@@ -48,9 +48,13 @@ int GetIDSForDMStatus(DeviceManagementStatus status) {
       return IDS_POLICY_DM_STATUS_SERVICE_POLICY_NOT_FOUND;
     case DM_STATUS_CANNOT_SIGN_REQUEST:
       return IDS_POLICY_DM_STATUS_CANNOT_SIGN_REQUEST;
+    case DM_STATUS_REQUEST_TOO_LARGE:
+      return IDS_POLICY_DM_STATUS_REQUEST_TOO_LARGE;
     case DM_STATUS_SERVICE_ARC_DISABLED:
       // This error is never shown on the UI.
       return IDS_POLICY_DM_STATUS_UNKNOWN_ERROR;
+    case DM_STATUS_SERVICE_CONSUMER_ACCOUNT_WITH_PACKAGED_LICENSE:
+      return IDS_POLICY_DM_STATUS_CONSUMER_ACCOUNT_WITH_PACKAGED_LICENSE;
   }
   NOTREACHED() << "Unhandled DM status " << status;
   return IDS_POLICY_DM_STATUS_UNKNOWN_ERROR;
@@ -78,12 +82,16 @@ int GetIDSForValidationStatus(CloudPolicyValidatorBase::Status status) {
       return IDS_POLICY_VALIDATION_BAD_DM_TOKEN;
     case CloudPolicyValidatorBase::VALIDATION_BAD_DEVICE_ID:
       return IDS_POLICY_VALIDATION_BAD_DEVICE_ID;
-    case CloudPolicyValidatorBase::VALIDATION_BAD_USERNAME:
-      return IDS_POLICY_VALIDATION_BAD_USERNAME;
+    case CloudPolicyValidatorBase::VALIDATION_BAD_USER:
+      return IDS_POLICY_VALIDATION_BAD_USER;
     case CloudPolicyValidatorBase::VALIDATION_POLICY_PARSE_ERROR:
       return IDS_POLICY_VALIDATION_POLICY_PARSE_ERROR;
     case CloudPolicyValidatorBase::VALIDATION_BAD_KEY_VERIFICATION_SIGNATURE:
       return IDS_POLICY_VALIDATION_BAD_KEY_VERIFICATION_SIGNATURE;
+    case CloudPolicyValidatorBase::VALIDATION_VALUE_WARNING:
+      return IDS_POLICY_VALIDATION_VALUE_WARNING;
+    case CloudPolicyValidatorBase::VALIDATION_VALUE_ERROR:
+      return IDS_POLICY_VALIDATION_VALUE_ERROR;
     case CloudPolicyValidatorBase::VALIDATION_STATUS_SIZE:
       NOTREACHED();
   }

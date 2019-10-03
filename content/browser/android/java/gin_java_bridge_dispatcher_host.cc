@@ -6,12 +6,11 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "content/browser/android/java/gin_java_bound_object_delegate.h"
 #include "content/browser/android/java/gin_java_bridge_message_filter.h"
 #include "content/browser/android/java/java_bridge_thread.h"
-#include "content/browser/android/java/jni_helper.h"
 #include "content/common/android/gin_java_bridge_value.h"
 #include "content/common/android/hash_set.h"
 #include "content/common/gin_java_bridge_messages.h"
@@ -52,10 +51,10 @@ void GinJavaBridgeDispatcherHost::InstallFilterAndRegisterAllRoutingIds() {
   }
 
   auto filter = GinJavaBridgeMessageFilter::FromHost(this, true);
-  // ForEachFrame is synchronous.
+  // Unretained() is safe because ForEachFrame() is synchronous.
   web_contents()->ForEachFrame(
-      base::Bind(&GinJavaBridgeMessageFilter::AddRoutingIdForHost, filter,
-                 base::Unretained(this)));
+      base::BindRepeating(&GinJavaBridgeMessageFilter::AddRoutingIdForHost,
+                          filter, base::Unretained(this)));
 }
 
 void GinJavaBridgeDispatcherHost::RenderFrameCreated(
@@ -79,11 +78,6 @@ void GinJavaBridgeDispatcherHost::WebContentsDestroyed() {
       GinJavaBridgeMessageFilter::FromHost(this, false);
   if (filter)
     filter->RemoveHost(this);
-}
-
-void GinJavaBridgeDispatcherHost::RenderProcessGone(
-    base::TerminationStatus status) {
-  GinJavaBridgeMessageFilter::RemoveFilter(this);
 }
 
 void GinJavaBridgeDispatcherHost::RenderViewHostChanged(
@@ -248,7 +242,7 @@ void GinJavaBridgeDispatcherHost::SetAllowObjectContentsInspection(bool allow) {
   if (!JavaBridgeThread::CurrentlyOn()) {
     JavaBridgeThread::GetTaskRunner()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &GinJavaBridgeDispatcherHost::SetAllowObjectContentsInspection,
             this, allow));
     return;

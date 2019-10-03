@@ -70,9 +70,9 @@ class TestDataDeviceDelegate : public DataDeviceDelegate {
   void OnDataDeviceDestroying(DataDevice* data_device) override {
     events_.push_back(DataEvent::kDestroy);
   }
-  DataOffer* OnDataOffer() override {
+  DataOffer* OnDataOffer(DataOffer::Purpose purpose) override {
     events_.push_back(DataEvent::kOffer);
-    data_offer_.reset(new DataOffer(new TestDataOfferDelegate));
+    data_offer_.reset(new DataOffer(new TestDataOfferDelegate, purpose));
     return data_offer_.get();
   }
   void OnEnter(Surface* surface,
@@ -109,9 +109,15 @@ class TestFileHelper : public FileHelper {
 
   // Overridden from FileHelper:
   std::string GetMimeTypeForUriList() const override { return ""; }
-  bool ConvertPathToUrl(const base::FilePath& path, GURL* out) override {
+  bool GetUrlFromPath(const std::string& app_id,
+                      const base::FilePath& path,
+                      GURL* out) override {
     return true;
   }
+  bool HasUrlsInPickle(const base::Pickle& pickle) override { return false; }
+  void GetUrlsFromPickle(const std::string& app_id,
+                         const base::Pickle& pickle,
+                         UrlsFromPickleCallback callback) override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestFileHelper);
@@ -166,7 +172,7 @@ TEST_F(DataDeviceTest, Destroy) {
 }
 
 TEST_F(DataDeviceTest, DataEventsDrop) {
-  ui::DropTargetEvent event(data_, gfx::Point(), gfx::Point(),
+  ui::DropTargetEvent event(data_, gfx::PointF(), gfx::PointF(),
                             ui::DragDropTypes::DRAG_MOVE);
   ui::Event::DispatcherApi(&event).set_target(surface_->window());
 
@@ -186,7 +192,7 @@ TEST_F(DataDeviceTest, DataEventsDrop) {
 }
 
 TEST_F(DataDeviceTest, DataEventsExit) {
-  ui::DropTargetEvent event(data_, gfx::Point(), gfx::Point(),
+  ui::DropTargetEvent event(data_, gfx::PointF(), gfx::PointF(),
                             ui::DragDropTypes::DRAG_MOVE);
   ui::Event::DispatcherApi(&event).set_target(surface_->window());
 
@@ -206,7 +212,7 @@ TEST_F(DataDeviceTest, DataEventsExit) {
 }
 
 TEST_F(DataDeviceTest, DeleteDataOfferDuringDrag) {
-  ui::DropTargetEvent event(data_, gfx::Point(), gfx::Point(),
+  ui::DropTargetEvent event(data_, gfx::PointF(), gfx::PointF(),
                             ui::DragDropTypes::DRAG_MOVE);
   ui::Event::DispatcherApi(&event).set_target(surface_->window());
 
@@ -226,7 +232,7 @@ TEST_F(DataDeviceTest, DeleteDataOfferDuringDrag) {
 }
 
 TEST_F(DataDeviceTest, NotAcceptDataEventsForSurface) {
-  ui::DropTargetEvent event(data_, gfx::Point(), gfx::Point(),
+  ui::DropTargetEvent event(data_, gfx::PointF(), gfx::PointF(),
                             ui::DragDropTypes::DRAG_MOVE);
   ui::Event::DispatcherApi(&event).set_target(surface_->window());
 

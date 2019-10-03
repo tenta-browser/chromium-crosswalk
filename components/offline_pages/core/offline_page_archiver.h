@@ -5,12 +5,19 @@
 #ifndef COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_ARCHIVER_H_
 #define COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_ARCHIVER_H_
 
-#include <stdint.h>
+#include <cstdint>
+#include <string>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
+#include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_types.h"
 #include "url/gurl.h"
+
+namespace content {
+class WebContents;
+}  // namespace content
 
 namespace offline_pages {
 
@@ -48,10 +55,6 @@ class OfflinePageArchiver {
     ERROR_CANCELED,                 // Caller canceled the request.
     ERROR_CONTENT_UNAVAILABLE,      // Content to archive is not available.
     ERROR_ARCHIVE_CREATION_FAILED,  // Creation of archive failed.
-    ERROR_SECURITY_CERTIFICATE,     // Page was loaded on secure connection, but
-                                    // there was a security error.
-    ERROR_ERROR_PAGE,               // We detected an error page.
-    ERROR_INTERSTITIAL_PAGE,        // We detected an interstitial page.
     ERROR_SKIPPED,                  // Page shouldn't be archived like NTP or
                                     // file urls.
     ERROR_DIGEST_CALCULATION_FAILED,  // Failed to compute digest.
@@ -59,24 +62,28 @@ class OfflinePageArchiver {
 
   // Describes the parameters to control how to create an archive.
   struct CreateArchiveParams {
-    CreateArchiveParams()
-        : remove_popup_overlay(false), use_page_problem_detectors(false) {}
+    explicit CreateArchiveParams(const std::string& name_space);
+
+    // The offline page namespace associated with the archive to be created.
+    std::string name_space;
 
     // Whether to remove popup overlay that obstructs viewing normal content.
-    bool remove_popup_overlay;
+    bool remove_popup_overlay = false;
 
     // Run page problem detectors while generating MTHML if true.
-    bool use_page_problem_detectors;
+    bool use_page_problem_detectors = false;
   };
 
-  typedef base::Callback<void(OfflinePageArchiver* /* archiver */,
-                              ArchiverResult /* result */,
+  // Callback for the final result of an attempt to generate of offline page
+  // archive. All parameters after |result| are only set in the case of a
+  // successful archive creation.
+  using CreateArchiveCallback =
+      base::OnceCallback<void(ArchiverResult /* result */,
                               const GURL& /* url */,
                               const base::FilePath& /* file_path */,
                               const base::string16& /* title */,
                               int64_t /* file_size */,
-                              const std::string& /* digest */)>
-      CreateArchiveCallback;
+                              const std::string& /* digest */)>;
 
   virtual ~OfflinePageArchiver() {}
 
@@ -85,7 +92,9 @@ class OfflinePageArchiver {
   // with the result and additional information.
   virtual void CreateArchive(const base::FilePath& archives_dir,
                              const CreateArchiveParams& create_archive_params,
-                             const CreateArchiveCallback& callback) = 0;
+                             content::WebContents* web_contents,
+                             CreateArchiveCallback callback) = 0;
+
 };
 
 }  // namespace offline_pages

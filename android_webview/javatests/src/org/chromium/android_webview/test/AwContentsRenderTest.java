@@ -19,8 +19,8 @@ import org.junit.runner.RunWith;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.VisualStateCallback;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.util.concurrent.CountDownLatch;
@@ -46,7 +46,7 @@ public class AwContentsRenderTest {
     }
 
     void setBackgroundColorOnUiThread(final int c) {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
     }
 
     @Test
@@ -67,9 +67,11 @@ public class AwContentsRenderTest {
         setBackgroundColorOnUiThread(Color.YELLOW);
         GraphicsTestUtils.pollForBackgroundColor(mAwContents, Color.YELLOW);
 
+        final String html = "<html><head><style>body {background-color:#227788}</style></head>"
+                + "<body></body></html>";
+        // Loading the html via a data URI requires us to encode '#' symbols as '%23'.
         mActivityTestRule.loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
-                "data:text/html,<html><head><style>body {background-color:#227788}</style></head>"
-                        + "<body></body></html>");
+                "data:text/html," + html.replace("#", "%23"));
         final int teal = 0xFF227788;
         GraphicsTestUtils.pollForBackgroundColor(mAwContents, teal);
 
@@ -85,7 +87,7 @@ public class AwContentsRenderTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testPictureListener() throws Throwable {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
 
         int pictureCount = mContentsClient.getPictureListenerHelper().getCallCount();
         mActivityTestRule.loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
@@ -99,9 +101,11 @@ public class AwContentsRenderTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testForceDrawWhenInvisible() throws Throwable {
+        final String html = "<html><head><style>body {background-color:#227788}</style></head>"
+                + "<body>Hello world!</body></html>";
+        // Loading the html via a data URI requires us to encode '#' symbols as '%23'.
         mActivityTestRule.loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
-                "data:text/html,<html><head><style>body {background-color:#227788}</style></head>"
-                        + "<body>Hello world!</body></html>");
+                "data:text/html," + html.replace("#", "%23"));
 
         Bitmap visibleBitmap = null;
         Bitmap invisibleBitmap = null;
@@ -118,10 +122,10 @@ public class AwContentsRenderTest {
         });
         Assert.assertTrue(latch.await(AwActivityTestRule.WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
 
-        final int width = ThreadUtils.runOnUiThreadBlockingNoException(
-                () -> mContainerView.getWidth());
-        final int height = ThreadUtils.runOnUiThreadBlockingNoException(
-                () -> mContainerView.getHeight());
+        final int width =
+                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getWidth());
+        final int height =
+                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getHeight());
         visibleBitmap = GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, width, height);
 
         // Things that affect DOM page visibility:

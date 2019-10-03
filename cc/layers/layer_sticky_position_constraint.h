@@ -7,9 +7,10 @@
 
 #include "cc/cc_export.h"
 
-#include "cc/trees/element_id.h"
+#include "cc/paint/element_id.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace cc {
 
@@ -29,6 +30,10 @@ struct CC_EXPORT LayerStickyPositionConstraint {
   float right_offset;
   float top_offset;
   float bottom_offset;
+
+  // The rectangle in which the sticky box is able to be positioned. This may be
+  // smaller than the scroller viewport due to things like padding.
+  gfx::Rect constraint_box_rect;
 
   // The rectangle corresponding to original layout position of the sticky box
   // relative to the scroll ancestor. The sticky box is only offset once the

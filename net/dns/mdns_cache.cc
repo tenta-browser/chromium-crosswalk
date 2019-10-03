@@ -9,13 +9,17 @@
 #include <utility>
 
 #include "base/strings/string_number_conversions.h"
-#include "net/dns/dns_protocol.h"
+#include "net/dns/public/dns_protocol.h"
 #include "net/dns/record_parsed.h"
 #include "net/dns/record_rdata.h"
 
 // TODO(noamsml): Recursive CNAME closure (backwards and forwards).
 
 namespace net {
+
+namespace {
+constexpr size_t kDefaultEntryLimit = 100'000;
+}  // namespace
 
 // The effective TTL given to records with a nominal zero TTL.
 // Allows time for hosts to send updated records, as detailed in RFC 6762
@@ -50,12 +54,12 @@ MDnsCache::Key MDnsCache::Key::CreateFor(const RecordParsed* record) {
              GetOptionalFieldForRecord(record));
 }
 
-MDnsCache::MDnsCache() = default;
+MDnsCache::MDnsCache() : entry_limit_(kDefaultEntryLimit) {}
 
 MDnsCache::~MDnsCache() = default;
 
 const RecordParsed* MDnsCache::LookupKey(const Key& key) {
-  RecordMap::iterator found = mdns_cache_.find(key);
+  auto found = mdns_cache_.find(key);
   if (found != mdns_cache_.end()) {
     return found->second.get();
   }
@@ -96,17 +100,21 @@ void MDnsCache::CleanupRecords(
     const RecordRemovedCallback& record_removed_callback) {
   base::Time next_expiration;
 
+  // TODO(crbug.com/946688): Make overfill pruning more intelligent than a bulk
+  // clearing of everything.
+  bool clear_cache = IsCacheOverfilled();
+
   // We are guaranteed that |next_expiration_| will be at or before the next
   // expiration. This allows clients to eagrely call CleanupRecords with
   // impunity.
-  if (now < next_expiration_) return;
+  if (now < next_expiration_ && !clear_cache)
+    return;
 
-  for (RecordMap::iterator i = mdns_cache_.begin();
-       i != mdns_cache_.end(); ) {
+  for (auto i = mdns_cache_.begin(); i != mdns_cache_.end();) {
     base::Time expiration = GetEffectiveExpiration(i->second.get());
-    if (now >= expiration) {
+    if (clear_cache || now >= expiration) {
       record_removed_callback.Run(i->second.get());
-      mdns_cache_.erase(i++);
+      i = mdns_cache_.erase(i);
     } else {
       if (next_expiration == base::Time() ||  expiration < next_expiration) {
         next_expiration = expiration;
@@ -125,7 +133,7 @@ void MDnsCache::FindDnsRecords(unsigned type,
   DCHECK(results);
   results->clear();
 
-  RecordMap::const_iterator i = mdns_cache_.lower_bound(Key(type, name, ""));
+  auto i = mdns_cache_.lower_bound(Key(type, name, ""));
   for (; i != mdns_cache_.end(); ++i) {
     if (i->first.name() != name ||
         (type != 0 && i->first.type() != type)) {
@@ -144,7 +152,7 @@ void MDnsCache::FindDnsRecords(unsigned type,
 std::unique_ptr<const RecordParsed> MDnsCache::RemoveRecord(
     const RecordParsed* record) {
   Key key = Key::CreateFor(record);
-  RecordMap::iterator found = mdns_cache_.find(key);
+  auto found = mdns_cache_.find(key);
 
   if (found != mdns_cache_.end() && found->second.get() == record) {
     std::unique_ptr<const RecordParsed> result = std::move(found->second);
@@ -153,6 +161,10 @@ std::unique_ptr<const RecordParsed> MDnsCache::RemoveRecord(
   }
 
   return std::unique_ptr<const RecordParsed>();
+}
+
+bool MDnsCache::IsCacheOverfilled() const {
+  return mdns_cache_.size() > entry_limit_;
 }
 
 // static

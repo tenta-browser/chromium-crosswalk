@@ -27,6 +27,7 @@ class ListValue;
 
 namespace extensions {
 class APIBindingHooks;
+class InteractionProvider;
 
 // A class encompassing the necessary pieces to construct the JS entry points
 // for Extension APIs. Designed to be used on a single thread, but safe between
@@ -34,8 +35,8 @@ class APIBindingHooks;
 class APIBindingsSystem {
  public:
   using GetAPISchemaMethod =
-      base::Callback<const base::DictionaryValue&(const std::string&)>;
-  using CustomTypeHandler = base::Callback<v8::Local<v8::Object>(
+      base::RepeatingCallback<const base::DictionaryValue&(const std::string&)>;
+  using CustomTypeHandler = base::RepeatingCallback<v8::Local<v8::Object>(
       v8::Isolate* isolate,
       const std::string& property_name,
       const base::ListValue* property_values,
@@ -44,15 +45,15 @@ class APIBindingsSystem {
       APITypeReferenceMap* type_refs,
       const BindingAccessChecker* access_checker)>;
 
-  APIBindingsSystem(
-      const GetAPISchemaMethod& get_api_schema,
-      const BindingAccessChecker::AvailabilityCallback& is_available,
-      const APIRequestHandler::SendRequestMethod& send_request,
-      const APIEventHandler::EventListenersChangedMethod&
-          event_listeners_changed,
-      const APIBinding::OnSilentRequest& on_silent_request,
-      const binding::AddConsoleError& add_console_error,
-      APILastError last_error);
+  APIBindingsSystem(GetAPISchemaMethod get_api_schema,
+                    BindingAccessChecker::AvailabilityCallback is_available,
+                    APIRequestHandler::SendRequestMethod send_request,
+                    std::unique_ptr<InteractionProvider> interaction_provider,
+                    APIEventListeners::ListenersUpdated event_listeners_changed,
+                    APIEventHandler::ContextOwnerIdGetter context_owner_getter,
+                    APIBinding::OnSilentRequest on_silent_request,
+                    binding::AddConsoleError add_console_error,
+                    APILastError last_error);
   ~APIBindingsSystem();
 
   // Returns a new v8::Object representing the api specified by |api_name|.
@@ -87,11 +88,14 @@ class APIBindingsSystem {
   // |type_name|, where |type_name| is the fully-qualified type (e.g.
   // storage.StorageArea).
   void RegisterCustomType(const std::string& type_name,
-                          const CustomTypeHandler& function);
+                          CustomTypeHandler function);
 
   // Handles any cleanup necessary before releasing the given |context|.
   void WillReleaseContext(v8::Local<v8::Context> context);
 
+  InteractionProvider* interaction_provider() {
+    return interaction_provider_.get();
+  }
   APIRequestHandler* request_handler() { return &request_handler_; }
   APIEventHandler* event_handler() { return &event_handler_; }
   APITypeReferenceMap* type_reference_map() { return &type_reference_map_; }
@@ -117,6 +121,9 @@ class APIBindingsSystem {
 
   // The exception handler for the system.
   ExceptionHandler exception_handler_;
+
+  // The interaction provider for the system.
+  std::unique_ptr<InteractionProvider> interaction_provider_;
 
   // The request handler associated with the system.
   APIRequestHandler request_handler_;

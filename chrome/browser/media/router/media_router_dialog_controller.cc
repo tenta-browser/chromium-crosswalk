@@ -12,34 +12,15 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/common/presentation_info.h"
-
-#if defined(OS_ANDROID)
-#include "chrome/browser/media/android/router/media_router_dialog_controller_android.h"
-#else
-#include "chrome/browser/ui/webui/media_router/media_router_dialog_controller_impl.h"
-#endif
+#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 
 namespace media_router {
-
-// static
-MediaRouterDialogController*
-MediaRouterDialogController::GetOrCreateForWebContents(
-    content::WebContents* contents) {
-#if defined(OS_ANDROID)
-  return MediaRouterDialogControllerAndroid::GetOrCreateForWebContents(
-      contents);
-#else
-  return MediaRouterDialogControllerImpl::GetOrCreateForWebContents(contents);
-#endif
-}
 
 class MediaRouterDialogController::InitiatorWebContentsObserver
     : public content::WebContentsObserver {
  public:
-  InitiatorWebContentsObserver(
-      content::WebContents* web_contents,
-      MediaRouterDialogController* dialog_controller)
+  InitiatorWebContentsObserver(content::WebContents* web_contents,
+                               MediaRouterDialogController* dialog_controller)
       : content::WebContentsObserver(web_contents),
         dialog_controller_(dialog_controller) {
     DCHECK(dialog_controller_);
@@ -65,57 +46,6 @@ class MediaRouterDialogController::InitiatorWebContentsObserver
   MediaRouterDialogController* const dialog_controller_;
 };
 
-StartPresentationContext::StartPresentationContext(
-    const content::PresentationRequest& presentation_request,
-    PresentationConnectionCallback success_cb,
-    PresentationConnectionErrorCallback error_cb)
-    : presentation_request_(presentation_request),
-      success_cb_(std::move(success_cb)),
-      error_cb_(std::move(error_cb)) {
-  DCHECK(success_cb_);
-  DCHECK(error_cb_);
-}
-
-StartPresentationContext::~StartPresentationContext() {
-  if (!cb_invoked_) {
-    std::move(error_cb_).Run(content::PresentationError(
-        content::PRESENTATION_ERROR_UNKNOWN, "Unknown error."));
-  }
-}
-
-void StartPresentationContext::InvokeSuccessCallback(
-    const std::string& presentation_id,
-    const GURL& presentation_url,
-    const MediaRoute& route) {
-  if (!cb_invoked_) {
-    std::move(success_cb_)
-        .Run(content::PresentationInfo(presentation_url, presentation_id),
-             route);
-    cb_invoked_ = true;
-  }
-}
-
-void StartPresentationContext::InvokeErrorCallback(
-    const content::PresentationError& error) {
-  if (!cb_invoked_) {
-    std::move(error_cb_).Run(error);
-    cb_invoked_ = true;
-  }
-}
-
-// static
-void StartPresentationContext::HandleRouteResponse(
-    std::unique_ptr<StartPresentationContext> context,
-    const RouteRequestResult& result) {
-  if (!result.route()) {
-    context->InvokeErrorCallback(content::PresentationError(
-        content::PRESENTATION_ERROR_UNKNOWN, result.error()));
-  } else {
-    context->InvokeSuccessCallback(result.presentation_id(),
-                                   result.presentation_url(), *result.route());
-  }
-}
-
 MediaRouterDialogController::MediaRouterDialogController(
     content::WebContents* initiator)
     : initiator_(initiator) {
@@ -128,20 +58,17 @@ MediaRouterDialogController::~MediaRouterDialogController() {
 }
 
 bool MediaRouterDialogController::ShowMediaRouterDialogForPresentation(
-    const content::PresentationRequest& presentation_request,
-    StartPresentationContext::PresentationConnectionCallback success_cb,
-    StartPresentationContext::PresentationConnectionErrorCallback error_cb) {
+    std::unique_ptr<StartPresentationContext> context) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (IsShowingMediaRouterDialog()) {
-    std::move(error_cb).Run(content::PresentationError(
-        content::PRESENTATION_ERROR_UNKNOWN,
+    context->InvokeErrorCallback(blink::mojom::PresentationError(
+        blink::mojom::PresentationErrorType::UNKNOWN,
         "Unable to create dialog: dialog already shown"));
     return false;
   }
 
-  start_presentation_context_ = base::MakeUnique<StartPresentationContext>(
-      presentation_request, std::move(success_cb), std::move(error_cb));
+  start_presentation_context_ = std::move(context);
   MediaRouterMetrics::RecordMediaRouterDialogOrigin(
       MediaRouterDialogOpenOrigin::PAGE);
   FocusOnMediaRouterDialog(true);
@@ -164,12 +91,16 @@ void MediaRouterDialogController::HideMediaRouterDialog() {
 
 void MediaRouterDialogController::FocusOnMediaRouterDialog(
     bool dialog_needs_creation) {
+  // Show the WebContents requesting a dialog.
+  // TODO(takumif): In the case of Views dialog, if the dialog is already shown,
+  // activating the WebContents makes the dialog lose focus and disappear. The
+  // dialog needs to be created again in that case.
+  initiator_->GetDelegate()->ActivateContents(initiator_);
   if (dialog_needs_creation) {
-    initiator_observer_.reset(
-        new InitiatorWebContentsObserver(initiator_, this));
+    initiator_observer_ =
+        std::make_unique<InitiatorWebContentsObserver>(initiator_, this);
     CreateMediaRouterDialog();
   }
-  initiator_->GetDelegate()->ActivateContents(initiator_);
 }
 
 void MediaRouterDialogController::Reset() {

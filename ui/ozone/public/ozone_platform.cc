@@ -4,11 +4,16 @@
 
 #include "ui/ozone/public/ozone_platform.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/ozone/platform_object.h"
 #include "ui/ozone/platform_selection.h"
+#include "ui/ozone/public/platform_screen.h"
 
 namespace ui {
 
@@ -17,13 +22,13 @@ namespace {
 bool g_platform_initialized_ui = false;
 bool g_platform_initialized_gpu = false;
 
+OzonePlatform* g_instance = nullptr;
+
 }  // namespace
 
 OzonePlatform::OzonePlatform() {
-  DCHECK(!instance_) << "There should only be a single OzonePlatform.";
-  instance_ = this;
-  g_platform_initialized_ui = false;
-  g_platform_initialized_gpu = false;
+  DCHECK(!g_instance) << "There should only be a single OzonePlatform.";
+  g_instance = this;
 }
 
 OzonePlatform::~OzonePlatform() = default;
@@ -34,7 +39,7 @@ void OzonePlatform::InitializeForUI(const InitParams& args) {
   if (g_platform_initialized_ui)
     return;
   g_platform_initialized_ui = true;
-  instance_->InitializeUI(args);
+  g_instance->InitializeUI(args);
   // This is deliberately created after initializing so that the platform can
   // create its own version of DDM.
   DeviceDataManager::CreateInstance();
@@ -46,25 +51,18 @@ void OzonePlatform::InitializeForGPU(const InitParams& args) {
   if (g_platform_initialized_gpu)
     return;
   g_platform_initialized_gpu = true;
-  instance_->InitializeGPU(args);
-}
-
-// static
-void OzonePlatform::Shutdown() {
-  auto* tmp = instance_;
-  instance_ = nullptr;
-  delete tmp;
+  g_instance->InitializeGPU(args);
 }
 
 // static
 OzonePlatform* OzonePlatform::GetInstance() {
-  DCHECK(instance_) << "OzonePlatform is not initialized";
-  return instance_;
+  DCHECK(g_instance) << "OzonePlatform is not initialized";
+  return g_instance;
 }
 
 // static
 OzonePlatform* OzonePlatform::EnsureInstance() {
-  if (!instance_) {
+  if (!g_instance) {
     TRACE_EVENT1("ozone",
                  "OzonePlatform::Initialize",
                  "platform",
@@ -74,24 +72,52 @@ OzonePlatform* OzonePlatform::EnsureInstance() {
 
     // TODO(spang): Currently need to leak this object.
     OzonePlatform* pl = platform.release();
-    DCHECK_EQ(instance_, pl);
+    DCHECK_EQ(g_instance, pl);
   }
-  return instance_;
+  return g_instance;
 }
-
-// static
-OzonePlatform* OzonePlatform::instance_ = nullptr;
 
 IPC::MessageFilter* OzonePlatform::GetGpuMessageFilter() {
   return nullptr;
 }
 
-base::MessageLoop::Type OzonePlatform::GetMessageLoopTypeForGpu() {
-  return base::MessageLoop::TYPE_DEFAULT;
+std::unique_ptr<PlatformScreen> OzonePlatform::CreateScreen() {
+  return nullptr;
 }
 
-void OzonePlatform::AddInterfaces(
-    service_manager::BinderRegistryWithArgs<
-        const service_manager::BindSourceInfo&>* registry) {}
+PlatformClipboard* OzonePlatform::GetPlatformClipboard() {
+  // Platforms that support system clipboard must override this method.
+  return nullptr;
+}
+
+bool OzonePlatform::IsNativePixmapConfigSupported(
+    gfx::BufferFormat format,
+    gfx::BufferUsage usage) const {
+  // Platform that support NativePixmap must override this method.
+  return false;
+}
+
+const OzonePlatform::PlatformProperties&
+OzonePlatform::GetPlatformProperties() {
+  static const base::NoDestructor<OzonePlatform::PlatformProperties> properties;
+  return *properties;
+}
+
+const OzonePlatform::InitializedHostProperties&
+OzonePlatform::GetInitializedHostProperties() {
+  DCHECK(g_platform_initialized_ui);
+
+  static InitializedHostProperties host_properties;
+  return host_properties;
+}
+
+void OzonePlatform::AddInterfaces(service_manager::BinderRegistry* registry) {}
+
+void OzonePlatform::AfterSandboxEntry() {}
+
+// static
+bool OzonePlatform::has_initialized_ui() {
+  return g_platform_initialized_ui;
+}
 
 }  // namespace ui

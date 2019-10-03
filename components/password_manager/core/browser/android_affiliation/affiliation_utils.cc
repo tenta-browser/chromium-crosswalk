@@ -53,7 +53,8 @@ bool CanonicalizeWebFacetURI(const std::string& input_uri,
   url::StdStringCanonOutput canonical_output(canonical_uri);
 
   bool canonicalization_succeeded = url::CanonicalizeStandardURL(
-      input_uri.c_str(), input_uri.size(), input_parsed, nullptr,
+      input_uri.c_str(), input_uri.size(), input_parsed,
+      url::SCHEME_WITH_HOST_PORT_AND_USER_INFORMATION, nullptr,
       &canonical_output, &canonical_parsed);
   canonical_output.Complete();
 
@@ -93,11 +94,7 @@ bool CanonicalizeHashComponent(const base::StringPiece& input_hash,
   // safe" base64 alphabet; plus the padding ('=').
   const char kBase64NonAlphanumericChars[] = "-_=";
 
-  // We need net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS to
-  // unescape the padding ('=').
-  std::string base64_encoded_hash = net::UnescapeURLComponent(
-      input_hash.as_string(),
-      net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+  std::string base64_encoded_hash = net::UnescapeBinaryURLComponent(input_hash);
 
   if (!base64_encoded_hash.empty() &&
       CanonicalizeBase64Padding(&base64_encoded_hash) &&
@@ -120,8 +117,8 @@ bool CanonicalizePackageNameComponent(
   // Characters other than alphanumeric that are permitted in the package names.
   const char kPackageNameNonAlphanumericChars[] = "._";
 
-  std::string package_name = net::UnescapeURLComponent(
-      input_package_name.as_string(), net::UnescapeRule::NORMAL);
+  std::string package_name =
+      net::UnescapeBinaryURLComponent(input_package_name);
 
   // TODO(engedy): We might want to use a regex to check this more throughly.
   if (!package_name.empty() &&
@@ -155,7 +152,7 @@ bool CanonicalizeAndroidFacetURI(const std::string& input_uri,
   // We cannot use url::CanonicalizeHost as that would convert the package name
   // to lower case, but the package name is case sensitive.
   success &= CanonicalizePackageNameComponent(
-      ComponentString(input_uri.data(), input_parsed.host), &canonical_output);
+      ComponentString(input_uri, input_parsed.host), &canonical_output);
 
   canonical_output.Complete();
 

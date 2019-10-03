@@ -24,9 +24,9 @@ import org.chromium.chrome.browser.compositor.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.accessibility.AccessibilityTabModelAdapter.AccessibilityTabModelAdapterListener;
 import org.chromium.chrome.browser.widget.accessibility.AccessibilityTabModelWrapper;
+import org.chromium.ui.base.DeviceFormFactor;
 
 /**
  * A {@link Layout} that shows the tabs as two {@link ListView}s, one for each {@link TabModel} to
@@ -34,7 +34,7 @@ import org.chromium.chrome.browser.widget.accessibility.AccessibilityTabModelWra
  */
 public class OverviewListLayout extends Layout implements AccessibilityTabModelAdapterListener {
     private AccessibilityTabModelWrapper mTabModelWrapper;
-    private final float mDpToPx;
+    private final float mDensity;
     private final BlackHoleEventFilter mBlackHoleEventFilter;
     private final SceneLayer mSceneLayer;
 
@@ -42,7 +42,7 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
             Context context, LayoutUpdateHost updateHost, LayoutRenderHost renderHost) {
         super(context, updateHost, renderHost);
         mBlackHoleEventFilter = new BlackHoleEventFilter(context);
-        mDpToPx = context.getResources().getDisplayMetrics().density;
+        mDensity = context.getResources().getDisplayMetrics().density;
         mSceneLayer = new SceneLayer();
     }
 
@@ -66,7 +66,7 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
     }
 
     @Override
-    public ViewportMode getViewportMode() {
+    public @ViewportMode int getViewportMode() {
         return ViewportMode.ALWAYS_FULLSCREEN;
     }
 
@@ -81,12 +81,9 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
                 (FrameLayout.LayoutParams) mTabModelWrapper.getLayoutParams();
         if (params == null) return;
 
-        int margin = (int) ((getHeight() - getHeightMinusBrowserControls()) * mDpToPx);
-        if (FeatureUtilities.isChromeHomeEnabled()) {
-            params.bottomMargin = margin;
-        } else {
-            params.topMargin = margin;
-        }
+        params.bottomMargin = (int) (getBottomBrowserControlsHeight() * mDensity);
+        params.topMargin = (int) (getTopBrowserControlsHeight() * mDensity);
+
         mTabModelWrapper.setLayoutParams(params);
     }
 
@@ -164,6 +161,18 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
     }
 
     @Override
+    public boolean canHostBeFocusable() {
+        // TODO(https://crbug.com/918171): Consider fine-tuning accessibility support for the
+        // overview list layout.
+        // We don't allow the host to gain focus for phones so that the CompositorViewHolder doesn't
+        // steal focus when trying to focus the disabled tab switcher button when there are no tabs
+        // open (https://crbug.com/584423). This solution never worked on tablets, however, and
+        // caused a different focus bug, so on tablets we do allow the host to gain focus
+        // (https://crbug.com/925277).
+        return DeviceFormFactor.isNonMultiDisplayContextOnTablet(getContext());
+    }
+
+    @Override
     public void setTabModelSelector(
             TabModelSelector tabModelSelector, TabContentManager tabContentManager) {
         super.setTabModelSelector(tabModelSelector, tabContentManager);
@@ -173,7 +182,7 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
     }
 
     @VisibleForTesting
-    public ViewGroup getContainer() {
+    public AccessibilityTabModelWrapper getContainer() {
         return mTabModelWrapper;
     }
 

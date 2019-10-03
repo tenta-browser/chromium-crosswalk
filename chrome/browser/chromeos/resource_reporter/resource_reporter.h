@@ -14,7 +14,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/memory_coordinator_client.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/singleton.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
@@ -28,8 +27,7 @@ namespace chromeos {
 // Chrome tasks and reports a weighted random sample of them via Rappor whenever
 // memory pressure is critical. The reporting is limited to once per
 // |kMinimumTimeBetweenReportsInMS|.
-class ResourceReporter : public task_manager::TaskManagerObserver,
-                         public base::MemoryCoordinatorClient {
+class ResourceReporter : public task_manager::TaskManagerObserver {
  public:
   // A collection of the data of a task manager's task that the ResourceReporter
   // is interested in.
@@ -53,10 +51,10 @@ class ResourceReporter : public task_manager::TaskManagerObserver,
     // percentage [0.0, 100.0].
     double cpu_percent;
 
-    // The physical memory usage of the task from the most recent task manager
+    // The memory footprint of the task from the most recent task manager
     // refresh in bytes. It doesn't include shared memory. A value of -1 is
     // invalid and means that the memory usage measurement for this task is not
-    // ready yet. See TaskManagerInterface::GetPhysicalMemoryUsage().
+    // ready yet. See TaskManagerInterface::GetMemoryFootprintUsage().
     int64_t memory_bytes;
 
     // True if the task is running on a process at background priority.
@@ -151,9 +149,6 @@ class ResourceReporter : public task_manager::TaskManagerObserver,
 
   // Gets the bucket in which the current system's number of CPU cores fall.
   static CpuCoresNumberRange GetCurrentSystemCpuCoresRange();
-
-  // base::MemoryCoordinatorClient:
-  void OnMemoryStateChange(base::MemoryState state) override;
 
   // Perform a weighted random sampling to select a task by its CPU or memory
   // usage weights so that we can record samples for them via Rappor.

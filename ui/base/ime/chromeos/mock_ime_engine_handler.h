@@ -7,35 +7,39 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <vector>
 
+#include "base/component_export.h"
 #include "ui/base/ime/ime_engine_handler_interface.h"
-#include "ui/base/ime/ui_base_ime_export.h"
 #include "ui/events/event.h"
 
 namespace chromeos {
 
-class UI_BASE_IME_EXPORT MockIMEEngineHandler
+class COMPONENT_EXPORT(UI_BASE_IME_CHROMEOS) MockIMEEngineHandler
     : public ui::IMEEngineHandlerInterface {
  public:
   MockIMEEngineHandler();
   ~MockIMEEngineHandler() override;
 
+  // ui::IMEEngineHandlerInterface:
   void FocusIn(const InputContext& input_context) override;
   void FocusOut() override;
   void Enable(const std::string& component_id) override;
   void Disable() override;
-  void PropertyActivate(const std::string& property_name) override;
   void Reset() override;
-  void MaybeSwitchEngine() override;
-  bool IsInterestedInKeyEvent() const override;
   void ProcessKeyEvent(const ui::KeyEvent& key_event,
-                       KeyEventDoneCallback& callback) override;
+                       KeyEventDoneCallback callback) override;
+  void SetCompositionBounds(const std::vector<gfx::Rect>& bounds) override;
+  void PropertyActivate(const std::string& property_name) override;
   void CandidateClicked(uint32_t index) override;
   void SetSurroundingText(const std::string& text,
                           uint32_t cursor_pos,
                           uint32_t anchor_pos,
                           uint32_t offset_pos) override;
-  void SetCompositionBounds(const std::vector<gfx::Rect>& bounds) override;
+  void SetMirroringEnabled(bool mirroring_enabled) override;
+  void SetCastingEnabled(bool casting_enabled) override;
+
+  const std::string& GetActiveComponentId() const;
 
   int focus_in_call_count() const { return focus_in_call_count_; }
   int focus_out_call_count() const { return focus_out_call_count_; }
@@ -71,32 +75,9 @@ class UI_BASE_IME_EXPORT MockIMEEngineHandler
     return last_processed_key_event_.get();
   }
 
-  const KeyEventDoneCallback& last_passed_callback() const {
-    return last_passed_callback_;
+  KeyEventDoneCallback last_passed_callback() {
+    return std::move(last_passed_callback_);
   }
-
-  bool ClearComposition(int context_id, std::string* error) override;
-
-  bool CommitText(int context_id,
-                  const char* text,
-                  std::string* error) override;
-
-  bool IsActive() const override;
-
-  const std::string& GetActiveComponentId() const override;
-
-  bool DeleteSurroundingText(int context_id,
-                             int offset,
-                             size_t number_of_chars,
-                             std::string* error) override;
-
-  bool SetCandidateWindowVisible(bool visible, std::string* error) override;
-
-  bool SetCursorPosition(int context_id,
-                         int candidate_id,
-                         std::string* error) override;
-
-  void HideInputView() override {}
 
  private:
   int focus_in_call_count_;

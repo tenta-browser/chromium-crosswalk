@@ -6,14 +6,14 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/time/default_tick_clock.h"
-#include "base/trace_event/auto_open_close_event.h"
 #include "base/trace_event/trace_event.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_frame.h"
 #include "media/blink/webmediaplayer_params.h"
-#include "third_party/WebKit/public/platform/WebVideoFrameSubmitter.h"
+#include "third_party/blink/public/platform/web_video_frame_submitter.h"
 
 namespace media {
 
@@ -21,37 +21,39 @@ namespace media {
 // background rendering to keep the Render() callbacks moving.
 const int kBackgroundRenderingTimeoutMs = 250;
 
+// static
+constexpr const char VideoFrameCompositor::kTracingCategory[];
+
 VideoFrameCompositor::VideoFrameCompositor(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     std::unique_ptr<blink::WebVideoFrameSubmitter> submitter)
     : task_runner_(task_runner),
-      tick_clock_(new base::DefaultTickClock()),
-      background_rendering_enabled_(true),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
       background_rendering_timer_(
           FROM_HERE,
           base::TimeDelta::FromMilliseconds(kBackgroundRenderingTimeoutMs),
           base::Bind(&VideoFrameCompositor::BackgroundRender,
-                     base::Unretained(this)),
-          // Task is not repeating, CallRender() will reset the task as needed.
-          false),
-      client_(nullptr),
-      rendering_(false),
-      rendered_last_frame_(false),
-      is_background_rendering_(false),
-      new_background_frame_(false),
-      // Assume 60Hz before the first UpdateCurrentFrame() call.
-      last_interval_(base::TimeDelta::FromSecondsD(1.0 / 60)),
-      callback_(nullptr),
-      submitter_(std::move(submitter)),
-      surface_layer_for_video_enabled_(
-          base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo)),
-      weak_ptr_factory_(this) {
-  background_rendering_timer_.SetTaskRunner(task_runner_);
-  if (submitter_.get()) {
+                     base::Unretained(this))),
+      submitter_(std::move(submitter)) {
+  if (submitter_) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&VideoFrameCompositor::InitializeSubmitter,
-                              weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&VideoFrameCompositor::InitializeSubmitter,
+                                  weak_ptr_factory_.GetWeakPtr()));
+    update_submission_state_callback_ = BindToLoop(
+        task_runner_,
+        base::BindRepeating(&VideoFrameCompositor::SetIsSurfaceVisible,
+                            weak_ptr_factory_.GetWeakPtr()));
   }
+}
+
+cc::UpdateSubmissionStateCB
+VideoFrameCompositor::GetUpdateSubmissionStateCallback() {
+  return update_submission_state_callback_;
+}
+
+void VideoFrameCompositor::SetIsSurfaceVisible(bool is_visible) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  submitter_->SetIsSurfaceVisible(is_visible);
 }
 
 void VideoFrameCompositor::InitializeSubmitter() {
@@ -65,18 +67,30 @@ VideoFrameCompositor::~VideoFrameCompositor() {
   DCHECK(!rendering_);
   if (client_)
     client_->StopUsingProvider();
-  if (submitter_)
-    submitter_->StopUsingProvider();
 }
 
-void VideoFrameCompositor::EnableSubmission(const viz::FrameSinkId& id) {
+void VideoFrameCompositor::EnableSubmission(
+    const viz::SurfaceId& id,
+    base::TimeTicks local_surface_id_allocation_time,
+    VideoRotation rotation,
+    bool force_submit) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  submitter_->StartSubmitting(id);
+
+  // If we're switching to |submitter_| from some other client, then tell it.
+  if (client_ && client_ != submitter_.get())
+    client_->StopUsingProvider();
+
+  submitter_->SetRotation(rotation);
+  submitter_->SetForceSubmit(force_submit);
+  submitter_->EnableSubmission(id, local_surface_id_allocation_time);
+  client_ = submitter_.get();
+  if (rendering_)
+    client_->StartRendering();
 }
 
 bool VideoFrameCompositor::IsClientSinkAvailable() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  return client_ || submitter_;
+  return client_;
 }
 
 void VideoFrameCompositor::OnRendererStateUpdate(bool new_state) {
@@ -85,8 +99,9 @@ void VideoFrameCompositor::OnRendererStateUpdate(bool new_state) {
   rendering_ = new_state;
 
   if (!auto_open_close_) {
-    auto_open_close_.reset(new base::trace_event::AutoOpenCloseEvent(
-        base::trace_event::AutoOpenCloseEvent::Type::ASYNC, "media,rail",
+    auto_open_close_.reset(new base::trace_event::AutoOpenCloseEvent<
+                           kTracingCategory>(
+        base::trace_event::AutoOpenCloseEvent<kTracingCategory>::Type::ASYNC,
         "VideoPlayback"));
   }
 
@@ -110,17 +125,10 @@ void VideoFrameCompositor::OnRendererStateUpdate(bool new_state) {
   if (!IsClientSinkAvailable())
     return;
 
-  if (submitter_) {
-    if (rendering_)
-      submitter_->StartRendering();
-    else
-      submitter_->StopRendering();
-  } else {
-    if (rendering_)
-      client_->StartRendering();
-    else
-      client_->StopRendering();
-  }
+  if (rendering_)
+    client_->StartRendering();
+  else
+    client_->StopRendering();
 }
 
 void VideoFrameCompositor::SetVideoFrameProviderClient(
@@ -145,11 +153,10 @@ scoped_refptr<VideoFrame> VideoFrameCompositor::GetCurrentFrameOnAnyThread() {
   return current_frame_;
 }
 
-void VideoFrameCompositor::SetCurrentFrame(
-    const scoped_refptr<VideoFrame>& frame) {
+void VideoFrameCompositor::SetCurrentFrame(scoped_refptr<VideoFrame> frame) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   base::AutoLock lock(current_frame_lock_);
-  current_frame_ = frame;
+  current_frame_ = std::move(frame);
 }
 
 void VideoFrameCompositor::PutCurrentFrame() {
@@ -168,6 +175,15 @@ bool VideoFrameCompositor::HasCurrentFrame() {
   return static_cast<bool>(GetCurrentFrame());
 }
 
+base::TimeDelta VideoFrameCompositor::GetPreferredRenderInterval() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  base::AutoLock lock(callback_lock_);
+
+  if (!callback_)
+    return viz::BeginFrameArgs::MinInterval();
+  return callback_->GetPreferredRenderInterval();
+}
+
 void VideoFrameCompositor::Start(RenderCallback* callback) {
   // Called from the media thread, so acquire the callback under lock before
   // returning in case a Stop() call comes in before the PostTask is processed.
@@ -175,8 +191,8 @@ void VideoFrameCompositor::Start(RenderCallback* callback) {
   DCHECK(!callback_);
   callback_ = callback;
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&VideoFrameCompositor::OnRendererStateUpdate,
-                            base::Unretained(this), true));
+      FROM_HERE, base::BindOnce(&VideoFrameCompositor::OnRendererStateUpdate,
+                                weak_ptr_factory_.GetWeakPtr(), true));
 }
 
 void VideoFrameCompositor::Stop() {
@@ -187,34 +203,39 @@ void VideoFrameCompositor::Stop() {
   DCHECK(callback_);
   callback_ = nullptr;
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&VideoFrameCompositor::OnRendererStateUpdate,
-                            base::Unretained(this), false));
+      FROM_HERE, base::BindOnce(&VideoFrameCompositor::OnRendererStateUpdate,
+                                weak_ptr_factory_.GetWeakPtr(), false));
 }
 
-void VideoFrameCompositor::PaintSingleFrame(
-    const scoped_refptr<VideoFrame>& frame,
-    bool repaint_duplicate_frame) {
+void VideoFrameCompositor::PaintSingleFrame(scoped_refptr<VideoFrame> frame,
+                                            bool repaint_duplicate_frame) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&VideoFrameCompositor::PaintSingleFrame,
-                   base::Unretained(this), frame, repaint_duplicate_frame));
+        FROM_HERE, base::BindOnce(&VideoFrameCompositor::PaintSingleFrame,
+                                  weak_ptr_factory_.GetWeakPtr(),
+                                  std::move(frame), repaint_duplicate_frame));
     return;
   }
-  if (ProcessNewFrame(frame, repaint_duplicate_frame) &&
+  if (ProcessNewFrame(std::move(frame), repaint_duplicate_frame) &&
       IsClientSinkAvailable()) {
-    if (!submitter_)
-      client_->DidReceiveFrame();
-    else
-      submitter_->DidReceiveFrame();
+    client_->DidReceiveFrame();
   }
 }
 
 void VideoFrameCompositor::UpdateCurrentFrameIfStale() {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  if (IsClientSinkAvailable() || !rendering_ || !is_background_rendering_)
+  // If we're not rendering, then the frame can't be stale.
+  if (!rendering_ || !is_background_rendering_)
     return;
+
+  // If we have a client, and it is currently rendering, then it's not stale
+  // since the client is driving the frame updates at the proper rate.
+  if (IsClientSinkAvailable() && client_->IsDrivingFrameUpdates())
+    return;
+
+  // We're rendering, but the client isn't driving the updates.  See if the
+  // frame is stale, and update it.
 
   DCHECK(!last_background_render_.is_null());
 
@@ -232,14 +253,13 @@ void VideoFrameCompositor::UpdateCurrentFrameIfStale() {
 }
 
 void VideoFrameCompositor::SetOnNewProcessedFrameCallback(
-    const OnNewProcessedFrameCB& cb) {
+    OnNewProcessedFrameCB cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  new_processed_frame_cb_ = cb;
+  new_processed_frame_cb_ = std::move(cb);
 }
 
-bool VideoFrameCompositor::ProcessNewFrame(
-    const scoped_refptr<VideoFrame>& frame,
-    bool repaint_duplicate_frame) {
+bool VideoFrameCompositor::ProcessNewFrame(scoped_refptr<VideoFrame> frame,
+                                           bool repaint_duplicate_frame) {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   if (frame && GetCurrentFrame() && !repaint_duplicate_frame &&
@@ -251,12 +271,28 @@ bool VideoFrameCompositor::ProcessNewFrame(
   // subsequent PutCurrentFrame() call it will mark it as rendered.
   rendered_last_frame_ = false;
 
-  SetCurrentFrame(frame);
+  SetCurrentFrame(std::move(frame));
 
-  if (!new_processed_frame_cb_.is_null())
-    base::ResetAndReturn(&new_processed_frame_cb_).Run(base::TimeTicks::Now());
+  if (new_processed_frame_cb_)
+    std::move(new_processed_frame_cb_).Run(base::TimeTicks::Now());
 
   return true;
+}
+
+void VideoFrameCompositor::UpdateRotation(VideoRotation rotation) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  submitter_->SetRotation(rotation);
+}
+
+void VideoFrameCompositor::SetIsPageVisible(bool is_visible) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  if (submitter_)
+    submitter_->SetIsPageVisible(is_visible);
+}
+
+void VideoFrameCompositor::SetForceSubmit(bool force_submit) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  submitter_->SetForceSubmit(force_submit);
 }
 
 void VideoFrameCompositor::BackgroundRender() {
@@ -264,12 +300,8 @@ void VideoFrameCompositor::BackgroundRender() {
   const base::TimeTicks now = tick_clock_->NowTicks();
   last_background_render_ = now;
   bool new_frame = CallRender(now, now + last_interval_, true);
-  if (new_frame && IsClientSinkAvailable()) {
-    if (!submitter_)
-      client_->DidReceiveFrame();
-    else
-      submitter_->DidReceiveFrame();
-  }
+  if (new_frame && IsClientSinkAvailable())
+    client_->DidReceiveFrame();
 }
 
 bool VideoFrameCompositor::CallRender(base::TimeTicks deadline_min,
@@ -312,5 +344,6 @@ bool VideoFrameCompositor::CallRender(base::TimeTicks deadline_min,
     background_rendering_timer_.Reset();
   return new_frame || had_new_background_frame;
 }
+
 
 }  // namespace media

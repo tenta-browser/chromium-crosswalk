@@ -5,19 +5,24 @@
 #ifndef CONTENT_SHELL_TEST_RUNNER_MOCK_CONTENT_SETTINGS_CLIENT_H_
 #define CONTENT_SHELL_TEST_RUNNER_MOCK_CONTENT_SETTINGS_CLIENT_H_
 
+#include <map>
+
 #include "base/macros.h"
-#include "third_party/WebKit/public/platform/WebContentSettingsClient.h"
+#include "base/time/time.h"
+#include "third_party/blink/public/platform/web_client_hints_type.h"
+#include "third_party/blink/public/platform/web_content_settings_client.h"
+#include "url/origin.h"
 
 namespace test_runner {
 
-class LayoutTestRuntimeFlags;
 class WebTestDelegate;
+class WebTestRuntimeFlags;
 
 class MockContentSettingsClient : public blink::WebContentSettingsClient {
  public:
   // Caller has to guarantee that |layout_test_runtime_flags| lives longer
   // than the MockContentSettingsClient being constructed here.
-  MockContentSettingsClient(LayoutTestRuntimeFlags* layout_test_runtime_flags);
+  MockContentSettingsClient(WebTestRuntimeFlags* layout_test_runtime_flags);
 
   ~MockContentSettingsClient() override;
 
@@ -32,13 +37,29 @@ class MockContentSettingsClient : public blink::WebContentSettingsClient {
                                    const blink::WebSecurityOrigin& context,
                                    const blink::WebURL& url) override;
   bool AllowAutoplay(bool default_value) override;
+  void PersistClientHints(
+      const blink::WebEnabledClientHints& enabled_client_hints,
+      base::TimeDelta duration,
+      const blink::WebURL& url) override;
+  void GetAllowedClientHintsFromSource(
+      const blink::WebURL& url,
+      blink::WebEnabledClientHints* client_hints) const override;
 
   void SetDelegate(WebTestDelegate* delegate);
+
+  void ResetClientHintsPersistencyData();
 
  private:
   WebTestDelegate* delegate_;
 
-  LayoutTestRuntimeFlags* flags_;
+  WebTestRuntimeFlags* flags_;
+
+  struct ClientHintsPersistencyData {
+    blink::WebEnabledClientHints client_hints;
+    base::Time expiration;
+  };
+
+  std::map<const url::Origin, ClientHintsPersistencyData> client_hints_map_;
 
   DISALLOW_COPY_AND_ASSIGN(MockContentSettingsClient);
 };

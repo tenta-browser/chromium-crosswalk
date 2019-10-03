@@ -29,7 +29,6 @@ extern const char kVisitorDispatcherName[];
 extern const char kVisitorVarName[];
 extern const char kAdjustAndMarkName[];
 extern const char kIsHeapObjectAliveName[];
-extern const char kIsEagerlyFinalizedName[];
 extern const char kConstIteratorName[];
 extern const char kIteratorName[];
 extern const char kConstReverseIteratorName[];
@@ -68,6 +67,10 @@ class Config {
     return name == "unique_ptr";
   }
 
+  static bool IsTraceWrapperV8Reference(const std::string& name) {
+    return name == "TraceWrapperV8Reference";
+  }
+
   static bool IsWTFCollection(const std::string& name) {
     return name == "Vector" ||
            name == "Deque" ||
@@ -79,24 +82,10 @@ class Config {
   }
 
   static bool IsGCCollection(const std::string& name) {
-    return name == "HeapVector" ||
-           name == "HeapDeque" ||
-           name == "HeapHashSet" ||
-           name == "HeapListHashSet" ||
-           name == "HeapLinkedHashSet" ||
-           name == "HeapHashCountedSet" ||
-           name == "HeapHashMap" ||
-           IsPersistentGCCollection(name);
-  }
-
-  static bool IsPersistentGCCollection(const std::string& name) {
-    return name == "PersistentHeapVector" ||
-           name == "PersistentHeapDeque" ||
-           name == "PersistentHeapHashSet" ||
-           name == "PersistentHeapListHashSet" ||
-           name == "PersistentHeapLinkedHashSet" ||
-           name == "PersistentHeapHashCountedSet" ||
-           name == "PersistentHeapHashMap";
+    return name == "HeapVector" || name == "HeapDeque" ||
+           name == "HeapHashSet" || name == "HeapListHashSet" ||
+           name == "HeapLinkedHashSet" || name == "HeapHashCountedSet" ||
+           name == "HeapHashMap";
   }
 
   static bool IsGCCollectionWithUnsafeIterator(const std::string& name) {
@@ -238,6 +227,8 @@ class Config {
   static bool IsTraceMethod(const clang::FunctionDecl* method) {
     return GetTraceMethodType(method) != NOT_TRACE_METHOD;
   }
+
+  static bool IsTraceWrappersMethod(const clang::FunctionDecl* method);
 
   static bool StartsWith(const std::string& str, const std::string& prefix) {
     if (prefix.size() > str.size())

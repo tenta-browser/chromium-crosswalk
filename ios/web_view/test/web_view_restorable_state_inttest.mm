@@ -4,7 +4,8 @@
 
 #import <ChromeWebView/ChromeWebView.h>
 
-#import "ios/web_view/test/web_view_int_test.h"
+#import "base/test/ios/wait_util.h"
+#import "ios/web_view/test/web_view_inttest_base.h"
 #import "ios/web_view/test/web_view_test_util.h"
 #include "testing/gtest_mac.h"
 
@@ -12,29 +13,14 @@
 #error "This file requires ARC support."
 #endif
 
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForPageLoadTimeout;
+
 namespace ios_web_view {
-
-namespace {
-
-// Creates a new web view and restores its state from |source_web_view|.
-CWVWebView* CreateWebViewWithState(CWVWebView* source_web_view) {
-  NSMutableData* data = [[NSMutableData alloc] init];
-  NSKeyedArchiver* archiver =
-      [[NSKeyedArchiver alloc] initForWritingWithMutableData:data];
-  [source_web_view encodeRestorableStateWithCoder:archiver];
-  [archiver finishEncoding];
-  NSKeyedUnarchiver* unarchiver =
-      [[NSKeyedUnarchiver alloc] initForReadingWithData:data];
-  CWVWebView* result = test::CreateWebView();
-  [result decodeRestorableStateWithCoder:unarchiver];
-  return result;
-}
-
-}  // namespace
 
 // Tests encodeRestorableStateWithCoder: and decodeRestorableStateWithCoder:
 // methods.
-typedef ios_web_view::WebViewIntTest WebViewRestorableStateTest;
+typedef ios_web_view::WebViewInttestBase WebViewRestorableStateTest;
 TEST_F(WebViewRestorableStateTest, EncodeDecode) {
   // Load 2 URLs to create non-default state.
   ASSERT_FALSE([web_view_ lastCommittedURL]);
@@ -51,7 +37,13 @@ TEST_F(WebViewRestorableStateTest, EncodeDecode) {
   ASSERT_FALSE([web_view_ canGoForward]);
 
   // Create second web view and restore its state from the first web view.
-  CWVWebView* restored_web_view = CreateWebViewWithState(web_view_);
+  CWVWebView* restored_web_view = test::CreateWebView();
+  test::CopyWebViewState(web_view_, restored_web_view);
+
+  // Wait for restore to finish.
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^bool {
+    return [restored_web_view lastCommittedURL] != nil;
+  }));
 
   // Verify that the state has been restored correctly.
   EXPECT_NSEQ(@"about:blank",

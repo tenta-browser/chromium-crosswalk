@@ -1,5 +1,10 @@
 <?xml version="1.0"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- Note: Including Win64 components in a 32-bit installer usually triggers
+       a consistency error. We suppress that error in our build to allow the
+       installer to set 64-bit registry keys on 64-bit Windows. Care must be
+       taken when adding Win64 components to ensure they are not installed on
+       32-bit Windows. -->
 
   <?define EventSourceName = "chromoting" ?>
   <?define ServiceName = "chromoting" ?>
@@ -225,11 +230,28 @@
               Vital="yes"/>
       </Component>
 
+      <Component Id="native_messaging_host_firefox_manifest" Guid="*">
+        <File Id="com.google.chrome.remote_desktop_firefox.json"
+              DiskId="1"
+              KeyPath="yes"
+              Name="com.google.chrome.remote_desktop-firefox.json"
+              Vital="yes"/>
+      </Component>
+
       <Component Id="remote_assistance_host_manifest" Guid="*">
         <File Id="com.google.chrome.remote_assistance.json"
               DiskId="1"
               KeyPath="yes"
               Name="com.google.chrome.remote_assistance.json"
+              Vital="yes"/>
+      </Component>
+
+
+      <Component Id="remote_assistance_host_firefox_manifest" Guid="*">
+        <File Id="com.google.chrome.remote_assistance_firefox.json"
+              DiskId="1"
+              KeyPath="yes"
+              Name="com.google.chrome.remote_assistance-firefox.json"
               Vital="yes"/>
       </Component>
 
@@ -510,6 +532,39 @@
         <CreateFolder/>
       </Component>
 
+      <!-- Firefox requires the key to be installed in the native registry -->
+      <Component Id="native_messaging_host_firefox_registry_win32"
+                 Guid="*"
+                 Win64="no">
+        <Condition>NOT Msix64</Condition>
+        <RegistryKey Root="HKLM"
+                     Key="SOFTWARE\Mozilla\NativeMessagingHosts"
+                     Action="create">
+          <RegistryKey Key="com.google.chrome.remote_desktop" Action="create">
+            <RegistryValue
+                Type="string"
+                Value="[binaries]com.google.chrome.remote_desktop-firefox.json"/>
+          </RegistryKey>
+        </RegistryKey>
+        <CreateFolder/>
+      </Component>
+
+      <Component Id="native_messaging_host_firefox_registry_win64"
+                 Guid="*"
+                 Win64="yes">
+        <Condition>Msix64</Condition>
+        <RegistryKey Root="HKLM"
+                     Key="SOFTWARE\Mozilla\NativeMessagingHosts"
+                     Action="create">
+          <RegistryKey Key="com.google.chrome.remote_desktop" Action="create">
+            <RegistryValue
+                Type="string"
+                Value="[binaries]com.google.chrome.remote_desktop-firefox.json"/>
+          </RegistryKey>
+        </RegistryKey>
+        <CreateFolder/>
+      </Component>
+
       <Component Id="remote_assistance_host_registry" Guid="*">
         <RegistryKey Root="HKLM"
                      Key="SOFTWARE\Google\chrome\NativeMessagingHosts"
@@ -519,6 +574,40 @@
             <RegistryValue
                 Type="string"
                 Value="[binaries]com.google.chrome.remote_assistance.json"/>
+          </RegistryKey>
+        </RegistryKey>
+        <CreateFolder/>
+      </Component>
+
+      <Component Id="remote_assistance_host_firefox_registry_win32"
+                 Guid="*"
+                 Win64="no">
+        <Condition>NOT Msix64</Condition>
+        <RegistryKey Root="HKLM"
+                     Key="SOFTWARE\Mozilla\NativeMessagingHosts"
+                     Action="create">
+          <RegistryKey Key="com.google.chrome.remote_assistance"
+                       Action="create">
+            <RegistryValue
+                Type="string"
+                Value="[binaries]com.google.chrome.remote_assistance-firefox.json"/>
+          </RegistryKey>
+        </RegistryKey>
+        <CreateFolder/>
+      </Component>
+
+      <Component Id="remote_assistance_host_firefox_registry_win64"
+                 Guid="*"
+                 Win64="yes">
+        <Condition>Msix64</Condition>
+        <RegistryKey Root="HKLM"
+                     Key="SOFTWARE\Mozilla\NativeMessagingHosts"
+                     Action="create">
+          <RegistryKey Key="com.google.chrome.remote_assistance"
+                       Action="create">
+            <RegistryValue
+                Type="string"
+                Value="[binaries]com.google.chrome.remote_assistance-firefox.json"/>
           </RegistryKey>
         </RegistryKey>
         <CreateFolder/>
@@ -623,9 +712,15 @@
         <ComponentRef Id="omaha_registration"/>
       <?endif?>
       <ComponentRef Id="icudtl"/>
+      <ComponentRef Id="native_messaging_host_firefox_manifest"/>
+      <ComponentRef Id="native_messaging_host_firefox_registry_win32"/>
+      <ComponentRef Id="native_messaging_host_firefox_registry_win64"/>
       <ComponentRef Id="native_messaging_host_manifest"/>
       <ComponentRef Id="native_messaging_host_registry"/>
       <ComponentRef Id="remote_assistance_host"/>
+      <ComponentRef Id="remote_assistance_host_firefox_manifest"/>
+      <ComponentRef Id="remote_assistance_host_firefox_registry_win32"/>
+      <ComponentRef Id="remote_assistance_host_firefox_registry_win64"/>
       <ComponentRef Id="remote_assistance_host_manifest"/>
       <ComponentRef Id="remote_assistance_host_registry"/>
       <ComponentRef Id="remote_assistance_host_uiaccess"/>
@@ -645,7 +740,32 @@
     <Icon Id="chromoting.ico" SourceFile="chromoting.ico"/>
     <Property Id="ARPPRODUCTICON" Value="chromoting.ico" />
 
+    <CustomAction Id="set_maintenance" Property="MAINTENANCE" Value="true" />
+
+    <!-- Set to reinstall all features. -->
+    <CustomAction Id="set_reinstall_all_property"
+                  Property="REINSTALL"
+                  Value="ALL" />
+    <!-- "amus" will force reinstall all files.
+         See https://docs.microsoft.com/en-us/windows/desktop/Msi/reinstallmode -->
+    <CustomAction Id="set_reinstallmode_property"
+                  Property="REINSTALLMODE"
+                  Value="amus" />
+
     <InstallExecuteSequence>
+      <!-- Set REINSTALL=all and REINSTALLMODE=amus if the user reruns the
+           MSI, which will force reinstalling all files and services.  -->
+      <Custom Action="set_maintenance" Before="set_reinstall_all_property">
+        Installed AND (NOT REMOVE) AND (NOT UPGRADINGPRODUCTCODE)
+      </Custom>
+      <Custom Action="set_reinstall_all_property"
+              Before="set_reinstallmode_property">
+        MAINTENANCE
+      </Custom>
+      <Custom Action="set_reinstallmode_property" Before="LaunchConditions">
+        MAINTENANCE
+      </Custom>
+
       <Custom Action="query_auto_start_service" Before="InstallInitialize"/>
       <Custom Action="start_chromoting_service" After="StartServices">
         <![CDATA[NOT REMOVE AND (auto_start_service = "#2")]]>

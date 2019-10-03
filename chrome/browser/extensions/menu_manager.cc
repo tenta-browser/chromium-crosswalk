@@ -9,9 +9,9 @@
 #include <tuple>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -55,12 +55,12 @@ const char kCheckedKey[] = "checked";
 const char kContextsKey[] = "contexts";
 const char kDocumentURLPatternsKey[] = "document_url_patterns";
 const char kEnabledKey[] = "enabled";
-const char kIncognitoKey[] = "incognito";
+const char kMenuManagerIncognitoKey[] = "incognito";
 const char kParentUIDKey[] = "parent_uid";
 const char kStringUIDKey[] = "string_uid";
 const char kTargetURLPatternsKey[] = "target_url_patterns";
 const char kTitleKey[] = "title";
-const char kTypeKey[] = "type";
+const char kMenuManagerTypeKey[] = "type";
 const char kVisibleKey[] = "visible";
 
 void SetIdKeyValue(base::DictionaryValue* properties,
@@ -206,8 +206,8 @@ std::unique_ptr<base::DictionaryValue> MenuItem::ToValue() const {
   // string IDs for items.
   DCHECK_EQ(0, id_.uid);
   value->SetString(kStringUIDKey, id_.string_uid);
-  value->SetBoolean(kIncognitoKey, id_.incognito);
-  value->SetInteger(kTypeKey, type_);
+  value->SetBoolean(kMenuManagerIncognitoKey, id_.incognito);
+  value->SetInteger(kMenuManagerTypeKey, type_);
   if (type_ != SEPARATOR)
     value->SetString(kTitleKey, title_);
   if (type_ == CHECKBOX || type_ == RADIO)
@@ -229,14 +229,14 @@ std::unique_ptr<MenuItem> MenuItem::Populate(const std::string& extension_id,
                                              const base::DictionaryValue& value,
                                              std::string* error) {
   bool incognito = false;
-  if (!value.GetBoolean(kIncognitoKey, &incognito))
+  if (!value.GetBoolean(kMenuManagerIncognitoKey, &incognito))
     return nullptr;
   Id id(incognito, MenuItem::ExtensionKey(extension_id));
   if (!value.GetString(kStringUIDKey, &id.string_uid))
     return nullptr;
   int type_int;
   Type type = NORMAL;
-  if (!value.GetInteger(kTypeKey, &type_int))
+  if (!value.GetInteger(kMenuManagerTypeKey, &type_int))
     return nullptr;
   type = static_cast<Type>(type_int);
   std::string title;
@@ -263,7 +263,7 @@ std::unique_ptr<MenuItem> MenuItem::Populate(const std::string& extension_id,
   if (!contexts.Populate(*contexts_value))
     return nullptr;
 
-  std::unique_ptr<MenuItem> result = base::MakeUnique<MenuItem>(
+  std::unique_ptr<MenuItem> result = std::make_unique<MenuItem>(
       id, title, checked, visible, enabled, type, contexts);
 
   std::vector<std::string> document_url_patterns;
@@ -282,7 +282,7 @@ std::unique_ptr<MenuItem> MenuItem::Populate(const std::string& extension_id,
   // parent_id is filled in from the value, but it might not be valid. It's left
   // to be validated upon being added (via AddChildItem) to the menu manager.
   std::unique_ptr<Id> parent_id =
-      base::MakeUnique<Id>(incognito, MenuItem::ExtensionKey(extension_id));
+      std::make_unique<Id>(incognito, MenuItem::ExtensionKey(extension_id));
   if (value.HasKey(kParentUIDKey)) {
     if (!value.GetString(kParentUIDKey, &parent_id->string_uid))
       return nullptr;
@@ -357,12 +357,12 @@ bool MenuManager::AddContextItem(const Extension* extension,
   const MenuItem::ExtensionKey& key = item->id().extension_key;
 
   // The item must have a non-empty key, and not have already been added.
-  if (key.empty() || base::ContainsKey(items_by_id_, item->id()))
+  if (key.empty() || base::Contains(items_by_id_, item->id()))
     return false;
 
   DCHECK_EQ(extension->id(), key.extension_id);
 
-  bool first_item = !base::ContainsKey(context_items_, key);
+  bool first_item = !base::Contains(context_items_, key);
   context_items_[key].push_back(std::move(item));
   items_by_id_[item_ptr->id()] = item_ptr;
 
@@ -386,7 +386,7 @@ bool MenuManager::AddChildItem(const MenuItem::Id& parent_id,
   if (!parent || parent->type() != MenuItem::NORMAL ||
       parent->incognito() != child->incognito() ||
       parent->extension_id() != child->extension_id() ||
-      base::ContainsKey(items_by_id_, child->id()))
+      base::Contains(items_by_id_, child->id()))
     return false;
   MenuItem* child_ptr = child.get();
   parent->AddChild(std::move(child));
@@ -474,7 +474,7 @@ bool MenuManager::ChangeParent(const MenuItem::Id& child_id,
 }
 
 bool MenuManager::RemoveContextMenuItem(const MenuItem::Id& id) {
-  if (!base::ContainsKey(items_by_id_, id))
+  if (!base::Contains(items_by_id_, id))
     return false;
 
   MenuItem* menu_item = GetItemById(id);
@@ -674,7 +674,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
                            webview_guest->view_instance_id());
   }
 
-  auto args = base::MakeUnique<base::ListValue>();
+  auto args = std::make_unique<base::ListValue>();
   args->Reserve(2);
   args->Append(std::move(properties));
   // |properties| is invalidated at this time, which is why |args| needs to be
@@ -692,9 +692,15 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
       if (frame_id != ExtensionApiFrameIdMap::kInvalidFrameId)
         raw_properties->SetInteger("frameId", frame_id);
 
-      args->Append(ExtensionTabUtil::CreateTabObject(web_contents)->ToValue());
+      // We intentionally don't scrub the tab data here, since the user chose to
+      // invoke the extension on the page.
+      // NOTE(devlin): We could potentially gate this on whether the extension
+      // has activeTab.
+      args->Append(ExtensionTabUtil::CreateTabObject(
+                       web_contents, ExtensionTabUtil::kDontScrubTab, extension)
+                       ->ToValue());
     } else {
-      args->Append(base::MakeUnique<base::DictionaryValue>());
+      args->Append(std::make_unique<base::DictionaryValue>());
     }
   }
 
@@ -725,7 +731,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
   {
     // Dispatch to menu item's .onclick handler (this is the legacy API, from
     // before chrome.contextMenus.onClicked existed).
-    auto event = base::MakeUnique<Event>(
+    auto event = std::make_unique<Event>(
         webview_guest ? events::WEB_VIEW_INTERNAL_CONTEXT_MENUS
                       : events::CONTEXT_MENUS,
         webview_guest ? kOnWebviewContextMenus : kOnContextMenus,
@@ -736,7 +742,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
   }
   {
     // Dispatch to .contextMenus.onClicked handler.
-    auto event = base::MakeUnique<Event>(
+    auto event = std::make_unique<Event>(
         webview_guest ? events::CHROME_WEB_VIEW_INTERNAL_ON_CLICKED
                       : events::CONTEXT_MENUS_ON_CLICKED,
         webview_guest ? api::chrome_web_view_internal::OnClicked::kEventName
@@ -763,7 +769,7 @@ void MenuManager::SanitizeRadioListsInMenu(
     // Uncheck any checked radio items in the run, and at the end reset
     // the appropriate one to checked. If no check radio items were found,
     // then check the first radio item in the run.
-    MenuItem::OwnedList::const_iterator last_checked = item_list.end();
+    auto last_checked = item_list.end();
     MenuItem::OwnedList::const_iterator radio_run_iter;
     for (radio_run_iter = i; radio_run_iter != item_list.end();
         ++radio_run_iter) {
@@ -787,22 +793,18 @@ void MenuManager::SanitizeRadioListsInMenu(
 }
 
 bool MenuManager::ItemUpdated(const MenuItem::Id& id) {
-  if (!base::ContainsKey(items_by_id_, id))
+  if (!base::Contains(items_by_id_, id))
     return false;
 
   MenuItem* menu_item = GetItemById(id);
   DCHECK(menu_item);
 
-  const extensions::MenuItem::OwnedList* list;
-  if (menu_item->parent_id()) {
-    list = &(GetItemById(*menu_item->parent_id())->children());
-  } else {
+  if (!menu_item->parent_id()) {
     auto i = context_items_.find(menu_item->id().extension_key);
     if (i == context_items_.end()) {
       NOTREACHED();
       return false;
     }
-    list = &(i->second);
   }
 
   // If we selected a radio item, unselect all other items in its group.
@@ -877,7 +879,7 @@ void MenuManager::OnExtensionUnloaded(content::BrowserContext* browser_context,
                                       const Extension* extension,
                                       UnloadedExtensionReason reason) {
   MenuItem::ExtensionKey extension_key(extension->id());
-  if (base::ContainsKey(context_items_, extension_key)) {
+  if (base::Contains(context_items_, extension_key)) {
     RemoveAllContextItems(extension_key);
   }
 }

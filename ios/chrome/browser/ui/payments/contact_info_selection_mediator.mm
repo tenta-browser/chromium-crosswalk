@@ -7,7 +7,7 @@
 #import "ios/chrome/browser/ui/payments/contact_info_selection_mediator.h"
 
 #include "base/logging.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/payments/core/payments_profile_comparator.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/payments/payment_request.h"
@@ -15,7 +15,7 @@
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/payments/cells/autofill_profile_item.h"
 #import "ios/chrome/browser/ui/payments/cells/payments_text_item.h"
-#include "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -114,6 +114,7 @@ using ::payment_request_util::GetPhoneNumberLabelFromAutofillProfile;
     item.complete =
         _paymentRequest->profile_comparator()->IsContactInfoComplete(
             contactProfile);
+    item.useScaledFont = YES;
     if (_paymentRequest->selected_contact_profile() == contactProfile)
       _selectedItemIndex = index;
 

@@ -6,28 +6,106 @@
 
 #include <memory>
 
-#include "base/json/json_reader.h"
-#include "base/json/json_writer.h"
-#include "base/values.h"
-#include "net/http/http_status_code.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "url/gurl.h"
+#include "base/bind.h"
+#include "base/macros.h"
+#include "remoting/base/grpc_support/grpc_async_executor.h"
+#include "remoting/base/grpc_support/grpc_async_unary_request.h"
+#include "remoting/base/grpc_support/grpc_channel.h"
+#include "remoting/proto/remoting/v1/directory_service.grpc.pb.h"
+#include "third_party/grpc/src/include/grpcpp/security/credentials.h"
 
 namespace remoting {
 
-class ServiceClient::Core
-    : public base::RefCountedThreadSafe<ServiceClient::Core>,
-      public net::URLFetcherDelegate {
+namespace {
+
+// Class for making Directory Service requests via gRPC, used by
+// ServiceClient::Core.
+class DirectoryServiceClient {
  public:
-  Core(const std::string& chromoting_hosts_url,
-       net::URLRequestContextGetter* request_context_getter)
-           : request_context_getter_(request_context_getter),
-             delegate_(nullptr),
-             pending_request_type_(PENDING_REQUEST_NONE),
-             chromoting_hosts_url_(chromoting_hosts_url) {
-  }
+  using RegisterHostCallback =
+      base::OnceCallback<void(const grpc::Status&,
+                              const apis::v1::RegisterHostResponse&)>;
+  using DeleteHostCallback =
+      base::OnceCallback<void(const grpc::Status&,
+                              const apis::v1::DeleteHostResponse&)>;
+
+  explicit DirectoryServiceClient(const std::string& remoting_server_endpoint);
+  ~DirectoryServiceClient();
+
+  void RegisterHost(const std::string& host_id,
+                    const std::string& host_name,
+                    const std::string& public_key,
+                    const std::string& host_client_id,
+                    const std::string& oauth_access_token,
+                    RegisterHostCallback callback);
+
+  void DeleteHost(const std::string& host_id,
+                  const std::string& oauth_access_token,
+                  DeleteHostCallback callback);
+
+ private:
+  using RemotingDirectoryService = apis::v1::RemotingDirectoryService;
+
+  GrpcAsyncExecutor grpc_executor_;
+  std::unique_ptr<apis::v1::RemotingDirectoryService::Stub> stub_;
+
+  DISALLOW_COPY_AND_ASSIGN(DirectoryServiceClient);
+};
+
+DirectoryServiceClient::DirectoryServiceClient(
+    const std::string& remoting_server_endpoint) {
+  GrpcChannelSharedPtr channel =
+      CreateSslChannelForEndpoint(remoting_server_endpoint);
+  stub_ = RemotingDirectoryService::NewStub(channel);
+}
+
+DirectoryServiceClient::~DirectoryServiceClient() = default;
+
+void DirectoryServiceClient::RegisterHost(const std::string& host_id,
+                                          const std::string& host_name,
+                                          const std::string& public_key,
+                                          const std::string& host_client_id,
+                                          const std::string& oauth_access_token,
+                                          RegisterHostCallback callback) {
+  auto register_host_request = apis::v1::RegisterHostRequest();
+  register_host_request.set_host_id(host_id);
+  register_host_request.set_host_name(host_name);
+  register_host_request.set_public_key(public_key);
+  register_host_request.set_host_client_id(host_client_id);
+
+  auto async_request = CreateGrpcAsyncUnaryRequest(
+      base::BindOnce(&RemotingDirectoryService::Stub::AsyncRegisterHost,
+                     base::Unretained(stub_.get())),
+      register_host_request, std::move(callback));
+
+  async_request->context()->set_credentials(
+      grpc::AccessTokenCredentials(oauth_access_token));
+  grpc_executor_.ExecuteRpc(std::move(async_request));
+}
+
+void DirectoryServiceClient::DeleteHost(const std::string& host_id,
+                                        const std::string& oauth_access_token,
+                                        DeleteHostCallback callback) {
+  auto delete_host_request = apis::v1::DeleteHostRequest();
+  delete_host_request.set_host_id(host_id);
+
+  auto async_request = CreateGrpcAsyncUnaryRequest(
+      base::BindOnce(&RemotingDirectoryService::Stub::AsyncDeleteHost,
+                     base::Unretained(stub_.get())),
+      delete_host_request, std::move(callback));
+
+  async_request->context()->set_credentials(
+      grpc::AccessTokenCredentials(oauth_access_token));
+  grpc_executor_.ExecuteRpc(std::move(async_request));
+}
+
+}  // namespace
+
+class ServiceClient::Core
+    : public base::RefCountedThreadSafe<ServiceClient::Core> {
+ public:
+  explicit Core(const std::string& remoting_server_endpoint)
+      : directory_service_client_(remoting_server_endpoint) {}
 
   void RegisterHost(const std::string& host_id,
                     const std::string& host_name,
@@ -36,35 +114,31 @@ class ServiceClient::Core
                     const std::string& oauth_access_token,
                     ServiceClient::Delegate* delegate);
 
-  void UnregisterHost(const std::string& host_id,
-                      const std::string& oauth_access_token,
-                      ServiceClient::Delegate* delegate);
-
-  // net::URLFetcherDelegate implementation.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void DeleteHost(const std::string& host_id,
+                  const std::string& oauth_access_token,
+                  ServiceClient::Delegate* delegate);
 
  private:
   friend class base::RefCountedThreadSafe<Core>;
-  ~Core() override = default;
+  ~Core() = default;
 
   enum PendingRequestType {
     PENDING_REQUEST_NONE,
     PENDING_REQUEST_REGISTER_HOST,
-    PENDING_REQUEST_UNREGISTER_HOST
+    PENDING_REQUEST_DELETE_HOST
   };
 
-  void MakeChromotingRequest(net::URLFetcher::RequestType request_type,
-                       const std::string& post_body,
-                       const std::string& url_suffix,
-                       const std::string& oauth_access_token,
-                       ServiceClient::Delegate* delegate);
-  void HandleResponse(const net::URLFetcher* source);
+  void OnRegisterHostResponse(const grpc::Status& status,
+                              const apis::v1::RegisterHostResponse& response);
 
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  ServiceClient::Delegate* delegate_;
-  std::unique_ptr<net::URLFetcher> request_;
-  PendingRequestType pending_request_type_;
-  std::string chromoting_hosts_url_;
+  void OnDeleteHostResponse(const grpc::Status& status,
+                            const apis::v1::DeleteHostResponse& response);
+
+  void NotifyError(const grpc::Status& status);
+
+  ServiceClient::Delegate* delegate_ = nullptr;
+  PendingRequestType pending_request_type_ = PENDING_REQUEST_NONE;
+  DirectoryServiceClient directory_service_client_;
 };
 
 void ServiceClient::Core::RegisterHost(
@@ -76,102 +150,82 @@ void ServiceClient::Core::RegisterHost(
     Delegate* delegate) {
   DCHECK(pending_request_type_ == PENDING_REQUEST_NONE);
   pending_request_type_ = PENDING_REQUEST_REGISTER_HOST;
-  base::DictionaryValue post_body;
-  post_body.SetString("data.hostId", host_id);
-  post_body.SetString("data.hostName", host_name);
-  post_body.SetString("data.publicKey", public_key);
-  std::string url_suffix;
-  if (!host_client_id.empty())
-    url_suffix = "?hostClientId=" + host_client_id;
-  std::string post_body_str;
-  base::JSONWriter::Write(post_body, &post_body_str);
-  MakeChromotingRequest(net::URLFetcher::POST,
-                        url_suffix,
-                        post_body_str,
-                        oauth_access_token,
-                        delegate);
-}
 
-void ServiceClient::Core::UnregisterHost(
-    const std::string& host_id,
-    const std::string& oauth_access_token,
-    Delegate* delegate) {
-  DCHECK(pending_request_type_ == PENDING_REQUEST_NONE);
-  pending_request_type_ = PENDING_REQUEST_UNREGISTER_HOST;
-  MakeChromotingRequest(net::URLFetcher::DELETE_REQUEST,
-                        host_id,
-                        std::string(),
-                        oauth_access_token,
-                        delegate);
-}
-
-void ServiceClient::Core::MakeChromotingRequest(
-    net::URLFetcher::RequestType request_type,
-    const std::string& url_suffix,
-    const std::string& request_body,
-    const std::string& oauth_access_token,
-    ServiceClient::Delegate* delegate) {
   delegate_ = delegate;
-  request_ = net::URLFetcher::Create(
-      0, GURL(chromoting_hosts_url_ + url_suffix), request_type, this);
-  request_->SetRequestContext(request_context_getter_.get());
-  request_->SetUploadData("application/json; charset=UTF-8", request_body);
-  request_->AddExtraRequestHeader("Authorization: OAuth " + oauth_access_token);
-  request_->Start();
+
+  directory_service_client_.RegisterHost(
+      host_id, host_name, public_key, host_client_id, oauth_access_token,
+      base::Bind(&ServiceClient::Core::OnRegisterHostResponse,
+                 base::Unretained(this)));
 }
 
-// URLFetcher::Delegate implementation.
-void ServiceClient::Core::OnURLFetchComplete(
-    const net::URLFetcher* source) {
-  HandleResponse(source);
-  request_.reset();
+void ServiceClient::Core::DeleteHost(const std::string& host_id,
+                                     const std::string& oauth_access_token,
+                                     Delegate* delegate) {
+  DCHECK(pending_request_type_ == PENDING_REQUEST_NONE);
+  pending_request_type_ = PENDING_REQUEST_DELETE_HOST;
+
+  delegate_ = delegate;
+
+  directory_service_client_.DeleteHost(
+      host_id, oauth_access_token,
+      base::Bind(&ServiceClient::Core::OnDeleteHostResponse,
+                 base::Unretained(this)));
 }
 
-void ServiceClient::Core::HandleResponse(const net::URLFetcher* source) {
-  DCHECK(pending_request_type_ != PENDING_REQUEST_NONE);
-  PendingRequestType old_type = pending_request_type_;
+void ServiceClient::Core::OnRegisterHostResponse(
+    const grpc::Status& status,
+    const apis::v1::RegisterHostResponse& response) {
+  DCHECK(pending_request_type_ == PENDING_REQUEST_REGISTER_HOST);
   pending_request_type_ = PENDING_REQUEST_NONE;
-  if (source->GetResponseCode() == net::HTTP_BAD_REQUEST) {
+
+  if (!status.ok()) {
+    NotifyError(status);
+    return;
+  }
+
+  if (!response.has_auth_code()) {
+    LOG(ERROR) << "No auth_code in server response.";
     delegate_->OnOAuthError();
     return;
   }
 
-  // Treat codes 2xx as successful; for example, HTTP_NO_CONTENT (204) can be
-  // returned from a DELETE_REQUEST.
-  if (source->GetResponseCode() / 100 == 2) {
-    switch (old_type) {
-      case PENDING_REQUEST_NONE:
-        break;
-      case PENDING_REQUEST_REGISTER_HOST:
-        {
-          std::string data;
-          source->GetResponseAsString(&data);
-          std::unique_ptr<base::Value> message_value =
-              base::JSONReader::Read(data);
-          base::DictionaryValue *dict;
-          std::string code;
-          if (message_value.get() &&
-              message_value->IsType(base::Value::Type::DICTIONARY) &&
-              message_value->GetAsDictionary(&dict) &&
-              dict->GetString("data.authorizationCode", &code)) {
-            delegate_->OnHostRegistered(code);
-          } else {
-            delegate_->OnHostRegistered(std::string());
-          }
-        }
-        break;
-      case PENDING_REQUEST_UNREGISTER_HOST:
-        delegate_->OnHostUnregistered();
-        break;
-    }
-    return;
-  }
-  delegate_->OnNetworkError(source->GetResponseCode());
+  delegate_->OnHostRegistered(response.auth_code());
 }
 
-ServiceClient::ServiceClient(const std::string& chromoting_hosts_url,
-                             net::URLRequestContextGetter* context_getter) {
-  core_ = new Core(chromoting_hosts_url, context_getter);
+void ServiceClient::Core::OnDeleteHostResponse(
+    const grpc::Status& status,
+    const apis::v1::DeleteHostResponse& response) {
+  DCHECK(pending_request_type_ == PENDING_REQUEST_DELETE_HOST);
+  pending_request_type_ = PENDING_REQUEST_NONE;
+
+  if (!status.ok()) {
+    NotifyError(status);
+    return;
+  }
+
+  delegate_->OnHostUnregistered();
+}
+
+void ServiceClient::Core::NotifyError(const grpc::Status& status) {
+  grpc::StatusCode error_code = status.error_code();
+  LOG(ERROR) << "Received error code: " << error_code
+             << ", message: " << status.error_message();
+
+  // TODO(crbug.com/968326): Update the Delegate interface and reporting to
+  // better reflect the errors that gRPC returns.
+  switch (error_code) {
+    case grpc::StatusCode::PERMISSION_DENIED:
+    case grpc::StatusCode::UNAUTHENTICATED:
+      delegate_->OnOAuthError();
+      return;
+    default:
+      delegate_->OnNetworkError(error_code);
+  }
+}
+
+ServiceClient::ServiceClient(const std::string& remoting_server_endpoint) {
+  core_ = new Core(remoting_server_endpoint);
 }
 
 ServiceClient::~ServiceClient() = default;
@@ -191,7 +245,7 @@ void ServiceClient::UnregisterHost(
     const std::string& host_id,
     const std::string& oauth_access_token,
     Delegate* delegate) {
-  return core_->UnregisterHost(host_id, oauth_access_token, delegate);
+  return core_->DeleteHost(host_id, oauth_access_token, delegate);
 }
 
-}  // namespace gaia
+}  // namespace remoting

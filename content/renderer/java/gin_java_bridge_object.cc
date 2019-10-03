@@ -4,12 +4,13 @@
 
 #include "content/renderer/java/gin_java_bridge_object.h"
 
+#include "base/bind.h"
 #include "content/common/gin_java_bridge_messages.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/java/gin_java_function_invocation_helper.h"
 #include "gin/function_template.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace content {
 
@@ -37,7 +38,9 @@ GinJavaBridgeObject* GinJavaBridgeObject::InjectNamed(
   if (controller.IsEmpty())
     return NULL;
 
-  global->Set(gin::StringToV8(isolate, object_name), controller.ToV8());
+  global->Set(context, gin::StringToV8(isolate, object_name), controller.ToV8())
+      .Check();
+
   return object;
 }
 
@@ -89,10 +92,13 @@ v8::Local<v8::Value> GinJavaBridgeObject::GetNamedProperty(
     }
     known_methods_[property] = dispatcher_->HasJavaMethod(object_id_, property);
   }
-  if (known_methods_[property])
-    return GetFunctionTemplate(isolate, property)->GetFunction();
-  else
+  if (known_methods_[property]) {
+    return GetFunctionTemplate(isolate, property)
+        ->GetFunction(isolate->GetCurrentContext())
+        .FromMaybe(v8::Local<v8::Value>());
+  } else {
     return v8::Local<v8::Value>();
+  }
 }
 
 std::vector<std::string> GinJavaBridgeObject::EnumerateNamedProperties(
@@ -110,9 +116,10 @@ v8::Local<v8::FunctionTemplate> GinJavaBridgeObject::GetFunctionTemplate(
   if (!function_template.IsEmpty())
     return function_template;
   function_template = gin::CreateFunctionTemplate(
-      isolate, base::Bind(&GinJavaFunctionInvocationHelper::Invoke,
-                          base::Owned(new GinJavaFunctionInvocationHelper(
-                              name, dispatcher_))));
+      isolate,
+      base::BindRepeating(
+          &GinJavaFunctionInvocationHelper::Invoke,
+          base::Owned(new GinJavaFunctionInvocationHelper(name, dispatcher_))));
   template_cache_.Set(name, function_template);
   return function_template;
 }

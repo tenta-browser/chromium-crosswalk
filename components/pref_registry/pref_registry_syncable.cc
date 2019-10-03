@@ -23,7 +23,6 @@ void PrefRegistrySyncable::SetSyncableRegistrationCallback(
 }
 
 void PrefRegistrySyncable::OnPrefRegistered(const std::string& path,
-                                            base::Value* default_value,
                                             uint32_t flags) {
   // Tests that |flags| does not contain both SYNCABLE_PREF and
   // SYNCABLE_PRIORITY_PREF flags at the same time.
@@ -46,6 +45,16 @@ scoped_refptr<PrefRegistrySyncable> PrefRegistrySyncable::ForkForIncognito() {
   registry->registration_flags_ = registration_flags_;
   registry->foreign_pref_keys_ = foreign_pref_keys_;
   return registry;
+}
+
+void PrefRegistrySyncable::WhitelistLateRegistrationPrefForSync(
+    const std::string& pref_name) {
+  sync_unknown_prefs_whitelist_.insert(pref_name);
+}
+
+bool PrefRegistrySyncable::IsWhitelistedLateRegistrationPref(
+    const std::string& path) const {
+  return sync_unknown_prefs_whitelist_.count(path) != 0;
 }
 
 }  // namespace user_prefs

@@ -11,7 +11,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/values.h"
-#include "chromeos/dbus/power_policy_controller.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/external_data_fetcher.h"
 #include "components/policy/core/common/policy_bundle.h"
@@ -77,6 +77,17 @@ void ApplyValueAsMandatoryPolicy(const base::Value* value,
     user_policy_map->Set(user_policy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                          POLICY_SOURCE_CLOUD, value->CreateDeepCopy(), nullptr);
   }
+}
+
+// Applies the value of |device_policy| in |device_policy_map| as the
+// mandatory value of |user_policy| in |user_policy_map|. If the value of
+// |device_policy| is unset, does nothing.
+void ApplyDevicePolicyAsMandatoryPolicy(const std::string& device_policy,
+                                        const std::string& user_policy,
+                                        const PolicyMap& device_policy_map,
+                                        PolicyMap* user_policy_map) {
+  const base::Value* value = device_policy_map.GetValue(device_policy);
+  ApplyValueAsMandatoryPolicy(value, user_policy, user_policy_map);
 }
 
 }  // namespace
@@ -161,6 +172,10 @@ void LoginProfilePolicyProvider::UpdateFromDevicePolicy() {
       key::kDeviceLoginScreenDefaultVirtualKeyboardEnabled,
       key::kVirtualKeyboardEnabled,
       device_policy_map, &user_policy_map);
+
+  ApplyDevicePolicyAsMandatoryPolicy(
+      key::kDeviceLoginScreenAutoSelectCertificateForUrls,
+      key::kAutoSelectCertificateForUrls, device_policy_map, &user_policy_map);
 
   const base::Value* value =
       device_policy_map.GetValue(key::kDeviceLoginScreenPowerManagement);

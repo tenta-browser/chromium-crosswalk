@@ -6,7 +6,7 @@
 
 #include "base/logging.h"
 #import "ios/chrome/browser/ui/presenters/contained_presenter_delegate.h"
-#include "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#include "ios/chrome/common/ui_util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -32,6 +32,8 @@ NSTimeInterval kAnimationDuration = 0.2;
 @synthesize presentedConstraints = _presentedConstraints;
 
 - (void)prepareForPresentation {
+  DCHECK(self.presentedViewController);
+
   [self.baseViewController addChildViewController:self.presentedViewController];
   [self.baseViewController.view addSubview:self.presentedViewController.view];
 
@@ -41,11 +43,6 @@ NSTimeInterval kAnimationDuration = 0.2;
 
   // The contents view will be sized and positioned by constraints.
   contents.translatesAutoresizingMaskIntoConstraints = NO;
-
-  // Sizing constraints never change, so they don't need to be stored.
-  // Height is sized by the contents of |contents|.
-  [contents.widthAnchor constraintEqualToAnchor:container.widthAnchor].active =
-      YES;
 
   // The horizontal position of the contents in the container also doesn't
   // change.
@@ -84,27 +81,40 @@ NSTimeInterval kAnimationDuration = 0.2;
   if (self.presentedConstraints[0].active)
     return;
 
-  [UIView animateWithDuration:animated ? kAnimationDuration : 0.0
-                   animations:^{
-                     [NSLayoutConstraint
-                         deactivateConstraints:self.dismissedConstraints];
-                     [NSLayoutConstraint
-                         activateConstraints:self.presentedConstraints];
-                     [self.baseViewController.view layoutIfNeeded];
-                   }];
+  auto animations = ^{
+    [NSLayoutConstraint deactivateConstraints:self.dismissedConstraints];
+    [NSLayoutConstraint activateConstraints:self.presentedConstraints];
+    [self.baseViewController.view layoutIfNeeded];
+  };
+  auto completion = ^(BOOL finished) {
+    [self.delegate containedPresenterDidPresent:self];
+  };
+
+  if (animated) {
+    [UIView animateWithDuration:kAnimationDuration
+                     animations:animations
+                     completion:completion];
+  } else {
+    animations();
+    completion(YES);
+  }
 }
 
 - (void)dismissAnimated:(BOOL)animated {
+  DCHECK(self.presentedViewController);
+  // If animated, the base view controller must still be in the view hierarchy.
+  DCHECK(!animated || self.baseViewController.view.superview);
+
   // No-op if already dismissed.
   if (self.dismissedConstraints[0].active)
     return;
 
-  void (^animations)() = ^{
+  auto animations = ^{
     [NSLayoutConstraint deactivateConstraints:self.presentedConstraints];
     [NSLayoutConstraint activateConstraints:self.dismissedConstraints];
     [self.baseViewController.view layoutIfNeeded];
   };
-  void (^completion)(BOOL) = ^(BOOL finished) {
+  auto completion = ^(BOOL finished) {
     [self cleanUpAfterDismissal];
     [self.delegate containedPresenterDidDismiss:self];
   };
@@ -118,10 +128,12 @@ NSTimeInterval kAnimationDuration = 0.2;
                      animations:animations
                      completion:completion];
   } else {
-    // Just execute everything synchronously if the dismissal isn't animated.
-    // Note that just using an animation duration of 0 in -animateWithDuration:
-    // will still call the completion block asynchronously.
-    animations();
+    // Just execute the completion block synchronously if the dismissal isn't
+    // animated. |animations| isn't called because (a) -cleanupAfterDismissal
+    // removes the presented view controller from the view hierarchy, and (b)
+    // in some contexts a non-animated dismissal may occur when the base view
+    // controller is no longer on screen, and the constraint activation in
+    // |animations| will crash.
     completion(YES);
   }
 }

@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -65,7 +65,8 @@ ExtensionFunction::ResponseAction ClipboardSetImageDataFunction::Run() {
   }
 
   ExtensionsAPIClient::Get()->SaveImageDataToClipboard(
-      params->image_data, params->type, std::move(*params->additional_items),
+      std::vector<char>(params->image_data.begin(), params->image_data.end()),
+      params->type, std::move(*params->additional_items),
       base::Bind(&ClipboardSetImageDataFunction::OnSaveImageDataSuccess, this),
       base::Bind(&ClipboardSetImageDataFunction::OnSaveImageDataError, this));
   return RespondLater();

@@ -23,6 +23,11 @@ const char MediaEngagementScore::kSignificantPlaybacksKey[] =
     "significantPlaybacks";
 const char MediaEngagementScore::kVisitsWithMediaTagKey[] =
     "visitsWithMediaTag";
+const char MediaEngagementScore::kHighScoreChanges[] = "highScoreChanges";
+const char MediaEngagementScore::kSignificantMediaPlaybacksKey[] =
+    "mediaElementPlaybacks";
+const char MediaEngagementScore::kSignificantAudioContextPlaybacksKey[] =
+    "audioContextPlaybacks";
 
 const char MediaEngagementScore::kScoreMinVisitsParamName[] = "min_visits";
 const char MediaEngagementScore::kHighScoreLowerThresholdParamName[] =
@@ -32,24 +37,32 @@ const char MediaEngagementScore::kHighScoreUpperThresholdParamName[] =
 
 namespace {
 
-const int kScoreMinVisitsParamDefault = 5;
-const double kHighScoreLowerThresholdParamDefault = 0.5;
-const double kHighScoreUpperThresholdParamDefault = 0.7;
+const int kScoreMinVisitsParamDefault = 20;
+const double kHighScoreLowerThresholdParamDefault = 0.2;
+const double kHighScoreUpperThresholdParamDefault = 0.3;
 
-std::unique_ptr<base::DictionaryValue> GetScoreDictForSettings(
+std::unique_ptr<base::DictionaryValue> GetMediaEngagementScoreDictForSettings(
     const HostContentSettingsMap* settings,
-    const GURL& origin_url) {
+    const url::Origin& origin) {
   if (!settings)
-    return base::MakeUnique<base::DictionaryValue>();
+    return std::make_unique<base::DictionaryValue>();
 
   std::unique_ptr<base::DictionaryValue> value =
       base::DictionaryValue::From(settings->GetWebsiteSetting(
-          origin_url, origin_url, CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT,
+          origin.GetURL(), origin.GetURL(),
+          CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT,
           content_settings::ResourceIdentifier(), nullptr));
 
   if (value.get())
     return value;
-  return base::MakeUnique<base::DictionaryValue>();
+  return std::make_unique<base::DictionaryValue>();
+}
+
+void GetIntegerFromScore(base::DictionaryValue* dict,
+                         base::StringPiece key,
+                         int* out) {
+  if (base::Value* v = dict->FindKeyOfType(key, base::Value::Type::INTEGER))
+    *out = v->GetInt();
 }
 
 }  // namespace
@@ -76,46 +89,81 @@ int MediaEngagementScore::GetScoreMinVisits() {
 }
 
 MediaEngagementScore::MediaEngagementScore(base::Clock* clock,
-                                           const GURL& origin,
+                                           const url::Origin& origin,
                                            HostContentSettingsMap* settings)
-    : MediaEngagementScore(clock,
-                           origin,
-                           GetScoreDictForSettings(settings, origin)) {
-  settings_map_ = settings;
-}
+    : MediaEngagementScore(
+          clock,
+          origin,
+          GetMediaEngagementScoreDictForSettings(settings, origin),
+          settings) {}
 
 MediaEngagementScore::MediaEngagementScore(
     base::Clock* clock,
-    const GURL& origin,
-    std::unique_ptr<base::DictionaryValue> score_dict)
-    : origin_(origin), clock_(clock), score_dict_(score_dict.release()) {
+    const url::Origin& origin,
+    std::unique_ptr<base::DictionaryValue> score_dict,
+    HostContentSettingsMap* settings)
+    : origin_(origin),
+      clock_(clock),
+      score_dict_(score_dict.release()),
+      settings_map_(settings) {
   if (!score_dict_)
     return;
 
-  score_dict_->GetInteger(kVisitsKey, &visits_);
-  score_dict_->GetInteger(kMediaPlaybacksKey, &media_playbacks_);
-  score_dict_->GetBoolean(kHasHighScoreKey, &is_high_);
-  score_dict_->GetInteger(kAudiblePlaybacksKey, &audible_playbacks_);
-  score_dict_->GetInteger(kSignificantPlaybacksKey, &significant_playbacks_);
-  score_dict_->GetInteger(kVisitsWithMediaTagKey, &visits_with_media_tag_);
+  // This is to prevent using previously saved data to mark an HTTP website as
+  // allowed to autoplay.
+  if (base::FeatureList::IsEnabled(media::kMediaEngagementHTTPSOnly) &&
+      origin_.scheme() != url::kHttpsScheme) {
+    return;
+  }
 
-  double internal_time;
-  if (score_dict_->GetDouble(kLastMediaPlaybackTimeKey, &internal_time))
-    last_media_playback_time_ = base::Time::FromInternalValue(internal_time);
+  GetIntegerFromScore(score_dict_.get(), kVisitsKey, &visits_);
+  GetIntegerFromScore(score_dict_.get(), kMediaPlaybacksKey, &media_playbacks_);
+  GetIntegerFromScore(score_dict_.get(), kAudiblePlaybacksKey,
+                      &audible_playbacks_);
+  GetIntegerFromScore(score_dict_.get(), kSignificantPlaybacksKey,
+                      &significant_playbacks_);
+  GetIntegerFromScore(score_dict_.get(), kVisitsWithMediaTagKey,
+                      &visits_with_media_tag_);
+  GetIntegerFromScore(score_dict_.get(), kHighScoreChanges,
+                      &high_score_changes_);
+  GetIntegerFromScore(score_dict_.get(), kSignificantMediaPlaybacksKey,
+                      &media_element_playbacks_);
+  GetIntegerFromScore(score_dict_.get(), kSignificantAudioContextPlaybacksKey,
+                      &audio_context_playbacks_);
+
+  if (base::Value* value = score_dict_->FindKeyOfType(
+          kHasHighScoreKey, base::Value::Type::BOOLEAN)) {
+    is_high_ = value->GetBool();
+  }
+
+  if (base::Value* value = score_dict_->FindKeyOfType(
+          kLastMediaPlaybackTimeKey, base::Value::Type::DOUBLE)) {
+    last_media_playback_time_ =
+        base::Time::FromInternalValue(value->GetDouble());
+  }
 
   // Recalculate the total score and high bit. If the high bit changed we
   // should commit this. This should only happen if we change the threshold
   // or if we have data from before the bit was introduced.
   bool was_high = is_high_;
   Recalculate();
-  if (is_high_ != was_high) {
-    if (settings_map_) {
-      Commit();
-    } else {
-      // Update the internal dictionary for testing.
-      score_dict_->SetBoolean(kHasHighScoreKey, is_high_);
-    }
+  bool needs_commit = is_high_ != was_high;
+
+  // If we have a score for media playbacks and we do not have a value for
+  // both media element playbacks and audio context playbacks then we should
+  // copy media playbacks into media element playbacks.
+  bool has_new_playbacks_key_ =
+      score_dict_->FindKey(kSignificantMediaPlaybacksKey) ||
+      score_dict_->FindKey(kSignificantAudioContextPlaybacksKey);
+  if (!has_new_playbacks_key_) {
+    media_element_playbacks_ = media_playbacks_;
+    needs_commit = true;
   }
+
+  // If we need to commit because of a migration and we have the settings map
+  // then we should commit.
+  if (needs_commit && settings_map_)
+    Commit();
 }
 
 // TODO(beccahughes): Add typemap.
@@ -124,7 +172,8 @@ MediaEngagementScore::GetScoreDetails() const {
   return media::mojom::MediaEngagementScoreDetails::New(
       origin_, actual_score(), visits(), media_playbacks(),
       last_media_playback_time().ToJsTime(), high_score(), audible_playbacks(),
-      significant_playbacks());
+      significant_playbacks(), high_score_changes(), audio_context_playbacks(),
+      media_element_playbacks());
 }
 
 MediaEngagementScore::~MediaEngagementScore() = default;
@@ -135,11 +184,15 @@ MediaEngagementScore& MediaEngagementScore::operator=(MediaEngagementScore&&) =
 
 void MediaEngagementScore::Commit() {
   DCHECK(settings_map_);
+
+  if (origin_.opaque())
+    return;
+
   if (!UpdateScoreDict())
     return;
 
   settings_map_->SetWebsiteSettingDefaultScope(
-      origin_, GURL(), CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT,
+      origin_.GetURL(), GURL(), CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT,
       content_settings::ResourceIdentifier(), std::move(score_dict_));
 }
 
@@ -156,17 +209,44 @@ bool MediaEngagementScore::UpdateScoreDict() {
   int stored_audible_playbacks = 0;
   int stored_significant_playbacks = 0;
   int stored_visits_with_media_tag = 0;
+  int high_score_changes = 0;
+  int stored_media_element_playbacks = 0;
+  int stored_audio_context_playbacks = 0;
 
-  score_dict_->GetInteger(kVisitsKey, &stored_visits);
-  score_dict_->GetInteger(kMediaPlaybacksKey, &stored_media_playbacks);
-  score_dict_->GetDouble(kLastMediaPlaybackTimeKey,
-                         &stored_last_media_playback_internal);
-  score_dict_->GetBoolean(kHasHighScoreKey, &is_high);
-  score_dict_->GetInteger(kAudiblePlaybacksKey, &stored_audible_playbacks);
-  score_dict_->GetInteger(kSignificantPlaybacksKey,
-                          &stored_significant_playbacks);
-  score_dict_->GetInteger(kVisitsWithMediaTagKey,
-                          &stored_visits_with_media_tag);
+  if (!score_dict_)
+    return false;
+
+  // This is to prevent saving data that we would otherwise not use.
+  if (base::FeatureList::IsEnabled(media::kMediaEngagementHTTPSOnly) &&
+      origin_.scheme() != url::kHttpsScheme) {
+    return false;
+  }
+
+  if (base::Value* value = score_dict_->FindKeyOfType(
+          kHasHighScoreKey, base::Value::Type::BOOLEAN)) {
+    is_high = value->GetBool();
+  }
+
+  if (base::Value* value = score_dict_->FindKeyOfType(
+          kLastMediaPlaybackTimeKey, base::Value::Type::DOUBLE)) {
+    stored_last_media_playback_internal = value->GetDouble();
+  }
+
+  GetIntegerFromScore(score_dict_.get(), kVisitsKey, &stored_visits);
+  GetIntegerFromScore(score_dict_.get(), kMediaPlaybacksKey,
+                      &stored_media_playbacks);
+  GetIntegerFromScore(score_dict_.get(), kAudiblePlaybacksKey,
+                      &stored_audible_playbacks);
+  GetIntegerFromScore(score_dict_.get(), kSignificantPlaybacksKey,
+                      &stored_significant_playbacks);
+  GetIntegerFromScore(score_dict_.get(), kVisitsWithMediaTagKey,
+                      &stored_visits_with_media_tag);
+  GetIntegerFromScore(score_dict_.get(), kHighScoreChanges,
+                      &high_score_changes);
+  GetIntegerFromScore(score_dict_.get(), kSignificantMediaPlaybacksKey,
+                      &stored_media_element_playbacks);
+  GetIntegerFromScore(score_dict_.get(), kSignificantAudioContextPlaybacksKey,
+                      &stored_audio_context_playbacks);
 
   bool changed = stored_visits != visits() ||
                  stored_media_playbacks != media_playbacks() ||
@@ -174,10 +254,20 @@ bool MediaEngagementScore::UpdateScoreDict() {
                  stored_audible_playbacks != audible_playbacks() ||
                  stored_significant_playbacks != significant_playbacks() ||
                  stored_visits_with_media_tag != visits_with_media_tag() ||
+                 stored_media_element_playbacks != media_element_playbacks() ||
+                 stored_audio_context_playbacks != audio_context_playbacks() ||
                  stored_last_media_playback_internal !=
                      last_media_playback_time_.ToInternalValue();
+
+  // Do not check for high_score_changes_ change as it MUST happen only if
+  // `changed` is true (ie. it can't happen alone).
+  DCHECK(high_score_changes == high_score_changes_ || changed);
+
   if (!changed)
     return false;
+
+  if (is_high_ != is_high)
+    ++high_score_changes_;
 
   score_dict_->SetInteger(kVisitsKey, visits_);
   score_dict_->SetInteger(kMediaPlaybacksKey, media_playbacks_);
@@ -187,17 +277,20 @@ bool MediaEngagementScore::UpdateScoreDict() {
   score_dict_->SetInteger(kAudiblePlaybacksKey, audible_playbacks_);
   score_dict_->SetInteger(kSignificantPlaybacksKey, significant_playbacks_);
   score_dict_->SetInteger(kVisitsWithMediaTagKey, visits_with_media_tag_);
+  score_dict_->SetInteger(kHighScoreChanges, high_score_changes_);
+  score_dict_->SetInteger(kSignificantMediaPlaybacksKey,
+                          media_element_playbacks_);
+  score_dict_->SetInteger(kSignificantAudioContextPlaybacksKey,
+                          audio_context_playbacks_);
 
   return true;
 }
 
 void MediaEngagementScore::Recalculate() {
-  // Update the engagement score.
-  actual_score_ = 0;
-  if (visits() >= GetScoreMinVisits()) {
-    actual_score_ =
-        static_cast<double>(media_playbacks()) / static_cast<double>(visits());
-  }
+  // Use the minimum visits to compute the score to allow websites that would
+  // surely have a high MEI to pass the bar early.
+  double effective_visits = std::max(visits(), GetScoreMinVisits());
+  actual_score_ = static_cast<double>(media_playbacks()) / effective_visits;
 
   // Recalculate whether the engagement score is considered high.
   if (is_high_) {

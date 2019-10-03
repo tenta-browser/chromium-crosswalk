@@ -14,26 +14,41 @@ class Profile;
 namespace predictors {
 
 extern const char kSpeculativePreconnectFeatureName[];
-extern const char kPreconnectMode[];
-extern const char kNoPreconnectMode[];
 extern const base::Feature kSpeculativePreconnectFeature;
 
-struct LoadingPredictorConfig;
+// Returns whether the speculative preconnect feature is enabled.
+bool IsPreconnectFeatureEnabled();
 
-// Returns whether the predictor is enabled, and populates |config|, if not
-// nullptr.
-bool IsLoadingPredictorEnabled(Profile* profile,
-                               LoadingPredictorConfig* config);
+// Returns whether the Loading Predictor is enabled for the given |profile|. If
+// true, the predictor can observe page load events, build historical database
+// and perform allowed speculative actions based on this database.
+bool IsLoadingPredictorEnabled(Profile* profile);
 
-// Returns true if speculative preconnect is enabled, and initializes |config|,
-// if not nullptr.
-bool MaybeEnableSpeculativePreconnect(LoadingPredictorConfig* config);
-
-// Returns true if all other implementations of preconnect should be disabled.
-bool ShouldDisableOtherPreconnects();
+// Returns whether the current |profile| settings allow to perform preresolve
+// and preconnect actions. This setting is controlled by the user, so the return
+// value shouldn't be cached.
+bool IsPreconnectAllowed(Profile* profile);
 
 // Indicates what caused the page load hint.
-enum class HintOrigin { NAVIGATION, EXTERNAL, OMNIBOX };
+enum class HintOrigin {
+  // Triggered at the start of each navigation.
+  NAVIGATION,
+
+  // Used when a preconnect is triggered by an external Android app.
+  EXTERNAL,
+
+  // Triggered by omnibox.
+  OMNIBOX,
+
+  // Triggered by navigation predictor service.
+  NAVIGATION_PREDICTOR,
+
+  // Used when a prerender initiated by Omnibox is unsuccessful, and instead a
+  // preconnect is initiated. Preconnect triggered by
+  // OMNIBOX_PRERENDER_FALLBACK may be handled differently than preconnects
+  // triggered by OMNIBOX since the former are triggered at higher confidence.
+  OMNIBOX_PRERENDER_FALLBACK
+};
 
 // Represents the config for the Loading predictor.
 struct LoadingPredictorConfig {
@@ -42,42 +57,15 @@ struct LoadingPredictorConfig {
   LoadingPredictorConfig(const LoadingPredictorConfig& other);
   ~LoadingPredictorConfig();
 
-  // The mode the LoadingPredictor is running in. Forms a bit map.
-  enum Mode {
-    LEARNING = 1 << 0,
-    PREFETCHING_FOR_NAVIGATION = 1 << 2,
-    PREFETCHING_FOR_EXTERNAL = 1 << 3,
-    PRECONNECT = 1 << 4
-  };
-  int mode;
-
-  // Helpers to deal with mode.
-  bool IsLearningEnabled() const;
-  bool IsPrefetchingEnabledForSomeOrigin(Profile* profile) const;
-  bool IsPrefetchingEnabledForOrigin(Profile* profile, HintOrigin origin) const;
-  bool IsPreconnectEnabledForSomeOrigin(Profile* profile) const;
-  bool IsPreconnectEnabledForOrigin(Profile* profile, HintOrigin origin) const;
-
-  bool IsLowConfidenceForTest() const;
-  bool IsHighConfidenceForTest() const;
-  bool IsMoreResourcesEnabledForTest() const;
   bool IsSmallDBEnabledForTest() const;
 
   // If a navigation hasn't seen a load complete event in this much time, it
   // is considered abandoned.
   size_t max_navigation_lifetime_seconds;
 
-  // Size of LRU caches for the URL and host data.
-  size_t max_urls_to_track;
+  // Size of LRU caches for the host data.
   size_t max_hosts_to_track;
 
-  // The number of times we should have seen a visit to this URL in history
-  // to start tracking it. This is to ensure we don't bother with oneoff
-  // entries. For hosts we track each one.
-  size_t min_url_visit_count;
-
-  // The maximum number of resources to store per entry.
-  size_t max_resources_per_entry;
   // The maximum number of origins to store per entry.
   size_t max_origins_per_entry;
   // The number of consecutive misses after which we stop tracking a resource
@@ -87,26 +75,9 @@ struct LoadingPredictorConfig {
   // endpoint.
   size_t max_redirect_consecutive_misses;
 
-  // The minimum confidence (accuracy of hits) required for a resource to be
-  // prefetched.
-  float min_resource_confidence_to_trigger_prefetch;
-  // The minimum number of times we must have a URL on record to prefetch it.
-  size_t min_resource_hits_to_trigger_prefetch;
-
-  // Maximum number of prefetches that can be inflight for a single navigation.
-  size_t max_prefetches_inflight_per_navigation;
-  // Maximum number of prefetches that can be inflight for a host for a single
-  // navigation.
-  size_t max_prefetches_inflight_per_host_per_navigation;
-  // True iff the predictor can use a host-based subresources database.
-  bool is_host_learning_enabled;
-  // True iff the predictor can use a url-based subresources database.
-  bool is_url_learning_enabled;
-  // True iff origin-based learning is enabled.
-  bool is_origin_learning_enabled;
-
-  // True iff all other implementations of preconnect should be disabled.
-  bool should_disable_other_preconnects;
+  // Delay between writing data to the predictors database memory cache and
+  // flushing it to disk.
+  size_t flush_data_to_disk_delay_seconds;
 };
 
 }  // namespace predictors

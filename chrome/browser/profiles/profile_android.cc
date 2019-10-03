@@ -6,10 +6,11 @@
 
 #include "base/android/jni_android.h"
 #include "base/memory/ptr_util.h"
+#include "chrome/android/public/profiles/jni_headers/Profile_jni.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_destroyer.h"
+#include "chrome/browser/profiles/profile_key_android.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "jni/Profile_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -47,8 +48,7 @@ Profile* ProfileAndroid::FromProfileAndroid(const JavaRef<jobject>& obj) {
 }
 
 // static
-ScopedJavaLocalRef<jobject> ProfileAndroid::GetLastUsedProfile(JNIEnv* env,
-                                                               jclass clazz) {
+ScopedJavaLocalRef<jobject> ProfileAndroid::GetLastUsedProfile(JNIEnv* env) {
   Profile* profile = ProfileManager::GetLastUsedProfile();
   if (profile == NULL) {
     NOTREACHED() << "Profile not found.";
@@ -95,6 +95,15 @@ jboolean ProfileAndroid::HasOffTheRecordProfile(
   return profile_->HasOffTheRecordProfile();
 }
 
+base::android::ScopedJavaLocalRef<jobject> ProfileAndroid::GetProfileKey(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  ProfileKeyAndroid* profile_key =
+      profile_->GetProfileKey()->GetProfileKeyAndroid();
+  DCHECK(profile_key);
+  return profile_key->GetJavaObject();
+}
+
 jboolean ProfileAndroid::IsOffTheRecord(JNIEnv* env,
                                         const JavaParamRef<jobject>& obj) {
   return profile_->IsOffTheRecord();
@@ -106,11 +115,13 @@ jboolean ProfileAndroid::IsChild(
   return profile_->IsChild();
 }
 
+void ProfileAndroid::Wipe(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+  profile_->Wipe();
+}
+
 // static
-ScopedJavaLocalRef<jobject> JNI_Profile_GetLastUsedProfile(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
-  return ProfileAndroid::GetLastUsedProfile(env, clazz);
+ScopedJavaLocalRef<jobject> JNI_Profile_GetLastUsedProfile(JNIEnv* env) {
+  return ProfileAndroid::GetLastUsedProfile(env);
 }
 
 ProfileAndroid::ProfileAndroid(Profile* profile)

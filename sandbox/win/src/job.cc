@@ -12,9 +12,9 @@
 
 namespace sandbox {
 
-Job::Job() : job_handle_(nullptr){};
+Job::Job() : job_handle_(nullptr) {}
 
-Job::~Job(){};
+Job::~Job() {}
 
 DWORD Job::Init(JobLevel security_level,
                 const wchar_t* job_name,
@@ -37,22 +37,26 @@ DWORD Job::Init(JobLevel security_level,
     case JOB_LOCKDOWN: {
       jeli.BasicLimitInformation.LimitFlags |=
           JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+      FALLTHROUGH;
     }
     case JOB_RESTRICTED: {
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_READCLIPBOARD;
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_HANDLES;
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_GLOBALATOMS;
+      FALLTHROUGH;
     }
     case JOB_LIMITED_USER: {
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_DISPLAYSETTINGS;
       jeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
       jeli.BasicLimitInformation.ActiveProcessLimit = 1;
+      FALLTHROUGH;
     }
     case JOB_INTERACTIVE: {
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS;
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_DESKTOP;
       jbur.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_EXITWINDOWS;
+      FALLTHROUGH;
     }
     case JOB_UNPROTECTED: {
       if (memory_limit) {

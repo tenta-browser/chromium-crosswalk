@@ -7,9 +7,9 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "cc/layers/solid_color_layer.h"
+#include "chrome/android/chrome_jni_headers/ToolbarSceneLayer_jni.h"
 #include "chrome/browser/android/compositor/layer/toolbar_layer.h"
 #include "content/public/browser/android/compositor.h"
-#include "jni/ToolbarSceneLayer_jni.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/gfx/android/java_bitmap.h"
 
@@ -38,11 +38,11 @@ void ToolbarSceneLayer::UpdateToolbarLayer(
     jint toolbar_background_color,
     jint url_bar_resource_id,
     jfloat url_bar_alpha,
+    jint url_bar_color,
     jfloat y_offset,
     jfloat view_height,
     bool visible,
-    bool show_shadow,
-    bool browser_controls_at_bottom) {
+    bool show_shadow) {
   // If the toolbar layer has not been created yet, create it.
   if (!toolbar_layer_) {
     ui::ResourceManager* resource_manager =
@@ -55,9 +55,9 @@ void ToolbarSceneLayer::UpdateToolbarLayer(
   toolbar_layer_->layer()->SetHideLayerAndSubtree(!visible);
   if (visible) {
     toolbar_layer_->PushResource(toolbar_resource_id, toolbar_background_color,
-                                 false, SK_ColorWHITE, url_bar_resource_id,
+                                 false, url_bar_color, url_bar_resource_id,
                                  url_bar_alpha, view_height, y_offset, false,
-                                 !show_shadow, browser_controls_at_bottom);
+                                 !show_shadow);
   }
 }
 

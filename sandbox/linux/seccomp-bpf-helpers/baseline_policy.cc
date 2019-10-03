@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "base/clang_coverage_buildflags.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
@@ -86,7 +87,8 @@ bool IsBaselinePolicyWatched(int sysno) {
          SyscallSets::IsNuma(sysno) ||
          SyscallSets::IsPrctl(sysno) ||
          SyscallSets::IsProcessGroupOrSession(sysno) ||
-#if defined(__i386__) || defined(__mips32__)
+#if defined(__i386__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
          SyscallSets::IsSocketCall(sysno) ||
 #endif
 #if defined(__arm__)
@@ -126,6 +128,16 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
 #endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||
         // defined(MEMORY_SANITIZER)
 
+#if BUILDFLAG(CLANG_COVERAGE)
+  if (SyscallSets::IsPrctl(sysno)) {
+    return Allow();
+  }
+
+  if (sysno == __NR_ftruncate) {
+    return Allow();
+  }
+#endif
+
   if (IsBaselinePolicyAllowed(sysno)) {
     return Allow();
   }
@@ -147,7 +159,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   if (sysno == __NR_fcntl)
     return RestrictFcntlCommands();
 
-#if defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (sysno == __NR_fcntl64)
     return RestrictFcntlCommands();
 #endif
@@ -156,6 +169,15 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   // fork() is never used as a system call (clone() is used instead), but we
   // have seen it in fallback code on Android.
   if (sysno == __NR_fork) {
+    return Error(EPERM);
+  }
+#endif
+
+#if defined(__NR_vfork)
+  // vfork() is almost never used as a system call, but some libc versions (e.g.
+  // older versions of bionic) might use it in a posix_spawn() implementation,
+  // which is used by system();
+  if (sysno == __NR_vfork) {
     return Error(EPERM);
   }
 #endif
@@ -174,9 +196,11 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   }
 
   if (sysno == __NR_madvise) {
-    // Only allow MADV_DONTNEED and MADV_FREE.
+    // Only allow MADV_DONTNEED, MADV_RANDOM, MADV_NORMAL and MADV_FREE.
     const Arg<int> advice(2);
-    return If(AnyOf(advice == MADV_DONTNEED
+    return If(AnyOf(advice == MADV_DONTNEED,
+                    advice == MADV_RANDOM,
+                    advice == MADV_NORMAL
 #if defined(MADV_FREE)
                     // MADV_FREE was introduced in Linux 4.5 and started being
                     // defined in glibc 2.24.
@@ -191,7 +215,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return RestrictMmapFlags();
 #endif
 
-#if defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (sysno == __NR_mmap2)
     return RestrictMmapFlags();
 #endif
@@ -213,7 +238,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   }
 #endif
 
-  // crbug.com/701137
+  // On Android, for https://crbug.com/701137.
+  // On Desktop, for https://crbug.com/741984.
   if (sysno == __NR_mincore) {
     return Allow();
   }
@@ -241,7 +267,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return Error(EPERM);
   }
 
-#if defined(__i386__) || defined(__mips32__)
+#if defined(__i386__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (SyscallSets::IsSocketCall(sysno))
     return RestrictSocketcallCommand();
 #endif
@@ -268,9 +295,10 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
 
 }  // namespace.
 
-// Unfortunately C++03 doesn't allow delegated constructors.
-// Call other constructor when C++11 lands.
-BaselinePolicy::BaselinePolicy() : BaselinePolicy(EPERM) {}
+BaselinePolicy::BaselinePolicy() : BaselinePolicy(EPERM) {
+  // Allocate crash keys set by Seccomp signal handlers.
+  AllocateCrashKeys();
+}
 
 BaselinePolicy::BaselinePolicy(int fs_denied_errno)
     : fs_denied_errno_(fs_denied_errno), policy_pid_(sys_getpid()) {

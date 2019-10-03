@@ -5,93 +5,96 @@
 #ifndef ASH_LOGIN_LOGIN_SCREEN_CONTROLLER_H_
 #define ASH_LOGIN_LOGIN_SCREEN_CONTROLLER_H_
 
+#include <vector>
+
 #include "ash/ash_export.h"
-#include "ash/public/interfaces/login_screen.mojom.h"
+#include "ash/login/ui/login_data_dispatcher.h"
+#include "ash/public/cpp/kiosk_app_menu.h"
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/system_tray_focus_observer.h"
 #include "base/macros.h"
-#include "base/observer_list.h"
 #include "base/optional.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
 
 class PrefRegistrySimple;
 
 namespace ash {
 
-class LockScreenAppsFocusObserver;
-class LoginDataDispatcher;
+class ParentAccessWidget;
+class SystemTrayNotifier;
 
-// LoginScreenController implements mojom::LoginScreen and wraps the
-// mojom::LoginScreenClient interface. This lets a consumer of ash provide a
-// LoginScreenClient, which we will dispatch to if one has been provided to us.
-// This could send requests to LoginScreenClient and also handle requests from
-// LoginScreenClient through mojo.
-class ASH_EXPORT LoginScreenController : public mojom::LoginScreen {
+// LoginScreenController implements LoginScreen and wraps the LoginScreenClient
+// interface. This lets a consumer of ash provide a LoginScreenClient, which we
+// will dispatch to if one has been provided to us. This could send requests to
+// LoginScreenClient and also handle requests from the consumer via the
+// LoginScreen interface.
+class ASH_EXPORT LoginScreenController : public LoginScreen,
+                                         public KioskAppMenu,
+                                         public SystemTrayFocusObserver {
  public:
+  // The current authentication stage. Used to get more verbose logging.
+  enum class AuthenticationStage {
+    kIdle,
+    kDoAuthenticate,
+    kUserCallback,
+  };
+
   using OnShownCallback = base::OnceCallback<void(bool did_show)>;
   // Callback for authentication checks. |success| is nullopt if an
   // authentication check did not run, otherwise it is true/false if auth
   // succeeded/failed.
   using OnAuthenticateCallback =
       base::OnceCallback<void(base::Optional<bool> success)>;
+  // Callback for parent access code validation. |success| is nullopt if
+  // validation did not run, otherwise it contains validation result.
+  using OnParentAccessValidation =
+      base::OnceCallback<void(base::Optional<bool> success)>;
 
-  LoginScreenController();
+  explicit LoginScreenController(SystemTrayNotifier* system_tray_notifier);
   ~LoginScreenController() override;
 
   static void RegisterProfilePrefs(PrefRegistrySimple* registry, bool for_test);
 
-  // Binds the mojom::LoginScreen interface to this object.
-  void BindRequest(mojom::LoginScreenRequest request);
+  // Check to see if an authentication attempt is in-progress.
+  bool IsAuthenticating() const;
 
-  // mojom::LoginScreen:
-  void SetClient(mojom::LoginScreenClientPtr client) override;
-  void ShowLockScreen(ShowLockScreenCallback callback) override;
-  void ShowErrorMessage(int32_t login_attempts,
-                        const std::string& error_text,
-                        const std::string& help_link_text,
-                        int32_t help_topic_id) override;
-  void ClearErrors() override;
-  void ShowUserPodCustomIcon(const AccountId& account_id,
-                             mojom::EasyUnlockIconOptionsPtr icon) override;
-  void HideUserPodCustomIcon(const AccountId& account_id) override;
-  void SetAuthType(const AccountId& account_id,
-                   proximity_auth::mojom::AuthType auth_type,
-                   const base::string16& initial_value) override;
-  void LoadUsers(std::vector<mojom::LoginUserInfoPtr> users,
-                 bool show_guest) override;
-  void SetPinEnabledForUser(const AccountId& account_id,
-                            bool is_enabled) override;
-  void HandleFocusLeavingLockScreenApps(bool reverse) override;
-  void SetDevChannelInfo(const std::string& os_version_label_text,
-                         const std::string& enterprise_info_text,
-                         const std::string& bluetooth_name) override;
-
-  // Wrappers around the mojom::LoginScreenClient interface. Hash the password
-  // and send AuthenticateUser request to LoginScreenClient.
-  // LoginScreenClient(chrome) will do the authentication and request to show
-  // error messages in the screen if auth fails, or request to clear errors if
-  // auth succeeds.
-  void AuthenticateUser(const AccountId& account_id,
-                        const std::string& password,
-                        bool authenticated_by_pin,
-                        OnAuthenticateCallback callback);
-  void AttemptUnlock(const AccountId& account_id);
+  // Hash the password and send AuthenticateUser request to LoginScreenClient.
+  // LoginScreenClient (in the chrome process) will do the authentication and
+  // request to show error messages in the screen if auth fails, or request to
+  // clear errors if auth succeeds.
+  void AuthenticateUserWithPasswordOrPin(const AccountId& account_id,
+                                         const std::string& password,
+                                         bool authenticated_by_pin,
+                                         OnAuthenticateCallback callback);
+  void AuthenticateUserWithExternalBinary(const AccountId& account_id,
+                                          OnAuthenticateCallback callback);
+  void EnrollUserWithExternalBinary(OnAuthenticateCallback callback);
+  void AuthenticateUserWithEasyUnlock(const AccountId& account_id);
+  bool ValidateParentAccessCode(const AccountId& account_id,
+                                const std::string& code);
   void HardlockPod(const AccountId& account_id);
-  void RecordClickOnLockIcon(const AccountId& account_id);
   void OnFocusPod(const AccountId& account_id);
   void OnNoPodFocused();
   void LoadWallpaper(const AccountId& account_id);
   void SignOutUser();
   void CancelAddUser();
+  void LoginAsGuest();
   void OnMaxIncorrectPasswordAttempted(const AccountId& account_id);
   void FocusLockScreenApps(bool reverse);
-
-  // Methods to manage lock screen apps focus observers.
-  // The observers will be notified when lock screen apps focus changes are
-  // reported via lock screen mojo interface.
-  void AddLockScreenAppsFocusObserver(LockScreenAppsFocusObserver* observer);
-  void RemoveLockScreenAppsFocusObserver(LockScreenAppsFocusObserver* observer);
-
-  // Flushes the mojo pipes - to be used in tests.
-  void FlushForTesting();
+  void ShowGaiaSignin(bool can_close, const AccountId& prefilled_account);
+  void OnRemoveUserWarningShown();
+  void RemoveUser(const AccountId& account_id);
+  void LaunchPublicSession(const AccountId& account_id,
+                           const std::string& locale,
+                           const std::string& input_method);
+  void RequestPublicSessionKeyboardLayouts(const AccountId& account_id,
+                                           const std::string& locale);
+  void ShowFeedback();
+  void ShowResetScreen();
+  void ShowAccountAccessHelpApp();
+  void ShowLockScreenNotificationSettings();
+  void FocusOobeDialog();
+  void NotifyUserActivity();
 
   // Enable or disable authentication for the debug overlay.
   enum class ForceFailAuth { kOff, kImmediate, kDelayed };
@@ -99,37 +102,60 @@ class ASH_EXPORT LoginScreenController : public mojom::LoginScreen {
     force_fail_auth_for_debug_overlay_ = force_fail;
   }
 
- private:
-  using PendingDoAuthenticateUser =
-      base::OnceCallback<void(const std::string& system_salt)>;
+  // LoginScreen:
+  void SetClient(LoginScreenClient* client) override;
+  LoginScreenModel* GetModel() override;
+  void ShowLockScreen() override;
+  void ShowLoginScreen() override;
+  void ShowKioskAppError(const std::string& message) override;
+  void FocusLoginShelf(bool reverse) override;
+  bool IsReadyForPassword() override;
+  void EnableAddUserButton(bool enable) override;
+  void EnableShutdownButton(bool enable) override;
+  void ShowGuestButtonInOobe(bool show) override;
+  void ShowParentAccessButton(bool show) override;
+  void ShowParentAccessWidget(
+      const AccountId& child_account_id,
+      base::RepeatingCallback<void(bool success)> callback,
+      ParentAccessRequestReason reason,
+      bool extra_dimmer) override;
+  void SetAllowLoginAsGuest(bool allow_guest) override;
+  std::unique_ptr<ScopedGuestButtonBlocker> GetScopedGuestButtonBlocker()
+      override;
 
-  void DoAuthenticateUser(const AccountId& account_id,
-                          const std::string& password,
-                          bool authenticated_by_pin,
-                          OnAuthenticateCallback callback,
-                          const std::string& system_salt);
+  // KioskAppMenu:
+  void SetKioskApps(
+      const std::vector<KioskAppMenuEntry>& kiosk_apps,
+      const base::RepeatingCallback<void(const KioskAppMenuEntry&)>& launch_app)
+      override;
+
+  AuthenticationStage authentication_stage() const {
+    return authentication_stage_;
+  }
+
+  LoginDataDispatcher* data_dispatcher() { return &login_data_dispatcher_; }
+
+ private:
   void OnAuthenticateComplete(OnAuthenticateCallback callback, bool success);
 
-  void OnGetSystemSalt(PendingDoAuthenticateUser then,
-                       const std::string& system_salt);
+  // Common code that is called when the login/lock screen is shown.
+  void OnShow();
 
-  // Returns the active data dispatcher or nullptr if there is no lock screen.
-  LoginDataDispatcher* DataDispatcher() const;
+  // SystemTrayFocusObserver:
+  void OnFocusLeavingSystemTray(bool reverse) override;
 
-  // Client interface in chrome browser. May be null in tests.
-  mojom::LoginScreenClientPtr login_screen_client_;
+  LoginDataDispatcher login_data_dispatcher_;
 
-  // Binding for the LockScreen interface.
-  mojo::Binding<mojom::LoginScreen> binding_;
+  LoginScreenClient* client_ = nullptr;
 
-  // True iff we are currently authentication.
-  bool is_authenticating_ = false;
+  AuthenticationStage authentication_stage_ = AuthenticationStage::kIdle;
 
-  base::ObserverList<LockScreenAppsFocusObserver>
-      lock_screen_apps_focus_observers_;
+  SystemTrayNotifier* system_tray_notifier_;
 
   // If set to false, all auth requests will forcibly fail.
   ForceFailAuth force_fail_auth_for_debug_overlay_ = ForceFailAuth::kOff;
+
+  std::unique_ptr<ParentAccessWidget> parent_access_widget_;
 
   base::WeakPtrFactory<LoginScreenController> weak_factory_;
 
@@ -138,4 +164,4 @@ class ASH_EXPORT LoginScreenController : public mojom::LoginScreen {
 
 }  // namespace ash
 
-#endif  // ASH_LOGIN_LOCK_SCREEN_CONTROLLER_H_
+#endif  // ASH_LOGIN_LOGIN_SCREEN_CONTROLLER_H_

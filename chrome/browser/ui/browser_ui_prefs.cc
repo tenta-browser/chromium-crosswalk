@@ -4,9 +4,13 @@
 
 #include "chrome/browser/ui/browser_ui_prefs.h"
 
+#include <memory>
+
+#include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -14,7 +18,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -33,25 +37,28 @@ uint32_t GetHomeButtonAndHomePageIsNewTabPageFlags() {
 }  // namespace
 
 void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterIntegerPref(prefs::kOptionsWindowLastTabIndex, 0);
   registry->RegisterBooleanPref(prefs::kAllowFileSelectionDialogs, true);
-  registry->RegisterIntegerPref(prefs::kShowFirstRunBubbleOption,
-                             first_run::FIRST_RUN_BUBBLE_DONT_SHOW);
+
+#if !defined(OS_ANDROID)
+  registry->RegisterIntegerPref(prefs::kRelaunchNotification, 0);
+  registry->RegisterIntegerPref(
+      prefs::kRelaunchNotificationPeriod,
+      base::saturated_cast<int>(
+          UpgradeDetector::GetDefaultHighAnnoyanceThreshold()
+              .InMilliseconds()));
+#endif  // !defined(OS_ANDROID)
 }
 
 void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterBooleanPref(
-      prefs::kHomePageIsNewTabPage,
-      true,
-      GetHomeButtonAndHomePageIsNewTabPageFlags());
+  registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
+                                GetHomeButtonAndHomePageIsNewTabPageFlags());
   registry->RegisterBooleanPref(prefs::kShowHomeButton, false,
                                 GetHomeButtonAndHomePageIsNewTabPageFlags());
 
-  registry->RegisterIntegerPref(prefs::kModuleConflictBubbleShown, 0);
   registry->RegisterInt64Pref(prefs::kDefaultBrowserLastDeclined, 0);
   bool reset_check_default = false;
 #if defined(OS_WIN)
-  reset_check_default = base::win::GetVersion() >= base::win::VERSION_WIN10;
+  reset_check_default = base::win::GetVersion() >= base::win::Version::WIN10;
 #endif
   registry->RegisterBooleanPref(prefs::kResetCheckDefaultBrowser,
                                 reset_check_default);
@@ -64,26 +71,23 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterStringPref(prefs::kCloudPrintEmail, std::string());
   registry->RegisterBooleanPref(prefs::kCloudPrintProxyEnabled, true);
   registry->RegisterBooleanPref(prefs::kCloudPrintSubmitEnabled, true);
-  registry->RegisterBooleanPref(prefs::kDevToolsDisabled, false);
   registry->RegisterDictionaryPref(prefs::kBrowserWindowPlacement);
   registry->RegisterDictionaryPref(prefs::kBrowserWindowPlacementPopup);
   registry->RegisterDictionaryPref(prefs::kAppWindowPlacement);
   registry->RegisterBooleanPref(
-      prefs::kEnableDoNotTrack,
-      false,
+      prefs::kEnableDoNotTrack, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 #if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
   registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
                                 false);
 #endif
-#if BUILDFLAG(ENABLE_WEBRTC)
   // TODO(guoweis): Remove next 2 options at M50.
   registry->RegisterBooleanPref(prefs::kWebRTCMultipleRoutesEnabled, true);
   registry->RegisterBooleanPref(prefs::kWebRTCNonProxiedUdpEnabled, true);
   registry->RegisterStringPref(prefs::kWebRTCIPHandlingPolicy,
                                content::kWebRTCIPHandlingDefault);
   registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
-#endif
+  registry->RegisterBooleanPref(prefs::kWebRtcEventLogCollectionAllowed, false);
 
   // Dictionaries to keep track of default tasks in the file browser.
   registry->RegisterDictionaryPref(
@@ -108,8 +112,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   // that use this preference.
   registry->RegisterBooleanPref(prefs::kShowUpdatePromotionInfoBar, true);
   registry->RegisterBooleanPref(
-      prefs::kShowFullscreenToolbar,
-      true,
+      prefs::kShowFullscreenToolbar, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kAllowJavascriptAppleEvents, false,
@@ -117,4 +120,14 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
 #else
   registry->RegisterBooleanPref(prefs::kFullscreenAllowed, true);
 #endif
+
+  registry->RegisterBooleanPref(prefs::kEnterpriseHardwarePlatformAPIEnabled,
+                                false);
+  registry->RegisterBooleanPref(prefs::kAllowPopupsDuringPageUnload, false);
+  registry->RegisterBooleanPref(prefs::kUserFeedbackAllowed, true);
+
+#if !defined(OS_ANDROID)
+  registry->RegisterBooleanPref(prefs::kShowFirstRunDefaultSearchShortcut,
+                                false);
+#endif  // !defined(OS_ANDROID)
 }

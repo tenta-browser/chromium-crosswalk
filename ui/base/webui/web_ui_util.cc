@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -115,10 +116,7 @@ void ParsePathAndImageSpec(const GURL& url,
                            std::string* path,
                            float* scale_factor,
                            int* frame_index) {
-  *path = net::UnescapeURLComponent(
-      url.path().substr(1),
-      net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-          net::UnescapeRule::SPACES);
+  *path = net::UnescapeBinaryURLComponent(url.path_piece().substr(1));
   if (scale_factor)
     *scale_factor = 1.0f;
   if (frame_index)
@@ -231,25 +229,6 @@ std::string GetFontSize() {
 
 std::string GetTextDirection() {
   return base::i18n::IsRTL() ? "rtl" : "ltr";
-}
-
-bool IsSharedResourceGzipped(const std::string& path) {
-  // A few specific resources are not compressed because they are accessed
-  // explicitly by code their resource ID and not only through the loading
-  // stack by their chrome://resources URL.
-  if (base::EndsWith(path, ".css", base::CompareCase::SENSITIVE)) {
-    return path != "css/text_defaults.css" &&
-           path != "css/text_defaults_md.css";
-  }
-
-  if (base::EndsWith(path, ".js", base::CompareCase::SENSITIVE)) {
-    return path != "js/i18n_template.js" &&
-           path != "js/jstemplate_compiled.js" &&
-           path != "js/load_time_data.js";
-  }
-
-  return base::EndsWith(path, ".html", base::CompareCase::SENSITIVE) ||
-         base::EndsWith(path, ".svg", base::CompareCase::SENSITIVE);
 }
 
 }  // namespace webui

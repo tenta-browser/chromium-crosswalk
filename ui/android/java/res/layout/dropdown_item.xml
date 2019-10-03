@@ -5,7 +5,9 @@
      found in the LICENSE file.
 -->
 
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
@@ -17,12 +19,12 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="@dimen/dropdown_icon_margin"
-        android:contentDescription="@null" />
+        tools:ignore="ContentDescription" />
 
     <LinearLayout
         android:id="@+id/dropdown_label_wrapper"
         android:layout_width="0dp"
-        android:layout_height="0dp"
+        android:layout_height="wrap_content"
         android:layout_weight="1"
         android:gravity="center_vertical"
         android:orientation="vertical" >
@@ -37,8 +39,7 @@
             android:includeFontPadding="false"
             android:singleLine="true"
             android:textAlignment="viewStart"
-            android:textColor="@drawable/dropdown_label_color"
-            android:textSize="@dimen/text_size_large" />
+            android:textAppearance="@style/TextAppearance.BlackTitle1" />
 
         <TextView
             android:id="@+id/dropdown_sublabel"
@@ -50,7 +51,7 @@
             android:includeFontPadding="false"
             android:singleLine="true"
             android:textAlignment="viewStart"
-            android:textAppearance="@style/BlackCaption" />
+            android:textAppearance="@style/TextAppearance.BlackCaption" />
     </LinearLayout>
 
     <ImageView
@@ -58,6 +59,6 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="8dp"
-        android:contentDescription="@null" />
+        tools:ignore="ContentDescription" />
 
 </LinearLayout>

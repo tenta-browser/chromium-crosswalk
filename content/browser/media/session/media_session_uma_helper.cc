@@ -22,18 +22,15 @@ MediaSessionUmaHelper::~MediaSessionUmaHelper()
 
 // static
 void MediaSessionUmaHelper::RecordMediaSessionUserAction(
-    MediaSessionUserAction action) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Media.Session.UserAction", static_cast<HistogramBase::Sample>(action),
-      static_cast<HistogramBase::Sample>(MediaSessionUserAction::Count));
+    MediaSessionUserAction action,
+    bool focused) {
+  UMA_HISTOGRAM_ENUMERATION("Media.Session.UserAction", action);
+  UMA_HISTOGRAM_BOOLEAN("Media.Session.UserAction.Focus", focused);
 }
 
 void MediaSessionUmaHelper::RecordSessionSuspended(
     MediaSessionSuspendedSource source) const {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Media.Session.Suspended",
-      static_cast<HistogramBase::Sample>(source),
-      static_cast<HistogramBase::Sample>(MediaSessionSuspendedSource::Count));
+  UMA_HISTOGRAM_ENUMERATION("Media.Session.Suspended", source);
 }
 
 void MediaSessionUmaHelper::RecordRequestAudioFocusResult(bool result) const {
@@ -65,7 +62,8 @@ void MediaSessionUmaHelper::OnSessionInactive() {
   total_active_time_ = base::TimeDelta();
 }
 
-void MediaSessionUmaHelper::SetClockForTest(base::TickClock* testing_clock) {
+void MediaSessionUmaHelper::SetClockForTest(
+    const base::TickClock* testing_clock) {
   clock_ = testing_clock;
 }
 

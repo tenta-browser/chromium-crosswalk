@@ -3,28 +3,18 @@
 // found in the LICENSE file.
 
 /**
- * @constructor
- * @struct
- * @extends {cr.EventTarget}
+ * FileOperationManager: manager of file operations. Implementations of this
+ * interface must @extends {cr.EventTarget} or implement the EventTarget API on
+ * their own.
+ *
+ * @interface
+ * @extends {EventTarget}
  */
 function FileOperationManager() {}
 
-/**
- * Adds an event listener for the tasks.
- * @param {string} type The name of the event.
- * @param {EventListenerType} handler The handler for the event.  This is called
- *     when the event is dispatched.
- * @override
- */
-FileOperationManager.prototype.addEventListener = function(type, handler) {};
-
-/**
- * Removes an event listener for the tasks.
- * @param {string} type The name of the event.
- * @param {EventListenerType} handler The handler to be removed.
- * @override
- */
-FileOperationManager.prototype.removeEventListener = function(type, handler) {};
+FileOperationManager.prototype = /** @struct */ {
+  __proto__: EventTarget.prototype,
+};
 
 /**
  * Says if there are any tasks in the queue.
@@ -77,11 +67,11 @@ FileOperationManager.prototype.deleteEntries = function(entries) {};
 /**
  * Creates a zip file for the selection of files.
  *
- * @param {!DirectoryEntry} dirEntry The directory containing the selection.
  * @param {!Array<!Entry>} selectionEntries The selected entries.
+ * @param {!DirectoryEntry} dirEntry The directory containing the selection.
  */
 FileOperationManager.prototype.zipSelection = function(
-    dirEntry, selectionEntries) {};
+    selectionEntries, dirEntry) {};
 
 /**
  * Generates new task ID.

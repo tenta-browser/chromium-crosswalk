@@ -5,14 +5,14 @@
 #include "chrome/browser/ui/views/cookie_info_view.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/i18n/time_formatting.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browsing_data/cookies_tree_model.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "net/cookies/canonical_cookie.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -28,25 +28,9 @@
 ///////////////////////////////////////////////////////////////////////////////
 // CookieInfoView, public:
 
-CookieInfoView::CookieInfoView()
-    : name_label_(NULL),
-      name_value_field_(NULL),
-      content_label_(NULL),
-      content_value_field_(NULL),
-      domain_label_(NULL),
-      domain_value_field_(NULL),
-      path_label_(NULL),
-      path_value_field_(NULL),
-      send_for_label_(NULL),
-      send_for_value_field_(NULL),
-      created_label_(NULL),
-      created_value_field_(NULL),
-      expires_label_(NULL),
-      expires_value_field_(NULL) {
-}
+CookieInfoView::CookieInfoView() = default;
 
-CookieInfoView::~CookieInfoView() {
-}
+CookieInfoView::~CookieInfoView() = default;
 
 void CookieInfoView::SetCookie(const std::string& domain,
                                const net::CanonicalCookie& cookie) {
@@ -95,27 +79,32 @@ void CookieInfoView::EnableCookieDisplay(bool enabled) {
 // CookieInfoView, views::View overrides.
 
 void CookieInfoView::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   if (details.is_add && details.child == this)
     Init();
 }
 
-void CookieInfoView::AddLabelRow(int layout_id,
-                                 views::GridLayout* layout,
-                                 views::Label* label,
-                                 views::Textfield* textfield) {
-  layout->StartRow(0, layout_id);
-  layout->AddView(label);
-  layout->AddView(
-      textfield, 2, 1, views::GridLayout::FILL, views::GridLayout::CENTER);
+views::Textfield* CookieInfoView::AddLabelRow(int layout_id,
+                                              views::GridLayout* layout,
+                                              int label_message_id) {
+  auto textfield = std::make_unique<views::Textfield>();
+  auto label = std::make_unique<views::Label>(
+      l10n_util::GetStringUTF16(label_message_id));
+  textfield->SetAssociatedLabel(label.get());
+  layout->StartRow(views::GridLayout::kFixedSize, layout_id);
+  layout->AddView(std::move(label));
+  auto* textfield_ptr =
+      layout->AddView(std::move(textfield), 2, 1, views::GridLayout::FILL,
+                      views::GridLayout::CENTER);
 
   // Now that the Textfield is in the view hierarchy, it can be initialized.
-  textfield->SetReadOnly(true);
-  textfield->SetBorder(views::NullBorder());
+  textfield_ptr->SetReadOnly(true);
+  textfield_ptr->SetBorder(views::NullBorder());
   // Color these borderless text areas the same as the containing dialog.
-  textfield->SetBackgroundColor(GetNativeTheme()->GetSystemColor(
+  textfield_ptr->SetBackgroundColor(GetNativeTheme()->GetSystemColor(
       ui::NativeTheme::kColorId_DialogBackground));
-  textfield->SetTextColor(SkColorSetRGB(0x78, 0x78, 0x78));
+  textfield_ptr->SetTextColor(SkColorSetRGB(0x78, 0x78, 0x78));
+  return textfield_ptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -125,30 +114,10 @@ void CookieInfoView::Init() {
   constexpr int kLabelValuePadding = 96;
 
   // Ensure we don't run this more than once and leak memory.
-  DCHECK(!name_label_);
-  name_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_NAME_LABEL));
-  name_value_field_ = new views::Textfield;
-  content_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_CONTENT_LABEL));
-  content_value_field_ = new views::Textfield;
-  domain_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_DOMAIN_LABEL));
-  domain_value_field_ = new views::Textfield;
-  path_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_PATH_LABEL));
-  path_value_field_ = new views::Textfield;
-  send_for_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_SENDFOR_LABEL));
-  send_for_value_field_ = new views::Textfield;
-  created_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_CREATED_LABEL));
-  created_value_field_ = new views::Textfield;
-  expires_label_ = new views::Label(
-      l10n_util::GetStringUTF16(IDS_COOKIES_COOKIE_EXPIRES_LABEL));
-  expires_value_field_ = new views::Textfield;
+  DCHECK(!name_value_field_);
 
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const gfx::Insets& dialog_insets =
       provider->GetInsetsMetric(views::INSETS_DIALOG);
@@ -157,25 +126,35 @@ void CookieInfoView::Init() {
 
   int three_column_layout_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(three_column_layout_id);
-  column_set->AddColumn(provider->GetControlLabelGridAlignment(),
-                        views::GridLayout::CENTER, 0,
-                        views::GridLayout::USE_PREF, 0, 0);
-  column_set->AddPaddingColumn(0, kLabelValuePadding);
+  column_set->AddColumn(
+      provider->GetControlLabelGridAlignment(), views::GridLayout::CENTER,
+      views::GridLayout::kFixedSize, views::GridLayout::USE_PREF, 0, 0);
+  column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                               kLabelValuePadding);
   column_set->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER,
-                        0, views::GridLayout::USE_PREF, 0, 0);
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
-                        1, views::GridLayout::USE_PREF, 0, 0);
+                        views::GridLayout::kFixedSize,
+                        views::GridLayout::USE_PREF, 0, 0);
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 1.0,
+                        views::GridLayout::USE_PREF, 0, 0);
 
-  AddLabelRow(three_column_layout_id, layout, name_label_, name_value_field_);
-  AddLabelRow(three_column_layout_id, layout, content_label_,
-              content_value_field_);
-  AddLabelRow(three_column_layout_id, layout, domain_label_,
-              domain_value_field_);
-  AddLabelRow(three_column_layout_id, layout, path_label_, path_value_field_);
-  AddLabelRow(three_column_layout_id, layout, send_for_label_,
-              send_for_value_field_);
-  AddLabelRow(three_column_layout_id, layout, created_label_,
-              created_value_field_);
-  AddLabelRow(three_column_layout_id, layout, expires_label_,
-              expires_value_field_);
+  name_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                  IDS_COOKIES_COOKIE_NAME_LABEL);
+
+  content_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                     IDS_COOKIES_COOKIE_CONTENT_LABEL);
+
+  domain_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                    IDS_COOKIES_COOKIE_DOMAIN_LABEL);
+
+  path_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                  IDS_COOKIES_COOKIE_PATH_LABEL);
+
+  send_for_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                      IDS_COOKIES_COOKIE_SENDFOR_LABEL);
+
+  created_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                     IDS_COOKIES_COOKIE_CREATED_LABEL);
+
+  expires_value_field_ = AddLabelRow(three_column_layout_id, layout,
+                                     IDS_COOKIES_COOKIE_EXPIRES_LABEL);
 }

@@ -6,6 +6,7 @@
 
 #include "base/callback.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/permission_controller.h"
 #include "content/public/browser/permission_type.h"
 
 namespace headless {
@@ -21,18 +22,18 @@ int HeadlessPermissionManager::RequestPermission(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     bool user_gesture,
-    const base::Callback<void(blink::mojom::PermissionStatus)>& callback) {
+    base::OnceCallback<void(blink::mojom::PermissionStatus)> callback) {
   // In headless mode we just pretent the user "closes" any permission prompt,
   // without accepting or denying. Notifications are the exception to this,
   // which are explicitly disabled in Incognito mode.
   if (browser_context_->IsOffTheRecord() &&
       permission == content::PermissionType::NOTIFICATIONS) {
-    callback.Run(blink::mojom::PermissionStatus::DENIED);
-    return kNoPendingOperation;
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
+    return content::PermissionController::kNoPendingOperation;
   }
 
-  callback.Run(blink::mojom::PermissionStatus::ASK);
-  return kNoPendingOperation;
+  std::move(callback).Run(blink::mojom::PermissionStatus::ASK);
+  return content::PermissionController::kNoPendingOperation;
 }
 
 int HeadlessPermissionManager::RequestPermissions(
@@ -40,17 +41,15 @@ int HeadlessPermissionManager::RequestPermissions(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     bool user_gesture,
-    const base::Callback<
-        void(const std::vector<blink::mojom::PermissionStatus>&)>& callback) {
+    base::OnceCallback<void(const std::vector<blink::mojom::PermissionStatus>&)>
+        callback) {
   // In headless mode we just pretent the user "closes" any permission prompt,
   // without accepting or denying.
   std::vector<blink::mojom::PermissionStatus> result(
       permissions.size(), blink::mojom::PermissionStatus::ASK);
-  callback.Run(result);
-  return kNoPendingOperation;
+  std::move(callback).Run(result);
+  return content::PermissionController::kNoPendingOperation;
 }
-
-void HeadlessPermissionManager::CancelPermissionRequest(int request_id) {}
 
 void HeadlessPermissionManager::ResetPermission(
     content::PermissionType permission,
@@ -64,12 +63,20 @@ blink::mojom::PermissionStatus HeadlessPermissionManager::GetPermissionStatus(
   return blink::mojom::PermissionStatus::ASK;
 }
 
+blink::mojom::PermissionStatus
+HeadlessPermissionManager::GetPermissionStatusForFrame(
+    content::PermissionType permission,
+    content::RenderFrameHost* render_frame_host,
+    const GURL& requesting_origin) {
+  return blink::mojom::PermissionStatus::ASK;
+}
+
 int HeadlessPermissionManager::SubscribePermissionStatusChange(
     content::PermissionType permission,
+    content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
-    const GURL& embedding_origin,
-    const base::Callback<void(blink::mojom::PermissionStatus)>& callback) {
-  return kNoPendingOperation;
+    base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback) {
+  return content::PermissionController::kNoPendingOperation;
 }
 
 void HeadlessPermissionManager::UnsubscribePermissionStatusChange(

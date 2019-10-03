@@ -18,7 +18,7 @@
 
 namespace content {
 
-typedef storage::FileSystemOperation::FileEntryList FileEntryList;
+using FileEntryList = storage::FileSystemOperation::FileEntryList;
 
 namespace {
 
@@ -29,10 +29,10 @@ void AssignAndQuit(base::RunLoop* run_loop,
   run_loop->Quit();
 }
 
-base::Callback<void(base::File::Error)> AssignAndQuitCallback(
+base::OnceCallback<void(base::File::Error)> AssignAndQuitCallback(
     base::RunLoop* run_loop,
     base::File::Error* result) {
-  return base::Bind(&AssignAndQuit, run_loop, base::Unretained(result));
+  return base::BindOnce(&AssignAndQuit, run_loop, base::Unretained(result));
 }
 
 void GetMetadataCallback(base::RunLoop* run_loop,
@@ -73,11 +73,11 @@ void ReadDirectoryCallback(base::RunLoop* run_loop,
     run_loop->Quit();
 }
 
-void DidGetUsageAndQuota(storage::QuotaStatusCode* status_out,
+void DidGetUsageAndQuota(blink::mojom::QuotaStatusCode* status_out,
                          int64_t* usage_out,
                          int64_t* quota_out,
                          base::OnceClosure done_callback,
-                         storage::QuotaStatusCode status,
+                         blink::mojom::QuotaStatusCode status,
                          int64_t usage,
                          int64_t quota) {
   if (status_out)
@@ -221,7 +221,7 @@ base::File::Error AsyncFileTestHelper::GetMetadata(
       storage::FileSystemOperation::GET_METADATA_FIELD_IS_DIRECTORY |
           storage::FileSystemOperation::GET_METADATA_FIELD_SIZE |
           storage::FileSystemOperation::GET_METADATA_FIELD_LAST_MODIFIED,
-      base::Bind(&GetMetadataCallback, &run_loop, &result, file_info));
+      base::BindOnce(&GetMetadataCallback, &run_loop, &result, file_info));
   run_loop.Run();
   return result;
 }
@@ -233,8 +233,8 @@ base::File::Error AsyncFileTestHelper::GetPlatformPath(
   base::File::Error result = base::File::FILE_ERROR_FAILED;
   base::RunLoop run_loop;
   context->operation_runner()->CreateSnapshotFile(
-      url, base::Bind(&CreateSnapshotFileCallback, &run_loop, &result,
-                      platform_path));
+      url, base::BindOnce(&CreateSnapshotFileCallback, &run_loop, &result,
+                          platform_path));
   run_loop.Run();
   return result;
 }
@@ -256,18 +256,19 @@ bool AsyncFileTestHelper::DirectoryExists(storage::FileSystemContext* context,
   return (result == base::File::FILE_OK) && file_info.is_directory;
 }
 
-storage::QuotaStatusCode AsyncFileTestHelper::GetUsageAndQuota(
+blink::mojom::QuotaStatusCode AsyncFileTestHelper::GetUsageAndQuota(
     storage::QuotaManager* quota_manager,
-    const GURL& origin,
+    const url::Origin& origin,
     storage::FileSystemType type,
     int64_t* usage,
     int64_t* quota) {
-  storage::QuotaStatusCode status = storage::kQuotaStatusUnknown;
+  blink::mojom::QuotaStatusCode status =
+      blink::mojom::QuotaStatusCode::kUnknown;
   base::RunLoop run_loop;
   quota_manager->GetUsageAndQuota(
       origin, FileSystemTypeToQuotaStorageType(type),
-      base::Bind(&DidGetUsageAndQuota, &status, usage, quota,
-                 run_loop.QuitWhenIdleClosure()));
+      base::BindOnce(&DidGetUsageAndQuota, &status, usage, quota,
+                     run_loop.QuitWhenIdleClosure()));
   run_loop.Run();
   return status;
 }

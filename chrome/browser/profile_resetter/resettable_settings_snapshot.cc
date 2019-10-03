@@ -7,23 +7,24 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/guid.h"
-#include "base/md5.h"
+#include "base/hash/md5.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/profile_resetter/profile_reset_report.pb.h"
 #include "chrome/browser/profile_resetter/reset_report_uploader.h"
 #include "chrome/browser/profile_resetter/reset_report_uploader_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/channel_info.h"
-#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -49,11 +50,9 @@ void AddPair(base::ListValue* list,
 
 }  // namespace
 
-ResettableSettingsSnapshot::ResettableSettingsSnapshot(
-    Profile* profile)
+ResettableSettingsSnapshot::ResettableSettingsSnapshot(Profile* profile)
     : startup_(SessionStartupPref::GetStartupPref(profile)),
-      shortcuts_determined_(false),
-      weak_ptr_factory_(this) {
+      shortcuts_determined_(false) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   // URLs are always stored sorted.
   std::sort(startup_.urls.begin(), startup_.urls.end());
@@ -242,7 +241,7 @@ std::unique_ptr<base::ListValue> GetReadableFeedbackForSnapshot(
           l10n_util::GetStringUTF16(IDS_VERSION_UI_USER_AGENT),
           GetUserAgent());
   std::string version = version_info::GetVersionNumber();
-  version += chrome::GetChannelString();
+  version += chrome::GetChannelName();
   AddPair(list.get(),
           l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
           version);
@@ -250,8 +249,7 @@ std::unique_ptr<base::ListValue> GetReadableFeedbackForSnapshot(
   // Add snapshot data.
   const std::vector<GURL>& urls = snapshot.startup_urls();
   std::string startup_urls;
-  for (std::vector<GURL>::const_iterator i = urls.begin();
-       i != urls.end(); ++i) {
+  for (auto i = urls.begin(); i != urls.end(); ++i) {
     if (!startup_urls.empty())
       startup_urls += ' ';
     startup_urls += i->host();
@@ -317,8 +315,7 @@ std::unique_ptr<base::ListValue> GetReadableFeedbackForSnapshot(
   if (snapshot.shortcuts_determined()) {
     base::string16 shortcut_targets;
     const std::vector<ShortcutCommand>& shortcuts = snapshot.shortcuts();
-    for (std::vector<ShortcutCommand>::const_iterator i =
-         shortcuts.begin(); i != shortcuts.end(); ++i) {
+    for (auto i = shortcuts.begin(); i != shortcuts.end(); ++i) {
       if (!shortcut_targets.empty())
         shortcut_targets += base::ASCIIToUTF16("\n");
       shortcut_targets += base::ASCIIToUTF16("chrome.exe ");
@@ -339,8 +336,7 @@ std::unique_ptr<base::ListValue> GetReadableFeedbackForSnapshot(
   const ResettableSettingsSnapshot::ExtensionList& extensions =
       snapshot.enabled_extensions();
   std::string extension_names;
-  for (ResettableSettingsSnapshot::ExtensionList::const_iterator i =
-       extensions.begin(); i != extensions.end(); ++i) {
+  for (auto i = extensions.begin(); i != extensions.end(); ++i) {
     if (!extension_names.empty())
       extension_names += '\n';
     extension_names += i->second;

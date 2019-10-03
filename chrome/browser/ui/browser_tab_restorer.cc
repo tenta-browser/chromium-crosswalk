@@ -14,6 +14,9 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_live_tab_context.h"
+#include "chrome/browser/ui/in_product_help/reopen_tab_in_product_help.h"
+#include "chrome/browser/ui/in_product_help/reopen_tab_in_product_help_factory.h"
+#include "components/feature_engagement/buildflags.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
 
@@ -29,7 +32,7 @@ const char kBrowserTabRestorerKey[] = "BrowserTabRestorer";
 // BrowserTabRestorer is installed on the Profile (by way of user data), only
 // one instance is created per profile at a time.
 class BrowserTabRestorer : public sessions::TabRestoreServiceObserver,
-                           public chrome::BrowserListObserver,
+                           public BrowserListObserver,
                            public base::SupportsUserData::Data {
  public:
   ~BrowserTabRestorer() override;
@@ -40,7 +43,6 @@ class BrowserTabRestorer : public sessions::TabRestoreServiceObserver,
   explicit BrowserTabRestorer(Browser* browser);
 
   // TabRestoreServiceObserver:
-  void TabRestoreServiceChanged(sessions::TabRestoreService* service) override;
   void TabRestoreServiceDestroyed(
       sessions::TabRestoreService* service) override;
   void TabRestoreServiceLoaded(sessions::TabRestoreService* service) override;
@@ -82,9 +84,6 @@ BrowserTabRestorer::BrowserTabRestorer(Browser* browser)
   tab_restore_service_->LoadTabsFromLastSession();
 }
 
-void BrowserTabRestorer::TabRestoreServiceChanged(
-    sessions::TabRestoreService* service) {}
-
 void BrowserTabRestorer::TabRestoreServiceDestroyed(
     sessions::TabRestoreService* service) {}
 
@@ -104,6 +103,10 @@ void BrowserTabRestorer::OnBrowserRemoved(Browser* browser) {
 
 void RestoreTab(Browser* browser) {
   base::RecordAction(base::UserMetricsAction("RestoreTab"));
+  auto* reopen_tab_iph =
+      ReopenTabInProductHelpFactory::GetForProfile(browser->profile());
+  reopen_tab_iph->TabReopened();
+
   sessions::TabRestoreService* service =
       TabRestoreServiceFactory::GetForProfile(browser->profile());
   if (!service)

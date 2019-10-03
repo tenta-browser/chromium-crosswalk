@@ -7,20 +7,19 @@
 #include <memory>
 #include <sstream>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_clock.h"
+#include "base/test/test_simple_task_runner.h"
 #include "base/timer/mock_timer.h"
 #include "base/values.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_service_client.h"
 #include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/network_state_test.h"
+#include "chromeos/network/network_state_test_helper.h"
 #include "chromeos/network/shill_property_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -55,13 +54,18 @@ std::string CreateConfigurationJsonString(const std::string& guid) {
 
 }  // namespace
 
-class WifiHotspotConnectorTest : public NetworkStateTest {
+class WifiHotspotConnectorTest : public testing::Test {
  public:
   class TestNetworkConnect : public NetworkConnect {
    public:
-    explicit TestNetworkConnect(NetworkStateTest* network_state_test)
-        : network_state_test_(network_state_test) {}
+    explicit TestNetworkConnect(NetworkStateTestHelper* helper)
+        : helper_(helper) {}
     ~TestNetworkConnect() override = default;
+
+    void set_is_running_in_test_task_runner(
+        bool is_running_in_test_task_runner) {
+      is_running_in_test_task_runner_ = is_running_in_test_task_runner;
+    }
 
     base::DictionaryValue* last_configuration() {
       return last_configuration_.get();
@@ -85,15 +89,11 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
       EXPECT_TRUE(
           last_configuration_->GetString(shill::kGuidProperty, &wifi_guid));
 
-      last_service_path_created_ = network_state_test_->ConfigureService(
-          CreateConfigurationJsonString(wifi_guid));
+      last_service_path_created_ =
+          helper_->ConfigureService(CreateConfigurationJsonString(wifi_guid));
     }
 
     // NetworkConnect:
-    bool MaybeShowConfigureUI(const std::string& network_id,
-                              const std::string& connect_error) override {
-      return false;
-    }
     void SetTechnologyEnabled(const chromeos::NetworkTypePattern& technology,
                               bool enabled_state) override {}
     void ShowMobileSetup(const std::string& network_id) override {}
@@ -110,11 +110,11 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
       last_configuration_ = shill_properties->CreateDeepCopy();
 
       // Prevent nested RunLoops when ConfigureServiceWithLastNetworkConfig()
-      // calls NetworkStateTest::ConfigureService(); that causes threading
-      // issues. If a RunLoop is running right now, the client which was running
-      // the RunLoop can manually call ConfigureServiceWithLastNetworkConfig()
-      // once done.
-      if (!base::RunLoop::IsRunningOnCurrentThread())
+      // calls NetworkStateTestHelper::ConfigureService(); that causes threading
+      // issues. If |test_task_runner_| is causing this function to be run, the
+      // client which triggered this call can manually call
+      // ConfigureServiceWithLastNetworkConfig() once done.
+      if (!is_running_in_test_task_runner_)
         ConfigureServiceWithLastNetworkConfig();
     }
 
@@ -129,13 +129,14 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
     }
 
    private:
-    NetworkStateTest* network_state_test_;
+    NetworkStateTestHelper* helper_;
     std::unique_ptr<base::DictionaryValue> last_configuration_;
     std::string last_service_path_created_;
     std::string network_id_to_connect_;
     std::string network_id_to_disconnect_;
     uint32_t num_connection_attempts_ = 0;
     uint32_t num_disconnection_attempts_ = 0;
+    bool is_running_in_test_task_runner_ = false;
   };
 
   WifiHotspotConnectorTest() = default;
@@ -145,53 +146,46 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
     other_wifi_service_path_.clear();
     connection_callback_responses_.clear();
 
-    DBusThreadManager::Initialize();
-    NetworkStateTest::SetUp();
-    network_state_handler()->SetTetherTechnologyState(
+    helper_.network_state_handler()->SetTetherTechnologyState(
         NetworkStateHandler::TechnologyState::TECHNOLOGY_ENABLED);
-    network_state_handler()->SetTechnologyEnabled(
+    helper_.network_state_handler()->SetTechnologyEnabled(
         NetworkTypePattern::WiFi(), true /* enabled */,
         chromeos::network_handler::ErrorCallback());
     base::RunLoop().RunUntilIdle();
 
     SetUpShillState();
 
-    test_network_connect_ = base::WrapUnique(new TestNetworkConnect(this));
+    test_network_connect_ = base::WrapUnique(new TestNetworkConnect(&helper_));
 
-    network_state_handler()->AddTetherNetworkState(
+    helper_.network_state_handler()->AddTetherNetworkState(
         kTetherNetworkGuid, "tetherNetworkName" /* name */,
         "tetherNetworkCarrier" /* carrier */, 100 /* full battery */,
         100 /* full signal strength */, false /* has_connected_to_host */);
 
-    network_state_handler()->AddTetherNetworkState(
+    helper_.network_state_handler()->AddTetherNetworkState(
         kTetherNetworkGuid2, "tetherNetworkName2" /* name */,
         "tetherNetworkCarrier2" /* carrier */, 100 /* full battery */,
         100 /* full signal strength */, false /* has_connected_to_host */);
 
     wifi_hotspot_connector_ = base::WrapUnique(new WifiHotspotConnector(
-        network_state_handler(), test_network_connect_.get()));
+        helper_.network_state_handler(), test_network_connect_.get()));
 
-    mock_timer_ = new base::MockTimer(true /* retain_user_task */,
-                                      false /* is_repeating */);
-    wifi_hotspot_connector_->SetTimerForTest(base::WrapUnique(mock_timer_));
-
-    test_clock_ = new base::SimpleTestClock();
-    test_clock_->SetNow(base::Time::UnixEpoch());
-    wifi_hotspot_connector_->SetClockForTest(base::WrapUnique(test_clock_));
+    mock_timer_ = new base::MockOneShotTimer();
+    test_clock_.SetNow(base::Time::UnixEpoch());
+    test_task_runner_ = base::MakeRefCounted<base::TestSimpleTaskRunner>();
+    wifi_hotspot_connector_->SetTestDoubles(base::WrapUnique(mock_timer_),
+                                            &test_clock_, test_task_runner_);
   }
 
   void SetUpShillState() {
     // Add a Wi-Fi service unrelated to the one under test. In some tests, a
     // connection from another device is tested.
-    other_wifi_service_path_ = ConfigureService(
+    other_wifi_service_path_ = helper_.ConfigureService(
         CreateConfigurationJsonString(std::string(kOtherWifiServiceGuid)));
   }
 
   void TearDown() override {
     wifi_hotspot_connector_.reset();
-    ShutdownNetworkState();
-    NetworkStateTest::TearDown();
-    DBusThreadManager::Shutdown();
   }
 
   void VerifyTimerSet() {
@@ -208,14 +202,23 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
     mock_timer_->Fire();
   }
 
+  void RunTestTaskRunner() {
+    test_network_connect_->set_is_running_in_test_task_runner(true);
+    test_task_runner_->RunUntilIdle();
+    test_network_connect_->set_is_running_in_test_task_runner(false);
+  }
+
   void NotifyConnectable(const std::string& service_path) {
-    SetServiceProperty(service_path, std::string(shill::kConnectableProperty),
-                       base::Value(true));
+    helper_.SetServiceProperty(service_path,
+                               std::string(shill::kConnectableProperty),
+                               base::Value(true));
+    RunTestTaskRunner();
   }
 
   void NotifyConnected(const std::string& service_path) {
-    SetServiceProperty(service_path, std::string(shill::kStateProperty),
-                       base::Value(shill::kStateReady));
+    helper_.SetServiceProperty(service_path, std::string(shill::kStateProperty),
+                               base::Value(shill::kStateReady));
+    RunTestTaskRunner();
   }
 
   void VerifyConnectionToHotspotDurationRecorded(bool expected) {
@@ -269,12 +272,12 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
       const std::string& tether_guid,
       uint32_t expected_num_connection_attempts) {
     const NetworkState* wifi_network_state =
-        network_state_handler()->GetNetworkStateFromGuid(wifi_guid);
+        helper_.network_state_handler()->GetNetworkStateFromGuid(wifi_guid);
     ASSERT_TRUE(wifi_network_state);
     EXPECT_EQ(tether_guid, wifi_network_state->tether_guid());
 
     const NetworkState* tether_network_state =
-        network_state_handler()->GetNetworkStateFromGuid(tether_guid);
+        helper_.network_state_handler()->GetNetworkStateFromGuid(tether_guid);
     ASSERT_TRUE(tether_network_state);
     EXPECT_EQ(wifi_guid, tether_network_state->tether_guid());
 
@@ -284,7 +287,7 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
 
   void VerifyNetworkNotAssociated(const std::string& guid) {
     const NetworkState* network_state =
-        network_state_handler()->GetNetworkStateFromGuid(guid);
+        helper_.network_state_handler()->GetNetworkStateFromGuid(guid);
     ASSERT_TRUE(network_state);
     EXPECT_TRUE(network_state->tether_guid().empty());
   }
@@ -293,13 +296,19 @@ class WifiHotspotConnectorTest : public NetworkStateTest {
     connection_callback_responses_.push_back(wifi_guid);
   }
 
+  NetworkStateHandler* network_state_handler() {
+    return helper_.network_state_handler();
+  }
+
   base::test::ScopedTaskEnvironment scoped_task_environment_;
+  NetworkStateTestHelper helper_{true /* use_default_devices_and_services */};
 
   std::string other_wifi_service_path_;
   std::vector<std::string> connection_callback_responses_;
 
-  base::MockTimer* mock_timer_;
-  base::SimpleTestClock* test_clock_;
+  base::MockOneShotTimer* mock_timer_;
+  base::SimpleTestClock test_clock_;
+  scoped_refptr<base::TestSimpleTaskRunner> test_task_runner_;
   std::unique_ptr<TestNetworkConnect> test_network_connect_;
 
   std::unique_ptr<WifiHotspotConnector> wifi_hotspot_connector_;
@@ -435,7 +444,7 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_Success) {
   EXPECT_EQ(wifi_guid, test_network_connect_->network_id_to_connect());
   EXPECT_EQ(0u, connection_callback_responses_.size());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Connection to network successful.
   NotifyConnected(test_network_connect_->last_service_path_created());
@@ -463,7 +472,7 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_Success_EmptyPassword) {
   EXPECT_EQ(wifi_guid, test_network_connect_->network_id_to_connect());
   EXPECT_EQ(0u, connection_callback_responses_.size());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Connection to network successful.
   NotifyConnected(test_network_connect_->last_service_path_created());
@@ -491,7 +500,7 @@ TEST_F(WifiHotspotConnectorTest,
   // Pass some arbitrary time -- this should not affect the
   // recorded duration because the start time should be reset
   // for a new network attempt.
-  test_clock_->Advance(base::TimeDelta::FromSeconds(13));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(13));
 
   // Before network becomes connectable, start the new connection.
   EXPECT_EQ(0u, connection_callback_responses_.size());
@@ -520,7 +529,7 @@ TEST_F(WifiHotspotConnectorTest,
   EXPECT_TRUE(test_network_connect_->network_id_to_connect().empty());
   EXPECT_EQ(1u, connection_callback_responses_.size());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Second network becomes connectable.
   NotifyConnectable(service_path2);
@@ -550,7 +559,7 @@ TEST_F(WifiHotspotConnectorTest,
   // Pass some arbitrary time -- this should not affect the
   // recorded duration because the start time should be reset
   // for a new network attempt.
-  test_clock_->Advance(base::TimeDelta::FromSeconds(13));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(13));
 
   std::string wifi_guid1 = VerifyLastConfiguration("ssid1", "password1");
   EXPECT_FALSE(wifi_guid1.empty());
@@ -590,7 +599,7 @@ TEST_F(WifiHotspotConnectorTest,
 
   EXPECT_NE(service_path1, service_path2);
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Second network becomes connectable.
   NotifyConnectable(service_path2);
@@ -630,18 +639,16 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_WifiDisabled_Success) {
   EXPECT_TRUE(
       network_state_handler()->IsTechnologyEnabled(NetworkTypePattern::WiFi()));
 
-  // Letting the RunLoop run-until-idle above indirectly led to
-  // TestNetworkConnect::CreateConfiguration being called with a running
-  // RunLoop. A RunLoop cannot be running when finishing work in
-  // TestNetworkConnect::CreateConfiguration; now that the RunLoop has stopped,
-  // finish the work it started.
+  // Run the task and manually invoke ConfigureServiceWithLastNetworkConfig() to
+  // prevent nested RunLoop errors.
+  RunTestTaskRunner();
   test_network_connect_->ConfigureServiceWithLastNetworkConfig();
 
   std::string wifi_guid =
       VerifyLastConfiguration(std::string(kSsid), std::string(kPassword));
   EXPECT_FALSE(wifi_guid.empty());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Network becomes connectable.
   NotifyConnectable(test_network_connect_->last_service_path_created());
@@ -688,11 +695,9 @@ TEST_F(WifiHotspotConnectorTest,
   EXPECT_TRUE(
       network_state_handler()->IsTechnologyEnabled(NetworkTypePattern::WiFi()));
 
-  // Letting the RunLoop run-until-idle above indirectly led to
-  // TestNetworkConnect::CreateConfiguration being called with a running
-  // RunLoop. A RunLoop cannot be running when finishing work in
-  // TestNetworkConnect::CreateConfiguration; now that the RunLoop has stopped,
-  // finish the work it started.
+  // Run the task and manually invoke ConfigureServiceWithLastNetworkConfig() to
+  // prevent nested RunLoop errors.
+  RunTestTaskRunner();
   test_network_connect_->ConfigureServiceWithLastNetworkConfig();
 
   std::string wifi_guid =
@@ -706,7 +711,7 @@ TEST_F(WifiHotspotConnectorTest,
   EXPECT_EQ(wifi_guid, test_network_connect_->network_id_to_connect());
   EXPECT_EQ(0u, connection_callback_responses_.size());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Connection to network successful.
   NotifyConnected(test_network_connect_->last_service_path_created());
@@ -769,7 +774,7 @@ TEST_F(WifiHotspotConnectorTest,
   // Pass some arbitrary time -- this should not affect the
   // recorded duration because the start time should be reset
   // for a new network attempt.
-  test_clock_->Advance(base::TimeDelta::FromSeconds(13));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(13));
 
   EXPECT_FALSE(test_network_connect_->last_configuration());
 
@@ -786,11 +791,9 @@ TEST_F(WifiHotspotConnectorTest,
   EXPECT_TRUE(
       network_state_handler()->IsTechnologyEnabled(NetworkTypePattern::WiFi()));
 
-  // Letting the RunLoop run-until-idle above indirectly led to
-  // TestNetworkConnect::CreateConfiguration being called with a running
-  // RunLoop. A RunLoop cannot be running when finishing work in
-  // TestNetworkConnect::CreateConfiguration; now that the RunLoop has stopped,
-  // finish the work it started.
+  // Run the task and manually invoke ConfigureServiceWithLastNetworkConfig() to
+  // prevent nested RunLoop errors.
+  RunTestTaskRunner();
   test_network_connect_->ConfigureServiceWithLastNetworkConfig();
 
   std::string wifi_guid2 = VerifyLastConfiguration("ssid2", "password2");
@@ -807,7 +810,7 @@ TEST_F(WifiHotspotConnectorTest,
   EXPECT_EQ(wifi_guid2, test_network_connect_->network_id_to_connect());
   EXPECT_EQ(1u, connection_callback_responses_.size());
 
-  test_clock_->Advance(kConnectionToHotspotTime);
+  test_clock_.Advance(kConnectionToHotspotTime);
 
   // Connection to network successful.
   NotifyConnected(service_path2);

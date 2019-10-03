@@ -10,12 +10,13 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/login_database.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/password_store_change.h"
@@ -61,7 +62,7 @@ class BadLoginDatabase : public LoginDatabase {
 };
 
 PasswordFormData CreateTestPasswordFormData() {
-  PasswordFormData data = {PasswordForm::SCHEME_HTML,
+  PasswordFormData data = {PasswordForm::Scheme::kHtml,
                            "http://bar.example.com",
                            "http://bar.example.com/origin",
                            "http://bar.example.com/action",
@@ -106,6 +107,7 @@ class PasswordStoreDefaultTestDelegate {
 PasswordStoreDefaultTestDelegate::PasswordStoreDefaultTestDelegate()
     : scoped_task_environment_(
           base::test::ScopedTaskEnvironment::MainThreadType::UI) {
+  OSCryptMocker::SetUp();
   SetupTempDir();
   store_ = CreateInitializedStore(
       std::make_unique<LoginDatabase>(test_login_db_file_path()));
@@ -115,12 +117,14 @@ PasswordStoreDefaultTestDelegate::PasswordStoreDefaultTestDelegate(
     std::unique_ptr<LoginDatabase> database)
     : scoped_task_environment_(
           base::test::ScopedTaskEnvironment::MainThreadType::UI) {
+  OSCryptMocker::SetUp();
   SetupTempDir();
   store_ = CreateInitializedStore(std::move(database));
 }
 
 PasswordStoreDefaultTestDelegate::~PasswordStoreDefaultTestDelegate() {
   ClosePasswordStore();
+  OSCryptMocker::TearDown();
 }
 
 void PasswordStoreDefaultTestDelegate::FinishAsyncProcessing() {
@@ -154,9 +158,9 @@ base::FilePath PasswordStoreDefaultTestDelegate::test_login_db_file_path()
 
 }  // anonymous namespace
 
-INSTANTIATE_TYPED_TEST_CASE_P(Default,
-                              PasswordStoreOriginTest,
-                              PasswordStoreDefaultTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(Default,
+                               PasswordStoreOriginTest,
+                               PasswordStoreDefaultTestDelegate);
 
 TEST(PasswordStoreDefaultTest, NonASCIIData) {
   PasswordStoreDefaultTestDelegate delegate;
@@ -164,14 +168,14 @@ TEST(PasswordStoreDefaultTest, NonASCIIData) {
 
   // Some non-ASCII password form data.
   static const PasswordFormData form_data[] = {
-      {PasswordForm::SCHEME_HTML, "http://foo.example.com",
+      {PasswordForm::Scheme::kHtml, "http://foo.example.com",
        "http://foo.example.com/origin", "http://foo.example.com/action",
        L"มีสีสัน", L"お元気ですか?", L"盆栽", L"أحب كرة", L"£éä국수çà", true, 1},
   };
 
   // Build the expected forms vector and add the forms to the store.
   std::vector<std::unique_ptr<PasswordForm>> expected_forms;
-  for (unsigned int i = 0; i < arraysize(form_data); ++i) {
+  for (unsigned int i = 0; i < base::size(form_data); ++i) {
     expected_forms.push_back(FillPasswordFormWithData(form_data[i]));
     store->AddLogin(*expected_forms.back());
   }
@@ -207,7 +211,6 @@ TEST(PasswordStoreDefaultTest, Notifications) {
 
   // Adding a login should trigger a notification.
   store->AddLogin(*form);
-  delegate.FinishAsyncProcessing();
 
   // Change the password.
   form->password_value = base::ASCIIToUTF16("a different password");
@@ -221,7 +224,6 @@ TEST(PasswordStoreDefaultTest, Notifications) {
 
   // Updating the login with the new password should trigger a notification.
   store->UpdateLogin(*form);
-  delegate.FinishAsyncProcessing();
 
   const PasswordStoreChange expected_delete_changes[] = {
       PasswordStoreChange(PasswordStoreChange::REMOVE, *form),
@@ -232,6 +234,7 @@ TEST(PasswordStoreDefaultTest, Notifications) {
 
   // Deleting the login should trigger a notification.
   store->RemoveLogin(*form);
+  // Run the tasks to allow all the above expected calls to take place.
   delegate.FinishAsyncProcessing();
 
   store->RemoveObserver(&observer);
@@ -273,12 +276,12 @@ TEST(PasswordStoreDefaultTest, OperationsOnABadDatabaseSilentlyFail) {
   delegate.FinishAsyncProcessing();
   testing::Mock::VerifyAndClearExpectations(&mock_consumer);
   EXPECT_CALL(mock_consumer, OnGetPasswordStoreResultsConstRef(IsEmpty()));
-  bad_store->GetBlacklistLogins(&mock_consumer);
+  bad_store->GetAllLogins(&mock_consumer);
   delegate.FinishAsyncProcessing();
   testing::Mock::VerifyAndClearExpectations(&mock_consumer);
 
   // Report metrics.
-  bad_store->ReportMetrics("Test Username", true);
+  bad_store->ReportMetrics("Test Username", true, false);
   delegate.FinishAsyncProcessing();
 
   // Change the login.
@@ -293,8 +296,6 @@ TEST(PasswordStoreDefaultTest, OperationsOnABadDatabaseSilentlyFail) {
   bad_store->RemoveLoginsCreatedBetween(base::Time(), base::Time::Max(),
                                         run_loop.QuitClosure());
   run_loop.Run();
-
-  bad_store->RemoveLoginsSyncedBetween(base::Time(), base::Time::Max());
   delegate.FinishAsyncProcessing();
 
   // Ensure no notifications and no explosions during shutdown either.

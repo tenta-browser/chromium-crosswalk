@@ -4,8 +4,11 @@
 
 #include "content/public/test/test_web_ui.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_piece.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
@@ -22,33 +25,59 @@ void TestWebUI::ClearTrackedCalls() {
   call_data_.clear();
 }
 
-WebContents* TestWebUI::GetWebContents() const {
+void TestWebUI::HandleReceivedMessage(const std::string& handler_name,
+                                      const base::ListValue* args) {
+  const auto callbacks_map_it = message_callbacks_.find(handler_name);
+
+  if (callbacks_map_it == message_callbacks_.end())
+    return;
+
+  // Create a copy of the callbacks before running them. Without this, it could
+  // be possible for the callback's handler to register a new message handler
+  // during iteration of the vector, resulting in undefined behavior.
+  std::vector<MessageCallback> callbacks_to_run = callbacks_map_it->second;
+  for (auto& callback : callbacks_to_run)
+    callback.Run(args);
+}
+
+WebContents* TestWebUI::GetWebContents() {
   return web_contents_;
 }
 
-WebUIController* TestWebUI::GetController() const {
+WebUIController* TestWebUI::GetController() {
   return controller_.get();
 }
 
-void TestWebUI::SetController(WebUIController* controller) {
-  controller_.reset(controller);
+void TestWebUI::SetController(std::unique_ptr<WebUIController> controller) {
+  controller_ = std::move(controller);
 }
 
-float TestWebUI::GetDeviceScaleFactor() const {
+float TestWebUI::GetDeviceScaleFactor() {
   return 1.0f;
 }
 
-const base::string16& TestWebUI::GetOverriddenTitle() const {
+const base::string16& TestWebUI::GetOverriddenTitle() {
   return temp_string_;
 }
 
-int TestWebUI::GetBindings() const {
-  return 0;
+int TestWebUI::GetBindings() {
+  return bindings_;
+}
+
+void TestWebUI::SetBindings(int bindings) {
+  bindings_ = bindings;
 }
 
 void TestWebUI::AddMessageHandler(
     std::unique_ptr<WebUIMessageHandler> handler) {
+  handler->set_web_ui(this);
+  handler->RegisterMessages();
   handlers_.push_back(std::move(handler));
+}
+
+void TestWebUI::RegisterMessageCallback(base::StringPiece message,
+                                        const MessageCallback& callback) {
+  message_callbacks_[message.as_string()].push_back(callback);
 }
 
 bool TestWebUI::CanCallJavascript() {

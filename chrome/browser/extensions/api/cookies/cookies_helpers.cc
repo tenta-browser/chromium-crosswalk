@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -36,8 +37,6 @@ using extensions::api::cookies::CookieStore;
 namespace GetAll = extensions::api::cookies::GetAll;
 
 namespace extensions {
-
-namespace keys = cookies_api_constants;
 
 namespace cookies_helpers {
 
@@ -83,21 +82,29 @@ Cookie CreateCookie(const net::CanonicalCookie& canonical_cookie,
   cookie.http_only = canonical_cookie.IsHttpOnly();
 
   switch (canonical_cookie.SameSite()) {
-  case net::CookieSameSite::DEFAULT_MODE:
-    cookie.same_site = api::cookies::SAME_SITE_STATUS_NO_RESTRICTION;
-    break;
-  case net::CookieSameSite::LAX_MODE:
-    cookie.same_site = api::cookies::SAME_SITE_STATUS_LAX;
-    break;
-  case net::CookieSameSite::STRICT_MODE:
-    cookie.same_site = api::cookies::SAME_SITE_STATUS_STRICT;
-    break;
+    case net::CookieSameSite::NO_RESTRICTION:
+      cookie.same_site = api::cookies::SAME_SITE_STATUS_NO_RESTRICTION;
+      break;
+    case net::CookieSameSite::LAX_MODE:
+    case net::CookieSameSite::EXTENDED_MODE:
+      cookie.same_site = api::cookies::SAME_SITE_STATUS_LAX;
+      break;
+    case net::CookieSameSite::STRICT_MODE:
+      cookie.same_site = api::cookies::SAME_SITE_STATUS_STRICT;
+      break;
+    case net::CookieSameSite::UNSPECIFIED:
+      cookie.same_site = api::cookies::SAME_SITE_STATUS_UNSPECIFIED;
+      break;
   }
 
   cookie.session = !canonical_cookie.IsPersistent();
   if (canonical_cookie.IsPersistent()) {
-    cookie.expiration_date.reset(
-        new double(canonical_cookie.ExpiryDate().ToDoubleT()));
+    double expiration_date = canonical_cookie.ExpiryDate().ToDoubleT();
+    if (canonical_cookie.ExpiryDate().is_max() ||
+        !std::isfinite(expiration_date)) {
+      expiration_date = std::numeric_limits<double>::max();
+    }
+    cookie.expiration_date = std::make_unique<double>(expiration_date);
   }
   cookie.store_id = store_id;
 
@@ -109,8 +116,8 @@ CookieStore CreateCookieStore(Profile* profile,
   DCHECK(profile);
   DCHECK(tab_ids);
   base::DictionaryValue dict;
-  dict.SetString(keys::kIdKey, GetStoreIdFromProfile(profile));
-  dict.Set(keys::kTabIdsKey, std::move(tab_ids));
+  dict.SetString(cookies_api_constants::kIdKey, GetStoreIdFromProfile(profile));
+  dict.Set(cookies_api_constants::kTabIdsKey, std::move(tab_ids));
 
   CookieStore cookie_store;
   bool rv = CookieStore::Populate(dict, &cookie_store);
@@ -118,16 +125,25 @@ CookieStore CreateCookieStore(Profile* profile,
   return cookie_store;
 }
 
-void GetCookieListFromStore(
-    net::CookieStore* cookie_store,
+void GetCookieListFromManager(
+    network::mojom::CookieManager* manager,
     const GURL& url,
-    net::CookieMonster::GetCookieListCallback callback) {
-  DCHECK(cookie_store);
-  if (!url.is_empty()) {
-    DCHECK(url.is_valid());
-    cookie_store->GetAllCookiesForURLAsync(url, std::move(callback));
+    network::mojom::CookieManager::GetCookieListCallback callback) {
+  if (url.is_empty()) {
+    // GetAllCookies has a different callback signature than GetCookieList, but
+    // can be treated as the same, just returning no excluded cookies.
+    // |AddCookieStatusList| takes a |GetCookieListCallback| and returns a
+    // callback that calls the input callback with an empty excluded list.
+    manager->GetAllCookies(
+        net::cookie_util::AddCookieStatusList(std::move(callback)));
   } else {
-    cookie_store->GetAllCookiesAsync(std::move(callback));
+    net::CookieOptions options;
+    options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+    options.set_do_not_update_access_time();
+
+    manager->GetCookieList(url, options, std::move(callback));
   }
 }
 

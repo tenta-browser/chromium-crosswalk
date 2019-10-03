@@ -7,6 +7,7 @@
 #include "base/strings/sys_string_conversions.h"
 #import "ios/chrome/browser/ui/dialogs/dialog_presenter.h"
 #import "ios/chrome/browser/ui/dialogs/java_script_dialog_blocking_state.h"
+#include "ios/chrome/browser/ui/dialogs/java_script_dialog_metrics.h"
 #include "ui/gfx/text_elider.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -27,51 +28,61 @@ void JavaScriptDialogPresenterImpl::RunJavaScriptDialog(
     web::JavaScriptDialogType dialog_type,
     NSString* message_text,
     NSString* default_prompt_text,
-    const web::DialogClosedCallback& callback) {
+    web::DialogClosedCallback callback) {
   JavaScriptDialogBlockingState::CreateForWebState(web_state);
   if (JavaScriptDialogBlockingState::FromWebState(web_state)->blocked()) {
     // Block the dialog if needed.
-    callback.Run(NO, nil);
+    RecordDialogDismissalCause(IOSJavaScriptDialogDismissalCause::kBlocked);
+    std::move(callback).Run(NO, nil);
     return;
   }
   message_text =
       JavaScriptDialogPresenterImpl::GetTruncatedMessageText(message_text);
   switch (dialog_type) {
     case web::JAVASCRIPT_DIALOG_TYPE_ALERT: {
-      web::DialogClosedCallback scoped_callback = callback;
-      [dialog_presenter_ runJavaScriptAlertPanelWithMessage:message_text
-                                                 requestURL:origin_url
-                                                   webState:web_state
-                                          completionHandler:^{
-                                            if (!scoped_callback.is_null()) {
-                                              scoped_callback.Run(YES, nil);
-                                            }
-                                          }];
+      __block web::DialogClosedCallback scoped_callback = std::move(callback);
+      [dialog_presenter_
+          runJavaScriptAlertPanelWithMessage:message_text
+                                  requestURL:origin_url
+                                    webState:web_state
+                           completionHandler:^{
+                             RecordDialogDismissalCause(
+                                 IOSJavaScriptDialogDismissalCause::kUser);
+                             if (!scoped_callback.is_null()) {
+                               std::move(scoped_callback).Run(YES, nil);
+                             }
+                           }];
       break;
     }
     case web::JAVASCRIPT_DIALOG_TYPE_CONFIRM: {
-      web::DialogClosedCallback scoped_callback = callback;
+      __block web::DialogClosedCallback scoped_callback = std::move(callback);
       [dialog_presenter_
           runJavaScriptConfirmPanelWithMessage:message_text
                                     requestURL:origin_url
                                       webState:web_state
                              completionHandler:^(BOOL is_confirmed) {
+                               RecordDialogDismissalCause(
+                                   IOSJavaScriptDialogDismissalCause::kUser);
                                if (!scoped_callback.is_null()) {
-                                 scoped_callback.Run(is_confirmed, nil);
+                                 std::move(scoped_callback)
+                                     .Run(is_confirmed, nil);
                                }
                              }];
       break;
     }
     case web::JAVASCRIPT_DIALOG_TYPE_PROMPT: {
-      web::DialogClosedCallback scoped_callback = callback;
+      __block web::DialogClosedCallback scoped_callback = std::move(callback);
       [dialog_presenter_
           runJavaScriptTextInputPanelWithPrompt:message_text
                                     defaultText:default_prompt_text
                                      requestURL:origin_url
                                        webState:web_state
                               completionHandler:^(NSString* text_input) {
+                                RecordDialogDismissalCause(
+                                    IOSJavaScriptDialogDismissalCause::kUser);
                                 if (!scoped_callback.is_null()) {
-                                  scoped_callback.Run(YES, text_input);
+                                  std::move(scoped_callback)
+                                      .Run(YES, text_input);
                                 }
                               }];
       break;

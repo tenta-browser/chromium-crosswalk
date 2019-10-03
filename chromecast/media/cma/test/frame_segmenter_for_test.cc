@@ -14,8 +14,8 @@
 #include "chromecast/media/cma/base/decoder_buffer_adapter.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer.h"
-#include "media/base/media_log.h"
 #include "media/base/media_tracks.h"
+#include "media/base/media_util.h"
 #include "media/base/test_helpers.h"
 #include "media/filters/ffmpeg_demuxer.h"
 #include "media/filters/file_data_source.h"
@@ -275,7 +275,7 @@ void OnMediaTracksUpdated(std::unique_ptr<::media::MediaTracks> tracks) {}
 void OnNewBuffer(BufferList* buffer_list,
                  const base::Closure& finished_cb,
                  ::media::DemuxerStream::Status status,
-                 const scoped_refptr< ::media::DecoderBuffer>& buffer) {
+                 scoped_refptr<::media::DecoderBuffer> buffer) {
   CHECK_EQ(status, ::media::DemuxerStream::kOk);
   CHECK(buffer.get());
   CHECK(buffer_list);
@@ -291,11 +291,6 @@ class FakeDemuxerHost : public ::media::DemuxerHost {
   void SetDuration(base::TimeDelta duration) override {}
   void OnDemuxerError(::media::PipelineStatus error) override {
     LOG(FATAL) << "OnDemuxerError: " << error;
-  }
-  void AddTextStream(::media::DemuxerStream* text_stream,
-                     const ::media::TextTrackConfig& config) override {
-  }
-  void RemoveTextStream(::media::DemuxerStream* text_stream) override {
   }
 };
 
@@ -313,14 +308,13 @@ DemuxResult FFmpegDemuxForTest(const base::FilePath& filepath,
   ::media::FileDataSource data_source;
   CHECK(data_source.Initialize(filepath));
 
-  ::media::MediaLog media_log;
-  ::media::FFmpegDemuxer demuxer(base::ThreadTaskRunnerHandle::Get(),
-                                 &data_source,
-                                 base::Bind(&OnEncryptedMediaInitData),
-                                 base::Bind(&OnMediaTracksUpdated), &media_log);
+  ::media::NullMediaLog media_log;
+  ::media::FFmpegDemuxer demuxer(
+      base::ThreadTaskRunnerHandle::Get(), &data_source,
+      base::BindRepeating(&OnEncryptedMediaInitData),
+      base::BindRepeating(&OnMediaTracksUpdated), &media_log, true);
   ::media::WaitableMessageLoopEvent init_event;
-  demuxer.Initialize(&fake_demuxer_host, init_event.GetPipelineStatusCB(),
-                     false);
+  demuxer.Initialize(&fake_demuxer_host, init_event.GetPipelineStatusCB());
   init_event.RunAndWaitForStatus(::media::PIPELINE_OK);
 
   auto stream_type =

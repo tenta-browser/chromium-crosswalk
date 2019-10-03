@@ -45,10 +45,8 @@ const char kGCMAccountMapperAppId[] = "com.google.android.gms";
 
 GCMAccountMapper::GCMAccountMapper(GCMDriver* gcm_driver)
     : gcm_driver_(gcm_driver),
-      clock_(new base::DefaultClock),
-      initialized_(false),
-      weak_ptr_factory_(this) {
-}
+      clock_(base::DefaultClock::GetInstance()),
+      initialized_(false) {}
 
 GCMAccountMapper::~GCMAccountMapper() {
 }
@@ -79,17 +77,13 @@ void GCMAccountMapper::SetAccountTokens(
   }
 
   // Start from removing the old tokens, from all of the known accounts.
-  for (AccountMappings::iterator iter = accounts_.begin();
-       iter != accounts_.end();
-       ++iter) {
+  for (auto iter = accounts_.begin(); iter != accounts_.end(); ++iter) {
     iter->access_token.clear();
   }
 
   // Update the internal collection of mappings with the new tokens.
-  for (std::vector<GCMClient::AccountTokenInfo>::const_iterator token_iter =
-           account_tokens.begin();
-       token_iter != account_tokens.end();
-       ++token_iter) {
+  for (auto token_iter = account_tokens.begin();
+       token_iter != account_tokens.end(); ++token_iter) {
     AccountMapping* account_mapping =
         FindMappingByAccountId(token_iter->account_id);
     if (!account_mapping) {
@@ -115,8 +109,7 @@ void GCMAccountMapper::SetAccountTokens(
 
   // Decide what to do with each account (either start mapping, or start
   // removing).
-  for (AccountMappings::iterator mappings_iter = accounts_.begin();
-       mappings_iter != accounts_.end();
+  for (auto mappings_iter = accounts_.begin(); mappings_iter != accounts_.end();
        ++mappings_iter) {
     if (mappings_iter->access_token.empty()) {
       // Send a remove message if the account was not previously being removed,
@@ -166,7 +159,7 @@ void GCMAccountMapper::OnMessage(const std::string& app_id,
     return;
   }
 
-  MessageData::const_iterator it = message.data.find(kGCMSendToGaiaIdAppIdKey);
+  auto it = message.data.find(kGCMSendToGaiaIdAppIdKey);
   if (it == message.data.end()) {
     DVLOG(1) << "Send to Gaia ID failure: Embedded app ID missing.";
     return;
@@ -193,7 +186,7 @@ void GCMAccountMapper::OnSendError(
     const GCMClient::SendErrorDetails& send_error_details) {
   DCHECK_EQ(app_id, kGCMAccountMapperAppId);
 
-  AccountMappings::iterator account_mapping_it =
+  auto account_mapping_it =
       FindMappingByMessageId(send_error_details.message_id);
 
   if (account_mapping_it == accounts_.end())
@@ -227,8 +220,7 @@ void GCMAccountMapper::OnSendError(
 void GCMAccountMapper::OnSendAcknowledged(const std::string& app_id,
                                           const std::string& message_id) {
   DCHECK_EQ(app_id, kGCMAccountMapperAppId);
-  AccountMappings::iterator account_mapping_it =
-      FindMappingByMessageId(message_id);
+  auto account_mapping_it = FindMappingByMessageId(message_id);
 
   DVLOG(1) << "OnSendAcknowledged with message ID: " << message_id;
 
@@ -370,9 +362,7 @@ bool GCMAccountMapper::IsLastStatusChangeOlderThanTTL(
 
 AccountMapping* GCMAccountMapper::FindMappingByAccountId(
     const std::string& account_id) {
-  for (AccountMappings::iterator iter = accounts_.begin();
-       iter != accounts_.end();
-       ++iter) {
+  for (auto iter = accounts_.begin(); iter != accounts_.end(); ++iter) {
     if (iter->account_id == account_id)
       return &*iter;
   }
@@ -382,9 +372,7 @@ AccountMapping* GCMAccountMapper::FindMappingByAccountId(
 
 GCMAccountMapper::AccountMappings::iterator
 GCMAccountMapper::FindMappingByMessageId(const std::string& message_id) {
-  for (std::vector<AccountMapping>::iterator iter = accounts_.begin();
-       iter != accounts_.end();
-       ++iter) {
+  for (auto iter = accounts_.begin(); iter != accounts_.end(); ++iter) {
     if (iter->last_message_id == message_id)
       return iter;
   }
@@ -392,8 +380,8 @@ GCMAccountMapper::FindMappingByMessageId(const std::string& message_id) {
   return accounts_.end();
 }
 
-void GCMAccountMapper::SetClockForTesting(std::unique_ptr<base::Clock> clock) {
-  clock_ = std::move(clock);
+void GCMAccountMapper::SetClockForTesting(base::Clock* clock) {
+  clock_ = clock;
 }
 
 }  // namespace gcm

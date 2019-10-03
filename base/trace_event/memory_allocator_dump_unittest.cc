@@ -8,11 +8,10 @@
 
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/trace_event/heap_profiler_serialization_state.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/process_memory_dump.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -22,7 +21,6 @@ using testing::ElementsAre;
 using testing::Eq;
 using testing::ByRef;
 using testing::IsEmpty;
-using testing::Contains;
 
 namespace base {
 namespace trace_event {
@@ -63,7 +61,7 @@ void CheckString(const MemoryAllocatorDump* dump,
                  const char* expected_units,
                  const std::string& expected_value) {
   MemoryAllocatorDump::Entry expected(name, expected_units, expected_value);
-  EXPECT_THAT(dump->entries(), Contains(Eq(ByRef(expected))));
+  EXPECT_THAT(dump->entries(), testing::Contains(Eq(ByRef(expected))));
 }
 
 void CheckScalar(const MemoryAllocatorDump* dump,
@@ -71,7 +69,7 @@ void CheckScalar(const MemoryAllocatorDump* dump,
                  const char* expected_units,
                  uint64_t expected_value) {
   MemoryAllocatorDump::Entry expected(name, expected_units, expected_value);
-  EXPECT_THAT(dump->entries(), Contains(Eq(ByRef(expected))));
+  EXPECT_THAT(dump->entries(), testing::Contains(Eq(ByRef(expected))));
 }
 
 }  // namespace
@@ -85,7 +83,7 @@ TEST(MemoryAllocatorDumpTest, GuidGeneration) {
 TEST(MemoryAllocatorDumpTest, DumpIntoProcessMemoryDump) {
   FakeMemoryAllocatorDumpProvider fmadp;
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
-  ProcessMemoryDump pmd(new HeapProfilerSerializationState, dump_args);
+  ProcessMemoryDump pmd(dump_args);
 
   fmadp.OnMemoryDump(dump_args, &pmd);
 
@@ -120,12 +118,11 @@ TEST(MemoryAllocatorDumpTest, DumpIntoProcessMemoryDump) {
   // Check that calling serialization routines doesn't cause a crash.
   std::unique_ptr<TracedValue> traced_value(new TracedValue);
   pmd.SerializeAllocatorDumpsInto(traced_value.get());
-  pmd.SerializeHeapProfilerDumpsInto(traced_value.get());
 }
 
 TEST(MemoryAllocatorDumpTest, GetSize) {
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
-  ProcessMemoryDump pmd(new HeapProfilerSerializationState, dump_args);
+  ProcessMemoryDump pmd(dump_args);
   MemoryAllocatorDump* dump = pmd.CreateAllocatorDump("allocator_for_size");
   dump->AddScalar(MemoryAllocatorDump::kNameSize,
                   MemoryAllocatorDump::kUnitsBytes, 1);
@@ -135,7 +132,7 @@ TEST(MemoryAllocatorDumpTest, GetSize) {
 
 TEST(MemoryAllocatorDumpTest, ReadValues) {
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
-  ProcessMemoryDump pmd(new HeapProfilerSerializationState, dump_args);
+  ProcessMemoryDump pmd(dump_args);
   MemoryAllocatorDump* dump = pmd.CreateAllocatorDump("allocator_for_size");
   dump->AddScalar("one", "byte", 1);
   dump->AddString("one", "object", "one");
@@ -159,7 +156,7 @@ TEST(MemoryAllocatorDumpTest, MovingAnEntry) {
 TEST(MemoryAllocatorDumpTest, ForbidDuplicatesDeathTest) {
   FakeMemoryAllocatorDumpProvider fmadp;
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::DETAILED};
-  ProcessMemoryDump pmd(new HeapProfilerSerializationState, dump_args);
+  ProcessMemoryDump pmd(dump_args);
   pmd.CreateAllocatorDump("foo_allocator");
   pmd.CreateAllocatorDump("bar_allocator/heap");
   ASSERT_DEATH(pmd.CreateAllocatorDump("foo_allocator"), "");
@@ -169,7 +166,7 @@ TEST(MemoryAllocatorDumpTest, ForbidDuplicatesDeathTest) {
 
 TEST(MemoryAllocatorDumpTest, ForbidStringsInBackgroundModeDeathTest) {
   MemoryDumpArgs dump_args = {MemoryDumpLevelOfDetail::BACKGROUND};
-  ProcessMemoryDump pmd(new HeapProfilerSerializationState, dump_args);
+  ProcessMemoryDump pmd(dump_args);
   MemoryAllocatorDump* dump = pmd.CreateAllocatorDump("malloc");
   ASSERT_DEATH(dump->AddString("foo", "bar", "baz"), "");
 }

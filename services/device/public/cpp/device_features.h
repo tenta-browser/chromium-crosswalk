@@ -9,13 +9,16 @@
 #define SERVICES_DEVICE_PUBLIC_CPP_DEVICE_FEATURES_H_
 
 #include "base/feature_list.h"
+#include "services/device/public/cpp/device_features_export.h"
 
 namespace features {
 
 // The features should be documented alongside the definition of their values
 // in the .cc file.
-extern const base::Feature kGenericSensor;
-extern const base::Feature kGenericSensorExtraClasses;
+DEVICE_FEATURES_EXPORT extern const base::Feature kGenericSensor;
+DEVICE_FEATURES_EXPORT extern const base::Feature kGenericSensorExtraClasses;
+DEVICE_FEATURES_EXPORT extern const base::Feature kSensorContentSetting;
+DEVICE_FEATURES_EXPORT extern const base::Feature kWinrtSensorsImplementation;
 
 }  // namespace features
 

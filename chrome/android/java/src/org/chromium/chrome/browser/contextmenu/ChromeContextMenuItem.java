@@ -6,99 +6,152 @@ package org.chromium.chrome.browser.contextmenu;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
-import android.support.annotation.DrawableRes;
-import android.support.annotation.IdRes;
+import android.support.annotation.IntDef;
 import android.support.annotation.StringRes;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.SuperscriptSpan;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.Callback;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.DefaultBrowserInfo;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
-import org.chromium.chrome.browser.widget.TintedDrawable;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
+import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.ui.text.SpanApplier;
+import org.chromium.ui.text.SpanApplier.SpanInfo;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * List of all predefined Context Menu Items available in Chrome.
  */
-public enum ChromeContextMenuItem implements ContextMenuItem {
-    // Custom Tab Group
-    OPEN_IN_NEW_CHROME_TAB(R.drawable.context_menu_new_tab,
-            R.string.contextmenu_open_in_new_chrome_tab, R.id.contextmenu_open_in_new_chrome_tab),
-    OPEN_IN_CHROME_INCOGNITO_TAB(R.drawable.incognito_statusbar,
-            R.string.contextmenu_open_in_chrome_incognito_tab,
-            R.id.contextmenu_open_in_chrome_incognito_tab),
-    OPEN_IN_BROWSER_ID(R.drawable.context_menu_new_tab, 0, R.id.contextmenu_open_in_browser_id),
-
-    // Link Group
-    OPEN_IN_OTHER_WINDOW(R.drawable.context_menu_new_tab, R.string.contextmenu_open_in_other_window,
-            R.id.contextmenu_open_in_other_window),
-    OPEN_IN_NEW_TAB(R.drawable.context_menu_new_tab, R.string.contextmenu_open_in_new_tab,
-            R.id.contextmenu_open_in_new_tab),
-    OPEN_IN_INCOGNITO_TAB(R.drawable.incognito_statusbar,
-            R.string.contextmenu_open_in_incognito_tab, R.id.contextmenu_open_in_incognito_tab),
-    COPY_LINK_ADDRESS(R.drawable.ic_content_copy_black, R.string.contextmenu_copy_link_address,
-            R.id.contextmenu_copy_link_address),
-    COPY_LINK_TEXT(R.drawable.ic_content_copy_black, R.string.contextmenu_copy_link_text,
-            R.id.contextmenu_copy_link_text),
-    SAVE_LINK_AS(R.drawable.ic_file_download_white_24dp, R.string.contextmenu_save_link,
-            R.id.contextmenu_save_link_as),
-
-    // Image Group
-    LOAD_ORIGINAL_IMAGE(R.drawable.context_menu_load_image,
-            R.string.contextmenu_load_original_image, R.id.contextmenu_load_original_image),
-    SAVE_IMAGE(R.drawable.ic_file_download_white_24dp, R.string.contextmenu_save_image,
-            R.id.contextmenu_save_image),
-    OPEN_IMAGE(R.drawable.context_menu_new_tab, R.string.contextmenu_open_image,
-            R.id.contextmenu_open_image),
-    OPEN_IMAGE_IN_NEW_TAB(R.drawable.context_menu_new_tab,
-            R.string.contextmenu_open_image_in_new_tab, R.id.contextmenu_open_image_in_new_tab),
-    SEARCH_BY_IMAGE(R.drawable.context_menu_search, R.string.contextmenu_search_web_for_image,
-            R.id.contextmenu_search_by_image),
-
-    // Message Group
-    CALL(R.drawable.ic_phone_googblue_36dp, R.string.contextmenu_call, R.id.contextmenu_call),
-    SEND_MESSAGE(R.drawable.ic_email_googblue_36dp, R.string.contextmenu_send_message,
-            R.id.contextmenu_send_message),
-    ADD_TO_CONTACTS(R.drawable.context_menu_add_to_contacts, R.string.contextmenu_add_to_contacts,
-            R.id.contextmenu_add_to_contacts),
-    COPY(R.drawable.ic_content_copy_black, R.string.contextmenu_copy, R.id.contextmenu_copy),
-
-    // Video Group
-    SAVE_VIDEO(R.drawable.ic_file_download_white_24dp, R.string.contextmenu_save_video,
-            R.id.contextmenu_save_video),
-
-    // Other
-    OPEN_IN_CHROME(R.drawable.context_menu_new_tab, R.string.menu_open_in_chrome,
-            R.id.contextmenu_open_in_chrome),
-
-    // Browser Action Items
-    BROWSER_ACTIONS_OPEN_IN_BACKGROUND(R.drawable.context_menu_new_tab,
-            R.string.browser_actions_open_in_background, R.id.browser_actions_open_in_background),
-    BROWSER_ACTIONS_OPEN_IN_INCOGNITO_TAB(R.drawable.incognito_statusbar,
-            R.string.browser_actions_open_in_incognito_tab,
-            R.id.browser_actions_open_in_incognito_tab),
-    BROWSER_ACTION_SAVE_LINK_AS(R.drawable.ic_file_download_white_24dp,
-            R.string.browser_actions_save_link_as, R.id.browser_actions_save_link_as),
-    BROWSER_ACTIONS_COPY_ADDRESS(R.drawable.ic_content_copy_black,
-            R.string.browser_actions_copy_address, R.id.browser_actions_copy_address);
-
-    @DrawableRes
-    private final int mIconId;
-    @StringRes
-    private final int mStringId;
-    @IdRes
-    private final int mMenuId;
+public class ChromeContextMenuItem implements ContextMenuItem {
+    @IntDef({Item.OPEN_IN_NEW_CHROME_TAB, Item.OPEN_IN_CHROME_INCOGNITO_TAB,
+            Item.OPEN_IN_BROWSER_ID, Item.OPEN_IN_NEW_TAB, Item.OPEN_IN_INCOGNITO_TAB,
+            Item.OPEN_IN_OTHER_WINDOW, Item.OPEN_IN_EPHEMERAL_TAB, Item.COPY_LINK_ADDRESS,
+            Item.COPY_LINK_TEXT, Item.SAVE_LINK_AS, Item.LOAD_ORIGINAL_IMAGE, Item.SAVE_IMAGE,
+            Item.OPEN_IMAGE, Item.OPEN_IMAGE_IN_NEW_TAB, Item.OPEN_IMAGE_IN_EPHEMERAL_TAB,
+            Item.SEARCH_BY_IMAGE, Item.CALL, Item.SEND_MESSAGE, Item.ADD_TO_CONTACTS, Item.COPY,
+            Item.SAVE_VIDEO, Item.OPEN_IN_CHROME})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Item {
+        // Values are numerated from 0 and can't have gaps.
+        // The menu and string IDs below must be kept in sync with this list.
+        // Custom Tab Group
+        int OPEN_IN_NEW_CHROME_TAB = 0;
+        int OPEN_IN_CHROME_INCOGNITO_TAB = 1;
+        int OPEN_IN_BROWSER_ID = 2;
+        // Link Group
+        int OPEN_IN_NEW_TAB = 3;
+        int OPEN_IN_INCOGNITO_TAB = 4;
+        int OPEN_IN_OTHER_WINDOW = 5;
+        int OPEN_IN_EPHEMERAL_TAB = 6;
+        int COPY_LINK_ADDRESS = 7;
+        int COPY_LINK_TEXT = 8;
+        int SAVE_LINK_AS = 9;
+        // Image Group
+        int LOAD_ORIGINAL_IMAGE = 10;
+        int SAVE_IMAGE = 11;
+        int OPEN_IMAGE = 12;
+        int OPEN_IMAGE_IN_NEW_TAB = 13;
+        int OPEN_IMAGE_IN_EPHEMERAL_TAB = 14;
+        int SEARCH_BY_IMAGE = 15;
+        // Message Group
+        int CALL = 16;
+        int SEND_MESSAGE = 17;
+        int ADD_TO_CONTACTS = 18;
+        int COPY = 19;
+        // Video Group
+        int SAVE_VIDEO = 20;
+        // Other
+        int OPEN_IN_CHROME = 21;
+        // ALWAYS UPDATE!
+        int NUM_ENTRIES = 22;
+    }
 
     /**
-     * A representation of a Context Menu Item. Each item should have a string and an id associated
-     * with it.
-     * @param iconId The icon that appears in {@link TabularContextMenuUi} to represent each item.
-     * @param stringId The string that describes the action of the item.
-     * @param menuId The id found in ids.xml.
+     * Mapping from {@link Item} to the ID found in the ids.xml.
      */
-    ChromeContextMenuItem(@DrawableRes int iconId, @StringRes int stringId, @IdRes int menuId) {
-        mIconId = iconId;
-        mStringId = stringId;
-        mMenuId = menuId;
+    private final static int[] MENU_IDS = {
+            R.id.contextmenu_open_in_new_chrome_tab, // Item.OPEN_IN_NEW_CHROME_TAB
+            R.id.contextmenu_open_in_chrome_incognito_tab, // Item.OPEN_IN_CHROME_INCOGNITO_TAB
+            R.id.contextmenu_open_in_browser_id, // Item.OPEN_IN_BROWSER_ID
+            R.id.contextmenu_open_in_new_tab, // Item.OPEN_IN_NEW_TAB
+            R.id.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB
+            R.id.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW
+            R.id.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB
+            R.id.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS
+            R.id.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT
+            R.id.contextmenu_save_link_as, // Item.SAVE_LINK_AS
+            R.id.contextmenu_load_original_image, // Item.LOAD_ORIGINAL_IMAGE
+            R.id.contextmenu_save_image, // Item.SAVE_IMAGE
+            R.id.contextmenu_open_image, // Item.OPEN_IMAGE
+            R.id.contextmenu_open_image_in_new_tab, // Item.OPEN_IMAGE_IN_NEW_TAB
+            R.id.contextmenu_open_image_in_ephemeral_tab, // Item.OPEN_IMAGE_IN_EPHEMERAL_TAB
+            R.id.contextmenu_search_by_image, // Item.SEARCH_BY_IMAGE
+            R.id.contextmenu_call, // Item.CALL
+            R.id.contextmenu_send_message, // Item.SEND_MESSAGE
+            R.id.contextmenu_add_to_contacts, // Item.ADD_TO_CONTACTS
+            R.id.contextmenu_copy, // Item.COPY
+            R.id.contextmenu_save_video, // Item.SAVE_VIDEO
+            R.id.contextmenu_open_in_chrome, // Item.OPEN_IN_CHROME
+    };
+
+    /**
+     * Mapping from {@link Item} to the ID of the string that describes the action of the item.
+     */
+    private final static int[] STRING_IDS = {
+            R.string.contextmenu_open_in_new_chrome_tab, // Item.OPEN_IN_NEW_CHROME_TAB:
+            R.string.contextmenu_open_in_chrome_incognito_tab, // Item.OPEN_IN_CHROME_INCOGNITO_TAB:
+            0, // Item.OPEN_IN_BROWSER_ID is not handled by this mapping.
+            R.string.contextmenu_open_in_new_tab, // Item.OPEN_IN_NEW_TAB:
+            R.string.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB:
+            R.string.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW:
+            R.string.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB:
+            R.string.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS:
+            R.string.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT:
+            R.string.contextmenu_save_link, // Item.SAVE_LINK_AS:
+            R.string.contextmenu_load_original_image, // Item.LOAD_ORIGINAL_IMAGE:
+            R.string.contextmenu_save_image, // Item.SAVE_IMAGE:
+            R.string.contextmenu_open_image, // Item.OPEN_IMAGE:
+            R.string.contextmenu_open_image_in_new_tab, // Item.OPEN_IMAGE_IN_NEW_TAB:
+            R.string.contextmenu_open_image_in_ephemeral_tab, // Item.OPEN_IMAGE_IN_EPHEMERAL_TAB:
+            R.string.contextmenu_search_web_for_image, // Item.SEARCH_BY_IMAGE:
+            R.string.contextmenu_call, // Item.CALL:
+            R.string.contextmenu_send_message, // Item.SEND_MESSAGE:
+            R.string.contextmenu_add_to_contacts, // Item.ADD_TO_CONTACTS:
+            R.string.contextmenu_copy, // Item.COPY:
+            R.string.contextmenu_save_video, // Item.SAVE_VIDEO:
+            R.string.menu_open_in_chrome, // Item.OPEN_IN_CHROME:
+    };
+
+    private final @Item int mItem;
+
+    public ChromeContextMenuItem(@Item int item) {
+        mItem = item;
+    }
+
+    @Override
+    public int getMenuId() {
+        assert MENU_IDS.length == Item.NUM_ENTRIES;
+        return MENU_IDS[mItem];
+    }
+
+    /**
+     * Get string ID from the ID of the item.
+     * @param item #Item Item ID.
+     * @return Returns the string that describes the action of the item.
+     */
+    private static @StringRes int getStringID(@Item int item) {
+        assert STRING_IDS.length == Item.NUM_ENTRIES;
+
+        if (FeatureUtilities.isTabGroupsAndroidEnabled() && item == Item.OPEN_IN_NEW_TAB) {
+            return R.string.contextmenu_open_in_new_tab_group;
+        }
+
+        return STRING_IDS[item];
     }
 
     /**
@@ -108,42 +161,29 @@ public enum ChromeContextMenuItem implements ContextMenuItem {
      * @return Returns a string for the menu item.
      */
     @Override
-    public String getTitle(Context context) {
-        if (this == ChromeContextMenuItem.SEARCH_BY_IMAGE) {
-            return context.getString(R.string.contextmenu_search_web_for_image,
-                    TemplateUrlService.getInstance()
-                            .getDefaultSearchEngineTemplateUrl()
-                            .getShortName());
-        } else if (this == OPEN_IN_BROWSER_ID) {
-            return DefaultBrowserInfo.getTitleOpenInDefaultBrowser(false);
-        } else if (mStringId == 0) {
-            return "";
-        }
-
-        return context.getString(mStringId);
-    }
-
-    /**
-     * Returns the drawable and the content description associated with the context menu. If no
-     * drawable is associated with the icon, null is returned for the drawable and the
-     * iconDescription.
-     */
-    @Override
-    public Drawable getDrawable(Context context) {
-        if (mIconId == R.drawable.context_menu_new_tab
-                || mIconId == R.drawable.context_menu_add_to_contacts
-                || mIconId == R.drawable.context_menu_load_image) {
-            return ApiCompatibilityUtils.getDrawable(context.getResources(), mIconId);
-        } else if (mIconId == 0) {
-            return null;
-        } else {
-            return TintedDrawable.constructTintedDrawable(
-                    context.getResources(), mIconId, R.color.light_normal_color);
+    public CharSequence getTitle(Context context) {
+        switch (mItem) {
+            case Item.OPEN_IN_BROWSER_ID:
+                return DefaultBrowserInfo.getTitleOpenInDefaultBrowser(false);
+            case Item.SEARCH_BY_IMAGE:
+                return context.getString(getStringID(mItem),
+                        TemplateUrlServiceFactory.get()
+                                .getDefaultSearchEngineTemplateUrl()
+                                .getShortName());
+            case Item.OPEN_IN_EPHEMERAL_TAB:
+            case Item.OPEN_IMAGE_IN_EPHEMERAL_TAB:
+                return SpanApplier.applySpans(context.getString(getStringID(mItem)),
+                        new SpanInfo("<new>", "</new>", new SuperscriptSpan(),
+                                new RelativeSizeSpan(0.75f),
+                                new ForegroundColorSpan(ApiCompatibilityUtils.getColor(
+                                        context.getResources(), R.color.default_text_color_blue))));
+            default:
+                return context.getString(getStringID(mItem));
         }
     }
 
     @Override
-    public int getMenuId() {
-        return mMenuId;
+    public void getDrawableAsync(Context context, Callback<Drawable> callback) {
+        callback.onResult(null);
     }
 }

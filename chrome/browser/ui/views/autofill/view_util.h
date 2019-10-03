@@ -5,12 +5,24 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_AUTOFILL_VIEW_UTIL_H_
 #define CHROME_BROWSER_UI_VIEWS_AUTOFILL_VIEW_UTIL_H_
 
-#include "ui/views/controls/textfield/textfield.h"
+#include <memory>
+
+#include "base/strings/string16.h"
+#include "ui/views/view.h"
+
+namespace views {
+class Label;
+}  // namespace views
 
 namespace autofill {
 
-// Creates and returns a small Textfield intended to be used for CVC entry.
-views::Textfield* CreateCvcTextfield();
+// Returns a new label with auto-color readability disabled to ensure consistent
+// colors in the title when a dark native theme is applied
+// (https://crbug.com/881514).
+std::unique_ptr<views::Label> CreateLabelWithColorReadabilityDisabled(
+    const base::string16& text,
+    int text_context,
+    int text_style);
 
 }  // namespace autofill
 

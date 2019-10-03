@@ -12,11 +12,14 @@
 
 namespace content {
 
-void RenderWidgetHostDelegate::GetScreenInfo(ScreenInfo*) {}
-
 KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
+}
+
+bool RenderWidgetHostDelegate::PreHandleMouseEvent(
+    const blink::WebMouseEvent& event) {
+  return false;
 }
 
 bool RenderWidgetHostDelegate::HandleWheelEvent(
@@ -24,9 +27,22 @@ bool RenderWidgetHostDelegate::HandleWheelEvent(
   return false;
 }
 
+bool RenderWidgetHostDelegate::HandleKeyboardEvent(
+    const NativeWebKeyboardEvent& event) {
+  return false;
+}
+
+bool RenderWidgetHostDelegate::ShouldIgnoreInputEvents() {
+  return false;
+}
+
 bool RenderWidgetHostDelegate::PreHandleGestureEvent(
     const blink::WebGestureEvent& event) {
   return false;
+}
+
+double RenderWidgetHostDelegate::GetPendingPageZoomLevel() {
+  return 0.0;
 }
 
 BrowserAccessibilityManager*
@@ -58,7 +74,11 @@ RenderWidgetHostDelegate::GetRenderWidgetHostWithPageFocus() {
   return nullptr;
 }
 
-bool RenderWidgetHostDelegate::IsFullscreenForCurrentTab() const {
+bool RenderWidgetHostDelegate::IsFullscreenForCurrentTab() {
+  return false;
+}
+
+bool RenderWidgetHostDelegate::ShouldShowStaleContentOnEviction() {
   return false;
 }
 
@@ -73,6 +93,15 @@ bool RenderWidgetHostDelegate::HasMouseLock(
 }
 
 RenderWidgetHostImpl* RenderWidgetHostDelegate::GetMouseLockWidget() {
+  return nullptr;
+}
+
+bool RenderWidgetHostDelegate::RequestKeyboardLock(RenderWidgetHostImpl* host,
+                                                   bool esc_key_locked) {
+  return false;
+}
+
+RenderWidgetHostImpl* RenderWidgetHostDelegate::GetKeyboardLockWidget() {
   return nullptr;
 }
 
@@ -107,9 +136,10 @@ bool RenderWidgetHostDelegate::AddDomainInfoToRapporSample(
   return false;
 }
 
-void RenderWidgetHostDelegate::UpdateUrlForUkmSource(
-    ukm::UkmRecorder* service,
-    ukm::SourceId ukm_source_id) {}
+ukm::SourceId RenderWidgetHostDelegate::GetUkmSourceIdForLastCommittedSource()
+    const {
+  return ukm::kInvalidSourceId;
+}
 
 gfx::Size RenderWidgetHostDelegate::GetAutoResizeSize() {
   return gfx::Size();
@@ -121,6 +151,15 @@ WebContents* RenderWidgetHostDelegate::GetAsWebContents() {
 
 bool RenderWidgetHostDelegate::IsShowingContextMenuOnPage() const {
   return false;
+}
+
+InputEventShim* RenderWidgetHostDelegate::GetInputEventShim() const {
+  return nullptr;
+}
+
+RenderFrameHostImpl*
+RenderWidgetHostDelegate::GetFocusedFrameFromFocusedDelegate() {
+  return nullptr;
 }
 
 }  // namespace content

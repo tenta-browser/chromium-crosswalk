@@ -15,6 +15,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chromeos/audio/cras_audio_handler.h"
+#include "chromeos/dbus/audio/fake_cras_audio_client.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/cras/audio_manager_cras.h"
 #include "media/audio/fake_audio_log_factory.h"
@@ -45,7 +46,7 @@ class MockAudioInputCallback : public AudioInputStream::AudioInputCallback {
 class MockAudioManagerCrasInput : public AudioManagerCras {
  public:
   MockAudioManagerCrasInput()
-      : AudioManagerCras(base::MakeUnique<TestAudioThread>(),
+      : AudioManagerCras(std::make_unique<TestAudioThread>(),
                          &fake_audio_log_factory_) {}
 
   // We need to override this function in order to skip checking the number
@@ -64,14 +65,16 @@ class MockAudioManagerCrasInput : public AudioManagerCras {
 class CrasInputStreamTest : public testing::Test {
  protected:
   CrasInputStreamTest() {
+    chromeos::CrasAudioClient::InitializeFake();
     chromeos::CrasAudioHandler::InitializeForTesting();
     mock_manager_.reset(new StrictMock<MockAudioManagerCrasInput>());
     base::RunLoop().RunUntilIdle();
   }
 
   ~CrasInputStreamTest() override {
-    chromeos::CrasAudioHandler::Shutdown();
     mock_manager_->Shutdown();
+    chromeos::CrasAudioHandler::Shutdown();
+    chromeos::CrasAudioClient::Shutdown();
   }
 
   CrasInputStream* CreateStream(ChannelLayout layout) {
@@ -90,7 +93,6 @@ class CrasInputStreamTest : public testing::Test {
     AudioParameters params(kTestFormat,
                            layout,
                            kTestSampleRate,
-                           kTestBitsPerSample,
                            samples_per_packet);
     return new CrasInputStream(params, mock_manager_.get(), device_id);
   }
@@ -121,7 +123,6 @@ class CrasInputStreamTest : public testing::Test {
     test_stream->Close();
   }
 
-  static const unsigned int kTestBitsPerSample;
   static const unsigned int kTestCaptureDurationMs;
   static const ChannelLayout kTestChannelLayout;
   static const AudioParameters::Format kTestFormat;
@@ -135,7 +136,6 @@ class CrasInputStreamTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(CrasInputStreamTest);
 };
 
-const unsigned int CrasInputStreamTest::kTestBitsPerSample = 16;
 const unsigned int CrasInputStreamTest::kTestCaptureDurationMs = 250;
 const ChannelLayout CrasInputStreamTest::kTestChannelLayout =
     CHANNEL_LAYOUT_STEREO;
@@ -156,24 +156,10 @@ TEST_F(CrasInputStreamTest, OpenStereo) {
   test_stream->Close();
 }
 
-TEST_F(CrasInputStreamTest, BadBitsPerSample) {
-  AudioParameters bad_bps_params(kTestFormat,
-                                 kTestChannelLayout,
-                                 kTestSampleRate,
-                                 kTestBitsPerSample - 1,
-                                 kTestFramesPerPacket);
-  CrasInputStream* test_stream =
-      new CrasInputStream(bad_bps_params, mock_manager_.get(),
-                          AudioDeviceDescription::kDefaultDeviceId);
-  EXPECT_FALSE(test_stream->Open());
-  test_stream->Close();
-}
-
 TEST_F(CrasInputStreamTest, BadSampleRate) {
   AudioParameters bad_rate_params(kTestFormat,
                                   kTestChannelLayout,
                                   0,
-                                  kTestBitsPerSample,
                                   kTestFramesPerPacket);
   CrasInputStream* test_stream =
       new CrasInputStream(bad_rate_params, mock_manager_.get(),
@@ -208,7 +194,6 @@ TEST_F(CrasInputStreamTest, CaptureFrames) {
     AudioParameters params_mono(kTestFormat,
                                 CHANNEL_LAYOUT_MONO,
                                 rates[i],
-                                kTestBitsPerSample,
                                 kTestFramesPerPacket);
     CaptureSomeFrames(params_mono, kTestCaptureDurationMs);
   }
@@ -218,7 +203,6 @@ TEST_F(CrasInputStreamTest, CaptureFrames) {
     AudioParameters params_stereo(kTestFormat,
                                   CHANNEL_LAYOUT_STEREO,
                                   rates[i],
-                                  kTestBitsPerSample,
                                   kTestFramesPerPacket);
     CaptureSomeFrames(params_stereo, kTestCaptureDurationMs);
   }

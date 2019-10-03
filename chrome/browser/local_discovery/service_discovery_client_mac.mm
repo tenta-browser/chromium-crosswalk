@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
@@ -33,6 +34,7 @@ using local_discovery::ServiceResolverImplMac;
 
 - (id)initWithContainer:
         (ServiceWatcherImplMac::NetServiceBrowserContainer*)serviceWatcherImpl;
+- (void)clearDiscoveredServices;
 
 @end
 
@@ -136,11 +138,12 @@ ServiceDiscoveryClientMac::~ServiceDiscoveryClientMac() {}
 
 std::unique_ptr<ServiceWatcher> ServiceDiscoveryClientMac::CreateServiceWatcher(
     const std::string& service_type,
-    const ServiceWatcher::UpdatedCallback& callback) {
+    ServiceWatcher::UpdatedCallback callback) {
   StartThreadIfNotStarted();
   VLOG(1) << "CreateServiceWatcher: " << service_type;
   return std::make_unique<ServiceWatcherImplMac>(
-      service_type, callback, service_discovery_thread_->task_runner());
+      service_type, std::move(callback),
+      service_discovery_thread_->task_runner());
 }
 
 std::unique_ptr<ServiceResolver>
@@ -176,14 +179,13 @@ void ServiceDiscoveryClientMac::StartThreadIfNotStarted() {
 
 ServiceWatcherImplMac::NetServiceBrowserContainer::NetServiceBrowserContainer(
     const std::string& service_type,
-    const ServiceWatcher::UpdatedCallback& callback,
+    ServiceWatcher::UpdatedCallback callback,
     scoped_refptr<base::SingleThreadTaskRunner> service_discovery_runner)
     : service_type_(service_type),
-      callback_(callback),
+      callback_(std::move(callback)),
       callback_runner_(base::ThreadTaskRunnerHandle::Get()),
       service_discovery_runner_(service_discovery_runner),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 ServiceWatcherImplMac::NetServiceBrowserContainer::
     ~NetServiceBrowserContainer() {
@@ -195,20 +197,24 @@ ServiceWatcherImplMac::NetServiceBrowserContainer::
   // already gone.
   // https://crbug.com/657495, https://openradar.appspot.com/28943305
   [browser_ setDelegate:nil];
+
+  // Ensure the delegate clears all references to itself, which it had added as
+  // discovered services were reported to it.
+  [delegate_ clearDiscoveredServices];
 }
 
 void ServiceWatcherImplMac::NetServiceBrowserContainer::Start() {
   service_discovery_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NetServiceBrowserContainer::StartOnDiscoveryThread,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&NetServiceBrowserContainer::StartOnDiscoveryThread,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void ServiceWatcherImplMac::NetServiceBrowserContainer::DiscoverNewServices() {
   service_discovery_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NetServiceBrowserContainer::DiscoverOnDiscoveryThread,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&NetServiceBrowserContainer::DiscoverOnDiscoveryThread,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void
@@ -232,16 +238,14 @@ ServiceWatcherImplMac::NetServiceBrowserContainer::DiscoverOnDiscoveryThread() {
   DVLOG(1) << "Listening for service type '" << [type UTF8String]
            << "' on domain '" << [domain UTF8String] << "'";
 
-  base::Time start_time = base::Time::Now();
   [browser_ searchForServicesOfType:type inDomain:domain];
-  UMA_HISTOGRAM_TIMES("LocalDiscovery.MacBrowseCallTimes",
-                      base::Time::Now() - start_time);
 }
 
 void ServiceWatcherImplMac::NetServiceBrowserContainer::OnServicesUpdate(
     ServiceWatcher::UpdateType update,
     const std::string& service) {
-  callback_runner_->PostTask(FROM_HERE, base::Bind(callback_, update, service));
+  callback_runner_->PostTask(FROM_HERE,
+                             base::BindOnce(callback_, update, service));
 }
 
 void ServiceWatcherImplMac::NetServiceBrowserContainer::DeleteSoon() {
@@ -250,16 +254,16 @@ void ServiceWatcherImplMac::NetServiceBrowserContainer::DeleteSoon() {
 
 ServiceWatcherImplMac::ServiceWatcherImplMac(
     const std::string& service_type,
-    const ServiceWatcher::UpdatedCallback& callback,
+    ServiceWatcher::UpdatedCallback callback,
     scoped_refptr<base::SingleThreadTaskRunner> service_discovery_runner)
     : service_type_(service_type),
-      callback_(callback),
+      callback_(std::move(callback)),
       started_(false),
       weak_factory_(this) {
   container_.reset(new NetServiceBrowserContainer(
       service_type,
-      base::Bind(&ServiceWatcherImplMac::OnServicesUpdate,
-                 weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&ServiceWatcherImplMac::OnServicesUpdate,
+                          weak_factory_.GetWeakPtr()),
       service_discovery_runner));
 }
 
@@ -319,8 +323,8 @@ ServiceResolverImplMac::NetServiceContainer::~NetServiceContainer() {
 void ServiceResolverImplMac::NetServiceContainer::StartResolving() {
   service_discovery_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NetServiceContainer::StartResolvingOnDiscoveryThread,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&NetServiceContainer::StartResolvingOnDiscoveryThread,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void ServiceResolverImplMac::NetServiceContainer::DeleteSoon() {
@@ -460,6 +464,14 @@ ServiceResolverImplMac::GetContainerForTesting() {
   return self;
 }
 
+- (void)clearDiscoveredServices {
+  for (NSNetService* netService in services_.get()) {
+    [netService stopMonitoring];
+    [netService setDelegate:nil];
+  }
+  [services_ removeAllObjects];
+}
+
 - (void)netServiceBrowser:(NSNetServiceBrowser*)netServiceBrowser
            didFindService:(NSNetService*)netService
                moreComing:(BOOL)moreServicesComing {
@@ -482,7 +494,9 @@ ServiceResolverImplMac::GetContainerForTesting() {
         base::SysNSStringToUTF8([netService name]));
 
     // Stop monitoring this service for updates.
-    [[services_ objectAtIndex:index] stopMonitoring];
+    DCHECK_EQ(netService, [services_ objectAtIndex:index]);
+    [netService stopMonitoring];
+    [netService setDelegate:nil];
     [services_ removeObjectAtIndex:index];
   }
 }

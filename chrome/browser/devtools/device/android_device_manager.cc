@@ -9,17 +9,23 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/devtools/device/usb/usb_device_manager_helper.h"
+#include "chrome/browser/devtools/device/usb/usb_device_provider.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/socket/stream_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 using content::BrowserThread;
 
@@ -32,6 +38,30 @@ const int kBufferSize = 16 * 1024;
 static const char kModelOffline[] = "Offline";
 
 static const char kRequestLineFormat[] = "GET %s HTTP/1.1";
+
+net::NetworkTrafficAnnotationTag kAndroidDeviceManagerTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("android_device_manager_socket", R"(
+        semantics {
+          sender: "Android Device Manager"
+          description:
+            "Remote debugging is supported over existing ADB (Android Debug "
+            "Bridge) connection, in addition to raw USB connection. This "
+            "socket talks to the local ADB daemon which routes debugging "
+            "traffic to a remote device."
+          trigger:
+            "A user connects to an Android device using remote debugging."
+          data: "Any data required for remote debugging."
+          destination: LOCAL
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "To use ADB with a device connected over USB, you must enable USB "
+            "debugging in the device system settings, under Developer options."
+          policy_exception_justification:
+            "This is not a network request and is only used for remote "
+            "debugging."
+        })");
 
 static void PostDeviceInfoCallback(
     scoped_refptr<base::SingleThreadTaskRunner> response_task_runner,
@@ -59,7 +89,7 @@ static void PostHttpUpgradeCallback(
     std::unique_ptr<net::StreamSocket> socket) {
   response_task_runner->PostTask(
       FROM_HERE, base::BindOnce(callback, result, extensions, body_head,
-                                base::Passed(&socket)));
+                                std::move(socket)));
 }
 
 class HttpRequest {
@@ -139,9 +169,9 @@ class HttpRequest {
       }
 
       result = socket_->Write(
-          request_.get(),
-          request_->BytesRemaining(),
-          base::Bind(&HttpRequest::DoSendRequest, base::Unretained(this)));
+          request_.get(), request_->BytesRemaining(),
+          base::Bind(&HttpRequest::DoSendRequest, base::Unretained(this)),
+          kAndroidDeviceManagerTrafficAnnotation);
     }
   }
 
@@ -163,11 +193,12 @@ class HttpRequest {
     }
     pieces.insert(pieces.end(), {crlf});
 
-    std::string request = base::JoinString(pieces, "");
+    std::string request = base::StrCat(pieces);
     scoped_refptr<net::IOBuffer> base_buffer =
-        new net::IOBuffer(request.size());
+        base::MakeRefCounted<net::IOBuffer>(request.size());
     memcpy(base_buffer->data(), request.data(), request.size());
-    request_ = new net::DrainableIOBuffer(base_buffer.get(), request.size());
+    request_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+        std::move(base_buffer), request.size());
 
     DoSendRequest(net::OK);
   }
@@ -176,7 +207,7 @@ class HttpRequest {
     if (!CheckNetResultOrDie(result))
       return;
 
-    response_buffer_ = new net::IOBuffer(kBufferSize);
+    response_buffer_ = base::MakeRefCounted<net::IOBuffer>(kBufferSize);
 
     result = socket_->Read(
         response_buffer_.get(),
@@ -309,17 +340,15 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
       const DeviceProviders& providers,
       const DescriptorsCallback& callback) {
     // Don't keep counted reference on calling thread;
-    DevicesRequest* request = new DevicesRequest(callback);
-    // Avoid destruction while sending requests
-    request->AddRef();
-    for (DeviceProviders::const_iterator it = providers.begin();
-         it != providers.end(); ++it) {
+    scoped_refptr<DevicesRequest> request =
+        base::WrapRefCounted(new DevicesRequest(callback));
+    for (auto it = providers.begin(); it != providers.end(); ++it) {
       device_task_runner->PostTask(
           FROM_HERE, base::BindOnce(&DeviceProvider::QueryDevices, *it,
                                     base::Bind(&DevicesRequest::ProcessSerials,
                                                request, *it)));
     }
-    device_task_runner->ReleaseSoon(FROM_HERE, request);
+    device_task_runner->ReleaseSoon(FROM_HERE, std::move(request));
   }
 
  private:
@@ -331,15 +360,14 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
   friend class base::RefCountedThreadSafe<DevicesRequest>;
   ~DevicesRequest() {
     response_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(callback_, base::Passed(&descriptors_)));
+        FROM_HERE, base::BindOnce(callback_, std::move(descriptors_)));
   }
 
   typedef std::vector<std::string> Serials;
 
   void ProcessSerials(scoped_refptr<DeviceProvider> provider,
                       const Serials& serials) {
-    for (Serials::const_iterator it = serials.begin(); it != serials.end();
-         ++it) {
+    for (auto it = serials.begin(); it != serials.end(); ++it) {
       descriptors_->resize(descriptors_->size() + 1);
       descriptors_->back().provider = provider;
       descriptors_->back().serial = *it;
@@ -351,7 +379,13 @@ class DevicesRequest : public base::RefCountedThreadSafe<DevicesRequest> {
   std::unique_ptr<DeviceDescriptors> descriptors_;
 };
 
-} // namespace
+void OnCountDevices(const base::Callback<void(int)>& callback,
+                    int device_count) {
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(callback, device_count));
+}
+
+}  // namespace
 
 AndroidDeviceManager::BrowserInfo::BrowserInfo()
     : type(kTypeOther) {
@@ -457,8 +491,7 @@ AndroidDeviceManager::Device::Device(
     : RefCountedDeleteOnSequence<Device>(base::ThreadTaskRunnerHandle::Get()),
       task_runner_(device_task_runner),
       provider_(provider),
-      serial_(serial),
-      weak_factory_(this) {}
+      serial_(serial) {}
 
 AndroidDeviceManager::Device::~Device() {
   task_runner_->PostTask(
@@ -507,9 +540,10 @@ AndroidDeviceManager::HandlerThread::~HandlerThread() {
   if (!thread_)
     return;
   // Shut down thread on a thread other than UI so it can join a thread.
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
-                           base::BindOnce(&HandlerThread::StopThread, thread_));
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&HandlerThread::StopThread, thread_));
 }
 
 // static
@@ -519,12 +553,8 @@ std::unique_ptr<AndroidDeviceManager> AndroidDeviceManager::Create() {
 
 void AndroidDeviceManager::SetDeviceProviders(
     const DeviceProviders& providers) {
-  for (DeviceProviders::iterator it = providers_.begin();
-      it != providers_.end(); ++it) {
-    (*it)->AddRef();
-    DeviceProvider* raw_ptr = it->get();
-    *it = nullptr;
-    handler_thread_->message_loop()->ReleaseSoon(FROM_HERE, raw_ptr);
+  for (auto it = providers_.begin(); it != providers_.end(); ++it) {
+    handler_thread_->message_loop()->ReleaseSoon(FROM_HERE, std::move(*it));
   }
   providers_ = providers;
 }
@@ -535,10 +565,25 @@ void AndroidDeviceManager::QueryDevices(const DevicesCallback& callback) {
                                    weak_factory_.GetWeakPtr(), callback));
 }
 
-AndroidDeviceManager::AndroidDeviceManager()
-    : handler_thread_(HandlerThread::GetInstance()),
-      weak_factory_(this) {
+void AndroidDeviceManager::CountDevices(
+    const base::Callback<void(int)>& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  handler_thread_->message_loop()->PostTask(
+      FROM_HERE, base::BindOnce(&UsbDeviceManagerHelper::CountDevices,
+                                base::BindOnce(&OnCountDevices, callback)));
 }
+
+void AndroidDeviceManager::set_usb_device_manager_for_test(
+    device::mojom::UsbDeviceManagerPtrInfo fake_usb_manager) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  handler_thread_->message_loop()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&UsbDeviceManagerHelper::SetUsbManagerForTesting,
+                     std::move(fake_usb_manager)));
+}
+
+AndroidDeviceManager::AndroidDeviceManager()
+    : handler_thread_(HandlerThread::GetInstance()) {}
 
 AndroidDeviceManager::~AndroidDeviceManager() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -553,7 +598,7 @@ void AndroidDeviceManager::UpdateDevices(
   for (DeviceDescriptors::const_iterator it = descriptors->begin();
        it != descriptors->end();
        ++it) {
-    DeviceWeakMap::iterator found = devices_.find(it->serial);
+    auto found = devices_.find(it->serial);
     scoped_refptr<Device> device;
     if (found == devices_.end() || !found->second ||
         found->second->provider_.get() != it->provider.get()) {

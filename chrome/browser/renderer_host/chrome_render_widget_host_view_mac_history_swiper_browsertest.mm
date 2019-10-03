@@ -4,6 +4,7 @@
 
 #include <Cocoa/Cocoa.h>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
@@ -20,7 +21,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
+#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
 #include "ui/events/base_event_utils.h"
@@ -97,10 +98,8 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
     ui_test_utils::NavigateToURL(browser(), url2_);
     ASSERT_EQ(url2_, GetWebContents()->GetURL());
 
-    std::unique_ptr<base::SimpleTestTickClock> mock_clock(
-      new base::SimpleTestTickClock());
-    mock_clock->Advance(base::TimeDelta::FromMilliseconds(100));
-    ui::SetEventTickClockForTesting(std::move(mock_clock));
+    mock_clock_.Advance(base::TimeDelta::FromMilliseconds(100));
+    ui::SetEventTickClockForTesting(&mock_clock_);
   }
 
   void TearDownOnMainThread() override { event_queue_.reset(); }
@@ -173,6 +172,12 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
         andReturnValue:OCMOCK_VALUE(timestamp)] timestamp];
     [(NSEvent*)[[mock_event stub] andReturnValue:OCMOCK_VALUE(type)] type];
 
+    // We need to assign a locationInWindow for the event so that the wheel
+    // event happens inside the page.
+    NSPoint locationInWindow = NSMakePoint(400, 400);
+    [(NSEvent*)[[mock_event stub] andReturnValue:OCMOCK_VALUE(locationInWindow)]
+        locationInWindow];
+
     return mock_event;
   }
 
@@ -200,7 +205,8 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
                        ->GetRenderViewHost()
                        ->GetWidget()
                        ->GetView()
-                       ->GetNativeView();
+                       ->GetNativeView()
+                       .GetNativeNSView();
     NSWindow* window = [view window];
     [(NSEvent*)[[event stub] andReturnValue:OCMOCK_VALUE(window)] window];
 
@@ -332,7 +338,8 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
                          ->GetRenderViewHost()
                          ->GetWidget()
                          ->GetView()
-                         ->GetNativeView();
+                         ->GetNativeView()
+                         .GetNativeNSView();
       BOOL run_loop = queued_event.runMessageLoop;
       switch (queued_event.deployment) {
         case DEPLOYMENT_GESTURE_BEGIN:
@@ -376,6 +383,8 @@ class ChromeRenderWidgetHostViewMacHistorySwiperTest
     const int scroll_offset = GetScrollTop();
     EXPECT_EQ(offset, scroll_offset);
   }
+
+  base::SimpleTestTickClock mock_clock_;
 
   GURL url1_;
   GURL url2_;
@@ -736,6 +745,9 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
   if (!IsHistorySwipingSupported())
     return;
 
+  ui_test_utils::NavigateToURL(browser(), url_iframe_);
+  ASSERT_EQ(url_iframe_, GetWebContents()->GetURL());
+
   content::InputEventAckWaiter wheel_end_ack_waiter(
       GetWebContents()->GetRenderViewHost()->GetWidget(),
       base::BindRepeating([](content::InputEventAckSource,
@@ -746,8 +758,6 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
                    blink::WebMouseWheelEvent::kPhaseEnded;
       }));
 
-  ui_test_utils::NavigateToURL(browser(), url_iframe_);
-  ASSERT_EQ(url_iframe_, GetWebContents()->GetURL());
   QueueBeginningEvents(0, -1);
   for (int i = 0; i < 10; ++i)
     QueueScrollAndTouchMoved(0, -1);
@@ -783,4 +793,26 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
 
   RunQueuedEvents();
   ExpectUrlAndOffset(url1_, 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
+                       InnerScrollersOverscrollBehaviorPreventsNavigation) {
+  if (!IsHistorySwipingSupported())
+    return;
+
+  const base::FilePath base_path(FILE_PATH_LITERAL("scroll"));
+  GURL url_overscroll_behavior = ui_test_utils::GetTestUrl(
+      base_path, base::FilePath(FILE_PATH_LITERAL("overscroll_behavior.html")));
+  ui_test_utils::NavigateToURL(browser(), url_overscroll_behavior);
+  ASSERT_EQ(url_overscroll_behavior, GetWebContents()->GetURL());
+
+  QueueBeginningEvents(1, 0);
+  for (int i = 0; i < 10; ++i) {
+    QueueScrollAndTouchMoved(10, 0);
+  }
+
+  QueueEndEvents();
+  RunQueuedEvents();
+  // If navigation was to occur, the URL would be url2_.
+  ExpectUrlAndOffset(url_overscroll_behavior, 0);
 }

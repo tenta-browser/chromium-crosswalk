@@ -6,30 +6,41 @@
 
 #include <algorithm>
 #include <memory>
+#include <queue>
 #include <vector>
 
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/drag_drop/drag_drop_controller.h"
-#include "ash/public/cpp/config.h"
+#include "ash/drag_drop/drag_drop_controller_test_api.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/ash_prefs.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/test/shell_test_api.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/scoped_root_window_for_new_windows.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shell_test_api.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
+#include "ash/window_factory.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/containers/flat_set.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/account_id/account_id.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
@@ -39,9 +50,6 @@
 #include "ui/events/test/events_test_utils.h"
 #include "ui/events/test/test_event_handler.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_switches.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/widget.h"
@@ -54,9 +62,9 @@ namespace ash {
 
 namespace {
 
-aura::Window* GetDefaultContainer() {
+aura::Window* GetActiveDeskContainer() {
   return Shell::GetContainer(Shell::GetPrimaryRootWindow(),
-                             kShellWindowId_DefaultContainer);
+                             desks_util::GetActiveDeskContainerId());
 }
 
 aura::Window* GetAlwaysOnTopContainer() {
@@ -66,20 +74,37 @@ aura::Window* GetAlwaysOnTopContainer() {
 
 // Expect ALL the containers!
 void ExpectAllContainers() {
-  // Validate no duplicate container IDs.
-  const size_t all_shell_container_ids_size = arraysize(kAllShellContainerIds);
-  std::set<int32_t> container_ids;
-  for (size_t i = 0; i < all_shell_container_ids_size; ++i)
-    EXPECT_TRUE(container_ids.insert(kAllShellContainerIds[i]).second);
-
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
+
+  // Validate no duplicate container IDs.
+  base::flat_set<int> container_ids;
+  std::queue<aura::Window*> window_queue;
+  window_queue.push(root_window);
+  while (!window_queue.empty()) {
+    aura::Window* current_window = window_queue.front();
+    window_queue.pop();
+    for (aura::Window* child : current_window->children())
+      window_queue.push(child);
+
+    const int id = current_window->id();
+
+    // Skip windows with no IDs.
+    if (id == aura::Window::kInitialId)
+      continue;
+
+    EXPECT_TRUE(container_ids.insert(id).second)
+        << "Found duplicate ID: " << id
+        << " at window: " << current_window->GetName();
+  }
+
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_WallpaperContainer));
-  EXPECT_TRUE(
-      Shell::GetContainer(root_window, kShellWindowId_DefaultContainer));
+
+  for (int desk_id : desks_util::GetDesksContainersIds())
+    EXPECT_TRUE(Shell::GetContainer(root_window, desk_id));
+
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_AlwaysOnTopContainer));
-  EXPECT_TRUE(Shell::GetContainer(root_window, kShellWindowId_PanelContainer));
   EXPECT_TRUE(Shell::GetContainer(root_window, kShellWindowId_ShelfContainer));
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_SystemModalContainer));
@@ -99,6 +124,8 @@ void ExpectAllContainers() {
       Shell::GetContainer(root_window, kShellWindowId_OverlayContainer));
   EXPECT_TRUE(Shell::GetContainer(root_window,
                                   kShellWindowId_ImeWindowParentContainer));
+  EXPECT_TRUE(Shell::GetContainer(root_window,
+                                  kShellWindowId_VirtualKeyboardContainer));
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_MouseCursorContainer));
 
@@ -123,6 +150,20 @@ class ModalWindow : public views::WidgetDelegateView {
   DISALLOW_COPY_AND_ASSIGN(ModalWindow);
 };
 
+class WindowWithPreferredSize : public views::WidgetDelegateView {
+ public:
+  WindowWithPreferredSize() = default;
+  ~WindowWithPreferredSize() override = default;
+
+  // views::WidgetDelegate:
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(400, 300);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WindowWithPreferredSize);
+};
+
 class SimpleMenuDelegate : public ui::SimpleMenuModel::Delegate {
  public:
   SimpleMenuDelegate() = default;
@@ -138,26 +179,11 @@ class SimpleMenuDelegate : public ui::SimpleMenuModel::Delegate {
   DISALLOW_COPY_AND_ASSIGN(SimpleMenuDelegate);
 };
 
-class TestShellObserver : public ShellObserver {
- public:
-  TestShellObserver() = default;
-  ~TestShellObserver() override = default;
-
-  // ShellObserver:
-  void OnLocalStatePrefServiceInitialized(PrefService* pref_service) override {
-    last_local_state_ = pref_service;
-  }
-
-  PrefService* last_local_state_ = nullptr;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestShellObserver);
-};
-
 }  // namespace
 
 class ShellTest : public AshTestBase {
  public:
+  // TODO(jamescook): Convert to AshTestBase::CreateTestWidget().
   views::Widget* CreateTestWindow(views::Widget::InitParams params) {
     views::Widget* widget = new views::Widget;
     params.context = CurrentContext();
@@ -169,7 +195,8 @@ class ShellTest : public AshTestBase {
                         bool always_on_top,
                         aura::Window* expected_container) {
     views::Widget::InitParams widget_params(type);
-    widget_params.keep_on_top = always_on_top;
+    if (always_on_top)
+      widget_params.z_order = ui::ZOrderLevel::kFloatingWindow;
 
     views::Widget* widget = CreateTestWindow(widget_params);
     widget->Show();
@@ -187,7 +214,8 @@ class ShellTest : public AshTestBase {
     views::MenuController* menu_controller =
         views::MenuController::GetActiveInstance();
     DCHECK(menu_controller);
-    EXPECT_EQ(views::MenuController::EXIT_NONE, menu_controller->exit_type());
+    EXPECT_EQ(views::MenuController::ExitType::kNone,
+              menu_controller->exit_type());
 
     // Create a LockScreen window.
     views::Widget::InitParams widget_params(
@@ -200,9 +228,9 @@ class ShellTest : public AshTestBase {
 
     // Simulate real screen locker to change session state to LOCKED
     // when it is shown.
-    SessionController* controller = Shell::Get()->session_controller();
-    controller->LockScreenAndFlushForTest();
+    GetSessionControllerClient()->LockScreen();
 
+    SessionControllerImpl* controller = Shell::Get()->session_controller();
     EXPECT_TRUE(controller->IsScreenLocked());
     EXPECT_TRUE(lock_widget->GetNativeView()->HasFocus());
 
@@ -217,10 +245,10 @@ TEST_F(ShellTest, CreateWindow) {
   // Normal window should be created in default container.
   TestCreateWindow(views::Widget::InitParams::TYPE_WINDOW,
                    false,  // always_on_top
-                   GetDefaultContainer());
+                   GetActiveDeskContainer());
   TestCreateWindow(views::Widget::InitParams::TYPE_POPUP,
                    false,  // always_on_top
-                   GetDefaultContainer());
+                   GetActiveDeskContainer());
 
   // Always-on-top window and popup are created in always-on-top container.
   TestCreateWindow(views::Widget::InitParams::TYPE_WINDOW,
@@ -231,34 +259,57 @@ TEST_F(ShellTest, CreateWindow) {
                    GetAlwaysOnTopContainer());
 }
 
-TEST_F(ShellTest, ChangeAlwaysOnTop) {
+// Verifies that a window with a preferred size is created centered on the
+// default display for new windows. Mojo apps like shortcut_viewer rely on this
+// behavior.
+TEST_F(ShellTest, CreateWindowWithPreferredSize) {
+  UpdateDisplay("1024x768,800x600");
+
+  aura::Window* secondary_root = Shell::GetAllRootWindows()[1];
+  ScopedRootWindowForNewWindows scoped_root(secondary_root);
+
+  views::Widget::InitParams params;
+  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  // Don't specify bounds, parent or context.
+  params.delegate = new WindowWithPreferredSize;
+  views::Widget widget;
+  params.context = CurrentContext();
+  widget.Init(params);
+
+  // Widget is centered on secondary display.
+  EXPECT_EQ(secondary_root, widget.GetNativeWindow()->GetRootWindow());
+  EXPECT_EQ(GetSecondaryDisplay().work_area().CenterPoint(),
+            widget.GetRestoredBounds().CenterPoint());
+}
+
+TEST_F(ShellTest, ChangeZOrderLevel) {
   views::Widget::InitParams widget_params(
       views::Widget::InitParams::TYPE_WINDOW);
 
-  // Creates a normal window
+  // Creates a normal window.
   views::Widget* widget = CreateTestWindow(widget_params);
   widget->Show();
 
-  // It should be in default container.
+  // It should be in the active desk container.
   EXPECT_TRUE(
-      GetDefaultContainer()->Contains(widget->GetNativeWindow()->parent()));
+      GetActiveDeskContainer()->Contains(widget->GetNativeWindow()->parent()));
 
-  // Flip always-on-top flag.
-  widget->SetAlwaysOnTop(true);
+  // Set the z-order to float.
+  widget->SetZOrderLevel(ui::ZOrderLevel::kFloatingWindow);
   // And it should in always on top container now.
   EXPECT_EQ(GetAlwaysOnTopContainer(), widget->GetNativeWindow()->parent());
 
-  // Flip always-on-top flag.
-  widget->SetAlwaysOnTop(false);
-  // It should go back to default container.
+  // Put the z-order back to normal.
+  widget->SetZOrderLevel(ui::ZOrderLevel::kNormal);
+  // It should go back to the active desk container.
   EXPECT_TRUE(
-      GetDefaultContainer()->Contains(widget->GetNativeWindow()->parent()));
+      GetActiveDeskContainer()->Contains(widget->GetNativeWindow()->parent()));
 
-  // Set the same always-on-top flag again.
-  widget->SetAlwaysOnTop(false);
-  // Should have no effect and we are still in the default container.
+  // Set the z-order again to the normal value.
+  widget->SetZOrderLevel(ui::ZOrderLevel::kNormal);
+  // Should have no effect and we are still in the the active desk container.
   EXPECT_TRUE(
-      GetDefaultContainer()->Contains(widget->GetNativeWindow()->parent()));
+      GetActiveDeskContainer()->Contains(widget->GetNativeWindow()->parent()));
 
   widget->Close();
 }
@@ -271,9 +322,9 @@ TEST_F(ShellTest, CreateModalWindow) {
   views::Widget* widget = CreateTestWindow(widget_params);
   widget->Show();
 
-  // It should be in default container.
+  // It should be in the active desk container.
   EXPECT_TRUE(
-      GetDefaultContainer()->Contains(widget->GetNativeWindow()->parent()));
+      GetActiveDeskContainer()->Contains(widget->GetNativeWindow()->parent()));
 
   // Create a modal window.
   views::Widget* modal_widget = views::Widget::CreateWindowWithParent(
@@ -306,11 +357,11 @@ TEST_F(ShellTest, CreateLockScreenModalWindow) {
   widget->Show();
   EXPECT_TRUE(widget->GetNativeView()->HasFocus());
 
-  // It should be in default container.
+  // It should be in the active desk container.
   EXPECT_TRUE(
-      GetDefaultContainer()->Contains(widget->GetNativeWindow()->parent()));
+      GetActiveDeskContainer()->Contains(widget->GetNativeWindow()->parent()));
 
-  Shell::Get()->session_controller()->LockScreenAndFlushForTest();
+  GetSessionControllerClient()->LockScreen();
   // Create a LockScreen window.
   views::Widget* lock_widget = CreateTestWindow(widget_params);
   Shell::GetContainer(Shell::GetPrimaryRootWindow(),
@@ -352,7 +403,7 @@ TEST_F(ShellTest, CreateLockScreenModalWindow) {
 
   // Modal dialog without parent, caused crash see crbug.com/226141
   views::Widget* modal_dialog = views::DialogDelegate::CreateDialogWidget(
-      new TestModalDialogDelegate(), CurrentContext(), NULL);
+      new TestModalDialogDelegate(), CurrentContext(), nullptr);
 
   modal_dialog->Show();
   EXPECT_FALSE(modal_dialog->GetNativeView()->HasFocus());
@@ -367,8 +418,8 @@ TEST_F(ShellTest, CreateLockScreenModalWindow) {
 }
 
 TEST_F(ShellTest, IsScreenLocked) {
-  SessionController* controller = Shell::Get()->session_controller();
-  controller->LockScreenAndFlushForTest();
+  SessionControllerImpl* controller = Shell::Get()->session_controller();
+  GetSessionControllerClient()->LockScreen();
   EXPECT_TRUE(controller->IsScreenLocked());
   GetSessionControllerClient()->UnlockScreen();
   EXPECT_FALSE(controller->IsScreenLocked());
@@ -381,11 +432,12 @@ TEST_F(ShellTest, LockScreenClosesActiveMenu) {
   menu_model->AddItem(0, base::ASCIIToUTF16("Menu item"));
   views::Widget* widget = Shell::GetPrimaryRootWindowController()
                               ->wallpaper_widget_controller()
-                              ->widget();
+                              ->GetWidget();
   std::unique_ptr<views::MenuRunner> menu_runner(
       new views::MenuRunner(menu_model.get(), views::MenuRunner::CONTEXT_MENU));
 
-  menu_runner->RunMenuAt(widget, NULL, gfx::Rect(), views::MENU_ANCHOR_TOPLEFT,
+  menu_runner->RunMenuAt(widget, nullptr, gfx::Rect(),
+                         views::MenuAnchorPosition::kTopLeft,
                          ui::MENU_SOURCE_MOUSE);
   LockScreenAndVerifyMenuClosed();
 }
@@ -457,7 +509,7 @@ TEST_F(ShellTest, FullscreenWindowHidesShelf) {
 // Various assertions around auto-hide behavior.
 // TODO(jamescook): Move this to ShelfTest.
 TEST_F(ShellTest, ToggleAutoHide) {
-  std::unique_ptr<aura::Window> window(new aura::Window(NULL));
+  std::unique_ptr<aura::Window> window = window_factory::NewWindow();
   window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);
   window->SetType(aura::client::WINDOW_TYPE_NORMAL);
   window->Init(ui::LAYER_TEXTURED);
@@ -485,15 +537,11 @@ TEST_F(ShellTest, ToggleAutoHide) {
 // Tests that the cursor-filter is ahead of the drag-drop controller in the
 // pre-target list.
 TEST_F(ShellTest, TestPreTargetHandlerOrder) {
-  // TODO: investigate failure in mash, http://crbug.com/695758.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   Shell* shell = Shell::Get();
   ui::EventTargetTestApi test_api(shell);
-  ShellTestApi shell_test_api(shell);
+  ShellTestApi shell_test_api;
 
-  const ui::EventHandlerList& handlers = test_api.pre_target_handlers();
+  ui::EventHandlerList handlers = test_api.GetPreTargetHandlers();
   ui::EventHandlerList::const_iterator cursor_filter =
       std::find(handlers.begin(), handlers.end(), shell->mouse_cursor_filter());
   ui::EventHandlerList::const_iterator drag_drop = std::find(
@@ -511,23 +559,6 @@ TEST_F(ShellTest, EnvPreTargetHandler) {
   generator.MoveMouseBy(1, 1);
   EXPECT_NE(0, event_handler.num_mouse_events());
   aura::Env::GetInstance()->RemovePreTargetHandler(&event_handler);
-}
-
-// Verifies keyboard is re-created on proper timing.
-TEST_F(ShellTest, KeyboardCreation) {
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      keyboard::switches::kEnableVirtualKeyboard);
-
-  ASSERT_TRUE(keyboard::IsKeyboardEnabled());
-
-  SessionObserver* shell = Shell::Get();
-  EXPECT_FALSE(keyboard::KeyboardController::GetInstance());
-  shell->OnSessionStateChanged(
-      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
-
-  EXPECT_TRUE(keyboard::KeyboardController::GetInstance());
 }
 
 // This verifies WindowObservers are removed when a window is destroyed after
@@ -550,7 +581,8 @@ class ShellTest2 : public AshTestBase {
 };
 
 TEST_F(ShellTest2, DontCrashWhenWindowDeleted) {
-  window_.reset(new aura::Window(NULL));
+  window_ = std::make_unique<aura::Window>(nullptr,
+                                           aura::client::WINDOW_TYPE_UNKNOWN);
   window_->Init(ui::LAYER_NOT_DRAWN);
 }
 
@@ -558,22 +590,55 @@ TEST_F(ShellTest2, DontCrashWhenWindowDeleted) {
 class ShellLocalStateTest : public AshTestBase {
  public:
   ShellLocalStateTest() { disable_provide_local_state(); }
+
+ protected:
+  std::unique_ptr<TestingPrefServiceSimple> local_state_;
 };
 
-TEST_F(ShellLocalStateTest, LocalState) {
-  TestShellObserver observer;
-  Shell::Get()->AddShellObserver(&observer);
+using ShellLoginTest = NoSessionAshTestBase;
 
-  // Prefs service wrapper code creates a PrefService.
-  std::unique_ptr<TestingPrefServiceSimple> local_state =
-      std::make_unique<TestingPrefServiceSimple>();
-  Shell::RegisterLocalStatePrefs(local_state->registry());
-  TestingPrefServiceSimple* local_state_ptr = local_state.get();
-  ShellTestApi().OnLocalStatePrefServiceInitialized(std::move(local_state));
-  EXPECT_EQ(local_state_ptr, observer.last_local_state_);
-  EXPECT_EQ(local_state_ptr, Shell::Get()->GetLocalStatePrefService());
+TEST_F(ShellLoginTest, DragAndDropDisabledBeforeLogin) {
+  DragDropController* drag_drop_controller =
+      ShellTestApi().drag_drop_controller();
+  DragDropControllerTestApi drag_drop_controller_test_api(drag_drop_controller);
+  EXPECT_FALSE(drag_drop_controller_test_api.enabled());
 
-  Shell::Get()->RemoveShellObserver(&observer);
+  SimulateUserLogin("user1@test.com");
+  EXPECT_TRUE(drag_drop_controller_test_api.enabled());
 }
+
+// Defines a parameterized test fixture to validate that there are no duplicate
+// containers IDs in both cases when the Virtual Desks feature is enabled or
+// disabled.
+class NoDuplicateShellContainerIdsTest
+    : public AshTestBase,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  NoDuplicateShellContainerIdsTest() = default;
+  ~NoDuplicateShellContainerIdsTest() override = default;
+
+  // AshTestBase:
+  void SetUp() override {
+    if (GetParam())
+      scoped_feature_list_.InitAndEnableFeature(features::kVirtualDesks);
+    else
+      scoped_feature_list_.InitAndDisableFeature(features::kVirtualDesks);
+
+    AshTestBase::SetUp();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(NoDuplicateShellContainerIdsTest);
+};
+
+TEST_P(NoDuplicateShellContainerIdsTest, ValidateContainersIds) {
+  ExpectAllContainers();
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         NoDuplicateShellContainerIdsTest,
+                         ::testing::Values(false, true));
 
 }  // namespace ash

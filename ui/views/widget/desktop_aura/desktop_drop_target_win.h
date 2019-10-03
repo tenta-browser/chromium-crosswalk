@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTIOP_DROP_TARGET_WIN_H_
-#define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTIOP_DROP_TARGET_WIN_H_
+#ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_DROP_TARGET_WIN_H_
+#define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_DROP_TARGET_WIN_H_
 
 #include <memory>
 
@@ -30,7 +30,7 @@ namespace views {
 class DesktopDropTargetWin : public ui::DropTargetWin,
                              public aura::WindowObserver {
  public:
-  DesktopDropTargetWin(aura::Window* root_window, HWND window);
+  explicit DesktopDropTargetWin(aura::Window* root_window);
   ~DesktopDropTargetWin() override;
 
  private:
@@ -79,4 +79,4 @@ class DesktopDropTargetWin : public ui::DropTargetWin,
 
 }  // namespace views
 
-#endif  // UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTIOP_DROP_TARGET_WIN_H_
+#endif  // UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_DROP_TARGET_WIN_H_

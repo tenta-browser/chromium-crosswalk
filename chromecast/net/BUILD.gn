@@ -28,12 +28,38 @@ cast_source_set("net") {
 
   deps = [
     "//base",
-    "//chromecast:chromecast_features",
-    "//chromecast/base:cast_sys_info",
+    "//chromecast:chromecast_buildflags",
+    "//chromecast/base:cast_sys_info_util",
     "//chromecast/base/metrics",
     "//chromecast/public",
     "//components/proxy_config",
     "//net",
+  ]
+
+  if (is_fuchsia) {
+    sources += [
+      "network_change_notifier_factory_fuchsia.cc",
+      "network_change_notifier_factory_fuchsia.h",
+    ]
+
+    deps += [
+      "//chromecast/base:chromecast_switches",
+      "//third_party/fuchsia-sdk/sdk:hardware_ethernet",
+    ]
+  }
+}
+
+cast_source_set("small_message_socket") {
+  sources = [
+    "small_message_socket.cc",
+    "small_message_socket.h",
+  ]
+  public_deps = [
+    "//net",
+  ]
+
+  deps = [
+    "//base",
   ]
 }
 
@@ -67,6 +93,7 @@ test("cast_net_unittests") {
     "//base",
     "//base/test:run_all_unittests",
     "//net",
+    "//net:test_support",
     "//testing/gtest",
   ]
 }

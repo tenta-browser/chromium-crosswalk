@@ -18,20 +18,24 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.Callable;
 
-/** Tests for {@link ExternalPrerenderHandler}. */
+/** Tests for {@link ExternalPrerenderHandler}.
+ *
+ *  NOTE: even though the tests refer to adding "Prerender", they actually exercise the default mode
+ *  in the PrerenderManager. Currently it is {@code PRERENDER_MODE_NOSTATE_PREFETCH}.
+ */
 @RunWith(BaseJUnit4ClassRunner.class)
 public class ExternalPrerenderHandlerTest {
     @Rule
@@ -61,7 +65,7 @@ public class ExternalPrerenderHandlerTest {
                 return Profile.getLastUsedProfile();
             }
         };
-        mProfile = ThreadUtils.runOnUiThreadBlocking(profileCallable);
+        mProfile = TestThreadUtils.runOnUiThreadBlocking(profileCallable);
 
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
         mTestPage = mTestServer.getURL(TEST_PAGE);
@@ -70,12 +74,8 @@ public class ExternalPrerenderHandlerTest {
 
     @After
     public void tearDown() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mExternalPrerenderHandler.cancelCurrentPrerender();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mExternalPrerenderHandler.cancelCurrentPrerender());
         mTestServer.stopAndDestroyServer();
     }
 
@@ -84,8 +84,8 @@ public class ExternalPrerenderHandlerTest {
     @Feature({"Prerender"})
     @SmallTest
     public void testAddPrerender() throws Exception {
-        final WebContents webContents = ensureStartedPrerenderForUrl(mTestPage);
-        ensureCompletedPrerenderForUrl(webContents, mTestPage);
+        ensureStartedPrerenderForUrl(mTestPage);
+        ensureCompletedPrefetchForUrl(mTestPage);
     }
 
     @Test
@@ -95,13 +95,10 @@ public class ExternalPrerenderHandlerTest {
     public void testAddAndCancelPrerender() throws Exception {
         final WebContents webContents = ensureStartedPrerenderForUrl(mTestPage);
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mExternalPrerenderHandler.cancelCurrentPrerender();
-                Assert.assertFalse(ExternalPrerenderHandler.hasPrerenderedUrl(
-                        mProfile, mTestPage, webContents));
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mExternalPrerenderHandler.cancelCurrentPrerender();
+            Assert.assertFalse(
+                    ExternalPrerenderHandler.hasPrerenderedUrl(mProfile, mTestPage, webContents));
         });
     }
 
@@ -110,20 +107,12 @@ public class ExternalPrerenderHandlerTest {
     @Feature({"Prerender"})
     @SmallTest
     public void testAddSeveralPrerenders() throws Exception {
-        WebContents webContents = ensureStartedPrerenderForUrl(mTestPage);
-        ensureCompletedPrerenderForUrl(webContents, mTestPage);
-
-        final WebContents webContents2 = ensureStartedPrerenderForUrl(mTestPage2);
+        ensureStartedPrerenderForUrl(mTestPage);
+        ensureCompletedPrefetchForUrl(mTestPage);
+        ensureStartedPrerenderForUrl(mTestPage2);
 
         // Make sure that the second one didn't remove the first one.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Assert.assertTrue(ExternalPrerenderHandler.hasPrerenderedUrl(
-                        mProfile, mTestPage2, webContents2));
-            }
-        });
-        ensureCompletedPrerenderForUrl(webContents2, mTestPage2);
+        ensureCompletedPrefetchForUrl(mTestPage2);
     }
 
     private WebContents ensureStartedPrerenderForUrl(final String url) throws Exception {
@@ -141,15 +130,18 @@ public class ExternalPrerenderHandlerTest {
                 return webContents.first;
             }
         };
-        return ThreadUtils.runOnUiThreadBlocking(addPrerenderCallable);
+        return TestThreadUtils.runOnUiThreadBlocking(addPrerenderCallable);
     }
 
-    private void ensureCompletedPrerenderForUrl(final WebContents webContents, final String url) {
-        CriteriaHelper.pollUiThread(new Criteria("No Prerender") {
+    private void ensureCompletedPrefetchForUrl(final String url) {
+        CriteriaHelper.pollUiThread(new Criteria("No Prefetch Happened") {
             @Override
             public boolean isSatisfied() {
-                return ExternalPrerenderHandler.hasPrerenderedAndFinishedLoadingUrl(
-                        mProfile, url, webContents);
+                boolean has_prefetched =
+                        ExternalPrerenderHandler.hasRecentlyPrefetchedUrlForTesting(mProfile, url);
+                if (has_prefetched)
+                    ExternalPrerenderHandler.clearPrefetchInformationForTesting(mProfile);
+                return has_prefetched;
             }
         }, ENSURE_COMPLETED_PRERENDER_TIMEOUT_MS, PRERENDER_DELAY_MS);
     }

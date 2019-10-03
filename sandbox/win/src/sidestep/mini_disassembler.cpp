@@ -109,6 +109,7 @@ InstructionType MiniDisassembler::ProcessPrefixes(unsigned char* start_byte,
       (*size)++;
       // we got a prefix, so add one and check next byte
       ProcessPrefixes(start_byte + 1, size);
+      break;
     default:
       break;   // not a prefix byte
   }
@@ -392,4 +393,4 @@ bool MiniDisassembler::ProcessSib(unsigned char* start_byte,
   return true;
 }
 
-};  // namespace sidestep
+}  // namespace sidestep

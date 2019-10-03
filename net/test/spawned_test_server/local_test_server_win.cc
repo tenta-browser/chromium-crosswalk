@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/single_thread_task_runner.h"
@@ -20,6 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/win/scoped_handle.h"
 #include "net/test/python_utils.h"
 
@@ -34,8 +34,7 @@ void UnblockPipe(HANDLE handle, DWORD size, bool* unblocked) {
   DWORD bytes_written = 0;
   LOG(WARNING) << "Timeout reached; unblocking pipe by writing "
                << size << " bytes";
-  CHECK(WriteFile(handle, unblock_data.data(), size, &bytes_written,
-                  NULL));
+  CHECK(WriteFile(handle, unblock_data.data(), size, &bytes_written, nullptr));
   CHECK_EQ(size, bytes_written);
   *unblocked = true;
 }
@@ -54,14 +53,14 @@ bool ReadData(HANDLE read_fd,
   // Prepare a timeout in case the server fails to start.
   bool unblocked = false;
   thread.task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(UnblockPipe, write_fd, bytes_max, &unblocked),
+      FROM_HERE, base::BindOnce(UnblockPipe, write_fd, bytes_max, &unblocked),
       TestTimeouts::action_max_timeout());
 
   DWORD bytes_read = 0;
   while (bytes_read < bytes_max) {
     DWORD num_bytes;
     if (!ReadFile(read_fd, buffer + bytes_read, bytes_max - bytes_read,
-                  &num_bytes, NULL)) {
+                  &num_bytes, nullptr)) {
       PLOG(ERROR) << "ReadFile failed";
       return false;
     }
@@ -72,7 +71,9 @@ bool ReadData(HANDLE read_fd,
     bytes_read += num_bytes;
   }
 
+  base::ScopedAllowBaseSyncPrimitivesForTesting allow_thread_join;
   thread.Stop();
+
   // If the timeout kicked in, abort.
   if (unblocked) {
     LOG(ERROR) << "Timeout exceeded for ReadData";
@@ -86,7 +87,9 @@ bool ReadData(HANDLE read_fd,
 
 namespace net {
 
-bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
+bool LocalTestServer::LaunchPython(
+    const base::FilePath& testserver_path,
+    const std::vector<base::FilePath>& python_path) {
   base::CommandLine python_command(base::CommandLine::NO_PROGRAM);
   if (!GetPythonCommand(&python_command))
     return false;
@@ -95,9 +98,9 @@ bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
   if (!AddCommandLineArguments(&python_command))
     return false;
 
-  HANDLE child_read = NULL;
-  HANDLE child_write = NULL;
-  if (!CreatePipe(&child_read, &child_write, NULL, 0)) {
+  HANDLE child_read = nullptr;
+  HANDLE child_write = nullptr;
+  if (!CreatePipe(&child_read, &child_write, nullptr, 0)) {
     PLOG(ERROR) << "Failed to create pipe";
     return false;
   }
@@ -122,14 +125,16 @@ bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
   // safe to truncate the handle (when passing it from 64-bit to
   // 32-bit) or sign-extend the handle (when passing it from 32-bit to
   // 64-bit)."
-  python_command.AppendArg("--startup-pipe=" +
-      base::IntToString(reinterpret_cast<uintptr_t>(child_write)));
+  python_command.AppendArg(
+      "--startup-pipe=" +
+      base::NumberToString(reinterpret_cast<uintptr_t>(child_write)));
 
   base::LaunchOptions launch_options;
+  SetPythonPathInEnvironment(python_path, &launch_options.environment);
 
   // Set CWD to source root.
-  if (!PathService::Get(base::DIR_SOURCE_ROOT,
-                        &launch_options.current_directory)) {
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT,
+                              &launch_options.current_directory)) {
     LOG(ERROR) << "Failed to get DIR_SOURCE_ROOT";
     return false;
   }

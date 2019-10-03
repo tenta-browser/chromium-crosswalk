@@ -7,6 +7,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/ppapi/ppapi_test.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -44,7 +46,7 @@ bool RunLoopUntil(const base::Callback<bool()>& condition) {
     }
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+        FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated(),
         base::TimeDelta::FromMilliseconds(20));
     content::RunMessageLoop();
   }
@@ -184,7 +186,7 @@ class FlashFullscreenInteractiveBrowserTest : public OutOfProcessPPAPITest {
             << "WebContents should have a fullscreen RenderWidgetHostView.";
         return false;
       }
-      EXPECT_EQ(GetActiveWebContents()->GetCapturerCount() > 0,
+      EXPECT_EQ(GetActiveWebContents()->IsBeingCaptured(),
                 !browser()
                      ->exclusive_access_manager()
                      ->fullscreen_controller()
@@ -264,14 +266,13 @@ class FlashFullscreenInteractiveBrowserTest : public OutOfProcessPPAPITest {
     // Copy and examine the upper-left pixel of the widget and compare it to the
     // |expected_color|.
     bool is_expected_color = false;
+    base::RunLoop run_loop;
     flash_fs_view->CopyFromSurface(
         gfx::Rect(0, 0, 1, 1), gfx::Size(1, 1),
-        base::Bind(
+        base::BindOnce(
             &FlashFullscreenInteractiveBrowserTest::CheckBitmapForFillColor,
-            expected_color, &is_expected_color,
-            base::MessageLoop::QuitWhenIdleClosure()),
-        kN32_SkColorType);
-    content::RunMessageLoop();
+            expected_color, &is_expected_color, run_loop.QuitClosure()));
+    run_loop.Run();
 
     return is_expected_color;
   }
@@ -279,12 +280,9 @@ class FlashFullscreenInteractiveBrowserTest : public OutOfProcessPPAPITest {
   static void CheckBitmapForFillColor(SkColor expected_color,
                                       bool* is_expected_color,
                                       const base::Closure& done_cb,
-                                      const SkBitmap& bitmap,
-                                      content::ReadbackResponse response) {
-    if (response == content::READBACK_SUCCESS) {
-      if (bitmap.width() > 0 && bitmap.height() > 0)
-        *is_expected_color = (bitmap.getColor(0, 0) == expected_color);
-    }
+                                      const SkBitmap& bitmap) {
+    if (!bitmap.drawsNothing())
+      *is_expected_color = (bitmap.getColor(0, 0) == expected_color);
     done_cb.Run();
   }
 

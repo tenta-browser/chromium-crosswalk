@@ -4,14 +4,31 @@
 
 #include "headless/lib/utility/headless_content_utility_client.h"
 
-#include "printing/features/features.h"
+#include "base/bind.h"
+#include "base/lazy_instance.h"
+#include "content/public/utility/utility_thread.h"
+#include "printing/buildflags/buildflags.h"
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
-#include "components/printing/service/public/cpp/pdf_compositor_service_factory.h"
-#include "components/printing/service/public/interfaces/pdf_compositor.mojom.h"
+#if BUILDFLAG(ENABLE_PRINTING)
+#include "components/services/pdf_compositor/public/cpp/pdf_compositor_service_factory.h"
+#include "components/services/pdf_compositor/public/mojom/pdf_compositor.mojom.h"
 #endif
 
 namespace headless {
+
+namespace {
+
+base::LazyInstance<
+    HeadlessContentUtilityClient::NetworkBinderCreationCallback>::Leaky
+    g_network_binder_creation_callback = LAZY_INSTANCE_INITIALIZER;
+
+}  // namespace
+
+// static
+void HeadlessContentUtilityClient::SetNetworkBinderCreationCallbackForTests(
+    NetworkBinderCreationCallback callback) {
+  g_network_binder_creation_callback.Get() = std::move(callback);
+}
 
 HeadlessContentUtilityClient::HeadlessContentUtilityClient(
     const std::string& user_agent)
@@ -19,14 +36,26 @@ HeadlessContentUtilityClient::HeadlessContentUtilityClient(
 
 HeadlessContentUtilityClient::~HeadlessContentUtilityClient() = default;
 
-void HeadlessContentUtilityClient::RegisterServices(
-    HeadlessContentUtilityClient::StaticServiceMap* services) {
-#if BUILDFLAG(ENABLE_BASIC_PRINTING) && !defined(CHROME_MULTIPLE_DLL_BROWSER)
-  service_manager::EmbeddedServiceInfo pdf_compositor_info;
-  pdf_compositor_info.factory =
-      base::Bind(&printing::CreatePdfCompositorService, user_agent_);
-  services->emplace(printing::mojom::kServiceName, pdf_compositor_info);
+bool HeadlessContentUtilityClient::HandleServiceRequest(
+    const std::string& service_name,
+    service_manager::mojom::ServiceRequest request) {
+#if BUILDFLAG(ENABLE_PRINTING) && !defined(CHROME_MULTIPLE_DLL_BROWSER)
+  if (service_name == printing::mojom::kServiceName) {
+    service_manager::Service::RunAsyncUntilTermination(
+        printing::CreatePdfCompositorService(std::move(request)),
+        base::BindOnce(
+            [] { content::UtilityThread::Get()->ReleaseProcess(); }));
+    return true;
+  }
 #endif
+
+  return false;
+}
+
+void HeadlessContentUtilityClient::RegisterNetworkBinders(
+    service_manager::BinderRegistry* registry) {
+  if (g_network_binder_creation_callback.Get())
+    g_network_binder_creation_callback.Get().Run(registry);
 }
 
 }  // namespace headless

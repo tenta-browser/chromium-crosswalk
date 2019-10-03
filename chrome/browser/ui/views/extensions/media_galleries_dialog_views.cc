@@ -6,11 +6,13 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/extensions/media_gallery_checkbox_view.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -66,7 +68,7 @@ MediaGalleriesDialogViews::MediaGalleriesDialogViews(
     MediaGalleriesDialogController* controller)
     : controller_(controller),
       contents_(new views::View()),
-      auxiliary_button_(NULL),
+      auxiliary_button_(nullptr),
       confirm_available_(false),
       accepted_(false) {
   InitChildViews();
@@ -103,36 +105,36 @@ void MediaGalleriesDialogViews::InitChildViews() {
 
   const int dialog_content_width = views::Widget::GetLocalizedContentsWidth(
       IDS_MEDIA_GALLERIES_DIALOG_CONTENT_WIDTH_CHARS);
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(contents_);
+  views::GridLayout* layout =
+      contents_->SetLayoutManager(std::make_unique<views::GridLayout>());
 
   int column_set_id = 0;
   views::ColumnSet* columns = layout->AddColumnSet(column_set_id);
-  columns->AddColumn(views::GridLayout::LEADING,
-                     views::GridLayout::LEADING,
-                     1,
-                     views::GridLayout::FIXED,
-                     dialog_content_width,
-                     0);
+  columns->AddColumn(views::GridLayout::LEADING, views::GridLayout::LEADING,
+                     1.0, views::GridLayout::FIXED, dialog_content_width, 0);
 
   // Message text.
   const int vertical_padding =
       provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL);
-  views::Label* subtext = new views::Label(controller_->GetSubtext());
+  auto subtext = std::make_unique<views::Label>(controller_->GetSubtext());
   subtext->SetMultiLine(true);
   subtext->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  layout->StartRow(0, column_set_id);
-  layout->AddView(
-      subtext, 1, 1,
-      views::GridLayout::FILL, views::GridLayout::LEADING,
-      dialog_content_width, subtext->GetHeightForWidth(dialog_content_width));
-  layout->AddPaddingRow(0, vertical_padding);
+  // Get the height here rather than inline because the order of evaluation for
+  // parameters may differ between platforms.
+  const int subtext_height = subtext->GetHeightForWidth(dialog_content_width);
+  layout->StartRow(views::GridLayout::kFixedSize, column_set_id);
+  layout->AddView(std::move(subtext), 1, 1, views::GridLayout::FILL,
+                  views::GridLayout::LEADING, dialog_content_width,
+                  subtext_height);
+  layout->AddPaddingRow(views::GridLayout::kFixedSize, vertical_padding);
 
   // Scrollable area for checkboxes.
   const int small_vertical_padding =
       provider->GetDistanceMetric(DISTANCE_RELATED_CONTROL_VERTICAL_SMALL);
-  ScrollableView* scroll_container = new ScrollableView();
-  scroll_container->SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, gfx::Insets(), small_vertical_padding));
+  auto scroll_container = std::make_unique<ScrollableView>();
+  scroll_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+      small_vertical_padding));
   scroll_container->SetBorder(
       views::CreateEmptyBorder(vertical_padding, 0, vertical_padding, 0));
 
@@ -144,24 +146,23 @@ void MediaGalleriesDialogViews::InitChildViews() {
 
     // Header and separator line.
     if (!section_headers[i].empty() && !entries.empty()) {
-      views::Separator* separator = new views::Separator();
-      scroll_container->AddChildView(separator);
+      scroll_container->AddChildView(std::make_unique<views::Separator>());
 
-      views::Label* header = new views::Label(section_headers[i]);
+      auto header = std::make_unique<views::Label>(section_headers[i]);
       header->SetMultiLine(true);
       header->SetHorizontalAlignment(gfx::ALIGN_LEFT);
       header->SetBorder(views::CreateEmptyBorder(
           vertical_padding,
           provider->GetInsetsMetric(views::INSETS_DIALOG).left(),
           vertical_padding, 0));
-      scroll_container->AddChildView(header);
+      scroll_container->AddChildView(std::move(header));
     }
 
     // Checkboxes.
     MediaGalleriesDialogController::Entries::const_iterator iter;
     for (iter = entries.begin(); iter != entries.end(); ++iter) {
       int spacing = iter + 1 == entries.end() ? small_vertical_padding : 0;
-      AddOrUpdateGallery(*iter, scroll_container, spacing);
+      AddOrUpdateGallery(*iter, scroll_container.get(), spacing);
     }
   }
 
@@ -169,13 +170,13 @@ void MediaGalleriesDialogViews::InitChildViews() {
 
   // Add the scrollable area to the outer dialog view. It will squeeze against
   // the title/subtitle and buttons to occupy all available space in the dialog.
-  views::ScrollView* scroll_view =
-      views::ScrollView::CreateScrollViewWithBorder();
-  scroll_view->SetContents(scroll_container);
-  layout->StartRowWithPadding(1, column_set_id, 0, vertical_padding);
-  layout->AddView(scroll_view, 1, 1,
-                  views::GridLayout::FILL, views::GridLayout::FILL,
-                  dialog_content_width, kScrollAreaHeight);
+  auto scroll_view = views::ScrollView::CreateScrollViewWithBorder();
+  scroll_view->SetContents(std::move(scroll_container));
+  layout->StartRowWithPadding(1.0, column_set_id, views::GridLayout::kFixedSize,
+                              vertical_padding);
+  layout->AddView(std::move(scroll_view), 1.0, 1.0, views::GridLayout::FILL,
+                  views::GridLayout::FILL, dialog_content_width,
+                  kScrollAreaHeight);
 }
 
 void MediaGalleriesDialogViews::UpdateGalleries() {
@@ -190,7 +191,7 @@ bool MediaGalleriesDialogViews::AddOrUpdateGallery(
     const MediaGalleriesDialogController::Entry& gallery,
     views::View* container,
     int trailing_vertical_space) {
-  CheckboxMap::iterator iter = checkbox_map_.find(gallery.pref_info.pref_id);
+  auto iter = checkbox_map_.find(gallery.pref_info.pref_id);
   if (iter != checkbox_map_.end()) {
     views::Checkbox* checkbox = iter->second->checkbox();
     checkbox->SetChecked(gallery.selected);
@@ -213,6 +214,10 @@ bool MediaGalleriesDialogViews::AddOrUpdateGallery(
 
 base::string16 MediaGalleriesDialogViews::GetWindowTitle() const {
   return controller_->GetHeader();
+}
+
+bool MediaGalleriesDialogViews::ShouldShowCloseButton() const {
+  return false;
 }
 
 void MediaGalleriesDialogViews::DeleteDelegate() {
@@ -247,14 +252,16 @@ ui::ModalType MediaGalleriesDialogViews::GetModalType() const {
   return ui::MODAL_TYPE_CHILD;
 }
 
-views::View* MediaGalleriesDialogViews::CreateExtraView() {
+std::unique_ptr<views::View> MediaGalleriesDialogViews::CreateExtraView() {
   DCHECK(!auxiliary_button_);
   base::string16 button_label = controller_->GetAuxiliaryButtonText();
+  std::unique_ptr<views::LabelButton> auxiliary_button;
   if (!button_label.empty()) {
-    auxiliary_button_ =
+    auxiliary_button =
         views::MdTextButton::CreateSecondaryUiButton(this, button_label);
+    auxiliary_button_ = auxiliary_button.get();
   }
-  return auxiliary_button_;
+  return auxiliary_button;
 }
 
 bool MediaGalleriesDialogViews::Cancel() {
@@ -282,13 +289,13 @@ void MediaGalleriesDialogViews::ButtonPressed(views::Button* sender,
        iter != checkbox_map_.end(); ++iter) {
     if (sender == iter->second->checkbox()) {
       controller_->DidToggleEntry(iter->first,
-                                  iter->second->checkbox()->checked());
+                                  iter->second->checkbox()->GetChecked());
       return;
     }
   }
 }
 
-void MediaGalleriesDialogViews::ShowContextMenuForView(
+void MediaGalleriesDialogViews::ShowContextMenuForViewImpl(
     views::View* source,
     const gfx::Point& point,
     ui::MenuSourceType source_type) {
@@ -307,16 +314,17 @@ void MediaGalleriesDialogViews::ShowContextMenu(const gfx::Point& point,
   context_menu_runner_.reset(new views::MenuRunner(
       controller_->GetContextMenu(id),
       views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU,
-      base::Bind(&MediaGalleriesDialogViews::OnMenuClosed,
-                 base::Unretained(this))));
+      base::BindRepeating(&MediaGalleriesDialogViews::OnMenuClosed,
+                          base::Unretained(this))));
 
-  context_menu_runner_->RunMenuAt(GetWidget(), NULL,
-                                  gfx::Rect(point.x(), point.y(), 0, 0),
-                                  views::MENU_ANCHOR_TOPLEFT, source_type);
+  context_menu_runner_->RunMenuAt(
+      GetWidget(), nullptr,
+      gfx::Rect(point.x(), point.y(), views::GridLayout::kFixedSize, 0),
+      views::MenuAnchorPosition::kTopLeft, source_type);
 }
 
 bool MediaGalleriesDialogViews::ControllerHasWebContents() const {
-  return controller_->WebContents() != NULL;
+  return controller_->WebContents() != nullptr;
 }
 
 void MediaGalleriesDialogViews::OnMenuClosed() {

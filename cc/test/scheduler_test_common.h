@@ -10,13 +10,14 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/scheduler/compositor_timing_history.h"
 #include "cc/scheduler/scheduler.h"
-#include "components/viz/test/ordered_simple_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace base {
+class TickClock;
+}
 
 namespace cc {
 
@@ -26,15 +27,21 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
  public:
   static std::unique_ptr<FakeCompositorTimingHistory> Create(
       bool using_synchronous_renderer_compositor);
+  FakeCompositorTimingHistory(const FakeCompositorTimingHistory&) = delete;
   ~FakeCompositorTimingHistory() override;
+
+  FakeCompositorTimingHistory& operator=(const FakeCompositorTimingHistory&) =
+      delete;
 
   void SetAllEstimatesTo(base::TimeDelta duration);
 
   void SetBeginMainFrameQueueDurationCriticalEstimate(base::TimeDelta duration);
   void SetBeginMainFrameQueueDurationNotCriticalEstimate(
       base::TimeDelta duration);
-  void SetBeginMainFrameStartToCommitDurationEstimate(base::TimeDelta duration);
+  void SetBeginMainFrameStartToReadyToCommitDurationEstimate(
+      base::TimeDelta duration);
   void SetCommitToReadyToActivateDurationEstimate(base::TimeDelta duration);
+  void SetCommitDurationEstimate(base::TimeDelta duration);
   void SetPrepareTilesDurationEstimate(base::TimeDelta duration);
   void SetActivateDurationEstimate(base::TimeDelta duration);
   void SetDrawDurationEstimate(base::TimeDelta duration);
@@ -42,41 +49,49 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
   base::TimeDelta BeginMainFrameQueueDurationCriticalEstimate() const override;
   base::TimeDelta BeginMainFrameQueueDurationNotCriticalEstimate()
       const override;
-  base::TimeDelta BeginMainFrameStartToCommitDurationEstimate() const override;
+  base::TimeDelta BeginMainFrameStartToReadyToCommitDurationEstimate()
+      const override;
+  base::TimeDelta CommitDurationEstimate() const override;
   base::TimeDelta CommitToReadyToActivateDurationEstimate() const override;
   base::TimeDelta PrepareTilesDurationEstimate() const override;
   base::TimeDelta ActivateDurationEstimate() const override;
   base::TimeDelta DrawDurationEstimate() const override;
 
  protected:
-  FakeCompositorTimingHistory(bool using_synchronous_renderer_compositor,
-                              std::unique_ptr<RenderingStatsInstrumentation>
-                                  rendering_stats_instrumentation_owned);
+  FakeCompositorTimingHistory(
+      bool using_synchronous_renderer_compositor,
+      std::unique_ptr<RenderingStatsInstrumentation>
+          rendering_stats_instrumentation_owned,
+      std::unique_ptr<CompositorFrameReportingController>
+          reporting_controller_owned_);
 
   std::unique_ptr<RenderingStatsInstrumentation>
       rendering_stats_instrumentation_owned_;
+  std::unique_ptr<CompositorFrameReportingController>
+      reporting_controller_owned_;
 
   base::TimeDelta begin_main_frame_queue_duration_critical_;
   base::TimeDelta begin_main_frame_queue_duration_not_critical_;
-  base::TimeDelta begin_main_frame_start_to_commit_duration_;
+  base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration_;
+  base::TimeDelta commit_duration_;
   base::TimeDelta commit_to_ready_to_activate_duration_;
   base::TimeDelta prepare_tiles_duration_;
   base::TimeDelta activate_duration_;
   base::TimeDelta draw_duration_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(FakeCompositorTimingHistory);
 };
 
 class TestScheduler : public Scheduler {
  public:
   TestScheduler(
-      base::SimpleTestTickClock* now_src,
+      const base::TickClock* now_src,
       SchedulerClient* client,
       const SchedulerSettings& scheduler_settings,
       int layer_tree_host_id,
-      OrderedSimpleTaskRunner* task_runner,
+      base::SingleThreadTaskRunner* task_runner,
       std::unique_ptr<CompositorTimingHistory> compositor_timing_history);
+  TestScheduler(const TestScheduler&) = delete;
+
+  TestScheduler& operator=(const TestScheduler&) = delete;
 
   bool IsDrawThrottled() const { return state_machine_.IsDrawThrottled(); }
 
@@ -122,14 +137,14 @@ class TestScheduler : public Scheduler {
     return state_machine_.ImplLatencyTakesPriority();
   }
 
+  const SchedulerStateMachine& state_machine() const { return state_machine_; }
+
  protected:
   // Overridden from Scheduler.
   base::TimeTicks Now() const override;
 
  private:
-  base::SimpleTestTickClock* now_src_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestScheduler);
+  const base::TickClock* now_src_;
 };
 
 }  // namespace cc

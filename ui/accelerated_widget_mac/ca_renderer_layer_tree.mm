@@ -80,6 +80,22 @@ bool AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
                        kCFBooleanTrue);
 
   [av_layer enqueueSampleBuffer:sample_buffer];
+
+  AVQueuedSampleBufferRenderingStatus status = [av_layer status];
+  switch (status) {
+    case AVQueuedSampleBufferRenderingStatusUnknown:
+      LOG(ERROR) << "AVSampleBufferDisplayLayer has status unknown, but should "
+                    "be rendering.";
+      return false;
+    case AVQueuedSampleBufferRenderingStatusFailed:
+      LOG(ERROR) << "AVSampleBufferDisplayLayer has status failed, error: "
+                 << [[[av_layer error] description]
+                        cStringUsingEncoding:NSUTF8StringEncoding];
+      return false;
+    case AVQueuedSampleBufferRenderingStatusRendering:
+      break;
+  }
+
   return true;
 }
 
@@ -201,6 +217,7 @@ bool CARendererLayerTree::ScheduleCALayer(const CARendererLayerParams& params) {
 void CARendererLayerTree::CommitScheduledCALayers(
     CALayer* superlayer,
     std::unique_ptr<CARendererLayerTree> old_tree,
+    const gfx::Size& pixel_size,
     float scale_factor) {
   TRACE_EVENT0("gpu", "CARendererLayerTree::CommitScheduledCALayers");
   RootLayer* old_root_layer = nullptr;
@@ -210,7 +227,7 @@ void CARendererLayerTree::CommitScheduledCALayers(
       old_root_layer = &old_tree->root_layer_;
   }
 
-  root_layer_.CommitToCA(superlayer, old_root_layer, scale_factor);
+  root_layer_.CommitToCA(superlayer, old_root_layer, pixel_size, scale_factor);
   // If there are any extra CALayers in |old_tree| that were not stolen by this
   // tree, they will be removed from the CALayer tree in this deallocation.
   old_tree.reset();
@@ -218,9 +235,7 @@ void CARendererLayerTree::CommitScheduledCALayers(
   scale_factor_ = scale_factor;
 }
 
-bool CARendererLayerTree::RootLayer::WantsFullcreenLowPowerBackdrop(
-    float scale_factor,
-    gfx::RectF* background_rect) {
+bool CARendererLayerTree::RootLayer::WantsFullcreenLowPowerBackdrop() const {
   bool found_video_layer = false;
   for (auto& clip_layer : clip_and_sorting_layers) {
     for (auto& transform_layer : clip_layer.transform_layers) {
@@ -243,16 +258,36 @@ bool CARendererLayerTree::RootLayer::WantsFullcreenLowPowerBackdrop(
         // solid black or transparent
         if (content_layer.io_surface)
           return false;
-        if (content_layer.background_color == SK_ColorBLACK) {
-          background_rect->Union(gfx::RectF(content_layer.rect));
-        } else if (content_layer.background_color != SK_ColorTRANSPARENT) {
+        if (content_layer.background_color != SK_ColorBLACK &&
+            content_layer.background_color != SK_ColorTRANSPARENT) {
           return false;
         }
       }
     }
   }
-  background_rect->Scale(1 / scale_factor);
   return found_video_layer;
+}
+
+void CARendererLayerTree::RootLayer::EnforceOnlyOneAVLayer() {
+  size_t video_layer_count = 0;
+  for (auto& clip_layer : clip_and_sorting_layers) {
+    for (auto& transform_layer : clip_layer.transform_layers) {
+      for (auto& content_layer : transform_layer.content_layers) {
+        if (content_layer.use_av_layer)
+          video_layer_count += 1;
+      }
+    }
+  }
+  if (video_layer_count <= 1)
+    return;
+  for (auto& clip_layer : clip_and_sorting_layers) {
+    for (auto& transform_layer : clip_layer.transform_layers) {
+      for (auto& content_layer : transform_layer.content_layers) {
+        if (content_layer.use_av_layer)
+          content_layer.use_av_layer = false;
+      }
+    }
+  }
 }
 
 id CARendererLayerTree::ContentsForSolidColorForTesting(SkColor color) {
@@ -296,10 +331,12 @@ CARendererLayerTree::RootLayer::~RootLayer() {
 CARendererLayerTree::ClipAndSortingLayer::ClipAndSortingLayer(
     bool is_clipped,
     gfx::Rect clip_rect,
+    gfx::RRectF rounded_corner_bounds_arg,
     unsigned sorting_context_id,
     bool is_singleton_sorting_context)
     : is_clipped(is_clipped),
       clip_rect(clip_rect),
+      rounded_corner_bounds(rounded_corner_bounds_arg),
       sorting_context_id(sorting_context_id),
       is_singleton_sorting_context(is_singleton_sorting_context) {}
 
@@ -308,18 +345,22 @@ CARendererLayerTree::ClipAndSortingLayer::ClipAndSortingLayer(
     : transform_layers(std::move(layer.transform_layers)),
       is_clipped(layer.is_clipped),
       clip_rect(layer.clip_rect),
+      rounded_corner_bounds(layer.rounded_corner_bounds),
       sorting_context_id(layer.sorting_context_id),
       is_singleton_sorting_context(layer.is_singleton_sorting_context),
-      ca_layer(layer.ca_layer) {
+      clipping_ca_layer(layer.clipping_ca_layer),
+      rounded_corner_ca_layer(layer.rounded_corner_ca_layer) {
   // Ensure that the ca_layer be reset, so that when the destructor is called,
   // the layer hierarchy is unaffected.
   // TODO(ccameron): Add a move constructor for scoped_nsobject to do this
   // automatically.
-  layer.ca_layer.reset();
+  layer.clipping_ca_layer.reset();
+  layer.rounded_corner_ca_layer.reset();
 }
 
 CARendererLayerTree::ClipAndSortingLayer::~ClipAndSortingLayer() {
-  [ca_layer removeFromSuperlayer];
+  [clipping_ca_layer removeFromSuperlayer];
+  [rounded_corner_ca_layer removeFromSuperlayer];
 }
 
 CARendererLayerTree::TransformLayer::TransformLayer(
@@ -471,7 +512,8 @@ bool CARendererLayerTree::RootLayer::AddContentLayer(
     if (params.sorting_context_id &&
         current_layer.sorting_context_id == params.sorting_context_id &&
         (current_layer.is_clipped != params.is_clipped ||
-         current_layer.clip_rect != params.clip_rect)) {
+         current_layer.clip_rect != params.clip_rect ||
+         current_layer.rounded_corner_bounds != params.rounded_corner_bounds)) {
       DLOG(ERROR) << "CALayer changed clip inside non-zero sorting context.";
       return false;
     }
@@ -479,14 +521,15 @@ bool CARendererLayerTree::RootLayer::AddContentLayer(
         !current_layer.is_singleton_sorting_context &&
         current_layer.is_clipped == params.is_clipped &&
         current_layer.clip_rect == params.clip_rect &&
+        current_layer.rounded_corner_bounds == params.rounded_corner_bounds &&
         current_layer.sorting_context_id == params.sorting_context_id) {
       needs_new_clip_and_sorting_layer = false;
     }
   }
   if (needs_new_clip_and_sorting_layer) {
     clip_and_sorting_layers.push_back(ClipAndSortingLayer(
-        params.is_clipped, params.clip_rect, params.sorting_context_id,
-        is_singleton_sorting_context));
+        params.is_clipped, params.clip_rect, params.rounded_corner_bounds,
+        params.sorting_context_id, is_singleton_sorting_context));
   }
   clip_and_sorting_layers.back().AddContentLayer(tree, params);
   return true;
@@ -516,7 +559,14 @@ void CARendererLayerTree::TransformLayer::AddContentLayer(
         gl::GLImageIOSurface::FromGLImage(params.image);
     DCHECK(io_surface_image);
     io_surface = io_surface_image->io_surface();
-    cv_pixel_buffer = io_surface_image->cv_pixel_buffer();
+    // Temporary investagtive fix for https://crbug.com/702369. It appears upon
+    // investigation that not using the original CVPixelBufferRef which came
+    // from the VTDecompressionSession prevents or minimizes flashing of
+    // incorrect content. Disable the CVPixelBufferRef path for the moment to
+    // determine if this fixes the bug for users.
+    // TODO(ccameron): If this indeed causes the bug to disappear, then
+    // extirpate the CVPixelBufferRef path.
+    // cv_pixel_buffer = io_surface_image->cv_pixel_buffer();
   }
 
   content_layers.push_back(
@@ -527,6 +577,7 @@ void CARendererLayerTree::TransformLayer::AddContentLayer(
 
 void CARendererLayerTree::RootLayer::CommitToCA(CALayer* superlayer,
                                                 RootLayer* old_layer,
+                                                const gfx::Size& pixel_size,
                                                 float scale_factor) {
   if (old_layer) {
     DCHECK(old_layer->ca_layer);
@@ -542,8 +593,11 @@ void CARendererLayerTree::RootLayer::CommitToCA(CALayer* superlayer,
     DLOG(ERROR) << "CARendererLayerTree root layer not attached to tree.";
   }
 
-  gfx::RectF bg_rect;
-  if (WantsFullcreenLowPowerBackdrop(scale_factor, &bg_rect)) {
+  EnforceOnlyOneAVLayer();
+
+  if (WantsFullcreenLowPowerBackdrop()) {
+    const gfx::RectF bg_rect(
+        ScaleSize(gfx::SizeF(pixel_size), 1 / scale_factor));
     if (gfx::RectF([ca_layer frame]) != bg_rect)
       [ca_layer setFrame:bg_rect.ToCGRect()];
     if (![ca_layer backgroundColor])
@@ -572,36 +626,74 @@ void CARendererLayerTree::ClipAndSortingLayer::CommitToCA(
   bool update_is_clipped = true;
   bool update_clip_rect = true;
   if (old_layer) {
-    DCHECK(old_layer->ca_layer);
-    std::swap(ca_layer, old_layer->ca_layer);
+    DCHECK(old_layer->clipping_ca_layer);
+    DCHECK(old_layer->rounded_corner_ca_layer);
+    std::swap(clipping_ca_layer, old_layer->clipping_ca_layer);
+    std::swap(rounded_corner_ca_layer, old_layer->rounded_corner_ca_layer);
     update_is_clipped = old_layer->is_clipped != is_clipped;
     update_clip_rect = update_is_clipped || old_layer->clip_rect != clip_rect;
   } else {
-    ca_layer.reset([[CALayer alloc] init]);
-    [ca_layer setAnchorPoint:CGPointZero];
-    [superlayer addSublayer:ca_layer];
+    clipping_ca_layer.reset([[CALayer alloc] init]);
+    [clipping_ca_layer setAnchorPoint:CGPointZero];
+    [superlayer addSublayer:clipping_ca_layer];
+    rounded_corner_ca_layer.reset([[CALayer alloc] init]);
+    [rounded_corner_ca_layer setAnchorPoint:CGPointZero];
+    [clipping_ca_layer addSublayer:rounded_corner_ca_layer];
   }
-  if ([ca_layer superlayer] != superlayer) {
+
+  if (!rounded_corner_bounds.IsEmpty()) {
+    if (!old_layer ||
+        old_layer->rounded_corner_bounds != rounded_corner_bounds) {
+      gfx::RectF dip_rounded_corner_bounds =
+          gfx::RectF(rounded_corner_bounds.rect());
+      dip_rounded_corner_bounds.Scale(1 / scale_factor);
+
+      [rounded_corner_ca_layer setMasksToBounds:true];
+
+      [rounded_corner_ca_layer
+          setPosition:CGPointMake(dip_rounded_corner_bounds.x(),
+                                  dip_rounded_corner_bounds.y())];
+      [rounded_corner_ca_layer
+          setBounds:CGRectMake(0, 0, dip_rounded_corner_bounds.width(),
+                               dip_rounded_corner_bounds.height())];
+      [rounded_corner_ca_layer
+          setSublayerTransform:CATransform3DMakeTranslation(
+                                   -dip_rounded_corner_bounds.x(),
+                                   -dip_rounded_corner_bounds.y(), 0)];
+
+      [rounded_corner_ca_layer
+          setCornerRadius:rounded_corner_bounds.GetSimpleRadius() /
+                          scale_factor];
+    }
+  } else {
+    [rounded_corner_ca_layer setMasksToBounds:false];
+    [rounded_corner_ca_layer setPosition:CGPointZero];
+    [rounded_corner_ca_layer setBounds:CGRectZero];
+    [rounded_corner_ca_layer setSublayerTransform:CATransform3DIdentity];
+    [rounded_corner_ca_layer setCornerRadius:0];
+  }
+  if ([clipping_ca_layer superlayer] != superlayer) {
     DLOG(ERROR) << "CARendererLayerTree root layer not attached to tree.";
   }
 
   if (update_is_clipped)
-    [ca_layer setMasksToBounds:is_clipped];
+    [clipping_ca_layer setMasksToBounds:is_clipped];
 
   if (update_clip_rect) {
     if (is_clipped) {
       gfx::RectF dip_clip_rect = gfx::RectF(clip_rect);
       dip_clip_rect.Scale(1 / scale_factor);
-      [ca_layer setPosition:CGPointMake(dip_clip_rect.x(), dip_clip_rect.y())];
-      [ca_layer setBounds:CGRectMake(0, 0, dip_clip_rect.width(),
-                                     dip_clip_rect.height())];
-      [ca_layer
+      [clipping_ca_layer
+          setPosition:CGPointMake(dip_clip_rect.x(), dip_clip_rect.y())];
+      [clipping_ca_layer setBounds:CGRectMake(0, 0, dip_clip_rect.width(),
+                                              dip_clip_rect.height())];
+      [clipping_ca_layer
           setSublayerTransform:CATransform3DMakeTranslation(
                                    -dip_clip_rect.x(), -dip_clip_rect.y(), 0)];
     } else {
-      [ca_layer setPosition:CGPointZero];
-      [ca_layer setBounds:CGRectZero];
-      [ca_layer setSublayerTransform:CATransform3DIdentity];
+      [clipping_ca_layer setPosition:CGPointZero];
+      [clipping_ca_layer setBounds:CGRectZero];
+      [clipping_ca_layer setSublayerTransform:CATransform3DIdentity];
     }
   }
 
@@ -609,7 +701,7 @@ void CARendererLayerTree::ClipAndSortingLayer::CommitToCA(
     TransformLayer* old_transform_layer = nullptr;
     if (old_layer && i < old_layer->transform_layers.size())
       old_transform_layer = &old_layer->transform_layers[i];
-    transform_layers[i].CommitToCA(ca_layer.get(), old_transform_layer,
+    transform_layers[i].CommitToCA(rounded_corner_ca_layer, old_transform_layer,
                                    scale_factor);
   }
 }
@@ -693,12 +785,24 @@ void CARendererLayerTree::ContentLayer::CommitToCA(CALayer* superlayer,
                          update_ca_filter;
   if (use_av_layer) {
     if (update_contents) {
+      bool result = false;
       if (cv_pixel_buffer) {
-        AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(av_layer,
-                                                       cv_pixel_buffer);
+        result = AVSampleBufferDisplayLayerEnqueueCVPixelBuffer(
+            av_layer, cv_pixel_buffer);
+        if (!result) {
+          LOG(ERROR) << "AVSampleBufferDisplayLayerEnqueueCVPixelBuffer failed";
+        }
       } else {
-        AVSampleBufferDisplayLayerEnqueueIOSurface(av_layer, io_surface);
+        result =
+            AVSampleBufferDisplayLayerEnqueueIOSurface(av_layer, io_surface);
+        if (!result) {
+          LOG(ERROR) << "AVSampleBufferDisplayLayerEnqueueIOSurface failed";
+        }
       }
+      // TODO(ccameron): Recreate the AVSampleBufferDisplayLayer on failure.
+      // This is not being done yet, to determine if this happens concurrently
+      // with video flickering.
+      // https://crbug.com/702369
     }
   } else {
     if (update_contents) {

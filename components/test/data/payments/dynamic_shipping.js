@@ -25,7 +25,8 @@ function buy() {  // eslint-disable-line no-unused-vars
     };
 
     var request = new PaymentRequest(
-        [{supportedMethods: ['visa']}], details, {requestShipping: true});
+        [{supportedMethods: 'basic-card', data: {supportedNetworks: ['visa']}}],
+        details, {requestShipping: true});
 
     request.addEventListener('shippingaddresschange', function(evt) {
       evt.updateWith(new Promise(function(resolve) {
@@ -79,8 +80,12 @@ function updateDetails(details, addr) {
     details.displayItems.splice(0, 1, shippingOption);
     details.shippingOptions = [shippingOption];
   } else {
-    delete details.shippingOptions;
+    details.shippingOptions = [];
     details.error = 'We do not ship to this address';
+    details.shippingAddressErrors = {
+      addressLine: 'ADDRESS LINE ERROR',
+      city: 'CITY ERROR',
+    };
   }
   return details;
 }

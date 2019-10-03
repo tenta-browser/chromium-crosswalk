@@ -6,19 +6,15 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
-#include "chrome/browser/supervised_user/supervised_user_service.h"
-#include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/supervised_user/supervised_user_test_base.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -41,45 +37,55 @@ static const char* kIframeHost2 = "www.iframe2.com";
 
 }  // namespace
 
-class SupervisedUserNavigationThrottleTest : public InProcessBrowserTest {
+class SupervisedUserNavigationThrottleTest : public SupervisedUserTestBase {
  protected:
-  SupervisedUserNavigationThrottleTest() {}
-  ~SupervisedUserNavigationThrottleTest() override {}
+  SupervisedUserNavigationThrottleTest() = default;
+  ~SupervisedUserNavigationThrottleTest() override = default;
 
   void BlockHost(const std::string& host) {
-    Profile* profile = browser()->profile();
+    Profile* profile = GetPrimaryUserProfile();
     SupervisedUserSettingsService* settings_service =
-        SupervisedUserSettingsServiceFactory::GetForProfile(profile);
-    auto dict = base::MakeUnique<base::DictionaryValue>();
+        SupervisedUserSettingsServiceFactory::GetForKey(
+            profile->GetProfileKey());
+    auto dict = std::make_unique<base::DictionaryValue>();
     dict->SetKey(host, base::Value(false));
     settings_service->SetLocalSetting(
         supervised_users::kContentPackManualBehaviorHosts, std::move(dict));
   }
 
+  bool IsInterstitialBeingShown(Browser* browser);
+
  private:
   void SetUpOnMainThread() override;
-  void SetUpCommandLine(base::CommandLine* command_line) override;
 };
 
+bool SupervisedUserNavigationThrottleTest::IsInterstitialBeingShown(
+    Browser* browser) {
+  WebContents* tab = browser->tab_strip_model()->GetActiveWebContents();
+  base::string16 title;
+  ui_test_utils::GetCurrentTabTitle(browser, &title);
+  return tab->GetController().GetLastCommittedEntry()->GetPageType() ==
+             content::PAGE_TYPE_ERROR &&
+         title == base::ASCIIToUTF16("Site blocked");
+}
+
 void SupervisedUserNavigationThrottleTest::SetUpOnMainThread() {
+  SupervisedUserTestBase::SetUpOnMainThread();
+
   // Resolve everything to localhost.
   host_resolver()->AddIPLiteralRule("*", "127.0.0.1", "localhost");
 
-  ASSERT_TRUE(embedded_test_server()->Start());
-}
-
-void SupervisedUserNavigationThrottleTest::SetUpCommandLine(
-    base::CommandLine* command_line) {
-  command_line->AppendSwitchASCII(switches::kSupervisedUserId, "asdf");
+  ASSERT_TRUE(embedded_test_server()->Started());
 }
 
 // Tests that navigating to a blocked page simply fails if there is no
 // SupervisedUserNavigationObserver.
 IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
                        NoNavigationObserverBlock) {
-  Profile* profile = browser()->profile();
+  LogInUser(LogInType::kChild);
+  Profile* profile = GetPrimaryUserProfile();
   SupervisedUserSettingsService* supervised_user_settings_service =
-      SupervisedUserSettingsServiceFactory::GetForProfile(profile);
+      SupervisedUserSettingsServiceFactory::GetForKey(profile->GetProfileKey());
   supervised_user_settings_service->SetLocalSetting(
       supervised_users::kContentPackDefaultFilteringBehavior,
       std::unique_ptr<base::Value>(
@@ -92,7 +98,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
   controller.LoadURL(GURL("http://www.example.com"), content::Referrer(),
                      ui::PAGE_TRANSITION_TYPED, std::string());
   observer.Wait();
-  content::NavigationEntry* entry = controller.GetActiveEntry();
+  content::NavigationEntry* entry = controller.GetVisibleEntry();
   ASSERT_TRUE(entry);
   EXPECT_EQ(content::PAGE_TYPE_NORMAL, entry->GetPageType());
   EXPECT_FALSE(observer.last_navigation_succeeded());
@@ -100,23 +106,25 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
 
 IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
                        BlockMainFrameWithInterstitial) {
-  BlockHost(kExampleHost2);
+  LogInUser(LogInType::kChild);
 
-  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
+  BlockHost(kExampleHost2);
 
   GURL allowed_url = embedded_test_server()->GetURL(
       kExampleHost, "/supervised_user/simple.html");
   ui_test_utils::NavigateToURL(browser(), allowed_url);
-  EXPECT_FALSE(tab->ShowingInterstitialPage());
+  EXPECT_FALSE(IsInterstitialBeingShown(browser()));
 
   GURL blocked_url = embedded_test_server()->GetURL(
       kExampleHost2, "/supervised_user/simple.html");
   ui_test_utils::NavigateToURL(browser(), blocked_url);
-  EXPECT_TRUE(tab->ShowingInterstitialPage());
+  EXPECT_TRUE(IsInterstitialBeingShown(browser()));
 }
 
 IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
                        DontBlockSubFrame) {
+  LogInUser(LogInType::kChild);
+
   BlockHost(kExampleHost2);
   BlockHost(kIframeHost2);
 
@@ -125,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
   GURL allowed_url_with_iframes = embedded_test_server()->GetURL(
       kExampleHost, "/supervised_user/with_iframes.html");
   ui_test_utils::NavigateToURL(browser(), allowed_url_with_iframes);
-  EXPECT_FALSE(tab->ShowingInterstitialPage());
+  EXPECT_FALSE(IsInterstitialBeingShown(browser()));
 
   // Both iframes (from allowed host iframe1.com as well as from blocked host
   // iframe2.com) should be loaded normally, since we don't filter iframes
@@ -141,24 +149,19 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleTest,
 class SupervisedUserNavigationThrottleNotSupervisedTest
     : public SupervisedUserNavigationThrottleTest {
  protected:
-  SupervisedUserNavigationThrottleNotSupervisedTest() {}
-  ~SupervisedUserNavigationThrottleNotSupervisedTest() override {}
-
- private:
-  // Overridden to do nothing, so that the supervised user ID will be empty.
-  void SetUpCommandLine(base::CommandLine* command_line) override {}
+  SupervisedUserNavigationThrottleNotSupervisedTest() = default;
+  ~SupervisedUserNavigationThrottleNotSupervisedTest() override = default;
 };
 
 IN_PROC_BROWSER_TEST_F(SupervisedUserNavigationThrottleNotSupervisedTest,
                        DontBlock) {
+  LogInUser(LogInType::kRegular);
   BlockHost(kExampleHost);
-
-  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
 
   GURL blocked_url = embedded_test_server()->GetURL(
       kExampleHost, "/supervised_user/simple.html");
   ui_test_utils::NavigateToURL(browser(), blocked_url);
   // Even though the URL is marked as blocked, the load should go through, since
   // the user isn't supervised.
-  EXPECT_FALSE(tab->ShowingInterstitialPage());
+  EXPECT_FALSE(IsInterstitialBeingShown(browser()));
 }

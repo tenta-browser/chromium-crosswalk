@@ -7,16 +7,14 @@
 #include <memory>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/fake_host_scan_cache.h"
 #include "chromeos/components/tether/host_scan_test_util.h"
 #include "chromeos/components/tether/mock_tether_host_response_recorder.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/network_state_test.h"
+#include "chromeos/network/network_state_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -27,44 +25,39 @@ namespace chromeos {
 
 namespace tether {
 
-class NetworkHostScanCacheTest : public NetworkStateTest {
+class NetworkHostScanCacheTest : public testing::Test {
  protected:
   NetworkHostScanCacheTest()
       : test_entries_(host_scan_test_util::CreateTestEntries()) {}
 
   void SetUp() override {
-    DBusThreadManager::Initialize();
-    NetworkStateTest::SetUp();
-    network_state_handler()->SetTetherTechnologyState(
+    helper_.network_state_handler()->SetTetherTechnologyState(
         NetworkStateHandler::TECHNOLOGY_ENABLED);
 
     mock_tether_host_response_recorder_ =
-        base::MakeUnique<NiceMock<MockTetherHostResponseRecorder>>();
+        std::make_unique<NiceMock<MockTetherHostResponseRecorder>>();
     device_id_tether_network_guid_map_ =
-        base::MakeUnique<DeviceIdTetherNetworkGuidMap>();
+        std::make_unique<DeviceIdTetherNetworkGuidMap>();
 
     ON_CALL(*mock_tether_host_response_recorder_,
             GetPreviouslyConnectedHostIds())
         .WillByDefault(Invoke(
             this, &NetworkHostScanCacheTest::GetPreviouslyConnectedHostIds));
 
-    host_scan_cache_ = base::MakeUnique<NetworkHostScanCache>(
-        network_state_handler(), mock_tether_host_response_recorder_.get(),
+    host_scan_cache_ = std::make_unique<NetworkHostScanCache>(
+        helper_.network_state_handler(),
+        mock_tether_host_response_recorder_.get(),
         device_id_tether_network_guid_map_.get());
 
     // To track what is expected to be contained in the cache, maintain a
     // FakeHostScanCache in memory and update it alongside |host_scan_cache_|.
     // Use a std::vector to track which device IDs correspond to devices whose
     // Tether networks' HasConnectedToHost fields are expected to be set.
-    expected_cache_ = base::MakeUnique<FakeHostScanCache>();
+    expected_cache_ = std::make_unique<FakeHostScanCache>();
     has_connected_to_host_device_ids_.clear();
   }
 
-  void TearDown() override {
-    ShutdownNetworkState();
-    NetworkStateTest::TearDown();
-    DBusThreadManager::Shutdown();
-  }
+  void TearDown() override {}
 
   std::vector<std::string> GetPreviouslyConnectedHostIds() const {
     return has_connected_to_host_device_ids_;
@@ -89,10 +82,8 @@ class NetworkHostScanCacheTest : public NetworkStateTest {
   }
 
   bool HasConnectedToHost(const std::string& tether_network_guid) {
-    auto it =
-        std::find(has_connected_to_host_device_ids_.begin(),
-                  has_connected_to_host_device_ids_.end(), tether_network_guid);
-    return it != has_connected_to_host_device_ids_.end();
+    return base::Contains(has_connected_to_host_device_ids_,
+                          tether_network_guid);
   }
 
   // Verifies that the information present in |expected_cache_| and
@@ -110,10 +101,11 @@ class NetworkHostScanCacheTest : public NetworkStateTest {
       // Ensure that each entry in |expected_cache_| matches the
       // corresponding entry in NetworkStateHandler.
       const NetworkState* tether_network_state =
-          network_state_handler()->GetNetworkStateFromGuid(tether_network_guid);
+          helper_.network_state_handler()->GetNetworkStateFromGuid(
+              tether_network_guid);
       ASSERT_TRUE(tether_network_state);
       EXPECT_EQ(entry.device_name, tether_network_state->name());
-      EXPECT_EQ(entry.carrier, tether_network_state->carrier());
+      EXPECT_EQ(entry.carrier, tether_network_state->tether_carrier());
       EXPECT_EQ(entry.battery_percentage,
                 tether_network_state->battery_percentage());
       EXPECT_EQ(entry.signal_strength, tether_network_state->signal_strength());
@@ -123,6 +115,7 @@ class NetworkHostScanCacheTest : public NetworkStateTest {
   }
 
   const base::test::ScopedTaskEnvironment scoped_task_environment_;
+  NetworkStateTestHelper helper_{true /* use_default_devices_and_services */};
   const std::unordered_map<std::string, HostScanCacheEntry> test_entries_;
 
   std::unique_ptr<NiceMock<MockTetherHostResponseRecorder>>

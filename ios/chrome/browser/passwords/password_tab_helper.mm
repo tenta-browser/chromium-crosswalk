@@ -12,8 +12,6 @@
 #error "This file requires ARC support."
 #endif
 
-DEFINE_WEB_STATE_USER_DATA_KEY(PasswordTabHelper);
-
 PasswordTabHelper::~PasswordTabHelper() = default;
 
 // static
@@ -23,6 +21,11 @@ void PasswordTabHelper::CreateForWebState(web::WebState* web_state) {
     web_state->SetUserData(UserDataKey(),
                            base::WrapUnique(new PasswordTabHelper(web_state)));
   }
+}
+
+void PasswordTabHelper::SetBaseViewController(
+    UIViewController* baseViewController) {
+  controller_.baseViewController = baseViewController;
 }
 
 void PasswordTabHelper::SetDispatcher(id<ApplicationCommands> dispatcher) {
@@ -42,6 +45,15 @@ id<PasswordFormFiller> PasswordTabHelper::GetPasswordFormFiller() {
   return controller_.passwordFormFiller;
 }
 
+password_manager::PasswordGenerationFrameHelper*
+PasswordTabHelper::GetGenerationHelper() {
+  return controller_.passwordGenerationHelper;
+}
+
+password_manager::PasswordManager* PasswordTabHelper::GetPasswordManager() {
+  return controller_.passwordManager;
+}
+
 PasswordTabHelper::PasswordTabHelper(web::WebState* web_state)
     : controller_([[PasswordController alloc] initWithWebState:web_state]) {
   web_state->AddObserver(this);
@@ -49,6 +61,7 @@ PasswordTabHelper::PasswordTabHelper(web::WebState* web_state)
 
 void PasswordTabHelper::WebStateDestroyed(web::WebState* web_state) {
   web_state->RemoveObserver(this);
-  [controller_ detach];
   controller_ = nil;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(PasswordTabHelper)

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.util;
 
+import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
@@ -14,17 +15,24 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.TransactionTooLargeException;
+import android.provider.Browser;
 import android.support.annotation.Nullable;
 import android.support.v4.app.BundleCompat;
 
+import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ApplicationStatus;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.IntentHandler.TabOpenType;
+import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 
 /**
- * Utilities dealing with extracting information from intents.
+ * Utilities dealing with extracting information from intents and creating common intents.
  */
 public class IntentUtils {
     private static final String TAG = "IntentUtils";
@@ -66,6 +74,19 @@ public class IntentUtils {
         } catch (Throwable t) {
             // Catches un-parceling exceptions.
             Log.e(TAG, "getBooleanExtra failed on intent " + intent);
+            return defaultValue;
+        }
+    }
+
+    /**
+     * Just like {@link Bundle#getBoolean(String, boolean)} but doesn't throw exceptions.
+     */
+    public static boolean safeGetBoolean(Bundle bundle, String name, boolean defaultValue) {
+        try {
+            return bundle.getBoolean(name, defaultValue);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "getBoolean failed on bundle " + bundle);
             return defaultValue;
         }
     }
@@ -118,6 +139,19 @@ public class IntentUtils {
         } catch (Throwable t) {
             // Catches un-parceling exceptions.
             Log.e(TAG, "getIntArray failed on bundle " + bundle);
+            return null;
+        }
+    }
+
+    /**
+     * Just like {@link Bundle#getFloatArray(String)} but doesn't throw exceptions.
+     */
+    public static float[] safeGetFloatArray(Bundle bundle, String name) {
+        try {
+            return bundle.getFloatArray(name);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "getFloatArray failed on bundle " + bundle);
             return null;
         }
     }
@@ -223,6 +257,20 @@ public class IntentUtils {
         } catch (Throwable t) {
             // Catches un-parceling exceptions.
             Log.e(TAG, "getParcelableArrayListExtra failed on intent " + intent);
+            return null;
+        }
+    }
+
+    /**
+     * Just link {@link Bundle#getParcelableArrayList(String)} but doesn't throw exceptions.
+     */
+    public static <T extends Parcelable> ArrayList<T> safeGetParcelableArrayList(
+            Bundle bundle, String name) {
+        try {
+            return bundle.getParcelableArrayList(name);
+        } catch (Throwable t) {
+            // Catches un-parceling exceptions.
+            Log.e(TAG, "getParcelableArrayList failed on bundle " + bundle);
             return null;
         }
     }
@@ -353,6 +401,13 @@ public class IntentUtils {
         }
     }
 
+    /** Returns whether the intent starts an activity in a new task or a new document. */
+    public static boolean isIntentForNewTaskOrNewDocument(Intent intent) {
+        int testFlags =
+                Intent.FLAG_ACTIVITY_NEW_TASK | ApiCompatibilityUtils.getActivityNewDocumentFlag();
+        return (intent.getFlags() & testFlags) != 0;
+    }
+
     /**
      * Returns how large the Intent will be in Parcel form, which is helpful for gauging whether
      * Android will deliver the Intent instead of throwing a TransactionTooLargeException.
@@ -394,6 +449,36 @@ public class IntentUtils {
     }
 
     /**
+     * Creates an Intent that tells Chrome to bring an Activity for a particular Tab back to the
+     * foreground.
+     * @param tabId The id of the Tab to bring to the foreground.
+     * @return Created Intent or null if this operation isn't possible.
+     */
+    @Nullable
+    public static Intent createBringTabToFrontIntent(int tabId) {
+        // Iterate through all {@link CustomTab}s and check whether the given tabId belongs to a
+        // {@link CustomTab}. If so, return null as the client app's task cannot be foregrounded.
+        for (Activity activity : ApplicationStatus.getRunningActivities()) {
+            if (activity instanceof CustomTabActivity
+                    && ((CustomTabActivity) activity).getActivityTab() != null
+                    && tabId == ((CustomTabActivity) activity).getActivityTab().getId()) {
+                return null;
+            }
+        }
+
+        Context context = ContextUtils.getApplicationContext();
+        Intent intent = new Intent(context, ChromeLauncherActivity.class);
+        intent.putExtra(Browser.EXTRA_APPLICATION_ID, context.getPackageName());
+        intent.putExtra(TabOpenType.BRING_TAB_TO_FRONT_STRING, tabId);
+        return intent;
+    }
+
+    private static Intent logInvalidIntent(Intent intent, Exception e) {
+        Log.e(TAG, "Invalid incoming intent.", e);
+        return intent.replaceExtras((Bundle) null);
+    }
+
+    /**
      * Sanitizes an intent. In case the intent cannot be unparcelled, all extras will be removed to
      * make it safe to use.
      * @return A safe to use version of this intent.
@@ -404,8 +489,12 @@ public class IntentUtils {
             incomingIntent.getBooleanExtra("TriggerUnparcel", false);
             return incomingIntent;
         } catch (BadParcelableException e) {
-            Log.e(TAG, "Invalid incoming intent.", e);
-            return incomingIntent.replaceExtras((Bundle) null);
+            return logInvalidIntent(incomingIntent, e);
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof ClassNotFoundException) {
+                return logInvalidIntent(incomingIntent, e);
+            }
+            throw e;
         }
     }
 }

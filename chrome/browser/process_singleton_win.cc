@@ -14,6 +14,7 @@
 #include "base/debug/activity_tracker.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process.h"
 #include "base/process/process_info.h"
@@ -23,6 +24,7 @@
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "base/win/wmi.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/win/chrome_process_finder.h"
@@ -31,7 +33,6 @@
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/chromium_strings.h"
-#include "chrome/installer/util/wmi.h"
 #include "content/public/common/result_codes.h"
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -211,7 +212,7 @@ void TerminateProcessWithHistograms(const base::Process& process,
         process.Pid(), exit_code);
     UMA_HISTOGRAM_TIMES("Chrome.ProcessSingleton.TerminateProcessTime",
                         base::TimeTicks::Now() - start_time);
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
+    base::UmaHistogramSparse(
         "Chrome.ProcessSingleton.TerminationWaitErrorCode.Windows", wait_error);
   } else {
     terminate_error = ::GetLastError();
@@ -219,8 +220,8 @@ void TerminateProcessWithHistograms(const base::Process& process,
         ProcessSingleton::TERMINATE_FAILED);
     DPLOG(ERROR) << "Unable to terminate process";
   }
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      "Chrome.ProcessSingleton.ProcessTerminateErrorCode.Windows",
+  base::UmaHistogramSparse(
+      "Chrome.ProcessSingleton.TerminateProcessErrorCode.Windows",
       terminate_error);
 }
 
@@ -235,7 +236,7 @@ bool ProcessSingleton::EscapeVirtualization(
   if (::GetModuleHandle(L"sftldr_wow64.dll") ||
       ::GetModuleHandle(L"sftldr.dll")) {
     int process_id;
-    if (!installer::WMIProcess::Launch(::GetCommandLineW(), &process_id))
+    if (!base::win::WmiLaunchProcess(::GetCommandLineW(), &process_id))
       return false;
     is_virtualized_ = true;
     // The new window was spawned from WMI, and won't be in the foreground.
@@ -316,6 +317,7 @@ ProcessSingleton::NotifyResult ProcessSingleton::NotifyOtherProcess() {
 
   // If there is a visible browser window, ask the user before killing it.
   if (visible_window && !should_kill_remote_process_callback_.Run()) {
+    SendRemoteProcessInteractionResultHistogram(USER_REFUSED_TERMINATION);
     // The user denied. Quit silently.
     return PROCESS_NOTIFIED;
   }

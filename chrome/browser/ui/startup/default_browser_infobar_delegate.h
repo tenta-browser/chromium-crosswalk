@@ -44,7 +44,6 @@ class DefaultBrowserInfoBarDelegate : public ConfirmInfoBarDelegate {
   void AllowExpiry();
 
   // ConfirmInfoBarDelegate:
-  Type GetInfoBarType() const override;
   infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   const gfx::VectorIcon& GetVectorIcon() const override;
   bool ShouldExpire(const NavigationDetails& details) const override;
@@ -65,7 +64,7 @@ class DefaultBrowserInfoBarDelegate : public ConfirmInfoBarDelegate {
   bool action_taken_;
 
   // Used to delay the expiration of the info-bar.
-  base::WeakPtrFactory<DefaultBrowserInfoBarDelegate> weak_factory_;
+  base::WeakPtrFactory<DefaultBrowserInfoBarDelegate> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DefaultBrowserInfoBarDelegate);
 };

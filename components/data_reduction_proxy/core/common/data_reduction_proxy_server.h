@@ -7,17 +7,15 @@
 
 #include <vector>
 
-#include "components/data_reduction_proxy/core/common/resource_type_provider.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
-#include "net/proxy/proxy_server.h"
+#include "net/base/proxy_server.h"
 
 namespace data_reduction_proxy {
 
 // A class that stores information about a single data reduction proxy server.
 class DataReductionProxyServer {
  public:
-  DataReductionProxyServer(const net::ProxyServer& proxy_server,
-                           ProxyServer_ProxyType proxy_type);
+  explicit DataReductionProxyServer(const net::ProxyServer& proxy_server);
 
   DataReductionProxyServer(const DataReductionProxyServer& other) = default;
 
@@ -26,21 +24,21 @@ class DataReductionProxyServer {
 
   bool operator==(const DataReductionProxyServer& other) const;
 
-  bool SupportsResourceType(
-      ResourceTypeProvider::ContentType content_type) const;
-
   const net::ProxyServer& proxy_server() const { return proxy_server_; }
 
   static std::vector<net::ProxyServer> ConvertToNetProxyServers(
       const std::vector<DataReductionProxyServer>&
           data_reduction_proxy_servers);
 
-  // Returns |proxy_type_| for verification by tests.
-  ProxyServer_ProxyType GetProxyTypeForTesting() const;
+  // Returns true if this is a core data reduction proxy server.
+  bool IsCoreProxy() const;
+
+  // Returns true if this is a secure data reduction proxy server. Only HTTPS
+  // and QUIC proxy servers are considered secure.
+  bool IsSecureProxy() const;
 
  private:
   net::ProxyServer proxy_server_;
-  ProxyServer_ProxyType proxy_type_;
 };
 
 }  // namespace data_reduction_proxy

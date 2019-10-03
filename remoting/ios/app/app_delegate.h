@@ -20,9 +20,12 @@
 // controller.
 - (void)navigateToHelpCenter:(UINavigationController*)navigationController;
 
-// Presents the help center modally onto the topmost view controller.
+// Presents contents modally onto the topmost view controller.
 - (void)presentHelpCenter;
+- (void)presentTermsOfService;
+- (void)presentPrivacyPolicy;
 
+// TODO(yuweih): Replace calls to this method with methods from HelpAndFeedback.
 // This will present the Send Feedback view controller onto the topmost view
 // controller.
 // context: a unique identifier for the user's place within the app which can be

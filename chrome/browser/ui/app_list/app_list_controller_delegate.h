@@ -9,11 +9,12 @@
 
 #include <string>
 
+#include "base/callback_forward.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "extensions/common/constants.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/native_widget_types.h"
 
 class Profile;
 
@@ -21,7 +22,7 @@ namespace extensions {
 class Extension;
 class ExtensionSet;
 class InstallTracker;
-}
+}  // namespace extensions
 
 namespace gfx {
 class Rect;
@@ -47,24 +48,24 @@ class AppListControllerDelegate {
     PIN_FIXED
   };
 
+  AppListControllerDelegate();
   virtual ~AppListControllerDelegate();
 
   // Dismisses the view.
   virtual void DismissView() = 0;
 
-  // Handles the view being closed.
-  virtual void ViewClosing();
-
   // Gets app list window.
-  virtual gfx::NativeWindow GetAppListWindow() = 0;
+  virtual aura::Window* GetAppListWindow() = 0;
 
   // Gets display ID of app list window.
-  int64_t GetAppListDisplayId();
+  virtual int64_t GetAppListDisplayId() = 0;
 
   // Gets the content bounds of the app info dialog of the app list in the
   // screen coordinates. On platforms that do not use views, this returns a 0x0
   // rectangle.
-  virtual gfx::Rect GetAppInfoDialogBounds();
+  using GetAppInfoDialogBoundsCallback =
+      base::OnceCallback<void(const gfx::Rect&)>;
+  virtual void GetAppInfoDialogBounds(GetAppInfoDialogBoundsCallback callback);
 
   // Control of pinning apps.
   virtual bool IsAppPinned(const std::string& app_id) = 0;
@@ -74,11 +75,6 @@ class AppListControllerDelegate {
 
   // Returns true if requested app is open.
   virtual bool IsAppOpen(const std::string& app_id) const = 0;
-
-  // Called before and after a dialog opens in the app list. For example,
-  // displays an overlay that disables the app list while the dialog is open.
-  virtual void OnShowChildDialog();
-  virtual void OnCloseChildDialog();
 
   // Whether the controller supports a Show App Info flow.
   virtual bool CanDoShowAppInfoFlow();
@@ -120,8 +116,7 @@ class AppListControllerDelegate {
   void UninstallApp(Profile* profile, const std::string& app_id);
 
   // True if the app was installed from the web store.
-  bool IsAppFromWebStore(Profile* profile,
-                         const std::string& app_id);
+  bool IsAppFromWebStore(Profile* profile, const std::string& app_id);
 
   // Shows the user the webstore site for the given app.
   void ShowAppInWebStore(Profile* profile,
@@ -137,12 +132,11 @@ class AppListControllerDelegate {
   // Gets/sets the launch type for an app.
   // The launch type specifies whether a hosted app should launch as a separate
   // window, fullscreened or as a tab.
-  extensions::LaunchType GetExtensionLaunchType(
-      Profile* profile, const std::string& app_id);
-  virtual void SetExtensionLaunchType(
-      Profile* profile,
-      const std::string& extension_id,
-      extensions::LaunchType launch_type);
+  extensions::LaunchType GetExtensionLaunchType(Profile* profile,
+                                                const std::string& app_id);
+  virtual void SetExtensionLaunchType(Profile* profile,
+                                      const std::string& extension_id,
+                                      extensions::LaunchType launch_type);
 
   // Returns true if the given extension is installed.
   virtual bool IsExtensionInstalled(Profile* profile,
@@ -155,6 +149,9 @@ class AppListControllerDelegate {
 
   // Called when a search is started using the app list search box.
   void OnSearchStarted();
+
+ private:
+  base::WeakPtrFactory<AppListControllerDelegate> weak_ptr_factory_;
 };
 
 #endif  // CHROME_BROWSER_UI_APP_LIST_APP_LIST_CONTROLLER_DELEGATE_H_

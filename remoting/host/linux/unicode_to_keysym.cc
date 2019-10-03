@@ -5,28 +5,9 @@
 #include "remoting/host/linux/unicode_to_keysym.h"
 
 #include <algorithm>
-#define XK_MISCELLANY
-#define XK_XKB_KEYS
-#define XK_LATIN1
-#define XK_LATIN2
-#define XK_LATIN3
-#define XK_LATIN4
-#define XK_LATIN9
-#define XK_GREEK
-#define XK_KATAKANA
-#define XK_ARABIC
-#define XK_CYRILLIC
-#define XK_HEBREW
-#define XK_THAI
-#define XK_KOREAN
-#define XK_CURRENCY
-#define XK_TECHNICAL
-#define XK_PUBLISHING
-#define XK_APL
-#define XK_SPECIAL
-#include <X11/keysymdef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
+#include "ui/gfx/x/x11.h"
 
 namespace remoting {
 
@@ -830,7 +811,7 @@ std::vector<uint32_t> GetKeySymsForUnicode(uint32_t unicode) {
     keysyms.push_back(unicode);
   }
 
-  const CodePair* map_end = kKeySymUnicodeMap + arraysize(kKeySymUnicodeMap);
+  const CodePair* map_end = kKeySymUnicodeMap + base::size(kKeySymUnicodeMap);
   const CodePair* pair =
       std::lower_bound(kKeySymUnicodeMap, map_end, unicode, &CompareCodePair);
   while (pair != map_end && pair->unicode == unicode) {

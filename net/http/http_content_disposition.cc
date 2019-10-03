@@ -189,7 +189,7 @@ bool DecodeWord(const std::string& encoded_word,
   // web browser.
 
   // What IE6/7 does: %-escaped UTF-8.
-  decoded_word = UnescapeURLComponent(encoded_word, UnescapeRule::SPACES);
+  decoded_word = UnescapeBinaryURLComponent(encoded_word, UnescapeRule::NORMAL);
   if (decoded_word != encoded_word)
     *parse_result_flags |= HttpContentDisposition::HAS_PERCENT_ENCODED_STRINGS;
   if (base::IsStringUTF8(decoded_word)) {
@@ -323,9 +323,8 @@ bool DecodeExtValue(const std::string& param_value, std::string* decoded) {
     return true;
   }
 
-  std::string unescaped = UnescapeURLComponent(
-      value, UnescapeRule::SPACES |
-                 UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+  std::string unescaped =
+      UnescapeBinaryURLComponent(value, UnescapeRule::NORMAL);
 
   return ConvertToUtf8AndNormalize(unescaped, charset.c_str(), decoded);
 }
@@ -403,17 +402,16 @@ void HttpContentDisposition::Parse(const std::string& header,
   HttpUtil::NameValuePairsIterator iter(pos, end, ';');
   while (iter.GetNext()) {
     if (filename.empty() &&
-        base::LowerCaseEqualsASCII(
-            base::StringPiece(iter.name_begin(), iter.name_end()),
-            "filename")) {
+        base::LowerCaseEqualsASCII(iter.name_piece(), "filename")) {
       DecodeFilenameValue(iter.value(), referrer_charset, &filename,
                           &parse_result_flags_);
-      if (!filename.empty())
+      if (!filename.empty()) {
         parse_result_flags_ |= HAS_FILENAME;
+        if (filename[0] == '\'')
+          parse_result_flags_ |= HAS_SINGLE_QUOTED_FILENAME;
+      }
     } else if (ext_filename.empty() &&
-               base::LowerCaseEqualsASCII(
-                   base::StringPiece(iter.name_begin(), iter.name_end()),
-                   "filename*")) {
+               base::LowerCaseEqualsASCII(iter.name_piece(), "filename*")) {
       DecodeExtValue(iter.raw_value(), &ext_filename);
       if (!ext_filename.empty())
         parse_result_flags_ |= HAS_EXT_FILENAME;
@@ -424,6 +422,9 @@ void HttpContentDisposition::Parse(const std::string& header,
     filename_ = ext_filename;
   else
     filename_ = filename;
+
+  if (!filename.empty() && filename[0] == '\'')
+    parse_result_flags_ |= HAS_SINGLE_QUOTED_FILENAME;
 }
 
 }  // namespace net

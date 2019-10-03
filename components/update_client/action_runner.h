@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "components/update_client/component_unpacker.h"
 
 namespace base {
@@ -32,27 +34,29 @@ class ActionRunner {
   using Callback =
       base::OnceCallback<void(bool succeeded, int error_code, int extra_code1)>;
 
-  ActionRunner(const Component& component,
-               const std::vector<uint8_t>& key_hash);
+  explicit ActionRunner(const Component& component);
   ~ActionRunner();
 
   void Run(Callback run_complete);
 
  private:
-  void Unpack();
+  void RunOnTaskRunner(std::unique_ptr<Unzipper> unzipper,
+                       scoped_refptr<Patcher> patcher);
   void UnpackComplete(const ComponentUnpacker::Result& result);
 
   void RunCommand(const base::CommandLine& cmdline);
+  void RunRecoveryCRXElevated(const base::FilePath& crx_path);
 
   base::CommandLine MakeCommandLine(const base::FilePath& unpack_path) const;
 
   void WaitForCommand(base::Process process);
 
-  const Component& component_;
+#if defined(OS_WIN)
+  void RunRecoveryCRXElevatedInSTA(const base::FilePath& crx_path);
+#endif
 
-  // Contains the key hash of the CRX this object is allowed to run. This value
-  // is using during the unpacking of the CRX to verify its integrity.
-  const std::vector<uint8_t> key_hash_;
+  bool is_per_user_install_ = false;
+  const Component& component_;
 
   // Used to post callbacks to the main thread.
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;

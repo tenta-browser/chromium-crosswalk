@@ -6,12 +6,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
+
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_tokenizer.h"
 #include "components/domain_reliability/config.h"
-#include "content/public/common/origin_util.h"
 
 namespace {
 
@@ -27,8 +28,8 @@ class DirectiveHeaderValueParser {
     SYNTAX_ERROR
   };
 
-  DirectiveHeaderValueParser(base::StringPiece value)
-      : value_(value.data()),
+  explicit DirectiveHeaderValueParser(base::StringPiece value)
+      : value_(value.as_string()),
         tokenizer_(value_.begin(), value_.end(), ";= "),
         stopped_with_error_(false) {
     tokenizer_.set_options(base::StringTokenizer::RETURN_DELIMS);
@@ -133,6 +134,8 @@ class DirectiveHeaderValueParser {
     return BEFORE_VALUE;
   }
 
+  // TODO(https://crbug.com/820198): This could take a StringPiece once
+  // StringTokenizer is made StringPiece-friendly.
   std::string value_;
   base::StringTokenizer tokenizer_;
 
@@ -167,9 +170,9 @@ bool ParseReportUri(const std::vector<base::StringPiece> in,
     if (!Unquote(in_token.as_string(), &unquoted))
       return false;
     GURL url(unquoted);
-    if (!url.is_valid() || !content::IsOriginSecure(url))
+    if (!url.is_valid() || !url.SchemeIsCryptographic())
       return false;
-    out->push_back(base::MakeUnique<GURL>(url));
+    out->push_back(std::make_unique<GURL>(url));
   }
 
   return true;
@@ -233,7 +236,7 @@ std::unique_ptr<DomainReliabilityHeader> DomainReliabilityHeader::Parse(
       include_subdomains = true;
       got_include_subdomains = true;
     } else {
-      LOG(WARNING) << "Ignoring unknown NEL header directive " << name << ".";
+      DLOG(WARNING) << "Ignoring unknown NEL header directive " << name << ".";
     }
   }
 
@@ -276,7 +279,8 @@ DomainReliabilityHeader::ReleaseConfig() {
 }
 
 std::string DomainReliabilityHeader::ToString() const {
-  std::string string = "";
+  DCHECK_EQ(PARSE_SET_CONFIG, status_);
+  std::string string;
   int64_t max_age_s = max_age_.InSeconds();
 
   if (config_->collectors.empty()) {
@@ -290,7 +294,7 @@ std::string DomainReliabilityHeader::ToString() const {
     string += "; ";
   }
 
-  string += "max-age=" + base::Int64ToString(max_age_s) + "; ";
+  string += "max-age=" + base::NumberToString(max_age_s) + "; ";
 
   if (config_->include_subdomains)
     string += "includeSubdomains; ";
@@ -312,7 +316,7 @@ DomainReliabilityHeader::DomainReliabilityHeader(
     base::TimeDelta max_age)
     : status_(status), config_(std::move(config)), max_age_(max_age) {
   DCHECK_EQ(PARSE_SET_CONFIG, status_);
-  DCHECK(config_.get());
+  DCHECK(config_);
   DCHECK_NE(0, max_age_.InMicroseconds());
 }
 

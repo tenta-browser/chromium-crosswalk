@@ -1,3 +1,5 @@
+# Please consult components/viz/README.md about allowable dependencies.
+
 include_rules = [
   # TODO(staraz): cc/base was added because SharedQuadState includes
   # cc::MathUtil. Remove it once cc/base/math_util* are moved to viz.
@@ -6,7 +8,9 @@ include_rules = [
 
   "+gpu/command_buffer/common",
   "+third_party/skia",
+  "+ui/gfx/video_types.h",
   "+ui/latency",
+  "+gpu/ipc/common/vulkan_ycbcr_info.h",
 ]
 
 specific_include_rules = {

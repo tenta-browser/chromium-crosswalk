@@ -20,8 +20,9 @@ import org.chromium.components.feature_engagement.FeatureConstants;
  * becomes front-most.  If that infobar is closed or another infobar comes to the front the window
  * will be dismissed.
  */
-class IPHInfoBarSupport implements OnDismissListener, InfoBarContainer.InfoBarAnimationListener,
-                                   InfoBarContainerObserver {
+public class IPHInfoBarSupport implements OnDismissListener,
+                                          InfoBarContainer.InfoBarAnimationListener,
+                                          InfoBarContainerObserver {
     /** Helper class to hold all relevant display parameters for an in-product help window. */
     public static class TrackerParameters {
         public TrackerParameters(
@@ -97,7 +98,7 @@ class IPHInfoBarSupport implements OnDismissListener, InfoBarContainer.InfoBarAn
     @Override
     public void notifyAnimationFinished(int animationType) {}
 
-    // Calling {@link ViewAnchoredTextBubble#dismiss()} will invoke {@link #onDismiss} which will
+    // Calling {@link TextBubble#dismiss()} will invoke {@link #onDismiss} which will
     // set the value of {@link #mCurrentState} to null, which is what the assert checks. Since this
     // goes through the Android SDK, FindBugs does not see this as happening, so the FindBugs
     // warning for a field guaranteed to be non-null being checked for null equality needs to be
@@ -127,7 +128,7 @@ class IPHInfoBarSupport implements OnDismissListener, InfoBarContainer.InfoBarAn
     @Override
     public void onAddInfoBar(InfoBarContainer container, InfoBar infoBar, boolean isFirst) {}
 
-    // Calling {@link ViewAnchoredTextBubble#dismiss()} will invoke {@link #onDismiss} which will
+    // Calling {@link TextBubble#dismiss()} will invoke {@link #onDismiss} which will
     // set the value of {@link #mCurrentState} to null, which is what the assert checks. Since this
     // goes through the Android SDK, FindBugs does not see this as happening, so the FindBugs
     // warning for a field guaranteed to be non-null being checked for null equality needs to be
@@ -149,9 +150,7 @@ class IPHInfoBarSupport implements OnDismissListener, InfoBarContainer.InfoBarAn
     // PopupWindow.OnDismissListener implementation.
     @Override
     public void onDismiss() {
-        // Helper for crbug.com/786916 to catch why we are getting two dismiss calls in a row.
         if (mCurrentState == null) return;
-        assert mCurrentState != null;
         mDelegate.onPopupDismissed(mCurrentState);
         mCurrentState = null;
     }

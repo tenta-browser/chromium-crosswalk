@@ -8,15 +8,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
@@ -41,7 +42,7 @@ typedef std::pair<MultiBuffer*, MultiBufferBlockId> MultiBufferGlobalBlockId;
 
 }  // namespace media
 
-namespace BASE_HASH_NAMESPACE {
+namespace std {
 
 template <>
 struct hash<media::MultiBufferGlobalBlockId> {
@@ -50,7 +51,7 @@ struct hash<media::MultiBufferGlobalBlockId> {
   }
 };
 
-}  // namespace BASE_HASH_NAMESPACE
+}  // namespace std
 
 namespace media {
 
@@ -210,7 +211,7 @@ class MEDIA_BLINK_EXPORT MultiBuffer {
   // Block numbers can be calculated from byte positions as:
   // block_num = byte_pos >> block_size_shift
   typedef MultiBufferBlockId BlockId;
-  typedef base::hash_map<BlockId, scoped_refptr<DataBuffer>> DataMap;
+  typedef std::unordered_map<BlockId, scoped_refptr<DataBuffer>> DataMap;
 
   // Registers a reader at the given position.
   // If the cache does not already contain |pos|, it will activate
@@ -288,6 +289,11 @@ class MEDIA_BLINK_EXPORT MultiBuffer {
   const DataMap& map() const { return data_; }
   int32_t block_size_shift() const { return block_size_shift_; }
 
+  // Setters.
+  void SetIsClientAudioElement(bool is_client_audio_element) {
+    is_client_audio_element_ = is_client_audio_element;
+  }
+
   // Callback which notifies us that a data provider has
   // some data for us. Also called when it might be appropriate
   // for a provider in a deferred state to wake up.
@@ -296,7 +302,9 @@ class MEDIA_BLINK_EXPORT MultiBuffer {
  protected:
   // Create a new writer at |pos| and return it.
   // Users needs to implemement this method.
-  virtual std::unique_ptr<DataProvider> CreateWriter(const BlockId& pos) = 0;
+  virtual std::unique_ptr<DataProvider> CreateWriter(
+      const BlockId& pos,
+      bool is_client_audio_element) = 0;
 
   virtual bool RangeSupported() const = 0;
 
@@ -339,6 +347,9 @@ class MEDIA_BLINK_EXPORT MultiBuffer {
 
   // log2 of block size.
   int32_t block_size_shift_;
+
+  // Is the client an audio element?
+  bool is_client_audio_element_ = false;
 
   // Stores the actual data.
   DataMap data_;

@@ -1,6 +1,7 @@
 include_rules = [
-  "+chromeos/chromeos_switches.h",
+  "+chromeos/constants",
   "+chromeos/ime",
-  "+services/ui/public/cpp/input_devices",
+  "+chromeos/services/ime/public/mojom",
   "+ui/chromeos/strings",
+  "+ui/ozone/public",
 ]

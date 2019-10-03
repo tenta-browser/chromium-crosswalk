@@ -1,19 +1,20 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 """The 'grit android2grd' tool."""
 
+from __future__ import print_function
 
 import getopt
 import os.path
 import StringIO
+import sys
 from xml.dom import Node
 import xml.dom.minidom
 
 import grit.node.empty
-from grit.node import io
+from grit.node import node_io
 from grit.node import message
 
 from grit.tool import interface
@@ -125,7 +126,8 @@ OPTIONS may be any of the following:
         Android2Grd._HEADER_DIR_FLAG,
         Android2Grd._XTB_DIR_FLAG,
         Android2Grd._XML_DIR_FLAG, ]
-    (opts, args) = getopt.getopt(args, None, ['%s=' % o for o in flags])
+    (opts, args) = getopt.getopt(
+        args, None, ['%s=' % o for o in flags] + ['help'])
 
     for key, val in opts:
       # Get rid of the preceding hypens.
@@ -144,6 +146,9 @@ OPTIONS may be any of the following:
         self.xtb_dir = val
       elif k == Android2Grd._XML_DIR_FLAG:
         self.xml_res_dir = val
+      elif k == 'help':
+        self.ShowUsage()
+        sys.exit(0)
     return args
 
   def Run(self, opts, args):
@@ -157,8 +162,8 @@ OPTIONS may be any of the following:
     """
     args = self.ParseOptions(args)
     if len(args) != 1:
-      print ('Tool requires one argument, the path to the Android '
-             'strings.xml resource file to be converted.')
+      print('Tool requires one argument, the path to the Android '
+            'strings.xml resource file to be converted.')
       return 2
     self.SetOptions(opts)
 
@@ -239,12 +244,12 @@ OPTIONS may be any of the following:
         description = ' '.join(child.data.split())
       elif child.nodeType == Node.ELEMENT_NODE:
         if child.tagName != 'string':
-          print 'Warning: ignoring unknown tag <%s>' % child.tagName
+          print('Warning: ignoring unknown tag <%s>' % child.tagName)
         else:
           translatable = self.IsTranslatable(child)
           raw_name = child.getAttribute('name')
           if not _STRING_NAME.match(raw_name):
-            print 'Error: illegal string name: %s' % raw_name
+            print('Error: illegal string name: %s' % raw_name)
           grd_name = 'IDS_' + raw_name.upper()
           # Transform the <string> node contents into a tclib.Message, taking
           # care to handle whitespace transformations and escaped characters,
@@ -287,14 +292,14 @@ OPTIONS may be any of the following:
           placeholder_text = self.__FormatPlaceholderText(node)
           placeholder_example = node.getAttribute('example')
           if not placeholder_example:
-            print ('Info: placeholder does not contain an example: %s' %
-                   node.toxml())
+            print('Info: placeholder does not contain an example: %s' %
+                  node.toxml())
             placeholder_example = placeholder_id.upper()
           msg.AppendPlaceholder(tclib.Placeholder(placeholder_id,
               placeholder_text, placeholder_example))
         else:
-          print ('Warning: removing tag <%s> which must be inside a '
-                 'placeholder: %s' % (node.tagName, node.toxml()))
+          print('Warning: removing tag <%s> which must be inside a '
+                'placeholder: %s' % (node.tagName, node.toxml()))
           msg.AppendText(self.__FormatPlaceholderText(node))
 
       # Handle other nodes.
@@ -344,17 +349,17 @@ OPTIONS may be any of the following:
     output = ''.join(output)
 
     if is_quoted_section:
-      print 'Warning: unbalanced quotes in string: %s' % android_string
+      print('Warning: unbalanced quotes in string: %s' % android_string)
 
     if is_backslash_sequence:
-      print 'Warning: trailing backslash in string: %s' % android_string
+      print('Warning: trailing backslash in string: %s' % android_string)
 
     # Check for format specifiers outside of placeholder tags.
     if not inside_placeholder:
       format_specifier = _FORMAT_SPECIFIER.search(output)
       if format_specifier:
-        print ('Warning: format specifiers are not inside a placeholder '
-               '<xliff:g/> tag: %s' % output)
+        print('Warning: format specifiers are not inside a placeholder '
+              '<xliff:g/> tag: %s' % output)
 
     return output
 
@@ -376,15 +381,15 @@ OPTIONS may be any of the following:
     declare a string resource along with a programmatic id.
     """
     if not description:
-      print 'Warning: no description for %s' % grd_name
+      print('Warning: no description for %s' % grd_name)
     # Check that we actually fit within the character limit we've specified.
     match = _CHAR_LIMIT.search(description)
     if match:
       char_limit = int(match.group(1))
       msg_content = msg.GetRealContent()
       if len(msg_content) > char_limit:
-        print ('Warning: char-limit for %s is %d, but length is %d: %s' %
-               (grd_name, char_limit, len(msg_content), msg_content))
+        print('Warning: char-limit for %s is %d, but length is %d: %s' %
+              (grd_name, char_limit, len(msg_content), msg_content))
     return message.MessageNode.Construct(parent=messages_node,
                                          name=grd_name,
                                          message=msg,
@@ -399,7 +404,7 @@ OPTIONS may be any of the following:
     """
     xtb_file = os.path.normpath(os.path.join(
         self.xtb_dir, '%s_%s.xtb' % (self.name, lang)))
-    fnode = io.FileNode()
+    fnode = node_io.FileNode()
     fnode.StartParsing(u'file', translations_node)
     fnode.HandleAttribute('path', xtb_file)
     fnode.HandleAttribute('lang', lang)
@@ -410,11 +415,11 @@ OPTIONS may be any of the following:
   def __CreateCppHeaderOutputNode(self, outputs_node, header_dir):
     """Creates the <output> element corresponding to the generated c header."""
     header_file_name = os.path.join(header_dir, self.name + '.h')
-    header_node = io.OutputNode()
+    header_node = node_io.OutputNode()
     header_node.StartParsing(u'output', outputs_node)
     header_node.HandleAttribute('filename', header_file_name)
     header_node.HandleAttribute('type', 'rc_header')
-    emit_node = io.EmitNode()
+    emit_node = node_io.EmitNode()
     emit_node.StartParsing(u'emit', header_node)
     emit_node.HandleAttribute('emit_type', 'prepend')
     emit_node.EndParsing()
@@ -427,7 +432,7 @@ OPTIONS may be any of the following:
     """Creates the <output> element corresponding to various rc file output."""
     rc_file_name = self.name + '_' + lang + ".rc"
     rc_path = os.path.join(rc_dir, rc_file_name)
-    node = io.OutputNode()
+    node = node_io.OutputNode()
     node.StartParsing(u'output', outputs_node)
     node.HandleAttribute('filename', rc_path)
     node.HandleAttribute('lang', lang)
@@ -455,7 +460,7 @@ OPTIONS may be any of the following:
     xml_path = os.path.normpath(os.path.join(
         xml_res_dir, values, 'strings.xml'))
 
-    node = io.OutputNode()
+    node = node_io.OutputNode()
     node.StartParsing(u'output', outputs_node)
     node.HandleAttribute('filename', xml_path)
     node.HandleAttribute('lang', locale)
@@ -472,8 +477,7 @@ OPTIONS may be any of the following:
     if android_string.hasAttribute('translatable'):
       value = android_string.getAttribute('translatable').lower()
       if value not in ('true', 'false'):
-        print 'Warning: translatable attribute has invalid value: %s' % value
+        print('Warning: translatable attribute has invalid value: %s' % value)
       return value == 'true'
     else:
       return True
-

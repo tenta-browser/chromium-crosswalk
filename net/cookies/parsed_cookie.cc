@@ -69,7 +69,7 @@ const char kTokenSeparator[] = ";=";
 // Returns true if |c| occurs in |chars|
 // TODO(erikwright): maybe make this take an iterator, could check for end also?
 inline bool CharIsA(const char c, const char* chars) {
-  return strchr(chars, c) != NULL;
+  return strchr(chars, c) != nullptr;
 }
 // Seek the iterator to the first occurrence of a character in |chars|.
 // Returns true if it hit the end, false otherwise.
@@ -138,7 +138,7 @@ ParsedCookie::ParsedCookie(const std::string& cookie_line)
       same_site_index_(0),
       priority_index_(0) {
   if (cookie_line.size() > kMaxCookieSize) {
-    VLOG(1) << "Not parsing cookie, too large: " << cookie_line.size();
+    DVLOG(1) << "Not parsing cookie, too large: " << cookie_line.size();
     return;
   }
 
@@ -150,12 +150,12 @@ ParsedCookie::ParsedCookie(const std::string& cookie_line)
 ParsedCookie::~ParsedCookie() = default;
 
 bool ParsedCookie::IsValid() const {
-  return !pairs_.empty() && IsSameSiteAttributeValid();
+  return !pairs_.empty();
 }
 
 CookieSameSite ParsedCookie::SameSite() const {
   return (same_site_index_ == 0)
-             ? CookieSameSite::DEFAULT_MODE
+             ? CookieSameSite::UNSPECIFIED
              : StringToCookieSameSite(pairs_[same_site_index_].second);
 }
 
@@ -207,8 +207,8 @@ bool ParsedCookie::SetIsHttpOnly(bool is_http_only) {
   return SetBool(&httponly_index_, kHttpOnlyTokenName, is_http_only);
 }
 
-bool ParsedCookie::SetSameSite(const std::string& is_same_site) {
-  return SetString(&same_site_index_, kSameSiteTokenName, is_same_site);
+bool ParsedCookie::SetSameSite(const std::string& same_site) {
+  return SetString(&same_site_index_, kSameSiteTokenName, same_site);
 }
 
 bool ParsedCookie::SetPriority(const std::string& priority) {
@@ -217,11 +217,15 @@ bool ParsedCookie::SetPriority(const std::string& priority) {
 
 std::string ParsedCookie::ToCookieLine() const {
   std::string out;
-  for (PairList::const_iterator it = pairs_.begin(); it != pairs_.end(); ++it) {
+  for (auto it = pairs_.begin(); it != pairs_.end(); ++it) {
     if (!out.empty())
       out.append("; ");
     out.append(it->first);
-    if (it->first != kSecureTokenName && it->first != kHttpOnlyTokenName) {
+    // Determine whether to emit the pair's value component. We should always
+    // print it for the first pair(see crbug.com/977619). After the first pair,
+    // we need to consider whether the name component is a special token.
+    if (it == pairs_.begin() ||
+        (it->first != kSecureTokenName && it->first != kHttpOnlyTokenName)) {
       out.append("=");
       out.append(it->second);
     }
@@ -448,12 +452,28 @@ void ParsedCookie::SetupAttributes() {
 
 bool ParsedCookie::SetString(size_t* index,
                              const std::string& key,
-                             const std::string& value) {
-  if (value.empty()) {
+                             const std::string& untrusted_value) {
+  // This function should do equivalent input validation to the
+  // constructor. Otherwise, the Set* functions can put this ParsedCookie in a
+  // state where parsing the output of ToCookieLine() produces a different
+  // ParsedCookie.
+  //
+  // Without input validation, invoking pc.SetPath(" baz ") would result in
+  // pc.ToCookieLine() == "path= baz ". Parsing the "path= baz " string would
+  // produce a cookie with "path" attribute equal to "baz" (no spaces). We
+  // should not produce cookie lines that parse to different key/value pairs!
+
+  // Inputs containing invalid characters should be ignored.
+  if (!IsValidCookieAttributeValue(untrusted_value))
+    return false;
+
+  // Use the same whitespace trimming code as the constructor.
+  const std::string parsed_value = ParseValueString(untrusted_value);
+  if (parsed_value.empty()) {
     ClearAttributePair(*index);
     return true;
   } else {
-    return SetAttributePair(index, key, value);
+    return SetAttributePair(index, key, parsed_value);
   }
 }
 
@@ -469,7 +489,7 @@ bool ParsedCookie::SetBool(size_t* index, const std::string& key, bool value) {
 bool ParsedCookie::SetAttributePair(size_t* index,
                                     const std::string& key,
                                     const std::string& value) {
-  if (!(HttpUtil::IsToken(key) && IsValidCookieAttributeValue(value)))
+  if (!HttpUtil::IsToken(key))
     return false;
   if (!IsValid())
     return false;
@@ -492,17 +512,13 @@ void ParsedCookie::ClearAttributePair(size_t index) {
   size_t* indexes[] = {&path_index_,      &domain_index_,  &expires_index_,
                        &maxage_index_,    &secure_index_,  &httponly_index_,
                        &same_site_index_, &priority_index_};
-  for (size_t i = 0; i < arraysize(indexes); ++i) {
-    if (*indexes[i] == index)
-      *indexes[i] = 0;
-    else if (*indexes[i] > index)
-      --*indexes[i];
+  for (size_t* attribute_index : indexes) {
+    if (*attribute_index == index)
+      *attribute_index = 0;
+    else if (*attribute_index > index)
+      --(*attribute_index);
   }
   pairs_.erase(pairs_.begin() + index);
-}
-
-bool ParsedCookie::IsSameSiteAttributeValid() const {
-  return same_site_index_ == 0 || SameSite() != CookieSameSite::DEFAULT_MODE;
 }
 
 }  // namespace net

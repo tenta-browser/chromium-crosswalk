@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <set>
+#include <tuple>
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -102,7 +103,6 @@ const std::string ColumnsForVersion(int version, bool concatenated) {
   return base::JoinString(columns, std::string(concatenated ? " || " : ", "));
 }
 
-
 // Inserts the data from |data| into |s|.  |s| is assumed to have slots for all
 // the columns in the keyword table.  |id_column| is the slot number to bind
 // |data|'s |id| to; |starting_column| is the slot number of the first of a
@@ -132,14 +132,16 @@ void BindURLToStatement(const TemplateURLData& data,
   s->BindString(starting_column + 5, data.originating_url.is_valid() ?
       history::URLDatabase::GURLToDatabaseURL(data.originating_url) :
       std::string());
-  s->BindInt64(starting_column + 6, data.date_created.ToTimeT());
+  s->BindInt64(starting_column + 6,
+               data.date_created.since_origin().InMicroseconds());
   s->BindInt(starting_column + 7, data.usage_count);
   s->BindString(starting_column + 8,
                 base::JoinString(data.input_encodings, ";"));
   s->BindString(starting_column + 9, data.suggestions_url);
   s->BindInt(starting_column + 10, data.prepopulate_id);
   s->BindBool(starting_column + 11, data.created_by_policy);
-  s->BindInt64(starting_column + 12, data.last_modified.ToTimeT());
+  s->BindInt64(starting_column + 12,
+               data.last_modified.since_origin().InMicroseconds());
   s->BindString(starting_column + 13, data.sync_guid);
   s->BindString(starting_column + 14, alternate_urls);
   s->BindString(starting_column + 15, data.image_url);
@@ -147,7 +149,8 @@ void BindURLToStatement(const TemplateURLData& data,
   s->BindString(starting_column + 17, data.suggestions_url_post_params);
   s->BindString(starting_column + 18, data.image_url_post_params);
   s->BindString(starting_column + 19, data.new_tab_url);
-  s->BindInt64(starting_column + 20, data.last_visited.ToTimeT());
+  s->BindInt64(starting_column + 20,
+               data.last_visited.since_origin().InMicroseconds());
 }
 
 WebDatabaseTable::TypeKey GetKey() {
@@ -222,6 +225,9 @@ bool KeywordTable::MigrateToVersion(int version,
     case 76:
       *update_compatible_version = true;
       return MigrateToVersion76RemoveInstantColumns();
+    case 77:
+      *update_compatible_version = true;
+      return MigrateToVersion77IncreaseTimePrecision();
   }
 
   return true;
@@ -232,8 +238,7 @@ bool KeywordTable::PerformOperations(const Operations& operations) {
   if (!transaction.Begin())
     return false;
 
-  for (Operations::const_iterator i(operations.begin()); i != operations.end();
-       ++i) {
+  for (auto i(operations.begin()); i != operations.end(); ++i) {
     switch (i->first) {
       case ADD:
         if (!AddKeyword(i->second))
@@ -269,8 +274,7 @@ bool KeywordTable::GetKeywords(Keywords* keywords) {
     }
   }
   bool succeeded = s.Succeeded();
-  for (std::set<TemplateURLID>::const_iterator i(bad_entries.begin());
-       i != bad_entries.end(); ++i)
+  for (auto i(bad_entries.begin()); i != bad_entries.end(); ++i)
     succeeded &= RemoveKeyword(*i);
   return succeeded;
 }
@@ -396,6 +400,42 @@ bool KeywordTable::MigrateToVersion76RemoveInstantColumns() {
          transaction.Commit();
 }
 
+bool KeywordTable::MigrateToVersion77IncreaseTimePrecision() {
+  sql::Transaction transaction(db_);
+  if (!transaction.Begin())
+    return false;
+
+  std::string query(
+      "SELECT id, date_created, last_modified, last_visited FROM keywords");
+  sql::Statement s(db_->GetUniqueStatement(query.c_str()));
+  std::vector<std::tuple<TemplateURLID, Time, Time, Time>> updates;
+  while (s.Step()) {
+    updates.push_back(std::make_tuple(
+        s.ColumnInt64(0), Time::FromTimeT(s.ColumnInt64(1)),
+        Time::FromTimeT(s.ColumnInt64(2)), Time::FromTimeT(s.ColumnInt64(3))));
+  }
+  if (!s.Succeeded())
+    return false;
+
+  for (auto tuple : updates) {
+    sql::Statement update_statement(db_->GetCachedStatement(
+        SQL_FROM_HERE,
+        "UPDATE keywords SET date_created = ?, last_modified = ?, last_visited "
+        "= ? WHERE id = ? "));
+    update_statement.BindInt64(
+        0, std::get<1>(tuple).since_origin().InMicroseconds());
+    update_statement.BindInt64(
+        1, std::get<2>(tuple).since_origin().InMicroseconds());
+    update_statement.BindInt64(
+        2, std::get<3>(tuple).since_origin().InMicroseconds());
+    update_statement.BindInt64(3, std::get<0>(tuple));
+    if (!update_statement.Run()) {
+      return false;
+    }
+  }
+  return transaction.Commit();
+}
+
 // static
 bool KeywordTable::GetKeywordDataFromStatement(const sql::Statement& s,
                                                TemplateURLData* data) {
@@ -422,8 +462,10 @@ bool KeywordTable::GetKeywordDataFromStatement(const sql::Statement& s,
   data->input_encodings = base::SplitString(
       s.ColumnString(9), ";", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   data->id = s.ColumnInt64(0);
-  data->date_created = Time::FromTimeT(s.ColumnInt64(7));
-  data->last_modified = Time::FromTimeT(s.ColumnInt64(13));
+  data->date_created =
+      base::Time() + base::TimeDelta::FromMicroseconds(s.ColumnInt64(7));
+  data->last_modified =
+      base::Time() + base::TimeDelta::FromMicroseconds(s.ColumnInt64(13));
   data->created_by_policy = s.ColumnBool(12);
   data->usage_count = s.ColumnInt(8);
   data->prepopulate_id = s.ColumnInt(11);
@@ -432,7 +474,7 @@ bool KeywordTable::GetKeywordDataFromStatement(const sql::Statement& s,
   data->alternate_urls.clear();
   base::JSONReader json_reader;
   std::unique_ptr<base::Value> value(
-      json_reader.ReadToValue(s.ColumnString(15)));
+      json_reader.ReadToValueDeprecated(s.ColumnString(15)));
   base::ListValue* alternate_urls_value;
   if (value.get() && value->GetAsList(&alternate_urls_value)) {
     std::string alternate_url;
@@ -442,7 +484,8 @@ bool KeywordTable::GetKeywordDataFromStatement(const sql::Statement& s,
     }
   }
 
-  data->last_visited = Time::FromTimeT(s.ColumnInt64(21));
+  data->last_visited =
+      base::Time() + base::TimeDelta::FromMicroseconds(s.ColumnInt64(21));
 
   return true;
 }

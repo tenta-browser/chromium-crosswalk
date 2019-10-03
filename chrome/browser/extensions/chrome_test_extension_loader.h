@@ -22,10 +22,9 @@ namespace content {
 class BrowserContext;
 }
 
-class ExtensionService;
-
 namespace extensions {
 class ExtensionRegistry;
+class ExtensionService;
 class ExtensionSystem;
 
 // A test class to help with loading packed or unpacked extensions. Designed to
@@ -98,7 +97,7 @@ class ChromeTestExtensionLoader {
   bool CheckInstallWarnings(const Extension& extension);
 
   // Waits for the extension to finish setting up.
-  bool WaitForExtensionReady();
+  bool WaitForExtensionReady(const Extension& extension);
 
   // The associated context and services.
   content::BrowserContext* browser_context_ = nullptr;

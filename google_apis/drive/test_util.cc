@@ -7,7 +7,6 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -35,7 +34,7 @@ bool RemovePrefix(const std::string& input,
 
 base::FilePath GetTestFilePath(const std::string& relative_path) {
   base::FilePath path;
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &path))
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT, &path))
     return base::FilePath();
   path = path.AppendASCII("google_apis")
              .AppendASCII("test")
@@ -82,7 +81,8 @@ std::unique_ptr<base::Value> LoadJSONFile(const std::string& relative_path) {
 
   std::string error;
   JSONFileValueDeserializer deserializer(path);
-  std::unique_ptr<base::Value> value = deserializer.Deserialize(NULL, &error);
+  std::unique_ptr<base::Value> value =
+      deserializer.Deserialize(nullptr, &error);
   LOG_IF(WARNING, !value.get()) << "Failed to parse " << path.value()
                                 << ": " << error;
   return value;

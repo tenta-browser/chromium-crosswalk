@@ -10,10 +10,12 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "jni/VideoCapture_jni.h"
+#include "media/capture/mojom/image_capture_types.h"
+#include "media/capture/video/android/capture_jni_headers/VideoCapture_jni.h"
 #include "media/capture/video/android/photo_capabilities.h"
 #include "media/capture/video/android/video_capture_device_factory_android.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -43,6 +45,7 @@ mojom::MeteringMode ToMojomMeteringMode(
     case PhotoCapabilities::AndroidMeteringMode::NONE:
       return mojom::MeteringMode::NONE;
     case PhotoCapabilities::AndroidMeteringMode::NOT_SET:
+    case PhotoCapabilities::AndroidMeteringMode::NUM_ENTRIES:
       NOTREACHED();
   }
   return mojom::MeteringMode::NONE;
@@ -74,6 +77,7 @@ mojom::FillLightMode ToMojomFillLightMode(
     case PhotoCapabilities::AndroidFillLightMode::OFF:
       return mojom::FillLightMode::OFF;
     case PhotoCapabilities::AndroidFillLightMode::NOT_SET:
+    case PhotoCapabilities::AndroidFillLightMode::NUM_ENTRIES:
       NOTREACHED();
   }
   NOTREACHED();
@@ -134,11 +138,17 @@ void VideoCaptureDeviceAndroid::AllocateAndStart(
   jboolean ret = Java_VideoCapture_allocate(
       env, j_capture_, params.requested_format.frame_size.width(),
       params.requested_format.frame_size.height(),
-      params.requested_format.frame_rate);
+      params.requested_format.frame_rate, params.enable_face_detection);
   if (!ret) {
-    SetErrorState(FROM_HERE, "failed to allocate");
+    SetErrorState(media::VideoCaptureError::kAndroidFailedToAllocate, FROM_HERE,
+                  "failed to allocate");
     return;
   }
+
+  // TODO(julien.isorce): Use Camera.SENSOR_COLOR_TRANSFORM2 to build a
+  // gfx::ColorSpace, and rename VideoCaptureDeviceAndroid::GetColorspace()
+  // to GetPixelFormat, see http://crbug.com/959901.
+  capture_color_space_ = gfx::ColorSpace();
 
   capture_format_.frame_size.SetSize(
       Java_VideoCapture_queryWidth(env, j_capture_),
@@ -146,7 +156,7 @@ void VideoCaptureDeviceAndroid::AllocateAndStart(
   capture_format_.frame_rate =
       Java_VideoCapture_queryFrameRate(env, j_capture_);
   capture_format_.pixel_format = GetColorspace();
-  DCHECK_NE(capture_format_.pixel_format, media::PIXEL_FORMAT_UNKNOWN);
+  DCHECK_NE(capture_format_.pixel_format, PIXEL_FORMAT_UNKNOWN);
   CHECK(capture_format_.frame_size.GetArea() > 0);
   CHECK(!(capture_format_.frame_size.width() % 2));
   CHECK(!(capture_format_.frame_size.height() % 2));
@@ -161,9 +171,10 @@ void VideoCaptureDeviceAndroid::AllocateAndStart(
            << capture_format_.frame_size.ToString() << ")@ "
            << capture_format_.frame_rate << "fps";
 
-  ret = Java_VideoCapture_startCapture(env, j_capture_);
+  ret = Java_VideoCapture_startCaptureMaybeAsync(env, j_capture_);
   if (!ret) {
-    SetErrorState(FROM_HERE, "failed to start capture");
+    SetErrorState(media::VideoCaptureError::kAndroidFailedToStartCapture,
+                  FROM_HERE, "failed to start capture");
     return;
   }
 
@@ -183,9 +194,11 @@ void VideoCaptureDeviceAndroid::StopAndDeAllocate() {
 
   JNIEnv* env = AttachCurrentThread();
 
-  const jboolean ret = Java_VideoCapture_stopCapture(env, j_capture_);
+  const jboolean ret =
+      Java_VideoCapture_stopCaptureAndBlockUntilStopped(env, j_capture_);
   if (!ret) {
-    SetErrorState(FROM_HERE, "failed to stop capture");
+    SetErrorState(media::VideoCaptureError::kAndroidFailedToStopCapture,
+                  FROM_HERE, "failed to stop capture");
     return;
   }
 
@@ -200,11 +213,18 @@ void VideoCaptureDeviceAndroid::StopAndDeAllocate() {
 
 void VideoCaptureDeviceAndroid::TakePhoto(TakePhotoCallback callback) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
+  TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
+                       "VideoCaptureDeviceAndroid::TakePhoto",
+                       TRACE_EVENT_SCOPE_PROCESS);
   {
     base::AutoLock lock(lock_);
     if (state_ != kConfigured)
       return;
     if (!got_first_frame_) {  // We have to wait until we get the first frame.
+      TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
+                           "VideoCaptureDeviceAndroid::TakePhoto enqueuing to "
+                           "wait for first frame",
+                           TRACE_EVENT_SCOPE_PROCESS);
       photo_requests_queue_.push_back(
           base::Bind(&VideoCaptureDeviceAndroid::DoTakePhoto,
                      weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback)));
@@ -266,8 +286,10 @@ void VideoCaptureDeviceAndroid::OnFrameAvailable(
       expected_next_frame_time_ - base::TimeTicks();
 
   // Deliver the frame when it doesn't arrive too early.
-  if (ThrottleFrame(current_time))
+  if (ThrottleFrame(current_time)) {
+    client_->OnFrameDropped(VideoCaptureFrameDropReason::kAndroidThrottling);
     return;
+  }
 
   jbyte* buffer = env->GetByteArrayElements(data, NULL);
   if (!buffer) {
@@ -275,6 +297,8 @@ void VideoCaptureDeviceAndroid::OnFrameAvailable(
                   "failed to GetByteArrayElements";
     // In case of error, restore back the throttle control value.
     expected_next_frame_time_ -= frame_interval_;
+    client_->OnFrameDropped(
+        VideoCaptureFrameDropReason::kAndroidGetByteArrayElementsFailed);
     return;
   }
 
@@ -309,8 +333,10 @@ void VideoCaptureDeviceAndroid::OnI420FrameAvailable(JNIEnv* env,
   ProcessFirstFrameAvailable(current_time);
 
   // Deliver the frame when it doesn't arrive too early.
-  if (ThrottleFrame(current_time))
+  if (ThrottleFrame(current_time)) {
+    client_->OnFrameDropped(VideoCaptureFrameDropReason::kAndroidThrottling);
     return;
+  }
 
   uint8_t* const y_src =
       reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(y_buffer));
@@ -325,7 +351,7 @@ void VideoCaptureDeviceAndroid::OnI420FrameAvailable(JNIEnv* env,
   const int y_plane_length = width * height;
   const int uv_plane_length = y_plane_length / 4;
   const int buffer_length = y_plane_length + uv_plane_length * 2;
-  std::unique_ptr<uint8_t> buffer(new uint8_t[buffer_length]);
+  std::unique_ptr<uint8_t[]> buffer(new uint8_t[buffer_length]);
 
   libyuv::Android420ToI420(y_src, y_stride, u_src, uv_row_stride, v_src,
                            uv_row_stride, uv_pixel_stride, buffer.get(), width,
@@ -339,9 +365,182 @@ void VideoCaptureDeviceAndroid::OnI420FrameAvailable(JNIEnv* env,
 
 void VideoCaptureDeviceAndroid::OnError(JNIEnv* env,
                                         const JavaParamRef<jobject>& obj,
+                                        int android_video_capture_error,
                                         const JavaParamRef<jstring>& message) {
-  SetErrorState(FROM_HERE,
-                base::android::ConvertJavaStringToUTF8(env, message));
+  SetErrorState(
+      static_cast<media::VideoCaptureError>(android_video_capture_error),
+      FROM_HERE, base::android::ConvertJavaStringToUTF8(env, message));
+}
+
+void VideoCaptureDeviceAndroid::OnFrameDropped(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    int android_video_capture_frame_drop_reason) {
+  base::AutoLock lock(lock_);
+  if (!client_)
+    return;
+  client_->OnFrameDropped(static_cast<media::VideoCaptureFrameDropReason>(
+      android_video_capture_frame_drop_reason));
+}
+
+void VideoCaptureDeviceAndroid::OnGetPhotoCapabilitiesReply(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    jlong callback_id,
+    jobject result) {
+  base::AutoLock lock(photo_callbacks_lock_);
+  GetPhotoStateCallback* const cb =
+      reinterpret_cast<GetPhotoStateCallback*>(callback_id);
+  // Search for the pointer |cb| in the list of |take_photo_callbacks_|.
+  const auto reference_it = std::find_if(
+      get_photo_state_callbacks_.begin(), get_photo_state_callbacks_.end(),
+      [cb](const std::unique_ptr<GetPhotoStateCallback>& callback) {
+        return callback.get() == cb;
+      });
+  if (reference_it == get_photo_state_callbacks_.end()) {
+    NOTREACHED() << "|callback_id| not found.";
+    return;
+  }
+  if (result == nullptr) {
+    get_photo_state_callbacks_.erase(reference_it);
+    return;
+  }
+
+  base::android::ScopedJavaLocalRef<jobject> scoped_photo_capabilities(env,
+                                                                       result);
+  PhotoCapabilities caps(scoped_photo_capabilities);
+
+  // TODO(mcasas): Manual member copying sucks, consider adding typemapping from
+  // PhotoCapabilities to mojom::PhotoStatePtr, https://crbug.com/622002.
+  mojom::PhotoStatePtr photo_capabilities = mojo::CreateEmptyPhotoState();
+
+  const auto jni_white_balance_modes = caps.getMeteringModeArray(
+      PhotoCapabilities::MeteringModeType::WHITE_BALANCE);
+  std::vector<mojom::MeteringMode> white_balance_modes;
+  for (const auto& white_balance_mode : jni_white_balance_modes)
+    white_balance_modes.push_back(ToMojomMeteringMode(white_balance_mode));
+  photo_capabilities->supported_white_balance_modes = white_balance_modes;
+  photo_capabilities->current_white_balance_mode = ToMojomMeteringMode(
+      caps.getMeteringMode(PhotoCapabilities::MeteringModeType::WHITE_BALANCE));
+
+  const auto jni_exposure_modes =
+      caps.getMeteringModeArray(PhotoCapabilities::MeteringModeType::EXPOSURE);
+  std::vector<mojom::MeteringMode> exposure_modes;
+  for (const auto& exposure_mode : jni_exposure_modes)
+    exposure_modes.push_back(ToMojomMeteringMode(exposure_mode));
+  photo_capabilities->supported_exposure_modes = exposure_modes;
+  photo_capabilities->current_exposure_mode = ToMojomMeteringMode(
+      caps.getMeteringMode(PhotoCapabilities::MeteringModeType::EXPOSURE));
+
+  const auto jni_focus_modes =
+      caps.getMeteringModeArray(PhotoCapabilities::MeteringModeType::FOCUS);
+  std::vector<mojom::MeteringMode> focus_modes;
+  for (const auto& focus_mode : jni_focus_modes)
+    focus_modes.push_back(ToMojomMeteringMode(focus_mode));
+  photo_capabilities->supported_focus_modes = focus_modes;
+  photo_capabilities->current_focus_mode = ToMojomMeteringMode(
+      caps.getMeteringMode(PhotoCapabilities::MeteringModeType::FOCUS));
+
+  photo_capabilities->focus_distance = mojom::Range::New();
+  photo_capabilities->focus_distance->current = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::CURRENT_FOCUS_DISTANCE);
+  photo_capabilities->focus_distance->max = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MAX_FOCUS_DISTANCE);
+  photo_capabilities->focus_distance->min = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MIN_FOCUS_DISTANCE);
+  photo_capabilities->focus_distance->step = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::STEP_FOCUS_DISTANCE);
+
+  photo_capabilities->exposure_compensation = mojom::Range::New();
+  photo_capabilities->exposure_compensation->current = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::CURRENT_EXPOSURE_COMPENSATION);
+  photo_capabilities->exposure_compensation->max = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MAX_EXPOSURE_COMPENSATION);
+  photo_capabilities->exposure_compensation->min = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MIN_EXPOSURE_COMPENSATION);
+  photo_capabilities->exposure_compensation->step = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::STEP_EXPOSURE_COMPENSATION);
+
+  photo_capabilities->exposure_time = mojom::Range::New();
+  photo_capabilities->exposure_time->current = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::CURRENT_EXPOSURE_TIME);
+  photo_capabilities->exposure_time->max = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MAX_EXPOSURE_TIME);
+  photo_capabilities->exposure_time->min = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::MIN_EXPOSURE_TIME);
+  photo_capabilities->exposure_time->step = caps.getDouble(
+      PhotoCapabilities::PhotoCapabilityDouble::STEP_EXPOSURE_TIME);
+
+  photo_capabilities->color_temperature = mojom::Range::New();
+  photo_capabilities->color_temperature->current = caps.getInt(
+      PhotoCapabilities::PhotoCapabilityInt::CURRENT_COLOR_TEMPERATURE);
+  photo_capabilities->color_temperature->max =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MAX_COLOR_TEMPERATURE);
+  photo_capabilities->color_temperature->min =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MIN_COLOR_TEMPERATURE);
+  photo_capabilities->color_temperature->step = caps.getInt(
+      PhotoCapabilities::PhotoCapabilityInt::STEP_COLOR_TEMPERATURE);
+
+  photo_capabilities->iso = mojom::Range::New();
+  photo_capabilities->iso->current =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::CURRENT_ISO);
+  photo_capabilities->iso->max =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MAX_ISO);
+  photo_capabilities->iso->min =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MIN_ISO);
+  photo_capabilities->iso->step =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::STEP_ISO);
+
+  photo_capabilities->brightness = mojom::Range::New();
+  photo_capabilities->contrast = mojom::Range::New();
+  photo_capabilities->saturation = mojom::Range::New();
+  photo_capabilities->sharpness = mojom::Range::New();
+
+  photo_capabilities->zoom = mojom::Range::New();
+  photo_capabilities->zoom->current =
+      caps.getDouble(PhotoCapabilities::PhotoCapabilityDouble::CURRENT_ZOOM);
+  photo_capabilities->zoom->max =
+      caps.getDouble(PhotoCapabilities::PhotoCapabilityDouble::MAX_ZOOM);
+  photo_capabilities->zoom->min =
+      caps.getDouble(PhotoCapabilities::PhotoCapabilityDouble::MIN_ZOOM);
+  photo_capabilities->zoom->step =
+      caps.getDouble(PhotoCapabilities::PhotoCapabilityDouble::STEP_ZOOM);
+
+  photo_capabilities->supports_torch =
+      caps.getBool(PhotoCapabilities::PhotoCapabilityBool::SUPPORTS_TORCH);
+  photo_capabilities->torch =
+      caps.getBool(PhotoCapabilities::PhotoCapabilityBool::TORCH);
+
+  photo_capabilities->red_eye_reduction =
+      caps.getBool(PhotoCapabilities::PhotoCapabilityBool::RED_EYE_REDUCTION)
+          ? mojom::RedEyeReduction::CONTROLLABLE
+          : mojom::RedEyeReduction::NEVER;
+  photo_capabilities->height = mojom::Range::New();
+  photo_capabilities->height->current =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::CURRENT_HEIGHT);
+  photo_capabilities->height->max =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MAX_HEIGHT);
+  photo_capabilities->height->min =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MIN_HEIGHT);
+  photo_capabilities->height->step =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::STEP_HEIGHT);
+  photo_capabilities->width = mojom::Range::New();
+  photo_capabilities->width->current =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::CURRENT_WIDTH);
+  photo_capabilities->width->max =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MAX_WIDTH);
+  photo_capabilities->width->min =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::MIN_WIDTH);
+  photo_capabilities->width->step =
+      caps.getInt(PhotoCapabilities::PhotoCapabilityInt::STEP_WIDTH);
+  const auto fill_light_modes = caps.getFillLightModeArray();
+  std::vector<mojom::FillLightMode> modes;
+  for (const auto& fill_light_mode : fill_light_modes)
+    modes.push_back(ToMojomFillLightMode(fill_light_mode));
+  photo_capabilities->fill_light_mode = modes;
+
+  std::move(*cb).Run(std::move(photo_capabilities));
+  get_photo_state_callbacks_.erase(reference_it);
 }
 
 void VideoCaptureDeviceAndroid::OnPhotoTaken(
@@ -350,34 +549,45 @@ void VideoCaptureDeviceAndroid::OnPhotoTaken(
     jlong callback_id,
     const base::android::JavaParamRef<jbyteArray>& data) {
   DCHECK(callback_id);
+  TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
+                       "VideoCaptureDeviceAndroid::OnPhotoTaken",
+                       TRACE_EVENT_SCOPE_PROCESS);
 
   base::AutoLock lock(photo_callbacks_lock_);
 
   TakePhotoCallback* const cb =
       reinterpret_cast<TakePhotoCallback*>(callback_id);
-  // Search for the pointer |cb| in the list of |photo_callbacks_|.
+  // Search for the pointer |cb| in the list of |take_photo_callbacks_|.
   const auto reference_it =
-      std::find_if(photo_callbacks_.begin(), photo_callbacks_.end(),
+      std::find_if(take_photo_callbacks_.begin(), take_photo_callbacks_.end(),
                    [cb](const std::unique_ptr<TakePhotoCallback>& callback) {
                      return callback.get() == cb;
                    });
-  if (reference_it == photo_callbacks_.end()) {
+  if (reference_it == take_photo_callbacks_.end()) {
     NOTREACHED() << "|callback_id| not found.";
     return;
   }
 
-  mojom::BlobPtr blob = mojom::Blob::New();
-  base::android::JavaByteArrayToByteVector(env, data.obj(), &blob->data);
-  blob->mime_type = blob->data.empty() ? "" : "image/jpeg";
-  std::move(*cb).Run(std::move(blob));
+  if (data != nullptr) {
+    mojom::BlobPtr blob = mojom::Blob::New();
+    base::android::JavaByteArrayToByteVector(env, data, &blob->data);
+    blob->mime_type = blob->data.empty() ? "" : "image/jpeg";
+    std::move(*cb).Run(std::move(blob));
+  }
 
-  photo_callbacks_.erase(reference_it);
+  take_photo_callbacks_.erase(reference_it);
 }
 
 void VideoCaptureDeviceAndroid::OnStarted(JNIEnv* env,
                                           const JavaParamRef<jobject>& obj) {
   if (client_)
     client_->OnStarted();
+}
+
+void VideoCaptureDeviceAndroid::DCheckCurrentlyOnIncomingTaskRunner(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {
+  DCHECK(main_task_runner_->BelongsToCurrentThread());
 }
 
 void VideoCaptureDeviceAndroid::ConfigureForTesting() {
@@ -419,8 +629,9 @@ void VideoCaptureDeviceAndroid::SendIncomingDataToClient(
   base::AutoLock lock(lock_);
   if (!client_)
     return;
-  client_->OnIncomingCapturedData(data, length, capture_format_, rotation,
-                                  reference_time, timestamp);
+  client_->OnIncomingCapturedData(
+      data, length, capture_format_, capture_color_space_, rotation,
+      false /* flip_y */, reference_time, timestamp);
 }
 
 VideoPixelFormat VideoCaptureDeviceAndroid::GetColorspace() {
@@ -429,30 +640,34 @@ VideoPixelFormat VideoCaptureDeviceAndroid::GetColorspace() {
       Java_VideoCapture_getColorspace(env, j_capture_);
   switch (current_capture_colorspace) {
     case ANDROID_IMAGE_FORMAT_YV12:
-      return media::PIXEL_FORMAT_YV12;
+      return PIXEL_FORMAT_YV12;
     case ANDROID_IMAGE_FORMAT_YUV_420_888:
-      return media::PIXEL_FORMAT_I420;
+      return PIXEL_FORMAT_I420;
     case ANDROID_IMAGE_FORMAT_NV21:
-      return media::PIXEL_FORMAT_NV21;
+      return PIXEL_FORMAT_NV21;
     case ANDROID_IMAGE_FORMAT_UNKNOWN:
     default:
-      return media::PIXEL_FORMAT_UNKNOWN;
+      return PIXEL_FORMAT_UNKNOWN;
   }
 }
 
-void VideoCaptureDeviceAndroid::SetErrorState(const base::Location& from_here,
+void VideoCaptureDeviceAndroid::SetErrorState(media::VideoCaptureError error,
+                                              const base::Location& from_here,
                                               const std::string& reason) {
   {
     base::AutoLock lock(lock_);
     state_ = kError;
     if (!client_)
       return;
-    client_->OnError(from_here, reason);
+    client_->OnError(error, from_here, reason);
   }
 }
 
 void VideoCaptureDeviceAndroid::DoTakePhoto(TakePhotoCallback callback) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
+  TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
+                       "VideoCaptureDeviceAndroid::DoTakePhoto",
+                       TRACE_EVENT_SCOPE_PROCESS);
 #if DCHECK_IS_ON()
   {
     base::AutoLock lock(lock_);
@@ -466,13 +681,11 @@ void VideoCaptureDeviceAndroid::DoTakePhoto(TakePhotoCallback callback) {
   std::unique_ptr<TakePhotoCallback> heap_callback(
       new TakePhotoCallback(std::move(callback)));
   const intptr_t callback_id = reinterpret_cast<intptr_t>(heap_callback.get());
-  if (!Java_VideoCapture_takePhoto(env, j_capture_, callback_id))
-    return;
-
   {
     base::AutoLock lock(photo_callbacks_lock_);
-    photo_callbacks_.push_back(std::move(heap_callback));
+    take_photo_callbacks_.push_back(std::move(heap_callback));
   }
+  Java_VideoCapture_takePhotoAsync(env, j_capture_, callback_id);
 }
 
 void VideoCaptureDeviceAndroid::DoGetPhotoState(
@@ -487,92 +700,15 @@ void VideoCaptureDeviceAndroid::DoGetPhotoState(
 #endif
   JNIEnv* env = AttachCurrentThread();
 
-  PhotoCapabilities caps(
-      Java_VideoCapture_getPhotoCapabilities(env, j_capture_));
-
-  // TODO(mcasas): Manual member copying sucks, consider adding typemapping from
-  // PhotoCapabilities to mojom::PhotoStatePtr, https://crbug.com/622002.
-  mojom::PhotoStatePtr photo_capabilities = mojom::PhotoState::New();
-
-  const auto jni_white_balance_modes = caps.getWhiteBalanceModes();
-  std::vector<mojom::MeteringMode> white_balance_modes;
-  for (const auto& white_balance_mode : jni_white_balance_modes)
-    white_balance_modes.push_back(ToMojomMeteringMode(white_balance_mode));
-  photo_capabilities->supported_white_balance_modes = white_balance_modes;
-  photo_capabilities->current_white_balance_mode =
-      ToMojomMeteringMode(caps.getWhiteBalanceMode());
-
-  const auto jni_exposure_modes = caps.getExposureModes();
-  std::vector<mojom::MeteringMode> exposure_modes;
-  for (const auto& exposure_mode : jni_exposure_modes)
-    exposure_modes.push_back(ToMojomMeteringMode(exposure_mode));
-  photo_capabilities->supported_exposure_modes = exposure_modes;
-  photo_capabilities->current_exposure_mode =
-      ToMojomMeteringMode(caps.getExposureMode());
-
-  const auto jni_focus_modes = caps.getFocusModes();
-  std::vector<mojom::MeteringMode> focus_modes;
-  for (const auto& focus_mode : jni_focus_modes)
-    focus_modes.push_back(ToMojomMeteringMode(focus_mode));
-  photo_capabilities->supported_focus_modes = focus_modes;
-  photo_capabilities->current_focus_mode =
-      ToMojomMeteringMode(caps.getFocusMode());
-
-  photo_capabilities->exposure_compensation = mojom::Range::New();
-  photo_capabilities->exposure_compensation->current =
-      caps.getCurrentExposureCompensation();
-  photo_capabilities->exposure_compensation->max =
-      caps.getMaxExposureCompensation();
-  photo_capabilities->exposure_compensation->min =
-      caps.getMinExposureCompensation();
-  photo_capabilities->exposure_compensation->step =
-      caps.getStepExposureCompensation();
-  photo_capabilities->color_temperature = mojom::Range::New();
-  photo_capabilities->color_temperature->current =
-      caps.getCurrentColorTemperature();
-  photo_capabilities->color_temperature->max = caps.getMaxColorTemperature();
-  photo_capabilities->color_temperature->min = caps.getMinColorTemperature();
-  photo_capabilities->color_temperature->step = caps.getStepColorTemperature();
-  photo_capabilities->iso = mojom::Range::New();
-  photo_capabilities->iso->current = caps.getCurrentIso();
-  photo_capabilities->iso->max = caps.getMaxIso();
-  photo_capabilities->iso->min = caps.getMinIso();
-  photo_capabilities->iso->step = caps.getStepIso();
-
-  photo_capabilities->brightness = mojom::Range::New();
-  photo_capabilities->contrast = mojom::Range::New();
-  photo_capabilities->saturation = mojom::Range::New();
-  photo_capabilities->sharpness = mojom::Range::New();
-
-  photo_capabilities->zoom = mojom::Range::New();
-  photo_capabilities->zoom->current = caps.getCurrentZoom();
-  photo_capabilities->zoom->max = caps.getMaxZoom();
-  photo_capabilities->zoom->min = caps.getMinZoom();
-  photo_capabilities->zoom->step = caps.getStepZoom();
-
-  photo_capabilities->supports_torch = caps.getSupportsTorch();
-  photo_capabilities->torch = caps.getTorch();
-
-  photo_capabilities->red_eye_reduction =
-      caps.getRedEyeReduction() ? mojom::RedEyeReduction::CONTROLLABLE
-                                : mojom::RedEyeReduction::NEVER;
-  photo_capabilities->height = mojom::Range::New();
-  photo_capabilities->height->current = caps.getCurrentHeight();
-  photo_capabilities->height->max = caps.getMaxHeight();
-  photo_capabilities->height->min = caps.getMinHeight();
-  photo_capabilities->height->step = caps.getStepHeight();
-  photo_capabilities->width = mojom::Range::New();
-  photo_capabilities->width->current = caps.getCurrentWidth();
-  photo_capabilities->width->max = caps.getMaxWidth();
-  photo_capabilities->width->min = caps.getMinWidth();
-  photo_capabilities->width->step = caps.getStepWidth();
-  const auto fill_light_modes = caps.getFillLightModes();
-  std::vector<mojom::FillLightMode> modes;
-  for (const auto& fill_light_mode : fill_light_modes)
-    modes.push_back(ToMojomFillLightMode(fill_light_mode));
-  photo_capabilities->fill_light_mode = modes;
-
-  std::move(callback).Run(std::move(photo_capabilities));
+  // Make copy on the heap so we can pass the pointer through JNI.
+  std::unique_ptr<GetPhotoStateCallback> heap_callback(
+      new GetPhotoStateCallback(std::move(callback)));
+  const intptr_t callback_id = reinterpret_cast<intptr_t>(heap_callback.get());
+  {
+    base::AutoLock lock(photo_callbacks_lock_);
+    get_photo_state_callbacks_.push_back(std::move(heap_callback));
+  }
+  Java_VideoCapture_getPhotoCapabilitiesAsync(env, j_capture_, callback_id);
 }
 
 void VideoCaptureDeviceAndroid::DoSetPhotoOptions(
@@ -590,6 +726,9 @@ void VideoCaptureDeviceAndroid::DoSetPhotoOptions(
 
   const double zoom = settings->has_zoom ? settings->zoom : 0.0;
 
+  const double focusDistance =
+      settings->has_focus_distance ? settings->focus_distance : 0.0;
+
   const PhotoCapabilities::AndroidMeteringMode focus_mode =
       settings->has_focus_mode
           ? ToAndroidMeteringMode(settings->focus_mode)
@@ -603,17 +742,19 @@ void VideoCaptureDeviceAndroid::DoSetPhotoOptions(
   const double width = settings->has_width ? settings->width : 0.0;
   const double height = settings->has_height ? settings->height : 0.0;
 
-  std::vector<float> points_of_interest_marshalled;
+  std::vector<double> points_of_interest_marshalled;
   for (const auto& point : settings->points_of_interest) {
     points_of_interest_marshalled.push_back(point->x);
     points_of_interest_marshalled.push_back(point->y);
   }
-  ScopedJavaLocalRef<jfloatArray> points_of_interest =
-      base::android::ToJavaFloatArray(env, points_of_interest_marshalled);
+  ScopedJavaLocalRef<jdoubleArray> points_of_interest =
+      base::android::ToJavaDoubleArray(env, points_of_interest_marshalled);
 
   const double exposure_compensation = settings->has_exposure_compensation
                                            ? settings->exposure_compensation
                                            : 0.0;
+  const double exposure_time =
+      settings->has_exposure_time ? settings->exposure_time : 0.0;
 
   const PhotoCapabilities::AndroidMeteringMode white_balance_mode =
       settings->has_white_balance_mode
@@ -631,9 +772,9 @@ void VideoCaptureDeviceAndroid::DoSetPhotoOptions(
       settings->has_color_temperature ? settings->color_temperature : 0.0;
 
   Java_VideoCapture_setPhotoOptions(
-      env, j_capture_, zoom, static_cast<int>(focus_mode),
+      env, j_capture_, zoom, static_cast<int>(focus_mode), focusDistance,
       static_cast<int>(exposure_mode), width, height, points_of_interest,
-      settings->has_exposure_compensation, exposure_compensation,
+      settings->has_exposure_compensation, exposure_compensation, exposure_time,
       static_cast<int>(white_balance_mode), iso,
       settings->has_red_eye_reduction, settings->red_eye_reduction,
       static_cast<int>(fill_light_mode), settings->has_torch, settings->torch,

@@ -8,17 +8,18 @@
 
 #include "base/bind.h"
 #include "base/memory/singleton.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chromeos/dbus/arc_oemcrypto_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/common/protected_buffer_manager.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_service_registry.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/system/invitation.h"
 
 namespace arc {
 namespace {
@@ -41,6 +42,14 @@ class ArcOemCryptoBridgeFactory
   ArcOemCryptoBridgeFactory() = default;
   ~ArcOemCryptoBridgeFactory() override = default;
 };
+
+mojom::ProtectedBufferManagerPtr GetGpuBufferManagerOnIOThread() {
+  // Get the Mojo interface from the GPU for dealing with secure buffers and
+  // pass that to the daemon as well in our Connect call.
+  mojom::ProtectedBufferManagerPtr gpu_buffer_manager;
+  content::BindInterfaceInGpuProcess(mojo::MakeRequest(&gpu_buffer_manager));
+  return gpu_buffer_manager;
+}
 
 }  // namespace
 
@@ -101,17 +110,15 @@ void ArcOemCryptoBridge::Connect(mojom::OemCryptoServiceRequest request) {
     return;
   }
   DVLOG(1) << "Bootstrapping the OemCrypto connection via D-Bus";
-  mojo::edk::OutgoingBrokerClientInvitation invitation;
-  mojo::edk::PlatformChannelPair channel_pair;
+  mojo::OutgoingInvitation invitation;
+  mojo::PlatformChannel channel;
   mojo::ScopedMessagePipeHandle server_pipe =
       invitation.AttachMessagePipe("arc-oemcrypto-pipe");
-  invitation.Send(
-      base::kNullProcessHandle,
-      mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                  channel_pair.PassServerHandle()));
-  mojo::edk::ScopedPlatformHandle child_handle =
-      channel_pair.PassClientHandle();
-  base::ScopedFD fd(child_handle.release().handle);
+  mojo::OutgoingInvitation::Send(std::move(invitation),
+                                 base::kNullProcessHandle,
+                                 channel.TakeLocalEndpoint());
+  base::ScopedFD fd =
+      channel.TakeRemoteEndpoint().TakePlatformHandle().TakeFD();
 
   // Bind the Mojo pipe to the interface before we send the D-Bus message
   // to avoid any kind of race condition with detecting it's been bound.
@@ -120,25 +127,49 @@ void ArcOemCryptoBridge::Connect(mojom::OemCryptoServiceRequest request) {
       mojo::InterfacePtrInfo<arc_oemcrypto::mojom::OemCryptoHostDaemon>(
           std::move(server_pipe), 0u));
   DVLOG(1) << "Bound remote OemCryptoHostDaemon interface to pipe";
-  oemcrypto_host_daemon_ptr_.set_connection_error_handler(base::Bind(
-      &mojo::InterfacePtr<arc_oemcrypto::mojom::OemCryptoHostDaemon>::reset,
-      base::Unretained(&oemcrypto_host_daemon_ptr_)));
+
+  oemcrypto_host_daemon_ptr_.set_connection_error_handler(base::BindOnce(
+      &ArcOemCryptoBridge::OnMojoConnectionError, weak_factory_.GetWeakPtr()));
   chromeos::DBusThreadManager::Get()
       ->GetArcOemCryptoClient()
       ->BootstrapMojoConnection(
           std::move(fd),
-          base::Bind(&ArcOemCryptoBridge::OnBootstrapMojoConnection,
-                     weak_factory_.GetWeakPtr(), base::Passed(&request)));
+          base::BindOnce(&ArcOemCryptoBridge::OnBootstrapMojoConnection,
+                         weak_factory_.GetWeakPtr(), std::move(request)));
 }
 
 void ArcOemCryptoBridge::ConnectToDaemon(
     mojom::OemCryptoServiceRequest request) {
-  // Get the Mojo interface from the GPU for dealing with secure buffers and
-  // pass that to the daemon as well in our Connect call.
-  mojom::ProtectedBufferManagerPtr gpu_buffer_manager;
-  content::BindInterfaceInGpuProcess(mojo::MakeRequest(&gpu_buffer_manager));
+  if (!oemcrypto_host_daemon_ptr_) {
+    VLOG(1) << "Mojo connection is already lost.";
+    return;
+  }
+
+  // We need to get the GPU interface on the IO thread, then after that is
+  // done it will run the Mojo call on our thread.
+  base::PostTaskAndReplyWithResult(
+      base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::IO})
+          .get(),
+      FROM_HERE, base::BindOnce(&GetGpuBufferManagerOnIOThread),
+      base::BindOnce(&ArcOemCryptoBridge::FinishConnectingToDaemon,
+                     weak_factory_.GetWeakPtr(), std::move(request)));
+}
+
+void ArcOemCryptoBridge::FinishConnectingToDaemon(
+    mojom::OemCryptoServiceRequest request,
+    mojom::ProtectedBufferManagerPtr gpu_buffer_manager) {
+  if (!oemcrypto_host_daemon_ptr_) {
+    VLOG(1) << "Mojo connection is already lost.";
+    return;
+  }
+
   oemcrypto_host_daemon_ptr_->Connect(std::move(request),
                                       std::move(gpu_buffer_manager));
+}
+
+void ArcOemCryptoBridge::OnMojoConnectionError() {
+  LOG(ERROR) << "ArcOemCryptoBridge Mojo connection lost.";
+  oemcrypto_host_daemon_ptr_.reset();
 }
 
 }  // namespace arc

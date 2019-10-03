@@ -5,6 +5,7 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ARRAY_TRAITS_STL_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ARRAY_TRAITS_STL_H_
 
+#include <array>
 #include <map>
 #include <set>
 #include <vector>
@@ -12,6 +13,29 @@
 #include "mojo/public/cpp/bindings/array_traits.h"
 
 namespace mojo {
+
+template <typename T>
+struct ArrayTraits<std::unordered_set<T>> {
+  using Element = T;
+  using ConstIterator = typename std::unordered_set<T>::const_iterator;
+
+  static bool IsNull(const std::unordered_set<T>& input) {
+    // std::unordered_set<> is always converted to non-null mojom array.
+    return false;
+  }
+
+  static size_t GetSize(const std::unordered_set<T>& input) {
+    return input.size();
+  }
+
+  static ConstIterator GetBegin(const std::unordered_set<T>& input) {
+    return input.begin();
+  }
+
+  static void AdvanceIterator(ConstIterator& iterator) { ++iterator; }
+
+  static const T& GetValue(ConstIterator& iterator) { return *iterator; }
+};
 
 template <typename T>
 struct ArrayTraits<std::vector<T>> {
@@ -120,6 +144,31 @@ struct ArrayTraits<MapValuesArrayView<K, V>> {
   }
   static void AdvanceIterator(ConstIterator& iterator) { ++iterator; }
   static const V& GetValue(ConstIterator& iterator) { return iterator->second; }
+};
+
+// This ArrayTraits specialization is used for conversion between
+// std::array<T, N> and array<T, N>.
+template <typename T, size_t N>
+struct ArrayTraits<std::array<T, N>> {
+  using Element = T;
+
+  static bool IsNull(const std::array<T, N>& input) { return false; }
+
+  static size_t GetSize(const std::array<T, N>& input) { return N; }
+
+  static const T& GetAt(const std::array<T, N>& input, size_t index) {
+    return input[index];
+  }
+  static T& GetAt(std::array<T, N>& input, size_t index) {
+    return input[index];
+  }
+
+  // std::array is fixed size but this is called during deserialization.
+  static bool Resize(std::array<T, N>& input, size_t size) {
+    if (size != N)
+      return false;
+    return true;
+  }
 };
 
 }  // namespace mojo

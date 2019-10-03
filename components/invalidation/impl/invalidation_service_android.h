@@ -15,8 +15,8 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/sequence_checker.h"
+#include "components/invalidation/impl/deprecated_invalidator_registrar.h"
 #include "components/invalidation/impl/invalidation_logger.h"
-#include "components/invalidation/impl/invalidator_registrar.h"
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/keyed_service/core/keyed_service.h"
 
@@ -47,7 +47,6 @@ class InvalidationServiceAndroid : public InvalidationService {
   InvalidationLogger* GetInvalidationLogger() override;
   void RequestDetailedStatus(
       base::Callback<void(const base::DictionaryValue&)> caller) const override;
-  IdentityProvider* GetIdentityProvider() override;
 
   void Invalidate(JNIEnv* env,
                   const base::android::JavaParamRef<jobject>& obj,
@@ -71,7 +70,7 @@ class InvalidationServiceAndroid : public InvalidationService {
   // Points to a Java instance of InvalidationService.
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 
-  syncer::InvalidatorRegistrar invalidator_registrar_;
+  syncer::DeprecatedInvalidatorRegistrar invalidator_registrar_;
   syncer::InvalidatorState invalidator_state_;
 
   // The invalidation API spec allows for the possibility of redundant

@@ -7,12 +7,12 @@
 #include <algorithm>
 
 #include "base/metrics/histogram_macros.h"
-#include "cc/resources/resource_provider.h"
 #include "components/viz/common/quads/render_pass_draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
+#include "components/viz/service/display/display_resource_provider.h"
 #include "gpu/GLES2/gl2extchromium.h"
 
 namespace viz {
@@ -30,29 +30,32 @@ const int kTooManyRenderPassDrawQuads = 30;
 // to the end before COUNT.
 enum CALayerResult {
   CA_LAYER_SUCCESS = 0,
-  CA_LAYER_FAILED_UNKNOWN,
-  CA_LAYER_FAILED_IO_SURFACE_NOT_CANDIDATE,
-  CA_LAYER_FAILED_STREAM_VIDEO_NOT_CANDIDATE,
-  CA_LAYER_FAILED_STREAM_VIDEO_TRANSFORM,
-  CA_LAYER_FAILED_TEXTURE_NOT_CANDIDATE,
-  CA_LAYER_FAILED_TEXTURE_Y_FLIPPED,
-  CA_LAYER_FAILED_TILE_NOT_CANDIDATE,
-  CA_LAYER_FAILED_QUAD_BLEND_MODE,
-  CA_LAYER_FAILED_QUAD_TRANSFORM,
-  CA_LAYER_FAILED_QUAD_CLIPPING,
-  CA_LAYER_FAILED_DEBUG_BORDER,
-  CA_LAYER_FAILED_PICTURE_CONTENT,
-  CA_LAYER_FAILED_RENDER_PASS,
-  CA_LAYER_FAILED_SURFACE_CONTENT,
-  CA_LAYER_FAILED_YUV_VIDEO_CONTENT,
-  CA_LAYER_FAILED_DIFFERENT_CLIP_SETTINGS,
-  CA_LAYER_FAILED_DIFFERENT_VERTEX_OPACITIES,
-  CA_LAYER_FAILED_RENDER_PASS_FILTER_SCALE,
-  CA_LAYER_FAILED_RENDER_PASS_BACKGROUND_FILTERS,
-  CA_LAYER_FAILED_RENDER_PASS_MASK,
-  CA_LAYER_FAILED_RENDER_PASS_FILTER_OPERATION,
-  CA_LAYER_FAILED_RENDER_PASS_SORTING_CONTEXT_ID,
-  CA_LAYER_FAILED_TOO_MANY_RENDER_PASS_DRAW_QUADS,
+  CA_LAYER_FAILED_UNKNOWN = 1,
+  // CA_LAYER_FAILED_IO_SURFACE_NOT_CANDIDATE = 2,
+  CA_LAYER_FAILED_STREAM_VIDEO_NOT_CANDIDATE = 3,
+  // CA_LAYER_FAILED_STREAM_VIDEO_TRANSFORM = 4,
+  CA_LAYER_FAILED_TEXTURE_NOT_CANDIDATE = 5,
+  // CA_LAYER_FAILED_TEXTURE_Y_FLIPPED = 6,
+  CA_LAYER_FAILED_TILE_NOT_CANDIDATE = 7,
+  CA_LAYER_FAILED_QUAD_BLEND_MODE = 8,
+  // CA_LAYER_FAILED_QUAD_TRANSFORM = 9,
+  // CA_LAYER_FAILED_QUAD_CLIPPING = 10,
+  CA_LAYER_FAILED_DEBUG_BORDER = 11,
+  CA_LAYER_FAILED_PICTURE_CONTENT = 12,
+  // CA_LAYER_FAILED_RENDER_PASS = 13,
+  CA_LAYER_FAILED_SURFACE_CONTENT = 14,
+  CA_LAYER_FAILED_YUV_VIDEO_CONTENT = 15,
+  CA_LAYER_FAILED_DIFFERENT_CLIP_SETTINGS = 16,
+  CA_LAYER_FAILED_DIFFERENT_VERTEX_OPACITIES = 17,
+  // CA_LAYER_FAILED_RENDER_PASS_FILTER_SCALE = 18,
+  CA_LAYER_FAILED_RENDER_PASS_BACKDROP_FILTERS = 19,
+  // CA_LAYER_FAILED_RENDER_PASS_MASK = 20,
+  CA_LAYER_FAILED_RENDER_PASS_FILTER_OPERATION = 21,
+  CA_LAYER_FAILED_RENDER_PASS_SORTING_CONTEXT_ID = 22,
+  CA_LAYER_FAILED_TOO_MANY_RENDER_PASS_DRAW_QUADS = 23,
+  // CA_LAYER_FAILED_QUAD_ROUNDED_CORNER = 24,
+  CA_LAYER_FAILED_QUAD_ROUNDED_CORNER_CLIP_MISMATCH = 25,
+  CA_LAYER_FAILED_QUAD_ROUNDED_CORNER_NOT_UNIFORM = 26,
   CA_LAYER_FAILED_COUNT,
 };
 
@@ -75,15 +78,15 @@ bool FilterOperationSupported(const cc::FilterOperation& operation) {
 }
 
 CALayerResult FromRenderPassQuad(
-    cc::ResourceProvider* resource_provider,
+    DisplayResourceProvider* resource_provider,
     const RenderPassDrawQuad* quad,
     const base::flat_map<RenderPassId, cc::FilterOperations*>&
         render_pass_filters,
     const base::flat_map<RenderPassId, cc::FilterOperations*>&
-        render_pass_background_filters,
+        render_pass_backdrop_filters,
     CALayerOverlay* ca_layer_overlay) {
-  if (render_pass_background_filters.count(quad->render_pass_id)) {
-    return CA_LAYER_FAILED_RENDER_PASS_BACKGROUND_FILTERS;
+  if (render_pass_backdrop_filters.count(quad->render_pass_id)) {
+    return CA_LAYER_FAILED_RENDER_PASS_BACKDROP_FILTERS;
   }
 
   if (quad->shared_quad_state->sorting_context_id != 0)
@@ -104,18 +107,15 @@ CALayerResult FromRenderPassQuad(
   return CA_LAYER_SUCCESS;
 }
 
-CALayerResult FromStreamVideoQuad(cc::ResourceProvider* resource_provider,
+CALayerResult FromStreamVideoQuad(DisplayResourceProvider* resource_provider,
                                   const StreamVideoDrawQuad* quad,
                                   CALayerOverlay* ca_layer_overlay) {
   unsigned resource_id = quad->resource_id();
   if (!resource_provider->IsOverlayCandidate(resource_id))
     return CA_LAYER_FAILED_STREAM_VIDEO_NOT_CANDIDATE;
   ca_layer_overlay->contents_resource_id = resource_id;
-  // TODO(ccameron): Support merging at least some basic transforms into the
-  // layer transform.
-  if (!quad->matrix.IsIdentity())
-    return CA_LAYER_FAILED_STREAM_VIDEO_TRANSFORM;
-  ca_layer_overlay->contents_rect = gfx::RectF(0, 0, 1, 1);
+  ca_layer_overlay->contents_rect =
+      BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
   return CA_LAYER_SUCCESS;
 }
 
@@ -131,7 +131,7 @@ CALayerResult FromSolidColorDrawQuad(const SolidColorDrawQuad* quad,
   return CA_LAYER_SUCCESS;
 }
 
-CALayerResult FromTextureQuad(cc::ResourceProvider* resource_provider,
+CALayerResult FromTextureQuad(DisplayResourceProvider* resource_provider,
                               const TextureDrawQuad* quad,
                               CALayerOverlay* ca_layer_overlay) {
   unsigned resource_id = quad->resource_id();
@@ -159,7 +159,7 @@ CALayerResult FromTextureQuad(cc::ResourceProvider* resource_provider,
   return CA_LAYER_SUCCESS;
 }
 
-CALayerResult FromTileQuad(cc::ResourceProvider* resource_provider,
+CALayerResult FromTileQuad(DisplayResourceProvider* resource_provider,
                            const TileDrawQuad* quad,
                            CALayerOverlay* ca_layer_overlay) {
   unsigned resource_id = quad->resource_id();
@@ -176,13 +176,13 @@ CALayerResult FromTileQuad(cc::ResourceProvider* resource_provider,
 class CALayerOverlayProcessor {
  public:
   CALayerResult FromDrawQuad(
-      cc::ResourceProvider* resource_provider,
+      DisplayResourceProvider* resource_provider,
       const gfx::RectF& display_rect,
       const DrawQuad* quad,
       const base::flat_map<RenderPassId, cc::FilterOperations*>&
           render_pass_filters,
       const base::flat_map<RenderPassId, cc::FilterOperations*>&
-          render_pass_background_filters,
+          render_pass_backdrop_filters,
       CALayerOverlay* ca_layer_overlay,
       bool* skip,
       bool* render_pass_draw_quad) {
@@ -193,6 +193,19 @@ class CALayerOverlayProcessor {
     if (quad->shared_quad_state->opacity == 0.f) {
       *skip = true;
       return CA_LAYER_SUCCESS;
+    }
+
+    // Support rounded corner bounds when they have the same rect as the clip
+    // rect, and all corners have the same radius. Note that it is entirely
+    // possible to make rounded corner rects independent of clip rect (by adding
+    // another CALayer to the tree). Handling non-single border radii is also,
+    // but requires APIs not supported on all macOS versions.
+    if (!quad->shared_quad_state->rounded_corner_bounds.IsEmpty()) {
+      DCHECK(quad->shared_quad_state->is_clipped);
+      if (quad->shared_quad_state->rounded_corner_bounds.GetType() >
+          gfx::RRectF::Type::kSingle) {
+        return CA_LAYER_FAILED_QUAD_ROUNDED_CORNER_NOT_UNIFORM;
+      }
     }
 
     // Enable edge anti-aliasing only on layer boundaries.
@@ -216,6 +229,8 @@ class CALayerOverlayProcessor {
           quad->shared_quad_state->is_clipped;
       most_recent_overlay_shared_state_->clip_rect =
           gfx::RectF(quad->shared_quad_state->clip_rect);
+      most_recent_overlay_shared_state_->rounded_corner_bounds =
+          quad->shared_quad_state->rounded_corner_bounds;
 
       most_recent_overlay_shared_state_->opacity =
           quad->shared_quad_state->opacity;
@@ -226,34 +241,34 @@ class CALayerOverlayProcessor {
 
     ca_layer_overlay->bounds_rect = gfx::RectF(quad->rect);
 
-    *render_pass_draw_quad = quad->material == DrawQuad::RENDER_PASS;
+    *render_pass_draw_quad = quad->material == DrawQuad::Material::kRenderPass;
     switch (quad->material) {
-      case DrawQuad::TEXTURE_CONTENT:
+      case DrawQuad::Material::kTextureContent:
         return FromTextureQuad(resource_provider,
                                TextureDrawQuad::MaterialCast(quad),
                                ca_layer_overlay);
-      case DrawQuad::TILED_CONTENT:
+      case DrawQuad::Material::kTiledContent:
         return FromTileQuad(resource_provider, TileDrawQuad::MaterialCast(quad),
                             ca_layer_overlay);
-      case DrawQuad::SOLID_COLOR:
+      case DrawQuad::Material::kSolidColor:
         return FromSolidColorDrawQuad(SolidColorDrawQuad::MaterialCast(quad),
                                       ca_layer_overlay, skip);
-      case DrawQuad::STREAM_VIDEO_CONTENT:
+      case DrawQuad::Material::kStreamVideoContent:
         return FromStreamVideoQuad(resource_provider,
                                    StreamVideoDrawQuad::MaterialCast(quad),
                                    ca_layer_overlay);
-      case DrawQuad::DEBUG_BORDER:
+      case DrawQuad::Material::kDebugBorder:
         return CA_LAYER_FAILED_DEBUG_BORDER;
-      case DrawQuad::PICTURE_CONTENT:
+      case DrawQuad::Material::kPictureContent:
         return CA_LAYER_FAILED_PICTURE_CONTENT;
-      case DrawQuad::RENDER_PASS:
+      case DrawQuad::Material::kRenderPass:
         return FromRenderPassQuad(
             resource_provider, RenderPassDrawQuad::MaterialCast(quad),
-            render_pass_filters, render_pass_background_filters,
+            render_pass_filters, render_pass_backdrop_filters,
             ca_layer_overlay);
-      case DrawQuad::SURFACE_CONTENT:
+      case DrawQuad::Material::kSurfaceContent:
         return CA_LAYER_FAILED_SURFACE_CONTENT;
-      case DrawQuad::YUV_VIDEO_CONTENT:
+      case DrawQuad::Material::kYuvVideoContent:
         return CA_LAYER_FAILED_YUV_VIDEO_CONTENT;
       default:
         break;
@@ -276,13 +291,13 @@ CALayerOverlay::CALayerOverlay(const CALayerOverlay& other) = default;
 CALayerOverlay::~CALayerOverlay() {}
 
 bool ProcessForCALayerOverlays(
-    cc::ResourceProvider* resource_provider,
+    DisplayResourceProvider* resource_provider,
     const gfx::RectF& display_rect,
     const QuadList& quad_list,
     const base::flat_map<RenderPassId, cc::FilterOperations*>&
         render_pass_filters,
     const base::flat_map<RenderPassId, cc::FilterOperations*>&
-        render_pass_background_filters,
+        render_pass_backdrop_filters,
     CALayerOverlayList* ca_layer_overlays) {
   CALayerResult result = CA_LAYER_SUCCESS;
   ca_layer_overlays->reserve(quad_list.size());
@@ -295,10 +310,9 @@ bool ProcessForCALayerOverlays(
     CALayerOverlay ca_layer;
     bool skip = false;
     bool render_pass_draw_quad = false;
-    result = processor.FromDrawQuad(resource_provider, display_rect, quad,
-                                    render_pass_filters,
-                                    render_pass_background_filters, &ca_layer,
-                                    &skip, &render_pass_draw_quad);
+    result = processor.FromDrawQuad(
+        resource_provider, display_rect, quad, render_pass_filters,
+        render_pass_backdrop_filters, &ca_layer, &skip, &render_pass_draw_quad);
     if (result != CA_LAYER_SUCCESS)
       break;
 

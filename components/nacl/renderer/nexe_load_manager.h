@@ -13,7 +13,7 @@
 
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/nacl/renderer/ppb_nacl_private.h"
@@ -107,9 +107,6 @@ class NexeLoadManager {
   // false otherwise.
   bool IsPNaCl() const;
 
-  // Returns true if dev interfaces are enabled for this plugin.
-  bool DevInterfacesEnabled() const;
-
   // Returns the time that the work for PNaCl translation began.
   base::Time pnacl_start_time() const { return pnacl_start_time_; }
   void set_pnacl_start_time(base::Time time) {
@@ -118,8 +115,9 @@ class NexeLoadManager {
 
   const std::string& program_url() const { return program_url_; }
 
-  void set_crash_info_shmem_handle(base::SharedMemoryHandle h) {
-    crash_info_shmem_handle_ = h;
+  void set_crash_info_shmem_region(
+      base::ReadOnlySharedMemoryRegion shmem_region) {
+    crash_info_shmem_region_ = std::move(shmem_region);
   }
 
   bool nonsfi() const { return nonsfi_; }
@@ -187,11 +185,11 @@ class NexeLoadManager {
   // A flag that indicates if the plugin is using Non-SFI mode.
   bool nonsfi_;
 
-  base::SharedMemoryHandle crash_info_shmem_handle_;
+  base::ReadOnlySharedMemoryRegion crash_info_shmem_region_;
 
   std::unique_ptr<TrustedPluginChannel> trusted_plugin_channel_;
   std::unique_ptr<ManifestServiceChannel> manifest_service_channel_;
-  base::WeakPtrFactory<NexeLoadManager> weak_factory_;
+  base::WeakPtrFactory<NexeLoadManager> weak_factory_{this};
 };
 
 }  // namespace nacl

@@ -25,9 +25,9 @@ class IOSPaymentInstrument;
 class PaymentManifestDownloader;
 }  // namespace payments
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 @protocol PaymentRequestUIDelegate;
 
@@ -70,12 +70,11 @@ class IOSPaymentInstrumentFinder {
   using IOSPaymentInstrumentsFoundCallback = base::OnceCallback<void(
       std::vector<std::unique_ptr<IOSPaymentInstrument>>)>;
 
-  // Initializes an IOSPaymentInstrumentFinder with a |context_getter| which is
-  // used for making URL requests with the PaymentManifestDownloader class and
-  // the IOSImageDataFetcherWrapper class. |payment_request_ui_delegate| is
-  // passed to the created IOSPaymentInstrument objects.
+  // Initializes an IOSPaymentInstrumentFinder with a |url_loader_factory| which
+  // is used for making URL requests. |payment_request_ui_delegate| is passed to
+  // the created IOSPaymentInstrument objects.
   IOSPaymentInstrumentFinder(
-      net::URLRequestContextGetter* context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       id<PaymentRequestUIDelegate> payment_request_ui_delegate);
 
   ~IOSPaymentInstrumentFinder();
@@ -108,7 +107,9 @@ class IOSPaymentInstrumentFinder {
   // and |method| is the url payment method identifier that corresponds with
   // this manifest.
   void OnPaymentManifestDownloaded(const GURL& method,
-                                   const std::string& content);
+                                   const GURL& method_url_after_redirects,
+                                   const std::string& content,
+                                   const std::string& error_message);
 
   // Parses a payment method manifest for its default applications and gets all
   // the valid ones. |input| is the json encoded payment method manifest to
@@ -123,9 +124,12 @@ class IOSPaymentInstrumentFinder {
   // the url payment method that corresponds with this manifest.
   // |web_app_manifest_url| is the web app manifest url. This is passed to
   // GetPaymentAppDetailsFromWebAppManifest for validating an icon source path.
-  void OnWebAppManifestDownloaded(const GURL& method,
-                                  const GURL& web_app_manifest_url,
-                                  const std::string& content);
+  void OnWebAppManifestDownloaded(
+      const GURL& method,
+      const GURL& web_app_manifest_url,
+      const GURL& web_app_manifest_url_after_redirects,
+      const std::string& content,
+      const std::string& error_message);
 
   // Parses a web app manifest for its name, icon, and universal link. |input|
   // is the json encoded web app manifest to parse. |web_app_manifest_url|

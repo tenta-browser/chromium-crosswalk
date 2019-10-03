@@ -4,6 +4,7 @@
 
 #include <inttypes.h>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
@@ -18,20 +19,20 @@
 #include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_config.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "net/base/load_timing_info.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/dns/mapped_host_resolver.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
-#include "net/quic/chromium/crypto/proof_source_chromium.h"
-#include "net/quic/test_tools/crypto_test_utils.h"
+#include "net/quic/crypto/proof_source_chromium.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/tools/quic/quic_http_response_cache.h"
+#include "net/third_party/quiche/src/quic/test_tools/crypto_test_utils.h"
+#include "net/third_party/quiche/src/quic/tools/quic_memory_cache_backend.h"
 #include "net/tools/quic/quic_simple_server.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
@@ -66,9 +67,11 @@ std::unique_ptr<test_server::HttpResponse> HandleRequest(
   std::unique_ptr<test_server::BasicHttpResponse> http_response(
       new test_server::BasicHttpResponse());
   http_response->AddCustomHeader(
-      "Alt-Svc", base::StringPrintf(
-                     "quic=\"%s:%d\"; v=\"%u\"", kAltSvcHost, kAltSvcPort,
-                     HttpNetworkSession::Params().quic_supported_versions[0]));
+      "Alt-Svc",
+      base::StringPrintf("quic=\"%s:%d\"; v=\"%u\"", kAltSvcHost, kAltSvcPort,
+                         HttpNetworkSession::Params()
+                             .quic_params.supported_versions[0]
+                             .transport_version));
   http_response->set_code(HTTP_OK);
   http_response->set_content(kHelloOriginResponse);
   http_response->set_content_type("text/plain");
@@ -112,6 +115,7 @@ class URLRequestQuicPerfTest : public ::testing::Test {
         new HttpNetworkSession::Params);
     params->enable_quic = true;
     params->enable_user_alternate_protocol_ports = true;
+    params->quic_params.allow_remote_alt_svc = true;
     context_->set_host_resolver(host_resolver_.get());
     context_->set_http_network_session_params(std::move(params));
     context_->set_cert_verifier(&cert_verifier_);
@@ -141,20 +145,20 @@ class URLRequestQuicPerfTest : public ::testing::Test {
 
  private:
   void StartQuicServer() {
-    net::QuicConfig config;
-    response_cache_.AddSimpleResponse(kOriginHost, kHelloPath, kHelloStatus,
-                                      kHelloAltSvcResponse);
+    quic::QuicConfig config;
+    memory_cache_backend_.AddSimpleResponse(kOriginHost, kHelloPath,
+                                            kHelloStatus, kHelloAltSvcResponse);
     quic_server_.reset(new QuicSimpleServer(
-        test::crypto_test_utils::ProofSourceForTesting(), config,
-        net::QuicCryptoServerConfig::ConfigOptions(),
-        AllSupportedTransportVersions(), &response_cache_));
+        quic::test::crypto_test_utils::ProofSourceForTesting(), config,
+        quic::QuicCryptoServerConfig::ConfigOptions(),
+        quic::AllSupportedVersions(), &memory_cache_backend_));
     int rv = quic_server_->Listen(
         net::IPEndPoint(net::IPAddress::IPv4AllZeros(), kAltSvcPort));
     ASSERT_GE(rv, 0) << "Quic server fails to start";
 
     CertVerifyResult verify_result;
     verify_result.verified_cert = ImportCertFromFile(
-        GetTestCertsDirectory(), "quic_test.example.com.crt");
+        GetTestCertsDirectory(), "quic-chain.pem");
     cert_verifier_.AddResultForCert(verify_result.verified_cert.get(),
                                     verify_result, OK);
   }
@@ -162,7 +166,7 @@ class URLRequestQuicPerfTest : public ::testing::Test {
   void StartTcpServer() {
     tcp_server_ = std::make_unique<EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
-    tcp_server_->RegisterRequestHandler(base::Bind(&HandleRequest));
+    tcp_server_->RegisterRequestHandler(base::BindRepeating(&HandleRequest));
     ASSERT_TRUE(tcp_server_->Start()) << "HTTP/1.1 server fails to start";
 
     CertVerifyResult verify_result;
@@ -177,7 +181,7 @@ class URLRequestQuicPerfTest : public ::testing::Test {
   std::unique_ptr<QuicSimpleServer> quic_server_;
   std::unique_ptr<base::MessageLoop> message_loop_;
   std::unique_ptr<TestURLRequestContext> context_;
-  QuicHttpResponseCache response_cache_;
+  quic::QuicMemoryCacheBackend memory_cache_backend_;
   MockCertVerifier cert_verifier_;
 };
 

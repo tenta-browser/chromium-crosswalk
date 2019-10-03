@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/callback.h"
 #include "chromeos/printing/ppd_provider.h"
 #include "chromeos/printing/printer_configuration.h"
 
@@ -23,7 +24,7 @@ namespace chromeos {
 // an up-to-date list of the printers detected is this:
 //
 // auto detector_ = PrinterDetectorImplementation::Create();
-// detector_->AddObserver(this);
+// detector_->RegisterPrintersFoundCallback(cb);
 // printers_ = detector_->GetPrinters();
 //
 class CHROMEOS_EXPORT PrinterDetector {
@@ -34,35 +35,15 @@ class CHROMEOS_EXPORT PrinterDetector {
     Printer printer;
 
     // Additional metadata used to find a driver.
-    PpdProvider::PrinterSearchData ppd_search_data;
+    PrinterSearchData ppd_search_data;
   };
 
-  class Observer {
-   public:
-    virtual ~Observer() = default;
-
-    // Called with a collection of printers as they are discovered.  On each
-    // call |printers| is the full set of known printers; it is not
-    // incremental; printers may be added or removed.
-    virtual void OnPrintersFound(
-        const std::vector<DetectedPrinter>& printers) = 0;
-
-    // Called when we are done with the initial scan for printers.  We may
-    // still call OnPrintersFound if the set of available printers
-    // changes, but the user can conclude that if a printer is currently
-    // available and not in the list, we're not still looking for it.
-    virtual void OnPrinterScanComplete() = 0;
-  };
+  using OnPrintersFoundCallback = base::RepeatingCallback<void(
+      const std::vector<DetectedPrinter>& printers)>;
 
   virtual ~PrinterDetector() = default;
 
-  // Observer management.  Observer callbacks will be performed on the calling
-  // sequence.
-  virtual void AddObserver(Observer* observer) = 0;
-  virtual void RemoveObserver(Observer* observer) = 0;
-
-  // Begins to issue the Notify callbacks for the attached observers.
-  virtual void StartObservers() = 0;
+  virtual void RegisterPrintersFoundCallback(OnPrintersFoundCallback cb) = 0;
 
   // Get the current list of known printers.
   virtual std::vector<DetectedPrinter> GetPrinters() = 0;

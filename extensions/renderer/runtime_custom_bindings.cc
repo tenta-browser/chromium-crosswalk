@@ -9,36 +9,22 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/values.h"
-#include "content/public/renderer/render_frame.h"
-#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_messages.h"
-#include "extensions/common/manifest.h"
 #include "extensions/renderer/extension_frame_helper.h"
 #include "extensions/renderer/script_context.h"
 
 namespace extensions {
 
 RuntimeCustomBindings::RuntimeCustomBindings(ScriptContext* context)
-    : ObjectBackedNativeHandler(context) {
-  RouteFunction(
-      "GetManifest",
-      base::Bind(&RuntimeCustomBindings::GetManifest, base::Unretained(this)));
-  RouteFunction("GetExtensionViews",
-                base::Bind(&RuntimeCustomBindings::GetExtensionViews,
-                           base::Unretained(this)));
-}
+    : ObjectBackedNativeHandler(context) {}
 
-RuntimeCustomBindings::~RuntimeCustomBindings() {
-}
+RuntimeCustomBindings::~RuntimeCustomBindings() {}
 
-void RuntimeCustomBindings::GetManifest(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  CHECK(context()->extension());
-
-  args.GetReturnValue().Set(content::V8ValueConverter::Create()->ToV8Value(
-      context()->extension()->manifest()->value(), context()->v8_context()));
+void RuntimeCustomBindings::AddRoutes() {
+  RouteHandlerFunction(
+      "GetExtensionViews",
+      base::BindRepeating(&RuntimeCustomBindings::GetExtensionViews,
+                          base::Unretained(this)));
 }
 
 void RuntimeCustomBindings::GetExtensionViews(
@@ -50,11 +36,11 @@ void RuntimeCustomBindings::GetExtensionViews(
 
   // |browser_window_id| == extension_misc::kUnknownWindowId means getting
   // all views for the current extension.
-  int browser_window_id = args[0]->Int32Value();
-  int tab_id = args[1]->Int32Value();
+  int browser_window_id = args[0].As<v8::Int32>()->Value();
+  int tab_id = args[1].As<v8::Int32>()->Value();
 
   std::string view_type_string =
-      base::ToUpperASCII(*v8::String::Utf8Value(args[2]));
+      base::ToUpperASCII(*v8::String::Utf8Value(args.GetIsolate(), args[2]));
   // |view_type| == VIEW_TYPE_INVALID means getting any type of
   // views.
   ViewType view_type = VIEW_TYPE_INVALID;
@@ -66,7 +52,6 @@ void RuntimeCustomBindings::GetExtensionViews(
   if (extension_id.empty())
     return;
 
-  v8::Local<v8::Context> v8_context = args.GetIsolate()->GetCurrentContext();
   // We ignore iframes here. (Returning subframes can cause broken behavior by
   // treating an app window's iframe as its main frame, and maybe other
   // nastiness).
@@ -74,7 +59,8 @@ void RuntimeCustomBindings::GetExtensionViews(
   // can be reasons to want to access just a frame - especially with isolated
   // extension frames in web pages.
   v8::Local<v8::Array> v8_views = ExtensionFrameHelper::GetV8MainFrames(
-      v8_context, extension_id, browser_window_id, tab_id, view_type);
+      context()->v8_context(), extension_id, browser_window_id, tab_id,
+      view_type);
 
   args.GetReturnValue().Set(v8_views);
 }

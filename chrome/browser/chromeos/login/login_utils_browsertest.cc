@@ -4,24 +4,28 @@
 
 #include <string>
 
-#include "ash/public/cpp/config.h"
+#include "ash/public/cpp/ash_features.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/scoped_observer.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/test_timeouts.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/ash_config.h"
-#include "chrome/browser/chromeos/login/existing_user_controller.h"
+#include "chrome/browser/chromeos/login/test/fake_gaia_mixin.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
-#include "chrome/browser/chromeos/login/ui/webui_login_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/gaia/fake_gaia.h"
@@ -29,10 +33,10 @@
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/rlz/rlz_tracker.h"
 #endif
 
@@ -52,9 +56,8 @@ void GetAccessPointRlzInBackgroundThread(rlz_lib::AccessPoint point,
 
 class LoginUtilsTest : public OobeBaseTest {
  public:
-  LoginUtilsTest() {}
-
-  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
+  LoginUtilsTest() = default;
+  ~LoginUtilsTest() override = default;
 
   PrefService* local_state() { return g_browser_process->local_state(); }
 
@@ -63,14 +66,10 @@ class LoginUtilsTest : public OobeBaseTest {
         chrome::NOTIFICATION_SESSION_STARTED,
         content::NotificationService::AllSources());
 
-    ExistingUserController* controller =
-        ExistingUserController::current_controller();
-    ASSERT_TRUE(controller);
-    WebUILoginDisplay* login_display =
-        static_cast<WebUILoginDisplay*>(controller->login_display());
-    ASSERT_TRUE(login_display);
-
-    login_display->ShowSigninScreenForCreds(username, "password");
+    LoginDisplayHost::default_host()
+        ->GetOobeUI()
+        ->GetView<GaiaScreenHandler>()
+        ->ShowSigninScreenForTest(username, "password", "[]");
 
     // Wait for the session to start after submitting the credentials. This
     // will wait until all the background requests are done.
@@ -78,18 +77,10 @@ class LoginUtilsTest : public OobeBaseTest {
   }
 
  private:
+  FakeGaiaMixin fake_gaia_{&mixin_host_, embedded_test_server()};
+
   DISALLOW_COPY_AND_ASSIGN(LoginUtilsTest);
 };
-
-// Exercises login, like the desktopui_MashLogin Chrome OS autotest.
-IN_PROC_BROWSER_TEST_F(LoginUtilsTest, MashLogin) {
-  if (GetAshConfig() != ash::Config::MASH)
-    return;
-
-  WaitForSigninScreen();
-  Login("username");
-  // Login did not time out and did not crash.
-}
 
 #if BUILDFLAG(ENABLE_RLZ)
 IN_PROC_BROWSER_TEST_F(LoginUtilsTest, RlzInitialized) {
@@ -118,7 +109,7 @@ IN_PROC_BROWSER_TEST_F(LoginUtilsTest, RlzInitialized) {
     base::RunLoop loop;
     base::string16 rlz_string;
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::Bind(&GetAccessPointRlzInBackgroundThread,
                    rlz::RLZTracker::ChromeHomePage(), &rlz_string),
         loop.QuitClosure());

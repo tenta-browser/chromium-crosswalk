@@ -9,10 +9,12 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/bit_reader.h"
 #include "media/base/channel_layout.h"
+#include "media/base/encryption_pattern.h"
 #include "media/base/media_util.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/timestamp_constants.h"
@@ -136,7 +138,7 @@ EsParserAdts::EsParserAdts(const NewAudioConfigCB& new_audio_config_cb,
       get_decrypt_config_cb_(get_decrypt_config_cb),
       use_hls_sample_aes_(use_hls_sample_aes),
       sbr_in_mimetype_(sbr_in_mimetype) {
-  DCHECK_EQ(!get_decrypt_config_cb_.is_null(), use_hls_sample_aes_);
+  DCHECK_EQ(!!get_decrypt_config_cb_, use_hls_sample_aes_);
 }
 #endif
 
@@ -213,10 +215,11 @@ bool EsParserAdts::ParseFromEsQueue() {
       if (base_decrypt_config) {
         std::vector<SubsampleEntry> subsamples;
         CalculateSubsamplesForAdtsFrame(adts_frame, &subsamples);
-        std::unique_ptr<DecryptConfig> decrypt_config(
-            new DecryptConfig(base_decrypt_config->key_id(),
-                              base_decrypt_config->iv(), subsamples));
-        stream_parser_buffer->set_decrypt_config(std::move(decrypt_config));
+        stream_parser_buffer->set_decrypt_config(
+            std::make_unique<DecryptConfig>(
+                base_decrypt_config->encryption_mode(),
+                base_decrypt_config->key_id(), base_decrypt_config->iv(),
+                subsamples, EncryptionPattern()));
       }
     }
 #endif
@@ -261,7 +264,7 @@ bool EsParserAdts::UpdateAudioConfiguration(const uint8_t* adts_header,
 #if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
   if (use_hls_sample_aes_) {
     scheme = EncryptionScheme(EncryptionScheme::CIPHER_MODE_AES_CBC,
-                              EncryptionScheme::Pattern());
+                              EncryptionPattern());
   }
 #endif
   AudioDecoderConfig audio_decoder_config(

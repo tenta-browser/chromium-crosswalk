@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -19,7 +20,6 @@ class FrameTreeNode;
 class RenderFrameHostDelegate;
 class RenderFrameHostImpl;
 class RenderViewHostImpl;
-class RenderWidgetHostDelegate;
 class SiteInstance;
 
 // A factory for creating RenderFrameHosts. There is a global factory function
@@ -31,9 +31,8 @@ class CONTENT_EXPORT RenderFrameHostFactory {
   // or a regular RenderFrameHostImpl if no factory is registered.
   static std::unique_ptr<RenderFrameHostImpl> Create(
       SiteInstance* site_instance,
-      RenderViewHostImpl* render_view_host,
+      scoped_refptr<RenderViewHostImpl> render_view_host,
       RenderFrameHostDelegate* delegate,
-      RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
       int32_t routing_id,
@@ -52,9 +51,8 @@ class CONTENT_EXPORT RenderFrameHostFactory {
   // function to create an alternate kind of RenderFrameHostImpl for testing.
   virtual std::unique_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
       SiteInstance* site_instance,
-      RenderViewHostImpl* render_view_host,
+      scoped_refptr<RenderViewHostImpl> render_view_host,
       RenderFrameHostDelegate* delegate,
-      RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
       int32_t routing_id,

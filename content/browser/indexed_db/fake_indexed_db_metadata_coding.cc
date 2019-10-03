@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 #include "content/browser/indexed_db/fake_indexed_db_metadata_coding.h"
-#include "content/common/indexed_db/indexed_db_key_path.h"
-#include "content/common/indexed_db/indexed_db_metadata.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
 
+using blink::IndexedDBDatabaseMetadata;
+using blink::IndexedDBIndexMetadata;
+using blink::IndexedDBObjectStoreMetadata;
 using leveldb::Status;
 
 namespace content {
@@ -14,14 +17,14 @@ FakeIndexedDBMetadataCoding::FakeIndexedDBMetadataCoding() {}
 FakeIndexedDBMetadataCoding::~FakeIndexedDBMetadataCoding() {}
 
 leveldb::Status FakeIndexedDBMetadataCoding::ReadDatabaseNames(
-    LevelDBDatabase* db,
+    TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
     std::vector<base::string16>* names) {
   return Status::OK();
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::ReadMetadataForDatabaseName(
-    LevelDBDatabase* db,
+    TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
     const base::string16& name,
     IndexedDBDatabaseMetadata* metadata,
@@ -30,7 +33,7 @@ leveldb::Status FakeIndexedDBMetadataCoding::ReadMetadataForDatabaseName(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::CreateDatabase(
-    LevelDBDatabase* database,
+    TransactionalLevelDBDatabase* database,
     const std::string& origin_identifier,
     const base::string16& name,
     int64_t version,
@@ -41,7 +44,7 @@ leveldb::Status FakeIndexedDBMetadataCoding::CreateDatabase(
 }
 
 void FakeIndexedDBMetadataCoding::SetDatabaseVersion(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t row_id,
     int64_t version,
     IndexedDBDatabaseMetadata* metadata) {
@@ -49,7 +52,7 @@ void FakeIndexedDBMetadataCoding::SetDatabaseVersion(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::FindDatabaseId(
-    LevelDBDatabase* db,
+    TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
     const base::string16& name,
     int64_t* id,
@@ -58,11 +61,11 @@ leveldb::Status FakeIndexedDBMetadataCoding::FindDatabaseId(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::CreateObjectStore(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
     base::string16 name,
-    IndexedDBKeyPath key_path,
+    blink::IndexedDBKeyPath key_path,
     bool auto_increment,
     IndexedDBObjectStoreMetadata* metadata) {
   metadata->name = std::move(name);
@@ -74,7 +77,7 @@ leveldb::Status FakeIndexedDBMetadataCoding::CreateObjectStore(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::RenameObjectStore(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     base::string16 new_name,
     base::string16* old_name,
@@ -85,19 +88,19 @@ leveldb::Status FakeIndexedDBMetadataCoding::RenameObjectStore(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::DeleteObjectStore(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     const IndexedDBObjectStoreMetadata& object_store) {
   return Status::OK();
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::CreateIndex(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
     int64_t index_id,
     base::string16 name,
-    IndexedDBKeyPath key_path,
+    blink::IndexedDBKeyPath key_path,
     bool is_unique,
     bool is_multi_entry,
     IndexedDBIndexMetadata* metadata) {
@@ -110,7 +113,7 @@ leveldb::Status FakeIndexedDBMetadataCoding::CreateIndex(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::RenameIndex(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
     base::string16 new_name,
@@ -122,7 +125,7 @@ leveldb::Status FakeIndexedDBMetadataCoding::RenameIndex(
 }
 
 leveldb::Status FakeIndexedDBMetadataCoding::DeleteIndex(
-    LevelDBTransaction* transaction,
+    TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
     const IndexedDBIndexMetadata& metadata) {

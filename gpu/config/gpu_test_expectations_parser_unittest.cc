@@ -38,6 +38,7 @@ static const struct TestOsWithFamily {
     {{"ELCAPITAN", GPUTestConfig::kOsMacElCapitan}, kOsFamilyMac},
     {{"SIERRA", GPUTestConfig::kOsMacSierra}, kOsFamilyMac},
     {{"HIGHSIERRA", GPUTestConfig::kOsMacHighSierra}, kOsFamilyMac},
+    {{"MOJAVE", GPUTestConfig::kOsMacMojave}, kOsFamilyMac},
     {{"LINUX", GPUTestConfig::kOsLinux}, {"LINUX", GPUTestConfig::kOsLinux}},
     {{"CHROMEOS", GPUTestConfig::kOsChromeOS},
      {"CHROMEOS", GPUTestConfig::kOsChromeOS}},
@@ -60,9 +61,9 @@ std::ostream& operator << (std::ostream& out, const TestOsWithFamily& os) {
 
 class GPUTestExpectationsParserTest : public testing::Test {
  public:
-  GPUTestExpectationsParserTest() { }
+  GPUTestExpectationsParserTest() = default;
 
-  ~GPUTestExpectationsParserTest() override {}
+  ~GPUTestExpectationsParserTest() override = default;
 
   const GPUTestBotConfig& bot_config() const {
     return bot_config_;
@@ -93,9 +94,9 @@ class GPUTestExpectationsParserParamTest
     : public GPUTestExpectationsParserTest,
       public testing::WithParamInterface<TestOsWithFamily> {
  public:
-  GPUTestExpectationsParserParamTest() { }
+  GPUTestExpectationsParserParamTest() = default;
 
-  ~GPUTestExpectationsParserParamTest() override {}
+  ~GPUTestExpectationsParserParamTest() override = default;
 
  protected:
   const GPUTestBotConfig& GetBotConfig() {
@@ -344,9 +345,9 @@ TEST_F(GPUTestExpectationsParserTest, MultipleAPIsConflict) {
   EXPECT_NE(0u, parser.GetErrorMessages().size());
 }
 
-INSTANTIATE_TEST_CASE_P(GPUTestExpectationsParser,
-                        GPUTestExpectationsParserParamTest,
-                        ::testing::ValuesIn(kOSVersionsWithFamily));
+INSTANTIATE_TEST_SUITE_P(GPUTestExpectationsParser,
+                         GPUTestExpectationsParserParamTest,
+                         ::testing::ValuesIn(kOSVersionsWithFamily));
 
 }  // namespace gpu
 

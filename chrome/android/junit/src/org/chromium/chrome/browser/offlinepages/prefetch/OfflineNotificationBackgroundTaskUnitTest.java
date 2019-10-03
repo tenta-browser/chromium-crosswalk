@@ -24,6 +24,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
+import android.os.Build;
 
 import org.junit.After;
 import org.junit.Before;
@@ -40,22 +41,20 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.multidex.ShadowMultiDex;
 
-import org.chromium.base.BaseChromiumApplication;
 import org.chromium.base.Callback;
-import org.chromium.base.ContextUtils;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.DeviceConditions;
+import org.chromium.chrome.browser.ShadowDeviceConditions;
 import org.chromium.chrome.browser.init.BrowserParts;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
-import org.chromium.chrome.browser.offlinepages.DeviceConditions;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
-import org.chromium.chrome.browser.offlinepages.ShadowDeviceConditions;
 import org.chromium.components.background_task_scheduler.BackgroundTaskScheduler;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskInfo;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 import org.chromium.net.ConnectionType;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -63,9 +62,8 @@ import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 /** Unit tests for {@link OfflineNotificationBackgroundTask}. */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
-        shadows = {ShadowMultiDex.class, ShadowDeviceConditions.class})
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE, shadows = {ShadowMultiDex.class, ShadowDeviceConditions.class})
 public class OfflineNotificationBackgroundTaskUnitTest {
     /**
      * Fake of BackgroundTaskScheduler system service.
@@ -105,22 +103,22 @@ public class OfflineNotificationBackgroundTaskUnitTest {
     @Mock
     private ChromeBrowserInitializer mChromeBrowserInitializer;
     @Captor
-    ArgumentCaptor<BrowserParts> mBrowserParts;
+    private ArgumentCaptor<BrowserParts> mBrowserParts;
     @Mock
-    OfflinePageBridge mOfflinePageBridge;
+    private OfflinePageBridge mOfflinePageBridge;
     @Mock
-    PrefetchedPagesNotifier mPrefetchedPagesNotifier;
+    private PrefetchedPagesNotifier mPrefetchedPagesNotifier;
 
     private FakeBackgroundTaskScheduler mFakeTaskScheduler;
     private Calendar mCalendar;
 
     private String mContentHost = "www.example.com";
 
+    @SuppressWarnings("unchecked")
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
         // Set up the context.
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
         doNothing().when(mChromeBrowserInitializer).handlePreNativeStartup(any(BrowserParts.class));
         try {
             doAnswer(new Answer<Void>() {
@@ -159,17 +157,13 @@ public class OfflineNotificationBackgroundTaskUnitTest {
         mCalendar.set(2017, 1, 1, 0, 0, 0);
 
         OfflineNotificationBackgroundTask.setCalendarForTesting(mCalendar);
-        clearPrefs();
+        PrefetchPrefs.setNotificationEnabled(true);
     }
 
     @After
     public void tearDown() {
         // Ensure that an empty content notificaition is not shown in any test.
         verify(mPrefetchedPagesNotifier, never()).showNotification("");
-    }
-
-    private void clearPrefs() {
-        ContextUtils.getAppSharedPreferences().edit().clear().apply();
     }
 
     /**
@@ -204,8 +198,8 @@ public class OfflineNotificationBackgroundTaskUnitTest {
         DeviceConditions deviceConditions =
                 new DeviceConditions(false /* POWER_CONNECTED */, 75 /* BATTERY_LEVEL */,
                         online ? ConnectionType.CONNECTION_WIFI : ConnectionType.CONNECTION_NONE,
-                        false /* POWER_SAVE */);
-        ShadowDeviceConditions.setCurrentConditions(deviceConditions, false /* metered */);
+                        false /* POWER_SAVE */, false /* metered */);
+        ShadowDeviceConditions.setCurrentConditions(deviceConditions);
     }
 
     public void assertTaskScheduledForOfflineDelay(String message) {
@@ -465,5 +459,42 @@ public class OfflineNotificationBackgroundTaskUnitTest {
         assertTaskScheduledForOfflineDelay(
                 "After waiting for tomorrow morning, the next delay should be normal "
                 + "even if the last notification was sent well in the future.");
+    }
+
+    @Test
+    @Config(sdk = Build.VERSION_CODES.O)
+    public void disabledPrefDoesNothingSdkO() {
+        // Set up the prefs so that a notification should be shown.
+        PrefetchPrefs.setHasNewPages(true);
+        PrefetchPrefs.setOfflineCounter(OfflineNotificationBackgroundTask.OFFLINE_POLLING_ATTEMPTS);
+        PrefetchPrefs.setIgnoredNotificationCounter(0);
+        setupDeviceOnlineStatus(false);
+
+        // Set up the Content Suggestions notifications preference.
+        PrefetchPrefs.setNotificationEnabled(false);
+
+        runTaskAndExpectTaskDone();
+        assertNativeStarted();
+        assertNotificationShown();
+    }
+
+    @Test
+    @Config(sdk = Build.VERSION_CODES.N_MR1)
+    public void disabledPrefPreventsNotificationShow() {
+        // Set up the prefs so that a notification would be shown, if not for the Content
+        // Suggestions notifications preference.
+        PrefetchPrefs.setHasNewPages(true);
+        PrefetchPrefs.setOfflineCounter(OfflineNotificationBackgroundTask.OFFLINE_POLLING_ATTEMPTS);
+        PrefetchPrefs.setIgnoredNotificationCounter(0);
+        setupDeviceOnlineStatus(false);
+
+        // Set up the Content Suggestions notifications preference.
+        PrefetchPrefs.setNotificationEnabled(false);
+
+        runTask();
+        assertNativeDidNotStart();
+        assertNoTaskScheduled("If the notifications preference was disabled, the task should not "
+                + "reschedule itself.");
+        assertNotificationNotShown();
     }
 }

@@ -14,16 +14,15 @@
 
 #include "base/bind.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/pref_names.h"
-#include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/sync_preferences/pref_service_mock_factory.h"
-#include "components/sync_preferences/pref_service_syncable.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_transaction_factory.h"
@@ -38,9 +37,7 @@ class CacheCounterTest : public PlatformTest {
  public:
   CacheCounterTest() {
     TestChromeBrowserState::Builder builder;
-    builder.SetPrefService(CreatePrefService());
     browser_state_ = builder.Build();
-
     context_getter_ = browser_state_->GetRequestContext();
   }
 
@@ -49,19 +46,6 @@ class CacheCounterTest : public PlatformTest {
   ios::ChromeBrowserState* browser_state() { return browser_state_.get(); }
 
   PrefService* prefs() { return browser_state_->GetPrefs(); }
-
-  std::unique_ptr<sync_preferences::PrefServiceSyncable> CreatePrefService() {
-    sync_preferences::PrefServiceMockFactory factory;
-    scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
-        new user_prefs::PrefRegistrySyncable);
-    std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs =
-        factory.CreateSyncable(registry.get());
-    registry->RegisterIntegerPref(
-        browsing_data::prefs::kDeleteTimePeriod,
-        static_cast<int>(browsing_data::TimePeriod::ALL_TIME));
-    registry->RegisterBooleanPref(browsing_data::prefs::kDeleteCache, true);
-    return prefs;
-  }
 
   void SetCacheDeletionPref(bool value) {
     prefs()->SetBoolean(browsing_data::prefs::kDeleteCache, value);
@@ -77,9 +61,10 @@ class CacheCounterTest : public PlatformTest {
     current_operation_ = OPERATION_ADD_ENTRY;
     next_step_ = STEP_GET_BACKEND;
 
-    web::WebThread::PostTask(web::WebThread::IO, FROM_HERE,
-                             base::Bind(&CacheCounterTest::CacheOperationStep,
-                                        base::Unretained(this), net::OK));
+    base::PostTaskWithTraits(
+        FROM_HERE, {web::WebThread::IO},
+        base::BindOnce(&CacheCounterTest::CacheOperationStep,
+                       base::Unretained(this), net::OK));
     WaitForIOThread();
   }
 
@@ -88,9 +73,10 @@ class CacheCounterTest : public PlatformTest {
     current_operation_ = OPERATION_CLEAR_CACHE;
     next_step_ = STEP_GET_BACKEND;
 
-    web::WebThread::PostTask(web::WebThread::IO, FROM_HERE,
-                             base::Bind(&CacheCounterTest::CacheOperationStep,
-                                        base::Unretained(this), net::OK));
+    base::PostTaskWithTraits(
+        FROM_HERE, {web::WebThread::IO},
+        base::BindOnce(&CacheCounterTest::CacheOperationStep,
+                       base::Unretained(this), net::OK));
     WaitForIOThread();
   }
 
@@ -160,8 +146,9 @@ class CacheCounterTest : public PlatformTest {
                                            ->GetCache();
 
           rv = http_cache->GetBackend(
-              &backend_, base::Bind(&CacheCounterTest::CacheOperationStep,
-                                    base::Unretained(this)));
+              &backend_,
+              base::BindRepeating(&CacheCounterTest::CacheOperationStep,
+                                  base::Unretained(this)));
 
           break;
         }
@@ -170,7 +157,7 @@ class CacheCounterTest : public PlatformTest {
           next_step_ = STEP_CALLBACK;
 
           DCHECK(backend_);
-          rv = backend_->DoomAllEntries(base::Bind(
+          rv = backend_->DoomAllEntries(base::BindRepeating(
               &CacheCounterTest::CacheOperationStep, base::Unretained(this)));
 
           break;
@@ -181,9 +168,9 @@ class CacheCounterTest : public PlatformTest {
 
           DCHECK(backend_);
           rv = backend_->CreateEntry(
-              "entry_key", &entry_,
-              base::Bind(&CacheCounterTest::CacheOperationStep,
-                         base::Unretained(this)));
+              "entry_key", net::HIGHEST, &entry_,
+              base::BindRepeating(&CacheCounterTest::CacheOperationStep,
+                                  base::Unretained(this)));
 
           break;
         }
@@ -192,13 +179,12 @@ class CacheCounterTest : public PlatformTest {
           next_step_ = STEP_CALLBACK;
 
           std::string data = "entry data";
-          scoped_refptr<net::StringIOBuffer> buffer =
-              new net::StringIOBuffer(data);
+          auto buffer = base::MakeRefCounted<net::StringIOBuffer>(data);
 
           rv = entry_->WriteData(
               0, 0, buffer.get(), data.size(),
-              base::Bind(&CacheCounterTest::CacheOperationStep,
-                         base::Unretained(this)),
+              base::BindRepeating(&CacheCounterTest::CacheOperationStep,
+                                  base::Unretained(this)),
               true);
 
           break;
@@ -210,9 +196,9 @@ class CacheCounterTest : public PlatformTest {
           if (current_operation_ == OPERATION_ADD_ENTRY)
             entry_->Close();
 
-          web::WebThread::PostTask(
-              web::WebThread::UI, FROM_HERE,
-              base::Bind(&CacheCounterTest::Callback, base::Unretained(this)));
+          base::PostTaskWithTraits(FROM_HERE, {web::WebThread::UI},
+                                   base::BindOnce(&CacheCounterTest::Callback,
+                                                  base::Unretained(this)));
 
           break;
         }
@@ -249,9 +235,9 @@ class CacheCounterTest : public PlatformTest {
 // Tests that for the empty cache, the result is zero.
 TEST_F(CacheCounterTest, Empty) {
   CacheCounter counter(browser_state());
-  counter.Init(
-      prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
-      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
+  counter.Init(prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
+               base::BindRepeating(&CacheCounterTest::CountingCallback,
+                                   base::Unretained(this)));
   counter.Restart();
 
   WaitForIOThread();
@@ -265,9 +251,9 @@ TEST_F(CacheCounterTest, BeforeAndAfterClearing) {
   CreateCacheEntry();
 
   CacheCounter counter(browser_state());
-  counter.Init(
-      prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
-      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
+  counter.Init(prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
+               base::BindRepeating(&CacheCounterTest::CountingCallback,
+                                   base::Unretained(this)));
   counter.Restart();
 
   WaitForIOThread();
@@ -286,9 +272,9 @@ TEST_F(CacheCounterTest, PrefChanged) {
   SetCacheDeletionPref(false);
 
   CacheCounter counter(browser_state());
-  counter.Init(
-      prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
-      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
+  counter.Init(prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
+               base::BindRepeating(&CacheCounterTest::CountingCallback,
+                                   base::Unretained(this)));
   SetCacheDeletionPref(true);
 
   WaitForIOThread();
@@ -303,9 +289,9 @@ TEST_F(CacheCounterTest, PeriodChanged) {
   CreateCacheEntry();
 
   CacheCounter counter(browser_state());
-  counter.Init(
-      prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
-      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
+  counter.Init(prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
+               base::BindRepeating(&CacheCounterTest::CountingCallback,
+                                   base::Unretained(this)));
 
   SetDeletionPeriodPref(browsing_data::TimePeriod::LAST_HOUR);
   WaitForIOThread();

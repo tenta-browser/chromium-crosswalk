@@ -10,23 +10,18 @@
 #include "base/macros.h"
 #include "chrome/test/base/web_ui_browser_test.h"
 
-class GURL;
-
 class NetInternalsTest : public WebUIBrowserTest {
  protected:
   NetInternalsTest();
   ~NetInternalsTest() override;
 
+  void SetUpOnMainThread() override;
+
  private:
   class MessageHandler;
 
-  // InProcessBrowserTest overrides.
-  void SetUpOnMainThread() override;
-
   // WebUIBrowserTest implementation.
   content::WebUIMessageHandler* GetMockMessageHandler() override;
-
-  GURL CreatePrerenderLoaderUrl(const GURL& prerender_url);
 
   // Attempts to start the test server.  Returns true on success or if the
   // TestServer is already started.

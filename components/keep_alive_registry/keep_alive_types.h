@@ -24,8 +24,12 @@ enum class KeepAliveOrigin {
   BACKGROUND_MODE_MANAGER,
   BACKGROUND_MODE_MANAGER_STARTUP,
 
+  // c/b/background_sync
+  BACKGROUND_SYNC,
+
   // c/b/chromeos
   LOGIN_DISPLAY_HOST_WEBUI,
+  PIN_MIGRATION,
 
   // c/b/notifications
   NOTIFICATION,
@@ -39,12 +43,12 @@ enum class KeepAliveOrigin {
   APP_LIST_SHOWER,
   CHROME_APP_DELEGATE,
   CHROME_VIEWS_DELEGATE,
-  LEAKED_UNINSTALL_VIEW,
   PANEL,
   PANEL_VIEW,
   PROFILE_HELPER,
   PROFILE_LOADER,
-  USER_MANAGER_VIEW
+  USER_MANAGER_VIEW,
+  CREDENTIAL_PROVIDER_SIGNIN_DIALOG,
 };
 
 // Restart: Allow Chrome to restart when all the registered KeepAlives allow

@@ -15,10 +15,10 @@
 
 namespace syncer {
 
-// A mock of the SyncEngine.
+// A fake of the SyncEngine.
 //
 // This class implements the bare minimum required for the ProfileSyncService to
-// get through initialization.  It often returns null pointers or nonesense
+// get through initialization. It often returns null pointers or nonsense
 // values; it is not intended to be used in tests that depend on SyncEngine
 // behavior.
 class FakeSyncEngine : public SyncEngine {
@@ -26,18 +26,22 @@ class FakeSyncEngine : public SyncEngine {
   FakeSyncEngine();
   ~FakeSyncEngine() override;
 
+  // Immediately calls params.host->OnEngineInitialized.
   void Initialize(InitParams params) override;
+
+  bool IsInitialized() const override;
 
   void TriggerRefresh(const ModelTypeSet& types) override;
 
   void UpdateCredentials(const SyncCredentials& credentials) override;
 
+  void InvalidateCredentials() override;
+
   void StartConfiguration() override;
 
   void StartSyncingWithServer() override;
 
-  void SetEncryptionPassphrase(const std::string& passphrase,
-                               bool is_explicit) override;
+  void SetEncryptionPassphrase(const std::string& passphrase) override;
 
   void SetDecryptionPassphrase(const std::string& passphrase) override;
 
@@ -58,17 +62,17 @@ class FakeSyncEngine : public SyncEngine {
                                  ChangeProcessor* change_processor) override;
   void DeactivateDirectoryDataType(ModelType type) override;
 
-  void ActivateNonBlockingDataType(ModelType type,
-                                   std::unique_ptr<ActivationContext>) override;
+  void ActivateNonBlockingDataType(
+      ModelType type,
+      std::unique_ptr<DataTypeActivationResponse>) override;
   void DeactivateNonBlockingDataType(ModelType type) override;
 
   UserShare* GetUserShare() const override;
 
-  Status GetDetailedStatus() override;
+  SyncStatus GetDetailedStatus() override;
 
-  bool HasUnsyncedItems() const override;
-
-  bool IsCryptographerReady(const BaseTransaction* trans) const override;
+  void HasUnsyncedItemsForTest(
+      base::OnceCallback<void(bool)> cb) const override;
 
   void GetModelSafeRoutingInfo(ModelSafeRoutingInfo* out) const override;
 
@@ -80,18 +84,16 @@ class FakeSyncEngine : public SyncEngine {
   void EnableDirectoryTypeDebugInfoForwarding() override;
   void DisableDirectoryTypeDebugInfoForwarding() override;
 
-  void RefreshTypesForTest(ModelTypeSet types) override;
-
-  void ClearServerData(const base::Closure& callback) override;
-
   void OnCookieJarChanged(bool account_mismatch,
                           bool empty_jar,
                           const base::Closure& callback) override;
+  void SetInvalidationsForSessionsEnabled(bool enabled) override;
 
   void set_fail_initial_download(bool should_fail);
 
  private:
-  bool fail_initial_download_;
+  bool fail_initial_download_ = false;
+  bool initialized_ = false;
 };
 
 }  // namespace syncer

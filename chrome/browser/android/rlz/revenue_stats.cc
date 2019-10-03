@@ -4,8 +4,8 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/RevenueStats_jni.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data_android.h"
-#include "jni/RevenueStats_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -15,7 +15,6 @@ namespace android {
 
 static void JNI_RevenueStats_SetSearchClient(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jclient) {
   SearchTermsDataAndroid::search_client_.Get() =
       base::android::ConvertJavaStringToUTF8(env, jclient);
@@ -23,7 +22,6 @@ static void JNI_RevenueStats_SetSearchClient(
 
 static void JNI_RevenueStats_SetRlzParameterValue(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jrlz) {
   SearchTermsDataAndroid::rlz_parameter_value_.Get() =
       base::android::ConvertJavaStringToUTF16(env, jrlz);

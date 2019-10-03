@@ -11,8 +11,8 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -49,7 +49,8 @@ class EdgeDatabaseReaderTest : public ::testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_path_));
+    ASSERT_TRUE(
+        base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_path_));
   }
 
  private:
@@ -278,7 +279,7 @@ TEST_F(EdgeDatabaseReaderTest, UnicodeStringsDatabaseTest) {
   std::unique_ptr<EdgeDatabaseTableEnumerator> table_enum =
       reader.OpenTableEnumerator(L"UnicodeTable");
   EXPECT_NE(nullptr, table_enum);
-  size_t utf8_strings_count = arraysize(utf8_strings);
+  size_t utf8_strings_count = base::size(utf8_strings);
   for (size_t row_count = 0; row_count < utf8_strings_count; ++row_count) {
     std::wstring row_string = base::UTF8ToWide(utf8_strings[row_count]);
     base::string16 str_col_value;

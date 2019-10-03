@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/timer/timer.h"
 #include "remoting/proto/control.pb.h"
 #include "remoting/protocol/cursor_shape_stub.h"
@@ -24,8 +25,7 @@ MouseShapePump::MouseShapePump(
     std::unique_ptr<webrtc::MouseCursorMonitor> mouse_cursor_monitor,
     protocol::CursorShapeStub* cursor_shape_stub)
     : mouse_cursor_monitor_(std::move(mouse_cursor_monitor)),
-      cursor_shape_stub_(cursor_shape_stub),
-      capture_timer_(true, true) {
+      cursor_shape_stub_(cursor_shape_stub) {
   mouse_cursor_monitor_->Init(this, webrtc::MouseCursorMonitor::SHAPE_ONLY);
   capture_timer_.Start(
       FROM_HERE, base::TimeDelta::FromMilliseconds(kCursorCaptureIntervalMs),

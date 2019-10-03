@@ -29,7 +29,7 @@ SpellingBubbleModel::~SpellingBubbleModel() {
 }
 
 base::string16 SpellingBubbleModel::GetTitle() const {
-  return l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_SPELLING_ASK_GOOGLE);
+  return l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_SPELLING_BUBBLE_TITLE);
 }
 
 base::string16 SpellingBubbleModel::GetMessageText() const {
@@ -54,12 +54,12 @@ base::string16 SpellingBubbleModel::GetLinkText() const {
   return l10n_util::GetStringUTF16(IDS_LEARN_MORE);
 }
 
-GURL SpellingBubbleModel::GetLinkURL() const {
+GURL SpellingBubbleModel::GetHelpPageURL() const {
   return GURL(chrome::kPrivacyLearnMoreURL);
 }
 
-void SpellingBubbleModel::LinkClicked() {
-  OpenURLParams params(GetLinkURL(), Referrer(),
+void SpellingBubbleModel::OpenHelpPage() {
+  OpenURLParams params(GetHelpPageURL(), Referrer(),
                        WindowOpenDisposition::NEW_FOREGROUND_TAB,
                        ui::PAGE_TRANSITION_LINK, false);
   web_contents_->OpenURL(params);
@@ -69,4 +69,10 @@ void SpellingBubbleModel::SetPref(bool enabled) {
   PrefService* pref = profile_->GetPrefs();
   DCHECK(pref);
   pref->SetBoolean(spellcheck::prefs::kSpellCheckUseSpellingService, enabled);
+
+  // If the user has explicitly opted in to using the spelling service,
+  // spellcheck should be enabled so that the spelling service can run.
+  if (enabled) {
+    pref->SetBoolean(spellcheck::prefs::kSpellCheckEnable, true);
+  }
 }

@@ -10,6 +10,8 @@ Usage:
   lighttpd_server PATH_TO_DOC_ROOT
 """
 
+from __future__ import print_function
+
 import codecs
 import contextlib
 import httplib
@@ -93,6 +95,7 @@ class LighttpdServer(object):
             'Could not find lighttpd at %s.\n'
             'It may need to be installed (e.g. sudo apt-get install lighttpd)'
             % self.lighttpd_path)
+      # pylint: disable=no-member
       self.process = pexpect.spawn(self.lighttpd_path,
                                    ['-D', '-f', self.config_path,
                                     '-m', self.lighttpd_module_path],
@@ -103,9 +106,9 @@ class LighttpdServer(object):
         break
       self.process.close()
 
-      if self.fixed_port or not 'in use' in server_error:
-        print 'Client error:', client_error
-        print 'Server error:', server_error
+      if self.fixed_port or 'in use' not in server_error:
+        print('Client error:', client_error)
+        print('Server error:', server_error)
         return False
       self.port = self._GetRandomPort()
     return True
@@ -137,6 +140,7 @@ class LighttpdServer(object):
       except (httplib.HTTPException, socket.error) as client_error:
         pass  # Probably too quick connecting: try again
       # Check for server startup error messages
+      # pylint: disable=no-member
       ix = self.process.expect([pexpect.TIMEOUT, pexpect.EOF, '.+'],
                                timeout=timeout)
       if ix == 2:  # stdout spew from the server
@@ -247,7 +251,7 @@ def main(argv):
       raw_input('Server running at http://127.0.0.1:%s -'
                 ' press Enter to exit it.' % server.port)
     else:
-      print 'Server exit code:', server.process.exitstatus
+      print('Server exit code:', server.process.exitstatus)
   finally:
     server.ShutdownHttpServer()
 

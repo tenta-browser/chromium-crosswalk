@@ -6,7 +6,10 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "extensions/browser/api/socket/udp_socket.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -96,7 +99,7 @@ void UDPSocketEventDispatcher::StartReceive(const ReceiveParams& params) {
   int buffer_size = (socket->buffer_size() <= 0 ? 4096 : socket->buffer_size());
   socket->RecvFrom(
       buffer_size,
-      base::Bind(&UDPSocketEventDispatcher::ReceiveCallback, params));
+      base::BindOnce(&UDPSocketEventDispatcher::ReceiveCallback, params));
 }
 
 /* static */
@@ -129,10 +132,9 @@ void UDPSocketEventDispatcher::ReceiveCallback(
 
     // Post a task to delay the read until the socket is available, as
     // calling StartReceive at this point would error with ERR_IO_PENDING.
-    BrowserThread::PostTask(
-        params.thread_id,
-        FROM_HERE,
-        base::Bind(&UDPSocketEventDispatcher::StartReceive, params));
+    base::PostTaskWithTraits(
+        FROM_HERE, {params.thread_id},
+        base::BindOnce(&UDPSocketEventDispatcher::StartReceive, params));
   } else if (bytes_read == net::ERR_IO_PENDING) {
     // This happens when resuming a socket which already had an
     // active "recv" callback.
@@ -169,10 +171,10 @@ void UDPSocketEventDispatcher::PostEvent(const ReceiveParams& params,
                                          std::unique_ptr<Event> event) {
   DCHECK_CURRENTLY_ON(params.thread_id);
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&DispatchEvent, params.browser_context_id, params.extension_id,
-                 base::Passed(std::move(event))));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&DispatchEvent, params.browser_context_id,
+                     params.extension_id, std::move(event)));
 }
 
 /*static*/

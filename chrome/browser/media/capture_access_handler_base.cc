@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/capture_access_handler_base.h"
 
+#include <string>
 #include <utility>
 
 #include "base/strings/string_number_conversions.h"
@@ -12,7 +13,7 @@
 #include "extensions/common/extension.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/sha1.h"
+#include "base/hash/sha1.h"
 #endif  // defined(OS_CHROMEOS)
 
 using content::BrowserThread;
@@ -26,7 +27,7 @@ struct CaptureAccessHandlerBase::Session {
   // Extensions control the routing of the captured MediaStream content.
   // Therefore, only built-in extensions (and certain whitelisted ones) can be
   // trusted to set-up secure links.
-  bool is_extension_trusted;
+  bool is_trusted;
 
   // This is true only if all connected video sinks are reported secure.
   bool is_capturing_link_secure;
@@ -39,9 +40,9 @@ CaptureAccessHandlerBase::~CaptureAccessHandlerBase() {}
 void CaptureAccessHandlerBase::AddCaptureSession(int render_process_id,
                                                  int render_frame_id,
                                                  int page_request_id,
-                                                 bool is_extension_trusted) {
+                                                 bool is_trusted) {
   Session session = {render_process_id, render_frame_id, page_request_id,
-                     is_extension_trusted, true};
+                     is_trusted, true};
   sessions_.push_back(session);
 }
 
@@ -70,12 +71,16 @@ void CaptureAccessHandlerBase::UpdateMediaRequestState(
     int render_process_id,
     int render_frame_id,
     int page_request_id,
-    content::MediaStreamType stream_type,
+    blink::mojom::MediaStreamType stream_type,
     content::MediaRequestState state) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if ((stream_type != content::MEDIA_DESKTOP_VIDEO_CAPTURE) &&
-      (stream_type != content::MEDIA_TAB_VIDEO_CAPTURE))
+  if ((stream_type !=
+       blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE) &&
+      (stream_type != blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE) &&
+      (stream_type != blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE) &&
+      (stream_type != blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE)) {
     return;
+  }
 
   if (state == content::MEDIA_REQUEST_STATE_DONE) {
     if (FindSession(render_process_id, render_frame_id, page_request_id) ==
@@ -99,32 +104,35 @@ void CaptureAccessHandlerBase::UpdateMediaRequestState(
 void CaptureAccessHandlerBase::UpdateExtensionTrusted(
     const content::MediaStreamRequest& request,
     const extensions::Extension* extension) {
-  bool is_extension_trusted =
-      MediaCaptureDevicesDispatcher::IsOriginForCasting(
-          request.security_origin) ||
-      IsExtensionWhitelistedForScreenCapture(extension) ||
-      IsBuiltInExtension(request.security_origin);
+  const bool is_trusted = MediaCaptureDevicesDispatcher::IsOriginForCasting(
+                              request.security_origin) ||
+                          IsExtensionWhitelistedForScreenCapture(extension) ||
+                          IsBuiltInExtension(request.security_origin);
+  UpdateTrusted(request, is_trusted);
+}
 
-  std::list<CaptureAccessHandlerBase::Session>::iterator it =
-      FindSession(request.render_process_id, request.render_frame_id,
-                  request.page_request_id);
+void CaptureAccessHandlerBase::UpdateTrusted(
+    const content::MediaStreamRequest& request,
+    bool is_trusted) {
+  auto it = FindSession(request.render_process_id, request.render_frame_id,
+                        request.page_request_id);
   if (it != sessions_.end()) {
-    it->is_extension_trusted = is_extension_trusted;
-    DVLOG(2) << "CaptureAccessHandlerBase::UpdateExtensionTrusted"
+    it->is_trusted = is_trusted;
+    DVLOG(2) << "CaptureAccessHandlerBase::UpdateTrusted"
              << " render_process_id: " << request.render_process_id
              << " render_frame_id: " << request.render_frame_id
-             << "page_request_id: " << request.page_request_id
-             << " is_extension_trusted: " << is_extension_trusted;
+             << " page_request_id: " << request.page_request_id
+             << " is_trusted: " << is_trusted;
     return;
   }
 
   AddCaptureSession(request.render_process_id, request.render_frame_id,
-                    request.page_request_id, is_extension_trusted);
-  DVLOG(2) << "Add new session while UpdateExtensionTrusted"
+                    request.page_request_id, is_trusted);
+  DVLOG(2) << "Add new session while UpdateTrusted"
            << " render_process_id: " << request.render_process_id
            << " render_frame_id: " << request.render_frame_id
            << " page_request_id: " << request.page_request_id
-           << " is_extension_trusted: " << is_extension_trusted;
+           << " is_trusted: " << is_trusted;
 }
 
 bool CaptureAccessHandlerBase::IsInsecureCapturingInProgress(
@@ -136,21 +144,21 @@ bool CaptureAccessHandlerBase::IsInsecureCapturingInProgress(
     if (session.render_process_id != render_process_id ||
         session.render_frame_id != render_frame_id)
       continue;
-    if (!session.is_extension_trusted || !session.is_capturing_link_secure)
+    if (!session.is_trusted || !session.is_capturing_link_secure)
       return true;
   }
   return false;
 }
 
-void CaptureAccessHandlerBase::UpdateCapturingLinkSecured(int render_process_id,
-                                                          int render_frame_id,
-                                                          int page_request_id,
-                                                          bool is_secure) {
-  std::list<CaptureAccessHandlerBase::Session>::iterator it =
-      FindSession(render_process_id, render_frame_id, page_request_id);
+void CaptureAccessHandlerBase::UpdateVideoScreenCaptureStatus(
+    int render_process_id,
+    int render_frame_id,
+    int page_request_id,
+    bool is_secure) {
+  auto it = FindSession(render_process_id, render_frame_id, page_request_id);
   if (it != sessions_.end()) {
     it->is_capturing_link_secure = is_secure;
-    DVLOG(2) << "UpdateCapturingLinkSecured:"
+    DVLOG(2) << "UpdateVideoScreenCaptureStatus:"
              << " render_process_id: " << render_process_id
              << " render_frame_id: " << render_frame_id
              << " page_request_id: " << page_request_id

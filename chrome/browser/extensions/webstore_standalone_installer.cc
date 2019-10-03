@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/extensions/crx_installer.h"
@@ -16,6 +16,7 @@
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/crx_file/id_util.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
@@ -31,15 +32,14 @@ namespace extensions {
 WebstoreStandaloneInstaller::WebstoreStandaloneInstaller(
     const std::string& webstore_item_id,
     Profile* profile,
-    const Callback& callback)
+    Callback callback)
     : id_(webstore_item_id),
-      callback_(callback),
+      callback_(std::move(callback)),
       profile_(profile),
       install_source_(WebstoreInstaller::INSTALL_SOURCE_INLINE),
       show_user_count_(true),
       average_rating_(0.0),
-      rating_count_(0) {
-}
+      rating_count_(0) {}
 
 void WebstoreStandaloneInstaller::BeginInstall() {
   // Add a ref to keep this alive for WebstoreDataFetcher.
@@ -63,17 +63,12 @@ void WebstoreStandaloneInstaller::BeginInstall() {
   // Use the requesting page as the referrer both since that is more correct
   // (it is the page that caused this request to happen) and so that we can
   // track top sites that trigger inline install requests.
-  webstore_data_fetcher_.reset(new WebstoreDataFetcher(
-      this,
-      profile_->GetRequestContext(),
-      GetRequestorURL(),
-      id_));
+  webstore_data_fetcher_.reset(new WebstoreDataFetcher(this, GURL(), id_));
 
-  std::string json_post_data = GetJsonPostData();
-  if (!json_post_data.empty())
-    webstore_data_fetcher_->SetJsonPostData(json_post_data);
-
-  webstore_data_fetcher_->Start();
+  webstore_data_fetcher_->Start(
+      content::BrowserContext::GetDefaultStoragePartition(profile_)
+          ->GetURLLoaderFactoryForBrowserProcess()
+          .get());
 }
 
 //
@@ -86,7 +81,8 @@ WebstoreStandaloneInstaller::~WebstoreStandaloneInstaller() {
 void WebstoreStandaloneInstaller::RunCallback(bool success,
                                               const std::string& error,
                                               webstore_install::Result result) {
-  callback_.Run(success, error, result);
+  DCHECK(callback_);
+  std::move(callback_).Run(success, error, result);
 }
 
 void WebstoreStandaloneInstaller::AbortInstall() {
@@ -123,7 +119,7 @@ void WebstoreStandaloneInstaller::CompleteInstall(
     const std::string& error) {
   scoped_active_install_.reset();
   if (!callback_.is_null())
-    callback_.Run(result == webstore_install::SUCCESS, error, result);
+    RunCallback(result == webstore_install::SUCCESS, error, result);
   Release();  // Matches the AddRef in BeginInstall.
 }
 
@@ -157,17 +153,13 @@ WebstoreStandaloneInstaller::GetLocalizedExtensionForDisplay() {
   return localized_extension_for_display_.get();
 }
 
-std::string WebstoreStandaloneInstaller::GetJsonPostData() {
-  return std::string();
-}
-
 void WebstoreStandaloneInstaller::OnManifestParsed() {
   ProceedWithInstallPrompt();
 }
 
 std::unique_ptr<ExtensionInstallPrompt>
 WebstoreStandaloneInstaller::CreateInstallUI() {
-  return base::MakeUnique<ExtensionInstallPrompt>(GetWebContents());
+  return std::make_unique<ExtensionInstallPrompt>(GetWebContents());
 }
 
 std::unique_ptr<WebstoreInstaller::Approval>
@@ -245,16 +237,6 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
 
   std::string error;
 
-  if (!CheckInlineInstallPermitted(*webstore_data, &error)) {
-    CompleteInstall(webstore_install::NOT_PERMITTED, error);
-    return;
-  }
-
-  if (!CheckRequestorPermitted(*webstore_data, &error)) {
-    CompleteInstall(webstore_install::NOT_PERMITTED, error);
-    return;
-  }
-
   // Manifest, number of users, average rating and rating count are required.
   std::string manifest;
   if (!webstore_data->GetString(kManifestKey, &manifest) ||
@@ -309,14 +291,12 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
   webstore_data_ = std::move(webstore_data);
 
   scoped_refptr<WebstoreInstallHelper> helper =
-      new WebstoreInstallHelper(this,
-                                id_,
-                                manifest,
-                                icon_url,
-                                profile_->GetRequestContext());
+      new WebstoreInstallHelper(this, id_, manifest, icon_url);
   // The helper will call us back via OnWebstoreParseSuccess() or
   // OnWebstoreParseFailure().
-  helper->Start();
+  helper->Start(content::BrowserContext::GetDefaultStoragePartition(profile_)
+                    ->GetURLLoaderFactoryForBrowserProcess()
+                    .get());
 }
 
 void WebstoreStandaloneInstaller::OnWebstoreResponseParseFailure(
@@ -328,7 +308,7 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseFailure(
 void WebstoreStandaloneInstaller::OnWebstoreParseSuccess(
     const std::string& id,
     const SkBitmap& icon,
-    base::DictionaryValue* manifest) {
+    std::unique_ptr<base::DictionaryValue> manifest) {
   CHECK_EQ(id_, id);
 
   if (!CheckRequestorAlive()) {
@@ -336,7 +316,7 @@ void WebstoreStandaloneInstaller::OnWebstoreParseSuccess(
     return;
   }
 
-  manifest_.reset(manifest);
+  manifest_ = std::move(manifest);
   icon_ = icon;
 
   OnManifestParsed();

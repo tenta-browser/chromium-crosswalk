@@ -5,6 +5,7 @@
 
 '''Unit tests for base.Node functionality (as used in various subclasses)'''
 
+from __future__ import print_function
 
 import os
 import sys
@@ -186,8 +187,8 @@ class NodeUnittest(unittest.TestCase):
       </grit>'''
     grd = grd_reader.Parse(StringIO.StringIO(xml),
                            util.PathFromRoot('grit/test/data'))
-    from grit.node import io
-    output_nodes = grd.GetChildrenOfType(io.OutputNode)
+    from grit.node import node_io
+    output_nodes = grd.GetChildrenOfType(node_io.OutputNode)
     self.failUnlessEqual(len(output_nodes), 3)
     self.failUnlessEqual(output_nodes[2].attrs['filename'],
                          'de/generated_resources.rc')
@@ -255,4 +256,3 @@ class NodeUnittest(unittest.TestCase):
 
 if __name__ == '__main__':
   unittest.main()
-

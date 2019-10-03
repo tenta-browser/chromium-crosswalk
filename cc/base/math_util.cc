@@ -11,7 +11,7 @@
 #include <xmmintrin.h>
 #endif
 
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "ui/gfx/geometry/angle_conversions.h"
 #include "ui/gfx/geometry/quad_f.h"
@@ -20,6 +20,7 @@
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/geometry/vector3d_f.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace cc {
@@ -268,6 +269,22 @@ gfx::RectF MathUtil::ProjectClippedRect(const gfx::Transform& transform,
   HomogeneousCoordinate h4 = ProjectHomogeneousPoint(transform, q.p4());
 
   return ComputeEnclosingClippedRect(h1, h2, h3, h4);
+}
+
+gfx::QuadF MathUtil::InverseMapQuadToLocalSpace(
+    const gfx::Transform& device_transform,
+    const gfx::QuadF& device_quad) {
+  gfx::Transform inverse_device_transform(gfx::Transform::kSkipInitialization);
+  DCHECK(device_transform.IsInvertible());
+  bool did_invert = device_transform.GetInverse(&inverse_device_transform);
+  DCHECK(did_invert);
+  bool clipped = false;
+  gfx::QuadF local_quad =
+      MathUtil::MapQuad(inverse_device_transform, device_quad, &clipped);
+  // We should not DCHECK(!clipped) here, because anti-aliasing inflation may
+  // cause device_quad to become clipped. To our knowledge this scenario does
+  // not need to be handled differently than the unclipped case.
+  return local_quad;
 }
 
 gfx::Rect MathUtil::MapEnclosedRectWith2dAxisAlignedTransform(
@@ -784,6 +801,25 @@ void MathUtil::AddToTracedValue(const char* name,
   res->AppendInteger(box.width());
   res->AppendInteger(box.height());
   res->AppendInteger(box.depth());
+  res->EndArray();
+}
+
+void MathUtil::AddToTracedValue(const char* name,
+                                const gfx::RRectF& rect,
+                                base::trace_event::TracedValue* res) {
+  res->BeginArray(name);
+  res->AppendDouble(rect.rect().x());
+  res->AppendDouble(rect.rect().y());
+  res->AppendDouble(rect.rect().width());
+  res->AppendDouble(rect.rect().height());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kUpperLeft).x());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kUpperLeft).y());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kUpperRight).x());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kUpperRight).y());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kLowerRight).x());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kLowerRight).y());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kLowerLeft).x());
+  res->AppendDouble(rect.GetCornerRadii(gfx::RRectF::Corner::kLowerLeft).y());
   res->EndArray();
 }
 

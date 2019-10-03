@@ -4,8 +4,9 @@
 
 #include "ui/views/examples/text_example.h"
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include <memory>
+
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
@@ -64,7 +65,7 @@ constexpr gfx::Font::Weight kFontWeights[]{
 
 // Toggles bit |flag| on |flags| based on state of |checkbox|.
 void SetFlagFromCheckbox(Checkbox* checkbox, int* flags, int flag) {
-  if (checkbox->checked())
+  if (checkbox->GetChecked())
     *flags |= flag;
   else
     *flags &= ~flag;
@@ -75,11 +76,7 @@ void SetFlagFromCheckbox(Checkbox* checkbox, int* flags, int flag) {
 // TextExample's content view, which draws stylized string.
 class TextExample::TextExampleView : public View {
  public:
-  TextExampleView()
-    : text_(base::ASCIIToUTF16(kShortText)),
-      flags_(0),
-      elide_(gfx::NO_ELIDE) {
-  }
+  TextExampleView() : text_(base::ASCIIToUTF16(kShortText)) {}
 
   void OnPaint(gfx::Canvas* canvas) override {
     View::OnPaint(canvas);
@@ -120,26 +117,21 @@ class TextExample::TextExampleView : public View {
   base::string16 text_;
 
   // Text flags for passing to |DrawStringRect()|.
-  int flags_;
+  int flags_ = 0;
 
   // The eliding, fading, or truncating behavior.
-  gfx::ElideBehavior elide_;
+  gfx::ElideBehavior elide_ = gfx::NO_ELIDE;
 
   DISALLOW_COPY_AND_ASSIGN(TextExampleView);
 };
 
 TextExample::TextExample() : ExampleBase("Text Styles") {}
 
-TextExample::~TextExample() {
-  // Remove the views first as some reference combobox models.
-  container()->RemoveAllChildViews(true);
-}
+TextExample::~TextExample() = default;
 
 Checkbox* TextExample::AddCheckbox(GridLayout* layout, const char* name) {
-  Checkbox* checkbox = new Checkbox(base::ASCIIToUTF16(name));
-  checkbox->set_listener(this);
-  layout->AddView(checkbox);
-  return checkbox;
+  return layout->AddView(
+      std::make_unique<Checkbox>(base::ASCIIToUTF16(name), this));
 }
 
 Combobox* TextExample::AddCombobox(GridLayout* layout,
@@ -147,20 +139,19 @@ Combobox* TextExample::AddCombobox(GridLayout* layout,
                                    const char* const* strings,
                                    int count) {
   layout->StartRow(0, 0);
-  layout->AddView(new Label(base::ASCIIToUTF16(name)));
-  example_combobox_model_.push_back(
+  layout->AddView(std::make_unique<Label>(base::ASCIIToUTF16(name)));
+  auto combobox = std::make_unique<Combobox>(
       std::make_unique<ExampleComboboxModel>(strings, count));
-  Combobox* combobox = new Combobox(example_combobox_model_.back().get());
   combobox->SetSelectedIndex(0);
   combobox->set_listener(this);
-  layout->AddView(combobox, kNumColumns - 1, 1);
-  return combobox;
+  return layout->AddView(std::move(combobox), kNumColumns - 1, 1);
 }
 
 void TextExample::CreateExampleView(View* container) {
-  text_view_ = new TextExampleView;
-  text_view_->SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
-  GridLayout* layout = GridLayout::CreateAndInstall(container);
+  auto text_view = std::make_unique<TextExampleView>();
+  text_view->SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
+  GridLayout* layout =
+      container->SetLayoutManager(std::make_unique<views::GridLayout>());
   layout->AddPaddingRow(0, 8);
 
   ColumnSet* column_set = layout->AddColumnSet(0);
@@ -173,15 +164,15 @@ void TextExample::CreateExampleView(View* container) {
   column_set->AddPaddingColumn(0, 8);
 
   h_align_cb_ = AddCombobox(layout, "H-Align", kHorizontalAligments,
-                            arraysize(kHorizontalAligments));
+                            base::size(kHorizontalAligments));
   eliding_cb_ = AddCombobox(layout, "Eliding", kElideBehaviors,
-                            arraysize(kElideBehaviors));
-  prefix_cb_ = AddCombobox(layout, "Prefix", kPrefixOptions,
-                           arraysize(kPrefixOptions));
+                            base::size(kElideBehaviors));
+  prefix_cb_ =
+      AddCombobox(layout, "Prefix", kPrefixOptions, base::size(kPrefixOptions));
   text_cb_ = AddCombobox(layout, "Example Text", kTextExamples,
-                         arraysize(kTextExamples));
+                         base::size(kTextExamples));
   weight_cb_ = AddCombobox(layout, "Font Weight", kWeightLabels,
-                           arraysize(kWeightLabels));
+                           base::size(kWeightLabels));
   weight_cb_->SelectValue(base::ASCIIToUTF16("Normal"));
 
   layout->StartRow(0, 0);
@@ -197,7 +188,7 @@ void TextExample::CreateExampleView(View* container) {
                         1, GridLayout::USE_PREF, 0, 0);
   column_set->AddPaddingColumn(0, 16);
   layout->StartRow(1, 1);
-  layout->AddView(text_view_);
+  text_view_ = layout->AddView(std::move(text_view));
   layout->AddPaddingRow(0, 8);
 }
 
@@ -205,7 +196,8 @@ void TextExample::ButtonPressed(Button* button, const ui::Event& event) {
   int flags = text_view_->flags();
   int style = text_view_->GetStyle();
   SetFlagFromCheckbox(multiline_checkbox_, &flags, gfx::Canvas::MULTI_LINE);
-  SetFlagFromCheckbox(break_checkbox_, &flags, gfx::Canvas::CHARACTER_BREAK);
+  SetFlagFromCheckbox(break_checkbox_, &flags,
+                      gfx::Canvas::CHARACTER_BREAKABLE);
   SetFlagFromCheckbox(italic_checkbox_, &style, gfx::Font::ITALIC);
   SetFlagFromCheckbox(underline_checkbox_, &style, gfx::Font::UNDERLINE);
   text_view_->set_flags(flags);
@@ -219,7 +211,7 @@ void TextExample::OnPerformAction(Combobox* combobox) {
     flags &= ~(gfx::Canvas::TEXT_ALIGN_LEFT |
                gfx::Canvas::TEXT_ALIGN_CENTER |
                gfx::Canvas::TEXT_ALIGN_RIGHT);
-    switch (combobox->selected_index()) {
+    switch (combobox->GetSelectedIndex()) {
       case 0:
         break;
       case 1:
@@ -233,7 +225,7 @@ void TextExample::OnPerformAction(Combobox* combobox) {
         break;
     }
   } else if (combobox == text_cb_) {
-    switch (combobox->selected_index()) {
+    switch (combobox->GetSelectedIndex()) {
       case 0:
         text_view_->set_text(base::ASCIIToUTF16(kShortText));
         break;
@@ -248,7 +240,7 @@ void TextExample::OnPerformAction(Combobox* combobox) {
         break;
     }
   } else if (combobox == eliding_cb_) {
-    switch (combobox->selected_index()) {
+    switch (combobox->GetSelectedIndex()) {
       case 0:
         text_view_->set_elide(gfx::ELIDE_TAIL);
         break;
@@ -261,7 +253,7 @@ void TextExample::OnPerformAction(Combobox* combobox) {
     }
   } else if (combobox == prefix_cb_) {
     flags &= ~(gfx::Canvas::SHOW_PREFIX | gfx::Canvas::HIDE_PREFIX);
-    switch (combobox->selected_index()) {
+    switch (combobox->GetSelectedIndex()) {
       case 0:
         break;
       case 1:
@@ -272,7 +264,7 @@ void TextExample::OnPerformAction(Combobox* combobox) {
         break;
     }
   } else if (combobox == weight_cb_) {
-    text_view_->SetWeight(kFontWeights[combobox->selected_index()]);
+    text_view_->SetWeight(kFontWeights[combobox->GetSelectedIndex()]);
   }
   text_view_->set_flags(flags);
   text_view_->SchedulePaint();

@@ -54,6 +54,7 @@ class MEDIA_EXPORT AudioOutputResampler : public AudioOutputDispatcher {
   void StopStream(AudioOutputProxy* stream_proxy) override;
   void StreamVolumeSet(AudioOutputProxy* stream_proxy, double volume) override;
   void CloseStream(AudioOutputProxy* stream_proxy) override;
+  void FlushStream(AudioOutputProxy* stream_proxy) override;
 
  private:
   using CallbackMap =
@@ -98,13 +99,13 @@ class MEDIA_EXPORT AudioOutputResampler : public AudioOutputDispatcher {
   // states by clearing the dispatcher if all proxies have been closed and none
   // have been created within |close_delay_|.  Without this, audio may be lost
   // to a fake stream indefinitely for transient errors.
-  base::Timer reinitialize_timer_;
+  base::RetainingOneShotTimer reinitialize_timer_;
 
   // Callback for registering a debug recording source.
   RegisterDebugRecordingSourceCallback
       register_debug_recording_source_callback_;
 
-  base::WeakPtrFactory<AudioOutputResampler> weak_factory_;
+  base::WeakPtrFactory<AudioOutputResampler> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(AudioOutputResampler);
 };
 

@@ -14,6 +14,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "base/test/scoped_path_override.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_profile.h"
 
@@ -36,13 +37,19 @@ class PrefServiceSyncable;
 class TestingProfileManager {
  public:
   explicit TestingProfileManager(TestingBrowserProcess* browser_process);
+  TestingProfileManager(TestingBrowserProcess* browser_process,
+                        ScopedTestingLocalState* local_state);
   ~TestingProfileManager();
 
   // This needs to be called in testing::Test::SetUp() to put the object in a
   // valid state. Some work cannot be done in a constructor because it may
   // call gtest asserts to verify setup. The result of this call can be used
   // to ASSERT before doing more SetUp work in the test.
-  bool SetUp() WARN_UNUSED_RESULT;
+  // |profiles_dir| is the path in which new directories would be placed.
+  // If empty, one will be created (and deleted upon destruction of |this|).
+  // If not empty, it will be used, but ownership is maintained by the caller.
+  bool SetUp(const base::FilePath& profiles_path = base::FilePath())
+      WARN_UNUSED_RESULT;
 
   // Creates a new TestingProfile whose data lives in a directory related to
   // profile_name, which is a non-user-visible key for the test environment.
@@ -59,7 +66,8 @@ class TestingProfileManager {
       const base::string16& user_name,
       int avatar_id,
       const std::string& supervised_user_id,
-      const TestingProfile::TestingFactories& factories);
+      TestingProfile::TestingFactories testing_factories,
+      base::Optional<bool> override_new_profile = base::Optional<bool>());
 
   // Small helper for creating testing profiles. Just forwards to above.
   TestingProfile* CreateTestingProfile(const std::string& name);
@@ -105,7 +113,7 @@ class TestingProfileManager {
   const base::FilePath& profiles_dir();
   ProfileManager* profile_manager();
   ProfileAttributesStorage* profile_attributes_storage();
-  ScopedTestingLocalState* local_state() { return &local_state_; }
+  ScopedTestingLocalState* local_state() { return local_state_; }
 
  private:
   friend class ProfileAttributesStorageTest;
@@ -117,7 +125,7 @@ class TestingProfileManager {
   // Does the actual ASSERT-checked SetUp work. This function cannot have a
   // return value, so it sets the |called_set_up_| flag on success and that is
   // returned in the public SetUp.
-  void SetUpInternal();
+  void SetUpInternal(const base::FilePath& profiles_path);
 
   // Deprecated helper accessor. Use profile_attributes_storage() instead.
   ProfileInfoCache* profile_info_cache();
@@ -125,14 +133,29 @@ class TestingProfileManager {
   // Whether SetUp() was called to put the object in a valid state.
   bool called_set_up_;
 
-  // The directory in which new profiles are placed.
+  // |profiles_path_| is the path under which new directories for the profiles
+  // will be placed. Depending on the way SetUp is invoked, this path might
+  // either be a directory owned by TestingProfileManager, in which case
+  // ownership will be managed by |profiles_dir_|, or the directory will be
+  // owned by the test which has instantiated |this|, and then |profiles_dir_|
+  // will remain empty.
+  base::FilePath profiles_path_;
   base::ScopedTempDir profiles_dir_;
+
+  // The user data directory in the path service is overriden because some
+  // functions, e.g. GetPathOfHighResAvatarAtIndex, get the user data directory
+  // by the path service instead of the profile manager. The override is scoped
+  // with the help of this variable.
+  std::unique_ptr<base::ScopedPathOverride> user_data_dir_override_;
 
   // Weak reference to the browser process on which the ProfileManager is set.
   TestingBrowserProcess* browser_process_;
 
   // Local state in which all the profiles are registered.
-  ScopedTestingLocalState local_state_;
+  ScopedTestingLocalState* local_state_;
+
+  // Owned local state for when it's not provided in the constructor.
+  std::unique_ptr<ScopedTestingLocalState> owned_local_state_;
 
   // Weak reference to the profile manager.
   ProfileManager* profile_manager_;

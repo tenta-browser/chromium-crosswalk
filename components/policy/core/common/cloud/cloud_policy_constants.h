@@ -26,6 +26,12 @@ POLICY_EXPORT extern const char kParamPlatform[];
 POLICY_EXPORT extern const char kParamRequest[];
 POLICY_EXPORT extern const char kParamRetry[];
 
+// Policy constants used in authorization header.
+POLICY_EXPORT extern const char kAuthHeader[];
+POLICY_EXPORT extern const char kServiceTokenAuthHeaderPrefix[];
+POLICY_EXPORT extern const char kDMTokenAuthHeaderPrefix[];
+POLICY_EXPORT extern const char kEnrollmentTokenAuthHeaderPrefix[];
+
 // String extern constants for the device and app type we report to the server.
 POLICY_EXPORT extern const char kValueAppType[];
 POLICY_EXPORT extern const char kValueDeviceType[];
@@ -46,6 +52,11 @@ POLICY_EXPORT extern const char kValueRequestCertBasedRegister[];
 POLICY_EXPORT extern const char kValueRequestActiveDirectoryEnrollPlayUser[];
 POLICY_EXPORT extern const char kValueRequestActiveDirectoryPlayActivity[];
 POLICY_EXPORT extern const char kValueRequestCheckDeviceLicense[];
+POLICY_EXPORT extern const char kValueRequestAppInstallReport[];
+POLICY_EXPORT extern const char kValueRequestTokenEnrollment[];
+POLICY_EXPORT extern const char kValueRequestChromeDesktopReport[];
+POLICY_EXPORT extern const char kValueRequestInitialEnrollmentStateRetrieval[];
+POLICY_EXPORT extern const char kValueRequestUploadPolicyValidationReport[];
 
 // Policy type strings for the policy_type field in PolicyFetchRequest.
 POLICY_EXPORT extern const char kChromeDevicePolicyType[];
@@ -53,6 +64,8 @@ POLICY_EXPORT extern const char kChromeUserPolicyType[];
 POLICY_EXPORT extern const char kChromePublicAccountPolicyType[];
 POLICY_EXPORT extern const char kChromeExtensionPolicyType[];
 POLICY_EXPORT extern const char kChromeSigninExtensionPolicyType[];
+POLICY_EXPORT extern const char kChromeMachineLevelUserCloudPolicyType[];
+POLICY_EXPORT extern const char kChromeMachineLevelExtensionCloudPolicyType[];
 
 // These codes are sent in the |error_code| field of PolicyFetchResponse.
 enum PolicyFetchStatus {
@@ -61,9 +74,6 @@ enum PolicyFetchStatus {
 };
 
 }  // namespace dm_protocol
-
-// The header used to transmit the policy ID for this client.
-POLICY_EXPORT extern const char kChromePolicyHeader[];
 
 // Public half of the verification key that is used to verify that policy
 // signing keys are originating from DM server.
@@ -110,10 +120,14 @@ enum DeviceManagementStatus {
   DM_STATUS_SERVICE_DOMAIN_MISMATCH = 14,
   // Client error: Request could not be signed.
   DM_STATUS_CANNOT_SIGN_REQUEST = 15,
+  // Client error: Request body is too large.
+  DM_STATUS_REQUEST_TOO_LARGE = 16,
   // Service error: Policy not found. Error code defined by the DM folks.
   DM_STATUS_SERVICE_POLICY_NOT_FOUND = 902,
   // Service error: ARC is not enabled on this domain.
   DM_STATUS_SERVICE_ARC_DISABLED = 904,
+  // Service error: Non-dasher account with packaged license can't enroll.
+  DM_STATUS_SERVICE_CONSUMER_ACCOUNT_WITH_PACKAGED_LICENSE = 905,
 };
 
 // List of modes that the device can be locked into.
@@ -135,7 +149,14 @@ enum DeviceMode {
   DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH,  // The device is locally owned as
                                           // consumer kiosk with ability to auto
                                           // launch a kiosk webapp.
+  DEVICE_MODE_DEMO,                       // The device is in demo mode. It was
+                                          // either enrolled online or setup
+                                          // offline into demo mode domain -
+                                          // see kDemoModeDomain.
 };
+
+// Domain that demo mode devices are enrolled into: cros-demo-mode.com
+POLICY_EXPORT extern const char kDemoModeDomain[];
 
 // License types available for enrollment.
 enum class LicenseType {
@@ -144,6 +165,17 @@ enum class LicenseType {
   ANNUAL,     // Annual license
   KIOSK       // Single App Kiosk license
 };
+
+// Indicate this device's market segment. go/cros-rlz-segments
+enum class MarketSegment {
+  UNKNOWN,  // If device is not enrolled or market segment is not specified.
+  EDUCATION,
+  ENTERPRISE,
+};
+
+// Sender ID of FCM (Firebase Cloud Messaging)
+// Policy Invalidation sender coming from the Firebase console.
+extern const char kPolicyFCMInvalidationSenderID[];
 
 }  // namespace policy
 

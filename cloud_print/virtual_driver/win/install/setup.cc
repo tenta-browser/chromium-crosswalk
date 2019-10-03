@@ -46,7 +46,7 @@ const char kUnregisterSwitch[] = "unregister";
 
 base::FilePath GetSystemPath(const base::string16& binary) {
   base::FilePath path;
-  if (!PathService::Get(base::DIR_SYSTEM, &path)) {
+  if (!base::PathService::Get(base::DIR_SYSTEM, &path)) {
     LOG(ERROR) << "Unable to get system path.";
     return path;
   }
@@ -59,7 +59,7 @@ base::FilePath GetNativeSystemPath(const base::string16& binary) {
   base::FilePath path;
   // Sysnative will bypass filesystem redirection and give us
   // the location of the 64bit system32 from a 32 bit process.
-  if (!PathService::Get(base::DIR_WINDOWS, &path)) {
+  if (!base::PathService::Get(base::DIR_WINDOWS, &path)) {
     LOG(ERROR) << "Unable to get windows path.";
     return path;
   }
@@ -257,7 +257,7 @@ HRESULT UninstallPrinter(void) {
 
 bool IsOSSupported() {
   // We don't support Vista or older.
-  return base::win::GetVersion() >= base::win::VERSION_WIN7;
+  return base::win::GetVersion() >= base::win::Version::WIN7;
 }
 
 HRESULT RegisterVirtualDriver(const base::FilePath& install_path) {
@@ -380,7 +380,7 @@ HRESULT ExecuteCommands() {
       *base::CommandLine::ForCurrentProcess();
 
   base::FilePath exe_path;
-  if (!PathService::Get(base::DIR_EXE, &exe_path) ||
+  if (!base::PathService::Get(base::DIR_EXE, &exe_path) ||
       !base::DirectoryExists(exe_path)) {
     return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
   }

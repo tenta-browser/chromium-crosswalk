@@ -15,21 +15,35 @@
 #include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/accessibility/accessibility_state_utils.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
-#include "components/autofill/core/browser/autofill_popup_delegate.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/browser/suggestion.h"
+#include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "content/public/browser/native_web_keyboard_event.h"
+#include "ui/accessibility/ax_active_popup.h"
+#include "ui/accessibility/ax_tree_id.h"
+#include "ui/accessibility/ax_tree_manager_map.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/autofill/manual_filling_controller_impl.h"
+#include "chrome/browser/password_manager/touch_to_fill_controller.h"
+
+using FillingSource = ManualFillingController::FillingSource;
+#endif
 
 using base::WeakPtr;
 
 namespace autofill {
 
+#if !defined(OS_MACOSX)
 // static
 WeakPtr<AutofillPopupControllerImpl> AutofillPopupControllerImpl::GetOrCreate(
     WeakPtr<AutofillPopupControllerImpl> previous,
@@ -54,6 +68,7 @@ WeakPtr<AutofillPopupControllerImpl> AutofillPopupControllerImpl::GetOrCreate(
           text_direction);
   return controller->GetWeakPtr();
 }
+#endif
 
 AutofillPopupControllerImpl::AutofillPopupControllerImpl(
     base::WeakPtr<AutofillPopupDelegate> delegate,
@@ -62,10 +77,9 @@ AutofillPopupControllerImpl::AutofillPopupControllerImpl(
     const gfx::RectF& element_bounds,
     base::i18n::TextDirection text_direction)
     : controller_common_(element_bounds, text_direction, container_view),
-      view_(NULL),
-      layout_model_(this, delegate->IsCreditCardPopup()),
-      delegate_(delegate),
-      weak_ptr_factory_(this) {
+      web_contents_(web_contents),
+      layout_model_(this, delegate->GetPopupType() == PopupType::kCreditCards),
+      delegate_(delegate) {
   ClearState();
   delegate->RegisterDeletionCallback(base::BindOnce(
       &AutofillPopupControllerImpl::HideViewAndDie, GetWeakPtr()));
@@ -74,7 +88,9 @@ AutofillPopupControllerImpl::AutofillPopupControllerImpl(
 AutofillPopupControllerImpl::~AutofillPopupControllerImpl() {}
 
 void AutofillPopupControllerImpl::Show(
-    const std::vector<autofill::Suggestion>& suggestions) {
+    const std::vector<Suggestion>& suggestions,
+    bool autoselect_first_suggestion,
+    PopupType popup_type) {
   SetValues(suggestions);
   DCHECK_EQ(suggestions_.size(), elided_values_.size());
   DCHECK_EQ(suggestions_.size(), elided_labels_.size());
@@ -86,6 +102,7 @@ void AutofillPopupControllerImpl::Show(
     // It is possible to fail to create the popup, in this case
     // treat the popup as hiding right away.
     if (!view_) {
+      delegate_->OnPopupSuppressed();
       Hide();
       return;
     }
@@ -107,7 +124,25 @@ void AutofillPopupControllerImpl::Show(
 #endif
 
   if (just_created) {
+#if defined(OS_ANDROID)
+    if (popup_type == PopupType::kPasswords &&
+        TouchToFillController::AllowedForWebContents(web_contents_)) {
+      TouchToFillController::GetOrCreate(web_contents_)
+          ->Show(suggestions, GetWeakPtr());
+    }
+
+    ManualFillingController::GetOrCreate(web_contents_)
+        ->UpdateSourceAvailability(FillingSource::AUTOFILL,
+                                   !suggestions.empty());
+#endif
     view_->Show();
+
+    // We only fire the event when a new popup shows. We do not fire the
+    // event when suggestions changed.
+    FireControlsChangedEvent(true);
+
+    if (autoselect_first_suggestion)
+      SetSelectedLine(0);
   } else {
     if (selected_line_ && *selected_line_ >= GetLineCount())
       selected_line_.reset();
@@ -162,7 +197,7 @@ void AutofillPopupControllerImpl::UpdateDataListValues(
   // Add a separator if there are any other values.
   if (!suggestions_.empty() &&
       suggestions_[0].frontend_id != POPUP_ITEM_ID_SEPARATOR) {
-    suggestions_.insert(suggestions_.begin(), autofill::Suggestion());
+    suggestions_.insert(suggestions_.begin(), Suggestion());
     suggestions_[0].frontend_id = POPUP_ITEM_ID_SEPARATOR;
     elided_values_.insert(elided_values_.begin(), base::string16());
     elided_labels_.insert(elided_labels_.begin(), base::string16());
@@ -252,6 +287,12 @@ void AutofillPopupControllerImpl::OnSuggestionsChanged() {
   // It is unclear if it is better to keep the popup where it was, or if it
   // should try and move to its desired position.
   layout_model_.UpdatePopupBounds();
+#else
+  // Assume that suggestions are (still) available. If this is wrong, the method
+  // |HideViewAndDie| will be called soon after and will hide all suggestions.
+  ManualFillingController::GetOrCreate(web_contents_)
+      ->UpdateSourceAvailability(FillingSource::AUTOFILL,
+                                 /*has_suggestions=*/true);
 #endif
 
   // Platform-specific draw call.
@@ -279,8 +320,22 @@ void AutofillPopupControllerImpl::SelectionCleared() {
   SetSelectedLine(base::nullopt);
 }
 
+bool AutofillPopupControllerImpl::HasSelection() const {
+  return selected_line_.has_value();
+}
+
 void AutofillPopupControllerImpl::AcceptSuggestion(int index) {
-  const autofill::Suggestion& suggestion = suggestions_[index];
+  const Suggestion& suggestion = suggestions_[index];
+#if defined(OS_ANDROID)
+  auto mf_controller = ManualFillingController::GetOrCreate(web_contents_);
+  // Accepting a suggestion should hide all suggestions. To prevent them from
+  // coming up in Multi-Window mode, mark the source as unavailable.
+  mf_controller->UpdateSourceAvailability(FillingSource::AUTOFILL,
+                                          /*has_suggestions=*/false);
+  mf_controller->UpdateSourceAvailability(FillingSource::TOUCH_TO_FILL,
+                                          /*has_suggestions=*/false);
+  mf_controller->Hide();
+#endif
   delegate_->DidAcceptSuggestion(suggestion.value, suggestion.frontend_id,
                                  index);
 }
@@ -289,7 +344,7 @@ gfx::Rect AutofillPopupControllerImpl::popup_bounds() const {
   return layout_model_.popup_bounds();
 }
 
-gfx::NativeView AutofillPopupControllerImpl::container_view() {
+gfx::NativeView AutofillPopupControllerImpl::container_view() const {
   return controller_common_.container_view;
 }
 
@@ -306,20 +361,25 @@ bool AutofillPopupControllerImpl::IsRTL() const {
   return controller_common_.text_direction == base::i18n::RIGHT_TO_LEFT;
 }
 
-const std::vector<autofill::Suggestion>
-AutofillPopupControllerImpl::GetSuggestions() {
+const std::vector<Suggestion> AutofillPopupControllerImpl::GetSuggestions() {
   return suggestions_;
 }
 
 #if !defined(OS_ANDROID)
+void AutofillPopupControllerImpl::SetTypesetter(gfx::Typesetter typesetter) {
+  typesetter_ = typesetter;
+}
+
 int AutofillPopupControllerImpl::GetElidedValueWidthForRow(int row) {
   return gfx::GetStringWidth(GetElidedValueAt(row),
-                             layout_model_.GetValueFontListForRow(row));
+                             layout_model_.GetValueFontListForRow(row),
+                             typesetter_);
 }
 
 int AutofillPopupControllerImpl::GetElidedLabelWidthForRow(int row) {
   return gfx::GetStringWidth(GetElidedLabelAt(row),
-                             layout_model_.GetLabelFontListForRow(row));
+                             layout_model_.GetLabelFontListForRow(row),
+                             typesetter_);
 }
 #endif
 
@@ -327,8 +387,7 @@ int AutofillPopupControllerImpl::GetLineCount() const {
   return suggestions_.size();
 }
 
-const autofill::Suggestion& AutofillPopupControllerImpl::GetSuggestionAt(
-    int row) const {
+const Suggestion& AutofillPopupControllerImpl::GetSuggestionAt(int row) const {
   return suggestions_[row];
 }
 
@@ -372,13 +431,6 @@ bool AutofillPopupControllerImpl::RemoveSuggestion(int list_index) {
   }
 
   return true;
-}
-
-ui::NativeTheme::ColorId
-AutofillPopupControllerImpl::GetBackgroundColorIDForRow(int index) const {
-  return selected_line_ && index == *selected_line_
-             ? ui::NativeTheme::kColorId_ResultsTableHoveredBackground
-             : ui::NativeTheme::kColorId_ResultsTableNormalBackground;
 }
 
 base::Optional<int> AutofillPopupControllerImpl::selected_line() const {
@@ -469,7 +521,7 @@ bool AutofillPopupControllerImpl::HasSuggestions() {
 }
 
 void AutofillPopupControllerImpl::SetValues(
-    const std::vector<autofill::Suggestion>& suggestions) {
+    const std::vector<Suggestion>& suggestions) {
   suggestions_ = suggestions;
   elided_values_.resize(suggestions.size());
   elided_labels_.resize(suggestions.size());
@@ -488,9 +540,11 @@ void AutofillPopupControllerImpl::ElideValueAndLabelForRow(
     int row,
     int available_width) {
   int value_width = gfx::GetStringWidth(
-      suggestions_[row].value, layout_model_.GetValueFontListForRow(row));
+      suggestions_[row].value, layout_model_.GetValueFontListForRow(row),
+      typesetter_);
   int label_width = gfx::GetStringWidth(
-      suggestions_[row].label, layout_model_.GetLabelFontListForRow(row));
+      suggestions_[row].label, layout_model_.GetLabelFontListForRow(row),
+      typesetter_);
   int total_text_length = value_width + label_width;
 
   // The line can have no strings if it represents a UI element, such as
@@ -502,12 +556,12 @@ void AutofillPopupControllerImpl::ElideValueAndLabelForRow(
   int value_size = available_width * value_width / total_text_length;
   elided_values_[row] = gfx::ElideText(
       suggestions_[row].value, layout_model_.GetValueFontListForRow(row),
-      value_size, gfx::ELIDE_TAIL);
+      value_size, gfx::ELIDE_TAIL, typesetter_);
 
   int label_size = available_width * label_width / total_text_length;
   elided_labels_[row] = gfx::ElideText(
       suggestions_[row].label, layout_model_.GetLabelFontListForRow(row),
-      label_size, gfx::ELIDE_TAIL);
+      label_size, gfx::ELIDE_TAIL, typesetter_);
 }
 #endif
 
@@ -522,10 +576,65 @@ void AutofillPopupControllerImpl::ClearState() {
 }
 
 void AutofillPopupControllerImpl::HideViewAndDie() {
-  if (view_)
+#if defined(OS_ANDROID)
+  // Mark the popup-like filling sources as unavailable.
+  // Note: We don't invoke ManualFillingController::Hide() here, as we might
+  // switch between text input fields.
+  ManualFillingController::GetOrCreate(web_contents_)
+      ->UpdateSourceAvailability(FillingSource::AUTOFILL,
+                                 /*has_suggestions=*/false);
+
+  ManualFillingController::GetOrCreate(web_contents_)
+      ->UpdateSourceAvailability(FillingSource::TOUCH_TO_FILL,
+                                 /*has_suggestions=*/false);
+#endif
+
+  if (view_) {
+    // We need to fire the event while view is not deleted yet.
+    FireControlsChangedEvent(false);
     view_->Hide();
+  }
 
   delete this;
+}
+
+void AutofillPopupControllerImpl::FireControlsChangedEvent(bool is_show) {
+  if (!accessibility_state_utils::IsScreenReaderEnabled())
+    return;
+  DCHECK(view_);
+
+  // Retrieve the ax tree id associated with the current web contents.
+  ui::AXTreeID tree_id = delegate_->GetAutofillDriver()->GetAxTreeId();
+  ui::AXTreeManager* ax_tree_manager =
+      ui::AXTreeManagerMap::GetInstance().GetManager(tree_id);
+
+  // Retrieve the ax node id associated with the current web contents' element
+  // that has a controller relation to the current autofill popup.
+  int32_t node_id = delegate_->GetWebContentsPopupControllerAxId();
+
+  // We can only raise controls changed accessibility event when we have a valid
+  // ax tree and an ax node associated with the ax tree for the popup
+  // controller, and a valid ax unique id for the popup controllee.
+  if (!ax_tree_manager)
+    return;
+  ui::AXPlatformNodeDelegate* ax_platform_node_delegate =
+      ax_tree_manager->GetDelegate(tree_id, node_id);
+  if (!ax_platform_node_delegate)
+    return;
+  ui::AXPlatformNode* target_node =
+      ax_platform_node_delegate->GetFromNodeID(node_id);
+  base::Optional<int32_t> popup_ax_id = view_->GetAxUniqueId();
+  if (!target_node || !popup_ax_id)
+    return;
+
+  // All the conditions are valid, raise the accessibility event and set global
+  // popup ax unique id.
+  if (is_show)
+    ui::SetActivePopupAxUniqueId(popup_ax_id);
+  else
+    ui::ClearActivePopupAxUniqueId();
+
+  target_node->NotifyAccessibilityEvent(ax::mojom::Event::kControlsChanged);
 }
 
 }  // namespace autofill

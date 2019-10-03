@@ -17,11 +17,10 @@
 #include "base/i18n/icu_string_conversions.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
@@ -32,16 +31,19 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths_internal.h"
-#include "chromeos/chromeos_constants.h"
+#include "chromeos/constants/chromeos_constants.h"
 #include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_system_core_util.h"
 #include "components/drive/job_list.h"
 #include "components/prefs/pref_service.h"
+#include "components/sync/driver/sync_driver_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
 #include "net/base/escape.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 #include "storage/browser/fileapi/file_system_url.h"
 
 using content::BrowserThread;
@@ -49,19 +51,13 @@ using content::BrowserThread;
 namespace drive {
 namespace util {
 
-namespace {
-
-// Returns DriveIntegrationService instance, if Drive is enabled.
-// Otherwise, NULL.
 DriveIntegrationService* GetIntegrationServiceByProfile(Profile* profile) {
   DriveIntegrationService* service =
       DriveIntegrationServiceFactory::FindForProfile(profile);
   if (!service || !service->IsMounted())
-    return NULL;
+    return nullptr;
   return service;
 }
-
-}  // namespace
 
 base::FilePath GetDriveMountPointPath(Profile* profile) {
   std::string id = chromeos::ProfileHelper::GetUserIdHashFromProfile(profile);
@@ -74,7 +70,7 @@ base::FilePath GetDriveMountPointPath(Profile* profile) {
         user_manager::UserManager::IsInitialized()
             ? chromeos::ProfileHelper::Get()->GetUserByProfile(
                   profile->GetOriginalProfile())
-            : NULL;
+            : nullptr;
     if (user)
       id = user->username_hash();
   }
@@ -107,7 +103,7 @@ base::FilePath ExtractDrivePath(const base::FilePath& path) {
   if (components[1] != FILE_PATH_LITERAL("special"))
     return base::FilePath();
   static const base::FilePath::CharType kPrefix[] = FILE_PATH_LITERAL("drive");
-  if (components[2].compare(0, arraysize(kPrefix) - 1, kPrefix) != 0)
+  if (components[2].compare(0, base::size(kPrefix) - 1, kPrefix) != 0)
     return base::FilePath();
 
   base::FilePath drive_path = GetDriveGrandRootPath();
@@ -121,7 +117,7 @@ FileSystemInterface* GetFileSystemByProfile(Profile* profile) {
 
   DriveIntegrationService* integration_service =
       GetIntegrationServiceByProfile(profile);
-  return integration_service ? integration_service->file_system() : NULL;
+  return integration_service ? integration_service->file_system() : nullptr;
 }
 
 FileSystemInterface* GetFileSystemByProfileId(void* profile_id) {
@@ -130,17 +126,9 @@ FileSystemInterface* GetFileSystemByProfileId(void* profile_id) {
   // |profile_id| needs to be checked with ProfileManager::IsValidProfile
   // before using it.
   if (!g_browser_process->profile_manager()->IsValidProfile(profile_id))
-    return NULL;
+    return nullptr;
   Profile* profile = reinterpret_cast<Profile*>(profile_id);
   return GetFileSystemByProfile(profile);
-}
-
-DriveAppRegistry* GetDriveAppRegistryByProfile(Profile* profile) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  DriveIntegrationService* integration_service =
-      GetIntegrationServiceByProfile(profile);
-  return integration_service ? integration_service->drive_app_registry() : NULL;
 }
 
 DriveServiceInterface* GetDriveServiceByProfile(Profile* profile) {
@@ -148,7 +136,7 @@ DriveServiceInterface* GetDriveServiceByProfile(Profile* profile) {
 
   DriveIntegrationService* integration_service =
       GetIntegrationServiceByProfile(profile);
-  return integration_service ? integration_service->drive_service() : NULL;
+  return integration_service ? integration_service->drive_service() : nullptr;
 }
 
 Profile* ExtractProfileFromPath(const base::FilePath& path) {
@@ -166,7 +154,7 @@ Profile* ExtractProfileFromPath(const base::FilePath& path) {
         return original_profile;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 base::FilePath ExtractDrivePathFromFileSystemUrl(
@@ -190,7 +178,7 @@ void PrepareWritableFileAndRun(Profile* profile,
                                const base::FilePath& path,
                                const PrepareWritableFileCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(!callback.is_null());
+  DCHECK(callback);
 
   FileSystemInterface* file_system = GetFileSystemByProfile(profile);
   if (!file_system || !IsUnderDriveMountPoint(path)) {
@@ -209,7 +197,7 @@ void EnsureDirectoryExists(Profile* profile,
                            const base::FilePath& directory,
                            const FileOperationCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(!callback.is_null());
+  DCHECK(callback);
   if (IsUnderDriveMountPoint(directory)) {
     FileSystemInterface* file_system = GetFileSystemByProfile(profile);
     DCHECK(file_system);
@@ -233,23 +221,30 @@ bool IsDriveEnabledForProfile(Profile* profile) {
   if (profile->GetPrefs()->GetBoolean(prefs::kDisableDrive))
     return false;
 
+  // Disable drive if sync is disabled by command line flag. Outside tests, this
+  // only occurs in cases already handled by the gaia account check above.
+  if (!switches::IsSyncAllowedByFlag())
+    return false;
+
   return true;
 }
 
 ConnectionStatusType GetDriveConnectionStatus(Profile* profile) {
-  drive::DriveServiceInterface* const drive_service =
-      drive::util::GetDriveServiceByProfile(profile);
-
-  if (!drive_service)
+  auto* drive_integration_service = GetIntegrationServiceByProfile(profile);
+  if (!drive_integration_service)
     return DRIVE_DISCONNECTED_NOSERVICE;
-  if (net::NetworkChangeNotifier::IsOffline())
+  auto* network_connection_tracker = content::GetNetworkConnectionTracker();
+  if (network_connection_tracker->IsOffline())
     return DRIVE_DISCONNECTED_NONETWORK;
-  if (!drive_service->CanSendRequest())
+  auto* drive_service = drive_integration_service->drive_service();
+  if (drive_service && !drive_service->CanSendRequest())
     return DRIVE_DISCONNECTED_NOTREADY;
 
+  auto connection_type = network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+  network_connection_tracker->GetConnectionType(&connection_type,
+                                                base::DoNothing());
   const bool is_connection_cellular =
-      net::NetworkChangeNotifier::IsConnectionCellular(
-          net::NetworkChangeNotifier::GetConnectionType());
+      network::NetworkConnectionTracker::IsConnectionCellular(connection_type);
   const bool disable_sync_over_celluar =
       profile->GetPrefs()->GetBoolean(prefs::kDisableDriveOverCellular);
 

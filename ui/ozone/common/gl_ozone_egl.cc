@@ -28,7 +28,7 @@ bool GLOzoneEGL::InitializeStaticGLBindings(
   if (!LoadGLES2Bindings(implementation))
     return false;
 
-  gl::SetGLImplementation(gl::kGLImplementationEGLGLES2);
+  gl::SetGLImplementation(implementation);
   gl::InitializeStaticGLBindingsGL();
   gl::InitializeStaticGLBindingsEGL();
 
@@ -56,6 +56,7 @@ void GLOzoneEGL::ShutdownGL() {
 }
 
 bool GLOzoneEGL::GetGLWindowSystemBindingInfo(
+    const gl::GLVersionInfo& gl_info,
     gl::GLWindowSystemBindingInfo* info) {
   return gl::GetGLWindowSystemBindingInfoEGL(info);
 }

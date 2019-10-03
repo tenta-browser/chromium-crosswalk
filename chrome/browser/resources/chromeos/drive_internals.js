@@ -8,7 +8,7 @@
  * @param {number} bytes The number in bytes.
  * @return {string} Formatted string in megabytes.
  */
-function ToMegaByteString(bytes) {
+function toMegaByteString(bytes) {
   var mb = Math.floor(bytes / (1 << 20));
   return mb.toString().replace(
       /\d+?(?=(\d{3})+$)/g,  // Digit sequence (\d+) followed (?=) by 3n digits.
@@ -32,6 +32,8 @@ function updateDriveRelatedPreferences(preferences) {
  */
 function updateConnectionStatus(connStatus) {
   $('connection-status').textContent = connStatus['status'];
+  $('push-notification-enabled').textContent =
+      connStatus['push-notification-enabled'];
   $('has-refresh-token').textContent = connStatus['has-refresh-token'];
   $('has-access-token').textContent = connStatus['has-access-token'];
 }
@@ -72,7 +74,7 @@ function updateGCacheContents(gcacheContents, gcacheSummary) {
   }
 
   $('gcache-summary-total-size').textContent =
-      ToMegaByteString(gcacheSummary['total_size']);
+      toMegaByteString(gcacheSummary['total_size']);
 }
 
 /**
@@ -108,7 +110,7 @@ function updateCacheContents(cacheEntry) {
  * stogage.
  */
 function updateLocalStorageUsage(localStorageSummary) {
-  var freeSpaceInMB = ToMegaByteString(localStorageSummary.free_space);
+  var freeSpaceInMB = toMegaByteString(localStorageSummary.free_space);
   $('local-storage-freespace').innerText = freeSpaceInMB;
 }
 
@@ -154,8 +156,8 @@ function updateInFlightOperations(inFlightOperations) {
  * @param {Object} aboutResource Dictionary describing about resource.
  */
 function updateAboutResource(aboutResource) {
-  var quotaTotalInMb = ToMegaByteString(aboutResource['account-quota-total']);
-  var quotaUsedInMb = ToMegaByteString(aboutResource['account-quota-used']);
+  var quotaTotalInMb = toMegaByteString(aboutResource['account-quota-total']);
+  var quotaUsedInMb = toMegaByteString(aboutResource['account-quota-used']);
 
   $('account-quota-info').textContent =
       quotaUsedInMb + ' / ' + quotaTotalInMb + ' (MB)';
@@ -164,50 +166,28 @@ function updateAboutResource(aboutResource) {
   $('root-resource-id').textContent = aboutResource['root-resource-id'];
 }
 
-/**
- * Updates the summary about app list.
- * @param {Object} appList Dictionary describing app list.
- */
-function updateAppList(appList) {
-  $('app-list-etag').textContent = appList['etag'];
-
-  var itemContainer = $('app-list-items');
-  for (var i = 0; i < appList['items'].length; i++) {
-    var app = appList['items'][i];
-    var tr = document.createElement('tr');
-    tr.className = 'installed-app';
-    tr.appendChild(createElementFromText('td', app.name));
-    tr.appendChild(createElementFromText('td', app.application_id));
-    tr.appendChild(createElementFromText('td', app.object_type));
-    tr.appendChild(createElementFromText('td', app.supports_create));
-
-    itemContainer.appendChild(tr);
-  }
-}
-
-/**
- * Updates the local cache information about account metadata.
- * @param {Object} localMetadata Dictionary describing account metadata.
- */
-function updateLocalMetadata(localMetadata) {
-  var changestamp = localMetadata['account-largest-changestamp-local'];
-
-  $('account-largest-changestamp-local').textContent = changestamp.toString() +
-      (changestamp > 0 ? ' (loaded)' : ' (not loaded)') +
-      (localMetadata['account-metadata-refreshing'] ? ' (refreshing)' : '');
-}
-
-/**
+/*
  * Updates the summary about delta update status.
  * @param {Object} deltaUpdateStatus Dictionary describing delta update status.
  */
 function updateDeltaUpdateStatus(deltaUpdateStatus) {
-  $('push-notification-enabled').textContent =
-      deltaUpdateStatus['push-notification-enabled'];
-  $('last-update-check-time').textContent =
-      deltaUpdateStatus['last-update-check-time'];
-  $('last-update-check-error').textContent =
-      deltaUpdateStatus['last-update-check-error'];
+  var itemContainer = $('delta-update-status');
+  for (var i = 0; i < deltaUpdateStatus['items'].length; i++) {
+    var update = deltaUpdateStatus['items'][i];
+    var tr = document.createElement('tr');
+    tr.className = 'delta-update';
+    tr.appendChild(createElementFromText('td', update.id));
+    tr.appendChild(createElementFromText('td', update.root_entry_path));
+    var startPageToken = update.start_page_token;
+    tr.appendChild(createElementFromText(
+        'td',
+        startPageToken + (startPageToken ? ' (loaded)' : ' (not loaded)')));
+    tr.appendChild(createElementFromText('td', update.last_check_time));
+    tr.appendChild(createElementFromText('td', update.last_check_result));
+    tr.appendChild(createElementFromText('td', update.refreshing));
+
+    itemContainer.appendChild(tr);
+  }
 }
 
 /**
@@ -217,6 +197,24 @@ function updateDeltaUpdateStatus(deltaUpdateStatus) {
 function updateEventLog(log) {
   var ul = $('event-log');
   updateKeyValueList(ul, log);
+}
+
+/**
+ * Updates the service log section.
+ * @param {Array} log Log lines.
+ */
+function updateServiceLog(log) {
+  var ul = $('service-log');
+  updateKeyValueList(ul, log);
+}
+
+/**
+ * Updates the service log section.
+ * @param {Array} log Log lines.
+ */
+function updateOtherServiceLogsUrl(url) {
+  var link = $('other-logs');
+  link.setAttribute('href', url);
 }
 
 /**
@@ -260,20 +258,49 @@ function updateResetStatus(success) {
   $('reset-status-text').textContent = (success ? 'success' : 'failed');
 }
 
+/**
+ * Makes up-to-date table of contents.
+ */
+function updateToc() {
+  var toc = $('toc');
+  while (toc.firstChild) {
+    toc.removeChild(toc.firstChild);
+  }
+  var sections = document.getElementsByTagName('section');
+  for (var i = 0; i < sections.length; i++) {
+    var section = sections[i];
+    if (!section.hidden) {
+      var header = section.getElementsByTagName('h2')[0];
+      var a = createElementFromText('a', header.textContent);
+      a.href = '#' + section.id;
+      var li = document.createElement('li');
+      li.appendChild(a);
+      toc.appendChild(li);
+    }
+  }
+}
+
+/**
+ * Shows or hides a section.
+ * @param {string} section Which section to change.
+ * @param {boolean} enabled Whether to enable.
+ */
+function setSectionEnabled(section, enable) {
+  var element = $(section);
+  if (element.hidden !== !enable) {
+    element.hidden = !enable;
+    updateToc();
+  }
+}
+
+function onZipDone(success) {
+  $('button-export-logs').removeAttribute('disabled');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   chrome.send('pageLoaded');
 
-  // Update the table of contents.
-  var toc = $('toc');
-  var sections = document.getElementsByTagName('h2');
-  for (var i = 0; i < sections.length; i++) {
-    var section = sections[i];
-    var a = createElementFromText('a', section.textContent);
-    a.href = '#' + section.id;
-    var li = document.createElement('li');
-    li.appendChild(a);
-    toc.appendChild(li);
-  }
+  updateToc();
 
   $('button-clear-access-token').addEventListener('click', function() {
     chrome.send('clearAccessToken');
@@ -292,6 +319,11 @@ document.addEventListener('DOMContentLoaded', function() {
     var button = $('button-show-file-entries');
     button.parentNode.removeChild(button);
     chrome.send('listFileEntries');
+  });
+
+  $('button-export-logs').addEventListener('click', function() {
+    $('button-export-logs').setAttribute('disabled', 'true');
+    chrome.send('zipLogs');
   });
 
   window.setInterval(function() {

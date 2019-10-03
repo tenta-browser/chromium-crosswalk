@@ -15,9 +15,11 @@
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/safe_browsing/browser_feature_extractor.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
+#include "components/safe_browsing/common/safe_browsing.mojom.h"
 #include "components/safe_browsing/db/database_manager.h"
-#include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "url/gurl.h"
 
 namespace safe_browsing {
@@ -34,18 +36,19 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
  public:
   // The caller keeps ownership of the tab object and is responsible for
   // ensuring that it stays valid until WebContentsDestroyed is called.
-  static ClientSideDetectionHost* Create(content::WebContents* tab);
+  static std::unique_ptr<ClientSideDetectionHost> Create(
+      content::WebContents* tab);
   ~ClientSideDetectionHost() override;
-
-  // From content::WebContentsObserver.
-  bool OnMessageReceived(const IPC::Message& message,
-                         content::RenderFrameHost* render_frame_host) override;
 
   // From content::WebContentsObserver.  If we navigate away we cancel all
   // pending callbacks that could show an interstitial, and check to see whether
   // we should classify the new URL.
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void ResourceLoadComplete(
+      content::RenderFrameHost* render_frame_host,
+      const content::GlobalRequestID& request_id,
+      const content::mojom::ResourceLoadInfo& resource_load_info) override;
 
   // Called when the SafeBrowsingService found a hit with one of the
   // SafeBrowsing lists.  This method is called on the UI thread.
@@ -72,7 +75,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   virtual void OnMalwarePreClassificationDone(bool should_classify);
 
  private:
-  friend class ClientSideDetectionHostTest;
+  friend class ClientSideDetectionHostTestBase;
   class ShouldClassifyUrlRequest;
   friend class ShouldClassifyUrlRequest;
 
@@ -81,12 +84,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   void OnPhishingPreClassificationDone(bool should_classify);
 
   // Verdict is an encoded ClientPhishingRequest protocol message.
-  void OnPhishingDetectionDone(const std::string& verdict);
-  void OnSubresourceResponseStarted(const std::string& ip,
-                                    const GURL& url,
-                                    const std::string& method,
-                                    const GURL& referrer,
-                                    content::ResourceType resource_type);
+  void PhishingDetectionDone(const std::string& verdict);
 
   // Callback that is called when the server ping back is
   // done. Display an interstitial if |is_phishing| is true.
@@ -156,6 +154,8 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   std::vector<GURL> cur_host_redirects_;
   // Current host, used to help determine cur_host_redirects_.
   std::string cur_host_;
+  // The currently active message pipe to the renderer PhishingDetector.
+  mojom::PhishingDetectorPtr phishing_detector_;
 
   // Max number of ips we save for each browse
   static const size_t kMaxIPsPerBrowse;
@@ -171,7 +171,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   int unsafe_unique_page_id_;
   std::unique_ptr<security_interstitials::UnsafeResource> unsafe_resource_;
 
-  base::WeakPtrFactory<ClientSideDetectionHost> weak_factory_;
+  base::WeakPtrFactory<ClientSideDetectionHost> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ClientSideDetectionHost);
 };

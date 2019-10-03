@@ -4,15 +4,21 @@
 
 package org.chromium.chrome.browser.suggestions;
 
+import static org.chromium.chrome.browser.ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS;
+
 import org.chromium.base.DiscardableReferencePool;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.favicon.FaviconHelper;
 import org.chromium.chrome.browser.favicon.LargeIconBridge;
+import org.chromium.chrome.browser.ntp.snippets.EmptySuggestionsSource;
 import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
 import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSites;
+import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSitesBridge;
 import org.chromium.chrome.browser.widget.ThumbnailProvider;
 import org.chromium.chrome.browser.widget.ThumbnailProviderImpl;
 
@@ -40,7 +46,9 @@ public class SuggestionsDependencyFactory {
     }
 
     public SuggestionsSource createSuggestionSource(Profile profile) {
-        return new SnippetsBridge(profile);
+        return ChromeFeatureList.isEnabled(INTEREST_FEED_CONTENT_SUGGESTIONS)
+                ? new EmptySuggestionsSource()
+                : new SnippetsBridge(profile);
     }
 
     public SuggestionsEventReporter createEventReporter() {
@@ -56,7 +64,8 @@ public class SuggestionsDependencyFactory {
     }
 
     public ThumbnailProvider createThumbnailProvider(DiscardableReferencePool referencePool) {
-        return new ThumbnailProviderImpl(referencePool);
+        return new ThumbnailProviderImpl(
+                referencePool, ThumbnailProviderImpl.ClientType.NTP_SUGGESTIONS);
     }
 
     public FaviconHelper createFaviconHelper() {

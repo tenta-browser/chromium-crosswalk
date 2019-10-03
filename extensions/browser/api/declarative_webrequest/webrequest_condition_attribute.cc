@@ -24,6 +24,7 @@
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
 #include "extensions/browser/api/web_request/web_request_resource_type.h"
 #include "extensions/common/error_utils.h"
 #include "net/base/net_errors.h"
@@ -31,7 +32,6 @@
 #include "net/base/static_cookie_policy.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_util.h"
-#include "net/url_request/url_request.h"
 
 using base::CaseInsensitiveCompareASCII;
 using base::DictionaryValue;
@@ -182,8 +182,7 @@ bool WebRequestConditionAttributeResourceType::IsFulfilled(
     const WebRequestData& request_data) const {
   if (!(request_data.stage & GetStages()))
     return false;
-  const auto resource_type = GetWebRequestResourceType(request_data.request);
-  return base::ContainsValue(types_, resource_type);
+  return base::Contains(types_, request_data.request->web_request_type);
 }
 
 WebRequestConditionAttribute::Type
@@ -233,8 +232,7 @@ WebRequestConditionAttributeContentType::Create(
     return scoped_refptr<const WebRequestConditionAttribute>(NULL);
   }
   std::vector<std::string> content_types;
-  for (base::ListValue::const_iterator it = value_as_list->begin();
-       it != value_as_list->end(); ++it) {
+  for (auto it = value_as_list->begin(); it != value_as_list->end(); ++it) {
     std::string content_type;
     if (!it->GetAsString(&content_type)) {
       *error = ErrorUtils::FormatErrorMessage(kInvalidValue, name);
@@ -267,9 +265,9 @@ bool WebRequestConditionAttributeContentType::IsFulfilled(
       content_type, &mime_type, &charset, &had_charset, NULL);
 
   if (inclusive_) {
-    return base::ContainsValue(content_types_, mime_type);
+    return base::Contains(content_types_, mime_type);
   } else {
-    return !base::ContainsValue(content_types_, mime_type);
+    return !base::Contains(content_types_, mime_type);
   }
 }
 
@@ -380,8 +378,7 @@ HeaderMatcher::~HeaderMatcher() {}
 std::unique_ptr<const HeaderMatcher> HeaderMatcher::Create(
     const base::ListValue* tests) {
   std::vector<std::unique_ptr<const HeaderMatchTest>> header_tests;
-  for (base::ListValue::const_iterator it = tests->begin();
-       it != tests->end(); ++it) {
+  for (auto it = tests->begin(); it != tests->end(); ++it) {
     const base::DictionaryValue* tests = NULL;
     if (!it->GetAsDictionary(&tests))
       return std::unique_ptr<const HeaderMatcher>();
@@ -611,7 +608,7 @@ bool WebRequestConditionAttributeRequestHeaders::IsFulfilled(
     return false;
 
   const net::HttpRequestHeaders& headers =
-      request_data.request->extra_request_headers();
+      request_data.request->extra_request_headers;
 
   bool passed = false;  // Did some header pass TestNameValue?
   net::HttpRequestHeaders::Iterator it(headers);
@@ -693,7 +690,7 @@ bool WebRequestConditionAttributeResponseHeaders::IsFulfilled(
   size_t iter = 0;
   while (!passed && headers->EnumerateHeaderLines(&iter, &name, &value)) {
     if (ExtensionsAPIClient::Get()->ShouldHideResponseHeader(
-            request_data.request->url(), name))
+            request_data.request->url, name))
       continue;
     passed |= header_matcher_->TestNameValue(name, value);
   }
@@ -762,7 +759,7 @@ bool WebRequestConditionAttributeThirdParty::IsFulfilled(
   const net::StaticCookiePolicy block_third_party_policy(
       net::StaticCookiePolicy::BLOCK_ALL_THIRD_PARTY_COOKIES);
   const int can_get_cookies = block_third_party_policy.CanAccessCookies(
-      request_data.request->url(), request_data.request->site_for_cookies());
+      request_data.request->url, request_data.request->site_for_cookies);
   const bool is_first_party = (can_get_cookies == net::OK);
 
   return match_third_party_ ? !is_first_party : is_first_party;
@@ -809,8 +806,7 @@ bool ParseListOfStages(const base::Value& value, int* out_stages) {
 
   int stages = 0;
   std::string stage_name;
-  for (base::ListValue::const_iterator it = list->begin();
-       it != list->end(); ++it) {
+  for (auto it = list->begin(); it != list->end(); ++it) {
     if (!(it->GetAsString(&stage_name)))
       return false;
     if (stage_name == keys::kOnBeforeRequestEnum) {

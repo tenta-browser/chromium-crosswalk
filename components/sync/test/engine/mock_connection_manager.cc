@@ -14,6 +14,7 @@
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/syncable_write_transaction.h"
 #include "components/sync/test/engine/test_id_factory.h"
+#include "net/base/net_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using std::find;
@@ -27,9 +28,7 @@ using sync_pb::SyncEnums;
 
 namespace syncer {
 
-using syncable::WriteTransaction;
-
-static char kValidAuthToken[] = "AuthToken";
+static char kValidAccessToken[] = "AccessToken";
 static char kCacheGuid[] = "kqyg7097kro6GSUod+GSg==";
 
 MockConnectionManager::MockConnectionManager(syncable::Directory* directory,
@@ -49,10 +48,9 @@ MockConnectionManager::MockConnectionManager(syncable::Directory* directory,
       partial_failure_(false),
       fail_non_periodic_get_updates_(false),
       next_position_in_parent_(2),
-      use_legacy_bookmarks_protocol_(false),
       num_get_updates_requests_(0) {
   SetNewTimestamp(0);
-  SetAuthToken(kValidAuthToken);
+  SetAccessToken(kValidAccessToken);
 }
 
 MockConnectionManager::~MockConnectionManager() {
@@ -75,7 +73,7 @@ void MockConnectionManager::SetMidCommitObserver(
 
 bool MockConnectionManager::PostBufferToPath(PostBufferParams* params,
                                              const string& path,
-                                             const string& auth_token) {
+                                             const string& access_token) {
   ClientToServerMessage post;
   if (!post.ParseFromString(params->buffer_in)) {
     ADD_FAILURE();
@@ -108,18 +106,18 @@ bool MockConnectionManager::PostBufferToPath(PostBufferParams* params,
       ADD_FAILURE();
       return false;
     }
-    WriteTransaction wt(FROM_HERE, syncable::UNITTEST, directory_);
+    syncable::WriteTransaction wt(FROM_HERE, syncable::UNITTEST, directory_);
   }
 
-  if (auth_token.empty()) {
+  if (access_token.empty()) {
     params->response.server_status = HttpResponse::SYNC_AUTH_ERROR;
     return false;
   }
 
-  if (auth_token != kValidAuthToken) {
+  if (access_token != kValidAccessToken) {
     // Simulate server-side auth failure.
     params->response.server_status = HttpResponse::SYNC_AUTH_ERROR;
-    InvalidateAndClearAuthToken();
+    ClearAccessToken();
   }
 
   if (--countdown_to_postbuffer_fail_ == 0) {
@@ -178,10 +176,9 @@ bool MockConnectionManager::PostBufferToPath(PostBufferParams* params,
       sync_pb::ClientToServerResponse_Error* response_error =
           response.mutable_error();
       response_error->set_error_type(SyncEnums::THROTTLED);
-      for (ModelTypeSet::Iterator it = partial_failure_type_.First(); it.Good();
-           it.Inc()) {
+      for (ModelType type : partial_failure_type_) {
         response_error->add_error_data_type_ids(
-            GetSpecificsFieldNumberFromModelType(it.Get()));
+            GetSpecificsFieldNumberFromModelType(type));
       }
       throttling_ = false;
     }
@@ -190,10 +187,9 @@ bool MockConnectionManager::PostBufferToPath(PostBufferParams* params,
       sync_pb::ClientToServerResponse_Error* response_error =
           response.mutable_error();
       response_error->set_error_type(SyncEnums::PARTIAL_FAILURE);
-      for (ModelTypeSet::Iterator it = partial_failure_type_.First(); it.Good();
-           it.Inc()) {
+      for (ModelType type : partial_failure_type_) {
         response_error->add_error_data_type_ids(
-            GetSpecificsFieldNumberFromModelType(it.Get()));
+            GetSpecificsFieldNumberFromModelType(type));
       }
       partial_failure_ = false;
     }
@@ -221,20 +217,11 @@ sync_pb::GetUpdatesResponse* MockConnectionManager::GetUpdateResponse() {
 
 void MockConnectionManager::AddDefaultBookmarkData(sync_pb::SyncEntity* entity,
                                                    bool is_folder) {
-  if (use_legacy_bookmarks_protocol_) {
-    sync_pb::SyncEntity_BookmarkData* data = entity->mutable_bookmarkdata();
-    data->set_bookmark_folder(is_folder);
-
-    if (!is_folder) {
-      data->set_bookmark_url("http://google.com");
-    }
-  } else {
-    entity->set_folder(is_folder);
-    entity->mutable_specifics()->mutable_bookmark();
-    if (!is_folder) {
-      entity->mutable_specifics()->mutable_bookmark()->set_url(
-          "http://google.com");
-    }
+  entity->set_folder(is_folder);
+  entity->mutable_specifics()->mutable_bookmark();
+  if (!is_folder) {
+    entity->mutable_specifics()->mutable_bookmark()->set_url(
+        "http://google.com");
   }
 }
 
@@ -445,8 +432,6 @@ sync_pb::SyncEntity* MockConnectionManager::AddUpdateFromLastCommit() {
     ent->CopyFrom(last_sent_commit().entries(0));
     ent->clear_insert_after_item_id();
     ent->clear_old_parent_id();
-    ent->set_position_in_parent(
-        last_commit_response().entryresponse(0).position_in_parent());
     ent->set_version(last_commit_response().entryresponse(0).version());
     ent->set_id_string(last_commit_response().entryresponse(0).id_string());
 
@@ -503,10 +488,6 @@ void MockConnectionManager::SetLastUpdateClientTag(const string& tag) {
   GetMutableLastUpdate()->set_client_defined_unique_tag(tag);
 }
 
-void MockConnectionManager::SetLastUpdatePosition(int64_t server_position) {
-  GetMutableLastUpdate()->set_position_in_parent(server_position);
-}
-
 void MockConnectionManager::SetNewTimestamp(int ts) {
   next_token_ = base::StringPrintf("mock connection ts = %d", ts);
   ApplyToken();
@@ -544,18 +525,15 @@ bool MockConnectionManager::ProcessGetUpdates(
   const GetUpdatesMessage& gu = csm->get_updates();
   num_get_updates_requests_++;
   EXPECT_FALSE(gu.has_from_timestamp());
-  EXPECT_FALSE(gu.has_requested_types());
 
   if (fail_non_periodic_get_updates_) {
-    EXPECT_EQ(sync_pb::GetUpdatesCallerInfo::PERIODIC,
-              gu.caller_info().source());
+    EXPECT_EQ(sync_pb::SyncEnums::PERIODIC, gu.get_updates_origin());
   }
 
   // Verify that the items we're about to send back to the client are of
   // the types requested by the client.  If this fails, it probably indicates
   // a test bug.
   EXPECT_TRUE(gu.fetch_folders());
-  EXPECT_FALSE(gu.has_requested_types());
   if (update_queue_.empty()) {
     GetUpdateResponse();
   }
@@ -592,7 +570,7 @@ bool MockConnectionManager::ProcessGetUpdates(
   update_queue_.pop_front();
 
   if (gu_client_command_) {
-    response->mutable_client_command()->CopyFrom(*gu_client_command_.get());
+    response->mutable_client_command()->CopyFrom(*gu_client_command_);
   }
   return true;
 }
@@ -615,8 +593,7 @@ bool MockConnectionManager::ShouldConflictThisCommit() {
 }
 
 bool MockConnectionManager::ShouldTransientErrorThisId(syncable::Id id) {
-  return find(transient_error_ids_.begin(), transient_error_ids_.end(), id) !=
-         transient_error_ids_.end();
+  return base::Contains(transient_error_ids_, id);
 }
 
 bool MockConnectionManager::ProcessCommit(
@@ -695,7 +672,7 @@ bool MockConnectionManager::ProcessCommit(
 
   if (commit_client_command_) {
     response_buffer->mutable_client_command()->CopyFrom(
-        *commit_client_command_.get());
+        *commit_client_command_);
   }
   return true;
 }
@@ -810,11 +787,9 @@ void MockConnectionManager::SetServerNotReachable() {
 }
 
 void MockConnectionManager::UpdateConnectionStatus() {
-  if (!server_reachable_) {
-    SetServerStatus(HttpResponse::CONNECTION_UNAVAILABLE);
-  } else {
-    SetServerStatus(HttpResponse::SERVER_CONNECTION_OK);
-  }
+  SetServerResponse(server_reachable_
+                        ? HttpResponse::ForSuccess()
+                        : HttpResponse::ForNetError(net::ERR_FAILED));
 }
 
 }  // namespace syncer

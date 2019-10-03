@@ -6,8 +6,7 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios.h"
@@ -27,7 +26,8 @@ TabRestoreServiceDelegateImplIOSFactory::GetForBrowserState(
 // static
 TabRestoreServiceDelegateImplIOSFactory*
 TabRestoreServiceDelegateImplIOSFactory::GetInstance() {
-  return base::Singleton<TabRestoreServiceDelegateImplIOSFactory>::get();
+  static base::NoDestructor<TabRestoreServiceDelegateImplIOSFactory> instance;
+  return instance.get();
 }
 
 TabRestoreServiceDelegateImplIOSFactory::
@@ -42,6 +42,6 @@ TabRestoreServiceDelegateImplIOSFactory::
 std::unique_ptr<KeyedService>
 TabRestoreServiceDelegateImplIOSFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  return base::MakeUnique<TabRestoreServiceDelegateImplIOS>(
+  return std::make_unique<TabRestoreServiceDelegateImplIOS>(
       ios::ChromeBrowserState::FromBrowserState(context));
 }

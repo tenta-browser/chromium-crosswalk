@@ -62,18 +62,18 @@ testing::AssertionResult RegistryDictEquals(const RegistryDict& a,
         *iter_value_a->second != *iter_value_b->second) {
       return testing::AssertionFailure()
              << "Value mismatch " << iter_value_a->first << "="
-             << *iter_value_a->second.get() << " vs. " << iter_value_b->first
-             << "=" << *iter_value_b->second.get();
+             << *iter_value_a->second << " vs. " << iter_value_b->first << "="
+             << *iter_value_b->second;
     }
   }
   if (iter_value_a != a.values().end())
     return testing::AssertionFailure()
            << "Value mismatch, a has extra value " << iter_value_a->first << "="
-           << *iter_value_a->second.get();
+           << *iter_value_a->second;
   if (iter_value_b != b.values().end())
     return testing::AssertionFailure()
            << "Value mismatch, b has extra value " << iter_value_b->first << "="
-           << *iter_value_b->second.get();
+           << *iter_value_b->second;
 
   return testing::AssertionSuccess();
 }
@@ -91,7 +91,7 @@ void SetString(RegistryDict* dict,
 class PRegParserTest : public testing::Test {
  protected:
   void SetUp() override {
-    ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir_));
+    ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir_));
     test_data_dir_ = test_data_dir_.AppendASCII(kRegistryPolBaseDir);
   }
 
@@ -104,7 +104,7 @@ TEST_F(PRegParserTest, TestParseFile) {
   RegistryDict dict;
   SetInteger(&dict, "DeleteValuesTest1", 1);
   SetString(&dict, "DeleteValuesTest2", "2");
-  dict.SetKey("DeleteKeysTest1", base::MakeUnique<RegistryDict>());
+  dict.SetKey("DeleteKeysTest1", std::make_unique<RegistryDict>());
   std::unique_ptr<RegistryDict> delete_keys_test(new RegistryDict());
   SetInteger(delete_keys_test.get(), "DeleteKeysTest2Entry", 1);
   dict.SetKey("DeleteKeysTest2", std::move(delete_keys_test));
@@ -112,7 +112,7 @@ TEST_F(PRegParserTest, TestParseFile) {
   std::unique_ptr<RegistryDict> subdict(new RegistryDict());
   SetInteger(subdict.get(), "DelValsTest1", 1);
   SetString(subdict.get(), "DelValsTest2", "2");
-  subdict->SetKey("DelValsTest3", base::MakeUnique<RegistryDict>());
+  subdict->SetKey("DelValsTest3", std::make_unique<RegistryDict>());
   dict.SetKey("DelValsTest", std::move(subdict));
 
   // Run the parser.
@@ -124,7 +124,7 @@ TEST_F(PRegParserTest, TestParseFile) {
   // Build the expected output dictionary.
   RegistryDict expected;
   std::unique_ptr<RegistryDict> del_vals_dict(new RegistryDict());
-  del_vals_dict->SetKey("DelValsTest3", base::MakeUnique<RegistryDict>());
+  del_vals_dict->SetKey("DelValsTest3", std::make_unique<RegistryDict>());
   expected.SetKey("DelValsTest", std::move(del_vals_dict));
   SetInteger(&expected, "HomepageIsNewTabPage", 1);
   SetString(&expected, "HomepageLocation", "http://www.example.com");

@@ -13,6 +13,7 @@
 #include "ash/public/interfaces/tray_action.mojom.h"
 #include "ash/session/test_session_controller_client.h"
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
@@ -36,11 +37,10 @@
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "chromeos/dbus/power_manager/suspend.pb.h"
 #include "components/arc/arc_service_manager.h"
-#include "components/arc/arc_session.h"
+#include "components/arc/session/arc_session.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/browser/web_contents.h"
@@ -57,8 +57,8 @@
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/window.h"
-#include "ui/events/devices/input_device_manager.h"
-#include "ui/events/test/device_data_manager_test_api.h"
+#include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/device_data_manager_test_api.h"
 
 using ash::mojom::CloseLockScreenNoteReason;
 using ash::mojom::LockScreenNoteOrigin;
@@ -85,12 +85,12 @@ std::unique_ptr<arc::ArcSession> ArcSessionFactory() {
   return nullptr;
 }
 
-scoped_refptr<extensions::Extension> CreateTestNoteTakingApp(
+scoped_refptr<const extensions::Extension> CreateTestNoteTakingApp(
     const std::string& app_id) {
   ListBuilder action_handlers;
   action_handlers.Append(DictionaryBuilder()
                              .Set("action", "new_note")
-                             .SetBoolean("enabled_on_lock_screen", true)
+                             .Set("enabled_on_lock_screen", true)
                              .Build());
   DictionaryBuilder background;
   background.Set("scripts", ListBuilder().Append("background.js").Build());
@@ -370,24 +370,6 @@ class TestAppWindow : public content::WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(TestAppWindow);
 };
 
-class LockScreenAppStateNotSupportedTest : public testing::Test {
- public:
-  LockScreenAppStateNotSupportedTest() = default;
-
-  ~LockScreenAppStateNotSupportedTest() override = default;
-
-  void SetUp() override {
-    command_line_ = base::MakeUnique<base::test::ScopedCommandLine>();
-    command_line_->GetProcessCommandLine()->InitFromArgv(
-        {"", "--disable-lock-screen-apps"});
-  }
-
- private:
-  std::unique_ptr<base::test::ScopedCommandLine> command_line_;
-
-  DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateNotSupportedTest);
-};
-
 class LockScreenAppStateTest : public BrowserWithTestWindowTest {
  public:
   LockScreenAppStateTest()
@@ -397,54 +379,44 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   ~LockScreenAppStateTest() override = default;
 
   void SetUp() override {
-    command_line_ = base::MakeUnique<base::test::ScopedCommandLine>();
+    command_line_ = std::make_unique<base::test::ScopedCommandLine>();
     command_line_->GetProcessCommandLine()->InitFromArgv({""});
     SetUpCommandLine(command_line_->GetProcessCommandLine());
 
-    SetUpStylusAvailability();
-
-    std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
-        chromeos::DBusThreadManager::GetSetterForTesting();
-    dbus_setter->SetPowerManagerClient(
-        std::make_unique<chromeos::FakePowerManagerClient>());
-
     BrowserWithTestWindowTest::SetUp();
 
-    session_manager_ = base::MakeUnique<session_manager::SessionManager>();
-    session_manager_->SessionStarted();
+    SetUpStylusAvailability();
+
+    session_manager_ = std::make_unique<session_manager::SessionManager>();
     session_manager_->SetSessionState(
         session_manager::SessionState::LOGIN_PRIMARY);
 
     // Initialize arc session manager - NoteTakingHelper expects it to be set.
-    arc_session_manager_ = base::MakeUnique<arc::ArcSessionManager>(
-        base::MakeUnique<arc::ArcSessionRunner>(
-            base::Bind(&ArcSessionFactory)));
+    arc_session_manager_ = std::make_unique<arc::ArcSessionManager>(
+        std::make_unique<arc::ArcSessionRunner>(
+            base::BindRepeating(&ArcSessionFactory)));
 
     chromeos::NoteTakingHelper::Initialize();
-
-    ASSERT_TRUE(lock_screen_apps::StateController::IsEnabled());
 
     InitExtensionSystem(profile());
 
     std::unique_ptr<FakeLockScreenProfileCreator> profile_creator =
-        base::MakeUnique<FakeLockScreenProfileCreator>(profile_manager());
+        std::make_unique<FakeLockScreenProfileCreator>(profile_manager());
     lock_screen_profile_creator_ = profile_creator.get();
 
     std::unique_ptr<TestAppManager> app_manager =
-        base::MakeUnique<TestAppManager>(profile(), profile_creator.get());
+        std::make_unique<TestAppManager>(profile(), profile_creator.get());
     app_manager_ = app_manager.get();
 
-    focus_cycler_delegate_ = base::MakeUnique<TestFocusCyclerDelegate>();
+    focus_cycler_delegate_ = std::make_unique<TestFocusCyclerDelegate>();
 
-    auto tick_clock = std::make_unique<base::SimpleTestTickClock>();
     // Advance the clock to have non-null value.
-    tick_clock->Advance(base::TimeDelta::FromMilliseconds(1));
-    tick_clock_ = tick_clock.get();
+    tick_clock_.Advance(base::TimeDelta::FromMilliseconds(1));
 
-    state_controller_ = base::MakeUnique<lock_screen_apps::StateController>();
+    state_controller_ = std::make_unique<lock_screen_apps::StateController>();
     state_controller_->SetTrayActionPtrForTesting(
         tray_action_.CreateInterfacePtrAndBind());
-    state_controller_->SetTickClockForTesting(std::move(tick_clock));
+    state_controller_->SetTickClockForTesting(&tick_clock_);
     state_controller_->SetLockScreenLockScreenProfileCreatorForTesting(
         std::move(profile_creator));
     state_controller_->SetAppManagerForTesting(std::move(app_manager));
@@ -495,8 +467,8 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   void SetStylusEnabled() {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         ash::switches::kAshForceEnableStylusTools);
-    ui::test::DeviceDataManagerTestAPI devices_test_api;
-    devices_test_api.NotifyObserversTouchscreenDeviceConfigurationChanged();
+    ui::DeviceDataManagerTestApi()
+        .NotifyObserversTouchscreenDeviceConfigurationChanged();
   }
 
   void InitExtensionSystem(Profile* profile) {
@@ -524,11 +496,11 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   std::unique_ptr<TestAppWindow> CreateNoteTakingWindow(
       Profile* profile,
       const extensions::Extension* extension) {
-    return base::MakeUnique<TestAppWindow>(
+    return std::make_unique<TestAppWindow>(
         profile, state_controller()->CreateAppWindowForLockScreenAction(
                      profile, extension,
                      extensions::api::app_runtime::ACTION_TYPE_NEW_NOTE,
-                     base::MakeUnique<ChromeAppDelegate>(true)));
+                     std::make_unique<ChromeAppDelegate>(true)));
   }
 
   void ClearObservedStates() {
@@ -573,6 +545,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     SetFirstRunCompletedIfNeeded(app_->id());
 
     session_manager_->SetSessionState(session_manager::SessionState::LOCKED);
+    state_controller_->FlushTrayActionForTesting();
 
     if (app_manager_->state() != TestAppManager::State::kStarted) {
       ADD_FAILURE() << "Lock app manager Start not invoked.";
@@ -646,11 +619,6 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     return lock_screen_profile_creator_->lock_screen_profile();
   }
 
-  chromeos::FakePowerManagerClient* GetPowerManagerClient() {
-    return static_cast<chromeos::FakePowerManagerClient*>(
-        chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
-  }
-
   session_manager::SessionManager* session_manager() {
     return session_manager_.get();
   }
@@ -676,7 +644,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     return lock_screen_profile_creator_;
   }
 
-  base::SimpleTestTickClock* tick_clock() { return tick_clock_; }
+  base::SimpleTestTickClock* tick_clock() { return &tick_clock_; }
 
  protected:
   // Should be set by tests that excercise the logic for the first lock screen
@@ -685,7 +653,6 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   // in |InitializeNoteTakingApp|)
   bool is_first_app_run_test_ = false;
 
- private:
   std::unique_ptr<base::test::ScopedCommandLine> command_line_;
 
   chromeos::FakeChromeUserManager* fake_user_manager_;
@@ -719,7 +686,7 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
   std::unique_ptr<TestAppWindow> app_window_;
   scoped_refptr<const extensions::Extension> app_;
 
-  base::SimpleTestTickClock* tick_clock_;
+  base::SimpleTestTickClock tick_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateTest);
 };
@@ -749,20 +716,6 @@ class LockScreenAppStateNoStylusInputTest : public LockScreenAppStateTest {
   DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateNoStylusInputTest);
 };
 
-// Tests with show-md-login flag set.
-class LockScreenAppStateWebUiLockTest : public LockScreenAppStateTest {
- public:
-  LockScreenAppStateWebUiLockTest() = default;
-  ~LockScreenAppStateWebUiLockTest() override = default;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(ash::switches::kShowWebUiLock);
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateWebUiLockTest);
-};
-
 }  // namespace
 
 TEST_F(LockScreenAppStateKioskUserTest, SetPrimaryProfile) {
@@ -772,14 +725,12 @@ TEST_F(LockScreenAppStateKioskUserTest, SetPrimaryProfile) {
   EXPECT_EQ(TestAppManager::State::kNotInitialized, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
   EXPECT_FALSE(lock_screen_profile_creator()->Initialized());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateNoStylusInputTest,
        StylusDetectedAfterInitializationAndScreenLock) {
-  ui::test::DeviceDataManagerTestAPI devices_test_api;
-
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kNotAvailable, true));
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_TRUE(LockScreenItemStorage::GetIfAllowed(profile()));
@@ -791,7 +742,7 @@ TEST_F(LockScreenAppStateNoStylusInputTest,
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 
   // Enable stylus input.
   SetStylusEnabled();
@@ -804,8 +755,6 @@ TEST_F(LockScreenAppStateNoStylusInputTest,
 }
 
 TEST_F(LockScreenAppStateNoStylusInputTest, StylusDetectedAfterInitialization) {
-  ui::test::DeviceDataManagerTestAPI devices_test_api;
-
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kNotAvailable, true));
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
 
@@ -818,7 +767,7 @@ TEST_F(LockScreenAppStateNoStylusInputTest, StylusDetectedAfterInitialization) {
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 
   // Given that the screen is locked, lock screen apps should become available.
   session_manager()->SetSessionState(session_manager::SessionState::LOCKED);
@@ -826,10 +775,6 @@ TEST_F(LockScreenAppStateNoStylusInputTest, StylusDetectedAfterInitialization) {
   EXPECT_EQ(TrayActionState::kAvailable,
             state_controller()->GetLockScreenNoteState());
   EXPECT_EQ(TestAppManager::State::kStarted, app_manager()->state());
-}
-
-TEST_F(LockScreenAppStateNotSupportedTest, NoInstance) {
-  EXPECT_FALSE(lock_screen_apps::StateController::IsEnabled());
 }
 
 TEST_F(LockScreenAppStateTest, InitialState) {
@@ -843,8 +788,7 @@ TEST_F(LockScreenAppStateTest, InitialState) {
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
 
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateTest, SetPrimaryProfile) {
@@ -854,7 +798,7 @@ TEST_F(LockScreenAppStateTest, SetPrimaryProfile) {
   EXPECT_EQ(TestAppManager::State::kStopped, app_manager()->state());
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  EXPECT_EQ(0u, observer()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(), "No state change.");
 }
 
 TEST_F(LockScreenAppStateTest, SetPrimaryProfileWhenSessionLocked) {
@@ -978,14 +922,14 @@ TEST_F(LockScreenAppStateTest, NoLockScreenProfile) {
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
 
-  scoped_refptr<extensions::Extension> app =
+  scoped_refptr<const extensions::Extension> app =
       CreateTestNoteTakingApp(kTestAppId);
   extensions::ExtensionSystem::Get(profile())
       ->extension_service()
       ->AddExtension(app.get());
   EXPECT_FALSE(state_controller()->CreateAppWindowForLockScreenAction(
       profile(), app.get(), extensions::api::app_runtime::ACTION_TYPE_NEW_NOTE,
-      base::MakeUnique<ChromeAppDelegate>(true)));
+      std::make_unique<ChromeAppDelegate>(true)));
 }
 
 TEST_F(LockScreenAppStateTest, SessionLock) {
@@ -1036,9 +980,8 @@ TEST_F(LockScreenAppStateTest, SessionUnlockedWhileStartingAppManager) {
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on session unlock.");
 
   // Test that subsequent session lock works as expected.
   session_manager()->SetSessionState(session_manager::SessionState::LOCKED);
@@ -1061,18 +1004,17 @@ TEST_F(LockScreenAppStateTest, AppManagerNoApp) {
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on session lock.");
 
   tray_action()->SendNewNoteRequest(
       LockScreenNoteOrigin::kLockScreenButtonSwipe);
+  state_controller()->FlushTrayActionForTesting();
 
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
-  state_controller()->FlushTrayActionForTesting();
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on note request.");
 
   // App manager should be started on next session lock.
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
@@ -1129,7 +1071,7 @@ TEST_F(LockScreenAppStateTest, CloseAppWhileLaunching) {
 
   EXPECT_FALSE(state_controller()->CreateAppWindowForLockScreenAction(
       profile(), app(), extensions::api::app_runtime::ACTION_TYPE_NEW_NOTE,
-      base::MakeUnique<ChromeAppDelegate>(true)));
+      std::make_unique<ChromeAppDelegate>(true)));
 
   ExpectObservedStatesMatch({TrayActionState::kAvailable},
                             "Close app window cancels launch.");
@@ -1143,8 +1085,8 @@ TEST_F(LockScreenAppStateTest, HandleActionWhenNotAvaiable) {
       LockScreenNoteOrigin::kLockScreenButtonSwipe);
   state_controller()->FlushTrayActionForTesting();
 
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on note request");
 }
 
 TEST_F(LockScreenAppStateTest, HandleAction) {
@@ -1166,8 +1108,8 @@ TEST_F(LockScreenAppStateTest, HandleAction) {
 
   // There should be no state change - the state_controller was already in
   // launching state when the request was received.
-  EXPECT_EQ(0u, observer()->observed_states().size());
-  EXPECT_EQ(0u, tray_action()->observed_states().size());
+  ExpectObservedStatesMatch(std::vector<TrayActionState>(),
+                            "No state change on repeated launch");
   EXPECT_EQ(1, app_manager()->launch_count());
 }
 
@@ -1201,35 +1143,6 @@ TEST_F(LockScreenAppStateTest, HandleActionWithLaunchFailure) {
   EXPECT_EQ(2, app_manager()->launch_count());
 }
 
-TEST_F(LockScreenAppStateWebUiLockTest,
-       LaunchActionWhenStylusRemoved_ActionClosedBeforeAnimationDone) {
-  ui::test::DeviceDataManagerTestAPI devices_test_api;
-  ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kAvailable,
-                                      true /* enable_app_launch */));
-  tray_action()->SendNewNoteRequest(LockScreenNoteOrigin::kStylusEject);
-
-  ExpectObservedStatesMatch({TrayActionState::kLaunching},
-                            "Launch on new note request");
-  ClearObservedStates();
-  // The app should not be launched until the lock UI reports the animation as
-  // complete.
-  EXPECT_EQ(0, app_manager()->launch_count());
-
-  state_controller()->CloseLockScreenNote(
-      CloseLockScreenNoteReason::kUnlockButtonPressed);
-
-  ExpectObservedStatesMatch({TrayActionState::kAvailable},
-                            "Close note before launch animation done.");
-  ClearObservedStates();
-
-  // The app should not be launched when the animation completes if the action
-  // is closed/canceled before that.
-  state_controller()->NewNoteLaunchAnimationDone();
-  EXPECT_EQ(0, app_manager()->launch_count());
-  EXPECT_TRUE(observer()->observed_states().empty());
-  EXPECT_TRUE(tray_action()->observed_states().empty());
-}
-
 TEST_F(LockScreenAppStateTest, AppWindowRegistration) {
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kAvailable,
                                       true /* enable_app_launch */));
@@ -1254,7 +1167,7 @@ TEST_F(LockScreenAppStateTest, AppWindowRegistration) {
   EXPECT_FALSE(state_controller()->CreateAppWindowForLockScreenAction(
       LockScreenProfile(), app(),
       extensions::api::app_runtime::ACTION_TYPE_NONE,
-      base::MakeUnique<ChromeAppDelegate>(true)));
+      std::make_unique<ChromeAppDelegate>(true)));
 
   app_window = CreateNoteTakingWindow(LockScreenProfile(), app());
   ASSERT_TRUE(app_window->window());
@@ -1315,7 +1228,7 @@ TEST_F(LockScreenAppStateTest, CloseAppWindowOnSuspend) {
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kActive,
                                       true /* enable_app_launch */));
 
-  GetPowerManagerClient()->SendSuspendImminent(
+  chromeos::FakePowerManagerClient::Get()->SendSuspendImminent(
       power_manager::SuspendImminent_Reason_OTHER);
   EXPECT_EQ(TrayActionState::kAvailable,
             state_controller()->GetLockScreenNoteState());
@@ -1345,7 +1258,7 @@ TEST_F(LockScreenAppStateTest, AppWindowClosedOnNoteTakingAppChange) {
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kActive,
                                       true /* enable_app_launch */));
 
-  scoped_refptr<extensions::Extension> secondary_app =
+  scoped_refptr<const extensions::Extension> secondary_app =
       CreateTestNoteTakingApp(kSecondaryTestAppId);
   extensions::ExtensionSystem::Get(LockScreenProfile())
       ->extension_service()
@@ -1446,7 +1359,7 @@ TEST_F(LockScreenAppStateTest, TakeFocus) {
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kActive,
                                       true /* enable_app_launch */));
 
-  auto regular_app_window = base::MakeUnique<TestAppWindow>(
+  auto regular_app_window = std::make_unique<TestAppWindow>(
       profile(),
       new extensions::AppWindow(profile(), new ChromeAppDelegate(true), app()));
   EXPECT_FALSE(state_controller()->HandleTakeFocus(
@@ -1492,7 +1405,7 @@ TEST_F(LockScreenAppStateTest, CloseNoteWhileLaunching) {
 
   EXPECT_FALSE(state_controller()->CreateAppWindowForLockScreenAction(
       profile(), app(), extensions::api::app_runtime::ACTION_TYPE_NEW_NOTE,
-      base::MakeUnique<ChromeAppDelegate>(true)));
+      std::make_unique<ChromeAppDelegate>(true)));
 
   ExpectObservedStatesMatch({TrayActionState::kAvailable},
                             "Close lock screen note.");

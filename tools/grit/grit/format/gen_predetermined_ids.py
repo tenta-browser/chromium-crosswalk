@@ -9,28 +9,20 @@ input to grit via the -p option. This is meant to be run manually every once in
 a while and its output checked in. See tools/gritsettings/README.md for details.
 """
 
+from __future__ import print_function
+
 import fnmatch
 import os
 import re
 import sys
 
-# Regular expressions for parsing the #define macro format. Separate regular
-# expressions are used for parsing lines with pragma (for builds with
-# enable_resource_whitelist_generation flag) in windows and non-windows, and for
-# lines without pragma, For example,
+# Regular expression for parsing the #define macro format. Matches both the
+# version of the macro with whitelist support and the one without. For example,
 # Without generate whitelist flag:
 #   #define IDS_FOO_MESSAGE 1234
-# With generate whitelist flag in non-windows:
-#   #define IDS_FOO_MESSAGE _Pragma("whitelisted_resource_1234") 1234
-# With generate whitelist flag in windows:
-#   #define IDS_FOO_MESSAGE __pragma(message("whitelisted_resource_1234")) 1234
-RESOURCE_EXTRACT_REGEX = re.compile('^#define (\S*) (\d*)$', re.MULTILINE)
-RESOURCE_EXTRACT_REGEX_PRAGMA = re.compile(
-      '^#define (\S*) _Pragma\("whitelisted_resource_\d*"\) (\d*)$',
-      re.MULTILINE)
-RESOURCE_EXTRACT_REGEX_PRAGMA_WINDOWS = re.compile(
-      '^#define (\S*) __pragma\(message\("whitelisted_resource_\d*"\)\) (\d*)$',
-      re.MULTILINE)
+# With generate whitelist flag:
+#   #define IDS_FOO_MESSAGE (::ui::WhitelistedResource<1234>(), 1234)
+RESOURCE_EXTRACT_REGEX = re.compile('^#define (\S*).* (\d+)\)?$', re.MULTILINE)
 
 ORDERED_RESOURCE_IDS_REGEX = re.compile('^Resource=(\d*)$', re.MULTILINE)
 
@@ -48,10 +40,6 @@ def _GetResourceNameIdPairsIter(string_to_scan):
     A tuple of name and id.
   """
   for match in RESOURCE_EXTRACT_REGEX.finditer(string_to_scan):
-    yield match.group(1, 2)
-  for match in RESOURCE_EXTRACT_REGEX_PRAGMA.finditer(string_to_scan):
-    yield match.group(1, 2)
-  for match in RESOURCE_EXTRACT_REGEX_PRAGMA_WINDOWS.finditer(string_to_scan):
     yield match.group(1, 2)
 
 
@@ -142,7 +130,7 @@ def _GeneratePredeterminedIdsFile(ordered_resources_file, out_dir):
   output_resource_map = GenerateResourceMapping(original_resources,
                                                 ordered_resource_ids)
   for res_id in sorted(output_resource_map.keys()):
-    print "{} {}".format(output_resource_map[res_id], res_id)
+    print(output_resource_map[res_id], res_id)
 
 
 def main(argv):

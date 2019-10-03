@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/memory/ref_counted.h"
 #include "components/update_client/update_client.h"
 
 class GURL;
@@ -18,12 +19,6 @@ class GURL;
 namespace base {
 class DictionaryValue;
 class FilePath;
-}
-
-namespace net {
-class URLFetcher;
-class URLFetcherDelegate;
-class URLRequestContextGetter;
 }
 
 namespace update_client {
@@ -35,24 +30,6 @@ struct CrxComponent;
 // Installer attributes are component-specific metadata, which may be serialized
 // in an update check request.
 using InstallerAttribute = std::pair<std::string, std::string>;
-
-// Sends a protocol request to the the service endpoint specified by |url|.
-// The body of the request is provided by |protocol_request| and it is
-// expected to contain XML data. The caller owns the returned object.
-std::unique_ptr<net::URLFetcher> SendProtocolRequest(
-    const GURL& url,
-    const std::string& protocol_request,
-    net::URLFetcherDelegate* url_fetcher_delegate,
-    net::URLRequestContextGetter* url_request_context_getter);
-
-// Returns true if the url request of |fetcher| was succesful.
-bool FetchSuccess(const net::URLFetcher& fetcher);
-
-// Returns the error code which occured during the fetch. The function returns 0
-// if the fetch was successful. If errors happen, the function could return a
-// network error, an http response code, or the status of the fetch, if the
-// fetch is pending or canceled.
-int GetFetchError(const net::URLFetcher& fetcher);
 
 // Returns true if the |component| contains a valid differential update url.
 bool HasDiffUpdate(const Component& component);
@@ -68,6 +45,9 @@ bool DeleteFileAndEmptyParentDirectory(const base::FilePath& filepath);
 // Returns the component id of the |component|. The component id is in a
 // format similar with the format of an extension id.
 std::string GetCrxComponentID(const CrxComponent& component);
+
+// Returns a CRX id from a public key hash.
+std::string GetCrxIdFromPublicKeyHash(const std::vector<uint8_t>& pk_hash);
 
 // Returns true if the actual SHA-256 hash of the |filepath| matches the
 // |expected_hash|.
@@ -93,6 +73,18 @@ CrxInstaller::Result InstallFunctionWrapper(
 // Deserializes the CRX manifest. The top level must be a dictionary.
 std::unique_ptr<base::DictionaryValue> ReadManifest(
     const base::FilePath& unpack_path);
+
+// Converts a custom, specific installer error (and optionally extended error)
+// to an installer result.
+template <typename T>
+CrxInstaller::Result ToInstallerResult(const T& error, int extended_error = 0) {
+  static_assert(std::is_enum<T>::value,
+                "Use an enum class to define custom installer errors");
+  return CrxInstaller::Result(
+      static_cast<int>(update_client::InstallError::CUSTOM_ERROR_BASE) +
+          static_cast<int>(error),
+      extended_error);
+}
 
 }  // namespace update_client
 

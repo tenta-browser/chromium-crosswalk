@@ -16,7 +16,13 @@ namespace base {
 
 int LaunchUnitTests(int argc,
                     char** argv,
-                    const RunTestSuiteCallback& run_test_suite) {
+                    RunTestSuiteCallback run_test_suite) {
+  return LaunchUnitTestsSerially(argc, argv, std::move(run_test_suite));
+}
+
+int LaunchUnitTestsSerially(int argc,
+                            char** argv,
+                            RunTestSuiteCallback run_test_suite) {
   CHECK(CommandLine::InitializedForCurrentProcess() ||
         CommandLine::Init(argc, argv));
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
@@ -36,7 +42,7 @@ int LaunchUnitTests(int argc,
     return 0;
   }
 
-  return run_test_suite.Run();
+  return std::move(run_test_suite).Run();
 }
 
 }  // namespace base

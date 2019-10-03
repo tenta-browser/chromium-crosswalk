@@ -7,13 +7,15 @@
 
 #include <string>
 
-#include "chromeos/chromeos_export.h"
+#include "base/component_export.h"
 
 namespace chromeos {
 
 // Key for user authentication. The class supports hashing of plain text
 // passwords to generate keys as well as the use of pre-hashed keys.
-class CHROMEOS_EXPORT Key {
+//
+// TODO(crbug.com/826417): Consider making this class movable.
+class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) Key {
  public:
   enum KeyType {
     // Plain text password.

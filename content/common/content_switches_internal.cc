@@ -7,8 +7,8 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,9 +16,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 
 #if defined(OS_ANDROID)
 #include "base/debug/debugger.h"
+#include "base/feature_list.h"
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID)
@@ -33,28 +35,6 @@ static void SigUSR1Handler(int signal) {}
 namespace content {
 
 namespace {
-
-#if defined(OS_WIN)
-const base::Feature kUseZoomForDsfEnabledByDefault {
-  "use-zoom-for-dsf enabled by default", base::FEATURE_ENABLED_BY_DEFAULT
-};
-#endif
-
-bool IsUseZoomForDSFEnabledByDefault() {
-#if defined(OS_LINUX)
-  return true;
-#elif defined(OS_WIN)
-  return base::FeatureList::IsEnabled(kUseZoomForDsfEnabledByDefault);
-#else
-  return false;
-#endif
-}
-
-#if defined(ANDROID)
-const base::Feature kProgressBarCompletionResourcesBeforeDOMContentLoaded {
-    "progress-bar-completion-resources-before-domContentLoaded",
-    base::FEATURE_DISABLED_BY_DEFAULT};
-#endif
 
 #if defined(OS_WIN)
 
@@ -88,7 +68,7 @@ bool IsPinchToZoomEnabled() {
   return !command_line.HasSwitch(switches::kDisablePinch);
 }
 
-V8CacheOptions GetV8CacheOptions() {
+blink::mojom::V8CacheOptions GetV8CacheOptions() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   std::string v8_cache_options =
@@ -96,82 +76,26 @@ V8CacheOptions GetV8CacheOptions() {
   if (v8_cache_options.empty())
     v8_cache_options = base::FieldTrialList::FindFullName("V8CacheOptions");
   if (v8_cache_options == "none") {
-    return V8_CACHE_OPTIONS_NONE;
-  } else if (v8_cache_options == "parse") {
-    return V8_CACHE_OPTIONS_PARSE;
+    return blink::mojom::V8CacheOptions::kNone;
   } else if (v8_cache_options == "code") {
-    return V8_CACHE_OPTIONS_CODE;
+    return blink::mojom::V8CacheOptions::kCode;
   } else {
-    return V8_CACHE_OPTIONS_DEFAULT;
+    return blink::mojom::V8CacheOptions::kDefault;
   }
-}
-
-bool IsUseZoomForDSFEnabled() {
-  static bool use_zoom_for_dsf_enabled_by_default =
-      IsUseZoomForDSFEnabledByDefault();
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  bool enabled =
-      (command_line->HasSwitch(switches::kEnableUseZoomForDSF) ||
-       use_zoom_for_dsf_enabled_by_default) &&
-      command_line->GetSwitchValueASCII(
-          switches::kEnableUseZoomForDSF) != "false";
-
-  return enabled;
-}
-
-ProgressBarCompletion GetProgressBarCompletionPolicy() {
-#if defined(OS_ANDROID)
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  std::string progress_bar_completion =
-      command_line.GetSwitchValueASCII(switches::kProgressBarCompletion);
-  if (progress_bar_completion == "loadEvent")
-    return ProgressBarCompletion::LOAD_EVENT;
-  if (progress_bar_completion == "resourcesBeforeDOMContentLoaded")
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL;
-  if (progress_bar_completion == "domContentLoaded")
-    return ProgressBarCompletion::DOM_CONTENT_LOADED;
-  if (progress_bar_completion ==
-      "resourcesBeforeDOMContentLoadedAndSameOriginIframes") {
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES;
-  }
-  // The command line, which is set by the user, takes priority. Otherwise,
-  // fall back to the feature flag.
-  if (base::FeatureList::IsEnabled(
-          kProgressBarCompletionResourcesBeforeDOMContentLoaded)) {
-    return ProgressBarCompletion::RESOURCES_BEFORE_DCL;
-  }
-#endif
-  return ProgressBarCompletion::LOAD_EVENT;
-}
-
-SavePreviousDocumentResources GetSavePreviousDocumentResources() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  std::string save_previous_document_resources =
-      command_line.GetSwitchValueASCII(
-          switches::kSavePreviousDocumentResources);
-  if (save_previous_document_resources == "never")
-    return SavePreviousDocumentResources::NEVER;
-  if (save_previous_document_resources == "onDOMContentLoaded")
-    return SavePreviousDocumentResources::UNTIL_ON_DOM_CONTENT_LOADED;
-  if (save_previous_document_resources == "onload")
-    return SavePreviousDocumentResources::UNTIL_ON_LOAD;
-  return SavePreviousDocumentResources::NEVER;
 }
 
 void WaitForDebugger(const std::string& label) {
 #if defined(OS_WIN)
 #if defined(GOOGLE_CHROME_BUILD)
   std::string title = "Google Chrome";
-#else   // CHROMIUM_BUILD
+#else   // BUILDFLAG(CHROMIUM_BRANDING)
   std::string title = "Chromium";
-#endif  // CHROMIUM_BUILD
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
   title += " ";
   title += label;  // makes attaching to process easier
   std::string message = label;
   message += " starting with pid: ";
-  message += base::IntToString(base::GetCurrentProcId());
+  message += base::NumberToString(base::GetCurrentProcId());
   ::MessageBox(NULL, base::UTF8ToWide(message).c_str(),
                base::UTF8ToWide(title).c_str(), MB_OK | MB_SETFOREGROUND);
 #elif defined(OS_POSIX)

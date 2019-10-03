@@ -12,6 +12,7 @@ import threading
 from devil import base_error
 from devil.android import crash_handler
 from devil.android import device_errors
+from devil.android.sdk import version_codes
 from devil.android.tools import device_recovery
 from devil.utils import signal_handler
 from pylib import valgrind_tools
@@ -51,9 +52,10 @@ class LocalDeviceTestRun(test_run.TestRun):
   def __init__(self, env, test_instance):
     super(LocalDeviceTestRun, self).__init__(env, test_instance)
     self._tools = {}
+    env.SetPreferredAbis(test_instance.GetPreferredAbis())
 
   #override
-  def RunTests(self):
+  def RunTests(self, results):
     tests = self._GetTests()
 
     exit_now = threading.Event()
@@ -112,15 +114,23 @@ class LocalDeviceTestRun(test_run.TestRun):
       raise TestsTerminated()
 
     try:
-      with signal_handler.SignalHandler(signal.SIGTERM, stop_tests):
+      with signal_handler.AddSignalHandler(signal.SIGTERM, stop_tests):
         tries = 0
-        results = []
         while tries < self._env.max_tries and tests:
           logging.info('STARTING TRY #%d/%d', tries + 1, self._env.max_tries)
-          if tries > 0 and tries + 1 == self._env.max_tries:
-            logging.info(
-                'Attempting to recover devices prior to last test attempt.')
-            self._env.parallel_devices.pMap(device_recovery.RecoverDevice, None)
+          if tries > 0 and self._env.recover_devices:
+            if any(d.build_version_sdk == version_codes.LOLLIPOP_MR1
+                   for d in self._env.devices):
+              logging.info(
+                  'Attempting to recover devices due to known issue on L MR1. '
+                  'See crbug.com/787056 for details.')
+              self._env.parallel_devices.pMap(
+                  device_recovery.RecoverDevice, None)
+            elif tries + 1 == self._env.max_tries:
+              logging.info(
+                  'Attempting to recover devices prior to last test attempt.')
+              self._env.parallel_devices.pMap(
+                  device_recovery.RecoverDevice, None)
           logging.info('Will run %d tests on %d devices: %s',
                        len(tests), len(self._env.devices),
                        ', '.join(str(d) for d in self._env.devices))
@@ -133,6 +143,11 @@ class LocalDeviceTestRun(test_run.TestRun):
               base_test_result.BaseTestResult(
                   t, base_test_result.ResultType.NOTRUN)
               for t in test_names if not t.endswith('*'))
+
+          # As soon as we know the names of the tests, we populate |results|.
+          # The tests in try_results will have their results updated by
+          # try_results.AddResult() as they are run.
+          results.append(try_results)
 
           try:
             if self._ShouldShard():
@@ -150,8 +165,6 @@ class LocalDeviceTestRun(test_run.TestRun):
                       base_test_result.ResultType.TIMEOUT,
                       log=_SIGTERM_TEST_LOG))
             raise
-          finally:
-            results.append(try_results)
 
           tries += 1
           tests = self._GetTestsToRetry(tests, try_results)
@@ -163,8 +176,6 @@ class LocalDeviceTestRun(test_run.TestRun):
             logging.info('All tests completed.')
     except TestsTerminated:
       pass
-
-    return results
 
   def _GetTestsToRetry(self, tests, try_results):
 
@@ -210,7 +221,7 @@ class LocalDeviceTestRun(test_run.TestRun):
         if hash(self._GetUniqueTestName(t)) % total_shards == shard_index]
 
   def GetTool(self, device):
-    if not str(device) in self._tools:
+    if str(device) not in self._tools:
       self._tools[str(device)] = valgrind_tools.CreateTool(
           self._env.tool, device)
     return self._tools[str(device)]

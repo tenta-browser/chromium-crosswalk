@@ -22,18 +22,15 @@ import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.payments.PaymentManifestDownloader;
 import org.chromium.components.payments.PaymentManifestDownloader.ManifestDownloadCallback;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.net.URI;
 
 /** An integration test for the payment manifest downloader. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @MediumTest
 public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
     @Rule
@@ -65,6 +62,7 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
     private boolean mDownloadPaymentMethodManifestSuccess;
     private boolean mDownloadWebAppManifestSuccess;
     private boolean mDownloadFailure;
+    private String mErrorMessage;
     private String mPaymentMethodManifest;
     private String mWebAppManifest;
 
@@ -83,9 +81,10 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
     }
 
     @Override
-    public void onManifestDownloadFailure() {
+    public void onManifestDownloadFailure(String errorMessage) {
         mDownloadComplete = true;
         mDownloadFailure = true;
+        mErrorMessage = errorMessage;
     }
 
     @Before
@@ -93,13 +92,13 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
         mRule.startMainActivityOnBlankPage();
         mServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
         mRule.runOnUiThread((Runnable) () -> {
-            mDownloader.initialize(
-                    mRule.getActivity().getCurrentContentViewCore().getWebContents());
+            mDownloader.initialize(mRule.getActivity().getCurrentWebContents());
         });
         mDownloadComplete = false;
         mDownloadPaymentMethodManifestSuccess = false;
         mDownloadWebAppManifestSuccess = false;
         mDownloadFailure = false;
+        mErrorMessage = "";
         mPaymentMethodManifest = null;
         mWebAppManifest = null;
     }
@@ -143,6 +142,8 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
         });
 
         Assert.assertTrue("Web app manifest should not have been downloaded.", mDownloadFailure);
+        Assert.assertEquals(
+                "Unable to download payment manifest \"" + uri.toString() + "\".", mErrorMessage);
     }
 
     @Test
@@ -178,6 +179,9 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
 
         Assert.assertTrue(
                 "Payment method manifest should have not have been downloaded.", mDownloadFailure);
+        Assert.assertEquals("Unable to make a HEAD request to \"" + uri.toString()
+                        + "\" for payment method manifest.",
+                mErrorMessage);
     }
 
     @Test

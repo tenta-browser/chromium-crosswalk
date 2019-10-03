@@ -4,7 +4,7 @@
 
 #include "components/ntp_snippets/content_suggestions_metrics.h"
 
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "components/ntp_snippets/category.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -112,17 +112,13 @@ TEST(ContentSuggestionsMetricsTest,
   base::HistogramTester histogram_tester;
   OnPageShown(std::vector<Category>(
                   {Category::FromKnownCategory(KnownCategories::ARTICLES),
-                   Category::FromKnownCategory(KnownCategories::BOOKMARKS)}),
+                   Category::FromKnownCategory(KnownCategories::READING_LIST)}),
               /*suggestions_per_category=*/{10, 5},
               /*is_category_visible=*/{true, true});
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
           "NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible.Articles"),
       ElementsAre(base::Bucket(/*min=*/10, /*count=*/1)));
-  EXPECT_THAT(
-      histogram_tester.GetAllSamples(
-          "NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible.Bookmarks"),
-      ElementsAre(base::Bucket(/*min=*/5, /*count=*/1)));
   EXPECT_THAT(histogram_tester.GetAllSamples(
                   "NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible"),
               ElementsAre(base::Bucket(/*min=*/15, /*count=*/1)));

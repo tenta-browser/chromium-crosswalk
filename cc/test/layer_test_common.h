@@ -57,6 +57,14 @@ class LayerTestCommon {
                                      const gfx::Rect& occluded,
                                      size_t* partially_occluded_count);
 
+  static void SetupBrowserControlsAndScrollLayerWithVirtualViewport(
+      LayerTreeHostImpl* host_impl,
+      LayerTreeImpl* tree_impl,
+      float top_controls_height,
+      const gfx::Size& inner_viewport_size,
+      const gfx::Size& outer_viewport_size,
+      const gfx::Size& scroll_layer_size);
+
   class LayerImplTest {
    public:
     LayerImplTest();
@@ -181,7 +189,7 @@ class LayerTestCommon {
     LayerTreeFrameSink* layer_tree_frame_sink() const {
       return host_->host_impl()->layer_tree_frame_sink();
     }
-    LayerTreeResourceProvider* resource_provider() const {
+    viz::ClientResourceProvider* resource_provider() const {
       return host_->host_impl()->resource_provider();
     }
     LayerImpl* root_layer_for_testing() const {

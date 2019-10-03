@@ -9,58 +9,44 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_downloader_delegate.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/account_fetcher_service_factory.h"
-#include "chrome/browser/signin/account_tracker_service_factory.h"
-#include "chrome/browser/signin/chrome_signin_client_factory.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
-#include "components/signin/core/browser/account_fetcher_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_client.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "content/public/browser/browser_thread.h"
+#include "components/signin/public/base/avatar_icon_util.h"
+#include "components/signin/public/identity_manager/access_token_fetcher.h"
+#include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/account_info.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_status.h"
 #include "skia/ext/image_operations.h"
 #include "url/gurl.h"
-
-using content::BrowserThread;
 
 namespace {
 
 // Template for optional authorization header when using an OAuth access token.
-const char kAuthorizationHeader[] =
-    "Authorization: Bearer %s";
+constexpr char kAuthorizationHeader[] = "Bearer %s";
 
 }  // namespace
 
 ProfileDownloader::ProfileDownloader(ProfileDownloaderDelegate* delegate)
-    : OAuth2TokenService::Consumer("profile_downloader"),
-      delegate_(delegate),
+    : delegate_(delegate),
       picture_status_(PICTURE_FAILED),
-      account_tracker_service_(
-          AccountTrackerServiceFactory::GetForProfile(
-              delegate_->GetBrowserProfile())),
+      identity_manager_(delegate_->GetIdentityManager()),
+      identity_manager_observer_(this),
       waiting_for_account_info_(false) {
   DCHECK(delegate_);
-  account_tracker_service_->AddObserver(this);
+  identity_manager_observer_.Add(identity_manager_);
 }
 
 void ProfileDownloader::Start() {
@@ -68,29 +54,22 @@ void ProfileDownloader::Start() {
 }
 
 void ProfileDownloader::StartForAccount(const std::string& account_id) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   VLOG(1) << "Starting profile downloader...";
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  ProfileOAuth2TokenService* service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(
-          delegate_->GetBrowserProfile());
-  if (!service) {
+  if (!identity_manager_) {
     // This can happen in some test paths.
-    LOG(WARNING) << "User has no token service";
+    LOG(WARNING) << "User has no identity manager";
     delegate_->OnProfileDownloadFailure(
         this, ProfileDownloaderDelegate::TOKEN_ERROR);
     return;
   }
 
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(delegate_->GetBrowserProfile());
-  account_id_ =
-      account_id.empty() ?
-          signin_manager->GetAuthenticatedAccountId() : account_id;
-  if (service->RefreshTokenIsAvailable(account_id_))
-    StartFetchingOAuth2AccessToken();
-  else
-    service->AddObserver(this);
+  // TODO(triploblastic@): Remove explicit conversion once ProfileDownloader
+  // has been fixed to use CoreAccountId.
+  account_id_ = account_id.empty() ? identity_manager_->GetPrimaryAccountId().id
+                                   : account_id;
+  StartFetchingOAuth2AccessToken();
 }
 
 base::string16 ProfileDownloader::GetProfileHostedDomain() const {
@@ -122,7 +101,7 @@ std::string ProfileDownloader::GetProfilePictureURL() const {
   GURL url(account_info_.picture_url);
   if (!url.is_valid())
     return std::string();
-  return profiles::GetImageURLWithOptions(
+  return signin::GetAvatarImageURLWithOptions(
              GURL(account_info_.picture_url),
              delegate_->GetDesiredImageSideLength(), true /* no_silhouette */)
       .spec();
@@ -130,12 +109,16 @@ std::string ProfileDownloader::GetProfilePictureURL() const {
 
 void ProfileDownloader::StartFetchingImage() {
   VLOG(1) << "Fetching user entry with token: " << auth_token_;
-  account_info_ = account_tracker_service_->GetAccountInfo(account_id_);
+  auto maybe_account_info =
+      identity_manager_->FindAccountInfoForAccountWithRefreshTokenByAccountId(
+          account_id_);
+  if (maybe_account_info.has_value())
+    account_info_ = maybe_account_info.value();
 
-  if (delegate_->IsPreSignin()) {
-    AccountFetcherServiceFactory::GetForProfile(delegate_->GetBrowserProfile())
-        ->FetchUserInfoBeforeSignin(account_id_);
-  }
+#if defined(OS_ANDROID)
+  if (delegate_->IsPreSignin())
+    identity_manager_->ForceRefreshOfExtendedAccountInfo(account_id_);
+#endif
 
   if (account_info_.IsValid()) {
     // FetchImageData might call the delegate's OnProfileDownloadSuccess
@@ -148,27 +131,22 @@ void ProfileDownloader::StartFetchingImage() {
 }
 
 void ProfileDownloader::StartFetchingOAuth2AccessToken() {
-  Profile* profile = delegate_->GetBrowserProfile();
-  OAuth2TokenService::ScopeSet scopes;
+  identity::ScopeSet scopes;
   scopes.insert(GaiaConstants::kGoogleUserInfoProfile);
   // Required to determine if lock should be enabled.
   scopes.insert(GaiaConstants::kGoogleUserInfoEmail);
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
-  oauth2_access_token_request_ = token_service->StartRequest(
-      account_id_, scopes, this);
+
+  oauth2_access_token_fetcher_ =
+      identity_manager_->CreateAccessTokenFetcherForAccount(
+          account_id_, "profile_downloader", scopes,
+          base::BindOnce(&ProfileDownloader::OnAccessTokenFetchComplete,
+                         base::Unretained(this)),
+          signin::AccessTokenFetcher::Mode::kWaitUntilRefreshTokenAvailable);
 }
 
 ProfileDownloader::~ProfileDownloader() {
-  // Ensures PO2TS observation is cleared when ProfileDownloader is destructed
-  // before refresh token is available.
-  ProfileOAuth2TokenService* service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(
-          delegate_->GetBrowserProfile());
-  if (service)
-    service->RemoveObserver(this);
-
-  account_tracker_service_->RemoveObserver(this);
+  oauth2_access_token_fetcher_.reset();
+  identity_manager_observer_.Remove(identity_manager_);
 }
 
 void ProfileDownloader::FetchImageData() {
@@ -180,12 +158,31 @@ void ProfileDownloader::FetchImageData() {
     return;
   }
 
+  if (account_info_.picture_url == kNoPictureURLFound) {
+    VLOG(1) << "No picture URL for account " << account_info_.email
+            << ". Using the default profile picture.";
+    picture_status_ = PICTURE_DEFAULT;
+    delegate_->OnProfileDownloadSuccess(this);
+    return;
+  }
+
   std::string image_url_with_size = GetProfilePictureURL();
   if (!image_url_with_size.empty() &&
       image_url_with_size == delegate_->GetCachedPictureURL()) {
     VLOG(1) << "Picture URL matches cached picture URL";
     picture_status_ = PICTURE_CACHED;
     delegate_->OnProfileDownloadSuccess(this);
+    return;
+  }
+
+  GURL image_url_to_fetch(image_url_with_size);
+  if (!image_url_to_fetch.is_valid()) {
+    VLOG(1) << "Profile picture URL with size |" << image_url_to_fetch << "| "
+            << "is not valid (the account picture URL is "
+            << "|" << account_info_.picture_url << "|)";
+    delegate_->OnProfileDownloadFailure(
+        this,
+        ProfileDownloaderDelegate::FailureReason::INVALID_PROFILE_PICTURE_URL);
     return;
   }
 
@@ -212,48 +209,53 @@ void ProfileDownloader::FetchImageData() {
             "profile image."
         })");
 
-  VLOG(1) << "Fetching profile image from " << image_url_with_size;
-  profile_image_fetcher_ =
-      net::URLFetcher::Create(GURL(image_url_with_size), net::URLFetcher::GET,
-                              this, traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      profile_image_fetcher_.get(),
-      data_use_measurement::DataUseUserData::PROFILE_DOWNLOADER);
-  profile_image_fetcher_->SetRequestContext(
-      delegate_->GetBrowserProfile()->GetRequestContext());
-  profile_image_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                                       net::LOAD_DO_NOT_SAVE_COOKIES);
+  VLOG(1) << "Loading profile image from " << image_url_to_fetch;
 
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = image_url_to_fetch;
+  resource_request->load_flags =
+      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
   if (!auth_token_.empty()) {
-    profile_image_fetcher_->SetExtraRequestHeaders(
+    resource_request->headers.SetHeader(
+        net::HttpRequestHeaders::kAuthorization,
         base::StringPrintf(kAuthorizationHeader, auth_token_.c_str()));
   }
 
-  profile_image_fetcher_->Start();
+  network::mojom::URLLoaderFactory* loader_factory =
+      delegate_->GetURLLoaderFactory();
+
+  simple_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
+                                                    traffic_annotation);
+  simple_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      loader_factory, base::BindOnce(&ProfileDownloader::OnURLLoaderComplete,
+                                     base::Unretained(this)));
 }
 
-void ProfileDownloader::OnURLFetchComplete(const net::URLFetcher* source) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (source->GetResponseCode() == net::HTTP_OK) {
-    std::string data;
-    source->GetResponseAsString(&data);
-    profile_image_fetcher_.reset();
+void ProfileDownloader::OnURLLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  int response_code = -1;
+  if (simple_loader_->ResponseInfo() && simple_loader_->ResponseInfo()->headers)
+    response_code = simple_loader_->ResponseInfo()->headers->response_code();
+
+  if (response_body) {
+    simple_loader_.reset();
     DVLOG(1) << "Decoding the image...";
-    ImageDecoder::Start(this, data);
-  } else if (source->GetResponseCode() == net::HTTP_NOT_FOUND) {
-    profile_image_fetcher_.reset();
+    ImageDecoder::Start(this, *response_body);
+  } else if (response_code == net::HTTP_NOT_FOUND) {
+    simple_loader_.reset();
     VLOG(1) << "Got 404, using default picture...";
     picture_status_ = PICTURE_DEFAULT;
     delegate_->OnProfileDownloadSuccess(this);
   } else {
-    LOG(WARNING) << "Fetching profile data failed";
-    DVLOG(1) << "  Status: " << source->GetStatus().status();
-    DVLOG(1) << "  Error: " << source->GetStatus().error();
-    DVLOG(1) << "  Response code: " << source->GetResponseCode();
-    DVLOG(1) << "  Url: " << source->GetURL().spec();
+    LOG(WARNING) << "Loading profile data failed";
+    DVLOG(1) << "  Error: " << simple_loader_->NetError();
+    DVLOG(1) << "  Response code: " << response_code;
+    DVLOG(1) << "  Url: " << simple_loader_->GetFinalURL().spec();
+    // Handle miscellaneous 400/500 errors.
     bool network_error =
-        source->GetStatus().status() != net::URLRequestStatus::SUCCESS;
-    profile_image_fetcher_.reset();
+        response_code == -1 || (response_code >= 400 && response_code < 600);
+    simple_loader_.reset();
     delegate_->OnProfileDownloadFailure(this, network_error ?
         ProfileDownloaderDelegate::NETWORK_ERROR :
         ProfileDownloaderDelegate::SERVICE_ERROR);
@@ -261,7 +263,7 @@ void ProfileDownloader::OnURLFetchComplete(const net::URLFetcher* source) {
 }
 
 void ProfileDownloader::OnImageDecoded(const SkBitmap& decoded_image) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   int image_size = delegate_->GetDesiredImageSideLength();
   profile_picture_ = skia::ImageOperations::Resize(
       decoded_image,
@@ -273,47 +275,28 @@ void ProfileDownloader::OnImageDecoded(const SkBitmap& decoded_image) {
 }
 
 void ProfileDownloader::OnDecodeImageFailed() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   delegate_->OnProfileDownloadFailure(
       this, ProfileDownloaderDelegate::IMAGE_DECODE_FAILED);
 }
 
-void ProfileDownloader::OnRefreshTokenAvailable(const std::string& account_id) {
-  ProfileOAuth2TokenService* service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(
-          delegate_->GetBrowserProfile());
-  if (account_id != account_id_)
+void ProfileDownloader::OnAccessTokenFetchComplete(
+    GoogleServiceAuthError error,
+    signin::AccessTokenInfo access_token_info) {
+  oauth2_access_token_fetcher_.reset();
+  if (error.state() != GoogleServiceAuthError::NONE) {
+    LOG(WARNING)
+        << "ProfileDownloader: token request using refresh token failed:"
+        << error.ToString();
+    delegate_->OnProfileDownloadFailure(this,
+                                        ProfileDownloaderDelegate::TOKEN_ERROR);
     return;
-
-  service->RemoveObserver(this);
-  StartFetchingOAuth2AccessToken();
-}
-
-// Callback for OAuth2TokenService::Request on success. |access_token| is the
-// token used to start fetching user data.
-void ProfileDownloader::OnGetTokenSuccess(
-    const OAuth2TokenService::Request* request,
-    const std::string& access_token,
-    const base::Time& expiration_time) {
-  DCHECK_EQ(request, oauth2_access_token_request_.get());
-  oauth2_access_token_request_.reset();
-  auth_token_ = access_token;
+  }
+  auth_token_ = access_token_info.token;
   StartFetchingImage();
 }
 
-// Callback for OAuth2TokenService::Request on failure.
-void ProfileDownloader::OnGetTokenFailure(
-    const OAuth2TokenService::Request* request,
-    const GoogleServiceAuthError& error) {
-  DCHECK_EQ(request, oauth2_access_token_request_.get());
-  oauth2_access_token_request_.reset();
-  LOG(WARNING) << "ProfileDownloader: token request using refresh token failed:"
-               << error.ToString();
-  delegate_->OnProfileDownloadFailure(
-      this, ProfileDownloaderDelegate::TOKEN_ERROR);
-}
-
-void ProfileDownloader::OnAccountUpdated(const AccountInfo& info) {
+void ProfileDownloader::OnExtendedAccountInfoUpdated(const AccountInfo& info) {
   if (info.account_id == account_id_ && info.IsValid()) {
     account_info_ = info;
 

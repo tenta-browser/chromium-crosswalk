@@ -4,12 +4,13 @@
 
 #include "android_webview/browser/net/aw_web_resource_response.h"
 
+#include <memory>
+
 #include "android_webview/browser/input_stream.h"
+#include "android_webview/native_jni/AwWebResourceResponse_jni.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "base/memory/ptr_util.h"
-#include "jni/AwWebResourceResponse_jni.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
@@ -21,17 +22,34 @@ namespace android_webview {
 
 AwWebResourceResponse::AwWebResourceResponse(
     const base::android::JavaRef<jobject>& obj)
-    : java_object_(obj) {}
+    : java_object_(obj), input_stream_transferred_(false) {}
 
 AwWebResourceResponse::~AwWebResourceResponse() {}
 
+bool AwWebResourceResponse::HasInputStream(JNIEnv* env) const {
+  ScopedJavaLocalRef<jobject> jstream =
+      Java_AwWebResourceResponse_getData(env, java_object_);
+  return !jstream.is_null();
+}
+
 std::unique_ptr<InputStream> AwWebResourceResponse::GetInputStream(
-    JNIEnv* env) const {
+    JNIEnv* env) {
+  // Only allow to call GetInputStream once per object, because this method
+  // transfers ownership of the stream and once the unique_ptr<InputStream>
+  // is deleted it also closes the original java input stream. This
+  // side-effect can result in unexpected behavior, e.g. trying to read
+  // from a closed stream.
+  DCHECK(!input_stream_transferred_);
+
+  if (input_stream_transferred_)
+    return std::unique_ptr<InputStream>();
+
+  input_stream_transferred_ = true;
   ScopedJavaLocalRef<jobject> jstream =
       Java_AwWebResourceResponse_getData(env, java_object_);
   if (jstream.is_null())
     return std::unique_ptr<InputStream>();
-  return base::MakeUnique<InputStream>(jstream);
+  return std::make_unique<InputStream>(jstream);
 }
 
 bool AwWebResourceResponse::GetMimeType(JNIEnv* env,
@@ -78,9 +96,9 @@ bool AwWebResourceResponse::GetResponseHeaders(
     return false;
   std::vector<std::string> header_names;
   std::vector<std::string> header_values;
-  AppendJavaStringArrayToStringVector(env, jstringArray_headerNames.obj(),
+  AppendJavaStringArrayToStringVector(env, jstringArray_headerNames,
                                       &header_names);
-  AppendJavaStringArrayToStringVector(env, jstringArray_headerValues.obj(),
+  AppendJavaStringArrayToStringVector(env, jstringArray_headerValues,
                                       &header_values);
   DCHECK_EQ(header_values.size(), header_names.size());
   for (size_t i = 0; i < header_names.size(); ++i) {

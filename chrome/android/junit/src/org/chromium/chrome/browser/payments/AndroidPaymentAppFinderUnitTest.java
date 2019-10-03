@@ -13,6 +13,7 @@ import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 import android.os.Bundle;
 
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatcher;
@@ -309,7 +310,7 @@ public class AndroidPaymentAppFinderUnitTest {
                     callback.onPaymentMethodManifestParseSuccess(
                             new URI[] {new URI("https://bobpay.com/app.json")}, new URI[0], false);
                 } catch (URISyntaxException e) {
-                    assert false;
+                    Assert.assertTrue(false);
                 }
             }
 
@@ -323,7 +324,7 @@ public class AndroidPaymentAppFinderUnitTest {
             }
 
             @Override
-            public void createNative() {}
+            public void createNative(WebContents webContents) {}
 
             @Override
             public void destroyNative() {}

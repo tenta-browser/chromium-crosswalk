@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "cc/benchmarks/micro_benchmark.h"
 
 namespace base {
@@ -24,14 +23,17 @@ class LayerTreeHostImpl;
 class CC_EXPORT MicroBenchmarkController {
  public:
   explicit MicroBenchmarkController(LayerTreeHost* host);
+  MicroBenchmarkController(const MicroBenchmarkController&) = delete;
   ~MicroBenchmarkController();
+
+  MicroBenchmarkController& operator=(const MicroBenchmarkController&) = delete;
 
   void DidUpdateLayers();
 
   // Returns the id of the benchmark on success, 0 otherwise.
   int ScheduleRun(const std::string& micro_benchmark_name,
                   std::unique_ptr<base::Value> value,
-                  const MicroBenchmark::DoneCallback& callback);
+                  MicroBenchmark::DoneCallback callback);
   // Returns true if the message was successfully delivered and handled.
   bool SendMessage(int id, std::unique_ptr<base::Value> value);
 
@@ -45,8 +47,6 @@ class CC_EXPORT MicroBenchmarkController {
   std::vector<std::unique_ptr<MicroBenchmark>> benchmarks_;
   static int next_id_;
   scoped_refptr<base::SingleThreadTaskRunner> main_controller_task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(MicroBenchmarkController);
 };
 
 }  // namespace cc

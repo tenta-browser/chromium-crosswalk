@@ -105,12 +105,9 @@ void PropertySet::Get(PropertyBase* property, GetCallback callback) {
   writer.AppendString(property->name());
 
   DCHECK(object_proxy_);
-  object_proxy_->CallMethod(&method_call,
-                            ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&PropertySet::OnGet,
-                                       GetWeakPtr(),
-                                       property,
-                                       callback));
+  object_proxy_->CallMethod(&method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
+                            base::BindOnce(&PropertySet::OnGet, GetWeakPtr(),
+                                           property, std::move(callback)));
 }
 
 void PropertySet::OnGet(PropertyBase* property, GetCallback callback,
@@ -132,7 +129,7 @@ void PropertySet::OnGet(PropertyBase* property, GetCallback callback,
   }
 
   if (!callback.is_null())
-    callback.Run(response);
+    std::move(callback).Run(response);
 }
 
 bool PropertySet::GetAndBlock(PropertyBase* property) {
@@ -196,12 +193,9 @@ void PropertySet::Set(PropertyBase* property, SetCallback callback) {
   property->AppendSetValueToWriter(&writer);
 
   DCHECK(object_proxy_);
-  object_proxy_->CallMethod(&method_call,
-                            ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&PropertySet::OnSet,
-                                       GetWeakPtr(),
-                                       property,
-                                       callback));
+  object_proxy_->CallMethod(&method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
+                            base::BindOnce(&PropertySet::OnSet, GetWeakPtr(),
+                                           property, std::move(callback)));
 }
 
 bool PropertySet::SetAndBlock(PropertyBase* property) {
@@ -224,7 +218,7 @@ void PropertySet::OnSet(PropertyBase* property,
                         Response* response) {
   LOG_IF(WARNING, !response) << property->name() << ": Set: failed.";
   if (!callback.is_null())
-    callback.Run(response);
+    std::move(callback).Run(response);
 }
 
 bool PropertySet::UpdatePropertiesFromReader(MessageReader* reader) {
@@ -661,13 +655,13 @@ void Property<std::vector<std::pair<std::vector<uint8_t>, uint16_t>>>::
 }
 
 //
-// Property<std::unordered_map<std::string, std::vector<uint8_t>>>
+// Property<std::map<std::string, std::vector<uint8_t>>>
 // specialization.
 //
 
 template <>
-bool Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
-    PopValueFromReader(MessageReader* reader) {
+bool Property<std::map<std::string, std::vector<uint8_t>>>::PopValueFromReader(
+    MessageReader* reader) {
   MessageReader variant_reader(nullptr);
   MessageReader dict_reader(nullptr);
   if (!reader->PopVariant(&variant_reader) ||
@@ -681,15 +675,23 @@ bool Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
       return false;
 
     std::string key;
-    MessageReader value_varient_reader(nullptr);
-    if (!entry_reader.PopString(&key) ||
-        !entry_reader.PopVariant(&value_varient_reader))
+    if (!entry_reader.PopString(&key))
       return false;
 
     const uint8_t* bytes = nullptr;
     size_t length = 0;
-    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
-      return false;
+
+    if (entry_reader.GetDataType() == Message::VARIANT) {
+      // Make BlueZ happy since it wraps the array of bytes with a variant.
+      MessageReader value_variant_reader(nullptr);
+      if (!entry_reader.PopVariant(&value_variant_reader))
+        return false;
+      if (!value_variant_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    } else {
+      if (!entry_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    }
 
     value_[key].assign(bytes, bytes + length);
   }
@@ -697,7 +699,7 @@ bool Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
 }
 
 template <>
-void Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
+void Property<std::map<std::string, std::vector<uint8_t>>>::
     AppendSetValueToWriter(MessageWriter* writer) {
   MessageWriter variant_writer(nullptr);
   MessageWriter dict_writer(nullptr);
@@ -725,13 +727,13 @@ void Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
 }
 
 //
-// Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>
+// Property<std::map<uint16_t, std::vector<uint8_t>>>
 // specialization.
 //
 
 template <>
-bool Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
-    PopValueFromReader(MessageReader* reader) {
+bool Property<std::map<uint16_t, std::vector<uint8_t>>>::PopValueFromReader(
+    MessageReader* reader) {
   MessageReader variant_reader(nullptr);
   MessageReader dict_reader(nullptr);
   if (!reader->PopVariant(&variant_reader) ||
@@ -745,15 +747,23 @@ bool Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
       return false;
 
     uint16_t key;
-    MessageReader value_varient_reader(nullptr);
-    if (!entry_reader.PopUint16(&key) ||
-        !entry_reader.PopVariant(&value_varient_reader))
+    if (!entry_reader.PopUint16(&key))
       return false;
 
     const uint8_t* bytes = nullptr;
     size_t length = 0;
-    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
-      return false;
+
+    if (entry_reader.GetDataType() == Message::VARIANT) {
+      // Make BlueZ happy since it wraps the array of bytes with a variant.
+      MessageReader value_variant_reader(nullptr);
+      if (!entry_reader.PopVariant(&value_variant_reader))
+        return false;
+      if (!value_variant_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    } else {
+      if (!entry_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    }
 
     value_[key].assign(bytes, bytes + length);
   }
@@ -761,8 +771,8 @@ bool Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
 }
 
 template <>
-void Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
-    AppendSetValueToWriter(MessageWriter* writer) {
+void Property<std::map<uint16_t, std::vector<uint8_t>>>::AppendSetValueToWriter(
+    MessageWriter* writer) {
   MessageWriter variant_writer(nullptr);
   MessageWriter dict_writer(nullptr);
 
@@ -804,7 +814,7 @@ template class Property<std::vector<ObjectPath>>;
 template class Property<std::vector<uint8_t>>;
 template class Property<std::map<std::string, std::string>>;
 template class Property<std::vector<std::pair<std::vector<uint8_t>, uint16_t>>>;
-template class Property<std::unordered_map<std::string, std::vector<uint8_t>>>;
-template class Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>;
+template class Property<std::map<std::string, std::vector<uint8_t>>>;
+template class Property<std::map<uint16_t, std::vector<uint8_t>>>;
 
 }  // namespace dbus

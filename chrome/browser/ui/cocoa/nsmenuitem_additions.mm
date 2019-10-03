@@ -7,16 +7,60 @@
 #include <Carbon/Carbon.h>
 
 #include "base/logging.h"
+#include "base/mac/scoped_cftyperef.h"
+#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
+
+namespace {
+bool g_is_input_source_dvorak_qwerty = false;
+}  // namespace
+
+void SetIsInputSourceDvorakQwertyForTesting(bool is_dvorak_qwerty) {
+  g_is_input_source_dvorak_qwerty = is_dvorak_qwerty;
+}
+
+@interface KeyboardInputSourceListener : NSObject
+@end
+
+@implementation KeyboardInputSourceListener
+
+- (instancetype)init {
+  if (self = [super init]) {
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(inputSourceDidChange:)
+               name:NSTextInputContextKeyboardSelectionDidChangeNotification
+             object:nil];
+    [self updateInputSource];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [super dealloc];
+}
+
+- (void)updateInputSource {
+  base::ScopedCFTypeRef<TISInputSourceRef> inputSource(
+      TISCopyCurrentKeyboardInputSource());
+  NSString* inputSourceID = (NSString*)TISGetInputSourceProperty(
+      inputSource.get(), kTISPropertyInputSourceID);
+  g_is_input_source_dvorak_qwerty =
+      [inputSourceID isEqualToString:@"com.apple.keylayout.DVORAK-QWERTYCMD"];
+}
+
+- (void)inputSourceDidChange:(NSNotification*)notification {
+  [self updateInputSource];
+}
+
+@end
 
 @implementation NSMenuItem(ChromeAdditions)
 
 - (BOOL)cr_firesForKeyEvent:(NSEvent*)event {
   if (![self isEnabled])
     return NO;
-  return [self cr_firesForKeyEventIfEnabled:event];
-}
 
-- (BOOL)cr_firesForKeyEventIfEnabled:(NSEvent*)event {
   DCHECK([event type] == NSKeyDown);
   // In System Preferences->Keyboard->Keyboard Shortcuts, it is possible to add
   // arbitrary keyboard shortcuts to applications. It is not documented how this
@@ -33,6 +77,23 @@
   NSString* eventString = [event charactersIgnoringModifiers];
   NSUInteger eventModifiers =
       [event modifierFlags] & NSDeviceIndependentModifierFlagsMask;
+
+  // cmd-opt-a gives some weird char as characters and "a" as
+  // charactersWithoutModifiers with an US layout, but an "a" as characters and
+  // a weird char as "charactersWithoutModifiers" with a cyrillic layout. Oh,
+  // Cocoa! Instead of getting the current layout from Text Input Services,
+  // and then requesting the kTISPropertyUnicodeKeyLayoutData and looking in
+  // there, let's try a pragmatic hack.
+  if ([eventString length] == 0 ||
+      ([eventString characterAtIndex:0] > 0x7f &&
+       [[event characters] length] > 0 &&
+       [[event characters] characterAtIndex:0] <= 0x7f)) {
+    eventString = [event characters];
+
+    // Process the shift if necessary.
+    if (eventModifiers & NSShiftKeyMask)
+      eventString = [eventString uppercaseString];
+  }
 
   if ([eventString length] == 0 || [[self keyEquivalent] length] == 0)
     return NO;
@@ -66,32 +127,53 @@
     eventModifiers |= NSFunctionKeyMask;
   }
 
-  // cmd-opt-a gives some weird char as characters and "a" as
-  // charactersWithoutModifiers with an US layout, but an "a" as characters and
-  // a weird char as "charactersWithoutModifiers" with a cyrillic layout. Oh,
-  // Cocoa! Instead of getting the current layout from Text Input Services,
-  // and then requesting the kTISPropertyUnicodeKeyLayoutData and looking in
-  // there, let's try a pragmatic hack.
-  if ([eventString characterAtIndex:0] > 0x7f &&
-      [[event characters] length] > 0 &&
-      [[event characters] characterAtIndex:0] <= 0x7f)
-    eventString = [event characters];
+  // We intentionally leak this object.
+  static __attribute__((unused)) KeyboardInputSourceListener* listener =
+      [[KeyboardInputSourceListener alloc] init];
 
-  // When both |characters| and |charactersIgnoringModifiers| are ascii, we
-  // want to use |characters| if it's a character and
-  // |charactersIgnoringModifiers| else (on dvorak, cmd-shift-z should fire
-  // "cmd-:" instead of "cmd-;", but on dvorak-qwerty, cmd-shift-z should fire
-  // cmd-shift-z instead of cmd-:).
-  if ([eventString characterAtIndex:0] <= 0x7f &&
-      [[event characters] length] > 0 &&
-      [[event characters] characterAtIndex:0] <= 0x7f &&
-      isalpha([[event characters] characterAtIndex:0]))
-    eventString = [event characters];
+  // We typically want to compare [NSMenuItem keyEquivalent] against [NSEvent
+  // charactersIgnoringModifiers]. There is a special keyboard layout "Dvorak -
+  // QWERTY" which uses QWERTY-style shortcuts when the Command key is held
+  // down. In this case, we want to use the keycode of the event rather than
+  // looking at the characters.
+  if (g_is_input_source_dvorak_qwerty) {
+    ui::KeyboardCode windows_keycode =
+        ui::KeyboardCodeFromKeyCode(event.keyCode);
+    unichar shifted_character, character;
+    ui::MacKeyCodeForWindowsKeyCode(windows_keycode, event.modifierFlags,
+                                    &shifted_character, &character);
+    eventString = [NSString stringWithFormat:@"%C", shifted_character];
+  }
 
-  // Clear shift key for printable characters.
-  if ((eventModifiers & (NSNumericPadKeyMask | NSFunctionKeyMask)) == 0 &&
-      [[self keyEquivalent] characterAtIndex:0] != '\r')
-    eventModifiers &= ~NSShiftKeyMask;
+  // On all keyboards, treat cmd + <number key> as the equivalent numerical key.
+  // This is technically incorrect, since the actual character produced may not
+  // be a number key, but this causes Chrome to match platform behavior. For
+  // example, on the Czech keyboard, we want to interpret cmd + '+' as cmd +
+  // '1', even though the '1' character normally requires cmd + shift + '+'.
+  if (eventModifiers == NSCommandKeyMask) {
+    ui::KeyboardCode windows_keycode =
+        ui::KeyboardCodeFromKeyCode(event.keyCode);
+    if (windows_keycode >= ui::VKEY_0 && windows_keycode <= ui::VKEY_9) {
+      eventString =
+          [NSString stringWithFormat:@"%d", windows_keycode - ui::VKEY_0];
+    }
+  }
+
+  // [ctr + shift + tab] generates the "End of Medium" keyEquivalent rather than
+  // "Horizontal Tab". We still use "Horizontal Tab" in the main menu to match
+  // the behavior of Safari and Terminal. Thus, we need to explicitly check for
+  // this case.
+  if ((eventModifiers & NSShiftKeyMask) &&
+      [eventString isEqualToString:@"\x19"]) {
+    eventString = @"\x9";
+  } else {
+    // Clear shift key for printable characters, excluding tab.
+    if ((eventModifiers & (NSNumericPadKeyMask | NSFunctionKeyMask)) == 0 &&
+        [[self keyEquivalent] characterAtIndex:0] != '\r' &&
+        [[self keyEquivalent] characterAtIndex:0] != '\x9') {
+      eventModifiers &= ~NSShiftKeyMask;
+    }
+  }
 
   // Clear all non-interesting modifiers
   eventModifiers &= NSCommandKeyMask |

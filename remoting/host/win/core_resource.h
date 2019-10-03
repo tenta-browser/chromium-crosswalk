@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef REMOTING_HOST_WIN_CORE_RESOURCE_H_
+#define REMOTING_HOST_WIN_CORE_RESOURCE_H_
+
 //{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ generated include file.
 // Used by host_service.rc
@@ -20,6 +23,7 @@
 #define IDS_SHARE_CONFIRM_DIALOG_MESSAGE_WITH_USERNAME 115
 #define IDS_SHARE_CONFIRM_DIALOG_CONFIRM 116
 #define IDS_SHARE_CONFIRM_DIALOG_DECLINE 117
+#define IDS_DOWNLOAD_FILE_DIALOG_TITLE   118
 
 #define IDC_DISCONNECT                  1001
 #define IDC_DISCONNECT_SHARINGWITH      1002
@@ -38,3 +42,5 @@
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif
+
+#endif  // REMOTING_HOST_WIN_CORE_RESOURCE_H_

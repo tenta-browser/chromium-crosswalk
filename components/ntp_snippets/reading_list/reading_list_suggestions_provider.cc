@@ -5,10 +5,10 @@
 #include "components/ntp_snippets/reading_list/reading_list_suggestions_provider.h"
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -29,7 +29,7 @@ const int kMaxEntries = 3;
 bool CompareEntries(const ReadingListEntry* lhs, const ReadingListEntry* rhs) {
   return lhs->UpdateTime() > rhs->UpdateTime();
 }
-}
+}  // namespace
 
 ReadingListSuggestionsProvider::ReadingListSuggestionsProvider(
     ContentSuggestionsProvider::Observer* observer,
@@ -47,7 +47,7 @@ ReadingListSuggestionsProvider::ReadingListSuggestionsProvider(
   scoped_observer_.Add(reading_list_model_);
 }
 
-ReadingListSuggestionsProvider::~ReadingListSuggestionsProvider(){};
+ReadingListSuggestionsProvider::~ReadingListSuggestionsProvider() {}
 
 CategoryStatus ReadingListSuggestionsProvider::GetCategoryStatus(
     Category category) {
@@ -84,6 +84,13 @@ void ReadingListSuggestionsProvider::FetchSuggestionImage(
     ImageFetchedCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(std::move(callback), gfx::Image()));
+}
+
+void ReadingListSuggestionsProvider::FetchSuggestionImageData(
+    const ContentSuggestion::ID& suggestion_id,
+    ImageDataFetchedCallback callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), std::string()));
 }
 
 void ReadingListSuggestionsProvider::Fetch(
@@ -227,7 +234,7 @@ ContentSuggestion ReadingListSuggestionsProvider::ConvertEntry(
   suggestion.set_publish_date(
       base::Time::FromDoubleT(entry_time / base::Time::kMicrosecondsPerSecond));
 
-  auto extra = base::MakeUnique<ReadingListSuggestionExtra>();
+  auto extra = std::make_unique<ReadingListSuggestionExtra>();
   extra->favicon_page_url =
       entry->DistilledURL().is_valid() ? entry->DistilledURL() : entry->URL();
   suggestion.set_reading_list_suggestion_extra(std::move(extra));

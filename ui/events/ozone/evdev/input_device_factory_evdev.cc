@@ -10,6 +10,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/scoped_file.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -155,6 +156,12 @@ std::unique_ptr<EventConverterEvdev> OpenInputDevice(
   return CreateConverter(params, std::move(fd), devinfo);
 }
 
+bool IsUncategorizedDevice(const EventConverterEvdev& converter) {
+  return !converter.HasTouchscreen() && !converter.HasKeyboard() &&
+         !converter.HasMouse() && !converter.HasTouchpad() &&
+         !converter.HasGamepad();
+}
+
 }  // namespace
 
 InputDeviceFactoryEvdev::InputDeviceFactoryEvdev(
@@ -188,8 +195,8 @@ void InputDeviceFactoryEvdev::AddInputDevice(int id,
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&InputDeviceFactoryEvdev::AttachInputDevice,
-                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&converter)));
+      base::BindOnce(&InputDeviceFactoryEvdev::AttachInputDevice,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(converter)));
 
   ++pending_device_changes_;
 }
@@ -219,8 +226,8 @@ void InputDeviceFactoryEvdev::AttachInputDevice(
     if (converter->type() == InputDeviceType::INPUT_DEVICE_INTERNAL &&
         converter->HasPen()) {
       converter->SetPalmSuppressionCallback(
-          base::Bind(&InputDeviceFactoryEvdev::EnablePalmSuppression,
-                     base::Unretained(this)));
+          base::BindRepeating(&InputDeviceFactoryEvdev::EnablePalmSuppression,
+                              base::Unretained(this)));
     }
 
     // Add initialized device to map.
@@ -285,6 +292,14 @@ void InputDeviceFactoryEvdev::GetTouchEventLog(
                     std::move(reply));
 #else
   std::move(reply).Run(std::vector<base::FilePath>());
+#endif
+}
+
+void InputDeviceFactoryEvdev::GetGesturePropertiesService(
+    ozone::mojom::GesturePropertiesServiceRequest request) {
+#if defined(USE_EVDEV_GESTURES)
+  gesture_properties_service_ = std::make_unique<GesturePropertiesService>(
+      gesture_property_provider_.get(), std::move(request));
 #endif
 }
 
@@ -390,6 +405,9 @@ void InputDeviceFactoryEvdev::UpdateDirtyFlags(
 
   if (converter->HasGamepad())
     gamepad_list_dirty_ = true;
+
+  if (IsUncategorizedDevice(*converter))
+    uncategorized_list_dirty_ = true;
 }
 
 void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
@@ -405,6 +423,8 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
     NotifyTouchpadDevicesUpdated();
   if (gamepad_list_dirty_)
     NotifyGamepadDevicesUpdated();
+  if (uncategorized_list_dirty_)
+    NotifyUncategorizedDevicesUpdated();
   if (!startup_devices_opened_) {
     dispatcher_->DispatchDeviceListsComplete();
     startup_devices_opened_ = true;
@@ -414,6 +434,7 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
   mouse_list_dirty_ = false;
   touchpad_list_dirty_ = false;
   gamepad_list_dirty_ = false;
+  uncategorized_list_dirty_ = false;
 }
 
 void InputDeviceFactoryEvdev::NotifyTouchscreensUpdated() {
@@ -463,14 +484,25 @@ void InputDeviceFactoryEvdev::NotifyTouchpadDevicesUpdated() {
 }
 
 void InputDeviceFactoryEvdev::NotifyGamepadDevicesUpdated() {
-  std::vector<InputDevice> gamepads;
+  std::vector<GamepadDevice> gamepads;
   for (auto it = converters_.begin(); it != converters_.end(); ++it) {
     if (it->second->HasGamepad()) {
-      gamepads.push_back(it->second->input_device());
+      gamepads.emplace_back(it->second->input_device(),
+                            it->second->GetGamepadAxes());
     }
   }
 
   dispatcher_->DispatchGamepadDevicesUpdated(gamepads);
+}
+
+void InputDeviceFactoryEvdev::NotifyUncategorizedDevicesUpdated() {
+  std::vector<InputDevice> uncategorized_devices;
+  for (auto it = converters_.begin(); it != converters_.end(); ++it) {
+    if (IsUncategorizedDevice(*(it->second)))
+      uncategorized_devices.push_back(it->second->input_device());
+  }
+
+  dispatcher_->DispatchUncategorizedDevicesUpdated(uncategorized_devices);
 }
 
 void InputDeviceFactoryEvdev::SetIntPropertyForOneType(
@@ -508,7 +540,19 @@ void InputDeviceFactoryEvdev::EnablePalmSuppression(bool enabled) {
   if (enabled == palm_suppression_enabled_)
     return;
   palm_suppression_enabled_ = enabled;
-  ApplyInputDeviceSettings();
+
+  // This function can be called while disabling pen devices, so don't disable
+  // inline here.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&InputDeviceFactoryEvdev::EnableDevices,
+                                weak_ptr_factory_.GetWeakPtr()));
+}
+
+void InputDeviceFactoryEvdev::EnableDevices() {
+  // TODO(spang): Fix the UI to not dismiss menus when we use
+  // ApplyInputDeviceSettings() instead of this function.
+  for (const auto& it : converters_)
+    it.second->SetEnabled(IsDeviceEnabled(it.second.get()));
 }
 
 }  // namespace ui

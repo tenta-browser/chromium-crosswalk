@@ -4,6 +4,7 @@
 
 #include "content/browser/service_worker/service_worker_context_watcher.h"
 
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -11,30 +12,30 @@
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
 
 namespace {
 
 void DidRegisterServiceWorker(int64_t* registration_id_out,
-                              ServiceWorkerStatusCode status,
+                              blink::ServiceWorkerStatusCode status,
                               const std::string& status_message,
                               int64_t registration_id) {
   ASSERT_TRUE(registration_id_out);
-  EXPECT_EQ(SERVICE_WORKER_OK, status);
+  EXPECT_EQ(blink::ServiceWorkerStatusCode::kOk, status);
   *registration_id_out = registration_id;
 }
 
-void DidUnregisterServiceWorker(ServiceWorkerStatusCode* status_out,
-                                ServiceWorkerStatusCode status) {
+void DidUnregisterServiceWorker(blink::ServiceWorkerStatusCode* status_out,
+                                blink::ServiceWorkerStatusCode status) {
   ASSERT_TRUE(status_out);
   *status_out = status;
 }
 
 class WatcherCallback {
  public:
-  WatcherCallback() : weak_factory_(this) {}
+  WatcherCallback() {}
 
   ~WatcherCallback() {}
 
@@ -43,12 +44,12 @@ class WatcherCallback {
     scoped_refptr<ServiceWorkerContextWatcher> watcher =
         base::MakeRefCounted<ServiceWorkerContextWatcher>(
             context,
-            base::Bind(&WatcherCallback::OnRegistrationUpdated,
-                       weak_factory_.GetWeakPtr()),
-            base::Bind(&WatcherCallback::OnVersionUpdated,
-                       weak_factory_.GetWeakPtr()),
-            base::Bind(&WatcherCallback::OnErrorReported,
-                       weak_factory_.GetWeakPtr()));
+            base::BindRepeating(&WatcherCallback::OnRegistrationUpdated,
+                                weak_factory_.GetWeakPtr()),
+            base::BindRepeating(&WatcherCallback::OnVersionUpdated,
+                                weak_factory_.GetWeakPtr()),
+            base::BindRepeating(&WatcherCallback::OnErrorReported,
+                                weak_factory_.GetWeakPtr()));
     watcher->Start();
     return watcher;
   }
@@ -70,7 +71,7 @@ class WatcherCallback {
     return errors_;
   }
 
-  int callback_count() const { return callback_count_; };
+  int callback_count() const { return callback_count_; }
 
  private:
   void OnRegistrationUpdated(
@@ -113,7 +114,7 @@ class WatcherCallback {
 
   int callback_count_ = 0;
 
-  base::WeakPtrFactory<WatcherCallback> weak_factory_;
+  base::WeakPtrFactory<WatcherCallback> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WatcherCallback);
 };
@@ -141,19 +142,21 @@ class ServiceWorkerContextWatcherTest : public testing::Test {
     return helper_->context_wrapper();
   }
   int64_t RegisterServiceWorker(const GURL& scope, const GURL& script_url) {
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = scope;
     int64_t registration_id = blink::mojom::kInvalidServiceWorkerRegistrationId;
     context()->RegisterServiceWorker(
-        script_url, blink::mojom::ServiceWorkerRegistrationOptions(scope),
-        nullptr /* provider_host */,
-        base::Bind(&DidRegisterServiceWorker, &registration_id));
+        script_url, options,
+        base::BindOnce(&DidRegisterServiceWorker, &registration_id));
     base::RunLoop().RunUntilIdle();
     return registration_id;
   }
 
-  ServiceWorkerStatusCode UnregisterServiceWorker(const GURL& scope) {
-    ServiceWorkerStatusCode status = SERVICE_WORKER_ERROR_FAILED;
+  blink::ServiceWorkerStatusCode UnregisterServiceWorker(const GURL& scope) {
+    blink::ServiceWorkerStatusCode status =
+        blink::ServiceWorkerStatusCode::kErrorFailed;
     context()->UnregisterServiceWorker(
-        scope, base::Bind(&DidUnregisterServiceWorker, &status));
+        scope, base::BindOnce(&DidUnregisterServiceWorker, &status));
     base::RunLoop().RunUntilIdle();
     return status;
   }
@@ -162,8 +165,7 @@ class ServiceWorkerContextWatcherTest : public testing::Test {
       scoped_refptr<ServiceWorkerContextWatcher> watcher,
       int64_t version_id,
       const ServiceWorkerContextCoreObserver::ErrorInfo& error_info) {
-    watcher->OnErrorReported(version_id, 0 /* process_id */, 0 /* thread_id */,
-                             error_info);
+    watcher->OnErrorReported(version_id, error_info);
   }
 
  private:
@@ -211,9 +213,9 @@ TEST_F(ServiceWorkerContextWatcherTest, StoredServiceWorkers) {
 
   ASSERT_EQ(2u, watcher_callback.registrations().size());
   EXPECT_EQ(scope_1,
-            watcher_callback.registrations().at(registration_id_1).pattern);
+            watcher_callback.registrations().at(registration_id_1).scope);
   EXPECT_EQ(scope_2,
-            watcher_callback.registrations().at(registration_id_2).pattern);
+            watcher_callback.registrations().at(registration_id_2).scope);
   ASSERT_EQ(2u, watcher_callback.versions().size());
   EXPECT_EQ(script_1, watcher_callback.versions()
                           .at(registration_id_1)
@@ -242,7 +244,7 @@ TEST_F(ServiceWorkerContextWatcherTest, RegisteredServiceWorker) {
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1u, watcher_callback.registrations().size());
   EXPECT_EQ(scope_1,
-            watcher_callback.registrations().at(registration_id_1).pattern);
+            watcher_callback.registrations().at(registration_id_1).scope);
   ASSERT_EQ(1u, watcher_callback.versions().size());
   EXPECT_EQ(script_1, watcher_callback.versions()
                           .at(registration_id_1)
@@ -255,9 +257,9 @@ TEST_F(ServiceWorkerContextWatcherTest, RegisteredServiceWorker) {
   int64_t registration_id_2 = RegisterServiceWorker(scope_2, script_2);
   ASSERT_EQ(2u, watcher_callback.registrations().size());
   EXPECT_EQ(scope_1,
-            watcher_callback.registrations().at(registration_id_1).pattern);
+            watcher_callback.registrations().at(registration_id_1).scope);
   EXPECT_EQ(scope_2,
-            watcher_callback.registrations().at(registration_id_2).pattern);
+            watcher_callback.registrations().at(registration_id_2).scope);
   ASSERT_EQ(2u, watcher_callback.versions().size());
   EXPECT_EQ(script_1, watcher_callback.versions()
                           .at(registration_id_1)
@@ -291,16 +293,17 @@ TEST_F(ServiceWorkerContextWatcherTest, UnregisteredServiceWorker) {
 
   ASSERT_EQ(2u, watcher_callback.registrations().size());
   EXPECT_EQ(scope_1,
-            watcher_callback.registrations().at(registration_id_1).pattern);
+            watcher_callback.registrations().at(registration_id_1).scope);
   EXPECT_EQ(scope_2,
-            watcher_callback.registrations().at(registration_id_2).pattern);
+            watcher_callback.registrations().at(registration_id_2).scope);
   ASSERT_EQ(2u, watcher_callback.versions().size());
 
-  ASSERT_EQ(SERVICE_WORKER_OK, UnregisterServiceWorker(scope_1));
+  ASSERT_EQ(blink::ServiceWorkerStatusCode::kOk,
+            UnregisterServiceWorker(scope_1));
 
   ASSERT_EQ(1u, watcher_callback.registrations().size());
   EXPECT_EQ(scope_2,
-            watcher_callback.registrations().at(registration_id_2).pattern);
+            watcher_callback.registrations().at(registration_id_2).scope);
 
   watcher->Stop();
   base::RunLoop().RunUntilIdle();
@@ -317,8 +320,7 @@ TEST_F(ServiceWorkerContextWatcherTest, ErrorReport) {
       watcher_callback.StartWatch(context_wrapper());
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1u, watcher_callback.registrations().size());
-  EXPECT_EQ(scope,
-            watcher_callback.registrations().at(registration_id).pattern);
+  EXPECT_EQ(scope, watcher_callback.registrations().at(registration_id).scope);
   ASSERT_EQ(1u, watcher_callback.versions().size());
   EXPECT_EQ(script, watcher_callback.versions()
                         .at(registration_id)

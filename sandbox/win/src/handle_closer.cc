@@ -104,22 +104,10 @@ bool HandleCloser::InitializeTargetHandles(TargetProcess* target) {
   if (!SetupHandleList(local_buffer.get(), bytes_needed))
     return false;
 
-  HANDLE child = target->Process();
-
-  // Allocate memory in the target process without specifying the address
-  void* remote_data = ::VirtualAllocEx(child, nullptr, bytes_needed, MEM_COMMIT,
-                                       PAGE_READWRITE);
-  if (!remote_data)
+  void* remote_data;
+  if (!CopyToChildMemory(target->Process(), local_buffer.get(), bytes_needed,
+                         &remote_data))
     return false;
-
-  // Copy the handle buffer over.
-  SIZE_T bytes_written;
-  bool result = ::WriteProcessMemory(child, remote_data, local_buffer.get(),
-                                     bytes_needed, &bytes_written);
-  if (!result || bytes_written != bytes_needed) {
-    ::VirtualFreeEx(child, remote_data, 0, MEM_RELEASE);
-    return false;
-  }
 
   g_handles_to_close = reinterpret_cast<HandleCloserInfo*>(remote_data);
 
@@ -147,7 +135,7 @@ bool HandleCloser::SetupHandleList(void* buffer, size_t buffer_bytes) {
     output = &list_entry->handle_type[0];
 
     // Copy the typename and set the offset and count.
-    i->first._Copy_s(output, i->first.size(), i->first.size());
+    i->first.copy(output, i->first.size());
     *(output += i->first.size()) = L'\0';
     output++;
     list_entry->offset_to_names =

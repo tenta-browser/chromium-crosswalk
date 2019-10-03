@@ -15,7 +15,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "ui/events/ozone/evdev/libgestures_glue/gesture_property_provider.h"
 
 namespace ui {
@@ -111,7 +111,7 @@ std::string GenerateEventLogName(const base::FilePath& out_dir,
                                  const std::string& prefix,
                                  const std::string& now,
                                  int id) {
-  return out_dir.value() + "/" + prefix + now + "." + base::IntToString(id);
+  return out_dir.value() + "/" + prefix + now + "." + base::NumberToString(id);
 }
 // Name event logs in a way that is compatible with existing toolchain.
 std::string GenerateEventLogName(GesturePropertyProvider* provider,
@@ -119,7 +119,7 @@ std::string GenerateEventLogName(GesturePropertyProvider* provider,
                                  const std::string& prefix,
                                  const std::string& now,
                                  int id) {
-  return out_dir.value() + "/" + prefix + now + "." + base::IntToString(id) +
+  return out_dir.value() + "/" + prefix + now + "." + base::NumberToString(id) +
          "." + GetCanonicalDeviceName(provider->GetDeviceNameById(id));
 }
 
@@ -235,9 +235,10 @@ void DumpTouchEventLog(
   // Compress touchpad/mouse logs asynchronously
   base::PostTaskWithTraitsAndReply(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&CompressDumpedLog, base::Passed(&log_paths_to_be_compressed)),
+      base::BindOnce(&CompressDumpedLog,
+                     base::Passed(&log_paths_to_be_compressed)),
       base::BindOnce(std::move(reply), log_paths));
 }
 

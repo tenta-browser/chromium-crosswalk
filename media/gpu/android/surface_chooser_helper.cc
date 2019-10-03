@@ -4,7 +4,8 @@
 
 #include "media/gpu/android/surface_chooser_helper.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "media/gpu/android/android_video_surface_chooser.h"
@@ -32,18 +33,20 @@ SurfaceChooserHelper::SurfaceChooserHelper(
     std::unique_ptr<AndroidVideoSurfaceChooser> surface_chooser,
     bool is_overlay_required,
     bool promote_aggressively,
+    bool always_use_texture_owner,
     std::unique_ptr<PromotionHintAggregator> promotion_hint_aggregator,
-    std::unique_ptr<base::TickClock> tick_clock)
+    const base::TickClock* tick_clock)
     : surface_chooser_(std::move(surface_chooser)),
       is_overlay_required_(is_overlay_required),
       promotion_hint_aggregator_(
           promotion_hint_aggregator
               ? std::move(promotion_hint_aggregator)
-              : base::MakeUnique<PromotionHintAggregatorImpl>()),
-      tick_clock_(tick_clock ? std::move(tick_clock)
-                             : base::MakeUnique<base::DefaultTickClock>()) {
+              : std::make_unique<PromotionHintAggregatorImpl>()),
+      tick_clock_(tick_clock ? tick_clock
+                             : base::DefaultTickClock::GetInstance()) {
   surface_chooser_state_.is_required = is_overlay_required_;
   surface_chooser_state_.promote_aggressively = promote_aggressively;
+  surface_chooser_state_.always_use_texture_owner = always_use_texture_owner;
 }
 
 SurfaceChooserHelper::~SurfaceChooserHelper() {}
@@ -86,6 +89,14 @@ void SurfaceChooserHelper::SetIsFullscreen(bool is_fullscreen) {
   }
 
   surface_chooser_state_.is_fullscreen = is_fullscreen;
+}
+
+void SurfaceChooserHelper::SetVideoRotation(VideoRotation video_rotation) {
+  surface_chooser_state_.video_rotation = video_rotation;
+}
+
+void SurfaceChooserHelper::SetIsPersistentVideo(bool is_persistent_video) {
+  surface_chooser_state_.is_persistent_video = is_persistent_video;
 }
 
 void SurfaceChooserHelper::UpdateChooserState(
@@ -142,8 +153,8 @@ SurfaceChooserHelper::ComputeFrameInformation(bool is_using_overlay) {
   if (!is_using_overlay) {
     // Not an overlay.
     return surface_chooser_state_.is_secure
-               ? FrameInformation::SURFACETEXTURE_L3
-               : FrameInformation::SURFACETEXTURE_INSECURE;
+               ? FrameInformation::NON_OVERLAY_L3
+               : FrameInformation::NON_OVERLAY_INSECURE;
   }
 
   // Overlay.

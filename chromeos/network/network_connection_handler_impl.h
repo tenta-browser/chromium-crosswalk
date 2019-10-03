@@ -5,20 +5,20 @@
 #ifndef CHROMEOS_NETWORK_NETWORK_CONNECTION_HANDLER_IMPL_H_
 #define CHROMEOS_NETWORK_NETWORK_CONNECTION_HANDLER_IMPL_H_
 
-#include "chromeos/cert_loader.h"
-#include "chromeos/chromeos_export.h"
+#include "base/component_export.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
+#include "chromeos/network/network_cert_loader.h"
 #include "chromeos/network/network_connection_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
 
 namespace chromeos {
 
 // Implementation of NetworkConnectionHandler.
-class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnectionHandlerImpl
     : public NetworkConnectionHandler,
       public LoginState::Observer,
-      public CertLoader::Observer,
+      public NetworkCertLoader::Observer,
       public NetworkStateHandlerObserver,
       public base::SupportsWeakPtr<NetworkConnectionHandlerImpl> {
  public:
@@ -29,13 +29,12 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
   void ConnectToNetwork(const std::string& service_path,
                         const base::Closure& success_callback,
                         const network_handler::ErrorCallback& error_callback,
-                        bool check_error_state) override;
+                        bool check_error_state,
+                        ConnectCallbackMode mode) override;
   void DisconnectNetwork(
       const std::string& service_path,
       const base::Closure& success_callback,
       const network_handler::ErrorCallback& error_callback) override;
-  bool HasConnectingNetwork(const std::string& service_path) override;
-  bool HasPendingConnectRequest() override;
 
   // NetworkStateHandlerObserver
   void NetworkListChanged() override;
@@ -44,9 +43,8 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
   // LoginState::Observer
   void LoggedInStateChanged() override;
 
-  // CertLoader::Observer
-  void OnCertificatesLoaded(
-      const net::ScopedCERTCertificateList& cert_list) override;
+  // NetworkCertLoader::Observer
+  void OnCertificatesLoaded() override;
 
  protected:
   void Init(NetworkStateHandler* network_state_handler,
@@ -56,7 +54,8 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
 
  private:
   struct ConnectRequest {
-    ConnectRequest(const std::string& service_path,
+    ConnectRequest(ConnectCallbackMode mode,
+                   const std::string& service_path,
                    const std::string& profile_path,
                    const base::Closure& success,
                    const network_handler::ErrorCallback& error);
@@ -69,12 +68,15 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
       CONNECT_CONNECTING = 2
     };
 
+    ConnectCallbackMode mode;
     std::string service_path;
     std::string profile_path;
     ConnectState connect_state;
     base::Closure success_callback;
     network_handler::ErrorCallback error_callback;
   };
+
+  bool HasConnectingNetwork(const std::string& service_path);
 
   ConnectRequest* GetPendingRequest(const std::string& service_path);
 
@@ -86,10 +88,6 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
   void VerifyConfiguredAndConnect(bool check_error_state,
                                   const std::string& service_path,
                                   const base::DictionaryValue& properties);
-
-  bool IsNetworkProhibitedByPolicy(const std::string& type,
-                                   const std::string& guid,
-                                   const std::string& profile_path);
 
   // Queues a connect request until certificates have loaded.
   void QueueConnectRequest(const std::string& service_path);
@@ -123,6 +121,7 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
   void CheckPendingRequest(const std::string service_path);
 
   void CheckAllPendingRequests();
+  void ClearPendingRequest(const std::string& service_path);
 
   // Look up the ConnectRequest for |service_path| and call
   // InvokeConnectErrorCallback.
@@ -140,7 +139,7 @@ class CHROMEOS_EXPORT NetworkConnectionHandlerImpl
                                     const base::Closure& success_callback);
 
   // Local references to the associated handler instances.
-  CertLoader* cert_loader_;
+  NetworkCertLoader* network_cert_loader_;
   NetworkStateHandler* network_state_handler_;
   NetworkConfigurationHandler* configuration_handler_;
   ManagedNetworkConfigurationHandler* managed_configuration_handler_;

@@ -11,9 +11,7 @@ MockIMECandidateWindowHandler::MockIMECandidateWindowHandler()
       update_lookup_table_call_count_(0) {
 }
 
-MockIMECandidateWindowHandler::~MockIMECandidateWindowHandler() {
-
-}
+MockIMECandidateWindowHandler::~MockIMECandidateWindowHandler() = default;
 
 void MockIMECandidateWindowHandler::UpdateLookupTable(
     const ui::CandidateWindow& table,
@@ -32,6 +30,10 @@ void MockIMECandidateWindowHandler::SetCursorBounds(
     const gfx::Rect& cursor_bounds,
     const gfx::Rect& composition_head) {
   ++set_cursor_bounds_call_count_;
+}
+
+gfx::Rect MockIMECandidateWindowHandler::GetCursorBounds() const {
+  return gfx::Rect(1, 1, 1, 1);
 }
 
 void MockIMECandidateWindowHandler::Reset() {

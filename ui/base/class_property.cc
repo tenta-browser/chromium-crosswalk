@@ -20,8 +20,6 @@ int64_t PropertyHandler::SetPropertyInternal(const void* key,
                                              PropertyDeallocator deallocator,
                                              int64_t value,
                                              int64_t default_value) {
-  // This code may be called before |port_| has been created.
-  std::unique_ptr<PropertyData> data = BeforePropertyChange(key);
   int64_t old = GetPropertyInternal(key, default_value);
   if (value == default_value) {
     prop_map_.erase(key);
@@ -32,13 +30,8 @@ int64_t PropertyHandler::SetPropertyInternal(const void* key,
     prop_value.deallocator = deallocator;
     prop_map_[key] = prop_value;
   }
-  AfterPropertyChange(key, old, std::move(data));
+  AfterPropertyChange(key, old);
   return old;
-}
-
-std::unique_ptr<PropertyData> PropertyHandler::BeforePropertyChange(
-    const void* key) {
-  return nullptr;
 }
 
 void PropertyHandler::ClearProperties() {
@@ -54,7 +47,7 @@ void PropertyHandler::ClearProperties() {
 
 int64_t PropertyHandler::GetPropertyInternal(const void* key,
                                              int64_t default_value) const {
-  std::map<const void*, Value>::const_iterator iter = prop_map_.find(key);
+  auto iter = prop_map_.find(key);
   if (iter == prop_map_.end())
     return default_value;
   return iter->second.value;
@@ -67,4 +60,4 @@ std::set<const void*> PropertyHandler::GetAllPropertyKeys() const {
   return keys;
 }
 
-} // namespace ui
+}  // namespace ui

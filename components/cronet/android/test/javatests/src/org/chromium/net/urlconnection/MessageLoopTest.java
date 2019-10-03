@@ -9,16 +9,17 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,7 +29,7 @@ import java.util.concurrent.ThreadFactory;
 /**
  * Tests the MessageLoop implementation.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class MessageLoopTest {
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
@@ -37,12 +38,13 @@ public class MessageLoopTest {
     private final ExecutorService mExecutorService =
             Executors.newSingleThreadExecutor(new ExecutorThreadFactory());
     private class ExecutorThreadFactory implements ThreadFactory {
+        @Override
         public Thread newThread(Runnable r) {
             mTestThread = new Thread(r);
             return mTestThread;
         }
     }
-    private boolean mFailed = false;
+    private boolean mFailed;
 
     @Test
     @SmallTest
@@ -77,7 +79,7 @@ public class MessageLoopTest {
                     loop.loop();
                     fail();
                 } catch (Exception e) {
-                    if (!(e instanceof IllegalStateException)) {
+                    if (!(e instanceof InterruptedIOException)) {
                         fail();
                     }
                 }
@@ -126,7 +128,7 @@ public class MessageLoopTest {
                     loop.loop();
                     fail();
                 } catch (Exception e) {
-                    if (!(e instanceof IllegalStateException)) {
+                    if (!(e instanceof NullPointerException)) {
                         fail();
                     }
                 }

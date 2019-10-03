@@ -5,6 +5,7 @@
 #include "ash/shelf/overflow_bubble_view_test_api.h"
 
 #include "ash/shelf/overflow_bubble_view.h"
+#include "ash/shelf/shelf_view.h"
 
 namespace ash {
 
@@ -13,15 +14,6 @@ OverflowBubbleViewTestAPI::OverflowBubbleViewTestAPI(
     : bubble_view_(bubble_view) {}
 
 OverflowBubbleViewTestAPI::~OverflowBubbleViewTestAPI() = default;
-
-gfx::Size OverflowBubbleViewTestAPI::GetContentsSize() {
-  return bubble_view_->shelf_view_->GetPreferredSize();
-}
-
-void OverflowBubbleViewTestAPI::ScrollByXOffset(int x_offset) {
-  bubble_view_->ScrollByXOffset(x_offset);
-  bubble_view_->Layout();
-}
 
 views::BubbleFrameView* OverflowBubbleViewTestAPI::GetBubbleFrameView() {
   return bubble_view_->GetBubbleFrameView();

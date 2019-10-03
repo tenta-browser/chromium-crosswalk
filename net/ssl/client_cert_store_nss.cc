@@ -17,9 +17,10 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "crypto/nss_crypto_module_delegate.h"
+#include "crypto/nss_util.h"
 #include "net/cert/scoped_nss_types.h"
 #include "net/cert/x509_util_nss.h"
 #include "net/ssl/ssl_cert_request_info.h"
@@ -44,17 +45,17 @@ class ClientCertIdentityNSS : public ClientCertIdentity {
         password_delegate_(std::move(password_delegate)) {}
   ~ClientCertIdentityNSS() override = default;
 
-  void AcquirePrivateKey(
-      const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
-          private_key_callback) override {
+  void AcquirePrivateKey(base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
+                             private_key_callback) override {
     // Caller is responsible for keeping the ClientCertIdentity alive until
     // the |private_key_callback| is run, so it's safe to use Unretained here.
     base::PostTaskWithTraitsAndReplyWithResult(
         FROM_HERE,
         {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-        base::Bind(&FetchClientCertPrivateKey, base::Unretained(certificate()),
-                   cert_certificate_.get(), password_delegate_),
-        private_key_callback);
+        base::BindOnce(&FetchClientCertPrivateKey,
+                       base::Unretained(certificate()), cert_certificate_.get(),
+                       password_delegate_),
+        std::move(private_key_callback));
   }
 
  private:
@@ -71,21 +72,20 @@ ClientCertStoreNSS::ClientCertStoreNSS(
 
 ClientCertStoreNSS::~ClientCertStoreNSS() = default;
 
-void ClientCertStoreNSS::GetClientCerts(
-    const SSLCertRequestInfo& request,
-    const ClientCertListCallback& callback) {
+void ClientCertStoreNSS::GetClientCerts(const SSLCertRequestInfo& request,
+                                        ClientCertListCallback callback) {
   scoped_refptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate;
   if (!password_delegate_factory_.is_null())
     password_delegate = password_delegate_factory_.Run(request.host_and_port);
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&ClientCertStoreNSS::GetAndFilterCertsOnWorkerThread,
-                 // Caller is responsible for keeping the ClientCertStore
-                 // alive until the callback is run.
-                 base::Unretained(this), std::move(password_delegate),
-                 base::Unretained(&request)),
-      callback);
+      base::BindOnce(&ClientCertStoreNSS::GetAndFilterCertsOnWorkerThread,
+                     // Caller is responsible for keeping the ClientCertStore
+                     // alive until the callback is run.
+                     base::Unretained(this), std::move(password_delegate),
+                     base::Unretained(&request)),
+      std::move(callback));
 }
 
 // static
@@ -115,25 +115,22 @@ void ClientCertStoreNSS::FilterCertsOnWorkerThread(
       continue;
     }
 
-    X509Certificate::OSCertHandles intermediates_raw;
-    intermediates_raw.reserve(nss_intermediates.size());
     std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
     intermediates.reserve(nss_intermediates.size());
     for (const ScopedCERTCertificate& nss_intermediate : nss_intermediates) {
       bssl::UniquePtr<CRYPTO_BUFFER> intermediate_cert_handle(
-          X509Certificate::CreateOSCertHandleFromBytes(
+          X509Certificate::CreateCertBufferFromBytes(
               reinterpret_cast<const char*>(nss_intermediate->derCert.data),
               nss_intermediate->derCert.len));
       if (!intermediate_cert_handle)
         break;
-      intermediates_raw.push_back(intermediate_cert_handle.get());
       intermediates.push_back(std::move(intermediate_cert_handle));
     }
 
     // Retain a copy of the intermediates. Some deployments expect the client to
     // supply intermediates out of the local store. See
     // https://crbug.com/548631.
-    (*examine_iter)->SetIntermediates(intermediates_raw);
+    (*examine_iter)->SetIntermediates(std::move(intermediates));
 
     if (examine_iter == keep_iter)
       ++keep_iter;
@@ -155,7 +152,8 @@ ClientCertIdentityList ClientCertStoreNSS::GetAndFilterCertsOnWorkerThread(
   // hooks (such as smart card UI). To ensure threads are not starved or
   // deadlocked, the base::ScopedBlockingCall below increments the thread pool
   // capacity if this method takes too much time to run.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   ClientCertIdentityList selected_identities;
   GetPlatformCertsOnWorkerThread(std::move(password_delegate), CertFilter(),
                                  &selected_identities);
@@ -169,9 +167,11 @@ void ClientCertStoreNSS::GetPlatformCertsOnWorkerThread(
         password_delegate,
     const CertFilter& cert_filter,
     ClientCertIdentityList* identities) {
-  CERTCertList* found_certs =
-      CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(), certUsageSSLClient,
-                                PR_FALSE, PR_FALSE, password_delegate.get());
+  crypto::EnsureNSSInit();
+
+  CERTCertList* found_certs = CERT_FindUserCertsByUsage(
+      CERT_GetDefaultCertDB(), certUsageSSLClient, PR_FALSE, PR_FALSE,
+      password_delegate ? password_delegate->wincx() : nullptr);
   if (!found_certs) {
     DVLOG(2) << "No client certs found.";
     return;

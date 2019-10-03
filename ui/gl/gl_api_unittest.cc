@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_gl_api_implementation.h"
@@ -60,7 +60,7 @@ class GLApiTest : public testing::Test {
 
     std::string extensions_string =
         GetGLExtensionsFromCurrentContext(api_.get());
-    ExtensionSet extension_set = MakeExtensionSet(extensions_string);
+    gfx::ExtensionSet extension_set = gfx::MakeExtensionSet(extensions_string);
 
     auto version = std::make_unique<GLVersionInfo>(
         reinterpret_cast<const char*>(api_->glGetStringFn(GL_VERSION)),
@@ -152,7 +152,7 @@ TEST_F(GLApiTest, DisabledExtensionBitTest) {
   };
   static const char* kFakeDisabledExtensions = "GL_ARB_timer_query";
 
-  SetFakeExtensionStrings(kFakeExtensions, arraysize(kFakeExtensions));
+  SetFakeExtensionStrings(kFakeExtensions, base::size(kFakeExtensions));
   InitializeAPI(nullptr);
   EXPECT_TRUE(driver_->ext.b_GL_ARB_timer_query);
 
@@ -173,17 +173,17 @@ TEST_F(GLApiTest, DisabledExtensionStringIndexTest) {
     "GL_EXT_4"
   };
 
-  SetFakeExtensionStrings(kFakeExtensions, arraysize(kFakeExtensions));
+  SetFakeExtensionStrings(kFakeExtensions, base::size(kFakeExtensions));
   InitializeAPI(nullptr);
 
-  EXPECT_EQ(arraysize(kFakeExtensions), GetNumExtensions());
-  for (uint32_t i = 0; i < arraysize(kFakeExtensions); ++i) {
+  EXPECT_EQ(base::size(kFakeExtensions), GetNumExtensions());
+  for (uint32_t i = 0; i < base::size(kFakeExtensions); ++i) {
     EXPECT_STREQ(kFakeExtensions[i], GetExtensioni(i));
   }
 
   InitializeAPI(kFakeDisabledExtensions);
-  EXPECT_EQ(arraysize(kFilteredExtensions), GetNumExtensions());
-  for (uint32_t i = 0; i < arraysize(kFilteredExtensions); ++i) {
+  EXPECT_EQ(base::size(kFilteredExtensions), GetNumExtensions());
+  for (uint32_t i = 0; i < base::size(kFilteredExtensions); ++i) {
     EXPECT_STREQ(kFilteredExtensions[i], GetExtensioni(i));
   }
 }

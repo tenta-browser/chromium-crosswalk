@@ -54,8 +54,6 @@ var BluetoothDevice = function() {
 Polymer({
   is: 'bluetooth-settings',
 
-  behaviors: [Polymer.NeonAnimatableBehavior],
-
   properties: {
     /**
      * A set of bluetooth devices.
@@ -477,7 +475,7 @@ Polymer({
   },
 
   /** @private */
-  onCloseTap_: function() {
+  onCloseClick_: function() {
     this.$.editDialog.close();
   },
 

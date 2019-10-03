@@ -11,8 +11,9 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
+#include "components/viz/common/surfaces/surface_info.h"
+#include "content/common/content_param_traits.h"
 #include "content/common/resource_messages.h"
 #include "content/public/common/content_constants.h"
 #include "ipc/ipc_message.h"
@@ -166,15 +167,12 @@ TEST(IPCMessageTest, SSLInfo) {
   in.unverified_cert = net::ImportCertFromFile(net::GetTestCertsDirectory(),
                                                "ok_cert_by_intermediate.pem");
   in.cert_status = net::CERT_STATUS_COMMON_NAME_INVALID;
-  in.security_bits = 0x100;
   in.key_exchange_group = 1024;
+  in.peer_signature_algorithm = 0x0804;
   in.connection_status = 0x300039;  // TLS_DHE_RSA_WITH_AES_256_CBC_SHA
   in.is_issued_by_known_root = true;
   in.pkp_bypassed = true;
   in.client_cert_sent = true;
-  in.channel_id_sent = true;
-  in.token_binding_negotiated = true;
-  in.token_binding_key_param = net::TB_PARAM_ECDSAP256;
   in.handshake_type = net::SSLInfo::HANDSHAKE_FULL;
   const net::SHA256HashValue kCertPublicKeyHashValue = {{0x01, 0x02}};
   in.public_key_hashes.push_back(net::HashValue(kCertPublicKeyHashValue));
@@ -208,17 +206,15 @@ TEST(IPCMessageTest, SSLInfo) {
   EXPECT_TRUE(IPC::ParamTraits<net::SSLInfo>::Read(&msg, &iter, &out));
 
   // Now verify they're equal.
-  ASSERT_TRUE(in.cert->Equals(out.cert.get()));
-  ASSERT_TRUE(in.unverified_cert->Equals(out.unverified_cert.get()));
-  ASSERT_EQ(in.security_bits, out.security_bits);
+  ASSERT_TRUE(in.cert->EqualsIncludingChain(out.cert.get()));
+  ASSERT_TRUE(
+      in.unverified_cert->EqualsIncludingChain(out.unverified_cert.get()));
   ASSERT_EQ(in.key_exchange_group, out.key_exchange_group);
+  ASSERT_EQ(in.peer_signature_algorithm, out.peer_signature_algorithm);
   ASSERT_EQ(in.connection_status, out.connection_status);
   ASSERT_EQ(in.is_issued_by_known_root, out.is_issued_by_known_root);
   ASSERT_EQ(in.pkp_bypassed, out.pkp_bypassed);
   ASSERT_EQ(in.client_cert_sent, out.client_cert_sent);
-  ASSERT_EQ(in.channel_id_sent, out.channel_id_sent);
-  ASSERT_EQ(in.token_binding_negotiated, out.token_binding_negotiated);
-  ASSERT_EQ(in.token_binding_key_param, out.token_binding_key_param);
   ASSERT_EQ(in.handshake_type, out.handshake_type);
   ASSERT_EQ(in.public_key_hashes, out.public_key_hashes);
   ASSERT_EQ(in.pinning_failure_log, out.pinning_failure_log);
@@ -255,9 +251,9 @@ TEST(IPCMessageTest, RenderWidgetSurfaceProperties) {
   content::RenderWidgetSurfaceProperties input;
   input.size = gfx::Size(23, 45);
   input.device_scale_factor = 0.8;
-#ifdef OS_ANDROID
   input.top_controls_height = 16.5;
   input.top_controls_shown_ratio = 0.4;
+#ifdef OS_ANDROID
   input.bottom_controls_height = 23.4;
   input.bottom_controls_shown_ratio = 0.8;
   input.selection.start.set_type(gfx::SelectionBound::Type::CENTER);
@@ -274,9 +270,9 @@ TEST(IPCMessageTest, RenderWidgetSurfaceProperties) {
 
   EXPECT_EQ(input.size, output.size);
   EXPECT_EQ(input.device_scale_factor, output.device_scale_factor);
-#ifdef OS_ANDROID
   EXPECT_EQ(input.top_controls_height, output.top_controls_height);
   EXPECT_EQ(input.top_controls_shown_ratio, output.top_controls_shown_ratio);
+#ifdef OS_ANDROID
   EXPECT_EQ(input.bottom_controls_height, output.bottom_controls_height);
   EXPECT_EQ(input.bottom_controls_shown_ratio,
             output.bottom_controls_shown_ratio);
@@ -284,4 +280,40 @@ TEST(IPCMessageTest, RenderWidgetSurfaceProperties) {
   EXPECT_EQ(input.has_transparent_background,
             output.has_transparent_background);
 #endif
+}
+
+static constexpr viz::FrameSinkId kArbitraryFrameSinkId(1, 1);
+
+TEST(IPCMessageTest, SurfaceInfo) {
+  IPC::Message msg(1, 2, IPC::Message::PRIORITY_NORMAL);
+  const viz::SurfaceId kArbitrarySurfaceId(
+      kArbitraryFrameSinkId,
+      viz::LocalSurfaceId(3, base::UnguessableToken::Create()));
+  constexpr float kArbitraryDeviceScaleFactor = 0.9f;
+  const gfx::Size kArbitrarySize(65, 321);
+  const viz::SurfaceInfo surface_info_in(
+      kArbitrarySurfaceId, kArbitraryDeviceScaleFactor, kArbitrarySize);
+  IPC::ParamTraits<viz::SurfaceInfo>::Write(&msg, surface_info_in);
+
+  viz::SurfaceInfo surface_info_out;
+  base::PickleIterator iter(msg);
+  EXPECT_TRUE(
+      IPC::ParamTraits<viz::SurfaceInfo>::Read(&msg, &iter, &surface_info_out));
+
+  ASSERT_EQ(surface_info_in, surface_info_out);
+}
+
+TEST(IPCMessageTest, WebCursor) {
+  content::CursorInfo info(ui::CursorType::kCustom);
+  info.custom_image.allocN32Pixels(32, 32);
+  info.hotspot = gfx::Point(10, 20);
+  info.image_scale_factor = 1.5f;
+  content::WebCursor input(info);
+  IPC::Message msg(1, 2, IPC::Message::PRIORITY_NORMAL);
+  IPC::ParamTraits<content::WebCursor>::Write(&msg, input);
+
+  content::WebCursor output;
+  base::PickleIterator iter(msg);
+  ASSERT_TRUE(IPC::ParamTraits<content::WebCursor>::Read(&msg, &iter, &output));
+  EXPECT_EQ(output, input);
 }

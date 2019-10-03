@@ -7,13 +7,18 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_brand.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profile_resetter/brandcode_config_fetcher.h"
 #include "chrome/browser/profile_resetter/brandcoded_default_settings.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "url/gurl.h"
 
 namespace safe_browsing {
@@ -60,6 +65,8 @@ void DefaultSettingsFetcher::Start() {
   std::string brandcode;
   if (google_brand::GetBrand(&brandcode) && !brandcode.empty()) {
     config_fetcher_.reset(new BrandcodeConfigFetcher(
+        g_browser_process->system_network_context_manager()
+            ->GetURLLoaderFactory(),
         base::Bind(&DefaultSettingsFetcher::OnSettingsFetched,
                    base::Unretained(this)),
         GURL(kOmahaUrl), brandcode));
@@ -70,7 +77,7 @@ void DefaultSettingsFetcher::Start() {
   // For non Google Chrome builds and cases with an empty |brandcode|, we create
   // a default-constructed |BrandcodedDefaultSettings| object and post the
   // callback immediately.
-  PostCallbackAndDeleteSelf(base::MakeUnique<BrandcodedDefaultSettings>());
+  PostCallbackAndDeleteSelf(std::make_unique<BrandcodedDefaultSettings>());
 }
 
 void DefaultSettingsFetcher::OnSettingsFetched() {
@@ -86,9 +93,9 @@ void DefaultSettingsFetcher::PostCallbackAndDeleteSelf(
   if (!default_settings)
     default_settings.reset(new BrandcodedDefaultSettings());
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(std::move(callback_), base::Passed(&default_settings)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(std::move(callback_), std::move(default_settings)));
   delete this;
 }
 

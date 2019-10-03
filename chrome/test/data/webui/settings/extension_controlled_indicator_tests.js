@@ -4,10 +4,10 @@
 
 suite('extension controlled indicator', function() {
   /** @type {TestExtensionControlBrowserProxy} */
-  var browserProxy;
+  let browserProxy;
 
   /** @type {ExtensionControlledIndicatorElement} */
-  var indicator;
+  let indicator;
 
   setup(function() {
     PolymerTest.clearBody();
@@ -23,20 +23,20 @@ suite('extension controlled indicator', function() {
 
   test('disable button tracks extensionCanBeDisabled', function() {
     assertTrue(indicator.extensionCanBeDisabled);
-    assertTrue(!!indicator.$$('paper-button'));
+    assertTrue(!!indicator.$$('cr-button'));
 
     indicator.extensionCanBeDisabled = false;
     Polymer.dom.flush();
-    assertFalse(!!indicator.$$('paper-button'));
+    assertFalse(!!indicator.$$('cr-button'));
   });
 
   test('label text and href', function() {
-    var imgSrc = indicator.$$('img').src;
+    let imgSrc = indicator.$$('img').src;
     assertTrue(imgSrc.includes(indicator.extensionId));
 
-    var label = indicator.$$('span');
+    let label = indicator.$$('span');
     assertTrue(!!label);
-    var labelLink = label.querySelector('a');
+    let labelLink = label.querySelector('a');
     assertTrue(!!labelLink);
     assertEquals(labelLink.textContent, indicator.extensionName);
 
@@ -44,7 +44,7 @@ suite('extension controlled indicator', function() {
     assertTrue(labelLink.href.includes(indicator.extensionId));
 
     indicator.extensionId = 'dpjamkmjmigaoobjbekmfgabipmfilij';
-    indicator.extensionName = "A Slightly Less Good Name (Can't Beat That ^)";
+    indicator.extensionName = 'A Slightly Less Good Name (Can\'t Beat That ^)';
     Polymer.dom.flush();
 
     imgSrc = indicator.$$('img').src;
@@ -58,11 +58,11 @@ suite('extension controlled indicator', function() {
   });
 
   test('tapping disable button invokes browser proxy', function() {
-    var disableButton = indicator.$$('paper-button');
+    const disableButton = indicator.$$('cr-button');
     assertTrue(!!disableButton);
-    MockInteractions.tap(disableButton);
-    return browserProxy.whenCalled('disableExtension').then(
-        function (extensionId) {
+    disableButton.click();
+    return browserProxy.whenCalled('disableExtension')
+        .then(function(extensionId) {
           assertEquals(extensionId, indicator.extensionId);
         });
   });

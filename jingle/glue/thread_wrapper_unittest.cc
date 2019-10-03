@@ -6,9 +6,9 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -90,7 +90,7 @@ class ThreadWrapperTest : public testing::Test {
   }
 
   // ThreadWrapper destroyes itself when |message_loop_| is destroyed.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   rtc::Thread* thread_;
   MockMessageHandler handler1_;
   MockMessageHandler handler2_;
@@ -155,10 +155,11 @@ TEST_F(ThreadWrapperTest, PostDelayed) {
       MatchMessage(&handler2_, kTestMessage1, data4)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.task_runner()->PostDelayedTask(
-      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+  base::RunLoop run_loop;
+  scoped_task_environment_.GetMainThreadTaskRunner()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(),
       base::TimeDelta::FromMilliseconds(kMaxTestDelay));
-  base::RunLoop().Run();
+  run_loop.Run();
 }
 
 TEST_F(ThreadWrapperTest, Clear) {
@@ -210,10 +211,11 @@ TEST_F(ThreadWrapperTest, ClearDelayed) {
       MatchMessage(&handler2_, kTestMessage1, null_data)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.task_runner()->PostDelayedTask(
-      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
+  base::RunLoop run_loop;
+  scoped_task_environment_.GetMainThreadTaskRunner()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(),
       base::TimeDelta::FromMilliseconds(kMaxTestDelay));
-  base::RunLoop().Run();
+  run_loop.Run();
 }
 
 // Verify that the queue is cleared when a handler is destroyed.
@@ -261,8 +263,8 @@ TEST_F(ThreadWrapperTest, SendToOtherThread) {
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   rtc::Thread* target;
   second_thread.task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&InitializeWrapperForNewThread, &target, &initialized_event));
+      FROM_HERE, base::BindOnce(&InitializeWrapperForNewThread, &target,
+                                &initialized_event));
   initialized_event.Wait();
 
   ASSERT_TRUE(target != NULL);
@@ -292,8 +294,8 @@ TEST_F(ThreadWrapperTest, SendDuringSend) {
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   rtc::Thread* target;
   second_thread.task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&InitializeWrapperForNewThread, &target, &initialized_event));
+      FROM_HERE, base::BindOnce(&InitializeWrapperForNewThread, &target,
+                                &initialized_event));
   initialized_event.Wait();
 
   ASSERT_TRUE(target != NULL);

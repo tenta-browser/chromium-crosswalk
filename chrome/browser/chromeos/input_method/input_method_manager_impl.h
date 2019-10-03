@@ -16,6 +16,7 @@
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/chromeos/input_method/candidate_window_controller.h"
+#include "chrome/browser/chromeos/input_method/ime_service_connector.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chrome/browser/profiles/profile.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
@@ -83,6 +84,9 @@ class InputMethodManagerImpl : public InputMethodManager,
     void RemoveInputMethodExtension(const std::string& extension_id) override;
     void ChangeInputMethod(const std::string& input_method_id,
                            bool show_message) override;
+    void ChangeInputMethodToJpKeyboard() override;
+    void ChangeInputMethodToJpIme() override;
+    void ToggleInputMethodForJpIme() override;
     bool EnableInputMethod(
         const std::string& new_active_input_method_id) override;
     void EnableLoginLayouts(
@@ -101,19 +105,28 @@ class InputMethodManagerImpl : public InputMethodManager,
     void SetInputMethodLoginDefaultFromVPD(const std::string& locale,
                                            const std::string& layout) override;
     void SwitchToNextInputMethod() override;
-    void SwitchToPreviousInputMethod() override;
+    void SwitchToLastUsedInputMethod() override;
     InputMethodDescriptor GetCurrentInputMethod() const override;
     bool ReplaceEnabledInputMethods(
         const std::vector<std::string>& new_active_input_method_ids) override;
     bool SetAllowedInputMethods(
-        const std::vector<std::string>& new_allowed_input_method_ids) override;
+        const std::vector<std::string>& new_allowed_input_method_ids,
+        bool enable_allowed_input_methods) override;
     const std::vector<std::string>& GetAllowedInputMethods() override;
+    void EnableInputView() override;
+    void DisableInputView() override;
+    const GURL& GetInputViewUrl() const override;
+
+    // Connect to an InputEngineManager instance in an IME Mojo service.
+    void ConnectMojoManager(
+        mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager>
+            receiver);
 
     // ------------------------- Data members.
     Profile* const profile;
 
     // The input method which was/is selected.
-    InputMethodDescriptor previous_input_method;
+    InputMethodDescriptor last_used_input_method;
     InputMethodDescriptor current_input_method;
 
     // The active input method ids cache.
@@ -137,16 +150,26 @@ class InputMethodManagerImpl : public InputMethodManager,
     // True if the opt-in IME menu is activated.
     bool menu_activated;
 
+    // The URL of the input view of the active ime with parameters (e.g. layout,
+    // keyset).
+    GURL input_view_url;
+
    protected:
     friend base::RefCounted<chromeos::input_method::InputMethodManager::State>;
     ~StateImpl() override;
 
    private:
-    // Retruns true if the passed input method is allowed. By default, all input
+    // Returns true if the passed input method is allowed. By default, all input
     // methods are allowed. After SetAllowedKeyboardLayoutInputMethods was
     // called, the passed keyboard layout input methods are allowed and all
     // non-keyboard input methods remain to be allowed.
     bool IsInputMethodAllowed(const std::string& input_method_id) const;
+
+    // Returns the first hardware input method that is allowed or the first
+    // allowed input method, if no hardware input method is allowed.
+    std::string GetAllowedFallBackKeyboardLayout() const;
+
+    std::unique_ptr<ImeServiceConnector> ime_service_connector_;
   };
 
   // Constructs an InputMethodManager instance. The client is responsible for
@@ -174,16 +197,25 @@ class InputMethodManagerImpl : public InputMethodManager,
   std::unique_ptr<InputMethodDescriptors> GetSupportedInputMethods()
       const override;
   void ActivateInputMethodMenuItem(const std::string& key) override;
+  void ConnectInputEngineManager(
+      mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager> receiver)
+      override;
   bool IsISOLevel5ShiftUsedByCurrentInputMethod() const override;
   bool IsAltGrUsedByCurrentInputMethod() const override;
   void NotifyImeMenuItemsChanged(
       const std::string& engine_id,
       const std::vector<InputMethodManager::MenuItem>& items) override;
   void MaybeNotifyImeMenuActivationChanged() override;
-  void OverrideKeyboardUrlRef(const std::string& keyset) override;
+  void OverrideKeyboardKeyset(mojom::ImeKeyset keyset) override;
   void SetImeMenuFeatureEnabled(ImeMenuFeature feature, bool enabled) override;
   bool GetImeMenuFeatureEnabled(ImeMenuFeature feature) const override;
   void NotifyObserversImeExtraInputStateChange() override;
+  ui::InputMethodKeyboardController* GetInputMethodKeyboardController()
+      override;
+  void NotifyInputMethodExtensionAdded(
+      const std::string& extension_id) override;
+  void NotifyInputMethodExtensionRemoved(
+      const std::string& extension_id) override;
 
   // chromeos::UserAddingScreen:
   void OnUserAddingStarted() override;
@@ -252,15 +284,19 @@ class InputMethodManagerImpl : public InputMethodManager,
   // changed.
   void NotifyImeMenuListChanged();
 
+  // Request that the virtual keyboard be reloaded.
+  void ReloadKeyboard();
+
   std::unique_ptr<InputMethodDelegate> delegate_;
 
   // The current UI session status.
   UISessionState ui_session_;
 
   // A list of objects that monitor the manager.
-  base::ObserverList<InputMethodManager::Observer> observers_;
-  base::ObserverList<CandidateWindowObserver> candidate_window_observers_;
-  base::ObserverList<ImeMenuObserver> ime_menu_observers_;
+  base::ObserverList<InputMethodManager::Observer>::Unchecked observers_;
+  base::ObserverList<CandidateWindowObserver>::Unchecked
+      candidate_window_observers_;
+  base::ObserverList<ImeMenuObserver>::Unchecked ime_menu_observers_;
 
   scoped_refptr<StateImpl> state_;
 
@@ -284,7 +320,7 @@ class InputMethodManagerImpl : public InputMethodManager,
   bool enable_extension_loading_;
 
   // Whether the expanded IME menu is activated.
-  bool is_ime_menu_activated_;
+  bool is_ime_menu_activated_ = false;
 
   // The enabled state of keyboard features.
   uint32_t features_enabled_state_;

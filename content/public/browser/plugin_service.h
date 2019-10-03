@@ -32,25 +32,25 @@ struct PepperPluginInfo;
 struct WebPluginInfo;
 
 // This must be created on the main thread but it's only called on the IO/file
-// thread. This is an asynchronous wrapper around the PluginList interface for
-// querying plugin information. This must be used instead of that to avoid
-// doing expensive disk operations on the IO/UI threads.
-class PluginService {
+// thread unless otherwise noted. This is an asynchronous wrapper around the
+// PluginList interface for querying plugin information. This must be used
+// instead of that to avoid doing expensive disk operations on the IO/UI
+// threads.
+class CONTENT_EXPORT PluginService {
  public:
   using GetPluginsCallback =
       base::OnceCallback<void(const std::vector<WebPluginInfo>&)>;
 
   // Returns the PluginService singleton.
-  CONTENT_EXPORT static PluginService* GetInstance();
+  static PluginService* GetInstance();
 
   // Tells all the renderer processes associated with the given browser context
   // to throw away their cache of the plugin list, and optionally also reload
   // all the pages with plugins. If |browser_context| is nullptr, purges the
   // cache in all renderers.
   // NOTE: can only be called on the UI thread.
-  CONTENT_EXPORT static void PurgePluginListCache(
-      BrowserContext* browser_context,
-      bool reload_pages);
+  static void PurgePluginListCache(BrowserContext* browser_context,
+                                   bool reload_pages);
 
   virtual ~PluginService() {}
 
@@ -70,6 +70,7 @@ class PluginService {
   // Gets plugin info for an individual plugin and filters the plugins using
   // the |context| and renderer IDs. This will report whether the data is stale
   // via |is_stale| and returns whether or not the plugin can be found.
+  // This can be called from any thread.
   virtual bool GetPluginInfo(int render_process_id,
                              int render_frame_id,
                              ResourceContext* context,
@@ -84,23 +85,26 @@ class PluginService {
   // Get plugin info by plugin path (including disabled plugins). Returns true
   // if the plugin is found and WebPluginInfo has been filled in |info|. This
   // will use cached data in the plugin list.
+  // This can be called from any thread.
   virtual bool GetPluginInfoByPath(const base::FilePath& plugin_path,
                                    WebPluginInfo* info) = 0;
 
   // Returns the display name for the plugin identified by the given path. If
   // the path doesn't identify a plugin, or the plugin has no display name,
   // this will attempt to generate a display name from the path.
+  // This can be called from any thread.
   virtual base::string16 GetPluginDisplayNameByPath(
       const base::FilePath& plugin_path) = 0;
 
   // Asynchronously loads plugins if necessary and then calls back to the
   // provided function on the calling sequence on completion.
+  // This can be called from any thread.
   virtual void GetPlugins(GetPluginsCallback callback) = 0;
 
   // Returns information about a pepper plugin if it exists, otherwise nullptr.
   // The caller does not own the pointer, and it's not guaranteed to live past
   // the call stack.
-  virtual PepperPluginInfo* GetRegisteredPpapiPluginInfo(
+  virtual const PepperPluginInfo* GetRegisteredPpapiPluginInfo(
       const base::FilePath& plugin_path) = 0;
 
   virtual void SetFilter(PluginServiceFilter* filter) = 0;
@@ -132,6 +136,12 @@ class PluginService {
   // Returns true iff PPAPI "dev channel" methods are supported.
   virtual bool PpapiDevChannelSupported(BrowserContext* browser_context,
                                         const GURL& document_url) = 0;
+
+  // Determine the number of PPAPI processes currently tracked by the service.
+  // Exposed primarily for testing purposes.
+  virtual int CountPpapiPluginProcessesForProfile(
+      const base::FilePath& plugin_path,
+      const base::FilePath& profile_data_directory) = 0;
 };
 
 }  // namespace content

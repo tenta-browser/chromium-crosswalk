@@ -15,19 +15,22 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/logging.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkUnPreMultiply.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/range/range.h"
 
 namespace color_utils {
 namespace {
 
 // RGBA KMean Constants
-const uint32_t kNumberOfClusters = 4;
+const int kNumberOfClusters = 4;
 const int kNumberOfIterations = 50;
 
 const HSL kDefaultLowerHSLBound = {-1, -1, 0.15};
@@ -137,28 +140,7 @@ class KMeanCluster {
   uint32_t weight_;
 };
 
-// Un-premultiplies each pixel in |bitmap| into an output |buffer|. Requires
-// approximately 10 microseconds for a 16x16 icon on an Intel Core i5.
-void UnPreMultiply(const SkBitmap& bitmap, uint32_t* buffer, int buffer_size) {
-  uint32_t* in = static_cast<uint32_t*>(bitmap.getPixels());
-  uint32_t* out = buffer;
-  int pixel_count = std::min(bitmap.width() * bitmap.height(), buffer_size);
-  for (int i = 0; i < pixel_count; ++i)
-    *out++ = SkUnPreMultiply::PMColorToColor(*in++);
-}
-
 // Prominent color utilities ---------------------------------------------------
-
-// A color value with an associated weight.
-struct WeightedColor {
-  WeightedColor(SkColor color, uint64_t weight)
-      : color(color), weight(weight) {}
-
-  SkColor color;
-
-  // The weight correlates to a count, so it should be 1 or greater.
-  uint64_t weight;
-};
 
 // A |ColorBox| represents a 3-dimensional region in a color space (an ordered
 // set of colors). It is a range in the ordered set, with a low index and a high
@@ -252,18 +234,18 @@ class ColorBox {
 
   // Returns the average color of this box, weighted by its popularity in
   // |color_counts|.
-  WeightedColor GetWeightedAverageColor(
+  Swatch GetWeightedAverageColor(
       const std::unordered_map<SkColor, int>& color_counts) const {
-    uint64_t sum_r = 0;
-    uint64_t sum_g = 0;
-    uint64_t sum_b = 0;
-    uint64_t total_count_in_box = 0;
+    size_t sum_r = 0;
+    size_t sum_g = 0;
+    size_t sum_b = 0;
+    size_t total_count_in_box = 0;
 
-    for (uint32_t i = color_range_.start(); i < color_range_.end(); ++i) {
+    for (size_t i = color_range_.start(); i < color_range_.end(); ++i) {
       const SkColor color = (*color_space_)[i];
       const auto color_count_iter = color_counts.find(color);
       DCHECK(color_count_iter != color_counts.end());
-      const int color_count = color_count_iter->second;
+      const size_t color_count = color_count_iter->second;
 
       total_count_in_box += color_count;
       sum_r += color_count * SkColorGetR(color);
@@ -271,7 +253,7 @@ class ColorBox {
       sum_b += color_count * SkColorGetB(color);
     }
 
-    return WeightedColor(
+    return Swatch(
         SkColorSetRGB(
             std::round(static_cast<double>(sum_r) / total_count_in_box),
             std::round(static_cast<double>(sum_g) / total_count_in_box),
@@ -337,7 +319,7 @@ class ColorBox {
 
 // Some color values should be ignored for the purposes of determining prominent
 // colors.
-bool IsInterestingColor(SkColor color) {
+bool IsInterestingColor(const SkColor& color) {
   const float average_channel_value =
       (SkColorGetR(color) + SkColorGetG(color) + SkColorGetB(color)) / 3.0f;
   // If a color is too close to white or black, ignore it.
@@ -357,86 +339,24 @@ struct ColorBracket {
   HSL goal = {-1};
 };
 
-// This algorithm is a port of Android's Palette API. Compare to package
-// android.support.v7.graphics and see that code for additional high-level
-// explanation of this algorithm. There are some minor differences:
-//   * This code doesn't exclude the same color from being used for
-//   different color profiles.
-//   * This code doesn't try to heuristically derive missing colors from
-//   existing colors.
-std::vector<SkColor> CalculateProminentColors(
+std::vector<Swatch> CalculateProminentColors(
     const SkBitmap& bitmap,
-    const std::vector<ColorBracket>& color_brackets) {
+    const std::vector<ColorBracket>& color_brackets,
+    const gfx::Rect& region,
+    base::Optional<ColorSwatchFilter> filter) {
   DCHECK(!bitmap.empty());
   DCHECK(!bitmap.isNull());
 
-  const uint32_t* pixels = static_cast<uint32_t*>(bitmap.getPixels());
-  const int pixel_count = bitmap.width() * bitmap.height();
+  std::vector<Swatch> box_colors =
+      CalculateColorSwatches(bitmap, 12, region, filter);
 
-  // For better performance, only consider at most 10k pixels (evenly
-  // distributed throughout the image). This has a very minor impact on the
-  // outcome but improves runtime substantially for large images. 10,007 is a
-  // prime number to reduce the chance of picking an unrepresentative sample.
-  constexpr int kMaxConsideredPixels = 10007;
-  const int pixel_increment = std::max(1, pixel_count / kMaxConsideredPixels);
-  std::unordered_map<SkColor, int> color_counts(kMaxConsideredPixels);
-
-  // First extract all colors into counts.
-  for (int i = 0; i < pixel_count; i += pixel_increment) {
-    // SkBitmap uses pre-multiplied alpha but the prominent color algorithm
-    // needs non-pre-multiplied alpha.
-    const SkColor pixel = SkUnPreMultiply::PMColorToColor(pixels[i]);
-    if (SkColorGetA(pixel) == SK_AlphaTRANSPARENT)
-      continue;
-
-    color_counts[pixel]++;
-  }
-
-  // Now throw out some uninteresting colors.
-  std::vector<SkColor> interesting_colors;
-  interesting_colors.reserve(color_counts.size());
-  for (auto color_count : color_counts) {
-    SkColor color = color_count.first;
-    if (IsInterestingColor(color))
-      interesting_colors.push_back(color);
-  }
-
-  std::vector<SkColor> best_colors(color_brackets.size(), SK_ColorTRANSPARENT);
-  if (interesting_colors.empty())
+  std::vector<Swatch> best_colors(color_brackets.size(), Swatch());
+  if (box_colors.empty())
     return best_colors;
 
-  // Group the colors into "boxes" and repeatedly split the most voluminous box.
-  // We stop the process when a box can no longer be split (there's only one
-  // color in it) or when the number of color boxes reaches 12. As per the
-  // Android docs,
-  //
-  //   For landscapes, good values are in the range 12-16. For images which
-  //   are largely made up of people's faces then this value should be increased
-  //   to 24-32.
-  const int kMaxColors = 12;
-  // Boxes are sorted by volume with the most voluminous at the front of the PQ.
-  std::priority_queue<ColorBox, std::vector<ColorBox>,
-                      bool (*)(const ColorBox&, const ColorBox&)>
-      boxes(&ColorBox::CompareByVolume);
-  boxes.emplace(&interesting_colors);
-  while (boxes.size() < kMaxColors) {
-    auto box = boxes.top();
-    if (!box.CanSplit())
-      break;
-    boxes.pop();
-    boxes.push(box.Split());
-    boxes.push(box);
-  }
-
-  // Now extract a single color to represent each box. This is the average color
-  // in the box, weighted by the frequency of that color in the source image.
-  std::vector<WeightedColor> box_colors;
-  uint64_t max_weight = 0;
-  while (!boxes.empty()) {
-    box_colors.push_back(boxes.top().GetWeightedAverageColor(color_counts));
-    boxes.pop();
-    max_weight = std::max(max_weight, box_colors.back().weight);
-  }
+  size_t max_weight = 0;
+  for (auto& weighted : box_colors)
+    max_weight = std::max(max_weight, weighted.population);
 
   // Given these box average colors, find the best one for each desired color
   // profile. "Best" in this case means the color which fits in the provided
@@ -455,10 +375,10 @@ std::vector<SkColor> CalculateProminentColors(
       double suitability =
           (1 - std::abs(hsl.s - color_brackets[i].goal.s)) * 3 +
           (1 - std::abs(hsl.l - color_brackets[i].goal.l)) * 6.5 +
-          (box_color.weight / static_cast<float>(max_weight)) * 0.5;
+          (box_color.population / static_cast<float>(max_weight)) * 0.5;
       if (suitability > best_suitability) {
         best_suitability = suitability;
-        best_colors[i] = box_color.color;
+        best_colors[i] = box_color;
       }
     }
   }
@@ -493,12 +413,13 @@ int GridSampler::GetSample(int width, int height) {
   // ..........
   // .3.7......
   // ..........
-  const int kPadX = 1;
-  const int kPadY = 1;
-  int x = kPadX +
-      (calls_ / kNumberOfClusters) * ((width - 2 * kPadX) / kNumberOfClusters);
-  int y = kPadY +
-      (calls_ % kNumberOfClusters) * ((height - 2 * kPadY) / kNumberOfClusters);
+  // But don't inset if the image is too narrow or too short.
+  const int kInsetX = (width > 2 ? 1 : 0);
+  const int kInsetY = (height > 2 ? 1 : 0);
+  int x = kInsetX + (calls_ / kNumberOfClusters) *
+                        ((width - 2 * kInsetX) / kNumberOfClusters);
+  int y = kInsetY + (calls_ % kNumberOfClusters) *
+                        ((height - 2 * kInsetY) / kNumberOfClusters);
   int index = x + (y * width);
   ++calls_;
   return index % (width * height);
@@ -543,15 +464,16 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
                                     int img_height,
                                     const HSL& lower_bound,
                                     const HSL& upper_bound,
-                                    KMeanImageSampler* sampler) {
+                                    KMeanImageSampler* sampler,
+                                    bool find_closest) {
   SkColor color = kDefaultBgColor;
   if (img_width > 0 && img_height > 0) {
     std::vector<KMeanCluster> clusters;
-    clusters.resize(kNumberOfClusters, KMeanCluster());
+    clusters.resize(static_cast<size_t>(kNumberOfClusters), KMeanCluster());
 
     // Pick a starting point for each cluster
-    std::vector<KMeanCluster>::iterator cluster = clusters.begin();
-    while (cluster != clusters.end()) {
+    auto new_cluster = clusters.begin();
+    while (new_cluster != clusters.end()) {
       // Try up to 10 times to find a unique color. If no unique color can be
       // found, destroy this cluster.
       bool color_unique = false;
@@ -571,10 +493,9 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
         // Loop through the previous clusters and check to see if we have seen
         // this color before.
         color_unique = true;
-        for (std::vector<KMeanCluster>::iterator
-            cluster_check = clusters.begin();
-            cluster_check != cluster; ++cluster_check) {
-          if (cluster_check->IsAtCentroid(r, g, b)) {
+        for (auto cluster = clusters.begin(); cluster != new_cluster;
+             ++cluster) {
+          if (cluster->IsAtCentroid(r, g, b)) {
             color_unique = false;
             break;
           }
@@ -583,19 +504,19 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
         // If we have a unique color set the center of the cluster to
         // that color.
         if (color_unique) {
-          cluster->SetCentroid(r, g, b);
+          new_cluster->SetCentroid(r, g, b);
           break;
         }
       }
 
       // If we don't have a unique color erase this cluster.
       if (!color_unique) {
-        cluster = clusters.erase(cluster);
+        new_cluster = clusters.erase(new_cluster);
       } else {
         // Have to increment the iterator here, otherwise the increment in the
         // for loop will skip a cluster due to the erase if the color wasn't
         // unique.
-        ++cluster;
+        ++new_cluster;
       }
     }
 
@@ -621,11 +542,11 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
           continue;
 
         uint32_t distance_sqr_to_closest_cluster = UINT_MAX;
-        std::vector<KMeanCluster>::iterator closest_cluster = clusters.begin();
+        auto closest_cluster = clusters.begin();
 
         // Figure out which cluster this color is closest to in RGB space.
-        for (std::vector<KMeanCluster>::iterator cluster = clusters.begin();
-            cluster != clusters.end(); ++cluster) {
+        for (auto cluster = clusters.begin(); cluster != clusters.end();
+             ++cluster) {
           uint32_t distance_sqr = cluster->GetDistanceSqr(r, g, b);
 
           if (distance_sqr < distance_sqr_to_closest_cluster) {
@@ -639,8 +560,8 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
 
       // Calculate the new cluster centers and see if we've converged or not.
       convergence = true;
-      for (std::vector<KMeanCluster>::iterator cluster = clusters.begin();
-          cluster != clusters.end(); ++cluster) {
+      for (auto cluster = clusters.begin(); cluster != clusters.end();
+           ++cluster) {
         convergence &= cluster->CompareCentroidWithAggregate();
 
         cluster->RecomputeCentroid();
@@ -654,8 +575,8 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
 
     // Loop through the clusters to figure out which cluster has an appropriate
     // color. Skip any that are too bright/dark and go in order of weight.
-    for (std::vector<KMeanCluster>::iterator cluster = clusters.begin();
-        cluster != clusters.end(); ++cluster) {
+    for (auto cluster = clusters.begin(); cluster != clusters.end();
+         ++cluster) {
       uint8_t r, g, b;
       cluster->GetCentroid(&r, &g, &b);
 
@@ -675,9 +596,11 @@ SkColor CalculateKMeanColorOfBuffer(uint8_t* decoded_data,
     }
   }
 
-  // Find a color that actually appears in the image (the K-mean cluster center
-  // will not usually be a color that appears in the image).
-  return FindClosestColor(decoded_data, img_width, img_height, color);
+  // The K-mean cluster center will not usually be a color that appears in the
+  // image.  If desired, find a color that actually appears.
+  return find_closest
+             ? FindClosestColor(decoded_data, img_width, img_height, color)
+             : color;
 }
 
 SkColor CalculateKMeanColorOfPNG(scoped_refptr<base::RefCountedMemory> png,
@@ -690,18 +613,11 @@ SkColor CalculateKMeanColorOfPNG(scoped_refptr<base::RefCountedMemory> png,
   SkColor color = kDefaultBgColor;
 
   if (png.get() && png->size() &&
-      gfx::PNGCodec::Decode(png->front(),
-                            png->size(),
-                            gfx::PNGCodec::FORMAT_BGRA,
-                            &decoded_data,
-                            &img_width,
-                            &img_height)) {
-    return CalculateKMeanColorOfBuffer(&decoded_data[0],
-                                       img_width,
-                                       img_height,
-                                       lower_bound,
-                                       upper_bound,
-                                       sampler);
+      gfx::PNGCodec::Decode(png->front(), png->size(),
+                            gfx::PNGCodec::FORMAT_BGRA, &decoded_data,
+                            &img_width, &img_height)) {
+    return CalculateKMeanColorOfBuffer(&decoded_data[0], img_width, img_height,
+                                       lower_bound, upper_bound, sampler, true);
   }
   return color;
 }
@@ -713,41 +629,149 @@ SkColor CalculateKMeanColorOfPNG(scoped_refptr<base::RefCountedMemory> png) {
 }
 
 SkColor CalculateKMeanColorOfBitmap(const SkBitmap& bitmap,
+                                    int height,
                                     const HSL& lower_bound,
                                     const HSL& upper_bound,
-                                    KMeanImageSampler* sampler) {
+                                    bool find_closest) {
+  // Clamp the height being used to the height of the provided image (otherwise,
+  // we can end up creating a larger buffer than we have data for, and the end
+  // of the buffer will remain uninitialized after we copy/UnPreMultiply the
+  // image data into it).
+  height = std::min(height, bitmap.height());
+
   // SkBitmap uses pre-multiplied alpha but the KMean clustering function
   // above uses non-pre-multiplied alpha. Transform the bitmap before we
   // analyze it because the function reads each pixel multiple times.
-  int pixel_count = bitmap.width() * bitmap.height();
+  int pixel_count = bitmap.width() * height;
   std::unique_ptr<uint32_t[]> image(new uint32_t[pixel_count]);
-  UnPreMultiply(bitmap, image.get(), pixel_count);
 
+  // Un-premultiplies each pixel in bitmap into the buffer. Requires
+  // approximately 10 microseconds for a 16x16 icon on an Intel Core i5.
+  uint32_t* in = static_cast<uint32_t*>(bitmap.getPixels());
+  uint32_t* out = image.get();
+  for (int i = 0; i < pixel_count; ++i)
+    *out++ = SkUnPreMultiply::PMColorToColor(*in++);
+
+  GridSampler sampler;
   return CalculateKMeanColorOfBuffer(reinterpret_cast<uint8_t*>(image.get()),
-                                     bitmap.width(), bitmap.height(),
-                                     lower_bound, upper_bound, sampler);
+                                     bitmap.width(), height, lower_bound,
+                                     upper_bound, &sampler, find_closest);
 }
 
 SkColor CalculateKMeanColorOfBitmap(const SkBitmap& bitmap) {
-  GridSampler sampler;
   return CalculateKMeanColorOfBitmap(
-      bitmap, kDefaultLowerHSLBound, kDefaultUpperHSLBound, &sampler);
+      bitmap, bitmap.height(), kDefaultLowerHSLBound, kDefaultUpperHSLBound,
+      true);
 }
 
-std::vector<SkColor> CalculateProminentColorsOfBitmap(
+const int kMaxConsideredPixelsForSwatches = 10007;
+
+// This algorithm is a port of Android's Palette API. Compare to package
+// android.support.v7.graphics and see that code for additional high-level
+// explanation of this algorithm. There are some minor differences:
+//   * This code doesn't exclude the same color from being used for
+//   different color profiles.
+//   * This code doesn't try to heuristically derive missing colors from
+//   existing colors.
+std::vector<Swatch> CalculateColorSwatches(
     const SkBitmap& bitmap,
-    const std::vector<ColorProfile>& color_profiles) {
+    size_t max_swatches,
+    const gfx::Rect& region,
+    base::Optional<ColorSwatchFilter> filter) {
+  DCHECK(!bitmap.empty());
+  DCHECK(!bitmap.isNull());
+  DCHECK(!region.IsEmpty());
+  DCHECK_LE(region.width(), bitmap.width());
+  DCHECK_LE(region.height(), bitmap.height());
+
+  const int pixel_count = region.width() * region.height();
+
+  // For better performance, only consider at most 10k pixels (evenly
+  // distributed throughout the image). This has a very minor impact on the
+  // outcome but improves runtime substantially for large images. 10,007 is a
+  // prime number to reduce the chance of picking an unrepresentative sample.
+  const int pixel_increment =
+      std::max(1, pixel_count / kMaxConsideredPixelsForSwatches);
+  std::unordered_map<SkColor, int> color_counts(
+      kMaxConsideredPixelsForSwatches);
+
+  // First extract all colors into counts.
+  for (int i = 0; i < pixel_count; i += pixel_increment) {
+    const int x = region.x() + (i % region.width());
+    const int y = region.y() + (i / region.width());
+
+    const SkColor pixel = bitmap.getColor(x, y);
+    if (SkColorGetA(pixel) == SK_AlphaTRANSPARENT)
+      continue;
+
+    color_counts[pixel]++;
+  }
+
+  // Now throw out some uninteresting colors if there is a filter.
+  std::vector<SkColor> interesting_colors;
+  interesting_colors.reserve(color_counts.size());
+  for (auto color_count : color_counts) {
+    SkColor color = color_count.first;
+    if (!filter || filter->Run(color))
+      interesting_colors.push_back(color);
+  }
+
+  if (interesting_colors.empty())
+    return {};
+
+  // Group the colors into "boxes" and repeatedly split the most voluminous box.
+  // We stop the process when a box can no longer be split (there's only one
+  // color in it) or when the number of color boxes reaches |max_colors|.
+  //
+  // Boxes are sorted by volume with the most voluminous at the front of the PQ.
+  std::priority_queue<ColorBox, std::vector<ColorBox>,
+                      bool (*)(const ColorBox&, const ColorBox&)>
+      boxes(&ColorBox::CompareByVolume);
+  boxes.emplace(&interesting_colors);
+  while (boxes.size() < max_swatches) {
+    auto box = boxes.top();
+    if (!box.CanSplit())
+      break;
+    boxes.pop();
+    boxes.push(box.Split());
+    boxes.push(box);
+  }
+
+  // Now extract a single color to represent each box. This is the average color
+  // in the box, weighted by the frequency of that color in the source image.
+  size_t max_weight = 0;
+  std::vector<Swatch> box_colors;
+  box_colors.reserve(max_swatches);
+  while (!boxes.empty()) {
+    box_colors.push_back(boxes.top().GetWeightedAverageColor(color_counts));
+    boxes.pop();
+    max_weight = std::max(max_weight, box_colors.back().population);
+  }
+
+  return box_colors;
+}
+
+std::vector<color_utils::Swatch> CalculateProminentColorsOfBitmap(
+    const SkBitmap& bitmap,
+    const std::vector<ColorProfile>& color_profiles,
+    gfx::Rect* region,
+    ColorSwatchFilter filter) {
   if (color_profiles.empty())
-    return std::vector<SkColor>();
+    return std::vector<Swatch>();
 
   size_t size = color_profiles.size();
   if (bitmap.empty() || bitmap.isNull())
-    return std::vector<SkColor>(size, SK_ColorTRANSPARENT);
+    return std::vector<Swatch>(size, Swatch());
 
   // The hue is not relevant to our bounds or goal colors.
   std::vector<ColorBracket> color_brackets(size);
   for (size_t i = 0; i < size; ++i) {
     switch (color_profiles[i].luma) {
+      case LumaRange::ANY:
+        color_brackets[i].lower_bound.l = 0;
+        color_brackets[i].upper_bound.l = 1;
+        color_brackets[i].goal.l = 0.5f;
+        break;
       case LumaRange::LIGHT:
         color_brackets[i].lower_bound.l = 0.55f;
         color_brackets[i].upper_bound.l = 1;
@@ -766,6 +790,11 @@ std::vector<SkColor> CalculateProminentColorsOfBitmap(
     }
 
     switch (color_profiles[i].saturation) {
+      case SaturationRange::ANY:
+        color_brackets[i].lower_bound.s = 0;
+        color_brackets[i].upper_bound.s = 1;
+        color_brackets[i].goal.s = 0.5f;
+        break;
       case SaturationRange::VIBRANT:
         color_brackets[i].lower_bound.s = 0.35f;
         color_brackets[i].upper_bound.s = 1;
@@ -779,7 +808,10 @@ std::vector<SkColor> CalculateProminentColorsOfBitmap(
     }
   }
 
-  return CalculateProminentColors(bitmap, color_brackets);
+  return CalculateProminentColors(
+      bitmap, color_brackets,
+      region ? *region : gfx::Rect(bitmap.width(), bitmap.height()),
+      filter.is_null() ? base::BindRepeating(&IsInterestingColor) : filter);
 }
 
 gfx::Matrix3F ComputeColorCovariance(const SkBitmap& bitmap) {

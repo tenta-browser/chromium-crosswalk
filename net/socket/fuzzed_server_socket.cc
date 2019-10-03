@@ -4,6 +4,8 @@
 
 #include "net/socket/fuzzed_server_socket.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -11,13 +13,12 @@
 
 namespace net {
 
-FuzzedServerSocket::FuzzedServerSocket(base::FuzzedDataProvider* data_provider,
+FuzzedServerSocket::FuzzedServerSocket(FuzzedDataProvider* data_provider,
                                        net::NetLog* net_log)
     : data_provider_(data_provider),
       net_log_(net_log),
       first_accept_(true),
-      listen_called_(false),
-      weak_factory_(this) {}
+      listen_called_(false) {}
 
 FuzzedServerSocket::~FuzzedServerSocket() = default;
 
@@ -34,11 +35,12 @@ int FuzzedServerSocket::GetLocalAddress(IPEndPoint* address) const {
 }
 
 int FuzzedServerSocket::Accept(std::unique_ptr<StreamSocket>* socket,
-                               const CompletionCallback& callback) {
+                               CompletionOnceCallback callback) {
   if (first_accept_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FuzzedServerSocket::DispatchAccept,
-                              weak_factory_.GetWeakPtr(), socket, callback));
+        FROM_HERE, base::BindOnce(&FuzzedServerSocket::DispatchAccept,
+                                  weak_factory_.GetWeakPtr(), socket,
+                                  std::move(callback)));
   }
   first_accept_ = false;
 
@@ -46,15 +48,15 @@ int FuzzedServerSocket::Accept(std::unique_ptr<StreamSocket>* socket,
 }
 
 void FuzzedServerSocket::DispatchAccept(std::unique_ptr<StreamSocket>* socket,
-                                        const CompletionCallback& callback) {
+                                        CompletionOnceCallback callback) {
   std::unique_ptr<FuzzedSocket> connected_socket(
       std::make_unique<FuzzedSocket>(data_provider_, net_log_));
   // The Connect call should always succeed synchronously, without using the
   // callback, since connected_socket->set_fuzz_connect_result(true) has not
   // been called.
-  CHECK_EQ(net::OK, connected_socket->Connect(callback));
+  CHECK_EQ(net::OK, connected_socket->Connect(CompletionOnceCallback()));
   *socket = std::move(connected_socket);
-  callback.Run(OK);
+  std::move(callback).Run(OK);
 }
 
 }  // namespace net

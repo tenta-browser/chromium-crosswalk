@@ -34,7 +34,8 @@ class PrefsTabHelper : public content::NotificationObserver,
  public:
   ~PrefsTabHelper() override;
 
-  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+                                   const std::string& locale);
   static void GetServiceInstance();
 
  protected:
@@ -51,7 +52,7 @@ class PrefsTabHelper : public content::NotificationObserver,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // Update the WebContents's RendererPreferences.
+  // Update the WebContents's blink::mojom::RendererPreferences.
   void UpdateRendererPreferences();
 
   void OnFontFamilyPrefChanged(const std::string& pref_name);
@@ -69,7 +70,9 @@ class PrefsTabHelper : public content::NotificationObserver,
       default_zoom_level_subscription_;
   FontPrefChangeNotifier::Registrar font_change_registrar_;
 #endif  // !defined(OS_ANDROID)
-  base::WeakPtrFactory<PrefsTabHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<PrefsTabHelper> weak_ptr_factory_{this};
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(PrefsTabHelper);
 };

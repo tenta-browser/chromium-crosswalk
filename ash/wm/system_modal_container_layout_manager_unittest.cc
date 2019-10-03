@@ -6,11 +6,16 @@
 
 #include <memory>
 
+#include "ash/keyboard/keyboard_controller_impl.h"
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/window_factory.h"
 #include "ash/wm/container_finder.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
@@ -25,10 +30,6 @@
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/test/layer_animator_test_controller.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_switches.h"
-#include "ui/keyboard/keyboard_test_util.h"
-#include "ui/keyboard/keyboard_ui.h"
 #include "ui/views/test/capture_tracking_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -45,7 +46,7 @@ aura::Window* GetModalContainer() {
 
 bool AllRootWindowsHaveModalBackgroundsForContainer(int container_id) {
   aura::Window::Windows containers =
-      wm::GetContainersFromAllRootWindows(container_id);
+      GetContainersForAllRootWindows(container_id);
   bool has_modal_screen = !containers.empty();
   for (aura::Window* container : containers) {
     has_modal_screen &= static_cast<SystemModalContainerLayoutManager*>(
@@ -152,16 +153,6 @@ class SystemModalContainerLayoutManagerTest : public AshTestBase {
     AshTestBase::SetUp();
   }
 
-  void ActivateKeyboard() {
-    Shell::GetPrimaryRootWindowController()->ActivateKeyboard(
-        keyboard::KeyboardController::GetInstance());
-  }
-
-  void DeactivateKeyboard() {
-    Shell::GetPrimaryRootWindowController()->DeactivateKeyboard(
-        keyboard::KeyboardController::GetInstance());
-  }
-
   aura::Window* OpenToplevelTestWindow(bool modal) {
     views::Widget* widget = views::Widget::CreateWindowWithContext(
         new TestWindow(modal), CurrentContext());
@@ -178,24 +169,19 @@ class SystemModalContainerLayoutManagerTest : public AshTestBase {
 
   // Show or hide the keyboard.
   void ShowKeyboard(bool show) {
-    keyboard::KeyboardController* keyboard =
-        keyboard::KeyboardController::GetInstance();
-    ASSERT_TRUE(keyboard);
-    if (show == keyboard->keyboard_visible())
+    auto* keyboard = keyboard::KeyboardUIController::Get();
+    ASSERT_TRUE(keyboard->IsEnabled());
+    if (show == keyboard->IsKeyboardVisible())
       return;
 
     if (show) {
-      keyboard->ShowKeyboard(true);
-      if (keyboard->ui()->GetContentsWindow()->bounds().height() == 0) {
-        keyboard->ui()->GetContentsWindow()->SetBounds(
-            keyboard::KeyboardBoundsFromRootBounds(
-                Shell::GetPrimaryRootWindow()->bounds(), 100));
-      }
+      keyboard->ShowKeyboard(true /* lock */);
+      ASSERT_TRUE(keyboard::WaitUntilShown());
     } else {
-      keyboard->HideKeyboard(keyboard::KeyboardController::HIDE_REASON_MANUAL);
+      keyboard->HideKeyboardByUser();
     }
 
-    DCHECK_EQ(show, keyboard->keyboard_visible());
+    DCHECK_EQ(show, keyboard->IsKeyboardVisible());
   }
 };
 
@@ -338,6 +324,17 @@ TEST_F(SystemModalContainerLayoutManagerTest, EventFocusContainers) {
   e1.ClickLeftButton();
   EXPECT_EQ(1, main_delegate->mouse_presses());
 
+  EventTestWindow* status_delegate = new EventTestWindow(false);
+  std::unique_ptr<aura::Window> status(
+      status_delegate->OpenTestWindowWithParent(
+          Shell::GetPrimaryRootWindowController()->GetContainer(
+              ash::kShellWindowId_StatusContainer)));
+  status->SetBounds(main->bounds());
+
+  // Make sure that status window can receive event.
+  e1.ClickLeftButton();
+  EXPECT_EQ(1, status_delegate->mouse_presses());
+
   // Create a modal window for the main window and verify that the main window
   // no longer receives mouse events.
   EventTestWindow* transient_delegate = new EventTestWindow(true);
@@ -345,7 +342,14 @@ TEST_F(SystemModalContainerLayoutManagerTest, EventFocusContainers) {
       transient_delegate->OpenTestWindowWithParent(main.get());
   EXPECT_TRUE(wm::IsActiveWindow(transient));
   e1.ClickLeftButton();
+
+  EXPECT_EQ(0, transient_delegate->mouse_presses());
+  EXPECT_EQ(1, status_delegate->mouse_presses());
+
+  status->Hide();
+  e1.ClickLeftButton();
   EXPECT_EQ(1, transient_delegate->mouse_presses());
+  EXPECT_EQ(1, status_delegate->mouse_presses());
 
   for (int block_reason = FIRST_BLOCK_REASON;
        block_reason < NUMBER_OF_BLOCK_REASONS; ++block_reason) {
@@ -360,9 +364,11 @@ TEST_F(SystemModalContainerLayoutManagerTest, EventFocusContainers) {
     // BlockUserSession could change the workspace size. Make sure |lock| has
     // the same bounds as |main| so that |lock| gets the generated mouse events.
     lock->SetBounds(main->bounds());
+
     EXPECT_TRUE(wm::IsActiveWindow(lock.get()));
     e1.ClickLeftButton();
     EXPECT_EQ(1, lock_delegate->mouse_presses());
+    EXPECT_EQ(1, status_delegate->mouse_presses());
 
     // Make sure that a modal container created by the lock screen can still
     // receive mouse events.
@@ -371,11 +377,25 @@ TEST_F(SystemModalContainerLayoutManagerTest, EventFocusContainers) {
         lock_modal_delegate->OpenTestWindowWithParent(lock.get());
     EXPECT_TRUE(wm::IsActiveWindow(lock_modal));
     e1.ClickLeftButton();
+
     // Verify that none of the other containers received any more mouse presses.
     EXPECT_EQ(1, lock_modal_delegate->mouse_presses());
     EXPECT_EQ(1, lock_delegate->mouse_presses());
+    EXPECT_EQ(1, status_delegate->mouse_presses());
     EXPECT_EQ(1, main_delegate->mouse_presses());
     EXPECT_EQ(1, transient_delegate->mouse_presses());
+
+    // Showing status will block events.
+    status->Show();
+    e1.ClickLeftButton();
+
+    // Verify that none of the other containers received any more mouse presses.
+    EXPECT_EQ(1, lock_modal_delegate->mouse_presses());
+    EXPECT_EQ(1, lock_delegate->mouse_presses());
+    EXPECT_EQ(1, status_delegate->mouse_presses());
+    EXPECT_EQ(1, main_delegate->mouse_presses());
+    EXPECT_EQ(1, transient_delegate->mouse_presses());
+    status->Hide();
 
     // Close |lock| before unlocking so that Shell::OnLockStateChanged does
     // not DCHECK on finding a system modal in Lock layer when unlocked.
@@ -383,6 +403,46 @@ TEST_F(SystemModalContainerLayoutManagerTest, EventFocusContainers) {
 
     UnblockUserSession();
   }
+}
+
+// Test if a user can still click the status area in lock screen
+// even if the user session has system modal dialog.
+TEST_F(SystemModalContainerLayoutManagerTest,
+       ClickStatusWithModalDialogInLockedState) {
+  // Create a normal window and attempt to receive a click event.
+  EventTestWindow* main_delegate = new EventTestWindow(false);
+  std::unique_ptr<aura::Window> main(
+      main_delegate->OpenTestWindowWithContext(CurrentContext()));
+  ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow(), main.get());
+
+  // A window in status area container to test if it could receive an event
+  // under each condition.
+  EventTestWindow* status_delegate = new EventTestWindow(false);
+  std::unique_ptr<aura::Window> status(
+      status_delegate->OpenTestWindowWithParent(
+          Shell::GetPrimaryRootWindowController()->GetContainer(
+              ash::kShellWindowId_StatusContainer)));
+  status->SetBounds(main->bounds());
+
+  // Events are blocked on all windows because status window is above the modal
+  // window.
+  EventTestWindow* modal_delegate = new EventTestWindow(true);
+  aura::Window* modal = modal_delegate->OpenTestWindowWithParent(main.get());
+  EXPECT_TRUE(wm::IsActiveWindow(modal));
+  generator.ClickLeftButton();
+
+  EXPECT_EQ(0, main_delegate->mouse_presses());
+  EXPECT_EQ(0, modal_delegate->mouse_presses());
+  EXPECT_EQ(0, status_delegate->mouse_presses());
+
+  BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
+
+  // In lock screen, a window in status area container should be able to receive
+  // the event even with a system modal dialog in the user session.
+  generator.ClickLeftButton();
+  EXPECT_EQ(0, main_delegate->mouse_presses());
+  EXPECT_EQ(0, modal_delegate->mouse_presses());
+  EXPECT_EQ(1, status_delegate->mouse_presses());
 }
 
 TEST_F(SystemModalContainerLayoutManagerTest, ModalTransientChildEvents) {
@@ -418,7 +478,8 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalTransientChildEvents) {
   // Create a child control for modal1_transient and it receives mouse events.
   aura::test::EventCountDelegate control_delegate;
   control_delegate.set_window_component(HTCLIENT);
-  std::unique_ptr<aura::Window> child(new aura::Window(&control_delegate));
+  std::unique_ptr<aura::Window> child =
+      window_factory::NewWindow(&control_delegate);
   child->SetType(aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   modal1_transient->AddChild(child.get());
@@ -655,7 +716,6 @@ TEST_F(SystemModalContainerLayoutManagerTest, MultiDisplays) {
 // positioned into the visible area.
 TEST_F(SystemModalContainerLayoutManagerTest,
        SystemModalDialogGetPushedFromKeyboard) {
-  ActivateKeyboard();
   const gfx::Rect& container_bounds = GetModalContainer()->bounds();
   // Place the window at the bottom of the screen.
   gfx::Size modal_size(100, 100);
@@ -686,14 +746,12 @@ TEST_F(SystemModalContainerLayoutManagerTest,
   EXPECT_NE(modal_bounds.ToString(), modal_window->bounds().ToString());
   EXPECT_EQ(modal_size.ToString(), modal_window->bounds().size().ToString());
   EXPECT_EQ(modal_origin.x(), modal_window->bounds().x());
-  DeactivateKeyboard();
 }
 
 // Test that windows will not get cropped through the visible virtual keyboard -
 // if centered.
 TEST_F(SystemModalContainerLayoutManagerTest,
        SystemModalDialogGetPushedButNotCroppedFromKeyboard) {
-  ActivateKeyboard();
   const gfx::Rect& container_bounds = GetModalContainer()->bounds();
   const gfx::Size screen_size = Shell::GetPrimaryRootWindow()->bounds().size();
   // Place the window at the bottom of the screen.
@@ -721,14 +779,12 @@ TEST_F(SystemModalContainerLayoutManagerTest,
   EXPECT_EQ(0, modal_window->bounds().y());
 
   ShowKeyboard(false);
-  DeactivateKeyboard();
 }
 
 // Test that windows will not get cropped through the visible virtual keyboard -
 // if not centered.
 TEST_F(SystemModalContainerLayoutManagerTest,
        SystemModalDialogGetPushedButNotCroppedFromKeyboardIfNotCentered) {
-  ActivateKeyboard();
   const gfx::Size screen_size = Shell::GetPrimaryRootWindow()->bounds().size();
   // Place the window at the bottom of the screen.
   gfx::Size modal_size(100, screen_size.height() - 70);
@@ -753,7 +809,6 @@ TEST_F(SystemModalContainerLayoutManagerTest,
   EXPECT_EQ(0, modal_window->bounds().y());
 
   ShowKeyboard(false);
-  DeactivateKeyboard();
 }
 
 TEST_F(SystemModalContainerLayoutManagerTest, UpdateModalType) {
@@ -763,23 +818,23 @@ TEST_F(SystemModalContainerLayoutManagerTest, UpdateModalType) {
       new TestWindow(false), modal_container);
   widget->Show();
   aura::Window* window = widget->GetNativeWindow();
-  EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
 
   window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_SYSTEM);
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
 
   // Setting twice should not cause error.
   window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_SYSTEM);
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
 
   window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_NONE);
-  EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
 
   window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_SYSTEM);
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
 
   widget->Close();
-  EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
 }
 
 TEST_F(SystemModalContainerLayoutManagerTest, VisibilityChange) {
@@ -792,29 +847,29 @@ TEST_F(SystemModalContainerLayoutManagerTest, VisibilityChange) {
       Shell::GetPrimaryRootWindowController()->GetSystemModalLayoutManager(
           modal_window.get());
 
-  EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
   EXPECT_FALSE(layout_manager->has_window_dimmer());
 
   modal_window->Show();
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
   EXPECT_TRUE(layout_manager->has_window_dimmer());
 
   // Make sure that a child visibility change should not cause
   // inconsistent state.
-  std::unique_ptr<aura::Window> child = std::make_unique<aura::Window>(nullptr);
+  std::unique_ptr<aura::Window> child = window_factory::NewWindow();
   child->SetType(aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   modal_window->AddChild(child.get());
   child->Show();
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
   EXPECT_TRUE(layout_manager->has_window_dimmer());
 
   modal_window->Hide();
-  EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
   EXPECT_FALSE(layout_manager->has_window_dimmer());
 
   modal_window->Show();
-  EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+  EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
   EXPECT_TRUE(layout_manager->has_window_dimmer());
 }
 
@@ -843,7 +898,7 @@ class InputTestDelegate : public aura::test::TestWindowDelegate {
         new TestWindow(true), Shell::GetPrimaryRootWindow(),
         gfx::Rect(200, 200, 100, 100));
     widget->Show();
-    EXPECT_TRUE(ShellPort::Get()->IsSystemModalWindowOpen());
+    EXPECT_TRUE(Shell::IsSystemModalWindowOpen());
 
     // Events should be blocked.
     GenerateEvents(window.get());
@@ -855,7 +910,7 @@ class InputTestDelegate : public aura::test::TestWindowDelegate {
     Reset();
 
     widget->Close();
-    EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
+    EXPECT_FALSE(Shell::IsSystemModalWindowOpen());
 
     GenerateEvents(window.get());
 

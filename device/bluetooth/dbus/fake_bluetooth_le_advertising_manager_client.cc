@@ -31,7 +31,9 @@ FakeBluetoothLEAdvertisingManagerClient::
 FakeBluetoothLEAdvertisingManagerClient::
     ~FakeBluetoothLEAdvertisingManagerClient() = default;
 
-void FakeBluetoothLEAdvertisingManagerClient::Init(dbus::Bus* bus) {}
+void FakeBluetoothLEAdvertisingManagerClient::Init(
+    dbus::Bus* bus,
+    const std::string& bluetooth_service_name) {}
 
 void FakeBluetoothLEAdvertisingManagerClient::AddObserver(Observer* observer) {}
 
@@ -41,38 +43,42 @@ void FakeBluetoothLEAdvertisingManagerClient::RemoveObserver(
 void FakeBluetoothLEAdvertisingManagerClient::RegisterAdvertisement(
     const dbus::ObjectPath& manager_object_path,
     const dbus::ObjectPath& advertisement_object_path,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   VLOG(1) << "RegisterAdvertisment: " << advertisement_object_path.value();
 
   if (manager_object_path != dbus::ObjectPath(kAdvertisingManagerPath)) {
-    error_callback.Run(kNoResponseError, "Invalid Advertising Manager path.");
+    std::move(error_callback)
+        .Run(kNoResponseError, "Invalid Advertising Manager path.");
     return;
   }
 
-  ServiceProviderMap::iterator iter =
-      service_provider_map_.find(advertisement_object_path);
+  auto iter = service_provider_map_.find(advertisement_object_path);
   if (iter == service_provider_map_.end()) {
-    error_callback.Run(bluetooth_advertising_manager::kErrorInvalidArguments,
-                       "Advertisement object not registered");
+    std::move(error_callback)
+        .Run(bluetooth_advertising_manager::kErrorInvalidArguments,
+             "Advertisement object not registered");
   } else if (currently_registered_.size() >= kMaxBluezAdvertisements) {
-    error_callback.Run(bluetooth_advertising_manager::kErrorFailed,
-                       "Maximum advertisements reached");
+    std::move(error_callback)
+        .Run(bluetooth_advertising_manager::kErrorFailed,
+             "Maximum advertisements reached");
   } else {
     currently_registered_.push_back(advertisement_object_path);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(callback));
   }
 }
 
 void FakeBluetoothLEAdvertisingManagerClient::UnregisterAdvertisement(
     const dbus::ObjectPath& manager_object_path,
     const dbus::ObjectPath& advertisement_object_path,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   VLOG(1) << "UnregisterAdvertisment: " << advertisement_object_path.value();
 
   if (manager_object_path != dbus::ObjectPath(kAdvertisingManagerPath)) {
-    error_callback.Run(kNoResponseError, "Invalid Advertising Manager path.");
+    std::move(error_callback)
+        .Run(kNoResponseError, "Invalid Advertising Manager path.");
     return;
   }
 
@@ -82,14 +88,17 @@ void FakeBluetoothLEAdvertisingManagerClient::UnregisterAdvertisement(
                 advertisement_object_path);
 
   if (service_iter == service_provider_map_.end()) {
-    error_callback.Run(bluetooth_advertising_manager::kErrorDoesNotExist,
-                       "Advertisement not registered");
+    std::move(error_callback)
+        .Run(bluetooth_advertising_manager::kErrorDoesNotExist,
+             "Advertisement not registered");
   } else if (reg_iter == currently_registered_.end()) {
-    error_callback.Run(bluetooth_advertising_manager::kErrorDoesNotExist,
-                       "Does not exist");
+    std::move(error_callback)
+        .Run(bluetooth_advertising_manager::kErrorDoesNotExist,
+             "Does not exist");
   } else {
     currently_registered_.erase(reg_iter);
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(callback));
   }
 }
 
@@ -97,24 +106,25 @@ void FakeBluetoothLEAdvertisingManagerClient::SetAdvertisingInterval(
     const dbus::ObjectPath& object_path,
     uint16_t min_interval_ms,
     uint16_t max_interval_ms,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   if (min_interval_ms < kMinIntervalMs || max_interval_ms > kMaxIntervalMs ||
       min_interval_ms > max_interval_ms) {
-    error_callback.Run(bluetooth_advertising_manager::kErrorInvalidArguments,
-                       "Invalid interval.");
+    std::move(error_callback)
+        .Run(bluetooth_advertising_manager::kErrorInvalidArguments,
+             "Invalid interval.");
     return;
   }
-  callback.Run();
+  std::move(callback).Run();
 }
 
 void FakeBluetoothLEAdvertisingManagerClient::ResetAdvertising(
     const dbus::ObjectPath& object_path,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   currently_registered_.clear();
   service_provider_map_.clear();
-  callback.Run();
+  std::move(callback).Run();
 }
 
 void FakeBluetoothLEAdvertisingManagerClient::
@@ -126,8 +136,7 @@ void FakeBluetoothLEAdvertisingManagerClient::
 void FakeBluetoothLEAdvertisingManagerClient::
     UnregisterAdvertisementServiceProvider(
         FakeBluetoothLEAdvertisementServiceProvider* service_provider) {
-  ServiceProviderMap::iterator iter =
-      service_provider_map_.find(service_provider->object_path_);
+  auto iter = service_provider_map_.find(service_provider->object_path_);
   if (iter != service_provider_map_.end() && iter->second == service_provider)
     service_provider_map_.erase(iter);
 }

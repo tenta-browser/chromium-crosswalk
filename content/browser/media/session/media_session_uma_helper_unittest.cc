@@ -5,7 +5,7 @@
 #include "content/browser/media/session/media_session_uma_helper.h"
 
 #include "base/metrics/histogram_samples.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -29,7 +29,7 @@ class MediaSessionUmaHelperTest : public testing::Test {
 
   MediaSessionUmaHelper& media_session_uma_helper() {
     return media_session_uma_helper_;
-  };
+  }
 
   std::unique_ptr<base::HistogramSamples> GetHistogramSamplesSinceTestStart(
       const std::string& name) {

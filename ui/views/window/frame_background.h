@@ -43,6 +43,9 @@ class VIEWS_EXPORT FrameBackground {
   // Memory is owned by the caller.
   void set_theme_image(const gfx::ImageSkia& image) { theme_image_ = image; }
 
+  // Sets an inset into the theme image to begin painting at.
+  void set_theme_image_y_inset(int y_inset) { theme_image_y_inset_ = y_inset; }
+
   // Sets an image that overlays the top window image.  Usually used to add
   // edge highlighting to provide the illusion of depth.  May be null (empty).
   // Memory is owned by the caller.
@@ -81,34 +84,32 @@ class VIEWS_EXPORT FrameBackground {
   void PaintMaximized(gfx::Canvas* canvas, const View* view) const;
 
  private:
-  // Fills the frame area with the frame color.
-  void PaintFrameColor(gfx::Canvas* canvas, const View* view) const;
+  // Fills the frame side and bottom borders with the frame color.
+  void FillFrameBorders(gfx::Canvas* canvas, const View* view) const;
 
-  // Paints the background of the tab strip.
-  void PaintFrameTopArea(gfx::Canvas* canvas, const View* view) const;
-
-  SkColor frame_color_;
-  bool use_custom_frame_;
-  bool is_active_;
-  bool incognito_;
+  SkColor frame_color_ = 0;
+  bool use_custom_frame_ = true;
+  bool is_active_ = true;
+  bool incognito_ = false;
   gfx::ImageSkia theme_image_;
+  int theme_image_y_inset_ = 0;
   gfx::ImageSkia theme_overlay_image_;
-  int top_area_height_;
+  int top_area_height_ = 0;
 
   // Images for the sides of the frame.
-  const gfx::ImageSkia* left_edge_;
-  const gfx::ImageSkia* top_edge_;
-  const gfx::ImageSkia* right_edge_;
-  const gfx::ImageSkia* bottom_edge_;
+  const gfx::ImageSkia* left_edge_ = nullptr;
+  const gfx::ImageSkia* top_edge_ = nullptr;
+  const gfx::ImageSkia* right_edge_ = nullptr;
+  const gfx::ImageSkia* bottom_edge_ = nullptr;
 
   // Images for the corners of the frame.
-  const gfx::ImageSkia* top_left_corner_;
-  const gfx::ImageSkia* top_right_corner_;
-  const gfx::ImageSkia* bottom_left_corner_;
-  const gfx::ImageSkia* bottom_right_corner_;
+  const gfx::ImageSkia* top_left_corner_ = nullptr;
+  const gfx::ImageSkia* top_right_corner_ = nullptr;
+  const gfx::ImageSkia* bottom_left_corner_ = nullptr;
+  const gfx::ImageSkia* bottom_right_corner_ = nullptr;
 
   // Vertical inset for theme image when drawing maximized.
-  int maximized_top_inset_;
+  int maximized_top_inset_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(FrameBackground);
 };

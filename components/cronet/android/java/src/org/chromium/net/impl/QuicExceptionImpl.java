@@ -22,13 +22,13 @@ public class QuicExceptionImpl extends QuicException {
      * this list</a>.
      * @param quicDetailedErrorCode Detailed <a href="https://www.chromium.org/quic">QUIC</a> error
      * code from <a
-     * href=https://cs.chromium.org/chromium/src/net/quic/quic_protocol.h?type=cs&q=%22enum+QuicErrorCode+%7B%22+file:src/net/quic/quic_protocol.h>
+     * href="https://cs.chromium.org/search/?q=symbol:%5CbQuicErrorCode%5Cb">
      * QuicErrorCode</a>.
      */
-    public QuicExceptionImpl(String message, int netErrorCode, int quicDetailedErrorCode) {
+    public QuicExceptionImpl(
+            String message, int errorCode, int netErrorCode, int quicDetailedErrorCode) {
         super(message, null);
-        mNetworkException =
-                new NetworkExceptionImpl(message, ERROR_QUIC_PROTOCOL_FAILED, netErrorCode);
+        mNetworkException = new NetworkExceptionImpl(message, errorCode, netErrorCode);
         mQuicDetailedErrorCode = quicDetailedErrorCode;
     }
 

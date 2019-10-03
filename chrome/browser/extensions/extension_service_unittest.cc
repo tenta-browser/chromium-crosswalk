@@ -18,14 +18,12 @@
 #include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -34,7 +32,9 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
@@ -42,12 +42,11 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/blacklist.h"
 #include "chrome/browser/extensions/chrome_app_sorting.h"
+#include "chrome/browser/extensions/chrome_extension_cookies.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/default_apps.h"
-#include "chrome/browser/extensions/extension_creator.h"
-#include "chrome/browser/extensions/extension_error_reporter.h"
 #include "chrome/browser/extensions/extension_error_ui.h"
 #include "chrome/browser/extensions/extension_management_test_util.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
@@ -61,23 +60,25 @@
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "chrome/browser/extensions/fake_safe_browsing_database_manager.h"
 #include "chrome/browser/extensions/installed_loader.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/pack_extension_job.h"
 #include "chrome/browser/extensions/pending_extension_info.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
+#include "chrome/browser/extensions/permissions_test_util.h"
 #include "chrome/browser/extensions/permissions_updater.h"
+#include "chrome/browser/extensions/plugin_manager.h"
 #include "chrome/browser/extensions/test_blacklist.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/global_error/global_error_waiter.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
-#include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -100,6 +101,8 @@
 #include "content/public/common/content_constants.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_creator.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -109,17 +112,21 @@
 #include "extensions/browser/install_flag.h"
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/mock_external_provider.h"
+#include "extensions/browser/pref_names.h"
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/browser/test_management_policy.h"
 #include "extensions/browser/uninstall_reason.h"
-#include "extensions/common/disable_reason.h"
+#include "extensions/browser/updater/extension_downloader_test_helper.h"
+#include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_l10n_util.h"
 #include "extensions/common/extension_resource.h"
+#include "extensions/common/extension_urls.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/common/manifest_handlers/content_scripts_handler.h"
 #include "extensions/common/manifest_handlers/permissions_parser.h"
 #include "extensions/common/manifest_url_handlers.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -127,11 +134,16 @@
 #include "extensions/common/switches.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/value_builder.h"
+#include "extensions/common/verifier_formats.h"
+#include "extensions/test/test_extension_dir.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "storage/browser/database/database_tracker.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/common/database/database_identifier.h"
@@ -140,6 +152,7 @@
 #include "testing/platform_test.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 // The blacklist tests rely on the safe-browsing database.
 #if defined(SAFE_BROWSING_DB_LOCAL)
@@ -151,32 +164,10 @@ using content::BrowserThread;
 using content::DOMStorageContext;
 using content::IndexedDBContext;
 using content::PluginService;
-using extensions::APIPermission;
-using extensions::APIPermissionSet;
-using extensions::AppSorting;
-using extensions::Blacklist;
-using extensions::CrxInstaller;
-using extensions::Extension;
-using extensions::ExtensionBuilder;
-using extensions::ExtensionCreator;
-using extensions::ExtensionPrefs;
-using extensions::ExtensionRegistry;
-using extensions::ExtensionResource;
-using extensions::ExtensionSystem;
-using extensions::ExternalInstallError;
-using extensions::ExternalInstallInfoFile;
-using extensions::ExternalInstallInfoUpdateUrl;
-using extensions::ExternalProviderInterface;
-using extensions::FakeSafeBrowsingDatabaseManager;
-using extensions::FeatureSwitch;
-using extensions::Manifest;
-using extensions::MockExternalProvider;
-using extensions::PermissionSet;
-using extensions::TestExtensionSystem;
-using extensions::UnloadedExtensionReason;
-using extensions::URLPatternSet;
 
-namespace keys = extensions::manifest_keys;
+namespace extensions {
+
+namespace keys = manifest_keys;
 
 namespace {
 
@@ -185,13 +176,13 @@ const char good0[] = "behllobkkfkfnphdnhnkndlbkcpglgmj";
 const char good1[] = "hpiknbiabeeppbpihjehijgoemciehgk";
 const char good2[] = "bjafgdebaacbbbecmhlhpofkepfkgcpa";
 const char all_zero[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const char good2048[] = "nmgjhmhbleinmjpbdhgajfjkbijcmgbh";
+const char good2048[] = "dfhpodpjggiioolfhoimofdbfjibmedp";
 const char good_crx[] = "ldnnhddmnhbkjipkidpdiheffobcpfmf";
 const char minimal_platform_app_crx[] = "jjeoclcdfjddkdjokiejckgcildcflpp";
 const char hosted_app[] = "kbmnembihfiondgfjekmnmcbddelicoi";
-const char page_action[] = "obcimlgaoabeegjmmpldobjndiealpln";
-const char theme_crx[] = "iamefpfkojoapidjnbafmgkgncegbkad";
-const char theme2_crx[] = "pjpgmfcmabopnnfonnhmdjglfpjjfkbf";
+const char page_action[] = "dpfmafkdlbmopmcepgpjkpldjbghdibm";
+const char theme_crx[] = "idlfhncioikpdnlhnmcjogambnefbbfp";
+const char theme2_crx[] = "ibcijncamhmjjdodjamgiipcgnnaeagd";
 const char permissions_crx[] = "eagpmdpfmaekmmcejjbmjoecnejeiiin";
 const char updates_from_webstore[] = "akjooamlhcgeopfifcmlggaebeocgokj";
 const char updates_from_webstore2[] = "oolblhbomdbcpmafphaodhjfcgbihcdg";
@@ -199,7 +190,6 @@ const char updates_from_webstore3[] = "bmfoocgfinpmkmlbjhcbofejhkhlbchk";
 const char permissions_blocklist[] = "noffkehfcaggllbcojjbopcmlhcnhcdn";
 const char cast_stable[] = "boadgeojelhgndaghljhdicfkmllpafd";
 const char cast_beta[] = "dliochdbjfkdbacpmhlcpmleaejidimm";
-const char zip_unpacker[] = "oedeeodfidgoollimchfdnbmhcpnklnd";
 
 struct BubbleErrorsTestData {
   BubbleErrorsTestData(const std::string& id,
@@ -256,26 +246,19 @@ size_t GetExternalInstallBubbleCount(ExtensionService* service) {
   return bubble_count;
 }
 
-scoped_refptr<Extension> CreateExtension(const base::string16& name,
-                                         const base::FilePath& path,
-                                         Manifest::Location location) {
-  base::DictionaryValue manifest;
-  manifest.SetString(extensions::manifest_keys::kVersion, "1.0.0.0");
-  manifest.SetString(extensions::manifest_keys::kName, name);
-  std::string error;
-  scoped_refptr<Extension> extension =
-      Extension::Create(path, location, manifest, Extension::NO_FLAGS, &error);
-  EXPECT_TRUE(extension.get() != nullptr) << error;
-  return extension;
+scoped_refptr<const Extension> CreateExtension(const std::string& name,
+                                               const base::FilePath& path,
+                                               Manifest::Location location) {
+  return ExtensionBuilder(name).SetPath(path).SetLocation(location).Build();
 }
 
 std::unique_ptr<ExternalInstallInfoFile> CreateExternalExtension(
-    const extensions::ExtensionId& extension_id,
+    const ExtensionId& extension_id,
     const std::string& version_str,
     const base::FilePath& path,
     Manifest::Location location,
     Extension::InitFromValueFlags flags) {
-  return base::MakeUnique<ExternalInstallInfoFile>(
+  return std::make_unique<ExternalInstallInfoFile>(
       extension_id, base::Version(version_str), path, location, flags, false,
       false);
 }
@@ -296,22 +279,19 @@ void PersistExtensionWithPaths(
   }
 
   std::unique_ptr<base::DictionaryValue> manifest =
-      extensions::DictionaryBuilder()
+      DictionaryBuilder()
           .Set(keys::kName, "Test extension")
           .Set(keys::kVersion, "1.0")
           .Set(keys::kManifestVersion, 2)
           .Build();
 
   // Persist manifest file.
-  base::FilePath manifest_path =
-      extension_dir.Append(extensions::kManifestFilename);
+  base::FilePath manifest_path = extension_dir.Append(kManifestFilename);
   JSONFileValueSerializer(manifest_path).Serialize(*manifest);
   EXPECT_TRUE(base::PathExists(manifest_path));
 }
 
 }  // namespace
-
-namespace extensions {
 
 // A simplified version of ExternalPrefLoader that loads the dictionary
 // from json data specified in a string.
@@ -346,10 +326,7 @@ class ExternalTestingLoader : public ExternalLoader {
   DISALLOW_COPY_AND_ASSIGN(ExternalTestingLoader);
 };
 
-}  // namespace extensions
-
-class MockProviderVisitor
-    : public extensions::ExternalProviderInterface::VisitorInterface {
+class MockProviderVisitor : public ExternalProviderInterface::VisitorInterface {
  public:
   // The provider will return |fake_base_path| from
   // GetBaseCrxFilePath().  User can test the behavior with
@@ -379,9 +356,11 @@ class MockProviderVisitor
             Manifest::Location download_location) {
     crx_location_ = crx_location;
     // Give the test json file to the provider for parsing.
-    provider_.reset(new extensions::ExternalProviderImpl(
-        this, new extensions::ExternalTestingLoader(json_data, fake_base_path_),
+    provider_.reset(new ExternalProviderImpl(
+        this, new ExternalTestingLoader(json_data, fake_base_path_),
         profile_.get(), crx_location, download_location, Extension::NO_FLAGS));
+    if (crx_location == Manifest::EXTERNAL_REGISTRY)
+      provider_->set_allow_updates(true);
 
     // We also parse the file into a dictionary to compare what we get back
     // from the provider.
@@ -480,7 +459,7 @@ class MockProviderVisitor
   }
 
   void OnExternalProviderReady(
-      const extensions::ExternalProviderInterface* provider) override {
+      const ExternalProviderInterface* provider) override {
     EXPECT_EQ(provider, provider_.get());
     EXPECT_TRUE(provider->IsReady());
   }
@@ -488,7 +467,7 @@ class MockProviderVisitor
   Profile* profile() { return profile_.get(); }
 
  protected:
-  std::unique_ptr<extensions::ExternalProviderImpl> provider_;
+  std::unique_ptr<ExternalProviderImpl> provider_;
 
   std::unique_ptr<base::DictionaryValue> GetDictionaryFromJSON(
       const std::string& json_data) {
@@ -580,13 +559,47 @@ class MockUpdateProviderVisitor : public MockProviderVisitor {
   DISALLOW_COPY_AND_ASSIGN(MockUpdateProviderVisitor);
 };
 
-class ExtensionServiceTest
-    : public extensions::ExtensionServiceTestWithInstall {
+struct MockExtensionRegistryObserver : public ExtensionRegistryObserver {
+  MockExtensionRegistryObserver() = default;
+  ~MockExtensionRegistryObserver() override = default;
+
+  // ExtensionRegistryObserver:
+  void OnExtensionLoaded(content::BrowserContext* browser_context,
+                         const Extension* extension) override {
+    last_extension_loaded = extension->id();
+  }
+  void OnExtensionUnloaded(content::BrowserContext* browser_context,
+                           const Extension* extension,
+                           UnloadedExtensionReason reason) override {
+    last_extension_unloaded = extension->id();
+  }
+  void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
+                                  const Extension* extension,
+                                  bool is_update,
+                                  const std::string& old_name) override {
+    last_extension_installed = extension->id();
+  }
+  void OnExtensionUninstalled(content::BrowserContext* browser_context,
+                              const Extension* extension,
+                              UninstallReason reason) override {
+    last_extension_uninstalled = extension->id();
+  }
+
+  std::string last_extension_loaded;
+  std::string last_extension_unloaded;
+  std::string last_extension_installed;
+  std::string last_extension_uninstalled;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockExtensionRegistryObserver);
+};
+
+class ExtensionServiceTest : public ExtensionServiceTestWithInstall {
  public:
   ExtensionServiceTest() = default;
 
   MockExternalProvider* AddMockExternalProvider(Manifest::Location location) {
-    auto provider = base::MakeUnique<MockExternalProvider>(service(), location);
+    auto provider = std::make_unique<MockExternalProvider>(service(), location);
     MockExternalProvider* provider_ptr = provider.get();
     service()->AddProviderForTesting(std::move(provider));
     return provider_ptr;
@@ -595,7 +608,7 @@ class ExtensionServiceTest
   // Checks for external extensions and waits for one to complete installing.
   void WaitForExternalExtensionInstalled() {
     content::WindowedNotificationObserver observer(
-        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     service()->CheckForExternalUpdates();
     observer.Wait();
@@ -610,13 +623,13 @@ class ExtensionServiceTest
   void GrantAllOptionalPermissions(const std::string& id) {
     const Extension* extension = service()->GetInstalledExtension(id);
     const PermissionSet& all_optional_permissions =
-        extensions::PermissionsParser::GetOptionalPermissions(extension);
-    extensions::PermissionsUpdater perms_updater(profile());
-    perms_updater.AddPermissions(extension, all_optional_permissions);
+        PermissionsParser::GetOptionalPermissions(extension);
+    permissions_test_util::GrantOptionalPermissionsAndWaitForCompletion(
+        profile(), *extension, all_optional_permissions);
   }
 
   testing::AssertionResult IsBlocked(const std::string& id) {
-    std::unique_ptr<extensions::ExtensionSet> all_unblocked_extensions =
+    std::unique_ptr<ExtensionSet> all_unblocked_extensions =
         registry()->GenerateInstalledExtensionsSet(
             ExtensionRegistry::EVERYTHING & ~ExtensionRegistry::BLOCKED);
     if (all_unblocked_extensions->Contains(id))
@@ -651,7 +664,7 @@ class ExtensionServiceTest
   bool IsPrefExist(const std::string& extension_id,
                    const std::string& pref_path) {
     const base::DictionaryValue* dict =
-        profile()->GetPrefs()->GetDictionary("extensions.settings");
+        profile()->GetPrefs()->GetDictionary(pref_names::kExtensions);
     if (dict == NULL) return false;
     const base::DictionaryValue* pref = NULL;
     if (!dict->GetDictionary(extension_id, &pref)) {
@@ -671,7 +684,7 @@ class ExtensionServiceTest
                const std::string& pref_path,
                std::unique_ptr<base::Value> value,
                const std::string& msg) {
-    DictionaryPrefUpdate update(profile()->GetPrefs(), "extensions.settings");
+    DictionaryPrefUpdate update(profile()->GetPrefs(), pref_names::kExtensions);
     base::DictionaryValue* dict = update.Get();
     ASSERT_TRUE(dict != NULL) << msg;
     base::DictionaryValue* pref = NULL;
@@ -688,9 +701,9 @@ class ExtensionServiceTest
     msg += " ";
     msg += pref_path;
     msg += " = ";
-    msg += base::IntToString(value);
+    msg += base::NumberToString(value);
 
-    SetPref(extension_id, pref_path, base::MakeUnique<base::Value>(value), msg);
+    SetPref(extension_id, pref_path, std::make_unique<base::Value>(value), msg);
   }
 
   void SetPrefBool(const std::string& extension_id,
@@ -701,7 +714,7 @@ class ExtensionServiceTest
     msg += " = ";
     msg += (value ? "true" : "false");
 
-    SetPref(extension_id, pref_path, base::MakeUnique<base::Value>(value), msg);
+    SetPref(extension_id, pref_path, std::make_unique<base::Value>(value), msg);
   }
 
   void ClearPref(const std::string& extension_id,
@@ -709,7 +722,7 @@ class ExtensionServiceTest
     std::string msg = " while clearing: ";
     msg += extension_id + " " + pref_path;
 
-    DictionaryPrefUpdate update(profile()->GetPrefs(), "extensions.settings");
+    DictionaryPrefUpdate update(profile()->GetPrefs(), pref_names::kExtensions);
     base::DictionaryValue* dict = update.Get();
     ASSERT_TRUE(dict != NULL) << msg;
     base::DictionaryValue* pref = NULL;
@@ -724,9 +737,8 @@ class ExtensionServiceTest
     std::string msg = " while setting: ";
     msg += extension_id + " " + pref_path;
 
-    auto list_value = base::MakeUnique<base::ListValue>();
-    for (std::set<std::string>::const_iterator iter = value.begin();
-         iter != value.end(); ++iter)
+    auto list_value = std::make_unique<base::ListValue>();
+    for (auto iter = value.begin(); iter != value.end(); ++iter)
       list_value->AppendString(*iter);
 
     SetPref(extension_id, pref_path, std::move(list_value), msg);
@@ -745,7 +757,7 @@ class ExtensionServiceTest
     InitializeExtensionService(params);
   }
 
-  extensions::ManagementPolicy* GetManagementPolicy() {
+  ManagementPolicy* GetManagementPolicy() {
     return ExtensionSystem::Get(browser_context())->management_policy();
   }
 
@@ -760,14 +772,14 @@ class ExtensionServiceTest
     return found == errors.end() ? nullptr : *found;
   }
 
-  typedef extensions::ExtensionManagementPrefUpdater<
+  typedef ExtensionManagementPrefUpdater<
       sync_preferences::TestingPrefServiceSyncable>
       ManagementPrefUpdater;
 };
 
 // Receives notifications from a PackExtensionJob, indicating either that
 // packing succeeded or that there was some error.
-class PackExtensionTestClient : public extensions::PackExtensionJob::Client {
+class PackExtensionTestClient : public PackExtensionJob::Client {
  public:
   PackExtensionTestClient(const base::FilePath& expected_crx_path,
                           const base::FilePath& expected_private_key_path);
@@ -844,8 +856,8 @@ TEST_F(ExtensionServiceTest, LoadAllExtensionsFromDirectorySuccess) {
   AddPattern(&expected_patterns, "http://*.google.com/*");
   AddPattern(&expected_patterns, "https://*.google.com/*");
   const Extension* extension = loaded_[0].get();
-  const extensions::UserScriptList& scripts =
-      extensions::ContentScriptsInfo::GetContentScripts(extension);
+  const UserScriptList& scripts =
+      ContentScriptsInfo::GetContentScripts(extension);
   ASSERT_EQ(2u, scripts.size());
   EXPECT_EQ(expected_patterns, scripts[0]->url_patterns());
   EXPECT_EQ(2u, scripts[0]->js_scripts().size());
@@ -883,10 +895,8 @@ TEST_F(ExtensionServiceTest, LoadAllExtensionsFromDirectorySuccess) {
   EXPECT_EQ(std::string("My extension 2"), loaded_[1]->name());
   EXPECT_EQ(std::string(), loaded_[1]->description());
   EXPECT_EQ(loaded_[1]->GetResourceURL("background.html"),
-            extensions::BackgroundInfo::GetBackgroundURL(loaded_[1].get()));
-  EXPECT_TRUE(
-      extensions::ContentScriptsInfo::GetContentScripts(loaded_[1].get())
-          .empty());
+            BackgroundInfo::GetBackgroundURL(loaded_[1].get()));
+  EXPECT_TRUE(ContentScriptsInfo::GetContentScripts(loaded_[1].get()).empty());
   EXPECT_EQ(Manifest::INTERNAL, loaded_[1]->location());
 
   int index = expected_num_extensions - 1;
@@ -894,8 +904,7 @@ TEST_F(ExtensionServiceTest, LoadAllExtensionsFromDirectorySuccess) {
   EXPECT_EQ(std::string("My extension 3"), loaded_[index]->name());
   EXPECT_EQ(std::string(), loaded_[index]->description());
   EXPECT_TRUE(
-      extensions::ContentScriptsInfo::GetContentScripts(loaded_[index].get())
-          .empty());
+      ContentScriptsInfo::GetContentScripts(loaded_[index].get()).empty());
   EXPECT_EQ(Manifest::INTERNAL, loaded_[index]->location());
 }
 
@@ -914,25 +923,29 @@ TEST_F(ExtensionServiceTest, LoadAllExtensionsFromDirectoryFail) {
   ASSERT_EQ(4u, GetErrors().size());
   ASSERT_EQ(0u, loaded_.size());
 
-  EXPECT_TRUE(base::MatchPattern(base::UTF16ToUTF8(GetErrors()[0]),
+  EXPECT_TRUE(base::MatchPattern(
+      base::UTF16ToUTF8(GetErrors()[0]),
       l10n_util::GetStringUTF8(IDS_EXTENSIONS_LOAD_ERROR_MESSAGE) + " *. " +
-      extensions::manifest_errors::kManifestUnreadable)) <<
-      base::UTF16ToUTF8(GetErrors()[0]);
+          manifest_errors::kManifestUnreadable))
+      << base::UTF16ToUTF8(GetErrors()[0]);
 
-  EXPECT_TRUE(base::MatchPattern(base::UTF16ToUTF8(GetErrors()[1]),
+  EXPECT_TRUE(base::MatchPattern(
+      base::UTF16ToUTF8(GetErrors()[1]),
       l10n_util::GetStringUTF8(IDS_EXTENSIONS_LOAD_ERROR_MESSAGE) + " *. " +
-      extensions::manifest_errors::kManifestUnreadable)) <<
-      base::UTF16ToUTF8(GetErrors()[1]);
+          manifest_errors::kManifestUnreadable))
+      << base::UTF16ToUTF8(GetErrors()[1]);
 
-  EXPECT_TRUE(base::MatchPattern(base::UTF16ToUTF8(GetErrors()[2]),
+  EXPECT_TRUE(base::MatchPattern(
+      base::UTF16ToUTF8(GetErrors()[2]),
       l10n_util::GetStringUTF8(IDS_EXTENSIONS_LOAD_ERROR_MESSAGE) + " *. " +
-      extensions::manifest_errors::kMissingFile)) <<
-      base::UTF16ToUTF8(GetErrors()[2]);
+          manifest_errors::kMissingFile))
+      << base::UTF16ToUTF8(GetErrors()[2]);
 
-  EXPECT_TRUE(base::MatchPattern(base::UTF16ToUTF8(GetErrors()[3]),
+  EXPECT_TRUE(base::MatchPattern(
+      base::UTF16ToUTF8(GetErrors()[3]),
       l10n_util::GetStringUTF8(IDS_EXTENSIONS_LOAD_ERROR_MESSAGE) + " *. " +
-      extensions::manifest_errors::kManifestUnreadable)) <<
-      base::UTF16ToUTF8(GetErrors()[3]);
+          manifest_errors::kManifestUnreadable))
+      << base::UTF16ToUTF8(GetErrors()[3]);
 }
 
 // Test various cases for delayed install because of missing imports.
@@ -991,6 +1004,105 @@ TEST_F(ExtensionServiceTest, PendingImports) {
   EXPECT_TRUE(service()->pending_extension_manager()->IsIdPending(pending_id));
   // Remove it because we are not testing the pending extension manager's
   // ability to download and install extensions.
+  EXPECT_TRUE(service()->pending_extension_manager()->Remove(pending_id));
+}
+
+// Tests that reloading extension with a install delayed due to pending imports
+// reloads currently installed extension version, rather than installing the
+// delayed install.
+TEST_F(ExtensionServiceTest, ReloadExtensionWithPendingImports) {
+  InitializeEmptyExtensionService();
+
+  // Wait for GarbageCollectExtensions task to complete.
+  content::RunAllTasksUntilIdle();
+
+  const base::FilePath base_path =
+      data_dir()
+          .AppendASCII("pending_updates_with_imports")
+          .AppendASCII("updated_with_imports");
+
+  const base::FilePath pem_path = base_path.AppendASCII("update.pem");
+
+  // Initially installed version - the version with no imports.
+  const base::FilePath installed_path = base_path.AppendASCII("1.0.0");
+
+  // The updated version - has import that is not satisfied (due to the imported
+  // extension not being installed).
+  const base::FilePath updated_path = base_path.AppendASCII("2.0.0");
+
+  ASSERT_TRUE(base::PathExists(pem_path));
+  ASSERT_TRUE(base::PathExists(installed_path));
+  ASSERT_TRUE(base::PathExists(updated_path));
+
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+
+  // Install version 1.
+  const Extension* extension =
+      PackAndInstallCRX(installed_path, pem_path, INSTALL_NEW,
+                        Extension::FROM_WEBSTORE, Manifest::Location::INTERNAL);
+  content::RunAllTasksUntilIdle();
+  ASSERT_TRUE(extension);
+  const std::string id = extension->id();
+
+  ASSERT_TRUE(registry()->enabled_extensions().Contains(id));
+  EXPECT_EQ("1.0.0", extension->VersionString());
+
+  // No pending extensions at this point.
+  EXPECT_FALSE(service()->pending_extension_manager()->HasPendingExtensions());
+
+  // Update to version 2 that adds an unsatisfied import.
+  PackCRXAndUpdateExtension(id, updated_path, pem_path, ENABLED);
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_TRUE(registry()->enabled_extensions().Contains(id));
+  extension = service()->GetInstalledExtension(id);
+  ASSERT_TRUE(extension);
+
+  // The extension update should be delayed at this point - the old version
+  // should still be installed.
+  EXPECT_EQ("1.0.0", extension->VersionString());
+
+  // Make sure the import started for the extension with a dependency.
+  EXPECT_TRUE(prefs->GetDelayedInstallInfo(id));
+  EXPECT_EQ(ExtensionPrefs::DELAY_REASON_WAIT_FOR_IMPORTS,
+            prefs->GetDelayedInstallReason(id));
+
+  const std::string pending_id(32, 'e');
+  EXPECT_TRUE(service()->pending_extension_manager()->IsIdPending(pending_id));
+
+  MockExtensionRegistryObserver reload_observer;
+  registry()->AddObserver(&reload_observer);
+
+  // Reload the extension, and verify that the installed version does not
+  // change.
+  service()->ReloadExtension(id);
+  EXPECT_TRUE(registry()->enabled_extensions().Contains(id));
+  EXPECT_EQ(id, reload_observer.last_extension_loaded);
+  EXPECT_EQ(id, reload_observer.last_extension_unloaded);
+  registry()->RemoveObserver(&reload_observer);
+
+  extension = service()->GetInstalledExtension(id);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ("1.0.0", extension->VersionString());
+
+  // The update should remain delayed, with the import pending.
+  EXPECT_TRUE(prefs->GetDelayedInstallInfo(id));
+  EXPECT_EQ(ExtensionPrefs::DELAY_REASON_WAIT_FOR_IMPORTS,
+            prefs->GetDelayedInstallReason(id));
+
+  // Attempt delayed installed - similar to reloading the extension, the update
+  // should remain delayed.
+  EXPECT_FALSE(service()->FinishDelayedInstallationIfReady(id, true));
+
+  extension = service()->GetInstalledExtension(id);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ("1.0.0", extension->VersionString());
+  EXPECT_EQ(ExtensionPrefs::DELAY_REASON_WAIT_FOR_IMPORTS,
+            prefs->GetDelayedInstallReason(id));
+  EXPECT_TRUE(service()->pending_extension_manager()->IsIdPending(pending_id));
+
+  // Remove the pending install because the pending extension manager's
+  // ability to download and install extensions is not important for this test.
   EXPECT_TRUE(service()->pending_extension_manager()->Remove(pending_id));
 }
 
@@ -1057,32 +1169,12 @@ TEST_F(ExtensionServiceTest, InstallExtension) {
   // TODO(erikkay): add tests for upgrade cases.
 }
 
-struct MockExtensionRegistryObserver
-    : public extensions::ExtensionRegistryObserver {
-  void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
-                                  const Extension* extension,
-                                  bool is_update,
-                                  const std::string& old_name) override {
-    last_extension_installed = extension->id();
-  }
-
-  void OnExtensionUninstalled(content::BrowserContext* browser_context,
-                              const Extension* extension,
-                              extensions::UninstallReason reason) override {
-    last_extension_uninstalled = extension->id();
-  }
-
-  std::string last_extension_installed;
-  std::string last_extension_uninstalled;
-};
-
 // Test that correct notifications are sent to ExtensionRegistryObserver on
 // extension install and uninstall.
 TEST_F(ExtensionServiceTest, InstallObserverNotified) {
   InitializeEmptyExtensionService();
 
-  extensions::ExtensionRegistry* registry(
-      extensions::ExtensionRegistry::Get(profile()));
+  ExtensionRegistry* registry(ExtensionRegistry::Get(profile()));
   MockExtensionRegistryObserver observer;
   registry->AddObserver(&observer);
 
@@ -1094,7 +1186,7 @@ TEST_F(ExtensionServiceTest, InstallObserverNotified) {
 
   // Uninstall the extension.
   ASSERT_TRUE(observer.last_extension_uninstalled.empty());
-  UninstallExtension(good_crx, false);
+  UninstallExtension(good_crx);
   ASSERT_EQ(good_crx, observer.last_extension_uninstalled);
 
   registry->RemoveObserver(&observer);
@@ -1152,18 +1244,17 @@ TEST_F(ExtensionServiceTest, UninstallingExternalExtensions) {
   ASSERT_TRUE(service()->GetExtensionById(good_crx, false));
 
   // Uninstall it and check that its killbit gets set.
-  UninstallExtension(good_crx, false);
-  ValidateIntegerPref(good_crx, "state",
-                      Extension::EXTERNAL_EXTENSION_UNINSTALLED);
+  UninstallExtension(good_crx);
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+  EXPECT_TRUE(prefs->IsExternalExtensionUninstalled(good_crx));
 
   // Try to re-install it externally. This should fail because of the killbit.
   info = CreateExternalExtension(good_crx, version_str, path,
                                  Manifest::EXTERNAL_PREF, Extension::NO_FLAGS);
   provider->UpdateOrAddExtension(std::move(info));
   content::RunAllTasksUntilIdle();
-  ASSERT_TRUE(NULL == service()->GetExtensionById(good_crx, false));
-  ValidateIntegerPref(good_crx, "state",
-                      Extension::EXTERNAL_EXTENSION_UNINSTALLED);
+  ASSERT_FALSE(service()->GetExtensionById(good_crx, false));
+  EXPECT_TRUE(prefs->IsExternalExtensionUninstalled(good_crx));
 
   std::string newer_version = "1.0.0.1";
   // Repeat the same thing with a newer version of the extension.
@@ -1172,9 +1263,8 @@ TEST_F(ExtensionServiceTest, UninstallingExternalExtensions) {
                                  Manifest::EXTERNAL_PREF, Extension::NO_FLAGS);
   provider->UpdateOrAddExtension(std::move(info));
   content::RunAllTasksUntilIdle();
-  ASSERT_TRUE(NULL == service()->GetExtensionById(good_crx, false));
-  ValidateIntegerPref(good_crx, "state",
-                      Extension::EXTERNAL_EXTENSION_UNINSTALLED);
+  ASSERT_FALSE(service()->GetExtensionById(good_crx, false));
+  EXPECT_TRUE(prefs->IsExternalExtensionUninstalled(good_crx));
 
   // Try adding the same extension from an external update URL.
   ASSERT_FALSE(service()->pending_extension_manager()->AddFromExternalUpdateUrl(
@@ -1313,7 +1403,7 @@ TEST_F(ExtensionServiceTest, InstallUserScript) {
   installed_ = NULL;
   was_update_ = false;
   loaded_.clear();
-  ExtensionErrorReporter::GetInstance()->ClearErrors();
+  LoadErrorReporter::GetInstance()->ClearErrors();
 }
 
 // Extensions don't install during shutdown.
@@ -1497,7 +1587,7 @@ TEST_F(ExtensionServiceTest, ReenableWithAllPermissionsGranted) {
   ASSERT_TRUE(extension);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
   EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE));
+      id, disable_reason::DISABLE_PERMISSIONS_INCREASE));
 
   // Update to version 5 that removes the kNotifications permission again.
   // The extension should get re-enabled.
@@ -1528,18 +1618,17 @@ TEST_F(ExtensionServiceTest, ReenableWithAllPermissionsGrantedOnStartup) {
 
   // Disable the extension due to a supposed permission increase, but retain its
   // granted permissions.
-  service()->DisableExtension(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE);
+  service()->DisableExtension(id, disable_reason::DISABLE_PERMISSIONS_INCREASE);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
   EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE));
+      id, disable_reason::DISABLE_PERMISSIONS_INCREASE));
 
   // Simulate a Chrome restart. Since the extension has all required
   // permissions, it should get re-enabled.
   service()->ReloadExtensionsForTest();
   EXPECT_TRUE(registry()->enabled_extensions().Contains(id));
   EXPECT_FALSE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE));
+      id, disable_reason::DISABLE_PERMISSIONS_INCREASE));
 }
 
 TEST_F(ExtensionServiceTest,
@@ -1567,11 +1656,9 @@ TEST_F(ExtensionServiceTest,
   ASSERT_TRUE(registry()->enabled_extensions().Contains(id));
 
   // Disable the extension.
-  service()->DisableExtension(id,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(id, disable_reason::DISABLE_USER_ACTION);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
-  EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_USER_ACTION));
+  EXPECT_TRUE(prefs->HasDisableReason(id, disable_reason::DISABLE_USER_ACTION));
 
   // Update to version 4 that adds the kNotifications permission, which has a
   // message and hence is considered a permission increase. The extension
@@ -1581,10 +1668,9 @@ TEST_F(ExtensionServiceTest,
   ASSERT_TRUE(extension);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
   EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE));
+      id, disable_reason::DISABLE_PERMISSIONS_INCREASE));
   // The USER_ACTION reason should also still be there.
-  EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_USER_ACTION));
+  EXPECT_TRUE(prefs->HasDisableReason(id, disable_reason::DISABLE_USER_ACTION));
 
   // Update to version 5 that removes the kNotifications permission again.
   // The PERMISSIONS_INCREASE should be removed, but the extension should stay
@@ -1593,8 +1679,7 @@ TEST_F(ExtensionServiceTest,
   extension = service()->GetInstalledExtension(id);
   ASSERT_TRUE(extension);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
-            prefs->GetDisableReasons(id));
+  EXPECT_EQ(disable_reason::DISABLE_USER_ACTION, prefs->GetDisableReasons(id));
 }
 
 TEST_F(ExtensionServiceTest,
@@ -1619,20 +1704,95 @@ TEST_F(ExtensionServiceTest,
 
   // Disable the extension due to a supposed permission increase, but retain its
   // granted permissions.
-  service()->DisableExtension(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE |
-              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(id, disable_reason::DISABLE_PERMISSIONS_INCREASE |
+                                      disable_reason::DISABLE_USER_ACTION);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
   EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE));
+      id, disable_reason::DISABLE_PERMISSIONS_INCREASE));
 
   // Simulate a Chrome restart. Since the extension has all required
   // permissions, the DISABLE_PERMISSIONS_INCREASE should get removed, but it
   // should stay disabled due to the remaining DISABLE_USER_ACTION reason.
   service()->ReloadExtensionsForTest();
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
-            prefs->GetDisableReasons(id));
+  EXPECT_EQ(disable_reason::DISABLE_USER_ACTION, prefs->GetDisableReasons(id));
+}
+
+// Tests that installing an extension with a permission adds it to the granted
+// permissions, so that if it is later removed and then re-added the extension
+// is not disabled.
+TEST_F(ExtensionServiceTest,
+       ReaddingOldPermissionInUpdateDoesntDisableExtension) {
+  InitializeEmptyExtensionService();
+
+  // Borrow a PEM for consistent IDs.
+  const base::FilePath pem_path =
+      data_dir().AppendASCII("permissions/update.pem");
+  ASSERT_TRUE(base::PathExists(pem_path));
+
+  constexpr char kManifestTemplate[] =
+      R"({
+           "name": "Test",
+           "description": "Test permissions update flow",
+           "manifest_version": 2,
+           "version": "%s",
+           "permissions": [%s]
+         })";
+
+  // Install version 1, which includes the tabs permission.
+  TestExtensionDir version1;
+  version1.WriteManifest(
+      base::StringPrintf(kManifestTemplate, "1", R"("tabs")"));
+
+  const Extension* extension =
+      PackAndInstallCRX(version1.UnpackedPath(), pem_path, INSTALL_NEW);
+  ASSERT_TRUE(extension);
+
+  const std::string id = extension->id();
+
+  EXPECT_EQ(0u, GetErrors().size());
+  ASSERT_TRUE(registry()->enabled_extensions().Contains(id));
+
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+
+  auto get_granted_permissions = [prefs, id]() {
+    return prefs->GetGrantedPermissions(id);
+  };
+
+  auto get_active_permissions = [prefs, id]() {
+    return prefs->GetActivePermissions(id);
+  };
+
+  APIPermissionSet tabs_permission_set;
+  tabs_permission_set.insert(APIPermission::kTab);
+
+  EXPECT_EQ(tabs_permission_set, get_granted_permissions()->apis());
+  EXPECT_EQ(tabs_permission_set, get_active_permissions()->apis());
+
+  // Version 2 removes the tabs permission. The tabs permission should be
+  // gone from the active permissions, but retained in the granted permissions.
+  TestExtensionDir version2;
+  version2.WriteManifest(base::StringPrintf(kManifestTemplate, "2", ""));
+
+  PackCRXAndUpdateExtension(id, version2.UnpackedPath(), pem_path, ENABLED);
+  EXPECT_TRUE(registry()->enabled_extensions().Contains(id));
+
+  EXPECT_EQ(tabs_permission_set, get_granted_permissions()->apis());
+  EXPECT_TRUE(get_active_permissions()->IsEmpty());
+
+  // Version 3 re-adds the tabs permission. Even though this is an increase in
+  // privilege from version 2, it's not from the granted permissions (which
+  // include the permission from version 1). Therefore, the extension should
+  // remain enabled.
+  TestExtensionDir version3;
+  version3.WriteManifest(
+      base::StringPrintf(kManifestTemplate, "3", R"("tabs")"));
+
+  PackCRXAndUpdateExtension(id, version3.UnpackedPath(), pem_path, ENABLED);
+  EXPECT_TRUE(registry()->enabled_extensions().Contains(id));
+
+  EXPECT_EQ(tabs_permission_set, get_granted_permissions()->apis());
+  EXPECT_EQ(tabs_permission_set, get_active_permissions()->apis());
 }
 
 #if !defined(OS_CHROMEOS)
@@ -1710,7 +1870,7 @@ TEST_F(ExtensionServiceTest, GrantedAPIAndHostPermissions) {
   // the extension's granted api permissions preference. (This simulates
   // updating the browser to a version which recognizes a new API permission).
   SetPref(extension_id, "granted_permissions.api",
-          base::MakeUnique<base::ListValue>(), "granted_permissions.api");
+          std::make_unique<base::ListValue>(), "granted_permissions.api");
   service()->ReloadExtensionsForTest();
 
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
@@ -1745,7 +1905,7 @@ TEST_F(ExtensionServiceTest, GrantedAPIAndHostPermissions) {
   host_permissions.insert("https://*.google.com/*");
   host_permissions.insert("http://*.google.com.hk/*");
 
-  auto api_permissions = base::MakeUnique<base::ListValue>();
+  auto api_permissions = std::make_unique<base::ListValue>();
   api_permissions->AppendString("tabs");
   SetPref(extension_id, "granted_permissions.api", std::move(api_permissions),
           "granted_permissions.api");
@@ -1831,11 +1991,10 @@ TEST_F(ExtensionServiceTest, PackExtension) {
 
   // Try packing with an invalid manifest.
   std::string invalid_manifest_content = "I am not a manifest.";
-  ASSERT_EQ(
-      static_cast<int>(invalid_manifest_content.size()),
-      base::WriteFile(temp_dir2.GetPath().Append(extensions::kManifestFilename),
-                      invalid_manifest_content.c_str(),
-                      invalid_manifest_content.size()));
+  ASSERT_EQ(static_cast<int>(invalid_manifest_content.size()),
+            base::WriteFile(temp_dir2.GetPath().Append(kManifestFilename),
+                            invalid_manifest_content.c_str(),
+                            invalid_manifest_content.size()));
   creator.reset(new ExtensionCreator());
   ASSERT_FALSE(creator->Run(temp_dir2.GetPath(), crx_path, privkey_path,
                             base::FilePath(), ExtensionCreator::kOverwriteCRX));
@@ -1883,7 +2042,7 @@ TEST_F(ExtensionServiceTest, PackPunctuatedExtension) {
     base::FilePath(FILE_PATH_LITERAL("thisextensionhasaslashinitsname.pem")),
   };
 
-  for (size_t i = 0; i < arraysize(punctuated_names); ++i) {
+  for (size_t i = 0; i < base::size(punctuated_names); ++i) {
     SCOPED_TRACE(punctuated_names[i].value().c_str());
     base::FilePath output_dir = temp_dir.GetPath().Append(punctuated_names[i]);
 
@@ -1898,9 +2057,8 @@ TEST_F(ExtensionServiceTest, PackPunctuatedExtension) {
     PackExtensionTestClient pack_client(expected_crx_path,
                                         expected_private_key_path);
     {
-      extensions::PackExtensionJob packer(&pack_client, output_dir,
-                                          base::FilePath(),
-                                          ExtensionCreator::kOverwriteCRX);
+      PackExtensionJob packer(&pack_client, output_dir, base::FilePath(),
+                              ExtensionCreator::kOverwriteCRX);
       packer.Start();
 
       // The packer will post a notification task to the current thread's
@@ -2037,8 +2195,7 @@ TEST_F(ExtensionServiceTest, MAYBE_InstallTheme) {
     ValidatePrefKeyCount(++pref_count);
     ASSERT_TRUE(extension);
     EXPECT_TRUE(extension->is_theme());
-    EXPECT_TRUE(
-        extensions::ContentScriptsInfo::GetContentScripts(extension).empty());
+    EXPECT_TRUE(ContentScriptsInfo::GetContentScripts(extension).empty());
   }
 
   // A theme with image resources missing (misspelt path).
@@ -2054,7 +2211,7 @@ TEST_F(ExtensionServiceTest, LoadLocalizedTheme) {
 
   base::FilePath extension_path = data_dir().AppendASCII("theme_i18n");
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_path);
+  UnpackedInstaller::Create(service())->Load(extension_path);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
@@ -2086,15 +2243,14 @@ TEST_F(ExtensionServiceTest, UnpackedExtensionMayContainSymlinkedFiles) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
   base::FilePath extension_path = temp.GetPath();
-  base::FilePath manifest = extension_path.Append(
-      extensions::kManifestFilename);
+  base::FilePath manifest = extension_path.Append(kManifestFilename);
   base::FilePath icon_symlink = extension_path.AppendASCII("icon.png");
   base::CopyFile(source_manifest, manifest);
   base::CreateSymbolicLink(source_icon, icon_symlink);
 
   // Load extension.
   InitializeEmptyExtensionService();
-  extensions::UnpackedInstaller::Create(service())->Load(extension_path);
+  UnpackedInstaller::Create(service())->Load(extension_path);
   content::RunAllTasksUntilIdle();
 
   EXPECT_TRUE(GetErrors().empty());
@@ -2110,12 +2266,11 @@ TEST_F(ExtensionServiceTest, UnpackedExtensionWithEmptyMetadataFolder) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath extension_dir = base::MakeAbsoluteFilePath(temp_dir.GetPath());
-  base::FilePath metadata_dir =
-      extension_dir.Append(extensions::kMetadataFolder);
+  base::FilePath metadata_dir = extension_dir.Append(kMetadataFolder);
   PersistExtensionWithPaths(extension_dir, {metadata_dir}, {});
   EXPECT_TRUE(base::DirectoryExists(metadata_dir));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_dir);
+  UnpackedInstaller::Create(service())->Load(extension_dir);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(0u, GetErrors().size());
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
@@ -2132,14 +2287,13 @@ TEST_F(ExtensionServiceTest, UnpackedExtensionWithReservedMetadataFiles) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath extension_dir = base::MakeAbsoluteFilePath(temp_dir.GetPath());
-  base::FilePath metadata_dir =
-      extension_dir.Append(extensions::kMetadataFolder);
+  base::FilePath metadata_dir = extension_dir.Append(kMetadataFolder);
   PersistExtensionWithPaths(
       extension_dir, {metadata_dir},
-      extensions::file_util::GetReservedMetadataFilePaths(extension_dir));
+      file_util::GetReservedMetadataFilePaths(extension_dir));
   EXPECT_TRUE(base::DirectoryExists(metadata_dir));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_dir);
+  UnpackedInstaller::Create(service())->Load(extension_dir);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(0u, GetErrors().size());
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
@@ -2156,17 +2310,15 @@ TEST_F(ExtensionServiceTest, UnpackedExtensionWithUserMetadataFiles) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath extension_dir = base::MakeAbsoluteFilePath(temp_dir.GetPath());
-  base::FilePath metadata_dir =
-      extension_dir.Append(extensions::kMetadataFolder);
+  base::FilePath metadata_dir = extension_dir.Append(kMetadataFolder);
   base::FilePath non_reserved_file =
       metadata_dir.Append(FILE_PATH_LITERAL("a.txt"));
   PersistExtensionWithPaths(
       extension_dir, {metadata_dir},
-      {extensions::file_util::GetVerifiedContentsPath(extension_dir),
-       non_reserved_file});
+      {file_util::GetVerifiedContentsPath(extension_dir), non_reserved_file});
   EXPECT_TRUE(base::PathExists(non_reserved_file));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_dir);
+  UnpackedInstaller::Create(service())->Load(extension_dir);
   content::RunAllTasksUntilIdle();
   ASSERT_EQ(1u, GetErrors().size());
 
@@ -2193,14 +2345,13 @@ TEST_F(ExtensionServiceTest,
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath extension_dir = base::MakeAbsoluteFilePath(temp_dir.GetPath());
-  base::FilePath metadata_dir =
-      extension_dir.Append(extensions::kMetadataFolder);
+  base::FilePath metadata_dir = extension_dir.Append(kMetadataFolder);
   PersistExtensionWithPaths(
       extension_dir,
       {metadata_dir, extension_dir.Append(FILE_PATH_LITERAL("_badfolder"))},
       {});
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_dir);
+  UnpackedInstaller::Create(service())->Load(extension_dir);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1u, GetErrors().size());
 
@@ -2233,7 +2384,7 @@ TEST_F(ExtensionServiceTest, UnpackedExtensionMayNotHaveUnderscore) {
       {underscore_folder.Append(FILE_PATH_LITERAL("a.js"))});
   EXPECT_TRUE(base::DirectoryExists(underscore_folder));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_dir);
+  UnpackedInstaller::Create(service())->Load(extension_dir);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1u, GetErrors().size());
 
@@ -2303,14 +2454,14 @@ TEST_F(ExtensionServiceTest, UpdateApps) {
       InstallCRX(extensions_path.AppendASCII("v1.crx"), INSTALL_NEW);
   ASSERT_EQ(1u, registry()->enabled_extensions().size());
   std::string id = extension->id();
-  ASSERT_EQ(std::string("1"), extension->version()->GetString());
+  ASSERT_EQ(std::string("1"), extension->version().GetString());
 
   // Now try updating to v2.
   UpdateExtension(id,
                   extensions_path.AppendASCII("v2.crx"),
                   ENABLED);
   ASSERT_EQ(std::string("2"),
-            service()->GetExtensionById(id, false)->version()->GetString());
+            service()->GetExtensionById(id, false)->version().GetString());
 }
 
 // Verifies that the NTP page and launch ordinals are kept when updating apps.
@@ -2324,7 +2475,7 @@ TEST_F(ExtensionServiceTest, UpdateAppsRetainOrdinals) {
       InstallCRX(extensions_path.AppendASCII("v1.crx"), INSTALL_NEW);
   ASSERT_EQ(1u, registry()->enabled_extensions().size());
   std::string id = extension->id();
-  ASSERT_EQ(std::string("1"), extension->version()->GetString());
+  ASSERT_EQ(std::string("1"), extension->version().GetString());
 
   // Modify the ordinals so we can distinguish them from the defaults.
   syncer::StringOrdinal new_page_ordinal =
@@ -2338,7 +2489,7 @@ TEST_F(ExtensionServiceTest, UpdateAppsRetainOrdinals) {
   // Now try updating to v2.
   UpdateExtension(id, extensions_path.AppendASCII("v2.crx"), ENABLED);
   ASSERT_EQ(std::string("2"),
-            service()->GetExtensionById(id, false)->version()->GetString());
+            service()->GetExtensionById(id, false)->version().GetString());
 
   // Verify that the ordinals match.
   ASSERT_TRUE(new_page_ordinal.Equals(sorting->GetPageOrdinal(id)));
@@ -2353,10 +2504,8 @@ TEST_F(ExtensionServiceTest, EnsureCWSOrdinalsInitialized) {
   service()->Init();
 
   AppSorting* sorting = ExtensionSystem::Get(profile())->app_sorting();
-  EXPECT_TRUE(
-      sorting->GetPageOrdinal(extensions::kWebStoreAppId).IsValid());
-  EXPECT_TRUE(
-      sorting->GetAppLaunchOrdinal(extensions::kWebStoreAppId).IsValid());
+  EXPECT_TRUE(sorting->GetPageOrdinal(kWebStoreAppId).IsValid());
+  EXPECT_TRUE(sorting->GetAppLaunchOrdinal(kWebStoreAppId).IsValid());
 }
 
 TEST_F(ExtensionServiceTest, InstallAppsWithUnlimitedStorage) {
@@ -2374,9 +2523,8 @@ TEST_F(ExtensionServiceTest, InstallAppsWithUnlimitedStorage) {
   EXPECT_TRUE(extension->permissions_data()->HasAPIPermission(
       APIPermission::kUnlimitedStorage));
   EXPECT_TRUE(extension->web_extent().MatchesURL(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension)));
-  const GURL origin1(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+      AppLaunchInfo::GetFullLaunchURL(extension)));
+  const GURL origin1(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin1));
 
@@ -2388,22 +2536,21 @@ TEST_F(ExtensionServiceTest, InstallAppsWithUnlimitedStorage) {
   EXPECT_TRUE(extension->permissions_data()->HasAPIPermission(
       APIPermission::kUnlimitedStorage));
   EXPECT_TRUE(extension->web_extent().MatchesURL(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension)));
-  const GURL origin2(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+      AppLaunchInfo::GetFullLaunchURL(extension)));
+  const GURL origin2(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   EXPECT_EQ(origin1, origin2);
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin2));
 
   // Uninstall one of them, unlimited storage should still be granted
   // to the origin.
-  UninstallExtension(id1, false);
+  UninstallExtension(id1);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin1));
 
   // Uninstall the other, unlimited storage should be revoked.
-  UninstallExtension(id2, false);
+  UninstallExtension(id2);
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_FALSE(
       profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
@@ -2422,8 +2569,7 @@ TEST_F(ExtensionServiceTest, InstallAppsAndCheckStorageProtection) {
   ASSERT_EQ(1u, registry()->enabled_extensions().size());
   EXPECT_TRUE(extension->is_app());
   const std::string id1 = extension->id();
-  const GURL origin1(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+  const GURL origin1(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageProtected(
       origin1));
 
@@ -2432,16 +2578,15 @@ TEST_F(ExtensionServiceTest, InstallAppsAndCheckStorageProtection) {
   ValidatePrefKeyCount(++pref_count);
   ASSERT_EQ(2u, registry()->enabled_extensions().size());
   const std::string id2 = extension->id();
-  const GURL origin2(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+  const GURL origin2(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   ASSERT_NE(origin1, origin2);
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageProtected(
       origin2));
 
-  UninstallExtension(id1, false);
+  UninstallExtension(id1);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
 
-  UninstallExtension(id2, false);
+  UninstallExtension(id2);
 
   EXPECT_TRUE(registry()->enabled_extensions().is_empty());
   EXPECT_FALSE(
@@ -2513,7 +2658,7 @@ TEST_F(ExtensionServiceTest, UpgradeSignedGood) {
   const Extension* extension = InstallCRX(path, INSTALL_NEW);
   std::string id = extension->id();
 
-  ASSERT_EQ("1.0.0.0", extension->version()->GetString());
+  ASSERT_EQ("1.0.0.0", extension->version().GetString());
   ASSERT_EQ(0u, GetErrors().size());
 
   // Upgrade to version 1.0.0.1.
@@ -2522,7 +2667,7 @@ TEST_F(ExtensionServiceTest, UpgradeSignedGood) {
   InstallCRX(path, INSTALL_UPDATED, Extension::NO_FLAGS, "My extension 1");
   extension = service()->GetExtensionById(id, false);
 
-  ASSERT_EQ("1.0.0.1", extension->version()->GetString());
+  ASSERT_EQ("1.0.0.1", extension->version().GetString());
   ASSERT_EQ("My updated extension 1", extension->name());
   ASSERT_EQ(0u, GetErrors().size());
 }
@@ -2554,7 +2699,7 @@ TEST_F(ExtensionServiceTest, UpdateExtension) {
   UpdateExtension(good_crx, path, ENABLED);
   ASSERT_EQ(
       "1.0.0.1",
-      service()->GetExtensionById(good_crx, false)->version()->GetString());
+      service()->GetExtensionById(good_crx, false)->version().GetString());
 }
 
 // Extensions should not be updated during browser shutdown.
@@ -2572,11 +2717,11 @@ TEST_F(ExtensionServiceTest, UpdateExtensionDuringShutdown) {
   // Update should fail and extension should not be updated.
   path = data_dir().AppendASCII("good2.crx");
   bool updated = service()->UpdateExtension(
-      extensions::CRXFileInfo(good_crx, path), true, NULL);
+      CRXFileInfo(good_crx, GetTestVerifierFormat(), path), true, NULL);
   ASSERT_FALSE(updated);
   ASSERT_EQ(
       "1.0.0.0",
-      service()->GetExtensionById(good_crx, false)->version()->GetString());
+      service()->GetExtensionById(good_crx, false)->version().GetString());
 }
 
 // Test updating a not-already-installed extension - this should fail
@@ -2607,7 +2752,7 @@ TEST_F(ExtensionServiceTest, UpdateWillNotDowngrade) {
   UpdateExtension(good_crx, path, FAILED);
   ASSERT_EQ(
       "1.0.0.1",
-      service()->GetExtensionById(good_crx, false)->version()->GetString());
+      service()->GetExtensionById(good_crx, false)->version().GetString());
 }
 
 // Make sure calling update with an identical version does nothing
@@ -2633,17 +2778,16 @@ TEST_F(ExtensionServiceTest, UpdateExtensionPreservesState) {
 
   // Disable it and allow it to run in incognito. These settings should carry
   // over to the updated version.
-  service()->DisableExtension(good->id(),
-                              extensions::disable_reason::DISABLE_USER_ACTION);
-  extensions::util::SetIsIncognitoEnabled(good->id(), profile(), true);
+  service()->DisableExtension(good->id(), disable_reason::DISABLE_USER_ACTION);
+  util::SetIsIncognitoEnabled(good->id(), profile(), true);
 
   path = data_dir().AppendASCII("good2.crx");
   UpdateExtension(good_crx, path, INSTALLED);
   ASSERT_EQ(1u, registry()->disabled_extensions().size());
   const Extension* good2 = service()->GetExtensionById(good_crx, true);
-  ASSERT_EQ("1.0.0.1", good2->version()->GetString());
-  EXPECT_TRUE(extensions::util::IsIncognitoEnabled(good2->id(), profile()));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_USER_ACTION,
+  ASSERT_EQ("1.0.0.1", good2->version().GetString());
+  EXPECT_TRUE(util::IsIncognitoEnabled(good2->id(), profile()));
+  EXPECT_EQ(disable_reason::DISABLE_USER_ACTION,
             ExtensionPrefs::Get(profile())->GetDisableReasons(good2->id()));
 }
 
@@ -2661,7 +2805,7 @@ TEST_F(ExtensionServiceTest, UpdateExtensionPreservesLocation) {
   path = data_dir().AppendASCII("good2.crx");
   UpdateExtension(good_crx, path, ENABLED);
   const Extension* good2 = service()->GetExtensionById(good_crx, false);
-  ASSERT_EQ("1.0.0.1", good2->version()->GetString());
+  ASSERT_EQ("1.0.0.1", good2->version().GetString());
   EXPECT_EQ(good2->location(), Manifest::EXTERNAL_PREF);
 }
 
@@ -2675,8 +2819,7 @@ TEST_F(ExtensionServiceTest, LoadExtensionsCanDowngrade) {
   // We'll write the extension manifest dynamically to a temporary path
   // to make it easier to change the version number.
   base::FilePath extension_path = temp.GetPath();
-  base::FilePath manifest_path =
-      extension_path.Append(extensions::kManifestFilename);
+  base::FilePath manifest_path = extension_path.Append(kManifestFilename);
   ASSERT_FALSE(base::PathExists(manifest_path));
 
   // Start with version 2.0.
@@ -2688,7 +2831,7 @@ TEST_F(ExtensionServiceTest, LoadExtensionsCanDowngrade) {
   JSONFileValueSerializer serializer(manifest_path);
   ASSERT_TRUE(serializer.Serialize(manifest));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_path);
+  UnpackedInstaller::Create(service())->Load(extension_path);
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(0u, GetErrors().size());
@@ -2702,7 +2845,7 @@ TEST_F(ExtensionServiceTest, LoadExtensionsCanDowngrade) {
   manifest.SetString("version", "1.0");
   ASSERT_TRUE(serializer.Serialize(manifest));
 
-  extensions::UnpackedInstaller::Create(service())->Load(extension_path);
+  UnpackedInstaller::Create(service())->Load(extension_path);
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(0u, GetErrors().size());
@@ -2749,7 +2892,7 @@ TEST_F(ExtensionServiceTest, AddPendingExtensionFromSync) {
           &IsExtension,
           kFakeRemoteInstall));
 
-  const extensions::PendingExtensionInfo* pending_extension_info;
+  const PendingExtensionInfo* pending_extension_info;
   ASSERT_TRUE((pending_extension_info =
                    service()->pending_extension_manager()->GetById(kFakeId)));
   EXPECT_EQ(kFakeUpdateURL, pending_extension_info->update_url());
@@ -2879,8 +3022,7 @@ TEST_F(ExtensionServiceTest, UpdatePendingExternalCrx) {
   EXPECT_FALSE(
       ExtensionPrefs::Get(profile())->IsExtensionDisabled(extension->id()));
   EXPECT_TRUE(service()->IsExtensionEnabled(extension->id()));
-  EXPECT_FALSE(
-      extensions::util::IsIncognitoEnabled(extension->id(), profile()));
+  EXPECT_FALSE(util::IsIncognitoEnabled(extension->id(), profile()));
 }
 
 // Test updating a pending CRX as if the source is an external extension
@@ -2899,7 +3041,7 @@ TEST_F(ExtensionServiceTest, UpdatePendingExternalCrxWinsOverSync) {
           kGoodRemoteInstall));
 
   // Check that there is a pending crx, with is_from_sync set to true.
-  const extensions::PendingExtensionInfo* pending_extension_info;
+  const PendingExtensionInfo* pending_extension_info;
   ASSERT_TRUE((pending_extension_info =
                    service()->pending_extension_manager()->GetById(kGoodId)));
   EXPECT_TRUE(pending_extension_info->is_from_sync());
@@ -3007,16 +3149,9 @@ TEST_F(ExtensionServiceTest, UpdatePendingExtensionAlreadyInstalled) {
 
   // Use AddExtensionImpl() as AddFrom*() would balk.
   service()->pending_extension_manager()->AddExtensionImpl(
-      good->id(),
-      std::string(),
-      extensions::ManifestURL::GetUpdateURL(good),
-      base::Version(),
-      &IsExtension,
-      kGoodIsFromSync,
-      Manifest::INTERNAL,
-      Extension::NO_FLAGS,
-      false,
-      kGoodRemoteInstall);
+      good->id(), std::string(), ManifestURL::GetUpdateURL(good),
+      base::Version(), &IsExtension, kGoodIsFromSync, Manifest::INTERNAL,
+      Extension::NO_FLAGS, false, kGoodRemoteInstall);
   UpdateExtension(good->id(), path, ENABLED);
 
   EXPECT_FALSE(service()->pending_extension_manager()->IsIdPending(kGoodId));
@@ -3026,15 +3161,14 @@ TEST_F(ExtensionServiceTest, UpdatePendingExtensionAlreadyInstalled) {
 // Tests blacklisting then unblacklisting extensions after the service has been
 // initialized.
 TEST_F(ExtensionServiceTest, SetUnsetBlacklistInPrefs) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   service()->Init();
 
-  const extensions::ExtensionSet& enabled_extensions =
-      registry()->enabled_extensions();
-  const extensions::ExtensionSet& blacklisted_extensions =
+  const ExtensionSet& enabled_extensions = registry()->enabled_extensions();
+  const ExtensionSet& blacklisted_extensions =
       registry()->blacklisted_extensions();
 
   EXPECT_TRUE(enabled_extensions.Contains(good0) &&
@@ -3050,12 +3184,9 @@ TEST_F(ExtensionServiceTest, SetUnsetBlacklistInPrefs) {
   EXPECT_FALSE(IsPrefExist("invalid_id", "blacklist"));
 
   // Blacklist good0 and good1 (and an invalid extension ID).
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_MALWARE, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE, true);
-  test_blacklist.SetBlacklistState(
-      "invalid_id", extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState("invalid_id", BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   EXPECT_TRUE(!enabled_extensions.Contains(good0) &&
@@ -3072,12 +3203,9 @@ TEST_F(ExtensionServiceTest, SetUnsetBlacklistInPrefs) {
 
   // Un-blacklist good1 and blacklist good2.
   test_blacklist.Clear(false);
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_MALWARE, true);
-  test_blacklist.SetBlacklistState(
-      good2, extensions::BLACKLISTED_MALWARE, true);
-  test_blacklist.SetBlacklistState(
-      "invalid_id", extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good2, BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState("invalid_id", BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   EXPECT_TRUE(!enabled_extensions.Contains(good0) &&
@@ -3122,19 +3250,18 @@ TEST_F(ExtensionServiceTest, BlacklistedExtensionWillNotInstall) {
 // from the blacklist. Also checks that all blacklisted preferences will be
 // cleared in that case.
 TEST_F(ExtensionServiceTest, RemoveExtensionFromBlacklist) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   service()->Init();
 
   ASSERT_TRUE(registry()->enabled_extensions().Contains(good0));
-  extensions::TestExtensionRegistryObserver observer(
-      extensions::ExtensionRegistry::Get(profile()), good0);
+  TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()),
+                                         good0);
 
   // Add the extension to the blacklist.
-  test_blacklist.SetBlacklistState(good0, extensions::BLACKLISTED_MALWARE,
-                                   true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_MALWARE, true);
   observer.WaitForExtensionUnloaded();
 
   // The extension should be disabled, both "blacklist" and "blacklist_state"
@@ -3142,26 +3269,24 @@ TEST_F(ExtensionServiceTest, RemoveExtensionFromBlacklist) {
   auto* prefs = ExtensionPrefs::Get(profile());
   EXPECT_FALSE(registry()->enabled_extensions().Contains(good0));
   EXPECT_TRUE(prefs->IsExtensionBlacklisted(good0));
-  EXPECT_EQ(extensions::BLACKLISTED_MALWARE,
-            prefs->GetExtensionBlacklistState(good0));
+  EXPECT_EQ(BLACKLISTED_MALWARE, prefs->GetExtensionBlacklistState(good0));
 
   // Remove the extension from the blacklist.
-  test_blacklist.SetBlacklistState(good0, extensions::NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good0, NOT_BLACKLISTED, true);
   observer.WaitForExtensionLoaded()->id();
 
   // The extension should be enabled, both "blacklist" and "blacklist_state"
   // should be cleared.
   EXPECT_TRUE(registry()->enabled_extensions().Contains(good0));
   EXPECT_FALSE(prefs->IsExtensionBlacklisted(good0));
-  EXPECT_EQ(extensions::NOT_BLACKLISTED,
-            prefs->GetExtensionBlacklistState(good0));
+  EXPECT_EQ(NOT_BLACKLISTED, prefs->GetExtensionBlacklistState(good0));
 }
 #endif  // defined(ENABLE_BLACKLIST_TESTS)
 
 #if defined(ENABLE_BLACKLIST_TESTS)
 // Unload blacklisted extension on policy change.
 TEST_F(ExtensionServiceTest, UnloadBlacklistedExtensionPolicy) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
 
   // A profile with no extensions installed.
   InitializeEmptyExtensionServiceWithTestingPrefs();
@@ -3179,8 +3304,7 @@ TEST_F(ExtensionServiceTest, UnloadBlacklistedExtensionPolicy) {
     pref.SetIndividualExtensionInstallationAllowed(good_crx, true);
   }
 
-  test_blacklist.SetBlacklistState(
-      good_crx, extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good_crx, BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   // The good_crx is blacklisted and the whitelist doesn't negate it.
@@ -3193,15 +3317,14 @@ TEST_F(ExtensionServiceTest, UnloadBlacklistedExtensionPolicy) {
 // Tests that a blacklisted extension is eventually unloaded on startup, if it
 // wasn't already.
 TEST_F(ExtensionServiceTest, WillNotLoadBlacklistedExtensionsFromDirectory) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
 
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
 
   // Blacklist good1 before the service initializes.
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE, false);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_MALWARE, false);
 
   // Load extensions.
   service()->Init();
@@ -3222,17 +3345,16 @@ TEST_F(ExtensionServiceTest, WillNotLoadBlacklistedExtensionsFromDirectory) {
 // Tests extensions blacklisted in prefs on startup; one still blacklisted by
 // safe browsing, the other not. The not-blacklisted one should recover.
 TEST_F(ExtensionServiceTest, BlacklistedInPrefsFromStartup) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
 
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   ExtensionPrefs::Get(profile())->SetExtensionBlacklistState(
-      good0, extensions::BLACKLISTED_MALWARE);
+      good0, BLACKLISTED_MALWARE);
   ExtensionPrefs::Get(profile())->SetExtensionBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE);
+      good1, BLACKLISTED_MALWARE);
 
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE, false);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_MALWARE, false);
 
   // Extension service hasn't loaded yet, but IsExtensionEnabled reads out of
   // prefs. Ensure it takes into account the blacklist state (crbug.com/373842).
@@ -3265,28 +3387,25 @@ TEST_F(ExtensionServiceTest, BlacklistedInPrefsFromStartup) {
 // Extension is added to blacklist with BLACKLISTED_POTENTIALLY_UNWANTED state
 // after it is installed. It is then successfully re-enabled by the user.
 TEST_F(ExtensionServiceTest, GreylistedExtensionDisabled) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   service()->Init();
 
-  const extensions::ExtensionSet& enabled_extensions =
-      registry()->enabled_extensions();
-  const extensions::ExtensionSet& disabled_extensions =
-      registry()->disabled_extensions();
+  const ExtensionSet& enabled_extensions = registry()->enabled_extensions();
+  const ExtensionSet& disabled_extensions = registry()->disabled_extensions();
 
   EXPECT_TRUE(enabled_extensions.Contains(good0));
   EXPECT_TRUE(enabled_extensions.Contains(good1));
   EXPECT_TRUE(enabled_extensions.Contains(good2));
 
   // Blacklist good0 and good1 (and an invalid extension ID).
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_CWS_POLICY_VIOLATION, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_POTENTIALLY_UNWANTED, true);
-  test_blacklist.SetBlacklistState(
-      "invalid_id", extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_CWS_POLICY_VIOLATION,
+                                   true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_POTENTIALLY_UNWANTED,
+                                   true);
+  test_blacklist.SetBlacklistState("invalid_id", BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   EXPECT_FALSE(enabled_extensions.Contains(good0));
@@ -3296,10 +3415,10 @@ TEST_F(ExtensionServiceTest, GreylistedExtensionDisabled) {
   EXPECT_TRUE(enabled_extensions.Contains(good2));
   EXPECT_FALSE(disabled_extensions.Contains(good2));
 
-  ValidateIntegerPref(
-      good0, "blacklist_state", extensions::BLACKLISTED_CWS_POLICY_VIOLATION);
-  ValidateIntegerPref(
-      good1, "blacklist_state", extensions::BLACKLISTED_POTENTIALLY_UNWANTED);
+  ValidateIntegerPref(good0, "blacklist_state",
+                      BLACKLISTED_CWS_POLICY_VIOLATION);
+  ValidateIntegerPref(good1, "blacklist_state",
+                      BLACKLISTED_POTENTIALLY_UNWANTED);
 
   // Now user enables good0.
   service()->EnableExtension(good0);
@@ -3310,10 +3429,8 @@ TEST_F(ExtensionServiceTest, GreylistedExtensionDisabled) {
   EXPECT_TRUE(disabled_extensions.Contains(good1));
 
   // Remove extensions from blacklist.
-  test_blacklist.SetBlacklistState(
-      good0, extensions::NOT_BLACKLISTED, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good0, NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good1, NOT_BLACKLISTED, true);
   content::RunAllTasksUntilIdle();
 
   // All extensions are enabled.
@@ -3330,27 +3447,24 @@ TEST_F(ExtensionServiceTest, GreylistedExtensionDisabled) {
 // When extension is removed from greylist, do not re-enable it if it is
 // disabled by user.
 TEST_F(ExtensionServiceTest, GreylistDontEnableManuallyDisabled) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   service()->Init();
 
-  const extensions::ExtensionSet& enabled_extensions =
-      registry()->enabled_extensions();
-  const extensions::ExtensionSet& disabled_extensions =
-      registry()->disabled_extensions();
+  const ExtensionSet& enabled_extensions = registry()->enabled_extensions();
+  const ExtensionSet& disabled_extensions = registry()->disabled_extensions();
 
   // Manually disable.
-  service()->DisableExtension(good0,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good0, disable_reason::DISABLE_USER_ACTION);
 
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_CWS_POLICY_VIOLATION, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_POTENTIALLY_UNWANTED, true);
-  test_blacklist.SetBlacklistState(
-      good2, extensions::BLACKLISTED_SECURITY_VULNERABILITY, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_CWS_POLICY_VIOLATION,
+                                   true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_POTENTIALLY_UNWANTED,
+                                   true);
+  test_blacklist.SetBlacklistState(good2, BLACKLISTED_SECURITY_VULNERABILITY,
+                                   true);
   content::RunAllTasksUntilIdle();
 
   // All extensions disabled.
@@ -3367,18 +3481,14 @@ TEST_F(ExtensionServiceTest, GreylistDontEnableManuallyDisabled) {
   EXPECT_FALSE(disabled_extensions.Contains(good1));
 
   // good1 is now manually disabled.
-  service()->DisableExtension(good1,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good1, disable_reason::DISABLE_USER_ACTION);
   EXPECT_FALSE(enabled_extensions.Contains(good1));
   EXPECT_TRUE(disabled_extensions.Contains(good1));
 
   // Remove extensions from blacklist.
-  test_blacklist.SetBlacklistState(
-      good0, extensions::NOT_BLACKLISTED, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::NOT_BLACKLISTED, true);
-  test_blacklist.SetBlacklistState(
-      good2, extensions::NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good0, NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good1, NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good2, NOT_BLACKLISTED, true);
   content::RunAllTasksUntilIdle();
 
   // good0 and good1 remain disabled.
@@ -3394,21 +3504,19 @@ TEST_F(ExtensionServiceTest, GreylistDontEnableManuallyDisabled) {
 #if defined(ENABLE_BLACKLIST_TESTS)
 // Blacklisted extension with unknown state are not enabled/disabled.
 TEST_F(ExtensionServiceTest, GreylistUnknownDontChange) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
   // A profile with 3 extensions installed: good0, good1, and good2.
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
   service()->Init();
 
-  const extensions::ExtensionSet& enabled_extensions =
-      registry()->enabled_extensions();
-  const extensions::ExtensionSet& disabled_extensions =
-      registry()->disabled_extensions();
+  const ExtensionSet& enabled_extensions = registry()->enabled_extensions();
+  const ExtensionSet& disabled_extensions = registry()->disabled_extensions();
 
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_CWS_POLICY_VIOLATION, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_POTENTIALLY_UNWANTED, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_CWS_POLICY_VIOLATION,
+                                   true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_POTENTIALLY_UNWANTED,
+                                   true);
   content::RunAllTasksUntilIdle();
 
   EXPECT_FALSE(enabled_extensions.Contains(good0));
@@ -3418,12 +3526,9 @@ TEST_F(ExtensionServiceTest, GreylistUnknownDontChange) {
   EXPECT_TRUE(enabled_extensions.Contains(good2));
   EXPECT_FALSE(disabled_extensions.Contains(good2));
 
-  test_blacklist.SetBlacklistState(
-      good0, extensions::NOT_BLACKLISTED, true);
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_UNKNOWN, true);
-  test_blacklist.SetBlacklistState(
-      good2, extensions::BLACKLISTED_UNKNOWN, true);
+  test_blacklist.SetBlacklistState(good0, NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_UNKNOWN, true);
+  test_blacklist.SetBlacklistState(good2, BLACKLISTED_UNKNOWN, true);
   content::RunAllTasksUntilIdle();
 
   // good0 re-enabled, other remain as they were.
@@ -3438,16 +3543,14 @@ TEST_F(ExtensionServiceTest, GreylistUnknownDontChange) {
 // Tests that blacklisted extensions cannot be reloaded, both those loaded
 // before and after extension service startup.
 TEST_F(ExtensionServiceTest, ReloadBlacklistedExtension) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
 
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
 
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE, false);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_MALWARE, false);
   service()->Init();
-  test_blacklist.SetBlacklistState(
-      good2, extensions::BLACKLISTED_MALWARE, false);
+  test_blacklist.SetBlacklistState(good2, BLACKLISTED_MALWARE, false);
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(StringSet(good0), registry()->enabled_extensions().GetIDs());
@@ -3479,8 +3582,7 @@ TEST_F(ExtensionServiceTest, BlockAndUnblockDisabledExtension) {
   InitializeGoodInstalledExtensionService();
   service()->Init();
 
-  service()->DisableExtension(good0,
-                              extensions::disable_reason::DISABLE_RELOAD);
+  service()->DisableExtension(good0, disable_reason::DISABLE_RELOAD);
 
   AssertExtensionBlocksAndUnblocks(true, good0);
 }
@@ -3528,19 +3630,17 @@ TEST_F(ExtensionServiceTest, BlockAndUnblockPolicyExtension) {
 // Tests blocking then unblocking extensions that are blacklisted both before
 // and after Init().
 TEST_F(ExtensionServiceTest, BlockAndUnblockBlacklistedExtension) {
-  extensions::TestBlacklist test_blacklist;
+  TestBlacklist test_blacklist;
 
   InitializeGoodInstalledExtensionService();
   test_blacklist.Attach(service()->blacklist_);
 
-  test_blacklist.SetBlacklistState(
-      good0, extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good0, BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   service()->Init();
 
-  test_blacklist.SetBlacklistState(
-      good1, extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good1, BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   // Blacklisted extensions stay blacklisted.
@@ -3550,11 +3650,9 @@ TEST_F(ExtensionServiceTest, BlockAndUnblockBlacklistedExtension) {
   service()->BlockAllExtensions();
 
   // Remove an extension from the blacklist while the service is blocked.
-  test_blacklist.SetBlacklistState(
-      good0, extensions::NOT_BLACKLISTED, true);
+  test_blacklist.SetBlacklistState(good0, NOT_BLACKLISTED, true);
   // Add an extension to the blacklist while the service is blocked.
-  test_blacklist.SetBlacklistState(
-      good2, extensions::BLACKLISTED_MALWARE, true);
+  test_blacklist.SetBlacklistState(good2, BLACKLISTED_MALWARE, true);
   content::RunAllTasksUntilIdle();
 
   // Go directly to blocked, do not pass go, do not collect $200.
@@ -3576,8 +3674,8 @@ TEST_F(ExtensionServiceTest, BlockAndUnblockEnabledComponentExtension) {
                             .AppendASCII(good0)
                             .AppendASCII("1.0.0.0");
   std::string manifest;
-  ASSERT_TRUE(base::ReadFileToString(
-      path.Append(extensions::kManifestFilename), &manifest));
+  ASSERT_TRUE(
+      base::ReadFileToString(path.Append(kManifestFilename), &manifest));
   service()->component_loader()->Add(manifest, path);
   service()->Init();
 
@@ -3683,8 +3781,8 @@ TEST_F(ExtensionServiceTest, ComponentExtensionWhitelisted) {
                             .AppendASCII(good0)
                             .AppendASCII("1.0.0.0");
   std::string manifest;
-  ASSERT_TRUE(base::ReadFileToString(
-      path.Append(extensions::kManifestFilename), &manifest));
+  ASSERT_TRUE(
+      base::ReadFileToString(path.Append(kManifestFilename), &manifest));
   service()->component_loader()->Add(manifest, path);
   service()->Init();
 
@@ -3719,8 +3817,8 @@ TEST_F(ExtensionServiceTest, ComponentExtensionWhitelistedPermission) {
                             .AppendASCII(good0)
                             .AppendASCII("1.0.0.0");
   std::string manifest;
-  ASSERT_TRUE(base::ReadFileToString(path.Append(extensions::kManifestFilename),
-                                     &manifest));
+  ASSERT_TRUE(
+      base::ReadFileToString(path.Append(kManifestFilename), &manifest));
   service()->component_loader()->Add(manifest, path);
   service()->Init();
 
@@ -3729,7 +3827,7 @@ TEST_F(ExtensionServiceTest, ComponentExtensionWhitelistedPermission) {
                   ->GetExtensionById(good0, false)
                   ->permissions_data()
                   ->active_permissions()
-                  .HasAPIPermission(extensions::APIPermission::kTab));
+                  .HasAPIPermission(APIPermission::kTab));
 
   // Component should not lose permissions on policy change.
   {
@@ -3743,7 +3841,7 @@ TEST_F(ExtensionServiceTest, ComponentExtensionWhitelistedPermission) {
                   ->GetExtensionById(good0, false)
                   ->permissions_data()
                   ->active_permissions()
-                  .HasAPIPermission(extensions::APIPermission::kTab));
+                  .HasAPIPermission(APIPermission::kTab));
 }
 
 // Tests that policy-installed extensions are not blacklisted by policy.
@@ -3789,8 +3887,8 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsInstall) {
   InitializeEmptyExtensionService();
 
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider_(
-      extensions::TestManagementPolicyProvider::PROHIBIT_LOAD);
+  TestManagementPolicyProvider provider_(
+      TestManagementPolicyProvider::PROHIBIT_LOAD);
   GetManagementPolicy()->RegisterProvider(&provider_);
 
   InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_FAILED);
@@ -3808,32 +3906,31 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsLoadFromPrefs) {
   base::DictionaryValue manifest;
   manifest.SetString(keys::kName, "simple_extension");
   manifest.SetString(keys::kVersion, "1");
+  manifest.SetInteger(keys::kManifestVersion, 2);
   // UNPACKED is for extensions loaded from a directory. We use it here, even
   // though we're testing loading from prefs, so that we don't need to provide
   // an extension key.
-  extensions::ExtensionInfo extension_info(
-      &manifest, std::string(), path, Manifest::UNPACKED);
+  ExtensionInfo extension_info(&manifest, std::string(), path,
+                               Manifest::UNPACKED);
 
   // Ensure we can load it with no management policy in place.
   GetManagementPolicy()->UnregisterAllProviders();
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
-  extensions::InstalledLoader(service()).Load(extension_info, false);
+  InstalledLoader(service()).Load(extension_info, false);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
 
   const Extension* extension =
       (registry()->enabled_extensions().begin())->get();
-  EXPECT_TRUE(
-      service()->UninstallExtension(extension->id(),
-                                    extensions::UNINSTALL_REASON_FOR_TESTING,
-                                    NULL));
+  EXPECT_TRUE(service()->UninstallExtension(
+      extension->id(), UNINSTALL_REASON_FOR_TESTING, NULL));
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
 
   // Ensure we cannot load it if management policy prohibits installation.
-  extensions::TestManagementPolicyProvider provider_(
-      extensions::TestManagementPolicyProvider::PROHIBIT_LOAD);
+  TestManagementPolicyProvider provider_(
+      TestManagementPolicyProvider::PROHIBIT_LOAD);
   GetManagementPolicy()->RegisterProvider(&provider_);
 
-  extensions::InstalledLoader(service()).Load(extension_info, false);
+  InstalledLoader(service()).Load(extension_info, false);
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
 }
 
@@ -3846,30 +3943,29 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsDisable) {
   EXPECT_EQ(0u, registry()->disabled_extensions().size());
 
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider(
-      extensions::TestManagementPolicyProvider::PROHIBIT_MODIFY_STATUS);
+  TestManagementPolicyProvider provider(
+      TestManagementPolicyProvider::PROHIBIT_MODIFY_STATUS);
   GetManagementPolicy()->RegisterProvider(&provider);
 
   // Attempt to disable it.
-  service()->DisableExtension(good_crx,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good_crx, disable_reason::DISABLE_USER_ACTION);
 
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
   EXPECT_TRUE(service()->GetExtensionById(good_crx, false));
   EXPECT_EQ(0u, registry()->disabled_extensions().size());
-  EXPECT_EQ(extensions::disable_reason::DISABLE_NONE,
+  EXPECT_EQ(disable_reason::DISABLE_NONE,
             ExtensionPrefs::Get(profile())->GetDisableReasons(good_crx));
 
   // Internal disable reasons are allowed.
   service()->DisableExtension(
-      good_crx, extensions::disable_reason::DISABLE_CORRUPTED |
-                    extensions::disable_reason::DISABLE_USER_ACTION);
+      good_crx,
+      disable_reason::DISABLE_CORRUPTED | disable_reason::DISABLE_USER_ACTION);
 
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
   EXPECT_TRUE(service()->GetExtensionById(good_crx, true));
   EXPECT_FALSE(service()->GetExtensionById(good_crx, false));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_CORRUPTED,
+  EXPECT_EQ(disable_reason::DISABLE_CORRUPTED,
             ExtensionPrefs::Get(profile())->GetDisableReasons(good_crx));
 }
 
@@ -3882,15 +3978,13 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsUninstall) {
   EXPECT_EQ(0u, registry()->disabled_extensions().size());
 
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider(
-      extensions::TestManagementPolicyProvider::PROHIBIT_MODIFY_STATUS);
+  TestManagementPolicyProvider provider(
+      TestManagementPolicyProvider::PROHIBIT_MODIFY_STATUS);
   GetManagementPolicy()->RegisterProvider(&provider);
 
   // Attempt to uninstall it.
-  EXPECT_FALSE(
-      service()->UninstallExtension(good_crx,
-                                    extensions::UNINSTALL_REASON_FOR_TESTING,
-                                    NULL));
+  EXPECT_FALSE(service()->UninstallExtension(
+      good_crx, UNINSTALL_REASON_FOR_TESTING, NULL));
 
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
   EXPECT_TRUE(service()->GetExtensionById(good_crx, false));
@@ -3907,8 +4001,8 @@ TEST_F(ExtensionServiceTest, ManagementPolicyUnloadsAllProhibited) {
   EXPECT_EQ(0u, registry()->disabled_extensions().size());
 
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider(
-      extensions::TestManagementPolicyProvider::PROHIBIT_LOAD);
+  TestManagementPolicyProvider provider(
+      TestManagementPolicyProvider::PROHIBIT_LOAD);
   GetManagementPolicy()->RegisterProvider(&provider);
 
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
@@ -3917,9 +4011,9 @@ TEST_F(ExtensionServiceTest, ManagementPolicyUnloadsAllProhibited) {
   service()->CheckManagementPolicy();
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_EQ(2u, registry()->disabled_extensions().size());
-  EXPECT_EQ(extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY,
+  EXPECT_EQ(disable_reason::DISABLE_BLOCKED_BY_POLICY,
             prefs->GetDisableReasons(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY,
+  EXPECT_EQ(disable_reason::DISABLE_BLOCKED_BY_POLICY,
             prefs->GetDisableReasons(page_action));
 
   // Removing the extensions from policy blacklist should re-enable them.
@@ -3937,15 +4031,14 @@ TEST_F(ExtensionServiceTest, ManagementPolicyRequiresEnable) {
   // Install, then disable, an extension.
   InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
-  service()->DisableExtension(good_crx,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good_crx, disable_reason::DISABLE_USER_ACTION);
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
 
   // Register an ExtensionManagementPolicy that requires the extension to remain
   // enabled.
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider(
-      extensions::TestManagementPolicyProvider::MUST_REMAIN_ENABLED);
+  TestManagementPolicyProvider provider(
+      TestManagementPolicyProvider::MUST_REMAIN_ENABLED);
   GetManagementPolicy()->RegisterProvider(&provider);
 
   // Reinstall the extension.
@@ -3962,9 +4055,9 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsEnableOnInstalled) {
   // Register an ExtensionManagementPolicy that disables all extensions, with
   // a specified disable_reason::DisableReason.
   GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider(
-      extensions::TestManagementPolicyProvider::MUST_REMAIN_DISABLED);
-  provider.SetDisableReason(extensions::disable_reason::DISABLE_NOT_VERIFIED);
+  TestManagementPolicyProvider provider(
+      TestManagementPolicyProvider::MUST_REMAIN_DISABLED);
+  provider.SetDisableReason(disable_reason::DISABLE_NOT_VERIFIED);
   GetManagementPolicy()->RegisterProvider(&provider);
 
   // Attempts to install an extensions, it should be installed but disabled.
@@ -3975,7 +4068,7 @@ TEST_F(ExtensionServiceTest, ManagementPolicyProhibitsEnableOnInstalled) {
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
 
   // Verifies that the disable reason is set properly.
-  EXPECT_EQ(extensions::disable_reason::DISABLE_NOT_VERIFIED,
+  EXPECT_EQ(disable_reason::DISABLE_NOT_VERIFIED,
             service()->extension_prefs_->GetDisableReasons(kGoodId));
 }
 
@@ -4006,7 +4099,7 @@ TEST_F(ExtensionServiceTest, PolicyBlockedPermissionNewExtensionInstall) {
 
   // Uninstall the extension and update policy to block some arbitrary
   // unknown permission.
-  UninstallExtension(id, false);
+  UninstallExtension(id);
   {
     ManagementPrefUpdater pref(profile_->GetTestingPrefService());
     pref.ClearBlockedPermissions("*");
@@ -4132,8 +4225,7 @@ TEST_F(ExtensionServiceTest, PolicyBlockedPermissionPolicyUpdate) {
   provider->UpdateOrAddExtension(ext2_forced, "2.0", crx_path);
   WaitForExternalExtensionInstalled();
 
-  extensions::ExtensionRegistry* registry =
-      extensions::ExtensionRegistry::Get(profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
 
   // Verify all three extensions are installed and enabled.
   ASSERT_TRUE(registry->enabled_extensions().GetByID(ext1));
@@ -4147,8 +4239,7 @@ TEST_F(ExtensionServiceTest, PolicyBlockedPermissionPolicyUpdate) {
 
   std::unique_ptr<const PermissionSet> active_permissions =
       ExtensionPrefs::Get(profile())->GetActivePermissions(ext1);
-  EXPECT_TRUE(active_permissions->HasAPIPermission(
-      extensions::APIPermission::kDownloads));
+  EXPECT_TRUE(active_permissions->HasAPIPermission(APIPermission::kDownloads));
 
   // Set policy to block 'downloads' permission.
   {
@@ -4162,8 +4253,7 @@ TEST_F(ExtensionServiceTest, PolicyBlockedPermissionPolicyUpdate) {
   EXPECT_TRUE(registry->enabled_extensions().GetByID(ext1));
   active_permissions =
       ExtensionPrefs::Get(profile())->GetActivePermissions(ext1);
-  EXPECT_FALSE(active_permissions->HasAPIPermission(
-      extensions::APIPermission::kDownloads));
+  EXPECT_FALSE(active_permissions->HasAPIPermission(APIPermission::kDownloads));
 
   // 'ext2' should be disabled because one of its required permissions is
   // blocked.
@@ -4200,7 +4290,7 @@ TEST_F(ExtensionServiceTest, MAYBE_ExternalExtensionAutoAcknowledgement) {
   // Providers are set up. Let them run.
   int count = 2;
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       base::Bind(&WaitForCountNotificationsCallback, &count));
   service()->CheckForExternalUpdates();
 
@@ -4232,7 +4322,7 @@ TEST_F(ExtensionServiceTest, ExternalExtensionDisabledOnInstallation) {
   EXPECT_TRUE(registry()->disabled_extensions().Contains(good_crx));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_EXTERNAL_EXTENSION,
+  EXPECT_EQ(disable_reason::DISABLE_EXTERNAL_EXTENSION,
             prefs->GetDisableReasons(good_crx));
 
   // Updating the extension shouldn't cause it to be enabled.
@@ -4242,13 +4332,13 @@ TEST_F(ExtensionServiceTest, ExternalExtensionDisabledOnInstallation) {
 
   EXPECT_TRUE(registry()->disabled_extensions().Contains(good_crx));
   EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_EXTERNAL_EXTENSION,
+  EXPECT_EQ(disable_reason::DISABLE_EXTERNAL_EXTENSION,
             prefs->GetDisableReasons(good_crx));
   const Extension* extension =
       registry()->disabled_extensions().GetByID(good_crx);
   ASSERT_TRUE(extension);
   // Double check that we did, in fact, update the extension.
-  EXPECT_EQ("1.0.0.1", extension->version()->GetString());
+  EXPECT_EQ("1.0.0.1", extension->version().GetString());
 }
 
 // Test that if an extension is installed before the "prompt for external
@@ -4256,7 +4346,7 @@ TEST_F(ExtensionServiceTest, ExternalExtensionDisabledOnInstallation) {
 // enabled, the extension is not disabled.
 TEST_F(ExtensionServiceTest, ExternalExtensionIsNotDisabledOnUpdate) {
   auto external_prompt_override =
-      base::MakeUnique<FeatureSwitch::ScopedOverride>(
+      std::make_unique<FeatureSwitch::ScopedOverride>(
           FeatureSwitch::prompt_for_external_extensions(), false);
   InitializeEmptyExtensionService();
 
@@ -4271,8 +4361,7 @@ TEST_F(ExtensionServiceTest, ExternalExtensionIsNotDisabledOnUpdate) {
   EXPECT_TRUE(registry()->enabled_extensions().Contains(good_crx));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_NONE,
-            prefs->GetDisableReasons(good_crx));
+  EXPECT_EQ(disable_reason::DISABLE_NONE, prefs->GetDisableReasons(good_crx));
 
   provider->UpdateOrAddExtension(good_crx, "1.0.0.1",
                                  data_dir().AppendASCII("good2.crx"));
@@ -4283,7 +4372,7 @@ TEST_F(ExtensionServiceTest, ExternalExtensionIsNotDisabledOnUpdate) {
   // before the old is destructed (which will immediately reset to the
   // original).
   external_prompt_override.reset();
-  external_prompt_override = base::MakeUnique<FeatureSwitch::ScopedOverride>(
+  external_prompt_override = std::make_unique<FeatureSwitch::ScopedOverride>(
       FeatureSwitch::prompt_for_external_extensions(), true);
   WaitForExternalExtensionInstalled();
 
@@ -4292,11 +4381,73 @@ TEST_F(ExtensionServiceTest, ExternalExtensionIsNotDisabledOnUpdate) {
     const Extension* extension =
         registry()->enabled_extensions().GetByID(good_crx);
     ASSERT_TRUE(extension);
-    EXPECT_EQ("1.0.0.1", extension->version()->GetString());
+    EXPECT_EQ("1.0.0.1", extension->version().GetString());
   }
   EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_NONE,
+  EXPECT_EQ(disable_reason::DISABLE_NONE, prefs->GetDisableReasons(good_crx));
+}
+
+// Test that if an external extension warning is ignored three times, the
+// extension no longer prompts
+TEST_F(ExtensionServiceTest, ExternalExtensionRemainsDisabledIfIgnored) {
+  FeatureSwitch::ScopedOverride prompt_override(
+      FeatureSwitch::prompt_for_external_extensions(), true);
+  InitializeEmptyExtensionService();
+
+  // Register and install an external extension.
+  MockExternalProvider* provider =
+      AddMockExternalProvider(Manifest::EXTERNAL_PREF);
+  provider->UpdateOrAddExtension(good_crx, "1.0.0.0",
+                                 data_dir().AppendASCII("good.crx"));
+
+  WaitForExternalExtensionInstalled();
+
+  EXPECT_TRUE(registry()->disabled_extensions().Contains(good_crx));
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+  EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
+  EXPECT_EQ(disable_reason::DISABLE_EXTERNAL_EXTENSION,
             prefs->GetDisableReasons(good_crx));
+
+  ExternalInstallManager* external_install_manager =
+      service()->external_install_manager();
+
+  for (int i = 0; i < 3; ++i) {
+    std::vector<ExternalInstallError*> errors =
+        external_install_manager->GetErrorsForTesting();
+    ASSERT_EQ(1u, errors.size());
+    errors[0]->OnInstallPromptDone(ExtensionInstallPrompt::Result::ABORTED);
+    base::RunLoop().RunUntilIdle();
+    // Note: Calling OnInstallPromptDone() can result in the removal of the
+    // error by the manager (which owns the object), so the contents |errors|
+    // are invalidated now!
+    EXPECT_TRUE(external_install_manager->GetErrorsForTesting().empty());
+    external_install_manager->ClearShownIdsForTesting();
+    external_install_manager->UpdateExternalExtensionAlert();
+  }
+
+  // We should have stopped prompting, since the user was shown the warning
+  // three times.
+  EXPECT_TRUE(external_install_manager->GetErrorsForTesting().empty());
+  EXPECT_TRUE(prefs->IsExternalExtensionAcknowledged(good_crx));
+  EXPECT_TRUE(registry()->disabled_extensions().Contains(good_crx));
+  EXPECT_EQ(disable_reason::DISABLE_EXTERNAL_EXTENSION,
+            prefs->GetDisableReasons(good_crx));
+
+  // The extension should remain disabled.
+  service()->ReloadExtensionsForTest();
+  EXPECT_TRUE(prefs->IsExternalExtensionAcknowledged(good_crx));
+  EXPECT_TRUE(registry()->disabled_extensions().Contains(good_crx));
+  EXPECT_EQ(disable_reason::DISABLE_EXTERNAL_EXTENSION,
+            prefs->GetDisableReasons(good_crx));
+
+  // Then re-enabling the extension (or otherwise causing the alert to be
+  // updated again) should work. Regression test for https://crbug.com/736292.
+  {
+    TestExtensionRegistryObserver registry_observer(registry());
+    service()->EnableExtension(good_crx);
+    registry_observer.WaitForExtensionLoaded();
+    base::RunLoop().RunUntilIdle();
+  }
 }
 
 #if !defined(OS_CHROMEOS)
@@ -4314,11 +4465,8 @@ TEST_F(ExtensionServiceTest, DefaultAppsInstall) {
         "  }"
         "}";
     default_apps::Provider* provider = new default_apps::Provider(
-        profile(),
-        service(),
-        new extensions::ExternalTestingLoader(json_data, data_dir()),
-        Manifest::INTERNAL,
-        Manifest::INVALID_LOCATION,
+        profile(), service(), new ExternalTestingLoader(json_data, data_dir()),
+        Manifest::INTERNAL, Manifest::INVALID_LOCATION,
         Extension::FROM_WEBSTORE | Extension::WAS_INSTALLED_BY_DEFAULT);
 
     service()->AddProviderForTesting(base::WrapUnique(provider));
@@ -4355,7 +4503,7 @@ TEST_F(ExtensionServiceTest, MAYBE_UpdatingPendingExternalExtensionWithFlags) {
   // Register and install an external extension.
   base::Version version("1.0.0.0");
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       content::NotificationService::AllSources());
   ExternalInstallInfoFile info(good_crx, version, path, Manifest::EXTERNAL_PREF,
                                Extension::FROM_BOOKMARK,
@@ -4387,8 +4535,7 @@ TEST_F(ExtensionServiceTest, DisableExtension) {
   EXPECT_EQ(0u, registry()->blacklisted_extensions().size());
 
   // Disable it.
-  service()->DisableExtension(good_crx,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good_crx, disable_reason::DISABLE_USER_ACTION);
 
   EXPECT_TRUE(service()->GetExtensionById(good_crx, true));
   EXPECT_FALSE(service()->GetExtensionById(good_crx, false));
@@ -4420,15 +4567,14 @@ TEST_F(ExtensionServiceTest, DisableTerminatedExtension) {
 
   InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
   TerminateExtension(good_crx);
-  EXPECT_TRUE(registry()->GetExtensionById(
-      good_crx, extensions::ExtensionRegistry::TERMINATED));
+  EXPECT_TRUE(
+      registry()->GetExtensionById(good_crx, ExtensionRegistry::TERMINATED));
 
   // Disable it.
-  service()->DisableExtension(good_crx,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(good_crx, disable_reason::DISABLE_USER_ACTION);
 
-  EXPECT_FALSE(registry()->GetExtensionById(
-      good_crx, extensions::ExtensionRegistry::TERMINATED));
+  EXPECT_FALSE(
+      registry()->GetExtensionById(good_crx, ExtensionRegistry::TERMINATED));
   EXPECT_TRUE(service()->GetExtensionById(good_crx, true));
 
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
@@ -4441,7 +4587,7 @@ TEST_F(ExtensionServiceTest, DisableTerminatedExtension) {
 // the ExtensionService...
 TEST_F(ExtensionServiceTest, PRE_DisableAllExtensions) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kDisableExtensions);
+      ::switches::kDisableExtensions);
   InitializeGoodInstalledExtensionService();
   service()->Init();
   EXPECT_TRUE(registry()->GenerateInstalledExtensionsSet()->is_empty());
@@ -4450,7 +4596,7 @@ TEST_F(ExtensionServiceTest, PRE_DisableAllExtensions) {
 // ... But, if we remove the switch, they are.
 TEST_F(ExtensionServiceTest, DisableAllExtensions) {
   EXPECT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableExtensions));
+      ::switches::kDisableExtensions));
   InitializeGoodInstalledExtensionService();
   service()->Init();
   EXPECT_FALSE(registry()->GenerateInstalledExtensionsSet()->is_empty());
@@ -4467,7 +4613,7 @@ TEST_F(ExtensionServiceTest, ReloadExtensions) {
              Extension::FROM_WEBSTORE | Extension::WAS_INSTALLED_BY_DEFAULT);
   const char* const extension_id = good_crx;
   service()->DisableExtension(extension_id,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+                              disable_reason::DISABLE_USER_ACTION);
 
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
@@ -4511,7 +4657,7 @@ TEST_F(ExtensionServiceTest, ReloadExtension) {
                            .AppendASCII("Extensions")
                            .AppendASCII(extension_id)
                            .AppendASCII("1.0.0.0");
-  extensions::UnpackedInstaller::Create(service())->Load(ext);
+  UnpackedInstaller::Create(service())->Load(ext);
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
@@ -4522,7 +4668,7 @@ TEST_F(ExtensionServiceTest, ReloadExtension) {
   // Extension should be disabled now, waiting to be reloaded.
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_EQ(1u, registry()->disabled_extensions().size());
-  EXPECT_EQ(extensions::disable_reason::DISABLE_RELOAD,
+  EXPECT_EQ(disable_reason::DISABLE_RELOAD,
             ExtensionPrefs::Get(profile())->GetDisableReasons(extension_id));
 
   // Reloading again should not crash.
@@ -4540,7 +4686,7 @@ TEST_F(ExtensionServiceTest, UninstallExtension) {
   InitializeEmptyExtensionService();
   InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
-  UninstallExtension(good_crx, false);
+  UninstallExtension(good_crx);
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_EQ(UnloadedExtensionReason::UNINSTALL, unloaded_reason_);
 }
@@ -4549,23 +4695,7 @@ TEST_F(ExtensionServiceTest, UninstallTerminatedExtension) {
   InitializeEmptyExtensionService();
   InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
   TerminateExtension(good_crx);
-  UninstallExtension(good_crx, false);
-  EXPECT_EQ(UnloadedExtensionReason::TERMINATE, unloaded_reason_);
-}
-
-// Tests the uninstaller helper.
-TEST_F(ExtensionServiceTest, UninstallExtensionHelper) {
-  InitializeEmptyExtensionService();
-  InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
-  UninstallExtension(good_crx, true);
-  EXPECT_EQ(UnloadedExtensionReason::UNINSTALL, unloaded_reason_);
-}
-
-TEST_F(ExtensionServiceTest, UninstallExtensionHelperTerminated) {
-  InitializeEmptyExtensionService();
-  InstallCRX(data_dir().AppendASCII("good.crx"), INSTALL_NEW);
-  TerminateExtension(good_crx);
-  UninstallExtension(good_crx, true);
+  UninstallExtension(good_crx);
   EXPECT_EQ(UnloadedExtensionReason::TERMINATE, unloaded_reason_);
 }
 
@@ -4612,8 +4742,7 @@ TEST_F(ExtensionServiceTest, UpgradingRequirementsDisabled) {
                                                     pem_path,
                                                     INSTALL_NEW);
   std::string id = extension_v1->id();
-  service()->DisableExtension(id,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(id, disable_reason::DISABLE_USER_ACTION);
   EXPECT_FALSE(service()->IsExtensionEnabled(id));
 
   base::FilePath v2_bad_requirements_crx = GetTemporaryFile();
@@ -4671,7 +4800,7 @@ TEST_F(ExtensionServiceTest, UnpackedRequirements) {
 
   base::FilePath path =
       data_dir().AppendASCII("requirements").AppendASCII("v2_bad_requirements");
-  extensions::UnpackedInstaller::Create(service())->Load(path);
+  UnpackedInstaller::Create(service())->Load(path);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1u, GetErrors().size());
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
@@ -4681,11 +4810,12 @@ class ExtensionCookieCallback {
  public:
   ExtensionCookieCallback() : result_(false) {}
 
-  void SetCookieCallback(bool result) {
-    result_ = result;
+  void SetCookieCallback(net::CanonicalCookie::CookieInclusionStatus result) {
+    result_ = (result == net::CanonicalCookie::CookieInclusionStatus::INCLUDE);
   }
 
-  void GetAllCookiesCallback(const net::CookieList& list) {
+  void GetAllCookiesCallback(const net::CookieList& list,
+                             const net::CookieStatusList& excluded_list) {
     list_ = list;
   }
   net::CookieList list_;
@@ -4724,22 +4854,21 @@ TEST_F(ExtensionServiceTest, ClearExtensionData) {
   std::string origin_id = storage::GetIdentifierFromOrigin(ext_url);
 
   // Set a cookie for the extension.
-  net::CookieStore* cookie_store = profile()->GetRequestContextForExtensions()
-                                            ->GetURLRequestContext()
-                                            ->cookie_store();
+  net::CookieStore* cookie_store =
+      extensions::ChromeExtensionCookies::Get(profile())
+          ->GetCookieStoreForTesting();
   ASSERT_TRUE(cookie_store);
   net::CookieOptions options;
   cookie_store->SetCookieWithOptionsAsync(
-       ext_url, "dummy=value", options,
-       base::Bind(&ExtensionCookieCallback::SetCookieCallback,
-                  base::Unretained(&callback)));
+      ext_url, "dummy=value", options,
+      base::BindOnce(&ExtensionCookieCallback::SetCookieCallback,
+                     base::Unretained(&callback)));
   content::RunAllTasksUntilIdle();
   EXPECT_TRUE(callback.result_);
 
   cookie_store->GetAllCookiesForURLAsync(
-      ext_url,
-      base::Bind(&ExtensionCookieCallback::GetAllCookiesCallback,
-                 base::Unretained(&callback)));
+      ext_url, base::BindOnce(&ExtensionCookieCallback::GetAllCookiesCallback,
+                              base::Unretained(&callback)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1U, callback.list_.size());
 
@@ -4768,16 +4897,15 @@ TEST_F(ExtensionServiceTest, ClearExtensionData) {
   // "known" origins.
   IndexedDBContext* idb_context = BrowserContext::GetDefaultStoragePartition(
                                       profile())->GetIndexedDBContext();
-  base::FilePath idb_path = idb_context->GetFilePathForTesting(ext_url);
+  base::FilePath idb_path =
+      idb_context->GetFilePathForTesting(url::Origin::Create(ext_url));
   EXPECT_TRUE(base::CreateDirectory(idb_path));
   EXPECT_TRUE(base::DirectoryExists(idb_path));
   idb_context->ResetCachesForTesting();
 
   // Uninstall the extension.
-  ASSERT_TRUE(
-      service()->UninstallExtension(good_crx,
-                                    extensions::UNINSTALL_REASON_FOR_TESTING,
-                                    NULL));
+  ASSERT_TRUE(service()->UninstallExtension(
+      good_crx, UNINSTALL_REASON_FOR_TESTING, NULL));
   // The data deletion happens on the IO thread; since we use a
   // TestBrowserThreadBundle (without REAL_IO_THREAD), the IO and UI threads are
   // the same, and RunAllTasksUntilIdle() should run IO thread tasks.
@@ -4785,9 +4913,8 @@ TEST_F(ExtensionServiceTest, ClearExtensionData) {
 
   // Check that the cookie is gone.
   cookie_store->GetAllCookiesForURLAsync(
-       ext_url,
-       base::Bind(&ExtensionCookieCallback::GetAllCookiesCallback,
-                  base::Unretained(&callback)));
+      ext_url, base::BindOnce(&ExtensionCookieCallback::GetAllCookiesCallback,
+                              base::Unretained(&callback)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(0U, callback.list_.size());
 
@@ -4809,6 +4936,22 @@ TEST_F(ExtensionServiceTest, ClearExtensionData) {
   EXPECT_FALSE(base::DirectoryExists(idb_path));
 }
 
+void SetCookieSaveData(bool* result_out,
+                       base::OnceClosure callback,
+                       net::CanonicalCookie::CookieInclusionStatus result) {
+  *result_out =
+      (result == net::CanonicalCookie::CookieInclusionStatus::INCLUDE);
+  std::move(callback).Run();
+}
+
+void GetCookiesSaveData(std::vector<net::CanonicalCookie>* result_out,
+                        base::OnceClosure callback,
+                        const std::vector<net::CanonicalCookie>& result,
+                        const net::CookieStatusList& excluded_cookies) {
+  *result_out = result;
+  std::move(callback).Run();
+}
+
 // Verifies app state is removed upon uninstall.
 TEST_F(ExtensionServiceTest, ClearAppData) {
   InitializeEmptyExtensionService();
@@ -4824,8 +4967,7 @@ TEST_F(ExtensionServiceTest, ClearAppData) {
   const std::string id1 = extension->id();
   EXPECT_TRUE(extension->permissions_data()->HasAPIPermission(
       APIPermission::kUnlimitedStorage));
-  const GURL origin1(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+  const GURL origin1(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin1));
   std::string origin_id = storage::GetIdentifierFromOrigin(origin1);
@@ -4838,32 +4980,43 @@ TEST_F(ExtensionServiceTest, ClearAppData) {
   EXPECT_TRUE(extension->permissions_data()->HasAPIPermission(
       APIPermission::kUnlimitedStorage));
   EXPECT_TRUE(extension->web_extent().MatchesURL(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension)));
-  const GURL origin2(
-      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
+      AppLaunchInfo::GetFullLaunchURL(extension)));
+  const GURL origin2(AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin());
   EXPECT_EQ(origin1, origin2);
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin2));
 
-  // Set a cookie for the extension.
-  net::CookieStore* cookie_store = profile()->GetRequestContext()
-                                            ->GetURLRequestContext()
-                                            ->cookie_store();
-  ASSERT_TRUE(cookie_store);
-  net::CookieOptions options;
-  cookie_store->SetCookieWithOptionsAsync(
-       origin1, "dummy=value", options,
-       base::Bind(&ExtensionCookieCallback::SetCookieCallback,
-                  base::Unretained(&callback)));
-  content::RunAllTasksUntilIdle();
-  EXPECT_TRUE(callback.result_);
+  network::mojom::NetworkContext* network_context =
+      content::BrowserContext::GetDefaultStoragePartition(profile())
+          ->GetNetworkContext();
+  network::mojom::CookieManagerPtr cookie_manager_ptr;
+  network_context->GetCookieManager(mojo::MakeRequest(&cookie_manager_ptr));
 
-  cookie_store->GetAllCookiesForURLAsync(
-      origin1,
-      base::Bind(&ExtensionCookieCallback::GetAllCookiesCallback,
-                 base::Unretained(&callback)));
-  content::RunAllTasksUntilIdle();
-  EXPECT_EQ(1U, callback.list_.size());
+  std::unique_ptr<net::CanonicalCookie> cc(net::CanonicalCookie::Create(
+      origin1, "dummy=value", base::Time::Now(), net::CookieOptions()));
+  ASSERT_TRUE(cc.get());
+
+  {
+    bool set_result = false;
+    base::RunLoop run_loop;
+    cookie_manager_ptr->SetCanonicalCookie(
+        *cc.get(), origin1.scheme(), net::CookieOptions(),
+        base::BindOnce(&SetCookieSaveData, &set_result,
+                       run_loop.QuitClosure()));
+    run_loop.Run();
+    EXPECT_TRUE(set_result);
+  }
+
+  {
+    base::RunLoop run_loop;
+    std::vector<net::CanonicalCookie> cookies_result;
+    cookie_manager_ptr->GetCookieList(
+        origin1, net::CookieOptions(),
+        base::BindOnce(&GetCookiesSaveData, &cookies_result,
+                       run_loop.QuitClosure()));
+    run_loop.Run();
+    EXPECT_EQ(1U, cookies_result.size());
+  }
 
   // Open a database.
   storage::DatabaseTracker* db_tracker =
@@ -4890,40 +5043,49 @@ TEST_F(ExtensionServiceTest, ClearAppData) {
   // "known" origins.
   IndexedDBContext* idb_context = BrowserContext::GetDefaultStoragePartition(
                                       profile())->GetIndexedDBContext();
-  base::FilePath idb_path = idb_context->GetFilePathForTesting(origin1);
+  base::FilePath idb_path =
+      idb_context->GetFilePathForTesting(url::Origin::Create(origin1));
   EXPECT_TRUE(base::CreateDirectory(idb_path));
   EXPECT_TRUE(base::DirectoryExists(idb_path));
   idb_context->ResetCachesForTesting();
 
   // Uninstall one of them, unlimited storage should still be granted
   // to the origin.
-  UninstallExtension(id1, false);
+  UninstallExtension(id1);
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
   EXPECT_TRUE(profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
       origin1));
 
-  // Check that the cookie is still there.
-  cookie_store->GetAllCookiesForURLAsync(
-       origin1,
-       base::Bind(&ExtensionCookieCallback::GetAllCookiesCallback,
-                  base::Unretained(&callback)));
-  content::RunAllTasksUntilIdle();
-  EXPECT_EQ(1U, callback.list_.size());
+  {
+    // Check that the cookie is still there.
+    base::RunLoop run_loop;
+    std::vector<net::CanonicalCookie> cookies_result;
+    cookie_manager_ptr->GetCookieList(
+        origin1, net::CookieOptions(),
+        base::BindOnce(&GetCookiesSaveData, &cookies_result,
+                       run_loop.QuitClosure()));
+    run_loop.Run();
+    EXPECT_EQ(1U, cookies_result.size());
+  }
 
   // Now uninstall the other. Storage should be cleared for the apps.
-  UninstallExtension(id2, false);
+  UninstallExtension(id2);
   EXPECT_EQ(0u, registry()->enabled_extensions().size());
   EXPECT_FALSE(
       profile()->GetExtensionSpecialStoragePolicy()->IsStorageUnlimited(
           origin1));
 
-  // Check that the cookie is gone.
-  cookie_store->GetAllCookiesForURLAsync(
-       origin1,
-       base::Bind(&ExtensionCookieCallback::GetAllCookiesCallback,
-                  base::Unretained(&callback)));
-  content::RunAllTasksUntilIdle();
-  EXPECT_EQ(0U, callback.list_.size());
+  {
+    // Check that the cookie is gone.
+    base::RunLoop run_loop;
+    std::vector<net::CanonicalCookie> cookies_result;
+    cookie_manager_ptr->GetCookieList(
+        origin1, net::CookieOptions(),
+        base::BindOnce(&GetCookiesSaveData, &cookies_result,
+                       run_loop.QuitClosure()));
+    run_loop.Run();
+    EXPECT_EQ(0U, cookies_result.size());
+  }
 
   // The database should have vanished as well.
   db_tracker->task_runner()->PostTask(
@@ -4944,46 +5106,70 @@ TEST_F(ExtensionServiceTest, ClearAppData) {
 }
 
 // Tests loading single extensions (like --load-extension)
-// Flaky crashes. http://crbug.com/231806
-TEST_F(ExtensionServiceTest, DISABLED_LoadExtension) {
+TEST_F(ExtensionServiceTest, LoadExtension) {
   InitializeEmptyExtensionService();
+  TestExtensionDir good_extension_dir;
+  good_extension_dir.WriteManifest(
+      R"({
+           "name": "Good Extension",
+           "version": "0.1",
+           "manifest_version": 2
+         })");
 
-  base::FilePath ext1 = data_dir()
-                            .AppendASCII("good")
-                            .AppendASCII("Extensions")
-                            .AppendASCII("behllobkkfkfnphdnhnkndlbkcpglgmj")
-                            .AppendASCII("1.0.0.0");
-  extensions::UnpackedInstaller::Create(service())->Load(ext1);
-  content::RunAllTasksUntilIdle();
+  {
+    ChromeTestExtensionLoader loader(profile());
+    loader.set_pack_extension(false);
+    loader.LoadExtension(good_extension_dir.UnpackedPath());
+  }
   EXPECT_EQ(0u, GetErrors().size());
-  ASSERT_EQ(1u, loaded_.size());
-  EXPECT_EQ(Manifest::UNPACKED, loaded_[0]->location());
   EXPECT_EQ(1u, registry()->enabled_extensions().size());
-
   ValidatePrefKeyCount(1);
 
-  base::FilePath no_manifest =
-      data_dir()
-          .AppendASCII("bad")
-          // .AppendASCII("Extensions")
-          .AppendASCII("cccccccccccccccccccccccccccccccc")
-          .AppendASCII("1");
-  extensions::UnpackedInstaller::Create(service())->Load(no_manifest);
-  content::RunAllTasksUntilIdle();
-  EXPECT_EQ(1u, GetErrors().size());
-  ASSERT_EQ(1u, loaded_.size());
-  EXPECT_EQ(1u, registry()->enabled_extensions().size());
+  auto get_extension_by_name = [](const ExtensionSet& extensions,
+                                  const std::string& name) {
+    // NOTE: lambda type deduction doesn't recognize returning
+    // const Extension* in one place and nullptr in another as the same type, so
+    // we have to make sure to return an explicit type here.
+    const Extension* result = nullptr;
+    for (const auto& extension : extensions) {
+      if (extension->name() == name) {
+        result = extension.get();
+        break;
+      }
+    }
+    return result;
+  };
+  constexpr const char kGoodExtension[] = "Good Extension";
+  {
+    const Extension* extension =
+        get_extension_by_name(registry()->enabled_extensions(), kGoodExtension);
+    ASSERT_TRUE(extension);
+    EXPECT_EQ(Manifest::UNPACKED, extension->location());
+  }
 
-  // Test uninstall.
-  std::string id = loaded_[0]->id();
-  EXPECT_FALSE(unloaded_id_.length());
-  service()->UninstallExtension(id,
-                                extensions::UNINSTALL_REASON_FOR_TESTING,
-                                NULL);
+  // Try loading an extension with no manifest. It should fail.
+  TestExtensionDir bad_extension_dir;
+  bad_extension_dir.WriteFile(FILE_PATH_LITERAL("background.js"), "// some JS");
+  {
+    ChromeTestExtensionLoader loader(profile());
+    loader.set_pack_extension(false);
+    loader.set_should_fail(true);
+    loader.LoadExtension(bad_extension_dir.UnpackedPath());
+  }
+
+  EXPECT_EQ(1u, GetErrors().size());
+  EXPECT_EQ(1u, registry()->enabled_extensions().size());
+  EXPECT_EQ(1u, registry()->GenerateInstalledExtensionsSet()->size());
+  EXPECT_TRUE(
+      get_extension_by_name(registry()->enabled_extensions(), kGoodExtension));
+
+  // Test uninstalling the good extension.
+  const ExtensionId good_id =
+      get_extension_by_name(registry()->enabled_extensions(), kGoodExtension)
+          ->id();
+  service()->UninstallExtension(good_id, UNINSTALL_REASON_FOR_TESTING, nullptr);
   content::RunAllTasksUntilIdle();
-  EXPECT_EQ(id, unloaded_id_);
-  ASSERT_EQ(0u, loaded_.size());
-  EXPECT_EQ(0u, registry()->enabled_extensions().size());
+  EXPECT_TRUE(registry()->GenerateInstalledExtensionsSet()->is_empty());
 }
 
 // Tests that we generate IDs when they are not specified in the manifest for
@@ -4992,7 +5178,7 @@ TEST_F(ExtensionServiceTest, GenerateID) {
   InitializeEmptyExtensionService();
 
   base::FilePath no_id_ext = data_dir().AppendASCII("no_id");
-  extensions::UnpackedInstaller::Create(service())->Load(no_id_ext);
+  UnpackedInstaller::Create(service())->Load(no_id_ext);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
@@ -5004,7 +5190,7 @@ TEST_F(ExtensionServiceTest, GenerateID) {
   std::string previous_id = loaded_[0]->id();
 
   // If we reload the same path, we should get the same extension ID.
-  extensions::UnpackedInstaller::Create(service())->Load(no_id_ext);
+  UnpackedInstaller::Create(service())->Load(no_id_ext);
   content::RunAllTasksUntilIdle();
   ASSERT_EQ(1u, loaded_.size());
   ASSERT_EQ(previous_id, loaded_[0]->id());
@@ -5015,7 +5201,7 @@ TEST_F(ExtensionServiceTest, UnpackedValidatesLocales) {
 
   base::FilePath bad_locale =
       data_dir().AppendASCII("unpacked").AppendASCII("bad_messages_file");
-  extensions::UnpackedInstaller::Create(service())->Load(bad_locale);
+  UnpackedInstaller::Create(service())->Load(bad_locale);
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1u, GetErrors().size());
   base::FilePath ms_messages_file = bad_locale.AppendASCII("_locales")
@@ -5049,8 +5235,12 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
   ASSERT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
   ASSERT_EQ(location, loaded_[0]->location());
-  ASSERT_EQ("1.0.0.0", loaded_[0]->version()->GetString());
-  ValidatePrefKeyCount(1);
+  ASSERT_EQ("1.0.0.0", loaded_[0]->version().GetString());
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+  EXPECT_TRUE(prefs->GetInstalledExtensionInfo(good_crx));
+  // TODO(devlin): Testing the underlying values of the prefs for extensions
+  // should be done in an ExtensionPrefs test, not here. This should only be
+  // using the public ExtensionPrefs interfaces.
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", location);
 
@@ -5061,7 +5251,7 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
   content::RunAllTasksUntilIdle();
   ASSERT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
-  ValidatePrefKeyCount(1);
+  EXPECT_TRUE(prefs->GetInstalledExtensionInfo(good_crx));
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", location);
 
@@ -5073,25 +5263,26 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
   WaitForExternalExtensionInstalled();
   ASSERT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
-  ASSERT_EQ("1.0.0.1", loaded_[0]->version()->GetString());
-  ValidatePrefKeyCount(1);
+  ASSERT_EQ("1.0.0.1", loaded_[0]->version().GetString());
+  EXPECT_TRUE(prefs->GetInstalledExtensionInfo(good_crx));
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", location);
 
   // Uninstall the extension and reload. Nothing should happen because the
   // preference should prevent us from reinstalling.
   std::string id = loaded_[0]->id();
+  EXPECT_EQ(id, good_crx);
   bool no_uninstall =
       GetManagementPolicy()->MustRemainEnabled(loaded_[0].get(), NULL);
-  service()->UninstallExtension(id,
-                                extensions::UNINSTALL_REASON_FOR_TESTING,
-                                NULL);
+  service()->UninstallExtension(id, UNINSTALL_REASON_FOR_TESTING, NULL);
   content::RunAllTasksUntilIdle();
 
   base::FilePath install_path = extensions_install_dir().AppendASCII(id);
   if (no_uninstall) {
     // Policy controlled extensions should not have been touched by uninstall.
     ASSERT_TRUE(base::PathExists(install_path));
+    EXPECT_TRUE(prefs->GetInstalledExtensionInfo(good_crx));
+    EXPECT_FALSE(prefs->IsExternalExtensionUninstalled(good_crx));
   } else {
     // The extension should also be gone from the install directory.
     ASSERT_FALSE(base::PathExists(install_path));
@@ -5099,19 +5290,18 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
     service()->CheckForExternalUpdates();
     content::RunAllTasksUntilIdle();
     ASSERT_EQ(0u, loaded_.size());
-    ValidatePrefKeyCount(1);
-    ValidateIntegerPref(good_crx, "state",
-                        Extension::EXTERNAL_EXTENSION_UNINSTALLED);
-    ValidateIntegerPref(good_crx, "location", location);
+    EXPECT_TRUE(prefs->IsExternalExtensionUninstalled(good_crx));
+    EXPECT_FALSE(prefs->GetInstalledExtensionInfo(good_crx));
 
     // Now clear the preference and reinstall.
-    SetPrefInteg(good_crx, "state", Extension::ENABLED);
+    prefs->ClearExternalUninstallForTesting(good_crx);
 
     loaded_.clear();
     WaitForExternalExtensionInstalled();
     ASSERT_EQ(1u, loaded_.size());
   }
-  ValidatePrefKeyCount(1);
+  EXPECT_TRUE(prefs->GetInstalledExtensionInfo(good_crx));
+  EXPECT_FALSE(prefs->IsExternalExtensionUninstalled(good_crx));
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", location);
 
@@ -5126,7 +5316,8 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
     service()->OnExternalProviderReady(provider);
     content::RunAllTasksUntilIdle();
     ASSERT_EQ(0u, loaded_.size());
-    ValidatePrefKeyCount(0);
+    EXPECT_FALSE(prefs->IsExternalExtensionUninstalled(good_crx));
+    EXPECT_FALSE(prefs->GetInstalledExtensionInfo(good_crx));
 
     // The extension should also be gone from the install directory.
     ASSERT_FALSE(base::PathExists(install_path));
@@ -5141,9 +5332,7 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
 
     // User uninstalls.
     loaded_.clear();
-    service()->UninstallExtension(id,
-                                  extensions::UNINSTALL_REASON_FOR_TESTING,
-                                  NULL);
+    service()->UninstallExtension(id, UNINSTALL_REASON_FOR_TESTING, NULL);
     content::RunAllTasksUntilIdle();
     ASSERT_EQ(0u, loaded_.size());
 
@@ -5155,7 +5344,9 @@ void ExtensionServiceTest::TestExternalProvider(MockExternalProvider* provider,
     service()->ReloadExtensionsForTest();
     content::RunAllTasksUntilIdle();
     ASSERT_EQ(0u, loaded_.size());
-    ValidatePrefKeyCount(1);
+
+    EXPECT_FALSE(prefs->GetInstalledExtensionInfo(good_crx));
+    EXPECT_TRUE(prefs->IsExternalExtensionUninstalled(good_crx));
 
     EXPECT_EQ(5, provider->visit_count());
   }
@@ -5263,7 +5454,7 @@ TEST_F(ExtensionServiceTest, MultipleExternalUpdateCheck) {
   // Two checks for external updates should find the extension, and install it
   // once.
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       content::NotificationService::AllSources());
   provider->set_visit_count(0);
   service()->CheckForExternalUpdates();
@@ -5273,7 +5464,7 @@ TEST_F(ExtensionServiceTest, MultipleExternalUpdateCheck) {
   ASSERT_EQ(0u, GetErrors().size());
   ASSERT_EQ(1u, loaded_.size());
   ASSERT_EQ(Manifest::EXTERNAL_PREF, loaded_[0]->location());
-  ASSERT_EQ("1.0.0.0", loaded_[0]->version()->GetString());
+  ASSERT_EQ("1.0.0.0", loaded_[0]->version().GetString());
   ValidatePrefKeyCount(1);
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", Manifest::EXTERNAL_PREF);
@@ -5515,8 +5706,7 @@ TEST_F(ExtensionServiceTest, DoNotInstallForEnterprise) {
   ASSERT_TRUE(base_path.IsAbsolute());
   MockProviderVisitor visitor(base_path);
   policy::ProfilePolicyConnector* const connector =
-      policy::ProfilePolicyConnectorFactory::GetForBrowserContext(
-          visitor.profile());
+      visitor.profile()->GetProfilePolicyConnector();
   connector->OverrideIsManagedForTesting(true);
   EXPECT_TRUE(connector->IsManaged());
 
@@ -5652,8 +5842,7 @@ TEST_F(ExtensionServiceTest, LoadAndRelocalizeExtensions) {
 class ExtensionsReadyRecorder : public content::NotificationObserver {
  public:
   ExtensionsReadyRecorder() : ready_(false) {
-    registrar_.Add(this,
-                   extensions::NOTIFICATION_EXTENSIONS_READY_DEPRECATED,
+    registrar_.Add(this, NOTIFICATION_EXTENSIONS_READY_DEPRECATED,
                    content::NotificationService::AllSources());
   }
 
@@ -5665,7 +5854,7 @@ class ExtensionsReadyRecorder : public content::NotificationObserver {
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
     switch (type) {
-      case extensions::NOTIFICATION_EXTENSIONS_READY_DEPRECATED:
+      case NOTIFICATION_EXTENSIONS_READY_DEPRECATED:
         ready_ = true;
         break;
       default:
@@ -5694,73 +5883,75 @@ TEST_F(ExtensionServiceTestSimple, Enabledness) {
   content::PluginService::GetInstance()->Init();
 #endif
 
-  ExtensionErrorReporter::Init(false);  // no noisy errors
+  LoadErrorReporter::Init(false);  // no noisy errors
   ExtensionsReadyRecorder recorder;
-  std::unique_ptr<TestingProfile> profile(new TestingProfile());
+
   std::unique_ptr<base::CommandLine> command_line;
-  base::FilePath install_dir = profile->GetPath()
-      .AppendASCII(extensions::kInstallDirectoryName);
 
-  // By default, we are enabled.
-  command_line.reset(new base::CommandLine(base::CommandLine::NO_PROGRAM));
-  ExtensionService* service = static_cast<extensions::TestExtensionSystem*>(
-      ExtensionSystem::Get(profile.get()))->
-      CreateExtensionService(
-          command_line.get(),
-          install_dir,
-          false);
-  EXPECT_TRUE(service->extensions_enabled());
-  service->Init();
-  content::RunAllTasksUntilIdle();
-  EXPECT_TRUE(recorder.ready());
+  // The profile lifetimes must not overlap: services may use global variables.
+  {
+    auto profile = std::make_unique<TestingProfile>();
+    base::FilePath install_dir =
+        profile->GetPath().AppendASCII(kInstallDirectoryName);
 
-  // If either the command line or pref is set, we are disabled.
-  recorder.set_ready(false);
-  profile.reset(new TestingProfile());
-  command_line->AppendSwitch(switches::kDisableExtensions);
-  service = static_cast<extensions::TestExtensionSystem*>(
-      ExtensionSystem::Get(profile.get()))->
-      CreateExtensionService(
-          command_line.get(),
-          install_dir,
-          false);
-  EXPECT_FALSE(service->extensions_enabled());
-  service->Init();
-  content::RunAllTasksUntilIdle();
-  EXPECT_TRUE(recorder.ready());
+    // By default, we are enabled.
+    command_line.reset(new base::CommandLine(base::CommandLine::NO_PROGRAM));
+    ExtensionService* service =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile.get()))
+            ->CreateExtensionService(command_line.get(), install_dir, false);
+    EXPECT_TRUE(service->extensions_enabled());
+    service->Init();
+    content::RunAllTasksUntilIdle();
+    EXPECT_TRUE(recorder.ready());
+  }
 
-  recorder.set_ready(false);
-  profile.reset(new TestingProfile());
-  profile->GetPrefs()->SetBoolean(prefs::kDisableExtensions, true);
-  service = static_cast<extensions::TestExtensionSystem*>(
-      ExtensionSystem::Get(profile.get()))->
-      CreateExtensionService(
-          command_line.get(),
-          install_dir,
-          false);
-  EXPECT_FALSE(service->extensions_enabled());
-  service->Init();
-  content::RunAllTasksUntilIdle();
-  EXPECT_TRUE(recorder.ready());
+  {
+    // If either the command line or pref is set, we are disabled.
+    recorder.set_ready(false);
+    auto profile = std::make_unique<TestingProfile>();
+    base::FilePath install_dir =
+        profile->GetPath().AppendASCII(kInstallDirectoryName);
+    command_line->AppendSwitch(::switches::kDisableExtensions);
+    ExtensionService* service =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile.get()))
+            ->CreateExtensionService(command_line.get(), install_dir, false);
+    EXPECT_FALSE(service->extensions_enabled());
+    service->Init();
+    content::RunAllTasksUntilIdle();
+    EXPECT_TRUE(recorder.ready());
+  }
 
-  recorder.set_ready(false);
-  profile.reset(new TestingProfile());
-  profile->GetPrefs()->SetBoolean(prefs::kDisableExtensions, true);
-  command_line.reset(new base::CommandLine(base::CommandLine::NO_PROGRAM));
-  service = static_cast<extensions::TestExtensionSystem*>(
-      ExtensionSystem::Get(profile.get()))->
-      CreateExtensionService(
-          command_line.get(),
-          install_dir,
-          false);
-  EXPECT_FALSE(service->extensions_enabled());
-  service->Init();
-  content::RunAllTasksUntilIdle();
-  EXPECT_TRUE(recorder.ready());
+  {
+    recorder.set_ready(false);
+    auto profile = std::make_unique<TestingProfile>();
+    base::FilePath install_dir =
+        profile->GetPath().AppendASCII(kInstallDirectoryName);
+    profile->GetPrefs()->SetBoolean(prefs::kDisableExtensions, true);
+    ExtensionService* service =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile.get()))
+            ->CreateExtensionService(command_line.get(), install_dir, false);
+    EXPECT_FALSE(service->extensions_enabled());
+    service->Init();
+    content::RunAllTasksUntilIdle();
+    EXPECT_TRUE(recorder.ready());
+  }
 
-  // Explicitly delete all the resources used in this test.
-  profile.reset();
-  service = NULL;
+  {
+    recorder.set_ready(false);
+    auto profile = std::make_unique<TestingProfile>();
+    base::FilePath install_dir =
+        profile->GetPath().AppendASCII(kInstallDirectoryName);
+    profile->GetPrefs()->SetBoolean(prefs::kDisableExtensions, true);
+    command_line.reset(new base::CommandLine(base::CommandLine::NO_PROGRAM));
+    ExtensionService* service =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile.get()))
+            ->CreateExtensionService(command_line.get(), install_dir, false);
+    EXPECT_FALSE(service->extensions_enabled());
+    service->Init();
+    content::RunAllTasksUntilIdle();
+    EXPECT_TRUE(recorder.ready());
+  }
+
   // Execute any pending deletion tasks.
   content::RunAllTasksUntilIdle();
 }
@@ -5783,9 +5974,9 @@ TEST_F(ExtensionServiceTest, StorageQuota) {
   base::FilePath unlimited_quota_ext2 =
       extensions_path.AppendASCII("unlimited_quota")
       .AppendASCII("2.0");
-  extensions::UnpackedInstaller::Create(service())->Load(limited_quota_ext);
-  extensions::UnpackedInstaller::Create(service())->Load(unlimited_quota_ext);
-  extensions::UnpackedInstaller::Create(service())->Load(unlimited_quota_ext2);
+  UnpackedInstaller::Create(service())->Load(limited_quota_ext);
+  UnpackedInstaller::Create(service())->Load(unlimited_quota_ext);
+  UnpackedInstaller::Create(service())->Load(unlimited_quota_ext2);
   content::RunAllTasksUntilIdle();
 
   ASSERT_EQ(3u, loaded_.size());
@@ -5812,8 +6003,8 @@ TEST_F(ExtensionServiceTest, ComponentExtensions) {
                             .AppendASCII("1.0.0.0");
 
   std::string manifest;
-  ASSERT_TRUE(base::ReadFileToString(
-      path.Append(extensions::kManifestFilename), &manifest));
+  ASSERT_TRUE(
+      base::ReadFileToString(path.Append(kManifestFilename), &manifest));
 
   service()->component_loader()->Add(manifest, path);
   service()->Init();
@@ -5846,8 +6037,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalUpdateUrl) {
   ValidateIntegerPref(good_crx, "state", Extension::ENABLED);
   ValidateIntegerPref(good_crx, "location", Manifest::INTERNAL);
 
-  extensions::PendingExtensionManager* pending =
-      service()->pending_extension_manager();
+  PendingExtensionManager* pending = service()->pending_extension_manager();
   EXPECT_FALSE(pending->IsIdPending(kGoodId));
 
   // Skip install when the location is the same.
@@ -5909,8 +6099,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
             Manifest::GetHigherPriorityLocation(Manifest::EXTERNAL_PREF,
                                                  Manifest::INTERNAL));
 
-  extensions::PendingExtensionManager* pending =
-      service()->pending_extension_manager();
+  PendingExtensionManager* pending = service()->pending_extension_manager();
   EXPECT_FALSE(pending->IsIdPending(kGoodId));
 
   ExternalInstallInfoFile info(kGoodId, older_version, kInvalidPathToCrx,
@@ -5919,7 +6108,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
   {
     // Simulate an external source adding the extension as INTERNAL.
     content::WindowedNotificationObserver observer(
-        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     EXPECT_TRUE(service()->OnExternalExtensionFileFound(info));
     EXPECT_TRUE(pending->IsIdPending(kGoodId));
@@ -5930,7 +6119,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
   {
     // Simulate an external source adding the extension as EXTERNAL_PREF.
     content::WindowedNotificationObserver observer(
-        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     info.crx_location = Manifest::EXTERNAL_PREF;
     EXPECT_TRUE(service()->OnExternalExtensionFileFound(info));
@@ -5953,7 +6142,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
   {
     // Now the registry adds the extension.
     content::WindowedNotificationObserver observer(
-        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
     info.crx_location = Manifest::EXTERNAL_REGISTRY;
     EXPECT_TRUE(service()->OnExternalExtensionFileFound(info));
@@ -5985,8 +6174,8 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
 
   // Tests assume |older_version| is less than the installed version, and
   // |newer_version| is greater.  Verify this:
-  ASSERT_LT(older_version, *ext->version());
-  ASSERT_GT(newer_version, *ext->version());
+  ASSERT_LT(older_version, ext->version());
+  ASSERT_GT(newer_version, ext->version());
 
   // An external install for the same location should fail if the version is
   // older, or the same, and succeed if the version is newer.
@@ -5997,7 +6186,7 @@ TEST_F(ExtensionServiceTest, InstallPriorityExternalLocalFile) {
   EXPECT_FALSE(pending->IsIdPending(kGoodId));
 
   // Same version as the installed version...
-  info.version = *ext->version();
+  info.version = ext->version();
   EXPECT_FALSE(service()->OnExternalExtensionFileFound(info));
   EXPECT_FALSE(pending->IsIdPending(kGoodId));
 
@@ -6042,8 +6231,7 @@ TEST_F(ExtensionServiceTest, ConcurrentExternalLocalFile) {
 
   InitializeEmptyExtensionService();
 
-  extensions::PendingExtensionManager* pending =
-      service()->pending_extension_manager();
+  PendingExtensionManager* pending = service()->pending_extension_manager();
   EXPECT_FALSE(pending->IsIdPending(kGoodId));
 
   // An external provider starts installing from a local crx.
@@ -6052,7 +6240,7 @@ TEST_F(ExtensionServiceTest, ConcurrentExternalLocalFile) {
                                kDontMarkAcknowledged, kDontInstallImmediately);
   EXPECT_TRUE(service()->OnExternalExtensionFileFound(info));
 
-  const extensions::PendingExtensionInfo* pending_info;
+  const PendingExtensionInfo* pending_info;
   EXPECT_TRUE((pending_info = pending->GetById(kGoodId)));
   EXPECT_TRUE(pending_info->version().IsValid());
   EXPECT_EQ(pending_info->version(), kVersion123);
@@ -6094,7 +6282,7 @@ TEST_F(ExtensionServiceTest, ConcurrentExternalLocalFile) {
 TEST_F(ExtensionServiceTest, InstallWhitelistedExtension) {
   std::string test_id = "hdkklepkcpckhnpgjnmbdfhehckloojk";
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      extensions::switches::kWhitelistedExtensionID, test_id);
+      switches::kWhitelistedExtensionID, test_id);
 
   InitializeEmptyExtensionService();
   base::FilePath path = data_dir().AppendASCII("permissions");
@@ -6164,7 +6352,7 @@ class ExtensionSourcePriorityTest : public ExtensionServiceTest {
 
   // Get the install source of a pending extension.
   Manifest::Location GetPendingLocation() {
-    const extensions::PendingExtensionInfo* info;
+    const PendingExtensionInfo* info;
     EXPECT_TRUE(
         (info = service()->pending_extension_manager()->GetById(crx_id_)));
     return info->install_source();
@@ -6172,7 +6360,7 @@ class ExtensionSourcePriorityTest : public ExtensionServiceTest {
 
   // Is an extension pending from a sync request?
   bool GetPendingIsFromSync() {
-    const extensions::PendingExtensionInfo* info;
+    const PendingExtensionInfo* info;
     EXPECT_TRUE(
         (info = service()->pending_extension_manager()->GetById(crx_id_)));
     return info->is_from_sync();
@@ -6205,7 +6393,7 @@ TEST_F(ExtensionSourcePriorityTest, PendingExternalFileOverSync) {
 
   // Install pending extension from sync.
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       content::NotificationService::AllSources());
   EXPECT_TRUE(AddPendingSyncInstall());
   ASSERT_EQ(Manifest::INTERNAL, GetPendingLocation());
@@ -6264,7 +6452,7 @@ TEST_F(ExtensionSourcePriorityTest, InstallExternalBlocksSyncRequest) {
   // Before the CRX installer runs, Sync requests that the same extension
   // be installed. Should fail, because an external source is pending.
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       content::NotificationService::AllSources());
   ASSERT_FALSE(AddPendingSyncInstall());
 
@@ -6375,27 +6563,27 @@ TEST_F(ExtensionServiceTest, DisablingComponentExtensions) {
   InitializeEmptyExtensionService();
   service_->Init();
 
-  scoped_refptr<Extension> external_component_extension = CreateExtension(
-      base::ASCIIToUTF16("external_component_extension"),
+  scoped_refptr<const Extension> external_component_extension = CreateExtension(
+      "external_component_extension",
       base::FilePath(FILE_PATH_LITERAL("//external_component_extension")),
       Manifest::EXTERNAL_COMPONENT);
   service_->AddExtension(external_component_extension.get());
   EXPECT_TRUE(registry()->enabled_extensions().Contains(
       external_component_extension->id()));
   service_->DisableExtension(external_component_extension->id(),
-                             extensions::disable_reason::DISABLE_USER_ACTION);
+                             disable_reason::DISABLE_USER_ACTION);
   EXPECT_TRUE(registry()->disabled_extensions().Contains(
       external_component_extension->id()));
 
-  scoped_refptr<Extension> component_extension = CreateExtension(
-      base::ASCIIToUTF16("component_extension"),
+  scoped_refptr<const Extension> component_extension = CreateExtension(
+      "component_extension",
       base::FilePath(FILE_PATH_LITERAL("//component_extension")),
       Manifest::COMPONENT);
   service_->AddExtension(component_extension.get());
   EXPECT_TRUE(
       registry()->enabled_extensions().Contains(component_extension->id()));
   service_->DisableExtension(component_extension->id(),
-                             extensions::disable_reason::DISABLE_USER_ACTION);
+                             disable_reason::DISABLE_USER_ACTION);
   EXPECT_FALSE(
       registry()->disabled_extensions().Contains(component_extension->id()));
 }
@@ -6426,7 +6614,7 @@ TEST_F(ExtensionServiceTest, MAYBE_ExternalInstallMultiple) {
 
   int count = 3;
   content::WindowedNotificationObserver observer(
-      extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+      NOTIFICATION_CRX_INSTALLER_DONE,
       base::Bind(&WaitForCountNotificationsCallback, &count));
   service()->CheckForExternalUpdates();
   observer.Wait();
@@ -6471,7 +6659,7 @@ TEST_F(ExtensionServiceTest, MultipleExternalInstallErrors) {
       {page_action, "1.0.0.0", "page_action.crx"},
       {minimal_platform_app_crx, "0.1", "minimal_platform_app.crx"}};
 
-  for (size_t i = 0; i < arraysize(extension_info); ++i) {
+  for (size_t i = 0; i < base::size(extension_info); ++i) {
     reg_provider->UpdateOrAddExtension(
         extension_info[i][0], extension_info[i][1],
         data_dir().AppendASCII(extension_info[i][2]));
@@ -6579,14 +6767,12 @@ TEST_F(ExtensionServiceTest, MultipleExternalInstallBubbleErrors) {
   // the expected number of errors in external_install_manager(). We also verify
   // that only the first BUBBLE_ALERT error is shown.
   for (size_t i = 0; i < data.size(); ++i) {
-    content::WindowedNotificationObserver global_error_observer(
-        chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-        content::NotificationService::AllSources());
+    test::GlobalErrorWaiter error_waiter(profile());
     provider->UpdateOrAddExtension(data[i].id, data[i].version,
                                    data[i].crx_path);
     WaitForExternalExtensionInstalled();
     // Make sure ExternalInstallError::OnDialogReady() fires.
-    global_error_observer.Wait();
+    error_waiter.Wait();
 
     const size_t expected_error_count = i + 1u;
     std::vector<ExternalInstallError*> errors =
@@ -6628,15 +6814,13 @@ TEST_F(ExtensionServiceTest, MultipleExternalInstallBubbleErrors) {
             data_dir().AppendASCII("update_from_webstore3.pem"),
             webstore_crx_three);
 
-    content::WindowedNotificationObserver global_error_observer(
-        chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-        content::NotificationService::AllSources());
+    test::GlobalErrorWaiter error_waiter(profile());
     provider->UpdateOrAddExtension(
         updates_from_webstore3, "1",
         temp_dir().GetPath().AppendASCII("webstore3.crx"));
     WaitForExternalExtensionInstalled();
     // Make sure ExternalInstallError::OnDialogReady() fires.
-    global_error_observer.Wait();
+    error_waiter.Wait();
 
     std::vector<ExternalInstallError*> errors =
         service_->external_install_manager()->GetErrorsForTesting();
@@ -6681,14 +6865,12 @@ TEST_F(ExtensionServiceTest, BubbleAlertDoesNotHideAnotherAlertFromMenu) {
           data_dir().AppendASCII("update_from_webstore2.pem"),
           data[1].crx_path);
   {
-    content::WindowedNotificationObserver global_error_observer(
-        chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-        content::NotificationService::AllSources());
+    test::GlobalErrorWaiter error_waiter(profile());
     provider->UpdateOrAddExtension(data[0].id, data[0].version,
                                    data[0].crx_path);
     WaitForExternalExtensionInstalled();
     // Make sure ExternalInstallError::OnDialogReady() fires.
-    global_error_observer.Wait();
+    error_waiter.Wait();
 
     std::vector<ExternalInstallError*> errors =
         service_->external_install_manager()->GetErrorsForTesting();
@@ -6718,14 +6900,12 @@ TEST_F(ExtensionServiceTest, BubbleAlertDoesNotHideAnotherAlertFromMenu) {
   // BUBBLE_ALERT.
   // Make sure that this bubble alert does not replace the current bubble alert.
   {
-    content::WindowedNotificationObserver global_error_observer(
-        chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-        content::NotificationService::AllSources());
+    test::GlobalErrorWaiter error_waiter(profile());
     provider->UpdateOrAddExtension(data[1].id, data[1].version,
                                    data[1].crx_path);
     WaitForExternalExtensionInstalled();
     // Make sure ExternalInstallError::OnDialogReady() fires.
-    global_error_observer.Wait();
+    error_waiter.Wait();
 
     std::vector<ExternalInstallError*> errors =
         service_->external_install_manager()->GetErrorsForTesting();
@@ -6880,7 +7060,7 @@ TEST_F(ExtensionServiceTest, ExternalInstallClickToKeep) {
 TEST_F(ExtensionServiceTest,
        ExternalInstallBubbleDoesntShowForEnabledExtensions) {
   auto external_prompt_override =
-      base::MakeUnique<FeatureSwitch::ScopedOverride>(
+      std::make_unique<FeatureSwitch::ScopedOverride>(
           FeatureSwitch::prompt_for_external_extensions(), false);
   InitializeEmptyExtensionService();
 
@@ -6895,8 +7075,7 @@ TEST_F(ExtensionServiceTest,
   EXPECT_TRUE(registry()->enabled_extensions().Contains(good_crx));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   EXPECT_FALSE(prefs->IsExternalExtensionAcknowledged(good_crx));
-  EXPECT_EQ(extensions::disable_reason::DISABLE_NONE,
-            prefs->GetDisableReasons(good_crx));
+  EXPECT_EQ(disable_reason::DISABLE_NONE, prefs->GetDisableReasons(good_crx));
 
   // We explicitly reset the override first. ScopedOverrides reset the value
   // to the original value on destruction, but if we reset by passing a new
@@ -6904,10 +7083,10 @@ TEST_F(ExtensionServiceTest,
   // before the old is destructed (which will immediately reset to the
   // original).
   external_prompt_override.reset();
-  external_prompt_override = base::MakeUnique<FeatureSwitch::ScopedOverride>(
+  external_prompt_override = std::make_unique<FeatureSwitch::ScopedOverride>(
       FeatureSwitch::prompt_for_external_extensions(), true);
 
-  extensions::ExternalInstallManager* external_manager =
+  ExternalInstallManager* external_manager =
       service()->external_install_manager();
   external_manager->UpdateExternalExtensionAlert();
   EXPECT_FALSE(external_manager->has_currently_visible_install_alert());
@@ -6926,22 +7105,20 @@ TEST_F(ExtensionServiceTest,
 TEST_F(ExtensionServiceTest, InstallBlacklistedExtension) {
   InitializeEmptyExtensionService();
 
-  scoped_refptr<Extension> extension = ExtensionBuilder("extension").Build();
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("extension").Build();
   ASSERT_TRUE(extension.get());
   const std::string& id = extension->id();
 
   std::set<std::string> id_set;
   id_set.insert(id);
 
-  extensions::TestExtensionRegistryObserver observer(
-      extensions::ExtensionRegistry::Get(profile()));
+  TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()));
   // Installation should be allowed but the extension should never have been
   // loaded and it should be blacklisted in prefs.
   service()->OnExtensionInstalled(
-      extension.get(),
-      syncer::StringOrdinal(),
-      (extensions::kInstallFlagIsBlacklistedForMalware |
-       extensions::kInstallFlagInstallImmediately));
+      extension.get(), syncer::StringOrdinal(),
+      (kInstallFlagIsBlacklistedForMalware | kInstallFlagInstallImmediately));
   content::RunAllTasksUntilIdle();
 
   // Extension was installed but not loaded.
@@ -6973,8 +7150,7 @@ TEST_F(ExtensionServiceTest, CannotEnableBlacklistedExtension) {
   EXPECT_TRUE(registry()->blacklisted_extensions().Contains(id));
   EXPECT_TRUE(ExtensionPrefs::Get(profile())->IsExtensionBlacklisted(id));
 
-  service()->DisableExtension(id,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(id, disable_reason::DISABLE_USER_ACTION);
   EXPECT_FALSE(registry()->enabled_extensions().Contains(id));
   EXPECT_FALSE(registry()->disabled_extensions().Contains(id));
   EXPECT_TRUE(registry()->blacklisted_extensions().Contains(id));
@@ -6984,26 +7160,20 @@ TEST_F(ExtensionServiceTest, CannotEnableBlacklistedExtension) {
 // Test that calls to disable Shared Modules do not work.
 TEST_F(ExtensionServiceTest, CannotDisableSharedModules) {
   InitializeEmptyExtensionService();
-  std::unique_ptr<base::DictionaryValue> export_dict =
-      extensions::DictionaryBuilder()
-          .Set("resources", extensions::ListBuilder().Append("foo.js").Build())
-          .Build();
-
-  scoped_refptr<Extension> extension =
+  scoped_refptr<const Extension> extension =
       ExtensionBuilder("Shared Module")
-          .MergeManifest(extensions::DictionaryBuilder()
-                             .Set("export", std::move(export_dict))
-                             .Build())
+          .SetManifestPath({"export", "resources"},
+                           ListBuilder().Append("foo.js").Build())
           .AddFlags(Extension::FROM_WEBSTORE)
           .Build();
 
   service()->OnExtensionInstalled(extension.get(), syncer::StringOrdinal(),
-                                  extensions::kInstallFlagInstallImmediately);
+                                  kInstallFlagInstallImmediately);
 
   ASSERT_TRUE(registry()->enabled_extensions().Contains(extension->id()));
   // Try to disable the extension.
   service()->DisableExtension(extension->id(),
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+                              disable_reason::DISABLE_USER_ACTION);
   // Shared Module should still be enabled.
   EXPECT_TRUE(registry()->enabled_extensions().Contains(extension->id()));
 }
@@ -7019,8 +7189,8 @@ TEST_F(ExtensionServiceTest, UninstallBlacklistedExtension) {
   service()->BlacklistExtensionForTest(id);
   EXPECT_NE(nullptr, registry()->GetInstalledExtension(id));
   base::string16 error;
-  EXPECT_TRUE(service()->UninstallExtension(
-      id, extensions::UNINSTALL_REASON_USER_INITIATED, nullptr));
+  EXPECT_TRUE(service()->UninstallExtension(id, UNINSTALL_REASON_USER_INITIATED,
+                                            nullptr));
   EXPECT_EQ(nullptr, registry()->GetInstalledExtension(id));
 }
 
@@ -7054,20 +7224,17 @@ TEST_F(ExtensionServiceTest, CorruptExtensionUpdate) {
   const Extension* v1 = InstallCRX(v1_path, INSTALL_NEW);
   std::string id = v1->id();
 
-  service()->DisableExtension(id,
-                              extensions::disable_reason::DISABLE_CORRUPTED);
+  service()->DisableExtension(id, disable_reason::DISABLE_CORRUPTED);
 
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   EXPECT_TRUE(registry()->disabled_extensions().Contains(id));
-  EXPECT_TRUE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_CORRUPTED));
+  EXPECT_TRUE(prefs->HasDisableReason(id, disable_reason::DISABLE_CORRUPTED));
 
   base::FilePath v2_path = data_dir().AppendASCII("good2.crx");
   UpdateExtension(id, v2_path, ENABLED);
 
   EXPECT_FALSE(registry()->disabled_extensions().Contains(id));
-  EXPECT_FALSE(prefs->HasDisableReason(
-      id, extensions::disable_reason::DISABLE_CORRUPTED));
+  EXPECT_FALSE(prefs->HasDisableReason(id, disable_reason::DISABLE_CORRUPTED));
 }
 
 // Try re-enabling a reloading extension. Regression test for crbug.com/676815.
@@ -7076,11 +7243,11 @@ TEST_F(ExtensionServiceTest, ReloadAndReEnableExtension) {
 
   // Add an extension in an unpacked location.
   scoped_refptr<const Extension> extension =
-      extensions::ChromeTestExtensionLoader(profile()).
-          LoadExtension(data_dir().AppendASCII("simple_with_file"));
+      ChromeTestExtensionLoader(profile()).LoadExtension(
+          data_dir().AppendASCII("simple_with_file"));
   const std::string kExtensionId = extension->id();
   ASSERT_TRUE(extension);
-  ASSERT_TRUE(extensions::Manifest::IsUnpackedLocation(extension->location()));
+  ASSERT_TRUE(Manifest::IsUnpackedLocation(extension->location()));
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kExtensionId));
 
   // Begin the reload process.
@@ -7110,18 +7277,16 @@ TEST_F(ExtensionServiceTest, ReloadSharedModule) {
   // Add a shared module and an extension that depends on it (the latter is
   // important to ensure we don't remove the unused shared module).
   scoped_refptr<const Extension> shared_module =
-      extensions::ChromeTestExtensionLoader(profile()).LoadExtension(
+      ChromeTestExtensionLoader(profile()).LoadExtension(
           data_dir().AppendASCII("api_test/shared_module/shared"));
   scoped_refptr<const Extension> dependent =
-      extensions::ChromeTestExtensionLoader(profile()).LoadExtension(
+      ChromeTestExtensionLoader(profile()).LoadExtension(
           data_dir().AppendASCII("api_test/shared_module/import_pass"));
   ASSERT_TRUE(shared_module);
   ASSERT_TRUE(dependent);
   const std::string kExtensionId = shared_module->id();
-  ASSERT_TRUE(
-      extensions::Manifest::IsUnpackedLocation(shared_module->location()));
-  ASSERT_EQ(extensions::Manifest::TYPE_SHARED_MODULE,
-            shared_module->manifest()->type());
+  ASSERT_TRUE(Manifest::IsUnpackedLocation(shared_module->location()));
+  ASSERT_EQ(Manifest::TYPE_SHARED_MODULE, shared_module->manifest()->type());
   EXPECT_TRUE(registry()->enabled_extensions().Contains(kExtensionId));
 
   // Reload the extension and wait for it to complete. This previously crashed
@@ -7168,53 +7333,143 @@ TEST_F(ExtensionServiceTest, UninstallDisabledMigratedExtension) {
           .SetLocation(Manifest::INTERNAL)
           .Build();
   service()->AddExtension(cast_extension.get());
-  service()->DisableExtension(cast_stable,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
+  service()->DisableExtension(cast_stable, disable_reason::DISABLE_USER_ACTION);
   ASSERT_TRUE(registry()->disabled_extensions().Contains(cast_stable));
 
   service()->UninstallMigratedExtensionsForTest();
   EXPECT_FALSE(service()->GetInstalledExtension(cast_stable));
 }
 
-TEST_F(ExtensionServiceTest, EnableZipUnpackerExtension) {
-  InitializeEmptyExtensionService();
+// Tests the case of a user installing a non-policy extension (e.g. through the
+// webstore), and that extension later becoming required by policy.
+// Regression test for https://crbug.com/894184.
+TEST_F(ExtensionServiceTest, UserInstalledExtensionThenRequiredByPolicy) {
+  InitializeEmptyExtensionServiceWithTestingPrefs();
 
-  scoped_refptr<const Extension> zip_unpacker_extension =
-      ExtensionBuilder("stable")
-          .SetID(zip_unpacker)
-          .SetLocation(Manifest::EXTERNAL_COMPONENT)
-          .Build();
-  service()->AddExtension(zip_unpacker_extension.get());
-  service()->DisableExtension(zip_unpacker,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
-  ASSERT_TRUE(registry()->disabled_extensions().Contains(zip_unpacker));
+  // Install an extension as if the user did it.
+  base::FilePath path = data_dir().AppendASCII("good.crx");
+  const Extension* extension = InstallCRX(path, INSTALL_NEW);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ(good_crx, extension->id());
+  EXPECT_EQ(Manifest::INTERNAL, extension->location());
 
-  service()->EnableZipUnpackerExtensionForTest();
-#if defined(OS_CHROMEOS)
-  ASSERT_TRUE(registry()->enabled_extensions().Contains(zip_unpacker));
-#else
-  ASSERT_TRUE(registry()->disabled_extensions().Contains(zip_unpacker));
-#endif
+  std::string kVersionStr = "1.0.0.0";
+  EXPECT_EQ(kVersionStr, extension->VersionString());
+
+  {
+    ManagementPrefUpdater pref(profile_->GetTestingPrefService());
+    // Mark good.crx for force-installation.
+    pref.SetIndividualExtensionAutoInstalled(
+        good_crx, "http://example.com/update_url", true);
+  }
+
+  // Require good.crx by policy.
+  MockExternalProvider* provider =
+      AddMockExternalProvider(Manifest::EXTERNAL_POLICY_DOWNLOAD);
+  // TODO(devlin): Do we also need to check installing extensions with different
+  // versions?
+  provider->UpdateOrAddExtension(good_crx, kVersionStr,
+                                 data_dir().AppendASCII("good.crx"));
+  service()->CheckForExternalUpdates();
+
+  ExtensionManagement* management =
+      ExtensionManagementFactory::GetForBrowserContext(profile());
+  ExtensionManagement::InstallationMode installation_mode =
+      management->GetInstallationMode(extension);
+  EXPECT_EQ(ExtensionManagement::INSTALLATION_FORCED, installation_mode);
+
+  // Reload all extensions.
+  service()->ReloadExtensionsForTest();
+
+  extension = registry()->GetInstalledExtension(good_crx);
+  ASSERT_TRUE(extension);
+  ManagementPolicy* policy =
+      ExtensionSystem::Get(browser_context())->management_policy();
+  // The extension should still be installed, and should be required to
+  // remain installed.
+  EXPECT_TRUE(policy->MustRemainInstalled(extension, nullptr));
+  // TODO(devlin): This currently doesn't work, because the extension is still
+  // installed with Manifest::Location INTERNAL.
+  // EXPECT_FALSE(policy->UserMayModifySettings(extension, nullptr));
+
+  EXPECT_TRUE(registry()->enabled_extensions().GetByID(good_crx));
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+  EXPECT_EQ(disable_reason::DISABLE_NONE, prefs->GetDisableReasons(good_crx));
+  EXPECT_FALSE(prefs->IsExtensionDisabled(good_crx));
 }
 
-TEST_F(ExtensionServiceTest, ShouldNotEnableZipUnpackerExtensionAgainstPolicy) {
+// Regression test for crbug.com/460699. Ensure PluginManager doesn't crash even
+// if OnExtensionUnloaded is invoked twice in succession.
+TEST_F(ExtensionServiceTest, PluginManagerCrash) {
   InitializeEmptyExtensionService();
+  PluginManager manager(profile());
 
-  GetManagementPolicy()->UnregisterAllProviders();
-  extensions::TestManagementPolicyProvider provider_(
-      extensions::TestManagementPolicyProvider::MUST_REMAIN_DISABLED);
-  GetManagementPolicy()->RegisterProvider(&provider_);
+  // Load an extension using a NaCl module.
+  const Extension* extension =
+      PackAndInstallCRX(data_dir().AppendASCII("native_client"), INSTALL_NEW);
+  service()->DisableExtension(extension->id(),
+                              disable_reason::DISABLE_USER_ACTION);
 
-  scoped_refptr<const Extension> zip_unpacker_extension =
-      ExtensionBuilder("stable")
-          .SetID(zip_unpacker)
-          .SetLocation(Manifest::EXTERNAL_COMPONENT)
-          .Build();
-  service()->AddExtension(zip_unpacker_extension.get());
-  service()->DisableExtension(zip_unpacker,
-                              extensions::disable_reason::DISABLE_USER_ACTION);
-  ASSERT_TRUE(registry()->disabled_extensions().Contains(zip_unpacker));
-
-  service()->EnableZipUnpackerExtensionForTest();
-  ASSERT_FALSE(registry()->enabled_extensions().Contains(zip_unpacker));
+  // crbug.com/708230: This will cause OnExtensionUnloaded to be called
+  // redundantly for a disabled extension.
+  service()->BlockAllExtensions();
 }
+
+class ExternalExtensionPriorityTest
+    : public ExtensionServiceTest,
+      public testing::WithParamInterface<Manifest::Location> {};
+
+// Policy-forced extensions should be fetched with FOREGROUND priority,
+// otherwise they may be throttled (web store sends “noupdate” response to
+// reduce load), which is OK for updates, but not for a new install. This is
+// a regression test for problems described in https://crbug.com/904600 and
+// https://crbug.com/917700.
+TEST_P(ExternalExtensionPriorityTest, PolicyForegroundFetch) {
+  ExtensionUpdater::ScopedSkipScheduledCheckForTest skip_scheduled_checks;
+  ExtensionServiceInitParams params = CreateDefaultInitParams();
+  params.autoupdate_enabled = true;
+  InitializeExtensionService(params);
+
+  ExtensionDownloaderTestHelper helper;
+  NullExtensionCache extension_cache;
+  service()->updater()->SetExtensionDownloaderForTesting(
+      helper.CreateDownloader());
+  service()->updater()->SetExtensionCacheForTesting(&extension_cache);
+  service()->updater()->Start();
+
+  GURL update_url(extension_urls::kChromeWebstoreUpdateURL);
+  service()->OnExternalExtensionUpdateUrlFound(
+      ExternalInstallInfoUpdateUrl(all_zero /* extension_id */,
+                                   "" /* install_parameter */, update_url,
+                                   GetParam() /* download_location */,
+                                   Extension::NO_FLAGS /* creation_flag */,
+                                   true /* mark_acknowledged */),
+      true /* is_initial_load */);
+
+  MockExternalProvider provider(nullptr, Manifest::EXTERNAL_POLICY_DOWNLOAD);
+  service()->OnExternalProviderReady(&provider);
+
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_EQ(helper.test_url_loader_factory().NumPending(), 1);
+  network::TestURLLoaderFactory::PendingRequest* pending_request =
+      helper.test_url_loader_factory().GetPendingRequest(0);
+  std::string header;
+  EXPECT_TRUE(pending_request->request.headers.GetHeader(
+      "X-Goog-Update-Interactivity", &header));
+  bool is_high_priority = GetParam() == Manifest::EXTERNAL_POLICY_DOWNLOAD ||
+                          GetParam() == Manifest::EXTERNAL_COMPONENT;
+  const char* expected_header = is_high_priority ? "fg" : "bg";
+  EXPECT_EQ(expected_header, header);
+
+  // Destroy updater's downloader as it uses |helper|.
+  service()->updater()->SetExtensionDownloaderForTesting(nullptr);
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         ExternalExtensionPriorityTest,
+                         testing::Values(Manifest::EXTERNAL_POLICY_DOWNLOAD,
+                                         Manifest::EXTERNAL_COMPONENT,
+                                         Manifest::EXTERNAL_PREF_DOWNLOAD));
+
+}  // namespace extensions

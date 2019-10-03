@@ -8,6 +8,7 @@
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 
 namespace content {
@@ -27,7 +28,8 @@ TestFrameNavigationObserver::TestFrameNavigationObserver(
       frame_tree_node_id_(ToRenderFrameHostImpl(adapter)->GetFrameTreeNodeId()),
       navigation_started_(false),
       has_committed_(false),
-      wait_for_commit_(false) {
+      wait_for_commit_(false),
+      last_navigation_succeeded_(false) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -51,6 +53,7 @@ void TestFrameNavigationObserver::WaitForCommit() {
 
 void TestFrameNavigationObserver::DidStartNavigation(
     NavigationHandle* navigation_handle) {
+  last_navigation_succeeded_ = false;
   if (!navigation_handle->IsSameDocument() &&
       navigation_handle->GetFrameTreeNodeId() == frame_tree_node_id_) {
     navigation_started_ = true;
@@ -63,6 +66,7 @@ void TestFrameNavigationObserver::DidFinishNavigation(
   if (!navigation_started_)
     return;
 
+  last_navigation_succeeded_ = !navigation_handle->IsErrorPage();
   if (!navigation_handle->HasCommitted() ||
       navigation_handle->IsErrorPage() ||
       navigation_handle->GetFrameTreeNodeId() != frame_tree_node_id_) {
@@ -70,6 +74,7 @@ void TestFrameNavigationObserver::DidFinishNavigation(
   }
 
   transition_type_ = navigation_handle->GetPageTransition();
+  last_committed_url_ = navigation_handle->GetURL();
 
   has_committed_ = true;
   if (wait_for_commit_)

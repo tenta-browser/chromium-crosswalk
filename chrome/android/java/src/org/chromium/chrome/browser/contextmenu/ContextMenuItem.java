@@ -8,6 +8,8 @@ import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.IdRes;
 
+import org.chromium.base.Callback;
+
 /**
  * An interface to get information of context menu.
  */
@@ -23,12 +25,12 @@ public interface ContextMenuItem {
      * @param context The context required to get the title from resources.
      * @return The title of the menu item.
      */
-    String getTitle(Context context);
+    CharSequence getTitle(Context context);
 
     /**
-     * Gets the {@link Drawable} icon of a context menu item.
+     * Gets the {@link Drawable} icon of a context menu item asynchronously.
      * @param context The context required to get the icon from resources.
-     * @return The icon of the menu item.
+     * @param callback The {@link Callback} used to show the icon when it is ready.
      */
-    Drawable getDrawable(Context context);
+    void getDrawableAsync(Context context, Callback<Drawable> callback);
 }

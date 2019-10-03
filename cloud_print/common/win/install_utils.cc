@@ -7,7 +7,7 @@
 #include <windows.h>
 
 #include "base/command_line.h"
-#include "base/file_version_info_win.h"
+#include "base/file_version_info.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
@@ -60,12 +60,10 @@ void SetGoogleUpdateKeys(const base::string16& product_id,
 
   // Get the version from the resource file.
   base::string16 version_string;
-  std::unique_ptr<FileVersionInfo> version_info(
-      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE()));
-  if (version_info.get()) {
-    FileVersionInfoWin* version_info_win =
-        static_cast<FileVersionInfoWin*>(version_info.get());
-    version_string = version_info_win->product_version();
+  std::unique_ptr<FileVersionInfo> version_info =
+      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE());
+  if (version_info) {
+    version_string = version_info->product_version();
   } else {
     LOG(ERROR) << "Unable to get version string";
     // Use a random version string so that Google Update has something to go by.
@@ -140,7 +138,7 @@ void CreateUninstallKey(const base::string16& uninstall_id,
   }
 
   base::FilePath unstall_binary;
-  CHECK(PathService::Get(base::FILE_EXE, &unstall_binary));
+  CHECK(base::PathService::Get(base::FILE_EXE, &unstall_binary));
 
   base::CommandLine uninstall_command(unstall_binary);
   uninstall_command.AppendSwitch(uninstall_switch);
@@ -149,14 +147,12 @@ void CreateUninstallKey(const base::string16& uninstall_id,
   key.WriteValue(kInstallLocation, unstall_binary.DirName().value().c_str());
 
   // Get the version resource.
-  std::unique_ptr<FileVersionInfo> version_info(
-      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE()));
+  std::unique_ptr<FileVersionInfo> version_info =
+      FileVersionInfo::CreateFileVersionInfoForModule(CURRENT_MODULE());
 
-  if (version_info.get()) {
-    FileVersionInfoWin* version_info_win =
-        static_cast<FileVersionInfoWin*>(version_info.get());
-    key.WriteValue(kDisplayVersion, version_info_win->file_version().c_str());
-    key.WriteValue(kPublisher, version_info_win->company_name().c_str());
+  if (version_info) {
+    key.WriteValue(kDisplayVersion, version_info->file_version().c_str());
+    key.WriteValue(kPublisher, version_info->company_name().c_str());
   } else {
     LOG(ERROR) << "Unable to get version string";
   }
@@ -186,7 +182,7 @@ base::FilePath GetInstallLocation(const base::string16& uninstall_id) {
 
 void DeleteProgramDir(const std::string& delete_switch) {
   base::FilePath installer_source;
-  if (!PathService::Get(base::FILE_EXE, &installer_source))
+  if (!base::PathService::Get(base::FILE_EXE, &installer_source))
     return;
   // Deletes only subdirs of program files.
   if (!IsProgramsFilesParent(installer_source))
@@ -206,7 +202,7 @@ void DeleteProgramDir(const std::string& delete_switch) {
 
 bool IsProgramsFilesParent(const base::FilePath& path) {
   base::FilePath program_files;
-  if (!PathService::Get(base::DIR_PROGRAM_FILESX86, &program_files))
+  if (!base::PathService::Get(base::DIR_PROGRAM_FILESX86, &program_files))
     return false;
   return program_files.IsParent(path);
 }

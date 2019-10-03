@@ -8,7 +8,6 @@
 
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -24,10 +23,6 @@
 #include "components/search_engines/template_url_prepopulate_data.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(OS_WIN)
-#include "components/os_crypt/ie7_password_win.h"
-#endif
-
 #include <iterator>
 
 namespace {
@@ -36,8 +31,7 @@ history::URLRows ConvertImporterURLRowsToHistoryURLRows(
     const std::vector<ImporterURLRow>& rows) {
   history::URLRows converted;
   converted.reserve(rows.size());
-  for (std::vector<ImporterURLRow>::const_iterator it = rows.begin();
-       it != rows.end(); ++it) {
+  for (auto it = rows.begin(); it != rows.end(); ++it) {
     history::URLRow row(it->url);
     row.set_title(it->title);
     row.set_visit_count(it->visit_count);
@@ -105,7 +99,7 @@ std::unique_ptr<TemplateURL> CreateTemplateURL(const base::string16& url,
   // Otherwise, we use the shortcut.
   data.SetShortName(title.empty() ? keyword : title);
   data.SetURL(TemplateURLRef::DisplayURLToURLRef(url));
-  return base::MakeUnique<TemplateURL>(data);
+  return std::make_unique<TemplateURL>(data);
 }
 
 // Parses the OpenSearch XML files in |xml_files| and populates |search_engines|
@@ -120,8 +114,8 @@ void ParseSearchEnginesFromFirefoxXMLData(
   // The first XML file represents the default search engine in Firefox 3, so we
   // need to keep it on top of the list.
   auto default_turl = search_engine_for_url.end();
-  for (std::vector<std::string>::const_iterator xml_iter =
-           xml_data.begin(); xml_iter != xml_data.end(); ++xml_iter) {
+  for (auto xml_iter = xml_data.begin(); xml_iter != xml_data.end();
+       ++xml_iter) {
     std::unique_ptr<TemplateURL> template_url = TemplateURLParser::Parse(
         UIThreadSearchTermsData(nullptr), xml_iter->data(), xml_iter->length(),
         &param_filter);
@@ -172,18 +166,6 @@ void InProcessImporterBridge::AddBookmarks(
 void InProcessImporterBridge::AddHomePage(const GURL& home_page) {
   writer_->AddHomepage(home_page);
 }
-
-#if defined(OS_WIN)
-void InProcessImporterBridge::AddIE7PasswordInfo(
-    const importer::ImporterIE7PasswordInfo& password_info) {
-  IE7PasswordInfo ie7_password_info;
-  ie7_password_info.url_hash = password_info.url_hash;
-  ie7_password_info.encrypted_data = password_info.encrypted_data;
-  ie7_password_info.date_created = password_info.date_created;
-
-  writer_->AddIE7PasswordInfo(ie7_password_info);
-}
-#endif  // OS_WIN
 
 void InProcessImporterBridge::SetFavicons(
     const favicon_base::FaviconUsageDataList& favicons) {

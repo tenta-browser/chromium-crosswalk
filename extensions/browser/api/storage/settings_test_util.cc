@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/storage/storage_frontend.h"
@@ -23,11 +23,9 @@ namespace settings_test_util {
 
 // Creates a kilobyte of data.
 std::unique_ptr<base::Value> CreateKilobyte() {
-  std::string kilobyte_string;
-  for (int i = 0; i < 1024; ++i) {
-    kilobyte_string += "a";
-  }
-  return std::unique_ptr<base::Value>(new base::Value(kilobyte_string));
+  std::string kilobyte_string(1024u, 'a');
+  return std::unique_ptr<base::Value>(
+      new base::Value(std::move(kilobyte_string)));
 }
 
 // Creates a megabyte of data.
@@ -75,10 +73,10 @@ scoped_refptr<const Extension> AddExtensionWithIdAndPermissions(
   base::DictionaryValue manifest;
   manifest.SetString("name", std::string("Test extension ") + id);
   manifest.SetString("version", "1.0");
+  manifest.SetInteger("manifest_version", 2);
 
   std::unique_ptr<base::ListValue> permissions(new base::ListValue());
-  for (std::set<std::string>::const_iterator it = permissions_set.begin();
-      it != permissions_set.end(); ++it) {
+  for (auto it = permissions_set.cbegin(); it != permissions_set.cend(); ++it) {
     permissions->AppendString(*it);
   }
   manifest.Set("permissions", std::move(permissions));
@@ -115,8 +113,7 @@ scoped_refptr<const Extension> AddExtensionWithIdAndPermissions(
   // the test discards the referenced to the returned extension.
   ExtensionRegistry::Get(context)->AddEnabled(extension);
 
-  for (std::set<std::string>::const_iterator it = permissions_set.begin();
-      it != permissions_set.end(); ++it) {
+  for (auto it = permissions_set.cbegin(); it != permissions_set.cend(); ++it) {
     DCHECK(extension->permissions_data()->HasAPIPermission(*it));
   }
 

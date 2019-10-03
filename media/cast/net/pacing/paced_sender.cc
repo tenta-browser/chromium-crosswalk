@@ -6,7 +6,6 @@
 
 #include "base/big_endian.h"
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_conversions.h"
 
 namespace media {
@@ -66,7 +65,7 @@ struct PacedSender::RtpSession {
 PacedSender::PacedSender(
     size_t target_burst_size,
     size_t max_burst_size,
-    base::TickClock* clock,
+    const base::TickClock* clock,
     std::vector<PacketEvent>* recent_packet_events,
     PacketTransport* transport,
     const scoped_refptr<base::SingleThreadTaskRunner>& transport_task_runner)
@@ -81,8 +80,7 @@ PacedSender::PacedSender(
       next_max_burst_size_(target_burst_size_),
       next_next_max_burst_size_(target_burst_size_),
       current_burst_size_(0),
-      state_(State_Unblocked),
-      weak_factory_(this) {}
+      state_(State_Unblocked) {}
 
 PacedSender::~PacedSender() = default;
 
@@ -241,7 +239,7 @@ void PacedSender::CancelSendingPacket(const PacketKey& packet_key) {
   priority_packet_list_.erase(packet_key);
 
   if (VLOG_IS_ON(2)) {
-    PacketSendHistory::iterator history_it = send_history_.find(packet_key);
+    auto history_it = send_history_.find(packet_key);
     if (history_it != send_history_.end())
       ++history_it->second.cancel_count;
   }
@@ -258,14 +256,14 @@ PacketRef PacedSender::PopNextPacket(PacketType* packet_type,
   // |send_history_| for prior transmission attempts.  Packets that have never
   // been transmitted will be popped first.  If all packets have transmitted
   // before, pop the one that has not been re-attempted for the longest time.
-  PacketList::iterator it = list->begin();
+  auto it = list->begin();
   PacketKey last_key = it->first;
   last_key.packet_id = UINT16_C(0xffff);
   PacketSendHistory::const_iterator history_it =
       send_history_.lower_bound(it->first);
   base::TimeTicks earliest_send_time =
       base::TimeTicks() + base::TimeDelta::Max();
-  PacketList::iterator found_it = it;
+  auto found_it = it;
   while (true) {
     if (history_it == send_history_.end() || it->first < history_it->first) {
       // There is no send history for this packet, which means it has not been

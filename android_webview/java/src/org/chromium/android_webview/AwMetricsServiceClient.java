@@ -8,24 +8,15 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 
 /**
- * Determines user consent and app opt-out for metrics.
- *
- * This requires the following steps:
- * 1) Check the platform's metrics consent setting.
- * 2) Check if the app has opted out.
- * 3) Wait for the native AwMetricsServiceClient to call nativeInitialized.
- * 4) If enabled, inform the native AwMetricsServiceClient via nativeSetHaveMetricsConsent.
- *
- * Step 1 is done asynchronously and the result is passed to setConsentSetting, which does step 2.
- * This happens in parallel with native AwMetricsServiceClient initialization; either
- * nativeInitialized or setConsentSetting might fire first. Whichever fires second should call
- * nativeSetHaveMetricsConsent.
+ * Determines user consent and app opt-out for metrics. See aw_metrics_service_client.h for more
+ * explanation.
  */
 @JNINamespace("android_webview")
 public class AwMetricsServiceClient {
@@ -35,13 +26,12 @@ public class AwMetricsServiceClient {
     // reporting. See https://developer.android.com/reference/android/webkit/WebView.html
     private static final String OPT_OUT_META_DATA_STR = "android.webkit.WebView.MetricsOptOut";
 
-    private static boolean sIsClientReady; // Is the native AwMetricsServiceClient initialized?
-    private static boolean sShouldEnable; // Have steps 1 and 2 passed?
+    private static final String PLAY_STORE_PACKAGE_NAME = "com.android.vending";
 
-    private static boolean isAppOptedOut(Context appContext) {
+    private static boolean isAppOptedOut(Context ctx) {
         try {
-            ApplicationInfo info = appContext.getPackageManager().getApplicationInfo(
-                    appContext.getPackageName(), PackageManager.GET_META_DATA);
+            ApplicationInfo info = ctx.getPackageManager().getApplicationInfo(
+                    ctx.getPackageName(), PackageManager.GET_META_DATA);
             if (info.metaData == null) {
                 // null means no such tag was found.
                 return false;
@@ -56,32 +46,23 @@ public class AwMetricsServiceClient {
         }
     }
 
-    public static void setConsentSetting(Context appContext, boolean userConsent) {
+    private static boolean shouldRecordPackageName(Context ctx) {
+        // Only record if it's a system app or it was installed from Play Store.
+        String packageName = ctx.getPackageName();
+        String installerPackageName = ctx.getPackageManager().getInstallerPackageName(packageName);
+        return (ctx.getApplicationInfo().flags & ApplicationInfo.FLAG_SYSTEM) != 0
+                || (PLAY_STORE_PACKAGE_NAME.equals(installerPackageName));
+    }
+
+    public static void setConsentSetting(Context ctx, boolean userConsent) {
         ThreadUtils.assertOnUiThread();
-
-        if (!userConsent || isAppOptedOut(appContext)) {
-            // Metrics defaults to off, so no need to call nativeSetHaveMetricsConsent(false).
-            return;
-        }
-
-        sShouldEnable = true;
-        if (sIsClientReady) {
-            nativeSetHaveMetricsConsent(true);
-        }
+        nativeSetHaveMetricsConsent(userConsent && !isAppOptedOut(ctx));
     }
 
     @CalledByNative
-    public static void nativeInitialized() {
-        ThreadUtils.assertOnUiThread();
-        sIsClientReady = true;
-        if (sShouldEnable) {
-            nativeSetHaveMetricsConsent(true);
-        }
-    }
-
-    @CalledByNative
-    public static String getWebViewPackageName() {
-        return AwBrowserProcess.getWebViewPackageName();
+    private static String getAppPackageName() {
+        Context ctx = ContextUtils.getApplicationContext();
+        return shouldRecordPackageName(ctx) ? ctx.getPackageName() : null;
     }
 
     public static native void nativeSetHaveMetricsConsent(boolean enabled);

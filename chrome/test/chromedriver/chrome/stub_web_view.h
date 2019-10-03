@@ -25,6 +25,8 @@ class StubWebView : public WebView {
   Status GetUrl(std::string* url) override;
   Status Load(const std::string& url, const Timeout* timeout) override;
   Status Reload(const Timeout* timeout) override;
+  Status Freeze(const Timeout* timeout) override;
+  Status Resume(const Timeout* timeout) override;
   Status SendCommand(const std::string& cmd,
                      const base::DictionaryValue& params) override;
   Status SendCommandAndGetResult(const std::string& cmd,
@@ -48,6 +50,11 @@ class StubWebView : public WebView {
                                const base::ListValue& args,
                                const base::TimeDelta& timeout,
                                std::unique_ptr<base::Value>* result) override;
+  Status CallUserSyncScript(const std::string& frame,
+                            const std::string& script,
+                            const base::ListValue& args,
+                            const base::TimeDelta& timeout,
+                            std::unique_ptr<base::Value>* result) override;
   Status GetFrameByFunction(const std::string& frame,
                             const std::string& function,
                             const base::ListValue& args,
@@ -81,10 +88,15 @@ class StubWebView : public WebView {
   Status OverrideGeolocation(const Geoposition& geoposition) override;
   Status OverrideNetworkConditions(
       const NetworkConditions& network_conditions) override;
-  Status CaptureScreenshot(std::string* screenshot) override;
+  Status OverrideDownloadDirectoryIfNeeded(
+      const std::string& download_directory) override;
+  Status CaptureScreenshot(
+      std::string* screenshot,
+      const base::DictionaryValue& params) override;
   Status SetFileInputFiles(const std::string& frame,
                            const base::DictionaryValue& element,
-                           const std::vector<base::FilePath>& files) override;
+                           const std::vector<base::FilePath>& files,
+                           const bool append) override;
   Status TakeHeapSnapshot(std::unique_ptr<base::Value>* snapshot) override;
   Status StartProfile() override;
   Status EndProfile(std::unique_ptr<base::Value>* profile_data) override;
@@ -96,10 +108,10 @@ class StubWebView : public WebView {
                                  int y,
                                  int xoffset,
                                  int yoffset) override;
-  Status SynthesizePinchGesture(int x, int y, double scale_factor) override;
-  Status GetScreenOrientation(std::string* orientation) override;
-  Status SetScreenOrientation(std::string orientation) override;
-  Status DeleteScreenOrientation() override;
+  bool IsOOPIF(const std::string& frame_id) override;
+  FrameTracker* GetFrameTracker() const override;
+  std::unique_ptr<base::Value> GetCastSinks() override;
+  std::unique_ptr<base::Value> GetCastIssueMessage() override;
 
  private:
   std::string id_;

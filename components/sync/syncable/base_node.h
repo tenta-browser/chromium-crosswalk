@@ -16,7 +16,6 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/model/attachments/attachment.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "url/gurl.h"
 
@@ -32,6 +31,7 @@ class EntitySpecifics;
 class NigoriSpecifics;
 class PasswordSpecificsData;
 class TypedUrlSpecifics;
+class WifiConfigurationSpecificsData;
 }  // namespace sync_pb
 
 namespace syncer {
@@ -121,13 +121,14 @@ class BaseNode {
   // data.  Can only be called if GetModelType() == PASSWORD.
   const sync_pb::PasswordSpecificsData& GetPasswordSpecifics() const;
 
+  // Getter specific to the WIFI_CONFIGURATION datatype.  Returns protobuf
+  // data.  Can only be called if GetModelType() == WIFI_CONFIGURATION.
+  const sync_pb::WifiConfigurationSpecificsData& GetWifiConfigurationSpecifics()
+      const;
+
   // Getter specific to the TYPED_URLS datatype.  Returns protobuf
   // data.  Can only be called if GetModelType() == TYPED_URLS.
   const sync_pb::TypedUrlSpecifics& GetTypedUrlSpecifics() const;
-
-  // Getter specific to the EXPERIMENTS datatype.  Returns protobuf
-  // data.  Can only be called if GetModelType() == EXPERIMENTS.
-  const sync_pb::ExperimentsSpecifics& GetExperimentsSpecifics() const;
 
   const sync_pb::EntitySpecifics& GetEntitySpecifics() const;
 
@@ -165,9 +166,6 @@ class BaseNode {
   // Do not call this function on items that do not support positioning
   // (ie. non-bookmarks).
   int GetPositionIndex() const;
-
-  // Returns this item's attachment ids.
-  const AttachmentIdList GetAttachmentIds() const;
 
   // Returns a base::DictionaryValue serialization of this node.
   std::unique_ptr<base::DictionaryValue> ToValue() const;
@@ -226,6 +224,8 @@ class BaseNode {
 
   // Same as |unencrypted_data_|, but for legacy password encryption.
   std::unique_ptr<sync_pb::PasswordSpecificsData> password_data_;
+  std::unique_ptr<sync_pb::WifiConfigurationSpecificsData>
+      wifi_configuration_data_;
 
   DISALLOW_COPY_AND_ASSIGN(BaseNode);
 };

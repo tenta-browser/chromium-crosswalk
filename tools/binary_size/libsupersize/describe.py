@@ -52,7 +52,7 @@ def _Divide(a, b):
 
 
 def _IncludeInTotals(section_name):
-  return section_name != models.SECTION_BSS and '(' not in section_name
+  return section_name not in models.BSS_SECTIONS and '(' not in section_name
 
 
 def _GetSectionSizeInfo(section_sizes):
@@ -61,7 +61,7 @@ def _GetSectionSizeInfo(section_sizes):
   max_bytes = max(abs(v) for k, v in section_sizes.iteritems()
                   if _IncludeInTotals(k))
 
-  def is_relevant_section(name, size):
+  def is_significant_section(name, size):
     # Show all sections containing symbols, plus relocations.
     # As a catch-all, also include any section that comprises > 4% of the
     # largest section. Use largest section rather than total so that it still
@@ -71,7 +71,7 @@ def _GetSectionSizeInfo(section_sizes):
             _IncludeInTotals(name) and abs(_Divide(size, max_bytes)) > .04)
 
   section_names = sorted(k for k, v  in section_sizes.iteritems()
-                         if is_relevant_section(k, v))
+                         if is_significant_section(k, v))
 
   return (total_bytes, section_names)
 
@@ -261,9 +261,13 @@ class DescriberText(Describer):
         yield '{}@{:<9s}  {}  {}{}'.format(
             sym.section, address, pss_field, sym.name, last_field)
       else:
+        path = sym.source_path or sym.object_path
+        if path and sym.generated_source:
+          path = '$root_gen_dir/' + path
+        path = path or '{no path}'
+
         yield '{}@{:<9s}  {} {}'.format(
-            sym.section, address, pss_field,
-            sym.source_path or sym.object_path or '{no path}')
+            sym.section, address, pss_field, path)
         if sym.name:
           yield '    {}{}'.format(sym.name, last_field)
 
@@ -276,7 +280,28 @@ class DescriberText(Describer):
     indent_prefix = '> ' * indent
     diff_prefix = ''
     total = group.pss
+    # is_default_sorted ==> sorted by abs(PSS) from largest to smallest.
+    if group.is_default_sorted:
+      # Skip long tail of small symbols (useful for diffs where aliases change).
+      # Long tail is defined as:
+      #   * Accounts for < .5% of PSS
+      #   * Symbols are smaller than 1.0 byte (by PSS)
+      #   * Always show at least 50 symbols.
+      min_remaining_pss_to_show = max(1024, total / 1000 * 5)
+      min_symbol_pss_to_show = 1.0
+      min_symbols_to_show = 50
+
     for index, s in enumerate(group):
+      if group.is_default_sorted and not self.verbose:
+        remaining_pss = total - running_total
+        if (index >= min_symbols_to_show and
+            abs(remaining_pss) < min_remaining_pss_to_show and
+            abs(s.pss) < min_symbol_pss_to_show):
+          remaining_count = len(group) - index
+          yield '{}Skipping {} tiny symbols comprising {} bytes.'.format(
+              indent_prefix, remaining_count, _FormatPss(remaining_pss))
+          break
+
       if group.IsBss() or not s.IsBss():
         running_total += s.pss
         running_percent = _Divide(running_total, total)
@@ -295,12 +320,24 @@ class DescriberText(Describer):
         for l in self._DescribeSymbolGroupChildren(s, indent=indent + 1):
           yield l
 
+  @staticmethod
+  def _RelevantSections(section_names):
+    relevant_sections = [
+        s for s in models.SECTION_TO_SECTION_NAME.itervalues()
+        if s in section_names]
+    if models.SECTION_MULTIPLE in relevant_sections:
+      relevant_sections.remove(models.SECTION_MULTIPLE)
+    return relevant_sections
+
   def _DescribeSymbolGroup(self, group):
     if self.summarize:
       total_size = group.pss
-      section_sizes = collections.defaultdict(float)
+      pss_by_section = collections.defaultdict(float)
+      counts_by_section = collections.defaultdict(int)
       for s in group.IterLeafSymbols():
-        section_sizes[s.section_name] += s.pss
+        pss_by_section[s.section_name] += s.pss
+        if not s.IsDelta() or s.diff_status is not models.DIFF_STATUS_UNCHANGED:
+          counts_by_section[s.section_name] += 1
 
     # Apply this filter after calcualating size since an alias being removed
     # causes some symbols to be UNCHANGED, yet have pss != 0.
@@ -318,20 +355,20 @@ class DescriberText(Describer):
           unique_paths.add(s.object_path)
 
       if group.IsDelta():
-        unique_part = 'aliases not grouped for diffs'
+        before_unique, after_unique = group.CountUniqueSymbols()
+        unique_part = '{:,} -> {:,} unique'.format(before_unique, after_unique)
       else:
         unique_part = '{:,} unique'.format(group.CountUniqueSymbols())
 
-      relevant_sections = [
-          s for s in models.SECTION_TO_SECTION_NAME.itervalues()
-          if s in section_sizes]
-      if models.SECTION_MULTIPLE in relevant_sections:
-        relevant_sections.remove(models.SECTION_MULTIPLE)
+      relevant_sections = self._RelevantSections(pss_by_section)
 
-      size_summary = ' '.join(
-          '{}={:<10}'.format(k, _PrettySize(int(section_sizes[k])))
+      size_summary = 'Sizes: ' + ' '.join(
+          '{}={:<10}'.format(k, _PrettySize(int(pss_by_section[k])))
           for k in relevant_sections)
       size_summary += ' total={:<10}'.format(_PrettySize(int(total_size)))
+
+      counts_summary = 'Counts: ' + ' '.join(
+          '{}={}'.format(k, counts_by_section[k]) for k in relevant_sections)
 
       section_legend = ', '.join(
           '{}={}'.format(models.SECTION_NAME_TO_SECTION[k], k)
@@ -342,6 +379,7 @@ class DescriberText(Describer):
               len(group), unique_part, int(total_size))],
           histogram.Generate(),
           [size_summary.rstrip()],
+          [counts_summary],
           ['Number of unique paths: {}'.format(len(unique_paths))],
           [''],
           ['Section Legend: {}'.format(section_legend)],
@@ -399,30 +437,45 @@ class DescriberText(Describer):
 
   def _DescribeDeltaSymbolGroup(self, delta_group):
     if self.summarize:
-      header_template = ('{} symbols added (+), {} changed (~), '
-                         '{} removed (-), {} unchanged (not shown)')
-      # Apply this filter since an alias being removed causes some symbols to be
-      # UNCHANGED, yet have pss != 0.
-      changed_delta_group = delta_group.WhereDiffStatusIs(
-          models.DIFF_STATUS_UNCHANGED).Inverted()
-      num_inc = sum(1 for s in changed_delta_group if s.pss > 0)
-      num_dec = sum(1 for s in changed_delta_group if s.pss < 0)
+      num_inc = 0
+      num_dec = 0
+      counts_by_section = collections.defaultdict(int)
+      for sym in delta_group.IterLeafSymbols():
+        if sym.pss > 0:
+          num_inc += 1
+        elif sym.pss < 0:
+          num_dec += 1
+
+        status = sym.diff_status
+        if status == models.DIFF_STATUS_ADDED:
+          counts_by_section[sym.section_name] += 1
+        elif status == models.DIFF_STATUS_REMOVED:
+          counts_by_section[sym.section_name] -= 1
+
+      relevant_sections = self._RelevantSections(counts_by_section)
       counts = delta_group.CountsByDiffStatus()
+      diff_status_msg = ('{} symbols added (+), {} changed (~), '
+                         '{} removed (-), {} unchanged (not shown)').format(
+          counts[models.DIFF_STATUS_ADDED],
+          counts[models.DIFF_STATUS_CHANGED],
+          counts[models.DIFF_STATUS_REMOVED],
+          counts[models.DIFF_STATUS_UNCHANGED])
+      counts_by_section_msg = 'Added/Removed by section: ' + ' '.join(
+          '{}: {:+}'.format(k, counts_by_section[k]) for k in relevant_sections)
+
       num_unique_before_symbols, num_unique_after_symbols = (
           delta_group.CountUniqueSymbols())
       diff_summary_desc = [
-          header_template.format(
-              counts[models.DIFF_STATUS_ADDED],
-              counts[models.DIFF_STATUS_CHANGED],
-              counts[models.DIFF_STATUS_REMOVED],
-              counts[models.DIFF_STATUS_UNCHANGED]),
+          diff_status_msg,
+          counts_by_section_msg,
           'Of changed symbols, {} grew, {} shrank'.format(num_inc, num_dec),
           'Number of unique symbols {} -> {} ({:+})'.format(
               num_unique_before_symbols, num_unique_after_symbols,
               num_unique_after_symbols - num_unique_before_symbols),
           ]
       path_delta_desc = itertools.chain(
-          self._DescribeDiffObjectPaths(delta_group), ('',))
+          self._DescribeDiffObjectPaths(delta_group),
+          ('',))
     else:
       diff_summary_desc = ()
       path_delta_desc = ()
@@ -431,11 +484,11 @@ class DescriberText(Describer):
     return itertools.chain(diff_summary_desc, path_delta_desc, group_desc)
 
   def _DescribeDeltaSizeInfo(self, diff):
-    common_metadata = {k: v for k, v in diff.before_metadata.iteritems()
-                       if diff.after_metadata[k] == v}
-    before_metadata = {k: v for k, v in diff.before_metadata.iteritems()
+    common_metadata = {k: v for k, v in diff.before.metadata.iteritems()
+                       if diff.after.metadata.get(k) == v}
+    before_metadata = {k: v for k, v in diff.before.metadata.iteritems()
                        if k not in common_metadata}
-    after_metadata = {k: v for k, v in diff.after_metadata.iteritems()
+    after_metadata = {k: v for k, v in diff.after.metadata.iteritems()
                       if k not in common_metadata}
     metadata_desc = itertools.chain(
         ('Common Metadata:',),
@@ -461,58 +514,98 @@ class DescriberText(Describer):
     return itertools.chain(metadata_desc, section_desc, coverage_desc, ('',),
                            group_desc)
 
+
 def DescribeSizeInfoCoverage(size_info):
   """Yields lines describing how accurate |size_info| is."""
   for section, section_name in models.SECTION_TO_SECTION_NAME.iteritems():
-    if section_name not in size_info.section_sizes:
-      continue
-    expected_size = size_info.section_sizes[section_name]
-
+    expected_size = size_info.section_sizes.get(section_name)
     in_section = size_info.raw_symbols.WhereInSection(section_name)
     actual_size = in_section.size
-    size_percent = _Divide(actual_size, expected_size)
-    yield ('Section {}: has {:.1%} of {} bytes accounted for from '
-           '{} symbols. {} bytes are unaccounted for.').format(
-               section_name, size_percent, actual_size, len(in_section),
-               expected_size - actual_size)
-    star_syms = in_section.WhereNameMatches(r'^\*')
-    padding = in_section.padding - star_syms.padding
-    anonymous_syms = star_syms.Inverted().WhereHasAnyAttribution().Inverted()
+
+    if expected_size is None:
+      yield 'Section {}: {} bytes from {} symbols.'.format(
+          section_name, actual_size, len(in_section))
+    else:
+      size_percent = _Divide(actual_size, expected_size)
+      yield ('Section {}: has {:.1%} of {} bytes accounted for from '
+             '{} symbols. {} bytes are unaccounted for.').format(
+                 section_name, size_percent, actual_size, len(in_section),
+                 expected_size - actual_size)
+
+    padding = in_section.padding
     yield '* Padding accounts for {} bytes ({:.1%})'.format(
-        padding, _Divide(padding, in_section.size))
-    if len(star_syms):
-      yield ('* {} placeholders (symbols that start with **) account for '
-             '{} bytes ({:.1%})').format(
-                 len(star_syms), star_syms.size,
-                 _Divide(star_syms.size,  in_section.size))
-    if anonymous_syms:
-      yield '* {} anonymous symbols account for {} bytes ({:.1%})'.format(
-          len(anonymous_syms), int(anonymous_syms.pss),
-          _Divide(star_syms.size, in_section.size))
+        padding, _Divide(padding, actual_size))
+
+    def size_msg(syms, padding=False):
+      size = syms.size if not padding else syms.size_without_padding
+      size_msg = 'Accounts for {} bytes ({:.1%}).'.format(
+          size, _Divide(size, actual_size))
+      if padding:
+        size_msg = size_msg[:-1] + ' padding is {} bytes.'.format(syms.padding)
+      return size_msg
+
+    syms = in_section.Filter(lambda s: s.source_path)
+    yield '* {} have source paths. {}'.format(len(syms), size_msg(syms))
+    syms = in_section.WhereHasComponent()
+    yield '* {} have a component assigned. {}'.format(len(syms), size_msg(syms))
+
+    syms = in_section.WhereNameMatches(r'^\*')
+    if len(syms):
+      yield '* {} placeholders exist (symbols that start with **). {}'.format(
+          len(syms), size_msg(syms))
+
+    syms = syms.Inverted().WhereHasAnyAttribution().Inverted()
+    if syms:
+      yield '* {} symbols have no name or path. {}'.format(
+          len(syms), size_msg(syms))
 
     if section == 'r':
-      string_literals = in_section.Filter(lambda s: s.IsStringLiteral())
-      yield '* Contains {} string literals. Total size={}, padding={}'.format(
-          len(string_literals), string_literals.size_without_padding,
-          string_literals.padding)
+      syms = in_section.Filter(lambda s: s.IsStringLiteral())
+      yield '* {} string literals exist. {}'.format(
+          len(syms), size_msg(syms, padding=True))
 
-    aliased_symbols = in_section.Filter(lambda s: s.aliases)
-    if len(aliased_symbols):
-      uniques = sum(1 for s in aliased_symbols.IterUniqueSymbols())
+    syms = in_section.Filter(lambda s: s.aliases)
+    if len(syms):
+      uniques = sum(1 for s in syms.IterUniqueSymbols())
       saved = sum(s.size_without_padding * (s.num_aliases - 1)
-                  for s in aliased_symbols.IterUniqueSymbols())
-      yield ('* Contains {} aliases, mapped to {} unique addresses '
-             '({} bytes saved)').format(
-                 len(aliased_symbols), uniques, saved)
-    else:
-      yield '* Contains 0 aliases'
+                  for s in syms.IterUniqueSymbols())
+      yield ('* {} aliases exist, mapped to {} unique addresses '
+             '({} bytes saved)').format(len(syms), uniques, saved)
 
-    inlined_symbols = in_section.WhereObjectPathMatches('{shared}')
-    if len(inlined_symbols):
-      yield '* {} symbols have shared ownership ({} bytes)'.format(
-          len(inlined_symbols), inlined_symbols.size)
+    syms = in_section.WhereObjectPathMatches('{shared}')
+    if len(syms):
+      yield '* {} symbols have shared ownership. {}'.format(
+          len(syms), size_msg(syms))
     else:
-      yield '* 0 symbols have shared ownership'
+      yield '* 0 symbols have shared ownership.'
+
+    for flag, desc in (
+        (models.FLAG_HOT, 'marked as "hot"'),
+        (models.FLAG_UNLIKELY, 'marked as "unlikely"'),
+        (models.FLAG_STARTUP, 'marked as "startup"'),
+        (models.FLAG_CLONE, 'clones'),
+        (models.FLAG_GENERATED_SOURCE, 'from generated sources')):
+      syms = in_section.WhereHasFlag(flag)
+      if len(syms):
+        yield '* {} symbols are {}. {}'.format(len(syms), desc, size_msg(syms))
+
+    # These thresholds were found by experimenting with arm32 Chrome.
+    # E.g.: Set them to 0 and see what warnings get logged, then take max value.
+    spam_counter = 0
+    for i in xrange(len(in_section) - 1):
+      sym = in_section[i + 1]
+      if (not sym.full_name.startswith('*')
+          and not sym.source_path.endswith('.S')  # Assembly symbol are iffy.
+          and not sym.IsStringLiteral()
+          and ((sym.section in 'rd' and sym.padding >= 256) or
+               (sym.section in 't' and sym.padding >= 64))):
+        # TODO(crbug.com/959906): We should synthesize symbols for these gaps
+        #     rather than attribute them as padding.
+        spam_counter += 1
+        if spam_counter <= 5:
+          yield 'Large padding of {} between:'.format(sym.padding)
+          yield '  A) ' + repr(in_section[i])
+          yield '  B) ' + repr(sym)
 
 
 class DescriberCsv(Describer):
@@ -528,18 +621,18 @@ class DescriberCsv(Describer):
     return self.stringio.getvalue().rstrip()
 
   def _DescribeSectionSizes(self, section_sizes):
-    relevant_section_names = _GetSectionSizeInfo(section_sizes)[1]
+    significant_section_names = _GetSectionSizeInfo(section_sizes)[1]
 
     if self.verbose:
-      relevant_set = set(relevant_section_names)
+      significant_set = set(significant_section_names)
       section_names = sorted(section_sizes.iterkeys())
-      yield self._RenderCsv(['Name', 'Size', 'IsRelevant'])
+      yield self._RenderCsv(['Name', 'Size', 'IsSignificant'])
       for name in section_names:
         size = section_sizes[name]
-        yield self._RenderCsv([name, size, int(name in relevant_set)])
+        yield self._RenderCsv([name, size, int(name in significant_set)])
     else:
       yield self._RenderCsv(['Name', 'Size'])
-      for name in relevant_section_names:
+      for name in significant_section_names:
         size = section_sizes[name]
         yield self._RenderCsv([name, size])
 

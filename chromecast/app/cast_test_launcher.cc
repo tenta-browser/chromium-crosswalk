@@ -4,13 +4,14 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/test/launcher/test_launcher.h"
 #include "base/test/test_suite.h"
+#include "build/build_config.h"
 #include "chromecast/app/cast_main_delegate.h"
 #include "content/public/test/test_launcher.h"
 #include "ipc/ipc_channel.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/core/embedder/embedder.h"
 
 namespace chromecast {
 namespace shell {
@@ -21,7 +22,10 @@ class CastTestLauncherDelegate : public content::TestLauncherDelegate {
   ~CastTestLauncherDelegate() override {}
 
   int RunTestSuite(int argc, char** argv) override {
-    return base::TestSuite(argc, argv).Run();
+    base::TestSuite test_suite(argc, argv);
+    // Browser tests are expected not to tear-down various globals.
+    test_suite.DisableCheckForLeakedGlobals();
+    return test_suite.Run();
   }
 
   bool AdjustChildProcessCommandLine(
@@ -31,9 +35,11 @@ class CastTestLauncherDelegate : public content::TestLauncherDelegate {
   }
 
  protected:
+#if !defined(OS_ANDROID)
   content::ContentMainDelegate* CreateContentMainDelegate() override {
     return new CastMainDelegate();
   }
+#endif  // defined(OS_ANDROID)
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CastTestLauncherDelegate);
@@ -49,6 +55,6 @@ int main(int argc, char** argv) {
     parallel_jobs /= 2U;
   }
   chromecast::shell::CastTestLauncherDelegate launcher_delegate;
-  mojo::edk::Init();
+  mojo::core::Init();
   return content::LaunchTests(&launcher_delegate, parallel_jobs, argc, argv);
 }

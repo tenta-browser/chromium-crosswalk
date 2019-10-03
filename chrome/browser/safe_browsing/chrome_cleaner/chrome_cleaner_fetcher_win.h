@@ -11,11 +11,13 @@ namespace base {
 class FilePath;
 }
 
-namespace safe_browsing {
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
+}
+}  // namespace network
 
-// The maximum number of attempts to download the cleaner in case of network
-// errors.
-extern const int kMaxCleanerDownloadAttempts;
+namespace safe_browsing {
 
 enum class ChromeCleanerFetchStatus {
   // Fetch succeeded with a net::HTTP_OK response code.
@@ -37,7 +39,8 @@ using ChromeCleanerFetchedCallback =
 
 // Fetches the Chrome Cleaner binary. This function can be called from any
 // sequence and |fetched_callback| will be called back on that same sequence.
-void FetchChromeCleaner(ChromeCleanerFetchedCallback fetched_callback);
+void FetchChromeCleaner(ChromeCleanerFetchedCallback fetched_callback,
+                        network::mojom::URLLoaderFactory* url_loader_factory);
 
 }  // namespace safe_browsing
 

@@ -12,7 +12,7 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/metrics/histogram_macros_local.h"
-#include "jni/MinidumpUploadService_jni.h"
+#include "chrome/android/chrome_jni_headers/MinidumpUploadService_jni.h"
 #include "ui/base/text/bytes_formatting.h"
 
 namespace {
@@ -44,6 +44,18 @@ CrashUploadListAndroid::CrashUploadListAndroid(
     : TextLogUploadList(upload_log_path) {}
 
 CrashUploadListAndroid::~CrashUploadListAndroid() {}
+
+// static
+bool CrashUploadListAndroid::BrowserCrashMetricsInitialized() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_MinidumpUploadService_browserCrashMetricsInitialized(env);
+}
+
+// static
+bool CrashUploadListAndroid::DidBrowserCrashRecently() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_MinidumpUploadService_didBrowserCrashRecently(env);
+}
 
 std::vector<UploadList::UploadInfo> CrashUploadListAndroid::LoadUploadList() {
   // First load the list of successfully uploaded logs.

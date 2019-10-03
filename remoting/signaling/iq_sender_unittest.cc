@@ -8,10 +8,10 @@
 
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/mock_callback.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/signaling/mock_signal_strategy.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -25,8 +25,8 @@ using ::testing::NotNull;
 using ::testing::Return;
 using ::testing::SaveArg;
 
-using ::buzz::QName;
-using ::buzz::XmlElement;
+using ::jingle_xmpp::QName;
+using ::jingle_xmpp::XmlElement;
 
 namespace remoting {
 
@@ -79,7 +79,7 @@ class IqSenderTest : public testing::Test {
 
   bool FormatAndDeliverResponse(const std::string& from,
                                 std::unique_ptr<XmlElement>* response_out) {
-    std::unique_ptr<XmlElement> response(new XmlElement(buzz::QN_IQ));
+    std::unique_ptr<XmlElement> response(new XmlElement(jingle_xmpp::QN_IQ));
     response->AddAttr(QName(std::string(), "type"), "result");
     response->AddAttr(QName(std::string(), "id"), kStanzaId);
     response->AddAttr(QName(std::string(), "from"), from);
@@ -96,7 +96,7 @@ class IqSenderTest : public testing::Test {
     return result;
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   MockSignalStrategy signal_strategy_;
   std::unique_ptr<IqSender> sender_;
   base::MockCallback<IqSender::ReplyCallback> callback_;

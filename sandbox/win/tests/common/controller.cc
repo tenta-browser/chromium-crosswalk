@@ -6,13 +6,16 @@
 
 #include <string>
 
-#include "base/memory/shared_memory.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/unguessable_token.h"
+#include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "sandbox/win/src/app_container_profile.h"
 #include "sandbox/win/src/sandbox_factory.h"
 
 namespace {
@@ -99,21 +102,6 @@ TestRunner::TestRunner(JobLevel job_level,
       no_sandbox_(false),
       disable_csrss_(true),
       target_process_id_(0) {
-  Init(job_level, startup_token, main_token);
-}
-
-TestRunner::TestRunner()
-    : is_init_(false),
-      is_async_(false),
-      no_sandbox_(false),
-      disable_csrss_(true),
-      target_process_id_(0) {
-  Init(JOB_LOCKDOWN, USER_RESTRICTED_SAME_ACCESS, USER_LOCKDOWN);
-}
-
-void TestRunner::Init(JobLevel job_level,
-                      TokenLevel startup_token,
-                      TokenLevel main_token) {
   broker_ = NULL;
   policy_ = NULL;
   timeout_ = kDefaultTimeout;
@@ -135,6 +123,9 @@ void TestRunner::Init(JobLevel job_level,
 
   is_init_ = true;
 }
+
+TestRunner::TestRunner()
+    : TestRunner(JOB_LOCKDOWN, USER_RESTRICTED_SAME_ACCESS, USER_LOCKDOWN) {}
 
 TargetPolicy* TestRunner::GetPolicy() {
   return policy_.get();
@@ -313,16 +304,32 @@ int DispatchCall(int argc, wchar_t **argv) {
   // in read only mode and sleep infinitely if we succeed.
   if (0 == _wcsicmp(argv[3], L"shared_memory_handle")) {
     HANDLE raw_handle = nullptr;
+    base::StringPiece test_contents = "Hello World";
     base::StringToUint(argv[4], reinterpret_cast<unsigned int*>(&raw_handle));
     if (raw_handle == nullptr)
       return SBOX_TEST_INVALID_PARAMETER;
-    base::SharedMemoryHandle shared_handle(raw_handle, 0u,
-                                           base::UnguessableToken::Create());
-    base::SharedMemory read_only_view(shared_handle, true);
-    if (!read_only_view.Map(0))
+    // First extract the handle to the platform-native ScopedHandle.
+    base::win::ScopedHandle scoped_handle(raw_handle);
+    if (!scoped_handle.IsValid())
       return SBOX_TEST_INVALID_PARAMETER;
-    std::string contents(reinterpret_cast<char*>(read_only_view.memory()));
-    if (contents != "Hello World")
+    // Then convert to the low-level chromium region.
+    base::subtle::PlatformSharedMemoryRegion platform_region =
+        base::subtle::PlatformSharedMemoryRegion::Take(
+            std::move(scoped_handle),
+            base::subtle::PlatformSharedMemoryRegion::Mode::kReadOnly,
+            test_contents.size(), base::UnguessableToken::Create());
+    // Finally wrap the low-level region in the shared memory API.
+    base::ReadOnlySharedMemoryRegion region =
+        base::ReadOnlySharedMemoryRegion::Deserialize(
+            std::move(platform_region));
+    if (!region.IsValid())
+      return SBOX_TEST_INVALID_PARAMETER;
+    base::ReadOnlySharedMemoryMapping view = region.Map();
+    if (!view.IsValid())
+      return SBOX_TEST_INVALID_PARAMETER;
+
+    const std::string contents(view.GetMemoryAsSpan<char>().data());
+    if (contents != test_contents)
       return SBOX_TEST_INVALID_PARAMETER;
     Sleep(INFINITE);
     return SBOX_TEST_TIMED_OUT;

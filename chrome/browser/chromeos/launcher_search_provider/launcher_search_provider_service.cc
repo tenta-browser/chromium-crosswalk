@@ -8,9 +8,8 @@
 
 #include <utility>
 
-#include "ash/app_list/model/search/tokenized_string.h"
-#include "ash/app_list/model/search/tokenized_string_match.h"
-#include "base/memory/ptr_util.h"
+#include "ash/public/cpp/app_list/tokenized_string.h"
+#include "ash/public/cpp/app_list/tokenized_string_match.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/launcher_search_provider/launcher_search_provider_service_factory.h"
 #include "chrome/browser/ui/app_list/search/launcher_search/launcher_search_provider.h"
@@ -61,7 +60,7 @@ void Service::OnQueryStarted(app_list::LauncherSearchProvider* provider,
     // javascript side API while we use uint32_t internally to generate it.
     event_router->DispatchEventToExtension(
         extension_id,
-        base::MakeUnique<extensions::Event>(
+        std::make_unique<extensions::Event>(
             extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_QUERY_STARTED,
             api_launcher_search_provider::OnQueryStarted::kEventName,
             api_launcher_search_provider::OnQueryStarted::Create(
@@ -80,7 +79,7 @@ void Service::OnQueryEnded() {
   for (const ExtensionId extension_id : *cached_listener_extension_ids_.get()) {
     event_router->DispatchEventToExtension(
         extension_id,
-        base::MakeUnique<extensions::Event>(
+        std::make_unique<extensions::Event>(
             extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_QUERY_ENDED,
             api_launcher_search_provider::OnQueryEnded::kEventName,
             api_launcher_search_provider::OnQueryEnded::Create(query_id_)));
@@ -92,13 +91,13 @@ void Service::OnQueryEnded() {
 void Service::OnOpenResult(const ExtensionId& extension_id,
                            const std::string& item_id) {
   CacheListenerExtensionIds();
-  CHECK(base::ContainsKey(*cached_listener_extension_ids_.get(), extension_id));
+  CHECK(base::Contains(*cached_listener_extension_ids_.get(), extension_id));
 
   extensions::EventRouter* event_router =
       extensions::EventRouter::Get(profile_);
   event_router->DispatchEventToExtension(
       extension_id,
-      base::MakeUnique<extensions::Event>(
+      std::make_unique<extensions::Event>(
           extensions::events::LAUNCHER_SEARCH_PROVIDER_ON_OPEN_RESULT,
           api_launcher_search_provider::OnOpenResult::kEventName,
           api_launcher_search_provider::OnOpenResult::Create(item_id)));
@@ -117,8 +116,7 @@ void Service::SetSearchResults(
 
   // If |extension| is not in the listener extensions list, ignore it.
   CacheListenerExtensionIds();
-  if (!base::ContainsKey(*cached_listener_extension_ids_.get(),
-                         extension->id())) {
+  if (!base::Contains(*cached_listener_extension_ids_.get(), extension->id())) {
     return;
   }
 
@@ -142,7 +140,7 @@ void Service::SetSearchResults(
     if (!match.Calculate(tokenized_query, tokenized_title))
       continue;
 
-    auto search_result = base::MakeUnique<app_list::LauncherSearchResult>(
+    auto search_result = std::make_unique<app_list::LauncherSearchResult>(
         result.item_id, icon_url, relevance, profile_, extension,
         error_reporter->Duplicate());
     search_result->UpdateFromMatch(tokenized_title, match);

@@ -7,7 +7,6 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/persistent_pref_store.h"
@@ -88,8 +87,14 @@ void DictionaryHashStoreContents::SetMac(const std::string& path,
 void DictionaryHashStoreContents::SetSplitMac(const std::string& path,
                                               const std::string& split_path,
                                               const std::string& value) {
-  // DictionaryValue handles a '.' delimiter.
-  SetMac(path + '.' + split_path, value);
+  base::DictionaryValue* macs_dict = GetMutableContents(true);
+  base::DictionaryValue* split_dict = nullptr;
+  macs_dict->GetDictionary(path, &split_dict);
+  if (!split_dict) {
+    split_dict = macs_dict->SetDictionary(
+        path, std::make_unique<base::DictionaryValue>());
+  }
+  split_dict->SetKey(split_path, base::Value(value));
 }
 
 void DictionaryHashStoreContents::ImportEntry(const std::string& path,

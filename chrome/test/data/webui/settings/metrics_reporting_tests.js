@@ -4,48 +4,56 @@
 
 suite('metrics reporting', function() {
   /** @type {settings.TestPrivacyPageBrowserProxy} */
-  var testBrowserProxy;
+  let testBrowserProxy;
 
   /** @type {SettingsPrivacyPageElement} */
-  var page;
+  let page;
 
   setup(function() {
     testBrowserProxy = new TestPrivacyPageBrowserProxy();
     settings.PrivacyPageBrowserProxyImpl.instance_ = testBrowserProxy;
     PolymerTest.clearBody();
-    page = document.createElement('settings-privacy-page');
+    page = document.createElement('settings-personalization-options');
+    document.body.appendChild(page);
   });
 
-  teardown(function() { page.remove(); });
+  teardown(function() {
+    page.remove();
+  });
 
   test('changes to whether metrics reporting is enabled/managed', function() {
-    return testBrowserProxy.whenCalled('getMetricsReporting').then(function() {
-      Polymer.dom.flush();
+    let toggled;
+    return testBrowserProxy.whenCalled('getMetricsReporting')
+        .then(function() {
+          return PolymerTest.flushTasks();
+        })
+        .then(function() {
+          const control = page.$.metricsReportingControl;
+          assertEquals(
+              testBrowserProxy.metricsReporting.enabled, control.checked);
+          assertEquals(
+              testBrowserProxy.metricsReporting.managed,
+              !!control.pref.controlledBy);
 
-      var control = page.$.metricsReportingControl;
-      assertEquals(testBrowserProxy.metricsReporting.enabled, control.checked);
-      assertEquals(testBrowserProxy.metricsReporting.managed,
-                   !!control.pref.controlledBy);
+          const changedMetrics = {
+            enabled: !testBrowserProxy.metricsReporting.enabled,
+            managed: !testBrowserProxy.metricsReporting.managed,
+          };
+          cr.webUIListenerCallback('metrics-reporting-change', changedMetrics);
+          Polymer.dom.flush();
 
-      var changedMetrics = {
-        enabled: !testBrowserProxy.metricsReporting.enabled,
-        managed: !testBrowserProxy.metricsReporting.managed,
-      };
-      cr.webUIListenerCallback('metrics-reporting-change', changedMetrics);
-      Polymer.dom.flush();
+          assertEquals(changedMetrics.enabled, control.checked);
+          assertEquals(changedMetrics.managed, !!control.pref.controlledBy);
 
-      assertEquals(changedMetrics.enabled, control.checked);
-      assertEquals(changedMetrics.managed, !!control.pref.controlledBy);
+          toggled = !changedMetrics.enabled;
+          control.checked = toggled;
+          control.notifyChangedByUserInteraction();
 
-      var toggled = !changedMetrics.enabled;
-      control.checked = toggled;
-      control.notifyChangedByUserInteraction();
-
-      return testBrowserProxy.whenCalled('setMetricsReportingEnabled').then(
-          function(enabled) {
-            assertEquals(toggled, enabled);
-          });
-    });
+          return testBrowserProxy.whenCalled('setMetricsReportingEnabled');
+        })
+        .then(function(enabled) {
+          assertEquals(toggled, enabled);
+        });
   });
 
   test('metrics reporting restart button', function() {
@@ -60,7 +68,6 @@ suite('metrics reporting', function() {
         enabled: false,
         managed: true,
       });
-      Polymer.dom.flush();
 
       // No restart button should show because the value is managed.
       assertFalse(!!page.$$('#restart'));
@@ -86,7 +93,7 @@ suite('metrics reporting', function() {
       assertTrue(!!page.$$('#restart'));
 
       // Receiving the same values should have no effect.
-       cr.webUIListenerCallback('metrics-reporting-change', {
+      cr.webUIListenerCallback('metrics-reporting-change', {
         enabled: false,
         managed: false,
       });

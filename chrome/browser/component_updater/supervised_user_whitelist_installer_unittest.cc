@@ -20,7 +20,6 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_path_override.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/component_updater/supervised_user_whitelist_installer.h"
@@ -29,6 +28,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/account_id/account_id.h"
 #include "components/component_updater/component_updater_paths.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/crx_file/id_util.h"
@@ -143,7 +143,9 @@ class MockComponentUpdateService : public ComponentUpdateService,
   }
 
   // OnDemandUpdater implementation:
-  void OnDemandUpdate(const std::string& crx_id, Callback callback) override {
+  void OnDemandUpdate(const std::string& crx_id,
+                      Priority priority,
+                      Callback callback) override {
     on_demand_update_called_ = true;
 
     if (!component_) {
@@ -151,6 +153,7 @@ class MockComponentUpdateService : public ComponentUpdateService,
       return;
     }
 
+    EXPECT_EQ(OnDemandUpdater::Priority::FOREGROUND, priority);
     EXPECT_EQ(GetCrxComponentID(*component_), crx_id);
   }
 
@@ -162,8 +165,7 @@ class MockComponentUpdateService : public ComponentUpdateService,
 
 class WhitelistLoadObserver {
  public:
-  explicit WhitelistLoadObserver(SupervisedUserWhitelistInstaller* installer)
-      : weak_ptr_factory_(this) {
+  explicit WhitelistLoadObserver(SupervisedUserWhitelistInstaller* installer) {
     installer->Subscribe(base::Bind(&WhitelistLoadObserver::OnWhitelistReady,
                                     weak_ptr_factory_.GetWeakPtr()));
   }
@@ -190,7 +192,7 @@ class WhitelistLoadObserver {
   base::FilePath whitelist_path_;
 
   base::RunLoop run_loop_;
-  base::WeakPtrFactory<WhitelistLoadObserver> weak_ptr_factory_;
+  base::WeakPtrFactory<WhitelistLoadObserver> weak_ptr_factory_{this};
 };
 
 }  // namespace
@@ -198,8 +200,7 @@ class WhitelistLoadObserver {
 class SupervisedUserWhitelistInstallerTest : public testing::Test {
  public:
   SupervisedUserWhitelistInstallerTest()
-      : testing_profile_manager_(TestingBrowserProcess::GetGlobal()),
-        user_data_dir_override_(chrome::DIR_USER_DATA) {}
+      : testing_profile_manager_(TestingBrowserProcess::GetGlobal()) {}
 
   ~SupervisedUserWhitelistInstallerTest() override {}
 
@@ -210,24 +211,24 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
 
     profile_attributes_storage()->AddProfile(
         GetProfilePath(kClientId), base::ASCIIToUTF16("A Profile"),
-        std::string(), base::string16(), 0, std::string());
+        std::string(), base::string16(), 0, std::string(), EmptyAccountId());
     profile_attributes_storage()->AddProfile(
         GetProfilePath(kOtherClientId), base::ASCIIToUTF16("Another Profile"),
-        std::string(), base::string16(), 0, std::string());
+        std::string(), base::string16(), 0, std::string(), EmptyAccountId());
 
     installer_ = SupervisedUserWhitelistInstaller::Create(
         &component_update_service_,
         profile_attributes_storage(),
         &local_state_);
 
-    ASSERT_TRUE(PathService::Get(DIR_SUPERVISED_USER_WHITELISTS,
-                                 &whitelist_base_directory_));
+    ASSERT_TRUE(base::PathService::Get(DIR_SUPERVISED_USER_WHITELISTS,
+                                       &whitelist_base_directory_));
     whitelist_directory_ = whitelist_base_directory_.AppendASCII(kCrxId);
     whitelist_version_directory_ = whitelist_directory_.AppendASCII(kVersion);
 
     ASSERT_TRUE(
-        PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
-                         &installed_whitelist_directory_));
+        base::PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
+                               &installed_whitelist_directory_));
     std::string crx_id(kCrxId);
     whitelist_path_ =
         installed_whitelist_directory_.AppendASCII(crx_id + ".json");
@@ -297,7 +298,6 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfileManager testing_profile_manager_;
-  base::ScopedPathOverride user_data_dir_override_;
   data_decoder::TestingJsonParser::ScopedFactoryOverride json_parser_override_;
   TestingPrefServiceSimple local_state_;
   content::TestServiceManagerContext service_manager_context_;
@@ -382,8 +382,9 @@ TEST_F(SupervisedUserWhitelistInstallerTest, InstallNewWhitelist) {
 
   // The actual file contents don't have to be equal, but the parsed values
   // should be.
-  EXPECT_TRUE(base::JSONReader::Read(kWhitelistContents)
-                  ->Equals(base::JSONReader::Read(whitelist_contents).get()))
+  EXPECT_TRUE(
+      base::JSONReader::ReadDeprecated(kWhitelistContents)
+          ->Equals(base::JSONReader::ReadDeprecated(whitelist_contents).get()))
       << kWhitelistContents << " vs. " << whitelist_contents;
 
   EXPECT_EQ(JsonToString(pref_),

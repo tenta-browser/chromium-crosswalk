@@ -5,7 +5,6 @@
 #include "media/audio/audio_output_proxy.h"
 
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_output_dispatcher.h"
 
@@ -91,6 +90,13 @@ void AudioOutputProxy::Close() {
   // unnecessarily complicate the Shutdown procedure of the
   // dispatcher+audio manager.
   delete this;
+}
+
+void AudioOutputProxy::Flush() {
+  DCHECK(state_ != kPlaying);
+
+  if (dispatcher_)
+    dispatcher_->FlushStream(this);
 }
 
 }  // namespace media

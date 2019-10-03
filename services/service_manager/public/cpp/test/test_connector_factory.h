@@ -5,63 +5,112 @@
 #ifndef SERVICES_SERVICE_MANAGER_PUBLIC_CPP_TEST_TEST_CONNECTOR_FACTORY_H_
 #define SERVICES_SERVICE_MANAGER_PUBLIC_CPP_TEST_TEST_CONNECTOR_FACTORY_H_
 
+#include <map>
 #include <memory>
+#include <string>
 
 #include "base/macros.h"
+#include "base/token.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
+#include "services/service_manager/public/mojom/service_control.mojom.h"
 
 namespace service_manager {
 
 class Service;
 
 // Creates Connector instances which route BindInterface requests directly to
-// a given Service implementation. Useful for testing production code which is
-// parameterized over a Connector, while bypassing all the Service Manager
-// machinery. Typical usage should look something like:
+// manually registered Service implementations. Useful for testing production
+// code which is parameterized over a Connector, while bypassing all the
+// Service Manager machinery. Typical usage should look something like:
 //
 //     TEST(MyTest, Foo) {
-//       // Your implementation of service_manager::Service.
-//       auto impl =  std::make_unique<MyServiceImpl>();
-//       TestConnectorFactory connector_factory(std::move(impl));
-//       std::unique_ptr<service_manager::Connector> connector =
-//           connector_factory.CreateConnector();
-//       RunSomeClientCode(connector.get());
+//       base::test::ScopedTaskEnvironment task_environment;
+//       TestConnectorFactory connector_factory;
+//       my_service::MyServiceImpl service(connector_factory.RegisterInstance(
+//           my_service::mojom::kServiceName));
+//
+//       RunSomeClientCode(connector_factory.GetDefaultConnector());
 //     }
 //
 // Where |RunSomeClientCode()| would typically be some production code that
 // expects a functioning Connector and uses it to connect to the service you're
 // testing.
-//
-// Note that Connectors created by this factory ignore the target service name
-// in BindInterface calls: interface requests are always routed to a single
-// target Service instance.
-class TestConnectorFactory {
+class TestConnectorFactory : public mojom::ServiceControl {
  public:
-  // Constructs a new TestConnectorFactory which creates Connectors whose
-  // requests are routed directly to |service|.
-  explicit TestConnectorFactory(std::unique_ptr<Service> service);
-  ~TestConnectorFactory();
+  // Creates a simple TestConnectorFactory which can be used register Service
+  // instances and vend Connectors which can connect to them.
+  TestConnectorFactory();
+  ~TestConnectorFactory() override;
 
-  // Allows a test to override the default Identity seen by the target service
-  // when it receives OnBindInterface requests from this factory's Connectors.
-  //
-  // This is useful if a Service implementation cares about the source identity
-  // services making incoming interface requests. Otherwise it can be ignored.
-  void set_source_identity(const Identity& identity) {
-    source_identity_ = identity;
-  }
+  // A mapping from service names to Service proxies for registered instances.
+  using NameToServiceProxyMap = std::map<std::string, mojom::ServicePtr>;
 
-  const Identity& source_identity() const { return source_identity_; }
+  // A Connector which can be used to connect to any service instances
+  // registered with this object. This Connector identifies its source as a
+  // generic meaningless Identity.
+  Connector* GetDefaultConnector();
 
   // Creates a new connector which routes BindInterfaces requests directly to
   // the Service instance associated with this factory.
   std::unique_ptr<Connector> CreateConnector();
 
+  // Registers a Service instance not owned by this TestConnectorFactory.
+  // Returns a ServiceRequest which the instance must bind in order to receive
+  // simulated events from this object.
+  mojom::ServiceRequest RegisterInstance(const std::string& service_name);
+
+  const base::Token& test_instance_group() const {
+    return test_instance_group_;
+  }
+
+  // Normally a TestConnectorFactory will assert if asked to route a request to
+  // an unregistered service. If this is set to |true|, such requests will be
+  // silently ignored instead.
+  bool ignore_unknown_service_requests() const {
+    return ignore_unknown_service_requests_;
+  }
+  void set_ignore_unknown_service_requests(bool ignore) {
+    ignore_unknown_service_requests_ = ignore;
+  }
+
+  // Normally when a service instance registered via |RegisterInstance()|
+  // requests termination from the Service Manager, TestConnectorFactory
+  // immediately severs the service instance's connection, typically
+  // triggering the service's shutdown path.
+  //
+  // If this is set to |true| (defaults to |false|), quit requests are ignored
+  // and each service instance will remain connected to the TestConnectorFactory
+  // until either it or the TestConnectorFactory is destroyed.
+  void set_ignore_quit_requests(bool ignore) { ignore_quit_requests_ = ignore; }
+
  private:
-  Identity source_identity_;
+  void OnStartResponseHandler(
+      const std::string& service_name,
+      mojom::ConnectorRequest connector_request,
+      mojom::ServiceControlAssociatedRequest control_request);
+
+  // mojom::ServiceControl:
+  void RequestQuit() override;
 
   std::unique_ptr<mojom::Connector> impl_;
+  base::Token test_instance_group_;
+  std::unique_ptr<Connector> default_connector_;
+
+  // Mapping used only in the default-constructed case where Service instances
+  // are unowned by the TestConnectorFactory. Maps service names to their
+  // proxies.
+  NameToServiceProxyMap service_proxies_;
+
+  // ServiceControl bindings which receive and process RequestQuit requests from
+  // connected service instances. The associated service name is used as
+  // context.
+  mojo::AssociatedBindingSet<mojom::ServiceControl, std::string>
+      service_control_bindings_;
+
+  bool ignore_unknown_service_requests_ = false;
+  bool ignore_quit_requests_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TestConnectorFactory);
 };

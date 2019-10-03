@@ -8,6 +8,10 @@
 //    clang-format -i -style=chromium filename
 // DO NOT EDIT!
 
+// Silence presubmit and Tricium warnings about include guards
+// no-include-guard-because-multiply-included
+// NOLINT(build/header_guard)
+
 BOOL wglChoosePixelFormatARBFn(HDC dc,
                                const int* int_attrib_list,
                                const float* float_attrib_list,

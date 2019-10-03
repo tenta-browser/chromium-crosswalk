@@ -47,10 +47,10 @@ cr.define('settings_default_browser', function() {
   }
 
   suite('DefaultBrowserPageTest', function() {
-    var page = null;
+    let page = null;
 
     /** @type {?settings.TestDefaultBrowserBrowserProxy} */
-    var browserProxy = null;
+    let browserProxy = null;
 
     setup(function() {
       browserProxy = new TestDefaultBrowserBrowserProxy();
@@ -72,7 +72,7 @@ cr.define('settings_default_browser', function() {
       return browserProxy.whenCalled('requestDefaultBrowserState');
     }
 
-    test('default-browser-test-can-be-default', function(done) {
+    test('default-browser-test-can-be-default', function() {
       browserProxy.setDefaultBrowserInfo({
         canBeDefault: true,
         isDefault: false,
@@ -81,15 +81,15 @@ cr.define('settings_default_browser', function() {
       });
 
       return initPage().then(function() {
-        assertFalse(page.isDefault_);
-        assertFalse(page.isSecondaryInstall_);
-        assertFalse(page.isUnknownError_);
-        assertTrue(page.maySetDefaultBrowser_);
-        done();
+        Polymer.dom.flush();
+        assertTrue(!!page.$$('#canBeDefaultBrowser'));
+        assertTrue(!page.$$('#isDefault'));
+        assertTrue(!page.$$('#isSecondaryInstall'));
+        assertTrue(!page.$$('#isUnknownError'));
       });
     });
 
-    test('default-browser-test-is-default', function(done) {
+    test('default-browser-test-is-default', function() {
       assertTrue(!!page);
       browserProxy.setDefaultBrowserInfo({
         canBeDefault: true,
@@ -99,15 +99,15 @@ cr.define('settings_default_browser', function() {
       });
 
       return initPage().then(function() {
-        assertTrue(page.isDefault_);
-        assertFalse(page.isSecondaryInstall_);
-        assertFalse(page.isUnknownError_);
-        assertFalse(page.maySetDefaultBrowser_);
-        done();
+        Polymer.dom.flush();
+        assertFalse(!!page.$$('#canBeDefaultBrowser'));
+        assertFalse(page.$$('#isDefault').hidden);
+        assertTrue(page.$$('#isSecondaryInstall').hidden);
+        assertTrue(page.$$('#isUnknownError').hidden);
       });
     });
 
-    test('default-browser-test-is-secondary-install', function(done) {
+    test('default-browser-test-is-secondary-install', function() {
       browserProxy.setDefaultBrowserInfo({
         canBeDefault: false,
         isDefault: false,
@@ -116,15 +116,15 @@ cr.define('settings_default_browser', function() {
       });
 
       return initPage().then(function() {
-        assertFalse(page.isDefault_);
-        assertTrue(page.isSecondaryInstall_);
-        assertFalse(page.isUnknownError_);
-        assertFalse(page.maySetDefaultBrowser_);
-        done();
+        Polymer.dom.flush();
+        assertFalse(!!page.$$('#canBeDefaultBrowser'));
+        assertTrue(page.$$('#isDefault').hidden);
+        assertFalse(page.$$('#isSecondaryInstall').hidden);
+        assertTrue(page.$$('#isUnknownError').hidden);
       });
     });
 
-    test('default-browser-test-is-disabled-by-policy', function(done) {
+    test('default-browser-test-is-disabled-by-policy', function() {
       browserProxy.setDefaultBrowserInfo({
         canBeDefault: true,
         isDefault: false,
@@ -133,15 +133,15 @@ cr.define('settings_default_browser', function() {
       });
 
       return initPage().then(function() {
-        assertFalse(page.isDefault_);
-        assertFalse(page.isSecondaryInstall_);
-        assertTrue(page.isUnknownError_);
-        assertFalse(page.maySetDefaultBrowser_);
-        done();
+        Polymer.dom.flush();
+        assertFalse(!!page.$$('#canBeDefaultBrowser'));
+        assertTrue(page.$$('#isDefault').hidden);
+        assertTrue(page.$$('#isSecondaryInstall').hidden);
+        assertFalse(page.$$('#isUnknownError').hidden);
       });
     });
 
-    test('default-browser-test-is-unknown-error', function(done) {
+    test('default-browser-test-is-unknown-error', function() {
       browserProxy.setDefaultBrowserInfo({
         canBeDefault: true,
         isDefault: false,
@@ -150,11 +150,11 @@ cr.define('settings_default_browser', function() {
       });
 
       return initPage().then(function() {
-        assertFalse(page.isDefault_);
-        assertFalse(page.isSecondaryInstall_);
-        assertTrue(page.isUnknownError_);
-        assertFalse(page.maySetDefaultBrowser_);
-        done();
+        Polymer.dom.flush();
+        assertFalse(!!page.$$('#canBeDefaultBrowser'));
+        assertTrue(page.$$('#isDefault').hidden);
+        assertTrue(page.$$('#isSecondaryInstall').hidden);
+        assertFalse(page.$$('#isUnknownError').hidden);
       });
     });
   });

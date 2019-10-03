@@ -42,9 +42,7 @@ int GetDelayMs() {
 
 }  // namespace
 
-SerialExtensionHostQueue::SerialExtensionHostQueue()
-    : pending_create_(false), ptr_factory_(this) {
-}
+SerialExtensionHostQueue::SerialExtensionHostQueue() : pending_create_(false) {}
 
 SerialExtensionHostQueue::~SerialExtensionHostQueue() {
 }
@@ -55,8 +53,7 @@ void SerialExtensionHostQueue::Add(DeferredStartRenderHost* host) {
 }
 
 void SerialExtensionHostQueue::Remove(DeferredStartRenderHost* host) {
-  std::list<DeferredStartRenderHost*>::iterator it =
-      std::find(queue_.begin(), queue_.end(), host);
+  auto it = std::find(queue_.begin(), queue_.end(), host);
   if (it != queue_.end())
     queue_.erase(it);
 }
@@ -64,8 +61,9 @@ void SerialExtensionHostQueue::Remove(DeferredStartRenderHost* host) {
 void SerialExtensionHostQueue::PostTask() {
   if (!pending_create_) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&SerialExtensionHostQueue::ProcessOneHost,
-                              ptr_factory_.GetWeakPtr()),
+        FROM_HERE,
+        base::BindOnce(&SerialExtensionHostQueue::ProcessOneHost,
+                       ptr_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(GetDelayMs()));
     pending_create_ = true;
   }

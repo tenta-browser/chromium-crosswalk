@@ -9,26 +9,26 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/layers/texture_layer_client.h"
+#include "cc/resources/shared_bitmap_id_registrar.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/sync_token.h"
-#include "third_party/WebKit/public/platform/WebLayer.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPlugin.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
 class WebGraphicsContext3DProvider;
-class WebLayer;
 struct WebPluginParams;
 }
 
 namespace cc {
-class SharedBitmap;
+class CrossThreadSharedBitmap;
 }
 
 namespace gpu {
@@ -75,8 +75,9 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   blink::WebPluginContainer* Container() const override;
   bool CanProcessDrag() const override;
   bool SupportsKeyboardFocus() const override;
-  void UpdateAllLifecyclePhases() override {}
-  void Paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override {}
+  void UpdateAllLifecyclePhases(
+      blink::WebWidget::LifecycleUpdateReason) override {}
+  void Paint(cc::PaintCanvas* canvas, const blink::WebRect& rect) override {}
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
@@ -93,13 +94,14 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
       const blink::WebFloatPoint& position,
       const blink::WebFloatPoint& screen_position) override;
   void DidReceiveResponse(const blink::WebURLResponse& response) override {}
-  void DidReceiveData(const char* data, int data_length) override {}
+  void DidReceiveData(const char* data, size_t data_length) override {}
   void DidFinishLoading() override {}
   void DidFailLoading(const blink::WebURLError& error) override {}
   bool IsPlaceholder() override;
 
   // cc::TextureLayerClient methods:
   bool PrepareTransferableResource(
+      cc::SharedBitmapIdRegistrar* bitmap_registrar,
       viz::TransferableResource* resource,
       std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
 
@@ -134,6 +136,9 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
     }
   };
 
+  using ContextProviderRef = base::RefCountedData<
+      std::unique_ptr<blink::WebGraphicsContext3DProvider>>;
+
   // Functions for parsing plugin parameters.
   Primitive ParsePrimitive(const blink::WebString& string);
   void ParseColor(const blink::WebString& string, uint8_t color[3]);
@@ -153,23 +158,31 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
 
   // Functions for drawing scene in Software.
   void DrawSceneSoftware(void* memory);
+  static void ReleaseSharedMemory(
+      scoped_refptr<cc::CrossThreadSharedBitmap> shared_bitmap,
+      cc::SharedBitmapIdRegistration registration,
+      const gpu::SyncToken& sync_token,
+      bool lost);
+  static void ReleaseSharedImage(
+      scoped_refptr<ContextProviderRef> context_provider,
+      const gpu::Mailbox& mailbox,
+      const gpu::SyncToken& sync_token,
+      bool lost);
 
   WebTestDelegate* delegate_;
   blink::WebPluginContainer* container_;
   blink::WebLocalFrame* web_local_frame_;
 
   blink::WebRect rect_;
-  std::unique_ptr<blink::WebGraphicsContext3DProvider> context_provider_;
+  scoped_refptr<ContextProviderRef> context_provider_;
   gpu::gles2::GLES2Interface* gl_;
-  GLuint color_texture_;
   gpu::Mailbox mailbox_;
   gpu::SyncToken sync_token_;
-  std::unique_ptr<viz::SharedBitmap> shared_bitmap_;
+  scoped_refptr<cc::CrossThreadSharedBitmap> shared_bitmap_;
   bool content_changed_;
   GLuint framebuffer_;
   Scene scene_;
   scoped_refptr<cc::TextureLayer> layer_;
-  std::unique_ptr<blink::WebLayer> web_layer_;
 
   blink::WebPluginContainer::TouchEventRequestType touch_event_request_;
   // Requests touch events from the WebPluginContainerImpl multiple times to

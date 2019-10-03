@@ -44,25 +44,26 @@ class CONTENT_EXPORT PepperDeviceEnumerationHostHelper {
    public:
     virtual ~Delegate() {}
 
-    using DevicesCallback = base::Callback<void(
+    using DevicesCallback = base::RepeatingCallback<void(
+        const std::vector<ppapi::DeviceRefData>& /* devices */)>;
+    using DevicesOnceCallback = base::OnceCallback<void(
         const std::vector<ppapi::DeviceRefData>& /* devices */)>;
 
     // Enumerates devices of the specified type.
     virtual void EnumerateDevices(PP_DeviceType_Dev type,
-                                  const DevicesCallback& callback) = 0;
+                                  DevicesOnceCallback callback) = 0;
 
     // Starts monitoring devices of the specified |type|. Returns a
     // subscription ID that must be used to stop monitoring for the device
     // |type|. Does not invoke |callback| synchronously. |callback| is invoked
     // when device changes of the specified |type| occur.
-    virtual uint32_t StartMonitoringDevices(
-        PP_DeviceType_Dev type,
-        const DevicesCallback& callback) = 0;
+    virtual size_t StartMonitoringDevices(PP_DeviceType_Dev type,
+                                          const DevicesCallback& callback) = 0;
 
     // Stops monitoring devices of the specified |type|. The
     // |subscription_id| is the return value of StartMonitoringDevices.
     virtual void StopMonitoringDevices(PP_DeviceType_Dev type,
-                                       uint32_t subscription_id) = 0;
+                                       size_t subscription_id) = 0;
   };
 
   // |resource_host| and |delegate| must outlive this object.

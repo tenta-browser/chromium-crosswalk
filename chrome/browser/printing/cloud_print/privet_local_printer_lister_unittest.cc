@@ -12,17 +12,19 @@
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/local_discovery/test_service_discovery_client.h"
+#include "chrome/browser/printing/cloud_print/privet_http_asynchronous_factory_impl.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using local_discovery::TestServiceDiscoveryClient;
 
-using testing::StrictMock;
-using testing::AtLeast;
 using testing::_;
+using testing::AtLeast;
+using testing::StrictMock;
 
 namespace cloud_print {
 
@@ -79,12 +81,14 @@ const uint8_t kAnnouncePacket[] = {
     0x03, 0x04,
 };
 
-const char kInfoIsLocalPrinter[] = "{"
+const char kInfoIsLocalPrinter[] =
+    "{"
     "\"api\" : [ \"/privet/printer/submitdoc\" ],"
     "\"x-privet-token\" : \"sample\""
     "}";
 
-const char kInfoIsNotLocalPrinter[] = "{"
+const char kInfoIsNotLocalPrinter[] =
+    "{"
     "\"api\" : [ \"/privet/register\" ],"
     "\"x-privet-token\" : \"sample\""
     "}";
@@ -111,34 +115,15 @@ class MockLocalPrinterListerDelegate
 
 class PrivetLocalPrinterListerTest : public testing::Test {
  public:
-  PrivetLocalPrinterListerTest() {
-    test_service_discovery_client_ = new TestServiceDiscoveryClient();
-    test_service_discovery_client_->Start();
-    url_request_context_ = new net::TestURLRequestContextGetter(
-        base::ThreadTaskRunnerHandle::Get());
-    local_printer_lister_.reset(new PrivetLocalPrinterLister(
+  PrivetLocalPrinterListerTest()
+      : test_service_discovery_client_(
+            base::MakeRefCounted<TestServiceDiscoveryClient>()),
+        http_asynchronous_factory_impl_(
+            test_url_loader_factory_.GetSafeWeakWrapper()) {
+    local_printer_lister_ = std::make_unique<PrivetLocalPrinterLister>(
         test_service_discovery_client_.get(),
-        url_request_context_.get(),
-        &delegate_));
-  }
-
-  ~PrivetLocalPrinterListerTest() override {}
-
-  bool SuccessfulResponseToURL(const GURL& url,
-                               const std::string& response) {
-    net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
-    EXPECT_TRUE(fetcher);
-    EXPECT_EQ(url, fetcher->GetOriginalURL());
-
-    if (!fetcher || url != fetcher->GetOriginalURL())
-      return false;
-
-    fetcher->SetResponseString(response);
-    fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
-                                              net::OK));
-    fetcher->set_response_code(200);
-    fetcher->delegate()->OnURLFetchComplete(fetcher);
-    return true;
+        test_url_loader_factory_.GetSafeWeakWrapper(), &delegate_);
+    test_service_discovery_client_->Start();
   }
 
   void SimulateReceive(const uint8_t* packet, size_t size) {
@@ -154,38 +139,31 @@ class PrivetLocalPrinterListerTest : public testing::Test {
  protected:
   content::TestBrowserThreadBundle test_thread_bundle;
   scoped_refptr<TestServiceDiscoveryClient> test_service_discovery_client_;
-  scoped_refptr<net::TestURLRequestContextGetter> url_request_context_;
   std::unique_ptr<PrivetLocalPrinterLister> local_printer_lister_;
-  net::TestURLFetcherFactory fetcher_factory_;
   StrictMock<MockLocalPrinterListerDelegate> delegate_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
+  cloud_print::PrivetHTTPAsynchronousFactoryImpl
+      http_asynchronous_factory_impl_;
 };
 
 TEST_F(PrivetLocalPrinterListerTest, PrinterAddedTest) {
+  test_url_loader_factory_.AddResponse(GURL(kPrivetInfoURL).spec(),
+                                       kInfoIsLocalPrinter);
   ExpectAnyPacket();
-
-  local_printer_lister_->Start();
-
-  SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
-
   EXPECT_CALL(delegate_, LocalPrinterChanged(kServiceName, true, _));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GURL(kPrivetInfoURL),
-      std::string(kInfoIsLocalPrinter)));
+  local_printer_lister_->Start();
+  SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
 }
 
 TEST_F(PrivetLocalPrinterListerTest, NonPrinterAddedTest) {
+  test_url_loader_factory_.AddResponse(GURL(kPrivetInfoURL).spec(),
+                                       kInfoIsNotLocalPrinter);
   ExpectAnyPacket();
-
-  local_printer_lister_->Start();
-
-  SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
-
   EXPECT_CALL(delegate_, LocalPrinterChanged(kServiceName, false, _));
 
-  EXPECT_TRUE(SuccessfulResponseToURL(
-      GURL(kPrivetInfoURL),
-      std::string(kInfoIsNotLocalPrinter)));
+  local_printer_lister_->Start();
+  SimulateReceive(kAnnouncePacket, sizeof(kAnnouncePacket));
 }
 
 }  // namespace

@@ -9,19 +9,25 @@
 #include <string>
 
 #include "base/callback_forward.h"
-#include "chromeos/printing/printer_configuration.h"
+#include "base/macros.h"
 
 class Profile;
 
 namespace chromeos {
 
+class Printer;
+
 // These values are written to logs.  New enum values can be added, but existing
 // enums must never be renumbered or deleted and reused.
 enum PrinterSetupResult {
-  kFatalError = 0,          // Setup failed in an unrecognized way
-  kSuccess = 1,             // Printer set up successfully
-  kPrinterUnreachable = 2,  // Could not reach printer
-  kDbusError = 3,           // Could not contact debugd
+  kFatalError = 0,                // Setup failed in an unrecognized way
+  kSuccess = 1,                   // Printer set up successfully
+  kPrinterUnreachable = 2,        // Could not reach printer
+  kDbusError = 3,                 // Could not contact debugd
+  kNativePrintersNotAllowed = 4,  // Tried adding/editing printers policy set
+  kInvalidPrinterUpdate = 5,      // Tried updating printer with invalid values
+  kComponentUnavailable = 6,      // Could not install component
+  kEditSuccess = 7,               // Printer editted successfully
   // Space left for additional errors
 
   // PPD errors
@@ -29,7 +35,23 @@ enum PrinterSetupResult {
   kInvalidPpd = 11,        // PPD rejected by cupstestppd
   kPpdNotFound = 12,       // Could not find PPD
   kPpdUnretrievable = 13,  // Could not download PPD
-  kMaxValue                // Maximum value for histograms
+  // Space left for additional errors
+
+  // Specific DBus errors. This must stay in sync with the DbusLibraryError
+  // enum and PrinterSetupResultFromDbusErrorCode().
+  kDbusNoReply = 64,  // Expected remote response but got nothing
+  kDbusTimeout = 65,  // Generic timeout error (c.f. dbus-protocol.h)
+  kMaxValue           // Maximum value for histograms
+};
+
+// These values are written to logs.  New enum values can be added, but existing
+// enums must never be renumbered or deleted and reused.
+// Records the source of a successful USB printer setup.
+enum class UsbPrinterSetupSource {
+  kSettings = 0,        // USB printer installed via Settings.
+  kPrintPreview = 1,    // USB printer installed via Print Preview.
+  kAutoconfigured = 2,  // USB printer installed automatically.
+  kMaxValue = kAutoconfigured,
 };
 
 using PrinterSetupCallback = base::OnceCallback<void(PrinterSetupResult)>;
@@ -39,9 +61,6 @@ using PrinterSetupCallback = base::OnceCallback<void(PrinterSetupResult)>;
 class PrinterConfigurer {
  public:
   static std::unique_ptr<PrinterConfigurer> Create(Profile* profile);
-
-  PrinterConfigurer(const PrinterConfigurer&) = delete;
-  PrinterConfigurer& operator=(const PrinterConfigurer&) = delete;
 
   virtual ~PrinterConfigurer() = default;
 
@@ -58,9 +77,17 @@ class PrinterConfigurer {
   // across reboots.
   static std::string SetupFingerprint(const Printer& printer);
 
+  // Records UMA metrics for USB printer setup.
+  static void RecordUsbPrinterSetupSource(UsbPrinterSetupSource source);
+
  protected:
   PrinterConfigurer() = default;
+
+  DISALLOW_COPY_AND_ASSIGN(PrinterConfigurer);
 };
+
+// Stream operator for ease of logging |result|.
+std::ostream& operator<<(std::ostream& out, const PrinterSetupResult& result);
 
 }  // namespace chromeos
 

@@ -8,9 +8,9 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
@@ -19,7 +19,9 @@
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/mime_util.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/url_request_status.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 namespace policy {
 
@@ -27,7 +29,7 @@ namespace {
 
 // Format for bearer tokens in HTTP requests to access OAuth 2.0 protected
 // resources.
-const char kAuthorizationHeaderFormat[] = "Authorization: Bearer %s";
+const char kAuthorizationHeaderFormat[] = "Bearer %s";
 
 // Value the "Content-Type" field will be set to in the POST request.
 const char kUploadContentType[] = "multipart/form-data";
@@ -150,24 +152,26 @@ std::string UploadJobImpl::RandomMimeBoundaryGenerator::GenerateBoundary()
 UploadJobImpl::UploadJobImpl(
     const GURL& upload_url,
     const std::string& account_id,
-    OAuth2TokenService* token_service,
-    scoped_refptr<net::URLRequestContextGetter> url_context_getter,
+    OAuth2AccessTokenManager* access_token_manager,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     Delegate* delegate,
     std::unique_ptr<MimeBoundaryGenerator> boundary_generator,
+    net::NetworkTrafficAnnotationTag traffic_annotation,
     scoped_refptr<base::SequencedTaskRunner> task_runner)
-    : OAuth2TokenService::Consumer("cros_upload_job"),
+    : OAuth2AccessTokenManager::Consumer("cros_upload_job"),
       upload_url_(upload_url),
       account_id_(account_id),
-      token_service_(token_service),
-      url_context_getter_(url_context_getter),
+      access_token_manager_(access_token_manager),
+      url_loader_factory_(std::move(url_loader_factory)),
       delegate_(delegate),
       boundary_generator_(std::move(boundary_generator)),
+      traffic_annotation_(traffic_annotation),
       state_(IDLE),
       retry_(0),
       task_runner_(task_runner),
       weak_factory_(this) {
-  DCHECK(token_service_);
-  DCHECK(url_context_getter_);
+  DCHECK(access_token_manager_);
+  DCHECK(url_loader_factory_);
   DCHECK(delegate_);
   SYSLOG(INFO) << "Upload job created.";
   if (!upload_url_.is_valid()) {
@@ -196,7 +200,7 @@ void UploadJobImpl::AddDataSegment(
   if (state_ != IDLE)
     return;
 
-  data_segments_.push_back(base::MakeUnique<DataSegment>(
+  data_segments_.push_back(std::make_unique<DataSegment>(
       name, filename, std::move(data), header_entries));
 }
 
@@ -225,10 +229,10 @@ void UploadJobImpl::RequestAccessToken() {
 
   state_ = ACQUIRING_TOKEN;
 
-  OAuth2TokenService::ScopeSet scope_set;
+  OAuth2AccessTokenManager::ScopeSet scope_set;
   scope_set.insert(GaiaConstants::kDeviceManagementServiceOAuth);
   access_token_request_ =
-      token_service_->StartRequest(account_id_, scope_set, this);
+      access_token_manager_->StartRequest(account_id_, scope_set, this);
 }
 
 bool UploadJobImpl::SetUpMultipart() {
@@ -297,7 +301,7 @@ bool UploadJobImpl::SetUpMultipart() {
   return true;
 }
 
-void UploadJobImpl::CreateAndStartURLFetcher(const std::string& access_token) {
+void UploadJobImpl::CreateAndStartURLLoader(const std::string& access_token) {
   // Ensure that the content has been prepared and the upload url is valid.
   DCHECK_EQ(PREPARING_CONTENT, state_);
   SYSLOG(INFO) << "Starting URL fetcher.";
@@ -306,13 +310,20 @@ void UploadJobImpl::CreateAndStartURLFetcher(const std::string& access_token) {
   content_type.append("; boundary=");
   content_type.append(*mime_boundary_.get());
 
-  upload_fetcher_ =
-      net::URLFetcher::Create(upload_url_, net::URLFetcher::POST, this);
-  upload_fetcher_->SetRequestContext(url_context_getter_.get());
-  upload_fetcher_->SetUploadData(content_type, *post_data_);
-  upload_fetcher_->AddExtraRequestHeader(
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->method = "POST";
+  resource_request->url = upload_url_;
+  resource_request->headers.SetHeader(
+      net::HttpRequestHeaders::kAuthorization,
       base::StringPrintf(kAuthorizationHeaderFormat, access_token.c_str()));
-  upload_fetcher_->Start();
+
+  url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
+                                                 traffic_annotation_);
+  url_loader_->AttachStringForUpload(*post_data_, content_type);
+  url_loader_->DownloadHeadersOnly(
+      url_loader_factory_.get(),
+      base::BindOnce(&UploadJobImpl::OnURLLoadComplete,
+                     base::Unretained(this)));
 }
 
 void UploadJobImpl::StartUpload() {
@@ -324,26 +335,25 @@ void UploadJobImpl::StartUpload() {
     state_ = ERROR;
     return;
   }
-  CreateAndStartURLFetcher(access_token_);
+  CreateAndStartURLLoader(access_token_);
   state_ = UPLOADING;
 }
 
 void UploadJobImpl::OnGetTokenSuccess(
-    const OAuth2TokenService::Request* request,
-    const std::string& access_token,
-    const base::Time& expiration_time) {
+    const OAuth2AccessTokenManager::Request* request,
+    const OAuth2AccessTokenConsumer::TokenResponse& token_response) {
   DCHECK_EQ(ACQUIRING_TOKEN, state_);
   DCHECK_EQ(access_token_request_.get(), request);
   access_token_request_.reset();
   SYSLOG(INFO) << "Token successfully acquired.";
 
   // Also cache the token locally, so that we can revoke it later if necessary.
-  access_token_ = access_token;
+  access_token_ = token_response.access_token;
   StartUpload();
 }
 
 void UploadJobImpl::OnGetTokenFailure(
-    const OAuth2TokenService::Request* request,
+    const OAuth2AccessTokenManager::Request* request,
     const GoogleServiceAuthError& error) {
   DCHECK_EQ(ACQUIRING_TOKEN, state_);
   DCHECK_EQ(access_token_request_.get(), request);
@@ -354,7 +364,7 @@ void UploadJobImpl::OnGetTokenFailure(
 
 void UploadJobImpl::HandleError(ErrorCode error_code) {
   retry_++;
-  upload_fetcher_.reset();
+  url_loader_.reset();
 
   SYSLOG(ERROR) << "Upload failed, error code: " << error_code;
 
@@ -372,10 +382,10 @@ void UploadJobImpl::HandleError(ErrorCode error_code) {
     if (error_code == AUTHENTICATION_ERROR) {
       SYSLOG(ERROR) << "Retrying upload with a new token.";
       // Request new token and retry.
-      OAuth2TokenService::ScopeSet scope_set;
+      OAuth2AccessTokenManager::ScopeSet scope_set;
       scope_set.insert(GaiaConstants::kDeviceManagementServiceOAuth);
-      token_service_->InvalidateAccessToken(account_id_, scope_set,
-                                            access_token_);
+      access_token_manager_->InvalidateAccessToken(account_id_, scope_set,
+                                                   access_token_);
       access_token_.clear();
       task_runner_->PostDelayedTask(
           FROM_HERE,
@@ -395,34 +405,31 @@ void UploadJobImpl::HandleError(ErrorCode error_code) {
   }
 }
 
-void UploadJobImpl::OnURLFetchComplete(const net::URLFetcher* source) {
-  DCHECK_EQ(upload_fetcher_.get(), source);
+void UploadJobImpl::OnURLLoadComplete(
+    scoped_refptr<net::HttpResponseHeaders> headers) {
   DCHECK_EQ(UPLOADING, state_);
+
   SYSLOG(INFO) << "URL fetch completed.";
-  const net::URLRequestStatus& status = source->GetStatus();
-  if (!status.is_success()) {
-    SYSLOG(ERROR) << "URLRequestStatus error " << status.error();
+  std::unique_ptr<network::SimpleURLLoader> url_loader = std::move(url_loader_);
+
+  if (!headers) {
+    SYSLOG(ERROR) << "SimpleURLLoader error " << url_loader->NetError();
     HandleError(NETWORK_ERROR);
+  } else if (headers->response_code() == net::HTTP_OK) {
+    // Successful upload
+    access_token_.clear();
+    post_data_.reset();
+    state_ = SUCCESS;
+    UMA_HISTOGRAM_EXACT_LINEAR(kUploadJobSuccessHistogram, retry_,
+                               static_cast<int>(UploadJobSuccess::REQUEST_MAX));
+    delegate_->OnSuccess();
+  } else if (headers->response_code() == net::HTTP_UNAUTHORIZED) {
+    SYSLOG(ERROR) << "Unauthorized request.";
+    HandleError(AUTHENTICATION_ERROR);
   } else {
-    const int response_code = source->GetResponseCode();
-    if (response_code == net::HTTP_OK) {
-      // Successful upload
-      upload_fetcher_.reset();
-      access_token_.clear();
-      post_data_.reset();
-      state_ = SUCCESS;
-      UMA_HISTOGRAM_EXACT_LINEAR(
-          kUploadJobSuccessHistogram, retry_,
-          static_cast<int>(UploadJobSuccess::REQUEST_MAX));
-      delegate_->OnSuccess();
-    } else if (response_code == net::HTTP_UNAUTHORIZED) {
-      SYSLOG(ERROR) << "Unauthorized request.";
-      HandleError(AUTHENTICATION_ERROR);
-    } else {
-      SYSLOG(ERROR) << "POST request failed with HTTP status code "
-                    << response_code << ".";
-      HandleError(SERVER_ERROR);
-    }
+    SYSLOG(ERROR) << "POST request failed with HTTP status code "
+                  << headers->response_code() << ".";
+    HandleError(SERVER_ERROR);
   }
 }
 

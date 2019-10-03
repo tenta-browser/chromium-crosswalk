@@ -3,10 +3,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-
 import base64
 
 from writers import adml_writer
+from writers.admx_writer import AdmxElementType
 
 
 def GetWriter(config):
@@ -14,6 +14,7 @@ def GetWriter(config):
   See the constructor of TemplateWriter for description of arguments.
   '''
   return ChromeOSADMLWriter(['chrome_os'], config)
+
 
 class ChromeOSADMLWriter(adml_writer.ADMLWriter):
   ''' Class for generating Chrome OS ADML policy templates. It is used by the
@@ -26,3 +27,7 @@ class ChromeOSADMLWriter(adml_writer.ADMLWriter):
   def IsPolicySupported(self, policy):
     return self.IsCrOSManagementSupported(policy, 'active_directory') and \
            super(ChromeOSADMLWriter, self).IsPolicySupported(policy)
+
+  # Overridden.
+  def _GetAdmxElementType(self, policy):
+    return AdmxElementType.GetType(policy, allow_multi_strings=True)

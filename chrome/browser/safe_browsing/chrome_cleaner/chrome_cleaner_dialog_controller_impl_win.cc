@@ -7,6 +7,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_navigation_util_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/srt_field_trial_win.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "components/component_updater/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "extensions/browser/extension_system.h"
 #include "ui/base/window_open_disposition.h"
 
 namespace safe_browsing {
@@ -58,7 +60,7 @@ ChromeCleanerDialogControllerImpl::ChromeCleanerDialogControllerImpl(
     ChromeCleanerController* cleaner_controller)
     : cleaner_controller_(cleaner_controller),
       prompt_delegate_impl_(
-          base::MakeUnique<ChromeCleanerPromptDelegateImpl>()) {
+          std::make_unique<ChromeCleanerPromptDelegateImpl>()) {
   DCHECK(cleaner_controller_);
   DCHECK_EQ(ChromeCleanerController::State::kScanning,
             cleaner_controller_->state());
@@ -87,12 +89,17 @@ void ChromeCleanerDialogControllerImpl::Accept(bool logs_enabled) {
   base::RecordAction(
       base::UserMetricsAction("SoftwareReporter.PromptDialog_Accepted"));
 
+  Profile* profile = browser_->profile();
+
+  extensions::ExtensionService* extension_service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+
   cleaner_controller_->ReplyWithUserResponse(
-      browser_->profile(),
+      profile, extension_service,
       logs_enabled
           ? ChromeCleanerController::UserResponse::kAcceptedWithLogs
           : ChromeCleanerController::UserResponse::kAcceptedWithoutLogs);
-  chrome_cleaner_util::OpenSettingsPage(
+  chrome_cleaner_util::OpenCleanupPage(
       browser_, WindowOpenDisposition::NEW_FOREGROUND_TAB);
   OnInteractionDone();
 }
@@ -108,8 +115,14 @@ void ChromeCleanerDialogControllerImpl::Cancel() {
   base::RecordAction(
       base::UserMetricsAction("SoftwareReporter.PromptDialog_Canceled"));
 
+  Profile* profile = browser_->profile();
+
+  extensions::ExtensionService* extension_service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+
   cleaner_controller_->ReplyWithUserResponse(
-      browser_->profile(), ChromeCleanerController::UserResponse::kDenied);
+      profile, extension_service,
+      ChromeCleanerController::UserResponse::kDenied);
   OnInteractionDone();
 }
 
@@ -124,8 +137,14 @@ void ChromeCleanerDialogControllerImpl::Close() {
   base::RecordAction(
       base::UserMetricsAction("SoftwareReporter.PromptDialog_Dismissed"));
 
+  Profile* profile = browser_->profile();
+
+  extensions::ExtensionService* extension_service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+
   cleaner_controller_->ReplyWithUserResponse(
-      browser_->profile(), ChromeCleanerController::UserResponse::kDismissed);
+      profile, extension_service,
+      ChromeCleanerController::UserResponse::kDismissed);
   OnInteractionDone();
 }
 
@@ -147,14 +166,14 @@ void ChromeCleanerDialogControllerImpl::DetailsButtonClicked(
   base::RecordAction(base::UserMetricsAction(
       "SoftwareReporter.PromptDialog_DetailsButtonClicked"));
 
-  cleaner_controller_->SetLogsEnabled(logs_enabled);
-  chrome_cleaner_util::OpenSettingsPage(
+  cleaner_controller_->SetLogsEnabled(browser_->profile(), logs_enabled);
+  chrome_cleaner_util::OpenCleanupPage(
       browser_, WindowOpenDisposition::NEW_FOREGROUND_TAB);
   OnInteractionDone();
 }
 
 void ChromeCleanerDialogControllerImpl::SetLogsEnabled(bool logs_enabled) {
-  cleaner_controller_->SetLogsEnabled(logs_enabled);
+  cleaner_controller_->SetLogsEnabled(browser_->profile(), logs_enabled);
   if (logs_enabled) {
     base::RecordAction(base::UserMetricsAction(
         "SoftwareReporter.PromptDialog.LogsPermissionCheckbox_Enabled"));
@@ -165,7 +184,11 @@ void ChromeCleanerDialogControllerImpl::SetLogsEnabled(bool logs_enabled) {
 }
 
 bool ChromeCleanerDialogControllerImpl::LogsEnabled() {
-  return cleaner_controller_->logs_enabled();
+  return cleaner_controller_->logs_enabled(browser_->profile());
+}
+
+bool ChromeCleanerDialogControllerImpl::LogsManaged() {
+  return cleaner_controller_->IsReportingManagedByPolicy(browser_->profile());
 }
 
 void ChromeCleanerDialogControllerImpl::OnIdle(
@@ -184,6 +207,7 @@ void ChromeCleanerDialogControllerImpl::OnScanning() {
 }
 
 void ChromeCleanerDialogControllerImpl::OnInfected(
+    bool is_powered_by_partner,
     const ChromeCleanerScannerResults& reported_results) {
   DCHECK(!dialog_shown_);
 
@@ -201,6 +225,7 @@ void ChromeCleanerDialogControllerImpl::OnInfected(
 }
 
 void ChromeCleanerDialogControllerImpl::OnCleaning(
+    bool is_powered_by_partner,
     const ChromeCleanerScannerResults& reported_results) {
   if (!dialog_shown_)
     OnInteractionDone();

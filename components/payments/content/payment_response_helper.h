@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_PAYMENTS_CONTENT_PAYMENT_RESPONSE_HELPER_H_
 #define COMPONENTS_PAYMENTS_CONTENT_PAYMENT_RESPONSE_HELPER_H_
 
+#include <string>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/address_normalizer.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/payments/core/payment_instrument.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 
 namespace payments {
 
@@ -28,6 +30,8 @@ class PaymentResponseHelper
 
     virtual void OnPaymentResponseReady(
         mojom::PaymentResponsePtr payment_response) = 0;
+
+    virtual void OnPaymentResponseError(const std::string& error_message) = 0;
   };
 
   // The spec, selected_instrument and delegate cannot be null.
@@ -40,17 +44,14 @@ class PaymentResponseHelper
                         Delegate* delegate);
   ~PaymentResponseHelper() override;
 
-  // Returns a new mojo PaymentAddress based on the specified
-  // |profile| and |app_locale|.
-  static mojom::PaymentAddressPtr GetMojomPaymentAddressFromAutofillProfile(
-      const autofill::AutofillProfile& profile,
-      const std::string& app_locale);
-
   // PaymentInstrument::Delegate
   void OnInstrumentDetailsReady(
       const std::string& method_name,
       const std::string& stringified_details) override;
-  void OnInstrumentDetailsError() override {}
+  void OnInstrumentDetailsError(const std::string& error_message) override;
+
+  mojom::PayerDetailPtr GeneratePayerDetail(
+      const autofill::AutofillProfile* selected_contact_profile) const;
 
  private:
   // Generates the Payment Response and sends it to the delegate.
@@ -81,7 +82,7 @@ class PaymentResponseHelper
   std::string method_name_;
   std::string stringified_details_;
 
-  base::WeakPtrFactory<PaymentResponseHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<PaymentResponseHelper> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PaymentResponseHelper);
 };

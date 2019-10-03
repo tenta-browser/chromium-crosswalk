@@ -24,6 +24,10 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
 
   void OnGpuMemoryBufferDestroyed(gfx::GpuMemoryBufferId gpu_memory_buffer_id);
 
+  void SetFailOnCreate(bool fail_on_create) {
+    fail_on_create_ = fail_on_create;
+  }
+
   // Overridden from gpu::GpuMemoryBufferManager:
   std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
       const gfx::Size& size,
@@ -34,10 +38,13 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
                                const gpu::SyncToken& sync_token) override;
 
  private:
+  // This class is called by multiple threads at the same time. Hold this lock
+  // for the duration of all member functions, to ensure consistency.
+  // https://crbug.com/690588, https://crbug.com/859020
+  base::Lock lock_;
+
   // Buffers allocated by this manager.
   int last_gpu_memory_buffer_id_ = 1000;
-  // Use of |buffers_| must be protected by the lock.
-  base::Lock buffers_lock_;
   std::map<int, gfx::GpuMemoryBuffer*> buffers_;
 
   // Parent information for child managers.
@@ -47,6 +54,8 @@ class TestGpuMemoryBufferManager : public gpu::GpuMemoryBufferManager {
   // Child infomration for parent managers.
   int last_client_id_ = 5000;
   std::map<int, TestGpuMemoryBufferManager*> clients_;
+
+  bool fail_on_create_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TestGpuMemoryBufferManager);
 };

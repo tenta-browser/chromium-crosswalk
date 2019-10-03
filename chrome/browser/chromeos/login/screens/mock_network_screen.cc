@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,28 +9,31 @@ namespace chromeos {
 using ::testing::AtLeast;
 using ::testing::_;
 
-MockNetworkScreen::MockNetworkScreen(BaseScreenDelegate* base_screen_delegate,
-                                     Delegate* delegate,
-                                     NetworkView* view)
-    : NetworkScreen(base_screen_delegate, delegate, view) {}
+MockNetworkScreen::MockNetworkScreen(NetworkScreenView* view,
+                                     const ScreenExitCallback& exit_callback)
+    : NetworkScreen(view, exit_callback) {}
 
-MockNetworkScreen::~MockNetworkScreen() {}
+MockNetworkScreen::~MockNetworkScreen() = default;
 
-MockNetworkView::MockNetworkView() {
+void MockNetworkScreen::ExitScreen(NetworkScreen::Result result) {
+  exit_callback()->Run(result);
+}
+
+MockNetworkScreenView::MockNetworkScreenView() {
   EXPECT_CALL(*this, MockBind(_)).Times(AtLeast(1));
 }
 
-MockNetworkView::~MockNetworkView() {
+MockNetworkScreenView::~MockNetworkScreenView() {
   if (screen_)
     screen_->OnViewDestroyed(this);
 }
 
-void MockNetworkView::Bind(NetworkScreen* screen) {
+void MockNetworkScreenView::Bind(NetworkScreen* screen) {
   screen_ = screen;
   MockBind(screen);
 }
 
-void MockNetworkView::Unbind() {
+void MockNetworkScreenView::Unbind() {
   screen_ = nullptr;
   MockUnbind();
 }

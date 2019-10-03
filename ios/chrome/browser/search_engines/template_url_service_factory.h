@@ -8,12 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 class TemplateURLService;
 
@@ -27,15 +23,15 @@ class TemplateURLServiceFactory : public BrowserStateKeyedServiceFactory {
  public:
   static TemplateURLService* GetForBrowserState(
       ios::ChromeBrowserState* browser_state);
+
   static TemplateURLServiceFactory* GetInstance();
 
-  // Returns the default factory used to build TemplateURLService. Can be
-  // registered with SetTestingFactory to use the TemplateURLService instance
-  // during testing.
-  static TestingFactoryFunction GetDefaultFactory();
+  // Returns the default factory used to build TemplateURLServices. Can be
+  // registered with SetTestingFactory to use real instances during testing.
+  static TestingFactory GetDefaultFactory();
 
  private:
-  friend struct base::DefaultSingletonTraits<TemplateURLServiceFactory>;
+  friend class base::NoDestructor<TemplateURLServiceFactory>;
 
   TemplateURLServiceFactory();
   ~TemplateURLServiceFactory() override;

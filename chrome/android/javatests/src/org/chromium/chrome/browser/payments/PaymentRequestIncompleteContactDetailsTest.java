@@ -10,6 +10,7 @@ import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.IMMEDI
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -22,10 +23,9 @@ import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
 import org.chromium.chrome.browser.payments.ui.PaymentRequestSection;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -33,18 +33,18 @@ import java.util.concurrent.TimeoutException;
  * incomplete contact details stored on disk.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestIncompleteContactDetailsTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_contact_details_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         // The user has an invalid email address on disk.
         helper.setProfile(new AutofillProfile("", "https://example.com", true, "Jon Doe", "Google",
@@ -58,8 +58,7 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testEditIncompleteContactAndCancel()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testEditIncompleteContactAndCancel() throws InterruptedException, TimeoutException {
         // Not ready to pay since Contact email is invalid.
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
@@ -74,7 +73,7 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
         mPaymentRequestTestRule.setTextInEditorAndWait(new String[] {"", "---", "jane.jones"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getEditorValidationError());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getEditorValidationError());
         // The section collapses and the [CHOOSE] button is active.
         mPaymentRequestTestRule.clickInEditorAndWait(
                 R.id.payments_edit_cancel_button, mPaymentRequestTestRule.getReadyForInput());
@@ -83,15 +82,15 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
 
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /** Attempt to add invalid contact info alongside the already invalid info, and cancel. */
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testAddIncompleteContactAndCancel()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testAddIncompleteContactAndCancel() throws InterruptedException, TimeoutException {
         // Not ready to pay since Contact email is invalid.
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
@@ -106,7 +105,7 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
         mPaymentRequestTestRule.setTextInEditorAndWait(new String[] {"", "---", "jane.jones"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getEditorValidationError());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getEditorValidationError());
         // The section collapses and the [CHOOSE] button is active.
         mPaymentRequestTestRule.clickInEditorAndWait(
                 R.id.payments_edit_cancel_button, mPaymentRequestTestRule.getReadyForInput());
@@ -115,15 +114,15 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
 
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /** Update the contact information with valid data and provide that to the merchant. */
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testEditIncompleteContactAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testEditIncompleteContactAndPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInContactInfoAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -133,7 +132,7 @@ public class PaymentRequestIncompleteContactDetailsTest implements MainActivityS
                 new String[] {"Jon Doe", "555-555-5555", "jon.doe@google.com"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(

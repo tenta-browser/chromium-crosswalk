@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// NOTE: spawned_test_server is deprecated, since it frequently causes test
+// flakiness. Please consider using embedded_test_server if possible.
+
 #ifndef NET_TEST_SPAWNED_TEST_SERVER_BASE_TEST_SERVER_H_
 #define NET_TEST_SPAWNED_TEST_SERVER_BASE_TEST_SERVER_H_
 
@@ -47,6 +50,7 @@ class BaseTestServer {
     TYPE_WSS,
     TYPE_TCP_ECHO,
     TYPE_UDP_ECHO,
+    TYPE_PROXY,
   };
 
   // Container for various options to control how the HTTPS or WSS server is
@@ -58,6 +62,10 @@ class BaseTestServer {
       // CERT_AUTO causes the testserver to generate a test certificate issued
       // by "Testing CA" (see net/data/ssl/certificates/ocsp-test-root.pem).
       CERT_AUTO,
+      // As with CERT_AUTO, but the chain will include a generated intermediate
+      // as well. The testserver will include the intermediate cert in the TLS
+      // handshake.
+      CERT_AUTO_WITH_INTERMEDIATE,
       // Generate an intermediate cert issued by "Testing CA", and generate a
       // test certificate issued by that intermediate with an AIA record for
       // retrieving the intermediate.
@@ -74,6 +82,14 @@ class BaseTestServer {
       // Causes the testserver to use a hostname that is a domain
       // instead of an IP.
       CERT_COMMON_NAME_IS_DOMAIN,
+
+      // An RSA certificate with the keyUsage extension specifying that the key
+      // is only for encipherment.
+      CERT_KEY_USAGE_RSA_ENCIPHERMENT,
+
+      // An RSA certificate with the keyUsage extension specifying that the key
+      // is only for digital signatures.
+      CERT_KEY_USAGE_RSA_DIGITAL_SIGNATURE,
 
       // A certificate with invalid notBefore and notAfter times. Windows'
       // certificate library will not parse this certificate.
@@ -100,6 +116,7 @@ class BaseTestServer {
       OCSP_DATE_OLD,
       OCSP_DATE_EARLY,
       OCSP_DATE_LONG,
+      OCSP_DATE_LONGER,
     };
 
     // OCSPSingleResponse is used when specifying multiple stapled responses,
@@ -168,6 +185,13 @@ class BaseTestServer {
       TLS_INTOLERANCE_RESET = 2,  // Send a TCP reset.
     };
 
+    enum TLSMaxVersion {
+      TLS_MAX_VERSION_DEFAULT = 0,
+      TLS_MAX_VERSION_TLS1_0 = 1,
+      TLS_MAX_VERSION_TLS1_1 = 2,
+      TLS_MAX_VERSION_TLS1_2 = 3,
+    };
+
     // Initialize a new SSLOptions using CERT_OK as the certificate.
     SSLOptions();
 
@@ -192,30 +216,73 @@ class BaseTestServer {
     // to testserver or the empty string if there is none.
     std::string GetOCSPProducedArgument() const;
 
+    // GetOCSPIntermediateArgument returns the value of any OCSP intermediate
+    // argument to testserver or the empty string if there is none.
+    std::string GetOCSPIntermediateArgument() const;
+
+    // GetOCSPIntermediateDateArgument returns the value of the OCSP
+    // intermediate date argument to testserver or the empty string if there is
+    // none.
+    std::string GetOCSPIntermediateDateArgument() const;
+
+    // GetOCSPIntermediateProducedArgument returns the value of the OCSP
+    // intermediate produced argument to testserver or the empty string if
+    // there is none.
+    std::string GetOCSPIntermediateProducedArgument() const;
+
     // The certificate to use when serving requests.
     ServerCertificate server_certificate = CERT_OK;
 
-    // If |server_certificate==CERT_AUTO| then this determines the type of OCSP
-    // response returned. Ignored if |ocsp_responses| is non-empty.
+    // If |server_certificate==CERT_AUTO| or |CERT_AUTO_WITH_INTERMEDIATE| then
+    // this determines the type of leaf OCSP response returned. Ignored if
+    // |ocsp_responses| is non-empty.
     OCSPStatus ocsp_status = OCSP_OK;
 
-    // If |server_certificate==CERT_AUTO| then this determines the date range
-    // set on the OCSP response returned. Ignore if |ocsp_responses| is
-    // non-empty.
+    // If |server_certificate==CERT_AUTO| or |CERT_AUTO_WITH_INTERMEDIATE| then
+    // this determines the date range set on the leaf OCSP response returned.
+    // Ignore if |ocsp_responses| is non-empty.
     OCSPDate ocsp_date = OCSP_DATE_VALID;
 
-    // If |server_certificate==CERT_AUTO|, contains the status and validity for
-    // multiple stapled responeses. Overrides |ocsp_status| and |ocsp_date| when
+    // If |server_certificate==CERT_AUTO| or |CERT_AUTO_WITH_INTERMEDIATE|,
+    // contains the status and validity for multiple stapled responeses.
+    // Overrides |ocsp_status| and |ocsp_date| when
     // non-empty.
     std::vector<OCSPSingleResponse> ocsp_responses;
 
-    // If |server_certificate==CERT_AUTO| then this determines the validity of
-    // the producedAt field on the returned OCSP response.
+    // If |server_certificate==CERT_AUTO| or |CERT_AUTO_WITH_INTERMEDIATE| then
+    // this determines the validity of the producedAt field on the returned
+    // leaf OCSP response.
     OCSPProduced ocsp_produced = OCSP_PRODUCED_VALID;
+
+    // If |server_certificate==CERT_AUTO_WITH_INTERMEDIATE| then this
+    // determines the type of intermediate OCSP response returned. Ignored if
+    // |ocsp_intermediate_responses| is non-empty.
+    OCSPStatus ocsp_intermediate_status = OCSP_OK;
+
+    // If |server_certificate==CERT_AUTO_WITH_INTERMEDIATE| then this
+    // determines the date range set on the intermediate OCSP response
+    // returned. Ignore if |ocsp_intermediate_responses| is non-empty.
+    OCSPDate ocsp_intermediate_date = OCSP_DATE_VALID;
+
+    // If |server_certificate==CERT_AUTO_WITH_INTERMEDIATE|, contains the
+    // status and validity for multiple stapled responeses. Overrides
+    // |ocsp_intermediate_status| and |ocsp_intermediate_date| when non-empty.
+    // TODO(mattm): testserver doesn't actually staple OCSP responses for
+    // intermediates.
+    std::vector<OCSPSingleResponse> ocsp_intermediate_responses;
+
+    // If |server_certificate==CERT_AUTO_WITH_INTERMEDIATE| then this
+    // determines the validity of the producedAt field on the returned
+    // intermediate OCSP response.
+    OCSPProduced ocsp_intermediate_produced = OCSP_PRODUCED_VALID;
 
     // If not zero, |cert_serial| will be the serial number of the
     // auto-generated leaf certificate when |server_certificate==CERT_AUTO|.
     uint64_t cert_serial = 0;
+
+    // If not empty, |cert_common_name| will be the common name of the
+    // auto-generated leaf certificate when |server_certificate==CERT_AUTO|.
+    std::string cert_common_name;
 
     // True if a CertificateRequest should be sent to the client during
     // handshaking.
@@ -254,6 +321,9 @@ class BaseTestServer {
     // If |tls_intolerant| is not TLS_INTOLERANT_NONE, how the server reacts to
     // an intolerant TLS version.
     TLSIntoleranceType tls_intolerance_type = TLS_INTOLERANCE_ALERT;
+
+    // The maximum TLS version to support.
+    TLSMaxVersion tls_max_version = TLS_MAX_VERSION_DEFAULT;
 
     // fallback_scsv_enabled, if true, causes the server to process the
     // TLS_FALLBACK_SCSV cipher suite. This cipher suite is sent by Chrome
@@ -294,8 +364,13 @@ class BaseTestServer {
     // If true, disables extended master secret tls extension.
     bool disable_extended_master_secret = false;
 
-    // List of token binding params that the server supports and will negotiate.
-    std::vector<int> supported_token_binding_params;
+    // If true, sends the TLS 1.3 to TLS 1.2 downgrade signal in the ServerHello
+    // random.
+    bool simulate_tls13_downgrade = false;
+
+    // If true, sends the TLS 1.2 to TLS 1.1 downgrade signal in the ServerHello
+    // random.
+    bool simulate_tls12_downgrade = false;
   };
 
   // Initialize a TestServer.
@@ -371,6 +446,9 @@ class BaseTestServer {
     redirect_connect_to_localhost_ = redirect_connect_to_localhost;
   }
 
+  // Registers the test server's certs for the current process.
+  static void RegisterTestCerts();
+
   // Marks the root certificate of an HTTPS test server as trusted for
   // the duration of tests.
   bool LoadTestRootCert() const WARN_UNUSED_RESULT;
@@ -381,6 +459,7 @@ class BaseTestServer {
  protected:
   virtual ~BaseTestServer();
   Type type() const { return type_; }
+  const SSLOptions& ssl_options() const { return ssl_options_; }
 
   bool started() const { return started_; }
 

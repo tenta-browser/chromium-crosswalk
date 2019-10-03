@@ -55,6 +55,9 @@ class FakeIntentHelperInstance : public mojom::IntentHelperInstance {
     return handled_intents_;
   }
 
+  std::vector<Broadcast> GetBroadcastsForAction(
+      const std::string& action) const;
+
   // Sets a list of intent handlers to be returned in response to
   // RequestIntentHandlerList() calls with intents containing |action|.
   void SetIntentHandlers(
@@ -75,9 +78,9 @@ class FakeIntentHelperInstance : public mojom::IntentHelperInstance {
   void HandleUrl(const std::string& url,
                  const std::string& package_name) override;
 
-  void HandleUrlList(std::vector<mojom::UrlWithMimeTypePtr> urls,
-                     mojom::ActivityNamePtr activity,
-                     mojom::ActionType action) override;
+  void HandleUrlListDeprecated(std::vector<mojom::UrlWithMimeTypePtr> urls,
+                               mojom::ActivityNamePtr activity,
+                               mojom::ActionType action) override;
 
   void InitDeprecated(mojom::IntentHelperHostPtr host_ptr) override;
 
@@ -108,6 +111,16 @@ class FakeIntentHelperInstance : public mojom::IntentHelperInstance {
                      const std::string& cls,
                      const std::string& extras) override;
 
+  void ClassifySelectionDeprecated(
+      const std::string& text,
+      ::arc::mojom::ScaleFactor scale_factor,
+      ClassifySelectionDeprecatedCallback callback) override;
+
+  void RequestTextSelectionActions(
+      const std::string& text,
+      ::arc::mojom::ScaleFactor scale_factor,
+      RequestTextSelectionActionsCallback callback) override;
+
  private:
   std::vector<Broadcast> broadcasts_;
 
@@ -118,6 +131,10 @@ class FakeIntentHelperInstance : public mojom::IntentHelperInstance {
   // RequestIntentHandlerList().
   std::map<std::string, std::vector<mojom::IntentHandlerInfoPtr>>
       intent_handlers_;
+
+  // Keeps the binding alive so that calls to this class can be correctly
+  // routed.
+  mojom::IntentHelperHostPtr host_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeIntentHelperInstance);
 };

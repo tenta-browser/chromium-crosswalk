@@ -4,10 +4,6 @@
 
 package org.chromium.content.browser;
 
-import android.content.ComponentName;
-import android.content.Context;
-import android.os.Bundle;
-
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -15,6 +11,10 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.os.Bundle;
 
 import org.junit.After;
 import org.junit.Before;
@@ -27,21 +27,21 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.process_launcher.ChildConnectionAllocator;
 import org.chromium.base.process_launcher.ChildProcessConnection;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.TestChildProcessConnection;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 /** Unit tests for the SpareChildConnection class. */
 @Config(manifest = Config.NONE)
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 public class SpareChildConnectionTest {
     @Mock
     private ChildProcessConnection.ServiceCallback mServiceCallback;
 
     // A connection allocator not used to create connections.
     private final ChildConnectionAllocator mWrongConnectionAllocator =
-            ChildConnectionAllocator.createForTest("org.chromium.test", "TestServiceName",
-                    3 /* serviceCount */, false /* bindToCaller */,
+            ChildConnectionAllocator.createFixedForTesting(null, "org.chromium.test",
+                    "TestServiceName", 3 /* serviceCount */, false /* bindToCaller */,
                     false /* bindAsExternalService */, false /* useStrongBinding */);
 
     // The allocator used to allocate the actual connection.
@@ -53,7 +53,8 @@ public class SpareChildConnectionTest {
 
         @Override
         public ChildProcessConnection createConnection(Context context, ComponentName serviceName,
-                boolean bindToCaller, boolean bindAsExternalService, Bundle serviceBundle) {
+                boolean bindToCaller, boolean bindAsExternalService, Bundle serviceBundle,
+                String instanceName) {
             // We expect to create only one connection in these tests.
             assert mConnection == null;
             mConnection = new TestChildProcessConnection(
@@ -86,10 +87,10 @@ public class SpareChildConnectionTest {
         // asserts are not triggered.
         LauncherThread.setCurrentThreadAsLauncherThread();
 
-        mConnectionAllocator =
-                ChildConnectionAllocator.createForTest("org.chromium.test.spare_connection",
-                        "TestServiceName", 5 /* serviceCount */, false /* bindToCaller */,
-                        false /* bindAsExternalService */, false /* useStrongBinding */);
+        mConnectionAllocator = ChildConnectionAllocator.createFixedForTesting(null,
+                "org.chromium.test.spare_connection", "TestServiceName", 5 /* serviceCount */,
+                false /* bindToCaller */, false /* bindAsExternalService */,
+                false /* useStrongBinding */);
         mConnectionAllocator.setConnectionFactoryForTesting(mTestConnectionFactory);
         mSpareConnection = new SpareChildConnection(
                 null /* context */, mConnectionAllocator, null /* serviceBundle */);

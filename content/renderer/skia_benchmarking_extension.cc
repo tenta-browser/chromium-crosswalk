@@ -19,14 +19,13 @@
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "skia/ext/benchmarking_canvas.h"
-#include "third_party/WebKit/public/web/WebArrayBuffer.h"
-#include "third_party/WebKit/public/web/WebArrayBufferConverter.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_array_buffer.h"
+#include "third_party/blink/public/web/web_array_buffer_converter.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkGraphics.h"
-#include "third_party/skia/include/core/SkImageDeserializer.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "ui/gfx/codec/jpeg_codec.h"
@@ -45,35 +44,6 @@ class Picture {
   sk_sp<SkPicture> picture;
 };
 
-class GfxImageDeserializer final : public SkImageDeserializer {
- public:
-  sk_sp<SkImage> makeFromData(SkData* data, const SkIRect* subset) override {
-    return makeFromMemory(data->data(), data->size(), subset);
-  }
-  sk_sp<SkImage> makeFromMemory(const void* data,
-                                size_t size,
-                                const SkIRect* subset) override {
-    sk_sp<SkImage> img;
-    // Try PNG first.
-    SkBitmap bitmap;
-    if (gfx::PNGCodec::Decode((const uint8_t*)data, size, &bitmap)) {
-      bitmap.setImmutable();
-      img = SkImage::MakeFromBitmap(bitmap);
-    } else {
-      // Try JPEG.
-      std::unique_ptr<SkBitmap> decoded_jpeg(
-          gfx::JPEGCodec::Decode((const uint8_t*)data, size));
-      if (decoded_jpeg) {
-        decoded_jpeg->setImmutable();
-        img = SkImage::MakeFromBitmap(*decoded_jpeg);
-      }
-    }
-    if (img && subset)
-      img = img->makeSubset(*subset);
-    return img;
-  }
-};
-
 std::unique_ptr<base::Value> ParsePictureArg(v8::Isolate* isolate,
                                              v8::Local<v8::Value> arg) {
   return content::V8ValueConverter::Create()->FromV8Value(
@@ -84,10 +54,8 @@ std::unique_ptr<Picture> CreatePictureFromEncodedString(
     const std::string& encoded) {
   std::string decoded;
   base::Base64Decode(encoded, &decoded);
-  SkMemoryStream stream(decoded.data(), decoded.size());
-  GfxImageDeserializer deserializer;
   sk_sp<SkPicture> skpicture =
-      SkPicture::MakeFromStream(&stream, &deserializer);
+      SkPicture::MakeFromData(decoded.data(), decoded.size());
   if (!skpicture)
     return nullptr;
 
@@ -156,9 +124,11 @@ void SkiaBenchmarking::Install(blink::WebLocalFrame* frame) {
   if (controller.IsEmpty())
     return;
 
-  v8::Local<v8::Object> chrome = GetOrCreateChromeObject(isolate,
-                                                          context->Global());
-  chrome->Set(gin::StringToV8(isolate, "skiaBenchmarking"), controller.ToV8());
+  v8::Local<v8::Object> chrome = GetOrCreateChromeObject(isolate, context);
+  chrome
+      ->Set(context, gin::StringToV8(isolate, "skiaBenchmarking"),
+            controller.ToV8())
+      .Check();
 }
 
 // static
@@ -310,16 +280,32 @@ void SkiaBenchmarking::GetOpTimings(gin::Arguments* args) {
   skia::BenchmarkingCanvas benchmarking_canvas(&canvas);
   picture->picture->playback(&benchmarking_canvas);
 
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Array> op_times =
       v8::Array::New(isolate, benchmarking_canvas.CommandCount());
   for (size_t i = 0; i < benchmarking_canvas.CommandCount(); ++i) {
-    op_times->Set(i, v8::Number::New(isolate, benchmarking_canvas.GetTime(i)));
+    op_times
+        ->CreateDataProperty(
+            context, i,
+            v8::Number::New(isolate, benchmarking_canvas.GetTime(i)))
+        .Check();
   }
 
   v8::Local<v8::Object> result = v8::Object::New(isolate);
-  result->Set(v8::String::NewFromUtf8(isolate, "total_time"),
-              v8::Number::New(isolate, total_time.InMillisecondsF()));
-  result->Set(v8::String::NewFromUtf8(isolate, "cmd_times"), op_times);
+  result
+      ->Set(context,
+            v8::String::NewFromUtf8(isolate, "total_time",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked(),
+            v8::Number::New(isolate, total_time.InMillisecondsF()))
+      .Check();
+  result
+      ->Set(context,
+            v8::String::NewFromUtf8(isolate, "cmd_times",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked(),
+            op_times)
+      .Check();
 
   args->Return(result);
 }
@@ -334,11 +320,22 @@ void SkiaBenchmarking::GetInfo(gin::Arguments* args) {
   if (!picture.get())
     return;
 
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Object> result = v8::Object::New(isolate);
-  result->Set(v8::String::NewFromUtf8(isolate, "width"),
-              v8::Number::New(isolate, picture->layer_rect.width()));
-  result->Set(v8::String::NewFromUtf8(isolate, "height"),
-              v8::Number::New(isolate, picture->layer_rect.height()));
+  result
+      ->Set(context,
+            v8::String::NewFromUtf8(isolate, "width",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked(),
+            v8::Number::New(isolate, picture->layer_rect.width()))
+      .Check();
+  result
+      ->Set(context,
+            v8::String::NewFromUtf8(isolate, "height",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked(),
+            v8::Number::New(isolate, picture->layer_rect.height()))
+      .Check();
 
   args->Return(result);
 }

@@ -5,7 +5,12 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_MODEL_DELEGATE_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_MODEL_DELEGATE_H_
 
+#include <memory>
 #include <vector>
+
+#include "base/macros.h"
+#include "base/optional.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 
 class Browser;
 class GURL;
@@ -48,7 +53,10 @@ class TabStripModelDelegate {
   // Adds a tab to the model and loads |url| in the tab. If |url| is an empty
   // URL, then the new tab-page is loaded instead. An |index| value of -1
   // means to append the contents to the end of the tab strip.
-  virtual void AddTabAt(const GURL& url, int index, bool foreground) = 0;
+  virtual void AddTabAt(const GURL& url,
+                        int index,
+                        bool foreground,
+                        base::Optional<TabGroupId> group = base::nullopt) = 0;
 
   // Asks for a new TabStripModel to be created and the given web contentses to
   // be added to it. Its size and position are reflected in |window_bounds|.
@@ -59,13 +67,19 @@ class TabStripModelDelegate {
   // about the Browser type. At least fix so that this returns a
   // TabStripModelDelegate, or perhaps even move this code elsewhere.
   struct NewStripContents {
+    NewStripContents();
+    ~NewStripContents();
+    NewStripContents(NewStripContents&&);
     // The WebContents to add.
-    content::WebContents* web_contents;
+    std::unique_ptr<content::WebContents> web_contents;
     // A bitmask of TabStripModel::AddTabTypes to apply to the added contents.
-    int add_types;
+    int add_types = 0;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(NewStripContents);
   };
   virtual Browser* CreateNewStripWithContents(
-      const std::vector<NewStripContents>& contentses,
+      std::vector<NewStripContents> contentses,
       const gfx::Rect& window_bounds,
       bool maximize) = 0;
 

@@ -7,7 +7,6 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
@@ -16,6 +15,7 @@
 #include "content/renderer/pepper/ppb_graphics_3d_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
+#include "media/base/media_util.h"
 #include "media/gpu/ipc/client/gpu_video_decode_accelerator_host.h"
 #include "media/video/picture.h"
 #include "media/video/video_decode_accelerator.h"
@@ -162,14 +162,16 @@ int32_t PPB_VideoDecoder_Impl::Decode(
 
   PPB_Buffer_Impl* buffer = static_cast<PPB_Buffer_Impl*>(enter.object());
   DCHECK_GE(bitstream_buffer->id, 0);
-  media::BitstreamBuffer decode_buffer(bitstream_buffer->id,
-                                       buffer->shared_memory()->handle(),
-                                       bitstream_buffer->size);
+  // TODO(crbug.com/844456): The shared memory buffer probably can be read-only,
+  // but only after PPB_Buffer_Impl is updated to deal with that.
+  media::BitstreamBuffer decode_buffer(
+      bitstream_buffer->id, buffer->shared_memory()->handle(),
+      false /* read_only */, bitstream_buffer->size);
   if (!SetBitstreamBufferCallback(bitstream_buffer->id, callback))
     return PP_ERROR_BADARGUMENT;
 
   FlushCommandBuffer();
-  decoder_->Decode(decode_buffer);
+  decoder_->Decode(std::move(decode_buffer));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -250,6 +252,7 @@ void PPB_VideoDecoder_Impl::ProvidePictureBuffers(
   if (!GetPPP())
     return;
 
+  coded_size_ = dimensions;
   PP_Size out_dim = PP_MakeSize(dimensions.width(), dimensions.height());
   GetPPP()->ProvidePictureBuffers(pp_instance(), pp_resource(),
                                   requested_num_of_buffers, &out_dim,
@@ -262,6 +265,8 @@ void PPB_VideoDecoder_Impl::PictureReady(const media::Picture& picture) {
   DCHECK(RenderThreadImpl::current());
   if (!GetPPP())
     return;
+
+  media::ReportPepperVideoDecoderOutputPictureCountHW(coded_size_.height());
 
   PP_Picture_Dev output;
   output.picture_buffer_id = picture.picture_buffer_id();

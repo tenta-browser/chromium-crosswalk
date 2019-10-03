@@ -8,17 +8,14 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/stringprintf.h"
+#include "components/ntp_tiles/constants.h"
 #include "components/rappor/public/rappor_utils.h"
 
 namespace ntp_tiles {
 namespace metrics {
 
 namespace {
-
-// Maximum number of tiles to record in histograms.
-const int kMaxNumTiles = 12;
 
 const int kLastTitleSource = static_cast<int>(TileTitleSource::LAST);
 
@@ -29,6 +26,8 @@ const char kHistogramPopularName[] = "popular_fetched";
 const char kHistogramBakedInName[] = "popular_baked_in";
 const char kHistogramWhitelistName[] = "whitelist";
 const char kHistogramHomepageName[] = "homepage";
+const char kHistogramCustomLinksName[] = "custom_links";
+const char kHistogramExploreName[] = "explore";
 
 // Suffixes for the various icon types.
 const char kTileTypeSuffixIconColor[] = "IconsColor";
@@ -57,6 +56,10 @@ std::string GetSourceHistogramName(TileSource source) {
       return kHistogramServerName;
     case TileSource::HOMEPAGE:
       return kHistogramHomepageName;
+    case TileSource::CUSTOM_LINKS:
+      return kHistogramCustomLinksName;
+    case TileSource::EXPLORE:
+      return kHistogramExploreName;
   }
   NOTREACHED();
   return std::string();
@@ -84,7 +87,7 @@ const char* GetTileTypeSuffix(TileVisualType type) {
 }  // namespace
 
 void RecordPageImpression(int number_of_tiles) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("NewTabPage.NumberOfTiles", number_of_tiles);
+  base::UmaHistogramSparse("NewTabPage.NumberOfTiles", number_of_tiles);
 }
 
 void RecordTileImpression(const NTPTileImpression& impression,

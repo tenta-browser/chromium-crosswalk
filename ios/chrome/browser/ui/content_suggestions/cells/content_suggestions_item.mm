@@ -9,8 +9,8 @@
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_cell.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_gesture_commands.h"
 #import "ios/chrome/browser/ui/content_suggestions/identifier/content_suggestion_identifier.h"
-#import "ios/chrome/browser/ui/favicon/favicon_attributes.h"
-#import "ios/chrome/browser/ui/favicon/favicon_view.h"
+#import "ios/chrome/common/favicon/favicon_attributes.h"
+#import "ios/chrome/common/favicon/favicon_view.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
@@ -35,23 +35,8 @@
 
 @implementation ContentSuggestionsItem
 
-@synthesize title = _title;
-@synthesize image = _image;
-@synthesize URL = _URL;
-@synthesize publisher = _publisher;
-@synthesize publishDate = _publishDate;
-@synthesize suggestionIdentifier = _suggestionIdentifier;
-@synthesize delegate = _delegate;
-@synthesize imageFetched = _imageFetched;
-@synthesize attributes = _attributes;
-@synthesize faviconURL = _faviconURL;
-@synthesize hasImage = _hasImage;
-@synthesize firstTimeWithImage = _firstTimeWithImage;
-@synthesize readLaterAction = _readLaterAction;
-@synthesize commandHandler = _commandHandler;
-@synthesize score = _score;
-@synthesize fetchDate = _fetchDate;
 @synthesize metricsRecorded = _metricsRecorded;
+@synthesize suggestionIdentifier = _suggestionIdentifier;
 
 - (instancetype)initWithType:(NSInteger)type
                        title:(NSString*)title
@@ -93,7 +78,7 @@
 
 - (CGFloat)cellHeightForWidth:(CGFloat)width {
   return [self.cellClass heightForWidth:width
-                              withImage:self.hasImage
+                     withImageAvailable:self.hasImage
                                   title:self.title
                           publisherName:self.publisher
                         publicationDate:[self relativeDate]];

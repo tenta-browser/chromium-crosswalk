@@ -17,19 +17,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.Callable;
@@ -39,10 +37,7 @@ import java.util.concurrent.ExecutionException;
  * Tests for ChromeTabCreator.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ChromeTabCreatorTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -72,7 +67,7 @@ public class ChromeTabCreatorTest {
     public void testCreateNewTabInBackgroundLowEnd()
             throws ExecutionException, InterruptedException {
         final Tab fgTab = mActivityTestRule.getActivity().getActivityTab();
-        final Tab bgTab = ThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
+        final Tab bgTab = TestThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
             @Override
             public Tab call() {
                 return mActivityTestRule.getActivity().getCurrentTabCreator().createNewTab(
@@ -85,15 +80,12 @@ public class ChromeTabCreatorTest {
         Assert.assertFalse(bgTab.isLoading());
 
         // Switch tabs and verify that the tab is loaded as it gets foregrounded.
-        ChromeTabUtils.waitForTabPageLoaded(bgTab, new Runnable() {
+        ChromeTabUtils.waitForTabPageLoaded(bgTab, mTestServer.getURL(TEST_PATH), new Runnable() {
             @Override
             public void run() {
-                ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-                    @Override
-                    public void run() {
-                        TabModelUtils.setIndex(mActivityTestRule.getActivity().getCurrentTabModel(),
-                                indexOf(bgTab));
-                    }
+                TestThreadUtils.runOnUiThreadBlocking(() -> {
+                    TabModelUtils.setIndex(
+                            mActivityTestRule.getActivity().getCurrentTabModel(), indexOf(bgTab));
                 });
             }
         });
@@ -109,7 +101,7 @@ public class ChromeTabCreatorTest {
     @Feature({"Browser"})
     public void testCreateNewTabInBackground() throws ExecutionException, InterruptedException {
         final Tab fgTab = mActivityTestRule.getActivity().getActivityTab();
-        Tab bgTab = ThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
+        Tab bgTab = TestThreadUtils.runOnUiThreadBlocking(new Callable<Tab>() {
             @Override
             public Tab call() {
                 return mActivityTestRule.getActivity().getCurrentTabCreator().createNewTab(
@@ -125,11 +117,8 @@ public class ChromeTabCreatorTest {
 
     /**
      * Verify that the spare WebContents is used.
-     *
-     * Spare WebContents are not created on low-devices, so don't run the test.
      */
     @Test
-    @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @MediumTest
     @Feature({"Browser"})
     public void testCreateNewTabTakesSpareWebContents() throws Throwable {
@@ -137,7 +126,7 @@ public class ChromeTabCreatorTest {
             @Override
             public void run() {
                 Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
-                WarmupManager.getInstance().createSpareWebContents();
+                WarmupManager.getInstance().createSpareWebContents(!WarmupManager.FOR_CCT);
                 Assert.assertTrue(WarmupManager.getInstance().hasSpareWebContents());
                 mActivityTestRule.getActivity().getCurrentTabCreator().createNewTab(
                         new LoadUrlParams(mTestServer.getURL(TEST_PATH)),

@@ -2,11 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 
-component("native_theme") {
+jumbo_component("native_theme") {
   sources = [
+    "caption_style.cc",
+    "caption_style.h",
+    "caption_style_mac.mm",
+    "caption_style_win.cc",
     "common_theme.cc",
     "common_theme.h",
     "native_theme.cc",
@@ -24,7 +29,7 @@ component("native_theme") {
     "native_theme_observer.h",
   ]
 
-  if (use_aura) {
+  if (use_aura || toolkit_views) {
     sources += [
       "native_theme_aura.cc",
       "native_theme_aura.h",
@@ -36,11 +41,14 @@ component("native_theme") {
 
   defines = [ "NATIVE_THEME_IMPLEMENTATION" ]
 
+  public_deps = [
+    "//skia",
+  ]
+
   deps = [
     "//base",
     "//base/third_party/dynamic_annotations",
     "//cc/paint",
-    "//skia",
     "//ui/base",
     "//ui/display",
     "//ui/gfx",
@@ -52,12 +60,13 @@ component("native_theme") {
     libs = [
       "CoreGraphics.framework",
       "AppKit.framework",
+      "MediaAccessibility.framework",
     ]
   }
 }
 
 if (is_win) {
-  component("native_theme_browser") {
+  jumbo_component("native_theme_browser") {
     defines = [ "NATIVE_THEME_IMPLEMENTATION" ]
 
     # These files cannot work in the renderer on Windows.
@@ -76,8 +85,22 @@ if (is_win) {
     ]
   }
 } else {
-  source_set("native_theme_browser") {
+  jumbo_source_set("native_theme_browser") {
   }
+}
+
+jumbo_source_set("test_support") {
+  testonly = true
+
+  deps = [
+    ":native_theme",
+    "//base",
+  ]
+
+  sources = [
+    "test_native_theme.cc",
+    "test_native_theme.h",
+  ]
 }
 
 test("native_theme_unittests") {
@@ -91,8 +114,16 @@ test("native_theme_unittests") {
     sources += [ "native_theme_mac_unittest.cc" ]
   }
 
+  if (is_win) {
+    sources += [
+      "caption_style_win_unittest.cc",
+      "native_theme_win_unittest.cc",
+    ]
+  }
+
   deps = [
     ":native_theme",
+    ":native_theme_browser",
     "//base/test:run_all_unittests",
     "//base/test:test_support",
     "//skia",

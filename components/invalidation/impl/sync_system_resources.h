@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -23,6 +24,11 @@
 #include "components/invalidation/public/invalidator_state.h"
 #include "google/cacheinvalidation/include/system-resources.h"
 #include "jingle/notifier/base/notifier_options.h"
+
+namespace network {
+class NetworkConnectionTracker;
+class SharedURLLoaderFactoryInfo;
+}  // namespace network
 
 namespace syncer {
 
@@ -69,13 +75,14 @@ class SyncInvalidationScheduler : public invalidation::Scheduler {
   void RunPostedTask(invalidation::Closure* task);
 
   // Holds all posted tasks that have not yet been run.
-  std::set<std::unique_ptr<invalidation::Closure>> posted_tasks_;
+  std::set<std::unique_ptr<invalidation::Closure>, base::UniquePtrComparator>
+      posted_tasks_;
 
   scoped_refptr<base::SingleThreadTaskRunner> const created_on_task_runner_;
   bool is_started_;
   bool is_stopped_;
 
-  base::WeakPtrFactory<SyncInvalidationScheduler> weak_factory_;
+  base::WeakPtrFactory<SyncInvalidationScheduler> weak_factory_{this};
 };
 
 // SyncNetworkChannel implements common tasks needed to interact with
@@ -135,7 +142,9 @@ class INVALIDATION_EXPORT SyncNetworkChannel
   static std::unique_ptr<SyncNetworkChannel> CreatePushClientChannel(
       const notifier::NotifierOptions& notifier_options);
   static std::unique_ptr<SyncNetworkChannel> CreateGCMNetworkChannel(
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+          url_loader_factory_info,
+      network::NetworkConnectionTracker* network_connection_tracker,
       std::unique_ptr<GCMNetworkChannelDelegate> delegate);
 
   // Get the count of how many valid received messages were received.
@@ -168,7 +177,7 @@ class INVALIDATION_EXPORT SyncNetworkChannel
 
   int received_messages_count_;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 };
 
 class SyncStorage : public invalidation::Storage {

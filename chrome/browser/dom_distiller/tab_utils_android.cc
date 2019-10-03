@@ -5,6 +5,7 @@
 #include <string>
 
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/DomDistillerTabUtils_jni.h"
 #include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -13,7 +14,6 @@
 #include "components/url_formatter/url_formatter.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_constants.h"
-#include "jni/DomDistillerTabUtils_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -23,7 +23,6 @@ namespace android {
 
 void JNI_DomDistillerTabUtils_DistillCurrentPageAndView(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_web_contents) {
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(j_web_contents);
@@ -32,7 +31,6 @@ void JNI_DomDistillerTabUtils_DistillCurrentPageAndView(
 
 void JNI_DomDistillerTabUtils_DistillCurrentPage(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_source_web_contents) {
   content::WebContents* source_web_contents =
       content::WebContents::FromJavaWebContents(j_source_web_contents);
@@ -41,7 +39,6 @@ void JNI_DomDistillerTabUtils_DistillCurrentPage(
 
 void JNI_DomDistillerTabUtils_DistillAndView(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_source_web_contents,
     const JavaParamRef<jobject>& j_destination_web_contents) {
   content::WebContents* source_web_contents =
@@ -54,7 +51,6 @@ void JNI_DomDistillerTabUtils_DistillAndView(
 ScopedJavaLocalRef<jstring>
 JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& j_url) {
   GURL url(base::android::ConvertJavaStringToUTF8(env, j_url));
 
@@ -70,27 +66,12 @@ JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
                                     nullptr));
 }
 
-// Returns true if the distiller experiment is set to use any heuristic other
-// than "NONE". This is used to prevent the Reader Mode panel from loading
-// when it would otherwise never be shown.
-jboolean JNI_DomDistillerTabUtils_IsDistillerHeuristicsEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
-  return dom_distiller::GetDistillerHeuristicsType()
-      != dom_distiller::DistillerHeuristicsType::NONE;
-}
-
-// Returns true if distiller is reporting every page as distillable.
-jboolean JNI_DomDistillerTabUtils_IsHeuristicAlwaysTrue(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
-  return dom_distiller::GetDistillerHeuristicsType()
-      == dom_distiller::DistillerHeuristicsType::ALWAYS_TRUE;
+jint JNI_DomDistillerTabUtils_GetDistillerHeuristics(JNIEnv* env) {
+  return static_cast<jint>(dom_distiller::GetDistillerHeuristicsType());
 }
 
 void JNI_DomDistillerTabUtils_SetInterceptNavigationDelegate(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& delegate,
     const JavaParamRef<jobject>& j_web_contents) {
   content::WebContents* web_contents =
@@ -98,7 +79,7 @@ void JNI_DomDistillerTabUtils_SetInterceptNavigationDelegate(
   DCHECK(web_contents);
   navigation_interception::InterceptNavigationDelegate::Associate(
       web_contents,
-      base::MakeUnique<navigation_interception::InterceptNavigationDelegate>(
+      std::make_unique<navigation_interception::InterceptNavigationDelegate>(
           env, delegate));
 }
 

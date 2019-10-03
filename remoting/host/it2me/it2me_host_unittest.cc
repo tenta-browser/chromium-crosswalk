@@ -10,24 +10,26 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/policy/policy_constants.h"
+#include "net/base/network_change_notifier.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/chromoting_host.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/policy_watcher.h"
+#include "remoting/host/xmpp_register_support_host_request.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/transport_context.h"
 #include "remoting/signaling/fake_signal_strategy.h"
+#include "remoting/signaling/xmpp_log_to_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_LINUX)
@@ -94,7 +96,7 @@ void FakeIt2MeConfirmationDialog::Show(const std::string& remote_user_email,
   EXPECT_STREQ(remote_user_email_.c_str(), remote_user_email.c_str());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, dialog_result_));
+      FROM_HERE, base::BindOnce(callback, dialog_result_));
 }
 
 class FakeIt2MeDialogFactory : public It2MeConfirmationDialogFactory {
@@ -112,9 +114,12 @@ class FakeIt2MeDialogFactory : public It2MeConfirmationDialogFactory {
     remote_user_email_ = remote_user_email;
   }
 
+  bool dialog_created() const { return dialog_created_; }
+
  private:
   std::string remote_user_email_;
   DialogResult dialog_result_ = DialogResult::OK;
+  bool dialog_created_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FakeIt2MeDialogFactory);
 };
@@ -126,7 +131,8 @@ FakeIt2MeDialogFactory::~FakeIt2MeDialogFactory() = default;
 
 std::unique_ptr<It2MeConfirmationDialog> FakeIt2MeDialogFactory::Create() {
   EXPECT_FALSE(remote_user_email_.empty());
-  return base::MakeUnique<FakeIt2MeConfirmationDialog>(remote_user_email_,
+  dialog_created_ = true;
+  return std::make_unique<FakeIt2MeConfirmationDialog>(remote_user_email_,
                                                        dialog_result_);
 }
 
@@ -158,7 +164,7 @@ class It2MeHostTest : public testing::Test, public It2MeHost::Observer {
 
   void RunValidationCallback(const std::string& remote_jid);
 
-  void StartHost();
+  void StartHost(bool enable_dialogs = true);
   void ShutdownHost();
 
   static base::ListValue MakeList(
@@ -182,9 +188,12 @@ class It2MeHostTest : public testing::Test, public It2MeHost::Observer {
  private:
   void StartupHostStateHelper(const base::Closure& quit_closure);
 
-  std::unique_ptr<base::MessageLoop> message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
   std::unique_ptr<base::RunLoop> run_loop_;
   std::unique_ptr<FakeSignalStrategy> fake_bot_signal_strategy_;
+
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
 
   std::unique_ptr<ChromotingHostContext> host_context_;
   scoped_refptr<AutoThreadTaskRunner> network_task_runner_;
@@ -204,8 +213,9 @@ void It2MeHostTest::SetUp() {
   // network thread. base::GetLinuxDistro() caches the result.
   base::GetLinuxDistro();
 #endif
-  message_loop_.reset(new base::MessageLoop());
   run_loop_.reset(new base::RunLoop());
+
+  network_change_notifier_ = net::NetworkChangeNotifier::Create();
 
   host_context_ = ChromotingHostContext::Create(new AutoThreadTaskRunner(
       base::ThreadTaskRunnerHandle::Get(), run_loop_->QuitClosure()));
@@ -236,7 +246,7 @@ void It2MeHostTest::OnValidationComplete(const base::Closure& resume_callback,
 void It2MeHostTest::SetPolicies(
     std::initializer_list<std::pair<base::StringPiece, const base::Value&>>
         policies) {
-  policies_ = base::MakeUnique<base::DictionaryValue>();
+  policies_ = std::make_unique<base::DictionaryValue>();
   for (const auto& policy : policies) {
     policies_->Set(policy.first, policy.second.CreateDeepCopy());
   }
@@ -249,8 +259,8 @@ void It2MeHostTest::StartupHostStateHelper(const base::Closure& quit_closure) {
   if (last_host_state_ == It2MeHostState::kRequestedAccessCode) {
     network_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&It2MeHost::SetStateForTesting, it2me_host_.get(),
-                   It2MeHostState::kReceivedAccessCode, ErrorCode::OK));
+        base::BindOnce(&It2MeHost::SetStateForTesting, it2me_host_.get(),
+                       It2MeHostState::kReceivedAccessCode, ErrorCode::OK));
   } else if (last_host_state_ != It2MeHostState::kStarting) {
     quit_closure.Run();
     return;
@@ -259,7 +269,7 @@ void It2MeHostTest::StartupHostStateHelper(const base::Closure& quit_closure) {
                                       base::Unretained(this), quit_closure);
 }
 
-void It2MeHostTest::StartHost() {
+void It2MeHostTest::StartHost(bool enable_dialogs) {
   if (!policies_) {
     policies_ = PolicyWatcher::GetDefaultPolicies();
   }
@@ -271,15 +281,27 @@ void It2MeHostTest::StartHost() {
   protocol::IceConfig ice_config;
   ice_config.stun_servers.push_back(rtc::SocketAddress(kTestStunServer, 100));
   ice_config.expiration_time =
-      base::Time::Now() + base::TimeDelta::FromHours(1);
+      base::Time::Now() + base::TimeDelta::FromHours(2);
 
   auto fake_signal_strategy =
-      base::MakeUnique<FakeSignalStrategy>(SignalingAddress("fake_local_jid"));
+      std::make_unique<FakeSignalStrategy>(SignalingAddress("fake_local_jid"));
   fake_bot_signal_strategy_->ConnectTo(fake_signal_strategy.get());
 
   it2me_host_ = new It2MeHost();
+  if (!enable_dialogs) {
+    // Only ChromeOS supports this method, so tests setting enable_dialogs to
+    // false should only be run on ChromeOS.
+    it2me_host_->set_enable_dialogs(enable_dialogs);
+  }
+  auto register_host_request =
+      std::make_unique<XmppRegisterSupportHostRequest>("fake_bot_jid");
+  auto log_to_server = std::make_unique<XmppLogToServer>(
+      ServerLogEntry::IT2ME, fake_signal_strategy.get(), "fake_bot_jid",
+      host_context_->network_task_runner());
   it2me_host_->Connect(host_context_->Copy(), policies_->CreateDeepCopy(),
-                       std::move(dialog_factory), weak_factory_.GetWeakPtr(),
+                       std::move(dialog_factory),
+                       std::move(register_host_request),
+                       std::move(log_to_server), weak_factory_.GetWeakPtr(),
                        std::move(fake_signal_strategy), kTestUserName,
                        "fake_bot_jid", ice_config);
 
@@ -306,9 +328,10 @@ void It2MeHostTest::RunValidationCallback(const std::string& remote_jid) {
 
   network_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(it2me_host_->GetValidationCallbackForTesting(), remote_jid,
-                 base::Bind(&It2MeHostTest::OnValidationComplete,
-                            base::Unretained(this), run_loop.QuitClosure())));
+      base::BindOnce(
+          it2me_host_->GetValidationCallbackForTesting(), remote_jid,
+          base::Bind(&It2MeHostTest::OnValidationComplete,
+                     base::Unretained(this), run_loop.QuitClosure())));
 
   run_loop.Run();
 }
@@ -325,7 +348,7 @@ void It2MeHostTest::OnStateChanged(It2MeHostState state, ErrorCode error_code) {
 
   if (state_change_callback_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::ResetAndReturn(&state_change_callback_));
+        FROM_HERE, std::move(state_change_callback_));
   }
 }
 
@@ -602,5 +625,14 @@ TEST_F(It2MeHostTest, MultipleConnectionsTriggerDisconnect) {
   RunUntilStateChanged(It2MeHostState::kDisconnected);
   ASSERT_EQ(It2MeHostState::kDisconnected, last_host_state_);
 }
+
+#if defined(OS_CHROMEOS)
+TEST_F(It2MeHostTest, ConnectRespectsNoDialogsParameter) {
+  StartHost(false);
+  EXPECT_FALSE(dialog_factory_->dialog_created());
+  EXPECT_FALSE(
+      GetHost()->desktop_environment_options().enable_user_interface());
+}
+#endif
 
 }  // namespace remoting

@@ -8,7 +8,6 @@
 
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "remoting/proto/video.pb.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 
@@ -25,11 +24,11 @@ void FakeVideoStub::set_on_frame_callback(base::Closure on_frame_callback) {
 
 void FakeVideoStub::ProcessVideoPacket(
     std::unique_ptr<VideoPacket> video_packet,
-    const base::Closure& done) {
+    base::OnceClosure done) {
   CHECK(thread_checker_.CalledOnValidThread());
   received_packets_.push_back(std::move(video_packet));
   if (!done.is_null())
-    done.Run();
+    std::move(done).Run();
   if (!on_frame_callback_.is_null())
     on_frame_callback_.Run();
 }
@@ -45,7 +44,7 @@ void FakeFrameConsumer::set_on_frame_callback(base::Closure on_frame_callback) {
 std::unique_ptr<webrtc::DesktopFrame> FakeFrameConsumer::AllocateFrame(
     const webrtc::DesktopSize& size) {
   CHECK(thread_checker_.CalledOnValidThread());
-  return base::MakeUnique<webrtc::BasicDesktopFrame>(size);
+  return std::make_unique<webrtc::BasicDesktopFrame>(size);
 }
 
 void FakeFrameConsumer::DrawFrame(std::unique_ptr<webrtc::DesktopFrame> frame,

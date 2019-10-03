@@ -7,11 +7,15 @@
 
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
+#include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "storage/browser/database/database_tracker.h"
-#include "storage/common/quota/quota_types.h"
-#include "third_party/WebKit/public/platform/modules/webdatabase/web_database.mojom.h"
+#include "third_party/blink/public/mojom/webdatabase/web_database.mojom.h"
 
 namespace url {
 class Origin;
@@ -19,18 +23,24 @@ class Origin;
 
 namespace content {
 
-class WebDatabaseHostImpl : public blink::mojom::WebDatabaseHost,
-                            public storage::DatabaseTracker::Observer {
+class CONTENT_EXPORT WebDatabaseHostImpl
+    : public blink::mojom::WebDatabaseHost,
+      public storage::DatabaseTracker::Observer {
  public:
-  WebDatabaseHostImpl(int proess_id,
+  WebDatabaseHostImpl(int process_id,
                       scoped_refptr<storage::DatabaseTracker> db_tracker);
   ~WebDatabaseHostImpl() override;
 
-  static void Create(int process_id,
-                     scoped_refptr<storage::DatabaseTracker> db_tracker,
-                     blink::mojom::WebDatabaseHostRequest request);
+  static void Create(
+      int process_id,
+      scoped_refptr<storage::DatabaseTracker> db_tracker,
+      mojo::PendingReceiver<blink::mojom::WebDatabaseHost> receiver);
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, BadMessagesUnauthorized);
+  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, BadMessagesInvalid);
+  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, ProcessShutdown);
+
   // blink::mojom::WebDatabaseHost:
   void OpenFile(const base::string16& vfs_file_name,
                 int32_t desired_flags,
@@ -86,6 +96,50 @@ class WebDatabaseHostImpl : public blink::mojom::WebDatabaseHost,
   // exist.
   blink::mojom::WebDatabase& GetWebDatabase();
 
+  // blink::mojom::WebDatabaseHost methods called after ValidateOrigin()
+  // successfully validates the origin.
+  void OpenFileValidated(const base::string16& vfs_file_name,
+                         int32_t desired_flags,
+                         OpenFileCallback callback);
+
+  void GetFileAttributesValidated(const base::string16& vfs_file_name,
+                                  GetFileAttributesCallback callback);
+
+  void GetFileSizeValidated(const base::string16& vfs_file_name,
+                            GetFileSizeCallback callback);
+
+  void SetFileSizeValidated(const base::string16& vfs_file_name,
+                            int64_t expected_size,
+                            SetFileSizeCallback callback);
+
+  void GetSpaceAvailableValidated(const url::Origin& origin,
+                                  GetSpaceAvailableCallback callback);
+
+  void OpenedValidated(const url::Origin& origin,
+                       const base::string16& database_name,
+                       const base::string16& database_description,
+                       int64_t estimated_size);
+
+  void ModifiedValidated(const url::Origin& origin,
+                         const base::string16& database_name);
+
+  void ClosedValidated(const url::Origin& origin,
+                       const base::string16& database_name);
+
+  void HandleSqliteErrorValidated(const url::Origin& origin,
+                                  const base::string16& database_name,
+                                  int32_t error);
+
+  // Asynchronously calls |callback| but only if |process_id_| has permission to
+  // access the passed |origin|.  Must be called from within the context of a
+  // mojo call. Invalid calls will report a bad message, which will terminate
+  // the calling process.
+  void ValidateOrigin(const url::Origin& origin, base::OnceClosure callback);
+
+  // As above, but for calls where the origin is embedded in a VFS filename.
+  // Empty filenames signalling a temp file are permitted.
+  void ValidateOrigin(const base::string16& vfs_file_name,
+                      base::OnceClosure callback);
   // Our render process host ID, used to bind to the correct render process.
   const int process_id_;
 
@@ -97,10 +151,14 @@ class WebDatabaseHostImpl : public blink::mojom::WebDatabaseHost,
   storage::DatabaseConnections database_connections_;
 
   // Interface to the render process WebDatabase.
-  blink::mojom::WebDatabasePtr database_provider_;
+  mojo::Remote<blink::mojom::WebDatabase> database_provider_;
 
   // The database tracker for the current browser context.
   const scoped_refptr<storage::DatabaseTracker> db_tracker_;
+
+  // Note: This should remain the last member so it'll be destroyed and
+  // invalidate its weak pointers before any other members are destroyed.
+  base::WeakPtrFactory<WebDatabaseHostImpl> weak_ptr_factory_{this};
 };
 
 }  // namespace content

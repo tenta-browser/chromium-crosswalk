@@ -12,6 +12,7 @@ platforms is planned.
 import collections
 import errno
 import glob
+import multiprocessing
 import optparse
 import os
 import Queue
@@ -22,26 +23,11 @@ import sys
 import threading
 
 
-CONCURRENT_TASKS=4
+CONCURRENT_TASKS=multiprocessing.cpu_count()
 
 # The BINARY_INFO tuple describes a binary as dump_syms identifies it.
 BINARY_INFO = collections.namedtuple('BINARY_INFO',
                                      ['platform', 'arch', 'hash', 'name'])
-
-
-def GetCommandOutput(command):
-  """Runs the command list, returning its output.
-
-  Prints the given command (which should be a list of one or more strings),
-  then runs it and returns its output (stdout) as a string.
-
-  From chromium_utils.
-  """
-  devnull = open(os.devnull, 'w')
-  proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=devnull,
-                          bufsize=1)
-  output = proc.communicate()[0]
-  return output
 
 
 def GetDumpSymsBinary(build_dir=None):
@@ -67,8 +53,7 @@ def Resolve(path, exe_path, loader_path, rpaths):
   path = path.replace('@executable_path', exe_path)
   if path.find('@rpath') != -1:
     for rpath in rpaths:
-      new_path = Resolve(path.replace('@rpath', rpath), exe_path, loader_path,
-                         [])
+      new_path = path.replace('@rpath', rpath)
       if os.access(new_path, os.X_OK):
         return new_path
     return ''
@@ -76,49 +61,132 @@ def Resolve(path, exe_path, loader_path, rpaths):
 
 
 def GetSharedLibraryDependenciesLinux(binary):
-  """Return absolute paths to all shared library dependecies of the binary.
+  """Return absolute paths to all shared library dependencies of the binary.
 
   This implementation assumes that we're running on a Linux system."""
-  ldd = GetCommandOutput(['ldd', binary])
+  ldd = subprocess.check_output(['ldd', binary])
   lib_re = re.compile('\t.* => (.+) \(.*\)$')
   result = []
   for line in ldd.splitlines():
     m = lib_re.match(line)
     if m:
-      result.append(m.group(1))
+      result.append(os.path.abspath(m.group(1)))
   return result
 
 
+def GetSharedLibraryDependenciesAndroid(binary):
+  """Return absolute paths to all shared library dependencies of the binary.
+
+  This implementation assumes that we're running on a Linux system, but
+  compiled for Android."""
+  readelf = subprocess.check_output(['readelf', '-d', binary])
+  lib_re = re.compile('Shared library: \[(.+)\]$')
+  result = []
+  binary_path = os.path.dirname(os.path.abspath(binary))
+  for line in readelf.splitlines():
+    m = lib_re.search(line)
+    if m:
+      lib = os.path.join(binary_path, m.group(1))
+      if os.access(lib, os.X_OK):
+        result.append(lib)
+  return result
+
+
+def GetDeveloperDirMac():
+  """Finds a good DEVELOPER_DIR value to run Mac dev tools.
+
+  It checks the existing DEVELOPER_DIR and `xcode-select -p` and uses
+  one of those if the folder exists, and falls back to one of the
+  existing system folders with dev tools.
+
+  Returns:
+    (string) path to assign to DEVELOPER_DIR env var.
+  """
+  candidate_paths = []
+  if 'DEVELOPER_DIR' in os.environ:
+    candidate_paths.append(os.environ['DEVELOPER_DIR'])
+  candidate_paths.extend([
+    subprocess.check_output(['xcode-select', '-p']).strip(),
+    # Most Mac 10.1[0-2] bots have at least one Xcode installed.
+    '/Applications/Xcode.app',
+    '/Applications/Xcode9.0.app',
+    '/Applications/Xcode8.0.app',
+    # Mac 10.13 bots don't have any Xcode installed, but have CLI tools as a
+    # temporary workaround.
+    '/Library/Developer/CommandLineTools',
+  ])
+  for path in candidate_paths:
+    if os.path.exists(path):
+      return path
+  print 'WARNING: no value found for DEVELOPER_DIR. Some commands may fail.'
+
+
 def GetSharedLibraryDependenciesMac(binary, exe_path):
-  """Return absolute paths to all shared library dependecies of the binary.
+  """Return absolute paths to all shared library dependencies of the binary.
 
   This implementation assumes that we're running on a Mac system."""
-  loader_path = os.path.dirname(binary)
-  otool = GetCommandOutput(['otool', '-l', binary]).splitlines()
+  # realpath() serves two purposes:
+  # 1. If an executable is linked against a framework, it links against
+  #    Framework.framework/Framework, which is a symlink to
+  #    Framework.framework/Framework/Versions/A/Framework. rpaths are relative
+  #    to the real location, so resolving the symlink is important.
+  # 2. It converts binary to an absolute path. If binary is just
+  #    "foo.dylib" in the current directory, dirname() would return an empty
+  #    string, causing "@loader_path/foo" to incorrectly expand to "/foo".
+  loader_path = os.path.dirname(os.path.realpath(binary))
+  env = os.environ.copy()
+  developer_dir = GetDeveloperDirMac()
+  if developer_dir:
+    env['DEVELOPER_DIR'] = developer_dir
+  otool = subprocess.check_output(['otool', '-l', binary], env=env).splitlines()
   rpaths = []
+  dylib_id = None
   for idx, line in enumerate(otool):
     if line.find('cmd LC_RPATH') != -1:
       m = re.match(' *path (.*) \(offset .*\)$', otool[idx+2])
-      rpaths.append(m.group(1))
+      rpath = m.group(1)
+      rpath = rpath.replace('@loader_path', loader_path)
+      rpath = rpath.replace('@executable_path', exe_path)
+      rpaths.append(rpath)
+    elif line.find('cmd LC_ID_DYLIB') != -1:
+      m = re.match(' *name (.*) \(offset .*\)$', otool[idx+2])
+      dylib_id = m.group(1)
+  # `man dyld` says that @rpath is resolved against a stack of LC_RPATHs from
+  # all executable images leading to the load of the current module. This is
+  # intentionally not implemented here, since we require that every .dylib
+  # contains all the rpaths it needs on its own, without relying on rpaths of
+  # the loading executables.
 
-  otool = GetCommandOutput(['otool', '-L', binary]).splitlines()
+  otool = subprocess.check_output(['otool', '-L', binary], env=env).splitlines()
   lib_re = re.compile('\t(.*) \(compatibility .*\)$')
   deps = []
   for line in otool:
     m = lib_re.match(line)
     if m:
+      # For frameworks and shared libraries, `otool -L` prints the LC_ID_DYLIB
+      # as the first line. Filter that out.
+      if m.group(1) == dylib_id:
+        continue
       dep = Resolve(m.group(1), exe_path, loader_path, rpaths)
       if dep:
         deps.append(os.path.normpath(dep))
+      else:
+        print >>sys.stderr, (
+            'ERROR: failed to resolve %s, exe_path %s, loader_path %s, '
+            'rpaths %s' % (m.group(1), exe_path, loader_path,
+                           ', '.join(rpaths)))
+        sys.exit(1)
   return deps
 
 
 def GetSharedLibraryDependencies(options, binary, exe_path):
-  """Return absolute paths to all shared library dependecies of the binary."""
+  """Return absolute paths to all shared library dependencies of the binary."""
   deps = []
-  if sys.platform.startswith('linux'):
+  if options.platform == 'linux2':
     deps = GetSharedLibraryDependenciesLinux(binary)
-  elif sys.platform == 'darwin':
+  elif options.platform == 'android':
+    deps = GetSharedLibraryDependenciesAndroid(binary)
+  elif options.platform == 'darwin':
     deps = GetSharedLibraryDependenciesMac(binary, exe_path)
   else:
     print "Platform not supported."
@@ -131,6 +199,29 @@ def GetSharedLibraryDependencies(options, binary, exe_path):
         os.path.abspath(os.path.dirname(dep)).startswith(build_dir)):
       result.append(dep)
   return result
+
+
+def GetTransitiveDependencies(options):
+  """Return absolute paths to the transitive closure of all shared library
+     dependencies of the binary, along with the binary itself."""
+  binary = os.path.abspath(options.binary)
+  exe_path = os.path.dirname(binary)
+  if options.platform == 'linux2':
+    # 'ldd' returns all transitive dependencies for us.
+    deps = set(GetSharedLibraryDependencies(options, binary, exe_path))
+    deps.add(binary)
+    return list(deps)
+  elif options.platform == 'darwin' or options.platform == 'android':
+    binaries = set([binary])
+    queue = [binary]
+    while queue:
+      deps = GetSharedLibraryDependencies(options, queue.pop(0), exe_path)
+      new_deps = set(deps) - binaries
+      binaries |= new_deps
+      queue.extend(list(new_deps))
+    return binaries
+  print "Platform not supported."
+  sys.exit(1)
 
 
 def mkdir_p(path):
@@ -150,6 +241,18 @@ def GetBinaryInfoFromHeaderInfo(header_info):
   if len(info_split) != 5 or info_split[0] != 'MODULE':
     return None
   return BINARY_INFO(*info_split[1:])
+
+
+def CreateSymbolDir(options, output_dir):
+  """Create the directory to store breakpad symbols in. On Android, we also
+     create a symlink in case the hash in the binary is missing."""
+  mkdir_p(output_dir)
+  if options.platform == 'android':
+    try:
+      os.symlink(output_dir, os.path.join(os.path.dirname(output_dir),
+                 '000000000000000000000000000000000'))
+    except:
+      pass
 
 
 def GenerateSymbols(options, binaries):
@@ -175,15 +278,16 @@ def GenerateSymbols(options, binaries):
           break
 
         binary_info = GetBinaryInfoFromHeaderInfo(
-            GetCommandOutput([dump_syms, '-i', binary]).splitlines()[0])
+            subprocess.check_output([dump_syms, '-i', binary]).splitlines()[0])
         if not binary_info:
           should_dump_syms = False
           reason = "Could not obtain binary information."
           break
 
         # See if the output file already exists.
-        output_path = os.path.join(options.symbols_dir, binary_info.name,
-                                   binary_info.hash, binary_info.name + '.sym')
+        output_dir = os.path.join(options.symbols_dir, binary_info.name,
+                                  binary_info.hash)
+        output_path = os.path.join(output_dir, binary_info.name + '.sym')
         if os.path.isfile(output_path):
           should_dump_syms = False
           reason = "Symbol file already found."
@@ -195,7 +299,7 @@ def GenerateSymbols(options, binaries):
           with open(potential_symbol_file, 'rt') as f:
             symbol_info = GetBinaryInfoFromHeaderInfo(f.readline())
           if symbol_info == binary_info:
-            mkdir_p(os.path.dirname(output_path))
+            CreateSymbolDir(options, output_dir)
             shutil.copyfile(potential_symbol_file, output_path)
             should_dump_syms = False
             reason = "Found local symbol file."
@@ -212,11 +316,10 @@ def GenerateSymbols(options, binaries):
         with print_lock:
           print "Generating symbols for %s" % binary
 
-      syms = GetCommandOutput([dump_syms, '-r', binary])
-      mkdir_p(os.path.dirname(output_path))
+      CreateSymbolDir(options, output_dir)
       try:
         with open(output_path, 'wb') as f:
-          f.write(syms)
+          subprocess.check_call([dump_syms, '-r', binary], stdout=f)
       except Exception, e:
         # Not much we can do about this.
         with print_lock:
@@ -250,6 +353,8 @@ def main():
                     type='int', help='Number of parallel tasks to run.')
   parser.add_option('-v', '--verbose', action='store_true',
                     help='Print verbose status output.')
+  parser.add_option('', '--platform', default=sys.platform,
+                    help='Target platform of the binary.')
 
   (options, _) = parser.parse_args()
 
@@ -279,14 +384,7 @@ def main():
     return 1
 
   # Build the transitive closure of all dependencies.
-  binaries = set([options.binary])
-  queue = [options.binary]
-  exe_path = os.path.dirname(options.binary)
-  while queue:
-    deps = GetSharedLibraryDependencies(options, queue.pop(0), exe_path)
-    new_deps = set(deps) - binaries
-    binaries |= new_deps
-    queue.extend(list(new_deps))
+  binaries = GetTransitiveDependencies(options)
 
   GenerateSymbols(options, binaries)
 

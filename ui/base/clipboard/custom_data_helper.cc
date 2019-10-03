@@ -103,7 +103,7 @@ void ReadCustomDataIntoMap(
       result->clear();
       return;
     }
-    auto insert_result = result->insert(std::make_pair(type, base::string16()));
+    auto insert_result = result->insert({type, base::string16()});
     if (!iter.ReadString16(&insert_result.first->second)) {
       // Data is corrupt, return an empty map.
       result->clear();
@@ -114,6 +114,16 @@ void ReadCustomDataIntoMap(
 
 void WriteCustomDataToPickle(
     const std::unordered_map<base::string16, base::string16>& data,
+    base::Pickle* pickle) {
+  pickle->WriteUInt32(data.size());
+  for (const auto& it : data) {
+    pickle->WriteString16(it.first);
+    pickle->WriteString16(it.second);
+  }
+}
+
+void WriteCustomDataToPickle(
+    const base::flat_map<base::string16, base::string16>& data,
     base::Pickle* pickle) {
   pickle->WriteUInt32(data.size());
   for (const auto& it : data) {

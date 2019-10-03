@@ -9,12 +9,13 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "components/drive/chromeos/drive_test_util.h"
 #include "google_apis/drive/test_util.h"
@@ -32,8 +33,8 @@ class LocalFileReaderAdapter {
   explicit LocalFileReaderAdapter(LocalFileReader* reader) : reader_(reader) {}
   int Read(net::IOBuffer* buffer,
            int buffer_length,
-           const net::CompletionCallback& callback) {
-    reader_->Read(buffer, buffer_length, callback);
+           net::CompletionOnceCallback callback) {
+    reader_->Read(buffer, buffer_length, std::move(callback));
     // As LocalFileReader::Read always works asynchronously,
     // return ERR_IO_PENDING.
     return net::ERR_IO_PENDING;
@@ -49,13 +50,13 @@ class LocalFileReaderTest : public ::testing::Test {
  protected:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    worker_thread_.reset(new base::Thread("LocalFileReaderTest"));
+    worker_thread_ = std::make_unique<base::Thread>("LocalFileReaderTest");
     ASSERT_TRUE(worker_thread_->Start());
-    file_reader_.reset(
-        new LocalFileReader(worker_thread_->task_runner().get()));
+    file_reader_ =
+        std::make_unique<LocalFileReader>(worker_thread_->task_runner().get());
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<base::Thread> worker_thread_;
   std::unique_ptr<LocalFileReader> file_reader_;

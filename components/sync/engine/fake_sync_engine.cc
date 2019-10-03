@@ -4,32 +4,45 @@
 
 #include "components/sync/engine/fake_sync_engine.h"
 
-#include "components/sync/engine/activation_context.h"
+#include "components/sync/engine/data_type_activation_response.h"
 #include "components/sync/engine/sync_engine_host.h"
+#include "components/sync/model/model_type_controller_delegate.h"
 
 namespace syncer {
+namespace {
 
 const char kTestCacheGuid[] = "test-guid";
+const char kTestBirthday[] = "1";
 
-FakeSyncEngine::FakeSyncEngine() : fail_initial_download_(false) {}
+}  // namespace
+
+FakeSyncEngine::FakeSyncEngine() {}
 FakeSyncEngine::~FakeSyncEngine() {}
 
 void FakeSyncEngine::Initialize(InitParams params) {
+  bool success = !fail_initial_download_;
+  initialized_ = success;
   params.host->OnEngineInitialized(ModelTypeSet(), WeakHandle<JsBackend>(),
                                    WeakHandle<DataTypeDebugInfoListener>(),
-                                   kTestCacheGuid, !fail_initial_download_);
+                                   kTestCacheGuid, kTestBirthday,
+                                   /*bag_of_chips=*/"", success);
+}
+
+bool FakeSyncEngine::IsInitialized() const {
+  return initialized_;
 }
 
 void FakeSyncEngine::TriggerRefresh(const ModelTypeSet& types) {}
 
 void FakeSyncEngine::UpdateCredentials(const SyncCredentials& credentials) {}
 
+void FakeSyncEngine::InvalidateCredentials() {}
+
 void FakeSyncEngine::StartConfiguration() {}
 
 void FakeSyncEngine::StartSyncingWithServer() {}
 
-void FakeSyncEngine::SetEncryptionPassphrase(const std::string& passphrase,
-                                             bool is_explicit) {}
+void FakeSyncEngine::SetEncryptionPassphrase(const std::string& passphrase) {}
 
 void FakeSyncEngine::SetDecryptionPassphrase(const std::string& passphrase) {}
 
@@ -54,7 +67,7 @@ void FakeSyncEngine::DeactivateDirectoryDataType(ModelType type) {}
 
 void FakeSyncEngine::ActivateNonBlockingDataType(
     ModelType type,
-    std::unique_ptr<ActivationContext> activation_context) {}
+    std::unique_ptr<DataTypeActivationResponse> activation_response) {}
 
 void FakeSyncEngine::DeactivateNonBlockingDataType(ModelType type) {}
 
@@ -62,23 +75,16 @@ UserShare* FakeSyncEngine::GetUserShare() const {
   return nullptr;
 }
 
-SyncEngine::Status FakeSyncEngine::GetDetailedStatus() {
-  return SyncEngine::Status();
+SyncStatus FakeSyncEngine::GetDetailedStatus() {
+  return SyncStatus();
 }
 
-bool FakeSyncEngine::HasUnsyncedItems() const {
-  return false;
-}
-
-bool FakeSyncEngine::IsCryptographerReady(const BaseTransaction* trans) const {
-  return false;
-}
+void FakeSyncEngine::HasUnsyncedItemsForTest(
+    base::OnceCallback<void(bool)> cb) const {}
 
 void FakeSyncEngine::GetModelSafeRoutingInfo(ModelSafeRoutingInfo* out) const {}
 
 void FakeSyncEngine::FlushDirectory() const {}
-
-void FakeSyncEngine::RefreshTypesForTest(ModelTypeSet types) {}
 
 void FakeSyncEngine::RequestBufferedProtocolEventsAndEnableForwarding() {}
 
@@ -92,10 +98,6 @@ void FakeSyncEngine::set_fail_initial_download(bool should_fail) {
   fail_initial_download_ = should_fail;
 }
 
-void FakeSyncEngine::ClearServerData(const base::Closure& callback) {
-  callback.Run();
-}
-
 void FakeSyncEngine::OnCookieJarChanged(bool account_mismatch,
                                         bool empty_jar,
                                         const base::Closure& callback) {
@@ -103,5 +105,7 @@ void FakeSyncEngine::OnCookieJarChanged(bool account_mismatch,
     callback.Run();
   }
 }
+
+void FakeSyncEngine::SetInvalidationsForSessionsEnabled(bool enabled) {}
 
 }  // namespace syncer

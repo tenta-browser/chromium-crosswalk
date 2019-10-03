@@ -4,125 +4,58 @@
 
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 
-#include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/clear_browsing_data_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
-#import "ios/chrome/browser/ui/material_components/app_bar_presenting.h"
 #import "ios/chrome/browser/ui/material_components/utils.h"
-#import "ios/chrome/browser/ui/settings/accounts_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/autofill_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/clear_browsing_data_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/import_data_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/save_passwords_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
-#import "ios/chrome/browser/ui/settings/sync_encryption_passphrase_collection_view_controller.h"
-#import "ios/chrome/browser/ui/settings/sync_settings_collection_view_controller.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_credit_card_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_profile_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/google_services/accounts_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/google_services/google_services_settings_coordinator.h"
+#import "ios/chrome/browser/ui/settings/google_services/google_services_settings_view_controller.h"
+#import "ios/chrome/browser/ui/settings/import_data_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/password/passwords_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/settings_root_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/settings_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/sync/sync_encryption_passphrase_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/sync/sync_settings_table_view_controller.h"
+#import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/user_feedback/user_feedback_provider.h"
-#import "ios/third_party/material_components_ios/src/components/AppBar/src/MaterialAppBar.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-// TODO(crbug.com/785484): Implements workarounds for bugs between iOS and MDC.
-// To be removed or refactored when iOS 9 is dropped.
-@interface SettingsAppBarContainerViewController
-    : MDCAppBarContainerViewController
-@end
+NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 
-@implementation SettingsAppBarContainerViewController
+@interface SettingsNavigationController () <
+    GoogleServicesSettingsCoordinatorDelegate>
 
-#pragma mark - Status bar
-
-- (UIViewController*)childViewControllerForStatusBarHidden {
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/785484): Remove the entire method override when iOS 9 is
-    // dropped.
-    return self.contentViewController;
-  } else {
-    return [super childViewControllerForStatusBarHidden];
-  }
-}
-
-// TODO(crbug.com/785484): Investigate if this can be fixed in MDC.
-- (void)viewDidLayoutSubviews {
-  [super viewDidLayoutSubviews];
-
-  UILayoutGuide* safeAreaLayoutGuide = SafeAreaLayoutGuideForView(self.view);
-  UIView* contentView = self.contentViewController.view;
-  UIView* headerView = self.appBar.headerViewController.headerView;
-  contentView.translatesAutoresizingMaskIntoConstraints = NO;
-  [NSLayoutConstraint activateConstraints:@[
-    [contentView.topAnchor constraintEqualToAnchor:headerView.bottomAnchor],
-    [contentView.leadingAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.leadingAnchor],
-    [contentView.trailingAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.trailingAnchor],
-    [contentView.bottomAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.bottomAnchor],
-  ]];
-}
-
-- (UIViewController*)childViewControllerForStatusBarStyle {
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/620361): Remove the entire method override when iOS 9 is
-    // dropped.
-    return self.contentViewController;
-  } else {
-    return [super childViewControllerForStatusBarStyle];
-  }
-}
-
-@end
-
-@interface SettingsNavigationController ()<UIGestureRecognizerDelegate>
-
-// Sets up the UI.  Used by both initializers.
-- (void)configureUI;
-
-// Closes the settings by calling |closeSettings| on |delegate|.
-- (void)closeSettings;
-
-// Creates an autoreleased Back button for a UINavigationItem which will pop the
-// top view controller when it is pressed. Should only be called by view
-// controllers owned by SettingsNavigationController.
-- (UIBarButtonItem*)backButton;
-
-// Creates an autoreleased "X" button that closes the settings when tapped.
-- (UIBarButtonItem*)closeButton;
-
-// Creates an autoreleased "CANCEL" button that closes the settings when tapped.
-- (UIBarButtonItem*)cancelButton;
-
-// Intercepts some commands and forwards all others up the responder chain.
-- (void)chromeExecuteCommand:(id)sender;
+// Google services settings coordinator.
+@property(nonatomic, strong)
+    GoogleServicesSettingsCoordinator* googleServicesSettingsCoordinator;
 
 @end
 
 @implementation SettingsNavigationController {
   ios::ChromeBrowserState* mainBrowserState_;  // weak
   __weak id<SettingsNavigationControllerDelegate> delegate_;
-  // Keeps a mapping between the view controllers that are wrapped to display an
-  // app bar and the containers that wrap them.
-  NSMutableDictionary* appBarContainedViewControllers_;
 }
 
+@synthesize googleServicesSettingsCoordinator =
+    _googleServicesSettingsCoordinator;
 @synthesize shouldCommitSyncChangesOnDismissal =
     shouldCommitSyncChangesOnDismissal_;
 
@@ -133,10 +66,9 @@ newSettingsMainControllerWithBrowserState:(ios::ChromeBrowserState*)browserState
                                  delegate:
                                      (id<SettingsNavigationControllerDelegate>)
                                          delegate {
-  SettingsCollectionViewController* controller =
-      [[SettingsCollectionViewController alloc]
-          initWithBrowserState:browserState
-                    dispatcher:[delegate dispatcherForSettings]];
+  SettingsTableViewController* controller = [[SettingsTableViewController alloc]
+      initWithBrowserState:browserState
+                dispatcher:[delegate dispatcherForSettings]];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
@@ -148,26 +80,41 @@ newSettingsMainControllerWithBrowserState:(ios::ChromeBrowserState*)browserState
 + (SettingsNavigationController*)
 newAccountsController:(ios::ChromeBrowserState*)browserState
              delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  AccountsCollectionViewController* controller = [
-      [AccountsCollectionViewController alloc] initWithBrowserState:browserState
-                                          closeSettingsOnAddAccount:YES];
+  AccountsTableViewController* controller =
+      [[AccountsTableViewController alloc] initWithBrowserState:browserState
+                                      closeSettingsOnAddAccount:YES];
   controller.dispatcher = [delegate dispatcherForSettings];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
-  [controller navigationItem].leftBarButtonItem = [nc closeButton];
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
+  return nc;
+}
+
++ (SettingsNavigationController*)
+    newGoogleServicesController:(ios::ChromeBrowserState*)browserState
+                       delegate:
+                           (id<SettingsNavigationControllerDelegate>)delegate {
+  // GoogleServicesSettings uses a coordinator to be presented, therefore the
+  // view controller is not accessible. Prefer creating a
+  // |SettingsNavigationController| with a nil root view controller and then
+  // use the coordinator to push the GoogleServicesSettings as the first
+  // root view controller.
+  SettingsNavigationController* nc = [[SettingsNavigationController alloc]
+      initWithRootViewController:nil
+                    browserState:browserState
+                        delegate:delegate];
+  [nc showGoogleServices];
   return nc;
 }
 
 + (SettingsNavigationController*)
      newSyncController:(ios::ChromeBrowserState*)browserState
-allowSwitchSyncAccount:(BOOL)allowSwitchSyncAccount
               delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  SyncSettingsCollectionViewController* controller =
-      [[SyncSettingsCollectionViewController alloc]
-            initWithBrowserState:browserState
-          allowSwitchSyncAccount:allowSwitchSyncAccount];
+  SyncSettingsTableViewController* controller =
+      [[SyncSettingsTableViewController alloc] initWithBrowserState:browserState
+                                             allowSwitchSyncAccount:YES];
   controller.dispatcher = [delegate dispatcherForSettings];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
@@ -184,32 +131,14 @@ newUserFeedbackController:(ios::ChromeBrowserState*)browserState
   DCHECK(ios::GetChromeBrowserProvider()
              ->GetUserFeedbackProvider()
              ->IsUserFeedbackEnabled());
-  UIViewController* controller =
-      ios::GetChromeBrowserProvider()
-          ->GetUserFeedbackProvider()
-          ->CreateViewController(dataSource, [delegate dispatcherForSettings]);
+  UIViewController* controller = ios::GetChromeBrowserProvider()
+                                     ->GetUserFeedbackProvider()
+                                     ->CreateViewController(dataSource);
   DCHECK(controller);
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
-  [controller navigationItem].rightBarButtonItem = [nc cancelButton];
-  return nc;
-}
-
-+ (SettingsNavigationController*)
-newClearBrowsingDataController:(ios::ChromeBrowserState*)browserState
-                      delegate:
-                          (id<SettingsNavigationControllerDelegate>)delegate {
-  ClearBrowsingDataCollectionViewController* controller =
-      [[ClearBrowsingDataCollectionViewController alloc]
-          initWithBrowserState:browserState];
-  controller.dispatcher = [delegate dispatcherForSettings];
-  SettingsNavigationController* nc = [[SettingsNavigationController alloc]
-      initWithRootViewController:controller
-                    browserState:browserState
-                        delegate:delegate];
-  [controller navigationItem].rightBarButtonItem = [nc doneButton];
   return nc;
 }
 
@@ -217,24 +146,23 @@ newClearBrowsingDataController:(ios::ChromeBrowserState*)browserState
 newSyncEncryptionPassphraseController:(ios::ChromeBrowserState*)browserState
                              delegate:(id<SettingsNavigationControllerDelegate>)
                                           delegate {
-  SyncEncryptionPassphraseCollectionViewController* controller =
-      [[SyncEncryptionPassphraseCollectionViewController alloc]
+  SyncEncryptionPassphraseTableViewController* controller =
+      [[SyncEncryptionPassphraseTableViewController alloc]
           initWithBrowserState:browserState];
   controller.dispatcher = [delegate dispatcherForSettings];
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
-  [controller navigationItem].leftBarButtonItem = [nc closeButton];
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
   return nc;
 }
 
 + (SettingsNavigationController*)
 newSavePasswordsController:(ios::ChromeBrowserState*)browserState
                   delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  SavePasswordsCollectionViewController* controller =
-      [[SavePasswordsCollectionViewController alloc]
-          initWithBrowserState:browserState];
+  PasswordsTableViewController* controller =
+      [[PasswordsTableViewController alloc] initWithBrowserState:browserState];
   controller.dispatcher = [delegate dispatcherForSettings];
 
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
@@ -243,9 +171,9 @@ newSavePasswordsController:(ios::ChromeBrowserState*)browserState
                         delegate:delegate];
   [controller navigationItem].rightBarButtonItem = [nc doneButton];
 
-  // Make sure the close button is always present, as the Save Passwords screen
+  // Make sure the cancel button is always present, as the Save Passwords screen
   // isn't just shown from Settings.
-  [controller navigationItem].leftBarButtonItem = [nc closeButton];
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
   return nc;
 }
 
@@ -256,28 +184,29 @@ newImportDataController:(ios::ChromeBrowserState*)browserState
               fromEmail:(NSString*)fromEmail
                 toEmail:(NSString*)toEmail
              isSignedIn:(BOOL)isSignedIn {
-  UIViewController* controller = [[ImportDataCollectionViewController alloc]
-      initWithDelegate:importDataDelegate
-             fromEmail:fromEmail
-               toEmail:toEmail
-            isSignedIn:isSignedIn];
+  UIViewController* controller =
+      [[ImportDataTableViewController alloc] initWithDelegate:importDataDelegate
+                                                    fromEmail:fromEmail
+                                                      toEmail:toEmail
+                                                   isSignedIn:isSignedIn];
 
   SettingsNavigationController* nc = [[SettingsNavigationController alloc]
       initWithRootViewController:controller
                     browserState:browserState
                         delegate:delegate];
 
-  // Make sure the close button is always present, as the Save Passwords screen
+  // Make sure the cancel button is always present, as the Save Passwords screen
   // isn't just shown from Settings.
-  [controller navigationItem].leftBarButtonItem = [nc closeButton];
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
   return nc;
 }
 
 + (SettingsNavigationController*)
-newAutofillController:(ios::ChromeBrowserState*)browserState
-             delegate:(id<SettingsNavigationControllerDelegate>)delegate {
-  AutofillCollectionViewController* controller =
-      [[AutofillCollectionViewController alloc]
+newAutofillProfilleController:(ios::ChromeBrowserState*)browserState
+                     delegate:
+                         (id<SettingsNavigationControllerDelegate>)delegate {
+  AutofillProfileTableViewController* controller =
+      [[AutofillProfileTableViewController alloc]
           initWithBrowserState:browserState];
   controller.dispatcher = [delegate dispatcherForSettings];
 
@@ -286,9 +215,29 @@ newAutofillController:(ios::ChromeBrowserState*)browserState
                     browserState:browserState
                         delegate:delegate];
 
-  // Make sure the close button is always present, as the Autofill screen
+  // Make sure the cancel button is always present, as the Autofill screen
   // isn't just shown from Settings.
-  [controller navigationItem].leftBarButtonItem = [nc closeButton];
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
+  return nc;
+}
+
++ (SettingsNavigationController*)
+newAutofillCreditCardController:(ios::ChromeBrowserState*)browserState
+                       delegate:
+                           (id<SettingsNavigationControllerDelegate>)delegate {
+  AutofillCreditCardTableViewController* controller =
+      [[AutofillCreditCardTableViewController alloc]
+          initWithBrowserState:browserState];
+  controller.dispatcher = [delegate dispatcherForSettings];
+
+  SettingsNavigationController* nc = [[SettingsNavigationController alloc]
+      initWithRootViewController:controller
+                    browserState:browserState
+                        delegate:delegate];
+
+  // Make sure the cancel button is always present, as the Autofill screen
+  // isn't just shown from Settings.
+  [controller navigationItem].leftBarButtonItem = [nc cancelButton];
   return nc;
 }
 
@@ -300,16 +249,53 @@ initWithRootViewController:(UIViewController*)rootViewController
                   delegate:(id<SettingsNavigationControllerDelegate>)delegate {
   DCHECK(browserState);
   DCHECK(!browserState->IsOffTheRecord());
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+  self = [super initWithRootViewController:rootViewController];
+#else
   self = rootViewController
              ? [super initWithRootViewController:rootViewController]
              : [super init];
+#endif
   if (self) {
     mainBrowserState_ = browserState;
     delegate_ = delegate;
-    shouldCommitSyncChangesOnDismissal_ = YES;
-    [self configureUI];
+    // When Unified Consent is enabled, |self.googleServicesSettingsCoordinator|
+    // is responsible to commit the sync changes. Thus sync changes only need to
+    // be explicitly committed by this navigation controller when Unified
+    // Consent is disabled.
+    shouldCommitSyncChangesOnDismissal_ =
+        !unified_consent::IsUnifiedConsentFeatureEnabled();
+    [self setModalPresentationStyle:UIModalPresentationFormSheet];
+    [self setModalTransitionStyle:UIModalTransitionStyleCoverVertical];
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+    // TODO(crbug.com/980037) Remove this and properly handle swipe to dismiss
+    // settings.
+    if (@available(iOS 13, *)) {
+      self.modalInPresentation = YES;
+    }
+#endif
   }
   return self;
+}
+
+- (void)viewDidLoad {
+  [super viewDidLoad];
+  if (base::FeatureList::IsEnabled(kSettingsRefresh)) {
+    self.navigationBar.backgroundColor = UIColor.whiteColor;
+  }
+  self.navigationBar.prefersLargeTitles = YES;
+  self.navigationBar.accessibilityIdentifier = @"SettingNavigationBar";
+}
+
+#pragma mark - Public
+
+- (UIBarButtonItem*)doneButton {
+  UIBarButtonItem* item = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                           target:self
+                           action:@selector(closeSettings)];
+  item.accessibilityIdentifier = kSettingsDoneButtonId;
+  return item;
 }
 
 - (void)settingsWillBeDismissed {
@@ -324,8 +310,12 @@ initWithRootViewController:(UIViewController*)rootViewController
   // existing settings.
   if (shouldCommitSyncChangesOnDismissal_) {
     SyncSetupServiceFactory::GetForBrowserState([self mainBrowserState])
-        ->CommitChanges();
+        ->PreUnityCommitChanges();
   }
+
+  // GoogleServicesSettingsCoordinator must be stopped before dismissing the
+  // sync settings view.
+  [self stopGoogleServicesSettingsCoordinator];
 
   // Reset the delegate to prevent any queued transitions from attempting to
   // close the settings.
@@ -334,10 +324,6 @@ initWithRootViewController:(UIViewController*)rootViewController
 
 - (void)closeSettings {
   [delegate_ closeSettings];
-}
-
-- (void)back {
-  [self popViewControllerAnimated:YES];
 }
 
 - (void)popViewControllerOrCloseSettingsAnimated:(BOOL)animated {
@@ -351,77 +337,62 @@ initWithRootViewController:(UIViewController*)rootViewController
   }
 }
 
-- (void)configureUI {
-  [self setModalPresentationStyle:UIModalPresentationFormSheet];
-  [self setModalTransitionStyle:UIModalTransitionStyleCoverVertical];
-  // Since the navigation bar is hidden, the gesture to swipe to go back can
-  // become inactive. Setting the delegate to self is an MDC workaround to have
-  // it consistently work with AppBar.
-  // https://github.com/material-components/material-components-ios/issues/720
-  [self setNavigationBarHidden:YES];
-  [self.interactivePopGestureRecognizer setDelegate:self];
+- (UIViewController*)popViewControllerAnimated:(BOOL)animated {
+  UIViewController* poppedViewController =
+      [super popViewControllerAnimated:animated];
+  if ([poppedViewController
+          respondsToSelector:@selector(viewControllerWasPopped)]) {
+    [poppedViewController performSelector:@selector(viewControllerWasPopped)];
+  }
+  return poppedViewController;
 }
 
-- (BOOL)hasRightDoneButton {
-  UIBarButtonItem* rightButton =
-      self.topViewController.navigationItem.rightBarButtonItem;
-  if (!rightButton)
-    return NO;
-  UIBarButtonItem* doneButton = [self doneButton];
-  return [rightButton style] == [doneButton style] &&
-         [[rightButton title] compare:[doneButton title]] == NSOrderedSame;
-}
+#pragma mark - Private
 
-- (UIBarButtonItem*)backButton {
-  // Create a custom Back bar button item, as Material Navigation Bar deprecated
-  // the back arrow with a shaft.
-  return [ChromeIcon templateBarButtonItemWithImage:[ChromeIcon backIcon]
-                                             target:self
-                                             action:@selector(back)];
-}
-
-- (UIBarButtonItem*)doneButton {
-  // Create a custom Done bar button item, as Material Navigation Bar does not
-  // handle a system UIBarButtonSystemItemDone item.
-  return [[UIBarButtonItem alloc]
-      initWithTitle:l10n_util::GetNSString(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON)
-              style:UIBarButtonItemStyleDone
-             target:self
-             action:@selector(closeSettings)];
-}
-
-- (UIBarButtonItem*)closeButton {
-  UIBarButtonItem* closeButton =
-      [ChromeIcon templateBarButtonItemWithImage:[ChromeIcon closeIcon]
-                                          target:self
-                                          action:@selector(closeSettings)];
-  closeButton.accessibilityLabel = l10n_util::GetNSString(IDS_ACCNAME_CLOSE);
-  return closeButton;
-}
-
+// Creates an autoreleased "Cancel" button that cancels the settings when
+// tapped.
 - (UIBarButtonItem*)cancelButton {
-  // Create a custom Cancel bar button item, as Material Navigation Bar does not
-  // handle a system UIBarButtonSystemItemCancel item.
-  return [[UIBarButtonItem alloc]
-      initWithTitle:l10n_util::GetNSString(IDS_IOS_NAVIGATION_BAR_CANCEL_BUTTON)
-              style:UIBarButtonItemStyleDone
-             target:self
-             action:@selector(closeSettings)];
+  UIBarButtonItem* cancelButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                           target:self
+                           action:@selector(closeSettings)];
+  return cancelButton;
 }
 
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-  return [self.topViewController supportedInterfaceOrientations];
+// Pushes a GoogleServicesSettingsViewController on this settings navigation
+// controller. Does nothing id the top view controller is already of type
+// |GoogleServicesSettingsViewController|.
+- (void)showGoogleServices {
+  if ([self.topViewController
+          isKindOfClass:[GoogleServicesSettingsViewController class]]) {
+    // The top view controller is already the Google services settings panel.
+    // No need to open it.
+    return;
+  }
+  self.googleServicesSettingsCoordinator =
+      [[GoogleServicesSettingsCoordinator alloc]
+          initWithBaseViewController:self
+                        browserState:mainBrowserState_
+                                mode:GoogleServicesSettingsModeSettings];
+  self.googleServicesSettingsCoordinator.dispatcher =
+      [delegate_ dispatcherForSettings];
+  self.googleServicesSettingsCoordinator.navigationController = self;
+  self.googleServicesSettingsCoordinator.delegate = self;
+  [self.googleServicesSettingsCoordinator start];
 }
 
-- (BOOL)shouldAutorotate {
-  return [self.topViewController shouldAutorotate];
+// Stops the underlying Google services settings coordinator if it exists.
+- (void)stopGoogleServicesSettingsCoordinator {
+  [self.googleServicesSettingsCoordinator stop];
+  self.googleServicesSettingsCoordinator = nil;
 }
 
-#pragma mark - UIGestureRecognizerDelegate
+#pragma mark - GoogleServicesSettingsCoordinatorDelegate
 
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer*)gestureRecognizer {
-  DCHECK_EQ(gestureRecognizer, self.interactivePopGestureRecognizer);
-  return self.viewControllers.count > 1;
+- (void)googleServicesSettingsCoordinatorDidRemove:
+    (GoogleServicesSettingsCoordinator*)coordinator {
+  DCHECK_EQ(self.googleServicesSettingsCoordinator, coordinator);
+  [self stopGoogleServicesSettingsCoordinator];
 }
 
 #pragma mark - Accessibility
@@ -435,73 +406,9 @@ initWithRootViewController:(UIViewController*)rootViewController
 
 #pragma mark - UINavigationController
 
-- (void)pushViewController:(UIViewController*)viewController
-                  animated:(BOOL)animated {
-  // Add a back button if the view controller is not the root view controller
-  // and doesn’t already have a left bar button item.
-  if (self.viewControllers.count > 0 &&
-      viewController.navigationItem.leftBarButtonItems.count == 0) {
-    viewController.navigationItem.leftBarButtonItem = [self backButton];
-  }
-  // Wrap the view controller in an MDCAppBarContainerViewController if needed.
-  [super pushViewController:[self wrappedControllerIfNeeded:viewController]
-                   animated:animated];
-}
-
-- (UIViewController*)popViewControllerAnimated:(BOOL)animated {
-  UIViewController* viewController = [super popViewControllerAnimated:animated];
-  // Unwrap the view controller from its MDCAppBarContainerViewController if
-  // needed.
-  return [self unwrappedControllerIfNeeded:viewController];
-}
-
-- (NSArray*)popToViewController:(UIViewController*)viewController
-                       animated:(BOOL)animated {
-  // First, check if the view controller was wrapped in an app bar container.
-  MDCAppBarContainerViewController* appBarContainer =
-      [self appBarContainerForController:viewController];
-  // Pop the view controllers.
-  NSArray* poppedViewControllers =
-      [super popToViewController:appBarContainer ?: viewController
-                        animated:animated];
-  // Unwrap the popped view controllers from their
-  // MDCAppBarContainerViewController if needed.
-  NSMutableArray* viewControllers = [NSMutableArray array];
-  [poppedViewControllers
-      enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL* stop) {
-        [viewControllers
-            addObject:[self unwrappedControllerIfNeeded:viewController]];
-      }];
-  return viewControllers;
-}
-
 // Ensures that the keyboard is always dismissed during a navigation transition.
 - (BOOL)disablesAutomaticKeyboardDismissal {
   return NO;
-}
-
-#pragma mark - UIResponder (ChromeExecuteCommand)
-
-- (void)chromeExecuteCommand:(id)sender {
-  switch ([sender tag]) {
-    case IDC_CLEAR_BROWSING_DATA_IOS: {
-      // Check that the data for the right browser state is being cleared before
-      // forwarding it up the responder chain.
-      ios::ChromeBrowserState* commandBrowserState =
-          [base::mac::ObjCCast<ClearBrowsingDataCommand>(sender) browserState];
-
-      // Clearing browsing data for the wrong profile is a destructive action.
-      // Executing it on the wrong profile is a privacy issue. Kill the
-      // app if this ever happens.
-      CHECK_EQ(commandBrowserState, [self mainBrowserState]);
-      break;
-    }
-    default:
-      NOTREACHED()
-          << "Unexpected command " << [sender tag]
-          << " Settings commands must execute on the main browser state.";
-  }
-  [[self nextResponder] chromeExecuteCommand:sender];
 }
 
 #pragma mark - UIResponder
@@ -526,19 +433,24 @@ initWithRootViewController:(UIViewController*)rootViewController
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showAccountsSettingsFromViewController:
     (UIViewController*)baseViewController {
-  AccountsCollectionViewController* controller =
-      [[AccountsCollectionViewController alloc]
-               initWithBrowserState:mainBrowserState_
-          closeSettingsOnAddAccount:NO];
+  AccountsTableViewController* controller = [[AccountsTableViewController alloc]
+           initWithBrowserState:mainBrowserState_
+      closeSettingsOnAddAccount:NO];
   controller.dispatcher = [delegate_ dispatcherForSettings];
   [self pushViewController:controller animated:YES];
 }
 
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showGoogleServicesSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  [self showGoogleServices];
+}
+
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showSyncSettingsFromViewController:
     (UIViewController*)baseViewController {
-  SyncSettingsCollectionViewController* controller =
-      [[SyncSettingsCollectionViewController alloc]
+  SyncSettingsTableViewController* controller =
+      [[SyncSettingsTableViewController alloc]
             initWithBrowserState:mainBrowserState_
           allowSwitchSyncAccount:YES];
   controller.dispatcher = [delegate_ dispatcherForSettings];
@@ -548,8 +460,38 @@ initWithRootViewController:(UIViewController*)rootViewController
 // TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
 - (void)showSyncPassphraseSettingsFromViewController:
     (UIViewController*)baseViewController {
-  SyncEncryptionPassphraseCollectionViewController* controller =
-      [[SyncEncryptionPassphraseCollectionViewController alloc]
+  SyncEncryptionPassphraseTableViewController* controller =
+      [[SyncEncryptionPassphraseTableViewController alloc]
+          initWithBrowserState:mainBrowserState_];
+  controller.dispatcher = [delegate_ dispatcherForSettings];
+  [self pushViewController:controller animated:YES];
+}
+
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showSavedPasswordsSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  PasswordsTableViewController* controller =
+      [[PasswordsTableViewController alloc]
+          initWithBrowserState:mainBrowserState_];
+  controller.dispatcher = [delegate_ dispatcherForSettings];
+  [self pushViewController:controller animated:YES];
+}
+
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showProfileSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  AutofillProfileTableViewController* controller =
+      [[AutofillProfileTableViewController alloc]
+          initWithBrowserState:mainBrowserState_];
+  controller.dispatcher = [delegate_ dispatcherForSettings];
+  [self pushViewController:controller animated:YES];
+}
+
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showCreditCardSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  AutofillCreditCardTableViewController* controller =
+      [[AutofillCreditCardTableViewController alloc]
           initWithBrowserState:mainBrowserState_];
   controller.dispatcher = [delegate_ dispatcherForSettings];
   [self pushViewController:controller animated:YES];
@@ -559,96 +501,6 @@ initWithRootViewController:(UIViewController*)rootViewController
 
 - (ios::ChromeBrowserState*)mainBrowserState {
   return mainBrowserState_;
-}
-
-#pragma mark - Status bar
-
-- (BOOL)modalPresentationCapturesStatusBarAppearance {
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/620361): Remove the entire method override when iOS 9 is
-    // dropped.
-    return YES;
-  } else {
-    return [super modalPresentationCapturesStatusBarAppearance];
-  }
-}
-
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    // TODO(crbug.com/620361): Remove the entire method override when iOS 9 is
-    // dropped.
-    [self setNeedsStatusBarAppearanceUpdate];
-  }
-}
-
-#pragma mark - AppBar Containment
-
-// If viewController doesn't implement the AppBarPresenting protocol, it is
-// wrapped in an MDCAppBarContainerViewController, which is returned. Otherwise,
-// viewController is returned.
-- (UIViewController*)wrappedControllerIfNeeded:(UIViewController*)controller {
-  // If the controller can't be presented with an app bar, it needs to be
-  // wrapped in an MDCAppBarContainerViewController.
-  if (![controller conformsToProtocol:@protocol(AppBarPresenting)]) {
-    MDCAppBarContainerViewController* appBarContainer =
-        [[SettingsAppBarContainerViewController alloc]
-            initWithContentViewController:controller];
-
-    // TODO(crbug.com/785484): Investigate if this and below can be removed.
-    // Configure the style.
-    appBarContainer.view.backgroundColor = [UIColor whiteColor];
-    ConfigureAppBarWithCardStyle(appBarContainer.appBar);
-
-    // Register the app bar container and return it.
-    [self registerAppBarContainer:appBarContainer];
-    return appBarContainer;
-  } else {
-    return controller;
-  }
-}
-
-// If controller is an MDCAppBarContainerViewController, it returns its content
-// view controller. Otherwise, it returns viewController.
-- (UIViewController*)unwrappedControllerIfNeeded:(UIViewController*)controller {
-  MDCAppBarContainerViewController* potentialAppBarController =
-      base::mac::ObjCCast<MDCAppBarContainerViewController>(controller);
-  if (potentialAppBarController) {
-    // Unregister the app bar container and return it.
-    [self unregisterAppBarContainer:potentialAppBarController];
-    return [potentialAppBarController contentViewController];
-  } else {
-    return controller;
-  }
-}
-
-// Adds an app bar container in a dictionary mapping its content view
-// controller's pointer to itself.
-- (void)registerAppBarContainer:(MDCAppBarContainerViewController*)container {
-  if (!appBarContainedViewControllers_) {
-    appBarContainedViewControllers_ = [[NSMutableDictionary alloc] init];
-  }
-  NSValue* key = [self keyForController:[container contentViewController]];
-  [appBarContainedViewControllers_ setObject:container forKey:key];
-}
-
-// Removes the app bar container entry from the aforementioned dictionary.
-- (void)unregisterAppBarContainer:(MDCAppBarContainerViewController*)container {
-  NSValue* key = [self keyForController:[container contentViewController]];
-  [appBarContainedViewControllers_ removeObjectForKey:key];
-}
-
-// Returns the app bar container containing |controller| if it is contained.
-// Otherwise, returns nil.
-- (MDCAppBarContainerViewController*)appBarContainerForController:
-    (UIViewController*)controller {
-  NSValue* key = [self keyForController:controller];
-  return [appBarContainedViewControllers_ objectForKey:key];
-}
-
-// Returns the dictionary key to use when dealing with |controller|.
-- (NSValue*)keyForController:(UIViewController*)controller {
-  return [NSValue valueWithNonretainedObject:controller];
 }
 
 #pragma mark - UIResponder

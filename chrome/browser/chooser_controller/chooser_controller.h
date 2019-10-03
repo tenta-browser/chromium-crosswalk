@@ -64,14 +64,17 @@ class ChooserController {
   // Returns the text to be displayed in the chooser title.
   base::string16 GetTitle() const;
 
-  // Returns if the chooser needs to show an icon before the text.
+  // Returns whether the chooser needs to show an icon before the text.
   // For WebBluetooth, it is a signal strength icon.
   virtual bool ShouldShowIconBeforeText() const;
 
-  // Returns if the chooser needs to show a footnote view.
-  virtual bool ShouldShowFootnoteView() const;
+  // Returns whether the chooser needs to show a help button.
+  virtual bool ShouldShowHelpButton() const;
 
-  // Returns if the chooser allows multiple items to be selected.
+  // Returns whether the chooser needs to show a button to re-scan for devices.
+  virtual bool ShouldShowReScanButton() const;
+
+  // Returns whether the chooser allows multiple items to be selected.
   virtual bool AllowMultipleSelection() const;
 
   // Returns the text to be displayed in the chooser when there are no options.
@@ -79,6 +82,28 @@ class ChooserController {
 
   // Returns the label for OK button.
   virtual base::string16 GetOkButtonLabel() const = 0;
+
+  // Returns the label for Cancel button.
+  virtual base::string16 GetCancelButtonLabel() const;
+
+  // Returns whether both OK and Cancel buttons are enabled.
+  //
+  // For chooser used in Web APIs such as WebBluetooth, WebUSB,
+  // WebSerial, etc., the OK button is only enabled when there is at least
+  // one device listed in the chooser, because user needs to be able to select
+  // a device to grant access permission in these APIs.
+  //
+  // For permission prompt used in Bluetooth scanning Web API, the two buttons
+  // represent Allow and Block, and should always be enabled so that user can
+  // make their permission decision.
+  virtual bool BothButtonsAlwaysEnabled() const;
+
+  // Returns whether table view should always be disabled.
+  //
+  // For permission prompt used in Bluetooth scanning Web API, the table is
+  // used for displaying device names, and user doesn't need to select a device
+  // from the table, so it should always be disabled.
+  virtual bool TableViewAlwaysDisabled() const;
 
   // The number of options users can pick from. For example, it can be
   // the number of USB/Bluetooth device names which are listed in the

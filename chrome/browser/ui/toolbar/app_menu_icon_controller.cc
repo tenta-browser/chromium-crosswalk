@@ -6,140 +6,173 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/ui/global_error/global_error_service.h"
+#include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/defaults.h"
+#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
-#include "chrome/browser/upgrade_detector.h"
-
-#if defined(OS_WIN)
-#include "base/feature_list.h"
-#include "base/win/windows_version.h"
-#include "chrome/browser/win/enumerate_modules_model.h"
-#include "chrome/common/chrome_features.h"
-#endif
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
+#include "chrome/common/channel_info.h"
+#include "components/version_info/channel.h"
+#include "ui/base/theme_provider.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace {
 
-// Maps an upgrade level to a severity level.
+// Maps an upgrade level to a severity level. When |show_very_low_upgrade_level|
+// is true, VERY_LOW through HIGH all return Severity::LOW. Otherwise, VERY_LOW
+// is ignored and LOW through HIGH return their respective Severity level.
 AppMenuIconController::Severity SeverityFromUpgradeLevel(
+    bool show_very_low_upgrade_level,
     UpgradeDetector::UpgradeNotificationAnnoyanceLevel level) {
-  switch (level) {
-    case UpgradeDetector::UPGRADE_ANNOYANCE_NONE:
-      return AppMenuIconController::Severity::NONE;
-    case UpgradeDetector::UPGRADE_ANNOYANCE_LOW:
-      return AppMenuIconController::Severity::LOW;
-    case UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED:
-      return AppMenuIconController::Severity::MEDIUM;
-    case UpgradeDetector::UPGRADE_ANNOYANCE_HIGH:
-    case UpgradeDetector::UPGRADE_ANNOYANCE_SEVERE:
-    case UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL:
-      return AppMenuIconController::Severity::HIGH;
+  if (show_very_low_upgrade_level) {
+    // Anything between kNone and kCritical is LOW for unstable desktop Chrome.
+    switch (level) {
+      case UpgradeDetector::UPGRADE_ANNOYANCE_NONE:
+        break;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_VERY_LOW:
+      case UpgradeDetector::UPGRADE_ANNOYANCE_LOW:
+      case UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED:
+      case UpgradeDetector::UPGRADE_ANNOYANCE_HIGH:
+        return AppMenuIconController::Severity::LOW;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL:
+        return AppMenuIconController::Severity::HIGH;
+    }
+  } else {
+    switch (level) {
+      case UpgradeDetector::UPGRADE_ANNOYANCE_NONE:
+        break;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_VERY_LOW:
+        // kVeryLow is meaningless for stable channels.
+        return AppMenuIconController::Severity::NONE;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_LOW:
+        return AppMenuIconController::Severity::LOW;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED:
+        return AppMenuIconController::Severity::MEDIUM;
+      case UpgradeDetector::UPGRADE_ANNOYANCE_HIGH:
+      case UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL:
+        return AppMenuIconController::Severity::HIGH;
+    }
   }
-  NOTREACHED();
+  DCHECK_EQ(level, UpgradeDetector::UPGRADE_ANNOYANCE_NONE);
+
   return AppMenuIconController::Severity::NONE;
 }
 
-// Checks if the app menu icon should be animated for the given upgrade level.
-bool ShouldAnimateUpgradeLevel(
-    UpgradeDetector::UpgradeNotificationAnnoyanceLevel level) {
-  return level != UpgradeDetector::UPGRADE_ANNOYANCE_NONE;
+// Return true if the browser is updating on the dev or canary channels.
+bool IsUnstableChannel() {
+  // Unbranded (Chromium) builds are on the UNKNOWN channel, so check explicitly
+  // for the Google Chrome channels that are considered "unstable". This ensures
+  // that Chromium builds get the default behavior.
+  const version_info::Channel channel = chrome::GetChannel();
+  return channel == version_info::Channel::DEV ||
+         channel == version_info::Channel::CANARY;
 }
 
-// Returns true if we should show the upgrade recommended icon.
-bool ShouldShowUpgradeRecommended() {
-#if defined(OS_CHROMEOS)
-  // In chromeos, the update recommendation is shown in the system tray. So it
-  // should not be displayed in the app menu.
-  return false;
-#else
-  return UpgradeDetector::GetInstance()->notify_upgrade();
-#endif
-}
-
-// Returns true if we should show the warning for incompatible software.
-bool ShouldShowIncompatibilityWarning() {
-#if defined(OS_WIN)
-  return !base::FeatureList::IsEnabled(features::kModuleDatabase) &&
-         EnumerateModulesModel::GetInstance()->ShouldShowConflictWarning();
-#else
-  return false;
-#endif
+// Returns the icon color based on |severity|. |promo_highlight_color|, if
+// specified, overrides the basic color when |severity| is NONE.
+SkColor GetIconColorForSeverity(AppMenuIconController::Delegate* delegate,
+                                AppMenuIconController::Severity severity,
+                                base::Optional<SkColor> promo_highlight_color) {
+  ui::NativeTheme::ColorId color_id =
+      ui::NativeTheme::kColorId_AlertSeverityHigh;
+  switch (severity) {
+    case AppMenuIconController::Severity::NONE:
+      if (promo_highlight_color)
+        return promo_highlight_color.value();
+      return delegate->GetViewThemeProvider()->GetColor(
+          ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+    case AppMenuIconController::Severity::LOW:
+      color_id = ui::NativeTheme::kColorId_AlertSeverityLow;
+      break;
+    case AppMenuIconController::Severity::MEDIUM:
+      color_id = ui::NativeTheme::kColorId_AlertSeverityMedium;
+      break;
+    case AppMenuIconController::Severity::HIGH:
+      break;
+  }
+  return delegate->GetViewNativeTheme()->GetSystemColor(color_id);
 }
 
 }  // namespace
 
 AppMenuIconController::AppMenuIconController(Profile* profile,
                                              Delegate* delegate)
-    : profile_(profile), delegate_(delegate) {
+    : AppMenuIconController(UpgradeDetector::GetInstance(), profile, delegate) {
+}
+
+AppMenuIconController::AppMenuIconController(UpgradeDetector* upgrade_detector,
+                                             Profile* profile,
+                                             Delegate* delegate)
+    : is_unstable_channel_(IsUnstableChannel()),
+      upgrade_detector_(upgrade_detector),
+      profile_(profile),
+      delegate_(delegate) {
   DCHECK(profile_);
   DCHECK(delegate_);
 
-  registrar_.Add(this, chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-                 content::Source<Profile>(profile_));
+  global_error_observer_.Add(
+      GlobalErrorServiceFactory::GetForProfile(profile_));
 
-  UpgradeDetector::GetInstance()->AddObserver(this);
-
-#if defined(OS_WIN)
-  if (!base::FeatureList::IsEnabled(features::kModuleDatabase)) {
-    auto* modules = EnumerateModulesModel::GetInstance();
-    modules->AddObserver(this);
-    modules->MaybePostScanningTask();
-  }
-#endif
+  upgrade_detector_->AddObserver(this);
 }
 
 AppMenuIconController::~AppMenuIconController() {
-  UpgradeDetector::GetInstance()->RemoveObserver(this);
-
-#if defined(OS_WIN)
-  if (!base::FeatureList::IsEnabled(features::kModuleDatabase))
-    EnumerateModulesModel::GetInstance()->RemoveObserver(this);
-#endif
+  upgrade_detector_->RemoveObserver(this);
 }
 
 void AppMenuIconController::UpdateDelegate() {
-  if (ShouldShowUpgradeRecommended()) {
-    UpgradeDetector::UpgradeNotificationAnnoyanceLevel level =
-        UpgradeDetector::GetInstance()->upgrade_notification_stage();
-    delegate_->UpdateSeverity(IconType::UPGRADE_NOTIFICATION,
-                              SeverityFromUpgradeLevel(level),
-                              ShouldAnimateUpgradeLevel(level));
-    return;
-  }
+  delegate_->UpdateTypeAndSeverity(GetTypeAndSeverity());
+}
 
-  if (ShouldShowIncompatibilityWarning()) {
-    delegate_->UpdateSeverity(IconType::INCOMPATIBILITY_WARNING,
-                              Severity::MEDIUM, true);
-    return;
+AppMenuIconController::TypeAndSeverity
+AppMenuIconController::GetTypeAndSeverity() const {
+  if (browser_defaults::kShowUpgradeMenuItem &&
+      upgrade_detector_->notify_upgrade()) {
+    UpgradeDetector::UpgradeNotificationAnnoyanceLevel level =
+        upgrade_detector_->upgrade_notification_stage();
+    // The severity may be NONE even if the detector has been notified of an
+    // update. This can happen for beta and stable channels once the VERY_LOW
+    // annoyance level is reached.
+    auto severity = SeverityFromUpgradeLevel(is_unstable_channel_, level);
+    if (severity != Severity::NONE)
+      return {IconType::UPGRADE_NOTIFICATION, severity};
   }
 
   if (GlobalErrorServiceFactory::GetForProfile(profile_)
           ->GetHighestSeverityGlobalErrorWithAppMenuItem()) {
     // If you change the severity here, make sure to also change the menu icon
     // and the bubble icon.
-    delegate_->UpdateSeverity(IconType::GLOBAL_ERROR,
-                              Severity::MEDIUM, true);
-    return;
+    return {IconType::GLOBAL_ERROR, Severity::MEDIUM};
   }
 
-  delegate_->UpdateSeverity(IconType::NONE, Severity::NONE, false);
+  return {IconType::NONE, Severity::NONE};
 }
 
-#if defined(OS_WIN)
-void AppMenuIconController::OnScanCompleted() {
-  UpdateDelegate();
+gfx::ImageSkia AppMenuIconController::GetIconImage(
+    bool touch_ui,
+    base::Optional<SkColor> promo_highlight_color) const {
+  const auto type_and_severity = GetTypeAndSeverity();
+  const gfx::VectorIcon* icon_id =
+      touch_ui ? &kBrowserToolsTouchIcon : &kBrowserToolsIcon;
+  switch (type_and_severity.type) {
+    case AppMenuIconController::IconType::NONE:
+      break;
+    case AppMenuIconController::IconType::UPGRADE_NOTIFICATION:
+      icon_id =
+          touch_ui ? &kBrowserToolsUpdateTouchIcon : &kBrowserToolsUpdateIcon;
+      break;
+    case AppMenuIconController::IconType::GLOBAL_ERROR:
+      icon_id =
+          touch_ui ? &kBrowserToolsErrorTouchIcon : &kBrowserToolsErrorIcon;
+      break;
+  }
+  return gfx::CreateVectorIcon(
+      *icon_id, GetIconColorForSeverity(delegate_, type_and_severity.severity,
+                                        promo_highlight_color));
 }
 
-void AppMenuIconController::OnConflictsAcknowledged() {
-  UpdateDelegate();
-}
-#endif
-
-void AppMenuIconController::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED, type);
+void AppMenuIconController::OnGlobalErrorsChanged() {
   UpdateDelegate();
 }
 

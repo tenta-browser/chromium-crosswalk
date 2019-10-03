@@ -15,22 +15,17 @@
 #include "base/observer_list.h"
 #include "ui/events/devices/device_hotplug_event_observer.h"
 #include "ui/events/devices/events_devices_export.h"
-#include "ui/events/devices/input_device_manager.h"
 #include "ui/events/devices/touch_device_transform.h"
 #include "ui/events/devices/touchscreen_device.h"
 
 namespace ui {
 
-namespace test {
-class DeviceDataManagerTestAPI;
-}  // namespace test
-
+class DeviceDataManagerTest;
 class InputDeviceEventObserver;
 
 // Keeps track of device mappings and event transformations.
 class EVENTS_DEVICES_EXPORT DeviceDataManager
-    : public InputDeviceManager,
-      public DeviceHotplugEventObserver {
+    : public DeviceHotplugEventObserver {
  public:
   static const int kMaxDeviceNum = 128;
   ~DeviceDataManager() override;
@@ -54,25 +49,26 @@ class EVENTS_DEVICES_EXPORT DeviceDataManager
 
   void SetTouchscreensEnabled(bool enabled);
 
-  // InputDeviceManager:
-  const std::vector<TouchscreenDevice>& GetTouchscreenDevices() const override;
-  const std::vector<InputDevice>& GetKeyboardDevices() const override;
-  const std::vector<InputDevice>& GetMouseDevices() const override;
-  const std::vector<InputDevice>& GetTouchpadDevices() const override;
-  bool AreDeviceListsComplete() const override;
-  bool AreTouchscreensEnabled() const override;
-  bool AreTouchscreenTargetDisplaysValid() const override;
-  void AddObserver(InputDeviceEventObserver* observer) override;
-  void RemoveObserver(InputDeviceEventObserver* observer) override;
-  void SetKeyboardDevicesForTesting(
-      const std::vector<InputDevice>& devices) override;
-  void SetTouchscreenDevicesForTesting(
-      const std::vector<TouchscreenDevice>& devices) override;
+  const std::vector<TouchscreenDevice>& GetTouchscreenDevices() const;
+  const std::vector<InputDevice>& GetKeyboardDevices() const;
+  const std::vector<InputDevice>& GetMouseDevices() const;
+  const std::vector<InputDevice>& GetTouchpadDevices() const;
+
+  // Returns all the uncategorized input devices, which means input devices
+  // besides keyboards, touchscreens, mice and touchpads.
+  const std::vector<InputDevice>& GetUncategorizedDevices() const;
+  bool AreDeviceListsComplete() const;
+  bool AreTouchscreensEnabled() const;
+
+  // Returns true if the |target_display_id| of the TouchscreenDevices returned
+  // from GetTouchscreenDevices() is valid.
+  bool AreTouchscreenTargetDisplaysValid() const;
+
+  void AddObserver(InputDeviceEventObserver* observer);
+  void RemoveObserver(InputDeviceEventObserver* observer);
 
  protected:
   DeviceDataManager();
-
-  static void set_instance(DeviceDataManager* instance);
 
   // DeviceHotplugEventObserver:
   void OnTouchscreenDevicesUpdated(
@@ -83,11 +79,14 @@ class EVENTS_DEVICES_EXPORT DeviceDataManager
       const std::vector<InputDevice>& devices) override;
   void OnTouchpadDevicesUpdated(
       const std::vector<InputDevice>& devices) override;
+  void OnUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices) override;
   void OnDeviceListsComplete() override;
   void OnStylusStateChanged(StylusState state) override;
 
  private:
-  friend class test::DeviceDataManagerTestAPI;
+  friend class DeviceDataManagerTest;
+  friend class DeviceDataManagerTestApi;
 
   void ClearTouchDeviceAssociations();
   void UpdateTouchInfoFromTransform(
@@ -98,6 +97,7 @@ class EVENTS_DEVICES_EXPORT DeviceDataManager
   void NotifyObserversKeyboardDeviceConfigurationChanged();
   void NotifyObserversMouseDeviceConfigurationChanged();
   void NotifyObserversTouchpadDeviceConfigurationChanged();
+  void NotifyObserversUncategorizedDeviceConfigurationChanged();
   void NotifyObserversDeviceListsComplete();
   void NotifyObserversStylusStateChanged(StylusState stylus_state);
 
@@ -107,9 +107,10 @@ class EVENTS_DEVICES_EXPORT DeviceDataManager
   std::vector<InputDevice> keyboard_devices_;
   std::vector<InputDevice> mouse_devices_;
   std::vector<InputDevice> touchpad_devices_;
+  std::vector<InputDevice> uncategorized_devices_;
   bool device_lists_complete_ = false;
 
-  base::ObserverList<InputDeviceEventObserver> observers_;
+  base::ObserverList<InputDeviceEventObserver>::Unchecked observers_;
 
   bool touch_screens_enabled_ = true;
 

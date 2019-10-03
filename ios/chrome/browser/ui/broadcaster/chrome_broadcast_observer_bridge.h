@@ -12,8 +12,14 @@ class ChromeBroadcastObserverInterface {
  public:
   virtual ~ChromeBroadcastObserverInterface();
 
-  // Invoked by |-broadcastTabStripVisible:|.
-  virtual void OnTabStripVisbibleBroadcasted(bool visible) {}
+  // Invoked by |-broadcastScrollViewSize:|.
+  virtual void OnScrollViewSizeBroadcasted(CGSize scroll_view_size) {}
+
+  // Invoked by |-broadcastScrollViewContentSize:|.
+  virtual void OnScrollViewContentSizeBroadcasted(CGSize content_size) {}
+
+  // Invoked by |-broadcastScrollViewContentInset:|.
+  virtual void OnScrollViewContentInsetBroadcasted(UIEdgeInsets conent_inset) {}
 
   // Invoked by |-broadcastContentScrollOffset:|.
   virtual void OnContentScrollOffsetBroadcasted(CGFloat offset) {}
@@ -21,11 +27,20 @@ class ChromeBroadcastObserverInterface {
   // Invoked by |-broadcastScrollViewIsScrolling:|.
   virtual void OnScrollViewIsScrollingBroadcasted(bool scrolling) {}
 
+  // Invoked by |-broadcastScrollViewIsZooming:|.
+  virtual void OnScrollViewIsZoomingBroadcasted(bool zooming) {}
+
   // Invoked by |-broadcastScrollViewIsDragging:|.
   virtual void OnScrollViewIsDraggingBroadcasted(bool dragging) {}
 
-  // Invoked by |-broadcastToolbarHeight:|.
-  virtual void OnToolbarHeightBroadcasted(CGFloat toolbar_height) {}
+  // Invoked by |-broadcastCollapsedToolbarHeight:|.
+  virtual void OnCollapsedToolbarHeightBroadcasted(CGFloat height) {}
+
+  // Invoked by |-broadcastExpandedToolbarHeight:|.
+  virtual void OnExpandedToolbarHeightBroadcasted(CGFloat height) {}
+
+  // Invoked by |-broadcastBottomToolbarHeight:|.
+  virtual void OnBottomToolbarHeightBroadcasted(CGFloat height) {}
 };
 
 // Bridge object that forwards broadcasted UI state to objects that subclass

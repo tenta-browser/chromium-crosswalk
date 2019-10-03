@@ -6,6 +6,13 @@ compositing and gpu presentation.
 See [//services/viz](../../services/viz/README.md) for more information about
 Viz overall.
 
+For understanding compositing related terminology, check out
+[//cc](../../cc/README.md). For understanding display compositor's position in
+the graphics stack, check out
+[Compositor Stack slides](https://docs.google.com/presentation/d/1ou3qdnFhKdjR6gKZgDwx3YHDwVUF7y8eoqM3rhErMMQ/edit?usp=sharing).
+For more comprehensive list of design docs relating to Viz, check out
+[WIP list of design doc](https://crbug.com/821901).
+
 **Table of Contents**
 1. [Terminology](#terminology)
 2. [Directory structure](#directory-structure)
@@ -64,7 +71,10 @@ clients directly, and by service implementations.
 
 ### client <a name="directory-structure-client"></a>
 Client library for accessing Viz services. May be used from privileged (eg
-browser) or unprivileged (eg renderer) processes.
+browser) or unprivileged (eg renderer) processes. The client library should
+remain agnostic about *how* to communicate with viz (in other words should not
+use mojo bindings), as some viz clients use mojo but others use it in-process
+or via other IPC mechanisms.
 
 | Can depend on: |
 |:---------------|
@@ -120,9 +130,20 @@ Code here supports presentation of the backing store drawn by the display
 compositor (typically thought of as SwapBuffers), as well as the use of
 overlays.
 
-| Can depend on: |
-|:---------------|
-| viz/common/*   |
+The source code is split into two build targets,
+``components/viz/service:service`` and
+``components/viz/service:gpu_service_dependencies``. The latter is
+code that requires being run in the gpu process, thus could not work
+if the viz service is located elsewhere. This is forward-looking code
+as the viz service is moving into the gpu process always.
+
+| Can depend on:                        |
+|:--------------------------------------|
+| viz/common/*                          |
+| viz/service/display/<some_interfaces> |
+
+Dependencies onto viz/service/display should generally only be for interfaces
+that the embedder must provide to the display.
 
 #### service/frame_sinks
 **Frame sinks**: This component implements the Mojo interfaces to send frames,
@@ -130,16 +151,24 @@ resources, and other data types from ``viz/common/`` for display to the
 compositing service. It receives and organizes relationships between what should
 be composited.
 
-| Can depend on:        |
-|:----------------------|
-| viz/common/*          |
-| viz/service/display/  |
-| viz/service/surfaces/ |
+| Can depend on:                |
+|:------------------------------|
+| viz/common/*                  |
+| viz/service/display/          |
+| viz/service/display_embedder/ |
+| viz/service/hit_test/         |
+| viz/service/surfaces/         |
 
 #### service/gl
 **GL**: This component implements the Mojo interfaces for allocating (and
 deallocating) gpu memory buffers, setting up a channel for the command buffer,
 etc.
+
+Similar to ``service/display_embedder`` this is split into two targets in
+the build system. Code that must run in the gpu process is compiled in
+the ``components/viz/service:gpu_service_dependencies`` build target,
+and the rest is compiled in ``components/viz/service:service``. As all
+code moves to the gpu process, these two build targets will merge.
 
 | Can depend on:        |
 |:----------------------|

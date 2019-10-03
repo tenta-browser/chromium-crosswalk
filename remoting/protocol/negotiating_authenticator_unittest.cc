@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "net/base/net_errors.h"
 #include "remoting/base/rsa_key_pair.h"
@@ -97,7 +98,7 @@ class NegotiatingAuthenticatorTest : public AuthenticatorTestBase {
 
   void CreatePairingRegistry(bool with_paired_client) {
     pairing_registry_ = new SynchronousPairingRegistry(
-        base::MakeUnique<MockPairingRegistryDelegate>());
+        std::make_unique<MockPairingRegistryDelegate>());
     if (with_paired_client) {
       PairingRegistry::Pairing pairing(
           base::Time(), kTestClientName, kTestClientId, kTestPairedSecret);
@@ -141,8 +142,9 @@ class NegotiatingAuthenticatorTest : public AuthenticatorTestBase {
     StreamConnectionTester tester(host_socket_.get(), client_socket_.get(),
                                   kMessageSize, kMessages);
 
-    tester.Start();
-    base::RunLoop().Run();
+    base::RunLoop run_loop;
+    tester.Start(run_loop.QuitClosure());
+    run_loop.Run();
     tester.CheckResults();
   }
 
@@ -207,7 +209,7 @@ public:
  }
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     PairingParams,
     NegotiatingPairingAuthenticatorTest,
     testing::Values(

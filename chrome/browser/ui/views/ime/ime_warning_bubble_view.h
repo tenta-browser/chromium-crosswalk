@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_observer.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 class BrowserActionsContainer;
 class BrowserView;
@@ -32,7 +32,7 @@ using ImeWarningBubbleResponseCallback =
 // or the parent browser is being destroyed.
 class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
                              public ToolbarActionsBarObserver,
-                             public chrome::BrowserListObserver {
+                             public BrowserListObserver {
  public:
   static void ShowBubble(const extensions::Extension* extension,
                          BrowserView* browser_view,
@@ -45,7 +45,7 @@ class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
   // ToolbarActionsBarObserver:
   void OnToolbarActionsBarAnimationEnded() override;
 
-  // chrome::BrowserListObserver:
+  // BrowserListObserver:
   void OnBrowserRemoved(Browser* browser) override;
 
  private:
@@ -77,15 +77,15 @@ class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
   Browser* const browser_;
 
   // True if bubble anchors to the action of the extension.
-  bool anchor_to_action_;
+  bool anchor_to_action_ = false;
 
   // The check box on the bubble view.
-  views::Checkbox* never_show_checkbox_;
+  views::Checkbox* never_show_checkbox_ = nullptr;
 
   ImeWarningBubbleResponseCallback response_callback_;
 
   // True if the warning bubble has been shown.
-  bool bubble_has_shown_;
+  bool bubble_has_shown_ = false;
 
   BrowserActionsContainer* container_;
 
@@ -94,7 +94,7 @@ class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
   ScopedObserver<ToolbarActionsBar, ToolbarActionsBarObserver>
       toolbar_actions_bar_observer_;
 
-  base::WeakPtrFactory<ImeWarningBubbleView> weak_ptr_factory_;
+  base::WeakPtrFactory<ImeWarningBubbleView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImeWarningBubbleView);
 };

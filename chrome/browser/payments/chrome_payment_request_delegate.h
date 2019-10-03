@@ -26,12 +26,13 @@ class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
 
   // PaymentRequestDelegate:
   void ShowDialog(PaymentRequest* request) override;
+  void RetryDialog() override;
   void CloseDialog() override;
   void ShowErrorMessage() override;
+  void ShowProcessingSpinner() override;
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   const std::string& GetApplicationLocale() const override;
   bool IsIncognito() const override;
-  bool IsSslCertificateValid() override;
   const GURL& GetLastCommittedURL() const override;
   void DoFullCardRequest(
       const autofill::CreditCard& credit_card,
@@ -43,14 +44,24 @@ class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
   std::string GetAuthenticatedEmail() const override;
   PrefService* GetPrefService() override;
   bool IsBrowserWindowActive() const override;
+
+  // ContentPaymentRequestDelegate:
   scoped_refptr<PaymentManifestWebDataService>
   GetPaymentManifestWebDataService() const override;
+  PaymentRequestDisplayManager* GetDisplayManager() override;
+  void EmbedPaymentHandlerWindow(
+      const GURL& url,
+      PaymentHandlerOpenWindowCallback callback) override;
+  bool IsInteractive() const override;
+  std::string GetInvalidSslCertificateErrorMessage() override;
+  bool SkipUiForBasicCard() const override;
 
  protected:
   // Reference to the dialog so that we can satisfy calls to CloseDialog(). This
   // reference is invalid once CloseDialog() has been called on it, because the
-  // dialog will be destroyed. Protected for testing.
-  PaymentRequestDialog* dialog_;
+  // dialog will be destroyed. Owned by the views:: dialog machinery. Protected
+  // for testing.
+  PaymentRequestDialog* shown_dialog_;
 
  private:
   // Not owned but outlives the PaymentRequest object that owns this.

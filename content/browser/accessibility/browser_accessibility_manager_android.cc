@@ -8,6 +8,7 @@
 #include "content/browser/accessibility/browser_accessibility_android.h"
 #include "content/browser/accessibility/web_contents_accessibility_android.h"
 #include "content/common/accessibility_messages.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "ui/accessibility/ax_role_properties.h"
 
 namespace content {
@@ -43,16 +44,13 @@ BrowserAccessibilityManagerAndroid::~BrowserAccessibilityManagerAndroid() {
 ui::AXTreeUpdate BrowserAccessibilityManagerAndroid::GetEmptyDocument() {
   ui::AXNodeData empty_document;
   empty_document.id = 0;
-  empty_document.role = ui::AX_ROLE_ROOT_WEB_AREA;
-  empty_document.AddIntAttribute(ui::AX_ATTR_RESTRICTION,
-                                 ui::AX_RESTRICTION_READ_ONLY);
-
+  empty_document.role = ax::mojom::Role::kRootWebArea;
+  empty_document.SetRestriction(ax::mojom::Restriction::kReadOnly);
   ui::AXTreeUpdate update;
   update.root_id = empty_document.id;
   update.nodes.push_back(empty_document);
   return update;
 }
-
 
 bool BrowserAccessibilityManagerAndroid::ShouldRespectDisplayedPasswordText() {
   WebContentsAccessibilityAndroid* wcax = GetWebContentsAXFromRootManager();
@@ -64,9 +62,9 @@ bool BrowserAccessibilityManagerAndroid::ShouldExposePasswordText() {
   return wcax ? wcax->ShouldExposePasswordText() : false;
 }
 
-BrowserAccessibility* BrowserAccessibilityManagerAndroid::GetFocus() {
+BrowserAccessibility* BrowserAccessibilityManagerAndroid::GetFocus() const {
   BrowserAccessibility* focus = BrowserAccessibilityManager::GetFocus();
-  if (!focus->IsPlainTextField())
+  if (focus && !focus->IsPlainTextField())
     return GetActiveDescendant(focus);
   return focus;
 }
@@ -77,9 +75,9 @@ void BrowserAccessibilityManagerAndroid::FireFocusEvent(
   WebContentsAccessibilityAndroid* wcax = GetWebContentsAXFromRootManager();
   if (!wcax)
     return;
-
   BrowserAccessibilityAndroid* android_node =
       static_cast<BrowserAccessibilityAndroid*>(node);
+  android_node->ResetContentInvalidTimer();
   wcax->HandleFocusChanged(android_node->unique_id());
 }
 
@@ -95,7 +93,7 @@ void BrowserAccessibilityManagerAndroid::FireLocationChanged(
 }
 
 void BrowserAccessibilityManagerAndroid::FireBlinkEvent(
-    ui::AXEvent event_type,
+    ax::mojom::Event event_type,
     BrowserAccessibility* node) {
   BrowserAccessibilityManager::FireBlinkEvent(event_type, node);
   WebContentsAccessibilityAndroid* wcax = GetWebContentsAXFromRootManager();
@@ -110,13 +108,13 @@ void BrowserAccessibilityManagerAndroid::FireBlinkEvent(
       static_cast<BrowserAccessibilityAndroid*>(node);
 
   switch (event_type) {
-    case ui::AX_EVENT_HOVER:
+    case ax::mojom::Event::kHover:
       HandleHoverEvent(node);
       break;
-    case ui::AX_EVENT_SCROLLED_TO_ANCHOR:
+    case ax::mojom::Event::kScrolledToAnchor:
       wcax->HandleScrolledToAnchor(android_node->unique_id());
       break;
-    case ui::AX_EVENT_CLICKED:
+    case ax::mojom::Event::kClicked:
       wcax->HandleClicked(android_node->unique_id());
       break;
     default:
@@ -125,7 +123,7 @@ void BrowserAccessibilityManagerAndroid::FireBlinkEvent(
 }
 
 void BrowserAccessibilityManagerAndroid::FireGeneratedEvent(
-    AXEventGenerator::Event event_type,
+    ui::AXEventGenerator::Event event_type,
     BrowserAccessibility* node) {
   BrowserAccessibilityManager::FireGeneratedEvent(event_type, node);
   WebContentsAccessibilityAndroid* wcax = GetWebContentsAXFromRootManager();
@@ -153,34 +151,37 @@ void BrowserAccessibilityManagerAndroid::FireGeneratedEvent(
   // Always send AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED to notify
   // the Android system that the accessibility hierarchy rooted at this
   // node has changed.
-  wcax->HandleContentChanged(android_node->unique_id());
+  if (event_type != ui::AXEventGenerator::Event::SUBTREE_CREATED)
+    wcax->HandleContentChanged(android_node->unique_id());
 
   switch (event_type) {
-    case Event::LOAD_COMPLETE:
+    case ui::AXEventGenerator::Event::LOAD_COMPLETE:
       if (node->manager() == GetRootManager()) {
         auto* android_focused =
             static_cast<BrowserAccessibilityAndroid*>(GetFocus());
-        wcax->HandlePageLoaded(android_focused->unique_id());
+        if (android_focused)
+          wcax->HandlePageLoaded(android_focused->unique_id());
       }
       break;
-    case Event::CHECKED_STATE_CHANGED:
+    case ui::AXEventGenerator::Event::CHECKED_STATE_CHANGED:
       wcax->HandleCheckStateChanged(android_node->unique_id());
       break;
-    case Event::SCROLL_POSITION_CHANGED:
+    case ui::AXEventGenerator::Event::SCROLL_HORIZONTAL_POSITION_CHANGED:
+    case ui::AXEventGenerator::Event::SCROLL_VERTICAL_POSITION_CHANGED:
       wcax->HandleScrollPositionChanged(android_node->unique_id());
       break;
-    case Event::ALERT:
+    case ui::AXEventGenerator::Event::ALERT:
     // An alert is a special case of live region. Fall through to the
     // next case to handle it.
-    case Event::LIVE_REGION_NODE_CHANGED: {
+    case ui::AXEventGenerator::Event::LIVE_REGION_NODE_CHANGED: {
       // This event is fired when an object appears in a live region.
       // Speak its text.
-      base::string16 text = android_node->GetText();
+      base::string16 text = android_node->GetInnerText();
       wcax->AnnounceLiveRegionText(text);
       break;
     }
-    case Event::DOCUMENT_SELECTION_CHANGED: {
-      int32_t focus_id = GetTreeData().sel_focus_object_id;
+    case ui::AXEventGenerator::Event::DOCUMENT_SELECTION_CHANGED: {
+      int32_t focus_id = ax_tree()->GetUnignoredSelection().focus_object_id;
       BrowserAccessibility* focus_object = GetFromID(focus_id);
       if (focus_object) {
         BrowserAccessibilityAndroid* android_focus_object =
@@ -189,30 +190,67 @@ void BrowserAccessibilityManagerAndroid::FireGeneratedEvent(
       }
       break;
     }
-    case Event::VALUE_CHANGED:
+    case ui::AXEventGenerator::Event::VALUE_CHANGED:
       if (android_node->IsEditableText() && GetFocus() == node) {
         wcax->HandleEditableTextChanged(android_node->unique_id());
       } else if (android_node->IsSlider()) {
         wcax->HandleSliderChanged(android_node->unique_id());
       }
       break;
-    case Event::ACTIVE_DESCENDANT_CHANGED:
-    case Event::CHILDREN_CHANGED:
-    case Event::COLLAPSED:
-    case Event::DESCRIPTION_CHANGED:
-    case Event::DOCUMENT_TITLE_CHANGED:
-    case Event::EXPANDED:
-    case Event::INVALID_STATUS_CHANGED:
-    case Event::LIVE_REGION_CHANGED:
-    case Event::LIVE_REGION_CREATED:
-    case Event::MENU_ITEM_SELECTED:
-    case Event::NAME_CHANGED:
-    case Event::OTHER_ATTRIBUTE_CHANGED:
-    case Event::ROLE_CHANGED:
-    case Event::ROW_COUNT_CHANGED:
-    case Event::SELECTED_CHANGED:
-    case Event::SELECTED_CHILDREN_CHANGED:
-    case Event::STATE_CHANGED:
+    case ui::AXEventGenerator::Event::ACCESS_KEY_CHANGED:
+    case ui::AXEventGenerator::Event::ACTIVE_DESCENDANT_CHANGED:
+    case ui::AXEventGenerator::Event::ATOMIC_CHANGED:
+    case ui::AXEventGenerator::Event::BUSY_CHANGED:
+    case ui::AXEventGenerator::Event::AUTO_COMPLETE_CHANGED:
+    case ui::AXEventGenerator::Event::CHILDREN_CHANGED:
+    case ui::AXEventGenerator::Event::CLASS_NAME_CHANGED:
+    case ui::AXEventGenerator::Event::COLLAPSED:
+    case ui::AXEventGenerator::Event::CONTROLS_CHANGED:
+    case ui::AXEventGenerator::Event::DESCRIBED_BY_CHANGED:
+    case ui::AXEventGenerator::Event::DESCRIPTION_CHANGED:
+    case ui::AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
+    case ui::AXEventGenerator::Event::DROPEFFECT_CHANGED:
+    case ui::AXEventGenerator::Event::EXPANDED:
+    case ui::AXEventGenerator::Event::ENABLED_CHANGED:
+    case ui::AXEventGenerator::Event::FOCUS_CHANGED:
+    case ui::AXEventGenerator::Event::FLOW_FROM_CHANGED:
+    case ui::AXEventGenerator::Event::FLOW_TO_CHANGED:
+    case ui::AXEventGenerator::Event::GRABBED_CHANGED:
+    case ui::AXEventGenerator::Event::HASPOPUP_CHANGED:
+    case ui::AXEventGenerator::Event::HIERARCHICAL_LEVEL_CHANGED:
+    case ui::AXEventGenerator::Event::IGNORED_CHANGED:
+    case ui::AXEventGenerator::Event::IMAGE_ANNOTATION_CHANGED:
+    case ui::AXEventGenerator::Event::INVALID_STATUS_CHANGED:
+    case ui::AXEventGenerator::Event::KEY_SHORTCUTS_CHANGED:
+    case ui::AXEventGenerator::Event::LABELED_BY_CHANGED:
+    case ui::AXEventGenerator::Event::LANGUAGE_CHANGED:
+    case ui::AXEventGenerator::Event::LAYOUT_INVALIDATED:
+    case ui::AXEventGenerator::Event::LIVE_REGION_CHANGED:
+    case ui::AXEventGenerator::Event::LIVE_REGION_CREATED:
+    case ui::AXEventGenerator::Event::LIVE_RELEVANT_CHANGED:
+    case ui::AXEventGenerator::Event::LIVE_STATUS_CHANGED:
+    case ui::AXEventGenerator::Event::LOAD_START:
+    case ui::AXEventGenerator::Event::MENU_ITEM_SELECTED:
+    case ui::AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
+    case ui::AXEventGenerator::Event::MULTISELECTABLE_STATE_CHANGED:
+    case ui::AXEventGenerator::Event::NAME_CHANGED:
+    case ui::AXEventGenerator::Event::OTHER_ATTRIBUTE_CHANGED:
+    case ui::AXEventGenerator::Event::PLACEHOLDER_CHANGED:
+    case ui::AXEventGenerator::Event::POSITION_IN_SET_CHANGED:
+    case ui::AXEventGenerator::Event::READONLY_CHANGED:
+    case ui::AXEventGenerator::Event::RELATED_NODE_CHANGED:
+    case ui::AXEventGenerator::Event::REQUIRED_STATE_CHANGED:
+    case ui::AXEventGenerator::Event::ROLE_CHANGED:
+    case ui::AXEventGenerator::Event::ROW_COUNT_CHANGED:
+    case ui::AXEventGenerator::Event::SELECTED_CHANGED:
+    case ui::AXEventGenerator::Event::SELECTED_CHILDREN_CHANGED:
+    case ui::AXEventGenerator::Event::SET_SIZE_CHANGED:
+    case ui::AXEventGenerator::Event::SORT_CHANGED:
+    case ui::AXEventGenerator::Event::STATE_CHANGED:
+    case ui::AXEventGenerator::Event::SUBTREE_CREATED:
+    case ui::AXEventGenerator::Event::VALUE_MAX_CHANGED:
+    case ui::AXEventGenerator::Event::VALUE_MIN_CHANGED:
+    case ui::AXEventGenerator::Event::VALUE_STEP_CHANGED:
       // There are some notifications that aren't meaningful on Android.
       // It's okay to skip them.
       break;
@@ -220,7 +258,7 @@ void BrowserAccessibilityManagerAndroid::FireGeneratedEvent(
 }
 
 void BrowserAccessibilityManagerAndroid::SendLocationChangeEvents(
-      const std::vector<AccessibilityHostMsg_LocationChangeParams>& params) {
+    const std::vector<AccessibilityHostMsg_LocationChangeParams>& params) {
   // Android is not very efficient at handling notifications, and location
   // changes in particular are frequent and not time-critical. If a lot of
   // nodes changed location, just send a single notification after a short
@@ -243,7 +281,7 @@ bool BrowserAccessibilityManagerAndroid::NextAtGranularity(
     int32_t* end_index) {
   switch (granularity) {
     case ANDROID_ACCESSIBILITY_NODE_INFO_MOVEMENT_GRANULARITY_CHARACTER: {
-      base::string16 text = node->GetText();
+      base::string16 text = node->GetInnerText();
       if (cursor_index >= static_cast<int32_t>(text.length()))
         return false;
       base::i18n::UTF16CharIterator iter(text.data(), text.size());
@@ -289,7 +327,7 @@ bool BrowserAccessibilityManagerAndroid::PreviousAtGranularity(
     case ANDROID_ACCESSIBILITY_NODE_INFO_MOVEMENT_GRANULARITY_CHARACTER: {
       if (cursor_index <= 0)
         return false;
-      base::string16 text = node->GetText();
+      base::string16 text = node->GetInnerText();
       base::i18n::UTF16CharIterator iter(text.data(), text.size());
       int previous_index = 0;
       while (!iter.end() && iter.array_pos() < cursor_index) {
@@ -362,12 +400,25 @@ void BrowserAccessibilityManagerAndroid::HandleHoverEvent(
     wcax->HandleHover(android_node->unique_id());
 }
 
+gfx::Rect BrowserAccessibilityManagerAndroid::GetViewBounds() {
+  // We have to take the device scale factor into account on Android.
+  BrowserAccessibilityDelegate* delegate = GetDelegateFromRootManager();
+  if (delegate) {
+    gfx::Rect bounds = delegate->AccessibilityGetViewBounds();
+    if (IsUseZoomForDSFEnabled() && device_scale_factor() > 0.0 &&
+        device_scale_factor() != 1.0)
+      bounds = ScaleToEnclosingRect(bounds, device_scale_factor());
+    return bounds;
+  }
+  return gfx::Rect();
+}
+
 void BrowserAccessibilityManagerAndroid::OnAtomicUpdateFinished(
     ui::AXTree* tree,
     bool root_changed,
-    const std::vector<ui::AXTreeDelegate::Change>& changes) {
-  BrowserAccessibilityManager::OnAtomicUpdateFinished(
-      tree, root_changed, changes);
+    const std::vector<ui::AXTreeObserver::Change>& changes) {
+  BrowserAccessibilityManager::OnAtomicUpdateFinished(tree, root_changed,
+                                                      changes);
 
   if (root_changed) {
     WebContentsAccessibilityAndroid* wcax = GetWebContentsAXFromRootManager();
@@ -377,8 +428,8 @@ void BrowserAccessibilityManagerAndroid::OnAtomicUpdateFinished(
   }
 }
 
-bool
-BrowserAccessibilityManagerAndroid::UseRootScrollOffsetsWhenComputingBounds() {
+bool BrowserAccessibilityManagerAndroid::
+    UseRootScrollOffsetsWhenComputingBounds() {
   // The Java layer handles the root scroll offset.
   return false;
 }

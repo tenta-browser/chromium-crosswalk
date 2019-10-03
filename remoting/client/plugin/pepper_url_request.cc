@@ -4,9 +4,10 @@
 
 #include "remoting/client/plugin/pepper_url_request.h"
 
-#include "base/callback_helpers.h"
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "ppapi/cpp/url_response_info.h"
 
@@ -65,7 +66,7 @@ void PepperUrlRequest::OnUrlOpened(int32_t result) {
 
   if (result < 0) {
     LOG(WARNING) << "pp::URLLoader for " << url_ << " failed: " << result;
-    base::ResetAndReturn(&on_result_callback_).Run(Result::Failed());
+    std::move(on_result_callback_).Run(Result::Failed());
     return;
   }
 
@@ -88,7 +89,7 @@ void PepperUrlRequest::OnResponseBodyRead(int32_t result) {
   if (result < 0) {
     LOG(WARNING) << "Failed to read HTTP response body when fetching "
                  << url_ << ", error: " << result;
-    base::ResetAndReturn(&on_result_callback_).Run(Result::Failed());
+    std::move(on_result_callback_).Run(Result::Failed());
     return;
   }
 
@@ -103,7 +104,7 @@ void PepperUrlRequest::OnResponseBodyRead(int32_t result) {
     return;
   }
 
-  base::ResetAndReturn(&on_result_callback_)
+  std::move(on_result_callback_)
       .Run(Result(url_loader_.GetResponseInfo().GetStatusCode(), response_));
 }
 
@@ -115,7 +116,7 @@ std::unique_ptr<UrlRequest> PepperUrlRequestFactory::CreateUrlRequest(
     UrlRequest::Type type,
     const std::string& url,
     const net::NetworkTrafficAnnotationTag& traffic_annotation) {
-  return base::MakeUnique<PepperUrlRequest>(pp_instance_, type, url,
+  return std::make_unique<PepperUrlRequest>(pp_instance_, type, url,
                                             traffic_annotation);
 }
 

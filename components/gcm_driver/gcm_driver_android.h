@@ -20,6 +20,10 @@ class FilePath;
 class SequencedTaskRunner;
 }
 
+namespace network {
+class SharedURLLoaderFactory;
+}
+
 namespace gcm {
 
 // GCMDriver implementation for Android, using Android GCM APIs.
@@ -28,7 +32,8 @@ class GCMDriverAndroid : public GCMDriver,
  public:
   GCMDriverAndroid(
       const base::FilePath& store_path,
-      const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner);
+      const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
   ~GCMDriverAndroid() override;
 
   // Methods called from Java via JNI:
@@ -47,6 +52,7 @@ class GCMDriverAndroid : public GCMDriver,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& app_id,
       const base::android::JavaParamRef<jstring>& sender_id,
+      const base::android::JavaParamRef<jstring>& j_message_id,
       const base::android::JavaParamRef<jstring>& collapse_key,
       const base::android::JavaParamRef<jbyteArray>& raw_data,
       const base::android::JavaParamRef<jobjectArray>& data_keys_and_values);
@@ -80,6 +86,8 @@ class GCMDriverAndroid : public GCMDriver,
   InstanceIDHandler* GetInstanceIDHandlerInternal() override;
   void AddHeartbeatInterval(const std::string& scope, int interval_ms) override;
   void RemoveHeartbeatInterval(const std::string& scope) override;
+  void AddAppHandler(const std::string& app_id,
+                     GCMAppHandler* handler) override;
 
   // GCMStatsRecorder::Delegate implementation:
   void OnActivityRecorded() override;

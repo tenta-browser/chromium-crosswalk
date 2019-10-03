@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -16,6 +17,7 @@
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "chrome/browser/chromeos/file_system_provider/icon_set.h"
 #include "chrome/browser/chromeos/file_system_provider/mount_path_util.h"
 #include "chrome/browser/chromeos/file_system_provider/notification_manager.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_info.h"
@@ -29,6 +31,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/common/extension_id.h"
 #include "storage/browser/fileapi/watcher_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -62,7 +65,7 @@ class FakeEventRouter : public extensions::EventRouter {
   // Handles an event which would normally be routed to an extension. Instead
   // replies with a hard coded response.
   void DispatchEventToExtension(
-      const std::string& extension_id,
+      const extensions::ExtensionId& extension_id,
       std::unique_ptr<extensions::Event> event) override {
     ASSERT_TRUE(file_system_);
     std::string file_system_id;
@@ -83,10 +86,10 @@ class FakeEventRouter : public extensions::EventRouter {
 
     if (reply_result_ == base::File::FILE_OK) {
       base::ListValue value_as_list;
-      value_as_list.Set(0, base::MakeUnique<base::Value>(kFileSystemId));
-      value_as_list.Set(1, base::MakeUnique<base::Value>(request_id));
+      value_as_list.Set(0, std::make_unique<base::Value>(kFileSystemId));
+      value_as_list.Set(1, std::make_unique<base::Value>(request_id));
       value_as_list.Set(2,
-                        base::MakeUnique<base::Value>(0) /* execution_time */);
+                        std::make_unique<base::Value>(0) /* execution_time */);
 
       using extensions::api::file_system_provider_internal::
           OperationRequestedSuccess::Params;
@@ -98,7 +101,7 @@ class FakeEventRouter : public extensions::EventRouter {
           false /* has_more */);
     } else {
       file_system_->GetRequestManager()->RejectRequest(
-          request_id, base::MakeUnique<RequestValue>(), reply_result_);
+          request_id, std::make_unique<RequestValue>(), reply_result_);
     }
   }
 
@@ -144,7 +147,7 @@ class Observer : public ProvidedFileSystemObserver {
                         const base::Closure& callback) override {
     EXPECT_EQ(kFileSystemId, file_system_info.file_system_id());
     change_events_.push_back(
-        base::MakeUnique<ChangeEvent>(change_type, changes));
+        std::make_unique<ChangeEvent>(change_type, changes));
     complete_callback_ = callback;
   }
 
@@ -240,7 +243,7 @@ class FileSystemProviderProvidedFileSystemTest : public testing::Test {
     mount_options.writable = true;
     file_system_info_.reset(new ProvidedFileSystemInfo(
         kExtensionId, mount_options, mount_path, false /* configurable */,
-        true /* watchable */, extensions::SOURCE_FILE));
+        true /* watchable */, extensions::SOURCE_FILE, IconSet()));
     provided_file_system_.reset(
         new ProvidedFileSystem(profile_.get(), *file_system_info_.get()));
     event_router_.reset(
@@ -372,7 +375,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher) {
   Watchers* const watchers = provided_file_system_->GetWatchers();
   ASSERT_EQ(1u, watchers->size());
   const Watcher& watcher = watchers->begin()->second;
-  EXPECT_EQ(FILE_PATH_LITERAL(kDirectoryPath), watcher.entry_path.value());
+  EXPECT_EQ(kDirectoryPath, watcher.entry_path.value());
   EXPECT_FALSE(watcher.recursive);
   EXPECT_EQ("", watcher.last_tag);
 
@@ -421,7 +424,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher_PersistentIllegal) {
     mount_options.supports_notify_tag = false;
     ProvidedFileSystemInfo file_system_info(
         kExtensionId, mount_options, mount_path, false /* configurable */,
-        true /* watchable */, extensions::SOURCE_FILE);
+        true /* watchable */, extensions::SOURCE_FILE, IconSet());
     ProvidedFileSystem simple_provided_file_system(profile_.get(),
                                                    file_system_info);
     simple_provided_file_system.SetEventRouterForTesting(event_router_.get());
@@ -467,8 +470,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher_Exists) {
     ASSERT_TRUE(watchers);
     ASSERT_EQ(1u, watchers->size());
     const auto& watcher_it = watchers->find(
-        WatcherKey(base::FilePath(FILE_PATH_LITERAL(kDirectoryPath)),
-                   false /* recursive */));
+        WatcherKey(base::FilePath(kDirectoryPath), false /* recursive */));
     ASSERT_NE(watchers->end(), watcher_it);
 
     EXPECT_EQ(1u, watcher_it->second.subscribers.size());
@@ -537,8 +539,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher_MultipleOrigins) {
     ASSERT_TRUE(watchers);
     ASSERT_EQ(1u, watchers->size());
     const auto& watcher_it = watchers->find(
-        WatcherKey(base::FilePath(FILE_PATH_LITERAL(kDirectoryPath)),
-                   false /* recursive */));
+        WatcherKey(base::FilePath(kDirectoryPath), false /* recursive */));
     ASSERT_NE(watchers->end(), watcher_it);
 
     EXPECT_EQ(1u, watcher_it->second.subscribers.size());
@@ -572,8 +573,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher_MultipleOrigins) {
     ASSERT_TRUE(watchers);
     ASSERT_EQ(2u, watchers->size());
     const auto& watcher_it = watchers->find(
-        WatcherKey(base::FilePath(FILE_PATH_LITERAL(kDirectoryPath)),
-                   false /* recursive */));
+        WatcherKey(base::FilePath(kDirectoryPath), false /* recursive */));
     ASSERT_NE(watchers->end(), watcher_it);
 
     EXPECT_EQ(1u, watcher_it->second.subscribers.size());
@@ -602,8 +602,7 @@ TEST_F(FileSystemProviderProvidedFileSystemTest, AddWatcher_MultipleOrigins) {
     ASSERT_TRUE(watchers);
     EXPECT_EQ(1u, watchers->size());
     const auto& watcher_it = watchers->find(
-        WatcherKey(base::FilePath(FILE_PATH_LITERAL(kDirectoryPath)),
-                   false /* recursive */));
+        WatcherKey(base::FilePath(kDirectoryPath), false /* recursive */));
     ASSERT_NE(watchers->end(), watcher_it);
 
     EXPECT_EQ(1u, watcher_it->second.subscribers.size());

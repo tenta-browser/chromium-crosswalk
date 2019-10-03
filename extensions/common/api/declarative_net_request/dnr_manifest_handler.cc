@@ -4,12 +4,11 @@
 
 #include "extensions/common/api/declarative_net_request/dnr_manifest_handler.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/files/file_path.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
 #include "extensions/common/api/declarative_net_request/utils.h"
 #include "extensions/common/error_utils.h"
-#include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/permissions_parser.h"
@@ -58,10 +57,18 @@ bool DNRManifestHandler::Parse(Extension* extension, base::string16* error) {
     return false;
   }
 
+  ExtensionResource resource = extension->GetResource(json_ruleset_location);
+  if (resource.empty() || resource.relative_path().ReferencesParent()) {
+    *error = ErrorUtils::FormatErrorMessageUTF16(
+        errors::kRulesFileIsInvalid, keys::kDeclarativeNetRequestKey,
+        keys::kDeclarativeRuleResourcesKey);
+    return false;
+  }
+
   extension->SetManifestData(
       keys::kDeclarativeNetRequestKey,
       std::make_unique<DNRManifestData>(
-          extension->GetResource(json_ruleset_location)));
+          resource.relative_path().NormalizePathSeparators()));
   return true;
 }
 
@@ -70,13 +77,19 @@ bool DNRManifestHandler::Validate(const Extension* extension,
                                   std::vector<InstallWarning>* warnings) const {
   DCHECK(IsAPIAvailable());
 
-  const ExtensionResource* resource =
-      DNRManifestData::GetRulesetResource(extension);
-  DCHECK(resource);
+  DNRManifestData* data = static_cast<DNRManifestData*>(
+      extension->GetManifestData(manifest_keys::kDeclarativeNetRequestKey));
+  DCHECK(data);
 
-  // Check file path validity.
-  if (!resource->GetFilePath().empty())
+  // Check file path validity. We don't use Extension::GetResource since it
+  // returns a failure if the relative path contains Windows path separators and
+  // we have already normalized the path separators.
+  if (!ExtensionResource::GetFilePath(
+           extension->path(), data->ruleset_relative_path,
+           ExtensionResource::SYMLINKS_MUST_RESOLVE_WITHIN_ROOT)
+           .empty()) {
     return true;
+  }
 
   *error = ErrorUtils::FormatErrorMessage(errors::kRulesFileIsInvalid,
                                           keys::kDeclarativeNetRequestKey,
@@ -84,8 +97,9 @@ bool DNRManifestHandler::Validate(const Extension* extension,
   return false;
 }
 
-const std::vector<std::string> DNRManifestHandler::Keys() const {
-  return SingleKey(keys::kDeclarativeNetRequestKey);
+base::span<const char* const> DNRManifestHandler::Keys() const {
+  static constexpr const char* kKeys[] = {keys::kDeclarativeNetRequestKey};
+  return kKeys;
 }
 
 }  // namespace declarative_net_request

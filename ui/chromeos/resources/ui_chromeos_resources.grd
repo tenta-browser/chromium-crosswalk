@@ -11,11 +11,6 @@
   </outputs>
   <release seq="1">
     <structures fallback_to_low_resolution="true">
-      <!-- Filesystem notification icons. -->
-      <structure type="chrome_scaled_image" name="IDR_DISK_SPACE_NOTIFICATION_LOW" file="filesystem/notification_disk_space_low.png" />
-      <structure type="chrome_scaled_image" name="IDR_DISK_SPACE_NOTIFICATION_CRITICAL" file="filesystem/notification_disk_space_critical.png" />
-      <structure type="chrome_scaled_image" name="IDR_STORAGE_MANAGER_BUTTON" file="filesystem/button_storage_manager.png" />
-
       <!-- Badge for Chrome Apps if Arc is enabled. -->
       <structure type="chrome_scaled_image" name="IDR_ARC_DUAL_ICON_BADGE" file="arc/dual-icon-badge.png" />
 
@@ -97,9 +92,17 @@
       <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_PAUSE" file="print_notification/pause.png" />
       <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_PLAY" file="print_notification/play.png" />
       <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_HELP" file="print_notification/help.png" />
-      <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_PRINTING" file="print_notification/print_job_printing.png" />
-      <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_DONE" file="print_notification/print_job_done.png" />
-      <structure type="chrome_scaled_image" name="IDR_PRINT_NOTIFICATION_ERROR" file="print_notification/print_job_error.png" />
+
+      <!-- Fingerprint images. -->
+      <structure type="chrome_scaled_image" name="IDR_LOGIN_FINGERPRINT_ICON_ANIMATION" file="fingerprint/fingerprint.png" />
+      <structure type="chrome_scaled_image" name="IDR_LOGIN_FINGERPRINT_ENROLLMENT_COMPLETE_ANIMATION" file="fingerprint/tick.png" />
+      <structure type="chrome_scaled_image" name="IDR_LOGIN_FINGERPRINT_SCANNER_TABLET_POWER_BUTTON_ANIMATION" file="fingerprint/fingerprint_scanner_tablet_power_button.png" />
+      <structure type="chrome_scaled_image" name="IDR_LOGIN_FINGERPRINT_SCANNER_LAPTOP_BOTTOM_RIGHT_ANIMATION" file="fingerprint/fingerprint_scanner_laptop_bottom_right.png" />
+      <structure type="chrome_scaled_image" name="IDR_LOGIN_FINGERPRINT_SCANNER_LAPTOP_TOP_RIGHT_ANIMATION" file="fingerprint/fingerprint_scanner_laptop_top_right.png" />
+
+      <!-- Kerberos. -->
+      <structure type="chrome_scaled_image" name="IDR_KERBEROS_ICON_KEY" file="kerberos/vpn_key_grey600_24dp.png" />
+
     </structures>
   </release>
 </grit>

@@ -7,24 +7,23 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/wm/always_on_top_controller.h"
-#include "ash/wm/root_window_finder.h"
 #include "ash/wm/window_state.h"
+#include "ash/wm/window_util.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
-namespace wm {
 namespace {
 
-aura::Window* FindContainerRoot(const gfx::Rect& bounds) {
-  if (bounds == gfx::Rect())
+aura::Window* FindContainerRoot(const gfx::Rect& bounds_in_screen) {
+  if (bounds_in_screen == gfx::Rect())
     return Shell::GetRootWindowForNewWindows();
-  return GetRootWindowMatching(bounds);
+  return window_util::GetRootWindowMatching(bounds_in_screen);
 }
 
 bool HasTransientParentWindow(const aura::Window* window) {
@@ -35,9 +34,17 @@ bool HasTransientParentWindow(const aura::Window* window) {
 
 aura::Window* GetSystemModalContainer(aura::Window* root,
                                       aura::Window* window) {
-  aura::Window* transient_parent = ::wm::GetTransientParent(window);
   DCHECK_EQ(ui::MODAL_TYPE_SYSTEM,
             window->GetProperty(aura::client::kModalKey));
+
+  // If |window| is already in a system modal container in |root|, re-use it.
+  for (auto modal_container_id : kSystemModalContainerIds) {
+    aura::Window* modal_container = root->GetChildById(modal_container_id);
+    if (window->parent() == modal_container)
+      return modal_container;
+  }
+
+  aura::Window* transient_parent = ::wm::GetTransientParent(window);
 
   // If screen lock is not active and user session is active,
   // all modal windows are placed into the normal modal container.
@@ -73,14 +80,15 @@ aura::Window* GetContainerForWindow(aura::Window* window) {
   return parent;
 }
 
-aura::Window* GetDefaultParent(aura::Window* window, const gfx::Rect& bounds) {
+aura::Window* GetDefaultParentForWindow(aura::Window* window,
+                                        const gfx::Rect& bounds_in_screen) {
   aura::Window* target_root = nullptr;
   aura::Window* transient_parent = ::wm::GetTransientParent(window);
   if (transient_parent) {
     // Transient window should use the same root as its transient parent.
     target_root = transient_parent->GetRootWindow();
   } else {
-    target_root = FindContainerRoot(bounds);
+    target_root = FindContainerRoot(bounds_in_screen);
   }
 
   switch (window->type()) {
@@ -94,10 +102,6 @@ aura::Window* GetDefaultParent(aura::Window* window, const gfx::Rect& bounds) {
     case aura::client::WINDOW_TYPE_CONTROL:
       return target_root->GetChildById(
           kShellWindowId_UnparentedControlContainer);
-    case aura::client::WINDOW_TYPE_PANEL:
-      if (window->GetProperty(kPanelAttachedKey))
-        return target_root->GetChildById(kShellWindowId_PanelContainer);
-      return GetContainerFromAlwaysOnTopController(target_root, window);
     case aura::client::WINDOW_TYPE_MENU:
       return target_root->GetChildById(kShellWindowId_MenuContainer);
     case aura::client::WINDOW_TYPE_TOOLTIP:
@@ -111,7 +115,7 @@ aura::Window* GetDefaultParent(aura::Window* window, const gfx::Rect& bounds) {
   return nullptr;
 }
 
-aura::Window::Windows GetContainersFromAllRootWindows(
+aura::Window::Windows GetContainersForAllRootWindows(
     int container_id,
     aura::Window* priority_root) {
   aura::Window::Windows containers;
@@ -128,5 +132,4 @@ aura::Window::Windows GetContainersFromAllRootWindows(
   return containers;
 }
 
-}  // namespace wm
 }  // namespace ash

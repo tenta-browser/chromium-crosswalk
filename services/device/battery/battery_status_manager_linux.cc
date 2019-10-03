@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
@@ -95,7 +97,7 @@ UPowerObject::UPowerObject(
 UPowerObject::~UPowerObject() {
   properties_.reset();  // before the proxy is deleted.
   dbus_->RemoveObjectProxy(kUPowerServiceName, proxy_->object_path(),
-                           base::Bind(&base::DoNothing));
+                           base::DoNothing());
 }
 
 std::vector<dbus::ObjectPath> UPowerObject::EnumerateDevices() {
@@ -261,7 +263,7 @@ BatteryObject::BatteryObject(
 BatteryObject::~BatteryObject() {
   properties_.reset();  // before the proxy is deleted.
   dbus_->RemoveObjectProxy(kUPowerServiceName, proxy_->object_path(),
-                           base::Bind(&base::DoNothing));
+                           base::DoNothing());
 }
 
 bool BatteryObject::IsValid() const {
@@ -307,10 +309,6 @@ mojom::BatteryStatus ComputeWebBatteryStatus(BatteryProperties* properties) {
   return status;
 }
 
-void OnSignalConnectedDoNothing(const std::string& interface_name,
-                                const std::string& signal_name,
-                                bool success) {}
-
 }  // namespace
 
 // Class that represents a dedicated thread which communicates with DBus to
@@ -325,10 +323,10 @@ class BatteryStatusManagerLinux::BatteryStatusNotificationThread
   ~BatteryStatusNotificationThread() override {
     // Make sure to shutdown the dbus connection if it is still open in the very
     // end. It needs to happen on the BatteryStatusNotificationThread.
-    message_loop()->task_runner()->PostTask(
+    task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&BatteryStatusNotificationThread::ShutdownDBusConnection,
-                   base::Unretained(this)));
+        base::BindOnce(&BatteryStatusNotificationThread::ShutdownDBusConnection,
+                       base::Unretained(this)));
 
     // Drain the message queue of the BatteryStatusNotificationThread and stop.
     Stop();
@@ -349,12 +347,12 @@ class BatteryStatusManagerLinux::BatteryStatusNotificationThread
         kUPowerServiceName, kUPowerSignalDeviceAdded,
         base::Bind(&BatteryStatusNotificationThread::DeviceAdded,
                    base::Unretained(this)),
-        base::Bind(&OnSignalConnectedDoNothing));
+        base::DoNothing());
     upower_->proxy()->ConnectToSignal(
         kUPowerServiceName, kUPowerSignalDeviceRemoved,
         base::Bind(&BatteryStatusNotificationThread::DeviceRemoved,
                    base::Unretained(this)),
-        base::Bind(&OnSignalConnectedDoNothing));
+        base::DoNothing());
 
     FindBatteryDevice();
   }
@@ -464,7 +462,7 @@ class BatteryStatusManagerLinux::BatteryStatusNotificationThread
           kUPowerDeviceInterfaceName, kUPowerDeviceSignalChanged,
           base::Bind(&BatteryStatusNotificationThread::BatteryChanged,
                      base::Unretained(this)),
-          base::Bind(&OnSignalConnectedDoNothing));
+          base::DoNothing());
     }
   }
 
@@ -479,8 +477,8 @@ class BatteryStatusManagerLinux::BatteryStatusNotificationThread
 
     // Shutdown DBus connection later because there may be pending tasks on
     // this thread.
-    message_loop()->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&dbus::Bus::ShutdownAndBlock, system_bus_));
+    task_runner()->PostTask(
+        FROM_HERE, base::BindOnce(&dbus::Bus::ShutdownAndBlock, system_bus_));
     system_bus_ = nullptr;
   }
 
@@ -586,8 +584,9 @@ bool BatteryStatusManagerLinux::StartListeningBatteryChange() {
     return false;
 
   notifier_thread_->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&BatteryStatusNotificationThread::StartListening,
-                            base::Unretained(notifier_thread_.get())));
+      FROM_HERE,
+      base::BindOnce(&BatteryStatusNotificationThread::StartListening,
+                     base::Unretained(notifier_thread_.get())));
   return true;
 }
 
@@ -596,8 +595,8 @@ void BatteryStatusManagerLinux::StopListeningBatteryChange() {
     return;
 
   notifier_thread_->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&BatteryStatusNotificationThread::StopListening,
-                            base::Unretained(notifier_thread_.get())));
+      FROM_HERE, base::BindOnce(&BatteryStatusNotificationThread::StopListening,
+                                base::Unretained(notifier_thread_.get())));
 }
 
 bool BatteryStatusManagerLinux::StartNotifierThreadIfNecessary() {

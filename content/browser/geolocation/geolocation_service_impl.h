@@ -5,11 +5,12 @@
 #ifndef CONTENT_BROWSER_GEOLOCATION_GEOLOCATION_SERVICE_IMPL_H_
 #define CONTENT_BROWSER_GEOLOCATION_GEOLOCATION_SERVICE_IMPL_H_
 
+#include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "device/geolocation/public/interfaces/geolocation.mojom.h"
-#include "device/geolocation/public/interfaces/geolocation_context.mojom.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "third_party/WebKit/public/platform/modules/geolocation/geolocation_service.mojom.h"
+#include "services/device/public/mojom/geolocation.mojom.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
+#include "third_party/blink/public/mojom/geolocation/geolocation_service.mojom.h"
 
 namespace blink {
 namespace mojom {
@@ -19,11 +20,12 @@ enum class PermissionStatus;
 
 namespace content {
 class RenderFrameHost;
-class PermissionManager;
+class PermissionControllerImpl;
 
 class GeolocationServiceImplContext {
  public:
-  GeolocationServiceImplContext(PermissionManager* permission_manager_);
+  explicit GeolocationServiceImplContext(
+      PermissionControllerImpl* permission_controller);
   ~GeolocationServiceImplContext();
   void RequestPermission(
       RenderFrameHost* render_frame_host,
@@ -31,12 +33,15 @@ class GeolocationServiceImplContext {
       const base::Callback<void(blink::mojom::PermissionStatus)>& callback);
 
  private:
-  PermissionManager* permission_manager_;
+  PermissionControllerImpl* permission_controller_;
   int request_id_;
 
   void HandlePermissionStatus(
       const base::Callback<void(blink::mojom::PermissionStatus)>& callback,
       blink::mojom::PermissionStatus permission_status);
+
+  base::WeakPtrFactory<GeolocationServiceImplContext> weak_factory_{this};
+
   DISALLOW_COPY_AND_ASSIGN(GeolocationServiceImplContext);
 };
 
@@ -44,7 +49,7 @@ class CONTENT_EXPORT GeolocationServiceImpl
     : public blink::mojom::GeolocationService {
  public:
   GeolocationServiceImpl(device::mojom::GeolocationContext* geolocation_context,
-                         PermissionManager* permission_manager,
+                         PermissionControllerImpl* permission_controller,
                          RenderFrameHost* render_frame_host);
   ~GeolocationServiceImpl() override;
 
@@ -55,16 +60,18 @@ class CONTENT_EXPORT GeolocationServiceImpl
   // This may not be called a second time until the Geolocation instance has
   // been created.
   void CreateGeolocation(device::mojom::GeolocationRequest request,
-                         bool user_gesture) override;
+                         bool user_gesture,
+                         CreateGeolocationCallback callback) override;
 
  private:
   // Creates the Geolocation Service.
   void CreateGeolocationWithPermissionStatus(
       device::mojom::GeolocationRequest request,
+      CreateGeolocationCallback callback,
       blink::mojom::PermissionStatus permission_status);
 
   device::mojom::GeolocationContext* geolocation_context_;
-  PermissionManager* permission_manager_;
+  PermissionControllerImpl* permission_controller_;
   RenderFrameHost* render_frame_host_;
 
   // Along with each GeolocationService, we store a

@@ -4,18 +4,22 @@
 
 #include "chrome/browser/safe_browsing/download_protection/download_url_sb_client.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/download_item_utils.h"
 
 namespace safe_browsing {
 
 DownloadUrlSBClient::DownloadUrlSBClient(
-    content::DownloadItem* item,
+    download::DownloadItem* item,
     DownloadProtectionService* service,
     const CheckDownloadCallback& callback,
     const scoped_refptr<SafeBrowsingUIManager>& ui_manager,
@@ -36,14 +40,16 @@ DownloadUrlSBClient::DownloadUrlSBClient(
   DCHECK(item_);
   DCHECK(service_);
   download_item_observer_.Add(item_);
-  Profile* profile = Profile::FromBrowserContext(item_->GetBrowserContext());
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item_));
   extended_reporting_level_ =
       profile ? GetExtendedReportingLevel(*profile->GetPrefs())
               : SBER_LEVEL_OFF;
 }
 
 // Implements DownloadItem::Observer.
-void DownloadUrlSBClient::OnDownloadDestroyed(content::DownloadItem* download) {
+void DownloadUrlSBClient::OnDownloadDestroyed(
+    download::DownloadItem* download) {
   download_item_observer_.Remove(item_);
   item_ = nullptr;
 }
@@ -85,18 +91,18 @@ void DownloadUrlSBClient::CheckDone(SBThreatType threat_type) {
   UpdateDownloadCheckStats(total_type_);
   if (threat_type != SB_THREAT_TYPE_SAFE) {
     UpdateDownloadCheckStats(dangerous_type_);
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&DownloadUrlSBClient::ReportMalware, this, threat_type));
   } else {
     // Identify download referrer chain, which will be used in
     // ClientDownloadRequest.
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&DownloadUrlSBClient::IdentifyReferrerChain, this));
   }
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(callback_, result));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(callback_, result));
 }
 
 void DownloadUrlSBClient::ReportMalware(SBThreatType threat_type) {
@@ -121,7 +127,8 @@ void DownloadUrlSBClient::ReportMalware(SBThreatType threat_type) {
   hit_report.is_metrics_reporting_active =
       ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
 
-  ui_manager_->MaybeReportSafeBrowsingHit(hit_report, item_->GetWebContents());
+  ui_manager_->MaybeReportSafeBrowsingHit(
+      hit_report, content::DownloadItemUtils::GetWebContents(item_));
 }
 
 void DownloadUrlSBClient::IdentifyReferrerChain() {
@@ -130,8 +137,7 @@ void DownloadUrlSBClient::IdentifyReferrerChain() {
     return;
 
   item_->SetUserData(ReferrerChainData::kDownloadReferrerChainDataKey,
-                     base::MakeUnique<ReferrerChainData>(
-                         service_->IdentifyReferrerChain(*item_)));
+                     service_->IdentifyReferrerChain(*item_));
 }
 
 void DownloadUrlSBClient::UpdateDownloadCheckStats(SBStatsType stat_type) {

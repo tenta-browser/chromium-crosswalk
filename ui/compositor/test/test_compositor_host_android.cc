@@ -9,6 +9,8 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "ui/compositor/compositor.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -23,12 +25,12 @@ class TestCompositorHostAndroid : public TestCompositorHost {
     compositor_.reset(new ui::Compositor(
         context_factory_private->AllocateFrameSinkId(), context_factory,
         context_factory_private, base::ThreadTaskRunnerHandle::Get(),
-        false /* enable_surface_synchronization */,
         false /* enable_pixel_canvas */));
     // TODO(sievers): Support onscreen here.
     compositor_->SetAcceleratedWidget(gfx::kNullAcceleratedWidget);
     compositor_->SetScaleAndSize(1.0f,
-                                 gfx::Size(bounds.width(), bounds.height()));
+                                 gfx::Size(bounds.width(), bounds.height()),
+                                 viz::LocalSurfaceIdAllocation());
   }
 
   // Overridden from TestCompositorHost:

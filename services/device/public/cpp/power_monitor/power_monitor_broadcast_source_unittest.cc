@@ -5,9 +5,9 @@
 #include "services/device/public/cpp/power_monitor/power_monitor_broadcast_source.h"
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/power_monitor_test_base.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,35 +19,33 @@ class PowerMonitorBroadcastSourceTest : public testing::Test {
   ~PowerMonitorBroadcastSourceTest() override {}
 
   void SetUp() override {
-    power_monitor_source_ = new PowerMonitorBroadcastSource(
-        nullptr, base::SequencedTaskRunnerHandle::Get());
-    power_monitor_.reset(new base::PowerMonitor(
-        std::unique_ptr<base::PowerMonitorSource>(power_monitor_source_)));
+    auto power_monitor_source = std::make_unique<PowerMonitorBroadcastSource>(
+        base::SequencedTaskRunnerHandle::Get());
+    power_monitor_source_ptr_ = power_monitor_source.get();
+    base::PowerMonitor::Initialize(std::move(power_monitor_source));
+    power_monitor_source_ptr_->Init(nullptr);
   }
 
   void TearDown() override {
-    power_monitor_.reset();
+    base::PowerMonitor::ShutdownForTesting();
     base::RunLoop().RunUntilIdle();
   }
 
   PowerMonitorBroadcastSource::Client* client() {
-    return power_monitor_source_->client_for_testing();
+    return power_monitor_source_ptr_->client_for_testing();
   }
 
-  base::PowerMonitor* monitor() { return power_monitor_.get(); }
-
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
  private:
-  PowerMonitorBroadcastSource* power_monitor_source_;
-  std::unique_ptr<base::PowerMonitor> power_monitor_;
+  PowerMonitorBroadcastSource* power_monitor_source_ptr_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerMonitorBroadcastSourceTest);
 };
 
 TEST_F(PowerMonitorBroadcastSourceTest, PowerMessageReceiveBroadcast) {
   base::PowerMonitorTestObserver observer;
-  monitor()->AddObserver(&observer);
+  base::PowerMonitor::AddObserver(&observer);
 
   // Sending resume when not suspended should have no effect.
   client()->Resume();
@@ -95,6 +93,7 @@ TEST_F(PowerMonitorBroadcastSourceTest, PowerMessageReceiveBroadcast) {
   client()->PowerStateChange(false);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(observer.power_state_changes(), 2);
+  base::PowerMonitor::RemoveObserver(&observer);
 }
 
 }  // namespace device

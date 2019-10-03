@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//remoting/remoting_options.gni")
 import("//media/media_options.gni")
+import("//remoting/remoting_options.gni")
 
 static_library("protocol") {
   sources = [
@@ -54,6 +54,8 @@ static_library("protocol") {
     "datagram_channel_factory.h",
     "errors.cc",
     "errors.h",
+    "file_transfer_helpers.cc",
+    "file_transfer_helpers.h",
     "frame_consumer.h",
     "frame_stats.cc",
     "frame_stats.h",
@@ -66,8 +68,6 @@ static_library("protocol") {
     "host_video_dispatcher.h",
     "host_video_stats_dispatcher.cc",
     "host_video_stats_dispatcher.h",
-    "http_ice_config_request.cc",
-    "http_ice_config_request.h",
     "ice_config.cc",
     "ice_config.h",
     "ice_config_request.h",
@@ -86,8 +86,6 @@ static_library("protocol") {
     "input_stub.h",
     "it2me_host_authenticator_factory.cc",
     "it2me_host_authenticator_factory.h",
-    "jingle_info_request.cc",
-    "jingle_info_request.h",
     "jingle_messages.cc",
     "jingle_messages.h",
     "jingle_session.cc",
@@ -198,9 +196,11 @@ static_library("protocol") {
     "//net",
     "//remoting/base",
     "//remoting/codec:decoder",
+    "//remoting/proto/remoting/v1:network_traversal_proto",
     "//remoting/signaling",
     "//third_party/boringssl",
     "//third_party/libyuv",
+    "//ui/events:dom_keycode_converter",
   ]
 
   defines = []
@@ -220,6 +220,8 @@ static_library("protocol") {
       "chromium_port_allocator_factory.h",
       "chromium_socket_factory.cc",
       "chromium_socket_factory.h",
+      "remoting_ice_config_request.cc",
+      "remoting_ice_config_request.h",
       "webrtc_audio_module.cc",
       "webrtc_audio_module.h",
       "webrtc_audio_sink_adapter.cc",
@@ -228,8 +230,6 @@ static_library("protocol") {
       "webrtc_connection_to_host.h",
       "webrtc_data_stream_adapter.cc",
       "webrtc_data_stream_adapter.h",
-      "webrtc_dummy_video_capturer.cc",
-      "webrtc_dummy_video_capturer.h",
       "webrtc_dummy_video_encoder.cc",
       "webrtc_dummy_video_encoder.h",
       "webrtc_transport.cc",
@@ -255,10 +255,16 @@ static_library("protocol") {
     }
 
     deps += [
+      "//remoting/proto/remoting/v1:network_traversal_grpc_library",
+      "//third_party/webrtc/api:callfactory_api",
       "//third_party/webrtc/api/audio_codecs:audio_codecs_api",
       "//third_party/webrtc/api/audio_codecs/opus:audio_decoder_opus",
       "//third_party/webrtc/api/audio_codecs/opus:audio_encoder_opus",
+      "//third_party/webrtc/api/rtc_event_log:rtc_event_log_factory",
+      "//third_party/webrtc/api/video_codecs:builtin_video_decoder_factory",
+      "//third_party/webrtc/media:rtc_audio_video",
       "//third_party/webrtc_overrides:init_webrtc",
+      "//third_party/webrtc_overrides:task_queue_factory",
     ]
   }
 
@@ -337,7 +343,7 @@ source_set("unit_tests") {
     "connection_tester.h",
     "content_description_unittest.cc",
     "data_channel_manager_unittest.cc",
-    "http_ice_config_request_unittest.cc",
+    "frame_stats_unittest.cc",
     "ice_config_unittest.cc",
     "ice_transport_unittest.cc",
     "input_event_tracker_unittest.cc",
@@ -353,6 +359,7 @@ source_set("unit_tests") {
     "port_range_unittest.cc",
     "ppapi_module_stub.cc",
     "pseudotcp_adapter_unittest.cc",
+    "remoting_ice_config_request_unittest.cc",
     "sdp_message_unittest.cc",
     "session_config_unittest.cc",
     "spake2_authenticator_unittest.cc",
@@ -377,6 +384,7 @@ source_set("unit_tests") {
   deps = [
     ":test_support",
     "//net:test_support",
+    "//remoting/proto/remoting/v1:network_traversal_grpc_library",
     "//testing/gmock",
     "//testing/gtest",
   ]

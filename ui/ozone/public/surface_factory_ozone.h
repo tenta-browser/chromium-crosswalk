@@ -6,22 +6,26 @@
 #define UI_OZONE_PUBLIC_SURFACE_FACTORY_OZONE_H_
 
 #include <stdint.h>
-
 #include <memory>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/native_library.h"
+#include "gpu/vulkan/buildflags.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/overlay_transform.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/ozone/ozone_base_export.h"
 #include "ui/ozone/public/gl_ozone.h"
+
+#if BUILDFLAG(ENABLE_VULKAN)
+#include "gpu/vulkan/vulkan_implementation.h"
+#endif
 
 namespace gfx {
 class NativePixmap;
@@ -30,6 +34,8 @@ class NativePixmap;
 namespace ui {
 
 class SurfaceOzoneCanvas;
+class OverlaySurface;
+class PlatformWindowSurface;
 
 // The Ozone interface allows external implementations to hook into Chromium to
 // provide a system specific implementation. The Ozone interface supports two
@@ -59,7 +65,7 @@ class SurfaceOzoneCanvas;
 //
 // The remaining functions are not covered since they are needed in both drawing
 // modes (See comments below for descriptions).
-class OZONE_BASE_EXPORT SurfaceFactoryOzone {
+class COMPONENT_EXPORT(OZONE_BASE) SurfaceFactoryOzone {
  public:
   // Returns a list of allowed GL implementations. The default implementation
   // will be the first item.
@@ -69,16 +75,39 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
   // GL implementation doesn't exist.
   virtual GLOzone* GetGLOzone(gl::GLImplementation implementation);
 
+#if BUILDFLAG(ENABLE_VULKAN)
+  // Creates the vulkan implementation. This object should be capable of
+  // creating surfaces that swap to a platform window.
+  virtual std::unique_ptr<gpu::VulkanImplementation>
+  CreateVulkanImplementation();
+
+  // Creates a scanout NativePixmap that can be rendered using Vulkan.
+  // TODO(spang): Remove this once VK_EXT_image_drm_format_modifier is
+  // available.
+  virtual scoped_refptr<gfx::NativePixmap> CreateNativePixmapForVulkan(
+      gfx::AcceleratedWidget widget,
+      gfx::Size size,
+      gfx::BufferFormat format,
+      gfx::BufferUsage usage,
+      VkDevice vk_device,
+      VkDeviceMemory* vk_device_memory,
+      VkImage* vk_image);
+#endif
+
+  // Creates a rendering and presentation API agnostic surface for a platform
+  // window.
+  virtual std::unique_ptr<PlatformWindowSurface> CreatePlatformWindowSurface(
+      gfx::AcceleratedWidget window);
+
+  // Creates an overlay surface for a platform window.
+  virtual std::unique_ptr<OverlaySurface> CreateOverlaySurface(
+      gfx::AcceleratedWidget window);
+
   // Create SurfaceOzoneCanvas for the specified gfx::AcceleratedWidget.
   //
   // Note: The platform must support creation of SurfaceOzoneCanvas from the
   // Browser Process using only the handle contained in gfx::AcceleratedWidget.
   virtual std::unique_ptr<SurfaceOzoneCanvas> CreateCanvasForWidget(
-      gfx::AcceleratedWidget widget);
-
-  // Returns all scanout formats for |widget| representing a particular display
-  // controller or default display controller for kNullAcceleratedWidget.
-  virtual std::vector<gfx::BufferFormat> GetScanoutFormats(
       gfx::AcceleratedWidget widget);
 
   // Create a single native buffer to be used for overlay planes or zero copy
@@ -87,9 +116,20 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
   // It can be called on any thread.
   virtual scoped_refptr<gfx::NativePixmap> CreateNativePixmap(
       gfx::AcceleratedWidget widget,
+      VkDevice vk_device,
       gfx::Size size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage);
+
+  // Similar to CreateNativePixmap, but returns the result asynchronously.
+  using NativePixmapCallback =
+      base::OnceCallback<void(scoped_refptr<gfx::NativePixmap>)>;
+  virtual void CreateNativePixmapAsync(gfx::AcceleratedWidget widget,
+                                       VkDevice vk_device,
+                                       gfx::Size size,
+                                       gfx::BufferFormat format,
+                                       gfx::BufferUsage usage,
+                                       NativePixmapCallback callback);
 
   // Create a single native buffer from an existing handle. Takes ownership of
   // |handle| and can be called on any thread.
@@ -97,7 +137,7 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
       gfx::AcceleratedWidget widget,
       gfx::Size size,
       gfx::BufferFormat format,
-      const gfx::NativePixmapHandle& handle);
+      gfx::NativePixmapHandle handle);
 
   // A temporary solution that allows protected NativePixmap management to be
   // handled outside the Ozone platform (crbug.com/771863).
@@ -106,11 +146,10 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
   // a NativePixmapHandle to such a dummy pixmap, and creates a NativePixmap
   // instance for it.
   virtual scoped_refptr<gfx::NativePixmap>
-  CreateNativePixmapForProtectedBufferHandle(
-      gfx::AcceleratedWidget widget,
-      gfx::Size size,
-      gfx::BufferFormat format,
-      const gfx::NativePixmapHandle& handle);
+  CreateNativePixmapForProtectedBufferHandle(gfx::AcceleratedWidget widget,
+                                             gfx::Size size,
+                                             gfx::BufferFormat format,
+                                             gfx::NativePixmapHandle handle);
 
   // This callback can be used by implementations of this interface to query
   // for a NativePixmap for the given NativePixmapHandle, instead of importing
@@ -120,8 +159,8 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
   // be used instead of the NativePixmap that would have been produced by the
   // standard, implementation-specific NativePixmapHandle import mechanism.
   using GetProtectedNativePixmapCallback =
-      base::Callback<scoped_refptr<gfx::NativePixmap>(
-          const gfx::NativePixmapHandle&)>;
+      base::RepeatingCallback<scoped_refptr<gfx::NativePixmap>(
+          const gfx::NativePixmapHandle& handle)>;
   // Called by an external service to set the GetProtectedNativePixmapCallback,
   // to be used by the implementation when importing NativePixmapHandles.
   // TODO(posciak): crbug.com/778555, move this to platform-specific
@@ -130,6 +169,13 @@ class OZONE_BASE_EXPORT SurfaceFactoryOzone {
   virtual void SetGetProtectedNativePixmapDelegate(
       const GetProtectedNativePixmapCallback&
           get_protected_native_pixmap_callback);
+
+  // Enumerates the BufferFormats that the platform can allocate (and use for
+  // texturing) via CreateNativePixmap(), or returns empty if those could not be
+  // retrieved or the platform doesn't know in advance.
+  // Enumeration should not be assumed to take a trivial amount of time.
+  virtual std::vector<gfx::BufferFormat> GetSupportedFormatsForTexturing()
+      const;
 
  protected:
   SurfaceFactoryOzone();

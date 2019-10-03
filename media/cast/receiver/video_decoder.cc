@@ -17,9 +17,6 @@
 #include "media/base/video_frame_pool.h"
 #include "media/base/video_util.h"
 #include "media/cast/cast_environment.h"
-// VPX_CODEC_DISABLE_COMPAT excludes parts of the libvpx API that provide
-// backwards compatibility for legacy applications using the library.
-#define VPX_CODEC_DISABLE_COMPAT 1
 #include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"
 #include "third_party/libvpx/source/libvpx/vpx/vpx_decoder.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
@@ -202,9 +199,8 @@ class VideoDecoder::FakeImpl : public VideoDecoder::ImplBase {
     // Make sure this is a JSON string.
     if (!len || data[0] != '{')
       return NULL;
-    base::JSONReader reader;
-    std::unique_ptr<base::Value> values(
-        reader.Read(base::StringPiece(reinterpret_cast<char*>(data), len)));
+    std::unique_ptr<base::Value> values(base::JSONReader::ReadDeprecated(
+        base::StringPiece(reinterpret_cast<char*>(data), len)));
     if (!values)
       return NULL;
     base::DictionaryValue* dict = NULL;

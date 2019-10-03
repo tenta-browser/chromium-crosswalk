@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/api/image_writer_private/operation.h"
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
-#include "chrome/browser/extensions/api/image_writer_private/operation.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/zlib/google/zip.h"
@@ -50,7 +53,11 @@ class OperationForTest : public Operation {
                    const ExtensionId& extension_id,
                    const std::string& device_path,
                    const base::FilePath& download_path)
-      : Operation(manager_, extension_id, device_path, download_path) {}
+      : Operation(manager_,
+                  /*connector=*/nullptr,
+                  extension_id,
+                  device_path,
+                  download_path) {}
 
   void StartImpl() override {}
 
@@ -114,7 +121,7 @@ class ImageWriterOperationTest : public ImageWriterUnitTestBase {
 
     // Cancel() will ensure we Shutdown() FakeImageWriterClient.
     operation_->Cancel();
-    scoped_task_environment_.RunUntilIdle();
+    thread_bundle_.RunUntilIdle();
 
     ImageWriterUnitTestBase::TearDown();
   }
@@ -254,7 +261,7 @@ TEST_F(ImageWriterOperationTest, VerifyFileFailure) {
       test_utils_.GetDevicePath(), kDevicePattern, kTestFileSize);
 
   operation_->Start();
-  operation_->VerifyWrite(base::Bind(&base::DoNothing));
+  operation_->VerifyWrite(base::DoNothing());
   content::RunAllTasksUntilIdle();
 }
 #endif  // !defined(OS_CHROMEOS)

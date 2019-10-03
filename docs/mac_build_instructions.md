@@ -31,15 +31,22 @@ Clone the `depot_tools` repository:
 $ git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
 ```
 
-Add `depot_tools` to the end of your PATH (you will probably want to put this
-in your `~/.bashrc` or `~/.zshrc`). Assuming you cloned `depot_tools` to
-`/path/to/depot_tools`:
+Add `depot_tools` to the end of your PATH (you will probably want to put this in
+your `~/.bash_profile` or `~/.zshrc`). Assuming you cloned `depot_tools` to
+`/path/to/depot_tools` (note: you **must** use the absolute path or Python will
+not be able to find infra tools):
 
 ```shell
 $ export PATH="$PATH:/path/to/depot_tools"
 ```
 
 ## Get the code
+
+Ensure that unicode filenames aren't mangled by HFS:
+
+```shell
+$ git config --global core.precomposeUnicode true
+```
 
 Create a `chromium` directory for the checkout and change to it (you can call
 this whatever you like and put it wherever you like, as long as the full path
@@ -56,8 +63,9 @@ dependencies.
 $ fetch chromium
 ```
 
-If you don't want the full repo history, you can save a lot of time by
-adding the `--no-history` flag to `fetch`.
+If you don't need the full repo history, you can save time by using
+`fetch --no-history chromium`. You can call `git fetch --unshallow` to retrieve
+the full history later.
 
 Expect the command to take 30 minutes on even a fast connection, and many
 hours on slower ones.
@@ -77,10 +85,10 @@ development and testing purposes.
 
 ## Setting up the build
 
-Chromium uses [Ninja](https://ninja-build.org) as its main build tool along
-with a tool called [GN](../tools/gn/docs/quick_start.md) to generate `.ninja`
-files. You can create any number of *build directories* with different
-configurations. To create a build directory:
+Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
+a tool called [GN](https://gn.googlesource.com/gn/+/master/docs/quick_start.md)
+to generate `.ninja` files. You can create any number of *build directories*
+with different configurations. To create a build directory:
 
 ```shell
 $ gn gen out/Default
@@ -150,12 +158,15 @@ You might also want to [install ccache](ccache_mac.md) to speed up the build.
 Build Chromium (the "chrome" target) with Ninja using the command:
 
 ```shell
-$ ninja -C out/Default chrome
+$ autoninja -C out/Default chrome
 ```
+
+(`autoninja` is a wrapper that automatically provides optimal values for the
+arguments passed to `ninja`.)
 
 You can get a list of all of the other build targets from GN by running `gn ls
 out/Default` from the command line. To compile one, pass the GN label to Ninja
-with no preceding "//" (so, for `//chrome/test:unit_tests` use `ninja -C
+with no preceding "//" (so, for `//chrome/test:unit_tests` use `autoninja -C
 out/Default chrome/test:unit_tests`).
 
 ## Run Chromium
@@ -186,6 +197,16 @@ would like to debug in a graphical environment, rather than using `lldb` at the
 command line, that is possible without building in Xcode (see
 [Debugging in Xcode](https://www.chromium.org/developers/how-tos/debugging-on-os-x/building-with-ninja-debugging-with-xcode)).
 
+Tips for printing variables from `lldb` prompt (both in Xcode or in terminal):
+* If `uptr` is a `std::unique_ptr`, the address it wraps is accessible as
+  `uptr.__ptr_.__value_`.
+* To pretty-print `base::string16`, ensure you have a `~/.lldbinit` file and
+  add the following line into it (substitute {SRC} for your actual path to the
+  root of Chromium's sources):
+```
+command script import {SRC}/tools/lldb/lldb_chrome.py
+```
+
 ## Update your checkout
 
 To update an existing checkout, you can run
@@ -213,7 +234,7 @@ slow, but it runs fairly well even **with indexing enabled**.  Most people
 build in the Terminal and write code with a text editor, though.
 
 With hybrid builds, compilation is still handled by Ninja, and can be run from
-the command line (e.g. `ninja -C out/gn chrome`) or by choosing the `chrome`
+the command line (e.g. `autoninja -C out/gn chrome`) or by choosing the `chrome`
 target in the hybrid workspace and choosing Build.
 
 To use Xcode-Ninja Hybrid pass `--ide=xcode` to `gn gen`:

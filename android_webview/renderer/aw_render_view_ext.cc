@@ -6,13 +6,15 @@
 #include "android_webview/common/render_view_messages.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 namespace android_webview {
 
 AwRenderViewExt::AwRenderViewExt(content::RenderView* render_view)
-    : content::RenderViewObserver(render_view) {}
+    : content::RenderViewObserver(render_view) {
+  DCHECK(render_view != nullptr);
+}
 
 AwRenderViewExt::~AwRenderViewExt() {}
 
@@ -22,27 +24,19 @@ void AwRenderViewExt::RenderViewCreated(content::RenderView* render_view) {
 }
 
 void AwRenderViewExt::DidCommitCompositorFrame() {
-  PostCheckContentsSize();
+  UpdateContentsSize();
 }
 
-void AwRenderViewExt::DidUpdateLayout() {
-  PostCheckContentsSize();
+void AwRenderViewExt::DidUpdateMainFrameLayout() {
+  // The size may have changed.
+  needs_contents_size_update_ = true;
 }
 
 void AwRenderViewExt::OnDestruct() {
   delete this;
 }
 
-void AwRenderViewExt::PostCheckContentsSize() {
-  if (check_contents_size_timer_.IsRunning())
-    return;
-
-  check_contents_size_timer_.Start(FROM_HERE,
-      base::TimeDelta::FromMilliseconds(0), this,
-      &AwRenderViewExt::CheckContentsSize);
-}
-
-void AwRenderViewExt::CheckContentsSize() {
+void AwRenderViewExt::UpdateContentsSize() {
   blink::WebView* webview = render_view()->GetWebView();
   content::RenderFrame* main_render_frame = render_view()->GetMainRenderFrame();
 
@@ -56,7 +50,11 @@ void AwRenderViewExt::CheckContentsSize() {
   if (!webview || !main_render_frame)
     return;
 
-  gfx::Size contents_size = main_render_frame->GetWebFrame()->ContentsSize();
+  if (!needs_contents_size_update_)
+    return;
+  needs_contents_size_update_ = false;
+
+  gfx::Size contents_size = main_render_frame->GetWebFrame()->DocumentSize();
 
   // Fall back to contentsPreferredMinimumSize if the mainFrame is reporting a
   // 0x0 size (this happens during initial load).

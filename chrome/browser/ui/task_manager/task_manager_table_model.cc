@@ -22,11 +22,11 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/nacl/browser/nacl_browser.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/nacl/common/nacl_switches.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/common/result_codes.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
+#include "third_party/blink/public/platform/web_cache.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/table_model_observer.h"
 #include "ui/base/text/bytes_formatting.h"
@@ -49,9 +49,6 @@ const int64_t kRefreshTimeMS = 1000;
 bool IsSharedByGroup(int column_id) {
   switch (column_id) {
     case IDS_TASK_MANAGER_MEM_FOOTPRINT_COLUMN:
-    case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
-    case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
-    case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
     case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
     case IDS_TASK_MANAGER_CPU_COLUMN:
     case IDS_TASK_MANAGER_START_TIME_COLUMN:
@@ -69,7 +66,6 @@ bool IsSharedByGroup(int column_id) {
     case IDS_TASK_MANAGER_HARD_FAULTS_COLUMN:
     case IDS_TASK_MANAGER_OPEN_FD_COUNT_COLUMN:
     case IDS_TASK_MANAGER_PROCESS_PRIORITY_COLUMN:
-    case IDS_TASK_MANAGER_MEMORY_STATE_COLUMN:
       return true;
     default:
       return false;
@@ -79,6 +75,18 @@ bool IsSharedByGroup(int column_id) {
 // Used to sort various column values.
 template <class T>
 int ValueCompare(T value1, T value2) {
+  if (value1 == value2)
+    return 0;
+  return value1 < value2 ? -1 : 1;
+}
+
+// This forces NaN values to the bottom of the table.
+template <>
+int ValueCompare(double value1, double value2) {
+  if (std::isnan(value1))
+    return std::isnan(value2) ? 0 : -1;
+  if (std::isnan(value2))
+    return 1;
   if (value1 == value2)
     return 0;
   return value1 < value2 ? -1 : 1;
@@ -117,18 +125,14 @@ class TaskManagerValuesStringifier {
         unknown_string_(l10n_util::GetStringUTF16(
             IDS_TASK_MANAGER_UNKNOWN_VALUE_TEXT)),
         disabled_nacl_debugging_string_(l10n_util::GetStringUTF16(
-            IDS_TASK_MANAGER_DISABLED_NACL_DBG_TEXT)),
-        memory_state_normal_string_(l10n_util::GetStringUTF16(
-            IDS_TASK_MANAGER_MEMORY_STATE_NORMAL_TEXT)),
-        memory_state_throttled_string_(l10n_util::GetStringUTF16(
-            IDS_TASK_MANAGER_MEMORY_STATE_THROTTLED_TEXT)),
-        memory_state_suspended_string_(l10n_util::GetStringUTF16(
-            IDS_TASK_MANAGER_MEMORY_STATE_SUSPENDED_TEXT)) {
+            IDS_TASK_MANAGER_DISABLED_NACL_DBG_TEXT)) {
   }
 
   ~TaskManagerValuesStringifier() {}
 
   base::string16 GetCpuUsageText(double cpu_usage) {
+    if (std::isnan(cpu_usage))
+      return n_a_string_;
     return base::UTF8ToUTF16(base::StringPrintf(kCpuTextFormatString,
                                                 cpu_usage));
   }
@@ -174,21 +178,6 @@ class TaskManagerValuesStringifier {
     return memory_text;
   }
 
-  base::string16 GetMemoryStateText(base::MemoryState state) {
-    switch (state) {
-      case base::MemoryState::NORMAL:
-        return memory_state_normal_string_;
-      case base::MemoryState::THROTTLED:
-        return memory_state_throttled_string_;
-      case base::MemoryState::SUSPENDED:
-        return memory_state_suspended_string_;
-      case base::MemoryState::UNKNOWN:
-        return n_a_string_;
-    }
-    NOTREACHED();
-    return n_a_string_;
-  }
-
   base::string16 GetIdleWakeupsText(int idle_wakeups) {
     if (idle_wakeups == -1)
       return n_a_string_;
@@ -212,13 +201,13 @@ class TaskManagerValuesStringifier {
     if (nacl_port == nacl::kGdbDebugStubPortUnknown)
       return unknown_string_;
 
-    return base::IntToString16(nacl_port);
+    return base::NumberToString16(nacl_port);
   }
 
   base::string16 GetWindowsHandlesText(int64_t current, int64_t peak) {
     return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_HANDLES_CELL_TEXT,
-                                      base::Int64ToString16(current),
-                                      base::Int64ToString16(peak));
+                                      base::NumberToString16(current),
+                                      base::NumberToString16(peak));
   }
 
   base::string16 GetNetworkUsageText(int64_t network_usage) {
@@ -234,7 +223,7 @@ class TaskManagerValuesStringifier {
   }
 
   base::string16 GetProcessIdText(base::ProcessId proc_id) {
-    return base::IntToString16(proc_id);
+    return base::NumberToString16(proc_id);
   }
 
   base::string16 FormatAllocatedAndUsedMemory(int64_t allocated, int64_t used) {
@@ -252,7 +241,7 @@ class TaskManagerValuesStringifier {
   base::string16 GetKeepaliveCountText(int keepalive_count) const {
     if (keepalive_count < 0)
       return n_a_string();
-    return base::IntToString16(keepalive_count);
+    return base::NumberToString16(keepalive_count);
   }
 
   const base::string16& n_a_string() const { return n_a_string_; }
@@ -292,11 +281,6 @@ class TaskManagerValuesStringifier {
   // The string to show on the NaCl debug port column cells when the flag
   // #enable-nacl-debug is disabled.
   const base::string16 disabled_nacl_debugging_string_;
-
-  // Localized strings for memory states.
-  const base::string16 memory_state_normal_string_;
-  const base::string16 memory_state_throttled_string_;
-  const base::string16 memory_state_suspended_string_;
 
   DISALLOW_COPY_AND_ASSIGN(TaskManagerValuesStringifier);
 };
@@ -376,23 +360,18 @@ base::string16 TaskManagerTableModel::GetText(int row, int column) {
       return stringifier_->GetMemoryUsageText(
           observed_task_manager()->GetMemoryFootprintUsage(tasks_[row]), false);
 
-    case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
-      return stringifier_->GetMemoryUsageText(
-          observed_task_manager()->GetPrivateMemoryUsage(tasks_[row]), false);
-
-    case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
-      return stringifier_->GetMemoryUsageText(
-          observed_task_manager()->GetSharedMemoryUsage(tasks_[row]), false);
-
-    case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
-      return stringifier_->GetMemoryUsageText(
-          observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row]), false);
-
     case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
       return stringifier_->GetMemoryUsageText(
           observed_task_manager()->GetSwappedMemoryUsage(tasks_[row]), false);
 
     case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
+      if (observed_task_manager()->IsRunningInVM(tasks_[row])) {
+        // Don't show the process ID if running inside a VM to avoid confusion
+        // over conflicting pids.
+        // TODO(b/122992194): Figure out if we need to change this to display
+        // something for VM processes.
+        return base::string16();
+      }
       return stringifier_->GetProcessIdText(
           observed_task_manager()->GetProcessId(tasks_[row]));
 
@@ -472,18 +451,13 @@ base::string16 TaskManagerTableModel::GetText(int row, int column) {
           ? stringifier_->backgrounded_string()
           : stringifier_->foregrounded_string();
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
     case IDS_TASK_MANAGER_OPEN_FD_COUNT_COLUMN: {
       const int fd_count = observed_task_manager()->GetOpenFdCount(tasks_[row]);
       return fd_count >= 0 ? base::FormatNumber(fd_count)
                            : stringifier_->n_a_string();
     }
-#endif  // defined(OS_LINUX)
-
-    case IDS_TASK_MANAGER_MEMORY_STATE_COLUMN: {
-      return stringifier_->GetMemoryStateText(
-          observed_task_manager()->GetMemoryState(tasks_[row]));
-    }
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
 
     case IDS_TASK_MANAGER_KEEPALIVE_COUNT_COLUMN: {
       return stringifier_->GetKeepaliveCountText(
@@ -511,7 +485,6 @@ int TaskManagerTableModel::CompareValues(int row1,
   switch (column_id) {
     case IDS_TASK_MANAGER_TASK_COLUMN:
     case IDS_TASK_MANAGER_PROFILE_NAME_COLUMN:
-    case IDS_TASK_MANAGER_MEMORY_STATE_COLUMN:
       return ui::TableModel::CompareValues(row1, row2, column_id);
 
     case IDS_TASK_MANAGER_NET_COLUMN:
@@ -538,21 +511,6 @@ int TaskManagerTableModel::CompareValues(int row1,
           observed_task_manager()->GetMemoryFootprintUsage(tasks_[row1]),
           observed_task_manager()->GetMemoryFootprintUsage(tasks_[row2]));
 
-    case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
-      return ValueCompare(
-          observed_task_manager()->GetPrivateMemoryUsage(tasks_[row1]),
-          observed_task_manager()->GetPrivateMemoryUsage(tasks_[row2]));
-
-    case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
-      return ValueCompare(
-          observed_task_manager()->GetSharedMemoryUsage(tasks_[row1]),
-          observed_task_manager()->GetSharedMemoryUsage(tasks_[row2]));
-
-    case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
-      return ValueCompare(
-          observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row1]),
-          observed_task_manager()->GetPhysicalMemoryUsage(tasks_[row2]));
-
     case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
       return ValueCompare(
           observed_task_manager()->GetSwappedMemoryUsage(tasks_[row1]),
@@ -563,9 +521,15 @@ int TaskManagerTableModel::CompareValues(int row1,
           observed_task_manager()->GetNaClDebugStubPort(tasks_[row1]),
           observed_task_manager()->GetNaClDebugStubPort(tasks_[row2]));
 
-    case IDS_TASK_MANAGER_PROCESS_ID_COLUMN:
+    case IDS_TASK_MANAGER_PROCESS_ID_COLUMN: {
+      bool vm1 = observed_task_manager()->IsRunningInVM(tasks_[row1]);
+      bool vm2 = observed_task_manager()->IsRunningInVM(tasks_[row2]);
+      if (vm1 != vm2) {
+        return ValueCompare(vm1, vm2);
+      }
       return ValueCompare(observed_task_manager()->GetProcessId(tasks_[row1]),
                           observed_task_manager()->GetProcessId(tasks_[row2]));
+    }
 
     case IDS_TASK_MANAGER_GDI_HANDLES_COLUMN: {
       int64_t current1, peak1, current2, peak2;
@@ -653,7 +617,7 @@ int TaskManagerTableModel::CompareValues(int row1,
       return BooleanCompare(is_proc1_bg, is_proc2_bg);
     }
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
     case IDS_TASK_MANAGER_OPEN_FD_COUNT_COLUMN: {
       const int proc1_fd_count =
           observed_task_manager()->GetOpenFdCount(tasks_[row1]);
@@ -661,7 +625,7 @@ int TaskManagerTableModel::CompareValues(int row1,
           observed_task_manager()->GetOpenFdCount(tasks_[row2]);
       return ValueCompare(proc1_fd_count, proc2_fd_count);
     }
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
 
     default:
       NOTREACHED();
@@ -672,17 +636,21 @@ int TaskManagerTableModel::CompareValues(int row1,
 void TaskManagerTableModel::GetRowsGroupRange(int row_index,
                                               int* out_start,
                                               int* out_length) {
-  const base::ProcessId process_id =
-      observed_task_manager()->GetProcessId(tasks_[row_index]);
   int i = row_index;
   int limit = row_index + 1;
-  while (i > 0 &&
-         observed_task_manager()->GetProcessId(tasks_[i - 1]) == process_id) {
-    --i;
-  }
-  while (limit < RowCount() &&
-         observed_task_manager()->GetProcessId(tasks_[limit]) == process_id) {
-    ++limit;
+  if (!observed_task_manager()->IsRunningInVM(tasks_[row_index])) {
+    const base::ProcessId process_id =
+        observed_task_manager()->GetProcessId(tasks_[row_index]);
+    while (i > 0 &&
+           observed_task_manager()->GetProcessId(tasks_[i - 1]) == process_id &&
+           !observed_task_manager()->IsRunningInVM(tasks_[i - 1])) {
+      --i;
+    }
+    while (limit < RowCount() &&
+           observed_task_manager()->GetProcessId(tasks_[limit]) == process_id &&
+           !observed_task_manager()->IsRunningInVM(tasks_[limit])) {
+      ++limit;
+    }
   }
   *out_start = i;
   *out_length = limit - i;
@@ -757,20 +725,9 @@ void TaskManagerTableModel::UpdateRefreshTypes(int column_id, bool visibility) {
       type = REFRESH_TYPE_MEMORY_FOOTPRINT;
       break;
 
-    case IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN:
-      type = REFRESH_TYPE_PHYSICAL_MEMORY;
-      break;
-    case IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN:
-    case IDS_TASK_MANAGER_SHARED_MEM_COLUMN:
     case IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN:
-      type = REFRESH_TYPE_MEMORY_DETAILS;
+      type = REFRESH_TYPE_SWAPPED_MEM;
       if (table_view_delegate_->IsColumnVisible(
-              IDS_TASK_MANAGER_PHYSICAL_MEM_COLUMN) ||
-          table_view_delegate_->IsColumnVisible(
-              IDS_TASK_MANAGER_PRIVATE_MEM_COLUMN) ||
-          table_view_delegate_->IsColumnVisible(
-              IDS_TASK_MANAGER_SHARED_MEM_COLUMN) ||
-          table_view_delegate_->IsColumnVisible(
               IDS_TASK_MANAGER_SWAPPED_MEM_COLUMN)) {
         needs_refresh = true;
       }
@@ -830,19 +787,15 @@ void TaskManagerTableModel::UpdateRefreshTypes(int column_id, bool visibility) {
       type = REFRESH_TYPE_PRIORITY;
       break;
 
-    case IDS_TASK_MANAGER_MEMORY_STATE_COLUMN:
-      type = REFRESH_TYPE_MEMORY_STATE;
-      break;
-
     case IDS_TASK_MANAGER_KEEPALIVE_COUNT_COLUMN:
       type = REFRESH_TYPE_KEEPALIVE_COUNT;
       break;
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
     case IDS_TASK_MANAGER_OPEN_FD_COUNT_COLUMN:
       type = REFRESH_TYPE_FD_COUNT;
       break;
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
 
     default:
       NOTREACHED();
@@ -973,8 +926,15 @@ bool TaskManagerTableModel::IsTaskFirstInGroup(int row_index) const {
   if (row_index == 0)
     return true;
 
-  return observed_task_manager()->GetProcessId(tasks_[row_index - 1]) !=
-      observed_task_manager()->GetProcessId(tasks_[row_index]);
+  if (observed_task_manager()->GetProcessId(tasks_[row_index - 1]) !=
+      observed_task_manager()->GetProcessId(tasks_[row_index]))
+    return true;
+
+  if (observed_task_manager()->IsRunningInVM(tasks_[row_index - 1]) !=
+      observed_task_manager()->IsRunningInVM(tasks_[row_index]))
+    return true;
+
+  return false;
 }
 
 }  // namespace task_manager

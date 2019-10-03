@@ -12,7 +12,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
 import android.os.StrictMode;
@@ -41,60 +40,65 @@ public class WebApkValidator {
     private static final String MAPSLITE_PACKAGE_NAME = "com.google.android.apps.mapslite";
     private static final String MAPSLITE_URL_PREFIX =
             "https://www.google.com/maps"; // Matches scope.
+    private static final boolean DEBUG = false;
 
     private static byte[] sExpectedSignature;
     private static byte[] sCommentSignedPublicKeyBytes;
     private static PublicKey sCommentSignedPublicKey;
+    private static boolean sDisableValidation;
     private static boolean sOverrideValidationForTesting;
 
     /**
-     * Queries the PackageManager to determine whether a WebAPK can handle the URL. Ignores whether
-     * the user has selected a default handler for the URL and whether the default handler is the
-     * WebAPK.
-     *
-     * <p>NOTE(yfriedman): This can fail if multiple WebAPKs can match the supplied url.
+     * Queries the PackageManager to determine whether one or more WebAPKs can handle the URL.
+     * Ignores whether the user has selected a default handler for the URL and whether the default
+     * handler is a WebAPK.
      *
      * @param context The application context.
      * @param url The url to check.
-     * @return Package name of WebAPK which can handle the URL. Null if the url should not be
-     * handled by a WebAPK.
+     * @return Package name for one of the WebAPKs which can handle the URL. If there are several
+     * matching WebAPKs an arbitrary one is returned. Null if there is no matching WebAPK.
      */
-    public static String queryWebApkPackage(Context context, String url) {
-        return findWebApkPackage(
-                context, resolveInfosForUrlAndOptionalPackage(context, url, null /* package*/));
+    public static @Nullable String queryFirstWebApkPackage(Context context, String url) {
+        return findFirstWebApkPackage(context, resolveInfosForUrl(context, url));
     }
 
     /**
-     * Queries the PackageManager to determine whether a WebAPK can handle the URL. Ignores whether
-     * the user has selected a default handler for the URL and whether the default handler is the
-     * WebAPK.
-     *
-     * <p>NOTE: This can fail if multiple WebAPKs can match the supplied url.
+     * Queries the PackageManager to determine whether one or more WebAPKs can handle the URL.
+     * Ignores whether the user has selected a default handler for the URL and whether the default
+     * handler is a WebAPK.
      *
      * @param context The application context.
      * @param url The url to check.
-     * @return Resolve Info of a WebAPK which can handle the URL. Null if the url should not be
-     *     handled by a WebAPK.
+     * @return ResolveInfo for one of the WebAPKs which can handle the URL. If there are several
+     * matching ResolveInfos an arbitrary one is returned. Null if there is no matching WebAPK.
      */
-    public static ResolveInfo queryResolveInfo(Context context, String url) {
-        return findResolveInfo(
-                context, resolveInfosForUrlAndOptionalPackage(context, url, null /* package */));
+    public static @Nullable ResolveInfo queryFirstWebApkResolveInfo(Context context, String url) {
+        return findFirstWebApkResolveInfo(context, resolveInfosForUrl(context, url));
     }
 
     /**
+     * Searches {@link infos} and returns the package name of the first {@link ResolveInfo} which
+     * corresponds to a WebAPK.
      * @param context The context to use to check whether WebAPK is valid.
-     * @param infos The ResolveInfos to search.
-     * @return Package name of the ResolveInfo which corresponds to a WebAPK. Null if none of the
-     *     ResolveInfos corresponds to a WebAPK.
+     * @param infos The {@link ResolveInfo}s to search.
+     * @return WebAPK package name of the match. Null if there are no matches.
      */
-    public static String findWebApkPackage(Context context, List<ResolveInfo> infos) {
-        ResolveInfo resolveInfo = findResolveInfo(context, infos);
+    public static @Nullable String findFirstWebApkPackage(
+            Context context, List<ResolveInfo> infos) {
+        ResolveInfo resolveInfo = findFirstWebApkResolveInfo(context, infos);
         if (resolveInfo != null) {
             return resolveInfo.activityInfo.packageName;
         }
         return null;
     }
 
+    /**
+     * Whether the given package corresponds to a WebAPK that can handle the URL.
+     * @param context The application context.
+     * @param webApkPackage The package to consider.
+     * @param url The URL the package must be able to handle.
+     * @return Whether the URL can be handled by that package.
+     */
     public static boolean canWebApkHandleUrl(Context context, String webApkPackage, String url) {
         List<ResolveInfo> infos = resolveInfosForUrlAndOptionalPackage(context, url, webApkPackage);
         for (ResolveInfo info : infos) {
@@ -107,44 +111,52 @@ public class WebApkValidator {
     }
 
     /**
-     * Fetches the list of resolve infos from the PackageManager that can handle the URL.
-     *
+     * Fetches a list of {@link ResolveInfo}s from the PackageManager that can handle the URL.
      * @param context The application context.
-     * @param url The url to check.
-     * @param applicationPackage The optional package name to set for intent resolution.
-     * @return The list of resolve infos found that can handle the URL.
+     * @param url The URL to check.
+     * @return The list of {@link ResolveInfo}s found that can handle the URL.
      */
-    private static List<ResolveInfo> resolveInfosForUrlAndOptionalPackage(
-            Context context, String url, @Nullable String applicationPackage) {
-        Intent intent;
-        try {
-            intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
-        } catch (Exception e) {
-            return new LinkedList<>();
-        }
-
-        intent.addCategory(Intent.CATEGORY_BROWSABLE);
-        if (applicationPackage != null) {
-            intent.setPackage(applicationPackage);
-        } else {
-            intent.setComponent(null);
-        }
-        Intent selector = intent.getSelector();
-        if (selector != null) {
-            selector.addCategory(Intent.CATEGORY_BROWSABLE);
-            selector.setComponent(null);
-        }
-        return context.getPackageManager().queryIntentActivities(
-                intent, PackageManager.GET_RESOLVED_FILTER);
+    public static List<ResolveInfo> resolveInfosForUrl(Context context, String url) {
+        return resolveInfosForUrlAndOptionalPackage(context, url, null);
     }
 
     /**
-     * @param context The context to use to check whether WebAPK is valid.
-     * @param infos The ResolveInfos to search.
-     * @return ResolveInfo which corresponds to a WebAPK. Null if none of the ResolveInfos
-     * corresponds to a WebAPK.
+     * Fetches the list of {@link ResolveInfo}s from the PackageManager that can handle the URL.
+     *
+     * @param context The application context.
+     * @param url The URL to check.
+     * @param applicationPackage The optional package name to set for intent resolution.
+     * @return The list of {@link ResolveInfo}s found that can handle the URL.
      */
-    private static ResolveInfo findResolveInfo(Context context, List<ResolveInfo> infos) {
+    private static List<ResolveInfo> resolveInfosForUrlAndOptionalPackage(
+            Context context, String url, @Nullable String applicationPackage) {
+        Intent intent = createWebApkIntentForUrlAndOptionalPackage(url, applicationPackage);
+        if (intent == null) return new LinkedList<>();
+
+        // StrictMode is relaxed due to https://crbug.com/843092.
+        StrictMode.ThreadPolicy policy = StrictMode.allowThreadDiskReads();
+        try {
+            return context.getPackageManager().queryIntentActivities(
+                    intent, PackageManager.GET_RESOLVED_FILTER);
+        } catch (Exception e) {
+            // We used to catch only java.util.MissingResourceException, but we need to catch more
+            // exceptions to handle "Package manager has died" exception.
+            // http://crbug.com/794363
+            return new LinkedList<>();
+        } finally {
+            StrictMode.setThreadPolicy(policy);
+        }
+    }
+
+    /**
+     * Searches {@link infos} and returns the first {@link ResolveInfo} which corresponds to a
+     * WebAPK.
+     * @param context The context to use to check whether WebAPK is valid.
+     * @param infos The {@link ResolveInfo}s to search.
+     * @return The matching {@link ResolveInfo}. Null if there are no matches.
+     */
+    private static @Nullable ResolveInfo findFirstWebApkResolveInfo(
+            Context context, List<ResolveInfo> infos) {
         for (ResolveInfo info : infos) {
             if (info.activityInfo != null
                     && isValidWebApk(context, info.activityInfo.packageName)) {
@@ -161,36 +173,73 @@ public class WebApkValidator {
      * @return true iff the WebAPK is installed and passes security checks
      */
     public static boolean isValidWebApk(Context context, String webappPackageName) {
-        if (sExpectedSignature == null || sCommentSignedPublicKeyBytes == null) {
+        if ((sExpectedSignature == null || sCommentSignedPublicKeyBytes == null)
+                && !sDisableValidation) {
             Log.wtf(TAG,
                     "WebApk validation failure - expected signature not set."
                             + "missing call to WebApkValidator.initWithBrowserHostSignature");
             return false;
         }
-        PackageInfo packageInfo = null;
+        PackageInfo packageInfo;
         try {
             packageInfo = context.getPackageManager().getPackageInfo(webappPackageName,
                     PackageManager.GET_SIGNATURES | PackageManager.GET_META_DATA);
-        } catch (NameNotFoundException e) {
-            e.printStackTrace();
-            Log.d(TAG, "WebApk not found");
+        } catch (Exception e) {
+            if (DEBUG) {
+                e.printStackTrace();
+                Log.d(TAG, "WebApk not found");
+            }
             return false;
         }
         if (isNotWebApkQuick(packageInfo)) {
             return false;
         }
-        if (sOverrideValidationForTesting) {
-            Log.d(TAG, "Ok! Looks like a WebApk (has start url) and validation is disabled.");
+        if (sDisableValidation || sOverrideValidationForTesting) {
+            if (DEBUG) {
+                Log.d(TAG, "Ok! Looks like a WebApk (has start url) and validation is disabled.");
+            }
             return true;
         }
         if (verifyV1WebApk(packageInfo, webappPackageName)) {
             return true;
         }
         if (verifyMapsLite(packageInfo, webappPackageName)) {
-            Log.d(TAG, "Matches Maps Lite");
+            if (DEBUG) {
+                Log.d(TAG, "Matches Maps Lite");
+            }
             return true;
         }
-        return verifyCommentSignedWebApk(packageInfo, webappPackageName);
+        return verifyCommentSignedWebApk(packageInfo);
+    }
+
+    /**
+     * @param url A Url that might launch a WebApk.
+     * @param applicationPackage The package of the WebApk to restrict the launch to.
+     * @return An intent that could launch a WebApk for the provided URL (and package), if such a
+     *         WebApk exists. If package isn't specified, the intent may create a disambiguation
+     *         dialog when started.
+     */
+    public static Intent createWebApkIntentForUrlAndOptionalPackage(
+            String url, @Nullable String applicationPackage) {
+        Intent intent;
+        try {
+            intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+        } catch (Exception e) {
+            return null;
+        }
+
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        if (applicationPackage != null) {
+            intent.setPackage(applicationPackage);
+        } else {
+            intent.setComponent(null);
+        }
+        Intent selector = intent.getSelector();
+        if (selector != null) {
+            selector.addCategory(Intent.CATEGORY_BROWSABLE);
+            selector.setComponent(null);
+        }
+        return intent;
     }
 
     /** Determine quickly whether this is definitely not a WebAPK */
@@ -211,7 +260,9 @@ public class WebApkValidator {
         }
         for (Signature signature : packageInfo.signatures) {
             if (Arrays.equals(sExpectedSignature, signature.toByteArray())) {
-                Log.d(TAG, "WebApk valid - signature match!");
+                if (DEBUG) {
+                    Log.d(TAG, "WebApk valid - signature match!");
+                }
                 return true;
             }
         }
@@ -219,26 +270,28 @@ public class WebApkValidator {
     }
 
     private static boolean verifyMapsLite(PackageInfo packageInfo, String webappPackageName) {
-        if (packageInfo.signatures == null || webappPackageName == null
-                || !webappPackageName.equals(MAPSLITE_PACKAGE_NAME)) {
+        if (!webappPackageName.equals(MAPSLITE_PACKAGE_NAME)) {
             return false;
         }
         String startUrl = packageInfo.applicationInfo.metaData.getString(START_URL);
         if (startUrl == null || !startUrl.startsWith(MAPSLITE_URL_PREFIX)) {
-            Log.d(TAG, "mapslite invalid startUrl prefix");
+            if (DEBUG) {
+                Log.d(TAG, "mapslite invalid startUrl prefix");
+            }
             return false;
         }
         String scope = packageInfo.applicationInfo.metaData.getString(SCOPE);
         if (scope == null || !scope.equals(MAPSLITE_URL_PREFIX)) {
-            Log.d(TAG, "mapslite invalid scope prefix");
+            if (DEBUG) {
+                Log.d(TAG, "mapslite invalid scope prefix");
+            }
             return false;
         }
         return true;
     }
 
     /** Verify that the comment signed webapk matches the public key. */
-    private static boolean verifyCommentSignedWebApk(
-            PackageInfo packageInfo, String webappPackageName) {
+    private static boolean verifyCommentSignedWebApk(PackageInfo packageInfo) {
         PublicKey commentSignedPublicKey;
         try {
             commentSignedPublicKey = getCommentSignedPublicKey();
@@ -269,16 +322,19 @@ public class WebApkValidator {
             buf.load();
 
             WebApkVerifySignature v = new WebApkVerifySignature(buf);
+            @WebApkVerifySignature.Error
             int result = v.read();
-            if (result != WebApkVerifySignature.ERROR_OK) {
+            if (result != WebApkVerifySignature.Error.OK) {
                 Log.e(TAG, String.format("Failure reading %s: %s", packageFilename, result));
                 return false;
             }
             result = v.verifySignature(commentSignedPublicKey);
 
             // TODO(scottkirkwood): remove this log once well tested.
-            Log.d(TAG, "File " + packageFilename + ": " + result);
-            return result == WebApkVerifySignature.ERROR_OK;
+            if (DEBUG) {
+                Log.d(TAG, "File " + packageFilename + ": " + result);
+            }
+            return result == WebApkVerifySignature.Error.OK;
         } catch (Exception e) {
             Log.e(TAG, "WebApk file error for file " + packageFilename, e);
             return false;
@@ -314,11 +370,19 @@ public class WebApkValidator {
     }
 
     /**
-     * Disables all verification performed by this class. This is meant only for development with
+     * Disables all validation performed by this class. This is meant only for development with
      * unsigned WebApks and should never be enabled in a real build.
      */
     public static void disableValidationForTesting() {
         sOverrideValidationForTesting = true;
+    }
+
+    /**
+     * Disables all validation performed by this class. This should only be called when some other
+     * means of validating WebApks is already present and otherwise should never be called.
+     */
+    public static void disableValidationUnsafe() {
+        sDisableValidation = true;
     }
 
     /**

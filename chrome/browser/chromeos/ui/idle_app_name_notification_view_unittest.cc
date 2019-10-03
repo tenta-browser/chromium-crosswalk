@@ -23,7 +23,7 @@ const char kTestAppName[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 class IdleAppNameNotificationViewTest : public BrowserWithTestWindowTest {
  public:
   IdleAppNameNotificationViewTest()
-      : BrowserWithTestWindowTest(Browser::TYPE_TABBED, false) {}
+      : BrowserWithTestWindowTest(Browser::TYPE_TABBED) {}
 
   ~IdleAppNameNotificationViewTest() override {}
 
@@ -37,6 +37,7 @@ class IdleAppNameNotificationViewTest : public BrowserWithTestWindowTest {
     base::DictionaryValue manifest;
     manifest.SetString(extensions::manifest_keys::kName, "Test");
     manifest.SetString(extensions::manifest_keys::kVersion, "1");
+    manifest.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
     manifest.SetString(extensions::manifest_keys::kDescription, "Test app");
     manifest.SetString("author.email", "Someone");
 

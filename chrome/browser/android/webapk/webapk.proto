@@ -45,6 +45,9 @@ message WebApk {
     THEME_COLOR_DIFFERS = 10;
     ORIENTATION_DIFFERS = 11;
     DISPLAY_MODE_DIFFERS = 12;
+    WEB_SHARE_TARGET_DIFFERS = 13;
+    MANUALLY_TRIGGERED = 14;
+    PRIMARY_ICON_MASKABLE_DIFFERS = 15;
   }
 
   // Package name of the WebAPK.
@@ -95,7 +98,6 @@ message WebAppManifest {
 }
 
 message Image {
-
   enum Usage {
     PRIMARY_ICON = 1;
     BADGE_ICON = 2;
@@ -115,11 +117,37 @@ message Image {
   // Specifies Chrome's intended usages for the image.
   repeated Usage usages = 8;
 
+  optional bool is_primay_icon_maskable = 9;
+
   reserved 2, 3, 4, 7;
 }
 
+// A proto representing a ShareTargetParamsFile
+// https://pr-preview.s3.amazonaws.com/ewilligers/web-share-target/pull/53.html#sharetargetfiles-and-its-members
+message ShareTargetParamsFile {
+  optional string name = 1;
+  repeated string accept = 2;
+}
+
+// A proto representing ShareTargetParams
+// https://wicg.github.io/web-share-target/#dom-sharetargetparams
+// Each field corresponds to key in ShareData. These are the query parameter
+// keys to be used for the data supplied in a ShareData instance.
+// ShareData: https://wicg.github.io/web-share#dom-sharedata
+message ShareTargetParams {
+  optional string title = 1;
+  optional string text = 2;
+  optional string url = 3;
+  repeated ShareTargetParamsFile files = 4;
+}
+
+// A proto representing a ShareTarget.
+// https://wicg.github.io/web-share-target/#dom-sharetarget
 message ShareTarget {
-  // The URL template that contains placeholders to be replaced with shared
-  // data.
-  optional string url_template = 1;
+  // The URL to be resolved when sharing.
+  optional string action = 2;
+  optional ShareTargetParams params = 3;
+  optional string method = 4;
+  optional string enctype = 5;
+  reserved 1;
 }

@@ -4,7 +4,7 @@
 
 #include "ash/login/ui/login_button.h"
 
-#include "ash/ash_constants.h"
+#include "ash/shelf/shelf_constants.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
@@ -15,22 +15,21 @@ namespace ash {
 namespace {
 
 // Color of the ink drop ripple.
-constexpr SkColor kInkDropRippleColor =
-    SkColorSetARGBMacro(0x0F, 0xFF, 0xFF, 0xFF);
+constexpr SkColor kInkDropRippleColor = SkColorSetARGB(0x0F, 0xFF, 0xFF, 0xFF);
 
 // Color of the ink drop highlight.
 constexpr SkColor kInkDropHighlightColor =
-    SkColorSetARGBMacro(0x14, 0xFF, 0xFF, 0xFF);
+    SkColorSetARGB(0x14, 0xFF, 0xFF, 0xFF);
 
 }  // namespace
 
 LoginButton::LoginButton(views::ButtonListener* listener)
     : views::ImageButton(listener) {
-  SetImageAlignment(views::ImageButton::ALIGN_CENTER,
-                    views::ImageButton::ALIGN_MIDDLE);
-  SetFocusPainter(views::Painter::CreateSolidFocusPainter(
-      kFocusBorderColor, kFocusBorderThickness, gfx::InsetsF()));
-  SetInkDropMode(InkDropHostView::InkDropMode::ON);
+  SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+  SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
+  SetInstallFocusRingOnFocus(true);
+  focus_ring()->SetColor(kShelfFocusBorderColor);
+  SetInkDropMode(InkDropMode::ON);
   set_has_ink_drop_action_on_click(true);
 }
 

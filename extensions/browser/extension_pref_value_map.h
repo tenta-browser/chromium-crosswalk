@@ -85,14 +85,13 @@ class ExtensionPrefValueMap : public KeyedService {
   void Shutdown() override;
 
   // Set an extension preference |value| for |key| of extension |ext_id|.
-  // Takes ownership of |value|.
   // Note that regular extension pref values need to be reported to
   // incognito and to regular ExtensionPrefStores.
   // Precondition: the extension must be registered.
   void SetExtensionPref(const std::string& ext_id,
                         const std::string& key,
                         extensions::ExtensionPrefsScope scope,
-                        base::Value* value);
+                        base::Value value);
 
   // Remove the extension preference value for |key| of extension |ext_id|.
   // Precondition: the extension must be registered.
@@ -204,7 +203,7 @@ class ExtensionPrefValueMap : public KeyedService {
   // be done in the destructor. This bit tracks whether it has been done yet.
   bool destroyed_;
 
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionPrefValueMap);
 };

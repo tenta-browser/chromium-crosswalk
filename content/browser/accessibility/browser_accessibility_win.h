@@ -5,9 +5,7 @@
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_WIN_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_BROWSER_ACCESSIBILITY_WIN_H_
 
-#include <atlbase.h>
-#include <atlcom.h>
-
+#include "base/win/atl.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_com_win.h"
 #include "content/common/content_export.h"
@@ -27,10 +25,10 @@ class CONTENT_EXPORT BrowserAccessibilityWin : public BrowserAccessibility {
   //
   // BrowserAccessibility methods.
   //
-  void OnSubtreeWillBeDeleted() override;
   bool IsNative() const override;
   void OnLocationChanged() override;
   base::string16 GetText() const override;
+  base::string16 GetHypertext() const override;
 
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
@@ -44,11 +42,11 @@ class CONTENT_EXPORT BrowserAccessibilityWin : public BrowserAccessibility {
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityWin);
 };
 
-CONTENT_EXPORT BrowserAccessibilityWin*
-ToBrowserAccessibilityWin(BrowserAccessibility* obj);
+CONTENT_EXPORT BrowserAccessibilityWin* ToBrowserAccessibilityWin(
+    BrowserAccessibility* obj);
 
-CONTENT_EXPORT const BrowserAccessibilityWin*
-ToBrowserAccessibilityWin(const BrowserAccessibility* obj);
+CONTENT_EXPORT const BrowserAccessibilityWin* ToBrowserAccessibilityWin(
+    const BrowserAccessibility* obj);
 
 }  // namespace content
 

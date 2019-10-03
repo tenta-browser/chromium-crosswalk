@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
+#include "ios/net/ios_net_buildflags.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -26,7 +27,11 @@ base::Time GetCreationTimeFromObject(NSHTTPCookie* cookie) {
   // The "Created" key is not documented.
   // Return a null time if the key is missing.
   id created = [[cookie properties] objectForKey:kHTTPCookieCreated];
+#if !BUILDFLAG(CRONET_BUILD)
+  // In Cronet the cookie store is recreated on startup, so |created| could be
+  // nil.
   DCHECK(created && [created isKindOfClass:[NSNumber class]]);
+#endif
   if (!created || ![created isKindOfClass:[NSNumber class]])
     return base::Time();
   // created is the time from January 1st, 2001 in seconds.
@@ -49,7 +54,8 @@ std::string GetCookieUniqueID(NSHTTPCookie* cookie) {
 
 namespace net {
 
-CookieCreationTimeManager::CookieCreationTimeManager() {
+CookieCreationTimeManager::CookieCreationTimeManager() : weak_factory_(this) {
+  DETACH_FROM_THREAD(thread_checker_);
 }
 
 CookieCreationTimeManager::~CookieCreationTimeManager() {
@@ -95,7 +101,7 @@ base::Time CookieCreationTimeManager::MakeUniqueCreationTime(
 
 base::Time CookieCreationTimeManager::GetCreationTime(NSHTTPCookie* cookie) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  base::hash_map<std::string, base::Time>::iterator it =
+  std::unordered_map<std::string, base::Time>::iterator it =
       creation_times_.find(GetCookieUniqueID(cookie));
   if (it != creation_times_.end())
     return it->second;
@@ -120,6 +126,11 @@ void CookieCreationTimeManager::Clear() {
   DCHECK(thread_checker_.CalledOnValidThread());
   creation_times_.clear();
   unique_times_.clear();
+}
+
+base::WeakPtr<CookieCreationTimeManager>
+CookieCreationTimeManager::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 }  // namespace net

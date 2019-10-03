@@ -10,7 +10,6 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#f5f5f5"
         android:paddingTop="8dp"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
@@ -18,9 +17,9 @@
         android:gravity="start|center_vertical"
         android:text="@string/powered_by_chrome_message"
         android:maxLines="1"
-        style="@style/BlackCaption" />
+        style="@style/TextAppearance.BlackCaption" />
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="#e0e0e0" />
+        android:background="@color/divider_bg_color" />
 </FrameLayout>

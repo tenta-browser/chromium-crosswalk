@@ -6,22 +6,26 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "content/browser/media/capture/desktop_capture_device_uma_types.h"
 #include "content/browser/media/capture/web_contents_audio_input_stream.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
-#include "content/browser/renderer_host/media/audio_input_sync_writer.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents_media_capture_id.h"
 #include "media/audio/audio_input_controller.h"
+#include "media/audio/audio_input_sync_writer.h"
 #include "media/audio/audio_logging.h"
 #include "media/audio/audio_manager.h"
 #include "media/base/media_switches.h"
@@ -46,11 +50,10 @@ void NotifyProcessHostStreamRemoved(int render_process_id) {
 }
 
 // Safe to call from any thread.
-void LogMessage(int stream_id, base::StringPiece message) {
+void LogMessage(int stream_id, const std::string& message) {
   const std::string out_message =
-      base::StringPrintf("[stream_id=%d] %.*s", stream_id,
-                         static_cast<int>(message.size()), message.data());
-  content::MediaStreamManager::SendMessageToNativeLog(out_message);
+      base::StringPrintf("[stream_id=%d] %s", stream_id, message.c_str());
+  MediaStreamManager::SendMessageToNativeLog(out_message);
   DVLOG(1) << out_message;
 }
 
@@ -64,8 +67,8 @@ class AudioInputDelegateImpl::ControllerEventHandler
       : stream_id_(stream_id), weak_delegate_(std::move(weak_delegate)) {}
 
   void OnCreated(bool initially_muted) override {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&AudioInputDelegateImpl::SendCreatedNotification,
                        weak_delegate_, initially_muted));
   }
@@ -75,21 +78,21 @@ class AudioInputDelegateImpl::ControllerEventHandler
     // we log it here.
     LogMessage(stream_id_,
                base::StringPrintf("AIC reports error_code=%d", error_code));
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&AudioInputDelegateImpl::OnError, weak_delegate_));
   }
 
   void OnLog(base::StringPiece message) override {
-    LogMessage(stream_id_, message);
+    LogMessage(stream_id_, message.as_string());
   }
 
   void OnMuted(bool is_muted) override {
     LogMessage(stream_id_, is_muted ? "OnMuted: State changed to muted"
                                     : "OnMuted: State changed to not muted");
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&AudioInputDelegateImpl::OnMuted,
-                                           weak_delegate_, is_muted));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                             base::BindOnce(&AudioInputDelegateImpl::OnMuted,
+                                            weak_delegate_, is_muted));
   }
 
  private:
@@ -100,22 +103,22 @@ class AudioInputDelegateImpl::ControllerEventHandler
 };
 
 std::unique_ptr<media::AudioInputDelegate> AudioInputDelegateImpl::Create(
-    EventHandler* subscriber,
     media::AudioManager* audio_manager,
     AudioMirroringManager* mirroring_manager,
     media::UserInputMonitor* user_input_monitor,
+    int render_process_id,
+    int render_frame_id,
     AudioInputDeviceManager* audio_input_device_manager,
-    std::unique_ptr<media::AudioLog> audio_log,
+    media::mojom::AudioLogPtr audio_log,
     AudioInputDeviceManager::KeyboardMicRegistration keyboard_mic_registration,
     uint32_t shared_memory_count,
     int stream_id,
     int session_id,
-    int render_process_id,
-    int render_frame_id,
     bool automatic_gain_control,
-    const media::AudioParameters& audio_parameters) {
+    const media::AudioParameters& audio_parameters,
+    EventHandler* subscriber) {
   // Check if we have the permission to open the device and which device to use.
-  const MediaStreamDevice* device =
+  const blink::MediaStreamDevice* device =
       audio_input_device_manager->GetOpenedDeviceById(session_id);
   if (!device) {
     LogMessage(stream_id, "Permission for stream not granted.");
@@ -132,8 +135,10 @@ std::unique_ptr<media::AudioInputDelegate> AudioInputDelegateImpl::Create(
 
   auto foreign_socket = std::make_unique<base::CancelableSyncSocket>();
 
-  std::unique_ptr<AudioInputSyncWriter> writer = AudioInputSyncWriter::Create(
-      shared_memory_count, possibly_modified_parameters, foreign_socket.get());
+  std::unique_ptr<media::AudioInputSyncWriter> writer =
+      media::AudioInputSyncWriter::Create(
+          base::BindRepeating(&LogMessage, stream_id), shared_memory_count,
+          possibly_modified_parameters, foreign_socket.get());
 
   if (!writer) {
     LogMessage(stream_id, "Failed to set up sync writer.");
@@ -148,29 +153,26 @@ std::unique_ptr<media::AudioInputDelegate> AudioInputDelegateImpl::Create(
                          automatic_gain_control));
 
   return base::WrapUnique(new AudioInputDelegateImpl(
-      subscriber, audio_manager, mirroring_manager, user_input_monitor,
-      possibly_modified_parameters, std::move(writer),
-      std::move(foreign_socket), std::move(audio_log),
-      std::move(keyboard_mic_registration),
-      stream_id, render_process_id, render_frame_id, automatic_gain_control,
-      device));
+      audio_manager, mirroring_manager, user_input_monitor,
+      possibly_modified_parameters, render_process_id, std::move(audio_log),
+      std::move(keyboard_mic_registration), stream_id, automatic_gain_control,
+      subscriber, device, std::move(writer), std::move(foreign_socket)));
 }
 
 AudioInputDelegateImpl::AudioInputDelegateImpl(
-    EventHandler* subscriber,
     media::AudioManager* audio_manager,
     AudioMirroringManager* mirroring_manager,
     media::UserInputMonitor* user_input_monitor,
     const media::AudioParameters& audio_parameters,
-    std::unique_ptr<AudioInputSyncWriter> writer,
-    std::unique_ptr<base::CancelableSyncSocket> foreign_socket,
-    std::unique_ptr<media::AudioLog> audio_log,
+    int render_process_id,
+    media::mojom::AudioLogPtr audio_log,
     AudioInputDeviceManager::KeyboardMicRegistration keyboard_mic_registration,
     int stream_id,
-    int render_process_id,
-    int render_frame_id,
     bool automatic_gain_control,
-    const MediaStreamDevice* device)
+    EventHandler* subscriber,
+    const blink::MediaStreamDevice* device,
+    std::unique_ptr<media::AudioInputSyncWriter> writer,
+    std::unique_ptr<base::CancelableSyncSocket> foreign_socket)
     : subscriber_(subscriber),
       controller_event_handler_(),
       writer_(std::move(writer)),
@@ -179,11 +181,10 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
       controller_(),
       keyboard_mic_registration_(std::move(keyboard_mic_registration)),
       stream_id_(stream_id),
-      render_process_id_(render_process_id),
-      weak_factory_(this) {
+      render_process_id_(render_process_id) {
   // Prevent process backgrounding while audio input is active:
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&NotifyProcessHostStreamAdded, render_process_id_));
 
   controller_event_handler_ = std::make_unique<ControllerEventHandler>(
@@ -192,9 +193,9 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
   const std::string& device_id = device->id;
 
   if (WebContentsMediaCaptureId::Parse(device_id, nullptr)) {
-    // For MEDIA_DESKTOP_AUDIO_CAPTURE, the source is selected from picker
-    // window, we do not mute the source audio.
-    // For MEDIA_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
+    // For MEDIA_GUM_DESKTOP_AUDIO_CAPTURE, the source is selected from
+    // picker window, we do not mute the source audio. For
+    // MEDIA_GUM_TAB_AUDIO_CAPTURE, the probable use case is Cast, we mute
     // the source audio.
     // TODO(qiangchen): Analyze audio constraints to make a duplicating or
     // diverting decision. It would give web developer more flexibility.
@@ -206,7 +207,8 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
         writer_.get(), user_input_monitor);
     DCHECK(controller_);
     // Only count for captures from desktop media picker dialog.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE)
+    if (device->type ==
+        blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE)
       IncrementDesktopCaptureCounter(TAB_AUDIO_CAPTURER_CREATED);
   } else {
     controller_ = media::AudioInputController::Create(
@@ -216,34 +218,31 @@ AudioInputDelegateImpl::AudioInputDelegateImpl(
 
     // Only count for captures from desktop media picker dialog and system loop
     // back audio.
-    if (device->type == MEDIA_DESKTOP_AUDIO_CAPTURE &&
-        (device_id == media::AudioDeviceDescription::kLoopbackInputDeviceId ||
-         device_id ==
-             media::AudioDeviceDescription::kLoopbackWithMuteDeviceId)) {
+    if (device->type ==
+            blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE &&
+        (media::AudioDeviceDescription::IsLoopbackDevice(device_id))) {
       IncrementDesktopCaptureCounter(SYSTEM_LOOPBACK_AUDIO_CAPTURER_CREATED);
     }
   }
   DCHECK(controller_);
 
-  audio_log_->OnCreated(stream_id, audio_parameters, device_id);
-  MediaInternals::GetInstance()->SetWebContentsTitleForAudioLogEntry(
-      stream_id, render_process_id_, render_frame_id, audio_log_.get());
+  audio_log_->OnCreated(audio_parameters, device_id);
 }
 
 AudioInputDelegateImpl::~AudioInputDelegateImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  audio_log_->OnClosed(stream_id_);
+  audio_log_->OnClosed();
   LogMessage(stream_id_, "Closing stream");
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&NotifyProcessHostStreamRemoved, render_process_id_));
 
   // We pass |controller_event_handler_| and |writer_| in here to make sure they
   // stay alive until |controller_| has finished closing.
   controller_->Close(base::BindOnce(
       [](int stream_id, std::unique_ptr<ControllerEventHandler>,
-         std::unique_ptr<AudioInputSyncWriter>) {
+         std::unique_ptr<media::AudioInputSyncWriter>) {
         LogMessage(stream_id, "Stream is now closed");
       },
       stream_id_, std::move(controller_event_handler_), std::move(writer_)));
@@ -258,7 +257,7 @@ void AudioInputDelegateImpl::OnRecordStream() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   LogMessage(stream_id_, "OnRecordStream");
   controller_->Record();
-  audio_log_->OnStarted(stream_id_);
+  audio_log_->OnStarted();
 }
 
 void AudioInputDelegateImpl::OnSetVolume(double volume) {
@@ -266,13 +265,20 @@ void AudioInputDelegateImpl::OnSetVolume(double volume) {
   DCHECK_GE(volume, 0);
   DCHECK_LE(volume, 1);
   controller_->SetVolume(volume);
-  audio_log_->OnSetVolume(stream_id_, volume);
+  audio_log_->OnSetVolume(volume);
+}
+
+void AudioInputDelegateImpl::OnSetOutputDeviceForAec(
+    const std::string& raw_output_device_id) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  controller_->SetOutputDeviceForAec(raw_output_device_id);
+  audio_log_->OnLogMessage("SetOutputDeviceForAec");
 }
 
 void AudioInputDelegateImpl::SendCreatedNotification(bool initially_muted) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(foreign_socket_);
-  subscriber_->OnStreamCreated(stream_id_, writer_->shared_memory(),
+  subscriber_->OnStreamCreated(stream_id_, writer_->TakeSharedMemoryRegion(),
                                std::move(foreign_socket_), initially_muted);
 }
 
@@ -283,7 +289,7 @@ void AudioInputDelegateImpl::OnMuted(bool is_muted) {
 
 void AudioInputDelegateImpl::OnError() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  audio_log_->OnError(stream_id_);
+  audio_log_->OnError();
   subscriber_->OnStreamError(stream_id_);
 }
 

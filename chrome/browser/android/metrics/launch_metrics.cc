@@ -5,6 +5,7 @@
 #include "base/android/jni_string.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/LaunchMetrics_jni.h"
 #include "chrome/browser/android/shortcut_info.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/browser_process.h"
@@ -14,8 +15,7 @@
 #include "components/rappor/public/rappor_utils.h"
 #include "components/rappor/rappor_service_impl.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/LaunchMetrics_jni.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
+#include "third_party/blink/public/common/manifest/web_display_mode.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -26,7 +26,6 @@ enum class HomeScreenLaunchType { STANDALONE = 0, SHORTCUT = 1, COUNT = 2 };
 
 static void JNI_LaunchMetrics_RecordLaunch(
     JNIEnv* env,
-    const JavaParamRef<jclass>& caller,
     jboolean is_shortcut,
     const JavaParamRef<jstring>& jurl,
     int source,
@@ -63,7 +62,7 @@ static void JNI_LaunchMetrics_RecordLaunch(
     // launched from a shortcut receive a boost to their engagement.
     SiteEngagementService* service = SiteEngagementService::Get(
         Profile::FromBrowserContext(web_contents->GetBrowserContext()));
-    service->SetLastShortcutLaunchTime(url);
+    service->SetLastShortcutLaunchTime(web_contents, url);
   }
 
   std::string rappor_metric_source;
@@ -120,7 +119,6 @@ static void JNI_LaunchMetrics_RecordLaunch(
 
 static void JNI_LaunchMetrics_RecordHomePageLaunchMetrics(
     JNIEnv* env,
-    const JavaParamRef<jclass>& caller,
     jboolean show_home_button,
     jboolean homepage_is_ntp,
     const JavaParamRef<jstring>& jhomepage_url) {
@@ -131,4 +129,4 @@ static void JNI_LaunchMetrics_RecordHomePageLaunchMetrics(
       homepage_url);
 }
 
-};  // namespace metrics
+}  // namespace metrics

@@ -8,7 +8,7 @@
 #include <memory>
 
 #import "base/ios/crb_protocol_observers.h"
-#import "base/logging.h"
+#include "base/logging.h"
 #import "base/mac/foundation_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -317,6 +317,12 @@ NSInvocation* InvocationForBroadcasterSelector(SEL selector) {
   } else if (type == @encode(CGRect)) {
     CGRect rectValue = value.CGRectValue;
     [invocation setArgument:&rectValue atIndex:2];
+  } else if (type == @encode(CGSize)) {
+    CGSize sizeValue = value.CGSizeValue;
+    [invocation setArgument:&sizeValue atIndex:2];
+  } else if (type == @encode(UIEdgeInsets)) {
+    UIEdgeInsets insetValue = value.UIEdgeInsetsValue;
+    [invocation setArgument:&insetValue atIndex:2];
   } else if (type == @encode(int)) {
     DCHECK(valueAsNumber);
     int intValue = valueAsNumber.intValue;

@@ -10,9 +10,9 @@
 #include <string>
 #include <utility>
 
-#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "media/midi/midi_service.h"
@@ -103,11 +103,11 @@ class FakeMidiManagerClient : public MidiManagerClient {
         logger_(logger) {}
   ~FakeMidiManagerClient() override = default;
 
-  void AddInputPort(const MidiPortInfo& info) override {
+  void AddInputPort(const mojom::PortInfo& info) override {
     input_ports_.push_back(info);
   }
 
-  void AddOutputPort(const MidiPortInfo& info) override {
+  void AddOutputPort(const mojom::PortInfo& info) override {
     output_ports_.push_back(info);
   }
 
@@ -123,7 +123,7 @@ class FakeMidiManagerClient : public MidiManagerClient {
   void ReceiveMidiData(uint32_t port_index,
                        const uint8_t* data,
                        size_t size,
-                       double timestamp) override {
+                       base::TimeTicks timestamp) override {
     logger_->AddLog("MidiManagerClient::ReceiveMidiData ");
     logger_->AddLog(
         base::StringPrintf("usb:port_index = %d data =", port_index));
@@ -143,8 +143,8 @@ class FakeMidiManagerClient : public MidiManagerClient {
 
   bool complete_start_session_;
   Result result_;
-  MidiPortInfoList input_ports_;
-  MidiPortInfoList output_ports_;
+  std::vector<mojom::PortInfo> input_ports_;
+  std::vector<mojom::PortInfo> output_ports_;
 
  private:
   Logger* logger_;
@@ -227,7 +227,7 @@ class MidiManagerUsbTest : public ::testing::Test {
     service_ = std::make_unique<MidiService>(std::move(factory));
   }
   ~MidiManagerUsbTest() override {
-    manager()->Shutdown();
+    service_->Shutdown();
     base::RunLoop run_loop;
     run_loop.RunUntilIdle();
 
@@ -240,10 +240,10 @@ class MidiManagerUsbTest : public ::testing::Test {
  protected:
   void Initialize() {
     client_.reset(new FakeMidiManagerClient(&logger_));
-    manager()->StartSession(client_.get());
+    service_->StartSession(client_.get());
   }
 
-  void Finalize() { manager()->EndSession(client_.get()); }
+  void Finalize() { service_->EndSession(client_.get()); }
 
   bool IsInitializationCallbackInvoked() {
     return client_->complete_start_session_;
@@ -260,8 +260,12 @@ class MidiManagerUsbTest : public ::testing::Test {
     }
   }
 
-  const MidiPortInfoList& input_ports() { return client_->input_ports_; }
-  const MidiPortInfoList& output_ports() { return client_->output_ports_; }
+  const std::vector<mojom::PortInfo>& input_ports() {
+    return client_->input_ports_;
+  }
+  const std::vector<mojom::PortInfo>& output_ports() {
+    return client_->output_ports_;
+  }
 
   MidiManagerUsb* manager() { return factory_->manager(); }
 
@@ -460,7 +464,8 @@ TEST_F(MidiManagerUsbTest, Send) {
   EXPECT_EQ(Result::OK, GetInitializationResult());
   ASSERT_EQ(2u, manager()->output_streams().size());
 
-  manager()->DispatchSendMidiData(client_.get(), 1, ToVector(data), 0);
+  manager()->DispatchSendMidiData(client_.get(), 1, ToVector(data),
+                                  base::TimeTicks());
   // Since UsbMidiDevice::Send is posted as a task, RunLoop should run to
   // invoke the task.
   base::RunLoop run_loop;
@@ -506,11 +511,13 @@ TEST_F(MidiManagerUsbTest, SendFromCompromizedRenderer) {
   EXPECT_EQ("UsbMidiDevice::GetDescriptors\n", logger_.TakeLog());
 
   // The specified port index is invalid. The manager must ignore the request.
-  manager()->DispatchSendMidiData(client_.get(), 99, ToVector(data), 0);
+  manager()->DispatchSendMidiData(client_.get(), 99, ToVector(data),
+                                  base::TimeTicks());
   EXPECT_EQ("", logger_.TakeLog());
 
   // The specified port index is invalid. The manager must ignore the request.
-  manager()->DispatchSendMidiData(client_.get(), 2, ToVector(data), 0);
+  manager()->DispatchSendMidiData(client_.get(), 2, ToVector(data),
+                                  base::TimeTicks());
   EXPECT_EQ("", logger_.TakeLog());
 }
 
@@ -546,7 +553,7 @@ TEST_F(MidiManagerUsbTest, Receive) {
   RunCallbackUntilCallbackInvoked(true, &devices);
   EXPECT_EQ(Result::OK, GetInitializationResult());
 
-  manager()->ReceiveUsbMidiData(device_raw, 2, data, arraysize(data),
+  manager()->ReceiveUsbMidiData(device_raw, 2, data, base::size(data),
                                 base::TimeTicks());
   Finalize();
 

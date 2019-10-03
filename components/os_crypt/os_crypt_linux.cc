@@ -12,6 +12,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -121,7 +122,7 @@ std::unique_ptr<crypto::SymmetricKey> GetEncryptionKey(Version version) {
 
   // Create an encryption key from our password and salt.
   std::unique_ptr<crypto::SymmetricKey> encryption_key(
-      crypto::SymmetricKey::DeriveKeyFromPassword(
+      crypto::SymmetricKey::DeriveKeyFromPasswordUsingPbkdf2(
           crypto::SymmetricKey::AES, *password, salt, kEncryptionIterations,
           kDerivedKeySizeInBits));
   DCHECK(encryption_key);
@@ -209,8 +210,10 @@ bool OSCrypt::DecryptString(const std::string& ciphertext,
 
   std::unique_ptr<crypto::SymmetricKey> encryption_key(
       GetEncryptionKey(version));
-  if (!encryption_key)
+  if (!encryption_key) {
+    VLOG(1) << "Decryption failed: could not get the key";
     return false;
+  }
 
   std::string iv(kIVBlockSizeAES128, ' ');
   crypto::Encryptor encryptor;
@@ -221,8 +224,10 @@ bool OSCrypt::DecryptString(const std::string& ciphertext,
   std::string raw_ciphertext =
       ciphertext.substr(strlen(kObfuscationPrefix[version]));
 
-  if (!encryptor.Decrypt(raw_ciphertext, plaintext))
+  if (!encryptor.Decrypt(raw_ciphertext, plaintext)) {
+    VLOG(1) << "Decryption failed";
     return false;
+  }
 
   return true;
 }
@@ -251,7 +256,7 @@ void UseMockKeyStorageForTesting(
     std::string* (*get_password_v11_mock)()) {
   // Save the real implementation to restore it later.
   static bool is_get_password_saved = false;
-  static std::string* (*get_password_save[arraysize(g_get_password)])();
+  static std::string* (*get_password_save[base::size(g_get_password)])();
   if (!is_get_password_saved) {
     std::copy(std::begin(g_get_password), std::end(g_get_password),
               std::begin(get_password_save));

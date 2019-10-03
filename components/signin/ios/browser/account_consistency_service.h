@@ -15,12 +15,14 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
-#include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/ios/browser/active_state_manager.h"
 #import "components/signin/ios/browser/manage_accounts_delegate.h"
+#import "components/signin/public/identity_manager/identity_manager.h"
+
+namespace content_settings {
+class CookieSettings;
+}
 
 namespace web {
 class BrowserState;
@@ -29,7 +31,7 @@ class WebStatePolicyDecider;
 }
 
 class AccountReconcilor;
-class SigninClient;
+class PrefService;
 
 @class AccountConsistencyNavigationDelegate;
 @class WKWebView;
@@ -40,8 +42,7 @@ class SigninClient;
 //
 // This is currently only used when WKWebView is enabled.
 class AccountConsistencyService : public KeyedService,
-                                  public GaiaCookieManagerService::Observer,
-                                  public SigninManagerBase::Observer,
+                                  public signin::IdentityManager::Observer,
                                   public ActiveStateManager::Observer {
  public:
   // Name of the preference property that persists the domains that have a
@@ -50,15 +51,14 @@ class AccountConsistencyService : public KeyedService,
 
   AccountConsistencyService(
       web::BrowserState* browser_state,
+      PrefService* prefs,
       AccountReconcilor* account_reconcilor,
       scoped_refptr<content_settings::CookieSettings> cookie_settings,
-      GaiaCookieManagerService* gaia_cookie_manager_service,
-      SigninClient* signin_client,
-      SigninManager* signin_manager);
+      signin::IdentityManager* identity_manager);
   ~AccountConsistencyService() override;
 
   // Registers the preferences used by AccountConsistencyService.
-  static void RegisterPrefs(user_prefs::PrefRegistrySyncable* registry);
+  static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // Sets the handler for |web_state| that reacts on Gaia responses with the
   // X-Chrome-Manage-Accounts header and notifies |delegate|.
@@ -146,20 +146,13 @@ class AccountConsistencyService : public KeyedService,
   // Adds CHROME_CONNECTED cookies on all the main Google domains.
   void AddChromeConnectedCookies();
 
-  // GaiaCookieManagerService::Observer implementation.
-  void OnAddAccountToCookieCompleted(
-      const std::string& account_id,
+  // IdentityManager::Observer implementation.
+  void OnPrimaryAccountSet(const CoreAccountInfo& account_info) override;
+  void OnPrimaryAccountCleared(
+      const CoreAccountInfo& previous_account_info) override;
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
       const GoogleServiceAuthError& error) override;
-  void OnGaiaAccountsInCookieUpdated(
-      const std::vector<gaia::ListedAccount>& accounts,
-      const std::vector<gaia::ListedAccount>& signed_out_accounts,
-      const GoogleServiceAuthError& error) override;
-
-  // SigninManagerBase::Observer implementation.
-  void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username) override;
-  void GoogleSignedOut(const std::string& account_id,
-                       const std::string& username) override;
 
   // ActiveStateManager::Observer implementation.
   void OnActive() override;
@@ -167,19 +160,17 @@ class AccountConsistencyService : public KeyedService,
 
   // Browser state associated with the service, used to create WKWebViews.
   web::BrowserState* browser_state_;
+  // Used to update kDomainsWithCookiePref.
+  PrefService* prefs_;
   // Service managing accounts reconciliation, notified of GAIA responses with
   // the X-Chrome-Manage-Accounts header
   AccountReconcilor* account_reconcilor_;
   // Cookie settings currently in use for |browser_state_|, used to check if
   // setting CHROME_CONNECTED cookies is valid.
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
-  // Service managing the Gaia cookies, observed to be notified of the state of
-  // reconciliation.
-  GaiaCookieManagerService* gaia_cookie_manager_service_;
-  // Signin client, used to access prefs.
-  SigninClient* signin_client_;
-  // Signin manager, observed to be notified of signin and signout events.
-  SigninManager* signin_manager_;
+  // Identity manager, observed to be notified of primary account signin and
+  // signout events.
+  signin::IdentityManager* identity_manager_;
 
   // Whether a CHROME_CONNECTED cookie request is currently being applied.
   bool applying_cookie_requests_;

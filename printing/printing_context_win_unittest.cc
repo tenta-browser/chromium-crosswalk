@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_hdc.h"
 #include "printing/backend/printing_info_win.h"
@@ -75,7 +75,7 @@ class MockPrintingContextWin : public PrintingContextSystemDialogWin {
 
     base::string16 printer_name = PrintingContextTest::GetDefaultPrinter();
     ScopedPrinterHandle printer;
-    if (!printer.OpenPrinter(printer_name.c_str()))
+    if (!printer.OpenPrinterWithName(printer_name.c_str()))
       return E_FAIL;
 
     const DEVMODE* dev_mode = nullptr;
@@ -142,20 +142,33 @@ class MockPrintingContextWin : public PrintingContextSystemDialogWin {
 };
 
 TEST_F(PrintingContextTest, PrintAll) {
-  base::MessageLoop message_loop;
   if (IsTestCaseDisabled())
     return;
 
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   MockPrintingContextWin context(this);
   context.AskUserForSettings(
-      123,
-      false,
-      false,
-      base::Bind(&PrintingContextTest::PrintSettingsCallback,
-                 base::Unretained(this)));
+      123, false, false,
+      base::BindOnce(&PrintingContextTest::PrintSettingsCallback,
+                     base::Unretained(this)));
   EXPECT_EQ(PrintingContext::OK, result());
-  PrintSettings settings = context.settings();
+  const PrintSettings& settings = context.settings();
   EXPECT_EQ(0u, settings.ranges().size());
+}
+
+TEST_F(PrintingContextTest, Color) {
+  if (IsTestCaseDisabled())
+    return;
+
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+  MockPrintingContextWin context(this);
+  context.AskUserForSettings(
+      123, false, false,
+      base::BindOnce(&PrintingContextTest::PrintSettingsCallback,
+                     base::Unretained(this)));
+  EXPECT_EQ(PrintingContext::OK, result());
+  const PrintSettings& settings = context.settings();
+  EXPECT_NE(settings.color(), UNKNOWN_COLOR_MODEL);
 }
 
 TEST_F(PrintingContextTest, Base) {
@@ -170,7 +183,7 @@ TEST_F(PrintingContextTest, Base) {
 
   // The print may lie to use and may not support world transformation.
   // Verify right now.
-  XFORM random_matrix = { 1, 0.1f, 0, 1.5f, 0, 1 };
+  XFORM random_matrix = {1, 0.1f, 0, 1.5f, 0, 1};
   EXPECT_TRUE(SetWorldTransform(context.context(), &random_matrix));
   EXPECT_TRUE(ModifyWorldTransform(context.context(), nullptr, MWT_IDENTITY));
 }

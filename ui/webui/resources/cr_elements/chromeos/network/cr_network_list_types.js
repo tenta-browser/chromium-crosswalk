@@ -8,18 +8,18 @@
  * CrNetworkListItem.
  */
 
-var CrNetworkList = {};
+const CrNetworkList = {};
 
 /**
- * Generic managed property type. This should match any of the basic managed
- * types in chrome.networkingPrivate, e.g. networkingPrivate.ManagedBoolean.
+ * Custom data for implementation specific network list items.
  * @typedef {{
  *   customItemName: string,
  *   polymerIcon: (string|undefined),
  *   customData: (!Object|undefined),
+ *   showBeforeNetworksList: boolean,
  * }}
  */
 CrNetworkList.CustomItemState;
 
-/** @typedef {CrOnc.NetworkStateProperties|CrNetworkList.CustomItemState} */
+/** @typedef {OncMojo.NetworkStateProperties|CrNetworkList.CustomItemState} */
 CrNetworkList.CrNetworkListItemType;

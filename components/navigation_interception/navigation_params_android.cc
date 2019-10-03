@@ -5,7 +5,7 @@
 #include "components/navigation_interception/navigation_params_android.h"
 
 #include "base/android/jni_string.h"
-#include "jni/NavigationParams_jni.h"
+#include "components/navigation_interception/jni_headers/NavigationParams_jni.h"
 
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ScopedJavaLocalRef;
@@ -29,7 +29,7 @@ base::android::ScopedJavaLocalRef<jobject> CreateJavaNavigationParams(
       env, jstring_url, jstring_referrer, params.is_post(),
       params.has_user_gesture(), params.transition_type(), params.is_redirect(),
       params.is_external_protocol(), params.is_main_frame(),
-      has_user_gesture_carryover);
+      params.is_renderer_initiated(), has_user_gesture_carryover);
 }
 
 }  // namespace navigation_interception

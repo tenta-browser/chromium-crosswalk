@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Multiply-included file, no traditional include guard.
+// NOLINT(build/header_guard)
+// no-include-guard-because-multiply-included
 #include "chrome/common/search/instant_types.h"
 #include "chrome/common/search/ntp_logging_events.h"
 #include "components/favicon_base/favicon_types.h"
@@ -19,6 +20,9 @@ IPC_ENUM_TRAITS_MAX_VALUE(OmniboxFocusChangeReason,
                           OMNIBOX_FOCUS_CHANGE_REASON_LAST)
 
 IPC_ENUM_TRAITS_MAX_VALUE(NTPLoggingEventType, NTP_EVENT_TYPE_LAST)
+
+IPC_ENUM_TRAITS_MAX_VALUE(NTPSuggestionsLoggingEventType,
+                          NTPSuggestionsLoggingEventType::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(ntp_tiles::TileTitleSource,
                           ntp_tiles::TileTitleSource::LAST)
@@ -45,33 +49,40 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(InstantMostVisitedItem)
   IPC_STRUCT_TRAITS_MEMBER(url)
   IPC_STRUCT_TRAITS_MEMBER(title)
-  IPC_STRUCT_TRAITS_MEMBER(thumbnail)
   IPC_STRUCT_TRAITS_MEMBER(favicon)
   IPC_STRUCT_TRAITS_MEMBER(title_source)
   IPC_STRUCT_TRAITS_MEMBER(source)
   IPC_STRUCT_TRAITS_MEMBER(data_generation_time)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(RGBAColor)
-  IPC_STRUCT_TRAITS_MEMBER(r)
-  IPC_STRUCT_TRAITS_MEMBER(g)
-  IPC_STRUCT_TRAITS_MEMBER(b)
-  IPC_STRUCT_TRAITS_MEMBER(a)
+IPC_STRUCT_TRAITS_BEGIN(InstantMostVisitedInfo)
+  IPC_STRUCT_TRAITS_MEMBER(items)
+  IPC_STRUCT_TRAITS_MEMBER(items_are_custom_links)
+  IPC_STRUCT_TRAITS_MEMBER(use_most_visited)
+  IPC_STRUCT_TRAITS_MEMBER(is_visible)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ThemeBackgroundInfo)
   IPC_STRUCT_TRAITS_MEMBER(using_default_theme)
+  IPC_STRUCT_TRAITS_MEMBER(using_dark_mode)
+  IPC_STRUCT_TRAITS_MEMBER(custom_background_url)
+  IPC_STRUCT_TRAITS_MEMBER(custom_background_attribution_line_1)
+  IPC_STRUCT_TRAITS_MEMBER(custom_background_attribution_line_2)
+  IPC_STRUCT_TRAITS_MEMBER(custom_background_attribution_action_url)
+  IPC_STRUCT_TRAITS_MEMBER(collection_id)
   IPC_STRUCT_TRAITS_MEMBER(background_color)
   IPC_STRUCT_TRAITS_MEMBER(text_color)
-  IPC_STRUCT_TRAITS_MEMBER(link_color)
   IPC_STRUCT_TRAITS_MEMBER(text_color_light)
-  IPC_STRUCT_TRAITS_MEMBER(header_color)
-  IPC_STRUCT_TRAITS_MEMBER(section_border_color)
   IPC_STRUCT_TRAITS_MEMBER(theme_id)
   IPC_STRUCT_TRAITS_MEMBER(image_horizontal_alignment)
   IPC_STRUCT_TRAITS_MEMBER(image_vertical_alignment)
   IPC_STRUCT_TRAITS_MEMBER(image_tiling)
-  IPC_STRUCT_TRAITS_MEMBER(image_height)
   IPC_STRUCT_TRAITS_MEMBER(has_attribution)
   IPC_STRUCT_TRAITS_MEMBER(logo_alternate)
+  IPC_STRUCT_TRAITS_MEMBER(has_theme_image)
+  IPC_STRUCT_TRAITS_MEMBER(theme_name)
+  IPC_STRUCT_TRAITS_MEMBER(color_id)
+  IPC_STRUCT_TRAITS_MEMBER(color_dark)
+  IPC_STRUCT_TRAITS_MEMBER(color_light)
+  IPC_STRUCT_TRAITS_MEMBER(color_picked)
 IPC_STRUCT_TRAITS_END()

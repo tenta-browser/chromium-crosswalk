@@ -12,11 +12,10 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "components/feature_engagement/internal/proto/availability.pb.h"
 #include "components/feature_engagement/internal/stats.h"
 #include "components/feature_engagement/public/feature_list.h"
-#include "components/leveldb_proto/proto_database.h"
+#include "components/leveldb_proto/public/proto_database.h"
 
 namespace feature_engagement {
 
@@ -24,10 +23,6 @@ namespace {
 
 using KeyAvailabilityPair = std::pair<std::string, Availability>;
 using KeyAvailabilityList = std::vector<KeyAvailabilityPair>;
-
-// Corresponds to a UMA suffix "LevelDBOpenResults" in histograms.xml.
-// Please do not change.
-const char kDatabaseUMAName[] = "FeatureEngagementTrackerAvailabilityStore";
 
 void OnDBUpdateComplete(
     std::unique_ptr<leveldb_proto::ProtoDatabase<Availability>> db,
@@ -48,7 +43,7 @@ void OnDBLoadComplete(
   stats::RecordAvailabilityDbLoadEvent(success);
   if (!success) {
     std::move(on_loaded_callback)
-        .Run(false, base::MakeUnique<std::map<std::string, uint32_t>>());
+        .Run(false, std::make_unique<std::map<std::string, uint32_t>>());
     return;
   }
 
@@ -61,8 +56,8 @@ void OnDBLoadComplete(
 
   // Find all availabilities from DB and find out what should be deleted.
   auto feature_availabilities =
-      base::MakeUnique<std::map<std::string, uint32_t>>();
-  auto deletes = base::MakeUnique<std::vector<std::string>>();
+      std::make_unique<std::map<std::string, uint32_t>>();
+  auto deletes = std::make_unique<std::vector<std::string>>();
   for (auto& availability : *availabilities) {
     // Check if in |feature_filter|.
     if (feature_mapping.find(availability.feature_name()) ==
@@ -86,7 +81,7 @@ void OnDBLoadComplete(
   }
 
   // Find features from |feature_filter| that are enabled, but not in DB yet.
-  auto additions = base::MakeUnique<KeyAvailabilityList>();
+  auto additions = std::make_unique<KeyAvailabilityList>();
   for (const base::Feature* feature : feature_filter) {
     // Check if already in DB.
     if (feature_availabilities->find(feature->name) !=
@@ -101,14 +96,12 @@ void OnDBLoadComplete(
     Availability availability;
     availability.set_feature_name(feature->name);
     availability.set_day(current_day);
-    additions->push_back(
-        std::make_pair(availability.feature_name(), std::move(availability)));
-
+    additions->push_back({feature->name, std::move(availability)});
     // Since it will be written to the DB, also add to the callback result.
-    feature_availabilities->insert(
-        std::make_pair(feature->name, availability.day()));
+    feature_availabilities->insert({feature->name, current_day});
+
     DVLOG(2) << "Adding availability for " << feature->name << " @ "
-             << availability.day();
+             << current_day;
   }
 
   // Write all changes to the DB.
@@ -124,12 +117,13 @@ void OnDBInitComplete(
     FeatureVector feature_filter,
     PersistentAvailabilityStore::OnLoadedCallback on_loaded_callback,
     uint32_t current_day,
-    bool success) {
+    leveldb_proto::Enums::InitStatus status) {
+  bool success = status == leveldb_proto::Enums::InitStatus::kOK;
   stats::RecordDbInitEvent(success, stats::StoreType::AVAILABILITY_STORE);
 
   if (!success) {
     std::move(on_loaded_callback)
-        .Run(false, base::MakeUnique<std::map<std::string, uint32_t>>());
+        .Run(false, std::make_unique<std::map<std::string, uint32_t>>());
     return;
   }
 
@@ -149,9 +143,7 @@ void PersistentAvailabilityStore::LoadAndUpdateStore(
     PersistentAvailabilityStore::OnLoadedCallback on_loaded_callback,
     uint32_t current_day) {
   auto* db_ptr = db.get();
-  db_ptr->Init(kDatabaseUMAName, storage_dir,
-               leveldb_proto::CreateSimpleOptions(),
-               base::BindOnce(&OnDBInitComplete, std::move(db),
+  db_ptr->Init(base::BindOnce(&OnDBInitComplete, std::move(db),
                               std::move(feature_filter),
                               std::move(on_loaded_callback), current_day));
 }

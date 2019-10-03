@@ -6,10 +6,11 @@
 
 #include <utility>
 
-#include "base/memory/shared_memory.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
+#include "base/test/scoped_task_environment.h"
 #include "media/audio/audio_input_controller.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -59,11 +60,12 @@ class TestCancelableSyncSocket : public base::CancelableSyncSocket {
 class MockDelegate : public AudioInputDelegate {
  public:
   MockDelegate() = default;
-  ~MockDelegate() = default;
+  ~MockDelegate() override = default;
 
   MOCK_METHOD0(GetStreamId, int());
   MOCK_METHOD0(OnRecordStream, void());
   MOCK_METHOD1(OnSetVolume, void(double));
+  MOCK_METHOD1(OnSetOutputDeviceForAec, void(const std::string&));
 };
 
 class MockDelegateFactory {
@@ -96,26 +98,18 @@ class MockClient : public mojom::AudioInputStreamClient {
  public:
   MockClient() = default;
 
-  void Initialized(mojo::ScopedSharedBufferHandle shared_buffer,
-                   mojo::ScopedHandle socket_handle,
+  void Initialized(mojom::ReadOnlyAudioDataPipePtr data_pipe,
                    bool initially_muted) {
-    ASSERT_TRUE(shared_buffer.is_valid());
-    ASSERT_TRUE(socket_handle.is_valid());
+    ASSERT_TRUE(data_pipe->shared_memory.IsValid());
+    ASSERT_TRUE(data_pipe->socket.is_valid());
 
     base::PlatformFile fd;
-    mojo::UnwrapPlatformFile(std::move(socket_handle), &fd);
-    socket_ = base::MakeUnique<base::CancelableSyncSocket>(fd);
+    mojo::UnwrapPlatformFile(std::move(data_pipe->socket), &fd);
+    socket_ = std::make_unique<base::CancelableSyncSocket>(fd);
     EXPECT_NE(socket_->handle(), base::CancelableSyncSocket::kInvalidHandle);
 
-    size_t memory_length;
-    base::SharedMemoryHandle shmem_handle;
-    bool read_only;
-    EXPECT_EQ(
-        mojo::UnwrapSharedMemoryHandle(std::move(shared_buffer), &shmem_handle,
-                                       &memory_length, &read_only),
-        MOJO_RESULT_OK);
-    EXPECT_FALSE(read_only);
-    buffer_ = base::MakeUnique<base::SharedMemory>(shmem_handle, read_only);
+    region_ = std::move(data_pipe->shared_memory);
+    EXPECT_TRUE(region_.IsValid());
 
     GotNotification(initially_muted);
   }
@@ -127,7 +121,7 @@ class MockClient : public mojom::AudioInputStreamClient {
   MOCK_METHOD0(OnError, void());
 
  private:
-  std::unique_ptr<base::SharedMemory> buffer_;
+  base::ReadOnlySharedMemoryRegion region_;
   std::unique_ptr<base::CancelableSyncSocket> socket_;
 
   DISALLOW_COPY_AND_ASSIGN(MockClient);
@@ -138,8 +132,7 @@ std::unique_ptr<AudioInputDelegate> CreateNoDelegate(
   return nullptr;
 }
 
-void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
-               mojo::ScopedHandle socket_handle,
+void NotCalled(mojom::ReadOnlyAudioDataPipePtr data_pipe,
                bool initially_muted) {
   EXPECT_TRUE(false) << "The StreamCreated callback was called despite the "
                         "test expecting it not to.";
@@ -150,13 +143,13 @@ void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
 class MojoAudioInputStreamTest : public Test {
  public:
   MojoAudioInputStreamTest()
-      : foreign_socket_(base::MakeUnique<TestCancelableSyncSocket>()),
+      : foreign_socket_(std::make_unique<TestCancelableSyncSocket>()),
         client_binding_(&client_, mojo::MakeRequest(&client_ptr_)) {}
 
   AudioInputStreamPtr CreateAudioInput() {
     AudioInputStreamPtr p;
     ExpectDelegateCreation();
-    impl_ = base::MakeUnique<MojoAudioInputStream>(
+    impl_ = std::make_unique<MojoAudioInputStream>(
         mojo::MakeRequest(&p), std::move(client_ptr_),
         base::BindOnce(&MockDelegateFactory::CreateDelegate,
                        base::Unretained(&mock_delegate_factory_)),
@@ -173,15 +166,16 @@ class MojoAudioInputStreamTest : public Test {
         base::WrapUnique(delegate_));
     EXPECT_TRUE(
         base::CancelableSyncSocket::CreatePair(&local_, foreign_socket_.get()));
-    EXPECT_TRUE(mem_.CreateAnonymous(kShmemSize));
+    mem_ = base::ReadOnlySharedMemoryRegion::Create(kShmemSize).region;
+    EXPECT_TRUE(mem_.IsValid());
     EXPECT_CALL(mock_delegate_factory_, MockCreateDelegate(NotNull()))
         .WillOnce(SaveArg<0>(&delegate_event_handler_));
   }
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::CancelableSyncSocket local_;
   std::unique_ptr<TestCancelableSyncSocket> foreign_socket_;
-  base::SharedMemory mem_;
+  base::ReadOnlySharedMemoryRegion mem_;
   StrictMock<MockDelegate>* delegate_ = nullptr;
   AudioInputDelegate::EventHandler* delegate_event_handler_ = nullptr;
   StrictMock<MockDelegateFactory> mock_delegate_factory_;
@@ -231,8 +225,9 @@ TEST_F(MojoAudioInputStreamTest, DestructWithCallPending_Safe) {
 
   ASSERT_NE(nullptr, delegate_event_handler_);
   foreign_socket_->ExpectOwnershipTransfer();
-  delegate_event_handler_->OnStreamCreated(
-      kStreamId, &mem_, std::move(foreign_socket_), kInitiallyNotMuted);
+  delegate_event_handler_->OnStreamCreated(kStreamId, std::move(mem_),
+                                           std::move(foreign_socket_),
+                                           kInitiallyNotMuted);
   audio_input_ptr->Record();
   impl_.reset();
   base::RunLoop().RunUntilIdle();
@@ -246,8 +241,9 @@ TEST_F(MojoAudioInputStreamTest, Created_NotifiesClient) {
 
   ASSERT_NE(nullptr, delegate_event_handler_);
   foreign_socket_->ExpectOwnershipTransfer();
-  delegate_event_handler_->OnStreamCreated(
-      kStreamId, &mem_, std::move(foreign_socket_), kInitiallyNotMuted);
+  delegate_event_handler_->OnStreamCreated(kStreamId, std::move(mem_),
+                                           std::move(foreign_socket_),
+                                           kInitiallyNotMuted);
 
   base::RunLoop().RunUntilIdle();
 }
@@ -293,8 +289,9 @@ TEST_F(MojoAudioInputStreamTest, DelegateErrorAfterCreated_PropagatesError) {
 
   ASSERT_NE(nullptr, delegate_event_handler_);
   foreign_socket_->ExpectOwnershipTransfer();
-  delegate_event_handler_->OnStreamCreated(
-      kStreamId, &mem_, std::move(foreign_socket_), kInitiallyNotMuted);
+  delegate_event_handler_->OnStreamCreated(kStreamId, std::move(mem_),
+                                           std::move(foreign_socket_),
+                                           kInitiallyNotMuted);
   delegate_event_handler_->OnStreamError(kStreamId);
 
   base::RunLoop().RunUntilIdle();

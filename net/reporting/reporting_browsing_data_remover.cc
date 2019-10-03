@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "net/reporting/reporting_cache.h"
-#include "net/reporting/reporting_client.h"
 #include "net/reporting/reporting_context.h"
 #include "net/reporting/reporting_report.h"
 
@@ -17,21 +16,8 @@ namespace net {
 void ReportingBrowsingDataRemover::RemoveBrowsingData(
     ReportingCache* cache,
     int data_type_mask,
-    base::Callback<bool(const GURL&)> origin_filter) {
-  bool remove_reports = (data_type_mask & DATA_TYPE_REPORTS) != 0;
-  bool remove_clients = (data_type_mask & DATA_TYPE_CLIENTS) != 0;
-
-  if (origin_filter.is_null()) {
-    if (remove_reports) {
-      cache->RemoveAllReports(
-          ReportingReport::Outcome::ERASED_BROWSING_DATA_REMOVED);
-    }
-    if (remove_clients)
-      cache->RemoveAllClients();
-    return;
-  }
-
-  if (remove_reports) {
+    const base::RepeatingCallback<bool(const GURL&)>& origin_filter) {
+  if ((data_type_mask & DATA_TYPE_REPORTS) != 0) {
     std::vector<const ReportingReport*> all_reports;
     cache->GetReports(&all_reports);
 
@@ -46,18 +32,23 @@ void ReportingBrowsingDataRemover::RemoveBrowsingData(
         ReportingReport::Outcome::ERASED_BROWSING_DATA_REMOVED);
   }
 
-  if (remove_clients) {
-    std::vector<const ReportingClient*> all_clients;
-    cache->GetClients(&all_clients);
-
-    std::vector<const ReportingClient*> clients_to_remove;
-    for (const ReportingClient* client : all_clients) {
-      // TODO(juliatuttle): Examine client endpoint as well?
-      if (origin_filter.Run(client->origin.GetURL()))
-        clients_to_remove.push_back(client);
+  if ((data_type_mask & DATA_TYPE_CLIENTS) != 0) {
+    for (const url::Origin& origin : cache->GetAllOrigins()) {
+      if (origin_filter.Run(origin.GetURL()))
+        cache->RemoveClient(origin);
     }
+  }
+}
 
-    cache->RemoveClients(clients_to_remove);
+// static
+void ReportingBrowsingDataRemover::RemoveAllBrowsingData(ReportingCache* cache,
+                                                         int data_type_mask) {
+  if ((data_type_mask & DATA_TYPE_REPORTS) != 0) {
+    cache->RemoveAllReports(
+        ReportingReport::Outcome::ERASED_BROWSING_DATA_REMOVED);
+  }
+  if ((data_type_mask & DATA_TYPE_CLIENTS) != 0) {
+    cache->RemoveAllClients();
   }
 }
 

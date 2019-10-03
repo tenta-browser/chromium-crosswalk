@@ -4,8 +4,6 @@
 
 package org.chromium.android_webview.test;
 
-import static org.junit.Assert.assertNotEquals;
-
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 import android.view.View;
@@ -22,11 +20,13 @@ import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwLayoutSizer;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
+import org.chromium.base.Log;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.ui.display.DisplayAndroid;
 
 import java.util.concurrent.atomic.AtomicReference;
+
+import javax.annotation.concurrent.GuardedBy;
 
 /**
  * Tests for certain edge cases related to integrating with the Android view system.
@@ -47,25 +47,37 @@ public class AndroidViewIntegrationTest {
                 }
             };
 
+    private static final String TAG = "AndroidViewTest"; // 20 max characters
+    // TODO(crbug.com/949391): turn this off once we can get some details about flakes.
+    private static final boolean DEBUG = true;
     private static final int CONTENT_SIZE_CHANGE_STABILITY_TIMEOUT_MS = 1000;
 
     private static class OnContentSizeChangedHelper extends CallbackHelper {
+        final private Object mLock = new Object();
+        @GuardedBy("mLock")
         private int mWidth;
+        @GuardedBy("mLock")
         private int mHeight;
 
         public int getWidth() {
             assert getCallCount() > 0;
-            return mWidth;
+            synchronized (mLock) {
+                return mWidth;
+            }
         }
 
         public int getHeight() {
             assert getCallCount() > 0;
-            return mHeight;
+            synchronized (mLock) {
+                return mHeight;
+            }
         }
 
         public void onContentSizeChanged(int widthCss, int heightCss) {
-            mWidth = widthCss;
-            mHeight = heightCss;
+            synchronized (mLock) {
+                mWidth = widthCss;
+                mHeight = heightCss;
+            }
             notifyCalled();
         }
     }
@@ -224,23 +236,27 @@ public class AndroidViewIntegrationTest {
     private void waitForContentSizeToChangeTo(OnContentSizeChangedHelper helper, int callCount,
             int widthCss, int heightCss) throws Exception {
         final int maxSizeChangeNotificationsToWaitFor = 5;
-        for (int i = 1; i <= maxSizeChangeNotificationsToWaitFor; i++) {
-            helper.waitForCallback(callCount, i);
+        for (int i = 0; i < maxSizeChangeNotificationsToWaitFor; i++) {
+            helper.waitForCallback(callCount + i);
+            if (DEBUG) {
+                Log.i(TAG,
+                        "i: " + i + ", height: " + helper.getHeight()
+                                + ", width: " + helper.getWidth());
+            }
             if ((heightCss == -1 || helper.getHeight() == heightCss)
                     && (widthCss == -1 || helper.getWidth() == widthCss)) {
-                break;
+                return;
             }
-            // This means that we hit the max number of iterations but the expected contents size
-            // wasn't reached.
-            assertNotEquals(i, maxSizeChangeNotificationsToWaitFor);
         }
+        Assert.fail("The expected contents size was not reached in max # of trials.");
     }
 
     private void loadPageOfSizeAndWaitForSizeChange(AwContents awContents,
             OnContentSizeChangedHelper helper, int widthCss, int heightCss,
             boolean heightPercent) throws Exception {
-
-        final String htmlData = makeHtmlPageOfSize(widthCss, heightCss, heightPercent);
+        // loadDataAsync loads HTML as a data URI, which requires encoding '#' characters as '%23'.
+        final String htmlData =
+                makeHtmlPageOfSize(widthCss, heightCss, heightPercent).replace("#", "%23");
         final int contentSizeChangeCallCount = helper.getCallCount();
         mActivityTestRule.loadDataAsync(awContents, htmlData, "text/html", false);
 
@@ -294,6 +310,7 @@ public class AndroidViewIntegrationTest {
                 + "</style>", "<div>a</div>");
 
         final int contentSizeChangeCallCount = mOnContentSizeChangedHelper.getCallCount();
+        Assert.assertEquals(0, contentSizeChangeCallCount);
         mActivityTestRule.loadDataAsync(
                 testContainerView.getAwContents(), htmlData, "text/html", false);
 
@@ -311,8 +328,7 @@ public class AndroidViewIntegrationTest {
         assertZeroHeight(testContainerView);
 
         final double deviceDIPScale =
-                DisplayAndroid.getNonMultiDisplay(testContainerView.getContext()).getDipScale();
-
+                GraphicsTestUtils.dipScaleForContext(testContainerView.getContext());
         final int contentHeightCss = 180;
 
         // In wrap-content mode the AwLayoutSizer will size the view to be as wide as the parent
@@ -338,9 +354,7 @@ public class AndroidViewIntegrationTest {
         assertZeroHeight(testContainerView);
 
         final double deviceDIPScale =
-                DisplayAndroid.getNonMultiDisplay(testContainerView.getContext()).getDipScale();
-
-        final int contentWidthCss = 142;
+                GraphicsTestUtils.dipScaleForContext(testContainerView.getContext());
         final int contentHeightCss = 180;
 
         // In wrap-content mode the AwLayoutSizer will size the view to be as wide as the parent
@@ -367,9 +381,7 @@ public class AndroidViewIntegrationTest {
         assertZeroHeight(testContainerView);
 
         final double deviceDIPScale =
-                DisplayAndroid.getNonMultiDisplay(testContainerView.getContext()).getDipScale();
-
-        final int contentWidthCss = 142;
+                GraphicsTestUtils.dipScaleForContext(testContainerView.getContext());
         final int contentHeightCss = 180;
 
         final int expectedWidthCss =
@@ -394,7 +406,7 @@ public class AndroidViewIntegrationTest {
         final AwContents awContents = testContainerView.getAwContents();
 
         final double deviceDIPScale =
-                DisplayAndroid.getNonMultiDisplay(testContainerView.getContext()).getDipScale();
+                GraphicsTestUtils.dipScaleForContext(testContainerView.getContext());
         final int physicalWidth = 600;
         final int spanWidth = 42;
         final int expectedWidthCss =

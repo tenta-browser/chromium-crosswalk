@@ -9,6 +9,7 @@
 
 #include <set>
 
+#include "base/cancelable_callback.h"
 #include "base/containers/queue.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -20,8 +21,7 @@
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browsing_data_remover.h"
-#include "storage/common/quota/quota_types.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -33,32 +33,6 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
     : public BrowsingDataRemover,
       public base::SupportsUserData::Data {
  public:
-  // Used to track the deletion of a single data storage backend.
-  class SubTask {
-   public:
-    // Creates a SubTask that calls |forward_callback| when completed.
-    // |forward_callback| is only kept as a reference and must outlive SubTask.
-    explicit SubTask(const base::Closure& forward_callback);
-    ~SubTask();
-
-    // Indicate that the task is in progress and we're waiting.
-    void Start();
-
-    // Returns a callback that should be called to indicate that the task
-    // has been finished.
-    base::Closure GetCompletionCallback();
-
-    // Whether the task is still in progress.
-    bool is_pending() const { return is_pending_; }
-
-   private:
-    void CompletionCallback();
-
-    bool is_pending_;
-    const base::Closure& forward_callback_;
-    base::WeakPtrFactory<SubTask> weak_ptr_factory_;
-  };
-
   explicit BrowsingDataRemoverImpl(BrowserContext* browser_context);
   ~BrowsingDataRemoverImpl() override;
 
@@ -70,8 +44,8 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
       BrowsingDataRemoverDelegate* embedder_delegate) override;
   bool DoesOriginMatchMask(
       int origin_type_mask,
-      const GURL& origin,
-      storage::SpecialStoragePolicy* special_storage_policy) const override;
+      const url::Origin& origin,
+      storage::SpecialStoragePolicy* special_storage_policy) override;
   void Remove(const base::Time& delete_begin,
               const base::Time& delete_end,
               int remove_mask,
@@ -124,6 +98,24 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   // Testing the private RemovalTask.
   FRIEND_TEST_ALL_PREFIXES(BrowsingDataRemoverImplTest, MultipleTasks);
 
+  // For debugging purposes. Please add new deletion tasks at the end.
+  // This enum is recorded in a histogram, so don't change or reuse ids.
+  // Entries must also be added to BrowsingDataRemoverTasks in enums.xml.
+  enum class TracingDataType {
+    kSynchronous = 1,
+    kEmbedderData = 2,
+    kStoragePartition = 3,
+    kHttpCache = 4,
+    kHttpAndMediaCaches = 5,
+    kReportingCache = 6,
+    kChannelIds = 7,
+    kNetworkHistory = 8,
+    kAuthCache = 9,
+    kCodeCaches = 10,
+    kNetworkErrorLogging = 11,
+    kMaxValue = kNetworkErrorLogging,
+  };
+
   // Represents a single removal task. Contains all parameters needed to execute
   // it and a pointer to the observer that added it. CONTENT_EXPORTed to be
   // visible in tests.
@@ -143,6 +135,7 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
     int origin_type_mask;
     std::unique_ptr<BrowsingDataFilterBuilder> filter_builder;
     Observer* observer;
+    base::Time task_started;
   };
 
   // Setter for |is_removing_|; DCHECKs that we can only start removing if we're
@@ -164,17 +157,29 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   void RemoveImpl(const base::Time& delete_begin,
                   const base::Time& delete_end,
                   int remove_mask,
-                  const BrowsingDataFilterBuilder& filter_builder,
+                  BrowsingDataFilterBuilder* filter_builder,
                   int origin_type_mask);
 
   // Notifies observers and transitions to the idle state.
   void Notify();
 
-  // Checks if we are all done, and if so, calls Notify().
-  void NotifyIfDone();
+  // Called by the closures returned by CreateTaskCompletionClosure().
+  // Checks if all tasks have completed, and if so, calls Notify().
+  void OnTaskComplete(TracingDataType data_type);
 
-  // Returns true if we're all done.
-  bool AllDone();
+  // Increments the number of pending tasks by one, and returns a OnceClosure
+  // that calls OnTaskComplete(). The Remover is complete once all the closures
+  // created by this method have been invoked.
+  base::OnceClosure CreateTaskCompletionClosure(TracingDataType data_type);
+
+  // Same as CreateTaskCompletionClosure() but guarantees that
+  // OnTaskComplete() is called if the task is dropped. That can typically
+  // happen when the connection is closed while an interface call is made.
+  base::OnceClosure CreateTaskCompletionClosureForMojo(
+      TracingDataType data_type);
+
+  // Records unfinished tasks from |pending_sub_tasks_| after a delay.
+  void RecordUnfinishedSubTasks();
 
   // Like GetWeakPtr(), but returns a weak pointer to BrowsingDataRemoverImpl
   // for internal purposes.
@@ -210,26 +215,20 @@ class CONTENT_EXPORT BrowsingDataRemoverImpl
   base::Callback<void(const base::Closure& continue_to_completion)>
       would_complete_callback_;
 
-  // A callback to NotifyIfDone() used by SubTasks instances.
-  const base::Closure sub_task_forward_callback_;
+  // Records which tasks of a deletion are currently active.
+  std::set<TracingDataType> pending_sub_tasks_;
 
-  // Keeping track of various subtasks to be completed.
-  // These may only be accessed from UI thread in order to avoid races!
-  SubTask synchronous_clear_operations_;
-  SubTask clear_embedder_data_;
-  SubTask clear_cache_;
-  SubTask clear_networking_history_;
-  SubTask clear_channel_ids_;
-  SubTask clear_http_auth_cache_;
-  SubTask clear_storage_partition_data_;
+  // Fires after some time to track slow tasks. Cancelled when all tasks
+  // are finished.
+  base::CancelableClosure slow_pending_tasks_closure_;
 
   // Observers of the global state and individual tasks.
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
 
   // We do not own this.
   StoragePartition* storage_partition_for_testing_;
 
-  base::WeakPtrFactory<BrowsingDataRemoverImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<BrowsingDataRemoverImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataRemoverImpl);
 };

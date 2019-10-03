@@ -37,10 +37,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/at_exit.h"
 #include "base/base_paths.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
@@ -143,18 +145,18 @@ class TransportClient : public CastTransport::Client {
 
   void OnStatusChanged(CastTransportStatus status) final {
     LOG(INFO) << "Cast transport status: " << status;
-  };
+  }
   void OnLoggingEventsReceived(
       std::unique_ptr<std::vector<FrameEvent>> frame_events,
       std::unique_ptr<std::vector<PacketEvent>> packet_events) final {
     DCHECK(log_event_dispatcher_);
     log_event_dispatcher_->DispatchBatchOfEvents(std::move(frame_events),
                                                  std::move(packet_events));
-  };
+  }
   void ProcessRtpPacket(std::unique_ptr<Packet> packet) final {
     if (packet_proxy_)
       packet_proxy_->ReceivePacket(std::move(packet));
-  };
+  }
 
  private:
   LogEventDispatcher* const log_event_dispatcher_;  // Not owned by this class.
@@ -250,14 +252,13 @@ struct GotVideoFrameOutput {
   std::vector<double> ssim;
 };
 
-void GotVideoFrame(
-    GotVideoFrameOutput* metrics_output,
-    const base::FilePath& yuv_output,
-    EncodedVideoFrameTracker* video_frame_tracker,
-    CastReceiver* cast_receiver,
-    const scoped_refptr<media::VideoFrame>& video_frame,
-    const base::TimeTicks& render_time,
-    bool continuous) {
+void GotVideoFrame(GotVideoFrameOutput* metrics_output,
+                   const base::FilePath& yuv_output,
+                   EncodedVideoFrameTracker* video_frame_tracker,
+                   CastReceiver* cast_receiver,
+                   scoped_refptr<media::VideoFrame> video_frame,
+                   base::TimeTicks render_time,
+                   bool continuous) {
   ++metrics_output->counter;
   cast_receiver->RequestDecodedVideoFrame(
       base::Bind(&GotVideoFrame, metrics_output, yuv_output,
@@ -268,19 +269,19 @@ void GotVideoFrame(
   if (video_frame_tracker) {
     scoped_refptr<media::VideoFrame> src_frame =
         video_frame_tracker->PopOldestEncodedFrame();
-    metrics_output->psnr.push_back(I420PSNR(src_frame, video_frame));
-    metrics_output->ssim.push_back(I420SSIM(src_frame, video_frame));
+    metrics_output->psnr.push_back(I420PSNR(*src_frame, *video_frame));
+    metrics_output->ssim.push_back(I420SSIM(*src_frame, *video_frame));
   }
 
   if (!yuv_output.empty()) {
-    AppendYuvToFile(yuv_output, video_frame);
+    AppendYuvToFile(yuv_output, std::move(video_frame));
   }
 }
 
 void GotAudioFrame(int* counter,
                    CastReceiver* cast_receiver,
                    std::unique_ptr<AudioBus> audio_bus,
-                   const base::TimeTicks& playout_time,
+                   base::TimeTicks playout_time,
                    bool is_continuous) {
   ++*counter;
   cast_receiver->RequestDecodedAudioFrame(
@@ -339,14 +340,12 @@ void RunSimulation(const base::FilePath& source_path,
   base::ThreadTaskRunnerHandle task_runner_handle(task_runner);
 
   // CastEnvironments.
+  test::SkewedTickClock sender_clock(&testing_clock);
   scoped_refptr<CastEnvironment> sender_env =
-      new CastEnvironment(std::unique_ptr<base::TickClock>(
-                              new test::SkewedTickClock(&testing_clock)),
-                          task_runner, task_runner, task_runner);
-  scoped_refptr<CastEnvironment> receiver_env =
-      new CastEnvironment(std::unique_ptr<base::TickClock>(
-                              new test::SkewedTickClock(&testing_clock)),
-                          task_runner, task_runner, task_runner);
+      new CastEnvironment(&sender_clock, task_runner, task_runner, task_runner);
+  test::SkewedTickClock receiver_clock(&testing_clock);
+  scoped_refptr<CastEnvironment> receiver_env = new CastEnvironment(
+      &receiver_clock, task_runner, task_runner, task_runner);
 
   // Event subscriber. Store at most 1 hour of events.
   EncodingEventSubscriber audio_event_subscriber(AUDIO_EVENT,
@@ -393,7 +392,7 @@ void RunSimulation(const base::FilePath& source_path,
   // Cast receiver.
   std::unique_ptr<CastTransport> transport_receiver(new CastTransportImpl(
       &testing_clock, base::TimeDelta::FromSeconds(1),
-      base::MakeUnique<TransportClient>(receiver_env->logger(), &packet_proxy),
+      std::make_unique<TransportClient>(receiver_env->logger(), &packet_proxy),
       base::WrapUnique(receiver_to_sender), task_runner));
   std::unique_ptr<CastReceiver> cast_receiver(
       CastReceiver::Create(receiver_env, audio_receiver_config,
@@ -404,7 +403,7 @@ void RunSimulation(const base::FilePath& source_path,
   // Cast sender and transport sender.
   std::unique_ptr<CastTransport> transport_sender(new CastTransportImpl(
       &testing_clock, base::TimeDelta::FromSeconds(1),
-      base::MakeUnique<TransportClient>(sender_env->logger(), nullptr),
+      std::make_unique<TransportClient>(sender_env->logger(), nullptr),
       base::WrapUnique(sender_to_receiver), task_runner));
   std::unique_ptr<CastSender> cast_sender(
       CastSender::Create(sender_env, transport_sender.get()));
@@ -704,7 +703,7 @@ int main(int argc, char** argv) {
   const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
   base::FilePath media_path = cmd->GetSwitchValuePath(media::cast::kLibDir);
   if (media_path.empty()) {
-    if (!PathService::Get(base::DIR_MODULE, &media_path)) {
+    if (!base::PathService::Get(base::DIR_MODULE, &media_path)) {
       LOG(ERROR) << "Failed to load FFmpeg.";
       return 1;
     }

@@ -23,6 +23,7 @@ class FakeDemuxerStream : public DemuxerStream {
   // DemuxerStream implementation.
   MOCK_METHOD1(Read, void(const ReadCB& read_cb));
   void FakeRead(const ReadCB& read_cb);
+  bool IsReadPending() const override;
   AudioDecoderConfig audio_decoder_config() override;
   VideoDecoderConfig video_decoder_config() override;
   Type type() const override;
@@ -51,7 +52,6 @@ class FakeMediaResource : public MediaResource {
 
   // MediaResource implementation.
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
 
  private:
   std::unique_ptr<FakeDemuxerStream> demuxer_stream_;

@@ -4,6 +4,8 @@
 
 #include "ui/views/bubble/info_bubble.h"
 
+#include <memory>
+
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -11,6 +13,7 @@
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/fill_layout.h"
+#include "ui/views/layout/layout_provider.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
@@ -18,11 +21,7 @@ namespace views {
 namespace {
 
 // The visible width of bubble borders (differs from the actual width) in px.
-const int kBubbleBorderVisibleWidth = 1;
-
-// The margin between the content of the error bubble and its border.
-const int kInfoBubbleHorizontalMargin = 14;
-const int kInfoBubbleVerticalMargin = 12;
+constexpr int kBubbleBorderVisibleWidth = 1;
 
 }  // namespace
 
@@ -30,7 +29,7 @@ class InfoBubbleFrame : public BubbleFrameView {
  public:
   explicit InfoBubbleFrame(const gfx::Insets& content_margins)
       : BubbleFrameView(gfx::Insets(), content_margins) {}
-  ~InfoBubbleFrame() override {}
+  ~InfoBubbleFrame() override = default;
 
   gfx::Rect GetAvailableScreenBounds(const gfx::Rect& rect) const override {
     return available_bounds_;
@@ -52,18 +51,18 @@ InfoBubble::InfoBubble(View* anchor, const base::string16& message)
   DCHECK(anchor_);
   SetAnchorView(anchor_);
 
-  set_margins(
-      gfx::Insets(kInfoBubbleVerticalMargin, kInfoBubbleHorizontalMargin));
-  set_can_activate(false);
+  set_margins(LayoutProvider::Get()->GetInsetsMetric(
+      InsetsMetric::INSETS_TOOLTIP_BUBBLE));
+  SetCanActivate(false);
 
-  SetLayoutManager(new FillLayout);
+  SetLayoutManager(std::make_unique<FillLayout>());
   Label* label = new Label(message);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label->SetMultiLine(true);
   AddChildView(label);
 }
 
-InfoBubble::~InfoBubble() {}
+InfoBubble::~InfoBubble() = default;
 
 void InfoBubble::Show() {
   widget_ = BubbleDialogDelegateView::CreateBubble(this);
@@ -81,8 +80,8 @@ NonClientFrameView* InfoBubble::CreateNonClientFrameView(Widget* widget) {
   DCHECK(!frame_);
   frame_ = new InfoBubbleFrame(margins());
   frame_->set_available_bounds(anchor_widget()->GetWindowBoundsInScreen());
-  frame_->SetBubbleBorder(std::unique_ptr<BubbleBorder>(
-      new BubbleBorder(arrow(), shadow(), color())));
+  frame_->SetBubbleBorder(
+      std::make_unique<BubbleBorder>(arrow(), GetShadow(), color()));
   return frame_;
 }
 
@@ -125,5 +124,9 @@ void InfoBubble::UpdatePosition() {
     widget_->Hide();
   }
 }
+
+BEGIN_METADATA(InfoBubble)
+METADATA_PARENT_CLASS(BubbleDialogDelegateView)
+END_METADATA()
 
 }  // namespace views

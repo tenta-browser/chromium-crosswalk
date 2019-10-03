@@ -8,9 +8,8 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -23,7 +22,7 @@ namespace {
 
 class SequencedModelWorkerTest : public testing::Test {
  public:
-  SequencedModelWorkerTest() : did_do_work_(false), weak_factory_(this) {}
+  SequencedModelWorkerTest() : did_do_work_(false) {}
 
   bool did_do_work() { return did_do_work_; }
   SequencedModelWorker* worker() { return worker_.get(); }
@@ -45,10 +44,9 @@ class SequencedModelWorkerTest : public testing::Test {
   // This is the work that will be scheduled to be done on the DB sequence.
   SyncerError DoWork() {
     EXPECT_TRUE(task_runner_->RunsTasksInCurrentSequence());
-    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+    run_loop_.Quit();
     did_do_work_ = true;
-    return SYNCER_OK;
+    return SyncerError(SyncerError::SYNCER_OK);
   }
 
   // This will be called by the OneShotTimer and make the test fail unless
@@ -56,14 +54,13 @@ class SequencedModelWorkerTest : public testing::Test {
   void Timeout() {
     ADD_FAILURE()
         << "Timed out waiting for work to be done on the DB sequence.";
-    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+    run_loop_.Quit();
   }
 
  protected:
   void SetUp() override {
     task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-        {base::MayBlock(), base::TaskPriority::BACKGROUND});
+        {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
     worker_ = new SequencedModelWorker(task_runner_, GROUP_DB);
   }
 
@@ -74,14 +71,18 @@ class SequencedModelWorkerTest : public testing::Test {
   scoped_refptr<SequencedModelWorker> worker_;
   base::OneShotTimer timer_;
 
-  base::WeakPtrFactory<SequencedModelWorkerTest> weak_factory_;
+ protected:
+  base::RunLoop run_loop_;
+
+ private:
+  base::WeakPtrFactory<SequencedModelWorkerTest> weak_factory_{this};
 };
 
 TEST_F(SequencedModelWorkerTest, DoesWorkOnDatabaseSequence) {
   base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&SequencedModelWorkerTest::ScheduleWork,
-                            factory()->GetWeakPtr()));
-  base::RunLoop().Run();
+      FROM_HERE, base::BindOnce(&SequencedModelWorkerTest::ScheduleWork,
+                                factory()->GetWeakPtr()));
+  run_loop_.Run();
   EXPECT_TRUE(did_do_work());
 }
 

@@ -9,8 +9,10 @@ import("//testing/test.gni")
 # URLs for top-level navigations.
 static_library("ukm") {
   sources = [
-    "persisted_logs_metrics_impl.cc",
-    "persisted_logs_metrics_impl.h",
+    "app_source_url_recorder.cc",
+    "app_source_url_recorder.h",
+    "unsent_log_store_metrics_impl.cc",
+    "unsent_log_store_metrics_impl.h",
     "ukm_pref_names.cc",
     "ukm_pref_names.h",
     "ukm_recorder_impl.cc",
@@ -21,19 +23,18 @@ static_library("ukm") {
     "ukm_rotation_scheduler.h",
     "ukm_service.cc",
     "ukm_service.h",
-    "ukm_source.cc",
-    "ukm_source.h",
   ]
 
   public_deps = [
     "//services/metrics/public/cpp:metrics_cpp",
-    "//services/metrics/public/interfaces",
+    "//services/metrics/public/cpp:ukm_builders",
+    "//services/metrics/public/mojom",
     "//third_party/metrics_proto",
   ]
 
   deps = [
     "//base",
-    "//components/data_use_measurement/core",
+    "//components/crx_file",
     "//components/metrics",
     "//components/prefs",
     "//components/variations",
@@ -54,6 +55,11 @@ static_library("observers") {
     "//base",
     "//components/history/core/browser",
     "//components/sync",
+    "//google_apis",
+  ]
+
+  public_deps = [
+    "//components/unified_consent",
   ]
 }
 
@@ -79,7 +85,9 @@ static_library("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "app_source_url_recorder_test.cc",
     "observers/sync_disable_observer_unittest.cc",
+    "ukm_recorder_impl_unittest.cc",
     "ukm_service_unittest.cc",
   ]
 
@@ -92,7 +100,9 @@ source_set("unit_tests") {
     "//components/metrics",
     "//components/metrics:test_support",
     "//components/prefs:test_support",
-    "//components/sync:test_support_driver",
+    "//components/sync:test_support",
+    "//components/sync_preferences:test_support",
+    "//components/unified_consent:test_support",
     "//components/variations",
     "//net:test_support",
     "//services/metrics/public/cpp:ukm_builders",
@@ -107,7 +117,7 @@ test("ukm_unittests") {
   deps = [
     ":unit_tests",
     "//base",
-    "//base/test:run_all_unittests",
     "//base/test:test_support",
+    "//components/test:run_all_unittests",
   ]
 }

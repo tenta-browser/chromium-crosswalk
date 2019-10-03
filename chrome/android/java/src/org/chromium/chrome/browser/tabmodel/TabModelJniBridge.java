@@ -12,6 +12,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.ResourceRequestBody;
 
 /**
  * Bridges between the C++ and Java {@link TabModel} interfaces.
@@ -22,7 +23,7 @@ public abstract class TabModelJniBridge implements TabModel {
     // TODO(dtrainor, simonb): Make these non-static so we don't break if we have multiple instances
     // of chrome running.  Also investigate how this affects document mode.
     private static long sTabSwitchStartTime;
-    private static TabSelectionType sTabSelectionType;
+    private static @TabSelectionType int sTabSelectionType;
     private static boolean sTabSwitchLatencyMetricRequired;
     private static boolean sPerceivedTabSwitchLatencyMetricLogged;
 
@@ -116,12 +117,16 @@ public abstract class TabModelJniBridge implements TabModel {
      * @param parent      The parent tab that creates the new tab.
      * @param incognito   Whether or not the tab is incognito.
      * @param webContents A {@link WebContents} object.
-     * @param parentId    ID of the parent.
      * @return Whether or not the Tab was successfully created.
      */
     @CalledByNative
-    protected abstract boolean createTabWithWebContents(Tab parent, boolean incognito,
-            WebContents webContents, int parentId);
+    protected abstract boolean createTabWithWebContents(
+            Tab parent, boolean incognito, WebContents webContents);
+
+    @CalledByNative
+    protected abstract void openNewTab(Tab parent, String url, String initiatorOrigin,
+            String extraHeaders, ResourceRequestBody postData, int disposition,
+            boolean persistParentage, boolean isRendererInitiated);
 
     /**
      * Creates a Tab with the given WebContents for DevTools.
@@ -129,8 +134,8 @@ public abstract class TabModelJniBridge implements TabModel {
      */
     @CalledByNative
     protected Tab createNewTabForDevTools(String url) {
-        return getTabCreator(false).createNewTab(new LoadUrlParams(url),
-                TabModel.TabLaunchType.FROM_CHROME_UI, null);
+        return getTabCreator(false).createNewTab(
+                new LoadUrlParams(url), TabLaunchType.FROM_CHROME_UI, null);
     }
 
     @Override
@@ -145,12 +150,16 @@ public abstract class TabModelJniBridge implements TabModel {
     @CalledByNative
     protected abstract boolean isSessionRestoreInProgress();
 
+    @CalledByNative
+    @Override
+    public abstract boolean isCurrentModel();
+
     /**
      * Register the start of tab switch latency timing. Called when setIndex() indicates a tab
      * switch event.
      * @param type The type of action that triggered the tab selection.
      */
-    public static void startTabSwitchLatencyTiming(final TabSelectionType type) {
+    public static void startTabSwitchLatencyTiming(final @TabSelectionType int type) {
         sTabSwitchStartTime = SystemClock.uptimeMillis();
         sTabSelectionType = type;
         sTabSwitchLatencyMetricRequired = false;
@@ -194,16 +203,16 @@ public abstract class TabModelJniBridge implements TabModel {
         if (sTabSwitchStartTime <= 0) return;
         final long ms = SystemClock.uptimeMillis() - sTabSwitchStartTime;
         switch (sTabSelectionType) {
-            case FROM_CLOSE:
+            case TabSelectionType.FROM_CLOSE:
                 nativeLogFromCloseMetric(ms, perceived);
                 break;
-            case FROM_EXIT:
+            case TabSelectionType.FROM_EXIT:
                 nativeLogFromExitMetric(ms, perceived);
                 break;
-            case FROM_NEW:
+            case TabSelectionType.FROM_NEW:
                 nativeLogFromNewMetric(ms, perceived);
                 break;
-            case FROM_USER:
+            case TabSelectionType.FROM_USER:
                 nativeLogFromUserMetric(ms, perceived);
                 break;
         }

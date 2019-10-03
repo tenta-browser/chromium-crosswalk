@@ -10,9 +10,9 @@
 #include <memory>
 
 #include "base/callback_forward.h"
-#include "base/memory/memory_coordinator_client.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/task_manager/task_manager_browsertest_util.h"
+#include "components/sessions/core/session_id.h"
 
 namespace task_manager {
 
@@ -48,11 +48,8 @@ class TaskManagerTester {
   int64_t GetColumnValue(ColumnSpecifier column, int row);
 
   // If |row| is associated with a WebContents, return its SessionID. Otherwise,
-  // return -1.
-  int32_t GetTabId(int row);
-
-  // Return the memory state of the process which is associated with |row|.
-  base::MemoryState GetMemoryState(int row);
+  // return SessionID::InvalidValue().
+  SessionID GetTabId(int row);
 
   // Kill the process of |row|.
   void Kill(int row);

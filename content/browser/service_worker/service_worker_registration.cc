@@ -6,17 +6,18 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_info.h"
+#include "content/browser/service_worker/service_worker_job_coordinator.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_register_job.h"
-#include "content/common/service_worker/service_worker_messages.h"
-#include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_thread.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -42,11 +43,10 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(
     const blink::mojom::ServiceWorkerRegistrationOptions& options,
     int64_t registration_id,
     base::WeakPtr<ServiceWorkerContextCore> context)
-    : pattern_(options.scope),
+    : scope_(options.scope),
+      update_via_cache_(options.update_via_cache),
       registration_id_(registration_id),
-      is_deleted_(false),
-      is_uninstalling_(false),
-      is_uninstalled_(false),
+      status_(Status::kIntact),
       should_activate_when_ready_(false),
       resources_total_size_bytes_(0),
       context_(context),
@@ -63,7 +63,29 @@ ServiceWorkerRegistration::~ServiceWorkerRegistration() {
   if (context_)
     context_->RemoveLiveRegistration(registration_id_);
   if (active_version())
-    active_version()->RemoveListener(this);
+    active_version()->RemoveObserver(this);
+}
+
+void ServiceWorkerRegistration::SetStatus(Status status) {
+  if (status_ == status)
+    return;
+#if DCHECK_IS_ON()
+  switch (status_) {
+    case Status::kIntact:
+      DCHECK_EQ(status, Status::kUninstalling);
+      break;
+    case Status::kUninstalling:
+      // All transitions are allowed:
+      // - To kIntact: resurrected.
+      // - To kUninstalled: finished uninstalling.
+      break;
+    case Status::kUninstalled:
+      NOTREACHED();
+      break;
+  }
+#endif  // DCHECK_IS_ON()
+
+  status_ = status;
 }
 
 ServiceWorkerVersion* ServiceWorkerRegistration::GetNewestVersion() const {
@@ -94,22 +116,24 @@ void ServiceWorkerRegistration::NotifyUpdateFound() {
 }
 
 void ServiceWorkerRegistration::NotifyVersionAttributesChanged(
-    ChangedVersionAttributesMask mask) {
+    blink::mojom::ChangedServiceWorkerObjectsMaskPtr mask) {
   for (auto& observer : listeners_)
-    observer.OnVersionAttributesChanged(this, mask, GetInfo());
-  if (mask.active_changed() || mask.waiting_changed())
+    observer.OnVersionAttributesChanged(this, mask.Clone(), GetInfo());
+  if (mask->active || mask->waiting)
     NotifyRegistrationFinished();
 }
 
 ServiceWorkerRegistrationInfo ServiceWorkerRegistration::GetInfo() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return ServiceWorkerRegistrationInfo(
-      pattern(), registration_id_,
-      is_deleted_ ? ServiceWorkerRegistrationInfo::IS_DELETED
-                  : ServiceWorkerRegistrationInfo::IS_NOT_DELETED,
+      scope(), update_via_cache(), registration_id_,
+      is_deleted() ? ServiceWorkerRegistrationInfo::IS_DELETED
+                   : ServiceWorkerRegistrationInfo::IS_NOT_DELETED,
       GetVersionInfo(active_version_.get()),
       GetVersionInfo(waiting_version_.get()),
-      GetVersionInfo(installing_version_.get()), resources_total_size_bytes_);
+      GetVersionInfo(installing_version_.get()), resources_total_size_bytes_,
+      navigation_preload_state_.enabled,
+      navigation_preload_state_.header.length());
 }
 
 void ServiceWorkerRegistration::SetActiveVersion(
@@ -119,19 +143,20 @@ void ServiceWorkerRegistration::SetActiveVersion(
 
   should_activate_when_ready_ = false;
 
-  ChangedVersionAttributesMask mask;
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
   if (version)
-    UnsetVersionInternal(version.get(), &mask);
+    UnsetVersionInternal(version.get(), mask.get());
   if (active_version_)
-    active_version_->RemoveListener(this);
+    active_version_->RemoveObserver(this);
   active_version_ = version;
   if (active_version_) {
-    active_version_->AddListener(this);
+    active_version_->AddObserver(this);
     active_version_->SetNavigationPreloadState(navigation_preload_state_);
   }
-  mask.add(ChangedVersionAttributesMask::ACTIVE_VERSION);
+  mask->active = true;
 
-  NotifyVersionAttributesChanged(mask);
+  NotifyVersionAttributesChanged(std::move(mask));
 }
 
 void ServiceWorkerRegistration::SetWaitingVersion(
@@ -141,54 +166,65 @@ void ServiceWorkerRegistration::SetWaitingVersion(
 
   should_activate_when_ready_ = false;
 
-  ChangedVersionAttributesMask mask;
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
   if (version)
-    UnsetVersionInternal(version.get(), &mask);
+    UnsetVersionInternal(version.get(), mask.get());
   waiting_version_ = version;
-  mask.add(ChangedVersionAttributesMask::WAITING_VERSION);
+  mask->waiting = true;
 
-  NotifyVersionAttributesChanged(mask);
+  NotifyVersionAttributesChanged(std::move(mask));
 }
 
 void ServiceWorkerRegistration::SetInstallingVersion(
     const scoped_refptr<ServiceWorkerVersion>& version) {
   if (installing_version_ == version)
     return;
-
-  ChangedVersionAttributesMask mask;
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
   if (version)
-    UnsetVersionInternal(version.get(), &mask);
+    UnsetVersionInternal(version.get(), mask.get());
   installing_version_ = version;
-  mask.add(ChangedVersionAttributesMask::INSTALLING_VERSION);
-
-  NotifyVersionAttributesChanged(mask);
+  mask->installing = true;
+  NotifyVersionAttributesChanged(std::move(mask));
 }
 
 void ServiceWorkerRegistration::UnsetVersion(ServiceWorkerVersion* version) {
   if (!version)
     return;
-  ChangedVersionAttributesMask mask;
-  UnsetVersionInternal(version, &mask);
-  if (mask.changed())
-    NotifyVersionAttributesChanged(mask);
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
+  UnsetVersionInternal(version, mask.get());
+  if (mask->installing || mask->waiting || mask->active)
+    NotifyVersionAttributesChanged(std::move(mask));
 }
 
 void ServiceWorkerRegistration::UnsetVersionInternal(
     ServiceWorkerVersion* version,
-    ChangedVersionAttributesMask* mask) {
+    blink::mojom::ChangedServiceWorkerObjectsMask* mask) {
   DCHECK(version);
+
   if (installing_version_.get() == version) {
     installing_version_ = nullptr;
-    mask->add(ChangedVersionAttributesMask::INSTALLING_VERSION);
+    mask->installing = true;
   } else if (waiting_version_.get() == version) {
     waiting_version_ = nullptr;
     should_activate_when_ready_ = false;
-    mask->add(ChangedVersionAttributesMask::WAITING_VERSION);
+    mask->waiting = true;
   } else if (active_version_.get() == version) {
-    active_version_->RemoveListener(this);
+    active_version_->RemoveObserver(this);
     active_version_ = nullptr;
-    mask->add(ChangedVersionAttributesMask::ACTIVE_VERSION);
+    mask->active = true;
   }
+}
+
+void ServiceWorkerRegistration::SetUpdateViaCache(
+    blink::mojom::ServiceWorkerUpdateViaCache update_via_cache) {
+  if (update_via_cache_ == update_via_cache)
+    return;
+  update_via_cache_ = update_via_cache;
+  for (auto& observer : listeners_)
+    observer.OnUpdateViaCacheChanged(this);
 }
 
 void ServiceWorkerRegistration::ActivateWaitingVersionWhenReady() {
@@ -199,37 +235,67 @@ void ServiceWorkerRegistration::ActivateWaitingVersionWhenReady() {
     return;
   }
 
-  StartLameDuckTimerIfNeeded();
+  if (IsLameDuckActiveVersion()) {
+    if (active_version()->running_status() == EmbeddedWorkerStatus::RUNNING) {
+      // If the waiting worker is ready and the active worker needs to be
+      // swapped out, ask the active worker to trigger idle timer as soon as
+      // possible.
+      active_version()->TriggerIdleTerminationAsap();
+    }
+    StartLameDuckTimer();
+  }
 }
 
 void ServiceWorkerRegistration::ClaimClients() {
   DCHECK(context_);
   DCHECK(active_version());
 
+  // https://w3c.github.io/ServiceWorker/#clients-claim
+  //
+  // "For each service worker client client whose origin is the same as the
+  //  service worker's origin:
+  const bool include_reserved_clients = false;
   for (std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator> it =
-           context_->GetProviderHostIterator();
+           context_->GetClientProviderHostIterator(scope_.GetOrigin(),
+                                                   include_reserved_clients);
        !it->IsAtEnd(); it->Advance()) {
     ServiceWorkerProviderHost* host = it->GetProviderHost();
-    if (host->IsHostToRunningServiceWorker())
-      continue;
+    // "1. If client’s execution ready flag is unset or client’s discarded flag
+    //     is set, continue."
+    // |include_reserved_clients| ensures only execution ready clients are
+    // returned.
+    DCHECK(host->is_execution_ready());
+
+    // This is part of step 5 but performed here as an optimization. Do nothing
+    // if this version is already the controller.
     if (host->controller() == active_version())
       continue;
+
+    // "2. If client is not a secure context, continue."
     if (!host->IsContextSecureForServiceWorker())
       continue;
-    if (host->MatchRegistration() == this)
-      host->ClaimedByRegistration(this);
+
+    // "3. Let registration be the result of running Match Service Worker
+    //     Registration algorithm passing client’s creation URL as the argument.
+    //  4. If registration is not the service worker's containing service worker
+    //     registration, continue."
+    if (host->MatchRegistration() != this)
+      continue;
+
+    // The remaining steps are performed here:
+    host->ClaimedByRegistration(this);
   }
 }
 
 void ServiceWorkerRegistration::ClearWhenReady() {
   DCHECK(context_);
-  if (is_uninstalling_)
+  if (is_deleted()) {
+    // We already deleted and are waiting to clear, or the registration is
+    // already cleared.
     return;
-  is_uninstalling_ = true;
-
-  context_->storage()->NotifyUninstallingRegistration(this);
+  }
   context_->storage()->DeleteRegistration(
-      id(), pattern().GetOrigin(),
+      this, scope().GetOrigin(),
       AdaptCallbackForRepeating(
           base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, this)));
 
@@ -237,39 +303,61 @@ void ServiceWorkerRegistration::ClearWhenReady() {
     Clear();
 }
 
-void ServiceWorkerRegistration::AbortPendingClear(
-    const StatusCallback& callback) {
+void ServiceWorkerRegistration::AbortPendingClear(StatusCallback callback) {
   DCHECK(context_);
-  if (!is_uninstalling()) {
-    callback.Run(SERVICE_WORKER_OK);
-    return;
+
+  switch (status_) {
+    case Status::kIntact:
+      std::move(callback).Run(blink::ServiceWorkerStatusCode::kOk);
+      return;
+    case Status::kUninstalling:
+      break;
+    case Status::kUninstalled:
+      NOTREACHED()
+          << "attempt to resurrect a completely uninstalled registration";
+      break;
   }
-  is_uninstalling_ = false;
-  context_->storage()->NotifyDoneUninstallingRegistration(this);
+
+  context_->storage()->NotifyDoneUninstallingRegistration(this,
+                                                          Status::kIntact);
 
   scoped_refptr<ServiceWorkerVersion> most_recent_version =
       waiting_version() ? waiting_version() : active_version();
   DCHECK(most_recent_version.get());
   context_->storage()->NotifyInstallingRegistration(this);
   context_->storage()->StoreRegistration(
-      this,
-      most_recent_version.get(),
-      base::Bind(&ServiceWorkerRegistration::OnRestoreFinished,
-                 this,
-                 callback,
-                 most_recent_version));
+      this, most_recent_version.get(),
+      base::BindOnce(&ServiceWorkerRegistration::OnRestoreFinished, this,
+                     std::move(callback), most_recent_version));
 }
 
 void ServiceWorkerRegistration::OnNoControllees(ServiceWorkerVersion* version) {
   if (!context_)
     return;
   DCHECK_EQ(active_version(), version);
-  if (is_uninstalling_)
+  if (is_uninstalling()) {
+    // TODO(falken): This can destroy the caller during this observer function
+    // call, which is impolite and dangerous. Try to make this async, or make
+    // OnNoControllees not an observer function.
     Clear();
-  else if (IsReadyToActivate())
+    return;
+  }
+
+  if (IsReadyToActivate()) {
     ActivateWaitingVersion(true /* delay */);
-  else
-    StartLameDuckTimerIfNeeded();
+    return;
+  }
+
+  if (IsLameDuckActiveVersion()) {
+    if (should_activate_when_ready_ &&
+        active_version()->running_status() == EmbeddedWorkerStatus::RUNNING) {
+      // If the waiting worker is ready and the active worker needs to be
+      // swapped out, ask the active worker to trigger idle timer as soon as
+      // possible.
+      active_version()->TriggerIdleTerminationAsap();
+    }
+    StartLameDuckTimer();
+  }
 }
 
 void ServiceWorkerRegistration::OnNoWork(ServiceWorkerVersion* version) {
@@ -277,7 +365,7 @@ void ServiceWorkerRegistration::OnNoWork(ServiceWorkerVersion* version) {
     return;
   DCHECK_EQ(active_version(), version);
   if (IsReadyToActivate())
-    ActivateWaitingVersion(false /* delay */);
+    ActivateWaitingVersion(true /* delay */);
 }
 
 bool ServiceWorkerRegistration::IsReadyToActivate() const {
@@ -291,7 +379,7 @@ bool ServiceWorkerRegistration::IsReadyToActivate() const {
     return true;
   }
   if (IsLameDuckActiveVersion()) {
-    return !active->HasWork() ||
+    return active->HasNoWork() ||
            waiting->TimeSinceSkipWaiting() > kMaxLameDuckTime ||
            active->TimeSinceNoControllees() > kMaxLameDuckTime;
   }
@@ -305,15 +393,16 @@ bool ServiceWorkerRegistration::IsLameDuckActiveVersion() const {
          !active_version()->HasControllee();
 }
 
-void ServiceWorkerRegistration::StartLameDuckTimerIfNeeded() {
-  if (!IsLameDuckActiveVersion() || lame_duck_timer_.IsRunning()) {
+void ServiceWorkerRegistration::StartLameDuckTimer() {
+  DCHECK(IsLameDuckActiveVersion());
+  if (lame_duck_timer_.IsRunning())
     return;
-  }
 
   lame_duck_timer_.Start(
       FROM_HERE, kMaxLameDuckTime,
-      base::Bind(&ServiceWorkerRegistration::RemoveLameDuckIfNeeded,
-                 Unretained(this) /* OK because |this| owns the timer */));
+      base::BindRepeating(
+          &ServiceWorkerRegistration::RemoveLameDuckIfNeeded,
+          Unretained(this) /* OK because |this| owns the timer */));
 }
 
 void ServiceWorkerRegistration::RemoveLameDuckIfNeeded() {
@@ -353,7 +442,7 @@ void ServiceWorkerRegistration::ActivateWaitingVersion(bool delay) {
     // "1. Wait for exitingWorker to finish handling any in-progress requests."
     // This is already handled by IsReadyToActivate().
     // "2. Terminate exitingWorker."
-    exiting_version->StopWorker(base::BindOnce(&base::DoNothing));
+    exiting_version->StopWorker(base::DoNothing());
     // "3. Run the [[UpdateState]] algorithm passing exitingWorker and
     // "redundant" as the arguments."
     exiting_version->SetStatus(ServiceWorkerVersion::REDUNDANT);
@@ -396,45 +485,64 @@ void ServiceWorkerRegistration::ContinueActivation(
   activating_version->RunAfterStartWorker(
       ServiceWorkerMetrics::EventType::ACTIVATE,
       base::BindOnce(&ServiceWorkerRegistration::DispatchActivateEvent, this,
-                     activating_version),
-      base::BindOnce(&ServiceWorkerRegistration::OnActivateEventFinished, this,
                      activating_version));
 }
 
-void ServiceWorkerRegistration::DeleteVersion(
-    const scoped_refptr<ServiceWorkerVersion>& version) {
-  DCHECK_EQ(id(), version->registration_id());
+void ServiceWorkerRegistration::ForceDelete() {
+  DCHECK(context_);
+  DCHECK(!is_uninstalled()) << "attempt to delete registration twice";
 
   // Protect the registration since version->Doom() can stop |version|, which
   // destroys start worker callbacks, which might be the only things holding a
   // reference to |this|.
   scoped_refptr<ServiceWorkerRegistration> protect(this);
 
-  UnsetVersion(version.get());
-  version->Doom();
+  // Abort any queued or running jobs for this registration.
+  context_->job_coordinator()->Abort(scope());
 
-  if (!active_version() && !waiting_version()) {
-    // Delete the records from the db.
-    context_->storage()->DeleteRegistration(
-        id(), pattern().GetOrigin(),
-        base::Bind(&ServiceWorkerRegistration::OnDeleteFinished, protect));
-    // But not from memory if there is a version in the pipeline.
-    // TODO(falken): Fix this logic. There could be a running register job for
-    // this registration that hasn't set installing_version() yet.
-    if (installing_version()) {
-      is_deleted_ = false;
-    } else {
-      is_uninstalled_ = true;
-      NotifyRegistrationFailed();
-    }
+  // The rest of this function is similar to Clear() but is slightly different
+  // because this emergency deletion isn't part of the spec and happens
+  // outside of the normal job coordinator.
+  // TODO(falken): Consider merging the two.
+  should_activate_when_ready_ = false;
+
+  // Doom versions. This sets the versions to redundant and tells the
+  // controllees that they are gone.
+  //
+  // There can't be an installing version since we aborted any register job.
+  DCHECK(!installing_version_);
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
+  // Unset the version first so we stop listening to the version as it might
+  // invoke listener methods during Doom().
+  if (scoped_refptr<ServiceWorkerVersion> waiting_version = waiting_version_) {
+    UnsetVersionInternal(waiting_version.get(), mask.get());
+    waiting_version->Doom();
   }
+  if (scoped_refptr<ServiceWorkerVersion> active_version = active_version_) {
+    UnsetVersionInternal(active_version.get(), mask.get());
+    active_version->Doom();
+  }
+
+  // Delete the registration and its state from storage.
+  if (status() == Status::kIntact) {
+    context_->storage()->DeleteRegistration(
+        this, scope().GetOrigin(),
+        base::BindOnce(&ServiceWorkerRegistration::OnDeleteFinished, protect));
+  }
+  DCHECK(is_uninstalling());
+  context_->storage()->NotifyDoneUninstallingRegistration(this,
+                                                          Status::kUninstalled);
+
+  // Tell observers that this registration is gone.
+  NotifyRegistrationFailed();
 }
 
 void ServiceWorkerRegistration::NotifyRegistrationFinished() {
-  std::vector<base::Closure> callbacks;
+  std::vector<base::OnceClosure> callbacks;
   callbacks.swap(registration_finished_callbacks_);
-  for (const auto& callback : callbacks)
-    callback.Run();
+  for (auto& callback : callbacks)
+    std::move(callback).Run();
 }
 
 void ServiceWorkerRegistration::SetTaskRunnerForTest(
@@ -456,17 +564,23 @@ void ServiceWorkerRegistration::SetNavigationPreloadHeader(
 }
 
 void ServiceWorkerRegistration::RegisterRegistrationFinishedCallback(
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   // This should only be called if the registration is in progress.
   DCHECK(!active_version() && !waiting_version() && !is_uninstalled() &&
          !is_uninstalling());
-  registration_finished_callbacks_.push_back(callback);
+  registration_finished_callbacks_.push_back(std::move(callback));
 }
 
 void ServiceWorkerRegistration::DispatchActivateEvent(
-    scoped_refptr<ServiceWorkerVersion> activating_version) {
+    scoped_refptr<ServiceWorkerVersion> activating_version,
+    blink::ServiceWorkerStatusCode start_worker_status) {
+  if (start_worker_status != blink::ServiceWorkerStatusCode::kOk) {
+    OnActivateEventFinished(activating_version, start_worker_status);
+    return;
+  }
   if (activating_version != active_version()) {
-    OnActivateEventFinished(activating_version, SERVICE_WORKER_ERROR_FAILED);
+    OnActivateEventFinished(activating_version,
+                            blink::ServiceWorkerStatusCode::kErrorFailed);
     return;
   }
 
@@ -475,15 +589,15 @@ void ServiceWorkerRegistration::DispatchActivateEvent(
       << "Worker stopped too soon after it was started.";
   int request_id = activating_version->StartRequest(
       ServiceWorkerMetrics::EventType::ACTIVATE,
-      base::Bind(&ServiceWorkerRegistration::OnActivateEventFinished, this,
-                 activating_version));
-  activating_version->event_dispatcher()->DispatchActivateEvent(
+      base::BindOnce(&ServiceWorkerRegistration::OnActivateEventFinished, this,
+                     activating_version));
+  activating_version->endpoint()->DispatchActivateEvent(
       activating_version->CreateSimpleEventCallback(request_id));
 }
 
 void ServiceWorkerRegistration::OnActivateEventFinished(
     scoped_refptr<ServiceWorkerVersion> activating_version,
-    ServiceWorkerStatusCode status) {
+    blink::ServiceWorkerStatusCode status) {
   // Activate is prone to failing due to shutdown, because it's triggered when
   // tabs close.
   bool is_shutdown =
@@ -500,50 +614,60 @@ void ServiceWorkerRegistration::OnActivateEventFinished(
   // it should still be activated. However, if the failure occurred during
   // shutdown, ignore it to give the worker another chance the next time the
   // browser starts up.
-  if (is_shutdown && status != SERVICE_WORKER_OK)
+  if (is_shutdown && status != blink::ServiceWorkerStatusCode::kOk)
     return;
 
   // "Run the Update State algorithm passing registration's active worker and
   // 'activated' as the arguments."
   activating_version->SetStatus(ServiceWorkerVersion::ACTIVATED);
-  context_->storage()->UpdateToActiveState(
-      this, base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context_->storage()->UpdateToActiveState(this, base::DoNothing());
 }
 
 void ServiceWorkerRegistration::OnDeleteFinished(
-    ServiceWorkerStatusCode status) {
+    blink::ServiceWorkerStatusCode status) {
   for (auto& listener : listeners_)
     listener.OnRegistrationDeleted(this);
 }
 
 void ServiceWorkerRegistration::Clear() {
-  is_uninstalling_ = false;
-  is_uninstalled_ = true;
+  DCHECK(is_uninstalling());
+  SetStatus(Status::kUninstalled);
   should_activate_when_ready_ = false;
-  if (context_)
-    context_->storage()->NotifyDoneUninstallingRegistration(this);
+
+  // Some callbacks, at least OnRegistrationFinishedUninstalling and
+  // NotifyDoneUninstallingRegistration, may drop their references to
+  // |this|, so protect it first.
+  // TODO(falken): Clean this up, can we call the observers from a task
+  // or make the observers more polite?
+  auto protect = base::WrapRefCounted(this);
+
+  if (context_) {
+    context_->storage()->NotifyDoneUninstallingRegistration(
+        this, Status::kUninstalled);
+  }
 
   std::vector<scoped_refptr<ServiceWorkerVersion>> versions_to_doom;
-  ChangedVersionAttributesMask mask;
+  auto mask =
+      blink::mojom::ChangedServiceWorkerObjectsMask::New(false, false, false);
   if (installing_version_.get()) {
     versions_to_doom.push_back(installing_version_);
     installing_version_ = nullptr;
-    mask.add(ChangedVersionAttributesMask::INSTALLING_VERSION);
+    mask->installing = true;
   }
   if (waiting_version_.get()) {
     versions_to_doom.push_back(waiting_version_);
     waiting_version_ = nullptr;
-    mask.add(ChangedVersionAttributesMask::WAITING_VERSION);
+    mask->waiting = true;
   }
   if (active_version_.get()) {
     versions_to_doom.push_back(active_version_);
-    active_version_->RemoveListener(this);
+    active_version_->RemoveObserver(this);
     active_version_ = nullptr;
-    mask.add(ChangedVersionAttributesMask::ACTIVE_VERSION);
+    mask->active = true;
   }
 
-  if (mask.changed()) {
-    NotifyVersionAttributesChanged(mask);
+  if (mask->installing || mask->waiting || mask->active) {
+    NotifyVersionAttributesChanged(std::move(mask));
 
     // Doom only after notifying attributes changed, because the spec requires
     // the attributes to be cleared by the time the statechange event is
@@ -557,16 +681,16 @@ void ServiceWorkerRegistration::Clear() {
 }
 
 void ServiceWorkerRegistration::OnRestoreFinished(
-    const StatusCallback& callback,
+    StatusCallback callback,
     scoped_refptr<ServiceWorkerVersion> version,
-    ServiceWorkerStatusCode status) {
+    blink::ServiceWorkerStatusCode status) {
   if (!context_) {
-    callback.Run(SERVICE_WORKER_ERROR_ABORT);
+    std::move(callback).Run(blink::ServiceWorkerStatusCode::kErrorAbort);
     return;
   }
   context_->storage()->NotifyDoneInstallingRegistration(
       this, version.get(), status);
-  callback.Run(status);
+  std::move(callback).Run(status);
 }
 
 }  // namespace content

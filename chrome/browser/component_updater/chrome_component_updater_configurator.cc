@@ -10,26 +10,38 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/component_updater/component_updater_utils.h"
+#include "chrome/browser/component_updater/recovery_improved_component_installer.h"
 #include "chrome/browser/google/google_brand.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/pref_names.h"
+#include "components/component_updater/component_updater_command_line_config_policy.h"
 #include "components/component_updater/configurator_impl.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
+#include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 #if defined(OS_WIN)
-#include "base/win/win_util.h"
+#include "base/enterprise_util.h"
+#include "chrome/install_static/install_util.h"
 #include "chrome/installer/util/google_update_settings.h"
 #endif
 
@@ -40,7 +52,6 @@ namespace {
 class ChromeConfigurator : public update_client::Configurator {
  public:
   ChromeConfigurator(const base::CommandLine* cmdline,
-                     net::URLRequestContextGetter* url_request_getter,
                      PrefService* pref_service);
 
   // update_client::Configurator overrides.
@@ -56,11 +67,12 @@ class ChromeConfigurator : public update_client::Configurator {
   std::string GetBrand() const override;
   std::string GetLang() const override;
   std::string GetOSLongName() const override;
-  std::string ExtraRequestParams() const override;
+  base::flat_map<std::string, std::string> ExtraRequestParams() const override;
   std::string GetDownloadPreference() const override;
-  net::URLRequestContextGetter* RequestContext() const override;
-  std::unique_ptr<service_manager::Connector> CreateServiceManagerConnector()
-      const override;
+  scoped_refptr<update_client::NetworkFetcherFactory> GetNetworkFetcherFactory()
+      override;
+  scoped_refptr<update_client::UnzipperFactory> GetUnzipperFactory() override;
+  scoped_refptr<update_client::PatcherFactory> GetPatcherFactory() override;
   bool EnabledDeltas() const override;
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
@@ -69,12 +81,19 @@ class ChromeConfigurator : public update_client::Configurator {
   update_client::ActivityDataService* GetActivityDataService() const override;
   bool IsPerUserInstall() const override;
   std::vector<uint8_t> GetRunActionKeyHash() const override;
+  std::string GetAppGuid() const override;
+  std::unique_ptr<update_client::ProtocolHandlerFactory>
+  GetProtocolHandlerFactory() const override;
+  update_client::RecoveryCRXElevator GetRecoveryCRXElevator() const override;
 
  private:
   friend class base::RefCountedThreadSafe<ChromeConfigurator>;
 
   ConfiguratorImpl configurator_impl_;
   PrefService* pref_service_;  // This member is not owned by this class.
+  scoped_refptr<update_client::NetworkFetcherFactory> network_fetcher_factory_;
+  scoped_refptr<update_client::UnzipperFactory> unzip_factory_;
+  scoped_refptr<update_client::PatcherFactory> patch_factory_;
 
   ~ChromeConfigurator() override {}
 };
@@ -82,11 +101,10 @@ class ChromeConfigurator : public update_client::Configurator {
 // Allows the component updater to use non-encrypted communication with the
 // update backend. The security of the update checks is enforced using
 // a custom message signing protocol and it does not depend on using HTTPS.
-ChromeConfigurator::ChromeConfigurator(
-    const base::CommandLine* cmdline,
-    net::URLRequestContextGetter* url_request_getter,
-    PrefService* pref_service)
-    : configurator_impl_(cmdline, url_request_getter, false),
+ChromeConfigurator::ChromeConfigurator(const base::CommandLine* cmdline,
+                                       PrefService* pref_service)
+    : configurator_impl_(ComponentUpdaterCommandLineConfigPolicy(cmdline),
+                         false),
       pref_service_(pref_service) {
   DCHECK(pref_service_);
 }
@@ -125,7 +143,7 @@ base::Version ChromeConfigurator::GetBrowserVersion() const {
 }
 
 std::string ChromeConfigurator::GetChannel() const {
-  return chrome::GetChannelString();
+  return chrome::GetChannelName();
 }
 
 std::string ChromeConfigurator::GetBrand() const {
@@ -142,14 +160,15 @@ std::string ChromeConfigurator::GetOSLongName() const {
   return configurator_impl_.GetOSLongName();
 }
 
-std::string ChromeConfigurator::ExtraRequestParams() const {
+base::flat_map<std::string, std::string>
+ChromeConfigurator::ExtraRequestParams() const {
   return configurator_impl_.ExtraRequestParams();
 }
 
 std::string ChromeConfigurator::GetDownloadPreference() const {
 #if defined(OS_WIN)
   // This group policy is supported only on Windows and only for enterprises.
-  return base::win::IsEnterpriseManaged()
+  return base::IsMachineExternallyManaged()
              ? base::SysWideToUTF8(
                    GoogleUpdateSettings::GetDownloadPreference())
              : std::string();
@@ -158,16 +177,35 @@ std::string ChromeConfigurator::GetDownloadPreference() const {
 #endif
 }
 
-net::URLRequestContextGetter* ChromeConfigurator::RequestContext() const {
-  return configurator_impl_.RequestContext();
+scoped_refptr<update_client::NetworkFetcherFactory>
+ChromeConfigurator::GetNetworkFetcherFactory() {
+  if (!network_fetcher_factory_) {
+    network_fetcher_factory_ =
+        base::MakeRefCounted<update_client::NetworkFetcherChromiumFactory>(
+            g_browser_process->system_network_context_manager()
+                ->GetSharedURLLoaderFactory());
+  }
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-ChromeConfigurator::CreateServiceManagerConnector() const {
+scoped_refptr<update_client::UnzipperFactory>
+ChromeConfigurator::GetUnzipperFactory() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  return content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->Clone();
+  if (!unzip_factory_) {
+    unzip_factory_ = base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+        content::GetSystemConnector()->Clone());
+  }
+  return unzip_factory_;
+}
+
+scoped_refptr<update_client::PatcherFactory>
+ChromeConfigurator::GetPatcherFactory() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!patch_factory_) {
+    patch_factory_ = base::MakeRefCounted<update_client::PatchChromiumFactory>(
+        content::GetSystemConnector()->Clone());
+  }
+  return patch_factory_;
 }
 
 bool ChromeConfigurator::EnabledDeltas() const {
@@ -203,6 +241,28 @@ std::vector<uint8_t> ChromeConfigurator::GetRunActionKeyHash() const {
   return configurator_impl_.GetRunActionKeyHash();
 }
 
+std::string ChromeConfigurator::GetAppGuid() const {
+#if defined(OS_WIN)
+  return install_static::UTF16ToUTF8(install_static::GetAppGuid());
+#else
+  return configurator_impl_.GetAppGuid();
+#endif
+}
+
+std::unique_ptr<update_client::ProtocolHandlerFactory>
+ChromeConfigurator::GetProtocolHandlerFactory() const {
+  return configurator_impl_.GetProtocolHandlerFactory();
+}
+
+update_client::RecoveryCRXElevator ChromeConfigurator::GetRecoveryCRXElevator()
+    const {
+#if defined(GOOGLE_CHROME_BUILD) && defined(OS_WIN)
+  return base::BindOnce(&RunRecoveryCRXElevated);
+#else
+  return {};
+#endif
+}
+
 }  // namespace
 
 void RegisterPrefsForChromeComponentUpdaterConfigurator(
@@ -214,10 +274,8 @@ void RegisterPrefsForChromeComponentUpdaterConfigurator(
 scoped_refptr<update_client::Configurator>
 MakeChromeComponentUpdaterConfigurator(
     const base::CommandLine* cmdline,
-    net::URLRequestContextGetter* context_getter,
     PrefService* pref_service) {
-  return base::MakeRefCounted<ChromeConfigurator>(cmdline, context_getter,
-                                                  pref_service);
+  return base::MakeRefCounted<ChromeConfigurator>(cmdline, pref_service);
 }
 
 }  // namespace component_updater

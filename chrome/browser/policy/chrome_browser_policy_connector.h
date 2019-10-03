@@ -8,20 +8,22 @@
 #include <stdint.h>
 
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 
 class PrefService;
 
-namespace net {
-class URLRequestContextGetter;
-}
-
 namespace policy {
-
 class ConfigurationPolicyProvider;
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+class MachineLevelUserCloudPolicyController;
+class MachineLevelUserCloudPolicyManager;
+#endif
 
 // Extends BrowserPolicyConnector with the setup shared among the desktop
 // implementations and Android.
@@ -37,12 +39,51 @@ class ChromeBrowserPolicyConnector : public BrowserPolicyConnector {
 
   ~ChromeBrowserPolicyConnector() override;
 
-  void Init(
-      PrefService* local_state,
-      scoped_refptr<net::URLRequestContextGetter> request_context) override;
+  // Called once the resource bundle has been created. Calls through to super
+  // class to notify observers.
+  void OnResourceBundleCreated();
+
+  void Init(PrefService* local_state,
+            scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+      override;
+
+  bool IsEnterpriseManaged() const override;
+
+  bool HasMachineLevelPolicies() override;
+
+  void Shutdown() override;
+
+  ConfigurationPolicyProvider* GetPlatformProvider();
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+  MachineLevelUserCloudPolicyController*
+  machine_level_user_cloud_policy_controller() {
+    return machine_level_user_cloud_policy_controller_.get();
+  }
+  MachineLevelUserCloudPolicyManager*
+  machine_level_user_cloud_policy_manager() {
+    return machine_level_user_cloud_policy_manager_;
+  }
+#endif
+
+ protected:
+  // BrowserPolicyConnector:
+  std::vector<std::unique_ptr<policy::ConfigurationPolicyProvider>>
+  CreatePolicyProviders() override;
 
  private:
   std::unique_ptr<ConfigurationPolicyProvider> CreatePlatformProvider();
+
+  // Owned by base class.
+  ConfigurationPolicyProvider* platform_provider_ = nullptr;
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+  std::unique_ptr<MachineLevelUserCloudPolicyController>
+      machine_level_user_cloud_policy_controller_;
+  // Owned by base class.
+  MachineLevelUserCloudPolicyManager* machine_level_user_cloud_policy_manager_ =
+      nullptr;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserPolicyConnector);
 };

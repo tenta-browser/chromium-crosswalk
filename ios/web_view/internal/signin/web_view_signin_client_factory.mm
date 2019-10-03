@@ -4,15 +4,13 @@
 
 #include "ios/web_view/internal/signin/web_view_signin_client_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
-#include "components/signin/core/browser/signin_client.h"
+#include "components/signin/public/base/signin_client.h"
 #include "ios/web_view/internal/content_settings/web_view_cookie_settings_factory.h"
 #include "ios/web_view/internal/content_settings/web_view_host_content_settings_map_factory.h"
 #include "ios/web_view/internal/signin/ios_web_view_signin_client.h"
-#include "ios/web_view/internal/signin/web_view_signin_error_controller_factory.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -30,14 +28,14 @@ IOSWebViewSigninClient* WebViewSigninClientFactory::GetForBrowserState(
 
 // static
 WebViewSigninClientFactory* WebViewSigninClientFactory::GetInstance() {
-  return base::Singleton<WebViewSigninClientFactory>::get();
+  static base::NoDestructor<WebViewSigninClientFactory> instance;
+  return instance.get();
 }
 
 WebViewSigninClientFactory::WebViewSigninClientFactory()
     : BrowserStateKeyedServiceFactory(
           "SigninClient",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(WebViewSigninErrorControllerFactory::GetInstance());
   DependsOn(WebViewCookieSettingsFactory::GetInstance());
   DependsOn(WebViewHostContentSettingsMapFactory::GetInstance());
 }
@@ -47,12 +45,10 @@ WebViewSigninClientFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   WebViewBrowserState* browser_state =
       WebViewBrowserState::FromBrowserState(context);
-  return base::MakeUnique<IOSWebViewSigninClient>(
-      browser_state->GetPrefs(), browser_state->GetRequestContext(),
-      WebViewSigninErrorControllerFactory::GetForBrowserState(browser_state),
+  return std::make_unique<IOSWebViewSigninClient>(
+      browser_state->GetPrefs(), browser_state,
       WebViewCookieSettingsFactory::GetForBrowserState(browser_state),
-      WebViewHostContentSettingsMapFactory::GetForBrowserState(browser_state),
-      nullptr /** scoped_refptr<TokenWebData> */);
+      WebViewHostContentSettingsMapFactory::GetForBrowserState(browser_state));
 }
 
 }  // namespace ios_web_view

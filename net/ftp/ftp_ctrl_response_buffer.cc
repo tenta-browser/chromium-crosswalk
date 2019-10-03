@@ -6,13 +6,13 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/logging.h"
-#include "net/base/parse_number.h"
 #include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
+#include "net/base/parse_number.h"
 #include "net/log/net_log_event_type.h"
+#include "net/log/net_log_values.h"
 
 namespace net {
 
@@ -82,15 +82,14 @@ int FtpCtrlResponseBuffer::ConsumeData(const char* data, int data_length) {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogFtpCtrlResponseCallback(
-    const FtpCtrlResponse* response,
-    NetLogCaptureMode capture_mode) {
-  std::unique_ptr<base::ListValue> lines(new base::ListValue());
-  lines->AppendStrings(response->lines);
+base::Value NetLogFtpCtrlResponseParams(const FtpCtrlResponse* response) {
+  base::ListValue lines;
+  for (const auto& line : response->lines)
+    lines.GetList().push_back(NetLogStringValue(line));
 
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("status_code", response->status_code);
-  dict->Set("lines", std::move(lines));
+  base::DictionaryValue dict;
+  dict.SetInteger("status_code", response->status_code);
+  dict.SetKey("lines", std::move(lines));
   return std::move(dict);
 }
 
@@ -101,7 +100,7 @@ FtpCtrlResponse FtpCtrlResponseBuffer::PopResponse() {
   responses_.pop();
 
   net_log_.AddEvent(NetLogEventType::FTP_CONTROL_RESPONSE,
-                    base::Bind(&NetLogFtpCtrlResponseCallback, &result));
+                    [&] { return NetLogFtpCtrlResponseParams(&result); });
 
   return result;
 }

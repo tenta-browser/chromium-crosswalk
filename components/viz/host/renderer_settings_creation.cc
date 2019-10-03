@@ -8,8 +8,19 @@
 #include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
+#include "components/viz/common/display/overlay_strategy.h"
 #include "components/viz/common/display/renderer_settings.h"
+#include "components/viz/common/features.h"
 #include "ui/base/ui_base_switches.h"
+
+#if defined(OS_MACOSX)
+#include "ui/base/cocoa/remote_layer_api.h"
+#endif
+
+#if defined(USE_OZONE)
+#include "components/viz/common/switches.h"
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 
 namespace viz {
 
@@ -35,38 +46,32 @@ bool GetSwitchValueAsInt(const base::CommandLine* command_line,
 
 }  // namespace
 
-ResourceSettings CreateResourceSettings(
-    const BufferToTextureTargetMap& image_targets) {
-  ResourceSettings resource_settings;
-  resource_settings.buffer_to_texture_target_map = image_targets;
-  return resource_settings;
-}
-
-RendererSettings CreateRendererSettings(
-    const BufferToTextureTargetMap& image_targets) {
+RendererSettings CreateRendererSettings() {
   RendererSettings renderer_settings;
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   renderer_settings.partial_swap_enabled =
       !command_line->HasSwitch(switches::kUIDisablePartialSwap);
-#if defined(OS_WIN)
-  renderer_settings.finish_rendering_on_resize = true;
-#elif defined(OS_MACOSX)
+#if defined(OS_MACOSX)
   renderer_settings.release_overlay_resources_after_gpu_query = true;
+  renderer_settings.auto_resize_output_surface = false;
+#elif defined(OS_CHROMEOS)
+  renderer_settings.auto_resize_output_surface = false;
 #endif
-  renderer_settings.gl_composited_overlay_candidate_quad_border =
-      command_line->HasSwitch(
-          switches::kGlCompositedOverlayCandidateQuadBorder);
+  renderer_settings.tint_gl_composited_content =
+      command_line->HasSwitch(switches::kTintGlCompositedContent);
   renderer_settings.show_overdraw_feedback =
       command_line->HasSwitch(switches::kShowOverdrawFeedback);
-  renderer_settings.enable_draw_occlusion =
-      command_line->HasSwitch(switches::kEnableDrawOcclusion);
-  renderer_settings.resource_settings = CreateResourceSettings(image_targets);
-  renderer_settings.disallow_non_exact_resource_reuse =
-      command_line->HasSwitch(switches::kDisallowNonExactResourceReuse);
   renderer_settings.allow_antialiasing =
       !command_line->HasSwitch(switches::kDisableCompositedAntialiasing);
-  renderer_settings.use_skia_renderer =
-      command_line->HasSwitch(switches::kUseSkiaRenderer);
+  renderer_settings.use_skia_renderer = features::IsUsingSkiaRenderer();
+#if defined(OS_MACOSX)
+  renderer_settings.allow_overlays =
+      ui::RemoteLayerAPISupported() &&
+      !base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableMacOverlays);
+#endif
+  renderer_settings.record_sk_picture = features::IsRecordingSkPicture();
+
   if (command_line->HasSwitch(switches::kSlowDownCompositingScaleFactor)) {
     const int kMinSlowDownScaleFactor = 1;
     const int kMaxSlowDownScaleFactor = 1000;
@@ -74,6 +79,21 @@ RendererSettings CreateRendererSettings(
                         kMinSlowDownScaleFactor, kMaxSlowDownScaleFactor,
                         &renderer_settings.slow_down_compositing_scale_factor);
   }
+
+#if defined(USE_OZONE)
+  if (command_line->HasSwitch(switches::kEnableHardwareOverlays)) {
+    renderer_settings.overlay_strategies = ParseOverlayStategies(
+        command_line->GetSwitchValueASCII(switches::kEnableHardwareOverlays));
+  } else {
+    auto& host_properties =
+        ui::OzonePlatform::GetInstance()->GetInitializedHostProperties();
+    if (host_properties.supports_overlays) {
+      renderer_settings.overlay_strategies = {OverlayStrategy::kFullscreen,
+                                              OverlayStrategy::kSingleOnTop,
+                                              OverlayStrategy::kUnderlay};
+    }
+  }
+#endif
 
   return renderer_settings;
 }

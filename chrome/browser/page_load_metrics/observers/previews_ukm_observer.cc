@@ -4,33 +4,55 @@
 
 #include "chrome/browser/page_load_metrics/observers/previews_ukm_observer.h"
 
+#include "base/base64.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/loader/chrome_navigation_data.h"
+#include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings.h"
+#include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "chrome/browser/previews/previews_infobar_delegate.h"
+#include "chrome/browser/previews/previews_content_util.h"
+#include "chrome/browser/previews/previews_ui_tab_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/page_load_metrics/page_load_timing.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
-#include "components/ukm/ukm_source.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
+#include "components/offline_pages/buildflags/buildflags.h"
+#include "components/optimization_guide/proto/hints.pb.h"
 #include "content/public/browser/navigation_handle.h"
-#include "services/metrics/public/cpp/ukm_entry_builder.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/previews_state.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/metrics/public/cpp/ukm_source.h"
+
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES)
+#include "chrome/browser/offline_pages/offline_page_tab_helper.h"
+#endif
 
 namespace previews {
 
 namespace {
 
-const char kPreviewsName[] = "Previews";
-const char kPreviewsServerLoFi[] = "server_lofi";
-const char kPreviewsClientLoFi[] = "client_lofi";
-const char kPreviewsLitePage[] = "lite_page";
-const char kPreviewsOptOut[] = "opt_out";
+const char kOfflinePreviewsMimeType[] = "multipart/related";
+
+bool ShouldOptionalEligibilityReasonBeRecorded(
+    base::Optional<previews::PreviewsEligibilityReason> reason) {
+  if (!reason.has_value())
+    return false;
+
+  // Do not record ALLOWED values since we are only interested in recording
+  // reasons why a preview was not eligible to be shown.
+  return reason.value() != previews::PreviewsEligibilityReason::ALLOWED;
+}
 
 }  // namespace
 
-PreviewsUKMObserver::PreviewsUKMObserver() {}
+PreviewsUKMObserver::PreviewsUKMObserver()
+    : committed_preview_(PreviewsType::NONE) {}
 
 PreviewsUKMObserver::~PreviewsUKMObserver() {}
 
@@ -38,23 +60,109 @@ page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 PreviewsUKMObserver::OnCommit(content::NavigationHandle* navigation_handle,
                               ukm::SourceId source_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // As documented in content/public/browser/navigation_handle.h, this
-  // NavigationData is a clone of the NavigationData instance returned from
-  // ResourceDispatcherHostDelegate::GetNavigationData during commit.
-  // Because ChromeResourceDispatcherHostDelegate always returns a
-  // ChromeNavigationData, it is safe to static_cast here.
-  ChromeNavigationData* chrome_navigation_data =
-      static_cast<ChromeNavigationData*>(
-          navigation_handle->GetNavigationData());
-  if (!chrome_navigation_data)
-    return CONTINUE_OBSERVING;
-  data_reduction_proxy::DataReductionProxyData* data =
-      chrome_navigation_data->GetDataReductionProxyData();
-  if (data && data->used_data_reduction_proxy() && data->lite_page_received()) {
-    lite_page_seen_ = true;
+
+  save_data_enabled_ = IsDataSaverEnabled(navigation_handle);
+
+  PreviewsUITabHelper* ui_tab_helper =
+      PreviewsUITabHelper::FromWebContents(navigation_handle->GetWebContents());
+  if (!ui_tab_helper)
+    return STOP_OBSERVING;
+
+  previews::PreviewsUserData* previews_user_data =
+      ui_tab_helper->GetPreviewsUserData(navigation_handle);
+  if (!previews_user_data)
+    return STOP_OBSERVING;
+
+  committed_preview_ = previews_user_data->CommittedPreviewsType();
+
+  // Only check for preview types that are decided before commit in the
+  // |allowed_previews_state|.
+  previews_likely_ =
+      HasEnabledPreviews(previews_user_data->PreHoldbackAllowedPreviewsState() &
+                         kPreCommitPreviews);
+  content::PreviewsState previews_state =
+      previews_user_data->PreHoldbackCommittedPreviewsState();
+
+  // Check all preview types in the |committed_previews_state|. In practice
+  // though, this will only set |previews_likely_| if it wasn't before for an
+  // Optimization Hints preview.
+  previews_likely_ |= HasEnabledPreviews(previews_state);
+
+  coin_flip_result_ = previews_user_data->coin_flip_holdback_result();
+
+  DCHECK(coin_flip_result_ == CoinFlipHoldbackResult::kNotSet ||
+         previews_likely_);
+
+  if (navigation_handle->GetWebContents()->GetContentsMimeType() ==
+      kOfflinePreviewsMimeType) {
+    if (!IsOfflinePreview(navigation_handle->GetWebContents()))
+      return STOP_OBSERVING;
+    offline_preview_seen_ = true;
+    DCHECK_EQ(previews::GetMainFramePreviewsType(previews_state),
+              previews::PreviewsType::OFFLINE);
   }
 
+  if (previews_state && previews::GetMainFramePreviewsType(previews_state) ==
+                            previews::PreviewsType::LITE_PAGE) {
+    lite_page_seen_ = true;
+  }
+  if (previews_state && previews::GetMainFramePreviewsType(previews_state) ==
+                            previews::PreviewsType::LITE_PAGE_REDIRECT) {
+    lite_page_redirect_seen_ = true;
+  }
+  if (previews_state && previews::GetMainFramePreviewsType(previews_state) ==
+                            previews::PreviewsType::NOSCRIPT) {
+    noscript_seen_ = true;
+  }
+  if (previews_state && previews::GetMainFramePreviewsType(previews_state) ==
+                            previews::PreviewsType::RESOURCE_LOADING_HINTS) {
+    resource_loading_hints_seen_ = true;
+  }
+  if (previews_state && previews::GetMainFramePreviewsType(previews_state) ==
+                            previews::PreviewsType::DEFER_ALL_SCRIPT) {
+    defer_all_script_seen_ = true;
+  }
+  if (previews_user_data->cache_control_no_transform_directive()) {
+    origin_opt_out_occurred_ = true;
+  }
+  if (previews_user_data->server_lite_page_info()) {
+    navigation_restart_penalty_ =
+        navigation_handle->NavigationStart() -
+        previews_user_data->server_lite_page_info()->original_navigation_start;
+  }
+
+  lite_page_eligibility_reason_ =
+      previews_user_data->EligibilityReasonForPreview(
+          previews::PreviewsType::LITE_PAGE);
+  lite_page_redirect_eligibility_reason_ =
+      previews_user_data->EligibilityReasonForPreview(
+          previews::PreviewsType::LITE_PAGE_REDIRECT);
+  noscript_eligibility_reason_ =
+      previews_user_data->EligibilityReasonForPreview(
+          previews::PreviewsType::NOSCRIPT);
+  resource_loading_hints_eligibility_reason_ =
+      previews_user_data->EligibilityReasonForPreview(
+          previews::PreviewsType::RESOURCE_LOADING_HINTS);
+  defer_all_script_eligibility_reason_ =
+      previews_user_data->EligibilityReasonForPreview(
+          previews::PreviewsType::DEFER_ALL_SCRIPT);
+  offline_eligibility_reason_ = previews_user_data->EligibilityReasonForPreview(
+      previews::PreviewsType::OFFLINE);
+
+  serialized_hint_version_string_ =
+      previews_user_data->serialized_hint_version_string();
+
   return CONTINUE_OBSERVING;
+}
+
+page_load_metrics::PageLoadMetricsObserver::ObservePolicy
+PreviewsUKMObserver::ShouldObserveMimeType(const std::string& mime_type) const {
+  if (PageLoadMetricsObserver::ShouldObserveMimeType(mime_type) ==
+          CONTINUE_OBSERVING ||
+      mime_type == kOfflinePreviewsMimeType) {
+    return CONTINUE_OBSERVING;
+  }
+  return STOP_OBSERVING;
 }
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
@@ -72,7 +180,16 @@ PreviewsUKMObserver::FlushMetricsOnAppEnterBackground(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  RecordPreviewsTypes(info);
+  RecordMetrics(info);
+  return STOP_OBSERVING;
+}
+
+page_load_metrics::PageLoadMetricsObserver::ObservePolicy
+PreviewsUKMObserver::OnHidden(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  RecordMetrics(info);
   return STOP_OBSERVING;
 }
 
@@ -80,49 +197,163 @@ void PreviewsUKMObserver::OnComplete(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  RecordMetrics(info);
+}
+
+void PreviewsUKMObserver::RecordMetrics(
+    const page_load_metrics::PageLoadExtraInfo& info) {
   RecordPreviewsTypes(info);
+  RecordOptimizationGuideInfo(info);
 }
 
 void PreviewsUKMObserver::RecordPreviewsTypes(
     const page_load_metrics::PageLoadExtraInfo& info) {
-  // Only record previews types when they occur.
-  if (!server_lofi_seen_ && !client_lofi_seen_ && !lite_page_seen_)
+  // Record the page end reason in UMA.
+  if (committed_preview_ != PreviewsType::NONE) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "Previews.PageEndReason", info.page_end_reason,
+        page_load_metrics::PageEndReason::PAGE_END_REASON_COUNT);
+  }
+  base::UmaHistogramExactLinear(
+      base::StringPrintf(
+          "Previews.PageEndReason.%s",
+          previews::GetStringNameForType(committed_preview_).c_str()),
+      info.page_end_reason,
+      page_load_metrics::PageEndReason::PAGE_END_REASON_COUNT);
+
+  // Only record previews types when they are active.
+  // |navigation_restart_penalty_| is included here because a Lite Page Redirect
+  // preview can be attempted and not commit. This incurs the penalty but may
+  // also cause no preview to be committed.
+  if (!lite_page_seen_ && !noscript_seen_ && !resource_loading_hints_seen_ &&
+      !defer_all_script_seen_ && !offline_preview_seen_ &&
+      !origin_opt_out_occurred_ && !save_data_enabled_ &&
+      !lite_page_redirect_seen_ && !navigation_restart_penalty_.has_value()) {
     return;
-  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-  if (!ukm_recorder)
-    return;
-  std::unique_ptr<ukm::UkmEntryBuilder> builder =
-      ukm_recorder->GetEntryBuilder(info.source_id, kPreviewsName);
-  if (server_lofi_seen_)
-    builder->AddMetric(kPreviewsServerLoFi, true);
-  if (client_lofi_seen_)
-    builder->AddMetric(kPreviewsClientLoFi, true);
+  }
+
+  ukm::builders::Previews builder(info.source_id);
+  builder.Setcoin_flip_result(static_cast<int>(coin_flip_result_));
   if (lite_page_seen_)
-    builder->AddMetric(kPreviewsLitePage, true);
+    builder.Setlite_page(1);
+  if (lite_page_redirect_seen_)
+    builder.Setlite_page_redirect(1);
+  if (noscript_seen_)
+    builder.Setnoscript(1);
+  if (resource_loading_hints_seen_)
+    builder.Setresource_loading_hints(1);
+  if (defer_all_script_seen_)
+    builder.Setdefer_all_script(1);
+  if (offline_preview_seen_)
+    builder.Setoffline_preview(1);
+  // 2 is set here for legacy reasons as it denotes an optout through the
+  // omnibox ui as opposed to the now deprecated infobar.
   if (opt_out_occurred_)
-    builder->AddMetric(kPreviewsOptOut, true);
+    builder.Setopt_out(2);
+  if (origin_opt_out_occurred_)
+    builder.Setorigin_opt_out(1);
+  if (save_data_enabled_)
+    builder.Setsave_data_enabled(1);
+  if (previews_likely_)
+    builder.Setpreviews_likely(1);
+  if (navigation_restart_penalty_.has_value()) {
+    builder.Setnavigation_restart_penalty(
+        navigation_restart_penalty_->InMilliseconds());
+  }
+
+  if (ShouldOptionalEligibilityReasonBeRecorded(
+          lite_page_eligibility_reason_)) {
+    builder.Setproxy_lite_page_eligibility_reason(
+        static_cast<int>(lite_page_eligibility_reason_.value()));
+  }
+  if (ShouldOptionalEligibilityReasonBeRecorded(
+          lite_page_redirect_eligibility_reason_)) {
+    builder.Setlite_page_redirect_eligibility_reason(
+        static_cast<int>(lite_page_redirect_eligibility_reason_.value()));
+  }
+  if (ShouldOptionalEligibilityReasonBeRecorded(noscript_eligibility_reason_)) {
+    builder.Setnoscript_eligibility_reason(
+        static_cast<int>(noscript_eligibility_reason_.value()));
+  }
+  if (ShouldOptionalEligibilityReasonBeRecorded(
+          resource_loading_hints_eligibility_reason_)) {
+    builder.Setresource_loading_hints_eligibility_reason(
+        static_cast<int>(resource_loading_hints_eligibility_reason_.value()));
+  }
+  if (ShouldOptionalEligibilityReasonBeRecorded(
+          defer_all_script_eligibility_reason_)) {
+    builder.Setdefer_all_script_eligibility_reason(
+        static_cast<int>(defer_all_script_eligibility_reason_.value()));
+  }
+  if (ShouldOptionalEligibilityReasonBeRecorded(offline_eligibility_reason_)) {
+    builder.Setoffline_eligibility_reason(
+        static_cast<int>(offline_eligibility_reason_.value()));
+  }
+  builder.Record(ukm::UkmRecorder::Get());
 }
 
-void PreviewsUKMObserver::OnLoadedResource(
-    const page_load_metrics::ExtraRequestCompleteInfo&
-        extra_request_complete_info) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (extra_request_complete_info.data_reduction_proxy_data) {
-    if (extra_request_complete_info.data_reduction_proxy_data
-            ->lofi_received()) {
-      server_lofi_seen_ = true;
-    }
-    if (extra_request_complete_info.data_reduction_proxy_data
-            ->client_lofi_requested()) {
-      client_lofi_seen_ = true;
-    }
+void PreviewsUKMObserver::RecordOptimizationGuideInfo(
+    const page_load_metrics::PageLoadExtraInfo& info) {
+  if (!serialized_hint_version_string_.has_value()) {
+    return;
   }
+
+  // Deserialize the serialized version string into its protobuffer.
+  std::string binary_version_pb;
+  if (!base::Base64Decode(serialized_hint_version_string_.value(),
+                          &binary_version_pb))
+    return;
+
+  optimization_guide::proto::Version hint_version;
+  if (!hint_version.ParseFromString(binary_version_pb))
+    return;
+
+  ukm::builders::OptimizationGuide builder(info.source_id);
+  if (hint_version.has_generation_timestamp() &&
+      hint_version.generation_timestamp().seconds() > 0) {
+    builder.SetHintGenerationTimestamp(
+        hint_version.generation_timestamp().seconds());
+  }
+  if (hint_version.has_hint_source() &&
+      hint_version.hint_source() !=
+          optimization_guide::proto::HINT_SOURCE_UNKNOWN) {
+    builder.SetHintSource(static_cast<int>(hint_version.hint_source()));
+  }
+  builder.Record(ukm::UkmRecorder::Get());
 }
 
 void PreviewsUKMObserver::OnEventOccurred(const void* const event_key) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (event_key == PreviewsInfoBarDelegate::OptOutEventKey())
+  if (event_key == PreviewsUITabHelper::OptOutEventKey())
     opt_out_occurred_ = true;
+}
+
+bool PreviewsUKMObserver::IsDataSaverEnabled(
+    content::NavigationHandle* navigation_handle) const {
+  Profile* profile = Profile::FromBrowserContext(
+      navigation_handle->GetWebContents()->GetBrowserContext());
+
+  data_reduction_proxy::DataReductionProxySettings*
+      data_reduction_proxy_settings =
+          DataReductionProxyChromeSettingsFactory::GetForBrowserContext(
+              profile);
+  if (!data_reduction_proxy_settings) {
+    DCHECK(profile->IsOffTheRecord());
+    return false;
+  }
+
+  return data_reduction_proxy_settings->IsDataReductionProxyEnabled();
+}
+
+bool PreviewsUKMObserver::IsOfflinePreview(
+    content::WebContents* web_contents) const {
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES)
+  offline_pages::OfflinePageTabHelper* tab_helper =
+      offline_pages::OfflinePageTabHelper::FromWebContents(web_contents);
+  return tab_helper && tab_helper->GetOfflinePreviewItem();
+#else
+  return false;
+#endif
 }
 
 }  // namespace previews

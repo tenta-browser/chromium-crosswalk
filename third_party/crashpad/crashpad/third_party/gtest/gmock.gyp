@@ -56,18 +56,20 @@
       'sources': [
         '<(gmock_dir)/include/gmock/gmock-actions.h',
         '<(gmock_dir)/include/gmock/gmock-cardinalities.h',
+        '<(gmock_dir)/include/gmock/gmock-function-mocker.h',
         '<(gmock_dir)/include/gmock/gmock-generated-actions.h',
         '<(gmock_dir)/include/gmock/gmock-generated-function-mockers.h',
         '<(gmock_dir)/include/gmock/gmock-generated-matchers.h',
-        '<(gmock_dir)/include/gmock/gmock-generated-nice-strict.h',
         '<(gmock_dir)/include/gmock/gmock-matchers.h',
         '<(gmock_dir)/include/gmock/gmock-more-actions.h',
         '<(gmock_dir)/include/gmock/gmock-more-matchers.h',
+        '<(gmock_dir)/include/gmock/gmock-nice-strict.h',
         '<(gmock_dir)/include/gmock/gmock-spec-builders.h',
         '<(gmock_dir)/include/gmock/gmock.h',
         '<(gmock_dir)/include/gmock/internal/custom/gmock-generated-actions.h',
         '<(gmock_dir)/include/gmock/internal/custom/gmock-matchers.h',
         '<(gmock_dir)/include/gmock/internal/custom/gmock-port.h',
+        '<(gmock_dir)/include/gmock/internal/custom/gmock-pp.h',
         '<(gmock_dir)/include/gmock/internal/gmock-generated-internal-utils.h',
         '<(gmock_dir)/include/gmock/internal/gmock-internal-utils.h',
         '<(gmock_dir)/include/gmock/internal/gmock-port.h',
@@ -92,22 +94,19 @@
             # triggers this warning in users: “error: 'Method' overrides a
             # member function but is not marked 'override'
             # [-Werror,-Winconsistent-missing-override]”. Suppress these
-            # warnings, and add -Wno-unknown-warning-option because only
-            # recent versions of clang (trunk r220703 and later, version
-            # 3.6 and later) recognize it.
+            # warnings until https://github.com/google/googletest/issues/533 is
+            # fixed.
             'conditions': [
               ['OS=="mac"', {
                 'xcode_settings': {
                   'WARNING_CFLAGS': [
                     '-Wno-inconsistent-missing-override',
-                    '-Wno-unknown-warning-option',
                   ],
                 },
               }],
               ['OS=="linux" or OS=="android"', {
                 'cflags': [
                   '-Wno-inconsistent-missing-override',
-                  '-Wno-unknown-warning-option',
                 ],
               }],
             ],
@@ -159,17 +158,39 @@
       'sources': [
         '<(gmock_dir)/test/gmock-actions_test.cc',
         '<(gmock_dir)/test/gmock-cardinalities_test.cc',
+        '<(gmock_dir)/test/gmock-function-mocker_test.cc',
         '<(gmock_dir)/test/gmock-generated-actions_test.cc',
         '<(gmock_dir)/test/gmock-generated-function-mockers_test.cc',
-        '<(gmock_dir)/test/gmock-generated-internal-utils_test.cc',
         '<(gmock_dir)/test/gmock-generated-matchers_test.cc',
         '<(gmock_dir)/test/gmock-internal-utils_test.cc',
         '<(gmock_dir)/test/gmock-matchers_test.cc',
         '<(gmock_dir)/test/gmock-more-actions_test.cc',
         '<(gmock_dir)/test/gmock-nice-strict_test.cc',
         '<(gmock_dir)/test/gmock-port_test.cc',
+        '<(gmock_dir)/test/gmock-pp-string_test.cc',
+        '<(gmock_dir)/test/gmock-pp_test.cc',
         '<(gmock_dir)/test/gmock-spec-builders_test.cc',
         '<(gmock_dir)/test/gmock_test.cc',
+      ],
+      'conditions': [
+         ['clang!=0', {
+          # For gtest/googlemock/test/gmock-matchers_test.cc’s
+          # Unstreamable::value_.
+          'conditions': [
+            ['OS=="mac"', {
+              'xcode_settings': {
+                'WARNING_CFLAGS': [
+                  '-Wno-unused-private-field',
+                ],
+              },
+            }],
+            ['OS=="linux" or OS=="android"', {
+              'cflags': [
+                '-Wno-unused-private-field',
+              ],
+            }],
+          ],
+        }],
       ],
     },
     {

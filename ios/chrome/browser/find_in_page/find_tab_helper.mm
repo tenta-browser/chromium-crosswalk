@@ -5,6 +5,8 @@
 #import "ios/chrome/browser/find_in_page/find_tab_helper.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #import "ios/chrome/browser/find_in_page/find_in_page_controller.h"
 #import "ios/chrome/browser/find_in_page/find_in_page_model.h"
 
@@ -12,49 +14,44 @@
 #error "This file requires ARC support."
 #endif
 
-DEFINE_WEB_STATE_USER_DATA_KEY(FindTabHelper);
+const char kFindActionName[] = "Find";
+const char kFindNextActionName[] = "FindNext";
+const char kFindPreviousActionName[] = "FindPrevious";
 
-// static
-void FindTabHelper::CreateForWebState(
-    web::WebState* web_state,
-    id<FindInPageControllerDelegate> controller_delegate) {
-  DCHECK(web_state);
-  if (!FromWebState(web_state)) {
-    web_state->SetUserData(UserDataKey(), base::WrapUnique(new FindTabHelper(
-                                              web_state, controller_delegate)));
-  }
-}
-
-FindTabHelper::FindTabHelper(
-    web::WebState* web_state,
-    id<FindInPageControllerDelegate> controller_delegate) {
+FindTabHelper::FindTabHelper(web::WebState* web_state) {
   web_state->AddObserver(this);
-  controller_.reset([[FindInPageController alloc]
-      initWithWebState:web_state
-              delegate:controller_delegate]);
+  controller_ = [[FindInPageController alloc] initWithWebState:web_state];
 }
 
 FindTabHelper::~FindTabHelper() {}
 
+void FindTabHelper::SetResponseDelegate(
+    id<FindInPageResponseDelegate> response_delegate) {
+  controller_.responseDelegate = response_delegate;
+}
+
 void FindTabHelper::StartFinding(NSString* search_term,
                                  FindInPageCompletionBlock completion) {
+  base::RecordAction(base::UserMetricsAction(kFindActionName));
   [controller_ findStringInPage:search_term
               completionHandler:^{
-                FindInPageModel* model = controller_.get().findInPageModel;
+                FindInPageModel* model = controller_.findInPageModel;
                 completion(model);
               }];
 }
 
 void FindTabHelper::ContinueFinding(FindDirection direction,
                                     FindInPageCompletionBlock completion) {
-  FindInPageModel* model = controller_.get().findInPageModel;
+  FindInPageModel* model = controller_.findInPageModel;
 
   if (direction == FORWARD) {
+    base::RecordAction(base::UserMetricsAction(kFindNextActionName));
     [controller_ findNextStringInPageWithCompletionHandler:^{
       completion(model);
     }];
 
   } else if (direction == REVERSE) {
+    base::RecordAction(base::UserMetricsAction(kFindPreviousActionName));
     [controller_ findPreviousStringInPageWithCompletionHandler:^{
       completion(model);
     }];
@@ -70,7 +67,7 @@ void FindTabHelper::StopFinding(ProceduralBlock completion) {
 }
 
 FindInPageModel* FindTabHelper::GetFindResult() const {
-  return controller_.get().findInPageModel;
+  return controller_.findInPageModel;
 }
 
 bool FindTabHelper::CurrentPageSupportsFindInPage() const {
@@ -78,11 +75,11 @@ bool FindTabHelper::CurrentPageSupportsFindInPage() const {
 }
 
 bool FindTabHelper::IsFindUIActive() const {
-  return controller_.get().findInPageModel.enabled;
+  return controller_.findInPageModel.enabled;
 }
 
 void FindTabHelper::SetFindUIActive(bool active) {
-  controller_.get().findInPageModel.enabled = active;
+  controller_.findInPageModel.enabled = active;
 }
 
 void FindTabHelper::PersistSearchTerm() {
@@ -93,9 +90,9 @@ void FindTabHelper::RestoreSearchTerm() {
   [controller_ restoreSearchTerm];
 }
 
-void FindTabHelper::NavigationItemCommitted(
+void FindTabHelper::DidFinishNavigation(
     web::WebState* web_state,
-    const web::LoadCommittedDetails& load_details) {
+    web::NavigationContext* navigation_context) {
   StopFinding(nil);
 }
 
@@ -103,3 +100,5 @@ void FindTabHelper::WebStateDestroyed(web::WebState* web_state) {
   [controller_ detachFromWebState];
   web_state->RemoveObserver(this);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(FindTabHelper)

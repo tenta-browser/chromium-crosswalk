@@ -42,6 +42,7 @@ void BadClockUI::PopulateStringsForHTML(base::DictionaryValue* load_time_data) {
   common_string_util::PopulateSSLLayoutStrings(cert_error_, load_time_data);
   common_string_util::PopulateSSLDebuggingStrings(ssl_info_, time_triggered_,
                                                   load_time_data);
+  common_string_util::PopulateDarkModeDisplaySetting(load_time_data);
 
   // Clock-specific strings.
   PopulateClockStrings(load_time_data);
@@ -118,11 +119,12 @@ void BadClockUI::HandleCommand(SecurityInterstitialCommand command) {
     case CMD_REPORT_PHISHING_ERROR:
       // Not supported by the bad clock error page.
       NOTREACHED() << "Unsupported command: " << command;
+      break;
     case CMD_ERROR:
     case CMD_TEXT_FOUND:
     case CMD_TEXT_NOT_FOUND:
-      // Commands are only for testing.
-      NOTREACHED() << "Unexpected command: " << command;
+      // Commands are for testing.
+      break;
   }
 }
 

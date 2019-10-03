@@ -44,6 +44,8 @@ std::string GetCodecName(AudioCodec codec) {
       return "alac";
     case kCodecAC3:
       return "ac3";
+    case kCodecMpegHAudio:
+      return "mpeg-h-audio";
   }
   NOTREACHED();
   return "";
@@ -62,6 +64,10 @@ AudioCodec StringToAudioCodec(const std::string& codec_id) {
     return kCodecALAC;
   if (codec_id == "flac")
     return kCodecFLAC;
+  if (base::StartsWith(codec_id, "mhm1.", base::CompareCase::SENSITIVE) ||
+      base::StartsWith(codec_id, "mha1.", base::CompareCase::SENSITIVE)) {
+    return kCodecMpegHAudio;
+  }
   if (codec_id == "opus")
     return kCodecOpus;
   if (codec_id == "vorbis")

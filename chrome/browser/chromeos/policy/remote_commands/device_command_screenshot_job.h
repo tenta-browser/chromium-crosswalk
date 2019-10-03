@@ -20,7 +20,6 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/policy/upload_job.h"
 #include "components/policy/core/common/remote_commands/remote_command_job.h"
-#include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ui/snapshot/snapshot.h"
 #include "url/gurl.h"
@@ -103,10 +102,9 @@ class DeviceCommandScreenshotJob : public RemoteCommandJob,
   void OnFailure(UploadJob::ErrorCode error_code) override;
 
   // RemoteCommandJob:
-  bool IsExpired(base::TimeTicks now) override;
   bool ParseCommandPayload(const std::string& command_payload) override;
-  void RunImpl(const CallbackWithResult& succeeded_callback,
-               const CallbackWithResult& failed_callback) override;
+  void RunImpl(CallbackWithResult succeeded_callback,
+               CallbackWithResult failed_callback) override;
   void TerminateImpl() override;
 
   void StoreScreenshot(size_t screen,

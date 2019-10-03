@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_MANAGER_FAKE_DISK_MOUNT_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_MANAGER_FAKE_DISK_MOUNT_MANAGER_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,13 +26,16 @@ class FakeDiskMountManager : public chromeos::disks::DiskMountManager {
     MountRequest(const std::string& source_path,
                  const std::string& source_format,
                  const std::string& mount_label,
+                 const std::vector<std::string>& mount_options,
                  chromeos::MountType type,
                  chromeos::MountAccessMode access_mode);
     MountRequest(const MountRequest& other);
+    ~MountRequest();
 
     std::string source_path;
     std::string source_format;
     std::string mount_label;
+    std::vector<std::string> mount_options;
     chromeos::MountType type;
     chromeos::MountAccessMode access_mode;
   };
@@ -44,7 +49,7 @@ class FakeDiskMountManager : public chromeos::disks::DiskMountManager {
   };
 
   struct RemountAllRequest {
-    RemountAllRequest(chromeos::MountAccessMode access_mode);
+    explicit RemountAllRequest(chromeos::MountAccessMode access_mode);
     chromeos::MountAccessMode access_mode;
   };
 
@@ -66,19 +71,23 @@ class FakeDiskMountManager : public chromeos::disks::DiskMountManager {
   // otherwise.
   bool FinishAllUnmountPathRequests();
 
+  // Fails a future unmount request for |mount_path| with |error_code|.
+  void FailUnmountRequest(const std::string& mount_path,
+                          chromeos::MountError error_code);
+
   // DiskMountManager overrides.
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
   const DiskMap& disks() const override;
-  const Disk* FindDiskBySourcePath(
+  const chromeos::disks::Disk* FindDiskBySourcePath(
       const std::string& source_path) const override;
   const MountPointMap& mount_points() const override;
-  void EnsureMountInfoRefreshed(
-      const EnsureMountInfoRefreshedCallback& callback,
-      bool force) override;
+  void EnsureMountInfoRefreshed(EnsureMountInfoRefreshedCallback callback,
+                                bool force) override;
   void MountPath(const std::string& source_path,
                  const std::string& source_format,
                  const std::string& mount_label,
+                 const std::vector<std::string>& mount_options,
                  chromeos::MountType type,
                  chromeos::MountAccessMode access_mode) override;
   // In order to simulate asynchronous invocation of callbacks after unmount
@@ -86,23 +95,26 @@ class FakeDiskMountManager : public chromeos::disks::DiskMountManager {
   // |FinishAllUnmountRequest()| is called.
   void UnmountPath(const std::string& mount_path,
                    chromeos::UnmountOptions options,
-                   const UnmountPathCallback& callback) override;
+                   UnmountPathCallback callback) override;
   void RemountAllRemovableDrives(
       chromeos::MountAccessMode access_mode) override;
-  void FormatMountedDevice(const std::string& mount_path) override;
+  void FormatMountedDevice(const std::string& mount_path,
+                           chromeos::disks::FormatFileSystemType filesystem,
+                           const std::string& label) override;
   void RenameMountedDevice(const std::string& mount_path,
                            const std::string& volume_name) override;
   void UnmountDeviceRecursively(
       const std::string& device_path,
-      const UnmountDeviceRecursivelyCallbackType& callback) override;
+      UnmountDeviceRecursivelyCallbackType callback) override;
 
-  bool AddDiskForTest(std::unique_ptr<Disk> disk) override;
+  bool AddDiskForTest(std::unique_ptr<chromeos::disks::Disk> disk) override;
   bool AddMountPointForTest(const MountPointInfo& mount_point) override;
-  void InvokeDiskEventForTest(DiskEvent event, const Disk* disk);
+  void InvokeDiskEventForTest(DiskEvent event,
+                              const chromeos::disks::Disk* disk);
 
  private:
-  base::ObserverList<Observer> observers_;
-  base::queue<UnmountPathCallback> pending_unmount_callbacks_;
+  base::ObserverList<Observer>::Unchecked observers_;
+  base::queue<base::OnceClosure> pending_unmount_callbacks_;
 
   DiskMap disks_;
   MountPointMap mount_points_;
@@ -110,6 +122,7 @@ class FakeDiskMountManager : public chromeos::disks::DiskMountManager {
   std::vector<MountRequest> mount_requests_;
   std::vector<UnmountRequest> unmount_requests_;
   std::vector<RemountAllRequest> remount_all_requests_;
+  std::map<std::string, chromeos::MountError> unmount_errors_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeDiskMountManager);
 };

@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/unguessable_token.h"
 #include "content/common/content_export.h"
 #include "content/public/common/resource_type.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -24,7 +25,6 @@ namespace content {
 class AppCacheHost;
 class AppCacheRequestHandler;
 class AppCacheServiceImpl;
-class ResourceRequesterInfo;
 
 // An interceptor to hijack requests and potentially service them out of
 // the appcache.
@@ -33,8 +33,7 @@ class CONTENT_EXPORT AppCacheInterceptor : public net::URLRequestInterceptor {
   // Must be called to make a request eligible for retrieval from an appcache.
   static void SetExtraRequestInfo(net::URLRequest* request,
                                   AppCacheServiceImpl* service,
-                                  int process_id,
-                                  int host_id,
+                                  const base::UnguessableToken& host_id,
                                   ResourceType resource_type,
                                   bool should_reset_appcache);
 
@@ -50,17 +49,6 @@ class CONTENT_EXPORT AppCacheInterceptor : public net::URLRequestInterceptor {
   static void GetExtraResponseInfo(net::URLRequest* request,
                                    int64_t* cache_id,
                                    GURL* manifest_url);
-
-  // Methods to support cross site navigations.
-  static void PrepareForCrossSiteTransfer(net::URLRequest* request,
-                                          int old_process_id);
-  static void CompleteCrossSiteTransfer(net::URLRequest* request,
-                                        int new_process_id,
-                                        int new_host_id,
-                                        ResourceRequesterInfo* requester_info);
-  static void MaybeCompleteCrossSiteTransferInOldProcess(
-      net::URLRequest* request,
-      int old_process_id);
 
   AppCacheInterceptor();
   ~AppCacheInterceptor() override;

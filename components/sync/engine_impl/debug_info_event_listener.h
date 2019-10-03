@@ -12,6 +12,7 @@
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/sequence_checker.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/weak_handle.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
@@ -27,7 +28,7 @@ namespace syncer {
 // In order to track datatype association results, we need at least as many
 // entries as datatypes. Reserve additional space for other kinds of events that
 // are likely to happen during first sync or startup.
-const unsigned int kMaxEntries = MODEL_TYPE_COUNT + 10;
+const unsigned int kMaxEntries = ModelType::NUM_ENTRIES + 10;
 
 // Listens to events and records them in a queue. And passes the events to
 // syncer when requested.
@@ -45,8 +46,7 @@ class DebugInfoEventListener : public SyncManager::Observer,
   void OnInitializationComplete(
       const WeakHandle<JsBackend>& js_backend,
       const WeakHandle<DataTypeDebugInfoListener>& debug_listener,
-      bool success,
-      ModelTypeSet restored_types) override;
+      bool success) override;
   void OnConnectionStatusChange(ConnectionStatus connection_status) override;
   void OnActionableError(const SyncProtocolError& sync_error) override;
   void OnMigrationRequested(ModelTypeSet types) override;
@@ -55,6 +55,7 @@ class DebugInfoEventListener : public SyncManager::Observer,
   // SyncEncryptionHandler::Observer implementation.
   void OnPassphraseRequired(
       PassphraseRequiredReason reason,
+      const KeyDerivationParams& key_derivation_params,
       const sync_pb::EncryptedData& pending_keys) override;
   void OnPassphraseAccepted() override;
   void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
@@ -65,8 +66,6 @@ class DebugInfoEventListener : public SyncManager::Observer,
   void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time explicit_passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
 
   // Sync manager events.
   void OnNudgeFromDatatype(ModelType datatype);
@@ -107,9 +106,9 @@ class DebugInfoEventListener : public SyncManager::Observer,
   // Cryptographer is initialized and does not have pending keys.
   bool cryptographer_ready_;
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<DebugInfoEventListener> weak_ptr_factory_;
+  base::WeakPtrFactory<DebugInfoEventListener> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DebugInfoEventListener);
 };

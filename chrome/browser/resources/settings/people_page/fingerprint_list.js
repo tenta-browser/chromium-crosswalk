@@ -8,9 +8,9 @@
 /**
  * The duration in ms of a background flash when a user touches the fingerprint
  * sensor on this page.
- * @const {number}
+ * @type {number}
  */
-var FLASH_DURATION_MS = 500;
+const FLASH_DURATION_MS = 500;
 
 Polymer({
   is: 'settings-fingerprint-list',
@@ -22,6 +22,14 @@ Polymer({
   ],
 
   properties: {
+    /**
+     * Authentication token provided by settings-people-page.
+     */
+    authToken: {
+      type: String,
+      value: '',
+    },
+
     /**
      * The list of fingerprint objects.
      * @private {!Array<string>}
@@ -35,6 +43,16 @@ Polymer({
 
     /** @private */
     showSetupFingerprintDialog_: Boolean,
+
+    /**
+     * Whether add another finger is allowed.
+     * @type {boolean}
+     * @private
+     */
+    allowAddAnotherFinger_: {
+      type: Boolean,
+      value: true,
+    },
   },
 
   /** @private {?settings.FingerprintBrowserProxy} */
@@ -63,8 +81,9 @@ Polymer({
    */
   currentRouteChanged: function(newRoute, oldRoute) {
     if (newRoute != settings.routes.FINGERPRINT) {
-      if (this.browserProxy_)
+      if (this.browserProxy_) {
         this.browserProxy_.endCurrentAuthentication();
+      }
     } else if (oldRoute == settings.routes.LOCK_SCREEN) {
       // Start fingerprint authentication when going from LOCK_SCREEN to
       // FINGERPRINT page.
@@ -78,9 +97,9 @@ Polymer({
    * @private
    */
   onAttemptReceived_: function(fingerprintAttempt) {
-    /** @type {NodeList<!HTMLElement>} */ var listItems =
+    /** @type {NodeList<!HTMLElement>} */ const listItems =
         this.$.fingerprintsList.querySelectorAll('.list-item');
-    /** @type {Array<number>} */ var filteredIndexes =
+    /** @type {Array<number>} */ const filteredIndexes =
         fingerprintAttempt.indexes.filter(function(index) {
           return index >= 0 && index < listItems.length;
         });
@@ -88,12 +107,13 @@ Polymer({
     // Flash the background and produce a ripple for each list item that
     // corresponds to the attempted finger.
     filteredIndexes.forEach(function(index) {
-      var listItem = listItems[index];
-      var ripple = listItem.querySelector('paper-ripple');
+      const listItem = listItems[index];
+      const ripple = listItem.querySelector('paper-ripple');
 
       // Activate the ripple.
-      if (ripple)
+      if (ripple) {
         ripple.simulatedRipple();
+      }
 
       // Flash the background.
       listItem.animate(
@@ -118,6 +138,7 @@ Polymer({
     // Update iron-list.
     this.fingerprints_ = fingerprintInfo.fingerprintsList.slice();
     this.$$('.action-button').disabled = fingerprintInfo.isMaxed;
+    this.allowAddAnotherFinger_ = !fingerprintInfo.isMaxed;
   },
 
   /**
@@ -127,8 +148,9 @@ Polymer({
    */
   onFingerprintDeleteTapped_: function(e) {
     this.browserProxy_.removeEnrollment(e.model.index).then(success => {
-      if (success)
+      if (success) {
         this.updateFingerprintsList_();
+      }
     });
   },
 
@@ -139,8 +161,9 @@ Polymer({
   onFingerprintLabelChanged_: function(e) {
     this.browserProxy_.changeEnrollmentLabel(e.model.index, e.model.item)
         .then(success => {
-          if (success)
+          if (success) {
             this.updateFingerprintsList_();
+          }
         });
   },
 
@@ -169,6 +192,15 @@ Polymer({
         settings.getCurrentRoute() == settings.routes.FINGERPRINT) {
       this.onSetupFingerprintDialogClose_();
     }
+  },
+
+  /**
+   * @param {string} item
+   * @return {string}
+   * @private
+   */
+  getButtonAriaLabel_: function(item) {
+    return this.i18n('lockScreenDeleteFingerprintLabel', item);
   },
 });
 })();

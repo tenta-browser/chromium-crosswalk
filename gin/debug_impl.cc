@@ -7,18 +7,8 @@
 namespace gin {
 
 namespace {
-v8::FunctionEntryHook g_entry_hook = NULL;
 v8::JitCodeEventHandler g_jit_code_event_handler = NULL;
-#if defined(OS_WIN)
-Debug::CodeRangeCreatedCallback g_code_range_created_callback = NULL;
-Debug::CodeRangeDeletedCallback g_code_range_deleted_callback = NULL;
-#endif
 }  // namespace
-
-// static
-void Debug::SetFunctionEntryHook(v8::FunctionEntryHook entry_hook) {
-  g_entry_hook = entry_hook;
-}
 
 // static
 void Debug::SetJitCodeEventHandler(v8::JitCodeEventHandler event_handler) {
@@ -27,36 +17,15 @@ void Debug::SetJitCodeEventHandler(v8::JitCodeEventHandler event_handler) {
 
 #if defined(OS_WIN)
 // static
-void Debug::SetCodeRangeCreatedCallback(CodeRangeCreatedCallback callback) {
-  g_code_range_created_callback = callback;
-}
-
-// static
-void Debug::SetCodeRangeDeletedCallback(CodeRangeDeletedCallback callback) {
-  g_code_range_deleted_callback = callback;
+void Debug::SetUnhandledExceptionCallback(
+    v8::UnhandledExceptionCallback callback) {
+  v8::V8::SetUnhandledExceptionCallback(callback);
 }
 #endif
-
-// static
-v8::FunctionEntryHook DebugImpl::GetFunctionEntryHook() {
-  return g_entry_hook;
-}
 
 // static
 v8::JitCodeEventHandler DebugImpl::GetJitCodeEventHandler() {
   return g_jit_code_event_handler;
 }
-
-#if defined(OS_WIN)
-// static
-Debug::CodeRangeCreatedCallback DebugImpl::GetCodeRangeCreatedCallback() {
-  return g_code_range_created_callback;
-}
-
-// static
-Debug::CodeRangeDeletedCallback DebugImpl::GetCodeRangeDeletedCallback() {
-  return g_code_range_deleted_callback;
-}
-#endif
 
 }  // namespace gin

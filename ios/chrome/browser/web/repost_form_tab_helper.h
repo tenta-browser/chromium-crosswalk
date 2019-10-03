@@ -28,10 +28,11 @@ class RepostFormTabHelper : public web::WebStateUserData<RepostFormTabHelper>,
 
   // Presents a repost form dialog at the given |location|. |callback| is called
   // with true if the repost was confirmed and with false if it was cancelled.
-  void PresentDialog(CGPoint location,
-                     const base::Callback<void(bool)>& callback);
+  void PresentDialog(CGPoint location, base::OnceCallback<void(bool)> callback);
 
  private:
+  friend class web::WebStateUserData<RepostFormTabHelper>;
+
   RepostFormTabHelper(web::WebState* web_state,
                       id<RepostFormTabHelperDelegate> delegate);
 
@@ -51,6 +52,8 @@ class RepostFormTabHelper : public web::WebStateUserData<RepostFormTabHelper>,
 
   // true if form repost dialog is currently being presented.
   bool is_presenting_dialog_ = false;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(RepostFormTabHelper);
 };

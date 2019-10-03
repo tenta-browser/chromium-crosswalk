@@ -20,22 +20,30 @@ Polymer({
     focusConfig_: {
       type: Object,
       value: function() {
-        var map = new Map();
+        const map = new Map();
         if (settings.routes.CLOUD_PRINTERS) {
-          map.set(
-              settings.routes.CLOUD_PRINTERS.path,
-              '#cloudPrinters .subpage-arrow');
+          map.set(settings.routes.CLOUD_PRINTERS.path, '#cloudPrinters');
         }
         // <if expr="chromeos">
         if (settings.routes.CUPS_PRINTERS) {
-          map.set(
-              settings.routes.CUPS_PRINTERS.path,
-              '#cupsPrinters .subpage-arrow');
+          map.set(settings.routes.CUPS_PRINTERS.path, '#cupsPrinters');
         }
         // </if>
         return map;
       },
     },
+
+    // <if expr="chromeos">
+    /**
+     * TODO(crbug.com/950007): Remove when SplitSettings is the default because
+     * CUPS printers will exist only in the OS settings page.
+     * @private
+     */
+    showCupsPrinters_: {
+      type: Boolean,
+      value: () => loadTimeData.getBoolean('showOSSettings'),
+    }
+    // </if>
   },
 
   // <if expr="chromeos">

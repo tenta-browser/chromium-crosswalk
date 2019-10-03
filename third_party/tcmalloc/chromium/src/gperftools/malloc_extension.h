@@ -1,4 +1,5 @@
-// Copyright (c) 2012, Google Inc.
+// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
+// Copyright (c) 2005, Google Inc.
 // All rights reserved.
 // 
 // Redistribution and use in source and binary forms, with or without
@@ -49,8 +50,22 @@
 #ifndef _MSC_VER
 #include <stdint.h>
 #endif
+#include <atomic>
 #include <string>
 #include <vector>
+
+#ifdef __has_attribute
+#define MALLOC_HAVE_ATTRIBUTE(x) __has_attribute(x)
+#else
+#define MALLOC_HAVE_ATTRIBUTE(x) 0
+#endif
+
+#if MALLOC_HAVE_ATTRIBUTE(unused)
+#undef ATTRIBUTE_UNUSED
+#define ATTRIBUTE_UNUSED __attribute__((unused))
+#else
+#define ATTRIBUTE_UNUSED
+#endif
 
 // Annoying stuff for windows -- makes sure clients can import these functions
 #ifndef PERFTOOLS_DLL_DECL
@@ -71,7 +86,7 @@ struct MallocRange;
 }
 
 // Interface to a pluggable system allocator.
-class SysAllocator {
+class PERFTOOLS_DLL_DECL SysAllocator {
  public:
   SysAllocator() {
   }
@@ -106,8 +121,12 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   virtual bool MallocMemoryStats(int* blocks, size_t* total,
                                  int histogram[kMallocHistogramSize]);
 
-  // Get a human readable description of the current state of the malloc
-  // data structures.  The state is stored as a null-terminated string
+  // Get a human readable description of the following malloc data structures.
+  // - Total inuse memory by application.
+  // - Free memory(thread, central and page heap),
+  // - Freelist of central cache, each class.
+  // - Page heap freelist.
+  // The state is stored as a null-terminated string
   // in a prefix of "buffer[0,buffer_length-1]".
   // REQUIRES: buffer_length > 0.
   virtual void GetStats(char* buffer, int buffer_length);
@@ -176,6 +195,26 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   // "tcmalloc.current_total_thread_cache_bytes"
   //      Number of bytes used across all thread caches.
   //      This property is not writable.
+  //
+  // "tcmalloc.central_cache_free_bytes"
+  //      Number of free bytes in the central cache that have been
+  //      assigned to size classes. They always count towards virtual
+  //      memory usage, and unless the underlying memory is swapped out
+  //      by the OS, they also count towards physical memory usage.
+  //      This property is not writable.
+  //
+  // "tcmalloc.transfer_cache_free_bytes"
+  //      Number of free bytes that are waiting to be transfered between
+  //      the central cache and a thread cache. They always count
+  //      towards virtual memory usage, and unless the underlying memory
+  //      is swapped out by the OS, they also count towards physical
+  //      memory usage. This property is not writable.
+  //
+  // "tcmalloc.thread_cache_free_bytes"
+  //      Number of free bytes in thread caches. They always count
+  //      towards virtual memory usage, and unless the underlying memory
+  //      is swapped out by the OS, they also count towards physical
+  //      memory usage. This property is not writable.
   //
   // "tcmalloc.pageheap_free_bytes"
   //      Number of bytes in free, mapped pages in page heap.  These
@@ -309,18 +348,14 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   virtual Ownership GetOwnership(const void* p);
 
   // The current malloc implementation.  Always non-NULL.
-  static MallocExtension* instance();
+  static MallocExtension* instance() {
+    InitModuleOnce();
+    return current_instance_.load(std::memory_order_acquire);
+  }
 
   // Change the malloc implementation.  Typically called by the
   // malloc implementation during initialization.
   static void Register(MallocExtension* implementation);
-
-  // On the current thread, return the total number of bytes allocated.
-  // This function is added in Chromium for profiling.
-  // Currently only implemented in tcmalloc. Returns 0 if tcmalloc is not used.
-  // Note that malloc_extension can be used without tcmalloc if gperftools'
-  // heap-profiler is enabled without the tcmalloc memory allocator.
-  static unsigned int GetBytesAllocatedOnCurrentThread();
 
   // Returns detailed information about malloc's freelists. For each list,
   // return a FreeListInfo:
@@ -385,6 +420,27 @@ class PERFTOOLS_DLL_DECL MallocExtension {
   // Like ReadStackTraces(), but returns stack traces that caused growth
   // in the address space size.
   virtual void** ReadHeapGrowthStackTraces();
+
+  // Returns the size in bytes of the calling threads cache.
+  virtual size_t GetThreadCacheSize();
+
+  // Like MarkThreadIdle, but does not destroy the internal data
+  // structures of the thread cache. When the thread resumes, it wil
+  // have an empty cache but will not need to pay to reconstruct the
+  // cache data structures.
+  virtual void MarkThreadTemporarilyIdle();
+
+ private:
+  static MallocExtension* InitModule();
+
+  static void InitModuleOnce() {
+    // Pointer stored here so heap leak checker will consider the default
+    // instance reachable, even if current_instance_ is later overridden by
+    // MallocExtension::Register().
+    ATTRIBUTE_UNUSED static MallocExtension* default_instance = InitModule();
+  }
+
+  static std::atomic<MallocExtension*> current_instance_;
 };
 
 namespace base {
@@ -395,7 +451,7 @@ struct MallocRange {
     INUSE,                // Application is using this range
     FREE,                 // Range is currently free
     UNMAPPED,             // Backing physical memory has been returned to the OS
-    UNKNOWN,
+    UNKNOWN
     // More enum values may be added in the future
   };
 

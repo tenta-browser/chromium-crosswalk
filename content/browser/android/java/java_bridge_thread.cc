@@ -5,7 +5,6 @@
 #include "content/browser/android/java/java_bridge_thread.h"
 
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "build/build_config.h"
@@ -34,15 +33,12 @@ JavaBridgeThread::~JavaBridgeThread() {
 
 // static
 bool JavaBridgeThread::CurrentlyOn() {
-  return g_background_thread.Get()
-      .message_loop()
-      ->task_runner()
-      ->BelongsToCurrentThread();
+  return g_background_thread.Get().task_runner()->BelongsToCurrentThread();
 }
 
 // static
-base::TaskRunner* JavaBridgeThread::GetTaskRunner() {
-  return g_background_thread.Get().message_loop()->task_runner().get();
+scoped_refptr<base::SingleThreadTaskRunner> JavaBridgeThread::GetTaskRunner() {
+  return g_background_thread.Get().task_runner();
 }
 
 }  // namespace content

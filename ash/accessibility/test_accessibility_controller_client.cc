@@ -4,24 +4,72 @@
 
 #include "ash/accessibility/test_accessibility_controller_client.h"
 
+#include "ash/public/cpp/accessibility_controller.h"
+
 namespace ash {
 
-TestAccessibilityControllerClient::TestAccessibilityControllerClient()
-    : binding_(this) {}
+constexpr base::TimeDelta
+    TestAccessibilityControllerClient::kShutdownSoundDuration;
 
-TestAccessibilityControllerClient::~TestAccessibilityControllerClient() =
-    default;
+TestAccessibilityControllerClient::TestAccessibilityControllerClient() {
+  AccessibilityController::Get()->SetClient(this);
+}
 
-mojom::AccessibilityControllerClientPtr
-TestAccessibilityControllerClient::CreateInterfacePtrAndBind() {
-  mojom::AccessibilityControllerClientPtr ptr;
-  binding_.Bind(mojo::MakeRequest(&ptr));
-  return ptr;
+TestAccessibilityControllerClient::~TestAccessibilityControllerClient() {
+  AccessibilityController::Get()->SetClient(nullptr);
 }
 
 void TestAccessibilityControllerClient::TriggerAccessibilityAlert(
-    mojom::AccessibilityAlert alert) {
+    AccessibilityAlert alert) {
   last_a11y_alert_ = alert;
+}
+
+void TestAccessibilityControllerClient::TriggerAccessibilityAlertWithMessage(
+    const std::string& message) {}
+
+void TestAccessibilityControllerClient::PlayEarcon(int32_t sound_key) {
+  sound_key_ = sound_key;
+}
+
+base::TimeDelta TestAccessibilityControllerClient::PlayShutdownSound() {
+  return kShutdownSoundDuration;
+}
+
+void TestAccessibilityControllerClient::HandleAccessibilityGesture(
+    ax::mojom::Gesture gesture) {
+  last_a11y_gesture_ = gesture;
+}
+
+bool TestAccessibilityControllerClient::ToggleDictation() {
+  is_dictation_active_ = !is_dictation_active_;
+  return is_dictation_active_;
+}
+
+void TestAccessibilityControllerClient::SilenceSpokenFeedback() {}
+
+void TestAccessibilityControllerClient::OnTwoFingerTouchStart() {}
+
+void TestAccessibilityControllerClient::OnTwoFingerTouchStop() {}
+
+bool TestAccessibilityControllerClient::ShouldToggleSpokenFeedbackViaTouch()
+    const {
+  return true;
+}
+
+void TestAccessibilityControllerClient::PlaySpokenFeedbackToggleCountdown(
+    int tick_count) {}
+
+void TestAccessibilityControllerClient::RequestSelectToSpeakStateChange() {
+  ++select_to_speak_state_change_requests_;
+}
+
+void TestAccessibilityControllerClient::
+    RequestAutoclickScrollableBoundsForPoint(gfx::Point& point_in_screen) {}
+
+int32_t TestAccessibilityControllerClient::GetPlayedEarconAndReset() {
+  int32_t tmp = sound_key_;
+  sound_key_ = -1;
+  return tmp;
 }
 
 }  // namespace ash

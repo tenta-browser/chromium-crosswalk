@@ -5,20 +5,38 @@
 #include "services/device/hid/hid_connection_impl.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted_memory.h"
 
 namespace device {
 
 HidConnectionImpl::HidConnectionImpl(
-    scoped_refptr<device::HidConnection> connection)
-    : hid_connection_(std::move(connection)), weak_factory_(this) {}
+    scoped_refptr<device::HidConnection> connection,
+    mojom::HidConnectionClientPtr connection_client)
+    : hid_connection_(std::move(connection)) {
+  if (connection_client) {
+    hid_connection_->SetClient(this);
+    client_ = std::move(connection_client);
+  }
+}
 
 HidConnectionImpl::~HidConnectionImpl() {
   DCHECK(hid_connection_);
+  hid_connection_->SetClient(nullptr);
 
   // Close |hid_connection_| on destruction because this class is owned by a
   // mojo::StrongBinding and will be destroyed when the pipe is closed.
   hid_connection_->Close();
+}
+
+void HidConnectionImpl::OnInputReport(
+    scoped_refptr<base::RefCountedBytes> buffer,
+    size_t size) {
+  DCHECK(client_);
+  uint8_t report_id = buffer->data()[0];
+  uint8_t* begin = &buffer->data()[1];
+  uint8_t* end = buffer->data().data() + size;
+  std::vector<uint8_t> data(begin, end);
+  client_->OnInputReport(report_id, data);
 }
 
 void HidConnectionImpl::Read(ReadCallback callback) {
@@ -30,7 +48,7 @@ void HidConnectionImpl::Read(ReadCallback callback) {
 
 void HidConnectionImpl::OnRead(ReadCallback callback,
                                bool success,
-                               scoped_refptr<net::IOBuffer> buffer,
+                               scoped_refptr<base::RefCountedBytes> buffer,
                                size_t size) {
   if (!success) {
     std::move(callback).Run(false, 0, base::nullopt);
@@ -38,7 +56,7 @@ void HidConnectionImpl::OnRead(ReadCallback callback,
   }
   DCHECK(buffer);
 
-  std::vector<uint8_t> data(buffer->data() + 1, buffer->data() + size);
+  std::vector<uint8_t> data(buffer->front() + 1, buffer->front() + size);
   std::move(callback).Run(true, buffer->data()[0], data);
 }
 
@@ -48,16 +66,14 @@ void HidConnectionImpl::Write(uint8_t report_id,
   DCHECK(hid_connection_);
 
   auto io_buffer =
-      base::MakeRefCounted<net::IOBufferWithSize>(buffer.size() + 1);
+      base::MakeRefCounted<base::RefCountedBytes>(buffer.size() + 1);
   io_buffer->data()[0] = report_id;
 
-  const char* data = reinterpret_cast<const char*>(buffer.data());
-  memcpy(io_buffer->data() + 1, data, buffer.size());
+  memcpy(io_buffer->front() + 1, buffer.data(), buffer.size());
 
-  hid_connection_->Write(
-      io_buffer, io_buffer->size(),
-      base::BindOnce(&HidConnectionImpl::OnWrite, weak_factory_.GetWeakPtr(),
-                     std::move(callback)));
+  hid_connection_->Write(io_buffer, base::BindOnce(&HidConnectionImpl::OnWrite,
+                                                   weak_factory_.GetWeakPtr(),
+                                                   std::move(callback)));
 }
 
 void HidConnectionImpl::OnWrite(WriteCallback callback, bool success) {
@@ -73,17 +89,18 @@ void HidConnectionImpl::GetFeatureReport(uint8_t report_id,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void HidConnectionImpl::OnGetFeatureReport(GetFeatureReportCallback callback,
-                                           bool success,
-                                           scoped_refptr<net::IOBuffer> buffer,
-                                           size_t size) {
+void HidConnectionImpl::OnGetFeatureReport(
+    GetFeatureReportCallback callback,
+    bool success,
+    scoped_refptr<base::RefCountedBytes> buffer,
+    size_t size) {
   if (!success) {
     std::move(callback).Run(false, base::nullopt);
     return;
   }
   DCHECK(buffer);
 
-  std::vector<uint8_t> data(buffer->data(), buffer->data() + size);
+  std::vector<uint8_t> data(buffer->front(), buffer->front() + size);
   std::move(callback).Run(true, data);
 }
 
@@ -93,14 +110,13 @@ void HidConnectionImpl::SendFeatureReport(uint8_t report_id,
   DCHECK(hid_connection_);
 
   auto io_buffer =
-      base::MakeRefCounted<net::IOBufferWithSize>(buffer.size() + 1);
+      base::MakeRefCounted<base::RefCountedBytes>(buffer.size() + 1);
   io_buffer->data()[0] = report_id;
 
-  const char* data = reinterpret_cast<const char*>(buffer.data());
-  memcpy(io_buffer->data() + 1, data, buffer.size());
+  memcpy(io_buffer->front() + 1, buffer.data(), buffer.size());
 
   hid_connection_->SendFeatureReport(
-      io_buffer, io_buffer->size(),
+      io_buffer,
       base::BindOnce(&HidConnectionImpl::OnSendFeatureReport,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }

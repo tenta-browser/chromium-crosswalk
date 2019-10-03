@@ -4,86 +4,41 @@
 
 #include "services/video_capture/test/mock_device_test.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/bind_helpers.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "media/capture/video/video_capture_jpeg_decoder.h"
 #include "media/capture/video/video_capture_system_impl.h"
 
 using testing::_;
 using testing::Invoke;
 using testing::InvokeWithoutArgs;
 
-namespace {
-
-std::unique_ptr<media::VideoCaptureJpegDecoder> CreateJpegDecoder() {
-  return nullptr;
-}
-
-}  // anonymous namespace
-
 namespace video_capture {
 
-MockDevice::MockDevice() = default;
-
-MockDevice::~MockDevice() = default;
-
-void MockDevice::SendStubFrame(const media::VideoCaptureFormat& format,
-                               int rotation,
-                               int frame_feedback_id) {
-  auto stub_frame = media::VideoFrame::CreateZeroInitializedFrame(
-      format.pixel_format, format.frame_size,
-      gfx::Rect(format.frame_size.width(), format.frame_size.height()),
-      format.frame_size, base::TimeDelta());
-  client_->OnIncomingCapturedData(
-      stub_frame->data(0),
-      static_cast<int>(media::VideoFrame::AllocationSize(
-          stub_frame->format(), stub_frame->coded_size())),
-      format, rotation, base::TimeTicks(), base::TimeDelta(),
-      frame_feedback_id);
-}
-
-void MockDevice::AllocateAndStart(const media::VideoCaptureParams& params,
-                                  std::unique_ptr<Client> client) {
-  client_ = std::move(client);
-  DoAllocateAndStart(params, &client);
-}
-
-void MockDevice::StopAndDeAllocate() {
-  DoStopAndDeAllocate();
-  client_.reset();
-}
-
-void MockDevice::GetPhotoState(GetPhotoStateCallback callback) {
-  DoGetPhotoState(&callback);
-}
-
-void MockDevice::SetPhotoOptions(media::mojom::PhotoSettingsPtr settings,
-                                 SetPhotoOptionsCallback callback) {
-  DoSetPhotoOptions(&settings, &callback);
-}
-
-void MockDevice::TakePhoto(TakePhotoCallback callback) {
-  DoTakePhoto(&callback);
-}
-
-MockDeviceTest::MockDeviceTest() : ref_factory_(base::Bind(&base::DoNothing)) {}
+MockDeviceTest::MockDeviceTest() : service_keepalive_(nullptr, base::nullopt) {}
 
 MockDeviceTest::~MockDeviceTest() = default;
 
 void MockDeviceTest::SetUp() {
   message_loop_ = std::make_unique<base::MessageLoop>();
-  auto mock_device_factory = std::make_unique<MockDeviceFactory>();
+  auto mock_device_factory = std::make_unique<media::MockDeviceFactory>();
   // We keep a pointer to the MockDeviceFactory as a member so that we can
   // invoke its AddMockDevice(). Ownership of the MockDeviceFactory is moved
   // to the DeviceFactoryMediaToMojoAdapter.
   mock_device_factory_ = mock_device_factory.get();
   auto video_capture_system = std::make_unique<media::VideoCaptureSystemImpl>(
       std::move(mock_device_factory));
+#if defined(OS_CHROMEOS)
   mock_device_factory_adapter_ =
       std::make_unique<DeviceFactoryMediaToMojoAdapter>(
-          ref_factory_.CreateRef(), std::move(video_capture_system),
-          base::Bind(CreateJpegDecoder));
+          std::move(video_capture_system), base::DoNothing(),
+          base::ThreadTaskRunnerHandle::Get());
+#else
+  mock_device_factory_adapter_ =
+      std::make_unique<DeviceFactoryMediaToMojoAdapter>(
+          std::move(video_capture_system));
+#endif  // defined(OS_CHROMEOS)
+  mock_device_factory_adapter_->SetServiceRef(service_keepalive_.CreateRef());
 
   mock_factory_binding_ = std::make_unique<mojo::Binding<mojom::DeviceFactory>>(
       mock_device_factory_adapter_.get(), mojo::MakeRequest(&factory_));
@@ -100,14 +55,13 @@ void MockDeviceTest::SetUp() {
   // We must wait for the response to GetDeviceInfos before calling
   // CreateDevice.
   wait_loop.Run();
-  factory_->CreateDevice(
-      mock_descriptor.device_id, mojo::MakeRequest(&device_proxy_),
-      base::Bind([](mojom::DeviceAccessResultCode result_code) {}));
+  factory_->CreateDevice(mock_descriptor.device_id,
+                         mojo::MakeRequest(&device_proxy_), base::DoNothing());
 
   requested_settings_.requested_format.frame_size = gfx::Size(800, 600);
   requested_settings_.requested_format.frame_rate = 15;
   requested_settings_.resolution_change_policy =
-      media::RESOLUTION_POLICY_FIXED_RESOLUTION;
+      media::ResolutionChangePolicy::FIXED_RESOLUTION;
   requested_settings_.power_line_frequency =
       media::PowerLineFrequency::FREQUENCY_DEFAULT;
 

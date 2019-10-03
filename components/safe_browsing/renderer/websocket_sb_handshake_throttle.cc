@@ -16,17 +16,17 @@
 #include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "net/http/http_request_headers.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
 
 namespace safe_browsing {
 
 WebSocketSBHandshakeThrottle::WebSocketSBHandshakeThrottle(
-    mojom::SafeBrowsing* safe_browsing)
-    : callbacks_(nullptr),
+    mojom::SafeBrowsing* safe_browsing,
+    int render_frame_id)
+    : render_frame_id_(render_frame_id),
       safe_browsing_(safe_browsing),
-      result_(Result::UNKNOWN),
-      weak_factory_(this) {}
+      result_(Result::UNKNOWN) {}
 
 WebSocketSBHandshakeThrottle::~WebSocketSBHandshakeThrottle() {
   // ThrottleHandshake() should always be called, but since that is done all the
@@ -39,30 +39,22 @@ WebSocketSBHandshakeThrottle::~WebSocketSBHandshakeThrottle() {
     UMA_HISTOGRAM_TIMES("SafeBrowsing.WebSocket.Elapsed.Abandoned",
                         base::TimeTicks::Now() - start_time_);
   }
-  UMA_HISTOGRAM_ENUMERATION("SafeBrowsing.WebSocket.Result", result_,
-                            Result::RESULT_COUNT);
 }
 
 void WebSocketSBHandshakeThrottle::ThrottleHandshake(
     const blink::WebURL& url,
-    blink::WebLocalFrame* web_local_frame,
-    blink::WebCallbacks<void, const blink::WebString&>* callbacks) {
-  DCHECK(!callbacks_);
+    blink::WebSocketHandshakeThrottle::OnCompletion completion_callback) {
   DCHECK(!url_checker_);
-  callbacks_ = callbacks;
+  DCHECK(!completion_callback_);
+  completion_callback_ = std::move(completion_callback);
   url_ = url;
-  int render_frame_id = MSG_ROUTING_NONE;
-  if (web_local_frame) {
-    auto* render_frame = content::RenderFrame::FromWebFrame(web_local_frame);
-    if (render_frame)
-      render_frame_id = render_frame->GetRoutingID();
-  }
   int load_flags = 0;
   start_time_ = base::TimeTicks::Now();
   safe_browsing_->CreateCheckerAndCheck(
-      render_frame_id, mojo::MakeRequest(&url_checker_), url, "GET",
+      render_frame_id_, mojo::MakeRequest(&url_checker_), url, "GET",
       net::HttpRequestHeaders(), load_flags,
-      content::RESOURCE_TYPE_SUB_RESOURCE, false,
+      content::ResourceType::kSubResource, false /* has_user_gesture */,
+      false /* originated_from_service_worker */,
       base::BindOnce(&WebSocketSBHandshakeThrottle::OnCheckResult,
                      weak_factory_.GetWeakPtr()));
 
@@ -80,15 +72,16 @@ void WebSocketSBHandshakeThrottle::OnCompleteCheck(bool proceed,
   if (proceed) {
     result_ = Result::SAFE;
     UMA_HISTOGRAM_TIMES("SafeBrowsing.WebSocket.Elapsed.Safe", elapsed);
-    callbacks_->OnSuccess();
+    std::move(completion_callback_).Run(base::nullopt);
   } else {
     // When the insterstitial is dismissed the page is navigated and this object
     // is destroyed before reaching here.
     result_ = Result::BLOCKED;
     UMA_HISTOGRAM_TIMES("SafeBrowsing.WebSocket.Elapsed.Blocked", elapsed);
-    callbacks_->OnError(blink::WebString::FromUTF8(base::StringPrintf(
-        "WebSocket connection to %s failed safe browsing check",
-        url_.spec().c_str())));
+    std::move(completion_callback_)
+        .Run(blink::WebString::FromUTF8(base::StringPrintf(
+            "WebSocket connection to %s failed safe browsing check",
+            url_.spec().c_str())));
   }
   // |this| is destroyed here.
 }
@@ -119,7 +112,7 @@ void WebSocketSBHandshakeThrottle::OnConnectionError() {
   // Make the destructor record NOT_SUPPORTED in the result histogram.
   result_ = Result::NOT_SUPPORTED;
   // Don't record the time elapsed because it's unlikely to be meaningful.
-  callbacks_->OnSuccess();
+  std::move(completion_callback_).Run(base::nullopt);
   // |this| is destroyed here.
 }
 

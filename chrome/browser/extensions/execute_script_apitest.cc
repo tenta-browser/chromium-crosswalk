@@ -5,12 +5,14 @@
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/test/base/ui_test_utils.h"
+#include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
 
-class ExecuteScriptApiTest : public ExtensionApiTest {
+class ExecuteScriptApiTest : public extensions::ExtensionApiTest {
  protected:
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
     // We need a.com to be a little bit slow to trigger a race condition.
     host_resolver()->AddRuleWithLatency("a.com", "127.0.0.1", 500);
     host_resolver()->AddRule("*", "127.0.0.1");
@@ -72,11 +74,6 @@ IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest,
                                   "execute_script.html")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, NavigationRaceJavaScriptURL) {
-  ASSERT_TRUE(RunExtensionSubtest("executescript/navigation_race",
-                                  "javascript_url.html")) << message_;
-}
-
 // If failing, mark disabled and update http://crbug.com/92105.
 IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, ExecuteScriptFrameAfterLoad) {
   ASSERT_TRUE(RunExtensionTest("executescript/frame_after_load")) << message_;
@@ -88,6 +85,10 @@ IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, FrameWithHttp204) {
 
 IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, ExecuteScriptRunAt) {
   ASSERT_TRUE(RunExtensionTest("executescript/run_at")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, ExecuteScriptCSSOrigin) {
+  ASSERT_TRUE(RunExtensionTest("executescript/css_origin")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, ExecuteScriptCallback) {
@@ -106,6 +107,33 @@ IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, RemovedFrames) {
   ASSERT_TRUE(RunExtensionTest("executescript/removed_frames")) << message_;
 }
 
+// Ensure that an extension can inject a script in a file frame provided it has
+// access to file urls enabled and the necessary host permissions.
+IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, InjectScriptInFileFrameAllowed) {
+  // Navigate to a file url. The extension will subsequently try to inject a
+  // script into it.
+  base::FilePath test_file =
+      test_data_dir_.DirName().AppendASCII("test_file.txt");
+  ui_test_utils::NavigateToURL(browser(), net::FilePathToFileURL(test_file));
+
+  SetCustomArg("ALLOWED");
+  ASSERT_TRUE(RunExtensionTest("executescript/file_access")) << message_;
+}
+
+// Ensure that an extension can't inject a script in a file frame if it doesn't
+// have file access.
+IN_PROC_BROWSER_TEST_F(ExecuteScriptApiTest, InjectScriptInFileFrameDenied) {
+  // Navigate to a file url. The extension will subsequently try to inject a
+  // script into it.
+  base::FilePath test_file =
+      test_data_dir_.DirName().AppendASCII("test_file.txt");
+  ui_test_utils::NavigateToURL(browser(), net::FilePathToFileURL(test_file));
+
+  SetCustomArg("DENIED");
+  ASSERT_TRUE(RunExtensionTestNoFileAccess("executescript/file_access"))
+      << message_;
+}
+
 // If tests time out because it takes too long to run them, then this value can
 // be increased to split the DestructiveScriptTest tests in approximately equal
 // parts. Each part takes approximately the same time to run.
@@ -118,9 +146,9 @@ class DestructiveScriptTest : public ExecuteScriptApiTest,
   bool RunSubtest(const std::string& test_host) {
     return RunExtensionSubtest(
         "executescript/destructive",
-        "test.html?" + test_host +
-        "#bucketcount=" + base::IntToString(kDestructiveScriptTestBucketCount) +
-        "&bucketindex=" + base::IntToString(GetParam()));
+        "test.html?" + test_host + "#bucketcount=" +
+            base::NumberToString(kDestructiveScriptTestBucketCount) +
+            "&bucketindex=" + base::NumberToString(GetParam()));
   }
 };
 
@@ -169,6 +197,7 @@ IN_PROC_BROWSER_TEST_P(DestructiveScriptTest, DOMSubtreeModified3) {
   ASSERT_TRUE(RunSubtest("domsubtreemodified3")) << message_;
 }
 
-INSTANTIATE_TEST_CASE_P(ExecuteScriptApiTest,
-                        DestructiveScriptTest,
-                        ::testing::Range(0, kDestructiveScriptTestBucketCount));
+INSTANTIATE_TEST_SUITE_P(ExecuteScriptApiTest,
+                         DestructiveScriptTest,
+                         ::testing::Range(0,
+                                          kDestructiveScriptTestBucketCount));

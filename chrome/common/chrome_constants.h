@@ -43,11 +43,9 @@ extern const base::FilePath::CharType kSystemProfileDir[];
 
 // filenames
 extern const base::FilePath::CharType kCacheDirname[];
-extern const base::FilePath::CharType kChannelIDFilename[];
 extern const base::FilePath::CharType kCookieFilename[];
 extern const base::FilePath::CharType kCRLSetFilename[];
 extern const base::FilePath::CharType kCustomDictionaryFileName[];
-extern const base::FilePath::CharType kDownloadMetadataStoreFilename[];
 extern const base::FilePath::CharType kDownloadServiceStorageDirname[];
 extern const base::FilePath::CharType kExtensionActivityLogFilename[];
 extern const base::FilePath::CharType kExtensionsCookieFilename[];
@@ -57,10 +55,12 @@ extern const base::FilePath::CharType kGCMStoreDirname[];
 extern const base::FilePath::CharType kLocalStateFilename[];
 extern const base::FilePath::CharType kMediaCacheDirname[];
 extern const base::FilePath::CharType kNetworkPersistentStateFilename[];
+extern const base::FilePath::CharType kNotificationSchedulerStorageDirname[];
 extern const base::FilePath::CharType kOfflinePageArchivesDirname[];
 extern const base::FilePath::CharType kOfflinePageMetadataDirname[];
 extern const base::FilePath::CharType kOfflinePagePrefetchStoreDirname[];
 extern const base::FilePath::CharType kOfflinePageRequestQueueDirname[];
+extern const base::FilePath::CharType kPageLoadCappingOptOutDBFilename[];
 extern const base::FilePath::CharType kPreferencesFilename[];
 extern const base::FilePath::CharType kPreviewsOptOutDBFilename[];
 extern const base::FilePath::CharType kReadmeFilename[];

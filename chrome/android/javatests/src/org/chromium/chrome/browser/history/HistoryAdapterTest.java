@@ -4,10 +4,6 @@
 
 package org.chromium.chrome.browser.history;
 
-import static org.chromium.chrome.browser.widget.DateDividedAdapter.TYPE_DATE;
-import static org.chromium.chrome.browser.widget.DateDividedAdapter.TYPE_HEADER;
-import static org.chromium.chrome.browser.widget.DateDividedAdapter.TYPE_NORMAL;
-
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -16,10 +12,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.widget.DateDividedAdapter.ItemViewType;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -40,12 +37,7 @@ public class HistoryAdapterTest {
     }
 
     private void initializeAdapter() {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable(){
-            @Override
-            public void run() {
-                mAdapter.initialize();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAdapter.initialize());
     }
 
     @Test
@@ -221,12 +213,7 @@ public class HistoryAdapterTest {
 
         mHistoryProvider.removeItem(item1);
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mAdapter.onHistoryDeleted();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAdapter.onHistoryDeleted());
 
         checkAdapterContents(false);
     }
@@ -257,15 +244,15 @@ public class HistoryAdapterTest {
 
         for (int i = 0; i < expectedItems.length; i++) {
             if (i == 0 && hasHeader) {
-                Assert.assertEquals(TYPE_HEADER, mAdapter.getItemViewType(i));
+                Assert.assertEquals(ItemViewType.HEADER, mAdapter.getItemViewType(i));
                 continue;
             }
 
             if (expectedItems[i] == null) {
                 // TODO(twellington): Check what date header is showing.
-                Assert.assertEquals(TYPE_DATE, mAdapter.getItemViewType(i));
+                Assert.assertEquals(ItemViewType.DATE, mAdapter.getItemViewType(i));
             } else {
-                Assert.assertEquals(TYPE_NORMAL, mAdapter.getItemViewType(i));
+                Assert.assertEquals(ItemViewType.NORMAL, mAdapter.getItemViewType(i));
                 Assert.assertEquals(expectedItems[i], mAdapter.getItemAt(i).second);
             }
         }

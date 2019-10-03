@@ -16,7 +16,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/test/launcher/test_launcher.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_switches.h"
@@ -80,11 +80,18 @@ class NonSfiUnitTestPlatformDelegate : public base::UnitTestPlatformDelegate {
   }
 
  private:
-  bool CreateTemporaryFile(base::FilePath* path) override {
-    if (!base::CreateNewTempDirectory(base::FilePath::StringType(), path))
+  bool CreateResultsFile(const base::FilePath& temp_dir,
+                         base::FilePath* path) override {
+    if (!base::CreateTemporaryDirInDir(temp_dir, base::FilePath::StringType(),
+                                       path))
       return false;
     *path = path->AppendASCII("test_results.xml");
     return true;
+  }
+
+  bool CreateTemporaryFile(const base::FilePath& temp_dir,
+                           base::FilePath* path) override {
+    return false;
   }
 
   bool GetTests(std::vector<base::TestIdentifier>* output) override {
@@ -112,19 +119,14 @@ class NonSfiUnitTestPlatformDelegate : public base::UnitTestPlatformDelegate {
 
   base::CommandLine GetCommandLineForChildGTestProcess(
       const std::vector<std::string>& test_names,
-      const base::FilePath& output_file) override {
+      const base::FilePath& output_file,
+      const base::FilePath& flag_file) override {
     base::CommandLine cmd_line(test_path_);
     cmd_line.AppendSwitchPath(
         switches::kTestLauncherOutput, output_file);
     cmd_line.AppendSwitchASCII(
         base::kGTestFilterFlag, base::JoinString(test_names, ":"));
     return cmd_line;
-  }
-
-  void RelaunchTests(base::TestLauncher* test_launcher,
-                     const std::vector<std::string>& test_names,
-                     int launch_flags) override {
-    RunUnitTestsBatch(test_launcher, this, test_names, launch_flags);
   }
 
   base::FilePath test_path_;
@@ -144,7 +146,7 @@ int TestLauncherNonSfiMain(const std::string& test_binary) {
 
   base::MessageLoopForIO message_loop;
 #if defined(OS_POSIX)
-  FileDescriptorWatcher file_descriptor_watcher(&message_loop);
+  FileDescriptorWatcher file_descriptor_watcher(message_loop.task_runner());
 #endif
 
   NonSfiUnitTestPlatformDelegate platform_delegate;

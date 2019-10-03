@@ -7,10 +7,10 @@
 #include "base/memory/ptr_util.h"
 #include "cc/animation/animation_events.h"
 #include "cc/animation/animation_id_provider.h"
-#include "cc/animation/animation_player.h"
-#include "cc/animation/animation_ticker.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
+#include "cc/animation/keyframe_effect.h"
+#include "cc/animation/single_keyframe_effect_animation.h"
 #include "cc/paint/filter_operation.h"
 #include "cc/paint/filter_operations.h"
 #include "cc/trees/property_tree.h"
@@ -26,12 +26,13 @@ TestLayer::TestLayer() {
   ClearMutatedProperties();
 }
 
-TestLayer::~TestLayer() {}
+TestLayer::~TestLayer() = default;
 
 void TestLayer::ClearMutatedProperties() {
   transform_ = gfx::Transform();
   opacity_ = 0;
   filters_ = FilterOperations();
+  backdrop_filters_ = FilterOperations();
   scroll_offset_ = gfx::ScrollOffset();
 
   has_potential_animation_.reset();
@@ -60,6 +61,17 @@ float TestLayer::brightness() const {
   return 0;
 }
 
+float TestLayer::invert() const {
+  for (unsigned i = 0; i < backdrop_filters_.size(); ++i) {
+    const FilterOperation& filter = backdrop_filters_.at(i);
+    if (filter.type() == FilterOperation::INVERT)
+      return filter.amount();
+  }
+
+  NOTREACHED();
+  return 0;
+}
+
 TestHostClient::TestHostClient(ThreadInstance thread_instance)
     : host_(AnimationHost::CreateForTesting(thread_instance)),
       mutators_need_commit_(false) {
@@ -78,8 +90,8 @@ void TestHostClient::ClearMutatedProperties() {
     kv.second->ClearMutatedProperties();
 }
 
-bool TestHostClient::IsElementInList(ElementId element_id,
-                                     ElementListType list_type) const {
+bool TestHostClient::IsElementInPropertyTrees(ElementId element_id,
+                                              ElementListType list_type) const {
   return list_type == ElementListType::ACTIVE
              ? layers_in_active_tree_.count(element_id)
              : layers_in_pending_tree_.count(element_id);
@@ -97,6 +109,15 @@ void TestHostClient::SetElementFilterMutated(ElementId element_id,
   TestLayer* layer = FindTestLayer(element_id, list_type);
   if (layer)
     layer->set_filters(filters);
+}
+
+void TestHostClient::SetElementBackdropFilterMutated(
+    ElementId element_id,
+    ElementListType list_type,
+    const FilterOperations& backdrop_filters) {
+  TestLayer* layer = FindTestLayer(element_id, list_type);
+  if (layer)
+    layer->set_backdrop_filters(backdrop_filters);
 }
 
 void TestHostClient::SetElementOpacityMutated(ElementId element_id,
@@ -126,18 +147,17 @@ void TestHostClient::SetElementScrollOffsetMutated(
 }
 
 void TestHostClient::ElementIsAnimatingChanged(
-    ElementId element_id,
+    const PropertyToElementIdMap& element_id_map,
     ElementListType list_type,
     const PropertyAnimationState& mask,
     const PropertyAnimationState& state) {
-  TestLayer* layer = FindTestLayer(element_id, list_type);
-  if (!layer)
-    return;
+  for (const auto& it : element_id_map) {
+    TestLayer* layer = FindTestLayer(it.second, list_type);
+    if (!layer)
+      continue;
 
-  for (int property = TargetProperty::FIRST_TARGET_PROPERTY;
-       property <= TargetProperty::LAST_TARGET_PROPERTY; ++property) {
-    TargetProperty::Type target_property =
-        static_cast<TargetProperty::Type>(property);
+    TargetProperty::Type target_property = it.first;
+    int property = static_cast<int>(target_property);
     if (mask.potentially_animating[property])
       layer->set_has_potential_animation(target_property,
                                          state.potentially_animating[property]);
@@ -146,6 +166,11 @@ void TestHostClient::ElementIsAnimatingChanged(
                                         state.currently_running[property]);
   }
 }
+
+void TestHostClient::AnimationScalesChanged(ElementId element_id,
+                                            ElementListType list_type,
+                                            float maximum_scale,
+                                            float starting_scale) {}
 
 void TestHostClient::SetScrollOffsetForAnimation(
     const gfx::ScrollOffset& scroll_offset) {
@@ -157,8 +182,8 @@ gfx::ScrollOffset TestHostClient::GetScrollOffsetForAnimation(
   return scroll_offset_;
 }
 
-void TestHostClient::RegisterElement(ElementId element_id,
-                                     ElementListType list_type) {
+void TestHostClient::RegisterElementId(ElementId element_id,
+                                       ElementListType list_type) {
   ElementIdToTestLayer& layers_in_tree = list_type == ElementListType::ACTIVE
                                              ? layers_in_active_tree_
                                              : layers_in_pending_tree_;
@@ -166,13 +191,13 @@ void TestHostClient::RegisterElement(ElementId element_id,
   layers_in_tree[element_id] = TestLayer::Create();
 
   DCHECK(host_);
-  host_->RegisterElement(element_id, list_type);
+  host_->RegisterElementId(element_id, list_type);
 }
 
-void TestHostClient::UnregisterElement(ElementId element_id,
-                                       ElementListType list_type) {
+void TestHostClient::UnregisterElementId(ElementId element_id,
+                                         ElementListType list_type) {
   DCHECK(host_);
-  host_->UnregisterElement(element_id, list_type);
+  host_->UnregisterElementId(element_id, list_type);
 
   ElementIdToTestLayer& layers_in_tree = list_type == ElementListType::ACTIVE
                                              ? layers_in_active_tree_
@@ -195,6 +220,14 @@ FilterOperations TestHostClient::GetFilters(ElementId element_id,
   TestLayer* layer = FindTestLayer(element_id, list_type);
   EXPECT_TRUE(layer);
   return layer->filters();
+}
+
+FilterOperations TestHostClient::GetBackdropFilters(
+    ElementId element_id,
+    ElementListType list_type) const {
+  TestLayer* layer = FindTestLayer(element_id, list_type);
+  EXPECT_TRUE(layer);
+  return layer->backdrop_filters();
 }
 
 float TestHostClient::GetOpacity(ElementId element_id,
@@ -267,6 +300,22 @@ bool TestHostClient::GetHasPotentialFilterAnimation(
   return layer->has_potential_animation(TargetProperty::FILTER);
 }
 
+bool TestHostClient::GetBackdropFilterIsCurrentlyAnimating(
+    ElementId element_id,
+    ElementListType list_type) const {
+  TestLayer* layer = FindTestLayer(element_id, list_type);
+  EXPECT_TRUE(layer);
+  return layer->is_currently_animating(TargetProperty::BACKDROP_FILTER);
+}
+
+bool TestHostClient::GetHasPotentialBackdropFilterAnimation(
+    ElementId element_id,
+    ElementListType list_type) const {
+  TestLayer* layer = FindTestLayer(element_id, list_type);
+  EXPECT_TRUE(layer);
+  return layer->has_potential_animation(TargetProperty::BACKDROP_FILTER);
+}
+
 void TestHostClient::ExpectFilterPropertyMutated(ElementId element_id,
                                                  ElementListType list_type,
                                                  float brightness) const {
@@ -274,6 +323,16 @@ void TestHostClient::ExpectFilterPropertyMutated(ElementId element_id,
   EXPECT_TRUE(layer);
   EXPECT_TRUE(layer->is_property_mutated(TargetProperty::FILTER));
   EXPECT_EQ(brightness, layer->brightness());
+}
+
+void TestHostClient::ExpectBackdropFilterPropertyMutated(
+    ElementId element_id,
+    ElementListType list_type,
+    float invert) const {
+  TestLayer* layer = FindTestLayer(element_id, list_type);
+  EXPECT_TRUE(layer);
+  EXPECT_TRUE(layer->is_property_mutated(TargetProperty::BACKDROP_FILTER));
+  EXPECT_EQ(invert, layer->invert());
 }
 
 void TestHostClient::ExpectOpacityPropertyMutated(ElementId element_id,
@@ -352,7 +411,7 @@ AnimationTimelinesTest::AnimationTimelinesTest()
       host_(nullptr),
       host_impl_(nullptr),
       timeline_id_(AnimationIdProvider::NextTimelineId()),
-      player_id_(AnimationIdProvider::NextPlayerId()),
+      animation_id_(AnimationIdProvider::NextAnimationId()),
       next_test_layer_id_(0) {
   host_ = client_.host();
   host_impl_ = client_impl_.host();
@@ -360,12 +419,10 @@ AnimationTimelinesTest::AnimationTimelinesTest()
   element_id_ = ElementId(NextTestLayerId());
 }
 
-AnimationTimelinesTest::~AnimationTimelinesTest() {
-}
+AnimationTimelinesTest::~AnimationTimelinesTest() = default;
 
 void AnimationTimelinesTest::SetUp() {
   timeline_ = AnimationTimeline::Create(timeline_id_);
-  player_ = AnimationPlayer::Create(player_id_);
 }
 
 void AnimationTimelinesTest::TearDown() {
@@ -385,44 +442,46 @@ void AnimationTimelinesTest::CreateTestLayer(
 }
 
 void AnimationTimelinesTest::CreateTestMainLayer() {
-  client_.RegisterElement(element_id_, ElementListType::ACTIVE);
+  client_.RegisterElementId(element_id_, ElementListType::ACTIVE);
 }
 
 void AnimationTimelinesTest::DestroyTestMainLayer() {
-  client_.UnregisterElement(element_id_, ElementListType::ACTIVE);
+  client_.UnregisterElementId(element_id_, ElementListType::ACTIVE);
 }
 
 void AnimationTimelinesTest::CreateTestImplLayer(
     ElementListType element_list_type) {
-  client_impl_.RegisterElement(element_id_, element_list_type);
+  client_impl_.RegisterElementId(element_id_, element_list_type);
 }
 
-void AnimationTimelinesTest::AttachTimelinePlayerLayer() {
+void AnimationTimelinesTest::AttachTimelineAnimationLayer() {
   host_->AddAnimationTimeline(timeline_);
-  timeline_->AttachPlayer(player_);
-  player_->AttachElement(element_id_);
+  timeline_->AttachAnimation(animation_);
+  animation_->AttachElement(element_id_);
 
-  element_animations_ = player_->element_animations();
+  element_animations_ = animation_->keyframe_effect()->element_animations();
 }
 
-void AnimationTimelinesTest::CreateImplTimelineAndPlayer() {
+void AnimationTimelinesTest::CreateImplTimelineAndAnimation() {
   host_->PushPropertiesTo(host_impl_);
-  GetImplTimelineAndPlayerByID();
+  GetImplTimelineAndAnimationByID();
 }
 
-void AnimationTimelinesTest::GetImplTimelineAndPlayerByID() {
+void AnimationTimelinesTest::GetImplTimelineAndAnimationByID() {
   timeline_impl_ = host_impl_->GetTimelineById(timeline_id_);
   EXPECT_TRUE(timeline_impl_);
-  player_impl_ = timeline_impl_->GetPlayerById(player_id_);
-  EXPECT_TRUE(player_impl_);
+  animation_impl_ = static_cast<SingleKeyframeEffectAnimation*>(
+      timeline_impl_->GetAnimationById(animation_id_));
+  EXPECT_TRUE(animation_impl_);
 
-  element_animations_impl_ = player_impl_->element_animations();
+  element_animations_impl_ =
+      animation_impl_->keyframe_effect()->element_animations();
 }
 
 void AnimationTimelinesTest::ReleaseRefPtrs() {
-  player_ = nullptr;
+  animation_ = nullptr;
   timeline_ = nullptr;
-  player_impl_ = nullptr;
+  animation_impl_ = nullptr;
   timeline_impl_ = nullptr;
 }
 
@@ -433,31 +492,33 @@ void AnimationTimelinesTest::TickAnimationsTransferEvents(
 
   // TODO(smcgruer): Construct a proper ScrollTree for the tests.
   ScrollTree scroll_tree;
-  host_impl_->TickAnimations(time, scroll_tree);
+  host_impl_->TickAnimations(time, scroll_tree, true);
   host_impl_->UpdateAnimationState(true, events.get());
 
   auto* animation_events = static_cast<const AnimationEvents*>(events.get());
   EXPECT_EQ(expect_events, animation_events->events_.size());
 
-  host_->TickAnimations(time, scroll_tree);
+  host_->TickAnimations(time, scroll_tree, true);
   host_->UpdateAnimationState(true, nullptr);
   host_->SetAnimationEvents(std::move(events));
 }
 
-AnimationTicker* AnimationTimelinesTest::GetTickerForElementId(
+KeyframeEffect* AnimationTimelinesTest::GetKeyframeEffectForElementId(
     ElementId element_id) {
   const scoped_refptr<ElementAnimations> element_animations =
       host_->GetElementAnimationsForElementId(element_id);
-  return element_animations ? &*element_animations->tickers_list().begin()
-                            : nullptr;
+  return element_animations
+             ? element_animations->FirstKeyframeEffectForTesting()
+             : nullptr;
 }
 
-AnimationTicker* AnimationTimelinesTest::GetImplTickerForLayerId(
+KeyframeEffect* AnimationTimelinesTest::GetImplKeyframeEffectForLayerId(
     ElementId element_id) {
   const scoped_refptr<ElementAnimations> element_animations =
       host_impl_->GetElementAnimationsForElementId(element_id);
-  return element_animations ? &*element_animations->tickers_list().begin()
-                            : nullptr;
+  return element_animations
+             ? element_animations->FirstKeyframeEffectForTesting()
+             : nullptr;
 }
 
 int AnimationTimelinesTest::NextTestLayerId() {
@@ -465,16 +526,16 @@ int AnimationTimelinesTest::NextTestLayerId() {
   return next_test_layer_id_;
 }
 
-bool AnimationTimelinesTest::CheckTickerTimelineNeedsPushProperties(
+bool AnimationTimelinesTest::CheckKeyframeEffectTimelineNeedsPushProperties(
     bool needs_push_properties) const {
-  DCHECK(player_);
+  DCHECK(animation_);
   DCHECK(timeline_);
 
   bool result = true;
 
-  AnimationTicker* ticker = player_->animation_ticker();
-  if (ticker->needs_push_properties() != needs_push_properties) {
-    ADD_FAILURE() << "ticker->needs_push_properties() expected to be "
+  KeyframeEffect* keyframe_effect = animation_->keyframe_effect();
+  if (keyframe_effect->needs_push_properties() != needs_push_properties) {
+    ADD_FAILURE() << "keyframe_effect->needs_push_properties() expected to be "
                   << needs_push_properties;
     result = false;
   }

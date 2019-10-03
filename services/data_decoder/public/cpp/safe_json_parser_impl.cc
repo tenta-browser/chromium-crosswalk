@@ -4,32 +4,33 @@
 
 #include "services/data_decoder/public/cpp/safe_json_parser_impl.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
-#include "services/data_decoder/public/interfaces/constants.mojom.h"
+#include "services/data_decoder/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/constants.mojom.h"
 
 namespace data_decoder {
 
-SafeJsonParserImpl::SafeJsonParserImpl(service_manager::Connector* connector,
-                                       const std::string& unsafe_json,
-                                       const SuccessCallback& success_callback,
-                                       const ErrorCallback& error_callback)
+SafeJsonParserImpl::SafeJsonParserImpl(
+    service_manager::Connector* connector,
+    const std::string& unsafe_json,
+    SuccessCallback success_callback,
+    ErrorCallback error_callback,
+    const base::Optional<base::Token>& batch_id)
     : unsafe_json_(unsafe_json),
-      success_callback_(success_callback),
-      error_callback_(error_callback) {
-  // Use a random instance ID to guarantee the connection is to a new service
-  // (running in its own process).
-  base::UnguessableToken token = base::UnguessableToken::Create();
-  service_manager::Identity identity(mojom::kServiceName,
-                                     service_manager::mojom::kInheritUserID,
-                                     token.ToString());
-  connector->BindInterface(identity, &json_parser_ptr_);
+      success_callback_(std::move(success_callback)),
+      error_callback_(std::move(error_callback)) {
+  // If no batch ID has been provided, use a random instance ID to guarantee the
+  // connection is to a new service running in its own process.
+  connector->BindInterface(
+      service_manager::ServiceFilter::ByNameWithId(
+          mojom::kServiceName, batch_id.value_or(base::Token::CreateRandom())),
+      &json_parser_ptr_);
 }
 
 SafeJsonParserImpl::~SafeJsonParserImpl() = default;
@@ -50,10 +51,11 @@ void SafeJsonParserImpl::OnConnectionError() {
   // Shut down the utility process.
   json_parser_ptr_.reset();
 
-  ReportResults(nullptr, "Connection error with the json parser process.");
+  ReportResults(base::nullopt,
+                "Connection error with the json parser process.");
 }
 
-void SafeJsonParserImpl::OnParseDone(std::unique_ptr<base::Value> result,
+void SafeJsonParserImpl::OnParseDone(base::Optional<base::Value> result,
                                      const base::Optional<std::string>& error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -63,15 +65,15 @@ void SafeJsonParserImpl::OnParseDone(std::unique_ptr<base::Value> result,
   ReportResults(std::move(result), error.value_or(""));
 }
 
-void SafeJsonParserImpl::ReportResults(std::unique_ptr<base::Value> parsed_json,
+void SafeJsonParserImpl::ReportResults(base::Optional<base::Value> parsed_json,
                                        const std::string& error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (error.empty() && parsed_json) {
     if (!success_callback_.is_null())
-      success_callback_.Run(std::move(parsed_json));
+      std::move(success_callback_).Run(std::move(*parsed_json));
   } else {
     if (!error_callback_.is_null())
-      error_callback_.Run(error);
+      std::move(error_callback_).Run(error);
   }
 
   // The parsing is done whether an error occured or not, so this instance can

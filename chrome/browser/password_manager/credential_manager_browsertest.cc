@@ -31,9 +31,7 @@ namespace {
 
 class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
  public:
-  CredentialManagerBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kWebAuth);
-  }
+  CredentialManagerBrowserTest() {}
 
   void SetUpOnMainThread() override {
     PasswordManagerBrowserTestBase::SetUpOnMainThread();
@@ -47,9 +45,7 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // To permit using webauthentication features.
-    command_line->AppendSwitch(
-        switches::kEnableExperimentalWebPlatformFeatures);
+    PasswordManagerBrowserTestBase::SetUpCommandLine(command_line);
   }
 
   // Similarly to PasswordManagerBrowserTestBase::NavigateToFile this is a
@@ -80,30 +76,6 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     ASSERT_EQ(expect_has_results, result);
   }
 
-  // Attempt to create a publicKeyCredential with an unsupported algorithm type.
-  void CreatePublicKeyCredentialWithUnsupportedAlgorithmAndExpectNotSupported(
-      content::WebContents* web_contents) {
-    std::string result;
-    std::string script =
-        "navigator.credentials.create({ publicKey: {"
-        "  challenge: new TextEncoder().encode('climb a mountain'),"
-        "  rp: { id: '1098237235409872', name: 'Acme' },"
-        "  user: { "
-        "    id: new TextEncoder().encode('1098237235409872'),"
-        "    name: 'avery.a.jones@example.com',"
-        "    displayName: 'Avery A. Jones', "
-        "    icon: 'https://pics.acme.com/00/p/aBjjjpqPb.png'},"
-        "  pubKeyCredParams: [{ type: 'public-key', alg: '123'}],"
-        "  timeout: 60000,"
-        "  excludeList: [] }"
-        "}).catch(c => window.domAutomationController.send(c.toString()));";
-    ASSERT_TRUE(
-        content::ExecuteScriptAndExtractString(web_contents, script, &result));
-    ASSERT_EQ(
-        "NotSupportedError: Parameters for this operation are not supported.",
-        result);
-  }
-
   // Schedules a call to be made to navigator.credentials.store() in the
   // `unload` handler to save a credential with |username| and |password|.
   void ScheduleNavigatorStoreCredentialAtUnload(
@@ -121,8 +93,8 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
   }
 
   // Tests that when navigator.credentials.store() is called in an `unload`
-  // handler before a same-RenderFrame navigation, the request is guaranteed to
-  // be serviced in the context of the initial document.
+  // handler before a same-RenderFrame navigation, the request is either dropped
+  // or serviced in the context of the old document.
   //
   // If |preestablish_mojo_pipe| is set, then the CredentialManagerClient will
   // establish the Mojo connection to the ContentCredentialManager ahead of
@@ -142,8 +114,8 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     ChromePasswordManagerClient* client =
         ChromePasswordManagerClient::FromWebContents(WebContents());
 
+    EXPECT_FALSE(client->has_binding_for_credential_manager());
     if (preestablish_mojo_pipe) {
-      EXPECT_FALSE(client->has_binding_for_credential_manager());
       ASSERT_NO_FATAL_FAILURE(
           TriggerNavigatorGetPasswordCredentialsAndExpectHasResult(
               WebContents(), false));
@@ -159,11 +131,13 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     ui_test_utils::NavigateToURL(browser(), a_url2);
     ASSERT_EQ(old_rfh, WebContents()->GetMainFrame());
 
-    // Ensure that the old document no longer has a Mojo connection to the
-    // ContentCredentialManager, nor can it get one later.
+    // Ensure that the old document no longer has a mojom::CredentialManager
+    // interface connection to the ContentCredentialManager, nor can it get one
+    // later.
     //
     // The sequence of events for same-RFH navigations is as follows:
     //  1.) FrameHostMsg_DidStartProvisionalLoad
+    //  ... waiting for first response byte ...
     //  2.) FrameLoader::PrepareForCommit
     //  2.1) Document::Shutdown (old Document)
     //  3.) mojom::FrameHost::DidCommitProvisionalLoad (new load)
@@ -172,25 +146,38 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     //  5.) content::WaitForLoadStop inside NavigateToURL returns
     //  6.) NavigateToURL returns
     //
-    // After Step 2.1, the old Document cannot issue a new Mojo InterfaceRequest
-    // anymore. Plus, because the AssociatedInterfaceRegistry, through which the
-    // associated interface to the ContentCredentialManager is retrieved, is
-    // itself Channel-associated, any InterfaceRequest messages that may have
-    // been issued before or during Step 2.1, will be guaranteed to arrive to
-    // the browser side before DidCommitProvisionalLoad in Step 3.
+    // After Step 2.1, the old Document no longer executes any author JS, so
+    // there can be no more calls to the Credential Management API, hence no
+    // more InterfaceRequests for mojom::CredentialManager.
     //
-    // Hence it is sufficient to check that the Mojo connection is closed now.
+    // Because the InterfaceRegistry, through which the client end of the
+    // mojom::CredentialManager interface to the ContentCredentialManager is
+    // retrieved, is re-bound by the RenderFrameHostImpl to a new pipe on
+    // DidCommitProvisionalLoad, any InterfaceRequest messages issued before or
+    // during Step 2.1 will either have already been dispatched on the browser
+    // side and serviced before DidCommitProvisionalLoad in Step 3, or will be
+    // ignored altogether.
+    //
+    // Hence it is sufficient to check that the Mojo connection is closed now
+    // after NavigateToURL above has returned.
     EXPECT_FALSE(client->has_binding_for_credential_manager());
 
-    // Ensure that the navigator.credentials.store() call was serviced in the
-    // context of the old URL, |a_url|.
+    // Ensure that the navigator.credentials.store() call issued on the previous
+    // mojom::CredentialManager connection was either serviced in the context of
+    // the old URL, |a_url|, or dropped altogether.
     //
-    // The CredentialManager Mojo interface is Channel-associated, so message
-    // ordering with legacy IPC messages is preserved. Therefore, servicing the
-    // store() called from the `unload` handler, triggered from
-    // FrameLoader::PrepareForCommit, will be serviced before
-    // DidCommitProvisionalLoad, thus before DidFinishNavigation,
-    ASSERT_TRUE(client->was_store_ever_called());
+    // The behavior is non-deterministic because the mojom::CredentialManager
+    // interface is not Channel-associated, so message ordering with legacy IPC
+    // messages is not preserved.
+    //
+    // If the store() method invoked from the `unload` handler (in Step 2.1)
+    // happens to be speedily dispatched before DidCommitProvisionalLoad, it
+    // will have been serviced in the context of the old document. Otherwise the
+    // ContentCredentialManager should have closed the underlying interface
+    // connection in response to DidCommitProvisionalLoad in Step 3, and the
+    // method call should be ignored.
+    if (!client->was_store_ever_called())
+      return;
 
     BubbleObserver prompt_observer(WebContents());
     prompt_observer.WaitForAutomaticSavePrompt();
@@ -210,7 +197,8 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
         test_password_store->stored_passwords().begin()->second[0];
     EXPECT_EQ(base::ASCIIToUTF16("user"), signin_form.username_value);
     EXPECT_EQ(base::ASCIIToUTF16("hunter2"), signin_form.password_value);
-    EXPECT_EQ(a_url1.GetOrigin(), signin_form.origin);
+    EXPECT_EQ(a_url1.GetOrigin().spec(), signin_form.signon_realm);
+    EXPECT_EQ(a_url1, signin_form.origin);
   }
 
   // Tests the when navigator.credentials.store() is called in an `unload`
@@ -253,8 +241,7 @@ class CredentialManagerBrowserTest : public PasswordManagerBrowserTestBase {
     // The sufficient conditions for this are:
     //  -- The swapped out RFH is destroyed, so the RenderFrame cannot
     //     establish a new Mojo connection to ContentCredentialManager anymore.
-    //  -- There is no already existing Mojo connection to
-    //  ContentCredentialManager
+    //  -- There is no pre-existing Mojo connection to ContentCredentialManager
     //     either, which could be used to call store() in the future.
     //  -- There have not been any calls to store() in the past.
     rfh_destruction_observer.WaitUntilDeleted();
@@ -290,11 +277,11 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   std::string fill_password =
       "document.getElementById('username_field').value = 'user';"
       "document.getElementById('password_field').value = 'password';";
-  ASSERT_TRUE(content::ExecuteScript(RenderViewHost(), fill_password));
+  ASSERT_TRUE(content::ExecuteScript(WebContents(), fill_password));
 
   // Call the API to trigger the notification to the client.
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "navigator.credentials.get({password: true})"
       ".then(cred => window.location = '/password/done.html')"));
   // Mojo calls from the renderer are asynchronous.
@@ -335,12 +322,14 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
   autofill::PasswordForm form_1;
   form_1.signon_realm = origin.spec();
+  form_1.origin = origin;
   form_1.username_value = base::ASCIIToUTF16("user1");
   form_1.password_value = base::ASCIIToUTF16("abcdef");
   form_1.preferred = true;
 
   autofill::PasswordForm form_2;
   form_2.signon_realm = origin.spec();
+  form_2.origin = origin;
   form_2.username_value = base::ASCIIToUTF16("user2");
   form_2.password_value = base::ASCIIToUTF16("123456");
 
@@ -366,7 +355,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user1' with the old password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user1', password: 'abcdef' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -381,7 +370,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user2' with the old password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user2', password: '123456' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -419,12 +408,14 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
   autofill::PasswordForm form_1;
   form_1.signon_realm = origin.spec();
+  form_1.origin = origin;
   form_1.username_value = base::ASCIIToUTF16("user1");
   form_1.password_value = base::ASCIIToUTF16("abcdef");
   form_1.preferred = true;
 
   autofill::PasswordForm form_2;
   form_2.signon_realm = origin.spec();
+  form_2.origin = origin;
   form_2.username_value = base::ASCIIToUTF16("user2");
   form_2.password_value = base::ASCIIToUTF16("123456");
 
@@ -450,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user1' with a new password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user1', password: 'ABCDEF' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -465,7 +456,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user2' with a new password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user2', password: 'UVWXYZ' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -547,7 +538,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user1' with a new password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user1', password: 'ABCDEF' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -562,7 +553,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
     // Call the API to store 'user2' with a new password.
     ASSERT_TRUE(content::ExecuteScript(
-        RenderViewHost(),
+        WebContents(),
         "navigator.credentials.store("
         "  new PasswordCredential({ id: 'user2', password: 'UVWXYZ' }))"
         ".then(cred => window.location = '/password/done.html');"));
@@ -614,7 +605,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
   // Call the API to trigger |get| and |store| and redirect.
   ASSERT_TRUE(
-      content::ExecuteScript(RenderViewHost(),
+      content::ExecuteScript(WebContents(),
                              "navigator.credentials.get({password: true})"
                              ".then(cred => "
                              "navigator.credentials.store(cred)"
@@ -644,8 +635,8 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
       password_store->stored_passwords();
   GURL www_url = https_test_server().GetURL("www.example.com", "/");
   EXPECT_EQ(2U, passwords.size());
-  EXPECT_TRUE(base::ContainsKey(passwords, psl_url.spec()));
-  EXPECT_TRUE(base::ContainsKey(passwords, www_url.spec()));
+  EXPECT_TRUE(base::Contains(passwords, psl_url.spec()));
+  EXPECT_TRUE(base::Contains(passwords, www_url.spec()));
 }
 
 IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
@@ -671,7 +662,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
   // Call the API to trigger |get| and |store| and redirect.
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "navigator.credentials.store("
       "  new PasswordCredential({ id: 'user', password: 'P4SSW0RD' }))"
       ".then(cred => window.location = '/password/done.html');"));
@@ -691,8 +682,8 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
       password_store->stored_passwords();
   GURL www_url = https_test_server().GetURL("www.example.com", "/");
   EXPECT_EQ(2U, passwords.size());
-  EXPECT_TRUE(base::ContainsKey(passwords, psl_url.spec()));
-  EXPECT_TRUE(base::ContainsKey(passwords, www_url.spec()));
+  EXPECT_TRUE(base::Contains(passwords, psl_url.spec()));
+  EXPECT_TRUE(base::Contains(passwords, www_url.spec()));
   EXPECT_EQ(base::ASCIIToUTF16("user"),
             passwords[psl_url.spec()].front().username_value);
   EXPECT_EQ(base::ASCIIToUTF16("password"),
@@ -733,7 +724,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
   // Call the API to trigger the account chooser.
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(), "navigator.credentials.get({password: true})"));
+      WebContents(), "navigator.credentials.get({password: true})"));
   BubbleObserver(WebContents()).WaitForAccountChooser();
 
   // Wait for the migration logic to actually touch the password store.
@@ -768,11 +759,11 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
   std::string fill_password =
   "document.getElementById('username_field').value = 'trash';"
   "document.getElementById('password_field').value = 'trash';";
-  ASSERT_TRUE(content::ExecuteScript(RenderViewHost(), fill_password));
+  ASSERT_TRUE(content::ExecuteScript(WebContents(), fill_password));
 
   // Call the API to trigger the notification to the client.
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "navigator.credentials.get({password: true})"
       ".then(cred => window.location = '/password/done.html');"));
 
@@ -888,19 +879,20 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, SaveViaAPIAndAutofill) {
   NavigateToFile("/password/password_form.html");
+  const GURL current_url = WebContents()->GetLastCommittedURL();
 
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "document.getElementById('input_submit_button').addEventListener('click',"
       "function(event) {"
-        "var c = new PasswordCredential({ id: 'user', password: 'API' });"
-        "navigator.credentials.store(c);"
+      "var c = new PasswordCredential({ id: 'user', password: 'API' });"
+      "navigator.credentials.store(c);"
       "});"));
   // Fill the password and click the button to submit the page. The API should
   // suppress the autofill password manager.
   NavigationObserver form_submit_observer(WebContents());
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "document.getElementById('username_field').value = 'user';"
       "document.getElementById('password_field').value = 'autofill';"
       "document.getElementById('input_submit_button').click();"));
@@ -923,7 +915,7 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, SaveViaAPIAndAutofill) {
   EXPECT_EQ(base::ASCIIToUTF16("API"), signin_form.password_value);
   EXPECT_EQ(embedded_test_server()->base_url().spec(),
             signin_form.signon_realm);
-  EXPECT_EQ(embedded_test_server()->base_url(), signin_form.origin);
+  EXPECT_EQ(current_url, signin_form.origin);
 }
 
 IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, UpdateViaAPIAndAutofill) {
@@ -945,18 +937,18 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, UpdateViaAPIAndAutofill) {
   NavigateToFile("/password/password_form.html");
 
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "document.getElementById('input_submit_button').addEventListener('click',"
       "function(event) {"
-        "var c = new PasswordCredential({ id: 'user', password: 'API' });"
-        "navigator.credentials.store(c);"
+      "var c = new PasswordCredential({ id: 'user', password: 'API' });"
+      "navigator.credentials.store(c);"
       "});"));
   // Fill the new password and click the button to submit the page later. The
   // API should suppress the autofill password manager and overwrite the
   // password.
   NavigationObserver form_submit_observer(WebContents());
   ASSERT_TRUE(content::ExecuteScript(
-      RenderViewHost(),
+      WebContents(),
       "document.getElementById('username_field').value = 'user';"
       "document.getElementById('password_field').value = 'autofill';"
       "document.getElementById('input_submit_button').click();"));
@@ -990,24 +982,10 @@ IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest, CredentialsAutofilled) {
 
   // Reload the page and make sure it's autofilled.
   NavigateToFile("/password/password_form.html");
-  WaitForElementValue("username_field", "user");
   content::SimulateMouseClickAt(
       WebContents(), 0, blink::WebMouseEvent::Button::kLeft, gfx::Point(1, 1));
+  WaitForElementValue("username_field", "user");
   WaitForElementValue("password_field", "12345");
-}
-
-// Tests that when navigator.credentials.create() is called with an unsupported
-// algorithm, we get a NotSupportedError.
-IN_PROC_BROWSER_TEST_F(CredentialManagerBrowserTest,
-                       CreatePublicKeyCredentialAlgorithmNotSupported) {
-  const GURL a_url1 = https_test_server().GetURL("a.com", "/title1.html");
-
-  // Navigate to a mostly empty page.
-  ui_test_utils::NavigateToURL(browser(), a_url1);
-
-  ASSERT_NO_FATAL_FAILURE(
-      CreatePublicKeyCredentialWithUnsupportedAlgorithmAndExpectNotSupported(
-          WebContents()));
 }
 
 }  // namespace

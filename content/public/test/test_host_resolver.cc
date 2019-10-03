@@ -4,10 +4,8 @@
 
 #include "content/public/test/test_host_resolver.h"
 
-#include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
 #include "base/threading/thread.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/notification_service_impl.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_interfaces.h"
@@ -35,7 +33,7 @@ class LocalHostResolverProc : public net::HostResolverProc {
     if (host == net::GetHostName()) {
       local = true;
     } else {
-      for (size_t i = 0; i < arraysize(kLocalHostNames); i++)
+      for (size_t i = 0; i < base::size(kLocalHostNames); i++)
         if (host == kLocalHostNames[i]) {
           local = true;
           break;

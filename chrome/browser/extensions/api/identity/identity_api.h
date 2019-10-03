@@ -12,11 +12,13 @@
 #include <vector>
 
 #include "base/callback_list.h"
+#include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
+#include "build/buildflag.h"
 #include "chrome/browser/extensions/api/identity/extension_token_key.h"
 #include "chrome/browser/extensions/api/identity/gaia_web_auth_flow.h"
 #include "chrome/browser/extensions/api/identity/identity_get_accounts_function.h"
@@ -27,18 +29,23 @@
 #include "chrome/browser/extensions/api/identity/identity_remove_cached_auth_token_function.h"
 #include "chrome/browser/extensions/api/identity/web_auth_flow.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
-#include "components/signin/core/browser/profile_identity_provider.h"
+#include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
-#include "google_apis/gaia/account_tracker.h"
-#include "google_apis/gaia/oauth2_mint_token_flow.h"
-#include "google_apis/gaia/oauth2_token_service.h"
 
 namespace content {
 class BrowserContext;
 }
 
+class Profile;
+
 namespace extensions {
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Enables all accounts in extensions.
+extern const base::Feature kExtensionsAllAccountsFeature;
+#endif
 
 class IdentityTokenCacheValue {
  public:
@@ -72,7 +79,7 @@ class IdentityTokenCacheValue {
 };
 
 class IdentityAPI : public BrowserContextKeyedAPI,
-                    public gaia::AccountTracker::Observer {
+                    public signin::IdentityManager::Observer {
  public:
   typedef std::map<ExtensionTokenKey, IdentityTokenCacheValue> CachedTokens;
 
@@ -92,23 +99,14 @@ class IdentityAPI : public BrowserContextKeyedAPI,
 
   const CachedTokens& GetAllCachedTokens();
 
-  // BrowserContextKeyedAPI implementation.
+  // BrowserContextKeyedAPI:
   void Shutdown() override;
   static BrowserContextKeyedAPIFactory<IdentityAPI>* GetFactoryInstance();
-
-  // gaia::AccountTracker::Observer implementation:
-  void OnAccountSignInChanged(const gaia::AccountIds& ids,
-                              bool is_signed_in) override;
 
   std::unique_ptr<base::CallbackList<void()>::Subscription>
   RegisterOnShutdownCallback(const base::Closure& cb) {
     return on_shutdown_callback_list_.Add(cb);
   }
-
-  // TODO(blundell): Eliminate this method once this class is no longer using
-  // AccountTracker.
-  // Makes |account_tracker_| aware of this account.
-  void SetAccountStateForTesting(const std::string& account_id, bool signed_in);
 
   // Callback that is used in testing contexts to test the implementation of
   // the chrome.identity.onSignInChanged event. Note that the passed-in Event is
@@ -119,18 +117,32 @@ class IdentityAPI : public BrowserContextKeyedAPI,
     on_signin_changed_callback_for_testing_ = callback;
   }
 
+  // Whether the chrome.identity API should use all accounts or the primary
+  // account only.
+  bool AreExtensionsRestrictedToPrimaryAccount();
+
  private:
   friend class BrowserContextKeyedAPIFactory<IdentityAPI>;
 
-  // BrowserContextKeyedAPI implementation.
+  // BrowserContextKeyedAPI:
   static const char* service_name() { return "IdentityAPI"; }
   static const bool kServiceIsNULLWhileTesting = true;
 
-  content::BrowserContext* browser_context_;
+  // signin::IdentityManager::Observer:
+  void OnRefreshTokenUpdatedForAccount(
+      const CoreAccountInfo& account_info) override;
+  // NOTE: This class must listen for this callback rather than
+  // OnRefreshTokenRemovedForAccount() to obtain the Gaia ID of the removed
+  // account.
+  void OnExtendedAccountInfoRemoved(const AccountInfo& info) override;
+
+  // Fires the chrome.identity.onSignInChanged event.
+  void FireOnAccountSignInChanged(const std::string& gaia_id,
+                                  bool is_signed_in);
+
+  Profile* profile_;
   IdentityMintRequestQueue mint_queue_;
   CachedTokens token_cache_;
-  ProfileIdentityProvider profile_identity_provider_;
-  gaia::AccountTracker account_tracker_;
 
   OnSignInChangedCallback on_signin_changed_callback_for_testing_;
 

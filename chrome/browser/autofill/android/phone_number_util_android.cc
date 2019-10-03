@@ -4,9 +4,9 @@
 
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "chrome/android/chrome_jni_headers/PhoneNumberUtil_jni.h"
 #include "chrome/browser/browser_process.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "jni/PhoneNumberUtil_jni.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
 #include "third_party/libphonenumber/phonenumber_api.h"
 
 namespace autofill {
@@ -16,19 +16,18 @@ using ::base::android::ConvertJavaStringToUTF8;
 using ::base::android::ConvertUTF8ToJavaString;
 using ::base::android::JavaParamRef;
 using ::base::android::ScopedJavaLocalRef;
-using ::i18n::phonenumbers::PhoneNumber;
-using ::i18n::phonenumbers::PhoneNumberUtil;
 
 // Formats the |phone_number| to the specified |format| for the given country
 // |country_code|. Returns the original number if the operation is not possible.
 std::string FormatPhoneNumberWithCountryCode(
     const std::string& phone_number,
     const std::string& country_code,
-    PhoneNumberUtil::PhoneNumberFormat format) {
-  PhoneNumber parsed_number;
-  PhoneNumberUtil* phone_number_util = PhoneNumberUtil::GetInstance();
+    ::i18n::phonenumbers::PhoneNumberUtil::PhoneNumberFormat format) {
+  ::i18n::phonenumbers::PhoneNumber parsed_number;
+  ::i18n::phonenumbers::PhoneNumberUtil* phone_number_util =
+      ::i18n::phonenumbers::PhoneNumberUtil::GetInstance();
   if (phone_number_util->Parse(phone_number, country_code, &parsed_number) !=
-      PhoneNumberUtil::NO_PARSING_ERROR) {
+      ::i18n::phonenumbers::PhoneNumberUtil::NO_PARSING_ERROR) {
     return phone_number;
   }
 
@@ -40,27 +39,14 @@ std::string FormatPhoneNumberWithCountryCode(
 // Formats the |phone_number| to the specified |format|. Use application locale
 // to determine country code. Returns the original number if the operation is
 // not possible.
-std::string FormatPhoneNumber(const std::string& phone_number,
-                              PhoneNumberUtil::PhoneNumberFormat format) {
+std::string FormatPhoneNumber(
+    const std::string& phone_number,
+    ::i18n::phonenumbers::PhoneNumberUtil::PhoneNumberFormat format) {
   return FormatPhoneNumberWithCountryCode(
       phone_number,
       autofill::AutofillCountry::CountryCodeForLocale(
           g_browser_process->GetApplicationLocale()),
       format);
-}
-
-// Checks whether the given number |jphone_number| is a possible number by using
-// i18n::phonenumbers::PhoneNumberUtil::IsPossibleNumber.
-bool IsPossibleNumberImpl(const std::string& phone_number,
-                          const std::string& country_code) {
-  PhoneNumber parsed_number;
-  PhoneNumberUtil* phone_number_util = PhoneNumberUtil::GetInstance();
-  if (phone_number_util->Parse(phone_number, country_code, &parsed_number) !=
-      PhoneNumberUtil::NO_PARSING_ERROR) {
-    return false;
-  }
-
-  return phone_number_util->IsPossibleNumber(parsed_number);
 }
 
 }  // namespace
@@ -71,18 +57,18 @@ bool IsPossibleNumberImpl(const std::string& phone_number,
 // by using i18n::phonenumbers::PhoneNumberUtil::Format.
 ScopedJavaLocalRef<jstring> JNI_PhoneNumberUtil_FormatForDisplay(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const JavaParamRef<jstring>& jphone_number,
     const JavaParamRef<jstring>& jcountry_code) {
   return ConvertUTF8ToJavaString(
-      env,
-      jcountry_code.is_null()
-          ? FormatPhoneNumber(ConvertJavaStringToUTF8(env, jphone_number),
-                              PhoneNumberUtil::PhoneNumberFormat::INTERNATIONAL)
-          : FormatPhoneNumberWithCountryCode(
-                ConvertJavaStringToUTF8(env, jphone_number),
-                ConvertJavaStringToUTF8(env, jcountry_code),
-                PhoneNumberUtil::PhoneNumberFormat::INTERNATIONAL));
+      env, jcountry_code.is_null()
+               ? FormatPhoneNumber(ConvertJavaStringToUTF8(env, jphone_number),
+                                   ::i18n::phonenumbers::PhoneNumberUtil::
+                                       PhoneNumberFormat::INTERNATIONAL)
+               : FormatPhoneNumberWithCountryCode(
+                     ConvertJavaStringToUTF8(env, jphone_number),
+                     ConvertJavaStringToUTF8(env, jcountry_code),
+                     ::i18n::phonenumbers::PhoneNumberUtil::PhoneNumberFormat::
+                         INTERNATIONAL));
 }
 
 // Formats the given number |jphone_number| to
@@ -92,19 +78,18 @@ ScopedJavaLocalRef<jstring> JNI_PhoneNumberUtil_FormatForDisplay(
 // (https://w3c.github.io/browser-payment-api/#paymentrequest-updated-algorithm)
 ScopedJavaLocalRef<jstring> JNI_PhoneNumberUtil_FormatForResponse(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const JavaParamRef<jstring>& jphone_number) {
   return ConvertUTF8ToJavaString(
-      env, FormatPhoneNumber(ConvertJavaStringToUTF8(env, jphone_number),
-                             PhoneNumberUtil::PhoneNumberFormat::E164));
+      env, FormatPhoneNumber(
+               ConvertJavaStringToUTF8(env, jphone_number),
+               ::i18n::phonenumbers::PhoneNumberUtil::PhoneNumberFormat::E164));
 }
 
 // Checks whether the given number |jphone_number| is a possible number for a
 // given country |jcountry_code| by using
-// i18n::phonenumbers::PhoneNumberUtil::IsPossibleNumber.
+// i18n::phonenumbers::PhoneNumberUtil::IsPossibleNumberForString.
 jboolean JNI_PhoneNumberUtil_IsPossibleNumber(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const JavaParamRef<jstring>& jphone_number,
     const JavaParamRef<jstring>& jcountry_code) {
   const std::string phone_number = ConvertJavaStringToUTF8(env, jphone_number);
@@ -113,7 +98,8 @@ jboolean JNI_PhoneNumberUtil_IsPossibleNumber(
                                     g_browser_process->GetApplicationLocale())
                               : ConvertJavaStringToUTF8(env, jcountry_code);
 
-  return IsPossibleNumberImpl(phone_number, country_code);
+  return ::i18n::phonenumbers::PhoneNumberUtil::GetInstance()
+      ->IsPossibleNumberForString(phone_number, country_code);
 }
 
 }  // namespace autofill

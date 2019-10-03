@@ -11,7 +11,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
-class BookmarkTabHelperDelegate;
+class BookmarkTabHelperObserver;
 
 namespace bookmarks {
 struct BookmarkNodeData;
@@ -41,10 +41,6 @@ class BookmarkTabHelper
 
   ~BookmarkTabHelper() override;
 
-  void set_delegate(BookmarkTabHelperDelegate* delegate) {
-    delegate_ = delegate;
-  }
-
   // It is up to callers to call set_bookmark_drag_delegate(NULL) when
   // |bookmark_drag| is deleted since this class does not take ownership of
   // |bookmark_drag|.
@@ -55,8 +51,11 @@ class BookmarkTabHelper
 
   bool is_starred() const { return is_starred_; }
 
-  // Returns true if the bookmark bar should be shown detached.
   bool ShouldShowBookmarkBar() const;
+
+  void AddObserver(BookmarkTabHelperObserver* observer);
+  void RemoveObserver(BookmarkTabHelperObserver* observer);
+  bool HasObserver(BookmarkTabHelperObserver* observer) const;
 
  private:
   friend class content::WebContentsUserData<BookmarkTabHelper>;
@@ -73,10 +72,10 @@ class BookmarkTabHelper
                            bool ids_reassigned) override;
   void BookmarkNodeAdded(bookmarks::BookmarkModel* model,
                          const bookmarks::BookmarkNode* parent,
-                         int index) override;
+                         size_t index) override;
   void BookmarkNodeRemoved(bookmarks::BookmarkModel* model,
                            const bookmarks::BookmarkNode* parent,
-                           int old_index,
+                           size_t old_index,
                            const bookmarks::BookmarkNode* node,
                            const std::set<GURL>& removed_urls) override;
   void BookmarkAllUserNodesRemoved(bookmarks::BookmarkModel* model,
@@ -97,12 +96,14 @@ class BookmarkTabHelper
 
   bookmarks::BookmarkModel* bookmark_model_;
 
-  // Our delegate, to notify when the url starred changed.
-  BookmarkTabHelperDelegate* delegate_;
+  // A list of observers notified when when the url starred changed.
+  base::ObserverList<BookmarkTabHelperObserver>::Unchecked observers_;
 
   // The BookmarkDrag is used to forward bookmark drag and drop events to
   // extensions.
   BookmarkDrag* bookmark_drag_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkTabHelper);
 };

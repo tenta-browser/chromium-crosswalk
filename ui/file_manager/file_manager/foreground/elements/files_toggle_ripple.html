@@ -3,7 +3,7 @@
   -- found in the LICENSE file.
   -->
 
-<link rel="import" href="chrome://resources/polymer/v1_0/polymer/polymer.html">
+<link rel="import" href="chrome://resources/html/polymer.html">
 
 <dom-module id="files-toggle-ripple">
   <template>
@@ -27,20 +27,19 @@
       }
 
       .ripple {
-        background-color: white;
+        background-color: var(--files-toggle-ripple-bg-color, white);
         height: 0;
         margin: 0 auto;
         opacity: 0;
         width: 0;
-        @apply(--files-toggle-ripple);
       }
 
       .ripple.activated {
+        background-color: var(--files-toggle-ripple-activated-bg-color, white);
         border-radius: 2px;
         height: 50%;
-        opacity: 0.2;
+        opacity: var(--files-toggle-ripple-activated-opacity, 0.2);
         width: 50%;
-        @apply(--files-toggle-ripple-activated);
       }
     </style>
     <div class="ripple-container">

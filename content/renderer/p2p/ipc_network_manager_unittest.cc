@@ -12,6 +12,7 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/webrtc/rtc_base/mdns_responder_interface.h"
 
 namespace content {
 
@@ -28,6 +29,14 @@ class MockP2PSocketDispatcher : public NetworkListManager {
   ~MockP2PSocketDispatcher() override {}
 };
 
+class EmptyMdnsResponder : public webrtc::MdnsResponderInterface {
+ public:
+  void CreateNameForAddress(const rtc::IPAddress& addr,
+                            NameCreatedCallback callback) override {}
+  void RemoveNameForAddress(const rtc::IPAddress& addr,
+                            NameRemovedCallback callback) override {}
+};
+
 }  // namespace
 
 // 2 IPv6 addresses with only last digit different.
@@ -41,7 +50,9 @@ class IpcNetworkManagerTest : public testing::Test {
  public:
   IpcNetworkManagerTest()
       : network_list_manager_(new MockP2PSocketDispatcher()),
-        network_manager_(new IpcNetworkManager(network_list_manager_.get())) {}
+        network_manager_(std::make_unique<IpcNetworkManager>(
+            network_list_manager_.get(),
+            std::make_unique<EmptyMdnsResponder>())) {}
 
  protected:
   std::unique_ptr<MockP2PSocketDispatcher> network_list_manager_;
@@ -104,9 +115,11 @@ TEST_F(IpcNetworkManagerTest, TestMergeNetworkList) {
   // IPs should be in the same order as the list passed into
   // OnNetworkListChanged.
   EXPECT_TRUE(rtc::IPFromString(kIPv6PublicAddrString1, &ip_address));
-  EXPECT_EQ((*network_with_two_ips)->GetIPs()[0], ip_address);
+  EXPECT_EQ((*network_with_two_ips)->GetIPs()[0],
+            rtc::InterfaceAddress(ip_address));
   EXPECT_TRUE(rtc::IPFromString(kIPv6PublicAddrString2, &ip_address));
-  EXPECT_EQ((*network_with_two_ips)->GetIPs()[1], ip_address);
+  EXPECT_EQ((*network_with_two_ips)->GetIPs()[1],
+            rtc::InterfaceAddress(ip_address));
   // Verify the network with prefix length of 48 has 1 IP address.
   auto network_with_one_ip = std::find_if(
       networks.begin(), networks.end(),
@@ -114,7 +127,75 @@ TEST_F(IpcNetworkManagerTest, TestMergeNetworkList) {
   ASSERT_NE(networks.end(), network_with_one_ip);
   EXPECT_EQ(1uL, (*network_with_one_ip)->GetIPs().size());
   EXPECT_TRUE(rtc::IPFromString(kIPv6PublicAddrString2, &ip_address));
-  EXPECT_EQ((*network_with_one_ip)->GetIPs()[0], ip_address);
+  EXPECT_EQ((*network_with_one_ip)->GetIPs()[0],
+            rtc::InterfaceAddress(ip_address));
+}
+
+// Test that IpcNetworkManager will guess a network type from the interface
+// name when not otherwise available.
+TEST_F(IpcNetworkManagerTest, DeterminesNetworkTypeFromNameIfUnknown) {
+  net::NetworkInterfaceList list;
+  net::IPAddress ip;
+  std::vector<rtc::Network*> networks;
+  rtc::IPAddress ip_address;
+
+  // Add a "tun1" entry of type "unknown" and "tun2" entry of type Wi-Fi. The
+  // "tun1" entry (and only it) should have its type determined from its name,
+  // since its type is unknown.
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv6PublicAddrString1));
+  list.push_back(net::NetworkInterface(
+      "tun1", "tun1", 0, net::NetworkChangeNotifier::CONNECTION_UNKNOWN, ip, 64,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
+
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv6PublicAddrString2));
+  list.push_back(net::NetworkInterface(
+      "tun2", "tun2", 0, net::NetworkChangeNotifier::CONNECTION_WIFI, ip, 64,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
+
+  network_manager_->OnNetworkListChanged(list, net::IPAddress(),
+                                         net::IPAddress());
+  network_manager_->GetNetworks(&networks);
+  EXPECT_EQ(2uL, networks.size());
+
+  auto tun1 = std::find_if(
+      networks.begin(), networks.end(),
+      [](rtc::Network* network) { return network->name() == "tun1"; });
+  ASSERT_NE(networks.end(), tun1);
+  auto tun2 = std::find_if(
+      networks.begin(), networks.end(),
+      [](rtc::Network* network) { return network->name() == "tun2"; });
+  ASSERT_NE(networks.end(), tun1);
+
+  EXPECT_EQ(rtc::ADAPTER_TYPE_VPN, (*tun1)->type());
+  EXPECT_EQ(rtc::ADAPTER_TYPE_WIFI, (*tun2)->type());
+}
+
+// Test that IpcNetworkManager will act as the mDNS responder provider for
+// all networks that it returns.
+TEST_F(IpcNetworkManagerTest,
+       ServeAsMdnsResponderProviderForNetworksEnumerated) {
+  net::NetworkInterfaceList list;
+  // Add networks.
+  net::IPAddress ip;
+  EXPECT_TRUE(ip.AssignFromIPLiteral(kIPv6PublicAddrString1));
+  list.push_back(net::NetworkInterface(
+      "em1", "em1", 0, net::NetworkChangeNotifier::CONNECTION_UNKNOWN, ip, 64,
+      net::IP_ADDRESS_ATTRIBUTE_NONE));
+
+  network_manager_->OnNetworkListChanged(list, net::IPAddress(),
+                                         net::IPAddress());
+  std::vector<rtc::Network*> networks;
+  network_manager_->GetNetworks(&networks);
+
+  ASSERT_EQ(1u, networks.size());
+  webrtc::MdnsResponderInterface* const mdns_responder =
+      network_manager_->GetMdnsResponder();
+  EXPECT_EQ(mdns_responder, networks[0]->GetMdnsResponder());
+  networks.clear();
+  network_manager_->GetAnyAddressNetworks(&networks);
+  ASSERT_EQ(2u, networks.size());
+  EXPECT_EQ(mdns_responder, networks[0]->GetMdnsResponder());
+  EXPECT_EQ(mdns_responder, networks[1]->GetMdnsResponder());
 }
 
 }  // namespace content

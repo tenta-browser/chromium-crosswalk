@@ -6,19 +6,16 @@
 
 #import <objc/runtime.h>
 
-#import <EarlGrey/EarlGrey.h>
+#include <memory>
 
 #include "base/command_line.h"
-#include "base/mac/scoped_block.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/signin/core/browser/signin_switches.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
-#include "ios/chrome/test/app/settings_test_util.h"
-#include "ios/chrome/test/app/signin_test_util.h"
-#import "ios/chrome/test/app/sync_test_util.h"
-#import "ios/chrome/test/app/tab_test_util.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_test_case_app_interface.h"
+#import "ios/testing/earl_grey/coverage_utils.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/web/public/test/http_server/http_server.h"
-#include "testing/coverage_util_ios.h"
+#include "net/test/embedded_test_server/default_handlers.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -55,7 +52,8 @@ NSArray* whiteListedMultitaskingTests = @[
   @"testErrorPage",                             // ErrorPageTestCase
   @"testFindInPage",                            // FindInPageTestCase
   @"testDismissFirstRun",                       // FirstRunTestCase
-  @"testLongPDFScroll",                         // FullscreenTestCase
+  // TODO(crbug.com/872788) Failing after move to Xcode 10.
+  // @"testLongPDFScroll",                         // FullscreenTestCase
   @"testDeleteHistory",                         // HistoryUITestCase
   @"testInfobarsDismissOnNavigate",             // InfobarTestCase
   @"testShowJavaScriptAlert",                   // JavaScriptDialogTestCase
@@ -79,7 +77,35 @@ NSArray* whiteListedMultitaskingTests = @[
 
 const CFTimeInterval kDrainTimeout = 5;
 
+void SetUpMockAuthentication() {
+  [ChromeTestCaseAppInterface setUpMockAuthentication];
+}
+
+void TearDownMockAuthentication() {
+  [ChromeTestCaseAppInterface tearDownMockAuthentication];
+}
+
+void ResetAuthentication() {
+  [ChromeTestCaseAppInterface resetAuthentication];
+}
+
+void RemoveInfoBarsAndPresentedState() {
+  [ChromeTestCaseAppInterface removeInfoBarsAndPresentedState];
+}
+
+UIDeviceOrientation GetCurrentDeviceOrientation() {
+#if defined(CHROME_EARL_GREY_1)
+  return [[UIDevice currentDevice] orientation];
+#elif defined(CHROME_EARL_GREY_2)
+  return [[GREY_REMOTE_CLASS_IN_APP(UIDevice) currentDevice] orientation];
+#endif
+}
+
 }  // namespace
+
+#if defined(CHROME_EARL_GREY_2)
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(ChromeTestCaseAppInterface)
+#endif
 
 @interface ChromeTestCase () {
   // Block to be executed during object tearDown.
@@ -88,6 +114,9 @@ const CFTimeInterval kDrainTimeout = 5;
   BOOL _isHTTPServerStopped;
   BOOL _isMockAuthenticationDisabled;
   std::unique_ptr<net::EmbeddedTestServer> _testServer;
+
+  // The orientation of the device when entering these tests.
+  UIDeviceOrientation _originalOrientation;
 }
 
 // Cleans up mock authentication.
@@ -115,14 +144,27 @@ const CFTimeInterval kDrainTimeout = 5;
 // Overrides testInvocations so the set of tests run can be modified, as
 // necessary.
 + (NSArray*)testInvocations {
+#if defined(CHROME_EARL_GREY_1)
   NSError* error = nil;
   [[EarlGrey selectElementWithMatcher:grey_systemAlertViewShown()]
       assertWithMatcher:grey_nil()
                   error:&error];
   if (error != nil) {
     NSLog(@"System alert view is present, so skipping all tests!");
+#if TARGET_IPHONE_SIMULATOR
     return @[];
+#else
+    // Invoke XCTFail via call to stubbed out test.
+    NSMethodSignature* signature =
+        [ChromeTestCase instanceMethodSignatureForSelector:@selector
+                        (failAllTestsDueToSystemAlertVisible)];
+    NSInvocation* systemAlertTest =
+        [NSInvocation invocationWithMethodSignature:signature];
+    systemAlertTest.selector = @selector(failAllTestsDueToSystemAlertVisible);
+    return @[ systemAlertTest ];
+#endif  // !TARGET_IPHONE_SIMULATOR
   }
+#endif  // defined(CHROME_EARL_GREY_1)
 
   // Return specific list of tests based on the target.
   NSString* targetName = [NSBundle mainBundle].infoDictionary[@"CFBundleName"];
@@ -137,11 +179,22 @@ const CFTimeInterval kDrainTimeout = 5;
   }
 }
 
+#if defined(CHROME_EARL_GREY_1)
++ (void)setUp {
+  [super setUp];
+  [ChromeTestCase setUpHelper];
+}
+#elif defined(CHROME_EARL_GREY_2)
++ (void)setUpForTestCase {
+  [super setUpForTestCase];
+  [ChromeTestCase setUpHelper];
+}
+#endif  // CHROME_EARL_GREY_2
+
 // Set up called once for the class, to dismiss anything displayed on startup
 // and revert browser settings to default. It also starts the HTTP server and
 // enables mock authentication.
-+ (void)setUp {
-  [super setUp];
++ (void)setUpHelper {
   [[self class] startHTTPServer];
   [[self class] enableMockAuthentication];
 
@@ -149,9 +202,9 @@ const CFTimeInterval kDrainTimeout = 5;
   // ensure the UI is in a clean state.
   [self removeAnyOpenMenusAndInfoBars];
   [self closeAllTabs];
-  chrome_test_util::SetContentSettingsBlockPopups(CONTENT_SETTING_DEFAULT);
+  [ChromeEarlGrey setContentSettings:CONTENT_SETTING_DEFAULT];
 
-  coverage_util::ConfigureCoverageReportPath();
+  [CoverageUtils configureCoverageReportPath];
 }
 
 // Tear down called once for the class, to shutdown mock authentication and
@@ -164,9 +217,12 @@ const CFTimeInterval kDrainTimeout = 5;
 
 - (net::EmbeddedTestServer*)testServer {
   if (!_testServer) {
-    _testServer = base::MakeUnique<net::EmbeddedTestServer>();
-    _testServer->AddDefaultHandlers(base::FilePath(
-        FILE_PATH_LITERAL("ios/testing/data/http_server_files/")));
+    _testServer = std::make_unique<net::EmbeddedTestServer>();
+    NSString* bundlePath = [NSBundle bundleForClass:[self class]].resourcePath;
+    _testServer->ServeFilesFromDirectory(
+        base::FilePath(base::SysNSStringToUTF8(bundlePath))
+            .AppendASCII("ios/testing/data/http_server_files/"));
+    net::test_server::RegisterDefaultHandlers(_testServer.get());
   }
   return _testServer.get();
 }
@@ -177,11 +233,13 @@ const CFTimeInterval kDrainTimeout = 5;
   _isHTTPServerStopped = NO;
   _isMockAuthenticationDisabled = NO;
   _tearDownHandler = nil;
+  _originalOrientation = GetCurrentDeviceOrientation();
 
-  chrome_test_util::ResetSigninPromoPreferences();
-  chrome_test_util::ResetMockAuthentication();
-  chrome_test_util::OpenNewTab();
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+  ResetAuthentication();
+
+  // Reset any remaining sign-in state from previous tests.
+  [ChromeEarlGrey signOutAndClearAccounts];
+  [ChromeEarlGrey openNewTab];
 }
 
 // Tear down called once per test, to close all tabs and menus, and clear the
@@ -193,7 +251,7 @@ const CFTimeInterval kDrainTimeout = 5;
   }
 
   // Clear any remaining test accounts and signed in users.
-  chrome_test_util::SignOutAndClearAccounts();
+  [ChromeEarlGrey signOutAndClearAccounts];
 
   // Re-start anything that was disabled this test, so it is running when the
   // next test starts.
@@ -210,6 +268,18 @@ const CFTimeInterval kDrainTimeout = 5;
   // state.
   [[self class] removeAnyOpenMenusAndInfoBars];
   [[self class] closeAllTabs];
+
+  if (GetCurrentDeviceOrientation() != _originalOrientation) {
+    // Rotate the device back to the original orientation, since some tests
+    // attempt to run in other orientations.
+#if defined(CHROME_EARL_GREY_1)
+    [EarlGrey rotateDeviceToOrientation:_originalOrientation errorOrNil:nil];
+#elif defined(CHROME_EARL_GREY_2)
+    [EarlGrey rotateDeviceToOrientation:_originalOrientation error:nil];
+#else
+#error Neither CHROME_EARL_GREY_1 nor CHROME_EARL_GREY_2 are defined
+#endif
+  }
   [super tearDown];
 }
 
@@ -222,8 +292,7 @@ const CFTimeInterval kDrainTimeout = 5;
 }
 
 + (void)removeAnyOpenMenusAndInfoBars {
-  chrome_test_util::RemoveAllInfoBars();
-  chrome_test_util::ClearPresentedState();
+  RemoveInfoBarsAndPresentedState();
   // After programatically removing UI elements, allow Earl Grey's
   // UI synchronization to become idle, so subsequent steps won't start before
   // the UI is in a good state.
@@ -232,7 +301,7 @@ const CFTimeInterval kDrainTimeout = 5;
 }
 
 + (void)closeAllTabs {
-  chrome_test_util::CloseAllTabs();
+  [ChromeEarlGrey closeAllTabs];
   [[GREYUIThreadExecutor sharedInstance]
       drainUntilIdleWithTimeout:kDrainTimeout];
 }
@@ -257,16 +326,14 @@ const CFTimeInterval kDrainTimeout = 5;
 + (void)disableMockAuthentication {
   // Make sure local data is cleared, before disabling mock authentication,
   // where data may be sent to real servers.
-  chrome_test_util::SignOutAndClearAccounts();
-  chrome_test_util::TearDownFakeSyncServer();
-  chrome_test_util::TearDownMockAccountReconcilor();
-  chrome_test_util::TearDownMockAuthentication();
+  [ChromeEarlGrey signOutAndClearAccounts];
+  [ChromeEarlGrey tearDownFakeSyncServer];
+  TearDownMockAuthentication();
 }
 
 + (void)enableMockAuthentication {
-  chrome_test_util::SetUpMockAuthentication();
-  chrome_test_util::SetUpMockAccountReconcilor();
-  chrome_test_util::SetUpFakeSyncServer();
+  SetUpMockAuthentication();
+  [ChromeEarlGrey setUpFakeSyncServer];
 }
 
 + (void)stopHTTPServer {
@@ -277,7 +344,8 @@ const CFTimeInterval kDrainTimeout = 5;
 
 + (void)startHTTPServer {
   web::test::HttpServer& server = web::test::HttpServer::GetSharedInstance();
-  server.StartOrDie();
+  NSString* bundlePath = [NSBundle bundleForClass:[self class]].resourcePath;
+  server.StartOrDie(base::FilePath(base::SysNSStringToUTF8(bundlePath)));
 }
 
 + (NSArray*)flakyTestNames {
@@ -318,6 +386,12 @@ const CFTimeInterval kDrainTimeout = 5;
   }
   free(methods);
   return multitaskingTestNames;
+}
+
+#pragma mark - Handling system alerts
+
+- (void)failAllTestsDueToSystemAlertVisible {
+  XCTFail("System alerts are present on device. Skipping all tests.");
 }
 
 @end

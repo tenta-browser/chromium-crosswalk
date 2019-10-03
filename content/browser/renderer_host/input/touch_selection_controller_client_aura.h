@@ -70,6 +70,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
 
  private:
   friend class TestTouchSelectionControllerClientAura;
+  class EnvEventObserver;
   class EnvPreTargetHandler;
 
   bool IsQuickMenuAvailable() const;
@@ -84,6 +85,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
   void SelectBetweenCoordinates(const gfx::PointF& base,
                                 const gfx::PointF& extent) override;
   void OnSelectionEvent(ui::SelectionEventType event) override;
+  void OnDragUpdate(const gfx::PointF& position) override;
   std::unique_ptr<ui::TouchHandleDrawable> CreateDrawable() override;
   void DidScroll() override;
 
@@ -91,13 +93,15 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void RunContextMenu() override;
+  bool ShouldShowQuickMenu() override;
+  base::string16 GetSelectedText() override;
 
   // Not owned, non-null for the lifetime of this object.
   RenderWidgetHostViewAura* rwhva_;
 
   class InternalClient : public TouchSelectionControllerClient {
    public:
-    InternalClient(RenderWidgetHostViewAura* rwhva) : rwhva_(rwhva) {}
+    explicit InternalClient(RenderWidgetHostViewAura* rwhva) : rwhva_(rwhva) {}
     ~InternalClient() final {}
 
     bool SupportsAnimation() const final;
@@ -107,6 +111,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
     void SelectBetweenCoordinates(const gfx::PointF& base,
                                   const gfx::PointF& extent) final;
     void OnSelectionEvent(ui::SelectionEventType event) final;
+    void OnDragUpdate(const gfx::PointF& position) final;
     std::unique_ptr<ui::TouchHandleDrawable> CreateDrawable() final;
     void DidScroll() override;
 
@@ -123,7 +128,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
   base::ObserverList<TouchSelectionControllerClientManager::Observer>
       observers_;
 
-  base::Timer quick_menu_timer_;
+  base::RetainingOneShotTimer quick_menu_timer_;
   bool quick_menu_requested_;
   bool touch_down_;
   bool scroll_in_progress_;
@@ -131,9 +136,8 @@ class CONTENT_EXPORT TouchSelectionControllerClientAura
 
   bool show_quick_menu_immediately_for_test_;
 
-  // A pre-target event handler for aura::Env which deactivates touch selection
-  // on mouse and keyboard events.
-  std::unique_ptr<EnvPreTargetHandler> env_pre_target_handler_;
+  // An event observer that deactivates touch selection on certain input events.
+  std::unique_ptr<EnvEventObserver> env_event_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerClientAura);
 };

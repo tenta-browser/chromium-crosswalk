@@ -8,6 +8,9 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/strings/string_util.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/filter/gzip_header.h"
 #include "net/filter/gzip_source_stream.h"
@@ -15,6 +18,8 @@
 
 namespace chromeos {
 namespace {
+
+constexpr char kPPDMagicNumberString[] = "*PPD-Adobe:";
 
 // Return true if contents has a valid Gzip header.
 bool IsGZipped(const std::string& contents) {
@@ -41,7 +46,7 @@ class StringSourceStream : public net::SourceStream {
   // This source always reads sychronously, so never uses the callback.
   int Read(net::IOBuffer* dest_buffer,
            int buffer_size,
-           const net::CompletionCallback&) override {
+           net::CompletionOnceCallback) override {
     int read_size = src_.size() - read_ofs_;
     if (read_size > buffer_size) {
       read_size = buffer_size;
@@ -61,7 +66,7 @@ class PpdLineReaderImpl : public PpdLineReader {
  public:
   PpdLineReaderImpl(const std::string& ppd_contents, size_t max_line_length)
       : max_line_length_(max_line_length),
-        read_buf_(new net::IOBuffer(kReadBufCapacity)) {
+        read_buf_(base::MakeRefCounted<net::IOBuffer>(kReadBufCapacity)) {
     input_ = std::make_unique<StringSourceStream>(ppd_contents);
     if (IsGZipped(ppd_contents)) {
       input_ = net::GzipSourceStream::Create(std::move(input_),
@@ -128,7 +133,7 @@ class PpdLineReaderImpl : public PpdLineReader {
       // uses it, we should never see the callback used.
       int result = input_->Read(
           read_buf_.get(), kReadBufCapacity,
-          base::Bind([](int) { LOG(FATAL) << "Unexpected async read"; }));
+          base::BindOnce([](int) { LOG(FATAL) << "Unexpected async read"; }));
       if (result == 0) {
         eof_ = true;
         return '\0';
@@ -165,6 +170,8 @@ class PpdLineReaderImpl : public PpdLineReader {
   std::unique_ptr<net::SourceStream> input_;
 };
 
+constexpr int PpdLineReaderImpl::kReadBufCapacity;
+
 }  // namespace
 
 // static
@@ -172,6 +179,16 @@ std::unique_ptr<PpdLineReader> PpdLineReader::Create(
     const std::string& contents,
     int max_line_length) {
   return std::make_unique<PpdLineReaderImpl>(contents, max_line_length);
+}
+
+// static
+bool PpdLineReader::ContainsMagicNumber(const std::string& contents,
+                                        int max_line_length) {
+  auto line_reader = PpdLineReader::Create(contents, max_line_length);
+  std::string line;
+  return line_reader->NextLine(&line) &&
+         base::StartsWith(line, kPPDMagicNumberString,
+                          base::CompareCase::SENSITIVE);
 }
 
 }  // namespace chromeos

@@ -5,7 +5,6 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/common/extensions/api/tabs.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,8 +35,8 @@ class ExtensionTabUtilTestDelegate : public ExtensionTabUtil::Delegate {
 // Test that the custom ScrubTabForExtension delegate works - in this test it
 // sets URL to a custom string.
 TEST(ExtensionTabUtilTest, Delegate) {
-  auto test_delegate = base::MakeUnique<ExtensionTabUtilTestDelegate>();
-  ExtensionTabUtil::SetPlatformDelegate(test_delegate.get());
+  ExtensionTabUtil::SetPlatformDelegate(
+      std::make_unique<ExtensionTabUtilTestDelegate>());
 
   api::tabs::Tab tab;
   ExtensionTabUtil::ScrubTabForExtension(nullptr, nullptr, &tab);

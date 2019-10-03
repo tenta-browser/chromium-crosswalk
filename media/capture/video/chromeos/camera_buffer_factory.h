@@ -8,7 +8,7 @@
 #include <memory>
 #include <unordered_map>
 
-#include "media/capture/video/chromeos/mojo/arc_camera3.mojom.h"
+#include "media/capture/video/chromeos/mojo/camera3.mojom.h"
 #include "media/capture/video/chromeos/pixel_format_utils.h"
 #include "media/capture/video_capture_types.h"
 #include "ui/gfx/buffer_types.h"
@@ -27,10 +27,12 @@ class CAPTURE_EXPORT CameraBufferFactory {
       gfx::BufferFormat format);
 
   virtual ChromiumPixelFormat ResolveStreamBufferFormat(
-      arc::mojom::HalPixelFormat hal_format);
+      cros::mojom::HalPixelFormat hal_format);
+
+  static gfx::BufferUsage GetBufferUsage(gfx::BufferFormat format);
 
  private:
-  std::unordered_map<arc::mojom::HalPixelFormat, ChromiumPixelFormat>
+  std::unordered_map<cros::mojom::HalPixelFormat, ChromiumPixelFormat>
       resolved_hal_formats_;
 };
 

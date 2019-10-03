@@ -4,9 +4,10 @@
 
 #include "chrome/browser/media/router/media_router_base.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/guid.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
@@ -14,6 +15,8 @@
 #if !defined(OS_ANDROID)
 #include "chrome/browser/media/router/mojo/media_route_controller.h"
 #endif  // !defined(OS_ANDROID)
+
+using blink::mojom::PresentationConnectionState;
 
 namespace media_router {
 
@@ -61,7 +64,7 @@ MediaRouterBase::AddPresentationConnectionStateChangedCallback(
 
   auto& callbacks = presentation_connection_state_callbacks_[route_id];
   if (!callbacks) {
-    callbacks = base::MakeUnique<PresentationConnectionStateChangedCallbacks>();
+    callbacks = std::make_unique<PresentationConnectionStateChangedCallbacks>();
     callbacks->set_removal_callback(base::Bind(
         &MediaRouterBase::OnPresentationConnectionStateCallbackRemoved,
         base::Unretained(this), route_id));
@@ -83,6 +86,11 @@ std::vector<MediaRoute> MediaRouterBase::GetCurrentRoutes() const {
   return internal_routes_observer_->current_routes;
 }
 
+std::unique_ptr<media::FlingingController>
+MediaRouterBase::GetFlingingController(const MediaRoute::Id& route_id) {
+  return nullptr;
+}
+
 #if !defined(OS_ANDROID)
 scoped_refptr<MediaRouteController> MediaRouterBase::GetRouteController(
     const MediaRoute::Id& route_id) {
@@ -99,9 +107,9 @@ std::string MediaRouterBase::CreatePresentationId() {
 
 void MediaRouterBase::NotifyPresentationConnectionStateChange(
     const MediaRoute::Id& route_id,
-    content::PresentationConnectionState state) {
+    PresentationConnectionState state) {
   // We should call NotifyPresentationConnectionClose() for the CLOSED state.
-  DCHECK_NE(state, content::PRESENTATION_CONNECTION_STATE_CLOSED);
+  DCHECK_NE(state, PresentationConnectionState::CLOSED);
 
   auto it = presentation_connection_state_callbacks_.find(route_id);
   if (it == presentation_connection_state_callbacks_.end())
@@ -112,14 +120,14 @@ void MediaRouterBase::NotifyPresentationConnectionStateChange(
 
 void MediaRouterBase::NotifyPresentationConnectionClose(
     const MediaRoute::Id& route_id,
-    content::PresentationConnectionCloseReason reason,
+    blink::mojom::PresentationConnectionCloseReason reason,
     const std::string& message) {
   auto it = presentation_connection_state_callbacks_.find(route_id);
   if (it == presentation_connection_state_callbacks_.end())
     return;
 
   content::PresentationConnectionStateChangeInfo info(
-      content::PRESENTATION_CONNECTION_STATE_CLOSED);
+      PresentationConnectionState::CLOSED);
   info.close_reason = reason;
   info.message = message;
   it->second->Notify(info);
@@ -168,7 +176,7 @@ void MediaRouterBase::DetachRouteController(const MediaRoute::Id& route_id,
 #endif  // !defined(OS_ANDROID)
 
 void MediaRouterBase::RegisterRemotingSource(
-    int32_t tab_id,
+    SessionID tab_id,
     CastRemotingConnector* remoting_source) {
   auto it = remoting_sources_.find(tab_id);
   if (it != remoting_sources_.end()) {
@@ -178,10 +186,15 @@ void MediaRouterBase::RegisterRemotingSource(
   remoting_sources_.emplace(tab_id, remoting_source);
 }
 
-void MediaRouterBase::UnregisterRemotingSource(int32_t tab_id) {
+void MediaRouterBase::UnregisterRemotingSource(SessionID tab_id) {
   auto it = remoting_sources_.find(tab_id);
   DCHECK(it != remoting_sources_.end());
   remoting_sources_.erase(it);
+}
+
+base::Value MediaRouterBase::GetState() const {
+  NOTREACHED() << "Should not invoke MediaRouterBase::GetState()";
+  return base::Value(base::Value::Type::DICTIONARY);
 }
 
 }  // namespace media_router

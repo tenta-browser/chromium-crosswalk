@@ -14,7 +14,6 @@
 #include "base/files/memory_mapped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -79,7 +78,7 @@ void MaybePrintResourceId(uint16_t resource_id) {
   // DataPack doesn't require single-threaded access, so use a lock.
   static base::Lock* lock = new base::Lock;
   base::AutoLock auto_lock(*lock);
-  if (!base::ContainsKey(*resource_ids_logged, resource_id)) {
+  if (!base::Contains(*resource_ids_logged, resource_id)) {
     printf("Resource=%d\n", resource_id);
     resource_ids_logged->insert(resource_id);
   }

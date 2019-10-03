@@ -4,11 +4,8 @@
 
 #include "chrome/browser/chrome_browser_field_trials_mobile.h"
 
-#include <string>
-
-#include "base/command_line.h"
-#include "base/metrics/field_trial.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/prerender/prerender_field_trial.h"
@@ -17,8 +14,9 @@
 namespace chrome {
 
 void SetupMobileFieldTrials() {
+  DCHECK(!g_browser_process);
 #if defined(OS_ANDROID)
-  prerender::ConfigurePrerender();
+  prerender::ConfigureNoStatePrefetch();
 #endif
 }
 

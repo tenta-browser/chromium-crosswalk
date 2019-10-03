@@ -5,9 +5,13 @@
 import json
 import os
 
+from py_utils import cloud_storage
+
 
 DEFAULT_CREDENTIAL_PATH = os.path.join(
-    os.path.dirname(__file__), os.path.pardir, 'data', 'credentials.json')
+    os.path.dirname(__file__), '..', 'data', 'credentials.json')
+
+DEFAULT_CREDENTIAL_BUCKET = cloud_storage.PUBLIC_BUCKET
 
 
 def GetAccountNameAndPassword(credential,
@@ -22,6 +26,11 @@ def GetAccountNameAndPassword(credential,
     A tuple (username, password) in which both are username and password
     strings.
   """
+  if (credentials_path == DEFAULT_CREDENTIAL_PATH and not
+      os.path.exists(DEFAULT_CREDENTIAL_PATH)):
+      cloud_storage.GetIfChanged(
+          DEFAULT_CREDENTIAL_PATH, DEFAULT_CREDENTIAL_BUCKET)
+
   with open(credentials_path, 'r') as f:
     credentials = json.load(f)
   c = credentials.get(credential)
@@ -45,9 +54,15 @@ def InputWithSelector(action_runner, input_text, input_selector):
       possible exceptions.
   """
   action_runner.WaitForElement(selector=input_selector)
+  action_runner.Wait(0.5)
+  # Focus the requested element first and then enter text using single
+  # Keyboard events to bypass certain restrictions on websites.
   action_runner.ExecuteJavaScript(
-      'document.querySelector({{ selector }}).value = {{ value }};',
-      selector=input_selector, value=input_text)
+      'document.querySelector({{selector}}).focus()', selector=input_selector)
+  # Wait a bit to make sure the focus is properly set, otherwise we'll end up
+  # losing some characters.
+  action_runner.Wait(0.5)
+  action_runner.EnterText(input_text)
 
 def InputForm(action_runner, input_text, input_id, form_id=None):
   """Sets the text value of an input field in a form on the page.

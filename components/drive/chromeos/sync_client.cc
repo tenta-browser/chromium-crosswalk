@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/drive/chromeos/file_cache.h"
 #include "components/drive/chromeos/file_system/download_operation.h"
@@ -136,7 +137,7 @@ FileError GetParentResourceEntry(ResourceMetadata* metadata,
 SyncClient::SyncTask::SyncTask()
     : state(SUSPENDED), context(BACKGROUND), should_run_again(false) {}
 SyncClient::SyncTask::SyncTask(const SyncTask& other) = default;
-SyncClient::SyncTask::~SyncTask() {}
+SyncClient::SyncTask::~SyncTask() = default;
 
 SyncClient::SyncClient(base::SequencedTaskRunner* blocking_task_runner,
                        file_system::OperationDelegate* delegate,
@@ -168,45 +169,40 @@ SyncClient::SyncClient(base::SequencedTaskRunner* blocking_task_runner,
 }
 
 SyncClient::~SyncClient() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
 void SyncClient::StartProcessingBacklog() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   std::vector<std::string>* to_fetch = new std::vector<std::string>;
   std::vector<std::string>* to_update = new std::vector<std::string>;
   blocking_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&CollectBacklog, metadata_, to_fetch, to_update),
-      base::Bind(&SyncClient::OnGetLocalIdsOfBacklog,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 base::Owned(to_fetch),
-                 base::Owned(to_update)));
+      base::BindOnce(&CollectBacklog, metadata_, to_fetch, to_update),
+      base::BindOnce(&SyncClient::OnGetLocalIdsOfBacklog,
+                     weak_ptr_factory_.GetWeakPtr(), base::Owned(to_fetch),
+                     base::Owned(to_update)));
 }
 
 void SyncClient::StartCheckingExistingPinnedFiles() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   std::vector<std::string>* local_ids = new std::vector<std::string>;
   blocking_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&CheckExistingPinnedFiles,
-                 metadata_,
-                 cache_,
-                 local_ids),
-      base::Bind(&SyncClient::AddFetchTasks,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 base::Owned(local_ids)));
+      base::BindOnce(&CheckExistingPinnedFiles, metadata_, cache_, local_ids),
+      base::BindOnce(&SyncClient::AddFetchTasks, weak_ptr_factory_.GetWeakPtr(),
+                     base::Owned(local_ids)));
 }
 
 void SyncClient::AddFetchTask(const std::string& local_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   AddFetchTaskInternal(local_id, delay_);
 }
 
 void SyncClient::RemoveFetchTask(const std::string& local_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   SyncTasks::iterator it = tasks_.find(SyncTasks::key_type(FETCH, local_id));
   if (it == tasks_.end())
@@ -219,7 +215,7 @@ void SyncClient::RemoveFetchTask(const std::string& local_id) {
       OnTaskComplete(FETCH, local_id, FILE_ERROR_ABORT);
       break;
     case RUNNING:
-      if (!task->cancel_closure.is_null())
+      if (task->cancel_closure)
         task->cancel_closure.Run();
       break;
   }
@@ -227,14 +223,14 @@ void SyncClient::RemoveFetchTask(const std::string& local_id) {
 
 void SyncClient::AddUpdateTask(const ClientContext& context,
                                const std::string& local_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   AddUpdateTaskInternal(context, local_id, delay_);
 }
 
 bool SyncClient:: WaitForUpdateTaskToComplete(
     const std::string& local_id,
     const FileOperationCallback& callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   SyncTasks::iterator it = tasks_.find(SyncTasks::key_type(UPDATE, local_id));
   if (it == tasks_.end())
@@ -247,7 +243,7 @@ bool SyncClient:: WaitForUpdateTaskToComplete(
 
 base::Closure SyncClient::PerformFetchTask(const std::string& local_id,
                                            const ClientContext& context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   return download_operation_->EnsureFileDownloadedByLocalId(
       local_id,
       context,
@@ -260,7 +256,7 @@ base::Closure SyncClient::PerformFetchTask(const std::string& local_id,
 
 void SyncClient::AddFetchTaskInternal(const std::string& local_id,
                                       const base::TimeDelta& delay) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   SyncTask task;
   task.state = PENDING;
@@ -273,7 +269,7 @@ void SyncClient::AddFetchTaskInternal(const std::string& local_id,
 
 base::Closure SyncClient::PerformUpdateTask(const std::string& local_id,
                                             const ClientContext& context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   entry_update_performer_->UpdateEntry(
       local_id,
       context,
@@ -287,7 +283,7 @@ base::Closure SyncClient::PerformUpdateTask(const std::string& local_id,
 void SyncClient::AddUpdateTaskInternal(const ClientContext& context,
                                        const std::string& local_id,
                                        const base::TimeDelta& delay) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   SyncTask task;
   task.state = PENDING;
@@ -301,7 +297,7 @@ void SyncClient::AddUpdateTaskInternal(const ClientContext& context,
 void SyncClient::AddTask(const SyncTasks::key_type& key,
                          const SyncTask& task,
                          const base::TimeDelta& delay) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   SyncTasks::iterator it = tasks_.find(key);
   if (it != tasks_.end()) {
@@ -324,7 +320,8 @@ void SyncClient::AddTask(const SyncTasks::key_type& key,
   DCHECK_EQ(PENDING, task.state);
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&SyncClient::StartTask, weak_ptr_factory_.GetWeakPtr(), key),
+      base::BindOnce(&SyncClient::StartTask, weak_ptr_factory_.GetWeakPtr(),
+                     key),
       delay);
 }
 
@@ -390,7 +387,7 @@ void SyncClient::StartTaskAfterGetParentResourceEntry(
 void SyncClient::OnGetLocalIdsOfBacklog(
     const std::vector<std::string>* to_fetch,
     const std::vector<std::string>* to_update) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // Give priority to upload tasks over fetch tasks, so that dirty files are
   // uploaded as soon as possible.
@@ -408,7 +405,7 @@ void SyncClient::OnGetLocalIdsOfBacklog(
 }
 
 void SyncClient::AddFetchTasks(const std::vector<std::string>* local_ids) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   for (size_t i = 0; i < local_ids->size(); ++i)
     AddFetchTask((*local_ids)[i]);
@@ -417,7 +414,7 @@ void SyncClient::AddFetchTasks(const std::vector<std::string>* local_ids) {
 void SyncClient::OnTaskComplete(SyncType type,
                                 const std::string& local_id,
                                 FileError error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   const SyncTasks::key_type key(type, local_id);
   SyncTasks::iterator it = tasks_.find(key);
@@ -458,7 +455,7 @@ void SyncClient::OnTaskComplete(SyncType type,
 
   for (size_t i = 0; i < it->second.waiting_callbacks.size(); ++i) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(it->second.waiting_callbacks[i], error));
+        FROM_HERE, base::BindOnce(it->second.waiting_callbacks[i], error));
   }
   it->second.waiting_callbacks.clear();
 
@@ -468,7 +465,8 @@ void SyncClient::OnTaskComplete(SyncType type,
     it->second.should_run_again = false;
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&SyncClient::StartTask, weak_ptr_factory_.GetWeakPtr(), key),
+        base::BindOnce(&SyncClient::StartTask, weak_ptr_factory_.GetWeakPtr(),
+                       key),
         retry_delay);
   } else {
     for (size_t i = 0; i < it->second.dependent_tasks.size(); ++i)
@@ -481,16 +479,15 @@ void SyncClient::OnFetchFileComplete(const std::string& local_id,
                                      FileError error,
                                      const base::FilePath& local_path,
                                      std::unique_ptr<ResourceEntry> entry) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   OnTaskComplete(FETCH, local_id, error);
   if (error == FILE_ERROR_ABORT) {
     // If user cancels download, unpin the file so that we do not sync the file
     // again.
     base::PostTaskAndReplyWithResult(
-        blocking_task_runner_.get(),
-        FROM_HERE,
+        blocking_task_runner_.get(), FROM_HERE,
         base::Bind(&FileCache::Unpin, base::Unretained(cache_), local_id),
-        base::Bind(&util::EmptyFileOperationCallback));
+        base::DoNothing::Repeatedly<FileError>());
   }
 }
 

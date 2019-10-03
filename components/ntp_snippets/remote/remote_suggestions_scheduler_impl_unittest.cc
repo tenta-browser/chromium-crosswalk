@@ -12,8 +12,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -23,7 +21,6 @@
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "components/ntp_snippets/features.h"
-#include "components/ntp_snippets/logger.h"
 #include "components/ntp_snippets/ntp_snippets_constants.h"
 #include "components/ntp_snippets/pref_names.h"
 #include "components/ntp_snippets/remote/persistent_scheduler.h"
@@ -33,8 +30,8 @@
 #include "components/ntp_snippets/user_classifier.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "components/variations/variations_params_manager.h"
 #include "components/web_resource/web_resource_pref_names.h"
+#include "net/base/mock_network_change_notifier.h"
 #include "net/base/network_change_notifier.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -146,6 +143,14 @@ class MockRemoteSuggestionsProvider : public RemoteSuggestionsProvider {
   }
   MOCK_METHOD2(FetchSuggestionImage,
                void(const ContentSuggestion::ID&, ImageFetchedCallback*));
+
+  void FetchSuggestionImageData(const ContentSuggestion::ID& suggestion_id,
+                                ImageDataFetchedCallback callback) override {
+    FetchSuggestionImageData(suggestion_id, &callback);
+  }
+  MOCK_METHOD2(FetchSuggestionImageData,
+               void(const ContentSuggestion::ID&, ImageDataFetchedCallback*));
+
   void GetDismissedSuggestionsForDebugging(
       Category category,
       DismissedSuggestionsCallback callback) override {
@@ -153,14 +158,18 @@ class MockRemoteSuggestionsProvider : public RemoteSuggestionsProvider {
   }
   MOCK_METHOD2(GetDismissedSuggestionsForDebugging,
                void(Category category, DismissedSuggestionsCallback* callback));
-  MOCK_METHOD0(OnSignInStateChanged, void());
+  MOCK_METHOD1(OnSignInStateChanged, void(bool));
 };
 
-class FakeOfflineNetworkChangeNotifier : public net::NetworkChangeNotifier {
+class FakeOfflineNetworkChangeNotifier {
  public:
-  ConnectionType GetCurrentConnectionType() const override {
-    return NetworkChangeNotifier::CONNECTION_NONE;
+  FakeOfflineNetworkChangeNotifier() {
+    notifier_->SetConnectionType(net::NetworkChangeNotifier::CONNECTION_NONE);
   }
+
+ private:
+  std::unique_ptr<net::test::MockNetworkChangeNotifier> notifier_ =
+      net::test::MockNetworkChangeNotifier::Create();
 };
 
 }  // namespace
@@ -172,11 +181,11 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
         default_variation_params_{{"scheduler_trigger_types",
                                    "persistent_scheduler_wake_up,ntp_opened,"
                                    "browser_foregrounded,browser_cold_start"}},
-        params_manager_(ntp_snippets::kArticleSuggestionsFeature.name,
-                        default_variation_params_,
-                        {kArticleSuggestionsFeature.name}),
         user_classifier_(/*pref_service=*/nullptr,
-                         base::MakeUnique<base::DefaultClock>()) {
+                         base::DefaultClock::GetInstance()) {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        ntp_snippets::kArticleSuggestionsFeature, default_variation_params_);
+
     RemoteSuggestionsSchedulerImpl::RegisterProfilePrefs(
         utils_.pref_service()->registry());
     RequestThrottler::RegisterProfilePrefs(utils_.pref_service()->registry());
@@ -191,16 +200,14 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
   }
 
   void ResetProvider() {
-    provider_ = base::MakeUnique<StrictMock<MockRemoteSuggestionsProvider>>(
+    provider_ = std::make_unique<StrictMock<MockRemoteSuggestionsProvider>>(
         /*observer=*/nullptr);
 
-    auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-    test_clock_ = test_clock.get();
-    test_clock_->SetNow(base::Time::Now());
+    test_clock_.SetNow(base::Time::Now());
 
-    scheduler_ = base::MakeUnique<RemoteSuggestionsSchedulerImpl>(
+    scheduler_ = std::make_unique<RemoteSuggestionsSchedulerImpl>(
         &persistent_scheduler_, &user_classifier_, utils_.pref_service(),
-        &local_state_, std::move(test_clock), &debug_logger_);
+        &local_state_, &test_clock_);
     scheduler_->SetProvider(provider_.get());
   }
 
@@ -209,10 +216,9 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
     std::map<std::string, std::string> params = default_variation_params_;
     params[param_name] = param_value;
 
-    params_manager_.ClearAllVariationParams();
-    params_manager_.SetVariationParamsWithFeatureAssociations(
-        ntp_snippets::kArticleSuggestionsFeature.name, params,
-        {ntp_snippets::kArticleSuggestionsFeature.name});
+    scoped_feature_list_.Reset();
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        ntp_snippets::kArticleSuggestionsFeature, params);
   }
 
   bool IsEulaNotifierAvailable() {
@@ -237,7 +243,7 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
 
  protected:
   std::map<std::string, std::string> default_variation_params_;
-  variations::testing::VariationParamsManager params_manager_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   void ActivateProviderAndEula() {
     SetEulaAcceptedPref();
@@ -271,7 +277,7 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
     return &persistent_scheduler_;
   }
 
-  base::SimpleTestClock* test_clock() { return test_clock_; }
+  base::SimpleTestClock* test_clock() { return &test_clock_; }
   MockRemoteSuggestionsProvider* provider() { return provider_.get(); }
   RemoteSuggestionsSchedulerImpl* scheduler() { return scheduler_.get(); }
 
@@ -280,10 +286,9 @@ class RemoteSuggestionsSchedulerImplTest : public ::testing::Test {
   UserClassifier user_classifier_;
   TestingPrefServiceSimple local_state_;
   StrictMock<MockPersistentScheduler> persistent_scheduler_;
-  base::SimpleTestClock* test_clock_;
+  base::SimpleTestClock test_clock_;
   std::unique_ptr<MockRemoteSuggestionsProvider> provider_;
   std::unique_ptr<RemoteSuggestionsSchedulerImpl> scheduler_;
-  Logger debug_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteSuggestionsSchedulerImplTest);
 };
@@ -908,7 +913,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest, FetchIntervalForShownTriggerOnWifi) {
   // Open NTP again after too short delay (one minute missing). UserClassifier
   // defaults to UserClass::ACTIVE_NTP_USER - we work with the default interval
   // for this class here. This time no fetch is executed.
-  test_clock()->Advance(base::TimeDelta::FromHours(10) -
+  test_clock()->Advance(base::TimeDelta::FromHours(4) -
                         base::TimeDelta::FromMinutes(1));
   scheduler()->OnSuggestionsSurfaceOpened();
 
@@ -973,11 +978,12 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
   std::move(signal_fetch_done).Run(Status::Success());
 
   // Open NTP again after too short delay. This time no fetch is executed.
-  test_clock()->Advance(base::TimeDelta::FromHours(5));
+  test_clock()->Advance(base::TimeDelta::FromHours(4) -
+                        base::TimeDelta::FromMinutes(1));
   scheduler()->OnSuggestionsSurfaceOpened();
 
   // Open NTP after another delay, now together long enough to issue a fetch.
-  test_clock()->Advance(base::TimeDelta::FromHours(7));
+  test_clock()->Advance(base::TimeDelta::FromMinutes(2));
   EXPECT_CALL(*provider(), RefetchInTheBackground(_));
   scheduler()->OnSuggestionsSurfaceOpened();
 }
@@ -1196,7 +1202,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldNotRefetchWhileDisplayingBeforeConfigurableDelay) {
   constexpr int kStaleHours = 18;
   SetVariationParameter("min_age_for_stale_fetch_hours",
-                        base::IntToString(kStaleHours));
+                        base::NumberToString(kStaleHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1225,7 +1231,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldRefetchWhileDisplayingAfterConfigurableDelay) {
   constexpr int kStaleHours = 18;
   SetVariationParameter("min_age_for_stale_fetch_hours",
-                        base::IntToString(kStaleHours));
+                        base::NumberToString(kStaleHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1253,7 +1259,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldNotRefetchWhileDisplayingBeforeFallbackConfigurableDelay) {
   constexpr int kStartupHours = 12;
   SetVariationParameter("startup_fetching_interval_hours-wifi-active_ntp_user",
-                        base::IntToString(kStartupHours));
+                        base::NumberToString(kStartupHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.
@@ -1282,7 +1288,7 @@ TEST_F(RemoteSuggestionsSchedulerImplTest,
        ShouldRefetchWhileDisplayingAfterFallbackConfigurableDelay) {
   constexpr int kStartupHours = 12;
   SetVariationParameter("startup_fetching_interval_hours-wifi-active_ntp_user",
-                        base::IntToString(kStartupHours));
+                        base::NumberToString(kStartupHours));
   // Activating the provider should schedule the persistent background fetches.
   EXPECT_CALL(*persistent_scheduler(), Schedule(_, _)).Times(2);
   // First enable the scheduler -- this will trigger the persistent scheduling.

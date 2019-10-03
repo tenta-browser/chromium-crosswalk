@@ -4,11 +4,11 @@
 
 package org.chromium.chrome.browser;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.DialogInterface.OnClickListener;
-import android.os.AsyncTask;
 import android.security.KeyChain;
 import android.security.KeyChainAliasCallback;
 import android.security.KeyChainException;
@@ -19,7 +19,11 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.security.Principal;
@@ -48,7 +52,7 @@ public class SSLClientCertificateRequest {
      * The key store is accessed in background, as the APIs being exercised
      * may be blocking. The results are posted back to native on the UI thread.
      */
-    private static class CertAsyncTaskKeyChain extends AsyncTask<Void, Void, Void> {
+    private static class CertAsyncTaskKeyChain extends AsyncTask<Void> {
         // These fields will store the results computed in doInBackground so that they can be posted
         // back in onPostExecute.
         private byte[][] mEncodedChain;
@@ -57,6 +61,7 @@ public class SSLClientCertificateRequest {
         // Pointer to the native certificate request needed to return the results.
         private final long mNativePtr;
 
+        @SuppressLint("StaticFieldLeak") // TODO(crbug.com/807729): Remove and fix.
         final Context mContext;
         final String mAlias;
 
@@ -68,7 +73,7 @@ public class SSLClientCertificateRequest {
         }
 
         @Override
-        protected Void doInBackground(Void... params) {
+        protected Void doInBackground() {
             String alias = getAlias();
             if (alias == null) return null;
 
@@ -148,13 +153,14 @@ public class SSLClientCertificateRequest {
         public void alias(final String alias) {
             // This is called by KeyChainActivity in a background thread. Post task to
             // handle the certificate selection on the UI thread.
-            ThreadUtils.runOnUiThread(() -> {
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
                 if (alias == null) {
                     // No certificate was selected.
-                    ThreadUtils.runOnUiThread(
+                    PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT,
                             () -> nativeOnSystemRequestCompletion(mNativePtr, null, null));
                 } else {
-                    new CertAsyncTaskKeyChain(mContext, mNativePtr, alias).execute();
+                    new CertAsyncTaskKeyChain(mContext, mNativePtr, alias)
+                            .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                 }
             });
         }
@@ -211,8 +217,8 @@ public class SSLClientCertificateRequest {
          * Builds and shows the dialog.
          */
         public void show() {
-            final AlertDialog.Builder builder =
-                    new AlertDialog.Builder(mActivity, R.style.AlertDialogTheme);
+            final AlertDialog.Builder builder = new UiUtils.CompatibleAlertDialogBuilder(
+                    mActivity, R.style.Theme_Chromium_AlertDialog);
             builder.setTitle(R.string.client_cert_unsupported_title)
                     .setMessage(R.string.client_cert_unsupported_message)
                     .setNegativeButton(R.string.close,

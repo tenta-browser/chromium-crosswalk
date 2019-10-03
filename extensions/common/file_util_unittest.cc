@@ -11,10 +11,9 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_string_value_serializer.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -185,7 +184,7 @@ TEST_F(FileUtilTest, LoadExtensionWithUnderscoreAndMetadataFolder) {
 
 TEST_F(FileUtilTest, LoadExtensionWithValidLocales) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir = install_dir.AppendASCII("extension_with_locales");
 
   std::string error;
@@ -197,7 +196,7 @@ TEST_F(FileUtilTest, LoadExtensionWithValidLocales) {
 
 TEST_F(FileUtilTest, LoadExtensionWithoutLocalesFolder) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir = install_dir.AppendASCII("extension_without_locales");
 
   std::string error;
@@ -229,7 +228,7 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
   static const base::FilePath::CharType* const folders[] = {
       kLocaleFolder, kPlatformSpecificFolder};
 
-  for (size_t i = 0; i < arraysize(folders); i++) {
+  for (size_t i = 0; i < base::size(folders); i++) {
     base::FilePath src_path = temp.GetPath().Append(folders[i]);
     ASSERT_TRUE(base::CreateDirectory(src_path));
   }
@@ -289,7 +288,7 @@ TEST_F(FileUtilTest,
 
 TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnMissingManifest) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir =
       install_dir.AppendASCII("file_util").AppendASCII("missing_manifest");
 
@@ -298,12 +297,12 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnMissingManifest) {
       install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == NULL);
   ASSERT_FALSE(error.empty());
-  ASSERT_STREQ("Manifest file is missing or unreadable.", error.c_str());
+  ASSERT_EQ(manifest_errors::kManifestUnreadable, error);
 }
 
 TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir =
       install_dir.AppendASCII("file_util").AppendASCII("bad_manifest");
 
@@ -312,10 +311,9 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
       install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == NULL);
   ASSERT_FALSE(error.empty());
-  ASSERT_STREQ(
-      "Manifest is not valid JSON.  "
-      "Line: 2, column: 16, Syntax error.",
-      error.c_str());
+  ASSERT_EQ(manifest_errors::kManifestParseError +
+                std::string("  Line: 2, column: 16, Syntax error."),
+            error);
 }
 
 TEST_F(FileUtilTest, ValidateThemeUTF8) {
@@ -351,7 +349,7 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
   std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   value->SetString("name", "test");
   value->SetString("version", "1");
-  value->SetInteger("manifest_version", 1);
+  value->SetInteger("manifest_version", 2);
 
   base::ListValue* scripts =
       value->SetList("background.scripts", std::make_unique<base::ListValue>());
@@ -415,20 +413,20 @@ TEST_F(FileUtilTest, FindPrivateKeyFiles) {
   base::FilePath src_path = temp.GetPath().AppendASCII("some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
-  ASSERT_EQ(static_cast<int>(arraysize(private_key)),
+  ASSERT_EQ(static_cast<int>(base::size(private_key)),
             base::WriteFile(src_path.AppendASCII("a_key.pem"), private_key,
-                            arraysize(private_key)));
-  ASSERT_EQ(static_cast<int>(arraysize(private_key)),
+                            base::size(private_key)));
+  ASSERT_EQ(static_cast<int>(base::size(private_key)),
             base::WriteFile(src_path.AppendASCII("second_key.pem"), private_key,
-                            arraysize(private_key)));
+                            base::size(private_key)));
   // Shouldn't find a key with a different extension.
-  ASSERT_EQ(static_cast<int>(arraysize(private_key)),
+  ASSERT_EQ(static_cast<int>(base::size(private_key)),
             base::WriteFile(src_path.AppendASCII("key.diff_ext"), private_key,
-                            arraysize(private_key)));
+                            base::size(private_key)));
   // Shouldn't find a key that isn't parsable.
-  ASSERT_EQ(static_cast<int>(arraysize(private_key)) - 30,
+  ASSERT_EQ(static_cast<int>(base::size(private_key)) - 30,
             base::WriteFile(src_path.AppendASCII("unparsable_key.pem"),
-                            private_key, arraysize(private_key) - 30));
+                            private_key, base::size(private_key) - 30));
   std::vector<base::FilePath> private_keys =
       file_util::FindPrivateKeyFiles(temp.GetPath());
   EXPECT_EQ(2U, private_keys.size());
@@ -489,7 +487,7 @@ TEST_F(FileUtilTest, WarnOnPrivateKey) {
 // Try to install an extension with a zero-length icon file.
 TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFile) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
 
   base::FilePath ext_dir =
       install_dir.AppendASCII("file_util").AppendASCII("bad_icon");
@@ -503,7 +501,7 @@ TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFile) {
 // Try to install an unpacked extension with a zero-length icon file.
 TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFileUnpacked) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
 
   base::FilePath ext_dir =
       install_dir.AppendASCII("file_util").AppendASCII("bad_icon");
@@ -513,6 +511,45 @@ TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFileUnpacked) {
       ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
   EXPECT_FALSE(extension);
   EXPECT_EQ("Could not load extension icon 'missing-icon.png'.", error);
+}
+
+// Try to install an unpacked extension with an invisible icon. This
+// should fail.
+TEST_F(FileUtilTest, CheckInvisibleIconFileUnpacked) {
+  base::FilePath install_dir;
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
+
+  base::FilePath ext_dir =
+      install_dir.AppendASCII("file_util").AppendASCII("invisible_icon");
+
+  // Set the flag that enables the error.
+  file_util::SetReportErrorForInvisibleIconForTesting(true);
+  std::string error;
+  scoped_refptr<Extension> extension(file_util::LoadExtension(
+      ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+  file_util::SetReportErrorForInvisibleIconForTesting(false);
+  EXPECT_FALSE(extension);
+  EXPECT_EQ("The icon is not sufficiently visible 'invisible_icon.png'.",
+            error);
+}
+
+// Try to install a packed extension with an invisible icon. This should
+// succeed.
+TEST_F(FileUtilTest, CheckInvisibleIconFilePacked) {
+  base::FilePath install_dir;
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
+
+  base::FilePath ext_dir =
+      install_dir.AppendASCII("file_util").AppendASCII("invisible_icon");
+
+  // Set the flag that enables the error.
+  file_util::SetReportErrorForInvisibleIconForTesting(true);
+  std::string error;
+  scoped_refptr<Extension> extension(file_util::LoadExtension(
+      ext_dir, Manifest::INTERNAL, Extension::NO_FLAGS, &error));
+  file_util::SetReportErrorForInvisibleIconForTesting(false);
+  EXPECT_TRUE(extension);
+  EXPECT_TRUE(error.empty());
 }
 
 TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
@@ -534,11 +571,18 @@ TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
     {URL_PREFIX "/simple.html", "simple.html"},
     {URL_PREFIX "\\simple.html", "simple.html"},
     {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
-    {URL_PREFIX "..%2f..%2fsimple.html", "..%2f..%2fsimple.html"},
+    // Escaped file paths result in failure.
+    {URL_PREFIX "..%2f..%2fsimple.html", ""},
+    // Escaped things that look like escaped file paths, on the other hand,
+    // should work.
+    {URL_PREFIX "..%252f..%252fsimple.html", "..%2f..%2fsimple.html"},
+    // This is a UTF-8 lock icon, which is unsafe to display in the omnibox, but
+    // is a valid, if unusual, file name.
+    {URL_PREFIX "%F0%9F%94%93.html", "\xF0\x9F\x94\x93.html"},
   };
 #undef URL_PREFIX
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     GURL url(test_cases[i].url);
     base::FilePath expected_path =
         base::FilePath::FromUTF8Unsafe(test_cases[i].expected_relative_path);

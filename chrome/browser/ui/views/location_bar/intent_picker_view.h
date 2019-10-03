@@ -5,33 +5,29 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_INTENT_PICKER_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_INTENT_PICKER_VIEW_H_
 
-#include <memory>
-
-#include "base/macros.h"
-#include "chrome/browser/ui/views/location_bar/bubble_icon_view.h"
-
-namespace arc {
-class IntentPickerController;
-}  // namespace arc
+#include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 
 class Browser;
 
 // The entry point for the intent picker.
-class IntentPickerView : public BubbleIconView {
+class IntentPickerView : public PageActionIconView {
  public:
-  explicit IntentPickerView(Browser* browser);
+  IntentPickerView(Browser* browser, PageActionIconView::Delegate* delegate);
   ~IntentPickerView() override;
 
+  // PageActionIconView:
+  bool Update() override;
+
  protected:
-  // BubbleIconView:
-  void OnExecuting(BubbleIconView::ExecuteSource execute_source) override;
+  // PageActionIconView:
+  void OnExecuting(PageActionIconView::ExecuteSource execute_source) override;
   views::BubbleDialogDelegateView* GetBubble() const override;
   const gfx::VectorIcon& GetVectorIcon() const override;
+  base::string16 GetTextForTooltipAndAccessibleName() const override;
 
  private:
-  bool IsIncognitoMode();
-
-  std::unique_ptr<arc::IntentPickerController> intent_picker_controller_;
+  bool IsIncognitoMode() const;
+  bool ShouldShowIcon() const;
 
   Browser* const browser_;
 

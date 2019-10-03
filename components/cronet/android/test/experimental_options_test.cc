@@ -7,9 +7,10 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "base/time/time.h"
+#include "components/cronet/android/cronet_tests_jni_headers/ExperimentalOptionsTest_jni.h"
 #include "components/cronet/android/test/cronet_test_util.h"
-#include "jni/ExperimentalOptionsTest_jni.h"
 #include "net/base/address_family.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_cache.h"
@@ -50,7 +51,6 @@ void WriteToHostCacheOnNetworkThread(jlong jcontext_adapter,
 
 static void JNI_ExperimentalOptionsTest_WriteToHostCache(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     jlong jcontext_adapter,
     const JavaParamRef<jstring>& jaddress) {
   TestUtil::RunAfterContextInit(

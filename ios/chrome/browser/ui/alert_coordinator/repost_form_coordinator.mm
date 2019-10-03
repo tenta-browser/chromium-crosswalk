@@ -6,11 +6,16 @@
 
 #include "base/logging.h"
 #include "components/strings/grit/components_strings.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/ui/dialogs/completion_block_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+using completion_block_util::DecidePolicyCallback;
+using completion_block_util::GetSafeDecidePolicyCompletion;
 
 @interface RepostFormCoordinator () {
   // WebState which requested this dialog.
@@ -19,6 +24,8 @@
   UIAlertController* _dialogController;
   // Number of attempts to show the repost form action sheet.
   NSUInteger _repostAttemptCount;
+  // A completion handler to be called when the dialog is dismissed.
+  void (^_dismissCompletionHandler)(void);
 }
 
 // Creates a new UIAlertController to use for the dialog.
@@ -37,14 +44,25 @@
                          completionHandler:(void (^)(BOOL))completionHandler {
   DCHECK(webState);
   DCHECK(completionHandler);
-  self = [super initWithBaseViewController:viewController];
+  self = [super
+      initWithBaseViewController:viewController
+                    browserState:ios::ChromeBrowserState::FromBrowserState(
+                                     webState->GetBrowserState())];
   if (self) {
     _webState = webState;
     CGRect sourceRect = CGRectMake(dialogLocation.x, dialogLocation.y, 1, 1);
+    DecidePolicyCallback safeCallback =
+        GetSafeDecidePolicyCompletion(completionHandler);
     _dialogController =
-        [[self class] newDialogControllerForSourceView:webState->GetView()
+        [[self class] newDialogControllerForSourceView:viewController.view
                                             sourceRect:sourceRect
-                                     completionHandler:completionHandler];
+                                     completionHandler:safeCallback];
+    // The dialog may be dimissed when a new navigation starts while the dialog
+    // is still presenting. This should be treated as a NO from user.
+    // See https://crbug.com/854750 for a case why this matters.
+    _dismissCompletionHandler = ^{
+      safeCallback(NO);
+    };
   }
   return self;
 }
@@ -54,7 +72,8 @@
     return;
 
   // Check to see if an action sheet can be shown.
-  if ([_webState->GetView() window]) {
+  if (self.baseViewController.view.window &&
+      !self.baseViewController.presentedViewController) {
     [self.baseViewController presentViewController:_dialogController
                                           animated:YES
                                         completion:nil];
@@ -90,8 +109,9 @@
 - (void)stop {
   [_dialogController.presentingViewController
       dismissViewControllerAnimated:YES
-                         completion:nil];
+                         completion:_dismissCompletionHandler];
   _repostAttemptCount = 0;
+  _dismissCompletionHandler = nil;
 }
 
 #pragma mark - Private

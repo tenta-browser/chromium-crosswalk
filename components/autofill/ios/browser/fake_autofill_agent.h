@@ -18,15 +18,17 @@ NS_ASSUME_NONNULL_BEGIN
 @interface FakeAutofillAgent : AutofillAgent
 
 // Adds a |suggestion| to be returned for form with |formName| and a field
-// with |fieldName|.
+// with |fieldIdentifier|.
 - (void)addSuggestion:(FormSuggestion*)suggestion
           forFormName:(NSString*)formName
-            fieldName:(NSString*)fieldName;
+      fieldIdentifier:(NSString*)fieldIdentifier
+              frameID:(NSString*)frameID;
 
 // Returns the last selected |suggestion| for form with |formName| and field
-// with |fieldName|.
+// with |fieldIdentifier|.
 - (FormSuggestion*)selectedSuggestionForFormName:(NSString*)formName
-                                       fieldName:(NSString*)fieldName;
+                                 fieldIdentifier:(NSString*)fieldIdentifier
+                                         frameID:(NSString*)frameID;
 
 @end
 

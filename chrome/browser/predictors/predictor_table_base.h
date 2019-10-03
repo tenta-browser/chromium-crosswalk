@@ -7,14 +7,14 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 
 namespace base {
 class SequencedTaskRunner;
 }
 
 namespace sql {
-class Connection;
+class Database;
 }
 
 namespace predictors {
@@ -38,20 +38,21 @@ class PredictorTableBase
   // DB sequence functions.
   virtual void CreateTableIfNonExistent() = 0;
   virtual void LogDatabaseStats() = 0;
-  void Initialize(sql::Connection* db);
+  void Initialize(sql::Database* db);
   void SetCancelled();
-  sql::Connection* DB();
+  bool IsCancelled();
+  sql::Database* DB();
   void ResetDB();
 
   bool CantAccessDatabase();
 
  private:
-  base::CancellationFlag cancelled_;
+  base::AtomicFlag cancelled_;
 
   friend class base::RefCountedThreadSafe<PredictorTableBase>;
 
   scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
-  sql::Connection* db_;
+  sql::Database* db_;
 
   DISALLOW_COPY_AND_ASSIGN(PredictorTableBase);
 };

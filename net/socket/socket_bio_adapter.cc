@@ -9,7 +9,6 @@
 #include <algorithm>
 
 #include "base/bind.h"
-#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -18,7 +17,41 @@
 #include "net/socket/socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/ssl/openssl_ssl_util.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "third_party/boringssl/src/include/openssl/bio.h"
+
+namespace {
+
+net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("socket_bio_adapter", R"(
+      semantics {
+        sender: "Socket BIO Adapter"
+        description:
+          "SocketBIOAdapter is used only internal to //net code as an internal "
+          "detail to implement a TLS connection for a Socket class, and is not "
+          "being called directly outside of this abstraction."
+        trigger:
+          "Establishing a TLS connection to a remote endpoint. There are many "
+          "different ways in which a TLS connection may be triggered, such as "
+          "loading an HTTPS URL."
+        data:
+          "All data sent or received over a TLS connection. This traffic may "
+          "either be the handshake or application data. During the handshake, "
+          "the target host name, user's IP, data related to previous "
+          "handshake, client certificates, and channel ID, may be sent. When "
+          "the connection is used to load an HTTPS URL, the application data "
+          "includes cookies, request headers, and the response body."
+        destination: OTHER
+        destination_other:
+          "Any destination the implementing socket is connected to."
+      }
+      policy {
+        cookies_allowed: NO
+        setting: "This feature cannot be disabled."
+        policy_exception_justification: "Essential for navigation."
+      })");
+
+}  // namespace
 
 namespace net {
 
@@ -33,16 +66,15 @@ SocketBIOAdapter::SocketBIOAdapter(StreamSocket* socket,
       write_buffer_capacity_(write_buffer_capacity),
       write_buffer_used_(0),
       write_error_(OK),
-      delegate_(delegate),
-      weak_factory_(this) {
+      delegate_(delegate) {
   bio_.reset(BIO_new(&kBIOMethod));
   bio_->ptr = this;
   bio_->init = 1;
 
-  read_callback_ = base::Bind(&SocketBIOAdapter::OnSocketReadComplete,
-                              weak_factory_.GetWeakPtr());
-  write_callback_ = base::Bind(&SocketBIOAdapter::OnSocketWriteComplete,
-                               weak_factory_.GetWeakPtr());
+  read_callback_ = base::BindRepeating(&SocketBIOAdapter::OnSocketReadComplete,
+                                       weak_factory_.GetWeakPtr());
+  write_callback_ = base::BindRepeating(
+      &SocketBIOAdapter::OnSocketWriteComplete, weak_factory_.GetWeakPtr());
 }
 
 SocketBIOAdapter::~SocketBIOAdapter() {
@@ -88,16 +120,13 @@ int SocketBIOAdapter::BIORead(char* out, int len) {
     // reused after shutdown for non-SSL traffic, so overreading is fine.
     DCHECK(!read_buffer_);
     DCHECK_EQ(0, read_offset_);
-    read_buffer_ = new IOBuffer(read_buffer_capacity_);
-    int result = ERR_READ_IF_READY_NOT_IMPLEMENTED;
-    if (base::FeatureList::IsEnabled(Socket::kReadIfReadyExperiment)) {
-      result = socket_->ReadIfReady(
-          read_buffer_.get(), read_buffer_capacity_,
-          base::Bind(&SocketBIOAdapter::OnSocketReadIfReadyComplete,
-                     weak_factory_.GetWeakPtr()));
-      if (result == ERR_IO_PENDING)
-        read_buffer_ = nullptr;
-    }
+    read_buffer_ = base::MakeRefCounted<IOBuffer>(read_buffer_capacity_);
+    int result = socket_->ReadIfReady(
+        read_buffer_.get(), read_buffer_capacity_,
+        base::BindOnce(&SocketBIOAdapter::OnSocketReadIfReadyComplete,
+                       weak_factory_.GetWeakPtr()));
+    if (result == ERR_IO_PENDING)
+      read_buffer_ = nullptr;
     if (result == ERR_READ_IF_READY_NOT_IMPLEMENTED) {
       result = socket_->Read(read_buffer_.get(), read_buffer_capacity_,
                              read_callback_);
@@ -186,7 +215,7 @@ int SocketBIOAdapter::BIOWrite(const char* in, int len) {
   // Instantiate the write buffer if needed.
   if (!write_buffer_) {
     DCHECK_EQ(0, write_buffer_used_);
-    write_buffer_ = new GrowableIOBuffer;
+    write_buffer_ = base::MakeRefCounted<GrowableIOBuffer>();
     write_buffer_->SetCapacity(write_buffer_capacity_);
   }
 
@@ -236,8 +265,8 @@ int SocketBIOAdapter::BIOWrite(const char* in, int len) {
   if (write_error_ != OK && write_error_ != ERR_IO_PENDING &&
       read_result_ == ERR_IO_PENDING) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&SocketBIOAdapter::CallOnReadReady,
-                              weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&SocketBIOAdapter::CallOnReadReady,
+                                  weak_factory_.GetWeakPtr()));
   }
 
   return bytes_copied;
@@ -247,8 +276,8 @@ void SocketBIOAdapter::SocketWrite() {
   while (write_error_ == OK && write_buffer_used_ > 0) {
     int write_size =
         std::min(write_buffer_used_, write_buffer_->RemainingCapacity());
-    int result =
-        socket_->Write(write_buffer_.get(), write_size, write_callback_);
+    int result = socket_->Write(write_buffer_.get(), write_size,
+                                write_callback_, kTrafficAnnotation);
     if (result == ERR_IO_PENDING) {
       write_error_ = ERR_IO_PENDING;
       return;

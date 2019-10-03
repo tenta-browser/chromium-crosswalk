@@ -14,10 +14,6 @@
 #include "content/public/common/main_function_params.h"
 #include "content/shell/browser/shell_browser_context.h"
 
-namespace net {
-class NetLog;
-}
-
 namespace content {
 
 class ShellBrowserMainParts : public BrowserMainParts {
@@ -26,12 +22,13 @@ class ShellBrowserMainParts : public BrowserMainParts {
   ~ShellBrowserMainParts() override;
 
   // BrowserMainParts overrides.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   int PreCreateThreads() override;
   void PreMainMessageLoopStart() override;
   void PostMainMessageLoopStart() override;
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
+  void PreDefaultMainMessageLoopRun(base::OnceClosure quit_closure) override;
   void PostMainMessageLoopRun() override;
   void PostDestroyThreads() override;
 
@@ -39,8 +36,6 @@ class ShellBrowserMainParts : public BrowserMainParts {
   ShellBrowserContext* off_the_record_browser_context() {
     return off_the_record_browser_context_.get();
   }
-
-  net::NetLog* net_log() { return net_log_.get(); }
 
  protected:
   virtual void InitializeBrowserContexts();
@@ -54,19 +49,13 @@ class ShellBrowserMainParts : public BrowserMainParts {
   }
 
  private:
-  void SetupFieldTrials();
 
-  std::unique_ptr<net::NetLog> net_log_;
   std::unique_ptr<ShellBrowserContext> browser_context_;
   std::unique_ptr<ShellBrowserContext> off_the_record_browser_context_;
 
   // For running content_browsertests.
   const MainFunctionParams parameters_;
   bool run_message_loop_;
-
-  // Statistical testing infrastructure for the entire browser. nullptr until
-  // |SetupFieldTrials()| is called.
-  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellBrowserMainParts);
 };

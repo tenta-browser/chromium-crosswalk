@@ -20,8 +20,8 @@
 #include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/favicon_base/favicon_types.h"
-#include "components/sessions/core/persistent_tab_restore_service.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
+#include "components/sessions/core/tab_restore_service_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -30,11 +30,12 @@
 
 namespace {
 
-class MockTRS : public sessions::PersistentTabRestoreService {
+class MockTRS : public sessions::TabRestoreServiceImpl {
  public:
   MockTRS(Profile* profile)
-      : sessions::PersistentTabRestoreService(
+      : sessions::TabRestoreServiceImpl(
             base::WrapUnique(new ChromeTabRestoreServiceClient(profile)),
+            profile->GetPrefs(),
             nullptr) {}
   MOCK_CONST_METHOD0(entries, const sessions::TabRestoreService::Entries&());
 };
@@ -111,7 +112,7 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
                                  const std::string& url,
                                  const std::string& title) {
     auto* tab = new MockTRS::Tab;
-    tab->id = id;
+    tab->id = SessionID::FromSerializedValue(id);
     tab->current_navigation_index = 0;
     tab->navigations.push_back(
         sessions::SerializedNavigationEntryTestHelper::CreateNavigation(url,
@@ -123,7 +124,7 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
       SessionID::id_type id,
       std::initializer_list<MockTRS::Tab*> tabs) {
     auto* window = new MockTRS::Window;
-    window->id = id;
+    window->id = SessionID::FromSerializedValue(id);
     window->tabs.reserve(tabs.size());
     for (auto* tab : tabs)
       window->tabs.emplace_back(std::move(tab));
@@ -137,6 +138,10 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
   void GotFaviconData(HistoryMenuBridge::HistoryItem* item,
                       const favicon_base::FaviconImageResult& image_result) {
     bridge_->GotFaviconData(item, image_result);
+  }
+
+  void CancelFaviconRequest(HistoryMenuBridge::HistoryItem* item) {
+    bridge_->CancelFaviconRequest(item);
   }
 
   std::unique_ptr<MockBridge> bridge_;
@@ -253,13 +258,13 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabs) {
   NSMenuItem* item1 = [menu itemAtIndex:0];
   MockBridge::HistoryItem* hist1 = bridge_->HistoryItemForMenuItem(item1);
   EXPECT_TRUE(hist1);
-  EXPECT_EQ(24, hist1->session_id);
+  EXPECT_EQ(24, hist1->session_id.id());
   EXPECT_NSEQ(@"Google", [item1 title]);
 
   NSMenuItem* item2 = [menu itemAtIndex:1];
   MockBridge::HistoryItem* hist2 = bridge_->HistoryItemForMenuItem(item2);
   EXPECT_TRUE(hist2);
-  EXPECT_EQ(42, hist2->session_id);
+  EXPECT_EQ(42, hist2->session_id.id());
   EXPECT_NSEQ(@"Apple", [item2 title]);
 }
 
@@ -291,13 +296,13 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
   NSMenuItem* item1 = [menu itemAtIndex:0];
   MockBridge::HistoryItem* hist1 = bridge_->HistoryItemForMenuItem(item1);
   EXPECT_TRUE(hist1);
-  EXPECT_EQ(24, hist1->session_id);
+  EXPECT_EQ(24, hist1->session_id.id());
   EXPECT_NSEQ(@"Google", [item1 title]);
 
   NSMenuItem* item2 = [menu itemAtIndex:1];
   MockBridge::HistoryItem* hist2 = bridge_->HistoryItemForMenuItem(item2);
   EXPECT_TRUE(hist2);
-  EXPECT_EQ(30, hist2->session_id);
+  EXPECT_EQ(30, hist2->session_id.id());
   EXPECT_EQ(2U, hist2->tabs.size());
   // Do not test menu item title because it is localized.
   NSMenu* submenu1 = [item2 submenu];
@@ -306,19 +311,19 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
   EXPECT_TRUE([[submenu1 itemAtIndex:1] isSeparatorItem]);
   EXPECT_NSEQ(@"foo", [[submenu1 itemAtIndex:2] title]);
   EXPECT_NSEQ(@"bar", [[submenu1 itemAtIndex:3] title]);
-  EXPECT_EQ(31, hist2->tabs[0]->session_id);
-  EXPECT_EQ(32, hist2->tabs[1]->session_id);
+  EXPECT_EQ(31, hist2->tabs[0]->session_id.id());
+  EXPECT_EQ(32, hist2->tabs[1]->session_id.id());
 
   NSMenuItem* item3 = [menu itemAtIndex:2];
   MockBridge::HistoryItem* hist3 = bridge_->HistoryItemForMenuItem(item3);
   EXPECT_TRUE(hist3);
-  EXPECT_EQ(42, hist3->session_id);
+  EXPECT_EQ(42, hist3->session_id.id());
   EXPECT_NSEQ(@"Apple", [item3 title]);
 
   NSMenuItem* item4 = [menu itemAtIndex:3];
   MockBridge::HistoryItem* hist4 = bridge_->HistoryItemForMenuItem(item4);
   EXPECT_TRUE(hist4);
-  EXPECT_EQ(50, hist4->session_id);
+  EXPECT_EQ(50, hist4->session_id.id());
   EXPECT_EQ(3U, hist4->tabs.size());
   // Do not test menu item title because it is localized.
   NSMenu* submenu2 = [item4 submenu];
@@ -328,9 +333,9 @@ TEST_F(HistoryMenuBridgeTest, RecentlyClosedTabsAndWindows) {
   EXPECT_NSEQ(@"magic", [[submenu2 itemAtIndex:2] title]);
   EXPECT_NSEQ(@"goats", [[submenu2 itemAtIndex:3] title]);
   EXPECT_NSEQ(@"teleporter", [[submenu2 itemAtIndex:4] title]);
-  EXPECT_EQ(51, hist4->tabs[0]->session_id);
-  EXPECT_EQ(52, hist4->tabs[1]->session_id);
-  EXPECT_EQ(53, hist4->tabs[2]->session_id);
+  EXPECT_EQ(51, hist4->tabs[0]->session_id.id());
+  EXPECT_EQ(52, hist4->tabs[1]->session_id.id());
+  EXPECT_EQ(53, hist4->tabs[2]->session_id.id());
 }
 
 // Tests that we properly request an icon from the FaviconService.
@@ -346,6 +351,9 @@ TEST_F(HistoryMenuBridgeTest, GetFaviconForHistoryItem) {
   // Make sure the item was modified properly.
   EXPECT_TRUE(item.icon_requested);
   EXPECT_NE(base::CancelableTaskTracker::kBadTaskId, item.icon_task_id);
+
+  // Cancel the request.
+  CancelFaviconRequest(&item);
 }
 
 TEST_F(HistoryMenuBridgeTest, GotFaviconData) {
@@ -358,6 +366,9 @@ TEST_F(HistoryMenuBridgeTest, GotFaviconData) {
   HistoryMenuBridge::HistoryItem item;
   item.menu_item.reset([[NSMenuItem alloc] init]);
   GetFaviconForHistoryItem(&item);
+
+  // Cancel the request so there will be no race.
+  CancelFaviconRequest(&item);
 
   // Pretend to be called back.
   favicon_base::FaviconImageResult image_result;

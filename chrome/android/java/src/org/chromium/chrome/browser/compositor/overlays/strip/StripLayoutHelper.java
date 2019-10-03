@@ -13,6 +13,7 @@ import android.content.res.Resources;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import android.support.annotation.StringRes;
 import android.text.TextUtils;
 import android.view.MotionEvent;
@@ -180,9 +181,8 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
         mNewTabButton = new CompositorButton(
                 context, NEW_TAB_BUTTON_WIDTH_DP, NEW_TAB_BUTTON_HEIGHT_DP, newTabClickHandler);
         mNewTabButton.setResources(R.drawable.btn_tabstrip_new_tab_normal,
-                R.drawable.btn_tabstrip_new_tab_pressed,
-                R.drawable.btn_tabstrip_new_incognito_tab_normal,
-                R.drawable.btn_tabstrip_new_incognito_tab_pressed);
+                R.drawable.btn_tabstrip_new_tab_pressed, R.drawable.btn_tabstrip_new_tab_normal,
+                R.drawable.btn_tabstrip_new_tab_pressed);
         mNewTabButton.setIncognito(incognito);
         mNewTabButton.setY(NEW_TAB_BUTTON_Y_OFFSET_DP);
         mNewTabButton.setClickSlop(NEW_TAB_BUTTON_CLICK_SLOP_DP);
@@ -214,8 +214,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
         mTabMenu.setWidth(menuWidth);
         mTabMenu.setModal(true);
 
-        int screenWidthDp = context.getResources().getConfiguration().screenWidthDp;
-        mShouldCascadeTabs = screenWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP;
+        mShouldCascadeTabs = DeviceFormFactor.isNonMultiDisplayContextOnTablet(context);
         mStripStacker = mShouldCascadeTabs ? mCascadingStripStacker : mScrollingStripStacker;
         mIsFirstLayoutPass = true;
     }
@@ -393,7 +392,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
                 float delta = calculateOffsetToMakeTabVisible(tab, true, true, true);
                 // During this resize, mMinScrollOffset will be changing, so the scroll effect
                 // cannot be properly animated. Jump to the new scroll offset instead.
-                mScrollOffset += delta;
+                mScrollOffset = (int) (mScrollOffset + delta);
             }
 
             updateStrip();
@@ -1074,6 +1073,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
      * @return The StripLayoutTab that corresponds to that tabid.
      */
     @VisibleForTesting
+    @Nullable
     public StripLayoutTab findTabById(int id) {
         if (mStripTabs == null) return null;
         for (int i = 0; i < mStripTabs.length; i++) {
@@ -1631,7 +1631,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
         if (shouldAnimate && !mAnimationsDisabledForTesting) {
             mScroller.startScroll(mScrollOffset, 0, (int) delta, 0, time, EXPAND_DURATION_MS);
         } else {
-            mScrollOffset += delta;
+            mScrollOffset = (int) (mScrollOffset + delta);
         }
     }
 
@@ -1646,7 +1646,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
         if (selectedTab == null) return;
 
         StripLayoutTab selectedLayoutTab = findTabById(selectedTab.getId());
-        if (isSelectedTabCompletelyVisible(selectedLayoutTab)) return;
+        if (selectedLayoutTab == null || isSelectedTabCompletelyVisible(selectedLayoutTab)) return;
 
         float delta = calculateOffsetToMakeTabVisible(selectedLayoutTab, true, true, true);
         setScrollForScrollingTabStacker(delta, animate, time);
@@ -1765,9 +1765,8 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
 
         @StringRes int resId;
         if (mIncognito) {
-            resId = isHidden
-                        ? R.string.accessibility_tabstrip_incognito_identifier
-                        : R.string.accessibility_tabstrip_incognito_identifier_selected;
+            resId = isHidden ? R.string.accessibility_tabstrip_incognito_identifier
+                             : R.string.accessibility_tabstrip_incognito_identifier_selected;
         } else {
             resId = isHidden
                         ? R.string.accessibility_tabstrip_identifier

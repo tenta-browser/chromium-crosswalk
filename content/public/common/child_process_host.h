@@ -7,11 +7,16 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <string>
+
 #include "base/files/scoped_file.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/common/bind_interface_helpers.h"
 #include "ipc/ipc_channel_proxy.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace base {
 class FilePath;
@@ -37,7 +42,8 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   enum : int { kInvalidUniqueID = -1 };
 
   // Used to create a child process host. The delegate must outlive this object.
-  static ChildProcessHost* Create(ChildProcessHostDelegate* delegate);
+  static std::unique_ptr<ChildProcessHost> Create(
+      ChildProcessHostDelegate* delegate);
 
   // These flags may be passed to GetChildPath in order to alter its behavior,
   // causing it to return a child path more suited to a specific task.
@@ -54,7 +60,33 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
     // gdb). In this case, you'd use GetChildPath to get the real executable
     // file name, and then prepend the GDB command to the command line.
     CHILD_ALLOW_SELF = 1 << 0,
-#endif  // defined(OS_LINUX)
+#elif defined(OS_MACOSX)
+    // Note, on macOS these are not bitwise flags and each value is mutually
+    // exclusive with the others. Each one of these options should correspond
+    // to a value in //content/public/app/mac_helpers.gni.
+
+    // Starts a child process with the macOS entitlement that allows JIT (i.e.
+    // memory that is writable and executable). In order to make use of this,
+    // memory cannot simply be allocated as read-write-execute; instead, the
+    // MAP_JIT flag must be passed to mmap() when allocating the memory region
+    // into which the writable-and-executable data are stored.
+    CHILD_RENDERER,
+
+    // Starts a child process with the macOS entitlement that allows unsigned
+    // executable memory.
+    // TODO(https://crbug.com/985816): Change this to use MAP_JIT and the
+    // allow-jit entitlement instead.
+    CHILD_GPU,
+
+    // Starts a child process with the macOS entitlement that ignores the
+    // library validation code signing enforcement. Library validation mandates
+    // that all executable pages be backed by a code signature that either 1)
+    // is signed by Apple, or 2) signed by the same Team ID as the main
+    // executable. Binary plug-ins that are not always signed by the same Team
+    // ID as the main binary, so this flag should be used when needing to load
+    // third-party plug-ins.
+    CHILD_PLUGIN,
+#endif
   };
 
   // Returns the pathname to be used for a child process.  If a subprocess
@@ -69,7 +101,6 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   static base::FilePath GetChildPath(int flags);
 
   // Send the shutdown message to the child process.
-  // Does not check with the delegate's CanShutdown.
   virtual void ForceShutdown() = 0;
 
   // Creates the IPC channel over a Mojo message pipe. The pipe connection is
@@ -85,8 +116,13 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   // Bind an interface exposed by the child process.
   virtual void BindInterface(const std::string& interface_name,
                              mojo::ScopedMessagePipeHandle interface_pipe) = 0;
+
+  // Instructs the child process to run an instance of the named service.
+  virtual void RunService(
+      const std::string& service_name,
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver) = 0;
 };
 
-};  // namespace content
+}  // namespace content
 
 #endif  // CONTENT_PUBLIC_COMMON_CHILD_PROCESS_HOST_H_

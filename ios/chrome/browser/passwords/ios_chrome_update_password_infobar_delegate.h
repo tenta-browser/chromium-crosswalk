@@ -11,9 +11,10 @@
 #include "ios/chrome/browser/passwords/ios_chrome_password_manager_infobar_delegate.h"
 
 @protocol ApplicationCommands;
+@class UIViewController;
 
 namespace password_manager {
-class PasswordFormManager;
+class PasswordFormManagerForUI;
 }
 
 namespace infobars {
@@ -25,12 +26,14 @@ class IOSChromeUpdatePasswordInfoBarDelegate
     : public IOSChromePasswordManagerInfoBarDelegate {
  public:
   // Creates the infobar for |form_to_save| and adds it to |infobar_manager|.
-  // |is_smart_lock_enabled| controls the branding string. |dispatcher| is not
-  // retained.
+  // |is_sync_user| controls the footer text. |baseViewController| is the base
+  // view controller from which to present UI, and is not retained.
+  // |dispatcher| is not retained.
   static void Create(
-      bool is_smart_lock_branding_enabled,
+      bool is_sync_user,
       infobars::InfoBarManager* infobar_manager,
-      std::unique_ptr<password_manager::PasswordFormManager> form_to_save,
+      std::unique_ptr<password_manager::PasswordFormManagerForUI> form_to_save,
+      UIViewController* baseViewController,
       id<ApplicationCommands> dispatcher);
 
   ~IOSChromeUpdatePasswordInfoBarDelegate() override;
@@ -48,16 +51,12 @@ class IOSChromeUpdatePasswordInfoBarDelegate
 
   void set_selected_account(base::string16 account) {
     selected_account_ = account;
-  };
+  }
 
  private:
   IOSChromeUpdatePasswordInfoBarDelegate(
-      bool is_smart_lock_branding_enabled,
-      std::unique_ptr<password_manager::PasswordFormManager> form_to_save);
-
-  // Returns the string with the branded title of the password manager (e.g.
-  // "Google Smart Lock for Passwords").
-  base::string16 GetBranding() const;
+      bool is_sync_user,
+      std::unique_ptr<password_manager::PasswordFormManagerForUI> form_to_save);
 
   // ConfirmInfoBarDelegate implementation.
   infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
@@ -65,7 +64,8 @@ class IOSChromeUpdatePasswordInfoBarDelegate
   int GetButtons() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
-  bool Cancel() override;
+  void InfoBarDismissed() override;
+  base::string16 GetLinkText() const override;
 
   // The credential that should be displayed in the infobar, and for which the
   // password will be updated.

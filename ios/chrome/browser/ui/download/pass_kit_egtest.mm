@@ -5,18 +5,19 @@
 #import <EarlGrey/EarlGrey.h>
 #import <PassKit/PassKit.h>
 
-#include "base/base_paths.h"
-#include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
-#include "base/path_service.h"
+#include <memory>
+
+#include "base/bind.h"
+#import "base/test/ios/wait_util.h"
 #import "ios/chrome/app/main_controller.h"
-#import "ios/chrome/browser/ui/browser_view_controller.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/download/download_test_util.h"
+#include "ios/chrome/browser/download/pass_kit_mime_type.h"
+#import "ios/chrome/browser/ui/browser_view/browser_view_controller.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -25,13 +26,11 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForDownloadTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForDownloadTimeout;
 using chrome_test_util::GetMainController;
 
 namespace {
-
-const char kPKFilePath[] = "ios/testing/data/http_server_files/generic.pkpass";
 
 // Returns matcher for PassKit error infobar.
 id<GREYMatcher> PassKitErrorInfobar() {
@@ -40,21 +39,10 @@ id<GREYMatcher> PassKitErrorInfobar() {
   return grey_accessibilityLabel(label);
 }
 
-// Returns the content of test pkpass file.
-std::string GetTestPass() {
-  base::FilePath path;
-  base::PathService::Get(base::DIR_MODULE, &path);
-  path = path.Append(FILE_PATH_LITERAL(kPKFilePath));
-  base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-  char pass_kit_data[file.GetLength()];
-  file.ReadAtCurrentPos(pass_kit_data, file.GetLength());
-  return std::string(pass_kit_data, file.GetLength());
-}
-
 // PassKit landing page and download request handler.
 std::unique_ptr<net::test_server::HttpResponse> GetResponse(
     const net::test_server::HttpRequest& request) {
-  auto result = base::MakeUnique<net::test_server::BasicHttpResponse>();
+  auto result = std::make_unique<net::test_server::BasicHttpResponse>();
   result->set_code(net::HTTP_OK);
 
   if (request.GetURL().path() == "/") {
@@ -62,11 +50,11 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
         "<a id='bad' href='/bad'>Bad</a>"
         "<a id='good' href='/good'>Good</a>");
   } else if (request.GetURL().path() == "/bad") {
-    result->AddCustomHeader("Content-Type", "application/vnd.apple.pkpass");
+    result->AddCustomHeader("Content-Type", kPkPassMimeType);
     result->set_content("corrupted");
   } else if (request.GetURL().path() == "/good") {
-    result->AddCustomHeader("Content-Type", "application/vnd.apple.pkpass");
-    result->set_content(GetTestPass());
+    result->AddCustomHeader("Content-Type", kPkPassMimeType);
+    result->set_content(testing::GetTestFileContents(testing::kPkPassFilePath));
   }
 
   return result;
@@ -91,8 +79,8 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
 // parsed.
 - (void)testPassKitParsingError {
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Bad"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"bad"];
+  [ChromeEarlGrey waitForWebStateContainingText:"Bad"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"bad"];
 
   bool infobarShown = WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     NSError* error = nil;
@@ -107,20 +95,23 @@ std::unique_ptr<net::test_server::HttpResponse> GetResponse(
 // Tests that Chrome PassKit dialog is shown for sucessfully downloaded pkpass
 // file.
 - (void)testPassKitDownload {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Wallet app is not supported on iPads.");
   }
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/")];
-  [ChromeEarlGrey waitForWebViewContainingText:"Good"];
-  [ChromeEarlGrey tapWebViewElementWithID:@"good"];
+  [ChromeEarlGrey waitForWebStateContainingText:"Good"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"good"];
 
   // PKAddPassesViewController UI is rendered out of host process so EarlGrey
   // matcher can not find PassKit Dialog UI. Instead this test relies on view
   // controller presentation as the signal that PassKit Dialog is shown.
-  UIViewController* BVC = GetMainController().browserViewInformation.mainBVC;
+  id<BrowserInterface> interface =
+      GetMainController().interfaceProvider.mainInterface;
+  UIViewController* viewController = interface.viewController;
   bool dialogShown = WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
-    UIViewController* presentedController = BVC.presentedViewController;
+    UIViewController* presentedController =
+        viewController.presentedViewController;
     return [presentedController class] == [PKAddPassesViewController class];
   });
   GREYAssert(dialogShown, @"PassKit dialog was not shown");

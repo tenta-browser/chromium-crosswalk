@@ -7,11 +7,10 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
-#include "base/task_scheduler/post_task.h"
-#include "chrome/services/file_util/public/interfaces/constants.mojom.h"
-#include "components/filesystem/directory_impl.h"
-#include "components/filesystem/lock_table.h"
+#include "base/task/post_task.h"
+#include "chrome/services/file_util/public/mojom/constants.mojom.h"
+#include "components/services/filesystem/directory_impl.h"
+#include "components/services/filesystem/lock_table.h"
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -97,7 +96,7 @@ void ZipFileCreator::ReportDone(bool success) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   zip_file_creator_ptr_.reset();
-  base::ResetAndReturn(&callback_).Run(success);
+  std::move(callback_).Run(success);
 
   delete this;
 }

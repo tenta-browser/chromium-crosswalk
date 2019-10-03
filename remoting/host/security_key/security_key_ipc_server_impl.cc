@@ -7,9 +7,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_checker.h"
@@ -18,10 +19,7 @@
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/named_platform_handle.h"
-#include "mojo/edk/embedder/named_platform_handle_utils.h"
-#include "mojo/edk/embedder/peer_connection.h"
+#include "mojo/public/cpp/system/isolated_connection.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/chromoting_messages.h"
 #include "remoting/host/client_session_details.h"
@@ -69,13 +67,14 @@ SecurityKeyIpcServerImpl::~SecurityKeyIpcServerImpl() {
 }
 
 bool SecurityKeyIpcServerImpl::CreateChannel(
-    const mojo::edk::NamedPlatformHandle& channel_handle,
+    const mojo::NamedPlatformChannel::ServerName& server_name,
     base::TimeDelta request_timeout) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!ipc_channel_);
   security_key_request_timeout_ = request_timeout;
 
-  mojo::edk::CreateServerHandleOptions options;
+  mojo::NamedPlatformChannel::Options options;
+  options.server_name = server_name;
 #if defined(OS_WIN)
   options.enforce_uniqueness = false;
   // Create a named pipe owned by the current user (the LocalService account
@@ -91,14 +90,12 @@ bool SecurityKeyIpcServerImpl::CreateChannel(
       "O:%sG:%sD:(A;;GA;;;AU)", user_sid_utf8.c_str(), user_sid_utf8.c_str()));
 
 #endif  // defined(OS_WIN)
-  peer_connection_ = base::MakeUnique<mojo::edk::PeerConnection>();
+  mojo::NamedPlatformChannel channel(options);
+
+  mojo_connection_ = std::make_unique<mojo::IsolatedConnection>();
   ipc_channel_ = IPC::Channel::CreateServer(
-      peer_connection_
-          ->Connect(mojo::edk::ConnectionParams(
-              mojo::edk::TransportProtocol::kLegacy,
-              mojo::edk::CreateServerHandle(channel_handle, options)))
-          .release(),
-      this, base::ThreadTaskRunnerHandle::Get());
+      mojo_connection_->Connect(channel.TakeServerEndpoint()).release(), this,
+      base::ThreadTaskRunnerHandle::Get());
 
   if (!ipc_channel_->Connect()) {
     ipc_channel_.reset();
@@ -150,7 +147,7 @@ void SecurityKeyIpcServerImpl::OnChannelConnected(int32_t peer_pid) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!connect_callback_.is_null()) {
-    base::ResetAndReturn(&connect_callback_).Run();
+    std::move(connect_callback_).Run();
   }
 
 #if defined(OS_WIN)
@@ -167,8 +164,8 @@ void SecurityKeyIpcServerImpl::OnChannelConnected(int32_t peer_pid) {
         new ChromotingNetworkToRemoteSecurityKeyMsg_InvalidSession());
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&SecurityKeyIpcServerImpl::OnChannelError,
-                              weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&SecurityKeyIpcServerImpl::OnChannelError,
+                                  weak_factory_.GetWeakPtr()));
     return;
   }
 #else   // !defined(OS_WIN)
@@ -189,11 +186,11 @@ void SecurityKeyIpcServerImpl::OnChannelError() {
   CloseChannel();
 
   if (!connect_callback_.is_null()) {
-    base::ResetAndReturn(&connect_callback_).Run();
+    std::move(connect_callback_).Run();
   }
   if (!done_callback_.is_null()) {
     // Note: This callback may result in this object being torn down.
-    base::ResetAndReturn(&done_callback_).Run();
+    std::move(done_callback_).Run();
   }
 }
 
@@ -215,7 +212,7 @@ void SecurityKeyIpcServerImpl::CloseChannel() {
     ipc_channel_->Close();
     connection_close_pending_ = false;
   }
-  peer_connection_.reset();
+  mojo_connection_.reset();
 }
 
 }  // namespace remoting

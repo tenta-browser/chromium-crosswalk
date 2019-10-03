@@ -8,17 +8,16 @@ import android.content.Context;
 import android.view.ViewGroup;
 
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
-import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirection;
 import org.chromium.chrome.browser.compositor.layouts.phone.SimpleAnimationLayout;
 import org.chromium.chrome.browser.compositor.overlays.SceneOverlay;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.features.start_surface.StartSurface;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 
 /**
@@ -31,10 +30,12 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
 
     /**
      * Creates an instance of a {@link LayoutManagerChromePhone}.
-     * @param host            A {@link LayoutManagerHost} instance.
+     * @param host         A {@link LayoutManagerHost} instance.
+     * @param startSurface An interface to talk to the Grid Tab Switcher. If it's NULL, VTS
+     *                     should be used, otherwise GTS should be used.
      */
-    public LayoutManagerChromePhone(LayoutManagerHost host) {
-        super(host, true);
+    public LayoutManagerChromePhone(LayoutManagerHost host, StartSurface startSurface) {
+        super(host, true, startSurface);
         Context context = host.getContext();
         LayoutRenderHost renderHost = host.getLayoutRenderHost();
 
@@ -47,20 +48,15 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
     }
 
     @Override
-    protected ToolbarSwipeHandler createToolbarSwipeHandler(LayoutProvider provider) {
-        return new PhoneToolbarSwipeHandler(provider);
-    }
-
-    @Override
     public void init(TabModelSelector selector, TabCreatorManager creator,
             TabContentManager content, ViewGroup androidContentContainer,
             ContextualSearchManagementDelegate contextualSearchDelegate,
             DynamicResourceLoader dynamicResourceLoader) {
-        // Initialize Layouts
-        mSimpleAnimationLayout.setTabModelSelector(selector, content);
-
         super.init(selector, creator, content, androidContentContainer, contextualSearchDelegate,
                 dynamicResourceLoader);
+
+        // Initialize Layouts
+        mSimpleAnimationLayout.setTabModelSelector(selector, content);
     }
 
     @Override
@@ -115,7 +111,7 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
         if (nextTab != null) nextTab.requestFocus();
         boolean animate = !tabRemoved && animationsEnabled();
         if (getActiveLayout() != overviewLayout && showOverview && !animate) {
-            startShowing(overviewLayout, false);
+            showOverview(false);
         }
     }
 
@@ -127,7 +123,7 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
             // smoothly.
             getActiveLayout().onTabCreating(sourceId);
         } else if (animationsEnabled()) {
-            if (!FeatureUtilities.isChromeHomeEnabled() || !overviewVisible()) {
+            if (!overviewVisible()) {
                 if (getActiveLayout() != null && getActiveLayout().isHiding()) {
                     setNextLayout(mSimpleAnimationLayout);
                     // The method Layout#doneHiding() will automatically show the next layout.
@@ -141,8 +137,8 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
     }
 
     @Override
-    protected void tabCreated(int id, int sourceId, TabLaunchType launchType, boolean isIncognito,
-            boolean willBeSelected, float originX, float originY) {
+    protected void tabCreated(int id, int sourceId, @TabLaunchType int launchType,
+            boolean isIncognito, boolean willBeSelected, float originX, float originY) {
         super.tabCreated(id, sourceId, launchType, isIncognito, willBeSelected, originX, originY);
 
         if (willBeSelected) {
@@ -155,20 +151,5 @@ public class LayoutManagerChromePhone extends LayoutManagerChrome {
     public void releaseTabLayout(int id) {
         mTitleCache.remove(id);
         super.releaseTabLayout(id);
-    }
-
-    private class PhoneToolbarSwipeHandler extends ToolbarSwipeHandler {
-        public PhoneToolbarSwipeHandler(LayoutProvider provider) {
-            super(provider);
-        }
-
-        @Override
-        public boolean isSwipeEnabled(ScrollDirection direction) {
-            if (direction == ScrollDirection.DOWN && FeatureUtilities.isChromeHomeEnabled()) {
-                return false;
-            }
-
-            return super.isSwipeEnabled(direction);
-        }
     }
 }

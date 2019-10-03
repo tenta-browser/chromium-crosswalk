@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/global_keyboard_shortcuts_mac.h"
 #include "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -15,6 +16,11 @@
 namespace chrome {
 
 bool IsChromeAccelerator(const ui::Accelerator& accelerator, Profile* profile) {
+  NSUInteger modifiers = (accelerator.IsCtrlDown() ? NSControlKeyMask : 0) |
+                         (accelerator.IsCmdDown() ? NSCommandKeyMask : 0) |
+                         (accelerator.IsAltDown() ? NSAlternateKeyMask : 0) |
+                         (accelerator.IsShiftDown() ? NSShiftKeyMask : 0);
+
   // The |accelerator| passed in contains a Windows key code but no platform
   // accelerator info. The Accelerator list is the opposite: It has accelerators
   // that have key_code() == VKEY_UNKNOWN but they contain a platform
@@ -22,17 +28,15 @@ bool IsChromeAccelerator(const ui::Accelerator& accelerator, Profile* profile) {
   // code to a character and use that when comparing against the Accelerator
   // list.
   unichar shifted_character;
-  ui::MacKeyCodeForWindowsKeyCode(accelerator.key_code(), 0, &shifted_character,
-                                  nullptr);
-  NSString* characters =
-      [[[NSString alloc] initWithCharacters:&shifted_character
-                                     length:1] autorelease];
+  unichar character;
+  int mac_keycode = ui::MacKeyCodeForWindowsKeyCode(
+      accelerator.key_code(), modifiers, &shifted_character, &character);
+  if (mac_keycode == -1)
+    return false;
 
-  NSUInteger modifiers =
-      (accelerator.IsCtrlDown() ? NSControlKeyMask : 0) |
-      (accelerator.IsCmdDown() ? NSCommandKeyMask : 0) |
-      (accelerator.IsAltDown() ? NSAlternateKeyMask : 0) |
-      (accelerator.IsShiftDown() ? NSShiftKeyMask : 0);
+  NSString* characters = [NSString stringWithFormat:@"%C", character];
+  NSString* charactersIgnoringModifiers =
+      [NSString stringWithFormat:@"%C", shifted_character];
 
   NSEvent* event = [NSEvent keyEventWithType:NSKeyDown
                                     location:NSZeroPoint
@@ -41,16 +45,17 @@ bool IsChromeAccelerator(const ui::Accelerator& accelerator, Profile* profile) {
                                 windowNumber:0
                                      context:nil
                                   characters:characters
-                 charactersIgnoringModifiers:characters
+                 charactersIgnoringModifiers:charactersIgnoringModifiers
                                    isARepeat:NO
-                                     keyCode:accelerator.key_code()];
+                                     keyCode:mac_keycode];
 
-  return CommandForKeyEvent(event) != -1;
+  return CommandForKeyEvent(event).found();
 }
 
-ui::Accelerator GetPrimaryChromeAcceleratorForCommandId(int command_id) {
+ui::Accelerator GetPrimaryChromeAcceleratorForBookmarkPage() {
   const ui::Accelerator* accelerator =
-      AcceleratorsCocoa::GetInstance()->GetAcceleratorForCommand(command_id);
+      AcceleratorsCocoa::GetInstance()->GetAcceleratorForCommand(
+          IDC_BOOKMARK_PAGE);
 
   return accelerator ? *accelerator : ui::Accelerator();
 }

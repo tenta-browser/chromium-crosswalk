@@ -9,10 +9,12 @@
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "build/build_config.h"
+#include "mojo/core/embedder/embedder.h"
+#include "net/base/network_change_notifier.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/breakpad.h"
 #include "remoting/host/chromoting_host_context.h"
@@ -27,9 +29,9 @@
 
 #if defined(OS_LINUX)
 #include <gtk/gtk.h>
-#include <X11/Xlib.h>
 
 #include "base/linux_util.h"
+#include "ui/gfx/x/x11.h"
 #endif  // defined(OS_LINUX)
 
 #if defined(OS_MACOSX)
@@ -65,9 +67,10 @@ bool CurrentProcessHasUiAccess() {
 }  // namespace
 
 // Creates a It2MeNativeMessagingHost instance, attaches it to stdin/stdout and
-// runs the message loop until It2MeNativeMessagingHost signals shutdown.
+// runs the task executor until It2MeNativeMessagingHost signals shutdown.
 int It2MeNativeMessagingHostMain(int argc, char** argv) {
-  // This object instance is required by Chrome code (such as MessageLoop).
+  // This object instance is required by Chrome code (such as
+  // SingleThreadTaskExecutor).
   base::AtExitManager exit_manager;
 
   base::CommandLine::Init(argc, argv);
@@ -98,7 +101,9 @@ int It2MeNativeMessagingHostMain(int argc, char** argv) {
   // Required to find the ICU data file, used by some file_util routines.
   base::i18n::InitializeICU();
 
-  base::TaskScheduler::CreateAndStartWithDefaultParams("It2Me");
+  mojo::core::Init();
+
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("It2Me");
 
   remoting::LoadResources("");
 
@@ -109,7 +114,11 @@ int It2MeNativeMessagingHostMain(int argc, char** argv) {
   // Required for any calls into GTK functions, such as the Disconnect and
   // Continue windows. Calling with nullptr arguments because we don't have
   // any command line arguments for gtk to consume.
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_init();
+#else
   gtk_init(nullptr, nullptr);
+#endif
 
   // Need to prime the host OS version value for linux to prevent IO on the
   // network thread. base::GetLinuxDistro() caches the result.
@@ -191,8 +200,13 @@ int It2MeNativeMessagingHostMain(int argc, char** argv) {
 #error Not implemented.
 #endif
 
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
   base::RunLoop run_loop;
+
+  // NetworkChangeNotifier must be initialized after SingleThreadTaskExecutor.
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier(
+      net::NetworkChangeNotifier::Create());
 
   std::unique_ptr<It2MeHostFactory> factory(new It2MeHostFactory());
 
@@ -205,7 +219,7 @@ int It2MeNativeMessagingHostMain(int argc, char** argv) {
 
   std::unique_ptr<ChromotingHostContext> context =
       ChromotingHostContext::Create(new remoting::AutoThreadTaskRunner(
-          message_loop.task_runner(), run_loop.QuitClosure()));
+          main_task_executor.task_runner(), run_loop.QuitClosure()));
   std::unique_ptr<PolicyWatcher> policy_watcher =
       PolicyWatcher::CreateWithTaskRunner(context->file_task_runner());
   std::unique_ptr<extensions::NativeMessageHost> host(
@@ -220,7 +234,7 @@ int It2MeNativeMessagingHostMain(int argc, char** argv) {
   run_loop.Run();
 
   // Block until tasks blocking shutdown have completed their execution.
-  base::TaskScheduler::GetInstance()->Shutdown();
+  base::ThreadPoolInstance::Get()->Shutdown();
 
   return kSuccessExitCode;
 }

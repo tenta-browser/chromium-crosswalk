@@ -8,12 +8,13 @@
 #include <vector>
 
 #include "apps/saved_files_service.h"
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/strings/string_split.h"
-#include "chrome/browser/apps/app_load_service.h"
+#include "chrome/browser/apps/platform_apps/app_load_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/browser/api/device_permissions_manager.h"
 #include "extensions/browser/api/file_system/saved_file_entry.h"
@@ -90,54 +91,41 @@ class RevokeButton : public views::ImageButton, public views::ButtonListener {
 class BulletedPermissionsList : public views::View {
  public:
   BulletedPermissionsList() {
-    layout_ = views::GridLayout::CreateAndInstall(this);
+    layout_ = SetLayoutManager(std::make_unique<views::GridLayout>());
 
     // Create 3 columns: the bullet, the bullet text, and the revoke button.
     views::ColumnSet* column_set = layout_->AddColumnSet(kBulletColumnSetId);
-    column_set->AddColumn(views::GridLayout::FILL,
-                          views::GridLayout::LEADING,
-                          0,
-                          views::GridLayout::USE_PREF,
-                          0,
-                          0);
-    column_set->AddPaddingColumn(0, kSpacingBetweenBulletAndStartOfText);
-    column_set->AddColumn(views::GridLayout::FILL,
-                          views::GridLayout::LEADING,
-                          1 /* stretch to fill space */,
-                          views::GridLayout::USE_PREF,
-                          0,
-                          0);
-    column_set->AddPaddingColumn(0, kSpacingBetweenTextAndRevokeButton);
-    column_set->AddColumn(views::GridLayout::FILL,
-                          views::GridLayout::LEADING,
-                          0,
-                          views::GridLayout::USE_PREF,
-                          0,
-                          0);
+    column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::LEADING,
+                          views::GridLayout::kFixedSize,
+                          views::GridLayout::USE_PREF, 0, 0);
+    column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                 kSpacingBetweenBulletAndStartOfText);
+    column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::LEADING,
+                          1.0 /* stretch to fill space */,
+                          views::GridLayout::USE_PREF, 0, 0);
+    column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                 kSpacingBetweenTextAndRevokeButton);
+    column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::LEADING,
+                          views::GridLayout::kFixedSize,
+                          views::GridLayout::USE_PREF, 0, 0);
 
     views::ColumnSet* nested_column_set =
         layout_->AddColumnSet(kNestedBulletColumnSetId);
-    nested_column_set->AddPaddingColumn(0, kIndentationBeforeNestedBullet);
-    nested_column_set->AddColumn(views::GridLayout::FILL,
-                                 views::GridLayout::LEADING,
-                                 0,
-                                 views::GridLayout::USE_PREF,
-                                 0,
-                                 0);
-    nested_column_set->AddPaddingColumn(0, kSpacingBetweenBulletAndStartOfText);
-    nested_column_set->AddColumn(views::GridLayout::FILL,
-                                 views::GridLayout::LEADING,
-                                 1 /* stretch to fill space */,
-                                 views::GridLayout::USE_PREF,
-                                 0,
-                                 0);
-    nested_column_set->AddPaddingColumn(0, kSpacingBetweenTextAndRevokeButton);
-    nested_column_set->AddColumn(views::GridLayout::FILL,
-                                 views::GridLayout::LEADING,
-                                 0,
-                                 views::GridLayout::USE_PREF,
-                                 0,
-                                 0);
+    nested_column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                        kIndentationBeforeNestedBullet);
+    nested_column_set->AddColumn(
+        views::GridLayout::FILL, views::GridLayout::LEADING,
+        views::GridLayout::kFixedSize, views::GridLayout::USE_PREF, 0, 0);
+    nested_column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                        kSpacingBetweenBulletAndStartOfText);
+    nested_column_set->AddColumn(
+        views::GridLayout::FILL, views::GridLayout::LEADING,
+        1.0 /* stretch to fill space */, views::GridLayout::USE_PREF, 0, 0);
+    nested_column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                                        kSpacingBetweenTextAndRevokeButton);
+    nested_column_set->AddColumn(
+        views::GridLayout::FILL, views::GridLayout::LEADING,
+        views::GridLayout::kFixedSize, views::GridLayout::USE_PREF, 0, 0);
   }
   ~BulletedPermissionsList() override {}
 
@@ -150,43 +138,46 @@ class BulletedPermissionsList : public views::View {
                             std::vector<base::string16> submessages,
                             gfx::ElideBehavior elide_behavior_for_submessages,
                             const base::Closure& revoke_callback) {
-    RevokeButton* revoke_button = NULL;
+    std::unique_ptr<RevokeButton> revoke_button;
     if (!revoke_callback.is_null())
-      revoke_button = new RevokeButton(revoke_callback, message);
+      revoke_button = std::make_unique<RevokeButton>(revoke_callback, message);
 
-    views::Label* permission_label = new views::Label(message);
+    auto permission_label = std::make_unique<views::Label>(message);
     permission_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     permission_label->SetMultiLine(true);
-    AddSinglePermissionBullet(false, permission_label, revoke_button);
+    AddSinglePermissionBullet(false, std::move(permission_label),
+                              std::move(revoke_button));
 
     for (const auto& submessage : submessages) {
-      views::Label* sub_permission_label = new views::Label(submessage);
+      auto sub_permission_label = std::make_unique<views::Label>(submessage);
       sub_permission_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
       sub_permission_label->SetElideBehavior(elide_behavior_for_submessages);
-      AddSinglePermissionBullet(true, sub_permission_label, NULL);
+      AddSinglePermissionBullet(true, std::move(sub_permission_label), nullptr);
     }
   }
 
  private:
   void AddSinglePermissionBullet(bool is_nested,
-                                 views::Label* permission_label,
-                                 RevokeButton* revoke_button) {
+                                 std::unique_ptr<views::Label> permission_label,
+                                 std::unique_ptr<RevokeButton> revoke_button) {
     // Add a padding row before every item except the first.
-    if (has_children()) {
-      layout_->AddPaddingRow(0, ChromeLayoutProvider::Get()->GetDistanceMetric(
-                                    views::DISTANCE_RELATED_CONTROL_VERTICAL));
+    if (!children().empty()) {
+      layout_->AddPaddingRow(views::GridLayout::kFixedSize,
+                             ChromeLayoutProvider::Get()->GetDistanceMetric(
+                                 views::DISTANCE_RELATED_CONTROL_VERTICAL));
     }
 
     const base::char16 bullet_point[] = {0x2022, 0};
-    views::Label* bullet_label = new views::Label(base::string16(bullet_point));
+    auto bullet_label =
+        std::make_unique<views::Label>(base::string16(bullet_point));
 
     layout_->StartRow(
-        1, is_nested ? kNestedBulletColumnSetId : kBulletColumnSetId);
-    layout_->AddView(bullet_label);
-    layout_->AddView(permission_label);
+        1.0, is_nested ? kNestedBulletColumnSetId : kBulletColumnSetId);
+    layout_->AddView(std::move(bullet_label));
+    layout_->AddView(std::move(permission_label));
 
-    if (revoke_button != NULL)
-      layout_->AddView(revoke_button);
+    if (revoke_button)
+      layout_->AddView(std::move(revoke_button));
     else
       layout_->SkipColumns(1);
   }
@@ -202,10 +193,10 @@ AppInfoPermissionsPanel::AppInfoPermissionsPanel(
     Profile* profile,
     const extensions::Extension* app)
     : AppInfoPanel(profile, app) {
-  SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical, gfx::Insets(),
-                           ChromeLayoutProvider::Get()->GetDistanceMetric(
-                               views::DISTANCE_RELATED_CONTROL_VERTICAL)));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+      ChromeLayoutProvider::Get()->GetDistanceMetric(
+          views::DISTANCE_RELATED_CONTROL_VERTICAL)));
 
   CreatePermissionsList();
 }
@@ -214,23 +205,23 @@ AppInfoPermissionsPanel::~AppInfoPermissionsPanel() {
 }
 
 void AppInfoPermissionsPanel::CreatePermissionsList() {
-  views::View* permissions_heading = CreateHeading(
+  auto permissions_heading = CreateHeading(
       l10n_util::GetStringUTF16(IDS_APPLICATION_INFO_APP_PERMISSIONS_TITLE));
-  AddChildView(permissions_heading);
+  AddChildView(std::move(permissions_heading));
 
   if (!HasActivePermissionMessages() && GetRetainedDeviceCount() == 0 &&
       GetRetainedFileCount() == 0) {
-    views::Label* no_permissions_text =
-        new views::Label(l10n_util::GetStringUTF16(
+    auto no_permissions_text =
+        std::make_unique<views::Label>(l10n_util::GetStringUTF16(
             app_->is_extension()
                 ? IDS_APPLICATION_INFO_EXTENSION_NO_PERMISSIONS_TEXT
                 : IDS_APPLICATION_INFO_APP_NO_PERMISSIONS_TEXT));
     no_permissions_text->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    AddChildView(no_permissions_text);
+    AddChildView(std::move(no_permissions_text));
     return;
   }
 
-  BulletedPermissionsList* permissions_list = new BulletedPermissionsList();
+  auto permissions_list = std::make_unique<BulletedPermissionsList>();
 
   // Add regular and host permission messages.
   for (const auto& message : GetActivePermissionMessages()) {
@@ -259,7 +250,7 @@ void AppInfoPermissionsPanel::CreatePermissionsList() {
                    base::Unretained(this)));
   }
 
-  AddChildView(permissions_list);
+  AddChildView(std::move(permissions_list));
 }
 
 bool AppInfoPermissionsPanel::HasActivePermissionMessages() const {

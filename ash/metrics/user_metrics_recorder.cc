@@ -5,18 +5,21 @@
 #include "ash/metrics/user_metrics_recorder.h"
 
 #include <memory>
+#include <vector>
 
 #include "ash/login/ui/lock_screen.h"
+#include "ash/metrics/demo_session_metrics_recorder.h"
 #include "ash/metrics/desktop_task_switch_metric_recorder.h"
 #include "ash/metrics/pointer_metrics_recorder.h"
+#include "ash/public/cpp/accessibility_controller_enums.h"
 #include "ash/public/cpp/shelf_item.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/shell.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_state.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -37,37 +40,40 @@ enum ActiveWindowStateType {
   ACTIVE_WINDOW_STATE_TYPE_SNAPPED,
   ACTIVE_WINDOW_STATE_TYPE_PINNED,
   ACTIVE_WINDOW_STATE_TYPE_TRUSTED_PINNED,
+  ACTIVE_WINDOW_STATE_TYPE_PIP,
   ACTIVE_WINDOW_STATE_TYPE_COUNT,
 };
 
 ActiveWindowStateType GetActiveWindowState() {
   ActiveWindowStateType active_window_state_type =
       ACTIVE_WINDOW_STATE_TYPE_NO_ACTIVE_WINDOW;
-  wm::WindowState* active_window_state = ash::wm::GetActiveWindowState();
+  WindowState* active_window_state = WindowState::ForActiveWindow();
   if (active_window_state) {
     switch (active_window_state->GetStateType()) {
-      case mojom::WindowStateType::MAXIMIZED:
+      case WindowStateType::kMaximized:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_MAXIMIZED;
         break;
-      case mojom::WindowStateType::FULLSCREEN:
+      case WindowStateType::kFullscreen:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_FULLSCREEN;
         break;
-      case mojom::WindowStateType::LEFT_SNAPPED:
-      case mojom::WindowStateType::RIGHT_SNAPPED:
+      case WindowStateType::kLeftSnapped:
+      case WindowStateType::kRightSnapped:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_SNAPPED;
         break;
-      case mojom::WindowStateType::PINNED:
+      case WindowStateType::kPinned:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_PINNED;
         break;
-      case mojom::WindowStateType::TRUSTED_PINNED:
+      case WindowStateType::kTrustedPinned:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_TRUSTED_PINNED;
         break;
-      case mojom::WindowStateType::DEFAULT:
-      case mojom::WindowStateType::NORMAL:
-      case mojom::WindowStateType::MINIMIZED:
-      case mojom::WindowStateType::INACTIVE:
-      case mojom::WindowStateType::AUTO_POSITIONED:
-        // TODO: We probably want to recorde PINNED state.
+      case WindowStateType::kPip:
+        active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_PIP;
+        break;
+      case WindowStateType::kDefault:
+      case WindowStateType::kNormal:
+      case WindowStateType::kMinimized:
+      case WindowStateType::kInactive:
+      case WindowStateType::kAutoPositioned:
         active_window_state_type = ACTIVE_WINDOW_STATE_TYPE_OTHER;
         break;
     }
@@ -90,17 +96,21 @@ bool IsArcKioskModeActive() {
 // Returns true if there is an active user and their session isn't currently
 // locked.
 bool IsUserActive() {
-  SessionController* session = Shell::Get()->session_controller();
+  SessionControllerImpl* session = Shell::Get()->session_controller();
   return session->IsActiveUserSessionStarted() && !session->IsScreenLocked();
 }
 
-// Array of window container ids that contain visible windows to be counted for
-// UMA statistics. Note the containers are ordered from top most visible
-// container to the lowest to allow the |GetNumVisibleWindows| method to short
-// circuit when processing a maximized or fullscreen window.
-int kVisibleWindowContainerIds[] = {kShellWindowId_PanelContainer,
-                                    kShellWindowId_AlwaysOnTopContainer,
-                                    kShellWindowId_DefaultContainer};
+// Returns a list of window container ids that contain visible windows to be
+// counted for UMA statistics. Note the containers are ordered from top most
+// visible container to the lowest to allow the |GetNumVisibleWindows| method to
+// short circuit when processing a maximized or fullscreen window.
+std::vector<int> GetVisibleWindowContainerIds() {
+  std::vector<int> ids{kShellWindowId_PipContainer,
+                       kShellWindowId_AlwaysOnTopContainer};
+  // TODO(afakhry): Add metrics for the inactive desks.
+  ids.emplace_back(desks_util::GetActiveDeskContainerId());
+  return ids;
+}
 
 // Returns an approximate count of how many windows are currently visible in the
 // primary root window.
@@ -108,7 +118,7 @@ int GetNumVisibleWindowsInPrimaryDisplay() {
   int visible_window_count = 0;
   bool maximized_or_fullscreen_window_present = false;
 
-  for (const int& current_container_id : kVisibleWindowContainerIds) {
+  for (const int& current_container_id : GetVisibleWindowContainerIds()) {
     if (maximized_or_fullscreen_window_present)
       break;
 
@@ -122,8 +132,7 @@ int GetNumVisibleWindowsInPrimaryDisplay() {
                                                        rend = children.rend();
          it != rend; ++it) {
       const aura::Window* child_window = *it;
-      const wm::WindowState* child_window_state =
-          wm::GetWindowState(child_window);
+      const WindowState* child_window_state = WindowState::Get(child_window);
 
       if (!child_window->IsVisible() || child_window_state->IsMinimized())
         continue;
@@ -135,12 +144,10 @@ int GetNumVisibleWindowsInPrimaryDisplay() {
         ++visible_window_count;
 
       // Stop counting windows that will be hidden by maximized or fullscreen
-      // windows. Only windows in the kShellWindowId_DefaultContainer and
+      // windows. Only windows in the active desk container and
       // kShellWindowId_AlwaysOnTopContainer can be maximized or fullscreened
       // and completely obscure windows beneath them.
-      if ((kShellWindowId_DefaultContainer == current_container_id ||
-           kShellWindowId_AlwaysOnTopContainer == current_container_id) &&
-          child_window_state->IsMaximizedOrFullscreenOrPinned()) {
+      if (child_window_state->IsMaximizedOrFullscreenOrPinned()) {
         maximized_or_fullscreen_window_present = true;
         break;
       }
@@ -153,10 +160,10 @@ int GetNumVisibleWindowsInPrimaryDisplay() {
 void RecordShelfItemCounts() {
   int pinned_item_count = 0;
   int unpinned_item_count = 0;
-  for (const ShelfItem& item : Shell::Get()->shelf_model()->items()) {
+  for (const ShelfItem& item : ShelfModel::Get()->items()) {
     if (item.type == TYPE_PINNED_APP || item.type == TYPE_BROWSER_SHORTCUT)
       ++pinned_item_count;
-    else if (item.type != TYPE_APP_LIST)
+    else
       ++unpinned_item_count;
   }
 
@@ -184,15 +191,26 @@ UserMetricsRecorder::~UserMetricsRecorder() {
 }
 
 // static
-void UserMetricsRecorder::RecordUserClick(
-    LoginMetricsRecorder::LockScreenUserClickTarget target) {
-  DCHECK(Shell::HasInstance());
+void UserMetricsRecorder::RecordUserClickOnTray(
+    LoginMetricsRecorder::TrayClickTarget target) {
   LoginMetricsRecorder* recorder =
       Shell::Get()->metrics()->login_metrics_recorder();
-  if (!LockScreen::IsShown() && !recorder->enabled_for_testing())
-    return;
+  recorder->RecordUserTrayClick(target);
+}
 
-  recorder->RecordUserClickEventOnLockScreen(target);
+// static
+void UserMetricsRecorder::RecordUserClickOnShelfButton(
+    LoginMetricsRecorder::ShelfButtonClickTarget target) {
+  LoginMetricsRecorder* recorder =
+      Shell::Get()->metrics()->login_metrics_recorder();
+  recorder->RecordUserShelfButtonClick(target);
+}
+
+// static
+void UserMetricsRecorder::RecordUserToggleDictation(
+    DictationToggleSource source) {
+  UMA_HISTOGRAM_ENUMERATION("Accessibility.CrosDictation.ToggleDictationMethod",
+                            source);
 }
 
 void UserMetricsRecorder::RecordUserMetricsAction(UserMetricsAction action) {
@@ -356,8 +374,12 @@ void UserMetricsRecorder::RecordUserMetricsAction(UserMetricsAction action) {
       break;
     case UMA_STATUS_AREA_NETWORK_SETTINGS_OPENED:
       RecordAction(UserMetricsAction("StatusArea_Network_Settings"));
+      break;
     case UMA_STATUS_AREA_OS_UPDATE_DEFAULT_SELECTED:
       RecordAction(UserMetricsAction("StatusArea_OS_Update_Default_Selected"));
+      break;
+    case UMA_STATUS_AREA_SCREEN_CAPTURE_CHANGE_SOURCE:
+      RecordAction(UserMetricsAction("StatusArea_ScreenCapture_Change_Source"));
       break;
     case UMA_STATUS_AREA_SCREEN_CAPTURE_DEFAULT_STOP:
       RecordAction(UserMetricsAction("StatusArea_ScreenCapture_Default_Stop"));
@@ -414,19 +436,12 @@ void UserMetricsRecorder::RecordUserMetricsAction(UserMetricsAction action) {
     case UMA_TRAY_SHUT_DOWN:
       RecordAction(UserMetricsAction("Tray_ShutDown"));
       break;
-    case UMA_TRAY_SWIPE_TO_CLOSE_SUCCESSFUL:
-      RecordAction(UserMetricsAction("Tray_SwipeToClose_Successful"));
-      break;
-    case UMA_TRAY_SWIPE_TO_CLOSE_UNSUCCESSFUL:
-      RecordAction(UserMetricsAction("Tray_SwipeToClose_Unsuccessful"));
-      break;
-    case UMA_TRAY_SWIPE_TO_OPEN_SUCCESSFUL:
-      RecordAction(UserMetricsAction("Tray_SwipeToOpen_Successful"));
-      break;
-    case UMA_TRAY_SWIPE_TO_OPEN_UNSUCCESSFUL:
-      RecordAction(UserMetricsAction("Tray_SwipeToOpen_Unsuccessful"));
-      break;
   }
+}
+
+void UserMetricsRecorder::StartDemoSessionMetricsRecording() {
+  demo_session_metrics_recorder_ =
+      std::make_unique<DemoSessionMetricsRecorder>();
 }
 
 void UserMetricsRecorder::OnShellInitialized() {
@@ -440,6 +455,7 @@ void UserMetricsRecorder::OnShellInitialized() {
 }
 
 void UserMetricsRecorder::OnShellShuttingDown() {
+  demo_session_metrics_recorder_.reset();
   desktop_task_switch_metric_recorder_.reset();
 
   // To clean up pointer_metrics_recorder_ properly, a valid shell instance is

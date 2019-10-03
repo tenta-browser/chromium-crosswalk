@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/timer/timer.h"
 #include "pdf/url_loader_wrapper.h"
 #include "ppapi/cpp/url_loader.h"
 #include "ppapi/utility/completion_callback_factory.h"
@@ -16,7 +17,7 @@
 
 namespace pp {
 class Instance;
-};
+}
 
 namespace chrome_pdf {
 
@@ -34,7 +35,7 @@ class URLLoaderWrapperImpl : public URLLoaderWrapper {
   std::string GetContentDisposition() const override;
   int GetStatusCode() const override;
   bool IsMultipart() const override;
-  bool GetByteRange(int* start, int* end) const override;
+  bool GetByteRangeStart(int* start) const override;
   bool GetDownloadProgress(int64_t* bytes_received,
                            int64_t* total_bytes_to_be_received) const override;
   void Close() override;
@@ -50,8 +51,6 @@ class URLLoaderWrapperImpl : public URLLoaderWrapper {
   void SetResponseHeaders(const std::string& response_headers);
 
  private:
-  class ReadStarter;
-
   void SetHeadersFromLoader();
   void ParseHeaders();
   void DidOpen(int32_t result);
@@ -79,7 +78,7 @@ class URLLoaderWrapperImpl : public URLLoaderWrapper {
   pp::CompletionCallback did_read_callback_;
   pp::CompletionCallbackFactory<URLLoaderWrapperImpl> callback_factory_;
 
-  std::unique_ptr<ReadStarter> read_starter_;
+  base::OneShotTimer read_starter_;
 
   DISALLOW_COPY_AND_ASSIGN(URLLoaderWrapperImpl);
 };

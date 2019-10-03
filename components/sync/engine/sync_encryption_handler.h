@@ -9,12 +9,21 @@
 
 #include "base/time/time.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/base/passphrase_enums.h"
+#include "components/sync/nigori/nigori.h"
 #include "components/sync/protocol/sync.pb.h"
 
 namespace syncer {
 
 class Cryptographer;
+class KeystoreKeysHandler;
 enum class PassphraseType;
+
+namespace syncable {
+
+class NigoriHandler;
+
+}  // namespace syncable
 
 // Reasons due to which Cryptographer might require a passphrase.
 enum PassphraseRequiredReason {
@@ -43,6 +52,9 @@ class SyncEncryptionHandler {
  public:
   class NigoriState;
 
+  static constexpr PassphraseType kInitialPassphraseType =
+      PassphraseType::IMPLICIT_PASSPHRASE;
+
   // All Observer methods are done synchronously from within a transaction and
   // on the sync thread.
   class Observer {
@@ -58,10 +70,13 @@ class SyncEncryptionHandler {
     // - If the passphrase is required because decryption failed, and a new
     //   passphrase is required, |reason| will be REASON_SET_PASSPHRASE_FAILED.
     //
+    // |key_derivation_params| are the parameters that should be used to obtain
+    // the key from the passphrase.
     // |pending_keys| is a copy of the cryptographer's pending keys, that may be
     // cached by the frontend for subsequent use by the UI.
     virtual void OnPassphraseRequired(
         PassphraseRequiredReason reason,
+        const KeyDerivationParams& key_derivation_params,
         const sync_pb::EncryptedData& pending_keys) = 0;
 
     // Called when the passphrase provided by the user has been accepted and is
@@ -111,12 +126,10 @@ class SyncEncryptionHandler {
                                          base::Time passphrase_time) = 0;
 
     // The user has set a passphrase using this device.
-    //
-    // |nigori_state| can be used to restore nigori state across
-    // SyncEncryptionHandlerImpl lifetimes. See also SyncEncryptionHandlerImpl's
-    // RestoredNigori method.
+    // TODO(treib): This method is only overridden in tests which use it to
+    // capture the NigoriState; we should find a better way to do that.
     virtual void OnLocalSetPassphraseEncryption(
-        const NigoriState& nigori_state) = 0;
+        const NigoriState& nigori_state) {}
   };
 
   class NigoriState {
@@ -135,27 +148,24 @@ class SyncEncryptionHandler {
   // Reads the nigori node, updates internal state as needed, and, if an
   // empty/stale nigori node is detected, overwrites the existing
   // nigori node. Upon completion, if the cryptographer is still ready
-  // attempts to re-encrypt all sync data.
+  // attempts to re-encrypt all sync data. Returns false in case of error.
   // Note: This method is expensive (it iterates through all encrypted types),
   // so should only be used sparingly (e.g. on startup).
-  virtual void Init() = 0;
+  virtual bool Init() = 0;
 
   // Attempts to re-encrypt encrypted data types using the passphrase provided.
   // Notifies observers of the result of the operation via OnPassphraseAccepted
   // or OnPassphraseRequired, updates the nigori node, and does re-encryption as
   // appropriate. If an explicit password has been set previously, we drop
-  // subsequent requests to set a passphrase. If the cryptographer has pending
-  // keys, and a new implicit passphrase is provided, we try decrypting the
-  // pending keys with it, and if that fails, we cache the passphrase for
-  // re-encryption once the pending keys are decrypted.
-  virtual void SetEncryptionPassphrase(const std::string& passphrase,
-                                       bool is_explicit) = 0;
+  // subsequent requests to set a passphrase. |passphrase| shouldn't be empty.
+  virtual void SetEncryptionPassphrase(const std::string& passphrase) = 0;
 
   // Provides a passphrase for decrypting the user's existing sync data.
   // Notifies observers of the result of the operation via OnPassphraseAccepted
   // or OnPassphraseRequired, updates the nigori node, and does re-encryption as
   // appropriate if there is a previously cached encryption passphrase. It is an
-  // error to call this when we don't have pending keys.
+  // error to call this when we don't have pending keys. |passphrase| shouldn't
+  // be empty.
   virtual void SetDecryptionPassphrase(const std::string& passphrase) = 0;
 
   // Enables encryption of all datatypes.
@@ -164,6 +174,29 @@ class SyncEncryptionHandler {
   // Whether encryption of all datatypes is enabled. If false, only sensitive
   // types are encrypted.
   virtual bool IsEncryptEverythingEnabled() const = 0;
+
+  // Returns the time when Nigori was migrated to keystore or when it was
+  // initialized in case it happens after migration was introduced. Returns
+  // base::Time() in case migration isn't completed.
+  virtual base::Time GetKeystoreMigrationTime() const = 0;
+
+  // Unsafe getter. Use only if sync is not up and running and there is no risk
+  // of other threads calling this. Returns the original cryptographer. This
+  // Cryptographer will always reflect the actual state of
+  // SyncEncryptionHandler (no needs to call this method again in case
+  // cryptographer state was changed).
+  // TODO(crbug.com/970213): remove this method or replace with normal getter
+  // for const Cryptographer.
+  virtual Cryptographer* GetCryptographerUnsafe() = 0;
+
+  // Returns KeystoreKeysHandler, allowing to pass new keystore keys and to
+  // check whether keystore keys need to be requested from the server.
+  virtual KeystoreKeysHandler* GetKeystoreKeysHandler() = 0;
+
+  // Returns NigoriHandler, allowing directory-specific interaction with
+  // Nigori. Returns nullptr iff USS implementation of Nigori is enabled.
+  // TODO(crbug.com/970213): remove this method.
+  virtual syncable::NigoriHandler* GetNigoriHandler() = 0;
 
   // The set of types that are always encrypted.
   static ModelTypeSet SensitiveTypes();

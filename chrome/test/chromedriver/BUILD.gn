@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/python.gni")
 import("//build/config/ui.gni")
+import("//build/util/lastchange.gni")
 import("//testing/test.gni")
 
 action("embed_js_in_cpp") {
@@ -12,7 +14,9 @@ action("embed_js_in_cpp") {
     "js/call_function.js",
     "js/dispatch_touch_event.js",
     "js/execute_async_script.js",
+    "js/execute_script.js",
     "js/focus.js",
+    "js/get_element_location.js",
     "js/get_element_region.js",
     "js/is_option_element_toggleable.js",
   ]
@@ -79,6 +83,8 @@ source_set("automation_client_lib") {
     "chrome/adb_impl.h",
     "chrome/automation_extension.cc",
     "chrome/automation_extension.h",
+    "chrome/cast_tracker.cc",
+    "chrome/cast_tracker.h",
     "chrome/chrome.h",
     "chrome/chrome_android_impl.cc",
     "chrome/chrome_android_impl.h",
@@ -108,6 +114,8 @@ source_set("automation_client_lib") {
     "chrome/devtools_http_client.h",
     "chrome/dom_tracker.cc",
     "chrome/dom_tracker.h",
+    "chrome/download_directory_override_manager.cc",
+    "chrome/download_directory_override_manager.h",
     "chrome/frame_tracker.cc",
     "chrome/frame_tracker.h",
     "chrome/geolocation_override_manager.cc",
@@ -148,12 +156,18 @@ source_set("automation_client_lib") {
     "chrome/web_view.h",
     "chrome/web_view_impl.cc",
     "chrome/web_view_impl.h",
+    "log_replay/chrome_replay_impl.cc",
+    "log_replay/chrome_replay_impl.h",
+    "log_replay/devtools_log_reader.cc",
+    "log_replay/devtools_log_reader.h",
+    "log_replay/log_replay_socket.cc",
+    "log_replay/log_replay_socket.h",
+    "log_replay/replay_http_client.cc",
+    "log_replay/replay_http_client.h",
     "net/adb_client_socket.cc",
     "net/adb_client_socket.h",
     "net/net_util.cc",
     "net/net_util.h",
-    "net/port_server.cc",
-    "net/port_server.h",
     "net/sync_websocket.h",
     "net/sync_websocket_factory.cc",
     "net/sync_websocket_factory.h",
@@ -181,34 +195,18 @@ source_set("automation_client_lib") {
     ":embed_user_data_dir_in_cpp",
     "//base",
     "//base/third_party/dynamic_annotations",
+    "//chrome/common:version_header",
     "//net",
-    "//third_party/WebKit/public:features",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//third_party/blink/public:buildflags",
     "//third_party/zlib:minizip",
     "//third_party/zlib/google:zip",
-    "//ui/accessibility:ax_gen",
+    "//ui/accessibility:ax_enums_mojo",
     "//ui/base",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//url",
-  ]
-}
-
-action("embed_version_in_cpp") {
-  script = "embed_version_in_cpp.py"
-  inputs = [
-    "cpp_source.py",
-    "VERSION",
-  ]
-  outputs = [
-    "$target_gen_dir/version.cc",
-    "$target_gen_dir/version.h",
-  ]
-
-  args = [
-    "--version-file",
-    rebase_path("VERSION", root_build_dir),
-    "--directory",
-    rebase_path(target_gen_dir, root_build_dir),
   ]
 }
 
@@ -258,15 +256,16 @@ source_set("lib") {
     "session_thread_map.h",
     "util.cc",
     "util.h",
+    "version.cc",
+    "version.h",
+    "webauthn_commands.cc",
+    "webauthn_commands.h",
     "window_commands.cc",
     "window_commands.h",
   ]
 
   # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
   configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
-
-  # Also compile the generated version files.
-  sources += get_target_outputs(":embed_version_in_cpp")
 
   if (use_x11) {
     sources += [ "keycode_text_conversion_x.cc" ]
@@ -279,14 +278,18 @@ source_set("lib") {
 
   deps = [
     ":automation_client_lib",
-    ":embed_version_in_cpp",
     "//base",
     "//base/third_party/dynamic_annotations",
     "//chrome/common:constants",
     "//chrome/common:version_header",
+    "//components/crx_file",
+    "//components/version_info:generate_version_info",
     "//crypto",
     "//net",
-    "//net:http_server",
+    "//net/server:http_server",
+    "//services/network:network_service",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
     "//third_party/zlib",
     "//ui/base",
     "//ui/events:dom_keycode_converter",
@@ -307,6 +310,7 @@ source_set("lib") {
 }
 
 executable("chromedriver") {
+  testonly = true
   sources = [
     "server/chromedriver_server.cc",
   ]
@@ -316,21 +320,63 @@ executable("chromedriver") {
 
   deps = [
     ":lib",
-    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
+    "//mojo/core/embedder",
+    "//net/server:http_server",
+    "//net/traffic_annotation:test_support",
+    "//services/network/public/mojom",
   ]
+}
+
+python_library("chromedriver_py_tests") {
+  testonly = true
+  deps = [
+    ":chromedriver",
+    "//chrome:chrome",
+  ]
+
+  pydeps_file = "test/run_py_tests.pydeps"
+  data = [
+    "//chrome/test/data/chromedriver/",
+    "//testing/scripts/run_chromedriver_tests.py",
+    "//testing/scripts/common.py",
+    "//testing/xvfb.py",
+  ]
+
+  data_deps = [
+    "//chrome/test/chromedriver",
+  ]
+  if (is_component_build && is_mac) {
+    data_deps += [ "//chrome:chrome_framework" ]
+  }
+
+  if (is_win) {
+    # On Windows, the following target produces the final chrome.exe
+    data_deps += [ "//chrome:reorder_imports" ]
+  }
+}
+
+python_library("chromedriver_replay_unittests") {
+  testonly = true
+  deps = [
+    ":chromedriver",
+  ]
+
+  pydeps_file = "log_replay/client_replay_unittest.pydeps"
 }
 
 test("chromedriver_unittests") {
   sources = [
     "capabilities_unittest.cc",
     "chrome/browser_info_unittest.cc",
+    "chrome/cast_tracker_unittest.cc",
     "chrome/chrome_finder_unittest.cc",
     "chrome/console_logger_unittest.cc",
     "chrome/device_manager_unittest.cc",
     "chrome/devtools_client_impl_unittest.cc",
     "chrome/devtools_http_client_unittest.cc",
     "chrome/dom_tracker_unittest.cc",
+    "chrome/download_directory_override_manager_unittest.cc",
     "chrome/frame_tracker_unittest.cc",
     "chrome/geolocation_override_manager_unittest.cc",
     "chrome/heap_snapshot_taker_unittest.cc",
@@ -351,13 +397,23 @@ test("chromedriver_unittests") {
     "chrome_launcher_unittest.cc",
     "command_listener_proxy_unittest.cc",
     "commands_unittest.cc",
+    "key_converter_unittest.cc",
+    "keycode_text_conversion_unittest.cc",
+    "log_replay/devtools_log_reader_unittest.cc",
     "logging_unittest.cc",
+    "net/adb_client_socket_unittest.cc",
+    "net/net_util_unittest.cc",
+    "net/sync_websocket_impl_unittest.cc",
+    "net/test_http_server.cc",
+    "net/test_http_server.h",
     "net/timeout_unittest.cc",
+    "net/websocket_unittest.cc",
     "performance_logger_unittest.cc",
     "server/http_handler_unittest.cc",
     "session_commands_unittest.cc",
     "session_unittest.cc",
     "util_unittest.cc",
+    "window_commands_unittest.cc",
   ]
 
   # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
@@ -365,47 +421,25 @@ test("chromedriver_unittests") {
 
   data = [
     "//chrome/test/data/chromedriver/",
+    "//chrome/test/chromedriver/log_replay/test_data",
   ]
 
   deps = [
     ":lib",
     "//base",
     "//base/test:run_all_unittests",
+    "//mojo/core/embedder",
     "//net",
-    "//net:http_server",
+    "//net:test_support",
+    "//net/server:http_server",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//testing/gmock",
     "//testing/gtest",
     "//ui/base",
+    "//ui/events:test_support",
     "//ui/gfx",
     "//ui/gfx/geometry",
-  ]
-}
-
-# ChromeDriver tests that aren't run on the main buildbot. Available as an
-# optional test type on trybots.
-test("chromedriver_tests") {
-  sources = [
-    "key_converter_unittest.cc",
-    "keycode_text_conversion_unittest.cc",
-    "net/net_util_unittest.cc",
-    "net/port_server_unittest.cc",
-    "net/sync_websocket_impl_unittest.cc",
-    "net/test_http_server.cc",
-    "net/test_http_server.h",
-    "net/websocket_unittest.cc",
-  ]
-
-  # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
-
-  deps = [
-    ":lib",
-    "//base",
-    "//base/test:run_all_unittests",
-    "//net",
-    "//net:http_server",
-    "//net:test_support",
-    "//testing/gtest",
-    "//ui/events:test_support",
     "//url",
   ]
 }

@@ -7,9 +7,10 @@
 
 #include <memory>
 
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_ui_factory.h"
 #include "base/macros.h"
 #include "ui/aura/test/test_window_delegate.h"
-#include "ui/keyboard/keyboard_ui.h"
 
 namespace aura {
 class Window;
@@ -23,20 +24,30 @@ class TestKeyboardUI : public keyboard::KeyboardUI {
   TestKeyboardUI();
   ~TestKeyboardUI() override;
 
-  bool HasContentsWindow() const override;
-  bool ShouldWindowOverscroll(aura::Window* window) const override;
-  aura::Window* GetContentsWindow() override;
+  // Overridden from KeyboardUI:
+  aura::Window* LoadKeyboardWindow(LoadCallback callback) override;
+  aura::Window* GetKeyboardWindow() const override;
 
  private:
   // Overridden from keyboard::KeyboardUI:
   ui::InputMethod* GetInputMethod() override;
   void ReloadKeyboardIfNeeded() override;
-  void InitInsets(const gfx::Rect& keyboard_bounds) override;
-  void ResetInsets() override;
 
   aura::test::TestWindowDelegate delegate_;
-  std::unique_ptr<aura::Window> keyboard_;
+  std::unique_ptr<aura::Window> keyboard_window_;
   DISALLOW_COPY_AND_ASSIGN(TestKeyboardUI);
+};
+
+class TestKeyboardUIFactory : public keyboard::KeyboardUIFactory {
+ public:
+  TestKeyboardUIFactory();
+  ~TestKeyboardUIFactory() override;
+
+ private:
+  // keyboard::KeyboardUIFactory:
+  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
+
+  DISALLOW_COPY_AND_ASSIGN(TestKeyboardUIFactory);
 };
 
 }  // namespace ash

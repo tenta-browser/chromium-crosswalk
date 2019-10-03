@@ -13,13 +13,18 @@
 #include "base/time/time.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
+#include "url/gurl.h"
 
 class GURL;
 
 namespace net {
 class HttpResponseHeaders;
 }  // namespace net
+
+namespace network {
+struct ResourceResponseHead;
+}  // namespace network
 
 namespace data_reduction_proxy {
 
@@ -28,9 +33,7 @@ enum TransformDirective {
   TRANSFORM_UNKNOWN,
   TRANSFORM_NONE,
   TRANSFORM_LITE_PAGE,
-  TRANSFORM_EMPTY_IMAGE,
   TRANSFORM_COMPRESSED_VIDEO,
-  TRANSFORM_PAGE_POLICIES_EMPTY_IMAGE,
   TRANSFORM_IDENTITY,
 };
 
@@ -44,23 +47,9 @@ enum DataReductionProxyBypassType {
 #undef BYPASS_EVENT_TYPE
 };
 
-// Values for the bypass actions that can be specified by the Data Reduction
-// Proxy in response to a client request. These are explicit bypass actions
-// specified by the Data Reduction Proxy in the Chrome-Proxy header, block-once,
-// bypass=1, block=300, etc. These are not used for Chrome initiated bypasses
-// due to a server error, missing Via header, etc.
-enum DataReductionProxyBypassAction {
-#define BYPASS_ACTION_TYPE(label, value) BYPASS_ACTION_TYPE_##label = value,
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_bypass_action_list.h"
-#undef BYPASS_ACTION_TYPE
-};
-
 // Contains instructions contained in the Chrome-Proxy header.
 struct DataReductionProxyInfo {
-  DataReductionProxyInfo()
-      : bypass_all(false),
-        mark_proxies_as_bad(false),
-        bypass_action(BYPASS_ACTION_TYPE_NONE) {}
+  DataReductionProxyInfo() : bypass_all(false), mark_proxies_as_bad(false) {}
 
   // True if Chrome should bypass all available data reduction proxies. False
   // if only the currently connected data reduction proxy should be bypassed.
@@ -73,9 +62,6 @@ struct DataReductionProxyInfo {
   // Amount of time to bypass the data reduction proxy or proxies. This value is
   // ignored if |mark_proxies_as_bad| is false.
   base::TimeDelta bypass_duration;
-
-  // The bypass action specified by the data reduction proxy.
-  DataReductionProxyBypassAction bypass_action;
 };
 
 // Gets the header used for data reduction proxy requests and responses.
@@ -112,17 +98,12 @@ const char* compressed_video_directive();
 // a specific page policy.
 const char* page_policies_directive();
 
-// Gets the Chrome-Proxy experiment ("exp") value to force a lite page preview
-// for requests that accept lite pages.
-const char* chrome_proxy_experiment_force_lite_page();
-
-// Gets the Chrome-Proxy experiment ("exp") value to force an empty image
-// preview for requests that enable server provided previews.
-const char* chrome_proxy_experiment_force_empty_image();
-
 // Returns true if the Chrome-Proxy-Content-Transform response header indicates
 // that an empty image has been provided.
 bool IsEmptyImagePreview(const net::HttpResponseHeaders& headers);
+
+// Returns true if there is a cycle in |url_chain|.
+bool HasURLRedirectCycle(const std::vector<GURL>& url_chain);
 
 // Retrieves the accepted transform type, if any, from |headers|.
 TransformDirective ParseRequestTransform(
@@ -184,9 +165,19 @@ bool ParseHeadersAndSetBypassDuration(const net::HttpResponseHeaders* headers,
                                       base::StringPiece action_prefix,
                                       base::TimeDelta* bypass_duration);
 
-// Returns the OFCL value in the Chrome-Proxy header. Returns -1 in case of
-// of error or if OFCL does not exist. |headers| must be non-null.
+// Returns the Original-Full-Content-Length(OFCL) value in the Chrome-Proxy
+// header. Returns -1 in case of of error or if OFCL does not exist. |headers|
+// must be non-null.
 int64_t GetDataReductionProxyOFCL(const net::HttpResponseHeaders* headers);
+
+// Returns an estimate of the compression ratio from the Content-Length and
+// Chrome-Proxy Original-Full-Content-Length(OFCL) response headers. These may
+// not be populated for responses which are streamed from the origin which will
+// be treated as a no compression case. Notably, only the response body size is
+// used to compute the ratio, and headers are excluded, since this is only an
+// estimate for response that is beginning to arrive.
+double EstimateCompressionRatioFromHeaders(
+    const network::ResourceResponseHead* response_head);
 
 }  // namespace data_reduction_proxy
 #endif  // COMPONENTS_DATA_REDUCTION_PROXY_CORE_COMMON_DATA_REDUCTION_PROXY_HEADERS_H_

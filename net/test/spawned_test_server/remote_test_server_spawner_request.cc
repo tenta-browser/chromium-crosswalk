@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -21,6 +22,7 @@
 #include "net/base/port_util.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "url/gurl.h"
@@ -72,7 +74,7 @@ class RemoteTestServerSpawnerRequest::Core : public URLRequest::Delegate {
 RemoteTestServerSpawnerRequest::Core::Core()
     : event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
              base::WaitableEvent::InitialState::NOT_SIGNALED),
-      read_buffer_(new IOBuffer(kBufferSize)) {
+      read_buffer_(base::MakeRefCounted<IOBuffer>(kBufferSize)) {
   DETACH_FROM_THREAD(thread_checker_);
 }
 
@@ -84,7 +86,8 @@ void RemoteTestServerSpawnerRequest::Core::SendRequest(
   // Prepare the URLRequest for sending the command.
   DCHECK(!request_.get());
   context_.reset(new TestURLRequestContext);
-  request_ = context_->CreateRequest(url, DEFAULT_PRIORITY, this);
+  request_ = context_->CreateRequest(url, DEFAULT_PRIORITY, this,
+                                     TRAFFIC_ANNOTATION_FOR_TESTS);
 
   if (post_data.empty()) {
     request_->set_method("GET");

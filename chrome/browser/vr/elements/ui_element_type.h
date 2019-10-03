@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "chrome/browser/vr/vr_ui_export.h"
+
 namespace vr {
 
 // These identifiers serve as stable, semantic identifiers for UI elements.
@@ -16,13 +18,43 @@ enum UiElementType {
   kTypeButtonBackground,
   kTypeButtonForeground,
   kTypeButtonHitTarget,
+  kTypeButtonText,
+  kTypeHostedUiBackplane,
   kTypeScaledDepthAdjuster,
+  kTypeOmniboxSuggestionBackground,
+  kTypeOmniboxSuggestionLayout,
+  kTypeOmniboxSuggestionTextLayout,
+  kTypeOmniboxSuggestionIconField,
+  kTypeOmniboxSuggestionIcon,
+  kTypeOmniboxSuggestionContentText,
+  kTypeOmniboxSuggestionDescriptionText,
+  kTypePromptBackplane,
+  kTypePromptShadow,
+  kTypePromptBackground,
+  kTypePromptIcon,
+  kTypePromptText,
+  kTypePromptPrimaryButton,
+  kTypePromptSecondaryButton,
+  kTypeSpacer,
+  kTypeTextInputHint,
+  kTypeTextInputText,
+  kTypeTextInputCursor,
+  kTypeToastBackground,
+  kTypeToastText,
+  kTypeCursorBackground,
+  kTypeCursorForeground,
+  kTypeOverflowMenuButton,
+  kTypeOverflowMenuItem,
+  kTypeTooltip,
+  kTypeLabel,
+  kTypeTabItem,
+  kTypeTabItemRemoveButton,
 
   // This must be last.
   kNumUiElementTypes,
 };
 
-std::string UiElementTypeToString(UiElementType type);
+VR_UI_EXPORT std::string UiElementTypeToString(UiElementType type);
 
 }  // namespace vr
 

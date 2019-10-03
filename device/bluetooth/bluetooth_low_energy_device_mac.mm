@@ -42,7 +42,6 @@ BluetoothLowEnergyDeviceMac::BluetoothLowEnergyDeviceMac(
       peripheral_(peripheral, base::scoped_policy::RETAIN),
       connected_(false),
       discovery_pending_count_(0) {
-  DCHECK(BluetoothAdapterMac::IsLowEnergyAvailable());
   DCHECK(peripheral_);
   peripheral_delegate_.reset([[BluetoothLowEnergyPeripheralDelegate alloc]
       initWithBluetoothLowEnergyDeviceMac:this]);
@@ -56,6 +55,8 @@ BluetoothLowEnergyDeviceMac::~BluetoothLowEnergyDeviceMac() {
   if (IsGattConnected()) {
     GetMacAdapter()->DisconnectGatt(this);
   }
+
+  [peripheral_ setDelegate:nil];
 }
 
 std::string BluetoothLowEnergyDeviceMac::GetIdentifier() const {
@@ -101,7 +102,7 @@ base::Optional<std::string> BluetoothLowEnergyDeviceMac::GetName() const {
 }
 
 bool BluetoothLowEnergyDeviceMac::IsPaired() const {
-  return false;
+  return GetMacAdapter()->IsBluetoothLowEnergyDeviceSystemPaired(identifier_);
 }
 
 bool BluetoothLowEnergyDeviceMac::IsConnected() const {
@@ -398,7 +399,6 @@ void BluetoothLowEnergyDeviceMac::DidWriteValueForDescriptor(
 // static
 std::string BluetoothLowEnergyDeviceMac::GetPeripheralIdentifier(
     CBPeripheral* peripheral) {
-  DCHECK(BluetoothAdapterMac::IsLowEnergyAvailable());
   NSUUID* uuid = [peripheral identifier];
   NSString* uuidString = [uuid UUIDString];
   return base::SysNSStringToUTF8(uuidString);
@@ -407,12 +407,17 @@ std::string BluetoothLowEnergyDeviceMac::GetPeripheralIdentifier(
 // static
 std::string BluetoothLowEnergyDeviceMac::GetPeripheralHashAddress(
     CBPeripheral* peripheral) {
+  return GetPeripheralHashAddress(GetPeripheralIdentifier(peripheral));
+}
+
+// static
+std::string BluetoothLowEnergyDeviceMac::GetPeripheralHashAddress(
+    base::StringPiece device_identifier) {
   const size_t kCanonicalAddressNumberOfBytes = 6;
   char raw[kCanonicalAddressNumberOfBytes];
-  crypto::SHA256HashString(GetPeripheralIdentifier(peripheral), raw,
-                           sizeof(raw));
-  std::string hash = base::HexEncode(raw, sizeof(raw));
-  return BluetoothDevice::CanonicalizeAddress(hash);
+  crypto::SHA256HashString(device_identifier, raw, sizeof(raw));
+  return BluetoothDevice::CanonicalizeAddress(
+      base::HexEncode(raw, sizeof(raw)));
 }
 
 void BluetoothLowEnergyDeviceMac::DidConnectPeripheral() {
@@ -458,6 +463,10 @@ void BluetoothLowEnergyDeviceMac::SendNotificationIfDiscoveryComplete() {
 }
 
 BluetoothAdapterMac* BluetoothLowEnergyDeviceMac::GetMacAdapter() {
+  return static_cast<BluetoothAdapterMac*>(this->adapter_);
+}
+
+BluetoothAdapterMac* BluetoothLowEnergyDeviceMac::GetMacAdapter() const {
   return static_cast<BluetoothAdapterMac*>(this->adapter_);
 }
 

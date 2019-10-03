@@ -11,8 +11,11 @@ const char kChromeChannelSwitch[] = "chrome-channel";
 const char kChromeExePathSwitch[] = "chrome-exe-path";
 const char kChromeMojoPipeTokenSwitch[] = "chrome-mojo-pipe-token";
 const char kChromePromptSwitch[] = "chrome-prompt";
+const char kChromeReadHandleSwitch[] = "chrome-read-handle";
+const char kChromeWriteHandleSwitch[] = "chrome-write-handle";
 const char kChromeSystemInstallSwitch[] = "chrome-system-install";
 const char kChromeVersionSwitch[] = "chrome-version";
+const char kWithScanningModeLogsSwitch[] = "with-scanning-mode-logs";
 const char kEnableCrashReportingSwitch[] = "enable-crash-reporting";
 const char kEngineSwitch[] = "engine";
 const char kExecutionModeSwitch[] = "execution-mode";
@@ -42,5 +45,47 @@ const wchar_t kMemoryUsedValueName[] = L"MemoryUsed";
 const wchar_t kStartTimeValueName[] = L"StartTime";
 const wchar_t kUploadResultsValueName[] = L"UploadResults";
 const wchar_t kVersionValueName[] = L"Version";
+
+std::ostream& operator<<(std::ostream& stream, ExecutionMode mode) {
+  switch (mode) {
+    case ExecutionMode::kNone:
+      stream << "ExecutionModeNone";
+      break;
+    case ExecutionMode::kScanning:
+      stream << "ExecutionModeScanning";
+      break;
+    case ExecutionMode::kCleanup:
+      stream << "ExecutionModeCleanup";
+      break;
+    case ExecutionMode::kNumValues:
+      stream << "ExecutionModeNumValues";
+      break;
+  }
+  return stream;
+}
+
+std::ostream& operator<<(std::ostream& stream, ChromePromptValue value) {
+  switch (value) {
+    case ChromePromptValue::kUnspecified:
+      stream << "ChromePromptUnspecified";
+      break;
+    case ChromePromptValue::kPrompted:
+      stream << "ChromePromptPrompted";
+      break;
+    case ChromePromptValue::kUserInitiated:
+      stream << "ChromePromptUserInitiated";
+      break;
+    case ChromePromptValue::kLegacyNotPrompted:
+      stream << "ChromePromptLegacyNotPrompted";
+      break;
+    case ChromePromptValue::kLegacyUnknown:
+      stream << "ChromePromptLegacyUnknown";
+      break;
+    case ChromePromptValue::kLegacyShownFromMenu:
+      stream << "ChromePromptLegacyShownFromMenu";
+      break;
+  }
+  return stream;
+}
 
 }  // namespace chrome_cleaner

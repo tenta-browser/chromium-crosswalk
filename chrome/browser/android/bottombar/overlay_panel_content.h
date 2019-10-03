@@ -47,8 +47,7 @@ class OverlayPanelContent {
       const base::android::JavaParamRef<jstring>& search_url,
       jlong search_start_time_ms);
 
-  // Takes ownership of the WebContents associated with the given
-  // |ContentViewCore| which holds the panel content.
+  // Takes ownership of the WebContents which holds the panel content.
   void SetWebContents(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -65,6 +64,12 @@ class OverlayPanelContent {
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& delegate,
       const base::android::JavaParamRef<jobject>& jweb_contents);
+
+  // Update the browser controls for the held web contents.
+  void UpdateBrowserControlsState(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jboolean are_controls_hidden);
 
  private:
   // Our global reference to the Java OverlayPanelContent.

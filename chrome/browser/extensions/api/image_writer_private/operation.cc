@@ -6,14 +6,16 @@
 
 #include <utility>
 
-#include "base/files/file_enumerator.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "chrome/browser/extensions/api/image_writer_private/unzip_helper.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 namespace image_writer {
@@ -27,6 +29,7 @@ const int kMD5BufferSize = 1024;
 }  // namespace
 
 Operation::Operation(base::WeakPtr<OperationManager> manager,
+                     std::unique_ptr<service_manager::Connector> connector,
                      const ExtensionId& extension_id,
                      const std::string& device_path,
                      const base::FilePath& download_folder)
@@ -37,6 +40,8 @@ Operation::Operation(base::WeakPtr<OperationManager> manager,
 #else
       device_path_(device_path),
 #endif
+      temp_dir_(std::make_unique<base::ScopedTempDir>()),
+      connector_(std::move(connector)),
       stage_(image_writer_api::STAGE_UNKNOWN),
       progress_(0),
       download_folder_(download_folder),
@@ -44,7 +49,15 @@ Operation::Operation(base::WeakPtr<OperationManager> manager,
           base::CreateSequencedTaskRunnerWithTraits(blocking_task_traits())) {
 }
 
-Operation::~Operation() {}
+Operation::~Operation() {
+  // The connector_ is bound to the |task_runner_| and must be deleted there.
+  task_runner_->DeleteSoon(FROM_HERE, std::move(connector_));
+
+  // base::ScopedTempDir must be destroyed on a thread that allows blocking IO
+  // because it will try delete the directory if a call to Delete() hasn't been
+  // made or was unsuccessful.
+  task_runner_->DeleteSoon(FROM_HERE, std::move(temp_dir_));
+}
 
 void Operation::Cancel() {
   DCHECK(IsRunningInCorrectSequence());
@@ -75,9 +88,9 @@ void Operation::Start() {
   DCHECK(IsRunningInCorrectSequence());
 #if defined(OS_CHROMEOS)
   if (download_folder_.empty() ||
-      !temp_dir_.CreateUniqueTempDirUnderPath(download_folder_)) {
+      !temp_dir_->CreateUniqueTempDirUnderPath(download_folder_)) {
 #else
-  if (!temp_dir_.CreateUniqueTempDir()) {
+  if (!temp_dir_->CreateUniqueTempDir()) {
 #endif
     Error(error::kTempDirError);
     return;
@@ -85,7 +98,7 @@ void Operation::Start() {
 
   AddCleanUpFunction(
       base::BindOnce(base::IgnoreResult(&base::ScopedTempDir::Delete),
-                     base::Unretained(&temp_dir_)));
+                     base::Unretained(temp_dir_.get())));
 
   StartImpl();
 }
@@ -113,7 +126,7 @@ void Operation::Unzip(const base::Closure& continuation) {
       base::Bind(&Operation::CompleteAndContinue, this, continuation),
       base::Bind(&Operation::OnUnzipFailure, this),
       base::Bind(&Operation::OnUnzipProgress, this));
-  unzip_helper->Unzip(image_path_, temp_dir_.GetPath());
+  unzip_helper->Unzip(image_path_, temp_dir_->GetPath());
 }
 
 void Operation::Finish() {
@@ -121,16 +134,16 @@ void Operation::Finish() {
 
   CleanUp();
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&OperationManager::OnComplete, manager_, extension_id_));
 }
 
 void Operation::Error(const std::string& error_message) {
   DCHECK(IsRunningInCorrectSequence());
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&OperationManager::OnError, manager_, extension_id_,
                      stage_, progress_, error_message));
 
@@ -150,8 +163,8 @@ void Operation::SetProgress(int progress) {
 
   progress_ = progress;
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&OperationManager::OnProgress, manager_, extension_id_,
                      stage_, progress_));
 }
@@ -165,8 +178,8 @@ void Operation::SetStage(image_writer_api::Stage stage) {
   stage_ = stage;
   progress_ = 0;
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&OperationManager::OnProgress, manager_, extension_id_,
                      stage_, progress_));
 }
@@ -192,7 +205,9 @@ void Operation::CompleteAndContinue(const base::Closure& continuation) {
 void Operation::StartUtilityClient() {
   DCHECK(IsRunningInCorrectSequence());
   if (!image_writer_client_.get()) {
-    image_writer_client_ = ImageWriterUtilityClient::Create();
+    // connector_ can be null in tests.
+    image_writer_client_ = ImageWriterUtilityClient::Create(
+        task_runner_, connector_ ? connector_->Clone() : nullptr);
     AddCleanUpFunction(base::BindOnce(&Operation::StopUtilityClient, this));
   }
 }
@@ -243,13 +258,12 @@ void Operation::GetMD5SumOfFile(
     }
   }
 
-  PostTask(base::BindOnce(&Operation::MD5Chunk, this, Passed(std::move(file)),
-                          0, file_size, progress_offset, progress_scale,
+  PostTask(base::BindOnce(&Operation::MD5Chunk, this, std::move(file), 0,
+                          file_size, progress_offset, progress_scale,
                           std::move(callback)));
 }
 
 bool Operation::IsRunningInCorrectSequence() const {
-  base::AssertBlockingAllowed();
   return task_runner_->RunsTasksInCurrentSequence();
 }
 
@@ -286,10 +300,9 @@ void Operation::MD5Chunk(
           progress_offset;
       SetProgress(percent_curr);
 
-      PostTask(base::BindOnce(&Operation::MD5Chunk, this,
-                              Passed(std::move(file)), bytes_processed + len,
-                              bytes_total, progress_offset, progress_scale,
-                              std::move(callback)));
+      PostTask(base::BindOnce(
+          &Operation::MD5Chunk, this, std::move(file), bytes_processed + len,
+          bytes_total, progress_offset, progress_scale, std::move(callback)));
       // Skip closing the file.
       return;
     } else {

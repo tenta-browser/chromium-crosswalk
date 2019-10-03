@@ -30,8 +30,6 @@ const char kSyncableMountNameForInternalSync[] = "syncfs-internal";
 const base::FilePath::CharType kSyncFileSystemDir[] =
     FILE_PATH_LITERAL("Sync FileSystem");
 
-void Noop() {}
-
 }  // namespace
 
 void RegisterSyncableFileSystem() {
@@ -73,8 +71,7 @@ FileSystemURL CreateSyncableFileSystemURLForSync(
     storage::FileSystemContext* file_system_context,
     const FileSystemURL& syncable_url) {
   return ExternalMountPoints::GetSystemInstance()->CreateExternalFileSystemURL(
-      syncable_url.origin(),
-      kSyncableMountNameForInternalSync,
+      syncable_url.origin().GetURL(), kSyncableMountNameForInternalSync,
       syncable_url.path());
 }
 
@@ -82,9 +79,8 @@ bool SerializeSyncableFileSystemURL(const FileSystemURL& url,
                                     std::string* serialized_url) {
   if (!url.is_valid() || url.type() != storage::kFileSystemTypeSyncable)
     return false;
-  *serialized_url =
-      GetSyncableFileSystemRootURI(url.origin()).spec() +
-      url.path().AsUTF8Unsafe();
+  *serialized_url = GetSyncableFileSystemRootURI(url.origin().GetURL()).spec() +
+                    url.path().AsUTF8Unsafe();
   return true;
 }
 
@@ -111,10 +107,6 @@ base::FilePath GetSyncFileSystemDir(const base::FilePath& profile_base_dir) {
 
 void RunSoon(const base::Location& from_here, const base::Closure& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(from_here, callback);
-}
-
-base::Closure NoopClosure() {
-  return base::Bind(&Noop);
 }
 
 }  // namespace sync_file_system

@@ -4,33 +4,50 @@
 
 #include "chrome/browser/media/media_engagement_session.h"
 
+#include "chrome/browser/media/media_engagement_preloaded_list.h"
 #include "chrome/browser/media/media_engagement_score.h"
 #include "chrome/browser/media/media_engagement_service.h"
+#include "media/base/media_switches.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_entry_builder.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
 MediaEngagementSession::MediaEngagementSession(MediaEngagementService* service,
-                                               const url::Origin& origin)
-    : service_(service), origin_(origin) {}
+                                               const url::Origin& origin,
+                                               RestoreType restore_status,
+                                               ukm::SourceId ukm_source_id)
+    : service_(service),
+      origin_(origin),
+      ukm_source_id_(ukm_source_id),
+      restore_status_(restore_status) {
+  if (restore_status_ == RestoreType::kRestored)
+    pending_data_to_commit_.visit = false;
+}
 
 bool MediaEngagementSession::IsSameOriginWith(const url::Origin& origin) const {
   return origin_.IsSameOriginWith(origin);
 }
 
-void MediaEngagementSession::RecordSignificantPlayback() {
-  DCHECK(!significant_playback_recorded_);
+void MediaEngagementSession::RecordSignificantMediaElementPlayback() {
+  DCHECK(!significant_media_element_playback_recorded_);
 
-  significant_playback_recorded_ = true;
-  pending_data_to_commit_.playback = true;
+  significant_media_element_playback_recorded_ = true;
+  pending_data_to_commit_.media_element_playback = true;
 
-  // When playback has happened, the visit can be recorded as there will be no
-  // further changes.
-  CommitPendingData();
+  RecordSignificantPlayback();
+}
+
+void MediaEngagementSession::RecordSignificantAudioContextPlayback() {
+  DCHECK(!significant_audio_context_playback_recorded_);
+
+  significant_audio_context_playback_recorded_ = true;
+  pending_data_to_commit_.audio_context_playback = true;
+
+  RecordSignificantPlayback();
 }
 
 void MediaEngagementSession::RecordShortPlaybackIgnored(int length_msec) {
-  ukm::UkmRecorder* ukm_recorder = GetUkmRecorder();
+  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
   if (!ukm_recorder)
     return;
 
@@ -52,8 +69,19 @@ void MediaEngagementSession::RegisterAudiblePlayers(
   significant_players_delta_ += significant_players;
 }
 
-bool MediaEngagementSession::significant_playback_recorded() const {
-  return significant_playback_recorded_;
+bool MediaEngagementSession::WasSignificantPlaybackRecorded() const {
+  return significant_media_element_playback_recorded_ ||
+         significant_audio_context_playback_recorded_;
+}
+
+bool MediaEngagementSession::significant_media_element_playback_recorded()
+    const {
+  return significant_media_element_playback_recorded_;
+}
+
+bool MediaEngagementSession::significant_audio_context_playback_recorded()
+    const {
+  return significant_audio_context_playback_recorded_;
 }
 
 const url::Origin& MediaEngagementSession::origin() const {
@@ -70,32 +98,45 @@ MediaEngagementSession::~MediaEngagementSession() {
   RecordUkmMetrics();
 }
 
-ukm::UkmRecorder* MediaEngagementSession::GetUkmRecorder() {
-  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-  if (!ukm_recorder)
-    return nullptr;
+void MediaEngagementSession::RecordSignificantPlayback() {
+  DCHECK(WasSignificantPlaybackRecorded());
 
-  if (ukm_source_id_ == ukm::kInvalidSourceId) {
-    ukm_source_id_ = ukm_recorder->GetNewSourceID();
-    ukm_recorder->UpdateSourceURL(ukm_source_id_, origin_.GetURL());
-  }
+  // If this was the first time we recorded significant playback then we should
+  // record the playback time.
+  if (first_significant_playback_time_.is_null())
+    first_significant_playback_time_ = service_->clock()->Now();
 
-  return ukm_recorder;
+  // When a session was restored, visits are only recorded when there was a
+  // playback. Add back the visit now as this code can only be executed once
+  // per session.
+  if (restore_status_ == RestoreType::kRestored)
+    pending_data_to_commit_.visit = true;
 }
 
 void MediaEngagementSession::RecordUkmMetrics() {
-  ukm::UkmRecorder* ukm_recorder = GetUkmRecorder();
+  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
   if (!ukm_recorder)
     return;
 
-  MediaEngagementScore score =
-      service_->CreateEngagementScore(origin_.GetURL());
+  bool is_preloaded = false;
+  if (base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData)) {
+    is_preloaded =
+        MediaEngagementPreloadedList::GetInstance()->CheckOriginIsPresent(
+            origin_);
+  }
+
+  MediaEngagementScore score = service_->CreateEngagementScore(origin_);
   ukm::builders::Media_Engagement_SessionFinished(ukm_source_id_)
+      .SetPlaybacks_AudioContextTotal(score.audio_context_playbacks())
+      .SetPlaybacks_MediaElementTotal(score.media_element_playbacks())
       .SetPlaybacks_Total(score.media_playbacks())
       .SetVisits_Total(score.visits())
       .SetEngagement_Score(round(score.actual_score() * 100))
-      .SetPlaybacks_Delta(significant_playback_recorded_)
+      .SetPlaybacks_Delta(significant_media_element_playback_recorded_)
       .SetEngagement_IsHigh(score.high_score())
+      .SetEngagement_IsHigh_Changed(high_score_changed_)
+      .SetEngagement_IsHigh_Changes(score.high_score_changes())
+      .SetEngagement_IsPreloaded(is_preloaded)
       .SetPlayer_Audible_Delta(audible_players_total_)
       .SetPlayer_Audible_Total(score.audible_playbacks())
       .SetPlayer_Significant_Delta(significant_players_total_)
@@ -104,24 +145,38 @@ void MediaEngagementSession::RecordUkmMetrics() {
       .Record(ukm_recorder);
 }
 
+bool MediaEngagementSession::HasPendingPlaybackToCommit() const {
+  return pending_data_to_commit_.audio_context_playback ||
+         pending_data_to_commit_.media_element_playback;
+}
+
 bool MediaEngagementSession::HasPendingDataToCommit() const {
-  return pending_data_to_commit_.visit || pending_data_to_commit_.playback ||
-         pending_data_to_commit_.players;
+  return pending_data_to_commit_.visit || pending_data_to_commit_.players ||
+         HasPendingPlaybackToCommit();
 }
 
 void MediaEngagementSession::CommitPendingData() {
   DCHECK(HasPendingDataToCommit());
 
-  MediaEngagementScore score =
-      service_->CreateEngagementScore(origin_.GetURL());
+  MediaEngagementScore score = service_->CreateEngagementScore(origin_);
+  bool previous_high_value = score.high_score();
 
   if (pending_data_to_commit_.visit)
     score.IncrementVisits();
 
-  if (significant_playback_recorded_ && pending_data_to_commit_.playback) {
+  if (WasSignificantPlaybackRecorded() && HasPendingPlaybackToCommit()) {
     const base::Time old_time = score.last_media_playback_time();
 
     score.IncrementMediaPlaybacks();
+
+    if (pending_data_to_commit_.audio_context_playback)
+      score.IncrementAudioContextPlaybacks();
+
+    if (pending_data_to_commit_.media_element_playback)
+      score.IncrementMediaElementPlaybacks();
+
+    // Use the stored significant playback time.
+    score.set_last_media_playback_time(first_significant_playback_time_);
 
     // This code should be reached once and |time_since_playback_for_ukm_| can't
     // be set.
@@ -149,6 +204,10 @@ void MediaEngagementSession::CommitPendingData() {
 
   score.Commit();
 
-  pending_data_to_commit_.visit = pending_data_to_commit_.playback =
-      pending_data_to_commit_.players = false;
+  // If the high state has changed store that in a bool.
+  high_score_changed_ = previous_high_value != score.high_score();
+
+  pending_data_to_commit_.visit = pending_data_to_commit_.players =
+      pending_data_to_commit_.audio_context_playback =
+          pending_data_to_commit_.media_element_playback = false;
 }

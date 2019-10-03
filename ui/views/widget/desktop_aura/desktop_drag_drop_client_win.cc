@@ -20,7 +20,8 @@ DesktopDragDropClientWin::DesktopDragDropClientWin(
     : drag_drop_in_progress_(false),
       drag_operation_(0),
       weak_factory_(this) {
-  drop_target_ = new DesktopDropTargetWin(root_window, window);
+  drop_target_ = new DesktopDropTargetWin(root_window);
+  drop_target_->Init(window);
 }
 
 DesktopDragDropClientWin::~DesktopDragDropClientWin() {
@@ -29,7 +30,7 @@ DesktopDragDropClientWin::~DesktopDragDropClientWin() {
 }
 
 int DesktopDragDropClientWin::StartDragAndDrop(
-    const ui::OSExchangeData& data,
+    std::unique_ptr<ui::OSExchangeData> data,
     aura::Window* root_window,
     aura::Window* source_window,
     const gfx::Point& screen_location,
@@ -42,8 +43,8 @@ int DesktopDragDropClientWin::StartDragAndDrop(
 
   drag_source_ = ui::DragSourceWin::Create();
   Microsoft::WRL::ComPtr<ui::DragSourceWin> drag_source_copy = drag_source_;
-  drag_source_copy->set_data(&data);
-  ui::OSExchangeDataProviderWin::GetDataObjectImpl(data)
+  drag_source_copy->set_data(data.get());
+  ui::OSExchangeDataProviderWin::GetDataObjectImpl(*data.get())
       ->set_in_drag_loop(true);
 
   DWORD effect;
@@ -52,7 +53,8 @@ int DesktopDragDropClientWin::StartDragAndDrop(
                             ui::DragDropTypes::DRAG_EVENT_SOURCE_COUNT);
 
   HRESULT result = DoDragDrop(
-      ui::OSExchangeDataProviderWin::GetIDataObject(data), drag_source_.Get(),
+      ui::OSExchangeDataProviderWin::GetIDataObject(*data.get()),
+      drag_source_.Get(),
       ui::DragDropTypes::DragOperationToDropEffect(operation), &effect);
   drag_source_copy->set_data(nullptr);
 
@@ -97,7 +99,7 @@ void DesktopDragDropClientWin::RemoveObserver(
 void DesktopDragDropClientWin::OnNativeWidgetDestroying(HWND window) {
   if (drop_target_.get()) {
     RevokeDragDrop(window);
-    drop_target_ = NULL;
+    drop_target_ = nullptr;
   }
 }
 

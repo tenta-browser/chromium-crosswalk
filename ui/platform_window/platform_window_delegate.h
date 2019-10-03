@@ -15,12 +15,12 @@ namespace ui {
 
 class Event;
 
-enum PlatformWindowState {
-  PLATFORM_WINDOW_STATE_UNKNOWN,
-  PLATFORM_WINDOW_STATE_MAXIMIZED,
-  PLATFORM_WINDOW_STATE_MINIMIZED,
-  PLATFORM_WINDOW_STATE_NORMAL,
-  PLATFORM_WINDOW_STATE_FULLSCREEN,
+enum class PlatformWindowState {
+  kUnknown,
+  kMaximized,
+  kMinimized,
+  kNormal,
+  kFullScreen,
 };
 
 class PlatformWindowDelegate {
@@ -43,11 +43,11 @@ class PlatformWindowDelegate {
 
   virtual void OnLostCapture() = 0;
 
-  virtual void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget,
-                                            float device_pixel_ratio) = 0;
+  virtual void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) = 0;
 
   // Notifies the delegate that the widget cannot be used anymore until
   // a new widget is made available through OnAcceleratedWidgetAvailable().
+  // Must not be called when the PlatformWindow is being destroyed.
   virtual void OnAcceleratedWidgetDestroyed() = 0;
 
   virtual void OnActivationChanged(bool active) = 0;

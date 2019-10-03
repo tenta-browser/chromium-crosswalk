@@ -19,6 +19,7 @@
 #include "media/blink/lru.h"
 #include "media/blink/media_blink_export.h"
 #include "media/blink/multibuffer.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
 #include "url/gurl.h"
 
 namespace media {
@@ -27,6 +28,7 @@ const int64_t kPositionNotSpecified = -1;
 
 class ResourceFetchContext;
 class UrlData;
+class UrlIndexTest;
 
 // A multibuffer for loading media resources which knows
 // how to create MultiBufferDataProviders to load data
@@ -38,7 +40,8 @@ class MEDIA_BLINK_EXPORT ResourceMultiBuffer : public MultiBuffer {
 
   // MultiBuffer implementation.
   std::unique_ptr<MultiBuffer::DataProvider> CreateWriter(
-      const BlockId& pos) override;
+      const BlockId& pos,
+      bool is_client_audio_element) override;
   bool RangeSupported() const override;
   void OnEmpty() override;
 
@@ -54,15 +57,17 @@ class UrlIndex;
 // Data is cached using a MultiBuffer instance.
 class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
  public:
-  // Keep in sync with WebMediaPlayer::CORSMode.
-  enum CORSMode { CORS_UNSPECIFIED, CORS_ANONYMOUS, CORS_USE_CREDENTIALS };
-  typedef std::pair<GURL, CORSMode> KeyType;
+  // Keep in sync with WebMediaPlayer::CorsMode.
+  enum CorsMode { CORS_UNSPECIFIED, CORS_ANONYMOUS, CORS_USE_CREDENTIALS };
+  typedef std::pair<GURL, CorsMode> KeyType;
 
   // Accessors
   const GURL& url() const { return url_; }
 
   // Cross-origin access mode
-  CORSMode cors_mode() const { return cors_mode_; }
+  CorsMode cors_mode() const { return cors_mode_; }
+
+  bool has_access_control() const { return has_access_control_; }
 
   // Are HTTP range requests supported?
   bool range_supported() const { return range_supported_; }
@@ -97,6 +102,9 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Returns our url_index.
   UrlIndex* url_index() const { return url_index_; }
 
+  // This must be called after the response arrives.
+  bool is_cors_cross_origin() const { return is_cors_cross_origin_; }
+
   // Notifies the url index that this is currently used.
   // The url <-> URLData mapping will be eventually be invalidated if
   // this is not called regularly.
@@ -105,7 +113,7 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Call this before we add some data to the multibuffer().
   // If the multibuffer is empty, the data origin is set from
   // |origin| and returns true. If not, it compares |origin|
-  // to the previous origin and returns wheather they match or not.
+  // to the previous origin and returns whether they match or not.
   bool ValidateDataOrigin(const GURL& origin);
 
   // Setters.
@@ -115,6 +123,8 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   void set_range_supported();
   void set_last_modified(base::Time last_modified);
   void set_etag(const std::string& etag);
+  void set_is_cors_cross_origin(bool is_cors_cross_origin);
+  void set_has_access_control();
 
   // A redirect has occured (or we've found a better UrlData for the same
   // resource).
@@ -139,18 +149,26 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Virtual so we can override it for testing.
   virtual ResourceMultiBuffer* multibuffer();
 
+  // Callback for reporting number of bytes received by the network.
+  using BytesReceivedCB = base::RepeatingCallback<void(uint64_t)>;
+
+  // Register a BytesReceivedCallback for this UrlData. These callbacks will be
+  // copied to another UrlData if there is a redirect.
+  void AddBytesReceivedCallback(BytesReceivedCB bytes_received_cb);
+
   void AddBytesRead(int64_t b) { bytes_read_from_cache_ += b; }
   int64_t BytesReadFromCache() const { return bytes_read_from_cache_; }
-  void AddBytesReadFromNetwork(int64_t b) { bytes_read_from_network_ += b; }
+  void AddBytesReadFromNetwork(int64_t b);
   int64_t BytesReadFromNetwork() const { return bytes_read_from_network_; }
 
  protected:
-  UrlData(const GURL& url, CORSMode cors_mode, UrlIndex* url_index);
+  UrlData(const GURL& url, CorsMode cors_mode, UrlIndex* url_index);
   virtual ~UrlData();
 
  private:
   friend class ResourceMultiBuffer;
   friend class UrlIndex;
+  friend class UrlIndexTest;
   friend class base::RefCounted<UrlData>;
 
   void OnEmpty();
@@ -166,7 +184,8 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   bool have_data_origin_;
 
   // Cross-origin access mode.
-  const CORSMode cors_mode_;
+  const CorsMode cors_mode_;
+  bool has_access_control_;
 
   UrlIndex* const url_index_;
 
@@ -182,9 +201,12 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Does the server support ranges?
   bool range_supported_;
 
-  // Set to false if we have reason to beleive the chrome disk cache
+  // Set to false if we have reason to believe the chrome disk cache
   // will not cache this url.
   bool cacheable_;
+
+  // https://html.spec.whatwg.org/#cors-cross-origin
+  bool is_cors_cross_origin_ = false;
 
   // Last time some media time used this resource.
   // Note that we use base::Time rather than base::TimeTicks because
@@ -206,6 +228,10 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   ResourceMultiBuffer multibuffer_;
   std::vector<RedirectCB> redirect_callbacks_;
 
+  std::vector<BytesReceivedCB> bytes_received_callbacks_;
+
+  std::vector<base::OnceClosure> waiting_load_callbacks_;
+
   base::ThreadChecker thread_checker_;
   DISALLOW_COPY_AND_ASSIGN(UrlData);
 };
@@ -225,7 +251,7 @@ class MEDIA_BLINK_EXPORT UrlIndex {
   // Because the returned UrlData has a raw reference to |this|, it must be
   // released before |this| is destroyed.
   scoped_refptr<UrlData> GetByUrl(const GURL& gurl,
-                                  UrlData::CORSMode cors_mode);
+                                  UrlData::CorsMode cors_mode);
 
   // Add the given UrlData to the index if possible. If a better UrlData
   // is already present in the index, return it instead. (If not, we just
@@ -247,14 +273,19 @@ class MEDIA_BLINK_EXPORT UrlIndex {
   ResourceFetchContext* fetch_context() const { return fetch_context_; }
   int block_shift() const { return block_shift_; }
 
- private:
+  // Returns true kMaxParallelPreload or more urls are loading at the same time.
+  bool HasReachedMaxParallelPreload() const;
+
+  // Protected rather than private for testing.
+ protected:
   friend class UrlData;
   friend class ResourceMultiBuffer;
+  friend class UrlIndexTest;
   void RemoveUrlData(const scoped_refptr<UrlData>& url_data);
 
   // Virtual so we can override it in tests.
   virtual scoped_refptr<UrlData> NewUrlData(const GURL& url,
-                                            UrlData::CORSMode cors_mode);
+                                            UrlData::CorsMode cors_mode);
 
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
@@ -267,6 +298,8 @@ class MEDIA_BLINK_EXPORT UrlIndex {
   // log2 of block size in multibuffer cache. Defaults to kBlockSizeShift.
   // Currently only changed for testing purposes.
   const int block_shift_;
+
+  std::deque<scoped_refptr<UrlData>> loading_queue_;
 
   base::MemoryPressureListener memory_pressure_listener_;
 };

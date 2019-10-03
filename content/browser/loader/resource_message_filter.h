@@ -17,8 +17,8 @@
 #include "content/public/browser/browser_associated_interface.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace storage {
 class FileSystemContext;
@@ -28,13 +28,12 @@ namespace net {
 class URLRequestContext;
 }  // namespace net
 
-
 namespace content {
 class ChromeAppCacheService;
 class ChromeBlobStorageContext;
+class PrefetchURLLoaderService;
 class ResourceContext;
 class ResourceRequesterInfo;
-class ServiceWorkerContextWrapper;
 
 // This class filters out incoming IPC messages for network requests and
 // processes them on the IPC thread.  As a result, network requests are not
@@ -43,15 +42,15 @@ class ServiceWorkerContextWrapper;
 // will not interfere with browser UI.
 class CONTENT_EXPORT ResourceMessageFilter
     : public BrowserMessageFilter,
-      public BrowserAssociatedInterface<mojom::URLLoaderFactory>,
-      public mojom::URLLoaderFactory {
+      public BrowserAssociatedInterface<network::mojom::URLLoaderFactory>,
+      public network::mojom::URLLoaderFactory {
  public:
   typedef base::Callback<void(ResourceType resource_type,
                               ResourceContext**,
                               net::URLRequestContext**)> GetContextsCallback;
 
-  // |appcache_service|, |blob_storage_context|, |file_system_context|,
-  // |service_worker_context| may be nullptr in unittests.
+  // |appcache_service|, |blob_storage_context|, and |file_system_context| may
+  // be nullptr in unittests.
   // InitializeForTest() needs to be manually called for unittests where
   // OnFilterAdded() would not otherwise be called.
   ResourceMessageFilter(
@@ -59,7 +58,7 @@ class CONTENT_EXPORT ResourceMessageFilter
       ChromeAppCacheService* appcache_service,
       ChromeBlobStorageContext* blob_storage_context,
       storage::FileSystemContext* file_system_context,
-      ServiceWorkerContextWrapper* service_worker_context,
+      PrefetchURLLoaderService* prefetch_url_loader_service,
       const GetContextsCallback& get_contexts_callback,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_thread_runner);
 
@@ -71,15 +70,16 @@ class CONTENT_EXPORT ResourceMessageFilter
 
   base::WeakPtr<ResourceMessageFilter> GetWeakPtr();
 
-  void CreateLoaderAndStart(mojom::URLLoaderRequest request,
+  void CreateLoaderAndStart(network::mojom::URLLoaderRequest request,
                             int32_t routing_id,
                             int32_t request_id,
                             uint32_t options,
-                            const ResourceRequest& url_request,
-                            mojom::URLLoaderClientPtr client,
+                            const network::ResourceRequest& url_request,
+                            network::mojom::URLLoaderClientPtr client,
                             const net::MutableNetworkTrafficAnnotationTag&
                                 traffic_annotation) override;
-  void Clone(mojom::URLLoaderFactoryRequest request) override;
+  // |request| could be queued when the channel has not been connected yet.
+  void Clone(network::mojom::URLLoaderFactoryRequest request) override;
 
   int child_id() const;
 
@@ -93,9 +93,11 @@ class CONTENT_EXPORT ResourceMessageFilter
   // When the testing pointer's CreateLoaderAndStart() is being called,
   // |GetCurrentForTesting()| will return the filter that's calling the testing
   // pointer. Also, the testing pointer won't be used for nested
-  // CreateLoaderAndStart's. Must be called on the IO thread.
+  // CreateLoaderAndStart's.
+  // This method must be called either on the IO thread or before threads start.
+  // This callback is run on the IO thread.
   static void SetNetworkFactoryForTesting(
-      mojom::URLLoaderFactory* test_factory);
+      network::mojom::URLLoaderFactory* test_factory);
   static ResourceMessageFilter* GetCurrentForTesting();
 
  protected:
@@ -111,16 +113,16 @@ class CONTENT_EXPORT ResourceMessageFilter
   bool is_channel_closed_;
   scoped_refptr<ResourceRequesterInfo> requester_info_;
 
-  // An additional set of non-associated bindings (beyond those held by the
-  // BrowserAssociatedInterface parent class) of pipes to this object's
-  // URLLoaderFactory interface.
-  mojo::BindingSet<mojom::URLLoaderFactory> bindings_;
+  std::unique_ptr<network::mojom::URLLoaderFactory> url_loader_factory_;
+  std::vector<network::mojom::URLLoaderFactoryRequest> queued_clone_requests_;
+
+  scoped_refptr<PrefetchURLLoaderService> prefetch_url_loader_service_;
 
   // Task runner for the IO thead.
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner_;
 
   // This must come last to make sure weak pointers are invalidated first.
-  base::WeakPtrFactory<ResourceMessageFilter> weak_ptr_factory_;
+  base::WeakPtrFactory<ResourceMessageFilter> weak_ptr_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ResourceMessageFilter);
 };

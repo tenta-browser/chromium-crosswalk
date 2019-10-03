@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/strings/string_util.h"
@@ -12,18 +13,17 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/find_bar/find_bar_state.h"
 #include "chrome/browser/ui/find_bar/find_bar_state_factory.h"
+#include "chrome/browser/ui/find_bar/find_result_observer.h"
+#include "chrome/browser/ui/find_bar/find_types.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/stop_find_action.h"
-#include "third_party/WebKit/public/web/WebFindOptions.h"
+#include "third_party/blink/public/mojom/frame/find_in_page.mojom.h"
 #include "ui/gfx/geometry/rect_f.h"
 
-using blink::WebFindOptions;
 using content::WebContents;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(FindTabHelper);
 
 // static
 int FindTabHelper::find_request_id_counter_ = -1;
@@ -38,12 +38,20 @@ FindTabHelper::FindTabHelper(WebContents* web_contents)
       last_search_result_() {
 }
 
-FindTabHelper::~FindTabHelper() {
+FindTabHelper::~FindTabHelper() = default;
+
+void FindTabHelper::AddObserver(FindResultObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void FindTabHelper::RemoveObserver(FindResultObserver* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 void FindTabHelper::StartFinding(base::string16 search_string,
                                  bool forward_direction,
-                                 bool case_sensitive) {
+                                 bool case_sensitive,
+                                 bool run_synchronously_for_testing) {
   // Remove the carriage return character, which generally isn't in web content.
   const base::char16 kInvalidChars[] = { '\r', 0 };
   base::RemoveChars(search_string, kInvalidChars, &search_string);
@@ -95,16 +103,17 @@ void FindTabHelper::StartFinding(base::string16 search_string,
   FindBarState* find_bar_state = FindBarStateFactory::GetForProfile(profile);
   find_bar_state->set_last_prepopulate_text(find_text_);
 
-  WebFindOptions options;
-  options.forward = forward_direction;
-  options.match_case = case_sensitive;
-  options.find_next = find_next;
-  web_contents()->Find(current_find_request_id_, find_text_, options);
+  auto options = blink::mojom::FindOptions::New();
+  options->forward = forward_direction;
+  options->match_case = case_sensitive;
+  options->find_next = find_next;
+  options->run_synchronously_for_testing = run_synchronously_for_testing;
+  web_contents()->Find(current_find_request_id_, find_text_,
+                       std::move(options));
 }
 
-void FindTabHelper::StopFinding(
-    FindBarController::SelectionAction selection_action) {
-  if (selection_action == FindBarController::kClearSelectionOnPage) {
+void FindTabHelper::StopFinding(FindOnPageSelectionAction selection_action) {
+  if (selection_action == FindOnPageSelectionAction::kClear) {
     // kClearSelection means the find string has been cleared by the user, but
     // the UI has not been dismissed. In that case we want to clear the
     // previously remembered search (http://crbug.com/42639).
@@ -115,18 +124,19 @@ void FindTabHelper::StopFinding(
       previous_find_text_ = find_text_;
   }
   find_text_.clear();
+  last_completed_find_text_.clear();
   find_op_aborted_ = true;
   last_search_result_ = FindNotificationDetails();
 
   content::StopFindAction action;
   switch (selection_action) {
-    case FindBarController::kClearSelectionOnPage:
+    case FindOnPageSelectionAction::kClear:
       action = content::STOP_FIND_ACTION_CLEAR_SELECTION;
       break;
-    case FindBarController::kKeepSelectionOnPage:
+    case FindOnPageSelectionAction::kKeep:
       action = content::STOP_FIND_ACTION_KEEP_SELECTION;
       break;
-    case FindBarController::kActivateSelectionOnPage:
+    case FindOnPageSelectionAction::kActivate:
       action = content::STOP_FIND_ACTION_ACTIVATE_SELECTION;
       break;
     default:
@@ -179,9 +189,9 @@ void FindTabHelper::HandleFindReply(int request_id,
     last_search_result_ = FindNotificationDetails(
         request_id, number_of_matches, selection, active_match_ordinal,
         final_update);
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_FIND_RESULT_AVAILABLE,
-        content::Source<WebContents>(web_contents()),
-        content::Details<FindNotificationDetails>(&last_search_result_));
+    for (auto& observer : observers_)
+      observer.OnFindResultAvailable(web_contents());
   }
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(FindTabHelper)

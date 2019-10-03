@@ -15,7 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
 #include "components/drive/file_errors.h"
@@ -43,7 +43,7 @@ const int64_t kMinFreeSpaceInBytes = 512ull * 1024ull * 1024ull;  // 512MB
 // implementation that reports fake free disk space.
 class FreeDiskSpaceGetterInterface {
  public:
-  virtual ~FreeDiskSpaceGetterInterface() {}
+  virtual ~FreeDiskSpaceGetterInterface() = default;
   virtual int64_t AmountOfFreeDiskSpace() = 0;
 };
 
@@ -55,6 +55,8 @@ class FileCache {
  public:
   // The file extended attribute assigned to Drive cache directory.
   static const char kGCacheFilesAttribute[];
+  // The file extended attribute assigned to files that can be removed.
+  static const char kGCacheRemovableAttribute[];
 
   // Enum defining type of file operation e.g. copy or move, etc.
   enum FileOperationType {
@@ -121,6 +123,9 @@ class FileCache {
   // Sets the state of the cache entry corresponding to |id| as mounted.
   FileError MarkAsMounted(const std::string& id,
                           base::FilePath* cache_file_path);
+
+  // Returns if a file corresponding to |id| is marked as mounted.
+  bool IsMarkedAsMounted(const std::string& id);
 
   // Sets the state of the cache entry corresponding to file_path as unmounted.
   FileError MarkAsUnmounted(const base::FilePath& file_path);
@@ -206,7 +211,7 @@ class FileCache {
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
 
-  base::CancellationFlag in_shutdown_;
+  base::AtomicFlag in_shutdown_;
 
   ResourceMetadataStorage* storage_;
 
@@ -223,7 +228,7 @@ class FileCache {
   // IDs of files marked mounted.
   std::set<std::string> mounted_files_;
 
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

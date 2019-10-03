@@ -13,7 +13,7 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "remoting/protocol/client_video_stats_dispatcher.h"
 #include "remoting/protocol/frame_consumer.h"
@@ -73,7 +73,7 @@ WebrtcVideoRendererAdapter::~WebrtcVideoRendererAdapter() {
 
 void WebrtcVideoRendererAdapter::SetMediaStream(
     scoped_refptr<webrtc::MediaStreamInterface> media_stream) {
-  DCHECK_EQ(media_stream->label(), label());
+  DCHECK_EQ(media_stream->id(), label());
 
   media_stream_ = std::move(media_stream);
 
@@ -105,11 +105,11 @@ void WebrtcVideoRendererAdapter::OnFrame(const webrtc::VideoFrame& frame) {
 
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&WebrtcVideoRendererAdapter::HandleFrameOnMainThread,
-                 weak_factory_.GetWeakPtr(), frame.transport_frame_id(),
-                 base::TimeTicks::Now(),
-                 scoped_refptr<webrtc::VideoFrameBuffer>(
-                     frame.video_frame_buffer().get())));
+      base::BindOnce(&WebrtcVideoRendererAdapter::HandleFrameOnMainThread,
+                     weak_factory_.GetWeakPtr(), frame.transport_frame_id(),
+                     base::TimeTicks::Now(),
+                     scoped_refptr<webrtc::VideoFrameBuffer>(
+                         frame.video_frame_buffer().get())));
 }
 
 void WebrtcVideoRendererAdapter::OnVideoFrameStats(

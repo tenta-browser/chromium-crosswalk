@@ -82,6 +82,7 @@ class ProcessSingleton {
     INVALID_LOCK_FILE = 12,
     ORPHANED_LOCK_FILE = 13,
 #endif
+    USER_REFUSED_TERMINATION = 14,
     REMOTE_PROCESS_INTERACTION_RESULT_COUNT
   };
 
@@ -221,6 +222,16 @@ class ProcessSingleton {
   // because it posts messages between threads.
   class LinuxWatcher;
   scoped_refptr<LinuxWatcher> watcher_;
+#endif
+
+#if defined(OS_MACOSX)
+  // macOS 10.13 tries to open a new Chrome instance if a user tries to
+  // open an external link after Chrome has updated, but not relaunched.
+  // This method extracts any waiting "open URL" AppleEvent and forwards
+  // it to the running process. Returns true if an event was found and
+  // forwarded.
+  // crbug.com/777863
+  bool WaitForAndForwardOpenURLEvent(pid_t event_destination_pid);
 #endif
 
   SEQUENCE_CHECKER(sequence_checker_);

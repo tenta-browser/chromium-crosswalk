@@ -8,10 +8,8 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
-#include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -42,9 +40,15 @@ void ClientHintsObserver::PersistClientHints(
   if (!primary_url.is_valid() || !content::IsOriginSecure(primary_url))
     return;
 
+  DCHECK(!client_hints.empty());
+  DCHECK_LE(
+      client_hints.size(),
+      static_cast<size_t>(blink::mojom::WebClientHintsType::kMaxValue) + 1);
+
   if (client_hints.empty() ||
       client_hints.size() >
-          static_cast<int>(blink::mojom::WebClientHintsType::kLast)) {
+          (static_cast<size_t>(blink::mojom::WebClientHintsType::kMaxValue) +
+           1)) {
     // Return early if the list does not have the right number of values.
     // Persisting wrong number of values to the disk may cause errors when
     // reading them back in the future.
@@ -59,19 +63,11 @@ void ClientHintsObserver::PersistClientHints(
   content::BrowserContext* browser_context = rph->GetBrowserContext();
   Profile* profile = Profile::FromBrowserContext(browser_context);
 
-  scoped_refptr<content_settings::CookieSettings> cookie_settings =
-      CookieSettingsFactory::GetForProfile(profile);
-  if (!cookie_settings->IsCookieAccessAllowed(primary_url, primary_url)) {
-    // If |primary_url| is disallowed from storing cookies, then |primary_url|
-    // is also prevented from storing client hints.
-    return;
-  }
-
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile);
 
   std::unique_ptr<base::ListValue> expiration_times_list =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
   expiration_times_list->Reserve(client_hints.size());
 
   // Use wall clock since the expiration time would be persisted across embedder
@@ -96,4 +92,4 @@ void ClientHintsObserver::PersistClientHints(
   UMA_HISTOGRAM_EXACT_LINEAR("ClientHints.UpdateEventCount", 1, 2);
 }
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(ClientHintsObserver);
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ClientHintsObserver)

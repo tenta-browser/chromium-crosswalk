@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "components/payments/core/payment_currency_amount.h"
 #include "components/payments/core/payment_details.h"
 #include "components/payments/core/payment_details_modifier.h"
@@ -16,21 +15,11 @@
 
 namespace payments {
 namespace {
-
-PaymentCurrencyAmount ConvertPaymentCurrencyAmount(
-    const mojom::PaymentCurrencyAmountPtr& amount_entry) {
-  PaymentCurrencyAmount amount;
-  amount.currency = amount_entry->currency;
-  amount.value = amount_entry->value;
-  amount.currency_system = amount_entry->currency_system;
-  return amount;
-}
-
 PaymentItem ConvertPaymentItem(const mojom::PaymentItemPtr& item_entry) {
   PaymentItem item;
   item.label = item_entry->label;
   if (item_entry->amount)
-    item.amount = ConvertPaymentCurrencyAmount(item_entry->amount);
+    item.amount = item_entry->amount.Clone();
   item.pending = item_entry->pending;
   return item;
 }
@@ -39,7 +28,7 @@ PaymentDetailsModifier ConvertPaymentDetailsModifier(
     const mojom::PaymentDetailsModifierPtr& modifier_entry) {
   PaymentDetailsModifier modifier;
   if (modifier_entry->total) {
-    modifier.total = base::MakeUnique<PaymentItem>(
+    modifier.total = std::make_unique<PaymentItem>(
         ConvertPaymentItem(modifier_entry->total));
   }
   modifier.additional_display_items.reserve(
@@ -61,7 +50,7 @@ PaymentShippingOption ConvertPaymentShippingOption(
   option.id = option_entry->id;
   option.label = option_entry->label;
   if (option_entry->amount)
-    option.amount = ConvertPaymentCurrencyAmount(option_entry->amount);
+    option.amount = option_entry->amount.Clone();
   option.selected = option_entry->selected;
   return option;
 }
@@ -108,7 +97,7 @@ std::string GetBasicCardNetworkName(const mojom::BasicCardNetwork& network) {
 PaymentMethodData ConvertPaymentMethodData(
     const mojom::PaymentMethodDataPtr& method_data_entry) {
   PaymentMethodData method_data;
-  method_data.supported_methods = method_data_entry->supported_methods;
+  method_data.supported_method = method_data_entry->supported_method;
 
   // Transfer the supported basic card networks (visa, amex) and types
   // (credit, debit).
@@ -128,23 +117,33 @@ PaymentDetails ConvertPaymentDetails(
   PaymentDetails details;
   if (details_entry->total) {
     details.total =
-        base::MakeUnique<PaymentItem>(ConvertPaymentItem(details_entry->total));
+        std::make_unique<PaymentItem>(ConvertPaymentItem(details_entry->total));
   }
-  details.display_items.reserve(details_entry->display_items.size());
-  for (const mojom::PaymentItemPtr& display_item :
-       details_entry->display_items) {
-    details.display_items.push_back(ConvertPaymentItem(display_item));
+  if (details_entry->display_items) {
+    details.display_items.reserve(details_entry->display_items->size());
+    for (const mojom::PaymentItemPtr& display_item :
+         *details_entry->display_items) {
+      details.display_items.push_back(ConvertPaymentItem(display_item));
+    }
+  } else {
+    details.display_items.clear();
   }
-  details.shipping_options.reserve(details_entry->shipping_options.size());
-  for (const mojom::PaymentShippingOptionPtr& shipping_option :
-       details_entry->shipping_options) {
-    details.shipping_options.push_back(
-        ConvertPaymentShippingOption(shipping_option));
+  if (details_entry->shipping_options) {
+    details.shipping_options.reserve(details_entry->shipping_options->size());
+    for (const mojom::PaymentShippingOptionPtr& shipping_option :
+         *details_entry->shipping_options) {
+      details.shipping_options.push_back(
+          ConvertPaymentShippingOption(shipping_option));
+    }
   }
-  details.modifiers.reserve(details_entry->modifiers.size());
-  for (const mojom::PaymentDetailsModifierPtr& modifier :
-       details_entry->modifiers) {
-    details.modifiers.push_back(ConvertPaymentDetailsModifier(modifier));
+  if (details_entry->modifiers) {
+    details.modifiers.reserve(details_entry->modifiers->size());
+    for (const mojom::PaymentDetailsModifierPtr& modifier :
+         *details_entry->modifiers) {
+      details.modifiers.push_back(ConvertPaymentDetailsModifier(modifier));
+    }
+  } else {
+    details.modifiers.clear();
   }
   details.error = details_entry->error;
   if (details_entry->id.has_value())

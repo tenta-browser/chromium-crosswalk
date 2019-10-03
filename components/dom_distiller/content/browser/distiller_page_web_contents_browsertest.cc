@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
@@ -112,8 +113,8 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
     quit_closure.Run();
   }
 
-  void OnJsExecutionDone(base::Closure callback, const base::Value* value) {
-    js_result_.reset(value->DeepCopy());
+  void OnJsExecutionDone(base::Closure callback, base::Value value) {
+    js_result_ = std::move(value);
     callback.Run();
   }
 
@@ -122,10 +123,10 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
     base::FilePath pak_file;
     base::FilePath pak_dir;
 #if defined(OS_ANDROID)
-    CHECK(PathService::Get(base::DIR_ANDROID_APP_DATA, &pak_dir));
+    CHECK(base::PathService::Get(base::DIR_ANDROID_APP_DATA, &pak_dir));
     pak_dir = pak_dir.Append(FILE_PATH_LITERAL("paks"));
 #else
-    PathService::Get(base::DIR_MODULE, &pak_dir);
+    base::PathService::Get(base::DIR_MODULE, &pak_dir);
 #endif  // OS_ANDROID
     pak_file =
         pak_dir.Append(FILE_PATH_LITERAL("components_tests_resources.pak"));
@@ -135,7 +136,7 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
 
   void SetUpTestServer() {
     base::FilePath path;
-    PathService::Get(base::DIR_SOURCE_ROOT, &path);
+    base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
     embedded_test_server()->ServeFilesFromDirectory(
         path.AppendASCII("components/test/data/dom_distiller"));
     embedded_test_server()->ServeFilesFromDirectory(
@@ -151,7 +152,7 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
 
   DistillerPageWebContents* distiller_page_;
   std::unique_ptr<proto::DomDistillerResult> distiller_result_;
-  std::unique_ptr<base::Value> js_result_;
+  base::Value js_result_;
 };
 
 // Use this class to be able to leak the WebContents, which is needed for when
@@ -182,7 +183,13 @@ class TestDistillerPageWebContents : public DistillerPageWebContents {
   bool new_web_contents_created_;
 };
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, BasicDistillationWorks) {
+#if defined(OS_WIN)
+#define MAYBE_BasicDistillationWorks DISABLED_BasicDistillationWorks
+#else
+#define MAYBE_BasicDistillationWorks BasicDistillationWorks
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
+                       MAYBE_BasicDistillationWorks) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -202,7 +209,13 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, BasicDistillationWorks) {
   EXPECT_EQ("", distiller_result_->pagination_info().prev_page());
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeLinks) {
+#if defined(OS_WIN)
+#define MAYBE_HandlesRelativeLinks DISABLED_HandlesRelativeLinks
+#else
+#define MAYBE_HandlesRelativeLinks HandlesRelativeLinks
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
+                       MAYBE_HandlesRelativeLinks) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -220,7 +233,13 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeLinks) {
               HasSubstr("href=\"http://www.google.com/absolutelink.html\""));
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeImages) {
+#if defined(OS_WIN)
+#define MAYBE_HandlesRelativeImages DISABLED_HandlesRelativeImages
+#else
+#define MAYBE_HandlesRelativeImages HandlesRelativeImages
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
+                       MAYBE_HandlesRelativeImages) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -238,7 +257,13 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeImages) {
               HasSubstr("src=\"http://www.google.com/absoluteimage.png\""));
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeVideos) {
+#if defined(OS_WIN)
+#define MAYBE_HandlesRelativeVideos DISABLED_HandlesRelativeVideos
+#else
+#define MAYBE_HandlesRelativeVideos HandlesRelativeVideos
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
+                       MAYBE_HandlesRelativeVideos) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -261,7 +286,13 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, HandlesRelativeVideos) {
               HasSubstr("src=\"http://www.google.com/absolute_track_fr.vtt\""));
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, VisibilityDetection) {
+#if defined(OS_WIN)
+#define MAYBE_VisibilityDetection DISABLED_VisibilityDetection
+#else
+#define MAYBE_VisibilityDetection VisibilityDetection
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
+                       MAYBE_VisibilityDetection) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -288,50 +319,73 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, VisibilityDetection) {
   }
 }
 
+#if defined(OS_WIN)
+#define MAYBE_UsingCurrentWebContentsWrongUrl \
+  DISABLED_UsingCurrentWebContentsWrongUrl
+#else
+#define MAYBE_UsingCurrentWebContentsWrongUrl UsingCurrentWebContentsWrongUrl
+#endif
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsWrongUrl) {
+                       MAYBE_UsingCurrentWebContentsWrongUrl) {
   std::string url("/bogus");
   bool expect_new_web_contents = true;
   bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = true;
-  RunUseCurrentWebContentsTest(url,
-                               expect_new_web_contents,
+  RunUseCurrentWebContentsTest(url, expect_new_web_contents,
                                setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
+#if defined(OS_WIN)
+#define MAYBE_UsingCurrentWebContentsNoMainFrameObserver \
+  DISABLED_UsingCurrentWebContentsNoMainFrameObserver
+#else
+#define MAYBE_UsingCurrentWebContentsNoMainFrameObserver \
+  UsingCurrentWebContentsNoMainFrameObserver
+#endif
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsNoMainFrameObserver) {
+                       MAYBE_UsingCurrentWebContentsNoMainFrameObserver) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = true;
   bool setup_main_frame_observer = false;
   bool wait_for_document_loaded = true;
-  RunUseCurrentWebContentsTest(url,
-                               expect_new_web_contents,
+  RunUseCurrentWebContentsTest(url, expect_new_web_contents,
                                setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
+#if defined(OS_WIN)
+#define MAYBE_UsingCurrentWebContentsNotFinishedLoadingYet \
+  DISABLED_UsingCurrentWebContentsNotFinishedLoadingYet
+#else
+#define MAYBE_UsingCurrentWebContentsNotFinishedLoadingYet \
+  UsingCurrentWebContentsNotFinishedLoadingYet
+#endif
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsNotFinishedLoadingYet) {
+                       MAYBE_UsingCurrentWebContentsNotFinishedLoadingYet) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
   bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = false;
-  RunUseCurrentWebContentsTest(url,
-                               expect_new_web_contents,
+  RunUseCurrentWebContentsTest(url, expect_new_web_contents,
                                setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
+#if defined(OS_WIN)
+#define MAYBE_UsingCurrentWebContentsReadyForDistillation \
+  DISABLED_UsingCurrentWebContentsReadyForDistillation
+#else
+#define MAYBE_UsingCurrentWebContentsReadyForDistillation \
+  UsingCurrentWebContentsReadyForDistillation
+#endif
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       UsingCurrentWebContentsReadyForDistillation) {
+                       MAYBE_UsingCurrentWebContentsReadyForDistillation) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
   bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = true;
-  RunUseCurrentWebContentsTest(url,
-                               expect_new_web_contents,
+  RunUseCurrentWebContentsTest(url, expect_new_web_contents,
                                setup_main_frame_observer,
                                wait_for_document_loaded);
 }
@@ -351,10 +405,8 @@ void DistillerPageWebContentsTest::RunUseCurrentWebContentsTest(
                                                url_loaded_runner.QuitClosure(),
                                                wait_for_document_loaded);
   current_web_contents->GetController().LoadURL(
-      embedded_test_server()->GetURL(url),
-      content::Referrer(),
-      ui::PAGE_TRANSITION_TYPED,
-      std::string());
+      embedded_test_server()->GetURL(url), content::Referrer(),
+      ui::PAGE_TRANSITION_TYPED, std::string());
   url_loaded_runner.Run();
 
   std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
@@ -375,23 +427,26 @@ void DistillerPageWebContentsTest::RunUseCurrentWebContentsTest(
   EXPECT_EQ("Test Page Title", distiller_result_->title());
 }
 
+#if defined(OS_WIN)
+#define MAYBE_PageDestroyedBeforeFinishDistillation \
+  DISABLED_PageDestroyedBeforeFinishDistillation
+#else
+#define MAYBE_PageDestroyedBeforeFinishDistillation \
+  PageDestroyedBeforeFinishDistillation
+#endif
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       PageDestroyedBeforeFinishDistillation) {
-
+                       MAYBE_PageDestroyedBeforeFinishDistillation) {
   content::WebContents* current_web_contents = shell()->web_contents();
 
   dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
       current_web_contents);
 
   base::RunLoop url_loaded_runner;
-  WebContentsMainFrameHelper main_frame_loaded(current_web_contents,
-                                               url_loaded_runner.QuitClosure(),
-                                               true);
+  WebContentsMainFrameHelper main_frame_loaded(
+      current_web_contents, url_loaded_runner.QuitClosure(), true);
   current_web_contents->GetController().LoadURL(
-      embedded_test_server()->GetURL(kSimpleArticlePath),
-      content::Referrer(),
-      ui::PAGE_TRANSITION_TYPED,
-      std::string());
+      embedded_test_server()->GetURL(kSimpleArticlePath), content::Referrer(),
+      ui::PAGE_TRANSITION_TYPED, std::string());
   url_loaded_runner.Run();
 
   std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
@@ -416,7 +471,12 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, MarkupInfo) {
+#if defined(OS_WIN)
+#define MAYBE_MarkupInfo DISABLED_MarkupInfo
+#else
+#define MAYBE_MarkupInfo MarkupInfo
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, MAYBE_MarkupInfo) {
   DistillerPageWebContents distiller_page(
       shell()->web_contents()->GetBrowserContext(),
       shell()->web_contents()->GetContainerBounds().size(),
@@ -488,40 +548,37 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
   }
 }
 
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       TestPinch) {
+#if defined(OS_WIN)
+#define MAYBE_TestPinch DISABLED_TestPinch
+#else
+#define MAYBE_TestPinch TestPinch
+#endif
+IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, MAYBE_TestPinch) {
   // Load the test file in content shell and wait until it has fully loaded.
   content::WebContents* web_contents = shell()->web_contents();
   dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
       web_contents);
   base::RunLoop url_loaded_runner;
-  WebContentsMainFrameHelper main_frame_loaded(web_contents,
-                                               url_loaded_runner.QuitClosure(),
-                                               true);
+  WebContentsMainFrameHelper main_frame_loaded(
+      web_contents, url_loaded_runner.QuitClosure(), true);
   web_contents->GetController().LoadURL(
-      embedded_test_server()->GetURL("/pinch_tester.html"),
-      content::Referrer(),
-      ui::PAGE_TRANSITION_TYPED,
-      std::string());
+      embedded_test_server()->GetURL("/pinch_tester.html"), content::Referrer(),
+      ui::PAGE_TRANSITION_TYPED, std::string());
   url_loaded_runner.Run();
 
   // Execute the JS to run the tests, and wait until it has finished.
   base::RunLoop run_loop;
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
       base::UTF8ToUTF16("(function() {return pinchtest.run();})();"),
-      base::Bind(&DistillerPageWebContentsTest::OnJsExecutionDone,
-                 base::Unretained(this), run_loop.QuitClosure()));
+      base::BindOnce(&DistillerPageWebContentsTest::OnJsExecutionDone,
+                     base::Unretained(this), run_loop.QuitClosure()));
   run_loop.Run();
 
-  // Convert to dictionary and parse the results.
-  const base::DictionaryValue* dict;
-  ASSERT_TRUE(js_result_);
-  ASSERT_TRUE(js_result_->GetAsDictionary(&dict));
+  ASSERT_TRUE(js_result_.is_dict());
 
-  ASSERT_TRUE(dict->HasKey("success"));
-  bool success;
-  ASSERT_TRUE(dict->GetBoolean("success", &success));
-  EXPECT_TRUE(success);
+  base::Optional<bool> value = js_result_.FindBoolKey("success");
+  ASSERT_TRUE(value.has_value());
+  EXPECT_TRUE(value.value());
 }
 
 }  // namespace dom_distiller

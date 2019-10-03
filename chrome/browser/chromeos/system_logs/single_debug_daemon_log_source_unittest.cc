@@ -9,9 +9,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_debug_daemon_client.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -23,19 +21,13 @@ using SupportedSource = SingleDebugDaemonLogSource::SupportedSource;
 
 class SingleDebugDaemonLogSourceTest : public ::testing::Test {
  public:
-  SingleDebugDaemonLogSourceTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        fetch_callback_(
-            base::Bind(&SingleDebugDaemonLogSourceTest::OnFetchComplete,
-                       base::Unretained(this))),
-        num_callback_calls_(0) {}
+  SingleDebugDaemonLogSourceTest() : num_callback_calls_(0) {}
 
   void SetUp() override {
     // Since no debug daemon will be available during a unit test, use
     // FakeDebugDaemonClient to provide dummy DebugDaemonClient functionality.
     chromeos::DBusThreadManager::GetSetterForTesting()->SetDebugDaemonClient(
-        base::MakeUnique<chromeos::FakeDebugDaemonClient>());
+        std::make_unique<chromeos::FakeDebugDaemonClient>());
   }
 
   void TearDown() override {
@@ -44,8 +36,9 @@ class SingleDebugDaemonLogSourceTest : public ::testing::Test {
   }
 
  protected:
-  const SysLogsSourceCallback& fetch_callback() const {
-    return fetch_callback_;
+  SysLogsSourceCallback fetch_callback() {
+    return base::BindOnce(&SingleDebugDaemonLogSourceTest::OnFetchComplete,
+                          base::Unretained(this));
   }
 
   int num_callback_calls() const { return num_callback_calls_; }
@@ -60,16 +53,8 @@ class SingleDebugDaemonLogSourceTest : public ::testing::Test {
     response_ = *response;
   }
 
-  // For running scheduled tasks.
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-
-  // Creates the necessary browser threads. Defined after
-  // |scoped_task_environment_| in order to use the MessageLoop it created.
+  // Creates the necessary browser threads.
   content::TestBrowserThreadBundle browser_thread_bundle_;
-
-  // Pre-made callback object for passing OnFetchComplete() to an asynchronous
-  // function.
-  const SysLogsSourceCallback fetch_callback_;
 
   // Used to verify that OnFetchComplete was called the correct number of times.
   int num_callback_calls_;

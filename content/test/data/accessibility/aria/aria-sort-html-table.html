@@ -1,6 +1,7 @@
 <!--
 @MAC-ALLOW:AXSortDirection*
 @WIN-ALLOW:sort:*
+@AURALINUX-ALLOW:sort:*
 -->
 <html>
 <body>
@@ -138,7 +139,7 @@
 
 <!-- Non-data table: aria-sort should not be exposed. -->
 
-<table>
+<table role="none">
   <tr>
     <th aria-sort="ascending">Alphabet</th>
   </tr>

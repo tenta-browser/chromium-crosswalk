@@ -9,13 +9,13 @@ import android.annotation.TargetApi;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
+import android.os.SystemClock;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
@@ -36,10 +36,10 @@ import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.init.EmptyBrowserParts;
 import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
 import org.chromium.chrome.browser.preferences.AboutChromePreferences;
-import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.PreferencesLauncher;
 import org.chromium.chrome.browser.preferences.website.Website.StoredDataClearedCallback;
 import org.chromium.chrome.browser.searchwidget.SearchWidgetProvider;
+import org.chromium.chrome.browser.util.ConversionUtils;
 
 import java.util.Collection;
 
@@ -192,9 +192,10 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
 
     /** This refreshes the storage numbers by fetching all site permissions. */
     private void refreshStorageNumbers() {
-        WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher(new SizeCalculator());
+        WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher();
         fetcher.fetchPreferencesForCategory(
-                SiteSettingsCategory.fromString(SiteSettingsCategory.CATEGORY_USE_STORAGE));
+                SiteSettingsCategory.createFromType(SiteSettingsCategory.Type.USE_STORAGE),
+                new SizeCalculator());
     }
 
     /** Data will be cleared once we fetch all site size and important status info. */
@@ -234,17 +235,15 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
             }
             mUnimportantDialog.show();
         } else if (view == mManageSiteDataButton) {
-            Intent intent = PreferencesLauncher.createIntentForSettingsPage(
-                    this, SingleCategoryPreferences.class.getName());
             Bundle initialArguments = new Bundle();
             initialArguments.putString(SingleCategoryPreferences.EXTRA_CATEGORY,
-                    SiteSettingsCategory.CATEGORY_USE_STORAGE);
+                    SiteSettingsCategory.preferenceKey(SiteSettingsCategory.Type.USE_STORAGE));
             initialArguments.putString(SingleCategoryPreferences.EXTRA_TITLE,
                     getString(R.string.website_settings_storage));
-            intent.putExtra(Preferences.EXTRA_SHOW_FRAGMENT_ARGUMENTS, initialArguments);
             RecordHistogram.recordEnumeratedHistogram(
                     "Android.ManageSpace.ActionTaken", OPTION_MANAGE_STORAGE, OPTION_MAX);
-            startActivity(intent);
+            PreferencesLauncher.launchSettingsPageCompat(
+                    this, SingleCategoryPreferences.class, initialArguments);
         } else if (view == mClearAllDataButton) {
             final ActivityManager activityManager =
                     (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
@@ -274,6 +273,10 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
     }
 
     private void onSiteStorageSizeCalculated(long totalSize, long unimportantSize) {
+        RecordHistogram.recordCountHistogram("Android.ManageSpace.TotalDiskUsageMB",
+                (int) ConversionUtils.bytesToMegabytes(totalSize));
+        RecordHistogram.recordCountHistogram("Android.ManageSpace.UnimportantDiskUsageMB",
+                (int) ConversionUtils.bytesToMegabytes(unimportantSize));
         mSiteDataSizeText.setText(Formatter.formatFileSize(this, totalSize));
         mUnimportantSiteDataSizeText.setText(Formatter.formatFileSize(this, unimportantSize));
     }
@@ -301,21 +304,28 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
         // We keep track of the number of sites waiting to be cleared, and when it reaches 0 we can
         // set our testing variable.
         private int mNumSitesClearing;
+        private long mClearStartTime;
 
         /**
          * We fetch all the websites and clear all the non-important data. This happens
          * asynchronously, and at the end we update the UI with the new storage numbers.
          */
         public void clearData() {
-            WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher(this, true);
+            mClearStartTime = SystemClock.elapsedRealtime();
+            WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher(true);
             fetcher.fetchPreferencesForCategory(
-                    SiteSettingsCategory.fromString(SiteSettingsCategory.CATEGORY_USE_STORAGE));
+                    SiteSettingsCategory.createFromType(SiteSettingsCategory.Type.USE_STORAGE),
+                    this);
         }
 
         @Override
         public void onStoredDataCleared() {
             mNumSitesClearing--;
-            if (mNumSitesClearing <= 0) clearUnimportantDataDone();
+            if (mNumSitesClearing <= 0) {
+                RecordHistogram.recordTimesHistogram("Android.ManageSpace.ClearUnimportantTime",
+                        SystemClock.elapsedRealtime() - mClearStartTime);
+                clearUnimportantDataDone();
+            }
         }
 
         @Override

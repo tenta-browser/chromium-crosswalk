@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.payments;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -14,34 +15,34 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * A payment integration test for shipping address labels.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestShippingAddressAndOptionTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_free_shipping_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         // The user has a shipping address associated with a credit card.
         String firstAddressId = helper.setProfile(new AutofillProfile("", "https://example.com",
@@ -66,7 +67,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testShippingAddressFormat_BottomSheet()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
 
         // Make sure that the shipping label on the bottomsheet does not include the country.
@@ -88,7 +89,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testShippingAddressFormat_FullSheet()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
 
         // Focus on a section other that shipping addresses to enter fullsheet mode.
@@ -111,8 +112,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testShippingAddressFormat_Expanded()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testShippingAddressFormat_Expanded() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
 
         // Focus on the shipping addresses section to enter expanded mode.
@@ -143,7 +143,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testShippingAddressFormat_NewAddress()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
 
         // Add a shipping address.
@@ -151,19 +151,20 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_add_option_button, mPaymentRequestTestRule.getReadyToEdit());
+        Boolean is_company_name_enabled =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.AUTOFILL_ENABLE_COMPANY_NAME);
         mPaymentRequestTestRule.setTextInEditorAndWait(
                 new String[] {"Seb Doe", "Google", "340 Main St", "Los Angeles", "CA", "90291",
                         "650-253-0000"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
 
         // Make sure that the shipping label does not include the country.
-        Assert.assertTrue(mPaymentRequestTestRule.getShippingAddressOptionRowAtIndex(0)
-                                  .getLabelText()
-                                  .toString()
-                                  .equals("Seb Doe\nGoogle, 340 Main St, Los Angeles, CA 90291\n"
-                                          + "+1 650-253-0000"));
+        Assert.assertEquals(mPaymentRequestTestRule.getShippingAddressOptionRowAtIndex(0)
+                                    .getLabelText()
+                                    .toString(),
+                "Seb Doe\nGoogle, 340 Main St, Los Angeles, CA 90291\n+1 650-253-0000");
     }
 
     /**
@@ -174,7 +175,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testEditShippingAddressAndCancelEditorShouldKeepAddressSelected()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -198,7 +199,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testEditShippingAddressAndClickAndroidBackButtonShouldKeepAddressSelected()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -222,7 +223,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testAddShippingAddressAndCancelEditorShouldKeepAddressSelected()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -246,7 +247,7 @@ public class PaymentRequestShippingAddressAndOptionTest implements MainActivityS
     @MediumTest
     @Feature({"Payments"})
     public void testAddShippingAddressAndClickAndroidBackButtonShouldKeepAddressSelected()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());

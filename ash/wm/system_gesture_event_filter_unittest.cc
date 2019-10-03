@@ -6,10 +6,10 @@
 
 #include <vector>
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/accelerators/accelerator_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/shell_test_api.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/window_factory.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
 #include "base/time/time.h"
@@ -59,19 +59,19 @@ class MaxSizeNCFV : public views::NonClientFrameView {
 
  private:
   gfx::Size GetMaximumSize() const override { return gfx::Size(200, 200); }
-  gfx::Rect GetBoundsForClientView() const override { return gfx::Rect(); };
+  gfx::Rect GetBoundsForClientView() const override { return gfx::Rect(); }
 
   gfx::Rect GetWindowBoundsForClientBounds(
       const gfx::Rect& client_bounds) const override {
     return gfx::Rect();
-  };
+  }
 
   // This function must ask the ClientView to do a hittest.  We don't do this in
   // the parent NonClientView because that makes it more difficult to calculate
   // hittests for regions that are partially obscured by the ClientView, e.g.
   // HTSYSMENU.
   int NonClientHitTest(const gfx::Point& point) override { return HTNOWHERE; }
-  void GetWindowMask(const gfx::Size& size, gfx::Path* window_mask) override {}
+  void GetWindowMask(const gfx::Size& size, SkPath* window_mask) override {}
   void ResetWindowControls() override {}
   void UpdateWindowIcon() override {}
   void UpdateWindowTitle() override {}
@@ -115,9 +115,9 @@ class SystemGestureEventFilterTest : public AshTestBase {
     // positions to be consistent across tests.
     std::vector<views::FrameButton> leading;
     std::vector<views::FrameButton> trailing;
-    trailing.push_back(views::FRAME_BUTTON_MINIMIZE);
-    trailing.push_back(views::FRAME_BUTTON_MAXIMIZE);
-    trailing.push_back(views::FRAME_BUTTON_CLOSE);
+    trailing.push_back(views::FrameButton::kMinimize);
+    trailing.push_back(views::FrameButton::kMaximize);
+    trailing.push_back(views::FrameButton::kClose);
     views::WindowButtonOrderProvider::GetInstance()->SetWindowButtonOrder(
         leading, trailing);
 
@@ -156,8 +156,7 @@ TEST_F(SystemGestureEventFilterTest, TwoFingerDrag) {
 
   ui::test::EventGenerator generator(root_window, toplevel->GetNativeWindow());
 
-  wm::WindowState* toplevel_state =
-      wm::GetWindowState(toplevel->GetNativeWindow());
+  WindowState* toplevel_state = WindowState::Get(toplevel->GetNativeWindow());
   // Swipe down to minimize.
   generator.GestureMultiFingerScroll(kTouchPoints, points, 15, kSteps, 0, 150);
   EXPECT_TRUE(toplevel_state->IsMinimized());
@@ -215,8 +214,7 @@ TEST_F(SystemGestureEventFilterTest, WindowsWithMaxSizeDontSnap) {
 
   // Swipe down to minimize.
   generator.GestureMultiFingerScroll(kTouchPoints, points, 15, kSteps, 0, 150);
-  wm::WindowState* toplevel_state =
-      wm::GetWindowState(toplevel->GetNativeWindow());
+  WindowState* toplevel_state = WindowState::Get(toplevel->GetNativeWindow());
   EXPECT_TRUE(toplevel_state->IsMinimized());
 
   toplevel->Restore();
@@ -306,7 +304,7 @@ TEST_F(SystemGestureEventFilterTest,
   EXPECT_EQ(HTLEFT, toplevel->GetNonClientComponent(points[0]));
   EXPECT_EQ(HTRIGHT, toplevel->GetNonClientComponent(points[1]));
 
-  GetEventGenerator().GestureMultiFingerScrollWithDelays(
+  GetEventGenerator()->GestureMultiFingerScrollWithDelays(
       kTouchPoints, points, delays, 15, kSteps, 0, 40);
 
   // The window bounds should not have changed because neither of the fingers
@@ -413,9 +411,9 @@ TEST_F(SystemGestureEventFilterTest, DragLeftNearEdgeSnaps) {
   generator.GestureMultiFingerScroll(kTouchPoints, points, 120, kSteps, drag_x,
                                      0);
 
-  EXPECT_EQ(ash::wm::GetDefaultLeftSnappedWindowBoundsInParent(toplevel_window)
-                .ToString(),
-            toplevel_window->bounds().ToString());
+  EXPECT_EQ(
+      GetDefaultLeftSnappedWindowBoundsInParent(toplevel_window).ToString(),
+      toplevel_window->bounds().ToString());
 }
 
 TEST_F(SystemGestureEventFilterTest, DragRightNearEdgeSnaps) {
@@ -441,9 +439,9 @@ TEST_F(SystemGestureEventFilterTest, DragRightNearEdgeSnaps) {
   int drag_x = work_area.right() - 20 - points[0].x();
   generator.GestureMultiFingerScroll(kTouchPoints, points, 120, kSteps, drag_x,
                                      0);
-  EXPECT_EQ(wm::GetDefaultRightSnappedWindowBoundsInParent(toplevel_window)
-                .ToString(),
-            toplevel_window->bounds().ToString());
+  EXPECT_EQ(
+      GetDefaultRightSnappedWindowBoundsInParent(toplevel_window).ToString(),
+      toplevel_window->bounds().ToString());
 }
 
 // Tests that the window manager does not consume gesture events targeted to
@@ -456,21 +454,22 @@ TEST_F(SystemGestureEventFilterTest,
 
   aura::test::EventCountDelegate delegate;
   delegate.set_window_component(HTCLIENT);
-  std::unique_ptr<aura::Window> child(new aura::Window(&delegate));
-  child->SetType(aura::client::WINDOW_TYPE_CONTROL);
+  std::unique_ptr<aura::Window> child =
+      window_factory::NewWindow(&delegate, aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   parent->AddChild(child.get());
   child->SetBounds(gfx::Rect(100, 100));
   child->Show();
 
   ui::test::TestEventHandler event_handler;
-  aura::Env::GetInstance()->PrependPreTargetHandler(&event_handler);
+  aura::Env::GetInstance()->AddPreTargetHandler(
+      &event_handler, ui::EventTarget::Priority::kSystem);
 
-  GetEventGenerator().MoveMouseTo(0, 0);
+  GetEventGenerator()->MoveMouseTo(0, 0);
   for (int i = 1; i <= 3; ++i)
-    GetEventGenerator().PressTouchId(i);
+    GetEventGenerator()->PressTouchId(i);
   for (int i = 1; i <= 3; ++i)
-    GetEventGenerator().ReleaseTouchId(i);
+    GetEventGenerator()->ReleaseTouchId(i);
   EXPECT_EQ(event_handler.num_gesture_events(),
             delegate.GetGestureCountAndReset());
 

@@ -32,7 +32,8 @@ bool RunFunctionImpl(v8::Local<v8::Function> function,
   v8::MaybeLocal<v8::Value> maybe_result =
       function->Call(context, receiver, argc, argv);
   if (try_catch.HasCaught()) {
-    *out_error = gin::V8ToString(try_catch.Message()->Get());
+    *out_error =
+        gin::V8ToString(context->GetIsolate(), try_catch.Message()->Get());
     return false;
   }
   v8::Local<v8::Value> result;
@@ -54,7 +55,7 @@ std::string ReplaceSingleQuotes(base::StringPiece str) {
 
 std::unique_ptr<base::Value> ValueFromString(base::StringPiece str) {
   std::unique_ptr<base::Value> value =
-      base::JSONReader::Read(ReplaceSingleQuotes(str));
+      base::JSONReader::ReadDeprecated(ReplaceSingleQuotes(str));
   EXPECT_TRUE(value) << str;
   return value;
 }
@@ -97,7 +98,7 @@ v8::Local<v8::Value> V8ValueFromScriptSource(v8::Local<v8::Context> context,
   v8::Local<v8::Script> script;
   if (!maybe_script.ToLocal(&script))
     return v8::Local<v8::Value>();
-  return script->Run();
+  return script->Run(context).ToLocalChecked();
 }
 
 v8::Local<v8::Function> FunctionFromString(v8::Local<v8::Context> context,

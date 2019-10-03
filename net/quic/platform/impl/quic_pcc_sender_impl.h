@@ -5,10 +5,10 @@
 #ifndef NET_QUIC_PLATFORM_IMPL_QUIC_PCC_SENDER_IMPL_H_
 #define NET_QUIC_PLATFORM_IMPL_QUIC_PCC_SENDER_IMPL_H_
 
-#include "net/quic/core/congestion_control/send_algorithm_interface.h"
-#include "net/quic/core/congestion_control/tcp_cubic_sender_bytes.h"
+#include "net/third_party/quiche/src/quic/core/congestion_control/send_algorithm_interface.h"
+#include "net/third_party/quiche/src/quic/core/congestion_control/tcp_cubic_sender_bytes.h"
 
-namespace net {
+namespace quic {
 
 // Interface for creating a PCC SendAlgorithmInterface.  For chromium,
 // this implementation is currently a stub that passes through to
@@ -26,6 +26,6 @@ SendAlgorithmInterface* CreatePccSenderImpl(
                                  max_congestion_window, stats);
 }
 
-}  // namespace net
+}  // namespace quic
 
 #endif  // NET_QUIC_PLATFORM_IMPL_QUIC_PCC_SENDER_IMPL_H_

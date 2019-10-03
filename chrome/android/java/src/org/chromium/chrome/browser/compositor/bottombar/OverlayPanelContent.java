@@ -8,35 +8,40 @@ import android.text.TextUtils;
 import android.view.View;
 import android.view.View.MeasureSpec;
 import android.view.ViewGroup;
+import android.view.ViewGroup.MarginLayoutParams;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.WebContentsFactory;
+import org.chromium.chrome.browser.content.ContentUtils;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManager;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.components.embedder_support.delegate.WebContentsDelegateAndroid;
+import org.chromium.components.embedder_support.view.ContentView;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
 import org.chromium.components.navigation_interception.NavigationParams;
-import org.chromium.components.web_contents_delegate_android.WebContentsDelegateAndroid;
-import org.chromium.content.browser.ContentVideoViewEmbedder;
-import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.NavigationHandle;
+import org.chromium.content_public.browser.RenderCoordinates;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.base.ViewAndroidDelegate;
 
 /**
  * Content container for an OverlayPanel. This class is responsible for the management of the
- * ContentViewCore displayed inside of a panel and exposes a simple API relevant to actions a
+ * WebContents displayed inside of a panel and exposes a simple API relevant to actions a
  * panel has.
  */
 public class OverlayPanelContent {
 
-    /** The ContentViewCore that this panel will display. */
-    private ContentViewCore mContentViewCore;
+    /** The WebContents that this panel will display. */
+    private WebContents mWebContents;
+
+    /** The container view that this panel uses. */
+    private ViewGroup mContainerView;
 
     /** The pointer to the native version of this class. */
     private long mNativeOverlayPanelContentPtr;
@@ -53,7 +58,7 @@ public class OverlayPanelContent {
     /** The URL that was directly loaded using the {@link #loadUrl(String)} method. */
     private String mLoadedUrl;
 
-    /** Whether the ContentViewCore has started loading a URL. */
+    /** Whether the content has started loading a URL. */
     private boolean mDidStartLoadingUrl;
 
     /**
@@ -63,7 +68,7 @@ public class OverlayPanelContent {
     private boolean mShouldReuseWebContents;
 
     /**
-     * Whether the ContentViewCore is processing a pending navigation.
+     * Whether the WebContents is processing a pending navigation.
      * NOTE(pedrosimonetti): This is being used to prevent redirections on the SERP to be
      * interpreted as a regular navigation, which should cause the Contextual Search Panel
      * to be promoted as a Tab. This was added to work around a server bug that has been fixed.
@@ -91,27 +96,51 @@ public class OverlayPanelContent {
     // java layer. Otherwise, the instance could be garbage-collected unexpectedly.
     private InterceptNavigationDelegate mInterceptNavigationDelegate;
 
+    /** Set to {@code True} if opened for an incognito tab. */
+    private boolean mIsIncognito;
+
     /** The desired size of the {@link ContentView} associated with this panel content. */
     private int mContentViewWidth;
     private int mContentViewHeight;
+    private boolean mSubtractBarHeight;
 
     /** The height of the bar at the top of the OverlayPanel in pixels. */
-    private int mBarHeightPx;
+    private final int mBarHeightPx;
+
+    /** Sets the top offset of the overlay panel in pixel. 0 when fully expanded. */
+    private int mPanelTopOffsetPx;
+
+    private class OverlayViewDelegate extends ViewAndroidDelegate {
+        public OverlayViewDelegate(ViewGroup v) {
+            super(v);
+        }
+
+        @Override
+        public void setViewPosition(View view, float x, float y, float width, float height,
+                int leftMargin, int topMargin) {
+            super.setViewPosition(view, x, y, width, height, leftMargin, topMargin);
+
+            // Applies top offset depending on the overlay panel state.
+            MarginLayoutParams lp = (MarginLayoutParams) view.getLayoutParams();
+            lp.topMargin += mPanelTopOffsetPx + mBarHeightPx;
+        }
+    }
 
     // ============================================================================================
     // InterceptNavigationDelegateImpl
     // ============================================================================================
 
     // Used to intercept intent navigations.
-    // TODO(jeremycho): Consider creating a Tab with the Panel's ContentViewCore,
+    // TODO(jeremycho): Consider creating a Tab with the Panel's WebContents.
     // which would also handle functionality like long-press-to-paste.
     private class InterceptNavigationDelegateImpl implements InterceptNavigationDelegate {
         final ExternalNavigationHandler mExternalNavHandler;
 
         public InterceptNavigationDelegateImpl() {
             Tab tab = mActivity.getActivityTab();
-            mExternalNavHandler = (tab != null && tab.getContentViewCore() != null)
-                    ? new ExternalNavigationHandler(tab) : null;
+            mExternalNavHandler = (tab != null && tab.getWebContents() != null)
+                    ? new ExternalNavigationHandler(tab)
+                    : null;
         }
 
         @Override
@@ -135,15 +164,17 @@ public class OverlayPanelContent {
      *                        for this parameter, the default one will be used.
      * @param progressObserver An observer for progress related events.
      * @param activity The ChromeActivity that contains this object.
+     * @param isIncognito {@True} if opened for an incognito tab
      * @param barHeight The height of the bar at the top of the OverlayPanel in dp.
      */
     public OverlayPanelContent(OverlayContentDelegate contentDelegate,
             OverlayContentProgressObserver progressObserver, ChromeActivity activity,
-            float barHeight) {
+            boolean isIncognito, float barHeight) {
         mNativeOverlayPanelContentPtr = nativeInit();
         mContentDelegate = contentDelegate;
         mProgressObserver = progressObserver;
         mActivity = activity;
+        mIsIncognito = isIncognito;
         mBarHeightPx = (int) (barHeight * mActivity.getResources().getDisplayMetrics().density);
 
         mWebContentsDelegate = new WebContentsDelegateAndroid() {
@@ -151,9 +182,7 @@ public class OverlayPanelContent {
 
             @Override
             public void loadingStateChanged(boolean toDifferentDocument) {
-                boolean isLoading = mContentViewCore != null
-                        && mContentViewCore.getWebContents() != null
-                        && mContentViewCore.getWebContents().isLoading();
+                boolean isLoading = mWebContents != null && mWebContents.isLoading();
                 if (isLoading) {
                     mProgressObserver.onProgressBarStarted();
                 } else {
@@ -167,18 +196,18 @@ public class OverlayPanelContent {
             }
 
             @Override
-            public void toggleFullscreenModeForTab(boolean enterFullscreen) {
-                mIsFullscreen = enterFullscreen;
+            public void enterFullscreenModeForTab(boolean prefersNavigationBar) {
+                mIsFullscreen = true;
+            }
+
+            @Override
+            public void exitFullscreenModeForTab() {
+                mIsFullscreen = false;
             }
 
             @Override
             public boolean isFullscreenForTabOrPending() {
                 return mIsFullscreen;
-            }
-
-            @Override
-            public ContentVideoViewEmbedder getContentVideoViewEmbedder() {
-                return null;  // Have a no-op embedder be used.
             }
 
             @Override
@@ -200,11 +229,11 @@ public class OverlayPanelContent {
     }
 
     // ============================================================================================
-    // ContentViewCore related
+    // WebContents related
     // ============================================================================================
 
     /**
-     * Load a URL; this will trigger creation of a new ContentViewCore if being loaded immediately,
+     * Load a URL; this will trigger creation of a new WebContents if being loaded immediately,
      * otherwise one is created when the panel's content becomes visible.
      * @param url The URL that should be loaded.
      * @param shouldLoadImmediately If a URL should be loaded immediately or wait until visibility
@@ -216,14 +245,11 @@ public class OverlayPanelContent {
         if (!shouldLoadImmediately) {
             mPendingUrl = url;
         } else {
-            createNewContentView();
+            createNewWebContents();
             mLoadedUrl = url;
             mDidStartLoadingUrl = true;
             mIsProcessingPendingNavigation = true;
-            if (!mContentDelegate.handleInterceptLoadUrl(mContentViewCore, url)) {
-                mContentViewCore.getWebContents().getNavigationController().loadUrl(
-                        new LoadUrlParams(url));
-            }
+            mWebContents.getNavigationController().loadUrl(new LoadUrlParams(url));
         }
     }
 
@@ -240,10 +266,12 @@ public class OverlayPanelContent {
      * by the {@link OverlayPanel} before the creation of the content view.
      * @param width The width of the content view.
      * @param height The height of the content view.
+     * @param subtractBarHeight if {@code true} view height should be smaller by {@code mBarHeight}.
      */
-    void setContentViewSize(int width, int height) {
+    void setContentViewSize(int width, int height, boolean subtractBarHeight) {
         mContentViewWidth = width;
         mContentViewHeight = height;
+        mSubtractBarHeight = subtractBarHeight;
     }
 
     /**
@@ -254,76 +282,47 @@ public class OverlayPanelContent {
     }
 
     /**
-     * Creates a ContentViewCore. This method will be overridden by tests.
-     * @param activity The ChromeActivity.
-     * @return The newly created ContentViewCore.
+     * Sets the top offset of the overlay panel that varies as the panel state changes.
+     * @param offset Top offset in pixel.
      */
-    protected ContentViewCore createContentViewCore(ChromeActivity activity) {
-        return ContentViewCore.create(activity, ChromeVersionInfo.getProductVersion());
+    public void setPanelTopOffset(int offset) {
+        mPanelTopOffsetPx = offset;
     }
 
     /**
-     * Create a new ContentViewCore that will be managed by this panel.
+     * Create a new WebContents that will be managed by this panel.
      */
-    private void createNewContentView() {
-        if (mContentViewCore != null) {
-            // If the ContentViewCore has already been created, but never used,
+    private void createNewWebContents() {
+        if (mWebContents != null) {
+            // If the WebContents has already been created, but never used,
             // then there's no need to create a new one.
             if (!mDidStartLoadingUrl || mShouldReuseWebContents) return;
 
-            destroyContentView();
+            destroyWebContents();
         }
 
-        mContentViewCore = createContentViewCore(mActivity);
+        // Creates an initially hidden WebContents which gets shown when the panel is opened.
+        mWebContents = WebContentsFactory.createWebContents(mIsIncognito, true);
 
-        ContentView cv = ContentView.createContentView(mActivity, mContentViewCore);
+        ContentView cv = ContentView.createContentView(mActivity, mWebContents);
         if (mContentViewWidth != 0 || mContentViewHeight != 0) {
             int width = mContentViewWidth == 0 ? ContentView.DEFAULT_MEASURE_SPEC
                     : MeasureSpec.makeMeasureSpec(mContentViewWidth, MeasureSpec.EXACTLY);
             int height = mContentViewHeight == 0 ? ContentView.DEFAULT_MEASURE_SPEC
                     : MeasureSpec.makeMeasureSpec(mContentViewHeight, MeasureSpec.EXACTLY);
             cv.setDesiredMeasureSpec(width, height);
-            mActivity.getCompositorViewHolder().setOverlayContentInfo(cv, width, height);
         }
 
-        // Creates an initially hidden WebContents which gets shown when the panel is opened.
-        WebContents panelWebContents = WebContentsFactory.createWebContents(false, true);
-
-        // Dummny ViewAndroidDelegate since the container view for overlay panel is
-        // never added to the view hierarchy.
-        ViewAndroidDelegate delegate =
-                new ViewAndroidDelegate() {
-                    private ViewGroup mContainerView;
-
-                    private ViewAndroidDelegate init(ViewGroup containerView) {
-                        mContainerView = containerView;
-                        return this;
-                    }
-
-                    @Override
-                    public View acquireView() {
-                        return null;
-                    }
-
-                    @Override
-                    public void setViewPosition(View anchorView, float x, float y, float width,
-                            float height, int leftMargin, int topMargin) {}
-
-                    @Override
-                    public void removeView(View anchorView) { }
-
-                    @Override
-                    public ViewGroup getContainerView() {
-                        return mContainerView;
-                    }
-                }.init(cv);
-        mContentViewCore.initialize(delegate, cv, panelWebContents, mActivity.getWindowAndroid());
+        OverlayViewDelegate delegate = new OverlayViewDelegate(cv);
+        mWebContents.initialize(ChromeVersionInfo.getProductVersion(), delegate, cv,
+                mActivity.getWindowAndroid(), WebContents.createDefaultInternalsHolder());
+        ContentUtils.setUserAgentOverride(mWebContents);
 
         // Transfers the ownership of the WebContents to the native OverlayPanelContent.
-        nativeSetWebContents(mNativeOverlayPanelContentPtr, panelWebContents, mWebContentsDelegate);
+        nativeSetWebContents(mNativeOverlayPanelContentPtr, mWebContents, mWebContentsDelegate);
 
         mWebContentsObserver =
-                new WebContentsObserver(panelWebContents) {
+                new WebContentsObserver(mWebContents) {
                     @Override
                     public void didStartLoading(String url) {
                         mContentDelegate.onContentLoadStarted(url);
@@ -335,48 +334,43 @@ public class OverlayPanelContent {
                     }
 
                     @Override
-                    public void didStartNavigation(String url, boolean isInMainFrame,
-                            boolean isSameDocument, boolean isErrorPage) {
-                        if (isInMainFrame && !isSameDocument) {
+                    public void didStartNavigation(NavigationHandle navigation) {
+                        if (navigation.isInMainFrame() && !navigation.isSameDocument()) {
+                            String url = navigation.getUrl();
                             mContentDelegate.onMainFrameLoadStarted(
                                     url, !TextUtils.equals(url, mLoadedUrl));
                         }
                     }
 
                     @Override
-                    public void didFinishNavigation(String url, boolean isInMainFrame,
-                            boolean isErrorPage, boolean hasCommitted, boolean isSameDocument,
-                            boolean isFragmentNavigation, Integer pageTransition, int errorCode,
-                            String errorDescription, int httpStatusCode) {
-                        if (hasCommitted && isInMainFrame) {
+                    public void didFinishNavigation(NavigationHandle navigation) {
+                        if (navigation.hasCommitted() && navigation.isInMainFrame()) {
                             mIsProcessingPendingNavigation = false;
-                            mContentDelegate.onMainFrameNavigation(url,
-                                    !TextUtils.equals(url, mLoadedUrl),
-                                    isHttpFailureCode(httpStatusCode));
+                            mContentDelegate.onMainFrameNavigation(navigation.getUrl(),
+                                    !TextUtils.equals(navigation.getUrl(), mLoadedUrl),
+                                    isHttpFailureCode(navigation.httpStatusCode()));
                         }
                     }
                 };
 
+        mContainerView = cv;
         mInterceptNavigationDelegate = new InterceptNavigationDelegateImpl();
         nativeSetInterceptNavigationDelegate(
-                mNativeOverlayPanelContentPtr, mInterceptNavigationDelegate, panelWebContents);
+                mNativeOverlayPanelContentPtr, mInterceptNavigationDelegate, mWebContents);
 
-        mContentDelegate.onContentViewCreated(mContentViewCore);
-        if (mContentViewWidth != 0 && mContentViewHeight != 0) {
-            onPhysicalBackingSizeChanged(mContentViewWidth, mContentViewHeight);
-        }
-        panelWebContents.setSize(cv.getWidth(), cv.getHeight());
+        mContentDelegate.onContentViewCreated();
+        resizePanelContentView();
+        mActivity.getCompositorViewHolder().addView(mContainerView, 1);
     }
 
     /**
-     * Destroy this panel's ContentViewCore.
+     * Destroy this panel's WebContents.
      */
-    private void destroyContentView() {
-        if (mContentViewCore != null) {
+    private void destroyWebContents() {
+        if (mWebContents != null) {
             // Native destroy will call up to destroy the Java WebContents.
             nativeDestroyWebContents(mNativeOverlayPanelContentPtr);
-            mContentViewCore.destroy();
-            mContentViewCore = null;
+            mWebContents = null;
             if (mWebContentsObserver != null) {
                 mWebContentsObserver.destroy();
                 mWebContentsObserver = null;
@@ -398,17 +392,13 @@ public class OverlayPanelContent {
     // ============================================================================================
 
     /**
-     * Calls updateBrowserControlsState on the ContentViewCore.
-     * @param enableHiding Enable the toolbar's ability to hide.
-     * @param enableShowing If the toolbar is allowed to show.
-     * @param animate If the toolbar should animate when showing/hiding.
+     * Calls updateBrowserControlsState on the WebContents.
+     * @param areControlsHidden Whether the browser controls are hidden for the web contents. If
+     *                          false, the web contents viewport always accounts for the controls.
+     *                          Otherwise the web contents never accounts for them.
      */
-    public void updateBrowserControlsState(
-            boolean enableHiding, boolean enableShowing, boolean animate) {
-        if (mContentViewCore != null && mContentViewCore.getWebContents() != null) {
-            mContentViewCore.getWebContents().updateBrowserControlsState(
-                    enableHiding, enableShowing, animate);
-        }
+    public void updateBrowserControlsState(boolean areControlsHidden) {
+        nativeUpdateBrowserControlsState(mNativeOverlayPanelContentPtr, areControlsHidden);
     }
 
     /**
@@ -419,11 +409,11 @@ public class OverlayPanelContent {
     }
 
     /**
-     * Reset the ContentViewCore's scroll position to (0, 0).
+     * Reset the content's scroll position to (0, 0).
      */
     public void resetContentViewScroll() {
-        if (mContentViewCore != null) {
-            mContentViewCore.scrollTo(0, 0);
+        if (mWebContents != null) {
+            mWebContents.getEventForwarder().scrollTo(0, 0);
         }
     }
 
@@ -431,8 +421,9 @@ public class OverlayPanelContent {
      * @return The Y scroll position.
      */
     public float getContentVerticalScroll() {
-        return mContentViewCore != null
-                ? mContentViewCore.computeVerticalScrollOffset() : -1.f;
+        return mWebContents != null
+                ? RenderCoordinates.fromWebContents(mWebContents).getScrollYPixInt()
+                : -1.f;
     }
 
     /**
@@ -446,25 +437,21 @@ public class OverlayPanelContent {
 
         if (isVisible) {
             // If the last call to loadUrl was specified to be delayed, load it now.
-            if (!TextUtils.isEmpty(mPendingUrl)) {
-                loadUrl(mPendingUrl, true);
-            }
+            if (!TextUtils.isEmpty(mPendingUrl)) loadUrl(mPendingUrl, true);
 
-            // The CVC is created with the search request, but if none was made we'll need
+            // The WebContents is created with the search request, but if none was made we'll need
             // one in order to display an empty panel.
-            if (mContentViewCore == null) {
-                createNewContentView();
-            }
+            if (mWebContents == null) createNewWebContents();
 
-            // NOTE(pedrosimonetti): Calling onShow() on the ContentViewCore will cause the page
+            // NOTE(pedrosimonetti): Calling onShow() on the WebContents will cause the page
             // to be rendered. This has a side effect of causing the page to be included in
             // your Web History (if enabled). For this reason, onShow() should only be called
             // when we know for sure the page will be seen by the user.
-            if (mContentViewCore != null) mContentViewCore.onShow();
+            if (mWebContents != null) mWebContents.onShow();
 
             mContentDelegate.onContentViewSeen();
         } else {
-            if (mContentViewCore != null) mContentViewCore.onHide();
+            if (mWebContents != null) mWebContents.onHide();
         }
 
         mContentDelegate.onVisibilityChanged(isVisible);
@@ -473,19 +460,19 @@ public class OverlayPanelContent {
     /**
      * @return Whether the given HTTP result code represents a failure or not.
      */
-    private boolean isHttpFailureCode(int httpResultCode) {
+    private static boolean isHttpFailureCode(int httpResultCode) {
         return httpResultCode <= 0 || httpResultCode >= 400;
     }
 
     /**
-     * @return true if the ContentViewCore is visible on the page.
+     * @return true if the content is visible on the page.
      */
     public boolean isContentShowing() {
         return mIsContentViewShowing;
     }
 
     // ============================================================================================
-    // Methods for managing this panel's ContentViewCore.
+    // Methods for managing this panel's WebContents.
     // ============================================================================================
 
     /**
@@ -497,31 +484,21 @@ public class OverlayPanelContent {
         mNativeOverlayPanelContentPtr = 0;
     }
 
-    /**
-     * @return This panel's ContentViewCore.
-     */
-    @VisibleForTesting
-    public ContentViewCore getContentViewCore() {
-        return mContentViewCore;
+    protected WebContents getWebContents() {
+        return mWebContents;
     }
 
-    private WebContents getWebContents() {
-        return mContentViewCore != null ? mContentViewCore.getWebContents() : null;
+    ViewGroup getContainerView() {
+        return mContainerView;
     }
 
-    void onSizeChanged(int width, int height) {
-        if (mContentViewCore == null || getWebContents() == null) return;
-        getWebContents().setSize(width, height);
-        mContentViewCore.onSizeChanged(width, height, mContentViewCore.getViewportWidthPix(),
-                mContentViewCore.getViewportHeightPix());
-    }
-
-    void onPhysicalBackingSizeChanged(int width, int height) {
+    void resizePanelContentView() {
         WebContents webContents = getWebContents();
-        if (webContents != null) {
-            nativeOnPhysicalBackingSizeChanged(
-                    mNativeOverlayPanelContentPtr, webContents, width, height);
-        }
+        if (webContents == null) return;
+        int viewHeight = mContentViewHeight - (mSubtractBarHeight ? mBarHeightPx : 0);
+        nativeOnPhysicalBackingSizeChanged(
+                mNativeOverlayPanelContentPtr, webContents, mContentViewWidth, viewHeight);
+        mWebContents.setSize(mContentViewWidth, viewHeight);
     }
 
     /**
@@ -538,9 +515,7 @@ public class OverlayPanelContent {
      */
     @VisibleForTesting
     public void destroy() {
-        if (mContentViewCore != null) {
-            destroyContentView();
-        }
+        if (mWebContents != null) destroyWebContents();
 
         // Tests will not create the native pointer, so we need to check if it's not zero
         // otherwise calling nativeDestroy with zero will make Chrome crash.
@@ -561,4 +536,6 @@ public class OverlayPanelContent {
     private native void nativeDestroyWebContents(long nativeOverlayPanelContent);
     private native void nativeSetInterceptNavigationDelegate(long nativeOverlayPanelContent,
             InterceptNavigationDelegate delegate, WebContents webContents);
+    private native void nativeUpdateBrowserControlsState(
+            long nativeOverlayPanelContent, boolean areControlsHidden);
 }

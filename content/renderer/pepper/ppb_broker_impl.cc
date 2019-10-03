@@ -16,8 +16,8 @@
 #include "content/renderer/render_view_impl.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/shared_impl/platform_file.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 using ppapi::PlatformFileToInt;
 using ppapi::thunk::PPB_Broker_API;
@@ -57,9 +57,6 @@ PPB_Broker_API* PPB_Broker_Impl::AsPPB_Broker_API() { return this; }
 int32_t PPB_Broker_Impl::Connect(
     scoped_refptr<TrackedCallback> connect_callback) {
   // TODO(ddorwin): Return PP_ERROR_FAILED if plugin is in-process.
-
-  UMA_HISTOGRAM_ENUMERATION("Pepper.BrokerAction", PepperBrokerAction::CONNECT,
-                            PepperBrokerAction::NUM);
 
   if (broker_) {
     // May only be called once.

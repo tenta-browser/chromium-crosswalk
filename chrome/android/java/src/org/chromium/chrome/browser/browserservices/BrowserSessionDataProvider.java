@@ -8,6 +8,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.Nullable;
 import android.support.customtabs.CustomTabsIntent;
 import android.support.customtabs.CustomTabsSessionToken;
 
@@ -45,7 +46,7 @@ public class BrowserSessionDataProvider {
     public BrowserSessionDataProvider(Intent intent) {
         if (intent == null) assert false;
         mSession = CustomTabsSessionToken.getSessionTokenFromIntent(intent);
-        mIsTrustedIntent = IntentHandler.isIntentChromeOrFirstParty(intent);
+        mIsTrustedIntent = IntentHandler.notSecureIsIntentChromeOrFirstParty(intent);
 
         mAnimationBundle = IntentUtils.safeGetBundleExtra(
                 intent, CustomTabsIntent.EXTRA_EXIT_ANIMATION_BUNDLE);
@@ -56,6 +57,7 @@ public class BrowserSessionDataProvider {
     /**
      * @return The session specified in the intent, or null.
      */
+    @Nullable
     public CustomTabsSessionToken getSession() {
         return mSession;
     }
@@ -104,7 +106,10 @@ public class BrowserSessionDataProvider {
 
     /**
      * Checks whether or not the Intent is from Chrome or other trusted first party.
+     *
+     * @deprecated This method is not reliable, see https://crbug.com/832124
      */
+    @Deprecated
     public boolean isTrustedIntent() {
         return mIsTrustedIntent;
     }

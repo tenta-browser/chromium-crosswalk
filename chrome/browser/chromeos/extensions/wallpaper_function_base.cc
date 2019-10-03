@@ -4,15 +4,19 @@
 
 #include "chrome/browser/chromeos/extensions/wallpaper_function_base.h"
 
-#include "base/macros.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/synchronization/cancellation_flag.h"
-#include "base/task_scheduler/lazy_task_runner.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/stl_util.h"
+#include "base/synchronization/atomic_flag.h"
+#include "base/task/lazy_task_runner.h"
+#include "base/task/task_traits.h"
 #include "chrome/browser/image_decoder.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
+#include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/codec/jpeg_codec.h"
+#include "ui/gfx/image/image_skia_operations.h"
 
 using content::BrowserThread;
 
@@ -27,16 +31,18 @@ const char* const kWallpaperLayoutArrays[] = {
   "TILE"
 };
 
-const int kWallpaperLayoutCount = arraysize(kWallpaperLayoutArrays);
+const int kWallpaperLayoutCount = base::size(kWallpaperLayoutArrays);
 
 base::LazySequencedTaskRunner g_blocking_task_runner =
     LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
-        base::TaskTraits(base::MayBlock(),
+        base::TaskTraits(base::ThreadPool(),
+                         base::MayBlock(),
                          base::TaskPriority::USER_BLOCKING,
                          base::TaskShutdownBehavior::BLOCK_SHUTDOWN));
 base::LazySequencedTaskRunner g_non_blocking_task_runner =
     LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
-        base::TaskTraits(base::MayBlock(),
+        base::TaskTraits(base::ThreadPool(),
+                         base::MayBlock(),
                          base::TaskPriority::USER_VISIBLE,
                          base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN));
 
@@ -44,18 +50,23 @@ base::LazySequencedTaskRunner g_non_blocking_task_runner =
 
 const char kCancelWallpaperMessage[] = "Set wallpaper was canceled.";
 
-wallpaper::WallpaperLayout GetLayoutEnum(const std::string& layout) {
+ash::WallpaperLayout GetLayoutEnum(const std::string& layout) {
   for (int i = 0; i < kWallpaperLayoutCount; i++) {
     if (layout.compare(kWallpaperLayoutArrays[i]) == 0)
-      return static_cast<wallpaper::WallpaperLayout>(i);
+      return static_cast<ash::WallpaperLayout>(i);
   }
   // Default to use CENTER layout.
-  return wallpaper::WALLPAPER_LAYOUT_CENTER;
+  return ash::WALLPAPER_LAYOUT_CENTER;
 }
 
-void RecordCustomWallpaperLayout(const wallpaper::WallpaperLayout& layout) {
+std::string GetLayoutString(const ash::WallpaperLayout& layout) {
+  return kWallpaperLayoutArrays[layout >= ash::NUM_WALLPAPER_LAYOUT ? 0
+                                                                    : layout];
+}
+
+void RecordCustomWallpaperLayout(const ash::WallpaperLayout& layout) {
   UMA_HISTOGRAM_ENUMERATION("Ash.Wallpaper.CustomLayout", layout,
-                            wallpaper::NUM_WALLPAPER_LAYOUT);
+                            ash::NUM_WALLPAPER_LAYOUT);
 }
 
 }  // namespace wallpaper_api_util
@@ -66,7 +77,7 @@ class WallpaperFunctionBase::UnsafeWallpaperDecoder
   explicit UnsafeWallpaperDecoder(scoped_refptr<WallpaperFunctionBase> function)
       : function_(function) {}
 
-  void Start(const std::vector<char>& image_data) {
+  void Start(const std::vector<uint8_t>& image_data) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
     // This function can only be called after user login. It is fine to use
@@ -83,6 +94,8 @@ class WallpaperFunctionBase::UnsafeWallpaperDecoder
   }
 
   void OnImageDecoded(const SkBitmap& decoded_image) override {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
     // Make the SkBitmap immutable as we won't modify it. This is important
     // because otherwise it gets duplicated during painting, wasting memory.
     SkBitmap immutable(decoded_image);
@@ -99,6 +112,8 @@ class WallpaperFunctionBase::UnsafeWallpaperDecoder
   }
 
   void OnDecodeImageFailed() override {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
     function_->OnFailure(
         l10n_util::GetStringUTF8(IDS_WALLPAPER_MANAGER_INVALID_WALLPAPER));
     delete this;
@@ -106,7 +121,7 @@ class WallpaperFunctionBase::UnsafeWallpaperDecoder
 
  private:
   scoped_refptr<WallpaperFunctionBase> function_;
-  base::CancellationFlag cancel_flag_;
+  base::AtomicFlag cancel_flag_;
 
   DISALLOW_COPY_AND_ASSIGN(UnsafeWallpaperDecoder);
 };
@@ -114,11 +129,12 @@ class WallpaperFunctionBase::UnsafeWallpaperDecoder
 WallpaperFunctionBase::UnsafeWallpaperDecoder*
     WallpaperFunctionBase::unsafe_wallpaper_decoder_;
 
-WallpaperFunctionBase::WallpaperFunctionBase() {
-}
+const int WallpaperFunctionBase::kWallpaperThumbnailWidth = 108;
+const int WallpaperFunctionBase::kWallpaperThumbnailHeight = 68;
 
-WallpaperFunctionBase::~WallpaperFunctionBase() {
-}
+WallpaperFunctionBase::WallpaperFunctionBase() = default;
+
+WallpaperFunctionBase::~WallpaperFunctionBase() = default;
 
 base::SequencedTaskRunner* WallpaperFunctionBase::GetBlockingTaskRunner() {
   return wallpaper_api_util::g_blocking_task_runner.Get().get();
@@ -128,7 +144,14 @@ base::SequencedTaskRunner* WallpaperFunctionBase::GetNonBlockingTaskRunner() {
   return wallpaper_api_util::g_non_blocking_task_runner.Get().get();
 }
 
-void WallpaperFunctionBase::StartDecode(const std::vector<char>& data) {
+void WallpaperFunctionBase::AssertCalledOnWallpaperSequence(
+    base::SequencedTaskRunner* task_runner) {
+#if DCHECK_IS_ON()
+  DCHECK(task_runner->RunsTasksInCurrentSequence());
+#endif
+}
+
+void WallpaperFunctionBase::StartDecode(const std::vector<uint8_t>& data) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (unsafe_wallpaper_decoder_)
     unsafe_wallpaper_decoder_->Cancel();
@@ -137,13 +160,22 @@ void WallpaperFunctionBase::StartDecode(const std::vector<char>& data) {
 }
 
 void WallpaperFunctionBase::OnCancel() {
-  unsafe_wallpaper_decoder_ = NULL;
-  SetError(wallpaper_api_util::kCancelWallpaperMessage);
-  SendResponse(false);
+  unsafe_wallpaper_decoder_ = nullptr;
+  Respond(Error(wallpaper_api_util::kCancelWallpaperMessage));
 }
 
 void WallpaperFunctionBase::OnFailure(const std::string& error) {
-  unsafe_wallpaper_decoder_ = NULL;
-  SetError(error);
-  SendResponse(false);
+  unsafe_wallpaper_decoder_ = nullptr;
+  Respond(Error(error));
+}
+
+void WallpaperFunctionBase::GenerateThumbnail(
+    const gfx::ImageSkia& image,
+    const gfx::Size& size,
+    scoped_refptr<base::RefCountedBytes>* thumbnail_data_out) {
+  *thumbnail_data_out = new base::RefCountedBytes();
+  gfx::ImageSkia thumbnail_image = gfx::ImageSkiaOperations::CreateResizedImage(
+      image, skia::ImageOperations::RESIZE_LANCZOS3, size);
+  gfx::JPEGCodec::Encode(*thumbnail_image.bitmap(), 90 /*quality=*/,
+                         &(*thumbnail_data_out)->data());
 }

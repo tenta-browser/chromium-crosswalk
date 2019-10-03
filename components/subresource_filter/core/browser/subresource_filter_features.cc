@@ -12,14 +12,16 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
-#include "base/trace_event/trace_event_argument.h"
-#include "components/variations/variations_associated_data.h"
+#include "base/time/time.h"
+#include "base/trace_event/traced_value.h"
+#include "components/subresource_filter/core/common/common_features.h"
+#include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 
 namespace subresource_filter {
 
@@ -62,12 +64,13 @@ std::string TakeVariationParamOrReturnEmpty(
   return value;
 }
 
-ActivationLevel ParseActivationLevel(const base::StringPiece activation_level) {
+mojom::ActivationLevel ParseActivationLevel(
+    const base::StringPiece activation_level) {
   if (base::LowerCaseEqualsASCII(activation_level, kActivationLevelEnabled))
-    return ActivationLevel::ENABLED;
+    return mojom::ActivationLevel::kEnabled;
   else if (base::LowerCaseEqualsASCII(activation_level, kActivationLevelDryRun))
-    return ActivationLevel::DRYRUN;
-  return ActivationLevel::DISABLED;
+    return mojom::ActivationLevel::kDryRun;
+  return mojom::ActivationLevel::kDisabled;
 }
 
 ActivationScope ParseActivationScope(const base::StringPiece activation_scope) {
@@ -97,15 +100,12 @@ ActivationList ParseActivationList(std::string activation_lists_string) {
   return ActivationList::NONE;
 }
 
+// Will return a value between 0 and 1 inclusive.
 double ParsePerformanceMeasurementRate(const std::string& rate) {
   double value = 0.0;
   if (!base::StringToDouble(rate, &value) || value < 0)
     return 0.0;
   return value < 1 ? value : 1;
-}
-
-bool ParseBool(const base::StringPiece value) {
-  return base::LowerCaseEqualsASCII(value, "true");
 }
 
 int ParseInt(const base::StringPiece value) {
@@ -116,16 +116,18 @@ int ParseInt(const base::StringPiece value) {
 
 std::vector<Configuration> FillEnabledPresetConfigurations(
     std::map<std::string, std::string>* params) {
+  // If ad tagging is enabled, turn on the dryrun automatically.
+  bool ad_tagging_enabled = base::FeatureList::IsEnabled(kAdTagging);
   const struct {
     const char* name;
     bool enabled_by_default;
     Configuration (*factory_method)();
   } kAvailablePresetConfigurations[] = {
-      {kPresetLiveRunOnPhishingSites, false,
+      {kPresetLiveRunOnPhishingSites, true,
        &Configuration::MakePresetForLiveRunOnPhishingSites},
-      {kPresetPerformanceTestingDryRunOnAllSites, false,
+      {kPresetPerformanceTestingDryRunOnAllSites, ad_tagging_enabled,
        &Configuration::MakePresetForPerformanceTestingDryRunOnAllSites},
-      {kPresetLiveRunForBetterAds, false,
+      {kPresetLiveRunForBetterAds, true,
        &Configuration::MakePresetForLiveRunForBetterAds}};
 
   CommaSeparatedStrings enabled_presets(
@@ -168,14 +170,6 @@ Configuration ParseExperimentalConfiguration(
       ParsePerformanceMeasurementRate(TakeVariationParamOrReturnEmpty(
           params, kPerformanceMeasurementRateParameterName));
 
-  configuration.activation_options.should_suppress_notifications =
-      ParseBool(TakeVariationParamOrReturnEmpty(
-          params, kSuppressNotificationsParameterName));
-
-  configuration.activation_options.should_whitelist_site_on_reload =
-      ParseBool(TakeVariationParamOrReturnEmpty(
-          params, kWhitelistSiteOnReloadParameterName));
-
   // GeneralSettings:
   configuration.general_settings.ruleset_flavor =
       TakeVariationParamOrReturnEmpty(params, kRulesetFlavorParameterName);
@@ -187,7 +181,9 @@ std::vector<Configuration> ParseEnabledConfigurations() {
   std::map<std::string, std::string> params;
   base::GetFieldTrialParamsByFeature(kSafeBrowsingSubresourceFilter, &params);
 
-  std::vector<Configuration> configs = FillEnabledPresetConfigurations(&params);
+  std::vector<Configuration> configs;
+  if (base::FeatureList::IsEnabled(kSafeBrowsingSubresourceFilter))
+    configs = FillEnabledPresetConfigurations(&params);
 
   Configuration experimental_config = ParseExperimentalConfiguration(&params);
   configs.push_back(std::move(experimental_config));
@@ -235,10 +231,13 @@ base::LazyInstance<scoped_refptr<ConfigurationList>>::Leaky
 // Constant definitions -------------------------------------------------------
 
 const base::Feature kSafeBrowsingSubresourceFilter{
-    "SubresourceFilter", base::FEATURE_DISABLED_BY_DEFAULT};
+    "SubresourceFilter", base::FEATURE_ENABLED_BY_DEFAULT};
 
-const base::Feature kSafeBrowsingSubresourceFilterExperimentalUI{
-    "SubresourceFilterExperimentalUI", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kSafeBrowsingSubresourceFilterConsiderRedirects{
+    "SubresourceFilterConsiderRedirects", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kFilterAdsOnAbusiveSites{"FilterAdsOnAbusiveSites",
+                                             base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Legacy name `activation_state` is used in variation parameters.
 const char kActivationLevelParameterName[] = "activation_state";
@@ -262,8 +261,6 @@ const char kActivationPriorityParameterName[] = "activation_priority";
 
 const char kPerformanceMeasurementRateParameterName[] =
     "performance_measurement_rate";
-const char kSuppressNotificationsParameterName[] = "suppress_notifications";
-const char kWhitelistSiteOnReloadParameterName[] = "whitelist_site_on_reload";
 const char kRulesetFlavorParameterName[] = "ruleset_flavor";
 
 const char kEnablePresetsParameterName[] = "enable_presets";
@@ -278,7 +275,7 @@ const char kPresetLiveRunForBetterAds[] =
 
 // static
 Configuration Configuration::MakePresetForLiveRunOnPhishingSites() {
-  Configuration config(ActivationLevel::ENABLED,
+  Configuration config(mojom::ActivationLevel::kEnabled,
                        ActivationScope::ACTIVATION_LIST,
                        ActivationList::PHISHING_INTERSTITIAL);
   config.activation_conditions.priority = 1000;
@@ -287,25 +284,16 @@ Configuration Configuration::MakePresetForLiveRunOnPhishingSites() {
 
 // static
 Configuration Configuration::MakePresetForPerformanceTestingDryRunOnAllSites() {
-  Configuration config(ActivationLevel::DRYRUN, ActivationScope::ALL_SITES);
-  config.activation_options.performance_measurement_rate = 1.0;
+  Configuration config(mojom::ActivationLevel::kDryRun,
+                       ActivationScope::ALL_SITES);
+  config.activation_options.performance_measurement_rate = 0.01;
   config.activation_conditions.priority = 500;
   return config;
 }
 
 // static
-Configuration Configuration::MakeForForcedActivation() {
-  // This is a strange configuration, but it is generated on-the-fly rather than
-  // via finch configs, and is separate from the standard activation computation
-  // (which is why scope is no_sites).
-  Configuration config(ActivationLevel::ENABLED, ActivationScope::NO_SITES);
-  config.activation_conditions.forced_activation = true;
-  return config;
-}
-
-// static
 Configuration Configuration::MakePresetForLiveRunForBetterAds() {
-  Configuration config(ActivationLevel::ENABLED,
+  Configuration config(mojom::ActivationLevel::kEnabled,
                        ActivationScope::ACTIVATION_LIST,
                        ActivationList::BETTER_ADS);
   config.activation_conditions.priority = 800;
@@ -313,7 +301,7 @@ Configuration Configuration::MakePresetForLiveRunForBetterAds() {
 }
 
 Configuration::Configuration() = default;
-Configuration::Configuration(ActivationLevel activation_level,
+Configuration::Configuration(mojom::ActivationLevel activation_level,
                              ActivationScope activation_scope,
                              ActivationList activation_list) {
   activation_options.activation_level = activation_level;
@@ -331,11 +319,8 @@ bool Configuration::operator==(const Configuration& rhs) const {
     return std::tie(config.activation_conditions.activation_scope,
                     config.activation_conditions.activation_list,
                     config.activation_conditions.priority,
-                    config.activation_conditions.forced_activation,
                     config.activation_options.activation_level,
                     config.activation_options.performance_measurement_rate,
-                    config.activation_options.should_whitelist_site_on_reload,
-                    config.activation_options.should_suppress_notifications,
                     config.general_settings.ruleset_flavor);
   };
   return tie(*this) == tie(rhs);
@@ -347,30 +332,43 @@ bool Configuration::operator!=(const Configuration& rhs) const {
 
 std::unique_ptr<base::trace_event::TracedValue>
 Configuration::ActivationConditions::ToTracedValue() const {
-  auto value = base::MakeUnique<base::trace_event::TracedValue>();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetString("activation_scope", StreamToString(activation_scope));
   value->SetString("activation_list", StreamToString(activation_list));
   value->SetInteger("priority", priority);
-  value->SetBoolean("forced_activation", forced_activation);
   return value;
 }
 
 std::unique_ptr<base::trace_event::TracedValue> Configuration::ToTracedValue()
     const {
-  auto value = base::MakeUnique<base::trace_event::TracedValue>();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
   auto traced_conditions = activation_conditions.ToTracedValue();
-  value->SetValue("activation_conditions", *traced_conditions);
+  value->SetValue("activation_conditions", traced_conditions.get());
   value->SetString("activation_level",
                    StreamToString(activation_options.activation_level));
   value->SetDouble("performance_measurement_rate",
                    activation_options.performance_measurement_rate);
-  value->SetBoolean("should_suppress_notifications",
-                    activation_options.should_suppress_notifications);
-  value->SetBoolean("should_whitelist_site_on_reload",
-                    activation_options.should_whitelist_site_on_reload);
   value->SetString("ruleset_flavor",
                    StreamToString(general_settings.ruleset_flavor));
   return value;
+}
+
+mojom::ActivationState Configuration::GetActivationState(
+    mojom::ActivationLevel effective_activation_level) const {
+  mojom::ActivationState state;
+  state.activation_level = effective_activation_level;
+
+  double measurement_rate = activation_options.performance_measurement_rate;
+  state.measure_performance =
+      base::ThreadTicks::IsSupported() &&
+      (measurement_rate == 1 || base::RandDouble() < measurement_rate);
+
+  // This bit keeps track of BAS enforcement-style logging, not warning logging.
+  // TODO(csharrison): Consider removing it since it can be computed directly
+  // from the mojom::ActivationLevel.
+  state.enable_logging =
+      effective_activation_level == mojom::ActivationLevel::kEnabled;
+  return state;
 }
 
 std::ostream& operator<<(std::ostream& os, const Configuration& config) {
@@ -398,7 +396,7 @@ scoped_refptr<ConfigurationList> GetEnabledConfigurations() {
 }
 
 bool HasEnabledConfiguration(const Configuration& config) {
-  return base::ContainsValue(
+  return base::Contains(
       GetEnabledConfigurations()->configs_by_decreasing_priority(), config);
 }
 

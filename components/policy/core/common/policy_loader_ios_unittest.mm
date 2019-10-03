@@ -6,10 +6,11 @@
 
 #import <UIKit/UIKit.h>
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
@@ -91,7 +92,7 @@ ConfigurationPolicyProvider* TestHarness::CreateProvider(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   std::unique_ptr<AsyncPolicyLoader> loader();
   return new AsyncPolicyProvider(
-      registry, base::MakeUnique<PolicyLoaderIOS>(task_runner));
+      registry, std::make_unique<PolicyLoaderIOS>(task_runner));
 }
 
 void TestHarness::InstallEmptyPolicy() {
@@ -215,15 +216,13 @@ void TestHarness::AddEncodedChromePolicy(NSDictionary* policy) {
 
 }  // namespace
 
-INSTANTIATE_TEST_CASE_P(
-    PolicyProviderIOSChromePolicyTest,
-    ConfigurationPolicyProviderTest,
-    testing::Values(TestHarness::Create));
+INSTANTIATE_TEST_SUITE_P(PolicyProviderIOSChromePolicyTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(TestHarness::Create));
 
-INSTANTIATE_TEST_CASE_P(
-    PolicyProviderIOSEncodedChromePolicyTest,
-    ConfigurationPolicyProviderTest,
-    testing::Values(TestHarness::CreateWithEncodedKey));
+INSTANTIATE_TEST_SUITE_P(PolicyProviderIOSEncodedChromePolicyTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(TestHarness::CreateWithEncodedKey));
 
 TEST(PolicyProviderIOSTest, ChromePolicyOverEncodedChromePolicy) {
   // This test verifies that if the "ChromePolicy" key is present then the

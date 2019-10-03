@@ -8,108 +8,91 @@ suite('SiteDetails', function() {
    * A site list element created before each test.
    * @type {SiteDetails}
    */
-  var testElement;
+  let testElement;
 
   /**
    * An example pref with 1 pref in each category.
    * @type {SiteSettingsPref}
    */
-  var prefs;
-
-  // Helper to create a mock permission preference.
-  function createExceptionForTest(override) {
-    return Object.assign(
-        {
-          embeddingOrigin: 'https://foo.com:443',
-          origin: 'https://foo.com:443',
-          setting: settings.ContentSetting.ALLOW,
-          source: settings.SiteSettingSource.PREFERENCE,
-        },
-        override);
-  }
+  let prefs;
 
   // Initialize a site-details before each test.
   setup(function() {
-    prefs = {
-      defaults: {
-        ads: {
-          setting: settings.ContentSetting.BLOCK,
-        },
-        auto_downloads: {
-          setting: settings.ContentSetting.ASK,
-        },
-        background_sync: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-        camera: {
-          setting: settings.ContentSetting.ASK,
-        },
-        geolocation: {
-          setting: settings.ContentSetting.ASK,
-        },
-        images: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-        javascript: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-        mic: {
-          setting: settings.ContentSetting.ASK,
-        },
-        midi_devices: {
-          setting: settings.ContentSetting.ASK,
-        },
-        notifications: {
-          setting: settings.ContentSetting.ASK,
-        },
-        plugins: {
-          setting: settings.ContentSetting.ASK,
-        },
-        popups: {
-          setting: settings.ContentSetting.BLOCK,
-        },
-        sound: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-        unsandboxed_plugins: {
-          setting: settings.ContentSetting.ASK,
-        },
-        protectedContent: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-        clipboard: {
-          setting: settings.ContentSetting.ALLOW,
-        },
-      },
-      exceptions: {
-        ads: [createExceptionForTest()],
-        auto_downloads: [createExceptionForTest()],
-        background_sync: [createExceptionForTest()],
-        camera: [createExceptionForTest()],
-        geolocation: [createExceptionForTest()],
-        images: [createExceptionForTest({
-          source: settings.SiteSettingSource.DEFAULT,
-        })],
-        javascript: [createExceptionForTest()],
-        mic: [createExceptionForTest()],
-        midi_devices: [createExceptionForTest()],
-        notifications: [createExceptionForTest({
-          setting: settings.ContentSetting.ASK,
-          source: settings.SiteSettingSource.POLICY,
-        })],
-        plugins: [createExceptionForTest({
-          source: settings.SiteSettingSource.EXTENSION,
-        })],
-        popups: [createExceptionForTest({
-          setting: settings.ContentSetting.BLOCK,
-          source: settings.SiteSettingSource.DEFAULT,
-        })],
-        sound: [createExceptionForTest()],
-        unsandboxed_plugins: [createExceptionForTest()],
-        protectedContent: [createExceptionForTest()],
-        clipboard: [createExceptionForTest()],
-      }
-    };
+    prefs = test_util.createSiteSettingsPrefs([], [
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.COOKIES,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.IMAGES,
+          [test_util.createRawSiteException('https://foo.com:443', {
+            source: settings.SiteSettingSource.DEFAULT,
+          })]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.JAVASCRIPT,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.SOUND,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.PLUGINS,
+          [test_util.createRawSiteException('https://foo.com:443', {
+            source: settings.SiteSettingSource.EXTENSION,
+          })]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.POPUPS,
+          [test_util.createRawSiteException('https://foo.com:443', {
+            setting: settings.ContentSetting.BLOCK,
+            source: settings.SiteSettingSource.DEFAULT,
+          })]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.GEOLOCATION,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.NOTIFICATIONS,
+          [test_util.createRawSiteException('https://foo.com:443', {
+            setting: settings.ContentSetting.ASK,
+            source: settings.SiteSettingSource.POLICY,
+          })]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.MIC,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.CAMERA,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.UNSANDBOXED_PLUGINS,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.AUTOMATIC_DOWNLOADS,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.BACKGROUND_SYNC,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.MIDI_DEVICES,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.PROTECTED_CONTENT,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.ADS,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.CLIPBOARD,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.SENSORS,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.PAYMENT_HANDLER,
+          [test_util.createRawSiteException('https://foo.com:443')]),
+    ], [
+      test_util.createContentSettingTypeToValuePair(
+          settings.ContentSettingsTypes.USB_DEVICES,
+          [test_util.createRawChooserException(
+              settings.ChooserType.USB_DEVICES,
+              [test_util.createRawSiteException('https://foo.com:443')])]),
+    ]);
 
     browserProxy = new TestSiteSettingsPrefsBrowserProxy();
     settings.SiteSettingsPrefsBrowserProxyImpl.instance_ = browserProxy;
@@ -117,53 +100,72 @@ suite('SiteDetails', function() {
   });
 
   function createSiteDetails(origin) {
-    var siteDetailsElement = document.createElement('site-details');
+    const siteDetailsElement = document.createElement('site-details');
     document.body.appendChild(siteDetailsElement);
     siteDetailsElement.origin = origin;
+    settings.navigateTo(
+        settings.routes.SITE_SETTINGS_SITE_DETAILS,
+        new URLSearchParams('site=' + origin));
     return siteDetailsElement;
   }
 
   test('all site settings are shown', function() {
     // Add ContentsSettingsTypes which are not supposed to be shown on the Site
     // Details page here.
-    var nonSiteDetailsContentSettingsTypes = [
-      settings.ContentSettingsTypes.ADS,
+    const nonSiteDetailsContentSettingsTypes = [
       settings.ContentSettingsTypes.COOKIES,
       settings.ContentSettingsTypes.PROTOCOL_HANDLERS,
-      settings.ContentSettingsTypes.USB_DEVICES,
       settings.ContentSettingsTypes.ZOOM_LEVELS,
     ];
-    if (!cr.isChromeOS)
+    if (!cr.isChromeOS) {
       nonSiteDetailsContentSettingsTypes.push(
           settings.ContentSettingsTypes.PROTECTED_CONTENT);
+    }
 
     // A list of optionally shown content settings mapped to their loadTimeData
     // flag string.
-    var optionalSiteDetailsContentSettingsTypes =
+    const optionalSiteDetailsContentSettingsTypes =
         /** @type {!settings.ContentSettingsType : string} */ ({});
-    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
-                                                .SOUND] =
-        'enableSoundContentSetting';
-    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
-                                                .CLIPBOARD] =
-        'enableClipboardContentSetting';
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes.ADS] =
+        'enableSafeBrowsingSubresourceFilter';
 
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .SENSORS] =
+        'enableSensorsContentSetting';
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .PAYMENT_HANDLER] =
+        'enablePaymentHandlerContentSetting';
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .SERIAL_PORTS] =
+        'enableExperimentalWebPlatformFeatures';
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .BLUETOOTH_SCANNING] =
+        'enableBluetoothScanningContentSetting';
     browserProxy.setPrefs(prefs);
+
+    // First, explicitly set all the optional settings to false.
+    for (contentSetting in optionalSiteDetailsContentSettingsTypes) {
+      const loadTimeDataOverride = {};
+      loadTimeDataOverride
+          [optionalSiteDetailsContentSettingsTypes[contentSetting]] = false;
+      loadTimeData.overrideValues(loadTimeDataOverride);
+    }
 
     // Iterate over each flag in on / off state, assuming that the on state
     // means the content setting will show, and off hides it.
     for (contentSetting in optionalSiteDetailsContentSettingsTypes) {
-      var numContentSettings =
+      const numContentSettings =
           Object.keys(settings.ContentSettingsTypes).length -
           nonSiteDetailsContentSettingsTypes.length -
           Object.keys(optionalSiteDetailsContentSettingsTypes).length;
 
-      var loadTimeDataOverride = {};
+      const loadTimeDataOverride = {};
       loadTimeDataOverride
           [optionalSiteDetailsContentSettingsTypes[contentSetting]] = true;
       loadTimeData.overrideValues(loadTimeDataOverride);
       testElement = createSiteDetails('https://foo.com:443');
-      assertEquals(numContentSettings+1, testElement.getCategoryList_().length);
+      assertEquals(
+          numContentSettings + 1, testElement.getCategoryList().length);
 
       // Check for setting = off at the end to ensure that the setting does
       // not carry over for the next iteration.
@@ -171,19 +173,12 @@ suite('SiteDetails', function() {
           [optionalSiteDetailsContentSettingsTypes[contentSetting]] = false;
       loadTimeData.overrideValues(loadTimeDataOverride);
       testElement = createSiteDetails('https://foo.com:443');
-      assertEquals(numContentSettings, testElement.getCategoryList_().length);
+      assertEquals(numContentSettings, testElement.getCategoryList().length);
     }
   });
 
-  test('usage heading shows when site settings enabled', function() {
+  test('usage heading shows properly', function() {
     browserProxy.setPrefs(prefs);
-    // Expect usage to be hidden when Site Settings is disabled.
-    loadTimeData.overrideValues({enableSiteSettings: false});
-    testElement = createSiteDetails('https://foo.com:443');
-    Polymer.dom.flush();
-    assert(!testElement.$$('#usage'));
-
-    loadTimeData.overrideValues({enableSiteSettings: true});
     testElement = createSiteDetails('https://foo.com:443');
     Polymer.dom.flush();
     assert(!!testElement.$$('#usage'));
@@ -202,12 +197,98 @@ suite('SiteDetails', function() {
     assertTrue(testElement.$$('#usage').innerText.indexOf('1 KB') != -1);
   });
 
+  test('storage gets trashed properly', function() {
+    const origin = 'https://foo.com:443';
+    browserProxy.setPrefs(prefs);
+    testElement = createSiteDetails(origin);
+
+    // Remove the current website-usage-private-api element.
+    const parent = testElement.$.usageApi.parentNode;
+    assertTrue(parent != undefined);
+    testElement.$.usageApi.remove();
+
+    // Replace it with a mock version.
+    let usageCleared = false;
+    Polymer({
+      is: 'mock-website-usage-private-api-storage',
+
+      fetchUsageTotal: function(host) {
+        testElement.storedData_ = '1 KB';
+      },
+
+      clearUsage: function(origin, task) {
+        usageCleared = true;
+      },
+    });
+    const api =
+        document.createElement('mock-website-usage-private-api-storage');
+    testElement.$.usageApi = api;
+    parent.appendChild(api);
+    Polymer.dom.flush();
+
+    // Call onOriginChanged_() manually to simulate a new navigation.
+    testElement.currentRouteChanged(settings.Route);
+    return browserProxy.whenCalled('getOriginPermissions').then(() => {
+      // Ensure the mock's methods were called and check usage was cleared on
+      // clicking the trash button.
+      assertEquals('1 KB', testElement.storedData_);
+      assertTrue(testElement.$$('#noStorage').hidden);
+      assertFalse(testElement.$$('#storage').hidden);
+
+      testElement.$$('#confirmClearStorage .action-button').click();
+      assertTrue(usageCleared);
+    });
+  });
+
+  test('cookies gets deleted properly', function() {
+    const origin = 'https://foo.com:443';
+    browserProxy.setPrefs(prefs);
+    testElement = createSiteDetails(origin);
+
+    // Remove the current website-usage-private-api element.
+    const parent = testElement.$.usageApi.parentNode;
+    assertTrue(parent != undefined);
+    testElement.$.usageApi.remove();
+
+    // Replace it with a mock version.
+    let usageCleared = false;
+    Polymer({
+      is: 'mock-website-usage-private-api-cookies',
+
+      fetchUsageTotal: function(host) {
+        testElement.numCookies_ = '10 cookies';
+      },
+
+      clearUsage: function(origin, task) {
+        usageCleared = true;
+      },
+    });
+    const api =
+        document.createElement('mock-website-usage-private-api-cookies');
+    testElement.$.usageApi = api;
+    parent.appendChild(api);
+    Polymer.dom.flush();
+
+    // Call onOriginChanged_() manually to simulate a new navigation.
+    testElement.currentRouteChanged(settings.Route);
+    return browserProxy.whenCalled('getOriginPermissions').then(() => {
+      // Ensure the mock's methods were called and check usage was cleared on
+      // clicking the trash button.
+      assertEquals('10 cookies', testElement.numCookies_);
+      assertTrue(testElement.$$('#noStorage').hidden);
+      assertFalse(testElement.$$('#storage').hidden);
+
+      testElement.$$('#confirmClearStorage .action-button').click();
+      assertTrue(usageCleared);
+    });
+  });
+
   test('correct pref settings are shown', function() {
     browserProxy.setPrefs(prefs);
     // Make sure all the possible content settings are shown for this test.
-    loadTimeData.overrideValues({enableSoundContentSetting: true});
     loadTimeData.overrideValues({enableSafeBrowsingSubresourceFilter: true});
-    loadTimeData.overrideValues({enableClipboardContentSetting: true});
+    loadTimeData.overrideValues({enableSensorsContentSetting: true});
+    loadTimeData.overrideValues({enablePaymentHandlerContentSetting: true});
     testElement = createSiteDetails('https://foo.com:443');
 
     return browserProxy.whenCalled('isOriginValid')
@@ -219,13 +300,14 @@ suite('SiteDetails', function() {
               .forEach((siteDetailsPermission) => {
                 if (!cr.isChromeOS &&
                     siteDetailsPermission.category ==
-                        settings.ContentSettingsTypes.PROTECTED_CONTENT)
+                        settings.ContentSettingsTypes.PROTECTED_CONTENT) {
                   return;
+                }
 
                 // Verify settings match the values specified in |prefs|.
-                var expectedSetting = settings.ContentSetting.ALLOW;
-                var expectedSource = settings.SiteSettingSource.PREFERENCE;
-                var expectedMenuValue = settings.ContentSetting.ALLOW;
+                let expectedSetting = settings.ContentSetting.ALLOW;
+                let expectedSource = settings.SiteSettingSource.PREFERENCE;
+                let expectedMenuValue = settings.ContentSetting.ALLOW;
 
                 // For all the categories with non-user-set 'Allow' preferences,
                 // update expected values.
@@ -263,23 +345,61 @@ suite('SiteDetails', function() {
   test('show confirmation dialog on reset settings', function() {
     browserProxy.setPrefs(prefs);
     testElement = createSiteDetails('https://foo.com:443');
+    Polymer.dom.flush();
 
     // Check both cancelling and accepting the dialog closes it.
     ['cancel-button', 'action-button'].forEach(buttonType => {
-      MockInteractions.tap(testElement.$.clearAndReset);
-      assertTrue(testElement.$.confirmDeleteDialog.open);
-      var actionButtonList =
-          testElement.$.confirmDeleteDialog.getElementsByClassName(buttonType);
+      testElement.$$('#resetSettingsButton').click();
+      assertTrue(testElement.$.confirmResetSettings.open);
+      const actionButtonList =
+          testElement.$.confirmResetSettings.getElementsByClassName(buttonType);
       assertEquals(1, actionButtonList.length);
-      MockInteractions.tap(actionButtonList[0]);
-      assertFalse(testElement.$.confirmDeleteDialog.open);
+      actionButtonList[0].click();
+      assertFalse(testElement.$.confirmResetSettings.open);
     });
 
     // Accepting the dialog will make a call to setOriginPermissions.
     return browserProxy.whenCalled('setOriginPermissions').then((args) => {
       assertEquals(testElement.origin, args[0]);
-      assertDeepEquals(testElement.getCategoryList_(), args[1]);
+      assertDeepEquals(testElement.getCategoryList(), args[1]);
       assertEquals(settings.ContentSetting.DEFAULT, args[2]);
+    });
+  });
+
+  test('show confirmation dialog on clear storage', function() {
+    browserProxy.setPrefs(prefs);
+    testElement = createSiteDetails('https://foo.com:443');
+
+    // Give |testElement.storedData_| a non-empty value to make the clear
+    // storage button appear. Also replace the website-usage-private-api element
+    // to prevent a call going back to the C++ upon confirming the dialog.
+    const parent = testElement.$.usageApi.parentNode;
+    assertTrue(parent != undefined);
+    testElement.$.usageApi.remove();
+    Polymer({
+      // Use a different mock name here to avoid an error when all tests are run
+      // together as there is no way to unregister a Polymer custom element.
+      is: 'mock1-website-usage-private-api',
+      fetchUsageTotal: function() {
+        testElement.storedData_ = '1 KB';
+      },
+      clearUsage: function(origin) {},
+    });
+    let api = document.createElement('mock1-website-usage-private-api');
+    testElement.$.usageApi = api;
+    parent.appendChild(api);
+    Polymer.dom.flush();
+
+    // Check both cancelling and accepting the dialog closes it.
+    ['cancel-button', 'action-button'].forEach(buttonType => {
+      testElement.$$('#usage cr-button').click();
+      assertTrue(testElement.$.confirmClearStorage.open);
+      const actionButtonList =
+          testElement.$.confirmClearStorage.getElementsByClassName(buttonType);
+      assertEquals(1, actionButtonList.length);
+      testElement.storedData_ = '';
+      actionButtonList[0].click();
+      assertFalse(testElement.$.confirmClearStorage.open);
     });
   });
 
@@ -287,7 +407,7 @@ suite('SiteDetails', function() {
     browserProxy.setPrefs(prefs);
     testElement = createSiteDetails('https://foo.com:443');
 
-    var siteDetailsPermission =
+    const siteDetailsPermission =
         testElement.root.querySelector('#notifications');
 
     // Wait for all the permissions to be populated initially.
@@ -307,7 +427,7 @@ suite('SiteDetails', function() {
               siteDetailsPermission.$.permission.value);
 
           // Set new prefs and make sure only that permission is updated.
-          var newException = {
+          const newException = {
             embeddingOrigin: testElement.origin,
             origin: testElement.origin,
             setting: settings.ContentSetting.BLOCK,
@@ -338,18 +458,15 @@ suite('SiteDetails', function() {
   });
 
   test('invalid origins navigate back', function() {
-    var invalid_url = 'invalid url';
+    const invalid_url = 'invalid url';
     browserProxy.setIsOriginValid(false);
 
     settings.navigateTo(settings.routes.SITE_SETTINGS);
-    settings.navigateTo(settings.routes.SITE_SETTINGS_SITE_DETAILS);
+
+    testElement = createSiteDetails(invalid_url);
     assertEquals(
         settings.routes.SITE_SETTINGS_SITE_DETAILS.path,
         settings.getCurrentRoute().path);
-
-    loadTimeData.overrideValues({enableSiteSettings: false});
-    testElement = createSiteDetails(invalid_url);
-
     return browserProxy.whenCalled('isOriginValid')
         .then((args) => {
           assertEquals(invalid_url, args);
@@ -364,46 +481,11 @@ suite('SiteDetails', function() {
         });
   });
 
-  test('resetting permissions will set ads back to default', function() {
+  test('call fetch block autoplay status', function() {
+    const origin = 'https://foo.com:443';
     browserProxy.setPrefs(prefs);
-    loadTimeData.overrideValues({enableSafeBrowsingSubresourceFilter: true});
-    testElement = createSiteDetails('https://foo.com:443');
-
-    var siteDetailsPermission = testElement.root.querySelector('#ads');
-
-    return browserProxy.whenCalled('isOriginValid')
-        .then(() => {
-          return browserProxy.whenCalled('getOriginPermissions');
-        })
-        .then(() => {
-          browserProxy.resetResolver('getOriginPermissions');
-          // Sanity check prefs are correct and that Ads was set to 'Allow'.
-          assertEquals(
-              settings.ContentSetting.ALLOW,
-              siteDetailsPermission.$.permission.value);
-
-          // Since the ads permission will only show 'Allow' and 'Block',
-          // check the user can still clear this setting by resetting all
-          // permissions.
-          MockInteractions.tap(testElement.$.clearAndReset);
-          assertTrue(testElement.$.confirmDeleteDialog.open);
-          var actionButtonList =
-              testElement.$.confirmDeleteDialog.getElementsByClassName(
-                  'action-button');
-          assertEquals(1, actionButtonList.length);
-          MockInteractions.tap(actionButtonList[0]);
-
-          return browserProxy.whenCalled('setOriginPermissions');
-        })
-        .then(() => {
-          return browserProxy.whenCalled('getOriginPermissions');
-        })
-        .then((args) => {
-          assertTrue(args[1].includes(settings.ContentSettingsTypes.ADS));
-          // Check the ads permission is set to default.
-          assertEquals(
-              settings.ContentSetting.DEFAULT,
-              siteDetailsPermission.$.permission.value);
-        });
+    testElement = createSiteDetails(origin);
+    return browserProxy.whenCalled('fetchBlockAutoplayStatus');
   });
+
 });

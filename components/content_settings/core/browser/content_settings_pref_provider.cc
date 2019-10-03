@@ -13,14 +13,15 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
+#include "base/trace_event/trace_event.h"
+#include "components/content_settings/core/browser/content_settings_info.h"
 #include "components/content_settings/core/browser/content_settings_pref.h"
+#include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/content_settings/core/browser/website_settings_info.h"
 #include "components/content_settings/core/browser/website_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -87,12 +88,13 @@ void PrefProvider::RegisterProfilePrefs(
 }
 
 PrefProvider::PrefProvider(PrefService* prefs,
-                           bool incognito,
+                           bool off_the_record,
                            bool store_last_modified)
     : prefs_(prefs),
-      is_incognito_(incognito),
+      off_the_record_(off_the_record),
       store_last_modified_(store_last_modified),
       clock_(base::DefaultClock::GetInstance()) {
+  TRACE_EVENT_BEGIN0("startup", "PrefProvider::PrefProvider");
   DCHECK(prefs_);
   // Verify preferences version.
   if (!prefs_->HasPrefPath(prefs::kContentSettingsVersion)) {
@@ -101,6 +103,7 @@ PrefProvider::PrefProvider(PrefService* prefs,
   }
   if (prefs_->GetInteger(prefs::kContentSettingsVersion) >
       ContentSettingsPattern::kContentSettingsPatternVersion) {
+    TRACE_EVENT_END0("startup", "PrefProvider::PrefProvider");
     return;
   }
 
@@ -108,25 +111,44 @@ PrefProvider::PrefProvider(PrefService* prefs,
 
   pref_change_registrar_.Init(prefs_);
 
+  ContentSettingsRegistry* content_settings =
+      ContentSettingsRegistry::GetInstance();
   WebsiteSettingsRegistry* website_settings =
       WebsiteSettingsRegistry::GetInstance();
   for (const WebsiteSettingsInfo* info : *website_settings) {
-    content_settings_prefs_.insert(std::make_pair(
-        info->type(),
-        base::MakeUnique<ContentSettingsPref>(
-            info->type(), prefs_, &pref_change_registrar_, info->pref_name(),
-            is_incognito_,
-            base::Bind(&PrefProvider::Notify, base::Unretained(this)))));
+    const ContentSettingsInfo* content_type_info =
+        content_settings->Get(info->type());
+    // If it's not a content setting, or it's persistent, handle it in this
+    // class.
+    if (!content_type_info || content_type_info->storage_behavior() ==
+                                  ContentSettingsInfo::PERSISTENT) {
+      content_settings_prefs_.insert(std::make_pair(
+          info->type(),
+          std::make_unique<ContentSettingsPref>(
+              info->type(), prefs_, &pref_change_registrar_, info->pref_name(),
+              off_the_record_,
+              base::Bind(&PrefProvider::Notify, base::Unretained(this)))));
+    } else if (info->type() == CONTENT_SETTINGS_TYPE_PLUGINS) {
+      // TODO(https://crbug.com/850062): Remove after M71, two milestones after
+      // migration of the Flash permissions to ephemeral provider.
+      flash_content_settings_pref_ = std::make_unique<ContentSettingsPref>(
+          info->type(), prefs_, &pref_change_registrar_, info->pref_name(),
+          off_the_record_,
+          base::Bind(&PrefProvider::Notify, base::Unretained(this)));
+    }
   }
 
-  if (!is_incognito_) {
-    size_t num_exceptions = 0;
+  size_t num_exceptions = 0;
+  if (!off_the_record_) {
     for (const auto& pref : content_settings_prefs_)
       num_exceptions += pref.second->GetNumExceptions();
 
-    UMA_HISTOGRAM_COUNTS("ContentSettings.NumberOfExceptions",
-                         num_exceptions);
+    UMA_HISTOGRAM_COUNTS_1M("ContentSettings.NumberOfExceptions",
+                            num_exceptions);
   }
+
+  TRACE_EVENT_END1("startup", "PrefProvider::PrefProvider",
+                   "NumberOfExceptions", num_exceptions);
 }
 
 PrefProvider::~PrefProvider() {
@@ -136,8 +158,12 @@ PrefProvider::~PrefProvider() {
 std::unique_ptr<RuleIterator> PrefProvider::GetRuleIterator(
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
-    bool incognito) const {
-  return GetPref(content_type)->GetRuleIterator(resource_identifier, incognito);
+    bool off_the_record) const {
+  if (!supports_type(content_type))
+    return nullptr;
+
+  return GetPref(content_type)
+      ->GetRuleIterator(resource_identifier, off_the_record);
 }
 
 bool PrefProvider::SetWebsiteSetting(
@@ -145,9 +171,12 @@ bool PrefProvider::SetWebsiteSetting(
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
-    base::Value* in_value) {
+    std::unique_ptr<base::Value>&& in_value) {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
+
+  if (!supports_type(content_type))
+    return false;
 
   // Default settings are set using a wildcard pattern for both
   // |primary_pattern| and |secondary_pattern|. Don't store default settings in
@@ -165,7 +194,8 @@ bool PrefProvider::SetWebsiteSetting(
 
   return GetPref(content_type)
       ->SetWebsiteSetting(primary_pattern, secondary_pattern,
-                          resource_identifier, modified_time, in_value);
+                          resource_identifier, modified_time,
+                          std::move(in_value));
 }
 
 base::Time PrefProvider::GetWebsiteSettingLastModified(
@@ -175,6 +205,9 @@ base::Time PrefProvider::GetWebsiteSettingLastModified(
     const ResourceIdentifier& resource_identifier) {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
+
+  if (!supports_type(content_type))
+    return base::Time();
 
   return GetPref(content_type)
       ->GetWebsiteSettingLastModified(primary_pattern, secondary_pattern,
@@ -186,7 +219,17 @@ void PrefProvider::ClearAllContentSettingsRules(
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
 
-  GetPref(content_type)->ClearAllContentSettingsRules();
+  if (supports_type(content_type))
+    GetPref(content_type)->ClearAllContentSettingsRules();
+
+  // TODO(https://crbug.com/850062): Remove after M71, two milestones after
+  // migration of the Flash permissions to ephemeral provider.
+  // |flash_content_settings_pref_| is not null only if Flash permissions are
+  // ephemeral and handled in EphemeralProvider.
+  if (content_type == CONTENT_SETTINGS_TYPE_PLUGINS &&
+      flash_content_settings_pref_) {
+    flash_content_settings_pref_->ClearAllContentSettingsRules();
+  }
 }
 
 void PrefProvider::ShutdownOnUIThread() {
@@ -223,7 +266,7 @@ void PrefProvider::Notify(
 }
 
 void PrefProvider::DiscardObsoletePreferences() {
-  if (is_incognito_)
+  if (off_the_record_)
     return;
 
   prefs_->ClearPref(kObsoleteDomainToOriginMigrationStatus);
@@ -235,29 +278,6 @@ void PrefProvider::DiscardObsoletePreferences() {
 #if !defined(OS_ANDROID)
   prefs_->ClearPref(kObsoleteMouseLockExceptionsPref);
 #endif  // !defined(OS_ANDROID)
-#endif  // !defined(OS_IOS)
-
-#if !defined(OS_IOS)
-  // Migrate CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT to
-  // CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA.
-  // TODO(raymes): See crbug.com/681709. Remove after M60.
-  const std::string prompt_no_decision_count_pref =
-      WebsiteSettingsRegistry::GetInstance()
-          ->Get(CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT)
-          ->pref_name();
-  const base::DictionaryValue* old_dict =
-      prefs_->GetDictionary(prompt_no_decision_count_pref);
-
-  const std::string permission_autoblocker_data_pref =
-      WebsiteSettingsRegistry::GetInstance()
-          ->Get(CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA)
-          ->pref_name();
-  const base::DictionaryValue* new_dict =
-      prefs_->GetDictionary(permission_autoblocker_data_pref);
-
-  if (!old_dict->empty() && new_dict->empty())
-    prefs_->Set(permission_autoblocker_data_pref, *old_dict);
-  prefs_->ClearPref(prompt_no_decision_count_pref);
 #endif  // !defined(OS_IOS)
 }
 

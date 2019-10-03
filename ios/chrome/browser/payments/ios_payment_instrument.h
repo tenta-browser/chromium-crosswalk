@@ -10,8 +10,8 @@
 #include <map>
 #include <string>
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "components/payments/core/payment_instrument.h"
 #include "ios/chrome/browser/payments/payment_request.h"
@@ -51,18 +51,24 @@ class IOSPaymentInstrument : public PaymentInstrument {
   // PaymentInstrument:
   void InvokePaymentApp(PaymentInstrument::Delegate* delegate) override;
   bool IsCompleteForPayment() const override;
+  uint32_t GetCompletenessScore() const override;
+  bool CanPreselect() const override;
   bool IsExactlyMatchingMerchantRequest() const override;
   base::string16 GetMissingInfoLabel() const override;
   bool IsValidForCanMakePayment() const override;
   void RecordUse() override;
   base::string16 GetLabel() const override;
   base::string16 GetSublabel() const override;
-  bool IsValidForModifier(const std::vector<std::string>& methods,
+  bool IsValidForModifier(const std::string& method,
                           bool supported_networks_specified,
                           const std::set<std::string>& supported_networks,
                           bool supported_types_specified,
                           const std::set<autofill::CreditCard::CardType>&
                               supported_types) const override;
+  void IsValidForPaymentMethodIdentifier(
+      const std::string& payment_method_identifier,
+      bool* is_valid) const override;
+  base::WeakPtr<PaymentInstrument> AsWeakPtr() override;
 
   // Given that the icon for the iOS payment instrument can only be determined
   // at run-time, the icon is obtained using this UIImage object rather than
@@ -73,9 +79,10 @@ class IOSPaymentInstrument : public PaymentInstrument {
   std::string method_name_;
   GURL universal_link_;
   std::string app_name_;
-  base::scoped_nsobject<UIImage> icon_image_;
+  UIImage* icon_image_;
 
   id<PaymentRequestUIDelegate> payment_request_ui_delegate_;
+  base::WeakPtrFactory<IOSPaymentInstrument> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IOSPaymentInstrument);
 };

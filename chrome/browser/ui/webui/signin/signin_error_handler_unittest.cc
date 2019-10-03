@@ -4,7 +4,8 @@
 
 #include "chrome/browser/ui/webui/signin/signin_error_handler.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/values.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -81,7 +82,7 @@ class SigninErrorHandlerTest : public BrowserWithTestWindowTest {
 
   void CreateHandlerInBrowser() {
     DCHECK(!handler_);
-    auto handler = base::MakeUnique<TestingSigninErrorHandler>(
+    auto handler = std::make_unique<TestingSigninErrorHandler>(
         browser(), false /* is_system_profile */, web_ui());
     handler_ = handler.get();
     signin_error_ui_.reset(new SigninErrorUI(web_ui()));
@@ -90,7 +91,7 @@ class SigninErrorHandlerTest : public BrowserWithTestWindowTest {
 
   void CreateHandlerInUserManager() {
     DCHECK(!handler_);
-    auto handler = base::MakeUnique<TestingSigninErrorHandler>(
+    auto handler = std::make_unique<TestingSigninErrorHandler>(
         nullptr /* browser */, true /* is_system_profile */, web_ui());
     handler_ = handler.get();
     web_ui()->AddMessageHandler(std::move(handler));
@@ -101,8 +102,8 @@ class SigninErrorHandlerTest : public BrowserWithTestWindowTest {
   content::TestWebUI* web_ui() { return web_ui_.get(); }
 
   // BrowserWithTestWindowTest
-  BrowserWindow* CreateBrowserWindow() override {
-    return new DialogTestBrowserWindow;
+  std::unique_ptr<BrowserWindow> CreateBrowserWindow() override {
+    return std::make_unique<DialogTestBrowserWindow>();
   }
 
  private:

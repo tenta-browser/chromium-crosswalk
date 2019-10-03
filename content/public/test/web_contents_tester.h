@@ -5,11 +5,14 @@
 #ifndef CONTENT_PUBLIC_TEST_WEB_CONTENTS_TESTER_H_
 #define CONTENT_PUBLIC_TEST_WEB_CONTENTS_TESTER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "third_party/blink/public/mojom/loader/pause_subresource_loading_handle.mojom.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
@@ -26,7 +29,6 @@ class HttpResponseHeaders;
 namespace content {
 
 class BrowserContext;
-class NavigationData;
 class NavigationHandle;
 class RenderFrameHost;
 
@@ -63,7 +65,7 @@ class WebContentsTester {
   static WebContentsTester* For(WebContents* contents);
 
   // Creates a WebContents enabled for testing.
-  static WebContents* CreateTestWebContents(
+  static std::unique_ptr<WebContents> CreateTestWebContents(
       BrowserContext* browser_context,
       scoped_refptr<SiteInstance> instance);
 
@@ -78,7 +80,18 @@ class WebContentsTester {
   // Creates a pending navigation to the given URL with the default parameters
   // and then commits the load with a page ID one larger than any seen. This
   // emulates what happens on a new navigation.
-  virtual void NavigateAndCommit(const GURL& url) = 0;
+  // Default parameter transition allows the transition type to be controlled
+  // if needed.
+  virtual void NavigateAndCommit(
+      const GURL& url,
+      ui::PageTransition transition = ui::PAGE_TRANSITION_LINK) = 0;
+
+  // Creates a pending navigation to the given URL with the default parameters
+  // and then aborts it with the given |error_code| and |response_headers|.
+  virtual void NavigateAndFail(
+      const GURL& url,
+      int error_code,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
 
   // Sets the loading state to the given value.
   virtual void TestSetIsLoading(bool value) = 0;
@@ -98,19 +111,21 @@ class WebContentsTester {
                                const GURL& url,
                                ui::PageTransition transition) = 0;
 
-  // Sets NavgationData on |navigation_handle|.
-  virtual void SetNavigationData(
-      NavigationHandle* navigation_handle,
-      std::unique_ptr<NavigationData> navigation_data) = 0;
-
   // Sets HttpResponseData on |navigation_handle|.
   virtual void SetHttpResponseHeaders(
       NavigationHandle* navigation_handle,
       scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
 
+  // Simulate this WebContents' main frame having an opener that points to the
+  // main frame of |opener|.
+  virtual void SetOpener(WebContents* opener) = 0;
+
   // Returns headers that were passed in the previous SaveFrameWithHeaders(...)
   // call.
   virtual const std::string& GetSaveFrameHeaders() = 0;
+
+  // Returns the suggested file name passed in the SaveFrameWithHeaders call.
+  virtual const base::string16& GetSuggestedFileName() = 0;
 
   // Returns whether a download request triggered via DownloadImage() is in
   // progress for |url|.
@@ -127,11 +142,40 @@ class WebContentsTester {
   // Sets the return value of GetLastCommittedUrl() of TestWebContents.
   virtual void SetLastCommittedURL(const GURL& url) = 0;
 
-  // Override WasRecentlyAudible for testing.
-  virtual void SetWasRecentlyAudible(bool audible) = 0;
+  // Sets the return value of GetTitle() of TestWebContents. Once set, the real
+  // title will never be returned.
+  virtual void SetTitle(const base::string16& new_title) = 0;
 
-  // Override IsCurrentlyAudible for testing.
+  // Sets the return value of GetContentsMimeType().
+  virtual void SetMainFrameMimeType(const std::string& mime_type) = 0;
+
+  // Change currently audible state for testing. This will cause all relevant
+  // notifications to fire as well.
   virtual void SetIsCurrentlyAudible(bool audible) = 0;
+
+  // Simulates an input event from the user.
+  virtual void TestDidReceiveInputEvent(blink::WebInputEvent::Type type) = 0;
+
+  // Simulates successfully finishing a load.
+  virtual void TestDidFinishLoad(const GURL& url) = 0;
+
+  // Simulates terminating an load with a network error.
+  virtual void TestDidFailLoadWithError(
+      const GURL& url,
+      int error_code,
+      const base::string16& error_description) = 0;
+
+  // Returns whether PauseSubresourceLoading was called on this web contents.
+  virtual bool GetPauseSubresourceLoadingCalled() = 0;
+
+  // Resets the state around PauseSubresourceLoadingCalled.
+  virtual void ResetPauseSubresourceLoadingCalled() = 0;
+
+  // Sets the return value of GetPageImportanceSignals().
+  virtual void SetPageImportanceSignals(PageImportanceSignals signals) = 0;
+
+  // Sets the last active time.
+  virtual void SetLastActiveTime(base::TimeTicks last_active_time) = 0;
 };
 
 }  // namespace content

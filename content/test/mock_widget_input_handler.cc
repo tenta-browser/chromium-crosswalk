@@ -17,14 +17,19 @@ using blink::WebTouchPoint;
 
 namespace content {
 
-MockWidgetInputHandler::MockWidgetInputHandler() : binding_(this) {}
+MockWidgetInputHandler::MockWidgetInputHandler() = default;
 
 MockWidgetInputHandler::MockWidgetInputHandler(
-    mojom::WidgetInputHandlerRequest request,
-    mojom::WidgetInputHandlerHostPtr host)
-    : binding_(this, std::move(request)), host_(std::move(host)) {}
+    mojo::PendingReceiver<mojom::WidgetInputHandler> receiver,
+    mojo::PendingRemote<mojom::WidgetInputHandlerHost> host)
+    : receiver_(this, std::move(receiver)), host_(std::move(host)) {}
 
-MockWidgetInputHandler::~MockWidgetInputHandler() {}
+MockWidgetInputHandler::~MockWidgetInputHandler() {
+  // We explicitly close the binding before the tearing down the vector of
+  // messages, as some of them may spin a RunLoop on destruction and we don't
+  // want to accept more messages beyond this point.
+  receiver_.reset();
+}
 
 void MockWidgetInputHandler::SetFocus(bool focused) {
   dispatched_messages_.emplace_back(
@@ -47,6 +52,11 @@ void MockWidgetInputHandler::CursorVisibilityChanged(bool visible) {
       std::make_unique<DispatchedMessage>("CursorVisibilityChanged"));
 }
 
+void MockWidgetInputHandler::FallbackCursorModeToggled(bool is_on) {
+  dispatched_messages_.emplace_back(
+      std::make_unique<DispatchedMessage>("FallbackCursorModeToggled"));
+}
+
 void MockWidgetInputHandler::ImeSetComposition(
     const base::string16& text,
     const std::vector<ui::ImeTextSpan>& ime_text_spans,
@@ -61,10 +71,12 @@ void MockWidgetInputHandler::ImeCommitText(
     const base::string16& text,
     const std::vector<ui::ImeTextSpan>& ime_text_spans,
     const gfx::Range& range,
-    int32_t relative_cursor_position) {
+    int32_t relative_cursor_position,
+    ImeCommitTextCallback callback) {
   dispatched_messages_.emplace_back(std::make_unique<DispatchedIMEMessage>(
       "CommitText", text, ime_text_spans, range, relative_cursor_position,
       relative_cursor_position));
+  std::move(callback).Run();
 }
 
 void MockWidgetInputHandler::ImeFinishComposingText(bool keep_selection) {
@@ -97,12 +109,23 @@ void MockWidgetInputHandler::DispatchNonBlockingEvent(
       std::move(event), DispatchEventCallback()));
 }
 
+void MockWidgetInputHandler::WaitForInputProcessed(
+    WaitForInputProcessedCallback callback) {
+  NOTREACHED();
+}
+
 MockWidgetInputHandler::MessageVector
 MockWidgetInputHandler::GetAndResetDispatchedMessages() {
   MessageVector dispatched_events;
   dispatched_messages_.swap(dispatched_events);
   return dispatched_events;
 }
+
+void MockWidgetInputHandler::AttachSynchronousCompositor(
+    mojo::PendingRemote<mojom::SynchronousCompositorControlHost> control_host,
+    mojo::PendingAssociatedRemote<mojom::SynchronousCompositorHost> host,
+    mojo::PendingAssociatedReceiver<mojom::SynchronousCompositor>
+        compositor_request) {}
 
 MockWidgetInputHandler::DispatchedMessage::DispatchedMessage(
     const std::string& name)

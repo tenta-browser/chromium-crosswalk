@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "net/url_request/url_request_job.h"
 
 namespace net {
@@ -57,16 +58,22 @@ class URLRequestMockDataJob : public URLRequestJob {
                                          const std::string& data,
                                          int repeat_count);
 
+  // Overrides response headers in the mocked response.
+  void OverrideResponseHeaders(const std::string& headers);
+
+ protected:
+  ~URLRequestMockDataJob() override;
+
  private:
   void GetResponseInfoConst(HttpResponseInfo* info) const;
-  ~URLRequestMockDataJob() override;
 
   void StartAsync();
 
+  base::Optional<std::string> headers_;
   std::string data_;
   size_t data_offset_;
   bool request_client_certificate_;
-  base::WeakPtrFactory<URLRequestMockDataJob> weak_factory_;
+  base::WeakPtrFactory<URLRequestMockDataJob> weak_factory_{this};
 };
 
 }  // namespace net

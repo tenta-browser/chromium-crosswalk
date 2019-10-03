@@ -6,13 +6,15 @@
 
 #include "base/bind.h"
 #include "base/optional.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 
 namespace content {
 
 TestNavigationThrottle::TestNavigationThrottle(NavigationHandle* handle)
-    : NavigationThrottle(handle), weak_ptr_factory_(this) {}
+    : NavigationThrottle(handle) {}
 
 TestNavigationThrottle::~TestNavigationThrottle() {}
 
@@ -70,7 +72,7 @@ void TestNavigationThrottle::SetResponseForAllMethods(
 
 void TestNavigationThrottle::SetCallback(ThrottleMethod method,
                                          base::Closure callback) {
-  method_properties_[method].callback = callback;
+  method_properties_[method].callback = std::move(callback);
 }
 
 void TestNavigationThrottle::OnWillRespond() {}
@@ -85,8 +87,8 @@ NavigationThrottle::ThrottleCheckResult TestNavigationThrottle::ProcessMethod(
       method_properties_[method].result;
   if (method_properties_[method].synchrony == ASYNCHRONOUS) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&TestNavigationThrottle::TestNavigationThrottle::
                            CancelAsynchronously,
                        weak_ptr_factory_.GetWeakPtr(), result));

@@ -10,12 +10,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "components/history/core/browser/history_service.h"
@@ -48,6 +46,7 @@ struct TestURLInfo {
   int visit_count;
   int typed_count;
   int age_in_days;
+  bool hidden = false;
 } test_db[] = {
     {"http://www.google.com/", "Google", 3, 3, 80},
 
@@ -112,6 +111,8 @@ struct TestURLInfo {
     // URLs to test exact-matching behavior.
     {"http://go/", "Intranet URL", 1, 1, 80},
     {"http://gooey/", "Intranet URL 2", 5, 5, 80},
+    // This entry is explicitly added as hidden
+    {"http://g/", "Intranet URL", 7, 7, 80, true},
 
     // URLs for testing offset adjustment.
     {"http://www.\xEA\xB5\x90\xEC\x9C\xA1.kr/", "Korean", 2, 2, 80},
@@ -125,9 +126,7 @@ struct TestURLInfo {
 
     // URLs used by EmptyVisits.
     {"http://pandora.com/", "Pandora", 2, 2, 80},
-    // This entry is explicitly added more recently than
-    // history::kLowQualityMatchAgeLimitInDays.
-    // {"http://pa/", "pa", 0, 0, 80},
+    {"http://pa/", "pa", 0, 0, history::kLowQualityMatchAgeLimitInDays - 1},
 
     // For intranet based tests.
     {"http://intra/one", "Intranet", 2, 2, 80},
@@ -289,20 +288,14 @@ void HistoryURLProviderTest::FillData() {
   // case the time would be specifed in the test_db structure.
   const Time now = Time::Now();
 
-  for (size_t i = 0; i < arraysize(test_db); ++i) {
+  for (size_t i = 0; i < base::size(test_db); ++i) {
     const TestURLInfo& cur = test_db[i];
     const GURL current_url(cur.url);
     client_->GetHistoryService()->AddPageWithDetails(
         current_url, base::UTF8ToUTF16(cur.title), cur.visit_count,
-        cur.typed_count, now - TimeDelta::FromDays(cur.age_in_days), false,
+        cur.typed_count, now - TimeDelta::FromDays(cur.age_in_days), cur.hidden,
         history::SOURCE_BROWSED);
   }
-
-  client_->GetHistoryService()->AddPageWithDetails(
-      GURL("http://pa/"), base::UTF8ToUTF16("pa"), 0, 0,
-      Time::Now() -
-          TimeDelta::FromDays(history::kLowQualityMatchAgeLimitInDays - 1),
-      false, history::SOURCE_BROWSED);
 }
 
 void HistoryURLProviderTest::RunTest(
@@ -324,7 +317,7 @@ void HistoryURLProviderTest::RunTest(
   matches_ = autocomplete_->matches();
   if (sort_matches_) {
     TemplateURLService* service = client_->GetTemplateURLService();
-    for (ACMatches::iterator i = matches_.begin(); i != matches_.end(); ++i) {
+    for (auto i = matches_.begin(); i != matches_.end(); ++i) {
       i->ComputeStrippedDestinationURL(input, service);
     }
     AutocompleteResult::SortAndDedupMatches(input.current_page_classification(),
@@ -398,7 +391,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://slashdot.org/", false }
   };
   RunTest(ASCIIToUTF16("slash"), std::string(), true, expected_nonsynth,
-          arraysize(expected_nonsynth));
+          base::size(expected_nonsynth));
 
   // Test that hosts get synthesized above less popular pages.
   const UrlAndLegalDefault expected_synth[] = {
@@ -406,7 +399,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://kerneltrap.org/not_very_popular.html", false }
   };
   RunTest(ASCIIToUTF16("kernel"), std::string(), true, expected_synth,
-          arraysize(expected_synth));
+          base::size(expected_synth));
 
   // Test that unpopular pages are ignored completely.
   RunTest(ASCIIToUTF16("fresh"), std::string(), true, nullptr, 0);
@@ -420,14 +413,14 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://synthesisatest.com/foo/", true }
   };
   RunTest(ASCIIToUTF16("synthesisa"), std::string(), false, expected_synthesisa,
-          arraysize(expected_synthesisa));
+          base::size(expected_synthesisa));
   EXPECT_LT(matches_.front().relevance, 1200);
   const UrlAndLegalDefault expected_synthesisb[] = {
     { "http://synthesisbtest.com/foo/", true },
     { "http://synthesisbtest.com/foo/bar.html", true }
   };
   RunTest(ASCIIToUTF16("synthesisb"), std::string(), false, expected_synthesisb,
-          arraysize(expected_synthesisb));
+          base::size(expected_synthesisb));
   EXPECT_GE(matches_.front().relevance, 1410);
 
   // Test that if we have a synthesized host that matches a suggestion, they
@@ -438,7 +431,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("news"), std::string(), true,
                                   expected_combine,
-                                  arraysize(expected_combine)));
+                                  base::size(expected_combine)));
   // The title should also have gotten set properly on the host for the
   // synthesized one, since it was also in the results.
   EXPECT_EQ(ASCIIToUTF16("Google News"), matches_.front().description);
@@ -452,7 +445,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/", false }
   };
   RunTest(ASCIIToUTF16("foo"), std::string(), true, short_1,
-          arraysize(short_1));
+          base::size(short_1));
 
   // When the user types the whole host, make sure we don't get two results for
   // it.
@@ -463,9 +456,9 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/another/", false }
   };
   RunTest(ASCIIToUTF16("foo.com"), std::string(), true, short_2,
-          arraysize(short_2));
+          base::size(short_2));
   RunTest(ASCIIToUTF16("foo.com/"), std::string(), true, short_2,
-          arraysize(short_2));
+          base::size(short_2));
 
   // The filename is the second best of the foo.com* entries, but there is a
   // shorter URL that's "good enough".  The host doesn't match the user input
@@ -477,7 +470,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/", false }
   };
   RunTest(ASCIIToUTF16("foo.com/d"), std::string(), true, short_3,
-          arraysize(short_3));
+          base::size(short_3));
   // If prevent_inline_autocomplete is false, we won't bother creating the
   // URL-what-you-typed match because we have promoted inline autocompletions.
   const UrlAndLegalDefault short_3_allow_inline[] = {
@@ -486,7 +479,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/", true }
   };
   RunTest(ASCIIToUTF16("foo.com/d"), std::string(), false, short_3_allow_inline,
-          arraysize(short_3_allow_inline));
+          base::size(short_3_allow_inline));
 
   // We shouldn't promote shorter URLs than the best if they're not good
   // enough.
@@ -496,7 +489,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/another/again/", false }
   };
   RunTest(ASCIIToUTF16("foo.com/dir/another/a"), std::string(), true, short_4,
-          arraysize(short_4));
+          base::size(short_4));
   // If prevent_inline_autocomplete is false, we won't bother creating the
   // URL-what-you-typed match because we have promoted inline autocompletions.
   const UrlAndLegalDefault short_4_allow_inline[] = {
@@ -504,7 +497,7 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://foo.com/dir/another/again/", true }
   };
   RunTest(ASCIIToUTF16("foo.com/dir/another/a"), std::string(), false,
-          short_4_allow_inline, arraysize(short_4_allow_inline));
+          short_4_allow_inline, base::size(short_4_allow_inline));
 
   // Exact matches should always be best no matter how much more another match
   // has been typed.
@@ -518,10 +511,12 @@ TEST_F(HistoryURLProviderTest, PromoteShorterURLs) {
     { "http://gooey/", true },
     { "http://www.google.com/", true }
   };
+  // Note that there is an http://g/ URL that is marked as hidden.  It shouldn't
+  // show up at all.  This test implicitly tests this fact too.
   RunTest(ASCIIToUTF16("g"), std::string(), false, short_5a,
-          arraysize(short_5a));
+          base::size(short_5a));
   RunTest(ASCIIToUTF16("go"), std::string(), false, short_5b,
-          arraysize(short_5b));
+          base::size(short_5b));
 }
 
 TEST_F(HistoryURLProviderTest, CullRedirects) {
@@ -537,7 +532,7 @@ TEST_F(HistoryURLProviderTest, CullRedirects) {
     {"http://redirects/B", 20},
     {"http://redirects/C", 10}
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     client_->GetHistoryService()->AddPageWithDetails(
         GURL(test_cases[i].url), ASCIIToUTF16("Title"), test_cases[i].count,
         test_cases[i].count, Time::Now(), false, history::SOURCE_BROWSED);
@@ -564,7 +559,7 @@ TEST_F(HistoryURLProviderTest, CullRedirects) {
     { base::UTF16ToUTF8(typing), true }
   };
   RunTest(typing, std::string(), true, expected_results,
-          arraysize(expected_results));
+          base::size(expected_results));
 
   // If prevent_inline_autocomplete is false, we won't bother creating the
   // URL-what-you-typed match because we have promoted inline autocompletions.
@@ -574,7 +569,7 @@ TEST_F(HistoryURLProviderTest, CullRedirects) {
     { test_cases[0].url, true }
   };
   RunTest(typing, std::string(), false, expected_results_allow_inlining,
-          arraysize(expected_results_allow_inlining));
+          base::size(expected_results_allow_inlining));
 }
 
 TEST_F(HistoryURLProviderTestNoSearchProvider, WhatYouTypedNoSearchProvider) {
@@ -585,7 +580,7 @@ TEST_F(HistoryURLProviderTestNoSearchProvider, WhatYouTypedNoSearchProvider) {
     { "http://wytmatch/", true }
   };
   RunTest(ASCIIToUTF16("wytmatch"), std::string(), false, results_1,
-          arraysize(results_1));
+          base::size(results_1));
 
   RunTest(ASCIIToUTF16("wytmatch foo bar"), std::string(), false, nullptr, 0);
   RunTest(ASCIIToUTF16("wytmatch+foo+bar"), std::string(), false, nullptr, 0);
@@ -593,8 +588,8 @@ TEST_F(HistoryURLProviderTestNoSearchProvider, WhatYouTypedNoSearchProvider) {
   const UrlAndLegalDefault results_2[] = {
     { "http://wytmatch+foo+bar.com/", true }
   };
-  RunTest(ASCIIToUTF16("wytmatch+foo+bar.com"), std::string(), false,
-          results_2, arraysize(results_2));
+  RunTest(ASCIIToUTF16("wytmatch+foo+bar.com"), std::string(), false, results_2,
+          base::size(results_2));
 }
 
 TEST_F(HistoryURLProviderTest, WhatYouTyped) {
@@ -609,37 +604,37 @@ TEST_F(HistoryURLProviderTest, WhatYouTyped) {
     { "http://www.wytmatch.com/", true }
   };
   RunTest(ASCIIToUTF16("wytmatch"), "com", false, results_1,
-          arraysize(results_1));
+          base::size(results_1));
 
   const UrlAndLegalDefault results_2[] = {
     { "http://wytmatch%20foo%20bar/", false }
   };
   RunTest(ASCIIToUTF16("http://wytmatch foo bar"), std::string(), false,
-          results_2, arraysize(results_2));
+          results_2, base::size(results_2));
 
   const UrlAndLegalDefault results_3[] = {
     { "https://wytmatch%20foo%20bar/", false }
   };
   RunTest(ASCIIToUTF16("https://wytmatch foo bar"), std::string(), false,
-          results_3, arraysize(results_3));
+          results_3, base::size(results_3));
 
   const UrlAndLegalDefault results_4[] = {{"https://wytih/", true},
                                           {"https://www.wytih/file", true},
                                           {"ftp://wytih/file", true},
                                           {"https://www.wytih/page", true}};
   RunTest(ASCIIToUTF16("wytih"), std::string(), false, results_4,
-          arraysize(results_4));
+          base::size(results_4));
 
   const UrlAndLegalDefault results_5[] = {{"https://www.wytih/", true},
                                           {"https://www.wytih/file", true},
                                           {"https://www.wytih/page", true}};
   RunTest(ASCIIToUTF16("www.wytih"), std::string(), false, results_5,
-          arraysize(results_5));
+          base::size(results_5));
 
   const UrlAndLegalDefault results_6[] = {{"ftp://wytih/file", true},
                                           {"https://www.wytih/file", true}};
   RunTest(ASCIIToUTF16("wytih/file"), std::string(), false, results_6,
-          arraysize(results_6));
+          base::size(results_6));
 }
 
 TEST_F(HistoryURLProviderTest, Fixup) {
@@ -651,7 +646,7 @@ TEST_F(HistoryURLProviderTest, Fixup) {
     { "http://%EF%BD%A5@s/", false }
   };
   RunTest(base::WideToUTF16(L"\uff65@s"), std::string(), false, fixup_crash,
-          arraysize(fixup_crash));
+          base::size(fixup_crash));
   RunTest(base::WideToUTF16(L"\u2015\u2015@ \uff7c"), std::string(), false,
           nullptr, 0);
 
@@ -661,8 +656,8 @@ TEST_F(HistoryURLProviderTest, Fixup) {
   const UrlAndLegalDefault fixup_1[] = {
     { "file:///C:/foo.txt", true }
   };
-  ASSERT_NO_FATAL_FAILURE(RunTest(input_1, std::string(), false, fixup_1,
-                                  arraysize(fixup_1)));
+  ASSERT_NO_FATAL_FAILURE(
+      RunTest(input_1, std::string(), false, fixup_1, base::size(fixup_1)));
   EXPECT_EQ(ASCIIToUTF16("///C:/foo.txt"),
             matches_.front().inline_autocompletion);
 
@@ -674,8 +669,8 @@ TEST_F(HistoryURLProviderTest, Fixup) {
     { "http://bogussite.com/b", true },
     { "http://bogussite.com/c", true }
   };
-  ASSERT_NO_FATAL_FAILURE(RunTest(input_2, std::string(), false, fixup_2,
-                                  arraysize(fixup_2)));
+  ASSERT_NO_FATAL_FAILURE(
+      RunTest(input_2, std::string(), false, fixup_2, base::size(fixup_2)));
   EXPECT_EQ(ASCIIToUTF16("/bogussite.com/a"),
             matches_.front().inline_autocompletion);
 
@@ -684,7 +679,7 @@ TEST_F(HistoryURLProviderTest, Fixup) {
   const UrlAndLegalDefault fixup_3[] = {
     { "http://www.56.com/", true }
   };
-  RunTest(ASCIIToUTF16("56"), "com", true, fixup_3, arraysize(fixup_3));
+  RunTest(ASCIIToUTF16("56"), "com", true, fixup_3, base::size(fixup_3));
 
   // An input looks like a IP address like "127.0.0.1" should result in
   // "http://127.0.0.1/".
@@ -692,14 +687,14 @@ TEST_F(HistoryURLProviderTest, Fixup) {
     { "http://127.0.0.1/", true }
   };
   RunTest(ASCIIToUTF16("127.0.0.1"), std::string(), false, fixup_4,
-          arraysize(fixup_4));
+          base::size(fixup_4));
 
   // An number "17173" should result in "http://www.17173.com/" in db.
   const UrlAndLegalDefault fixup_5[] = {
     { "http://www.17173.com/", true }
   };
   RunTest(ASCIIToUTF16("17173"), std::string(), false, fixup_5,
-          arraysize(fixup_5));
+          base::size(fixup_5));
 }
 
 // Make sure the results for the input 'p' don't change between the first and
@@ -737,13 +732,13 @@ TEST_F(HistoryURLProviderTestNoDB, NavigateWithoutDB) {
     { "http://test.com/", true }
   };
   RunTest(ASCIIToUTF16("test.com"), std::string(), false, navigation_1,
-          arraysize(navigation_1));
+          base::size(navigation_1));
 
   UrlAndLegalDefault navigation_2[] = {
     { "http://slash/", false }
   };
   RunTest(ASCIIToUTF16("slash"), std::string(), false, navigation_2,
-          arraysize(navigation_2));
+          base::size(navigation_2));
 
   RunTest(ASCIIToUTF16("this is a query"), std::string(), false, nullptr, 0);
 }
@@ -772,7 +767,7 @@ TEST_F(HistoryURLProviderTest, TreatEmailsAsSearches) {
     { "http://user@foo.com/", false }
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("user@foo.com"), std::string(),
-                                  false, expected, arraysize(expected)));
+                                  false, expected, base::size(expected)));
   EXPECT_LE(1200, matches_[0].relevance);
   EXPECT_LT(matches_[0].relevance, 1210);
 }
@@ -792,7 +787,7 @@ TEST_F(HistoryURLProviderTest, IntranetURLsWithPaths) {
     { "gooey/a", 1400, true },
     { "gooey/a b", 1400, true },
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     SCOPED_TRACE(test_cases[i].input);
     if (test_cases[i].relevance == 0) {
       RunTest(ASCIIToUTF16(test_cases[i].input), std::string(), false, nullptr,
@@ -802,7 +797,8 @@ TEST_F(HistoryURLProviderTest, IntranetURLsWithPaths) {
           {url_formatter::FixupURL(test_cases[i].input, std::string()).spec(),
            test_cases[i].allowed_to_be_default_match}};
       ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16(test_cases[i].input),
-                              std::string(), false, output, arraysize(output)));
+                                      std::string(), false, output,
+                                      base::size(output)));
       // Actual relevance should be at least what test_cases expects and
       // and no more than 10 more.
       EXPECT_LE(test_cases[i].relevance, matches_[0].relevance);
@@ -821,7 +817,7 @@ TEST_F(HistoryURLProviderTest, IntranetURLCompletion) {
     { "http://intra/two", true }
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("intra/t"), std::string(), false,
-                                  expected1, arraysize(expected1)));
+                                  expected1, base::size(expected1)));
   EXPECT_LE(1410, matches_[0].relevance);
   EXPECT_LT(matches_[0].relevance, 1420);
   // It uses the default scoring.
@@ -832,7 +828,7 @@ TEST_F(HistoryURLProviderTest, IntranetURLCompletion) {
     { "http://moo/bar", true }
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("moo/b"), std::string(), false,
-                                  expected2, arraysize(expected2)));
+                                  expected2, base::size(expected2)));
   // The url what you typed match should be around 1400, otherwise the
   // search what you typed match is going to be first.
   EXPECT_LE(1400, matches_[0].relevance);
@@ -842,19 +838,19 @@ TEST_F(HistoryURLProviderTest, IntranetURLCompletion) {
                                           {"http://intra/one", true},
                                           {"http://intra/two", true}};
   RunTest(ASCIIToUTF16("intra"), std::string(), false, expected3,
-          arraysize(expected3));
+          base::size(expected3));
 
   const UrlAndLegalDefault expected4[] = {{"http://intra/three", true},
                                           {"http://intra/one", true},
                                           {"http://intra/two", true}};
   RunTest(ASCIIToUTF16("intra/"), std::string(), false, expected4,
-          arraysize(expected4));
+          base::size(expected4));
 
   const UrlAndLegalDefault expected5[] = {
     { "http://intra/one", true }
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("intra/o"), std::string(), false,
-                                  expected5, arraysize(expected5)));
+                                  expected5, base::size(expected5)));
   EXPECT_LE(1410, matches_[0].relevance);
   EXPECT_LT(matches_[0].relevance, 1420);
 
@@ -862,7 +858,7 @@ TEST_F(HistoryURLProviderTest, IntranetURLCompletion) {
     { "http://intra/x", true }
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("intra/x"), std::string(), false,
-                                  expected6, arraysize(expected6)));
+                                  expected6, base::size(expected6)));
   EXPECT_LE(1400, matches_[0].relevance);
   EXPECT_LT(matches_[0].relevance, 1410);
 
@@ -871,13 +867,13 @@ TEST_F(HistoryURLProviderTest, IntranetURLCompletion) {
   };
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("typedhost/untypedpath"),
                                   std::string(), false, expected7,
-                                  arraysize(expected7)));
+                                  base::size(expected7)));
   EXPECT_LE(1400, matches_[0].relevance);
   EXPECT_LT(matches_[0].relevance, 1410);
 
   const UrlAndLegalDefault expected8[] = {{"https://www.prefixintra/x", true}};
   ASSERT_NO_FATAL_FAILURE(RunTest(ASCIIToUTF16("prefixintra/x"), std::string(),
-                                  false, expected8, arraysize(expected8)));
+                                  false, expected8, base::size(expected8)));
 }
 
 TEST_F(HistoryURLProviderTest, CrashDueToFixup) {
@@ -887,7 +883,7 @@ TEST_F(HistoryURLProviderTest, CrashDueToFixup) {
     "\\@st",
     "view-source:x",
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     AutocompleteInput input(ASCIIToUTF16(test_cases[i]),
                             metrics::OmniboxEventProto::OTHER,
                             TestSchemeClassifier());
@@ -913,21 +909,21 @@ TEST_F(HistoryURLProviderTest, DoesNotInlinePunycodeMatches) {
     { "http://puny.xn--h2by8byc123p.in/", true },
   };
   RunTest(ASCIIToUTF16("pun"), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny."), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.x"), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.xn"), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.xn--"), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.xn--h2"), std::string(), false, expected1_true,
-          arraysize(expected1_true));
+          base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.xn--h2by8byc123p"), std::string(), false,
-          expected1_true, arraysize(expected1_true));
+          expected1_true, base::size(expected1_true));
   RunTest(ASCIIToUTF16("puny.xn--h2by8byc123p."), std::string(), false,
-          expected1_true, arraysize(expected1_true));
+          expected1_true, base::size(expected1_true));
 
   // When the punycode part of the URL is rendered as international characters,
   // this match should not be allowed to be the default match if the inline
@@ -939,21 +935,21 @@ TEST_F(HistoryURLProviderTest, DoesNotInlinePunycodeMatches) {
     { "http://two_puny.xn--1lq90ic7f1rc.cn/", false },
   };
   RunTest(ASCIIToUTF16("two"), std::string(), false, expected2_true,
-          arraysize(expected2_true));
+          base::size(expected2_true));
   RunTest(ASCIIToUTF16("two_puny."), std::string(), false, expected2_true,
-          arraysize(expected2_true));
+          base::size(expected2_true));
   RunTest(ASCIIToUTF16("two_puny.x"), std::string(), false, expected2_false,
-          arraysize(expected2_false));
+          base::size(expected2_false));
   RunTest(ASCIIToUTF16("two_puny.xn"), std::string(), false, expected2_false,
-          arraysize(expected2_false));
+          base::size(expected2_false));
   RunTest(ASCIIToUTF16("two_puny.xn--"), std::string(), false, expected2_false,
-          arraysize(expected2_false));
+          base::size(expected2_false));
   RunTest(ASCIIToUTF16("two_puny.xn--1l"), std::string(), false,
-          expected2_false, arraysize(expected2_false));
+          expected2_false, base::size(expected2_false));
   RunTest(ASCIIToUTF16("two_puny.xn--1lq90ic7f1rc"), std::string(), false,
-          expected2_true, arraysize(expected2_true));
+          expected2_true, base::size(expected2_true));
   RunTest(ASCIIToUTF16("two_puny.xn--1lq90ic7f1rc."), std::string(), false,
-          expected2_true, arraysize(expected2_true));
+          expected2_true, base::size(expected2_true));
 }
 
 TEST_F(HistoryURLProviderTest, CullSearchResults) {
@@ -964,7 +960,7 @@ TEST_F(HistoryURLProviderTest, CullSearchResults) {
   data.SetURL("http://testsearch.com/?q={searchTerms}");
   TemplateURLService* template_url_service = client_->GetTemplateURLService();
   TemplateURL* template_url =
-      template_url_service->Add(base::MakeUnique<TemplateURL>(data));
+      template_url_service->Add(std::make_unique<TemplateURL>(data));
   template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   template_url_service->Load();
 
@@ -980,7 +976,7 @@ TEST_F(HistoryURLProviderTest, CullSearchResults) {
     {"https://testsearch.com/?q=foobar", 20},
     {"http://foobar.com/", 10}
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     client_->GetHistoryService()->AddPageWithDetails(
         GURL(test_cases[i].url), base::UTF8ToUTF16("Title"),
         test_cases[i].count, test_cases[i].count, Time::Now(), false,
@@ -992,14 +988,16 @@ TEST_F(HistoryURLProviderTest, CullSearchResults) {
     { test_cases[2].url, false }
   };
   RunTest(ASCIIToUTF16("foobar"), std::string(), true,
-      expected_when_searching_query, arraysize(expected_when_searching_query));
+          expected_when_searching_query,
+          base::size(expected_when_searching_query));
 
   // We should not see search URLs when typing the search engine name.
   const UrlAndLegalDefault expected_when_searching_site[] = {
     { test_cases[0].url, false }
   };
   RunTest(ASCIIToUTF16("testsearch"), std::string(), true,
-      expected_when_searching_site, arraysize(expected_when_searching_site));
+          expected_when_searching_site,
+          base::size(expected_when_searching_site));
 }
 
 TEST_F(HistoryURLProviderTest, SuggestExactInput) {
@@ -1018,48 +1016,50 @@ TEST_F(HistoryURLProviderTest, SuggestExactInput) {
   } test_cases[] = {
     { "http://www.somesite.com", false,
       "http://www.somesite.com", {0, npos, npos}, 0 },
+    { "http://www.somesite.com/", false,
+      "http://www.somesite.com", {0, npos, npos}, 0 },
+    { "http://www.somesite.com/", false,
+      "http://www.somesite.com", {0, npos, npos}, 0 },
     { "www.somesite.com", true,
       "www.somesite.com", {0, npos, npos}, 0 },
-    { "www.somesite.com", false,
-      "http://www.somesite.com", {0, 7, npos}, 1 },
     { "somesite.com", true,
       "somesite.com", {0, npos, npos}, 0 },
-    { "somesite.com", false,
-      "http://somesite.com", {0, 7, npos}, 1 },
     { "w", true,
       "w", {0, npos, npos}, 0 },
-    { "w", false,
-      "http://w", {0, 7, npos}, 1 },
     { "w.com", true,
       "w.com", {0, npos, npos}, 0 },
-    { "w.com", false,
-      "http://w.com", {0, 7, npos}, 1 },
     { "www.w.com", true,
       "www.w.com", {0, npos, npos}, 0 },
-    { "www.w.com", false,
-      "http://www.w.com", {0, 7, npos}, 1 },
     { "view-source:w", true,
       "view-source:w", {0, npos, npos}, 0 },
     { "view-source:www.w.com/", true,
-      "view-source:www.w.com", {0, npos, npos}, npos },
-    { "view-source:www.w.com/", false,
-      "view-source:http://www.w.com", {0, npos, npos}, npos },
+      "view-source:www.w.com", {0, npos, npos}, 0 },
     { "view-source:http://www.w.com/", false,
       "view-source:http://www.w.com", {0, npos, npos}, 0 },
-    { "   view-source:", true,
+    { "view-source:", true,
       "view-source:", {0, npos, npos}, 0 },
-    { "http:////////w.com", false,
-      "http://w.com", {0, npos, npos}, npos },
-    { "    http:////////www.w.com", false,
-      "http://www.w.com", {0, npos, npos}, npos },
-    { "http:a///www.w.com", false,
-      "http://a///www.w.com", {0, npos, npos}, npos },
+    { "http://w.com", false,
+      "http://w.com", {0, npos, npos}, 0 },
+    { "http://www.w.com", false,
+      "http://www.w.com", {0, npos, npos}, 0 },
+    { "http://a///www.w.com", false,
+      "http://a///www.w.com", {0, npos, npos}, 0 },
     { "mailto://a@b.com", true,
       "mailto://a@b.com", {0, npos, npos}, 0 },
     { "mailto://a@b.com", false,
       "mailto://a@b.com", {0, npos, npos}, 0 },
+    { "http://a%20b/x%20y", false,
+      "http://a%20b/x y", {0, npos, npos}, 0 },
+    { "file:///x%20y/a%20b", true,
+      "file:///x y/a b", {0, npos, npos}, 0 },
+    { "file://x%20y/a%20b", true,
+      "file://x%20y/a b", {0, npos, npos}, 0 },
+    { "view-source:x%20y/a%20b", true,
+      "view-source:x%20y/a b", {0, npos, npos}, 0 },
+    { "view-source:http://x%20y/a%20b", false,
+      "view-source:http://x%20y/a b", {0, npos, npos}, 0 },
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     SCOPED_TRACE(testing::Message() << "Index " << i << " input: "
                                     << test_cases[i].input << ", trim_http: "
                                     << test_cases[i].trim_http);
@@ -1119,7 +1119,7 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
   max_1100_visit_typed_decays.visited_count_buckets.buckets().push_back(
       std::make_pair(0.0, 50));
 
-  const int kMaxMatches = 3;
+  const int kProviderMaxMatches = 3;
   struct TestCase {
     const char* input;
     HUPScoringParams scoring_params;
@@ -1128,7 +1128,7 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
       int control_relevance;
       int experiment_relevance;
     };
-    ExpectedMatch matches[kMaxMatches];
+    ExpectedMatch matches[kProviderMaxMatches];
   } test_cases[] = {
       // Max score 2000 -> no demotion.
       {"7.com/1",
@@ -1164,11 +1164,11 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
        max_1100_visit_typed_decays,
        {{"7.com/5", 1203, 1203}, {"7.com/5a", 1202, 50}, {nullptr, 0, 0}}},
   };
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     SCOPED_TRACE(test_cases[i].input);
-    UrlAndLegalDefault output[kMaxMatches];
+    UrlAndLegalDefault output[kProviderMaxMatches];
     int max_matches;
-    for (max_matches = 0; max_matches < kMaxMatches; ++max_matches) {
+    for (max_matches = 0; max_matches < kProviderMaxMatches; ++max_matches) {
       if (test_cases[i].matches[max_matches].url == nullptr)
         break;
       output[max_matches].url =
@@ -1191,59 +1191,97 @@ TEST_F(HistoryURLProviderTest, HUPScoringExperiment) {
 
 TEST_F(HistoryURLProviderTest, MatchURLFormatting) {
   // Sanity check behavior under default flags.
-  ExpectFormattedFullMatch("abc", L"https://www.abc.def.com/path", 12, 3);
-  ExpectFormattedFullMatch("hij", L"https://www.hij.com/path", 12, 3);
-
-  auto feature_list = base::MakeUnique<base::test::ScopedFeatureList>();
-  feature_list->InitWithFeatures(
-      {omnibox::kUIExperimentHideSuggestionUrlScheme,
-       omnibox::kUIExperimentHideSuggestionUrlTrivialSubdomains,
-       omnibox::kUIExperimentElideSuggestionUrlAfterHost},
-      {});
+  ExpectFormattedFullMatch("abc", L"www.abc.def.com/path", 4, 3);
+  ExpectFormattedFullMatch("hij", L"hij.com/path", 0, 3);
 
   // Sanity check that scheme, subdomain, and path can all be trimmed or elided.
-  ExpectFormattedFullMatch("hij", L"hij.com/\x2026\x0000", 0, 3);
+  ExpectFormattedFullMatch("hij", L"hij.com/path", 0, 3);
 
   // Verify that the scheme is preserved if part of match.
-  ExpectFormattedFullMatch("https://www.hi",
-                           L"https://www.hij.com/\x2026\x0000", 0, 14);
+  ExpectFormattedFullMatch("https://www.hi", L"https://www.hij.com/path", 0,
+                           14);
 
   // Verify that the whole subdomain is preserved if part of match.
-  ExpectFormattedFullMatch("abc", L"www.abc.def.com/\x2026\x0000", 4, 3);
-  ExpectFormattedFullMatch("www.hij", L"www.hij.com/\x2026\x0000", 0, 7);
+  ExpectFormattedFullMatch("abc", L"www.abc.def.com/path", 4, 3);
+  ExpectFormattedFullMatch("www.hij", L"www.hij.com/path", 0, 7);
 
   // Verify that the path is preserved if part of the match.
   ExpectFormattedFullMatch("hij.com/path", L"hij.com/path", 0, 12);
 
   // Verify preserving both the scheme and subdomain.
-  ExpectFormattedFullMatch("https://www.hi",
-                           L"https://www.hij.com/\x2026\x0000", 0, 14);
+  ExpectFormattedFullMatch("https://www.hi", L"https://www.hij.com/path", 0,
+                           14);
 
   // Verify preserving everything.
   ExpectFormattedFullMatch("https://www.hij.com/p", L"https://www.hij.com/path",
                            0, 21);
 
   // Verify that upper case input still works for subdomain matching.
-  ExpectFormattedFullMatch("WWW.hij", L"www.hij.com/\x2026\x0000", 0, 7);
+  ExpectFormattedFullMatch("WWW.hij", L"www.hij.com/path", 0, 7);
 
   // Verify that matching in the subdomain-only preserves the subdomain.
-  ExpectFormattedFullMatch("ww", L"www.hij.com/\x2026\x0000", 0, 2);
-  ExpectFormattedFullMatch("https://ww", L"https://www.hij.com/\x2026\x0000", 0,
-                           10);
+  ExpectFormattedFullMatch("ww", L"www.hij.com/path", 0, 2);
+  ExpectFormattedFullMatch("https://ww", L"https://www.hij.com/path", 0, 10);
+}
 
-  // Test individual feature flags as a sanity check.
-  feature_list.reset(new base::test::ScopedFeatureList);
-  feature_list->InitAndEnableFeature(
-      omnibox::kUIExperimentHideSuggestionUrlScheme);
-  ExpectFormattedFullMatch("hij", L"www.hij.com/path", 4, 3);
+std::unique_ptr<HistoryURLProviderParams> BuildHistoryURLProviderParams(
+    const std::string& input_text,
+    const std::string& url_text,
+    bool match_in_scheme) {
+  AutocompleteInput input(ASCIIToUTF16(input_text),
+                          metrics::OmniboxEventProto::OTHER,
+                          TestSchemeClassifier());
+  history::HistoryMatch history_match;
+  history_match.url_info.set_url(GURL(url_text));
+  history_match.match_in_scheme = match_in_scheme;
+  auto params = std::make_unique<HistoryURLProviderParams>(
+      input, true, AutocompleteMatch(), nullptr, nullptr);
+  params->matches.push_back(history_match);
 
-  feature_list.reset(new base::test::ScopedFeatureList);
-  feature_list->InitAndEnableFeature(
-      omnibox::kUIExperimentHideSuggestionUrlTrivialSubdomains);
-  ExpectFormattedFullMatch("hij", L"https://hij.com/path", 8, 3);
+  return params;
+}
 
-  feature_list.reset(new base::test::ScopedFeatureList);
-  feature_list->InitAndEnableFeature(
-      omnibox::kUIExperimentElideSuggestionUrlAfterHost);
-  ExpectFormattedFullMatch("hij", L"https://www.hij.com/\x2026\x0000", 12, 3);
+// Make sure "http://" scheme is generally trimmed.
+TEST_F(HistoryURLProviderTest, DoTrimHttpScheme) {
+  auto params =
+      BuildHistoryURLProviderParams("face", "http://www.facebook.com", false);
+
+  AutocompleteMatch match = autocomplete_->HistoryMatchToACMatch(*params, 0, 0);
+  EXPECT_EQ(ASCIIToUTF16("facebook.com"), match.contents);
+}
+
+// Make sure "http://" scheme is not trimmed if input has a scheme too.
+TEST_F(HistoryURLProviderTest, DontTrimHttpSchemeIfInputHasScheme) {
+  auto params = BuildHistoryURLProviderParams("http://face",
+                                              "http://www.facebook.com", false);
+
+  AutocompleteMatch match = autocomplete_->HistoryMatchToACMatch(*params, 0, 0);
+  EXPECT_EQ(ASCIIToUTF16("http://facebook.com"), match.contents);
+}
+
+// Make sure "http://" scheme is not trimmed if input matches in scheme.
+TEST_F(HistoryURLProviderTest, DontTrimHttpSchemeIfInputMatchesInScheme) {
+  auto params =
+      BuildHistoryURLProviderParams("ht face", "http://www.facebook.com", true);
+
+  AutocompleteMatch match = autocomplete_->HistoryMatchToACMatch(*params, 0, 0);
+  EXPECT_EQ(ASCIIToUTF16("http://facebook.com"), match.contents);
+}
+
+// Make sure "https://" scheme is not trimmed if the input has a scheme.
+TEST_F(HistoryURLProviderTest, DontTrimHttpsSchemeIfInputMatchesInScheme) {
+  auto params = BuildHistoryURLProviderParams(
+      "https://face", "https://www.facebook.com", false);
+
+  AutocompleteMatch match = autocomplete_->HistoryMatchToACMatch(*params, 0, 0);
+  EXPECT_EQ(ASCIIToUTF16("https://facebook.com"), match.contents);
+}
+
+// Make sure "https://" scheme is trimmed if nothing prevents it.
+TEST_F(HistoryURLProviderTest, DoTrimHttpsScheme) {
+  auto params =
+      BuildHistoryURLProviderParams("face", "https://www.facebook.com", false);
+
+  AutocompleteMatch match = autocomplete_->HistoryMatchToACMatch(*params, 0, 0);
+  EXPECT_EQ(ASCIIToUTF16("facebook.com"), match.contents);
 }

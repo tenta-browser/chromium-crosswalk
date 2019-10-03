@@ -8,9 +8,9 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "google_apis/gcm/base/gcm_util.h"
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
@@ -19,9 +19,9 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 namespace gcm {
 
@@ -107,7 +107,8 @@ UnregistrationRequest::UnregistrationRequest(
     const net::BackoffEntry::Policy& backoff_policy,
     const UnregistrationCallback& callback,
     int max_retry_count,
-    scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     GCMStatsRecorder* recorder,
     const std::string& source_to_record)
     : callback_(callback),
@@ -115,11 +116,13 @@ UnregistrationRequest::UnregistrationRequest(
       custom_request_handler_(std::move(custom_request_handler)),
       registration_url_(registration_url),
       backoff_entry_(&backoff_policy),
-      request_context_getter_(request_context_getter),
+      url_loader_factory_(std::move(url_loader_factory)),
       retries_left_(max_retry_count),
+      io_task_runner_(io_task_runner),
       recorder_(recorder),
       source_to_record_(source_to_record),
       weak_ptr_factory_(this) {
+  DCHECK(io_task_runner_);
   DCHECK_GE(max_retry_count, 0);
 }
 
@@ -127,7 +130,7 @@ UnregistrationRequest::~UnregistrationRequest() {}
 
 void UnregistrationRequest::Start() {
   DCHECK(!callback_.is_null());
-  DCHECK(!url_fetcher_.get());
+  DCHECK(!url_loader_.get());
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("gcm_unregistration", R"(
         semantics {
@@ -156,37 +159,37 @@ void UnregistrationRequest::Start() {
           policy_exception_justification:
             "Not implemented, considered not useful."
         })");
-  url_fetcher_ = net::URLFetcher::Create(
-      registration_url_, net::URLFetcher::POST, this, traffic_annotation);
-  url_fetcher_->SetRequestContext(request_context_getter_.get());
-  url_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                             net::LOAD_DO_NOT_SAVE_COOKIES);
 
-  std::string extra_headers;
-  BuildRequestHeaders(&extra_headers);
-  url_fetcher_->SetExtraRequestHeaders(extra_headers);
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = registration_url_;
+  request->method = "POST";
+  request->load_flags =
+      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  BuildRequestHeaders(&request->headers);
 
   std::string body;
   BuildRequestBody(&body);
 
   DVLOG(1) << "Unregistration request: " << body;
-  url_fetcher_->SetUploadData(kRequestContentType, body);
-
+  url_loader_ =
+      network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
+  url_loader_->AttachStringForUpload(body, kRequestContentType);
   DVLOG(1) << "Performing unregistration for: " << request_info_.app_id();
   recorder_->RecordUnregistrationSent(request_info_.app_id(),
                                       source_to_record_);
-  request_start_time_ = base::TimeTicks::Now();
-  url_fetcher_->Start();
+  url_loader_->SetAllowHttpErrorResults(true);
+  url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&UnregistrationRequest::OnURLLoadComplete,
+                     base::Unretained(this), url_loader_.get()));
 }
 
-void UnregistrationRequest::BuildRequestHeaders(std::string* extra_headers) {
-  net::HttpRequestHeaders headers;
-  headers.SetHeader(
-      net::HttpRequestHeaders::kAuthorization,
-      std::string(kLoginHeader) + " " +
-          base::Uint64ToString(request_info_.android_id) + ":" +
-          base::Uint64ToString(request_info_.security_token));
-  *extra_headers = headers.ToString();
+void UnregistrationRequest::BuildRequestHeaders(
+    net::HttpRequestHeaders* headers) {
+  headers->SetHeader(net::HttpRequestHeaders::kAuthorization,
+                     std::string(kLoginHeader) + " " +
+                         base::NumberToString(request_info_.android_id) + ":" +
+                         base::NumberToString(request_info_.security_token));
 }
 
 void UnregistrationRequest::BuildRequestBody(std::string* body) {
@@ -195,8 +198,7 @@ void UnregistrationRequest::BuildRequestBody(std::string* body) {
     BuildFormEncoding(kSubtypeKey, request_info_.subtype, body);
 
   BuildFormEncoding(kDeviceIdKey,
-                    base::Uint64ToString(request_info_.android_id),
-                    body);
+                    base::NumberToString(request_info_.android_id), body);
   BuildFormEncoding(kDeleteKey, kDeleteValue, body);
 
   DCHECK(custom_request_handler_.get());
@@ -204,29 +206,32 @@ void UnregistrationRequest::BuildRequestBody(std::string* body) {
 }
 
 UnregistrationRequest::Status UnregistrationRequest::ParseResponse(
-    const net::URLFetcher* source) {
-  if (!source->GetStatus().is_success()) {
+    const network::SimpleURLLoader* source,
+    std::unique_ptr<std::string> body) {
+  if (!body) {
     DVLOG(1) << "Unregistration URL fetching failed.";
     return URL_FETCHING_FAILED;
   }
 
-  std::string response;
-  if (!source->GetResponseAsString(&response)) {
-    DVLOG(1) << "Failed to get unregistration response body.";
-    return NO_RESPONSE_BODY;
-  }
+  std::string response = std::move(*body);
 
   // If we are able to parse a meaningful known error, let's do so. Note that
   // some errors will have HTTP_OK response code!
   if (response.find(kErrorPrefix) != std::string::npos) {
     std::string error = response.substr(response.find(kErrorPrefix) +
-                                        arraysize(kErrorPrefix) - 1);
+                                        base::size(kErrorPrefix) - 1);
     DVLOG(1) << "Unregistration response error message: " << error;
     return GetStatusFromError(error);
   }
 
+  // Can't even get any header info.
+  if (!source->ResponseInfo() || !source->ResponseInfo()->headers) {
+    DVLOG(1) << "Unregistration HTTP response info or header missing";
+    return HTTP_NOT_OK;
+  }
+
   net::HttpStatusCode response_status = static_cast<net::HttpStatusCode>(
-      source->GetResponseCode());
+      source->ResponseInfo()->headers->response_code());
   if (response_status != net::HTTP_OK) {
     DVLOG(1) << "Unregistration HTTP response code not OK: " << response_status;
     if (response_status == net::HTTP_SERVICE_UNAVAILABLE)
@@ -241,9 +246,10 @@ UnregistrationRequest::Status UnregistrationRequest::ParseResponse(
 }
 
 void UnregistrationRequest::RetryWithBackoff() {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   DCHECK_GT(retries_left_, 0);
   --retries_left_;
-  url_fetcher_.reset();
+  url_loader_.reset();
   backoff_entry_.InformOfRequest(false);
 
   DVLOG(1) << "Delaying GCM unregistration of app: " << request_info_.app_id()
@@ -253,22 +259,22 @@ void UnregistrationRequest::RetryWithBackoff() {
       request_info_.app_id(), source_to_record_,
       backoff_entry_.GetTimeUntilRelease().InMilliseconds(), retries_left_ + 1);
   DCHECK(!weak_ptr_factory_.HasWeakPtrs());
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+  io_task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&UnregistrationRequest::Start, weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&UnregistrationRequest::Start,
+                     weak_ptr_factory_.GetWeakPtr()),
       backoff_entry_.GetTimeUntilRelease());
 }
 
-void UnregistrationRequest::OnURLFetchComplete(const net::URLFetcher* source) {
-  UnregistrationRequest::Status status = ParseResponse(source);
+void UnregistrationRequest::OnURLLoadComplete(
+    const network::SimpleURLLoader* source,
+    std::unique_ptr<std::string> body) {
+  UnregistrationRequest::Status status = ParseResponse(source, std::move(body));
 
   DVLOG(1) << "UnregistrationRequestStatus: " << status;
 
   DCHECK(custom_request_handler_.get());
-  custom_request_handler_->ReportUMAs(
-      status,
-      backoff_entry_.failure_count(),
-      base::TimeTicks::Now() - request_start_time_);
+  custom_request_handler_->ReportUMAs(status);
 
   recorder_->RecordUnregistrationResponse(request_info_.app_id(),
                                           source_to_record_, status);
@@ -283,10 +289,8 @@ void UnregistrationRequest::OnURLFetchComplete(const net::URLFetcher* source) {
     recorder_->RecordUnregistrationResponse(request_info_.app_id(),
                                             source_to_record_, status);
 
-    // Only REACHED_MAX_RETRIES is reported because the function will skip
-    // reporting count and time when status is not SUCCESS.
     DCHECK(custom_request_handler_.get());
-    custom_request_handler_->ReportUMAs(status, 0, base::TimeDelta());
+    custom_request_handler_->ReportUMAs(status);
   }
 
   callback_.Run(status);

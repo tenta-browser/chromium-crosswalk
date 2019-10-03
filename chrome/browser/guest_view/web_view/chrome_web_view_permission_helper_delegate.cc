@@ -7,13 +7,14 @@
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_request_id.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/render_messages.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "content/public/browser/render_frame_host.h"
@@ -21,15 +22,15 @@
 #include "content/public/browser/render_view_host.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 namespace extensions {
 
 namespace {
 
-void CallbackWrapper(const base::Callback<void(bool)>& callback,
+void CallbackWrapper(base::OnceCallback<void(bool)> callback,
                      ContentSetting status) {
-  callback.Run(status == CONTENT_SETTING_ALLOW);
+  std::move(callback).Run(status == CONTENT_SETTING_ALLOW);
 }
 
 }  // anonymous namespace
@@ -37,8 +38,7 @@ void CallbackWrapper(const base::Callback<void(bool)>& callback,
 ChromeWebViewPermissionHelperDelegate::ChromeWebViewPermissionHelperDelegate(
     WebViewPermissionHelper* web_view_permission_helper)
     : WebViewPermissionHelperDelegate(web_view_permission_helper),
-      plugin_auth_host_bindings_(web_contents(), this),
-      weak_factory_(this) {}
+      plugin_auth_host_bindings_(web_contents(), this) {}
 
 ChromeWebViewPermissionHelperDelegate::~ChromeWebViewPermissionHelperDelegate()
 {}
@@ -94,24 +94,22 @@ void ChromeWebViewPermissionHelperDelegate::OnOpenPDF(const GURL& url) {
 void ChromeWebViewPermissionHelperDelegate::CanDownload(
     const GURL& url,
     const std::string& request_method,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   base::DictionaryValue request_info;
   request_info.SetString(guest_view::kUrl, url.spec());
   web_view_permission_helper()->RequestPermission(
-      WEB_VIEW_PERMISSION_TYPE_DOWNLOAD,
-      request_info,
-      base::Bind(
+      WEB_VIEW_PERMISSION_TYPE_DOWNLOAD, request_info,
+      base::BindOnce(
           &ChromeWebViewPermissionHelperDelegate::OnDownloadPermissionResponse,
-          weak_factory_.GetWeakPtr(),
-          callback),
+          weak_factory_.GetWeakPtr(), std::move(callback)),
       false /* allowed_by_default */);
 }
 
 void ChromeWebViewPermissionHelperDelegate::OnDownloadPermissionResponse(
-    const base::Callback<void(bool)>& callback,
+    base::OnceCallback<void(bool)> callback,
     bool allow,
     const std::string& user_input) {
-  callback.Run(allow && web_view_guest()->attached());
+  std::move(callback).Run(allow && web_view_guest()->attached());
 }
 
 void ChromeWebViewPermissionHelperDelegate::RequestPointerLockPermission(
@@ -146,7 +144,7 @@ void ChromeWebViewPermissionHelperDelegate::RequestGeolocationPermission(
     int bridge_id,
     const GURL& requesting_frame,
     bool user_gesture,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   base::DictionaryValue request_info;
   request_info.SetString(guest_view::kUrl, requesting_frame.spec());
   request_info.SetBoolean(guest_view::kUserGesture, user_gesture);
@@ -158,7 +156,7 @@ void ChromeWebViewPermissionHelperDelegate::RequestGeolocationPermission(
       base::BindOnce(&ChromeWebViewPermissionHelperDelegate::
                          OnGeolocationPermissionResponse,
                      weak_factory_.GetWeakPtr(), bridge_id, user_gesture,
-                     base::Bind(&CallbackWrapper, callback));
+                     base::BindOnce(&CallbackWrapper, std::move(callback)));
   int request_id = web_view_permission_helper()->RequestPermission(
       WEB_VIEW_PERMISSION_TYPE_GEOLOCATION, request_info,
       std::move(permission_callback), false /* allowed_by_default */);
@@ -168,7 +166,7 @@ void ChromeWebViewPermissionHelperDelegate::RequestGeolocationPermission(
 void ChromeWebViewPermissionHelperDelegate::OnGeolocationPermissionResponse(
     int bridge_id,
     bool user_gesture,
-    const base::Callback<void(ContentSetting)>& callback,
+    base::OnceCallback<void(ContentSetting)> callback,
     bool allow,
     const std::string& user_input) {
   // The <webview> embedder has allowed the permission. We now need to make sure
@@ -176,7 +174,7 @@ void ChromeWebViewPermissionHelperDelegate::OnGeolocationPermissionResponse(
   RemoveBridgeID(bridge_id);
 
   if (!allow || !web_view_guest()->attached()) {
-    callback.Run(CONTENT_SETTING_BLOCK);
+    std::move(callback).Run(CONTENT_SETTING_BLOCK);
     return;
   }
 
@@ -202,8 +200,7 @@ void ChromeWebViewPermissionHelperDelegate::OnGeolocationPermissionResponse(
           ->embedder_web_contents()
           ->GetLastCommittedURL()
           .GetOrigin(),
-      user_gesture,
-      callback);
+      user_gesture, std::move(callback));
 }
 
 void ChromeWebViewPermissionHelperDelegate::CancelGeolocationPermissionRequest(
@@ -213,8 +210,7 @@ void ChromeWebViewPermissionHelperDelegate::CancelGeolocationPermissionRequest(
 }
 
 int ChromeWebViewPermissionHelperDelegate::RemoveBridgeID(int bridge_id) {
-  std::map<int, int>::iterator bridge_itr =
-      bridge_id_to_request_id_map_.find(bridge_id);
+  auto bridge_itr = bridge_id_to_request_id_map_.find(bridge_id);
   if (bridge_itr == bridge_id_to_request_id_map_.end())
     return webview::kInvalidPermissionRequestID;
 

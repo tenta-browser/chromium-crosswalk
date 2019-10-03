@@ -4,22 +4,36 @@
 
 package org.chromium.chrome.browser.searchwidget;
 
+import android.content.res.Resources;
+import android.support.annotation.ColorInt;
+import android.support.annotation.ColorRes;
+
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.chrome.browser.ntp.NewTabPage;
+import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
+import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 
 class SearchBoxDataProvider implements ToolbarDataProvider {
+    private final @ColorInt int mPrimaryColor;
     private Tab mTab;
+
+    /**
+     * @param resources The {@link Resources} for accessing colors.
+     */
+    SearchBoxDataProvider(Resources resources) {
+        mPrimaryColor = ColorUtils.getPrimaryBackgroundColor(resources, isIncognito());
+    }
 
     /**
      * Called when native library is loaded and a tab has been initialized.
      * @param tab The tab to use.
      */
     public void onNativeLibraryReady(Tab tab) {
-        assert LibraryLoader.isInitialized();
+        assert LibraryLoader.getInstance().isInitialized();
         mTab = tab;
     }
 
@@ -35,14 +49,29 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
+    public boolean isInOverviewAndShowingOmnibox() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldShowLocationBarInOverviewMode() {
+        return false;
+    }
+
+    @Override
     public Profile getProfile() {
         if (mTab == null) return null;
         return mTab.getProfile();
     }
 
     @Override
-    public String getText() {
-        return null;
+    public UrlBarData getUrlBarData() {
+        return UrlBarData.EMPTY;
+    }
+
+    @Override
+    public String getTitle() {
+        return "";
     }
 
     @Override
@@ -57,7 +86,7 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
 
     @Override
     public int getPrimaryColor() {
-        return 0;
+        return mPrimaryColor;
     }
 
     @Override
@@ -71,22 +100,12 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
-    public boolean shouldShowGoogleG(String urlBarText) {
-        return false;
-    }
-
-    @Override
     public boolean isOfflinePage() {
         return false;
     }
 
     @Override
-    public boolean shouldShowSecurityIcon() {
-        return false;
-    }
-
-    @Override
-    public boolean shouldShowVerboseStatus() {
+    public boolean isPreview() {
         return false;
     }
 
@@ -96,7 +115,16 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
-    public int getSecurityIconResource() {
+    public int getSecurityIconResource(boolean isTablet) {
         return 0;
     }
+
+    @Override
+    public @ColorRes int getSecurityIconColorStateList() {
+        return 0;
+    }
+
+    @Override
+    public void updateSearchEngineStatusIcon(boolean shouldShowSearchEngineLogo,
+            boolean isSearchEngineGoogle, String searchEngineUrl) {}
 }

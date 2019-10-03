@@ -19,9 +19,9 @@ if (params.get('__is_android__') == 'true') {
 } else if (params.get('__oneUA__') == 'true') {
   presentationUrl = "presentation_receiver.html";
 } else if (params.get('__oneUANoReceiver__') == 'true') {
-  presentationUrl = "https://www.google.com";
+  presentationUrl = "no_presentation_receiver.html";
 } else {
-  presentationUrl = "test://test";
+  presentationUrl = "https://www.example.com/presentation.html";
 }
 
 var startSessionRequest = new PresentationRequest([presentationUrl]);
@@ -120,7 +120,7 @@ function checkStartFailed(expectedErrorName, expectedErrorMessageSubstring) {
       sendResult(false, 'start() unexpectedly succeeded.');
     }).catch(function(e) {
       if (expectedErrorName != e.name) {
-        sendResult(false, 'Got unexpected error: ' + e.name);
+        sendResult(false, 'Got unexpected error. ' + e.name + ': ' + e.message);
       } else if (e.message.indexOf(expectedErrorMessageSubstring) == -1) {
         sendResult(false,
             'Error message is not correct, it should contain "' +
@@ -219,6 +219,12 @@ function sendMessageAndExpectResponse(message) {
     sendResult(false, 'startedConnection does not exist.');
     return;
   }
+  if (startedConnection.state != 'connected') {
+    sendResult(false,
+        `Expected the connection state to be connected but it was \
+         ${startedConnection.state}`);
+    return;
+  }
   startedConnection.onmessage = function(receivedMessage) {
     var expectedResponse = 'Pong: ' + message;
     var actualResponse = receivedMessage.data;
@@ -239,6 +245,12 @@ function sendMessageAndExpectResponse(message) {
 function initiateCloseFromReceiverPage() {
   if (!startedConnection) {
     sendResult(false, 'startedConnection does not exist.');
+    return;
+  }
+  if (startedConnection.state != 'connected') {
+    sendResult(false,
+        `Expected the connection state to be connected but it was \
+         ${startedConnection.state}`);
     return;
   }
   startedConnection.onclose = (event) => {

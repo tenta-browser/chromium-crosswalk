@@ -10,15 +10,17 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/optional.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
+#include "content/browser/android/navigation_handle_proxy.h"
+#include "content/browser/frame_host/navigation_handle_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/common/android/media_metadata_android.h"
+#include "content/public/android/content_jni_headers/WebContentsObserverProxy_jni.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/common/media_metadata.h"
-#include "jni/WebContentsObserverProxy_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -127,48 +129,32 @@ void WebContentsObserverProxy::DocumentAvailableInMainFrame() {
 
 void WebContentsObserverProxy::DidStartNavigation(
     NavigationHandle* navigation_handle) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> jstring_url(
-      ConvertUTF8ToJavaString(env, navigation_handle->GetURL().spec()));
   Java_WebContentsObserverProxy_didStartNavigation(
-      env, java_observer_, jstring_url, navigation_handle->IsInMainFrame(),
-      navigation_handle->IsSameDocument(), navigation_handle->IsErrorPage());
+      AttachCurrentThread(), java_observer_,
+      static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
+          ->java_navigation_handle());
+}
+
+void WebContentsObserverProxy::DidRedirectNavigation(
+    NavigationHandle* navigation_handle) {
+  Java_WebContentsObserverProxy_didRedirectNavigation(
+      AttachCurrentThread(), java_observer_,
+      static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
+          ->java_navigation_handle());
 }
 
 void WebContentsObserverProxy::DidFinishNavigation(
     NavigationHandle* navigation_handle) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> jstring_url(
-      ConvertUTF8ToJavaString(env, navigation_handle->GetURL().spec()));
-
-  bool is_fragment_navigation = navigation_handle->IsSameDocument();
-
-  if (navigation_handle->HasCommitted()) {
-    // See http://crbug.com/251330 for why it's determined this way.
-    url::Replacements<char> replacements;
-    replacements.ClearRef();
-    bool urls_same_ignoring_fragment =
-        navigation_handle->GetURL().ReplaceComponents(replacements) ==
-        navigation_handle->GetPreviousURL().ReplaceComponents(replacements);
-    is_fragment_navigation &= urls_same_ignoring_fragment;
-  }
-
-  // TODO(shaktisahu): Provide appropriate error description (crbug/690784).
-  ScopedJavaLocalRef<jstring> jerror_description =
-      ConvertUTF8ToJavaString(env, "");
+  // Remove after fixing https://crbug/905461.
+  TRACE_EVENT0("browser", "Java_WebContentsObserverProxy_didFinishNavigation");
 
   Java_WebContentsObserverProxy_didFinishNavigation(
-      env, java_observer_, jstring_url, navigation_handle->IsInMainFrame(),
-      navigation_handle->IsErrorPage(), navigation_handle->HasCommitted(),
-      navigation_handle->IsSameDocument(), is_fragment_navigation,
-      navigation_handle->HasCommitted() ? navigation_handle->GetPageTransition()
-                                        : -1,
-      navigation_handle->GetNetErrorCode(), jerror_description,
-      // TODO(shaktisahu): Change default status to -1 after fixing
-      // crbug/690041.
-      navigation_handle->GetResponseHeaders()
-          ? navigation_handle->GetResponseHeaders()->response_code()
-          : 200);
+      AttachCurrentThread(), java_observer_,
+      static_cast<NavigationHandleImpl*>(navigation_handle)
+          ->navigation_request()
+          ->java_navigation_handle());
 }
 
 void WebContentsObserverProxy::DidFinishLoad(RenderFrameHost* render_frame_host,
@@ -199,6 +185,18 @@ void WebContentsObserverProxy::NavigationEntryCommitted(
   Java_WebContentsObserverProxy_navigationEntryCommitted(env, java_observer_);
 }
 
+void WebContentsObserverProxy::NavigationEntriesDeleted() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_navigationEntriesDeleted(env, java_observer_);
+}
+
+void WebContentsObserverProxy::NavigationEntryChanged(
+    const EntryChangedDetails& change_details) {
+  JNIEnv* env = AttachCurrentThread();
+  // TODO(jinsukkim): Convert |change_details| to Java object when needed.
+  Java_WebContentsObserverProxy_navigationEntriesChanged(env, java_observer_);
+}
+
 void WebContentsObserverProxy::DidAttachInterstitialPage() {
   JNIEnv* env = AttachCurrentThread();
   Java_WebContentsObserverProxy_didAttachInterstitialPage(env, java_observer_);
@@ -209,9 +207,11 @@ void WebContentsObserverProxy::DidDetachInterstitialPage() {
   Java_WebContentsObserverProxy_didDetachInterstitialPage(env, java_observer_);
 }
 
-void WebContentsObserverProxy::DidChangeThemeColor(SkColor color) {
+void WebContentsObserverProxy::DidChangeThemeColor(
+    base::Optional<SkColor> color) {
   JNIEnv* env = AttachCurrentThread();
-  Java_WebContentsObserverProxy_didChangeThemeColor(env, java_observer_, color);
+  Java_WebContentsObserverProxy_didChangeThemeColor(
+      env, java_observer_, color.value_or(SK_ColorTRANSPARENT));
 }
 
 void WebContentsObserverProxy::MediaEffectivelyFullscreenChanged(
@@ -227,14 +227,17 @@ void WebContentsObserverProxy::DidFirstVisuallyNonEmptyPaint() {
                                                               java_observer_);
 }
 
-void WebContentsObserverProxy::WasShown() {
-  JNIEnv* env = AttachCurrentThread();
-  Java_WebContentsObserverProxy_wasShown(env, java_observer_);
-}
+void WebContentsObserverProxy::OnVisibilityChanged(
+    content::Visibility visibility) {
+  // Occlusion is not supported on Android.
+  DCHECK_NE(visibility, content::Visibility::OCCLUDED);
 
-void WebContentsObserverProxy::WasHidden() {
   JNIEnv* env = AttachCurrentThread();
-  Java_WebContentsObserverProxy_wasHidden(env, java_observer_);
+
+  if (visibility == content::Visibility::VISIBLE)
+    Java_WebContentsObserverProxy_wasShown(env, java_observer_);
+  else
+    Java_WebContentsObserverProxy_wasHidden(env, java_observer_);
 }
 
 void WebContentsObserverProxy::TitleWasSet(NavigationEntry* entry) {
@@ -260,6 +263,28 @@ void WebContentsObserverProxy::SetToBaseURLForDataURLIfNeeded(
     // loadDataWithBaseUrl.
     *url = base_url_of_last_started_data_url_.possibly_invalid_spec();
   }
+}
+
+void WebContentsObserverProxy::ViewportFitChanged(
+    blink::mojom::ViewportFit value) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_viewportFitChanged(
+      env, java_observer_, as_jint(static_cast<int>(value)));
+}
+
+void WebContentsObserverProxy::DidReloadLoFiImages() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_didReloadLoFiImages(env, java_observer_);
+}
+
+void WebContentsObserverProxy::OnWebContentsFocused(RenderWidgetHost*) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_onWebContentsFocused(env, java_observer_);
+}
+
+void WebContentsObserverProxy::OnWebContentsLostFocus(RenderWidgetHost*) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WebContentsObserverProxy_onWebContentsLostFocus(env, java_observer_);
 }
 
 }  // namespace content

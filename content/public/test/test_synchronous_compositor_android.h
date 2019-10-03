@@ -23,11 +23,6 @@ class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
 
   void SetClient(SynchronousCompositorClient* client);
 
-  // SynchronousCompositor overrides.
-  SynchronousCompositor::Frame DemandDrawHw(
-      const gfx::Size& viewport_size,
-      const gfx::Rect& viewport_rect_for_tile_priority,
-      const gfx::Transform& transform_for_tile_priority) override;
   scoped_refptr<FrameFuture> DemandDrawHwAsync(
       const gfx::Size& viewport_size,
       const gfx::Rect& viewport_rect_for_tile_priority,
@@ -35,8 +30,11 @@ class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
   void ReturnResources(
       uint32_t layer_tree_frame_sink_id,
       const std::vector<viz::ReturnedResource>& resources) override;
+  void DidPresentCompositorFrames(viz::FrameTimingDetailsMap timing_details,
+                                  uint32_t frame_token) override {}
   bool DemandDrawSw(SkCanvas* canvas) override;
   void SetMemoryPolicy(size_t bytes_limit) override {}
+  void DidBecomeActive() override {}
   void DidChangeRootLayerScrollOffset(
       const gfx::ScrollOffset& root_offset) override {}
   void SynchronouslyZoomBy(float zoom_delta,
@@ -61,7 +59,7 @@ class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
   SynchronousCompositorClient* client_;
   const int process_id_;
   const int routing_id_;
-  SynchronousCompositor::Frame hardware_frame_;
+  std::unique_ptr<Frame> hardware_frame_;
   FrameAckArray frame_ack_array_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSynchronousCompositor);

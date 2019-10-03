@@ -33,7 +33,7 @@ channel (assuming the Browser channel properties are appropriate). A new channel
 can always be split out in future if deemed necessary.
 
 > **Note**: Any time a new type of notification is added, a new
-`SystemNotificationType` should be added to `histograms.xml` and
+`SystemNotificationType` should be added to `enums.xml` and
 `NotificationUmaTracker.onNotificationShown` must be called with this new
  type whenever any notifications are shown, to collect UMA on how often the
  notifications are blocked. *It is not necessary to add a new channel
@@ -63,11 +63,15 @@ For channels that should be created on first launch of the app, some extra steps
 - Increment `CHANNELS_VERSION` in `ChannelDefinitions.java`
 - Update startup channel tests in `ChannelsInitializerTest.java` and `ChannelsUpdaterTest.java`.
 
+Note: An optional 'description' field exists for notification channels.
+While we don't currently have any descriptions for the existing ones, it's encouraged to add them
+for newly created channels, where appropriate. See [the setDescription documentation](https://developer.android.com/reference/android/app/NotificationChannel.html#setDescription(java.lang.String)) for details.
+
 ## Testing
 
 > **Important**: As of October 2017, instrumented channel tests are not run on trybots because
  these tests are restricted to Android O+, and there are no such devices in the waterfall yet (
- [Issue 763951](crbug.com/763951)). So when making changes you *must* check all the channel tests
+ [Issue 763951](https://crbug.com/763951)). So when making changes you *must* check all the channel tests
  pass on an Android O device locally.
 
 

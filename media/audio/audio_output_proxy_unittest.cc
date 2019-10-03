@@ -8,10 +8,10 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "media/audio/audio_manager.h"
@@ -71,17 +71,17 @@ class MockAudioOutputStream : public AudioOutputStream {
             FakeAudioOutputStream::MakeFakeStream(manager, params_)) {
   }
 
-  void Start(AudioSourceCallback* callback) {
+  void Start(AudioSourceCallback* callback) override {
     start_called_ = true;
     fake_output_stream_->Start(callback);
   }
 
-  void Stop() {
+  void Stop() override {
     stop_called_ = true;
     fake_output_stream_->Stop();
   }
 
-  ~MockAudioOutputStream() = default;
+  ~MockAudioOutputStream() override = default;
 
   bool start_called() { return start_called_; }
   bool stop_called() { return stop_called_; }
@@ -90,6 +90,7 @@ class MockAudioOutputStream : public AudioOutputStream {
   MOCK_METHOD1(SetVolume, void(double volume));
   MOCK_METHOD1(GetVolume, void(double* volume));
   MOCK_METHOD0(Close, void());
+  MOCK_METHOD0(Flush, void());
 
  private:
   bool start_called_;
@@ -101,7 +102,7 @@ class MockAudioOutputStream : public AudioOutputStream {
 class MockAudioManager : public AudioManagerBase {
  public:
   MockAudioManager()
-      : AudioManagerBase(base::MakeUnique<TestAudioThread>(),
+      : AudioManagerBase(std::make_unique<TestAudioThread>(),
                          &fake_audio_log_factory_) {}
   ~MockAudioManager() override { Shutdown(); }
 
@@ -172,7 +173,7 @@ class AudioOutputProxyTest : public testing::Test {
     // FakeAudioOutputStream will keep the message loop busy indefinitely; i.e.,
     // RunUntilIdle() will never terminate.
     params_ = AudioParameters(AudioParameters::AUDIO_PCM_LINEAR,
-                              CHANNEL_LAYOUT_STEREO, 8000, 16, 2048);
+                              CHANNEL_LAYOUT_STEREO, 8000, 2048);
     InitDispatcher(base::TimeDelta::FromMilliseconds(kTestCloseDelayMs));
   }
 
@@ -183,7 +184,7 @@ class AudioOutputProxyTest : public testing::Test {
   }
 
   virtual void InitDispatcher(base::TimeDelta close_delay) {
-    dispatcher_impl_ = base::MakeUnique<AudioOutputDispatcherImpl>(
+    dispatcher_impl_ = std::make_unique<AudioOutputDispatcherImpl>(
         &manager(), params_, std::string(), close_delay);
   }
 
@@ -487,7 +488,7 @@ class AudioOutputProxyTest : public testing::Test {
     proxy->Close();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   MockAudioManager manager_;
   std::unique_ptr<AudioOutputDispatcherImpl> dispatcher_impl_;
   MockAudioSourceCallback callback_;
@@ -496,16 +497,13 @@ class AudioOutputProxyTest : public testing::Test {
 
 class AudioOutputResamplerTest : public AudioOutputProxyTest {
  public:
-  void TearDown() override { AudioOutputProxyTest::TearDown(); }
-
   void InitDispatcher(base::TimeDelta close_delay) override {
     // Use a low sample rate and large buffer size when testing otherwise the
     // FakeAudioOutputStream will keep the message loop busy indefinitely; i.e.,
     // RunUntilIdle() will never terminate.
-    resampler_params_ = AudioParameters(
-        AudioParameters::AUDIO_PCM_LOW_LATENCY, CHANNEL_LAYOUT_STEREO,
-        16000, 16, 1024);
-    resampler_ = base::MakeUnique<AudioOutputResampler>(
+    resampler_params_ = AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                                        CHANNEL_LAYOUT_STEREO, 16000, 1024);
+    resampler_ = std::make_unique<AudioOutputResampler>(
         &manager(), params_, resampler_params_, std::string(), close_delay,
         base::BindRepeating(&RegisterDebugRecording));
   }
@@ -513,7 +511,7 @@ class AudioOutputResamplerTest : public AudioOutputProxyTest {
   void OnStart() override {
     // Let Start() run for a bit.
     base::RunLoop run_loop;
-    message_loop_.task_runner()->PostDelayedTask(
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(),
         base::TimeDelta::FromMilliseconds(kStartRunTimeMs));
     run_loop.Run();
@@ -826,7 +824,7 @@ TEST_F(AudioOutputResamplerTest, FallbackRecovery) {
   // Once all proxies have been closed, AudioOutputResampler will start the
   // reinitialization timer and execute it after the close delay elapses.
   base::RunLoop run_loop;
-  message_loop_.task_runner()->PostDelayedTask(
+  scoped_task_environment_.GetMainThreadTaskRunner()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(),
       base::TimeDelta::FromMilliseconds(2 * kTestCloseDelayMs));
   run_loop.Run();

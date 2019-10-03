@@ -47,15 +47,6 @@ const char kDataReductionProxyHttpProxies[] =
 // A test key for data reduction proxy authentication.
 const char kDataReductionProxyKey[] = "spdy-proxy-auth-value";
 
-// The mode for Data Reduction Proxy Lo-Fi. The various modes are always-on,
-// cellular-only, slow connections only and disabled.
-const char kDataReductionProxyLoFi[] = "data-reduction-proxy-lo-fi";
-const char kDataReductionProxyLoFiValueAlwaysOn[] = "always-on";
-const char kDataReductionProxyLoFiValueCellularOnly[] = "cellular-only";
-const char kDataReductionProxyLoFiValueDisabled[] = "disabled";
-const char kDataReductionProxyLoFiValueSlowConnectionsOnly[] =
-    "slow-connections-only";
-
 const char kDataReductionPingbackURL[] = "data-reduction-proxy-pingback-url";
 
 // Sets a secure proxy check URL to test before committing to using the Data
@@ -75,12 +66,6 @@ const char kEnableDataReductionProxy[] = "enable-spdy-proxy-auth";
 const char kEnableDataReductionProxyBypassWarning[] =
     "enable-data-reduction-proxy-bypass-warning";
 
-// Enables lite page from the data reduction proxy. This means a lite page
-// should be requested instead of placeholders whenever Lo-Fi mode is on. Lo-fi
-// must also be enabled via a flag or field trial.
-const char kEnableDataReductionProxyLitePage[] =
-    "enable-data-reduction-proxy-lite-page";
-
 // Enables sending a pageload metrics pingback after every page load.
 const char kEnableDataReductionProxyForcePingback[] =
     "enable-data-reduction-proxy-force-pingback";
@@ -92,6 +77,17 @@ const char kEnableDataReductionProxySavingsPromo[] =
 // Disables fetching of the warmup URL.
 const char kDisableDataReductionProxyWarmupURLFetch[] =
     "disable-data-reduction-proxy-warmup-url-fetch";
+
+// Disables the warmup URL fetcher to callback into DRP to report the result of
+// the warmup fetch.
+const char kDisableDataReductionProxyWarmupURLFetchCallback[] =
+    "disable-data-reduction-proxy-warmup-url-fetch-callback";
+
+// Uses the encoded ClientConfig instead of fetching one from the config server.
+// This value is always used, regardless of error or expiration. The value
+// should be a base64 encoded binary protobuf.
+const char kDataReductionProxyServerClientConfig[] =
+    "data-reduction-proxy-client-config";
 
 }  // namespace switches
 }  // namespace data_reduction_proxy

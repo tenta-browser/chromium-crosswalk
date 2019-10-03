@@ -9,8 +9,8 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/numerics/checked_math.h"
+#include "base/stl_util.h"
 #include "base/sys_byteorder.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/timestamp_constants.h"
@@ -36,7 +36,7 @@ enum {
 };
 
 WebMClusterParser::WebMClusterParser(
-    int64_t timecode_scale,
+    int64_t timecode_scale_ns,
     int audio_track_num,
     base::TimeDelta audio_default_duration,
     int video_track_num,
@@ -47,22 +47,27 @@ WebMClusterParser::WebMClusterParser(
     const std::string& video_encryption_key_id,
     const AudioCodec audio_codec,
     MediaLog* media_log)
-    : timecode_multiplier_(timecode_scale / 1000.0),
+    : timecode_multiplier_(timecode_scale_ns / 1000.0),
       ignored_tracks_(ignored_tracks),
       audio_encryption_key_id_(audio_encryption_key_id),
       video_encryption_key_id_(video_encryption_key_id),
       audio_codec_(audio_codec),
       parser_(kWebMIdCluster, this),
       cluster_start_time_(kNoTimestamp),
-      audio_(audio_track_num, false, audio_default_duration, media_log),
-      video_(video_track_num, true, video_default_duration, media_log),
+      audio_(audio_track_num,
+             TrackType::AUDIO,
+             audio_default_duration,
+             media_log),
+      video_(video_track_num,
+             TrackType::VIDEO,
+             video_default_duration,
+             media_log),
       ready_buffer_upper_bound_(kNoDecodeTimestamp()),
       media_log_(media_log) {
-  for (WebMTracksParser::TextTracks::const_iterator it = text_tracks.begin();
-       it != text_tracks.end();
-       ++it) {
+  for (auto it = text_tracks.begin(); it != text_tracks.end(); ++it) {
     text_track_map_.insert(std::make_pair(
-        it->first, Track(it->first, false, kNoTimestamp, media_log_)));
+        it->first,
+        Track(it->first, TrackType::TEXT, kNoTimestamp, media_log_)));
   }
 }
 
@@ -238,7 +243,7 @@ base::TimeDelta WebMClusterParser::ReadOpusDuration(const uint8_t* data,
 
   int opusConfig = (data[0] & kTocConfigMask) >> 3;
   CHECK_GE(opusConfig, 0);
-  CHECK_LT(opusConfig, static_cast<int>(arraysize(kOpusFrameDurationsMu)));
+  CHECK_LT(opusConfig, static_cast<int>(base::size(kOpusFrameDurationsMu)));
 
   DCHECK_GT(frame_count, 0);
   base::TimeDelta duration = base::TimeDelta::FromMicroseconds(
@@ -417,8 +422,11 @@ bool WebMClusterParser::OnBinary(int id, const uint8_t* data, int size) {
 
       // Read in the big-endian integer.
       discard_padding_ = static_cast<int8_t>(data[0]);
-      for (int i = 1; i < size; ++i)
-        discard_padding_ = (discard_padding_ << 8) | data[i];
+      for (int i = 1; i < size; ++i) {
+        // Multiplying instead of shifting, since the padding may be negative,
+        // and shifting a negative value is undefined.
+        discard_padding_ = (discard_padding_ * 256) | data[i];
+      }
 
       return true;
     }
@@ -606,23 +614,25 @@ bool WebMClusterParser::OnBlock(bool is_simple_block,
     buffer->set_duration(track->default_duration());
   }
 
+  // TODO(wolenetz): Is this correct for negative |discard_padding|? See
+  // https://crbug.com/969195.
   if (discard_padding != 0) {
     buffer->set_discard_padding(std::make_pair(
         base::TimeDelta(),
         base::TimeDelta::FromMicroseconds(discard_padding / 1000)));
   }
 
-  return track->AddBuffer(buffer);
+  return track->AddBuffer(std::move(buffer));
 }
 
 WebMClusterParser::Track::Track(int track_num,
-                                bool is_video,
+                                TrackType track_type,
                                 base::TimeDelta default_duration,
                                 MediaLog* media_log)
     : track_num_(track_num),
-      is_video_(is_video),
+      track_type_(track_type),
       default_duration_(default_duration),
-      estimated_next_frame_duration_(kNoTimestamp),
+      max_frame_duration_(kNoTimestamp),
       media_log_(media_log) {
   DCHECK(default_duration_ == kNoTimestamp ||
          default_duration_ > base::TimeDelta());
@@ -634,7 +644,7 @@ WebMClusterParser::Track::~Track() = default;
 
 DecodeTimestamp WebMClusterParser::Track::GetReadyUpperBound() {
   DCHECK(ready_buffers_.empty());
-  if (last_added_buffer_missing_duration_.get())
+  if (last_added_buffer_missing_duration_)
     return last_added_buffer_missing_duration_->GetDecodeTimestamp();
 
   return DecodeTimestamp::FromPresentationTime(base::TimeDelta::Max());
@@ -661,10 +671,9 @@ void WebMClusterParser::Track::ExtractReadyBuffers(
   // Not all of |buffers_| are ready yet. Move any that are ready to
   // |ready_buffers_|.
   while (true) {
-    const scoped_refptr<StreamParserBuffer>& buffer = buffers_.front();
-    if (buffer->GetDecodeTimestamp() >= before_timestamp)
+    if (buffers_.front()->GetDecodeTimestamp() >= before_timestamp)
       break;
-    ready_buffers_.push_back(buffer);
+    ready_buffers_.emplace_back(std::move(buffers_.front()));
     buffers_.pop_front();
     DCHECK(!buffers_.empty());
   }
@@ -675,14 +684,14 @@ void WebMClusterParser::Track::ExtractReadyBuffers(
 }
 
 bool WebMClusterParser::Track::AddBuffer(
-    const scoped_refptr<StreamParserBuffer>& buffer) {
+    scoped_refptr<StreamParserBuffer> buffer) {
   DVLOG(2) << "AddBuffer() : " << track_num_
            << " ts " << buffer->timestamp().InSecondsF()
            << " dur " << buffer->duration().InSecondsF()
            << " kf " << buffer->is_key_frame()
            << " size " << buffer->data_size();
 
-  if (last_added_buffer_missing_duration_.get()) {
+  if (last_added_buffer_missing_duration_) {
     base::TimeDelta derived_duration =
         buffer->timestamp() - last_added_buffer_missing_duration_->timestamp();
     last_added_buffer_missing_duration_->set_duration(derived_duration);
@@ -694,44 +703,34 @@ bool WebMClusterParser::Track::AddBuffer(
              << last_added_buffer_missing_duration_->duration().InSecondsF()
              << " kf " << last_added_buffer_missing_duration_->is_key_frame()
              << " size " << last_added_buffer_missing_duration_->data_size();
-    scoped_refptr<StreamParserBuffer> updated_buffer =
-        last_added_buffer_missing_duration_;
-    last_added_buffer_missing_duration_ = NULL;
-    if (!QueueBuffer(updated_buffer))
+    if (!QueueBuffer(std::move(last_added_buffer_missing_duration_)))
       return false;
   }
 
   if (buffer->duration() == kNoTimestamp) {
-    last_added_buffer_missing_duration_ = buffer;
+    last_added_buffer_missing_duration_ = std::move(buffer);
     DVLOG(2) << "AddBuffer() : holding back buffer that is missing duration";
     return true;
   }
 
-  return QueueBuffer(buffer);
+  return QueueBuffer(std::move(buffer));
 }
 
 void WebMClusterParser::Track::ApplyDurationEstimateIfNeeded() {
-  if (!last_added_buffer_missing_duration_.get())
+  if (!last_added_buffer_missing_duration_)
     return;
 
-  base::TimeDelta estimated_duration = GetDurationEstimate();
-  last_added_buffer_missing_duration_->set_duration(estimated_duration);
-
-  if (is_video_) {
-    // Exposing estimation so splicing/overlap frame processing can make
-    // informed decisions downstream.
-    // TODO(chcunningham): Set this for audio as well in later change where
-    // audio is switched to max estimation and splicing is disabled.
-    last_added_buffer_missing_duration_->set_is_duration_estimated(true);
-  }
+  last_added_buffer_missing_duration_->set_duration(GetDurationEstimate());
+  last_added_buffer_missing_duration_->set_is_duration_estimated(true);
 
   LIMITED_MEDIA_LOG(INFO, media_log_, num_duration_estimates_,
                     kMaxDurationEstimateLogs)
-      << "Estimating WebM block duration to be "
-      << estimated_duration.InMilliseconds()
-      << "ms for the last (Simple)Block in the Cluster for this Track. Use "
-         "BlockGroups with BlockDurations at the end of each Track in a "
-         "Cluster to avoid estimation.";
+      << "Estimating WebM block duration="
+      << last_added_buffer_missing_duration_->duration().InMilliseconds()
+      << "ms for the last (Simple)Block in the Cluster for this Track (PTS="
+      << last_added_buffer_missing_duration_->timestamp().InMilliseconds()
+      << "ms). Use BlockGroups with BlockDurations at the end of each Cluster "
+      << "to avoid estimation.";
 
   DVLOG(2) << __func__ << " new dur : ts "
            << last_added_buffer_missing_duration_->timestamp().InSecondsF()
@@ -742,12 +741,11 @@ void WebMClusterParser::Track::ApplyDurationEstimateIfNeeded() {
 
   // Don't use the applied duration as a future estimation (don't use
   // QueueBuffer() here.)
-  buffers_.push_back(last_added_buffer_missing_duration_);
-  last_added_buffer_missing_duration_ = NULL;
+  buffers_.emplace_back(std::move(last_added_buffer_missing_duration_));
 }
 
 void WebMClusterParser::Track::ClearReadyBuffers() {
-  // Note that |buffers_| are kept and |estimated_next_frame_duration_| is not
+  // Note that |buffers_| are kept and |{min|max}_frame_duration_| is not
   // reset here.
   ready_buffers_.clear();
 }
@@ -759,8 +757,8 @@ void WebMClusterParser::Track::Reset() {
 }
 
 bool WebMClusterParser::Track::QueueBuffer(
-    const scoped_refptr<StreamParserBuffer>& buffer) {
-  DCHECK(!last_added_buffer_missing_duration_.get());
+    scoped_refptr<StreamParserBuffer> buffer) {
+  DCHECK(!last_added_buffer_missing_duration_);
 
   // WebMClusterParser::OnBlock() gives MEDIA_LOG and parse error on decreasing
   // block timecode detection within a cluster. Therefore, we should not see
@@ -776,54 +774,44 @@ bool WebMClusterParser::Track::QueueBuffer(
     return false;
   }
 
-  // The estimated frame duration is the minimum (for audio) or the maximum
-  // (for video) non-zero duration since the last initialization segment. The
-  // minimum is used for audio to ensure frame durations aren't overestimated,
-  // triggering unnecessary frame splicing. For video, splicing does not apply,
-  // so maximum is used and overlap is simply resolved by showing the
-  // later of the overlapping frames at its given PTS, effectively trimming down
-  // the over-estimated duration of the previous frame.
-  // TODO(chcunningham): Use max for audio and disable splicing whenever
-  // estimated buffers are encountered.
   if (duration > base::TimeDelta()) {
-    base::TimeDelta orig_duration_estimate = estimated_next_frame_duration_;
-    if (estimated_next_frame_duration_ == kNoTimestamp) {
-      estimated_next_frame_duration_ = duration;
-    } else if (is_video_) {
-      estimated_next_frame_duration_ =
-          std::max(duration, estimated_next_frame_duration_);
+    base::TimeDelta orig_max_duration = max_frame_duration_;
+
+    if (max_frame_duration_ == kNoTimestamp) {
+      max_frame_duration_ = duration;
     } else {
-      estimated_next_frame_duration_ =
-          std::min(duration, estimated_next_frame_duration_);
+      max_frame_duration_ = std::max(max_frame_duration_, duration);
     }
 
-    if (orig_duration_estimate != estimated_next_frame_duration_) {
-      DVLOG(3) << "Updated duration estimate:"
-               << orig_duration_estimate
-               << " -> "
-               << estimated_next_frame_duration_
-               << " at timestamp: "
+    if (max_frame_duration_ != orig_max_duration) {
+      DVLOG(3) << "Updated max duration estimate:" << orig_max_duration
+               << " -> " << max_frame_duration_ << " at timestamp: "
                << buffer->GetDecodeTimestamp().InSecondsF();
     }
   }
 
-  buffers_.push_back(buffer);
+  buffers_.push_back(std::move(buffer));
   return true;
 }
 
 base::TimeDelta WebMClusterParser::Track::GetDurationEstimate() {
-  base::TimeDelta duration = estimated_next_frame_duration_;
-  if (duration != kNoTimestamp) {
-    DVLOG(3) << __func__ << " : using estimated duration";
-  } else {
+  base::TimeDelta duration;
+
+  if (max_frame_duration_ == kNoTimestamp) {
     DVLOG(3) << __func__ << " : using hardcoded default duration";
-    if (is_video_) {
-      duration = base::TimeDelta::FromMilliseconds(
-          kDefaultVideoBufferDurationInMs);
+    if (track_type_ == TrackType::AUDIO) {
+      duration =
+          base::TimeDelta::FromMilliseconds(kDefaultAudioBufferDurationInMs);
     } else {
-      duration = base::TimeDelta::FromMilliseconds(
-          kDefaultAudioBufferDurationInMs);
+      // Text and video tracks can both use the larger video default duration.
+      duration =
+          base::TimeDelta::FromMilliseconds(kDefaultVideoBufferDurationInMs);
     }
+  } else {
+    // Use max duration to minimize the risk of introducing gaps in the buffered
+    // range. For audio, this is still safe because overlap trimming is not
+    // applied to buffers where is_duration_estimated() = true.
+    duration = max_frame_duration_;
   }
 
   DCHECK(duration > base::TimeDelta());
@@ -833,18 +821,14 @@ base::TimeDelta WebMClusterParser::Track::GetDurationEstimate() {
 
 void WebMClusterParser::ClearTextTrackReadyBuffers() {
   text_buffers_map_.clear();
-  for (TextTrackMap::iterator it = text_track_map_.begin();
-       it != text_track_map_.end();
-       ++it) {
+  for (auto it = text_track_map_.begin(); it != text_track_map_.end(); ++it) {
     it->second.ClearReadyBuffers();
   }
 }
 
 void WebMClusterParser::ResetTextTracks() {
   ClearTextTrackReadyBuffers();
-  for (TextTrackMap::iterator it = text_track_map_.begin();
-       it != text_track_map_.end();
-       ++it) {
+  for (auto it = text_track_map_.begin(); it != text_track_map_.end(); ++it) {
     it->second.Reset();
   }
 }
@@ -873,8 +857,7 @@ void WebMClusterParser::UpdateReadyBuffers() {
   // Prepare each track's ready buffers for retrieval.
   audio_.ExtractReadyBuffers(ready_buffer_upper_bound_);
   video_.ExtractReadyBuffers(ready_buffer_upper_bound_);
-  for (TextTrackMap::iterator itr = text_track_map_.begin();
-       itr != text_track_map_.end();
+  for (auto itr = text_track_map_.begin(); itr != text_track_map_.end();
        ++itr) {
     itr->second.ExtractReadyBuffers(ready_buffer_upper_bound_);
   }

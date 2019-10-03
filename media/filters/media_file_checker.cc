@@ -23,12 +23,8 @@ namespace media {
 
 static const int64_t kMaxCheckTimeInSeconds = 5;
 
-static void OnError(bool* called) {
+static void OnMediaFileCheckerError(bool* called) {
   *called = false;
-}
-
-static bool DoNothingWithFrame(AVFrame* frame) {
-  return true;
 }
 
 struct Decoder {
@@ -41,9 +37,13 @@ MediaFileChecker::MediaFileChecker(base::File file) : file_(std::move(file)) {}
 MediaFileChecker::~MediaFileChecker() = default;
 
 bool MediaFileChecker::Start(base::TimeDelta check_time) {
-  media::FileDataSource source(std::move(file_));
+  media::FileDataSource source;
+  if (!source.Initialize(std::move(file_)))
+    return false;
+
   bool read_ok = true;
-  media::BlockingUrlProtocol protocol(&source, base::Bind(&OnError, &read_ok));
+  media::BlockingUrlProtocol protocol(
+      &source, base::Bind(&OnMediaFileCheckerError, &read_ok));
   media::FFmpegGlue glue(&protocol);
   AVFormatContext* format_context = glue.format_context();
 
@@ -79,7 +79,7 @@ bool MediaFileChecker::Start(base::TimeDelta check_time) {
   AVPacket packet;
   int result = 0;
 
-  auto do_nothing_cb = base::BindRepeating(&DoNothingWithFrame);
+  auto do_nothing_cb = base::BindRepeating([](AVFrame*) { return true; });
   const base::TimeTicks deadline =
       base::TimeTicks::Now() +
       std::min(check_time,

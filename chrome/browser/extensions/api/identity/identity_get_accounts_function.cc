@@ -4,15 +4,18 @@
 
 #include "chrome/browser/extensions/api/identity/identity_get_accounts_function.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "chrome/browser/extensions/api/identity/identity_api.h"
 #include "chrome/browser/extensions/api/identity/identity_constants.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/extensions/api/identity.h"
-#include "components/signin/core/browser/profile_management_switches.h"
-#include "content/public/common/service_manager_connection.h"
-#include "services/identity/public/interfaces/account.mojom.h"
-#include "services/identity/public/interfaces/constants.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "content/public/browser/browser_context.h"
 
 namespace extensions {
 
@@ -23,43 +26,48 @@ IdentityGetAccountsFunction::~IdentityGetAccountsFunction() {
 }
 
 ExtensionFunction::ResponseAction IdentityGetAccountsFunction::Run() {
-  if (GetProfile()->IsOffTheRecord()) {
+  if (browser_context()->IsOffTheRecord()) {
     return RespondNow(Error(identity_constants::kOffTheRecord));
   }
 
-  content::BrowserContext::GetConnectorFor(GetProfile())
-      ->BindInterface(identity::mojom::kServiceName,
-                      mojo::MakeRequest(&identity_manager_));
-
-  identity_manager_->GetAccounts(
-      base::Bind(&IdentityGetAccountsFunction::OnGotAccounts, this));
-
-  return RespondLater();
-}
-
-void IdentityGetAccountsFunction::OnGotAccounts(
-    std::vector<identity::mojom::AccountPtr> accounts) {
+  std::vector<CoreAccountInfo> accounts =
+      IdentityManagerFactory::GetForProfile(
+          Profile::FromBrowserContext(browser_context()))
+          ->GetAccountsWithRefreshTokens();
   std::unique_ptr<base::ListValue> infos(new base::ListValue());
 
-  // If there is no primary account or the primary account has no refresh token
-  // available, short-circuit out.
-  if (accounts.empty() || !accounts[0]->state.is_primary_account ||
-      !accounts[0]->state.has_refresh_token) {
-    Respond(OneArgument(std::move(infos)));
-    return;
+  if (accounts.empty()) {
+    return RespondNow(OneArgument(std::move(infos)));
   }
 
-  for (const auto& account : accounts) {
-    api::identity::AccountInfo account_info;
-    account_info.id = account->info.gaia;
+  Profile* profile = Profile::FromBrowserContext(browser_context());
+  bool primary_account_only = IdentityAPI::GetFactoryInstance()
+                                  ->Get(profile)
+                                  ->AreExtensionsRestrictedToPrimaryAccount();
+
+  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+  api::identity::AccountInfo account_info;
+
+  // Ensure that the primary account is inserted first; even though this
+  // semantics isn't documented, the implementation has always ensured it and it
+  // shouldn't be changed without determining that it is safe to do so.
+  if (identity_manager->HasPrimaryAccountWithRefreshToken()) {
+    account_info.id = identity_manager->GetPrimaryAccountInfo().gaia;
     infos->Append(account_info.ToValue());
-
-    // Stop after the primary account if extensions are not multi-account.
-    if (!signin::IsExtensionsMultiAccount())
-      break;
   }
 
-  Respond(OneArgument(std::move(infos)));
+  // If secondary accounts are supported, add all the secondary accounts as
+  // well.
+  if (!primary_account_only) {
+    for (const auto& account : accounts) {
+      if (account.account_id == identity_manager->GetPrimaryAccountId())
+        continue;
+      account_info.id = account.gaia;
+      infos->Append(account_info.ToValue());
+    }
+  }
+
+  return RespondNow(OneArgument(std::move(infos)));
 }
 
 }  // namespace extensions

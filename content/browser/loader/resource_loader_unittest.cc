@@ -11,29 +11,28 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/containers/circular_deque.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/statistics_recorder.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/test_resource_handler.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/login_delegate.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_paths.h"
-#include "content/public/common/resource_response.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/test/test_content_browser_client.h"
 #include "content/test/test_web_contents.h"
-#include "ipc/ipc_message.h"
 #include "net/base/chunked_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -47,6 +46,7 @@
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_private_key.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/url_request/url_request_failed_job.h"
@@ -58,10 +58,15 @@
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/resource_response.h"
+#include "services/network/throttling/scoped_throttling_token.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
 namespace {
+
+constexpr char kBodyReadFromNetBeforePausedHistogram[] =
+    "Network.URLLoader.BodyReadFromNetBeforePaused";
 
 // Stub client certificate store that returns a preset list of certificates for
 // each request and records the arguments of the most recent request for later
@@ -91,11 +96,12 @@ class ClientCertStoreStub : public net::ClientCertStore {
 
   // net::ClientCertStore:
   void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
-                      const ClientCertListCallback& callback) override {
+                      ClientCertListCallback callback) override {
     *requested_authorities_ = cert_request_info.cert_authorities;
     ++(*request_count_);
 
-    callback.Run(net::FakeClientCertIdentityListFromCertificateList(response_));
+    std::move(callback).Run(
+        net::FakeClientCertIdentityListFromCertificateList(response_));
   }
 
  private:
@@ -117,15 +123,14 @@ class LoaderDestroyingCertStore : public net::ClientCertStore {
         on_loader_deleted_callback_(on_loader_deleted_callback) {}
 
   // net::ClientCertStore:
-  void GetClientCerts(
-      const net::SSLCertRequestInfo& cert_request_info,
-      const ClientCertListCallback& cert_selected_callback) override {
+  void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
+                      ClientCertListCallback cert_selected_callback) override {
     // Don't destroy |loader_| while it's on the stack.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&LoaderDestroyingCertStore::DoCallback,
-                       base::Unretained(loader_), cert_selected_callback,
-                       on_loader_deleted_callback_));
+        FROM_HERE, base::BindOnce(&LoaderDestroyingCertStore::DoCallback,
+                                  base::Unretained(loader_),
+                                  std::move(cert_selected_callback),
+                                  on_loader_deleted_callback_));
   }
 
  private:
@@ -133,10 +138,10 @@ class LoaderDestroyingCertStore : public net::ClientCertStore {
   // LoaderDestroyingCertStore (ClientCertStores are actually handles, and not
   // global cert stores).
   static void DoCallback(std::unique_ptr<ResourceLoader>* loader,
-                         const ClientCertListCallback& cert_selected_callback,
+                         ClientCertListCallback cert_selected_callback,
                          const base::Closure& on_loader_deleted_callback) {
     loader->reset();
-    cert_selected_callback.Run(net::ClientCertIdentityList());
+    std::move(cert_selected_callback).Run(net::ClientCertIdentityList());
     on_loader_deleted_callback.Run();
   }
 
@@ -151,8 +156,7 @@ class MockClientCertURLRequestJob : public net::URLRequestTestJob {
  public:
   MockClientCertURLRequestJob(net::URLRequest* request,
                               net::NetworkDelegate* network_delegate)
-      : net::URLRequestTestJob(request, network_delegate),
-        weak_factory_(this) {}
+      : net::URLRequestTestJob(request, network_delegate) {}
 
   static std::vector<std::string> test_authorities() {
     return std::vector<std::string>(1, "dummy");
@@ -160,8 +164,7 @@ class MockClientCertURLRequestJob : public net::URLRequestTestJob {
 
   // net::URLRequestTestJob:
   void Start() override {
-    scoped_refptr<net::SSLCertRequestInfo> cert_request_info(
-        new net::SSLCertRequestInfo);
+    auto cert_request_info = base::MakeRefCounted<net::SSLCertRequestInfo>();
     cert_request_info->cert_authorities = test_authorities();
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
@@ -179,7 +182,7 @@ class MockClientCertURLRequestJob : public net::URLRequestTestJob {
  private:
   ~MockClientCertURLRequestJob() override {}
 
-  base::WeakPtrFactory<MockClientCertURLRequestJob> weak_factory_;
+  base::WeakPtrFactory<MockClientCertURLRequestJob> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MockClientCertURLRequestJob);
 };
@@ -198,7 +201,6 @@ class MockClientCertJobProtocolHandler
 // Set up dummy values to use in test HTTPS requests.
 
 const net::CertStatus kTestCertError = net::CERT_STATUS_DATE_INVALID;
-const int kTestSecurityBits = 256;
 // SSL3 TLS_DHE_RSA_WITH_AES_256_CBC_SHA
 const int kTestConnectionStatus = 0x300039;
 
@@ -223,7 +225,6 @@ class MockHTTPSURLRequestJob : public net::URLRequestTestJob {
     info->ssl_info.cert =
         net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem");
     info->ssl_info.cert_status = kTestCertError;
-    info->ssl_info.security_bits = kTestSecurityBits;
     info->ssl_info.connection_status = kTestConnectionStatus;
   }
 
@@ -249,7 +250,7 @@ class MockHTTPSJobURLRequestInterceptor : public net::URLRequestInterceptor {
       net::URLRequest* request,
       net::NetworkDelegate* network_delegate) const override {
     std::string headers =
-        redirect_ ? std::string(kRedirectHeaders, arraysize(kRedirectHeaders))
+        redirect_ ? std::string(kRedirectHeaders, base::size(kRedirectHeaders))
                   : net::URLRequestTestJob::test_headers();
     return new MockHTTPSURLRequestJob(request, network_delegate, headers,
                                       "dummy response", true);
@@ -273,7 +274,7 @@ class SelectCertificateBrowserClient : public TestContentBrowserClient {
     base::RunLoop().RunUntilIdle();
   }
 
-  void SelectClientCertificate(
+  base::OnceClosure SelectClientCertificate(
       WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
@@ -284,6 +285,16 @@ class SelectCertificateBrowserClient : public TestContentBrowserClient {
     passed_identities_ = std::move(client_certs);
     delegate_ = std::move(delegate);
     select_certificate_run_loop_.Quit();
+    return base::OnceClosure();
+  }
+
+  std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
+      ResourceContext* resource_context) override {
+    return std::move(dummy_cert_store_);
+  }
+
+  void SetClientCertStore(std::unique_ptr<net::ClientCertStore> store) {
+    dummy_cert_store_ = std::move(store);
   }
 
   int call_count() { return call_count_; }
@@ -303,6 +314,7 @@ class SelectCertificateBrowserClient : public TestContentBrowserClient {
   net::ClientCertIdentityList passed_identities_;
   int call_count_;
   std::unique_ptr<ClientCertificateDelegate> delegate_;
+  std::unique_ptr<net::ClientCertStore> dummy_cert_store_;
 
   base::RunLoop select_certificate_run_loop_;
 
@@ -323,16 +335,17 @@ class NonChunkedUploadDataStream : public net::UploadDataStream {
  private:
   int InitInternal(const net::NetLogWithSource& net_log) override {
     SetSize(size_);
-    stream_.Init(base::Bind(&NonChunkedUploadDataStream::OnInitCompleted,
-                            base::Unretained(this)),
+    stream_.Init(base::BindOnce(&NonChunkedUploadDataStream::OnInitCompleted,
+                                base::Unretained(this)),
                  net_log);
     return net::OK;
   }
 
   int ReadInternal(net::IOBuffer* buf, int buf_len) override {
-    return stream_.Read(buf, buf_len,
-                        base::Bind(&NonChunkedUploadDataStream::OnReadCompleted,
-                                   base::Unretained(this)));
+    return stream_.Read(
+        buf, buf_len,
+        base::BindOnce(&NonChunkedUploadDataStream::OnReadCompleted,
+                       base::Unretained(this)));
   }
 
   void ResetInternal() override { stream_.Reset(); }
@@ -343,6 +356,26 @@ class NonChunkedUploadDataStream : public net::UploadDataStream {
   DISALLOW_COPY_AND_ASSIGN(NonChunkedUploadDataStream);
 };
 
+// Returns whether monitoring was successfully set up. If yes,
+// StopMonitorBodyReadFromNetBeforePausedHistogram() needs to be called later to
+// stop monitoring.
+//
+// |*output_sample| needs to stay valid until monitoring is stopped.
+WARN_UNUSED_RESULT bool StartMonitorBodyReadFromNetBeforePausedHistogram(
+    base::HistogramBase::Sample* output_sample) {
+  return base::StatisticsRecorder::SetCallback(
+      kBodyReadFromNetBeforePausedHistogram,
+      base::BindRepeating(
+          [](base::HistogramBase::Sample* output,
+             base::HistogramBase::Sample sample) { *output = sample; },
+          output_sample));
+}
+
+void StopMonitorBodyReadFromNetBeforePausedHistogram() {
+  base::StatisticsRecorder::ClearCallback(
+      kBodyReadFromNetBeforePausedHistogram);
+}
+
 }  // namespace
 
 class ResourceLoaderTest : public testing::Test,
@@ -351,7 +384,6 @@ class ResourceLoaderTest : public testing::Test,
   ResourceLoaderTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
         test_url_request_context_(true),
-        resource_context_(&test_url_request_context_),
         raw_ptr_resource_handler_(nullptr),
         raw_ptr_to_request_(nullptr) {
     test_url_request_context_.set_job_factory(&job_factory_);
@@ -402,31 +434,31 @@ class ResourceLoaderTest : public testing::Test,
 
     // A request marked as a main frame request must also belong to a main
     // frame.
-    ASSERT_TRUE((resource_type != RESOURCE_TYPE_MAIN_FRAME) ||
+    ASSERT_TRUE((resource_type != ResourceType::kMainFrame) ||
                 belongs_to_main_frame);
 
     RenderFrameHost* rfh = web_contents_->GetMainFrame();
     ResourceRequestInfo::AllocateForTesting(
-        request.get(), resource_type, &resource_context_,
+        request.get(), resource_type, nullptr /* resource_context */,
         rfh->GetProcess()->GetID(), rfh->GetRenderViewHost()->GetRoutingID(),
-        rfh->GetRoutingID(), belongs_to_main_frame, true /* allow_download */,
-        false /* is_async */, PREVIEWS_OFF /* previews_state */,
-        nullptr /* navigation_ui_data */);
+        rfh->GetRoutingID(), belongs_to_main_frame,
+        ResourceInterceptPolicy::kAllowAll, false /* is_async */,
+        PREVIEWS_OFF /* previews_state */, nullptr /* navigation_ui_data */);
     std::unique_ptr<TestResourceHandler> resource_handler(
         new TestResourceHandler(nullptr, nullptr));
     raw_ptr_resource_handler_ = resource_handler.get();
     loader_.reset(new ResourceLoader(
         std::move(request),
         WrapResourceHandler(std::move(resource_handler), raw_ptr_to_request_),
-        this));
+        this, nullptr /* resource_context */, nullptr /* throttling_token */));
   }
 
   void SetUpResourceLoaderForUrl(const GURL& test_url) {
     std::unique_ptr<net::URLRequest> request(
-        resource_context_.GetRequestContext()->CreateRequest(
+        test_url_request_context_.CreateRequest(
             test_url, net::DEFAULT_PRIORITY, nullptr /* delegate */,
             TRAFFIC_ANNOTATION_FOR_TESTS));
-    SetUpResourceLoader(std::move(request), RESOURCE_TYPE_MAIN_FRAME, true);
+    SetUpResourceLoader(std::move(request), ResourceType::kMainFrame, true);
   }
 
   void SetUp() override {
@@ -436,8 +468,8 @@ class ResourceLoaderTest : public testing::Test,
     browser_context_.reset(new TestBrowserContext());
     scoped_refptr<SiteInstance> site_instance =
         SiteInstance::Create(browser_context_.get());
-    web_contents_.reset(
-        TestWebContents::Create(browser_context_.get(), site_instance.get()));
+    web_contents_ =
+        TestWebContents::Create(browser_context_.get(), site_instance.get());
     SetUpResourceLoaderForUrl(test_redirect_url());
   }
 
@@ -453,14 +485,10 @@ class ResourceLoaderTest : public testing::Test,
     base::RunLoop().RunUntilIdle();
   }
 
-  void SetClientCertStore(std::unique_ptr<net::ClientCertStore> store) {
-    dummy_cert_store_ = std::move(store);
-  }
-
   // ResourceLoaderDelegate:
-  ResourceDispatcherHostLoginDelegate* CreateLoginDelegate(
+  std::unique_ptr<LoginDelegate> CreateLoginDelegate(
       ResourceLoader* loader,
-      net::AuthChallengeInfo* auth_info) override {
+      const net::AuthChallengeInfo& auth_info) override {
     return nullptr;
   }
   bool HandleExternalProtocol(ResourceLoader* loader,
@@ -487,7 +515,7 @@ class ResourceLoaderTest : public testing::Test,
   }
   void DidReceiveRedirect(ResourceLoader* loader,
                           const GURL& new_url,
-                          ResourceResponse* response) override {
+                          network::ResourceResponse* response) override {
     EXPECT_EQ(loader, loader_.get());
     EXPECT_EQ(0, did_finish_loading_);
     EXPECT_EQ(0, did_receive_response_);
@@ -495,7 +523,7 @@ class ResourceLoaderTest : public testing::Test,
     ++did_received_redirect_;
   }
   void DidReceiveResponse(ResourceLoader* loader,
-                          ResourceResponse* response) override {
+                          network::ResourceResponse* response) override {
     EXPECT_EQ(loader, loader_.get());
     EXPECT_EQ(0, did_finish_loading_);
     EXPECT_EQ(0, did_receive_response_);
@@ -511,10 +539,6 @@ class ResourceLoaderTest : public testing::Test,
     EXPECT_EQ(0, raw_ptr_resource_handler_->call_depth());
 
     ++did_finish_loading_;
-  }
-  std::unique_ptr<net::ClientCertStore> CreateClientCertStore(
-      ResourceLoader* loader) override {
-    return std::move(dummy_cert_store_);
   }
 
   TestBrowserThreadBundle thread_bundle_;
@@ -535,10 +559,8 @@ class ResourceLoaderTest : public testing::Test,
   net::URLRequestJobFactoryImpl job_factory_;
   net::TestNetworkQualityEstimator network_quality_estimator_;
   net::TestURLRequestContext test_url_request_context_;
-  MockResourceContext resource_context_;
   std::unique_ptr<TestBrowserContext> browser_context_;
   std::unique_ptr<TestWebContents> web_contents_;
-  std::unique_ptr<net::ClientCertStore> dummy_cert_store_;
 
   // The ResourceLoader owns the URLRequest and the ResourceHandler.
   TestResourceHandler* raw_ptr_resource_handler_;
@@ -616,10 +638,10 @@ TEST_F(ClientCertResourceLoaderTest, WithStoreLookup) {
   net::CertificateList dummy_certs(1, test_cert);
   std::unique_ptr<ClientCertStoreStub> test_store(new ClientCertStoreStub(
       dummy_certs, &store_request_count, &store_requested_authorities));
-  SetClientCertStore(std::move(test_store));
 
   // Plug in test content browser client.
   SelectCertificateBrowserClient test_client;
+  test_client.SetClientCertStore(std::move(test_store));
   ContentBrowserClient* old_client = SetBrowserClientForTesting(&test_client);
 
   // Start the request and wait for it to pause.
@@ -727,7 +749,11 @@ TEST_F(ClientCertResourceLoaderTest, StoreAsyncCancel) {
   LoaderDestroyingCertStore* test_store =
       new LoaderDestroyingCertStore(&loader_,
                                     loader_destroyed_run_loop.QuitClosure());
-  SetClientCertStore(base::WrapUnique(test_store));
+
+  // Plug in test content browser client.
+  SelectCertificateBrowserClient test_client;
+  test_client.SetClientCertStore(base::WrapUnique(test_store));
+  ContentBrowserClient* old_client = SetBrowserClientForTesting(&test_client);
 
   loader_->StartRequest();
   loader_destroyed_run_loop.Run();
@@ -735,15 +761,18 @@ TEST_F(ClientCertResourceLoaderTest, StoreAsyncCancel) {
 
   // Pump the event loop to ensure nothing asynchronous crashes either.
   base::RunLoop().RunUntilIdle();
+
+  // Restore the original content browser client.
+  SetBrowserClientForTesting(old_client);
 }
 
-// Tests that a RESOURCE_TYPE_PREFETCH request sets the LOAD_PREFETCH flag.
+// Tests that a ResourceType::kPrefetch request sets the LOAD_PREFETCH flag.
 TEST_F(ResourceLoaderTest, PrefetchFlag) {
   std::unique_ptr<net::URLRequest> request(
-      resource_context_.GetRequestContext()->CreateRequest(
+      test_url_request_context_.CreateRequest(
           test_async_url(), net::DEFAULT_PRIORITY, nullptr /* delegate */,
           TRAFFIC_ANNOTATION_FOR_TESTS));
-  SetUpResourceLoader(std::move(request), RESOURCE_TYPE_PREFETCH, true);
+  SetUpResourceLoader(std::move(request), ResourceType::kPrefetch, true);
 
   loader_->StartRequest();
   raw_ptr_resource_handler_->WaitUntilResponseComplete();
@@ -1544,7 +1573,7 @@ class EffectiveConnectionTypeResourceLoaderTest : public ResourceLoaderTest {
 
     // Start the request and wait for it to finish.
     std::unique_ptr<net::URLRequest> request(
-        resource_context_.GetRequestContext()->CreateRequest(
+        test_url_request_context_.CreateRequest(
             test_redirect_url(), net::DEFAULT_PRIORITY, nullptr /* delegate */,
             TRAFFIC_ANNOTATION_FOR_TESTS));
     SetUpResourceLoader(std::move(request), resource_type,
@@ -1563,14 +1592,14 @@ class EffectiveConnectionTypeResourceLoaderTest : public ResourceLoaderTest {
 
 // Tests that the effective connection type is set on main frame requests.
 TEST_F(EffectiveConnectionTypeResourceLoaderTest, Slow2G) {
-  VerifyEffectiveConnectionType(RESOURCE_TYPE_MAIN_FRAME, true,
+  VerifyEffectiveConnectionType(ResourceType::kMainFrame, true,
                                 net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G,
                                 net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G);
 }
 
 // Tests that the effective connection type is set on main frame requests.
 TEST_F(EffectiveConnectionTypeResourceLoaderTest, 3G) {
-  VerifyEffectiveConnectionType(RESOURCE_TYPE_MAIN_FRAME, true,
+  VerifyEffectiveConnectionType(ResourceType::kMainFrame, true,
                                 net::EFFECTIVE_CONNECTION_TYPE_3G,
                                 net::EFFECTIVE_CONNECTION_TYPE_3G);
 }
@@ -1578,7 +1607,7 @@ TEST_F(EffectiveConnectionTypeResourceLoaderTest, 3G) {
 // Tests that the effective connection type is not set on requests that belong
 // to main frame.
 TEST_F(EffectiveConnectionTypeResourceLoaderTest, BelongsToMainFrame) {
-  VerifyEffectiveConnectionType(RESOURCE_TYPE_OBJECT, true,
+  VerifyEffectiveConnectionType(ResourceType::kObject, true,
                                 net::EFFECTIVE_CONNECTION_TYPE_3G,
                                 net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN);
 }
@@ -1586,9 +1615,194 @@ TEST_F(EffectiveConnectionTypeResourceLoaderTest, BelongsToMainFrame) {
 // Tests that the effective connection type is not set on non-main frame
 // requests.
 TEST_F(EffectiveConnectionTypeResourceLoaderTest, DoesNotBelongToMainFrame) {
-  VerifyEffectiveConnectionType(RESOURCE_TYPE_OBJECT, false,
+  VerifyEffectiveConnectionType(ResourceType::kObject, false,
                                 net::EFFECTIVE_CONNECTION_TYPE_3G,
                                 net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN);
+}
+
+TEST_F(ResourceLoaderTest, PauseReadingBodyFromNetBeforeRespnoseHeaders) {
+  static constexpr char kPath[] = "/hello.html";
+  static constexpr char kBodyContents[] = "This is the data as you requested.";
+
+  base::HistogramBase::Sample output_sample = -1;
+  EXPECT_TRUE(StartMonitorBodyReadFromNetBeforePausedHistogram(&output_sample));
+
+  net::EmbeddedTestServer server;
+  net::test_server::ControllableHttpResponse response_controller(&server,
+                                                                 kPath);
+  ASSERT_TRUE(server.Start());
+
+  SetUpResourceLoaderForUrl(server.GetURL(kPath));
+  loader_->StartRequest();
+
+  // Pausing reading response body from network stops future reads from the
+  // underlying URLRequest. So no data should be sent using the response body
+  // data pipe.
+  loader_->PauseReadingBodyFromNet();
+
+  response_controller.WaitForRequest();
+  response_controller.Send(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/plain\r\n\r\n" +
+      std::string(kBodyContents));
+  response_controller.Done();
+
+  // We will still receive the response header, although there won't be any data
+  // available until ResumeReadBodyFromNet() is called.
+  raw_ptr_resource_handler_->WaitUntilResponseStarted();
+  EXPECT_EQ(1, raw_ptr_resource_handler_->on_response_started_called());
+  EXPECT_EQ(0, raw_ptr_resource_handler_->on_read_completed_called());
+
+  // Wait for a little amount of time so that if the loader mistakenly reads
+  // response body from the underlying URLRequest, it is easier to find out.
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(),
+      base::TimeDelta::FromMilliseconds(100));
+  run_loop.Run();
+
+  EXPECT_TRUE(raw_ptr_resource_handler_->body().empty());
+
+  loader_->ResumeReadingBodyFromNet();
+  raw_ptr_resource_handler_->WaitUntilResponseComplete();
+
+  EXPECT_EQ(kBodyContents, raw_ptr_resource_handler_->body());
+
+  loader_.reset();
+  EXPECT_EQ(0, output_sample);
+  StopMonitorBodyReadFromNetBeforePausedHistogram();
+}
+
+TEST_F(ResourceLoaderTest, PauseReadingBodyFromNetWhenReadIsPending) {
+  static constexpr char kPath[] = "/hello.html";
+  static constexpr char kBodyContentsFirstHalf[] = "This is the first half.";
+  static constexpr char kBodyContentsSecondHalf[] = "This is the second half.";
+
+  base::HistogramBase::Sample output_sample = -1;
+  EXPECT_TRUE(StartMonitorBodyReadFromNetBeforePausedHistogram(&output_sample));
+
+  net::EmbeddedTestServer server;
+  net::test_server::ControllableHttpResponse response_controller(&server,
+                                                                 kPath);
+  ASSERT_TRUE(server.Start());
+
+  SetUpResourceLoaderForUrl(server.GetURL(kPath));
+  loader_->StartRequest();
+
+  response_controller.WaitForRequest();
+  response_controller.Send(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/plain\r\n\r\n" +
+      std::string(kBodyContentsFirstHalf));
+
+  raw_ptr_resource_handler_->WaitUntilResponseStarted();
+  EXPECT_EQ(1, raw_ptr_resource_handler_->on_response_started_called());
+
+  loader_->PauseReadingBodyFromNet();
+
+  response_controller.Send(kBodyContentsSecondHalf);
+  response_controller.Done();
+
+  // It is uncertain how much data has been read before reading is actually
+  // paused, because if there is a pending read when PauseReadingBodyFromNet()
+  // arrives, the pending read won't be cancelled. Therefore, this test only
+  // checks that after ResumeReadingBodyFromNet() we should be able to get the
+  // whole response body.
+  loader_->ResumeReadingBodyFromNet();
+  raw_ptr_resource_handler_->WaitUntilResponseComplete();
+
+  EXPECT_EQ(std::string(kBodyContentsFirstHalf) +
+                std::string(kBodyContentsSecondHalf),
+            raw_ptr_resource_handler_->body());
+
+  loader_.reset();
+  EXPECT_LE(0, output_sample);
+  StopMonitorBodyReadFromNetBeforePausedHistogram();
+}
+
+TEST_F(ResourceLoaderTest, MultiplePauseResumeReadingBodyFromNet) {
+  static constexpr char kPath[] = "/hello.html";
+  static constexpr char kBodyContentsFirstHalf[] = "This is the first half.";
+  static constexpr char kBodyContentsSecondHalf[] = "This is the second half.";
+
+  base::HistogramBase::Sample output_sample = -1;
+  EXPECT_TRUE(StartMonitorBodyReadFromNetBeforePausedHistogram(&output_sample));
+
+  net::EmbeddedTestServer server;
+  net::test_server::ControllableHttpResponse response_controller(&server,
+                                                                 kPath);
+  ASSERT_TRUE(server.Start());
+
+  SetUpResourceLoaderForUrl(server.GetURL(kPath));
+  loader_->StartRequest();
+
+  // It is okay to call ResumeReadingBodyFromNet() even if there is no prior
+  // PauseReadingBodyFromNet().
+  loader_->ResumeReadingBodyFromNet();
+
+  response_controller.WaitForRequest();
+  response_controller.Send(
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Type: text/plain\r\n\r\n" +
+      std::string(kBodyContentsFirstHalf));
+
+  loader_->PauseReadingBodyFromNet();
+
+  raw_ptr_resource_handler_->WaitUntilResponseStarted();
+  EXPECT_EQ(1, raw_ptr_resource_handler_->on_response_started_called());
+
+  loader_->PauseReadingBodyFromNet();
+  loader_->PauseReadingBodyFromNet();
+
+  response_controller.Send(kBodyContentsSecondHalf);
+  response_controller.Done();
+
+  // One ResumeReadingBodyFromNet() call will resume reading even if there are
+  // multiple PauseReadingBodyFromNet() calls before it.
+  loader_->ResumeReadingBodyFromNet();
+
+  raw_ptr_resource_handler_->WaitUntilResponseComplete();
+
+  EXPECT_EQ(std::string(kBodyContentsFirstHalf) +
+                std::string(kBodyContentsSecondHalf),
+            raw_ptr_resource_handler_->body());
+
+  loader_.reset();
+  EXPECT_LE(0, output_sample);
+  StopMonitorBodyReadFromNetBeforePausedHistogram();
+}
+
+// Tests that AuthChallengeInfo is present on a request that requests
+// authentication.
+TEST_F(ResourceLoaderTest, AuthChallengeInfo) {
+  net::EmbeddedTestServer server;
+  server.AddDefaultHandlers(base::FilePath());
+  ASSERT_TRUE(server.Start());
+  SetUpResourceLoaderForUrl(server.GetURL("/auth-basic"));
+  loader_->StartRequest();
+  raw_ptr_resource_handler_->WaitUntilResponseComplete();
+  const base::Optional<net::AuthChallengeInfo>& auth_info =
+      raw_ptr_resource_handler_->resource_response()->head.auth_challenge_info;
+  ASSERT_TRUE(auth_info.has_value());
+  EXPECT_FALSE(auth_info->is_proxy);
+  EXPECT_EQ(url::Origin::Create(server.GetURL("/")), auth_info->challenger);
+  EXPECT_EQ("basic", auth_info->scheme);
+  EXPECT_EQ("testrealm", auth_info->realm);
+  EXPECT_EQ("Basic realm=\"testrealm\"", auth_info->challenge);
+  EXPECT_EQ("/auth-basic", auth_info->path);
+}
+
+// Tests that no AuthChallengeInfo is present on a request that doesn't request
+// authentication.
+TEST_F(ResourceLoaderTest, NoAuthChallengeInfo) {
+  net::EmbeddedTestServer server;
+  server.AddDefaultHandlers(base::FilePath());
+  ASSERT_TRUE(server.Start());
+  SetUpResourceLoaderForUrl(server.GetURL("/"));
+  loader_->StartRequest();
+  raw_ptr_resource_handler_->WaitUntilResponseComplete();
+  EXPECT_FALSE(raw_ptr_resource_handler_->resource_response()
+                   ->head.auth_challenge_info.has_value());
 }
 
 }  // namespace content

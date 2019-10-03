@@ -34,10 +34,24 @@ UIImage* BrandedImageProvider::GetSigninConfirmationPersonalizeServicesImage() {
   return nil;
 }
 
-bool BrandedImageProvider::GetToolbarVoiceSearchButtonImageId(int* image_id) {
-  return false;
+NSArray<UIImage*>* BrandedImageProvider::GetToolbarVoiceSearchButtonImages(
+    bool incognito) {
+  return nil;
 }
 
 UIImage* BrandedImageProvider::GetWhatsNewIconImage(WhatsNewIcon type) {
+  return nil;
+}
+
+UIImage* BrandedImageProvider::GetDownloadGoogleDriveImage() {
+  return nil;
+}
+
+UIImage* BrandedImageProvider::GetToolbarSearchIcon(SearchEngineIcon type,
+                                                    bool dark_version) {
+  return [UIImage imageNamed:@"toolbar_search"];
+}
+
+UIImage* BrandedImageProvider::GetOmniboxAnswerIcon() {
   return nil;
 }

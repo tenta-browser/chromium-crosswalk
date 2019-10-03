@@ -22,20 +22,23 @@
 
 typedef void (*FunctionPtr)();
 
+#define LIB_NAME "libcrazy_linker_tests_libfoo_with_relro.so"
+#define LIB2_NAME "libcrazy_linker_tests_libbar_with_relro.so"
+
 int main() {
   crazy_context_t* context = crazy_context_create();
 
   RelroLibrary foo;
   RelroLibrary bar;
 
-  crazy_context_add_search_path_for_address(context, (void*)&main);
+  crazy_add_search_path_for_address((void*)&main);
 
   // Load libfoo_with_relro.so
   crazy_context_set_load_address(context, 0x20000000);
-  foo.Init("libfoo_with_relro.so", context);
+  foo.Init(LIB_NAME, context);
 
   crazy_context_set_load_address(context, 0x20800000);
-  bar.Init("libbar_with_relro.so", context);
+  bar.Init(LIB2_NAME, context);
 
   printf("Libraries loaded\n");
 

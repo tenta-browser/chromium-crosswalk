@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import <EarlGrey/EarlGrey.h>
+
 #include "base/ios/ios_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/payments/core/payment_prefs.h"
+#include "components/prefs/pref_service.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/ui/payments/payment_request_egtest_base.h"
-#include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
+#import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
+#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -37,15 +43,22 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
 @implementation PaymentRequestCanMakePaymentEGTest
 
+- (void)setUp {
+  [super setUp];
+
+  // Allow canMakePayment to return a truthful value by default.
+  PrefService* prefs = chrome_test_util::GetOriginalBrowserState()->GetPrefs();
+  prefs->SetBoolean(payments::kCanMakePaymentEnabled, true);
+}
+
 #pragma mark - Tests
 
 // Tests canMakePayment() when visa is required and user has a visa instrument.
 - (void)testCanMakePaymentIsSupported {
   [self addCreditCard:autofill::test::GetCreditCard()];  // visa.
-
   [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
 
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   [self waitForWebViewContainingTexts:{"true"}];
 }
@@ -54,7 +67,6 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 // user is in incognito mode.
 - (void)testCanMakePaymentIsSupportedInIncognitoMode {
   [self addCreditCard:autofill::test::GetCreditCard()];  // visa.
-
   // Open an Incognito tab.
   [ChromeEarlGreyUI openToolsMenu];
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
@@ -66,7 +78,7 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
   [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
 
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   [self waitForWebViewContainingTexts:{"true"}];
 }
@@ -75,14 +87,13 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 - (void)testCanMakePaymentIsNotSupported {
   [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
 
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   [self waitForWebViewContainingTexts:{"false"}];
 }
 
 // Tests canMakePayment() when visa is required, user doesn't have a visa
-// instrument and the user is in incognito mode. In this case canMakePayment()
-// returns true.
+// instrument and the user is in incognito mode.
 - (void)testCanMakePaymentIsNotSupportedInIncognitoMode {
   // Open an Incognito tab.
   [ChromeEarlGreyUI openToolsMenu];
@@ -93,9 +104,51 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
   [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
 
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
-  [self waitForWebViewContainingTexts:{"true"}];
+  [self waitForWebViewContainingTexts:{"false"}];
+}
+
+// Tests canMakePayment() when visa is required, user has a visa instrument, but
+// user has not allowed canMakePayment to return a truthful value.
+- (void)testCanMakePaymentIsSupportedNoUserConsent {
+  // Disallow canMakePayment to return a truthful value.
+  PrefService* prefs = chrome_test_util::GetOriginalBrowserState()->GetPrefs();
+  prefs->SetBoolean(payments::kCanMakePaymentEnabled, false);
+
+  [self addCreditCard:autofill::test::GetCreditCard()];  // visa.
+
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
+
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
+
+  [self waitForWebViewContainingTexts:{"false"}];
+}
+
+// Tests canMakePayment() when visa is required, user has a visa instrument,
+// user is in incognito mode, but user has not allowed canMakePayment to return
+// a truthful value.
+- (void)testCanMakePaymentIsSupportedInIncognitoModeNoUserConsent {
+  // Disallow canMakePayment to return a truthful value.
+  PrefService* prefs = chrome_test_util::GetOriginalBrowserState()->GetPrefs();
+  prefs->SetBoolean(payments::kCanMakePaymentEnabled, false);
+
+  [self addCreditCard:autofill::test::GetCreditCard()];  // visa.
+
+  // Open an Incognito tab.
+  [ChromeEarlGreyUI openToolsMenu];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kToolsMenuNewIncognitoTabId)]
+      performAction:grey_tap()];
+  [ChromeEarlGrey waitForIncognitoTabCount:1];
+
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
+
+  [ChromeEarlGrey loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentPage)];
+
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
+
+  [self waitForWebViewContainingTexts:{"false"}];
 }
 
 @end
@@ -108,6 +161,16 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 @end
 
 @implementation PaymentRequestCanMakePaymentExceedsQueryQuotaEGTest
+
+- (void)setUp {
+  [super setUp];
+
+  // Allow canMakePayment to return a truthful value by default.
+  PrefService* prefs = chrome_test_util::GetOriginalBrowserState()->GetPrefs();
+  prefs->SetBoolean(payments::kCanMakePaymentEnabled, true);
+}
+
+#pragma mark - Tests
 
 // Tests canMakePayment() exceeds query quota when different payment methods are
 // queried one after another.
@@ -122,13 +185,13 @@ const char kCanMakePaymentMethodIdentifierPage[] =
       loadURL:web::test::HttpServer::MakeUrl(kCanMakePaymentCreditCardPage)];
 
   // Query visa payment method.
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // User does not have a visa card.
   [self waitForWebViewContainingTexts:{"false"}];
 
   // Query Mastercard payment method.
-  [ChromeEarlGrey tapWebViewElementWithID:@"other-buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"other-buy"];
 
   // Query quota exceeded.
   [self
@@ -138,13 +201,13 @@ const char kCanMakePaymentMethodIdentifierPage[] =
   [self addCreditCard:autofill::test::GetCreditCard()];  // visa.
 
   // Query visa payment method.
-  [ChromeEarlGrey tapWebViewElementWithID:@"buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"buy"];
 
   // User has a visa card. While the query is cached, result is always fresh.
   [self waitForWebViewContainingTexts:{"true"}];
 
   // Query Mastercard payment method.
-  [ChromeEarlGrey tapWebViewElementWithID:@"other-buy"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"other-buy"];
 
   // Query quota exceeded.
   [self
@@ -163,6 +226,14 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
 @implementation PaymentRequestCanMakePaymentExceedsQueryQuotaBasicaCardEGTest
 
+- (void)setUp {
+  [super setUp];
+
+  // Allow canMakePayment to return a truthful value by default.
+  PrefService* prefs = chrome_test_util::GetOriginalBrowserState()->GetPrefs();
+  prefs->SetBoolean(payments::kCanMakePaymentEnabled, true);
+}
+
 #pragma mark - Tests
 
 // Tests canMakePayment() exceeds query quota when different payment methods are
@@ -179,13 +250,13 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
   // Query basic-card payment method with "supportedNetworks": ["visa"] in the
   // payment method specific data.
-  [ChromeEarlGrey tapWebViewElementWithID:@"checkBasicVisa"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"checkBasicVisa"];
 
   // User does not have a visa card.
   [self waitForWebViewContainingTexts:{"false"}];
 
   // Query basic-card payment method without "supportedNetworks" parameter.
-  [ChromeEarlGrey tapWebViewElementWithID:@"checkBasicCard"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"checkBasicCard"];
 
   // Query quota exceeded.
   [self
@@ -196,13 +267,13 @@ const char kCanMakePaymentMethodIdentifierPage[] =
 
   // Query basic-card payment method with "supportedNetworks": ["visa"] in the
   // payment method specific data.
-  [ChromeEarlGrey tapWebViewElementWithID:@"checkBasicVisa"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"checkBasicVisa"];
 
   // User has a visa card. While the query is cached, result is always fresh.
   [self waitForWebViewContainingTexts:{"true"}];
 
   // Query basic-card payment method without "supportedNetworks" parameter.
-  [ChromeEarlGrey tapWebViewElementWithID:@"checkBasicCard"];
+  [ChromeEarlGrey tapWebStateElementWithID:@"checkBasicCard"];
 
   // Query quota exceeded.
   [self

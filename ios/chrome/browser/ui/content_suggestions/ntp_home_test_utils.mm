@@ -4,9 +4,12 @@
 
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_test_utils.h"
 
+#import <EarlGrey/EarlGrey.h>
+
 #include <string>
 
 #include "base/callback.h"
+#include "base/mac/foundation_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/ntp_snippets/content_suggestion.h"
 #include "components/ntp_snippets/status.h"
@@ -84,10 +87,11 @@ id<GREYMatcher> OmniboxWidthBetween(CGFloat width, CGFloat margin) {
                                               descriptionBlock:describe];
 }
 
-UIView* CollectionView() {
-  return SubviewWithAccessibilityIdentifier(
-      [ContentSuggestionsViewController collectionAccessibilityIdentifier],
-      [[UIApplication sharedApplication] keyWindow]);
+UICollectionView* CollectionView() {
+  return base::mac::ObjCCast<UICollectionView>(
+      SubviewWithAccessibilityIdentifier(
+          [ContentSuggestionsViewController collectionAccessibilityIdentifier],
+          [[UIApplication sharedApplication] keyWindow]));
 }
 
 UIView* FakeOmnibox() {

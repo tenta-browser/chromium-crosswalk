@@ -10,7 +10,6 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "printing/metafile.h"
 #include "printing/print_job_constants.h"
@@ -21,13 +20,12 @@ namespace printing {
 #if !defined(USE_CUPS)
 // static
 std::unique_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
-  return base::MakeUnique<PrintingContextNoSystemDialog>(delegate);
+  return std::make_unique<PrintingContextNoSystemDialog>(delegate);
 }
 #endif  // !defined(USE_CUPS)
 
 PrintingContextNoSystemDialog::PrintingContextNoSystemDialog(Delegate* delegate)
-    : PrintingContext(delegate) {
-}
+    : PrintingContext(delegate) {}
 
 PrintingContextNoSystemDialog::~PrintingContextNoSystemDialog() {
   ReleaseContext();
@@ -37,9 +35,9 @@ void PrintingContextNoSystemDialog::AskUserForSettings(
     int max_pages,
     bool has_selection,
     bool is_scripted,
-    const PrintSettingsCallback& callback) {
+    PrintSettingsCallback callback) {
   // We don't want to bring up a dialog here.  Ever.  Just signal the callback.
-  callback.Run(OK);
+  std::move(callback).Run(OK);
 }
 
 PrintingContext::Result PrintingContextNoSystemDialog::UseDefaultSettings() {
@@ -59,21 +57,20 @@ gfx::Size PrintingContextNoSystemDialog::GetPdfPaperSizeDeviceUnits() {
   int32_t width = 0;
   int32_t height = 0;
   UErrorCode error = U_ZERO_ERROR;
-  ulocdata_getPaperSize(
-      delegate_->GetAppLocale().c_str(), &height, &width, &error);
+  ulocdata_getPaperSize(delegate_->GetAppLocale().c_str(), &height, &width,
+                        &error);
   if (error > U_ZERO_ERROR) {
     // If the call failed, assume a paper size of 8.5 x 11 inches.
     LOG(WARNING) << "ulocdata_getPaperSize failed, using 8.5 x 11, error: "
                  << error;
-    width = static_cast<int>(
-        kLetterWidthInch * settings_.device_units_per_inch());
-    height = static_cast<int>(
-        kLetterHeightInch  * settings_.device_units_per_inch());
+    width =
+        static_cast<int>(kLetterWidthInch * settings_.device_units_per_inch());
+    height =
+        static_cast<int>(kLetterHeightInch * settings_.device_units_per_inch());
   } else {
     // ulocdata_getPaperSize returns the width and height in mm.
     // Convert this to pixels based on the dpi.
-    float multiplier = 100 * settings_.device_units_per_inch();
-    multiplier /= kHundrethsMMPerInch;
+    float multiplier = settings_.device_units_per_inch() / kMicronsPerMil;
     width *= multiplier;
     height *= multiplier;
   }
@@ -144,4 +141,3 @@ printing::NativeDrawingContext PrintingContextNoSystemDialog::context() const {
 }
 
 }  // namespace printing
-

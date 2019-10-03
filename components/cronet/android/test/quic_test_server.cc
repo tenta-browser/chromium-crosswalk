@@ -11,13 +11,13 @@
 #include "base/message_loop/message_loop.h"
 #include "base/test/test_support_android.h"
 #include "base/threading/thread.h"
+#include "components/cronet/android/cronet_tests_jni_headers/QuicTestServer_jni.h"
 #include "components/cronet/android/test/cronet_test_util.h"
-#include "jni/QuicTestServer_jni.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
-#include "net/quic/chromium/crypto/proof_source_chromium.h"
+#include "net/quic/crypto/proof_source_chromium.h"
 #include "net/test/test_data_directory.h"
-#include "net/tools/quic/quic_http_response_cache.h"
+#include "net/third_party/quiche/src/quic/tools/quic_memory_cache_backend.h"
 #include "net/tools/quic/quic_simple_server.h"
 
 using base::android::JavaParamRef;
@@ -30,7 +30,7 @@ namespace {
 static const int kServerPort = 6121;
 
 base::Thread* g_quic_server_thread = nullptr;
-net::QuicHttpResponseCache* g_quic_response_cache = nullptr;
+quic::QuicMemoryCacheBackend* g_quic_memory_cache_backend = nullptr;
 net::QuicSimpleServer* g_quic_server = nullptr;
 
 void StartOnServerThread(const base::FilePath& test_files_root,
@@ -41,22 +41,22 @@ void StartOnServerThread(const base::FilePath& test_files_root,
   // Set up in-memory cache.
   base::FilePath file_dir = test_files_root.Append("quic_data");
   CHECK(base::PathExists(file_dir)) << "Quic data does not exist";
-  g_quic_response_cache = new net::QuicHttpResponseCache();
-  g_quic_response_cache->InitializeFromDirectory(file_dir.value());
-  net::QuicConfig config;
+  g_quic_memory_cache_backend = new quic::QuicMemoryCacheBackend();
+  g_quic_memory_cache_backend->InitializeBackend(file_dir.value());
+  quic::QuicConfig config;
 
   // Set up server certs.
   base::FilePath directory = test_data_dir.Append("net/data/ssl/certificates");
   std::unique_ptr<net::ProofSourceChromium> proof_source(
       new net::ProofSourceChromium());
   CHECK(proof_source->Initialize(
-      directory.Append("quic_test.example.com.crt"),
-      directory.Append("quic_test.example.com.key.pkcs8"),
-      directory.Append("quic_test.example.com.key.sct")));
+      directory.Append("quic-chain.pem"),
+      directory.Append("quic-leaf-cert.key"),
+      base::FilePath()));
   g_quic_server = new net::QuicSimpleServer(
       std::move(proof_source), config,
-      net::QuicCryptoServerConfig::ConfigOptions(),
-      net::AllSupportedTransportVersions(), g_quic_response_cache);
+      quic::QuicCryptoServerConfig::ConfigOptions(),
+      quic::AllSupportedVersions(), g_quic_memory_cache_backend);
 
   // Start listening.
   int rv = g_quic_server->Listen(
@@ -70,7 +70,7 @@ void ShutdownOnServerThread() {
   DCHECK(g_quic_server_thread->task_runner()->BelongsToCurrentThread());
   g_quic_server->Shutdown();
   delete g_quic_server;
-  delete g_quic_response_cache;
+  delete g_quic_memory_cache_backend;
 }
 
 }  // namespace
@@ -79,7 +79,6 @@ void ShutdownOnServerThread() {
 // the device.
 void JNI_QuicTestServer_StartQuicTestServer(
     JNIEnv* env,
-    const JavaParamRef<jclass>& /*jcaller*/,
     const JavaParamRef<jstring>& jtest_files_root,
     const JavaParamRef<jstring>& jtest_data_dir) {
   DCHECK(!g_quic_server_thread);
@@ -96,20 +95,17 @@ void JNI_QuicTestServer_StartQuicTestServer(
       base::android::ConvertJavaStringToUTF8(env, jtest_files_root));
   g_quic_server_thread->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&StartOnServerThread, test_files_root, test_data_dir));
+      base::BindOnce(&StartOnServerThread, test_files_root, test_data_dir));
 }
 
-void JNI_QuicTestServer_ShutdownQuicTestServer(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& /*jcaller*/) {
+void JNI_QuicTestServer_ShutdownQuicTestServer(JNIEnv* env) {
   DCHECK(!g_quic_server_thread->task_runner()->BelongsToCurrentThread());
   g_quic_server_thread->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&ShutdownOnServerThread));
+      FROM_HERE, base::BindOnce(&ShutdownOnServerThread));
   delete g_quic_server_thread;
 }
 
-int JNI_QuicTestServer_GetServerPort(JNIEnv* env,
-                                     const JavaParamRef<jclass>& /*jcaller*/) {
+int JNI_QuicTestServer_GetServerPort(JNIEnv* env) {
   return kServerPort;
 }
 

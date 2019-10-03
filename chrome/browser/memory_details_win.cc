@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/memory_details.h"
+// Windows headers must come first.
+#include <windows.h>
 
 #include <psapi.h>
 #include <stddef.h>
 #include <TlHelp32.h>
+
+#include "chrome/browser/memory_details.h"
 
 #include <memory>
 
@@ -16,26 +19,23 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/process_type.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
 
-// Known browsers which we collect details for.
-enum BrowserProcess {
-  CHROME_BROWSER = 0,
-};
-
 MemoryDetails::MemoryDetails() {
   base::FilePath browser_process_path;
-  PathService::Get(base::FILE_EXE, &browser_process_path);
+  base::PathService::Get(base::FILE_EXE, &browser_process_path);
 
   ProcessData process;
   process.name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
@@ -49,7 +49,8 @@ ProcessData* MemoryDetails::ChromeBrowser() {
 
 void MemoryDetails::CollectProcessData(
     const std::vector<ProcessMemoryInformation>& child_info) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // Clear old data.
   process_data_[0].processes.clear();
@@ -83,11 +84,6 @@ void MemoryDetails::CollectProcessData(
                             ? content::PROCESS_TYPE_BROWSER
                             : content::PROCESS_TYPE_UNKNOWN;
 
-    std::unique_ptr<base::ProcessMetrics> metrics =
-        base::ProcessMetrics::CreateProcessMetrics(process_handle.Get());
-    metrics->GetCommittedKBytes(&info.committed);
-    metrics->GetWorkingSetKBytes(&info.working_set);
-
     // Get Version Information.
     info.version = base::ASCIIToUTF16(version_info::GetVersionNumber());
     // Check if this is one of the child processes whose data we collected
@@ -105,7 +101,7 @@ void MemoryDetails::CollectProcessData(
   } while (::Process32Next(snapshot.Get(), &process_entry));
 
   // Finally return to the browser thread.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&MemoryDetails::CollectChildInfoOnUIThread, this));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&MemoryDetails::CollectChildInfoOnUIThread, this));
 }

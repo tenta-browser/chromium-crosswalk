@@ -12,8 +12,8 @@
 #include "chrome/browser/ui/autofill/autofill_popup_view_delegate.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/browser/suggestion.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/grit/components_scaled_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -39,8 +39,9 @@ class TestAutofillPopupViewDelegate : public AutofillPopupViewDelegate {
   void SetSelectionAtPoint(const gfx::Point& point) override {}
   bool AcceptSelectedLine() override { return true; }
   void SelectionCleared() override {}
+  bool HasSelection() const override { return false; }
   gfx::Rect popup_bounds() const override { return gfx::Rect(0, 0, 100, 100); }
-  gfx::NativeView container_view() override { return container_view_; }
+  gfx::NativeView container_view() const override { return container_view_; }
   const gfx::RectF& element_bounds() const override { return element_bounds_; }
   bool IsRTL() const override { return false; }
 
@@ -52,13 +53,10 @@ class TestAutofillPopupViewDelegate : public AutofillPopupViewDelegate {
     suggestions.push_back(Suggestion("", "x", "", 0));
     suggestions.push_back(Suggestion("", "", "americanExpressCC", 0));
     suggestions.push_back(Suggestion("", "x", "genericCC", 0));
-    // Http warning message.
-    suggestions.push_back(
-        Suggestion("x", "x", "httpWarning",
-                   POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE));
     return suggestions;
   }
 #if !defined(OS_ANDROID)
+  void SetTypesetter(gfx::Typesetter typesetter) override {}
   int GetElidedValueWidthForRow(int row) override { return 0; }
   int GetElidedLabelWidthForRow(int row) override { return 0; }
 #endif
@@ -109,10 +107,6 @@ TEST_F(AutofillPopupLayoutModelTest, RowWidthWithoutText) {
                     .GetImageNamed(IDR_AUTOFILL_CC_GENERIC)
                     .Width(),
             layout_model()->RowWidthWithoutText(3, /* has_substext= */ true));
-  EXPECT_EQ(base_size + AutofillPopupLayoutModel::kHttpWarningNamePadding +
-                AutofillPopupLayoutModel::kPaddingAfterLeadingIcon +
-                layout_model()->GetIconImage(4).width(),
-            layout_model()->RowWidthWithoutText(4, /* has_substext= */ true));
 }
 #endif
 

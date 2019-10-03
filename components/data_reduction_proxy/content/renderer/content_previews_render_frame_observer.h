@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/blink/public/platform/web_url_response.h"
 
 namespace data_reduction_proxy {
 
@@ -20,15 +20,19 @@ class ContentPreviewsRenderFrameObserver : public content::RenderFrameObserver {
   ContentPreviewsRenderFrameObserver(content::RenderFrame* render_frame);
   ~ContentPreviewsRenderFrameObserver() override;
 
-  static content::PreviewsState GetPreviewsStateFromResponse(
-      content::PreviewsState original_state,
-      const blink::WebURLResponse& web_url_response);
-
  private:
+  friend class ContentPreviewsRenderFrameObserverTest;
+
   // content::RenderFrameObserver:
   void OnDestruct() override;
-  void DidCommitProvisionalLoad(bool is_new_navigation,
-                                bool is_same_document_navigation) override;
+  void DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                ui::PageTransition transition) override;
+
+  // Returns whether |previews_state| is consistent with data reduction
+  // proxy headers found in |web_url_response| with respect to server previews.
+  static bool ValidatePreviewsStateWithResponse(
+      content::PreviewsState previews_state,
+      const blink::WebURLResponse& web_url_response);
 
   DISALLOW_COPY_AND_ASSIGN(ContentPreviewsRenderFrameObserver);
 };

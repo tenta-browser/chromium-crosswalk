@@ -9,7 +9,6 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -22,6 +21,7 @@
 #include "crypto/random.h"
 #include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util.h"
 #include "net/der/parse_values.h"
 
 namespace cast_channel {
@@ -89,7 +89,7 @@ AuthResult ParseAuthMessage(const CastMessage& challenge_reply,
   if (auth_message->has_error()) {
     return AuthResult::CreateWithParseError(
         "Auth message error: " +
-            base::IntToString(auth_message->error().error_type()),
+            base::NumberToString(auth_message->error().error_type()),
         AuthResult::ERROR_MESSAGE_ERROR);
   }
   if (!auth_message->has_response()) {
@@ -304,13 +304,8 @@ AuthResult VerifyTLSCertificate(const net::X509Certificate& peer_cert,
                                 std::string* peer_cert_der,
                                 const base::Time& verification_time) {
   // Get the DER-encoded form of the certificate.
-  if (!net::X509Certificate::GetDEREncoded(peer_cert.os_cert_handle(),
-                                           peer_cert_der) ||
-      peer_cert_der->empty()) {
-    return AuthResult::CreateWithParseError(
-        "Could not create DER-encoded peer cert.",
-        AuthResult::ERROR_CERT_PARSING_FAILED);
-  }
+  *peer_cert_der = std::string(
+      net::x509_util::CryptoBufferAsStringPiece(peer_cert.cert_buffer()));
 
   // Ensure the peer cert is valid and doesn't have an excessive remaining
   // lifetime. Although it is not verified as an X.509 certificate, the entire

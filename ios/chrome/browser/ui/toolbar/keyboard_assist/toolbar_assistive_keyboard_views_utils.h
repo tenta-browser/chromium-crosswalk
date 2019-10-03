@@ -5,7 +5,10 @@
 #ifndef IOS_CHROME_BROWSER_UI_TOOLBAR_KEYBOARD_ASSIST_TOOLBAR_ASSISTIVE_KEYBOARD_VIEWS_UTILS_H_
 #define IOS_CHROME_BROWSER_UI_TOOLBAR_KEYBOARD_ASSIST_TOOLBAR_ASSISTIVE_KEYBOARD_VIEWS_UTILS_H_
 
-#import <UIKit/UIKIt.h>
+#import <UIKit/UIKit.h>
+
+// The accessibility identifier for the Voice Search button.
+extern NSString* const kVoiceSearchInputAccessoryViewID;
 
 @protocol ToolbarAssistiveKeyboardDelegate;
 

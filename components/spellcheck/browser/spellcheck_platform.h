@@ -13,14 +13,19 @@
 
 #include "base/callback_forward.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
+
+#if defined(OS_WIN)
+#include "components/spellcheck/browser/spellcheck_host_metrics.h"
+#endif  // defined(OS_WIN)
 
 struct SpellCheckResult;
 
 namespace spellcheck_platform {
 
-typedef base::Callback<void(
-        const std::vector<SpellCheckResult>& /* results */)>
-            TextCheckCompleteCallback;
+typedef base::OnceCallback<void(
+    const std::vector<SpellCheckResult>& /* results */)>
+    TextCheckCompleteCallback;
 
 // Get the languages supported by the platform spellchecker and store them in
 // |spellcheck_languages|. Note that they must be converted to
@@ -52,8 +57,14 @@ void UpdateSpellingPanelWithMisspelledWord(const base::string16& word);
 // then returns true, otherwise false.
 bool PlatformSupportsLanguage(const std::string& current_language);
 
-// Sets the language for the platform-specific spellchecker.
-void SetLanguage(const std::string& lang_to_set);
+// Sets the language for the platform-specific spellchecker asynchronously. The
+// callback will be invoked with boolean parameter indicating the status of the
+// spellchecker for the language |lang_to_set|.
+void SetLanguage(const std::string& lang_to_set,
+                 base::OnceCallback<void(bool)> callback);
+
+// Removes the language for the platform-specific spellchecker.
+void DisableLanguage(const std::string& lang_to_disable);
 
 // Checks the spelling of the given string, using the platform-specific
 // spellchecker. Returns true if the word is spelled correctly.
@@ -87,11 +98,17 @@ void IgnoreWord(const base::string16& word);
 void CloseDocumentWithTag(int tag);
 
 // Requests an asyncronous spell and grammar checking.
-// The result is returned to an IPC message to |destination| thus it should
-// not be null.
 void RequestTextCheck(int document_tag,
                       const base::string16& text,
                       TextCheckCompleteCallback callback);
+
+#if defined(OS_WIN)
+// Records how many user spellcheck languages are currently not supported by the
+// Windows OS spellchecker due to missing language packs.
+void RecordMissingLanguagePacksCount(
+    std::vector<std::string> spellcheck_locales,
+    SpellCheckHostMetrics* metrics);
+#endif  // defined(OS_WIN)
 
 // Internal state, to restore system state after testing.
 // Not public since it contains Cocoa data types.

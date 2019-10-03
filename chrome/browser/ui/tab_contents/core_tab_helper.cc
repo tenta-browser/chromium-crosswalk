@@ -9,14 +9,12 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser_command_controller.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/render_messages.h"
@@ -33,13 +31,16 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/context_menu_params.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/base/load_states.h"
 #include "net/http/http_request_headers.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_list.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -56,13 +57,8 @@ const int kImageSearchThumbnailMaxHeight = 600;
 
 }  // namespace
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(CoreTabHelper);
-
 CoreTabHelper::CoreTabHelper(WebContents* web_contents)
-    : content::WebContentsObserver(web_contents),
-      delegate_(NULL),
-      content_restrictions_(0),
-      weak_factory_(this) {}
+    : content::WebContentsObserver(web_contents), content_restrictions_(0) {}
 
 CoreTabHelper::~CoreTabHelper() {}
 
@@ -74,26 +70,6 @@ base::string16 CoreTabHelper::GetStatusText() const {
   base::string16 status_text;
   GetStatusTextForWebContents(&status_text, web_contents());
   return status_text;
-}
-
-void CoreTabHelper::OnCloseStarted() {
-  if (close_start_time_.is_null())
-    close_start_time_ = base::TimeTicks::Now();
-}
-
-void CoreTabHelper::OnCloseCanceled() {
-  close_start_time_ = base::TimeTicks();
-  before_unload_end_time_ = base::TimeTicks();
-  unload_detached_start_time_ = base::TimeTicks();
-}
-
-void CoreTabHelper::OnUnloadStarted() {
-  before_unload_end_time_ = base::TimeTicks::Now();
-}
-
-void CoreTabHelper::OnUnloadDetachedStarted() {
-  if (unload_detached_start_time_.is_null())
-    unload_detached_start_time_ = base::TimeTicks::Now();
 }
 
 void CoreTabHelper::UpdateContentRestrictions(int content_restrictions) {
@@ -138,8 +114,8 @@ bool CoreTabHelper::GetStatusTextForWebContents(
     if (!guest_manager)
       return false;
     return guest_manager->ForEachGuest(
-        source, base::Bind(&CoreTabHelper::GetStatusTextForWebContents,
-                           status_text));
+        source, base::BindRepeating(&CoreTabHelper::GetStatusTextForWebContents,
+                                    status_text));
 #else  // !BUILDFLAG(ENABLE_EXTENSIONS)
     return false;
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
@@ -174,17 +150,17 @@ bool CoreTabHelper::GetStatusTextForWebContents(
       *status_text =
           l10n_util::GetStringUTF16(IDS_LOAD_STATE_ESTABLISHING_PROXY_TUNNEL);
       return true;
-    case net::LOAD_STATE_DOWNLOADING_PROXY_SCRIPT:
+    case net::LOAD_STATE_DOWNLOADING_PAC_FILE:
       *status_text =
-          l10n_util::GetStringUTF16(IDS_LOAD_STATE_DOWNLOADING_PROXY_SCRIPT);
+          l10n_util::GetStringUTF16(IDS_LOAD_STATE_DOWNLOADING_PAC_FILE);
       return true;
     case net::LOAD_STATE_RESOLVING_PROXY_FOR_URL:
       *status_text =
           l10n_util::GetStringUTF16(IDS_LOAD_STATE_RESOLVING_PROXY_FOR_URL);
       return true;
-    case net::LOAD_STATE_RESOLVING_HOST_IN_PROXY_SCRIPT:
-      *status_text = l10n_util::GetStringUTF16(
-          IDS_LOAD_STATE_RESOLVING_HOST_IN_PROXY_SCRIPT);
+    case net::LOAD_STATE_RESOLVING_HOST_IN_PAC_FILE:
+      *status_text =
+          l10n_util::GetStringUTF16(IDS_LOAD_STATE_RESOLVING_HOST_IN_PAC_FILE);
       return true;
     case net::LOAD_STATE_RESOLVING_HOST:
       *status_text = l10n_util::GetStringUTF16(IDS_LOAD_STATE_RESOLVING_HOST);
@@ -212,9 +188,6 @@ bool CoreTabHelper::GetStatusTextForWebContents(
           l10n_util::GetStringFUTF16(IDS_LOAD_STATE_WAITING_FOR_RESPONSE,
                                      source->GetLoadStateHost());
       return true;
-    case net::LOAD_STATE_THROTTLED:
-      *status_text = l10n_util::GetStringUTF16(IDS_LOAD_STATE_THROTTLED);
-      return true;
     // Ignore net::LOAD_STATE_READING_RESPONSE and net::LOAD_STATE_IDLE
     case net::LOAD_STATE_IDLE:
     case net::LOAD_STATE_READING_RESPONSE:
@@ -239,48 +212,22 @@ void CoreTabHelper::DidStartLoading() {
   UpdateContentRestrictions(0);
 }
 
-void CoreTabHelper::WasShown() {
-  web_cache::WebCacheManager::GetInstance()->ObserveActivity(
-      web_contents()->GetMainFrame()->GetProcess()->GetID());
-}
-
-void CoreTabHelper::WebContentsDestroyed() {
-  // OnCloseStarted isn't called in unit tests.
-  if (!close_start_time_.is_null()) {
-    bool fast_tab_close_enabled =
-        base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableFastUnload);
-
-    if (fast_tab_close_enabled) {
-      base::TimeTicks now = base::TimeTicks::Now();
-      base::TimeDelta close_time = now - close_start_time_;
-      UMA_HISTOGRAM_TIMES("Tab.Close", close_time);
-
-      base::TimeTicks unload_start_time = close_start_time_;
-      base::TimeTicks unload_end_time = now;
-      if (!before_unload_end_time_.is_null())
-        unload_start_time = before_unload_end_time_;
-      if (!unload_detached_start_time_.is_null())
-        unload_end_time = unload_detached_start_time_;
-      base::TimeDelta unload_time = unload_end_time - unload_start_time;
-      UMA_HISTOGRAM_TIMES("Tab.Close.UnloadTime", unload_time);
-    } else {
-      base::TimeTicks now = base::TimeTicks::Now();
-      base::TimeTicks unload_start_time = close_start_time_;
-      if (!before_unload_end_time_.is_null())
-        unload_start_time = before_unload_end_time_;
-      UMA_HISTOGRAM_TIMES("Tab.Close", now - close_start_time_);
-      UMA_HISTOGRAM_TIMES("Tab.Close.UnloadTime", now - unload_start_time);
-    }
+void CoreTabHelper::OnVisibilityChanged(content::Visibility visibility) {
+  // TODO(jochen): Consider handling OCCLUDED tabs the same way as HIDDEN tabs.
+  if (visibility != content::Visibility::HIDDEN) {
+    web_cache::WebCacheManager::GetInstance()->ObserveActivity(
+        web_contents()->GetMainFrame()->GetProcess()->GetID());
   }
 }
 
-void CoreTabHelper::BeforeUnloadFired(const base::TimeTicks& proceed_time) {
-  before_unload_end_time_ = proceed_time;
-}
-
-void CoreTabHelper::BeforeUnloadDialogCancelled() {
-  OnCloseCanceled();
+// Update back/forward buttons for web_contents that are active.
+void CoreTabHelper::NavigationEntriesDeleted() {
+#if !defined(OS_ANDROID)
+  for (Browser* browser : *BrowserList::GetInstance()) {
+    if (web_contents() == browser->tab_strip_model()->GetActiveWebContents())
+      browser->command_controller()->TabStateChanged();
+  }
+#endif
 }
 
 // Handles the image thumbnail for the context node, composes a image search
@@ -325,7 +272,7 @@ void CoreTabHelper::DoSearchByImageInNewTab(
   if (!post_data.empty()) {
     DCHECK(!content_type.empty());
     open_url_params.uses_post = true;
-    open_url_params.post_data = content::ResourceRequestBody::CreateFromBytes(
+    open_url_params.post_data = network::ResourceRequestBody::CreateFromBytes(
         post_data.data(), post_data.size());
     open_url_params.extra_headers += base::StringPrintf(
         "%s: %s\r\n", net::HttpRequestHeaders::kContentType,
@@ -333,3 +280,5 @@ void CoreTabHelper::DoSearchByImageInNewTab(
   }
   web_contents()->OpenURL(open_url_params);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(CoreTabHelper)

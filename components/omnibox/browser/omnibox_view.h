@@ -23,7 +23,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/range/range.h"
 
@@ -34,6 +36,8 @@ class OmniboxEditModel;
 
 class OmniboxView {
  public:
+  using IconFetchedCallback = base::OnceCallback<void(const gfx::Image& icon)>;
+
   // Represents the changes between two State objects.  This is used by the
   // model to determine how its internal state should be updated after the view
   // state changes.  See OmniboxEditModel::OnAfterPossibleChange().
@@ -73,7 +77,8 @@ class OmniboxView {
                          WindowOpenDisposition disposition,
                          const GURL& alternate_nav_url,
                          const base::string16& pasted_text,
-                         size_t selected_line);
+                         size_t selected_line,
+                         base::TimeTicks match_selection_timestamp);
 
   // Returns the current text of the edit control, which could be the
   // "temporary" text set by the popup, the "permanent" text set by the
@@ -84,8 +89,11 @@ class OmniboxView {
   // the field is empty.
   bool IsEditingOrEmpty() const;
 
-  // Returns the vector icon to display as the location icon.
-  const gfx::VectorIcon& GetVectorIcon() const;
+  // Returns the icon to display as the location icon. If a favicon is
+  // available, |on_icon_fetched| may be called later asynchronously.
+  gfx::ImageSkia GetIcon(int dip_size,
+                         SkColor color,
+                         IconFetchedCallback on_icon_fetched) const;
 
   // The user text is the text the user has manually keyed in.  When present,
   // this is shown in preference to the permanent text; hitting escape will
@@ -109,11 +117,8 @@ class OmniboxView {
   // preserving and selecting the user's text if they already typed in a query.
   virtual void EnterKeywordModeForDefaultSearchProvider() = 0;
 
-  // Returns true if all text is selected or there is no text at all.
+  // Returns true if all text is selected. Returns false if there is no text.
   virtual bool IsSelectAll() const = 0;
-
-  // Returns true if the user deleted the suggested text.
-  virtual bool DeleteAtEndPressed() = 0;
 
   // Fills |start| and |end| with the indexes of the current selection's bounds.
   // It is not guaranteed that |*start < *end|, as the selection can be
@@ -138,7 +143,7 @@ class OmniboxView {
   // defines a method with that name.
   virtual void CloseOmniboxPopup();
 
-  // Sets the focus to the autocomplete view.
+  // Sets the focus to the omnibox.
   virtual void SetFocus() = 0;
 
   // Shows or hides the caret based on whether the model's is_caret_visible() is
@@ -168,7 +173,8 @@ class OmniboxView {
 
   // Called when the temporary text has been reverted by the user.  This will
   // reset the user's original selection.
-  virtual void OnRevertTemporaryText() = 0;
+  virtual void OnRevertTemporaryText(const base::string16& display_text,
+                                     const AutocompleteMatch& match) = 0;
 
   // Checkpoints the current edit state before an operation that might trigger
   // a new autocomplete run to open or modify the popup. Call this before
@@ -189,13 +195,6 @@ class OmniboxView {
   // the top-most window is the relative window.
   virtual gfx::NativeView GetRelativeWindowForPopup() const = 0;
 
-  // Returns the width in pixels needed to display the current text. The
-  // returned value includes margins.
-  virtual int GetTextWidth() const = 0;
-
-  // Returns the omnibox's width in pixels.
-  virtual int GetWidth() const = 0;
-
   // Returns true if the user is composing something in an IME.
   virtual bool IsImeComposing() const = 0;
 
@@ -203,8 +202,11 @@ class OmniboxView {
   // which may overlap the omnibox's popup window.
   virtual bool IsImeShowingPopup() const;
 
-  // Display a virtual keybaord or alternate input view if enabled.
-  virtual void ShowImeIfNeeded();
+  // Display a virtual keyboard or alternate input view if enabled.
+  virtual void ShowVirtualKeyboardIfEnabled();
+
+  // Hides a virtual keyboard or alternate input view if enabled.
+  virtual void HideImeIfNeeded();
 
   // Returns true if the view is displaying UI that indicates that query
   // refinement will take place when the user selects the current match.  For
@@ -275,12 +277,14 @@ class OmniboxView {
   // everything is emphasized equally, whereas for URLs the scheme may be styled
   // based on the current security state, with parts of the URL de-emphasized to
   // draw attention to whatever best represents the "identity" of the current
-  // URL.
-  void UpdateTextStyle(const base::string16& display_text,
+  // URL. Returns true if the path component is eligible for fadeout.
+  bool UpdateTextStyle(const base::string16& display_text,
+                       const bool text_is_url,
                        const AutocompleteSchemeClassifier& classifier);
 
  private:
   friend class OmniboxViewMacTest;
+  friend class TestOmniboxView;
 
   // |model_| can be NULL in tests.
   std::unique_ptr<OmniboxEditModel> model_;

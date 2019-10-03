@@ -10,7 +10,6 @@
 
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "components/viz/common/viz_common_export.h"
@@ -77,11 +76,11 @@ class VIZ_COMMON_EXPORT DelayBasedTimeSource {
   base::TimeTicks last_tick_time_;
   base::TimeTicks next_tick_time_;
 
-  base::CancelableClosure tick_closure_;
+  base::CancelableOnceClosure tick_closure_;
 
   base::SingleThreadTaskRunner* task_runner_;
 
-  base::WeakPtrFactory<DelayBasedTimeSource> weak_factory_;
+  base::WeakPtrFactory<DelayBasedTimeSource> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DelayBasedTimeSource);
 };

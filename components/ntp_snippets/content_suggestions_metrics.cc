@@ -79,13 +79,13 @@ const char kPerCategoryHistogramFormat[] = "%s.%s";
 // and contains exactly the values to be recorded in UMA. Don't remove or
 // reorder elements, only add new ones at the end (before COUNT), and keep in
 // sync with ContentSuggestionsCategory in histograms.xml.
-enum HistogramCategories {
+enum class HistogramCategories {
   EXPERIMENTAL,
-  RECENT_TABS,
-  DOWNLOADS,
-  BOOKMARKS,
-  PHYSICAL_WEB_PAGES,
-  FOREIGN_TABS,
+  RECENT_TABS_DEPRECATED,
+  DOWNLOADS_DEPRECATED,
+  BOOKMARKS_DEPRECATED,
+  PHYSICAL_WEB_PAGES_DEPRECATED,
+  FOREIGN_TABS_DEPRECATED,
   ARTICLES,
   READING_LIST,
   CONTEXTUAL,
@@ -104,22 +104,18 @@ HistogramCategories GetHistogramCategory(Category category) {
   // listed here.
   auto known_category = static_cast<KnownCategories>(category.id());
   switch (known_category) {
-    case KnownCategories::RECENT_TABS:
-      return HistogramCategories::RECENT_TABS;
-    case KnownCategories::DOWNLOADS:
-      return HistogramCategories::DOWNLOADS;
-    case KnownCategories::BOOKMARKS:
-      return HistogramCategories::BOOKMARKS;
-    case KnownCategories::PHYSICAL_WEB_PAGES:
-      return HistogramCategories::PHYSICAL_WEB_PAGES;
-    case KnownCategories::FOREIGN_TABS:
-      return HistogramCategories::FOREIGN_TABS;
     case KnownCategories::ARTICLES:
       return HistogramCategories::ARTICLES;
     case KnownCategories::READING_LIST:
       return HistogramCategories::READING_LIST;
-    case KnownCategories::CONTEXTUAL:
-      return HistogramCategories::CONTEXTUAL;
+    case KnownCategories::BOOKMARKS_DEPRECATED:
+      return HistogramCategories::BOOKMARKS_DEPRECATED;
+    case KnownCategories::DOWNLOADS_DEPRECATED:
+      return HistogramCategories::DOWNLOADS_DEPRECATED;
+    case KnownCategories::FOREIGN_TABS_DEPRECATED:
+      return HistogramCategories::FOREIGN_TABS_DEPRECATED;
+    case KnownCategories::RECENT_TABS_DEPRECATED:
+    case KnownCategories::PHYSICAL_WEB_PAGES_DEPRECATED:
     case KnownCategories::LOCAL_CATEGORIES_COUNT:
     case KnownCategories::REMOTE_CATEGORIES_OFFSET:
       NOTREACHED();
@@ -134,16 +130,6 @@ HistogramCategories GetHistogramCategory(Category category) {
 std::string GetCategorySuffix(Category category) {
   HistogramCategories histogram_category = GetHistogramCategory(category);
   switch (histogram_category) {
-    case HistogramCategories::RECENT_TABS:
-      return "RecentTabs";
-    case HistogramCategories::DOWNLOADS:
-      return "Downloads";
-    case HistogramCategories::BOOKMARKS:
-      return "Bookmarks";
-    case HistogramCategories::PHYSICAL_WEB_PAGES:
-      return "PhysicalWeb";
-    case HistogramCategories::FOREIGN_TABS:
-      return "ForeignTabs";
     case HistogramCategories::ARTICLES:
       return "Articles";
     case HistogramCategories::EXPERIMENTAL:
@@ -152,6 +138,11 @@ std::string GetCategorySuffix(Category category) {
       return "ReadingList";
     case HistogramCategories::CONTEXTUAL:
       return "Contextual";
+    case HistogramCategories::BOOKMARKS_DEPRECATED:
+    case HistogramCategories::DOWNLOADS_DEPRECATED:
+    case HistogramCategories::FOREIGN_TABS_DEPRECATED:
+    case HistogramCategories::RECENT_TABS_DEPRECATED:
+    case HistogramCategories::PHYSICAL_WEB_PAGES_DEPRECATED:
     case HistogramCategories::COUNT:
       NOTREACHED();
       break;

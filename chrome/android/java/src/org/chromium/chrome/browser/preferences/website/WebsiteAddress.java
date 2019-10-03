@@ -5,12 +5,13 @@
 package org.chromium.chrome.browser.preferences.website;
 
 import android.net.Uri;
+import android.support.annotation.Nullable;
 
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.components.url_formatter.UrlFormatter;
 
 import java.io.Serializable;
-
-import javax.annotation.Nullable;
 
 /**
  * A pattern that matches a certain set of URLs used in content settings rules. The pattern can be
@@ -25,7 +26,6 @@ public class WebsiteAddress implements Comparable<WebsiteAddress>, Serializable 
     private final String mHost;
     private final boolean mOmitProtocolAndPort;
 
-    private static final String HTTP_SCHEME = "http";
     private static final String SCHEME_SUFFIX = "://";
     private static final String ANY_SUBDOMAIN_PATTERN = "[*.]";
 
@@ -57,7 +57,7 @@ public class WebsiteAddress implements Comparable<WebsiteAddress>, Serializable 
         if (originOrHostOrPattern.indexOf(SCHEME_SUFFIX) != -1) {
             Uri uri = Uri.parse(originOrHostOrPattern);
             String origin = trimTrailingBackslash(originOrHostOrPattern);
-            boolean omitProtocolAndPort = HTTP_SCHEME.equals(uri.getScheme())
+            boolean omitProtocolAndPort = UrlConstants.HTTP_SCHEME.equals(uri.getScheme())
                     && (uri.getPort() == -1 || uri.getPort() == 80);
             return new WebsiteAddress(originOrHostOrPattern, origin, uri.getScheme(), uri.getHost(),
                     omitProtocolAndPort);
@@ -83,7 +83,7 @@ public class WebsiteAddress implements Comparable<WebsiteAddress>, Serializable 
     public String getOrigin() {
         // aaa:80 and aaa must return the same origin string.
         if (mHost != null && mOmitProtocolAndPort) {
-            return HTTP_SCHEME + SCHEME_SUFFIX + mHost;
+            return UrlConstants.HTTP_URL_PREFIX + mHost;
         } else {
             return mOrigin;
         }
@@ -94,8 +94,9 @@ public class WebsiteAddress implements Comparable<WebsiteAddress>, Serializable 
     }
 
     public String getTitle() {
-        if (mOrigin == null || mOmitProtocolAndPort) return mHost;
-        return mOrigin;
+        if (mOrigin == null) return mHost;
+        return mOmitProtocolAndPort ? UrlFormatter.formatUrlForSecurityDisplayOmitScheme(mOrigin)
+                                    : UrlFormatter.formatUrlForSecurityDisplay(mOrigin);
     }
 
     /**
@@ -109,7 +110,7 @@ public class WebsiteAddress implements Comparable<WebsiteAddress>, Serializable 
     private String getDomainAndRegistry() {
         if (mOrigin != null) return UrlUtilities.getDomainAndRegistry(mOrigin, false);
         // getDomainAndRegistry works better having a protocol prefix.
-        return UrlUtilities.getDomainAndRegistry(HTTP_SCHEME + SCHEME_SUFFIX + mHost, false);
+        return UrlUtilities.getDomainAndRegistry(UrlConstants.HTTP_URL_PREFIX + mHost, false);
     }
 
     @Override

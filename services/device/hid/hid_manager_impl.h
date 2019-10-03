@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef DEVICE_HID_HID_MANAGER_IMPL_H_
-#define DEVICE_HID_HID_MANAGER_IMPL_H_
+#ifndef SERVICES_DEVICE_HID_HID_MANAGER_IMPL_H_
+#define SERVICES_DEVICE_HID_HID_MANAGER_IMPL_H_
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
@@ -13,7 +13,7 @@
 #include "mojo/public/cpp/bindings/interface_ptr_set.h"
 #include "services/device/hid/hid_device_info.h"
 #include "services/device/hid/hid_service.h"
-#include "services/device/public/interfaces/hid.mojom.h"
+#include "services/device/public/mojom/hid.mojom.h"
 
 namespace device {
 
@@ -37,6 +37,7 @@ class HidManagerImpl : public mojom::HidManager, public HidService::Observer {
                               GetDevicesCallback callback) override;
   void GetDevices(GetDevicesCallback callback) override;
   void Connect(const std::string& device_guid,
+               mojom::HidConnectionClientPtr connection_client,
                ConnectCallback callback) override;
 
  private:
@@ -45,6 +46,7 @@ class HidManagerImpl : public mojom::HidManager, public HidService::Observer {
                         std::vector<mojom::HidDeviceInfoPtr> devices);
 
   void CreateConnection(ConnectCallback callback,
+                        mojom::HidConnectionClientPtr connection_client,
                         scoped_refptr<HidConnection> connection);
 
   // HidService::Observer:
@@ -56,10 +58,10 @@ class HidManagerImpl : public mojom::HidManager, public HidService::Observer {
   mojo::AssociatedInterfacePtrSet<mojom::HidManagerClient> clients_;
   ScopedObserver<HidService, HidService::Observer> hid_service_observer_;
 
-  base::WeakPtrFactory<HidManagerImpl> weak_factory_;
+  base::WeakPtrFactory<HidManagerImpl> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(HidManagerImpl);
 };
 
 }  // namespace device
 
-#endif  // DEVICE_HID_HID_MANAGER_IMPL_H_
+#endif  // SERVICES_DEVICE_HID_HID_MANAGER_IMPL_H_

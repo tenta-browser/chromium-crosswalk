@@ -8,9 +8,9 @@
 #include "components/autofill/content/renderer/page_form_analyser_logger.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElementCollection.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element_collection.h"
+#include "third_party/blink/public/web/web_form_element.h"
 
 namespace autofill {
 
@@ -19,6 +19,7 @@ namespace {
 class MockPageFormAnalyserLogger : public PageFormAnalyserLogger {
  public:
   MockPageFormAnalyserLogger() : PageFormAnalyserLogger(nullptr) {}
+  virtual ~MockPageFormAnalyserLogger() {}
 
   void Send(std::string message,
             ConsoleLevel level,
@@ -99,6 +100,13 @@ const char kInferredUsernameAutocompleteAttributes[] =
     "   <input type='password' autocomplete='new-password'>"
     "</form>";
 
+const char kPasswordFieldsWithAndWithoutAutocomplete[] =
+    "<form>"
+    "   <input type='password'>"
+    "   <input type='text'>"
+    "   <input type='password' autocomplete='current-password'>"
+    "</form>";
+
 const std::string AutocompleteSuggestionString(const std::string& suggestion) {
   return "Input elements should have autocomplete "
          "attributes (suggested: \"" +
@@ -109,9 +117,12 @@ const std::string AutocompleteSuggestionString(const std::string& suggestion) {
 
 class PagePasswordsAnalyserTest : public ChromeRenderViewTest {
  protected:
-  PagePasswordsAnalyserTest() {}
+  PagePasswordsAnalyserTest()
+      : mock_logger_(new MockPageFormAnalyserLogger()) {}
 
   void TearDown() override {
+    elements_.clear();
+    mock_logger_.reset();
     page_passwords_analyser.Reset();
     ChromeRenderViewTest::TearDown();
   }
@@ -136,22 +147,23 @@ class PagePasswordsAnalyserTest : public ChromeRenderViewTest {
     std::string documented = message + kExpectedDocumentationLink;
     for (size_t index : element_indices)
       nodes.push_back(elements_[index]);
-    EXPECT_CALL(mock_logger, Send(documented, level, nodes))
+    EXPECT_CALL(*mock_logger_, Send(documented, level, nodes))
         .RetiresOnSaturation();
   }
 
   void RunTestCase() {
-    EXPECT_CALL(mock_logger, Flush());
-    page_passwords_analyser.AnalyseDocumentDOM(GetMainFrame(), &mock_logger);
+    EXPECT_CALL(*mock_logger_, Flush());
+    page_passwords_analyser.AnalyseDocumentDOM(GetMainFrame(),
+                                               mock_logger_.get());
   }
 
   PagePasswordsAnalyser page_passwords_analyser;
-  MockPageFormAnalyserLogger mock_logger;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PagePasswordsAnalyserTest);
 
   std::vector<blink::WebElement> elements_;
+  std::unique_ptr<MockPageFormAnalyserLogger> mock_logger_;
 };
 
 TEST_F(PagePasswordsAnalyserTest, PasswordFieldNotInForm) {
@@ -178,7 +190,7 @@ TEST_F(PagePasswordsAnalyserTest, ElementsWithDuplicateIds) {
   LoadTestCase(kElementsWithDuplicateIds);
 
   Expect("Found 2 elements with non-unique id #duplicate:",
-         PageFormAnalyserLogger::kError, {0, 1});
+         PageFormAnalyserLogger::kWarning, {0, 1});
 
   RunTestCase();
 }
@@ -251,6 +263,16 @@ TEST_F(PagePasswordsAnalyserTest, InferredUsernameAutocompleteAttributes) {
   element_index++;  // Skip already annotated password field.
   element_index++;  // Skip already annotated password field.
 
+  RunTestCase();
+}
+
+TEST_F(PagePasswordsAnalyserTest, PasswordFieldWithAndWithoutAutocomplete) {
+  LoadTestCase(kPasswordFieldsWithAndWithoutAutocomplete);
+  Expect(
+      "Multiple forms should be contained in their own "
+      "form elements; break up complex forms into ones that represent a "
+      "single action:",
+      PageFormAnalyserLogger::kVerbose, {0});
   RunTestCase();
 }
 

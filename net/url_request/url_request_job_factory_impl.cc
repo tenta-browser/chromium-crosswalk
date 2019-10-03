@@ -14,7 +14,7 @@ namespace net {
 
 namespace {
 
-URLRequestInterceptor* g_interceptor_for_testing = NULL;
+URLRequestInterceptor* g_interceptor_for_testing = nullptr;
 
 }  // namespace
 
@@ -28,7 +28,7 @@ bool URLRequestJobFactoryImpl::SetProtocolHandler(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!protocol_handler) {
-    ProtocolHandlerMap::iterator it = protocol_handler_map_.find(scheme);
+    auto it = protocol_handler_map_.find(scheme);
     if (it == protocol_handler_map_.end())
       return false;
 
@@ -36,7 +36,7 @@ bool URLRequestJobFactoryImpl::SetProtocolHandler(
     return true;
   }
 
-  if (base::ContainsKey(protocol_handler_map_, scheme))
+  if (base::Contains(protocol_handler_map_, scheme))
     return false;
   protocol_handler_map_[scheme] = std::move(protocol_handler);
   return true;
@@ -54,9 +54,9 @@ URLRequestJob* URLRequestJobFactoryImpl::MaybeCreateJobWithProtocolHandler(
       return job;
   }
 
-  ProtocolHandlerMap::const_iterator it = protocol_handler_map_.find(scheme);
+  auto it = protocol_handler_map_.find(scheme);
   if (it == protocol_handler_map_.end())
-    return NULL;
+    return nullptr;
   return it->second->MaybeCreateJob(request, network_delegate);
 }
 
@@ -76,7 +76,7 @@ URLRequestJob* URLRequestJobFactoryImpl::MaybeInterceptResponse(
 bool URLRequestJobFactoryImpl::IsHandledProtocol(
     const std::string& scheme) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  return base::ContainsKey(protocol_handler_map_, scheme) ||
+  return base::Contains(protocol_handler_map_, scheme) ||
          URLRequestJobManager::GetInstance()->SupportsScheme(scheme);
 }
 
@@ -87,8 +87,7 @@ bool URLRequestJobFactoryImpl::IsSafeRedirectTarget(
     // Error cases are safely handled.
     return true;
   }
-  ProtocolHandlerMap::const_iterator it = protocol_handler_map_.find(
-      location.scheme());
+  auto it = protocol_handler_map_.find(location.scheme());
   if (it == protocol_handler_map_.end()) {
     // Unhandled cases are safely handled.
     return true;

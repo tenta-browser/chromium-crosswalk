@@ -9,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -110,7 +109,7 @@ TEST(ExtensionL10nUtil, GetValidLocalesWithUnsupportedLocale) {
 
 TEST(ExtensionL10nUtil, GetValidLocalesWithValidLocalesAndMessagesFile) {
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir =
       install_dir.AppendASCII("extension_with_locales").Append(kLocaleFolder);
 
@@ -125,15 +124,15 @@ TEST(ExtensionL10nUtil, GetValidLocalesWithValidLocalesAndMessagesFile) {
 }
 
 TEST(ExtensionL10nUtil, LoadMessageCatalogsValidFallback) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-US");
   base::FilePath install_dir;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &install_dir));
   install_dir =
       install_dir.AppendASCII("extension_with_locales").Append(kLocaleFolder);
 
   std::string error;
   std::unique_ptr<MessageBundle> bundle(
-      extension_l10n_util::LoadMessageCatalogs(install_dir, "sr", "en_US",
-                                               &error));
+      extension_l10n_util::LoadMessageCatalogs(install_dir, "sr", &error));
   ASSERT_FALSE(NULL == bundle.get());
   EXPECT_TRUE(error.empty());
   EXPECT_EQ("Color", bundle->GetL10nMessage("color"));
@@ -141,6 +140,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsValidFallback) {
 }
 
 TEST(ExtensionL10nUtil, LoadMessageCatalogsMissingFiles) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("sr");
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
@@ -150,12 +150,13 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsMissingFiles) {
   ASSERT_TRUE(base::CreateDirectory(src_path.AppendASCII("sr")));
 
   std::string error;
-  EXPECT_TRUE(NULL == extension_l10n_util::LoadMessageCatalogs(src_path, "en",
-                                                               "sr", &error));
+  EXPECT_TRUE(NULL ==
+              extension_l10n_util::LoadMessageCatalogs(src_path, "en", &error));
   EXPECT_FALSE(error.empty());
 }
 
 TEST(ExtensionL10nUtil, LoadMessageCatalogsBadJSONFormat) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("sr");
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
@@ -172,7 +173,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsBadJSONFormat) {
 
   std::string error;
   EXPECT_TRUE(NULL == extension_l10n_util::LoadMessageCatalogs(
-                          src_path, "en_US", "sr", &error));
+                          src_path, "en_US", &error));
   EXPECT_EQ(ErrorUtils::FormatErrorMessage(
                 errors::kLocalesInvalidLocale,
                 base::UTF16ToUTF8(messages_file.LossyDisplayName()),
@@ -181,6 +182,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsBadJSONFormat) {
 }
 
 TEST(ExtensionL10nUtil, LoadMessageCatalogsDuplicateKeys) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("sr");
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
@@ -208,7 +210,7 @@ TEST(ExtensionL10nUtil, LoadMessageCatalogsDuplicateKeys) {
   // JSON parser hides duplicates. We are going to get only one key/value
   // pair at the end.
   std::unique_ptr<MessageBundle> message_bundle(
-      extension_l10n_util::LoadMessageCatalogs(src_path, "en", "sr", &error));
+      extension_l10n_util::LoadMessageCatalogs(src_path, "en", &error));
   EXPECT_TRUE(NULL != message_bundle.get());
   EXPECT_TRUE(error.empty());
 }
@@ -382,7 +384,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionDefaultTitleMsgs) {
   manifest.SetString(keys::kDescription, "__MSG_description__");
   std::string action_title(keys::kBrowserAction);
   action_title.append(".");
-  action_title.append(keys::kPageActionDefaultTitle);
+  action_title.append(keys::kActionDefaultTitle);
   manifest.SetString(action_title, "__MSG_title__");
 
   std::string error;
@@ -435,8 +437,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionFileHandlerTitle) {
   manifest.SetString(keys::kDescription, "__MSG_description__");
 
   base::DictionaryValue handler;
-  handler.SetString(keys::kPageActionDefaultTitle,
-                    "__MSG_file_handler_title__");
+  handler.SetString(keys::kActionDefaultTitle, "__MSG_file_handler_title__");
   auto handlers = std::make_unique<base::ListValue>();
   handlers->GetList().push_back(std::move(handler));
   manifest.Set(keys::kFileBrowserHandlers, std::move(handlers));
@@ -458,7 +459,7 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithNameDescriptionFileHandlerTitle) {
   manifest.GetList(keys::kFileBrowserHandlers, &handlers_raw);
   base::DictionaryValue* handler_raw = nullptr;
   handlers_raw->GetList()[0].GetAsDictionary(&handler_raw);
-  ASSERT_TRUE(handler_raw->GetString(keys::kPageActionDefaultTitle, &result));
+  ASSERT_TRUE(handler_raw->GetString(keys::kActionDefaultTitle, &result));
   EXPECT_EQ("file handler title", result);
 
   EXPECT_TRUE(error.empty());
@@ -600,57 +601,97 @@ TEST(ExtensionL10nUtil, LocalizeManifestWithSearchProviderMsgs) {
   EXPECT_TRUE(error.empty());
 }
 
-// Try with NULL manifest.
+// Tests that we don't relocalize with a null manifest.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestWithNullManifest) {
   EXPECT_FALSE(extension_l10n_util::ShouldRelocalizeManifest(NULL));
 }
 
-// Try with default and current locales missing.
+// Tests that we don't relocalize with default and current locales missing.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestEmptyManifest) {
   base::DictionaryValue manifest;
   EXPECT_FALSE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
 }
 
-// Try with missing current_locale.
+// Tests that we relocalize without a current locale.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestWithDefaultLocale) {
   base::DictionaryValue manifest;
   manifest.SetString(keys::kDefaultLocale, "en_US");
   EXPECT_TRUE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
 }
 
-// Try with missing default_locale.
+// Tests that we don't relocalize without a default locale.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestWithCurrentLocale) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-US");
   base::DictionaryValue manifest;
-  manifest.SetString(keys::kCurrentLocale,
-                     extension_l10n_util::CurrentLocaleOrDefault());
+  manifest.SetString(keys::kCurrentLocale, "en_US");
   EXPECT_FALSE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
 }
 
-// Try with all data present, but with same current_locale as system locale.
+// Tests that we don't relocalize with same current_locale as system locale.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestSameCurrentLocale) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-US");
   base::DictionaryValue manifest;
   manifest.SetString(keys::kDefaultLocale, "en_US");
-  manifest.SetString(keys::kCurrentLocale,
-                     extension_l10n_util::CurrentLocaleOrDefault());
+  manifest.SetString(keys::kCurrentLocale, "en_US");
   EXPECT_FALSE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
 }
 
-// Try with all data present, but with different current_locale.
+// Tests that we relocalize with a different current_locale.
 TEST(ExtensionL10nUtil, ShouldRelocalizeManifestDifferentCurrentLocale) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-US");
   base::DictionaryValue manifest;
   manifest.SetString(keys::kDefaultLocale, "en_US");
   manifest.SetString(keys::kCurrentLocale, "sr");
   EXPECT_TRUE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
 }
 
+// Tests that we don't relocalize with the same current_locale as preferred
+// locale.
+TEST(ExtensionL10nUtil, ShouldRelocalizeManifestSameCurrentLocaleAsPreferred) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-GB", "en-CA");
+  base::DictionaryValue manifest;
+  manifest.SetString(keys::kDefaultLocale, "en_US");
+  manifest.SetString(keys::kCurrentLocale, "en_CA");
+
+  // Preferred and current locale are both en_CA.
+  EXPECT_FALSE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
+}
+
+// Tests that we relocalize with a different current_locale from the preferred
+// locale.
+TEST(ExtensionL10nUtil,
+     ShouldRelocalizeManifestDifferentCurrentLocaleThanPreferred) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-GB", "en-CA");
+  base::DictionaryValue manifest;
+  manifest.SetString(keys::kDefaultLocale, "en_US");
+  manifest.SetString(keys::kCurrentLocale, "en_GB");
+
+  // Requires relocalization as the preferred (en_CA) differs from current
+  // (en_GB).
+  EXPECT_TRUE(extension_l10n_util::ShouldRelocalizeManifest(&manifest));
+}
+
 TEST(ExtensionL10nUtil, GetAllFallbackLocales) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-US");
   std::vector<std::string> fallback_locales;
-  extension_l10n_util::GetAllFallbackLocales("en_US", "all", &fallback_locales);
+  extension_l10n_util::GetAllFallbackLocales("all", &fallback_locales);
   ASSERT_EQ(3U, fallback_locales.size());
 
-  CHECK_EQ("en_US", fallback_locales[0]);
-  CHECK_EQ("en", fallback_locales[1]);
-  CHECK_EQ("all", fallback_locales[2]);
+  EXPECT_EQ("en_US", fallback_locales[0]);
+  EXPECT_EQ("en", fallback_locales[1]);
+  EXPECT_EQ("all", fallback_locales[2]);
+}
+
+TEST(ExtensionL10nUtil, GetAllFallbackLocalesWithPreferredLocale) {
+  extension_l10n_util::ScopedLocaleForTest scoped_locale("en-GB", "en-CA");
+  std::vector<std::string> fallback_locales;
+  extension_l10n_util::GetAllFallbackLocales("all", &fallback_locales);
+  ASSERT_EQ(4U, fallback_locales.size());
+
+  EXPECT_EQ("en_CA", fallback_locales[0]);
+  EXPECT_EQ("en_GB", fallback_locales[1]);
+  EXPECT_EQ("en", fallback_locales[2]);
+  EXPECT_EQ("all", fallback_locales[3]);
 }
 
 }  // namespace

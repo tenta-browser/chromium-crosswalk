@@ -15,7 +15,7 @@
 #ifndef CRASHPAD_UTIL_STDLIB_STRING_NUMBER_CONVERSION_H_
 #define CRASHPAD_UTIL_STDLIB_STRING_NUMBER_CONVERSION_H_
 
-#include "base/strings/string_piece.h"
+#include <string>
 
 namespace crashpad {
 
@@ -54,10 +54,12 @@ namespace crashpad {
 //!     allow arbitrary bases based on whether the string begins with a prefix
 //!     indicating its base. The functions here are provided for situations
 //!     where such prefix recognition is desirable.
-bool StringToNumber(const base::StringPiece& string, int* number);
-bool StringToNumber(const base::StringPiece& string, unsigned int* number);
-bool StringToNumber(const base::StringPiece& string, int64_t* number);
-bool StringToNumber(const base::StringPiece& string, uint64_t* number);
+bool StringToNumber(const std::string& string, int* number);
+bool StringToNumber(const std::string& string, unsigned int* number);
+bool StringToNumber(const std::string& string, long* number);
+bool StringToNumber(const std::string& string, unsigned long* number);
+bool StringToNumber(const std::string& string, long long* number);
+bool StringToNumber(const std::string& string, unsigned long long* number);
 //! \}
 
 }  // namespace crashpad

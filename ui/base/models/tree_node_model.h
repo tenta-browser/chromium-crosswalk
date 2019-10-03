@@ -17,6 +17,10 @@
 #include "base/strings/string16.h"
 #include "ui/base/models/tree_model.h"
 
+namespace bookmarks {
+class BookmarkModel;
+}
+
 namespace ui {
 
 // TreeNodeModel and TreeNodes provide an implementation of TreeModel around
@@ -63,9 +67,17 @@ namespace ui {
 
 // TreeNode -------------------------------------------------------------------
 
+// See above for documentation. Example:
+//
+//   class MyNode : public ui::TreeNode<MyNode> {
+//     ...<custom class logic>...
+//   };
+//   using MyModel = ui::TreeNodeModel<MyNode>;
 template <class NodeType>
 class TreeNode : public TreeModelNode {
  public:
+  using TreeNodes = std::vector<std::unique_ptr<NodeType>>;
+
   TreeNode() : parent_(nullptr) {}
 
   explicit TreeNode(const base::string16& title)
@@ -75,10 +87,9 @@ class TreeNode : public TreeModelNode {
 
   // Adds |node| as a child of this node, at |index|. Returns a raw pointer to
   // the node.
-  virtual NodeType* Add(std::unique_ptr<NodeType> node, int index) {
+  NodeType* Add(std::unique_ptr<NodeType> node, size_t index) {
     DCHECK(node);
-    DCHECK_GE(index, 0);
-    DCHECK_LE(index, child_count());
+    DCHECK_LE(index, children_.size());
     DCHECK(!node->parent_);
     node->parent_ = static_cast<NodeType*>(this);
     NodeType* node_ptr = node.get();
@@ -86,16 +97,17 @@ class TreeNode : public TreeModelNode {
     return node_ptr;
   }
 
-  // Removes |node| from this node and returns it.
-  virtual std::unique_ptr<NodeType> Remove(NodeType* node) {
-    auto i = std::find_if(children_.begin(), children_.end(),
-                          [node](const std::unique_ptr<NodeType>& ptr) {
-                            return ptr.get() == node;
-                          });
-    DCHECK(i != children_.end());
-    node->parent_ = nullptr;
-    std::unique_ptr<NodeType> ptr = std::move(*i);
-    children_.erase(i);
+  // Shorthand for "add at end".
+  NodeType* Add(std::unique_ptr<NodeType> node) {
+    return Add(std::move(node), children_.size());
+  }
+
+  // Removes the node at the given index. Returns the removed node.
+  std::unique_ptr<NodeType> Remove(size_t index) {
+    DCHECK_LT(index, children_.size());
+    children_[index]->parent_ = nullptr;
+    std::unique_ptr<NodeType> ptr = std::move(children_[index]);
+    children_.erase(children_.begin() + index);
     return ptr;
   }
 
@@ -109,11 +121,7 @@ class TreeNode : public TreeModelNode {
   // Returns true if this is the root node.
   bool is_root() const { return parent_ == nullptr; }
 
-  // Returns the number of children.
-  int child_count() const { return static_cast<int>(children_.size()); }
-
-  // Returns true if this node has no children.
-  bool empty() const { return children_.empty(); }
+  const TreeNodes& children() const { return children_; }
 
   // Returns the number of all nodes in the subtree rooted at this node,
   // including this node.
@@ -122,17 +130,6 @@ class TreeNode : public TreeModelNode {
     for (const auto& child : children_)
       count += child->GetTotalNodeCount();
     return count;
-  }
-
-  // Returns the node at |index|.
-  const NodeType* GetChild(int index) const {
-    DCHECK_GE(index, 0);
-    DCHECK_LT(index, child_count());
-    return children_[index].get();
-  }
-  NodeType* GetChild(int index) {
-    return const_cast<NodeType*>(
-        static_cast<const NodeType&>(*this).GetChild(index));
   }
 
   // Returns the index of |node|, or -1 if |node| is not a child of this.
@@ -161,10 +158,10 @@ class TreeNode : public TreeModelNode {
     return parent_ ? parent_->HasAncestor(ancestor) : false;
   }
 
- protected:
-  std::vector<std::unique_ptr<NodeType>>& children() { return children_; }
-
  private:
+  // TODO(https://crbug.com/956314): Remove this.
+  friend class bookmarks::BookmarkModel;
+
   // Title displayed in the tree.
   base::string16 title_;
 
@@ -172,13 +169,17 @@ class TreeNode : public TreeModelNode {
   NodeType* parent_;
 
   // This node's children.
-  typename std::vector<std::unique_ptr<NodeType>> children_;
+  TreeNodes children_;
 
   DISALLOW_COPY_AND_ASSIGN(TreeNode);
 };
 
 // TreeNodeWithValue ----------------------------------------------------------
 
+// See top of file for documentation. Example:
+//
+//  using MyNode = ui::TreeNodeWithValue<MyData>;
+//  using MyModel = ui::TreeNodeModel<MyNode>;
 template <class ValueType>
 class TreeNodeWithValue : public TreeNode<TreeNodeWithValue<ValueType>> {
  public:
@@ -209,31 +210,50 @@ class TreeNodeModel : public TreeModel {
       : root_(std::move(root)) {}
   virtual ~TreeNodeModel() override {}
 
-  NodeType* AsNode(TreeModelNode* model_node) {
+  static NodeType* AsNode(TreeModelNode* model_node) {
     return static_cast<NodeType*>(model_node);
   }
+  static const NodeType* AsNode(const TreeModelNode* model_node) {
+    return static_cast<const NodeType*>(model_node);
+  }
 
-  NodeType* Add(NodeType* parent, std::unique_ptr<NodeType> node, int index) {
-    DCHECK(parent && node);
+  NodeType* Add(NodeType* parent,
+                std::unique_ptr<NodeType> node,
+                size_t index) {
+    DCHECK(parent);
+    DCHECK(node);
     NodeType* node_ptr = parent->Add(std::move(node), index);
     NotifyObserverTreeNodesAdded(parent, index, 1);
     return node_ptr;
   }
 
-  std::unique_ptr<NodeType> Remove(NodeType* parent, NodeType* node) {
+  // Shorthand for "add at end".
+  NodeType* Add(NodeType* parent, std::unique_ptr<NodeType> node) {
+    return Add(parent, std::move(node), parent->children().size());
+  }
+
+  std::unique_ptr<NodeType> Remove(NodeType* parent, size_t index) {
     DCHECK(parent);
-    int index = parent->GetIndexOf(node);
-    std::unique_ptr<NodeType> owned_node = parent->Remove(node);
+    std::unique_ptr<NodeType> owned_node = parent->Remove(index);
     NotifyObserverTreeNodesRemoved(parent, index, 1);
     return owned_node;
   }
 
-  void NotifyObserverTreeNodesAdded(NodeType* parent, int start, int count) {
+  std::unique_ptr<NodeType> Remove(NodeType* parent, NodeType* node) {
+    DCHECK(parent);
+    return Remove(parent, size_t{parent->GetIndexOf(node)});
+  }
+
+  void NotifyObserverTreeNodesAdded(NodeType* parent,
+                                    size_t start,
+                                    size_t count) {
     for (TreeModelObserver& observer : observer_list_)
       observer.TreeNodesAdded(this, parent, start, count);
   }
 
-  void NotifyObserverTreeNodesRemoved(NodeType* parent, int start, int count) {
+  void NotifyObserverTreeNodesRemoved(NodeType* parent,
+                                      size_t start,
+                                      size_t count) {
     for (TreeModelObserver& observer : observer_list_)
       observer.TreeNodesRemoved(this, parent, start, count);
   }
@@ -244,26 +264,36 @@ class TreeNodeModel : public TreeModel {
   }
 
   // TreeModel:
+
+  // C++ allows one to override a base class' virtual function with one that
+  // returns a different type, as long as that type implements the base class'
+  // return type. This is convenient because it allows callers with references
+  // to the specific TreeNodeModel to get the proper return type without
+  // casting.
+  //
+  // However, this does require that the NodeType be defined when this is
+  // parsed (normally one could forward define this).
   NodeType* GetRoot() override {
     return root_.get();
   }
 
-  int GetChildCount(TreeModelNode* parent) override {
+  Nodes GetChildren(const TreeModelNode* parent) const override {
     DCHECK(parent);
-    return AsNode(parent)->child_count();
+    const auto& children = AsNode(parent)->children();
+    Nodes nodes;
+    nodes.reserve(children.size());
+    std::transform(children.cbegin(), children.cend(),
+                   std::back_inserter(nodes),
+                   [](const auto& child) { return child.get(); });
+    return nodes;
   }
 
-  NodeType* GetChild(TreeModelNode* parent, int index) override {
-    DCHECK(parent);
-    return AsNode(parent)->GetChild(index);
-  }
-
-  int GetIndexOf(TreeModelNode* parent, TreeModelNode* child) override {
+  int GetIndexOf(TreeModelNode* parent, TreeModelNode* child) const override {
     DCHECK(parent);
     return AsNode(parent)->GetIndexOf(AsNode(child));
   }
 
-  TreeModelNode* GetParent(TreeModelNode* node) override {
+  TreeModelNode* GetParent(TreeModelNode* node) const override {
     DCHECK(node);
     return AsNode(node)->parent();
   }
@@ -285,7 +315,7 @@ class TreeNodeModel : public TreeModel {
 
  private:
   // The observers.
-  base::ObserverList<TreeModelObserver> observer_list_;
+  base::ObserverList<TreeModelObserver>::Unchecked observer_list_;
 
   // The root.
   std::unique_ptr<NodeType> root_;

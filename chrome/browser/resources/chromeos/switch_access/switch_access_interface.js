@@ -4,93 +4,110 @@
 
 /**
  * Interface for controllers to interact with main SwitchAccess class.
- *
  * @interface
  */
-function SwitchAccessInterface() {}
-
-SwitchAccessInterface.prototype = {
+class SwitchAccessInterface {
   /**
-   * Move to the next/previous interesting node. If |doNext| is true, move to
-   * the next node. Otherwise, move to the previous node.
-   *
-   * @param {boolean} doNext
+   * Open and jump to the Switch Access menu.
    */
-  moveToNode: function(doNext) {},
+  enterMenu() {}
+
+  /**
+   * Move to the next interesting node.
+   */
+  moveForward() {}
+
+  /**
+   * Move to the previous interesting node.
+   */
+  moveBackward() {}
 
   /**
    * Perform the default action on the current node.
    */
-  selectCurrentNode: function() {},
+  selectCurrentNode() {}
 
   /**
    * Open the options page in a new tab.
    */
-  showOptionsPage: function() {},
+  showOptionsPage() {}
 
   /**
    * Return a list of the names of all user commands.
-   *
-   * @return {!Array<string>}
+   * @return {!Array<!SAConstants.Command>}
    */
-  getCommands: function() {},
+  getCommands() {}
 
   /**
-   * Return the default key code for a command.
-   *
+   * Checks if the given string is a valid Switch Access command.
    * @param {string} command
-   * @return {number}
+   * @return {boolean}
    */
-  getDefaultKeyCodeFor: function(command) {},
+  hasCommand(command) {}
+
+  /**
+   * Forwards keycodes received from keyPress events to |callback|.
+   * @param {function(number)} callback
+   */
+  listenForKeycodes(callback) {}
+
+  /**
+   * Stops forwarding keycodes.
+   */
+  stopListeningForKeycodes() {}
 
   /**
    * Run the function binding for the specified command.
-   *
-   * @param {string} command
+   * @param {!SAConstants.Command} command
    */
-  runCommand: function(command) {},
+  runCommand(command) {}
 
   /**
    * Perform actions as the result of actions by the user. Currently, restarts
    * auto-scan if it is enabled.
    */
-  performedUserAction: function() {},
+  performedUserAction() {}
+
+  /**
+   * Handle a change in user preferences.
+   * @param {!Object} changes
+   */
+  onPreferencesChanged(changes) {}
 
   /**
    * Set the value of the preference |key| to |value| in chrome.storage.sync.
-   * this.prefs_ is not set until handleStorageChange_.
+   * The behavior is not updated until the storage update is complete.
    *
-   * @param {string} key
-   * @param {boolean|string|number} value
+   * @param {SAConstants.Preference} key
+   * @param {boolean|number} value
    */
-  setPref: function(key, value) {},
+  setPreference(key, value) {}
 
   /**
-   * Get the value of type 'boolean' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'boolean'.
+   * Get the boolean value for the given key. Will throw a type error if the
+   * value associated with |key| is not a boolean, or undefined.
    *
-   * @param  {string} key
+   * @param  {SAConstants.Preference} key
    * @return {boolean}
    */
-  getBooleanPref: function(key) {},
+  getBooleanPreference(key) {}
 
   /**
-   * Get the value of type 'number' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'number'.
+   * Get the number value for the given key. Will throw a type error if the
+   * value associated with |key| is not a number, or undefined.
    *
-   * @param  {string} key
+   * @param  {SAConstants.Preference} key
    * @return {number}
    */
-  getNumberPref: function(key) {},
+  getNumberPreference(key) {}
 
   /**
-   * Get the value of type 'string' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'string'.
+   * Get the number value for the given key, or |null| if none exists.
    *
-   * @param  {string} key
-   * @return {string}
+   * @param  {SAConstants.Preference} key
+   * @return {number|null}
    */
-  getStringPref: function(key) {},
+  getNumberPreferenceIfDefined(key) {}
 
   /**
    * Returns true if |keyCode| is already used to run a command from the
@@ -99,25 +116,12 @@ SwitchAccessInterface.prototype = {
    * @param {number} keyCode
    * @return {boolean}
    */
-  keyCodeIsUsed: function(keyCode) {},
+  keyCodeIsUsed(keyCode) {}
 
   /**
-   * Move to the next sibling of the current node if it has one.
+   * Sets up the connection between the menuPanel and the menuManager.
+   * @param {!PanelInterface} menuPanel
+   * @return {MenuManager}
    */
-  debugMoveToNext: function() {},
-
-  /**
-   * Move to the previous sibling of the current node if it has one.
-   */
-  debugMoveToPrevious: function() {},
-
-  /**
-   * Move to the first child of the current node if it has one.
-   */
-  debugMoveToFirstChild: function() {},
-
-  /**
-   * Move to the parent of the current node if it has one.
-   */
-  debugMoveToParent: function() {}
-};
+  connectMenuPanel(menuPanel) {}
+}

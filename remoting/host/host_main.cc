@@ -19,18 +19,16 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "mojo/core/embedder/embedder.h"
 #include "remoting/base/breakpad.h"
 #include "remoting/host/evaluate_capability.h"
+#include "remoting/host/host_config_upgrader.h"
 #include "remoting/host/host_exit_codes.h"
 #include "remoting/host/logging.h"
 #include "remoting/host/resources.h"
 #include "remoting/host/setup/me2me_native_messaging_host.h"
 #include "remoting/host/switches.h"
 #include "remoting/host/usage_stats_consent.h"
-
-#if defined(REMOTING_MULTI_PROCESS)
-#include "mojo/edk/embedder/embedder.h"
-#endif  // defined(REMOTING_MULTI_PROCESS)
 
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
@@ -48,6 +46,7 @@ int HostProcessMain();
 #if defined(OS_WIN)
 int DaemonProcessMain();
 int DesktopProcessMain();
+int FileChooserMain();
 int RdpDesktopSessionMain();
 #endif  // defined(OS_WIN)
 
@@ -56,20 +55,24 @@ namespace {
 typedef int (*MainRoutineFn)();
 
 const char kUsageMessage[] =
-  "Usage: %s [options]\n"
-  "\n"
-  "Options:\n"
-  "  --audio-pipe-name=<pipe> - Sets the pipe name to capture audio on Linux.\n"
-  "  --console                - Runs the daemon interactively.\n"
-  "  --daemon-pipe=<pipe>     - Specifies the pipe to connect to the daemon.\n"
-  "  --elevate=<binary>       - Runs <binary> elevated.\n"
-  "  --host-config=<config>   - Specifies the host configuration.\n"
-  "  --help, -?               - Prints this message.\n"
-  "  --type                   - Specifies process type.\n"
-  "  --version                - Prints the host version and exits.\n"
-  "  --window-id=<id>         - Specifies a window to remote,"
-                                " instead of the whole desktop.\n"
-  "  --evaluate-type=<type>   - Evaluates the capability of the host.\n";
+    "Usage: %s [options]\n"
+    "\n"
+    "Options:\n"
+    "  --audio-pipe-name=<pipe> - Sets the pipe name to capture audio on "
+    "Linux.\n"
+    "  --console                - Runs the daemon interactively.\n"
+    "  --daemon-pipe=<pipe>     - Specifies the pipe to connect to the "
+    "daemon.\n"
+    "  --elevate=<binary>       - Runs <binary> elevated.\n"
+    "  --host-config=<config>   - Specifies the host configuration.\n"
+    "  --help, -?               - Prints this message.\n"
+    "  --type                   - Specifies process type.\n"
+    "  --version                - Prints the host version and exits.\n"
+    "  --window-id=<id>         - Specifies a window to remote,"
+    " instead of the whole desktop.\n"
+    "  --evaluate-type=<type>   - Evaluates the capability of the host.\n"
+    "  --upgrade-token          - Upgrades the OAuth token in the host "
+    "config.\n";
 
 void Usage(const base::FilePath& program_name) {
   printf(kUsageMessage, program_name.MaybeAsASCII().c_str());
@@ -135,6 +138,8 @@ MainRoutineFn SelectMainRoutine(const std::string& process_type) {
     main_routine = &DaemonProcessMain;
   } else if (process_type == kProcessTypeDesktop) {
     main_routine = &DesktopProcessMain;
+  } else if (process_type == kProcessTypeFileChooser) {
+    main_routine = &FileChooserMain;
   } else if (process_type == kProcessTypeRdpDesktopSession) {
     main_routine = &RdpDesktopSessionMain;
 #endif  // defined(OS_WIN)
@@ -152,6 +157,15 @@ int HostMain(int argc, char** argv) {
 #endif
 
   base::CommandLine::Init(argc, argv);
+
+#if !defined(NDEBUG)
+  // Always enable Webrtc logging for debug builds.
+  // Without this switch, Webrtc errors will still be logged but
+  // RTC_LOG(LS_INFO) lines will not.
+  // See https://webrtc.org/native-code/logging
+  auto* cl = base::CommandLine::ForCurrentProcess();
+  cl->AppendSwitch("vmodule=*/webrtc/*=1");
+#endif
 
   // Parse the command line.
   const base::CommandLine* command_line =
@@ -195,6 +209,11 @@ int HostMain(int argc, char** argv) {
   // Enable debug logs.
   InitHostLogging();
 
+  // Perform token upgrade if specified on command-line.
+  if (command_line->HasSwitch(kUpgradeTokenSwitchName)) {
+    return HostConfigUpgrader::UpgradeConfigFile();
+  }
+
 #if defined(REMOTING_ENABLE_BREAKPAD)
   // Initialize Breakpad as early as possible. On Mac the command-line needs to
   // be initialized first, so that the preference for crash-reporting can be
@@ -225,9 +244,7 @@ int HostMain(int argc, char** argv) {
 
   remoting::LoadResources("");
 
-#if defined(REMOTING_MULTI_PROCESS)
-  mojo::edk::Init();
-#endif
+  mojo::core::Init();
 
   // Invoke the entry point.
   int exit_code = main_routine();

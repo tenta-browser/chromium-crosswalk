@@ -12,10 +12,6 @@
 OAuth2AccessTokenFetcherImmediateError::FailCaller::FailCaller(
     OAuth2AccessTokenFetcherImmediateError* fetcher)
     : fetcher_(fetcher) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&OAuth2AccessTokenFetcherImmediateError::FailCaller::run,
-                 this));
 }
 
 OAuth2AccessTokenFetcherImmediateError::FailCaller::~FailCaller() {
@@ -24,12 +20,12 @@ OAuth2AccessTokenFetcherImmediateError::FailCaller::~FailCaller() {
 void OAuth2AccessTokenFetcherImmediateError::FailCaller::run() {
   if (fetcher_) {
     fetcher_->Fail();
-    fetcher_ = NULL;
+    fetcher_ = nullptr;
   }
 }
 
 void OAuth2AccessTokenFetcherImmediateError::FailCaller::detach() {
-  fetcher_ = NULL;
+  fetcher_ = nullptr;
 }
 
 
@@ -49,7 +45,7 @@ OAuth2AccessTokenFetcherImmediateError::
 void OAuth2AccessTokenFetcherImmediateError::CancelRequest() {
   if (failer_) {
     failer_->detach();
-    failer_ = NULL;
+    failer_ = nullptr;
   }
 }
 
@@ -58,6 +54,10 @@ void OAuth2AccessTokenFetcherImmediateError::Start(
     const std::string& client_secret,
     const std::vector<std::string>& scopes) {
   failer_ = new FailCaller(this);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&OAuth2AccessTokenFetcherImmediateError::FailCaller::run,
+                     failer_));
 }
 
 void OAuth2AccessTokenFetcherImmediateError::Fail() {

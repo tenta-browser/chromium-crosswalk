@@ -7,8 +7,10 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
+#include "base/base64.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -42,6 +44,7 @@ const char BookmarkCodec::kSyncTransactionVersion[] =
     "sync_transaction_version";
 const char BookmarkCodec::kTypeURL[] = "url";
 const char BookmarkCodec::kTypeFolder[] = "folder";
+const char BookmarkCodec::kSyncMetadata[] = "sync_metadata";
 
 // Current version of the file.
 static const int kCurrentVersion = 1;
@@ -54,14 +57,15 @@ BookmarkCodec::BookmarkCodec()
           BookmarkNode::kInvalidSyncTransactionVersion) {
 }
 
-BookmarkCodec::~BookmarkCodec() {}
+BookmarkCodec::~BookmarkCodec() = default;
 
-std::unique_ptr<base::Value> BookmarkCodec::Encode(BookmarkModel* model) {
-  return Encode(model->bookmark_bar_node(),
-                model->other_node(),
-                model->mobile_node(),
-                model->root_node()->GetMetaInfoMap(),
-                model->root_node()->sync_transaction_version());
+std::unique_ptr<base::Value> BookmarkCodec::Encode(
+    BookmarkModel* model,
+    const std::string& sync_metadata_str) {
+  return Encode(model->bookmark_bar_node(), model->other_node(),
+                model->mobile_node(), model->root_node()->GetMetaInfoMap(),
+                model->root_node()->sync_transaction_version(),
+                sync_metadata_str);
 }
 
 std::unique_ptr<base::Value> BookmarkCodec::Encode(
@@ -69,10 +73,11 @@ std::unique_ptr<base::Value> BookmarkCodec::Encode(
     const BookmarkNode* other_folder_node,
     const BookmarkNode* mobile_folder_node,
     const BookmarkNode::MetaInfoMap* model_meta_info_map,
-    int64_t sync_transaction_version) {
+    int64_t sync_transaction_version,
+    const std::string& sync_metadata_str) {
   ids_reassigned_ = false;
   InitializeChecksum();
-  auto roots = base::MakeUnique<base::DictionaryValue>();
+  auto roots = std::make_unique<base::DictionaryValue>();
   roots->Set(kRootFolderNameKey, EncodeNode(bookmark_bar_node));
   roots->Set(kOtherBookmarkFolderNameKey, EncodeNode(other_folder_node));
   roots->Set(kMobileBookmarkFolderNameKey, EncodeNode(mobile_folder_node));
@@ -81,9 +86,9 @@ std::unique_ptr<base::Value> BookmarkCodec::Encode(
   if (sync_transaction_version !=
       BookmarkNode::kInvalidSyncTransactionVersion) {
     roots->SetString(kSyncTransactionVersion,
-                     base::Int64ToString(sync_transaction_version));
+                     base::NumberToString(sync_transaction_version));
   }
-  auto main = base::MakeUnique<base::DictionaryValue>();
+  auto main = std::make_unique<base::DictionaryValue>();
   main->SetInteger(kVersionKey, kCurrentVersion);
   FinalizeChecksum();
   // We are going to store the computed checksum. So set stored checksum to be
@@ -91,14 +96,21 @@ std::unique_ptr<base::Value> BookmarkCodec::Encode(
   stored_checksum_ = computed_checksum_;
   main->SetString(kChecksumKey, computed_checksum_);
   main->Set(kRootsKey, std::move(roots));
+  if (!sync_metadata_str.empty()) {
+    std::string sync_metadata_str_base64;
+    base::Base64Encode(sync_metadata_str, &sync_metadata_str_base64);
+    main->SetKey(kSyncMetadata,
+                 base::Value(std::move(sync_metadata_str_base64)));
+  }
   return std::move(main);
 }
 
-bool BookmarkCodec::Decode(BookmarkNode* bb_node,
+bool BookmarkCodec::Decode(const base::Value& value,
+                           BookmarkNode* bb_node,
                            BookmarkNode* other_folder_node,
                            BookmarkNode* mobile_folder_node,
                            int64_t* max_id,
-                           const base::Value& value) {
+                           std::string* sync_metadata_str) {
   ids_.clear();
   ids_reassigned_ = false;
   ids_valid_ = true;
@@ -106,7 +118,7 @@ bool BookmarkCodec::Decode(BookmarkNode* bb_node,
   stored_checksum_.clear();
   InitializeChecksum();
   bool success = DecodeHelper(bb_node, other_folder_node, mobile_folder_node,
-                              value);
+                              value, sync_metadata_str);
   FinalizeChecksum();
   // If either the checksums differ or some IDs were missing/not unique,
   // reassign IDs.
@@ -119,12 +131,12 @@ bool BookmarkCodec::Decode(BookmarkNode* bb_node,
 std::unique_ptr<base::Value> BookmarkCodec::EncodeNode(
     const BookmarkNode* node) {
   std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
-  std::string id = base::Int64ToString(node->id());
+  std::string id = base::NumberToString(node->id());
   value->SetString(kIdKey, id);
   const base::string16& title = node->GetTitle();
   value->SetString(kNameKey, title);
   value->SetString(kDateAddedKey,
-                   base::Int64ToString(node->date_added().ToInternalValue()));
+                   base::NumberToString(node->date_added().ToInternalValue()));
   if (node->is_url()) {
     value->SetString(kTypeKey, kTypeURL);
     std::string url = node->url().possibly_invalid_spec();
@@ -134,12 +146,12 @@ std::unique_ptr<base::Value> BookmarkCodec::EncodeNode(
     value->SetString(kTypeKey, kTypeFolder);
     value->SetString(
         kDateModifiedKey,
-        base::Int64ToString(node->date_folder_modified().ToInternalValue()));
+        base::NumberToString(node->date_folder_modified().ToInternalValue()));
     UpdateChecksumWithFolderNode(id, title);
 
-    auto child_values = base::MakeUnique<base::ListValue>();
-    for (int i = 0; i < node->child_count(); ++i)
-      child_values->Append(EncodeNode(node->GetChild(i)));
+    auto child_values = std::make_unique<base::ListValue>();
+    for (const auto& child : node->children())
+      child_values->Append(EncodeNode(child.get()));
     value->Set(kChildrenKey, std::move(child_values));
   }
   const BookmarkNode::MetaInfoMap* meta_info_map = node->GetMetaInfoMap();
@@ -148,17 +160,16 @@ std::unique_ptr<base::Value> BookmarkCodec::EncodeNode(
   if (node->sync_transaction_version() !=
       BookmarkNode::kInvalidSyncTransactionVersion) {
     value->SetString(kSyncTransactionVersion,
-                     base::Int64ToString(node->sync_transaction_version()));
+                     base::NumberToString(node->sync_transaction_version()));
   }
   return std::move(value);
 }
 
 std::unique_ptr<base::Value> BookmarkCodec::EncodeMetaInfo(
     const BookmarkNode::MetaInfoMap& meta_info_map) {
-  auto meta_info = base::MakeUnique<base::DictionaryValue>();
-  for (BookmarkNode::MetaInfoMap::const_iterator it = meta_info_map.begin();
-      it != meta_info_map.end(); ++it) {
-    meta_info->SetKey(it->first, base::Value(it->second));
+  auto meta_info = std::make_unique<base::DictionaryValue>();
+  for (const auto& item : meta_info_map) {
+    meta_info->SetKey(item.first, base::Value(item.second));
   }
   return std::move(meta_info);
 }
@@ -166,7 +177,8 @@ std::unique_ptr<base::Value> BookmarkCodec::EncodeMetaInfo(
 bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
                                  BookmarkNode* other_folder_node,
                                  BookmarkNode* mobile_folder_node,
-                                 const base::Value& value) {
+                                 const base::Value& value,
+                                 std::string* sync_metadata_str) {
   const base::DictionaryValue* d_value = nullptr;
   if (!value.GetAsDictionary(&d_value))
     return false;  // Unexpected type.
@@ -233,12 +245,14 @@ bool BookmarkCodec::DecodeHelper(BookmarkNode* bb_node,
                            &model_sync_transaction_version_))
     return false;
 
-  // Need to reset the type as decoding resets the type to FOLDER. Similarly
-  // we need to reset the title as the title is persisted and restored from
+  std::string sync_metadata_str_base64;
+  if (sync_metadata_str &&
+      d_value->GetString(kSyncMetadata, &sync_metadata_str_base64)) {
+    base::Base64Decode(sync_metadata_str_base64, sync_metadata_str);
+  }
+
+  // Need to reset the title as the title is persisted and restored from
   // the file.
-  bb_node->set_type(BookmarkNode::BOOKMARK_BAR);
-  other_folder_node->set_type(BookmarkNode::OTHER_NODE);
-  mobile_folder_node->set_type(BookmarkNode::MOBILE);
   bb_node->SetTitle(l10n_util::GetStringUTF16(IDS_BOOKMARK_BAR_FOLDER_NAME));
   other_folder_node->SetTitle(
       l10n_util::GetStringUTF16(IDS_BOOKMARK_BAR_OTHER_FOLDER_NAME));
@@ -298,7 +312,7 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
 
   std::string date_added_string;
   if (!value.GetString(kDateAddedKey, &date_added_string))
-    date_added_string = base::Int64ToString(Time::Now().ToInternalValue());
+    date_added_string = base::NumberToString(Time::Now().ToInternalValue());
   int64_t internal_time;
   base::StringToInt64(date_added_string, &internal_time);
 
@@ -321,13 +335,12 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
       return false;  // Node invalid.
 
     if (parent)
-      parent->Add(base::WrapUnique(node), parent->child_count());
-    node->set_type(BookmarkNode::URL);
+      parent->Add(base::WrapUnique(node));
     UpdateChecksumWithUrlNode(id_string, title, url_string);
   } else {
     std::string last_modified_date;
     if (!value.GetString(kDateModifiedKey, &last_modified_date))
-      last_modified_date = base::Int64ToString(Time::Now().ToInternalValue());
+      last_modified_date = base::NumberToString(Time::Now().ToInternalValue());
 
     const base::Value* child_values;
     if (!value.Get(kChildrenKey, &child_values))
@@ -343,13 +356,12 @@ bool BookmarkCodec::DecodeNode(const base::DictionaryValue& value,
       node->set_id(id);
     }
 
-    node->set_type(BookmarkNode::FOLDER);
     int64_t internal_time;
     base::StringToInt64(last_modified_date, &internal_time);
     node->set_date_folder_modified(Time::FromInternalValue(internal_time));
 
     if (parent)
-      parent->Add(base::WrapUnique(node), parent->child_count());
+      parent->Add(base::WrapUnique(node));
 
     UpdateChecksumWithFolderNode(id_string, title);
 
@@ -417,8 +429,7 @@ bool BookmarkCodec::DecodeMetaInfo(const base::DictionaryValue& value,
   // transaction version to its value, then delete the field.
   if (deserialized_holder) {
     const char kBookmarkTransactionVersionKey[] = "sync.transaction_version";
-    BookmarkNode::MetaInfoMap::iterator it =
-        meta_info_map->find(kBookmarkTransactionVersionKey);
+    auto it = meta_info_map->find(kBookmarkTransactionVersionKey);
     if (it != meta_info_map->end()) {
       base::StringToInt64(it->second, sync_transaction_version);
       meta_info_map->erase(it);
@@ -461,8 +472,8 @@ void BookmarkCodec::ReassignIDs(BookmarkNode* bb_node,
 void BookmarkCodec::ReassignIDsHelper(BookmarkNode* node) {
   DCHECK(node);
   node->set_id(++maximum_id_);
-  for (int i = 0; i < node->child_count(); ++i)
-    ReassignIDsHelper(node->GetChild(i));
+  for (const auto& child : node->children())
+    ReassignIDsHelper(child.get());
 }
 
 void BookmarkCodec::UpdateChecksum(const std::string& str) {

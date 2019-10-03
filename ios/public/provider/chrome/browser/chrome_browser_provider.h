@@ -18,8 +18,12 @@
 
 class AppDistributionProvider;
 class BrandedImageProvider;
-class ExternalSearchProvider;
+class BrowserURLRewriterProvider;
+class FullscreenProvider;
+class MailtoHandlerProvider;
 class OmahaServiceProvider;
+class OverridesProvider;
+class SpecialUserProvider;
 class SpotlightProvider;
 class UserFeedbackProvider;
 class VoiceSearchProvider;
@@ -32,14 +36,11 @@ namespace web {
 class WebState;
 }
 
-@protocol AppRatingPrompt;
 @protocol LogoVendor;
 @protocol TextFieldStyling;
-@class Tab;
 @class TabModel;
 @class UITextField;
 @class UIView;
-@protocol UrlLoader;
 
 namespace ios {
 
@@ -110,18 +111,13 @@ class ChromeBrowserProvider {
   // Creates and returns a new styled text field with the given |frame|.
   virtual UITextField<TextFieldStyling>* CreateStyledTextField(
       CGRect frame) const NS_RETURNS_RETAINED;
-  // Creates and returns an app ratings prompt object.  Can return nil if app
-  // ratings prompts are not supported by the provider.
-  virtual id<AppRatingPrompt> CreateAppRatingPrompt() const NS_RETURNS_RETAINED;
 
   // Initializes the cast service.  Should be called soon after the given
   // |main_tab_model| is created.
   virtual void InitializeCastService(TabModel* main_tab_model) const;
 
-  // Attaches any embedder-specific tab helpers to the given |web_state|.  The
-  // owning |tab| is included for helpers that need access to information that
-  // is not yet available through web::WebState.
-  virtual void AttachTabHelpers(web::WebState* web_state, Tab* tab) const;
+  // Attaches any embedder-specific tab helpers to the given |web_state|.
+  virtual void AttachTabHelpers(web::WebState* web_state) const;
 
   // Returns an instance of the voice search provider, if one exists.
   virtual VoiceSearchProvider* GetVoiceSearchProvider() const;
@@ -132,14 +128,16 @@ class ChromeBrowserProvider {
   // Creates and returns an object that can fetch and vend search engine logos.
   // The caller assumes ownership of the returned object.
   virtual id<LogoVendor> CreateLogoVendor(
-      ios::ChromeBrowserState* browser_state,
-      id<UrlLoader> loader) const NS_RETURNS_RETAINED;
+      ios::ChromeBrowserState* browser_state) const NS_RETURNS_RETAINED;
 
   // Returns an instance of the omaha service provider.
   virtual OmahaServiceProvider* GetOmahaServiceProvider() const;
 
   // Returns an instance of the user feedback provider.
   virtual UserFeedbackProvider* GetUserFeedbackProvider() const;
+
+  // Returns an instance of the special user provider.
+  virtual SpecialUserProvider* GetSpecialUserProvider() const;
 
   // Returns an instance of the branded image provider.
   virtual BrandedImageProvider* GetBrandedImageProvider() const;
@@ -154,11 +152,17 @@ class ChromeBrowserProvider {
   // Returns an instance of the spotlight provider.
   virtual SpotlightProvider* GetSpotlightProvider() const;
 
-  // Returns an instance of the External Search provider.
-  virtual ExternalSearchProvider* GetExternalSearchProvider() const;
+  // Returns a valid non-null instance of the mailto handler provider.
+  virtual MailtoHandlerProvider* GetMailtoHandlerProvider() const;
 
-  // Checks for native iOS apps that are installed.
-  virtual void CheckForFirstPartyApps() const;
+  // Returns an instance of the fullscreen provider.
+  virtual FullscreenProvider* GetFullscreenProvider() const;
+
+  // Returns an instance of the BrowserURLRewriter provider.
+  virtual BrowserURLRewriterProvider* GetBrowserURLRewriterProvider() const;
+
+  // Returns an instance of the Overrides provider;
+  virtual OverridesProvider* GetOverridesProvider() const;
 
   // Adds and removes observers.
   void AddObserver(Observer* observer);
@@ -169,7 +173,8 @@ class ChromeBrowserProvider {
   void FireChromeIdentityServiceDidChange(ChromeIdentityService* new_service);
 
  private:
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
+  std::unique_ptr<MailtoHandlerProvider> mailto_handler_provider_;
 };
 
 }  // namespace ios

@@ -11,7 +11,7 @@ import android.graphics.BitmapFactory;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ObserverList;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ntp.cards.SuggestionsCategoryInfo;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
@@ -19,6 +19,7 @@ import org.chromium.chrome.browser.ntp.snippets.CategoryStatus;
 import org.chromium.chrome.browser.ntp.snippets.SnippetArticle;
 import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
 import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,7 +35,6 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     private ObserverList<Observer> mObserverList = new ObserverList<>();
     private final List<Integer> mCategories = new ArrayList<>();
     private final Map<Integer, List<SnippetArticle>> mSuggestions = new HashMap<>();
-    private final List<SnippetArticle> mContextualSuggestions = new ArrayList<>();
     private final Map<Integer, Integer> mCategoryStatus = new LinkedHashMap<>();
     private final Map<Integer, SuggestionsCategoryInfo> mCategoryInfo = new HashMap<>();
 
@@ -51,14 +51,6 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     private final Map<Integer, SuggestionsCategoryInfo> mDismissedCategoryInfo = new HashMap<>();
 
     private boolean mRemoteSuggestionsEnabled = true;
-
-    /**
-     * Sets contextual suggestions to be shown in the suggestions carousel.
-     */
-    public void setContextualSuggestions(List<SnippetArticle> suggestions) {
-        mContextualSuggestions.clear();
-        mContextualSuggestions.addAll(suggestions);
-    }
 
     /**
      * Sets the status to be returned for a given category.
@@ -178,6 +170,13 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     }
 
     /**
+     * Notifies the observer that the suggestions visibility has changed for the specified category.
+     */
+    public void fireOnSuggestionsVisibilityChanged(@CategoryInt int category) {
+        for (Observer observer : mObserverList) observer.onSuggestionsVisibilityChanged(category);
+    }
+
+    /**
      * Removes a category from the fake source without notifying anyone.
      */
     public void silentlyRemoveCategory(int category) {
@@ -237,7 +236,7 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     public void fetchSuggestionImage(
             final SnippetArticle suggestion, final Callback<Bitmap> callback) {
         if (mThumbnails.containsKey(suggestion.mIdWithinCategory)) {
-            ThreadUtils.postOnUiThread(
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT,
                     () -> callback.onResult(mThumbnails.get(suggestion.mIdWithinCategory)));
         }
     }
@@ -246,7 +245,8 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     public void fetchSuggestionFavicon(final SnippetArticle suggestion, int minimumSizePx,
             int desiredSizePx, final Callback<Bitmap> callback) {
         final Bitmap favicon = getFaviconForId(suggestion.mIdWithinCategory);
-        if (favicon != null) ThreadUtils.postOnUiThread(() -> callback.onResult(favicon));
+        if (favicon != null)
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> callback.onResult(favicon));
     }
 
     private Bitmap getFaviconForId(String id) {
@@ -258,17 +258,6 @@ public class FakeSuggestionsSource implements SuggestionsSource {
     @Override
     public void fetchSuggestions(@CategoryInt int category, String[] displayedSuggestionIds,
             Callback<List<SnippetArticle>> successCallback, Runnable failureRunnable) {
-    }
-
-    @Override
-    public void fetchContextualSuggestions(String url, Callback<List<SnippetArticle>> callback) {
-        callback.onResult(mContextualSuggestions);
-    }
-
-    @Override
-    public void fetchContextualSuggestionImage(
-            SnippetArticle suggestion, Callback<Bitmap> callback) {
-        fetchSuggestionImage(suggestion, callback);
     }
 
     @Override

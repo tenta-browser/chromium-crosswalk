@@ -10,8 +10,7 @@
 #include <vector>
 
 #include "base/auto_reset.h"
-#include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -46,10 +45,7 @@ namespace views {
 class TextfieldModelTest : public ViewsTestBase,
                            public TextfieldModel::Delegate {
  public:
-  TextfieldModelTest()
-      : ViewsTestBase(),
-        composition_text_confirmed_or_cleared_(false) {
-  }
+  TextfieldModelTest() = default;
 
   // ::testing::Test:
   void TearDown() override {
@@ -69,14 +65,14 @@ class TextfieldModelTest : public ViewsTestBase,
     model->ClearEditHistory();
   }
 
-  bool composition_text_confirmed_or_cleared_;
+  bool composition_text_confirmed_or_cleared_ = false;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TextfieldModelTest);
 };
 
 TEST_F(TextfieldModelTest, EditString) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   // Append two strings.
   model.Append(base::ASCIIToUTF16("HILL"));
   EXPECT_STR_EQ("HILL", model.text());
@@ -119,7 +115,7 @@ TEST_F(TextfieldModelTest, EditString) {
 }
 
 TEST_F(TextfieldModelTest, EditString_SimpleRTL) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   // Append two strings.
   model.Append(base::WideToUTF16(L"\x05d0\x05d1\x05d2"));
   EXPECT_EQ(base::WideToUTF16(L"\x05d0\x05d1\x05d2"), model.text());
@@ -149,7 +145,7 @@ TEST_F(TextfieldModelTest, EditString_SimpleRTL) {
 }
 
 TEST_F(TextfieldModelTest, EditString_ComplexScript) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
 
   // Append two Hindi strings.
   model.Append(base::WideToUTF16(L"\x0915\x093f\x0915\x094d\x0915"));
@@ -233,10 +229,42 @@ TEST_F(TextfieldModelTest, EditString_ComplexScript) {
   EXPECT_TRUE(model.Backspace());
   EXPECT_EQ(base::WideToUTF16(L"\x002C\x0020\x05D1\x05BC\x05B7\x05E9"),
             model.text());
+
+  // Halfwidth katakana ﾀﾞ:
+  // "HALFWIDTH KATAKANA LETTER TA" + "HALFWIDTH KATAKANA VOICED SOUND MARK"
+  // ("ABC" prefix as sanity check that the entire string isn't deleted).
+  model.SetText(base::WideToUTF16(L"ABC\xFF80\xFF9E"));
+  MoveCursorTo(model, model.text().length());
+  model.Backspace();
+#if defined(OS_MACOSX)
+  // On Mac, the entire cluster should be deleted to match
+  // NSTextField behavior.
+  EXPECT_EQ(base::WideToUTF16(L"ABC"), model.text());
+  EXPECT_EQ(3U, model.GetCursorPosition());
+#else
+  EXPECT_EQ(base::WideToUTF16(L"ABC\xFF80"), model.text());
+  EXPECT_EQ(4U, model.GetCursorPosition());
+#endif
+
+  // Emoji with Fitzpatrick modifier:
+  // 'BOY' + 'EMOJI MODIFIER FITZPATRICK TYPE-5'
+  model.SetText(base::WideToUTF16(L"\U0001F466\U0001F3FE"));
+  MoveCursorTo(model, model.text().length());
+  model.Backspace();
+#if defined(OS_MACOSX)
+  // On Mac, the entire emoji should be deleted to match NSTextField
+  // behavior.
+  EXPECT_EQ(base::WideToUTF16(L""), model.text());
+  EXPECT_EQ(0U, model.GetCursorPosition());
+#else
+  // https://crbug.com/829040
+  EXPECT_EQ(base::WideToUTF16(L"\U0001F466"), model.text());
+  EXPECT_EQ(2U, model.GetCursorPosition());
+#endif
 }
 
 TEST_F(TextfieldModelTest, EmptyString) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   EXPECT_EQ(base::string16(), model.text());
   EXPECT_EQ(base::string16(), model.GetSelectedText());
 
@@ -254,7 +282,7 @@ TEST_F(TextfieldModelTest, EmptyString) {
 }
 
 TEST_F(TextfieldModelTest, Selection) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO"));
   model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_RIGHT,
                    gfx::SELECTION_NONE);
@@ -308,7 +336,7 @@ TEST_F(TextfieldModelTest, Selection_BidiWithNonSpacingMarks) {
   // the (logical) start and end points. Selection is simply defined as
   // the portion of text between the logical positions of the start and end
   // caret positions.
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   // TODO(xji): temporarily disable in platform Win since the complex script
   // characters turned into empty square due to font regression. So, not able
   // to test 2 characters belong to the same grapheme.
@@ -406,7 +434,7 @@ TEST_F(TextfieldModelTest, Selection_BidiWithNonSpacingMarks) {
 }
 
 TEST_F(TextfieldModelTest, SelectionAndEdit) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO"));
   model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_RIGHT,
                    gfx::SELECTION_NONE);
@@ -444,9 +472,54 @@ TEST_F(TextfieldModelTest, SelectionAndEdit) {
 }
 
 TEST_F(TextfieldModelTest, Word) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(
       base::ASCIIToUTF16("The answer to Life, the Universe, and Everything"));
+#if defined(OS_WIN)  // Move right by word includes space/punctuation.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
+  EXPECT_EQ(4U, model.GetCursorPosition());
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
+  EXPECT_EQ(11U, model.GetCursorPosition());
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
+  // Should pass the non word chars ', ' and be at the start of "the".
+  EXPECT_EQ(20U, model.GetCursorPosition());
+
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  EXPECT_EQ(24U, model.GetCursorPosition());
+  EXPECT_STR_EQ("the ", model.GetSelectedText());
+
+  // Move to the end.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  EXPECT_STR_EQ("the Universe, and Everything", model.GetSelectedText());
+  // Should be safe to go next word at the end.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  EXPECT_STR_EQ("the Universe, and Everything", model.GetSelectedText());
+  model.InsertChar('2');
+  EXPECT_EQ(21U, model.GetCursorPosition());
+
+  // Now backwards.
+  model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_LEFT,
+                   gfx::SELECTION_NONE);  // leave 2.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  EXPECT_EQ(14U, model.GetCursorPosition());
+  EXPECT_STR_EQ("Life, ", model.GetSelectedText());
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  EXPECT_STR_EQ("to Life, ", model.GetSelectedText());
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT,
+                   gfx::SELECTION_RETAIN);  // Now at start.
+  EXPECT_STR_EQ("The answer to Life, ", model.GetSelectedText());
+  // Should be safe to go to the previous word at the beginning.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  EXPECT_STR_EQ("The answer to Life, ", model.GetSelectedText());
+  model.ReplaceChar('4');
+  EXPECT_EQ(base::string16(), model.GetSelectedText());
+  EXPECT_STR_EQ("42", model.text());
+#else  // Non-Windows: move right by word does NOT include space/punctuation.
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
   EXPECT_EQ(3U, model.GetCursorPosition());
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
@@ -490,10 +563,11 @@ TEST_F(TextfieldModelTest, Word) {
   model.ReplaceChar('4');
   EXPECT_EQ(base::string16(), model.GetSelectedText());
   EXPECT_STR_EQ("42", model.text());
+#endif
 }
 
 TEST_F(TextfieldModelTest, SetText) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO"));
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
   model.SetText(base::ASCIIToUTF16("GOODBYE"));
@@ -517,24 +591,24 @@ TEST_F(TextfieldModelTest, Clipboard) {
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
   const base::string16 initial_clipboard_text =
       base::ASCIIToUTF16("initial text");
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(initial_clipboard_text);
 
   base::string16 clipboard_text;
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
 
   // Cut with an empty selection should do nothing.
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
   EXPECT_FALSE(model.Cut());
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_EQ(initial_clipboard_text, clipboard_text);
   EXPECT_STR_EQ("HELLO WORLD", model.text());
   EXPECT_EQ(11U, model.GetCursorPosition());
 
   // Copy with an empty selection should do nothing.
   model.Copy();
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_EQ(initial_clipboard_text, clipboard_text);
   EXPECT_STR_EQ("HELLO WORLD", model.text());
   EXPECT_EQ(11U, model.GetCursorPosition());
@@ -543,7 +617,7 @@ TEST_F(TextfieldModelTest, Clipboard) {
   model.render_text()->SetObscured(true);
   model.SelectAll(false);
   EXPECT_FALSE(model.Cut());
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_EQ(initial_clipboard_text, clipboard_text);
   EXPECT_STR_EQ("HELLO WORLD", model.text());
   EXPECT_STR_EQ("HELLO WORLD", model.GetSelectedText());
@@ -551,7 +625,7 @@ TEST_F(TextfieldModelTest, Clipboard) {
   // Copy on obscured (password) text should do nothing.
   model.SelectAll(false);
   EXPECT_FALSE(model.Copy());
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_EQ(initial_clipboard_text, clipboard_text);
   EXPECT_STR_EQ("HELLO WORLD", model.text());
   EXPECT_STR_EQ("HELLO WORLD", model.GetSelectedText());
@@ -561,7 +635,7 @@ TEST_F(TextfieldModelTest, Clipboard) {
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
   EXPECT_TRUE(model.Cut());
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_STR_EQ("WORLD", clipboard_text);
   EXPECT_STR_EQ("HELLO ", model.text());
   EXPECT_EQ(6U, model.GetCursorPosition());
@@ -569,7 +643,7 @@ TEST_F(TextfieldModelTest, Clipboard) {
   // Copy with non-empty selection.
   model.SelectAll(false);
   EXPECT_TRUE(model.Copy());
-  clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_text);
+  clipboard->ReadText(ui::ClipboardType::kCopyPaste, &clipboard_text);
   EXPECT_STR_EQ("HELLO ", clipboard_text);
   EXPECT_STR_EQ("HELLO ", model.text());
   EXPECT_EQ(6U, model.GetCursorPosition());
@@ -595,7 +669,7 @@ static void SelectWordTestVerifier(
 }
 
 TEST_F(TextfieldModelTest, SelectWordTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("  HELLO  !!  WO     RLD "));
 
   // Test when cursor is at the beginning.
@@ -636,21 +710,21 @@ TEST_F(TextfieldModelTest, SelectWordTest) {
 // regression.
 #if defined(OS_LINUX)
 TEST_F(TextfieldModelTest, SelectWordTest_MixScripts) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   std::vector<WordAndCursor> word_and_cursor;
-  word_and_cursor.push_back(WordAndCursor(L"a\x05d0", 2));
-  word_and_cursor.push_back(WordAndCursor(L"a\x05d0", 2));
-  word_and_cursor.push_back(WordAndCursor(L"\x05d1\x05d2", 5));
-  word_and_cursor.push_back(WordAndCursor(L"\x05d1\x05d2", 5));
-  word_and_cursor.push_back(WordAndCursor(L" ", 3));
-  word_and_cursor.push_back(WordAndCursor(L"a\x05d0", 2));
-  word_and_cursor.push_back(WordAndCursor(L"\x0915\x094d\x0915", 9));
-  word_and_cursor.push_back(WordAndCursor(L"\x0915\x094d\x0915", 9));
-  word_and_cursor.push_back(WordAndCursor(L" ", 10));
-  word_and_cursor.push_back(WordAndCursor(L"\x4E2D\x56FD", 12));
-  word_and_cursor.push_back(WordAndCursor(L"\x4E2D\x56FD", 12));
-  word_and_cursor.push_back(WordAndCursor(L"\x82B1", 13));
-  word_and_cursor.push_back(WordAndCursor(L"\x5929", 14));
+  word_and_cursor.emplace_back(L"a\x05d0", 2);
+  word_and_cursor.emplace_back(L"a\x05d0", 2);
+  word_and_cursor.emplace_back(L"\x05d1\x05d2", 5);
+  word_and_cursor.emplace_back(L"\x05d1\x05d2", 5);
+  word_and_cursor.emplace_back(L" ", 3);
+  word_and_cursor.emplace_back(L"a\x05d0", 2);
+  word_and_cursor.emplace_back(L"\x0915\x094d\x0915", 9);
+  word_and_cursor.emplace_back(L"\x0915\x094d\x0915", 9);
+  word_and_cursor.emplace_back(L" ", 10);
+  word_and_cursor.emplace_back(L"\x4E2D\x56FD", 12);
+  word_and_cursor.emplace_back(L"\x4E2D\x56FD", 12);
+  word_and_cursor.emplace_back(L"\x82B1", 13);
+  word_and_cursor.emplace_back(L"\x5929", 14);
 
   // The text consists of Ascii, Hebrew, Hindi with Virama sign, and Chinese.
   model.SetText(base::WideToUTF16(L"a\x05d0 \x05d1\x05d2 \x0915\x094d\x0915 "
@@ -668,7 +742,7 @@ TEST_F(TextfieldModelTest, SelectWordTest_MixScripts) {
 #endif
 
 TEST_F(TextfieldModelTest, RangeTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_NONE);
   gfx::Range range = model.render_text()->selection();
@@ -676,6 +750,55 @@ TEST_F(TextfieldModelTest, RangeTest) {
   EXPECT_EQ(0U, range.start());
   EXPECT_EQ(0U, range.end());
 
+#if defined(OS_WIN)  // Move/select right by word includes space/punctuation.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_FALSE(range.is_empty());
+  EXPECT_FALSE(range.is_reversed());
+  EXPECT_EQ(0U, range.start());
+  EXPECT_EQ(6U, range.end());
+
+  model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_LEFT,
+                   gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_FALSE(range.is_empty());
+  EXPECT_EQ(0U, range.start());
+  EXPECT_EQ(5U, range.end());
+
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_TRUE(range.is_empty());
+  EXPECT_EQ(0U, range.start());
+  EXPECT_EQ(0U, range.end());
+
+  // now from the end.
+  model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
+  range = model.render_text()->selection();
+  EXPECT_TRUE(range.is_empty());
+  EXPECT_EQ(11U, range.start());
+  EXPECT_EQ(11U, range.end());
+
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_FALSE(range.is_empty());
+  EXPECT_TRUE(range.is_reversed());
+  EXPECT_EQ(11U, range.start());
+  EXPECT_EQ(6U, range.end());
+  model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_RIGHT,
+                   gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_FALSE(range.is_empty());
+  EXPECT_TRUE(range.is_reversed());
+  EXPECT_EQ(11U, range.start());
+  EXPECT_EQ(7U, range.end());
+
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  range = model.render_text()->selection();
+  EXPECT_TRUE(range.is_empty());
+  EXPECT_EQ(11U, range.start());
+  EXPECT_EQ(11U, range.end());
+#else
+  // Non-Windows: move/select right by word does NOT include space/punctuation.
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
   range = model.render_text()->selection();
   EXPECT_FALSE(range.is_empty());
@@ -723,6 +846,7 @@ TEST_F(TextfieldModelTest, RangeTest) {
   EXPECT_TRUE(range.is_empty());
   EXPECT_EQ(11U, range.start());
   EXPECT_EQ(11U, range.end());
+#endif
 
   // Select All
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
@@ -734,7 +858,7 @@ TEST_F(TextfieldModelTest, RangeTest) {
 }
 
 TEST_F(TextfieldModelTest, SelectRangeTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
   gfx::Range range(0, 6);
   EXPECT_FALSE(range.is_reversed());
@@ -778,12 +902,22 @@ TEST_F(TextfieldModelTest, SelectRangeTest) {
 }
 
 TEST_F(TextfieldModelTest, SelectionTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_NONE);
   gfx::Range selection = model.render_text()->selection();
   EXPECT_EQ(gfx::Range(0), selection);
 
+#if defined(OS_WIN)  // Select word right includes trailing space/punctuation.
+  model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
+  selection = model.render_text()->selection();
+  EXPECT_EQ(gfx::Range(0, 6), selection);
+
+  model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_LEFT,
+                   gfx::SELECTION_RETAIN);
+  selection = model.render_text()->selection();
+  EXPECT_EQ(gfx::Range(0, 5), selection);
+#else  // Non-Windows: select word right does NOT include space/punctuation.
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_RETAIN);
   selection = model.render_text()->selection();
   EXPECT_EQ(gfx::Range(0, 5), selection);
@@ -792,11 +926,11 @@ TEST_F(TextfieldModelTest, SelectionTest) {
                    gfx::SELECTION_RETAIN);
   selection = model.render_text()->selection();
   EXPECT_EQ(gfx::Range(0, 4), selection);
+#endif
 
   model.MoveCursor(gfx::WORD_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_RETAIN);
   selection = model.render_text()->selection();
   EXPECT_EQ(gfx::Range(0), selection);
-
   // now from the end.
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
   selection = model.render_text()->selection();
@@ -822,7 +956,7 @@ TEST_F(TextfieldModelTest, SelectionTest) {
 }
 
 TEST_F(TextfieldModelTest, SelectSelectionModelTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
   model.SelectSelectionModel(gfx::SelectionModel(gfx::Range(0, 6),
       gfx::CURSOR_BACKWARD));
@@ -867,7 +1001,9 @@ TEST_F(TextfieldModelTest, CompositionTextTest) {
 
   ui::CompositionText composition;
   composition.text = base::ASCIIToUTF16("678");
-  composition.ime_text_spans.push_back(ui::ImeTextSpan(0, 3, 0, false));
+  composition.ime_text_spans.push_back(
+      ui::ImeTextSpan(ui::ImeTextSpan::Type::kComposition, 0, 3,
+                      ui::ImeTextSpan::Thickness::kThin));
 
   // Cursor should be at the end of composition when characters are just typed.
   composition.selection = gfx::Range(3, 3);
@@ -882,8 +1018,12 @@ TEST_F(TextfieldModelTest, CompositionTextTest) {
   // Restart composition with targeting "67" in "678".
   composition.selection = gfx::Range(1, 3);
   composition.ime_text_spans.clear();
-  composition.ime_text_spans.push_back(ui::ImeTextSpan(0, 2, 0, true));
-  composition.ime_text_spans.push_back(ui::ImeTextSpan(2, 3, 0, false));
+  composition.ime_text_spans.push_back(
+      ui::ImeTextSpan(ui::ImeTextSpan::Type::kComposition, 0, 2,
+                      ui::ImeTextSpan::Thickness::kThick));
+  composition.ime_text_spans.push_back(
+      ui::ImeTextSpan(ui::ImeTextSpan::Type::kComposition, 2, 3,
+                      ui::ImeTextSpan::Thickness::kThin));
   model.SetCompositionText(composition);
   EXPECT_TRUE(model.HasCompositionText());
   EXPECT_TRUE(model.HasSelection());
@@ -1053,7 +1193,7 @@ TEST_F(TextfieldModelTest, CompositionTextTest) {
 }
 
 TEST_F(TextfieldModelTest, UndoRedo_BasicTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.InsertChar('a');
   EXPECT_FALSE(model.Redo());  // There is nothing to redo.
   EXPECT_TRUE(model.Undo());
@@ -1151,7 +1291,7 @@ TEST_F(TextfieldModelTest, UndoRedo_BasicTest) {
 
 TEST_F(TextfieldModelTest, UndoRedo_SetText) {
   // This is to test the undo/redo behavior of omnibox.
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.InsertChar('w');
   EXPECT_STR_EQ("w", model.text());
   EXPECT_EQ(1U, model.GetCursorPosition());
@@ -1213,7 +1353,7 @@ TEST_F(TextfieldModelTest, UndoRedo_SetText) {
 
 TEST_F(TextfieldModelTest, UndoRedo_BackspaceThenSetText) {
   // This is to test the undo/redo behavior of omnibox.
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.InsertChar('w');
   EXPECT_STR_EQ("w", model.text());
   EXPECT_EQ(1U, model.GetCursorPosition());
@@ -1236,7 +1376,7 @@ TEST_F(TextfieldModelTest, UndoRedo_BackspaceThenSetText) {
 }
 
 TEST_F(TextfieldModelTest, UndoRedo_CutCopyPasteTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.SetText(base::ASCIIToUTF16("ABCDE"));
   EXPECT_FALSE(model.Redo());  // There is nothing to redo.
   // Test Cut.
@@ -1246,7 +1386,9 @@ TEST_F(TextfieldModelTest, UndoRedo_CutCopyPasteTest) {
   EXPECT_EQ(1U, model.GetCursorPosition());
   EXPECT_TRUE(model.Undo());
   EXPECT_STR_EQ("ABCDE", model.text());
-  EXPECT_EQ(3U, model.GetCursorPosition());
+  EXPECT_EQ(1U, model.GetCursorPosition());
+  EXPECT_TRUE(model.render_text()->selection().EqualsIgnoringDirection(
+      gfx::Range(1, 3)));
   EXPECT_TRUE(model.Undo());
   EXPECT_STR_EQ("", model.text());
   EXPECT_EQ(0U, model.GetCursorPosition());
@@ -1277,7 +1419,9 @@ TEST_F(TextfieldModelTest, UndoRedo_CutCopyPasteTest) {
   EXPECT_EQ(1U, model.GetCursorPosition());
   EXPECT_TRUE(model.Undo());
   EXPECT_STR_EQ("ABCDE", model.text());
-  EXPECT_EQ(3U, model.GetCursorPosition());
+  EXPECT_EQ(1U, model.GetCursorPosition());
+  EXPECT_TRUE(model.render_text()->selection().EqualsIgnoringDirection(
+      gfx::Range(1, 3)));
   EXPECT_TRUE(model.Undo());
   EXPECT_STR_EQ("", model.text());
   EXPECT_EQ(0U, model.GetCursorPosition());
@@ -1319,8 +1463,9 @@ TEST_F(TextfieldModelTest, UndoRedo_CutCopyPasteTest) {
   // An empty cut shouldn't create an edit.
   EXPECT_TRUE(model.Undo());
   EXPECT_STR_EQ("ABCBCBCDE", model.text());
-  EXPECT_EQ(3U, model.GetCursorPosition());
-
+  EXPECT_EQ(1U, model.GetCursorPosition());
+  EXPECT_TRUE(model.render_text()->selection().EqualsIgnoringDirection(
+      gfx::Range(1, 3)));
   // Test Copy.
   ResetModel(&model);
   model.SetText(base::ASCIIToUTF16("12345"));
@@ -1373,7 +1518,7 @@ TEST_F(TextfieldModelTest, UndoRedo_CutCopyPasteTest) {
 }
 
 TEST_F(TextfieldModelTest, UndoRedo_CursorTest) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.InsertChar('a');
   model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_NONE);
   model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_RIGHT,
@@ -1390,6 +1535,47 @@ TEST_F(TextfieldModelTest, UndoRedo_CursorTest) {
   EXPECT_STR_EQ("ab", model.text());
   EXPECT_EQ(2U, model.GetCursorPosition());
   EXPECT_FALSE(model.Redo());
+}
+
+TEST_F(TextfieldModelTest, Undo_SelectionTest) {
+  gfx::Range range = gfx::Range(2, 4);
+  TextfieldModel model(nullptr);
+  model.SetText(base::ASCIIToUTF16("abcdef"));
+  model.SelectRange(range);
+  EXPECT_EQ(model.render_text()->selection(), range);
+
+  // Deleting the selected text should change the text and the range.
+  EXPECT_TRUE(model.Backspace());
+  EXPECT_STR_EQ("abef", model.text());
+  EXPECT_EQ(model.render_text()->selection(), gfx::Range(2, 2));
+
+  // Undoing the deletion should restore the former range.
+  EXPECT_TRUE(model.Undo());
+  EXPECT_STR_EQ("abcdef", model.text());
+  EXPECT_EQ(model.render_text()->selection(), range);
+
+  // When range.start = range.end, nothing is selected and
+  // range.start = range.end = cursor position
+  model.MoveCursor(gfx::CHARACTER_BREAK, gfx::CURSOR_LEFT, gfx::SELECTION_NONE);
+  EXPECT_EQ(model.render_text()->selection(), gfx::Range(2, 2));
+
+  // Deleting a single character should change the text and cursor location.
+  EXPECT_TRUE(model.Backspace());
+  EXPECT_STR_EQ("acdef", model.text());
+  EXPECT_EQ(model.render_text()->selection(), gfx::Range(1, 1));
+
+  // Undoing the deletion should restore the former range.
+  EXPECT_TRUE(model.Undo());
+  EXPECT_STR_EQ("abcdef", model.text());
+  EXPECT_EQ(model.render_text()->selection(), gfx::Range(2, 2));
+
+  MoveCursorTo(model, model.text().length());
+  EXPECT_TRUE(model.Backspace());
+  model.SelectRange(gfx::Range(1, 3));
+  model.SetText(base::ASCIIToUTF16("[set]"));
+  EXPECT_TRUE(model.Undo());
+  EXPECT_STR_EQ("abcde", model.text());
+  EXPECT_EQ(model.render_text()->selection(), gfx::Range(1, 3));
 }
 
 void RunInsertReplaceTest(TextfieldModel& model) {
@@ -1442,28 +1628,28 @@ void RunOverwriteReplaceTest(TextfieldModel& model) {
 TEST_F(TextfieldModelTest, UndoRedo_ReplaceTest) {
   {
     SCOPED_TRACE("Select forwards and insert.");
-    TextfieldModel model(NULL);
+    TextfieldModel model(nullptr);
     model.SetText(base::ASCIIToUTF16("abcd"));
     model.SelectRange(gfx::Range(1, 3));
     RunInsertReplaceTest(model);
   }
   {
     SCOPED_TRACE("Select reversed and insert.");
-    TextfieldModel model(NULL);
+    TextfieldModel model(nullptr);
     model.SetText(base::ASCIIToUTF16("abcd"));
     model.SelectRange(gfx::Range(3, 1));
     RunInsertReplaceTest(model);
   }
   {
     SCOPED_TRACE("Select forwards and overwrite.");
-    TextfieldModel model(NULL);
+    TextfieldModel model(nullptr);
     model.SetText(base::ASCIIToUTF16("abcd"));
     model.SelectRange(gfx::Range(1, 3));
     RunOverwriteReplaceTest(model);
   }
   {
     SCOPED_TRACE("Select reversed and overwrite.");
-    TextfieldModel model(NULL);
+    TextfieldModel model(nullptr);
     model.SetText(base::ASCIIToUTF16("abcd"));
     model.SelectRange(gfx::Range(3, 1));
     RunOverwriteReplaceTest(model);
@@ -1471,11 +1657,13 @@ TEST_F(TextfieldModelTest, UndoRedo_ReplaceTest) {
 }
 
 TEST_F(TextfieldModelTest, UndoRedo_CompositionText) {
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
 
   ui::CompositionText composition;
   composition.text = base::ASCIIToUTF16("abc");
-  composition.ime_text_spans.push_back(ui::ImeTextSpan(0, 3, 0, false));
+  composition.ime_text_spans.push_back(
+      ui::ImeTextSpan(ui::ImeTextSpan::Type::kComposition, 0, 3,
+                      ui::ImeTextSpan::Thickness::kThin));
   composition.selection = gfx::Range(2, 3);
 
   model.SetText(base::ASCIIToUTF16("ABCDE"));
@@ -1553,10 +1741,10 @@ TEST_F(TextfieldModelTest, UndoRedo_CompositionText) {
 TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 1
   // Clipboard text with a leading tab should be pasted with the tab stripped.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("\tB"));
 
-  TextfieldModel model(NULL);
+  TextfieldModel model(nullptr);
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
   EXPECT_STR_EQ("HELLO WORLD", model.text());
   model.MoveCursor(gfx::LINE_BREAK, gfx::CURSOR_RIGHT, gfx::SELECTION_NONE);
@@ -1572,7 +1760,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 2
   // Clipboard text with multiple leading tabs and spaces should be pasted with
   // all tabs and spaces stripped.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("\t\t\t B"));
 
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
@@ -1589,7 +1777,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 3
   // Clipboard text with multiple tabs separating the words should be pasted
   // with one space replacing all tabs.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("FOO \t\t BAR"));
 
   model.Append(base::ASCIIToUTF16("HELLO WORLD"));
@@ -1607,7 +1795,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Clipboard text with multiple leading tabs and multiple tabs separating
   // the words should be pasted with the leading tabs stripped and one space
   // replacing the intermediate tabs.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("\t\tFOO \t\t BAR"));
 
   EXPECT_TRUE(model.Paste());
@@ -1620,7 +1808,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 5
   // Clipboard text with multiple trailing tabs should be pasted with all
   // trailing tabs stripped.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("FOO BAR\t\t\t"));
   EXPECT_TRUE(model.Paste());
   EXPECT_STR_EQ("FOO BAR", model.text());
@@ -1632,7 +1820,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 6
   // Clipboard text with only spaces and tabs should be pasted as a single
   // space.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("     \t\t"));
   EXPECT_TRUE(model.Paste());
   EXPECT_STR_EQ(" ", model.text());
@@ -1644,7 +1832,7 @@ TEST_F(TextfieldModelTest, Clipboard_WhiteSpaceStringTest) {
   // Test 7
   // Clipboard text with lots of spaces between words should have all spaces
   // replaced with a single space.
-  ui::ScopedClipboardWriter(ui::CLIPBOARD_TYPE_COPY_PASTE)
+  ui::ScopedClipboardWriter(ui::ClipboardType::kCopyPaste)
       .WriteText(base::ASCIIToUTF16("FOO      BAR"));
   EXPECT_TRUE(model.Paste());
   EXPECT_STR_EQ("FOO BAR", model.text());
@@ -1694,9 +1882,9 @@ TEST_F(TextfieldModelTest, Transpose) {
 
   TextfieldModel model(nullptr);
 
-  EXPECT_EQ(all_tests.size(), arraysize(test_strings));
+  EXPECT_EQ(all_tests.size(), base::size(test_strings));
 
-  for (size_t i = 0; i < arraysize(test_strings); i++) {
+  for (size_t i = 0; i < base::size(test_strings); i++) {
     for (size_t j = 0; j < all_tests[i].size(); j++) {
       SCOPED_TRACE(testing::Message() << "Testing case " << i << ", " << j
                                       << " with string " << test_strings[i]);
@@ -1760,6 +1948,46 @@ TEST_F(TextfieldModelTest, Yank) {
   // Ensure yanking inserts the modified kill buffer text.
   model.Yank();
   EXPECT_STR_EQ("aad", model.text());
+}
+
+TEST_F(TextfieldModelTest, SetCompositionFromExistingText) {
+  TextfieldModel model(nullptr);
+  model.SetText(base::ASCIIToUTF16("abcde"));
+
+  model.SetCompositionFromExistingText(gfx::Range(0, 1));
+  EXPECT_TRUE(model.HasCompositionText());
+
+  model.SetCompositionFromExistingText(gfx::Range(1, 3));
+  EXPECT_TRUE(model.HasCompositionText());
+
+  ui::CompositionText composition;
+  composition.text = base::ASCIIToUTF16("123");
+  model.SetCompositionText(composition);
+  EXPECT_STR_EQ("a123de", model.text());
+}
+
+TEST_F(TextfieldModelTest, SetCompositionFromExistingText_Empty) {
+  TextfieldModel model(nullptr);
+  model.SetText(base::ASCIIToUTF16("abc"));
+
+  model.SetCompositionFromExistingText(gfx::Range(0, 2));
+  EXPECT_TRUE(model.HasCompositionText());
+
+  model.SetCompositionFromExistingText(gfx::Range(1, 1));
+  EXPECT_FALSE(model.HasCompositionText());
+  EXPECT_STR_EQ("abc", model.text());
+}
+
+TEST_F(TextfieldModelTest, SetCompositionFromExistingText_OutOfBounds) {
+  TextfieldModel model(nullptr);
+  model.SetText(base::string16());
+
+  model.SetCompositionFromExistingText(gfx::Range(0, 2));
+  EXPECT_FALSE(model.HasCompositionText());
+
+  model.SetText(base::ASCIIToUTF16("abc"));
+  model.SetCompositionFromExistingText(gfx::Range(1, 4));
+  EXPECT_FALSE(model.HasCompositionText());
 }
 
 }  // namespace views

@@ -21,9 +21,6 @@ class MediaRouterDialogControllerAndroid
  public:
   ~MediaRouterDialogControllerAndroid() override;
 
-  static MediaRouterDialogControllerAndroid* GetOrCreateForWebContents(
-      content::WebContents* web_contents);
-
   // The methods called by the Java counterpart.
 
   // Notifies the controller that user has selected a sink with |jsink_id| for
@@ -63,6 +60,8 @@ class MediaRouterDialogControllerAndroid
   void CancelPresentationRequest();
 
   base::android::ScopedJavaGlobalRef<jobject> java_dialog_controller_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(MediaRouterDialogControllerAndroid);
 };

@@ -5,12 +5,14 @@
 #include "chrome/browser/android/browsing_data/browsing_data_counter_bridge.h"
 
 #include "base/android/jni_string.h"
-#include "chrome/browser/browsing_data/browsing_data_counter_factory.h"
-#include "chrome/browser/browsing_data/browsing_data_counter_utils.h"
+#include "base/bind.h"
+#include "base/trace_event/trace_event.h"
+#include "chrome/android/chrome_jni_headers/BrowsingDataCounterBridge_jni.h"
+#include "chrome/browser/browsing_data/counters/browsing_data_counter_factory.h"
+#include "chrome/browser/browsing_data/counters/browsing_data_counter_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
-#include "jni/BrowsingDataCounterBridge_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -27,6 +29,9 @@ BrowsingDataCounterBridge::BrowsingDataCounterBridge(
   DCHECK_GE(clear_browsing_data_tab, 0);
   DCHECK_LT(clear_browsing_data_tab,
             static_cast<int>(browsing_data::ClearBrowsingDataTab::NUM_TYPES));
+  TRACE_EVENT1("browsing_data",
+               "BrowsingDataCounterBridge::BrowsingDataCounterBridge",
+               "data_type", data_type);
 
   clear_browsing_data_tab_ =
       static_cast<browsing_data::ClearBrowsingDataTab>(clear_browsing_data_tab);
@@ -62,9 +67,12 @@ void BrowsingDataCounterBridge::Destroy(JNIEnv* env,
 void BrowsingDataCounterBridge::onCounterFinished(
     std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result) {
   JNIEnv* env = base::android::AttachCurrentThread();
+  Profile* profile =
+      ProfileManager::GetActiveUserProfile()->GetOriginalProfile();
   ScopedJavaLocalRef<jstring> result_string =
       base::android::ConvertUTF16ToJavaString(
-          env, GetChromeCounterTextFromResult(result.get()));
+          env, browsing_data_counter_utils::GetChromeCounterTextFromResult(
+                   result.get(), profile));
   Java_BrowsingDataCounterBridge_onBrowsingDataCounterFinished(env, jobject_,
                                                                result_string);
 }

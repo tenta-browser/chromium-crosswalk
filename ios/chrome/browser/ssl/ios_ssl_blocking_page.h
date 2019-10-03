@@ -38,7 +38,7 @@ class IOSSSLBlockingPage : public IOSSecurityInterstitialPage {
                      const GURL& request_url,
                      int options_mask,
                      const base::Time& time_triggered,
-                     const base::Callback<void(bool)>& callback);
+                     base::OnceCallback<void(bool)> callback);
 
  protected:
   // InterstitialPageDelegate implementation.
@@ -59,13 +59,9 @@ class IOSSSLBlockingPage : public IOSSecurityInterstitialPage {
   // Returns true if |options_mask| refers to a soft-overridable SSL error.
   static bool IsOverridable(int options_mask);
 
-  base::Callback<void(bool)> callback_;
+  base::OnceCallback<void(bool)> callback_;
   const net::SSLInfo ssl_info_;
   const bool overridable_;  // The UI allows the user to override the error.
-
-  // The user previously allowed a bad certificate, but the decision has now
-  // expired.
-  const bool expired_but_previously_allowed_;
 
   std::unique_ptr<IOSChromeControllerClient> controller_;
   std::unique_ptr<security_interstitials::SSLErrorUI> ssl_error_ui_;

@@ -23,6 +23,8 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 
+class TemplateURLService;
+
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.notifications
 enum NotificationChannelStatus { ENABLED, BLOCKED, UNAVAILABLE };
@@ -74,11 +76,11 @@ class NotificationChannelsProviderAndroid
       PrefService* prefs,
       content_settings::ProviderInterface* pref_provider);
 
-  // Undoes the migration done by |MigrateToChannelsIfNecessary|, if we
-  // previously migrated to channels and did not already un-migrate.
-  void UnmigrateChannelsIfNecessary(
+  // Deletes any existing blocked site channels, unless this one-off deletion
+  // already occurred. See https://crbug.com/835232.
+  void ClearBlockedChannelsIfNecessary(
       PrefService* prefs,
-      content_settings::ProviderInterface* pref_provider);
+      TemplateURLService* template_url_service);
 
   // UserModifiableProvider methods.
   std::unique_ptr<content_settings::RuleIterator> GetRuleIterator(
@@ -90,7 +92,7 @@ class NotificationChannelsProviderAndroid
       const ContentSettingsPattern& secondary_pattern,
       ContentSettingsType content_type,
       const content_settings::ResourceIdentifier& resource_identifier,
-      base::Value* value) override;
+      std::unique_ptr<base::Value>&& value) override;
   void ClearAllContentSettingsRules(ContentSettingsType content_type) override;
   void ShutdownOnUIThread() override;
   base::Time GetWebsiteSettingLastModified(

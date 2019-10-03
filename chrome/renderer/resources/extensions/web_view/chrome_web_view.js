@@ -5,16 +5,17 @@
 // This module implements chrome-specific <webview> API.
 // See web_view_api_methods.js for details.
 
-var ChromeWebView = getInternalApi ?
-    getInternalApi('chromeWebViewInternal') :
-    require('chromeWebViewInternal').ChromeWebView;
+var ChromeWebView = getInternalApi('chromeWebViewInternal');
 var ChromeWebViewSchema =
     requireNative('schema_registry').GetSchema('chromeWebViewInternal');
 var CreateEvent = require('guestViewEvents').CreateEvent;
 var GuestViewInternalNatives = requireNative('guest_view_internal');
 var idGeneratorNatives = requireNative('id_generator');
+var registerElement = require('guestViewContainerElement').registerElement;
 var utils = require('utils');
+var WebViewElement = require('webViewElement').WebViewElement;
 var WebViewImpl = require('webView').WebViewImpl;
+var WebViewAttributeNames = require('webViewConstants').WebViewAttributeNames;
 
 // This is the only "webViewInternal.onClicked" named event for this renderer.
 //
@@ -29,13 +30,8 @@ var ContextMenusEvent = CreateEvent('chromeWebViewInternal.onClicked');
 var ContextMenusHandlerEvent =
     CreateEvent('chromeWebViewInternal.onContextMenuShow');
 
-var jsEvent;
-function createCustomEvent(name, schema, options, webviewId) {
-  if (bindingUtil)
-    return bindingUtil.createCustomEvent(name, undefined, false, false);
-  if (!jsEvent)
-    jsEvent = require('event_bindings').Event;
-  return new jsEvent(name, schema, options, webviewId);
+function GetUniqueSubEventName(eventName) {
+  return eventName + '/' + idGeneratorNatives.GetNextId();
 }
 
 // This event is exposed as <webview>.contextMenus.onClicked.
@@ -44,8 +40,8 @@ function createContextMenusOnClickedEvent(webViewInstanceId,
                                           opt_argSchemas,
                                           opt_eventOptions) {
   var subEventName = GetUniqueSubEventName(opt_eventName);
-  var newEvent = createCustomEvent(subEventName, opt_argSchemas,
-                                   opt_eventOptions, webViewInstanceId);
+  var newEvent =
+      bindingUtil.createCustomEvent(subEventName, false, false);
 
   var view = GuestViewInternalNatives.GetViewFromID(webViewInstanceId);
   if (view) {
@@ -66,8 +62,8 @@ function createContextMenusOnContextMenuEvent(webViewInstanceId,
                                               opt_argSchemas,
                                               opt_eventOptions) {
   var subEventName = GetUniqueSubEventName(opt_eventName);
-  var newEvent = createCustomEvent(subEventName, opt_argSchemas,
-                                   opt_eventOptions, webViewInstanceId);
+  var newEvent =
+      bindingUtil.createCustomEvent(subEventName, false, false);
 
   var view = GuestViewInternalNatives.GetViewFromID(webViewInstanceId);
   if (view) {
@@ -141,7 +137,14 @@ utils.expose(WebViewContextMenus, WebViewContextMenusImpl, {
 
 // -----------------------------------------------------------------------------
 
-WebViewImpl.prototype.maybeSetupContextMenus = function() {
+class ChromeWebViewImpl extends WebViewImpl {
+  constructor(webviewElement) {
+    super(webviewElement);
+    this.setupContextMenus();
+  }
+}
+
+ChromeWebViewImpl.prototype.setupContextMenus = function() {
   if (!this.contextMenusOnContextMenuEvent_) {
     var eventName = 'chromeWebViewInternal.onContextMenuShow';
     var eventSchema =
@@ -203,6 +206,15 @@ WebViewImpl.prototype.maybeSetupContextMenus = function() {
       });
 };
 
-function GetUniqueSubEventName(eventName) {
-  return eventName + '/' + idGeneratorNatives.GetNextId();
+class ChromeWebViewElement extends WebViewElement {
+  static get observedAttributes() {
+    return WebViewAttributeNames;
+  }
+
+  constructor() {
+    super();
+    privates(this).internal = new ChromeWebViewImpl(this);
+  }
 }
+
+registerElement('WebView', ChromeWebViewElement);

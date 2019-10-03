@@ -16,20 +16,18 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.prerender.ExternalPrerenderHandler;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.PrerenderTestHelper;
 import org.chromium.chrome.test.util.browser.TabTitleObserver;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.PageTransition;
 
@@ -41,10 +39,7 @@ import java.util.concurrent.TimeoutException;
  * Tests are disabled on low-end devices. These only support one renderer for performance reasons.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PrerenderTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -123,21 +118,6 @@ public class PrerenderTest {
     }
 
     /**
-     * Tests that we do get the page load finished notification even when a page has been fully
-     * prerendered.
-     */
-    @Test
-    @LargeTest
-    @Restriction({RESTRICTION_TYPE_NON_LOW_END_DEVICE})
-    @Feature({"TabContents"})
-    @RetryOnFailure
-    public void testPageLoadFinishNotification() throws InterruptedException {
-        String url = mTestServer.getURL("/chrome/test/data/android/prerender/google.html");
-        PrerenderTestHelper.prerenderUrl(url, mActivityTestRule.getActivity().getActivityTab());
-        mActivityTestRule.loadUrl(url);
-    }
-
-    /**
      * Tests that we don't crash when dismissing a prerendered page with infobars and unload
      * handler (See bug 5757331).
      * Note that this bug happened with the instant code. Now that we use Wicked Fast, we don't
@@ -158,6 +138,6 @@ public class PrerenderTest {
 
         // Cancel the prerender. This will discard the prerendered WebContents and close the
         // infobars.
-        ThreadUtils.runOnUiThreadBlocking(() -> handler.cancelCurrentPrerender());
+        TestThreadUtils.runOnUiThreadBlocking(() -> handler.cancelCurrentPrerender());
     }
 }

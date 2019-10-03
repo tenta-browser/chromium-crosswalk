@@ -4,6 +4,7 @@
 
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/dictionary_helper.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
@@ -12,11 +13,14 @@
 #include "components/spellcheck/common/spellcheck_common.h"
 #include "components/sync/base/model_type.h"
 
-using spellcheck::MAX_SYNCABLE_DICTIONARY_WORDS;
+namespace {
+
+using spellcheck::kMaxSyncableDictionaryWords;
 
 class TwoClientDictionarySyncTest : public SyncTest {
  public:
   TwoClientDictionarySyncTest() : SyncTest(TWO_CLIENT) {}
+
   ~TwoClientDictionarySyncTest() override {}
 
   bool TestUsesSelfNotifications() override { return false; }
@@ -90,7 +94,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientDictionarySyncTest,
   ASSERT_TRUE(DictionaryMatchChecker().Wait());
 
   for (int i = 0; i < num_clients(); ++i)
-    dictionary_helper::AddWord(i, "foo" + base::IntToString(i));
+    dictionary_helper::AddWord(i, "foo" + base::NumberToString(i));
 
   ASSERT_TRUE(DictionaryMatchChecker().Wait());
   ASSERT_EQ(num_clients(),
@@ -117,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientDictionarySyncTest,
 }
 
 // Tests the case where a client has more words added than the
-// MAX_SYNCABLE_DICTIONARY_WORDS limit.
+// kMaxSyncableDictionaryWords limit.
 IN_PROC_BROWSER_TEST_F(TwoClientDictionarySyncTest, Limit) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   dictionary_helper::LoadDictionaries();
@@ -126,11 +130,11 @@ IN_PROC_BROWSER_TEST_F(TwoClientDictionarySyncTest, Limit) {
   // Disable client #1 before client #0 starts adding anything.
   GetClient(1)->DisableSyncForAllDatatypes();
 
-  // Pick a size between 1/2 and 1/3 of MAX_SYNCABLE_DICTIONARY_WORDS. This will
+  // Pick a size between 1/2 and 1/3 of kMaxSyncableDictionaryWords. This will
   // allow the test to verify that while we crossed the limit the client not
   // actively making changes is still recieving sync updates but stops exactly
   // on the limit.
-  size_t chunk_size = MAX_SYNCABLE_DICTIONARY_WORDS * 2 / 5;
+  size_t chunk_size = kMaxSyncableDictionaryWords * 2 / 5;
 
   ASSERT_TRUE(dictionary_helper::AddWords(0, chunk_size, "foo-0-"));
   ASSERT_EQ(chunk_size, dictionary_helper::GetDictionarySize(0));
@@ -157,8 +161,10 @@ IN_PROC_BROWSER_TEST_F(TwoClientDictionarySyncTest, Limit) {
   ASSERT_TRUE(GetClient(1)->EnableSyncForAllDatatypes());
   ASSERT_TRUE(NumDictionaryEntriesChecker(1, 3 * chunk_size).Wait());
   ASSERT_TRUE(ServerCountMatchStatusChecker(syncer::DICTIONARY,
-                                            MAX_SYNCABLE_DICTIONARY_WORDS)
+                                            kMaxSyncableDictionaryWords)
                   .Wait());
   ASSERT_TRUE(
-      NumDictionaryEntriesChecker(0, MAX_SYNCABLE_DICTIONARY_WORDS).Wait());
+      NumDictionaryEntriesChecker(0, kMaxSyncableDictionaryWords).Wait());
 }
+
+}  // namespace

@@ -15,11 +15,12 @@
 
 namespace {
 
-void ShowContentExampleWindow(content::BrowserContext* browser_context,
+void ShowContentExampleWindow(ui::ViewsContentClient* views_content_client,
+                              content::BrowserContext* browser_context,
                               gfx::NativeWindow window_context) {
-  views::examples::ShowExamplesWindowWithContent(views::examples::QUIT_ON_CLOSE,
-                                                 browser_context,
-                                                 window_context);
+  views::examples::ShowExamplesWindowWithContent(
+      std::move(views_content_client->quit_closure()), browser_context,
+      window_context);
 
   // These lines serve no purpose other than to introduce an explicit content
   // dependency. If the main executable doesn't have this dependency, the linker
@@ -28,7 +29,7 @@ void ShowContentExampleWindow(content::BrowserContext* browser_context,
   // dlsym search path, which breaks (usually valid) assumptions made in
   // sandbox::InitLibcUrandomOverrides(). See http://crbug.com/374712.
   if (!browser_context) {
-    content::BrowserContext::SaveSessionState(NULL);
+    content::BrowserContext::SaveSessionState(nullptr);
     NOTREACHED();
   }
 }
@@ -37,7 +38,7 @@ void ShowContentExampleWindow(content::BrowserContext* browser_context,
 
 #if defined(OS_WIN)
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
-  sandbox::SandboxInterfaceInfo sandbox_info = {0};
+  sandbox::SandboxInterfaceInfo sandbox_info = {nullptr};
   content::InitializeSandboxInfo(&sandbox_info);
   ui::ViewsContentClient views_content_client(instance, &sandbox_info);
 #else
@@ -45,6 +46,7 @@ int main(int argc, const char** argv) {
   ui::ViewsContentClient views_content_client(argc, argv);
 #endif
 
-  views_content_client.set_task(base::Bind(&ShowContentExampleWindow));
+  views_content_client.set_on_pre_main_message_loop_run_callback(base::BindOnce(
+      &ShowContentExampleWindow, base::Unretained(&views_content_client)));
   return views_content_client.RunMain();
 }

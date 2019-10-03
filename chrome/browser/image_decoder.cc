@@ -8,10 +8,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "ipc/ipc_channel.h"
 #include "services/data_decoder/public/cpp/decode_image.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -37,15 +39,8 @@ void OnDecodeImageDone(
 }
 
 void BindToBrowserConnector(service_manager::mojom::ConnectorRequest request) {
-  if (!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&BindToBrowserConnector, base::Passed(&request)));
-    return;
-  }
-
-  content::ServiceManagerConnection::GetForProcess()->GetConnector()
-      ->BindConnectorRequest(std::move(request));
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  content::GetSystemConnector()->BindConnectorRequest(std::move(request));
 }
 
 void RunDecodeCallbackOnTaskRunner(
@@ -67,7 +62,9 @@ void DecodeImage(
   service_manager::mojom::ConnectorRequest connector_request;
   std::unique_ptr<service_manager::Connector> connector =
       service_manager::Connector::Create(&connector_request);
-  BindToBrowserConnector(std::move(connector_request));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&BindToBrowserConnector, std::move(connector_request)));
 
   data_decoder::DecodeImage(
       connector.get(), image_data, codec, shrink_to_fit, kMaxImageSizeInBytes,
@@ -172,10 +169,10 @@ void ImageDecoder::StartWithOptionsImpl(
   // operation happening on a thread which always has a ThreadTaskRunnerHandle.
   // We arbitrarily use the IO thread here to match details of the legacy
   // implementation.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&DecodeImage, base::Passed(&image_data), codec,
-                     shrink_to_fit, desired_image_frame_size, callback,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
+      base::BindOnce(&DecodeImage, std::move(image_data), codec, shrink_to_fit,
+                     desired_image_frame_size, callback,
                      base::WrapRefCounted(image_request->task_runner())));
 }
 

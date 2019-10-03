@@ -29,6 +29,12 @@ class FakeClientCertIdentity : public ClientCertIdentity {
       const std::string& cert_filename,
       const std::string& key_filename);
 
+  // Creates a FakeClientCertIdentity from a certificate file (DER or PEM).
+  // Signing attempts will fail. Returns nullptr on error.
+  static std::unique_ptr<FakeClientCertIdentity> CreateFromCertAndFailSigning(
+      const base::FilePath& dir,
+      const std::string& cert_filename);
+
   // Duplicates the FakeClientCertIdentity.
   std::unique_ptr<FakeClientCertIdentity> Copy();
 
@@ -36,9 +42,8 @@ class FakeClientCertIdentity : public ClientCertIdentity {
   SSLPrivateKey* ssl_private_key() const { return key_.get(); }
 
   // ClientCertIdentity implementation:
-  void AcquirePrivateKey(
-      const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
-          private_key_callback) override;
+  void AcquirePrivateKey(base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
+                             private_key_callback) override;
 #if defined(OS_MACOSX)
   SecIdentityRef sec_identity_ref() const override;
 #endif

@@ -9,6 +9,7 @@
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
+#include "ash/shell_state.h"
 #include "ash/wm/system_modal_container_layout_manager.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_state.h"
@@ -26,7 +27,6 @@
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
-namespace wm {
 
 namespace {
 
@@ -35,7 +35,7 @@ int GetDefaultSnappedWindowWidth(aura::Window* window) {
   const float kSnappedWidthWorkspaceRatio = 0.5f;
 
   int work_area_width =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window).width();
+      screen_util::GetDisplayWorkAreaBoundsInParent(window).width();
   int min_width =
       window->delegate() ? window->delegate()->GetMinimumSize().width() : 0;
   int ideal_width =
@@ -48,31 +48,6 @@ int GetDefaultSnappedWindowWidth(aura::Window* window) {
 bool IsWindowOrAncestorLockedToRoot(const aura::Window* window) {
   return window && (window->GetProperty(kLockedToRootKey) ||
                     IsWindowOrAncestorLockedToRoot(window->parent()));
-}
-
-// Move all transient children to |dst_root|, including the ones in
-// the child windows and transient children of the transient children.
-void MoveAllTransientChildrenToNewRoot(const display::Display& display,
-                                       aura::Window* window) {
-  aura::Window* dst_root =
-      Shell::GetRootWindowControllerWithDisplayId(display.id())
-          ->GetRootWindow();
-  for (aura::Window* transient_child : ::wm::GetTransientChildren(window)) {
-    const int container_id = transient_child->parent()->id();
-    DCHECK_GE(container_id, 0);
-    aura::Window* container = dst_root->GetChildById(container_id);
-    const gfx::Rect transient_child_bounds_in_screen =
-        transient_child->GetBoundsInScreen();
-    container->AddChild(transient_child);
-    transient_child->SetBoundsInScreen(transient_child_bounds_in_screen,
-                                       display);
-
-    // Transient children may have transient children.
-    MoveAllTransientChildrenToNewRoot(display, transient_child);
-  }
-  // Move transient children of the child windows if any.
-  for (aura::Window* child : window->children())
-    MoveAllTransientChildrenToNewRoot(display, child);
 }
 
 }  // namespace
@@ -116,7 +91,7 @@ void AdjustBoundsToEnsureMinimumWindowVisibility(const gfx::Rect& visible_area,
 
 gfx::Rect GetDefaultLeftSnappedWindowBoundsInParent(aura::Window* window) {
   gfx::Rect work_area_in_parent(
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window));
+      screen_util::GetDisplayWorkAreaBoundsInParent(window));
   return gfx::Rect(work_area_in_parent.x(), work_area_in_parent.y(),
                    GetDefaultSnappedWindowWidth(window),
                    work_area_in_parent.height());
@@ -124,7 +99,7 @@ gfx::Rect GetDefaultLeftSnappedWindowBoundsInParent(aura::Window* window) {
 
 gfx::Rect GetDefaultRightSnappedWindowBoundsInParent(aura::Window* window) {
   gfx::Rect work_area_in_parent(
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window));
+      screen_util::GetDisplayWorkAreaBoundsInParent(window));
   int width = GetDefaultSnappedWindowWidth(window);
   return gfx::Rect(work_area_in_parent.right() - width, work_area_in_parent.y(),
                    width, work_area_in_parent.height());
@@ -132,7 +107,7 @@ gfx::Rect GetDefaultRightSnappedWindowBoundsInParent(aura::Window* window) {
 
 void CenterWindow(aura::Window* window) {
   WMEvent event(WM_EVENT_CENTER);
-  wm::GetWindowState(window)->OnWMEvent(&event);
+  WindowState::Get(window)->OnWMEvent(&event);
 }
 
 void SetBoundsInScreen(aura::Window* window,
@@ -163,8 +138,8 @@ void SetBoundsInScreen(aura::Window* window,
     }
 
     if (dst_container && window->parent() != dst_container) {
-      aura::Window* focused = GetFocusedWindow();
-      aura::Window* active = GetActiveWindow();
+      aura::Window* focused = window_util::GetFocusedWindow();
+      aura::Window* active = window_util::GetActiveWindow();
 
       aura::WindowTracker tracker;
       if (focused)
@@ -172,23 +147,27 @@ void SetBoundsInScreen(aura::Window* window,
       if (active && focused != active)
         tracker.Add(active);
 
-      gfx::Point origin = bounds_in_screen.origin();
-      const gfx::Point display_origin = display.bounds().origin();
-      origin.Offset(-display_origin.x(), -display_origin.y());
-      gfx::Rect new_bounds = gfx::Rect(origin, bounds_in_screen.size());
-
-      // Set new bounds now so that the container's layout manager can adjust
-      // the bounds if necessary.
-      window->SetBounds(new_bounds);
+      // Client controlled window will have its own logic on client side
+      // to adjust bounds.
+      // TODO(oshima): Use WM_EVENT_SET_BOUNDS with target display id.
+      auto* window_state = WindowState::Get(window);
+      if (!window_state || !window_state->allow_set_bounds_direct()) {
+        gfx::Point origin = bounds_in_screen.origin();
+        const gfx::Point display_origin = display.bounds().origin();
+        origin.Offset(-display_origin.x(), -display_origin.y());
+        gfx::Rect new_bounds = gfx::Rect(origin, bounds_in_screen.size());
+        // Set new bounds now so that the container's layout manager can adjust
+        // the bounds if necessary.
+        window->SetBounds(new_bounds);
+      }
 
       dst_container->AddChild(window);
-
-      MoveAllTransientChildrenToNewRoot(display, window);
 
       // Restore focused/active window.
       if (focused && tracker.Contains(focused)) {
         aura::client::GetFocusClient(focused)->FocusWindow(focused);
-        Shell::Get()->set_root_window_for_new_windows(focused->GetRootWindow());
+        Shell::Get()->shell_state()->SetRootWindowForNewWindows(
+            focused->GetRootWindow());
       } else if (active && tracker.Contains(active)) {
         wm::ActivateWindow(active);
       }
@@ -208,5 +187,4 @@ void SetBoundsInScreen(aura::Window* window,
   window->SetBounds(gfx::Rect(origin, bounds_in_screen.size()));
 }
 
-}  // namespace wm
 }  // namespace ash

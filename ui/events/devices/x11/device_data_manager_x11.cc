@@ -12,9 +12,9 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "base/sys_info.h"
+#include "base/stl_util.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "ui/display/display.h"
 #include "ui/events/devices/x11/device_list_cache_x11.h"
@@ -102,7 +102,7 @@ constexpr const char* kCachedAtoms[] = {
 };
 
 // Make sure the sizes of enum and |kCachedAtoms| are aligned.
-static_assert(arraysize(kCachedAtoms) ==
+static_assert(base::size(kCachedAtoms) ==
                   ui::DeviceDataManagerX11::DT_LAST_ENTRY,
               "kCachedAtoms count / enum mismatch");
 
@@ -150,13 +150,11 @@ void DeviceDataManagerX11::CreateInstance() {
   if (HasInstance())
     return;
 
-  DeviceDataManagerX11* device_data_manager = new DeviceDataManagerX11();
+  new DeviceDataManagerX11();
 
   // TODO(bruthig): Replace the DeleteInstance callbacks with explicit calls.
   base::AtExitManager::RegisterTask(
       base::Bind(DeviceDataManager::DeleteInstance));
-
-  set_instance(device_data_manager);
 }
 
 // static
@@ -635,9 +633,8 @@ int DeviceDataManagerX11::GetMappedButton(int button) {
 }
 
 void DeviceDataManagerX11::UpdateButtonMap() {
-  button_map_count_ = XGetPointerMapping(gfx::GetXDisplay(),
-                                         button_map_,
-                                         arraysize(button_map_));
+  button_map_count_ = XGetPointerMapping(gfx::GetXDisplay(), button_map_,
+                                         base::size(button_map_));
 }
 
 void DeviceDataManagerX11::GetGestureTimes(const XEvent& xev,
@@ -832,8 +829,7 @@ void DeviceDataManagerX11::DisableDevice(int deviceid) {
   blocked_devices_.set(deviceid, true);
   // TODO(rsadam@): Support blocking touchscreen devices.
   std::vector<InputDevice> keyboards = GetKeyboardDevices();
-  std::vector<InputDevice>::iterator it =
-      FindDeviceWithId(keyboards.begin(), keyboards.end(), deviceid);
+  auto it = FindDeviceWithId(keyboards.begin(), keyboards.end(), deviceid);
   if (it != std::end(keyboards)) {
     blocked_keyboard_devices_.insert(
         std::pair<int, InputDevice>(deviceid, *it));
@@ -844,8 +840,7 @@ void DeviceDataManagerX11::DisableDevice(int deviceid) {
 
 void DeviceDataManagerX11::EnableDevice(int deviceid) {
   blocked_devices_.set(deviceid, false);
-  std::map<int, InputDevice>::iterator it =
-      blocked_keyboard_devices_.find(deviceid);
+  auto it = blocked_keyboard_devices_.find(deviceid);
   if (it != blocked_keyboard_devices_.end()) {
     std::vector<InputDevice> devices = GetKeyboardDevices();
     // Add device to current list of active devices.
@@ -879,13 +874,11 @@ bool DeviceDataManagerX11::IsEventBlocked(const XEvent& xev) {
 void DeviceDataManagerX11::OnKeyboardDevicesUpdated(
     const std::vector<InputDevice>& devices) {
   std::vector<InputDevice> keyboards(devices);
-  for (std::map<int, InputDevice>::iterator blocked_iter =
-           blocked_keyboard_devices_.begin();
+  for (auto blocked_iter = blocked_keyboard_devices_.begin();
        blocked_iter != blocked_keyboard_devices_.end();) {
     // Check if the blocked device still exists in list of devices.
     int device_id = blocked_iter->first;
-    std::vector<InputDevice>::iterator it =
-        FindDeviceWithId(keyboards.begin(), keyboards.end(), device_id);
+    auto it = FindDeviceWithId(keyboards.begin(), keyboards.end(), device_id);
     // If the device no longer exists, unblock it, else filter it out from our
     // active list.
     if (it == keyboards.end()) {

@@ -12,7 +12,6 @@
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
-#include "chrome/common/extensions/extension_process_policy.h"
 #include "chrome/common/url_constants.h"
 #include "components/rappor/rappor_service_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -23,15 +22,16 @@
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/extensions_browser_client.h"
+#include "extensions/browser/kiosk/kiosk_delegate.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/switches.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/mojom/autoplay/autoplay.mojom.h"
 
 using content::BrowserContext;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(
-    extensions::ChromeExtensionWebContentsObserver);
 
 namespace extensions {
 
@@ -41,11 +41,24 @@ ChromeExtensionWebContentsObserver::ChromeExtensionWebContentsObserver(
 
 ChromeExtensionWebContentsObserver::~ChromeExtensionWebContentsObserver() {}
 
+// static
+void ChromeExtensionWebContentsObserver::CreateForWebContents(
+    content::WebContents* web_contents) {
+  content::WebContentsUserData<
+      ChromeExtensionWebContentsObserver>::CreateForWebContents(web_contents);
+
+  // Initialize this instance if necessary.
+  FromWebContents(web_contents)->Initialize();
+}
+
 void ChromeExtensionWebContentsObserver::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized());
   ReloadIfTerminated(render_frame_host);
   ExtensionWebContentsObserver::RenderFrameCreated(render_frame_host);
 
+  // This logic should match
+  // ChromeContentBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories.
   const Extension* extension = GetExtensionFromFrame(render_frame_host, false);
   if (!extension)
     return;
@@ -57,10 +70,10 @@ void ChromeExtensionWebContentsObserver::RenderFrameCreated(
   // are allowed to use chrome://resources/ and chrome://theme/ URLs.
   if ((extension->is_extension() || extension->is_platform_app()) &&
       Manifest::IsComponentLocation(extension->location())) {
-    policy->GrantOrigin(
+    policy->GrantRequestOrigin(
         process_id, url::Origin::Create(GURL(content::kChromeUIResourcesURL)));
-    policy->GrantOrigin(process_id,
-                        url::Origin::Create(GURL(chrome::kChromeUIThemeURL)));
+    policy->GrantRequestOrigin(
+        process_id, url::Origin::Create(GURL(chrome::kChromeUIThemeURL)));
   }
 
   // Extensions, legacy packaged apps, and component platform apps are allowed
@@ -71,9 +84,9 @@ void ChromeExtensionWebContentsObserver::RenderFrameCreated(
       extension->is_legacy_packaged_app() ||
       (extension->is_platform_app() &&
        Manifest::IsComponentLocation(extension->location()))) {
-    policy->GrantOrigin(process_id,
-                        url::Origin::Create(GURL(chrome::kChromeUIFaviconURL)));
-    policy->GrantOrigin(
+    policy->GrantRequestOrigin(
+        process_id, url::Origin::Create(GURL(chrome::kChromeUIFaviconURL)));
+    policy->GrantRequestOrigin(
         process_id,
         url::Origin::Create(GURL(chrome::kChromeUIExtensionIconURL)));
   }
@@ -81,12 +94,14 @@ void ChromeExtensionWebContentsObserver::RenderFrameCreated(
 
 void ChromeExtensionWebContentsObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
+  DCHECK(initialized());
   ExtensionWebContentsObserver::DidFinishNavigation(navigation_handle);
 }
 
 bool ChromeExtensionWebContentsObserver::OnMessageReceived(
     const IPC::Message& message,
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized());
   if (ExtensionWebContentsObserver::OnMessageReceived(message,
                                                       render_frame_host)) {
     return true;
@@ -108,6 +123,7 @@ void ChromeExtensionWebContentsObserver::OnDetailedConsoleMessageAdded(
     const base::string16& source,
     const StackTrace& stack_trace,
     int32_t severity_level) {
+  DCHECK(initialized());
   if (!IsSourceFromAnExtension(source))
     return;
 
@@ -126,6 +142,7 @@ void ChromeExtensionWebContentsObserver::OnDetailedConsoleMessageAdded(
 
 void ChromeExtensionWebContentsObserver::InitializeRenderFrame(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized());
   ExtensionWebContentsObserver::InitializeRenderFrame(render_frame_host);
   WindowController* controller = dispatcher()->GetExtensionWindowController();
   if (controller) {
@@ -136,6 +153,7 @@ void ChromeExtensionWebContentsObserver::InitializeRenderFrame(
 
 void ChromeExtensionWebContentsObserver::ReloadIfTerminated(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized());
   std::string extension_id = GetExtensionIdFromFrame(render_frame_host);
   if (extension_id.empty())
     return;
@@ -151,5 +169,36 @@ void ChromeExtensionWebContentsObserver::ReloadIfTerminated(
         extension_service()->ReloadExtension(extension_id);
   }
 }
+
+void ChromeExtensionWebContentsObserver::ReadyToCommitNavigation(
+    content::NavigationHandle* navigation_handle) {
+  ExtensionWebContentsObserver::ReadyToCommitNavigation(navigation_handle);
+  const ExtensionRegistry* registry = ExtensionRegistry::Get(
+      navigation_handle->GetWebContents()->GetBrowserContext());
+
+  const Extension* extension =
+      GetExtensionFromFrame(web_contents()->GetMainFrame(), false);
+  DCHECK(ExtensionsBrowserClient::Get()->GetKioskDelegate());
+  bool is_kiosk = extension && ExtensionsBrowserClient::Get()
+                                   ->GetKioskDelegate()
+                                   ->IsAutoLaunchedKioskApp(extension->id());
+
+  // If the top most frame is an extension, packaged app, hosted app, etc. then
+  // the main frame and all iframes should be able to autoplay without
+  // restriction. <webview> should still have autoplay blocked though.
+  GURL url = navigation_handle->IsInMainFrame()
+                 ? navigation_handle->GetURL()
+                 : navigation_handle->GetWebContents()->GetLastCommittedURL();
+  if (is_kiosk || registry->enabled_extensions().GetExtensionOrAppByURL(url)) {
+    blink::mojom::AutoplayConfigurationClientAssociatedPtr client;
+    navigation_handle->GetRenderFrameHost()
+        ->GetRemoteAssociatedInterfaces()
+        ->GetInterface(&client);
+    client->AddAutoplayFlags(url::Origin::Create(navigation_handle->GetURL()),
+                             blink::mojom::kAutoplayFlagForceAllow);
+  }
+}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ChromeExtensionWebContentsObserver)
 
 }  // namespace extensions

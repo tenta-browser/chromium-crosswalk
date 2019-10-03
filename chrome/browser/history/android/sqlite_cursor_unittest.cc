@@ -10,9 +10,8 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -73,7 +72,7 @@ class SQLiteCursorTest : public testing::Test,
   // Override SQLiteCursor::TestObserver.
   void OnPostMoveToTask() override {
     ASSERT_FALSE(run_loop_);
-    run_loop_ = base::MakeUnique<base::RunLoop>();
+    run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
     run_loop_ = nullptr;
   }
@@ -85,7 +84,7 @@ class SQLiteCursorTest : public testing::Test,
 
   void OnPostGetFaviconTask() override {
     ASSERT_FALSE(run_loop_);
-    run_loop_ = base::MakeUnique<base::RunLoop>();
+    run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
     run_loop_ = nullptr;
   }
@@ -212,7 +211,7 @@ TEST_F(SQLiteCursorTest, Run) {
   base::android::ScopedJavaLocalRef<jbyteArray> data =
       cursor->GetBlob(env, NULL, 3);
   std::vector<uint8_t> out;
-  base::android::JavaByteArrayToByteVector(env, data.obj(), &out);
+  base::android::JavaByteArrayToByteVector(env, data, &out);
   EXPECT_EQ(data_bytes->data().size(), out.size());
   EXPECT_EQ(data_bytes->data()[0], out[0]);
   cursor->Destroy(env, NULL);

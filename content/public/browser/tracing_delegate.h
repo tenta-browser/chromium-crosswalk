@@ -15,16 +15,13 @@ namespace base {
 class DictionaryValue;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace content {
 class BackgroundTracingConfig;
 class TraceUploader;
-
-typedef base::Callback<bool(const std::string& metadata_name)>
-    MetadataFilterPredicate;
 
 // This can be implemented by the embedder to provide functionality for the
 // about://tracing WebUI.
@@ -34,7 +31,7 @@ class CONTENT_EXPORT TracingDelegate {
 
   // Provide trace uploading functionality; see trace_uploader.h.
   virtual std::unique_ptr<TraceUploader> GetTraceUploader(
-      net::URLRequestContextGetter* request_context) = 0;
+      scoped_refptr<network::SharedURLLoaderFactory>) = 0;
 
   // This can be used to veto a particular background tracing scenario.
   virtual bool IsAllowedToBeginBackgroundScenario(
@@ -49,8 +46,6 @@ class CONTENT_EXPORT TracingDelegate {
 
   // Used to add any additional metadata to traces.
   virtual std::unique_ptr<base::DictionaryValue> GenerateMetadataDict();
-
-  virtual MetadataFilterPredicate GetMetadataFilterPredicate();
 };
 
 }  // namespace content

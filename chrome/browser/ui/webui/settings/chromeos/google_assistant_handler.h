@@ -6,14 +6,19 @@
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_CHROMEOS_GOOGLE_ASSISTANT_HANDLER_H_
 
 #include "base/macros.h"
+#include "base/optional.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
+#include "chromeos/audio/cras_audio_handler.h"
+#include "chromeos/services/assistant/public/mojom/settings.mojom.h"
+#include "mojo/public/cpp/bindings/binding.h"
 
 class Profile;
 
 namespace chromeos {
 namespace settings {
 
-class GoogleAssistantHandler : public ::settings::SettingsPageUIHandler {
+class GoogleAssistantHandler : public ::settings::SettingsPageUIHandler,
+                               chromeos::CrasAudioHandler::AudioObserver {
  public:
   explicit GoogleAssistantHandler(Profile* profile);
   ~GoogleAssistantHandler() override;
@@ -22,17 +27,29 @@ class GoogleAssistantHandler : public ::settings::SettingsPageUIHandler {
   void OnJavascriptAllowed() override;
   void OnJavascriptDisallowed() override;
 
+  // chromeos::CrasAudioHandler::AudioObserver overrides
+  void OnAudioNodesChanged() override;
+
  private:
-  // WebUI call to enable the Google Assistant.
-  void HandleSetGoogleAssistantEnabled(const base::ListValue* args);
-  // WebUI call to enable context for the Google Assistant.
-  void HandleSetGoogleAssistantContextEnabled(const base::ListValue* args);
   // WebUI call to launch into the Google Assistant app settings.
   void HandleShowGoogleAssistantSettings(const base::ListValue* args);
-  // WebUI call to launch assistant runtime flow.
-  void HandleTurnOnGoogleAssistant(const base::ListValue* args);
+  // WebUI call to retrain Assistant voice model.
+  void HandleRetrainVoiceModel(const base::ListValue* args);
+  // WebUI call to sync Assistant voice model status.
+  void HandleSyncVoiceModelStatus(const base::ListValue* args);
+  // WebUI call to signal js side is ready.
+  void HandleInitialized(const base::ListValue* args);
+
+  // Bind to assistant settings manager.
+  void BindAssistantSettingsManager();
 
   Profile* const profile_;
+
+  assistant::mojom::AssistantSettingsManagerPtr settings_manager_;
+
+  bool pending_hotword_update_ = false;
+
+  base::WeakPtrFactory<GoogleAssistantHandler> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(GoogleAssistantHandler);
 };

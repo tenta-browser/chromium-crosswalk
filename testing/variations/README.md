@@ -10,6 +10,9 @@ perf bots and browser tests in the waterfall.
 > Note: This configuration applies specifically to Chromium developer builds.
 > Chrome branded / official builds do not use these definitions.
 
+> Note: This configuration is NOT used for content_browsertests or other test
+> targets based on content_shell.
+
 ## Config File Format
 
 ```json
@@ -50,7 +53,8 @@ Each *study configuration* is a dictionary containing `platforms` and
 `experiments`.
 
 `platforms` is an array of strings, indicating the targetted platforms. The
-strings may be `android`, `chromeos`, `ios`, `linux`, `mac`, or `windows`.
+strings may be `android`, `android_webview`, `chromeos`, `ios`, `linux`, `mac`,
+or `windows`.
 
 `experiments` is an array containing the *experiments*.
 
@@ -109,7 +113,7 @@ the form `//N` where `N` is between 0 and 9.
 {
     "AStudyWithExperimentComment": [
         {
-            "platforms": ["chromeos", "linux", "mac", "win"],
+            "platforms": ["chromeos", "linux", "mac", "windows"],
             "experiments": [
                 {
                     "//0": "This is the first comment line.",
@@ -129,7 +133,7 @@ Simply specify two different study configurations in the study:
 {
     "DifferentExperimentsPerPlatform": [
         {
-            "platforms": ["chromeos", "linux", "mac", "win"],
+            "platforms": ["chromeos", "linux", "mac", "windows"],
             "experiments": [{ "name": "DesktopExperiment" }]
         },
         {

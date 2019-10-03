@@ -11,11 +11,11 @@
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "components/policy/core/common/async_policy_provider.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/policy_loader_ios.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace policy {
 
@@ -29,7 +29,7 @@ class DeviceManagementServiceConfiguration
 
   ~DeviceManagementServiceConfiguration() override {}
 
-  std::string GetServerUrl() override {
+  std::string GetDMServerUrl() override {
     return BrowserPolicyConnector::GetDeviceManagementUrl();
   }
 
@@ -51,6 +51,10 @@ class DeviceManagementServiceConfiguration
                                     os_bugfix_version);
     return base::StringPrintf(
         "%s|%s|%s", os_name.c_str(), os_hardware.c_str(), os_version.c_str());
+  }
+
+  std::string GetReportingServerUrl() override {
+    return BrowserPolicyConnector::GetRealtimeReportingUrl();
   }
 
  private:
@@ -78,7 +82,7 @@ BrowserPolicyConnectorIOS::~BrowserPolicyConnectorIOS() {}
 
 void BrowserPolicyConnectorIOS::Init(
     PrefService* local_state,
-    scoped_refptr<net::URLRequestContextGetter> request_context) {
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   std::unique_ptr<DeviceManagementService::Configuration> configuration(
       new DeviceManagementServiceConfiguration(user_agent_));
   std::unique_ptr<DeviceManagementService> device_management_service(

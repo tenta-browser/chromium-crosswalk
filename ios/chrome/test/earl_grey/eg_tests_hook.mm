@@ -10,11 +10,11 @@
 
 namespace tests_hook {
 
-bool DisableContentSuggestions() {
+bool DisableAppGroupAccess() {
   return true;
 }
 
-bool DisableContextualSearch() {
+bool DisableContentSuggestions() {
   return true;
 }
 

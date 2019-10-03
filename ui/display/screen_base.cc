@@ -30,13 +30,11 @@ gfx::NativeWindow ScreenBase::GetWindowAtScreenPoint(const gfx::Point& point) {
 Display ScreenBase::GetPrimaryDisplay() const {
   auto iter = display_list_.GetPrimaryDisplayIterator();
   if (iter == display_list_.displays().end())
-    return Display();  // Invalid display since we have no primary display.
+    return Display::GetDefaultDisplay();
   return *iter;
 }
 
 Display ScreenBase::GetDisplayNearestWindow(gfx::NativeWindow window) const {
-  // TODO(riajiang): Implement this for multi-displays either here or in
-  // ScreenMus.
   NOTIMPLEMENTED_LOG_ONCE();
   return GetPrimaryDisplay();
 }

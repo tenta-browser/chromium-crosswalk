@@ -7,10 +7,11 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/mac/foundation_util.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/numerics/safe_math.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "services/device/hid/hid_connection_mac.h"
@@ -65,28 +66,15 @@ void HidConnectionMac::PlatformClose() {
   if (result != kIOReturnSuccess) {
     HID_LOG(EVENT) << "Failed to close HID device: " << HexErrorCode(result);
   }
-
-  while (!pending_reads_.empty()) {
-    std::move(pending_reads_.front().callback).Run(false, NULL, 0);
-    pending_reads_.pop();
-  }
 }
 
-void HidConnectionMac::PlatformRead(ReadCallback callback) {
-  DCHECK(thread_checker().CalledOnValidThread());
-  PendingHidRead pending_read;
-  pending_read.callback = std::move(callback);
-  pending_reads_.push(std::move(pending_read));
-  ProcessReadQueue();
-}
-
-void HidConnectionMac::PlatformWrite(scoped_refptr<net::IOBuffer> buffer,
-                                     size_t size,
-                                     WriteCallback callback) {
+void HidConnectionMac::PlatformWrite(
+    scoped_refptr<base::RefCountedBytes> buffer,
+    WriteCallback callback) {
   blocking_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&HidConnectionMac::SetReportAsync, this,
-                                kIOHIDReportTypeOutput, buffer, size,
-                                std::move(callback)));
+      FROM_HERE,
+      base::BindOnce(&HidConnectionMac::SetReportAsync, this,
+                     kIOHIDReportTypeOutput, buffer, std::move(callback)));
 }
 
 void HidConnectionMac::PlatformGetFeatureReport(uint8_t report_id,
@@ -97,13 +85,12 @@ void HidConnectionMac::PlatformGetFeatureReport(uint8_t report_id,
 }
 
 void HidConnectionMac::PlatformSendFeatureReport(
-    scoped_refptr<net::IOBuffer> buffer,
-    size_t size,
+    scoped_refptr<base::RefCountedBytes> buffer,
     WriteCallback callback) {
   blocking_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&HidConnectionMac::SetReportAsync, this,
-                                kIOHIDReportTypeFeature, buffer, size,
-                                std::move(callback)));
+      FROM_HERE,
+      base::BindOnce(&HidConnectionMac::SetReportAsync, this,
+                     kIOHIDReportTypeFeature, buffer, std::move(callback)));
 }
 
 // static
@@ -120,58 +107,25 @@ void HidConnectionMac::InputReportCallback(void* context,
     return;
   }
 
-  scoped_refptr<net::IOBufferWithSize> buffer;
+  scoped_refptr<base::RefCountedBytes> buffer;
   if (connection->device_info()->has_report_id()) {
     // report_id is already contained in report_bytes
-    buffer =
-        new net::IOBufferWithSize(base::checked_cast<size_t>(report_length));
-    memcpy(buffer->data(), report_bytes, report_length);
+    buffer = base::MakeRefCounted<base::RefCountedBytes>(
+        report_bytes, base::checked_cast<size_t>(report_length));
   } else {
-    buffer = new net::IOBufferWithSize(static_cast<size_t>(
-        (base::CheckedNumeric<size_t>(report_length) + 1).ValueOrDie()));
-    buffer->data()[0] = 0;
-    memcpy(buffer->data() + 1, report_bytes, report_length);
+    buffer = base::MakeRefCounted<base::RefCountedBytes>(
+        (base::CheckedNumeric<size_t>(report_length) + 1).ValueOrDie());
+    buffer->front()[0] = 0;
+    memcpy(buffer->front() + 1, report_bytes, report_length);
   }
 
-  connection->ProcessInputReport(buffer);
-}
-
-void HidConnectionMac::ProcessInputReport(
-    scoped_refptr<net::IOBufferWithSize> buffer) {
-  DCHECK(thread_checker().CalledOnValidThread());
-  DCHECK_GE(buffer->size(), 1);
-
-  uint8_t report_id = buffer->data()[0];
-  if (IsReportIdProtected(report_id))
-    return;
-
-  PendingHidReport report;
-  report.buffer = buffer;
-  report.size = buffer->size();
-  pending_reports_.push(report);
-  ProcessReadQueue();
-}
-
-void HidConnectionMac::ProcessReadQueue() {
-  DCHECK(thread_checker().CalledOnValidThread());
-
-  // Hold a reference to |this| to prevent a callback from freeing this object
-  // during the loop.
-  scoped_refptr<HidConnectionMac> self(this);
-  while (pending_reads_.size() && pending_reports_.size()) {
-    PendingHidRead read = std::move(pending_reads_.front());
-    PendingHidReport report = pending_reports_.front();
-
-    pending_reads_.pop();
-    pending_reports_.pop();
-    std::move(read.callback).Run(true, report.buffer, report.size);
-  }
+  connection->ProcessInputReport(buffer, buffer->size());
 }
 
 void HidConnectionMac::GetFeatureReportAsync(uint8_t report_id,
                                              ReadCallback callback) {
-  scoped_refptr<net::IOBufferWithSize> buffer(
-      new net::IOBufferWithSize(device_info()->max_feature_report_size() + 1));
+  auto buffer = base::MakeRefCounted<base::RefCountedBytes>(
+      device_info()->max_feature_report_size() + 1);
   CFIndex report_size = buffer->size();
 
   // The IOHIDDevice object is shared with the UI thread and so this function
@@ -179,9 +133,9 @@ void HidConnectionMac::GetFeatureReportAsync(uint8_t report_id,
   // version is NOT IMPLEMENTED. I've examined the open source implementation
   // of this function and believe it is a simple enough wrapper around the
   // kernel API that this is safe.
-  IOReturn result = IOHIDDeviceGetReport(
-      device_.get(), kIOHIDReportTypeFeature, report_id,
-      reinterpret_cast<uint8_t*>(buffer->data()), &report_size);
+  IOReturn result =
+      IOHIDDeviceGetReport(device_.get(), kIOHIDReportTypeFeature, report_id,
+                           buffer->front(), &report_size);
   if (result == kIOReturnSuccess) {
     task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&HidConnectionMac::ReturnAsyncResult, this,
@@ -196,11 +150,12 @@ void HidConnectionMac::GetFeatureReportAsync(uint8_t report_id,
   }
 }
 
-void HidConnectionMac::SetReportAsync(IOHIDReportType report_type,
-                                      scoped_refptr<net::IOBuffer> buffer,
-                                      size_t size,
-                                      WriteCallback callback) {
-  uint8_t* data = reinterpret_cast<uint8_t*>(buffer->data());
+void HidConnectionMac::SetReportAsync(
+    IOHIDReportType report_type,
+    scoped_refptr<base::RefCountedBytes> buffer,
+    WriteCallback callback) {
+  uint8_t* data = buffer->front();
+  size_t size = buffer->size();
   DCHECK_GE(size, 1u);
   uint8_t report_id = data[0];
   if (report_id == 0) {

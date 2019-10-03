@@ -5,20 +5,18 @@
 package org.chromium.chrome.browser.firstrun;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.Intent;
+import android.os.Bundle;
+import android.support.v4.app.Fragment;
 import android.text.TextUtils;
 
-import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.preferences.PreferencesLauncher;
-import org.chromium.chrome.browser.signin.AccountManagementFragment;
+import org.chromium.chrome.browser.preferences.sync.SyncAndServicesPreferences;
+import org.chromium.chrome.browser.signin.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.SigninManager;
 import org.chromium.chrome.browser.signin.SigninManager.SignInCallback;
+import org.chromium.chrome.browser.signin.UnifiedConsentServiceBridge;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 
 /**
@@ -35,7 +33,6 @@ import org.chromium.chrome.browser.util.FeatureUtilities;
  * FirstRunSignInProcessor.start(activity).
  */
 public final class FirstRunSignInProcessor {
-    private static final String TAG = "FirstRunSigninProc";
     /**
      * SharedPreferences preference names to keep the state of the First Run Experience.
      */
@@ -52,22 +49,14 @@ public final class FirstRunSignInProcessor {
      * @param activity The context for the FRE parameters processor.
      */
     public static void start(final Activity activity) {
-        SigninManager signinManager = SigninManager.get(activity.getApplicationContext());
+        SigninManager signinManager = IdentityServicesProvider.getSigninManager();
         signinManager.onFirstRunCheckDone();
 
-        boolean firstRunFlowComplete = FirstRunStatus.getFirstRunFlowComplete();
-        // We skip signin and the FRE if
+        // Skip signin if the first run flow is not complete. Examples of cases where the user
+        // would not have gone through the FRE:
         // - FRE is disabled, or
         // - FRE hasn't been completed, but the user has already seen the ToS in the Setup Wizard.
-        if (CommandLine.getInstance().hasSwitch(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
-                || ApiCompatibilityUtils.isDemoUser(activity)
-                || (!firstRunFlowComplete && ToSAckedReceiver.checkAnyUserHasSeenToS())) {
-            return;
-        }
-
-        if (!firstRunFlowComplete) {
-            // Force trigger the FRE.
-            requestToFireIntentAndFinish(activity);
+        if (!FirstRunStatus.getFirstRunFlowComplete()) {
             return;
         }
 
@@ -76,7 +65,7 @@ public final class FirstRunSignInProcessor {
             return;
         }
         final String accountName = getFirstRunFlowSignInAccountName();
-        if (!FeatureUtilities.canAllowSync(activity) || !signinManager.isSignInAllowed()
+        if (!FeatureUtilities.canAllowSync() || !signinManager.isSignInAllowed()
                 || TextUtils.isEmpty(accountName)) {
             setFirstRunFlowSignInComplete(true);
             return;
@@ -86,6 +75,7 @@ public final class FirstRunSignInProcessor {
         signinManager.signIn(accountName, activity, new SignInCallback() {
             @Override
             public void onSignInComplete() {
+                UnifiedConsentServiceBridge.setUrlKeyedAnonymizedDataCollectionEnabled(true);
                 // Show sync settings if user pressed the "Settings" button.
                 if (setUp) {
                     openSignInSettings(activity);
@@ -106,23 +96,9 @@ public final class FirstRunSignInProcessor {
      * Opens sign in settings as requested in the FRE sign-in dialog.
      */
     private static void openSignInSettings(Activity activity) {
-        Intent intent = PreferencesLauncher.createIntentForSettingsPage(
-                activity, AccountManagementFragment.class.getName());
-        activity.startActivity(intent);
-    }
-
-    /**
-     * Starts the full FRE and finishes the current activity.
-     */
-    private static void requestToFireIntentAndFinish(Activity activity) {
-        Log.e(TAG, "Attempt to pass-through without completed FRE");
-
-        // Things went wrong -- we want the user to go through the full FRE.
-        FirstRunStatus.setFirstRunFlowComplete(false);
-        setFirstRunFlowSignInComplete(false);
-        setFirstRunFlowSignInAccountName(null);
-        setFirstRunFlowSignInSetup(false);
-        activity.startActivity(FirstRunFlowSequencer.createGenericFirstRunIntent(activity, true));
+        final Class<? extends Fragment> fragment = SyncAndServicesPreferences.class;
+        final Bundle arguments = SyncAndServicesPreferences.createArguments(true);
+        PreferencesLauncher.launchSettingsPageCompat(activity, fragment, arguments);
     }
 
     /**
@@ -199,8 +175,8 @@ public final class FirstRunSignInProcessor {
     /**
      * Allows the user to sign-in if there are no pending FRE sign-in requests.
      */
-    public static void updateSigninManagerFirstRunCheckDone(Context context) {
-        SigninManager manager = SigninManager.get(context);
+    public static void updateSigninManagerFirstRunCheckDone() {
+        SigninManager manager = IdentityServicesProvider.getSigninManager();
         if (manager.isSignInAllowed()) return;
         if (!FirstRunStatus.getFirstRunFlowComplete()) return;
         if (!getFirstRunFlowSignInComplete()) return;

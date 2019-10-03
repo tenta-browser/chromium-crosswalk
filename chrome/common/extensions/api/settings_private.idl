@@ -13,7 +13,14 @@ namespace settingsPrivate {
     USER_POLICY,
     OWNER,
     PRIMARY_USER,
-    EXTENSION
+    EXTENSION,
+
+    // Preferences are controlled by the parent of the child user.
+    PARENT,
+
+    // Preferences are controlled neither by parent nor the child user.
+    // Preference values are hard-coded values and can not be changed.
+    CHILD_RESTRICTIONS
   };
 
   enum Enforcement { ENFORCED, RECOMMENDED };
@@ -62,10 +69,10 @@ namespace settingsPrivate {
     // Sets a pref value.
     // |name|: The name of the pref.
     // |value|: The new value of the pref.
-    // |pageId|: The user metrics identifier or null.
+    // |pageId|: An optional user metrics identifier.
     // |callback|: The callback for whether the pref was set or not.
     static void setPref(DOMString name, any value,
-        DOMString pageId, OnPrefSetCallback callback);
+        optional DOMString pageId, optional OnPrefSetCallback callback);
 
     // Gets an array of all the prefs.
     static void getAllPrefs(GetAllPrefsCallback callback);

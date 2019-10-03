@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.webapps;
 
-import android.content.Context;
-import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
 import org.junit.After;
@@ -37,13 +35,12 @@ public class WebappAuthenticatorTest {
     @SmallTest
     @Feature({"Webapps"})
     public void testAuthentication() {
-        Context context = InstrumentationRegistry.getTargetContext();
         String url = "http://www.example.org/hello.html";
-        byte[] mac = WebappAuthenticator.getMacForUrl(context, url);
+        byte[] mac = WebappAuthenticator.getMacForUrl(url);
         Assert.assertNotNull(mac);
-        Assert.assertTrue(WebappAuthenticator.isUrlValid(context, url, mac));
-        Assert.assertFalse(WebappAuthenticator.isUrlValid(context, url + "?goats=true", mac));
+        Assert.assertTrue(WebappAuthenticator.isUrlValid(url, mac));
+        Assert.assertFalse(WebappAuthenticator.isUrlValid(url + "?goats=true", mac));
         mac[4] += (byte) 1;
-        Assert.assertFalse(WebappAuthenticator.isUrlValid(context, url, mac));
+        Assert.assertFalse(WebappAuthenticator.isUrlValid(url, mac));
     }
 }

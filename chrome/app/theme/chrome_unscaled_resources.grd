@@ -22,6 +22,10 @@
           <include name="IDR_PRODUCT_LOGO_128_BETA" file="google_chrome/product_logo_128_beta.png" type="BINDATA" />
           <include name="IDR_PRODUCT_LOGO_128_DEV" file="google_chrome/product_logo_128_dev.png" type="BINDATA" />
         </if>
+        <if expr="chromeos">
+          <include name="IDR_PRODUCT_LOGO_24PX_1X" file="google_chrome/chrome_24px_1x.svg" type="BINDATA" />
+          <include name="IDR_PRODUCT_LOGO_24PX_2X" file="google_chrome/chrome_24px_2x.svg" type="BINDATA" />
+        </if>
         <if expr="is_win">
           <!-- External company logo, displayed in the Chrome Cleanup WebUI if
                cleanup functionality is powered by an external company. -->
@@ -33,8 +37,26 @@
         <if expr="is_macosx">
           <include name="IDR_STATUS_TRAY_ICON" file="google_chrome/product_logo_22_mono.png" type="BINDATA" />
         </if>
-        <if expr="not is_macosx and not is_win">
-          <include name="IDR_STATUS_TRAY_ICON" file="google_chrome/product_logo_22.png" type="BINDATA" />
+        <if expr="chromeos">
+          <include name="IDR_CHROME_APP_ICON_32" file="google_chrome/chromeos/chrome_app_icon_32.png" type="BINDATA" />
+          <include name="IDR_CHROME_APP_ICON_192" file="google_chrome/chromeos/chrome_app_icon_192.png" type="BINDATA" />
+          <include name="IDR_WEBSTORE_APP_ICON_16" file="google_chrome/chromeos/webstore_app_icon_16.png" type="BINDATA" />
+          <include name="IDR_WEBSTORE_APP_ICON_128" file="google_chrome/chromeos/webstore_app_icon_128.png" type="BINDATA" />
+        </if>
+        <if expr="not chromeos">
+          <include name="IDR_WELCOME_MODULE_ICONS_GOOGLE_DARK" file="google_chrome/welcome/module_icons/google_dark.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_MODULE_ICONS_GOOGLE_LIGHT" file="google_chrome/welcome/module_icons/google_light.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_MODULE_ICONS_SET_DEFAULT_DARK" file="google_chrome/welcome/module_icons/set_default_dark.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_MODULE_ICONS_SET_DEFAULT_LIGHT" file="google_chrome/welcome/module_icons/set_default_light.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_MODULE_ICONS_WALLPAPER_DARK" file="google_chrome/welcome/module_icons/wallpaper_dark.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_MODULE_ICONS_WALLPAPER_LIGHT" file="google_chrome/welcome/module_icons/wallpaper_light.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_NTP_THUMBNAILS_ART" file="google_chrome/welcome/ntp_thumbnails/art.jpg" type="BINDATA" />
+          <include name="IDR_WELCOME_NTP_THUMBNAILS_CITYSCAPE" file="google_chrome/welcome/ntp_thumbnails/cityscape.jpg" type="BINDATA" />
+          <include name="IDR_WELCOME_NTP_THUMBNAILS_EARTH" file="google_chrome/welcome/ntp_thumbnails/earth.jpg" type="BINDATA" />
+          <include name="IDR_WELCOME_NTP_THUMBNAILS_GEOMETRIC_SHAPES" file="google_chrome/welcome/ntp_thumbnails/geometric_shapes.jpg" type="BINDATA" />
+          <include name="IDR_WELCOME_NTP_THUMBNAILS_LANDSCAPE" file="google_chrome/welcome/ntp_thumbnails/landscape.jpg" type="BINDATA" />
+          <include name="IDR_WELCOME_SET_DEFAULT_DARK" file="google_chrome/welcome/set_default_dark.svg" type="BINDATA" />
+          <include name="IDR_WELCOME_SET_DEFAULT_LIGHT" file="google_chrome/welcome/set_default_light.svg" type="BINDATA" />
         </if>
       </if>
       <if expr="not _google_chrome">
@@ -47,8 +69,11 @@
         <if expr="is_macosx">
           <include name="IDR_STATUS_TRAY_ICON" file="chromium/product_logo_22_mono.png" type="BINDATA" />
         </if>
-        <if expr="not is_macosx and not is_win">
-          <include name="IDR_STATUS_TRAY_ICON" file="chromium/product_logo_22.png" type="BINDATA" />
+        <if expr="chromeos">
+          <include name="IDR_CHROME_APP_ICON_32" file="chromium/chromeos/chrome_app_icon_32.png" type="BINDATA" />
+          <include name="IDR_CHROME_APP_ICON_192" file="chromium/chromeos/chrome_app_icon_192.png" type="BINDATA" />
+          <include name="IDR_WEBSTORE_APP_ICON_16" file="chromium/chromeos/webstore_app_icon_16.png" type="BINDATA" />
+          <include name="IDR_WEBSTORE_APP_ICON_128" file="chromium/chromeos/webstore_app_icon_128.png" type="BINDATA" />
         </if>
       </if>
       <if expr="is_win">
@@ -106,6 +131,19 @@
         <include name="IDR_APPS_FOLDER_32" file="mac/apps_folder_32.png" type="BINDATA" />
         <include name="IDR_APPS_FOLDER_OVERLAY_128" file="mac/apps_folder_overlay_128.png" type="BINDATA" />
         <include name="IDR_APPS_FOLDER_OVERLAY_512" file="mac/apps_folder_overlay_512.png" type="BINDATA" />
+      </if>
+      <if expr="chromeos">
+        <!-- Crostini icons -->
+        <include name="IDR_LOGO_CROSTINI_TERMINAL" file="crostini/logo_crostini_terminal.png" type="BINDATA" />
+        <include name="IDR_LOGO_CROSTINI_DEFAULT_32" file="crostini/logo_crostini_default_32.png" type="BINDATA" />
+        <include name="IDR_LOGO_CROSTINI_DEFAULT_192" file="crostini/logo_crostini_default_192.png" type="BINDATA" />
+        <include name="IDR_CROSTINI_MASCOT" file="crostini/crostini_mascot_1x.svg" type="BINDATA" />
+        <include name="IDR_LINUX_ILLUSTRATION" file="crostini/linux_illustration_2x.png" type="BINDATA" />
+        <!-- PluginVm icons -->
+        <include name="IDR_LOGO_PLUGIN_VM_DEFAULT_32" file="plugin_vm/logo_plugin_vm_default_32.png" type="BINDATA" />
+        <include name="IDR_LOGO_PLUGIN_VM_DEFAULT_192" file="plugin_vm/logo_plugin_vm_default_192.png" type="BINDATA" />
+        <include name="IDR_PLUGIN_VM_LAUNCHER" file="plugin_vm/plugin_vm_launcher.png" type="BINDATA" />
+        <include name="IDR_PLUGIN_VM_LAUNCHER_ERROR" file="plugin_vm/plugin_vm_launcher_error.png" type="BINDATA" />
       </if>
     </includes>
   </release>

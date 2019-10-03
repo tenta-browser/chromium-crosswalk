@@ -9,24 +9,23 @@
 #include <stdint.h>
 
 #include <memory>
+#include <random>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "net/base/ip_endpoint.h"
-#include "third_party/mt19937ar/mt19937ar.h"
 
 namespace net {
 class NetLog;
-};
+}
 
 namespace base {
 class TickClock;
-};
+}
 
 namespace media {
 namespace cast {
@@ -40,14 +39,14 @@ class PacketPipe {
   // Allows injection of fake test runner for testing.
   virtual void InitOnIOThread(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      base::TickClock* clock);
+      const base::TickClock* clock);
   virtual void AppendToPipe(std::unique_ptr<PacketPipe> pipe);
 
  protected:
   std::unique_ptr<PacketPipe> pipe_;
   // Allows injection of fake task runner for testing.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::TickClock* clock_;
+  const base::TickClock* clock_;
 };
 
 // Implements a Interrupted Poisson Process for packet delivery.
@@ -73,7 +72,7 @@ class InterruptedPoissonProcess {
   // |clock| is the system clock.
   void InitOnIOThread(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      base::TickClock* clock);
+      const base::TickClock* clock);
 
   base::TimeDelta NextEvent(double rate);
   double RandDouble();
@@ -84,7 +83,7 @@ class InterruptedPoissonProcess {
   void SendPacket();
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::TickClock* clock_;
+  const base::TickClock* clock_;
   const std::vector<double> average_rates_;
   const double coef_burstiness_;
   const double coef_variance_;
@@ -99,9 +98,9 @@ class InterruptedPoissonProcess {
   std::vector<base::WeakPtr<InternalBuffer> > send_buffers_;
 
   // Fast pseudo random number generator.
-  MersenneTwister mt_rand_;
+  std::mt19937 mt_rand_;
 
-  base::WeakPtrFactory<InterruptedPoissonProcess> weak_factory_;
+  base::WeakPtrFactory<InterruptedPoissonProcess> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InterruptedPoissonProcess);
 };

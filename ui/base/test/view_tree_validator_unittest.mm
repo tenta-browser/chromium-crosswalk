@@ -4,7 +4,7 @@
 
 #include "ui/base/test/view_tree_validator.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/test/ui_cocoa_test_helper.h"
+#include "ui/base/test/cocoa_helper.h"
 
 using ViewTreeValidatorTest = ui::CocoaTest;
 
@@ -36,7 +36,7 @@ TEST_F(ViewTreeValidatorTest, CorrectnessTest) {
   NSWindow* window = test_window();
   int width = NSWidth(window.contentView.frame);
   int height = NSHeight(window.contentView.frame);
-  NSView* view_1 = AutoreleasedButtonWithFrame(0, 0, width / 2, height);
+  NSView* view_1 = AutoreleasedViewWithFrame(0, 0, width / 2, height);
   NSView* view_2 = AutoreleasedButtonWithFrame(width / 2, 0, width / 2, height);
   NSView* view_3 = AutoreleasedButtonWithFrame(0, 0, width / 2, height / 2);
   NSView* view_4 = AutoreleasedViewWithFrame(0, 0, width / 2, height / 2);

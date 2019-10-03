@@ -13,14 +13,16 @@
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/platform_util.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/cryptuiapi_shim.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/gfx/font.h"
-#include "ui/gfx/platform_font_win.h"
 #include "ui/shell_dialogs/base_shell_dialog_win.h"
 #include "ui/views/win/hwnd_util.h"
 
@@ -41,25 +43,29 @@ class ManageCertificatesDialog : public ui::BaseShellDialogImpl {
       return;
     }
 
-    RunState run_state = BeginRun(parent);
-    run_state.dialog_thread->task_runner()->PostTaskAndReply(
-        FROM_HERE, base::Bind(&ManageCertificatesDialog::ShowOnDialogThread,
-                              base::Unretained(this), run_state),
-        base::Bind(&ManageCertificatesDialog::OnDialogClosed,
-                   base::Unretained(this), run_state, callback));
+    std::unique_ptr<RunState> run_state = BeginRun(parent);
+
+    base::SingleThreadTaskRunner* task_runner =
+        run_state->dialog_task_runner.get();
+    task_runner->PostTaskAndReply(
+        FROM_HERE,
+        base::BindOnce(&ManageCertificatesDialog::ShowOnDialogThread,
+                       base::Unretained(this), parent),
+        base::BindOnce(&ManageCertificatesDialog::OnDialogClosed,
+                       base::Unretained(this), std::move(run_state), callback));
   }
 
  private:
-  void ShowOnDialogThread(const RunState& run_state) {
+  void ShowOnDialogThread(HWND owner) {
     CRYPTUI_CERT_MGR_STRUCT cert_mgr = {0};
     cert_mgr.dwSize = sizeof(CRYPTUI_CERT_MGR_STRUCT);
-    cert_mgr.hwndParent = run_state.owner;
+    cert_mgr.hwndParent = owner;
     ::CryptUIDlgCertMgr(&cert_mgr);
   }
 
-  void OnDialogClosed(const RunState& run_state,
+  void OnDialogClosed(std::unique_ptr<RunState> run_state,
                       const base::Closure& callback) {
-    EndRun(run_state);
+    EndRun(std::move(run_state));
     // May delete |this|.
     callback.Run();
   }
@@ -76,15 +82,15 @@ void OpenConnectionDialogCallback() {
   // new dialog to be made for each call.  rundll32 uses the same global
   // dialog and it seems to share with the shortcut in control panel.
   base::FilePath rundll32;
-  PathService::Get(base::DIR_SYSTEM, &rundll32);
+  base::PathService::Get(base::DIR_SYSTEM, &rundll32);
   rundll32 = rundll32.AppendASCII("rundll32.exe");
 
   base::FilePath shell32dll;
-  PathService::Get(base::DIR_SYSTEM, &shell32dll);
+  base::PathService::Get(base::DIR_SYSTEM, &shell32dll);
   shell32dll = shell32dll.AppendASCII("shell32.dll");
 
   base::FilePath inetcpl;
-  PathService::Get(base::DIR_SYSTEM, &inetcpl);
+  base::PathService::Get(base::DIR_SYSTEM, &inetcpl);
   inetcpl = inetcpl.AppendASCII("inetcpl.cpl,,4");
 
   std::wstring args(shell32dll.value());
@@ -96,9 +102,17 @@ void OpenConnectionDialogCallback() {
 }
 
 void ShowNetworkProxySettings(content::WebContents* web_contents) {
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
-                           base::Bind(&OpenConnectionDialogCallback));
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
+    // See
+    // https://docs.microsoft.com/en-us/windows/uwp/launch-resume/launch-settings-app#network--internet
+    platform_util::OpenExternal(
+        Profile::FromBrowserContext(web_contents->GetBrowserContext()),
+        GURL("ms-settings:network-proxy"));
+  } else {
+    base::PostTaskWithTraits(
+        FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
+        base::BindOnce(&OpenConnectionDialogCallback));
+  }
 }
 
 void ShowManageSSLCertificates(content::WebContents* web_contents) {
@@ -109,15 +123,6 @@ void ShowManageSSLCertificates(content::WebContents* web_contents) {
   dialog->Show(
       parent,
       base::Bind(&base::DeletePointer<ManageCertificatesDialog>, dialog));
-}
-
-std::string MaybeGetLocalizedFontName(const std::string& font_name_or_list) {
-  std::string font_name = ResolveFontList(font_name_or_list);
-  if (font_name.empty())
-    return font_name;
-  gfx::Font font(font_name, 12);  // dummy font size
-  return static_cast<gfx::PlatformFontWin*>(font.platform_font())
-      ->GetLocalizedFontName();
 }
 
 }  // namespace settings_utils

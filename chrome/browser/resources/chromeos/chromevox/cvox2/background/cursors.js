@@ -66,6 +66,7 @@ var AutomationNode = chrome.automation.AutomationNode;
 var Dir = constants.Dir;
 var Movement = cursors.Movement;
 var RoleType = chrome.automation.RoleType;
+var StateType = chrome.automation.StateType;
 var Unit = cursors.Unit;
 
 /**
@@ -90,13 +91,6 @@ cursors.Cursor = function(node, index) {
       node = nextNode;
       index = 0;
     }
-  } else if (
-      node.role == RoleType.GENERIC_CONTAINER && node.state.richlyEditable &&
-      (node.firstChild &&
-       (node.firstChild.role == RoleType.LINE_BREAK ||
-        node.firstChild.role == RoleType.STATIC_TEXT))) {
-    // Re-interpret this case as pointing to the text under the div.
-    node = node.find({role: RoleType.INLINE_TEXT_BOX}) || node;
   }
 
   /** @type {number} @private */
@@ -197,8 +191,9 @@ cursors.Cursor.prototype = {
     if (!adjustedNode)
       return null;
 
-    // Make no adjustments if we're within editable content.
-    if (adjustedNode.state.editable)
+    // Make no adjustments if we're within non-rich editable content.
+    if (adjustedNode.state[StateType.EDITABLE] &&
+        !adjustedNode.state[StateType.RICHLY_EDITABLE])
       return adjustedNode;
 
     // Selections over line break nodes are broken.
@@ -236,8 +231,12 @@ cursors.Cursor.prototype = {
     if (!this.node)
       return -1;
 
-    if (this.node.state.editable) {
-      return this.index_ == cursors.NODE_INDEX ? 0 : this.index_;
+    if (this.node.state[StateType.EDITABLE]) {
+      if (!this.node.state[StateType.RICHLY_EDITABLE])
+        return this.index_;
+      return this.index_ == cursors.NODE_INDEX ?
+          (this.node.indexInParent || 0) :
+          this.index_;
     } else if (
         this.node.role == RoleType.INLINE_TEXT_BOX &&
         // Selections under a line break are broken.
@@ -334,33 +333,41 @@ cursors.Cursor.prototype = {
 
         switch (movement) {
           case Movement.BOUND:
+            var wordStarts, wordEnds;
             if (newNode.role == RoleType.INLINE_TEXT_BOX) {
-              var start, end;
-              for (var i = 0; i < newNode.wordStarts.length; i++) {
-                if (newIndex >= newNode.wordStarts[i] &&
-                    newIndex <= newNode.wordEnds[i]) {
-                  start = newNode.wordStarts[i];
-                  end = newNode.wordEnds[i];
-                  break;
-                }
-              }
-              if (goog.isDef(start) && goog.isDef(end))
-                newIndex = dir == Dir.FORWARD ? end : start;
+              wordStarts = newNode.wordStarts;
+              wordEnds = newNode.wordEnds;
             } else {
-              newIndex = cursors.NODE_INDEX;
+              wordStarts = newNode.nonInlineTextWordStarts;
+              wordEnds = newNode.nonInlineTextWordEnds;
             }
+            var start, end;
+            for (var i = 0; i < wordStarts.length; i++) {
+              if (newIndex >= wordStarts[i] && newIndex <= wordEnds[i]) {
+                start = wordStarts[i];
+                end = wordEnds[i];
+                break;
+              }
+            }
+            if (goog.isDef(start) && goog.isDef(end))
+              newIndex = dir == Dir.FORWARD ? end : start;
             break;
           case Movement.DIRECTIONAL:
+            var wordStarts, wordEnds;
             var start;
             if (newNode.role == RoleType.INLINE_TEXT_BOX) {
-              // Go to the next word stop in the same piece of text.
-              for (var i = 0; i < newNode.wordStarts.length; i++) {
-                if (newIndex >= newNode.wordStarts[i] &&
-                    newIndex <= newNode.wordEnds[i]) {
-                  var nextIndex = dir == Dir.FORWARD ? i + 1 : i - 1;
-                  start = newNode.wordStarts[nextIndex];
-                  break;
-                }
+              wordStarts = newNode.wordStarts;
+              wordEnds = newNode.wordEnds;
+            } else {
+              wordStarts = newNode.nonInlineTextWordStarts;
+              wordEnds = newNode.nonInlineTextWordEnds;
+            }
+            // Go to the next word stop in the same piece of text.
+            for (var i = 0; i < wordStarts.length; i++) {
+              if (newIndex >= wordStarts[i] && newIndex <= wordEnds[i]) {
+                var nextIndex = dir == Dir.FORWARD ? i + 1 : i - 1;
+                start = wordStarts[nextIndex];
+                break;
               }
             }
             if (goog.isDef(start)) {
@@ -375,16 +382,14 @@ cursors.Cursor.prototype = {
                 newNode = AutomationUtil.findNextNode(
                     newNode, dir, AutomationPredicate.leafWithWordStop);
                 if (newNode) {
-                  if (newNode.role == RoleType.INLINE_TEXT_BOX) {
-                    var starts = newNode.wordStarts;
-                    if (starts.length) {
-                      newIndex = dir == Dir.BACKWARD ?
-                          starts[starts.length - 1] :
-                          starts[0];
-                    }
-                  } else {
-                    // For non-text nodes, move by word = by object.
-                    newIndex = cursors.NODE_INDEX;
+                  var starts;
+                  if (newNode.role == RoleType.INLINE_TEXT_BOX)
+                    starts = newNode.wordStarts;
+                  else
+                    starts = newNode.nonInlineTextWordStarts;
+                  if (starts.length) {
+                    newIndex = dir == Dir.BACKWARD ? starts[starts.length - 1] :
+                                                     starts[0];
                   }
                 }
               }
@@ -437,10 +442,12 @@ cursors.Cursor.prototype = {
   get deepEquivalent() {
     var newNode = this.node;
     var newIndex = this.index_;
+    var isTextIndex = false;
     while (newNode.firstChild) {
       if (newNode.role == RoleType.STATIC_TEXT) {
         // Text offset.
         // Re-interpret the index as an offset into an inlineTextBox.
+        isTextIndex = true;
         var target = newNode.firstChild;
         var length = 0;
         while (target && length < newIndex) {
@@ -461,15 +468,51 @@ cursors.Cursor.prototype = {
         break;
       } else if (
           newNode.role != RoleType.INLINE_TEXT_BOX &&
+          // An index inside a content editable or a descendant of a content
+          // editable should be treated as a child offset.
+          // However, an index inside a simple editable, such as an input
+          // element, should be treated as a character offset.
+          (!newNode.state[StateType.EDITABLE] ||
+           newNode.state[StateType.RICHLY_EDITABLE]) &&
           newNode.children[newIndex]) {
-        // Valid node offset.
+        // Valid child node offset.
         newNode = newNode.children[newIndex];
         newIndex = 0;
       } else {
-        // Invalid offset.
+        // This offset is a text offset into the descendant visible
+        // text. Approximate this by indexing into the inline text boxes.
+        isTextIndex = true;
+        var lines = this.getAllLeaves_(newNode);
+        if (!lines.length)
+          break;
+
+        var targetLine, targetIndex = 0;
+        for (var i = 0, line, cur = 0; line = lines[i]; i++) {
+          var lineLength = line.name ? line.name.length : 1;
+          cur += lineLength;
+          if (cur > newIndex) {
+            targetLine = line;
+            if (!line.name)
+              targetIndex = cursors.NODE_INDEX;
+            else
+              targetIndex = newIndex - (cur - lineLength);
+            break;
+          }
+        }
+        if (!targetLine) {
+          // If we got here, that means the index is actually beyond the total
+          // length of text. Just get the last line.
+          targetLine = lines[lines.length - 1];
+          targetIndex =
+              targetLine ? targetLine.name.length : cursors.NODE_INDEX;
+        }
+        newNode = targetLine;
+        newIndex = targetIndex;
         break;
       }
     }
+    if (!isTextIndex)
+      newIndex = cursors.NODE_INDEX;
 
     return new cursors.Cursor(newNode, newIndex);
   },
@@ -480,6 +523,24 @@ cursors.Cursor.prototype = {
    */
   isValid: function() {
     return this.node != null;
+  },
+
+  /**
+   * @private
+   * @param {!AutomationNode} node
+   * @return {!Array<!AutomationNode>}
+   */
+  getAllLeaves_: function(node) {
+    var ret = [];
+    if (!node.firstChild) {
+      ret.push(node);
+      return ret;
+    }
+
+    for (var i = 0; i < node.children.length; i++)
+      ret = ret.concat(this.getAllLeaves_(node.children[i]));
+
+    return ret;
   }
 };
 
@@ -538,9 +599,29 @@ cursors.WrappingCursor.prototype = {
       if (!endpoint)
         return this;
 
+      // Finds any explicitly provided focus.
+      var getDirectedFocus = function(node) {
+        return dir == Dir.FORWARD ? node.nextFocus : node.previousFocus;
+      };
+
       // Case 1: forwards (find the root-like node).
-      while (!AutomationPredicate.root(endpoint) && endpoint.parent)
+      var directedFocus;
+      while (!AutomationPredicate.root(endpoint) && endpoint.parent) {
+        if (directedFocus = getDirectedFocus(endpoint)) {
+          break;
+        }
         endpoint = endpoint.parent;
+      }
+
+      if (directedFocus) {
+        directedFocus =
+            (dir == Dir.FORWARD ?
+                 AutomationUtil.findNodePre(
+                     directedFocus, dir, AutomationPredicate.object) :
+                 AutomationUtil.findLastNode(directedFocus, pred)) ||
+            directedFocus;
+        return new cursors.WrappingCursor(directedFocus, cursors.NODE_INDEX);
+      }
 
       // Always play a wrap earcon when moving forward.
       var playEarcon = dir == Dir.FORWARD;
@@ -666,12 +747,15 @@ cursors.Range.prototype = {
   },
 
   /**
-   * Returns true if this range covers a single node's text content or less.
+   * Returns true if this range covers less than a node.
    * @return {boolean}
    */
   isSubNode: function() {
-    return this.start.node === this.end.node && this.start.index > -1 &&
-        this.end.index > -1;
+    var startIndex = this.start.index;
+    var endIndex = this.end.index;
+    return this.start.node === this.end.node && startIndex != -1 &&
+        endIndex != -1 && startIndex != endIndex &&
+        (startIndex != 0 || endIndex != this.start.getText().length);
   },
 
   /**
@@ -726,8 +810,13 @@ cursors.Range.prototype = {
    * Select the text contained within this range.
    */
   select: function() {
-    var startNode = this.start.selectionNode_;
-    var endNode = this.end.selectionNode_;
+    var start = this.start_, end = this.end_;
+    if (this.start.compare(this.end) == Dir.BACKWARD) {
+      start = this.end;
+      end = this.start;
+    }
+    var startNode = start.selectionNode_;
+    var endNode = end.selectionNode_;
 
     if (!startNode || !endNode)
       return;
@@ -737,10 +826,17 @@ cursors.Range.prototype = {
         startNode.root == endNode.root) {
       // We want to adjust to select the entire node for node offsets;
       // otherwise, use the plain character offset.
-      var startIndex = this.start.selectionIndex_;
-      var endIndex = this.end.index_ == cursors.NODE_INDEX ?
-          this.end.selectionIndex_ + 1 :
-          this.end.selectionIndex_;
+      var startIndex = start.selectionIndex_;
+      var endIndex = end.index_ == cursors.NODE_INDEX ?
+          end.selectionIndex_ + 1 :
+          end.selectionIndex_;
+
+      // Richly editables should always set a caret, but not select. This makes
+      // it possible to navigate through content editables using ChromeVox keys
+      // and not hear selections as you go.
+      if (startNode.state[StateType.RICHLY_EDITABLE] ||
+          endNode.state[StateType.RICHLY_EDITABLE])
+        endIndex = startIndex;
 
       chrome.automation.setDocumentSelection({
         anchorObject: startNode,
@@ -767,6 +863,33 @@ cursors.Range.prototype = {
    */
   isValid: function() {
     return this.start.isValid() && this.end.isValid();
+  },
+
+  /**
+   * Compares this range with |rhs|.
+   * @param {cursors.Range} rhs
+   * @return {Dir|undefined} Dir.BACKWARD if |rhs| comes before this range in
+   * document order. Dir.FORWARD if |rhs| comes after this range. Undefined
+   * otherwise.
+   */
+  compare: function(rhs) {
+    var startDir = this.start.compare(rhs.start);
+    var endDir = this.end.compare(rhs.end);
+    if (startDir != endDir)
+      return undefined;
+
+    return startDir;
+  },
+
+  /**
+   * Returns an undirected version of this range.
+   * @return {!cursors.Range}
+   */
+  normalize: function() {
+    if (this.start.compare(this.end) == Dir.BACKWARD) {
+      return new cursors.Range(this.end, this.start);
+    }
+    return this;
   }
 };
 

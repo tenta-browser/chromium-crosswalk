@@ -5,37 +5,52 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_MIRROR_ACCOUNT_RECONCILOR_DELEGATE_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_MIRROR_ACCOUNT_RECONCILOR_DELEGATE_H_
 
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
 #include "components/signin/core/browser/account_reconcilor_delegate.h"
-#include "components/signin/core/browser/signin_manager_base.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 namespace signin {
 
 // AccountReconcilorDelegate specialized for Mirror.
 class MirrorAccountReconcilorDelegate : public AccountReconcilorDelegate,
-                                        public SigninManagerBase::Observer {
+                                        public IdentityManager::Observer {
  public:
-  MirrorAccountReconcilorDelegate(SigninManagerBase* signin_manager);
+  explicit MirrorAccountReconcilorDelegate(IdentityManager* identity_manager);
   ~MirrorAccountReconcilorDelegate() override;
+
+ protected:
+  // AccountReconcilorDelegate:
+  // TODO(sinhak): Make this private after deleting
+  // |ChromeOSAccountReconcilorDelegate|.
+  bool IsReconcileEnabled() const override;
 
  private:
   // AccountReconcilorDelegate:
-  bool IsReconcileEnabled() const override;
   bool IsAccountConsistencyEnforced() const override;
+  gaia::GaiaSource GetGaiaApiSource() const override;
   bool ShouldAbortReconcileIfPrimaryHasError() const override;
-  std::string GetFirstGaiaAccountForReconcile(
-      const std::vector<std::string>& chrome_accounts,
+  CoreAccountId GetFirstGaiaAccountForReconcile(
+      const std::vector<CoreAccountId>& chrome_accounts,
       const std::vector<gaia::ListedAccount>& gaia_accounts,
-      const std::string& primary_account,
-      bool first_execution) const override;
+      const CoreAccountId& primary_account,
+      bool first_execution,
+      bool will_logout) const override;
+  std::vector<CoreAccountId> GetChromeAccountsForReconcile(
+      const std::vector<CoreAccountId>& chrome_accounts,
+      const CoreAccountId& primary_account,
+      const std::vector<gaia::ListedAccount>& gaia_accounts,
+      const gaia::MultiloginMode mode) const override;
 
-  // SigninManagerBase::Observer:
-  void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username) override;
-  void GoogleSignedOut(const std::string& account_id,
-                       const std::string& username) override;
+  // IdentityManager::Observer:
+  void OnPrimaryAccountSet(
+      const CoreAccountInfo& primary_account_info) override;
+  void OnPrimaryAccountCleared(
+      const CoreAccountInfo& previous_primary_account_info) override;
 
-  SigninManagerBase* signin_manager_;
+  IdentityManager* identity_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MirrorAccountReconcilorDelegate);
 };

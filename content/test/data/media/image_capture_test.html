@@ -6,7 +6,7 @@
 <body>
 <script type="text/javascript" src="webrtc_test_utilities.js"></script>
 <script>
-const WIDTH = 320;
+const WIDTH = 640;
 /** @const */ var CONSTRAINTS = { width: { max : WIDTH } };
 
 // Returns a Promise resolved with |object| after a delay of |delayInMs|.
@@ -21,10 +21,8 @@ function testCreateAndGetPhotoCapabilitiesSucceeds() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        return capturer.getPhotoCapabilities();
+        let imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+        return imageCapturer.getPhotoCapabilities();
       })
       .then(capabilities => {
         // There's nothing to check here since |capabilities| vary per device.
@@ -40,10 +38,8 @@ function testCreateAndGetPhotoSettingsSucceeds() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        return capturer.getPhotoSettings();
+        let imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+        return imageCapturer.getPhotoSettings();
       })
       .then(settings => {
         // There's nothing to check here since |settings| vary per device.
@@ -59,10 +55,8 @@ function testCreateAndTakePhotoSucceeds() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        return capturer.takePhoto();
+        let imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+        return imageCapturer.takePhoto();
       })
       .then(blob => {
         assertTrue(blob.type != undefined);
@@ -80,10 +74,8 @@ function testCreateAndTakePhotoIsRejected() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        return capturer.takePhoto();
+        let imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+        return imageCapturer.takePhoto();
       })
       .then(blob => {
         failTest('Expected promise to get rejected but it was fulfilled');
@@ -100,10 +92,8 @@ function testCreateAndGrabFrameSucceeds() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        return capturer.grabFrame();
+        let imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+        return imageCapturer.grabFrame();
       })
       .then(imageBitmap => {
         // On Android, depending on the device orientation, |imageBitmap| might
@@ -123,13 +113,10 @@ function testCreateAndGetTrackCapabilities() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        imageCapturer = capturer;
+        imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
         // TODO(mcasas): Before accesing synchronous track APIs we need a delay,
         // use instead a round trip of capabilities: https://crbug.com/711524.
-        return capturer.getPhotoCapabilities();
+        return imageCapturer.getPhotoCapabilities();
       })
       .then(capabilities => {
         imageCapturer.track.getCapabilities();
@@ -147,13 +134,10 @@ function testCreateAndGetTrackSettings() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        imageCapturer = capturer;
+        imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
         // TODO(mcasas): Before accesing synchronous track APIs we need a delay,
         // use instead a round trip of capabilities: https://crbug.com/711524.
-        return capturer.getPhotoCapabilities();
+        return imageCapturer.getPhotoCapabilities();
       })
       .then(capabilities => {
         imageCapturer.track.getSettings();
@@ -173,13 +157,10 @@ function testManipulateZoom() {
   navigator.mediaDevices.getUserMedia({"video" : CONSTRAINTS})
       .then(stream => {
         assertEquals('video', stream.getVideoTracks()[0].kind);
-        return new ImageCapture(stream.getVideoTracks()[0]);
-      })
-      .then(capturer => {
-        imageCapturer = capturer;
+        imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
         // TODO(mcasas): Before accesing synchronous track APIs we need a delay,
         // use instead a round trip of capabilities: https://crbug.com/711524.
-        return capturer.getPhotoCapabilities();
+        return imageCapturer.getPhotoCapabilities();
       })
       .then(capabilities => {
         const trackCapabilities = imageCapturer.track.getCapabilities();
@@ -207,6 +188,124 @@ function testManipulateZoom() {
       .catch(err => {
         return failTest(err.toString());
       });
+}
+
+// Tries to read, set and read back the exposureTime capability if available.
+function testManipulateExposureTime() {
+    var newExposureTime = -1;
+    var imageCapturer;
+    var exposureTimeTolerance;
+    navigator.mediaDevices.getUserMedia({"video": CONSTRAINTS})
+        .then(stream => {
+            assertEquals('video', stream.getVideoTracks()[0].kind);
+            imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+            // TODO(mcasas): Before accesing synchronous track APIs we need a delay,
+            // use instead a round trip of capabilities: https://crbug.com/711524.
+            return imageCapturer.getPhotoCapabilities();
+        })
+        .then(capabilities => {
+            const trackCapabilities = imageCapturer.track.getCapabilities();
+            if (trackCapabilities.exposureTime === undefined) {
+                console.log('exposureTime not supported, skipping test');
+                reportTestSuccess();
+                return;
+            }
+
+            const currentExposureTime = imageCapturer.track.getSettings().exposureTime;
+            newExposureTime = currentExposureTime + trackCapabilities.exposureTime
+                .step;
+            newExposureTime = Math.min(newExposureTime, trackCapabilities.exposureTime
+                .max);
+            console.log("Setting exposureTime from " + currentExposureTime +
+                " to " +
+                newExposureTime);
+            exposureTimeTolerance = trackCapabilities.exposureTime.step /
+                10;
+
+            currentExposureMode = imageCapturer.track.getSettings().exposureMode;
+            console.log(" exposureMode == " + currentExposureMode);
+            exposureModeCapabilities = trackCapabilities.exposureMode;
+            console.log(" exposureModeCapabilities == " +
+                exposureModeCapabilities);
+
+            return imageCapturer.track.applyConstraints({
+                advanced: [{
+                    exposureMode: "manual",
+                    exposureTime: newExposureTime
+                }]
+            });
+        })
+        .then(() => {
+            assertEquals(newExposureTime,
+                imageCapturer.track.getConstraints().advanced[0].exposureTime
+            );
+            assertTrue(Math.abs(newExposureTime - imageCapturer.track.getSettings()
+                    .exposureTime) <
+                exposureTimeTolerance);
+            reportTestSuccess();
+        })
+        .catch(err => {
+            return failTest(err.toString());
+        });
+}
+
+// Tries to read, set and read back the focusDistance capability if available.
+function testManipulateFocusDistance() {
+    var newFocusDistance = -1;
+    var imageCapturer;
+    var focusDistanceTolerance;
+    navigator.mediaDevices.getUserMedia({"video": CONSTRAINTS})
+        .then(stream => {
+            assertEquals('video', stream.getVideoTracks()[0].kind);
+            imageCapturer = new ImageCapture(stream.getVideoTracks()[0]);
+            // TODO(mcasas): Before accesing synchronous track APIs we need a delay,
+            // use instead a round trip of capabilities: https://crbug.com/711524.
+            return imageCapturer.getPhotoCapabilities();
+        })
+        .then(capabilities => {
+            const trackCapabilities = imageCapturer.track.getCapabilities();
+            if (trackCapabilities.focusDistance === undefined) {
+                console.log('focusDistance not supported, skipping test');
+                reportTestSuccess();
+                return;
+            }
+
+            const currentFocusDistance = imageCapturer.track.getSettings().focusDistance;
+            newFocusDistance = currentFocusDistance + trackCapabilities.focusDistance
+                .step;
+            newFocusDistance = Math.min(newFocusDistance, trackCapabilities.focusDistance
+                .max);
+            console.log("Setting focusDistance from " + currentFocusDistance +
+                " to " +
+                newFocusDistance);
+            focusDistanceTolerance = trackCapabilities.focusDistance.step /
+                10;
+
+            currentFocusMode = imageCapturer.track.getSettings().focusMode;
+            console.log(" focusMode == " + currentFocusMode);
+            focusModeCapabilities = trackCapabilities.focusMode;
+            console.log(" focusModeCapabilities == " +
+                focusModeCapabilities);
+
+            return imageCapturer.track.applyConstraints({
+                advanced: [{
+                    focusMode: "manual",
+                    focusDistance: newFocusDistance
+                }]
+            });
+        })
+        .then(() => {
+            assertEquals(newFocusDistance,
+                imageCapturer.track.getConstraints().advanced[0].focusDistance
+            );
+            assertTrue(Math.abs(newFocusDistance - imageCapturer.track.getSettings()
+                    .focusDistance) <
+                focusDistanceTolerance);
+            reportTestSuccess();
+        })
+        .catch(err => {
+            return failTest(err.toString());
+        });
 }
 
 </script>

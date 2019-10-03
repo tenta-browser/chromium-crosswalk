@@ -4,9 +4,9 @@
 
 #include "ios/chrome/browser/metrics/ios_chrome_metrics_services_manager_client.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/metrics_state_manager.h"
@@ -20,6 +20,7 @@
 #include "ios/chrome/browser/tabs/tab_model_list.h"
 #include "ios/chrome/browser/variations/ios_chrome_variations_service_client.h"
 #include "ios/chrome/browser/variations/ios_ui_string_overrider_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -41,7 +42,7 @@ class IOSChromeMetricsServicesManagerClient::IOSChromeEnabledStateProvider
   IOSChromeEnabledStateProvider() {}
   ~IOSChromeEnabledStateProvider() override {}
 
-  bool IsConsentGiven() override {
+  bool IsConsentGiven() const override {
     return IOSChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
   }
 
@@ -51,7 +52,7 @@ class IOSChromeMetricsServicesManagerClient::IOSChromeEnabledStateProvider
 IOSChromeMetricsServicesManagerClient::IOSChromeMetricsServicesManagerClient(
     PrefService* local_state)
     : enabled_state_provider_(
-          base::MakeUnique<IOSChromeEnabledStateProvider>()),
+          std::make_unique<IOSChromeEnabledStateProvider>()),
       local_state_(local_state) {
   DCHECK(local_state);
 }
@@ -62,7 +63,7 @@ IOSChromeMetricsServicesManagerClient::
 std::unique_ptr<rappor::RapporServiceImpl>
 IOSChromeMetricsServicesManagerClient::CreateRapporServiceImpl() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return base::MakeUnique<rappor::RapporServiceImpl>(
+  return std::make_unique<rappor::RapporServiceImpl>(
       local_state_, base::Bind(&TabModelList::IsOffTheRecordSessionActive));
 }
 
@@ -74,33 +75,17 @@ IOSChromeMetricsServicesManagerClient::CreateVariationsService() {
   // a dummy value for the name of the switch that disables background
   // networking.
   return variations::VariationsService::Create(
-      base::MakeUnique<IOSChromeVariationsServiceClient>(), local_state_,
+      std::make_unique<IOSChromeVariationsServiceClient>(), local_state_,
       GetMetricsStateManager(), "dummy-disable-background-switch",
-      ::CreateUIStringOverrider());
+      ::CreateUIStringOverrider(),
+      base::BindOnce(&ApplicationContext::GetNetworkConnectionTracker,
+                     base::Unretained(GetApplicationContext())));
 }
 
 std::unique_ptr<metrics::MetricsServiceClient>
 IOSChromeMetricsServicesManagerClient::CreateMetricsServiceClient() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return IOSChromeMetricsServiceClient::Create(GetMetricsStateManager());
-}
-
-std::unique_ptr<const base::FieldTrial::EntropyProvider>
-IOSChromeMetricsServicesManagerClient::CreateEntropyProvider() {
-  return GetMetricsStateManager()->CreateDefaultEntropyProvider();
-}
-
-net::URLRequestContextGetter*
-IOSChromeMetricsServicesManagerClient::GetURLRequestContext() {
-  return GetApplicationContext()->GetSystemURLRequestContext();
-}
-
-bool IOSChromeMetricsServicesManagerClient::IsMetricsReportingEnabled() {
-  return enabled_state_provider_->IsReportingEnabled();
-}
-
-bool IOSChromeMetricsServicesManagerClient::IsMetricsConsentGiven() {
-  return enabled_state_provider_->IsConsentGiven();
 }
 
 metrics::MetricsStateManager*
@@ -113,6 +98,19 @@ IOSChromeMetricsServicesManagerClient::GetMetricsStateManager() {
         base::Bind(&LoadMetricsClientInfo));
   }
   return metrics_state_manager_.get();
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+IOSChromeMetricsServicesManagerClient::GetURLLoaderFactory() {
+  return GetApplicationContext()->GetSharedURLLoaderFactory();
+}
+
+bool IOSChromeMetricsServicesManagerClient::IsMetricsReportingEnabled() {
+  return enabled_state_provider_->IsReportingEnabled();
+}
+
+bool IOSChromeMetricsServicesManagerClient::IsMetricsConsentGiven() {
+  return enabled_state_provider_->IsConsentGiven();
 }
 
 bool IOSChromeMetricsServicesManagerClient::IsIncognitoSessionActive() {

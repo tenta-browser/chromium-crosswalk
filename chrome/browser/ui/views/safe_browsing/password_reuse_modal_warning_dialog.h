@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/views/window/dialog_delegate.h"
 
@@ -16,6 +17,8 @@ class WebContents;
 
 namespace safe_browsing {
 
+using password_manager::metrics_util::PasswordType;
+
 // Implementation of password reuse modal dialog.
 class PasswordReuseModalWarningDialog
     : public views::DialogDelegateView,
@@ -24,6 +27,7 @@ class PasswordReuseModalWarningDialog
  public:
   PasswordReuseModalWarningDialog(content::WebContents* web_contents,
                                   ChromePasswordProtectionService* service,
+                                  PasswordType password_type,
                                   OnWarningDone done_callback);
 
   ~PasswordReuseModalWarningDialog() override;
@@ -42,21 +46,19 @@ class PasswordReuseModalWarningDialog
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
 
   // ChromePasswordProtectionService::Observer:
-  void OnStartingGaiaPasswordChange() override;
   void OnGaiaPasswordChanged() override;
   void OnMarkingSiteAsLegitimate(const GURL& url) override;
-  void InvokeActionForTesting(
-      ChromePasswordProtectionService::WarningAction action) override;
-  ChromePasswordProtectionService::WarningUIType GetObserverType() override;
+  void InvokeActionForTesting(WarningAction action) override;
+  WarningUIType GetObserverType() override;
 
   // content::WebContentsObserver:
   void WebContentsDestroyed() override;
 
  private:
-  const bool show_softer_warning_;
   OnWarningDone done_callback_;
   ChromePasswordProtectionService* service_;
   const GURL url_;
+  PasswordType password_type_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordReuseModalWarningDialog);
 };

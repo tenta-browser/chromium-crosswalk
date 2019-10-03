@@ -5,9 +5,8 @@
 package org.chromium.chrome.browser.tabmodel;
 
 import org.chromium.base.ObserverList;
+import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +22,13 @@ public abstract class TabModelSelectorBase implements TabModelSelector {
     private static TabModelSelectorObserver sObserver;
 
     private List<TabModel> mTabModels = Collections.emptyList();
+
+    /**
+     * This is a dummy implementation intended to stub out TabModelFilterProvider before native is
+     * ready.
+     */
+    private TabModelFilterProvider mTabModelFilterProvider = new TabModelFilterProvider();
+
     private int mActiveModelIndex = NORMAL_TAB_MODEL_INDEX;
     private final ObserverList<TabModelSelectorObserver> mObservers =
             new ObserverList<TabModelSelectorObserver>();
@@ -42,16 +48,17 @@ public abstract class TabModelSelectorBase implements TabModelSelector {
         }
         mActiveModelIndex = startIncognito ? INCOGNITO_TAB_MODEL_INDEX : NORMAL_TAB_MODEL_INDEX;
         mTabModels = Collections.unmodifiableList(tabModels);
+        mTabModelFilterProvider = new TabModelFilterProvider(mTabModels);
 
         TabModelObserver tabModelObserver = new EmptyTabModelObserver() {
             @Override
-            public void didAddTab(Tab tab, TabLaunchType type) {
+            public void didAddTab(Tab tab, @TabLaunchType int type) {
                 notifyChanged();
                 notifyNewTabCreated(tab);
             }
 
             @Override
-            public void didSelectTab(Tab tab, TabSelectionType type, int lastId) {
+            public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
                 notifyChanged();
             }
 
@@ -131,6 +138,11 @@ public abstract class TabModelSelectorBase implements TabModelSelector {
     public TabModel getModel(boolean incognito) {
         int index = incognito ? INCOGNITO_TAB_MODEL_INDEX : NORMAL_TAB_MODEL_INDEX;
         return getModelAt(index);
+    }
+
+    @Override
+    public TabModelFilterProvider getTabModelFilterProvider() {
+        return mTabModelFilterProvider;
     }
 
     @Override
@@ -219,7 +231,14 @@ public abstract class TabModelSelectorBase implements TabModelSelector {
     }
 
     @Override
+    public void setOverviewModeBehavior(OverviewModeBehavior overviewModeBehavior) {}
+
+    @Override
+    public void mergeState() {}
+
+    @Override
     public void destroy() {
+        mTabModelFilterProvider.destroy();
         for (int i = 0; i < getModels().size(); i++) getModelAt(i).destroy();
     }
 

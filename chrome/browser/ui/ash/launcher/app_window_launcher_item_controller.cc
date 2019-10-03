@@ -8,14 +8,13 @@
 #include <utility>
 
 #include "ash/public/cpp/shelf_types.h"
-#include "base/memory/ptr_util.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/launcher_context_menu.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/base/base_window.h"
-#include "ui/wm/core/window_animations.h"
 #include "ui/wm/core/window_util.h"
 
 AppWindowLauncherItemController::AppWindowLauncherItemController(
@@ -82,7 +81,7 @@ void AppWindowLauncherItemController::ItemSelected(
     ash::ShelfLaunchSource source,
     ItemSelectedCallback callback) {
   if (windows_.empty()) {
-    std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_NONE, {});
     return;
   }
 
@@ -102,16 +101,31 @@ void AppWindowLauncherItemController::ItemSelected(
       action, GetAppMenuItems(event ? event->flags() : ui::EF_NONE));
 }
 
-std::unique_ptr<ui::MenuModel> AppWindowLauncherItemController::GetContextMenu(
-    int64_t display_id) {
+ash::ShelfItemDelegate::AppMenuItems
+AppWindowLauncherItemController::GetAppMenuItems(int event_flags) {
+  AppMenuItems items;
+  base::string16 app_title = LauncherControllerHelper::GetAppTitle(
+      ChromeLauncherController::instance()->profile(), app_id());
+  for (const auto* it : windows()) {
+    // TODO(khmel): resolve correct icon here.
+    aura::Window* window = it->GetNativeWindow();
+    auto title = (window && !window->GetTitle().empty()) ? window->GetTitle()
+                                                         : app_title;
+    items.push_back({title, gfx::ImageSkia()});
+  }
+  return items;
+}
+
+void AppWindowLauncherItemController::GetContextMenu(
+    int64_t display_id,
+    GetContextMenuCallback callback) {
   ChromeLauncherController* controller = ChromeLauncherController::instance();
   const ash::ShelfItem* item = controller->GetItem(shelf_id());
-  return LauncherContextMenu::Create(controller, item, display_id);
+  context_menu_ = LauncherContextMenu::Create(controller, item, display_id);
+  context_menu_->GetMenuModel(std::move(callback));
 }
 
 void AppWindowLauncherItemController::Close() {
-  // Note: Closing windows may affect the contents of app_windows_.
-  WindowList windows_to_close = windows_;
   for (auto* window : windows_)
     window->Close();
 }
@@ -122,14 +136,6 @@ void AppWindowLauncherItemController::ActivateIndexedApp(size_t index) {
   auto it = windows_.begin();
   std::advance(it, index);
   ShowAndActivateOrMinimize(*it);
-}
-
-ui::BaseWindow* AppWindowLauncherItemController::GetLastActiveWindow() {
-  if (last_active_window_)
-    return last_active_window_;
-  if (windows_.empty())
-    return nullptr;
-  return windows_.front();
 }
 
 void AppWindowLauncherItemController::OnWindowPropertyChanged(
@@ -151,11 +157,19 @@ void AppWindowLauncherItemController::OnWindowPropertyChanged(
   }
 }
 
+ui::BaseWindow* AppWindowLauncherItemController::GetLastActiveWindow() {
+  if (last_active_window_)
+    return last_active_window_;
+  if (windows_.empty())
+    return nullptr;
+  return windows_.front();
+}
+
 ash::ShelfAction AppWindowLauncherItemController::ShowAndActivateOrMinimize(
     ui::BaseWindow* app_window) {
   // Either show or minimize windows when shown from the launcher.
   return ChromeLauncherController::instance()->ActivateWindowOrMinimizeIfActive(
-      app_window, GetAppMenuItems(ui::EF_NONE).size() == 1);
+      app_window, windows().size() == 1);
 }
 
 ash::ShelfAction
@@ -172,8 +186,7 @@ AppWindowLauncherItemController::ActivateOrAdvanceToNextAppWindow(
   if (window_to_show->IsActive()) {
     // Coming here, only a single window is active. For keyboard activations
     // the window gets animated.
-    AnimateWindow(window_to_show->GetNativeWindow(),
-                  wm::WINDOW_ANIMATION_TYPE_BOUNCE);
+    ash_util::BounceWindow(window_to_show->GetNativeWindow());
   } else {
     return ShowAndActivateOrMinimize(window_to_show);
   }
@@ -200,4 +213,14 @@ void AppWindowLauncherItemController::UpdateShelfItemIcon() {
     ChromeLauncherController::instance()->UpdateLauncherItemImage(
         shelf_id().app_id);
   }
+}
+
+void AppWindowLauncherItemController::ExecuteCommand(bool from_context_menu,
+                                                     int64_t command_id,
+                                                     int32_t event_flags,
+                                                     int64_t display_id) {
+  if (from_context_menu && ExecuteContextMenuCommand(command_id, event_flags))
+    return;
+
+  ActivateIndexedApp(command_id);
 }

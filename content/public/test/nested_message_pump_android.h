@@ -12,20 +12,18 @@
 
 namespace content {
 
-// A nested message pump to be used for content browsertests and layout tests
+// A nested message pump to be used for content browsertests and web tests
 // on Android. It overrides the default UI message pump to allow nested loops.
 class NestedMessagePumpAndroid : public base::MessagePumpForUI {
  public:
   NestedMessagePumpAndroid();
+  ~NestedMessagePumpAndroid() override;
 
   void Run(Delegate* delegate) override;
   void Quit() override;
   void ScheduleWork() override;
   void ScheduleDelayedWork(const base::TimeTicks& delayed_work_time) override;
-  void Start(Delegate* delegate) override;
-
- protected:
-  ~NestedMessagePumpAndroid() override;
+  void Attach(Delegate* delegate) override;
 
  private:
   // We may make recursive calls to Run, so we save state that needs to be

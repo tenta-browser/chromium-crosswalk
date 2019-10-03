@@ -17,6 +17,7 @@ namespace data_reduction_proxy {
 // Make sure any changes here that have the potential to impact android_webview
 // are reflected in RegisterSimpleProfilePrefs.
 void RegisterSyncableProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(prefs::kDataSaverEnabled, false);
   registry->RegisterBooleanPref(prefs::kDataReductionProxyWasEnabledBefore,
                                 false);
 
@@ -90,6 +91,23 @@ void RegisterSyncableProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterStringPref(prefs::kDataReductionProxyConfig, std::string());
   registry->RegisterInt64Pref(prefs::kDataReductionProxyLastConfigRetrievalTime,
                               0L);
+  registry->RegisterDictionaryPref(prefs::kNetworkProperties);
+
+  registry->RegisterIntegerPref(prefs::kThisWeekNumber, false);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekServicesDownstreamBackgroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekServicesDownstreamForegroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekServicesDownstreamBackgroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekServicesDownstreamForegroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekUserTrafficContentTypeDownstreamKB,
+      PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekUserTrafficContentTypeDownstreamKB,
+      PrefRegistry::LOSSY_PREF);
 }
 
 void RegisterSimpleProfilePrefs(PrefRegistrySimple* registry) {
@@ -170,6 +188,23 @@ void RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterStringPref(prefs::kDataReductionProxyConfig, std::string());
   registry->RegisterInt64Pref(prefs::kDataReductionProxyLastConfigRetrievalTime,
                               0L);
+  registry->RegisterDictionaryPref(prefs::kNetworkProperties);
+
+  registry->RegisterIntegerPref(prefs::kThisWeekNumber, false);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekServicesDownstreamBackgroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekServicesDownstreamForegroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekServicesDownstreamBackgroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekServicesDownstreamForegroundKB, PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kThisWeekUserTrafficContentTypeDownstreamKB,
+      PrefRegistry::LOSSY_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kLastWeekUserTrafficContentTypeDownstreamKB,
+      PrefRegistry::LOSSY_PREF);
 }
 
 }  // namespace data_reduction_proxy

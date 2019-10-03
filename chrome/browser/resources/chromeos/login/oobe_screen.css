@@ -5,8 +5,6 @@
  * This contains common styling for all the OOBE screens. */
 
 :root {
-  --oobe-roboto-medium: 500 12px Roboto;
-  --oobe-roboto-bold: 700 12px Roboto;
   --oobe-text-button-focused-border-color:
       rgba(66, 133, 244, 0.4); /* #4284f4 */
 }
@@ -54,13 +52,14 @@
   display: flex;
   height: 28px;
   justify-content: flex-end;
+  min-height: 0;
   padding-right: 34px;  /* Double the padding of .step */
   position: absolute;
   width: 100%;
 }
 
 html[dir=rtl] .step-controls {
-  /* Hack as -webkit-padding-end doesn't catch direction. crbug.com/363836 */
+  /* Hack as padding-inline-end doesn't catch direction. crbug.com/363836 */
   padding-left: 34px;
 }
 
@@ -83,18 +82,7 @@ html[dir=rtl] .step-controls {
   visibility: hidden;
 }
 
-.step-loading {
-  align-items: center;
-  bottom: 0;
-  display: flex;
-  justify-content: center;
-  left: 0;
-  position: absolute;
-  right: 0;
-  top: 0;
-}
-
-/* Fixes perfomance problem caused by http://crbug.com/229405 . */
+/* Fixes performance problem caused by http://crbug.com/229405 . */
 .step.hidden .throbber,
 .step.hidden .spinner,
 .step.hidden .inline-spinner {
@@ -155,7 +143,7 @@ html[dir=rtl] .step-extra-controls {
 #reset-button,
 #password-changed-back-button,
 #tos-back-button {
-  -webkit-margin-end: 8px;
+  margin-inline-end: 8px;
 }
 
 .menu-area {

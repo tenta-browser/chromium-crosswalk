@@ -7,6 +7,8 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/wm/window_state.h"
+#include "base/bind.h"
+#include "components/viz/host/host_frame_sink_manager.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -15,15 +17,25 @@
 
 namespace ash {
 
-VideoDetector::VideoDetector(viz::mojom::VideoDetectorObserverRequest request)
+namespace {
+
+// How long to wait before attempting to re-establish a lost connection.
+constexpr base::TimeDelta kReEstablishConnectionDelay =
+    base::TimeDelta::FromMilliseconds(100);
+
+}  // namespace
+
+VideoDetector::VideoDetector()
     : state_(State::NOT_PLAYING),
       video_is_playing_(false),
       window_observer_manager_(this),
       scoped_session_observer_(this),
       is_shutting_down_(false),
-      binding_(this, std::move(request)) {
+      binding_(this),
+      weak_factory_(this) {
   aura::Env::GetInstance()->AddObserver(this);
   Shell::Get()->AddShellObserver(this);
+  EstablishConnectionToViz();
 }
 
 VideoDetector::~VideoDetector() {
@@ -44,9 +56,9 @@ void VideoDetector::OnWindowInitialized(aura::Window* window) {
 }
 
 void VideoDetector::OnWindowDestroying(aura::Window* window) {
-  if (fullscreen_root_windows_.count(window)) {
+  if (fullscreen_desks_containers_.count(window)) {
     window_observer_manager_.Remove(window);
-    fullscreen_root_windows_.erase(window);
+    fullscreen_desks_containers_.erase(window);
     UpdateState();
   }
 }
@@ -62,15 +74,17 @@ void VideoDetector::OnChromeTerminating() {
 }
 
 void VideoDetector::OnFullscreenStateChanged(bool is_fullscreen,
-                                             aura::Window* root_window) {
-  if (is_fullscreen && !fullscreen_root_windows_.count(root_window)) {
-    fullscreen_root_windows_.insert(root_window);
-    if (!window_observer_manager_.IsObserving(root_window))
-      window_observer_manager_.Add(root_window);
+                                             aura::Window* container) {
+  const bool has_fullscreen_in_container =
+      fullscreen_desks_containers_.count(container);
+  if (is_fullscreen && !has_fullscreen_in_container) {
+    fullscreen_desks_containers_.insert(container);
+    if (!window_observer_manager_.IsObserving(container))
+      window_observer_manager_.Add(container);
     UpdateState();
-  } else if (!is_fullscreen && fullscreen_root_windows_.count(root_window)) {
-    fullscreen_root_windows_.erase(root_window);
-    window_observer_manager_.Remove(root_window);
+  } else if (!is_fullscreen && has_fullscreen_in_container) {
+    fullscreen_desks_containers_.erase(container);
+    window_observer_manager_.Remove(container);
     UpdateState();
   }
 }
@@ -78,8 +92,9 @@ void VideoDetector::OnFullscreenStateChanged(bool is_fullscreen,
 void VideoDetector::UpdateState() {
   State new_state = State::NOT_PLAYING;
   if (video_is_playing_) {
-    new_state = fullscreen_root_windows_.empty() ? State::PLAYING_WINDOWED
-                                                 : State::PLAYING_FULLSCREEN;
+    new_state = fullscreen_desks_containers_.empty()
+                    ? State::PLAYING_WINDOWED
+                    : State::PLAYING_FULLSCREEN;
   }
 
   if (state_ != new_state) {
@@ -99,6 +114,29 @@ void VideoDetector::OnVideoActivityStarted() {
 void VideoDetector::OnVideoActivityEnded() {
   video_is_playing_ = false;
   UpdateState();
+}
+
+void VideoDetector::EstablishConnectionToViz() {
+  viz::mojom::VideoDetectorObserverPtr observer;
+  if (binding_.is_bound())
+    binding_.Close();
+  binding_.Bind(mojo::MakeRequest(&observer));
+  binding_.set_connection_error_handler(base::BindOnce(
+      &VideoDetector::OnConnectionError, base::Unretained(this)));
+  aura::Env::GetInstance()
+      ->context_factory_private()
+      ->GetHostFrameSinkManager()
+      ->AddVideoDetectorObserver(std::move(observer));
+}
+
+void VideoDetector::OnConnectionError() {
+  if (video_is_playing_)
+    OnVideoActivityEnded();
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&VideoDetector::EstablishConnectionToViz,
+                     weak_factory_.GetWeakPtr()),
+      kReEstablishConnectionDelay);
 }
 
 }  // namespace ash

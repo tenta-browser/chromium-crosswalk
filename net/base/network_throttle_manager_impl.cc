@@ -4,6 +4,7 @@
 
 #include "net/base/network_throttle_manager_impl.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -153,10 +154,8 @@ void NetworkThrottleManagerImpl::ThrottleImpl::NotifyUnblocked() {
 NetworkThrottleManagerImpl::NetworkThrottleManagerImpl()
     : lifetime_median_estimate_(PercentileEstimator::kMedianPercentile,
                                 kInitialMedianInMs),
-      outstanding_recomputation_timer_(
-          std::make_unique<base::Timer>(false /* retain_user_task */,
-                                        false /* is_repeating */)),
-      tick_clock_(new base::DefaultTickClock()),
+      outstanding_recomputation_timer_(std::make_unique<base::OneShotTimer>()),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
       weak_ptr_factory_(this) {}
 
 NetworkThrottleManagerImpl::~NetworkThrottleManagerImpl() = default;
@@ -188,12 +187,11 @@ NetworkThrottleManagerImpl::CreateThrottle(
 }
 
 void NetworkThrottleManagerImpl::SetTickClockForTesting(
-    std::unique_ptr<base::TickClock> tick_clock) {
-  tick_clock_ = std::move(tick_clock);
+    const base::TickClock* tick_clock) {
+  tick_clock_ = tick_clock;
   DCHECK(!outstanding_recomputation_timer_->IsRunning());
-  outstanding_recomputation_timer_ = std::make_unique<base::Timer>(
-      false /* retain_user_task */, false /* is_repeating */,
-      tick_clock_.get());
+  outstanding_recomputation_timer_ =
+      std::make_unique<base::OneShotTimer>(tick_clock_);
 }
 
 bool NetworkThrottleManagerImpl::ConditionallyTriggerTimerForTesting() {
@@ -233,7 +231,7 @@ void NetworkThrottleManagerImpl::OnThrottleDestroyed(ThrottleImpl* throttle) {
       DCHECK(throttle->queue_pointer() != outstanding_throttles_.end());
       DCHECK_EQ(throttle, *(throttle->queue_pointer()));
       outstanding_throttles_.erase(throttle->queue_pointer());
-    // Fall through
+      FALLTHROUGH;
     case ThrottleImpl::State::AGED:
       DCHECK(!throttle->start_time().is_null());
       lifetime_median_estimate_.AddSample(
@@ -242,8 +240,8 @@ void NetworkThrottleManagerImpl::OnThrottleDestroyed(ThrottleImpl* throttle) {
       break;
   }
 
-  DCHECK(!base::ContainsValue(blocked_throttles_, throttle));
-  DCHECK(!base::ContainsValue(outstanding_throttles_, throttle));
+  DCHECK(!base::Contains(blocked_throttles_, throttle));
+  DCHECK(!base::Contains(outstanding_throttles_, throttle));
 
   // Unblock the throttles if there's some chance there's a throttle to
   // unblock.
@@ -252,8 +250,8 @@ void NetworkThrottleManagerImpl::OnThrottleDestroyed(ThrottleImpl* throttle) {
     // Via PostTask so there aren't upcalls from within destructors.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&NetworkThrottleManagerImpl::MaybeUnblockThrottles,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&NetworkThrottleManagerImpl::MaybeUnblockThrottles,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 

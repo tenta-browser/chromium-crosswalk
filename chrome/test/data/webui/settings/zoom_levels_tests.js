@@ -8,19 +8,19 @@ suite('ZoomLevels', function() {
    * A zoom levels category created before each test.
    * @type {ZoomLevels}
    */
-  var testElement;
+  let testElement;
 
   /**
    * The mock proxy object to use during test.
    * @type {TestSiteSettingsPrefsBrowserProxy}
    */
-  var browserProxy = null;
+  let browserProxy = null;
 
   /**
    * An example zoom list.
    * @type {!Array<ZoomLevelEntry>}
    */
-  var zoomList = [
+  const zoomList = [
     {
       origin: 'http://www.google.com',
       displayName: 'http://www.google.com',
@@ -56,7 +56,9 @@ suite('ZoomLevels', function() {
     PolymerTest.clearBody();
     testElement = document.createElement('zoom-levels');
     document.body.appendChild(testElement);
-    return browserProxy.whenCalled('fetchZoomLevels');
+    return browserProxy.whenCalled('fetchZoomLevels').then(() => {
+      return test_util.waitForRender(testElement);
+    });
   }
 
   /**
@@ -66,16 +68,16 @@ suite('ZoomLevels', function() {
    *     fetch.
    */
   function getRemoveButton(listContainer, index) {
-    return listContainer.children[index].querySelector('button');
+    return listContainer.children[index].querySelector('cr-icon-button');
   }
 
   test('empty zoom state', function() {
-    var list = testElement.$.list;
+    const list = testElement.$.list;
     assertTrue(!!list);
     assertEquals(0, list.items.length);
     assertEquals(
         0, testElement.shadowRoot.querySelectorAll('.list-item').length);
-    assertTrue(!!testElement.$$('#empty'));
+    assertFalse(testElement.$.empty.hidden);
   });
 
   test('non-empty zoom state', function() {
@@ -83,16 +85,16 @@ suite('ZoomLevels', function() {
 
     return initPage()
         .then(function() {
-          var list = testElement.$.list;
+          const list = testElement.$.list;
           assertTrue(!!list);
           assertEquals(2, list.items.length);
-          assertFalse(!!testElement.$$('#empty'));
+          assertTrue(testElement.$.empty.hidden);
           assertEquals(
               2, testElement.shadowRoot.querySelectorAll('.list-item').length);
 
-          var removeButton = getRemoveButton(testElement.$.listContainer, 0);
+          const removeButton = getRemoveButton(testElement.$.listContainer, 0);
           assert(!!removeButton);
-          MockInteractions.tap(removeButton);
+          removeButton.click();
           return browserProxy.whenCalled('removeZoomLevel');
         })
         .then(function(args) {

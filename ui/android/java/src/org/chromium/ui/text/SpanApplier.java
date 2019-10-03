@@ -4,6 +4,7 @@
 
 package org.chromium.ui.text;
 
+import android.support.annotation.Nullable;
 import android.text.SpannableString;
 
 import java.util.Arrays;
@@ -28,19 +29,31 @@ public class SpanApplier {
     public static final class SpanInfo implements Comparable<SpanInfo> {
         final String mStartTag;
         final String mEndTag;
-        final Object mSpan;
+        final @Nullable Object[] mSpans;
         int mStartTagIndex;
         int mEndTagIndex;
 
         /**
          * @param startTag The start tag, e.g. "<tos>".
          * @param endTag The end tag, e.g. "</tos>".
-         * @param span The span to apply to the text between the start and end tags.
+         * @param span The span to apply to the text between the start and end tags. May be null,
+         *         then SpanApplier will not apply any span.
          */
-        public SpanInfo(String startTag, String endTag, Object span) {
+        public SpanInfo(String startTag, String endTag, @Nullable Object span) {
             mStartTag = startTag;
             mEndTag = endTag;
-            mSpan = span;
+            mSpans = span == null ? null : new Object[] {span};
+        }
+
+        /**
+         * @param startTag The start tag, e.g. "<tos>".
+         * @param endTag The end tag, e.g. "</tos>".
+         * @param spans A vararg list of spans to be applied.
+         */
+        public SpanInfo(String startTag, String endTag, Object... spans) {
+            mStartTag = startTag;
+            mEndTag = endTag;
+            mSpans = spans;
         }
 
         @Override
@@ -70,6 +83,7 @@ public class SpanApplier {
      * @param input The input string.
      * @param spans The Spans which will be applied to the string.
      * @return A SpannableString with the given spans applied.
+     * @throws IllegalArgumentException if the span cannot be applied.
      */
     public static SpannableString applySpans(String input, SpanInfo... spans) {
         for (SpanInfo span : spans) {
@@ -78,7 +92,7 @@ public class SpanApplier {
                     span.mStartTagIndex + span.mStartTag.length());
         }
 
-        // Sort the spans from first to last.
+        // Sort the spans from first to last in the order they appear in the input string.
         Arrays.sort(spans);
 
         // Copy the input text to the output, but omit the start and end tags.
@@ -109,8 +123,13 @@ public class SpanApplier {
 
         SpannableString spannableString = new SpannableString(output);
         for (SpanInfo span : spans) {
-            if (span.mStartTagIndex != -1) {
-                spannableString.setSpan(span.mSpan, span.mStartTagIndex, span.mEndTagIndex, 0);
+            if (span.mStartTagIndex == -1 || span.mSpans == null || span.mSpans.length == 0) {
+                continue;
+            }
+
+            for (Object s : span.mSpans) {
+                if (s == null) continue;
+                spannableString.setSpan(s, span.mStartTagIndex, span.mEndTagIndex, 0);
             }
         }
 

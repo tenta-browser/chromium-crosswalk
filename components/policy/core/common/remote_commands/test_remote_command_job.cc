@@ -5,13 +5,13 @@
 #include "components/policy/core/common/remote_commands/test_remote_command_job.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 
@@ -39,7 +39,7 @@ class TestRemoteCommandJob::EchoPayload
 };
 
 std::unique_ptr<std::string> TestRemoteCommandJob::EchoPayload::Serialize() {
-  return base::MakeUnique<std::string>(payload_);
+  return std::make_unique<std::string>(payload_);
 }
 
 TestRemoteCommandJob::TestRemoteCommandJob(bool succeed,
@@ -66,13 +66,15 @@ bool TestRemoteCommandJob::IsExpired(base::TimeTicks now) {
                    base::TimeDelta::FromHours(kCommandExpirationTimeInHours);
 }
 
-void TestRemoteCommandJob::RunImpl(const CallbackWithResult& succeed_callback,
-                                   const CallbackWithResult& failed_callback) {
+void TestRemoteCommandJob::RunImpl(CallbackWithResult succeed_callback,
+                                   CallbackWithResult failed_callback) {
   std::unique_ptr<ResultPayload> echo_payload(
       new EchoPayload(command_payload_));
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(succeed_ ? succeed_callback : failed_callback,
-                            base::Passed(&echo_payload)),
+      FROM_HERE,
+      base::BindOnce(
+          succeed_ ? std::move(succeed_callback) : std::move(failed_callback),
+          std::move(echo_payload)),
       execution_duration_);
 }
 

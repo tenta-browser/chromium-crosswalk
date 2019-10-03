@@ -9,10 +9,10 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/numerics/math_constants.h"
+#import "ios/chrome/browser/ui/side_swipe/side_swipe_gesture_recognizer.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_util.h"
-#import "ios/chrome/browser/ui/side_swipe_gesture_recognizer.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -60,7 +60,7 @@ const CGFloat kSelectionSize = 64.0;
 const CGFloat kSelectionDownScale = 0.1875;
 
 // The final scale of the selection bubble when the threshold is met.
-const CGFloat kSelectionAnimationScale = 23;
+const CGFloat kSelectionAnimationScale = 26;
 
 // The duration of the animations played when the threshold is met.
 const CGFloat kSelectionAnimationDuration = 0.5;
@@ -81,10 +81,6 @@ const CGFloat kSelectionAnimationDuration = 0.5;
   // If |NO| this is an edge gesture and navigation isn't possible. Don't show
   // arrows and bubbles and don't allow navigate.
   BOOL canNavigate_;
-
-  // If |YES| arrowView_ is directionnal and must be rotated 180 degreed for the
-  // forward panes.
-  BOOL rotateForward_;
 }
 // Returns a newly allocated and configured selection circle shape.
 - (CAShapeLayer*)newSelectionCircleLayer;
@@ -100,14 +96,12 @@ const CGFloat kSelectionAnimationDuration = 0.5;
 - (instancetype)initWithFrame:(CGRect)frame
                 withDirection:(UISwipeGestureRecognizerDirection)direction
                   canNavigate:(BOOL)canNavigate
-                        image:(UIImage*)image
-                rotateForward:(BOOL)rotateForward {
+                        image:(UIImage*)image {
   self = [super initWithFrame:frame];
   if (self) {
     self.backgroundColor = [UIColor colorWithWhite:90.0 / 256 alpha:1.0];
 
     canNavigate_ = canNavigate;
-    rotateForward_ = rotateForward;
     if (canNavigate) {
       image = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
       const CGRect imageSize = CGRectMake(0, 0, 24, 24);
@@ -188,13 +182,8 @@ const CGFloat kSelectionAnimationDuration = 0.5;
   CGFloat rotationStart = -CGFloat(base::kPiDouble) / 2;
   CGFloat rotationEnd = 0;
   if (gesture.direction == UISwipeGestureRecognizerDirectionLeft) {
-    if (rotateForward_) {
-      rotationStart = CGFloat(base::kPiDouble) * 1.5;
-      rotationEnd = CGFloat(base::kPiDouble);
-    } else {
-      rotationStart = CGFloat(base::kPiDouble) / 2;
-      rotationEnd = 0;
-    }
+    rotationStart = CGFloat(base::kPiDouble) * 1.5;
+    rotationEnd = CGFloat(base::kPiDouble);
   }
   CGAffineTransform rotation = CGAffineTransformMakeRotation(MapValueToRange(
       {0, kArrowThreshold}, {rotationStart, rotationEnd}, distance));
@@ -337,7 +326,7 @@ const CGFloat kSelectionAnimationDuration = 0.5;
     // and that the distance including expected velocity is over |threshold|.
     if (distance > kArrowThreshold && finalDistance > threshold &&
         canNavigate_ && gesture.state == UIGestureRecognizerStateEnded) {
-      TriggerHapticFeedbackForAction();
+      TriggerHapticFeedbackForImpact(UIImpactFeedbackStyleMedium);
 
       // Speed up the animation for higher velocity swipes.
       CGFloat animationTime = MapValueToRange(

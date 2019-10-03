@@ -32,12 +32,15 @@ class RendererURLLoaderThrottle : public content::URLLoaderThrottle,
  private:
   // content::URLLoaderThrottle implementation.
   void DetachFromCurrentSequence() override;
-  void WillStartRequest(const content::ResourceRequest& request,
+  void WillStartRequest(network::ResourceRequest* request,
                         bool* defer) override;
-  void WillRedirectRequest(const net::RedirectInfo& redirect_info,
-                           bool* defer) override;
+  void WillRedirectRequest(net::RedirectInfo* redirect_info,
+                           const network::ResourceResponseHead& response_head,
+                           bool* defer,
+                           std::vector<std::string>* to_be_removed_headers,
+                           net::HttpRequestHeaders* modified_headers) override;
   void WillProcessResponse(const GURL& response_url,
-                           const content::ResourceResponseHead& response_head,
+                           network::ResourceResponseHead* response_head,
                            bool* defer) override;
 
   // mojom::UrlCheckNotifier implementation.
@@ -84,7 +87,7 @@ class RendererURLLoaderThrottle : public content::URLLoaderThrottle,
 
   GURL original_url_;
 
-  base::WeakPtrFactory<RendererURLLoaderThrottle> weak_factory_;
+  base::WeakPtrFactory<RendererURLLoaderThrottle> weak_factory_{this};
 };
 
 }  // namespace safe_browsing

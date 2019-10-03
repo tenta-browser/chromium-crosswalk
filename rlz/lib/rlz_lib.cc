@@ -9,16 +9,20 @@
 
 #include <algorithm>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/syslog_logging.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
+#include "net/base/backoff_entry.h"
 #include "rlz/lib/assert.h"
 #include "rlz/lib/financial_ping.h"
 #include "rlz/lib/lib_values.h"
 #include "rlz/lib/net_response_check.h"
 #include "rlz/lib/rlz_value_store.h"
 #include "rlz/lib/string_utils.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace {
 
@@ -213,8 +217,8 @@ bool GetProductEventsAsCgiHelper(rlz_lib::Product product, char* cgi,
 namespace rlz_lib {
 
 #if defined(RLZ_NETWORK_IMPLEMENTATION_CHROME_NET)
-bool SetURLRequestContext(net::URLRequestContextGetter* context) {
-  return FinancialPing::SetURLRequestContext(context);
+bool SetURLLoaderFactory(network::mojom::URLLoaderFactory* factory) {
+  return FinancialPing::SetURLLoaderFactory(factory);
 }
 #endif
 
@@ -349,6 +353,14 @@ bool SetAccessPointRlz(AccessPoint point, const char* new_rlz) {
   return store->WriteAccessPointRlz(point, normalized_rlz);
 }
 
+bool UpdateExistingAccessPointRlz(const std::string& brand) {
+  ScopedRlzValueStoreLock lock;
+  RlzValueStore* store = lock.GetStore();
+  if (!store || !store->HasAccess(RlzValueStore::kWriteAccess))
+    return false;
+  return store->UpdateExistingAccessPointRlz(brand);
+}
+
 // Financial Server pinging functions.
 
 bool FormFinancialPingRequest(Product product, const AccessPoint* access_points,
@@ -386,24 +398,31 @@ bool ParseFinancialPingResponse(Product product, const char* response) {
   return ParsePingResponse(product, response);
 }
 
-bool SendFinancialPing(Product product, const AccessPoint* access_points,
+bool SendFinancialPing(Product product,
+                       const AccessPoint* access_points,
                        const char* product_signature,
                        const char* product_brand,
-                       const char* product_id, const char* product_lang,
+                       const char* product_id,
+                       const char* product_lang,
                        bool exclude_machine_id) {
   return SendFinancialPing(product, access_points, product_signature,
                            product_brand, product_id, product_lang,
                            exclude_machine_id, false);
 }
 
-
-bool SendFinancialPing(Product product, const AccessPoint* access_points,
+bool SendFinancialPing(Product product,
+                       const AccessPoint* access_points,
                        const char* product_signature,
                        const char* product_brand,
-                       const char* product_id, const char* product_lang,
+                       const char* product_id,
+                       const char* product_lang,
                        bool exclude_machine_id,
                        const bool skip_time_check) {
-  // Create the financial ping request.
+  // Create the financial ping request.  To support ChromeOS retries, the
+  // same request needs to be sent out each time in order to preserve the
+  // machine id.  Not doing so could cause the RLZ server to over count
+  // ChromeOS machines under some network error conditions (for example,
+  // the request is properly received but the response it not).
   std::string request;
   if (!FinancialPing::FormRequest(product, access_points, product_signature,
                                   product_brand, product_id, product_lang,
@@ -417,10 +436,58 @@ bool SendFinancialPing(Product product, const AccessPoint* access_points,
   // Send out the ping, update the last ping time irrespective of success.
   FinancialPing::UpdateLastPingTime(product);
   std::string response;
-  if (!FinancialPing::PingServer(request.c_str(), &response))
-    return false;
 
-  // Parse the ping response - update RLZs, clear events.
+#if defined(OS_CHROMEOS)
+  const net::BackoffEntry::Policy policy = {
+      0,  // Number of initial errors to ignore.
+      base::TimeDelta::FromSeconds(5).InMilliseconds(),  // Initial delay.
+      2,    // Factor to increase delay.
+      0.1,  // Delay fuzzing.
+      base::TimeDelta::FromMinutes(5).InMilliseconds(),  // Maximum delay.
+      -1,  // Time to keep entries.  -1 == never discard.
+  };
+  net::BackoffEntry backoff(&policy);
+
+  const int kMaxRetryCount = 3;
+  FinancialPing::PingResponse res = FinancialPing::PING_FAILURE;
+  while (backoff.failure_count() < kMaxRetryCount) {
+    // Write to syslog that an RLZ ping is being attempted.  This is
+    // purposefully done via syslog so that admin and/or end users can monitor
+    // RLZ activity from this machine.  If RLZ is turned off in crosh, these
+    // messages will be absent.
+    SYSLOG(INFO) << "Attempting to send RLZ ping brand=" << product_brand;
+
+    res = FinancialPing::PingServer(request.c_str(), &response);
+    if (res != FinancialPing::PING_FAILURE)
+      break;
+
+    backoff.InformOfRequest(false);
+    if (backoff.ShouldRejectRequest()) {
+      SYSLOG(INFO) << "Failed sending RLZ ping - retrying in "
+                   << backoff.GetTimeUntilRelease().InSeconds() << " seconds";
+    }
+
+    base::PlatformThread::Sleep(backoff.GetTimeUntilRelease());
+  }
+
+  if (res != FinancialPing::PING_SUCCESSFUL) {
+    if (res == FinancialPing::PING_FAILURE) {
+      SYSLOG(INFO) << "Failed sending RLZ ping after " << kMaxRetryCount
+                   << " tries";
+    } else {  // res == FinancialPing::PING_SHUTDOWN
+      SYSLOG(INFO) << "Failed sending RLZ ping due to chrome shutdown";
+    }
+    return false;
+  }
+
+  SYSLOG(INFO) << "Succeeded in sending RLZ ping";
+#else
+  FinancialPing::PingResponse res =
+      FinancialPing::PingServer(request.c_str(), &response);
+  if (res != FinancialPing::PING_SUCCESSFUL)
+    return false;
+#endif
+
   return ParsePingResponse(product, response.c_str());
 }
 
@@ -552,7 +619,7 @@ bool GetPingParams(Product product, const AccessPoint* access_points,
     bool first_rlz = true;  // comma before every RLZ but the first.
     for (int i = 0; access_points[i] != NO_ACCESS_POINT; i++) {
       char rlz[kMaxRlzLength + 1];
-      if (GetAccessPointRlz(access_points[i], rlz, arraysize(rlz))) {
+      if (GetAccessPointRlz(access_points[i], rlz, base::size(rlz))) {
         const char* access_point = GetAccessPointName(access_points[i]);
         if (!access_point)
           continue;
@@ -568,7 +635,7 @@ bool GetPingParams(Product product, const AccessPoint* access_points,
     // Report the DCC too if not empty. DCCs are windows-only.
     char dcc[kMaxDccLength + 1];
     dcc[0] = 0;
-    if (GetMachineDealCode(dcc, arraysize(dcc)) && dcc[0])
+    if (GetMachineDealCode(dcc, base::size(dcc)) && dcc[0])
       base::StringAppendF(&cgi_string, "&%s=%s", kDccCgiVariable, dcc);
 #endif
   }

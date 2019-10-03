@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 #include "base/macros.h"
 #include "base/values.h"
@@ -16,33 +17,52 @@ namespace safe_browsing {
 // Please define any new SafeBrowsing related features in this file, and add
 // them to the ExperimentalFeaturesList below to start displaying their status
 // on the chrome://safe-browsing page.
+const base::Feature kAdPopupTriggerFeature{"SafeBrowsingAdPopupTrigger",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
 
-// Allows an ad sample report to be created but not sent. Used to measure
-// performance impact of report generation.
-const base::Feature kAdSamplerCollectButDontSendFeature{
-    "SafeBrowsingAdSamplerCollectButDontSend",
-    base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kAdRedirectTriggerFeature{
+    "SafeBrowsingAdRedirectTrigger", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Controls various parameters related to occasionally collecting ad samples,
 // for example to control how often collection should occur.
 const base::Feature kAdSamplerTriggerFeature{"SafeBrowsingAdSamplerTrigger",
                                              base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kGaiaPasswordReuseReporting{
-    "SyncPasswordReuseEvent", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kCaptureInlineJavascriptForGoogleAds{
+    "CaptureInlineJavascriptForGoogleAds", base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kGoogleBrandedPhishingWarning{
-    "PasswordProtectionGoogleBrandedPhishingWarning",
+const base::Feature kCaptureSafetyNetId{"SafeBrowsingCaptureSafetyNetId",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+// If enabled in pre-network-service world, SafeBrowsing URL checks are done by
+// applying SafeBrowsing's URLLoaderThrottle subclasses to ThrottlingURLLoader.
+//
+// This flag has no effect if network service is enabled. With network service,
+// SafeBrowsing URL checks are always done by SafeBrowsing's URLLoaderThrottle
+// subclasses.
+const base::Feature kCheckByURLLoaderThrottle{
+    "S13nSafeBrowsingCheckByURLLoaderThrottle",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
-// If enabled, SafeBrowsing URL checks don't defer starting requests or
-// following redirects, no matter on desktop or mobile. Instead they only defer
-// response processing.
-// Please note that when --enable-features=NetworkService is in effect,
-// SafeBrowsing URL checks never block starting requests or following redirects.
-// S13nSafeBrowsingParallelUrlCheck is ignored in that case.
-const base::Feature kParallelUrlCheck{"S13nSafeBrowsingParallelUrlCheck",
-                                      base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kCommittedSBInterstitials{
+    "SafeBrowsingCommittedInterstitials", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kForceUseAPDownloadProtection{
+    "ForceUseAPDownloadProtection", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPasswordProtectionForSignedInUsers{
+    "SafeBrowsingPasswordProtectionForSignedInUsers",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kRealTimeUrlLookupEnabled{
+    "SafeBrowsingRealTimeUrlLookupEnabled", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kRealTimeUrlLookupFetchAllowlist{
+    "SafeBrowsingRealTimeUrlLookupFetchAllowlist",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSuspiciousSiteTriggerQuotaFeature{
+    "SafeBrowsingSuspiciousSiteTriggerQuota", base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kThreatDomDetailsTagAndAttributeFeature{
     "ThreatDomDetailsTagAttributes", base::FEATURE_DISABLED_BY_DEFAULT};
@@ -51,26 +71,40 @@ const base::Feature kTriggerThrottlerDailyQuotaFeature{
     "SafeBrowsingTriggerThrottlerDailyQuota",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kDispatchSafetyNetCheckOffThread{
-    "DispatchSafetyNetCheckOffThread", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kUseAPDownloadProtection{"UseAPDownloadProtection",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kUseLocalBlacklistsV2{"SafeBrowsingUseLocalBlacklistsV2",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
+constexpr base::FeatureParam<bool> kShouldFillOldPhishGuardProto{
+    &kPasswordProtectionForSignedInUsers, "DeprecateOldProto", false};
 
 namespace {
-// List of experimental features. Boolean value for each list member should be
-// set to true if the experiment is currently running at a probability other
-// than 1 or 0, or to false otherwise.
+// List of Safe Browsing features. Boolean value for each list member should be
+// set to true if the experiment state should be listed on
+// chrome://safe-browsing.
 constexpr struct {
   const base::Feature* feature;
-  // True if the feature is running at a probability other than 1 or 0.
-  bool probabilistically_enabled;
+  // True if the feature's state should be listed on chrome://safe-browsing.
+  bool show_state;
 } kExperimentalFeatures[]{
-    {&kAdSamplerCollectButDontSendFeature, false},
+    {&kAdPopupTriggerFeature, true},
+    {&kAdRedirectTriggerFeature, true},
     {&kAdSamplerTriggerFeature, false},
-    {&kGaiaPasswordReuseReporting, true},
-    {&kGoogleBrandedPhishingWarning, true},
-    {&kParallelUrlCheck, true},
+    {&kCaptureInlineJavascriptForGoogleAds, true},
+    {&kCaptureSafetyNetId, true},
+    {&kCheckByURLLoaderThrottle, true},
+    {&kCommittedSBInterstitials, true},
+    {&kForceUseAPDownloadProtection, false},
+    {&kPasswordProtectionForSignedInUsers, true},
+    {&kRealTimeUrlLookupEnabled, true},
+    {&kRealTimeUrlLookupFetchAllowlist, true},
+    {&kSuspiciousSiteTriggerQuotaFeature, true},
     {&kThreatDomDetailsTagAndAttributeFeature, false},
     {&kTriggerThrottlerDailyQuotaFeature, false},
-    {&kDispatchSafetyNetCheckOffThread, false},
+    {&kUseLocalBlacklistsV2, true},
+    {&kUseAPDownloadProtection, true},
 };
 
 // Adds the name and the enabled/disabled status of a given feature.
@@ -90,10 +124,14 @@ void AddFeatureAndAvailability(const base::Feature* exp_feature,
 base::ListValue GetFeatureStatusList() {
   base::ListValue param_list;
   for (const auto& feature_status : kExperimentalFeatures) {
-    if (feature_status.probabilistically_enabled)
+    if (feature_status.show_state)
       AddFeatureAndAvailability(feature_status.feature, &param_list);
   }
   return param_list;
+}
+
+bool GetShouldFillOldPhishGuardProto() {
+  return kShouldFillOldPhishGuardProto.Get();
 }
 
 }  // namespace safe_browsing

@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_TRANSLATE_IOS_BROWSER_JS_TRANSLATE_MANAGER_H_
 #define COMPONENTS_TRANSLATE_IOS_BROWSER_JS_TRANSLATE_MANAGER_H_
 
-#import "ios/web/public/web_state/js/crw_js_injection_manager.h"
+#import "ios/web/public/deprecated/crw_js_injection_manager.h"
 
 #include <string>
 
@@ -23,14 +23,6 @@
 // The translation script. Must be set before |-inject| is called, and is reset
 // after the injection.
 @property(nonatomic, copy) NSString* script;
-
-// Injects JS to constantly check if the translate script is ready and informs
-// the Obj-C side when it is.
-- (void)injectWaitUntilTranslateReadyScript;
-
-// After a translation has been initiated, injects JS to check if the
-// translation has finished/failed and informs the Obj-C when it is.
-- (void)injectTranslateStatusScript;
 
 // Starts translation of the page from |source| language to |target| language.
 // Equivalent to TranslateHelper::StartTranslation().

@@ -4,20 +4,20 @@
 
 package org.chromium.chrome.browser.webapps;
 
-import static org.chromium.webapk.lib.common.WebApkConstants.WEBAPK_PACKAGE_PREFIX;
-
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 
-import org.chromium.base.library_loader.LibraryProcessType;
+import org.chromium.base.VisibleForTesting;
+import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.AppHooks;
+import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.metrics.WebApkSplashscreenMetrics;
 import org.chromium.chrome.browser.metrics.WebApkUma;
 import org.chromium.chrome.browser.util.IntentUtils;
-import org.chromium.content.browser.ChildProcessCreationParams;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.webapk.lib.common.WebApkConstants;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * An Activity is designed for WebAPKs (native Android apps) and displays a webapp in a nearly
@@ -27,34 +27,17 @@ public class WebApkActivity extends WebappActivity {
     /** Manages whether to check update for the WebAPK, and starts update check if needed. */
     private WebApkUpdateManager mUpdateManager;
 
-    /** Indicates whether launching renderer in WebAPK process is enabled. */
-    private boolean mCanLaunchRendererInWebApkProcess;
-
-    private final ChildProcessCreationParams mDefaultParams =
-            ChildProcessCreationParams.getDefault();
-
     /** The start time that the activity becomes focused. */
     private long mStartTime;
 
     private static final String TAG = "cr_WebApkActivity";
 
-    /**
-     * Tries extracting the WebAPK short name from the passed in intent. Returns null if the intent
-     * does not launch a WebApkActivity. This method is slow. It makes several PackageManager calls.
-     */
-    public static String slowExtractNameFromIntentIfTargetIsWebApk(Intent intent) {
-        // Check for intents targetted at WebApkActivity and WebApkActivity0-9.
-        if (!intent.getComponent().getClassName().startsWith(WebApkActivity.class.getName())) {
-            return null;
-        }
-
-        WebApkInfo info = WebApkInfo.create(intent);
-        return (info != null) ? info.shortName() : null;
-    }
+    @VisibleForTesting
+    public static final String STARTUP_UMA_HISTOGRAM_SUFFIX = ".WebApk";
 
     @Override
-    protected boolean isVerified() {
-        return true;
+    public @WebappScopePolicy.Type int scopePolicy() {
+        return WebappScopePolicy.Type.STRICT;
     }
 
     @Override
@@ -65,41 +48,25 @@ public class WebApkActivity extends WebappActivity {
     @Override
     protected void initializeUI(Bundle savedInstance) {
         super.initializeUI(savedInstance);
-        getActivityTab().setWebappManifestScope(mWebappInfo.scopeUri().toString());
+        WebContents webContents = getActivityTab().getWebContents();
+        if (webContents != null) webContents.notifyRendererPreferenceUpdate();
     }
 
     @Override
     public boolean shouldPreferLightweightFre(Intent intent) {
-        // We cannot use getWebApkPackageName() because {@link WebappActivity#preInflationStartup()}
-        // may not have been called yet.
+        // We cannot use getWebApkPackageName() because
+        // {@link WebappActivity#performPreInflationStartup()} may not have been called yet.
         String webApkPackageName =
                 IntentUtils.safeGetStringExtra(intent, WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME);
 
         // Use the lightweight FRE for unbound WebAPKs.
-        return webApkPackageName != null && !webApkPackageName.startsWith(WEBAPK_PACKAGE_PREFIX);
+        return webApkPackageName != null
+                && !webApkPackageName.startsWith(WebApkConstants.WEBAPK_PACKAGE_PREFIX);
     }
 
     @Override
-    public void finishNativeInitialization() {
-        super.finishNativeInitialization();
-        if (!isInitialized()) return;
-        mCanLaunchRendererInWebApkProcess = ChromeWebApkHost.canLaunchRendererInWebApkProcess();
-    }
-
-    @Override
-    public String getNativeClientPackageName() {
-        return getWebappInfo().apkPackageName();
-    }
-
-    @Override
-    public void onResumeWithNative() {
-        super.onResumeWithNative();
-
-        // When launching Chrome renderer in WebAPK process is enabled, WebAPK hosts Chrome's
-        // renderer processes by declaring the Chrome's renderer service in its AndroidManifest.xml
-        // and sets {@link ChildProcessCreationParams} for WebAPK's renderer process so the
-        // {@link ChildProcessLauncher} knows which application's renderer service to connect to.
-        initializeChildProcessCreationParams(mCanLaunchRendererInWebApkProcess);
+    public String getWebApkPackageName() {
+        return getWebappInfo().webApkPackageName();
     }
 
     @Override
@@ -109,19 +76,24 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
+    public void onResumeWithNative() {
+        super.onResumeWithNative();
+        AppHooks.get().setDisplayModeForActivity(getWebappInfo().displayMode(), this);
+    }
+
+    @Override
     protected void recordIntentToCreationTime(long timeMs) {
         super.recordIntentToCreationTime(timeMs);
 
-        RecordHistogram.recordTimesHistogram(
-                "MobileStartup.IntentToCreationTime.WebApk", timeMs, TimeUnit.MILLISECONDS);
+        RecordHistogram.recordTimesHistogram("MobileStartup.IntentToCreationTime.WebApk", timeMs);
     }
 
     @Override
     protected void onDeferredStartupWithStorage(WebappDataStorage storage) {
         super.onDeferredStartupWithStorage(storage);
 
-        WebApkInfo info = (WebApkInfo) mWebappInfo;
-        WebApkUma.recordShellApkVersion(info.shellApkVersion(), info.apkPackageName());
+        WebApkInfo info = (WebApkInfo) getWebappInfo();
+        WebApkUma.recordShellApkVersion(info.shellApkVersion(), info.distributor());
 
         mUpdateManager = new WebApkUpdateManager(storage);
         mUpdateManager.updateIfNeeded(getActivityTab(), info);
@@ -131,40 +103,16 @@ public class WebApkActivity extends WebappActivity {
     protected void onUpdatedLastUsedTime(
             WebappDataStorage storage, boolean previouslyLaunched, long previousUsageTimestamp) {
         if (previouslyLaunched) {
-            WebApkUma.recordLaunchInterval(storage.getLastUsedTime() - previousUsageTimestamp);
+            WebApkUma.recordLaunchInterval(storage.getLastUsedTimeMs() - previousUsageTimestamp);
         }
-    }
-
-    @Override
-    public void onPause() {
-        super.onPause();
-        initializeChildProcessCreationParams(false);
     }
 
     @Override
     public void onPauseWithNative() {
-        WebApkUma.recordWebApkSessionDuration(SystemClock.elapsedRealtime() - mStartTime);
+        WebApkInfo info = (WebApkInfo) getWebappInfo();
+        WebApkUma.recordWebApkSessionDuration(
+                info.distributor(), SystemClock.elapsedRealtime() - mStartTime);
         super.onPauseWithNative();
-    }
-
-    /**
-     * Initializes {@link ChildProcessCreationParams} as a WebAPK's renderer process if
-     * {@link isForWebApk}} is true; as Chrome's child process otherwise.
-     * @param isForWebApk: Whether the {@link ChildProcessCreationParams} is initialized as a
-     *                     WebAPK renderer process.
-     */
-    private void initializeChildProcessCreationParams(boolean isForWebApk) {
-        // TODO(hanxi): crbug.com/664530. WebAPKs shouldn't use a global ChildProcessCreationParams.
-        ChildProcessCreationParams params = mDefaultParams;
-        if (isForWebApk) {
-            boolean isExternalService = false;
-            boolean bindToCaller = false;
-            boolean ignoreVisibilityForImportance = false;
-            params = new ChildProcessCreationParams(getWebappInfo().apkPackageName(),
-                    isExternalService, LibraryProcessType.PROCESS_CHILD, bindToCaller,
-                    ignoreVisibilityForImportance);
-        }
-        ChildProcessCreationParams.registerDefault(params);
     }
 
     @Override
@@ -172,6 +120,55 @@ public class WebApkActivity extends WebappActivity {
         if (mUpdateManager != null) {
             mUpdateManager.destroy();
         }
+
+        // The common case is to be connected to just one WebAPK's services. For the sake of
+        // simplicity disconnect from the services of all WebAPKs.
+        ChromeWebApkHost.disconnectFromAllServices(true /* waitForPendingWork */);
+
         super.onDestroyInternal();
+    }
+
+    @Override
+    protected boolean handleBackPressed() {
+        if (super.handleBackPressed()) return true;
+
+        if (getWebappInfo().isSplashProvidedByWebApk()) {
+            // When the WebAPK provides the splash screen, the splash screen activity is stacked
+            // underneath the WebAPK. The splash screen finishes itself in
+            // {@link Activity#onResume()}. When finishing the WebApkActivity, there is sometimes a
+            // frame of the splash screen drawn prior to the splash screen activity finishing
+            // itself. There are no glitches when the activity stack is finished via
+            // {@link ActivityManager.AppTask#finishAndRemoveTask()}.
+            WebApkServiceClient.getInstance().finishAndRemoveTaskSdk23(this);
+            return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    protected boolean loadUrlIfPostShareTarget(WebappInfo webappInfo) {
+        WebApkInfo webApkInfo = (WebApkInfo) webappInfo;
+        return WebApkPostShareTargetNavigator.navigateIfPostShareTarget(
+                webApkInfo, getActivityTab().getWebContents());
+    }
+
+    @Override
+    protected void initSplash() {
+        super.initSplash();
+
+        // Decide whether to record startup UMA histograms. This is a similar check to the one done
+        // in ChromeTabbedActivity.performPreInflationStartup refer to the comment there for why.
+        if (!LibraryLoader.getInstance().isInitialized()) {
+            getActivityTabStartupMetricsTracker().trackStartupMetrics(STARTUP_UMA_HISTOGRAM_SUFFIX);
+            // If there is a saved instance state, then the intent (and its stored timestamp) might
+            // be stale (Android replays intents if there is a recents entry for the activity).
+            if (getSavedInstanceState() == null) {
+                long shellLaunchTimestampMs =
+                        IntentHandler.getWebApkShellLaunchTimestampFromIntent(getIntent());
+                // Splash observers are removed once the splash screen is hidden.
+                addSplashscreenObserver(new WebApkSplashscreenMetrics(shellLaunchTimestampMs));
+            }
+        }
     }
 }

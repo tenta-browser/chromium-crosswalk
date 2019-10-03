@@ -37,26 +37,25 @@ GURL GetViewUrlFromArgs(const std::string& scheme,
 
 DomDistillerHandler::DomDistillerHandler(DomDistillerService* service,
                                          const std::string& scheme)
-    : service_(service), article_scheme_(scheme), weak_ptr_factory_(this) {}
+    : service_(service), article_scheme_(scheme) {}
 
 DomDistillerHandler::~DomDistillerHandler() {}
 
 void DomDistillerHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "requestEntries",
-      base::Bind(&DomDistillerHandler::HandleRequestEntries,
-                 base::Unretained(this)));
+      base::BindRepeating(&DomDistillerHandler::HandleRequestEntries,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "addArticle",
-      base::Bind(&DomDistillerHandler::HandleAddArticle,
-                 base::Unretained(this)));
+      "addArticle", base::BindRepeating(&DomDistillerHandler::HandleAddArticle,
+                                        base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "selectArticle",
-      base::Bind(&DomDistillerHandler::HandleSelectArticle,
-                 base::Unretained(this)));
+      base::BindRepeating(&DomDistillerHandler::HandleSelectArticle,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "viewUrl",
-      base::Bind(&DomDistillerHandler::HandleViewUrl, base::Unretained(this)));
+      "viewUrl", base::BindRepeating(&DomDistillerHandler::HandleViewUrl,
+                                     base::Unretained(this)));
 }
 
 void DomDistillerHandler::HandleAddArticle(const base::ListValue* args) {
@@ -103,8 +102,7 @@ void DomDistillerHandler::HandleSelectArticle(const base::ListValue* args) {
 void DomDistillerHandler::HandleRequestEntries(const base::ListValue* args) {
   base::ListValue entries;
   const std::vector<ArticleEntry>& entries_specifics = service_->GetEntries();
-  for (std::vector<ArticleEntry>::const_iterator it = entries_specifics.begin();
-       it != entries_specifics.end();
+  for (auto it = entries_specifics.begin(); it != entries_specifics.end();
        ++it) {
     const ArticleEntry& article = *it;
     DCHECK(IsEntryValid(article));

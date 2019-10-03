@@ -17,7 +17,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/child_process_host.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
 namespace {
 
@@ -123,12 +123,12 @@ void SearchIPCRouter::OmniboxFocusChanged(OmniboxFocusState state,
   embedded_search_client()->FocusChanged(state, reason);
 }
 
-void SearchIPCRouter::SendMostVisitedItems(
-    const std::vector<InstantMostVisitedItem>& items) {
-  if (!policy_->ShouldSendMostVisitedItems())
+void SearchIPCRouter::SendMostVisitedInfo(
+    const InstantMostVisitedInfo& most_visited_info) {
+  if (!policy_->ShouldSendMostVisitedInfo())
     return;
 
-  embedded_search_client()->MostVisitedChanged(items);
+  embedded_search_client()->MostVisitedInfoChanged(most_visited_info);
 }
 
 void SearchIPCRouter::SendThemeBackgroundInfo(
@@ -139,6 +139,13 @@ void SearchIPCRouter::SendThemeBackgroundInfo(
   embedded_search_client()->ThemeChanged(theme_info);
 }
 
+void SearchIPCRouter::SendLocalBackgroundSelected() {
+  if (!policy_->ShouldSendLocalBackgroundSelected())
+    return;
+
+  embedded_search_client()->LocalBackgroundSelected();
+}
+
 void SearchIPCRouter::OnTabActivated() {
   is_active_tab_ = true;
 }
@@ -147,14 +154,14 @@ void SearchIPCRouter::OnTabDeactivated() {
   is_active_tab_ = false;
 }
 
-void SearchIPCRouter::FocusOmnibox(int page_seq_no, OmniboxFocusState state) {
+void SearchIPCRouter::FocusOmnibox(int page_seq_no, bool focus) {
   if (page_seq_no != commit_counter_)
     return;
 
   if (!policy_->ShouldProcessFocusOmnibox(is_active_tab_))
     return;
 
-  delegate_->FocusOmnibox(state);
+  delegate_->FocusOmnibox(focus);
 }
 
 void SearchIPCRouter::DeleteMostVisitedItem(int page_seq_no, const GURL& url) {
@@ -188,6 +195,97 @@ void SearchIPCRouter::UndoAllMostVisitedDeletions(int page_seq_no) {
   delegate_->OnUndoAllMostVisitedDeletions();
 }
 
+void SearchIPCRouter::AddCustomLink(int page_seq_no,
+                                    const GURL& url,
+                                    const std::string& title,
+                                    AddCustomLinkCallback callback) {
+  bool result = false;
+  if (page_seq_no == commit_counter_ && policy_->ShouldProcessAddCustomLink()) {
+    result = delegate_->OnAddCustomLink(url, title);
+  }
+
+  std::move(callback).Run(result);
+}
+
+void SearchIPCRouter::UpdateCustomLink(int page_seq_no,
+                                       const GURL& url,
+                                       const GURL& new_url,
+                                       const std::string& new_title,
+                                       UpdateCustomLinkCallback callback) {
+  bool result = false;
+  if (page_seq_no == commit_counter_ &&
+      policy_->ShouldProcessUpdateCustomLink()) {
+    result = delegate_->OnUpdateCustomLink(url, new_url, new_title);
+  }
+
+  std::move(callback).Run(result);
+}
+
+void SearchIPCRouter::ReorderCustomLink(int page_seq_no,
+                                        const GURL& url,
+                                        int new_pos) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessReorderCustomLink())
+    return;
+
+  delegate_->OnReorderCustomLink(url, new_pos);
+}
+
+void SearchIPCRouter::DeleteCustomLink(int page_seq_no,
+                                       const GURL& url,
+                                       DeleteCustomLinkCallback callback) {
+  bool result = false;
+  if (page_seq_no == commit_counter_ &&
+      policy_->ShouldProcessDeleteCustomLink()) {
+    result = delegate_->OnDeleteCustomLink(url);
+  }
+
+  std::move(callback).Run(result);
+}
+
+void SearchIPCRouter::UndoCustomLinkAction(int page_seq_no) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessUndoCustomLinkAction())
+    return;
+
+  delegate_->OnUndoCustomLinkAction();
+}
+
+void SearchIPCRouter::ResetCustomLinks(int page_seq_no) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessResetCustomLinks())
+    return;
+
+  delegate_->OnResetCustomLinks();
+}
+
+void SearchIPCRouter::ToggleMostVisitedOrCustomLinks(int page_seq_no) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessToggleMostVisitedOrCustomLinks())
+    return;
+
+  delegate_->OnToggleMostVisitedOrCustomLinks();
+}
+
+void SearchIPCRouter::ToggleShortcutsVisibility(int page_seq_no,
+                                                bool do_notify) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessToggleShortcutsVisibility())
+    return;
+
+  delegate_->OnToggleShortcutsVisibility(do_notify);
+}
+
 void SearchIPCRouter::LogEvent(int page_seq_no,
                                NTPLoggingEventType event,
                                base::TimeDelta time) {
@@ -198,6 +296,20 @@ void SearchIPCRouter::LogEvent(int page_seq_no,
     return;
 
   delegate_->OnLogEvent(event, time);
+}
+
+void SearchIPCRouter::LogSuggestionEventWithValue(
+    int page_seq_no,
+    NTPSuggestionsLoggingEventType event,
+    int data,
+    base::TimeDelta time) {
+  if (page_seq_no != commit_counter_)
+    return;
+
+  if (!policy_->ShouldProcessLogSuggestionEventWithValue())
+    return;
+
+  delegate_->OnLogSuggestionEventWithValue(event, data, time);
 }
 
 void SearchIPCRouter::LogMostVisitedImpression(
@@ -237,28 +349,95 @@ void SearchIPCRouter::PasteAndOpenDropdown(int page_seq_no,
   delegate_->PasteIntoOmnibox(text);
 }
 
-void SearchIPCRouter::ChromeIdentityCheck(
-    int page_seq_no,
-    const base::string16& identity,
-    ChromeIdentityCheckCallback callback) {
-  bool result = false;
-  if (page_seq_no == commit_counter_ &&
-      policy_->ShouldProcessChromeIdentityCheck()) {
-    result = delegate_->ChromeIdentityCheck(identity);
-  }
+void SearchIPCRouter::SetCustomBackgroundInfo(
+    const GURL& background_url,
+    const std::string& attribution_line_1,
+    const std::string& attribution_line_2,
+    const GURL& action_url,
+    const std::string& collection_id) {
+  if (!policy_->ShouldProcessSetCustomBackgroundInfo())
+    return;
 
-  std::move(callback).Run(result);
+  delegate_->OnSetCustomBackgroundInfo(background_url, attribution_line_1,
+                                       attribution_line_2, action_url,
+                                       collection_id);
 }
 
-void SearchIPCRouter::HistorySyncCheck(int page_seq_no,
-                                       HistorySyncCheckCallback callback) {
-  bool result = false;
-  if (page_seq_no == commit_counter_ &&
-      policy_->ShouldProcessHistorySyncCheck()) {
-    result = delegate_->HistorySyncCheck();
-  }
+void SearchIPCRouter::SelectLocalBackgroundImage() {
+  if (!policy_->ShouldProcessSelectLocalBackgroundImage())
+    return;
 
-  std::move(callback).Run(result);
+  delegate_->OnSelectLocalBackgroundImage();
+}
+
+void SearchIPCRouter::BlocklistSearchSuggestion(int32_t task_version,
+                                                int64_t task_id) {
+  if (!policy_->ShouldProcessBlocklistSearchSuggestion())
+    return;
+
+  delegate_->OnBlocklistSearchSuggestion(task_version, task_id);
+}
+
+void SearchIPCRouter::BlocklistSearchSuggestionWithHash(
+    int32_t task_version,
+    int64_t task_id,
+    const std::vector<uint8_t>& hash) {
+  if (!policy_->ShouldProcessBlocklistSearchSuggestionWithHash())
+    return;
+
+  if (hash.size() > 4) {
+    return;
+  }
+  delegate_->OnBlocklistSearchSuggestionWithHash(task_version, task_id,
+                                                 hash.data());
+}
+
+void SearchIPCRouter::SearchSuggestionSelected(
+    int32_t task_version,
+    int64_t task_id,
+    const std::vector<uint8_t>& hash) {
+  if (!policy_->ShouldProcessSearchSuggestionSelected())
+    return;
+
+  if (hash.size() > 4) {
+    return;
+  }
+  delegate_->OnSearchSuggestionSelected(task_version, task_id, hash.data());
+}
+
+void SearchIPCRouter::OptOutOfSearchSuggestions() {
+  if (!policy_->ShouldProcessOptOutOfSearchSuggestions())
+    return;
+
+  delegate_->OnOptOutOfSearchSuggestions();
+}
+
+void SearchIPCRouter::ApplyDefaultTheme() {
+  if (!policy_->ShouldProcessThemeChangeMessages())
+    return;
+
+  delegate_->OnApplyDefaultTheme();
+}
+
+void SearchIPCRouter::ApplyAutogeneratedTheme(SkColor color) {
+  if (!policy_->ShouldProcessThemeChangeMessages())
+    return;
+
+  delegate_->OnApplyAutogeneratedTheme(color);
+}
+
+void SearchIPCRouter::RevertThemeChanges() {
+  if (!policy_->ShouldProcessThemeChangeMessages())
+    return;
+
+  delegate_->OnRevertThemeChanges();
+}
+
+void SearchIPCRouter::ConfirmThemeChanges() {
+  if (!policy_->ShouldProcessThemeChangeMessages())
+    return;
+
+  delegate_->OnConfirmThemeChanges();
 }
 
 void SearchIPCRouter::set_delegate_for_testing(Delegate* delegate) {

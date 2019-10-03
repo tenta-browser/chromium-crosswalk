@@ -10,7 +10,6 @@
 
 #include "base/callback.h"
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
@@ -29,18 +28,27 @@ class CC_EXPORT ImageController {
 
   using ImageDecodeRequestId = uint64_t;
   using ImageDecodedCallback =
-      base::Callback<void(ImageDecodeRequestId, ImageDecodeResult)>;
+      base::OnceCallback<void(ImageDecodeRequestId, ImageDecodeResult)>;
   explicit ImageController(
       base::SequencedTaskRunner* origin_task_runner,
       scoped_refptr<base::SequencedTaskRunner> worker_task_runner);
+  ImageController(const ImageController&) = delete;
   virtual ~ImageController();
 
+  ImageController& operator=(const ImageController&) = delete;
+
   void SetImageDecodeCache(ImageDecodeCache* cache);
-  void GetTasksForImagesAndRef(
-      std::vector<DrawImage>* sync_decoded_images,
-      std::vector<DrawImage>* at_raster_images,
-      std::vector<scoped_refptr<TileTask>>* tasks,
-      const ImageDecodeCache::TracingInfo& tracing_info);
+  // Build tile tasks for synchronously decoded images.
+  // |sync_decoded_images| is the input. These are the images from a particular
+  // tile, retrieved by the DiscardableImageMap. Images can be removed from the
+  // vector under certain conditions.
+  // |tasks| is an output, which are the built tile tasks.
+  // |has_at_raster_images| is an output parameter.
+  // |tracing_info| is used in tracing or UMA only.
+  void ConvertImagesToTasks(std::vector<DrawImage>* sync_decoded_images,
+                            std::vector<scoped_refptr<TileTask>>* tasks,
+                            bool* has_at_raster_images,
+                            const ImageDecodeCache::TracingInfo& tracing_info);
   void UnrefImages(const std::vector<DrawImage>& images);
   void ReduceMemoryUsage();
   std::vector<scoped_refptr<TileTask>> SetPredecodeImages(
@@ -55,9 +63,8 @@ class CC_EXPORT ImageController {
   // unlock this image. It is up to the caller to ensure that the image is later
   // unlocked using UnlockImageDecode.
   // Virtual for testing.
-  virtual ImageDecodeRequestId QueueImageDecode(
-      const DrawImage& draw_image,
-      const ImageDecodedCallback& callback);
+  virtual ImageDecodeRequestId QueueImageDecode(const DrawImage& draw_image,
+                                                ImageDecodedCallback callback);
   size_t image_cache_max_limit_bytes() const {
     return image_cache_max_limit_bytes_;
   }
@@ -76,15 +83,13 @@ class CC_EXPORT ImageController {
     ImageDecodeRequest();
     ImageDecodeRequest(ImageDecodeRequestId id,
                        const DrawImage& draw_image,
-                       const ImageDecodedCallback& callback,
+                       ImageDecodedCallback callback,
                        scoped_refptr<TileTask> task,
                        bool need_unref);
     ImageDecodeRequest(ImageDecodeRequest&& other);
-    ImageDecodeRequest(const ImageDecodeRequest& other);
     ~ImageDecodeRequest();
 
     ImageDecodeRequest& operator=(ImageDecodeRequest&& other);
-    ImageDecodeRequest& operator=(const ImageDecodeRequest& other);
 
     ImageDecodeRequestId id;
     DrawImage draw_image;
@@ -126,9 +131,7 @@ class CC_EXPORT ImageController {
   // from generating new tasks, this vector should be empty.
   std::vector<ImageDecodeRequest> orphaned_decode_requests_;
 
-  base::WeakPtrFactory<ImageController> weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(ImageController);
+  base::WeakPtrFactory<ImageController> weak_ptr_factory_{this};
 };
 
 }  // namespace cc

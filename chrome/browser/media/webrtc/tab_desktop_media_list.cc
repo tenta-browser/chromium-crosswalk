@@ -4,8 +4,10 @@
 
 #include "chrome/browser/media/webrtc/tab_desktop_media_list.h"
 
-#include "base/hash.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/hash/hash.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -17,6 +19,7 @@
 #include "media/base/video_util.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
+#include "ui/gfx/favicon_size.h"
 #include "ui/gfx/image/image.h"
 
 using content::BrowserThread;
@@ -26,8 +29,8 @@ namespace {
 
 gfx::ImageSkia CreateEnclosedFaviconImage(gfx::Size size,
                                           const gfx::ImageSkia& favicon) {
-  DCHECK_GE(size.width(), 20);
-  DCHECK_GE(size.height(), 20);
+  DCHECK_GE(size.width(), gfx::kFaviconSize);
+  DCHECK_GE(size.height(), gfx::kFaviconSize);
 
   // Create a bitmap.
   SkBitmap result;
@@ -52,14 +55,13 @@ gfx::ImageSkia CreateEnclosedFaviconImage(gfx::Size size,
 }
 
 // Update the list once per second.
-const int kDefaultUpdatePeriod = 1000;
+const int kDefaultTabDesktopMediaListUpdatePeriod = 1000;
 
 }  // namespace
 
 TabDesktopMediaList::TabDesktopMediaList()
-    : DesktopMediaListBase(
-          base::TimeDelta::FromMilliseconds(kDefaultUpdatePeriod)),
-      weak_factory_(this) {
+    : DesktopMediaListBase(base::TimeDelta::FromMilliseconds(
+          kDefaultTabDesktopMediaListUpdatePeriod)) {
   type_ = DesktopMediaID::TYPE_WEB_CONTENTS;
   thumbnail_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
@@ -153,7 +155,7 @@ void TabDesktopMediaList::Refresh() {
   // to the same sequenced task runner that CreateEnlargedFaviconImag()
   // is posted.
   thumbnail_task_runner_.get()->PostTaskAndReply(
-      FROM_HERE, base::BindOnce(&base::DoNothing),
+      FROM_HERE, base::DoNothing(),
       base::BindOnce(&TabDesktopMediaList::ScheduleNextRefresh,
                      weak_factory_.GetWeakPtr()));
 }

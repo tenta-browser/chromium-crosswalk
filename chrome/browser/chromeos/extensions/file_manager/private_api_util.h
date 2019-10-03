@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "chrome/browser/chromeos/file_system_provider/icon_set.h"
 
 class GURL;
 class Profile;
@@ -29,6 +30,7 @@ class EventLogger;
 namespace extensions {
 namespace api {
 namespace file_manager_private {
+struct IconSet;
 struct VolumeMetadata;
 }
 }
@@ -43,6 +45,10 @@ namespace file_manager {
 class Volume;
 
 namespace util {
+
+// Fills out IDL IconSet struct with the provided icon set.
+void FillIconSet(extensions::api::file_manager_private::IconSet* output,
+                 const chromeos::file_system_provider::IconSet& input);
 
 // Converts the |volume| to VolumeMetadata to communicate with JavaScript via
 // private API.
@@ -63,7 +69,7 @@ base::FilePath GetLocalPathFromURL(content::RenderFrameHost* render_frame_host,
                                    const GURL& url);
 
 // The callback type is used for GetSelectedFileInfo().
-typedef base::Callback<void(const std::vector<ui::SelectedFileInfo>&)>
+typedef base::OnceCallback<void(const std::vector<ui::SelectedFileInfo>&)>
     GetSelectedFileInfoCallback;
 
 // Option enum to control how to set the ui::SelectedFileInfo::local_path

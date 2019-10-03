@@ -14,6 +14,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/drag_drop_client_observer.h"
 #include "ui/aura/client/drag_drop_delegate.h"
@@ -30,7 +31,6 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/path.h"
 #include "ui/views/widget/native_widget_aura.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -115,9 +115,7 @@ class DragDropTrackerDelegate : public aura::WindowDelegate {
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
   bool HasHitTestMask() const override { return true; }
-  void GetHitTestMask(gfx::Path* mask) const override {
-    DCHECK(mask->isEmpty());
-  }
+  void GetHitTestMask(SkPath* mask) const override { DCHECK(mask->isEmpty()); }
 
  private:
   DragDropController* drag_drop_controller_;
@@ -129,15 +127,14 @@ class DragDropTrackerDelegate : public aura::WindowDelegate {
 // DragDropController, public:
 
 DragDropController::DragDropController()
-    : drag_data_(NULL),
-      drag_operation_(0),
+    : drag_operation_(0),
       drag_window_(NULL),
       drag_source_window_(NULL),
       should_block_during_drag_drop_(true),
       drag_drop_window_delegate_(new DragDropTrackerDelegate(this)),
       current_drag_event_source_(ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE),
       weak_factory_(this) {
-  Shell::Get()->PrependPreTargetHandler(this);
+  Shell::Get()->AddPreTargetHandler(this, ui::EventTarget::Priority::kSystem);
   Shell::Get()->window_tree_host_manager()->AddObserver(this);
 }
 
@@ -152,16 +149,16 @@ DragDropController::~DragDropController() {
 }
 
 int DragDropController::StartDragAndDrop(
-    const ui::OSExchangeData& data,
+    std::unique_ptr<ui::OSExchangeData> data,
     aura::Window* root_window,
     aura::Window* source_window,
     const gfx::Point& screen_location,
     int operation,
     ui::DragDropTypes::DragEventSource source) {
-  if (IsDragDropInProgress())
+  if (!enabled_ || IsDragDropInProgress())
     return 0;
 
-  const ui::OSExchangeData::Provider* provider = &data.provider();
+  const ui::OSExchangeData::Provider* provider = &data->provider();
   // We do not support touch drag/drop without a drag image.
   if (source == ui::DragDropTypes::DRAG_EVENT_SOURCE_TOUCH &&
       provider->GetDragImage().size().IsEmpty())
@@ -177,9 +174,9 @@ int DragDropController::StartDragAndDrop(
     // We need to transfer the current gesture sequence and the GR's touch event
     // queue to the |drag_drop_tracker_|'s capture window so that when it takes
     // capture, it still gets a valid gesture state.
-    ui::GestureRecognizer::Get()->TransferEventsTo(
+    aura::Env::GetInstance()->gesture_recognizer()->TransferEventsTo(
         source_window, tracker->capture_window(),
-        ui::GestureRecognizer::ShouldCancelTouches::Cancel);
+        ui::TransferTouchesBehavior::kCancel);
     // We also send a gesture end to the source window so it can clear state.
     // TODO(varunjain): Remove this whole block when gesture sequence
     // transferring is properly done in the GR (http://crbug.com/160558)
@@ -192,7 +189,7 @@ int DragDropController::StartDragAndDrop(
     drag_source_window_->AddObserver(this);
   pending_long_tap_.reset();
 
-  drag_data_ = &data;
+  drag_data_ = std::move(data);
   drag_operation_ = operation;
 
   float drag_image_scale = 1;
@@ -257,6 +254,7 @@ int DragDropController::StartDragAndDrop(
 }
 
 void DragDropController::DragCancel() {
+  DCHECK(enabled_);
   DoDragCancel(kCancelAnimationDuration);
 }
 
@@ -431,10 +429,8 @@ void DragDropController::DragUpdate(aura::Window* target,
     aura::client::DragDropDelegate* delegate =
         aura::client::GetDragDropDelegate(drag_window_);
     if (delegate) {
-      ui::DropTargetEvent e(*drag_data_, gfx::Point(), gfx::Point(),
-                            drag_operation_);
-      e.set_location_f(event.location_f());
-      e.set_root_location_f(event.root_location_f());
+      ui::DropTargetEvent e(*drag_data_.get(), event.location_f(),
+                            event.root_location_f(), drag_operation_);
       e.set_flags(event.flags());
       ui::Event::DispatcherApi(&e).set_target(target);
       delegate->OnDragEntered(e);
@@ -443,10 +439,8 @@ void DragDropController::DragUpdate(aura::Window* target,
     aura::client::DragDropDelegate* delegate =
         aura::client::GetDragDropDelegate(drag_window_);
     if (delegate) {
-      ui::DropTargetEvent e(*drag_data_, gfx::Point(), gfx::Point(),
-                            drag_operation_);
-      e.set_location_f(event.location_f());
-      e.set_root_location_f(event.root_location_f());
+      ui::DropTargetEvent e(*drag_data_.get(), event.location_f(),
+                            event.root_location_f(), drag_operation_);
       e.set_flags(event.flags());
       ui::Event::DispatcherApi(&e).set_target(target);
       op = delegate->OnDragUpdated(e);
@@ -462,7 +456,7 @@ void DragDropController::DragUpdate(aura::Window* target,
   }
 
   DCHECK(drag_image_.get());
-  if (drag_image_->visible()) {
+  if (drag_image_->GetVisible()) {
     gfx::Point root_location_in_screen = event.root_location();
     ::wm::ConvertPointToScreen(target->GetRootWindow(),
                                &root_location_in_screen);
@@ -486,13 +480,11 @@ void DragDropController::Drop(aura::Window* target,
   aura::client::DragDropDelegate* delegate =
       aura::client::GetDragDropDelegate(target);
   if (delegate) {
-    ui::DropTargetEvent e(*drag_data_, gfx::Point(), gfx::Point(),
-                          drag_operation_);
-    e.set_location_f(event.location_f());
-    e.set_root_location_f(event.root_location_f());
+    ui::DropTargetEvent e(*drag_data_.get(), event.location_f(),
+                          event.root_location_f(), drag_operation_);
     e.set_flags(event.flags());
     ui::Event::DispatcherApi(&e).set_target(target);
-    drag_operation_ = delegate->OnPerformDrop(e);
+    drag_operation_ = delegate->OnPerformDrop(e, std::move(drag_data_));
     if (drag_operation_ == 0)
       StartCanceledAnimation(kCancelAnimationDuration);
     else
@@ -523,8 +515,8 @@ void DragDropController::AnimationEnded(const gfx::Animation* animation) {
     } else {
       // See comment about this in OnGestureEvent().
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&DragDropController::ForwardPendingLongTap,
-                                weak_factory_.GetWeakPtr()));
+          FROM_HERE, base::BindOnce(&DragDropController::ForwardPendingLongTap,
+                                    weak_factory_.GetWeakPtr()));
     }
   }
 }
@@ -594,7 +586,7 @@ void DragDropController::Cleanup() {
   if (drag_window_)
     drag_window_->RemoveObserver(this);
   drag_window_ = NULL;
-  drag_data_ = NULL;
+  drag_data_.reset();
   // Cleanup can be called again while deleting DragDropTracker, so delete
   // the pointer with a local variable to avoid double free.
   std::unique_ptr<ash::DragDropTracker> holder = std::move(drag_drop_tracker_);

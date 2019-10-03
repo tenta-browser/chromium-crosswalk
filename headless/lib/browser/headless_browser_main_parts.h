@@ -9,11 +9,8 @@
 
 #include "base/files/file_path.h"
 #include "content/public/browser/browser_main_parts.h"
+#include "content/public/common/main_function_params.h"
 #include "headless/public/headless_browser.h"
-
-namespace net {
-class NetLog;
-}  // namespace net
 
 namespace headless {
 
@@ -21,23 +18,29 @@ class HeadlessBrowserImpl;
 
 class HeadlessBrowserMainParts : public content::BrowserMainParts {
  public:
-  explicit HeadlessBrowserMainParts(HeadlessBrowserImpl* browser);
+  explicit HeadlessBrowserMainParts(
+      const content::MainFunctionParams& parameters,
+      HeadlessBrowserImpl* browser);
   ~HeadlessBrowserMainParts() override;
 
   // content::BrowserMainParts implementation:
   void PreMainMessageLoopRun() override;
+  void PreDefaultMainMessageLoopRun(base::OnceClosure quit_closure) override;
+  bool MainMessageLoopRun(int* result_code) override;
   void PostMainMessageLoopRun() override;
 #if defined(OS_MACOSX)
   void PreMainMessageLoopStart() override;
 #endif
 
-  net::NetLog* net_log() const { return net_log_.get(); }
+  void QuitMainMessageLoop();
 
  private:
+  const content::MainFunctionParams parameters_;  // For running browser tests.
   HeadlessBrowserImpl* browser_;  // Not owned.
 
-  bool devtools_http_handler_started_;
-  std::unique_ptr<net::NetLog> net_log_;
+  bool run_message_loop_ = true;
+  bool devtools_http_handler_started_ = false;
+  base::OnceClosure quit_main_message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(HeadlessBrowserMainParts);
 };

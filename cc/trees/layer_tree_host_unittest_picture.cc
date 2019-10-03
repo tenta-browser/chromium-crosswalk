@@ -4,6 +4,8 @@
 
 #include "cc/trees/layer_tree_host.h"
 
+#include "base/bind.h"
+#include "base/time/time.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/fake_picture_layer_impl.h"
@@ -41,14 +43,16 @@ class LayerTreeHostPictureTestTwinLayer
   }
 
   void BeginTest() override {
-    activates_ = 0;
+    // Commit and activate to produce a pending (recycled) layer and an active
+    // layer.
     PostSetNeedsCommitToMainThread();
   }
 
   void DidCommit() override {
     switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
-        // Activate while there are pending and active twins in place.
+        // Activate reusing an existing recycled pending layer, to an already
+        // existing active layer.
         layer_tree_host()->SetNeedsCommit();
         break;
       case 2:
@@ -66,11 +70,8 @@ class LayerTreeHostPictureTestTwinLayer
         break;
       }
       case 4:
-        // Active while there are pending and active twins again.
+        // Activate while there are pending and active twins again.
         layer_tree_host()->SetNeedsCommit();
-        break;
-      case 5:
-        EndTest();
         break;
     }
   }
@@ -131,11 +132,14 @@ class LayerTreeHostPictureTestTwinLayer
     }
 
     ++activates_;
+    if (activates_ == 5)
+      EndTest();
   }
 
-  void AfterTest() override { EXPECT_EQ(5, activates_); }
+  void AfterTest() override {}
 
-  int activates_;
+  int activates_ = 0;
+
   int picture_id1_;
   int picture_id2_;
 };
@@ -190,7 +194,8 @@ class LayerTreeHostPictureTestResizeViewportWithGpuRaster
         // Change the picture layer's size along with the viewport, so it will
         // consider picking a new tile size.
         picture_->SetBounds(gfx::Size(768, 1056));
-        layer_tree_host()->SetViewportSize(gfx::Size(768, 1056));
+        layer_tree_host()->SetViewportSizeAndScale(
+            gfx::Size(768, 1056), 1.f, viz::LocalSurfaceIdAllocation());
         break;
       case 2:
         EndTest();
@@ -423,7 +428,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
     picture_->SetBounds(gfx::Size(100, 100));
     pinch_->AddChild(picture_);
 
-    LayerTreeHost::ViewportLayers viewport_layers;
+    ViewportLayers viewport_layers;
     viewport_layers.page_scale = page_scale_layer;
     viewport_layers.inner_viewport_container = root_clip;
     viewport_layers.inner_viewport_scroll = pinch_;
@@ -432,10 +437,6 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
     layer_tree_host()->SetRootLayer(root_clip);
     LayerTreeHostPictureTest::SetupTree();
     client_.set_bounds(picture_->bounds());
-  }
-
-  void InitializeSettings(LayerTreeSettings* settings) override {
-    settings->layer_transforms_should_scale_layer_contents = true;
   }
 
   void BeginTest() override {
@@ -595,14 +596,11 @@ class LayerTreeHostPictureTestForceRecalculateScales
     root->AddChild(normal_layer_);
 
     layer_tree_host()->SetRootLayer(root);
-    layer_tree_host()->SetViewportSize(size);
+    layer_tree_host()->SetViewportSizeAndScale(size, 1.f,
+                                               viz::LocalSurfaceIdAllocation());
 
     client_.set_fill_with_nonsolid_color(true);
     client_.set_bounds(size);
-  }
-
-  void InitializeSettings(LayerTreeSettings* settings) override {
-    settings->layer_transforms_should_scale_layer_contents = true;
   }
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }

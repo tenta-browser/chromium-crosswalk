@@ -9,8 +9,7 @@ namespace task_manager {
 TestTaskManager::TestTaskManager()
     : handle_(base::kNullProcessHandle),
       pid_(base::kNullProcessId) {
-  set_timer_for_testing(
-      std::unique_ptr<base::Timer>(new base::MockTimer(true, true)));
+  set_timer_for_testing(std::make_unique<base::MockRepeatingTimer>());
 }
 
 TestTaskManager::~TestTaskManager() {
@@ -42,18 +41,6 @@ int64_t TestTaskManager::GetMemoryFootprintUsage(TaskId task_id) const {
   return -1;
 }
 
-int64_t TestTaskManager::GetPhysicalMemoryUsage(TaskId task_id) const {
-  return -1;
-}
-
-int64_t TestTaskManager::GetPrivateMemoryUsage(TaskId task_id) const {
-  return -1;
-}
-
-int64_t TestTaskManager::GetSharedMemoryUsage(TaskId task_id) const {
-  return -1;
-}
-
 int64_t TestTaskManager::GetSwappedMemoryUsage(TaskId task_id) const {
   return -1;
 }
@@ -61,10 +48,6 @@ int64_t TestTaskManager::GetSwappedMemoryUsage(TaskId task_id) const {
 int64_t TestTaskManager::GetGpuMemoryUsage(TaskId task_id,
                                            bool* has_duplicates) const {
   return -1;
-}
-
-base::MemoryState TestTaskManager::GetMemoryState(TaskId task_id) const {
-  return base::MemoryState::UNKNOWN;
 }
 
 int TestTaskManager::GetIdleWakeupsPerSecond(TaskId task_id) const {
@@ -124,8 +107,8 @@ Task::Type TestTaskManager::GetType(TaskId task_id) const {
   return Task::UNKNOWN;
 }
 
-int TestTaskManager::GetTabId(TaskId task_id) const {
-  return -1;
+SessionID TestTaskManager::GetTabId(TaskId task_id) const {
+  return SessionID::InvalidValue();
 }
 
 int TestTaskManager::GetChildProcessUniqueId(TaskId task_id) const {
@@ -192,6 +175,10 @@ TaskIdList TestTaskManager::GetIdsOfTasksSharingSameProcess(
 
 size_t TestTaskManager::GetNumberOfTasksOnSameProcess(TaskId task_id) const {
   return 1;
+}
+
+bool TestTaskManager::IsRunningInVM(TaskId task_id) const {
+  return false;
 }
 
 TaskId TestTaskManager::GetTaskIdForWebContents(

@@ -16,12 +16,14 @@ namespace content {
 // This class supports coalescing upon queueing a task.
 class MainThreadEventQueueTaskList {
  public:
+  enum class EnqueueResult { kCoalesced, kEnqueued };
+
   MainThreadEventQueueTaskList();
   ~MainThreadEventQueueTaskList();
 
   // Adds an event to the queue. The event may be coalesced with previously
   // queued events.
-  void Queue(std::unique_ptr<MainThreadEventQueueTask> event);
+  EnqueueResult Enqueue(std::unique_ptr<MainThreadEventQueueTask> event);
   std::unique_ptr<MainThreadEventQueueTask> Pop();
 
   const std::unique_ptr<MainThreadEventQueueTask>& front() const {
@@ -30,6 +32,8 @@ class MainThreadEventQueueTaskList {
   const std::unique_ptr<MainThreadEventQueueTask>& at(size_t pos) const {
     return queue_.at(pos);
   }
+
+  std::unique_ptr<MainThreadEventQueueTask> remove(size_t pos);
 
   bool empty() const { return queue_.empty(); }
 

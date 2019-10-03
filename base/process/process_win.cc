@@ -4,11 +4,18 @@
 
 #include "base/process/process.h"
 
+#include "base/clang_coverage_buildflags.h"
 #include "base/debug/activity_tracker.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/kill.h"
 #include "base/threading/thread_restrictions.h"
+
+#include <windows.h>
+
+#if BUILDFLAG(CLANG_COVERAGE)
+#include "base/test/clang_coverage.h"
+#endif
 
 namespace {
 
@@ -83,10 +90,13 @@ bool Process::CanBackgroundProcesses() {
 
 // static
 void Process::TerminateCurrentProcessImmediately(int exit_code) {
+#if BUILDFLAG(CLANG_COVERAGE)
+  WriteClangCoverageProfile();
+#endif
   ::TerminateProcess(GetCurrentProcess(), exit_code);
   // There is some ambiguity over whether the call above can return. Rather than
   // hitting confusing crashes later on we should crash right here.
-  CHECK(false);
+  IMMEDIATE_CRASH();
 }
 
 bool Process::IsValid() const {
@@ -119,6 +129,18 @@ ProcessId Process::Pid() const {
   return GetProcId(Handle());
 }
 
+Time Process::CreationTime() const {
+  FILETIME creation_time = {};
+  FILETIME ignore1 = {};
+  FILETIME ignore2 = {};
+  FILETIME ignore3 = {};
+  if (!::GetProcessTimes(Handle(), &creation_time, &ignore1, &ignore2,
+                         &ignore3)) {
+    return Time();
+  }
+  return Time::FromFileTime(creation_time);
+}
+
 bool Process::is_current() const {
   return is_current_process_;
 }
@@ -132,19 +154,26 @@ void Process::Close() {
 }
 
 bool Process::Terminate(int exit_code, bool wait) const {
+  constexpr DWORD kWaitMs = 60 * 1000;
+
   // exit_code cannot be implemented.
   DCHECK(IsValid());
   bool result = (::TerminateProcess(Handle(), exit_code) != FALSE);
   if (result) {
     // The process may not end immediately due to pending I/O
-    if (wait && ::WaitForSingleObject(Handle(), 60 * 1000) != WAIT_OBJECT_0)
+    if (wait && ::WaitForSingleObject(Handle(), kWaitMs) != WAIT_OBJECT_0)
       DPLOG(ERROR) << "Error waiting for process exit";
     Exited(exit_code);
   } else {
-    // The process can't be terminated, perhaps because it has already
-    // exited.
-    DPLOG(ERROR) << "Unable to terminate process";
-    if (::WaitForSingleObject(Handle(), 0) == WAIT_OBJECT_0) {
+    // The process can't be terminated, perhaps because it has already exited or
+    // is in the process of exiting. An error code of ERROR_ACCESS_DENIED is the
+    // undocumented-but-expected result if the process has already exited or
+    // started exiting when TerminateProcess is called, so don't print an error
+    // message in that case.
+    if (GetLastError() != ERROR_ACCESS_DENIED)
+      DPLOG(ERROR) << "Unable to terminate process";
+    // A non-zero timeout is necessary here for the same reasons as above.
+    if (::WaitForSingleObject(Handle(), kWaitMs) == WAIT_OBJECT_0) {
       DWORD actual_exit;
       Exited(::GetExitCodeProcess(Handle(), &actual_exit) ? actual_exit
                                                           : exit_code);
@@ -160,6 +189,9 @@ bool Process::WaitForExit(int* exit_code) const {
 }
 
 bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) const {
+  // Intentionally avoid instantiating ScopedBlockingCallWithBaseSyncPrimitives.
+  // In some cases, this function waits on a child Process doing CPU work.
+  // http://crbug.com/905788
   if (!timeout.is_zero())
     internal::AssertBaseSyncPrimitivesAllowed();
 

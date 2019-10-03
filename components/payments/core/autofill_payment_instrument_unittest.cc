@@ -4,13 +4,15 @@
 
 #include "components/payments/core/autofill_payment_instrument.h"
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/address_normalizer.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/payments/full_card_request.h"
 #include "components/autofill/core/browser/payments/payments_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
@@ -20,6 +22,9 @@
 #include "components/payments/core/test_payment_request_delegate.h"
 #include "components/strings/grit/components_strings.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -37,7 +42,7 @@ class FakePaymentInstrumentDelegate : public PaymentInstrument::Delegate {
     on_instrument_details_ready_called_ = true;
   }
 
-  void OnInstrumentDetailsError() override {
+  void OnInstrumentDetailsError(const std::string& error_message) override {
     on_instrument_details_error_called_ = true;
   }
 
@@ -54,21 +59,18 @@ class FakePaymentInstrumentDelegate : public PaymentInstrument::Delegate {
   bool on_instrument_details_error_called_ = false;
 };
 
-class FakePaymentRequestDelegate
-    : public PaymentRequestDelegate,
-      public autofill::payments::PaymentsClientUnmaskDelegate {
+class FakePaymentRequestDelegate : public PaymentRequestDelegate {
  public:
   FakePaymentRequestDelegate()
       : locale_("en-US"),
         last_committed_url_("https://shop.com"),
         personal_data_("en-US"),
-        request_context_(new net::TestURLRequestContextGetter(
-            base::ThreadTaskRunnerHandle::Get())),
-        payments_client_(request_context_.get(),
-                         nullptr,
-                         nullptr,
-                         this,
-                         nullptr),
+        test_shared_loader_factory_(
+            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+                &test_url_loader_factory_)),
+        payments_client_(test_shared_loader_factory_,
+                         /*identity_manager=*/nullptr,
+                         /*account_info_getter=*/nullptr),
         full_card_request_(&autofill_client_,
                            &payments_client_,
                            &personal_data_) {}
@@ -85,8 +87,6 @@ class FakePaymentRequestDelegate
   const std::string& GetApplicationLocale() const override { return locale_; }
 
   bool IsIncognito() const override { return false; }
-
-  bool IsSslCertificateValid() override { return true; }
 
   const GURL& GetLastCommittedURL() const override {
     return last_committed_url_;
@@ -118,7 +118,8 @@ class FakePaymentRequestDelegate
   const GURL last_committed_url_;
   autofill::TestAddressNormalizer address_normalizer_;
   autofill::PersonalDataManager personal_data_;
-  scoped_refptr<net::TestURLRequestContextGetter> request_context_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
+  scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
   autofill::TestAutofillClient autofill_client_;
   autofill::payments::PaymentsClient payments_client_;
   autofill::payments::FullCardRequest full_card_request_;
@@ -140,7 +141,7 @@ class AutofillPaymentInstrumentTest : public testing::Test {
   }
 
   autofill::CreditCard& local_credit_card() { return local_card_; }
-  const std::vector<autofill::AutofillProfile*>& billing_profiles() {
+  std::vector<autofill::AutofillProfile*>& billing_profiles() {
     return billing_profiles_;
   }
 
@@ -222,6 +223,25 @@ TEST_F(AutofillPaymentInstrumentTest,
        IsCompleteForPayment_InvalidBillinbAddressId) {
   autofill::CreditCard& card = local_credit_card();
   card.set_billing_address_id("InvalidBillingAddressId");
+  base::string16 missing_info;
+  AutofillPaymentInstrument instrument(
+      "visa", card, /*matches_merchant_card_type_exactly=*/true,
+      billing_profiles(), "en-US", nullptr);
+  EXPECT_FALSE(instrument.IsCompleteForPayment());
+  EXPECT_EQ(
+      l10n_util::GetStringUTF16(IDS_PAYMENTS_CARD_BILLING_ADDRESS_REQUIRED),
+      instrument.GetMissingInfoLabel());
+}
+
+// A local card with an incomplete billing address is not a complete instrument
+// for payment.
+TEST_F(AutofillPaymentInstrumentTest,
+       IsCompleteForPayment_IncompleteBillinbAddress) {
+  autofill::AutofillProfile incomplete_profile =
+      autofill::test::GetIncompleteProfile2();
+  billing_profiles()[0] = &incomplete_profile;
+  autofill::CreditCard& card = local_credit_card();
+  card.set_billing_address_id(incomplete_profile.guid());
   base::string16 missing_info;
   AutofillPaymentInstrument instrument(
       "visa", card, /*matches_merchant_card_type_exactly=*/true,
@@ -319,7 +339,7 @@ TEST_F(AutofillPaymentInstrumentTest, IsValidForCanMakePayment_NoNumber) {
 TEST_F(AutofillPaymentInstrumentTest,
        InvokePaymentApp_NormalizationBeforeUnmask) {
   auto personal_data_manager =
-      base::MakeUnique<autofill::TestPersonalDataManager>();
+      std::make_unique<autofill::TestPersonalDataManager>();
   TestPaymentRequestDelegate delegate(personal_data_manager.get());
   delegate.DelayFullCardRequestCompletion();
   delegate.test_address_normalizer()->DelayNormalization();
@@ -350,7 +370,7 @@ TEST_F(AutofillPaymentInstrumentTest,
 TEST_F(AutofillPaymentInstrumentTest,
        InvokePaymentApp_UnmaskBeforeNormalization) {
   auto personal_data_manager =
-      base::MakeUnique<autofill::TestPersonalDataManager>();
+      std::make_unique<autofill::TestPersonalDataManager>();
   TestPaymentRequestDelegate delegate(personal_data_manager.get());
   delegate.DelayFullCardRequestCompletion();
   delegate.test_address_normalizer()->DelayNormalization();

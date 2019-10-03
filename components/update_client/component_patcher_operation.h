@@ -18,10 +18,6 @@ namespace base {
 class DictionaryValue;
 }  // namespace base
 
-namespace service_manager {
-class Connector;
-}
-
 namespace update_client {
 
 extern const char kOp[];
@@ -31,6 +27,7 @@ extern const char kInput[];
 extern const char kPatch[];
 
 class CrxInstaller;
+class Patcher;
 enum class UnpackerError;
 
 class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
@@ -42,7 +39,7 @@ class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
   void Run(const base::DictionaryValue* command_args,
            const base::FilePath& input_dir,
            const base::FilePath& unpack_dir,
-           const scoped_refptr<CrxInstaller>& installer,
+           scoped_refptr<CrxInstaller> installer,
            ComponentPatcher::Callback callback);
 
  protected:
@@ -62,7 +59,7 @@ class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
   virtual UnpackerError DoParseArguments(
       const base::DictionaryValue* command_args,
       const base::FilePath& input_dir,
-      const scoped_refptr<CrxInstaller>& installer) = 0;
+      scoped_refptr<CrxInstaller> installer) = 0;
 
   // Subclasses must override DoRun to actually perform the patching operation.
   // They must call the provided callback when they have completed their
@@ -93,7 +90,7 @@ class DeltaUpdateOpCopy : public DeltaUpdateOp {
   UnpackerError DoParseArguments(
       const base::DictionaryValue* command_args,
       const base::FilePath& input_dir,
-      const scoped_refptr<CrxInstaller>& installer) override;
+      scoped_refptr<CrxInstaller> installer) override;
 
   void DoRun(ComponentPatcher::Callback callback) override;
 
@@ -117,7 +114,7 @@ class DeltaUpdateOpCreate : public DeltaUpdateOp {
   UnpackerError DoParseArguments(
       const base::DictionaryValue* command_args,
       const base::FilePath& input_dir,
-      const scoped_refptr<CrxInstaller>& installer) override;
+      scoped_refptr<CrxInstaller> installer) override;
 
   void DoRun(ComponentPatcher::Callback callback) override;
 
@@ -133,7 +130,7 @@ class DeltaUpdateOpCreate : public DeltaUpdateOp {
 class DeltaUpdateOpPatch : public DeltaUpdateOp {
  public:
   DeltaUpdateOpPatch(const std::string& operation,
-                     service_manager::Connector* connector);
+                     scoped_refptr<Patcher> patcher);
 
  private:
   ~DeltaUpdateOpPatch() override;
@@ -142,7 +139,7 @@ class DeltaUpdateOpPatch : public DeltaUpdateOp {
   UnpackerError DoParseArguments(
       const base::DictionaryValue* command_args,
       const base::FilePath& input_dir,
-      const scoped_refptr<CrxInstaller>& installer) override;
+      scoped_refptr<CrxInstaller> installer) override;
 
   void DoRun(ComponentPatcher::Callback callback) override;
 
@@ -151,7 +148,7 @@ class DeltaUpdateOpPatch : public DeltaUpdateOp {
   void DonePatching(ComponentPatcher::Callback callback, int result);
 
   std::string operation_;
-  service_manager::Connector* connector_;
+  scoped_refptr<Patcher> patcher_;
   base::FilePath patch_abs_path_;
   base::FilePath input_abs_path_;
 
@@ -159,7 +156,7 @@ class DeltaUpdateOpPatch : public DeltaUpdateOp {
 };
 
 DeltaUpdateOp* CreateDeltaUpdateOp(const std::string& operation,
-                                   service_manager::Connector* connector);
+                                   scoped_refptr<Patcher> patcher);
 
 }  // namespace update_client
 

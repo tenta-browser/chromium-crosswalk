@@ -4,10 +4,11 @@
 
 #include "chrome/browser/chromeos/first_run/goodies_displayer.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
@@ -84,7 +85,7 @@ bool GoodiesDisplayer::Init() {
       prefs::kCanShowOobeGoodiesPage);
   if (can_show) {
     base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::Bind(&CheckGoodiesPrefAgainstOobeTimestamp),
         base::Bind(&UpdateGoodiesPrefCantShow));
   }
@@ -139,7 +140,8 @@ void GoodiesDisplayer::OnBrowserSetLastActive(Browser* browser) {
   }
 
   // Regardless of how we got here, we don't henceforth need to show Goodies.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, base::Bind(&Delete));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::BindOnce(&Delete));
 }
 
 GoodiesDisplayerTestInfo::GoodiesDisplayerTestInfo()

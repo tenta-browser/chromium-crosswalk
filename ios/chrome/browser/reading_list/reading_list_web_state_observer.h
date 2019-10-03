@@ -36,6 +36,8 @@ class ReadingListWebStateObserver
   void ReadingListModelBeingDeleted(const ReadingListModel* model) override;
 
  private:
+  friend class web::WebStateUserData<ReadingListWebStateObserver>;
+
   ReadingListWebStateObserver(web::WebState* web_state,
                               ReadingListModel* reading_list_model);
 
@@ -80,11 +82,13 @@ class ReadingListWebStateObserver
   web::WebState* web_state_ = nullptr;
 
   ReadingListModel* reading_list_model_;
-  std::unique_ptr<base::Timer> timer_;
+  std::unique_ptr<base::RepeatingTimer> timer_;
   GURL pending_url_;
   int try_number_;
   bool last_load_was_offline_;
   web::PageLoadCompletionStatus last_load_result_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(ReadingListWebStateObserver);
 };

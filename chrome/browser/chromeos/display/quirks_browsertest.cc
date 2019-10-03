@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/test/bind_test_util.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/quirks/quirks_manager.h"
 #include "content/public/test/test_utils.h"
-#include "net/url_request/test_url_fetcher_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 
 namespace quirks {
 
@@ -17,26 +21,6 @@ namespace {
 const char kFakeIccJson[] = "{\n  \"icc\": \"AAAIkCAgICACEAAA\"\n}";
 const char kFakeIccData[] = {0x00, 0x00, 0x08, 0x90, 0x20, 0x20,
                              0x20, 0x20, 0x02, 0x10, 0x00, 0x00};
-
-// Create FakeURLFetcher which returns fake icc file json.
-std::unique_ptr<net::URLFetcher> CreateFakeURLFetcherSuccess(
-    const GURL& url,
-    net::URLFetcherDelegate* delegate) {
-  net::URLFetcher* fetcher =
-      new net::FakeURLFetcher(url, delegate, kFakeIccJson, net::HTTP_OK,
-                              net::URLRequestStatus::SUCCESS);
-  return base::WrapUnique(fetcher);
-}
-
-// Create FakeURLFetcher which replies with HTTP_NOT_FOUND.
-std::unique_ptr<net::URLFetcher> CreateFakeURLFetcherFailure(
-    const GURL& url,
-    net::URLFetcherDelegate* delegate) {
-  net::URLFetcher* fetcher = new net::FakeURLFetcher(
-      url, delegate, "File not found", net::HTTP_NOT_FOUND,
-      net::URLRequestStatus::FAILED);
-  return base::WrapUnique(fetcher);
-}
 
 // Full path to fake icc file in <tmp test directory>/display_profiles/.
 base::FilePath GetPathForIccFile(int64_t product_id) {
@@ -48,7 +32,18 @@ base::FilePath GetPathForIccFile(int64_t product_id) {
 
 class QuirksBrowserTest : public InProcessBrowserTest {
  public:
-  QuirksBrowserTest() : file_existed_(false) {}
+  QuirksBrowserTest() {
+    test_url_loader_factory_.SetInterceptor(base::BindLambdaForTesting(
+        [this](const network::ResourceRequest& request) {
+          if (find_fake_file_) {
+            test_url_loader_factory_.AddResponse(request.url.spec(),
+                                                 kFakeIccJson);
+          } else {
+            test_url_loader_factory_.AddResponse(request.url.spec(), "",
+                                                 net::HTTP_NOT_FOUND);
+          }
+        }));
+  }
 
  protected:
   ~QuirksBrowserTest() override = default;
@@ -56,10 +51,7 @@ class QuirksBrowserTest : public InProcessBrowserTest {
   // Query QuirksManager for icc file, then run msg loop to wait for callback.
   // |find_fake_file| indicates that URLFetcher should respond with success.
   void TestQuirksClient(int64_t product_id, bool find_fake_file) {
-    // Set up fake url getter.
-    QuirksManager::Get()->SetFakeQuirksFetcherCreatorForTests(
-        base::Bind(find_fake_file ? &CreateFakeURLFetcherSuccess
-                                  : &CreateFakeURLFetcherFailure));
+    find_fake_file_ = find_fake_file;
 
     base::RunLoop run_loop;
     end_message_loop_ = run_loop.QuitClosure();
@@ -70,6 +62,8 @@ class QuirksBrowserTest : public InProcessBrowserTest {
                    base::Unretained(this)));
 
     run_loop.Run();
+
+    test_url_loader_factory_.ClearResponses();
   }
 
   // Callback from RequestIccProfilePath().
@@ -93,11 +87,20 @@ class QuirksBrowserTest : public InProcessBrowserTest {
 
     // Quirks clients can't run until after login.
     quirks::QuirksManager::Get()->OnLoginCompleted();
+
+    // Set up interception for URL requests.
+    QuirksManager::Get()->SetURLLoaderFactoryForTests(
+        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+            &test_url_loader_factory_));
   }
 
   base::Closure end_message_loop_;  // Callback to terminate message loop.
   base::FilePath icc_path_;         // Path to icc file if found or downloaded.
-  bool file_existed_;               // File was previously downloaded.
+  bool file_existed_ = false;       // File was previously downloaded.
+  bool find_fake_file_ = false;     // Return success from Quirks server
+                                    // request.
+
+  network::TestURLLoaderFactory test_url_loader_factory_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuirksBrowserTest);
@@ -110,10 +113,13 @@ IN_PROC_BROWSER_TEST_F(QuirksBrowserTest, DownloadIccFile) {
   base::FilePath path = GetPathForIccFile(0x0000aaaa);
   EXPECT_EQ(icc_path_, path);
   EXPECT_EQ(file_existed_, false);
-  EXPECT_TRUE(base::PathExists(path));
-  char data[32];
-  ReadFile(path, data, sizeof(data));
-  EXPECT_EQ(0, memcmp(data, kFakeIccData, sizeof(kFakeIccData)));
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    EXPECT_TRUE(base::PathExists(path));
+    char data[32];
+    ReadFile(path, data, sizeof(data));
+    EXPECT_EQ(0, memcmp(data, kFakeIccData, sizeof(kFakeIccData)));
+  }
 
   // Retest same file, this time expect it to already exist.
   TestQuirksClient(0x0000aaaa, true);
@@ -124,7 +130,10 @@ IN_PROC_BROWSER_TEST_F(QuirksBrowserTest, DownloadIccFile) {
   TestQuirksClient(0x1111bbbb, false);
   EXPECT_EQ(icc_path_, base::FilePath());
   EXPECT_EQ(file_existed_, false);
-  EXPECT_FALSE(base::PathExists(GetPathForIccFile(0x1111bbbb)));
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    EXPECT_FALSE(base::PathExists(GetPathForIccFile(0x1111bbbb)));
+  }
 }
 
 }  // namespace quirks

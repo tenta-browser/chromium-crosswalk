@@ -16,7 +16,7 @@
 namespace syncer {
 
 class ChangeProcessor;
-struct ActivationContext;
+struct DataTypeActivationResponse;
 
 // The DataTypeConfigurer interface abstracts out the action of
 // configuring a set of new data types and cleaning up after a set of
@@ -44,7 +44,9 @@ class ModelTypeConfigurer {
     // The awkward part is handling when SyncEngine calls ConfigureDataTypes on
     // itself to configure Nigori.
     base::Callback<void(ModelTypeSet, ModelTypeSet)> ready_task;
-    base::Closure retry_callback;
+
+    // Whether full sync (or sync the feature) is enabled;
+    bool is_sync_feature_enabled;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ConfigureParams);
@@ -81,7 +83,7 @@ class ModelTypeConfigurer {
   // This must be called before initial sync for data type.
   virtual void ActivateNonBlockingDataType(
       ModelType type,
-      std::unique_ptr<ActivationContext> activation_context) = 0;
+      std::unique_ptr<DataTypeActivationResponse> activation_response) = 0;
 
   // Deactivates change processing for the given non-blocking data type.
   virtual void DeactivateNonBlockingDataType(ModelType type) = 0;

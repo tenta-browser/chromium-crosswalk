@@ -11,18 +11,20 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/country_names.h"
 #include "components/autofill/core/browser/data_driven_test.h"
 #include "components/autofill/core/browser/form_data_importer.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/common/form_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -55,14 +57,14 @@ const ServerFieldType kProfileFieldTypes[] = {NAME_FIRST,
                                               PHONE_HOME_WHOLE_NUMBER};
 
 const base::FilePath& GetTestDataDir() {
-  CR_DEFINE_STATIC_LOCAL(base::FilePath, dir, ());
-  if (dir.empty()) {
-    PathService::Get(base::DIR_SOURCE_ROOT, &dir);
-    dir = dir.AppendASCII("components");
-    dir = dir.AppendASCII("test");
-    dir = dir.AppendASCII("data");
-  }
-  return dir;
+  static base::NoDestructor<base::FilePath> dir([]() {
+    base::FilePath dir;
+    base::PathService::Get(base::DIR_SOURCE_ROOT, &dir);
+    return dir.AppendASCII("components")
+        .AppendASCII("test")
+        .AppendASCII("data");
+  }());
+  return *dir;
 }
 
 const std::vector<base::FilePath> GetTestFiles() {
@@ -181,6 +183,8 @@ class AutofillMergeTest : public DataDrivenTest,
   // Deserializes |str| into a field type.
   ServerFieldType StringToFieldType(const std::string& str);
 
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  TestAutofillClient autofill_client_;
   PersonalDataManagerMock personal_data_;
   std::unique_ptr<FormDataImporter> form_data_importer_;
 
@@ -204,7 +208,7 @@ AutofillMergeTest::~AutofillMergeTest() {
 void AutofillMergeTest::SetUp() {
   test::DisableSystemServices(nullptr);
   form_data_importer_ = std::make_unique<FormDataImporter>(
-      /*AutofillClient=*/nullptr,
+      &autofill_client_,
       /*payments::PaymentsClient=*/nullptr, &personal_data_, "en");
 }
 
@@ -225,7 +229,7 @@ void AutofillMergeTest::MergeProfiles(const std::string& profiles,
   // Create a test form.
   FormData form;
   form.name = base::ASCIIToUTF16("MyTestForm");
-  form.origin = GURL("https://www.example.com/origin.html");
+  form.url = GURL("https://www.example.com/origin.html");
   form.action = GURL("https://www.example.com/action.html");
 
   // Parse the input line by line.
@@ -275,13 +279,11 @@ void AutofillMergeTest::MergeProfiles(const std::string& profiles,
 
       // Import the profile.
       std::unique_ptr<CreditCard> imported_credit_card;
-      bool imported_credit_card_matches_masked_server_credit_card;
-      form_data_importer_->ImportFormData(
-          form_structure,
-          true,   // credit card autofill enabled
-          false,  // should return local card
-          &imported_credit_card,
-          &imported_credit_card_matches_masked_server_credit_card);
+      form_data_importer_->ImportFormData(form_structure,
+                                          true,  // address autofill enabled,
+                                          true,  // credit card autofill enabled
+                                          false,  // should return local card
+                                          &imported_credit_card);
       EXPECT_FALSE(imported_credit_card);
 
       // Clear the |form| to start a new profile.
@@ -302,6 +304,8 @@ TEST_P(AutofillMergeTest, DataDrivenMergeProfiles) {
                        kIsExpectedToPass);
 }
 
-INSTANTIATE_TEST_CASE_P(, AutofillMergeTest, testing::ValuesIn(GetTestFiles()));
+INSTANTIATE_TEST_SUITE_P(,
+                         AutofillMergeTest,
+                         testing::ValuesIn(GetTestFiles()));
 
 }  // namespace autofill

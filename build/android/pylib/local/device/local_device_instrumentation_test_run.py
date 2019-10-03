@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import contextlib
+import copy
 import hashlib
 import json
 import logging
@@ -12,6 +13,7 @@ import re
 import sys
 import time
 
+from devil import base_error
 from devil.android import crash_handler
 from devil.android import device_errors
 from devil.android import device_temp_file
@@ -19,6 +21,7 @@ from devil.android import flag_changer
 from devil.android.sdk import shared_prefs
 from devil.android import logcat_monitor
 from devil.android.tools import system_app
+from devil.android.tools import webview_app
 from devil.utils import reraiser_thread
 from incremental_install import installer
 from pylib import constants
@@ -29,6 +32,7 @@ from pylib.constants import host_paths
 from pylib.instrumentation import instrumentation_test_instance
 from pylib.local.device import local_device_environment
 from pylib.local.device import local_device_test_run
+from pylib.output import remote_output_manager
 from pylib.utils import instrumentation_tracing
 from pylib.utils import shared_preference_utils
 
@@ -37,6 +41,7 @@ from py_trace_event import trace_time
 from py_utils import contextlib_ext
 from py_utils import tempfile_ext
 import tombstones
+
 
 with host_paths.SysPath(
     os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party'), 0):
@@ -73,8 +78,6 @@ EXTRA_TRACE_FILE = ('org.chromium.base.test.BaseJUnit4ClassRunner.TraceFile')
 
 _EXTRA_TEST_LIST = (
     'org.chromium.base.test.BaseChromiumAndroidJUnitRunner.TestList')
-
-UI_CAPTURE_DIRS = ['chromium_tests_root', 'UiCapture']
 
 FEATURE_ANNOTATION = 'Feature'
 RENDER_TEST_FEATURE_ANNOTATION = 'RenderTest'
@@ -125,8 +128,9 @@ class LocalDeviceInstrumentationTestRun(
     super(LocalDeviceInstrumentationTestRun, self).__init__(
         env, test_instance)
     self._flag_changers = {}
-    self._ui_capture_dir = dict()
     self._replace_package_contextmanager = None
+    self._shared_prefs_to_restore = []
+    self._use_webview_contextmanager = None
 
   #override
   def TestPackage(self):
@@ -154,9 +158,34 @@ class LocalDeviceInstrumentationTestRun(
           self._replace_package_contextmanager = system_app.ReplaceSystemApp(
               dev, self._test_instance.replace_system_package.package,
               self._test_instance.replace_system_package.replacement_apk)
+          # Pylint is not smart enough to realize that this field has
+          # an __enter__ method, and will complain loudly.
+          # pylint: disable=no-member
           self._replace_package_contextmanager.__enter__()
+          # pylint: enable=no-member
 
         steps.append(replace_package)
+
+      if self._test_instance.use_webview_provider:
+        @trace_event.traced
+        def use_webview_provider(dev):
+          # We need the context manager to be applied before modifying any
+          # shared preference files in case the replacement APK needs to be
+          # set up, and it needs to be applied while the test is running.
+          # Thus, it needs to be applied early during setup, but must still be
+          # applied during _RunTest, which isn't possible using 'with' without
+          # applying the context manager up in test_runner. Instead, we
+          # manually invoke its __enter__ and __exit__ methods in setup and
+          # teardown.
+          self._use_webview_contextmanager = webview_app.UseWebViewProvider(
+              dev, self._test_instance.use_webview_provider)
+          # Pylint is not smart enough to realize that this field has
+          # an __enter__ method, and will complain loudly.
+          # pylint: disable=no-member
+          self._use_webview_contextmanager.__enter__()
+          # pylint: enable=no-member
+
+        steps.append(use_webview_provider)
 
       def install_helper(apk, permissions):
         @instrumentation_tracing.no_tracing
@@ -203,24 +232,45 @@ class LocalDeviceInstrumentationTestRun(
       def set_debug_app(dev):
         # Set debug app in order to enable reading command line flags on user
         # builds
-        if not self._test_instance.package_info:
-          logging.error("Couldn't set debug app: no package info")
-        elif not self._test_instance.package_info.package:
-          logging.error("Couldn't set debug app: no package defined")
+        package_name = None
+        if self._test_instance.apk_under_test:
+          package_name = self._test_instance.apk_under_test.GetPackageName()
+        elif self._test_instance.test_apk:
+          package_name = self._test_instance.test_apk.GetPackageName()
         else:
-          cmd = ['am', 'set-debug-app', '--persistent']
-          if self._test_instance.wait_for_java_debugger:
-            cmd.append('-w')
-          cmd.append(self._test_instance.package_info.package)
-          dev.RunShellCommand(cmd, check_return=True)
+          logging.error("Couldn't set debug app: no package name found")
+          return
+        cmd = ['am', 'set-debug-app', '--persistent']
+        if self._test_instance.wait_for_java_debugger:
+          cmd.append('-w')
+        cmd.append(package_name)
+        dev.RunShellCommand(cmd, check_return=True)
 
       @trace_event.traced
       def edit_shared_prefs(dev):
         for setting in self._test_instance.edit_shared_prefs:
-          shared_pref = shared_prefs.SharedPrefs(dev, setting['package'],
-                                                 setting['filename'])
+          shared_pref = shared_prefs.SharedPrefs(
+              dev, setting['package'], setting['filename'],
+              use_encrypted_path=setting.get('supports_encrypted_path', False))
+          pref_to_restore = copy.copy(shared_pref)
+          pref_to_restore.Load()
+          self._shared_prefs_to_restore.append(pref_to_restore)
+
           shared_preference_utils.ApplySharedPreferenceSetting(
               shared_pref, setting)
+
+      @trace_event.traced
+      def set_vega_permissions(dev):
+        # Normally, installation of VrCore automatically grants storage
+        # permissions. However, since VrCore is part of the system image on
+        # the Vega standalone headset, we don't install the APK as part of test
+        # setup. Instead, grant the permissions here so that it can take
+        # screenshots.
+        if dev.product_name == 'vega':
+          dev.GrantPermissions('com.google.vr.vrcore', [
+              'android.permission.WRITE_EXTERNAL_STORAGE',
+              'android.permission.READ_EXTERNAL_STORAGE'
+          ])
 
       @instrumentation_tracing.no_tracing
       def push_test_data(dev):
@@ -241,59 +291,68 @@ class LocalDeviceInstrumentationTestRun(
       @trace_event.traced
       def create_flag_changer(dev):
         if self._test_instance.flags:
-          if not self._test_instance.package_info:
-            logging.error("Couldn't set flags: no package info")
-          elif not self._test_instance.package_info.cmdline_file:
-            logging.error("Couldn't set flags: no cmdline_file")
-          else:
-            self._CreateFlagChangerIfNeeded(dev)
-            logging.debug('Attempting to set flags: %r',
-                          self._test_instance.flags)
-            self._flag_changers[str(dev)].AddFlags(self._test_instance.flags)
+          self._CreateFlagChangerIfNeeded(dev)
+          logging.debug('Attempting to set flags: %r',
+                        self._test_instance.flags)
+          self._flag_changers[str(dev)].AddFlags(self._test_instance.flags)
 
         valgrind_tools.SetChromeTimeoutScale(
             dev, self._test_instance.timeout_scale)
 
-      @trace_event.traced
-      def setup_ui_capture_dir(dev):
-        # Make sure the UI capture directory exists and is empty by deleting
-        # and recreating it.
-        # TODO (aberent) once DeviceTempDir exists use it here.
-        self._ui_capture_dir[dev] = posixpath.join(
-            dev.GetExternalStoragePath(),
-            *UI_CAPTURE_DIRS)
-
-        if dev.PathExists(self._ui_capture_dir[dev]):
-          dev.RunShellCommand(['rm', '-rf', self._ui_capture_dir[dev]])
-        dev.RunShellCommand(['mkdir', self._ui_capture_dir[dev]])
-
-      steps += [set_debug_app, edit_shared_prefs, push_test_data,
-                create_flag_changer, setup_ui_capture_dir]
+      steps += [
+          set_debug_app, edit_shared_prefs, push_test_data, create_flag_changer,
+          set_vega_permissions
+      ]
 
       def bind_crash_handler(step, dev):
         return lambda: crash_handler.RetryOnSystemCrash(step, dev)
 
       steps = [bind_crash_handler(s, device) for s in steps]
 
-      if self._env.concurrent_adb:
-        reraiser_thread.RunAsync(steps)
-      else:
-        for step in steps:
-          step()
-      if self._test_instance.store_tombstones:
-        tombstones.ClearAllTombstones(device)
+      try:
+        if self._env.concurrent_adb:
+          reraiser_thread.RunAsync(steps)
+        else:
+          for step in steps:
+            step()
+        if self._test_instance.store_tombstones:
+          tombstones.ClearAllTombstones(device)
+      except device_errors.CommandFailedError:
+        # A bugreport can be large and take a while to generate, so only capture
+        # one if we're using a remote manager.
+        if isinstance(
+            self._env.output_manager,
+            remote_output_manager.RemoteOutputManager):
+          logging.error(
+              'Error when setting up device for tests. Taking a bugreport for '
+              'investigation. This may take a while...')
+          report_name = '%s.bugreport' % device.serial
+          with self._env.output_manager.ArchivedTempfile(
+              report_name, 'bug_reports') as report_file:
+            device.TakeBugReport(report_file.name)
+          logging.error('Bug report saved to %s', report_file.Link())
+        raise
 
     self._env.parallel_devices.pMap(
         individual_device_set_up,
         self._test_instance.GetDataDependencies())
     if self._test_instance.wait_for_java_debugger:
+      apk = self._test_instance.apk_under_test or self._test_instance.test_apk
       logging.warning('*' * 80)
       logging.warning('Waiting for debugger to attach to process: %s',
-                      self._test_instance.package_info.package)
+                      apk.GetPackageName())
       logging.warning('*' * 80)
 
   #override
   def TearDown(self):
+    # By default, teardown will invoke ADB. When receiving SIGTERM due to a
+    # timeout, there's a high probability that ADB is non-responsive. In these
+    # cases, sending an ADB command will potentially take a long time to time
+    # out. Before this happens, the process will be hard-killed for not
+    # responding to SIGTERM fast enough.
+    if self._received_sigterm:
+      return
+
     @local_device_environment.handle_shard_failures_with(
         self._env.BlacklistDevice)
     @trace_event.traced
@@ -306,29 +365,41 @@ class LocalDeviceInstrumentationTestRun(
 
       valgrind_tools.SetChromeTimeoutScale(dev, None)
 
-      if self._test_instance.ui_screenshot_dir:
-        pull_ui_screen_captures(dev)
+      # Restore any shared preference files that we stored during setup.
+      # This should be run sometime before the replace package contextmanager
+      # gets exited so we don't have to special case restoring files of
+      # replaced system apps.
+      for pref_to_restore in self._shared_prefs_to_restore:
+        pref_to_restore.Commit(force_commit=True)
+
+      # Context manager exit handlers are applied in reverse order
+      # of the enter handlers
+      if self._use_webview_contextmanager:
+        # See pylint-related comment above with __enter__()
+        # pylint: disable=no-member
+        self._use_webview_contextmanager.__exit__(*sys.exc_info())
+        # pylint: enable=no-member
 
       if self._replace_package_contextmanager:
+        # See pylint-related comment above with __enter__()
+        # pylint: disable=no-member
         self._replace_package_contextmanager.__exit__(*sys.exc_info())
-
-    @trace_event.traced
-    def pull_ui_screen_captures(dev):
-      file_names = dev.ListDirectory(self._ui_capture_dir[dev])
-      target_path = self._test_instance.ui_screenshot_dir
-      if not os.path.exists(target_path):
-        os.makedirs(target_path)
-
-      for file_name in file_names:
-        dev.PullFile(posixpath.join(self._ui_capture_dir[dev], file_name),
-                     target_path)
+        # pylint: enable=no-member
 
     self._env.parallel_devices.pMap(individual_device_tear_down)
 
   def _CreateFlagChangerIfNeeded(self, device):
-    if not str(device) in self._flag_changers:
+    if str(device) not in self._flag_changers:
+      cmdline_file = 'test-cmdline-file'
+      if self._test_instance.use_apk_under_test_flags_file:
+        if self._test_instance.package_info:
+          cmdline_file = self._test_instance.package_info.cmdline_file
+        else:
+          logging.warning(
+              'No PackageInfo found, falling back to using flag file %s',
+              cmdline_file)
       self._flag_changers[str(device)] = flag_changer.FlagChanger(
-        device, self._test_instance.package_info.cmdline_file)
+          device, cmdline_file)
 
   #override
   def _CreateShards(self, tests):
@@ -357,11 +428,15 @@ class LocalDeviceInstrumentationTestRun(
     flags_to_add = []
     test_timeout_scale = None
     if self._test_instance.coverage_directory:
-      coverage_basename = '%s.ec' % ('%s_group' % test[0]['method']
-          if isinstance(test, list) else test['method'])
+      coverage_basename = '%s.exec' % (
+          '%s_%s_group' % (test[0]['class'], test[0]['method']) if isinstance(
+              test, list) else '%s_%s' % (test['class'], test['method']))
       extras['coverage'] = 'true'
       coverage_directory = os.path.join(
           device.GetExternalStoragePath(), 'chrome', 'test', 'coverage')
+      if not device.PathExists(coverage_directory):
+        device.RunShellCommand(['mkdir', '-p', coverage_directory],
+                               check_return=True)
       coverage_device_file = os.path.join(
           coverage_directory, coverage_basename)
       extras['coverageFile'] = coverage_device_file
@@ -371,7 +446,14 @@ class LocalDeviceInstrumentationTestRun(
         device.adb, suffix='.png', dir=device.GetExternalStoragePath())
     extras[EXTRA_SCREENSHOT_FILE] = screenshot_device_file.name
 
-    extras[EXTRA_UI_CAPTURE_DIR] = self._ui_capture_dir[device]
+    # Set up the screenshot directory. This needs to be done for each test so
+    # that we only get screenshots created by that test. It has to be on
+    # external storage since the default location doesn't allow file creation
+    # from the instrumentation test app on Android L and M.
+    ui_capture_dir = device_temp_file.NamedDeviceTemporaryDirectory(
+        device.adb,
+        dir=device.GetExternalStoragePath())
+    extras[EXTRA_UI_CAPTURE_DIR] = ui_capture_dir.name
 
     if self._env.trace_output:
       trace_device_file = device_temp_file.DeviceTempFile(
@@ -449,85 +531,120 @@ class LocalDeviceInstrumentationTestRun(
         time.strftime('%Y%m%dT%H%M%S-UTC', time.gmtime()),
         device.serial)
 
-    with self._env.output_manager.ArchivedTempfile(
-        stream_name, 'logcat') as logcat_file:
-      try:
-        with logcat_monitor.LogcatMonitor(
-            device.adb,
-            filter_specs=local_device_environment.LOGCAT_FILTERS,
-            output_file=logcat_file.name,
-            transform_func=self._test_instance.MaybeDeobfuscateLines) as logmon:
-          with _LogTestEndpoints(device, test_name):
-            with contextlib_ext.Optional(
-                trace_event.trace(test_name),
-                self._env.trace_output):
-              output = device.StartInstrumentation(
-                  target, raw=True, extras=extras, timeout=timeout, retries=0)
-      finally:
-        logmon.Close()
-
-    if logcat_file.Link():
-      logging.info('Logcat saved to %s', logcat_file.Link())
-
-    duration_ms = time_ms() - start_ms
-
-    with contextlib_ext.Optional(
-        trace_event.trace('ProcessResults'),
-        self._env.trace_output):
-      output = self._test_instance.MaybeDeobfuscateLines(output)
-      # TODO(jbudorick): Make instrumentation tests output a JSON so this
-      # doesn't have to parse the output.
-      result_code, result_bundle, statuses = (
-          self._test_instance.ParseAmInstrumentRawOutput(output))
-      results = self._test_instance.GenerateTestResults(
-          result_code, result_bundle, statuses, start_ms, duration_ms,
-          device.product_cpu_abi, self._test_instance.symbolizer)
-
-    if self._env.trace_output:
-      self._SaveTraceData(trace_device_file, device, test['class'])
-
-    def restore_flags():
-      if flags_to_add:
-        self._flag_changers[str(device)].Restore()
-
-    def restore_timeout_scale():
-      if test_timeout_scale:
-        valgrind_tools.SetChromeTimeoutScale(
-            device, self._test_instance.timeout_scale)
-
-    def handle_coverage_data():
-      if self._test_instance.coverage_directory:
-        device.PullFile(coverage_directory,
-            self._test_instance.coverage_directory)
-        device.RunShellCommand(
-            'rm -f %s' % posixpath.join(coverage_directory, '*'),
-            check_return=True, shell=True)
-
-    def handle_render_test_data():
-      if _IsRenderTest(test):
-        # Render tests do not cause test failure by default. So we have to check
-        # to see if any failure images were generated even if the test does not
-        # fail.
+    with ui_capture_dir:
+      with self._env.output_manager.ArchivedTempfile(
+          stream_name, 'logcat') as logcat_file:
         try:
-          self._ProcessRenderTestResults(
-              device, render_tests_device_output_dir, results)
+          with logcat_monitor.LogcatMonitor(
+              device.adb,
+              filter_specs=local_device_environment.LOGCAT_FILTERS,
+              output_file=logcat_file.name,
+              transform_func=self._test_instance.MaybeDeobfuscateLines,
+              check_error=False) as logmon:
+            with _LogTestEndpoints(device, test_name):
+              with contextlib_ext.Optional(
+                  trace_event.trace(test_name),
+                  self._env.trace_output):
+                output = device.StartInstrumentation(
+                    target, raw=True, extras=extras, timeout=timeout, retries=0)
         finally:
-          device.RemovePath(render_tests_device_output_dir,
-                            recursive=True, force=True)
+          logmon.Close()
 
-    # While constructing the TestResult objects, we can parallelize several
-    # steps that involve ADB. These steps should NOT depend on any info in
-    # the results! Things such as whether the test CRASHED have not yet been
-    # determined.
-    post_test_steps = [restore_flags, restore_timeout_scale,
-                       handle_coverage_data, handle_render_test_data]
-    if self._env.concurrent_adb:
-      post_test_step_thread_group = reraiser_thread.ReraiserThreadGroup(
-          reraiser_thread.ReraiserThread(f) for f in post_test_steps)
-      post_test_step_thread_group.StartAll(will_block=True)
-    else:
-      for step in post_test_steps:
-        step()
+      if logcat_file.Link():
+        logging.info('Logcat saved to %s', logcat_file.Link())
+
+      duration_ms = time_ms() - start_ms
+
+      with contextlib_ext.Optional(
+          trace_event.trace('ProcessResults'),
+          self._env.trace_output):
+        output = self._test_instance.MaybeDeobfuscateLines(output)
+        # TODO(jbudorick): Make instrumentation tests output a JSON so this
+        # doesn't have to parse the output.
+        result_code, result_bundle, statuses = (
+            self._test_instance.ParseAmInstrumentRawOutput(output))
+        results = self._test_instance.GenerateTestResults(
+            result_code, result_bundle, statuses, start_ms, duration_ms,
+            device.product_cpu_abi, self._test_instance.symbolizer)
+
+      if self._env.trace_output:
+        self._SaveTraceData(trace_device_file, device, test['class'])
+
+      def restore_flags():
+        if flags_to_add:
+          self._flag_changers[str(device)].Restore()
+
+      def restore_timeout_scale():
+        if test_timeout_scale:
+          valgrind_tools.SetChromeTimeoutScale(
+              device, self._test_instance.timeout_scale)
+
+      def handle_coverage_data():
+        if self._test_instance.coverage_directory:
+          try:
+            device.PullFile(coverage_directory,
+                            self._test_instance.coverage_directory)
+            device.RunShellCommand(
+                'rm -f %s' % posixpath.join(coverage_directory, '*'),
+                check_return=True,
+                shell=True)
+          except base_error.BaseError as e:
+            logging.warning('Failed to handle coverage data after tests: %s', e)
+
+      def handle_render_test_data():
+        if _IsRenderTest(test):
+          # Render tests do not cause test failure by default. So we have to
+          # check to see if any failure images were generated even if the test
+          # does not fail.
+          try:
+            self._ProcessRenderTestResults(
+                device, render_tests_device_output_dir, results)
+          finally:
+            device.RemovePath(render_tests_device_output_dir,
+                              recursive=True, force=True)
+
+      def pull_ui_screen_captures():
+        screenshots = []
+        for filename in device.ListDirectory(ui_capture_dir.name):
+          if filename.endswith('.json'):
+            screenshots.append(pull_ui_screenshot(filename))
+        if screenshots:
+          json_archive_name = 'ui_capture_%s_%s.json' % (
+              test_name.replace('#', '.'),
+              time.strftime('%Y%m%dT%H%M%S-UTC', time.gmtime()))
+          with self._env.output_manager.ArchivedTempfile(
+              json_archive_name, 'ui_capture', output_manager.Datatype.JSON
+              ) as json_archive:
+            json.dump(screenshots, json_archive)
+          for result in results:
+            result.SetLink('ui screenshot', json_archive.Link())
+
+      def pull_ui_screenshot(filename):
+        source_dir = ui_capture_dir.name
+        json_path = posixpath.join(source_dir, filename)
+        json_data = json.loads(device.ReadFile(json_path))
+        image_file_path = posixpath.join(source_dir, json_data['location'])
+        with self._env.output_manager.ArchivedTempfile(
+            json_data['location'], 'ui_capture', output_manager.Datatype.PNG
+            ) as image_archive:
+          device.PullFile(image_file_path, image_archive.name)
+        json_data['image_link'] = image_archive.Link()
+        return json_data
+
+      # While constructing the TestResult objects, we can parallelize several
+      # steps that involve ADB. These steps should NOT depend on any info in
+      # the results! Things such as whether the test CRASHED have not yet been
+      # determined.
+      post_test_steps = [restore_flags, restore_timeout_scale,
+                         handle_coverage_data, handle_render_test_data,
+                         pull_ui_screen_captures]
+      if self._env.concurrent_adb:
+        post_test_step_thread_group = reraiser_thread.ReraiserThreadGroup(
+            reraiser_thread.ReraiserThread(f) for f in post_test_steps)
+        post_test_step_thread_group.StartAll(will_block=True)
+      else:
+        for step in post_test_steps:
+          step()
 
     for result in results:
       if logcat_file:
@@ -634,15 +751,18 @@ class LocalDeviceInstrumentationTestRun(
             dir=dev.GetExternalStoragePath()) as dev_test_list_json:
           junit4_runner_class = self._test_instance.junit4_runner_class
           test_package = self._test_instance.test_package
-          extras = {}
-          extras['log'] = 'true'
+          extras = {
+            'log': 'true',
+            # Workaround for https://github.com/mockito/mockito/issues/922
+            'notPackage': 'net.bytebuddy',
+          }
           extras[_EXTRA_TEST_LIST] = dev_test_list_json.name
           target = '%s/%s' % (test_package, junit4_runner_class)
-          kwargs = {}
+          timeout = 120
           if self._test_instance.wait_for_java_debugger:
-            kwargs['timeout'] = None
+            timeout = None
           test_list_run_output = dev.StartInstrumentation(
-              target, extras=extras, retries=0, **kwargs)
+              target, extras=extras, retries=0, timeout=timeout)
           if any(test_list_run_output):
             logging.error('Unexpected output while listing tests:')
             for line in test_list_run_output:
@@ -651,7 +771,8 @@ class LocalDeviceInstrumentationTestRun(
             host_file = os.path.join(host_dir, 'list_tests.json')
             dev.PullFile(dev_test_list_json.name, host_file)
             with open(host_file, 'r') as host_file:
-                return json.load(host_file)
+              return json.load(host_file)
+
       return crash_handler.RetryOnSystemCrash(_run, d)
 
     raw_test_lists = self._env.parallel_devices.pMap(list_tests).pGet(None)
@@ -729,19 +850,19 @@ class LocalDeviceInstrumentationTestRun(
 
   def _SaveScreenshot(self, device, screenshot_device_file, test_name, results,
                       link_name):
-      screenshot_filename = '%s-%s.png' % (
-          test_name, time.strftime('%Y%m%dT%H%M%S-UTC', time.gmtime()))
-      if device.FileExists(screenshot_device_file.name):
-        with self._env.output_manager.ArchivedTempfile(
-            screenshot_filename, 'screenshot',
-            output_manager.Datatype.IMAGE) as screenshot_host_file:
-          try:
-            device.PullFile(screenshot_device_file.name,
-                            screenshot_host_file.name)
-          finally:
-            screenshot_device_file.close()
-        for result in results:
-          result.SetLink(link_name, screenshot_host_file.Link())
+    screenshot_filename = '%s-%s.png' % (
+        test_name, time.strftime('%Y%m%dT%H%M%S-UTC', time.gmtime()))
+    if device.FileExists(screenshot_device_file.name):
+      with self._env.output_manager.ArchivedTempfile(
+          screenshot_filename, 'screenshot',
+          output_manager.Datatype.PNG) as screenshot_host_file:
+        try:
+          device.PullFile(screenshot_device_file.name,
+                          screenshot_host_file.name)
+        finally:
+          screenshot_device_file.close()
+      for result in results:
+        result.SetLink(link_name, screenshot_host_file.Link())
 
   def _ProcessRenderTestResults(
       self, device, render_tests_device_output_dir, results):
@@ -761,7 +882,7 @@ class LocalDeviceInstrumentationTestRun(
 
       with self._env.output_manager.ArchivedTempfile(
           'fail_%s' % failure_filename, 'render_tests',
-          output_manager.Datatype.IMAGE) as failure_image_host_file:
+          output_manager.Datatype.PNG) as failure_image_host_file:
         device.PullFile(
             posixpath.join(failure_images_device_dir, failure_filename),
             failure_image_host_file.name)
@@ -772,7 +893,7 @@ class LocalDeviceInstrumentationTestRun(
       if device.PathExists(golden_image_device_file):
         with self._env.output_manager.ArchivedTempfile(
             'golden_%s' % failure_filename, 'render_tests',
-            output_manager.Datatype.IMAGE) as golden_image_host_file:
+            output_manager.Datatype.PNG) as golden_image_host_file:
           device.PullFile(
               golden_image_device_file, golden_image_host_file.name)
         golden_link = golden_image_host_file.Link()
@@ -784,7 +905,7 @@ class LocalDeviceInstrumentationTestRun(
       if device.PathExists(diff_image_device_file):
         with self._env.output_manager.ArchivedTempfile(
             'diff_%s' % failure_filename, 'render_tests',
-            output_manager.Datatype.IMAGE) as diff_image_host_file:
+            output_manager.Datatype.PNG) as diff_image_host_file:
           device.PullFile(
               diff_image_device_file, diff_image_host_file.name)
         diff_link = diff_image_host_file.Link()
@@ -812,18 +933,11 @@ class LocalDeviceInstrumentationTestRun(
 
   #override
   def _ShouldRetry(self, test, result):
-    def not_run(res):
-      if isinstance(res, list):
-        return any(not_run(r) for r in res)
-      return res.GetType() == base_test_result.ResultType.NOTRUN
-
-    if 'RetryOnFailure' in test.get('annotations', {}) or not_run(result):
-      return True
-
-    # TODO(jbudorick): Remove this log message once @RetryOnFailure has been
-    # enabled for a while. See crbug.com/619055 for more details.
-    logging.error('Default retries are being phased out. crbug.com/619055')
-    return False
+    # We've tried to disable retries in the past with mixed results.
+    # See crbug.com/619055 for historical context and crbug.com/797002
+    # for ongoing efforts.
+    del test, result
+    return True
 
   #override
   def _ShouldShard(self):

@@ -26,16 +26,14 @@ class ElevationIconSetter {
   // |callback| will be called if the button icon is actually changed; callers
   // should pass a function which does a relayout on the view containing the
   // button, to ensure the button is correctly resized as necessary.
-  ElevationIconSetter(views::LabelButton* button,
-                      const base::Closure& callback);
+  ElevationIconSetter(views::LabelButton* button, base::OnceClosure callback);
   ~ElevationIconSetter();
 
  private:
-  void SetButtonIcon(const base::Closure& callback,
-                     std::unique_ptr<SkBitmap> icon);
+  void SetButtonIcon(base::OnceClosure callback, const SkBitmap& icon);
 
   views::LabelButton* button_;
-  base::WeakPtrFactory<ElevationIconSetter> weak_factory_;
+  base::WeakPtrFactory<ElevationIconSetter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ElevationIconSetter);
 };

@@ -9,10 +9,13 @@
 #include <stdint.h>
 #include <sys/ioctl.h>
 
+#include "base/bind_helpers.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop_current.h"
+#include "base/optional.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "net/base/network_interfaces_linux.h"
 
 namespace net {
@@ -112,11 +115,9 @@ char* AddressTrackerLinux::GetInterfaceName(int interface_index, char* buf) {
 
 AddressTrackerLinux::AddressTrackerLinux()
     : get_interface_name_(GetInterfaceName),
-      address_callback_(base::Bind(&base::DoNothing)),
-      link_callback_(base::Bind(&base::DoNothing)),
-      tunnel_callback_(base::Bind(&base::DoNothing)),
-      netlink_fd_(-1),
-      watcher_(FROM_HERE),
+      address_callback_(base::DoNothing()),
+      link_callback_(base::DoNothing()),
+      tunnel_callback_(base::DoNothing()),
       ignored_interfaces_(),
       connection_type_initialized_(false),
       connection_type_initialized_cv_(&connection_type_lock_),
@@ -133,8 +134,6 @@ AddressTrackerLinux::AddressTrackerLinux(
       address_callback_(address_callback),
       link_callback_(link_callback),
       tunnel_callback_(tunnel_callback),
-      netlink_fd_(-1),
-      watcher_(FROM_HERE),
       ignored_interfaces_(ignored_interfaces),
       connection_type_initialized_(false),
       connection_type_initialized_cv_(&connection_type_lock_),
@@ -145,13 +144,11 @@ AddressTrackerLinux::AddressTrackerLinux(
   DCHECK(!link_callback.is_null());
 }
 
-AddressTrackerLinux::~AddressTrackerLinux() {
-  CloseSocket();
-}
+AddressTrackerLinux::~AddressTrackerLinux() = default;
 
 void AddressTrackerLinux::Init() {
-  netlink_fd_ = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-  if (netlink_fd_ < 0) {
+  netlink_fd_.reset(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+  if (!netlink_fd_.is_valid()) {
     PLOG(ERROR) << "Could not create NETLINK socket";
     AbortAndForceOnline();
     return;
@@ -168,8 +165,8 @@ void AddressTrackerLinux::Init() {
     // http://crbug.com/113993
     addr.nl_groups =
         RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR | RTMGRP_NOTIFY | RTMGRP_LINK;
-    rv = bind(
-        netlink_fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    rv = bind(netlink_fd_.get(), reinterpret_cast<struct sockaddr*>(&addr),
+              sizeof(addr));
     if (rv < 0) {
       PLOG(ERROR) << "Could not bind NETLINK socket";
       AbortAndForceOnline();
@@ -192,9 +189,9 @@ void AddressTrackerLinux::Init() {
   request.header.nlmsg_pid = getpid();
   request.msg.rtgen_family = AF_UNSPEC;
 
-  rv = HANDLE_EINTR(sendto(netlink_fd_, &request, request.header.nlmsg_len,
-                           0, reinterpret_cast<struct sockaddr*>(&peer),
-                           sizeof(peer)));
+  rv = HANDLE_EINTR(
+      sendto(netlink_fd_.get(), &request, request.header.nlmsg_len, 0,
+             reinterpret_cast<struct sockaddr*>(&peer), sizeof(peer)));
   if (rv < 0) {
     PLOG(ERROR) << "Could not send NETLINK request";
     AbortAndForceOnline();
@@ -211,9 +208,9 @@ void AddressTrackerLinux::Init() {
   // Request dump of link state
   request.header.nlmsg_type = RTM_GETLINK;
 
-  rv = HANDLE_EINTR(sendto(netlink_fd_, &request, request.header.nlmsg_len, 0,
-                           reinterpret_cast<struct sockaddr*>(&peer),
-                           sizeof(peer)));
+  rv = HANDLE_EINTR(
+      sendto(netlink_fd_.get(), &request, request.header.nlmsg_len, 0,
+             reinterpret_cast<struct sockaddr*>(&peer), sizeof(peer)));
   if (rv < 0) {
     PLOG(ERROR) << "Could not send NETLINK request";
     AbortAndForceOnline();
@@ -229,18 +226,16 @@ void AddressTrackerLinux::Init() {
   }
 
   if (tracking_) {
-    rv = base::MessageLoopForIO::current()->WatchFileDescriptor(
-        netlink_fd_, true, base::MessageLoopForIO::WATCH_READ, &watcher_, this);
-    if (rv < 0) {
-      PLOG(ERROR) << "Could not watch NETLINK socket";
-      AbortAndForceOnline();
-      return;
-    }
+    watcher_ = base::FileDescriptorWatcher::WatchReadable(
+        netlink_fd_.get(),
+        base::BindRepeating(&AddressTrackerLinux::OnFileCanReadWithoutBlocking,
+                            base::Unretained(this)));
   }
 }
 
 void AddressTrackerLinux::AbortAndForceOnline() {
-  CloseSocket();
+  watcher_.reset();
+  netlink_fd_.reset();
   AddressTrackerAutoLock lock(*this, connection_type_lock_);
   current_connection_type_ = NetworkChangeNotifier::CONNECTION_UNKNOWN;
   connection_type_initialized_ = true;
@@ -269,7 +264,7 @@ bool AddressTrackerLinux::IsInterfaceIgnored(int interface_index) const {
 NetworkChangeNotifier::ConnectionType
 AddressTrackerLinux::GetCurrentConnectionType() {
   // http://crbug.com/125097
-  base::ThreadRestrictions::ScopedAllowWait allow_wait;
+  base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
   AddressTrackerAutoLock lock(*this, connection_type_lock_);
   // Make sure the initial connection type is set before returning.
   threads_waiting_for_connection_type_initialization_++;
@@ -288,24 +283,31 @@ void AddressTrackerLinux::ReadMessages(bool* address_changed,
   *tunnel_changed = false;
   char buffer[4096];
   bool first_loop = true;
-  for (;;) {
-    int rv = HANDLE_EINTR(recv(netlink_fd_,
-                               buffer,
-                               sizeof(buffer),
-                               // Block the first time through loop.
-                               first_loop ? 0 : MSG_DONTWAIT));
-    first_loop = false;
-    if (rv == 0) {
-      LOG(ERROR) << "Unexpected shutdown of NETLINK socket.";
-      return;
+  {
+    base::Optional<base::ScopedBlockingCall> blocking_call;
+    if (tracking_) {
+      // If the loop below takes a long time to run, a new thread should added
+      // to the current thread pool to ensure forward progress of all tasks.
+      blocking_call.emplace(FROM_HERE, base::BlockingType::MAY_BLOCK);
     }
-    if (rv < 0) {
-      if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
-        break;
-      PLOG(ERROR) << "Failed to recv from netlink socket";
-      return;
+
+    for (;;) {
+      int rv = HANDLE_EINTR(recv(netlink_fd_.get(), buffer, sizeof(buffer),
+                                 // Block the first time through loop.
+                                 first_loop ? 0 : MSG_DONTWAIT));
+      first_loop = false;
+      if (rv == 0) {
+        LOG(ERROR) << "Unexpected shutdown of NETLINK socket.";
+        return;
+      }
+      if (rv < 0) {
+        if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
+          break;
+        PLOG(ERROR) << "Failed to recv from netlink socket";
+        return;
+      }
+      HandleMessage(buffer, rv, address_changed, link_changed, tunnel_changed);
     }
-    HandleMessage(buffer, rv, address_changed, link_changed, tunnel_changed);
   }
   if (*link_changed || *address_changed)
     UpdateCurrentConnectionType();
@@ -348,7 +350,7 @@ void AddressTrackerLinux::HandleMessage(char* buffer,
             msg->ifa_flags |= IFA_F_DEPRECATED;
           // Only indicate change if the address is new or ifaddrmsg info has
           // changed.
-          AddressMap::iterator it = address_map_.find(address);
+          auto it = address_map_.find(address);
           if (it == address_map_.end()) {
             address_map_.insert(it, std::make_pair(address, *msg));
             *address_changed = true;
@@ -414,8 +416,7 @@ void AddressTrackerLinux::HandleMessage(char* buffer,
   }
 }
 
-void AddressTrackerLinux::OnFileCanReadWithoutBlocking(int fd) {
-  DCHECK_EQ(netlink_fd_, fd);
+void AddressTrackerLinux::OnFileCanReadWithoutBlocking() {
   bool address_changed;
   bool link_changed;
   bool tunnel_changed;
@@ -428,18 +429,15 @@ void AddressTrackerLinux::OnFileCanReadWithoutBlocking(int fd) {
     tunnel_callback_.Run();
 }
 
-void AddressTrackerLinux::OnFileCanWriteWithoutBlocking(int /* fd */) {}
-
-void AddressTrackerLinux::CloseSocket() {
-  if (netlink_fd_ >= 0 && IGNORE_EINTR(close(netlink_fd_)) < 0)
-    PLOG(ERROR) << "Could not close NETLINK socket.";
-  netlink_fd_ = -1;
+bool AddressTrackerLinux::IsTunnelInterface(int interface_index) const {
+  char buf[IFNAMSIZ] = {0};
+  return IsTunnelInterfaceName(get_interface_name_(interface_index, buf));
 }
 
-bool AddressTrackerLinux::IsTunnelInterface(int interface_index) const {
+// static
+bool AddressTrackerLinux::IsTunnelInterfaceName(const char* name) {
   // Linux kernel drivers/net/tun.c uses "tun" name prefix.
-  char buf[IFNAMSIZ] = {0};
-  return strncmp(get_interface_name_(interface_index, buf), "tun", 3) == 0;
+  return strncmp(name, "tun", 3) == 0;
 }
 
 void AddressTrackerLinux::UpdateCurrentConnectionType() {
@@ -447,12 +445,9 @@ void AddressTrackerLinux::UpdateCurrentConnectionType() {
   std::unordered_set<int> online_links = GetOnlineLinks();
 
   // Strip out tunnel interfaces from online_links
-  for (std::unordered_set<int>::const_iterator it = online_links.begin();
-       it != online_links.end();) {
+  for (auto it = online_links.cbegin(); it != online_links.cend();) {
     if (IsTunnelInterface(*it)) {
-      std::unordered_set<int>::const_iterator tunnel_it = it;
-      ++it;
-      online_links.erase(*tunnel_it);
+      it = online_links.erase(it);
     } else {
       ++it;
     }

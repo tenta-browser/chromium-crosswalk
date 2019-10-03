@@ -13,15 +13,19 @@
 #include "content/public/renderer/render_frame.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/port_id.h"
+#include "extensions/renderer/bindings/api_binding_util.h"
 #include "extensions/renderer/bindings/api_bindings_system.h"
 #include "extensions/renderer/bindings/api_event_handler.h"
 #include "extensions/renderer/bindings/api_request_handler.h"
+#include "extensions/renderer/bindings/get_per_context_data.h"
 #include "extensions/renderer/gc_callback.h"
 #include "extensions/renderer/ipc_message_sender.h"
+#include "extensions/renderer/message_target.h"
 #include "extensions/renderer/messaging_util.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
 #include "extensions/renderer/script_context.h"
 #include "gin/arguments.h"
+#include "gin/dictionary.h"
 #include "gin/handle.h"
 #include "gin/per_context_data.h"
 #include "ipc/ipc_message.h"
@@ -46,31 +50,15 @@ struct OneTimeReceiver {
 using OneTimeMessageCallback =
     base::OnceCallback<void(gin::Arguments* arguments)>;
 struct OneTimeMessageContextData : public base::SupportsUserData::Data {
+  static constexpr char kPerContextDataKey[] =
+      "extension_one_time_message_context_data";
+
   std::map<PortId, OneTimeOpener> openers;
   std::map<PortId, OneTimeReceiver> receivers;
   std::vector<std::unique_ptr<OneTimeMessageCallback>> pending_callbacks;
 };
 
-constexpr char kExtensionOneTimeMessageContextData[] =
-    "extension_one_time_message_context_data";
-
-OneTimeMessageContextData* GetPerContextData(v8::Local<v8::Context> context,
-                                             bool should_create) {
-  gin::PerContextData* per_context_data = gin::PerContextData::From(context);
-  if (!per_context_data)
-    return nullptr;
-  auto* data = static_cast<OneTimeMessageContextData*>(
-      per_context_data->GetUserData(kExtensionOneTimeMessageContextData));
-
-  if (!data && should_create) {
-    auto messaging_data = std::make_unique<OneTimeMessageContextData>();
-    data = messaging_data.get();
-    per_context_data->SetUserData(kExtensionOneTimeMessageContextData,
-                                  std::move(messaging_data));
-  }
-
-  return data;
-}
+constexpr char OneTimeMessageContextData::kPerContextDataKey[];
 
 int RoutingIdForScriptContext(ScriptContext* script_context) {
   content::RenderFrame* render_frame = script_context->GetRenderFrame();
@@ -86,7 +74,9 @@ void OneTimeMessageResponseHelper(
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  OneTimeMessageContextData* data = GetPerContextData(context, false);
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context,
+                                                   kDontCreateIfMissing);
   if (!data)
     return;
 
@@ -105,11 +95,54 @@ void OneTimeMessageResponseHelper(
   std::move(*callback).Run(&arguments);
 }
 
+// Called with the results of dispatching an onMessage event to listeners.
+// Returns true if any of the listeners responded with `true`, indicating they
+// will respond to the call asynchronously.
+bool WillListenerReplyAsync(v8::Local<v8::Context> context,
+                            v8::MaybeLocal<v8::Value> maybe_results) {
+  v8::Local<v8::Value> results;
+  // |maybe_results| can be empty if the context was destroyed before the
+  // listeners were ran (or while they were running).
+  if (!maybe_results.ToLocal(&results))
+    return false;
+
+  if (!results->IsObject())
+    return false;
+
+  // Suppress any script errors, but bail out if they happen (in theory, we
+  // shouldn't have any).
+  v8::Isolate* isolate = context->GetIsolate();
+  v8::TryCatch try_catch(isolate);
+  // We expect results in the form of an object with an array of results as
+  // a `results` property.
+  v8::Local<v8::Value> results_property;
+  if (!results.As<v8::Object>()
+           ->Get(context, gin::StringToSymbol(isolate, "results"))
+           .ToLocal(&results_property) ||
+      !results_property->IsArray()) {
+    return false;
+  }
+
+  // Check if any of the results is `true`.
+  v8::Local<v8::Array> array = results_property.As<v8::Array>();
+  uint32_t length = array->Length();
+  for (uint32_t i = 0; i < length; ++i) {
+    v8::Local<v8::Value> val;
+    if (!array->Get(context, i).ToLocal(&val))
+      return false;
+
+    if (val->IsTrue())
+      return true;
+  }
+
+  return false;
+}
+
 }  // namespace
 
 OneTimeMessageHandler::OneTimeMessageHandler(
     NativeExtensionBindingsSystem* bindings_system)
-    : bindings_system_(bindings_system), weak_factory_(this) {}
+    : bindings_system_(bindings_system) {}
 OneTimeMessageHandler::~OneTimeMessageHandler() {}
 
 bool OneTimeMessageHandler::HasPort(ScriptContext* script_context,
@@ -118,11 +151,12 @@ bool OneTimeMessageHandler::HasPort(ScriptContext* script_context,
   v8::HandleScope handle_scope(isolate);
 
   OneTimeMessageContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+      GetPerContextData<OneTimeMessageContextData>(script_context->v8_context(),
+                                                   kDontCreateIfMissing);
   if (!data)
     return false;
-  return port_id.is_opener ? base::ContainsKey(data->openers, port_id)
-                           : base::ContainsKey(data->receivers, port_id);
+  return port_id.is_opener ? base::Contains(data->openers, port_id)
+                           : base::Contains(data->receivers, port_id);
 }
 
 void OneTimeMessageHandler::SendMessage(
@@ -140,7 +174,8 @@ void OneTimeMessageHandler::SendMessage(
   DCHECK_EQ(script_context->context_id(), new_port_id.context_id);
 
   OneTimeMessageContextData* data =
-      GetPerContextData(script_context->v8_context(), true);
+      GetPerContextData<OneTimeMessageContextData>(script_context->v8_context(),
+                                                   kCreateIfMissing);
   DCHECK(data);
 
   bool wants_response = !response_callback.IsEmpty();
@@ -157,9 +192,15 @@ void OneTimeMessageHandler::SendMessage(
   IPCMessageSender* ipc_sender = bindings_system_->GetIPCMessageSender();
   ipc_sender->SendOpenMessageChannel(script_context, new_port_id, target,
                                      method_name, include_tls_channel_id);
-  ipc_sender->SendPostMessageToPort(routing_id, new_port_id, message);
+  ipc_sender->SendPostMessageToPort(new_port_id, message);
 
-  if (!wants_response) {
+  // If the sender doesn't provide a response callback, we can immediately
+  // close the channel. Note: we only do this for extension messages, not
+  // native apps.
+  // TODO(devlin): This is because of some subtle ordering in the browser side,
+  // where closing the channel after sending the message causes things to be
+  // destroyed in the wrong order. That would be nice to fix.
+  if (!wants_response && target.type != MessageTarget::NATIVE_APP) {
     bool close_channel = true;
     ipc_sender->SendCloseMessagePort(routing_id, new_port_id, close_channel);
   }
@@ -176,9 +217,10 @@ void OneTimeMessageHandler::AddReceiver(ScriptContext* script_context,
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = script_context->v8_context();
 
-  OneTimeMessageContextData* data = GetPerContextData(context, true);
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context, kCreateIfMissing);
   DCHECK(data);
-  DCHECK(!base::ContainsKey(data->receivers, target_port_id));
+  DCHECK(!base::Contains(data->receivers, target_port_id));
   OneTimeReceiver& receiver = data->receivers[target_port_id];
   receiver.sender.Reset(isolate, sender);
   receiver.routing_id = RoutingIdForScriptContext(script_context);
@@ -219,7 +261,9 @@ bool OneTimeMessageHandler::DeliverMessageToReceiver(
 
   bool handled = false;
 
-  OneTimeMessageContextData* data = GetPerContextData(context, false);
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context,
+                                                   kDontCreateIfMissing);
   if (!data)
     return handled;
 
@@ -267,9 +311,20 @@ bool OneTimeMessageHandler::DeliverMessageToReceiver(
   std::vector<v8::Local<v8::Value>> args = {v8_message, v8_sender,
                                             response_function};
 
+  JSRunner::ResultCallback dispatch_callback;
+  // For runtime.onMessage, we require that the listener return `true` if they
+  // intend to respond asynchronously. Check the results of the listeners.
+  if (port.event_name == messaging_util::kOnMessageEvent) {
+    dispatch_callback =
+        base::BindOnce(&OneTimeMessageHandler::OnEventFired,
+                       weak_factory_.GetWeakPtr(), target_port_id);
+  }
+
   data->pending_callbacks.push_back(std::move(callback));
   bindings_system_->api_system()->event_handler()->FireEventInContext(
-      port.event_name, context, &args, nullptr);
+      port.event_name, context, &args, nullptr, std::move(dispatch_callback));
+
+  // Note: The context could be invalidated at this point!
 
   return handled;
 }
@@ -279,10 +334,12 @@ bool OneTimeMessageHandler::DeliverReplyToOpener(ScriptContext* script_context,
                                                  const PortId& target_port_id) {
   DCHECK(target_port_id.is_opener);
 
-  v8::Local<v8::Context> context = script_context->v8_context();
+  v8::Local<v8::Context> v8_context = script_context->v8_context();
   bool handled = false;
 
-  OneTimeMessageContextData* data = GetPerContextData(context, false);
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(v8_context,
+                                                   kDontCreateIfMissing);
   if (!data)
     return handled;
 
@@ -292,13 +349,19 @@ bool OneTimeMessageHandler::DeliverReplyToOpener(ScriptContext* script_context,
 
   handled = true;
 
-  const OneTimeOpener& port = iter->second;
+  // Note: make a copy of port, since we're about to free it.
+  const OneTimeOpener port = iter->second;
   DCHECK_NE(-1, port.request_id);
+
+  // We erase the opener now, since delivering the reply can cause JS to run,
+  // which could either invalidate the context or modify the |openers|
+  // collection (e.g., by sending another message).
+  data->openers.erase(iter);
 
   // This port was the opener, so the message is the response from the
   // receiver. Invoke the callback and close the message port.
   v8::Local<v8::Value> v8_message =
-      messaging_util::MessageToV8(context, message);
+      messaging_util::MessageToV8(v8_context, message);
   std::vector<v8::Local<v8::Value>> args = {v8_message};
   bindings_system_->api_system()->request_handler()->CompleteRequest(
       port.request_id, args, std::string());
@@ -306,7 +369,8 @@ bool OneTimeMessageHandler::DeliverReplyToOpener(ScriptContext* script_context,
   bool close_channel = true;
   bindings_system_->GetIPCMessageSender()->SendCloseMessagePort(
       port.routing_id, target_port_id, close_channel);
-  data->openers.erase(iter);
+
+  // Note: The context could be invalidated at this point!
 
   return handled;
 }
@@ -316,7 +380,9 @@ bool OneTimeMessageHandler::DisconnectReceiver(ScriptContext* script_context,
   v8::Local<v8::Context> context = script_context->v8_context();
   bool handled = false;
 
-  OneTimeMessageContextData* data = GetPerContextData(context, false);
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context,
+                                                   kDontCreateIfMissing);
   if (!data)
     return handled;
 
@@ -334,8 +400,10 @@ bool OneTimeMessageHandler::DisconnectOpener(ScriptContext* script_context,
                                              const std::string& error_message) {
   bool handled = false;
 
+  v8::Local<v8::Context> v8_context = script_context->v8_context();
   OneTimeMessageContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+      GetPerContextData<OneTimeMessageContextData>(v8_context,
+                                                   kDontCreateIfMissing);
   if (!data)
     return handled;
 
@@ -344,13 +412,26 @@ bool OneTimeMessageHandler::DisconnectOpener(ScriptContext* script_context,
     return handled;
 
   handled = true;
-  const OneTimeOpener& port = iter->second;
+
+  // Note: make a copy of port, since we're about to free it.
+  const OneTimeOpener port = iter->second;
   DCHECK_NE(-1, port.request_id);
 
-  bindings_system_->api_system()->request_handler()->CompleteRequest(
-      port.request_id, std::vector<v8::Local<v8::Value>>(), error_message);
-
+  // We erase the opener now, since delivering the reply can cause JS to run,
+  // which could either invalidate the context or modify the |openers|
+  // collection (e.g., by sending another message).
   data->openers.erase(iter);
+
+  bindings_system_->api_system()->request_handler()->CompleteRequest(
+      port.request_id, std::vector<v8::Local<v8::Value>>(),
+      // If the browser doesn't supply an error message, we supply a generic
+      // one.
+      error_message.empty()
+          ? "The message port closed before a response was received."
+          : error_message);
+
+  // Note: The context could be invalidated at this point!
+
   return handled;
 }
 
@@ -359,19 +440,32 @@ void OneTimeMessageHandler::OnOneTimeMessageResponse(
     gin::Arguments* arguments) {
   v8::Isolate* isolate = arguments->isolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  OneTimeMessageContextData* data = GetPerContextData(context, false);
-  DCHECK(data);
+
+  // The listener may try replying after the context or the channel has been
+  // closed. Fail gracefully.
+  // TODO(devlin): At least in the case of the channel being closed (e.g.
+  // because the listener did not return `true`), it might be good to surface an
+  // error.
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context,
+                                                   kDontCreateIfMissing);
+  if (!data)
+    return;
+
   auto iter = data->receivers.find(port_id);
-  DCHECK(iter != data->receivers.end());
+  if (iter == data->receivers.end())
+    return;
+
   int routing_id = iter->second.routing_id;
   data->receivers.erase(iter);
 
-  if (arguments->Length() < 1) {
-    arguments->ThrowTypeError("Required argument 'message' is missing");
-    return;
-  }
   v8::Local<v8::Value> value;
-  CHECK(arguments->GetNext(&value));
+  // We allow omitting the message argument (e.g., sendMessage()). Default the
+  // value to undefined.
+  if (arguments->Length() > 0)
+    CHECK(arguments->GetNext(&value));
+  else
+    value = v8::Undefined(isolate);
 
   std::string error;
   std::unique_ptr<Message> message =
@@ -381,7 +475,7 @@ void OneTimeMessageHandler::OnOneTimeMessageResponse(
     return;
   }
   IPCMessageSender* ipc_sender = bindings_system_->GetIPCMessageSender();
-  ipc_sender->SendPostMessageToPort(routing_id, port_id, *message);
+  ipc_sender->SendPostMessageToPort(port_id, *message);
   bool close_channel = true;
   ipc_sender->SendCloseMessagePort(routing_id, port_id, close_channel);
 }
@@ -393,7 +487,8 @@ void OneTimeMessageHandler::OnResponseCallbackCollected(
   // be called after context invalidation.
   v8::HandleScope handle_scope(script_context->isolate());
   OneTimeMessageContextData* data =
-      GetPerContextData(script_context->v8_context(), false);
+      GetPerContextData<OneTimeMessageContextData>(script_context->v8_context(),
+                                                   kDontCreateIfMissing);
   // ScriptContext invalidation and PerContextData cleanup happen "around" the
   // same time, but there aren't strict guarantees about ordering. It's possible
   // the data was collected.
@@ -411,6 +506,36 @@ void OneTimeMessageHandler::OnResponseCallbackCollected(
 
   // Close the message port. There's no way to send a reply anymore. Don't
   // close the channel because another listener may reply.
+  IPCMessageSender* ipc_sender = bindings_system_->GetIPCMessageSender();
+  bool close_channel = false;
+  ipc_sender->SendCloseMessagePort(routing_id, port_id, close_channel);
+}
+
+void OneTimeMessageHandler::OnEventFired(const PortId& port_id,
+                                         v8::Local<v8::Context> context,
+                                         v8::MaybeLocal<v8::Value> result) {
+  // The context could be tearing down by the time the event is fully
+  // dispatched.
+  OneTimeMessageContextData* data =
+      GetPerContextData<OneTimeMessageContextData>(context,
+                                                   kDontCreateIfMissing);
+  if (!data)
+    return;
+
+  if (WillListenerReplyAsync(context, result))
+    return;  // The listener will reply later; leave the channel open.
+
+  auto iter = data->receivers.find(port_id);
+  // The channel may already be closed (if the listener replied).
+  if (iter == data->receivers.end())
+    return;
+
+  int routing_id = iter->second.routing_id;
+  data->receivers.erase(iter);
+
+  // The listener did not reply and did not return `true` from any of its
+  // listeners. Close the message port. Don't close the channel because another
+  // listener (in a separate context) may reply.
   IPCMessageSender* ipc_sender = bindings_system_->GetIPCMessageSender();
   bool close_channel = false;
   ipc_sender->SendCloseMessagePort(routing_id, port_id, close_channel);

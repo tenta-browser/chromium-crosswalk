@@ -10,10 +10,11 @@
 #include <limits>
 #include <string>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/timer/lap_timer.h"
 #include "base/values.h"
-#include "cc/base/lap_timer.h"
 #include "cc/benchmarks/rasterize_and_record_benchmark_impl.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/layer.h"
@@ -22,7 +23,6 @@
 #include "cc/paint/display_item_list.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_host_common.h"
-#include "skia/ext/analysis_canvas.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
@@ -31,7 +31,7 @@ namespace {
 
 const int kDefaultRecordRepeatCount = 100;
 
-// Parameters for LapTimer.
+// Parameters for base::LapTimer.
 const int kTimeLimitMillis = 1;
 const int kWarmupRuns = 0;
 const int kTimeCheckInterval = 1;
@@ -69,13 +69,12 @@ RecordingModeToPaintingControlSetting(RecordingSource::RecordingMode mode) {
 
 RasterizeAndRecordBenchmark::RasterizeAndRecordBenchmark(
     std::unique_ptr<base::Value> value,
-    const MicroBenchmark::DoneCallback& callback)
-    : MicroBenchmark(callback),
+    MicroBenchmark::DoneCallback callback)
+    : MicroBenchmark(std::move(callback)),
       record_repeat_count_(kDefaultRecordRepeatCount),
       settings_(std::move(value)),
       main_thread_benchmark_done_(false),
-      layer_tree_host_(nullptr),
-      weak_ptr_factory_(this) {
+      layer_tree_host_(nullptr) {
   base::DictionaryValue* settings = nullptr;
   settings_->GetAsDictionary(&settings);
   if (!settings)
@@ -99,8 +98,12 @@ void RasterizeAndRecordBenchmark::DidUpdateLayers(
   DCHECK(!results_.get());
   results_ = base::WrapUnique(new base::DictionaryValue);
   results_->SetInteger("pixels_recorded", record_results_.pixels_recorded);
-  results_->SetInteger("picture_memory_usage",
-                       static_cast<int>(record_results_.bytes_used));
+  results_->SetInteger("painter_memory_usage",
+                       static_cast<int>(record_results_.painter_memory_usage));
+  results_->SetInteger("paint_op_memory_usage",
+                       static_cast<int>(record_results_.paint_op_memory_usage));
+  results_->SetInteger("paint_op_count",
+                       static_cast<int>(record_results_.paint_op_count));
 
   for (int i = 0; i < RecordingSource::RECORDING_MODE_COUNT; i++) {
     std::string name = base::StringPrintf("record_time%s_ms", kModeSuffixes[i]);
@@ -128,8 +131,8 @@ RasterizeAndRecordBenchmark::CreateBenchmarkImpl(
     scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner) {
   return base::WrapUnique(new RasterizeAndRecordBenchmarkImpl(
       origin_task_runner, settings_.get(),
-      base::Bind(&RasterizeAndRecordBenchmark::RecordRasterResults,
-                 weak_ptr_factory_.GetWeakPtr())));
+      base::BindOnce(&RasterizeAndRecordBenchmark::RecordRasterResults,
+                     weak_ptr_factory_.GetWeakPtr())));
 }
 
 void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
@@ -147,15 +150,16 @@ void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
         RecordingModeToPaintingControlSetting(
             static_cast<RecordingSource::RecordingMode>(mode_index));
     base::TimeDelta min_time = base::TimeDelta::Max();
-    size_t memory_used = 0;
+    size_t paint_op_memory_usage = 0;
+    size_t paint_op_count = 0;
 
     scoped_refptr<DisplayItemList> display_list;
     for (int i = 0; i < record_repeat_count_; ++i) {
       // Run for a minimum amount of time to avoid problems with timer
       // quantization when the layer is very small.
-      LapTimer timer(kWarmupRuns,
-                     base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
-                     kTimeCheckInterval);
+      base::LapTimer timer(kWarmupRuns,
+                           base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
+                           kTimeCheckInterval);
 
       do {
         display_list = painter->PaintContentsToDisplayList(painting_control);
@@ -163,24 +167,27 @@ void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
             display_list, painter->GetApproximateUnsharedMemoryUsage(),
             layer_tree_host_->recording_scale_factor());
 
-        if (memory_used) {
+        if (paint_op_memory_usage) {
           // Verify we are recording the same thing each time.
-          DCHECK_EQ(memory_used, display_list->BytesUsed());
+          DCHECK_EQ(paint_op_memory_usage, display_list->BytesUsed());
+          DCHECK_EQ(paint_op_count, display_list->TotalOpCount());
         } else {
-          memory_used = display_list->BytesUsed();
+          paint_op_memory_usage = display_list->BytesUsed();
+          paint_op_count = display_list->TotalOpCount();
         }
 
         timer.NextLap();
       } while (!timer.HasTimeLimitExpired());
-      base::TimeDelta duration =
-          base::TimeDelta::FromMillisecondsD(timer.MsPerLap());
+      base::TimeDelta duration = timer.TimePerLap();
       if (duration < min_time)
         min_time = duration;
     }
 
     if (mode_index == RecordingSource::RECORD_NORMALLY) {
-      record_results_.bytes_used +=
-          memory_used + painter->GetApproximateUnsharedMemoryUsage();
+      record_results_.painter_memory_usage +=
+          painter->GetApproximateUnsharedMemoryUsage();
+      record_results_.paint_op_memory_usage += paint_op_memory_usage;
+      record_results_.paint_op_count += paint_op_count;
       record_results_.pixels_recorded += painter->PaintableRegion().width() *
                                          painter->PaintableRegion().height();
     }
@@ -188,9 +195,7 @@ void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
   }
 }
 
-RasterizeAndRecordBenchmark::RecordResults::RecordResults()
-    : pixels_recorded(0), bytes_used(0) {}
-
-RasterizeAndRecordBenchmark::RecordResults::~RecordResults() {}
+RasterizeAndRecordBenchmark::RecordResults::RecordResults() = default;
+RasterizeAndRecordBenchmark::RecordResults::~RecordResults() = default;
 
 }  // namespace cc

@@ -15,15 +15,27 @@ Polymer({
      * If true, the button is in the expanded state and will show the
      * 'expand-less' icon. If false, the button shows the 'expand-more' icon.
      */
-    expanded: {type: Boolean, value: false, notify: true},
+    expanded: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onExpandedChange_',
+    },
 
     /**
      * If true, the button will be disabled and grayed out.
      */
-    disabled: {type: Boolean, value: false, reflectToAttribute: true},
+    disabled: {
+      type: Boolean,
+      value: false,
+      reflectToAttribute: true,
+    },
 
     /** A11y text descriptor for this control. */
-    alt: String,
+    alt: {
+      type: String,
+      observer: 'onAltChange_',
+    },
 
     tabIndex: {
       type: Number,
@@ -31,9 +43,42 @@ Polymer({
     },
   },
 
+  observers: [
+    'updateAriaExpanded_(disabled, expanded)',
+  ],
+
+  listeners: {
+    click: 'toggleExpand_',
+  },
+
+  /** @type {boolean} */
+  get noink() {
+    return this.$.icon.noink;
+  },
+
+  /** @type {boolean} */
+  set noink(value) {
+    this.$.icon.noink = value;
+  },
+
+  focus: function() {
+    this.$.icon.focus();
+  },
+
   /** @private */
-  iconName_: function(expanded) {
-    return expanded ? 'icon-expand-less' : 'icon-expand-more';
+  onAltChange_: function() {
+    if (this.alt) {
+      this.$.icon.removeAttribute('aria-labelledby');
+      this.$.icon.setAttribute('aria-label', this.alt);
+    } else {
+      this.$.icon.removeAttribute('aria-label');
+      this.$.icon.setAttribute('aria-labelledby', 'label');
+    }
+  },
+
+  /** @private */
+  onExpandedChange_: function() {
+    this.$.icon.ironIcon = this.expanded ? 'cr:expand-less' : 'cr:expand-more';
   },
 
   /**
@@ -41,7 +86,22 @@ Polymer({
    * @private
    */
   toggleExpand_: function(event) {
-    this.expanded = !this.expanded;
+    // Prevent |click| event from bubbling. It can cause parents of this
+    // elements to erroneously re-toggle this control.
     event.stopPropagation();
+    event.preventDefault();
+
+    this.scrollIntoViewIfNeeded();
+    this.expanded = !this.expanded;
+    cr.ui.focusWithoutInk(this.$.icon);
+  },
+
+  /** @private */
+  updateAriaExpanded_: function() {
+    if (this.disabled) {
+      this.$.icon.removeAttribute('aria-expanded');
+    } else {
+      this.$.icon.setAttribute('aria-expanded', this.expanded);
+    }
   },
 });

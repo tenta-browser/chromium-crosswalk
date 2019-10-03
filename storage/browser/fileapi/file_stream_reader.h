@@ -7,10 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/files/file.h"
-#include "net/base/completion_callback.h"
-#include "storage/browser/storage_browser_export.h"
+#include "base/memory/weak_ptr.h"
+#include "net/base/completion_once_callback.h"
 
 namespace base {
 class FilePath;
@@ -25,6 +28,7 @@ class IOBuffer;
 namespace storage {
 class FileSystemContext;
 class FileSystemURL;
+class ObfuscatedFileUtilMemoryDelegate;
 }
 
 namespace storage {
@@ -41,8 +45,25 @@ class FileStreamReader {
   // actual modification time to see if the file has been modified, and if
   // it does any succeeding read operations should fail with
   // ERR_UPLOAD_FILE_CHANGED error.
-  STORAGE_EXPORT static FileStreamReader* CreateForLocalFile(
+  COMPONENT_EXPORT(STORAGE_BROWSER)
+  static std::unique_ptr<FileStreamReader> CreateForLocalFile(
       base::TaskRunner* task_runner,
+      const base::FilePath& file_path,
+      int64_t initial_offset,
+      const base::Time& expected_modification_time);
+
+  // Creates a new FileReader for a memory file |file_path|.
+  // |initial_offset| specifies the offset in the file where the first read
+  // should start.  If the given offset is out of the file range any
+  // read operation may error out with net::ERR_REQUEST_RANGE_NOT_SATISFIABLE.
+  // |expected_modification_time| specifies the expected last modification
+  // If the value is non-null, the reader will check the underlying file's
+  // actual modification time to see if the file has been modified, and if
+  // it does any succeeding read operations should fail with
+  // ERR_UPLOAD_FILE_CHANGED error.
+  COMPONENT_EXPORT(STORAGE_BROWSER)
+  static std::unique_ptr<FileStreamReader> CreateForMemoryFile(
+      base::WeakPtr<ObfuscatedFileUtilMemoryDelegate> memory_file_util,
       const base::FilePath& file_path,
       int64_t initial_offset,
       const base::Time& expected_modification_time);
@@ -52,16 +73,17 @@ class FileStreamReader {
   // the value is non-null, the reader will check the underlying file's actual
   // modification time to see if the file has been modified, and if it does any
   // succeeding read operations should fail with ERR_UPLOAD_FILE_CHANGED error.
-  STORAGE_EXPORT static FileStreamReader* CreateForFileSystemFile(
+  COMPONENT_EXPORT(STORAGE_BROWSER)
+  static std::unique_ptr<FileStreamReader> CreateForFileSystemFile(
       storage::FileSystemContext* context,
       const storage::FileSystemURL& url,
       int64_t initial_offset,
       const base::Time& expected_modification_time);
 
   // Verify if the underlying file has not been modified.
-  STORAGE_EXPORT static bool VerifySnapshotTime(
-      const base::Time& expected_modification_time,
-      const base::File::Info& file_info);
+  COMPONENT_EXPORT(STORAGE_BROWSER)
+  static bool VerifySnapshotTime(const base::Time& expected_modification_time,
+                                 const base::File::Info& file_info);
 
   // It is valid to delete the reader at any time.  If the stream is deleted
   // while it has a pending read, its callback will not be called.
@@ -80,8 +102,9 @@ class FileStreamReader {
   //
   // If the stream is deleted while it has an in-flight Read operation
   // |callback| will not be called.
-  virtual int Read(net::IOBuffer* buf, int buf_len,
-                   const net::CompletionCallback& callback) = 0;
+  virtual int Read(net::IOBuffer* buf,
+                   int buf_len,
+                   net::CompletionOnceCallback callback) = 0;
 
   // Returns the length of the file if it could successfully retrieve the
   // file info *and* its last modification time equals to
@@ -92,7 +115,7 @@ class FileStreamReader {
   // Note that the return type is int64_t to return a larger file's size (a file
   // larger than 2G) but an error code should fit in the int range (may be
   // smaller than int64_t range).
-  virtual int64_t GetLength(const net::Int64CompletionCallback& callback) = 0;
+  virtual int64_t GetLength(net::Int64CompletionOnceCallback callback) = 0;
 };
 
 }  // namespace storage

@@ -27,7 +27,7 @@ namespace settings {
 // settings code to change the default browser settings.
 class DefaultBrowserHandler : public SettingsPageUIHandler {
  public:
-  explicit DefaultBrowserHandler(content::WebUI* webui);
+  DefaultBrowserHandler();
   ~DefaultBrowserHandler() override;
 
   // SettingsPageUIHandler implementation.
@@ -35,7 +35,13 @@ class DefaultBrowserHandler : public SettingsPageUIHandler {
   void OnJavascriptAllowed() override;
   void OnJavascriptDisallowed() override;
 
+ protected:
+  // Subclasses should override this method.
+  virtual void RecordSetAsDefaultUMA();
+
  private:
+  std::string check_default_callback_id_;
+
   // Called from WebUI to request the current state.
   void RequestDefaultBrowserState(const base::ListValue* args);
 
@@ -55,7 +61,7 @@ class DefaultBrowserHandler : public SettingsPageUIHandler {
   PrefChangeRegistrar local_state_pref_registrar_;
 
   // Used to invalidate the DefaultBrowserWorker callback.
-  base::WeakPtrFactory<DefaultBrowserHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<DefaultBrowserHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DefaultBrowserHandler);
 };

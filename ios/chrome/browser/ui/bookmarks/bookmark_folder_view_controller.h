@@ -8,7 +8,10 @@
 #import <UIKit/UIKit.h>
 #include <set>
 
+#import "ios/chrome/browser/ui/table_view/chrome_table_view_controller.h"
+
 @class BookmarkFolderViewController;
+@protocol BrowserCommands;
 namespace bookmarks {
 class BookmarkModel;
 class BookmarkNode;
@@ -29,7 +32,7 @@ class BookmarkNode;
 // This controller monitors the state of the bookmark model, so changes to the
 // bookmark model can affect this controller's state.
 // The bookmark model is assumed to be loaded, thus also not to be NULL.
-@interface BookmarkFolderViewController : UIViewController
+@interface BookmarkFolderViewController : ChromeTableViewController
 
 @property(nonatomic, weak) id<BookmarkFolderViewControllerDelegate> delegate;
 
@@ -45,42 +48,16 @@ class BookmarkNode;
 // |allowsCancel| puts a cancel and done button in the navigation bar instead of
 // a back button, which is needed if this view controller is presented modally.
 - (instancetype)
-initWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
-     allowsNewFolders:(BOOL)allowsNewFolders
-          editedNodes:(const std::set<const bookmarks::BookmarkNode*>&)nodes
-         allowsCancel:(BOOL)allowsCancel
-       selectedFolder:(const bookmarks::BookmarkNode*)selectedFolder;
+    initWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
+         allowsNewFolders:(BOOL)allowsNewFolders
+              editedNodes:(const std::set<const bookmarks::BookmarkNode*>&)nodes
+             allowsCancel:(BOOL)allowsCancel
+           selectedFolder:(const bookmarks::BookmarkNode*)selectedFolder
+               dispatcher:(id<BrowserCommands>)dispatcher;
 
 // This method changes the currently selected folder and updates the UI. The
 // delegate is not notified of the change.
 - (void)changeSelectedFolder:(const bookmarks::BookmarkNode*)selectedFolder;
-
-#pragma mark UIScrollViewDelegate
-
-// Updates the MDCAppBar with changes to the collection view scroll state. Must
-// be called by subclasses if they override this method in order to maintain
-// this functionality.
-- (void)scrollViewDidScroll:(UIScrollView*)scrollView NS_REQUIRES_SUPER;
-
-// Updates the MDCAppBar with changes to the collection view scroll state. Must
-// be called by subclasses if they override this method in order to maintain
-// this functionality.
-- (void)scrollViewDidEndDragging:(UIScrollView*)scrollView
-                  willDecelerate:(BOOL)decelerate NS_REQUIRES_SUPER;
-
-// Updates the MDCAppBar with changes to the collection view scroll state. Must
-// be called by subclasses if they override this method in order to maintain
-// this functionality.
-- (void)scrollViewDidEndDecelerating:(UIScrollView*)scrollView
-    NS_REQUIRES_SUPER;
-
-// Updates the MDCAppBar with changes to the collection view scroll state. Must
-// be called by subclasses if they override this method in order to maintain
-// this functionality.
-- (void)scrollViewWillEndDragging:(UIScrollView*)scrollView
-                     withVelocity:(CGPoint)velocity
-              targetContentOffset:(inout CGPoint*)targetContentOffset
-    NS_REQUIRES_SUPER;
 
 @end
 

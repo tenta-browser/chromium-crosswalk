@@ -6,9 +6,6 @@
  * @fileoverview Tests for chrome://bluetooth-internals
  */
 
-/** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../';
-
 /**
  * Test fixture for BluetoothInternals WebUI testing.
  * @constructor
@@ -33,18 +30,20 @@ BluetoothInternalsTest.prototype = {
 
   /** @override */
   extraLibraries: [
-    ROOT_PATH + 'third_party/mocha/mocha.js',
-    ROOT_PATH + 'chrome/test/data/webui/mocha_adapter.js',
-    ROOT_PATH + 'ui/webui/resources/js/promise_resolver.js',
-    ROOT_PATH + 'ui/webui/resources/js/cr.js',
-    ROOT_PATH + 'ui/webui/resources/js/util.js',
-    ROOT_PATH + 'chrome/test/data/webui/test_browser_proxy.js',
+    '//third_party/mocha/mocha.js',
+    '//chrome/test/data/webui/mocha_adapter.js',
+    '//ui/webui/resources/js/promise_resolver.js',
+    '//ui/webui/resources/js/cr.js',
+    '//ui/webui/resources/js/util.js',
+    '//chrome/test/data/webui/test_browser_proxy.js',
   ],
 
   preLoad: function() {
     /**
      * A test adapter factory proxy for the chrome://bluetooth-internals
-     * page.
+     * page.  Provides a fake BluetoothInternalsHandler::GetAdapter
+     * implementation and acts as a root of all Test*Proxies by containing an
+     * adapter member.
      */
     class TestAdapterFactoryProxy extends TestBrowserProxy {
       constructor() {
@@ -52,19 +51,13 @@ BluetoothInternalsTest.prototype = {
           'getAdapter',
         ]);
 
-        this.binding = new mojo.Binding(bluetooth.mojom.AdapterFactory, this);
         this.adapter = new TestAdapterProxy();
-        this.adapterBinding_ = new mojo.Binding(bluetooth.mojom.Adapter,
-                                                this.adapter);
+        this.adapterBinding_ = new bluetooth.mojom.Adapter(this.adapter);
       }
 
-      getAdapter() {
+      async getAdapter() {
         this.methodCalled('getAdapter');
-
-        // Create message pipe bound to TestAdapter.
-        return Promise.resolve({
-          adapter: this.adapterBinding_.createInterfacePtrAndBind(),
-        });
+        return {adapter: this.adapterBinding_.$.createProxy()};
       }
     }
 
@@ -82,31 +75,33 @@ BluetoothInternalsTest.prototype = {
         this.deviceProxyMap = new Map();
         this.adapterInfo_ = null;
         this.devices_ = [];
-        this.connectResult_ = bluetooth.mojom.AdapterInfo.SUCCESS;
+        this.connectResult_ = bluetooth.mojom.ConnectResult.SUCCESS;
       }
 
-      connectToDevice(address) {
+      async connectToDevice(address) {
         assert(this.deviceProxyMap.has(address), 'Device does not exist');
-
-        return Promise.resolve({
+        return {
           result: this.connectResult_,
-          device: this.deviceProxyMap.get(
-              address).binding.createInterfacePtrAndBind(),
-        });
+          device: this.deviceProxyMap.get(address).router.$.createProxy(),
+        };
       }
 
-      getInfo() {
+      async getInfo() {
         this.methodCalled('getInfo');
-        return Promise.resolve({info: this.adapterInfo_});
+        return {info: this.adapterInfo_};
       }
 
-      getDevices() {
+      async getDevices() {
         this.methodCalled('getDevices');
-        return Promise.resolve({devices: this.devices_});
+        return {devices: this.devices_};
       }
 
-      setClient(client) {
+      async setClient(client) {
         this.methodCalled('setClient', client);
+      }
+
+      async startDiscoverySession() {
+        return {session: null};
       }
 
       setTestAdapter(adapterInfo) {
@@ -120,8 +115,7 @@ BluetoothInternalsTest.prototype = {
       setTestDevices(devices) {
         this.devices_ = devices;
         this.devices_.forEach(function(device) {
-          this.deviceProxyMap.set(
-              device.address, new TestDeviceProxy(device));
+          this.deviceProxyMap.set(device.address, new TestDeviceProxy(device));
         }, this);
       }
     }
@@ -139,23 +133,26 @@ BluetoothInternalsTest.prototype = {
           'getServices',
         ]);
 
-        this.binding = new mojo.Binding(bluetooth.mojom.Device, this);
         this.info_ = info;
         this.services_ = [];
-      }
 
-      disconnect() {
-        this.binding.close();
+        // NOTE: We use the generated CallbackRouter here because Device defines
+        // lots of methods we don't care to mock here. DeviceCallbackRouter
+        // callback silently discards messages that have no listeners.
+        this.router = new bluetooth.mojom.DeviceCallbackRouter;
+        this.router.disconnect.addListener(() => this.router.$.close());
+        this.router.getInfo.addListener(() => this.getInfo());
+        this.router.getServices.addListener(() => this.getServices());
       }
 
       getInfo() {
         this.methodCalled('getInfo');
-        return Promise.resolve({info: this.info_});
+        return {info: this.info_};
       }
 
       getServices() {
         this.methodCalled('getServices');
-        return Promise.resolve({services: this.services_});
+        return {services: this.services_};
       }
 
       setTestServices(services) {
@@ -164,28 +161,29 @@ BluetoothInternalsTest.prototype = {
     }
 
     window.setupFn = () => {
-      this.adapterInterceptor = new MojoInterfaceInterceptor(
-          bluetooth.mojom.AdapterFactory.name);
-      this.adapterInterceptor.oninterfacerequest = (e) => {
+      this.bluetoothInternalsHandlerInterceptor = new MojoInterfaceInterceptor(
+          mojom.BluetoothInternalsHandler.$interfaceName);
+      this.bluetoothInternalsHandlerInterceptor.oninterfacerequest = (e) => {
         this.adapterFactory = new TestAdapterFactoryProxy();
-        this.adapterFactory.binding.bind(e.handle);
+        this.adapterFactoryBinding_ =
+            new mojom.BluetoothInternalsHandler(this.adapterFactory);
+        this.adapterFactoryBinding_.$.bindHandle(e.handle);
 
         this.adapterFactory.adapter.setTestDevices([
           this.fakeDeviceInfo1(),
           this.fakeDeviceInfo2(),
         ]);
-        this.adapterFactory.adapter.setTestAdapter(
-            this.fakeAdapterInfo());
+        this.adapterFactory.adapter.setTestAdapter(this.fakeAdapterInfo());
 
-        this.adapterFactory.adapter.deviceProxyMap.forEach(
-            function(deviceProxy) {
+        this.adapterFactory.adapter.deviceProxyMap
+            .forEach(function(deviceProxy) {
               deviceProxy.setTestServices([
                 this.fakeServiceInfo1(),
                 this.fakeServiceInfo2(),
               ]);
             }, this);
       };
-      this.adapterInterceptor.start();
+      this.bluetoothInternalsHandlerInterceptor.start();
       this.setupResolver.resolve();
       return Promise.resolve();
     };
@@ -213,10 +211,11 @@ BluetoothInternalsTest.prototype = {
    */
   fakeDeviceInfo1: function() {
     return {
-      address: "AA:AA:84:96:92:84",
-      name: "AAA",
-      nameForDisplay: "AAA",
+      address: 'AA:AA:84:96:92:84',
+      name: 'AAA',
+      nameForDisplay: 'AAA',
       rssi: {value: -40},
+      isGattConnected: false,
       services: [],
     };
   },
@@ -227,10 +226,11 @@ BluetoothInternalsTest.prototype = {
    */
   fakeDeviceInfo2: function() {
     return {
-      address: "BB:BB:84:96:92:84",
-      name: "BBB",
-      nameForDisplay: "BBB",
+      address: 'BB:BB:84:96:92:84',
+      name: 'BBB',
+      nameForDisplay: 'BBB',
       rssi: null,
+      isGattConnected: false,
       services: [],
     };
   },
@@ -242,9 +242,10 @@ BluetoothInternalsTest.prototype = {
    */
   fakeDeviceInfo3: function() {
     return {
-      address: "CC:CC:84:96:92:84",
-      name: "CCC",
-      nameForDisplay: "CCC",
+      address: 'CC:CC:84:96:92:84',
+      name: 'CCC',
+      nameForDisplay: 'CCC',
+      isGattConnected: false,
     };
   },
 
@@ -288,8 +289,7 @@ BluetoothInternalsTest.prototype = {
   },
 };
 
-TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
-    function() {
+TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals', function() {
   /** @const */ var PageManager = cr.ui.pageManager.PageManager;
 
   var adapterFactory = null;
@@ -330,8 +330,8 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       deviceTable = document.querySelector('#devices table');
       sidebarNode = document.querySelector('#sidebar');
       devices.splice(0, devices.length);
-      adapterBroker.adapterClient_.deviceAdded(fakeDeviceInfo1());
-      adapterBroker.adapterClient_.deviceAdded(fakeDeviceInfo2());
+      adapterBroker.deviceAdded(fakeDeviceInfo1());
+      adapterBroker.deviceAdded(fakeDeviceInfo2());
     });
 
     teardown(function() {
@@ -361,8 +361,8 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
      * @param {!device_collection.DeviceInfo} deviceInfo
      */
     function changeDevice(deviceInfo) {
-      var deviceRow = deviceTable.querySelector('#' + escapeDeviceAddress(
-          deviceInfo.address));
+      var deviceRow = deviceTable.querySelector(
+          '#' + escapeDeviceAddress(deviceInfo.address));
       var nameForDisplayColumn = deviceRow.children[0];
       var addressColumn = deviceRow.children[1];
       var rssiColumn = deviceRow.children[2];
@@ -373,10 +373,9 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       expectTrue(!!rssiColumn);
       expectTrue(!!servicesColumn);
 
-      adapterBroker.adapterClient_.deviceChanged(deviceInfo);
+      adapterBroker.deviceChanged(deviceInfo);
 
-      expectEquals(deviceInfo.nameForDisplay,
-                   nameForDisplayColumn.textContent);
+      expectEquals(deviceInfo.nameForDisplay, nameForDisplayColumn.textContent);
       expectEquals(deviceInfo.address, addressColumn.textContent);
 
       if (deviceInfo.rssi) {
@@ -384,8 +383,8 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       }
 
       if (deviceInfo.services) {
-        expectEquals(String(deviceInfo.services.length),
-                     servicesColumn.textContent);
+        expectEquals(
+            String(deviceInfo.services.length), servicesColumn.textContent);
       } else {
         expectEquals('Unknown', servicesColumn.textContent);
       }
@@ -405,8 +404,8 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
      * @param {boolean} expectRemoved
      */
     function expectDeviceRemoved(address, expectRemoved) {
-      var removedRow = deviceTable.querySelector(
-          '#' + escapeDeviceAddress(address));
+      var removedRow =
+          deviceTable.querySelector('#' + escapeDeviceAddress(address));
 
       expectEquals(expectRemoved, removedRow.classList.contains('removed'));
     }
@@ -420,10 +419,10 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
 
       // Copy device info because device collection will not copy this object.
       var infoCopy = fakeDeviceInfo3();
-      adapterBroker.adapterClient_.deviceAdded(infoCopy);
+      adapterBroker.deviceAdded(infoCopy);
 
       // Same device shouldn't appear twice.
-      adapterBroker.adapterClient_.deviceAdded(infoCopy);
+      adapterBroker.deviceAdded(infoCopy);
 
       devices = deviceTable.querySelectorAll('tbody tr');
       expectEquals(EXPECTED_DEVICES + 1, devices.length);
@@ -437,7 +436,7 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       expectEquals(EXPECTED_DEVICES, devices.length);
 
       var fakeDevice = fakeDeviceInfo2();
-      adapterBroker.adapterClient_.deviceRemoved(fakeDevice);
+      adapterBroker.deviceRemoved(fakeDevice);
 
       // The number of rows shouldn't change.
       devices = deviceTable.querySelectorAll('tbody tr');
@@ -456,7 +455,7 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       // Copy device info because device collection will not copy this object.
       var newDeviceInfo = fakeDeviceInfo1();
       newDeviceInfo.nameForDisplay = 'DDDD';
-      newDeviceInfo.rssi = { value: -20 };
+      newDeviceInfo.rssi = {value: -20};
       newDeviceInfo.services = ['service1', 'service2', 'service3'];
 
       changeDevice(newDeviceInfo);
@@ -471,20 +470,20 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
 
       // Copy device info because device collection will not copy this object.
       var originalDeviceInfo = fakeDeviceInfo3();
-      adapterBroker.adapterClient_.deviceAdded(originalDeviceInfo);
+      adapterBroker.deviceAdded(originalDeviceInfo);
 
       var newDeviceInfo = fakeDeviceInfo3();
       newDeviceInfo.nameForDisplay = 'DDDD';
-      newDeviceInfo.rssi = { value: -20 };
+      newDeviceInfo.rssi = {value: -20};
       newDeviceInfo.services = ['service1', 'service2', 'service3'];
 
       changeDevice(newDeviceInfo);
       changeDevice(originalDeviceInfo);
 
-      adapterBroker.adapterClient_.deviceRemoved(originalDeviceInfo);
+      adapterBroker.deviceRemoved(originalDeviceInfo);
       expectDeviceRemoved(originalDeviceInfo.address, true);
 
-      adapterBroker.adapterClient_.deviceAdded(originalDeviceInfo);
+      adapterBroker.deviceAdded(originalDeviceInfo);
       expectDeviceRemoved(originalDeviceInfo.address, false);
     });
 
@@ -494,34 +493,34 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
 
       // Copy device info because device collection will not copy this object.
       var newDeviceInfo = fakeDeviceInfo3();
-      adapterBroker.adapterClient_.deviceAdded(newDeviceInfo);
+      adapterBroker.deviceAdded(newDeviceInfo);
 
-      var deviceRow = deviceTable.querySelector('#' + escapeDeviceAddress(
-          newDeviceInfo.address));
+      var deviceRow = deviceTable.querySelector(
+          '#' + escapeDeviceAddress(newDeviceInfo.address));
       var rssiColumn = deviceRow.children[2];
       expectEquals('Unknown', rssiColumn.textContent);
 
       var newDeviceInfo1 = fakeDeviceInfo3();
       newDeviceInfo1.rssi = {value: -42};
-      adapterBroker.adapterClient_.deviceChanged(newDeviceInfo1);
+      adapterBroker.deviceChanged(newDeviceInfo1);
       expectEquals('-42', rssiColumn.textContent);
 
       // Device table should keep last valid rssi value.
       var newDeviceInfo2 = fakeDeviceInfo3();
       newDeviceInfo2.rssi = null;
-      adapterBroker.adapterClient_.deviceChanged(newDeviceInfo2);
+      adapterBroker.deviceChanged(newDeviceInfo2);
       expectEquals('-42', rssiColumn.textContent);
 
       var newDeviceInfo3 = fakeDeviceInfo3();
       newDeviceInfo3.rssi = {value: -17};
-      adapterBroker.adapterClient_.deviceChanged(newDeviceInfo3);
+      adapterBroker.deviceChanged(newDeviceInfo3);
       expectEquals('-17', rssiColumn.textContent);
     });
 
     /* Sidebar Tests */
     test('Sidebar_Setup', function() {
-      var sidebarItems = Array.from(
-          sidebarNode.querySelectorAll('.sidebar-content li'));
+      var sidebarItems =
+          Array.from(sidebarNode.querySelectorAll('.sidebar-content li'));
 
       pageNames.forEach(function(pageName) {
         expectTrue(sidebarItems.some(function(item) {
@@ -567,10 +566,11 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
      */
     function whenSnackbarShows(pendingSnackbar) {
       return new Promise(function(resolve) {
-        if (pendingSnackbar.classList.contains('open'))
+        if (pendingSnackbar.classList.contains('open')) {
           resolve();
-        else
+        } else {
           pendingSnackbar.addEventListener('showed', resolve);
+        }
       });
     }
 
@@ -602,9 +602,11 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       var snackbar1 = snackbar.Snackbar.show('Message 1');
       assertEquals(1, $('snackbar-container').children.length);
 
-      return whenSnackbarShows(snackbar1).then(function() {
-        return snackbar.Snackbar.dismiss();
-      }).then(finishSnackbarTest);
+      return whenSnackbarShows(snackbar1)
+          .then(function() {
+            return snackbar.Snackbar.dismiss();
+          })
+          .then(finishSnackbarTest);
     });
 
     test('Snackbar_QueueThreeDismiss', function() {
@@ -625,9 +627,12 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
 
       whenSnackbarShows(snackbar1).then(next);
       whenSnackbarShows(snackbar2).then(next);
-      return whenSnackbarShows(snackbar3).then(next).then(function() {
-        expectEquals(expectedCalls, actualCalls);
-      }).then(finishSnackbarTest);
+      return whenSnackbarShows(snackbar3)
+          .then(next)
+          .then(function() {
+            expectEquals(expectedCalls, actualCalls);
+          })
+          .then(finishSnackbarTest);
     });
 
     test('Snackbar_QueueThreeDismissAll', function() {
@@ -650,19 +655,22 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       whenSnackbarShows(snackbar3).then(next);
       snackbar3.addEventListener('dismissed', next);
 
-      return whenSnackbarShows(snackbar1).then(function() {
-        return snackbar.Snackbar.dismiss(true);
-      }).then(function() {
-        expectEquals(0, snackbar.Snackbar.queue_.length);
-        expectFalse(!!snackbar.Snackbar.current_);
-      }).then(finishSnackbarTest);
+      return whenSnackbarShows(snackbar1)
+          .then(function() {
+            return snackbar.Snackbar.dismiss(true);
+          })
+          .then(function() {
+            expectEquals(0, snackbar.Snackbar.queue_.length);
+            expectFalse(!!snackbar.Snackbar.current_);
+          })
+          .then(finishSnackbarTest);
     });
 
     /* AdapterPage Tests */
     function checkAdapterFieldSet(adapterInfo) {
       for (var propName in adapterInfo) {
-        var valueCell = adapterFieldSet.querySelector(
-            '[data-field="' + propName + '"]');
+        var valueCell =
+            adapterFieldSet.querySelector('[data-field="' + propName + '"]');
         var value = adapterInfo[propName];
 
         if (typeof(value) === 'boolean') {
@@ -683,11 +691,11 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       var adapterInfo = adapterFieldSet.value;
 
       adapterInfo.present = !adapterInfo.present;
-      adapterBroker.adapterClient_.presentChanged(adapterInfo.present);
+      adapterBroker.presentChanged(adapterInfo.present);
       checkAdapterFieldSet(adapterInfo);
 
       adapterInfo.discovering = !adapterInfo.discovering;
-      adapterBroker.adapterClient_.discoveringChanged(adapterInfo.discovering);
+      adapterBroker.discoveringChanged(adapterInfo.discovering);
       checkAdapterFieldSet(adapterInfo);
     });
 
@@ -695,15 +703,15 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       var adapterInfo = adapterFieldSet.value;
 
       adapterInfo.present = !adapterInfo.present;
-      adapterBroker.adapterClient_.presentChanged(adapterInfo.present);
+      adapterBroker.presentChanged(adapterInfo.present);
       checkAdapterFieldSet(adapterInfo);
-      adapterBroker.adapterClient_.presentChanged(adapterInfo.present);
+      adapterBroker.presentChanged(adapterInfo.present);
       checkAdapterFieldSet(adapterInfo);
 
       adapterInfo.discovering = !adapterInfo.discovering;
-      adapterBroker.adapterClient_.discoveringChanged(adapterInfo.discovering);
+      adapterBroker.discoveringChanged(adapterInfo.discovering);
       checkAdapterFieldSet(adapterInfo);
-      adapterBroker.adapterClient_.discoveringChanged(adapterInfo.discovering);
+      adapterBroker.discoveringChanged(adapterInfo.discovering);
       checkAdapterFieldSet(adapterInfo);
     });
 
@@ -715,13 +723,8 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
      * @param {!Object} deviceInfo
      */
     function checkDeviceDetailsFieldSet(detailsPage, deviceInfo) {
-      [
-        'name',
-        'address',
-        'isGattConnected',
-        'rssi.value',
-        'services.length',
-      ].forEach(function(propName){
+      ['name', 'address', 'isGattConnected', 'rssi.value', 'services.length',
+      ].forEach(function(propName) {
         var valueCell = detailsPage.querySelector(
             'fieldset [data-field="' + propName + '"]');
 
@@ -733,8 +736,9 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
           value = value[part];
         }
 
-        if (propName == 'isGattConnected')
+        if (propName == 'isGattConnected') {
           value = value ? 'Connected' : 'Not Connected';
+        }
 
         if (typeof(value) === 'boolean') {
           expectEquals(value, valueCell.classList.contains('checked'));
@@ -749,19 +753,20 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
     test('DeviceDetailsPage_NewDelete', function() {
       var device = devices.item(0);
 
-      var deviceInspectLink = $(device.address).querySelector(
-          '[is="action-link"]');
+      var deviceInspectLink =
+          $(device.address).querySelector('[is="action-link"]');
 
       var deviceDetailsPageId = 'devices/' + device.address.toLowerCase();
 
       deviceInspectLink.click();
-      expectEquals("#" + deviceDetailsPageId, window.location.hash);
+      expectEquals('#' + deviceDetailsPageId, window.location.hash);
 
       var detailsPage = $(deviceDetailsPageId);
       assertTrue(!!detailsPage);
 
-      return adapterFactory.adapter.deviceProxyMap.get(
-          device.address).whenCalled('getServices').then(function() {
+      return adapterFactory.adapter.deviceProxyMap.get(device.address)
+          .whenCalled('getServices')
+          .then(function() {
             // At this point, the device details page should be fully loaded.
             checkDeviceDetailsFieldSet(detailsPage, device);
 
@@ -776,18 +781,19 @@ TEST_F('BluetoothInternalsTest', 'Startup_BluetoothInternals',
       var device = devices.item(0);
       var deviceDetailsPageId = 'devices/' + device.address.toLowerCase();
 
-      var deviceLinks = $(device.address).querySelectorAll(
-          '[is="action-link"]');
+      var deviceLinks =
+          $(device.address).querySelectorAll('[is="action-link"]');
 
       // First link is 'Inspect'.
       deviceLinks[0].click();
-      expectEquals("#" + deviceDetailsPageId, window.location.hash);
+      expectEquals('#' + deviceDetailsPageId, window.location.hash);
 
       var detailsPage = $(deviceDetailsPageId);
       assertTrue(!!detailsPage);
 
-      return adapterFactory.adapter.deviceProxyMap.get(
-          device.address).whenCalled('getServices').then(function() {
+      return adapterFactory.adapter.deviceProxyMap.get(device.address)
+          .whenCalled('getServices')
+          .then(function() {
             // At this point, the device details page should be fully loaded.
             checkDeviceDetailsFieldSet(detailsPage, device);
 

@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/observer_list.h"
+#include "base/time/time.h"
 #include "components/sync/engine_impl/cycle/debug_info_getter.h"
 #include "components/sync/engine_impl/model_type_registry.h"
 #include "components/sync/engine_impl/sync_engine_event_listener.h"
@@ -46,8 +48,10 @@ class SyncCycleContext {
                    DebugInfoGetter* debug_info_getter,
                    ModelTypeRegistry* model_type_registry,
                    bool keystore_encryption_enabled,
-                   bool client_enabled_pre_commit_update_avoidance,
-                   const std::string& invalidator_client_id);
+                   const std::string& invalidator_client_id,
+                   const std::string& birthday,
+                   const std::string& bag_of_chips,
+                   base::TimeDelta poll_interval);
 
   ~SyncCycleContext();
 
@@ -68,7 +72,12 @@ class SyncCycleContext {
   }
   bool notifications_enabled() { return notifications_enabled_; }
 
-  // Account name, set once a directory has been opened.
+  void set_birthday(const std::string& birthday);
+  const std::string& birthday() const { return birthday_; }
+
+  void set_bag_of_chips(const std::string& bag_of_chips);
+  const std::string& bag_of_chips() const { return bag_of_chips_; }
+
   void set_account_name(const std::string& name) { account_name_ = name; }
   const std::string& account_name() const { return account_name_; }
 
@@ -77,7 +86,7 @@ class SyncCycleContext {
   }
   int32_t max_commit_batch_size() const { return max_commit_batch_size_; }
 
-  base::ObserverList<SyncEngineEventListener>* listeners() {
+  base::ObserverList<SyncEngineEventListener>::Unchecked* listeners() {
     return &listeners_;
   }
 
@@ -89,19 +98,18 @@ class SyncCycleContext {
     client_status_.set_hierarchy_conflict_detected(value);
   }
 
+  void set_is_sync_feature_enabled(bool value) {
+    client_status_.set_is_sync_feature_enabled(value);
+  }
+
   const sync_pb::ClientStatus& client_status() const { return client_status_; }
 
   const std::string& invalidator_client_id() const {
     return invalidator_client_id_;
   }
 
-  bool ShouldFetchUpdatesBeforeCommit() const {
-    return !(server_enabled_pre_commit_update_avoidance_ ||
-             client_enabled_pre_commit_update_avoidance_);
-  }
-
-  void set_server_enabled_pre_commit_update_avoidance(bool value) {
-    server_enabled_pre_commit_update_avoidance_ = value;
+  void set_invalidator_client_id(const std::string& id) {
+    invalidator_client_id_ = id;
   }
 
   ModelTypeRegistry* model_type_registry() { return model_type_registry_; }
@@ -116,8 +124,14 @@ class SyncCycleContext {
 
   void set_cookie_jar_empty(bool empty_jar) { cookie_jar_empty_ = empty_jar; }
 
+  base::TimeDelta poll_interval() const { return poll_interval_; }
+  void set_poll_interval(base::TimeDelta interval) {
+    DCHECK(!interval.is_zero());
+    poll_interval_ = interval;
+  }
+
  private:
-  base::ObserverList<SyncEngineEventListener> listeners_;
+  base::ObserverList<SyncEngineEventListener>::Unchecked listeners_;
 
   ServerConnectionManager* const connection_manager_;
   syncable::Directory* const directory_;
@@ -129,6 +143,10 @@ class SyncCycleContext {
   // Kept up to date with talk events to determine whether notifications are
   // enabled. True only if the notification channel is authorized and open.
   bool notifications_enabled_;
+
+  std::string birthday_;
+
+  std::string bag_of_chips_;
 
   // The name of the account being synced.
   std::string account_name_;
@@ -154,16 +172,7 @@ class SyncCycleContext {
   // register itself with the invalidations server during startup.  We need to
   // provide this to the sync server when we make changes to enable it to
   // prevent us from receiving notifications of changes we make ourselves.
-  const std::string invalidator_client_id_;
-
-  // Flag to enable or disable the no pre-commit GetUpdates experiment.  When
-  // this flag is set to false, the syncer has the option of not performing at
-  // GetUpdates request when there is nothing to fetch.
-  bool server_enabled_pre_commit_update_avoidance_;
-
-  // If true, indicates that we've been passed a command-line flag to force
-  // enable the pre-commit update avoidance experiment described above.
-  const bool client_enabled_pre_commit_update_avoidance_;
+  std::string invalidator_client_id_;
 
   // Whether the account(s) present in the content area's cookie jar match the
   // chrome account. If multiple accounts are present in the cookie jar, a
@@ -172,6 +181,8 @@ class SyncCycleContext {
 
   // If there's a cookie jar mismatch, whether the cookie jar was empty or not.
   bool cookie_jar_empty_;
+
+  base::TimeDelta poll_interval_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncCycleContext);
 };

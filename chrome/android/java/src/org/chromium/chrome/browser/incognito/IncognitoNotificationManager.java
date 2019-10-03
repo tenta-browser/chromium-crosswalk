@@ -10,9 +10,13 @@ import android.content.Context;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.notifications.ChromeNotification;
 import org.chromium.chrome.browser.notifications.ChromeNotificationBuilder;
 import org.chromium.chrome.browser.notifications.NotificationBuilderFactory;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxy;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxyImpl;
+import org.chromium.chrome.browser.notifications.NotificationMetadata;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 
@@ -34,8 +38,13 @@ public class IncognitoNotificationManager {
 
         ChromeNotificationBuilder builder =
                 NotificationBuilderFactory
-                        .createChromeNotificationBuilder(
-                                true /* preferCompat */, ChannelDefinitions.CHANNEL_ID_INCOGNITO)
+                        .createChromeNotificationBuilder(true /* preferCompat */,
+                                ChannelDefinitions.ChannelId.INCOGNITO,
+                                null /* remoteAppPackageName */,
+                                new NotificationMetadata(
+                                        NotificationUmaTracker.SystemNotificationType
+                                                .CLOSE_INCOGNITO,
+                                        INCOGNITO_TABS_OPEN_TAG, INCOGNITO_TABS_OPEN_ID))
                         .setContentTitle(title)
                         .setContentIntent(
                                 IncognitoNotificationService.getRemoveAllIncognitoTabsIntent(
@@ -43,15 +52,16 @@ public class IncognitoNotificationManager {
                         .setContentText(actionMessage)
                         .setOngoing(true)
                         .setVisibility(Notification.VISIBILITY_SECRET)
-                        .setSmallIcon(R.drawable.incognito_statusbar)
+                        .setSmallIcon(R.drawable.incognito_simple)
                         .setShowWhen(false)
                         .setLocalOnly(true)
                         .setGroup(NotificationConstants.GROUP_INCOGNITO);
-        NotificationManager nm =
-                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(INCOGNITO_TABS_OPEN_TAG, INCOGNITO_TABS_OPEN_ID, builder.build());
+        NotificationManagerProxy nm = new NotificationManagerProxyImpl(context);
+        ChromeNotification notification = builder.buildChromeNotification();
+        nm.notify(notification);
         NotificationUmaTracker.getInstance().onNotificationShown(
-                NotificationUmaTracker.CLOSE_INCOGNITO, ChannelDefinitions.CHANNEL_ID_INCOGNITO);
+                NotificationUmaTracker.SystemNotificationType.CLOSE_INCOGNITO,
+                notification.getNotification());
     }
 
     /**

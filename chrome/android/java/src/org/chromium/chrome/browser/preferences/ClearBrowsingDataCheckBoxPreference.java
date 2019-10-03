@@ -4,19 +4,18 @@
 
 package org.chromium.chrome.browser.preferences;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
+import android.support.v4.view.ViewCompat;
+import android.support.v7.preference.PreferenceViewHolder;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ClickableSpan;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.util.AccessibilityUtil;
@@ -27,7 +26,7 @@ import org.chromium.ui.text.SpanApplier;
  * A preference representing one browsing data type in ClearBrowsingDataPreferences.
  * This class allows clickable links inside the checkbox summary.
  */
-public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPreference {
+public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPreferenceCompat {
     private View mView;
     private Runnable mLinkClickDelegate;
     private boolean mHasClickableSpans;
@@ -47,12 +46,11 @@ public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPrefe
         mLinkClickDelegate = linkClickDelegate;
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     @Override
-    public View onCreateView(ViewGroup parent) {
-        if (mView != null) return mView;
+    public void onBindViewHolder(PreferenceViewHolder holder) {
+        super.onBindViewHolder(holder);
 
-        mView = super.onCreateView(parent);
+        mView = holder.itemView;
         setupLayout(mView);
 
         final TextView textView = (TextView) mView.findViewById(android.R.id.summary);
@@ -86,8 +84,6 @@ public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPrefe
                 return false;
             }
         });
-
-        return mView;
     }
 
     /**
@@ -98,7 +94,7 @@ public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPrefe
         // Adjust icon padding.
         int padding = getContext().getResources().getDimensionPixelSize(R.dimen.pref_icon_padding);
         ImageView icon = (ImageView) view.findViewById(android.R.id.icon);
-        ApiCompatibilityUtils.setPaddingRelative(
+        ViewCompat.setPaddingRelative(
                 icon, padding, icon.getPaddingTop(), 0, icon.getPaddingBottom());
     }
 
@@ -123,12 +119,10 @@ public class ClearBrowsingDataCheckBoxPreference extends ChromeBaseCheckBoxPrefe
         }
         // Linkify <link></link> span.
         final SpannableString summaryWithLink = SpanApplier.applySpans(summaryString,
-                new SpanApplier.SpanInfo("<link>", "</link>", new NoUnderlineClickableSpan() {
-                    @Override
-                    public void onClick(View widget) {
-                        if (mLinkClickDelegate != null) mLinkClickDelegate.run();
-                    }
-                }));
+                new SpanApplier.SpanInfo("<link>", "</link>",
+                        new NoUnderlineClickableSpan(getContext().getResources(), (widget) -> {
+                            if (mLinkClickDelegate != null) mLinkClickDelegate.run();
+                        })));
 
         mHasClickableSpans = true;
         super.setSummary(summaryWithLink);

@@ -4,21 +4,18 @@
 
 #include "chrome/browser/chromeos/printing/printers_sync_bridge.h"
 
-#include <memory>
 #include <set>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/optional.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/chromeos/printing/specifics_translation.h"
+#include "chromeos/printing/printer_configuration.h"
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/model/model_type_change_processor.h"
-#include "components/sync/model/model_type_store.h"
 #include "components/sync/model/mutable_data_batch.h"
+#include "components/sync/model_impl/client_tag_based_model_type_processor.h"
 #include "components/sync/protocol/model_type_state.pb.h"
 #include "components/sync/protocol/sync.pb.h"
 
@@ -26,21 +23,20 @@ namespace chromeos {
 
 namespace {
 
-using Result = syncer::ModelTypeStore::Result;
-
+using syncer::ClientTagBasedModelTypeProcessor;
 using syncer::ConflictResolution;
 using syncer::EntityChange;
 using syncer::EntityChangeList;
 using syncer::EntityData;
+using syncer::MetadataChangeList;
 using syncer::ModelTypeChangeProcessor;
 using syncer::ModelTypeStore;
-using syncer::MetadataChangeList;
 
 std::unique_ptr<EntityData> CopyToEntityData(
     const sync_pb::PrinterSpecifics& specifics) {
-  auto entity_data = base::MakeUnique<EntityData>();
+  auto entity_data = std::make_unique<EntityData>();
   *entity_data->specifics.mutable_printer() = specifics;
-  entity_data->non_unique_name =
+  entity_data->name =
       specifics.display_name().empty() ? "PRINTER" : specifics.display_name();
   return entity_data;
 }
@@ -51,10 +47,11 @@ std::unique_ptr<EntityData> CopyToEntityData(
 class PrintersSyncBridge::StoreProxy {
  public:
   StoreProxy(PrintersSyncBridge* owner,
-             const syncer::ModelTypeStoreFactory& callback)
+             syncer::OnceModelTypeStoreFactory callback)
       : owner_(owner), weak_ptr_factory_(this) {
-    callback.Run(syncer::PRINTERS, base::Bind(&StoreProxy::OnStoreCreated,
-                                              weak_ptr_factory_.GetWeakPtr()));
+    std::move(callback).Run(syncer::PRINTERS,
+                            base::BindOnce(&StoreProxy::OnStoreCreated,
+                                           weak_ptr_factory_.GetWeakPtr()));
   }
 
   // Returns true if the store has been initialized.
@@ -71,70 +68,71 @@ class PrintersSyncBridge::StoreProxy {
     DCHECK(store_);
     store_->CommitWriteBatch(
         std::move(batch),
-        base::Bind(&StoreProxy::OnCommit, weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&StoreProxy::OnCommit, weak_ptr_factory_.GetWeakPtr()));
+    owner_->NotifyPrintersUpdated();
   }
 
  private:
   // Callback for ModelTypeStore initialization.
-  void OnStoreCreated(Result result, std::unique_ptr<ModelTypeStore> store) {
-    if (result == Result::SUCCESS) {
-      store_ = std::move(store);
-      store_->ReadAllData(base::Bind(&StoreProxy::OnReadAllData,
-                                     weak_ptr_factory_.GetWeakPtr()));
-    } else {
-      owner_->change_processor()->ReportError(
-          FROM_HERE, "ModelTypeStore creation failed.");
-    }
-  }
-
-  void OnReadAllData(Result result,
-                     std::unique_ptr<ModelTypeStore::RecordList> record_list) {
-    if (result != Result::SUCCESS) {
-      owner_->change_processor()->ReportError(FROM_HERE,
-                                              "Initial load of data failed");
+  void OnStoreCreated(const base::Optional<syncer::ModelError>& error,
+                      std::unique_ptr<ModelTypeStore> store) {
+    if (error) {
+      owner_->change_processor()->ReportError(*error);
       return;
     }
 
-    bool error = false;
+    store_ = std::move(store);
+    store_->ReadAllData(base::BindOnce(&StoreProxy::OnReadAllData,
+                                       weak_ptr_factory_.GetWeakPtr()));
+  }
+
+  void OnReadAllData(const base::Optional<syncer::ModelError>& error,
+                     std::unique_ptr<ModelTypeStore::RecordList> record_list) {
+    if (error) {
+      owner_->change_processor()->ReportError(*error);
+      return;
+    }
+
+    bool parse_error = false;
     {
       base::AutoLock lock(owner_->data_lock_);
       for (const ModelTypeStore::Record& r : *record_list) {
-        auto specifics = base::MakeUnique<sync_pb::PrinterSpecifics>();
+        auto specifics = std::make_unique<sync_pb::PrinterSpecifics>();
         if (specifics->ParseFromString(r.value)) {
           auto& dest = owner_->all_data_[specifics->id()];
           dest = std::move(specifics);
         } else {
-          error = true;
+          parse_error = true;
         }
       }
     }
     owner_->NotifyPrintersUpdated();
 
-    if (error) {
+    if (parse_error) {
       owner_->change_processor()->ReportError(
-          FROM_HERE, "Failed to deserialize all specifics.");
+          {FROM_HERE, "Failed to deserialize all specifics."});
       return;
     }
 
     // Data loaded.  Load metadata.
-    store_->ReadAllMetadata(base::Bind(&StoreProxy::OnReadAllMetadata,
-                                       weak_ptr_factory_.GetWeakPtr()));
+    store_->ReadAllMetadata(base::BindOnce(&StoreProxy::OnReadAllMetadata,
+                                           weak_ptr_factory_.GetWeakPtr()));
   }
 
   // Callback to handle commit errors.
-  void OnCommit(ModelTypeStore::Result result) {
-    if (result != Result::SUCCESS) {
+  void OnCommit(const base::Optional<syncer::ModelError>& error) {
+    if (error) {
       LOG(WARNING) << "Failed to commit operation to store";
-      owner_->change_processor()->ReportError(FROM_HERE,
-                                              "Failed to commit to store");
+      owner_->change_processor()->ReportError(*error);
+      return;
     }
   }
 
   void OnReadAllMetadata(
-      base::Optional<syncer::ModelError> error,
+      const base::Optional<syncer::ModelError>& error,
       std::unique_ptr<syncer::MetadataBatch> metadata_batch) {
     if (error) {
-      owner_->change_processor()->ReportError(error.value());
+      owner_->change_processor()->ReportError(*error);
       return;
     }
 
@@ -148,15 +146,15 @@ class PrintersSyncBridge::StoreProxy {
 };
 
 PrintersSyncBridge::PrintersSyncBridge(
-    const syncer::ModelTypeStoreFactory& callback,
-    const base::RepeatingClosure& error_callback)
-    : ModelTypeSyncBridge(base::BindRepeating(&ModelTypeChangeProcessor::Create,
-                                              error_callback),
-                          syncer::PRINTERS),
-      store_delegate_(base::MakeUnique<StoreProxy>(this, callback)),
+    syncer::OnceModelTypeStoreFactory callback,
+    base::RepeatingClosure error_callback)
+    : ModelTypeSyncBridge(std::make_unique<ClientTagBasedModelTypeProcessor>(
+          syncer::PRINTERS,
+          std::move(error_callback))),
+      store_delegate_(std::make_unique<StoreProxy>(this, std::move(callback))),
       observers_(new base::ObserverListThreadSafe<Observer>()) {}
 
-PrintersSyncBridge::~PrintersSyncBridge() {}
+PrintersSyncBridge::~PrintersSyncBridge() = default;
 
 std::unique_ptr<MetadataChangeList>
 PrintersSyncBridge::CreateMetadataChangeList() {
@@ -176,13 +174,13 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::MergeSyncData(
     // Store the new data locally.
     for (const auto& change : entity_data) {
       const sync_pb::PrinterSpecifics& specifics =
-          change.data().specifics.printer();
+          change->data().specifics.printer();
 
-      DCHECK_EQ(change.storage_key(), specifics.id());
+      DCHECK_EQ(change->storage_key(), specifics.id());
       sync_entity_ids.insert(specifics.id());
 
       // Write the update to local storage even if we already have it.
-      StoreSpecifics(base::MakeUnique<sync_pb::PrinterSpecifics>(specifics),
+      StoreSpecifics(std::make_unique<sync_pb::PrinterSpecifics>(specifics),
                      batch.get());
     }
 
@@ -190,7 +188,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::MergeSyncData(
     // appropriate metadata.
     for (const auto& entry : all_data_) {
       const std::string& local_entity_id = entry.first;
-      if (!base::ContainsKey(sync_entity_ids, local_entity_id)) {
+      if (!base::Contains(sync_entity_ids, local_entity_id)) {
         // Only local objects which were not updated are uploaded.  Objects for
         // which there was a remote copy are overwritten.
         change_processor()->Put(local_entity_id,
@@ -201,7 +199,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::MergeSyncData(
   }
 
   NotifyPrintersUpdated();
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
   store_delegate_->Commit(std::move(batch));
   return {};
 }
@@ -214,20 +212,20 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::ApplySyncChanges(
   {
     base::AutoLock lock(data_lock_);
     // For all the entities from the server, apply changes.
-    for (const EntityChange& change : entity_changes) {
+    for (const std::unique_ptr<EntityChange>& change : entity_changes) {
       // We register the entity's storage key as our printer ids since they're
       // globally unique.
-      const std::string& id = change.storage_key();
-      if (change.type() == EntityChange::ACTION_DELETE) {
+      const std::string& id = change->storage_key();
+      if (change->type() == EntityChange::ACTION_DELETE) {
         // Server says delete, try to remove locally.
         DeleteSpecifics(id, batch.get());
       } else {
         // Server says update, overwrite whatever is local.  Conflict resolution
         // guarantees that this will be the newest version of the object.
         const sync_pb::PrinterSpecifics& specifics =
-            change.data().specifics.printer();
+            change->data().specifics.printer();
         DCHECK_EQ(id, specifics.id());
-        StoreSpecifics(base::MakeUnique<sync_pb::PrinterSpecifics>(specifics),
+        StoreSpecifics(std::make_unique<sync_pb::PrinterSpecifics>(specifics),
                        batch.get());
       }
     }
@@ -235,7 +233,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::ApplySyncChanges(
 
   NotifyPrintersUpdated();
   // Update the local database with metadata for the incoming changes.
-  batch->TransferMetadataChanges(std::move(metadata_change_list));
+  batch->TakeMetadataChangesFrom(std::move(metadata_change_list));
 
   store_delegate_->Commit(std::move(batch));
   return {};
@@ -243,7 +241,7 @@ base::Optional<syncer::ModelError> PrintersSyncBridge::ApplySyncChanges(
 
 void PrintersSyncBridge::GetData(StorageKeyList storage_keys,
                                  DataCallback callback) {
-  auto batch = base::MakeUnique<syncer::MutableDataBatch>();
+  auto batch = std::make_unique<syncer::MutableDataBatch>();
   {
     base::AutoLock lock(data_lock_);
     for (const auto& key : storage_keys) {
@@ -253,18 +251,18 @@ void PrintersSyncBridge::GetData(StorageKeyList storage_keys,
       }
     }
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
-void PrintersSyncBridge::GetAllData(DataCallback callback) {
-  auto batch = base::MakeUnique<syncer::MutableDataBatch>();
+void PrintersSyncBridge::GetAllDataForDebugging(DataCallback callback) {
+  auto batch = std::make_unique<syncer::MutableDataBatch>();
   {
     base::AutoLock lock(data_lock_);
     for (const auto& entry : all_data_) {
       batch->Put(entry.first, CopyToEntityData(*entry.second));
     }
   }
-  callback.Run(std::move(batch));
+  std::move(callback).Run(std::move(batch));
 }
 
 std::string PrintersSyncBridge::GetClientTag(const EntityData& entity_data) {
@@ -279,21 +277,26 @@ std::string PrintersSyncBridge::GetStorageKey(const EntityData& entity_data) {
 
 // Picks the entity with the most recent updated time as the canonical version.
 ConflictResolution PrintersSyncBridge::ResolveConflict(
-    const EntityData& local_data,
+    const std::string& storage_key,
     const EntityData& remote_data) const {
-  DCHECK(local_data.specifics.has_printer());
   DCHECK(remote_data.specifics.has_printer());
 
-  const sync_pb::PrinterSpecifics& local_printer =
-      local_data.specifics.printer();
+  auto iter = all_data_.find(storage_key);
+  // If the local printer doesn't exist, it must have been deleted. In this
+  // case, use the remote one.
+  if (iter == all_data_.end()) {
+    return ConflictResolution::kUseRemote;
+  }
+  const sync_pb::PrinterSpecifics& local_printer = *iter->second;
+
   const sync_pb::PrinterSpecifics& remote_printer =
       remote_data.specifics.printer();
 
   if (local_printer.updated_timestamp() > remote_printer.updated_timestamp()) {
-    return ConflictResolution::UseLocal();
+    return ConflictResolution::kUseLocal;
   }
 
-  return ConflictResolution::UseRemote();
+  return ConflictResolution::kUseRemote;
 }
 
 void PrintersSyncBridge::AddPrinter(
@@ -328,7 +331,7 @@ bool PrintersSyncBridge::UpdatePrinterLocked(
 
   // Modify the printer in-place then notify the change processor.
   sync_pb::PrinterSpecifics* merged = iter->second.get();
-  merged->MergeFrom(*printer);
+  MergePrinterToSpecifics(*SpecificsToPrinter(*printer), merged);
   merged->set_updated_timestamp(base::Time::Now().ToJavaTime());
   CommitPrinterPut(*merged);
 
@@ -376,6 +379,11 @@ base::Optional<sync_pb::PrinterSpecifics> PrintersSyncBridge::GetPrinter(
   }
 
   return {*iter->second};
+}
+
+bool PrintersSyncBridge::HasPrinter(const std::string& id) const {
+  base::AutoLock lock(data_lock_);
+  return all_data_.find(id) != all_data_.end();
 }
 
 void PrintersSyncBridge::CommitPrinterPut(

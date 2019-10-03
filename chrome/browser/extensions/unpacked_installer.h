@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -18,12 +19,12 @@
 #include "extensions/browser/preload_check.h"
 #include "extensions/common/manifest.h"
 
-class ExtensionService;
 class Profile;
 
 namespace extensions {
 
 class Extension;
+class ExtensionService;
 class PreloadCheckGroup;
 
 // Installs and loads an unpacked extension. Because internal state needs to be
@@ -34,16 +35,16 @@ class PreloadCheckGroup;
 class UnpackedInstaller
     : public base::RefCountedThreadSafe<UnpackedInstaller> {
  public:
-  using CompletionCallback = base::Callback<void(const Extension* extension,
-                                                 const base::FilePath&,
-                                                 const std::string&)>;
+  using CompletionCallback = base::OnceCallback<void(const Extension* extension,
+                                                     const base::FilePath&,
+                                                     const std::string&)>;
 
   static scoped_refptr<UnpackedInstaller> Create(
       ExtensionService* extension_service);
 
   // Loads the extension from the directory |extension_path|, which is
   // the top directory of a specific extension where its manifest file lives.
-  // Errors are reported through ExtensionErrorReporter. On success,
+  // Errors are reported through LoadErrorReporter. On success,
   // ExtensionService::AddExtension() is called.
   void Load(const base::FilePath& extension_path);
 
@@ -72,8 +73,8 @@ class UnpackedInstaller
     be_noisy_on_failure_ = be_noisy_on_failure;
   }
 
-  void set_completion_callback(const CompletionCallback& callback) {
-    callback_ = callback;
+  void set_completion_callback(CompletionCallback callback) {
+    callback_ = std::move(callback);
   }
 
  private:

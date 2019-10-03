@@ -5,11 +5,13 @@
 #ifndef CONTENT_PUBLIC_TEST_BROWSING_DATA_REMOVER_TEST_UTIL_H_
 #define CONTENT_PUBLIC_TEST_BROWSING_DATA_REMOVER_TEST_UTIL_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "base/scoped_observer.h"
+#include "base/sequenced_task_runner.h"
 #include "content/public/browser/browsing_data_remover.h"
-#include "content/public/test/test_utils.h"
 
 namespace content {
 
@@ -28,8 +30,19 @@ class BrowsingDataRemoverCompletionObserver
   void OnBrowsingDataRemoverDone() override;
 
  private:
-  scoped_refptr<MessageLoopRunner> message_loop_runner_;
+  void FlushForTestingComplete();
+  void QuitRunLoopWhenTasksComplete();
+
+  // Tracks when the Task Scheduler task flushing is done.
+  bool flush_for_testing_complete_ = false;
+
+  // Tracks when BrowsingDataRemover::Observer::OnBrowsingDataRemoverDone() is
+  // called.
+  bool browsing_data_remover_done_ = false;
+
+  base::RunLoop run_loop_;
   ScopedObserver<BrowsingDataRemover, BrowsingDataRemover::Observer> observer_;
+  scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataRemoverCompletionObserver);
 };
@@ -56,12 +69,22 @@ class BrowsingDataRemoverCompletionInhibitor {
       const base::Closure& continue_to_completion);
 
  private:
+  void FlushForTestingComplete();
+  void QuitRunLoopWhenTasksComplete();
+
+  // Tracks when the Task Scheduler task flushing is done.
+  bool flush_for_testing_complete_ = false;
+
+  // Tracks when OnBrowsingDataRemoverWouldComplete() is called.
+  bool browsing_data_remover_would_complete_done_ = false;
+
   // Not owned by this class. If the pointer becomes invalid, the owner of
   // this class is responsible for calling Reset().
   BrowsingDataRemover* remover_;
 
-  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   base::Closure continue_to_completion_callback_;
+  scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataRemoverCompletionInhibitor);
 };

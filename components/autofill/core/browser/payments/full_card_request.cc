@@ -8,9 +8,9 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_clock.h"
 
@@ -35,8 +35,7 @@ FullCardRequest::FullCardRequest(RiskDataLoader* risk_data_loader,
       result_delegate_(nullptr),
       ui_delegate_(nullptr),
       should_unmask_card_(false),
-      form_parsed_timestamp_(form_parsed_timestamp),
-      weak_ptr_factory_(this) {
+      form_parsed_timestamp_(form_parsed_timestamp) {
   DCHECK(risk_data_loader_);
   DCHECK(payments_client_);
   DCHECK(personal_data_manager_);
@@ -48,8 +47,30 @@ void FullCardRequest::GetFullCard(const CreditCard& card,
                                   AutofillClient::UnmaskCardReason reason,
                                   base::WeakPtr<ResultDelegate> result_delegate,
                                   base::WeakPtr<UIDelegate> ui_delegate) {
-  DCHECK(result_delegate);
   DCHECK(ui_delegate);
+  GetFullCard(card, reason, result_delegate, ui_delegate, base::Value());
+}
+
+void FullCardRequest::GetFullCardViaFIDO(
+    const CreditCard& card,
+    AutofillClient::UnmaskCardReason reason,
+    base::WeakPtr<ResultDelegate> result_delegate,
+    base::Value fido_assertion_info) {
+  DCHECK(fido_assertion_info.is_dict());
+  GetFullCard(card, reason, result_delegate, nullptr,
+              std::move(fido_assertion_info));
+}
+
+void FullCardRequest::GetFullCard(const CreditCard& card,
+                                  AutofillClient::UnmaskCardReason reason,
+                                  base::WeakPtr<ResultDelegate> result_delegate,
+                                  base::WeakPtr<UIDelegate> ui_delegate,
+                                  base::Value fido_assertion_info) {
+  // Retrieval of card information should happen via CVC auth or FIDO, but not
+  // both. Use |ui_delegate|'s existence as evidence of doing CVC auth and
+  // |fido_assertion_info| as evidence of doing FIDO auth.
+  DCHECK_NE(fido_assertion_info.is_dict(), !!ui_delegate);
+  DCHECK(result_delegate);
 
   // Only one request can be active at a time. If the member variable
   // |result_delegate_| is already set, then immediately reject the new request
@@ -60,23 +81,27 @@ void FullCardRequest::GetFullCard(const CreditCard& card,
   }
 
   result_delegate_ = result_delegate;
-  ui_delegate_ = ui_delegate;
   request_.reset(new payments::PaymentsClient::UnmaskRequestDetails);
   request_->card = card;
+  request_->reason = reason;
   should_unmask_card_ = card.record_type() == CreditCard::MASKED_SERVER_CARD ||
                         (card.record_type() == CreditCard::FULL_SERVER_CARD &&
                          card.ShouldUpdateExpiration(AutofillClock::Now()));
   if (should_unmask_card_) {
     payments_client_->Prepare();
-    if (IsAutofillSendBillingCustomerNumberExperimentEnabled()) {
-      request_->billing_customer_number =
-          static_cast<int64_t>(payments_client_->GetPrefService()->GetDouble(
-              prefs::kAutofillBillingCustomerNumber));
-    }
+    request_->billing_customer_number = GetBillingCustomerId(
+        personal_data_manager_, /*should_log_validity=*/true);
   }
 
-  ui_delegate_->ShowUnmaskPrompt(request_->card, reason,
-                                 weak_ptr_factory_.GetWeakPtr());
+  request_->fido_assertion_info = std::move(fido_assertion_info);
+  ui_delegate_ = ui_delegate;
+
+  // If there is a UI delegate, then perform a CVC check.
+  // Otherwise, continue and use |fido_assertion_info| to unmask.
+  if (ui_delegate_) {
+    ui_delegate_->ShowUnmaskPrompt(request_->card, reason,
+                                   weak_ptr_factory_.GetWeakPtr());
+  }
 
   if (should_unmask_card_) {
     risk_data_loader_->LoadRiskData(
@@ -114,10 +139,8 @@ void FullCardRequest::OnUnmaskResponse(const UnmaskResponse& response) {
   }
 
   request_->user_response = response;
-  if (!request_->risk_data.empty()) {
-    real_pan_request_timestamp_ = AutofillClock::Now();
-    payments_client_->UnmaskCard(*request_);
-  }
+  if (!request_->risk_data.empty())
+    SendUnmaskCardRequest();
 }
 
 void FullCardRequest::OnUnmaskPromptClosed() {
@@ -129,10 +152,16 @@ void FullCardRequest::OnUnmaskPromptClosed() {
 
 void FullCardRequest::OnDidGetUnmaskRiskData(const std::string& risk_data) {
   request_->risk_data = risk_data;
-  if (!request_->user_response.cvc.empty()) {
-    real_pan_request_timestamp_ = AutofillClock::Now();
-    payments_client_->UnmaskCard(*request_);
-  }
+  if (!request_->user_response.cvc.empty() ||
+      !request_->fido_assertion_info.is_none())
+    SendUnmaskCardRequest();
+}
+
+void FullCardRequest::SendUnmaskCardRequest() {
+  real_pan_request_timestamp_ = AutofillClock::Now();
+  payments_client_->UnmaskCard(*request_,
+                               base::BindOnce(&FullCardRequest::OnDidGetRealPan,
+                                              weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FullCardRequest::OnDidGetRealPan(AutofillClient::PaymentsRpcResult result,

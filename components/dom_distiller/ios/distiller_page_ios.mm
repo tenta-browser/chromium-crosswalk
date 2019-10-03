@@ -12,15 +12,15 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "ios/web/public/browser_state.h"
-#import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_manager.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
+#import "ios/web/public/deprecated/crw_js_injection_manager.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 
@@ -30,7 +30,7 @@
 
 namespace {
 
-// This is duplicated here from ios/web/web_state/ui/web_view_js_utils.mm in
+// This is duplicated here from ios/web/js_messaging/web_view_js_utils.mm in
 // order to handle numbers. The dom distiller proto expects integers and the
 // generated JSON deserializer does not accept doubles in the place of ints.
 // However WKWebView only returns "numbers." However, here the proto expects
@@ -112,6 +112,34 @@ base::Value ValueResultFromScriptResult(id wk_result, int max_depth) {
 
 namespace dom_distiller {
 
+// Blocks the media content to avoid starting background playing.
+class DistillerPageMediaBlocker : public web::WebStatePolicyDecider {
+ public:
+  DistillerPageMediaBlocker(web::WebState* web_state)
+      : web::WebStatePolicyDecider(web_state),
+        main_frame_navigation_blocked_(false) {}
+
+  bool ShouldAllowResponse(NSURLResponse* response,
+                           bool for_main_frame) override {
+    if ([response.MIMEType hasPrefix:@"audio/"] ||
+        [response.MIMEType hasPrefix:@"video/"]) {
+      if (for_main_frame) {
+        main_frame_navigation_blocked_ = true;
+      }
+      return NO;
+    }
+    return YES;
+  }
+
+  bool main_frame_navigation_blocked() const {
+    return main_frame_navigation_blocked_;
+  }
+
+ private:
+  bool main_frame_navigation_blocked_;
+  DISALLOW_COPY_AND_ASSIGN(DistillerPageMediaBlocker);
+};
+
 #pragma mark -
 
 DistillerPageIOS::DistillerPageIOS(web::BrowserState* browser_state)
@@ -133,11 +161,14 @@ void DistillerPageIOS::AttachWebState(
   web_state_ = std::move(web_state);
   if (web_state_) {
     web_state_->AddObserver(this);
+    media_blocker_ =
+        std::make_unique<DistillerPageMediaBlocker>(web_state_.get());
   }
 }
 
 std::unique_ptr<web::WebState> DistillerPageIOS::DetachWebState() {
   if (web_state_) {
+    media_blocker_.reset();
     web_state_->RemoveObserver(this);
   }
   return std::move(web_state_);
@@ -162,6 +193,7 @@ void DistillerPageIOS::DistillPageImpl(const GURL& url,
   }
   // Load page using WebState.
   web::NavigationManager::WebLoadParams params(url_);
+  web_state_->SetKeepRenderProcessAlive(true);
   web_state_->GetNavigationManager()->LoadURLWithParams(params);
   // LoadIfNecessary is needed because the view is not created (but needed) when
   // loading the page. TODO(crbug.com/705819): Remove this call.
@@ -215,7 +247,8 @@ void DistillerPageIOS::DidStartLoading(web::WebState* web_state) {
 
 void DistillerPageIOS::DidStopLoading(web::WebState* web_state) {
   DCHECK_EQ(web_state_.get(), web_state);
-  if (web_state->IsShowingWebInterstitial()) {
+  if (web_state->IsShowingWebInterstitial() ||
+      media_blocker_->main_frame_navigation_blocked()) {
     // If there is an interstitial, stop the distillation.
     // The interstitial is not displayed to the user who cannot choose to
     // continue.

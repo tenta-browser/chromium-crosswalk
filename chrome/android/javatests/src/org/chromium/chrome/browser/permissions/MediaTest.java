@@ -6,28 +6,27 @@ package org.chromium.chrome.browser.permissions;
 
 import android.support.test.filters.MediumTest;
 
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.permissions.PermissionTestRule.PermissionUpdateWaiter;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.common.ContentSwitches;
+import org.chromium.chrome.test.util.ChromeRestriction;
+import org.chromium.content_public.common.ContentSwitches;
 
 /**
  * Test suite for media permissions requests.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @RetryOnFailure
 public class MediaTest {
     @Rule
@@ -37,6 +36,11 @@ public class MediaTest {
     private static final String TEST_FILE = "/content/test/data/android/media_permissions.html";
 
     public MediaTest() {}
+
+    @Before
+    public void setUp() throws Exception {
+        mPermissionRule.setUpActivity();
+    }
 
     private void testMediaPermissionsPlumbing(String prefix, String script, int numUpdates,
             boolean withGesture, boolean isDialog) throws Exception {
@@ -57,6 +61,7 @@ public class MediaTest {
     @MediumTest
     @Feature({"MediaPermissions", "Main"})
     @CommandLineFlags.Add({FAKE_DEVICE, "disable-features=" + PermissionTestRule.MODAL_FLAG})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_REQUIRES_TOUCH})
     public void testMicrophonePermissionsPlumbingInfoBar() throws Exception {
         testMediaPermissionsPlumbing("Mic count:", "initiate_getMicrophone()", 1, false, false);
     }
@@ -81,6 +86,7 @@ public class MediaTest {
     @MediumTest
     @Feature({"MediaPermissions", "Main"})
     @CommandLineFlags.Add({FAKE_DEVICE, "disable-features=" + PermissionTestRule.MODAL_FLAG})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_REQUIRES_TOUCH})
     public void testCameraPermissionsPlumbingInfoBar() throws Exception {
         testMediaPermissionsPlumbing("Camera count:", "initiate_getCamera()", 1, false, false);
     }
@@ -107,6 +113,7 @@ public class MediaTest {
     @MediumTest
     @Feature({"MediaPermissions", "Main"})
     @CommandLineFlags.Add({FAKE_DEVICE, "disable-features=" + PermissionTestRule.MODAL_FLAG})
+    @Restriction({ChromeRestriction.RESTRICTION_TYPE_REQUIRES_TOUCH})
     public void testCombinedPermissionsPlumbing() throws Exception {
         testMediaPermissionsPlumbing("Combined count:", "initiate_getCombined()", 1, false, false);
     }

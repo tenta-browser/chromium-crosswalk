@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -55,20 +56,40 @@ class WebUIBrowserExpectFailTest : public WebUIBrowserTest {
 WebUIBrowserTest* WebUIBrowserExpectFailTest::s_test_ = NULL;
 
 // Test that bogus javascript fails fast - no timeout waiting for result.
-IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestFailsFast) {
+// TODO(crbug/974796): Flaky on Win7 debug builds.
+#if (defined(OS_WIN) && !(defined(NDEBUG)))
+#define MAYBE_TestFailsFast DISABLED_TestFailsFast
+#else
+#define MAYBE_TestFailsFast TestFailsFast
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, MAYBE_TestFailsFast) {
   AddLibrary(base::FilePath(FILE_PATH_LITERAL("sample_downloads.js")));
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIDownloadsURL));
   EXPECT_FATAL_FAILURE(RunJavascriptTestNoReturn("DISABLED_BogusFunctionName"),
-                       "WebUITestHandler::JavaScriptComplete");
+                       "GetAsBoolean(&run_test_succeeded_)");
 }
 
 // Test that bogus javascript fails fast - no timeout waiting for result.
-IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestRuntimeErrorFailsFast) {
+// Flaky timeouts on Win7 Tests (dbg)(1); see https://crbug.com/985255.
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_TestRuntimeErrorFailsFast DISABLED_TestRuntimeErrorFailsFast
+#else
+#define MAYBE_TestRuntimeErrorFailsFast TestRuntimeErrorFailsFast
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest,
+                       MAYBE_TestRuntimeErrorFailsFast) {
   AddLibrary(base::FilePath(FILE_PATH_LITERAL("runtime_error.js")));
   ui_test_utils::NavigateToURL(browser(), GURL(kDummyURL));
   EXPECT_FATAL_FAILURE(RunJavascriptTestNoReturn("TestRuntimeErrorFailsFast"),
-                       "WebUITestHandler::JavaScriptComplete");
+                       "GetAsBoolean(&run_test_succeeded_)");
 }
+
+// Test times out in debug builds: https://crbug.com/902310
+#ifndef NDEBUG
+#define MAYBE_TestFailsAsyncFast DISABLED_TestFailsAsyncFast
+#else
+#define MAYBE_TestFailsAsyncFast TestFailsAsyncFast
+#endif
 
 // Test that bogus javascript fails async test fast as well - no timeout waiting
 // for result.
@@ -77,7 +98,7 @@ IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestFailsAsyncFast) {
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIDownloadsURL));
   EXPECT_FATAL_FAILURE(
       RunJavascriptAsyncTestNoReturn("DISABLED_BogusFunctionName"),
-      "WebUITestHandler::JavaScriptComplete");
+      "GetAsBoolean(&run_test_succeeded_)");
 }
 
 // Tests that the async framework works.
@@ -112,18 +133,22 @@ class WebUIBrowserAsyncTest : public WebUIBrowserTest {
 
    private:
     void RegisterMessages() override {
-      web_ui()->RegisterMessageCallback("startAsyncTest",
-          base::Bind(&AsyncWebUIMessageHandler::HandleStartAsyncTest,
-                     base::Unretained(this)));
-      web_ui()->RegisterMessageCallback("testContinues",
-          base::Bind(&AsyncWebUIMessageHandler::HandleTestContinues,
-                     base::Unretained(this)));
-      web_ui()->RegisterMessageCallback("testFails",
-          base::Bind(&AsyncWebUIMessageHandler::HandleTestFails,
-                     base::Unretained(this)));
-      web_ui()->RegisterMessageCallback("testPasses",
-          base::Bind(&AsyncWebUIMessageHandler::HandleTestPasses,
-                     base::Unretained(this)));
+      web_ui()->RegisterMessageCallback(
+          "startAsyncTest",
+          base::BindRepeating(&AsyncWebUIMessageHandler::HandleStartAsyncTest,
+                              base::Unretained(this)));
+      web_ui()->RegisterMessageCallback(
+          "testContinues",
+          base::BindRepeating(&AsyncWebUIMessageHandler::HandleTestContinues,
+                              base::Unretained(this)));
+      web_ui()->RegisterMessageCallback(
+          "testFails",
+          base::BindRepeating(&AsyncWebUIMessageHandler::HandleTestFails,
+                              base::Unretained(this)));
+      web_ui()->RegisterMessageCallback(
+          "testPasses",
+          base::BindRepeating(&AsyncWebUIMessageHandler::HandleTestPasses,
+                              base::Unretained(this)));
     }
 
     // Starts the test in |list_value|[0] with the runAsync wrapper.

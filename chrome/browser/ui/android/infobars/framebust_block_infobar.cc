@@ -9,6 +9,7 @@
 
 #include "base/android/jni_string.h"
 #include "base/memory/ptr_util.h"
+#include "chrome/android/chrome_jni_headers/FramebustBlockInfoBar_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/android/interventions/framebust_block_message_delegate_bridge.h"
@@ -16,7 +17,6 @@
 #include "chrome/browser/ui/interventions/intervention_infobar_delegate.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/FramebustBlockInfoBar_jni.h"
 
 FramebustBlockInfoBar::FramebustBlockInfoBar(
     std::unique_ptr<FramebustBlockMessageDelegate> message_delegate)
@@ -34,8 +34,10 @@ void FramebustBlockInfoBar::ProcessButton(int action) {
   if (!owner())
     return;  // We're closing; don't call anything, it might access the owner.
 
+  // Tapping the button means that the user wants to bypass the intervention in
+  // a sticky way, e.g. via content settings.
   DCHECK_EQ(action, InfoBarAndroid::ACTION_OK);
-  delegate_->AcceptIntervention();
+  delegate_->DeclineInterventionSticky();
   RemoveSelf();
 }
 

@@ -11,44 +11,33 @@
 #include "ui/aura/window.h"
 
 namespace ash {
+
 namespace {
 
-WallpaperWindowStateManager* g_window_state_manager = nullptr;
+// Reactivate the most recently unminimized window on the active desk so as not
+// to activate any desk that has been explicitly navigated away from, nor
+// activate any window that has been explicitly minimized.
+void ActivateMruUnminimizedWindowOnActiveDesk() {
+  MruWindowTracker::WindowList mru_windows(
+      Shell::Get()->mru_window_tracker()->BuildMruWindowList(
+          DesksMruType::kActiveDesk));
+  for (auto* window : mru_windows) {
+    if (WindowState::Get(window)->GetStateType() !=
+        WindowStateType::kMinimized) {
+      WindowState::Get(window)->Activate();
+      return;
+    }
+  }
+}
 
 }  // namespace
-
-// static
-void WallpaperWindowStateManager::MinimizeInactiveWindows(
-    const std::string& user_id_hash) {
-  if (!g_window_state_manager)
-    g_window_state_manager = new WallpaperWindowStateManager();
-  g_window_state_manager->BuildWindowListAndMinimizeInactiveForUser(
-      user_id_hash, wm::GetActiveWindow());
-}
-
-// static
-void WallpaperWindowStateManager::RestoreWindows(
-    const std::string& user_id_hash) {
-  if (!g_window_state_manager) {
-    DCHECK(false) << "This should only be called after calling "
-                  << "MinimizeInactiveWindows.";
-    return;
-  }
-
-  g_window_state_manager->RestoreMinimizedWindows(user_id_hash);
-  if (g_window_state_manager->user_id_hash_window_list_map_.empty()) {
-    delete g_window_state_manager;
-    g_window_state_manager = nullptr;
-  }
-}
 
 WallpaperWindowStateManager::WallpaperWindowStateManager() = default;
 
 WallpaperWindowStateManager::~WallpaperWindowStateManager() = default;
 
-void WallpaperWindowStateManager::BuildWindowListAndMinimizeInactiveForUser(
-    const std::string& user_id_hash,
-    aura::Window* active_window) {
+void WallpaperWindowStateManager::MinimizeInactiveWindows(
+    const std::string& user_id_hash) {
   if (user_id_hash_window_list_map_.find(user_id_hash) ==
       user_id_hash_window_list_map_.end()) {
     user_id_hash_window_list_map_[user_id_hash] = std::set<aura::Window*>();
@@ -56,20 +45,22 @@ void WallpaperWindowStateManager::BuildWindowListAndMinimizeInactiveForUser(
   std::set<aura::Window*>* results =
       &user_id_hash_window_list_map_[user_id_hash];
 
+  aura::Window* active_window = window_util::GetActiveWindow();
   aura::Window::Windows windows =
-      Shell::Get()->mru_window_tracker()->BuildWindowListIgnoreModal();
+      Shell::Get()->mru_window_tracker()->BuildWindowListIgnoreModal(
+          kActiveDesk);
 
   for (aura::Window::Windows::iterator iter = windows.begin();
        iter != windows.end(); ++iter) {
     // Ignore active window and minimized windows.
-    if (*iter == active_window || wm::GetWindowState(*iter)->IsMinimized())
+    if (*iter == active_window || WindowState::Get(*iter)->IsMinimized())
       continue;
 
     if (!(*iter)->HasObserver(this))
       (*iter)->AddObserver(this);
 
     results->insert(*iter);
-    wm::GetWindowState(*iter)->Minimize();
+    WindowState::Get(*iter)->Minimize();
   }
 }
 
@@ -89,9 +80,11 @@ void WallpaperWindowStateManager::RestoreMinimizedWindows(
 
   for (std::set<aura::Window*>::iterator iter = removed_windows.begin();
        iter != removed_windows.end(); ++iter) {
-    wm::GetWindowState(*iter)->Unminimize();
+    WindowState::Get(*iter)->Unminimize();
     RemoveObserverIfUnreferenced(*iter);
   }
+
+  ActivateMruUnminimizedWindowOnActiveDesk();
 }
 
 void WallpaperWindowStateManager::RemoveObserverIfUnreferenced(

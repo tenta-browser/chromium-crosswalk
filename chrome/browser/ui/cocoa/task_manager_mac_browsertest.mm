@@ -5,6 +5,8 @@
 #import <Cocoa/Cocoa.h>
 #include <stddef.h>
 
+#include <algorithm>
+
 #include "base/macros.h"
 #include "base/strings/pattern.h"
 #include "chrome/browser/browser_process.h"
@@ -26,6 +28,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_utils.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -87,18 +90,20 @@ class TaskManagerMacTest : public InProcessBrowserTest {
   }
 
   // Looks up a tab based on its tab ID.
-  content::WebContents* FindWebContentsByTabId(SessionID::id_type tab_id) {
-    for (TabContentsIterator it; !it.done(); it.Next()) {
-      if (SessionTabHelper::IdForTab(*it) == tab_id)
-        return *it;
-    }
-    return nullptr;
+  content::WebContents* FindWebContentsByTabId(SessionID tab_id) {
+    auto& all_tabs = AllTabContentses();
+    auto tab_id_matches = [tab_id](content::WebContents* web_contents) {
+      return SessionTabHelper::IdForTab(web_contents) == tab_id;
+    };
+    auto it = std::find_if(all_tabs.begin(), all_tabs.end(), tab_id_matches);
+
+    return (it == all_tabs.end()) ? nullptr : *it;
   }
 
   // Returns the current TaskManagerTableModel index for a particular tab. Don't
   // cache this value, since it can change whenever the message loop runs.
   int FindRowForTab(content::WebContents* tab) {
-    int32_t tab_id = SessionTabHelper::IdForTab(tab);
+    SessionID tab_id = SessionTabHelper::IdForTab(tab);
     std::unique_ptr<TaskManagerTester> tester =
         TaskManagerTester::Create(base::Closure());
     for (int i = 0; i < tester->GetRowCount(); ++i) {
@@ -269,11 +274,15 @@ IN_PROC_BROWSER_TEST_F(TaskManagerMacTest, SelectionConsistency) {
   EXPECT_EQ(TableFirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(2, [GetTable() numberOfSelectedRows]);
 
-  // Press the button, which kills the process of the selected row.
-  PressKillButton();
+  {
+    content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
 
-  // Two rows should disappear.
-  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+    // Press the button, which kills the process of the selected row.
+    PressKillButton();
+
+    // Two rows should disappear.
+    ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+  }
 
   // No row should now be selected.
   ASSERT_EQ(-1, TableFirstSelectedRow());

@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -14,12 +15,12 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
-#include "base/run_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "net/cookies/cookie_monster.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_store.h"
 #include "net/cookies/cookie_store_test_callbacks.h"
 #include "net/cookies/cookie_store_test_helpers.h"
@@ -37,6 +38,7 @@
 namespace net {
 
 using base::Thread;
+using TimeRange = CookieDeletionInfo::TimeRange;
 
 const int kTimeout = 1000;
 
@@ -46,6 +48,9 @@ const char kValidCookieLine[] = "A=B; path=/";
 // struct CookieStoreTestTraits {
 //   // Factory function. Will be called at most once per test.
 //   static std::unique_ptr<CookieStore> Create();
+//
+//   // Drains the run loop(s) used to deliver cookie change notifications.
+//   static void DeliverChangeNotifications();
 //
 //   // The cookie store supports cookies with the exclude_httponly() option.
 //   static const bool supports_http_only;
@@ -72,6 +77,27 @@ const char kValidCookieLine[] = "A=B; path=/";
 //   // calls to CookieStore::AddCallbackForAllChanges()).
 //   static const bool supports_global_cookie_tracking;
 //
+//   // The cookie store supports tracking of cookie changes for an URL (i.e.
+//   // calls to CookieStore::AddCallbackForUrl()).
+//   static const bool supports_url_cookie_tracking;
+//
+//   // The cookie store supports tracking of named cookie changes (i.e.
+//   // calls to CookieStore::AddCallbackForCookie()).
+//   static const bool supports_named_cookie_tracking;
+//
+//   // The cookie store supports more than one callback per cookie change type.
+//   static const bool supports_multiple_tracking_callbacks;
+//
+//   // The cookie store correctly distinguishes between OVERWRITE and EXPLICIT
+//   // (deletion) change causes.
+//   static const bool has_exact_change_cause;
+//
+//   // The cookie store is guaranteed to deliver cookie changes in the order
+//   // in which calls were issued. This only applies to changes coming from
+//   // _different_ calls. If a call results in a cookie overwrite, the deletion
+//   // change must still be issued before the insertion change.
+//   static const bool has_exact_change_ordering;
+//
 //   // Time to wait between two cookie insertions to ensure that cookies have
 //   // different creation times.
 //   static const int creation_time_granularity_in_ms;
@@ -82,6 +108,8 @@ class CookieStoreTest : public testing::Test {
  protected:
   CookieStoreTest()
       : http_www_foo_("http://www.foo.com"),
+        http_bar_foo_("http://bar.foo.com"),
+        http_www_bar_("http://www.bar.com"),
         https_www_foo_("https://www.foo.com"),
         ftp_foo_("ftp://ftp.foo.com/"),
         ws_www_foo_("ws://www.foo.com"),
@@ -92,10 +120,8 @@ class CookieStoreTest : public testing::Test {
         http_bar_com_("http://bar.com") {
     // This test may be used outside of the net test suite, and thus may not
     // have a message loop.
-    if (!base::MessageLoop::current())
+    if (!base::MessageLoopCurrent::Get())
       message_loop_.reset(new base::MessageLoop);
-    weak_factory_.reset(new base::WeakPtrFactory<base::MessageLoop>(
-        base::MessageLoop::current()));
   }
 
   // Helper methods for the asynchronous Cookie Store API that call the
@@ -115,9 +141,7 @@ class CookieStoreTest : public testing::Test {
                                     const CookieOptions& options) {
     DCHECK(cs);
     GetCookieListCallback callback;
-    cs->GetCookieListWithOptionsAsync(
-        url, options,
-        base::Bind(&GetCookieListCallback::Run, base::Unretained(&callback)));
+    cs->GetCookieListWithOptionsAsync(url, options, callback.MakeCallback());
     callback.WaitUntilDone();
     return CanonicalCookie::BuildCookieLine(callback.cookies());
   }
@@ -127,9 +151,7 @@ class CookieStoreTest : public testing::Test {
                                       const CookieOptions& options) {
     DCHECK(cs);
     GetCookieListCallback callback;
-    cs->GetCookieListWithOptionsAsync(
-        url, options,
-        base::Bind(&GetCookieListCallback::Run, base::Unretained(&callback)));
+    cs->GetCookieListWithOptionsAsync(url, options, callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.cookies();
   }
@@ -137,17 +159,28 @@ class CookieStoreTest : public testing::Test {
   CookieList GetAllCookiesForURL(CookieStore* cs, const GURL& url) {
     DCHECK(cs);
     GetCookieListCallback callback;
-    cs->GetAllCookiesForURLAsync(url, base::Bind(&GetCookieListCallback::Run,
-                                                 base::Unretained(&callback)));
+    cs->GetAllCookiesForURLAsync(url, callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.cookies();
+  }
+
+  CookieStatusList GetExcludedCookiesForURL(CookieStore* cs, const GURL& url) {
+    DCHECK(cs);
+    GetCookieListCallback callback;
+    CookieOptions options;
+    options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+    options.set_return_excluded_cookies();
+    cs->GetCookieListWithOptionsAsync(url, options, callback.MakeCallback());
+    callback.WaitUntilDone();
+    return callback.excluded_cookies();
   }
 
   CookieList GetAllCookies(CookieStore* cs) {
     DCHECK(cs);
     GetCookieListCallback callback;
-    cs->GetAllCookiesAsync(
-        base::Bind(&GetCookieListCallback::Run, base::Unretained(&callback)));
+    cs->GetAllCookiesAsync(callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.cookies();
   }
@@ -157,28 +190,28 @@ class CookieStoreTest : public testing::Test {
                             const std::string& cookie_line,
                             const CookieOptions& options) {
     DCHECK(cs);
-    ResultSavingCookieCallback<bool> callback;
-    cs->SetCookieWithOptionsAsync(
-        url, cookie_line, options,
-        base::Bind(
-            &ResultSavingCookieCallback<bool>::Run,
-            base::Unretained(&callback)));
+    ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+    cs->SetCookieWithOptionsAsync(url, cookie_line, options,
+                                  callback.MakeCallback());
     callback.WaitUntilDone();
-    return callback.result();
+    return callback.result() == CanonicalCookie::CookieInclusionStatus::INCLUDE;
   }
 
   bool SetCanonicalCookie(CookieStore* cs,
                           std::unique_ptr<CanonicalCookie> cookie,
-                          bool secure_source,
+                          std::string source_scheme,
                           bool can_modify_httponly) {
     DCHECK(cs);
-    ResultSavingCookieCallback<bool> callback;
-    cs->SetCanonicalCookieAsync(
-        std::move(cookie), secure_source, can_modify_httponly,
-        base::Bind(&ResultSavingCookieCallback<bool>::Run,
-                   base::Unretained(&callback)));
+    ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+    CookieOptions options;
+    if (can_modify_httponly)
+      options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+    cs->SetCanonicalCookieAsync(std::move(cookie), std::move(source_scheme),
+                                options, callback.MakeCallback());
     callback.WaitUntilDone();
-    return callback.result();
+    return callback.result() == CanonicalCookie::CookieInclusionStatus::INCLUDE;
   }
 
   bool SetCookieWithServerTime(CookieStore* cs,
@@ -201,52 +234,68 @@ class CookieStoreTest : public testing::Test {
     return SetCookieWithOptions(cs, url, cookie_line, options);
   }
 
-  void DeleteCookie(CookieStore* cs,
-                    const GURL& url,
-                    const std::string& cookie_name) {
+  CanonicalCookie::CookieInclusionStatus SetCookieReturnStatus(
+      CookieStore* cs,
+      const GURL& url,
+      const std::string& cookie_line) {
+    CookieOptions options;
+    if (!CookieStoreTestTraits::supports_http_only)
+      options.set_include_httponly();
+    // Allow setting SameSite cookies.
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+
     DCHECK(cs);
-    NoResultCookieCallback callback;
-    cs->DeleteCookieAsync(
-        url, cookie_name,
-        base::Bind(&NoResultCookieCallback::Run, base::Unretained(&callback)));
+    ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+    cs->SetCookieWithOptionsAsync(url, cookie_line, options,
+                                  callback.MakeCallback());
     callback.WaitUntilDone();
+    return callback.result();
+  }
+
+  CanonicalCookie::CookieInclusionStatus SetCanonicalCookieReturnStatus(
+      CookieStore* cs,
+      std::unique_ptr<CanonicalCookie> cookie,
+      std::string source_scheme,
+      bool can_modify_httponly) {
+    DCHECK(cs);
+    ResultSavingCookieCallback<CanonicalCookie::CookieInclusionStatus> callback;
+    CookieOptions options;
+    if (can_modify_httponly)
+      options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
+    cs->SetCanonicalCookieAsync(std::move(cookie), std::move(source_scheme),
+                                options, callback.MakeCallback());
+    callback.WaitUntilDone();
+    return callback.result();
   }
 
   uint32_t DeleteCanonicalCookie(CookieStore* cs,
                                  const CanonicalCookie& cookie) {
     DCHECK(cs);
     ResultSavingCookieCallback<uint32_t> callback;
-    cs->DeleteCanonicalCookieAsync(
-        cookie, base::Bind(&ResultSavingCookieCallback<uint32_t>::Run,
-                           base::Unretained(&callback)));
+    cs->DeleteCanonicalCookieAsync(cookie, callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.result();
   }
 
-  uint32_t DeleteCreatedBetween(CookieStore* cs,
-                                const base::Time& delete_begin,
-                                const base::Time& delete_end) {
+  uint32_t DeleteCreatedInTimeRange(CookieStore* cs,
+                                    const TimeRange& creation_range) {
     DCHECK(cs);
     ResultSavingCookieCallback<uint32_t> callback;
-    cs->DeleteAllCreatedBetweenAsync(
-        delete_begin, delete_end,
-        base::Bind(&ResultSavingCookieCallback<uint32_t>::Run,
-                   base::Unretained(&callback)));
+    cs->DeleteAllCreatedInTimeRangeAsync(creation_range,
+                                         callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.result();
   }
 
-  uint32_t DeleteAllCreatedBetweenWithPredicate(
-      CookieStore* cs,
-      const base::Time delete_begin,
-      const base::Time delete_end,
-      const CookieStore::CookiePredicate& predicate) {
+  uint32_t DeleteAllCreatedInTimeRange(CookieStore* cs,
+                                       CookieDeletionInfo delete_info) {
     DCHECK(cs);
     ResultSavingCookieCallback<uint32_t> callback;
-    cs->DeleteAllCreatedBetweenWithPredicateAsync(
-        delete_begin, delete_end, predicate,
-        base::Bind(&ResultSavingCookieCallback<uint32_t>::Run,
-                   base::Unretained(&callback)));
+    cs->DeleteAllMatchingInfoAsync(std::move(delete_info),
+                                   callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.result();
   }
@@ -254,9 +303,7 @@ class CookieStoreTest : public testing::Test {
   uint32_t DeleteSessionCookies(CookieStore* cs) {
     DCHECK(cs);
     ResultSavingCookieCallback<uint32_t> callback;
-    cs->DeleteSessionCookiesAsync(
-        base::Bind(&ResultSavingCookieCallback<uint32_t>::Run,
-                   base::Unretained(&callback)));
+    cs->DeleteSessionCookiesAsync(callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.result();
   }
@@ -264,8 +311,7 @@ class CookieStoreTest : public testing::Test {
   uint32_t DeleteAll(CookieStore* cs) {
     DCHECK(cs);
     ResultSavingCookieCallback<uint32_t> callback;
-    cs->DeleteAllAsync(base::Bind(&ResultSavingCookieCallback<uint32_t>::Run,
-                                  base::Unretained(&callback)));
+    cs->DeleteAllAsync(callback.MakeCallback());
     callback.WaitUntilDone();
     return callback.result();
   }
@@ -287,6 +333,9 @@ class CookieStoreTest : public testing::Test {
       cookie_store_ = CookieStoreTestTraits::Create();
     return cookie_store_.get();
   }
+
+  // Resets CookieStore.
+  void ResetCookieStore() { cookie_store_.reset(); }
 
   // Compares two cookie lines.
   void MatchCookieLines(const std::string& line1, const std::string& line2) {
@@ -314,6 +363,8 @@ class CookieStoreTest : public testing::Test {
   }
 
   const CookieURLHelper http_www_foo_;
+  const CookieURLHelper http_bar_foo_;
+  const CookieURLHelper http_www_bar_;
   const CookieURLHelper https_www_foo_;
   const CookieURLHelper ftp_foo_;
   const CookieURLHelper ws_www_foo_;
@@ -323,7 +374,6 @@ class CookieStoreTest : public testing::Test {
   const CookieURLHelper http_baz_com_;
   const CookieURLHelper http_bar_com_;
 
-  std::unique_ptr<base::WeakPtrFactory<base::MessageLoop>> weak_factory_;
   std::unique_ptr<base::MessageLoop> message_loop_;
 
  private:
@@ -338,8 +388,7 @@ class CookieStoreTest : public testing::Test {
 
   std::unique_ptr<CookieStore> cookie_store_;
 };
-
-TYPED_TEST_CASE_P(CookieStoreTest);
+TYPED_TEST_SUITE_P(CookieStoreTest);
 
 TYPED_TEST_P(CookieStoreTest, FilterTest) {
   CookieStore* cs = this->GetCookieStore();
@@ -352,20 +401,20 @@ TYPED_TEST_P(CookieStoreTest, FilterTest) {
   std::unique_ptr<CanonicalCookie> cc(CanonicalCookie::CreateSanitizedCookie(
       this->www_foo_foo_.url(), "A", "B", std::string(), "/foo", one_hour_ago,
       one_hour_from_now, base::Time(), false, false,
-      CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT));
+      CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT));
   ASSERT_TRUE(cc);
-  EXPECT_TRUE(this->SetCanonicalCookie(
-      cs, std::move(cc), true /*secure_source*/, true /*modify_httponly*/));
+  EXPECT_TRUE(this->SetCanonicalCookie(cs, std::move(cc), "https",
+                                       true /*modify_httponly*/));
 
   // Note that for the creation time to be set exactly, without modification,
   // it must be different from the one set by the line above.
   cc = CanonicalCookie::CreateSanitizedCookie(
       this->www_foo_bar_.url(), "C", "D", this->www_foo_bar_.domain(), "/bar",
       two_hours_ago, base::Time(), one_hour_ago, false, true,
-      CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT);
+      CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT);
   ASSERT_TRUE(cc);
-  EXPECT_TRUE(this->SetCanonicalCookie(
-      cs, std::move(cc), true /*secure_source*/, true /*modify_httponly*/));
+  EXPECT_TRUE(this->SetCanonicalCookie(cs, std::move(cc), "https",
+                                       true /*modify_httponly*/));
 
   // Because of strict secure cookies, it should not be possible to create
   // a secure cookie with an HTTP URL.
@@ -373,16 +422,16 @@ TYPED_TEST_P(CookieStoreTest, FilterTest) {
   cc = CanonicalCookie::CreateSanitizedCookie(
       this->http_www_foo_.url(), "E", "F", std::string(), std::string(),
       base::Time(), base::Time(), base::Time(), true, false,
-      CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT);
+      CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT);
   ASSERT_FALSE(cc);
 
   cc = CanonicalCookie::CreateSanitizedCookie(
       this->https_www_foo_.url(), "E", "F", std::string(), std::string(),
       base::Time(), base::Time(), base::Time(), true, false,
-      CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT);
+      CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT);
   ASSERT_TRUE(cc);
-  EXPECT_TRUE(this->SetCanonicalCookie(
-      cs, std::move(cc), true /*secure_source*/, true /*modify_httponly*/));
+  EXPECT_TRUE(this->SetCanonicalCookie(cs, std::move(cc), "https",
+                                       true /*modify_httponly*/));
 
   // Get all the cookies for a given URL, regardless of properties. This 'get()'
   // operation shouldn't update the access time, as the test checks that the
@@ -390,8 +439,8 @@ TYPED_TEST_P(CookieStoreTest, FilterTest) {
   // make that difficult.
   CookieOptions options;
   options.set_include_httponly();
-  options.set_same_site_cookie_mode(
-      CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+  options.set_same_site_cookie_context(
+      CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
   options.set_do_not_update_access_time();
 
   CookieList cookies =
@@ -485,26 +534,27 @@ TYPED_TEST_P(CookieStoreTest, SetCanonicalCookieTest) {
       std::make_unique<CanonicalCookie>(
           "A", "B", foo_foo_host, "/foo", one_hour_ago, one_hour_from_now,
           base::Time(), false /* secure */, false /* httponly */,
-          CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-      false /* secure_source */, true));
+          CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+      "http", true));
   // Note that for the creation time to be set exactly, without modification,
   // it must be different from the one set by the line above.
   EXPECT_TRUE(this->SetCanonicalCookie(
       cs,
       std::make_unique<CanonicalCookie>(
           "C", "D", "." + foo_bar_domain, "/bar", two_hours_ago, base::Time(),
-          one_hour_ago, false, true, CookieSameSite::DEFAULT_MODE,
+          one_hour_ago, false, true, CookieSameSite::NO_RESTRICTION,
           COOKIE_PRIORITY_DEFAULT),
-      false /* secure_source */, true));
+      "http", true));
 
   // A secure source is required for creating secure cookies.
-  EXPECT_FALSE(this->SetCanonicalCookie(
-      cs,
-      std::make_unique<CanonicalCookie>(
-          "E", "F", http_foo_host, "/", base::Time(), base::Time(),
-          base::Time(), true, false, CookieSameSite::DEFAULT_MODE,
-          COOKIE_PRIORITY_DEFAULT),
-      false /* secure_source */, true));
+  EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::EXCLUDE_SECURE_ONLY,
+            this->SetCanonicalCookieReturnStatus(
+                cs,
+                std::make_unique<CanonicalCookie>(
+                    "E", "F", http_foo_host, "/", base::Time(), base::Time(),
+                    base::Time(), true, false, CookieSameSite::NO_RESTRICTION,
+                    COOKIE_PRIORITY_DEFAULT),
+                "http", true));
 
   // A secure source is also required for overwriting secure cookies.  Writing
   // a secure cookie then overwriting it from a non-secure source should fail.
@@ -513,27 +563,30 @@ TYPED_TEST_P(CookieStoreTest, SetCanonicalCookieTest) {
       std::make_unique<CanonicalCookie>(
           "E", "F", http_foo_host, "/", base::Time(), base::Time(),
           base::Time(), true /* secure */, false /* httponly */,
-          CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-      true /* secure_source */, true /* modify_http_only */));
+          CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+      "https", true /* modify_http_only */));
 
-  EXPECT_FALSE(this->SetCanonicalCookie(
-      cs,
-      std::make_unique<CanonicalCookie>(
-          "E", "F", http_foo_host, "/", base::Time(), base::Time(),
-          base::Time(), true /* secure */, false /* httponly */,
-          CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-      false /* secure_source */, true /* modify_http_only */));
+  EXPECT_EQ(CanonicalCookie::CookieInclusionStatus::EXCLUDE_SECURE_ONLY,
+            this->SetCanonicalCookieReturnStatus(
+                cs,
+                std::make_unique<CanonicalCookie>(
+                    "E", "F", http_foo_host, "/", base::Time(), base::Time(),
+                    base::Time(), true /* secure */, false /* httponly */,
+                    CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+                "http", true /* modify_http_only */));
 
   if (TypeParam::supports_http_only) {
     // Permission to modify http only cookies is required to create an
     // httponly cookie.
-    EXPECT_FALSE(this->SetCanonicalCookie(
-        cs,
-        std::make_unique<CanonicalCookie>(
-            "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
-            base::Time(), false /* secure */, true /* httponly */,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-        false /* secure_source */, false /* modify_http_only */));
+    EXPECT_EQ(
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_HTTP_ONLY,
+        this->SetCanonicalCookieReturnStatus(
+            cs,
+            std::make_unique<CanonicalCookie>(
+                "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
+                base::Time(), false /* secure */, true /* httponly */,
+                CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+            "http", false /* modify_http_only */));
 
     // Permission to modify httponly cookies is also required to overwrite
     // an httponly cookie.
@@ -542,16 +595,18 @@ TYPED_TEST_P(CookieStoreTest, SetCanonicalCookieTest) {
         std::make_unique<CanonicalCookie>(
             "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
             base::Time(), false /* secure */, true /* httponly */,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-        false /* secure_source */, true /* modify_http_only */));
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+        "http", true /* modify_http_only */));
 
-    EXPECT_FALSE(this->SetCanonicalCookie(
-        cs,
-        std::make_unique<CanonicalCookie>(
-            "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
-            base::Time(), false /* secure */, true /* httponly */,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-        false /* secure_source */, false /* modify_http_only */));
+    EXPECT_EQ(
+        CanonicalCookie::CookieInclusionStatus::EXCLUDE_HTTP_ONLY,
+        this->SetCanonicalCookieReturnStatus(
+            cs,
+            std::make_unique<CanonicalCookie>(
+                "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
+                base::Time(), false /* secure */, true /* httponly */,
+                CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+            "http", false /* modify_http_only */));
   } else {
     // Leave store in same state as if the above tests had been run.
     EXPECT_TRUE(this->SetCanonicalCookie(
@@ -559,8 +614,8 @@ TYPED_TEST_P(CookieStoreTest, SetCanonicalCookieTest) {
         std::make_unique<CanonicalCookie>(
             "G", "H", http_foo_host, "/unique", base::Time(), base::Time(),
             base::Time(), false /* secure */, true /* httponly */,
-            CookieSameSite::DEFAULT_MODE, COOKIE_PRIORITY_DEFAULT),
-        false /* secure_source */, true /* modify_http_only */));
+            CookieSameSite::NO_RESTRICTION, COOKIE_PRIORITY_DEFAULT),
+        "http", true /* modify_http_only */));
   }
 
   // Get all the cookies for a given URL, regardless of properties. This 'get()'
@@ -569,8 +624,8 @@ TYPED_TEST_P(CookieStoreTest, SetCanonicalCookieTest) {
   // make that difficult.
   CookieOptions options;
   options.set_include_httponly();
-  options.set_same_site_cookie_mode(
-      CookieOptions::SameSiteCookieMode::INCLUDE_STRICT_AND_LAX);
+  options.set_same_site_cookie_context(
+      CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
   options.set_do_not_update_access_time();
 
   CookieList cookies =
@@ -647,28 +702,28 @@ TYPED_TEST_P(CookieStoreTest, SecureEnforcement) {
           "A", "B", http_domain, "/", base::Time::Now(), base::Time(),
           base::Time(), true, false, CookieSameSite::NO_RESTRICTION,
           COOKIE_PRIORITY_DEFAULT),
-      false /*secure_source*/, true /*modify_httponly*/));
+      "http", true /*modify_httponly*/));
   EXPECT_TRUE(this->SetCanonicalCookie(
       cs,
       std::make_unique<CanonicalCookie>(
           "A", "B", http_domain, "/", base::Time::Now(), base::Time(),
           base::Time(), true, false, CookieSameSite::NO_RESTRICTION,
           COOKIE_PRIORITY_DEFAULT),
-      true /*secure_source*/, true /*modify_httponly*/));
+      "https", true /*modify_httponly*/));
   EXPECT_TRUE(this->SetCanonicalCookie(
       cs,
       std::make_unique<CanonicalCookie>(
           "A", "B", http_domain, "/", base::Time::Now(), base::Time(),
           base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
           COOKIE_PRIORITY_DEFAULT),
-      true /*secure_source*/, true /*modify_httponly*/));
+      "https", true /*modify_httponly*/));
   EXPECT_TRUE(this->SetCanonicalCookie(
       cs,
       std::make_unique<CanonicalCookie>(
           "A", "B", http_domain, "/", base::Time::Now(), base::Time(),
           base::Time(), false, false, CookieSameSite::NO_RESTRICTION,
           COOKIE_PRIORITY_DEFAULT),
-      false /*secure_source*/, true /*modify_httponly*/));
+      "http", true /*modify_httponly*/));
 }
 
 // The iOS networking stack uses the iOS cookie parser, which we do not
@@ -1259,7 +1314,7 @@ TYPED_TEST_P(CookieStoreTest, TestDeleteAll) {
   EXPECT_EQ(0u, this->GetAllCookies(cs).size());
 }
 
-TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedBetween) {
+TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedInTimeRange) {
   CookieStore* cs = this->GetCookieStore();
   const base::Time last_month = base::Time::Now() -
                                 base::TimeDelta::FromDays(30);
@@ -1277,14 +1332,17 @@ TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedBetween) {
                          this->GetCookies(cs, this->http_www_foo_.url()));
 
   // Remove cookies in empty intervals.
-  EXPECT_EQ(0u, this->DeleteCreatedBetween(cs, last_month, last_minute));
-  EXPECT_EQ(0u, this->DeleteCreatedBetween(cs, next_minute, next_month));
+  EXPECT_EQ(0u, this->DeleteCreatedInTimeRange(
+                    cs, TimeRange(last_month, last_minute)));
+  EXPECT_EQ(0u, this->DeleteCreatedInTimeRange(
+                    cs, TimeRange(next_minute, next_month)));
   // Check that the cookie is still there.
   this->MatchCookieLines("A=B",
                          this->GetCookies(cs, this->http_www_foo_.url()));
 
   // Remove the cookie with an interval defined by two dates.
-  EXPECT_EQ(1u, this->DeleteCreatedBetween(cs, last_minute, next_minute));
+  EXPECT_EQ(1u, this->DeleteCreatedInTimeRange(
+                    cs, TimeRange(last_minute, next_minute)));
   // Check that the cookie disappeared.
   this->MatchCookieLines(std::string(),
                          this->GetCookies(cs, this->http_www_foo_.url()));
@@ -1296,25 +1354,18 @@ TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedBetween) {
                          this->GetCookies(cs, this->http_www_foo_.url()));
 
   // Remove the cookie with a null ending time.
-  EXPECT_EQ(1u, this->DeleteCreatedBetween(cs, last_minute, base::Time()));
+  EXPECT_EQ(1u, this->DeleteCreatedInTimeRange(
+                    cs, TimeRange(last_minute, base::Time())));
   // Check that the cookie disappeared.
   this->MatchCookieLines(std::string(),
                          this->GetCookies(cs, this->http_www_foo_.url()));
 }
 
-namespace {
-static bool CookieHasValue(const std::string& value,
-                           const CanonicalCookie& cookie) {
-  return cookie.Value() == value;
-}
-}
-
-TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedBetweenWithPredicate) {
+TYPED_TEST_P(CookieStoreTest, TestDeleteAllWithInfo) {
   CookieStore* cs = this->GetCookieStore();
   base::Time now = base::Time::Now();
   base::Time last_month = base::Time::Now() - base::TimeDelta::FromDays(30);
   base::Time last_minute = base::Time::Now() - base::TimeDelta::FromMinutes(1);
-  std::string desired_value("B");
 
   // These 3 cookies match the time range and host.
   EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "A=B"));
@@ -1323,31 +1374,25 @@ TYPED_TEST_P(CookieStoreTest, TestDeleteAllCreatedBetweenWithPredicate) {
   EXPECT_TRUE(this->SetCookie(cs, this->https_www_foo_.url(), "E=B"));
 
   // Delete cookies.
+  CookieDeletionInfo delete_info(now, base::Time::Max());
+  delete_info.value_for_testing = "B";
   EXPECT_EQ(2u,  // Deletes A=B, E=B
-            this->DeleteAllCreatedBetweenWithPredicate(
-                cs, now, base::Time::Max(),
-                base::Bind(&CookieHasValue, desired_value)));
+            this->DeleteAllCreatedInTimeRange(cs, std::move(delete_info)));
 
   // Check that we deleted the right ones.
   this->MatchCookieLines("C=D;Y=Z",
                          this->GetCookies(cs, this->https_www_foo_.url()));
 
-  // Now check that using a null predicate will do nothing.
-  EXPECT_EQ(0u,
-            this->DeleteAllCreatedBetweenWithPredicate(
-                cs, now, base::Time::Max(), CookieStore::CookiePredicate()));
-
   // Finally, check that we don't delete cookies when our time range is off.
-  desired_value = "D";
-  EXPECT_EQ(0u, this->DeleteAllCreatedBetweenWithPredicate(
-                    cs, last_month, last_minute,
-                    base::Bind(&CookieHasValue, desired_value)));
+  delete_info = CookieDeletionInfo(last_month, last_minute);
+  delete_info.value_for_testing = "D";
+  EXPECT_EQ(0u, this->DeleteAllCreatedInTimeRange(cs, std::move(delete_info)));
   this->MatchCookieLines("C=D;Y=Z",
                          this->GetCookies(cs, this->https_www_foo_.url()));
   // Same thing, but with a good time range.
-  EXPECT_EQ(1u, this->DeleteAllCreatedBetweenWithPredicate(
-                    cs, now, base::Time::Max(),
-                    base::Bind(&CookieHasValue, desired_value)));
+  delete_info = CookieDeletionInfo(now, base::Time::Max());
+  delete_info.value_for_testing = "D";
+  EXPECT_EQ(1u, this->DeleteAllCreatedInTimeRange(cs, std::move(delete_info)));
   this->MatchCookieLines("Y=Z",
                          this->GetCookies(cs, this->https_www_foo_.url()));
 }
@@ -1571,31 +1616,6 @@ TYPED_TEST_P(CookieStoreTest, GetAllCookiesAsync) {
   ASSERT_TRUE(++it == cookies.end());
 }
 
-TYPED_TEST_P(CookieStoreTest, DeleteCookieAsync) {
-  CookieStore* cs = this->GetCookieStore();
-
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "A=A1; path=/"));
-  EXPECT_TRUE(
-      this->SetCookie(cs, this->http_www_foo_.url(), "A=A2; path=/foo"));
-  EXPECT_TRUE(
-      this->SetCookie(cs, this->http_www_foo_.url(), "A=A3; path=/bar"));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "B=B1; path=/"));
-  EXPECT_TRUE(
-      this->SetCookie(cs, this->http_www_foo_.url(), "B=B2; path=/foo"));
-  EXPECT_TRUE(
-      this->SetCookie(cs, this->http_www_foo_.url(), "B=B3; path=/bar"));
-
-  this->DeleteCookie(cs, this->http_www_foo_.AppendPath("foo/bar"), "A");
-
-  CookieList cookies = this->GetAllCookies(cs);
-  size_t expected_size = 4;
-  EXPECT_EQ(expected_size, cookies.size());
-  for (const auto& cookie : cookies) {
-    EXPECT_NE("A1", cookie.Value());
-    EXPECT_NE("A2", cookie.Value());
-  }
-}
-
 TYPED_TEST_P(CookieStoreTest, DeleteCanonicalCookieAsync) {
   CookieStore* cs = this->GetCookieStore();
 
@@ -1653,268 +1673,46 @@ TYPED_TEST_P(CookieStoreTest, DeleteSessionCookie) {
   EXPECT_EQ("C=D", this->GetCookies(cs, this->http_www_foo_.url()));
 }
 
-namespace {
-
-typedef std::pair<CanonicalCookie, CookieStore::ChangeCause> CookieNotification;
-
-void OnCookieChanged(std::vector<CookieNotification>* changes,
-                     const CanonicalCookie& cookie,
-                     CookieStore::ChangeCause cause) {
-  CookieNotification notification(cookie, cause);
-  changes->push_back(notification);
-}
-
-}  // namespace
-
-TYPED_TEST_P(CookieStoreTest, GlobalChangeTracking_Insert) {
-  if (!TypeParam::supports_global_cookie_tracking)
-    return;
-
-  CookieStore* cs = this->GetCookieStore();
-  std::vector<CookieNotification> cookie_changes;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes))));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "A=B"));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "C=D"));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "E=F"));
-  EXPECT_EQ("A=B; C=D; E=F", this->GetCookies(cs, this->http_www_foo_.url()));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(3u, cookie_changes.size());
-  EXPECT_EQ(CookieStore::ChangeCause::INSERTED, cookie_changes[0].second);
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[0].first.Domain());
-  EXPECT_EQ("A", cookie_changes[0].first.Name());
-  EXPECT_EQ("B", cookie_changes[0].first.Value());
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[1].first.Domain());
-  EXPECT_EQ(CookieStore::ChangeCause::INSERTED, cookie_changes[1].second);
-  EXPECT_EQ("C", cookie_changes[1].first.Name());
-  EXPECT_EQ("D", cookie_changes[1].first.Value());
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[2].first.Domain());
-  EXPECT_EQ(CookieStore::ChangeCause::INSERTED, cookie_changes[2].second);
-  EXPECT_EQ("E", cookie_changes[2].first.Name());
-  EXPECT_EQ("F", cookie_changes[2].first.Value());
-}
-
-TYPED_TEST_P(CookieStoreTest, GlobalChangeTracking_Delete) {
-  if (!TypeParam::supports_global_cookie_tracking)
-    return;
-
-  CookieStore* cs = this->GetCookieStore();
-  std::vector<CookieNotification> cookie_changes;
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "A=B"));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "C=D"));
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "E=F"));
-
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes))));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(0u, cookie_changes.size());
-
-  EXPECT_TRUE(
-      this->FindAndDeleteCookie(cs, this->http_www_foo_.url().host(), "C"));
-  EXPECT_EQ("A=B; E=F", this->GetCookies(cs, this->http_www_foo_.url()));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(1u, cookie_changes.size());
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[0].first.Domain());
-  EXPECT_EQ(CookieStore::ChangeCause::EXPLICIT_DELETE_CANONICAL,
-            cookie_changes[0].second);
-  EXPECT_EQ("C", cookie_changes[0].first.Name());
-  EXPECT_EQ("D", cookie_changes[0].first.Value());
-}
-
-TYPED_TEST_P(CookieStoreTest, GlobalChangeTracking_Overwrite) {
-  if (!TypeParam::supports_global_cookie_tracking)
-    return;
-
-  // Insert a cookie "a" for path "/path1"
-  CookieStore* cs = this->GetCookieStore();
-  std::vector<CookieNotification> cookie_changes;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes))));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(0u, cookie_changes.size());
-
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(),
-                              "a=val1; path=/path1; "
-                              "expires=Mon, 18-Apr-22 22:50:13 GMT"));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(1u, cookie_changes.size());
-  EXPECT_EQ(CookieStore::ChangeCause::INSERTED, cookie_changes[0].second);
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[0].first.Domain());
-  EXPECT_EQ("a", cookie_changes[0].first.Name());
-  EXPECT_EQ("val1", cookie_changes[0].first.Value());
-  cookie_changes.clear();
-
-  // Insert a cookie "a" for path "/path1", that is httponly. This should
-  // overwrite the non-http-only version.
-  CookieOptions allow_httponly;
-  allow_httponly.set_include_httponly();
-  EXPECT_TRUE(this->SetCookieWithOptions(cs, this->http_www_foo_.url(),
-                                         "a=val2; path=/path1; httponly; "
-                                         "expires=Mon, 18-Apr-22 22:50:14 GMT",
-                                         allow_httponly));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(2u, cookie_changes.size());
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[0].first.Domain());
-  EXPECT_EQ(CookieStore::ChangeCause::OVERWRITE, cookie_changes[0].second);
-  EXPECT_EQ("a", cookie_changes[0].first.Name());
-  EXPECT_EQ("val1", cookie_changes[0].first.Value());
-  EXPECT_EQ(this->http_www_foo_.url().host(), cookie_changes[1].first.Domain());
-  EXPECT_EQ(CookieStore::ChangeCause::INSERTED, cookie_changes[1].second);
-  EXPECT_EQ("a", cookie_changes[1].first.Name());
-  EXPECT_EQ("val2", cookie_changes[1].first.Value());
-}
-
-TYPED_TEST_P(CookieStoreTest, GlobalChangeTracking_Deregister) {
-  if (!TypeParam::supports_global_cookie_tracking)
-    return;
-
-  CookieStore* cs = this->GetCookieStore();
-
-  // Register two notifiers.
-  std::vector<CookieNotification> cookie_changes_1;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription1(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes_1))));
-
-  std::vector<CookieNotification> cookie_changes_2;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription2(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes_2))));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(0u, cookie_changes_1.size());
-  ASSERT_EQ(0u, cookie_changes_2.size());
-
-  // Insert a cookie and make sure both see it.
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "A=B"));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(1u, cookie_changes_1.size());
-  EXPECT_EQ("A", cookie_changes_1[0].first.Name());
-  EXPECT_EQ("B", cookie_changes_1[0].first.Value());
-  cookie_changes_1.clear();
-
-  ASSERT_EQ(1u, cookie_changes_2.size());
-  EXPECT_EQ("A", cookie_changes_2[0].first.Name());
-  EXPECT_EQ("B", cookie_changes_2[0].first.Value());
-  cookie_changes_2.clear();
-
-  // De-register the second registration.
-  subscription2.reset();
-
-  // Insert a second cookie and make sure that it's only visible in one
-  // change array.
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "C=D"));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(1u, cookie_changes_1.size());
-  EXPECT_EQ("C", cookie_changes_1[0].first.Name());
-  EXPECT_EQ("D", cookie_changes_1[0].first.Value());
-  cookie_changes_1.clear();
-
-  ASSERT_EQ(0u, cookie_changes_2.size());
-}
-
-// Confirm that deregistering a subscription blocks the notification
-// if the deregistration happened after the change but before the
-// notification was received.
-TYPED_TEST_P(CookieStoreTest, GlobalChangeTracking_DeregisterRace) {
-  if (!TypeParam::supports_global_cookie_tracking)
-    return;
-
-  CookieStore* cs = this->GetCookieStore();
-
-  // Register two notifiers.
-  std::vector<CookieNotification> cookie_changes_1;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription1(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes_1))));
-
-  std::vector<CookieNotification> cookie_changes_2;
-  std::unique_ptr<CookieStore::CookieChangedSubscription> subscription2(
-      cs->AddCallbackForAllChanges(
-          base::Bind(&OnCookieChanged, base::Unretained(&cookie_changes_2))));
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(0u, cookie_changes_1.size());
-  ASSERT_EQ(0u, cookie_changes_2.size());
-
-  // De-register the second registration.
-
-  // Insert a cookie, confirm not seen, dergister, run until idle,
-  // and confirm still not seen.
-  ASSERT_EQ(0u, cookie_changes_2.size());
-  EXPECT_TRUE(this->SetCookie(cs, this->http_www_foo_.url(), "C=D"));
-
-  // Note that by the API contract it's perfectly valid to have
-  // received the notification immediately, i.e. synchrnously with the cookie
-  // change.  In that case, there's nothing to test.
-  if (1u == cookie_changes_2.size()) {
-    LOG(ERROR) << "Nothing to test.";
-    return;
-  }
-
-  // A task was posted by the SetCookie() above, but has not yet
-  // arrived.  If it arrived before the subscription is destroyed,
-  // callback execution would be valid.  Destroy one of the
-  // subscriptions so as to lose the race and make sure the task
-  // posted arrives after the subscription was destroyed.
-  subscription2.reset();
-  base::RunLoop().RunUntilIdle();
-  ASSERT_EQ(1u, cookie_changes_1.size());
-  EXPECT_EQ("C", cookie_changes_1[0].first.Name());
-  EXPECT_EQ("D", cookie_changes_1[0].first.Value());
-  cookie_changes_1.clear();
-
-  // No late notification was received.
-  ASSERT_EQ(0u, cookie_changes_2.size());
-}
-
-REGISTER_TYPED_TEST_CASE_P(CookieStoreTest,
-                           FilterTest,
-                           SetCanonicalCookieTest,
-                           SecureEnforcement,
-                           EmptyKeyTest,
-                           DomainTest,
-                           DomainWithTrailingDotTest,
-                           ValidSubdomainTest,
-                           InvalidDomainTest,
-                           InvalidDomainSameDomainAndRegistry,
-                           DomainWithoutLeadingDotParentDomain,
-                           DomainWithoutLeadingDotSameDomain,
-                           CaseInsensitiveDomainTest,
-                           TestIpAddress,
-                           TestIpAddressNoDomainCookies,
-                           TestTLD,
-                           TestTLDWithTerminalDot,
-                           TestSubdomainSettingCookiesOnUnknownTLD,
-                           TestSubdomainSettingCookiesOnKnownTLD,
-                           TestSubdomainSettingCookiesOnKnownDottedTLD,
-                           TestSettingCookiesOnUnknownTLD,
-                           TestSettingCookiesWithHostDomainOnUnknownTLD,
-                           TestHostEndsWithDot,
-                           InvalidScheme,
-                           InvalidScheme_Read,
-                           PathTest,
-                           EmptyExpires,
-                           HttpOnlyTest,
-                           TestCookieDeletion,
-                           TestDeleteAll,
-                           TestDeleteAllCreatedBetween,
-                           TestDeleteAllCreatedBetweenWithPredicate,
-                           TestSecure,
-                           NetUtilCookieTest,
-                           OverwritePersistentCookie,
-                           EmptyName,
-                           CookieOrdering,
-                           GetAllCookiesAsync,
-                           DeleteCookieAsync,
-                           DeleteCanonicalCookieAsync,
-                           DeleteSessionCookie,
-                           GlobalChangeTracking_Insert,
-                           GlobalChangeTracking_Delete,
-                           GlobalChangeTracking_Overwrite,
-                           GlobalChangeTracking_Deregister,
-                           GlobalChangeTracking_DeregisterRace);
+REGISTER_TYPED_TEST_SUITE_P(CookieStoreTest,
+                            FilterTest,
+                            SetCanonicalCookieTest,
+                            SecureEnforcement,
+                            EmptyKeyTest,
+                            DomainTest,
+                            DomainWithTrailingDotTest,
+                            ValidSubdomainTest,
+                            InvalidDomainTest,
+                            InvalidDomainSameDomainAndRegistry,
+                            DomainWithoutLeadingDotParentDomain,
+                            DomainWithoutLeadingDotSameDomain,
+                            CaseInsensitiveDomainTest,
+                            TestIpAddress,
+                            TestIpAddressNoDomainCookies,
+                            TestTLD,
+                            TestTLDWithTerminalDot,
+                            TestSubdomainSettingCookiesOnUnknownTLD,
+                            TestSubdomainSettingCookiesOnKnownTLD,
+                            TestSubdomainSettingCookiesOnKnownDottedTLD,
+                            TestSettingCookiesOnUnknownTLD,
+                            TestSettingCookiesWithHostDomainOnUnknownTLD,
+                            TestHostEndsWithDot,
+                            InvalidScheme,
+                            InvalidScheme_Read,
+                            PathTest,
+                            EmptyExpires,
+                            HttpOnlyTest,
+                            TestCookieDeletion,
+                            TestDeleteAll,
+                            TestDeleteAllCreatedInTimeRange,
+                            TestDeleteAllWithInfo,
+                            TestSecure,
+                            NetUtilCookieTest,
+                            OverwritePersistentCookie,
+                            EmptyName,
+                            CookieOrdering,
+                            GetAllCookiesAsync,
+                            DeleteCanonicalCookieAsync,
+                            DeleteSessionCookie);
 
 }  // namespace net
 

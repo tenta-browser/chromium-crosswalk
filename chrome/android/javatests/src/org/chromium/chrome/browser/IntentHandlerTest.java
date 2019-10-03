@@ -25,10 +25,12 @@ import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.CollectionUtil;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
 import org.chromium.chrome.browser.test.CommandLineInitRule;
+import org.chromium.chrome.browser.util.UrlConstants;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -90,6 +92,21 @@ public class IntentHandlerTest {
                     + "://navigate?url=content://com.android.chrome.FileProvider",
     };
 
+    private static final String[][] INTENT_URLS_AND_TYPES_FOR_MHTML = {
+            {"file://foo.mhtml", ""}, {"file://foo.mht", ""}, {"file://foo!.mht", ""},
+            {"file://foo!.mhtml", ""}, {"file://foo.mhtml", "application/octet-stream"},
+            {"file://foo.mht", "application/octet-stream"}, {"file://foo", "multipart/related"},
+            {"file://foo", "message/rfc822"}, {"content://example.com/1", "multipart/related"},
+            {"content://example.com/1", "message/rfc822"},
+    };
+
+    private static final String[][] INTENT_URLS_AND_TYPES_NOT_FOR_MHTML = {
+            {"http://www.example.com", ""}, {"ftp://www.example.com", ""}, {"file://foo", ""},
+            {"file://foo", "application/octet-stream"}, {"file://foo.txt", ""},
+            {"file://foo.mhtml", "text/html"}, {"content://example.com/1", ""},
+            {"content://example.com/1", "text/html"},
+    };
+
     private static final String GOOGLE_URL = "https://www.google.com";
 
     private IntentHandler mIntentHandler;
@@ -105,6 +122,26 @@ public class IntentHandlerTest {
             }
         }
         Assert.assertTrue(failedTests.toString(), failedTests.isEmpty());
+    }
+
+    private void checkIntentForMhtmlFileOrContent(String[][] urlsAndTypes, boolean isValid) {
+        List<String> failedTests = new ArrayList<>();
+
+        for (String[] urlAndType : urlsAndTypes) {
+            Uri url = Uri.parse(urlAndType[0]);
+            String type = urlAndType[1];
+            if (type.equals("")) {
+                mIntent.setData(url);
+            } else {
+                mIntent.setDataAndType(url, type);
+            }
+            if (IntentHandler.isIntentForMhtmlFileOrContent(mIntent) != isValid) {
+                failedTests.add(url.toString() + "," + type);
+            }
+        }
+        Assert.assertTrue(
+                "Expect " + isValid + " Actual " + !isValid + ": " + failedTests.toString(),
+                failedTests.isEmpty());
     }
 
     @Before
@@ -344,5 +381,106 @@ public class IntentHandlerTest {
         String packageName = context.getPackageName();
         String referrer = IntentHandler.constructValidReferrerForAuthority(packageName).getUrl();
         Assert.assertEquals("android-app://" + packageName, referrer);
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Android-AppBase"})
+    public void testRemoveChromeCustomHeaderFromExtraIntentHeaders() throws Throwable {
+        Bundle bundle = new Bundle();
+        bundle.putString("X-Chrome-intent-type", "X-custom-value");
+        Intent headersIntent = new Intent(Intent.ACTION_VIEW);
+        headersIntent.putExtra(Browser.EXTRA_HEADERS, bundle);
+        Assert.assertNull(IntentHandler.getExtraHeadersFromIntent(headersIntent));
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Android-AppBase"})
+    public void testLogHeaders() {
+        Bundle bundle = new Bundle();
+        bundle.putString("Content-Length", "1234");
+        Intent headersIntent = new Intent(Intent.ACTION_VIEW);
+        headersIntent.putExtra(Browser.EXTRA_HEADERS, bundle);
+
+        IntentHandler.getExtraHeadersFromIntent(headersIntent);
+        Assert.assertEquals(0,
+                RecordHistogram.getHistogramTotalCountForTesting("Android.IntentHeaders"));
+
+        IntentHandler.getExtraHeadersFromIntent(headersIntent, true);
+        Assert.assertEquals(1,
+                RecordHistogram.getHistogramTotalCountForTesting("Android.IntentHeaders"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Android-AppBase"})
+    public void testMaybeAddAdditionalExtraHeaders() {
+        String contentUrl = "content://com.example.org/document/1";
+        Intent intent = new Intent();
+
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(null, null, null));
+        // Null URL.
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(intent, null, null));
+        // Null intent.
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(null, contentUrl, null));
+        // Null type.
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, null));
+        // Empty type.
+        intent.setType("");
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, null));
+
+        // Type not used by MHTML.
+        intent.setType("text/plain");
+        Assert.assertNull(IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, null));
+
+        // MHTML type with no extra headers.
+        intent.setType("multipart/related");
+        Assert.assertEquals("X-Chrome-intent-type: multipart/related",
+                IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, null));
+
+        // MHTML type with extra headers.
+        intent.setType("multipart/related");
+        Assert.assertEquals("Foo: bar\nX-Chrome-intent-type: multipart/related",
+                IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, "Foo: bar"));
+
+        // Different MHTML type.
+        intent.setType("message/rfc822");
+        Assert.assertEquals("X-Chrome-intent-type: message/rfc822",
+                IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, null));
+
+        // Different MHTML type with extra headers.
+        intent.setType("message/rfc822");
+        Assert.assertEquals("Foo: bar\nX-Chrome-intent-type: message/rfc822",
+                IntentHandler.maybeAddAdditionalExtraHeaders(intent, contentUrl, "Foo: bar"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Android-AppBase"})
+    public void testIsIntentForMhtmlFileOrContent() {
+        checkIntentForMhtmlFileOrContent(INTENT_URLS_AND_TYPES_FOR_MHTML, true);
+        checkIntentForMhtmlFileOrContent(INTENT_URLS_AND_TYPES_NOT_FOR_MHTML, false);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Android-AppBase"})
+    public void testCreateTrustedOpenNewTabIntent() {
+        Context context = InstrumentationRegistry.getTargetContext();
+        Intent intent = IntentHandler.createTrustedOpenNewTabIntent(context, true);
+
+        Assert.assertEquals(intent.getAction(), Intent.ACTION_VIEW);
+        Assert.assertEquals(intent.getData(), Uri.parse(UrlConstants.NTP_URL));
+        Assert.assertTrue(intent.getBooleanExtra(Browser.EXTRA_CREATE_NEW_TAB, false));
+        Assert.assertTrue(IntentHandler.wasIntentSenderChrome(intent));
+        Assert.assertTrue(
+                intent.getBooleanExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, false));
+
+        intent = IntentHandler.createTrustedOpenNewTabIntent(context, false);
+        Assert.assertFalse(
+                intent.getBooleanExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, true));
     }
 }

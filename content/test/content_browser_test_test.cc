@@ -6,13 +6,16 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/process/launch.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/launcher/test_launcher.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_timeouts.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -26,6 +29,8 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_switches.h"
+#include "services/service_manager/sandbox/switches.h"
+#include "testing/gtest/include/gtest/gtest-spi.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -50,7 +55,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_RendererCrash) {
       shell()->web_contents()->GetMainFrame()->GetProcess(),
       content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
 
-  NavigateToURL(shell(), GURL("chrome:crash"));
+  NavigateToURL(shell(), GetWebUIURL("crash"));
   renderer_shutdown_observer.Wait();
 
   EXPECT_FALSE(renderer_shutdown_observer.did_exit_normally());
@@ -68,7 +73,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_RendererCrash) {
 
 // Tests that browser tests print the callstack when a child process crashes.
 IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RendererCrashCallStack) {
-  base::ThreadRestrictions::ScopedAllowIO allow_io_for_temp_dir;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::CommandLine new_test =
@@ -81,7 +86,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RendererCrashCallStack) {
 #if defined(THREAD_SANITIZER)
   // TSan appears to not be able to report intentional crashes from sandboxed
   // renderer processes.
-  new_test.AppendSwitch(switches::kNoSandbox);
+  new_test.AppendSwitch(service_manager::switches::kNoSandbox);
 #endif
 
   std::string output;
@@ -92,7 +97,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RendererCrashCallStack) {
   // "#0 0x0000007ea911 (...content_browsertests+0x7ea910)"
   std::string crash_string =
 #if !USE_EXTERNAL_SYMBOLIZER
-      "content::RenderFrameImpl::NavigateInternal";
+      "content::RenderFrameImpl::HandleRendererDebugURL";
 #else
       "#0 ";
 #endif
@@ -109,7 +114,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_BrowserCrash) {
 
 // Tests that browser tests print the callstack on asserts.
 IN_PROC_BROWSER_TEST_F(ContentBrowserTest, BrowserCrashCallStack) {
-  base::ThreadRestrictions::ScopedAllowIO allow_io_for_temp_dir;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::CommandLine new_test =
@@ -218,6 +223,17 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, NonNestableTask) {
       FROM_HERE, base::BindOnce(&CallbackChecker, &non_nested_task_ran));
   content::RunAllPendingInMessageLoop();
   ASSERT_TRUE(non_nested_task_ran);
+}
+
+IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RunTimeoutInstalled) {
+  // Verify that a RunLoop timeout is installed and shorter than the test
+  // timeout itself.
+  const auto* run_timeout = base::RunLoop::ScopedRunTimeoutForTest::Current();
+  EXPECT_TRUE(run_timeout);
+  EXPECT_LT(run_timeout->timeout(), TestTimeouts::test_launcher_timeout());
+
+  EXPECT_NONFATAL_FAILURE({ run_timeout->on_timeout().Run(); },
+                          "RunLoop::Run() timed out");
 }
 
 }  // namespace content

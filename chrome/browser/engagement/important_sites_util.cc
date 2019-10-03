@@ -8,14 +8,14 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <utility>
 
-#include "base/containers/hash_tables.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -24,18 +24,25 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/url_and_title.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "third_party/WebKit/public/platform/site_engagement.mojom.h"
+#include "third_party/blink/public/mojom/site_engagement/site_engagement.mojom.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "url/url_util.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/search_permissions/search_permissions_service.h"
+#endif
 
 namespace {
 using bookmarks::BookmarkModel;
+using bookmarks::UrlAndTitle;
 using ImportantDomainInfo = ImportantSitesUtil::ImportantDomainInfo;
 using ImportantReason = ImportantSitesUtil::ImportantReason;
 
@@ -195,18 +202,18 @@ bool CompareDescendingImportantInfo(
   return a.second.engagement_score > b.second.engagement_score;
 }
 
-base::hash_set<std::string> GetBlacklistedImportantDomains(Profile* profile) {
+std::unordered_set<std::string> GetBlacklistedImportantDomains(
+    Profile* profile) {
   ContentSettingsForOneType content_settings_list;
   HostContentSettingsMap* map =
       HostContentSettingsMapFactory::GetForProfile(profile);
   map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO,
                              content_settings::ResourceIdentifier(),
                              &content_settings_list);
-  base::hash_set<std::string> ignoring_domains;
+  std::unordered_set<std::string> ignoring_domains;
   for (const ContentSettingPatternSource& site : content_settings_list) {
     GURL origin(site.primary_pattern.ToString());
-    if (!origin.is_valid() ||
-        base::ContainsKey(ignoring_domains, origin.host())) {
+    if (!origin.is_valid() || base::Contains(ignoring_domains, origin.host())) {
       continue;
     }
 
@@ -225,8 +232,7 @@ base::hash_set<std::string> GetBlacklistedImportantDomains(Profile* profile) {
 }
 
 // Inserts origins with some engagement measure into the map, including a site
-// engagement cutoff, notifications permission, and recent launches from home
-// screen.
+// engagement cutoff and recent launches from home screen.
 void PopulateInfoMapWithEngagement(
     Profile* profile,
     blink::mojom::EngagementLevel minimum_engagement,
@@ -240,13 +246,6 @@ void PopulateInfoMapWithEngagement(
   // We can have multiple origins for a single domain, so we record the one
   // with the highest engagement score.
   for (const auto& detail : engagement_details) {
-    if (detail.notifications_bonus > 0) {
-      // This origin has notifications enabled.
-      MaybePopulateImportantInfoForReason(detail.origin, &content_origins,
-                                          ImportantReason::NOTIFICATIONS,
-                                          output);
-    }
-
     if (detail.installed_bonus > 0) {
       // This origin was recently launched from the home screen.
       MaybePopulateImportantInfoForReason(detail.origin, &content_origins,
@@ -280,14 +279,28 @@ void PopulateInfoMapWithContentTypeAllowed(
   HostContentSettingsMapFactory::GetForProfile(profile)->GetSettingsForOneType(
       content_type, content_settings::ResourceIdentifier(),
       &content_settings_list);
+
   // Extract a set of urls, using the primary pattern. We don't handle
   // wildcard patterns.
   std::set<GURL> content_origins;
   for (const ContentSettingPatternSource& site : content_settings_list) {
     if (site.GetContentSetting() != CONTENT_SETTING_ALLOW)
       continue;
-    MaybePopulateImportantInfoForReason(GURL(site.primary_pattern.ToString()),
-                                        &content_origins, reason, output);
+    GURL url(site.primary_pattern.ToString());
+
+#if defined(OS_ANDROID)
+    SearchPermissionsService* search_permissions_service =
+        SearchPermissionsService::Factory::GetInstance()->GetForBrowserContext(
+            profile);
+    // If the permission is controlled by the Default Search Engine then don't
+    // consider it important. The DSE gets these permissions by default.
+    if (search_permissions_service->IsPermissionControlledByDSE(
+            content_type, url::Origin::Create(url))) {
+      continue;
+    }
+#endif
+
+    MaybePopulateImportantInfoForReason(url, &content_origins, reason, output);
   }
 }
 
@@ -300,15 +313,15 @@ void PopulateInfoMapWithBookmarks(
       BookmarkModelFactory::GetForBrowserContextIfExists(profile);
   if (!model)
     return;
-  std::vector<BookmarkModel::URLAndTitle> untrimmed_bookmarks;
+  std::vector<UrlAndTitle> untrimmed_bookmarks;
   model->GetBookmarks(&untrimmed_bookmarks);
 
   // Process the bookmarks and optionally trim them if we have too many.
-  std::vector<BookmarkModel::URLAndTitle> result_bookmarks;
+  std::vector<UrlAndTitle> result_bookmarks;
   if (untrimmed_bookmarks.size() > kMaxBookmarks) {
     std::copy_if(untrimmed_bookmarks.begin(), untrimmed_bookmarks.end(),
                  std::back_inserter(result_bookmarks),
-                 [service](const BookmarkModel::URLAndTitle& entry) {
+                 [service](const UrlAndTitle& entry) {
                    return service->IsEngagementAtLeast(
                        entry.url.GetOrigin(),
                        blink::mojom::EngagementLevel::LOW);
@@ -318,8 +331,7 @@ void PopulateInfoMapWithBookmarks(
     // allow us to remove most of these lookups and merging of signals.
     std::sort(
         result_bookmarks.begin(), result_bookmarks.end(),
-        [&engagement_map](const BookmarkModel::URLAndTitle& a,
-                          const BookmarkModel::URLAndTitle& b) {
+        [&engagement_map](const UrlAndTitle& a, const UrlAndTitle& b) {
           auto a_it = engagement_map.find(a.url.GetOrigin());
           auto b_it = engagement_map.find(b.url.GetOrigin());
           double a_score = a_it == engagement_map.end() ? 0 : a_it->second;
@@ -333,7 +345,7 @@ void PopulateInfoMapWithBookmarks(
   }
 
   std::set<GURL> content_origins;
-  for (const BookmarkModel::URLAndTitle& bookmark : result_bookmarks) {
+  for (const UrlAndTitle& bookmark : result_bookmarks) {
     MaybePopulateImportantInfoForReason(bookmark.url, &content_origins,
                                         ImportantReason::BOOKMARKS, output);
   }
@@ -370,6 +382,7 @@ void ImportantSitesUtil::RegisterProfilePrefs(
 std::vector<ImportantDomainInfo>
 ImportantSitesUtil::GetImportantRegisterableDomains(Profile* profile,
                                                     size_t max_results) {
+  SCOPED_UMA_HISTOGRAM_TIMER("Storage.ImportantSites.GenerationTime");
   std::map<std::string, ImportantDomainInfo> important_info;
   std::map<GURL, double> engagement_map;
 
@@ -377,12 +390,16 @@ ImportantSitesUtil::GetImportantRegisterableDomains(Profile* profile,
                                 &engagement_map, &important_info);
 
   PopulateInfoMapWithContentTypeAllowed(
+      profile, CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+      ImportantReason::NOTIFICATIONS, &important_info);
+
+  PopulateInfoMapWithContentTypeAllowed(
       profile, CONTENT_SETTINGS_TYPE_DURABLE_STORAGE, ImportantReason::DURABLE,
       &important_info);
 
   PopulateInfoMapWithBookmarks(profile, engagement_map, &important_info);
 
-  base::hash_set<std::string> blacklisted_domains =
+  std::unordered_set<std::string> blacklisted_domains =
       GetBlacklistedImportantDomains(profile);
 
   std::vector<std::pair<std::string, ImportantDomainInfo>> items(
@@ -439,7 +456,7 @@ void ImportantSitesUtil::RecordBlacklistedAndIgnoredImportantSites(
               nullptr));
 
       if (!dict)
-        dict = base::MakeUnique<base::DictionaryValue>();
+        dict = std::make_unique<base::DictionaryValue>();
 
       RecordIgnore(dict.get());
 

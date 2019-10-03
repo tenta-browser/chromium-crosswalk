@@ -13,28 +13,30 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.SystemClock;
 import android.support.annotation.Nullable;
+import android.text.format.DateUtils;
 import android.util.Rational;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.rappor.RapporServiceBridge;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
+import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * A controller for entering Android O Picture in Picture mode with fullscreen videos.
@@ -70,6 +72,9 @@ public class PictureInPictureController {
     private static final int METRICS_END_REASON_WEB_CONTENTS_LEFT_FULLSCREEN = 7;
     private static final int METRICS_END_REASON_COUNT = 8;
 
+    private static final float MIN_ASPECT_RATIO = 1 / 2.39f;
+    private static final float MAX_ASPECT_RATIO = 2.39f;
+
     /** Callbacks to cleanup after leaving PiP. */
     private List<Callback<ChromeActivity>> mOnLeavePipCallbacks = new LinkedList<>();
 
@@ -95,12 +100,12 @@ public class PictureInPictureController {
         if (webContents == null) return false;
 
         // Non-null WebContents implies the native library has been loaded.
-        assert LibraryLoader.isInitialized();
+        assert LibraryLoader.getInstance().isInitialized();
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.VIDEO_PERSISTENCE)) return false;
 
-        // Only auto-PiP if there is a playing fullscreen video.
-        if (!AppHooks.get().shouldDetectVideoFullscreen()
-                || !webContents.hasActiveEffectivelyFullscreenVideo()) {
+        // Only auto-PiP if there is a playing fullscreen video that allows PiP.
+        if (!webContents.hasActiveEffectivelyFullscreenVideo()
+                || !webContents.isPictureInPictureAllowedForFullscreenVideo()) {
             recordAttemptResult(METRICS_ATTEMPT_RESULT_NO_VIDEO);
             return false;
         }
@@ -171,24 +176,30 @@ public class PictureInPictureController {
         assert webContents != null;
 
         Rect bounds = getVideoBounds(webContents, activity);
+        PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder();
+        if (bounds != null) {
+            builder.setAspectRatio(new Rational(bounds.width(), bounds.height()));
+            builder.setSourceRectHint(bounds);
+        }
+
         try {
-            boolean entered = activity.enterPictureInPictureMode(
-                    new PictureInPictureParams.Builder()
-                            .setAspectRatio(new Rational(bounds.width(), bounds.height()))
-                            .setSourceRectHint(bounds)
-                            .build());
-            if (!entered) return;
-        } catch (IllegalStateException e) {
-            Log.e(TAG, "Error entering PiP: " + e);
+            if (!activity.enterPictureInPictureMode(builder.build())) return;
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            Log.e(TAG, "Error entering PiP with bounds (%d, %d): %s",
+                    bounds.width(), bounds.height(), e);
             return;
         }
 
         webContents.setHasPersistentVideo(true);
 
+        // We don't want InfoBars displaying while in PiP, they cover too much content.
+        InfoBarContainer.get(activity.getActivityTab()).setHidden(true);
+
         mOnLeavePipCallbacks.add(new Callback<ChromeActivity>() {
             @Override
             public void onResult(ChromeActivity activity2) {
                 webContents.setHasPersistentVideo(false);
+                InfoBarContainer.get(activity.getActivityTab()).setHidden(false);
             }
         });
 
@@ -202,16 +213,17 @@ public class PictureInPictureController {
                 new DismissActivityOnTabModelSelectorEventObserver(activity);
         final WebContentsObserver webContentsObserver =
                 new DismissActivityOnWebContentsObserver(activity);
+        final TabModelSelector tabModelSelector = TabModelSelector.from(activityTab);
 
         activityTab.addObserver(tabObserver);
-        activityTab.getTabModelSelector().addObserver(tabModelSelectorObserver);
+        tabModelSelector.addObserver(tabModelSelectorObserver);
         webContents.addObserver(webContentsObserver);
 
         mOnLeavePipCallbacks.add(new Callback<ChromeActivity>() {
             @Override
             public void onResult(ChromeActivity activity2) {
                 activityTab.removeObserver(tabObserver);
-                activityTab.getTabModelSelector().removeObserver(tabModelSelectorObserver);
+                tabModelSelector.removeObserver(tabModelSelectorObserver);
                 webContents.removeObserver(webContentsObserver);
             }
         });
@@ -222,8 +234,7 @@ public class PictureInPictureController {
             public void onResult(ChromeActivity activity2) {
                 long pipTimeMs = SystemClock.elapsedRealtime() - startTimeMs;
                 RecordHistogram.recordCustomTimesHistogram(METRICS_DURATION, pipTimeMs,
-                        TimeUnit.SECONDS.toMillis(7), TimeUnit.HOURS.toMillis(10),
-                        TimeUnit.MILLISECONDS, 50);
+                        DateUtils.SECOND_IN_MILLIS * 7, DateUtils.HOUR_IN_MILLIS * 10, 50);
             }
         });
     }
@@ -233,11 +244,14 @@ public class PictureInPictureController {
         // yet been detected. However we check |hasActiveEffectivelyFullscreenVideo| in
         // |shouldAttempt|, so |rect| should never be null.
         Rect rect = webContents.getFullscreenVideoSize();
-        float videoAspectRatio = ((float) rect.width()) / ((float) rect.height());
+        if (rect.width() == 0 || rect.height() == 0) return null;
+
+        float videoAspectRatio = MathUtils.clamp(rect.width() / (float) rect.height(),
+                MIN_ASPECT_RATIO, MAX_ASPECT_RATIO);
 
         int windowWidth = activity.getWindow().getDecorView().getWidth();
         int windowHeight = activity.getWindow().getDecorView().getHeight();
-        float phoneAspectRatio = ((float) windowWidth) / ((float) windowHeight);
+        float phoneAspectRatio = windowWidth / (float) windowHeight;
 
         // The currently playing video size is the video frame size, not the on-screen size.
         // We know the video will be touching either the sides or the top and bottom of the screen
@@ -318,13 +332,13 @@ public class PictureInPictureController {
         }
 
         @Override
-        public void onCrash(Tab tab, boolean sadTabShown) {
+        public void onCrash(Tab tab) {
             dismissActivity(mActivity, METRICS_END_REASON_CRASH);
         }
 
         @Override
-        public void onToggleFullscreenMode(Tab tab, boolean enable) {
-            if (!enable) dismissActivity(mActivity, METRICS_END_REASON_LEFT_FULLSCREEN);
+        public void onExitFullscreenMode(Tab tab) {
+            dismissActivity(mActivity, METRICS_END_REASON_LEFT_FULLSCREEN);
         }
     }
 

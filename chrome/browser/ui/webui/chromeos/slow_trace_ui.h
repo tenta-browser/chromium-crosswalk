@@ -26,19 +26,18 @@ namespace chromeos {
 class SlowTraceSource : public content::URLDataSource {
  public:
   SlowTraceSource();
+  ~SlowTraceSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
       const std::string& path,
       const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string& path) const override;
-  bool AllowCaching() const override;
+  std::string GetMimeType(const std::string& path) override;
+  bool AllowCaching() override;
 
  private:
-  ~SlowTraceSource() override;
-
   void OnGetTraceData(const content::URLDataSource::GotDataCallback& callback,
                       scoped_refptr<base::RefCountedString> trace_data);
 

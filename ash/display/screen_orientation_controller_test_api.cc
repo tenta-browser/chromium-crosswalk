@@ -4,7 +4,7 @@
 
 #include "ash/display/screen_orientation_controller_test_api.h"
 
-#include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/display/screen_orientation_controller.h"
 
 namespace ash {
 
@@ -23,14 +23,18 @@ void ScreenOrientationControllerTestApi::SetRotationLocked(bool locked) {
   controller_->SetRotationLockedInternal(locked);
 }
 
-blink::WebScreenOrientationLockType
-ScreenOrientationControllerTestApi::UserLockedOrientation() const {
+OrientationLockType ScreenOrientationControllerTestApi::UserLockedOrientation()
+    const {
   return controller_->user_locked_orientation_;
 }
 
-blink::WebScreenOrientationLockType
-ScreenOrientationControllerTestApi::GetCurrentOrientation() const {
+OrientationLockType ScreenOrientationControllerTestApi::GetCurrentOrientation()
+    const {
   return controller_->GetCurrentOrientation();
+}
+
+void ScreenOrientationControllerTestApi::UpdateNaturalOrientation() {
+  controller_->UpdateNaturalOrientationForTest();
 }
 
 }  // namespace ash

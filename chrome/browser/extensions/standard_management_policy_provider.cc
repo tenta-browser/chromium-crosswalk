@@ -21,12 +21,27 @@ namespace {
 
 // Returns whether the extension can be modified under admin policy or not, and
 // fills |error| with corresponding error message if necessary.
-bool AdminPolicyIsModifiable(const extensions::Extension* extension,
+bool AdminPolicyIsModifiable(const Extension* source_extension,
+                             const Extension* extension,
                              base::string16* error) {
-  if (!extensions::Manifest::IsComponentLocation(extension->location()) &&
-      !extensions::Manifest::IsPolicyLocation(extension->location())) {
-    return true;
+  // Component and force installed extensions can enable/disable all other
+  // extensions including force installed ones (but component are off limits).
+  const bool component_or_force_installed =
+      source_extension &&
+      (Manifest::IsComponentLocation(source_extension->location()) ||
+       Manifest::IsPolicyLocation(source_extension->location()));
+
+  bool is_modifiable = true;
+
+  if (Manifest::IsComponentLocation(extension->location()))
+    is_modifiable = false;
+  if (!component_or_force_installed &&
+      Manifest::IsPolicyLocation(extension->location())) {
+    is_modifiable = false;
   }
+
+  if (is_modifiable)
+    return true;
 
   if (error) {
     *error = l10n_util::GetStringFUTF16(
@@ -49,11 +64,10 @@ StandardManagementPolicyProvider::~StandardManagementPolicyProvider() {
 
 std::string
     StandardManagementPolicyProvider::GetDebugPolicyProviderName() const {
-#ifdef NDEBUG
-  NOTREACHED();
-  return std::string();
-#else
+#if DCHECK_IS_ON()
   return "extension management policy controlled settings";
+#else
+  IMMEDIATE_CRASH();
 #endif
 }
 
@@ -78,15 +92,6 @@ bool StandardManagementPolicyProvider::UserMayLoad(
   if (extension->from_bookmark())
     return true;
 
-  ExtensionManagement::InstallationMode installation_mode =
-      settings_->GetInstallationMode(extension);
-
-  // Force-installed extensions cannot be overwritten manually.
-  if (!Manifest::IsPolicyLocation(extension->location()) &&
-      installation_mode == ExtensionManagement::INSTALLATION_FORCED) {
-    return ReturnLoadError(extension, error);
-  }
-
   // Check whether the extension type is allowed.
   //
   // If you get a compile error here saying that the type you added is not
@@ -103,8 +108,10 @@ bool StandardManagementPolicyProvider::UserMayLoad(
     case Manifest::TYPE_HOSTED_APP:
     case Manifest::TYPE_LEGACY_PACKAGED_APP:
     case Manifest::TYPE_PLATFORM_APP:
-    case Manifest::TYPE_SHARED_MODULE: {
-      if (!settings_->IsAllowedManifestType(extension->GetType()))
+    case Manifest::TYPE_SHARED_MODULE:
+    case Manifest::TYPE_LOGIN_SCREEN_EXTENSION: {
+      if (!settings_->IsAllowedManifestType(extension->GetType(),
+                                            extension->id()))
         return ReturnLoadError(extension, error);
       break;
     }
@@ -112,22 +119,48 @@ bool StandardManagementPolicyProvider::UserMayLoad(
       NOTREACHED();
   }
 
-  if (installation_mode == ExtensionManagement::INSTALLATION_BLOCKED)
+  ExtensionManagement::InstallationMode installation_mode =
+      settings_->GetInstallationMode(extension);
+  if (installation_mode == ExtensionManagement::INSTALLATION_BLOCKED ||
+      installation_mode == ExtensionManagement::INSTALLATION_REMOVED) {
     return ReturnLoadError(extension, error);
+  }
 
   return true;
+}
+
+bool StandardManagementPolicyProvider::UserMayInstall(
+    const Extension* extension,
+    base::string16* error) const {
+  ExtensionManagement::InstallationMode installation_mode =
+      settings_->GetInstallationMode(extension);
+
+  // Force-installed extensions cannot be overwritten manually.
+  if (!Manifest::IsPolicyLocation(extension->location()) &&
+      installation_mode == ExtensionManagement::INSTALLATION_FORCED) {
+    return ReturnLoadError(extension, error);
+  }
+
+  return UserMayLoad(extension, error);
 }
 
 bool StandardManagementPolicyProvider::UserMayModifySettings(
     const Extension* extension,
     base::string16* error) const {
-  return AdminPolicyIsModifiable(extension, error);
+  return AdminPolicyIsModifiable(nullptr, extension, error);
+}
+
+bool StandardManagementPolicyProvider::ExtensionMayModifySettings(
+    const Extension* source_extension,
+    const Extension* extension,
+    base::string16* error) const {
+  return AdminPolicyIsModifiable(source_extension, extension, error);
 }
 
 bool StandardManagementPolicyProvider::MustRemainEnabled(
     const Extension* extension,
     base::string16* error) const {
-  return !AdminPolicyIsModifiable(extension, error);
+  return !AdminPolicyIsModifiable(nullptr, extension, error);
 }
 
 bool StandardManagementPolicyProvider::MustRemainDisabled(
@@ -164,6 +197,18 @@ bool StandardManagementPolicyProvider::MustRemainInstalled(
           IDS_EXTENSION_CANT_UNINSTALL_POLICY_REQUIRED,
           base::UTF8ToUTF16(extension->name()));
     }
+    return true;
+  }
+  return false;
+}
+
+bool StandardManagementPolicyProvider::ShouldForceUninstall(
+    const Extension* extension,
+    base::string16* error) const {
+  if (UserMayLoad(extension, error))
+    return false;
+  if (settings_->GetInstallationMode(extension) ==
+      ExtensionManagement::INSTALLATION_REMOVED) {
     return true;
   }
   return false;

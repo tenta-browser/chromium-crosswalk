@@ -40,7 +40,7 @@ class LocalFileChangeTrackerTest : public testing::Test {
  public:
   LocalFileChangeTrackerTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-        in_memory_env_(leveldb_chrome::NewMemEnv(leveldb::Env::Default())),
+        in_memory_env_(leveldb_chrome::NewMemEnv("LocalFileChangeTrackerTest")),
         file_system_(GURL("http://example.com"),
                      in_memory_env_.get(),
                      base::ThreadTaskRunnerHandle::Get().get(),
@@ -177,14 +177,14 @@ TEST_F(LocalFileChangeTrackerTest, GetChanges) {
   file_system_.GetChangedURLsInTracker(&urls);
 
   EXPECT_EQ(5U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath3)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath4)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath5)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath1)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath2)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath3)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath4)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath5)));
 
   // Changes for kPath0 must have been offset and removed.
-  EXPECT_FALSE(base::ContainsKey(urls, URL(kPath0)));
+  EXPECT_FALSE(base::Contains(urls, URL(kPath0)));
 
   // GetNextChangedURLs only returns up to max_urls (i.e. 3) urls.
   base::circular_deque<FileSystemURL> urls_to_process;
@@ -297,8 +297,7 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
   EXPECT_EQ(base::File::FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
   EXPECT_EQ(static_cast<int64_t>(kData.size()),       // Modifies the file.
-            file_system_.Write(&url_request_context, URL(kPath4),
-                               blob.GetBlobDataHandle()));
+            file_system_.Write(URL(kPath4), blob.GetBlobDataHandle()));
 
   // Verify the changes.
   file_system_.GetChangedURLsInTracker(&urls);
@@ -448,8 +447,8 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
   EXPECT_EQ(base::File::FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
   EXPECT_EQ(static_cast<int64_t>(kData.size()),
-            file_system_.Write(&url_request_context,  // Modifies the file.
-                               URL(kPath4), blob.GetBlobDataHandle()));
+            file_system_.Write(URL(kPath4),  // Modifies the file.
+                               blob.GetBlobDataHandle()));
 
   // Verify we have 5 changes for preparation.
   file_system_.GetChangedURLsInTracker(&urls);
@@ -669,8 +668,8 @@ TEST_F(LocalFileChangeTrackerTest, NextChangedURLsWithRecursiveRemove) {
   ASSERT_EQ(2U, urls.size());
 
   // The exact order of recursive removal cannot be determined.
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath1)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath2)));
 }
 
 TEST_F(LocalFileChangeTrackerTest, ResetForFileSystem) {
@@ -693,10 +692,10 @@ TEST_F(LocalFileChangeTrackerTest, ResetForFileSystem) {
   FileSystemURLSet urls;
   GetAllChangedURLs(&urls);
   EXPECT_EQ(4u, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath0)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath1)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath2)));
-  EXPECT_TRUE(base::ContainsKey(urls, URL(kPath3)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath0)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath1)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath2)));
+  EXPECT_TRUE(base::Contains(urls, URL(kPath3)));
 
   // Reset all changes for the file system.
   change_tracker()->ResetForFileSystem(

@@ -6,19 +6,18 @@
 
 #include <vector>
 
-#include "base/memory/ptr_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/browser/page_load_metrics/page_load_tracker.h"
-#include "components/ukm/ukm_source.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/test/navigation_simulator.h"
-#include "net/base/host_port_pair.h"
-#include "net/base/ip_address.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "url/gurl.h"
 
 namespace internal {
@@ -38,10 +37,10 @@ typedef struct {
 static const PageAddressInfo
     kPublicPage = {(char*)"https://foo.com/", (char*)"216.58.195.78", 443},
     kPublicPageIPv6 = {(char*)"https://google.com/",
-                       (char*)"[2607:f8b0:4005:809::200e]", 443},
+                       (char*)"2607:f8b0:4005:809::200e", 443},
     kPrivatePage = {(char*)"http://test.local/", (char*)"192.168.10.123", 80},
     kLocalhostPage = {(char*)"http://localhost/", (char*)"127.0.0.1", 80},
-    kLocalhostPageIPv6 = {(char*)"http://[::1]/", (char*)"[::1]", 80},
+    kLocalhostPageIPv6 = {(char*)"http://[::1]/", (char*)"::1", 80},
     kPublicRequest1 = {(char*)"http://bar.com/", (char*)"100.150.200.250", 80},
     kPublicRequest2 = {(char*)"https://www.baz.com/", (char*)"192.10.20.30",
                        443},
@@ -80,7 +79,7 @@ class LocalNetworkRequestsPageLoadMetricsObserverTest
  protected:
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
     tracker->AddObserver(
-        base::MakeUnique<LocalNetworkRequestsPageLoadMetricsObserver>());
+        std::make_unique<LocalNetworkRequestsPageLoadMetricsObserver>());
   }
 
   void SetUp() override {
@@ -89,12 +88,14 @@ class LocalNetworkRequestsPageLoadMetricsObserverTest
 
   void SimulateNavigateAndCommit(const internal::PageAddressInfo& page) {
     GURL url(page.url);
-    net::HostPortPair socket_address(page.host_ip, page.port);
+    net::IPAddress address;
+    ASSERT_TRUE(address.AssignFromIPLiteral(page.host_ip));
+    net::IPEndPoint remote_endpoint(address, page.port);
 
     navigation_simulator_ =
         content::NavigationSimulator::CreateRendererInitiated(url, main_rfh());
     navigation_simulator_->Start();
-    navigation_simulator_->SetSocketAddress(socket_address);
+    navigation_simulator_->SetSocketAddress(remote_endpoint);
     navigation_simulator_->Commit();
   }
 
@@ -109,13 +110,15 @@ class LocalNetworkRequestsPageLoadMetricsObserverTest
 
   void SimulateLoadedResource(const internal::PageAddressInfo& resource,
                               const int net_error) {
+    net::IPAddress address;
+    ASSERT_TRUE(address.AssignFromIPLiteral(resource.host_ip));
     page_load_metrics::ExtraRequestCompleteInfo request_info(
-        GURL(resource.url), net::HostPortPair(resource.host_ip, resource.port),
+        GURL(resource.url), net::IPEndPoint(address, resource.port),
         -1 /* frame_tree_node_id */, !net_error /* was_cached */,
         (net_error ? 1024 * 20 : 0) /* raw_body_bytes */,
         0 /* original_network_content_length */,
         nullptr /* data_reduction_proxy_data */,
-        content::ResourceType::RESOURCE_TYPE_MAIN_FRAME, net_error,
+        content::ResourceType::kMainFrame, net_error,
         {} /* load_timing_info */);
 
     PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
@@ -178,13 +181,14 @@ class LocalNetworkRequestsPageLoadMetricsObserverTest
 
   void ExpectUkmPageDomainMetric(const internal::PageAddressInfo& page,
                                  const internal::DomainType domain_type) {
-    auto entries =
-        test_ukm_recorder().GetEntriesByName(internal::kUkmPageDomainEventName);
+    auto entries = test_ukm_recorder().GetEntriesByName(
+        ukm::builders::PageDomainInfo::kEntryName);
     EXPECT_EQ(1u, entries.size());
     for (const auto* const entry : entries) {
       test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(page.url));
-      test_ukm_recorder().ExpectEntryMetric(entry, internal::kUkmDomainTypeName,
-                                            static_cast<int>(domain_type));
+      test_ukm_recorder().ExpectEntryMetric(
+          entry, ukm::builders::PageDomainInfo::kDomainTypeName,
+          static_cast<int>(domain_type));
     }
   }
 
@@ -192,24 +196,25 @@ class LocalNetworkRequestsPageLoadMetricsObserverTest
       const internal::PageAddressInfo& page,
       const std::vector<internal::UkmMetricInfo>& expected_metrics,
       const std::map<std::string, int>& expected_histograms) {
-    auto entries = test_ukm_recorder().GetEntriesByName(
-        internal::kUkmLocalNetworkRequestsEventName);
+    using LocalNetworkRequests = ukm::builders::LocalNetworkRequests;
+    auto entries =
+        test_ukm_recorder().GetEntriesByName(LocalNetworkRequests::kEntryName);
     ASSERT_EQ(entries.size(), expected_metrics.size());
     for (size_t i = 0; i < entries.size() && i < expected_metrics.size(); i++) {
       test_ukm_recorder().ExpectEntrySourceHasUrl(entries[i], GURL(page.url));
-      test_ukm_recorder().ExpectEntryMetric(entries[i],
-                                            internal::kUkmResourceTypeName,
-                                            expected_metrics[i].resource_type);
-      test_ukm_recorder().ExpectEntryMetric(entries[i],
-                                            internal::kUkmSuccessfulCountName,
-                                            expected_metrics[i].success_count);
-      test_ukm_recorder().ExpectEntryMetric(entries[i],
-                                            internal::kUkmFailedCountName,
-                                            expected_metrics[i].failed_count);
+      test_ukm_recorder().ExpectEntryMetric(
+          entries[i], LocalNetworkRequests::kResourceTypeName,
+          expected_metrics[i].resource_type);
+      test_ukm_recorder().ExpectEntryMetric(
+          entries[i], LocalNetworkRequests::kCount_SuccessfulName,
+          expected_metrics[i].success_count);
+      test_ukm_recorder().ExpectEntryMetric(
+          entries[i], LocalNetworkRequests::kCount_FailedName,
+          expected_metrics[i].failed_count);
       if (expected_metrics[i].resource_type ==
           internal::RESOURCE_TYPE_LOCALHOST) {
         test_ukm_recorder().ExpectEntryMetric(
-            entries[i], internal::kUkmPortTypeName,
+            entries[i], LocalNetworkRequests::kPortTypeName,
             static_cast<int>(expected_metrics[i].port_type));
       }
     }
@@ -720,7 +725,9 @@ TEST_F(LocalNetworkRequestsPageLoadMetricsObserverTest,
   }
 
   // At this point, we should still only see the domain type UKM entry.
-  EXPECT_EQ(1ul, test_ukm_recorder().entries_count());
+  // Also history manipulation intervention will log a UKM for navigating away
+  // from a page without user interaction.
+  EXPECT_EQ(2ul, test_ukm_recorder().entries_count());
 
   // Close the page.
   DeleteContents();
@@ -771,12 +778,11 @@ TEST_F(LocalNetworkRequestsPageLoadMetricsObserverTest,
   // Load a resource that has the IP address in the URL but returned an empty
   // socket address for some reason.
   PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
-      {GURL(internal::kDiffSubnetRequest2.url), net::HostPortPair(),
+      {GURL(internal::kDiffSubnetRequest2.url), net::IPEndPoint(),
        -1 /* frame_tree_node_id */, true /* was_cached */,
        1024 * 20 /* raw_body_bytes */, 0 /* original_network_content_length */,
        nullptr /* data_reduction_proxy_data */,
-       content::ResourceType::RESOURCE_TYPE_MAIN_FRAME, 0,
-       nullptr /* load_timing_info */},
+       content::ResourceType::kMainFrame, 0, nullptr /* load_timing_info */},
       GetGlobalRequestID());
   DeleteContents();
 
@@ -799,12 +805,11 @@ TEST_F(LocalNetworkRequestsPageLoadMetricsObserverTest,
   // Load a resource that doesn't have the IP address in the URL and returned an
   // empty socket address (e.g., failed DNS resolution).
   PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
-      {GURL(internal::kPrivatePage.url), net::HostPortPair(),
+      {GURL(internal::kPrivatePage.url), net::IPEndPoint(),
        -1 /* frame_tree_node_id */, false /* was_cached */,
        0 /* raw_body_bytes */, 0 /* original_network_content_length */,
        nullptr /* data_reduction_proxy_data */,
-       content::ResourceType::RESOURCE_TYPE_MAIN_FRAME, -20,
-       nullptr /* load_timing_info */},
+       content::ResourceType::kMainFrame, -20, nullptr /* load_timing_info */},
       GetGlobalRequestID());
   DeleteContents();
 
@@ -889,6 +894,8 @@ TEST_F(LocalNetworkRequestsPageLoadMetricsObserverTest, PrivatePageFailedLoad) {
   navigation_simulator->CommitErrorPage();
 
   // Nothing should have been generated.
-  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
+  // Note that the expected count is 1 because history manipulation intervention
+  // will log a UKM for navigating away from a page without user interaction.
+  EXPECT_EQ(1ul, test_ukm_recorder().entries_count());
   ExpectNoHistograms();
 }

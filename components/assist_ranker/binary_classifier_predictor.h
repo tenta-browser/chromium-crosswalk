@@ -9,14 +9,12 @@
 #include "components/assist_ranker/base_predictor.h"
 #include "components/assist_ranker/proto/ranker_example.pb.h"
 
-class GURL;
-
 namespace base {
 class FilePath;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace assist_ranker {
@@ -28,11 +26,14 @@ class BinaryClassifierPredictor : public BasePredictor {
  public:
   ~BinaryClassifierPredictor() override;
 
+  // Returns an new predictor instance with the given |config| and initialize
+  // its model loader. The |request_context getter| is passed to the
+  // predictor's model_loader which holds it as scoped_refptr.
   static std::unique_ptr<BinaryClassifierPredictor> Create(
-      net::URLRequestContextGetter* request_context_getter,
+      const PredictorConfig& config,
       const base::FilePath& model_path,
-      GURL model_url,
-      const std::string& uma_prefix);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+      WARN_UNUSED_RESULT;
 
   // Fills in a boolean decision given a RankerExample. Returns false if a
   // prediction could not be made (e.g. the model is not loaded yet).
@@ -53,7 +54,7 @@ class BinaryClassifierPredictor : public BasePredictor {
 
  private:
   friend class BinaryClassifierPredictorTest;
-  BinaryClassifierPredictor();
+  BinaryClassifierPredictor(const PredictorConfig& config);
 
   // TODO(hamelphi): Use an abstract BinaryClassifierInferenceModule in order to
   // generalize to other models.

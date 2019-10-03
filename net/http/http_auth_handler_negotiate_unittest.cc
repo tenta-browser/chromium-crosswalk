@@ -6,27 +6,38 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_request_info.h"
 #include "net/http/mock_allow_http_auth_preferences.h"
 #include "net/log/net_log_with_source.h"
+#include "net/net_buildflags.h"
 #include "net/ssl/ssl_info.h"
 #include "net/test/gtest_util.h"
+#include "net/test/test_with_scoped_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+#if !BUILDFLAG(USE_KERBEROS)
+#error "use_kerberos should be true to use Negotiate authentication scheme."
+#endif
 
 #if defined(OS_ANDROID)
 #include "net/android/dummy_spnego_authenticator.h"
 #elif defined(OS_WIN)
 #include "net/http/mock_sspi_library_win.h"
-#elif defined(OS_POSIX)
+#elif BUILDFLAG(USE_EXTERNAL_GSSAPI)
 #include "net/http/mock_gssapi_library_posix.h"
+#else
+#error "use_kerberos is true, but no Kerberos implementation available."
 #endif
 
 using net::test::IsError;
@@ -34,34 +45,28 @@ using net::test::IsOk;
 
 namespace net {
 
-#if defined(OS_ANDROID)
-typedef net::android::DummySpnegoAuthenticator MockAuthLibrary;
-#elif defined(OS_WIN)
-typedef MockSSPILibrary MockAuthLibrary;
-#elif defined(OS_POSIX)
-typedef test::MockGSSAPILibrary MockAuthLibrary;
-#endif
+constexpr char kFakeToken[] = "FakeToken";
 
-class HttpAuthHandlerNegotiateTest : public PlatformTest {
+class HttpAuthHandlerNegotiateTest : public PlatformTest,
+                                     public WithScopedTaskEnvironment {
  public:
   void SetUp() override {
     auth_library_ = new MockAuthLibrary();
     resolver_.reset(new MockHostResolver());
-    resolver_->rules()->AddIPLiteralRule("alias", "10.0.0.2",
-                                           "canonical.example.com");
+    resolver_->rules_map()[HostResolverSource::ANY]->AddIPLiteralRule(
+        "alias", "10.0.0.2", "canonical.example.com");
 
     http_auth_preferences_.reset(new MockAllowHttpAuthPreferences());
-    factory_.reset(new HttpAuthHandlerNegotiate::Factory());
+    factory_.reset(new HttpAuthHandlerNegotiate::Factory(
+        net::HttpAuthHandlerFactory::NegotiateAuthSystemFactory()));
     factory_->set_http_auth_preferences(http_auth_preferences_.get());
 #if defined(OS_ANDROID)
     http_auth_preferences_->set_auth_android_negotiate_account_type(
         "org.chromium.test.DummySpnegoAuthenticator");
     MockAuthLibrary::EnsureTestAccountExists();
-#endif
-#if defined(OS_WIN) || (defined(OS_POSIX) && !defined(OS_ANDROID))
+#else
     factory_->set_library(base::WrapUnique(auth_library_));
-#endif
-    factory_->set_host_resolver(resolver_.get());
+#endif  // !OS_ANDROID
   }
 
 #if defined(OS_ANDROID)
@@ -75,7 +80,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
     security_package_->cbMaxToken = 1337;
     mock_library->ExpectQuerySecurityPackageInfo(
         L"Negotiate", SEC_E_OK, security_package_.get());
-#elif defined(OS_POSIX)
+#else
     // Copied from an actual transaction!
     static const char kAuthResponse[] =
         "\x60\x82\x02\xCA\x06\x09\x2A\x86\x48\x86\xF7\x12\x01\x02\x02\x01"
@@ -145,7 +150,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
             GSS_S_CONTINUE_NEEDED,  // Major response code
             0,                      // Minor response code
             context1,               // Context
-            NULL,                   // Expected input token
+            nullptr,                // Expected input token
             kAuthResponse),         // Output token
         MockAuthLibrary::SecurityContextQuery(
             "Negotiate",     // Package name
@@ -156,7 +161,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
             kAuthResponse)   // Output token
     };
 
-    for (size_t i = 0; i < arraysize(queries); ++i) {
+    for (size_t i = 0; i < base::size(queries); ++i) {
       mock_library->ExpectSecurityContext(queries[i].expected_package,
                                           queries[i].response_code,
                                           queries[i].minor_response_code,
@@ -164,14 +169,14 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
                                           queries[i].expected_input_token,
                                           queries[i].output_token);
     }
-#endif  // defined(OS_POSIX)
+#endif  // !OS_WIN
   }
 
 #if defined(OS_POSIX)
   void SetupErrorMocks(MockAuthLibrary* mock_library,
                        int major_status,
                        int minor_status) {
-    const gss_OID_desc kDefaultMech = { 0, NULL };
+    const gss_OID_desc kDefaultMech = {0, nullptr};
     test::GssContextMockImpl context(
         "localhost",                    // Source name
         "example.com",                  // Target name
@@ -185,8 +190,8 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
         major_status,  // Major response code
         minor_status,  // Minor response code
         context,       // Context
-        NULL,          // Expected input token
-        NULL);         // Output token
+        nullptr,       // Expected input token
+        nullptr);      // Output token
 
     mock_library->ExpectSecurityContext(query.expected_package,
                                         query.response_code,
@@ -195,7 +200,6 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
                                         query.expected_input_token,
                                         query.output_token);
   }
-
 #endif  // defined(OS_POSIX)
 
   int CreateHandler(bool disable_cname_lookup,
@@ -218,7 +222,7 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
     SSLInfo null_ssl_info;
     int rv = factory_->CreateAuthHandlerFromString(
         "Negotiate", HttpAuth::AUTH_SERVER, null_ssl_info, gurl,
-        NetLogWithSource(), &generic_handler);
+        NetLogWithSource(), resolver_.get(), &generic_handler);
     if (rv != OK)
       return rv;
     HttpAuthHandlerNegotiate* negotiate_handler =
@@ -228,6 +232,10 @@ class HttpAuthHandlerNegotiateTest : public PlatformTest {
   }
 
   MockAuthLibrary* AuthLibrary() { return auth_library_; }
+  MockHostResolver* resolver() { return resolver_.get(); }
+  MockAllowHttpAuthPreferences* http_auth_preferences() {
+    return http_auth_preferences_.get();
+  }
 
  private:
 #if defined(OS_WIN)
@@ -248,16 +256,16 @@ TEST_F(HttpAuthHandlerNegotiateTest, DisableCname) {
   EXPECT_EQ(OK, CreateHandler(
       true, false, true, "http://alias:500", &auth_handler));
 
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
   EXPECT_EQ(OK, callback.GetResult(auth_handler->GenerateAuthToken(
-                    NULL, &request_info, callback.callback(), &token)));
+                    nullptr, &request_info, callback.callback(), &token)));
 #if defined(OS_WIN)
-  EXPECT_EQ("HTTP/alias", auth_handler->spn());
-#elif defined(OS_POSIX)
-  EXPECT_EQ("HTTP@alias", auth_handler->spn());
+  EXPECT_EQ("HTTP/alias", auth_handler->spn_for_testing());
+#else
+  EXPECT_EQ("HTTP@alias", auth_handler->spn_for_testing());
 #endif
 }
 
@@ -266,16 +274,16 @@ TEST_F(HttpAuthHandlerNegotiateTest, DisableCnameStandardPort) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       true, true, true, "http://alias:80", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
   EXPECT_EQ(OK, callback.GetResult(auth_handler->GenerateAuthToken(
-                    NULL, &request_info, callback.callback(), &token)));
+                    nullptr, &request_info, callback.callback(), &token)));
 #if defined(OS_WIN)
-  EXPECT_EQ("HTTP/alias", auth_handler->spn());
-#elif defined(OS_POSIX)
-  EXPECT_EQ("HTTP@alias", auth_handler->spn());
+  EXPECT_EQ("HTTP/alias", auth_handler->spn_for_testing());
+#else
+  EXPECT_EQ("HTTP@alias", auth_handler->spn_for_testing());
 #endif
 }
 
@@ -284,16 +292,16 @@ TEST_F(HttpAuthHandlerNegotiateTest, DisableCnameNonstandardPort) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       true, true, true, "http://alias:500", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
   EXPECT_EQ(OK, callback.GetResult(auth_handler->GenerateAuthToken(
-                    NULL, &request_info, callback.callback(), &token)));
+                    nullptr, &request_info, callback.callback(), &token)));
 #if defined(OS_WIN)
-  EXPECT_EQ("HTTP/alias:500", auth_handler->spn());
-#elif defined(OS_POSIX)
-  EXPECT_EQ("HTTP@alias:500", auth_handler->spn());
+  EXPECT_EQ("HTTP/alias:500", auth_handler->spn_for_testing());
+#else
+  EXPECT_EQ("HTTP@alias:500", auth_handler->spn_for_testing());
 #endif
 }
 
@@ -302,16 +310,16 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameSync) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       false, false, true, "http://alias:500", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
   EXPECT_EQ(OK, callback.GetResult(auth_handler->GenerateAuthToken(
-                    NULL, &request_info, callback.callback(), &token)));
+                    nullptr, &request_info, callback.callback(), &token)));
 #if defined(OS_WIN)
-  EXPECT_EQ("HTTP/canonical.example.com", auth_handler->spn());
-#elif defined(OS_POSIX)
-  EXPECT_EQ("HTTP@canonical.example.com", auth_handler->spn());
+  EXPECT_EQ("HTTP/canonical.example.com", auth_handler->spn_for_testing());
+#else
+  EXPECT_EQ("HTTP@canonical.example.com", auth_handler->spn_for_testing());
 #endif
 }
 
@@ -320,17 +328,18 @@ TEST_F(HttpAuthHandlerNegotiateTest, CnameAsync) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       false, false, false, "http://alias:500", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
-  EXPECT_EQ(ERR_IO_PENDING, auth_handler->GenerateAuthToken(
-      NULL, &request_info, callback.callback(), &token));
+  EXPECT_EQ(ERR_IO_PENDING,
+            auth_handler->GenerateAuthToken(nullptr, &request_info,
+                                            callback.callback(), &token));
   EXPECT_THAT(callback.WaitForResult(), IsOk());
 #if defined(OS_WIN)
-  EXPECT_EQ("HTTP/canonical.example.com", auth_handler->spn());
-#elif defined(OS_POSIX)
-  EXPECT_EQ("HTTP@canonical.example.com", auth_handler->spn());
+  EXPECT_EQ("HTTP/canonical.example.com", auth_handler->spn_for_testing());
+#else
+  EXPECT_EQ("HTTP@canonical.example.com", auth_handler->spn_for_testing());
 #endif
 }
 
@@ -343,12 +352,13 @@ TEST_F(HttpAuthHandlerNegotiateTest, ServerNotInKerberosDatabase) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       false, false, false, "http://alias:500", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
-  EXPECT_EQ(ERR_IO_PENDING, auth_handler->GenerateAuthToken(
-      NULL, &request_info, callback.callback(), &token));
+  EXPECT_EQ(ERR_IO_PENDING,
+            auth_handler->GenerateAuthToken(nullptr, &request_info,
+                                            callback.callback(), &token));
   EXPECT_THAT(callback.WaitForResult(), IsError(ERR_MISSING_AUTH_CREDENTIALS));
 }
 
@@ -359,22 +369,22 @@ TEST_F(HttpAuthHandlerNegotiateTest, NoKerberosCredentials) {
   std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
   EXPECT_EQ(OK, CreateHandler(
       false, false, false, "http://alias:500", &auth_handler));
-  ASSERT_TRUE(auth_handler.get() != NULL);
+  ASSERT_TRUE(auth_handler.get() != nullptr);
   TestCompletionCallback callback;
   HttpRequestInfo request_info;
   std::string token;
-  EXPECT_EQ(ERR_IO_PENDING, auth_handler->GenerateAuthToken(
-      NULL, &request_info, callback.callback(), &token));
+  EXPECT_EQ(ERR_IO_PENDING,
+            auth_handler->GenerateAuthToken(nullptr, &request_info,
+                                            callback.callback(), &token));
   EXPECT_THAT(callback.WaitForResult(), IsError(ERR_MISSING_AUTH_CREDENTIALS));
 }
 
-#if defined(DLOPEN_KERBEROS)
+#if BUILDFLAG(USE_EXTERNAL_GSSAPI)
 TEST_F(HttpAuthHandlerNegotiateTest, MissingGSSAPI) {
-  std::unique_ptr<HostResolver> host_resolver(new MockHostResolver());
   MockAllowHttpAuthPreferences http_auth_preferences;
   std::unique_ptr<HttpAuthHandlerNegotiate::Factory> negotiate_factory(
-      new HttpAuthHandlerNegotiate::Factory());
-  negotiate_factory->set_host_resolver(host_resolver);
+      new HttpAuthHandlerNegotiate::Factory(
+          net::HttpAuthHandlerFactory::NegotiateAuthSystemFactory()));
   negotiate_factory->set_http_auth_preferences(&http_auth_preferences);
   negotiate_factory->set_library(
       std::make_unique<GSSAPISharedLibrary>("/this/library/does/not/exist"));
@@ -382,13 +392,88 @@ TEST_F(HttpAuthHandlerNegotiateTest, MissingGSSAPI) {
   GURL gurl("http://www.example.com");
   std::unique_ptr<HttpAuthHandler> generic_handler;
   int rv = negotiate_factory->CreateAuthHandlerFromString(
-      "Negotiate", HttpAuth::AUTH_SERVER, gurl, NetLogWithSource(),
-      &generic_handler);
+      "Negotiate", HttpAuth::AUTH_SERVER, SSLInfo(), gurl, NetLogWithSource(),
+      resolver(), &generic_handler);
   EXPECT_THAT(rv, IsError(ERR_UNSUPPORTED_AUTH_SCHEME));
-  EXPECT_TRUE(generic_handler.get() == NULL);
+  EXPECT_TRUE(generic_handler.get() == nullptr);
 }
-#endif  // defined(DLOPEN_KERBEROS)
+#endif  // BUILDFLAG(USE_EXTERNAL_GSSAPI)
+
+// AllowGssapiLibraryLoad() is only supported on Chrome OS.
+#if defined(OS_CHROMEOS)
+TEST_F(HttpAuthHandlerNegotiateTest, AllowGssapiLibraryLoad) {
+  // Disabling allow_gssapi_library_load should prevent handler creation.
+  SetupMocks(AuthLibrary());
+  http_auth_preferences()->set_allow_gssapi_library_load(false);
+  std::unique_ptr<HttpAuthHandlerNegotiate> auth_handler;
+  int rv = CreateHandler(true, false, true, "http://alias:500", &auth_handler);
+  EXPECT_THAT(rv, IsError(ERR_UNSUPPORTED_AUTH_SCHEME));
+  EXPECT_FALSE(auth_handler);
+
+  // Handler creation can be dynamically re-enabled.
+  http_auth_preferences()->set_allow_gssapi_library_load(true);
+  rv = CreateHandler(true, false, true, "http://alias:500", &auth_handler);
+  EXPECT_EQ(OK, rv);
+  EXPECT_TRUE(auth_handler);
+}
+#endif  // defined(OS_CHROMEOS)
 
 #endif  // defined(OS_POSIX)
+
+class TestAuthSystem : public HttpNegotiateAuthSystem {
+ public:
+  TestAuthSystem() = default;
+  ~TestAuthSystem() override = default;
+
+  // HttpNegotiateAuthSystem implementation:
+  bool Init(const NetLogWithSource&) override { return true; }
+  bool NeedsIdentity() const override { return true; }
+  bool AllowsExplicitCredentials() const override { return true; }
+
+  net::HttpAuth::AuthorizationResult ParseChallenge(
+      net::HttpAuthChallengeTokenizer* tok) override {
+    return net::HttpAuth::AUTHORIZATION_RESULT_ACCEPT;
+  }
+
+  int GenerateAuthToken(const net::AuthCredentials* credentials,
+                        const std::string& spn,
+                        const std::string& channel_bindings,
+                        std::string* auth_token,
+                        const NetLogWithSource& net_log,
+                        net::CompletionOnceCallback callback) override {
+    *auth_token = kFakeToken;
+    return net::OK;
+  }
+
+  void SetDelegation(HttpAuth::DelegationType delegation_type) override {}
+};
+
+TEST_F(HttpAuthHandlerNegotiateTest, OverrideAuthSystem) {
+  auto negotiate_factory = std::make_unique<HttpAuthHandlerNegotiate::Factory>(
+      base::BindRepeating([](const HttpAuthPreferences*)
+                              -> std::unique_ptr<HttpNegotiateAuthSystem> {
+        return std::make_unique<TestAuthSystem>();
+      }));
+  negotiate_factory->set_http_auth_preferences(http_auth_preferences());
+#if !defined(OS_ANDROID)
+  auto auth_library = std::make_unique<MockAuthLibrary>();
+  SetupMocks(auth_library.get());
+  negotiate_factory->set_library(std::move(auth_library));
+#endif
+
+  GURL gurl("http://www.example.com");
+  std::unique_ptr<HttpAuthHandler> handler;
+  EXPECT_EQ(OK, negotiate_factory->CreateAuthHandlerFromString(
+                    "Negotiate", HttpAuth::AUTH_SERVER, SSLInfo(), gurl,
+                    NetLogWithSource(), resolver(), &handler));
+  EXPECT_TRUE(handler);
+
+  TestCompletionCallback callback;
+  std::string auth_token;
+  HttpRequestInfo request_info;
+  EXPECT_EQ(OK, callback.GetResult(handler->GenerateAuthToken(
+                    nullptr, &request_info, callback.callback(), &auth_token)));
+  EXPECT_EQ(kFakeToken, auth_token);
+}
 
 }  // namespace net

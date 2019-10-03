@@ -4,19 +4,22 @@
 
 package org.chromium.chrome.browser.init;
 
-import android.os.AsyncTask;
-
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.ChromeActivitySessionTracker;
 import org.chromium.chrome.browser.ChromeVersionInfo;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.components.variations.firstrun.VariationsSeedFetcher;
-import org.chromium.content.browser.ChildProcessLauncherHelper;
+import org.chromium.content_public.browser.ChildProcessLauncherHelper;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.concurrent.Executor;
 
@@ -29,8 +32,8 @@ import java.util.concurrent.Executor;
 public abstract class AsyncInitTaskRunner {
     private boolean mFetchingVariations;
     private boolean mLibraryLoaded;
+    private boolean mAllocateChildConnection;
 
-    private LoadTask mLoadTask;
     private FetchSeedTask mFetchSeedTask;
 
     @VisibleForTesting
@@ -38,40 +41,16 @@ public abstract class AsyncInitTaskRunner {
         return ChromeVersionInfo.isOfficialBuild();
     }
 
-    private class LoadTask extends AsyncTask<Void, Void, Boolean> {
-        @Override
-        protected Boolean doInBackground(Void... params) {
-            try {
-                LibraryLoader libraryLoader = LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER);
-                libraryLoader.ensureInitialized();
-                // The prefetch is done after the library load for two reasons:
-                // - It is easier to know the library location after it has
-                // been loaded.
-                // - Testing has shown that this gives the best compromise,
-                // by avoiding performance regression on any tested
-                // device, and providing performance improvement on
-                // some. Doing it earlier delays UI inflation and more
-                // generally startup on some devices, most likely by
-                // competing for IO.
-                // For experimental results, see http://crbug.com/460438.
-                libraryLoader.asyncPrefetchLibrariesToMemory();
-            } catch (ProcessInitException e) {
-                return false;
-            }
-            return true;
-        }
-
-        @Override
-        protected void onPostExecute(Boolean result) {
-            mLibraryLoaded = result;
-            tasksPossiblyComplete(mLibraryLoaded);
-        }
+    @VisibleForTesting
+    void prefetchLibrary() {
+        LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
     }
 
-    private class FetchSeedTask extends AsyncTask<Void, Void, Void> {
+    private class FetchSeedTask implements Runnable {
         private final String mRestrictMode;
         private final String mMilestone;
         private final String mChannel;
+        private boolean mShouldRun = true;
 
         public FetchSeedTask(String restrictMode) {
             mRestrictMode = restrictMode;
@@ -80,15 +59,24 @@ public abstract class AsyncInitTaskRunner {
         }
 
         @Override
-        protected Void doInBackground(Void... params) {
+        public void run() {
             VariationsSeedFetcher.get().fetchSeed(mRestrictMode, mMilestone, mChannel);
-            return null;
+            PostTask.postTask(UiThreadTaskTraits.BOOTSTRAP, new Runnable() {
+                @Override
+                public void run() {
+                    if (!shouldRun()) return;
+                    mFetchingVariations = false;
+                    tasksPossiblyComplete(true);
+                }
+            });
         }
 
-        @Override
-        protected void onPostExecute(Void result) {
-            mFetchingVariations = false;
-            tasksPossiblyComplete(true);
+        public synchronized void cancel() {
+            mShouldRun = false;
+        }
+
+        private synchronized boolean shouldRun() {
+            return mShouldRun;
         }
 
         private String getChannelString() {
@@ -117,7 +105,6 @@ public abstract class AsyncInitTaskRunner {
      */
     public void startBackgroundTasks(boolean allocateChildConnection, boolean fetchVariationSeed) {
         ThreadUtils.assertOnUiThread();
-        assert mLoadTask == null;
         if (fetchVariationSeed && shouldFetchVariationsSeedDuringFirstRun()) {
             mFetchingVariations = true;
 
@@ -130,35 +117,75 @@ public abstract class AsyncInitTaskRunner {
                 @Override
                 public void onResult(String restrictMode) {
                     mFetchSeedTask = new FetchSeedTask(restrictMode);
-                    mFetchSeedTask.executeOnExecutor(getExecutor());
+                    PostTask.postTask(TaskTraits.USER_BLOCKING, mFetchSeedTask);
                 }
             });
         }
 
-        if (allocateChildConnection) {
-            ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext());
+        // Remember to allocate child connection once library loading completes. We do it after
+        // the loading to reduce stress on the OS caused by running library loading in parallel
+        // with UI inflation, see AsyncInitializationActivity.setContentViewAndLoadLibrary().
+        mAllocateChildConnection = allocateChildConnection;
+
+        // Load the library on a background thread. Using a plain Thread instead of AsyncTask
+        // because the latter would be throttled, and this task is on the critical path of the
+        // browser initialization.
+        getTaskPerThreadExecutor().execute(() -> {
+            final boolean libraryLoaded = loadNativeLibrary();
+            ThreadUtils.postOnUiThread(() -> {
+                mLibraryLoaded = libraryLoaded;
+                tasksPossiblyComplete(mLibraryLoaded);
+            });
+        });
+    }
+
+    /**
+     * Loads the native library. Can be run on any thread.
+     *
+     * @return true iff loading succeeded.
+     */
+    private boolean loadNativeLibrary() {
+        try {
+            LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_BROWSER);
+            // The prefetch is done after the library load for two reasons:
+            // - It is easier to know the library location after it has
+            // been loaded.
+            // - Testing has shown that this gives the best compromise,
+            // by avoiding performance regression on any tested
+            // device, and providing performance improvement on
+            // some. Doing it earlier delays UI inflation and more
+            // generally startup on some devices, most likely by
+            // competing for IO.
+            // For experimental results, see http://crbug.com/460438.
+            prefetchLibrary();
+        } catch (ProcessInitException e) {
+            return false;
         }
-        mLoadTask = new LoadTask();
-        mLoadTask.executeOnExecutor(getExecutor());
+        return true;
     }
 
     private void tasksPossiblyComplete(boolean result) {
         ThreadUtils.assertOnUiThread();
 
         if (!result) {
-            mLoadTask.cancel(true);
-            if (mFetchSeedTask != null) mFetchSeedTask.cancel(true);
+            if (mFetchSeedTask != null) mFetchSeedTask.cancel();
             onFailure();
         }
 
         if (mLibraryLoaded && !mFetchingVariations) {
+            if (FeatureUtilities.isNetworkServiceWarmUpEnabled()) {
+                ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext(), false);
+            }
+            if (mAllocateChildConnection) {
+                ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext(), true);
+            }
             onSuccess();
         }
     }
 
     @VisibleForTesting
-    protected Executor getExecutor() {
-        return AsyncTask.THREAD_POOL_EXECUTOR;
+    protected Executor getTaskPerThreadExecutor() {
+        return runnable -> new Thread(runnable).start();
     }
 
     /**

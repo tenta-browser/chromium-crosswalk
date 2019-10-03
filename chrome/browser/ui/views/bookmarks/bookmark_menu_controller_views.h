@@ -50,7 +50,7 @@ class BookmarkMenuController : public bookmarks::BaseBookmarkModelObserver,
                          content::PageNavigator* page_navigator,
                          views::Widget* parent,
                          const bookmarks::BookmarkNode* node,
-                         int start_child_index,
+                         size_t start_child_index,
                          bool for_drop);
 
   void RunMenuAt(BookmarkBarView* bookmark_bar);
@@ -85,10 +85,9 @@ class BookmarkMenuController : public bookmarks::BaseBookmarkModelObserver,
   void ExecuteCommand(int id, int mouse_event_flags) override;
   bool ShouldExecuteCommandWithoutClosingMenu(int id,
                                               const ui::Event& e) override;
-  bool GetDropFormats(
-      views::MenuItemView* menu,
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types) override;
+  bool GetDropFormats(views::MenuItemView* menu,
+                      int* formats,
+                      std::set<ui::ClipboardFormatType>* format_types) override;
   bool AreDropTypesRequired(views::MenuItemView* menu) override;
   bool CanDrop(views::MenuItemView* menu,
                const ui::OSExchangeData& data) override;
@@ -114,6 +113,7 @@ class BookmarkMenuController : public bookmarks::BaseBookmarkModelObserver,
                                       views::MenuButton** button) override;
   int GetMaxWidthForMenu(views::MenuItemView* view) override;
   void WillShowMenu(views::MenuItemView* menu) override;
+  bool ShouldTryPositioningBesideAnchor() const override;
 
   // bookmarks::BaseBookmarkModelObserver:
   void BookmarkModelChanged() override;

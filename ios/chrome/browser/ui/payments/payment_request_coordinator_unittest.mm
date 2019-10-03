@@ -8,10 +8,10 @@
 #include "base/json/json_writer.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/ios/wait_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#import "base/test/ios/wait_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/payment_address.h"
 #include "components/payments/core/payment_instrument.h"
@@ -78,8 +78,10 @@ typedef void (^mock_coordinator_select_shipping_option)(
 class PaymentRequestCoordinatorTest : public PaymentRequestUnitTestBase,
                                       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     autofill::AutofillProfile profile = autofill::test::GetFullProfile();
     autofill::CreditCard card = autofill::test::GetCreditCard();  // Visa.
@@ -90,7 +92,11 @@ class PaymentRequestCoordinatorTest : public PaymentRequestUnitTestBase,
     CreateTestPaymentRequest();
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 };
 
 // Tests that invoking start and stop on the coordinator presents and
@@ -105,18 +111,6 @@ TEST_F(PaymentRequestCoordinatorTest, StartAndStop) {
       initWithBaseViewController:base_view_controller];
   [coordinator setPaymentRequest:payment_request()];
   [coordinator setBrowserState:browser_state()];
-
-  // Mock the coordinator delegate.
-  id check_block = ^BOOL(id value) {
-    EXPECT_TRUE(value == coordinator);
-    return YES;
-  };
-  id delegate = [OCMockObject
-      mockForProtocol:@protocol(PaymentRequestCoordinatorDelegate)];
-  [[delegate expect]
-      paymentRequestCoordinatorDidStop:[OCMArg checkWithBlock:check_block]];
-
-  [coordinator setDelegate:delegate];
 
   [coordinator start];
   // Spin the run loop to trigger the animation.
@@ -137,8 +131,6 @@ TEST_F(PaymentRequestCoordinatorTest, StartAndStop) {
     return !base_view_controller.presentedViewController;
   });
   EXPECT_EQ(nil, base_view_controller.presentedViewController);
-
-  EXPECT_OCMOCK_VERIFY(delegate);
 }
 
 // Tests that calling the ShippingAddressSelectionCoordinator delegate method
@@ -170,7 +162,7 @@ TEST_F(PaymentRequestCoordinatorTest, DidSelectShippingAddress) {
 
   // Call the ShippingAddressSelectionCoordinator delegate method.
   [coordinator shippingAddressSelectionCoordinator:nil
-                          didSelectShippingAddress:profiles().back().get()];
+                          didSelectShippingAddress:profiles().back()];
 }
 
 // Tests that calling the ShippingOptionSelectionCoordinator delegate method
@@ -188,8 +180,8 @@ TEST_F(PaymentRequestCoordinatorTest, DidSelectShippingOption) {
   payments::PaymentShippingOption shipping_option;
   shipping_option.id = "123456";
   shipping_option.label = "1-Day";
-  shipping_option.amount.value = "0.99";
-  shipping_option.amount.currency = "USD";
+  shipping_option.amount->value = "0.99";
+  shipping_option.amount->currency = "USD";
 
   // Mock the coordinator delegate.
   id delegate = [OCMockObject

@@ -8,13 +8,12 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 
@@ -97,7 +96,7 @@ void ArcCastReceiverService::OnCastReceiverEnabledChanged() const {
     return;
   cast_receiver_instance->SetEnabled(
       pref_change_registrar_->prefs()->GetBoolean(prefs::kCastReceiverEnabled),
-      base::Bind(&OnResultReceivedIgnoreResult));
+      base::BindOnce(&OnResultReceivedIgnoreResult));
 }
 
 void ArcCastReceiverService::OnCastReceiverNameChanged() const {
@@ -112,8 +111,8 @@ void ArcCastReceiverService::OnCastReceiverNameChanged() const {
       name.empty()) {
     return;
   }
-  cast_receiver_instance->SetName(name,
-                                  base::Bind(&OnResultReceivedIgnoreResult));
+  cast_receiver_instance->SetName(
+      name, base::BindOnce(&OnResultReceivedIgnoreResult));
 }
 
 }  // namespace arc

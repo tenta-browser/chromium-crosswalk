@@ -11,6 +11,10 @@
 
 namespace android_webview {
 
+// NOTE: We should not add more things to RenderView and related classes.
+//       RenderView is deprecated in content, since it is not compatible
+//       with site isolation/out of process iframes.
+
 // Render process side of AwRenderViewHostExt, this provides cross-process
 // implementation of miscellaneous WebView functions that we need to poke
 // WebKit directly to implement (and that aren't needed in the chrome app).
@@ -24,14 +28,16 @@ class AwRenderViewExt : public content::RenderViewObserver {
 
   // RenderViewObserver:
   void DidCommitCompositorFrame() override;
-  void DidUpdateLayout() override;
+  void DidUpdateMainFrameLayout() override;
   void OnDestruct() override;
 
-  void CheckContentsSize();
-  void PostCheckContentsSize();
+  void UpdateContentsSize();
 
   gfx::Size last_sent_contents_size_;
-  base::OneShotTimer check_contents_size_timer_;
+
+  // Whether the contents size may have changed and |UpdateContentsSize| needs
+  // to be called.
+  bool needs_contents_size_update_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(AwRenderViewExt);
 };

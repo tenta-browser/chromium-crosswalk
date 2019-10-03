@@ -21,7 +21,7 @@ cr.define('object_fieldset', function() {
    * @constructor
    * @extends {HTMLFieldSetElement}
    */
-  var ObjectFieldSet = cr.ui.define('fieldset');
+  const ObjectFieldSet = cr.ui.define('fieldset');
 
   ObjectFieldSet.prototype = {
     __proto__: HTMLFieldSetElement.prototype,
@@ -71,20 +71,21 @@ cr.define('object_fieldset', function() {
     redraw: function() {
       this.innerHTML = '';
 
-      Object.keys(this.value).forEach(function(propName) {
-        var value = this.value[propName];
-        if (value === false && !this.showAll_)
+      Object.keys(assert(this.value)).forEach(function(propName) {
+        const value = this.value[propName];
+        if (value === false && !this.showAll_) {
           return;
+        }
 
-        var name = this.nameMap_[propName] || propName;
-        var newField = document.createElement('div');
+        const name = this.nameMap_[propName] || propName;
+        const newField = document.createElement('div');
         newField.classList.add('status');
 
-        var nameDiv = document.createElement('div');
+        const nameDiv = document.createElement('div');
         nameDiv.textContent = name + ':';
         newField.appendChild(nameDiv);
 
-        var valueDiv = document.createElement('div');
+        const valueDiv = document.createElement('div');
         valueDiv.dataset.field = propName;
 
         if (typeof(value) === 'boolean') {

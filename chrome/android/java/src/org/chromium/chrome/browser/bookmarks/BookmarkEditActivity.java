@@ -12,14 +12,11 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.TextView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Log;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.SynchronousInitializationActivity;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
-import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.chrome.browser.widget.EmptyAlertEditText;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.url_formatter.UrlFormatter;
@@ -35,8 +32,8 @@ public class BookmarkEditActivity extends SynchronousInitializationActivity {
 
     private BookmarkModel mModel;
     private BookmarkId mBookmarkId;
-    private EmptyAlertEditText mTitleEditText;
-    private EmptyAlertEditText mUrlEditText;
+    private BookmarkTextInputLayout mTitleEditText;
+    private BookmarkTextInputLayout mUrlEditText;
     private TextView mFolderTextView;
 
     private MenuItem mDeleteButton;
@@ -69,9 +66,9 @@ public class BookmarkEditActivity extends SynchronousInitializationActivity {
         }
 
         setContentView(R.layout.bookmark_edit);
-        mTitleEditText = (EmptyAlertEditText) findViewById(R.id.title_text);
+        mTitleEditText = findViewById(R.id.title_text);
         mFolderTextView = (TextView) findViewById(R.id.folder_text);
-        mUrlEditText = (EmptyAlertEditText) findViewById(R.id.url_text);
+        mUrlEditText = findViewById(R.id.url_text);
 
         mFolderTextView.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -87,12 +84,11 @@ public class BookmarkEditActivity extends SynchronousInitializationActivity {
 
         updateViewContent(false);
 
-        if (!FeatureUtilities.isChromeHomeEnabled()) {
-            findViewById(R.id.shadow).setVisibility(View.VISIBLE);
-            toolbar.setTitleTextAppearance(toolbar.getContext(), R.style.BlackHeadline2);
-            toolbar.setBackgroundColor(
-                    ApiCompatibilityUtils.getColor(getResources(), R.color.modern_primary_color));
-        }
+        View shadow = findViewById(R.id.shadow);
+        View scrollView = findViewById(R.id.scroll_view);
+        scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            shadow.setVisibility(scrollView.getScrollY() > 0 ? View.VISIBLE : View.GONE);
+        });
     }
 
     /**
@@ -102,8 +98,8 @@ public class BookmarkEditActivity extends SynchronousInitializationActivity {
         BookmarkItem bookmarkItem = mModel.getBookmarkById(mBookmarkId);
         // While the user is editing the bookmark, do not override user's input.
         if (!modelChanged) {
-            mTitleEditText.setText(bookmarkItem.getTitle());
-            mUrlEditText.setText(bookmarkItem.getUrl());
+            mTitleEditText.getEditText().setText(bookmarkItem.getTitle());
+            mUrlEditText.getEditText().setText(bookmarkItem.getUrl());
         }
         mFolderTextView.setText(mModel.getBookmarkTitle(bookmarkItem.getParentId()));
         mTitleEditText.setEnabled(bookmarkItem.isEditable());
@@ -114,9 +110,9 @@ public class BookmarkEditActivity extends SynchronousInitializationActivity {
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         mDeleteButton = menu.add(R.string.bookmark_action_bar_delete)
-                .setIcon(TintedDrawable.constructTintedDrawable(
-                        getResources(), R.drawable.btn_trash))
-                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+                                .setIcon(TintedDrawable.constructTintedDrawable(
+                                        this, R.drawable.ic_delete_white_24dp))
+                                .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
 
         return super.onCreateOptionsMenu(menu);
     }

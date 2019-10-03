@@ -19,18 +19,19 @@ class CastCrashReporterClientAndroid
   explicit CastCrashReporterClientAndroid(const std::string& process_type);
   ~CastCrashReporterClientAndroid() override;
 
-  static bool GetCrashDumpLocation(const std::string& process_type,
-                                   base::FilePath* crash_dir);
+  // Return the path to a directory of MIME-encoded crash reports.
+  static bool GetCrashReportsLocation(const std::string& process_type,
+                                      base::FilePath* crash_dir);
 
   // crash_reporter::CrashReporterClient implementation:
-  void GetProductNameAndVersion(const char** product_name,
-                                const char** version) override;
+  void GetProductNameAndVersion(std::string* product_name,
+                                std::string* version,
+                                std::string* channel) override;
   base::FilePath GetReporterLogFilename() override;
   bool GetCrashDumpLocation(base::FilePath* crash_dir) override;
   int GetAndroidMinidumpDescriptor() override;
   bool GetCollectStatsConsent() override;
   bool EnableBreakpadForProcess(const std::string& process_type) override;
-  size_t RegisterCrashKeys() override;
 
  private:
   std::string process_type_;

@@ -11,7 +11,6 @@
 #include "chrome/common/media_router/issue.h"
 #include "chrome/common/media_router/mojo/media_router.mojom.h"
 #include "chrome/common/media_router/route_request_result.h"
-#include "mojo/common/common_custom_types_struct_traits.h"
 #include "net/base/ip_endpoint.h"
 
 namespace mojo {
@@ -157,50 +156,6 @@ struct StructTraits<media_router::mojom::CastMediaSinkDataView,
 };
 
 template <>
-struct StructTraits<media_router::mojom::RouteMessageDataView,
-                    content::PresentationConnectionMessage> {
-  static media_router::mojom::RouteMessage::Type type(
-      const content::PresentationConnectionMessage& msg) {
-    if (msg.message)
-      return media_router::mojom::RouteMessage::Type::TEXT;
-    else if (msg.data)
-      return media_router::mojom::RouteMessage::Type::BINARY;
-    NOTREACHED();
-    return media_router::mojom::RouteMessage::Type::TEXT;
-  }
-
-  static const base::Optional<std::string>& message(
-      const content::PresentationConnectionMessage& msg) {
-    return msg.message;
-  }
-
-  static const base::Optional<std::vector<uint8_t>>& data(
-      const content::PresentationConnectionMessage& msg) {
-    return msg.data;
-  }
-
-  static bool Read(media_router::mojom::RouteMessageDataView data,
-                   content::PresentationConnectionMessage* out) {
-    media_router::mojom::RouteMessage::Type type;
-    if (!data.ReadType(&type))
-      return false;
-    switch (type) {
-      case media_router::mojom::RouteMessage::Type::TEXT: {
-        if (!data.ReadMessage(&out->message) || !out->message)
-          return false;
-        break;
-      }
-      case media_router::mojom::RouteMessage::Type::BINARY: {
-        if (!data.ReadData(&out->data) || !out->data)
-          return false;
-        break;
-      }
-    }
-    return true;
-  }
-};
-
-template <>
 struct StructTraits<media_router::mojom::IssueDataView,
                     media_router::IssueInfo> {
   static bool Read(media_router::mojom::IssueDataView data,
@@ -208,6 +163,10 @@ struct StructTraits<media_router::mojom::IssueDataView,
 
   static const std::string& route_id(const media_router::IssueInfo& issue) {
     return issue.route_id;
+  }
+
+  static const std::string& sink_id(const media_router::IssueInfo& issue) {
+    return issue.sink_id;
   }
 
   static media_router::IssueInfo::Severity severity(
@@ -262,8 +221,12 @@ struct EnumTraits<media_router::mojom::SinkIconType,
         return media_router::mojom::SinkIconType::HANGOUT;
       case media_router::SinkIconType::EDUCATION:
         return media_router::mojom::SinkIconType::EDUCATION;
+      case media_router::SinkIconType::WIRED_DISPLAY:
+        return media_router::mojom::SinkIconType::WIRED_DISPLAY;
       case media_router::SinkIconType::GENERIC:
         return media_router::mojom::SinkIconType::GENERIC;
+      case media_router::SinkIconType::TOTAL_COUNT:
+        break;
     }
     NOTREACHED() << "Unknown sink icon type " << static_cast<int>(icon_type);
     return media_router::mojom::SinkIconType::GENERIC;
@@ -289,6 +252,9 @@ struct EnumTraits<media_router::mojom::SinkIconType,
         return true;
       case media_router::mojom::SinkIconType::EDUCATION:
         *output = media_router::SinkIconType::EDUCATION;
+        return true;
+      case media_router::mojom::SinkIconType::WIRED_DISPLAY:
+        *output = media_router::SinkIconType::WIRED_DISPLAY;
         return true;
       case media_router::mojom::SinkIconType::GENERIC:
         *output = media_router::SinkIconType::GENERIC;
@@ -329,6 +295,11 @@ struct StructTraits<media_router::mojom::MediaSinkDataView,
     return sink_internal.sink().icon_type();
   }
 
+  static media_router::MediaRouteProviderId provider_id(
+      const media_router::MediaSinkInternal& sink_internal) {
+    return sink_internal.sink().provider_id();
+  }
+
   static const media_router::MediaSinkInternal& extra_data(
       const media_router::MediaSinkInternal& sink_internal) {
     return sink_internal;
@@ -347,8 +318,6 @@ struct EnumTraits<media_router::mojom::RouteControllerType,
         return media_router::mojom::RouteControllerType::kNone;
       case media_router::RouteControllerType::kGeneric:
         return media_router::mojom::RouteControllerType::kGeneric;
-      case media_router::RouteControllerType::kHangouts:
-        return media_router::mojom::RouteControllerType::kHangouts;
       case media_router::RouteControllerType::kMirroring:
         return media_router::mojom::RouteControllerType::kMirroring;
     }
@@ -365,9 +334,6 @@ struct EnumTraits<media_router::mojom::RouteControllerType,
         return true;
       case media_router::mojom::RouteControllerType::kGeneric:
         *output = media_router::RouteControllerType::kGeneric;
-        return true;
-      case media_router::mojom::RouteControllerType::kHangouts:
-        *output = media_router::RouteControllerType::kHangouts;
         return true;
       case media_router::mojom::RouteControllerType::kMirroring:
         *output = media_router::RouteControllerType::kMirroring;
@@ -417,16 +383,6 @@ struct StructTraits<media_router::mojom::MediaRouteDataView,
     return route.is_local();
   }
 
-  static const std::string& custom_controller_path(
-      const media_router::MediaRoute& route) {
-    return route.custom_controller_path();
-  }
-
-  static bool supports_media_route_controller(
-      const media_router::MediaRoute& route) {
-    return route.supports_media_route_controller();
-  }
-
   static media_router::RouteControllerType controller_type(
       const media_router::MediaRoute& route) {
     return route.controller_type();
@@ -442,104 +398,6 @@ struct StructTraits<media_router::mojom::MediaRouteDataView,
 
   static bool is_local_presentation(const media_router::MediaRoute& route) {
     return route.is_local_presentation();
-  }
-};
-
-// PresentationConnectionState
-
-template <>
-struct EnumTraits<media_router::mojom::MediaRouter::PresentationConnectionState,
-                  content::PresentationConnectionState> {
-  static media_router::mojom::MediaRouter::PresentationConnectionState ToMojom(
-      content::PresentationConnectionState state) {
-    switch (state) {
-      case content::PRESENTATION_CONNECTION_STATE_CONNECTING:
-        return media_router::mojom::MediaRouter::PresentationConnectionState::
-            CONNECTING;
-      case content::PRESENTATION_CONNECTION_STATE_CONNECTED:
-        return media_router::mojom::MediaRouter::PresentationConnectionState::
-            CONNECTED;
-      case content::PRESENTATION_CONNECTION_STATE_CLOSED:
-        return media_router::mojom::MediaRouter::PresentationConnectionState::
-            CLOSED;
-      case content::PRESENTATION_CONNECTION_STATE_TERMINATED:
-        return media_router::mojom::MediaRouter::PresentationConnectionState::
-            TERMINATED;
-    }
-    NOTREACHED() << "Unknown PresentationConnectionState "
-                 << static_cast<int>(state);
-    return media_router::mojom::MediaRouter::PresentationConnectionState::
-        TERMINATED;
-  }
-
-  static bool FromMojom(
-      media_router::mojom::MediaRouter::PresentationConnectionState input,
-      content::PresentationConnectionState* state) {
-    switch (input) {
-      case media_router::mojom::MediaRouter::PresentationConnectionState::
-          CONNECTING:
-        *state = content::PRESENTATION_CONNECTION_STATE_CONNECTING;
-        return true;
-      case media_router::mojom::MediaRouter::PresentationConnectionState::
-          CONNECTED:
-        *state = content::PRESENTATION_CONNECTION_STATE_CONNECTED;
-        return true;
-      case media_router::mojom::MediaRouter::PresentationConnectionState::
-          CLOSED:
-        *state = content::PRESENTATION_CONNECTION_STATE_CLOSED;
-        return true;
-      case media_router::mojom::MediaRouter::PresentationConnectionState::
-          TERMINATED:
-        *state = content::PRESENTATION_CONNECTION_STATE_TERMINATED;
-        return true;
-    }
-    return false;
-  }
-};
-
-// PresentationConnectionCloseReason
-
-template <>
-struct EnumTraits<
-    media_router::mojom::MediaRouter::PresentationConnectionCloseReason,
-    content::PresentationConnectionCloseReason> {
-  static media_router::mojom::MediaRouter::PresentationConnectionCloseReason
-  ToMojom(content::PresentationConnectionCloseReason reason) {
-    switch (reason) {
-      case content::PRESENTATION_CONNECTION_CLOSE_REASON_CONNECTION_ERROR:
-        return media_router::mojom::MediaRouter::
-            PresentationConnectionCloseReason::CONNECTION_ERROR;
-      case content::PRESENTATION_CONNECTION_CLOSE_REASON_CLOSED:
-        return media_router::mojom::MediaRouter::
-            PresentationConnectionCloseReason::CLOSED;
-      case content::PRESENTATION_CONNECTION_CLOSE_REASON_WENT_AWAY:
-        return media_router::mojom::MediaRouter::
-            PresentationConnectionCloseReason::WENT_AWAY;
-    }
-    NOTREACHED() << "Unknown PresentationConnectionCloseReason "
-                 << static_cast<int>(reason);
-    return media_router::mojom::MediaRouter::PresentationConnectionCloseReason::
-        CONNECTION_ERROR;
-  }
-
-  static bool FromMojom(
-      media_router::mojom::MediaRouter::PresentationConnectionCloseReason input,
-      content::PresentationConnectionCloseReason* state) {
-    switch (input) {
-      case media_router::mojom::MediaRouter::PresentationConnectionCloseReason::
-          CONNECTION_ERROR:
-        *state = content::PRESENTATION_CONNECTION_CLOSE_REASON_CONNECTION_ERROR;
-        return true;
-      case media_router::mojom::MediaRouter::PresentationConnectionCloseReason::
-          CLOSED:
-        *state = content::PRESENTATION_CONNECTION_CLOSE_REASON_CLOSED;
-        return true;
-      case media_router::mojom::MediaRouter::PresentationConnectionCloseReason::
-          WENT_AWAY:
-        *state = content::PRESENTATION_CONNECTION_CLOSE_REASON_WENT_AWAY;
-        return true;
-    }
-    return false;
   }
 };
 
@@ -570,6 +428,9 @@ struct EnumTraits<media_router::mojom::RouteRequestResultCode,
             NO_SUPPORTED_PROVIDER;
       case media_router::RouteRequestResult::CANCELLED:
         return media_router::mojom::RouteRequestResultCode::CANCELLED;
+      case media_router::RouteRequestResult::ROUTE_ALREADY_EXISTS:
+        return media_router::mojom::RouteRequestResultCode::
+            ROUTE_ALREADY_EXISTS;
       default:
         NOTREACHED() << "Unknown RouteRequestResultCode "
                      << static_cast<int>(code);
@@ -606,6 +467,53 @@ struct EnumTraits<media_router::mojom::RouteRequestResultCode,
         return true;
       case media_router::mojom::RouteRequestResultCode::CANCELLED:
         *output = media_router::RouteRequestResult::CANCELLED;
+        return true;
+      case media_router::mojom::RouteRequestResultCode::ROUTE_ALREADY_EXISTS:
+        *output = media_router::RouteRequestResult::ROUTE_ALREADY_EXISTS;
+        return true;
+    }
+    return false;
+  }
+};
+
+// MediaRouteProvider
+
+template <>
+struct EnumTraits<media_router::mojom::MediaRouteProvider::Id,
+                  media_router::MediaRouteProviderId> {
+  static media_router::mojom::MediaRouteProvider::Id ToMojom(
+      media_router::MediaRouteProviderId provider_id) {
+    switch (provider_id) {
+      case media_router::MediaRouteProviderId::EXTENSION:
+        return media_router::mojom::MediaRouteProvider::Id::EXTENSION;
+      case media_router::MediaRouteProviderId::WIRED_DISPLAY:
+        return media_router::mojom::MediaRouteProvider::Id::WIRED_DISPLAY;
+      case media_router::MediaRouteProviderId::CAST:
+        return media_router::mojom::MediaRouteProvider::Id::CAST;
+      case media_router::MediaRouteProviderId::DIAL:
+        return media_router::mojom::MediaRouteProvider::Id::DIAL;
+      case media_router::MediaRouteProviderId::UNKNOWN:
+        break;
+    }
+    NOTREACHED() << "Invalid MediaRouteProvider::Id: "
+                 << static_cast<int>(provider_id);
+    return media_router::mojom::MediaRouteProvider::Id::EXTENSION;
+  }
+
+  static bool FromMojom(media_router::mojom::MediaRouteProvider::Id input,
+                        media_router::MediaRouteProviderId* provider_id) {
+    switch (input) {
+      case media_router::mojom::MediaRouteProvider::Id::EXTENSION:
+        *provider_id = media_router::MediaRouteProviderId::EXTENSION;
+        return true;
+      case media_router::mojom::MediaRouteProvider::Id::WIRED_DISPLAY:
+        *provider_id = media_router::MediaRouteProviderId::WIRED_DISPLAY;
+        return true;
+      case media_router::mojom::MediaRouteProvider::Id::CAST:
+        *provider_id = media_router::MediaRouteProviderId::CAST;
+        return true;
+      case media_router::mojom::MediaRouteProvider::Id::DIAL:
+        *provider_id = media_router::MediaRouteProviderId::DIAL;
         return true;
     }
     return false;

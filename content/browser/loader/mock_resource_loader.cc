@@ -6,13 +6,13 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_handler.h"
-#include "content/public/common/resource_response.h"
 #include "net/base/io_buffer.h"
+#include "net/http/http_request_headers.h"
 #include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -25,6 +25,15 @@ class MockResourceLoader::TestResourceController : public ResourceController {
 
   void Resume() override { mock_loader_->OnResume(); }
 
+  void ResumeForRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers) override {
+    DCHECK(removed_headers.empty() && modified_headers.IsEmpty())
+        << "Redirect with removed or modified headers is not supported yet. "
+           "See https://crbug.com/845683";
+    Resume();
+  }
+
   void Cancel() override { CancelWithError(net::ERR_ABORTED); }
 
   void CancelWithError(int error_code) override {
@@ -35,7 +44,7 @@ class MockResourceLoader::TestResourceController : public ResourceController {
 };
 
 MockResourceLoader::MockResourceLoader(ResourceHandler* resource_handler)
-    : resource_handler_(resource_handler), weak_factory_(this) {
+    : resource_handler_(resource_handler) {
   resource_handler_->SetDelegate(this);
 }
 
@@ -55,7 +64,7 @@ MockResourceLoader::Status MockResourceLoader::OnWillStart(const GURL& url) {
 
 MockResourceLoader::Status MockResourceLoader::OnRequestRedirected(
     const net::RedirectInfo& redirect_info,
-    scoped_refptr<ResourceResponse> response) {
+    scoped_refptr<network::ResourceResponse> response) {
   EXPECT_FALSE(weak_factory_.HasWeakPtrs());
   EXPECT_EQ(Status::IDLE, status_);
 
@@ -72,7 +81,7 @@ MockResourceLoader::Status MockResourceLoader::OnRequestRedirected(
 }
 
 MockResourceLoader::Status MockResourceLoader::OnResponseStarted(
-    scoped_refptr<ResourceResponse> response) {
+    scoped_refptr<network::ResourceResponse> response) {
   EXPECT_FALSE(weak_factory_.HasWeakPtrs());
   EXPECT_EQ(Status::IDLE, status_);
 
@@ -107,7 +116,7 @@ MockResourceLoader::Status MockResourceLoader::OnWillRead() {
   }
 
   return status_;
-};
+}
 
 MockResourceLoader::Status MockResourceLoader::OnReadCompleted(
     base::StringPiece bytes) {

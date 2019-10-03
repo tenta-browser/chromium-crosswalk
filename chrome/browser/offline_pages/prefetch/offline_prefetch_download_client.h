@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_OFFLINE_PAGES_PREFETCH_OFFLINE_PREFETCH_DOWNLOAD_CLIENT_H_
 #define CHROME_BROWSER_OFFLINE_PAGES_PREFETCH_OFFLINE_PREFETCH_DOWNLOAD_CLIENT_H_
 
-#include "base/macros.h"
-#include "components/download/public/client.h"
+#include <string>
+#include <vector>
 
-namespace content {
-class BrowserContext;
-}  // namespace content
+#include "base/macros.h"
+#include "components/download/public/background_service/client.h"
+
+class SimpleFactoryKey;
 
 namespace download {
 struct CompletionInfo;
@@ -23,7 +24,7 @@ class PrefetchDownloader;
 
 class OfflinePrefetchDownloadClient : public download::Client {
  public:
-  explicit OfflinePrefetchDownloadClient(content::BrowserContext* context);
+  explicit OfflinePrefetchDownloadClient(SimpleFactoryKey* simple_factory_key);
   ~OfflinePrefetchDownloadClient() override;
 
  private:
@@ -32,23 +33,20 @@ class OfflinePrefetchDownloadClient : public download::Client {
       bool state_lost,
       const std::vector<download::DownloadMetaData>& downloads) override;
   void OnServiceUnavailable() override;
-  download::Client::ShouldDownload OnDownloadStarted(
-      const std::string& guid,
-      const std::vector<GURL>& url_chain,
-      const scoped_refptr<const net::HttpResponseHeaders>& headers) override;
-  void OnDownloadUpdated(const std::string& guid,
-                         uint64_t bytes_downloaded) override;
   void OnDownloadFailed(const std::string& guid,
+                        const download::CompletionInfo& completion_info,
                         download::Client::FailureReason reason) override;
   void OnDownloadSucceeded(
       const std::string& guid,
       const download::CompletionInfo& completion_info) override;
   bool CanServiceRemoveDownloadedFile(const std::string& guid,
                                       bool force_delete) override;
+  void GetUploadData(const std::string& guid,
+                     download::GetUploadDataCallback callback) override;
 
   PrefetchDownloader* GetPrefetchDownloader() const;
 
-  content::BrowserContext* context_;
+  SimpleFactoryKey* simple_factory_key_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflinePrefetchDownloadClient);
 };

@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/version_info/version_info.h"
-#include "ios/chrome/common/ios_app_bundle_id_prefix.h"
+#include "ios/chrome/common/ios_app_bundle_id_prefix_buildflags.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -17,21 +17,28 @@ namespace app_group {
 
 const char kChromeAppGroupXCallbackCommand[] = "app-group-command";
 
+const char kChromeExtensionFieldTrialPreference[] = "Extension.FieldTrial";
+
 const char kChromeAppGroupCommandPreference[] =
     "GroupApp.ChromeAppGroupCommand";
 
 const char kChromeAppGroupCommandTimePreference[] = "CommandTime";
 const char kChromeAppGroupCommandAppPreference[] = "SourceApp";
 const char kChromeAppGroupCommandCommandPreference[] = "Command";
-const char kChromeAppGroupCommandURLPreference[] = "URL";
+const char kChromeAppGroupCommandTextPreference[] = "Text";
+const char kChromeAppGroupCommandDataPreference[] = "Data";
 const char kChromeAppGroupCommandIndexPreference[] = "Index";
 
 const char kChromeAppGroupOpenURLCommand[] = "openurl";
+const char kChromeAppGroupSearchTextCommand[] = "searchtext";
+const char kChromeAppGroupSearchImageCommand[] = "searchimage";
 const char kChromeAppGroupVoiceSearchCommand[] = "voicesearch";
 const char kChromeAppGroupNewTabCommand[] = "newtab";
 const char kChromeAppGroupFocusOmniboxCommand[] = "focusomnibox";
 const char kChromeAppGroupIncognitoSearchCommand[] = "incognitosearch";
 const char kChromeAppGroupQRScannerCommand[] = "qrscanner";
+
+const char kChromeAppGroupSupportsSearchByImage[] = "supportsSearchByImage";
 
 const char kChromeAppClientID[] = "ClientID";
 const char kUserMetricsEnabledDate[] = "UserMetricsEnabledDate";
@@ -50,6 +57,7 @@ NSString* const kShareItemSourceShareExtension = @"ChromeShareExtension";
 NSString* const kOpenCommandSourceTodayExtension = @"ChromeTodayExtension";
 NSString* const kOpenCommandSourceContentExtension = @"ChromeContentExtension";
 NSString* const kOpenCommandSourceSearchExtension = @"ChromeSearchExtension";
+NSString* const kOpenCommandSourceShareExtension = @"ChromeShareExtension";
 
 NSString* const kSuggestedItems = @"SuggestedItems";
 

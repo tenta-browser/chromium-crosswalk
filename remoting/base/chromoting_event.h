@@ -9,14 +9,26 @@
 #include <string>
 
 #include "base/values.h"
+#include "remoting/proto/remoting/v1/chromoting_event.pb.h"
 
 namespace remoting {
 
+// TODO(yuweih): See if we can rewrite this in Protobuf.
 // This is the representation of the log entry being sent to the telemetry
 // server. The content should be synced with chromoting_event.js and
 // chromoting_extensions.proto.
 class ChromotingEvent {
  public:
+  enum class AuthMethod {
+    // Note that NOT_SET is only defined locally and should not be sent to the
+    // server.
+    NOT_SET = 0,
+    PIN = 1,
+    ACCESS_CODE = 2,
+    PINLESS = 3,
+    THIRD_PARTY = 4,
+  };
+
   enum class ConnectionError {
     NONE = 1,
     HOST_OFFLINE = 2,
@@ -38,6 +50,8 @@ class ChromotingEvent {
     NACL_PLUGIN_CRASHED = 18,
     INVALID_ACCOUNT = 19
   };
+
+  enum class ConnectionType { DIRECT = 1, STUN = 2, RELAY = 3 };
 
   enum class Mode { IT2ME = 1, ME2ME = 2 };
 
@@ -75,6 +89,21 @@ class ChromotingEvent {
     CREATING_PLUGIN = 17,
   };
 
+  enum SessionEntryPoint {
+    CONNECT_BUTTON = 1,
+    RECONNECT_BUTTON = 2,
+    AUTO_RECONNECT_ON_CONNECTION_DROPPED = 3,
+    AUTO_RECONNECT_ON_HOST_OFFLINE = 4,
+  };
+
+  enum SignalStrategyType {
+    NOT_SET = 0,
+    XMPP = 1,
+    WCS = 2,
+    LCS = 3,
+    FTL = 4,
+  };
+
   enum class Type {
     SESSION_STATE = 1,
     CONNECTION_STATISTICS = 2,
@@ -87,8 +116,10 @@ class ChromotingEvent {
     SIGNAL_STRATEGY_PROGRESS = 9
   };
 
+  static const char kAuthMethodKey[];
   static const char kCaptureLatencyKey[];
   static const char kConnectionErrorKey[];
+  static const char kConnectionTypeKey[];
   static const char kCpuKey[];
   static const char kDecodeLatencyKey[];
   static const char kEncodeLatencyKey[];
@@ -103,12 +134,15 @@ class ChromotingEvent {
   static const char kModeKey[];
   static const char kOsKey[];
   static const char kOsVersionKey[];
+  static const char kPreviousSessionStateKey[];
   static const char kRenderLatencyKey[];
   static const char kRoleKey[];
   static const char kRoundtripLatencyKey[];
   static const char kSessionDurationKey[];
+  static const char kSessionEntryPointKey[];
   static const char kSessionIdKey[];
   static const char kSessionStateKey[];
+  static const char kSignalStrategyTypeKey[];
   static const char kTypeKey[];
   static const char kVideoBandwidthKey[];
   static const char kWebAppVersionKey[];
@@ -133,20 +167,34 @@ class ChromotingEvent {
     SetInteger(key, static_cast<int>(value));
   }
 
+  // Returns true if the format of ChromotingEvent can be accepted by the
+  // telemetry server.
+  bool IsDataValid();
+
   // Adds fields of CPU type, OS type and OS version.
   void AddSystemInfo();
 
   void IncrementSendAttempts();
   int send_attempts() const { return send_attempts_; }
 
+  const base::Value* GetValue(const std::string& key) const;
+
   // Returns a copy of the internal dictionary value.
   std::unique_ptr<base::DictionaryValue> CopyDictionaryValue() const;
+
+  // Converts into a ChromotingEvent protobuf.
+  apis::v1::ChromotingEvent CreateProto() const;
 
   // Returns true if the SessionState concludes the end of session.
   static bool IsEndOfSession(SessionState state);
 
   // Converts the OS type String into the enum value.
   static Os ParseOsFromString(const std::string& os);
+
+  // Converts an enum value of a enum class defined above to its name as a
+  // string, e.g. HOST_OFFLINE -> "host-offline".
+  template <typename EnumType>
+  static const char* EnumToString(EnumType value);
 
  private:
   std::unique_ptr<base::DictionaryValue> values_map_;

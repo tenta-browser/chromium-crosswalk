@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/file_manager/open_util.h"
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -55,7 +56,7 @@ void ExecuteFileTaskForUrl(Profile* profile,
       GetFileManagerMainPageUrl(),  // Executing task on behalf of the Files
                                     // app.
       task, std::vector<FileSystemURL>(1, file_system_context->CrackURL(url)),
-      base::Bind(&IgnoreFileTaskExecuteResult));
+      base::BindOnce(&IgnoreFileTaskExecuteResult));
 }
 
 // Opens the file manager for the specified |url|. Used to implement
@@ -72,9 +73,8 @@ void OpenFileManagerWithInternalActionId(Profile* profile,
     return;
   base::RecordAction(base::UserMetricsAction("ShowFileBrowserFullTab"));
 
-  file_tasks::TaskDescriptor task(kFileManagerAppId,
-                                  file_tasks::TASK_TYPE_FILE_BROWSER_HANDLER,
-                                  action_id);
+  file_tasks::TaskDescriptor task(
+      kFileManagerAppId, file_tasks::TASK_TYPE_FILE_HANDLER, action_id);
   ExecuteFileTaskForUrl(profile, task, url);
 }
 
@@ -113,15 +113,15 @@ void OpenFileWithMimeType(Profile* profile,
                           const platform_util::OpenOperationCallback& callback,
                           const std::string& mime_type) {
   std::vector<extensions::EntryInfo> entries;
-  entries.push_back(extensions::EntryInfo(path, mime_type, false));
+  entries.emplace_back(path, mime_type, false);
 
   std::vector<GURL> file_urls;
   file_urls.push_back(url);
 
   file_tasks::FindAllTypesOfTasks(
-      profile, drive::util::GetDriveAppRegistryByProfile(profile), entries,
-      file_urls,
-      base::Bind(&OpenFileMimeTypeAfterTasksListed, profile, url, callback));
+      profile, entries, file_urls,
+      base::BindOnce(&OpenFileMimeTypeAfterTasksListed, profile, url,
+                     callback));
 }
 
 // Opens the file specified by |url| by finding and executing a file task for
@@ -166,6 +166,26 @@ void OpenItemWithMetadata(Profile* profile,
   callback.Run(platform_util::OPEN_FAILED_INVALID_TYPE);
 }
 
+void ShowItemInFolderWithMetadata(
+    Profile* profile,
+    const base::FilePath& file_path,
+    const GURL& url,
+    const platform_util::OpenOperationCallback& callback,
+    base::File::Error error,
+    const base::File::Info& file_info) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (error != base::File::FILE_OK) {
+    callback.Run(error == base::File::FILE_ERROR_NOT_FOUND
+                     ? platform_util::OPEN_FAILED_PATH_NOT_FOUND
+                     : platform_util::OPEN_FAILED_FILE_ERROR);
+    return;
+  }
+
+  // This action changes the selection so we do not reuse existing tabs.
+  OpenFileManagerWithInternalActionId(profile, url, "select");
+  callback.Run(platform_util::OPEN_SUCCEEDED);
+}
+
 }  // namespace
 
 void OpenItem(Profile* profile,
@@ -201,9 +221,11 @@ void ShowItemInFolder(Profile* profile,
     return;
   }
 
-  // This action changes the selection so we do not reuse existing tabs.
-  OpenFileManagerWithInternalActionId(profile, url, "select");
-  callback.Run(platform_util::OPEN_SUCCEEDED);
+  GetMetadataForPath(
+      GetFileSystemContextForExtensionId(profile, kFileManagerAppId), file_path,
+      storage::FileSystemOperation::GET_METADATA_FIELD_IS_DIRECTORY,
+      base::BindOnce(&ShowItemInFolderWithMetadata, profile, file_path, url,
+                     callback));
 }
 
 void DisableShellOperationsForTesting() {

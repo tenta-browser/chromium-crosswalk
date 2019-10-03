@@ -4,9 +4,6 @@
 
 #include "chrome/browser/vr/vr_gl_util.h"
 
-#include "ui/gfx/geometry/point3_f.h"
-#include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/transform.h"
 
 namespace vr {
@@ -16,15 +13,6 @@ std::array<float, 16> MatrixToGLArray(const gfx::Transform& transform) {
   std::array<float, 16> result;
   transform.matrix().asColMajorf(result.data());
   return result;
-}
-
-// This code is adapted from the GVR Treasure Hunt demo source.
-gfx::Rect CalculatePixelSpaceRect(const gfx::Size& texture_size,
-                                  const gfx::RectF& texture_rect) {
-  const gfx::RectF rect =
-      ScaleRect(texture_rect, static_cast<float>(texture_size.width()),
-                static_cast<float>(texture_size.height()));
-  return gfx::Rect(rect.x(), rect.y(), rect.width(), rect.height());
 }
 
 GLuint CompileShader(GLenum shader_type,
@@ -38,10 +26,10 @@ GLuint CompileShader(GLenum shader_type,
     // Compile the shader.
     glCompileShader(shader_handle);
     // Get the compilation status.
-    GLint status;
+    GLint status = GL_FALSE;
     glGetShaderiv(shader_handle, GL_COMPILE_STATUS, &status);
     if (status == GL_FALSE) {
-      GLint info_log_length;
+      GLint info_log_length = 0;
       glGetShaderiv(shader_handle, GL_INFO_LOG_LENGTH, &info_log_length);
       GLchar* str_info_log = new GLchar[info_log_length + 1];
       glGetShaderInfoLog(shader_handle, info_log_length, nullptr, str_info_log);
@@ -51,6 +39,8 @@ GLuint CompileShader(GLenum shader_type,
       glDeleteShader(shader_handle);
       shader_handle = 0;
     }
+  } else {
+    error = "Could not create a shader handle (did not attempt compilation).";
   }
 
   return shader_handle;
@@ -72,12 +62,12 @@ GLuint CreateAndLinkProgram(GLuint vertext_shader_handle,
     glLinkProgram(program_handle);
 
     // Get the link status.
-    GLint link_status;
+    GLint link_status = GL_FALSE;
     glGetProgramiv(program_handle, GL_LINK_STATUS, &link_status);
 
     // If the link failed, delete the program.
     if (link_status == GL_FALSE) {
-      GLint info_log_length;
+      GLint info_log_length = 0;
       glGetProgramiv(program_handle, GL_INFO_LOG_LENGTH, &info_log_length);
 
       GLchar* str_info_log = new GLchar[info_log_length + 1];
@@ -94,30 +84,6 @@ GLuint CreateAndLinkProgram(GLuint vertext_shader_handle,
   return program_handle;
 }
 
-gfx::SizeF CalculateScreenSize(const gfx::Transform& proj_matrix,
-                               const gfx::Transform& model_matrix,
-                               const gfx::SizeF& size) {
-  // View matrix is the identity, thus, not needed in the calculation.
-  gfx::Transform scale_transform;
-  scale_transform.Scale(size.width(), size.height());
-
-  gfx::Transform model_view_proj_matrix =
-      proj_matrix * model_matrix * scale_transform;
-
-  gfx::Point3F projected_upper_right_corner(0.5f, 0.5f, 0.0f);
-  model_view_proj_matrix.TransformPoint(&projected_upper_right_corner);
-  gfx::Point3F projected_lower_left_corner(-0.5f, -0.5f, 0.0f);
-  model_view_proj_matrix.TransformPoint(&projected_lower_left_corner);
-
-  // Calculate and return the normalized size in screen space.
-  return gfx::SizeF((std::abs(projected_upper_right_corner.x()) +
-                     std::abs(projected_lower_left_corner.x())) /
-                        2.0f,
-                    (std::abs(projected_upper_right_corner.y()) +
-                     std::abs(projected_lower_left_corner.y())) /
-                        2.0f);
-}
-
 void SetTexParameters(GLenum texture_type) {
   glTexParameteri(texture_type, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(texture_type, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -128,6 +94,11 @@ void SetTexParameters(GLenum texture_type) {
 void SetColorUniform(GLuint handle, SkColor c) {
   glUniform4f(handle, SkColorGetR(c) / 255.0, SkColorGetG(c) / 255.0,
               SkColorGetB(c) / 255.0, SkColorGetA(c) / 255.0);
+}
+
+void SetOpaqueColorUniform(GLuint handle, SkColor c) {
+  glUniform3f(handle, SkColorGetR(c) / 255.0, SkColorGetG(c) / 255.0,
+              SkColorGetB(c) / 255.0);
 }
 
 }  // namespace vr

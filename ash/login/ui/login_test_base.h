@@ -7,8 +7,7 @@
 
 #include <memory>
 
-#include "ash/login/ui/login_data_dispatcher.h"
-#include "ash/public/interfaces/login_user_info.mojom.h"
+#include "ash/public/cpp/login_types.h"
 #include "ash/test/ash_test_base.h"
 #include "base/macros.h"
 
@@ -19,6 +18,8 @@ class Widget;
 
 namespace ash {
 
+class LoginDataDispatcher;
+
 // Base test fixture for testing the views-based login and lock screens. This
 // class provides easy access to types which the login/lock frequently need.
 class LoginTestBase : public AshTestBase {
@@ -26,8 +27,15 @@ class LoginTestBase : public AshTestBase {
   LoginTestBase();
   ~LoginTestBase() override;
 
+  // Shows a full Lock/Login screen. These methods are useful for when we want
+  // to test interactions between multiple lock screen components, or when some
+  // component needs to be able to talk directly to the lockscreen (e.g. getting
+  // the ScreenType).
+  void ShowLockScreen();
+  void ShowLoginScreen();
+
   // Sets the primary test widget. The widget can be retrieved using |widget()|.
-  // This can be used to make a wdiget scoped to the whole test, e.g. if the
+  // This can be used to make a widget scoped to the whole test, e.g. if the
   // widget is created in a SetUp override.
   // May be called at most once.
   void SetWidget(std::unique_ptr<views::Widget> widget);
@@ -37,15 +45,32 @@ class LoginTestBase : public AshTestBase {
   // shown.
   std::unique_ptr<views::Widget> CreateWidgetWithContent(views::View* content);
 
-  // Utility method to create a new |mojom::UserInfoPtr| instance.
-  mojom::LoginUserInfoPtr CreateUser(const std::string& name) const;
-
-  // Changes the active number of users. Fires an event on |data_dispatcher()|.
+  // Changes the active number of users. Fires an event on |DataDispatcher()|.
   void SetUserCount(size_t count);
 
-  const std::vector<mojom::LoginUserInfoPtr>& users() const { return users_; }
+  // Append number of |num_users| regular auth users.
+  // Changes the active number of users. Fires an event on
+  // |DataDispatcher()|.
+  void AddUsers(size_t num_users);
 
-  LoginDataDispatcher* data_dispatcher() { return &data_dispatcher_; }
+  // Add a single user with the specified |email|.
+  void AddUserByEmail(const std::string& email);
+
+  // Append number of |num_public_accounts| public account users.
+  // Changes the active number of users. Fires an event on
+  // |DataDispatcher()|.
+  void AddPublicAccountUsers(size_t num_public_accounts);
+
+  // Creates and appends |num_users| of child user accounts.
+  // Changes the active number of users. Fires an event on |DataDispatcher()|.
+  void AddChildUsers(size_t num_users);
+
+  std::vector<LoginUserInfo>& users() { return users_; }
+
+  const std::vector<LoginUserInfo>& users() const { return users_; }
+
+  // Returns the singleton LoginDataDispatcher.
+  LoginDataDispatcher* DataDispatcher();
 
   // AshTestBase:
   void TearDown() override;
@@ -56,9 +81,7 @@ class LoginTestBase : public AshTestBase {
   // The widget created using |ShowWidgetWithContent|.
   std::unique_ptr<views::Widget> widget_;
 
-  std::vector<mojom::LoginUserInfoPtr> users_;
-
-  LoginDataDispatcher data_dispatcher_;
+  std::vector<LoginUserInfo> users_;
 
   DISALLOW_COPY_AND_ASSIGN(LoginTestBase);
 };

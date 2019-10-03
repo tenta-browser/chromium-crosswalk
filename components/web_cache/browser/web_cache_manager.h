@@ -19,7 +19,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "components/web_cache/public/interfaces/web_cache.mojom.h"
+#include "components/web_cache/public/mojom/web_cache.mojom.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -242,7 +242,7 @@ class WebCacheManager : public content::NotificationObserver {
   // Maps every renderer_id with its corresponding mojom::WebCachePtr.
   WebCacheServicesMap web_cache_services_;
 
-  base::WeakPtrFactory<WebCacheManager> weak_factory_;
+  base::WeakPtrFactory<WebCacheManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebCacheManager);
 };

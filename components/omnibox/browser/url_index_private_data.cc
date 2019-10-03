@@ -16,7 +16,6 @@
 
 #include "base/containers/stack.h"
 #include "base/files/file_util.h"
-#include "base/feature_list.h"
 #include "base/i18n/break_iterator.h"
 #include "base/i18n/case_conversion.h"
 #include "base/macros.h"
@@ -25,6 +24,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/history/core/browser/history_database.h"
@@ -190,10 +190,13 @@ ScoredHistoryMatches URLIndexPrivateData::HistoryItemsForTerms(
     // the final filtering we need whitespace separated substrings possibly
     // containing escaped characters.
     base::string16 lower_raw_string(base::i18n::ToLower(search_string));
-    base::string16 lower_unescaped_string = net::UnescapeURLComponent(
-        lower_raw_string,
-        net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
-            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+    // Have to convert to UTF-8 and back, because UnescapeURLComponent doesn't
+    // support unescaping UTF-8 characters and converting them to UTF-16.
+    base::string16 lower_unescaped_string =
+        base::UTF8ToUTF16(net::UnescapeURLComponent(
+            base::UTF16ToUTF8(lower_raw_string),
+            net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+                net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS));
 
     // Extract individual 'words' (as opposed to 'terms'; see comment in
     // HistoryIdsToScoredMatches()) from the search string. When the user types
@@ -253,7 +256,7 @@ bool URLIndexPrivateData::UpdateURL(
   // is deleted from the index.
   bool row_was_updated = false;
   history::URLID row_id = row.id();
-  HistoryInfoMap::iterator row_pos = history_info_map_.find(row_id);
+  auto row_pos = history_info_map_.find(row_id);
   if (row_pos == history_info_map_.end()) {
     // This new row should be indexed if it qualifies.
     history::URLRow new_row(row);
@@ -306,7 +309,7 @@ bool URLIndexPrivateData::UpdateURL(
 void URLIndexPrivateData::UpdateRecentVisits(
     history::URLID url_id,
     const history::VisitVector& recent_visits) {
-  HistoryInfoMap::iterator row_pos = history_info_map_.find(url_id);
+  auto row_pos = history_info_map_.find(url_id);
   if (row_pos != history_info_map_.end()) {
     VisitInfoVector* visits = &row_pos->second.visits;
     visits->clear();
@@ -330,6 +333,7 @@ void URLIndexPrivateData::ScheduleUpdateRecentVisits(
     history::URLID url_id,
     base::CancelableTaskTracker* tracker) {
   history_service->ScheduleDBTask(
+      FROM_HERE,
       std::unique_ptr<history::HistoryDBTask>(
           new UpdateRecentVisitsFromHistoryDBTask(this, url_id)),
       tracker);
@@ -350,10 +354,8 @@ class HistoryInfoMapItemHasURL {
 
 bool URLIndexPrivateData::DeleteURL(const GURL& url) {
   // Find the matching entry in the history_info_map_.
-  HistoryInfoMap::iterator pos = std::find_if(
-      history_info_map_.begin(),
-      history_info_map_.end(),
-      HistoryInfoMapItemHasURL(url));
+  auto pos = std::find_if(history_info_map_.begin(), history_info_map_.end(),
+                          HistoryInfoMapItemHasURL(url));
   if (pos == history_info_map_.end())
     return false;
   RemoveRowFromIndex(pos->second.url_row);
@@ -368,10 +370,17 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RestoreFromFile(
   if (!base::PathExists(file_path))
     return nullptr;
   std::string data;
+
+  // To reduce OOM crashes, set a common sense limit on the cache file size we
+  // try to read. Most cache file sizes are under 1MB.
+  constexpr size_t kHistoryProviderCacheSizeLimitBytes = 50 * 1000 * 1000;
+
   // If there is no cache file then simply give up. This will cause us to
   // attempt to rebuild from the history database.
-  if (!base::ReadFileToString(file_path, &data))
+  if (!base::ReadFileToStringWithMaxSize(file_path, &data,
+                                         kHistoryProviderCacheSizeLimitBytes)) {
     return nullptr;
+  }
 
   scoped_refptr<URLIndexPrivateData> restored_data(new URLIndexPrivateData);
   InMemoryURLIndexCacheItem index_cache;
@@ -386,9 +395,9 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RestoreFromFile(
 
   UMA_HISTOGRAM_TIMES("History.InMemoryURLIndexRestoreCacheTime",
                       base::TimeTicks::Now() - beginning_time);
-  UMA_HISTOGRAM_COUNTS("History.InMemoryURLHistoryItems",
-                       restored_data->history_id_word_map_.size());
-  UMA_HISTOGRAM_COUNTS("History.InMemoryURLCacheSize", data.size());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryURLHistoryItems",
+                          restored_data->history_id_word_map_.size());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryURLCacheSize", data.size());
   UMA_HISTOGRAM_COUNTS_10000("History.InMemoryURLWords",
                              restored_data->word_map_.size());
   UMA_HISTOGRAM_COUNTS_10000("History.InMemoryURLChars",
@@ -423,6 +432,7 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RebuildFromHistory(
       OmniboxFieldTrial::MaxNumHQPUrlsIndexedAtStartup();
   int num_urls_indexed = 0;
   for (history::URLRow row; history_enum.GetNextURL(&row);) {
+    DCHECK(RowQualifiesAsSignificant(row, base::Time()));
     // Do not use >= to account for case of -1 for unlimited urls.
     if (num_urls_indexed++ == max_urls_indexed)
       break;
@@ -432,8 +442,8 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RebuildFromHistory(
 
   UMA_HISTOGRAM_TIMES("History.InMemoryURLIndexingTime",
                       base::TimeTicks::Now() - beginning_time);
-  UMA_HISTOGRAM_COUNTS("History.InMemoryURLHistoryItems",
-                       rebuilt_data->history_id_word_map_.size());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryURLHistoryItems",
+                          rebuilt_data->history_id_word_map_.size());
   UMA_HISTOGRAM_COUNTS_10000("History.InMemoryURLWords",
                              rebuilt_data->word_map_.size());
   UMA_HISTOGRAM_COUNTS_10000("History.InMemoryURLChars",
@@ -445,7 +455,7 @@ scoped_refptr<URLIndexPrivateData> URLIndexPrivateData::RebuildFromHistory(
 bool URLIndexPrivateData::WritePrivateDataToCacheFileTask(
     scoped_refptr<URLIndexPrivateData> private_data,
     const base::FilePath& file_path) {
-  DCHECK(private_data.get());
+  DCHECK(private_data);
   DCHECK(!file_path.empty());
   return private_data->SaveToFile(file_path);
 }
@@ -482,6 +492,22 @@ void URLIndexPrivateData::Clear() {
   word_starts_map_.clear();
 }
 
+size_t URLIndexPrivateData::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(search_term_cache_);
+  res += base::trace_event::EstimateMemoryUsage(word_list_);
+  res += base::trace_event::EstimateMemoryUsage(available_words_);
+  res += base::trace_event::EstimateMemoryUsage(word_map_);
+  res += base::trace_event::EstimateMemoryUsage(char_word_map_);
+  res += base::trace_event::EstimateMemoryUsage(word_id_history_map_);
+  res += base::trace_event::EstimateMemoryUsage(history_id_word_map_);
+  res += base::trace_event::EstimateMemoryUsage(history_info_map_);
+  res += base::trace_event::EstimateMemoryUsage(word_starts_map_);
+
+  return res;
+}
+
 URLIndexPrivateData::~URLIndexPrivateData() {}
 
 HistoryIDVector URLIndexPrivateData::HistoryIDsFromWords(
@@ -501,8 +527,7 @@ HistoryIDVector URLIndexPrivateData::HistoryIDsFromWords(
   std::sort(words.begin(), words.end(), LengthGreater);
 
   // TODO(dyaroshev): write a generic algorithm(crbug.com/696167).
-  for (String16Vector::iterator iter = words.begin(); iter != words.end();
-       ++iter) {
+  for (auto iter = words.begin(); iter != words.end(); ++iter) {
     HistoryIDSet term_history_set = HistoryIDsForTerm(*iter);
     if (term_history_set.empty())
       return HistoryIDVector();
@@ -549,8 +574,8 @@ HistoryIDSet URLIndexPrivateData::HistoryIDsForTerm(
   if (term_length > 1) {
     // See if this term or a prefix thereof is present in the cache.
     base::string16 term_lower = base::i18n::ToLower(term);
-    SearchTermCacheMap::iterator best_prefix(search_term_cache_.end());
-    for (SearchTermCacheMap::iterator cache_iter = search_term_cache_.begin();
+    auto best_prefix(search_term_cache_.end());
+    for (auto cache_iter = search_term_cache_.begin();
          cache_iter != search_term_cache_.end(); ++cache_iter) {
       if (base::StartsWith(term_lower,
                            base::i18n::ToLower(cache_iter->first),
@@ -622,7 +647,7 @@ HistoryIDSet URLIndexPrivateData::HistoryIDsForTerm(
   // construct a flat_set than to insert elements one by one.
   HistoryIDVector buffer;
   for (WordID word_id : word_id_set) {
-    WordIDHistoryMap::iterator word_iter = word_id_history_map_.find(word_id);
+    auto word_iter = word_id_history_map_.find(word_id);
     if (word_iter != word_id_history_map_.end()) {
       HistoryIDSet& word_history_id_set(word_iter->second);
       buffer.insert(buffer.end(), word_history_id_set.begin(),
@@ -645,9 +670,8 @@ WordIDSet URLIndexPrivateData::WordIDSetForTermChars(
   // TODO(dyaroshev): write a generic algorithm(crbug.com/696167).
 
   WordIDSet word_id_set;
-  for (Char16Set::const_iterator c_iter = term_chars.begin();
-       c_iter != term_chars.end(); ++c_iter) {
-    CharWordIDMap::iterator char_iter = char_word_map_.find(*c_iter);
+  for (auto c_iter = term_chars.begin(); c_iter != term_chars.end(); ++c_iter) {
+    auto char_iter = char_word_map_.find(*c_iter);
     // A character was not found so there are no matching results: bail.
     if (char_iter == char_word_map_.end())
       return WordIDSet();
@@ -731,51 +755,23 @@ void URLIndexPrivateData::HistoryIdsToScoredMatches(
 void URLIndexPrivateData::CalculateWordStartsOffsets(
     const String16Vector& lower_terms,
     WordStarts* lower_terms_to_word_starts_offsets) {
-  static const bool experiment_enabled =
-      base::FeatureList::IsEnabled(omnibox::kBreakWordsAtUnderscores);
-  CalculateWordStartsOffsets(lower_terms, experiment_enabled,
-                             lower_terms_to_word_starts_offsets);
-}
-
-// static
-void URLIndexPrivateData::CalculateWordStartsOffsets(
-    const String16Vector& lower_terms,
-    bool force_break_on_underscore,
-    WordStarts* lower_terms_to_word_starts_offsets) {
   // Calculate offsets for each term.  For instance, the offset for
   // ".net" should be 1, indicating that the actual word-part of the term
   // starts at offset 1.
   lower_terms_to_word_starts_offsets->resize(lower_terms.size(), 0u);
-  if (force_break_on_underscore) {
-    for (size_t i = 0; i < lower_terms.size(); ++i) {
-      TailoredWordBreakIterator iter(lower_terms[i],
-                                base::i18n::BreakIterator::BREAK_WORD);
-      // If the iterator doesn't work, assume an offset of 0.
-      if (!iter.Init())
-        continue;
-      // Find the first word start. If the iterator didn't find a word break,
-      // set an offset of term size. For example, the offset for "://" should be
-      // 3, indicating that the word-part is missing.
-      while (iter.Advance() && !iter.IsWord()) {
-      }
-
-      (*lower_terms_to_word_starts_offsets)[i] = iter.prev();
+  for (size_t i = 0; i < lower_terms.size(); ++i) {
+    TailoredWordBreakIterator iter(lower_terms[i],
+                                   base::i18n::BreakIterator::BREAK_WORD);
+    // If the iterator doesn't work, assume an offset of 0.
+    if (!iter.Init())
+      continue;
+    // Find the first word start. If the iterator didn't find a word break,
+    // set an offset of term size. For example, the offset for "://" should be
+    // 3, indicating that the word-part is missing.
+    while (iter.Advance() && !iter.IsWord()) {
     }
-  } else {
-    for (size_t i = 0; i < lower_terms.size(); ++i) {
-      base::i18n::BreakIterator iter(lower_terms[i],
-                                     base::i18n::BreakIterator::BREAK_WORD);
-      // If the iterator doesn't work, assume an offset of 0.
-      if (!iter.Init())
-        continue;
-      // Find the first word start. If the iterator didn't find a word break,
-      // set an offset of term size. For example, the offset for "://" should be
-      // 3, indicating that the word-part is missing.
-      while (iter.Advance() && !iter.IsWord()) {
-      }
 
-      (*lower_terms_to_word_starts_offsets)[i] = iter.prev();
-    }
+    (*lower_terms_to_word_starts_offsets)[i] = iter.prev();
   }
 }
 
@@ -1265,7 +1261,7 @@ bool URLIndexPrivateData::URLSchemeIsWhitelisted(
 bool URLIndexPrivateData::ShouldFilter(
     const HistoryID history_id,
     const TemplateURLService* template_url_service) const {
-  HistoryInfoMap::const_iterator hist_pos = history_info_map_.find(history_id);
+  auto hist_pos = history_info_map_.find(history_id);
   if (hist_pos == history_info_map_.end())
     return true;
 
@@ -1298,6 +1294,11 @@ URLIndexPrivateData::SearchTermCacheItem::SearchTermCacheItem() : used_(true) {
 URLIndexPrivateData::SearchTermCacheItem::SearchTermCacheItem(
     const SearchTermCacheItem& other) = default;
 
+size_t URLIndexPrivateData::SearchTermCacheItem::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(word_id_set_) +
+         base::trace_event::EstimateMemoryUsage(history_id_set_);
+}
+
 URLIndexPrivateData::SearchTermCacheItem::~SearchTermCacheItem() {
 }
 
@@ -1314,10 +1315,10 @@ URLIndexPrivateData::HistoryItemFactorGreater::~HistoryItemFactorGreater() {
 bool URLIndexPrivateData::HistoryItemFactorGreater::operator()(
     const HistoryID h1,
     const HistoryID h2) {
-  HistoryInfoMap::const_iterator entry1(history_info_map_.find(h1));
+  auto entry1(history_info_map_.find(h1));
   if (entry1 == history_info_map_.end())
     return false;
-  HistoryInfoMap::const_iterator entry2(history_info_map_.find(h2));
+  auto entry2(history_info_map_.find(h2));
   if (entry2 == history_info_map_.end())
     return true;
   const history::URLRow& r1(entry1->second.url_row);

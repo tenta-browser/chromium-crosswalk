@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_BROWSER_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 
+#include <memory>
+
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
@@ -19,11 +21,12 @@ namespace content {
 class WebContents;
 }
 
+class LauncherContextMenu;
+
 // Shelf item delegate for a browser shortcut; only one such item should exist.
 // This item shows an application menu that lists open browser windows or tabs.
-class BrowserShortcutLauncherItemController
-    : public ash::ShelfItemDelegate,
-      public chrome::BrowserListObserver {
+class BrowserShortcutLauncherItemController : public ash::ShelfItemDelegate,
+                                              public BrowserListObserver {
  public:
   explicit BrowserShortcutLauncherItemController(ash::ShelfModel* shelf_model);
 
@@ -37,15 +40,16 @@ class BrowserShortcutLauncherItemController
                                           content::WebContents* web_contents);
 
   // Check if there is any active browsers windows.
-  bool IsListOfActiveBrowserEmpty();
+  static bool IsListOfActiveBrowserEmpty();
 
   // ash::ShelfItemDelegate overrides:
   void ItemSelected(std::unique_ptr<ui::Event> event,
                     int64_t display_id,
                     ash::ShelfLaunchSource source,
                     ItemSelectedCallback callback) override;
-  ash::MenuItemList GetAppMenuItems(int event_flags) override;
-  std::unique_ptr<ui::MenuModel> GetContextMenu(int64_t display_id) override;
+  AppMenuItems GetAppMenuItems(int event_flags) override;
+  void GetContextMenu(int64_t display_id,
+                      GetContextMenuCallback callback) override;
   void ExecuteCommand(bool from_context_menu,
                       int64_t command_id,
                       int32_t event_flags,
@@ -58,23 +62,19 @@ class BrowserShortcutLauncherItemController
   // SHELF_ACTION_WINDOW_ACTIVATED, or SHELF_ACTION_NEW_WINDOW_CREATED.
   ash::ShelfAction ActivateOrAdvanceToNextBrowser();
 
-  // Returns true when the given |browser| is listed in the browser application
-  // list.
-  bool IsBrowserRepresentedInBrowserList(Browser* browser);
-
-  // Get a list of active browsers.
-  BrowserList::BrowserVector GetListOfActiveBrowsers();
-
-  // chrome::BrowserListObserver:
+  // BrowserListObserver:
+  void OnBrowserAdded(Browser* browser) override;
   void OnBrowserClosing(Browser* browser) override;
 
   ash::ShelfModel* shelf_model_;
 
-  // The cached list of open browser windows shown in an application menu.
-  BrowserList::BrowserVector browser_menu_items_;
+  // The cached browser windows and tab indices shown in an application menu.
+  std::vector<std::pair<Browser*, size_t>> app_menu_items_;
 
-  // Observer for browser windows closing events.
+  // Observer for browser windows adding and closing events.
   ScopedObserver<BrowserList, BrowserListObserver> browser_list_observer_;
+
+  std::unique_ptr<LauncherContextMenu> context_menu_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserShortcutLauncherItemController);
 };

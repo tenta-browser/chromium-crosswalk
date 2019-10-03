@@ -26,7 +26,6 @@ class StreamProvider final : public MediaResource {
 
   // MediaResource implemenation.
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override {}
 
   void Initialize(int remote_audio_handle,
                   int remote_video_handle,
@@ -56,7 +55,7 @@ class StreamProvider final : public MediaResource {
   // Run only once when first error occurs;
   base::Closure error_callback_;
 
-  base::WeakPtrFactory<StreamProvider> weak_factory_;
+  base::WeakPtrFactory<StreamProvider> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(StreamProvider);
 };

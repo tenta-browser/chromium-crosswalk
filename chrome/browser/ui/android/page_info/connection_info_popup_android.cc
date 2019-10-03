@@ -7,6 +7,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/ConnectionInfoPopup_jni.h"
 #include "chrome/browser/android/resource_mapper.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,7 +20,6 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/ConnectionInfoPopup_jni.h"
 #include "net/cert/x509_certificate.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -34,7 +34,6 @@ using content::WebContents;
 // static
 static jlong JNI_ConnectionInfoPopup_Init(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& java_web_contents) {
   content::WebContents* web_contents =
@@ -60,13 +59,11 @@ ConnectionInfoPopupAndroid::ConnectionInfoPopupAndroid(
       SecurityStateTabHelper::FromWebContents(web_contents);
   DCHECK(helper);
 
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
   presenter_.reset(new PageInfo(
       this, Profile::FromBrowserContext(web_contents->GetBrowserContext()),
       TabSpecificContentSettings::FromWebContents(web_contents), web_contents,
-      nav_entry->GetURL(), security_info));
+      nav_entry->GetURL(), helper->GetSecurityLevel(),
+      *helper->GetVisibleSecurityState()));
 }
 
 ConnectionInfoPopupAndroid::~ConnectionInfoPopupAndroid() {
@@ -146,6 +143,11 @@ void ConnectionInfoPopupAndroid::SetIdentityInfo(
 
 void ConnectionInfoPopupAndroid::SetCookieInfo(
     const CookieInfoList& cookie_info_list) {
+  NOTIMPLEMENTED();
+}
+
+void ConnectionInfoPopupAndroid::SetPageFeatureInfo(
+    const PageFeatureInfo& info) {
   NOTIMPLEMENTED();
 }
 

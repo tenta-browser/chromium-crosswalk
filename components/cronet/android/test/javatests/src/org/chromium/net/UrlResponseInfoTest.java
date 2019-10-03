@@ -5,12 +5,12 @@
 package org.chromium.net;
 
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.impl.UrlResponseInfoImpl;
 
@@ -22,7 +22,7 @@ import java.util.Map;
 /**
  * Tests for {@link UrlResponseInfo}.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class UrlResponseInfoTest {
     /**
      * Test for public API of {@link UrlResponseInfo}.
@@ -42,9 +42,11 @@ public class UrlResponseInfoTest {
         final boolean wasCached = true;
         final String negotiatedProtocol = "quic/1+spdy/3";
         final String proxyServer = "example.com";
+        final long receivedByteCount = 42;
 
-        final UrlResponseInfo info = new UrlResponseInfoImpl(urlChain, httpStatusCode,
-                httpStatusText, allHeadersList, wasCached, negotiatedProtocol, proxyServer);
+        final UrlResponseInfo info =
+                new UrlResponseInfoImpl(urlChain, httpStatusCode, httpStatusText, allHeadersList,
+                        wasCached, negotiatedProtocol, proxyServer, receivedByteCount);
         Assert.assertEquals(info.getUrlChain(), urlChain);
         try {
             info.getUrlChain().add("example.com");
@@ -69,5 +71,6 @@ public class UrlResponseInfoTest {
         Assert.assertEquals(info.wasCached(), wasCached);
         Assert.assertEquals(info.getNegotiatedProtocol(), negotiatedProtocol);
         Assert.assertEquals(info.getProxyServer(), proxyServer);
+        Assert.assertEquals(info.getReceivedByteCount(), receivedByteCount);
     }
 }

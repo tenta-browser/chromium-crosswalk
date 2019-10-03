@@ -4,19 +4,16 @@
 
 package org.chromium.chrome.browser.bookmarkswidget;
 
-import android.annotation.SuppressLint;
 import android.appwidget.AppWidgetManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.Bitmap.Config;
-import android.graphics.Canvas;
-import android.graphics.Rect;
 import android.net.Uri;
 import android.os.StrictMode;
 import android.support.annotation.BinderThread;
+import android.support.annotation.Nullable;
 import android.support.annotation.UiThread;
 import android.text.TextUtils;
 import android.widget.RemoteViews;
@@ -25,32 +22,32 @@ import android.widget.RemoteViewsService;
 import com.google.android.apps.chrome.appwidget.bookmarks.BookmarkThumbnailWidgetProvider;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
-import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.favicon.IconType;
 import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.favicon.LargeIconBridge.LargeIconCallback;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.chrome.browser.util.ViewUtils;
 import org.chromium.chrome.browser.widget.RoundedIconGenerator;
-import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.components.bookmarks.BookmarkId;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.LinkedBlockingQueue;
-
-import javax.annotation.Nullable;
 
 /**
  * Service to support the bookmarks widget.
@@ -81,35 +78,32 @@ public class BookmarkWidgetService extends RemoteViewsService {
         return new BookmarkAdapter(this, widgetId);
     }
 
-    static String getChangeFolderAction(Context context) {
-        return context.getPackageName() + ACTION_CHANGE_FOLDER_SUFFIX;
+    static String getChangeFolderAction() {
+        return ContextUtils.getApplicationContext().getPackageName() + ACTION_CHANGE_FOLDER_SUFFIX;
     }
 
-    // TODO(crbug.com/635567): Fix this properly.
-    @SuppressLint("DefaultLocale")
-    static SharedPreferences getWidgetState(Context context, int widgetId) {
+    static SharedPreferences getWidgetState(int widgetId) {
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
-            return context.getSharedPreferences(
-                    String.format("widgetState-%d", widgetId),
-                    Context.MODE_PRIVATE);
+            return ContextUtils.getApplicationContext().getSharedPreferences(
+                    String.format(Locale.US, "widgetState-%d", widgetId), Context.MODE_PRIVATE);
         } finally {
             StrictMode.setThreadPolicy(oldPolicy);
         }
     }
 
-    static void deleteWidgetState(Context context, int widgetId) {
-        SharedPreferences preferences = getWidgetState(context, widgetId);
+    static void deleteWidgetState(int widgetId) {
+        SharedPreferences preferences = getWidgetState(widgetId);
         if (preferences != null) preferences.edit().clear().apply();
     }
 
-    static void changeFolder(Context context, Intent intent) {
+    static void changeFolder(Intent intent) {
         int widgetId = IntentUtils.safeGetIntExtra(intent, AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
         String serializedFolder = IntentUtils.safeGetStringExtra(intent, EXTRA_FOLDER_ID);
         if (widgetId >= 0 && serializedFolder != null) {
-            SharedPreferences prefs = getWidgetState(context, widgetId);
+            SharedPreferences prefs = getWidgetState(widgetId);
             prefs.edit().putString(PREF_CURRENT_FOLDER, serializedFolder).apply();
-            AppWidgetManager.getInstance(context)
+            AppWidgetManager.getInstance(ContextUtils.getApplicationContext())
                     .notifyAppWidgetViewDataChanged(widgetId, R.id.bookmarks_list);
         }
     }
@@ -169,7 +163,6 @@ public class BookmarkWidgetService extends RemoteViewsService {
         private RoundedIconGenerator mIconGenerator;
         private int mMinIconSizeDp;
         private int mDisplayedIconSize;
-        private int mCornerRadius;
         private int mRemainingTaskCount;
 
         @UiThread
@@ -182,12 +175,8 @@ public class BookmarkWidgetService extends RemoteViewsService {
                     Profile.getLastUsedProfile().getOriginalProfile());
             mMinIconSizeDp = (int) res.getDimension(R.dimen.default_favicon_min_size);
             mDisplayedIconSize = res.getDimensionPixelSize(R.dimen.default_favicon_size);
-            mCornerRadius = res.getDimensionPixelSize(R.dimen.default_favicon_corner_radius);
-            int textSize = res.getDimensionPixelSize(R.dimen.default_favicon_icon_text_size);
-            int iconColor =
-                    ApiCompatibilityUtils.getColor(res, R.color.default_favicon_background_color);
-            mIconGenerator = new RoundedIconGenerator(mDisplayedIconSize, mDisplayedIconSize,
-                    mCornerRadius, iconColor, textSize);
+            mIconGenerator =
+                    ViewUtils.createDefaultRoundedIconGenerator(context.getResources(), false);
 
             mRemainingTaskCount = 1;
             mBookmarkModel = new BookmarkModel();
@@ -284,19 +273,21 @@ public class BookmarkWidgetService extends RemoteViewsService {
         private final Context mContext;
         private final int mWidgetId;
         private final SharedPreferences mPreferences;
+        private final int mIconColor;
 
         // Accessed only on the UI thread
         private BookmarkModel mBookmarkModel;
 
         // Accessed only on binder threads.
         private BookmarkFolder mCurrentFolder;
-        private Bitmap mFolderBitmap;
 
         @UiThread
         public BookmarkAdapter(Context context, int widgetId) {
             mContext = context;
             mWidgetId = widgetId;
-            mPreferences = getWidgetState(mContext, mWidgetId);
+            mPreferences = getWidgetState(mWidgetId);
+            mIconColor = ApiCompatibilityUtils.getColor(
+                    mContext.getResources(), R.color.default_icon_color_dark);
         }
 
         @UiThread
@@ -358,14 +349,10 @@ public class BookmarkWidgetService extends RemoteViewsService {
         @BinderThread
         @Override
         public void onDestroy() {
-            ThreadUtils.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    if (mBookmarkModel != null) mBookmarkModel.destroy();
-                }
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+                if (mBookmarkModel != null) mBookmarkModel.destroy();
             });
-            deleteWidgetState(mContext, mWidgetId);
-            mFolderBitmap = null;
+            deleteWidgetState(mWidgetId);
         }
 
         @BinderThread
@@ -389,16 +376,13 @@ public class BookmarkWidgetService extends RemoteViewsService {
             //A reference of BookmarkLoader is needed in binder thread to
             //prevent it from being garbage collected.
             final BookmarkLoader bookmarkLoader = new BookmarkLoader();
-            ThreadUtils.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    bookmarkLoader.initialize(mContext, folderId, new BookmarkLoaderCallback() {
-                        @Override
-                        public void onBookmarksLoaded(BookmarkFolder folder) {
-                            resultQueue.add(folder);
-                        }
-                    });
-                }
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+                bookmarkLoader.initialize(mContext, folderId, new BookmarkLoaderCallback() {
+                    @Override
+                    public void onBookmarksLoaded(BookmarkFolder folder) {
+                        resultQueue.add(folder);
+                    }
+                });
             });
             try {
                 return resultQueue.take();
@@ -445,12 +429,7 @@ public class BookmarkWidgetService extends RemoteViewsService {
             //returns. If it happens, refresh widget until the bookmarks are all loaded.
             if (mCurrentFolder == null || !mPreferences.getString(PREF_CURRENT_FOLDER, "")
                     .equals(mCurrentFolder.folder.id.toString())) {
-                ThreadUtils.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        refreshWidget();
-                    }
-                });
+                PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> { refreshWidget(); });
             }
             if (mCurrentFolder == null) {
                 return 0;
@@ -499,19 +478,22 @@ public class BookmarkWidgetService extends RemoteViewsService {
             views.setTextViewText(R.id.title, TextUtils.isEmpty(title) ? url : title);
 
             if (bookmark == mCurrentFolder.folder) {
-                views.setImageViewResource(R.id.favicon, R.drawable.back_normal);
+                views.setInt(R.id.favicon, "setColorFilter", mIconColor);
+                views.setImageViewResource(R.id.favicon, R.drawable.ic_arrow_back_white_24dp);
             } else if (bookmark.isFolder) {
-                if (mFolderBitmap == null) generateFolderBitmap();
-                views.setImageViewBitmap(R.id.favicon, mFolderBitmap);
+                views.setInt(R.id.favicon, "setColorFilter", mIconColor);
+                views.setImageViewResource(R.id.favicon, R.drawable.ic_folder_blue_24dp);
             } else {
+                // Clear any color filter so that it doesn't cover the favicon bitmap.
+                views.setInt(R.id.favicon, "setColorFilter", 0);
                 views.setImageViewBitmap(R.id.favicon, bookmark.favicon);
             }
 
             Intent fillIn;
             if (bookmark.isFolder) {
-                fillIn = new Intent(getChangeFolderAction(mContext))
-                        .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, mWidgetId)
-                        .putExtra(EXTRA_FOLDER_ID, id.toString());
+                fillIn = new Intent(getChangeFolderAction())
+                                 .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, mWidgetId)
+                                 .putExtra(EXTRA_FOLDER_ID, id.toString());
             } else {
                 fillIn = new Intent(Intent.ACTION_VIEW);
                 if (!TextUtils.isEmpty(url)) {
@@ -523,26 +505,6 @@ public class BookmarkWidgetService extends RemoteViewsService {
             }
             views.setOnClickFillInIntent(R.id.list_item, fillIn);
             return views;
-        }
-
-        @BinderThread
-        private void generateFolderBitmap() {
-            // RemoteView does not inherently support tinting icons, and while
-            // BookmarkUtils#getFolderIcon() returns a TintedDrawable, Drawable#getBitmap() does
-            // not return a Bitmap with the tint applied. Programatically draw the drawable into a
-            // canvas backed by a bitmap that can be set as the RemoveView's ImageView bitmap.
-            TintedDrawable drawable = BookmarkUtils.getFolderIcon(mContext.getResources());
-            int width = drawable.getIntrinsicWidth();
-            int height = drawable.getIntrinsicHeight();
-            drawable.setBounds(new Rect(0, 0, width, height));
-
-            // Use the solid color equivalent of dark_mode_tint since bookmark widget has a
-            // translucent background.
-            drawable.setTint(ApiCompatibilityUtils.getColorStateList(
-                    mContext.getResources(), R.color.light_normal_color));
-
-            mFolderBitmap = Bitmap.createBitmap(width, height, Config.ARGB_8888);
-            drawable.draw(new Canvas(mFolderBitmap));
         }
     }
 }

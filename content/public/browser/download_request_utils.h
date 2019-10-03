@@ -7,7 +7,11 @@
 
 #include <string>
 
+#include "components/download/public/common/download_url_parameters.h"
 #include "content/common/content_export.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+
+class GURL;
 
 namespace net {
 class URLRequest;
@@ -15,12 +19,28 @@ class URLRequest;
 
 namespace content {
 
+class WebContents;
+
 // Utility methods for download requests.
 class CONTENT_EXPORT DownloadRequestUtils {
  public:
   // Returns the identifier for origin of the download.
   static std::string GetRequestOriginFromRequest(
       const net::URLRequest* request);
+
+  // Construct download::DownloadUrlParameters for downloading the resource at
+  // |url| and associating the download with the main frame of the given
+  // WebContents.
+  static std::unique_ptr<download::DownloadUrlParameters>
+  CreateDownloadForWebContentsMainFrame(
+      WebContents* web_contents,
+      const GURL& url,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
+
+  // Returns if the URL passes the security check and can be requested.
+  // |render_process_id| can be -1 when no renderer process is associated with
+  // this request.
+  static bool IsURLSafe(int render_process_id, const GURL& url);
 };
 
 }  // namespace content

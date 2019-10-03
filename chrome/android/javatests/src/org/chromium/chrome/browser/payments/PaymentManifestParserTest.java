@@ -22,17 +22,14 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.payments.PaymentManifestParser;
 import org.chromium.components.payments.PaymentManifestParser.ManifestParseCallback;
 import org.chromium.components.payments.WebAppManifestSection;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
 import java.net.URI;
 
 /** An integration test for the payment manifest parser. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentManifestParserTest implements ManifestParseCallback {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mRule =
@@ -70,7 +67,7 @@ public class PaymentManifestParserTest implements ManifestParseCallback {
     @Before
     public void setUp() throws Throwable {
         mRule.startMainActivityOnBlankPage();
-        mRule.runOnUiThread((Runnable) () -> mParser.createNative());
+        mRule.runOnUiThread((Runnable) () -> mParser.createNative(mRule.getWebContents()));
         mWebAppManifestUris = null;
         mSupportedOrigins = null;
         mAllOriginsSupported = false;

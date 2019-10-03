@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/base/ime/text_input_client.h"
 
 namespace ui {
@@ -18,6 +19,8 @@ class DummyTextInputClient : public TextInputClient {
  public:
   DummyTextInputClient();
   explicit DummyTextInputClient(TextInputType text_input_type);
+  DummyTextInputClient(TextInputType text_input_type,
+                       TextInputMode text_input_mode);
   ~DummyTextInputClient() override;
 
   // Overriden from TextInputClient.
@@ -35,10 +38,11 @@ class DummyTextInputClient : public TextInputClient {
   bool GetCompositionCharacterBounds(uint32_t index,
                                      gfx::Rect* rect) const override;
   bool HasCompositionText() const override;
+  ui::TextInputClient::FocusReason GetFocusReason() const override;
   bool GetTextRange(gfx::Range* range) const override;
   bool GetCompositionTextRange(gfx::Range* range) const override;
-  bool GetSelectionRange(gfx::Range* range) const override;
-  bool SetSelectionRange(const gfx::Range& range) override;
+  bool GetEditableSelectionRange(gfx::Range* range) const override;
+  bool SetEditableSelectionRange(const gfx::Range& range) override;
   bool DeleteRange(const gfx::Range& range) override;
   bool GetTextFromRange(const gfx::Range& range,
                         base::string16* text) const override;
@@ -49,7 +53,21 @@ class DummyTextInputClient : public TextInputClient {
   void EnsureCaretNotInRect(const gfx::Rect& rect) override;
   bool IsTextEditCommandEnabled(TextEditCommand command) const override;
   void SetTextEditCommandForNextKeyEvent(TextEditCommand command) override;
-  const std::string& GetClientSourceInfo() const override;
+  ukm::SourceId GetClientSourceForMetrics() const override;
+  bool ShouldDoLearning() override;
+
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+  bool SetCompositionFromExistingText(
+      const gfx::Range& range,
+      const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+#endif
+
+#if defined(OS_WIN)
+  void SetActiveCompositionForAccessibility(
+      const gfx::Range& range,
+      const base::string16& active_composition_text,
+      bool is_composition_committed) override;
+#endif
 
   int insert_char_count() const { return insert_char_count_; }
   base::char16 last_insert_char() const { return last_insert_char_; }
@@ -59,8 +77,12 @@ class DummyTextInputClient : public TextInputClient {
   const std::vector<CompositionText>& composition_history() const {
     return composition_history_;
   }
+  const std::vector<gfx::Range>& selection_history() const {
+    return selection_history_;
+  }
 
   TextInputType text_input_type_;
+  TextInputMode text_input_mode_;
 
   DISALLOW_COPY_AND_ASSIGN(DummyTextInputClient);
 
@@ -69,6 +91,7 @@ class DummyTextInputClient : public TextInputClient {
   base::char16 last_insert_char_;
   std::vector<base::string16> insert_text_history_;
   std::vector<CompositionText> composition_history_;
+  std::vector<gfx::Range> selection_history_;
 };
 
 }  // namespace ui

@@ -5,8 +5,7 @@
 #include "chrome/browser/page_load_metrics/observers/https_engagement_metrics/https_engagement_page_load_metrics_observer.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -35,14 +34,14 @@ class HttpsEngagementPageLoadMetricsBrowserTest : public InProcessBrowserTest {
     https_test_server_->SetSSLConfig(cert_error
                                          ? net::EmbeddedTestServer::CERT_EXPIRED
                                          : net::EmbeddedTestServer::CERT_OK);
-    https_test_server_->ServeFilesFromSourceDirectory("chrome/test/data");
+    https_test_server_->ServeFilesFromSourceDirectory(GetChromeTestDataDir());
     ASSERT_TRUE(https_test_server_->Start());
   }
 
   void StartHttpServer() {
     http_test_server_.reset(
         new net::EmbeddedTestServer(net::EmbeddedTestServer::TYPE_HTTP));
-    http_test_server_->ServeFilesFromSourceDirectory("chrome/test/data");
+    http_test_server_->ServeFilesFromSourceDirectory(GetChromeTestDataDir());
     ASSERT_TRUE(http_test_server_->Start());
   }
 

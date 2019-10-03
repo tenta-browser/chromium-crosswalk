@@ -5,7 +5,6 @@
 #include "chrome/common/extensions/sync_helper.h"
 
 #include "base/logging.h"
-#include "chrome/common/extensions/extension_constants.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/features/behavior_feature.h"
@@ -59,6 +58,7 @@ bool IsSyncable(const Extension* extension) {
 
     case Manifest::TYPE_UNKNOWN:
     case Manifest::TYPE_SHARED_MODULE:
+    case Manifest::TYPE_LOGIN_SCREEN_EXTENSION:
       return false;
 
     case Manifest::NUM_LOAD_TYPES:

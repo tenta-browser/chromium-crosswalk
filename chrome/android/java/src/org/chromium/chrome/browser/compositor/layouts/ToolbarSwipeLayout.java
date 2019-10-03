@@ -7,8 +7,6 @@ package org.chromium.chrome.browser.compositor.layouts;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.RectF;
-import android.view.animation.DecelerateInterpolator;
-import android.view.animation.Interpolator;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
@@ -20,6 +18,7 @@ import org.chromium.chrome.browser.compositor.layouts.eventfilter.BlackHoleEvent
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.EventFilter;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirection;
 import org.chromium.chrome.browser.compositor.scene_layer.SceneLayer;
+import org.chromium.chrome.browser.compositor.scene_layer.ScrollingBottomViewSceneLayer;
 import org.chromium.chrome.browser.compositor.scene_layer.TabListSceneLayer;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.tab.Tab;
@@ -66,7 +65,12 @@ public class ToolbarSwipeLayout extends Layout {
     private final BlackHoleEventFilter mBlackHoleEventFilter;
     private final TabListSceneLayer mSceneLayer;
 
-    private final Interpolator mEdgeInterpolator = new DecelerateInterpolator();
+    /** The left and right scene layer responsible for drawing bottom toolbars for each tab. */
+    private ScrollingBottomViewSceneLayer mLeftBottomToolbarSceneLayer;
+    private ScrollingBottomViewSceneLayer mRightBottomToolbarSceneLayer;
+
+    /** Whether the bottom bar scene layers should be shown. */
+    private boolean mShowBottomToolbarSceneLayers;
 
     /**
      * @param context             The current Android's context.
@@ -94,7 +98,7 @@ public class ToolbarSwipeLayout extends Layout {
     }
 
     @Override
-    public ViewportMode getViewportMode() {
+    public @ViewportMode int getViewportMode() {
         // This seems counter-intuitive, but if the toolbar moves the android view is not showing.
         // That means the compositor has to draw it and therefore needs the fullscreen viewport.
         // Likewise, when the android view is showing, the compositor controls do not draw and the
@@ -126,8 +130,7 @@ public class ToolbarSwipeLayout extends Layout {
         prepareLayoutTabForSwipe(mFromTab, false);
     }
 
-    @Override
-    public void swipeStarted(long time, ScrollDirection direction, float x, float y) {
+    public void swipeStarted(long time, @ScrollDirection int direction, float x, float y) {
         if (mTabModelSelector == null || mToTab != null || direction == ScrollDirection.DOWN) {
             return;
         }
@@ -147,22 +150,26 @@ public class ToolbarSwipeLayout extends Layout {
                                                                            : fromIndex + 1;
         int leftIndex = dragFromLeftEdge ? toIndex : fromIndex;
         int rightIndex = !dragFromLeftEdge ? toIndex : fromIndex;
+        int leftTabId = Tab.INVALID_TAB_ID;
+        int rightTabId = Tab.INVALID_TAB_ID;
 
-        List<Integer> visibleTabs = new ArrayList<Integer>();
         if (0 <= leftIndex && leftIndex < model.getCount()) {
-            int leftTabId = model.getTabAt(leftIndex).getId();
+            leftTabId = model.getTabAt(leftIndex).getId();
             mLeftTab = createLayoutTab(leftTabId, model.isIncognito(), NO_CLOSE_BUTTON, NEED_TITLE);
             prepareLayoutTabForSwipe(mLeftTab, leftIndex != fromIndex);
-            visibleTabs.add(leftTabId);
         }
         if (0 <= rightIndex && rightIndex < model.getCount()) {
-            int rightTabId = model.getTabAt(rightIndex).getId();
+            rightTabId = model.getTabAt(rightIndex).getId();
             mRightTab =
                     createLayoutTab(rightTabId, model.isIncognito(), NO_CLOSE_BUTTON, NEED_TITLE);
             prepareLayoutTabForSwipe(mRightTab, rightIndex != fromIndex);
-            visibleTabs.add(rightTabId);
         }
-
+        // Prioritize toTabId because fromTabId likely has a live layer.
+        int fromTabId = dragFromLeftEdge ? rightTabId : leftTabId;
+        int toTabId = !dragFromLeftEdge ? rightTabId : leftTabId;
+        List<Integer> visibleTabs = new ArrayList<Integer>();
+        if (toTabId != Tab.INVALID_TAB_ID) visibleTabs.add(toTabId);
+        if (fromTabId != Tab.INVALID_TAB_ID) visibleTabs.add(fromTabId);
         updateCacheVisibleIds(visibleTabs);
 
         mToTab = null;
@@ -189,10 +196,6 @@ public class ToolbarSwipeLayout extends Layout {
         assert layoutTab != null;
         if (layoutTab.shouldStall()) layoutTab.setSaturation(0.0f);
         float heightDp = layoutTab.getOriginalContentHeight();
-        // Clip the layout tab so it doesn't leak into the toolbar if it's at the bottom
-        if (getFullscreenManager() != null && getFullscreenManager().areBrowserControlsAtBottom()) {
-            heightDp = heightDp - getFullscreenManager().getBottomControlsHeight() / mDpToPx;
-        }
         layoutTab.setClipSize(layoutTab.getOriginalContentWidth(), heightDp);
         layoutTab.setScale(1.f);
         layoutTab.setBorderScale(1.f);
@@ -202,13 +205,11 @@ public class ToolbarSwipeLayout extends Layout {
         layoutTab.setAnonymizeToolbar(anonymizeToolbar && ANONYMIZE_NON_FOCUSED_TAB);
     }
 
-    @Override
     public void swipeUpdated(long time, float x, float y, float dx, float dy, float tx, float ty) {
         mOffsetTarget = MathUtils.clamp(mOffsetStart + tx, 0, getWidth()) - mOffsetStart;
         requestUpdate();
     }
 
-    @Override
     public void swipeFlingOccurred(
             long time, float x, float y, float tx, float ty, float vx, float vy) {
         // Use the velocity to add on final step which simulate a fling.
@@ -219,7 +220,6 @@ public class ToolbarSwipeLayout extends Layout {
         swipeUpdated(time, x, y, 0, 0, tx + kickX, ty + kickY);
     }
 
-    @Override
     public void swipeFinished(long time) {
         if (mFromTab == null || mTabModelSelector == null) return;
 
@@ -249,18 +249,14 @@ public class ToolbarSwipeLayout extends Layout {
         if (duration > 0) {
             CompositorAnimator offsetAnimation =
                     CompositorAnimator.ofFloat(getAnimationHandler(), start, end, duration, null);
-            offsetAnimation.addUpdateListener(new CompositorAnimator.AnimatorUpdateListener() {
-                @Override
-                public void onAnimationUpdate(CompositorAnimator animator) {
-                    mOffset = animator.getAnimatedValue();
-                    mOffsetTarget = mOffset;
-                }
+            offsetAnimation.addUpdateListener(animator -> {
+                mOffset = animator.getAnimatedValue();
+                mOffsetTarget = mOffset;
             });
             offsetAnimation.start();
         }
     }
 
-    @Override
     public void swipeCancelled(long time) {
         swipeFinished(time);
     }
@@ -284,7 +280,8 @@ public class ToolbarSwipeLayout extends Layout {
         if (doEdge) {
             float progress = mOffset / getWidth();
             float direction = Math.signum(progress);
-            float smoothedProgress = mEdgeInterpolator.getInterpolation(Math.abs(progress));
+            float smoothedProgress =
+                    CompositorAnimator.DECELERATE_INTERPOLATOR.getInterpolation(Math.abs(progress));
 
             float maxSlide = getWidth() / 5.f;
             rightX = direction * smoothedProgress * maxSlide;
@@ -310,13 +307,52 @@ public class ToolbarSwipeLayout extends Layout {
         if (mLeftTab != null) {
             mLeftTab.setX(leftX);
             needUpdate = mLeftTab.updateSnap(dt) || needUpdate;
+            if (mLeftBottomToolbarSceneLayer != null) {
+                if (mShowBottomToolbarSceneLayers) {
+                    mLeftBottomToolbarSceneLayer.setIsVisible(true);
+                    mLeftBottomToolbarSceneLayer.setXOffset((int) (mLeftTab.getX() * mDpToPx));
+                } else {
+                    mLeftBottomToolbarSceneLayer.setIsVisible(false);
+                }
+            }
+        } else if (mLeftBottomToolbarSceneLayer != null) {
+            mLeftBottomToolbarSceneLayer.setIsVisible(false);
         }
 
         if (mRightTab != null) {
             mRightTab.setX(rightX);
             needUpdate = mRightTab.updateSnap(dt) || needUpdate;
+            if (mRightBottomToolbarSceneLayer != null) {
+                if (mShowBottomToolbarSceneLayers) {
+                    mRightBottomToolbarSceneLayer.setIsVisible(true);
+                    mRightBottomToolbarSceneLayer.setXOffset((int) (mRightTab.getX() * mDpToPx));
+                } else {
+                    mRightBottomToolbarSceneLayer.setIsVisible(false);
+                }
+            }
+        } else if (mRightBottomToolbarSceneLayer != null) {
+            mRightBottomToolbarSceneLayer.setIsVisible(false);
         }
+
         if (needUpdate) requestUpdate();
+    }
+
+    /**
+     * Provide this layout access to two {@link ScrollingBottomViewSceneLayer}s to draw for each tab
+     * in this layout.
+     * @param left The toolbar to draw with the left tab.
+     * @param right The toolbar to draw with the right tab.
+     * @param showBottomToolbarSceneLayers Whether to show the bottom bar scene layers.
+     */
+    public void setBottomToolbarSceneLayers(ScrollingBottomViewSceneLayer left,
+            ScrollingBottomViewSceneLayer right, boolean showBottomToolbarSceneLayers) {
+        mShowBottomToolbarSceneLayers = showBottomToolbarSceneLayers;
+        mLeftBottomToolbarSceneLayer = left;
+        mLeftBottomToolbarSceneLayer.setIsVisible(showBottomToolbarSceneLayers);
+        addSceneOverlay(mLeftBottomToolbarSceneLayer);
+        mRightBottomToolbarSceneLayer = right;
+        mRightBottomToolbarSceneLayer.setIsVisible(showBottomToolbarSceneLayers);
+        addSceneOverlay(mRightBottomToolbarSceneLayer);
     }
 
     /**
@@ -363,13 +399,17 @@ public class ToolbarSwipeLayout extends Layout {
             ResourceManager resourceManager, ChromeFullscreenManager fullscreenManager) {
         super.updateSceneLayer(viewport, contentViewport, layerTitleCache, tabContentManager,
                 resourceManager, fullscreenManager);
-        // Use the default theme colors if the browser controls are at the bottom.
-        if (fullscreenManager.areBrowserControlsAtBottom()) {
-            for (LayoutTab t : mLayoutTabs) t.setForceDefaultThemeColor(true);
-        }
         assert mSceneLayer != null;
         // contentViewport is intentionally passed for both parameters below.
         mSceneLayer.pushLayers(getContext(), contentViewport, contentViewport, this,
-                layerTitleCache, tabContentManager, resourceManager, fullscreenManager);
+                layerTitleCache, tabContentManager, resourceManager, fullscreenManager,
+                SceneLayer.INVALID_RESOURCE_ID, 0);
+    }
+
+    /**
+     * @param showBottomToolbarSceneLayers Whether the bottom toolbar scene layers should be shown.
+     */
+    public void setBottomToolbarSceneLayersVisibility(boolean showBottomToolbarSceneLayers) {
+        mShowBottomToolbarSceneLayers = showBottomToolbarSceneLayers;
     }
 }

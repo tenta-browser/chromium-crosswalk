@@ -7,7 +7,6 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/policy/core/common/schema.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -53,7 +52,7 @@ TEST(RegistryDictTest, CaseInsensitiveButPreservingValueNames) {
   EXPECT_EQ(1u, test_dict.values().size());
   EXPECT_EQ(int_value, *test_dict.GetValue("oNe"));
 
-  RegistryDict::ValueMap::const_iterator entry = test_dict.values().begin();
+  auto entry = test_dict.values().begin();
   ASSERT_NE(entry, test_dict.values().end());
   EXPECT_EQ("One", entry->first);
 
@@ -102,13 +101,13 @@ TEST(RegistryDictTest, CaseInsensitiveButPreservingKeyNames) {
 
   base::Value int_value(42);
 
-  test_dict.SetKey("One", base::MakeUnique<RegistryDict>());
+  test_dict.SetKey("One", std::make_unique<RegistryDict>());
   EXPECT_EQ(1u, test_dict.keys().size());
   RegistryDict* actual_subdict = test_dict.GetKey("One");
   ASSERT_TRUE(actual_subdict);
   EXPECT_TRUE(actual_subdict->values().empty());
 
-  RegistryDict::KeyMap::const_iterator entry = test_dict.keys().begin();
+  auto entry = test_dict.keys().begin();
   ASSERT_NE(entry, test_dict.keys().end());
   EXPECT_EQ("One", entry->first);
 
@@ -166,7 +165,7 @@ TEST(RegistryDictTest, Swap) {
   base::Value string_value("fortytwo");
 
   dict_a.SetValue("one", int_value.CreateDeepCopy());
-  dict_a.SetKey("two", base::MakeUnique<RegistryDict>());
+  dict_a.SetKey("two", std::make_unique<RegistryDict>());
   dict_b.SetValue("three", string_value.CreateDeepCopy());
 
   dict_a.Swap(&dict_b);
@@ -227,20 +226,20 @@ TEST(RegistryDictTest, ConvertToJSON) {
 
   base::DictionaryValue expected;
   expected.SetKey("one", int_value.Clone());
-  auto expected_subdict = base::MakeUnique<base::DictionaryValue>();
+  auto expected_subdict = std::make_unique<base::DictionaryValue>();
   expected_subdict->SetKey("two", string_value.Clone());
   expected.Set("three", std::move(expected_subdict));
-  auto expected_list = base::MakeUnique<base::ListValue>();
-  expected_list->Append(base::MakeUnique<base::Value>(string_value.Clone()));
+  auto expected_list = std::make_unique<base::ListValue>();
+  expected_list->Append(std::make_unique<base::Value>(string_value.Clone()));
   expected.Set("dict-to-list", std::move(expected_list));
   expected.SetBoolean("int-to-bool", true);
   expected.SetDouble("int-to-double", 42.0);
   expected.SetBoolean("string-to-bool", false);
   expected.SetDouble("string-to-double", 0.0);
   expected.SetInteger("string-to-int", static_cast<int>(0));
-  expected_list = base::MakeUnique<base::ListValue>();
-  expected_list->Append(base::MakeUnique<base::Value>("value"));
-  expected_subdict = base::MakeUnique<base::DictionaryValue>();
+  expected_list = std::make_unique<base::ListValue>();
+  expected_list->Append(std::make_unique<base::Value>("value"));
+  expected_subdict = std::make_unique<base::DictionaryValue>();
   expected_subdict->Set("key", std::move(expected_list));
   expected.Set("string-to-dict", std::move(expected_subdict));
 

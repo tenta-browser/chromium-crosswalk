@@ -6,6 +6,8 @@
 #
 # Usage: message_compiler.py <environment_file> [<args to mc.exe>*]
 
+from __future__ import print_function
+
 import difflib
 import distutils.dir_util
 import filecmp
@@ -55,16 +57,17 @@ def main():
   env_pairs = open(env_file).read()[:-2].split('\0')
   env_dict = dict([item.split('=', 1) for item in env_pairs])
 
-  if input_file.endswith('.man'):
+  extension = os.path.splitext(input_file)[1]
+  if extension in ['.man', '.mc']:
     # For .man files, mc's output changed significantly from Version 10.0.15063
     # to Version 10.0.16299.  We should always have the output of the current
     # default SDK checked in and compare to that. Early out if a different SDK
-    # is active.
+    # is active. This also happens with .mc files.
     # TODO(thakis): Check in new baselines and compare to 16299 instead once
     # we use the 2017 Fall Creator's Update by default.
     mc_help = subprocess.check_output(['mc.exe', '/?'], env=env_dict,
                                       stderr=subprocess.STDOUT, shell=True)
-    version = re.search(r'Message Compiler\s+Version (\S+)', mc_help).group(1)
+    version = re.search(br'Message Compiler\s+Version (\S+)', mc_help).group(1)
     if version != '10.0.15063':
       return
 
@@ -121,20 +124,21 @@ def main():
     # in tmp_dir to the checked-in outputs.
     diff = filecmp.dircmp(tmp_dir, source)
     if diff.diff_files or set(diff.left_list) != set(diff.right_list):
-      print 'mc.exe output different from files in %s, see %s' % (source,
-                                                                  tmp_dir)
+      print('mc.exe output different from files in %s, see %s' % (source,
+                                                                  tmp_dir))
       diff.report()
       for f in diff.diff_files:
         if f.endswith('.bin'): continue
         fromfile = os.path.join(source, f)
         tofile = os.path.join(tmp_dir, f)
-        print ''.join(difflib.unified_diff(open(fromfile, 'U').readlines(),
-                                           open(tofile, 'U').readlines(),
-                                           fromfile, tofile))
+        print(''.join(
+            difflib.unified_diff(
+                open(fromfile, 'U').readlines(),
+                open(tofile, 'U').readlines(), fromfile, tofile)))
       delete_tmp_dir = False
       sys.exit(1)
   except subprocess.CalledProcessError as e:
-    print e.output
+    print(e.output)
     sys.exit(e.returncode)
   finally:
     if os.path.exists(tmp_dir) and delete_tmp_dir:

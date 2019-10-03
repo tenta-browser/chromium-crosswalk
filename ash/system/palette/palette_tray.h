@@ -15,7 +15,6 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ui/events/devices/input_device_event_observer.h"
-#include "ui/views/pointer_watcher.h"
 
 class PrefChangeRegistrar;
 class PrefRegistrySimple;
@@ -44,8 +43,7 @@ class ASH_EXPORT PaletteTray : public TrayBackgroundView,
                                public SessionObserver,
                                public ShellObserver,
                                public PaletteToolManager::Delegate,
-                               public ui::InputDeviceEventObserver,
-                               public views::PointerWatcher {
+                               public ui::InputDeviceEventObserver {
  public:
   explicit PaletteTray(Shelf* shelf);
   ~PaletteTray() override;
@@ -62,24 +60,27 @@ class ASH_EXPORT PaletteTray : public TrayBackgroundView,
   // disabled it in settings. This can be overridden by passing switches.
   bool ShouldShowPalette() const;
 
+  // Handles stylus events to show the welcome bubble on first usage.
+  void OnStylusEvent(const ui::TouchEvent& event);
+
   // SessionObserver:
   void OnActiveUserPrefServiceChanged(PrefService* pref_service) override;
   void OnSessionStateChanged(session_manager::SessionState state) override;
 
   // ShellObserver:
   void OnLockStateChanged(bool locked) override;
-  void OnLocalStatePrefServiceInitialized(PrefService* pref_service) override;
 
   // TrayBackgroundView:
   void ClickedOutsideBubble() override;
   base::string16 GetAccessibleNameForTray() override;
-  void HideBubbleWithView(const views::TrayBubbleView* bubble_view) override;
+  void HideBubbleWithView(const TrayBubbleView* bubble_view) override;
   void AnchorUpdated() override;
   void Initialize() override;
   bool PerformAction(const ui::Event& event) override;
   void CloseBubble() override;
   void ShowBubble(bool show_by_click) override;
-  views::TrayBubbleView* GetBubbleView() override;
+  TrayBubbleView* GetBubbleView() override;
+  const char* GetClassName() const override;
 
   // PaletteToolManager::Delegate:
   void HidePalette() override;
@@ -92,25 +93,21 @@ class ASH_EXPORT PaletteTray : public TrayBackgroundView,
   friend class PaletteTrayTestApi;
 
   // ui::InputDeviceObserver:
-  void OnTouchscreenDeviceConfigurationChanged() override;
+  void OnInputDeviceConfigurationChanged(uint8_t input_device_types) override;
   void OnStylusStateChanged(ui::StylusState stylus_state) override;
 
-  // views::TrayBubbleView::Delegate:
+  // TrayBubbleView::Delegate:
   void BubbleViewDestroyed() override;
-  void OnMouseEnteredView() override;
-  void OnMouseExitedView() override;
   base::string16 GetAccessibleNameForBubble() override;
   bool ShouldEnableExtraKeyboardAccessibility() override;
-  void HideBubble(const views::TrayBubbleView* bubble_view) override;
+  void HideBubble(const TrayBubbleView* bubble_view) override;
 
   // PaletteToolManager::Delegate:
   void OnActiveToolChanged() override;
   aura::Window* GetWindow() override;
 
-  // views::PointerWatcher:
-  void OnPointerEventObserved(const ui::PointerEvent& event,
-                              const gfx::Point& location_in_screen,
-                              gfx::NativeView target) override;
+  // Initializes with Shell's local state and starts to observe it.
+  void InitializeWithLocalState();
 
   // Updates the tray icon from the palette tool manager.
   void UpdateTrayIcon();
@@ -135,7 +132,10 @@ class ASH_EXPORT PaletteTray : public TrayBackgroundView,
   std::unique_ptr<PaletteWelcomeBubble> welcome_bubble_;
   std::unique_ptr<TrayBubbleWrapper> bubble_;
 
-  PrefService* local_state_pref_service_ = nullptr;  // Not owned.
+  // A Shell pre-target handler that notifies PaletteTray of stylus events.
+  std::unique_ptr<ui::EventHandler> stylus_event_handler_;
+
+  PrefService* local_state_ = nullptr;               // Not owned.
   PrefService* active_user_pref_service_ = nullptr;  // Not owned.
   std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_local_;
   std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_user_;

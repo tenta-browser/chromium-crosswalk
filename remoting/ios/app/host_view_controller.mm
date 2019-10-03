@@ -11,7 +11,7 @@
 #include <memory>
 
 #import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
-#import "remoting/ios/app/physical_keyboard_detector.h"
+#import "remoting/ios/app/help_and_feedback.h"
 #import "remoting/ios/app/remoting_theme.h"
 #import "remoting/ios/app/settings/remoting_settings_view_controller.h"
 #import "remoting/ios/app/view_utils.h"
@@ -35,6 +35,8 @@ static const CGFloat kFabInset = 15.f;
 static const CGFloat kKeyboardAnimationTime = 0.3;
 static const CGFloat kMoveFABAnimationTime = 0.3;
 
+static NSString* const kFeedbackContext = @"InSessionFeedbackContext";
+
 @interface HostViewController ()<ClientKeyboardDelegate,
                                  ClientGesturesDelegate,
                                  RemotingSettingsViewControllerDelegate> {
@@ -44,7 +46,6 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   ClientGestures* _clientGestures;
   ClientKeyboard* _clientKeyboard;
   CGSize _keyboardSize;
-  BOOL _surfaceCreated;
   HostSettings* _settings;
 
   // Used to blur the content when the app enters background.
@@ -57,7 +58,6 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   // When set to true, ClientKeyboard will immediately resign first responder
   // after it becomes first responder.
   BOOL _blocksKeyboard;
-  BOOL _hasPhysicalKeyboard;
   NSLayoutConstraint* _keyboardHeightConstraint;
 
   // Subview of self.view. Adjusted frame for safe area.
@@ -66,9 +66,9 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   // A placeholder view for anchoring views and calculating visible area.
   UIView* _keyboardPlaceholderView;
 
-  // A display link for animating host surface size change. Use the paused
+  // A display link for animating keyboard height change. Use the paused
   // property to start or stop the animation.
-  CADisplayLink* _surfaceSizeAnimationLink;
+  CADisplayLink* _keyboardHeightAnimationLink;
 }
 @end
 
@@ -79,9 +79,7 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   if (self) {
     _client = client;
     _keyboardSize = CGSizeZero;
-    _surfaceCreated = NO;
     _blocksKeyboard = NO;
-    _hasPhysicalKeyboard = NO;
     _settings =
         [[RemotingPreferences instance] settingsForHost:client.hostInfo.hostId];
 
@@ -106,17 +104,11 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   _hostView.accessibilityTraits = UIAccessibilityTraitAllowsDirectInteraction;
   [self.view addSubview:_hostView];
 
-  UILayoutGuide* safeAreaLayoutGuide =
-      remoting::SafeAreaLayoutGuideForView(self.view);
-
   [NSLayoutConstraint activateConstraints:@[
-    [_hostView.topAnchor constraintEqualToAnchor:safeAreaLayoutGuide.topAnchor],
-    [_hostView.bottomAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.bottomAnchor],
-    [_hostView.leadingAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.leadingAnchor],
-    [_hostView.trailingAnchor
-        constraintEqualToAnchor:safeAreaLayoutGuide.trailingAnchor],
+    [_hostView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+    [_hostView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+    [_hostView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+    [_hostView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
   ]];
 
   _hostView.displayTaskRunner =
@@ -195,18 +187,20 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   return YES;
 }
 
+- (BOOL)prefersHomeIndicatorAutoHidden {
+  // Allow home indicator to timeout so that user can see desktop on the bottom
+  // of the screen.
+  return YES;
+}
+
 - (void)viewDidAppear:(BOOL)animated {
   [super viewDidAppear:animated];
-  if (!_surfaceCreated) {
-    [_client.displayHandler onSurfaceCreated:_hostView];
-    _surfaceCreated = YES;
-  }
+  [_client.displayHandler createRendererContext:_hostView];
 
-  [PhysicalKeyboardDetector detectOnView:_hostView
-                                callback:^(BOOL hasPhysicalKeyboard) {
-                                  _hasPhysicalKeyboard = hasPhysicalKeyboard;
-                                  [_clientKeyboard becomeFirstResponder];
-                                }];
+  // |_clientKeyboard| should always be the first responder even when the soft
+  // keyboard is not visible, so that input from physical keyboard can still be
+  // captured.
+  [_clientKeyboard becomeFirstResponder];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -249,12 +243,12 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
     [self applicationWillResignActive:UIApplication.sharedApplication];
   }
 
-  _surfaceSizeAnimationLink =
+  _keyboardHeightAnimationLink =
       [CADisplayLink displayLinkWithTarget:self
-                                  selector:@selector(animateHostSurfaceSize:)];
-  _surfaceSizeAnimationLink.paused = YES;
-  [_surfaceSizeAnimationLink addToRunLoop:NSRunLoop.currentRunLoop
-                                  forMode:NSDefaultRunLoopMode];
+                                  selector:@selector(animateKeyboardHeight:)];
+  _keyboardHeightAnimationLink.paused = YES;
+  [_keyboardHeightAnimationLink addToRunLoop:NSRunLoop.currentRunLoop
+                                     forMode:NSDefaultRunLoopMode];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -265,18 +259,23 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
 
   [[NSNotificationCenter defaultCenter] removeObserver:self];
 
-  _surfaceSizeAnimationLink.paused = YES;
-  [_surfaceSizeAnimationLink invalidate];
+  _keyboardHeightAnimationLink.paused = YES;
+  [_keyboardHeightAnimationLink invalidate];
 }
 
 - (void)viewDidLayoutSubviews {
   [super viewDidLayoutSubviews];
 
-  // Pass the actual size of the view to the renderer.
-  [_client.displayHandler onSurfaceChanged:_hostView.bounds];
+  [self updateViewportSafeInsets];
 
-  // Start the animation on the host's visible area.
-  _surfaceSizeAnimationLink.paused = NO;
+  // Pass the actual size of the view to the renderer.
+  [_client.displayHandler setSurfaceSize:_hostView.bounds];
+
+  _client.gestureInterpreter->OnSurfaceSizeChanged(
+      _hostView.bounds.size.width, _hostView.bounds.size.height);
+
+  // Start the safe insets animation.
+  _keyboardHeightAnimationLink.paused = NO;
 
   [self resizeHostToFitIfNeeded];
 }
@@ -284,9 +283,13 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
 #pragma mark - Keyboard Notifications
 
 - (void)keyboardWillShow:(NSNotification*)notification {
-  // The soft keyboard can be triggered by the PhysicalKeyboardDetector, in this
-  // case we don't need to change the keyboard size.
-  if (!_clientKeyboard.isFirstResponder) {
+  // Note that this won't be called in split keyboard mode.
+
+  // keyboardWillShow may be called with a wrong keyboard size when the physical
+  // keyboard is plugged in while the soft keyboard is hidden. This is
+  // potentially an OS bug. `!_clientKeyboard.showsSoftKeyboard` works around
+  // it.
+  if (!_clientKeyboard.showsSoftKeyboard) {
     return;
   }
 
@@ -299,11 +302,13 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
     return;
   }
 
-  CGSize keyboardSize =
-      [[[notification userInfo] objectForKey:UIKeyboardFrameEndUserInfoKey]
-          CGRectValue]
-          .size;
-  [self setKeyboardSize:keyboardSize needsLayout:YES];
+  // On iOS 10 the keyboard might be partially shown, i.e. part of the keyboard
+  // is below the screen.
+  CGRect keyboardRect = [[[notification userInfo]
+      objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
+  CGSize visibleKeyboardSize =
+      CGRectIntersection(self.view.bounds, keyboardRect).size;
+  [self setKeyboardSize:visibleKeyboardSize needsLayout:YES];
 }
 
 - (void)keyboardWillHide:(NSNotification*)notification {
@@ -319,6 +324,10 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
 - (void)clientKeyboardShouldSend:(NSString*)text {
   _client.keyboardInterpreter->HandleTextEvent(base::SysNSStringToUTF8(text),
                                                0);
+}
+
+- (void)clientKeyboardShouldSendKey:(const remoting::KeypressInfo&)key {
+  _client.keyboardInterpreter->HandleKeypressEvent(key);
 }
 
 - (void)clientKeyboardShouldDelete {
@@ -368,6 +377,14 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   [self setFabIsRight:!_fabIsRight shouldLayout:YES];
 }
 
+- (void)sendFeedback {
+  [_client createFeedbackDataWithCallback:^(
+               const remoting::FeedbackData& data) {
+    [HelpAndFeedback.instance presentFeedbackFlowWithContext:kFeedbackContext
+                                                feedbackData:data];
+  }];
+}
+
 #pragma mark - Private
 
 - (void)setFabIsRight:(BOOL)fabIsRight shouldLayout:(BOOL)shouldLayout {
@@ -390,24 +407,15 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
 }
 
 - (void)resizeHostToFitIfNeeded {
-  // Don't adjust the host resolution if the keyboard is active. That would end
-  // up with a very narrow desktop.
-  // Also don't adjust if it's the phone and in portrait orientation. This is
-  // the most used orientation on phones but the aspect ratio is uncommon on
-  // desktop devices.
-  BOOL isPhonePortrait =
-      self.traitCollection.horizontalSizeClass ==
-          UIUserInterfaceSizeClassCompact &&
-      self.traitCollection.verticalSizeClass == UIUserInterfaceSizeClassRegular;
-
-  if (_settings.shouldResizeHostToFit && !isPhonePortrait &&
-      !_clientKeyboard.showsSoftKeyboard) {
-    [_client setHostResolution:_hostView.frame.size
+  if (_settings.shouldResizeHostToFit) {
+    UIEdgeInsets safeInsets = remoting::SafeAreaInsetsForView(_hostView);
+    CGRect safeRect = UIEdgeInsetsInsetRect(_hostView.frame, safeInsets);
+    [_client setHostResolution:safeRect.size
                          scale:_hostView.contentScaleFactor];
   }
 }
 
-- (void)animateHostSurfaceSize:(CADisplayLink*)link {
+- (void)animateKeyboardHeight:(CADisplayLink*)link {
   // The method is called when the keyboard animation is in-progress. It
   // calculates the intermediate visible area size during the animation and
   // passes it to DesktopViewport.
@@ -417,27 +425,36 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   // done on the display thread asynchronously, so unfortunately the animation
   // will not be perfectly synchronized with the keyboard animation.
 
-  CGSize viewSize = _hostView.frame.size;
-  CGFloat targetVisibleHeight =
-      viewSize.height - _keyboardPlaceholderView.frame.size.height;
+  [self updateViewportSafeInsets];
+
+  CALayer* kbPlaceholderLayer =
+      [_keyboardPlaceholderView.layer presentationLayer];
+  CGFloat currentKeyboardHeight = kbPlaceholderLayer.frame.size.height;
+  CGFloat targetKeyboardHeight = _keyboardPlaceholderView.frame.size.height;
+  if (currentKeyboardHeight == targetKeyboardHeight) {
+    // Animation is done.
+    _keyboardHeightAnimationLink.paused = YES;
+  }
+}
+
+- (void)updateViewportSafeInsets {
+  // The viewport safe insets consist of area that is (partially) obstructed by
+  // the notch and the soft keyboard.
   CALayer* kbPlaceholderLayer =
       [_keyboardPlaceholderView.layer presentationLayer];
   CGRect viewKeyboardIntersection =
       CGRectIntersection(kbPlaceholderLayer.frame, _hostView.frame);
-  CGFloat currentVisibleHeight =
-      _hostView.frame.size.height - viewKeyboardIntersection.size.height;
-  _client.gestureInterpreter->OnSurfaceSizeChanged(viewSize.width,
-                                                   currentVisibleHeight);
-  if (currentVisibleHeight == targetVisibleHeight) {
-    // Animation is done.
-    _surfaceSizeAnimationLink.paused = YES;
-  }
+  UIEdgeInsets safeInsets = remoting::SafeAreaInsetsForView(_hostView);
+  safeInsets.bottom =
+      std::max(safeInsets.bottom, viewKeyboardIntersection.size.height);
+  _client.gestureInterpreter->OnSafeInsetsChanged(
+      safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom);
 }
 
 - (void)disconnectFromHost {
   [_client disconnectFromHost];
-  [_surfaceSizeAnimationLink invalidate];
-  _surfaceSizeAnimationLink = nil;
+  [_keyboardHeightAnimationLink invalidate];
+  _keyboardHeightAnimationLink = nil;
 }
 
 - (void)applyInputMode {
@@ -453,6 +470,8 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   }
 }
 
+// TODO(yuweih): This method is badly named. Should be changed to
+// "didTapShowMenu".
 - (void)didTap:(id)sender {
   // TODO(nicholss): The FAB is being used to launch an alert window with
   // more options. This is not ideal but it gets us an easy way to make a
@@ -470,24 +489,21 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
                 preferredStyle:UIAlertControllerStyleActionSheet];
 
   __weak HostViewController* weakSelf = self;
-  if (!_hasPhysicalKeyboard) {
-    // These are only needed if the device has no physical keyboard.
-    __weak ClientKeyboard* weakClientKeyboard = _clientKeyboard;
-    if (_clientKeyboard.showsSoftKeyboard) {
-      [self addActionToAlert:alert
-                       title:IDS_HIDE_KEYBOARD
-                       style:UIAlertActionStyleDefault
-            restoresKeyboard:NO
-                     handler:^() {
-                       weakClientKeyboard.showsSoftKeyboard = NO;
-                     }];
-    } else {
-      [self addActionToAlert:alert
-                       title:IDS_SHOW_KEYBOARD
-                     handler:^() {
-                       weakClientKeyboard.showsSoftKeyboard = YES;
-                     }];
-    }
+  __weak ClientKeyboard* weakClientKeyboard = _clientKeyboard;
+  if (_clientKeyboard.showsSoftKeyboard) {
+    [self addActionToAlert:alert
+                     title:IDS_HIDE_KEYBOARD
+                     style:UIAlertActionStyleDefault
+          restoresKeyboard:NO
+                   handler:^{
+                     weakClientKeyboard.showsSoftKeyboard = NO;
+                   }];
+  } else {
+    [self addActionToAlert:alert
+                     title:IDS_SHOW_KEYBOARD
+                   handler:^{
+                     weakClientKeyboard.showsSoftKeyboard = YES;
+                   }];
   }
 
   remoting::GestureInterpreter::InputMode currentInputMode =
@@ -496,7 +512,7 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
       currentInputMode == remoting::GestureInterpreter::DIRECT_INPUT_MODE
           ? IDS_SELECT_TRACKPAD_MODE
           : IDS_SELECT_TOUCH_MODE;
-  void (^switchInputModeHandler)() = ^() {
+  void (^switchInputModeHandler)() = ^{
     switch (currentInputMode) {
       case remoting::GestureInterpreter::DIRECT_INPUT_MODE:
         [self useTrackpadInputMode];
@@ -511,7 +527,7 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
                    title:switchInputModeTitle
                  handler:switchInputModeHandler];
 
-  void (^disconnectHandler)() = ^() {
+  void (^disconnectHandler)() = ^{
     [weakSelf disconnectFromHost];
     [weakSelf.navigationController popToRootViewControllerAnimated:YES];
   };
@@ -521,7 +537,7 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
         restoresKeyboard:NO
                  handler:disconnectHandler];
 
-  void (^settingsHandler)() = ^() {
+  void (^settingsHandler)() = ^{
     RemotingSettingsViewController* settingsViewController =
         [[RemotingSettingsViewController alloc] init];
     settingsViewController.delegate = weakSelf;
@@ -542,12 +558,12 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
   [self addActionToAlert:alert
                    title:(_fabIsRight) ? IDS_MOVE_FAB_LEFT_BUTTON
                                        : IDS_MOVE_FAB_RIGHT_BUTTON
-                 handler:^() {
+                 handler:^{
                    [weakSelf moveFAB];
                  }];
 
   __weak UIAlertController* weakAlert = alert;
-  void (^cancelHandler)() = ^() {
+  void (^cancelHandler)() = ^{
     [weakAlert dismissViewControllerAnimated:YES completion:nil];
   };
   [self addActionToAlert:alert
@@ -630,6 +646,8 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
     LOG(DFATAL) << "Blur view does not exist.";
     return;
   }
+  [_client.displayHandler createRendererContext:_hostView];
+  [_client setVideoChannelEnabled:YES];
   [_blurView removeFromSuperview];
   _blurView = nil;
 }
@@ -650,6 +668,8 @@ static const CGFloat kMoveFABAnimationTime = 0.3;
     [_blurView.topAnchor constraintEqualToAnchor:_hostView.topAnchor],
     [_blurView.bottomAnchor constraintEqualToAnchor:_hostView.bottomAnchor],
   ]];
+  [_client setVideoChannelEnabled:NO];
+  [_client.displayHandler destroyRendererContext];
 }
 
 @end

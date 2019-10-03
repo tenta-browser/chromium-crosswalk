@@ -7,18 +7,19 @@
 
 #include <vector>
 
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
+#include "ash/public/cpp/keyboard/keyboard_controller_observer.h"
 #include "base/containers/flat_map.h"
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "components/exo/keyboard_observer.h"
 #include "components/exo/seat_observer.h"
 #include "components/exo/surface_observer.h"
-#include "ui/events/devices/input_device_event_observer.h"
 #include "ui/events/event.h"
 #include "ui/events/event_handler.h"
 
 namespace ui {
+enum class DomCode;
 class KeyEvent;
 }
 
@@ -31,13 +32,14 @@ class Surface;
 // This class implements a client keyboard that represents one or more keyboard
 // devices.
 class Keyboard : public ui::EventHandler,
-                 public ui::InputDeviceEventObserver,
-                 public ash::TabletModeObserver,
                  public SurfaceObserver,
-                 public SeatObserver {
+                 public SeatObserver,
+                 public ash::KeyboardControllerObserver {
  public:
   Keyboard(KeyboardDelegate* delegate, Seat* seat);
   ~Keyboard() override;
+
+  KeyboardDelegate* delegate() const { return delegate_; }
 
   bool HasDeviceConfigurationDelegate() const;
   void SetDeviceConfigurationDelegate(
@@ -59,17 +61,12 @@ class Keyboard : public ui::EventHandler,
   // Overridden from SurfaceObserver:
   void OnSurfaceDestroying(Surface* surface) override;
 
-  // Overridden from ui::InputDeviceEventObserver:
-  void OnKeyboardDeviceConfigurationChanged() override;
-
-  // Overridden from ash::TabletModeObserver:
-  void OnTabletModeStarted() override;
-  void OnTabletModeEnding() override;
-  void OnTabletModeEnded() override;
-
   // Overridden from SeatObserver:
   void OnSurfaceFocusing(Surface* gaining_focus) override;
   void OnSurfaceFocused(Surface* gained_focus) override;
+
+  // Overridden from ash::KeyboardControllerObserver
+  void OnKeyboardEnabledChanged(bool is_enabled) override;
 
  private:
   // Change keyboard focus to |surface|.
@@ -107,6 +104,11 @@ class Keyboard : public ui::EventHandler,
   // The current focus surface for the keyboard.
   Surface* focus_ = nullptr;
 
+  // Set of currently pressed keys. First value is a platform code and second
+  // value is the code that was delivered to client. See Seat.h for more
+  // details.
+  base::flat_map<ui::DomCode, ui::DomCode> pressed_keys_;
+
   // Current set of modifier flags.
   int modifier_flags_ = 0;
 
@@ -120,7 +122,12 @@ class Keyboard : public ui::EventHandler,
   // Delay until a key state change expected to be acknowledged is expired.
   const base::TimeDelta expiration_delay_for_pending_key_acks_;
 
-  base::ObserverList<KeyboardObserver> observer_list_;
+  // True when the ARC app window is focused.
+  // TODO(yhanada, https://crbug.com/847500): Remove this when we find a way to
+  // fix https://crbug.com/847500 without breaking ARC++ apps.
+  bool focus_belongs_to_arc_app_ = false;
+
+  base::ObserverList<KeyboardObserver>::Unchecked observer_list_;
 
   base::WeakPtrFactory<Keyboard> weak_ptr_factory_;
 

@@ -1,8 +1,12 @@
+#!/usr/bin/env python
 # Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 """Extract source file information from .ninja files."""
 
+from __future__ import print_function
+
+import argparse
 import logging
 import os
 import re
@@ -12,7 +16,8 @@ import re
 # build obj/.../foo.o: cxx gen/.../foo.cc || obj/.../foo.inputdeps.stamp
 # build obj/.../libfoo.a: alink obj/.../a.o obj/.../b.o |
 # build ./libchrome.so ./lib.unstripped/libchrome.so: solink a.o b.o ...
-_REGEX = re.compile(r'build ([^:]+): \w+ (.*?)(?: \||\n|$)')
+# build libmonochrome.so: __chrome_android_libmonochrome___rule | ...
+_REGEX = re.compile(r'build ([^:]+): \w+ (.*?)(?: *\||\n|$)')
 
 
 class _SourceMapper(object):
@@ -55,10 +60,13 @@ class _SourceMapper(object):
   def unmatched_paths_count(self):
     return len(self._unmatched_paths)
 
+  def IterAllPaths(self):
+    return self._dep_map.iterkeys()
+
 
 def _ParseNinjaPathList(path_list):
   ret = path_list.replace('\\ ', '\b')
-  return [s.replace('\b', ' ') for s in ret.split(' ')]
+  return [s.replace('\b', ' ') for s in ret.split()]
 
 
 def _ParseOneFile(lines, dep_map, elf_path):
@@ -85,6 +93,10 @@ def _ParseOneFile(lines, dep_map, elf_path):
         if elf_path in properly_parsed:
           elf_inputs = _ParseNinjaPathList(srcs)
   return sub_ninjas, elf_inputs
+
+
+def ParseOneFileForTest(lines, dep_map, elf_path):
+  return _ParseOneFile(lines, dep_map, elf_path)
 
 
 def Parse(output_directory, elf_path):
@@ -115,3 +127,32 @@ def Parse(output_directory, elf_path):
     to_parse.extend(sub_ninjas)
 
   return _SourceMapper(dep_map, len(seen_paths)), elf_inputs
+
+
+def main():
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--output-directory', required=True)
+  parser.add_argument('--elf-path')
+  parser.add_argument('--show-inputs', action='store_true')
+  parser.add_argument('--show-mappings', action='store_true')
+  args = parser.parse_args()
+  logging.basicConfig(level=logging.DEBUG,
+                      format='%(levelname).1s %(relativeCreated)6d %(message)s')
+
+  source_mapper, elf_inputs = Parse(args.output_directory, args.elf_path)
+  if not elf_inputs:
+    elf_inputs = []
+
+  print('Found {} elf_inputs, and {} source mappings'.format(
+      len(elf_inputs), len(source_mapper._dep_map)))
+  if args.show_inputs:
+    print('elf_inputs:')
+    print('\n'.join(elf_inputs))
+  if args.show_mappings:
+    print('object_path -> source_path:')
+    for path in source_mapper.IterAllPaths():
+      print('{} -> {}'.format(path, source_mapper.FindSourceForPath(path)))
+
+
+if __name__ == '__main__':
+  main()

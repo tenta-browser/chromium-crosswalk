@@ -5,15 +5,21 @@
 #include "components/download/content/internal/download_driver_impl.h"
 
 #include <set>
+#include <string>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/download/internal/driver_entry.h"
-#include "content/public/browser/download_interrupt_reasons.h"
-#include "content/public/browser/download_url_parameters.h"
-#include "content/public/browser/storage_partition.h"
+#include "base/trace_event/memory_usage_estimator.h"
+#include "components/download/internal/background_service/driver_entry.h"
+#include "components/download/public/common/download_features.h"
+#include "components/download/public/common/download_interrupt_reasons.h"
+#include "components/download/public/common/download_url_parameters.h"
+#include "components/download/public/common/simple_download_manager_coordinator.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 
@@ -21,19 +27,19 @@ namespace download {
 
 namespace {
 
-// Converts a content::DownloadItem::DownloadState to DriverEntry::State.
+// Converts a DownloadItem::DownloadState to DriverEntry::State.
 DriverEntry::State ToDriverEntryState(
-    content::DownloadItem::DownloadState state) {
+    DownloadItem::DownloadState state) {
   switch (state) {
-    case content::DownloadItem::IN_PROGRESS:
+    case DownloadItem::IN_PROGRESS:
       return DriverEntry::State::IN_PROGRESS;
-    case content::DownloadItem::COMPLETE:
+    case DownloadItem::COMPLETE:
       return DriverEntry::State::COMPLETE;
-    case content::DownloadItem::CANCELLED:
+    case DownloadItem::CANCELLED:
       return DriverEntry::State::CANCELLED;
-    case content::DownloadItem::INTERRUPTED:
+    case DownloadItem::INTERRUPTED:
       return DriverEntry::State::INTERRUPTED;
-    case content::DownloadItem::MAX_DOWNLOAD_STATE:
+    case DownloadItem::MAX_DOWNLOAD_STATE:
       return DriverEntry::State::UNKNOWN;
     default:
       NOTREACHED();
@@ -41,20 +47,19 @@ DriverEntry::State ToDriverEntryState(
   }
 }
 
-FailureType FailureTypeFromInterruptReason(
-    content::DownloadInterruptReason reason) {
+FailureType FailureTypeFromInterruptReason(DownloadInterruptReason reason) {
   switch (reason) {
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED:
-    case content::DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED:
-    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED:
-    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM:
-    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
-    case content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_NO_SPACE:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_TOO_LARGE:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_VIRUS_INFECTED:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED:
+    case DOWNLOAD_INTERRUPT_REASON_FILE_SECURITY_CHECK_FAILED:
+    case DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED:
+    case DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM:
+    case DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
+    case DOWNLOAD_INTERRUPT_REASON_USER_CANCELED:
       return FailureType::NOT_RECOVERABLE;
     default:
       return FailureType::RECOVERABLE;
@@ -62,16 +67,15 @@ FailureType FailureTypeFromInterruptReason(
 }
 
 // Logs interrupt reason when download fails.
-void LogDownloadInterruptReason(content::DownloadInterruptReason reason) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Download.Service.Driver.InterruptReason",
-                              reason);
+void LogDownloadInterruptReason(download::DownloadInterruptReason reason) {
+  base::UmaHistogramSparse("Download.Service.Driver.InterruptReason", reason);
 }
 
 }  // namespace
 
 // static
 DriverEntry DownloadDriverImpl::CreateDriverEntry(
-    const content::DownloadItem* item) {
+    const DownloadItem* item) {
   DCHECK(item);
   DriverEntry entry;
   entry.guid = item->GetGuid();
@@ -81,12 +85,12 @@ DriverEntry DownloadDriverImpl::CreateDriverEntry(
   entry.bytes_downloaded = item->GetReceivedBytes();
   entry.expected_total_size = item->GetTotalBytes();
   entry.current_file_path =
-      item->GetState() == content::DownloadItem::DownloadState::COMPLETE
+      item->GetState() == DownloadItem::DownloadState::COMPLETE
           ? item->GetTargetFilePath()
           : item->GetFullPath();
   entry.completion_time = item->GetEndTime();
   entry.response_headers = item->GetResponseHeaders();
-  if (entry.response_headers.get()) {
+  if (entry.response_headers) {
     entry.can_resume =
         entry.response_headers->HasHeaderValue("Accept-Ranges", "bytes") ||
         (entry.response_headers->HasHeader("Content-Range") &&
@@ -99,15 +103,29 @@ DriverEntry DownloadDriverImpl::CreateDriverEntry(
         !item->GetETag().empty() || !item->GetLastModifiedTime().empty();
   }
   entry.url_chain = item->GetUrlChain();
+
+  if (item->GetState() == DownloadItem::DownloadState::COMPLETE) {
+    std::string hash = item->GetHash();
+    if (!hash.empty())
+      entry.hash256 = base::HexEncode(hash.data(), hash.size());
+  }
+
   return entry;
 }
 
-DownloadDriverImpl::DownloadDriverImpl(content::DownloadManager* manager)
-    : download_manager_(manager), client_(nullptr), weak_ptr_factory_(this) {
-  DCHECK(download_manager_);
+DownloadDriverImpl::DownloadDriverImpl(
+    SimpleDownloadManagerCoordinator* download_manager_coordinator)
+    : client_(nullptr),
+      download_manager_coordinator_(download_manager_coordinator),
+      is_ready_(false) {
+  DCHECK(download_manager_coordinator_);
+  DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
-DownloadDriverImpl::~DownloadDriverImpl() = default;
+DownloadDriverImpl::~DownloadDriverImpl() {
+  if (download_manager_coordinator_)
+    download_manager_coordinator_->GetNotifier()->RemoveObserver(this);
+}
 
 void DownloadDriverImpl::Initialize(DownloadDriver::Client* client) {
   DCHECK(!client_);
@@ -115,46 +133,40 @@ void DownloadDriverImpl::Initialize(DownloadDriver::Client* client) {
   DCHECK(client_);
 
   // |download_manager_| may be shut down. Informs the client.
-  if (!download_manager_) {
+  if (!download_manager_coordinator_) {
     client_->OnDriverReady(false);
     return;
   }
 
-  notifier_ =
-      base::MakeUnique<AllDownloadItemNotifier>(download_manager_, this);
+  download_manager_coordinator_->GetNotifier()->AddObserver(this);
 }
 
 void DownloadDriverImpl::HardRecover() {
   // TODO(dtrainor, xingliu): Implement recovery for the DownloadManager.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DownloadDriverImpl::OnHardRecoverComplete,
-                            weak_ptr_factory_.GetWeakPtr(), true));
+      FROM_HERE, base::BindOnce(&DownloadDriverImpl::OnHardRecoverComplete,
+                                weak_ptr_factory_.GetWeakPtr(), true));
 }
 
 bool DownloadDriverImpl::IsReady() const {
-  return client_ && download_manager_ &&
-         download_manager_->IsManagerInitialized();
+  return client_ && download_manager_coordinator_ &&
+         download_manager_coordinator_->initialized();
 }
 
 void DownloadDriverImpl::Start(
     const RequestParams& request_params,
     const std::string& guid,
     const base::FilePath& file_path,
+    scoped_refptr<network::ResourceRequestBody> post_body,
     const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(!request_params.url.is_empty());
   DCHECK(!guid.empty());
-  if (!download_manager_)
+  if (!download_manager_coordinator_)
     return;
 
-  content::StoragePartition* storage_partition =
-      content::BrowserContext::GetStoragePartitionForSite(
-          download_manager_->GetBrowserContext(), request_params.url);
-  DCHECK(storage_partition);
-
-  std::unique_ptr<content::DownloadUrlParameters> download_url_params(
-      new content::DownloadUrlParameters(
-          request_params.url, storage_partition->GetURLRequestContext(),
-          traffic_annotation));
+  std::unique_ptr<DownloadUrlParameters> download_url_params(
+      new DownloadUrlParameters(request_params.url,
+                                traffic_annotation));
 
   // TODO(xingliu): Make content::DownloadManager handle potential guid
   // collision and return an error to fail the download cleanly.
@@ -168,50 +180,63 @@ void DownloadDriverImpl::Start(
   download_url_params->set_file_path(file_path);
   if (request_params.fetch_error_body)
     download_url_params->set_fetch_error_body(true);
-
-  download_manager_->DownloadUrl(std::move(download_url_params));
+  download_url_params->set_download_source(
+      download::DownloadSource::INTERNAL_API);
+  download_url_params->set_post_body(post_body);
+  download_url_params->set_follow_cross_origin_redirects(true);
+  download_url_params->set_upload_progress_callback(
+      base::BindRepeating(&DownloadDriverImpl::OnUploadProgress,
+                          weak_ptr_factory_.GetWeakPtr(), guid));
+  download_url_params->set_require_safety_checks(
+      request_params.require_safety_checks);
+  download_manager_coordinator_->DownloadUrl(std::move(download_url_params));
 }
 
-void DownloadDriverImpl::Remove(const std::string& guid) {
+void DownloadDriverImpl::Remove(const std::string& guid, bool remove_file) {
   guid_to_remove_.emplace(guid);
 
   // DownloadItem::Remove will cause the item object removed from memory, post
   // the remove task to avoid the object being accessed in the same call stack.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DownloadDriverImpl::DoRemoveDownload,
-                            weak_ptr_factory_.GetWeakPtr(), guid));
+      FROM_HERE,
+      base::BindOnce(&DownloadDriverImpl::DoRemoveDownload,
+                     weak_ptr_factory_.GetWeakPtr(), guid, remove_file));
 }
 
-void DownloadDriverImpl::DoRemoveDownload(const std::string& guid) {
-  if (!download_manager_)
+void DownloadDriverImpl::DoRemoveDownload(const std::string& guid,
+                                          bool remove_file) {
+  if (!download_manager_coordinator_)
     return;
-  content::DownloadItem* item = download_manager_->GetDownloadByGuid(guid);
+  DownloadItem* item = download_manager_coordinator_->GetDownloadByGuid(guid);
   // Cancels the download and removes the persisted records in content layer.
   if (item) {
+    // Remove the download file for completed download.
+    if (remove_file)
+      item->DeleteFile(base::DoNothing());
     item->Remove();
   }
 }
 
 void DownloadDriverImpl::Pause(const std::string& guid) {
-  if (!download_manager_)
+  if (!download_manager_coordinator_)
     return;
-  content::DownloadItem* item = download_manager_->GetDownloadByGuid(guid);
+  DownloadItem* item = download_manager_coordinator_->GetDownloadByGuid(guid);
   if (item)
     item->Pause();
 }
 
 void DownloadDriverImpl::Resume(const std::string& guid) {
-  if (!download_manager_)
+  if (!download_manager_coordinator_)
     return;
-  content::DownloadItem* item = download_manager_->GetDownloadByGuid(guid);
+  DownloadItem* item = download_manager_coordinator_->GetDownloadByGuid(guid);
   if (item)
-    item->Resume();
+    item->Resume(true);
 }
 
 base::Optional<DriverEntry> DownloadDriverImpl::Find(const std::string& guid) {
-  if (!download_manager_)
+  if (!download_manager_coordinator_)
     return base::nullopt;
-  content::DownloadItem* item = download_manager_->GetDownloadByGuid(guid);
+  DownloadItem* item = download_manager_coordinator_->GetDownloadByGuid(guid);
   if (item)
     return CreateDriverEntry(item);
   return base::nullopt;
@@ -219,11 +244,11 @@ base::Optional<DriverEntry> DownloadDriverImpl::Find(const std::string& guid) {
 
 std::set<std::string> DownloadDriverImpl::GetActiveDownloads() {
   std::set<std::string> guids;
-  if (!download_manager_)
+  if (!download_manager_coordinator_)
     return guids;
 
-  std::vector<content::DownloadItem*> items;
-  download_manager_->GetAllDownloads(&items);
+  std::vector<DownloadItem*> items;
+  download_manager_coordinator_->GetAllDownloads(&items);
 
   for (auto* item : items) {
     DriverEntry::State state = ToDriverEntryState(item->GetState());
@@ -234,44 +259,51 @@ std::set<std::string> DownloadDriverImpl::GetActiveDownloads() {
   return guids;
 }
 
-void DownloadDriverImpl::OnDownloadUpdated(content::DownloadManager* manager,
-                                           content::DownloadItem* item) {
+size_t DownloadDriverImpl::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(guid_to_remove_);
+}
+
+void DownloadDriverImpl::OnDownloadUpdated(
+    SimpleDownloadManagerCoordinator* coordinator,
+    DownloadItem* item) {
   DCHECK(client_);
   // Blocks the observer call if we asked to remove the download.
   if (guid_to_remove_.find(item->GetGuid()) != guid_to_remove_.end())
     return;
 
-  using DownloadState = content::DownloadItem::DownloadState;
+  using DownloadState = DownloadItem::DownloadState;
   DownloadState state = item->GetState();
-  content::DownloadInterruptReason reason = item->GetLastReason();
+  download::DownloadInterruptReason reason = item->GetLastReason();
   DriverEntry entry = CreateDriverEntry(item);
 
   if (state == DownloadState::COMPLETE) {
     client_->OnDownloadSucceeded(entry);
   } else if (state == DownloadState::IN_PROGRESS) {
     client_->OnDownloadUpdated(entry);
-  } else if (reason !=
-             content::DownloadInterruptReason::DOWNLOAD_INTERRUPT_REASON_NONE) {
+  } else if (reason != DOWNLOAD_INTERRUPT_REASON_NONE) {
     if (client_->IsTrackingDownload(item->GetGuid()))
       LogDownloadInterruptReason(reason);
     client_->OnDownloadFailed(entry, FailureTypeFromInterruptReason(reason));
   }
 }
 
-void DownloadDriverImpl::OnDownloadRemoved(content::DownloadManager* manager,
-                                           content::DownloadItem* download) {
+void DownloadDriverImpl::OnDownloadRemoved(
+    SimpleDownloadManagerCoordinator* coordinator,
+    DownloadItem* download) {
   guid_to_remove_.erase(download->GetGuid());
   // |download| is about to be deleted.
 }
 
-void DownloadDriverImpl::OnDownloadCreated(content::DownloadManager* manager,
-                                           content::DownloadItem* item) {
+void DownloadDriverImpl::OnDownloadCreated(
+    SimpleDownloadManagerCoordinator* coordinator,
+    DownloadItem* item) {
   if (guid_to_remove_.find(item->GetGuid()) != guid_to_remove_.end()) {
     // Client has removed the download before content persistence layer created
     // the record, remove the download immediately.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&DownloadDriverImpl::DoRemoveDownload,
-                              weak_ptr_factory_.GetWeakPtr(), item->GetGuid()));
+        FROM_HERE, base::BindOnce(&DownloadDriverImpl::DoRemoveDownload,
+                                  weak_ptr_factory_.GetWeakPtr(),
+                                  item->GetGuid(), false /* remove_file */));
     return;
   }
 
@@ -285,17 +317,32 @@ void DownloadDriverImpl::OnDownloadCreated(content::DownloadManager* manager,
     client_->OnDownloadCreated(entry);
 }
 
-void DownloadDriverImpl::OnManagerInitialized(
-    content::DownloadManager* manager) {
-  DCHECK_EQ(download_manager_, manager);
-  DCHECK(client_);
-  DCHECK(download_manager_);
-  client_->OnDriverReady(true);
+void DownloadDriverImpl::OnUploadProgress(const std::string& guid,
+                                          uint64_t bytes_uploaded) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  client_->OnUploadProgress(guid, bytes_uploaded);
 }
 
-void DownloadDriverImpl::OnManagerGoingDown(content::DownloadManager* manager) {
-  DCHECK_EQ(download_manager_, manager);
-  download_manager_ = nullptr;
+void DownloadDriverImpl::OnDownloadsInitialized(
+    SimpleDownloadManagerCoordinator* coordinator,
+    bool active_downloads_only) {
+  DCHECK_EQ(download_manager_coordinator_, coordinator);
+  DCHECK(download_manager_coordinator_);
+
+  if (!client_)
+    return;
+
+  if (is_ready_)
+    return;
+
+  client_->OnDriverReady(true);
+  is_ready_ = true;
+}
+
+void DownloadDriverImpl::OnManagerGoingDown(
+    SimpleDownloadManagerCoordinator* coordinator) {
+  DCHECK_EQ(download_manager_coordinator_, coordinator);
+  download_manager_coordinator_ = nullptr;
 }
 
 void DownloadDriverImpl::OnHardRecoverComplete(bool success) {

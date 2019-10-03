@@ -6,6 +6,9 @@
 #define EXTENSIONS_COMMON_CONSTANTS_H_
 
 #include "base/files/file_path.h"
+#include "base/logging.h"
+#include "base/strings/string_piece_forward.h"
+#include "components/services/app_service/public/mojom/types.mojom.h"
 #include "ui/base/layout.h"
 
 namespace extensions {
@@ -45,9 +48,6 @@ extern const char kInstallDirectoryName[];
 // The name of a temporary directory to install an extension into for
 // validation before finalizing install.
 extern const char kTempExtensionName[];
-
-// The file to write our decoded images to, relative to the extension_path.
-extern const char kDecodedImagesFilename[];
 
 // The file to write our decoded message catalogs to, relative to the
 // extension_path.
@@ -104,11 +104,6 @@ extern const char kAuthUserQueryKey[];
 extern const char kMimeTypeJpeg[];
 extern const char kMimeTypePng[];
 
-// TODO(lazyboy): This is a hack and it is copied from service_worker_types.cc,
-// which is not available to extensions/ code. Move the constant to
-// content/public/common.
-extern const int64_t kInvalidServiceWorkerVersionId;
-
 // The extension id of the Web Store component application.
 extern const char kWebStoreAppId[];
 
@@ -122,37 +117,8 @@ extern const size_t kWebstoreSignaturesPublicKeySize;
 // from a non-service worker context
 extern const int kMainThreadId;
 
-// Enumeration of possible app launch sources.
-// This should be kept in sync with LaunchSource in
-// extensions/common/api/app_runtime.idl, and GetLaunchSourceEnum() in
-// extensions/browser/api/app_runtime/app_runtime_api.cc.
-// Note the enumeration is used in UMA histogram so entries
-// should not be re-ordered or removed.
-enum AppLaunchSource {
-  SOURCE_NONE,
-  SOURCE_UNTRACKED,
-  SOURCE_APP_LAUNCHER,
-  SOURCE_NEW_TAB_PAGE,
-  SOURCE_RELOAD,
-  SOURCE_RESTART,
-  SOURCE_LOAD_AND_LAUNCH,
-  SOURCE_COMMAND_LINE,
-  SOURCE_FILE_HANDLER,
-  SOURCE_URL_HANDLER,
-  SOURCE_SYSTEM_TRAY,
-  SOURCE_ABOUT_PAGE,
-  SOURCE_KEYBOARD,
-  SOURCE_EXTENSIONS_PAGE,
-  SOURCE_MANAGEMENT_API,
-  SOURCE_EPHEMERAL_APP_DEPRECATED,
-  SOURCE_BACKGROUND,
-  SOURCE_KIOSK,
-  SOURCE_CHROME_INTERNAL,
-  SOURCE_TEST,
-  SOURCE_INSTALLED_NOTIFICATION,
-  SOURCE_CONTEXT_MENU,
-  NUM_APP_LAUNCH_SOURCES
-};
+using apps::mojom::AppLaunchSource;
+using apps::mojom::LaunchContainer;
 
 // This enum is used for the launch type the user wants to use for an
 // application.
@@ -173,17 +139,9 @@ enum LaunchType {
   LAUNCH_TYPE_DEFAULT = LAUNCH_TYPE_REGULAR
 };
 
-// Don't remove items or change the order of this enum.  It's used in
-// histograms and preferences.
-enum LaunchContainer {
-  LAUNCH_CONTAINER_WINDOW,
-  LAUNCH_CONTAINER_PANEL,
-  LAUNCH_CONTAINER_TAB,
-  // For platform apps, which don't actually have a container (they just get a
-  // "onLaunched" event).
-  LAUNCH_CONTAINER_NONE,
-  NUM_LAUNCH_CONTAINERS
-};
+// The origin of injected CSS.
+enum CSSOrigin { CSS_ORIGIN_AUTHOR, CSS_ORIGIN_USER };
+static const CSSOrigin CSS_ORIGIN_LAST = CSS_ORIGIN_USER;
 
 }  // namespace extensions
 
@@ -209,6 +167,9 @@ enum ExtensionIcons {
   EXTENSION_ICON_INVALID = 0,
 };
 
+// The extension id of the ChromeVox extension.
+extern const char kChromeVoxExtensionId[];
+
 // The extension id of the feedback component extension.
 extern const char kFeedbackExtensionId[];
 
@@ -227,6 +188,55 @@ extern const char kQuickOfficeExtensionId[];
 // The extension id used for testing mimeHandlerPrivate.
 extern const char kMimeHandlerPrivateTestExtensionId[];
 
+// The extension id of the Camera application.
+extern const char kCameraAppId[];
+
+// The extension id of the Chrome component application.
+extern const char kChromeAppId[];
+
+// The extension id of the Files Manager application.
+extern const char kFilesManagerAppId[];
+
+// The extension id of the Google Keep application.
+extern const char kGoogleKeepAppId[];
+
+// The extension id of the Youtube application.
+extern const char kYoutubeAppId[];
+
+// The extension id of the genius (Get Help) app.
+extern const char kGeniusAppId[];
+
+#if defined(OS_CHROMEOS)
+// The extension id of the default Demo Mode Highlights app.
+extern const char kHighlightsAppId[];
+
+// The extension id of the eve Demo Mode Highlights app.
+extern const char kHighlightsEveAppId[];
+
+// The extension id of the nocturne Demo Mode Highlights app.
+extern const char kHighlightsNocturneAppId[];
+
+// The extension id of an alternate Demo Mode Highlights app.
+extern const char kHighlightsAltAppId[];
+
+// The extension id of the default Demo Mode screensaver app.
+extern const char kScreensaverAppId[];
+
+// The extension id of the eve Demo Mode screensaver app.
+extern const char kScreensaverEveAppId[];
+
+// The extension id of the nocturne Demo Mode screensaver app.
+extern const char kScreensaverNocturneAppId[];
+
+// The extension id of an alternate Demo Mode screensaver app.
+extern const char kScreensaverAltAppId[];
+
+// Returns true if this app is part of the "system UI". Generally this is UI
+// that that on other operating systems would be considered part of the OS,
+// for example the file manager.
+bool IsSystemUIApp(base::StringPiece extension_id);
+#endif
+
 // The extension id for the production version of Hangouts.
 extern const char kProdHangoutsExtensionId[];
 
@@ -235,6 +245,12 @@ extern const char* const kHangoutsExtensionIds[6];
 
 // Error message when enterprise policy blocks scripting of webpage.
 extern const char kPolicyBlockedScripting[];
+
+// The default block size for hashing used in content verification.
+extern const int kContentVerificationDefaultBlockSize;
+
+// The minimum severity of a log or error in order to report it to the browser.
+extern const logging::LogSeverity kMinimumSeverityToReportError;
 
 }  // namespace extension_misc
 

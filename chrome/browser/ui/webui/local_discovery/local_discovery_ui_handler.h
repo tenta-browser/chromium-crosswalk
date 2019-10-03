@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_WEBUI_LOCAL_DISCOVERY_LOCAL_DISCOVERY_UI_HANDLER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,9 +15,10 @@
 #include "chrome/browser/printing/cloud_print/cloud_print_printer_list.h"
 #include "chrome/browser/printing/cloud_print/privet_device_lister.h"
 #include "chrome/browser/printing/cloud_print/privet_http.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/prefs/pref_member.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
 #define CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
@@ -43,8 +45,19 @@ class LocalDiscoveryUIHandler
       public cloud_print::PrivetRegisterOperation::Delegate,
       public cloud_print::PrivetDeviceLister::Delegate,
       public cloud_print::CloudPrintPrinterList::Delegate,
-      public SigninManagerBase::Observer {
+      public signin::IdentityManager::Observer {
  public:
+  // Class used to set a URLLoaderFactory that should be used when making
+  // network requests. Create one instance of this object with the
+  // URLLoaderFactory to use. It's automatically unregistered when the object is
+  // destroyed.
+  class SetURLLoaderFactoryForTesting final {
+   public:
+    explicit SetURLLoaderFactoryForTesting(
+        scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+    ~SetURLLoaderFactoryForTesting();
+  };
+
   LocalDiscoveryUIHandler();
   ~LocalDiscoveryUIHandler() override;
 
@@ -78,11 +91,11 @@ class LocalDiscoveryUIHandler
       const cloud_print::CloudPrintPrinterList::DeviceList& devices) override;
   void OnDeviceListUnavailable() override;
 
-  // SigninManagerBase::Observer implementation.
-  void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username) override;
-  void GoogleSignedOut(const std::string& account_id,
-                       const std::string& username) override;
+  // signin::IdentityManager::Observer implementation.
+  void OnPrimaryAccountSet(
+      const CoreAccountInfo& primary_account_info) override;
+  void OnPrimaryAccountCleared(
+      const CoreAccountInfo& previous_primary_account_info) override;
 
  private:
   using DeviceDescriptionMap =
@@ -92,9 +105,6 @@ class LocalDiscoveryUIHandler
   // Message handlers:
   // For when the page is ready to receive device notifications.
   void HandleStart(const base::ListValue* args);
-
-  // For when a visibility change occurs.
-  void HandleIsVisible(const base::ListValue* args);
 
   // For when a user choice is made.
   void HandleRegisterDevice(const base::ListValue* args);
@@ -109,8 +119,10 @@ class LocalDiscoveryUIHandler
   // tab.
   void HandleOpenCloudPrintURL(const base::ListValue* args);
 
+#if !defined(OS_CHROMEOS)
   // For showing sync login UI.
   void HandleShowSyncUI(const base::ListValue* args);
+#endif
 
   // For when the IP address of the printer has been resolved for registration.
   void StartRegisterHTTP(
@@ -125,9 +137,6 @@ class LocalDiscoveryUIHandler
 
   // Singal to the web interface that registration has finished.
   void SendRegisterDone(const std::string& service_name);
-
-  // Set the visibility of the page.
-  void SetIsVisible(bool visible);
 
   // Get the sync account email.
   std::string GetSyncAccount() const;
@@ -184,9 +193,6 @@ class LocalDiscoveryUIHandler
 
   // The device lister used to list devices on the local network.
   std::unique_ptr<cloud_print::PrivetDeviceLister> privet_lister_;
-
-  // Whether or not the page is marked as visible.
-  bool is_visible_;
 
   // List of printers from cloud print.
   std::unique_ptr<cloud_print::GCDApiFlow> cloud_print_printer_list_;

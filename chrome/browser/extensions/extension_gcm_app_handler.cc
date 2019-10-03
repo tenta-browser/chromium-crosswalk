@@ -12,12 +12,12 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
-#include "chrome/browser/gcm/instance_id/instance_id_profile_service.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
+#include "components/gcm_driver/instance_id/instance_id_profile_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
@@ -48,8 +48,7 @@ ExtensionGCMAppHandler::GetFactoryInstance() {
 
 ExtensionGCMAppHandler::ExtensionGCMAppHandler(content::BrowserContext* context)
     : profile_(Profile::FromBrowserContext(context)),
-      extension_registry_observer_(this),
-      weak_factory_(this) {
+      extension_registry_observer_(this) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
   js_event_router_.reset(new extensions::GcmJsEventRouter(profile_));
 }
@@ -112,7 +111,7 @@ void ExtensionGCMAppHandler::OnExtensionUnloaded(
     return;
 
   if (reason == UnloadedExtensionReason::UPDATE &&
-      GetGCMDriver()->app_handlers().size() >= 1) {
+      !GetGCMDriver()->app_handlers().empty()) {
     // When the extension is being updated, it will be first unloaded and then
     // loaded again by ExtensionService::AddExtension. If the app handler for
     // this extension is the only handler, removing it and adding it again will

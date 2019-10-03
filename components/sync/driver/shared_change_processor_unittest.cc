@@ -9,18 +9,15 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/device_info/local_device_info_provider.h"
-#include "components/sync/driver/fake_sync_client.h"
+#include "components/sync/driver/data_type_manager.h"
 #include "components/sync/driver/generic_change_processor.h"
 #include "components/sync/driver/generic_change_processor_factory.h"
-#include "components/sync/driver/sync_api_component_factory.h"
-#include "components/sync/model/attachments/attachment_id.h"
-#include "components/sync/model/attachments/attachment_service.h"
-#include "components/sync/model/attachments/attachment_store.h"
+#include "components/sync/driver/sync_client_mock.h"
+#include "components/sync/engine/sync_engine.h"
 #include "components/sync/model/data_type_error_handler_mock.h"
 #include "components/sync/model/fake_syncable_service.h"
 #include "components/sync/syncable/test_user_share.h"
@@ -31,87 +28,44 @@ namespace syncer {
 
 namespace {
 
+using ::testing::_;
 using ::testing::NiceMock;
 using ::testing::StrictMock;
 
-class TestSyncApiComponentFactory : public SyncApiComponentFactory {
- public:
-  TestSyncApiComponentFactory() {}
-  ~TestSyncApiComponentFactory() override {}
-
-  // SyncApiComponentFactory implementation.
-  void RegisterDataTypes(
-      SyncService* sync_service,
-      const RegisterDataTypesMethod& register_platform_types_method) override {}
-  DataTypeManager* CreateDataTypeManager(
-      ModelTypeSet initial_types,
-      const WeakHandle<DataTypeDebugInfoListener>& debug_info_listener,
-      const DataTypeController::TypeMap* controllers,
-      const DataTypeEncryptionHandler* encryption_handler,
-      ModelTypeConfigurer* configurer,
-      DataTypeManagerObserver* observer) override {
-    return nullptr;
-  }
-  SyncEngine* CreateSyncEngine(const std::string& name,
-                               invalidation::InvalidationService* invalidator,
-                               const base::WeakPtr<SyncPrefs>& sync_prefs,
-                               const base::FilePath& sync_folder) override {
-    return nullptr;
-  }
-  std::unique_ptr<LocalDeviceInfoProvider> CreateLocalDeviceInfoProvider()
-      override {
-    return nullptr;
-  }
-  SyncApiComponentFactory::SyncComponents CreateBookmarkSyncComponents(
-      SyncService* sync_service,
-      std::unique_ptr<DataTypeErrorHandler> error_handler) override {
-    return SyncApiComponentFactory::SyncComponents(nullptr, nullptr);
-  }
-  std::unique_ptr<AttachmentService> CreateAttachmentService(
-      std::unique_ptr<AttachmentStoreForSync> attachment_store,
-      const UserShare& user_share,
-      const std::string& store_birthday,
-      ModelType model_type,
-      AttachmentService::Delegate* delegate) override {
-    return AttachmentService::CreateForTest();
-  }
-};
-
-class SyncSharedChangeProcessorTest : public testing::Test,
-                                      public FakeSyncClient {
+class SyncSharedChangeProcessorTest : public testing::Test {
  public:
   SyncSharedChangeProcessorTest()
-      : FakeSyncClient(&factory_),
-        model_thread_("dbthread"),
-        did_connect_(false),
-        has_attachment_service_(false) {}
+      : model_thread_("dbthread"), did_connect_(false) {}
 
   ~SyncSharedChangeProcessorTest() override {
-    EXPECT_FALSE(db_syncable_service_.get());
-  }
-
-  // FakeSyncClient override.
-  base::WeakPtr<SyncableService> GetSyncableServiceForType(
-      ModelType type) override {
-    return db_syncable_service_->AsWeakPtr();
+    EXPECT_FALSE(db_syncable_service_);
   }
 
  protected:
+  base::WeakPtr<SyncableService> GetSyncableServiceForType(ModelType type) {
+    DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
+    return db_syncable_service_->AsWeakPtr();
+  }
+
   void SetUp() override {
     test_user_share_.SetUp();
     shared_change_processor_ = new SharedChangeProcessor(AUTOFILL);
+    ON_CALL(sync_client_, GetSyncableServiceForType(AUTOFILL))
+        .WillByDefault(testing::Invoke(
+            this, &SyncSharedChangeProcessorTest::GetSyncableServiceForType));
     ASSERT_TRUE(model_thread_.Start());
     ASSERT_TRUE(model_thread_.task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&SyncSharedChangeProcessorTest::SetUpDBSyncableService,
-                   base::Unretained(this))));
+        base::BindOnce(&SyncSharedChangeProcessorTest::SetUpDBSyncableService,
+                       base::Unretained(this))));
   }
 
   void TearDown() override {
     EXPECT_TRUE(model_thread_.task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&SyncSharedChangeProcessorTest::TearDownDBSyncableService,
-                   base::Unretained(this))));
+        base::BindOnce(
+            &SyncSharedChangeProcessorTest::TearDownDBSyncableService,
+            base::Unretained(this))));
     // This must happen before the DB thread is stopped since
     // |shared_change_processor_| may post tasks to delete its members
     // on the correct thread.
@@ -133,49 +87,23 @@ class SyncSharedChangeProcessorTest : public testing::Test,
   void Connect() {
     EXPECT_TRUE(model_thread_.task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&SyncSharedChangeProcessorTest::ConnectOnDBThread,
-                   base::Unretained(this), shared_change_processor_)));
-  }
-
-  void SetAttachmentStore() {
-    EXPECT_TRUE(model_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&SyncSharedChangeProcessorTest::SetAttachmentStoreOnDBThread,
-                   base::Unretained(this))));
-  }
-
-  bool HasAttachmentService() {
-    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
-                              base::WaitableEvent::InitialState::NOT_SIGNALED);
-    EXPECT_TRUE(model_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(
-            &SyncSharedChangeProcessorTest::CheckAttachmentServiceOnDBThread,
-            base::Unretained(this), base::Unretained(&event))));
-    event.Wait();
-    return has_attachment_service_;
+        base::BindOnce(&SyncSharedChangeProcessorTest::ConnectOnDBThread,
+                       base::Unretained(this), shared_change_processor_)));
   }
 
  private:
   // Used by SetUp().
   void SetUpDBSyncableService() {
     DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
-    DCHECK(!db_syncable_service_.get());
+    DCHECK(!db_syncable_service_);
     db_syncable_service_ = std::make_unique<FakeSyncableService>();
   }
 
   // Used by TearDown().
   void TearDownDBSyncableService() {
     DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
-    DCHECK(db_syncable_service_.get());
+    DCHECK(db_syncable_service_);
     db_syncable_service_.reset();
-  }
-
-  void SetAttachmentStoreOnDBThread() {
-    DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
-    DCHECK(db_syncable_service_.get());
-    db_syncable_service_->set_attachment_store(
-        AttachmentStore::CreateInMemoryStore());
   }
 
   // Used by Connect().  The SharedChangeProcessor is passed in
@@ -185,47 +113,31 @@ class SyncSharedChangeProcessorTest : public testing::Test,
       const scoped_refptr<SharedChangeProcessor>& shared_change_processor) {
     DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
     EXPECT_TRUE(shared_change_processor->Connect(
-        this, &processor_factory_, test_user_share_.user_share(),
+        &sync_client_, &processor_factory_, test_user_share_.user_share(),
         std::make_unique<DataTypeErrorHandlerMock>(),
         base::WeakPtr<SyncMergeResult>()));
     did_connect_ = true;
   }
 
-  void CheckAttachmentServiceOnDBThread(base::WaitableEvent* event) {
-    DCHECK(model_thread_.task_runner()->BelongsToCurrentThread());
-    DCHECK(db_syncable_service_.get());
-    has_attachment_service_ = !!db_syncable_service_->attachment_service();
-    event->Signal();
-  }
-
-  base::MessageLoop frontend_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   base::Thread model_thread_;
   TestUserShare test_user_share_;
-  TestSyncApiComponentFactory factory_;
 
   scoped_refptr<SharedChangeProcessor> shared_change_processor_;
 
   GenericChangeProcessorFactory processor_factory_;
   bool did_connect_;
-  bool has_attachment_service_;
 
   // Used only on DB thread.
   std::unique_ptr<FakeSyncableService> db_syncable_service_;
+
+  testing::NiceMock<SyncClientMock> sync_client_;
 };
 
 // Simply connect the shared change processor.  It should succeed, and
 // nothing further should happen.
 TEST_F(SyncSharedChangeProcessorTest, Basic) {
   Connect();
-}
-
-// Connect the shared change processor to a syncable service with
-// AttachmentStore. Verify that shared change processor implementation
-// creates AttachmentService and passes it back to the syncable service.
-TEST_F(SyncSharedChangeProcessorTest, ConnectWithAttachmentStore) {
-  SetAttachmentStore();
-  Connect();
-  EXPECT_TRUE(HasAttachmentService());
 }
 
 }  // namespace

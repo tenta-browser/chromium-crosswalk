@@ -15,17 +15,18 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.content_public.browser.ScreenOrientationProvider;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ScreenOrientationValues;
 import org.chromium.content_shell_apk.ContentShellActivityTestRule;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayAndroid.DisplayAndroidObserver;
 
 import java.util.concurrent.Callable;
-
 
 /**
  * Tests for ScreenOrientationListener and its implementations.
@@ -65,14 +66,10 @@ public class ScreenOrientationListenerTest {
     public void setUp() throws Exception {
         mActivityTestRule.launchContentShellWithUrl("about:blank");
         mCallbackHelper = new OrientationChangeCallbackHelper();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mDisplayAndroid =
-                        mActivityTestRule.getContentViewCore().getWindowAndroid().getDisplay();
-                mDisplayAndroid.addObserver(mCallbackHelper);
-                DisplayAndroid.startAccurateListening();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mDisplayAndroid =
+                    mActivityTestRule.getWebContents().getTopLevelNativeWindow().getDisplay();
+            mDisplayAndroid.addObserver(mCallbackHelper);
         });
 
         // Calculate device natural orientation, as mObserver.mOrientation
@@ -85,15 +82,11 @@ public class ScreenOrientationListenerTest {
 
     @After
     public void tearDown() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mDisplayAndroid.removeObserver(mCallbackHelper);
-                mDisplayAndroid = null;
-                mActivityTestRule.getActivity().setRequestedOrientation(
-                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                DisplayAndroid.stopAccurateListening();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mDisplayAndroid.removeObserver(mCallbackHelper);
+            mDisplayAndroid = null;
+            mActivityTestRule.getActivity().setRequestedOrientation(
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         });
 
         mCallbackHelper = null;
@@ -147,7 +140,7 @@ public class ScreenOrientationListenerTest {
     }
 
     private int getCurrentRotation() {
-        return ThreadUtils.runOnUiThreadBlockingNoException(new Callable<Integer>() {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(new Callable<Integer>() {
             @Override
             public Integer call() {
                 return mDisplayAndroid.getRotation();
@@ -162,12 +155,8 @@ public class ScreenOrientationListenerTest {
         if (expectedRotation == currentRotation) return expectedRotation;
 
         int callCount = mCallbackHelper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mActivityTestRule.getActivity().setRequestedOrientation(orientation);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mActivityTestRule.getActivity().setRequestedOrientation(orientation); });
         mCallbackHelper.waitForCallback(callCount);
         return mCallbackHelper.getLastRotation();
     }
@@ -175,6 +164,7 @@ public class ScreenOrientationListenerTest {
     @Test
     @MediumTest
     @Feature({"ScreenOrientation"})
+    @DisabledTest
     public void testOrientationChanges() throws Exception {
         int rotation = lockOrientationAndWait(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         Assert.assertEquals(
@@ -240,13 +230,10 @@ public class ScreenOrientationListenerTest {
         if (expectedRotation == currentRotation) return expectedRotation;
 
         int callCount = mCallbackHelper.getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                ScreenOrientationProvider.lockOrientation(
-                        mActivityTestRule.getContentViewCore().getWindowAndroid(),
-                        (byte) orientationValue);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            ScreenOrientationProvider.getInstance().lockOrientation(
+                    mActivityTestRule.getWebContents().getTopLevelNativeWindow(),
+                    (byte) orientationValue);
         });
         mCallbackHelper.waitForCallback(callCount);
         return mCallbackHelper.getLastRotation();
@@ -255,6 +242,7 @@ public class ScreenOrientationListenerTest {
     @Test
     @MediumTest
     @Feature({"ScreenOrientation"})
+    @DisabledTest(message = "crbug.com/807356")
     public void testBasicValues() throws Exception {
         int rotation = lockOrientationValueAndWait(ScreenOrientationValues.LANDSCAPE_PRIMARY);
         Assert.assertEquals(

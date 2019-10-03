@@ -41,7 +41,11 @@ if (is_debug) {
 
     # Don't define _DEBUG. Modest savings, but good for consistency.
     "//build/config:debug",
+
+    # Don't enable sanitizers for build tools. They slow down the overall build.
+    "//build/config/sanitizers:default_sanitizer_flags",
   ]
+
   configs_to_add += [
     "//build/config:release",
     "//build/config/compiler:optimize_max",
@@ -51,6 +55,12 @@ if (is_debug) {
     # highbd_sad4d_sse2.asm on Windows this saves about 15 s.
     configs_to_delete += [ "//build/config/win:default_crt" ]
     configs_to_add += [ "//build/config/win:release_crt" ]
+
+    # Without no_default_deps, an implicit dependency on libc++ is added.
+    # libc++ may have been built referencing the debug CRT, but since we're
+    # explicitly using the release CRT, this would result in undefined symbol
+    # errors when linking, so we need to remove the implicit libc++ dependency.
+    no_default_deps = true
   }
 }
 
@@ -72,7 +82,7 @@ if (current_toolchain == host_toolchain) {
       "source/patched-yasm",
     ]
     defines = [ "HAVE_CONFIG_H" ]
-    if (is_posix) {
+    if (is_posix || is_fuchsia) {
       cflags = [ "-std=gnu99" ]
     }
   }
@@ -86,17 +96,7 @@ if (current_toolchain == host_toolchain) {
       ":yasm_config",
       "//build/config/compiler:no_chromium_code",
     ]
-
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     deps = [
-      "//build/config:exe_and_shlib_deps",
-
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
@@ -111,17 +111,7 @@ if (current_toolchain == host_toolchain) {
       ":yasm_config",
       "//build/config/compiler:no_chromium_code",
     ]
-
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     deps = [
-      "//build/config:exe_and_shlib_deps",
-
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
@@ -139,20 +129,12 @@ if (current_toolchain == host_toolchain) {
       "//build/config/compiler:no_chromium_code",
     ]
 
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     # Must be compatible with yasm_utils/yasm
     configs -= configs_to_delete
     configs += configs_to_add
 
     deps = [
       ":yasm_utils",
-      "//build/config:exe_and_shlib_deps",
 
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
@@ -187,17 +169,7 @@ if (current_toolchain == host_toolchain) {
       ":yasm_config",
       "//build/config/compiler:no_chromium_code",
     ]
-
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     deps = [
-      "//build/config:exe_and_shlib_deps",
-
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
@@ -212,17 +184,7 @@ if (current_toolchain == host_toolchain) {
       ":yasm_config",
       "//build/config/compiler:no_chromium_code",
     ]
-
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     deps = [
-      "//build/config:exe_and_shlib_deps",
-
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
@@ -264,17 +226,7 @@ if (current_toolchain == host_toolchain) {
       # correctly.
       ":re2c_warnings",
     ]
-
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     deps = [
-      "//build/config:exe_and_shlib_deps",
-
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",
     ]
@@ -391,13 +343,6 @@ if (current_toolchain == host_toolchain) {
       ":yasm_warnings",
     ]
 
-    if (is_win) {
-      # Work around incremental linking randomly creating corrupt binaries,
-      # crbug.com/644525.
-      configs -= [ "//build/config/win:default_incremental_linking" ]
-      configs += [ "//build/config/win:no_incremental_linking" ]
-    }
-
     # Disable WPO for yasm: crbug.com/604808
     if (is_official_build && full_wpo_on_official) {
       configs -= [ "//build/config/compiler:default_optimization" ]
@@ -433,7 +378,6 @@ if (current_toolchain == host_toolchain) {
       ":generate_module",
       ":generate_version",
       ":yasm_utils",
-      "//build/config:exe_and_shlib_deps",
 
       # Default manifest on Windows (a no-op elsewhere).
       "//build/win:default_exe_manifest",

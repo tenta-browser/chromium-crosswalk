@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_creator.h"
 #include "chrome/browser/extensions/extension_disabled_ui.h"
 #include "chrome/browser/extensions/extension_error_controller.h"
 #include "chrome/browser/extensions/extension_error_ui_default.h"
@@ -17,16 +21,22 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/recovery/recovery_install_global_error.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/global_error/global_error_observer.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
+#include "components/crx_file/crx_verifier.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_creator.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/mock_external_provider.h"
+#include "extensions/browser/sandboxed_unpacker.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/feature_switch.h"
 
@@ -54,7 +64,7 @@ base::FilePath PackCRXInTempDir(base::ScopedTempDir* temp_dir,
   base::FilePath crx_path = temp_dir->GetPath().AppendASCII("temp.crx");
 
   base::FilePath test_data;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data));
+  EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data));
   test_data = test_data.AppendASCII("extensions");
 
   base::FilePath dir_path = test_data.AppendASCII(extension_folder);
@@ -67,6 +77,34 @@ base::FilePath PackCRXInTempDir(base::ScopedTempDir* temp_dir,
   return crx_path;
 }
 
+// Helper to wait for a global error to be added. To stop waiting, the global
+// error must have a bubble view.
+class GlobalErrorWaiter : public GlobalErrorObserver {
+ public:
+  explicit GlobalErrorWaiter(Profile* profile)
+      : service_(GlobalErrorServiceFactory::GetForProfile(profile)) {
+    scoped_observer_.Add(service_);
+  }
+
+  ~GlobalErrorWaiter() override = default;
+
+  // GlobalErrorObserver
+  void OnGlobalErrorsChanged() override {
+    if (service_->GetFirstGlobalErrorWithBubbleView())
+      run_loop_.Quit();
+  }
+
+  void Wait() { run_loop_.Run(); }
+
+ private:
+  base::RunLoop run_loop_;
+  GlobalErrorService* service_;
+  ScopedObserver<GlobalErrorService, GlobalErrorObserver> scoped_observer_{
+      this};
+
+  DISALLOW_COPY_AND_ASSIGN(GlobalErrorWaiter);
+};
+
 }  // namespace
 
 class GlobalErrorBubbleTest : public DialogBrowserTest {
@@ -76,21 +114,15 @@ class GlobalErrorBubbleTest : public DialogBrowserTest {
   }
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override;
+  void ShowUi(const std::string& name) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GlobalErrorBubbleTest);
 };
 
-void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
-  content::WindowedNotificationObserver global_errors_updated(
-      chrome::NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-      base::Bind([](const content::NotificationSource& source,
-                    const content::NotificationDetails& details) -> bool {
-        return content::Details<GlobalError>(details).ptr()->HasBubbleView();
-      }));
+void GlobalErrorBubbleTest::ShowUi(const std::string& name) {
   Profile* profile = browser()->profile();
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   extensions::ExtensionRegistry* extension_registry =
       extensions::ExtensionRegistry::Get(profile);
@@ -102,14 +134,16 @@ void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
   extension_service->AddExtension(test_extension.get());
 
   if (name == "ExtensionDisabledGlobalError") {
+    GlobalErrorWaiter waiter(profile);
     extensions::AddExtensionDisabledError(extension_service,
                                           test_extension.get(), false);
-    global_errors_updated.Wait();
+    waiter.Wait();
     ShowPendingError(browser());
   } else if (name == "ExtensionDisabledGlobalErrorRemote") {
+    GlobalErrorWaiter waiter(profile);
     extensions::AddExtensionDisabledError(extension_service,
                                           test_extension.get(), true);
-    global_errors_updated.Wait();
+    waiter.Wait();
     ShowPendingError(browser());
   } else if (name == "ExtensionGlobalError") {
     extensions::TestBlacklist test_blacklist(
@@ -120,21 +154,19 @@ void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
     test_blacklist.SetBlacklistState(test_extension->id(),
                                      extensions::BLACKLISTED_MALWARE, true);
     // Ensure ExtensionService::ManageBlacklist() runs, which shows the dialog.
-    // (This flow doesn't use NOTIFICATION_GLOBAL_ERRORS_CHANGED.) This is
-    // asynchronous, and using TestBlacklist ensures the tasks run without
-    // delay, but some tasks run on the IO thread, so post a task there to
-    // ensure it was flushed.
-    // The test also needs to invoke OnBlacklistUpdated() directly. Usually this
-    // happens via NOTIFICATION_SAFE_BROWSING_UPDATE_COMPLETE but TestBlacklist
+    // (This flow doesn't use OnGlobalErrorsChanged.) This is asynchronous, and
+    // using TestBlacklist ensures the tasks run without delay, but some tasks
+    // run on the IO thread, so post a task there to ensure it was flushed. The
+    // test also needs to invoke OnBlacklistUpdated() directly. Usually this
+    // happens via a callback from the SafeBrowsing DB, but TestBlacklist
     // replaced the SafeBrowsing DB with a fake one, so the notification source
     // is different.
     static_cast<extensions::Blacklist::Observer*>(extension_service)
         ->OnBlacklistUpdated();
     base::RunLoop().RunUntilIdle();
     base::RunLoop flush_io;
-    content::BrowserThread::PostTaskAndReply(
-        content::BrowserThread::IO, FROM_HERE, base::BindOnce(&base::DoNothing),
-        flush_io.QuitClosure());
+    base::PostTaskWithTraitsAndReply(FROM_HERE, {content::BrowserThread::IO},
+                                     base::DoNothing(), flush_io.QuitClosure());
     flush_io.Run();
 
     // Oh no! This relies on RunUntilIdle() to show the bubble. The bubble is
@@ -150,7 +182,8 @@ void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
     base::FilePath crx_path = PackCRXInTempDir(
         &temp_dir, "update_from_webstore", "update_from_webstore.pem");
 
-    auto provider = base::MakeUnique<extensions::MockExternalProvider>(
+    GlobalErrorWaiter waiter(profile);
+    auto provider = std::make_unique<extensions::MockExternalProvider>(
         extension_service, extensions::Manifest::EXTERNAL_PREF);
     extensions::MockExternalProvider* provider_ptr = provider.get();
     extension_service->AddProviderForTesting(std::move(provider));
@@ -160,13 +193,13 @@ void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
 
     // ExternalInstallError::OnDialogReady() adds the error and shows the dialog
     // immediately.
-    global_errors_updated.Wait();
+    waiter.Wait();
   } else if (name == "RecoveryInstallGlobalError") {
+    GlobalErrorWaiter waiter(profile);
     g_browser_process->local_state()->SetBoolean(
         prefs::kRecoveryComponentNeedsElevation, true);
-    global_errors_updated.Wait();
+    waiter.Wait();
     ShowPendingError(browser());
-
 #if !defined(OS_CHROMEOS)
   } else if (name == "SigninGlobalError") {
     SigninGlobalErrorFactory::GetForProfile(profile)->ShowBubbleView(browser());
@@ -177,41 +210,43 @@ void GlobalErrorBubbleTest::ShowDialog(const std::string& name) {
 }
 
 IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest,
-                       InvokeDialog_ExtensionDisabledGlobalError) {
-  RunDialog();
+                       InvokeUi_ExtensionDisabledGlobalError) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest,
-                       InvokeDialog_ExtensionDisabledGlobalErrorRemote) {
-  RunDialog();
+                       InvokeUi_ExtensionDisabledGlobalErrorRemote) {
+  ShowAndVerifyUi();
 }
 
 // This shows a non-persistent dialog during a RunLoop::RunUntilIdle(), so it's
 // not possible to guarantee that events to dismiss the dialog are not processed
 // as well. Disable by default to prevent flakiness in browser_tests.
 IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest,
-                       DISABLED_InvokeDialog_ExtensionGlobalError) {
-  RunDialog();
+                       DISABLED_InvokeUi_ExtensionGlobalError) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest,
-                       InvokeDialog_ExternalInstallBubbleAlert) {
+                       InvokeUi_ExternalInstallBubbleAlert) {
+  extensions::SandboxedUnpacker::ScopedVerifierFormatOverrideForTest
+      verifier_format_override(crx_file::VerifierFormat::CRX3);
   extensions::FeatureSwitch::ScopedOverride prompt(
       extensions::FeatureSwitch::prompt_for_external_extensions(), true);
-  RunDialog();
+  ShowAndVerifyUi();
 }
 
 // RecoveryInstallGlobalError only exists on Windows and Mac.
 #if defined(OS_WIN) || defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest,
-                       InvokeDialog_RecoveryInstallGlobalError) {
-  RunDialog();
+                       InvokeUi_RecoveryInstallGlobalError) {
+  ShowAndVerifyUi();
 }
 #endif
 
 // Signin global errors never happon on ChromeOS.
 #if !defined(OS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest, InvokeDialog_SigninGlobalError) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(GlobalErrorBubbleTest, InvokeUi_SigninGlobalError) {
+  ShowAndVerifyUi();
 }
 #endif

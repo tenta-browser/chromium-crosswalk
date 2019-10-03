@@ -1,17 +1,19 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
+<link rel="import" href="chrome://resources/cr_elements/cr_button/cr_button.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_dialog/cr_dialog.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_icon_button/cr_icon_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_link_row/cr_link_row.html">
 <link rel="import" href="chrome://resources/html/assert.html">
 <link rel="import" href="chrome://resources/html/cr/ui/focus_without_ink.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/neon-animation/neon-animatable.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
+<link rel="import" href="security_keys_subpage.html">
 <link rel="import" href="../clear_browsing_data_dialog/clear_browsing_data_dialog.html">
-<link rel="import" href="../clear_browsing_data_dialog/clear_browsing_data_dialog_tabs.html">
 <link rel="import" href="../controls/settings_toggle_button.html">
 <link rel="import" href="../lifetime_browser_proxy.html">
+<link rel="import" href="../people_page/sync_browser_proxy.html">
+<link rel="import" href="../people_page/signout_dialog.html">
 <link rel="import" href="../route.html">
 <link rel="import" href="../settings_page/settings_animated_pages.html">
 <link rel="import" href="../settings_page/settings_subpage.html">
@@ -19,173 +21,151 @@
 <link rel="import" href="../site_settings/all_sites.html">
 <link rel="import" href="../site_settings/category_default_setting.html">
 <link rel="import" href="../site_settings/category_setting_exceptions.html">
+<link rel="import" href="../site_settings/chooser_exception_list.html">
 <link rel="import" href="../site_settings/constants.html">
 <link rel="import" href="../site_settings/media_picker.html">
 <link rel="import" href="../site_settings/pdf_documents.html">
 <link rel="import" href="../site_settings/protocol_handlers.html">
 <link rel="import" href="../site_settings/site_data_details_subpage.html">
-<link rel="import" href="../site_settings/usb_devices.html">
 <link rel="import" href="../site_settings/site_data.html">
 <link rel="import" href="../site_settings/site_details.html">
 <link rel="import" href="../site_settings/zoom_levels.html">
 <link rel="import" href="../site_settings_page/site_settings_page.html">
 
+<if expr="not chromeos">
+<link rel="import" href="chrome://resources/cr_elements/cr_toast/cr_toast.html">
+</if>
 <if expr="use_nss_certs">
   <link rel="import" href="chrome://resources/cr_components/certificate_manager/certificate_manager.html">
 </if>
 <link rel="import" href="privacy_page_browser_proxy.html">
+<link rel="import" href="personalization_options.html">
 
 <dom-module id="settings-privacy-page">
   <template>
     <style include="settings-shared">
+<if expr="not chromeos">
+      #toast {
+        left: 0;
+        z-index: 1;
+      }
+
+      :host-context([dir='rtl']) #toast {
+        left: auto;
+        right: 0;
+      }
+</if>
     </style>
     <template is="dom-if" if="[[showClearBrowsingDataDialog_]]" restamp>
-      <template is="dom-if" if="[[!tabsInCbd_]]" restamp>
-        <settings-clear-browsing-data-dialog prefs="{{prefs}}"
-            on-close="onDialogClosed_">
-        </settings-clear-browsing-data-dialog>
-      </template>
-      <template is="dom-if" if="[[tabsInCbd_]]" restamp>
-        <settings-clear-browsing-data-dialog-tabs prefs="{{prefs}}"
-            on-close="onDialogClosed_">
-        </settings-clear-browsing-data-dialog-tabs>
-      </template>
+      <settings-clear-browsing-data-dialog prefs="{{prefs}}"
+          on-close="onDialogClosed_">
+      </settings-clear-browsing-data-dialog>
     </template>
-    <template id="doNotTrackDialogIf" is="dom-if"
-        if="[[showDoNotTrackDialog_]]" notify-dom-change>
-      <dialog is="cr-dialog" id="confirmDoNotTrackDialog"
+    <template id="doNotTrackDialogIf" is="dom-if" if="[[showDoNotTrackDialog_]]"
+        on-dom-change="onDoNotTrackDomChange_">
+      <cr-dialog id="confirmDoNotTrackDialog"
           close-text="$i18n{close}" on-cancel="onDoNotTrackDialogCancel_"
           on-close="onDoNotTrackDialogClosed_">
         <div slot="title">$i18n{doNotTrackDialogTitle}</div>
         <div slot="body">$i18nRaw{doNotTrackDialogMessage}</div>
         <div slot="button-container">
-          <paper-button class="cancel-button"
-              on-tap="onDoNotTrackDialogCancel_">
+          <cr-button class="cancel-button"
+              on-click="onDoNotTrackDialogCancel_">
             $i18n{cancel}
-          </paper-button>
-          <paper-button class="action-button"
-              on-tap="onDoNotTrackDialogConfirm_">
+          </cr-button>
+          <cr-button class="action-button"
+              on-click="onDoNotTrackDialogConfirm_">
             $i18n{confirm}
-          </paper-button>
+          </cr-button>
         </div>
-      </dialog>
+      </cr-dialog>
     </template>
     <settings-animated-pages id="pages" section="privacy"
         focus-config="[[focusConfig_]]">
-      <neon-animatable route-path="default">
-        <div class="settings-box first">
-          <p class="privacy-explanation">$i18nRaw{improveBrowsingExperience}</p>
-        </div>
-        <settings-toggle-button pref="{{prefs.alternate_error_pages.enabled}}"
-            label="$i18n{linkDoctorPref}">
-        </settings-toggle-button>
-        <settings-toggle-button hidden="[[!pageVisibility.searchPrediction]]"
-            pref="{{prefs.search.suggest_enabled}}"
-            label="$i18n{searchSuggestPref}">
-        </settings-toggle-button>
-        <settings-toggle-button hidden="[[!pageVisibility.networkPrediction]]"
-            pref="{{prefs.net.network_prediction_options}}"
-            label="$i18n{networkPredictionEnabled}"
-            numeric-unchecked-value="[[networkPredictionEnum_.NEVER]]">
-        </settings-toggle-button>
-        <settings-toggle-button id="safeBrowsingExtendedReportingControl"
-            pref="[[safeBrowsingExtendedReportingPref_]]"
-            label="$i18n{safeBrowsingEnableExtendedReporting}"
-            on-settings-boolean-control-change="onSberChange_"
-            no-set-pref>
-        </settings-toggle-button>
-        <settings-toggle-button pref="{{prefs.safebrowsing.enabled}}"
-            label="$i18n{safeBrowsingEnableProtection}">
-        </settings-toggle-button>
-<if expr="_google_chrome">
-<if expr="chromeos">
-        <settings-toggle-button pref="{{prefs.cros.metrics.reportingEnabled}}"
-            label="$i18n{enableLogging}">
-        </settings-toggle-button>
-</if><!-- chromeos -->
+      <div route-path="default">
+        <template is="dom-if" if="[[!unifiedConsentEnabled_]]">
+          <div class="settings-box first">
+            <p class="privacy-explanation">
+              $i18nRaw{improveBrowsingExperience}
+            </p>
+          </div>
+        </template>
+        <cr-link-row label="$i18n{syncAndNonPersonalizedServices}"
+            sub-label="$i18n{syncAndGoogleServicesPrivacyDescription}"
+            on-click="onSyncAndGoogleServicesClick_"
+            hidden="[[!unifiedConsentEnabled_]]"></cr-link-row>
 <if expr="not chromeos">
-        <settings-toggle-button id="metricsReportingControl"
-            pref="[[metricsReportingPref_]]" label="$i18n{enableLogging}"
-            on-settings-boolean-control-change="onMetricsReportingChange_"
+        <settings-toggle-button id="signinAllowedToggle"
+            pref="{{prefs.signin.allowed_on_next_startup}}"
+            label="$i18n{signinAllowedTitle}"
+            sub-label="$i18n{signinAllowedDescription}"
+            on-settings-boolean-control-change="onSigninAllowedChange_"
             no-set-pref>
-          <template is="dom-if" if="[[showRestart_]]" restamp>
-            <paper-button on-tap="onRestartTap_" id="restart"
-                slot="more-actions">
-              $i18n{restart}
-            </paper-button>
-          </template>
         </settings-toggle-button>
 </if><!-- not chromeos -->
-</if><!-- _google_chrome -->
+        <template is="dom-if" if="[[!unifiedConsentEnabled_]]">
+          <settings-personalization-options prefs="{{prefs}}"
+              page-visibility="[[pageVisibility]]"
+              unified-consent-enabled="[[unifiedConsentEnabled_]]">
+          </settings-personalization-options>
+        </template>
         <settings-toggle-button id="doNotTrack"
             pref="{{prefs.enable_do_not_track}}" label="$i18n{doNotTrack}"
             on-settings-boolean-control-change="onDoNotTrackChange_"
             no-set-pref>
         </settings-toggle-button>
+        <settings-toggle-button id="canMakePaymentToggle"
+            aria-label="$i18n{canMakePaymentToggleLabel}"
+            label="$i18n{canMakePaymentToggleLabel}"
+            pref="{{prefs.payments.can_make_payment_enabled}}">
+        </settings-toggle-button>
+        <settings-toggle-button hidden="[[!pageVisibility.networkPrediction]]"
+            pref="{{prefs.net.network_prediction_options}}"
+            label="$i18n{networkPredictionEnabled}"
+            sub-label="$i18n{networkPredictionEnabledDesc}"
+            numeric-unchecked-value="[[networkPredictionUncheckedValue_]]">
+        </settings-toggle-button>
 <if expr="chromeos">
         <settings-toggle-button
+            hidden="[[!pageVisibility.contentProtectionAttestation]]"
             pref="{{prefs.cros.device.attestation_for_content_protection_enabled}}"
             label="$i18n{enableContentProtectionAttestation}">
         </settings-toggle-button>
         <settings-toggle-button
+            hidden="[[!pageVisibility.wakeOnWifi]]"
             pref="{{prefs.settings.internet.wake_on_wifi_darkconnect}}"
             label="$i18n{wakeOnWifi}">
         </settings-toggle-button>
 </if>
-<if expr="_google_chrome">
-        <settings-toggle-button
-            pref="{{prefs.spellcheck.use_spelling_service}}"
-            label="$i18n{spellingPref}"
-            sub-label="$i18n{spellingDescription}">
-        </settings-toggle-button>
-</if>
 <if expr="use_nss_certs or is_win or is_macosx">
-        <div id="manageCertificates" class="settings-box two-line"
-            actionable on-tap="onManageCertificatesTap_">
-          <div class="start">
-            $i18n{manageCertificates}
-            <div class="secondary" id="manageCertificatesSecondary">
-              $i18n{manageCertificatesDescription}
-            </div>
-          </div>
-<if expr="use_nss_certs">
-          <button is="paper-icon-button-light" class="subpage-arrow"
-              aria-label="$i18n{manageCertificates}"
-              aria-describedby="manageCertificatesSecondary"></button>
-</if>
+        <cr-link-row id="manageCertificates"
+            class="hr"
 <if expr="not use_nss_certs">
-          <button is="paper-icon-button-light" class="icon-external"
-              aria-label="$i18n{manageCertificates}"
-              aria-describedby="manageCertificatesSecondary"></button>
+            external
 </if>
-        </div>
+            label="$i18n{manageCertificates}"
+            sub-label="$i18n{manageCertificatesDescription}"
+            on-click="onManageCertificatesTap_"></cr-link-row>
 </if>
-        <div id="site-settings-subpage-trigger"
-            class="settings-box two-line" actionable
-            on-tap="onSiteSettingsTap_">
-          <div class="start">
-            [[siteSettingsPageTitle_()]]
-            <div class="secondary" id="siteSettingsSecondary">
-              $i18n{siteSettingsDescription}
-            </div>
-          </div>
-          <button class="subpage-arrow" is="paper-icon-button-light"
-              aria-label$="[[siteSettingsPageTitle_()]]"
-              aria-describedby="siteSettingsSecondary"></button>
-        </div>
-        <div class="settings-box two-line" id="clearBrowsingData"
-            on-tap="onClearBrowsingDataTap_" actionable>
-          <div class="start">
-            $i18n{clearBrowsingData}
-            <div class="secondary" id="clearBrowsingDataSecondary">
-              $i18n{clearBrowsingDataDescription}
-            </div>
-          </div>
-          <button is="paper-icon-button-light" id="clearBrowsingDataTrigger"
-              class="subpage-arrow" aria-label="$i18n{clearBrowsingData}"
-              aria-describedby="clearBrowsingDataSecondary"></button>
-        </div>
-      </neon-animatable>
+        <template is="dom-if" if="[[enableSecurityKeysSubpage_]]">
+          <cr-link-row id="security-keys-subpage-trigger"
+            class="hr"
+            label="$i18n{securityKeysTitle}"
+            sub-label="$i18n{securityKeysDesc}"
+            on-click="onSecurityKeysTap_"></cr-link-row>
+        </template>
+        <cr-link-row id="site-settings-subpage-trigger"
+            class="hr"
+            label="$i18n{siteSettings}"
+            sub-label="$i18n{siteSettingsDescription}"
+            on-click="onSiteSettingsTap_"></cr-link-row>
+        <cr-link-row id="clearBrowsingData"
+            class="hr"
+            label="$i18n{clearBrowsingData}"
+            sub-label="$i18n{clearBrowsingDataDescription}"
+            on-click="onClearBrowsingDataTap_"></cr-link-row>
+      </div>
+
 <if expr="use_nss_certs">
       <template is="dom-if" route-path="/certificates">
         <settings-subpage
@@ -195,11 +175,22 @@
         </settings-subpage>
       </template>
 </if>
+
+      <template is="dom-if" if="[[enableSecurityKeysSubpage_]]">
+        <template is="dom-if" route-path="/securityKeys">
+          <settings-subpage
+              associated-control="[[$$('#security-keys-subpage-trigger')]]"
+              page-title="$i18n{securityKeysTitle}">
+            <security-keys-subpage></security-keys-subpage>
+          </settings-subpage>
+        </template>
+      </template>
+
       <template is="dom-if" route-path="/content">
         <settings-subpage
             associated-control="[[$$('#site-settings-subpage-trigger')]]"
             id="site-settings"
-            page-title="[[siteSettingsPageTitle_()]]"
+            page-title="$i18n{siteSettings}"
             learn-more-url="$i18n{exceptionsLearnMoreURL}">
           <settings-site-settings-page focus-config="[[focusConfig_]]">
           </settings-site-settings-page>
@@ -207,12 +198,16 @@
       </template>
 
       <template is="dom-if" route-path="/content/all" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryAllSites}">
-          <all-sites></all-sites>
+        <settings-subpage page-title="$i18n{siteSettingsAllSites}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+          <all-sites filter="[[searchFilter_]]"></all-sites>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/automaticDownloads" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsAutomaticDownloads}">
+        <settings-subpage page-title="$i18n{siteSettingsAutomaticDownloads}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsAutoDownloadBlock}"
               toggle-on-label="$i18n{siteSettingsAutoDownloadAskRecommended}"
@@ -220,12 +215,15 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.AUTOMATIC_DOWNLOADS}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/backgroundSync" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsBackgroundSync}">
+        <settings-subpage page-title="$i18n{siteSettingsBackgroundSync}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsBackgroundSyncBlocked}"
               toggle-on-label=
@@ -234,12 +232,15 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.BACKGROUND_SYNC}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/camera" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryCamera}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryCamera}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <media-picker label="$i18n{siteSettingsCameraLabel}" type="camera">
           </media-picker>
           <category-default-setting category="{{ContentSettingsTypes.CAMERA}}"
@@ -249,12 +250,15 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.CAMERA}}" read-only-list
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/cookies" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryCookies}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryCookies}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting category="{{ContentSettingsTypes.COOKIES}}"
               toggle-off-label="$i18n{siteSettingsBlocked}"
               toggle-on-label="$i18n{siteSettingsCookiesAllowedRecommended}"
@@ -265,17 +269,13 @@
               label="$i18n{thirdPartyCookie}"
               sub-label="$i18n{thirdPartyCookieSublabel}">
           </settings-toggle-button>
-          <div class="settings-box" actionable on-tap="onSiteDataTap_">
-             <div class="start" id="cookiesLink">
-               $i18n{siteSettingsCookieLink}
-             </div>
-             <button class="subpage-arrow" is="paper-icon-button-light"
-                 aria-labelledby="cookiesLink">
-             </button>
-          </div>
+          <cr-link-row id="site-data-trigger" class="hr"
+              on-click="onSiteDataTap_" label="$i18n{siteSettingsCookieLink}">
+          </cr-link-row>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.COOKIES}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
@@ -289,19 +289,24 @@
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/images" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryImages}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryImages}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting category="{{ContentSettingsTypes.IMAGES}}"
               toggle-off-label="$i18n{siteSettingsDontShowImages}"
               toggle-on-label="$i18n{siteSettingsShowAllRecommended}">
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.IMAGES}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/location" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryLocation}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryLocation}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsBlocked}"
               toggle-on-label="$i18n{siteSettingsAskBeforeAccessingRecommended}"
@@ -309,7 +314,8 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.GEOLOCATION}}" read-only-list
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
@@ -332,7 +338,9 @@
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/javascript" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryJavascript}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryJavascript}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsBlocked}"
               toggle-on-label="$i18n{siteSettingsAllowedRecommended}"
@@ -340,28 +348,40 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.JAVASCRIPT}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
-      <template is="dom-if" if="[[enableSoundContentSetting_]]"
-          no-search>
-        <template is="dom-if" route-path="/content/sound" no-search>
-          <settings-subpage page-title="$i18n{siteSettingsSound}">
-            <category-default-setting
-                toggle-off-label="$i18n{siteSettingsSoundBlock}"
-                toggle-on-label="$i18n{siteSettingsSoundAllowRecommended}"
-                category="{{ContentSettingsTypes.SOUND}}">
-            </category-default-setting>
-            <category-setting-exceptions
-                category="{{ContentSettingsTypes.SOUND}}"
-                block-header="$i18n{siteSettingsBlockSound}">
-            </category-setting-exceptions>
-          </settings-subpage>
-        </template>
+      <template is="dom-if" route-path="/content/sound" no-search>
+        <settings-subpage page-title="$i18n{siteSettingsSound}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+          <category-default-setting
+              toggle-off-label="$i18n{siteSettingsSoundBlock}"
+              toggle-on-label="$i18n{siteSettingsSoundAllowRecommended}"
+              category="{{ContentSettingsTypes.SOUND}}">
+          </category-default-setting>
+          <settings-toggle-button
+              id="block-autoplay-setting"
+              label="$i18n{siteSettingsBlockAutoplaySetting}"
+              pref="{{blockAutoplayStatus_.pref}}"
+              disabled="[[!blockAutoplayStatus_.enabled]]"
+              hidden="[[!enableBlockAutoplayContentSetting_]]"
+              on-settings-boolean-control-change="onBlockAutoplayToggleChange_"
+              no-set-pref>
+          </settings-toggle-button>
+          <category-setting-exceptions
+              category="{{ContentSettingsTypes.SOUND}}"
+              block-header="$i18n{siteSettingsBlockSound}"
+              search-filter="[[searchFilter_]]">
+          </category-setting-exceptions>
+        </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/microphone" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryMicrophone}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryMicrophone}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <media-picker label="$i18n{siteSettingsMicrophoneLabel}" type="mic">
           </media-picker>
           <category-default-setting category="{{ContentSettingsTypes.MIC}}"
@@ -371,12 +391,33 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.MIC}}" read-only-list
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
+      <template is="dom-if" if="[[enableSensorsContentSetting_]]" no-search>
+        <template is="dom-if" route-path="/content/sensors" no-search>
+          <settings-subpage page-title="$i18n{siteSettingsSensors}"
+              search-label="$i18n{siteSettingsAllSitesSearch}"
+              search-term="{{searchFilter_}}">
+            <category-default-setting
+                toggle-off-label="$i18n{siteSettingsSensorsBlock}"
+                toggle-on-label="$i18n{siteSettingsSensorsAllow}"
+                category="{{ContentSettingsTypes.SENSORS}}">
+            </category-default-setting>
+            <category-setting-exceptions
+                category="{{ContentSettingsTypes.SENSORS}}" read-only-list
+                block-header="$i18n{siteSettingsBlock}"
+                search-filter="[[searchFilter_]]">
+            </category-setting-exceptions>
+          </settings-subpage>
+       </template>
+     </template>
       <template is="dom-if" route-path="/content/notifications" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryNotifications}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryNotifications}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsBlocked}"
               toggle-on-label="$i18n{siteSettingsAskBeforeSendingRecommended}"
@@ -384,47 +425,60 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.NOTIFICATIONS}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/flash" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsFlash}">
+        <settings-subpage page-title="$i18n{siteSettingsFlash}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+          <a class="settings-box first no-outline" tabindex="-1"
+              target="_blank">
+            $i18n{siteSettingsFlashPermissionsEphemeral}
+          </a>
           <category-default-setting category="{{ContentSettingsTypes.PLUGINS}}"
-              toggle-off-label="$i18n{siteSettingsFlashBlock}"
-              toggle-on-label="$i18n{siteSettingsFlashAskFirstRecommended}">
+              toggle-off-label="$i18n{siteSettingsFlashBlockRecommended}"
+              toggle-on-label="$i18n{siteSettingsFlashAskFirst}">
           </category-default-setting>
 <if expr="chromeos">
           <a class="settings-box inherit-color no-outline" tabindex="-1"
               target="_blank"
               href="https://www.macromedia.com/support/documentation/en/flashplayer/help/settings_manager07.html">
             <div class="start">$i18n{adobeFlashStorage}</div>
-            <button class="icon-external" is="paper-icon-button-light"
-                actionable aria-label="$i18n{adobeFlashStorage}"></button>
+            <cr-icon-button actionable class="icon-external"
+                aria-label="$i18n{adobeFlashStorage}"></cr-icon-button>
           </a>
 </if>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.PLUGINS}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}" read-only-list
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/popups" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsCategoryPopups}">
+        <settings-subpage page-title="$i18n{siteSettingsCategoryPopups}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting category="{{ContentSettingsTypes.POPUPS}}"
               toggle-off-label="$i18n{siteSettingsBlockedRecommended}"
               toggle-on-label="$i18n{siteSettingsAllowed}">
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.POPUPS}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" if="[[enableSafeBrowsingSubresourceFilter_]]"
           no-search>
         <template is="dom-if" route-path="/content/ads" no-search>
-          <settings-subpage page-title="$i18n{siteSettingsAds}">
+          <settings-subpage page-title="$i18n{siteSettingsAds}"
+              search-label="$i18n{siteSettingsAllSitesSearch}"
+              search-term="{{searchFilter_}}">
             <category-default-setting
                 category="{{ContentSettingsTypes.ADS}}"
                 toggle-off-label="$i18n{siteSettingsAdsBlockRecommended}"
@@ -433,13 +487,16 @@
             <category-setting-exceptions
                 category="{{ContentSettingsTypes.ADS}}"
                 read-only-list
-                block-header="$i18n{siteSettingsBlock}">
+                block-header="$i18n{siteSettingsBlock}"
+                search-filter="[[searchFilter_]]">
             </category-setting-exceptions>
           </settings-subpage>
        </template>
      </template>
      <template is="dom-if" route-path="/content/unsandboxedPlugins" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsUnsandboxedPlugins}">
+        <settings-subpage page-title="$i18n{siteSettingsUnsandboxedPlugins}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsUnsandboxedPluginsBlock}"
               toggle-on-label=
@@ -448,12 +505,15 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.UNSANDBOXED_PLUGINS}}"
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/midiDevices" no-search>
-        <settings-subpage page-title="$i18n{siteSettingsMidiDevices}">
+        <settings-subpage page-title="$i18n{siteSettingsMidiDevices}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
           <category-default-setting
               toggle-off-label="$i18n{siteSettingsMidiDevicesBlock}"
               toggle-on-label=
@@ -462,32 +522,68 @@
           </category-default-setting>
           <category-setting-exceptions
               category="{{ContentSettingsTypes.MIDI_DEVICES}}" read-only-list
-              block-header="$i18n{siteSettingsBlock}">
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
           </category-setting-exceptions>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/usbDevices" no-search>
         <settings-subpage page-title="$i18n{siteSettingsUsbDevices}">
-          <usb-devices></usb-devices>
+          <category-default-setting
+              toggle-off-label="$i18n{siteSettingsUsbDevicesBlock}"
+              toggle-on-label=
+                  "$i18n{siteSettingsUsbDevicesAskRecommended}"
+              category="{{ContentSettingsTypes.USB_DEVICES}}">
+          </category-default-setting>
+          <chooser-exception-list
+              category="{{ContentSettingsTypes.USB_DEVICES}}"
+              chooser-type="{{ChooserType.USB_DEVICES}}">
+          </chooser-exception-list>
         </settings-subpage>
+      </template>
+      <template is="dom-if" if="[[enableExperimentalWebPlatformFeatures_]]">
+        <template is="dom-if" route-path="/content/serialPorts" no-search>
+          <settings-subpage page-title="$i18n{siteSettingsSerialPorts}">
+            <category-default-setting
+                toggle-off-label="$i18n{siteSettingsSerialPortsBlock}"
+                toggle-on-label=
+                    "$i18n{siteSettingsSerialPortsAskRecommended}"
+                category="{{ContentSettingsTypes.SERIAL_PORTS}}">
+            </category-default-setting>
+            <chooser-exception-list
+                category="{{ContentSettingsTypes.SERIAL_PORTS}}"
+                chooser-type="{{ChooserType.SERIAL_PORTS}}">
+            </chooser-exception-list>
+          </settings-subpage>
+        </template>
       </template>
       <template is="dom-if" route-path="/content/siteDetails" no-search>
         <settings-subpage page-title="[[pageTitle]]">
-          <site-details page-title="{{pageTitle}}"></site-details>
+          <site-details
+            page-title="{{pageTitle}}"
+            block-autoplay-enabled="[[blockAutoplayStatus_.pref.value]]">
+          </site-details>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/cookies/detail" no-search>
         <settings-subpage page-title="[[pageTitle]]">
-          <paper-button slot="subpage-title-extra" class="secondary-button"
-              on-tap="onRemoveAllCookiesFromSite_">
+          <cr-button slot="subpage-title-extra"
+              on-click="onRemoveAllCookiesFromSite_">
             $i18n{siteSettingsCookieRemoveAll}
-          </paper-button>
+          </cr-button>
           <site-data-details-subpage page-title="{{pageTitle}}">
           </site-data-details-subpage>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/content/protectedContent" no-search>
+<if expr="not chromeos">
         <settings-subpage page-title="$i18n{siteSettingsProtectedContent}">
+</if>
+<if expr="chromeos">
+        <settings-subpage page-title="$i18n{siteSettingsProtectedContent}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+</if>
           <settings-toggle-button class="first"
               pref="{{prefs.webkit.webprefs.encrypted_media_enabled}}"
               label="[[getProtectedContentLabel_(
@@ -510,29 +606,83 @@
               if="[[prefs.settings.privacy.drm_enabled.value]]">
             <category-setting-exceptions
                 category="{{ContentSettingsTypes.PROTECTED_CONTENT}}"
-                block-header="$i18n{siteSettingsBlock}">
+                block-header="$i18n{siteSettingsBlock}"
+                search-filter="[[searchFilter_]]">
             </category-setting-exceptions>
           </template>
 </if>
         </settings-subpage>
       </template>
-      <template is="dom-if" if="[[enableClipboardContentSetting_]]"
-          no-search>
-        <template is="dom-if" route-path="/content/clipboard" no-search>
-          <settings-subpage page-title="$i18n{siteSettingsClipboard}">
+      <template is="dom-if" route-path="/content/clipboard" no-search>
+        <settings-subpage page-title="$i18n{siteSettingsClipboard}"
+            search-label="$i18n{siteSettingsAllSitesSearch}"
+            search-term="{{searchFilter_}}">
+          <category-default-setting
+              toggle-off-label="$i18n{siteSettingsClipboardBlock}"
+              toggle-on-label="$i18n{siteSettingsClipboardAskRecommended}"
+              category="{{ContentSettingsTypes.CLIPBOARD}}">
+          </category-default-setting>
+          <category-setting-exceptions
+              category="{{ContentSettingsTypes.CLIPBOARD}}"
+              block-header="$i18n{siteSettingsBlock}"
+              search-filter="[[searchFilter_]]">
+          </category-setting-exceptions>
+        </settings-subpage>
+      </template>
+      <template is="dom-if" if="[[enablePaymentHandlerContentSetting_]]">
+        <template is="dom-if" route-path="/content/paymentHandler" no-search>
+          <settings-subpage page-title="$i18n{siteSettingsPaymentHandler}"
+              search-label="$i18n{siteSettingsAllSitesSearch}"
+              search-term="{{searchFilter_}}">
             <category-default-setting
-                toggle-off-label="$i18n{siteSettingsClipboardBlock}"
-                toggle-on-label="$i18n{siteSettingsClipboardAskRecommended}"
-                category="{{ContentSettingsTypes.CLIPBOARD}}">
+                toggle-off-label="$i18n{siteSettingsPaymentHandlerBlock}"
+                toggle-on-label="$i18n{siteSettingsPaymentHandlerAllowRecommended}"
+                category="[[ContentSettingsTypes.PAYMENT_HANDLER]]">
             </category-default-setting>
             <category-setting-exceptions
-                category="{{ContentSettingsTypes.CLIPBOARD}}"
-                block-header="$i18n{siteSettingsBlock}">
+                category="[[ContentSettingsTypes.PAYMENT_HANDLER]]"
+                block-header="$i18n{siteSettingsBlocked}"
+                search-filter="[[searchFilter_]]">
             </category-setting-exceptions>
           </settings-subpage>
        </template>
       </template>
+      <template is="dom-if" if="[[enableBluetoothScanningContentSetting_]]">
+        <template is="dom-if" route-path="/content/bluetoothScanning" no-search>
+          <settings-subpage page-title="$i18n{siteSettingsBluetoothScanning}"
+              search-label="$i18n{siteSettingsAllSitesSearch}"
+              search-term="{{searchFilter_}}">
+            <category-default-setting
+                toggle-off-label="$i18n{siteSettingsBluetoothScanningBlock}"
+                toggle-on-label=
+                    "$i18n{siteSettingsBluetoothScanningAskRecommended}"
+                category="{{ContentSettingsTypes.BLUETOOTH_SCANNING}}">
+            </category-default-setting>
+            <category-setting-exceptions
+                category="{{ContentSettingsTypes.BLUETOOTH_SCANNING}}"
+                read-only-list
+                block-header="$i18n{siteSettingsBlock}"
+                search-filter="[[searchFilter_]]">
+            </category-setting-exceptions>
+          </settings-subpage>
+        </template>
+      </template>
     </settings-animated-pages>
+
+    <template is="dom-if" if="[[showSignoutDialog_]]" restamp>
+      <settings-signout-dialog sync-status="[[syncStatus]]"
+          on-close="onSignoutDialogClosed_">
+      </settings-signout-dialog>
+    </template>
+
+<if expr="not chromeos">
+    <cr-toast id="toast" open="[[showRestart_]]">
+      <div>$i18n{restartToApplyChanges}</div>
+      <cr-button on-click="onRestartTap_">
+        $i18n{restart}
+      </cr-button>
+    </cr-toast>
+</if>
   </template>
   <script src="privacy_page.js"></script>
 </dom-module>

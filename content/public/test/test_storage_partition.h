@@ -17,8 +17,11 @@ class URLRequestContextGetter;
 namespace content {
 
 class AppCacheService;
+class BackgroundSyncContext;
+class DevToolsBackgroundServicesContext;
 class DOMStorageContext;
 class IndexedDBContext;
+class NativeFileSystemEntryFactory;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
 
@@ -30,7 +33,6 @@ class ZoomLevelDelegate;
 
 namespace mojom {
 class NetworkContext;
-class URLLoaderFactory;
 }
 
 // Fake implementation of StoragePartition.
@@ -52,17 +54,32 @@ class TestStoragePartition : public StoragePartition {
   }
   net::URLRequestContextGetter* GetMediaURLRequestContext() override;
 
-  void set_network_context(mojom::NetworkContext* context) {
+  void set_network_context(network::mojom::NetworkContext* context) {
     network_context_ = context;
   }
-  mojom::NetworkContext* GetNetworkContext() override;
+  network::mojom::NetworkContext* GetNetworkContext() override;
 
-  void set_url_loader_factory_for_browser_process(
-      mojom::URLLoaderFactory* url_loader_factory_for_browser_process) {
-    url_loader_factory_for_browser_process_ =
-        url_loader_factory_for_browser_process;
+  scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactoryForBrowserProcess() override;
+
+  scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactoryForBrowserProcessWithCORBEnabled() override;
+
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+  GetURLLoaderFactoryForBrowserProcessIOThread() override;
+
+  void set_cookie_manager_for_browser_process(
+      network::mojom::CookieManager* cookie_manager_for_browser_process) {
+    cookie_manager_for_browser_process_ = cookie_manager_for_browser_process;
   }
-  mojom::URLLoaderFactory* GetURLLoaderFactoryForBrowserProcess() override;
+  network::mojom::CookieManager* GetCookieManagerForBrowserProcess() override;
+  void CreateRestrictedCookieManager(
+      network::mojom::RestrictedCookieManagerRole role,
+      const url::Origin& origin,
+      bool is_service_worker,
+      int process_id,
+      int routing_id,
+      network::mojom::RestrictedCookieManagerRequest request) override;
 
   void set_quota_manager(storage::QuotaManager* manager) {
     quota_manager_ = manager;
@@ -79,6 +96,11 @@ class TestStoragePartition : public StoragePartition {
   }
   storage::FileSystemContext* GetFileSystemContext() override;
 
+  void set_background_sync_context(BackgroundSyncContext* context) {
+    background_sync_context_ = context;
+  }
+  BackgroundSyncContext* GetBackgroundSyncContext() override;
+
   void set_database_tracker(storage::DatabaseTracker* tracker) {
     database_tracker_ = tracker;
   }
@@ -93,21 +115,44 @@ class TestStoragePartition : public StoragePartition {
     indexed_db_context_ = context;
   }
   IndexedDBContext* GetIndexedDBContext() override;
+  NativeFileSystemEntryFactory* GetNativeFileSystemEntryFactory() override;
 
   void set_service_worker_context(ServiceWorkerContext* context) {
     service_worker_context_ = context;
   }
   ServiceWorkerContext* GetServiceWorkerContext() override;
 
+  void set_shared_worker_service(SharedWorkerService* service) {
+    shared_worker_service_ = service;
+  }
+  SharedWorkerService* GetSharedWorkerService() override;
+
   void set_cache_storage_context(CacheStorageContext* context) {
     cache_storage_context_ = context;
   }
   CacheStorageContext* GetCacheStorageContext() override;
 
+  void set_generated_code_cache_context(GeneratedCodeCacheContext* context) {
+    generated_code_cache_context_ = context;
+  }
+  GeneratedCodeCacheContext* GetGeneratedCodeCacheContext() override;
+
   void set_platform_notification_context(PlatformNotificationContext* context) {
     platform_notification_context_ = context;
   }
   PlatformNotificationContext* GetPlatformNotificationContext() override;
+
+  void set_devtools_background_services_context(
+      DevToolsBackgroundServicesContext* context) {
+    devtools_background_services_context_ = context;
+  }
+  DevToolsBackgroundServicesContext* GetDevToolsBackgroundServicesContext()
+      override;
+
+  void set_content_index_context(ContentIndexContext* context) {
+    content_index_context_ = context;
+  }
+  ContentIndexContext* GetContentIndexContext() override;
 
 #if !defined(OS_ANDROID)
   void set_host_zoom_map(HostZoomMap* map) { host_zoom_map_ = map; }
@@ -126,13 +171,11 @@ class TestStoragePartition : public StoragePartition {
 
   void ClearDataForOrigin(uint32_t remove_mask,
                           uint32_t quota_storage_remove_mask,
-                          const GURL& storage_origin,
-                          net::URLRequestContextGetter* rq_context) override;
+                          const GURL& storage_origin) override;
 
   void ClearData(uint32_t remove_mask,
                  uint32_t quota_storage_remove_mask,
                  const GURL& storage_origin,
-                 const OriginMatcherFunction& origin_matcher,
                  const base::Time begin,
                  const base::Time end,
                  base::OnceClosure callback) override;
@@ -140,7 +183,8 @@ class TestStoragePartition : public StoragePartition {
   void ClearData(uint32_t remove_mask,
                  uint32_t quota_storage_remove_mask,
                  const OriginMatcherFunction& origin_matcher,
-                 const CookieMatcherFunction& cookie_matcher,
+                 network::mojom::CookieDeletionFilterPtr cookie_deletion_filter,
+                 bool perform_storage_cleanup,
                  const base::Time begin,
                  const base::Time end,
                  base::OnceClosure callback) override;
@@ -151,28 +195,41 @@ class TestStoragePartition : public StoragePartition {
       const base::Callback<bool(const GURL&)>& url_matcher,
       base::OnceClosure callback) override;
 
+  void ClearCodeCaches(
+      const base::Time begin,
+      const base::Time end,
+      const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+      base::OnceClosure callback) override;
+
   void Flush() override;
 
-  void ClearBluetoothAllowedDevicesMapForTesting() override;
+  void ResetURLLoaderFactories() override;
 
-  void SetNetworkFactoryForTesting(
-      mojom::URLLoaderFactory* test_factory) override;
+  void ClearBluetoothAllowedDevicesMapForTesting() override;
+  void FlushNetworkInterfaceForTesting() override;
+  void WaitForDeletionTasksForTesting() override;
 
  private:
   base::FilePath file_path_;
   net::URLRequestContextGetter* url_request_context_getter_ = nullptr;
   net::URLRequestContextGetter* media_url_request_context_getter_ = nullptr;
-  mojom::NetworkContext* network_context_ = nullptr;
-  mojom::URLLoaderFactory* url_loader_factory_for_browser_process_ = nullptr;
+  network::mojom::NetworkContext* network_context_ = nullptr;
+  network::mojom::CookieManager* cookie_manager_for_browser_process_ = nullptr;
   storage::QuotaManager* quota_manager_ = nullptr;
   AppCacheService* app_cache_service_ = nullptr;
+  BackgroundSyncContext* background_sync_context_ = nullptr;
   storage::FileSystemContext* file_system_context_ = nullptr;
   storage::DatabaseTracker* database_tracker_ = nullptr;
   DOMStorageContext* dom_storage_context_ = nullptr;
   IndexedDBContext* indexed_db_context_ = nullptr;
   ServiceWorkerContext* service_worker_context_ = nullptr;
+  SharedWorkerService* shared_worker_service_ = nullptr;
   CacheStorageContext* cache_storage_context_ = nullptr;
+  GeneratedCodeCacheContext* generated_code_cache_context_ = nullptr;
   PlatformNotificationContext* platform_notification_context_ = nullptr;
+  DevToolsBackgroundServicesContext* devtools_background_services_context_ =
+      nullptr;
+  ContentIndexContext* content_index_context_ = nullptr;
 #if !defined(OS_ANDROID)
   HostZoomMap* host_zoom_map_ = nullptr;
   HostZoomLevelContext* host_zoom_level_context_ = nullptr;

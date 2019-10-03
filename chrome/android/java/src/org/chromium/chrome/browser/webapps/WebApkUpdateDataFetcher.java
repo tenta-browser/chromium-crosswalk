@@ -4,14 +4,17 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.text.TextUtils;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.webapk.lib.common.splash.SplashLayout;
 
 import java.util.HashMap;
 
@@ -97,9 +100,14 @@ public class WebApkUpdateDataFetcher extends EmptyTabObserver {
     @CalledByNative
     protected void onDataAvailable(String manifestStartUrl, String scopeUrl, String name,
             String shortName, String primaryIconUrl, String primaryIconMurmur2Hash,
-            Bitmap primaryIconBitmap, String badgeIconUrl, String badgeIconMurmur2Hash,
-            Bitmap badgeIconBitmap, String[] iconUrls, @WebDisplayMode int displayMode,
-            int orientation, long themeColor, long backgroundColor) {
+            Bitmap primaryIconBitmap, boolean isPrimaryIconMaskable, String badgeIconUrl,
+            String badgeIconMurmur2Hash, Bitmap badgeIconBitmap, String[] iconUrls,
+            @WebDisplayMode int displayMode, int orientation, long themeColor, long backgroundColor,
+            String shareAction, String shareParamsTitle, String shareParamsText,
+            String shareParamsUrl, boolean isShareMethodPost, boolean isShareEncTypeMultipart,
+            String[] shareParamsFileNames, String[][] shareParamsAccepts) {
+        Context appContext = ContextUtils.getApplicationContext();
+
         HashMap<String, String> iconUrlToMurmur2HashMap = new HashMap<String, String>();
         for (String iconUrl : iconUrls) {
             String murmur2Hash = null;
@@ -111,11 +119,22 @@ public class WebApkUpdateDataFetcher extends EmptyTabObserver {
             iconUrlToMurmur2HashMap.put(iconUrl, murmur2Hash);
         }
 
+        // When share action is empty, we use a default empty share target
+        WebApkInfo.ShareTarget shareTarget = TextUtils.isEmpty(shareAction)
+                ? new WebApkInfo.ShareTarget()
+                : new WebApkInfo.ShareTarget(shareAction, shareParamsTitle, shareParamsText,
+                        shareParamsUrl, isShareMethodPost, isShareEncTypeMultipart,
+                        shareParamsFileNames, shareParamsAccepts);
+
+        int defaultBackgroundColor = SplashLayout.getDefaultBackgroundColor(appContext);
         WebApkInfo info = WebApkInfo.create(mOldInfo.id(), mOldInfo.uri().toString(), scopeUrl,
-                new WebApkInfo.Icon(primaryIconBitmap), new WebApkInfo.Icon(badgeIconBitmap), name,
-                shortName, displayMode, orientation, mOldInfo.source(), themeColor, backgroundColor,
-                mOldInfo.apkPackageName(), mOldInfo.shellApkVersion(), mOldInfo.manifestUrl(),
-                manifestStartUrl, iconUrlToMurmur2HashMap, mOldInfo.shouldForceNavigation());
+                new WebApkInfo.Icon(primaryIconBitmap), new WebApkInfo.Icon(badgeIconBitmap), null,
+                name, shortName, displayMode, orientation, mOldInfo.source(), themeColor,
+                backgroundColor, defaultBackgroundColor, isPrimaryIconMaskable,
+                mOldInfo.webApkPackageName(), mOldInfo.shellApkVersion(), mOldInfo.manifestUrl(),
+                manifestStartUrl, WebApkInfo.WebApkDistributor.BROWSER, iconUrlToMurmur2HashMap,
+                shareTarget, null, mOldInfo.shouldForceNavigation(),
+                mOldInfo.isSplashProvidedByWebApk(), null);
         mObserver.onGotManifestData(info, primaryIconUrl, badgeIconUrl);
     }
 

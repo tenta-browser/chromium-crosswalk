@@ -18,7 +18,7 @@ namespace {
 const uint8_t kRGBImageColor[] = {0x30, 0x40, 0x10, 0xFF};
 
 template <gfx::BufferFormat format>
-class GLImageDXGITestDelegate {
+class GLImageDXGITestDelegate : public GLImageTestDelegateBase {
  public:
   scoped_refptr<GLImage> CreateSolidColorImage(const gfx::Size& size,
                                                const uint8_t color[4]) const {
@@ -66,9 +66,9 @@ class GLImageDXGITestDelegate {
         nullptr, &handle);
     EXPECT_HRESULT_SUCCEEDED(hr);
 
-    scoped_refptr<GLImageDXGIHandle> image(
-        new GLImageDXGIHandle(size, 0, format));
-    bool rv = image->Initialize(base::win::ScopedHandle(handle));
+    scoped_refptr<GLImageDXGI> image(new GLImageDXGI(size, nullptr));
+    bool rv =
+        image->InitializeHandle(base::win::ScopedHandle(handle), 0, format);
 
     EXPECT_TRUE(rv);
     return image;
@@ -90,21 +90,21 @@ using GLImageTestTypes =
                    GLImageDXGITestDelegate<gfx::BufferFormat::RGBX_8888>>;
 
 // Disabled by default as it requires DX11.
-INSTANTIATE_TYPED_TEST_CASE_P(DISABLED_GLImageDXGIHandle,
-                              GLImageTest,
-                              GLImageTestTypes);
+INSTANTIATE_TYPED_TEST_SUITE_P(DISABLED_GLImageDXGIHandle,
+                               GLImageTest,
+                               GLImageTestTypes);
 
 using GLImageRGBTestTypes =
     testing::Types<GLImageDXGITestDelegate<gfx::BufferFormat::RGBA_8888>,
                    GLImageDXGITestDelegate<gfx::BufferFormat::RGBX_8888>>;
 
 // Disabled by default as it requires DX11.
-INSTANTIATE_TYPED_TEST_CASE_P(DISABLED_GLImageDXGIHandle,
-                              GLImageZeroInitializeTest,
-                              GLImageRGBTestTypes);
+INSTANTIATE_TYPED_TEST_SUITE_P(DISABLED_GLImageDXGIHandle,
+                               GLImageZeroInitializeTest,
+                               GLImageRGBTestTypes);
 
 // Disabled by default as it requires DX11.
-INSTANTIATE_TYPED_TEST_CASE_P(
+INSTANTIATE_TYPED_TEST_SUITE_P(
     DISABLED_GLImageDXGIHandle,
     GLImageBindTest,
     GLImageDXGITestDelegate<gfx::BufferFormat::RGBA_8888>);

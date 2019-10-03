@@ -12,11 +12,19 @@
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/widget.h"
 
+// static
+void ChromeWebContentsViewFocusHelper::CreateForWebContents(
+    content::WebContents* web_contents) {
+  if (!ChromeWebContentsViewFocusHelper::FromWebContents(web_contents)) {
+    web_contents->SetUserData(
+        ChromeWebContentsViewFocusHelper::UserDataKey(),
+        base::WrapUnique(new ChromeWebContentsViewFocusHelper(web_contents)));
+  }
+}
+
 ChromeWebContentsViewFocusHelper::ChromeWebContentsViewFocusHelper(
     content::WebContents* web_contents)
     : web_contents_(web_contents) {}
-
-ChromeWebContentsViewFocusHelper::~ChromeWebContentsViewFocusHelper() {}
 
 bool ChromeWebContentsViewFocusHelper::Focus() {
   SadTabHelper* sad_tab_helper = SadTabHelper::FromWebContents(web_contents_);
@@ -30,8 +38,10 @@ bool ChromeWebContentsViewFocusHelper::Focus() {
 
   const web_modal::WebContentsModalDialogManager* manager =
       web_modal::WebContentsModalDialogManager::FromWebContents(web_contents_);
-  if (manager && manager->IsDialogActive())
+  if (manager && manager->IsDialogActive()) {
     manager->FocusTopmostDialog();
+    return true;
+  }
 
   return false;
 }
@@ -52,12 +62,10 @@ void ChromeWebContentsViewFocusHelper::StoreFocus() {
 }
 
 bool ChromeWebContentsViewFocusHelper::RestoreFocus() {
-  views::View* last_focused_view = last_focused_view_tracker_.view();
+  views::View* view_to_focus = GetStoredFocus();
   last_focused_view_tracker_.Clear();
-  if (last_focused_view &&
-      last_focused_view->IsFocusable() &&
-      GetFocusManager()->ContainsView(last_focused_view)) {
-    last_focused_view->RequestFocus();
+  if (view_to_focus) {
+    view_to_focus->RequestFocus();
     return true;
   }
   return false;
@@ -65,6 +73,15 @@ bool ChromeWebContentsViewFocusHelper::RestoreFocus() {
 
 void ChromeWebContentsViewFocusHelper::ResetStoredFocus() {
   last_focused_view_tracker_.Clear();
+}
+
+views::View* ChromeWebContentsViewFocusHelper::GetStoredFocus() {
+  views::View* last_focused_view = last_focused_view_tracker_.view();
+  if (last_focused_view && last_focused_view->IsFocusable() &&
+      GetFocusManager()->ContainsView(last_focused_view)) {
+    return last_focused_view;
+  }
+  return nullptr;
 }
 
 gfx::NativeView ChromeWebContentsViewFocusHelper::GetActiveNativeView() {
@@ -81,3 +98,5 @@ views::FocusManager* ChromeWebContentsViewFocusHelper::GetFocusManager() {
   views::Widget* toplevel_widget = GetTopLevelWidget();
   return toplevel_widget ? toplevel_widget->GetFocusManager() : NULL;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ChromeWebContentsViewFocusHelper)

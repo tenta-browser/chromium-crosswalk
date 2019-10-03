@@ -19,7 +19,7 @@ Polymer({
 
     /**
      * The ONC data properties used to display the list item.
-     * @type {!CrOnc.NetworkStateProperties|undefined}
+     * @type {!OncMojo.NetworkStateProperties|undefined}
      */
     networkState: {
       type: Object,
@@ -43,7 +43,11 @@ Polymer({
       reflectToAttribute: true,
     },
 
-    /** Expose the itemName so it can be used as a label for a11y.  */
+    /**
+     * Expose the itemName so it can be used as a label for a11y.  It will be
+     * added as an attribute on this top-level cr-network-list-item, and can
+     * be used by any sub-element which applies it.
+     */
     ariaLabel: {
       type: String,
       notify: true,
@@ -53,18 +57,31 @@ Polymer({
 
     /**
      * The cached ConnectionState for the network.
-     * @type {!CrOnc.ConnectionState|undefined}
+     * @type {!chromeos.networkConfig.mojom.ConnectionStateType|undefined}
      */
-    connectionState_: String,
+    connectionState_: Number,
+
+    /** Whether to show technology badge on mobile network icon. */
+    showTechnologyBadge: {type: Boolean, value: true},
   },
 
   behaviors: [CrPolicyNetworkBehavior],
+
+  /** @override */
+  attached: function() {
+    this.listen(this, 'keydown', 'onKeydown_');
+  },
+
+  /** @override */
+  detached: function() {
+    this.unlisten(this, 'keydown', 'onKeydown_');
+  },
 
   /** @private */
   itemChanged_: function() {
     if (this.item && !this.item.hasOwnProperty('customItemName')) {
       this.networkState =
-          /** @type {!CrOnc.NetworkStateProperties} */ (this.item);
+          /** @type {!OncMojo.NetworkStateProperties} */ (this.item);
     } else if (this.networkState) {
       this.networkState = undefined;
     }
@@ -72,14 +89,15 @@ Polymer({
 
   /** @private */
   networkStateChanged_: function() {
-    if (!this.networkState)
+    if (!this.networkState) {
       return;
-    var connectionState = this.networkState.ConnectionState;
-    if (connectionState == this.connectionState_)
+    }
+    const connectionState = this.networkState.connectionState;
+    if (connectionState == this.connectionState_) {
       return;
+    }
     this.connectionState_ = connectionState;
-    if (connectionState == CrOnc.ConnectionState.CONNECTED)
-      this.fire('network-connected', this.networkState);
+    this.fire('network-connect-changed', this.networkState);
   },
 
   /**
@@ -89,14 +107,15 @@ Polymer({
    */
   getItemName_: function() {
     if (this.item.hasOwnProperty('customItemName')) {
-      var item = /** @type {!CrNetworkList.CustomItemState} */ (this.item);
-      var name = item.customItemName || '';
-      if (CrOncStrings.hasOwnProperty(item.customItemName))
+      const item = /** @type {!CrNetworkList.CustomItemState} */ (this.item);
+      let name = item.customItemName || '';
+      if (CrOncStrings.hasOwnProperty(item.customItemName)) {
         name = CrOncStrings[item.customItemName];
+      }
       return name;
     }
-    var network = /** @type {!CrOnc.NetworkStateProperties} */ (this.item);
-    return CrOnc.getNetworkName(network);
+    return OncMojo.getNetworkDisplayName(
+        /** @type {!OncMojo.NetworkStateProperties} */ (this.item));
   },
 
   /**
@@ -104,9 +123,7 @@ Polymer({
    * @private
    */
   isStateTextVisible_: function() {
-    return !!this.networkState &&
-        (this.networkState.ConnectionState !=
-         CrOnc.ConnectionState.NOT_CONNECTED);
+    return !!this.networkState && !!this.getNetworkStateText_();
   },
 
   /**
@@ -115,22 +132,30 @@ Polymer({
    * @private
    */
   getNetworkStateText_: function() {
-    if (!this.isStateTextVisible_())
+    const mojom = chromeos.networkConfig.mojom;
+    if (!this.networkState) {
       return '';
-    var state = this.networkState.ConnectionState;
-    // For Cellular, an empty ConnectionState indicates that the device is
-    // still initializing.
-    if (!state && this.networkState.Type == CrOnc.Type.CELLULAR)
-      return CrOncStrings.networkListItemInitializing;
-    if (state == CrOnc.ConnectionState.CONNECTED)
+    }
+    const connectionState = this.networkState.connectionState;
+    if (this.networkState.type == mojom.NetworkType.kCellular &&
+        this.networkState.cellular.scanning) {
+      // TODO(khorimoto): Add and sim locked and possibly initializing states to
+      // CellularStateProperties.
+      return CrOncStrings.networkListItemScanning;
+    }
+    if (OncMojo.connectionStateIsConnected(connectionState)) {
+      // TODO(khorimoto): Consider differentiating between Portal, Connected,
+      // and Online.
       return CrOncStrings.networkListItemConnected;
-    if (state == CrOnc.ConnectionState.CONNECTING)
+    }
+    if (connectionState == mojom.ConnectionStateType.kConnecting) {
       return CrOncStrings.networkListItemConnecting;
+    }
     return '';
   },
 
   /**
-   * @param {!CrOnc.NetworkStateProperties} networkState
+   * @param {!OncMojo.NetworkStateProperties|undefined} networkState
    * @param {boolean} showButtons
    * @return {boolean}
    * @private
@@ -144,13 +169,46 @@ Polymer({
    * @private
    */
   isConnected_: function() {
-    return !!this.networkState &&
-        this.networkState.ConnectionState == CrOnc.ConnectionState.CONNECTED;
+    if (!this.networkState) {
+      return false;
+    }
+    return OncMojo.connectionStateIsConnected(
+        this.networkState.connectionState);
+  },
+
+  /**
+   * @param {!KeyboardEvent} event
+   * @private
+   */
+  onKeydown_: function(event) {
+    // The only key event handled by this element is pressing Enter when the
+    // subpage arrow is focused.
+    if (event.key != 'Enter' ||
+        !this.isSubpageButtonVisible_(this.networkState, this.showButtons) ||
+        this.$$('#subpage-button') != this.shadowRoot.activeElement) {
+      return;
+    }
+
+    this.fireShowDetails_(event);
+
+    // The default event for pressing Enter on a focused button is to simulate a
+    // click on the button. Prevent this action, since it would navigate a
+    // second time to the details page and cause an unnecessary entry to be
+    // added to the back stack. See https://crbug.com/736963.
+    event.preventDefault();
+  },
+
+  /**
+   * @param {!MouseEvent} event
+   * @private
+   */
+  onSubpageArrowClick_: function(event) {
+    this.fireShowDetails_(event);
   },
 
   /**
    * Fires a 'show-details' event with |this.networkState| as the details.
-   * @param {Event} event
+   * @param {!Event} event
    * @private
    */
   fireShowDetails_: function(event) {

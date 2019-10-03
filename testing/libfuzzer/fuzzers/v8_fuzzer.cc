@@ -27,7 +27,7 @@ static const seconds kSleepSeconds(1);
 // kSleepSeconds + kMaxExecutionSeconds.
 // TODO(metzman): Determine if having such a short timeout causes too much
 // indeterminism.
-static const seconds kMaxExecutionSeconds(12);
+static const seconds kMaxExecutionSeconds(7);
 
 // Inspired by/copied from d8 code, this allocator will return nullptr when
 // an allocation request is made that puts currently_allocated_ over
@@ -46,11 +46,6 @@ class MockArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
  public:
   MockArrayBufferAllocator()
       : v8::ArrayBuffer::Allocator(), currently_allocated_(0) {}
-  void SetProtection(void* data,
-                     size_t length,
-                     Protection protection) override {
-    allocator_->SetProtection(data, length, protection);
-  }
 
   void* Allocate(size_t length) override {
     void* data = AllocateUninitialized(length);
@@ -73,33 +68,6 @@ class MockArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
     // be innacurate.
     free(ptr);
   }
-
-  void Free(void* data, size_t length, AllocationMode mode) override {
-    switch (mode) {
-      case AllocationMode::kNormal: {
-        // Free locks and unlocks for us.
-        Free(data, length);
-        return;
-      }
-      case AllocationMode::kReservation: {
-        lock_guard<mutex> mtx_locker(mtx_);
-        currently_allocated_ -= length;
-        allocator_->Free(data, length, mode);
-        return;
-      }
-      default:
-        NOTREACHED();
-    }
-  }
-
-  void* Reserve(size_t length) override {
-    lock_guard<mutex> mtx_locker(mtx_);
-    if (length + currently_allocated_ > kAllocationLimit) {
-      return nullptr;
-    }
-    currently_allocated_ += length;
-    return allocator_->Reserve(length);
-  }
 };
 
 void terminate_execution(v8::Isolate* isolate,
@@ -108,7 +76,7 @@ void terminate_execution(v8::Isolate* isolate,
                          time_point<steady_clock>& start_time) {
   while (true) {
     std::this_thread::sleep_for(kSleepSeconds);
-    mtx.lock();
+    lock_guard<mutex> mtx_locker(mtx);
     if (is_running) {
       if (duration_cast<seconds>(steady_clock::now() - start_time) >
           kMaxExecutionSeconds) {
@@ -118,17 +86,16 @@ void terminate_execution(v8::Isolate* isolate,
         fflush(0);
       }
     }
-    mtx.unlock();
   }
 }
 
 struct Environment {
   Environment() {
-    v8::Platform* platform = v8::platform::CreateDefaultPlatform(
+    platform_ = v8::platform::NewDefaultPlatform(
         0, v8::platform::IdleTaskSupport::kDisabled,
         v8::platform::InProcessStackDumping::kDisabled, nullptr);
 
-    v8::V8::InitializePlatform(platform);
+    v8::V8::InitializePlatform(platform_.get());
     v8::V8::Initialize();
     v8::Isolate::CreateParams create_params;
 
@@ -141,11 +108,16 @@ struct Environment {
   mutex mtx;
   std::thread terminator_thread;
   v8::Isolate* isolate;
+  std::unique_ptr<v8::Platform> platform_;
   time_point<steady_clock> start_time;
-  bool is_running;
+  bool is_running = true;
 };
 
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
+// Explicitly specify some attributes to avoid issues with the linker dead-
+// stripping the following function on macOS, as it is not called directly
+// by fuzz target. LibFuzzer runtime uses dlsym() to resolve that function.
+extern "C" __attribute__((used)) __attribute__((visibility("default"))) int
+LLVMFuzzerInitialize(int* argc, char*** argv) {
   v8::V8::InitializeICUDefaultLocation((*argv)[0]);
   v8::V8::InitializeExternalStartupData((*argv)[0]);
   v8::V8::SetFlagsFromCommandLine(argc, *argv, true);
@@ -153,10 +125,10 @@ extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  static Environment* env = new Environment();
+
   if (size < 1)
     return 0;
-
-  static Environment* env = new Environment();
 
   v8::Isolate::Scope isolate_scope(env->isolate);
   v8::HandleScope handle_scope(env->isolate);
@@ -182,7 +154,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   auto local_script = script.ToLocalChecked();
   env->mtx.lock();
   env->start_time = steady_clock::now();
-  env->is_running = true;
   env->mtx.unlock();
 
   ALLOW_UNUSED_LOCAL(local_script->Run(context));

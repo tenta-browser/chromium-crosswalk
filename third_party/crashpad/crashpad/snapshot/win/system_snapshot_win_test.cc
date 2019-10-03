@@ -60,6 +60,10 @@ TEST_F(SystemSnapshotWinTest, GetCPUArchitecture) {
   EXPECT_EQ(cpu_architecture, kCPUArchitectureX86);
 #elif defined(ARCH_CPU_X86_64)
   EXPECT_EQ(cpu_architecture, kCPUArchitectureX86_64);
+#elif defined(ARCH_CPU_ARM64)
+  EXPECT_EQ(cpu_architecture, kCPUArchitectureARM64);
+#else
+#error Unsupported Windows Arch
 #endif
 }
 
@@ -75,11 +79,13 @@ TEST_F(SystemSnapshotWinTest, CPUVendor) {
   EXPECT_TRUE(cpu_vendor == "GenuineIntel" || cpu_vendor == "AuthenticAMD");
 }
 
+#if defined(ARCH_CPU_X86_FAMILY)
 TEST_F(SystemSnapshotWinTest, CPUX86SupportsDAZ) {
   // Most SSE2+ machines support Denormals-Are-Zero. This may fail if run on
   // older machines.
   EXPECT_TRUE(system_snapshot().CPUX86SupportsDAZ());
 }
+#endif
 
 TEST_F(SystemSnapshotWinTest, GetOperatingSystem) {
   EXPECT_EQ(system_snapshot().GetOperatingSystem(),
@@ -134,22 +140,24 @@ TEST_F(SystemSnapshotWinTest, TimeZone) {
   EXPECT_EQ(standard_offset_seconds % (15 * 60), 0)
       << "standard_offset_seconds " << standard_offset_seconds;
 
-  if (dst_status == SystemSnapshot::kDoesNotObserveDaylightSavingTime) {
-    EXPECT_EQ(daylight_offset_seconds, standard_offset_seconds);
-    EXPECT_EQ(daylight_name, standard_name);
-  } else {
-    EXPECT_EQ(daylight_offset_seconds % (15 * 60), 0)
-        << "daylight_offset_seconds " << daylight_offset_seconds;
+  // dst_status of kDoesNotObserveDaylightSavingTime can mean only that the
+  // adjustment is not automatic, as opposed to daylight/standard differences
+  // not existing at all. So it cannot be asserted that the two offsets are the
+  // same in that case.
 
-    // In contemporary usage, dst_delta_seconds will almost always be one hour,
-    // except for Lord Howe Island, Australia, which uses a 30-minute delta.
-    // Throughout history, other variations existed. See
-    // https://www.timeanddate.com/time/dst/.
-    int dst_delta_seconds = daylight_offset_seconds - standard_offset_seconds;
-    if (dst_delta_seconds != 60 * 60 && dst_delta_seconds != 30 * 60) {
-      FAIL() << "dst_delta_seconds " << dst_delta_seconds;
-    }
+  EXPECT_EQ(daylight_offset_seconds % (15 * 60), 0)
+      << "daylight_offset_seconds " << daylight_offset_seconds;
 
+  // In contemporary usage, dst_delta_seconds will almost always be one hour,
+  // except for Lord Howe Island, Australia, which uses a 30-minute delta.
+  // Throughout history, other variations existed. See
+  // https://www.timeanddate.com/time/dst/.
+  int dst_delta_seconds = daylight_offset_seconds - standard_offset_seconds;
+  if (dst_delta_seconds != 60 * 60 && dst_delta_seconds != 30 * 60) {
+    FAIL() << "dst_delta_seconds " << dst_delta_seconds;
+  }
+
+  if (dst_status != SystemSnapshot::kDoesNotObserveDaylightSavingTime) {
     EXPECT_NE(standard_name, daylight_name);
   }
 }

@@ -6,19 +6,16 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/category_rankers/constant_category_ranker.h"
-#include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/ntp_snippets_constants.h"
 #include "components/ntp_snippets/time_serialization.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/variations/variations_params_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -37,13 +34,13 @@ const char kHistogramMovedUpCategoryNewIndex[] =
 class ClickBasedCategoryRankerTest : public testing::Test {
  public:
   ClickBasedCategoryRankerTest()
-      : pref_service_(base::MakeUnique<TestingPrefServiceSimple>()),
+      : pref_service_(std::make_unique<TestingPrefServiceSimple>()),
         unused_remote_category_id_(
             static_cast<int>(KnownCategories::LAST_KNOWN_REMOTE_CATEGORY) + 1) {
     ClickBasedCategoryRanker::RegisterProfilePrefs(pref_service_->registry());
 
-    ranker_ = base::MakeUnique<ClickBasedCategoryRanker>(
-        pref_service_.get(), base::MakeUnique<base::DefaultClock>());
+    ranker_ = std::make_unique<ClickBasedCategoryRanker>(
+        pref_service_.get(), base::DefaultClock::GetInstance());
   }
 
   int GetUnusedRemoteCategoryID() { return unused_remote_category_id_++; }
@@ -68,9 +65,9 @@ class ClickBasedCategoryRankerTest : public testing::Test {
     }
   }
 
-  void ResetRanker(std::unique_ptr<base::Clock> clock) {
-    ranker_ = base::MakeUnique<ClickBasedCategoryRanker>(pref_service_.get(),
-                                                         std::move(clock));
+  void ResetRanker(base::Clock* clock) {
+    ranker_ =
+        std::make_unique<ClickBasedCategoryRanker>(pref_service_.get(), clock);
   }
 
   void NotifyOnSuggestionOpened(int times, Category category) {
@@ -81,22 +78,6 @@ class ClickBasedCategoryRankerTest : public testing::Test {
 
   void NotifyOnCategoryDismissed(Category category) {
     ranker()->OnCategoryDismissed(category);
-  }
-
-  void SetDismissedCategoryPenaltyVariationParam(int value) {
-    variation_params_manager_.SetVariationParamsWithFeatureAssociations(
-        kCategoryRanker.name,
-        {{"click_based_category_ranker-dismissed_category_penalty",
-          base::IntToString(value)}},
-        {kCategoryRanker.name});
-  }
-
-  void SetPromotedCategoryVariationParam(int value) {
-    variation_params_manager_.SetVariationParamsWithFeatureAssociations(
-        kCategoryRanker.name,
-        {{"click_based_category_ranker-promoted_category",
-          base::IntToString(value)}},
-        {kCategoryRanker.name});
   }
 
   std::vector<Category> ConvertKnownCategories(
@@ -114,7 +95,6 @@ class ClickBasedCategoryRankerTest : public testing::Test {
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
   int unused_remote_category_id_;
   std::unique_ptr<ClickBasedCategoryRanker> ranker_;
-  variations::testing::VariationParamsManager variation_params_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ClickBasedCategoryRankerTest);
 };
@@ -133,7 +113,7 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldSortRemoteCategoriesByWhenAdded) {
 TEST_F(ClickBasedCategoryRankerTest, ShouldSortLocalCategoriesBeforeRemote) {
   const Category remote_category = AddUnusedRemoteCategory();
   const Category local_category =
-      Category::FromKnownCategory(KnownCategories::BOOKMARKS);
+      Category::FromKnownCategory(KnownCategories::READING_LIST);
   EXPECT_TRUE(CompareCategories(local_category, remote_category));
   EXPECT_FALSE(CompareCategories(remote_category, local_category));
 }
@@ -144,7 +124,7 @@ TEST_F(ClickBasedCategoryRankerTest,
   EXPECT_FALSE(CompareCategories(remote_category, remote_category));
 
   const Category local_category =
-      Category::FromKnownCategory(KnownCategories::BOOKMARKS);
+      Category::FromKnownCategory(KnownCategories::READING_LIST);
   EXPECT_FALSE(CompareCategories(local_category, local_category));
 }
 
@@ -268,7 +248,7 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldPersistOrderAndClicksWhenRestarted) {
   ASSERT_TRUE(CompareCategories(first, third));
 
   // Simulate Chrome restart.
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
+  ResetRanker(base::DefaultClock::GetInstance());
 
   // The old order must be preserved.
   EXPECT_TRUE(CompareCategories(third, second));
@@ -295,15 +275,14 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldDecayClickCountsWithTime) {
   NotifyOnSuggestionOpened(/*times=*/first_clicks, first);
 
   // Let multiple years pass by.
-  auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-  base::SimpleTestClock* raw_test_clock = test_clock.get();
-  raw_test_clock->SetNow(base::Time::Now() + base::TimeDelta::FromDays(1000));
+  base::SimpleTestClock test_clock;
+  test_clock.SetNow(base::Time::Now() + base::TimeDelta::FromDays(1000));
   // Reset the ranker to pick up the new clock.
-  ResetRanker(std::move(test_clock));
+  ResetRanker(&test_clock);
 
   // The user behavior changes and they start using the second category instead.
   // According to our requirenments after such a long time it should take less
-  // than |first_clicks| for the second category to outperfom the first one.
+  // than |first_clicks| for the second category to outperform the first one.
   int second_clicks = 0;
   while (CompareCategories(first, second) && second_clicks < first_clicks) {
     NotifyOnSuggestionOpened(/*times=*/1, second);
@@ -328,11 +307,10 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldDecayAfterClearHistory) {
   NotifyOnSuggestionOpened(/*times=*/first_clicks, first);
 
   // Let multiple years pass by.
-  auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-  base::SimpleTestClock* raw_test_clock = test_clock.get();
-  raw_test_clock->SetNow(base::Time::Now() + base::TimeDelta::FromDays(1000));
+  base::SimpleTestClock test_clock;
+  test_clock.SetNow(base::Time::Now() + base::TimeDelta::FromDays(1000));
   // Reset the ranker to pick up the new clock.
-  ResetRanker(std::move(test_clock));
+  ResetRanker(&test_clock);
 
   // It should take less than |first_clicks| for the second category to
   // overtake because of decays.
@@ -359,16 +337,14 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldPersistLastDecayTimeWhenRestarted) {
   ASSERT_NE(before, DeserializeTime(0));
 
   // Ensure that |Now()| is different from |before| by injecting our clock.
-  auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-  test_clock->SetNow(base::Time::Now() + base::TimeDelta::FromSeconds(10));
-  ResetRanker(std::move(test_clock));
+  base::SimpleTestClock test_clock;
+  test_clock.SetNow(base::Time::Now() + base::TimeDelta::FromSeconds(10));
+  ResetRanker(&test_clock);
 
   EXPECT_EQ(before, ranker()->GetLastDecayTime());
 }
 
 TEST_F(ClickBasedCategoryRankerTest, ShouldMoveCategoryDownWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
   // Take top categories.
   std::vector<KnownCategories> default_order =
       ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
@@ -382,8 +358,6 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldMoveCategoryDownWhenDismissed) {
 
 TEST_F(ClickBasedCategoryRankerTest,
        ShouldMoveSecondToLastCategoryDownWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
   // Add categories to the bottom.
   Category first = AddUnusedRemoteCategory();
   Category second = AddUnusedRemoteCategory();
@@ -395,8 +369,6 @@ TEST_F(ClickBasedCategoryRankerTest,
 
 TEST_F(ClickBasedCategoryRankerTest,
        ShouldNotMoveCategoryTooMuchDownWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
   // Add enough categories to the end.
   std::vector<Category> categories;
   const int penalty = ClickBasedCategoryRanker::GetDismissedCategoryPenalty();
@@ -426,8 +398,6 @@ TEST_F(ClickBasedCategoryRankerTest,
 
 TEST_F(ClickBasedCategoryRankerTest,
        ShouldNotChangeOrderOfOtherCategoriesWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
   // Add enough categories to the end.
   std::vector<Category> categories;
   const int penalty = ClickBasedCategoryRanker::GetDismissedCategoryPenalty();
@@ -450,78 +420,12 @@ TEST_F(ClickBasedCategoryRankerTest,
 }
 
 TEST_F(ClickBasedCategoryRankerTest, ShouldNotMoveLastCategoryWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
   Category first = AddUnusedRemoteCategory();
   Category second = AddUnusedRemoteCategory();
 
   ASSERT_TRUE(CompareCategories(first, second));
   NotifyOnCategoryDismissed(second);
   EXPECT_TRUE(CompareCategories(first, second));
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
-       ShouldReduceLastCategoryClicksWhenDismissed) {
-  SetDismissedCategoryPenaltyVariationParam(2);
-
-  Category first = AddUnusedRemoteCategory();
-  Category second = AddUnusedRemoteCategory();
-
-  ASSERT_TRUE(CompareCategories(first, second));
-
-  NotifyOnSuggestionOpened(/*times=*/1, second);
-
-  // This should reduce the click count back to 0.
-  NotifyOnCategoryDismissed(second);
-
-  // Try to move the second category up assuming that the previous click is
-  // still there.
-  NotifyOnSuggestionOpened(
-      /*times=*/ClickBasedCategoryRanker::GetPassingMargin() - 1, second);
-
-  EXPECT_TRUE(CompareCategories(first, second));
-
-  NotifyOnSuggestionOpened(/*times=*/1, second);
-  EXPECT_FALSE(CompareCategories(first, second));
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
-       ShouldTakeVariationValueForDismissedCategoryPenalty) {
-  const int penalty = 10203;
-  SetDismissedCategoryPenaltyVariationParam(penalty);
-  EXPECT_EQ(penalty, ClickBasedCategoryRanker::GetDismissedCategoryPenalty());
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
-       ShouldDoNothingWhenCategoryDismissedIfPenaltyIsZero) {
-  SetDismissedCategoryPenaltyVariationParam(0);
-
-  // Add dummy remote categories to ensure that the following categories are not
-  // in the top anymore.
-  AddUnusedRemoteCategories(
-      ClickBasedCategoryRanker::GetNumTopCategoriesWithExtraMargin());
-
-  Category first = AddUnusedRemoteCategory();
-  Category second = AddUnusedRemoteCategory();
-  Category third = AddUnusedRemoteCategory();
-
-  NotifyOnSuggestionOpened(/*times=*/1, second);
-
-  // This should be ignored, because the penalty is set to 0.
-  NotifyOnCategoryDismissed(second);
-
-  // The second category should stay where it was.
-  EXPECT_TRUE(CompareCategories(first, second));
-  EXPECT_TRUE(CompareCategories(second, third));
-
-  // Try to move the second category up assuming that the previous click is
-  // still there.
-  NotifyOnSuggestionOpened(
-      /*times=*/ClickBasedCategoryRanker::GetPassingMargin() - 1, second);
-
-  // It should overtake the first category, because the dismissal should be
-  // ignored and the click should remain.
-  EXPECT_FALSE(CompareCategories(first, second));
 }
 
 TEST_F(ClickBasedCategoryRankerTest, ShouldRestoreDefaultOrderOnClearHistory) {
@@ -584,86 +488,6 @@ TEST_F(ClickBasedCategoryRankerTest, ShouldIgnorePartialClearHistory) {
 
   // The order should not be cleared.
   EXPECT_FALSE(CompareCategories(first, second));
-}
-
-TEST_F(ClickBasedCategoryRankerTest, ShouldPromoteCategory) {
-  const Category downloads =
-      Category::FromKnownCategory(KnownCategories::DOWNLOADS);
-  const Category bookmarks =
-      Category::FromKnownCategory(KnownCategories::BOOKMARKS);
-  const Category articles =
-      Category::FromKnownCategory(KnownCategories::ARTICLES);
-  ASSERT_TRUE(CompareCategories(downloads, bookmarks));
-  ASSERT_TRUE(CompareCategories(bookmarks, articles));
-  SetPromotedCategoryVariationParam(articles.id());
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
-  EXPECT_TRUE(CompareCategories(articles, downloads));
-  EXPECT_TRUE(CompareCategories(articles, bookmarks));
-  EXPECT_FALSE(CompareCategories(downloads, articles));
-  EXPECT_FALSE(CompareCategories(bookmarks, articles));
-  EXPECT_FALSE(CompareCategories(articles, articles));
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
-       ShouldHandleInvalidCategoryIDForPromotion) {
-  SetPromotedCategoryVariationParam(
-      static_cast<int>(KnownCategories::LOCAL_CATEGORIES_COUNT));
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
-  // Make sure we have the default order.
-  EXPECT_TRUE(CompareCategories(
-      Category::FromKnownCategory(KnownCategories::PHYSICAL_WEB_PAGES),
-      Category::FromKnownCategory(KnownCategories::DOWNLOADS)));
-  EXPECT_TRUE(CompareCategories(
-      Category::FromKnownCategory(KnownCategories::DOWNLOADS),
-      Category::FromKnownCategory(KnownCategories::RECENT_TABS)));
-  EXPECT_TRUE(CompareCategories(
-      Category::FromKnownCategory(KnownCategories::RECENT_TABS),
-      Category::FromKnownCategory(KnownCategories::FOREIGN_TABS)));
-  EXPECT_TRUE(CompareCategories(
-      Category::FromKnownCategory(KnownCategories::FOREIGN_TABS),
-      Category::FromKnownCategory(KnownCategories::BOOKMARKS)));
-  EXPECT_TRUE(CompareCategories(
-      Category::FromKnownCategory(KnownCategories::BOOKMARKS),
-      Category::FromKnownCategory(KnownCategories::ARTICLES)));
-}
-
-TEST_F(ClickBasedCategoryRankerTest, ShouldEndPromotionOnSectionDismissal) {
-  const Category physical_web =
-      Category::FromKnownCategory(KnownCategories::PHYSICAL_WEB_PAGES);
-  const Category articles =
-      Category::FromKnownCategory(KnownCategories::ARTICLES);
-  ASSERT_TRUE(CompareCategories(physical_web, articles));
-
-  SetPromotedCategoryVariationParam(articles.id());
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
-
-  ASSERT_TRUE(CompareCategories(articles, physical_web));
-
-  ranker()->OnCategoryDismissed(articles);
-  EXPECT_FALSE(CompareCategories(articles, physical_web));
-  EXPECT_TRUE(CompareCategories(physical_web, articles));
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
-       ShouldResumePromotionAfter2WeeksSinceDismissal) {
-  const Category downloads =
-      Category::FromKnownCategory(KnownCategories::DOWNLOADS);
-  const Category recent_tabs =
-      Category::FromKnownCategory(KnownCategories::RECENT_TABS);
-  ASSERT_TRUE(CompareCategories(downloads, recent_tabs));
-
-  SetPromotedCategoryVariationParam(recent_tabs.id());
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
-  ASSERT_TRUE(CompareCategories(recent_tabs, downloads));
-
-  ranker()->OnCategoryDismissed(recent_tabs);
-  ASSERT_FALSE(CompareCategories(recent_tabs, downloads));
-
-  // Simulate a little over 2 weeks of time passing.
-  auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-  test_clock->SetNow(base::Time::Now() + base::TimeDelta::FromDays(15));
-  ResetRanker(std::move(test_clock));
-  EXPECT_TRUE(CompareCategories(recent_tabs, downloads));
 }
 
 TEST_F(ClickBasedCategoryRankerTest,
@@ -734,29 +558,6 @@ TEST_F(ClickBasedCategoryRankerTest,
 }
 
 TEST_F(ClickBasedCategoryRankerTest,
-       ShouldNotEmitNewIndexWhenCategoryPromoted) {
-  base::HistogramTester histogram_tester;
-
-  std::vector<KnownCategories> default_order =
-      ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
-  Category first = Category::FromKnownCategory(default_order[0]);
-  Category second = Category::FromKnownCategory(default_order[1]);
-
-  ASSERT_TRUE(CompareCategories(first, second));
-
-  ASSERT_THAT(histogram_tester.GetAllSamples(kHistogramMovedUpCategoryNewIndex),
-              IsEmpty());
-
-  SetPromotedCategoryVariationParam(second.id());
-  ResetRanker(base::MakeUnique<base::DefaultClock>());
-
-  ASSERT_FALSE(CompareCategories(first, second));
-
-  EXPECT_THAT(histogram_tester.GetAllSamples(kHistogramMovedUpCategoryNewIndex),
-              IsEmpty());
-}
-
-TEST_F(ClickBasedCategoryRankerTest,
        ShouldInsertCategoryBeforeSelectedCategory) {
   std::vector<KnownCategories> default_order =
       ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
@@ -815,7 +616,7 @@ TEST_F(ClickBasedCategoryRankerTest,
        ShouldNotChangeRemainingOrderWhenInsertingBeforeCategory) {
   std::vector<KnownCategories> default_order =
       ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
-  Category anchor = Category::FromKnownCategory(default_order[2]);
+  Category anchor = Category::FromKnownCategory(default_order[0]);
   Category inserted = GetUnusedRemoteCategory();
 
   ranker()->InsertCategoryBeforeIfNecessary(inserted, anchor);
@@ -833,9 +634,7 @@ TEST_F(ClickBasedCategoryRankerTest,
       ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
   Category first = Category::FromKnownCategory(default_order[0]);
   Category second = Category::FromKnownCategory(default_order[1]);
-  Category third = Category::FromKnownCategory(default_order[2]);
   ASSERT_TRUE(CompareCategories(first, second));
-  ASSERT_TRUE(CompareCategories(second, third));
 
   Category first_before = GetUnusedRemoteCategory();
   ranker()->InsertCategoryBeforeIfNecessary(first_before, second);
@@ -853,7 +652,6 @@ TEST_F(ClickBasedCategoryRankerTest,
   EXPECT_TRUE(CompareCategories(second_before, second));
   EXPECT_TRUE(CompareCategories(second, second_after));
   EXPECT_TRUE(CompareCategories(second_after, first_after));
-  EXPECT_TRUE(CompareCategories(first_after, third));
 }
 
 TEST_F(ClickBasedCategoryRankerTest,
@@ -952,7 +750,7 @@ TEST_F(ClickBasedCategoryRankerTest,
        ShouldNotChangeRemainingOrderWhenInsertingAfterCategory) {
   std::vector<KnownCategories> default_order =
       ConstantCategoryRanker::GetKnownCategoriesDefaultOrder();
-  Category anchor = Category::FromKnownCategory(default_order[2]);
+  Category anchor = Category::FromKnownCategory(default_order[0]);
   Category inserted = GetUnusedRemoteCategory();
 
   ranker()->InsertCategoryAfterIfNecessary(inserted, anchor);

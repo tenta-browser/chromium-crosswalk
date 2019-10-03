@@ -16,21 +16,19 @@ class Value;
 
 namespace extensions {
 
-class ChromeosInfoPrivateGetFunction : public AsyncExtensionFunction {
+class ChromeosInfoPrivateGetFunction : public UIThreadExtensionFunction {
  public:
   ChromeosInfoPrivateGetFunction();
 
  protected:
   ~ChromeosInfoPrivateGetFunction() override;
 
-  bool RunAsync() override;
+  // UIThreadExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   // Returns a newly allocate value, or null.
   std::unique_ptr<base::Value> GetValue(const std::string& property_name);
-
-  // Gets boolean |pref| value from PrefService.
-  bool GetBooleanPrefValue(const char* pref);
 
   DECLARE_EXTENSION_FUNCTION("chromeosInfoPrivate.get", CHROMEOSINFOPRIVATE_GET)
 };
@@ -42,6 +40,7 @@ class ChromeosInfoPrivateSetFunction : public UIThreadExtensionFunction {
  protected:
   ~ChromeosInfoPrivateSetFunction() override;
 
+  // UIThreadExtensionFunction:
   ResponseAction Run() override;
 
  private:

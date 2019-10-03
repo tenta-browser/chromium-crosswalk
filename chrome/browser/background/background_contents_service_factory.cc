@@ -23,21 +23,20 @@ BackgroundContentsService* BackgroundContentsServiceFactory::GetForProfile(
 }
 
 // static
-BackgroundContentsServiceFactory* BackgroundContentsServiceFactory::
-    GetInstance() {
+BackgroundContentsServiceFactory*
+BackgroundContentsServiceFactory::GetInstance() {
   return base::Singleton<BackgroundContentsServiceFactory>::get();
 }
 
 BackgroundContentsServiceFactory::BackgroundContentsServiceFactory()
     : BrowserContextKeyedServiceFactory(
-        "BackgroundContentsService",
-        BrowserContextDependencyManager::GetInstance()) {
+          "BackgroundContentsService",
+          BrowserContextDependencyManager::GetInstance()) {
   DependsOn(extensions::ExtensionRegistryFactory::GetInstance());
   DependsOn(extensions::ExtensionSystemFactory::GetInstance());
 }
 
-BackgroundContentsServiceFactory::~BackgroundContentsServiceFactory() {
-}
+BackgroundContentsServiceFactory::~BackgroundContentsServiceFactory() {}
 
 KeyedService* BackgroundContentsServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* profile) const {
@@ -56,11 +55,7 @@ BackgroundContentsServiceFactory::GetBrowserContextToUse(
   return chrome::GetBrowserContextOwnInstanceInIncognito(context);
 }
 
-bool
-BackgroundContentsServiceFactory::ServiceIsCreatedWithBrowserContext() const {
-  return true;
-}
-
-bool BackgroundContentsServiceFactory::ServiceIsNULLWhileTesting() const {
+bool BackgroundContentsServiceFactory::ServiceIsCreatedWithBrowserContext()
+    const {
   return true;
 }

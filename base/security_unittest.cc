@@ -14,10 +14,11 @@
 #include <limits>
 #include <memory>
 
-#include "base/allocator/features.h"
+#include "base/allocator/buildflags.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
+#include "base/sanitizer_buildflags.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,17 +55,6 @@ NOINLINE Type HideValueFromCompiler(volatile Type value) {
 #define MALLOC_OVERFLOW_TEST(function) DISABLED_##function
 #endif
 
-#if defined(OS_LINUX) && defined(__x86_64__)
-// Detect runtime TCMalloc bypasses.
-bool IsTcMallocBypassed() {
-  // This should detect a TCMalloc bypass from Valgrind.
-  char* g_slice = getenv("G_SLICE");
-  if (g_slice && !strcmp(g_slice, "always-malloc"))
-    return true;
-  return false;
-}
-#endif
-
 // There are platforms where these tests are known to fail. We would like to
 // be able to easily check the status on the bots, but marking tests as
 // FAILS_ is too clunky.
@@ -83,15 +73,19 @@ void OverflowTestsSoftExpectTrue(bool overflow_detected) {
   }
 }
 
-#if defined(OS_IOS) || defined(ADDRESS_SANITIZER) || \
-    defined(THREAD_SANITIZER) || defined(MEMORY_SANITIZER)
+#if defined(OS_IOS) || defined(OS_FUCHSIA) || defined(OS_MACOSX) || \
+    defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||      \
+    defined(MEMORY_SANITIZER) || BUILDFLAG(IS_HWASAN)
 #define MAYBE_NewOverflow DISABLED_NewOverflow
 #else
 #define MAYBE_NewOverflow NewOverflow
 #endif
-// Test array[TooBig][X] and array[X][TooBig] allocations for int overflows.
-// IOS doesn't honor nothrow, so disable the test there.
-// Disabled under XSan because asan aborts when new returns nullptr,
+// Test array[TooBig][X] and array[X][TooBig] allocations for int
+// overflows.  IOS doesn't honor nothrow, so disable the test there.
+// TODO(https://crbug.com/828229): Fuchsia SDK exports an incorrect
+// new[] that gets picked up in Debug/component builds, breaking this
+// test.  Disabled on Mac for the same reason.  Disabled under XSan
+// because asan aborts when new returns nullptr,
 // https://bugs.chromium.org/p/chromium/issues/detail?id=690271#c15
 TEST(SecurityTest, MAYBE_NewOverflow) {
   const size_t kArraySize = 4096;
@@ -133,8 +127,6 @@ bool ArePointersToSameArea(void* ptr1, void* ptr2, size_t size) {
 
 // Check if TCMalloc uses an underlying random memory allocator.
 TEST(SecurityTest, MALLOC_OVERFLOW_TEST(RandomMemoryAllocations)) {
-  if (IsTcMallocBypassed())
-    return;
   size_t kPageSize = 4096;  // We support x86_64 only.
   // Check that malloc() returns an address that is neither the kernel's
   // un-hinted mmap area, nor the current brk() area. The first malloc() may

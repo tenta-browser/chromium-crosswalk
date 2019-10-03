@@ -6,11 +6,10 @@
 
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_detail_item.h"
+#import "ios/chrome/browser/ui/collection_view/cells/collection_view_account_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_footer_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_switch_item.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 
@@ -28,13 +27,13 @@ CollectionViewControllerTest::~CollectionViewControllerTest() {}
 void CollectionViewControllerTest::TearDown() {
   // Delete the controller before deleting other test variables, such as a
   // profile, to ensure things are cleaned up in the same order as in Chrome.
-  controller_.reset();
+  controller_ = nil;
   BlockCleanupTest::TearDown();
 }
 
 void CollectionViewControllerTest::CreateController() {
   DCHECK(!controller_);
-  controller_.reset(InstantiateController());
+  controller_ = InstantiateController();
   // Force the model to be loaded.
   [controller_ loadModel];
   // Force the collectionView to be built.
@@ -44,19 +43,19 @@ void CollectionViewControllerTest::CreateController() {
 CollectionViewController* CollectionViewControllerTest::controller() {
   if (!controller_)
     CreateController();
-  return controller_.get();
+  return controller_;
 }
 
 void CollectionViewControllerTest::ResetController() {
-  controller_.reset();
+  controller_ = nil;
 }
 
 void CollectionViewControllerTest::CheckController() {
   EXPECT_TRUE([controller_ view]);
   EXPECT_TRUE([controller_ collectionView]);
   EXPECT_TRUE([controller_ collectionViewModel]);
-  EXPECT_EQ(controller_.get(), [controller_ collectionView].dataSource);
-  EXPECT_EQ(controller_.get(), [controller_ collectionView].delegate);
+  EXPECT_EQ(controller_, [controller_ collectionView].dataSource);
+  EXPECT_EQ(controller_, [controller_ collectionView].delegate);
 }
 
 int CollectionViewControllerTest::NumberOfSections() {
@@ -115,12 +114,28 @@ void CollectionViewControllerTest::CheckSectionFooterWithId(
   return CheckSectionFooter(l10n_util::GetNSString(expected_text_id), section);
 }
 
+void CollectionViewControllerTest::CheckTextCellText(NSString* expected_text,
+                                                     int section,
+                                                     int item) {
+  id cell = GetCollectionViewItem(section, item);
+  ASSERT_TRUE([cell respondsToSelector:@selector(text)]);
+  EXPECT_NSEQ(expected_text, [cell text]);
+}
+
+void CollectionViewControllerTest::CheckTextCellTextWithId(int expected_text_id,
+                                                           int section,
+                                                           int item) {
+  CheckTextCellText(l10n_util::GetNSString(expected_text_id), section, item);
+}
+
 void CollectionViewControllerTest::CheckTextCellTitle(NSString* expected_title,
                                                       int section,
                                                       int item) {
-  CollectionViewTextItem* cell = GetCollectionViewItem(section, item);
-  EXPECT_NSEQ(expected_title, cell.text);
-  EXPECT_FALSE(cell.detailText);
+  id cell = GetCollectionViewItem(section, item);
+  ASSERT_TRUE([cell respondsToSelector:@selector(text)]);
+  EXPECT_NSEQ(expected_title, [cell text]);
+  ASSERT_TRUE([cell respondsToSelector:@selector(detailText)]);
+  EXPECT_FALSE([cell detailText]);
 }
 
 void CollectionViewControllerTest::CheckTextCellTitleWithId(
@@ -135,9 +150,11 @@ void CollectionViewControllerTest::CheckTextCellTitleAndSubtitle(
     NSString* expected_subtitle,
     int section,
     int item) {
-  CollectionViewTextItem* cell = GetCollectionViewItem(section, item);
-  EXPECT_NSEQ(expected_title, cell.text);
-  EXPECT_NSEQ(expected_subtitle, cell.detailText);
+  id cell = GetCollectionViewItem(section, item);
+  ASSERT_TRUE([cell respondsToSelector:@selector(text)]);
+  EXPECT_NSEQ(expected_title, [cell text]);
+  ASSERT_TRUE([cell respondsToSelector:@selector(detailText)]);
+  EXPECT_NSEQ(expected_subtitle, [cell detailText]);
 }
 
 void CollectionViewControllerTest::CheckDetailItemTextWithIds(
@@ -145,9 +162,9 @@ void CollectionViewControllerTest::CheckDetailItemTextWithIds(
     int expected_detail_text_id,
     int section_id,
     int item_id) {
-  CollectionViewDetailItem* item = GetCollectionViewItem(section_id, item_id);
-  EXPECT_NSEQ(l10n_util::GetNSString(expected_text_id), item.text);
-  EXPECT_NSEQ(l10n_util::GetNSString(expected_detail_text_id), item.detailText);
+  CheckTextCellTitleAndSubtitle(l10n_util::GetNSString(expected_text_id),
+                                l10n_util::GetNSString(expected_detail_text_id),
+                                section_id, item_id);
 }
 
 void CollectionViewControllerTest::CheckSwitchCellStateAndTitle(

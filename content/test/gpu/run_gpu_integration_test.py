@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -14,6 +14,9 @@ import gpu_project_config
 path_util.SetupTelemetryPaths()
 
 from telemetry.testing import browser_test_runner
+from telemetry.testing import serially_executed_browser_test_case
+from py_utils import discover
+
 
 def PostprocessJSON(file_name, run_test_args):
   # The file is not necessarily written depending on the arguments - only
@@ -25,7 +28,36 @@ def PostprocessJSON(file_name, run_test_args):
     with open(file_name, 'w') as f:
       json.dump(test_result, f, indent=2)
 
+def FailIfScreenLockedOnMac():
+  # Detect if the Mac lockscreen is present, which causes issues when running
+  # tests.
+  if not sys.platform.startswith('darwin'):
+    return
+  import Quartz
+  current_session = Quartz.CGSessionCopyCurrentDictionary()
+  if not current_session:
+    # Using the logging module doesn't seem to be guaranteed to show up in
+    # stdout, so use print instead.
+    print ('WARNING: Unable to obtain CGSessionCoppyCurrentDictionary via '
+           'Quartz - unable to determine whether Mac lockscreen is present or '
+           'not.')
+    return
+  if current_session.get('CGSSessionScreenIsLocked'):
+    raise RuntimeError('Mac lockscreen detected, aborting.')
+
+def FindTestCase(test_name):
+  for start_dir in gpu_project_config.CONFIG.start_dirs:
+    modules_to_classes = discover.DiscoverClasses(
+        start_dir,
+        gpu_project_config.CONFIG.top_level_dir,
+        base_class=serially_executed_browser_test_case.
+        SeriallyExecutedBrowserTestCase)
+    for cl in modules_to_classes.values():
+      if cl.Name() == test_name:
+          return cl
+
 def main():
+  FailIfScreenLockedOnMac()
   rest_args = sys.argv[1:]
   parser = argparse.ArgumentParser(description='Extra argument parser',
                                    add_help=False)
@@ -36,6 +68,27 @@ def main():
     help=('Write the test script arguments to the results file.'))
   option, rest_args_filtered = parser.parse_known_args(rest_args)
 
+  parser.add_argument(
+      'test', nargs='*', type=str, help=argparse.SUPPRESS)
+  option, _ = parser.parse_known_args(rest_args_filtered)
+
+  if option.test:
+    test_class = FindTestCase(option.test[0])
+  else:
+    test_class = None
+
+  if test_class:
+    rest_args_filtered.extend(
+        ['--test-name-prefix=%s.%s.' %
+         (test_class.__module__, test_class.__name__)])
+
+  if not any(arg.startswith('--retry-limit') for arg in rest_args_filtered):
+    if '--retry-only-retry-on-failure-tests' not in rest_args_filtered:
+      rest_args_filtered.append('--retry-only-retry-on-failure-tests')
+    rest_args_filtered.append('--retry-limit=2')
+  rest_args_filtered.extend([
+      '--repository-absolute-path', path_util.GetChromiumSrcDir()])
+
   retval = browser_test_runner.Run(
       gpu_project_config.CONFIG, rest_args_filtered)
 
@@ -43,6 +96,7 @@ def main():
   # we need the help output from both the argument parser here and the argument
   # parser in browser_test_runner.
   if '--help' in rest_args:
+    print '\n\nCommand line arguments handed by run_gpu_integration_test:'
     parser.print_help()
     return retval
 

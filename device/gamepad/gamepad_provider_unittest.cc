@@ -6,10 +6,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
 #include "device/gamepad/gamepad_test_helpers.h"
@@ -44,7 +46,8 @@ class GamepadProviderTest : public testing::Test, public GamepadTestHelper {
   GamepadProvider* CreateProvider(const Gamepads& test_data) {
     mock_data_fetcher_ = new MockGamepadDataFetcher(test_data);
     provider_.reset(new GamepadProvider(
-        nullptr, std::unique_ptr<GamepadDataFetcher>(mock_data_fetcher_)));
+        nullptr, std::unique_ptr<GamepadDataFetcher>(mock_data_fetcher_),
+        std::unique_ptr<base::Thread>()));
     return provider_.get();
   }
 
@@ -53,7 +56,7 @@ class GamepadProviderTest : public testing::Test, public GamepadTestHelper {
   // gamepad fetchers. The buffer will report an odd value for the version if
   // the buffer is not in a consistent state, so we also require that the value
   // is even before continuing.
-  void WaitForData(GamepadHardwareBuffer* buffer) {
+  void WaitForData(const GamepadHardwareBuffer* buffer) {
     const base::subtle::Atomic32 initial_version = buffer->seqlock.ReadBegin();
     base::subtle::Atomic32 current_version;
     do {
@@ -65,12 +68,12 @@ class GamepadProviderTest : public testing::Test, public GamepadTestHelper {
   // The provider polls the data on the background thread and then issues
   // the callback on the client thread. Waiting for it to poll twice ensures
   // that it was able to issue callbacks for the first poll.
-  void WaitForDataAndCallbacksIssued(GamepadHardwareBuffer* buffer) {
+  void WaitForDataAndCallbacksIssued(const GamepadHardwareBuffer* buffer) {
     WaitForData(buffer);
     WaitForData(buffer);
   }
 
-  void ReadGamepadHardwareBuffer(GamepadHardwareBuffer* buffer,
+  void ReadGamepadHardwareBuffer(const GamepadHardwareBuffer* buffer,
                                  Gamepads* output) {
     memset(output, 0, sizeof(Gamepads));
     base::subtle::Atomic32 version;
@@ -110,13 +113,13 @@ TEST_F(GamepadProviderTest, PollingAccess) {
   base::RunLoop().RunUntilIdle();
 
   // Renderer-side, pull data out of poll buffer.
-  base::SharedMemoryHandle handle = provider->DuplicateSharedMemoryHandle();
-  std::unique_ptr<base::SharedMemory> shared_memory(
-      new base::SharedMemory(handle, true));
-  EXPECT_TRUE(shared_memory->Map(sizeof(GamepadHardwareBuffer)));
+  base::ReadOnlySharedMemoryRegion region =
+      provider->DuplicateSharedMemoryRegion();
+  base::ReadOnlySharedMemoryMapping mapping = region.Map();
+  EXPECT_TRUE(mapping.IsValid());
 
-  GamepadHardwareBuffer* buffer =
-      static_cast<GamepadHardwareBuffer*>(shared_memory->memory());
+  const GamepadHardwareBuffer* buffer =
+      static_cast<const GamepadHardwareBuffer*>(mapping.memory());
 
   // Wait until the shared memory buffer has been written at least once.
   WaitForData(buffer);
@@ -160,13 +163,13 @@ TEST_F(GamepadProviderTest, ConnectDisconnectMultiple) {
   base::RunLoop().RunUntilIdle();
 
   // Renderer-side, pull data out of poll buffer.
-  base::SharedMemoryHandle handle = provider->DuplicateSharedMemoryHandle();
-  std::unique_ptr<base::SharedMemory> shared_memory(
-      new base::SharedMemory(handle, true));
-  EXPECT_TRUE(shared_memory->Map(sizeof(GamepadHardwareBuffer)));
+  base::ReadOnlySharedMemoryRegion region =
+      provider->DuplicateSharedMemoryRegion();
+  base::ReadOnlySharedMemoryMapping mapping = region.Map();
+  EXPECT_TRUE(mapping.IsValid());
 
-  GamepadHardwareBuffer* buffer =
-      static_cast<GamepadHardwareBuffer*>(shared_memory->memory());
+  const GamepadHardwareBuffer* buffer =
+      static_cast<const GamepadHardwareBuffer*>(mapping.memory());
 
   // Wait until the shared memory buffer has been written at least once.
   WaitForData(buffer);
@@ -219,13 +222,13 @@ TEST_F(GamepadProviderTest, UserGesture) {
   base::RunLoop().RunUntilIdle();
 
   // Renderer-side, pull data out of poll buffer.
-  base::SharedMemoryHandle handle = provider->DuplicateSharedMemoryHandle();
-  std::unique_ptr<base::SharedMemory> shared_memory(
-      new base::SharedMemory(handle, true));
-  EXPECT_TRUE(shared_memory->Map(sizeof(GamepadHardwareBuffer)));
+  base::ReadOnlySharedMemoryRegion region =
+      provider->DuplicateSharedMemoryRegion();
+  base::ReadOnlySharedMemoryMapping mapping = region.Map();
+  EXPECT_TRUE(mapping.IsValid());
 
-  GamepadHardwareBuffer* buffer =
-      static_cast<GamepadHardwareBuffer*>(shared_memory->memory());
+  const GamepadHardwareBuffer* buffer =
+      static_cast<const GamepadHardwareBuffer*>(mapping.memory());
 
   // Wait until the shared memory buffer has been written at least once.
   WaitForData(buffer);
@@ -273,13 +276,13 @@ TEST_F(GamepadProviderTest, Sanitization) {
   base::RunLoop().RunUntilIdle();
 
   // Renderer-side, pull data out of poll buffer.
-  base::SharedMemoryHandle handle = provider->DuplicateSharedMemoryHandle();
-  std::unique_ptr<base::SharedMemory> shared_memory(
-      new base::SharedMemory(handle, true));
-  EXPECT_TRUE(shared_memory->Map(sizeof(GamepadHardwareBuffer)));
+  base::ReadOnlySharedMemoryRegion region =
+      provider->DuplicateSharedMemoryRegion();
+  base::ReadOnlySharedMemoryMapping mapping = region.Map();
+  EXPECT_TRUE(mapping.IsValid());
 
-  GamepadHardwareBuffer* buffer =
-      static_cast<GamepadHardwareBuffer*>(shared_memory->memory());
+  const GamepadHardwareBuffer* buffer =
+      static_cast<const GamepadHardwareBuffer*>(mapping.memory());
 
   // Wait until the shared memory buffer has been written at least once.
   WaitForData(buffer);

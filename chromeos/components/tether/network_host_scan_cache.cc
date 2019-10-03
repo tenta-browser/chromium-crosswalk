@@ -4,11 +4,11 @@
 
 #include "chromeos/components/tether/network_host_scan_cache.h"
 
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/tether_host_response_recorder.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -35,22 +35,23 @@ void NetworkHostScanCache::SetHostScanResult(const HostScanCacheEntry& entry) {
         entry.battery_percentage, entry.signal_strength,
         HasConnectedToHost(entry.tether_network_guid));
 
-    PA_LOG(INFO) << "Added scan result for Tether network with GUID "
-                 << entry.tether_network_guid << ". "
-                 << "Device name: " << entry.device_name << ", "
-                 << "carrier: " << entry.carrier << ", "
-                 << "battery percentage: " << entry.battery_percentage << ", "
-                 << "signal strength: " << entry.signal_strength;
+    PA_LOG(VERBOSE) << "Added scan result for Tether network with GUID "
+                    << entry.tether_network_guid << ". "
+                    << "Device name: " << entry.device_name << ", "
+                    << "carrier: " << entry.carrier << ", "
+                    << "battery percentage: " << entry.battery_percentage
+                    << ", "
+                    << "signal strength: " << entry.signal_strength;
   } else {
     network_state_handler_->UpdateTetherNetworkProperties(
         entry.tether_network_guid, entry.carrier, entry.battery_percentage,
         entry.signal_strength);
 
-    PA_LOG(INFO) << "Updated scan result for Tether network with GUID "
-                 << entry.tether_network_guid << ". "
-                 << "New carrier: " << entry.carrier << ", "
-                 << "new battery percentage: " << entry.battery_percentage
-                 << ", new signal strength: " << entry.signal_strength;
+    PA_LOG(VERBOSE) << "Updated scan result for Tether network with GUID "
+                    << entry.tether_network_guid << ". "
+                    << "New carrier: " << entry.carrier << ", "
+                    << "new battery percentage: " << entry.battery_percentage
+                    << ", new signal strength: " << entry.signal_strength;
   }
 }
 
@@ -103,9 +104,9 @@ void NetworkHostScanCache::OnPreviouslyConnectedHostIdsChanged() {
             tether_network_guid);
 
     if (update_successful) {
-      PA_LOG(INFO) << "Successfully set the HasConnectedToHost property of "
-                   << "the Tether network with GUID " << tether_network_guid
-                   << " to true.";
+      PA_LOG(VERBOSE) << "Successfully set the HasConnectedToHost property of "
+                      << "the Tether network with GUID " << tether_network_guid
+                      << " to true.";
     }
   }
 }
@@ -117,8 +118,7 @@ bool NetworkHostScanCache::HasConnectedToHost(
           tether_network_guid);
   std::vector<std::string> connected_device_ids =
       tether_host_response_recorder_->GetPreviouslyConnectedHostIds();
-  return std::find(connected_device_ids.begin(), connected_device_ids.end(),
-                   device_id) != connected_device_ids.end();
+  return base::Contains(connected_device_ids, device_id);
 }
 
 }  // namespace tether

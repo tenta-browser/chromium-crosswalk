@@ -19,7 +19,11 @@ class GL_EXPORT VSyncProviderWin : public gfx::VSyncProvider {
   static void InitializeOneOff();
 
   // gfx::VSyncProvider overrides;
-  void GetVSyncParameters(const UpdateVSyncCallback& callback) override;
+  void GetVSyncParameters(UpdateVSyncCallback callback) override;
+  bool GetVSyncParametersIfAvailable(base::TimeTicks* timebase,
+                                     base::TimeDelta* interval) override;
+  bool SupportGetVSyncParametersIfAvailable() const override;
+  bool IsHWClock() const override;
 
  private:
   gfx::AcceleratedWidget window_;

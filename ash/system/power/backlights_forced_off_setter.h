@@ -13,7 +13,7 @@
 #include "base/observer_list.h"
 #include "base/optional.h"
 #include "base/scoped_observer.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 
 namespace ash {
 
@@ -65,7 +65,8 @@ class ASH_EXPORT BacklightsForcedOffSetter
   std::unique_ptr<ScopedBacklightsForcedOff> ForceBacklightsOff();
 
   // Overridden from chromeos::PowerManagerClient::Observer:
-  void BrightnessChanged(int level, bool user_initiated) override;
+  void ScreenBrightnessChanged(
+      const power_manager::BacklightBrightnessChange& change) override;
   void PowerManagerRestarted() override;
 
   // Resets internal state for tests.
@@ -111,7 +112,7 @@ class ASH_EXPORT BacklightsForcedOffSetter
   // Number of active backlights forced off requests.
   int active_backlights_forced_off_count_ = 0;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   ScopedObserver<chromeos::PowerManagerClient,
                  chromeos::PowerManagerClient::Observer>

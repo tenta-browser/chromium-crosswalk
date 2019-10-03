@@ -5,8 +5,8 @@
 #include "chrome/browser/ui/android/omnibox/omnibox_view_util.h"
 
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/OmniboxViewUtil_jni.h"
 #include "components/omnibox/browser/omnibox_view.h"
-#include "jni/OmniboxViewUtil_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -14,7 +14,6 @@ using base::android::ScopedJavaLocalRef;
 // static
 ScopedJavaLocalRef<jstring> JNI_OmniboxViewUtil_SanitizeTextForPaste(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jtext) {
   base::string16 pasted_text(
       base::android::ConvertJavaStringToUTF16(env, jtext));

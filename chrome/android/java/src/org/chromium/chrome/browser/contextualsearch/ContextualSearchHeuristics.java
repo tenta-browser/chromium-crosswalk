@@ -12,6 +12,7 @@ import java.util.Set;
  */
 public class ContextualSearchHeuristics {
     protected Set<ContextualSearchHeuristic> mHeuristics;
+    private QuickAnswersHeuristic mQuickAnswersHeuristic;
 
     /**
      * Manages a set of heuristics.
@@ -78,22 +79,38 @@ public class ContextualSearchHeuristics {
     }
 
     /**
-     * Logs all the heuristics that want to provide a Ranker "feature" to the given logger.
-     * @param logger The logger to log to.
+     * Logs all the heuristics that want to provide a Ranker "feature" to the given recorder.
+     * @param recorder The recorder to log to.
      */
-    public void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
+    public void logRankerTapSuppression(ContextualSearchInteractionRecorder recorder) {
         for (ContextualSearchHeuristic heuristic : mHeuristics) {
-            heuristic.logRankerTapSuppression(logger);
+            heuristic.logRankerTapSuppression(recorder);
         }
     }
 
     /**
-     * Logs all the heuristics that want to provide outcomes to Ranker to the given logger.
-     * @param logger The logger to log to.
+     * Logs all the heuristics that want to provide outcomes to Ranker to the given recorder.
+     * @param recorder The logger to log to.
      */
-    public void logRankerTapSuppressionOutcome(ContextualSearchRankerLogger logger) {
+    public void logRankerTapSuppressionOutcome(ContextualSearchInteractionRecorder recorder) {
         for (ContextualSearchHeuristic heuristic : mHeuristics) {
-            heuristic.logRankerTapSuppressionOutcome(logger);
+            heuristic.logRankerTapSuppressionOutcome(recorder);
         }
+    }
+
+    /**
+     * Sets the {@link QuickAnswersHeuristic} so that it can be accessed externally by
+     * {@link #getQuickAnswersHeuristic}.
+     * @param quickAnswersHeuristic The active {@link QuickAnswersHeuristic}.
+     */
+    public void setQuickAnswersHeuristic(QuickAnswersHeuristic quickAnswersHeuristic) {
+        mQuickAnswersHeuristic = quickAnswersHeuristic;
+    }
+
+    /**
+     * @return The active {@link QuickAnswersHeuristic}.
+     */
+    public QuickAnswersHeuristic getQuickAnswersHeuristic() {
+        return mQuickAnswersHeuristic;
     }
 }

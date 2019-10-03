@@ -4,20 +4,16 @@
 
 #include "ios/chrome/browser/history/web_history_service_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "base/no_destructor.h"
 #include "components/history/core/browser/web_history_service.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/sync/driver/sync_service.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
-#include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
+#include "ios/chrome/browser/sync/profile_sync_service_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 
 namespace ios {
 namespace {
@@ -26,8 +22,8 @@ namespace {
 // false otherwise.
 bool IsHistorySyncEnabled(ios::ChromeBrowserState* browser_state) {
   syncer::SyncService* sync_service =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(browser_state);
-  return sync_service && sync_service->IsSyncActive() &&
+      ProfileSyncServiceFactory::GetForBrowserState(browser_state);
+  return sync_service && sync_service->IsSyncFeatureActive() &&
          sync_service->GetActiveDataTypes().Has(
              syncer::HISTORY_DELETE_DIRECTIVES);
 }
@@ -48,16 +44,16 @@ history::WebHistoryService* WebHistoryServiceFactory::GetForBrowserState(
 
 // static
 WebHistoryServiceFactory* WebHistoryServiceFactory::GetInstance() {
-  return base::Singleton<WebHistoryServiceFactory>::get();
+  static base::NoDestructor<WebHistoryServiceFactory> instance;
+  return instance.get();
 }
 
 WebHistoryServiceFactory::WebHistoryServiceFactory()
     : BrowserStateKeyedServiceFactory(
           "WebHistoryService",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(IOSChromeProfileSyncServiceFactory::GetInstance());
-  DependsOn(OAuth2TokenServiceFactory::GetInstance());
-  DependsOn(ios::SigninManagerFactory::GetInstance());
+  DependsOn(ProfileSyncServiceFactory::GetInstance());
+  DependsOn(IdentityManagerFactory::GetInstance());
 }
 
 WebHistoryServiceFactory::~WebHistoryServiceFactory() {
@@ -67,10 +63,10 @@ std::unique_ptr<KeyedService> WebHistoryServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return base::MakeUnique<history::WebHistoryService>(
-      OAuth2TokenServiceFactory::GetForBrowserState(browser_state),
-      ios::SigninManagerFactory::GetForBrowserState(browser_state),
-      browser_state->GetRequestContext());
+  return std::make_unique<history::WebHistoryService>(
+      IdentityManagerFactory::GetForBrowserState(browser_state),
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          browser_state->GetURLLoaderFactory()));
 }
 
 }  // namespace ios

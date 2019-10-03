@@ -11,7 +11,9 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
+#include "base/single_thread_task_runner.h"
 #include "components/cast_channel/cast_socket.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 
 namespace cast_channel {
 
@@ -37,6 +39,9 @@ class CastSocketService {
 
   CastSocket* GetSocket(const net::IPEndPoint& ip_endpoint) const;
 
+  using NetworkContextGetter =
+      base::RepeatingCallback<network::mojom::NetworkContext*()>;
+
   // Opens cast socket with |open_params| and invokes |open_cb| when opening
   // operation finishes. If cast socket with |ip_endpoint| already exists,
   // invoke |open_cb| directly with the existing socket.
@@ -44,7 +49,9 @@ class CastSocketService {
   // a valid private IP address as determined by |IsValidCastIPAddress()|.
   // |open_params|: Parameters necessary to open a Cast channel.
   // |open_cb|: OnOpenCallback invoked when cast socket is opened.
-  virtual void OpenSocket(const CastSocketOpenParams& open_params,
+  // |network_context_getter| is called on UI thread only.
+  virtual void OpenSocket(NetworkContextGetter network_context_getter,
+                          const CastSocketOpenParams& open_params,
                           CastSocket::OnOpenCallback open_cb);
 
   // Adds |observer| to socket service. When socket service opens cast socket,
@@ -86,7 +93,7 @@ class CastSocketService {
   std::map<int, std::unique_ptr<CastSocket>> sockets_;
 
   // List of socket observers.
-  base::ObserverList<CastSocket::Observer> observers_;
+  base::ObserverList<CastSocket::Observer>::Unchecked observers_;
 
   scoped_refptr<Logger> logger_;
 

@@ -10,12 +10,13 @@ import android.support.annotation.Nullable;
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.Tab.TabHidingType;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.base.PageTransition;
-
 
 /**
  * Records stats related to a page visit, such as the time spent on the website, or if the user
@@ -69,18 +70,18 @@ public class NavigationRecorder extends EmptyTabObserver {
     }
 
     @Override
-    public void onShown(Tab tab) {
+    public void onShown(Tab tab, @TabSelectionType int type) {
         if (mStartTimeMs == 0) mStartTimeMs = SystemClock.elapsedRealtime();
     }
 
     @Override
-    public void onHidden(Tab tab) {
+    public void onHidden(Tab tab, @TabHidingType int type) {
         endRecording(tab, null);
     }
 
     @Override
     public void onDestroyed(Tab tab) {
-        endRecording(null, null);
+        endRecording(tab, null);
     }
 
     @Override
@@ -89,7 +90,7 @@ public class NavigationRecorder extends EmptyTabObserver {
         // the omnibox. This doesn't cover the navigate-back case so we also need to observe
         // changes to WebContent's navigation entries.
         int transitionTypeMask = PageTransition.FROM_ADDRESS_BAR | PageTransition.HOME_PAGE
-                | PageTransition.CHAIN_START | PageTransition.CHAIN_END;
+                | PageTransition.CHAIN_START | PageTransition.CHAIN_END | PageTransition.FROM_API;
 
         if ((params.getTransitionType() & transitionTypeMask) != 0) endRecording(tab, null);
     }

@@ -17,13 +17,12 @@
 
 class Browser;
 class TabStripModel;
-class UnloadControllerWebContentsDelegate;
 
 namespace content {
 class NotificationSource;
 class NotificationDetails;
 class WebContents;
-}
+}  // namespace content
 
 class UnloadController : public content::NotificationObserver,
                          public TabStripModelObserver {
@@ -93,15 +92,10 @@ class UnloadController : public content::NotificationObserver,
                const content::NotificationDetails& details) override;
 
   // Overridden from TabStripModelObserver:
-  void TabInsertedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* contents,
-                     int index,
-                     bool foreground) override;
-  void TabDetachedAt(content::WebContents* contents, int index) override;
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* old_contents,
-                     content::WebContents* new_contents,
-                     int index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
   void TabStripEmpty() override;
 
   void TabAttachedImpl(content::WebContents* contents);
@@ -156,7 +150,7 @@ class UnloadController : public content::NotificationObserver,
   // are currently confirming that the browser is closable.
   base::Callback<void(bool)> on_close_confirmed_;
 
-  base::WeakPtrFactory<UnloadController> weak_factory_;
+  base::WeakPtrFactory<UnloadController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UnloadController);
 };

@@ -4,9 +4,12 @@
 
 #include "chrome/browser/ui/views/location_bar/icon_label_bubble_view.h"
 
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "chrome/test/views/chrome_views_test_base.h"
+#include "components/strings/grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
@@ -14,7 +17,7 @@
 #include "ui/views/animation/test/ink_drop_host_view_test_api.h"
 #include "ui/views/animation/test/test_ink_drop.h"
 #include "ui/views/controls/image_view.h"
-#include "ui/views/test/views_test_base.h"
+#include "ui/views/widget/widget_utils.h"
 
 #if defined(OS_CHROMEOS)
 #include "ui/aura/window.h"
@@ -34,6 +37,10 @@ const int kNumberOfSteps = 300;
 
 class TestIconLabelBubbleView : public IconLabelBubbleView {
  public:
+  using IconLabelBubbleView::AnimateIn;
+  using IconLabelBubbleView::AnimateOut;
+  using IconLabelBubbleView::ResetSlideAnimation;
+
   enum State {
     GROWING,
     STEADY,
@@ -53,7 +60,7 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
   }
 
   int width() const { return bounds().width(); }
-  bool IsLabelVisible() const { return label()->visible(); }
+  bool IsLabelVisible() const { return label()->GetVisible(); }
   void SetLabelVisible(bool visible) { label()->SetVisible(visible); }
   const gfx::Rect& GetLabelBounds() const { return label()->bounds(); }
 
@@ -69,7 +76,7 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
   }
 
   void HideBubble() {
-    OnWidgetVisibilityChanged(nullptr, false);
+    AnimateInkDrop(views::InkDropState::HIDDEN, nullptr /* event */);
     is_bubble_showing_ = false;
   }
 
@@ -78,12 +85,14 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
  protected:
   // IconLabelBubbleView:
   SkColor GetTextColor() const override { return kTestColor; }
+  SkColor GetInkDropBaseColor() const override { return kTestColor; }
 
   bool ShouldShowLabel() const override {
     return !IsShrinking() ||
-           (width() > (image()->GetPreferredSize().width() +
-                       2 * LocationBarView::kIconInteriorPadding +
-                       2 * GetLayoutConstant(LOCATION_BAR_ELEMENT_PADDING)));
+           (width() >
+            (image()->GetPreferredSize().width() +
+             GetLayoutInsets(LOCATION_BAR_ICON_INTERIOR_PADDING).width() +
+             2 * GetLayoutConstant(LOCATION_BAR_ELEMENT_PADDING)));
   }
 
   double WidthMultiplier() const override {
@@ -105,6 +114,7 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
   bool IsShrinking() const override { return state() == SHRINKING; }
 
   bool ShowBubble(const ui::Event& event) override {
+    AnimateInkDrop(views::InkDropState::ACTIVATED, nullptr /* event */);
     is_bubble_showing_ = true;
     return true;
   }
@@ -117,28 +127,16 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
 
 }  // namespace
 
-class IconLabelBubbleViewTest : public views::ViewsTestBase {
- public:
-  IconLabelBubbleViewTest()
-      : views::ViewsTestBase(),
-        widget_(nullptr),
-        view_(nullptr),
-        ink_drop_(nullptr),
-        steady_reached_(false),
-        shrinking_reached_(false),
-        minimum_size_reached_(false),
-        previous_width_(0),
-        initial_image_x_(0) {}
-  ~IconLabelBubbleViewTest() override {}
-
+class IconLabelBubbleViewTest : public ChromeViewsTestBase {
  protected:
-  // views::ViewsTestBase:
+  // ChromeViewsTestBase:
   void SetUp() override {
-    views::ViewsTestBase::SetUp();
+    ChromeViewsTestBase::SetUp();
     gfx::FontList font_list;
 
     CreateWidget();
-    generator_.reset(new ui::test::EventGenerator(widget_->GetNativeWindow()));
+    generator_ =
+        std::make_unique<ui::test::EventGenerator>(GetRootWindow(widget_));
     view_ = new TestIconLabelBubbleView(font_list);
     view_->SetBoundsRect(gfx::Rect(0, 0, 24, 24));
     widget_->SetContentsView(view_);
@@ -151,7 +149,7 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
     if (widget_ && !widget_->IsClosed())
       widget_->Close();
 
-    ViewsTestBase::TearDown();
+    ChromeViewsTestBase::TearDown();
   }
 
   void VerifyWithAnimationStep(int step) {
@@ -193,7 +191,8 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
     minimum_size_reached_ = false;
     previous_width_ = 0;
     initial_image_x_ = GetImageBounds().x();
-    EXPECT_EQ(0, initial_image_x_);
+    EXPECT_EQ(GetLayoutInsets(LOCATION_BAR_ICON_INTERIOR_PADDING).left(),
+              initial_image_x_);
   }
 
   void VerifyAnimationStep() {
@@ -263,16 +262,16 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
     return view_->GetImageView()->bounds();
   }
 
-  views::Widget* widget_;
-  TestIconLabelBubbleView* view_;
-  TestInkDrop* ink_drop_;
+  views::Widget* widget_ = nullptr;
+  TestIconLabelBubbleView* view_ = nullptr;
+  TestInkDrop* ink_drop_ = nullptr;
   std::unique_ptr<ui::test::EventGenerator> generator_;
 
-  bool steady_reached_;
-  bool shrinking_reached_;
-  bool minimum_size_reached_;
-  int previous_width_;
-  int initial_image_x_;
+  bool steady_reached_ = false;
+  bool shrinking_reached_ = false;
+  bool minimum_size_reached_ = false;
+  int previous_width_ = 0;
+  int initial_image_x_ = 0;
 };
 
 // Tests layout rules for IconLabelBubbleView while simulating animation.
@@ -372,10 +371,41 @@ TEST_F(IconLabelBubbleViewTest, GestureInkDropState) {
 }
 #endif
 
+TEST_F(IconLabelBubbleViewTest, LabelVisibilityAfterAnimation) {
+  view()->AnimateIn(base::nullopt);
+  EXPECT_TRUE(view()->IsLabelVisible());
+  view()->AnimateOut();
+  EXPECT_FALSE(view()->IsLabelVisible());
+  // Label should reappear if animated in after being animated out.
+  view()->AnimateIn(base::nullopt);
+  EXPECT_TRUE(view()->IsLabelVisible());
+}
+
+TEST_F(IconLabelBubbleViewTest, LabelVisibilityAfterAnimationReset) {
+  view()->ResetSlideAnimation(true);
+  EXPECT_TRUE(view()->IsLabelVisible());
+  view()->ResetSlideAnimation(false);
+  EXPECT_FALSE(view()->IsLabelVisible());
+  // Label should reappear if animated in after being reset out.
+  view()->AnimateIn(base::nullopt);
+  EXPECT_TRUE(view()->IsLabelVisible());
+}
+
+TEST_F(IconLabelBubbleViewTest,
+       LabelVisibilityAfterAnimationWithDefinedString) {
+  view()->AnimateIn(IDS_AUTOFILL_CARD_SAVED);
+  EXPECT_TRUE(view()->IsLabelVisible());
+  view()->AnimateOut();
+  EXPECT_FALSE(view()->IsLabelVisible());
+  // Label should reappear if animated in after being animated out.
+  view()->AnimateIn(IDS_AUTOFILL_CARD_SAVED);
+  EXPECT_TRUE(view()->IsLabelVisible());
+}
+
 #if defined(OS_CHROMEOS)
 // Verifies IconLabelBubbleView::CalculatePreferredSize() doesn't crash when
 // there is a widget but no compositor.
-using IconLabelBubbleViewCrashTest = views::ViewsTestBase;
+using IconLabelBubbleViewCrashTest = ChromeViewsTestBase;
 
 TEST_F(IconLabelBubbleViewCrashTest,
        GetPreferredSizeDoesntCrashWhenNoCompositor) {

@@ -4,7 +4,7 @@
 import os
 
 from benchmarks import blink_perf
-from telemetry import story
+
 
 # pylint: disable=protected-access
 class BlinkPerfAll(blink_perf._BlinkPerfBenchmark):
@@ -19,8 +19,8 @@ class BlinkPerfAll(blink_perf._BlinkPerfBenchmark):
                       default=blink_perf.BLINK_PERF_BASE_DIR,
                       help=('Path to blink perf tests. Could be an absolute '
                             'path, a relative path with respect to your '
-                            'current directory, or a relative path with '
-                            'respect to third_party/WebKit/PerformanceTest/)'))
+                            'current directory or a relative path with '
+                            'respect to third_party/blink/perf_tests)'))
 
   def CreateStorySet(self, options):
     if os.path.exists(options.test_path):
@@ -30,9 +30,3 @@ class BlinkPerfAll(blink_perf._BlinkPerfBenchmark):
     print
     print 'Running all tests in %s' % path
     return blink_perf.CreateStorySetFromPath(path, blink_perf.SKIPPED_FILE)
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass # Nothing disabled.
-    return StoryExpectations()

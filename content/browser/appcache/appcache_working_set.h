@@ -8,10 +8,11 @@
 #include <stdint.h>
 
 #include <map>
+#include <unordered_map>
 
-#include "base/containers/hash_tables.h"
 #include "content/common/content_export.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -23,7 +24,7 @@ class AppCacheResponseInfo;
 // currently in memory.
 class CONTENT_EXPORT AppCacheWorkingSet {
  public:
-  typedef std::map<GURL, AppCacheGroup*> GroupMap;
+  using GroupMap = std::map<GURL, AppCacheGroup*>;
 
   AppCacheWorkingSet();
   ~AppCacheWorkingSet();
@@ -34,42 +35,39 @@ class CONTENT_EXPORT AppCacheWorkingSet {
   void AddCache(AppCache* cache);
   void RemoveCache(AppCache* cache);
   AppCache* GetCache(int64_t id) {
-    CacheMap::iterator it = caches_.find(id);
-    return (it != caches_.end()) ? it->second : NULL;
+    auto it = caches_.find(id);
+    return (it != caches_.end()) ? it->second : nullptr;
   }
 
   void AddGroup(AppCacheGroup* group);
   void RemoveGroup(AppCacheGroup* group);
   AppCacheGroup* GetGroup(const GURL& manifest_url) {
-    GroupMap::iterator it = groups_.find(manifest_url);
-    return (it != groups_.end()) ? it->second : NULL;
+    auto it = groups_.find(manifest_url);
+    return (it != groups_.end()) ? it->second : nullptr;
   }
 
-  const GroupMap* GetGroupsInOrigin(const GURL& origin_url) {
-    return GetMutableGroupsInOrigin(origin_url);
+  const GroupMap* GetGroupsInOrigin(const url::Origin& origin) {
+    return GetMutableGroupsInOrigin(origin);
   }
 
   void AddResponseInfo(AppCacheResponseInfo* response_info);
   void RemoveResponseInfo(AppCacheResponseInfo* response_info);
   AppCacheResponseInfo* GetResponseInfo(int64_t id) {
-    ResponseInfoMap::iterator it = response_infos_.find(id);
-    return (it != response_infos_.end()) ? it->second : NULL;
+    auto it = response_infos_.find(id);
+    return (it != response_infos_.end()) ? it->second : nullptr;
   }
 
  private:
-  typedef base::hash_map<int64_t, AppCache*> CacheMap;
-  typedef std::map<GURL, GroupMap> GroupsByOriginMap;
-  typedef base::hash_map<int64_t, AppCacheResponseInfo*> ResponseInfoMap;
-
-  GroupMap* GetMutableGroupsInOrigin(const GURL& origin_url) {
-    GroupsByOriginMap::iterator it = groups_by_origin_.find(origin_url);
-    return (it != groups_by_origin_.end()) ? &it->second : NULL;
+  GroupMap* GetMutableGroupsInOrigin(const url::Origin& origin) {
+    auto it = groups_by_origin_.find(origin);
+    return (it != groups_by_origin_.end()) ? &it->second : nullptr;
   }
 
-  CacheMap caches_;
+  std::unordered_map<int64_t, AppCache*> caches_;
   GroupMap groups_;
-  GroupsByOriginMap groups_by_origin_;  // origin -> (manifest -> group)
-  ResponseInfoMap response_infos_;
+  // origin -> (manifest -> group)
+  std::map<url::Origin, GroupMap> groups_by_origin_;
+  std::unordered_map<int64_t, AppCacheResponseInfo*> response_infos_;
   bool is_disabled_;
 };
 

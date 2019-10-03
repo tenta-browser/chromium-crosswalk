@@ -21,7 +21,7 @@ import org.chromium.chrome.browser.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.widget.incognitotoggle.IncognitoToggleButtonTablet;
-import org.chromium.ui.UiUtils;
+import org.chromium.ui.KeyboardVisibilityDelegate;
 
 /**
  * Represents the background screen that shows when no tabs are visible.  This {@link View}
@@ -75,8 +75,7 @@ public class EmptyBackgroundViewTablet extends FrameLayout {
     public void setTabModelSelector(TabModelSelector tabModelSelector) {
         mTabModelSelector = tabModelSelector;
 
-        mIncognitoToggleButton = (IncognitoToggleButtonTablet) findViewById(
-                R.id.empty_incognito_toggle_button);
+        mIncognitoToggleButton = findViewById(R.id.empty_incognito_toggle_button);
 
         mIncognitoToggleButton.setTabModelSelector(mTabModelSelector);
     }
@@ -94,15 +93,11 @@ public class EmptyBackgroundViewTablet extends FrameLayout {
      * @param menuHandler The menu handler to be used for showing the pop up menu.
      */
     public void setMenuOnTouchListener(final AppMenuHandler menuHandler) {
-        final ImageButton menuBtn = (ImageButton) findViewById(R.id.empty_menu_button);
-        final AppMenuButtonHelper menuPopupButtonHelper = new AppMenuButtonHelper(menuHandler);
+        final ImageButton menuBtn = findViewById(R.id.empty_menu_button);
+        final AppMenuButtonHelper menuPopupButtonHelper = menuHandler.createAppMenuButtonHelper();
         menuBtn.setOnTouchListener(menuPopupButtonHelper);
-        menuPopupButtonHelper.setOnAppMenuShownListener(new Runnable() {
-            @Override
-            public void run() {
-                RecordUserAction.record("MobileToolbarShowMenu");
-            }
-        });
+        menuPopupButtonHelper.setOnAppMenuShownListener(
+                () -> RecordUserAction.record("MobileToolbarShowMenu"));
     }
 
     public void setEmptyContainerState(boolean shouldShow) {
@@ -111,7 +106,7 @@ public class EmptyBackgroundViewTablet extends FrameLayout {
         if (shouldShow && getVisibility() != View.VISIBLE
                 && mCurrentTransitionAnimation != mAnimateInAnimation) {
             nextAnimator = mAnimateInAnimation;
-            UiUtils.hideKeyboard(this);
+            KeyboardVisibilityDelegate.getInstance().hideKeyboard(this);
         } else if (!shouldShow && getVisibility() != View.GONE
                 && mCurrentTransitionAnimation != mAnimateOutAnimation) {
             nextAnimator = mAnimateOutAnimation;

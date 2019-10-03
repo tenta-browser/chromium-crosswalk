@@ -10,28 +10,23 @@
 
 #include "base/compiler_specific.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/origin_trial_policy.h"
 #include "content/shell/common/shell_origin_trial_policy.h"
 
 namespace content {
-
-std::string GetShellUserAgent();
 
 class ShellContentClient : public ContentClient {
  public:
   ShellContentClient();
   ~ShellContentClient() override;
 
-  std::string GetUserAgent() const override;
-  base::string16 GetLocalizedString(int message_id) const override;
-  base::StringPiece GetDataResource(
-      int resource_id,
-      ui::ScaleFactor scale_factor) const override;
-  base::RefCountedMemory* GetDataResourceBytes(
-      int resource_id) const override;
-  gfx::Image& GetNativeImageNamed(int resource_id) const override;
-  bool IsSupplementarySiteIsolationModeEnabled() override;
-  OriginTrialPolicy* GetOriginTrialPolicy() override;
+  base::string16 GetLocalizedString(int message_id) override;
+  base::StringPiece GetDataResource(int resource_id,
+                                    ui::ScaleFactor scale_factor) override;
+  base::RefCountedMemory* GetDataResourceBytes(int resource_id) override;
+  bool IsDataResourceGzipped(int resource_id) override;
+  gfx::Image& GetNativeImageNamed(int resource_id) override;
+  base::DictionaryValue GetNetLogConstants() override;
+  blink::OriginTrialPolicy* GetOriginTrialPolicy() override;
 
  private:
   ShellOriginTrialPolicy origin_trial_policy_;

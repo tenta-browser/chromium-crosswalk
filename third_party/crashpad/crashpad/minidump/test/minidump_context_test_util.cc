@@ -18,7 +18,7 @@
 #include <sys/types.h>
 
 #include "base/format_macros.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "gtest/gtest.h"
 #include "snapshot/cpu_context.h"
@@ -128,7 +128,8 @@ void InitializeMinidumpContextAMD64(MinidumpContextAMD64* context,
   context->ds = static_cast<uint16_t>(value++);
   context->es = static_cast<uint16_t>(value++);
   context->ss = static_cast<uint16_t>(value++);
-  for (size_t index = 0; index < arraysize(context->vector_register); ++index) {
+  for (size_t index = 0; index < base::size(context->vector_register);
+       ++index) {
     context->vector_register[index].lo = value++;
     context->vector_register[index].hi = value++;
   }
@@ -138,6 +139,137 @@ void InitializeMinidumpContextAMD64(MinidumpContextAMD64* context,
   context->last_branch_from_rip = value++;
   context->last_exception_to_rip = value++;
   context->last_exception_from_rip = value++;
+}
+
+void InitializeMinidumpContextARM(MinidumpContextARM* context, uint32_t seed) {
+  if (seed == 0) {
+    memset(context, 0, sizeof(*context));
+    context->context_flags = kMinidumpContextARM;
+    return;
+  }
+
+  context->context_flags = kMinidumpContextARMAll;
+
+  uint32_t value = seed;
+
+  for (size_t index = 0; index < base::size(context->regs); ++index) {
+    context->regs[index] = value++;
+  }
+  context->fp = value++;
+  context->ip = value++;
+  context->ip = value++;
+  context->sp = value++;
+  context->lr = value++;
+  context->pc = value++;
+  context->cpsr = value++;
+
+  for (size_t index = 0; index < base::size(context->vfp); ++index) {
+    context->vfp[index] = value++;
+  }
+  context->fpscr = value++;
+}
+
+void InitializeMinidumpContextARM64(MinidumpContextARM64* context,
+                                    uint32_t seed) {
+  if (seed == 0) {
+    memset(context, 0, sizeof(*context));
+    context->context_flags = kMinidumpContextARM64;
+    return;
+  }
+
+  context->context_flags = kMinidumpContextARM64Full;
+
+  uint32_t value = seed;
+
+  for (size_t index = 0; index < base::size(context->regs); ++index) {
+    context->regs[index] = value++;
+  }
+  context->fp = value++;
+  context->lr = value++;
+  context->sp = value++;
+  context->pc = value++;
+  context->cpsr = value++;
+
+  for (size_t index = 0; index < base::size(context->fpsimd); ++index) {
+    context->fpsimd[index].lo = value++;
+    context->fpsimd[index].hi = value++;
+  }
+  context->fpsr = value++;
+  context->fpcr = value++;
+}
+
+void InitializeMinidumpContextMIPS(MinidumpContextMIPS* context,
+                                   uint32_t seed) {
+  if (seed == 0) {
+    memset(context, 0, sizeof(*context));
+    context->context_flags = kMinidumpContextMIPS;
+    return;
+  }
+
+  context->context_flags = kMinidumpContextMIPSAll;
+
+  uint32_t value = seed;
+
+  for (size_t index = 0; index < base::size(context->regs); ++index) {
+    context->regs[index] = value++;
+  }
+
+  context->mdlo = value++;
+  context->mdhi = value++;
+  context->epc = value++;
+  context->badvaddr = value++;
+  context->status = value++;
+  context->cause = value++;
+
+  for (size_t index = 0; index < base::size(context->fpregs.fregs); ++index) {
+    context->fpregs.fregs[index]._fp_fregs = static_cast<float>(value++);
+  }
+
+  context->fpcsr = value++;
+  context->fir = value++;
+
+  for (size_t index = 0; index < 3; ++index) {
+    context->hi[index] = value++;
+    context->lo[index] = value++;
+  }
+
+  context->dsp_control = value++;
+}
+
+void InitializeMinidumpContextMIPS64(MinidumpContextMIPS64* context,
+                                     uint32_t seed) {
+  if (seed == 0) {
+    memset(context, 0, sizeof(*context));
+    context->context_flags = kMinidumpContextMIPS64;
+    return;
+  }
+
+  context->context_flags = kMinidumpContextMIPS64All;
+
+  uint64_t value = seed;
+
+  for (size_t index = 0; index < base::size(context->regs); ++index) {
+    context->regs[index] = value++;
+  }
+
+  context->mdlo = value++;
+  context->mdhi = value++;
+  context->epc = value++;
+  context->badvaddr = value++;
+  context->status = value++;
+  context->cause = value++;
+
+  for (size_t index = 0; index < base::size(context->fpregs.dregs); ++index) {
+    context->fpregs.dregs[index] = static_cast<double>(value++);
+  }
+  context->fpcsr = value++;
+  context->fir = value++;
+
+  for (size_t index = 0; index < 3; ++index) {
+    context->hi[index] = value++;
+    context->lo[index] = value++;
+  }
+  context->dsp_control = value++;
 }
 
 namespace {
@@ -162,35 +294,33 @@ void ExpectMinidumpContextFxsave(const FxsaveType* expected,
   EXPECT_EQ(observed->reserved_3, expected->reserved_3);
   EXPECT_EQ(observed->mxcsr, expected->mxcsr);
   EXPECT_EQ(observed->mxcsr_mask, expected->mxcsr_mask);
-  for (size_t st_mm_index = 0;
-       st_mm_index < arraysize(expected->st_mm);
+  for (size_t st_mm_index = 0; st_mm_index < base::size(expected->st_mm);
        ++st_mm_index) {
     SCOPED_TRACE(base::StringPrintf("st_mm_index %" PRIuS, st_mm_index));
     EXPECT_EQ(BytesToHexString(observed->st_mm[st_mm_index].st,
-                               arraysize(observed->st_mm[st_mm_index].st)),
+                               base::size(observed->st_mm[st_mm_index].st)),
               BytesToHexString(expected->st_mm[st_mm_index].st,
-                               arraysize(expected->st_mm[st_mm_index].st)));
+                               base::size(expected->st_mm[st_mm_index].st)));
     EXPECT_EQ(
         BytesToHexString(observed->st_mm[st_mm_index].st_reserved,
-                         arraysize(observed->st_mm[st_mm_index].st_reserved)),
+                         base::size(observed->st_mm[st_mm_index].st_reserved)),
         BytesToHexString(expected->st_mm[st_mm_index].st_reserved,
-                         arraysize(expected->st_mm[st_mm_index].st_reserved)));
+                         base::size(expected->st_mm[st_mm_index].st_reserved)));
   }
-  for (size_t xmm_index = 0;
-       xmm_index < arraysize(expected->xmm);
+  for (size_t xmm_index = 0; xmm_index < base::size(expected->xmm);
        ++xmm_index) {
     EXPECT_EQ(BytesToHexString(observed->xmm[xmm_index],
-                               arraysize(observed->xmm[xmm_index])),
+                               base::size(observed->xmm[xmm_index])),
               BytesToHexString(expected->xmm[xmm_index],
-                               arraysize(expected->xmm[xmm_index])))
+                               base::size(expected->xmm[xmm_index])))
         << "xmm_index " << xmm_index;
   }
   EXPECT_EQ(
-      BytesToHexString(observed->reserved_4, arraysize(observed->reserved_4)),
-      BytesToHexString(expected->reserved_4, arraysize(expected->reserved_4)));
+      BytesToHexString(observed->reserved_4, base::size(observed->reserved_4)),
+      BytesToHexString(expected->reserved_4, base::size(expected->reserved_4)));
   EXPECT_EQ(
-      BytesToHexString(observed->available, arraysize(observed->available)),
-      BytesToHexString(expected->available, arraysize(expected->available)));
+      BytesToHexString(observed->available, base::size(observed->available)),
+      BytesToHexString(expected->available, base::size(expected->available)));
 }
 
 }  // namespace
@@ -215,11 +345,11 @@ void ExpectMinidumpContextX86(
   EXPECT_EQ(observed->fsave.fpu_cs, expected.fsave.fpu_cs);
   EXPECT_EQ(observed->fsave.fpu_dp, expected.fsave.fpu_dp);
   EXPECT_EQ(observed->fsave.fpu_ds, expected.fsave.fpu_ds);
-  for (size_t index = 0; index < arraysize(expected.fsave.st); ++index) {
+  for (size_t index = 0; index < base::size(expected.fsave.st); ++index) {
     EXPECT_EQ(BytesToHexString(observed->fsave.st[index],
-                               arraysize(observed->fsave.st[index])),
+                               base::size(observed->fsave.st[index])),
               BytesToHexString(expected.fsave.st[index],
-                               arraysize(expected.fsave.st[index])))
+                               base::size(expected.fsave.st[index])))
         << "index " << index;
   }
   if (snapshot) {
@@ -318,7 +448,8 @@ void ExpectMinidumpContextAMD64(
 
   ExpectMinidumpContextFxsave(&expected.fxsave, &observed->fxsave);
 
-  for (size_t index = 0; index < arraysize(expected.vector_register); ++index) {
+  for (size_t index = 0; index < base::size(expected.vector_register);
+       ++index) {
     if (snapshot) {
       EXPECT_EQ(observed->vector_register[index].lo, 0u) << "index " << index;
       EXPECT_EQ(observed->vector_register[index].hi, 0u) << "index " << index;
@@ -348,6 +479,119 @@ void ExpectMinidumpContextAMD64(
     EXPECT_EQ(observed->last_exception_from_rip,
               expected.last_exception_from_rip);
   }
+}
+
+void ExpectMinidumpContextARM(uint32_t expect_seed,
+                              const MinidumpContextARM* observed,
+                              bool snapshot) {
+  MinidumpContextARM expected;
+  InitializeMinidumpContextARM(&expected, expect_seed);
+
+  EXPECT_EQ(observed->context_flags, expected.context_flags);
+
+  for (size_t index = 0; index < base::size(expected.regs); ++index) {
+    EXPECT_EQ(observed->regs[index], expected.regs[index]);
+  }
+  EXPECT_EQ(observed->fp, expected.fp);
+  EXPECT_EQ(observed->ip, expected.ip);
+  EXPECT_EQ(observed->sp, expected.sp);
+  EXPECT_EQ(observed->lr, expected.lr);
+  EXPECT_EQ(observed->pc, expected.pc);
+  EXPECT_EQ(observed->cpsr, expected.cpsr);
+
+  EXPECT_EQ(observed->fpscr, expected.fpscr);
+  for (size_t index = 0; index < base::size(expected.vfp); ++index) {
+    EXPECT_EQ(observed->vfp[index], expected.vfp[index]);
+  }
+  for (size_t index = 0; index < base::size(expected.extra); ++index) {
+    EXPECT_EQ(observed->extra[index], snapshot ? 0 : expected.extra[index]);
+  }
+}
+
+void ExpectMinidumpContextARM64(uint32_t expect_seed,
+                                const MinidumpContextARM64* observed,
+                                bool snapshot) {
+  MinidumpContextARM64 expected;
+  InitializeMinidumpContextARM64(&expected, expect_seed);
+
+  EXPECT_EQ(observed->context_flags, expected.context_flags);
+
+  for (size_t index = 0; index < base::size(expected.regs); ++index) {
+    EXPECT_EQ(observed->regs[index], expected.regs[index]);
+  }
+  EXPECT_EQ(observed->cpsr, expected.cpsr);
+
+  EXPECT_EQ(observed->fpsr, expected.fpsr);
+  EXPECT_EQ(observed->fpcr, expected.fpcr);
+  for (size_t index = 0; index < base::size(expected.fpsimd); ++index) {
+    EXPECT_EQ(observed->fpsimd[index].lo, expected.fpsimd[index].lo);
+    EXPECT_EQ(observed->fpsimd[index].hi, expected.fpsimd[index].hi);
+  }
+}
+
+void ExpectMinidumpContextMIPS(uint32_t expect_seed,
+                               const MinidumpContextMIPS* observed,
+                               bool snapshot) {
+  MinidumpContextMIPS expected;
+  InitializeMinidumpContextMIPS(&expected, expect_seed);
+
+  EXPECT_EQ(observed->context_flags, expected.context_flags);
+
+  for (size_t index = 0; index < base::size(expected.regs); ++index) {
+    EXPECT_EQ(observed->regs[index], expected.regs[index]);
+  }
+
+  EXPECT_EQ(observed->mdlo, expected.mdlo);
+  EXPECT_EQ(observed->mdhi, expected.mdhi);
+  EXPECT_EQ(observed->epc, expected.epc);
+  EXPECT_EQ(observed->badvaddr, expected.badvaddr);
+  EXPECT_EQ(observed->status, expected.status);
+  EXPECT_EQ(observed->cause, expected.cause);
+
+  for (size_t index = 0; index < base::size(expected.fpregs.fregs); ++index) {
+    EXPECT_EQ(observed->fpregs.fregs[index]._fp_fregs,
+              expected.fpregs.fregs[index]._fp_fregs);
+  }
+  EXPECT_EQ(observed->fpcsr, expected.fpcsr);
+  EXPECT_EQ(observed->fir, expected.fir);
+
+  for (size_t index = 0; index < 3; ++index) {
+    EXPECT_EQ(observed->hi[index], expected.hi[index]);
+    EXPECT_EQ(observed->lo[index], expected.lo[index]);
+  }
+  EXPECT_EQ(observed->dsp_control, expected.dsp_control);
+}
+
+void ExpectMinidumpContextMIPS64(uint32_t expect_seed,
+                                 const MinidumpContextMIPS64* observed,
+                                 bool snapshot) {
+  MinidumpContextMIPS64 expected;
+  InitializeMinidumpContextMIPS64(&expected, expect_seed);
+
+  EXPECT_EQ(observed->context_flags, expected.context_flags);
+
+  for (size_t index = 0; index < base::size(expected.regs); ++index) {
+    EXPECT_EQ(observed->regs[index], expected.regs[index]);
+  }
+
+  EXPECT_EQ(observed->mdlo, expected.mdlo);
+  EXPECT_EQ(observed->mdhi, expected.mdhi);
+  EXPECT_EQ(observed->epc, expected.epc);
+  EXPECT_EQ(observed->badvaddr, expected.badvaddr);
+  EXPECT_EQ(observed->status, expected.status);
+  EXPECT_EQ(observed->cause, expected.cause);
+
+  for (size_t index = 0; index < base::size(expected.fpregs.dregs); ++index) {
+    EXPECT_EQ(observed->fpregs.dregs[index], expected.fpregs.dregs[index]);
+  }
+  EXPECT_EQ(observed->fpcsr, expected.fpcsr);
+  EXPECT_EQ(observed->fir, expected.fir);
+
+  for (size_t index = 0; index < 3; ++index) {
+    EXPECT_EQ(observed->hi[index], expected.hi[index]);
+    EXPECT_EQ(observed->lo[index], expected.lo[index]);
+  }
+  EXPECT_EQ(observed->dsp_control, expected.dsp_control);
 }
 
 }  // namespace test

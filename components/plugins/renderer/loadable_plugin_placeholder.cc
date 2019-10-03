@@ -16,17 +16,10 @@
 #include "base/values.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "content/public/renderer/v8_value_converter.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/web/WebDOMMessageEvent.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
-#include "third_party/WebKit/public/web/WebSerializedScriptValue.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -70,8 +63,7 @@ LoadablePluginPlaceholder::LoadablePluginPlaceholder(
       power_saver_enabled_(false),
       premade_throttler_(nullptr),
       allow_loading_(false),
-      finished_loading_(false),
-      weak_factory_(this) {}
+      finished_loading_(false) {}
 
 LoadablePluginPlaceholder::~LoadablePluginPlaceholder() {
 }
@@ -331,27 +323,6 @@ void LoadablePluginPlaceholder::DidFinishLoadingCallback() {
     CHECK(plugin()->Container());
     plugin()->Container()->ReportGeometry();
   }
-}
-
-void LoadablePluginPlaceholder::DidFinishIconRepositionForTestingCallback() {
-  if (!plugin())
-    return;
-
-  // Set an attribute and post an event, so browser tests can wait for the
-  // placeholder to be ready to receive simulated user input.
-  blink::WebElement element = plugin()->Container()->GetElement();
-  element.SetAttribute("placeholderReady", "true");
-
-  base::Value value("placeholderReady");
-  blink::WebSerializedScriptValue message_data =
-      blink::WebSerializedScriptValue::Serialize(
-          blink::MainThreadIsolate(),
-          content::V8ValueConverter::Create()->ToV8Value(
-              &value,
-              element.GetDocument().GetFrame()->MainWorldScriptContext()));
-  blink::WebDOMMessageEvent msg_event(message_data);
-
-  plugin()->Container()->EnqueueMessageEvent(msg_event);
 }
 
 void LoadablePluginPlaceholder::SetPluginInfo(

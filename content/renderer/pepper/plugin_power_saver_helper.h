@@ -31,17 +31,19 @@ class CONTENT_EXPORT PluginPowerSaverHelper : public RenderFrameObserver {
 
   struct PeripheralPlugin {
     PeripheralPlugin(const url::Origin& content_origin,
-                     const base::Closure& unthrottle_callback);
-    PeripheralPlugin(const PeripheralPlugin& other);
+                     base::OnceClosure unthrottle_callback);
     ~PeripheralPlugin();
 
+    PeripheralPlugin(PeripheralPlugin&&);
+    PeripheralPlugin& operator=(PeripheralPlugin&&);
+
     url::Origin content_origin;
-    base::Closure unthrottle_callback;
+    base::OnceClosure unthrottle_callback;
   };
 
   // See RenderFrame for documentation.
   void RegisterPeripheralPlugin(const url::Origin& content_origin,
-                                const base::Closure& unthrottle_callback);
+                                base::OnceClosure unthrottle_callback);
   RenderFrame::PeripheralContentStatus GetPeripheralContentStatus(
       const url::Origin& main_frame_origin,
       const url::Origin& content_origin,
@@ -50,8 +52,8 @@ class CONTENT_EXPORT PluginPowerSaverHelper : public RenderFrameObserver {
   void WhitelistContentOrigin(const url::Origin& content_origin);
 
   // RenderFrameObserver implementation.
-  void DidCommitProvisionalLoad(bool is_new_navigation,
-                                bool is_same_document_navigation) override;
+  void DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                ui::PageTransition transition) override;
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnDestruct() override;
 

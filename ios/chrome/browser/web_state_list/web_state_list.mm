@@ -7,13 +7,13 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/auto_reset.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_delegate.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_order_controller.h"
 #import "ios/chrome/browser/web_state_list/web_state_opener.h"
-#import "ios/web/public/navigation_manager.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -97,16 +97,21 @@ bool WebStateList::WebStateWrapper::WasOpenedBy(const web::WebState* opener,
 
 WebStateList::WebStateList(WebStateListDelegate* delegate)
     : delegate_(delegate),
-      order_controller_(base::MakeUnique<WebStateListOrderController>(this)) {
+      order_controller_(std::make_unique<WebStateListOrderController>(this)) {
   DCHECK(delegate_);
 }
 
 WebStateList::~WebStateList() {
+  CHECK(!locked_);
   CloseAllWebStates(CLOSE_NO_FLAGS);
 }
 
 bool WebStateList::ContainsIndex(int index) const {
   return 0 <= index && index < count();
+}
+
+bool WebStateList::IsMutating() const {
+  return locked_;
 }
 
 web::WebState* WebStateList::GetActiveWebState() const {
@@ -123,6 +128,24 @@ web::WebState* WebStateList::GetWebStateAt(int index) const {
 int WebStateList::GetIndexOfWebState(const web::WebState* web_state) const {
   for (int index = 0; index < count(); ++index) {
     if (web_state_wrappers_[index]->web_state() == web_state)
+      return index;
+  }
+  return kInvalidIndex;
+}
+
+int WebStateList::GetIndexOfWebStateWithURL(const GURL& url) const {
+  for (int index = 0; index < count(); ++index) {
+    if (web_state_wrappers_[index]->web_state()->GetVisibleURL() == url)
+      return index;
+  }
+  return kInvalidIndex;
+}
+
+int WebStateList::GetIndexOfInactiveWebStateWithURL(const GURL& url) const {
+  for (int index = 0; index < count(); ++index) {
+    if (index == active_index_)
+      continue;
+    if (web_state_wrappers_[index]->web_state()->GetVisibleURL() == url)
       return index;
   }
   return kInvalidIndex;
@@ -155,32 +178,40 @@ int WebStateList::InsertWebState(int index,
                                  std::unique_ptr<web::WebState> web_state,
                                  int insertion_flags,
                                  WebStateOpener opener) {
-  if (IsInsertionFlagSet(insertion_flags, INSERT_INHERIT_OPENER))
-    opener = WebStateOpener(GetActiveWebState());
-
-  if (!IsInsertionFlagSet(insertion_flags, INSERT_FORCE_INDEX)) {
-    index = order_controller_->DetermineInsertionIndex(opener.opener);
-    if (index < 0 || count() < index)
-      index = count();
-  }
-
-  DCHECK(ContainsIndex(index) || index == count());
-  delegate_->WillAddWebState(web_state.get());
-
-  web::WebState* web_state_ptr = web_state.get();
-  web_state_wrappers_.insert(
-      web_state_wrappers_.begin() + index,
-      base::MakeUnique<WebStateWrapper>(std::move(web_state)));
-
-  if (active_index_ >= index)
-    ++active_index_;
-
   const bool activating = IsInsertionFlagSet(insertion_flags, INSERT_ACTIVATE);
-  for (auto& observer : observers_)
-    observer.WebStateInsertedAt(this, web_state_ptr, index, activating);
 
-  if (opener.opener)
-    SetOpenerOfWebStateAt(index, opener);
+  {
+    // Inner block for the mutation lock, because ActivateWebState might need to
+    // be called (if |activating| is true), and that method has its own mutation
+    // lock.
+    CHECK(!locked_);
+    base::AutoReset<bool> scoped_lock(&locked_, /* locked */ true);
+    if (IsInsertionFlagSet(insertion_flags, INSERT_INHERIT_OPENER))
+      opener = WebStateOpener(GetActiveWebState());
+
+    if (!IsInsertionFlagSet(insertion_flags, INSERT_FORCE_INDEX)) {
+      index = order_controller_->DetermineInsertionIndex(opener.opener);
+      if (index < 0 || count() < index)
+        index = count();
+    }
+
+    DCHECK(ContainsIndex(index) || index == count());
+    delegate_->WillAddWebState(web_state.get());
+
+    web::WebState* web_state_ptr = web_state.get();
+    web_state_wrappers_.insert(
+        web_state_wrappers_.begin() + index,
+        std::make_unique<WebStateWrapper>(std::move(web_state)));
+
+    if (active_index_ >= index)
+      ++active_index_;
+
+    for (auto& observer : observers_)
+      observer.WebStateInsertedAt(this, web_state_ptr, index, activating);
+
+    if (opener.opener)
+      SetOpenerOfWebStateAt(index, opener);
+  }
 
   if (activating)
     ActivateWebStateAt(index);
@@ -189,6 +220,8 @@ int WebStateList::InsertWebState(int index,
 }
 
 void WebStateList::MoveWebStateAt(int from_index, int to_index) {
+  CHECK(!locked_);
+  base::AutoReset<bool> scoped_lock(&locked_, /* locked */ true);
   DCHECK(ContainsIndex(from_index));
   DCHECK(ContainsIndex(to_index));
   if (from_index == to_index)
@@ -227,15 +260,23 @@ std::unique_ptr<web::WebState> WebStateList::ReplaceWebStateAt(
   std::unique_ptr<web::WebState> old_web_state =
       web_state_wrappers_[index]->ReplaceWebState(std::move(web_state));
 
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.WebStateReplacedAt(this, old_web_state.get(), web_state_ptr,
                                 index);
+  }
+
+  // When the active WebState is replaced, notify the observers as nearly
+  // all of them needs to treat a replacement as the selection changed.
+  NotifyIfActiveWebStateChanged(old_web_state.get(),
+                                WebStateListObserver::CHANGE_REASON_REPLACED);
 
   delegate_->WebStateDetached(old_web_state.get());
   return old_web_state;
 }
 
 std::unique_ptr<web::WebState> WebStateList::DetachWebStateAt(int index) {
+  CHECK(!locked_);
+  base::AutoReset<bool> scoped_lock(&locked_, /* locked */ true);
   DCHECK(ContainsIndex(index));
   int new_active_index = order_controller_->DetermineNewActiveIndex(index);
 
@@ -252,24 +293,36 @@ std::unique_ptr<web::WebState> WebStateList::DetachWebStateAt(int index) {
   // as the active one but only send the WebStateActivatedAt notification after
   // the WebStateDetachedAt one.
   bool active_web_state_was_closed = (index == active_index_);
-  if (active_index_ > index)
+  if (active_index_ > index) {
     --active_index_;
-  else if (active_index_ == index)
-    active_index_ = new_active_index;
+  } else if (active_index_ == index) {
+    if (new_active_index != kInvalidIndex && !ContainsIndex(new_active_index)) {
+      // TODO(crbug.com/877792): This is a speculative fix for 877792 and short
+      // term fix for 960628.
+      active_index_ = count() - 1;
+    } else {
+      active_index_ = new_active_index;
+    }
+  }
 
   for (auto& observer : observers_)
     observer.WebStateDetachedAt(this, web_state, index);
 
-  if (active_web_state_was_closed)
-    NotifyIfActiveWebStateChanged(web_state, false);
+  if (active_web_state_was_closed) {
+    NotifyIfActiveWebStateChanged(web_state,
+                                  WebStateListObserver::CHANGE_REASON_NONE);
+  }
 
   delegate_->WebStateDetached(web_state);
   return detached_web_state;
 }
 
 void WebStateList::CloseWebStateAt(int index, int close_flags) {
+  // Lock after detaching, since that has its own lock.
   auto detached_web_state = DetachWebStateAt(index);
 
+  CHECK(!locked_);
+  base::AutoReset<bool> scoped_lock(&locked_, /* locked */ true);
   const bool user_action = IsClosingFlagSet(close_flags, CLOSE_USER_ACTION);
   for (auto& observer : observers_) {
     observer.WillCloseWebStateAt(this, detached_web_state.get(), index,
@@ -288,7 +341,8 @@ void WebStateList::ActivateWebStateAt(int index) {
   DCHECK(ContainsIndex(index));
   web::WebState* old_web_state = GetActiveWebState();
   active_index_ = index;
-  NotifyIfActiveWebStateChanged(old_web_state, true);
+  NotifyIfActiveWebStateChanged(
+      old_web_state, WebStateListObserver::CHANGE_REASON_USER_ACTION);
 }
 
 void WebStateList::AddObserver(WebStateListObserver* observer) {
@@ -308,14 +362,14 @@ void WebStateList::ClearOpenersReferencing(int index) {
 }
 
 void WebStateList::NotifyIfActiveWebStateChanged(web::WebState* old_web_state,
-                                                 bool user_action) {
+                                                 int reason) {
   web::WebState* new_web_state = GetActiveWebState();
   if (old_web_state == new_web_state)
     return;
 
   for (auto& observer : observers_) {
     observer.WebStateActivatedAt(this, old_web_state, new_web_state,
-                                 active_index_, user_action);
+                                 active_index_, reason);
   }
 }
 

@@ -6,7 +6,7 @@
 
 #include "components/security_state/core/security_state.h"
 #include "ios/chrome/browser/ssl/ios_security_state_tab_helper.h"
-#import "ios/web/public/origin_util.h"
+#import "ios/web/common/origin_util.h"
 #include "url/origin.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -29,9 +29,7 @@ security_state::SecurityLevel GetSecurityLevelForWebState(
   if (!client) {
     return security_state::NONE;
   }
-  security_state::SecurityInfo result;
-  client->GetSecurityInfo(&result);
-  return result.security_level;
+  return client->GetSecurityLevel();
 }
 
 }  // namespace
@@ -138,14 +136,20 @@ bool ParseCredentialType(const base::DictionaryValue& json,
 bool ParseCredentialDictionary(const base::DictionaryValue& json,
                                CredentialInfo* credential,
                                std::string* reason) {
-  if (!json.GetString(kCredentialIdKey, &credential->id)) {
+  base::string16 id;
+  if (!json.GetString(kCredentialIdKey, &id)) {
     // |id| is required.
     if (reason) {
       *reason = "no valid 'id' field";
     }
     return false;
   }
-  json.GetString(kCredentialNameKey, &credential->name);
+  credential->id = id;
+
+  base::string16 name;
+  json.GetString(kCredentialNameKey, &name);
+  credential->name = name;
+
   std::string iconUrl;
   if (json.GetString(kCredentialIconKey, &iconUrl) && !iconUrl.empty()) {
     credential->icon = GURL(iconUrl);
@@ -166,15 +170,16 @@ bool ParseCredentialDictionary(const base::DictionaryValue& json,
     return false;
   }
   if (credential->type == CredentialType::CREDENTIAL_TYPE_PASSWORD) {
-    if (!json.GetString(kPasswordCredentialPasswordKey,
-                        &credential->password) ||
-        credential->password.empty()) {
+    base::string16 password;
+    if (!json.GetString(kPasswordCredentialPasswordKey, &password) ||
+        password.empty()) {
       // |password| field is required for PasswordCredential.
       if (reason) {
         *reason = "no valid 'password' field";
       }
       return false;
     }
+    credential->password = password;
   }
   if (credential->type == CredentialType::CREDENTIAL_TYPE_FEDERATED) {
     std::string federation;

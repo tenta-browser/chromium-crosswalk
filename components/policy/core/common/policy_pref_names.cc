@@ -11,6 +11,14 @@ namespace policy_prefs {
 // by UMA_HISTOGRAM_ENUMERATION.
 const char kLastPolicyStatisticsUpdate[] = "policy.last_statistics_update";
 
+// The enrollment token of machine level user cloud policy.
+const char kMachineLevelUserCloudPolicyEnrollmentToken[] =
+    "policy.machine_level_user_cloud_policy_enrollment_token";
+
+// Enum specifying if/how the SafeSites content filter should be applied.
+// See the SafeSitesFilterBehavior policy for details.
+const char kSafeSitesFilterBehavior[] = "policy.safe_sites_filter_behavior";
+
 // Blocks access to the listed host patterns.
 const char kUrlBlacklist[] = "policy.url_blacklist";
 
@@ -21,6 +29,15 @@ const char kUrlWhitelist[] = "policy.url_whitelist";
 // milliseconds. Not all values are meaningful, so it is clamped to a sane range
 // by the cloud policy subsystem.
 const char kUserPolicyRefreshRate[] = "policy.user_refresh_rate";
+
+// Boolean indicates whether the cloud management enrollment is mandatory or
+// not.
+const char kCloudManagementEnrollmentMandatory[] =
+    "policy.cloud_management_enrollment_mandatory";
+
+// Boolean that specifies whether the cloud policy will override conflicting
+// machine policy.
+const char kCloudPolicyOverridesPlatformPolicy[] = "policy.cloud_override";
 
 }  // namespace policy_prefs
 }  // namespace policy

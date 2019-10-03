@@ -4,15 +4,17 @@
 
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_manager.h"
+#include "google_apis/gaia/gaia_auth_util.h"
 
 namespace multi_user_util {
 
-AccountId GetAccountIdFromProfile(Profile* profile) {
+AccountId GetAccountIdFromProfile(const Profile* profile) {
   // This will guarantee an nonempty AccountId be returned if a valid profile is
   // provided.
   const user_manager::User* user =
@@ -36,11 +38,14 @@ Profile* GetProfileFromAccountId(const AccountId& account_id) {
 }
 
 Profile* GetProfileFromWindow(aura::Window* window) {
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
-  // We might come here before the manager got created - or in a unit test.
-  if (!manager)
+  MultiUserWindowManagerHelper* helper =
+      MultiUserWindowManagerHelper::GetInstance();
+  // We might come here before the helper got created - or in a unit test.
+  if (!helper)
     return nullptr;
-  const AccountId account_id = manager->GetUserPresentingWindow(window);
+  const AccountId account_id =
+      MultiUserWindowManagerHelper::GetWindowManager()->GetUserPresentingWindow(
+          window);
   return account_id.is_valid() ? GetProfileFromAccountId(account_id) : nullptr;
 }
 
@@ -62,9 +67,9 @@ const AccountId GetCurrentAccountId() {
 
 // Move the window to the current user's desktop.
 void MoveWindowToCurrentDesktop(aura::Window* window) {
-  if (!MultiUserWindowManager::GetInstance()->IsWindowOnDesktopOfUser(
+  if (!MultiUserWindowManagerHelper::GetInstance()->IsWindowOnDesktopOfUser(
           window, GetCurrentAccountId())) {
-    MultiUserWindowManager::GetInstance()->ShowWindowForUser(
+    MultiUserWindowManagerHelper::GetWindowManager()->ShowWindowForUser(
         window, GetCurrentAccountId());
   }
 }

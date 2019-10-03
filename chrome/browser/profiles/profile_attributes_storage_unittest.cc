@@ -6,6 +6,7 @@
 
 #include <unordered_set>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "components/account_id/account_id.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -169,7 +171,7 @@ class ProfileAttributesStorageTest : public testing::Test {
         base::StringPrintf("testing_profile_gaia%" PRIuS, number_of_profiles),
         base::ASCIIToUTF16(base::StringPrintf("testing_profile_user%" PRIuS,
                                               number_of_profiles)),
-        number_of_profiles, std::string(""));
+        number_of_profiles, std::string(""), EmptyAccountId());
 
     EXPECT_EQ(number_of_profiles + 1, storage()->GetNumberOfProfiles());
   }
@@ -206,9 +208,8 @@ TEST_F(ProfileAttributesStorageTest, AddProfile) {
   storage()->AddProfile(GetProfilePath("new_profile_path_1"),
                         base::ASCIIToUTF16("new_profile_name_1"),
                         std::string("new_profile_gaia_1"),
-                        base::ASCIIToUTF16("new_profile_username_1"),
-                        1,
-                        std::string(""));
+                        base::ASCIIToUTF16("new_profile_username_1"), 1,
+                        std::string(""), EmptyAccountId());
 
   VerifyAndResetCallExpectations();
   EXPECT_EQ(1U, storage()->GetNumberOfProfiles());
@@ -492,30 +493,28 @@ TEST_F(ProfileAttributesStorageTest, SupervisedUsersAccessors) {
   ASSERT_FALSE(entry->IsChild());
   ASSERT_TRUE(entry->IsLegacySupervised());
 
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   EXPECT_CALL(observer(), OnProfileSupervisedUserIdChanged(path)).Times(1);
   entry->SetSupervisedUserId(supervised_users::kChildAccountSUID);
   VerifyAndResetCallExpectations();
   ASSERT_TRUE(entry->IsSupervised());
   ASSERT_TRUE(entry->IsChild());
   ASSERT_FALSE(entry->IsLegacySupervised());
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 }
 
 TEST_F(ProfileAttributesStorageTest, ReSortTriggered) {
   DisableObserver();  // No need to test observers in this test.
 
   storage()->AddProfile(GetProfilePath("alpha_path"),
-                        base::ASCIIToUTF16("alpha"),
-                        std::string("alpha_gaia"),
-                        base::ASCIIToUTF16("alpha_username"),
-                        1,
-                        std::string(""));
+                        base::ASCIIToUTF16("alpha"), std::string("alpha_gaia"),
+                        base::ASCIIToUTF16("alpha_username"), 1,
+                        std::string(""), EmptyAccountId());
 
-  storage()->AddProfile(GetProfilePath("lima_path"),
-                        base::ASCIIToUTF16("lima"),
+  storage()->AddProfile(GetProfilePath("lima_path"), base::ASCIIToUTF16("lima"),
                         std::string("lima_gaia"),
-                        base::ASCIIToUTF16("lima_username"),
-                        1,
-                        std::string(""));
+                        base::ASCIIToUTF16("lima_username"), 1, std::string(""),
+                        EmptyAccountId());
 
   ProfileAttributesEntry* entry;
   ASSERT_TRUE(storage()->GetProfileAttributesWithPath(
@@ -594,11 +593,8 @@ TEST_F(ProfileAttributesStorageTest, AccessFromElsewhere) {
 }
 
 TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
-  size_t total_icon_count = profiles::GetDefaultAvatarIconCount();
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-  size_t generic_icon_count = profiles::GetGenericAvatarIconCount();
-  ASSERT_LE(generic_icon_count, total_icon_count);
-#endif
+  size_t total_icon_count = profiles::GetDefaultAvatarIconCount() -
+                            profiles::GetModernAvatarIconStartIndex();
 
   // Run ChooseAvatarIconIndexForNewProfile |num_iterations| times before using
   // the final |icon_index| to add a profile. Multiple checks are needed because
@@ -614,14 +610,7 @@ TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
       icon_index = storage()->ChooseAvatarIconIndexForNewProfile();
       // Icon must not be used.
       ASSERT_EQ(0u, used_icon_indices.count(icon_index));
-      ASSERT_GT(total_icon_count, icon_index);
-
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-      if (i < total_icon_count - generic_icon_count)
-        ASSERT_LE(generic_icon_count, icon_index);
-      else
-        ASSERT_GT(generic_icon_count, icon_index);
-#endif
+      ASSERT_TRUE(profiles::IsModernAvatarIconIndex(icon_index));
     }
 
     used_icon_indices.insert(icon_index);
@@ -630,14 +619,15 @@ TEST_F(ProfileAttributesStorageTest, ChooseAvatarIconIndexForNewProfile) {
         GetProfilePath(base::StringPrintf("testing_profile_path%" PRIuS, i));
     EXPECT_CALL(observer(), OnProfileAdded(profile_path)).Times(1);
     storage()->AddProfile(profile_path, base::string16(), std::string(),
-                          base::string16(), icon_index, std::string());
+                          base::string16(), icon_index, std::string(),
+                          EmptyAccountId());
     VerifyAndResetCallExpectations();
   }
 
   for (int iter = 0; iter < num_iterations; ++iter) {
     // All icons are used up, expect any valid icon.
-    ASSERT_GT(total_icon_count,
-              storage()->ChooseAvatarIconIndexForNewProfile());
+    ASSERT_TRUE(profiles::IsModernAvatarIconIndex(
+        storage()->ChooseAvatarIconIndexForNewProfile()));
   }
 }
 
@@ -666,6 +656,8 @@ TEST_F(ProfileAttributesStorageTest, ProfileForceSigninLock) {
   ASSERT_FALSE(entry->IsSigninRequired());
 }
 
+// Avatar icons not used on Android.
+#if !defined(OS_ANDROID)
 TEST_F(ProfileAttributesStorageTest, AvatarIconIndex) {
   AddTestingProfile();
 
@@ -685,6 +677,7 @@ TEST_F(ProfileAttributesStorageTest, AvatarIconIndex) {
   VerifyAndResetCallExpectations();
   ASSERT_EQ(3U, entry->GetAvatarIconIndex());
 }
+#endif
 
 // High res avatar downloading is only supported on desktop.
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
@@ -700,7 +693,7 @@ TEST_F(ProfileAttributesStorageTest, DownloadHighResAvatarTest) {
   EXPECT_CALL(observer(), OnProfileAdded(profile_path)).Times(1);
   storage()->AddProfile(profile_path, base::ASCIIToUTF16("name_1"),
                         std::string(), base::string16(), kIconIndex,
-                        std::string());
+                        std::string(), EmptyAccountId());
   ASSERT_EQ(1U, storage()->GetNumberOfProfiles());
   VerifyAndResetCallExpectations();
 
@@ -730,7 +723,7 @@ TEST_F(ProfileAttributesStorageTest, DownloadHighResAvatarTest) {
   std::string icon_filename =
       profiles::GetDefaultAvatarIconFileNameAtIndex(kIconIndex);
   EXPECT_EQ(1U, storage()->cached_avatar_images_.size());
-  EXPECT_TRUE(storage()->cached_avatar_images_[icon_filename]->IsEmpty());
+  EXPECT_TRUE(storage()->cached_avatar_images_[icon_filename].IsEmpty());
 
   // Simulate downloading a high-res avatar.
   ProfileAvatarDownloader avatar_downloader(
@@ -750,13 +743,13 @@ TEST_F(ProfileAttributesStorageTest, DownloadHighResAvatarTest) {
 
   // The image should have been cached.
   EXPECT_EQ(1U, storage()->cached_avatar_images_.size());
-  EXPECT_FALSE(storage()->cached_avatar_images_[icon_filename]->IsEmpty());
-  EXPECT_EQ(storage()->cached_avatar_images_[icon_filename].get(),
+  EXPECT_FALSE(storage()->cached_avatar_images_[icon_filename].IsEmpty());
+  EXPECT_EQ(&storage()->cached_avatar_images_[icon_filename],
             entry->GetHighResAvatar());
 
   // Since we are not using GAIA image, |GetAvatarIcon| should return the same
   // image as |GetHighResAvatar| in desktop.
-  EXPECT_EQ(storage()->cached_avatar_images_[icon_filename].get(),
+  EXPECT_EQ(&storage()->cached_avatar_images_[icon_filename],
             &entry->GetAvatarIcon());
 
   // Finish the async calls that save the image to the disk.
@@ -781,7 +774,7 @@ TEST_F(ProfileAttributesStorageTest, NothingToDownloadHighResAvatarTest) {
   EXPECT_CALL(observer(), OnProfileAdded(profile_path)).Times(1);
   storage()->AddProfile(profile_path, base::ASCIIToUTF16("name_1"),
                         std::string(), base::string16(), kIconIndex,
-                        std::string());
+                        std::string(), EmptyAccountId());
   EXPECT_EQ(1U, storage()->GetNumberOfProfiles());
   content::RunAllTasksUntilIdle();
 
@@ -797,8 +790,11 @@ TEST_F(ProfileAttributesStorageTest, LoadAvatarFromDiskTest) {
       profiles::GetPathOfHighResAvatarAtIndex(kIconIndex);
 
   // Create the avatar on the disk, which is a valid 1x1 transparent png.
+  base::FilePath dir = icon_path.DirName();
+  ASSERT_FALSE(base::DirectoryExists(dir));
+  ASSERT_TRUE(base::CreateDirectory(dir));
   ASSERT_FALSE(base::PathExists(icon_path));
-  const char* bitmap =
+  const char bitmap[] =
       "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A\x00\x00\x00\x0D\x49\x48\x44\x52"
       "\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x00\x37\x6E\xF9"
       "\x24\x00\x00\x00\x0A\x49\x44\x41\x54\x08\x1D\x63\x60\x00\x00\x00"
@@ -813,7 +809,7 @@ TEST_F(ProfileAttributesStorageTest, LoadAvatarFromDiskTest) {
   EXPECT_CALL(observer(), OnProfileAdded(profile_path)).Times(1);
   storage()->AddProfile(profile_path, base::ASCIIToUTF16("name_1"),
                         std::string(), base::string16(), kIconIndex,
-                        std::string());
+                        std::string(), EmptyAccountId());
   EXPECT_EQ(1U, storage()->GetNumberOfProfiles());
   VerifyAndResetCallExpectations();
 

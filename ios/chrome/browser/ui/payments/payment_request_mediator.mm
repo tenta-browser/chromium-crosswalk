@@ -9,8 +9,8 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/currency_formatter.h"
@@ -30,7 +30,7 @@
 #import "ios/chrome/browser/ui/payments/cells/payment_method_item.h"
 #import "ios/chrome/browser/ui/payments/cells/payments_text_item.h"
 #import "ios/chrome/browser/ui/payments/cells/price_item.h"
-#include "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -106,7 +106,7 @@ using ::payment_request_util::GetShippingSectionTitle;
   item.price = base::SysUTF16ToNSString(l10n_util::GetStringFUTF16(
       IDS_PAYMENT_REQUEST_ORDER_SUMMARY_SHEET_TOTAL_FORMAT,
       base::UTF8ToUTF16(currencyFormatter->formatted_currency_code()),
-      currencyFormatter->Format(total.amount.value)));
+      currencyFormatter->Format(total.amount->value)));
   item.notification = self.totalValueChanged
                           ? l10n_util::GetNSString(IDS_PAYMENTS_UPDATED_LABEL)
                           : nil;
@@ -134,6 +134,7 @@ using ::payment_request_util::GetShippingSectionTitle;
     item.address = GetShippingAddressLabelFromAutofillProfile(*profile);
     item.phoneNumber = GetPhoneNumberLabelFromAutofillProfile(*profile);
     item.accessoryType = MDCCollectionViewCellAccessoryDisclosureIndicator;
+    item.useScaledFont = YES;
     return item;
   }
 
@@ -163,7 +164,7 @@ using ::payment_request_util::GetShippingSectionTitle;
     payments::CurrencyFormatter* currencyFormatter =
         self.paymentRequest->GetOrCreateCurrencyFormatter();
     item.detailText = base::SysUTF16ToNSString(
-        currencyFormatter->Format(option->amount.value));
+        currencyFormatter->Format(option->amount->value));
     item.accessoryType = MDCCollectionViewCellAccessoryDisclosureIndicator;
     return item;
   }
@@ -255,6 +256,7 @@ using ::payment_request_util::GetShippingSectionTitle;
     if (self.paymentRequest->request_payer_email())
       item.email = GetEmailLabelFromAutofillProfile(*profile);
     item.accessoryType = MDCCollectionViewCellAccessoryDisclosureIndicator;
+    item.useScaledFont = YES;
     return item;
   }
 
@@ -273,6 +275,7 @@ using ::payment_request_util::GetShippingSectionTitle;
 
 - (CollectionViewFooterItem*)footerItem {
   CollectionViewFooterItem* item = [[CollectionViewFooterItem alloc] init];
+  item.useScaledFont = YES;
 
   // If no transaction has been completed so far, choose which string to display
   // as a function of the profile's signed in state. Otherwise, always show the

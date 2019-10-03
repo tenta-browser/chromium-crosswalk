@@ -12,8 +12,11 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget_observer.h"
 
-class NewTabPromoBubbleView;
-class TabStripImpl;
+class FeaturePromoBubbleView;
+
+namespace views {
+class InkDropContainerView;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // NewTabButton
@@ -26,18 +29,18 @@ class NewTabButton : public views::ImageButton,
                      public views::MaskedTargeterDelegate,
                      public views::WidgetObserver {
  public:
-  NewTabButton(TabStripImpl* tab_strip, views::ButtonListener* listener);
+  static constexpr char kClassName[] = "NewTabButton";
+
+  static const gfx::Size kButtonSize;
+
+  NewTabButton(TabStrip* tab_strip, views::ButtonListener* listener);
   ~NewTabButton() override;
 
-  // Set the background offset used to match the background image to the frame
+  // Set the background X offset used to match the background image to the frame
   // image.
-  void set_background_offset(const gfx::Point& offset) {
+  void set_background_offset(int offset) {
     background_offset_ = offset;
   }
-
-  // Returns the offset from the top of the tabstrip at which the new tab
-  // button's visible region begins.
-  static int GetTopOffset();
 
   // Retrieves the last active BrowserView instance to display the NewTabPromo.
   static void ShowPromoForLastActiveBrowser();
@@ -53,7 +56,20 @@ class NewTabButton : public views::ImageButton,
   // when it exists.
   void CloseBubble();
 
-  NewTabPromoBubbleView* new_tab_promo() { return new_tab_promo_; }
+  // Called when the tab strip transitions to/from single tab mode, the frame
+  // state changes or the accent color changes.  Updates the glyph colors for
+  // the best contrast on the background.
+  void FrameColorsChanged();
+
+  void AnimateInkDropToStateForTesting(views::InkDropState state);
+
+  FeaturePromoBubbleView* new_tab_promo() { return new_tab_promo_; }
+
+  // views::View:
+  const char* GetClassName() const override;
+  void Layout() override;
+  void AddLayerBeneathView(ui::Layer* new_layer) override;
+  void RemoveLayerBeneathView(ui::Layer* old_layer) override;
 
  private:
 // views::ImageButton:
@@ -61,53 +77,55 @@ class NewTabButton : public views::ImageButton,
   void OnMouseReleased(const ui::MouseEvent& event) override;
 #endif
   void OnGestureEvent(ui::GestureEvent* event) override;
+  void NotifyClick(const ui::Event& event) override;
   void PaintButtonContents(gfx::Canvas* canvas) override;
+  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // views::MaskedTargeterDelegate:
-  bool GetHitTestMask(gfx::Path* mask) const override;
+  bool GetHitTestMask(SkPath* mask) const override;
 
   // views::WidgetObserver:
   void OnWidgetDestroying(views::Widget* widget) override;
 
-  // Returns the gfx::Rect around the visible portion of the New Tab Button.
-  // Note: This is different than the rect around the entire New Tab Button as
-  // it extends to the top of the tabstrip for Fitts' Law interaction in a
-  // maximized window. Used for anchoring the NewTabPromo.
-  gfx::Rect GetVisibleBounds();
+  // Returns the radius to use for the button corners.
+  int GetCornerRadius() const;
 
-  // Computes a path corresponding to the button's outer border for a given
-  // |scale| and stores it in |path|.  |button_y| is used as the y-coordinate
-  // for the top of the button.  If |extend_to_top| is true, the path is
-  // extended vertically to y = 0.  The caller uses this for Fitts' Law purposes
-  // in maximized/fullscreen mode.
-  void GetBorderPath(float button_y,
-                     float scale,
-                     bool extend_to_top,
-                     SkPath* path) const;
+  // Paints the fill region of the button into |canvas|.
+  void PaintFill(gfx::Canvas* canvas) const;
 
-  // Paints the fill region of the button into |canvas|, according to the
-  // supplied values from GetImage() and the given |fill| path.
-  void PaintFill(bool pressed,
-                 float scale,
-                 const SkPath& fill,
-                 gfx::Canvas* canvas) const;
+  // Paints a properly sized plus (+) icon into the center of the button.
+  void PaintPlusIcon(gfx::Canvas* canvas) const;
+
+  SkColor GetButtonFillColor() const;
+
+  // Returns the path for the given |origin| and |scale|.  If |extend_to_top| is
+  // true, the path is extended vertically to y = 0.
+  SkPath GetBorderPath(const gfx::Point& origin,
+                       float scale,
+                       bool extend_to_top) const;
+
+  void UpdateInkDropBaseColor();
 
   // Tab strip that contains this button.
-  TabStripImpl* tab_strip_;
+  TabStrip* tab_strip_;
+
+  // Contains our ink drop layer so it can paint above our background.
+  views::InkDropContainerView* ink_drop_container_;
 
   // Promotional UI that appears next to the NewTabButton and encourages its
   // use. Owned by its NativeWidget.
-  NewTabPromoBubbleView* new_tab_promo_;
+  FeaturePromoBubbleView* new_tab_promo_ = nullptr;
 
   // The offset used to paint the background image.
-  gfx::Point background_offset_;
+  int background_offset_;
 
   // were we destroyed?
-  bool* destroyed_;
+  bool* destroyed_ = nullptr;
 
   // Observes the NewTabPromo's Widget.  Used to tell whether the promo is
   // open and get called back when it closes.
-  ScopedObserver<views::Widget, WidgetObserver> new_tab_promo_observer_;
+  ScopedObserver<views::Widget, WidgetObserver> new_tab_promo_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NewTabButton);
 };

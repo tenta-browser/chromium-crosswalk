@@ -6,15 +6,17 @@
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/views/payments/payment_request_browsertest_base.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view_ids.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/payments/core/journey_logger.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "url/gurl.h"
 
@@ -23,7 +25,10 @@ namespace payments {
 class PaymentRequestCanMakePaymentMetricsTest
     : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestCanMakePaymentMetricsTest() {}
+  PaymentRequestCanMakePaymentMetricsTest() {
+    feature_list_.InitAndEnableFeature(
+        ::features::kPaymentRequestHasEnrolledInstrument);
+  }
 
   void SetupInitialAddressAndCreditCard() {
     autofill::AutofillProfile billing_address =
@@ -34,17 +39,25 @@ class PaymentRequestCanMakePaymentMetricsTest
     AddCreditCard(card);
   }
 
-  void CallCanMakePaymentAndThenShow() {
-    // Start the Payment Request and expect CanMakePayment to be called before
-    // the Payment Request is shown.
+  void CheckPaymentSupportAndThenShow() {
+    // Start the Payment Request and expect CanMakePayment and
+    // HasEnrolledInstrument to be called before the Payment Request is shown.
     ResetEventWaiterForSequence({DialogEvent::CAN_MAKE_PAYMENT_CALLED,
                                  DialogEvent::CAN_MAKE_PAYMENT_RETURNED,
+                                 DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED,
+                                 DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED,
+                                 DialogEvent::PROCESSING_SPINNER_SHOWN,
+                                 DialogEvent::PROCESSING_SPINNER_HIDDEN,
                                  DialogEvent::DIALOG_OPENED});
     ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "queryShow();"));
     WaitForObservedEvent();
+    // Wait for all callbacks to run.
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
+  base::test::ScopedFeatureList feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestCanMakePaymentMetricsTest);
 };
 
@@ -53,11 +66,11 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Setup a credit card with an associated billing address so CanMakePayment
-  // returns true.
+  // Setup a credit card with an associated billing address so
+  // HasEnrolledInstrument returns true.
   SetupInitialAddressAndCreditCard();
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Complete the Payment Request.
   PayWithCreditCardAndWait(base::ASCIIToUTF16("123"));
@@ -84,6 +97,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -91,11 +108,11 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Setup a credit card with an associated billing address so CanMakePayment
-  // returns true.
+  // Setup a credit card with an associated billing address so
+  // HasEnrolledInstrument returns true.
   SetupInitialAddressAndCreditCard();
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that an unexpected error occurs.
   ResetEventWaiterForSequence(
@@ -128,6 +145,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -135,11 +156,11 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Setup a credit card with an associated billing address so CanMakePayment
-  // returns true.
+  // Setup a credit card with an associated billing address so
+  // HasEnrolledInstrument returns true.
   SetupInitialAddressAndCreditCard();
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user cancels the Payment Request.
   ClickOnCancel();
@@ -166,6 +187,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -177,8 +202,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   autofill::AutofillProfile billing_address = autofill::test::GetFullProfile();
   AddAutofillProfile(billing_address);
 
-  // Don't add a card on file, so CanMakePayment returns false.
-  CallCanMakePaymentAndThenShow();
+  // Don't add a card on file, so HasEnrolledInstrument returns false.
+  CheckPaymentSupportAndThenShow();
 
   // Add a test credit card.
   OpenCreditCardEditorScreen();
@@ -216,8 +241,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -225,8 +254,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Don't add a card on file, so CanMakePayment returns false.
-  CallCanMakePaymentAndThenShow();
+  // Don't add a card on file, so HasEnrolledInstrument returns false.
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that an unexpected error occurs.
   ResetEventWaiterForSequence(
@@ -257,8 +286,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -266,8 +299,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Don't add a card on file, so CanMakePayment returns false.
-  CallCanMakePaymentAndThenShow();
+  // Don't add a card on file, so HasEnrolledInstrument returns false.
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user cancels the Payment Request.
   ClickOnCancel();
@@ -292,8 +325,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -301,13 +338,16 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Setup a credit card with an associated billing address so CanMakePayment
-  // returns true.
+  // Setup a credit card with an associated billing address so
+  // HasEnrolledInstrument returns true.
   SetupInitialAddressAndCreditCard();
 
-  // Try to start the Payment Request, but only CanMakePayment should be called.
+  // Try to start the Payment Request, but only check payment support without
+  // calling show().
   ResetEventWaiterForSequence({DialogEvent::CAN_MAKE_PAYMENT_CALLED,
-                               DialogEvent::CAN_MAKE_PAYMENT_RETURNED});
+                               DialogEvent::CAN_MAKE_PAYMENT_RETURNED,
+                               DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED,
+                               DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED});
   ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "queryNoShow();"));
   WaitForObservedEvent();
 
@@ -336,6 +376,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -343,10 +387,13 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  // Don't add a card on file, so CanMakePayment returns false.
-  // Try to start the Payment Request, but only CanMakePayment should be called.
+  // Don't add a card on file, so HasEnrolledInstrument returns false.
+  // Try to start the Payment Request, but only check payment support without
+  // calling show().
   ResetEventWaiterForSequence({DialogEvent::CAN_MAKE_PAYMENT_CALLED,
-                               DialogEvent::CAN_MAKE_PAYMENT_RETURNED});
+                               DialogEvent::CAN_MAKE_PAYMENT_RETURNED,
+                               DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED,
+                               DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED});
   ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "queryNoShow();"));
   WaitForObservedEvent();
 
@@ -373,8 +420,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -386,9 +437,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   // to complete the Payment Request.
   SetupInitialAddressAndCreditCard();
 
-  // Start the Payment Request, CanMakePayment should not be called in this
-  // test.
-  ResetEventWaiter(DialogEvent::DIALOG_OPENED);
+  ResetEventWaiterForDialogOpened();
   ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "noQueryShow();"));
   WaitForObservedEvent();
 
@@ -417,6 +466,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -428,9 +481,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   // to complete the Payment Request.
   SetupInitialAddressAndCreditCard();
 
-  // Start the Payment Request, CanMakePayment should not be called in this
-  // test.
-  ResetEventWaiter(DialogEvent::DIALOG_OPENED);
+  ResetEventWaiterForDialogOpened();
   ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "noQueryShow();"));
   WaitForObservedEvent();
 
@@ -465,6 +516,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -476,9 +531,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   // to complete the Payment Request.
   SetupInitialAddressAndCreditCard();
 
-  // Start the Payment Request, CanMakePayment should not be called in this
-  // test.
-  ResetEventWaiter(DialogEvent::DIALOG_OPENED);
+  ResetEventWaiterForDialogOpened();
   ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(), "noQueryShow();"));
   WaitForObservedEvent();
 
@@ -507,6 +560,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -514,7 +571,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user navigates away from the Payment Request by opening a
   // different page on the same origin.
@@ -542,8 +599,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -551,7 +612,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user navigates away from the Payment Request by opening a
   // different page on a different origin.
@@ -581,8 +642,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -590,7 +655,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user closes the tab containing the Payment Request.
   ResetEventWaiterForSequence({DialogEvent::DIALOG_CLOSED});
@@ -617,8 +682,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
@@ -626,7 +695,7 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   NavigateTo("/payment_request_can_make_payment_metrics_test.html");
   base::HistogramTester histogram_tester;
 
-  CallCanMakePaymentAndThenShow();
+  CheckPaymentSupportAndThenShow();
 
   // Simulate that the user reloads the page containing the Payment Request.
   ResetEventWaiterForSequence({DialogEvent::DIALOG_CLOSED});
@@ -653,8 +722,12 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestCanMakePaymentMetricsTest,
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_NAME);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_PHONE);
   EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_REQUEST_PAYER_EMAIL);
-  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
-  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_TRUE);
+  EXPECT_FALSE(buckets[0].min & JourneyLogger::EVENT_CAN_MAKE_PAYMENT_FALSE);
+  EXPECT_FALSE(buckets[0].min &
+               JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_TRUE);
+  EXPECT_TRUE(buckets[0].min &
+              JourneyLogger::EVENT_HAS_ENROLLED_INSTRUMENT_FALSE);
 }
 
 }  // namespace payments

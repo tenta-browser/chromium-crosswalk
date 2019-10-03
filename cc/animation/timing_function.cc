@@ -12,9 +12,9 @@
 
 namespace cc {
 
-TimingFunction::TimingFunction() {}
+TimingFunction::TimingFunction() = default;
 
-TimingFunction::~TimingFunction() {}
+TimingFunction::~TimingFunction() = default;
 
 std::unique_ptr<CubicBezierTimingFunction>
 CubicBezierTimingFunction::CreatePreset(EaseType ease_type) {
@@ -51,23 +51,18 @@ CubicBezierTimingFunction::CubicBezierTimingFunction(EaseType ease_type,
                                                      double y2)
     : bezier_(x1, y1, x2, y2), ease_type_(ease_type) {}
 
-CubicBezierTimingFunction::~CubicBezierTimingFunction() {}
+CubicBezierTimingFunction::~CubicBezierTimingFunction() = default;
 
 TimingFunction::Type CubicBezierTimingFunction::GetType() const {
   return Type::CUBIC_BEZIER;
 }
 
-float CubicBezierTimingFunction::GetValue(double x) const {
-  return static_cast<float>(bezier_.Solve(x));
+double CubicBezierTimingFunction::GetValue(double x) const {
+  return bezier_.Solve(x);
 }
 
-float CubicBezierTimingFunction::Velocity(double x) const {
-  return static_cast<float>(bezier_.Slope(x));
-}
-
-void CubicBezierTimingFunction::Range(float* min, float* max) const {
-  *min = static_cast<float>(bezier_.range_min());
-  *max = static_cast<float>(bezier_.range_max());
+double CubicBezierTimingFunction::Velocity(double x) const {
+  return bezier_.Slope(x);
 }
 
 std::unique_ptr<TimingFunction> CubicBezierTimingFunction::Clone() const {
@@ -83,89 +78,104 @@ std::unique_ptr<StepsTimingFunction> StepsTimingFunction::Create(
 StepsTimingFunction::StepsTimingFunction(int steps, StepPosition step_position)
     : steps_(steps), step_position_(step_position) {}
 
-StepsTimingFunction::~StepsTimingFunction() {
-}
+StepsTimingFunction::~StepsTimingFunction() = default;
 
 TimingFunction::Type StepsTimingFunction::GetType() const {
   return Type::STEPS;
 }
 
-float StepsTimingFunction::GetValue(double t) const {
-  return static_cast<float>(GetPreciseValue(t));
+double StepsTimingFunction::GetValue(double t) const {
+  return GetPreciseValue(t, TimingFunction::LimitDirection::RIGHT);
 }
 
 std::unique_ptr<TimingFunction> StepsTimingFunction::Clone() const {
   return base::WrapUnique(new StepsTimingFunction(*this));
 }
 
-void StepsTimingFunction::Range(float* min, float* max) const {
-  *min = 0.0f;
-  *max = 1.0f;
+double StepsTimingFunction::Velocity(double x) const {
+  return 0;
 }
 
-float StepsTimingFunction::Velocity(double x) const {
-  return 0.0f;
-}
-
-double StepsTimingFunction::GetPreciseValue(double t) const {
+double StepsTimingFunction::GetPreciseValue(double t,
+                                            LimitDirection direction) const {
   const double steps = static_cast<double>(steps_);
   double current_step = std::floor((steps * t) + GetStepsStartOffset());
+  // Adjust step if using a left limit at a discontinuous step boundary.
+  if (direction == LimitDirection::LEFT &&
+      steps * t - std::floor(steps * t) == 0) {
+    current_step -= 1;
+  }
+  // Jumps may differ from steps based on the number of end-point
+  // discontinuities, which may be 0, 1 or 2.
+  int jumps = NumberOfJumps();
   if (t >= 0 && current_step < 0)
     current_step = 0;
-  if (t <= 1 && current_step > steps)
-    current_step = steps;
-  return current_step / steps;
+  if (t <= 1 && current_step > jumps)
+    current_step = jumps;
+  return current_step / jumps;
+}
+
+int StepsTimingFunction::NumberOfJumps() const {
+  switch (step_position_) {
+    case StepPosition::END:
+    case StepPosition::START:
+    case StepPosition::JUMP_END:
+    case StepPosition::JUMP_START:
+      return steps_;
+
+    case StepPosition::JUMP_BOTH:
+      return steps_ + 1;
+
+    case StepPosition::JUMP_NONE:
+      DCHECK_GT(steps_, 1);
+      return steps_ - 1;
+
+    default:
+      NOTREACHED();
+      return steps_;
+  }
 }
 
 float StepsTimingFunction::GetStepsStartOffset() const {
   switch (step_position_) {
+    case StepPosition::JUMP_BOTH:
+    case StepPosition::JUMP_START:
     case StepPosition::START:
       return 1;
-    case StepPosition::MIDDLE:
-      return 0.5;
+
+    case StepPosition::JUMP_END:
+    case StepPosition::JUMP_NONE:
     case StepPosition::END:
       return 0;
+
     default:
       NOTREACHED();
       return 1;
   }
 }
 
-std::unique_ptr<FramesTimingFunction> FramesTimingFunction::Create(int frames) {
-  return base::WrapUnique(new FramesTimingFunction(frames));
+std::unique_ptr<LinearTimingFunction> LinearTimingFunction::Create() {
+  return base::WrapUnique(new LinearTimingFunction());
 }
 
-FramesTimingFunction::FramesTimingFunction(int frames) : frames_(frames) {}
+LinearTimingFunction::LinearTimingFunction() = default;
 
-FramesTimingFunction::~FramesTimingFunction() {}
+LinearTimingFunction::~LinearTimingFunction() = default;
 
-TimingFunction::Type FramesTimingFunction::GetType() const {
-  return Type::FRAMES;
+TimingFunction::Type LinearTimingFunction::GetType() const {
+  return Type::LINEAR;
 }
 
-float FramesTimingFunction::GetValue(double t) const {
-  return static_cast<float>(GetPreciseValue(t));
+std::unique_ptr<TimingFunction> LinearTimingFunction::Clone() const {
+  return base::WrapUnique(new LinearTimingFunction(*this));
 }
 
-std::unique_ptr<TimingFunction> FramesTimingFunction::Clone() const {
-  return base::WrapUnique(new FramesTimingFunction(*this));
+double LinearTimingFunction::Velocity(double x) const {
+  return 0;
 }
 
-void FramesTimingFunction::Range(float* min, float* max) const {
-  *min = 0.0f;
-  *max = 1.0f;
-}
-
-float FramesTimingFunction::Velocity(double x) const {
-  return 0.0f;
-}
-
-double FramesTimingFunction::GetPreciseValue(double t) const {
-  const double frames = static_cast<double>(frames_);
-  double output_progress = std::floor(frames * t) / (frames - 1);
-  if (t <= 1 && output_progress > 1)
-    output_progress = 1;
-  return output_progress;
+double LinearTimingFunction::GetValue(double t) const {
+  return t;
 }
 
 }  // namespace cc

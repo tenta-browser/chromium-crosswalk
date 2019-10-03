@@ -4,14 +4,15 @@
 
 #include "chrome/browser/ui/ash/launcher/multi_profile_app_window_launcher_controller.h"
 
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/window_properties.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "components/account_id/account_id.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/native_app_window.h"
 #include "ui/aura/window.h"
@@ -44,13 +45,8 @@ void MultiProfileAppWindowLauncherController::ActiveUserChanged(
     Profile* profile =
         Profile::FromBrowserContext(app_window->browser_context());
     if (!multi_user_util::IsProfileFromActiveUser(profile)) {
-      if (IsRegisteredApp(app_window->GetNativeWindow())) {
+      if (IsRegisteredApp(app_window->GetNativeWindow()))
         UnregisterApp(app_window->GetNativeWindow());
-      } else if (app_window->window_type_is_panel()) {
-        // Panels are not registered; hide by clearing the shelf item type.
-        app_window->GetNativeWindow()->SetProperty<int>(ash::kShelfItemTypeKey,
-                                                        ash::TYPE_UNDEFINED);
-      }
     }
   }
   for (extensions::AppWindow* app_window : app_window_list_) {
@@ -60,11 +56,6 @@ void MultiProfileAppWindowLauncherController::ActiveUserChanged(
         !IsRegisteredApp(app_window->GetNativeWindow()) &&
         (app_window->GetBaseWindow()->IsMinimized() ||
          app_window->GetNativeWindow()->IsVisible())) {
-      if (app_window->window_type_is_panel()) {
-        // Panels are not registered; show by restoring the shelf item type.
-        app_window->GetNativeWindow()->SetProperty<int>(ash::kShelfItemTypeKey,
-                                                        ash::TYPE_APP_PANEL);
-      }
       RegisterApp(app_window);
     }
   }
@@ -88,7 +79,7 @@ void MultiProfileAppWindowLauncherController::OnAppWindowAdded(
   // app to teleport to the current user's desktop, teleport this window now.
   if (!multi_user_util::IsProfileFromActiveUser(profile) &&
       UserHasAppOnActiveDesktop(app_window)) {
-    MultiUserWindowManager::GetInstance()->ShowWindowForUser(
+    MultiUserWindowManagerHelper::GetWindowManager()->ShowWindowForUser(
         app_window->GetNativeWindow(), multi_user_util::GetCurrentAccountId());
   }
 
@@ -109,16 +100,6 @@ void MultiProfileAppWindowLauncherController::OnAppWindowShown(
       !IsRegisteredApp(app_window->GetNativeWindow())) {
     RegisterApp(app_window);
     return;
-  }
-
-  // The panel layout manager only manages windows which are anchored.
-  // Since this window did never had an anchor, it would stay hidden. We
-  // therefore make it visible now.
-  if (UserHasAppOnActiveDesktop(app_window) &&
-      app_window->GetNativeWindow()->type() ==
-          aura::client::WINDOW_TYPE_PANEL &&
-      !app_window->GetNativeWindow()->layer()->GetTargetOpacity()) {
-    app_window->GetNativeWindow()->layer()->SetOpacity(1.0f);
   }
 }
 
@@ -150,11 +131,12 @@ bool MultiProfileAppWindowLauncherController::UserHasAppOnActiveDesktop(
   content::BrowserContext* app_context = app_window->browser_context();
   DCHECK(!app_context->IsOffTheRecord());
   const AccountId current_account_id = multi_user_util::GetCurrentAccountId();
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
+  MultiUserWindowManagerHelper* helper =
+      MultiUserWindowManagerHelper::GetInstance();
   for (extensions::AppWindow* other_window : app_window_list_) {
     DCHECK(!other_window->browser_context()->IsOffTheRecord());
-    if (manager->IsWindowOnDesktopOfUser(other_window->GetNativeWindow(),
-                                         current_account_id) &&
+    if (helper->IsWindowOnDesktopOfUser(other_window->GetNativeWindow(),
+                                        current_account_id) &&
         app_id == other_window->extension_id() &&
         app_context == other_window->browser_context()) {
       return true;

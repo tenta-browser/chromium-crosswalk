@@ -11,6 +11,7 @@ import android.accounts.AccountManagerCallback;
 import android.accounts.AuthenticatorDescription;
 import android.accounts.AuthenticatorException;
 import android.accounts.OperationCanceledException;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -35,18 +36,15 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.annotations.MainDex;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
 
 import java.io.IOException;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Default implementation of {@link AccountManagerDelegate} which delegates all calls to the
  * Android account manager.
  */
-@MainDex
 public class SystemAccountManagerDelegate implements AccountManagerDelegate {
     private final AccountManager mAccountManager;
     private final ObserverList<AccountsChangeObserver> mObservers = new ObserverList<>();
@@ -184,17 +182,36 @@ public class SystemAccountManagerDelegate implements AccountManagerDelegate {
 
     /**
      * Records a histogram value for how long time an action has taken using
-     * {@link RecordHistogram#recordTimesHistogram(String, long, TimeUnit))} iff the browser
+     * {@link RecordHistogram#recordTimesHistogram(String, long))} if the browser
      * process has been initialized.
      *
      * @param histogramName the name of the histogram.
      * @param elapsedMs the elapsed time in milliseconds.
      */
     protected static void recordElapsedTimeHistogram(String histogramName, long elapsedMs) {
-        if (!LibraryLoader.isInitialized()) return;
-        RecordHistogram.recordTimesHistogram(histogramName, elapsedMs, TimeUnit.MILLISECONDS);
+        if (!LibraryLoader.getInstance().isInitialized()) return;
+        RecordHistogram.recordTimesHistogram(histogramName, elapsedMs);
     }
 
+    // No permission is needed on 23+ and Chrome always has MANAGE_ACCOUNTS permission on lower APIs
+    @SuppressLint("MissingPermission")
+    @Override
+    public void createAddAccountIntent(Callback<Intent> callback) {
+        AccountManagerCallback<Bundle> accountManagerCallback = accountManagerFuture -> {
+            try {
+                Bundle bundle = accountManagerFuture.getResult();
+                callback.onResult(bundle.getParcelable(AccountManager.KEY_INTENT));
+            } catch (OperationCanceledException | IOException | AuthenticatorException e) {
+                Log.e(TAG, "Error while creating an intent to add an account: ", e);
+                callback.onResult(null);
+            }
+        };
+        mAccountManager.addAccount(GoogleAuthUtil.GOOGLE_ACCOUNT_TYPE, null, null, null, null,
+                accountManagerCallback, null);
+    }
+
+    // No permission is needed on 23+ and Chrome always has MANAGE_ACCOUNTS permission on lower APIs
+    @SuppressLint("MissingPermission")
     @Override
     public void updateCredentials(
             Account account, Activity activity, final Callback<Boolean> callback) {

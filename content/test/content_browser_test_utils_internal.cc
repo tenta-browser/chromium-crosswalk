@@ -8,12 +8,15 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/containers/stack.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/compositor/surface_utils.h"
@@ -22,15 +25,20 @@
 #include "content/browser/frame_host/render_frame_host_delegate.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
 #include "content/browser/renderer_host/delegated_frame_host.h"
-#include "content/common/frame_messages.h"
+#include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/frame_visual_properties.h"
+#include "content/common/view_messages.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/resource_dispatcher_host.h"
-#include "content/public/browser/resource_throttle.h"
-#include "content/public/common/file_chooser_file_info.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_frame_navigation_observer.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_javascript_dialog_manager.h"
 #include "net/url_request/url_request.h"
@@ -46,15 +54,29 @@ void NavigateFrameToURL(FrameTreeNode* node, const GURL& url) {
   observer.Wait();
 }
 
-void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed) {
+void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed, bool success) {
   ShellJavaScriptDialogManager* manager =
       static_cast<ShellJavaScriptDialogManager*>(
           shell->GetJavaScriptDialogManager(shell->web_contents()));
-  manager->set_should_proceed_on_beforeunload(proceed);
+  manager->set_should_proceed_on_beforeunload(proceed, success);
 }
 
 RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node) {
   return frame_tree_node->current_frame_host();
+}
+
+bool NavigateToURLInSameBrowsingInstance(Shell* window, const GURL& url) {
+  TestNavigationObserver observer(window->web_contents());
+  // Using a PAGE_TRANSITION_LINK transition with a browser-initiated
+  // navigation forces it to stay in the current BrowsingInstance, as normally
+  // that transition is used by renderer-initiated navigations.
+  window->LoadURLForFrame(url, std::string(),
+                          ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK));
+  observer.Wait();
+
+  if (!IsLastCommittedEntryOfPageType(window->web_contents(), PAGE_TYPE_NORMAL))
+    return false;
+  return window->web_contents()->GetLastCommittedURL() == url;
 }
 
 FrameTreeVisualizer::FrameTreeVisualizer() {
@@ -92,10 +114,7 @@ std::string FrameTreeVisualizer::DepictFrameTree(FrameTreeNode* root) {
       to_explore.push(node->child_at(i));
     }
 
-    RenderFrameHost* pending = node->render_manager()->pending_frame_host();
     RenderFrameHost* spec = node->render_manager()->speculative_frame_host();
-    if (pending)
-      legend[GetName(pending->GetSiteInstance())] = pending->GetSiteInstance();
     if (spec)
       legend[GetName(spec->GetSiteInstance())] = spec->GetSiteInstance();
   }
@@ -170,14 +189,9 @@ std::string FrameTreeVisualizer::DepictFrameTree(FrameTreeNode* root) {
     // RenderFrameHost, and show any exceptional state of the node, like a
     // pending or speculative RenderFrameHost.
     RenderFrameHost* current = node->render_manager()->current_frame_host();
-    RenderFrameHost* pending = node->render_manager()->pending_frame_host();
     RenderFrameHost* spec = node->render_manager()->speculative_frame_host();
     base::StringAppendF(&line, "Site %s",
                         GetName(current->GetSiteInstance()).c_str());
-    if (pending) {
-      base::StringAppendF(&line, " (%s pending)",
-                          GetName(pending->GetSiteInstance()).c_str());
-    }
     if (spec) {
       base::StringAppendF(&line, " (%s speculative)",
                           GetName(spec->GetSiteInstance()).c_str());
@@ -225,14 +239,12 @@ std::string FrameTreeVisualizer::DepictFrameTree(FrameTreeNode* root) {
     SiteInstanceImpl* site_instance =
         static_cast<SiteInstanceImpl*>(legend_entry.second);
     std::string description = site_instance->GetSiteURL().spec();
-    if (site_instance->IsDefaultSubframeSiteInstance())
-      description = "default subframe process";
     base::StringAppendF(&result, "\n%s%s = %s", prefix,
                         legend_entry.first.c_str(), description.c_str());
     // Highlight some exceptionable conditions.
     if (site_instance->active_frame_count() == 0)
       result.append(" (active_frame_count == 0)");
-    if (!site_instance->GetProcess()->HasConnection())
+    if (!site_instance->GetProcess()->IsInitializedAndNotDead())
       result.append(" (no process)");
     prefix = "      ";
   }
@@ -273,47 +285,26 @@ Shell* OpenPopup(const ToRenderFrameHost& opener,
   return new_shell;
 }
 
-namespace {
+FileChooserDelegate::FileChooserDelegate(const base::FilePath& file,
+                                         base::OnceClosure callback)
+    : file_(file), callback_(std::move(callback)) {}
 
-class HttpRequestStallThrottle : public ResourceThrottle {
- public:
-  // ResourceThrottle
-  void WillStartRequest(bool* defer) override { *defer = true; }
+FileChooserDelegate::~FileChooserDelegate() = default;
 
-  const char* GetNameForLogging() const override {
-    return "HttpRequestStallThrottle";
-  }
-};
-
-}  // namespace
-
-NavigationStallDelegate::NavigationStallDelegate(const GURL& url) : url_(url) {}
-
-void NavigationStallDelegate::RequestBeginning(
-    net::URLRequest* request,
-    content::ResourceContext* resource_context,
-    content::AppCacheService* appcache_service,
-    ResourceType resource_type,
-    std::vector<std::unique_ptr<content::ResourceThrottle>>* throttles) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  if (request->url() == url_)
-    throttles->push_back(std::make_unique<HttpRequestStallThrottle>());
-}
-
-FileChooserDelegate::FileChooserDelegate(const base::FilePath& file)
-      : file_(file), file_chosen_(false) {}
-
-void FileChooserDelegate::RunFileChooser(RenderFrameHost* render_frame_host,
-                                         const FileChooserParams& params) {
+void FileChooserDelegate::RunFileChooser(
+    RenderFrameHost* render_frame_host,
+    std::unique_ptr<content::FileSelectListener> listener,
+    const blink::mojom::FileChooserParams& params) {
   // Send the selected file to the renderer process.
-  FileChooserFileInfo file_info;
-  file_info.file_path = file_;
-  std::vector<FileChooserFileInfo> files;
-  files.push_back(file_info);
-  render_frame_host->FilesSelectedInChooser(files, FileChooserParams::Open);
+  auto file_info = blink::mojom::FileChooserFileInfo::NewNativeFile(
+      blink::mojom::NativeFileInfo::New(file_, base::string16()));
+  std::vector<blink::mojom::FileChooserFileInfoPtr> files;
+  files.push_back(std::move(file_info));
+  listener->FileSelected(std::move(files), base::FilePath(),
+                         blink::mojom::FileChooserParams::Mode::kOpen);
 
-  file_chosen_ = true;
-  params_ = params;
+  params_ = params.Clone();
+  std::move(callback_).Run();
 }
 
 FrameTestNavigationManager::FrameTestNavigationManager(
@@ -354,83 +345,207 @@ void UrlCommitObserver::DidFinishNavigation(
   }
 }
 
-UpdateResizeParamsMessageFilter::UpdateResizeParamsMessageFilter()
+RenderProcessHostKillWaiter::RenderProcessHostKillWaiter(
+    RenderProcessHost* render_process_host)
+    : exit_watcher_(render_process_host,
+                    RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT) {}
+
+base::Optional<bad_message::BadMessageReason>
+RenderProcessHostKillWaiter::Wait() {
+  base::Optional<bad_message::BadMessageReason> result;
+
+  // Wait for the renderer kill.
+  exit_watcher_.Wait();
+  if (exit_watcher_.did_exit_normally())
+    return result;
+
+  // Find the logged Stability.BadMessageTerminated.Content data (if present).
+  std::vector<base::Bucket> uma_samples =
+      histogram_tester_.GetAllSamples("Stability.BadMessageTerminated.Content");
+  // No UMA will be present if the kill was not trigerred by the //content layer
+  // (e.g. if it was trigerred by bad_message::ReceivedBadMessage from //chrome
+  // layer or from somewhere in the //components layer).
+  if (uma_samples.empty())
+    return result;
+  const base::Bucket& bucket = uma_samples.back();
+  // Assumming that user of RenderProcessHostKillWatcher makes sure that only
+  // one kill can happen while using the class.
+  DCHECK_EQ(1u, uma_samples.size())
+      << "Multiple renderer kills are unsupported";
+
+  // Translate contents of the bucket into bad_message::BadMessageReason.
+  return static_cast<bad_message::BadMessageReason>(bucket.min);
+}
+
+ShowWidgetMessageFilter::ShowWidgetMessageFilter()
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
     : content::BrowserMessageFilter(FrameMsgStart),
-      frame_rect_run_loop_(base::MakeUnique<base::RunLoop>()),
-      frame_rect_received_(false) {}
-
-void UpdateResizeParamsMessageFilter::WaitForRect() {
-  frame_rect_run_loop_->Run();
+#else
+    : content::BrowserMessageFilter(ViewMsgStart),
+#endif
+      message_loop_runner_(new content::MessageLoopRunner) {
 }
 
-void UpdateResizeParamsMessageFilter::ResetRectRunLoop() {
-  last_rect_ = gfx::Rect();
-  frame_rect_run_loop_.reset(new base::RunLoop);
-  frame_rect_received_ = false;
-}
+ShowWidgetMessageFilter::~ShowWidgetMessageFilter() {}
 
-viz::FrameSinkId UpdateResizeParamsMessageFilter::GetOrWaitForId() {
-  // No-opt if already quit.
-  frame_sink_id_run_loop_.Run();
-  return frame_sink_id_;
-}
-
-UpdateResizeParamsMessageFilter::~UpdateResizeParamsMessageFilter() {}
-
-void UpdateResizeParamsMessageFilter::OnUpdateResizeParams(
-    const gfx::Rect& rect,
-    const ScreenInfo& screen_info,
-    uint64_t sequence_number,
-    const viz::SurfaceId& surface_id) {
-  // Track each rect updates.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&UpdateResizeParamsMessageFilter::OnUpdatedFrameRectOnUI,
-                     this, rect));
-
-  // Record the received value. We cannot check the current state of the child
-  // frame, as it can only be processed on the UI thread, and we cannot block
-  // here.
-  frame_sink_id_ = surface_id.frame_sink_id();
-
-  // There can be several updates before a valid viz::FrameSinkId is ready. Do
-  // not quit |run_loop_| until after we receive a valid one.
-  if (!frame_sink_id_.is_valid())
-    return;
-
-  // We can't nest on the IO thread. So tests will wait on the UI thread, so
-  // post there to exit the nesting.
-  content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(
-                     &UpdateResizeParamsMessageFilter::OnUpdatedFrameSinkIdOnUI,
-                     this));
-}
-
-void UpdateResizeParamsMessageFilter::OnUpdatedFrameRectOnUI(
-    const gfx::Rect& rect) {
-  last_rect_ = rect;
-  if (!frame_rect_received_) {
-    frame_rect_received_ = true;
-    // Tests looking at the rect currently expect all received input to finish
-    // processing before the test continutes.
-    frame_rect_run_loop_->QuitWhenIdle();
-  }
-}
-
-void UpdateResizeParamsMessageFilter::OnUpdatedFrameSinkIdOnUI() {
-  frame_sink_id_run_loop_.Quit();
-}
-
-bool UpdateResizeParamsMessageFilter::OnMessageReceived(
-    const IPC::Message& message) {
-  IPC_BEGIN_MESSAGE_MAP(UpdateResizeParamsMessageFilter, message)
-    IPC_MESSAGE_HANDLER(FrameHostMsg_UpdateResizeParams, OnUpdateResizeParams)
+bool ShowWidgetMessageFilter::OnMessageReceived(const IPC::Message& message) {
+  IPC_BEGIN_MESSAGE_MAP(ShowWidgetMessageFilter, message)
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
+    IPC_MESSAGE_HANDLER(FrameHostMsg_ShowPopup, OnShowPopup)
+#else
+    IPC_MESSAGE_HANDLER(ViewHostMsg_ShowWidget, OnShowWidget)
+#endif
   IPC_END_MESSAGE_MAP()
-
-  // We do not consume the message, so that we can verify the effects of it
-  // being processed.
   return false;
+}
+
+void ShowWidgetMessageFilter::Wait() {
+  message_loop_runner_->Run();
+}
+
+void ShowWidgetMessageFilter::Reset() {
+  initial_rect_ = gfx::Rect();
+  routing_id_ = MSG_ROUTING_NONE;
+  message_loop_runner_ = new content::MessageLoopRunner;
+}
+
+void ShowWidgetMessageFilter::OnShowWidget(int route_id,
+                                           const gfx::Rect& initial_rect) {
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&ShowWidgetMessageFilter::OnShowWidgetOnUI, this, route_id,
+                     initial_rect));
+}
+
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
+void ShowWidgetMessageFilter::OnShowPopup(
+    const FrameHostMsg_ShowPopup_Params& params) {
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&ShowWidgetMessageFilter::OnShowWidgetOnUI, this,
+                     MSG_ROUTING_NONE, params.bounds));
+}
+#endif
+
+void ShowWidgetMessageFilter::OnShowWidgetOnUI(int route_id,
+                                               const gfx::Rect& initial_rect) {
+  initial_rect_ = initial_rect;
+  routing_id_ = route_id;
+  message_loop_runner_->Quit();
+}
+
+DropMessageFilter::DropMessageFilter(uint32_t message_class,
+                                     uint32_t drop_message_id)
+    : BrowserMessageFilter(message_class), drop_message_id_(drop_message_id) {}
+
+DropMessageFilter::~DropMessageFilter() = default;
+
+bool DropMessageFilter::OnMessageReceived(const IPC::Message& message) {
+  return message.type() == drop_message_id_;
+}
+
+ObserveMessageFilter::ObserveMessageFilter(uint32_t message_class,
+                                           uint32_t watch_message_id)
+    : BrowserMessageFilter(message_class),
+      watch_message_id_(watch_message_id) {}
+
+ObserveMessageFilter::~ObserveMessageFilter() = default;
+
+void ObserveMessageFilter::Wait() {
+  base::RunLoop loop;
+  quit_closure_ = loop.QuitClosure();
+  loop.Run();
+}
+
+bool ObserveMessageFilter::OnMessageReceived(const IPC::Message& message) {
+  if (message.type() == watch_message_id_) {
+    // Exit the Wait() method if it's being used, but in a fresh stack once the
+    // message is actually handled.
+    if (quit_closure_ && !received_) {
+      base::PostTask(FROM_HERE,
+                     base::BindOnce(&ObserveMessageFilter::QuitWait, this));
+    }
+    received_ = true;
+  }
+  return false;
+}
+
+void ObserveMessageFilter::QuitWait() {
+  std::move(quit_closure_).Run();
+}
+
+UnresponsiveRendererObserver::UnresponsiveRendererObserver(
+    WebContents* web_contents)
+    : WebContentsObserver(web_contents) {}
+
+UnresponsiveRendererObserver::~UnresponsiveRendererObserver() = default;
+
+RenderProcessHost* UnresponsiveRendererObserver::Wait(base::TimeDelta timeout) {
+  if (!captured_render_process_host_) {
+    base::OneShotTimer timer;
+    timer.Start(FROM_HERE, timeout, run_loop_.QuitClosure());
+    run_loop_.Run();
+    timer.Stop();
+  }
+  return captured_render_process_host_;
+}
+
+void UnresponsiveRendererObserver::OnRendererUnresponsive(
+    RenderProcessHost* render_process_host) {
+  captured_render_process_host_ = render_process_host;
+  run_loop_.Quit();
+}
+
+BeforeUnloadBlockingDelegate::BeforeUnloadBlockingDelegate(
+    WebContentsImpl* web_contents)
+    : web_contents_(web_contents) {
+  web_contents_->SetDelegate(this);
+}
+
+BeforeUnloadBlockingDelegate::~BeforeUnloadBlockingDelegate() {
+  if (!callback_.is_null())
+    std::move(callback_).Run(true, base::string16());
+
+  web_contents_->SetDelegate(nullptr);
+  web_contents_->SetJavaScriptDialogManagerForTesting(nullptr);
+}
+
+void BeforeUnloadBlockingDelegate::Wait() {
+  run_loop_->Run();
+  run_loop_ = std::make_unique<base::RunLoop>();
+}
+
+JavaScriptDialogManager*
+BeforeUnloadBlockingDelegate::GetJavaScriptDialogManager(WebContents* source) {
+  return this;
+}
+
+void BeforeUnloadBlockingDelegate::RunJavaScriptDialog(
+    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
+    JavaScriptDialogType dialog_type,
+    const base::string16& message_text,
+    const base::string16& default_prompt_text,
+    DialogClosedCallback callback,
+    bool* did_suppress_message) {
+  NOTREACHED();
+}
+
+void BeforeUnloadBlockingDelegate::RunBeforeUnloadDialog(
+    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
+    bool is_reload,
+    DialogClosedCallback callback) {
+  callback_ = std::move(callback);
+  run_loop_->Quit();
+}
+
+bool BeforeUnloadBlockingDelegate::HandleJavaScriptDialog(
+    WebContents* web_contents,
+    bool accept,
+    const base::string16* prompt_override) {
+  NOTREACHED();
+  return true;
 }
 
 }  // namespace content

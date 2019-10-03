@@ -16,14 +16,14 @@ namespace net {
 struct RedirectInfo;
 }
 
+namespace network {
+struct ResourceResponse;
+}
+
 namespace content {
 
-class NavigationData;
 class NavigationURLLoaderDelegate;
-class StreamHandle;
-struct ResourceResponse;
 
-// PlzNavigate
 // Test implementation of NavigationURLLoader to simulate the network stack
 // response.
 class TestNavigationURLLoader
@@ -34,21 +34,24 @@ class TestNavigationURLLoader
                           NavigationURLLoaderDelegate* delegate);
 
   // NavigationURLLoader implementation.
-  void FollowRedirect() override;
+  void FollowRedirect(const std::vector<std::string>& removed_headers,
+                      const net::HttpRequestHeaders& modified_headers,
+                      PreviewsState new_previews_state) override;
   void ProceedWithResponse() override;
-  void InterceptNavigation(NavigationInterceptionCB callback) override;
 
   NavigationRequestInfo* request_info() const { return request_info_.get(); }
 
   void SimulateServerRedirect(const GURL& redirect_url);
 
   void SimulateError(int error_code);
+  void SimulateErrorWithStatus(
+      const network::URLLoaderCompletionStatus& status);
 
-  void CallOnRequestRedirected(const net::RedirectInfo& redirect_info,
-                               const scoped_refptr<ResourceResponse>& response);
-  void CallOnResponseStarted(const scoped_refptr<ResourceResponse>& response,
-                             std::unique_ptr<StreamHandle> body,
-                             std::unique_ptr<NavigationData> navigation_data);
+  void CallOnRequestRedirected(
+      const net::RedirectInfo& redirect_info,
+      const scoped_refptr<network::ResourceResponse>& response_head);
+  void CallOnResponseStarted(
+      const scoped_refptr<network::ResourceResponse>& response_head);
 
   int redirect_count() { return redirect_count_; }
 

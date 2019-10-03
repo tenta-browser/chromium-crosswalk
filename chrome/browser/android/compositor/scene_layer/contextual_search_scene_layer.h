@@ -17,6 +17,7 @@
 
 namespace cc {
 class Layer;
+class SolidColorLayer;
 }
 
 namespace android {
@@ -24,7 +25,7 @@ namespace android {
 class ContextualSearchLayer;
 
 class ContextualSearchSceneLayer : public SceneLayer,
-    public chrome::BitmapFetcherDelegate {
+                                   public BitmapFetcherDelegate {
  public:
   ContextualSearchSceneLayer(JNIEnv* env,
                              const base::android::JavaRef<jobject>& jobj);
@@ -39,6 +40,7 @@ class ContextualSearchSceneLayer : public SceneLayer,
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& object,
       jint search_bar_background_resource_id,
+      jint search_bar_background_color,
       jint search_context_resource_id,
       jint search_term_resource_id,
       jint search_caption_resource_id,
@@ -46,6 +48,8 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jint search_provider_icon_resource_id,
       jint quick_action_icon_resource_id,
       jint arrow_up_resource_id,
+      jint drag_handlebar_resource_id,
+      jint open_tab_icon_resource_id,
       jint close_icon_resource_id,
       jint progress_bar_background_resource_id,
       jint progress_bar_resource_id,
@@ -53,12 +57,15 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jint bar_banner_ripple_resource_id,
       jint bar_banner_text_resource_id,
       jfloat dp_to_px,
+      jfloat layout_width,
+      jfloat layout_height,
       jfloat base_page_brightness,
       jfloat base_page_offset,
       const base::android::JavaParamRef<jobject>& jweb_contents,
       jboolean search_promo_visible,
       jfloat search_promo_height,
       jfloat search_promo_opacity,
+      jint search_prmomo_background_color,
       jboolean search_bar_banner_visible,
       jfloat search_bar_banner_height,
       jfloat search_bar_banner_padding,
@@ -70,6 +77,7 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jfloat search_panel_width,
       jfloat search_panel_height,
       jfloat search_bar_margin_side,
+      jfloat search_bar_margin_top,
       jfloat search_bar_height,
       jfloat search_context_opacity,
       jfloat search_text_layer_min_height,
@@ -86,6 +94,8 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jstring j_thumbnail_url,
       jfloat custom_image_visibility_percentage,
       jint bar_image_size,
+      jint icon_color,
+      jint drag_handlebar_color,
       jfloat arrow_icon_opacity,
       jfloat arrow_icon_rotation,
       jfloat close_icon_opacity,
@@ -122,11 +132,12 @@ class ContextualSearchSceneLayer : public SceneLayer,
 
   JNIEnv* env_;
   base::android::ScopedJavaGlobalRef<jobject> object_;
-  float base_page_brightness_;
   std::string thumbnail_url_;
-  std::unique_ptr<chrome::BitmapFetcher> fetcher_;
+  std::unique_ptr<BitmapFetcher> fetcher_;
 
   scoped_refptr<ContextualSearchLayer> contextual_search_layer_;
+  // Responsible for fading the base page content.
+  scoped_refptr<cc::SolidColorLayer> color_overlay_;
   scoped_refptr<cc::Layer> content_container_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextualSearchSceneLayer);

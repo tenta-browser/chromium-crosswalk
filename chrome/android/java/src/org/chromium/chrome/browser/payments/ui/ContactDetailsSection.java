@@ -5,8 +5,10 @@
 package org.chromium.chrome.browser.payments.ui;
 
 import android.content.Context;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.payments.AutofillAddress;
 import org.chromium.chrome.browser.payments.AutofillContact;
@@ -20,8 +22,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-
-import javax.annotation.Nullable;
 
 /**
  * The data to show in the contact details section where the user can select something.
@@ -43,7 +43,7 @@ public class ContactDetailsSection extends SectionInformation {
     public ContactDetailsSection(Context context, Collection<AutofillProfile> unmodifiableProfiles,
             ContactEditor contactEditor, JourneyLogger journeyLogger) {
         // Initially no items are selected, but they are updated later in the constructor.
-        super(PaymentRequestUI.TYPE_CONTACT_DETAILS, null);
+        super(PaymentRequestUI.DataType.CONTACT_DETAILS, null);
 
         mContext = context;
         mContactEditor = contactEditor;
@@ -153,6 +153,9 @@ public class ContactDetailsSection extends SectionInformation {
                     firstCompleteContactIndex != SectionInformation.NO_SELECTION);
         }
 
+        // Record all required and missing fields of the most complete suggestion.
+        recordMissingContactFields(uniqueContacts.isEmpty() ? null : uniqueContacts.get(0));
+
         updateItemsWithCollection(firstCompleteContactIndex, uniqueContacts);
     }
 
@@ -178,5 +181,27 @@ public class ContactDetailsSection extends SectionInformation {
                     requestPayerName, requestPayerPhone, requestPayerEmail);
         }
         return null;
+    }
+
+    // Bit field values are identical to ProfileFields from payments_profile_comparator.h
+    private void recordMissingContactFields(AutofillContact contact) {
+        int missingFields = 0;
+        if (mContactEditor.getRequestPayerName()
+                && (contact == null || TextUtils.isEmpty(contact.getPayerName()))) {
+            missingFields |= ContactEditor.INVALID_NAME;
+        }
+        if (mContactEditor.getRequestPayerPhone()
+                && (contact == null || TextUtils.isEmpty(contact.getPayerPhone()))) {
+            missingFields |= ContactEditor.INVALID_PHONE_NUMBER;
+        }
+        if (mContactEditor.getRequestPayerEmail()
+                && (contact == null || TextUtils.isEmpty(contact.getPayerEmail()))) {
+            missingFields |= ContactEditor.INVALID_EMAIL;
+        }
+
+        if (missingFields != 0) {
+            RecordHistogram.recordSparseHistogram(
+                    "PaymentRequest.MissingContactFields", missingFields);
+        }
     }
 }

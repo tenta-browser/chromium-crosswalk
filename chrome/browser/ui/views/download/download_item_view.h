@@ -26,22 +26,18 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/download/download_commands.h"
-#include "chrome/browser/download/download_item_model.h"
+#include "chrome/browser/download/download_ui_model.h"
 #include "chrome/browser/icon_manager.h"
-#include "content/public/browser/download_item.h"
+#include "components/download/public/common/download_item.h"
 #include "content/public/browser/download_manager.h"
-#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/font_list.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/animation/ink_drop_host_view.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
 
 class DownloadShelfView;
 class DownloadShelfContextMenuView;
-
-namespace extensions {
-class ExperienceSamplingEvent;
-}
 
 namespace gfx {
 class Image;
@@ -57,7 +53,6 @@ namespace views {
 class ImageButton;
 class Label;
 class MdTextButton;
-class ViewHierarchyChangedDetails;
 }
 
 // Represents a single download item on the download shelf. Encompasses an icon,
@@ -65,10 +60,12 @@ class ViewHierarchyChangedDetails;
 class DownloadItemView : public views::InkDropHostView,
                          public views::ButtonListener,
                          public views::ContextMenuController,
-                         public content::DownloadItem::Observer,
-                         public gfx::AnimationDelegate {
+                         public DownloadUIModel::Observer,
+                         public views::AnimationDelegateViews {
  public:
-  DownloadItemView(content::DownloadItem* download, DownloadShelfView* parent);
+  DownloadItemView(DownloadUIModel::DownloadUIModelPtr download,
+                   DownloadShelfView* parent,
+                   views::View* accessible_alert);
   ~DownloadItemView() override;
 
   // Timer callback for handling animations
@@ -79,10 +76,10 @@ class DownloadItemView : public views::InkDropHostView,
   // Returns the base color for text on this download item, based on |theme|.
   static SkColor GetTextColorForThemeProvider(const ui::ThemeProvider* theme);
 
-  void OnExtractIconComplete(gfx::Image* icon);
+  void OnExtractIconComplete(gfx::Image icon);
 
-  // Returns the DownloadItem model object belonging to this item.
-  content::DownloadItem* download() { return model_.download(); }
+  // Returns the DownloadUIModel object belonging to this item.
+  DownloadUIModel* model() { return model_.get(); }
 
   // Submits download to download feedback service if the user has approved and
   // the download is suitable for submission, then apply |download_command|.
@@ -90,46 +87,39 @@ class DownloadItemView : public views::InkDropHostView,
   void MaybeSubmitDownloadToFeedbackService(
       DownloadCommands::Command download_command);
 
-  // content::DownloadItem::Observer:
-  void OnDownloadUpdated(content::DownloadItem* download) override;
-  void OnDownloadOpened(content::DownloadItem* download) override;
-  void OnDownloadDestroyed(content::DownloadItem* download) override;
+  // DownloadUIModel::Observer:
+  void OnDownloadUpdated() override;
+  void OnDownloadOpened() override;
+  void OnDownloadDestroyed() override;
 
   // views::View:
   void Layout() override;
+  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   gfx::Size CalculatePreferredSize() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
-  bool GetTooltipText(const gfx::Point& p,
-                      base::string16* tooltip) const override;
+  base::string16 GetTooltipText(const gfx::Point& p) const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnThemeChanged() override;
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
 
   // view::InkDropHostView:
-  void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
-  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
-  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
-  std::unique_ptr<views::InkDropHighlight> CreateInkDropHighlight()
-      const override;
   void OnInkDropCreated() override;
+  SkColor GetInkDropBaseColor() const override;
 
   // ui::EventHandler:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
   // views::ContextMenuController.
-  void ShowContextMenuForView(View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  void ShowContextMenuForViewImpl(View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
-  // gfx::AnimationDelegate implementation.
+  // views::AnimationDelegateViews implementation.
   void AnimationProgressed(const gfx::Animation* animation) override;
 
  protected:
@@ -137,6 +127,8 @@ class DownloadItemView : public views::InkDropHostView,
   void OnPaint(gfx::Canvas* canvas) override;
   void OnFocus() override;
   void OnBlur() override;
+  void AddedToWidget() override;
+  void OnThemeChanged() override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DownloadItemViewDangerousDownloadLabelTest,
@@ -149,6 +141,46 @@ class DownloadItemView : public views::InkDropHostView,
     DANGEROUS_MODE,   // Displaying the dangerous download warning.
     MALICIOUS_MODE    // Displaying the malicious download warning.
   };
+
+  static constexpr int kTextWidth = 140;
+
+  // Vertical padding between filename and status text.
+  static constexpr int kVerticalTextPadding = 1;
+
+  static constexpr int kTooltipMaxWidth = 800;
+
+  // Padding before the icon and at end of the item.
+  static constexpr int kStartPadding = 12;
+  static constexpr int kEndPadding = 6;
+
+  // Horizontal padding between progress indicator and filename/status text.
+  static constexpr int kProgressTextPadding = 8;
+
+  // The space between the Save and Discard buttons when prompting for a
+  // dangerous download.
+  static constexpr int kSaveDiscardButtonPadding = 5;
+
+  // The touchable space around the dropdown button's icon.
+  static constexpr int kDropdownBorderWidth = 10;
+
+  // The space on the right side of the dangerous download label.
+  static constexpr int kLabelPadding = 8;
+
+  // Height/width of the warning icon, also in dp.
+  static constexpr int kWarningIconSize = 24;
+
+  // Height/width of the erro icon, also in dp.
+  static constexpr int kErrorIconSize = 27;
+
+  // How long the 'download complete' animation should last for.
+  static constexpr int kCompleteAnimationDurationMs = 2500;
+
+  // How long the 'download interrupted' animation should last for.
+  static constexpr int kInterruptedAnimationDurationMs = 2500;
+
+  // How long we keep the item disabled after the user clicked it to open the
+  // downloaded item.
+  static constexpr int kDisabledOnOpenDuration = 3000;
 
   void OpenDownload();
 
@@ -168,11 +200,7 @@ class DownloadItemView : public views::InkDropHostView,
   // relative to local bounds.
   int GetYForFilenameText() const;
 
-  // Painting of various download item bits.
-  void DrawStatusText(gfx::Canvas* canvas);
-  void DrawFilename(gfx::Canvas* canvas);
   void DrawIcon(gfx::Canvas* canvas);
-
   void LoadIcon();
   void LoadIconIfItemPathChanged();
 
@@ -241,8 +269,23 @@ class DownloadItemView : public views::InkDropHostView,
 
   // Update the accessible name to reflect the current state of the control,
   // so that screenreaders can access the filename, status text, and
-  // dangerous download warning message (if any).
+  // dangerous download warning message (if any). The name will be presented
+  // when the download item receives focus.
   void UpdateAccessibleName();
+
+  // Update accessible status text.
+  // If |is_last_update| is false, then a timer is used to notify screen readers
+  // to speak the alert text on a regular interval. If |is_last_update| is true,
+  // then the screen reader is notified of the request to speak the alert
+  // immediately, and any running timer is ended.
+  void UpdateAccessibleAlert(const base::string16& alert, bool is_last_update);
+
+  // Get the accessible alert text for a download that is currently in progress.
+  base::string16 GetInProgressAccessibleAlertText();
+
+  // Callback for |accessible_update_timer_|, or can be used to ask a screen
+  // reader to speak the current alert immediately.
+  void AnnounceAccessibleAlert();
 
   // Show/Hide/Reset |animation| based on the state transition specified by
   // |from| and |to|.
@@ -256,11 +299,18 @@ class DownloadItemView : public views::InkDropHostView,
   // Returns the base text color.
   SkColor GetTextColor() const;
 
-  // Returns a slightly dimmed version of the base text color.
-  SkColor GetDimmedTextColor() const;
+  // Returns the status text to show in the notification.
+  base::string16 GetStatusText() const;
+
+  // Returns the file name to report to user. It might be elided to fit into
+  // the text width.
+  base::string16 ElidedFilename();
 
   // The download shelf that owns us.
   DownloadShelfView* shelf_;
+
+  // The focus ring for this Button.
+  std::unique_ptr<views::FocusRing> focus_ring_;
 
   // Elements of our particular download
   base::string16 status_text_;
@@ -301,7 +351,7 @@ class DownloadItemView : public views::InkDropHostView,
   base::CancelableTaskTracker cancelable_task_tracker_;
 
   // A model class to control the status text we display.
-  DownloadItemModel model_;
+  DownloadUIModel::DownloadUIModelPtr model_;
 
   // Animation for download complete.
   std::unique_ptr<gfx::SlideAnimation> complete_animation_;
@@ -313,17 +363,20 @@ class DownloadItemView : public views::InkDropHostView,
   views::MdTextButton* save_button_;
   views::MdTextButton* discard_button_;
 
+  // The file name label.
+  views::Label* file_name_label_;
+
+  // The status text label.
+  views::Label* status_label_;
+
   // The drop down button.
-  views::ImageButton* dropdown_button_;
+  views::ImageButton* dropdown_button_ = nullptr;
 
   // Dangerous mode label.
   views::Label* dangerous_download_label_;
 
   // Whether the dangerous mode label has been sized yet.
   bool dangerous_download_label_sized_;
-
-  // Whether we are currently disabled as part of opening the downloaded file.
-  bool disabled_while_opening_;
 
   // The time at which this view was created.
   base::Time creation_time_;
@@ -337,18 +390,25 @@ class DownloadItemView : public views::InkDropHostView,
   // The name of this view as reported to assistive technology.
   base::string16 accessible_name_;
 
+  // A hidden view for accessible status alerts, that are spoken by screen
+  // readers when a download changes state.
+  views::View* accessible_alert_;
+
+  // A timer for accessible alerts that helps reduce the number of similar
+  // messages spoken in a short period of time.
+  base::RepeatingTimer accessible_alert_timer_;
+
+  // Force the reading of the current alert text the next time it updates.
+  bool announce_accessible_alert_soon_;
+
   // The icon loaded in the download shelf is based on the file path of the
   // item.  Store the path used, so that we can detect a change in the path
   // and reload the icon.
   base::FilePath last_download_item_path_;
 
-  // ExperienceSampling: This tracks dangerous/malicious downloads warning UI
-  // and the user's decisions about it.
-  std::unique_ptr<extensions::ExperienceSamplingEvent> sampling_event_;
-
   // Method factory used to delay reenabling of the item when opening the
   // downloaded file.
-  base::WeakPtrFactory<DownloadItemView> weak_ptr_factory_;
+  base::WeakPtrFactory<DownloadItemView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadItemView);
 };

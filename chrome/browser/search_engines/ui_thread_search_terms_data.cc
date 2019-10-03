@@ -14,10 +14,10 @@
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/google/core/browser/google_url_tracker.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
 
@@ -71,8 +71,7 @@ base::string16 UIThreadSearchTermsData::GetRlzParameterValue(
   // For organic brandcodes do not use rlz at all. Empty brandcode usually
   // means a chromium install. This is ok.
   std::string brand;
-  if (google_brand::GetBrand(&brand) && !brand.empty() &&
-      !google_brand::IsOrganic(brand)) {
+  if (google_brand::GetBrand(&brand) && !google_brand::IsOrganic(brand)) {
     // This call will return false the first time(s) it is called until the
     // value has been cached. This normally would mean that at most one omnibox
     // search might not send the RLZ data but this is not really a problem.
@@ -125,7 +124,7 @@ std::string UIThreadSearchTermsData::GoogleImageSearchSource() const {
   if (version_info::IsOfficialBuild())
     version += " (Official)";
   version += " " + version_info::GetOSType();
-  std::string modifier(chrome::GetChannelString());
+  std::string modifier(chrome::GetChannelName());
   if (!modifier.empty())
     version += " " + modifier;
   return version;
@@ -135,4 +134,8 @@ std::string UIThreadSearchTermsData::GoogleImageSearchSource() const {
 void UIThreadSearchTermsData::SetGoogleBaseURL(const std::string& base_url) {
   delete google_base_url_;
   google_base_url_ = base_url.empty() ? NULL : new std::string(base_url);
+}
+
+size_t UIThreadSearchTermsData::EstimateMemoryUsage() const {
+  return 0;
 }

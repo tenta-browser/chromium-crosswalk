@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
@@ -89,7 +89,7 @@ bool ProxyPolicyHandler::CheckPolicySettings(const PolicyMap& policies,
     return true;
 
   bool is_valid_mode = false;
-  for (size_t i = 0; i != arraysize(kProxyModeValidationMap); ++i) {
+  for (size_t i = 0; i != base::size(kProxyModeValidationMap); ++i) {
     const ProxyModeValidationEntry& entry = kProxyModeValidationMap[i];
     if (entry.mode_value != mode_value)
       continue;
@@ -319,10 +319,9 @@ bool ProxyPolicyHandler::CheckProxyModeAndServerMode(const PolicyMap& policies,
         *mode_value = ProxyPrefs::kSystemProxyModeName;
         break;
       default:
-        errors->AddError(key::kProxySettings,
-                         key::kProxyServerMode,
+        errors->AddError(key::kProxySettings, key::kProxyServerMode,
                          IDS_POLICY_OUT_OF_RANGE_ERROR,
-                         base::IntToString(server_mode_value));
+                         base::NumberToString(server_mode_value));
         return false;
     }
   }

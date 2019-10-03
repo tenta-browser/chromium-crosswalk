@@ -17,6 +17,8 @@
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
 
+class PrefService;
+
 namespace base {
 class DictionaryValue;
 class ListValue;
@@ -31,26 +33,35 @@ class DeviceSettingsService;
 class CrosSettings {
  public:
   // Manage singleton instance.
-  static void Initialize();
+  static void Initialize(PrefService* local_state);
   static bool IsInitialized();
   static void Shutdown();
   static CrosSettings* Get();
 
+  // Sets the singleton to |test_instance|. Does not take ownership of the
+  // instance. Should be matched with a call to |ShutdownForTesting| once the
+  // test is finished and before the instance is deleted.
+  static void SetForTesting(CrosSettings* test_instance);
+  static void ShutdownForTesting();
+
   // Checks if the given username is whitelisted and allowed to sign-in to
   // this device. |wildcard_match| may be NULL. If it's present, it'll be set to
   // true if the whitelist check was satisfied via a wildcard.
-  static bool IsWhitelisted(const std::string& username, bool* wildcard_match);
+  bool IsUserWhitelisted(const std::string& username,
+                         bool* wildcard_match) const;
+
+  // Creates an instance with no providers as yet. This is meant for unit tests,
+  // production code uses the singleton returned by Get() above.
+  CrosSettings();
 
   // Creates a device settings service instance. This is meant for unit tests,
   // production code uses the singleton returned by Get() above.
-  explicit CrosSettings(DeviceSettingsService* device_settings_service);
+  CrosSettings(DeviceSettingsService* device_settings_service,
+               PrefService* local_state);
   virtual ~CrosSettings();
 
   // Helper function to test if the given |path| is a valid cros setting.
   static bool IsCrosSettings(const std::string& path);
-
-  // Sets |in_value| to given |path| in cros settings.
-  void Set(const std::string& path, const base::Value& in_value);
 
   // Returns setting value for the given |path|.
   const base::Value* GetPref(const std::string& path) const;
@@ -71,21 +82,6 @@ class CrosSettings {
   virtual CrosSettingsProvider::TrustedStatus PrepareTrustedValues(
       const base::Closure& callback) const;
 
-  // Convenience forms of Set().  These methods will replace any existing
-  // value at that |path|, even if it has a different type.
-  void SetBoolean(const std::string& path, bool in_value);
-  void SetInteger(const std::string& path, int in_value);
-  void SetDouble(const std::string& path, double in_value);
-  void SetString(const std::string& path, const std::string& in_value);
-
-  // Convenience functions for manipulating lists. Note that the following
-  // functions employs a read, modify and write pattern. If underlying settings
-  // provider updates its value asynchronously such as DeviceSettingsProvider,
-  // value cache they read from might not be fresh and multiple calls to those
-  // function would lose data. See http://crbug.com/127215
-  void AppendToList(const std::string& path, const base::Value* value);
-  void RemoveFromList(const std::string& path, const base::Value* value);
-
   // These are convenience forms of Get().  The value will be retrieved
   // and the return value will be true if the |path| is valid and the value at
   // the end of the path can be returned in the form specified.
@@ -105,6 +101,11 @@ class CrosSettings {
   bool FindEmailInList(const std::string& path,
                        const std::string& email,
                        bool* wildcard_match) const;
+
+  // Same as above, but receives already populated user list.
+  static bool FindEmailInList(const base::ListValue* list,
+                              const std::string& email,
+                              bool* wildcard_match);
 
   // Adding/removing of providers.
   bool AddSettingsProvider(std::unique_ptr<CrosSettingsProvider> provider);
@@ -143,7 +144,7 @@ class CrosSettings {
 // construction and tears it down again on destruction.
 class ScopedTestCrosSettings {
  public:
-  ScopedTestCrosSettings();
+  explicit ScopedTestCrosSettings(PrefService* local_state);
   ~ScopedTestCrosSettings();
 
  private:

@@ -7,7 +7,6 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -18,7 +17,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -49,13 +48,10 @@ IN_PROC_BROWSER_TEST_F(FastShutdown, DISABLED_SlowTermination) {
   GURL url = embedded_test_server()->GetURL("/fast_shutdown/on_unloader.html");
   EXPECT_EQ("", content::GetCookies(browser()->profile(), url));
 
-  content::WindowedNotificationObserver window_observer(
-      chrome::NOTIFICATION_BROWSER_WINDOW_READY,
-      content::NotificationService::AllSources());
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_NONE);
-  window_observer.Wait();
+  ui_test_utils::WaitForBrowserToOpen();
 
   // Close the new window, removing the one and only beforeunload handler.
   ASSERT_EQ(2u, chrome::GetTotalBrowserCount());
@@ -74,3 +70,20 @@ IN_PROC_BROWSER_TEST_F(FastShutdown, DISABLED_SlowTermination) {
   EXPECT_EQ("unloaded=ohyeah", content::GetCookies(browser()->profile(), url));
 }
 #endif
+
+// Verifies that the spare renderer maintained by SpareRenderProcessHostManager
+// is correctly destroyed during browser shutdown.
+//
+// Prior to the CL that introduced the test below, there were some problems
+// encountered during the shutdown sequence specific to the //chrome layer.
+// Therefore, it is important that the test below is a //chrome-level test, even
+// though the test doesn't have any explicit dependencies on the //chrome layer.
+IN_PROC_BROWSER_TEST_F(FastShutdown, SpareRenderProcessHostDuringShutdown) {
+  content::RenderProcessHost::WarmupSpareRenderProcessHost(
+      browser()->profile());
+
+  // The verification is that there are no DCHECKs anywhere during test tear
+  // down (in particular that no DCHECKs are hit inside
+  // ProfileDestroyer::DestroyProfileWhenAppropriate when it tries to make sure
+  // that no renderers associated with the given Profile are still alive).
+}

@@ -3,25 +3,15 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
-#include "services/service_manager/public/c/main.h"
+#include "base/task/single_thread_task_executor.h"
 #include "services/service_manager/public/cpp/service.h"
-#include "services/service_manager/public/cpp/service_runner.h"
+#include "services/service_manager/public/cpp/service_binding.h"
+#include "services/service_manager/public/cpp/service_executable/service_main.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
-namespace service_manager {
-
-class ConnectTestSingletonApp : public Service {
- public:
-  ConnectTestSingletonApp() {}
-  ~ConnectTestSingletonApp() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ConnectTestSingletonApp);
-};
-
-}  // namespace service_manager
-
-MojoResult ServiceMain(MojoHandle service_request_handle) {
-  service_manager::ServiceRunner runner(
-      new service_manager::ConnectTestSingletonApp);
-  return runner.Run(service_request_handle);
+void ServiceMain(service_manager::mojom::ServiceRequest request) {
+  base::SingleThreadTaskExecutor main_task_executor;
+  service_manager::Service service;
+  service_manager::ServiceBinding binding(&service, std::move(request));
+  service.RunUntilTermination();
 }

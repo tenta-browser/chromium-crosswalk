@@ -5,15 +5,16 @@
 #ifndef EXTENSIONS_RENDERER_EXTENSION_FRAME_HELPER_H_
 #define EXTENSIONS_RENDERER_EXTENSION_FRAME_HELPER_H_
 
+#include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "content/public/common/console_message_level.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
 #include "extensions/common/view_type.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "v8/include/v8.h"
 
 struct ExtensionMsg_ExternalConnectionInfo;
@@ -48,7 +49,9 @@ class ExtensionFrameHelper
       int tab_id,
       ViewType view_type);
   // Same as above, but returns a v8::Array of the v8 global objects for those
-  // frames, and only includes main frames.
+  // frames, and only includes main frames. Note: This only returns contexts
+  // that are accessible by |context|, and |context| must be the current
+  // context.
   // Returns an empty v8::Array if no frames are found.
   static v8::Local<v8::Array> GetV8MainFrames(v8::Local<v8::Context> context,
                                               const std::string& extension_id,
@@ -60,6 +63,24 @@ class ExtensionFrameHelper
   // isn't one in this process.
   static content::RenderFrame* GetBackgroundPageFrame(
       const std::string& extension_id);
+  // Same as above, but returns the background page's main frame, or
+  // v8::Undefined if there is none. Note: This will assert that the
+  // isolate's current context can access the returned object; callers should
+  // ensure that the current context is correct.
+  static v8::Local<v8::Value> GetV8BackgroundPageMainFrame(
+      v8::Isolate* isolate,
+      const std::string& extension_id);
+
+  // Finds a neighboring extension frame with the same extension as the one
+  // owning |relative_to_frame| (if |relative_to_frame| is not an extension
+  // frame, returns nullptr). Pierces the browsing instance boundary because
+  // certain extensions rely on this behavior.
+  // TODO(devlin, lukasza): https://crbug.com/786411: Remove this behavior, and
+  // make extensions follow the web standard for finding frames or use an
+  // explicit API.
+  static content::RenderFrame* FindFrame(
+      content::RenderFrame* relative_to_frame,
+      const std::string& name);
 
   // Returns true if the given |context| is for any frame in the extension's
   // event page.
@@ -102,7 +123,7 @@ class ExtensionFrameHelper
   // RenderFrameObserver implementation.
   void DidCreateDocumentElement() override;
   void DidCreateNewDocument() override;
-  void DidStartProvisionalLoad(
+  void ReadyToCommitNavigation(
       blink::WebDocumentLoader* document_loader) override;
   void DidCreateScriptContext(v8::Local<v8::Context>,
                               int world_id) override;
@@ -112,16 +133,18 @@ class ExtensionFrameHelper
   void DraggableRegionsChanged() override;
 
   // IPC handlers.
-  void OnExtensionValidateMessagePort(const PortId& id);
+  void OnExtensionValidateMessagePort(int worker_thread_id, const PortId& id);
   void OnExtensionDispatchOnConnect(
+      int worker_thread_id,
       const PortId& target_port_id,
       const std::string& channel_name,
       const ExtensionMsg_TabConnectionInfo& source,
-      const ExtensionMsg_ExternalConnectionInfo& info,
-      const std::string& tls_channel_id);
-  void OnExtensionDeliverMessage(const PortId& target_port_id,
+      const ExtensionMsg_ExternalConnectionInfo& info);
+  void OnExtensionDeliverMessage(int worker_thread_id,
+                                 const PortId& target_port_id,
                                  const Message& message);
-  void OnExtensionDispatchOnDisconnect(const PortId& id,
+  void OnExtensionDispatchOnDisconnect(int worker_thread_id,
+                                       const PortId& id,
                                        const std::string& error_message);
   void OnExtensionSetTabId(int tab_id);
   void OnUpdateBrowserWindowId(int browser_window_id);
@@ -136,6 +159,7 @@ class ExtensionFrameHelper
                                 const base::ListValue& args);
   void OnSetFrameName(const std::string& name);
   void OnAppWindowClosed(bool send_onclosed);
+  void OnSetSpatialNavigationEnabled(bool enabled);
 
   // Type of view associated with the RenderFrame.
   ViewType view_type_;
@@ -162,7 +186,13 @@ class ExtensionFrameHelper
 
   bool delayed_main_world_script_initialization_ = false;
 
-  base::WeakPtrFactory<ExtensionFrameHelper> weak_ptr_factory_;
+  // Whether or not a DocumentLoader has been created at least once for this
+  // RenderFrame.
+  // Note: Chrome Apps intentionally do not support new navigations. When a
+  // navigation happens, it is either the initial one or a reload.
+  bool has_started_first_navigation_ = false;
+
+  base::WeakPtrFactory<ExtensionFrameHelper> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionFrameHelper);
 };

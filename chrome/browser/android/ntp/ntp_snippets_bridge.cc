@@ -5,6 +5,8 @@
 #include "chrome/browser/android/ntp/ntp_snippets_bridge.h"
 
 #include <jni.h>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -12,24 +14,23 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/feature_list.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/SnippetsBridge_jni.h"
 #include "chrome/browser/android/chrome_feature_list.h"
-#include "chrome/browser/android/ntp/content_suggestions_notifier_service.h"
+#include "chrome/browser/android/ntp/get_remote_suggestions_scheduler.h"
 #include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/ntp_snippets/content_suggestions_notifier_service_factory.h"
 #include "chrome/browser/ntp_snippets/content_suggestions_service_factory.h"
-#include "chrome/browser/ntp_snippets/contextual_content_suggestions_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
-#include "chrome/browser/profiles/profile_manager.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/ntp_snippets/content_suggestion.h"
 #include "components/ntp_snippets/content_suggestions_metrics.h"
+#include "components/ntp_snippets/pref_names.h"
 #include "components/ntp_snippets/remote/remote_suggestions_provider.h"
 #include "components/ntp_snippets/remote/remote_suggestions_scheduler.h"
-#include "jni/SnippetsBridge_jni.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/image/image.h"
@@ -72,47 +73,11 @@ ScopedJavaLocalRef<jobject> JNI_SnippetsBridge_ToJavaSuggestionList(
             suggestion.publish_date().ToJavaTime(), suggestion.score(),
             suggestion.fetch_date().ToJavaTime(),
             suggestion.is_video_suggestion(),
-            suggestion.optional_image_dominant_color().value_or(0));
-    if (suggestion.id().category().IsKnownCategory(
-            KnownCategories::DOWNLOADS) &&
-        suggestion.download_suggestion_extra() != nullptr) {
-      if (suggestion.download_suggestion_extra()->is_download_asset) {
-        Java_SnippetsBridge_setAssetDownloadDataForSuggestion(
-            env, java_suggestion,
-            ConvertUTF8ToJavaString(
-                env, suggestion.download_suggestion_extra()->download_guid),
-            ConvertUTF8ToJavaString(env, suggestion.download_suggestion_extra()
-                                             ->target_file_path.value()),
-            ConvertUTF8ToJavaString(
-                env, suggestion.download_suggestion_extra()->mime_type));
-      } else {
-        Java_SnippetsBridge_setOfflinePageDownloadDataForSuggestion(
-            env, java_suggestion,
-            suggestion.download_suggestion_extra()->offline_page_id);
-      }
-    }
-    if (suggestion.id().category().IsKnownCategory(
-            KnownCategories::RECENT_TABS) &&
-        suggestion.recent_tab_suggestion_extra() != nullptr) {
-      Java_SnippetsBridge_setRecentTabDataForSuggestion(
-          env, java_suggestion,
-          suggestion.recent_tab_suggestion_extra()->tab_id,
-          suggestion.recent_tab_suggestion_extra()->offline_page_id);
-    }
+            suggestion.optional_image_dominant_color().value_or(0),
+            !suggestion.salient_image_url().is_empty());
   }
 
   return result;
-}
-
-ntp_snippets::RemoteSuggestionsScheduler* GetRemoteSuggestionsScheduler() {
-  ntp_snippets::ContentSuggestionsService* content_suggestions_service =
-      ContentSuggestionsServiceFactory::GetForProfile(
-          ProfileManager::GetLastUsedProfile());
-  // Can maybe be null in some cases? (Incognito profile?) crbug.com/647920
-  if (!content_suggestions_service) {
-    return nullptr;
-  }
-  return content_suggestions_service->remote_suggestions_scheduler();
 }
 
 }  // namespace
@@ -127,8 +92,7 @@ static jlong JNI_SnippetsBridge_Init(JNIEnv* env,
 
 static void
 JNI_SnippetsBridge_RemoteSuggestionsSchedulerOnPersistentSchedulerWakeUp(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& caller) {
+    JNIEnv* env) {
   ntp_snippets::RemoteSuggestionsScheduler* scheduler =
       GetRemoteSuggestionsScheduler();
   if (!scheduler) {
@@ -139,8 +103,7 @@ JNI_SnippetsBridge_RemoteSuggestionsSchedulerOnPersistentSchedulerWakeUp(
 }
 
 static void JNI_SnippetsBridge_RemoteSuggestionsSchedulerOnBrowserUpgraded(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& caller) {
+    JNIEnv* env) {
   ntp_snippets::RemoteSuggestionsScheduler* scheduler =
       GetRemoteSuggestionsScheduler();
   // Can be null if the feature has been disabled but the scheduler has not been
@@ -152,31 +115,6 @@ static void JNI_SnippetsBridge_RemoteSuggestionsSchedulerOnBrowserUpgraded(
   scheduler->OnBrowserUpgraded();
 }
 
-static void JNI_SnippetsBridge_SetContentSuggestionsNotificationsEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& caller,
-    jboolean enabled) {
-  ContentSuggestionsNotifierService* notifier_service =
-      ContentSuggestionsNotifierServiceFactory::GetForProfile(
-          ProfileManager::GetLastUsedProfile());
-  if (!notifier_service)
-    return;
-
-  notifier_service->SetEnabled(enabled);
-}
-
-static jboolean JNI_SnippetsBridge_AreContentSuggestionsNotificationsEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& caller) {
-  ContentSuggestionsNotifierService* notifier_service =
-      ContentSuggestionsNotifierServiceFactory::GetForProfile(
-          ProfileManager::GetLastUsedProfile());
-  if (!notifier_service)
-    return false;
-
-  return notifier_service->IsEnabled();
-}
-
 NTPSnippetsBridge::NTPSnippetsBridge(JNIEnv* env,
                                      const JavaParamRef<jobject>& j_bridge,
                                      const JavaParamRef<jobject>& j_profile)
@@ -186,11 +124,17 @@ NTPSnippetsBridge::NTPSnippetsBridge(JNIEnv* env,
   Profile* profile = ProfileAndroid::FromProfileAndroid(j_profile);
   content_suggestions_service_ =
       ContentSuggestionsServiceFactory::GetForProfile(profile);
-  contextual_content_suggestions_service_ =
-      ContextualContentSuggestionsServiceFactory::GetForProfile(profile);
   history_service_ = HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::EXPLICIT_ACCESS);
   content_suggestions_service_observer_.Add(content_suggestions_service_);
+
+  pref_change_registrar_.Init(profile->GetPrefs());
+  pref_change_registrar_.Add(
+      ntp_snippets::prefs::kArticlesListVisible,
+      base::BindRepeating(
+          &NTPSnippetsBridge::OnSuggestionsVisibilityChanged,
+          base::Unretained(this),
+          Category::FromKnownCategory(KnownCategories::ARTICLES)));
 }
 
 void NTPSnippetsBridge::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -301,34 +245,6 @@ void NTPSnippetsBridge::Fetch(
                  failure_callback, category));
 }
 
-void NTPSnippetsBridge::FetchContextualSuggestions(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& j_url,
-    const JavaParamRef<jobject>& j_callback) {
-  DCHECK(base::FeatureList::IsEnabled(
-      chrome::android::kContextualSuggestionsCarousel));
-  GURL url(ConvertJavaStringToUTF8(env, j_url));
-  contextual_content_suggestions_service_->FetchContextualSuggestions(
-      url, base::Bind(&NTPSnippetsBridge::OnContextualSuggestionsFetched,
-                      weak_ptr_factory_.GetWeakPtr(),
-                      ScopedJavaGlobalRef<jobject>(j_callback)));
-}
-
-void NTPSnippetsBridge::FetchContextualSuggestionImage(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jint j_category_id,
-    const JavaParamRef<jstring>& id_within_category,
-    const JavaParamRef<jobject>& j_callback) {
-  ScopedJavaGlobalRef<jobject> callback(j_callback);
-  contextual_content_suggestions_service_->FetchContextualSuggestionImage(
-      ContentSuggestion::ID(Category::FromIDValue(j_category_id),
-                            ConvertJavaStringToUTF8(env, id_within_category)),
-      base::Bind(&NTPSnippetsBridge::OnImageFetched,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
-}
-
 void NTPSnippetsBridge::ReloadSuggestions(JNIEnv* env,
                                           const JavaParamRef<jobject>& obj) {
   content_suggestions_service_->ReloadSuggestions();
@@ -349,11 +265,10 @@ void NTPSnippetsBridge::DismissSuggestion(
 
   history_service_->QueryURL(
       GURL(ConvertJavaStringToUTF8(env, jurl)), /*want_visits=*/false,
-      base::Bind(
+      base::BindOnce(
           [](int global_position, Category category, int position_in_category,
-             bool success, const history::URLRow& row,
-             const history::VisitVector& visit_vector) {
-            bool visited = success && row.visit_count() != 0;
+             history::QueryURLResult result) {
+            bool visited = result.success && result.row.visit_count() != 0;
             ntp_snippets::metrics::OnSuggestionDismissed(
                 global_position, category, position_in_category, visited);
           },
@@ -417,7 +332,7 @@ void NTPSnippetsBridge::OnImageFetched(ScopedJavaGlobalRef<jobject> callback,
   if (!image.IsEmpty()) {
     j_bitmap = gfx::ConvertToJavaBitmap(image.ToSkBitmap());
   }
-  RunCallbackAndroid(callback, j_bitmap);
+  RunObjectCallbackAndroid(callback, j_bitmap);
 }
 
 void NTPSnippetsBridge::OnSuggestionsFetched(
@@ -429,25 +344,20 @@ void NTPSnippetsBridge::OnSuggestionsFetched(
   // TODO(fhorschig, dgn): Allow refetch or show notification acc. to status.
   JNIEnv* env = AttachCurrentThread();
   if (status.IsSuccess()) {
-    RunCallbackAndroid(
+    RunObjectCallbackAndroid(
         success_callback,
         JNI_SnippetsBridge_ToJavaSuggestionList(env, category, suggestions));
   } else {
     // The second parameter here means nothing - it was more convenient to pass
     // a Callback (which has 1 parameter) over to the native side than a
     // Runnable (which has no parameters). We ignore the parameter Java-side.
-    RunCallbackAndroid(failure_callback, 0);
+    RunIntCallbackAndroid(failure_callback, 0);
   }
 }
 
-void NTPSnippetsBridge::OnContextualSuggestionsFetched(
-    ScopedJavaGlobalRef<jobject> j_callback,
-    ntp_snippets::Status status,
-    const GURL& url,
-    std::vector<ContentSuggestion> suggestions) {
+void NTPSnippetsBridge::OnSuggestionsVisibilityChanged(
+    const Category category) {
   JNIEnv* env = AttachCurrentThread();
-  auto j_suggestions = JNI_SnippetsBridge_ToJavaSuggestionList(
-      env, Category::FromKnownCategory(KnownCategories::CONTEXTUAL),
-      suggestions);
-  RunCallbackAndroid(j_callback, j_suggestions);
+  Java_SnippetsBridge_onSuggestionsVisibilityChanged(
+      env, bridge_, static_cast<int>(category.id()));
 }

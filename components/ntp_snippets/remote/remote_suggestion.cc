@@ -87,15 +87,18 @@ RemoteSuggestion::CreateFromContentSuggestionsDictionary(
   snippet->fetch_date_ = fetch_date;
 
   if (!(dict.GetString("title", &snippet->title_) &&
-        dict.GetString("snippet", &snippet->snippet_) &&
         GetTimeValue(dict, "creationTime", &snippet->publish_date_) &&
         GetTimeValue(dict, "expirationTime", &snippet->expiry_date_) &&
-        GetURLValue(dict, "imageUrl", &snippet->salient_image_url_) &&
         dict.GetString("attribution", &snippet->publisher_name_) &&
         GetURLValue(dict, "fullPageUrl", &snippet->url_))) {
     return nullptr;
   }
-  GetURLValue(dict, "ampUrl", &snippet->amp_url_);  // May fail; OK.
+
+  // Optional fields.
+  dict.GetString("snippet", &snippet->snippet_);
+  GetURLValue(dict, "imageUrl", &snippet->salient_image_url_);
+  GetURLValue(dict, "ampUrl", &snippet->amp_url_);
+
   // TODO(sfiera): also favicon URL.
 
   const base::Value* image_dominant_color_value =
@@ -148,31 +151,6 @@ RemoteSuggestion::CreateFromContentSuggestionsDictionary(
   }
 
   return snippet;
-}
-
-// static
-std::unique_ptr<RemoteSuggestion>
-RemoteSuggestion::CreateFromContextualSuggestionsDictionary(
-    const base::DictionaryValue& dict) {
-  std::string id;
-  if (!dict.GetString("url", &id) || id.empty()) {
-    return nullptr;
-  }
-  // TODO(gaschler): Remove the unused kArticlesRemoteId argument when moving
-  // away from RemoteSuggestion.
-  auto remote_suggestion = MakeUnique({id}, kArticlesRemoteId);
-  GetURLValue(dict, "url", &remote_suggestion->url_);
-  if (!dict.GetString("title", &remote_suggestion->title_)) {
-    dict.GetString("source", &remote_suggestion->title_);
-  }
-  dict.GetString("snippet", &remote_suggestion->snippet_);
-  GetTimeValue(dict, "creationTime", &remote_suggestion->publish_date_);
-  GetTimeValue(dict, "expirationTime", &remote_suggestion->expiry_date_);
-  GetURLValue(dict, "imageUrl", &remote_suggestion->salient_image_url_);
-  if (!dict.GetString("attribution", &remote_suggestion->publisher_name_)) {
-    dict.GetString("source", &remote_suggestion->publisher_name_);
-  }
-  return remote_suggestion;
 }
 
 // static
@@ -305,11 +283,13 @@ ContentSuggestion RemoteSuggestion::ToContentSuggestion(
   suggestion.set_publish_date(publish_date_);
   suggestion.set_publisher_name(base::UTF8ToUTF16(publisher_name_));
   suggestion.set_score(score_);
+  suggestion.set_salient_image_url(salient_image_url_);
+
   if (should_notify_) {
     NotificationExtra extra;
     extra.deadline = notification_deadline_;
     suggestion.set_notification_extra(
-        base::MakeUnique<NotificationExtra>(extra));
+        std::make_unique<NotificationExtra>(extra));
   }
   suggestion.set_fetch_date(fetch_date_);
   if (content_type_ == ContentType::VIDEO) {

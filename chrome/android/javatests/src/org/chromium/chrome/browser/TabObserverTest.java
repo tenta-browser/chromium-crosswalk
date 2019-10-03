@@ -15,17 +15,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerChrome;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.UiRestriction;
 
 import java.util.concurrent.TimeoutException;
@@ -34,8 +33,7 @@ import java.util.concurrent.TimeoutException;
  * Tests for TabObserver.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TabObserverTest {
     /** A {@Link TabObserver} that has callback helpers for each event. */
     private static class TestTabObserver extends EmptyTabObserver {
@@ -75,14 +73,14 @@ public class TabObserverTest {
         int interactableCallCount = interactabilityHelper.getCallCount();
 
         // Enter tab switcher mode and make sure the event is triggered.
-        ThreadUtils.runOnUiThreadBlocking(() -> layoutManager.showOverview(false));
+        TestThreadUtils.runOnUiThreadBlocking(() -> layoutManager.showOverview(false));
 
         interactabilityHelper.waitForCallback(interactableCallCount);
         interactableCallCount = interactabilityHelper.getCallCount();
         assertFalse("Tab should not be interactable.", mTab.isUserInteractable());
 
         // Exit tab switcher and wait for event again.
-        ThreadUtils.runOnUiThreadBlocking(() -> layoutManager.hideOverview(false));
+        TestThreadUtils.runOnUiThreadBlocking(() -> layoutManager.hideOverview(false));
 
         interactabilityHelper.waitForCallback(interactableCallCount);
         assertTrue("Tab should be interactable.", mTab.isUserInteractable());

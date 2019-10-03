@@ -52,9 +52,8 @@ void GlRenderer::RequestCanvasSize() {
 void GlRenderer::OnPixelTransformationChanged(
     const std::array<float, 9>& matrix) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  transformation_matrix_ = matrix;
   if (!canvas_) {
-    LOG(WARNING) << "Trying to set transformation matrix when the canvas is "
-        "not ready.";
     return;
   }
   canvas_->SetTransformationMatrix(matrix);
@@ -109,6 +108,9 @@ void GlRenderer::OnSurfaceCreated(std::unique_ptr<Canvas> canvas) {
   if (view_width_ > 0 && view_height_ > 0) {
     canvas_->SetViewSize(view_width_, view_height_);
   }
+  if (transformation_matrix_) {
+    canvas_->SetTransformationMatrix(*transformation_matrix_);
+  }
   for (auto& drawable : drawables_) {
     drawable->SetCanvas(canvas_->GetWeakPtr());
   }
@@ -145,7 +147,7 @@ void GlRenderer::RequestRender() {
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&GlRenderer::OnRender, weak_ptr_));
+      FROM_HERE, base::BindOnce(&GlRenderer::OnRender, weak_ptr_));
   render_scheduled_ = true;
 }
 

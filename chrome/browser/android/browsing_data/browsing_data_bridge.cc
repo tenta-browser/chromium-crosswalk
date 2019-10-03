@@ -14,26 +14,28 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/scoped_observer.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
+#include "chrome/android/chrome_jni_headers/BrowsingDataBridge_jni.h"
 #include "chrome/browser/browsing_data/browsing_data_important_sites_util.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/engagement/important_sites_util.h"
 #include "chrome/browser/history/web_history_service_factory.h"
-#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_features.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/browsing_data/core/history_notice_utils.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/sync/driver/sync_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
-#include "jni/BrowsingDataBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -43,10 +45,6 @@ using base::android::ScopedJavaGlobalRef;
 using content::BrowsingDataRemover;
 
 namespace {
-
-Profile* GetOriginalProfile() {
-  return ProfileManager::GetActiveUserProfile()->GetOriginalProfile();
-}
 
 void OnBrowsingDataRemoverDone(
     JavaObjectWeakGlobalRef weak_chrome_native_preferences) {
@@ -63,14 +61,18 @@ void OnBrowsingDataRemoverDone(
 static void JNI_BrowsingDataBridge_ClearBrowsingData(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& jprofile,
     const JavaParamRef<jintArray>& data_types,
     jint time_period,
     const JavaParamRef<jobjectArray>& jexcluding_domains,
     const JavaParamRef<jintArray>& jexcluding_domain_reasons,
     const JavaParamRef<jobjectArray>& jignoring_domains,
     const JavaParamRef<jintArray>& jignoring_domain_reasons) {
+  TRACE_EVENT0("browsing_data", "BrowsingDataBridge_ClearBrowsingData");
+
+  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   BrowsingDataRemover* browsing_data_remover =
-      content::BrowserContext::GetBrowsingDataRemover(GetOriginalProfile());
+      content::BrowserContext::GetBrowsingDataRemover(profile);
 
   std::vector<int> data_types_vector;
   base::android::JavaIntArrayToIntVector(env, data_types, &data_types_vector);
@@ -87,6 +89,7 @@ static void JNI_BrowsingDataBridge_ClearBrowsingData(
       case browsing_data::BrowsingDataType::COOKIES:
         remove_mask |= BrowsingDataRemover::DATA_TYPE_COOKIES;
         remove_mask |= ChromeBrowsingDataRemoverDelegate::DATA_TYPE_SITE_DATA;
+        remove_mask |= BrowsingDataRemover::DATA_TYPE_MEDIA_LICENSES;
         break;
       case browsing_data::BrowsingDataType::PASSWORDS:
         remove_mask |= ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PASSWORDS;
@@ -102,13 +105,11 @@ static void JNI_BrowsingDataBridge_ClearBrowsingData(
         remove_mask |=
             ChromeBrowsingDataRemoverDelegate::DATA_TYPE_CONTENT_SETTINGS;
         break;
-      case browsing_data::BrowsingDataType::MEDIA_LICENSES:
-        remove_mask |= BrowsingDataRemover::DATA_TYPE_MEDIA_LICENSES;
-        break;
       case browsing_data::BrowsingDataType::DOWNLOADS:
       case browsing_data::BrowsingDataType::HOSTED_APPS_DATA:
         // Only implemented on Desktop.
         NOTREACHED();
+        FALLTHROUGH;
       case browsing_data::BrowsingDataType::NUM_TYPES:
         NOTREACHED();
     }
@@ -117,13 +118,13 @@ static void JNI_BrowsingDataBridge_ClearBrowsingData(
   std::vector<int32_t> excluding_domain_reasons;
   std::vector<std::string> ignoring_domains;
   std::vector<int32_t> ignoring_domain_reasons;
-  base::android::AppendJavaStringArrayToStringVector(
-      env, jexcluding_domains.obj(), &excluding_domains);
-  base::android::JavaIntArrayToIntVector(env, jexcluding_domain_reasons.obj(),
+  base::android::AppendJavaStringArrayToStringVector(env, jexcluding_domains,
+                                                     &excluding_domains);
+  base::android::JavaIntArrayToIntVector(env, jexcluding_domain_reasons,
                                          &excluding_domain_reasons);
-  base::android::AppendJavaStringArrayToStringVector(
-      env, jignoring_domains.obj(), &ignoring_domains);
-  base::android::JavaIntArrayToIntVector(env, jignoring_domain_reasons.obj(),
+  base::android::AppendJavaStringArrayToStringVector(env, jignoring_domains,
+                                                     &ignoring_domains);
+  base::android::JavaIntArrayToIntVector(env, jignoring_domain_reasons,
                                          &ignoring_domain_reasons);
   std::unique_ptr<content::BrowsingDataFilterBuilder> filter_builder(
       content::BrowsingDataFilterBuilder::Create(
@@ -134,8 +135,8 @@ static void JNI_BrowsingDataBridge_ClearBrowsingData(
 
   if (!excluding_domains.empty() || !ignoring_domains.empty()) {
     ImportantSitesUtil::RecordBlacklistedAndIgnoredImportantSites(
-        GetOriginalProfile(), excluding_domains, excluding_domain_reasons,
-        ignoring_domains, ignoring_domain_reasons);
+        profile, excluding_domains, excluding_domain_reasons, ignoring_domains,
+        ignoring_domain_reasons);
   }
 
   base::OnceClosure callback = base::BindOnce(
@@ -162,21 +163,26 @@ static void EnableDialogAboutOtherFormsOfBrowsingHistory(
 static void JNI_BrowsingDataBridge_RequestInfoAboutOtherFormsOfBrowsingHistory(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& jprofile,
     const JavaParamRef<jobject>& listener) {
+  TRACE_EVENT0(
+      "browsing_data",
+      "BrowsingDataBridge_RequestInfoAboutOtherFormsOfBrowsingHistory");
   // The one-time notice in the dialog.
+  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   browsing_data::ShouldPopupDialogAboutOtherFormsOfBrowsingHistory(
-      ProfileSyncServiceFactory::GetForProfile(GetOriginalProfile()),
-      WebHistoryServiceFactory::GetForProfile(GetOriginalProfile()),
-      chrome::GetChannel(),
+      ProfileSyncServiceFactory::GetForProfile(profile),
+      WebHistoryServiceFactory::GetForProfile(profile), chrome::GetChannel(),
       base::Bind(&EnableDialogAboutOtherFormsOfBrowsingHistory,
                  ScopedJavaGlobalRef<jobject>(env, listener)));
 }
 
 static void JNI_BrowsingDataBridge_FetchImportantSites(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& jprofile,
     const JavaParamRef<jobject>& java_callback) {
-  Profile* profile = GetOriginalProfile();
+  TRACE_EVENT0("browsing_data", "BrowsingDataBridge_FetchImportantSites");
+  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   std::vector<ImportantSitesUtil::ImportantDomainInfo> important_sites =
       ImportantSitesUtil::GetImportantRegisterableDomains(
           profile, ImportantSitesUtil::kMaxImportantSites);
@@ -204,18 +210,16 @@ static void JNI_BrowsingDataBridge_FetchImportantSites(
 }
 
 // This value should not change during a sessions, as it's used for UMA metrics.
-static jint JNI_BrowsingDataBridge_GetMaxImportantSites(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
+static jint JNI_BrowsingDataBridge_GetMaxImportantSites(JNIEnv* env) {
   return ImportantSitesUtil::kMaxImportantSites;
 }
 
 static void JNI_BrowsingDataBridge_MarkOriginAsImportantForTesting(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& jprofile,
     const JavaParamRef<jstring>& jorigin) {
   GURL origin(base::android::ConvertJavaStringToUTF8(jorigin));
   CHECK(origin.is_valid());
-  ImportantSitesUtil::MarkOriginAsImportantForTesting(GetOriginalProfile(),
-                                                      origin);
+  ImportantSitesUtil::MarkOriginAsImportantForTesting(
+      ProfileAndroid::FromProfileAndroid(jprofile), origin);
 }

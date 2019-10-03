@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/supports_user_data.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -15,9 +16,9 @@ class Browser;
 class Profile;
 
 namespace content {
+class RenderWidgetHost;
 class WebContents;
-struct WebContentsUnresponsiveState;
-}
+}  // namespace content
 
 namespace ui {
 class ProfileSigninConfirmationDelegate;
@@ -44,8 +45,10 @@ class TabDialogs : public base::SupportsUserData::Data {
 
   // Shows or hides the hung renderer dialog.
   virtual void ShowHungRendererDialog(
-      const content::WebContentsUnresponsiveState& unresponsive_state) = 0;
-  virtual void HideHungRendererDialog() = 0;
+      content::RenderWidgetHost* render_widget_host,
+      base::RepeatingClosure hang_monitor_restarter) = 0;
+  virtual void HideHungRendererDialog(
+      content::RenderWidgetHost* render_widget_host) = 0;
   virtual bool IsShowingHungRendererDialog() = 0;
 
   // Shows a dialog asking the user to confirm linking to a managed account.

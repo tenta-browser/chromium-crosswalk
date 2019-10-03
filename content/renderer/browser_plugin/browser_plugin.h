@@ -5,7 +5,7 @@
 #ifndef CONTENT_RENDERER_BROWSER_PLUGIN_BROWSER_PLUGIN_H_
 #define CONTENT_RENDERER_BROWSER_PLUGIN_BROWSER_PLUGIN_H_
 
-#include "third_party/WebKit/public/web/WebPlugin.h"
+#include "third_party/blink/public/web/web_plugin.h"
 
 #include <memory>
 
@@ -15,26 +15,20 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
-#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
+#include "content/common/frame_visual_properties.h"
 #include "content/public/common/screen_info.h"
+#include "content/renderer/child_frame_compositor.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
 #include "content/renderer/render_view_impl.h"
-#include "third_party/WebKit/public/web/WebDragStatus.h"
-#include "third_party/WebKit/public/web/WebImeTextSpan.h"
-#include "third_party/WebKit/public/web/WebInputMethodController.h"
-#include "third_party/WebKit/public/web/WebNode.h"
+#include "third_party/blink/public/web/web_drag_status.h"
+#include "third_party/blink/public/web/web_ime_text_span.h"
+#include "third_party/blink/public/web/web_input_method_controller.h"
+#include "third_party/blink/public/web/web_node.h"
 
-#if defined(USE_AURA)
-#include "content/renderer/mus/mus_embedded_frame_delegate.h"
-#endif
-
-namespace base {
-class UnguessableToken;
-}
-
-namespace viz {
-class SurfaceInfo;
-struct SurfaceSequence;
+namespace cc {
+class Layer;
+class RenderFrameMetadata;
 }
 
 namespace content {
@@ -43,17 +37,11 @@ class BrowserPluginDelegate;
 class BrowserPluginManager;
 class ChildFrameCompositingHelper;
 
-#if defined(USE_AURA)
-class MusEmbeddedFrame;
-#endif
-
 class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
-#if defined(USE_AURA)
-                                     public MusEmbeddedFrameDelegate,
-#endif
+                                     public ChildFrameCompositor,
                                      public MouseLockDispatcher::LockTarget {
  public:
-  static BrowserPlugin* GetFromNode(blink::WebNode& node);
+  static BrowserPlugin* GetFromNode(const blink::WebNode& node);
 
   int render_frame_routing_id() const { return render_frame_routing_id_; }
   int browser_plugin_instance_id() const { return browser_plugin_instance_id_; }
@@ -74,11 +62,12 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
 
   void ScreenInfoChanged(const ScreenInfo& screen_info);
 
+  void OnZoomLevelChanged(double zoom_level);
+
+  void UpdateCaptureSequenceNumber(uint32_t capture_sequence_number);
+
   // Indicates whether the guest should be focused.
   bool ShouldGuestBeFocused() const;
-
-  // Called by CompositingHelper to send current SurfaceSequence to browser.
-  void SendSatisfySequence(const viz::SurfaceSequence& sequence);
 
   // Provided that a guest instance ID has been allocated, this method attaches
   // this BrowserPlugin instance to that guest.
@@ -88,11 +77,12 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
   // currently attached to, if any.
   void Detach();
 
-  // Notify the plugin about a compositor commit so that frame ACKs could be
-  // sent, if needed.
-  void DidCommitCompositorFrame();
+  // Returns the last allocated LocalSurfaceIdAllocation.
+  const viz::LocalSurfaceIdAllocation& GetLocalSurfaceIdAllocation() const;
 
-  void WasResized();
+  const viz::FrameSinkId& frame_sink_id() const { return frame_sink_id_; }
+
+  void SynchronizeVisualProperties();
 
   // Returns whether a message should be forwarded to BrowserPlugin.
   static bool ShouldForwardToBrowserPlugin(const IPC::Message& message);
@@ -106,8 +96,9 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
   bool SupportsEditCommands() const override;
   bool SupportsInputMethod() const override;
   bool CanProcessDrag() const override;
-  void UpdateAllLifecyclePhases() override {}
-  void Paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override {}
+  void UpdateAllLifecyclePhases(
+      blink::WebWidget::LifecycleUpdateReason) override {}
+  void Paint(cc::PaintCanvas* canvas, const blink::WebRect& rect) override {}
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
@@ -123,7 +114,7 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
                               const blink::WebFloatPoint& position,
                               const blink::WebFloatPoint& screen) override;
   void DidReceiveResponse(const blink::WebURLResponse& response) override;
-  void DidReceiveData(const char* data, int data_length) override;
+  void DidReceiveData(const char* data, size_t data_length) override;
   void DidFinishLoading() override;
   void DidFailLoading(const blink::WebURLError& error) override;
   bool ExecuteEditCommand(const blink::WebString& name) override;
@@ -166,54 +157,40 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
 
   ~BrowserPlugin() override;
 
-  const gfx::Rect& frame_rect() const {
-    return pending_resize_params_.frame_rect;
+  const gfx::Rect& screen_space_rect() const {
+    return pending_visual_properties_.screen_space_rect;
   }
-  gfx::Rect FrameRectInPixels() const;
-  float GetDeviceScaleFactor() const;
+  RenderWidget* GetMainWidget() const;
 
   const ScreenInfo& screen_info() const {
-    return pending_resize_params_.screen_info;
-  }
-
-  uint64_t auto_size_sequence_number() const {
-    return pending_resize_params_.sequence_number;
+    return pending_visual_properties_.screen_info;
   }
 
   void UpdateInternalInstanceId();
 
-#if defined(USE_AURA)
-  void CreateMusWindowAndEmbed(const base::UnguessableToken& embed_token);
-#endif
-
   // IPC message handlers.
   // Please keep in alphabetical order.
   void OnAdvanceFocus(int instance_id, bool reverse);
+  void OnAttachACK(int browser_plugin_instance_id);
   void OnGuestGone(int instance_id);
   void OnGuestReady(int instance_id, const viz::FrameSinkId& frame_sink_id);
-  void OnResizeDueToAutoResize(int browser_plugin_instance_id,
-                               uint64_t sequence_number);
-  void OnSetChildFrameSurface(int instance_id,
-                              const viz::SurfaceInfo& surface_info,
-                              const viz::SurfaceSequence& sequence);
+  void OnDidUpdateVisualProperties(int browser_plugin_instance_id,
+                                   const cc::RenderFrameMetadata& metadata);
+  void OnEnableAutoResize(int browser_plugin_instance_id,
+                          const gfx::Size& min_size,
+                          const gfx::Size& max_size);
+  void OnDisableAutoResize(int browser_plugin_instance_id);
   void OnSetContentsOpaque(int instance_id, bool opaque);
   void OnSetCursor(int instance_id, const WebCursor& cursor);
   void OnSetMouseLock(int instance_id, bool enable);
-#if defined(USE_AURA)
-  void OnSetMusEmbedToken(int instance_id,
-                          const base::UnguessableToken& embed_token);
-#endif
-  void OnSetTooltipText(int browser_plugin_instance_id,
-                        const base::string16& tooltip_text);
   void OnShouldAcceptTouchEvents(int instance_id, bool accept);
 
-#if defined(USE_AURA)
-  // MusEmbeddedFrameDelegate
-  void OnMusEmbeddedFrameSurfaceChanged(
-      const viz::SurfaceInfo& surface_info) override;
-  void OnMusEmbeddedFrameSinkIdAllocated(
-      const viz::FrameSinkId& frame_sink_id) override;
-#endif
+  // ChildFrameCompositor:
+  cc::Layer* GetLayer() override;
+  void SetLayer(scoped_refptr<cc::Layer> layer,
+                bool prevent_contents_opaque_changes,
+                bool is_surface_layer) override;
+  SkBitmap* GetSadPageBitmap() override;
 
   // This indicates whether this BrowserPlugin has been attached to a
   // WebContents and is ready to receive IPCs.
@@ -246,39 +223,30 @@ class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
   std::vector<EditCommand> edit_commands_;
 
   viz::FrameSinkId frame_sink_id_;
-  viz::LocalSurfaceId local_surface_id_;
-  viz::LocalSurfaceIdAllocator local_surface_id_allocator_;
-
-  bool enable_surface_synchronization_ = false;
-
-  // TODO(fsamuel): We might want to unify this with content::ResizeParams.
-  struct ResizeParams {
-    gfx::Rect frame_rect;
-    ScreenInfo screen_info;
-    uint64_t sequence_number = 0lu;
-  };
+  viz::ParentLocalSurfaceIdAllocator parent_local_surface_id_allocator_;
 
   // The last ResizeParams sent to the browser process, if any.
-  base::Optional<ResizeParams> sent_resize_params_;
+  base::Optional<FrameVisualProperties> sent_visual_properties_;
 
   // The current set of ResizeParams. This may or may not match
-  // |sent_resize_params_|.
-  ResizeParams pending_resize_params_;
+  // |sent_visual_properties_|.
+  FrameVisualProperties pending_visual_properties_;
 
   // We call lifetime managing methods on |delegate_|, but we do not directly
   // own this. The delegate destroys itself.
   base::WeakPtr<BrowserPluginDelegate> delegate_;
 
-#if defined(USE_AURA)
-  // Set if OnSetMusEmbedToken() is called before attached.
-  base::Optional<base::UnguessableToken> pending_embed_token_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
-  std::unique_ptr<MusEmbeddedFrame> mus_embedded_frame_;
-#endif
+  // Pointer to the RenderWidget that embeds this plugin.
+  base::WeakPtr<RenderWidget> embedding_render_widget_;
+
+  // The layer used to embed the out-of-process content.
+  scoped_refptr<cc::Layer> embedded_layer_;
 
   // Weak factory used in v8 |MakeWeak| callback, since the v8 callback might
   // get called after BrowserPlugin has been destroyed.
-  base::WeakPtrFactory<BrowserPlugin> weak_ptr_factory_;
+  base::WeakPtrFactory<BrowserPlugin> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowserPlugin);
 };

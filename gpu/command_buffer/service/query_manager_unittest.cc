@@ -7,15 +7,16 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
+#include "gpu/command_buffer/service/gles2_query_manager.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
-#include "gpu/command_buffer/service/query_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_context.h"
@@ -41,9 +42,8 @@ class QueryManagerTest : public GpuServiceTest {
   static const uint32_t kInitialResult = 0xBDBDBDBDu;
   static const uint8_t kInitialMemoryValue = 0xBDu;
 
-  QueryManagerTest() {
-  }
-  ~QueryManagerTest() override {}
+  QueryManagerTest() = default;
+  ~QueryManagerTest() override = default;
 
  protected:
   void SetUp() override {
@@ -70,15 +70,15 @@ class QueryManagerTest : public GpuServiceTest {
     buffer = command_buffer_service_->CreateTransferBufferHelper(
         kSharedBufferSize, &shared_memory2_id_);
     memset(buffer->memory(), kInitialMemoryValue, kSharedBufferSize);
-    decoder_.reset(
-        new MockGLES2Decoder(command_buffer_service_.get(), &outputter_));
+    decoder_.reset(new MockGLES2Decoder(&client_, command_buffer_service_.get(),
+                                        &outputter_));
     TestHelper::SetupFeatureInfoInitExpectations(
         gl_.get(), extension_expectations);
     EXPECT_CALL(*decoder_.get(), GetGLContext())
       .WillRepeatedly(Return(GetGLContext()));
     scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
     feature_info->InitializeForTesting();
-    manager_.reset(new QueryManager(decoder_.get(), feature_info.get()));
+    manager_.reset(new GLES2QueryManager(decoder_.get(), feature_info.get()));
   }
 
   QueryManager::Query* CreateQuery(GLenum target,
@@ -126,8 +126,9 @@ class QueryManagerTest : public GpuServiceTest {
 
   TraceOutputter outputter_;
   std::unique_ptr<FakeCommandBufferServiceBase> command_buffer_service_;
+  FakeDecoderClient client_;
   std::unique_ptr<MockGLES2Decoder> decoder_;
-  std::unique_ptr<QueryManager> manager_;
+  std::unique_ptr<GLES2QueryManager> manager_;
 
   int32_t shared_memory_id_ = 0;
   int32_t shared_memory2_id_ = 0;
@@ -161,18 +162,18 @@ TEST_F(QueryManagerTest, Basic) {
   scoped_refptr<QueryManager::Query> query(
       CreateQuery(GL_ANY_SAMPLES_PASSED_EXT, kClient1Id, shared_memory_id_,
                   kSharedMemoryOffset, kService1Id));
-  ASSERT_TRUE(query.get() != NULL);
+  ASSERT_TRUE(query.get() != nullptr);
   // Check we can get the same Query.
   EXPECT_EQ(query.get(), manager_->GetQuery(kClient1Id));
   // Check we get nothing for a non-existent query.
-  EXPECT_TRUE(manager_->GetQuery(kClient2Id) == NULL);
+  EXPECT_TRUE(manager_->GetQuery(kClient2Id) == nullptr);
   // Check we can delete the query.
   EXPECT_CALL(*gl_, DeleteQueries(1, ::testing::Pointee(kService1Id)))
       .Times(1)
       .RetiresOnSaturation();
   manager_->RemoveQuery(kClient1Id);
   // Check we get nothing for a non-existent query.
-  EXPECT_TRUE(manager_->GetQuery(kClient1Id) == NULL);
+  EXPECT_TRUE(manager_->GetQuery(kClient1Id) == nullptr);
   // Check query is deleted
   EXPECT_TRUE(query->IsDeleted());
   EXPECT_FALSE(manager_->HavePendingQueries());
@@ -186,13 +187,13 @@ TEST_F(QueryManagerTest, Destroy) {
   scoped_refptr<QueryManager::Query> query(
       CreateQuery(GL_ANY_SAMPLES_PASSED_EXT, kClient1Id, shared_memory_id_,
                   kSharedMemoryOffset, kService1Id));
-  ASSERT_TRUE(query.get() != NULL);
+  ASSERT_TRUE(query.get() != nullptr);
   EXPECT_CALL(*gl_, DeleteQueries(1, ::testing::Pointee(kService1Id)))
       .Times(1)
       .RetiresOnSaturation();
   manager_->Destroy(true);
   // Check we get nothing for a non-existent query.
-  EXPECT_TRUE(manager_->GetQuery(kClient1Id) == NULL);
+  EXPECT_TRUE(manager_->GetQuery(kClient1Id) == nullptr);
   // Check query is deleted
   EXPECT_TRUE(query->IsDeleted());
 }
@@ -206,7 +207,7 @@ TEST_F(QueryManagerTest, QueryBasic) {
   scoped_refptr<QueryManager::Query> query(
       CreateQuery(kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset,
                   kService1Id));
-  ASSERT_TRUE(query.get() != NULL);
+  ASSERT_TRUE(query.get() != nullptr);
 
   EXPECT_TRUE(query->IsValid());
   EXPECT_FALSE(query->IsDeleted());
@@ -228,12 +229,12 @@ TEST_F(QueryManagerTest, ProcessPendingQuery) {
   scoped_refptr<QueryManager::Query> query(
       CreateQuery(kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset,
                   kService1Id));
-  ASSERT_TRUE(query.get() != NULL);
+  ASSERT_TRUE(query.get() != nullptr);
 
   // Setup shared memory like client would.
   QuerySync* sync = decoder_->GetSharedMemoryAs<QuerySync*>(
       shared_memory_id_, kSharedMemoryOffset, sizeof(*sync));
-  ASSERT_TRUE(sync != NULL);
+  ASSERT_TRUE(sync != nullptr);
   sync->Reset();
 
   // Queue it
@@ -290,7 +291,7 @@ TEST_F(QueryManagerTest, ProcessPendingQueries) {
   // Setup shared memory like client would.
   QuerySync* sync1 = decoder_->GetSharedMemoryAs<QuerySync*>(
       shared_memory_id_, kSharedMemoryOffset, sizeof(*sync1) * 3);
-  ASSERT_TRUE(sync1 != NULL);
+  ASSERT_TRUE(sync1 != nullptr);
   QuerySync* sync2 = sync1 + 1;
   QuerySync* sync3 = sync2 + 1;
 
@@ -304,9 +305,9 @@ TEST_F(QueryManagerTest, ProcessPendingQueries) {
   scoped_refptr<QueryManager::Query> query3(
       CreateQuery(kTarget, kClient3Id, shared_memory_id_,
                   kSharedMemoryOffset + sizeof(*sync1) * 2, kService3Id));
-  ASSERT_TRUE(query1.get() != NULL);
-  ASSERT_TRUE(query2.get() != NULL);
-  ASSERT_TRUE(query3.get() != NULL);
+  ASSERT_TRUE(query1.get() != nullptr);
+  ASSERT_TRUE(query2.get() != nullptr);
+  ASSERT_TRUE(query3.get() != nullptr);
   EXPECT_FALSE(manager_->HavePendingQueries());
 
   sync1->Reset();
@@ -395,7 +396,7 @@ TEST_F(QueryManagerTest, ExitWithPendingQuery) {
   scoped_refptr<QueryManager::Query> query(
       CreateQuery(kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset,
                   kService1Id));
-  ASSERT_TRUE(query.get() != NULL);
+  ASSERT_TRUE(query.get() != nullptr);
 
   // Queue it
   QueueQuery(query.get(), kService1Id, kSubmitCount);
@@ -414,13 +415,13 @@ TEST_F(QueryManagerTest, ARBOcclusionQuery2) {
       "GL_ARB_occlusion_query2");
   scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
   feature_info->InitializeForTesting();
-  std::unique_ptr<QueryManager> manager(
-      new QueryManager(decoder_.get(), feature_info.get()));
+  std::unique_ptr<GLES2QueryManager> manager(
+      new GLES2QueryManager(decoder_.get(), feature_info.get()));
 
   QueryManager::Query* query =
       CreateQueryOnManager(manager.get(), kTarget, kClient1Id,
                            shared_memory_id_, kSharedMemoryOffset, kService1Id);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   EXPECT_CALL(*gl_, BeginQuery(GL_ANY_SAMPLES_PASSED_EXT, kService1Id))
       .Times(1)
@@ -446,13 +447,13 @@ TEST_F(QueryManagerTest, ARBOcclusionQuery) {
       "GL_ARB_occlusion_query");
   scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
   feature_info->InitializeForTesting();
-  std::unique_ptr<QueryManager> manager(
-      new QueryManager(decoder_.get(), feature_info.get()));
+  std::unique_ptr<GLES2QueryManager> manager(
+      new GLES2QueryManager(decoder_.get(), feature_info.get()));
 
   QueryManager::Query* query =
       CreateQueryOnManager(manager.get(), kTarget, kClient1Id,
                            shared_memory_id_, kSharedMemoryOffset, kService1Id);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   EXPECT_CALL(*gl_, BeginQuery(GL_SAMPLES_PASSED_ARB, kService1Id))
       .Times(1)
@@ -477,13 +478,13 @@ TEST_F(QueryManagerTest, ARBOcclusionPauseResume) {
       "GL_ARB_occlusion_query");
   scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
   feature_info->InitializeForTesting();
-  std::unique_ptr<QueryManager> manager(
-      new QueryManager(decoder_.get(), feature_info.get()));
+  std::unique_ptr<GLES2QueryManager> manager(
+      new GLES2QueryManager(decoder_.get(), feature_info.get()));
 
   QueryManager::Query* query =
       CreateQueryOnManager(manager.get(), kTarget, kClient1Id,
                            shared_memory_id_, kSharedMemoryOffset, kService1Id);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   EXPECT_CALL(*gl_, BeginQuery(GL_SAMPLES_PASSED_ARB, kService1Id))
       .Times(1)
@@ -562,11 +563,11 @@ TEST_F(QueryManagerTest, TimeElapsedQuery) {
   const base::subtle::Atomic32 kSubmitCount = 123;
   gl::GPUTimingFake fake_timing_queries;
   decoder_->GetGLContext()->CreateGPUTimingClient()->SetCpuTimeForTesting(
-      base::Bind(&gl::GPUTimingFake::GetFakeCPUTime));
+      base::BindRepeating(&gl::GPUTimingFake::GetFakeCPUTime));
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   fake_timing_queries.ExpectGPUTimerQuery(*gl_, true);
   fake_timing_queries.SetCurrentGLTime(
@@ -594,11 +595,11 @@ TEST_F(QueryManagerTest, TimeElapsedPauseResume) {
   const base::subtle::Atomic32 kSubmitCount = 123;
   gl::GPUTimingFake fake_timing_queries;
   decoder_->GetGLContext()->CreateGPUTimingClient()->SetCpuTimeForTesting(
-      base::Bind(&gl::GPUTimingFake::GetFakeCPUTime));
+      base::BindRepeating(&gl::GPUTimingFake::GetFakeCPUTime));
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   fake_timing_queries.ExpectGPUTimerQuery(*gl_, true);
   fake_timing_queries.SetCurrentGLTime(
@@ -666,7 +667,7 @@ TEST_F(QueryManagerManualSetupTest, TimeElapsedDisjoint) {
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   // Disjoint happening before the query should not trigger a disjoint event.
   fake_timing_queries.SetDisjoint();
@@ -699,11 +700,11 @@ TEST_F(QueryManagerTest, TimeStampQuery) {
   gl::GPUTimingFake fake_timing_queries;
 
   decoder_->GetGLContext()->CreateGPUTimingClient()->SetCpuTimeForTesting(
-      base::Bind(&gl::GPUTimingFake::GetFakeCPUTime));
+      base::BindRepeating(&gl::GPUTimingFake::GetFakeCPUTime));
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   const uint64_t expected_result =
       100u * base::Time::kNanosecondsPerMicrosecond;
@@ -726,11 +727,11 @@ TEST_F(QueryManagerTest, TimeStampQueryPending) {
   gl::GPUTimingFake fake_timing_queries;
 
   decoder_->GetGLContext()->CreateGPUTimingClient()->SetCpuTimeForTesting(
-      base::Bind(&gl::GPUTimingFake::GetFakeCPUTime));
+      base::BindRepeating(&gl::GPUTimingFake::GetFakeCPUTime));
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   const uint64_t expected_result =
       100u * base::Time::kNanosecondsPerMicrosecond;
@@ -770,7 +771,7 @@ TEST_F(QueryManagerManualSetupTest, TimeStampDisjoint) {
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   // Disjoint happening before the query should not trigger a disjoint event.
   fake_timing_queries.SetDisjoint();
@@ -820,7 +821,7 @@ TEST_F(QueryManagerManualSetupTest, DisjointContinualTest) {
 
   QueryManager::Query* query = CreateQuery(
       kTarget, kClient1Id, shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   fake_timing_queries.ExpectGPUTimeStampQuery(*gl_, false);
   manager_->QueryCounter(query, kSubmitCount);
@@ -842,18 +843,18 @@ TEST_F(QueryManagerTest, GetErrorQuery) {
   TestHelper::SetupFeatureInfoInitExpectations(gl_.get(), "");
   scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
   feature_info->InitializeForTesting();
-  std::unique_ptr<QueryManager> manager(
-      new QueryManager(decoder_.get(), feature_info.get()));
+  std::unique_ptr<GLES2QueryManager> manager(
+      new GLES2QueryManager(decoder_.get(), feature_info.get()));
 
   QueryManager::Query* query =
       CreateQueryOnManager(manager.get(), kTarget, kClient1Id,
                            shared_memory_id_, kSharedMemoryOffset, 0);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   // Setup shared memory like client would.
   QuerySync* sync = decoder_->GetSharedMemoryAs<QuerySync*>(
       shared_memory_id_, kSharedMemoryOffset, sizeof(*sync));
-  ASSERT_TRUE(sync != NULL);
+  ASSERT_TRUE(sync != nullptr);
   sync->Reset();
 
   manager->BeginQuery(query);
@@ -884,13 +885,13 @@ TEST_F(QueryManagerTest, OcclusionQuery) {
       "GL_ARB_occlusion_query");
   scoped_refptr<FeatureInfo> feature_info(new FeatureInfo());
   feature_info->InitializeForTesting();
-  std::unique_ptr<QueryManager> manager(
-      new QueryManager(decoder_.get(), feature_info.get()));
+  std::unique_ptr<GLES2QueryManager> manager(
+      new GLES2QueryManager(decoder_.get(), feature_info.get()));
 
   QueryManager::Query* query =
       CreateQueryOnManager(manager.get(), kTarget, kClient1Id,
                            shared_memory_id_, kSharedMemoryOffset, kService1Id);
-  ASSERT_TRUE(query != NULL);
+  ASSERT_TRUE(query != nullptr);
 
   EXPECT_CALL(*gl_, BeginQuery(GL_SAMPLES_PASSED_ARB, kService1Id))
       .Times(1)
@@ -905,5 +906,3 @@ TEST_F(QueryManagerTest, OcclusionQuery) {
 
 }  // namespace gles2
 }  // namespace gpu
-
-

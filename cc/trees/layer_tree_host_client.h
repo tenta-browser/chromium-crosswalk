@@ -9,9 +9,12 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
+#include "cc/input/browser_controls_state.h"
+#include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace gfx {
-class Vector2dF;
+struct PresentationFeedback;
 }
 
 namespace viz {
@@ -19,6 +22,44 @@ struct BeginFrameArgs;
 }
 
 namespace cc {
+struct ElementId;
+
+struct ApplyViewportChangesArgs {
+  // Scroll offset delta of the inner (visual) viewport.
+  gfx::ScrollOffset inner_delta;
+
+  // Elastic overscroll effect offset delta. This is used only on Mac. a.k.a
+  // "rubber-banding" overscroll.
+  gfx::Vector2dF elastic_overscroll_delta;
+
+  // "Pinch-zoom" page scale delta. This is a multiplicative delta. i.e.
+  // main_thread_scale * delta == impl_thread_scale.
+  float page_scale_delta;
+
+  // Indicates that a pinch gesture is currently active or not; used to allow
+  // subframe compositors to throttle their re-rastering during the gesture.
+  bool is_pinch_gesture_active;
+
+  // How much the browser controls have been shown or hidden. The ratio runs
+  // between 0 (hidden) and 1 (full-shown). This is additive.
+  float browser_controls_delta;
+
+  // Whether the browser controls have been locked to fully hidden or shown or
+  // whether they can be freely moved.
+  BrowserControlsState browser_controls_constraint;
+
+  // Set to true when a scroll gesture being handled on the compositor has
+  // ended.
+  bool scroll_gesture_did_end;
+};
+
+using ManipulationInfo = uint32_t;
+constexpr ManipulationInfo kManipulationInfoNone = 0;
+constexpr ManipulationInfo kManipulationInfoHasScrolledByWheel = 1 << 0;
+constexpr ManipulationInfo kManipulationInfoHasScrolledByTouch = 1 << 1;
+constexpr ManipulationInfo kManipulationInfoHasScrolledByPrecisionTouchPad =
+    1 << 2;
+constexpr ManipulationInfo kManipulationInfoHasPinchZoomed = 1 << 3;
 
 // A LayerTreeHost is bound to a LayerTreeHostClient. The main rendering
 // loop (in ProxyMain or SingleThreadProxy) calls methods on the
@@ -51,6 +92,8 @@ class LayerTreeHostClient {
   virtual void BeginMainFrameNotExpectedSoon() = 0;
   virtual void BeginMainFrameNotExpectedUntil(base::TimeTicks time) = 0;
   virtual void DidBeginMainFrame() = 0;
+  virtual void WillUpdateLayers() = 0;
+  virtual void DidUpdateLayers() = 0;
 
   // Visual frame-based updates to the state of the LayerTreeHost are expected
   // to happen only in calls to LayerTreeHostClient::UpdateLayerTreeHost, which
@@ -64,15 +107,23 @@ class LayerTreeHostClient {
   // mutations on the LayerTreeHost.)
   virtual void UpdateLayerTreeHost() = 0;
 
-  virtual void ApplyViewportDeltas(
-      const gfx::Vector2dF& inner_delta,
-      const gfx::Vector2dF& outer_delta,
-      const gfx::Vector2dF& elastic_overscroll_delta,
-      float page_scale,
-      float top_controls_delta) = 0;
-  virtual void RecordWheelAndTouchScrollingCount(
-      bool has_scrolled_by_wheel,
-      bool has_scrolled_by_touch) = 0;
+  // Notifies the client of viewport-related changes that occured in the
+  // LayerTreeHost since the last commit. This typically includes things
+  // related to pinch-zoom, browser controls (aka URL bar), overscroll, etc.
+  virtual void ApplyViewportChanges(const ApplyViewportChangesArgs& args) = 0;
+
+  // Record use counts of different methods of scrolling (e.g. wheel, touch,
+  // precision touchpad, etc.).
+  virtual void RecordManipulationTypeCounts(ManipulationInfo info) = 0;
+
+  // Notifies the client when an overscroll has happened.
+  virtual void SendOverscrollEventFromImplSide(
+      const gfx::Vector2dF& overscroll_delta,
+      ElementId scroll_latched_element_id) = 0;
+  // Notifies the client when a gesture scroll has ended.
+  virtual void SendScrollEndEventFromImplSide(
+      ElementId scroll_latched_element_id) = 0;
+
   // Request a LayerTreeFrameSink from the client. When the client has one it
   // should call LayerTreeHost::SetLayerTreeFrameSink. This will result in
   // either DidFailToInitializeLayerTreeFrameSink or
@@ -85,10 +136,13 @@ class LayerTreeHostClient {
   virtual void DidCommitAndDrawFrame() = 0;
   virtual void DidReceiveCompositorFrameAck() = 0;
   virtual void DidCompletePageScaleAnimation() = 0;
-  // The only time a subframe ever gets its own LayerTree is when the subframe
-  // renders in a different process its ancestors; this returns true in
-  // that case.
-  virtual bool IsForSubframe() = 0;
+  virtual void DidPresentCompositorFrame(
+      uint32_t frame_token,
+      const gfx::PresentationFeedback& feedback) = 0;
+  // Mark the frame start and end time for UMA and UKM metrics that require
+  // the time from the start of BeginMainFrame to the Commit, or early out.
+  virtual void RecordStartOfFrameMetrics() = 0;
+  virtual void RecordEndOfFrameMetrics(base::TimeTicks frame_begin_time) = 0;
 
  protected:
   virtual ~LayerTreeHostClient() {}

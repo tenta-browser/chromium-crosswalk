@@ -9,9 +9,10 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/login/auth/auth_status_consumer.h"
 #include "chromeos/login/auth/authenticator.h"
 #include "chromeos/login/auth/extended_authenticator.h"
@@ -24,8 +25,8 @@ namespace base {
 class TaskRunner;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace content {
@@ -42,7 +43,8 @@ namespace chromeos {
 // If auth is succeeded, cookie fetcher is executed, LP instance deletes itself.
 //
 // If |delegate_| is not NULL it will handle error messages, password input.
-class CHROMEOS_EXPORT LoginPerformer : public AuthStatusConsumer {
+class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) LoginPerformer
+    : public AuthStatusConsumer {
  public:
   typedef enum AuthorizationMode {
     // Authorization performed internally by Chrome.
@@ -170,8 +172,9 @@ class CHROMEOS_EXPORT LoginPerformer : public AuthStatusConsumer {
   // Look up browser context to use during signin.
   virtual content::BrowserContext* GetSigninContext() = 0;
 
-  // Get RequestContext used for sign in.
-  virtual net::URLRequestContextGetter* GetSigninRequestContext() = 0;
+  // Gets the SharedURLLoaderFactory used for sign in.
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetSigninURLLoaderFactory() = 0;
 
   // Create authenticator implementation.
   virtual scoped_refptr<Authenticator> CreateAuthenticator() = 0;

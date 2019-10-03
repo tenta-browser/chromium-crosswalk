@@ -6,7 +6,7 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
+#include "base/task/single_thread_task_executor.h"
 
 #include "third_party/khronos_glcts/framework/common/tcuApp.hpp"
 #include "third_party/khronos_glcts/framework/common/tcuCommandLine.hpp"
@@ -20,7 +20,7 @@
 tcu::Platform* createPlatform ();
 
 void GTFMain(int argc, char* argv[]) {
-  setvbuf(stdout, DE_NULL, _IOLBF, 4*1024);
+  setvbuf(stdout, DE_nullptr, _IOLBF, 4 * 1024);
 
   try {
     tcu::CommandLine cmdLine(argc, argv);
@@ -44,7 +44,8 @@ void GTFMain(int argc, char* argv[]) {
 int main(int argc, char *argv[]) {
   base::AtExitManager at_exit;
   base::CommandLine::Init(argc, argv);
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
 
   GTFMain(argc, argv);
 

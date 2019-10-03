@@ -5,7 +5,7 @@
 #ifndef UI_AURA_WINDOW_OBSERVER_H_
 #define UI_AURA_WINDOW_OBSERVER_H_
 
-#include "base/macros.h"
+#include "base/observer_list_types.h"
 #include "base/strings/string16.h"
 #include "ui/aura/aura_export.h"
 #include "ui/compositor/property_change_reason.h"
@@ -19,7 +19,7 @@ namespace aura {
 
 class Window;
 
-class AURA_EXPORT WindowObserver {
+class AURA_EXPORT WindowObserver : public base::CheckedObserver {
  public:
   struct HierarchyChangeParams {
     enum HierarchyChangePhase {
@@ -54,6 +54,9 @@ class AURA_EXPORT WindowObserver {
 
   // Invoked prior to removing |window| as a child of this window.
   virtual void OnWillRemoveWindow(Window* window) {}
+
+  // Invoked after |removed_window| had been removed as a child of this window.
+  virtual void OnWindowRemoved(Window* removed_window) {}
 
   // Invoked when this window's parent window changes.  |parent| may be NULL.
   virtual void OnWindowParentChanged(Window* window, Window* parent) {}
@@ -91,17 +94,6 @@ class AURA_EXPORT WindowObserver {
                                      const gfx::Rect& new_bounds,
                                      ui::PropertyChangeReason reason) {}
 
-  // Invoked when the opacity of the |window|'s layer is set (even if it didn't
-  // change). |reason| indicates whether the opacity was set directly or by an
-  // animation. This won't necessarily be called at every step of an animation.
-  // However, it will always be called before the first frame of the animation
-  // is rendered and when the animation ends. The client can determine whether
-  // the animation is ending by calling
-  // window->layer()->GetAnimator()->IsAnimatingProperty(
-  // ui::LayerAnimationElement::OPACITY).
-  virtual void OnWindowOpacitySet(Window* window,
-                                  ui::PropertyChangeReason reason) {}
-
   // Invoked before Window::SetTransform() sets the transform of a window.
   virtual void OnWindowTargetTransformChanging(
       Window* window,
@@ -117,6 +109,24 @@ class AURA_EXPORT WindowObserver {
   // ui::LayerAnimationElement::TRANSFORM).
   virtual void OnWindowTransformed(Window* window,
                                    ui::PropertyChangeReason reason) {}
+
+  // Invoked when the opacity of the |window|'s layer is set (even if it didn't
+  // change). |reason| indicates whether the opacity was set directly or by an
+  // animation. This won't necessarily be called at every step of an animation.
+  // However, it will always be called before the first frame of the animation
+  // is rendered and when the animation ends. The client can determine whether
+  // the animation is ending by calling
+  // window->layer()->GetAnimator()->IsAnimatingProperty(
+  // ui::LayerAnimationElement::OPACITY).
+  virtual void OnWindowOpacitySet(Window* window,
+                                  ui::PropertyChangeReason reason) {}
+
+  // Invoked when the alpha shape of the |window|'s layer is set.
+  virtual void OnWindowAlphaShapeSet(Window* window) {}
+
+  // Invoked when whether |window|'s layer fills its bounds opaquely or not
+  // is changed.
+  virtual void OnWindowTransparentChanged(Window* window) {}
 
   // Invoked when |window|'s position among its siblings in the stacking order
   // has changed.
@@ -158,25 +168,24 @@ class AURA_EXPORT WindowObserver {
 
   // Called when the app embedded in |window| disconnects (is no longer
   // embedded).
-  virtual void OnEmbeddedAppDisconnected(Window* window);
+  virtual void OnEmbeddedAppDisconnected(Window* window) {}
+
+  // Called when the occlusion state of |window| changes.
+  virtual void OnWindowOcclusionChanged(Window* window) {}
+
+  // Called when the window manager potentially starts an interactive resize
+  // loop.
+  virtual void OnResizeLoopStarted(Window* window) {}
+
+  // Called when the window manager ends an interactive resize loop. This is not
+  // called if the window is destroyed during the loop.
+  virtual void OnResizeLoopEnded(Window* window) {}
+
+  // Called when the opaque regions for occlusion of |window| is changed.
+  virtual void OnWindowOpaqueRegionsForOcclusionChanged(Window* window) {}
 
  protected:
-  virtual ~WindowObserver();
-
- private:
-  friend class Window;
-
-  // Called when this is added as an observer on |window|.
-  void OnObservingWindow(Window* window);
-
-  // Called when this is removed from the observers on |window|.
-  void OnUnobservingWindow(Window* window);
-
-  // Tracks the number of windows being observed to track down
-  // http://crbug.com/365364.
-  int observing_;
-
-  DISALLOW_COPY_AND_ASSIGN(WindowObserver);
+  ~WindowObserver() override;
 };
 
 }  // namespace aura

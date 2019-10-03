@@ -8,10 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_helpers.h"
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -39,8 +38,7 @@ static base::LazyInstance<CastThreads>::DestructorAtExit g_cast_threads =
     LAZY_INSTANCE_INITIALIZER;
 
 CastSessionDelegateBase::CastSessionDelegateBase()
-    : io_task_runner_(content::RenderThread::Get()->GetIOTaskRunner()),
-      weak_factory_(this) {
+    : io_task_runner_(content::RenderThread::Get()->GetIOTaskRunner()) {
   DCHECK(io_task_runner_.get());
 #if defined(OS_WIN)
   // Note that this also increases the accuracy of PostDelayTask,
@@ -68,11 +66,11 @@ void CastSessionDelegateBase::StartUDP(
   // CastSender uses the renderer's IO thread as the main thread. This reduces
   // thread hopping for incoming video frames and outgoing network packets.
   // TODO(hubbe): Create cast environment in ctor instead.
-  cast_environment_ = new CastEnvironment(
-      std::unique_ptr<base::TickClock>(new base::DefaultTickClock()),
-      base::ThreadTaskRunnerHandle::Get(),
-      g_cast_threads.Get().GetAudioEncodeTaskRunner(),
-      g_cast_threads.Get().GetVideoEncodeTaskRunner());
+  cast_environment_ =
+      new CastEnvironment(base::DefaultTickClock::GetInstance(),
+                          base::ThreadTaskRunnerHandle::Get(),
+                          g_cast_threads.Get().GetAudioEncodeTaskRunner(),
+                          g_cast_threads.Get().GetVideoEncodeTaskRunner());
 
   // Rationale for using unretained: The callback cannot be called after the
   // destruction of CastTransportIPC, and they both share the same thread.
@@ -105,8 +103,7 @@ void CastSessionDelegateBase::StatusNotificationCB(
   }
 }
 
-CastSessionDelegate::CastSessionDelegate()
-    : weak_factory_(this) {
+CastSessionDelegate::CastSessionDelegate() {
   DCHECK(io_task_runner_.get());
 }
 
@@ -209,14 +206,14 @@ void CastSessionDelegate::GetEventLogsAndReset(
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   if (!event_subscribers_.get()) {
-    callback.Run(base::MakeUnique<base::Value>(base::Value::Type::BINARY));
+    callback.Run(std::make_unique<base::Value>(base::Value::Type::BINARY));
     return;
   }
 
   media::cast::EncodingEventSubscriber* subscriber =
       event_subscribers_->GetEncodingEventSubscriber(is_audio);
   if (!subscriber) {
-    callback.Run(base::MakeUnique<base::Value>(base::Value::Type::BINARY));
+    callback.Run(std::make_unique<base::Value>(base::Value::Type::BINARY));
     return;
   }
 
@@ -247,13 +244,13 @@ void CastSessionDelegate::GetEventLogsAndReset(
 
   if (!success) {
     DVLOG(2) << "Failed to serialize event log.";
-    callback.Run(base::MakeUnique<base::Value>(base::Value::Type::BINARY));
+    callback.Run(std::make_unique<base::Value>(base::Value::Type::BINARY));
     return;
   }
 
   DVLOG(2) << "Serialized log length: " << output_bytes;
 
-  auto blob = base::MakeUnique<base::Value>(std::vector<char>(
+  auto blob = std::make_unique<base::Value>(std::vector<char>(
       serialized_log.get(), serialized_log.get() + output_bytes));
   callback.Run(std::move(blob));
 }
@@ -263,14 +260,14 @@ void CastSessionDelegate::GetStatsAndReset(bool is_audio,
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   if (!event_subscribers_.get()) {
-    callback.Run(base::MakeUnique<base::DictionaryValue>());
+    callback.Run(std::make_unique<base::DictionaryValue>());
     return;
   }
 
   media::cast::StatsEventSubscriber* subscriber =
       event_subscribers_->GetStatsEventSubscriber(is_audio);
   if (!subscriber) {
-    callback.Run(base::MakeUnique<base::DictionaryValue>());
+    callback.Run(std::make_unique<base::DictionaryValue>());
     return;
   }
 
@@ -300,13 +297,13 @@ void CastSessionDelegate::OnOperationalStatusChange(
       // successfully re-initialized.
       if (is_for_audio) {
         if (!audio_frame_input_available_callback_.is_null()) {
-          base::ResetAndReturn(&audio_frame_input_available_callback_).Run(
-              cast_sender_->audio_frame_input());
+          std::move(audio_frame_input_available_callback_)
+              .Run(cast_sender_->audio_frame_input());
         }
       } else {
         if (!video_frame_input_available_callback_.is_null()) {
-          base::ResetAndReturn(&video_frame_input_available_callback_).Run(
-              cast_sender_->video_frame_input());
+          std::move(video_frame_input_available_callback_)
+              .Run(cast_sender_->video_frame_input());
         }
       }
       break;

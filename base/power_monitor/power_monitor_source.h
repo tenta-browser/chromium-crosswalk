@@ -8,7 +8,6 @@
 #include "base/base_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/observer_list_threadsafe.h"
 #include "base/synchronization/lock.h"
 
 namespace base {
@@ -36,9 +35,6 @@ class BASE_EXPORT PowerMonitorSource {
 
   // Friend function that is allowed to access the protected ProcessPowerEvent.
   friend void ProcessPowerEventHelper(PowerEvent);
-
-  // Get the process-wide PowerMonitorSource (if not present, returns NULL).
-  static PowerMonitorSource* Get();
 
   // ProcessPowerEvent should only be called from a single thread, most likely
   // the UI thread or, in child processes, the IO thread.

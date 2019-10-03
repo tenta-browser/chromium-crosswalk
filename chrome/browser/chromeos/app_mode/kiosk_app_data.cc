@@ -11,7 +11,7 @@
 #include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data_delegate.h"
@@ -20,10 +20,13 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/extensions/webstore_install_helper.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/browser/sandboxed_unpacker.h"
@@ -33,6 +36,9 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/manifest_handlers/kiosk_mode_info.h"
+#include "extensions/common/verifier_formats.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
 
@@ -47,6 +53,8 @@ constexpr char kKeyRequiredPlatformVersion[] = "required_platform_version";
 
 constexpr char kInvalidWebstoreResponseError[] =
     "Invalid Chrome Web Store reponse";
+
+bool ignore_kiosk_app_data_load_failures_for_testing = false;
 
 // Returns true for valid kiosk app manifest.
 bool IsValidKioskAppManifest(const extensions::Manifest& manifest) {
@@ -79,12 +87,14 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
         crx_file_(crx_file),
         success_(false),
         task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-            {base::MayBlock(), base::TaskPriority::BACKGROUND,
+            {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
              base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})) {}
 
   void Start() {
+    auto connector = content::GetSystemConnector()->Clone();
     task_runner_->PostTask(FROM_HERE,
-                           base::BindOnce(&CrxLoader::StartInThreadPool, this));
+                           base::BindOnce(&CrxLoader::StartInThreadPool, this,
+                                          std::move(connector)));
   }
 
   bool success() const { return success_; }
@@ -96,7 +106,7 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
   }
 
  private:
-  ~CrxLoader() override {}
+  ~CrxLoader() override = default;
 
   // extensions::SandboxedUnpackerClient
   void OnUnpackSuccess(
@@ -128,7 +138,8 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
     NotifyFinishedInThreadPool();
   }
 
-  void StartInThreadPool() {
+  void StartInThreadPool(
+      std::unique_ptr<service_manager::Connector> connector) {
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
     if (!temp_dir_.CreateUniqueTempDir()) {
@@ -137,11 +148,17 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
       return;
     }
 
-    scoped_refptr<extensions::SandboxedUnpacker> unpacker(
-        new extensions::SandboxedUnpacker(
-            extensions::Manifest::INTERNAL, extensions::Extension::NO_FLAGS,
-            temp_dir_.GetPath(), task_runner_.get(), this));
-    unpacker->StartWithCrx(extensions::CRXFileInfo(crx_file_));
+    auto unpacker = base::MakeRefCounted<extensions::SandboxedUnpacker>(
+        std::move(connector), extensions::Manifest::INTERNAL,
+        extensions::Extension::NO_FLAGS, temp_dir_.GetPath(),
+        task_runner_.get(), this);
+    // Temporary allow CRX2 for kiosk apps.
+    // See https://crbug.com/960428. Note that we don't have user policies at
+    // this stage, so we have to explicitly allow CRX2 extension archive format.
+    // TODO(crbug.com/740715): remove in M77.
+    unpacker->StartWithCrx(extensions::CRXFileInfo(
+        crx_file_, extensions::GetPolicyVerifierFormat(
+                       true /* insecure_updates_enabled */)));
   }
 
   void NotifyFinishedInThreadPool() {
@@ -152,8 +169,8 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
                    << temp_dir_.GetPath().value();
     }
 
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&CrxLoader::NotifyFinishedOnUIThread, this));
   }
 
@@ -192,20 +209,16 @@ class KioskAppData::WebstoreDataParser
   void Start(const std::string& app_id,
              const std::string& manifest,
              const GURL& icon_url,
-             net::URLRequestContextGetter* context_getter) {
+             network::mojom::URLLoaderFactory* loader_factory) {
     scoped_refptr<extensions::WebstoreInstallHelper> webstore_helper =
-        new extensions::WebstoreInstallHelper(this,
-                                              app_id,
-                                              manifest,
-                                              icon_url,
-                                              context_getter);
-    webstore_helper->Start();
+        new extensions::WebstoreInstallHelper(this, app_id, manifest, icon_url);
+    webstore_helper->Start(loader_factory);
   }
 
  private:
   friend class base::RefCounted<WebstoreDataParser>;
 
-  ~WebstoreDataParser() override {}
+  ~WebstoreDataParser() override = default;
 
   void ReportFailure() {
     if (client_)
@@ -215,13 +228,12 @@ class KioskAppData::WebstoreDataParser
   }
 
   // WebstoreInstallHelper::Delegate overrides:
-  void OnWebstoreParseSuccess(const std::string& id,
-                              const SkBitmap& icon,
-                              base::DictionaryValue* parsed_manifest) override {
-    // Takes ownership of |parsed_manifest|.
-    extensions::Manifest manifest(
-        extensions::Manifest::INVALID_LOCATION,
-        std::unique_ptr<base::DictionaryValue>(parsed_manifest));
+  void OnWebstoreParseSuccess(
+      const std::string& id,
+      const SkBitmap& icon,
+      std::unique_ptr<base::DictionaryValue> parsed_manifest) override {
+    extensions::Manifest manifest(extensions::Manifest::INVALID_LOCATION,
+                                  std::move(parsed_manifest));
 
     if (!IsValidKioskAppManifest(manifest)) {
       ReportFailure();
@@ -270,9 +282,14 @@ KioskAppData::KioskAppData(KioskAppDataDelegate* delegate,
       status_(STATUS_INIT),
       update_url_(update_url),
       crx_file_(cached_crx),
-      weak_factory_(this) {}
+      weak_factory_(this) {
+  if (ignore_kiosk_app_data_load_failures_for_testing) {
+    LOG(WARNING) << "Force KioskAppData loaded for testing.";
+    SetStatus(STATUS_LOADED);
+  }
+}
 
-KioskAppData::~KioskAppData() {}
+KioskAppData::~KioskAppData() = default;
 
 void KioskAppData::Load() {
   SetStatus(STATUS_LOADING);
@@ -304,8 +321,8 @@ void KioskAppData::LoadFromInstalledApp(Profile* profile,
       app, kIconSize, ExtensionIconSet::MATCH_BIGGER);
   extensions::ImageLoader::Get(profile)->LoadImageAsync(
       app, image, gfx::Size(kIconSize, kIconSize),
-      base::Bind(&KioskAppData::OnExtensionIconLoaded,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&KioskAppData::OnExtensionIconLoaded,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void KioskAppData::SetCachedCrx(const base::FilePath& crx_file) {
@@ -344,6 +361,12 @@ std::unique_ptr<KioskAppData> KioskAppData::CreateForTest(
 }
 
 void KioskAppData::SetStatus(Status status) {
+  if (status == STATUS_ERROR &&
+      ignore_kiosk_app_data_load_failures_for_testing) {
+    LOG(WARNING) << "Ignoring KioskAppData error for testing. Force OK.";
+    status = STATUS_LOADED;
+  }
+
   if (status_ == status)
     return;
 
@@ -365,8 +388,9 @@ void KioskAppData::SetStatus(Status status) {
   }
 }
 
-net::URLRequestContextGetter* KioskAppData::GetRequestContextGetter() {
-  return g_browser_process->system_request_context();
+network::mojom::URLLoaderFactory* KioskAppData::GetURLLoaderFactory() {
+  return g_browser_process->system_network_context_manager()
+      ->GetURLLoaderFactory();
 }
 
 bool KioskAppData::LoadFromCache() {
@@ -437,6 +461,11 @@ void KioskAppData::OnIconLoadFailure() {
   StartFetch();
 }
 
+// static
+void KioskAppData::SetIgnoreKioskAppDataLoadFailuresForTesting(bool value) {
+  ignore_kiosk_app_data_load_failures_for_testing = value;
+}
+
 void KioskAppData::OnWebstoreParseSuccess(
     const SkBitmap& icon,
     const std::string& required_platform_version) {
@@ -454,10 +483,11 @@ void KioskAppData::StartFetch() {
     return;
   }
 
-  webstore_fetcher_.reset(new extensions::WebstoreDataFetcher(
-      this, GetRequestContextGetter(), GURL(), app_id()));
+  webstore_fetcher_.reset(
+      new extensions::WebstoreDataFetcher(this, GURL(), app_id()));
   webstore_fetcher_->set_max_auto_retries(3);
-  webstore_fetcher_->Start();
+  webstore_fetcher_->Start(g_browser_process->system_network_context_manager()
+                               ->GetURLLoaderFactory());
 }
 
 void KioskAppData::OnWebstoreRequestFailure() {
@@ -492,7 +522,7 @@ void KioskAppData::OnWebstoreResponseParseSuccess(
 
   // WebstoreDataParser deletes itself when done.
   (new WebstoreDataParser(weak_factory_.GetWeakPtr()))
-      ->Start(app_id(), manifest, icon_url, GetRequestContextGetter());
+      ->Start(app_id(), manifest, icon_url, GetURLLoaderFactory());
 }
 
 void KioskAppData::OnWebstoreResponseParseFailure(const std::string& error) {

@@ -6,24 +6,24 @@
 
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/test/fake_vr_device.h"
-#include "device/vr/test/fake_vr_service_client.h"
-#include "device/vr/test/mock_vr_display_impl.h"
 #include "device/vr/vr_device_base.h"
-#include "device/vr/vr_service.mojom.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace device {
 
 namespace {
 
-void DoNothing(bool will_not_present) {}
-
 class VRDeviceBaseForTesting : public VRDeviceBase {
  public:
-  VRDeviceBaseForTesting() = default;
+  VRDeviceBaseForTesting() : VRDeviceBase(mojom::XRDeviceId::FAKE_DEVICE_ID) {}
   ~VRDeviceBaseForTesting() override = default;
 
   void SetVRDisplayInfoForTest(mojom::VRDisplayInfoPtr display_info) {
@@ -31,11 +31,14 @@ class VRDeviceBaseForTesting : public VRDeviceBase {
   }
 
   void FireDisplayActivate() {
-    OnActivate(device::mojom::VRDisplayEventReason::MOUNTED,
-               base::Bind(&DoNothing));
+    OnActivate(device::mojom::VRDisplayEventReason::MOUNTED, base::DoNothing());
   }
 
   bool ListeningForActivate() { return listening_for_activate; }
+
+  void RequestSession(
+      mojom::XRRuntimeSessionOptionsPtr options,
+      mojom::XRRuntime::RequestSessionCallback callback) override {}
 
  private:
   void OnListeningForActivate(bool listening) override {
@@ -47,6 +50,41 @@ class VRDeviceBaseForTesting : public VRDeviceBase {
   DISALLOW_COPY_AND_ASSIGN(VRDeviceBaseForTesting);
 };
 
+class StubVRDeviceEventListener : public mojom::XRRuntimeEventListener {
+ public:
+  StubVRDeviceEventListener() : binding_(this) {}
+  ~StubVRDeviceEventListener() override {}
+
+  MOCK_METHOD1(DoOnChanged, void(mojom::VRDisplayInfo* vr_device_info));
+  void OnDisplayInfoChanged(mojom::VRDisplayInfoPtr vr_device_info) override {
+    DoOnChanged(vr_device_info.get());
+  }
+
+  MOCK_METHOD2(DoOnDeviceActivated,
+               void(mojom::VRDisplayEventReason,
+                    base::OnceCallback<void(bool)>));
+  void OnDeviceActivated(mojom::VRDisplayEventReason reason,
+                         base::OnceCallback<void(bool)> callback) override {
+    DoOnDeviceActivated(reason, base::DoNothing());
+    // For now keep the test simple, and just call the callback:
+    std::move(callback).Run(true);
+  }
+
+  MOCK_METHOD0(OnExitPresent, void());
+  MOCK_METHOD0(OnBlur, void());
+  MOCK_METHOD0(OnFocus, void());
+  MOCK_METHOD1(OnDeviceIdle, void(mojom::VRDisplayEventReason));
+  MOCK_METHOD0(OnInitialized, void());
+
+  mojom::XRRuntimeEventListenerAssociatedPtrInfo BindPtrInfo() {
+    mojom::XRRuntimeEventListenerAssociatedPtrInfo ret;
+    binding_.Bind(mojo::MakeRequest(&ret));
+    return ret;
+  }
+
+  mojo::AssociatedBinding<mojom::XRRuntimeEventListener> binding_;
+};
+
 }  // namespace
 
 class VRDeviceTest : public testing::Test {
@@ -55,16 +93,6 @@ class VRDeviceTest : public testing::Test {
   ~VRDeviceTest() override {}
 
  protected:
-  void SetUp() override {
-    mojom::VRServiceClientPtr proxy;
-    client_ = std::make_unique<FakeVRServiceClient>(mojo::MakeRequest(&proxy));
-  }
-
-  std::unique_ptr<MockVRDisplayImpl> MakeMockDisplay(VRDeviceBase* device) {
-    return std::make_unique<testing::NiceMock<MockVRDisplayImpl>>(
-        device, client(), nullptr, nullptr, false);
-  }
-
   std::unique_ptr<VRDeviceBaseForTesting> MakeVRDevice() {
     std::unique_ptr<VRDeviceBaseForTesting> device =
         std::make_unique<VRDeviceBaseForTesting>();
@@ -72,16 +100,14 @@ class VRDeviceTest : public testing::Test {
     return device;
   }
 
-  mojom::VRDisplayInfoPtr MakeVRDisplayInfo(unsigned int device_id) {
+  mojom::VRDisplayInfoPtr MakeVRDisplayInfo(mojom::XRDeviceId device_id) {
     mojom::VRDisplayInfoPtr display_info = mojom::VRDisplayInfo::New();
-    display_info->index = device_id;
+    display_info->id = device_id;
+    display_info->capabilities = mojom::VRDisplayCapabilities::New();
     return display_info;
   }
 
-  FakeVRServiceClient* client() { return client_.get(); }
-
-  std::unique_ptr<FakeVRServiceClient> client_;
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(VRDeviceTest);
 };
@@ -91,80 +117,35 @@ class VRDeviceTest : public testing::Test {
 // will receive the "vrdevicechanged" event.
 TEST_F(VRDeviceTest, DeviceChangedDispatched) {
   auto device = MakeVRDevice();
-  auto display = MakeMockDisplay(device.get());
-  EXPECT_CALL(*display, DoOnChanged(testing::_)).Times(1);
+  auto device_ptr = device->BindXRRuntimePtr();
+  StubVRDeviceEventListener listener;
+  device_ptr->ListenToDeviceChanges(
+      listener.BindPtrInfo(),
+      base::DoNothing());  // TODO: consider getting initial info
+  base::RunLoop().RunUntilIdle();
+  EXPECT_CALL(listener, DoOnChanged(testing::_)).Times(1);
   device->SetVRDisplayInfoForTest(MakeVRDisplayInfo(device->GetId()));
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(VRDeviceTest, DisplayActivateRegsitered) {
   device::mojom::VRDisplayEventReason mounted =
       device::mojom::VRDisplayEventReason::MOUNTED;
   auto device = MakeVRDevice();
-  auto display1 = MakeMockDisplay(device.get());
-  auto display2 = MakeMockDisplay(device.get());
+  auto device_ptr = device->BindXRRuntimePtr();
+  StubVRDeviceEventListener listener;
+  device_ptr->ListenToDeviceChanges(
+      listener.BindPtrInfo(),
+      base::DoNothing());  // TODO: consider getting initial data
+  base::RunLoop().RunUntilIdle();
 
-  EXPECT_CALL(*display1, ListeningForActivate())
-      .WillRepeatedly(testing::Return(true));
-  EXPECT_CALL(*display1, InFocusedFrame())
-      .WillRepeatedly(testing::Return(false));
-  device->OnListeningForActivateChanged(display1.get());
   EXPECT_FALSE(device->ListeningForActivate());
-
-  EXPECT_CALL(*display1, OnActivate(mounted, testing::_)).Times(0);
-  EXPECT_CALL(*display2, OnActivate(mounted, testing::_)).Times(0);
-  device->FireDisplayActivate();
-
-  EXPECT_CALL(*display1, InFocusedFrame())
-      .WillRepeatedly(testing::Return(true));
-  device->OnFrameFocusChanged(display1.get());
+  device->SetListeningForActivate(true);
   EXPECT_TRUE(device->ListeningForActivate());
 
-  EXPECT_CALL(*display1, OnActivate(mounted, testing::_)).Times(1);
+  EXPECT_CALL(listener, DoOnDeviceActivated(mounted, testing::_)).Times(1);
   device->FireDisplayActivate();
-
-  EXPECT_CALL(*display2, ListeningForActivate())
-      .WillRepeatedly(testing::Return(true));
-  EXPECT_CALL(*display2, InFocusedFrame())
-      .WillRepeatedly(testing::Return(true));
-  device->OnListeningForActivateChanged(display2.get());
-  EXPECT_TRUE(device->ListeningForActivate());
-
-  EXPECT_CALL(*display2, OnActivate(mounted, testing::_)).Times(3);
-  device->FireDisplayActivate();
-
-  EXPECT_CALL(*display1, ListeningForActivate())
-      .WillRepeatedly(testing::Return(false));
-  device->OnListeningForActivateChanged(display1.get());
-  EXPECT_TRUE(device->ListeningForActivate());
-
-  device->FireDisplayActivate();
-
-  EXPECT_CALL(*display2, ListeningForActivate())
-      .WillRepeatedly(testing::Return(false));
-  device->OnListeningForActivateChanged(display2.get());
-  EXPECT_FALSE(device->ListeningForActivate());
-
-  // Even though the device says it's not listening for activate, we still send
-  // it the activation to handle raciness on Android.
-  device->FireDisplayActivate();
-
-  EXPECT_CALL(*display2, InFocusedFrame())
-      .WillRepeatedly(testing::Return(false));
-  device->OnFrameFocusChanged(display2.get());
-
-  // Now we no longer fire the activation.
-  device->FireDisplayActivate();
-}
-
-TEST_F(VRDeviceTest, NoMagicWindowPosesWhileBrowsing) {
-  auto device = std::make_unique<FakeVRDevice>();
-  device->SetPose(mojom::VRPose::New());
-
-  device->GetMagicWindowPose(
-      base::BindOnce([](mojom::VRPosePtr pose) { EXPECT_TRUE(pose); }));
-  device->SetMagicWindowEnabled(false);
-  device->GetMagicWindowPose(
-      base::BindOnce([](mojom::VRPosePtr pose) { EXPECT_FALSE(pose); }));
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace device

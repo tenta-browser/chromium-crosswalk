@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -20,6 +21,7 @@
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/invalidation/public/object_id_invalidation_map.h"
 #include "jingle/notifier/listener/push_client.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace syncer {
 
@@ -33,7 +35,7 @@ struct NonBlockingInvalidator::InitializeOptions {
       const scoped_refptr<base::SingleThreadTaskRunner>&
           invalidation_state_tracker_task_runner,
       const std::string& client_info,
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter)
+      scoped_refptr<base::SingleThreadTaskRunner> network_task_runner)
       : network_channel_creator(network_channel_creator),
         invalidator_client_id(invalidator_client_id),
         saved_invalidations(saved_invalidations),
@@ -42,7 +44,7 @@ struct NonBlockingInvalidator::InitializeOptions {
         invalidation_state_tracker_task_runner(
             invalidation_state_tracker_task_runner),
         client_info(client_info),
-        request_context_getter(request_context_getter) {}
+        network_task_runner(network_task_runner) {}
 
   NetworkChannelCreator network_channel_creator;
   std::string invalidator_client_id;
@@ -52,7 +54,7 @@ struct NonBlockingInvalidator::InitializeOptions {
   scoped_refptr<base::SingleThreadTaskRunner>
       invalidation_state_tracker_task_runner;
   std::string client_info;
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter;
+  scoped_refptr<base::SingleThreadTaskRunner> network_task_runner;
 };
 
 namespace {
@@ -93,7 +95,7 @@ void CallbackProxy::Run(const base::DictionaryValue& value) {
   std::unique_ptr<base::DictionaryValue> copied(value.DeepCopy());
   running_thread_->PostTask(
       FROM_HERE,
-      base::Bind(&CallbackProxy::DoRun, callback_, base::Passed(&copied)));
+      base::BindOnce(&CallbackProxy::DoRun, callback_, std::move(copied)));
 }
 }
 
@@ -145,7 +147,7 @@ NonBlockingInvalidator::Core::Core(
     : delegate_observer_(delegate_observer),
       delegate_observer_task_runner_(delegate_observer_task_runner) {
   DCHECK(delegate_observer_);
-  DCHECK(delegate_observer_task_runner_.get());
+  DCHECK(delegate_observer_task_runner_);
 }
 
 NonBlockingInvalidator::Core::~Core() {
@@ -153,9 +155,8 @@ NonBlockingInvalidator::Core::~Core() {
 
 void NonBlockingInvalidator::Core::Initialize(
     const NonBlockingInvalidator::InitializeOptions& initialize_options) {
-  DCHECK(initialize_options.request_context_getter.get());
-  network_task_runner_ =
-      initialize_options.request_context_getter->GetNetworkTaskRunner();
+  DCHECK(initialize_options.network_task_runner);
+  network_task_runner_ = initialize_options.network_task_runner;
   DCHECK(network_task_runner_->BelongsToCurrentThread());
   std::unique_ptr<SyncNetworkChannel> network_channel =
       initialize_options.network_channel_creator.Run();
@@ -198,19 +199,16 @@ void NonBlockingInvalidator::Core::OnInvalidatorStateChange(
   DCHECK(network_task_runner_->BelongsToCurrentThread());
   delegate_observer_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingInvalidator::OnInvalidatorStateChange,
-                 delegate_observer_,
-                 reason));
+      base::BindOnce(&NonBlockingInvalidator::OnInvalidatorStateChange,
+                     delegate_observer_, reason));
 }
 
 void NonBlockingInvalidator::Core::OnIncomingInvalidation(
     const ObjectIdInvalidationMap& invalidation_map) {
   DCHECK(network_task_runner_->BelongsToCurrentThread());
   delegate_observer_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingInvalidator::OnIncomingInvalidation,
-                 delegate_observer_,
-                 invalidation_map));
+      FROM_HERE, base::BindOnce(&NonBlockingInvalidator::OnIncomingInvalidation,
+                                delegate_observer_, invalidation_map));
 }
 
 std::string NonBlockingInvalidator::Core::GetOwnerName() const {
@@ -224,11 +222,10 @@ NonBlockingInvalidator::NonBlockingInvalidator(
     const std::string& invalidation_bootstrap_data,
     InvalidationStateTracker* invalidation_state_tracker,
     const std::string& client_info,
-    const scoped_refptr<net::URLRequestContextGetter>& request_context_getter)
+    scoped_refptr<base::SingleThreadTaskRunner> network_task_runner)
     : invalidation_state_tracker_(invalidation_state_tracker),
       parent_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      network_task_runner_(request_context_getter->GetNetworkTaskRunner()),
-      weak_ptr_factory_(this) {
+      network_task_runner_(network_task_runner) {
   base::WeakPtr<NonBlockingInvalidator> weak_ptr_this =
       weak_ptr_factory_.GetWeakPtr();
   weak_ptr_this.get();  // Bind to this thread.
@@ -238,14 +235,11 @@ NonBlockingInvalidator::NonBlockingInvalidator(
   InitializeOptions initialize_options(
       network_channel_creator, invalidator_client_id, saved_invalidations,
       invalidation_bootstrap_data, weak_ptr_this,
-      base::ThreadTaskRunnerHandle::Get(), client_info, request_context_getter);
+      base::ThreadTaskRunnerHandle::Get(), client_info, network_task_runner);
 
   if (!network_task_runner_->PostTask(
-          FROM_HERE,
-          base::Bind(
-              &NonBlockingInvalidator::Core::Initialize,
-              core_,
-              initialize_options))) {
+          FROM_HERE, base::BindOnce(&NonBlockingInvalidator::Core::Initialize,
+                                    core_, initialize_options))) {
     NOTREACHED();
   }
 }
@@ -254,8 +248,7 @@ NonBlockingInvalidator::~NonBlockingInvalidator() {
   DCHECK(parent_task_runner_->BelongsToCurrentThread());
   if (!network_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&NonBlockingInvalidator::Core::Teardown,
-                     core_))) {
+          base::BindOnce(&NonBlockingInvalidator::Core::Teardown, core_))) {
     DVLOG(1) << "Network thread stopped before invalidator is destroyed.";
   }
 }
@@ -272,10 +265,8 @@ bool NonBlockingInvalidator::UpdateRegisteredIds(InvalidationHandler* handler,
     return false;
   if (!network_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(
-              &NonBlockingInvalidator::Core::UpdateRegisteredIds,
-              core_,
-              registrar_.GetAllRegisteredIds()))) {
+          base::BindOnce(&NonBlockingInvalidator::Core::UpdateRegisteredIds,
+                         core_, registrar_.GetAllRegisteredIds()))) {
     NOTREACHED();
   }
   return true;
@@ -296,8 +287,8 @@ void NonBlockingInvalidator::UpdateCredentials(const std::string& email,
   DCHECK(parent_task_runner_->BelongsToCurrentThread());
   if (!network_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&NonBlockingInvalidator::Core::UpdateCredentials,
-                     core_, email, token))) {
+          base::BindOnce(&NonBlockingInvalidator::Core::UpdateCredentials,
+                         core_, email, token))) {
     NOTREACHED();
   }
 }
@@ -309,9 +300,8 @@ void NonBlockingInvalidator::RequestDetailedStatus(
       base::Bind(&CallbackProxy::Run, base::Owned(new CallbackProxy(callback)));
   if (!network_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&NonBlockingInvalidator::Core::RequestDetailedStatus,
-                     core_,
-                     proxy_callback))) {
+          base::BindOnce(&NonBlockingInvalidator::Core::RequestDetailedStatus,
+                         core_, proxy_callback))) {
     NOTREACHED();
   }
 }
@@ -324,10 +314,15 @@ NetworkChannelCreator
 }
 
 NetworkChannelCreator NonBlockingInvalidator::MakeGCMNetworkChannelCreator(
-    scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+        url_loader_factory_info,
+    network::NetworkConnectionTracker* network_connection_tracker,
     std::unique_ptr<GCMNetworkChannelDelegate> delegate) {
   return base::Bind(&SyncNetworkChannel::CreateGCMNetworkChannel,
-                    request_context_getter,
+                    base::Passed(&url_loader_factory_info),
+                    // NetworkConnectionTracker is a global singleton guaranteed
+                    // to be alive when this is used.
+                    base::Unretained(network_connection_tracker),
                     base::Passed(&delegate));
 }
 

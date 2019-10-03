@@ -6,7 +6,10 @@
 
 #include <set>
 
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/media/webrtc/desktop_media_list_observer.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/gfx/image/image.h"
 
@@ -14,7 +17,7 @@ using content::BrowserThread;
 using content::DesktopMediaID;
 
 DesktopMediaListBase::DesktopMediaListBase(base::TimeDelta update_period)
-    : update_period_(update_period), weak_factory_(this) {}
+    : update_period_(update_period) {}
 
 DesktopMediaListBase::~DesktopMediaListBase() {}
 
@@ -132,10 +135,10 @@ void DesktopMediaListBase::UpdateSourceThumbnail(DesktopMediaID id,
 }
 
 void DesktopMediaListBase::ScheduleNextRefresh() {
-  BrowserThread::PostDelayedTask(BrowserThread::UI, FROM_HERE,
-                                 base::BindOnce(&DesktopMediaListBase::Refresh,
-                                                weak_factory_.GetWeakPtr()),
-                                 update_period_);
+  base::PostDelayedTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                                  base::BindOnce(&DesktopMediaListBase::Refresh,
+                                                 weak_factory_.GetWeakPtr()),
+                                  update_period_);
 }
 
 // static

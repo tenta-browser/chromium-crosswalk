@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
-#include "ios/chrome/browser/tabs/tab.h"
 #import "net/base/mac/url_conversions.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,77 +13,63 @@
 #endif
 
 @interface ShareToData () {
- @private
   // URL to be shared with share extensions.
-  GURL shareURL_;
+  GURL _shareURL;
 
-  // URL to be shared with password managers.
-  GURL passwordManagerURL_;
-
-  // Title to be shared (not nil).
-  NSString* title_;
-
-  // Whether the title was provided by the page (i.e., was not generated from
-  // the url).
-  BOOL isOriginalTitle_;
-
-  // Whether the page is printable or not.
-  BOOL isPagePrintable_;
+  // Visible URL of the page.
+  GURL _visibleURL;
 }
-
-@property(nonatomic, readwrite, copy) NSString* title;
-@property(nonatomic, readwrite, assign) BOOL isOriginalTitle;
-@property(nonatomic, readwrite, assign) BOOL isPagePrintable;
 @end
 
 @implementation ShareToData
 
-@synthesize title = title_;
-@synthesize image = image_;
-@synthesize thumbnailGenerator = thumbnailGenerator_;
-@synthesize isOriginalTitle = isOriginalTitle_;
-@synthesize isPagePrintable = isPagePrintable_;
-
-- (id)init {
-  NOTREACHED();
-  return nil;
-}
+@synthesize title = _title;
+@synthesize thumbnailGenerator = _thumbnailGenerator;
+@synthesize isOriginalTitle = _isOriginalTitle;
+@synthesize isPagePrintable = _isPagePrintable;
+@synthesize isPageSearchable = _isPageSearchable;
+@synthesize userAgent = _userAgent;
 
 - (id)initWithShareURL:(const GURL&)shareURL
-    passwordManagerURL:(const GURL&)passwordManagerURL
+            visibleURL:(const GURL&)visibleURL
                  title:(NSString*)title
        isOriginalTitle:(BOOL)isOriginalTitle
        isPagePrintable:(BOOL)isPagePrintable
-    thumbnailGenerator:(ThumbnailGeneratorBlock)thumbnailGenerator {
+      isPageSearchable:(BOOL)isPageSearchable
+             userAgent:(web::UserAgentType)userAgent
+    thumbnailGenerator:
+        (ChromeActivityItemThumbnailGenerator*)thumbnailGenerator {
   DCHECK(shareURL.is_valid());
-  DCHECK(passwordManagerURL.is_valid());
+  DCHECK(visibleURL.is_valid());
   DCHECK(title);
   self = [super init];
   if (self) {
-    shareURL_ = shareURL;
-    passwordManagerURL_ = passwordManagerURL;
-    title_ = [title copy];
-    isOriginalTitle_ = isOriginalTitle;
-    isPagePrintable_ = isPagePrintable;
-    thumbnailGenerator_ = thumbnailGenerator;
+    _shareURL = shareURL;
+    _visibleURL = visibleURL;
+    _title = [title copy];
+    _isOriginalTitle = isOriginalTitle;
+    _isPagePrintable = isPagePrintable;
+    _isPageSearchable = isPageSearchable;
+    _userAgent = userAgent;
+    _thumbnailGenerator = thumbnailGenerator;
   }
   return self;
 }
 
 - (const GURL&)shareURL {
-  return shareURL_;
+  return _shareURL;
 }
 
-- (const GURL&)passwordManagerURL {
-  return passwordManagerURL_;
+- (const GURL&)visibleURL {
+  return _visibleURL;
 }
 
 - (NSURL*)shareNSURL {
-  return net::NSURLWithGURL(shareURL_);
+  return net::NSURLWithGURL(_shareURL);
 }
 
 - (NSURL*)passwordManagerNSURL {
-  return net::NSURLWithGURL(passwordManagerURL_);
+  return net::NSURLWithGURL(_visibleURL);
 }
 
 @end

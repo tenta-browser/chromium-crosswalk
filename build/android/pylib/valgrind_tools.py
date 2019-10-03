@@ -4,15 +4,13 @@
 
 # pylint: disable=R0201
 
-import glob
+from __future__ import print_function
+
 import logging
-import os.path
-import subprocess
 import sys
 
 from devil.android import device_errors
 from devil.android.valgrind_tools import base_tool
-from pylib.constants import DIR_SOURCE_ROOT
 
 
 def SetChromeTimeoutScale(device, scale):
@@ -42,19 +40,7 @@ class AddressSanitizerTool(base_tool.BaseTool):
   @classmethod
   def CopyFiles(cls, device):
     """Copies ASan tools to the device."""
-    libs = glob.glob(os.path.join(DIR_SOURCE_ROOT,
-                                  'third_party/llvm-build/Release+Asserts/',
-                                  'lib/clang/*/lib/linux/',
-                                  'libclang_rt.asan-arm-android.so'))
-    assert len(libs) == 1
-    subprocess.call(
-        [os.path.join(
-             DIR_SOURCE_ROOT,
-             'tools/android/asan/third_party/asan_device_setup.sh'),
-         '--device', str(device),
-         '--lib', libs[0],
-         '--extra-options', AddressSanitizerTool.EXTRA_OPTIONS])
-    device.WaitUntilFullyBooted()
+    del device
 
   def GetTestWrapper(self):
     return AddressSanitizerTool.WRAPPER_NAME
@@ -85,112 +71,7 @@ class AddressSanitizerTool(base_tool.BaseTool):
     return 20.0
 
 
-class ValgrindTool(base_tool.BaseTool):
-  """Base abstract class for Valgrind tools."""
-
-  VG_DIR = '/data/local/tmp/valgrind'
-  VGLOGS_DIR = '/data/local/tmp/vglogs'
-
-  def __init__(self, device):
-    super(ValgrindTool, self).__init__()
-    self._device = device
-    # exactly 31 chars, SystemProperties::PROP_NAME_MAX
-    self._wrap_properties = ['wrap.com.google.android.apps.ch',
-                             'wrap.org.chromium.native_test']
-
-  @classmethod
-  def CopyFiles(cls, device):
-    """Copies Valgrind tools to the device."""
-    device.RunShellCommand(
-        'rm -r %s; mkdir %s' % (ValgrindTool.VG_DIR, ValgrindTool.VG_DIR))
-    device.RunShellCommand(
-        'rm -r %s; mkdir %s' % (ValgrindTool.VGLOGS_DIR,
-                                ValgrindTool.VGLOGS_DIR))
-    files = cls.GetFilesForTool()
-    device.PushChangedFiles(
-        [((os.path.join(DIR_SOURCE_ROOT, f),
-          os.path.join(ValgrindTool.VG_DIR, os.path.basename(f)))
-         for f in files)])
-
-  def SetupEnvironment(self):
-    """Sets up device environment."""
-    self._device.RunShellCommand('chmod 777 /data/local/tmp')
-    self._device.RunShellCommand('setenforce 0')
-    for prop in self._wrap_properties:
-      self._device.RunShellCommand(
-          'setprop %s "logwrapper %s"' % (prop, self.GetTestWrapper()))
-    SetChromeTimeoutScale(self._device, self.GetTimeoutScale())
-
-  def CleanUpEnvironment(self):
-    """Cleans up device environment."""
-    for prop in self._wrap_properties:
-      self._device.RunShellCommand('setprop %s ""' % (prop,))
-    SetChromeTimeoutScale(self._device, None)
-
-  @staticmethod
-  def GetFilesForTool():
-    """Returns a list of file names for the tool."""
-    raise NotImplementedError()
-
-  def NeedsDebugInfo(self):
-    """Whether this tool requires debug info.
-
-    Returns:
-      True if this tool can not work with stripped binaries.
-    """
-    return True
-
-
-class MemcheckTool(ValgrindTool):
-  """Memcheck tool."""
-
-  def __init__(self, device):
-    super(MemcheckTool, self).__init__(device)
-
-  @staticmethod
-  def GetFilesForTool():
-    """Returns a list of file names for the tool."""
-    return ['tools/valgrind/android/vg-chrome-wrapper.sh',
-            'tools/valgrind/memcheck/suppressions.txt',
-            'tools/valgrind/memcheck/suppressions_android.txt']
-
-  def GetTestWrapper(self):
-    """Returns a string that is to be prepended to the test command line."""
-    return ValgrindTool.VG_DIR + '/' + 'vg-chrome-wrapper.sh'
-
-  def GetTimeoutScale(self):
-    """Returns a multiplier that should be applied to timeout values."""
-    return 30
-
-
-class TSanTool(ValgrindTool):
-  """ThreadSanitizer tool. See http://code.google.com/p/data-race-test ."""
-
-  def __init__(self, device):
-    super(TSanTool, self).__init__(device)
-
-  @staticmethod
-  def GetFilesForTool():
-    """Returns a list of file names for the tool."""
-    return ['tools/valgrind/android/vg-chrome-wrapper-tsan.sh',
-            'tools/valgrind/tsan/suppressions.txt',
-            'tools/valgrind/tsan/suppressions_android.txt',
-            'tools/valgrind/tsan/ignores.txt']
-
-  def GetTestWrapper(self):
-    """Returns a string that is to be prepended to the test command line."""
-    return ValgrindTool.VG_DIR + '/' + 'vg-chrome-wrapper-tsan.sh'
-
-  def GetTimeoutScale(self):
-    """Returns a multiplier that should be applied to timeout values."""
-    return 30.0
-
-
 TOOL_REGISTRY = {
-    'memcheck': MemcheckTool,
-    'memcheck-renderer': MemcheckTool,
-    'tsan': TSanTool,
-    'tsan-renderer': TSanTool,
     'asan': AddressSanitizerTool,
 }
 
@@ -211,8 +92,8 @@ def CreateTool(tool_name, device):
   if ctor:
     return ctor(device)
   else:
-    print 'Unknown tool %s, available tools: %s' % (
-        tool_name, ', '.join(sorted(TOOL_REGISTRY.keys())))
+    print('Unknown tool %s, available tools: %s' % (tool_name, ', '.join(
+        sorted(TOOL_REGISTRY.keys()))))
     sys.exit(1)
 
 def PushFilesForTool(tool_name, device):
@@ -229,7 +110,6 @@ def PushFilesForTool(tool_name, device):
   if clazz:
     clazz.CopyFiles(device)
   else:
-    print 'Unknown tool %s, available tools: %s' % (
-        tool_name, ', '.join(sorted(TOOL_REGISTRY.keys())))
+    print('Unknown tool %s, available tools: %s' % (tool_name, ', '.join(
+        sorted(TOOL_REGISTRY.keys()))))
     sys.exit(1)
-

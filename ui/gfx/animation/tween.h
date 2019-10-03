@@ -9,6 +9,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/animation/animation_export.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/transform.h"
 
@@ -65,17 +66,29 @@ class ANIMATION_EXPORT Tween {
   // other integers in the range. This is the integer interpolation approach
   // specified by www.w3.org/TR/css3-transitions.
   static int LinearIntValueBetween(double value, int start, int target);
-  static gfx::Rect RectValueBetween(double value,
-                                    const gfx::Rect& start_bounds,
-                                    const gfx::Rect& target_bounds);
-  static gfx::Transform TransformValueBetween(
-      double value,
-      const gfx::Transform& start_transform,
-      const gfx::Transform& target_transform);
 
-  static gfx::SizeF SizeValueBetween(double value,
-                                     const gfx::SizeF& start_size,
-                                     const gfx::SizeF& target_size);
+  // Interpolates between |start| and |target| rects, animating the rect corners
+  // (as opposed to animating the rect origin and size) to minimize rounding
+  // error accumulation at intermediate stages.
+  static gfx::Rect RectValueBetween(double value,
+                                    const gfx::Rect& start,
+                                    const gfx::Rect& target);
+
+  static gfx::RectF RectFValueBetween(double value,
+                                      const gfx::RectF& start,
+                                      const gfx::RectF& target);
+
+  static gfx::Transform TransformValueBetween(double value,
+                                              const gfx::Transform& start,
+                                              const gfx::Transform& target);
+
+  static gfx::Size SizeValueBetween(double value,
+                                    const gfx::Size& start,
+                                    const gfx::Size& target);
+
+  static gfx::SizeF SizeFValueBetween(double value,
+                                      const gfx::SizeF& start,
+                                      const gfx::SizeF& target);
 
  private:
   Tween();

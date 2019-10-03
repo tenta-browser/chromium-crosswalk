@@ -20,10 +20,10 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/blacklist_state.h"
-#include "extensions/browser/extension_scoped_prefs.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_prefs_scope.h"
 #include "extensions/browser/install_flag.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/url_pattern_set.h"
@@ -52,6 +52,7 @@ class PrefRegistrySyncable;
 namespace extensions {
 
 class AppSorting;
+class EarlyExtensionPrefsObserver;
 class ExtensionPrefsObserver;
 class URLPatternSet;
 
@@ -70,7 +71,7 @@ class URLPatternSet;
 //       preference. Extension-controlled preferences are stored in
 //       PrefValueStore::extension_prefs(), which this class populates and
 //       maintains as the underlying extensions change.
-class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
+class ExtensionPrefs : public KeyedService {
  public:
   using ExtensionsInfo = std::vector<std::unique_ptr<ExtensionInfo>>;
 
@@ -140,16 +141,16 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Creates an ExtensionPrefs object.
   // Does not take ownership of |prefs| or |extension_pref_value_map|.
   // If |extensions_disabled| is true, extension controlled preferences and
-  // content settings do not become effective. ExtensionPrefsObservers should be
-  // included in |early_observers| if they need to observe events which occur
-  // during initialization of the ExtensionPrefs object.
+  // content settings do not become effective. EarlyExtensionPrefsObservers
+  // should be included in |early_observers| if they need to observe events
+  // which occur during initialization of the ExtensionPrefs object.
   static ExtensionPrefs* Create(
       content::BrowserContext* browser_context,
       PrefService* prefs,
       const base::FilePath& root_dir,
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled,
-      const std::vector<ExtensionPrefsObserver*>& early_observers);
+      const std::vector<EarlyExtensionPrefsObserver*>& early_observers);
 
   // A version of Create which allows injection of a custom base::Time provider.
   // Use this as needed for testing.
@@ -159,18 +160,13 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
       const base::FilePath& root_dir,
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled,
-      const std::vector<ExtensionPrefsObserver*>& early_observers,
-      std::unique_ptr<base::Clock> clock);
+      const std::vector<EarlyExtensionPrefsObserver*>& early_observers,
+      base::Clock* clock);
 
   ~ExtensionPrefs() override;
 
   // Convenience function to get the ExtensionPrefs for a BrowserContext.
   static ExtensionPrefs* Get(content::BrowserContext* context);
-
-  // Returns all installed extensions from extension preferences provided by
-  // |pref_service|. This is exposed for ProtectedPrefsWatcher because it needs
-  // access to the extension ID list before the ExtensionService is initialized.
-  static ExtensionIdList GetExtensionsFrom(const PrefService* pref_service);
 
   // Add or remove an observer from the ExtensionPrefs.
   void AddObserver(ExtensionPrefsObserver* observer);
@@ -189,6 +185,13 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Get/Set the order that the browser actions appear in the toolbar.
   ExtensionIdList GetToolbarOrder() const;
   void SetToolbarOrder(const ExtensionIdList& extension_ids);
+
+  // Get/Set the set of extensions that are pinned to the toolbar. Only used
+  // when the experiment ExtensionsMenu is active."
+  // TODO(crbug.com/943702): Remove reference to experiment when it launches or
+  // remove code if it does not.
+  ExtensionIdList GetPinnedExtensions() const;
+  void SetPinnedExtensions(const ExtensionIdList& extension_ids);
 
   // Called when an extension is installed, so that prefs get created.
   // If |page_ordinal| is invalid then a page will be found for the App.
@@ -238,35 +241,33 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Populates |out| with the ids of all installed extensions.
   void GetExtensions(ExtensionIdList* out) const;
 
-  // ExtensionScopedPrefs methods:
   void UpdateExtensionPref(const std::string& id,
                            base::StringPiece key,
-                           std::unique_ptr<base::Value> value) override;
+                           std::unique_ptr<base::Value> value);
 
-  void DeleteExtensionPrefs(const std::string& id) override;
+  void DeleteExtensionPrefs(const std::string& id);
 
   bool ReadPrefAsBoolean(const std::string& extension_id,
                          base::StringPiece pref_key,
-                         bool* out_value) const override;
+                         bool* out_value) const;
 
   bool ReadPrefAsInteger(const std::string& extension_id,
                          base::StringPiece pref_key,
-                         int* out_value) const override;
+                         int* out_value) const;
 
   bool ReadPrefAsString(const std::string& extension_id,
                         base::StringPiece pref_key,
-                        std::string* out_value) const override;
+                        std::string* out_value) const;
 
   bool ReadPrefAsList(const std::string& extension_id,
                       base::StringPiece pref_key,
-                      const base::ListValue** out_value) const override;
+                      const base::ListValue** out_value) const;
 
-  bool ReadPrefAsDictionary(
-      const std::string& extension_id,
-      base::StringPiece pref_key,
-      const base::DictionaryValue** out_value) const override;
+  bool ReadPrefAsDictionary(const std::string& extension_id,
+                            base::StringPiece pref_key,
+                            const base::DictionaryValue** out_value) const;
 
-  bool HasPrefForExtension(const std::string& extension_id) const override;
+  bool HasPrefForExtension(const std::string& extension_id) const;
 
   // Did the extension ask to escalate its permission during an upgrade?
   bool DidExtensionEscalatePermissions(const std::string& id) const;
@@ -287,6 +288,10 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   void ReplaceDisableReasons(const std::string& extension_id,
                              int disable_reasons);
   void ClearDisableReasons(const std::string& extension_id);
+
+  // Clears disable reasons that do not apply to component extensions.
+  void ClearInapplicableDisableReasonsForComponentExtension(
+      const std::string& component_extension_id);
 
   // Gets the set of extensions that have been blacklisted in prefs. This will
   // return only the blocked extensions, not the "greylist" extensions.
@@ -312,6 +317,10 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // sources of blacklist information, such as safebrowsing. You probably want
   // to use Blacklist::GetBlacklistedIDs rather than this method.
   bool IsExtensionBlacklisted(const std::string& id) const;
+
+  // Returns whether insecure algorithms like SHA1 are trusted for the
+  // purpose of updating the extension.
+  bool InsecureExtensionUpdatesEnabled() const;
 
   // Increment the count of how many times we prompted the user to acknowledge
   // the given extension, and return the new count.
@@ -389,6 +398,22 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   void SetActivePermissions(const std::string& extension_id,
                             const PermissionSet& permissions);
 
+  // Returns the set of runtime-granted permissions. These are permissions that
+  // the user explicitly approved at runtime, rather than install time (such
+  // as those granted through the permissions API or the runtime host
+  // permissions feature). Note that, similar to granted permissions, this can
+  // include permissions granted to the extension, even if they are not active.
+  std::unique_ptr<const PermissionSet> GetRuntimeGrantedPermissions(
+      const ExtensionId& extension_id) const;
+
+  // Adds to the set of runtime-granted permissions.
+  void AddRuntimeGrantedPermissions(const ExtensionId& extension_id,
+                                    const PermissionSet& permissions);
+
+  // Removes from the set of runtime-granted permissions.
+  void RemoveRuntimeGrantedPermissions(const ExtensionId& extension_id,
+                                       const PermissionSet& permissions);
+
   // Records whether or not this extension is currently running.
   void SetExtensionRunning(const std::string& extension_id, bool is_running);
 
@@ -423,7 +448,8 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // version directory and the location. Blacklisted extensions won't be saved
   // and neither will external extensions the user has explicitly uninstalled.
   // Caller takes ownership of returned structure.
-  std::unique_ptr<ExtensionsInfo> GetInstalledExtensionsInfo() const;
+  std::unique_ptr<ExtensionsInfo> GetInstalledExtensionsInfo(
+      bool include_component_extensions = false) const;
 
   // Same as above, but only includes external extensions the user has
   // explicitly uninstalled.
@@ -432,7 +458,8 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Returns the ExtensionInfo from the prefs for the given extension. If the
   // extension is not present, NULL is returned.
   std::unique_ptr<ExtensionInfo> GetInstalledExtensionInfo(
-      const std::string& extension_id) const;
+      const std::string& extension_id,
+      bool include_component_extensions = false) const;
 
   // We've downloaded an updated .crx file for the extension, but are waiting
   // to install it.
@@ -551,21 +578,55 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   int GetCorruptedDisableCount() const;
   void IncrementCorruptedDisableCount();
 
-  // Whether the extension with the given |id| needs to be synced. This is set
-  // when the state (such as enabled/disabled or allowed in incognito) is
-  // changed before Sync is ready.
+  // Whether the extension with the given |extension_id| needs to be synced.
+  // This is set when the state (such as enabled/disabled or allowed in
+  // incognito) is changed before Sync is ready.
   bool NeedsSync(const std::string& extension_id) const;
   void SetNeedsSync(const std::string& extension_id, bool needs_sync);
 
   // Returns false if there is no ruleset checksum corresponding to
   // |extension_id|. On success, returns true and populates
-  // |dnr_ruleset_checksum|.
+  // the checksum.
   bool GetDNRRulesetChecksum(const ExtensionId& extension_id,
-                             int* dnr_ruleset_checksum) const;
+                             int* checksum) const;
+  void SetDNRRulesetChecksum(const ExtensionId& extension_id, int checksum);
+
+  // Returns false if there is no dynamic ruleset corresponding to
+  // |extension_id|. On success, returns true and populates the checksum.
+  // TODO(crbug.com/696822): Use a single dictionary to store checksums for
+  // static and dynamic rulesets. This will be more relevant if and when we do
+  // support multiple static rulesets.
+  bool GetDNRDynamicRulesetChecksum(const ExtensionId& extension_id,
+                                    int* checksum) const;
+  void SetDNRDynamicRulesetChecksum(const ExtensionId& extension_id,
+                                    int checksum);
+
+  // Sets the set of allowed pages for the given |extension_id|.
+  void SetDNRAllowedPages(const ExtensionId& extension_id, URLPatternSet set);
+
+  // Returns the set of allowed pages for the given |extension_id|.
+  URLPatternSet GetDNRAllowedPages(const ExtensionId& extension_id) const;
+
+  // Whether the extension with the given |extension_id| is using its ruleset's
+  // matched action count for the badge text. This is set via the
+  // setActionCountAsBadgeText API call.
+  bool GetDNRUseActionCountAsBadgeText(const ExtensionId& extension_id) const;
+  void SetDNRUseActionCountAsBadgeText(const ExtensionId& extension_id,
+                                       bool use_action_count_as_badge_text);
+
+  // Iterates over the extension pref entries and removes any obsolete keys. We
+  // need to do this here specially (rather than in
+  // MigrateObsoleteProfilePrefs()) because these entries are subkeys of the
+  // extension's dictionary, which is keyed on the extension ID.
+  void MigrateObsoleteExtensionPrefs();
 
   // When called before the ExtensionService is created, alerts that are
   // normally suppressed in first run will still trigger.
   static void SetRunAlertsInFirstRunForTest();
+
+  void ClearExternalUninstallForTesting(const ExtensionId& id);
+
+  static const char kFakeObsoletePrefForTesting[];
 
  private:
   friend class ExtensionPrefsBlacklistedExtensions;  // Unit test.
@@ -580,13 +641,14 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   };
 
   // See the Create methods.
-  ExtensionPrefs(content::BrowserContext* browser_context,
-                 PrefService* prefs,
-                 const base::FilePath& root_dir,
-                 ExtensionPrefValueMap* extension_pref_value_map,
-                 std::unique_ptr<base::Clock> clock,
-                 bool extensions_disabled,
-                 const std::vector<ExtensionPrefsObserver*>& early_observers);
+  ExtensionPrefs(
+      content::BrowserContext* browser_context,
+      PrefService* prefs,
+      const base::FilePath& root_dir,
+      ExtensionPrefValueMap* extension_pref_value_map,
+      base::Clock* clock,
+      bool extensions_disabled,
+      const std::vector<EarlyExtensionPrefsObserver*>& early_observers);
 
   // Converts absolute paths in the pref to paths relative to the
   // install_directory_.
@@ -601,7 +663,8 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // |extension| dictionary.
   std::unique_ptr<ExtensionInfo> GetInstalledInfoHelper(
       const std::string& extension_id,
-      const base::DictionaryValue* extension) const;
+      const base::DictionaryValue* extension,
+      bool include_component_extensions) const;
 
   // Interprets the list pref, |pref_key| in |extension_id|'s preferences, as a
   // URLPatternSet. The |valid_schemes| specify how to parse the URLPatterns.
@@ -616,11 +679,12 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   void SetExtensionBlacklisted(const std::string& extension_id,
                                bool is_blacklisted);
 
-  // Converts |new_value| to a list of strings and sets the |pref_key| pref
-  // belonging to |extension_id|.
+  // Converts |set| to a list of strings and sets the |pref_key| pref belonging
+  // to |extension_id|. If |set| is empty, the preference for |pref_key| is
+  // cleared.
   void SetExtensionPrefURLPatternSet(const std::string& extension_id,
                                      base::StringPiece pref_key,
-                                     const URLPatternSet& new_value);
+                                     const URLPatternSet& set);
 
   // Read the boolean preference entry and return true if the preference exists
   // and the preference's value is true; false otherwise.
@@ -638,6 +702,16 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   void SetExtensionPrefPermissionSet(const std::string& extension_id,
                                      base::StringPiece pref_key,
                                      const PermissionSet& new_value);
+
+  // Common implementation to add permissions to a stored permission set.
+  void AddToPrefPermissionSet(const ExtensionId& extension_id,
+                              const PermissionSet& permissions,
+                              const char* pref_name);
+
+  // Common implementation to remove permissions from a stored permission set.
+  void RemoveFromPrefPermissionSet(const ExtensionId& extension_id,
+                                   const PermissionSet& permissions,
+                                   const char* pref_name);
 
   // Returns an immutable dictionary for extension |id|'s prefs, or NULL if it
   // doesn't exist.
@@ -688,7 +762,11 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
       const base::Optional<int>& dnr_ruleset_checksum,
       prefs::DictionaryValueUpdate* extension_dict) const;
 
-  void InitExtensionControlledPrefs(ExtensionPrefValueMap* value_map);
+  void InitExtensionControlledPrefs(const ExtensionsInfo& extensions_info);
+
+  // Loads preferences for the given |extension_id| into the pref value map.
+  void LoadExtensionControlledPrefs(const ExtensionId& extension_id,
+                                    ExtensionPrefsScope scope);
 
   // Helper function to complete initialization of the values in
   // |extension_dict| for an extension install. Also see
@@ -712,11 +790,11 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Weak pointer, owned by BrowserContext.
   ExtensionPrefValueMap* extension_pref_value_map_;
 
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   bool extensions_disabled_;
 
-  base::ObserverList<ExtensionPrefsObserver> observer_list_;
+  base::ObserverList<ExtensionPrefsObserver>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionPrefs);
 };

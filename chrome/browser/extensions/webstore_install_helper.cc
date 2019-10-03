@@ -8,7 +8,7 @@
 #include "base/values.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
@@ -24,31 +24,28 @@ const char kImageDecodeError[] = "Image decode failed";
 
 namespace extensions {
 
-WebstoreInstallHelper::WebstoreInstallHelper(
-    Delegate* delegate,
-    const std::string& id,
-    const std::string& manifest,
-    const GURL& icon_url,
-    net::URLRequestContextGetter* context_getter)
+WebstoreInstallHelper::WebstoreInstallHelper(Delegate* delegate,
+                                             const std::string& id,
+                                             const std::string& manifest,
+                                             const GURL& icon_url)
     : delegate_(delegate),
       id_(id),
       manifest_(manifest),
       icon_url_(icon_url),
-      context_getter_(context_getter),
       icon_decode_complete_(false),
       manifest_parse_complete_(false),
-      parse_error_(Delegate::UNKNOWN_ERROR) {
-}
+      parse_error_(Delegate::UNKNOWN_ERROR) {}
 
 WebstoreInstallHelper::~WebstoreInstallHelper() {}
 
-void WebstoreInstallHelper::Start() {
+void WebstoreInstallHelper::Start(
+    network::mojom::URLLoaderFactory* loader_factory) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   data_decoder::SafeJsonParser::Parse(
-      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
-      manifest_, base::Bind(&WebstoreInstallHelper::OnJSONParseSucceeded, this),
-      base::Bind(&WebstoreInstallHelper::OnJSONParseFailed, this));
+      content::GetSystemConnector(), manifest_,
+      base::BindOnce(&WebstoreInstallHelper::OnJSONParseSucceeded, this),
+      base::BindOnce(&WebstoreInstallHelper::OnJSONParseFailed, this));
 
   if (icon_url_.is_empty()) {
     icon_decode_complete_ = true;
@@ -84,13 +81,12 @@ void WebstoreInstallHelper::Start() {
               "Not implemented, considered not useful."
           })");
 
-    icon_fetcher_.reset(
-        new chrome::BitmapFetcher(icon_url_, this, traffic_annotation));
+    icon_fetcher_.reset(new BitmapFetcher(icon_url_, this, traffic_annotation));
     icon_fetcher_->Init(
-        context_getter_, std::string(),
-        net::URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE,
+        std::string(),
+        net::URLRequest::REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
         net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DO_NOT_SEND_COOKIES);
-    icon_fetcher_->Start();
+    icon_fetcher_->Start(loader_factory);
   }
 }
 
@@ -114,15 +110,15 @@ void WebstoreInstallHelper::OnFetchComplete(const GURL& url,
   Release();  // Balanced in Start().
 }
 
-void WebstoreInstallHelper::OnJSONParseSucceeded(
-    std::unique_ptr<base::Value> result) {
+void WebstoreInstallHelper::OnJSONParseSucceeded(base::Value result) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   manifest_parse_complete_ = true;
-  const base::DictionaryValue* value;
-  if (result->GetAsDictionary(&value))
-    parsed_manifest_.reset(value->DeepCopy());
-  else
+  if (result.is_dict()) {
+    parsed_manifest_ = base::DictionaryValue::From(
+        base::Value::ToUniquePtrValue(std::move(result)));
+  } else {
     parse_error_ = Delegate::MANIFEST_ERROR;
+  }
 
   ReportResultsIfComplete();
 }
@@ -143,7 +139,7 @@ void WebstoreInstallHelper::ReportResultsIfComplete() {
     return;
 
   if (error_.empty() && parsed_manifest_)
-    delegate_->OnWebstoreParseSuccess(id_, icon_, parsed_manifest_.release());
+    delegate_->OnWebstoreParseSuccess(id_, icon_, std::move(parsed_manifest_));
   else
     delegate_->OnWebstoreParseFailure(id_, parse_error_, error_);
 }

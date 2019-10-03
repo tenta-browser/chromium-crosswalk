@@ -40,21 +40,24 @@ Polymer({
     /**
      * The GUID when an existing network is being configured. This will be
      * empty when configuring a new network.
-     * @private
      */
     guid: String,
 
     /**
      * The type of network to be configured.
-     * @private {!chrome.networkingPrivate.NetworkType}
+     * @type {!chrome.networkingPrivate.NetworkType}
      */
     type: String,
 
     /**
      * The name of network (for display while the network details are fetched).
-     * @private
      */
     name: String,
+
+    /**
+     * Set to true to show the 'connect' button instead of 'save'.
+     */
+    showConnect: Boolean,
 
     /** @private */
     enableConnect_: Boolean,
@@ -66,31 +69,51 @@ Polymer({
      * The current properties if an existing network is being configured, or
      * a minimal subset for a new network. Note: network-config may modify
      * this (specifically .name).
-     * @private {!chrome.networkingPrivate.NetworkProperties}
+     * @private {!chrome.networkingPrivate.ManagedProperties}
      */
-    networkProperties_: Object,
+    managedProperties_: Object,
+
+    /**
+     * Set by network-config when a configuration error occurs.
+     * @private
+     */
+    error_: {
+      type: String,
+      value: '',
+    },
   },
 
   open: function() {
-    var dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
-    if (!dialog.open)
+    const dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
+    if (!dialog.open) {
       dialog.showModal();
+    }
 
-    // Set networkProperties for new configurations and for existing
+    // Set managedProperties for new configurations and for existing
     // configurations until the current properties are loaded.
     assert(this.type && this.type != CrOnc.Type.ALL);
-    this.networkProperties_ = {
+    this.managedProperties_ = {
       GUID: this.guid,
-      Name: this.name,
+      Name: {Active: this.name},
       Type: this.type,
     };
     this.$.networkConfig.init();
   },
 
   close: function() {
-    var dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
-    if (dialog.open)
+    const dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
+    if (dialog.open) {
       dialog.close();
+    }
+  },
+
+  /**
+   * @param {!Event} event
+   * @private
+   */
+  onClose_: function(event) {
+    this.close();
+    event.stopPropagation();
   },
 
   /**
@@ -98,36 +121,30 @@ Polymer({
    * @private
    */
   getDialogTitle_: function() {
-    var name = this.networkProperties_.Name;
-    if (name)
-      return this.i18n('internetConfigName', name);
-    var type = this.i18n('OncType' + this.networkProperties_.Type);
-    return this.i18n('internetJoinType', type);
-  },
+    // If no properties are available yet, wait until they are set as part of
+    // open().
+    if (!this.managedProperties_) {
+      return '';
+    }
 
-  /**
-   * @return {boolean}
-   * @private
-   */
-  isConfigured_: function() {
-    var source = this.networkProperties_.Source;
-    return !!this.guid && !!source && source != CrOnc.Source.NONE;
+    const name = /** @type {string} */ (
+        CrOnc.getActiveValue(this.managedProperties_.Name));
+    if (name && !this.showConnect) {
+      return this.i18n('internetConfigName', HTMLEscape(name));
+    }
+    const type = this.i18n('OncType' + this.managedProperties_.Type);
+    return this.i18n('internetJoinType', type);
   },
 
   /**
    * @return {string}
    * @private
    */
-  getSaveOrConnectLabel_: function() {
-    return this.i18n(this.isConfigured_() ? 'save' : 'networkButtonConnect');
-  },
-
-  /**
-   * @return {boolean}
-   * @private
-   */
-  getSaveOrConnectEnabled_: function() {
-    return this.isConfigured_() ? this.enableSave_ : this.enableConnect_;
+  getError_: function() {
+    if (this.i18nExists(this.error_)) {
+      return this.i18n(this.error_);
+    }
+    return this.i18n('networkErrorUnknown');
   },
 
   /** @private */
@@ -136,7 +153,12 @@ Polymer({
   },
 
   /** @private */
-  onSaveOrConnectTap_: function() {
-    this.$.networkConfig.saveOrConnect();
+  onSaveTap_: function() {
+    this.$.networkConfig.save();
+  },
+
+  /** @private */
+  onConnectTap_: function() {
+    this.$.networkConfig.connect();
   },
 });

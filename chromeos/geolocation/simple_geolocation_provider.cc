@@ -13,7 +13,7 @@
 #include "chromeos/geolocation/geoposition.h"
 #include "chromeos/network/geolocation_handler.h"
 #include "chromeos/network/network_handler.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 
@@ -25,10 +25,9 @@ const char kDefaultGeolocationProviderUrl[] =
 }  // namespace
 
 SimpleGeolocationProvider::SimpleGeolocationProvider(
-    net::URLRequestContextGetter* url_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> factory,
     const GURL& url)
-    : url_context_getter_(url_context_getter), url_(url) {
-}
+    : shared_url_loader_factory_(std::move(factory)), url_(url) {}
 
 SimpleGeolocationProvider::~SimpleGeolocationProvider() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -47,8 +46,11 @@ void SimpleGeolocationProvider::RequestGeolocation(
   // Mostly necessary for testing and rare cases where NetworkHandler is not
   // initialized: in that case, calls to Get() will fail.
   if (send_wifi_access_points || send_cell_towers) {
-    NetworkHandler::Get()->geolocation_handler()->GetNetworkInformation(
-        wifi_vector.get(), cell_vector.get());
+    GeolocationHandler* geolocation_handler = geolocation_handler_;
+    if (!geolocation_handler)
+      geolocation_handler = NetworkHandler::Get()->geolocation_handler();
+    geolocation_handler->GetNetworkInformation(wifi_vector.get(),
+                                               cell_vector.get());
   }
 
   if (!send_wifi_access_points || (wifi_vector->size() == 0))
@@ -58,7 +60,7 @@ void SimpleGeolocationProvider::RequestGeolocation(
     cell_vector = nullptr;
 
   SimpleGeolocationRequest* request(new SimpleGeolocationRequest(
-      url_context_getter_.get(), url_, timeout, std::move(wifi_vector),
+      shared_url_loader_factory_, url_, timeout, std::move(wifi_vector),
       std::move(cell_vector)));
   requests_.push_back(base::WrapUnique(request));
 

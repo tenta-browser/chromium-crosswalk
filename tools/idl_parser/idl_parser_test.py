@@ -25,7 +25,7 @@ class WebIDLParser(unittest.TestCase):
         os.path.join(os.path.dirname(__file__), 'test_parser'))
     self.filenames = glob.glob('%s/*_web.idl' % test_dir)
 
-  def _TestNode(self, node):
+  def _TestNode(self, node, filepath):
     comments = node.GetListOf('SpecialComment')
     for comment in comments:
       check, value = ParseCommentTest(comment.GetName())
@@ -37,7 +37,7 @@ class WebIDLParser(unittest.TestCase):
       if check == 'TREE':
         quick = '\n'.join(node.Tree())
         lineno = node.GetProperty('LINENO')
-        msg = 'Mismatched tree at line %d:' % lineno
+        msg = 'Mismatched tree at line %d in %s:' % (lineno, filepath)
         msg += '\n\n[EXPECTED]\n%s\n\n[ACTUAL]\n%s\n' % (value, quick)
         self.assertEqual(value, quick, msg)
 
@@ -49,55 +49,55 @@ class WebIDLParser(unittest.TestCase):
           filename)
 
       for node in filenode.GetChildren():
-        self._TestNode(node)
+        self._TestNode(node, filename)
 
 
-class TestImplements(unittest.TestCase):
+class TestIncludes(unittest.TestCase):
 
   def setUp(self):
     self.parser = IDLParser(IDLLexer(), mute_error=True)
 
-  def _ParseImplements(self, idl_text):
+  def _ParseIncludes(self, idl_text):
     filenode = self.parser.ParseText(filename='', data=idl_text)
     self.assertEqual(1, len(filenode.GetChildren()))
     return filenode.GetChildren()[0]
 
-  def testAImplementsB(self):
-    idl_text = 'A implements B;'
-    implements_node = self._ParseImplements(idl_text)
-    self.assertEqual('Implements(A)', str(implements_node))
-    reference_node = implements_node.GetProperty('REFERENCE')
+  def testAIncludesB(self):
+    idl_text = 'A includes B;'
+    includes_node = self._ParseIncludes(idl_text)
+    self.assertEqual('Includes(A)', str(includes_node))
+    reference_node = includes_node.GetProperty('REFERENCE')
     self.assertEqual('B', str(reference_node))
 
-  def testBImplementsC(self):
-    idl_text = 'B implements C;'
-    implements_node = self._ParseImplements(idl_text)
-    self.assertEqual('Implements(B)', str(implements_node))
-    reference_node = implements_node.GetProperty('REFERENCE')
+  def testBIncludesC(self):
+    idl_text = 'B includes C;'
+    includes_node = self._ParseIncludes(idl_text)
+    self.assertEqual('Includes(B)', str(includes_node))
+    reference_node = includes_node.GetProperty('REFERENCE')
     self.assertEqual('C', str(reference_node))
 
   def testUnexpectedSemicolon(self):
-    idl_text = 'A implements;'
-    node = self._ParseImplements(idl_text)
+    idl_text = 'A includes;'
+    node = self._ParseIncludes(idl_text)
     self.assertEqual('Error', node.GetClass())
     error_message = node.GetName()
-    self.assertEqual('Unexpected ";" after keyword "implements".',
+    self.assertEqual('Unexpected ";" after keyword "includes".',
         error_message)
 
-  def testUnexpectedImplements(self):
-    idl_text = 'implements C;'
-    node = self._ParseImplements(idl_text)
+  def testUnexpectedIncludes(self):
+    idl_text = 'includes C;'
+    node = self._ParseIncludes(idl_text)
     self.assertEqual('Error', node.GetClass())
     error_message = node.GetName()
-    self.assertEqual('Unexpected implements.',
+    self.assertEqual('Unexpected includes.',
         error_message)
 
-  def testUnexpectedImplementsAfterBracket(self):
-    idl_text = '[foo] implements B;'
-    node = self._ParseImplements(idl_text)
+  def testUnexpectedIncludesAfterBracket(self):
+    idl_text = '[foo] includes B;'
+    node = self._ParseIncludes(idl_text)
     self.assertEqual('Error', node.GetClass())
     error_message = node.GetName()
-    self.assertEqual('Unexpected keyword "implements" after "]".',
+    self.assertEqual('Unexpected keyword "includes" after "]".',
         error_message)
 
 

@@ -1,19 +1,22 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
-<link rel="import" href="chrome://resources/html/md_select_css.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_button/cr_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_input/cr_input.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_searchable_drop_down/cr_searchable_drop_down.html">
+<link rel="import" href="chrome://resources/cr_elements/md_select_css.html">
+<link rel="import" href="chrome://resources/cr_elements/shared_style_css.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-input/paper-input.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/iron-icon/iron-icon.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner-lite.html">
 <link rel="import" href="../i18n_setup.html">
-<link rel="import" href="cups_add_printer_dialog_util.html">
+<link rel="import" href="cups_add_printer_dialog_elements.html">
+<link rel="import" href="cups_printer_dialog_util.html">
 <link rel="import" href="cups_printer_shared_css.html">
 <link rel="import" href="cups_printers_browser_proxy.html">
-<link rel="import" href="cups_set_manufacturer_model_behavior.html">
 
 <dom-module id="add-printer-discovery-dialog">
   <template>
-    <style include="cups-printer-shared">
+    <style include="cr-shared-style cups-printer-shared">
       add-printer-list {
         max-height: 310px;
         overflow-y: auto;
@@ -26,11 +29,11 @@
         top: 80%;
       }
 
-      #searchSpinner paper-spinner {
+      #searchSpinner paper-spinner-lite {
         --paper-spinner-stroke-width: 2px;
-        -webkit-margin-end: 3px;
-        -webkit-margin-start: 20px;
         height: 15px;
+        margin-inline-end: 3px;
+        margin-inline-start: 20px;
         width: 15px;
       }
     </style>
@@ -40,31 +43,31 @@
         <add-printer-list printers="[[discoveredPrinters]]"
             selected-printer="{{selectedPrinter}}">
         </add-printer-list>
-        <div class="center" id="noPrinterMessage" hidden>
+        <div class="center" id="noPrinterMessage"
+            hidden="[[discoveredPrinters.length]]">
            $i18n{noPrinterNearbyMessage}
         </div>
         <div id="searchSpinner" hidden="[[!discovering_]]">
-          <paper-spinner active="[[discovering_]]"></paper-spinner>
+          <paper-spinner-lite active="[[discovering_]]"></paper-spinner-lite>
           <span>$i18n{searchingNearbyPrinters}</span>
         </div>
       </div>
       <div slot="dialog-buttons">
         <div>  <!-- Left group -->
-          <paper-button id="manuallyAddPrinterButton" class="secondary-button"
-              on-tap="switchToManualAddDialog_">
+          <cr-button id="manuallyAddPrinterButton"
+              on-click="switchToManualAddDialog_">
             $i18n{manuallyAddPrinterButtonText}
-          </paper-button>
+          </cr-button>
         </div>
         <div>  <!-- Right group -->
-          <paper-button class="cancel-button secondary-button"
-              on-tap="onCancelTap_">
-            $i18n{cancelButtonText}
-          </paper-button>
-          <paper-button class="action-button" id="addPrinterButton"
+          <cr-button class="cancel-button" on-click="onCancelTap_">
+            $i18n{cancel}
+          </cr-button>
+          <cr-button class="action-button" id="addPrinterButton"
               disabled="[[!canAddPrinter_(selectedPrinter)]]"
-              on-tap="switchToConfiguringDialog_">
+              on-click="switchToConfiguringDialog_">
             $i18n{addPrinterButtonText}
-          </paper-button>
+          </cr-button>
         </div>
       </div>
     </add-printer-dialog>
@@ -73,121 +76,72 @@
 
 <dom-module id="add-printer-manually-dialog">
   <template>
-    <style include="cups-printer-shared">
-      #discoverPrintersButton {
-        -webkit-margin-end: 153px;
-      }
-
-      .search-printer-box {
-        margin-top: 18px;
-      }
-
-      .search-printer-box paper-spinner {
-        --paper-spinner-stroke-width: 2px;
-        -webkit-margin-end: 3px;
-        -webkit-margin-start: 20px;
-        height: 15px;
-        width: 15px;
-      }
-
-      .search-printer-box .spinner-comment {
-        color: var(--google-grey-700);
-      }
-
-      .printer-not-found {
-        background-color: var(--paper-yellow-100);
-        padding: 10px 20px;
-      }
-
-      .printer-found {
-        background-color: var(--paper-green-100);
-        padding: 10px 20px;
-      }
-    </style>
+    <style include="cups-printer-shared"></style>
     <add-printer-dialog>
       <div slot="dialog-title">$i18n{addPrintersManuallyTitle}</div>
+        <div id="general-error-container" hidden="[[!errorText_]]">
+          <div id="general-error">
+            <iron-icon id="general-error-icon" icon="cr:warning"></iron-icon>
+            <div id="general-error-message">
+              [[errorText_]]
+            </div>
+          </div>
+        </div>
       <div slot="dialog-body">
         <div class="settings-box first two-line">
+          <cr-input class="printer-name-input" autofocus
+            id="printerNameInput" value="{{newPrinter.printerName}}"
+            label="$i18n{printerName}" maxlength=64>
+          </cr-input>
+        </div>
+        <div class="settings-box two-line">
+          <cr-input id="printerAddressInput" label="$i18n{printerAddress}"
+              value="{{newPrinter.printerAddress}}" maxlength=63
+              error-message="$i18n{ippPrinterUnreachable}">
+          </cr-input>
+        </div>
+        <div class="settings-box two-line">
           <div class="start">
-            <div class="label">$i18n{printerName}</div>
+            <div id="printerProtocol" class="cr-form-field-label">
+              $i18n{printerProtocol}
+            </div>
             <div class="secondary">
-              <paper-input class="printer-name-input" no-label-float autofocus
-                  id="printerNameInput" value="{{newPrinter.printerName}}">
-              </paper-input>
+              <select class="md-select" aria-labelledby="printerProtocol"
+                  value="[[newPrinter.printerProtocol]]"
+                  on-change="onProtocolChange_">
+                <option value="ipp">$i18n{printerProtocolIpp}</option>
+                <option value="ipps">$i18n{printerProtocolIpps}</option>
+                <option value="http">$i18n{printerProtocolHttp}</option>
+                <option value="https">$i18n{printerProtocolHttps}</option>
+                <option value="socket">$i18n{printerProtocolAppSocket}
+                </option>
+                <option value="lpd">$i18n{printerProtocolLpd}</option>
+              </select>
             </div>
           </div>
         </div>
         <div class="settings-box two-line">
-          <div class="start">
-            <div class="label">$i18n{printerAddress}</div>
-            <div class="secondary">
-              <paper-input no-label-float id="printerAddressInput"
-                  value="{{newPrinter.printerAddress}}"
-                  on-input="onAddressChanged_">
-              </paper-input>
-            </div>
-          </div>
-        </div>
-        <div class="settings-box two-line">
-          <div class="start">
-            <div id="printerProtocol" class="label">$i18n{printerProtocol}</div>
-            <div class="secondary">
-              <div class="md-select-wrapper">
-                <select class="md-select" aria-labelledby="printerProtocol"
-                    value="[[newPrinter.printerProtocol]]"
-                    on-change="onProtocolChange_">
-                  <option value="ipp">$i18n{printerProtocolIpp}</option>
-                  <option value="ipps">$i18n{printerProtocolIpps}</option>
-                  <option value="http">$i18n{printerProtocolHttp}</option>
-                  <option value="https">$i18n{printerProtocolHttps}</option>
-                  <option value="socket">$i18n{printerProtocolAppSocket}
-                  </option>
-                  <option value="lpd">$i18n{printerProtocolLpd}</option>
-                </select>
-                <span class="md-select-underline"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="settings-box two-line">
-          <div class="start">
-            <div class="label">$i18n{printerQueue}</div>
-            <div class="secondary">
-              <paper-input no-label-float label="ipp/print"
-                  value="{{newPrinter.printerQueue}}">
-              </paper-input>
-            </div>
-          </div>
-        </div>
-        <div class="search-printer-box" id="searchInProgress" hidden>
-          <paper-spinner active></paper-spinner>
-          <span class="spinner-comment">$i18n{searchingPrinter}</span>
-        </div>
-        <div class="search-printer-box printer-not-found"
-            id="searchNotFound" hidden>
-          <span>$i18n{printerNotFound}</span>
-        </div>
-        <div class="search-printer-box printer-found" id="searchFound" hidden>
-          <span>$i18n{printerFound}</span>
+          <cr-input label="$i18n{printerQueue}"
+              value="{{newPrinter.printerQueue}}" maxlength=64>
+          </cr-input>
         </div>
       </div>
       <div slot="dialog-buttons">
         <div>  <!-- Left group -->
-          <paper-button class="secondary-button"
-              on-tap="switchToDiscoveryDialog_">
+          <cr-button on-click="switchToDiscoveryDialog_"
+              hidden="[[enableUpdatedUi]]">
             $i18n{discoverPrintersButtonText}
-          </paper-button>
+          </cr-button>
         </div>
         <div>  <!-- Right group -->
-          <paper-button class="cancel-button secondary-button"
-              on-tap="onCancelTap_">
-            $i18n{cancelButtonText}
-          </paper-button>
-          <paper-button class="action-button"
-              on-tap="addPressed_"
-              disabled="[[!newPrinter.printerName]]">
+          <cr-button class="cancel-button" on-click="onCancelTap_">
+            $i18n{cancel}
+          </cr-button>
+          <cr-button id="addPrinterButton" class="action-button"
+              on-click="addPressed_"
+              disabled="[[!canAddPrinter_(newPrinter.*, inProgress_)]]">
             $i18n{addPrinterButtonText}
-          </paper-button>
+          </cr-button>
         </div>
       </div>
     </add-printer-dialog>
@@ -197,66 +151,75 @@
 <dom-module id="add-printer-manufacturer-model-dialog">
   <template>
     <style include="cups-printer-shared">
-      .error-message {
-        background-color: var(--google-red-100);
-        color: red;
-        margin-top: 10px;
-        padding: 10px 20px;
+      .subtext {
+        margin-bottom: 10px;
+        padding-inline-end: 20px;
+        padding-inline-start: 20px;
       }
     </style>
     <add-printer-dialog>
-      <div slot="dialog-title">$i18n{selectManufacturerAndModelTitle}</div>
+      <div slot="dialog-title">$i18n{manufacturerAndModelDialogTitle}
+        <div id="general-error-container" hidden="[[!errorText_]]">
+            <div id="general-error">
+              <iron-icon id="general-error-icon" icon="cr:warning"></iron-icon>
+              <div id="general-error-message">
+                [[errorText_]]
+              </div>
+            </div>
+        </div>
+      </div>
       <div slot="dialog-body">
-        <div class="settings-box two-line">
-          <div class="start">
-            <div class="label">$i18n{printerManufacturer}</div>
-            <div class="secondary">
-              <drop-down-search-box items="[[manufacturerList]]"
-                  selected-item="{{activePrinter.ppdManufacturer}}">
-              </drop-down-search-box>
-            </div>
-          </div>
+        <div class="subtext" id="makeModelTextInfo">
+          <span>[[getManufacturerAndModelSubtext_(activePrinter.*)]]
+          </span>
+          <a href="$i18n{printingCUPSPrintLearnMoreUrl}" target="_blank">
+            $i18n{learnMore}
+          </a>
         </div>
         <div class="settings-box two-line">
-          <div class="start">
-            <div class="label">$i18n{printerModel}</div>
-            <div class="secondary">
-              <drop-down-search-box items="[[modelList]]"
-                  selected-item="{{activePrinter.ppdModel}}">
-              </drop-down-search-box>
-            </div>
-          </div>
+          <cr-searchable-drop-down id="manufacturerDropdown"
+              items="[[manufacturerList]]"
+              label="$i18n{printerManufacturer}"
+              value="{{activePrinter.ppdManufacturer}}">
+          </cr-searchable-drop-down>
         </div>
-        <div class="settings-box two-line last">
-          <div class="start">
-            <div class="label">$i18n{selectDriver}</div>
-            <div class="secondary">
-              <paper-input class="browse-file-input" no-label-float readonly
-                  value="[[getBaseName_(activePrinter.printerPPDPath)]]">
-                <paper-button class="browse-button" suffix
-                    on-tap="onBrowseFile_">
-                  $i18n{selectDriverButtonText}
-                </paper-button>
-              </paper-input>
-            </div>
-          </div>
+        <div class="settings-box two-line">
+          <cr-searchable-drop-down id="modelDropdown"
+              items="[[modelList]]"
+              label="$i18n{printerModel}"
+              value="{{activePrinter.ppdModel}}">
+          </cr-searchable-drop-down>
         </div>
-        <div class="error-message" hidden="[[!setupFailed]]">
-          Driver not found (exact error message TBD)
+        <div id="ppdLabel" class="cr-form-field-label">
+          <span>$i18n{selectDriver}</span>
+          <a href="$i18n{printingCUPSPrintPpdLearnMoreUrl}" target="_blank">
+              $i18n{learnMore}
+          </a>
+        </div>
+        <div class="settings-box two-line">
+          <cr-input class="browse-file-input" readonly value="[[newUserPPD_]]"
+              aria-labelledby="ppdLabel" invalid="[[invalidPPD_]]"
+              error-message="$i18n{selectDriverErrorMessage}" tabindex="-1">
+          </cr-input>
+          <cr-button class="browse-button" on-click="onBrowseFile_">
+            $i18n{selectDriverButtonText}
+          </cr-button>
+        </div>
+        <div class="eula" id="eulaUrl" hidden="[[!eulaUrl_]]">
+          <a href="[[eulaUrl_]]" target="_blank">$i18n{printerEulaNotice}</a>
         </div>
       </div>
       <div slot="dialog-buttons">
-        <paper-button class="cancel-button secondary-button"
-            on-tap="onCancelTap_">
-          $i18n{cancelButtonText}
-        </paper-button>
-        <paper-button class="action-button" id="addPrinterButton"
+        <cr-button class="cancel-button" on-click="onCancelTap_">
+          $i18n{cancel}
+        </cr-button>
+        <cr-button class="action-button" id="addPrinterButton"
             disabled="[[!canAddPrinter_(activePrinter.ppdManufacturer,
                                         activePrinter.ppdModel,
                                         activePrinter.printerPPDPath)]]"
-            on-tap="switchToConfiguringDialog_">
+            on-click="addPrinter_">
           $i18n{addPrinterButtonText}
-        </paper-button>
+        </cr-button>
       </div>
     </add-printer-dialog>
   </template>
@@ -273,14 +236,13 @@
     <add-printer-dialog>
       <div slot="dialog-title">[[dialogTitle]]</div>
       <div slot="dialog-body">
-        <paper-spinner active></paper-spinner>
+        <paper-spinner-lite active></paper-spinner-lite>
         <div id="configuringMessage">$i18n{printerConfiguringMessage}</div>
       </div>
       <div slot="dialog-buttons">
-        <paper-button class="cancel-button secondary-button"
-            on-tap="onCancelConfiguringTap_">
-          $i18n{cancelButtonText}
-        </paper-button>
+        <cr-button class="cancel-button" on-click="onCloseConfiguringTap_">
+          $i18n{close}
+        </cr-button>
       </div>
     </add-printer-dialog>
   </template>
@@ -298,7 +260,8 @@
 
     <!-- Manually Add Printer Dialog -->
     <template is="dom-if" if="[[showManuallyAddDialog_]]" restamp>
-      <add-printer-manually-dialog new-printer="{{newPrinter}}">
+      <add-printer-manually-dialog new-printer="{{newPrinter}}"
+          enable-updated-ui="[[enableUpdatedUi]]">
       </add-printer-manually-dialog>
     </template>
 
@@ -312,8 +275,7 @@
 
     <!-- Manufacturer and Model Dialog -->
     <template is="dom-if" if="[[showManufacturerDialog_]]" restamp>
-      <add-printer-manufacturer-model-dialog active-printer="{{newPrinter}}"
-          setup-failed="[[setupFailed]]">
+      <add-printer-manufacturer-model-dialog active-printer="{{newPrinter}}">
       </add-printer-manufacturer-model-dialog>
     </template>
 

@@ -9,11 +9,11 @@
 #include <string>
 
 #include "base/callback.h"
-#include "chrome/browser/printing/cloud_print/privet_url_fetcher.h"
+#include "chrome/browser/printing/cloud_print/privet_url_loader.h"
 #include "net/base/host_port_pair.h"
 
 namespace base {
-class RefCountedBytes;
+class RefCountedMemory;
 }
 
 namespace gfx {
@@ -21,7 +21,7 @@ class Size;
 }
 
 namespace printing {
-class PWGRasterConverter;
+class PwgRasterConverter;
 }
 
 namespace cloud_print {
@@ -32,8 +32,8 @@ class PrivetHTTPClient;
 class PrivetJSONOperation {
  public:
   // If value is null, the operation failed.
-  typedef base::RepeatingCallback<void(const base::DictionaryValue* /*value*/)>
-      ResultCallback;
+  using ResultCallback =
+      base::OnceCallback<void(const base::DictionaryValue* /*value*/)>;
 
   virtual ~PrivetJSONOperation() {}
 
@@ -52,41 +52,16 @@ class PrivetHTTPClient {
 
   // Creates operation to query basic information about local device.
   virtual std::unique_ptr<PrivetJSONOperation> CreateInfoOperation(
-      const PrivetJSONOperation::ResultCallback& callback) = 0;
+      PrivetJSONOperation::ResultCallback callback) = 0;
 
-  // Creates a URL fetcher for PrivetV1.
-  virtual std::unique_ptr<PrivetURLFetcher> CreateURLFetcher(
+  // Creates a URL loader for PrivetV1.
+  virtual std::unique_ptr<PrivetURLLoader> CreateURLLoader(
       const GURL& url,
-      net::URLFetcher::RequestType request_type,
-      PrivetURLFetcher::Delegate* delegate) = 0;
+      const std::string& http_method,
+      PrivetURLLoader::Delegate* delegate) = 0;
 
   virtual void RefreshPrivetToken(
-      const PrivetURLFetcher::TokenCallback& token_callback) = 0;
-};
-
-class PrivetDataReadOperation {
- public:
-  enum ResponseType {
-    RESPONSE_TYPE_ERROR,
-    RESPONSE_TYPE_STRING,
-    RESPONSE_TYPE_FILE
-  };
-
-  // If value is null, the operation failed.
-  typedef base::Callback<void(
-      ResponseType /*response_type*/,
-      const std::string& /*response_str*/,
-      const base::FilePath& /*response_file_path*/)> ResultCallback;
-
-  virtual ~PrivetDataReadOperation() {}
-
-  virtual void Start() = 0;
-
-  virtual void SetDataRange(int range_start, int range_end) = 0;
-
-  virtual void SaveDataToFile() = 0;
-
-  virtual PrivetHTTPClient* GetHTTPClient() = 0;
+      PrivetURLLoader::TokenCallback token_callback) = 0;
 };
 
 // Represents a full registration flow (/privet/register), normally consisting
@@ -156,27 +131,26 @@ class PrivetLocalPrintOperation {
 
   virtual void Start() = 0;
 
+  // Required print data. MUST be called before calling Start().
+  virtual void SetData(scoped_refptr<base::RefCountedMemory> data) = 0;
 
-  // Required print data. MUST be called before calling |Start()|.
-  virtual void SetData(const scoped_refptr<base::RefCountedBytes>& data) = 0;
-
-  // Optional attributes for /submitdoc. Call before calling |Start()|
+  // Optional attributes for /submitdoc. Call before calling Start().
   // |ticket| should be in CJT format.
-  virtual void SetTicket(const std::string& ticket) = 0;
+  virtual void SetTicket(base::Value ticket) = 0;
+
   // |capabilities| should be in CDD format.
   virtual void SetCapabilities(const std::string& capabilities) = 0;
+
   // Username and jobname are for display only.
   virtual void SetUsername(const std::string& username) = 0;
   virtual void SetJobname(const std::string& jobname) = 0;
-  // If |offline| is true, we will indicate to the printer not to post the job
-  // to Google Cloud Print.
-  virtual void SetOffline(bool offline) = 0;
+
   // Document page size.
   virtual void SetPageSize(const gfx::Size& page_size) = 0;
 
   // For testing, inject an alternative PWG raster converter.
-  virtual void SetPWGRasterConverterForTesting(
-      std::unique_ptr<printing::PWGRasterConverter> pwg_raster_converter) = 0;
+  virtual void SetPwgRasterConverterForTesting(
+      std::unique_ptr<printing::PwgRasterConverter> pwg_raster_converter) = 0;
 
   virtual PrivetHTTPClient* GetHTTPClient() = 0;
 };
@@ -194,7 +168,7 @@ class PrivetV1HTTPClient {
 
   // Creates operation to query basic information about local device.
   virtual std::unique_ptr<PrivetJSONOperation> CreateInfoOperation(
-      const PrivetJSONOperation::ResultCallback& callback) = 0;
+      PrivetJSONOperation::ResultCallback callback) = 0;
 
   // Creates operation to register local device using Privet v1 protocol.
   virtual std::unique_ptr<PrivetRegisterOperation> CreateRegisterOperation(
@@ -203,7 +177,7 @@ class PrivetV1HTTPClient {
 
   // Creates operation to query capabilities of local printer.
   virtual std::unique_ptr<PrivetJSONOperation> CreateCapabilitiesOperation(
-      const PrivetJSONOperation::ResultCallback& callback) = 0;
+      PrivetJSONOperation::ResultCallback callback) = 0;
 
   // Creates operation to submit print job to local printer.
   virtual std::unique_ptr<PrivetLocalPrintOperation> CreateLocalPrintOperation(

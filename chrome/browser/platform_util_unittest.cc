@@ -10,15 +10,14 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/json/json_string_value_serializer.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -58,8 +57,9 @@ class PlatformUtilTestContentBrowserClient : public ChromeContentBrowserClient {
 
     // New FileSystemBackend that uses our MockSpecialStoragePolicy.
     additional_backends->push_back(
-        base::MakeUnique<chromeos::FileSystemBackend>(
-            nullptr, nullptr, nullptr, nullptr, nullptr, external_mount_points,
+        std::make_unique<chromeos::FileSystemBackend>(
+            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            external_mount_points,
             storage::ExternalMountPoints::GetSystemInstance()));
   }
 };
@@ -150,7 +150,7 @@ class PlatformUtilTest : public PlatformUtilTestBase {
     ASSERT_NO_FATAL_FAILURE(PlatformUtilTestBase::SetUp());
 
     static const char kTestFileData[] = "Cow says moo!";
-    const int kTestFileDataLength = arraysize(kTestFileData) - 1;
+    const int kTestFileDataLength = base::size(kTestFileData) - 1;
 
     // This prevents platfrom_util from invoking any shell or external APIs
     // during tests. Doing so may result in external applications being launched

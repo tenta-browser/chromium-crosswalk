@@ -4,10 +4,11 @@
 
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter.h"
 
-#include "content/renderer/media/media_stream_audio_track.h"
+#include "base/bind.h"
+#include "content/renderer/media/stream/processed_local_audio_source.h"
 #include "content/renderer/media/webrtc/media_stream_video_webrtc_sink.h"
 #include "content/renderer/media/webrtc/peer_connection_dependency_factory.h"
-#include "content/renderer/media/webrtc/processed_local_audio_source.h"
+#include "third_party/blink/public/platform/modules/mediastream/media_stream_audio_track.h"
 
 namespace content {
 
@@ -63,23 +64,39 @@ WebRtcMediaStreamTrackAdapter::WebRtcMediaStreamTrackAdapter(
       remote_track_can_complete_initialization_(
           base::WaitableEvent::ResetPolicy::MANUAL,
           base::WaitableEvent::InitialState::NOT_SIGNALED),
-      is_initialized_(false) {
+      is_initialized_(false),
+      is_disposed_(false) {
   DCHECK(factory_);
   DCHECK(main_thread_);
 }
 
 WebRtcMediaStreamTrackAdapter::~WebRtcMediaStreamTrackAdapter() {
-  DCHECK(main_thread_->BelongsToCurrentThread());
   DCHECK(!remote_track_can_complete_initialization_.IsSignaled());
-  DCHECK(!is_initialized_);
+  DCHECK(is_disposed_);
+  // Ensured by destructor traits.
+  DCHECK(main_thread_->BelongsToCurrentThread());
+}
+
+// static
+void WebRtcMediaStreamTrackAdapterTraits::Destruct(
+    const WebRtcMediaStreamTrackAdapter* adapter) {
+  if (!adapter->main_thread_->BelongsToCurrentThread()) {
+    adapter->main_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&WebRtcMediaStreamTrackAdapterTraits::Destruct,
+                       base::Unretained(adapter)));
+    return;
+  }
+  delete adapter;
 }
 
 void WebRtcMediaStreamTrackAdapter::Dispose() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  if (!is_initialized_)
+  DCHECK(is_initialized_);
+  if (is_disposed_)
     return;
   remote_track_can_complete_initialization_.Reset();
-  is_initialized_ = false;
+  is_disposed_ = true;
   if (web_track_.Source().GetType() ==
       blink::WebMediaStreamSource::kTypeAudio) {
     if (local_track_audio_sink_)
@@ -100,10 +117,19 @@ bool WebRtcMediaStreamTrackAdapter::is_initialized() const {
   return is_initialized_;
 }
 
+void WebRtcMediaStreamTrackAdapter::InitializeOnMainThread() {
+  DCHECK(main_thread_->BelongsToCurrentThread());
+  if (is_initialized_)
+    return;
+  // TODO(hbos): Only ever initialize explicitly,
+  // remove EnsureTrackIsInitialized(). https://crbug.com/857458
+  EnsureTrackIsInitialized();
+}
+
 const blink::WebMediaStreamTrack& WebRtcMediaStreamTrackAdapter::web_track() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!web_track_.IsNull());
   EnsureTrackIsInitialized();
+  DCHECK(!web_track_.IsNull());
   return web_track_;
 }
 
@@ -119,7 +145,7 @@ bool WebRtcMediaStreamTrackAdapter::IsEqual(
     const blink::WebMediaStreamTrack& web_track) {
   DCHECK(main_thread_->BelongsToCurrentThread());
   EnsureTrackIsInitialized();
-  return web_track_.GetTrackData() == web_track.GetTrackData();
+  return web_track_.GetPlatformTrack() == web_track.GetPlatformTrack();
 }
 
 void WebRtcMediaStreamTrackAdapter::InitializeLocalAudioTrack(
@@ -130,7 +156,8 @@ void WebRtcMediaStreamTrackAdapter::InitializeLocalAudioTrack(
   DCHECK_EQ(web_track.Source().GetType(),
             blink::WebMediaStreamSource::kTypeAudio);
   web_track_ = web_track;
-  MediaStreamAudioTrack* native_track = MediaStreamAudioTrack::From(web_track_);
+  blink::MediaStreamAudioTrack* native_track =
+      blink::MediaStreamAudioTrack::From(web_track_);
   DCHECK(native_track);
 
   // Non-WebRtc remote sources and local sources do not provide an instance of
@@ -139,17 +166,17 @@ void WebRtcMediaStreamTrackAdapter::InitializeLocalAudioTrack(
   webrtc::AudioSourceInterface* source_interface = nullptr;
   local_track_audio_sink_.reset(
       new WebRtcAudioSink(web_track_.Id().Utf8(), source_interface,
-                          factory_->GetWebRtcSignalingThread()));
+                          factory_->GetWebRtcSignalingThread(), main_thread_));
 
   if (auto* media_stream_source = ProcessedLocalAudioSource::From(
-          MediaStreamAudioSource::From(web_track_.Source()))) {
+          blink::MediaStreamAudioSource::From(web_track_.Source()))) {
     local_track_audio_sink_->SetLevel(media_stream_source->audio_level());
     // The sink only grabs stats from the audio processor. Stats are only
     // available if audio processing is turned on. Therefore, only provide the
     // sink a reference to the processor if audio processing is turned on.
-    if (auto processor = media_stream_source->audio_processor()) {
-      if (processor->has_audio_processing())
-        local_track_audio_sink_->SetAudioProcessor(processor);
+    if (media_stream_source->has_audio_processing()) {
+      local_track_audio_sink_->SetAudioProcessor(
+          media_stream_source->audio_processor());
     }
   }
   native_track->AddSink(local_track_audio_sink_.get());
@@ -167,7 +194,7 @@ void WebRtcMediaStreamTrackAdapter::InitializeLocalVideoTrack(
             blink::WebMediaStreamSource::kTypeVideo);
   web_track_ = web_track;
   local_track_video_sink_.reset(
-      new MediaStreamVideoWebRtcSink(web_track_, factory_));
+      new MediaStreamVideoWebRtcSink(web_track_, factory_, main_thread_));
   webrtc_track_ = local_track_video_sink_->webrtc_video_track();
   DCHECK(webrtc_track_);
   is_initialized_ = true;
@@ -182,8 +209,14 @@ void WebRtcMediaStreamTrackAdapter::InitializeRemoteAudioTrack(
   DCHECK_EQ(webrtc_audio_track->kind(),
             webrtc::MediaStreamTrackInterface::kAudioKind);
   remote_audio_track_adapter_ =
-      new RemoteAudioTrackAdapter(main_thread_, webrtc_audio_track.get());
+      base::MakeRefCounted<blink::RemoteAudioTrackAdapter>(
+          main_thread_, webrtc_audio_track.get());
   webrtc_track_ = webrtc_audio_track;
+  // Set the initial volume to zero. When the track is put in an audio tag for
+  // playout, its volume is set to that of the tag. Without this, we could end
+  // up playing out audio that's not attached to any tag, see:
+  // http://crbug.com/810848
+  webrtc_audio_track->GetSource()->SetVolume(0);
   remote_track_can_complete_initialization_.Signal();
   main_thread_->PostTask(
       FROM_HERE,
@@ -199,7 +232,8 @@ void WebRtcMediaStreamTrackAdapter::InitializeRemoteVideoTrack(
   DCHECK_EQ(webrtc_video_track->kind(),
             webrtc::MediaStreamTrackInterface::kVideoKind);
   remote_video_track_adapter_ =
-      new RemoteVideoTrackAdapter(main_thread_, webrtc_video_track.get());
+      base::MakeRefCounted<blink::RemoteVideoTrackAdapter>(
+          main_thread_, webrtc_video_track.get());
   webrtc_track_ = webrtc_video_track;
   remote_track_can_complete_initialization_.Signal();
   main_thread_->PostTask(
@@ -227,6 +261,7 @@ void WebRtcMediaStreamTrackAdapter::
 }
 
 void WebRtcMediaStreamTrackAdapter::EnsureTrackIsInitialized() {
+  DCHECK(main_thread_->BelongsToCurrentThread());
   if (is_initialized_)
     return;
 
@@ -238,11 +273,11 @@ void WebRtcMediaStreamTrackAdapter::EnsureTrackIsInitialized() {
 
 void WebRtcMediaStreamTrackAdapter::DisposeLocalAudioTrack() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!is_initialized_);
   DCHECK(local_track_audio_sink_);
   DCHECK_EQ(web_track_.Source().GetType(),
             blink::WebMediaStreamSource::kTypeAudio);
-  MediaStreamAudioTrack* audio_track = MediaStreamAudioTrack::From(web_track_);
+  blink::MediaStreamAudioTrack* audio_track =
+      blink::MediaStreamAudioTrack::From(web_track_);
   DCHECK(audio_track);
   audio_track->RemoveSink(local_track_audio_sink_.get());
   local_track_audio_sink_.reset();
@@ -252,7 +287,6 @@ void WebRtcMediaStreamTrackAdapter::DisposeLocalAudioTrack() {
 
 void WebRtcMediaStreamTrackAdapter::DisposeLocalVideoTrack() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!is_initialized_);
   DCHECK(local_track_video_sink_);
   DCHECK_EQ(web_track_.Source().GetType(),
             blink::WebMediaStreamSource::kTypeVideo);
@@ -263,7 +297,6 @@ void WebRtcMediaStreamTrackAdapter::DisposeLocalVideoTrack() {
 
 void WebRtcMediaStreamTrackAdapter::DisposeRemoteAudioTrack() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!is_initialized_);
   DCHECK(remote_audio_track_adapter_);
   DCHECK_EQ(web_track_.Source().GetType(),
             blink::WebMediaStreamSource::kTypeAudio);
@@ -276,7 +309,6 @@ void WebRtcMediaStreamTrackAdapter::DisposeRemoteAudioTrack() {
 
 void WebRtcMediaStreamTrackAdapter::DisposeRemoteVideoTrack() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!is_initialized_);
   DCHECK(remote_video_track_adapter_);
   DCHECK_EQ(web_track_.Source().GetType(),
             blink::WebMediaStreamSource::kTypeVideo);
@@ -296,7 +328,7 @@ void WebRtcMediaStreamTrackAdapter::
 
 void WebRtcMediaStreamTrackAdapter::FinalizeRemoteTrackDisposingOnMainThread() {
   DCHECK(main_thread_->BelongsToCurrentThread());
-  DCHECK(!is_initialized_);
+  DCHECK(is_disposed_);
   remote_audio_track_adapter_ = nullptr;
   remote_video_track_adapter_ = nullptr;
   webrtc_track_ = nullptr;

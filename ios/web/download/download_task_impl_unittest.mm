@@ -9,13 +9,13 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#import "base/mac/bind_objc_block.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#import "ios/testing/wait_util.h"
+#import "base/test/ios/wait_util.h"
 #import "ios/web/net/cookies/wk_cookie_util.h"
 #import "ios/web/public/download/download_task_observer.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -34,10 +34,10 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::kWaitForDownloadTimeout;
-using testing::kWaitForFileOperationTimeout;
-using testing::WaitUntilConditionOrTimeout;
-using base::BindBlockArc;
+using base::test::ios::kWaitForCookiesTimeout;
+using base::test::ios::kWaitForDownloadTimeout;
+using base::test::ios::kWaitForFileOperationTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace web {
 
@@ -50,6 +50,29 @@ const char kMimeType[] = "application/pdf";
 class MockDownloadTaskObserver : public DownloadTaskObserver {
  public:
   MOCK_METHOD1(OnDownloadUpdated, void(DownloadTask* task));
+  void OnDownloadDestroyed(DownloadTask* task) override {
+    // Removing observer here works as a test that
+    // DownloadTaskObserver::OnDownloadDestroyed is actually called.
+    // DownloadTask DCHECKs if it is destroyed without observer removal.
+    task->RemoveObserver(this);
+  }
+};
+
+// Allows waiting for DownloadTaskObserver::OnDownloadUpdated callback.
+class OnDownloadUpdatedWaiter : public DownloadTaskObserver {
+ public:
+  bool Wait() {
+    return WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+      base::RunLoop().RunUntilIdle();
+      return download_updated_;
+    });
+  }
+
+ private:
+  void OnDownloadUpdated(DownloadTask* task) override {
+    download_updated_ = true;
+  }
+  bool download_updated_ = false;
 };
 
 // Mocks DownloadTaskImpl::Delegate's OnTaskUpdated and OnTaskDestroyed methods
@@ -59,22 +82,22 @@ class FakeDownloadTaskImplDelegate : public DownloadTaskImpl::Delegate {
   FakeDownloadTaskImplDelegate()
       : configuration_([NSURLSessionConfiguration
             backgroundSessionConfigurationWithIdentifier:
-                [NSUUID UUID].UUIDString]) {}
+                [NSUUID UUID].UUIDString]),
+        session_(OCMStrictClassMock([NSURLSession class])) {
+    OCMStub([session_ configuration]).andReturn(configuration_);
+  }
 
   MOCK_METHOD1(OnTaskDestroyed, void(DownloadTaskImpl* task));
 
   // Returns mock, which can be accessed via session() method.
   NSURLSession* CreateSession(NSString* identifier,
+                              NSArray<NSHTTPCookie*>* cookies,
                               id<NSURLSessionDataDelegate> delegate,
                               NSOperationQueue* delegate_queue) {
     // Make sure this method is called only once.
-    EXPECT_FALSE(session_);
     EXPECT_FALSE(session_delegate_);
-
     session_delegate_ = delegate;
-    session_ = OCMStrictClassMock([NSURLSession class]);
-    OCMStub([session_ configuration]).andReturn(configuration_);
-
+    cookies_ = [cookies copy];
     return session_;
   }
 
@@ -83,9 +106,13 @@ class FakeDownloadTaskImplDelegate : public DownloadTaskImpl::Delegate {
   id session() { return session_; }
   id<NSURLSessionDataDelegate> session_delegate() { return session_delegate_; }
 
+  // Returns the cookies passed to Create session method.
+  NSArray<NSHTTPCookie*>* cookies() { return cookies_; }
+
  private:
   id<NSURLSessionDataDelegate> session_delegate_;
   id configuration_;
+  NSArray<NSHTTPCookie*>* cookies_ = nil;
   id session_;
 };
 
@@ -101,17 +128,14 @@ class DownloadTaskImplTest : public PlatformTest {
             kContentDisposition,
             /*total_bytes=*/-1,
             kMimeType,
+            ui::PageTransition::PAGE_TRANSITION_TYPED,
             task_delegate_.configuration().identifier,
-            &task_delegate_)) {
+            &task_delegate_)),
+        session_delegate_callbacks_queue_(
+            dispatch_queue_create(nullptr, DISPATCH_QUEUE_SERIAL)) {
     browser_state_.SetOffTheRecord(true);
     web_state_.SetBrowserState(&browser_state_);
     task_->AddObserver(&task_observer_);
-  }
-
-  ~DownloadTaskImplTest() {
-    if (task_) {
-      task_->RemoveObserver(&task_observer_);
-    }
   }
 
   // Starts the download and return NSURLSessionDataTask fake for this task.
@@ -121,6 +145,7 @@ class DownloadTaskImplTest : public PlatformTest {
     NSURL* url = [NSURL URLWithString:@(kUrl)];
     CRWFakeNSURLSessionTask* session_task =
         [[CRWFakeNSURLSessionTask alloc] initWithURL:url];
+    EXPECT_TRUE(task_delegate_.session());
     OCMExpect([task_delegate_.session() dataTaskWithURL:url])
         .andReturn(session_task);
 
@@ -148,7 +173,7 @@ class DownloadTaskImplTest : public PlatformTest {
         completionHandler:^{
           cookie_was_set = true;
         }];
-    return WaitUntilConditionOrTimeout(testing::kWaitForCookiesTimeout, ^{
+    return WaitUntilConditionOrTimeout(kWaitForCookiesTimeout, ^{
       return cookie_was_set;
     });
   }
@@ -164,21 +189,34 @@ class DownloadTaskImplTest : public PlatformTest {
   // C-string that represents the downloaded data.
   void SimulateDataDownload(CRWFakeNSURLSessionTask* session_task,
                             const char data_str[]) {
+    OnDownloadUpdatedWaiter callback_waiter;
+    task_->AddObserver(&callback_waiter);
     session_task.countOfBytesReceived += strlen(data_str);
     NSData* data = [NSData dataWithBytes:data_str length:strlen(data_str)];
-    [session_delegate() URLSession:session()
-                          dataTask:session_task
-                    didReceiveData:data];
+    dispatch_async(session_delegate_callbacks_queue_, ^{
+      [session_delegate() URLSession:session()
+                            dataTask:session_task
+                      didReceiveData:data];
+    });
+    EXPECT_TRUE(callback_waiter.Wait());
+    task_->RemoveObserver(&callback_waiter);
   }
 
   // Sets NSURLSessionTask.state to NSURLSessionTaskStateCompleted and calls
   // URLSession:dataTask:didCompleteWithError: callback.
   void SimulateDownloadCompletion(CRWFakeNSURLSessionTask* session_task,
                                   NSError* error = nil) {
+    OnDownloadUpdatedWaiter callback_waiter;
+    task_->AddObserver(&callback_waiter);
+
     session_task.state = NSURLSessionTaskStateCompleted;
-    [session_delegate() URLSession:session()
-                              task:session_task
-              didCompleteWithError:error];
+    dispatch_async(session_delegate_callbacks_queue_, ^{
+      [session_delegate() URLSession:session()
+                                task:session_task
+                didCompleteWithError:error];
+    });
+    EXPECT_TRUE(callback_waiter.Wait());
+    task_->RemoveObserver(&callback_waiter);
   }
 
   web::TestWebThreadBundle thread_bundle_;
@@ -187,20 +225,28 @@ class DownloadTaskImplTest : public PlatformTest {
   testing::StrictMock<FakeDownloadTaskImplDelegate> task_delegate_;
   std::unique_ptr<DownloadTaskImpl> task_;
   MockDownloadTaskObserver task_observer_;
+  // NSURLSessionDataDelegate callbacks are called on background serial queue.
+  dispatch_queue_t session_delegate_callbacks_queue_ = 0;
 };
 
 // Tests DownloadTaskImpl default state after construction.
 TEST_F(DownloadTaskImplTest, DefaultState) {
+  EXPECT_EQ(DownloadTask::State::kNotStarted, task_->GetState());
   EXPECT_FALSE(task_->GetResponseWriter());
   EXPECT_NSEQ(task_delegate_.configuration().identifier,
               task_->GetIndentifier());
   EXPECT_EQ(kUrl, task_->GetOriginalUrl());
   EXPECT_FALSE(task_->IsDone());
   EXPECT_EQ(0, task_->GetErrorCode());
+  EXPECT_EQ(-1, task_->GetHttpCode());
   EXPECT_EQ(-1, task_->GetTotalBytes());
+  EXPECT_EQ(0, task_->GetReceivedBytes());
   EXPECT_EQ(-1, task_->GetPercentComplete());
   EXPECT_EQ(kContentDisposition, task_->GetContentDisposition());
   EXPECT_EQ(kMimeType, task_->GetMimeType());
+  EXPECT_EQ(kMimeType, task_->GetOriginalMimeType());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      task_->GetTransitionType(), ui::PageTransition::PAGE_TRANSITION_TYPED));
   EXPECT_EQ("file.test", base::UTF16ToUTF8(task_->GetSuggestedFilename()));
 
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
@@ -221,8 +267,107 @@ TEST_F(DownloadTaskImplTest, EmptyContentDownload) {
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(0, task_->GetTotalBytes());
+  EXPECT_EQ(0, task_->GetReceivedBytes());
+  EXPECT_EQ(100, task_->GetPercentComplete());
+
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+}
+
+// Tests sucessfull download of response when content length is unknown until
+// the download completes.
+TEST_F(DownloadTaskImplTest, UnknownLengthContentDownload) {
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  CRWFakeNSURLSessionTask* session_task = Start();
+  ASSERT_TRUE(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+
+  // The response has arrived.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  const char kData[] = "foo";
+  session_task.countOfBytesExpectedToReceive = -1;
+  SimulateDataDownload(session_task, kData);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kInProgress, task_->GetState());
+  EXPECT_FALSE(task_->IsDone());
+  EXPECT_EQ(0, task_->GetErrorCode());
+  EXPECT_EQ(-1, task_->GetTotalBytes());
+  EXPECT_EQ(-1, task_->GetPercentComplete());
+  EXPECT_EQ(kData, task_->GetResponseWriter()->AsStringWriter()->data());
+
+  // Download has finished.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  int64_t kDataSize = strlen(kData);
+  session_task.countOfBytesExpectedToReceive = kDataSize;
+  SimulateDownloadCompletion(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    return task_->IsDone();
+  }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
+  EXPECT_EQ(0, task_->GetErrorCode());
+  EXPECT_EQ(kDataSize, task_->GetTotalBytes());
+  EXPECT_EQ(100, task_->GetPercentComplete());
+  EXPECT_EQ(kData, task_->GetResponseWriter()->AsStringWriter()->data());
+
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+}
+
+// Tests cancelling the download task.
+TEST_F(DownloadTaskImplTest, Cancelling) {
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  CRWFakeNSURLSessionTask* session_task = Start();
+  ASSERT_TRUE(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+
+  // Cancel the download.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  task_->Cancel();
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    return task_->IsDone();
+  }));
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kCancelled, task_->GetState());
+
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+}
+
+// Tests restarting failed download task.
+TEST_F(DownloadTaskImplTest, Restarting) {
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  CRWFakeNSURLSessionTask* session_task = Start();
+  ASSERT_TRUE(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+
+  // Download has failed.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  NSError* error = [NSError errorWithDomain:NSURLErrorDomain
+                                       code:NSURLErrorNotConnectedToInternet
+                                   userInfo:nil];
+  SimulateDownloadCompletion(session_task, error);
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    return task_->IsDone();
+  }));
+  EXPECT_EQ(100, task_->GetPercentComplete());
+
+  // Restart the task.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  session_task = Start();
+  EXPECT_EQ(0, task_->GetPercentComplete());
+  ASSERT_TRUE(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+
+  // Download has finished.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  SimulateDownloadCompletion(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    return task_->IsDone();
+  }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
+  EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(100, task_->GetPercentComplete());
 
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
@@ -243,9 +388,11 @@ TEST_F(DownloadTaskImplTest, SmallResponseDownload) {
   session_task.countOfBytesExpectedToReceive = kDataSize;
   SimulateDataDownload(session_task, kData);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kInProgress, task_->GetState());
   EXPECT_FALSE(task_->IsDone());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kDataSize, task_->GetTotalBytes());
+  EXPECT_EQ(kDataSize, task_->GetReceivedBytes());
   EXPECT_EQ(100, task_->GetPercentComplete());
   EXPECT_EQ(kData, task_->GetResponseWriter()->AsStringWriter()->data());
 
@@ -256,8 +403,10 @@ TEST_F(DownloadTaskImplTest, SmallResponseDownload) {
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kDataSize, task_->GetTotalBytes());
+  EXPECT_EQ(kDataSize, task_->GetReceivedBytes());
   EXPECT_EQ(100, task_->GetPercentComplete());
   EXPECT_EQ(kData, task_->GetResponseWriter()->AsStringWriter()->data());
 
@@ -281,9 +430,11 @@ TEST_F(DownloadTaskImplTest, LargeResponseDownload) {
   session_task.countOfBytesExpectedToReceive = kData1Size + kData2Size;
   SimulateDataDownload(session_task, kData1);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kInProgress, task_->GetState());
   EXPECT_FALSE(task_->IsDone());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kData1Size + kData2Size, task_->GetTotalBytes());
+  EXPECT_EQ(kData1Size, task_->GetReceivedBytes());
   EXPECT_EQ(42, task_->GetPercentComplete());
   net::URLFetcherStringWriter* writer =
       task_->GetResponseWriter()->AsStringWriter();
@@ -293,9 +444,11 @@ TEST_F(DownloadTaskImplTest, LargeResponseDownload) {
   EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
   SimulateDataDownload(session_task, kData2);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kInProgress, task_->GetState());
   EXPECT_FALSE(task_->IsDone());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kData1Size + kData2Size, task_->GetTotalBytes());
+  EXPECT_EQ(kData1Size + kData2Size, task_->GetReceivedBytes());
   EXPECT_EQ(100, task_->GetPercentComplete());
   EXPECT_EQ(std::string(kData1) + kData2, writer->data());
 
@@ -306,8 +459,10 @@ TEST_F(DownloadTaskImplTest, LargeResponseDownload) {
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kData1Size + kData2Size, task_->GetTotalBytes());
+  EXPECT_EQ(kData1Size + kData2Size, task_->GetReceivedBytes());
   EXPECT_EQ(100, task_->GetPercentComplete());
   EXPECT_EQ(std::string(kData1) + kData2, writer->data());
 
@@ -331,8 +486,10 @@ TEST_F(DownloadTaskImplTest, FailureInTheBeginning) {
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
   EXPECT_TRUE(task_->GetErrorCode() == net::ERR_INTERNET_DISCONNECTED);
   EXPECT_EQ(0, task_->GetTotalBytes());
+  EXPECT_EQ(0, task_->GetReceivedBytes());
   EXPECT_EQ(100, task_->GetPercentComplete());
 
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
@@ -354,9 +511,11 @@ TEST_F(DownloadTaskImplTest, FailureInTheMiddle) {
   session_task.countOfBytesExpectedToReceive = kExpectedDataSize;
   SimulateDataDownload(session_task, kReceivedData);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  EXPECT_EQ(DownloadTask::State::kInProgress, task_->GetState());
   EXPECT_FALSE(task_->IsDone());
   EXPECT_EQ(0, task_->GetErrorCode());
   EXPECT_EQ(kExpectedDataSize, task_->GetTotalBytes());
+  EXPECT_EQ(kReceivedDataSize, task_->GetReceivedBytes());
   EXPECT_EQ(23, task_->GetPercentComplete());
   net::URLFetcherStringWriter* writer =
       task_->GetResponseWriter()->AsStringWriter();
@@ -367,46 +526,41 @@ TEST_F(DownloadTaskImplTest, FailureInTheMiddle) {
   NSError* error = [NSError errorWithDomain:NSURLErrorDomain
                                        code:NSURLErrorNotConnectedToInternet
                                    userInfo:nil];
+  session_task.countOfBytesExpectedToReceive = 0;  // This is 0 when offline.
   SimulateDownloadCompletion(session_task, error);
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(DownloadTask::State::kComplete, task_->GetState());
   EXPECT_TRUE(task_->GetErrorCode() == net::ERR_INTERNET_DISCONNECTED);
   EXPECT_EQ(kExpectedDataSize, task_->GetTotalBytes());
-  EXPECT_EQ(23, task_->GetPercentComplete());
+  EXPECT_EQ(kReceivedDataSize, task_->GetReceivedBytes());
+  EXPECT_EQ(100, task_->GetPercentComplete());
   EXPECT_EQ(kReceivedData, writer->data());
 
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
 }
 
-// Tests that NSURLSessionConfiguration contains up to date cookie from browser
-// state before the download started.
+// Tests that CreateSession is called with the correct cookies from the cookie
+// store.
 TEST_F(DownloadTaskImplTest, Cookie) {
-  if (@available(iOS 11, *)) {
-    // Remove all cookies from the session configuration.
-    auto storage = task_delegate_.configuration().HTTPCookieStorage;
-    for (NSHTTPCookie* cookie in storage.cookies)
-      [storage deleteCookie:cookie];
+  // Add a cookie to BrowserState.
+  NSURL* cookie_url = [NSURL URLWithString:@(kUrl)];
+  NSHTTPCookie* cookie = [NSHTTPCookie cookieWithProperties:@{
+    NSHTTPCookieName : @"name",
+    NSHTTPCookieValue : @"value",
+    NSHTTPCookiePath : cookie_url.path,
+    NSHTTPCookieDomain : cookie_url.host,
+    NSHTTPCookieVersion : @1,
+  }];
+  ASSERT_TRUE(SetCookie(cookie));
 
-    // Add a cookie to BrowserState.
-    NSURL* cookie_url = [NSURL URLWithString:@(kUrl)];
-    NSHTTPCookie* cookie = [NSHTTPCookie cookieWithProperties:@{
-      NSHTTPCookieName : @"name",
-      NSHTTPCookieValue : @"value",
-      NSHTTPCookiePath : cookie_url.path,
-      NSHTTPCookieDomain : cookie_url.host,
-      NSHTTPCookieVersion : @1,
-    }];
-    ASSERT_TRUE(SetCookie(cookie));
-
-    // Start the download and make sure that all cookie from BrowserState were
-    // picked up.
-    EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
-    ASSERT_TRUE(Start());
-    EXPECT_EQ(1U, storage.cookies.count);
-    EXPECT_NSEQ(cookie, storage.cookies.firstObject);
-  }
-
+  // Start the download and make sure that all cookie from BrowserState were
+  // picked up.
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  ASSERT_TRUE(Start());
+  EXPECT_EQ(1U, task_delegate_.cookies().count);
+  EXPECT_NSEQ(cookie, task_delegate_.cookies().firstObject);
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
 }
 
@@ -423,10 +577,11 @@ TEST_F(DownloadTaskImplTest, FileDeletion) {
       std::make_unique<net::URLFetcherFileWriter>(
           base::ThreadTaskRunnerHandle::Get(), temp_file);
   __block bool initialized_file_writer = false;
-  ASSERT_EQ(net::ERR_IO_PENDING, writer->Initialize(BindBlockArc(^(int error) {
-    ASSERT_FALSE(error);
-    initialized_file_writer = true;
-  })));
+  ASSERT_EQ(net::ERR_IO_PENDING,
+            writer->Initialize(base::BindRepeating(^(int error) {
+              ASSERT_FALSE(error);
+              initialized_file_writer = true;
+            })));
   ASSERT_TRUE(WaitUntilConditionOrTimeout(1.0, ^{
     base::RunLoop().RunUntilIdle();
     return initialized_file_writer;
@@ -467,7 +622,7 @@ TEST_F(DownloadTaskImplTest, MimeTypeChange) {
   ASSERT_TRUE(session_task);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
 
-  // Download has finished with a different MIME type.
+  ASSERT_EQ(kMimeType, task_->GetOriginalMimeType());
   ASSERT_EQ(kMimeType, task_->GetMimeType());
   EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
   const char kOtherMimeType[] = "application/foo";
@@ -481,7 +636,32 @@ TEST_F(DownloadTaskImplTest, MimeTypeChange) {
   ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
     return task_->IsDone();
   }));
+  EXPECT_EQ(kMimeType, task_->GetOriginalMimeType());
   EXPECT_EQ(kOtherMimeType, task_->GetMimeType());
+
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+}
+
+// Tests updating HTTP response code.
+TEST_F(DownloadTaskImplTest, HttpResponseCode) {
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  CRWFakeNSURLSessionTask* session_task = Start();
+  ASSERT_TRUE(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+
+  EXPECT_CALL(task_observer_, OnDownloadUpdated(task_.get()));
+  int kHttpCode = 303;
+  session_task.response =
+      [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@(kUrl)]
+                                  statusCode:303
+                                 HTTPVersion:nil
+                                headerFields:nil];
+  SimulateDownloadCompletion(session_task);
+  testing::Mock::VerifyAndClearExpectations(&task_observer_);
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    return task_->IsDone();
+  }));
+  EXPECT_EQ(kHttpCode, task_->GetHttpCode());
 
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
 }
@@ -494,7 +674,6 @@ TEST_F(DownloadTaskImplTest, DownloadTaskDestruction) {
   ASSERT_TRUE(session_task);
   testing::Mock::VerifyAndClearExpectations(&task_observer_);
   EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
-  task_->RemoveObserver(&task_observer_);
   task_ = nullptr;  // Destruct DownloadTaskImpl.
   EXPECT_TRUE(session_task.state = NSURLSessionTaskStateCanceling);
 }
@@ -509,6 +688,69 @@ TEST_F(DownloadTaskImplTest, DownloadTaskShutdown) {
 
   task_->ShutDown();
   EXPECT_TRUE(session_task.state = NSURLSessionTaskStateCanceling);
+}
+
+// Tests valid data:// url downloads.
+TEST_F(DownloadTaskImplTest, ValidDataUrl) {
+  // Create data:// url download task.
+  char kDataUrl[] = "data:text/plain;base64,Q2hyb21pdW0=";
+  auto task = std::make_unique<DownloadTaskImpl>(
+      &web_state_, GURL(kDataUrl), kContentDisposition,
+      /*total_bytes=*/-1, kMimeType, ui::PageTransition::PAGE_TRANSITION_TYPED,
+      task_delegate_.configuration().identifier, &task_delegate_);
+
+  // Start and wait until the download is complete.
+  task->Start(std::make_unique<net::URLFetcherStringWriter>());
+  DownloadTaskImpl* task_ptr = task.get();
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return task_ptr->IsDone();
+  }));
+
+  // Verify the state of downloaded task.
+  const char kTestData[] = "Chromium";
+  EXPECT_EQ(DownloadTask::State::kComplete, task->GetState());
+  EXPECT_EQ(0, task->GetErrorCode());
+  EXPECT_EQ(strlen(kTestData), static_cast<size_t>(task->GetTotalBytes()));
+  EXPECT_EQ(strlen(kTestData), static_cast<size_t>(task->GetReceivedBytes()));
+  EXPECT_EQ(100, task->GetPercentComplete());
+  EXPECT_EQ("text/plain", task->GetMimeType());
+  EXPECT_EQ(kTestData, task->GetResponseWriter()->AsStringWriter()->data());
+
+  // One OnTaskDestroyed for |task_| and one for |task|.
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task.get()));
+}
+
+// Tests empty data:// url downloads.
+TEST_F(DownloadTaskImplTest, EmptyDataUrl) {
+  // Create data:// url download task.
+  char kDataUrl[] = "data://";
+  auto task = std::make_unique<DownloadTaskImpl>(
+      &web_state_, GURL(kDataUrl), kContentDisposition,
+      /*total_bytes=*/-1, kMimeType, ui::PageTransition::PAGE_TRANSITION_TYPED,
+      task_delegate_.configuration().identifier, &task_delegate_);
+
+  // Start and wait until the download is complete.
+  task->Start(std::make_unique<net::URLFetcherStringWriter>());
+  DownloadTaskImpl* task_ptr = task.get();
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForDownloadTimeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return task_ptr->IsDone();
+  }));
+
+  // Verify the state of downloaded task.
+  EXPECT_EQ(DownloadTask::State::kComplete, task->GetState());
+  EXPECT_EQ(net::ERR_INVALID_URL, task->GetErrorCode());
+  EXPECT_EQ(-1, task->GetTotalBytes());
+  EXPECT_EQ(0, task->GetReceivedBytes());
+  EXPECT_EQ(0, task->GetPercentComplete());
+  EXPECT_EQ("", task->GetMimeType());
+  EXPECT_EQ("", task->GetResponseWriter()->AsStringWriter()->data());
+
+  // One OnTaskDestroyed for |task_| and one for |task|.
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task_.get()));
+  EXPECT_CALL(task_delegate_, OnTaskDestroyed(task.get()));
 }
 
 }  // namespace web

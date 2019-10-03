@@ -23,17 +23,19 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_reporting_service.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/safe_browsing/download_protection_util.h"
+#include "chrome/common/safe_browsing/download_type_util.h"
 #include "chrome/common/safe_browsing/file_type_policies.h"
 #include "components/history/core/browser/download_constants.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/language/core/common/locale_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "crypto/sha2.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 namespace safe_browsing {
 
@@ -60,13 +62,13 @@ bool IsBinaryDownloadForCurrentOS(
   // should also be updated so that the IsBinaryDownloadForCurrentOS() will
   // return true for that DownloadType as appropriate.
   static_assert(ClientDownloadRequest::DownloadType_MAX ==
-                    ClientDownloadRequest::SAMPLED_UNSUPPORTED_FILE,
+                    ClientDownloadRequest::DOCUMENT,
                 "Update logic below");
 
 // Platform-specific types are relevant only for their own platforms.
 #if defined(OS_MACOSX)
   if (download_type == ClientDownloadRequest::MAC_EXECUTABLE ||
-      download_type == ClientDownloadRequest::INVALID_MAC_ARCHIVE)
+      download_type == ClientDownloadRequest::MAC_ARCHIVE_FAILED_PARSING)
     return true;
 #elif defined(OS_ANDROID)
   if (download_type == ClientDownloadRequest::ANDROID_APK)
@@ -82,12 +84,15 @@ bool IsBinaryDownloadForCurrentOS(
   if (download_type == ClientDownloadRequest::ZIPPED_EXECUTABLE ||
       download_type == ClientDownloadRequest::ZIPPED_ARCHIVE ||
       download_type == ClientDownloadRequest::INVALID_ZIP ||
+      download_type == ClientDownloadRequest::RAR_COMPRESSED_EXECUTABLE ||
+      download_type == ClientDownloadRequest::RAR_COMPRESSED_ARCHIVE ||
+      download_type == ClientDownloadRequest::INVALID_RAR ||
       download_type == ClientDownloadRequest::ARCHIVE ||
       download_type == ClientDownloadRequest::PPAPI_SAVE_REQUEST) {
     return true;
   }
 
-  // The default return value of download_protection_util::GetDownloadType is
+  // The default return value of download_type_util::GetDownloadType is
   // ClientDownloadRequest::WIN_EXECUTABLE.
   return download_type == ClientDownloadRequest::WIN_EXECUTABLE;
 }
@@ -101,7 +106,7 @@ bool IsBinaryDownload(const history::DownloadRow& row) {
   return (policies->IsCheckedBinaryFile(row.target_path) &&
           !policies->IsArchiveFile(row.target_path) &&
           IsBinaryDownloadForCurrentOS(
-              download_protection_util::GetDownloadType(row.target_path)));
+              download_type_util::GetDownloadType(row.target_path)));
 }
 
 // Returns true if a download represented by a DownloadRow is not a binary file.
@@ -204,9 +209,11 @@ void PopulateDetailsFromRow(const history::DownloadRow& download,
   download_request->set_file_basename(
       download.target_path.BaseName().AsUTF8Unsafe());
   download_request->set_download_type(
-      download_protection_util::GetDownloadType(download.target_path));
-  download_request->set_locale(
-      g_browser_process->local_state()->GetString(prefs::kApplicationLocale));
+      download_type_util::GetDownloadType(download.target_path));
+  std::string pref_locale = g_browser_process->local_state()->GetString(
+      language::prefs::kApplicationLocale);
+  language::ConvertToActualUILocale(&pref_locale);
+  download_request->set_locale(pref_locale);
 
   details->set_download_time_msec(download.end_time.ToJavaTime());
   // Opened time is unknown for now, so use the download time if the file was
@@ -250,9 +257,7 @@ std::unique_ptr<LastDownloadFinder> LastDownloadFinder::Create(
   return finder;
 }
 
-LastDownloadFinder::LastDownloadFinder()
-    : history_service_observer_(this), weak_ptr_factory_(this) {
-}
+LastDownloadFinder::LastDownloadFinder() : history_service_observer_(this) {}
 
 LastDownloadFinder::LastDownloadFinder(
     const DownloadDetailsGetter& download_details_getter,
@@ -260,8 +265,7 @@ LastDownloadFinder::LastDownloadFinder(
     const LastDownloadCallback& callback)
     : download_details_getter_(download_details_getter),
       callback_(callback),
-      history_service_observer_(this),
-      weak_ptr_factory_(this) {
+      history_service_observer_(this) {
   // Observe profile lifecycle events so that the finder can begin or abandon
   // the search in profiles while it is running.
   notification_registrar_.Add(this,
@@ -326,8 +330,8 @@ void LastDownloadFinder::OnMetadataQuery(
   }
   if (history_service->BackendLoaded()) {
     history_service->QueryDownloads(
-        base::Bind(&LastDownloadFinder::OnDownloadQuery,
-                   weak_ptr_factory_.GetWeakPtr(), profile));
+        base::BindOnce(&LastDownloadFinder::OnDownloadQuery,
+                       weak_ptr_factory_.GetWeakPtr(), profile));
   } else {
     // else wait until history is loaded.
     history_service_observer_.Add(history_service);
@@ -343,7 +347,7 @@ void LastDownloadFinder::AbandonSearchInProfile(Profile* profile) {
 
 void LastDownloadFinder::OnDownloadQuery(
     Profile* profile,
-    std::unique_ptr<std::vector<history::DownloadRow>> downloads) {
+    std::vector<history::DownloadRow> downloads) {
   // Early-exit if the history search for this profile was abandoned.
   auto iter = profile_states_.find(profile);
   if (iter == profile_states_.end())
@@ -354,7 +358,7 @@ void LastDownloadFinder::OnDownloadQuery(
     // Find the most recent from this profile and use it if it's better than
     // anything else found so far.
     const history::DownloadRow* profile_best_binary =
-        FindMostInteresting(*downloads, true);
+        FindMostInteresting(downloads, true);
     if (profile_best_binary &&
         IsMostInterestingBinary(*profile_best_binary, details_.get(),
                                 most_recent_binary_row_)) {
@@ -364,7 +368,7 @@ void LastDownloadFinder::OnDownloadQuery(
   }
 
   const history::DownloadRow* profile_best_non_binary =
-      FindMostInteresting(*downloads, false);
+      FindMostInteresting(downloads, false);
   if (profile_best_non_binary &&
       IsMoreInterestingNonBinaryThan(*profile_best_non_binary,
                                      most_recent_non_binary_row_)) {
@@ -438,9 +442,8 @@ void LastDownloadFinder::OnHistoryServiceLoaded(
       if (pair.second == WAITING_FOR_HISTORY ||
           pair.second == WAITING_FOR_NON_BINARY_HISTORY) {
         history_service->QueryDownloads(
-            base::Bind(&LastDownloadFinder::OnDownloadQuery,
-                       weak_ptr_factory_.GetWeakPtr(),
-                       pair.first));
+            base::BindOnce(&LastDownloadFinder::OnDownloadQuery,
+                           weak_ptr_factory_.GetWeakPtr(), pair.first));
       }
       return;
     }

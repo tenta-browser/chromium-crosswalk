@@ -77,6 +77,13 @@ extern const DeviceCapabilities kLogitechTouchKeyboardK400;
 extern const DeviceCapabilities kElo_TouchSystems_2700;
 extern const DeviceCapabilities kWilsonBeachActiveStylus;
 extern const DeviceCapabilities kEveStylus;
+extern const DeviceCapabilities kHammerKeyboard;
+extern const DeviceCapabilities kHammerTouchpad;
+extern const DeviceCapabilities kIlitekTP_Mouse;
+extern const DeviceCapabilities kIlitekTP;
+extern const DeviceCapabilities kSideVolumeButton;
+extern const DeviceCapabilities kNocturneTouchScreen;
+extern const DeviceCapabilities kNocturneStylus;
 
 }  // namspace ui
 

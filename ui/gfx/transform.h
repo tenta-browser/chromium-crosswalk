@@ -11,7 +11,7 @@
 #include "base/compiler_specific.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/geometry/vector2d_f.h"
-#include "ui/gfx/gfx_export.h"
+#include "ui/gfx/geometry_skia_export.h"
 
 namespace gfx {
 
@@ -25,14 +25,14 @@ class Vector3dF;
 
 // 4x4 transformation matrix. Transform is cheap and explicitly allows
 // copy/assign.
-class GFX_EXPORT Transform {
+class GEOMETRY_SKIA_EXPORT Transform {
  public:
 
   enum SkipInitialization {
     kSkipInitialization
   };
 
-  Transform() : matrix_(SkMatrix44::kIdentity_Constructor) {}
+  constexpr Transform() : matrix_(SkMatrix44::kIdentity_Constructor) {}
 
   // Skips initializing this matrix to avoid overhead, when we know it will be
   // initialized before use.
@@ -99,12 +99,21 @@ class GFX_EXPORT Transform {
     return gfx::Vector2dF(matrix_.get(0, 0), matrix_.get(1, 1));
   }
 
+  // Applies a scale to the current transformation and assigns the result to
+  // |this|.
+  void PostScale(SkMScalar x, SkMScalar y);
+
   // Applies the current transformation on a translation and assigns the result
   // to |this|.
   void Translate(const Vector2dF& offset);
   void Translate(SkMScalar x, SkMScalar y);
   void Translate3d(const Vector3dF& offset);
   void Translate3d(SkMScalar x, SkMScalar y, SkMScalar z);
+
+  // Applies a translation to the current transformation and assigns the result
+  // to |this|.
+  void PostTranslate(const Vector2dF& offset);
+  void PostTranslate(SkMScalar x, SkMScalar y);
 
   // Applies the current transformation on a skew and assigns the result
   // to |this|.
@@ -173,7 +182,8 @@ class GFX_EXPORT Transform {
   // have its back side facing frontwards after applying the transform.
   bool IsBackFaceVisible() const;
 
-  // Inverts the transform which is passed in. Returns true if successful.
+  // Inverts the transform which is passed in. Returns true if successful, or
+  // sets |transform| to the identify matrix on failure.
   bool GetInverse(Transform* transform) const WARN_UNUSED_RESULT;
 
   // Transposes this transform in place.

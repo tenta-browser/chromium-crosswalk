@@ -8,7 +8,8 @@
 #include <stdint.h>
 
 #include <memory>
-#include <unordered_map>
+#include <string>
+#include <vector>
 
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
@@ -19,7 +20,6 @@
 namespace device {
 
 class BluetoothAdapterAndroid;
-class BluetoothRemoteGattDescriptorAndroid;
 class BluetoothRemoteGattServiceAndroid;
 
 // BluetoothRemoteGattCharacteristicAndroid along with its owned Java class
@@ -61,11 +61,13 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
   std::vector<BluetoothRemoteGattDescriptor*> GetDescriptors() const override;
   BluetoothRemoteGattDescriptor* GetDescriptor(
       const std::string& identifier) const override;
-  void ReadRemoteCharacteristic(const ValueCallback& callback,
-                                const ErrorCallback& error_callback) override;
+  std::vector<BluetoothRemoteGattDescriptor*> GetDescriptorsByUUID(
+      const BluetoothUUID& uuid) const override;
+  void ReadRemoteCharacteristic(ValueCallback callback,
+                                ErrorCallback error_callback) override;
   void WriteRemoteCharacteristic(const std::vector<uint8_t>& value,
-                                 const base::Closure& callback,
-                                 const ErrorCallback& error_callback) override;
+                                 base::OnceClosure callback,
+                                 ErrorCallback error_callback) override;
 
   // Called when value changed event occurs.
   void OnChanged(JNIEnv* env,
@@ -98,12 +100,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
 
  protected:
   void SubscribeToNotifications(BluetoothRemoteGattDescriptor* ccc_descriptor,
-                                const base::Closure& callback,
-                                const ErrorCallback& error_callback) override;
+                                base::OnceClosure callback,
+                                ErrorCallback error_callback) override;
   void UnsubscribeFromNotifications(
       BluetoothRemoteGattDescriptor* ccc_descriptor,
-      const base::Closure& callback,
-      const ErrorCallback& error_callback) override;
+      base::OnceClosure callback,
+      ErrorCallback error_callback) override;
 
  private:
   BluetoothRemoteGattCharacteristicAndroid(
@@ -133,15 +135,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothRemoteGattCharacteristicAndroid
 
   // WriteRemoteCharacteristic callbacks and pending state.
   bool write_pending_ = false;
-  base::Closure write_callback_;
+  base::OnceClosure write_callback_;
   ErrorCallback write_error_callback_;
 
   std::vector<uint8_t> value_;
-
-  // Map of descriptors, keyed by descriptor identifier.
-  std::unordered_map<std::string,
-                     std::unique_ptr<BluetoothRemoteGattDescriptorAndroid>>
-      descriptors_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothRemoteGattCharacteristicAndroid);
 };

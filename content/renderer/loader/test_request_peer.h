@@ -11,16 +11,20 @@
 #include <vector>
 #include "base/time/time.h"
 #include "content/public/renderer/request_peer.h"
+#include "net/base/load_timing_info.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
 
 namespace net {
 struct RedirectInfo;
 }  // namespace net
 
+namespace network {
+struct ResourceResponseInfo;
+}
+
 namespace content {
 
-class ReceivedData;
 class ResourceDispatcher;
-struct ResourceResponseInfo;
 
 // Listens for request response data and stores it so that it can be compared
 // to the reference data.
@@ -32,14 +36,15 @@ class TestRequestPeer : public RequestPeer {
 
   void OnUploadProgress(uint64_t position, uint64_t size) override;
   bool OnReceivedRedirect(const net::RedirectInfo& redirect_info,
-                          const ResourceResponseInfo& info) override;
-  void OnReceivedResponse(const ResourceResponseInfo& info) override;
-  void OnDownloadedData(int len, int encoded_data_length) override;
-  void OnReceivedData(std::unique_ptr<ReceivedData> data) override;
+                          const network::ResourceResponseInfo& info) override;
+  void OnReceivedResponse(const network::ResourceResponseInfo& info) override;
+  void OnStartLoadingResponseBody(
+      mojo::ScopedDataPipeConsumerHandle body) override;
   void OnTransferSizeUpdated(int transfer_size_diff) override;
   void OnReceivedCachedMetadata(const char* data, int len) override;
   void OnCompletedRequest(
       const network::URLLoaderCompletionStatus& status) override;
+  scoped_refptr<base::TaskRunner> GetTaskRunner() override;
 
   struct Context final {
     Context();
@@ -61,17 +66,20 @@ class TestRequestPeer : public RequestPeer {
     // Data received. If downloading to file, remains empty.
     std::string data;
 
+    // Mojo's data pipe passed on OnStartLoadingResponseBody.
+    mojo::ScopedDataPipeConsumerHandle body_handle;
+
     // Total encoded data length, regardless of whether downloading to a file or
     // not.
     int total_encoded_data_length = 0;
     bool defer_on_transfer_size_updated = false;
 
-    // Total length when downloading to a file.
-    int total_downloaded_data_length = 0;
-
     bool complete = false;
     bool cancelled = false;
     int request_id = -1;
+
+    net::LoadTimingInfo last_load_timing;
+    network::URLLoaderCompletionStatus completion_status;
   };
 
  private:

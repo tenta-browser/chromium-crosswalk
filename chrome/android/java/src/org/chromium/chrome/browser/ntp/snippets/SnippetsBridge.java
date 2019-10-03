@@ -84,14 +84,6 @@ public class SnippetsBridge implements SuggestionsSource {
         return nativeAreRemoteSuggestionsEnabled(mNativeSnippetsBridge);
     }
 
-    public static void setContentSuggestionsNotificationsEnabled(boolean enabled) {
-        nativeSetContentSuggestionsNotificationsEnabled(enabled);
-    }
-
-    public static boolean areContentSuggestionsNotificationsEnabled() {
-        return nativeAreContentSuggestionsNotificationsEnabled();
-    }
-
     @Override
     public void fetchRemoteSuggestions() {
         assert mNativeSnippetsBridge != 0;
@@ -136,20 +128,6 @@ public class SnippetsBridge implements SuggestionsSource {
         assert mNativeSnippetsBridge != 0;
         nativeFetchSuggestionFavicon(mNativeSnippetsBridge, suggestion.mCategory,
                 suggestion.mIdWithinCategory, minimumSizePx, desiredSizePx, callback);
-    }
-
-    @Override
-    public void fetchContextualSuggestions(String url, Callback<List<SnippetArticle>> callback) {
-        assert mNativeSnippetsBridge != 0;
-        nativeFetchContextualSuggestions(mNativeSnippetsBridge, url, callback);
-    }
-
-    @Override
-    public void fetchContextualSuggestionImage(
-            SnippetArticle suggestion, Callback<Bitmap> callback) {
-        assert mNativeSnippetsBridge != 0;
-        nativeFetchContextualSuggestionImage(mNativeSnippetsBridge, suggestion.mCategory,
-                suggestion.mIdWithinCategory, callback);
     }
 
     @Override
@@ -201,32 +179,15 @@ public class SnippetsBridge implements SuggestionsSource {
     @CalledByNative
     private static SnippetArticle addSuggestion(List<SnippetArticle> suggestions, int category,
             String id, String title, String publisher, String url, long timestamp, float score,
-            long fetchTime, boolean isVideoSuggestion, int thumbnailDominantColor) {
+            long fetchTime, boolean isVideoSuggestion, int thumbnailDominantColor,
+            boolean hasThumbnail) {
         int position = suggestions.size();
         // thumbnailDominantColor equal to 0 encodes absence of the value. 0 is not a valid color,
         // because the passed color cannot be fully transparent.
-        suggestions.add(new SnippetArticle(category, id, title, publisher, url, timestamp, score,
-                fetchTime, isVideoSuggestion,
-                thumbnailDominantColor == 0 ? null : thumbnailDominantColor));
+        suggestions.add(new SnippetArticle(category, id, title, /*snippet=*/"", publisher, url,
+                timestamp, score, fetchTime, isVideoSuggestion,
+                thumbnailDominantColor == 0 ? null : thumbnailDominantColor, hasThumbnail));
         return suggestions.get(position);
-    }
-
-    @CalledByNative
-    private static void setAssetDownloadDataForSuggestion(
-            SnippetArticle suggestion, String downloadGuid, String filePath, String mimeType) {
-        suggestion.setAssetDownloadData(downloadGuid, filePath, mimeType);
-    }
-
-    @CalledByNative
-    private static void setOfflinePageDownloadDataForSuggestion(
-            SnippetArticle suggestion, long offlinePageId) {
-        suggestion.setOfflinePageDownloadData(offlinePageId);
-    }
-
-    @CalledByNative
-    private static void setRecentTabDataForSuggestion(
-            SnippetArticle suggestion, int tabId, long offlinePageId) {
-        suggestion.setRecentTabData(tabId, offlinePageId);
     }
 
     @CalledByNative
@@ -262,14 +223,17 @@ public class SnippetsBridge implements SuggestionsSource {
         for (Observer observer : mObserverList) observer.onFullRefreshRequired();
     }
 
+    @CalledByNative
+    private void onSuggestionsVisibilityChanged(@CategoryInt int category) {
+        for (Observer observer : mObserverList) observer.onSuggestionsVisibilityChanged(category);
+    }
+
     private native long nativeInit(Profile profile);
     private native void nativeDestroy(long nativeNTPSnippetsBridge);
     private native void nativeReloadSuggestions(long nativeNTPSnippetsBridge);
     private static native void nativeRemoteSuggestionsSchedulerOnPersistentSchedulerWakeUp();
     private static native void nativeRemoteSuggestionsSchedulerOnBrowserUpgraded();
     private native boolean nativeAreRemoteSuggestionsEnabled(long nativeNTPSnippetsBridge);
-    private static native void nativeSetContentSuggestionsNotificationsEnabled(boolean enabled);
-    private static native boolean nativeAreContentSuggestionsNotificationsEnabled();
     private native int[] nativeGetCategories(long nativeNTPSnippetsBridge);
     private native int nativeGetCategoryStatus(long nativeNTPSnippetsBridge, int category);
     private native SuggestionsCategoryInfo nativeGetCategoryInfo(
@@ -284,10 +248,6 @@ public class SnippetsBridge implements SuggestionsSource {
     private native void nativeFetch(long nativeNTPSnippetsBridge, int category,
             String[] knownSuggestions, Callback<List<SnippetArticle>> successCallback,
             Callback<Integer> failureCallback);
-    private native void nativeFetchContextualSuggestions(
-            long nativeNTPSnippetsBridge, String url, Callback<List<SnippetArticle>> callback);
-    private native void nativeFetchContextualSuggestionImage(long nativeNTPSnippetsBridge,
-            int category, String idWithinCategory, Callback<Bitmap> callback);
     private native void nativeDismissSuggestion(long nativeNTPSnippetsBridge, String url,
             int globalPosition, int category, int positionInCategory, String idWithinCategory);
     private native void nativeDismissCategory(long nativeNTPSnippetsBridge, int category);

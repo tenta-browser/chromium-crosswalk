@@ -7,9 +7,10 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/browsing_data/core/pref_names.h"
@@ -48,10 +49,10 @@ class MockBrowsingDataCounter : public BrowsingDataCounter {
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(static_cast<ReportResultType>(
-                       &MockBrowsingDataCounter::ReportResult),
-                   base::Unretained(this),
-                   static_cast<BrowsingDataCounter::ResultInt>(0)),
+        base::BindOnce(static_cast<ReportResultType>(
+                           &MockBrowsingDataCounter::ReportResult),
+                       base::Unretained(this),
+                       static_cast<BrowsingDataCounter::ResultInt>(0)),
         base::TimeDelta::FromMilliseconds(delay_ms_));
   }
 
@@ -103,7 +104,7 @@ class BrowsingDataCounterTest : public testing::Test {
  private:
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
   std::unique_ptr<MockBrowsingDataCounter> counter_;
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
 };
 
 TEST_F(BrowsingDataCounterTest, NoResponse) {

@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -104,11 +105,9 @@ FileError CheckPreConditionForEnsureFileDownloaded(
     // We add the gdoc file extension in the temporary file, so that in cross
     // profile drag-and-drop between Drive folders, the destination profiles's
     // CopyOperation can detect the special JSON file only by the path.
-    if (!GeneratesUniquePathWithExtension(temporary_file_directory,
-                                          extension,
+    if (!GeneratesUniquePathWithExtension(temporary_file_directory, extension,
                                           &gdoc_file_path) ||
-        !util::CreateGDocFile(gdoc_file_path,
-                              GURL(entry->file_specific_info().alternate_url()),
+        !util::CreateGDocFile(gdoc_file_path, GURL(entry->alternate_url()),
                               entry->resource_id()) ||
         !base::GetFileInfo(gdoc_file_path,
                            reinterpret_cast<base::File::Info*>(&file_info)))
@@ -225,9 +224,9 @@ FileError UpdateLocalStateForDownloadFile(
   DCHECK(cache);
 
   // Downloaded file should be deleted on errors.
-  base::ScopedClosureRunner file_deleter(base::Bind(
-      base::IgnoreResult(&base::DeleteFile),
-      downloaded_file_path, false /* recursive */));
+  base::ScopedClosureRunner file_deleter(
+      base::BindOnce(base::IgnoreResult(&base::DeleteFile),
+                     downloaded_file_path, false /* recursive */));
 
   FileError error = GDataToFileError(gdata_error);
   if (error != FILE_ERROR_OK)
@@ -263,13 +262,13 @@ FileError UpdateLocalStateForDownloadFile(
 
 class DownloadOperation::DownloadParams {
  public:
-  DownloadParams(const GetFileContentInitializedCallback initialized_callback,
+  DownloadParams(GetFileContentInitializedCallback initialized_callback,
                  const google_apis::GetContentCallback get_content_callback,
-                 const GetFileCallback completion_callback,
+                 GetFileCallback completion_callback,
                  std::unique_ptr<ResourceEntry> entry)
-      : initialized_callback_(initialized_callback),
+      : initialized_callback_(std::move(initialized_callback)),
         get_content_callback_(get_content_callback),
-        completion_callback_(completion_callback),
+        completion_callback_(std::move(completion_callback)),
         entry_(std::move(entry)),
         was_cancelled_(false),
         weak_ptr_factory_(this) {
@@ -283,10 +282,12 @@ class DownloadOperation::DownloadParams {
 
   void OnCacheFileFound(const base::FilePath& cache_file_path) {
     if (!initialized_callback_.is_null()) {
-      initialized_callback_.Run(FILE_ERROR_OK, cache_file_path,
-                                base::MakeUnique<ResourceEntry>(*entry_));
+      std::move(initialized_callback_)
+          .Run(FILE_ERROR_OK, cache_file_path,
+               std::make_unique<ResourceEntry>(*entry_));
     }
-    completion_callback_.Run(FILE_ERROR_OK, cache_file_path, std::move(entry_));
+    std::move(completion_callback_)
+        .Run(FILE_ERROR_OK, cache_file_path, std::move(entry_));
   }
 
   void OnStartDownloading(const base::Closure& cancel_download_closure) {
@@ -296,18 +297,20 @@ class DownloadOperation::DownloadParams {
     }
 
     DCHECK(entry_);
-    initialized_callback_.Run(FILE_ERROR_OK, base::FilePath(),
-                              base::MakeUnique<ResourceEntry>(*entry_));
+    std::move(initialized_callback_)
+        .Run(FILE_ERROR_OK, base::FilePath(),
+             std::make_unique<ResourceEntry>(*entry_));
   }
 
-  void OnError(FileError error) const {
-    completion_callback_.Run(error, base::FilePath(),
-                             std::unique_ptr<ResourceEntry>());
+  void OnError(FileError error) {
+    std::move(completion_callback_)
+        .Run(error, base::FilePath(), std::unique_ptr<ResourceEntry>());
   }
 
   void OnDownloadCompleted(const base::FilePath& cache_file_path,
-                           std::unique_ptr<ResourceEntry> entry) const {
-    completion_callback_.Run(FILE_ERROR_OK, cache_file_path, std::move(entry));
+                           std::unique_ptr<ResourceEntry> entry) {
+    std::move(completion_callback_)
+        .Run(FILE_ERROR_OK, cache_file_path, std::move(entry));
   }
 
   const google_apis::GetContentCallback& get_content_callback() const {
@@ -325,9 +328,9 @@ class DownloadOperation::DownloadParams {
       cancel_download_closure_.Run();
   }
 
-  const GetFileContentInitializedCallback initialized_callback_;
+  GetFileContentInitializedCallback initialized_callback_;
   const google_apis::GetContentCallback get_content_callback_;
-  const GetFileCallback completion_callback_;
+  GetFileCallback completion_callback_;
 
   std::unique_ptr<ResourceEntry> entry_;
   base::Closure cancel_download_closure_;
@@ -353,16 +356,15 @@ DownloadOperation::DownloadOperation(
       weak_ptr_factory_(this) {
 }
 
-DownloadOperation::~DownloadOperation() {
-}
+DownloadOperation::~DownloadOperation() = default;
 
 base::Closure DownloadOperation::EnsureFileDownloadedByLocalId(
     const std::string& local_id,
     const ClientContext& context,
-    const GetFileContentInitializedCallback& initialized_callback,
+    GetFileContentInitializedCallback initialized_callback,
     const google_apis::GetContentCallback& get_content_callback,
-    const GetFileCallback& completion_callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    GetFileCallback completion_callback) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!completion_callback.is_null());
 
   CheckPreconditionForEnsureFileDownloadedParams params;
@@ -373,37 +375,30 @@ base::Closure DownloadOperation::EnsureFileDownloadedByLocalId(
   base::FilePath* cache_file_path = new base::FilePath;
   base::FilePath* temp_download_file_path = new base::FilePath;
   ResourceEntry* entry = new ResourceEntry;
-  std::unique_ptr<DownloadParams> download_params(
-      new DownloadParams(initialized_callback, get_content_callback,
-                         completion_callback, base::WrapUnique(entry)));
+  std::unique_ptr<DownloadParams> download_params(new DownloadParams(
+      std::move(initialized_callback), get_content_callback,
+      std::move(completion_callback), base::WrapUnique(entry)));
   base::Closure cancel_closure = download_params->GetCancelClosure();
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&CheckPreConditionForEnsureFileDownloadedByLocalId,
-                 params,
-                 local_id,
-                 drive_file_path,
-                 cache_file_path,
-                 temp_download_file_path,
-                 entry),
-      base::Bind(&DownloadOperation::EnsureFileDownloadedAfterCheckPreCondition,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 base::Passed(&download_params),
-                 context,
-                 base::Owned(drive_file_path),
-                 base::Owned(cache_file_path),
-                 base::Owned(temp_download_file_path)));
+      blocking_task_runner_.get(), FROM_HERE,
+      base::BindOnce(&CheckPreConditionForEnsureFileDownloadedByLocalId, params,
+                     local_id, drive_file_path, cache_file_path,
+                     temp_download_file_path, entry),
+      base::BindOnce(
+          &DownloadOperation::EnsureFileDownloadedAfterCheckPreCondition,
+          weak_ptr_factory_.GetWeakPtr(), std::move(download_params), context,
+          base::Owned(drive_file_path), base::Owned(cache_file_path),
+          base::Owned(temp_download_file_path)));
   return cancel_closure;
 }
 
 base::Closure DownloadOperation::EnsureFileDownloadedByPath(
     const base::FilePath& file_path,
     const ClientContext& context,
-    const GetFileContentInitializedCallback& initialized_callback,
+    GetFileContentInitializedCallback initialized_callback,
     const google_apis::GetContentCallback& get_content_callback,
-    const GetFileCallback& completion_callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    GetFileCallback completion_callback) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!completion_callback.is_null());
 
   CheckPreconditionForEnsureFileDownloadedParams params;
@@ -414,26 +409,20 @@ base::Closure DownloadOperation::EnsureFileDownloadedByPath(
   base::FilePath* cache_file_path = new base::FilePath;
   base::FilePath* temp_download_file_path = new base::FilePath;
   ResourceEntry* entry = new ResourceEntry;
-  std::unique_ptr<DownloadParams> download_params(
-      new DownloadParams(initialized_callback, get_content_callback,
-                         completion_callback, base::WrapUnique(entry)));
+  std::unique_ptr<DownloadParams> download_params(new DownloadParams(
+      std::move(initialized_callback), get_content_callback,
+      std::move(completion_callback), base::WrapUnique(entry)));
   base::Closure cancel_closure = download_params->GetCancelClosure();
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&CheckPreConditionForEnsureFileDownloadedByPath,
-                 params,
-                 file_path,
-                 cache_file_path,
-                 temp_download_file_path,
-                 entry),
-      base::Bind(&DownloadOperation::EnsureFileDownloadedAfterCheckPreCondition,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 base::Passed(&download_params),
-                 context,
-                 base::Owned(drive_file_path),
-                 base::Owned(cache_file_path),
-                 base::Owned(temp_download_file_path)));
+      blocking_task_runner_.get(), FROM_HERE,
+      base::BindOnce(&CheckPreConditionForEnsureFileDownloadedByPath, params,
+                     file_path, cache_file_path, temp_download_file_path,
+                     entry),
+      base::BindOnce(
+          &DownloadOperation::EnsureFileDownloadedAfterCheckPreCondition,
+          weak_ptr_factory_.GetWeakPtr(), std::move(download_params), context,
+          base::Owned(drive_file_path), base::Owned(cache_file_path),
+          base::Owned(temp_download_file_path)));
   return cancel_closure;
 }
 
@@ -444,7 +433,7 @@ void DownloadOperation::EnsureFileDownloadedAfterCheckPreCondition(
     base::FilePath* cache_file_path,
     base::FilePath* temp_download_file_path,
     FileError error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(params);
   DCHECK(drive_file_path);
   DCHECK(cache_file_path);
@@ -491,21 +480,20 @@ void DownloadOperation::EnsureFileDownloadedAfterDownloadFile(
     std::unique_ptr<DownloadParams> params,
     google_apis::DriveApiErrorCode gdata_error,
     const base::FilePath& downloaded_file_path) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   DownloadParams* params_ptr = params.get();
   ResourceEntry* entry_after_update = new ResourceEntry;
   base::FilePath* cache_file_path = new base::FilePath;
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(), FROM_HERE,
-      base::Bind(&UpdateLocalStateForDownloadFile, metadata_, cache_,
-                 params_ptr->entry(), gdata_error, downloaded_file_path,
-                 entry_after_update, cache_file_path),
-      base::Bind(&DownloadOperation::EnsureFileDownloadedAfterUpdateLocalState,
-                 weak_ptr_factory_.GetWeakPtr(), drive_file_path,
-                 base::Passed(&params),
-                 base::Passed(base::WrapUnique(entry_after_update)),
-                 base::Owned(cache_file_path)));
+      base::BindOnce(&UpdateLocalStateForDownloadFile, metadata_, cache_,
+                     params_ptr->entry(), gdata_error, downloaded_file_path,
+                     entry_after_update, cache_file_path),
+      base::BindOnce(
+          &DownloadOperation::EnsureFileDownloadedAfterUpdateLocalState,
+          weak_ptr_factory_.GetWeakPtr(), drive_file_path, std::move(params),
+          base::WrapUnique(entry_after_update), base::Owned(cache_file_path)));
 }
 
 void DownloadOperation::EnsureFileDownloadedAfterUpdateLocalState(
@@ -514,7 +502,7 @@ void DownloadOperation::EnsureFileDownloadedAfterUpdateLocalState(
     std::unique_ptr<ResourceEntry> entry_after_update,
     base::FilePath* cache_file_path,
     FileError error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (error != FILE_ERROR_OK) {
     params->OnError(error);

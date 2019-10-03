@@ -18,10 +18,20 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
-#include "content/common/indexed_db/indexed_db_key.h"
-#include "content/common/indexed_db/indexed_db_key_path.h"
+#include "content/browser/indexed_db/scopes/scope_lock_range.h"
+#include "content/common/content_export.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
 
 namespace content {
+
+namespace indexed_db {
+// 0 - Initial version.
+// 1 - Adds UserIntVersion to DatabaseMetaData.
+// 2 - Adds DataVersion to to global metadata.
+// 3 - Adds metadata needed for blob support.
+const constexpr int64_t kLatestKnownSchemaVersion = 3;
+}  // namespace indexed_db
 
 CONTENT_EXPORT extern const unsigned char kMinimumIndexId;
 
@@ -34,6 +44,11 @@ typedef std::vector<BlobJournalEntryType> BlobJournalType;
 
 CONTENT_EXPORT void EncodeByte(unsigned char value, std::string* into);
 CONTENT_EXPORT void EncodeBool(bool value, std::string* into);
+
+// Unlike EncodeVarInt, this is a 'dumb' implementation of a variable int
+// encoder. It writes, little-endian', until there are no more '1' bits in the
+// number. The Decoder must know how to calculate the size of the encoded int,
+// typically by having this reside at the end of the value or key.
 CONTENT_EXPORT void EncodeInt(int64_t value, std::string* into);
 CONTENT_EXPORT void EncodeVarInt(int64_t value, std::string* into);
 CONTENT_EXPORT void EncodeString(const base::string16& value,
@@ -42,8 +57,9 @@ CONTENT_EXPORT void EncodeStringWithLength(const base::string16& value,
                                            std::string* into);
 CONTENT_EXPORT void EncodeBinary(const std::string& value, std::string* into);
 CONTENT_EXPORT void EncodeDouble(double value, std::string* into);
-CONTENT_EXPORT void EncodeIDBKey(const IndexedDBKey& value, std::string* into);
-CONTENT_EXPORT void EncodeIDBKeyPath(const IndexedDBKeyPath& value,
+CONTENT_EXPORT void EncodeIDBKey(const blink::IndexedDBKey& value,
+                                 std::string* into);
+CONTENT_EXPORT void EncodeIDBKeyPath(const blink::IndexedDBKeyPath& value,
                                      std::string* into);
 CONTENT_EXPORT void EncodeBlobJournal(const BlobJournalType& journal,
                                       std::string* into);
@@ -67,10 +83,10 @@ CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeDouble(base::StringPiece* slice,
                                                     double* value);
 CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeIDBKey(
     base::StringPiece* slice,
-    std::unique_ptr<IndexedDBKey>* value);
+    std::unique_ptr<blink::IndexedDBKey>* value);
 CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeIDBKeyPath(
     base::StringPiece* slice,
-    IndexedDBKeyPath* value);
+    blink::IndexedDBKeyPath* value);
 CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeBlobJournal(
     base::StringPiece* slice,
     BlobJournalType* journal);
@@ -97,6 +113,17 @@ CONTENT_EXPORT int CompareKeys(const base::StringPiece& a,
 CONTENT_EXPORT int CompareIndexKeys(const base::StringPiece& a,
                                     const base::StringPiece& b);
 
+const constexpr int kDatabaseRangeLockLevel = 0;
+const constexpr int kObjectStoreRangeLockLevel = 1;
+const constexpr int kIndexedDBLockLevelCount = 2;
+
+CONTENT_EXPORT ScopeLockRange GetDatabaseLockRange(int64_t database_id);
+CONTENT_EXPORT ScopeLockRange GetObjectStoreLockRange(int64_t database_id,
+                                                      int64_t object_store_id);
+
+// TODO(dmurph): Modify all decoding methods to return something more sensible,
+// as it is not obvious that they modify the input slice to remove the decoded
+// bit. https://crbug.com/922225
 class KeyPrefix {
  public:
   // These are serialized to disk; any new items must be appended, and none can
@@ -193,7 +220,7 @@ class MaxDatabaseIdKey {
 
 class DataVersionKey {
  public:
-  static std::string Encode();
+  CONTENT_EXPORT static std::string Encode();
 };
 
 class BlobJournalKey {
@@ -407,8 +434,8 @@ class ObjectStoreDataKey {
                                            const std::string encoded_user_key);
   static std::string Encode(int64_t database_id,
                             int64_t object_store_id,
-                            const IndexedDBKey& user_key);
-  std::unique_ptr<IndexedDBKey> user_key() const;
+                            const blink::IndexedDBKey& user_key);
+  std::unique_ptr<blink::IndexedDBKey> user_key() const;
 
  private:
   std::string encoded_user_key_;
@@ -425,8 +452,8 @@ class ExistsEntryKey {
                                            const std::string& encoded_key);
   static std::string Encode(int64_t database_id,
                             int64_t object_store_id,
-                            const IndexedDBKey& user_key);
-  std::unique_ptr<IndexedDBKey> user_key() const;
+                            const blink::IndexedDBKey& user_key);
+  std::unique_ptr<blink::IndexedDBKey> user_key() const;
 
  private:
   static const int64_t kSpecialIndexNumber;
@@ -448,7 +475,7 @@ class BlobEntryKey {
                                                  int64_t object_store_id);
   static std::string Encode(int64_t database_id,
                             int64_t object_store_id,
-                            const IndexedDBKey& user_key);
+                            const blink::IndexedDBKey& user_key);
   std::string Encode() const;
   int64_t database_id() const { return database_id_; }
   int64_t object_store_id() const { return object_store_id_; }
@@ -482,13 +509,13 @@ class IndexDataKey {
   static std::string Encode(int64_t database_id,
                             int64_t object_store_id,
                             int64_t index_id,
-                            const IndexedDBKey& user_key);
+                            const blink::IndexedDBKey& user_key);
   CONTENT_EXPORT static std::string Encode(
       int64_t database_id,
       int64_t object_store_id,
       int64_t index_id,
-      const IndexedDBKey& user_key,
-      const IndexedDBKey& user_primary_key);
+      const blink::IndexedDBKey& user_key,
+      const blink::IndexedDBKey& user_primary_key);
   CONTENT_EXPORT static std::string EncodeMinKey(int64_t database_id,
                                                  int64_t object_store_id,
                                                  int64_t index_id);
@@ -498,8 +525,8 @@ class IndexDataKey {
   int64_t DatabaseId() const;
   int64_t ObjectStoreId() const;
   int64_t IndexId() const;
-  std::unique_ptr<IndexedDBKey> user_key() const;
-  std::unique_ptr<IndexedDBKey> primary_key() const;
+  std::unique_ptr<blink::IndexedDBKey> user_key() const;
+  std::unique_ptr<blink::IndexedDBKey> primary_key() const;
 
   CONTENT_EXPORT std::string Encode() const;
 

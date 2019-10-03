@@ -28,11 +28,11 @@
 #include "base/containers/circular_deque.h"
 #include "base/files/file_descriptor_watcher_posix.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
@@ -88,7 +88,7 @@ class QueueManager {
       packet_pipe_ = std::move(tmp);
     }
     packet_pipe_->InitOnIOThread(base::ThreadTaskRunnerHandle::Get(),
-                                 &tick_clock_);
+                                 base::DefaultTickClock::GetInstance());
   }
 
  private:
@@ -111,7 +111,6 @@ class QueueManager {
   std::unique_ptr<PacketPipe> packet_pipe_;
   std::unique_ptr<base::FileDescriptorWatcher::Controller>
       read_socket_watch_controller_;
-  base::DefaultTickClock tick_clock_;
 };
 
 }  // namespace test
@@ -212,8 +211,7 @@ void CheckByteCounters() {
     last_printout = now;
   }
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&CheckByteCounters),
+      FROM_HERE, base::BindOnce(&CheckByteCounters),
       base::TimeDelta::FromMilliseconds(100));
 }
 
@@ -306,8 +304,8 @@ int main(int argc, char **argv) {
   int fd1 = tun_alloc(argv[1], IFF_TAP);
   int fd2 = tun_alloc(argv[2], IFF_TAP);
 
-  base::MessageLoopForIO message_loop;
-  base::FileDescriptorWatcher file_descriptor_watcher(&message_loop);
+  base::test::ScopedTaskEnvironment task_environment(
+      base::test::ScopedTaskEnvironment::MainThreadType::IO);
   last_printout = base::TimeTicks::Now();
   media::cast::test::QueueManager qm1(fd1, fd2, std::move(in_pipe));
   media::cast::test::QueueManager qm2(fd2, fd1, std::move(out_pipe));

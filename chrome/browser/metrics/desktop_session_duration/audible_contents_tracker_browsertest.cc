@@ -9,6 +9,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test_base.h"
+#include "media/base/media_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -43,6 +44,13 @@ class AudibleContentsTrackerTest : public InProcessBrowserTest {
     InProcessBrowserTest::SetUp();
   }
 
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
+    InProcessBrowserTest::SetUpCommandLine(command_line);
+  }
+
   void TearDown() override {
     InProcessBrowserTest::TearDown();
     tracker_.reset();
@@ -64,7 +72,7 @@ IN_PROC_BROWSER_TEST_F(AudibleContentsTrackerTest, TestAudioNotifications) {
 
   // Add a request handler for serving audio.
   base::FilePath test_data_dir;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
   embedded_test_server()->ServeFilesFromDirectory(
       test_data_dir.AppendASCII("chrome/test/data/"));
   // Start the test server after adding the request handler for thread safety.

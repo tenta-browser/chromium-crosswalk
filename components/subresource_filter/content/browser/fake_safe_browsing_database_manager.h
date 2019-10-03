@@ -49,7 +49,6 @@ class FakeSafeBrowsingDatabaseManager
   bool ChecksAreAlwaysAsync() const override;
   bool CanCheckResourceType(
       content::ResourceType /* resource_type */) const override;
-  bool CanCheckSubresourceFilter() const override;
   safe_browsing::ThreatSource GetThreatSource() const override;
   bool CheckExtensionIDs(const std::set<std::string>& extension_ids,
                          Client* client) override;
@@ -65,7 +64,7 @@ class FakeSafeBrowsingDatabaseManager
   bool simulate_timeout_ = false;
   bool synchronous_failure_ = false;
 
-  base::WeakPtrFactory<FakeSafeBrowsingDatabaseManager> weak_factory_;
+  base::WeakPtrFactory<FakeSafeBrowsingDatabaseManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeSafeBrowsingDatabaseManager);
 };

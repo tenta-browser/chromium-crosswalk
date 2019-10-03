@@ -9,9 +9,20 @@
 #include <set>
 #include <utility>
 
+#include "base/base64.h"
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/i18n/string_search.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root_map.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_util.h"
@@ -23,22 +34,27 @@
 #include "chrome/browser/chromeos/fileapi/external_file_url_util.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/extensions/chrome_extension_function_details.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/extensions/api/file_manager_private_internal.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/components/drivefs/drivefs_util.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
-#include "components/drive/drive_app_registry.h"
+#include "components/drive/chromeos/search_metadata.h"
 #include "components/drive/event_logger.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/storage_partition.h"
 #include "google_apis/drive/auth_service.h"
 #include "google_apis/drive/drive_api_url_generator.h"
-#include "google_apis/drive/drive_switches.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "storage/common/fileapi/file_system_info.h"
 #include "storage/common/fileapi/file_system_util.h"
 #include "url/gurl.h"
@@ -73,89 +89,155 @@ const char kDriveConnectionReasonNotReady[] = "not_ready";
 const char kDriveConnectionReasonNoNetwork[] = "no_network";
 const char kDriveConnectionReasonNoService[] = "no_service";
 
+constexpr char kAvailableOfflinePropertyName[] = "availableOffline";
+
 // Maximum dimension of thumbnail in file manager. File manager shows 180x180
 // thumbnail. Given that we support hdpi devices, maximum dimension is 360.
 const int kFileManagerMaximumThumbnailDimension = 360;
+
+// Thresholds for logging slow operations.
+constexpr base::TimeDelta kDriveSlowOperationThreshold =
+    base::TimeDelta::FromSeconds(5);
+constexpr base::TimeDelta kDriveVerySlowOperationThreshold =
+    base::TimeDelta::FromMinutes(1);
+
+std::unique_ptr<std::string> GetShareUrlFromAlternateUrl(
+    const GURL& alternate_url) {
+  // Set |share_url| to a modified version of |alternate_url| that opens the
+  // sharing dialog for files and folders (add ?userstoinvite="" to the URL).
+  // TODO(sashab): Add an endpoint to the Drive API that generates this URL,
+  // instead of manually modifying it here.
+  GURL::Replacements replacements;
+  std::string new_query =
+      (alternate_url.has_query() ? alternate_url.query() + "&" : "") +
+      "userstoinvite=%22%22";
+  replacements.SetQueryStr(new_query);
+
+  return std::make_unique<std::string>(
+      alternate_url.ReplaceComponents(replacements).spec());
+}
 
 // Copies properties from |entry_proto| to |properties|. |shared_with_me| is
 // given from the running profile.
 void FillEntryPropertiesValueForDrive(const drive::ResourceEntry& entry_proto,
                                       bool shared_with_me,
                                       EntryProperties* properties) {
-  properties->shared_with_me.reset(new bool(shared_with_me));
-  properties->shared.reset(new bool(entry_proto.shared()));
-  properties->starred.reset(new bool(entry_proto.starred()));
+  properties->shared_with_me = std::make_unique<bool>(shared_with_me);
+  properties->shared = std::make_unique<bool>(entry_proto.shared());
+  properties->starred = std::make_unique<bool>(entry_proto.starred());
 
   const drive::PlatformFileInfoProto& file_info = entry_proto.file_info();
-  properties->size.reset(new double(file_info.size()));
-  properties->modification_time.reset(new double(
-      base::Time::FromInternalValue(file_info.last_modified()).ToJsTime()));
-  properties->modification_by_me_time.reset(new double(
+  properties->size = std::make_unique<double>(file_info.size());
+  properties->modification_time = std::make_unique<double>(
+      base::Time::FromInternalValue(file_info.last_modified()).ToJsTime());
+  properties->modification_by_me_time = std::make_unique<double>(
       base::Time::FromInternalValue(entry_proto.last_modified_by_me())
-          .ToJsTime()));
+          .ToJsTime());
 
-  if (!entry_proto.has_file_specific_info())
-    return;
-
-  const drive::FileSpecificInfo& file_specific_info =
-      entry_proto.file_specific_info();
-
-  if (!entry_proto.resource_id().empty()) {
-    DriveApiUrlGenerator url_generator(
-        (GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction)),
-        (GURL(google_apis::DriveApiUrlGenerator::
-                  kBaseThumbnailUrlForProduction)),
-        google_apis::GetTeamDrivesIntegrationSwitch());
-    properties->thumbnail_url.reset(new std::string(
-        url_generator.GetThumbnailUrl(entry_proto.resource_id(),
-                                      500 /* width */, 500 /* height */,
-                                      false /* not cropped */).spec()));
-    properties->cropped_thumbnail_url.reset(new std::string(
-        url_generator.GetThumbnailUrl(
-                          entry_proto.resource_id(),
-                          kFileManagerMaximumThumbnailDimension /* width */,
-                          kFileManagerMaximumThumbnailDimension /* height */,
-                          true /* cropped */).spec()));
-  }
-  if (file_specific_info.has_image_width()) {
-    properties->image_width.reset(
-        new int(file_specific_info.image_width()));
-  }
-  if (file_specific_info.has_image_height()) {
-    properties->image_height.reset(
-        new int(file_specific_info.image_height()));
-  }
-  if (file_specific_info.has_image_rotation()) {
-    properties->image_rotation.reset(
-        new int(file_specific_info.image_rotation()));
-  }
-  properties->hosted.reset(new bool(file_specific_info.is_hosted_document()));
-  properties->content_mime_type.reset(
-      new std::string(file_specific_info.content_mime_type()));
-  properties->pinned.reset(
-      new bool(file_specific_info.cache_state().is_pinned()));
-  properties->dirty.reset(
-      new bool(file_specific_info.cache_state().is_dirty()));
-  properties->present.reset(
-      new bool(file_specific_info.cache_state().is_present()));
-
-  if (file_specific_info.cache_state().is_present()) {
-    properties->available_offline.reset(new bool(true));
-  } else if (file_specific_info.is_hosted_document() &&
-             file_specific_info.has_document_extension()) {
-    const std::string file_extension = file_specific_info.document_extension();
-    // What's available offline? See the 'Web' column at:
-    // https://support.google.com/drive/answer/1628467
-    properties->available_offline.reset(
-        new bool(file_extension == ".gdoc" || file_extension == ".gdraw" ||
-                 file_extension == ".gsheet" || file_extension == ".gslides"));
-  } else {
-    properties->available_offline.reset(new bool(false));
+  if (entry_proto.has_alternate_url()) {
+    properties->alternate_url =
+        std::make_unique<std::string>(entry_proto.alternate_url());
+    properties->share_url =
+        GetShareUrlFromAlternateUrl(GURL(entry_proto.alternate_url()));
   }
 
-  properties->available_when_metered.reset(
-      new bool(file_specific_info.cache_state().is_present() ||
-               file_specific_info.is_hosted_document()));
+  if (entry_proto.has_file_specific_info()) {
+    const drive::FileSpecificInfo& file_specific_info =
+        entry_proto.file_specific_info();
+
+    if (!entry_proto.resource_id().empty()) {
+      DriveApiUrlGenerator url_generator(
+          (GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction)),
+          (GURL(google_apis::DriveApiUrlGenerator::
+                    kBaseThumbnailUrlForProduction)));
+      properties->thumbnail_url = std::make_unique<std::string>(
+          url_generator
+              .GetThumbnailUrl(entry_proto.resource_id(), 500 /* width */,
+                               500 /* height */, false /* not cropped */)
+              .spec());
+      properties->cropped_thumbnail_url = std::make_unique<std::string>(
+          url_generator
+              .GetThumbnailUrl(
+                  entry_proto.resource_id(),
+                  kFileManagerMaximumThumbnailDimension /* width */,
+                  kFileManagerMaximumThumbnailDimension /* height */,
+                  true /* cropped */)
+              .spec());
+    }
+    if (file_specific_info.has_image_width()) {
+      properties->image_width =
+          std::make_unique<int>(file_specific_info.image_width());
+    }
+    if (file_specific_info.has_image_height()) {
+      properties->image_height =
+          std::make_unique<int>(file_specific_info.image_height());
+    }
+    if (file_specific_info.has_image_rotation()) {
+      properties->image_rotation =
+          std::make_unique<int>(file_specific_info.image_rotation());
+    }
+    properties->hosted =
+        std::make_unique<bool>(file_specific_info.is_hosted_document());
+    properties->content_mime_type =
+        std::make_unique<std::string>(file_specific_info.content_mime_type());
+    properties->pinned =
+        std::make_unique<bool>(file_specific_info.cache_state().is_pinned());
+    properties->dirty =
+        std::make_unique<bool>(file_specific_info.cache_state().is_dirty());
+    properties->present =
+        std::make_unique<bool>(file_specific_info.cache_state().is_present());
+
+    if (file_specific_info.cache_state().is_present()) {
+      properties->available_offline = std::make_unique<bool>(true);
+    } else if (file_specific_info.is_hosted_document() &&
+               file_specific_info.has_document_extension()) {
+      const std::string file_extension =
+          file_specific_info.document_extension();
+      // What's available offline? See the 'Web' column at:
+      // https://support.google.com/drive/answer/1628467
+      properties->available_offline = std::make_unique<bool>(
+          file_extension == ".gdoc" || file_extension == ".gdraw" ||
+          file_extension == ".gsheet" || file_extension == ".gslides");
+    } else {
+      properties->available_offline = std::make_unique<bool>(false);
+    }
+
+    properties->available_when_metered =
+        std::make_unique<bool>(file_specific_info.cache_state().is_present() ||
+                               file_specific_info.is_hosted_document());
+  }
+
+  if (entry_proto.has_capabilities_info()) {
+    const drive::CapabilitiesInfo& capabilities_info =
+        entry_proto.capabilities_info();
+
+    // Only set the |can_copy| capability for hosted documents; for other files,
+    // we must have read access, so |can_copy| is implicitly true.
+    bool can_copy = true;
+    if (entry_proto.has_file_specific_info() &&
+        entry_proto.file_specific_info().is_hosted_document() &&
+        capabilities_info.has_can_copy()) {
+      can_copy = capabilities_info.can_copy();
+    }
+    properties->can_copy = std::make_unique<bool>(can_copy);
+
+    properties->can_delete = std::make_unique<bool>(
+        capabilities_info.has_can_delete() ? capabilities_info.can_delete()
+                                           : true);
+    properties->can_rename = std::make_unique<bool>(
+        capabilities_info.has_can_rename() ? capabilities_info.can_rename()
+                                           : true);
+
+    // |can_add_children| defaults to true for directories, and false for files.
+    properties->can_add_children =
+        std::make_unique<bool>(capabilities_info.has_can_add_children()
+                                   ? capabilities_info.can_add_children()
+                                   : file_info.is_directory());
+
+    properties->can_share = std::make_unique<bool>(
+        capabilities_info.has_can_share() ? capabilities_info.can_share()
+                                          : true);
+  }
 }
 
 // Creates entry definition list for (metadata) search result info list.
@@ -164,7 +246,7 @@ void ConvertSearchResultInfoListToEntryDefinitionList(
     Profile* profile,
     const std::string& extension_id,
     const std::vector<T>& search_result_info_list,
-    const EntryDefinitionListCallback& callback) {
+    EntryDefinitionListCallback callback) {
   FileDefinitionList file_definition_list;
 
   for (size_t i = 0; i < search_result_info_list.size(); ++i) {
@@ -177,46 +259,45 @@ void ConvertSearchResultInfoListToEntryDefinitionList(
   }
 
   file_manager::util::ConvertFileDefinitionListToEntryDefinitionList(
-      profile,
-      extension_id,
+      profile, extension_id,
       file_definition_list,  // Safe, since copied internally.
-      callback);
+      std::move(callback));
 }
 
 class SingleEntryPropertiesGetterForDrive {
  public:
-  typedef base::Callback<void(std::unique_ptr<EntryProperties> properties,
-                              base::File::Error error)>
+  typedef base::OnceCallback<void(std::unique_ptr<EntryProperties> properties,
+                                  base::File::Error error)>
       ResultCallback;
 
   // Creates an instance and starts the process.
   static void Start(const base::FilePath local_path,
                     const std::set<EntryPropertyName>& names,
                     Profile* const profile,
-                    const ResultCallback& callback) {
+                    ResultCallback callback) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
     SingleEntryPropertiesGetterForDrive* instance =
         new SingleEntryPropertiesGetterForDrive(local_path, names, profile,
-                                                callback);
+                                                std::move(callback));
     instance->StartProcess();
 
     // The instance will be destroyed by itself.
   }
 
-  virtual ~SingleEntryPropertiesGetterForDrive() {}
+  virtual ~SingleEntryPropertiesGetterForDrive() = default;
 
  private:
   SingleEntryPropertiesGetterForDrive(
       const base::FilePath local_path,
       const std::set<EntryPropertyName>& /* names */,
       Profile* const profile,
-      const ResultCallback& callback)
-      : callback_(callback),
+      ResultCallback callback)
+      : callback_(std::move(callback)),
         local_path_(local_path),
         running_profile_(profile),
         properties_(new EntryProperties),
-        file_owner_profile_(NULL),
+        file_owner_profile_(nullptr),
         weak_ptr_factory_(this) {
     DCHECK(!callback_.is_null());
     DCHECK(profile);
@@ -246,8 +327,8 @@ class SingleEntryPropertiesGetterForDrive {
 
     file_system->GetResourceEntry(
         file_path_,
-        base::Bind(&SingleEntryPropertiesGetterForDrive::OnGetFileInfo,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&SingleEntryPropertiesGetterForDrive::OnGetFileInfo,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 
   void OnGetFileInfo(drive::FileError error,
@@ -301,8 +382,8 @@ class SingleEntryPropertiesGetterForDrive {
 
     file_system->GetResourceEntry(
         file_path,
-        base::Bind(&SingleEntryPropertiesGetterForDrive::OnGetShareInfo,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&SingleEntryPropertiesGetterForDrive::OnGetShareInfo,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 
   void OnGetShareInfo(drive::FileError error,
@@ -326,10 +407,8 @@ class SingleEntryPropertiesGetterForDrive {
 
     drive::FileSystemInterface* const file_system =
         drive::util::GetFileSystemByProfile(file_owner_profile_);
-    drive::DriveAppRegistry* const app_registry =
-        drive::util::GetDriveAppRegistryByProfile(file_owner_profile_);
-    if (!file_system || !app_registry) {
-      // |file_system| or |app_registry| is NULL if Drive is disabled.
+    if (!file_system) {
+      // |file_system| is NULL if Drive is disabled.
       CompleteGetEntryProperties(drive::FILE_ERROR_FAILED);
       return;
     }
@@ -341,36 +420,6 @@ class SingleEntryPropertiesGetterForDrive {
       return;
     }
 
-    const drive::FileSpecificInfo& file_specific_info =
-        owner_resource_entry_->file_specific_info();
-
-    // Get drive WebApps that can accept this file. We just need to extract the
-    // doc icon for the drive app, which is set as default.
-    std::vector<drive::DriveAppInfo> drive_apps;
-    app_registry->GetAppsForFile(file_path_.Extension(),
-                                 file_specific_info.content_mime_type(),
-                                 &drive_apps);
-    if (!drive_apps.empty()) {
-      std::string default_task_id =
-          file_manager::file_tasks::GetDefaultTaskIdFromPrefs(
-              *file_owner_profile_->GetPrefs(),
-              file_specific_info.content_mime_type(),
-              file_path_.Extension());
-      file_manager::file_tasks::TaskDescriptor default_task;
-      file_manager::file_tasks::ParseTaskID(default_task_id, &default_task);
-      DCHECK(default_task_id.empty() || !default_task.app_id.empty());
-      for (size_t i = 0; i < drive_apps.size(); ++i) {
-        const drive::DriveAppInfo& app_info = drive_apps[i];
-        if (default_task.app_id == app_info.app_id) {
-          // The drive app is set as default. The Files app should use the doc
-          // icon.
-          const GURL doc_icon = drive::util::FindPreferredIcon(
-              app_info.document_icons, drive::util::kPreferredIconSize);
-          properties_->custom_icon_url.reset(new std::string(doc_icon.spec()));
-        }
-      }
-    }
-
     CompleteGetEntryProperties(drive::FILE_ERROR_OK);
   }
 
@@ -378,13 +427,13 @@ class SingleEntryPropertiesGetterForDrive {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     DCHECK(!callback_.is_null());
 
-    callback_.Run(std::move(properties_),
-                  drive::FileErrorToBaseFileError(error));
+    std::move(callback_).Run(std::move(properties_),
+                             drive::FileErrorToBaseFileError(error));
     BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE, this);
   }
 
   // Given parameters.
-  const ResultCallback callback_;
+  ResultCallback callback_;
   const base::FilePath local_path_;
   Profile* const running_profile_;
 
@@ -399,32 +448,32 @@ class SingleEntryPropertiesGetterForDrive {
 
 class SingleEntryPropertiesGetterForFileSystemProvider {
  public:
-  typedef base::Callback<void(std::unique_ptr<EntryProperties> properties,
-                              base::File::Error error)>
+  typedef base::OnceCallback<void(std::unique_ptr<EntryProperties> properties,
+                                  base::File::Error error)>
       ResultCallback;
 
   // Creates an instance and starts the process.
   static void Start(const storage::FileSystemURL file_system_url,
                     const std::set<EntryPropertyName>& names,
-                    const ResultCallback& callback) {
+                    ResultCallback callback) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
     SingleEntryPropertiesGetterForFileSystemProvider* instance =
-        new SingleEntryPropertiesGetterForFileSystemProvider(file_system_url,
-                                                             names, callback);
+        new SingleEntryPropertiesGetterForFileSystemProvider(
+            file_system_url, names, std::move(callback));
     instance->StartProcess();
 
     // The instance will be destroyed by itself.
   }
 
-  virtual ~SingleEntryPropertiesGetterForFileSystemProvider() {}
+  virtual ~SingleEntryPropertiesGetterForFileSystemProvider() = default;
 
  private:
   SingleEntryPropertiesGetterForFileSystemProvider(
       const storage::FileSystemURL& file_system_url,
       const std::set<EntryPropertyName>& names,
-      const ResultCallback& callback)
-      : callback_(callback),
+      ResultCallback callback)
+      : callback_(std::move(callback)),
         file_system_url_(file_system_url),
         names_(names),
         properties_(new EntryProperties),
@@ -463,12 +512,16 @@ class SingleEntryPropertiesGetterForFileSystemProvider {
         names_.end()) {
       field_mask |= ProvidedFileSystemInterface::METADATA_FIELD_THUMBNAIL;
     }
+    if (!field_mask) {
+      OnGetMetadataCompleted(nullptr, base::File::FILE_OK);
+      return;
+    }
 
     parser.file_system()->GetMetadata(
         parser.file_path(), field_mask,
-        base::Bind(&SingleEntryPropertiesGetterForFileSystemProvider::
-                       OnGetMetadataCompleted,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&SingleEntryPropertiesGetterForFileSystemProvider::
+                           OnGetMetadataCompleted,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 
   void OnGetMetadataCompleted(std::unique_ptr<EntryMetadata> metadata,
@@ -482,29 +535,30 @@ class SingleEntryPropertiesGetterForFileSystemProvider {
 
     if (names_.find(api::file_manager_private::ENTRY_PROPERTY_NAME_SIZE) !=
         names_.end()) {
-      properties_->size.reset(new double(*metadata->size.get()));
+      properties_->size = std::make_unique<double>(*metadata->size.get());
     }
 
     if (names_.find(
             api::file_manager_private::ENTRY_PROPERTY_NAME_MODIFICATIONTIME) !=
         names_.end()) {
-      properties_->modification_time.reset(
-          new double(metadata->modification_time->ToJsTime()));
+      properties_->modification_time =
+          std::make_unique<double>(metadata->modification_time->ToJsTime());
     }
 
     if (names_.find(
             api::file_manager_private::ENTRY_PROPERTY_NAME_CONTENTMIMETYPE) !=
             names_.end() &&
         metadata->mime_type.get()) {
-      properties_->content_mime_type.reset(
-          new std::string(*metadata->mime_type));
+      properties_->content_mime_type =
+          std::make_unique<std::string>(*metadata->mime_type);
     }
 
     if (names_.find(
             api::file_manager_private::ENTRY_PROPERTY_NAME_THUMBNAILURL) !=
             names_.end() &&
         metadata->thumbnail.get()) {
-      properties_->thumbnail_url.reset(new std::string(*metadata->thumbnail));
+      properties_->thumbnail_url =
+          std::make_unique<std::string>(*metadata->thumbnail);
     }
 
     CompleteGetEntryProperties(base::File::FILE_OK);
@@ -514,12 +568,12 @@ class SingleEntryPropertiesGetterForFileSystemProvider {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     DCHECK(!callback_.is_null());
 
-    callback_.Run(std::move(properties_), result);
+    std::move(callback_).Run(std::move(properties_), result);
     BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE, this);
   }
 
   // Given parameters.
-  const ResultCallback callback_;
+  ResultCallback callback_;
   const storage::FileSystemURL file_system_url_;
   const std::set<EntryPropertyName> names_;
 
@@ -530,27 +584,404 @@ class SingleEntryPropertiesGetterForFileSystemProvider {
       weak_ptr_factory_;
 };  // class SingleEntryPropertiesGetterForDrive
 
+class SingleEntryPropertiesGetterForDriveFs {
+ public:
+  using ResultCallback =
+      base::OnceCallback<void(std::unique_ptr<EntryProperties> properties,
+                              base::File::Error error)>;
+
+  // Creates an instance and starts the process.
+  static void Start(const storage::FileSystemURL& file_system_url,
+                    Profile* const profile,
+                    ResultCallback callback) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    SingleEntryPropertiesGetterForDriveFs* instance =
+        new SingleEntryPropertiesGetterForDriveFs(file_system_url, profile,
+                                                  std::move(callback));
+    instance->StartProcess();
+
+    // The instance will be destroyed by itself.
+  }
+
+ private:
+  SingleEntryPropertiesGetterForDriveFs(
+      const storage::FileSystemURL& file_system_url,
+      Profile* const profile,
+      ResultCallback callback)
+      : callback_(std::move(callback)),
+        file_system_url_(file_system_url),
+        running_profile_(profile),
+        properties_(std::make_unique<EntryProperties>()),
+        weak_ptr_factory_(this) {
+    DCHECK(callback_);
+    DCHECK(profile);
+  }
+
+  void StartProcess() {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    drive::DriveIntegrationService* integration_service =
+        drive::DriveIntegrationServiceFactory::FindForProfile(running_profile_);
+    if (!integration_service || !integration_service->IsMounted()) {
+      CompleteGetEntryProperties(drive::FILE_ERROR_SERVICE_UNAVAILABLE);
+      return;
+    }
+    base::FilePath path;
+    if (!integration_service->GetRelativeDrivePath(file_system_url_.path(),
+                                                   &path)) {
+      CompleteGetEntryProperties(drive::FILE_ERROR_INVALID_OPERATION);
+      return;
+    }
+
+    auto* drivefs_interface = integration_service->GetDriveFsInterface();
+    if (!drivefs_interface) {
+      CompleteGetEntryProperties(drive::FILE_ERROR_SERVICE_UNAVAILABLE);
+      return;
+    }
+
+    drivefs_interface->GetMetadata(
+        path, mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+                  base::BindOnce(
+                      &SingleEntryPropertiesGetterForDriveFs::OnGetFileInfo,
+                      weak_ptr_factory_.GetWeakPtr()),
+                  drive::FILE_ERROR_SERVICE_UNAVAILABLE, nullptr));
+  }
+
+  void OnGetFileInfo(drive::FileError error,
+                     drivefs::mojom::FileMetadataPtr metadata) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    if (!metadata) {
+      CompleteGetEntryProperties(error);
+      return;
+    }
+
+    properties_->size = std::make_unique<double>(metadata->size);
+    properties_->present = std::make_unique<bool>(metadata->available_offline);
+    properties_->dirty = std::make_unique<bool>(metadata->dirty);
+    properties_->hosted =
+        std::make_unique<bool>(drivefs::IsHosted(metadata->type));
+    properties_->available_offline = std::make_unique<bool>(
+        metadata->available_offline || *properties_->hosted);
+    properties_->available_when_metered = std::make_unique<bool>(
+        metadata->available_offline || *properties_->hosted);
+    properties_->pinned = std::make_unique<bool>(metadata->pinned);
+    properties_->shared = std::make_unique<bool>(metadata->shared);
+    properties_->starred = std::make_unique<bool>(metadata->starred);
+
+    if (metadata->modification_time != base::Time()) {
+      properties_->modification_time =
+          std::make_unique<double>(metadata->modification_time.ToJsTime());
+    }
+    if (metadata->last_viewed_by_me_time != base::Time()) {
+      properties_->modification_by_me_time =
+          std::make_unique<double>(metadata->last_viewed_by_me_time.ToJsTime());
+    }
+    if (!metadata->content_mime_type.empty()) {
+      properties_->content_mime_type =
+          std::make_unique<std::string>(metadata->content_mime_type);
+    }
+    if (!metadata->custom_icon_url.empty()) {
+      properties_->custom_icon_url =
+          std::make_unique<std::string>(std::move(metadata->custom_icon_url));
+    }
+    if (!metadata->alternate_url.empty()) {
+      properties_->alternate_url =
+          std::make_unique<std::string>(std::move(metadata->alternate_url));
+      properties_->share_url =
+          GetShareUrlFromAlternateUrl(GURL(*properties_->alternate_url));
+    }
+    if (metadata->image_metadata) {
+      if (metadata->image_metadata->height) {
+        properties_->image_height =
+            std::make_unique<int32_t>(metadata->image_metadata->height);
+      }
+      if (metadata->image_metadata->width) {
+        properties_->image_width =
+            std::make_unique<int32_t>(metadata->image_metadata->width);
+      }
+      if (metadata->image_metadata->rotation) {
+        properties_->image_rotation =
+            std::make_unique<int32_t>(metadata->image_metadata->rotation);
+      }
+    }
+
+    properties_->can_delete =
+        std::make_unique<bool>(metadata->capabilities->can_delete);
+    properties_->can_rename =
+        std::make_unique<bool>(metadata->capabilities->can_rename);
+    properties_->can_add_children =
+        std::make_unique<bool>(metadata->capabilities->can_add_children);
+
+    // Only set the |can_copy| capability for hosted documents; for other files,
+    // we must have read access, so |can_copy| is implicitly true.
+    properties_->can_copy = std::make_unique<bool>(
+        !*properties_->hosted || metadata->capabilities->can_copy);
+    properties_->can_share =
+        std::make_unique<bool>(metadata->capabilities->can_share);
+
+    if (drivefs::IsAFile(metadata->type)) {
+      properties_->thumbnail_url = std::make_unique<std::string>(
+          base::StrCat({"drivefs:", file_system_url_.ToGURL().spec()}));
+      properties_->cropped_thumbnail_url =
+          std::make_unique<std::string>(*properties_->thumbnail_url);
+    }
+
+    if (metadata->folder_feature) {
+      properties_->is_machine_root =
+          std::make_unique<bool>(metadata->folder_feature->is_machine_root);
+      properties_->is_external_media =
+          std::make_unique<bool>(metadata->folder_feature->is_external_media);
+      properties_->is_arbitrary_sync_folder = std::make_unique<bool>(
+          metadata->folder_feature->is_arbitrary_sync_folder);
+    }
+
+    CompleteGetEntryProperties(drive::FILE_ERROR_OK);
+  }
+
+  void CompleteGetEntryProperties(drive::FileError error) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    DCHECK(callback_);
+
+    std::move(callback_).Run(std::move(properties_),
+                             drive::FileErrorToBaseFileError(error));
+    BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE, this);
+  }
+
+  // Given parameters.
+  ResultCallback callback_;
+  const storage::FileSystemURL file_system_url_;
+  Profile* const running_profile_;
+
+  // Values used in the process.
+  std::unique_ptr<EntryProperties> properties_;
+
+  base::WeakPtrFactory<SingleEntryPropertiesGetterForDriveFs> weak_ptr_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(SingleEntryPropertiesGetterForDriveFs);
+};
+
+class SingleEntryPropertiesGetterForDocumentsProvider {
+ public:
+  typedef base::OnceCallback<void(std::unique_ptr<EntryProperties> properties,
+                                  base::File::Error error)>
+      ResultCallback;
+
+  // Creates an instance and starts the process.
+  static void Start(const storage::FileSystemURL file_system_url,
+                    Profile* const profile,
+                    ResultCallback callback) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    SingleEntryPropertiesGetterForDocumentsProvider* instance =
+        new SingleEntryPropertiesGetterForDocumentsProvider(
+            file_system_url, profile, std::move(callback));
+    instance->StartProcess();
+
+    // The instance will be destroyed by itself.
+  }
+
+ private:
+  SingleEntryPropertiesGetterForDocumentsProvider(
+      const storage::FileSystemURL& file_system_url,
+      Profile* const profile,
+      ResultCallback callback)
+      : callback_(std::move(callback)),
+        file_system_url_(file_system_url),
+        profile_(profile),
+        properties_(new EntryProperties),
+        weak_ptr_factory_(this) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    DCHECK(!callback_.is_null());
+  }
+
+  void StartProcess() {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    auto* root_map =
+        arc::ArcDocumentsProviderRootMap::GetForBrowserContext(profile_);
+    base::FilePath path;
+    auto* root = root_map->ParseAndLookup(file_system_url_, &path);
+    if (!root) {
+      CompleteGetEntryProperties(base::File::FILE_ERROR_NOT_FOUND);
+      return;
+    }
+    root->GetMetadata(
+        path,
+        base::BindOnce(
+            &SingleEntryPropertiesGetterForDocumentsProvider::OnGetMetadata,
+            weak_ptr_factory_.GetWeakPtr()));
+  }
+
+  void OnGetMetadata(
+      base::File::Error error,
+      const arc::ArcDocumentsProviderRoot::ExtraFileMetadata& metadata) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    if (error != base::File::FILE_OK) {
+      CompleteGetEntryProperties(error);
+      return;
+    }
+    properties_->can_delete = std::make_unique<bool>(metadata.supports_delete);
+    properties_->can_rename = std::make_unique<bool>(metadata.supports_rename);
+    properties_->can_add_children =
+        std::make_unique<bool>(metadata.dir_supports_create);
+    CompleteGetEntryProperties(base::File::FILE_OK);
+  }
+
+  void CompleteGetEntryProperties(base::File::Error error) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    DCHECK(callback_);
+
+    std::move(callback_).Run(std::move(properties_), error);
+    BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE, this);
+  }
+
+  // Given parameters.
+  ResultCallback callback_;
+  const storage::FileSystemURL file_system_url_;
+  Profile* const profile_;
+
+  // Values used in the process.
+  std::unique_ptr<EntryProperties> properties_;
+
+  base::WeakPtrFactory<SingleEntryPropertiesGetterForDocumentsProvider>
+      weak_ptr_factory_;
+};  // class SingleEntryPropertiesGetterForDocumentsProvider
+
+std::string MakeThumbnailDataUrlOnSequence(
+    const std::vector<uint8_t>& png_data) {
+  std::string encoded;
+  base::Base64Encode(
+      base::StringPiece(reinterpret_cast<const char*>(png_data.data()),
+                        png_data.size()),
+      &encoded);
+  return base::StrCat({"data:image/png;base64,", encoded});
+}
+
+void OnSearchDriveFs(
+    scoped_refptr<UIThreadExtensionFunction> function,
+    bool filter_dirs,
+    base::OnceCallback<void(std::unique_ptr<base::ListValue>)> callback,
+    drive::FileError error,
+    base::Optional<std::vector<drivefs::mojom::QueryItemPtr>> items) {
+  const ChromeExtensionFunctionDetails chrome_details(function.get());
+  drive::DriveIntegrationService* integration_service =
+      drive::util::GetIntegrationServiceByProfile(chrome_details.GetProfile());
+  if (!integration_service) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  if (error != drive::FILE_ERROR_OK || !items.has_value()) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  GURL url;
+  file_manager::util::ConvertAbsoluteFilePathToFileSystemUrl(
+      chrome_details.GetProfile(), integration_service->GetMountPointPath(),
+      function->extension_id(), &url);
+  const auto fs_root = base::StrCat({url.spec(), "/"});
+  const auto fs_name =
+      integration_service->GetMountPointPath().BaseName().value();
+  const base::FilePath root("/");
+
+  auto result = std::make_unique<base::ListValue>();
+  result->GetList().reserve(items->size());
+  for (const auto& item : *items) {
+    base::FilePath path;
+    if (!root.AppendRelativePath(item->path, &path))
+      path = item->path;
+    base::DictionaryValue entry;
+    entry.SetKey("fileSystemName", base::Value(fs_name));
+    entry.SetKey("fileSystemRoot", base::Value(fs_root));
+    entry.SetKey("fileFullPath", base::Value(item->path.AsUTF8Unsafe()));
+    bool is_dir = drivefs::IsADirectory(item->metadata->type);
+    entry.SetKey("fileIsDirectory", base::Value(is_dir));
+    entry.SetKey(kAvailableOfflinePropertyName,
+                 base::Value(item->metadata->available_offline));
+    if (!filter_dirs || !is_dir) {
+      result->GetList().emplace_back(std::move(entry));
+    }
+  }
+
+  std::move(callback).Run(std::move(result));
+}
+
+drivefs::mojom::QueryParameters::QuerySource SearchDriveFs(
+    scoped_refptr<UIThreadExtensionFunction> function,
+    drivefs::mojom::QueryParametersPtr query,
+    bool filter_dirs,
+    base::OnceCallback<void(std::unique_ptr<base::ListValue>)> callback) {
+  const ChromeExtensionFunctionDetails chrome_details(function.get());
+  drive::DriveIntegrationService* const integration_service =
+      drive::util::GetIntegrationServiceByProfile(chrome_details.GetProfile());
+  auto on_response = base::BindOnce(&OnSearchDriveFs, std::move(function),
+                                    filter_dirs, std::move(callback));
+  return integration_service->GetDriveFsHost()->PerformSearch(
+      std::move(query),
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          std::move(on_response), drive::FileError::FILE_ERROR_ABORT,
+          base::Optional<std::vector<drivefs::mojom::QueryItemPtr>>()));
+}
+
+void UmaEmitSearchOutcome(
+    bool success,
+    bool remote,
+    FileManagerPrivateSearchDriveMetadataFunction::SearchType type,
+    const base::TimeTicks& time_started) {
+  const char* infix = nullptr;
+  switch (type) {
+    case FileManagerPrivateSearchDriveMetadataFunction::SearchType::kText:
+      infix = "TextSearchTime";
+      break;
+    case FileManagerPrivateSearchDriveMetadataFunction::SearchType::
+        kSharedWithMe:
+      infix = "SharedSearchTime";
+      break;
+    case FileManagerPrivateSearchDriveMetadataFunction::SearchType::kOffline:
+      infix = "OfflineSearchTime";
+      break;
+  }
+  if (remote) {
+    base::UmaHistogramMediumTimes(
+        base::StrCat({"DriveCommon.RemoteSearch.", infix,
+                      success ? ".SuccessTime" : ".FailTime"}),
+        base::TimeTicks::Now() - time_started);
+  } else {
+    base::UmaHistogramMediumTimes(
+        base::StrCat({"DriveCommon.LocalSearch.", infix,
+                      success ? ".SuccessTime" : ".FailTime"}),
+        base::TimeTicks::Now() - time_started);
+  }
+}
+
 }  // namespace
 
 FileManagerPrivateInternalGetEntryPropertiesFunction::
     FileManagerPrivateInternalGetEntryPropertiesFunction()
     : processed_count_(0) {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
 }
 
 FileManagerPrivateInternalGetEntryPropertiesFunction::
-    ~FileManagerPrivateInternalGetEntryPropertiesFunction() {
-}
+    ~FileManagerPrivateInternalGetEntryPropertiesFunction() = default;
 
-bool FileManagerPrivateInternalGetEntryPropertiesFunction::RunAsync() {
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetEntryPropertiesFunction::Run() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   using api::file_manager_private_internal::GetEntryProperties::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   scoped_refptr<storage::FileSystemContext> file_system_context =
       file_manager::util::GetFileSystemContextForRenderFrameHost(
-          GetProfile(), render_frame_host());
+          chrome_details.GetProfile(), render_frame_host());
 
   properties_list_.resize(params->urls.size());
   const std::set<EntryPropertyName> names_as_set(params->names.begin(),
@@ -562,17 +993,35 @@ bool FileManagerPrivateInternalGetEntryPropertiesFunction::RunAsync() {
     switch (file_system_url.type()) {
       case storage::kFileSystemTypeDrive:
         SingleEntryPropertiesGetterForDrive::Start(
-            file_system_url.path(), names_as_set, GetProfile(),
-            base::Bind(&FileManagerPrivateInternalGetEntryPropertiesFunction::
-                           CompleteGetEntryProperties,
-                       this, i, file_system_url));
+            file_system_url.path(), names_as_set, chrome_details.GetProfile(),
+            base::BindOnce(
+                &FileManagerPrivateInternalGetEntryPropertiesFunction::
+                    CompleteGetEntryProperties,
+                this, i, file_system_url));
         break;
       case storage::kFileSystemTypeProvided:
         SingleEntryPropertiesGetterForFileSystemProvider::Start(
             file_system_url, names_as_set,
-            base::Bind(&FileManagerPrivateInternalGetEntryPropertiesFunction::
-                           CompleteGetEntryProperties,
-                       this, i, file_system_url));
+            base::BindOnce(
+                &FileManagerPrivateInternalGetEntryPropertiesFunction::
+                    CompleteGetEntryProperties,
+                this, i, file_system_url));
+        break;
+      case storage::kFileSystemTypeDriveFs:
+        SingleEntryPropertiesGetterForDriveFs::Start(
+            file_system_url, chrome_details.GetProfile(),
+            base::BindOnce(
+                &FileManagerPrivateInternalGetEntryPropertiesFunction::
+                    CompleteGetEntryProperties,
+                this, i, file_system_url));
+        break;
+      case storage::kFileSystemTypeArcDocumentsProvider:
+        SingleEntryPropertiesGetterForDocumentsProvider::Start(
+            file_system_url, chrome_details.GetProfile(),
+            base::BindOnce(
+                &FileManagerPrivateInternalGetEntryPropertiesFunction::
+                    CompleteGetEntryProperties,
+                this, i, file_system_url));
         break;
       default:
         // TODO(yawano) Change this to support other voluems (e.g. local) ,and
@@ -584,7 +1033,7 @@ bool FileManagerPrivateInternalGetEntryPropertiesFunction::RunAsync() {
     }
   }
 
-  return true;
+  return RespondLater();
 }
 
 void FileManagerPrivateInternalGetEntryPropertiesFunction::
@@ -596,8 +1045,8 @@ void FileManagerPrivateInternalGetEntryPropertiesFunction::
   DCHECK(0 <= processed_count_ && processed_count_ < properties_list_.size());
 
   if (error == base::File::FILE_OK) {
-    properties->external_file_url.reset(
-        new std::string(chromeos::FileSystemURLToExternalFileURL(url).spec()));
+    properties->external_file_url = std::make_unique<std::string>(
+        chromeos::FileSystemURLToExternalFileURL(url).spec());
   }
   properties_list_[index] = std::move(*properties);
 
@@ -605,27 +1054,59 @@ void FileManagerPrivateInternalGetEntryPropertiesFunction::
   if (processed_count_ < properties_list_.size())
     return;
 
-  results_ = extensions::api::file_manager_private_internal::
-      GetEntryProperties::Results::Create(properties_list_);
-  SendResponse(true);
+  Respond(
+      ArgumentList(extensions::api::file_manager_private_internal::
+                       GetEntryProperties::Results::Create(properties_list_)));
 }
 
-bool FileManagerPrivateInternalPinDriveFileFunction::RunAsync() {
+FileManagerPrivateInternalPinDriveFileFunction::
+    FileManagerPrivateInternalPinDriveFileFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalPinDriveFileFunction::Run() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   using extensions::api::file_manager_private_internal::PinDriveFile::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  scoped_refptr<storage::FileSystemContext> file_system_context =
+      file_manager::util::GetFileSystemContextForRenderFrameHost(
+          chrome_details.GetProfile(), render_frame_host());
+  const GURL url = GURL(params->url);
+  const storage::FileSystemURL file_system_url =
+      file_system_context->CrackURL(url);
+
+  switch (file_system_url.type()) {
+    case storage::kFileSystemTypeDrive:
+      return RunAsyncForDrive(url, params->pin);
+
+    case storage::kFileSystemTypeDriveFs:
+      return RunAsyncForDriveFs(file_system_url, params->pin);
+
+    default:
+      return RespondNow(Error("Invalid file system type"));
+  }
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalPinDriveFileFunction::RunAsyncForDrive(
+    const GURL& url,
+    bool pin) {
+  const ChromeExtensionFunctionDetails chrome_details(this);
   drive::FileSystemInterface* const file_system =
-      drive::util::GetFileSystemByProfile(GetProfile());
+      drive::util::GetFileSystemByProfile(chrome_details.GetProfile());
   if (!file_system)  // |file_system| is NULL if Drive is disabled.
-    return false;
+    return RespondNow(Error("Drive is disabled"));
 
   const base::FilePath drive_path =
       drive::util::ExtractDrivePath(file_manager::util::GetLocalPathFromURL(
-          render_frame_host(), GetProfile(), GURL(params->url)));
-  if (params->pin) {
+          render_frame_host(), chrome_details.GetProfile(), url));
+  if (pin) {
     file_system->Pin(
         drive_path,
         base::Bind(
@@ -638,31 +1119,110 @@ bool FileManagerPrivateInternalPinDriveFileFunction::RunAsync() {
             &FileManagerPrivateInternalPinDriveFileFunction::OnPinStateSet,
             this));
   }
-  return true;
+  return RespondLater();
 }
 
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalPinDriveFileFunction::RunAsyncForDriveFs(
+    const storage::FileSystemURL& file_system_url,
+    bool pin) {
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  drive::DriveIntegrationService* integration_service =
+      drive::DriveIntegrationServiceFactory::FindForProfile(
+          chrome_details.GetProfile());
+  base::FilePath path;
+  if (!integration_service || !integration_service->GetRelativeDrivePath(
+                                  file_system_url.path(), &path)) {
+    return RespondNow(Error("Drive is disabled"));
+  }
+
+  auto* drivefs_interface = integration_service->GetDriveFsInterface();
+  if (!drivefs_interface)
+    return RespondNow(Error("Drive is disabled"));
+
+  drivefs_interface->SetPinned(
+      path, pin,
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(
+              &FileManagerPrivateInternalPinDriveFileFunction::OnPinStateSet,
+              this),
+          drive::FILE_ERROR_SERVICE_UNAVAILABLE));
+  return RespondLater();
+}
 void FileManagerPrivateInternalPinDriveFileFunction::OnPinStateSet(
     drive::FileError error) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (error == drive::FILE_ERROR_OK) {
-    SendResponse(true);
+    Respond(NoArguments());
   } else {
-    SetError(drive::FileErrorToString(error));
-    SendResponse(false);
+    Respond(Error(drive::FileErrorToString(error)));
   }
 }
 
-bool FileManagerPrivateInternalCancelFileTransfersFunction::RunAsync() {
+FileManagerPrivateInternalEnsureFileDownloadedFunction::
+    FileManagerPrivateInternalEnsureFileDownloadedFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalEnsureFileDownloadedFunction::Run() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  using extensions::api::file_manager_private_internal::EnsureFileDownloaded::
+      Params;
+  const std::unique_ptr<Params> params(Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  const base::FilePath drive_path =
+      drive::util::ExtractDrivePath(file_manager::util::GetLocalPathFromURL(
+          render_frame_host(), chrome_details.GetProfile(), GURL(params->url)));
+  if (drive_path.empty()) {
+    // Not under Drive. No need to fill the cache.
+    return RespondNow(NoArguments());
+  }
+
+  drive::FileSystemInterface* const file_system =
+      drive::util::GetFileSystemByProfile(chrome_details.GetProfile());
+  if (!file_system)  // |file_system| is NULL if Drive is disabled.
+    return RespondNow(Error("Drive is disabled"));
+
+  file_system->GetFile(
+      drive_path,
+      base::BindOnce(&FileManagerPrivateInternalEnsureFileDownloadedFunction::
+                         OnDownloadFinished,
+                     this));
+  return RespondLater();
+}
+
+void FileManagerPrivateInternalEnsureFileDownloadedFunction::OnDownloadFinished(
+    drive::FileError error,
+    const base::FilePath& file_path,
+    std::unique_ptr<drive::ResourceEntry> entry) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (error == drive::FILE_ERROR_OK) {
+    Respond(NoArguments());
+  } else {
+    Respond(Error(drive::FileErrorToString(error)));
+  }
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalCancelFileTransfersFunction::Run() {
   using extensions::api::file_manager_private_internal::CancelFileTransfers::
       Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   drive::DriveIntegrationService* integration_service =
-      drive::DriveIntegrationServiceFactory::FindForProfile(GetProfile());
+      drive::DriveIntegrationServiceFactory::FindForProfile(
+          chrome_details.GetProfile());
   if (!integration_service || !integration_service->IsMounted())
-    return false;
+    return RespondNow(Error("Drive is disabled"));
 
   drive::JobListInterface* const job_list = integration_service->job_list();
   DCHECK(job_list);
@@ -678,7 +1238,8 @@ bool FileManagerPrivateInternalCancelFileTransfersFunction::RunAsync() {
 
   for (size_t i = 0; i < params->urls.size(); ++i) {
     base::FilePath file_path = file_manager::util::GetLocalPathFromURL(
-        render_frame_host(), GetProfile(), GURL(params->urls[i]));
+        render_frame_host(), chrome_details.GetProfile(),
+        GURL(params->urls[i]));
     if (file_path.empty())
       continue;
 
@@ -693,45 +1254,71 @@ bool FileManagerPrivateInternalCancelFileTransfersFunction::RunAsync() {
     }
   }
 
-  SendResponse(true);
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool FileManagerPrivateCancelAllFileTransfersFunction::RunAsync() {
-  drive::DriveIntegrationService* const integration_service =
-      drive::DriveIntegrationServiceFactory::FindForProfile(GetProfile());
-  if (!integration_service || !integration_service->IsMounted())
-    return false;
-
-  drive::JobListInterface* const job_list = integration_service->job_list();
-  DCHECK(job_list);
-  const std::vector<drive::JobInfo> jobs = job_list->GetJobInfoList();
-
-  for (size_t i = 0; i < jobs.size(); ++i) {
-    if (drive::IsActiveFileTransferJobInfo(jobs[i]))
-      job_list->CancelJob(jobs[i].job_id);
-  }
-
-  SendResponse(true);
-  return true;
+FileManagerPrivateSearchDriveFunction::FileManagerPrivateSearchDriveFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
 }
 
-bool FileManagerPrivateSearchDriveFunction::RunAsync() {
+ExtensionFunction::ResponseAction FileManagerPrivateSearchDriveFunction::Run() {
   using extensions::api::file_manager_private::SearchDrive::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  drive::FileSystemInterface* const file_system =
-      drive::util::GetFileSystemByProfile(GetProfile());
-  if (!file_system) {
-    // |file_system| is NULL if Drive is disabled.
-    return false;
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  if (!drive::util::GetIntegrationServiceByProfile(
+          chrome_details.GetProfile())) {
+    // |integration_service| is NULL if Drive is disabled or not mounted.
+    return RespondNow(Error("Drive is disabled"));
   }
 
-  file_system->Search(
-      params->search_params.query, GURL(params->search_params.next_feed),
-      base::Bind(&FileManagerPrivateSearchDriveFunction::OnSearch, this));
-  return true;
+  operation_start_ = base::TimeTicks::Now();
+  is_offline_ = content::GetNetworkConnectionTracker()->IsOffline();
+
+  drive::FileSystemInterface* const file_system =
+      drive::util::GetFileSystemByProfile(chrome_details.GetProfile());
+  if (file_system) {
+    file_system->Search(
+        params->search_params.query, GURL(params->search_params.next_feed),
+        base::BindOnce(&FileManagerPrivateSearchDriveFunction::OnSearch, this));
+  } else {
+    // |file_system| is NULL if the backend is DriveFs.
+    auto query = drivefs::mojom::QueryParameters::New();
+    query->text_content = params->search_params.query;
+    is_offline_ =
+        SearchDriveFs(
+            this, std::move(query), false,
+            base::BindOnce(
+                &FileManagerPrivateSearchDriveFunction::OnSearchDriveFs,
+                this)) ==
+        drivefs::mojom::QueryParameters::QuerySource::kLocalOnly;
+  }
+
+  return RespondLater();
+}
+
+void FileManagerPrivateSearchDriveFunction::OnSearchDriveFs(
+    std::unique_ptr<base::ListValue> results) {
+  if (!results) {
+    UmaEmitSearchOutcome(
+        false, !is_offline_,
+        FileManagerPrivateSearchDriveMetadataFunction::SearchType::kText,
+        operation_start_);
+    Respond(Error("No search results"));
+    return;
+  }
+  auto result = std::make_unique<base::DictionaryValue>();
+  result->SetKey("entries", std::move(*results));
+  // Search queries are capped at 100 of items anyway and pagination is
+  // never actually used, so no need to fill this.
+  result->SetKey("nextFeed", base::Value(""));
+  UmaEmitSearchOutcome(
+      true, !is_offline_,
+      FileManagerPrivateSearchDriveMetadataFunction::SearchType::kText,
+      operation_start_);
+  Respond(OneArgument(std::move(result)));
 }
 
 void FileManagerPrivateSearchDriveFunction::OnSearch(
@@ -739,7 +1326,11 @@ void FileManagerPrivateSearchDriveFunction::OnSearch(
     const GURL& next_link,
     std::unique_ptr<SearchResultInfoList> results) {
   if (error != drive::FILE_ERROR_OK) {
-    SendResponse(false);
+    UmaEmitSearchOutcome(
+        false, !is_offline_,
+        FileManagerPrivateSearchDriveMetadataFunction::SearchType::kText,
+        operation_start_);
+    Respond(Error(drive::FileErrorToString(error)));
     return;
   }
 
@@ -748,14 +1339,12 @@ void FileManagerPrivateSearchDriveFunction::OnSearch(
   DCHECK(results.get());
   const SearchResultInfoList& results_ref = *results.get();
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   ConvertSearchResultInfoListToEntryDefinitionList(
-      GetProfile(),
-      extension_->id(),
-      results_ref,
-      base::Bind(&FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList,
-                 this,
-                 next_link,
-                 base::Passed(&results)));
+      chrome_details.GetProfile(), extension_->id(), results_ref,
+      base::BindOnce(
+          &FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList, this,
+          next_link, std::move(results)));
 }
 
 void FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList(
@@ -763,34 +1352,35 @@ void FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList(
     std::unique_ptr<SearchResultInfoList> search_result_info_list,
     std::unique_ptr<EntryDefinitionList> entry_definition_list) {
   DCHECK_EQ(search_result_info_list->size(), entry_definition_list->size());
-  auto entries = base::MakeUnique<base::ListValue>();
-
-  // Convert Drive files to something File API stack can understand.
-  for (EntryDefinitionList::const_iterator it = entry_definition_list->begin();
-       it != entry_definition_list->end();
-       ++it) {
-    auto entry = base::MakeUnique<base::DictionaryValue>();
-    entry->SetString("fileSystemName", it->file_system_name);
-    entry->SetString("fileSystemRoot", it->file_system_root_url);
-    entry->SetString("fileFullPath", "/" + it->full_path.AsUTF8Unsafe());
-    entry->SetBoolean("fileIsDirectory", it->is_directory);
-    entries->Append(std::move(entry));
-  }
+  auto entries = file_manager::util::ConvertEntryDefinitionListToListValue(
+      *entry_definition_list);
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->Set("entries", std::move(entries));
   result->SetString("nextFeed", next_link.spec());
 
-  SetResult(std::move(result));
-  SendResponse(true);
+  Respond(OneArgument(std::move(result)));
+  UmaEmitSearchOutcome(
+      true, !is_offline_,
+      FileManagerPrivateSearchDriveMetadataFunction::SearchType::kText,
+      operation_start_);
 }
 
-bool FileManagerPrivateSearchDriveMetadataFunction::RunAsync() {
+FileManagerPrivateSearchDriveMetadataFunction::
+    FileManagerPrivateSearchDriveMetadataFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateSearchDriveMetadataFunction::Run() {
   using api::file_manager_private::SearchDriveMetadata::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  drive::EventLogger* logger = file_manager::util::GetLogger(GetProfile());
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  drive::EventLogger* logger =
+      file_manager::util::GetLogger(chrome_details.GetProfile());
   if (logger) {
     logger->Log(
         logging::LOG_INFO, "%s[%d] called. (types: '%s', maxResults: '%d')",
@@ -800,46 +1390,151 @@ bool FileManagerPrivateSearchDriveMetadataFunction::RunAsync() {
   }
   set_log_on_completion(true);
 
+  drive::DriveIntegrationService* const integration_service =
+      drive::util::GetIntegrationServiceByProfile(chrome_details.GetProfile());
+  if (!integration_service) {
+    // |integration_service| is NULL if Drive is disabled or not mounted.
+    return RespondNow(Error("Drive not available"));
+  }
+
+  operation_start_ = base::TimeTicks::Now();
+  is_offline_ = true;  // Legacy search is assumed offline always.
+
   drive::FileSystemInterface* const file_system =
-      drive::util::GetFileSystemByProfile(GetProfile());
-  if (!file_system) {
-    // |file_system| is NULL if Drive is disabled.
-    return false;
+      drive::util::GetFileSystemByProfile(chrome_details.GetProfile());
+  // |file_system| is NULL if the backend is DriveFs, otherwise it's legacy
+  // sync client.
+  if (file_system) {
+    int options = -1;
+    switch (params->search_params.types) {
+      case api::file_manager_private::SEARCH_TYPE_EXCLUDE_DIRECTORIES:
+        options = drive::SEARCH_METADATA_EXCLUDE_DIRECTORIES;
+        search_type_ = SearchType::kText;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_SHARED_WITH_ME:
+        options = drive::SEARCH_METADATA_SHARED_WITH_ME;
+        search_type_ = SearchType::kSharedWithMe;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_OFFLINE:
+        options = drive::SEARCH_METADATA_OFFLINE;
+        search_type_ = SearchType::kOffline;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_ALL:
+        options = drive::SEARCH_METADATA_ALL;
+        search_type_ = SearchType::kText;
+        break;
+      default:
+        return RespondNow(Error("Invalid search type"));
+    }
+    file_system->SearchMetadata(
+        params->search_params.query, options, params->search_params.max_results,
+        drive::MetadataSearchOrder::LAST_ACCESSED,
+        base::BindOnce(
+            &FileManagerPrivateSearchDriveMetadataFunction::OnSearchMetadata,
+            this));
+  } else {
+    auto query = drivefs::mojom::QueryParameters::New();
+    query->sort_field =
+        drivefs::mojom::QueryParameters::SortField::kLastModified;
+    query->sort_direction =
+        drivefs::mojom::QueryParameters::SortDirection::kDescending;
+    if (!params->search_params.query.empty()) {
+      query->title = params->search_params.query;
+      query->query_source =
+          drivefs::mojom::QueryParameters::QuerySource::kLocalOnly;
+    }
+    query->page_size = params->search_params.max_results;
+    bool filter_dirs = false;
+    switch (params->search_params.types) {
+      case api::file_manager_private::SEARCH_TYPE_EXCLUDE_DIRECTORIES:
+        filter_dirs = true;
+        search_type_ = SearchType::kText;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_SHARED_WITH_ME:
+        query->shared_with_me = true;
+        search_type_ = SearchType::kSharedWithMe;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_OFFLINE:
+        query->available_offline = true;
+        query->query_source =
+            drivefs::mojom::QueryParameters::QuerySource::kLocalOnly;
+        search_type_ = SearchType::kOffline;
+        break;
+      case api::file_manager_private::SEARCH_TYPE_ALL:
+        search_type_ = SearchType::kText;
+        break;
+      default:
+        return RespondNow(Error("Invalid search type"));
+    }
+    is_offline_ =
+        SearchDriveFs(
+            this, std::move(query), filter_dirs,
+            base::BindOnce(
+                &FileManagerPrivateSearchDriveMetadataFunction::OnSearchDriveFs,
+                this, params->search_params.query)) ==
+        drivefs::mojom::QueryParameters::QuerySource::kLocalOnly;
   }
 
-  int options = -1;
-  switch (params->search_params.types) {
-    case api::file_manager_private::SEARCH_TYPE_EXCLUDE_DIRECTORIES:
-      options = drive::SEARCH_METADATA_EXCLUDE_DIRECTORIES;
-      break;
-    case api::file_manager_private::SEARCH_TYPE_SHARED_WITH_ME:
-      options = drive::SEARCH_METADATA_SHARED_WITH_ME;
-      break;
-    case api::file_manager_private::SEARCH_TYPE_OFFLINE:
-      options = drive::SEARCH_METADATA_OFFLINE;
-      break;
-    case api::file_manager_private::SEARCH_TYPE_ALL:
-      options = drive::SEARCH_METADATA_ALL;
-      break;
-    case api::file_manager_private::SEARCH_TYPE_NONE:
-      break;
-  }
-  DCHECK_NE(options, -1);
+  return RespondLater();
+}
 
-  file_system->SearchMetadata(
-      params->search_params.query, options, params->search_params.max_results,
-      drive::MetadataSearchOrder::LAST_ACCESSED,
-      base::Bind(
-          &FileManagerPrivateSearchDriveMetadataFunction::OnSearchMetadata,
-          this));
-  return true;
+void FileManagerPrivateSearchDriveMetadataFunction::OnSearchDriveFs(
+    const std::string& query_text,
+    std::unique_ptr<base::ListValue> results) {
+  if (!results) {
+    UmaEmitSearchOutcome(false, !is_offline_, search_type_, operation_start_);
+    Respond(Error("No search results"));
+    return;
+  }
+
+  std::vector<base::string16> keywords =
+      base::SplitString(base::UTF8ToUTF16(query_text),
+                        base::StringPiece16(base::kWhitespaceUTF16),
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::vector<std::unique_ptr<
+      base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>>
+      queries;
+  queries.reserve(keywords.size());
+  for (const auto& keyword : keywords) {
+    queries.push_back(
+        std::make_unique<
+            base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
+            keyword));
+  }
+
+  auto results_list = std::make_unique<base::ListValue>();
+  results_list->GetList().reserve(results->GetList().size());
+  for (auto& entry : *results) {
+    base::DictionaryValue dict;
+    std::string highlight;
+    base::Value* value = entry.FindKey("fileFullPath");
+    if (value && value->GetAsString(&highlight)) {
+      base::FilePath path(highlight);
+      if (!drive::internal::FindAndHighlight(path.BaseName().value(), queries,
+                                             &highlight)) {
+        highlight = path.BaseName().value();
+      }
+    }
+    if (base::Value* availableOffline = entry.FindKeyOfType(
+            kAvailableOfflinePropertyName, base::Value::Type::BOOLEAN)) {
+      dict.SetKey(kAvailableOfflinePropertyName, std::move(*availableOffline));
+      entry.RemoveKey(kAvailableOfflinePropertyName);
+    }
+    dict.SetKey("entry", std::move(entry));
+    dict.SetKey("highlightedBaseName", base::Value(highlight));
+    results_list->GetList().emplace_back(std::move(dict));
+  }
+
+  UmaEmitSearchOutcome(true, !is_offline_, search_type_, operation_start_);
+  Respond(OneArgument(std::move(results_list)));
 }
 
 void FileManagerPrivateSearchDriveMetadataFunction::OnSearchMetadata(
     drive::FileError error,
     std::unique_ptr<drive::MetadataSearchResultVector> results) {
   if (error != drive::FILE_ERROR_OK) {
-    SendResponse(false);
+    UmaEmitSearchOutcome(false, !is_offline_, search_type_, operation_start_);
+    Respond(Error(drive::FileErrorToString(error)));
     return;
   }
 
@@ -848,14 +1543,12 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnSearchMetadata(
   DCHECK(results.get());
   const drive::MetadataSearchResultVector& results_ref = *results.get();
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   ConvertSearchResultInfoListToEntryDefinitionList(
-      GetProfile(),
-      extension_->id(),
-      results_ref,
-      base::Bind(
+      chrome_details.GetProfile(), extension_->id(), results_ref,
+      base::BindOnce(
           &FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList,
-          this,
-          base::Passed(&results)));
+          this, std::move(results)));
 }
 
 void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
@@ -869,19 +1562,11 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
   // file_manager_private_custom_bindings.js for how this is magically
   // converted to a FileEntry.
   for (size_t i = 0; i < entry_definition_list->size(); ++i) {
-    auto result_dict = base::MakeUnique<base::DictionaryValue>();
+    auto result_dict = std::make_unique<base::DictionaryValue>();
 
     // FileEntry fields.
-    auto entry = base::MakeUnique<base::DictionaryValue>();
-    entry->SetString(
-        "fileSystemName", entry_definition_list->at(i).file_system_name);
-    entry->SetString(
-        "fileSystemRoot", entry_definition_list->at(i).file_system_root_url);
-    entry->SetString(
-        "fileFullPath",
-        "/" + entry_definition_list->at(i).full_path.AsUTF8Unsafe());
-    entry->SetBoolean("fileIsDirectory",
-                      entry_definition_list->at(i).is_directory);
+    auto entry = file_manager::util::ConvertEntryDefinitionToValue(
+        entry_definition_list->at(i));
 
     result_dict->Set("entry", std::move(entry));
     result_dict->SetString(
@@ -890,8 +1575,8 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
     results_list->Append(std::move(result_dict));
   }
 
-  SetResult(std::move(results_list));
-  SendResponse(true);
+  UmaEmitSearchOutcome(true, !is_offline_, search_type_, operation_start_);
+  Respond(OneArgument(std::move(results_list)));
 }
 
 ExtensionFunction::ResponseAction
@@ -902,15 +1587,18 @@ FileManagerPrivateGetDriveConnectionStateFunction::Run() {
       Profile::FromBrowserContext(browser_context()))) {
     case drive::util::DRIVE_DISCONNECTED_NOSERVICE:
       result.type = kDriveConnectionTypeOffline;
-      result.reason.reset(new std::string(kDriveConnectionReasonNoService));
+      result.reason =
+          std::make_unique<std::string>(kDriveConnectionReasonNoService);
       break;
     case drive::util::DRIVE_DISCONNECTED_NONETWORK:
       result.type = kDriveConnectionTypeOffline;
-      result.reason.reset(new std::string(kDriveConnectionReasonNoNetwork));
+      result.reason =
+          std::make_unique<std::string>(kDriveConnectionReasonNoNetwork);
       break;
     case drive::util::DRIVE_DISCONNECTED_NOTREADY:
       result.type = kDriveConnectionTypeOffline;
-      result.reason.reset(new std::string(kDriveConnectionReasonNotReady));
+      result.reason =
+          std::make_unique<std::string>(kDriveConnectionReasonNotReady);
       break;
     case drive::util::DRIVE_CONNECTED_METERED:
       result.type = kDriveConnectionTypeMetered;
@@ -925,28 +1613,31 @@ FileManagerPrivateGetDriveConnectionStateFunction::Run() {
           ->network_state_handler()
           ->FirstNetworkByType(chromeos::NetworkTypePattern::Mobile());
 
-  drive::EventLogger* logger = file_manager::util::GetLogger(
-      Profile::FromBrowserContext(browser_context()));
-  if (logger)
-    logger->Log(logging::LOG_INFO, "%s succeeded.", name());
   return RespondNow(ArgumentList(
       api::file_manager_private::GetDriveConnectionState::Results::Create(
           result)));
 }
 
-bool FileManagerPrivateRequestAccessTokenFunction::RunAsync() {
+FileManagerPrivateRequestAccessTokenFunction::
+    FileManagerPrivateRequestAccessTokenFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateRequestAccessTokenFunction::Run() {
   using extensions::api::file_manager_private::RequestAccessToken::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   drive::DriveServiceInterface* const drive_service =
-      drive::util::GetDriveServiceByProfile(GetProfile());
+      drive::util::GetDriveServiceByProfile(chrome_details.GetProfile());
 
   if (!drive_service) {
     // DriveService is not available.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
-    SendResponse(true);
-    return true;
+    return RespondNow(
+        OneArgument(std::make_unique<base::Value>(std::string())));
   }
 
   // If refreshing is requested, then clear the token to refetch it.
@@ -958,85 +1649,54 @@ bool FileManagerPrivateRequestAccessTokenFunction::RunAsync() {
   drive_service->RequestAccessToken(
       base::Bind(&FileManagerPrivateRequestAccessTokenFunction::
                       OnAccessTokenFetched, this));
-  return true;
+  return RespondLater();
 }
 
 void FileManagerPrivateRequestAccessTokenFunction::OnAccessTokenFetched(
     google_apis::DriveApiErrorCode code,
     const std::string& access_token) {
-  SetResult(base::MakeUnique<base::Value>(access_token));
-  SendResponse(true);
+  Respond(OneArgument(std::make_unique<base::Value>(access_token)));
 }
 
-bool FileManagerPrivateInternalGetShareUrlFunction::RunAsync() {
-  using extensions::api::file_manager_private_internal::GetShareUrl::Params;
-  const std::unique_ptr<Params> params(Params::Create(*args_));
-  EXTENSION_FUNCTION_VALIDATE(params);
-
-  const base::FilePath path = file_manager::util::GetLocalPathFromURL(
-      render_frame_host(), GetProfile(), GURL(params->url));
-  DCHECK(drive::util::IsUnderDriveMountPoint(path));
-
-  const base::FilePath drive_path = drive::util::ExtractDrivePath(path);
-
-  drive::FileSystemInterface* const file_system =
-      drive::util::GetFileSystemByProfile(GetProfile());
-  if (!file_system) {
-    // |file_system| is NULL if Drive is disabled.
-    return false;
-  }
-
-  file_system->GetShareUrl(
-      drive_path,
-      GURL("chrome-extension://" + extension_id()),  // embed origin
-      base::Bind(&FileManagerPrivateInternalGetShareUrlFunction::OnGetShareUrl,
-                 this));
-  return true;
+FileManagerPrivateInternalRequestDriveShareFunction::
+    FileManagerPrivateInternalRequestDriveShareFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
 }
 
-void FileManagerPrivateInternalGetShareUrlFunction::OnGetShareUrl(
-    drive::FileError error,
-    const GURL& share_url) {
-  if (error != drive::FILE_ERROR_OK) {
-    SetError("Share Url for this item is not available.");
-    SendResponse(false);
-    return;
-  }
-
-  SetResult(base::MakeUnique<base::Value>(share_url.spec()));
-  SendResponse(true);
-}
-
-bool FileManagerPrivateInternalRequestDriveShareFunction::RunAsync() {
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalRequestDriveShareFunction::Run() {
   using extensions::api::file_manager_private_internal::RequestDriveShare::
       Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
   const base::FilePath path = file_manager::util::GetLocalPathFromURL(
-      render_frame_host(), GetProfile(), GURL(params->url));
+      render_frame_host(), chrome_details.GetProfile(), GURL(params->url));
   const base::FilePath drive_path = drive::util::ExtractDrivePath(path);
   Profile* const owner_profile = drive::util::ExtractProfileFromPath(path);
 
   if (!owner_profile)
-    return false;
+    return RespondNow(Error("Invalid state"));
 
   drive::FileSystemInterface* const owner_file_system =
       drive::util::GetFileSystemByProfile(owner_profile);
   if (!owner_file_system)
-    return false;
+    return RespondNow(Error("Drive not available"));
 
   const user_manager::User* const user =
-      chromeos::ProfileHelper::Get()->GetUserByProfile(GetProfile());
+      chromeos::ProfileHelper::Get()->GetUserByProfile(
+          chrome_details.GetProfile());
   if (!user || !user->is_logged_in())
-    return false;
+    return RespondNow(Error("Invalid user"));
 
   google_apis::drive::PermissionRole role =
       google_apis::drive::PERMISSION_ROLE_READER;
   switch (params->share_type) {
     case api::file_manager_private::DRIVE_SHARE_TYPE_NONE:
       NOTREACHED();
-      return false;
+      return RespondNow(Error("Invalid share type"));
     case api::file_manager_private::DRIVE_SHARE_TYPE_CAN_EDIT:
       role = google_apis::drive::PERMISSION_ROLE_WRITER;
       break;
@@ -1055,52 +1715,78 @@ bool FileManagerPrivateInternalRequestDriveShareFunction::RunAsync() {
       base::Bind(
           &FileManagerPrivateInternalRequestDriveShareFunction::OnAddPermission,
           this));
-  return true;
+  return RespondLater();
 }
 
 void FileManagerPrivateInternalRequestDriveShareFunction::OnAddPermission(
     drive::FileError error) {
-  SendResponse(error == drive::FILE_ERROR_OK);
+  if (error == drive::FILE_ERROR_OK) {
+    Respond(NoArguments());
+  } else {
+    Respond(Error(drive::FileErrorToString(error)));
+  }
 }
 
 FileManagerPrivateInternalGetDownloadUrlFunction::
-    FileManagerPrivateInternalGetDownloadUrlFunction() {}
+    FileManagerPrivateInternalGetDownloadUrlFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
 
 FileManagerPrivateInternalGetDownloadUrlFunction::
-    ~FileManagerPrivateInternalGetDownloadUrlFunction() {}
+    ~FileManagerPrivateInternalGetDownloadUrlFunction() = default;
 
-bool FileManagerPrivateInternalGetDownloadUrlFunction::RunAsync() {
-  using extensions::api::file_manager_private_internal::GetShareUrl::Params;
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetDownloadUrlFunction::Run() {
+  using extensions::api::file_manager_private_internal::GetDownloadUrl::Params;
   const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  scoped_refptr<storage::FileSystemContext> file_system_context =
+      file_manager::util::GetFileSystemContextForRenderFrameHost(
+          chrome_details.GetProfile(), render_frame_host());
+  const GURL url = GURL(params->url);
+  const storage::FileSystemURL file_system_url =
+      file_system_context->CrackURL(url);
+
+  switch (file_system_url.type()) {
+    case storage::kFileSystemTypeDrive:
+      return RunAsyncForDrive(url);
+    case storage::kFileSystemTypeDriveFs:
+      return RunAsyncForDriveFs(file_system_url);
+    default:
+      return RespondNow(Error("Drive is disabled"));
+  }
+}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetDownloadUrlFunction::RunAsyncForDrive(
+    const GURL& url) {
   // Start getting the file info.
+  const ChromeExtensionFunctionDetails chrome_details(this);
   drive::FileSystemInterface* const file_system =
-      drive::util::GetFileSystemByProfile(GetProfile());
+      drive::util::GetFileSystemByProfile(chrome_details.GetProfile());
   if (!file_system) {
     // |file_system| is NULL if Drive is disabled or not mounted.
-    SetError("Drive is disabled or not mounted.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
-    return false;
+    return RespondNow(Error("Drive is disabled or not mounted."));
   }
 
   const base::FilePath path = file_manager::util::GetLocalPathFromURL(
-      render_frame_host(), GetProfile(), GURL(params->url));
+      render_frame_host(), chrome_details.GetProfile(), url);
   if (!drive::util::IsUnderDriveMountPoint(path)) {
-    SetError("The given file is not in Drive.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
-    return false;
+    return RespondNow(Error("The given file is not in Drive."));
   }
   base::FilePath file_path = drive::util::ExtractDrivePath(path);
 
   file_system->GetResourceEntry(
       file_path,
-      base::Bind(
+      base::BindOnce(
           &FileManagerPrivateInternalGetDownloadUrlFunction::OnGetResourceEntry,
           this));
-  return true;
+  return RespondLater();
 }
 
 void FileManagerPrivateInternalGetDownloadUrlFunction::OnGetResourceEntry(
@@ -1109,33 +1795,38 @@ void FileManagerPrivateInternalGetDownloadUrlFunction::OnGetResourceEntry(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (error != drive::FILE_ERROR_OK) {
-    SetError("Download Url for this item is not available.");
-    // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
-    SendResponse(false);
+    OnGotDownloadUrl(GURL());
     return;
   }
 
   DriveApiUrlGenerator url_generator(
       (GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction)),
       (GURL(
-          google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction)),
-      google_apis::GetTeamDrivesIntegrationSwitch());
-  download_url_ = url_generator.GenerateDownloadFileUrl(entry->resource_id());
+          google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction)));
+  OnGotDownloadUrl(url_generator.GenerateDownloadFileUrl(entry->resource_id()));
+}
 
-  ProfileOAuth2TokenService* oauth2_token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile());
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfile(GetProfile());
-  const std::string& account_id = signin_manager->GetAuthenticatedAccountId();
+void FileManagerPrivateInternalGetDownloadUrlFunction::OnGotDownloadUrl(
+    GURL download_url) {
+  if (download_url.is_empty()) {
+    // Intentionally returns a blank.
+    Respond(Error("Download Url for this item is not available."));
+    return;
+  }
+  download_url_ = std::move(download_url);
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(chrome_details.GetProfile());
+  const std::string& account_id = identity_manager->GetPrimaryAccountId();
   std::vector<std::string> scopes;
-  scopes.push_back("https://www.googleapis.com/auth/drive.readonly");
+  scopes.emplace_back("https://www.googleapis.com/auth/drive.readonly");
 
-  auth_service_.reset(
-      new google_apis::AuthService(oauth2_token_service,
-                                   account_id,
-                                   GetProfile()->GetRequestContext(),
-                                   scopes));
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory =
+      content::BrowserContext::GetDefaultStoragePartition(
+          chrome_details.GetProfile())
+          ->GetURLLoaderFactoryForBrowserProcess();
+  auth_service_ = std::make_unique<google_apis::AuthService>(
+      identity_manager, account_id, url_loader_factory, scopes);
   auth_service_->StartAuthentication(base::Bind(
       &FileManagerPrivateInternalGetDownloadUrlFunction::OnTokenFetched, this));
 }
@@ -1144,18 +1835,114 @@ void FileManagerPrivateInternalGetDownloadUrlFunction::OnTokenFetched(
     google_apis::DriveApiErrorCode code,
     const std::string& access_token) {
   if (code != google_apis::HTTP_SUCCESS) {
-    SetError("Not able to fetch the token.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
-    SendResponse(false);
+    Respond(Error("Not able to fetch the token."));
     return;
   }
 
-  const std::string url =
-      download_url_.Resolve("?alt=media&access_token=" + access_token).spec();
-  SetResult(base::MakeUnique<base::Value>(url));
+  Respond(OneArgument(std::make_unique<base::Value>(
+      download_url_.Resolve("?alt=media&access_token=" + access_token)
+          .spec())));
+}
 
-  SendResponse(true);
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetDownloadUrlFunction::RunAsyncForDriveFs(
+    const storage::FileSystemURL& file_system_url) {
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  drive::DriveIntegrationService* integration_service =
+      drive::DriveIntegrationServiceFactory::FindForProfile(
+          chrome_details.GetProfile());
+  base::FilePath path;
+  if (!integration_service || !integration_service->GetRelativeDrivePath(
+                                  file_system_url.path(), &path)) {
+    return RespondNow(Error("Drive not available"));
+  }
+
+  auto* drivefs_interface = integration_service->GetDriveFsInterface();
+  if (!drivefs_interface)
+    return RespondNow(Error("Drive not available"));
+
+  drivefs_interface->GetMetadata(
+      path,
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(
+              &FileManagerPrivateInternalGetDownloadUrlFunction::OnGotMetadata,
+              this),
+          drive::FILE_ERROR_SERVICE_UNAVAILABLE, nullptr));
+  return RespondLater();
+}
+
+void FileManagerPrivateInternalGetDownloadUrlFunction::OnGotMetadata(
+    drive::FileError error,
+    drivefs::mojom::FileMetadataPtr metadata) {
+  OnGotDownloadUrl(metadata ? GURL(metadata->download_url) : GURL());
+}
+
+FileManagerPrivateInternalGetThumbnailFunction::
+    FileManagerPrivateInternalGetThumbnailFunction() {
+  SetWarningThresholds(kDriveSlowOperationThreshold,
+                       kDriveVerySlowOperationThreshold);
+}
+
+FileManagerPrivateInternalGetThumbnailFunction::
+    ~FileManagerPrivateInternalGetThumbnailFunction() = default;
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetThumbnailFunction::Run() {
+  using extensions::api::file_manager_private_internal::GetThumbnail::Params;
+  const std::unique_ptr<Params> params(Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  const ChromeExtensionFunctionDetails chrome_details(this);
+  scoped_refptr<storage::FileSystemContext> file_system_context =
+      file_manager::util::GetFileSystemContextForRenderFrameHost(
+          chrome_details.GetProfile(), render_frame_host());
+  const GURL url = GURL(params->url);
+  const storage::FileSystemURL file_system_url =
+      file_system_context->CrackURL(url);
+
+  if (file_system_url.type() != storage::kFileSystemTypeDriveFs) {
+    return RespondNow(Error("Invalid URL"));
+  }
+  drive::DriveIntegrationService* integration_service =
+      drive::DriveIntegrationServiceFactory::FindForProfile(
+          chrome_details.GetProfile());
+  base::FilePath path;
+  if (!integration_service || !integration_service->GetRelativeDrivePath(
+                                  file_system_url.path(), &path)) {
+    return RespondNow(Error("Drive not available"));
+  }
+  auto* drivefs_interface = integration_service->GetDriveFsInterface();
+  if (!drivefs_interface) {
+    return RespondNow(Error("Drive not available"));
+  }
+  drivefs_interface->GetThumbnail(
+      path, params->crop_to_square,
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+          base::BindOnce(
+              &FileManagerPrivateInternalGetThumbnailFunction::GotThumbnail,
+              this),
+          base::Optional<std::vector<uint8_t>>()));
+  return RespondLater();
+}
+
+void FileManagerPrivateInternalGetThumbnailFunction::GotThumbnail(
+    const base::Optional<std::vector<uint8_t>>& data) {
+  if (!data) {
+    Respond(OneArgument(std::make_unique<base::Value>("")));
+    return;
+  }
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&MakeThumbnailDataUrlOnSequence, *data),
+      base::BindOnce(
+          &FileManagerPrivateInternalGetThumbnailFunction::SendEncodedThumbnail,
+          this));
+}
+
+void FileManagerPrivateInternalGetThumbnailFunction::SendEncodedThumbnail(
+    std::string thumbnail_data_url) {
+  Respond(OneArgument(
+      std::make_unique<base::Value>(std::move(thumbnail_data_url))));
 }
 
 }  // namespace extensions

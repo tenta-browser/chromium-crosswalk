@@ -7,10 +7,13 @@
 
 #include <memory>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/native_web_keyboard_event.h"
+#include "ui/aura/scoped_keyboard_hook.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/gestures/motion_event_aura.h"
@@ -27,6 +30,7 @@ class WebTouchEvent;
 }  // namespace blink
 
 namespace ui {
+enum class DomCode;
 class TextInputClient;
 class TouchSelectionController;
 }
@@ -38,6 +42,7 @@ class OverscrollController;
 class RenderWidgetHostImpl;
 class RenderWidgetHostViewBase;
 class TouchSelectionControllerClientAura;
+class HitTestDebugKeyEventObserver;
 
 // Provides an implementation of ui::EventHandler for use with
 // RenderWidgetHostViewBase. A delegate is required in order to provide platform
@@ -125,9 +130,6 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
 #endif  // defined(OS_WIN)
 
   bool accept_return_character() { return accept_return_character_; }
-  void disable_input_event_router_for_testing() {
-    disable_input_event_router_for_testing_ = true;
-  }
   bool mouse_locked() { return mouse_locked_; }
   const ui::MotionEventAura& pointer_state() const { return pointer_state_; }
   void set_focus_on_mouse_down_or_key_event(
@@ -140,6 +142,11 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   bool LockMouse();
   void UnlockMouse();
 
+  // Start/Stop processing of future system keyboard events.
+  bool LockKeyboard(base::Optional<base::flat_set<ui::DomCode>> codes);
+  void UnlockKeyboard();
+  bool IsKeyboardLocked() const;
+
   // ui::EventHandler:
   void OnKeyEvent(ui::KeyEvent* event) override;
   void OnMouseEvent(ui::MouseEvent* event) override;
@@ -147,9 +154,31 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   void OnTouchEvent(ui::TouchEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
 
+  void GestureEventAck(const blink::WebGestureEvent& event,
+                       InputEventAckState ack_result);
+
+  // Used to set the mouse_wheel_phase_handler_ timer timeout for testing.
+  void set_mouse_wheel_wheel_phase_handler_timeout(base::TimeDelta timeout) {
+    mouse_wheel_phase_handler_.set_mouse_wheel_end_dispatch_timeout(timeout);
+  }
+
  private:
   FRIEND_TEST_ALL_PREFIXES(InputMethodResultAuraTest,
                            FinishImeCompositionSession);
+  FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewAuraTest,
+                           KeyEventRoutingWithKeyboardLockActiveForOneKey);
+  FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewAuraTest,
+                           KeyEventRoutingWithKeyboardLockActiveForEscKey);
+  FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewAuraTest,
+                           KeyEventRoutingWithKeyboardLockActiveForAllKeys);
+  FRIEND_TEST_ALL_PREFIXES(
+      RenderWidgetHostViewAuraTest,
+      KeyEventRoutingKeyboardLockAndChildPopupWithInputGrab);
+  FRIEND_TEST_ALL_PREFIXES(
+      RenderWidgetHostViewAuraTest,
+      KeyEventRoutingKeyboardLockAndChildPopupWithoutInputGrab);
+  friend class MockPointerLockRenderWidgetHostView;
+
   // Returns true if the |event| passed in can be forwarded to the renderer.
   bool CanRendererHandleEvent(const ui::MouseEvent* event,
                               bool mouse_locked,
@@ -177,17 +206,20 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
                                     blink::WebMouseEvent* event);
 
   // This method moves cursor to window center for pointer lock.
-  void MoveCursorToCenter();
+  // In Windows, a non-null |event| is used for creating the synthesize move to
+  // update blink side states.
+  void MoveCursorToCenter(ui::MouseEvent* event);
 
   // Helper function to set keyboard focus to the main window.
   void SetKeyboardFocus();
 
   // Helper method to determine if, in mouse locked mode, the cursor should be
   // moved to center.
-  bool ShouldMoveToCenter();
+  bool ShouldMoveToCenter(gfx::PointF mouse_screen_position);
 
-  // Returns true when we can do SurfaceHitTesting for the event type.
-  bool ShouldRouteEvent(const ui::Event* event) const;
+  // Returns true when we can hit test input events with location data to be
+  // sent to the targeted RenderWidgetHost.
+  bool ShouldRouteEvents() const;
 
   // Directs events to the |host_|.
   void ProcessMouseEvent(const blink::WebMouseEvent& event,
@@ -197,13 +229,14 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   void ProcessTouchEvent(const blink::WebTouchEvent& event,
                          const ui::LatencyInfo& latency);
 
+  // Returns true if event is a reserved key for an active KeyboardLock request.
+  bool IsKeyLocked(const ui::KeyEvent& event);
+
   // Whether return characters should be passed on to the RenderWidgetHostImpl.
   bool accept_return_character_;
 
-  // Allows tests to send gesture events for testing without first sending a
-  // corresponding touch sequence, as would be required by
-  // RenderWidgetHostInputEventRouter.
-  bool disable_input_event_router_for_testing_;
+  // Deactivates keyboard lock when destroyed.
+  std::unique_ptr<aura::ScopedKeyboardHook> scoped_keyboard_hook_;
 
   // While the mouse is locked, the cursor is hidden from the user. Mouse events
   // are still generated. However, the position they report is the last known
@@ -238,15 +271,13 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   // This flag is used to differentiate between these synthetic mouse move
   // events vs. normal mouse move events.
   bool synthetic_move_sent_;
+
+  bool enable_consolidated_movement_;
+  base::Optional<gfx::Point> synthetic_move_position_;
+
   // Stores the current state of the active pointers targeting this
   // object.
   ui::MotionEventAura pointer_state_;
-
-#if defined(OS_WIN)
-  // Contains a copy of the last context menu request parameters. Only set when
-  // we receive a request to show the context menu on a long press.
-  std::unique_ptr<ContextMenuParams> last_context_menu_params_;
-#endif  // defined(OS_WIN)
 
   // The following are not owned. They should outlive |this|
   RenderWidgetHostImpl* const host_;
@@ -258,6 +289,8 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   Delegate* const delegate_;
   aura::Window* window_;
   MouseWheelPhaseHandler mouse_wheel_phase_handler_;
+
+  std::unique_ptr<HitTestDebugKeyEventObserver> debug_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewEventHandler);
 };

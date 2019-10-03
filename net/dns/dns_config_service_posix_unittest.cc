@@ -9,15 +9,20 @@
 #include "base/cancelable_callback.h"
 #include "base/files/file_util.h"
 #include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
+#include "base/stl_util.h"
 #include "base/sys_byteorder.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "net/base/ip_address.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_config_service_posix.h"
-#include "net/dns/dns_protocol.h"
-#include "net/test/net_test_suite.h"
+#include "net/dns/public/dns_protocol.h"
 
+#include "base/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
@@ -72,7 +77,7 @@ void InitializeResState(res_state res) {
   res->dnsrch[0] = res->defdname;
   res->dnsrch[1] = res->defdname + sizeof("chromium.org");
 
-  for (unsigned i = 0; i < arraysize(kNameserversIPv4) && i < MAXNS; ++i) {
+  for (unsigned i = 0; i < base::size(kNameserversIPv4) && i < MAXNS; ++i) {
     struct sockaddr_in sa;
     sa.sin_family = AF_INET;
     sa.sin_port = base::HostToNet16(NS_DEFAULTPORT + i);
@@ -84,7 +89,7 @@ void InitializeResState(res_state res) {
 #if defined(OS_LINUX)
   // Install IPv6 addresses, replacing the corresponding IPv4 addresses.
   unsigned nscount6 = 0;
-  for (unsigned i = 0; i < arraysize(kNameserversIPv6) && i < MAXNS; ++i) {
+  for (unsigned i = 0; i < base::size(kNameserversIPv6) && i < MAXNS; ++i) {
     if (!kNameserversIPv6[i])
       continue;
     // Must use malloc to mimick res_ninit.
@@ -115,21 +120,20 @@ void InitializeExpectedConfig(DnsConfig* config) {
   config->timeout = base::TimeDelta::FromSeconds(4);
   config->attempts = 7;
   config->rotate = true;
-  config->edns0 = false;
   config->append_to_multi_label_name = true;
   config->search.clear();
   config->search.push_back("chromium.org");
   config->search.push_back("example.com");
 
   config->nameservers.clear();
-  for (unsigned i = 0; i < arraysize(kNameserversIPv4) && i < MAXNS; ++i) {
+  for (unsigned i = 0; i < base::size(kNameserversIPv4) && i < MAXNS; ++i) {
     IPAddress ip;
     EXPECT_TRUE(ip.AssignFromIPLiteral(kNameserversIPv4[i]));
     config->nameservers.push_back(IPEndPoint(ip, NS_DEFAULTPORT + i));
   }
 
 #if defined(OS_LINUX)
-  for (unsigned i = 0; i < arraysize(kNameserversIPv6) && i < MAXNS; ++i) {
+  for (unsigned i = 0; i < base::size(kNameserversIPv6) && i < MAXNS; ++i) {
     if (!kNameserversIPv6[i])
       continue;
     IPAddress ip;
@@ -184,11 +188,35 @@ TEST(DnsConfigServicePosixTest, RejectEmptyNameserver) {
 TEST(DnsConfigServicePosixTest, DestroyWhileJobsWorking) {
   // Regression test to verify crash does not occur if DnsConfigServicePosix
   // instance is destroyed while SerialWorker jobs have posted to worker pool.
+  base::test::ScopedTaskEnvironment scoped_task_environment(
+      base::test::ScopedTaskEnvironment::MainThreadType::IO);
+
   std::unique_ptr<internal::DnsConfigServicePosix> service(
       new internal::DnsConfigServicePosix());
-  service->ReadConfig(base::Bind(&DummyConfigCallback));
+  // Call WatchConfig() which also tests ReadConfig().
+  service->WatchConfig(base::BindRepeating(&DummyConfigCallback));
   service.reset();
+  scoped_task_environment.RunUntilIdle();
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(1000));
+}
+
+TEST(DnsConfigServicePosixTest, DestroyOnDifferentThread) {
+  // Regression test to verify crash does not occur if DnsConfigServicePosix
+  // instance is destroyed on another thread.
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
+  scoped_refptr<base::SequencedTaskRunner> runner =
+      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
+  std::unique_ptr<internal::DnsConfigServicePosix, base::OnTaskRunnerDeleter>
+      service(new internal::DnsConfigServicePosix(),
+              base::OnTaskRunnerDeleter(runner));
+
+  runner->PostTask(FROM_HERE,
+                   base::BindOnce(&internal::DnsConfigServicePosix::WatchConfig,
+                                  base::Unretained(service.get()),
+                                  base::BindRepeating(&DummyConfigCallback)));
+  service.reset();
+  scoped_task_environment.RunUntilIdle();
 }
 
 }  // namespace
@@ -196,13 +224,6 @@ TEST(DnsConfigServicePosixTest, DestroyWhileJobsWorking) {
 #else  // OS_ANDROID
 
 namespace internal {
-
-const char kTempHosts1[] = "127.0.0.1 localhost";
-// kTempHosts2 is only used by SeenChangeSinceHostsChange, which doesn't run
-// on Android.
-#if !defined(OS_ANDROID)
-const char kTempHosts2[] = "127.0.0.2 localhost";
-#endif  // !defined(OS_ANDROID)
 
 class DnsConfigServicePosixTest : public testing::Test {
  public:
@@ -213,113 +234,34 @@ class DnsConfigServicePosixTest : public testing::Test {
     EXPECT_TRUE(config.IsValid());
     seen_config_ = true;
     real_config_ = config;
-    // run_loop_ will be nullptr if ExpectChange() was never called.
-    // ChangeConfigMultipleTimes can't call ExpectChange() because
-    // OnConfigChanged() will only be called when the DnsConfig is actually
-    // different. When the device has nameservers configured, that's true on the
-    // initial read, and OnConfigChanged() will be called, but when it doesn't,
-    // that's never true, and the Run() call in ExpectChange() would hang
-    // forever.
-    if (run_loop_)
-      run_loop_->QuitWhenIdle();
-  }
-
-  void WriteMockHostsFile(const char* hosts_string) {
-    ASSERT_EQ(base::WriteFile(temp_file_, hosts_string, strlen(hosts_string)),
-              static_cast<int>(strlen(hosts_string)));
-  }
-
-  void MockDNSConfig(const char* dns_server) {
-    IPAddress dns_address;
-    ASSERT_TRUE(dns_address.AssignFromIPLiteral(dns_server));
-    test_config_.nameservers.clear();
-    test_config_.nameservers.push_back(
-        IPEndPoint(dns_address, dns_protocol::kDefaultPort));
-    service_->SetDnsConfigForTesting(&test_config_);
-  }
-
-  void MockHostsFilePath(const char* file_path) {
-    service_->SetHostsFilePathForTesting(file_path);
   }
 
   void SetUp() override {
-    // TODO(pauljensen): Get rid of GetExternalStorageDirectory() when
-    // crbug.com/475568 is fixed.  For now creating a temp file in the
-    // default temp directory (/data/data/...) will cause FilePathWatcher
-    // to fail, so create the temp file in /sdcard.
-    base::FilePath parent_dir;
-    ASSERT_TRUE(base::android::GetExternalStorageDirectory(&parent_dir));
-    ASSERT_TRUE(base::CreateTemporaryFileInDir(parent_dir, &temp_file_));
-    WriteMockHostsFile(kTempHosts1);
-    // Set the time on the hosts file back so it appears older than the
-    // 1s safety offset in DnsConfigServicePosix::SeenChangeSince().
-    // TODO(pauljensen): Switch from Sleep() to TouchFile() when
-    // crbug.com/475568 is fixed.  For now TouchFile() will fail in /sdcard.
-    base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(1100));
-    // // Copy real hosts file's last modified time to mock hosts file.
-    // base::File hosts(base::FilePath(DnsConfigServicePosix::kFilePathHosts),
-    //                 base::File::FLAG_OPEN | base::File::FLAG_READ);
-    // base::File::Info hosts_info;
-    // ASSERT_TRUE(hosts.GetInfo(&hosts_info));
-    // ASSERT_TRUE(base::TouchFile(temp_file_, hosts_info.last_modified,
-    //                            hosts_info.last_accessed));
-
-    creation_time_ = base::Time::Now();
     service_.reset(new DnsConfigServicePosix());
-    MockHostsFilePath(temp_file_.value().c_str());
   }
 
   void TearDown() override { ASSERT_TRUE(base::DeleteFile(temp_file_, false)); }
 
-  void StartWatching() {
-    seen_config_ = false;
-    service_->WatchConfig(base::Bind(
-        &DnsConfigServicePosixTest::OnConfigChanged, base::Unretained(this)));
-    ExpectChange();
-  }
-
-  void ExpectChange() {
-    EXPECT_FALSE(seen_config_);
-    run_loop_ = std::make_unique<base::RunLoop>();
-    run_loop_->Run();
-    EXPECT_TRUE(seen_config_);
-    seen_config_ = false;
-  }
-
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   bool seen_config_;
-  base::Time creation_time_;
   base::FilePath temp_file_;
   std::unique_ptr<DnsConfigServicePosix> service_;
-  DnsConfig test_config_;
   DnsConfig real_config_;
-  std::unique_ptr<base::RunLoop> run_loop_;
 };
-
-TEST_F(DnsConfigServicePosixTest, SeenChangeSinceNetworkChange) {
-  // Verify SeenChangeSince() returns false if no changes
-  MockDNSConfig("8.8.8.8");
-  StartWatching();
-  EXPECT_FALSE(service_->SeenChangeSince(creation_time_));
-  // Verify SeenChangeSince() returns true if network change
-  MockDNSConfig("8.8.4.4");
-  service_->OnNetworkChanged(NetworkChangeNotifier::CONNECTION_WIFI);
-  EXPECT_TRUE(service_->SeenChangeSince(creation_time_));
-  ExpectChange();
-}
 
 // Regression test for https://crbug.com/704662.
 TEST_F(DnsConfigServicePosixTest, ChangeConfigMultipleTimes) {
   service_->WatchConfig(base::Bind(&DnsConfigServicePosixTest::OnConfigChanged,
                                    base::Unretained(this)));
-  NetTestSuite::GetScopedTaskEnvironment()->RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   for (int i = 0; i < 5; i++) {
-    service_->OnNetworkChanged(NetworkChangeNotifier::CONNECTION_WIFI);
+    service_->RefreshConfig();
     // Wait for config read after the change. OnConfigChanged() will only be
     // called if the new config is different from the old one, so this can't be
     // ExpectChange().
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(50));
-    NetTestSuite::GetScopedTaskEnvironment()->RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
   }
 
   // There should never be more than 4 nameservers in a real config.

@@ -7,8 +7,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/payments/payment_request_browsertest_base.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view_ids.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace payments {
@@ -53,8 +53,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestOrderSummaryViewControllerTest,
   // Go to the shipping address screen and select the first address (MI state).
   ClickOnBackArrow();
   OpenShippingAddressSectionScreen();
-  ResetEventWaiterForSequence(std::list<DialogEvent>{
-      DialogEvent::SPEC_DONE_UPDATING, DialogEvent::BACK_NAVIGATION});
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN,
+                               DialogEvent::SPEC_DONE_UPDATING,
+                               DialogEvent::BACK_NAVIGATION});
   ClickOnChildInListViewAndWait(
       /* child_index=*/0, /*total_num_children=*/2,
       DialogViewID::SHIPPING_ADDRESS_SHEET_LIST_VIEW,
@@ -97,8 +99,10 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestOrderSummaryViewControllerTest,
   // Go to the shipping address screen and select the second address (CA state).
   ClickOnBackArrow();
   OpenShippingAddressSectionScreen();
-  ResetEventWaiterForSequence(std::list<DialogEvent>{
-      DialogEvent::SPEC_DONE_UPDATING, DialogEvent::BACK_NAVIGATION});
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN,
+                               DialogEvent::SPEC_DONE_UPDATING,
+                               DialogEvent::BACK_NAVIGATION});
   ClickOnChildInListViewAndWait(
       /* child_index=*/1, /*total_num_children=*/2,
       DialogViewID::SHIPPING_ADDRESS_SHEET_LIST_VIEW,

@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 
+#include <vector>
+
 #include "base/gtest_prod_util.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/weak_ptr.h"
@@ -16,10 +18,10 @@
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
 #include "chrome/browser/ui/autofill/popup_controller_common.h"
-#include "ui/accessibility/ax_enums.h"
+#include "components/autofill/core/browser/ui/popup_types.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/native_theme/native_theme.h"
 
 namespace content {
 struct NativeWebKeyboardEvent;
@@ -49,11 +51,13 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
       base::i18n::TextDirection text_direction);
 
   // Shows the popup, or updates the existing popup with the given values.
-  void Show(const std::vector<autofill::Suggestion>& suggestions);
+  virtual void Show(const std::vector<Suggestion>& suggestions,
+                    bool autoselect_first_suggestion,
+                    PopupType popup_type);
 
   // Updates the data list values currently shown with the popup.
-  void UpdateDataListValues(const std::vector<base::string16>& values,
-                            const std::vector<base::string16>& labels);
+  virtual void UpdateDataListValues(const std::vector<base::string16>& values,
+                                    const std::vector<base::string16>& labels);
 
   // Hides the popup and destroys the controller. This also invalidates
   // |delegate_|.
@@ -82,13 +86,15 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
   void SetSelectionAtPoint(const gfx::Point& point) override;
   bool AcceptSelectedLine() override;
   void SelectionCleared() override;
+  bool HasSelection() const override;
   gfx::Rect popup_bounds() const override;
-  gfx::NativeView container_view() override;
+  gfx::NativeView container_view() const override;
   const gfx::RectF& element_bounds() const override;
   void SetElementBounds(const gfx::RectF& bounds);
   bool IsRTL() const override;
-  const std::vector<autofill::Suggestion> GetSuggestions() override;
+  const std::vector<Suggestion> GetSuggestions() override;
 #if !defined(OS_ANDROID)
+  void SetTypesetter(gfx::Typesetter typesetter) override;
   int GetElidedValueWidthForRow(int row) override;
   int GetElidedLabelWidthForRow(int row) override;
 #endif
@@ -97,19 +103,16 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
   void OnSuggestionsChanged() override;
   void AcceptSuggestion(int index) override;
   int GetLineCount() const override;
-  const autofill::Suggestion& GetSuggestionAt(int row) const override;
+  const Suggestion& GetSuggestionAt(int row) const override;
   const base::string16& GetElidedValueAt(int row) const override;
   const base::string16& GetElidedLabelAt(int row) const override;
   bool GetRemovalConfirmationText(int list_index,
                                   base::string16* title,
                                   base::string16* body) override;
   bool RemoveSuggestion(int list_index) override;
-  ui::NativeTheme::ColorId GetBackgroundColorIDForRow(int index) const override;
+  void SetSelectedLine(base::Optional<int> selected_line) override;
   base::Optional<int> selected_line() const override;
   const AutofillPopupLayoutModel& layout_model() const override;
-
-  // Change which line is currently selected by the user.
-  void SetSelectedLine(base::Optional<int> selected_line);
 
   // Increase the selected line by 1, properly handling wrapping.
   void SelectNextLine();
@@ -128,15 +131,18 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
 
   // Set the Autofill entry values. Exposed to allow tests to set these values
   // without showing the popup.
-  void SetValues(const std::vector<autofill::Suggestion>& suggestions);
+  void SetValues(const std::vector<Suggestion>& suggestions);
 
   AutofillPopupView* view() { return view_; }
 
   base::WeakPtr<AutofillPopupControllerImpl> GetWeakPtr();
 
-  // Contains common popup functionality such as popup layout. Protected for
-  // testing.
-  PopupControllerCommon controller_common_;
+  AutofillPopupLayoutModel& LayoutModelForTesting() { return layout_model_; }
+
+  // Raise an accessibility event to indicate the controls relation of the
+  // form control of the popup and popup itself has changed based on the popup's
+  // show or hide action.
+  void FireControlsChangedEvent(bool is_show);
 
  private:
 #if !defined(OS_ANDROID)
@@ -155,9 +161,12 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
   void HideViewAndDie();
 
   friend class AutofillPopupControllerUnitTest;
+  friend class AutofillPopupControllerAccessibilityUnitTest;
   void SetViewForTesting(AutofillPopupView* view) { view_ = view; }
 
-  AutofillPopupView* view_;  // Weak reference.
+  PopupControllerCommon controller_common_;
+  content::WebContents* web_contents_;
+  AutofillPopupView* view_ = nullptr;  // Weak reference.
   AutofillPopupLayoutModel layout_model_;
   base::WeakPtr<AutofillPopupDelegate> delegate_;
 
@@ -165,7 +174,7 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
   base::i18n::TextDirection text_direction_;
 
   // The current Autofill query values.
-  std::vector<autofill::Suggestion> suggestions_;
+  std::vector<Suggestion> suggestions_;
 
   // Elided values and labels corresponding to the suggestions_ vector to
   // ensure that it fits on the screen.
@@ -176,7 +185,13 @@ class AutofillPopupControllerImpl : public AutofillPopupController {
   // line is currently selected.
   base::Optional<int> selected_line_;
 
-  base::WeakPtrFactory<AutofillPopupControllerImpl> weak_ptr_factory_;
+  // The typesetter to use when eliding text. This must be BROWSER when the UI
+  // is drawn by Cocoa on macOS.
+  gfx::Typesetter typesetter_ = gfx::Typesetter::HARFBUZZ;
+
+  base::WeakPtrFactory<AutofillPopupControllerImpl> weak_ptr_factory_{this};
+
+  DISALLOW_COPY_AND_ASSIGN(AutofillPopupControllerImpl);
 };
 
 }  // namespace autofill

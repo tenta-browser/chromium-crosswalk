@@ -4,20 +4,24 @@
 
 #include "content/browser/service_worker/service_worker_installed_scripts_sender.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/task/post_task.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_disk_cache.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -40,10 +44,10 @@ void ReadDataPipeInternal(mojo::DataPipeConsumerHandle handle,
         std::move(quit_closure).Run();
         return;
       case MOJO_RESULT_SHOULD_WAIT:
-        BrowserThread::PostTask(
-            BrowserThread::IO, FROM_HERE,
+        base::PostTaskWithTraits(
+            FROM_HERE, {BrowserThread::IO},
             base::BindOnce(&ReadDataPipeInternal, handle, result,
-                           base::Passed(&quit_closure)));
+                           std::move(quit_closure)));
         return;
       case MOJO_RESULT_OK:
         EXPECT_NE(nullptr, buffer);
@@ -95,11 +99,11 @@ class ExpectedScriptInfo {
   }
 
   void CheckIfIdentical(
-      const mojom::ServiceWorkerScriptInfoPtr& script_info) const {
+      const blink::mojom::ServiceWorkerScriptInfoPtr& script_info) const {
     EXPECT_EQ(script_url_, script_info->script_url);
     EXPECT_EQ(encoding_, script_info->encoding);
     for (const auto& header : headers_) {
-      EXPECT_TRUE(base::ContainsKey(script_info->headers, header.first));
+      EXPECT_TRUE(base::Contains(script_info->headers, header.first));
       EXPECT_EQ(header.second, script_info->headers[header.first]);
       script_info->headers.erase(header.first);
     }
@@ -129,13 +133,13 @@ class ExpectedScriptInfo {
 };
 
 class MockServiceWorkerInstalledScriptsManager
-    : public mojom::ServiceWorkerInstalledScriptsManager {
+    : public blink::mojom::ServiceWorkerInstalledScriptsManager {
  public:
   explicit MockServiceWorkerInstalledScriptsManager(
-      mojom::ServiceWorkerInstalledScriptsManagerRequest request)
+      blink::mojom::ServiceWorkerInstalledScriptsManagerRequest request)
       : binding_(this, std::move(request)) {}
 
-  mojom::ServiceWorkerScriptInfoPtr WaitUntilTransferInstalledScript() {
+  blink::mojom::ServiceWorkerScriptInfoPtr WaitUntilTransferInstalledScript() {
     EXPECT_TRUE(incoming_script_info_.is_null());
     EXPECT_FALSE(transfer_installed_script_waiter_);
     base::RunLoop loop;
@@ -146,7 +150,7 @@ class MockServiceWorkerInstalledScriptsManager
   }
 
   void TransferInstalledScript(
-      mojom::ServiceWorkerScriptInfoPtr script_info) override {
+      blink::mojom::ServiceWorkerScriptInfoPtr script_info) override {
     EXPECT_TRUE(incoming_script_info_.is_null());
     EXPECT_TRUE(transfer_installed_script_waiter_);
     incoming_script_info_ = std::move(script_info);
@@ -155,9 +159,9 @@ class MockServiceWorkerInstalledScriptsManager
   }
 
  private:
-  mojo::Binding<mojom::ServiceWorkerInstalledScriptsManager> binding_;
+  mojo::Binding<blink::mojom::ServiceWorkerInstalledScriptsManager> binding_;
   base::OnceClosure transfer_installed_script_waiter_;
-  mojom::ServiceWorkerScriptInfoPtr incoming_script_info_;
+  blink::mojom::ServiceWorkerScriptInfoPtr incoming_script_info_;
 
   DISALLOW_COPY_AND_ASSIGN(MockServiceWorkerInstalledScriptsManager);
 };
@@ -171,17 +175,18 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
   void SetUp() override {
     helper_ = std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath());
 
-    context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
 
-    pattern_ = GURL("http://www.example.com/test/");
+    scope_ = GURL("http://www.example.com/test/");
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = scope_;
     registration_ = base::MakeRefCounted<ServiceWorkerRegistration>(
-        blink::mojom::ServiceWorkerRegistrationOptions(pattern_), 1L,
-        context()->AsWeakPtr());
+        options, 1L, context()->AsWeakPtr());
     version_ = base::MakeRefCounted<ServiceWorkerVersion>(
         registration_.get(),
         GURL("http://www.example.com/test/service_worker.js"),
+        blink::mojom::ScriptType::kClassic,
         context()->storage()->NewVersionId(), context()->AsWeakPtr());
     version_->set_fetch_handler_existence(
         ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
@@ -201,13 +206,12 @@ class ServiceWorkerInstalledScriptsSenderTest : public testing::Test {
   TestBrowserThreadBundle thread_bundle_;
   std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
 
-  GURL pattern_;
+  GURL scope_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
 };
 
-using SenderFinishedReason =
-    ServiceWorkerInstalledScriptsSender::FinishedReason;
+using FinishedReason = ServiceWorkerInstalledScriptReader::FinishedReason;
 
 TEST_F(ServiceWorkerInstalledScriptsSenderTest, SendScripts) {
   const GURL kMainScriptURL = version()->script_url();
@@ -257,13 +261,13 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, SendScripts) {
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -276,14 +280,13 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, SendScripts) {
   // Stream the installed scripts once.
   for (const auto& expected_script : kExpectedScriptInfoMap) {
     const ExpectedScriptInfo& info = expected_script.second;
-    EXPECT_EQ(SenderFinishedReason::kNotFinished,
-              sender->last_finished_reason());
+    EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
 
-  EXPECT_EQ(SenderFinishedReason::kSuccess, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kSuccess, sender->last_finished_reason());
 }
 
 TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendBody) {
@@ -314,13 +317,13 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendBody) {
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -329,21 +332,20 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendBody) {
   ASSERT_TRUE(renderer_manager);
 
   sender->Start();
-  EXPECT_EQ(SenderFinishedReason::kNotFinished, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
 
   {
     // Reset a data pipe during sending the body.
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_TRUE(
-        base::ContainsKey(kExpectedScriptInfoMap, script_info->script_url));
+        base::Contains(kExpectedScriptInfoMap, script_info->script_url));
     script_info->body.reset();
     kExpectedScriptInfoMap.erase(script_info->script_url);
     // Wait until the error is triggered on the sender side.
     base::RunLoop().RunUntilIdle();
   }
 
-  EXPECT_EQ(SenderFinishedReason::kConnectionError,
-            sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kConnectionError, sender->last_finished_reason());
 }
 
 TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendMetaData) {
@@ -374,13 +376,13 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendMetaData) {
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -389,20 +391,20 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, FailedToSendMetaData) {
   ASSERT_TRUE(renderer_manager);
 
   sender->Start();
-  EXPECT_EQ(SenderFinishedReason::kNotFinished, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
 
   {
     // Reset a data pipe during sending the meta data.
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_TRUE(
-        base::ContainsKey(kExpectedScriptInfoMap, script_info->script_url));
+        base::Contains(kExpectedScriptInfoMap, script_info->script_url));
     script_info->meta_data.reset();
     kExpectedScriptInfoMap.erase(script_info->script_url);
     // Wait until the error is triggered on the sender side.
     base::RunLoop().RunUntilIdle();
   }
 
-  EXPECT_EQ(SenderFinishedReason::kMetaDataSenderError,
+  EXPECT_EQ(FinishedReason::kMetaDataSenderError,
             sender->last_finished_reason());
 }
 
@@ -445,13 +447,13 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, Histograms) {
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -465,21 +467,20 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, Histograms) {
   // Stream the installed scripts once.
   for (const auto& expected_script : kExpectedScriptInfoMap) {
     const ExpectedScriptInfo& info = expected_script.second;
-    EXPECT_EQ(SenderFinishedReason::kNotFinished,
-              sender->last_finished_reason());
+    EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
 
-  EXPECT_EQ(SenderFinishedReason::kSuccess, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kSuccess, sender->last_finished_reason());
 
   // The histogram should be recorded when reading the script.
-  // The count should be four: reading the response body of a main script and an
-  // imported script, and the end of reading bodies for the two scripts.
+  // The count should be two: reading the response body of a main script and an
+  // imported script.
   histogram_tester.ExpectBucketCount(
       "ServiceWorker.DiskCache.ReadResponseResult",
-      ServiceWorkerMetrics::ReadResponseResult::READ_OK, 4);
+      ServiceWorkerMetrics::ReadResponseResult::READ_OK, 2);
 }
 
 TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptBeforeStreaming) {
@@ -525,15 +526,15 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptBeforeStreaming) {
       std::make_unique<ServiceWorkerInstalledScriptsSender>(version());
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
-  mojom::ServiceWorkerInstalledScriptsManagerHostPtr manager_host_ptr;
+  blink::mojom::ServiceWorkerInstalledScriptsManagerHostPtr manager_host_ptr;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -551,13 +552,12 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptBeforeStreaming) {
   // Stream the installed scripts once.
   for (const auto& expected_script : kExpectedScriptInfoMap) {
     const ExpectedScriptInfo& info = expected_script.second;
-    EXPECT_EQ(SenderFinishedReason::kNotFinished,
-              sender->last_finished_reason());
+    EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
-  EXPECT_EQ(SenderFinishedReason::kNotFinished, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
 
   // Handle requested installed scripts.
   {
@@ -566,7 +566,7 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptBeforeStreaming) {
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
-  EXPECT_EQ(SenderFinishedReason::kSuccess, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kSuccess, sender->last_finished_reason());
 }
 
 TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptAfterStreaming) {
@@ -612,15 +612,15 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptAfterStreaming) {
       std::make_unique<ServiceWorkerInstalledScriptsSender>(version());
 
   std::unique_ptr<MockServiceWorkerInstalledScriptsManager> renderer_manager;
-  mojom::ServiceWorkerInstalledScriptsManagerHostPtr manager_host_ptr;
+  blink::mojom::ServiceWorkerInstalledScriptsManagerHostPtr manager_host_ptr;
   {
-    mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
+    blink::mojom::ServiceWorkerInstalledScriptsInfoPtr scripts_info =
         sender->CreateInfoAndBind();
     ASSERT_TRUE(scripts_info);
     ASSERT_EQ(kExpectedScriptInfoMap.size(),
               scripts_info->installed_urls.size());
     for (const auto& url : scripts_info->installed_urls)
-      EXPECT_TRUE(base::ContainsKey(kExpectedScriptInfoMap, url));
+      EXPECT_TRUE(base::Contains(kExpectedScriptInfoMap, url));
     EXPECT_TRUE(scripts_info->manager_request.is_pending());
     renderer_manager =
         std::make_unique<MockServiceWorkerInstalledScriptsManager>(
@@ -634,13 +634,12 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptAfterStreaming) {
   // Stream the installed scripts once.
   for (const auto& expected_script : kExpectedScriptInfoMap) {
     const ExpectedScriptInfo& info = expected_script.second;
-    EXPECT_EQ(SenderFinishedReason::kNotFinished,
-              sender->last_finished_reason());
+    EXPECT_EQ(FinishedReason::kNotFinished, sender->last_finished_reason());
     auto script_info = renderer_manager->WaitUntilTransferInstalledScript();
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
-  EXPECT_EQ(SenderFinishedReason::kSuccess, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kSuccess, sender->last_finished_reason());
 
   // Request the main script again before receiving the other scripts.
   manager_host_ptr->RequestInstalledScript(kMainScriptURL);
@@ -652,7 +651,7 @@ TEST_F(ServiceWorkerInstalledScriptsSenderTest, RequestScriptAfterStreaming) {
     EXPECT_EQ(info.script_url(), script_info->script_url);
     info.CheckIfIdentical(script_info);
   }
-  EXPECT_EQ(SenderFinishedReason::kSuccess, sender->last_finished_reason());
+  EXPECT_EQ(FinishedReason::kSuccess, sender->last_finished_reason());
 }
 
 }  // namespace content

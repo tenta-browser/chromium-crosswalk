@@ -61,6 +61,7 @@ void MutateSomeSettings(
 class TwoClientExtensionSettingsAndAppSettingsSyncTest : public SyncTest {
  public:
   TwoClientExtensionSettingsAndAppSettingsSyncTest() : SyncTest(TWO_CLIENT) {}
+
   ~TwoClientExtensionSettingsAndAppSettingsSyncTest() override {}
 
  private:

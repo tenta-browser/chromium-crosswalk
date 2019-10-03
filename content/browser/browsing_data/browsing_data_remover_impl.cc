@@ -12,12 +12,17 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
+#include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/browsing_data/storage_partition_http_cache_data_remover.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover_delegate.h"
@@ -25,17 +30,11 @@
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
-#include "net/base/net_errors.h"
-#include "net/cookies/cookie_store.h"
-#include "net/http/http_network_session.h"
-#include "net/http/http_transaction_factory.h"
-#include "net/http/transport_security_state.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/channel_id_store.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "ppapi/features/features.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/features.h"
 #include "storage/browser/quota/special_storage_policy.h"
+#include "url/gurl.h"
 #include "url/origin.h"
 
 using base::UserMetricsAction;
@@ -43,6 +42,23 @@ using base::UserMetricsAction;
 namespace content {
 
 namespace {
+
+// Timeout after which the History.ClearBrowsingData.Duration.SlowTasks180s
+// histogram is recorded.
+const base::TimeDelta kSlowTaskTimeout = base::TimeDelta::FromSeconds(180);
+
+base::OnceClosure RunsOrPostOnCurrentTaskRunner(base::OnceClosure closure) {
+  return base::BindOnce(
+      [](base::OnceClosure closure,
+         scoped_refptr<base::TaskRunner> task_runner) {
+        if (base::ThreadTaskRunnerHandle::Get() == task_runner) {
+          std::move(closure).Run();
+          return;
+        }
+        task_runner->PostTask(FROM_HERE, std::move(closure));
+      },
+      std::move(closure), base::ThreadTaskRunnerHandle::Get());
+}
 
 // Returns whether |origin| matches |origin_type_mask| given the special
 // storage |policy|; and if |predicate| is not null, then also whether
@@ -54,18 +70,16 @@ bool DoesOriginMatchMaskAndURLs(
     const base::Callback<bool(const GURL&)>& predicate,
     const BrowsingDataRemoverDelegate::EmbedderOriginTypeMatcher&
         embedder_matcher,
-    const GURL& origin,
+    const url::Origin& origin,
     storage::SpecialStoragePolicy* policy) {
-  if (!predicate.is_null() && !predicate.Run(origin))
+  if (!predicate.is_null() && !predicate.Run(origin.GetURL()))
     return false;
 
   const std::vector<std::string>& schemes = url::GetWebStorageSchemes();
-  bool is_web_scheme =
-      (std::find(schemes.begin(), schemes.end(), origin.GetOrigin().scheme()) !=
-       schemes.end());
+  bool is_web_scheme = base::Contains(schemes, origin.scheme());
 
   // If a websafe origin is unprotected, it matches iff UNPROTECTED_WEB.
-  if ((!policy || !policy->IsStorageProtected(origin.GetOrigin())) &&
+  if ((!policy || !policy->IsStorageProtected(origin.GetURL())) &&
       is_web_scheme &&
       (origin_type_mask & BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB)) {
     return true;
@@ -73,8 +87,7 @@ bool DoesOriginMatchMaskAndURLs(
   origin_type_mask &= ~BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB;
 
   // Hosted applications (protected and websafe origins) iff PROTECTED_WEB.
-  if (policy && policy->IsStorageProtected(origin.GetOrigin()) &&
-      is_web_scheme &&
+  if (policy && policy->IsStorageProtected(origin.GetURL()) && is_web_scheme &&
       (origin_type_mask & BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB)) {
     return true;
   }
@@ -90,77 +103,7 @@ bool DoesOriginMatchMaskAndURLs(
   return false;
 }
 
-void ClearHttpAuthCacheOnIOThread(
-    scoped_refptr<net::URLRequestContextGetter> context_getter,
-    base::Time delete_begin) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  net::HttpNetworkSession* http_session = context_getter->GetURLRequestContext()
-                                              ->http_transaction_factory()
-                                              ->GetSession();
-  DCHECK(http_session);
-  http_session->http_auth_cache()->ClearEntriesAddedWithin(base::Time::Now() -
-                                                           delete_begin);
-  http_session->CloseAllConnections();
-}
-
-void OnClearedChannelIDsOnIOThread(net::URLRequestContextGetter* rq_context,
-                                   const base::Closure& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  // Need to close open SSL connections which may be using the channel ids we
-  // are deleting.
-  // TODO(mattm): http://crbug.com/166069 Make the server bound cert
-  // service/store have observers that can notify relevant things directly.
-  rq_context->GetURLRequestContext()
-      ->ssl_config_service()
-      ->NotifySSLConfigChange();
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, callback);
-}
-
-void ClearChannelIDsOnIOThread(
-    const base::Callback<bool(const std::string&)>& domain_predicate,
-    base::Time delete_begin,
-    base::Time delete_end,
-    scoped_refptr<net::URLRequestContextGetter> rq_context,
-    const base::Closure& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  net::ChannelIDService* channel_id_service =
-      rq_context->GetURLRequestContext()->channel_id_service();
-  channel_id_service->GetChannelIDStore()->DeleteForDomainsCreatedBetween(
-      domain_predicate, delete_begin, delete_end,
-      base::Bind(&OnClearedChannelIDsOnIOThread,
-                 base::RetainedRef(std::move(rq_context)), callback));
-}
-
 }  // namespace
-
-BrowsingDataRemoverImpl::SubTask::SubTask(const base::Closure& forward_callback)
-    : is_pending_(false),
-      forward_callback_(forward_callback),
-      weak_ptr_factory_(this) {
-  DCHECK(!forward_callback_.is_null());
-}
-
-BrowsingDataRemoverImpl::SubTask::~SubTask() {}
-
-void BrowsingDataRemoverImpl::SubTask::Start() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(!is_pending_);
-  is_pending_ = true;
-}
-
-base::Closure BrowsingDataRemoverImpl::SubTask::GetCompletionCallback() {
-  return base::Bind(&BrowsingDataRemoverImpl::SubTask::CompletionCallback,
-                    weak_ptr_factory_.GetWeakPtr());
-}
-
-void BrowsingDataRemoverImpl::SubTask::CompletionCallback() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(is_pending_);
-  is_pending_ = false;
-  forward_callback_.Run();
-}
 
 BrowsingDataRemoverImpl::BrowsingDataRemoverImpl(
     BrowserContext* browser_context)
@@ -168,18 +111,7 @@ BrowsingDataRemoverImpl::BrowsingDataRemoverImpl(
       remove_mask_(-1),
       origin_type_mask_(-1),
       is_removing_(false),
-      sub_task_forward_callback_(
-          base::Bind(&BrowsingDataRemoverImpl::NotifyIfDone,
-                     base::Unretained(this))),
-      synchronous_clear_operations_(sub_task_forward_callback_),
-      clear_embedder_data_(sub_task_forward_callback_),
-      clear_cache_(sub_task_forward_callback_),
-      clear_networking_history_(sub_task_forward_callback_),
-      clear_channel_ids_(sub_task_forward_callback_),
-      clear_http_auth_cache_(sub_task_forward_callback_),
-      clear_storage_partition_data_(sub_task_forward_callback_),
-      storage_partition_for_testing_(nullptr),
-      weak_ptr_factory_(this) {
+      storage_partition_for_testing_(nullptr) {
   DCHECK(browser_context_);
 }
 
@@ -215,15 +147,15 @@ void BrowsingDataRemoverImpl::SetEmbedderDelegate(
 
 bool BrowsingDataRemoverImpl::DoesOriginMatchMask(
     int origin_type_mask,
-    const GURL& origin,
-    storage::SpecialStoragePolicy* policy) const {
+    const url::Origin& origin,
+    storage::SpecialStoragePolicy* policy) {
   BrowsingDataRemoverDelegate::EmbedderOriginTypeMatcher embedder_matcher;
   if (embedder_delegate_)
     embedder_matcher = embedder_delegate_->GetOriginTypeMatcher();
 
-  return DoesOriginMatchMaskAndURLs(origin_type_mask,
-                                    base::Callback<bool(const GURL&)>(),
-                                    embedder_matcher, origin, policy);
+  return DoesOriginMatchMaskAndURLs(
+      origin_type_mask, base::Callback<bool(const GURL&)>(),
+      std::move(embedder_matcher), origin, policy);
 }
 
 void BrowsingDataRemoverImpl::Remove(const base::Time& delete_begin,
@@ -301,10 +233,19 @@ void BrowsingDataRemoverImpl::RemoveInternal(
 
 void BrowsingDataRemoverImpl::RunNextTask() {
   DCHECK(!task_queue_.empty());
-  const RemovalTask& removal_task = task_queue_.front();
+  RemovalTask& removal_task = task_queue_.front();
+  removal_task.task_started = base::Time::Now();
+
+  // To detect tasks that are causing slow deletions, record running sub tasks
+  // after a delay.
+  slow_pending_tasks_closure_.Reset(base::BindRepeating(
+      &BrowsingDataRemoverImpl::RecordUnfinishedSubTasks, GetWeakPtr()));
+  base::PostDelayedTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                                  slow_pending_tasks_closure_.callback(),
+                                  kSlowTaskTimeout);
 
   RemoveImpl(removal_task.delete_begin, removal_task.delete_end,
-             removal_task.remove_mask, *removal_task.filter_builder,
+             removal_task.remove_mask, removal_task.filter_builder.get(),
              removal_task.origin_type_mask);
 }
 
@@ -312,7 +253,7 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     const base::Time& delete_begin,
     const base::Time& delete_end,
     int remove_mask,
-    const BrowsingDataFilterBuilder& filter_builder,
+    BrowsingDataFilterBuilder* filter_builder,
     int origin_type_mask) {
   // =============== README before adding more storage backends ===============
   //
@@ -324,7 +265,10 @@ void BrowsingDataRemoverImpl::RemoveImpl(
   // 3. Do not support partial deletion, i.e. only delete your data if
   //    |filter_builder.IsEmptyBlacklist()|. Add a comment explaining why this
   //    is acceptable.
-  synchronous_clear_operations_.Start();
+  base::ScopedClosureRunner synchronous_clear_operations(
+      CreateTaskCompletionClosure(TracingDataType::kSynchronous));
+
+  TRACE_EVENT0("browsing_data", "BrowsingDataRemoverImpl::RemoveImpl");
 
   // crbug.com/140910: Many places were calling this with base::Time() as
   // delete_end, even though they should've used base::Time::Max().
@@ -351,8 +295,15 @@ void BrowsingDataRemoverImpl::RemoveImpl(
 
   //////////////////////////////////////////////////////////////////////////////
   // INITIALIZATION
-  base::Callback<bool(const GURL& url)> filter =
-      filter_builder.BuildGeneralFilter();
+  base::RepeatingCallback<bool(const GURL& url)> filter =
+      filter_builder->BuildGeneralFilter();
+
+  // Some backends support a filter that |is_null()| to make complete deletion
+  // more efficient.
+  base::RepeatingCallback<bool(const GURL&)> nullable_filter =
+      filter_builder->IsEmptyBlacklist()
+          ? base::RepeatingCallback<bool(const GURL&)>()
+          : filter;
 
   //////////////////////////////////////////////////////////////////////////////
   // DATA_TYPE_DOWNLOADS
@@ -363,26 +314,6 @@ void BrowsingDataRemoverImpl::RemoveImpl(
         BrowserContext::GetDownloadManager(browser_context_);
     download_manager->RemoveDownloadsByURLAndTime(filter, delete_begin_,
                                                   delete_end_);
-  }
-
-  //////////////////////////////////////////////////////////////////////////////
-  // DATA_TYPE_CHANNEL_IDS
-  // Channel IDs are not separated for protected and unprotected web
-  // origins. We check the origin_type_mask_ to prevent unintended deletion.
-  if (remove_mask & DATA_TYPE_CHANNEL_IDS &&
-      origin_type_mask_ & ORIGIN_TYPE_UNPROTECTED_WEB) {
-    base::RecordAction(UserMetricsAction("ClearBrowsingData_ChannelIDs"));
-    // Since we are running on the UI thread don't call GetURLRequestContext().
-    scoped_refptr<net::URLRequestContextGetter> rq_context =
-        BrowserContext::GetDefaultStoragePartition(browser_context_)
-            ->GetURLRequestContext();
-    clear_channel_ids_.Start();
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&ClearChannelIDsOnIOThread,
-                       filter_builder.BuildChannelIDFilter(), delete_begin_,
-                       delete_end_, std::move(rq_context),
-                       clear_channel_ids_.GetCompletionCallback()));
   }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -425,6 +356,10 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS;
   }
+  if (remove_mask & DATA_TYPE_BACKGROUND_FETCH) {
+    storage_partition_remove_mask |=
+        StoragePartition::REMOVE_DATA_MASK_BACKGROUND_FETCH;
+  }
 
   // Content Decryption Modules used by Encrypted Media store licenses in a
   // private filesystem. These are different than content licenses used by
@@ -443,8 +378,6 @@ void BrowsingDataRemoverImpl::RemoveImpl(
   }
 
   if (storage_partition_remove_mask) {
-    clear_storage_partition_data_.Start();
-
     uint32_t quota_storage_remove_mask =
         ~StoragePartition::QUOTA_MANAGED_STORAGE_MASK_PERSISTENT;
 
@@ -457,24 +390,30 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     }
 
     // If cookies are supposed to be conditionally deleted from the storage
-    // partition, create a cookie matcher function.
-    StoragePartition::CookieMatcherFunction cookie_matcher;
-    if (!filter_builder.IsEmptyBlacklist() &&
+    // partition, create the deletion info object.
+    network::mojom::CookieDeletionFilterPtr deletion_filter;
+    if (!filter_builder->IsEmptyBlacklist() &&
         (storage_partition_remove_mask &
          StoragePartition::REMOVE_DATA_MASK_COOKIES)) {
-      cookie_matcher = filter_builder.BuildCookieFilter();
+      deletion_filter = filter_builder->BuildCookieDeletionFilter();
+    } else {
+      deletion_filter = network::mojom::CookieDeletionFilter::New();
     }
 
     BrowsingDataRemoverDelegate::EmbedderOriginTypeMatcher embedder_matcher;
     if (embedder_delegate_)
       embedder_matcher = embedder_delegate_->GetOriginTypeMatcher();
+    bool perform_storage_cleanup =
+        delete_begin_.is_null() && delete_end_.is_max() &&
+        filter_builder->GetMode() == BrowsingDataFilterBuilder::BLACKLIST;
 
     storage_partition->ClearData(
         storage_partition_remove_mask, quota_storage_remove_mask,
-        base::Bind(&DoesOriginMatchMaskAndURLs, origin_type_mask_, filter,
-                   embedder_matcher),
-        cookie_matcher, delete_begin_, delete_end_,
-        clear_storage_partition_data_.GetCompletionCallback());
+        base::BindRepeating(&DoesOriginMatchMaskAndURLs, origin_type_mask_,
+                            filter, std::move(embedder_matcher)),
+        std::move(deletion_filter), perform_storage_cleanup, delete_begin_,
+        delete_end_,
+        CreateTaskCompletionClosure(TracingDataType::kStoragePartition));
   }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -482,20 +421,34 @@ void BrowsingDataRemoverImpl::RemoveImpl(
   if (remove_mask & DATA_TYPE_CACHE) {
     base::RecordAction(UserMetricsAction("ClearBrowsingData_Cache"));
 
+    network::mojom::NetworkContext* network_context =
+        storage_partition->GetNetworkContext();
+
     // TODO(msramek): Clear the cache of all renderers.
 
-    clear_cache_.Start();
-    storage_partition->ClearHttpAndMediaCaches(
-        delete_begin, delete_end,
-        filter_builder.IsEmptyBlacklist() ? base::Callback<bool(const GURL&)>()
-                                          : filter,
-        clear_cache_.GetCompletionCallback());
+    // TODO(crbug.com/813882): implement retry on network service.
+    if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+      // The clearing of the HTTP cache happens in the network service process
+      // when enabled. Note that we've deprecated the concept of a media cache,
+      // and are now using a single cache for both purposes.
+      network_context->ClearHttpCache(
+          delete_begin, delete_end, filter_builder->BuildNetworkServiceFilter(),
+          CreateTaskCompletionClosureForMojo(TracingDataType::kHttpCache));
+    } else {
+      storage_partition->ClearHttpAndMediaCaches(
+          delete_begin, delete_end, nullable_filter,
+          CreateTaskCompletionClosureForMojo(
+              TracingDataType::kHttpAndMediaCaches));
+    }
+    storage_partition->ClearCodeCaches(
+        delete_begin, delete_end, nullable_filter,
+        CreateTaskCompletionClosureForMojo(TracingDataType::kCodeCaches));
 
     // When clearing cache, wipe accumulated network related data
     // (TransportSecurityState and HttpServerPropertiesManager data).
-    clear_networking_history_.Start();
-    storage_partition->GetNetworkContext()->ClearNetworkingHistorySince(
-        delete_begin, clear_networking_history_.GetCompletionCallback());
+    network_context->ClearNetworkingHistorySince(
+        delete_begin,
+        CreateTaskCompletionClosureForMojo(TracingDataType::kNetworkHistory));
 
     // Tell the shader disk cache to clear.
     base::RecordAction(UserMetricsAction("ClearBrowsingData_ShaderCache"));
@@ -503,31 +456,41 @@ void BrowsingDataRemoverImpl::RemoveImpl(
         StoragePartition::REMOVE_DATA_MASK_SHADER_CACHE;
   }
 
+#if BUILDFLAG(ENABLE_REPORTING)
+  //////////////////////////////////////////////////////////////////////////////
+  // Reporting cache.
+  if (remove_mask & DATA_TYPE_COOKIES) {
+    network::mojom::NetworkContext* network_context =
+        BrowserContext::GetDefaultStoragePartition(browser_context_)
+            ->GetNetworkContext();
+    network_context->ClearReportingCacheClients(
+        filter_builder->BuildNetworkServiceFilter(),
+        CreateTaskCompletionClosureForMojo(TracingDataType::kReportingCache));
+    network_context->ClearNetworkErrorLogging(
+        filter_builder->BuildNetworkServiceFilter(),
+        CreateTaskCompletionClosureForMojo(
+            TracingDataType::kNetworkErrorLogging));
+  }
+#endif  // BUILDFLAG(ENABLE_REPORTING)
+
   //////////////////////////////////////////////////////////////////////////////
   // Auth cache.
-  if (remove_mask & DATA_TYPE_COOKIES) {
-    scoped_refptr<net::URLRequestContextGetter> request_context =
-        BrowserContext::GetDefaultStoragePartition(browser_context_)
-            ->GetURLRequestContext();
-    clear_http_auth_cache_.Start();
-    BrowserThread::PostTaskAndReply(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&ClearHttpAuthCacheOnIOThread,
-                       std::move(request_context), delete_begin_),
-        clear_http_auth_cache_.GetCompletionCallback());
+  if ((remove_mask & DATA_TYPE_COOKIES) &&
+      !(remove_mask & DATA_TYPE_AVOID_CLOSING_CONNECTIONS)) {
+    BrowserContext::GetDefaultStoragePartition(browser_context_)
+        ->GetNetworkContext()
+        ->ClearHttpAuthCache(delete_begin, CreateTaskCompletionClosureForMojo(
+                                               TracingDataType::kAuthCache));
   }
 
   //////////////////////////////////////////////////////////////////////////////
   // Embedder data.
   if (embedder_delegate_) {
-    clear_embedder_data_.Start();
     embedder_delegate_->RemoveEmbedderData(
         delete_begin_, delete_end_, remove_mask, filter_builder,
-        origin_type_mask, clear_embedder_data_.GetCompletionCallback());
+        origin_type_mask,
+        CreateTaskCompletionClosure(TracingDataType::kEmbedderData));
   }
-
-  // Notify in case all actions taken were synchronous.
-  synchronous_clear_operations_.GetCompletionCallback().Run();
 }
 
 void BrowsingDataRemoverImpl::AddObserver(Observer* observer) {
@@ -584,15 +547,6 @@ BrowsingDataRemoverImpl::RemovalTask::RemovalTask(
 
 BrowsingDataRemoverImpl::RemovalTask::~RemovalTask() {}
 
-bool BrowsingDataRemoverImpl::AllDone() {
-  return !synchronous_clear_operations_.is_pending() &&
-         !clear_embedder_data_.is_pending() && !clear_cache_.is_pending() &&
-         !clear_networking_history_.is_pending() &&
-         !clear_channel_ids_.is_pending() &&
-         !clear_http_auth_cache_.is_pending() &&
-         !clear_storage_partition_data_.is_pending();
-}
-
 void BrowsingDataRemoverImpl::Notify() {
   // Some tests call |RemoveImpl| directly, without using the task scheduler.
   // TODO(msramek): Improve those tests so we don't have to do this. Tests
@@ -608,9 +562,22 @@ void BrowsingDataRemoverImpl::Notify() {
   // itself in the meantime.
   DCHECK(!task_queue_.empty());
 
-  if (task_queue_.front().observer != nullptr &&
-      observer_list_.HasObserver(task_queue_.front().observer)) {
-    task_queue_.front().observer->OnBrowsingDataRemoverDone();
+  const RemovalTask& task = task_queue_.front();
+  if (task.observer != nullptr && observer_list_.HasObserver(task.observer)) {
+    task.observer->OnBrowsingDataRemoverDone();
+  }
+  if (task.filter_builder->GetMode() == BrowsingDataFilterBuilder::BLACKLIST) {
+    base::TimeDelta delta = base::Time::Now() - task.task_started;
+    // Full and partial deletions are often implemented differently, so
+    // we track them in seperate metrics.
+    if (task.delete_begin.is_null() && task.delete_end.is_max() &&
+        task.filter_builder->IsEmptyBlacklist()) {
+      UMA_HISTOGRAM_MEDIUM_TIMES(
+          "History.ClearBrowsingData.Duration.FullDeletion", delta);
+    } else {
+      UMA_HISTOGRAM_MEDIUM_TIMES(
+          "History.ClearBrowsingData.Duration.PartialDeletion", delta);
+    }
   }
 
   task_queue_.pop();
@@ -624,18 +591,26 @@ void BrowsingDataRemoverImpl::Notify() {
   // Yield to the UI thread before executing the next removal task.
   // TODO(msramek): Consider also adding a backoff if too many tasks
   // are scheduled.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&BrowsingDataRemoverImpl::RunNextTask, GetWeakPtr()));
 }
 
-void BrowsingDataRemoverImpl::NotifyIfDone() {
+void BrowsingDataRemoverImpl::OnTaskComplete(TracingDataType data_type) {
   // TODO(brettw) http://crbug.com/305259: This should also observe session
   // clearing (what about other things such as passwords, etc.?) and wait for
   // them to complete before continuing.
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  size_t num_erased = pending_sub_tasks_.erase(data_type);
+  DCHECK_EQ(num_erased, 1U);
 
-  if (!AllDone())
+  TRACE_EVENT_ASYNC_END1("browsing_data", "BrowsingDataRemoverImpl",
+                         static_cast<int>(data_type), "data_type",
+                         static_cast<int>(data_type));
+  if (!pending_sub_tasks_.empty())
     return;
+
+  slow_pending_tasks_closure_.Cancel();
 
   if (!would_complete_callback_.is_null()) {
     would_complete_callback_.Run(
@@ -644,6 +619,36 @@ void BrowsingDataRemoverImpl::NotifyIfDone() {
   }
 
   Notify();
+}
+
+base::OnceClosure BrowsingDataRemoverImpl::CreateTaskCompletionClosure(
+    TracingDataType data_type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  auto result = pending_sub_tasks_.insert(data_type);
+  DCHECK(result.second) << "Task already started: "
+                        << static_cast<int>(data_type);
+  TRACE_EVENT_ASYNC_BEGIN1("browsing_data", "BrowsingDataRemoverImpl",
+                           static_cast<int>(data_type), "data_type",
+                           static_cast<int>(data_type));
+  return base::BindOnce(&BrowsingDataRemoverImpl::OnTaskComplete, GetWeakPtr(),
+                        data_type);
+}
+
+base::OnceClosure BrowsingDataRemoverImpl::CreateTaskCompletionClosureForMojo(
+    TracingDataType data_type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return RunsOrPostOnCurrentTaskRunner(mojo::WrapCallbackWithDropHandler(
+      CreateTaskCompletionClosure(data_type),
+      base::BindOnce(&BrowsingDataRemoverImpl::OnTaskComplete, GetWeakPtr(),
+                     data_type)));
+}
+
+void BrowsingDataRemoverImpl::RecordUnfinishedSubTasks() {
+  DCHECK(!pending_sub_tasks_.empty());
+  for (TracingDataType task : pending_sub_tasks_) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "History.ClearBrowsingData.Duration.SlowTasks180s", task);
+  }
 }
 
 base::WeakPtr<BrowsingDataRemoverImpl> BrowsingDataRemoverImpl::GetWeakPtr() {

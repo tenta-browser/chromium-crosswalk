@@ -5,22 +5,33 @@
 #include "components/omnibox/browser/autocomplete_provider.h"
 
 #include <algorithm>
+#include <set>
 #include <string>
 
+#include "base/feature_list.h"
+#include "base/i18n/case_conversion.h"
 #include "base/logging.h"
+#include "base/no_destructor.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
+#include "components/bookmarks/browser/bookmark_utils.h"
+#include "components/omnibox/browser/autocomplete_i18n.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/omnibox/browser/autocomplete_match_classification.h"
+#include "components/omnibox/browser/history_provider.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/browser/scored_history_match.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/url_formatter/url_fixer.h"
 #include "url/gurl.h"
 
-// static
-const size_t AutocompleteProvider::kMaxMatches = 3;
-
 AutocompleteProvider::AutocompleteProvider(Type type)
-    : done_(true),
-      type_(type) {
-}
+    : provider_max_matches_(OmniboxFieldTrial::GetProviderMaxMatches(type)),
+      done_(true),
+      type_(type) {}
 
 // static
 const char* AutocompleteProvider::TypeToString(Type type) {
@@ -29,6 +40,8 @@ const char* AutocompleteProvider::TypeToString(Type type) {
       return "Bookmark";
     case TYPE_BUILTIN:
       return "Builtin";
+    case TYPE_DOCUMENT:
+      return "Document";
     case TYPE_HISTORY_QUICK:
       return "HistoryQuick";
     case TYPE_HISTORY_URL:
@@ -41,10 +54,10 @@ const char* AutocompleteProvider::TypeToString(Type type) {
       return "Shortcuts";
     case TYPE_ZERO_SUGGEST:
       return "ZeroSuggest";
-    case TYPE_CLIPBOARD_URL:
-      return "ClipboardURL";
-    case TYPE_PHYSICAL_WEB:
-      return "PhysicalWeb";
+    case TYPE_CLIPBOARD:
+      return "Clipboard";
+    case TYPE_ON_DEVICE_HEAD:
+      return "OnDeviceHead";
     default:
       NOTREACHED() << "Unhandled AutocompleteProvider::Type " << type;
       return "Unknown";
@@ -60,6 +73,34 @@ const char* AutocompleteProvider::GetName() const {
   return TypeToString(type_);
 }
 
+// static
+ACMatchClassifications AutocompleteProvider::ClassifyAllMatchesInString(
+    const base::string16& find_text,
+    const base::string16& text,
+    const bool text_is_search_query,
+    const ACMatchClassifications& original_class) {
+  // TODO (manukh) Move this function to autocomplete_match_classification
+  DCHECK(!find_text.empty());
+
+  if (text.empty())
+    return original_class;
+
+  TermMatches term_matches = FindTermMatches(find_text, text);
+
+  ACMatchClassifications classifications;
+  if (text_is_search_query) {
+    classifications = ClassifyTermMatches(term_matches, text.size(),
+                                          ACMatchClassification::NONE,
+                                          ACMatchClassification::MATCH);
+  } else
+    classifications = ClassifyTermMatches(term_matches, text.size(),
+                                          ACMatchClassification::MATCH,
+                                          ACMatchClassification::NONE);
+
+  return AutocompleteMatch::MergeClassifications(original_class,
+                                                 classifications);
+}
+
 metrics::OmniboxEventProto_ProviderType AutocompleteProvider::
     AsOmniboxEventProviderType() const {
   switch (type_) {
@@ -67,6 +108,8 @@ metrics::OmniboxEventProto_ProviderType AutocompleteProvider::
       return metrics::OmniboxEventProto::BOOKMARK;
     case TYPE_BUILTIN:
       return metrics::OmniboxEventProto::BUILTIN;
+    case TYPE_DOCUMENT:
+      return metrics::OmniboxEventProto::DOCUMENT;
     case TYPE_HISTORY_QUICK:
       return metrics::OmniboxEventProto::HISTORY_QUICK;
     case TYPE_HISTORY_URL:
@@ -79,10 +122,8 @@ metrics::OmniboxEventProto_ProviderType AutocompleteProvider::
       return metrics::OmniboxEventProto::SHORTCUTS;
     case TYPE_ZERO_SUGGEST:
       return metrics::OmniboxEventProto::ZERO_SUGGEST;
-    case TYPE_CLIPBOARD_URL:
-      return metrics::OmniboxEventProto::CLIPBOARD_URL;
-    case TYPE_PHYSICAL_WEB:
-      return metrics::OmniboxEventProto::PHYSICAL_WEB;
+    case TYPE_CLIPBOARD:
+      return metrics::OmniboxEventProto::CLIPBOARD;
     default:
       NOTREACHED() << "Unhandled AutocompleteProvider::Type " << type_;
       return metrics::OmniboxEventProto::UNKNOWN_PROVIDER;
@@ -98,6 +139,10 @@ void AutocompleteProvider::AddProviderInfo(ProvidersInfo* provider_info) const {
 }
 
 void AutocompleteProvider::ResetSession() {
+}
+
+size_t AutocompleteProvider::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(matches_);
 }
 
 AutocompleteProvider::~AutocompleteProvider() {
@@ -159,9 +204,14 @@ AutocompleteProvider::FixupReturn AutocompleteProvider::FixupUserInput(
   // harm in making sure.
   const size_t last_input_nonslash =
       input_text.find_last_not_of(base::ASCIIToUTF16("/\\"));
-  const size_t num_input_slashes =
-      (last_input_nonslash == base::string16::npos) ?
-      input_text.length() : (input_text.length() - 1 - last_input_nonslash);
+  size_t num_input_slashes =
+      (last_input_nonslash == base::string16::npos)
+          ? input_text.length()
+          : (input_text.length() - 1 - last_input_nonslash);
+  // If we appended text, user slashes are irrelevant.
+  if (output.length() > input_text.length() &&
+      base::StartsWith(output, input_text, base::CompareCase::SENSITIVE))
+    num_input_slashes = 0;
   const size_t last_output_nonslash =
       output.find_last_not_of(base::ASCIIToUTF16("/\\"));
   const size_t num_output_slashes =
@@ -193,4 +243,26 @@ size_t AutocompleteProvider::TrimHttpPrefix(base::string16* url) {
     ++prefix_end;
   url->erase(scheme_pos, prefix_end - scheme_pos);
   return (scheme_pos == 0) ? prefix_end : 0;
+}
+
+// static
+bool AutocompleteProvider::InExplicitExperimentalKeywordMode(
+    const AutocompleteInput& input,
+    const base::string16& keyword) {
+  // It is important to this method that we determine if the user entered
+  // keyword mode intentionally, as we use this routine to e.g. filter
+  // all but keyword results. Currently we assume that the user entered
+  // keyword mode intentionally with all entry methods except with a
+  // space (and disregard entry method during a backspace). However, if the
+  // user has typed a char past the space, we again assume keyword mode.
+  return OmniboxFieldTrial::IsExperimentalKeywordModeEnabled() &&
+         input.prefer_keyword() &&
+         base::StartsWith(input.text(), keyword,
+                          base::CompareCase::SENSITIVE) &&
+         (((input.keyword_mode_entry_method() !=
+                metrics::OmniboxEventProto::SPACE_AT_END &&
+            input.keyword_mode_entry_method() !=
+                metrics::OmniboxEventProto::SPACE_IN_MIDDLE) &&
+           !input.prevent_inline_autocomplete()) ||
+          input.text().size() > keyword.size() + 1);
 }

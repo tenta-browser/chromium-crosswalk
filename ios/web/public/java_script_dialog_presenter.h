@@ -17,6 +17,8 @@ class WebState;
 
 class JavaScriptDialogPresenter {
  public:
+  virtual ~JavaScriptDialogPresenter() = default;
+
   // Requests presentation of a JavaScript dialog. Clients must always call
   // |callback| even if they choose not to present the dialog.
   virtual void RunJavaScriptDialog(WebState* web_state,
@@ -24,7 +26,7 @@ class JavaScriptDialogPresenter {
                                    JavaScriptDialogType dialog_type,
                                    NSString* message_text,
                                    NSString* default_prompt_text,
-                                   const DialogClosedCallback& callback) = 0;
+                                   DialogClosedCallback callback) = 0;
   // Informs clients that all requested dialogs associated with |web_state|
   // should be dismissed.
   virtual void CancelDialogs(WebState* web_state) = 0;

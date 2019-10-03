@@ -4,8 +4,9 @@
 
 #include "ios/chrome/browser/ui/webui/version_ui.h"
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
@@ -17,13 +18,13 @@
 #include "components/version_ui/version_ui_constants.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/browser/ui/webui/version_handler.h"
 #include "ios/chrome/common/channel_info.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/web/public/web_client.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -54,7 +55,7 @@ web::WebUIIOSDataSource* CreateVersionUIDataSource() {
   html_source->AddString(
       version_ui::kCopyright,
       l10n_util::GetStringFUTF16(IDS_IOS_ABOUT_VERSION_COPYRIGHT,
-                                 base::IntToString16(exploded_time.year)));
+                                 base::NumberToString16(exploded_time.year)));
   html_source->AddLocalizedString(version_ui::kRevision,
                                   IDS_VERSION_UI_REVISION);
   std::string last_change = version_info::GetLastChange();
@@ -68,13 +69,9 @@ web::WebUIIOSDataSource* CreateVersionUIDataSource() {
                                   version_info::IsOfficialBuild()
                                       ? IDS_VERSION_UI_OFFICIAL
                                       : IDS_VERSION_UI_UNOFFICIAL);
-#if defined(ARCH_CPU_64_BITS)
-  html_source->AddLocalizedString(version_ui::kVersionBitSize,
-                                  IDS_VERSION_UI_64BIT);
-#else
-  html_source->AddLocalizedString(version_ui::kVersionBitSize,
-                                  IDS_VERSION_UI_32BIT);
-#endif
+  html_source->AddLocalizedString(
+      version_ui::kVersionBitSize,
+      sizeof(void*) == 8 ? IDS_VERSION_UI_64BIT : IDS_VERSION_UI_32BIT);
   html_source->AddLocalizedString(version_ui::kUserAgentName,
                                   IDS_VERSION_UI_USER_AGENT);
   html_source->AddString(
@@ -94,20 +91,29 @@ web::WebUIIOSDataSource* CreateVersionUIDataSource() {
 
   html_source->AddLocalizedString(version_ui::kVariationsName,
                                   IDS_VERSION_UI_VARIATIONS);
+  html_source->AddLocalizedString(version_ui::kVariationsCmdName,
+                                  IDS_VERSION_UI_VARIATIONS_CMD);
+
+  html_source->AddString(version_ui::kSanitizer, version_info::GetSanitizerList());
+
+#if defined(__apple_build_version__)
+  html_source->AddString(version_ui::kCompiler, "Apple Clang");
+#else
+  html_source->AddString(version_ui::kCompiler, "LLVM clang");
+#endif
 
   html_source->SetJsonPath("strings.js");
   html_source->AddResourcePath(version_ui::kVersionJS, IDR_VERSION_UI_JS);
   html_source->AddResourcePath(version_ui::kAboutVersionCSS,
                                IDR_VERSION_UI_CSS);
   html_source->SetDefaultResource(IDR_VERSION_UI_HTML);
-  html_source->UseGzip();
   return html_source;
 }
 
 }  // namespace
 
 VersionUI::VersionUI(web::WebUIIOS* web_ui) : web::WebUIIOSController(web_ui) {
-  web_ui->AddMessageHandler(base::MakeUnique<VersionHandler>());
+  web_ui->AddMessageHandler(std::make_unique<VersionHandler>());
   web::WebUIIOSDataSource::Add(ios::ChromeBrowserState::FromWebUIIOS(web_ui),
                                CreateVersionUIDataSource());
 }

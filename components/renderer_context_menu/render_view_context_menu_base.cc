@@ -16,8 +16,8 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/menu_item.h"
-#include "ppapi/features/features.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
 
 using blink::WebContextMenuData;
 using blink::WebString;
@@ -204,6 +204,13 @@ void RenderViewContextMenuBase::AddMenuItem(int command_id,
   menu_model_.AddItem(command_id, title);
 }
 
+void RenderViewContextMenuBase::AddMenuItemWithIcon(
+    int command_id,
+    const base::string16& title,
+    const gfx::ImageSkia& image) {
+  menu_model_.AddItemWithIcon(command_id, title, image);
+}
+
 void RenderViewContextMenuBase::AddCheckItem(int command_id,
                                          const base::string16& title) {
   menu_model_.AddCheckItem(command_id, title);
@@ -219,24 +226,70 @@ void RenderViewContextMenuBase::AddSubMenu(int command_id,
   menu_model_.AddSubMenu(command_id, label, model);
 }
 
+void RenderViewContextMenuBase::AddSubMenuWithStringIdAndIcon(
+    int command_id,
+    int message_id,
+    ui::MenuModel* model,
+    const gfx::ImageSkia& image) {
+  menu_model_.AddSubMenuWithStringIdAndIcon(command_id, message_id, model,
+                                            image);
+}
+
 void RenderViewContextMenuBase::UpdateMenuItem(int command_id,
                                            bool enabled,
                                            bool hidden,
                                            const base::string16& label) {
-  if (toolkit_delegate_) {
-    toolkit_delegate_->UpdateMenuItem(command_id,
-                                      enabled,
-                                      hidden,
-                                      label);
-  }
+  int index = menu_model_.GetIndexOfCommandId(command_id);
+  if (index == -1)
+    return;
+
+  menu_model_.SetLabel(index, label);
+  menu_model_.SetEnabledAt(index, enabled);
+  menu_model_.SetVisibleAt(index, !hidden);
+  if (toolkit_delegate_)
+    toolkit_delegate_->RebuildMenu();
 }
 
 void RenderViewContextMenuBase::UpdateMenuIcon(int command_id,
                                                const gfx::Image& image) {
+  int index = menu_model_.GetIndexOfCommandId(command_id);
+  if (index == -1)
+    return;
+
+  menu_model_.SetIcon(index, image);
 #if defined(OS_CHROMEOS)
   if (toolkit_delegate_)
-    toolkit_delegate_->UpdateMenuIcon(command_id, image);
+    toolkit_delegate_->RebuildMenu();
 #endif
+}
+
+void RenderViewContextMenuBase::RemoveMenuItem(int command_id) {
+  int index = menu_model_.GetIndexOfCommandId(command_id);
+  if (index == -1)
+    return;
+
+  menu_model_.RemoveItemAt(index);
+  if (toolkit_delegate_)
+    toolkit_delegate_->RebuildMenu();
+}
+
+// Removes separators so that if there are two separators next to each other,
+// only one of them remains.
+void RenderViewContextMenuBase::RemoveAdjacentSeparators() {
+  int num_items = menu_model_.GetItemCount();
+  for (int index = num_items - 1; index > 0; --index) {
+    ui::MenuModel::ItemType curr_type = menu_model_.GetTypeAt(index);
+    ui::MenuModel::ItemType prev_type = menu_model_.GetTypeAt(index - 1);
+
+    if (curr_type == ui::MenuModel::ItemType::TYPE_SEPARATOR &&
+        prev_type == ui::MenuModel::ItemType::TYPE_SEPARATOR) {
+      // We found adjacent separators, remove the one at the bottom.
+      menu_model_.RemoveItemAt(index);
+    }
+  }
+
+  if (toolkit_delegate_)
+    toolkit_delegate_->RebuildMenu();
 }
 
 RenderViewHost* RenderViewContextMenuBase::GetRenderViewHost() const {
@@ -321,10 +374,11 @@ void RenderViewContextMenuBase::ExecuteCommand(int id, int event_flags) {
   command_executed_ = false;
 }
 
-void RenderViewContextMenuBase::MenuWillShow(ui::SimpleMenuModel* source) {
+void RenderViewContextMenuBase::OnMenuWillShow(ui::SimpleMenuModel* source) {
   for (int i = 0; i < source->GetItemCount(); ++i) {
     if (source->IsVisibleAt(i) &&
-        source->GetTypeAt(i) != ui::MenuModel::TYPE_SEPARATOR) {
+        source->GetTypeAt(i) != ui::MenuModel::TYPE_SEPARATOR &&
+        source->GetTypeAt(i) != ui::MenuModel::TYPE_SUBMENU) {
       RecordShownItem(source->GetCommandIdAt(i));
     }
   }

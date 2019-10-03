@@ -6,10 +6,6 @@
 
 namespace prefs {
 
-// The value to use for Accept-Languages HTTP header when making an HTTP
-// request.
-const char kAcceptLanguages[] = "intl.accept_languages";
-
 // The application locale.
 const char kApplicationLocale[] = "intl.app_locale";
 
@@ -60,6 +56,12 @@ const char kEnableDoNotTrack[] = "enable_do_not_track";
 // Prefs for persisting HttpServerProperties.
 const char kHttpServerProperties[] = "net.http_server_properties";
 
+// Caches the folder id of user's position in the bookmark hierarchy navigator.
+const char kIosBookmarkCachedFolderId[] = "ios.bookmark.cached_folder_id";
+
+// Caches the scroll position of Bookmarks.
+const char kIosBookmarkCachedTopMostRow[] = "ios.bookmark.cached_top_most_row";
+
 // Preference that keep information about where to create a new bookmark.
 const char kIosBookmarkFolderDefault[] = "ios.bookmark.default_folder";
 
@@ -80,10 +82,6 @@ const char kIosSettingsPromoAlreadySeen[] = "ios.settings.promo_already_seen";
 // in the settings view.
 const char kIosSettingsSigninPromoDisplayedCount[] =
     "ios.settings.signin_promo_displayed_count";
-
-// Whether the user has enabled the Physical Web feature to surface URLs
-// broadcast by nearby devices.
-const char kIosPhysicalWebEnabled[] = "ios.physical_web_enabled";
 
 // True if the previous session exited cleanly.
 // This can be different from kStabilityExitedCleanly, because the last run of
@@ -130,11 +128,6 @@ const char kSigninLastAccounts[] = "ios.signin.last_accounts";
 // accounts was migrated to use account ids instead of emails.
 const char kSigninLastAccountsMigrated[] = "ios.signin.last_accounts_migrated";
 
-// String which contains the user id of the user signed in with shared
-// authentication.
-const char kSigninSharedAuthenticationUserId[] =
-    "ios.signin.shared_authentication_user_id";
-
 // Boolean which indicates if user should be prompted to sign in again
 // when a new tab is created.
 const char kSigninShouldPromptForSigninAgain[] =
@@ -150,39 +143,5 @@ const char kOmniboxGeolocationAuthorizationState[] =
 // authorization alert.
 const char kOmniboxGeolocationLastAuthorizationAlertVersion[] =
     "ios.omnibox.geolocation_last_authorization_alert_version";
-
-// Integer which contains the timestamp at which the "Rate This App" dialog was
-// last shown.
-const char kRateThisAppDialogLastShownTime[] =
-    "ios.ratethisapp.dialog_last_shown_time";
-
-// Index of the entry point that initiated sending the SMS to the user for the
-// "desktop to iOS" promotion (see DesktopIOSPromotion.IOSSigninReason histogram
-// for details).
-const char kDesktopIOSPromotionSMSEntryPoint[] =
-    "ios.desktop_ios_promo_sms_entrypoint";
-
-// Indexes of the entry points presented to the user for "desktop to iOS"
-// promotion
-const char kDesktopIOSPromotionShownEntryPoints[] =
-    "ios.desktop_ios_promo_shown_entrypoints";
-
-// Timestamp of the last "desktop to iOS" promotion SMS dispatch or of the last
-// impression (if no SMS was sent).
-const char kDesktopIOSPromotionLastImpression[] =
-    "ios.desktop_ios_promo_last_impression";
-
-// True if the "desktop to iOS" promotion was successful, i.e. user installed
-// the application and signed in after seeing the promotion and receiving the
-// SMS.
-const char kDesktopIOSPromotionDone[] = "ios.desktop_ios_promo_done";
-
-// True if the user is eligible to receive "desktop to iOS" promotion.
-const char kDesktopIOSPromotionEligible[] = "ios.desktoptomobileeligible";
-
-// Integer that represents which variation of title and text of the
-// "desktop to iOS" promotion was presented to the user on desktop.
-const char kDesktopIOSPromotionVariationId[] =
-    "ios.desktop_ios_promo_variation_id";
 
 }  // namespace prefs

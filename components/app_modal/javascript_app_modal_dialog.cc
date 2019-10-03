@@ -6,8 +6,6 @@
 
 #include <utility>
 
-#include "base/metrics/histogram_macros.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/app_modal/app_modal_dialog_queue.h"
 #include "components/app_modal/javascript_dialog_manager.h"
@@ -58,8 +56,7 @@ void EnforceMaxPromptSize(const base::string16& in_string,
 
 ChromeJavaScriptDialogExtraData::ChromeJavaScriptDialogExtraData()
     : has_already_shown_a_dialog_(false),
-      suppress_javascript_messages_(false),
-      suppressed_dialog_count_(0) {}
+      suppress_javascript_messages_(false) {}
 
 JavaScriptAppModalDialog::JavaScriptAppModalDialog(
     content::WebContents* web_contents,
@@ -83,8 +80,7 @@ JavaScriptAppModalDialog::JavaScriptAppModalDialog(
       is_before_unload_dialog_(is_before_unload_dialog),
       is_reload_(is_reload),
       callback_(std::move(callback)),
-      use_override_prompt_text_(false),
-      creation_time_(base::TimeTicks::Now()) {
+      use_override_prompt_text_(false) {
   EnforceMaxTextSize(message_text, &message_text_);
   EnforceMaxPromptSize(default_prompt_text, &default_prompt_text_);
 }
@@ -177,7 +173,7 @@ void JavaScriptAppModalDialog::NotifyDelegate(bool success,
   // The close callback above may delete web_contents_, thus removing the extra
   // data from the map owned by ::JavaScriptDialogManager. Make sure
   // to only use the data if still present. http://crbug.com/236476
-  ExtraDataMap::iterator extra_data = extra_data_map_->find(web_contents_);
+  auto extra_data = extra_data_map_->find(web_contents_);
   if (extra_data != extra_data_map_->end()) {
     extra_data->second.has_already_shown_a_dialog_ = true;
     extra_data->second.suppress_javascript_messages_ = suppress_js_messages;
@@ -190,12 +186,6 @@ void JavaScriptAppModalDialog::NotifyDelegate(bool success,
 
 void JavaScriptAppModalDialog::CallDialogClosedCallback(bool success,
     const base::string16& user_input) {
-  // TODO(joenotcharles): Both the callers of this function also check IsValid
-  // and call Invalidate, but in different orders. If the difference is not
-  // significant, more common code could be moved here.
-  UMA_HISTOGRAM_MEDIUM_TIMES(
-      "JSDialogs.FineTiming.TimeBetweenDialogCreatedAndSameDialogClosed",
-      base::TimeTicks::Now() - creation_time_);
   if (!callback_.is_null())
     std::move(callback_).Run(success, user_input);
 }

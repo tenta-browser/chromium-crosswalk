@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "ash/public/interfaces/cros_display_config.mojom.h"
 #include "base/macros.h"
 #include "chrome/browser/chromeos/language_preferences.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -106,8 +107,6 @@ class Preferences : public sync_preferences::PrefServiceSyncableObserver,
   // Overriden form user_manager::UserManager::UserSessionStateObserver.
   void ActiveUserChanged(const user_manager::User* active_user) override;
 
-  void ActivateInputMethods(const user_manager::User* active_user);
-
   sync_preferences::PrefServiceSyncable* prefs_;
 
   input_method::InputMethodManager* input_method_manager_;
@@ -115,7 +114,6 @@ class Preferences : public sync_preferences::PrefServiceSyncableObserver,
 
   BooleanPrefMember performance_tracing_enabled_;
   BooleanPrefMember tap_to_click_enabled_;
-  BooleanPrefMember tap_dragging_enabled_;
   BooleanPrefMember three_finger_click_enabled_;
   BooleanPrefMember unified_desktop_enabled_by_default_;
   BooleanPrefMember natural_scroll_;
@@ -127,11 +125,16 @@ class Preferences : public sync_preferences::PrefServiceSyncableObserver,
   BooleanPrefMember mouse_reverse_scroll_;
   FilePathPrefMember download_default_directory_;
 
+  StringListPrefMember allowed_languages_;
+  StringPrefMember preferred_languages_;
+
   // Input method preferences.
   StringPrefMember preload_engines_;
   StringPrefMember current_input_method_;
   StringPrefMember previous_input_method_;
-  StringPrefMember enabled_extension_imes_;
+
+  StringListPrefMember allowed_input_methods_;
+  StringPrefMember enabled_imes_;
   BooleanPrefMember ime_menu_activated_;
 
   BooleanPrefMember xkb_auto_repeat_enabled_;
@@ -152,6 +155,8 @@ class Preferences : public sync_preferences::PrefServiceSyncableObserver,
   scoped_refptr<input_method::InputMethodManager::State> ime_state_;
 
   std::unique_ptr<input_method::InputMethodSyncer> input_method_syncer_;
+
+  ash::mojom::CrosDisplayConfigControllerPtr cros_display_config_ptr_;
 
   DISALLOW_COPY_AND_ASSIGN(Preferences);
 };

@@ -4,8 +4,8 @@
 
 #include "ui/views/widget/widget_delegate.h"
 
+#include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
-#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/view.h"
 #include "ui/views/views_delegate.h"
@@ -17,9 +17,13 @@ namespace views {
 ////////////////////////////////////////////////////////////////////////////////
 // WidgetDelegate:
 
-WidgetDelegate::WidgetDelegate()
-    : default_contents_view_(NULL),
-      can_activate_(true) {
+WidgetDelegate::WidgetDelegate() = default;
+WidgetDelegate::~WidgetDelegate() {
+  CHECK(can_delete_this_) << "A WidgetDelegate must outlive its Widget";
+}
+
+void WidgetDelegate::SetCanActivate(bool can_activate) {
+  can_activate_ = can_activate;
 }
 
 void WidgetDelegate::OnWidgetMove() {
@@ -30,6 +34,12 @@ void WidgetDelegate::OnDisplayChanged() {
 
 void WidgetDelegate::OnWorkAreaChanged() {
 }
+
+bool WidgetDelegate::OnCloseRequested(Widget::ClosedReason close_reason) {
+  return true;
+}
+
+void WidgetDelegate::OnPaintAsActiveChanged(bool paint_as_active) {}
 
 View* WidgetDelegate::GetInitiallyFocusedView() {
   return nullptr;
@@ -55,17 +65,6 @@ bool WidgetDelegate::CanMinimize() const {
   return false;
 }
 
-int32_t WidgetDelegate::GetResizeBehavior() const {
-  int32_t behavior = ui::mojom::kResizeBehaviorNone;
-  if (CanResize())
-    behavior |= ui::mojom::kResizeBehaviorCanResize;
-  if (CanMaximize())
-    behavior |= ui::mojom::kResizeBehaviorCanMaximize;
-  if (CanMinimize())
-    behavior |= ui::mojom::kResizeBehaviorCanMinimize;
-  return behavior;
-}
-
 bool WidgetDelegate::CanActivate() const {
   return can_activate_;
 }
@@ -74,8 +73,8 @@ ui::ModalType WidgetDelegate::GetModalType() const {
   return ui::MODAL_TYPE_NONE;
 }
 
-ui::AXRole WidgetDelegate::GetAccessibleWindowRole() const {
-  return ui::AX_ROLE_WINDOW;
+ax::mojom::Role WidgetDelegate::GetAccessibleWindowRole() {
+  return ax::mojom::Role::kWindow;
 }
 
 base::string16 WidgetDelegate::GetAccessibleWindowTitle() const {
@@ -92,14 +91,6 @@ bool WidgetDelegate::ShouldShowWindowTitle() const {
 
 bool WidgetDelegate::ShouldShowCloseButton() const {
   return true;
-}
-
-bool WidgetDelegate::ShouldHandleSystemCommands() const {
-  const Widget* widget = GetWidget();
-  if (!widget)
-    return false;
-
-  return widget->non_client_view() != NULL;
 }
 
 gfx::ImageSkia WidgetDelegate::GetWindowAppIcon() {
@@ -127,11 +118,10 @@ std::string WidgetDelegate::GetWindowName() const {
 void WidgetDelegate::SaveWindowPlacement(const gfx::Rect& bounds,
                                          ui::WindowShowState show_state) {
   std::string window_name = GetWindowName();
-  if (!ViewsDelegate::GetInstance() || window_name.empty())
-    return;
-
-  ViewsDelegate::GetInstance()->SaveWindowPlacement(GetWidget(), window_name,
-                                                    bounds, show_state);
+  if (!window_name.empty()) {
+    ViewsDelegate::GetInstance()->SaveWindowPlacement(GetWidget(), window_name,
+                                                      bounds, show_state);
+  }
 }
 
 bool WidgetDelegate::GetSavedWindowPlacement(
@@ -139,11 +129,9 @@ bool WidgetDelegate::GetSavedWindowPlacement(
     gfx::Rect* bounds,
     ui::WindowShowState* show_state) const {
   std::string window_name = GetWindowName();
-  if (!ViewsDelegate::GetInstance() || window_name.empty())
-    return false;
-
-  return ViewsDelegate::GetInstance()->GetSavedWindowPlacement(
-      widget, window_name, bounds, show_state);
+  return !window_name.empty() &&
+         ViewsDelegate::GetInstance()->GetSavedWindowPlacement(
+             widget, window_name, bounds, show_state);
 }
 
 bool WidgetDelegate::ShouldRestoreWindowSize() const {
@@ -161,11 +149,11 @@ ClientView* WidgetDelegate::CreateClientView(Widget* widget) {
 }
 
 NonClientFrameView* WidgetDelegate::CreateNonClientFrameView(Widget* widget) {
-  return NULL;
+  return nullptr;
 }
 
 View* WidgetDelegate::CreateOverlayView() {
-  return NULL;
+  return nullptr;
 }
 
 bool WidgetDelegate::WillProcessWorkAreaChange() const {
@@ -176,7 +164,7 @@ bool WidgetDelegate::WidgetHasHitTestMask() const {
   return false;
 }
 
-void WidgetDelegate::GetWidgetHitTestMask(gfx::Path* mask) const {
+void WidgetDelegate::GetWidgetHitTestMask(SkPath* mask) const {
   DCHECK(mask);
 }
 
@@ -193,16 +181,13 @@ bool WidgetDelegate::ShouldDescendIntoChildForEventHandling(
 ////////////////////////////////////////////////////////////////////////////////
 // WidgetDelegateView:
 
-// static
-const char WidgetDelegateView::kViewClassName[] = "WidgetDelegateView";
 
 WidgetDelegateView::WidgetDelegateView() {
   // A WidgetDelegate should be deleted on DeleteDelegate.
   set_owned_by_client();
 }
 
-WidgetDelegateView::~WidgetDelegateView() {
-}
+WidgetDelegateView::~WidgetDelegateView() = default;
 
 void WidgetDelegateView::DeleteDelegate() {
   delete this;
@@ -220,8 +205,8 @@ views::View* WidgetDelegateView::GetContentsView() {
   return this;
 }
 
-const char* WidgetDelegateView::GetClassName() const {
-  return kViewClassName;
-}
+BEGIN_METADATA(WidgetDelegateView)
+METADATA_PARENT_CLASS(View)
+END_METADATA()
 
 }  // namespace views

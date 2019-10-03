@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_UI_BUBBLE_ANCHOR_UTIL_H_
 #define CHROME_BROWSER_UI_BUBBLE_ANCHOR_UTIL_H_
 
+#include "build/build_config.h"
+#include "ui/gfx/native_widget_types.h"
+
 namespace gfx {
 class Rect;
 }
@@ -12,6 +15,14 @@ class Rect;
 class Browser;
 
 namespace bubble_anchor_util {
+
+// Indicates which browser component to use as an anchor.
+// Used as a parameter of GetPageInfoAnchorView().
+enum Anchor {
+  kLocationBar,
+  kAppMenuButton,
+  kCustomTabBar,
+};
 
 // Offset from the window edge to show bubbles when there is no location bar.
 // E.g., when in fullscreen or in a Hosted App window. Don't center, since that

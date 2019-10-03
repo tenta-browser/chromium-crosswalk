@@ -1,26 +1,23 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/login/screens/network_screen.h"
+
+#include <memory>
+
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
-#include "chrome/browser/chromeos/input_method/input_method_configuration.h"
-#include "chrome/browser/chromeos/input_method/mock_input_method_manager_impl.h"
 #include "chrome/browser/chromeos/login/mock_network_state_helper.h"
-#include "chrome/browser/chromeos/login/screens/mock_base_screen_delegate.h"
-#include "chrome/browser/chromeos/login/screens/mock_model_view_channel.h"
 #include "chrome/browser/chromeos/login/screens/mock_network_screen.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/system/fake_statistics_provider.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/ime/chromeos/mock_component_extension_ime_manager.h"
 
 using testing::_;
 using testing::AnyNumber;
@@ -30,7 +27,8 @@ namespace chromeos {
 
 class NetworkScreenUnitTest : public testing::Test {
  public:
-  NetworkScreenUnitTest() {}
+  NetworkScreenUnitTest() = default;
+  ~NetworkScreenUnitTest() override = default;
 
   // testing::Test:
   void SetUp() override {
@@ -41,18 +39,11 @@ class NetworkScreenUnitTest : public testing::Test {
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         switches::kEnterpriseEnableZeroTouchEnrollment, "hands-off");
 
-    // Replace the regular InputMethodManager with a mock.
-    input_method::MockInputMethodManagerImpl* mock_input_manager =
-        new input_method::MockInputMethodManagerImpl();
-    mock_input_manager->SetComponentExtensionIMEManager(
-        std::unique_ptr<MockComponentExtensionIMEManager>(
-            new MockComponentExtensionIMEManager()));
-    input_method::InitializeForTesting(mock_input_manager);
-
     // Create the NetworkScreen we will use for testing.
-    network_screen_.reset(
-        new NetworkScreen(&mock_base_screen_delegate_, nullptr, &mock_view_));
-    network_screen_->set_model_view_channel(&mock_channel_);
+    network_screen_ = std::make_unique<NetworkScreen>(
+        &mock_view_,
+        base::BindRepeating(&NetworkScreenUnitTest::HandleScreenExit,
+                            base::Unretained(this)));
     mock_network_state_helper_ = new login::MockNetworkStateHelper();
     network_screen_->SetNetworkStateHelperForTest(mock_network_state_helper_);
   }
@@ -60,7 +51,6 @@ class NetworkScreenUnitTest : public testing::Test {
   void TearDown() override {
     TestingBrowserProcess::GetGlobal()->SetShuttingDown(true);
     network_screen_.reset();
-    input_method::Shutdown();
     DBusThreadManager::Shutdown();
   }
 
@@ -68,32 +58,25 @@ class NetworkScreenUnitTest : public testing::Test {
   // A pointer to the NetworkScreen.
   std::unique_ptr<NetworkScreen> network_screen_;
 
-  // Accessory objects needed by NetworkScreen.
-  MockBaseScreenDelegate mock_base_screen_delegate_;
   login::MockNetworkStateHelper* mock_network_state_helper_ = nullptr;
+  base::Optional<NetworkScreen::Result> last_screen_result_;
 
  private:
+  void HandleScreenExit(NetworkScreen::Result screen_result) {
+    EXPECT_FALSE(last_screen_result_.has_value());
+    last_screen_result_ = screen_result;
+  }
+
   // Test versions of core browser infrastructure.
   content::TestBrowserThreadBundle threads_;
 
   // More accessory objects needed by NetworkScreen.
-  MockNetworkView mock_view_;
-  MockModelViewChannel mock_channel_;
-
-  // Scoped test versions of required global objects.
-  ScopedTestDeviceSettingsService device_settings_;
-  ScopedTestCrosSettings cros_settings_;
-  system::ScopedFakeStatisticsProvider provider_;
+  MockNetworkScreenView mock_view_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkScreenUnitTest);
 };
 
 TEST_F(NetworkScreenUnitTest, ContinuesAutomatically) {
-  // Set expectation that NetworkScreen will finish.
-  EXPECT_CALL(mock_base_screen_delegate_,
-              OnExit(_, ScreenExitCode::NETWORK_CONNECTED, _))
-      .Times(1);
-
   // Simulate a network connection.
   EXPECT_CALL(*mock_network_state_helper_, IsConnected())
       .Times(AnyNumber())
@@ -102,14 +85,12 @@ TEST_F(NetworkScreenUnitTest, ContinuesAutomatically) {
 
   // Check that we continued once
   EXPECT_EQ(1, network_screen_->continue_attempts_);
+
+  ASSERT_TRUE(last_screen_result_.has_value());
+  EXPECT_EQ(NetworkScreen::Result::CONNECTED, last_screen_result_.value());
 }
 
 TEST_F(NetworkScreenUnitTest, ContinuesOnlyOnce) {
-  // Set expectation that NetworkScreen will finish.
-  EXPECT_CALL(mock_base_screen_delegate_,
-              OnExit(_, ScreenExitCode::NETWORK_CONNECTED, _))
-      .Times(1);
-
   // Connect to network "net0".
   EXPECT_CALL(*mock_network_state_helper_, GetCurrentNetworkName())
       .Times(AnyNumber())
@@ -123,6 +104,9 @@ TEST_F(NetworkScreenUnitTest, ContinuesOnlyOnce) {
 
   // Check that we have continued exactly once.
   ASSERT_EQ(1, network_screen_->continue_attempts_);
+
+  ASSERT_TRUE(last_screen_result_.has_value());
+  EXPECT_EQ(NetworkScreen::Result::CONNECTED, last_screen_result_.value());
 
   // Stop waiting for another network, net1.
   network_screen_->StopWaitingForConnection(base::ASCIIToUTF16("net1"));

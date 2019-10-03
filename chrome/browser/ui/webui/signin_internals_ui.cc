@@ -4,20 +4,18 @@
 
 #include "chrome/browser/ui/webui/signin_internals_ui.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
-#include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
-#include "chrome/browser/ui/webui/signin/signin_dice_internals_handler.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/url_constants.h"
 #include "components/grit/components_resources.h"
-#include "components/signin/core/browser/about_signin_internals.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
-#include "components/signin/core/browser/profile_management_switches.h"
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 
@@ -26,11 +24,12 @@ namespace {
 content::WebUIDataSource* CreateSignInInternalsHTMLSource() {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUISignInInternalsHost);
+  source->OverrideContentSecurityPolicyScriptSrc(
+      "script-src chrome://resources 'self' 'unsafe-eval';");
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath("signin_internals.js", IDR_SIGNIN_INTERNALS_INDEX_JS);
   source->SetDefaultResource(IDR_SIGNIN_INTERNALS_INDEX_HTML);
-  source->UseGzip();
   return source;
 }
 
@@ -45,12 +44,6 @@ SignInInternalsUI::SignInInternalsUI(content::WebUI* web_ui)
         AboutSigninInternalsFactory::GetForProfile(profile);
     if (about_signin_internals)
       about_signin_internals->AddSigninObserver(this);
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-    if (signin::IsDiceEnabledForProfile(profile->GetPrefs())) {
-      web_ui->AddMessageHandler(
-          base::MakeUnique<SigninDiceInternalsHandler>(profile));
-    }
-#endif
   }
 }
 
@@ -85,16 +78,13 @@ bool SignInInternalsUI::OverrideHandleWebUIMessage(
           "chrome.signin.getSigninInfo.handleReply",
           *about_signin_internals->GetSigninStatus());
 
-      std::vector<gaia::ListedAccount> cookie_accounts;
-      std::vector<gaia::ListedAccount> signed_out_accounts;
-      GaiaCookieManagerService* cookie_manager_service =
-          GaiaCookieManagerServiceFactory::GetForProfile(profile);
-      if (cookie_manager_service->ListAccounts(
-              &cookie_accounts, &signed_out_accounts,
-              "ChromiumSignInInternalsUI")) {
-        about_signin_internals->OnGaiaAccountsInCookieUpdated(
-            cookie_accounts,
-            signed_out_accounts,
+      signin::IdentityManager* identity_manager =
+          IdentityManagerFactory::GetForProfile(profile);
+      signin::AccountsInCookieJarInfo accounts_in_cookie_jar =
+          identity_manager->GetAccountsInCookieJar();
+      if (accounts_in_cookie_jar.accounts_are_fresh) {
+        about_signin_internals->OnAccountsInCookieUpdated(
+            accounts_in_cookie_jar,
             GoogleServiceAuthError(GoogleServiceAuthError::NONE));
       }
 

@@ -3,12 +3,16 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/image_writer_private/write_from_url_operation.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
+#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 namespace image_writer {
@@ -17,20 +21,24 @@ using content::BrowserThread;
 
 WriteFromUrlOperation::WriteFromUrlOperation(
     base::WeakPtr<OperationManager> manager,
+    std::unique_ptr<service_manager::Connector> connector,
     const ExtensionId& extension_id,
-    net::URLRequestContextGetter* request_context,
+    network::mojom::URLLoaderFactoryPtrInfo factory_info,
     GURL url,
     const std::string& hash,
     const std::string& device_path,
     const base::FilePath& download_folder)
-    : Operation(manager, extension_id, device_path, download_folder),
-      request_context_(request_context),
+    : Operation(manager,
+                std::move(connector),
+                extension_id,
+                device_path,
+                download_folder),
+      url_loader_factory_ptr_info_(std::move(factory_info)),
       url_(url),
       hash_(hash),
       download_continuation_() {}
 
-WriteFromUrlOperation::~WriteFromUrlOperation() {
-}
+WriteFromUrlOperation::~WriteFromUrlOperation() = default;
 
 void WriteFromUrlOperation::StartImpl() {
   DCHECK(IsRunningInCorrectSequence());
@@ -54,14 +62,14 @@ void WriteFromUrlOperation::GetDownloadTarget(base::OnceClosure continuation) {
   }
 
   if (url_.ExtractFileName().empty()) {
-    if (!base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &image_path_)) {
+    if (!base::CreateTemporaryFileInDir(temp_dir_->GetPath(), &image_path_)) {
       Error(error::kTempFileError);
       return;
     }
   } else {
     base::FilePath file_name =
         base::FilePath::FromUTF8Unsafe(url_.ExtractFileName());
-    image_path_ = temp_dir_.GetPath().Append(file_name);
+    image_path_ = temp_dir_->GetPath().Append(file_name);
   }
 
   PostTask(std::move(continuation));
@@ -105,49 +113,53 @@ void WriteFromUrlOperation::Download(base::OnceClosure continuation) {
             "Not implemented, considered not useful."
         })");
 
-  // Store the URL fetcher on this object so that it is destroyed before this
-  // object is.
-  url_fetcher_ = net::URLFetcher::Create(url_, net::URLFetcher::GET, this,
-                                         traffic_annotation);
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL(url_);
+  simple_url_loader_ =
+      network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
 
-  url_fetcher_->SetRequestContext(request_context_);
-  url_fetcher_->SaveResponseToFileAtPath(image_path_, task_runner());
+  simple_url_loader_->SetOnDownloadProgressCallback(base::BindRepeating(
+      &WriteFromUrlOperation::OnDataDownloaded, base::Unretained(this)));
+  simple_url_loader_->SetOnResponseStartedCallback(base::BindOnce(
+      &WriteFromUrlOperation::OnResponseStarted, base::Unretained(this)));
 
   AddCleanUpFunction(
-      base::BindOnce(&WriteFromUrlOperation::DestroyUrlFetcher, this));
+      base::BindOnce(&WriteFromUrlOperation::DestroySimpleURLLoader, this));
 
-  url_fetcher_->Start();
+  network::mojom::URLLoaderFactoryPtr url_loader_factory_ptr;
+  url_loader_factory_ptr.Bind(std::move(url_loader_factory_ptr_info_));
+
+  simple_url_loader_->DownloadToFile(
+      url_loader_factory_ptr.get(),
+      base::BindOnce(&WriteFromUrlOperation::OnSimpleLoaderComplete,
+                     base::Unretained(this)),
+      image_path_);
 }
 
-void WriteFromUrlOperation::DestroyUrlFetcher() { url_fetcher_.reset(); }
-
-void WriteFromUrlOperation::OnURLFetchUploadProgress(
-    const net::URLFetcher* source,
-    int64_t current,
-    int64_t total) {
-  // No-op
+void WriteFromUrlOperation::DestroySimpleURLLoader() {
+  simple_url_loader_.reset();
 }
 
-void WriteFromUrlOperation::OnURLFetchDownloadProgress(
-    const net::URLFetcher* source,
-    int64_t current,
-    int64_t total,
-    int64_t current_network_bytes) {
+void WriteFromUrlOperation::OnResponseStarted(
+    const GURL& final_url,
+    const network::ResourceResponseHead& response_head) {
+  total_response_bytes_ = response_head.content_length;
+}
+
+void WriteFromUrlOperation::OnDataDownloaded(uint64_t current) {
   DCHECK(IsRunningInCorrectSequence());
 
-  if (IsCancelled()) {
-    url_fetcher_.reset(NULL);
-  }
+  if (IsCancelled())
+    DestroySimpleURLLoader();
 
-  int progress = (kProgressComplete * current) / total;
+  int progress = (kProgressComplete * current) / total_response_bytes_;
 
   SetProgress(progress);
 }
 
-void WriteFromUrlOperation::OnURLFetchComplete(const net::URLFetcher* source) {
+void WriteFromUrlOperation::OnSimpleLoaderComplete(base::FilePath file_path) {
   DCHECK(IsRunningInCorrectSequence());
-
-  if (source->GetStatus().is_success() && source->GetResponseCode() == 200) {
+  if (!file_path.empty()) {
     SetProgress(kProgressComplete);
 
     std::move(download_continuation_).Run();

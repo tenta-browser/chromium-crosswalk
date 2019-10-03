@@ -23,6 +23,7 @@ class ListValue;
 struct TemplateURLData {
   TemplateURLData();
   TemplateURLData(const TemplateURLData& other);
+
   // Creates a TemplateURLData suitable for prepopulated engines.
   // Note that unlike in the default constructor, |safe_for_autoreplace| will
   // be set to true. date_created and last_modified will be set to null time
@@ -62,6 +63,15 @@ struct TemplateURLData {
   // it requires substitutions first).  This must be non-empty.
   void SetURL(const std::string& url);
   const std::string& url() const { return url_; }
+
+  // Recomputes |sync_guid| using the same logic as in the constructor. This
+  // means a random GUID is generated, except for prepopulated search engines,
+  // which generate GUIDs deterministically based on |prepopulate_id|.
+  void GenerateSyncGUID();
+
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
 
   // Optional additional raw URLs.
   std::string suggestions_url;

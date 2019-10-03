@@ -107,10 +107,10 @@ class TestAppearanceBrowserProxy extends TestBrowserProxy {
   }
 }
 
-var appearancePage = null;
+let appearancePage = null;
 
 /** @type {?TestAppearanceBrowserProxy} */
-var appearanceBrowserProxy = null;
+let appearanceBrowserProxy = null;
 
 function createAppearancePage() {
   appearanceBrowserProxy.reset();
@@ -145,9 +145,12 @@ suite('AppearanceHandler', function() {
     createAppearancePage();
   });
 
-  teardown(function() { appearancePage.remove(); });
+  teardown(function() {
+    appearancePage.remove();
+  });
 
   if (cr.isChromeOS) {
+    // TODO(crbug/950007): Remove when SplitSettings is complete.
     test('wallpaperManager', function() {
       appearanceBrowserProxy.setIsWallpaperPolicyControlled(false);
       // TODO(dschuyler): This should notice the policy change without needing
@@ -155,16 +158,17 @@ suite('AppearanceHandler', function() {
       createAppearancePage();
       return appearanceBrowserProxy.whenCalled('isWallpaperPolicyControlled')
           .then(() => {
-            var button = appearancePage.$.wallpaperButton;
+            const button = appearancePage.$.wallpaperButton;
             assertTrue(!!button);
             assertFalse(button.disabled);
-            MockInteractions.tap(button);
+            button.click();
             return appearanceBrowserProxy.whenCalled('openWallpaperManager');
           });
     });
 
+    // TODO(crbug/950007): Remove when SplitSettings is complete.
     test('wallpaperSettingVisible', function() {
-      appearancePage.set("pageVisibility.setWallpaper", false);
+      appearancePage.set('pageVisibility.setWallpaper', false);
       return appearanceBrowserProxy.whenCalled('isWallpaperSettingVisible')
           .then(function() {
             Polymer.dom.flush();
@@ -172,6 +176,7 @@ suite('AppearanceHandler', function() {
           });
     });
 
+    // TODO(crbug/950007): Remove when SplitSettings is complete.
     test('wallpaperPolicyControlled', function() {
       // Should show the wallpaper policy indicator and disable the toggle
       // button if the wallpaper is policy controlled.
@@ -187,15 +192,15 @@ suite('AppearanceHandler', function() {
   } else {
     test('noWallpaperManager', function() {
       // The wallpaper button should not be present.
-      var button = appearancePage.$.wallpaperButton;
+      const button = appearancePage.$.wallpaperButton;
       assertFalse(!!button);
     });
   }
 
-  var THEME_ID_PREF = 'prefs.extensions.theme.id.value';
+  const THEME_ID_PREF = 'prefs.extensions.theme.id.value';
 
   if (cr.isLinux && !cr.isChromeOS) {
-    var USE_SYSTEM_PREF = 'prefs.extensions.theme.use_system.value';
+    const USE_SYSTEM_PREF = 'prefs.extensions.theme.use_system.value';
 
     test('useDefaultThemeLinux', function() {
       assertFalse(!!appearancePage.get(THEME_ID_PREF));
@@ -213,10 +218,10 @@ suite('AppearanceHandler', function() {
       Polymer.dom.flush();
 
       // With a custom theme installed, "USE CLASSIC" should show.
-      var button = appearancePage.$$('#useDefault');
+      const button = appearancePage.$$('#useDefault');
       assertTrue(!!button);
 
-      MockInteractions.tap(button);
+      button.click();
       return appearanceBrowserProxy.whenCalled('useDefaultTheme');
     });
 
@@ -243,10 +248,10 @@ suite('AppearanceHandler', function() {
       assertTrue(!!appearancePage.$$('#useDefault'));
       assertFalse(appearancePage.$$('#themesSecondaryActions').hidden);
 
-      var button = appearancePage.$$('#useSystem');
+      const button = appearancePage.$$('#useSystem');
       assertTrue(!!button);
 
-      MockInteractions.tap(button);
+      button.click();
       return appearanceBrowserProxy.whenCalled('useSystemTheme');
     });
   } else {
@@ -258,47 +263,53 @@ suite('AppearanceHandler', function() {
       Polymer.dom.flush();
 
       // With a custom theme installed, "RESET TO DEFAULT" should show.
-      var button = appearancePage.$$('#useDefault');
+      const button = appearancePage.$$('#useDefault');
       assertTrue(!!button);
 
-      MockInteractions.tap(button);
+      button.click();
       return appearanceBrowserProxy.whenCalled('useDefaultTheme');
     });
   }
 
   test('default zoom handling', function() {
     function getDefaultZoomText() {
-      var zoomLevel = appearancePage.$.zoomLevel;
+      const zoomLevel = appearancePage.$.zoomLevel;
       return zoomLevel.options[zoomLevel.selectedIndex].textContent.trim();
     }
 
-    return appearanceBrowserProxy.whenCalled('getDefaultZoom').then(function() {
-      assertEquals('100%', getDefaultZoomText());
+    return appearanceBrowserProxy.whenCalled('getDefaultZoom')
+        .then(function() {
+          assertEquals('100%', getDefaultZoomText());
 
-      appearanceBrowserProxy.setDefaultZoom(2 / 3);
-      createAppearancePage();
-      return appearanceBrowserProxy.whenCalled('getDefaultZoom');
-    }).then(function() {
-      assertEquals('67%', getDefaultZoomText());
+          appearanceBrowserProxy.setDefaultZoom(2 / 3);
+          createAppearancePage();
+          return appearanceBrowserProxy.whenCalled('getDefaultZoom');
+        })
+        .then(function() {
+          assertEquals('67%', getDefaultZoomText());
 
-      appearanceBrowserProxy.setDefaultZoom(11 / 10);
-      createAppearancePage();
-      return appearanceBrowserProxy.whenCalled('getDefaultZoom');
-    }).then(function() {
-      assertEquals('110%', getDefaultZoomText());
+          appearanceBrowserProxy.setDefaultZoom(11 / 10);
+          createAppearancePage();
+          return appearanceBrowserProxy.whenCalled('getDefaultZoom');
+        })
+        .then(function() {
+          assertEquals('110%', getDefaultZoomText());
 
-      appearanceBrowserProxy.setDefaultZoom(1.7499999999999);
-      createAppearancePage();
-      return appearanceBrowserProxy.whenCalled('getDefaultZoom');
-    }).then(function() {
-      assertEquals('175%', getDefaultZoomText());
-    });
+          appearanceBrowserProxy.setDefaultZoom(1.7499999999999);
+          createAppearancePage();
+          return appearanceBrowserProxy.whenCalled('getDefaultZoom');
+        })
+        .then(function() {
+          assertEquals('175%', getDefaultZoomText());
+        });
   });
 
   test('show home button toggling', function() {
     assertFalse(!!appearancePage.$$('.list-frame'));
-    appearancePage.set('prefs', {browser: {show_home_button: {value: true}}});
-
+    appearancePage.set('prefs', {
+      browser: {show_home_button: {value: true}},
+      extensions: {theme: {id: {value: ''}}},
+    });
     Polymer.dom.flush();
 
     assertTrue(!!appearancePage.$$('.list-frame'));
@@ -306,7 +317,7 @@ suite('AppearanceHandler', function() {
 });
 
 suite('HomeUrlInput', function() {
-  var homeUrlInput;
+  let homeUrlInput;
 
   setup(function() {
     appearanceBrowserProxy = new TestAppearanceBrowserProxy();

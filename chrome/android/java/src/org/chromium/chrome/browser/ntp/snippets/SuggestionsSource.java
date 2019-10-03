@@ -34,6 +34,12 @@ public interface SuggestionsSource {
 
         /** Called when the observer should discard the suggestions it has and pull new ones. */
         void onFullRefreshRequired();
+
+        /**
+         * Called when the visibility of the suggestions of the specified category is changed.
+         * @param category The specified category.
+         */
+        void onSuggestionsVisibilityChanged(@CategoryInt int category);
     }
 
     /**
@@ -107,19 +113,6 @@ public interface SuggestionsSource {
             Callback<List<SnippetArticle>> successCallback, Runnable failureRunnable);
 
     /**
-     * Fetches suggestions related to the provided URL.
-     * @param url The context (site URL) for which we want to have suggestions.
-     * @param callback The callback to run with the received suggestions.
-     */
-    void fetchContextualSuggestions(String url, Callback<List<SnippetArticle>> callback);
-
-    /**
-     * Fetches the thumbnail image for a contextual suggestion. A {@code null} Bitmap is returned if
-     * no image is available.
-     */
-    void fetchContextualSuggestionImage(SnippetArticle suggestion, Callback<Bitmap> callback);
-
-    /**
      * Tells the source to dismiss the content suggestion.
      */
     void dismissSuggestion(SnippetArticle suggestion);
@@ -158,5 +151,8 @@ public interface SuggestionsSource {
 
         @Override
         public void onFullRefreshRequired() {}
+
+        @Override
+        public void onSuggestionsVisibilityChanged(@CategoryInt int category) {}
     }
 }

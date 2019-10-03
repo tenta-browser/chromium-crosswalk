@@ -4,29 +4,36 @@
 
 #include "ui/compositor/test/in_process_context_factory.h"
 
+#include <limits>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "cc/test/pixel_test_output_surface.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/frame_sinks/delay_based_time_source.h"
 #include "components/viz/common/gpu/context_provider.h"
-#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "components/viz/service/display/display.h"
 #include "components/viz/service/display/display_scheduler.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
+#include "components/viz/service/display_embedder/skia_output_surface_dependency_impl.h"
+#include "components/viz/service/display_embedder/skia_output_surface_impl.h"
 #include "components/viz/service/frame_sinks/direct_layer_tree_frame_sink.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "components/viz/test/test_gpu_service_holder.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/reflector.h"
@@ -34,9 +41,13 @@
 #include "ui/display/display_switches.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/switches.h"
+#include "ui/gl/color_space_utils.h"
 #include "ui/gl/gl_implementation.h"
-#include "ui/gl/gl_utils.h"
 #include "ui/gl/test/gl_surface_test_support.h"
+
+#if defined(OS_MACOSX)
+#include "ui/accelerated_widget_mac/ca_transaction_observer.h"
+#endif
 
 #if !defined(GPU_SURFACE_HANDLE_IS_ACCELERATED_WINDOW)
 #include "gpu/ipc/common/gpu_surface_tracker.h"
@@ -44,9 +55,9 @@
 
 namespace ui {
 namespace {
-// The client_id used here should not conflict with the client_id generated
-// from RenderWidgetHostImpl.
-constexpr uint32_t kDefaultClientId = 0u;
+
+// This should not conflict with ids from RenderWidgetHostImpl or WindowService.
+constexpr uint32_t kDefaultClientId = std::numeric_limits<uint32_t>::max() / 2;
 
 class FakeReflector : public Reflector {
  public:
@@ -63,7 +74,7 @@ class DirectOutputSurface : public viz::OutputSurface {
  public:
   explicit DirectOutputSurface(
       scoped_refptr<InProcessContextProvider> context_provider)
-      : viz::OutputSurface(context_provider), weak_ptr_factory_(this) {
+      : viz::OutputSurface(context_provider) {
     capabilities_.flipped_output_surface = true;
   }
 
@@ -86,54 +97,53 @@ class DirectOutputSurface : public viz::OutputSurface {
                bool use_stencil) override {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   }
   void SwapBuffers(viz::OutputSurfaceFrame frame) override {
     DCHECK(context_provider_.get());
     if (frame.sub_buffer_rect) {
       context_provider_->ContextSupport()->PartialSwapBuffers(
-          *frame.sub_buffer_rect);
+          *frame.sub_buffer_rect, 0 /* flags */, base::DoNothing(),
+          base::DoNothing());
     } else {
-      context_provider_->ContextSupport()->Swap();
+      context_provider_->ContextSupport()->Swap(
+          0 /* flags */, base::DoNothing(), base::DoNothing());
     }
     gpu::gles2::GLES2Interface* gl = context_provider_->ContextGL();
-    const uint64_t fence_sync = gl->InsertFenceSyncCHROMIUM();
-    gl->ShallowFlushCHROMIUM();
-
     gpu::SyncToken sync_token;
-    gl->GenUnverifiedSyncTokenCHROMIUM(fence_sync, sync_token.GetData());
+    gl->GenUnverifiedSyncTokenCHROMIUM(sync_token.GetData());
 
     context_provider_->ContextSupport()->SignalSyncToken(
-        sync_token, base::Bind(&DirectOutputSurface::OnSwapBuffersComplete,
-                               weak_ptr_factory_.GetWeakPtr(), ++swap_id_));
+        sync_token, base::BindOnce(&DirectOutputSurface::OnSwapBuffersComplete,
+                                   weak_ptr_factory_.GetWeakPtr()));
   }
   uint32_t GetFramebufferCopyTextureFormat() override {
     auto* gl = static_cast<InProcessContextProvider*>(context_provider());
     return gl->GetCopyTextureInternalFormat();
-  }
-  viz::OverlayCandidateValidator* GetOverlayCandidateValidator()
-      const override {
-    return nullptr;
   }
   bool IsDisplayedAsOverlayPlane() const override { return false; }
   unsigned GetOverlayTextureId() const override { return 0; }
   gfx::BufferFormat GetOverlayBufferFormat() const override {
     return gfx::BufferFormat::RGBX_8888;
   }
-  bool SurfaceIsSuspendForRecycle() const override { return false; }
   bool HasExternalStencilTest() const override { return false; }
   void ApplyExternalStencil() override {}
+  unsigned UpdateGpuFence() override { return 0; }
+  void SetUpdateVSyncParametersCallback(
+      viz::UpdateVSyncParametersCallback callback) override {}
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override {}
+  gfx::OverlayTransform GetDisplayTransform() override {
+    return gfx::OVERLAY_TRANSFORM_NONE;
+  }
 
  private:
-  void OnSwapBuffersComplete(uint64_t swap_id) {
-    client_->DidReceiveSwapBuffersAck(swap_id);
-    client_->DidReceivePresentationFeedback(swap_id,
-                                            gfx::PresentationFeedback());
+  void OnSwapBuffersComplete() {
+    client_->DidReceiveSwapBuffersAck(gfx::SwapTimings());
+    client_->DidReceivePresentationFeedback(gfx::PresentationFeedback());
   }
 
   viz::OutputSurfaceClient* client_ = nullptr;
-  uint64_t swap_id_ = 0;
-  base::WeakPtrFactory<DirectOutputSurface> weak_ptr_factory_;
+  base::WeakPtrFactory<DirectOutputSurface> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DirectOutputSurface);
 };
@@ -144,11 +154,20 @@ struct InProcessContextFactory::PerCompositorData {
   gpu::SurfaceHandle surface_handle = gpu::kNullSurfaceHandle;
   std::unique_ptr<viz::BeginFrameSource> begin_frame_source;
   std::unique_ptr<viz::Display> display;
+  SkMatrix44 output_color_matrix;
 };
 
 InProcessContextFactory::InProcessContextFactory(
     viz::HostFrameSinkManager* host_frame_sink_manager,
     viz::FrameSinkManagerImpl* frame_sink_manager)
+    : InProcessContextFactory(host_frame_sink_manager,
+                              frame_sink_manager,
+                              features::IsUsingSkiaRenderer()) {}
+
+InProcessContextFactory::InProcessContextFactory(
+    viz::HostFrameSinkManager* host_frame_sink_manager,
+    viz::FrameSinkManagerImpl* frame_sink_manager,
+    bool use_skia_renderer)
     : frame_sink_id_allocator_(kDefaultClientId),
       use_test_surface_(true),
       disable_vsync_(base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -159,34 +178,22 @@ InProcessContextFactory::InProcessContextFactory(
   DCHECK_NE(gl::GetGLImplementation(), gl::kGLImplementationNone)
       << "If running tests, ensure that main() is calling "
       << "gl::GLSurfaceTestSupport::InitializeOneOff()";
-
-#if defined(OS_WIN)
-  renderer_settings_.finish_rendering_on_resize = true;
-#elif defined(OS_MACOSX)
+  if (use_skia_renderer)
+    renderer_settings_.use_skia_renderer = true;
+#if defined(OS_MACOSX)
   renderer_settings_.release_overlay_resources_after_gpu_query = true;
+  // Ensure that tests don't wait for frames that will never come.
+  ui::CATransactionCoordinator::Get().DisableForTesting();
 #endif
-  // Populate buffer_to_texture_target_map for all buffer usage/formats.
-  for (int usage_idx = 0; usage_idx <= static_cast<int>(gfx::BufferUsage::LAST);
-       ++usage_idx) {
-    gfx::BufferUsage usage = static_cast<gfx::BufferUsage>(usage_idx);
-    for (int format_idx = 0;
-         format_idx <= static_cast<int>(gfx::BufferFormat::LAST);
-         ++format_idx) {
-      gfx::BufferFormat format = static_cast<gfx::BufferFormat>(format_idx);
-      renderer_settings_.resource_settings
-          .buffer_to_texture_target_map[std::make_pair(usage, format)] =
-          GL_TEXTURE_2D;
-    }
-  }
 }
 
 InProcessContextFactory::~InProcessContextFactory() {
   DCHECK(per_compositor_data_.empty());
 }
 
-void InProcessContextFactory::SendOnLostResources() {
+void InProcessContextFactory::SendOnLostSharedContext() {
   for (auto& observer : observer_list_)
-    observer.OnLostResources();
+    observer.OnLostSharedContext();
 }
 
 void InProcessContextFactory::SetUseFastRefreshRateForTests() {
@@ -208,13 +215,13 @@ void InProcessContextFactory::CreateLayerTreeFrameSink(
   if (!shared_worker_context_provider_ || shared_worker_context_provider_lost) {
     constexpr bool support_locking = true;
     shared_worker_context_provider_ = InProcessContextProvider::CreateOffscreen(
-        &gpu_memory_buffer_manager_, &image_factory_, nullptr, support_locking);
+        &gpu_memory_buffer_manager_, &image_factory_, support_locking);
     auto result = shared_worker_context_provider_->BindToCurrentThread();
     if (result != gpu::ContextResult::kSuccess)
       shared_worker_context_provider_ = nullptr;
   }
 
-  gpu::gles2::ContextCreationAttribHelper attribs;
+  gpu::ContextCreationAttribs attribs;
   attribs.alpha_size = 8;
   attribs.blue_size = 8;
   attribs.green_size = 8;
@@ -231,13 +238,19 @@ void InProcessContextFactory::CreateLayerTreeFrameSink(
 
   constexpr bool support_locking = false;
   scoped_refptr<InProcessContextProvider> context_provider =
-      InProcessContextProvider::Create(
-          attribs, shared_worker_context_provider_.get(),
-          &gpu_memory_buffer_manager_, &image_factory_, data->surface_handle,
-          "UICompositor", support_locking);
+      InProcessContextProvider::Create(attribs, &gpu_memory_buffer_manager_,
+                                       &image_factory_, data->surface_handle,
+                                       "UICompositor", support_locking);
 
   std::unique_ptr<viz::OutputSurface> display_output_surface;
-  if (use_test_surface_) {
+
+  if (renderer_settings_.use_skia_renderer) {
+    display_output_surface = viz::SkiaOutputSurfaceImpl::Create(
+        std::make_unique<viz::SkiaOutputSurfaceDependencyImpl>(
+            viz::TestGpuServiceHolder::GetInstance()->gpu_service(),
+            gpu::kNullSurfaceHandle),
+        renderer_settings_);
+  } else if (use_test_surface_) {
     bool flipped_output_surface = false;
     display_output_surface = std::make_unique<cc::PixelTestOutputSurface>(
         context_provider, flipped_output_surface);
@@ -266,11 +279,11 @@ void InProcessContextFactory::CreateLayerTreeFrameSink(
       display_output_surface->capabilities().max_frames_pending);
 
   data->display = std::make_unique<viz::Display>(
-      &shared_bitmap_manager_, &gpu_memory_buffer_manager_, renderer_settings_,
-      compositor->frame_sink_id(), std::move(display_output_surface),
-      std::move(scheduler), compositor->task_runner());
-  GetFrameSinkManager()->RegisterBeginFrameSource(begin_frame_source.get(),
-                                                  compositor->frame_sink_id());
+      &shared_bitmap_manager_, renderer_settings_, compositor->frame_sink_id(),
+      std::move(display_output_surface), std::move(scheduler),
+      compositor->task_runner());
+  frame_sink_manager_->RegisterBeginFrameSource(begin_frame_source.get(),
+                                                compositor->frame_sink_id());
   // Note that we are careful not to destroy a prior |data->begin_frame_source|
   // until we have reset |data->display|.
   data->begin_frame_source = std::move(begin_frame_source);
@@ -278,9 +291,9 @@ void InProcessContextFactory::CreateLayerTreeFrameSink(
   auto* display = per_compositor_data_[compositor.get()]->display.get();
   auto layer_tree_frame_sink = std::make_unique<viz::DirectLayerTreeFrameSink>(
       compositor->frame_sink_id(), GetHostFrameSinkManager(),
-      GetFrameSinkManager(), display, context_provider,
-      shared_worker_context_provider_, &gpu_memory_buffer_manager_,
-      &shared_bitmap_manager_);
+      frame_sink_manager_, display, nullptr /* display_client */,
+      context_provider, shared_worker_context_provider_,
+      compositor->task_runner(), &gpu_memory_buffer_manager_);
   compositor->SetLayerTreeFrameSink(std::move(layer_tree_frame_sink));
 
   data->display->Resize(compositor->size());
@@ -295,6 +308,12 @@ std::unique_ptr<Reflector> InProcessContextFactory::CreateReflector(
 void InProcessContextFactory::RemoveReflector(Reflector* reflector) {
 }
 
+bool InProcessContextFactory::SyncTokensRequiredForDisplayCompositor() {
+  // Display and DirectLayerTreeFrameSink share a GL context, so sync
+  // points aren't needed when passing resources between them.
+  return false;
+}
+
 scoped_refptr<viz::ContextProvider>
 InProcessContextFactory::SharedMainThreadContextProvider() {
   if (shared_main_thread_contexts_ &&
@@ -304,7 +323,7 @@ InProcessContextFactory::SharedMainThreadContextProvider() {
 
   constexpr bool support_locking = false;
   shared_main_thread_contexts_ = InProcessContextProvider::CreateOffscreen(
-      &gpu_memory_buffer_manager_, &image_factory_, nullptr, support_locking);
+      &gpu_memory_buffer_manager_, &image_factory_, support_locking);
   auto result = shared_main_thread_contexts_->BindToCurrentThread();
   if (result != gpu::ContextResult::kSuccess)
     shared_main_thread_contexts_ = NULL;
@@ -312,12 +331,20 @@ InProcessContextFactory::SharedMainThreadContextProvider() {
   return shared_main_thread_contexts_;
 }
 
+scoped_refptr<viz::RasterContextProvider>
+InProcessContextFactory::SharedMainThreadRasterContextProvider() {
+  SharedMainThreadContextProvider();
+  DCHECK(!shared_main_thread_contexts_ ||
+         shared_main_thread_contexts_->RasterInterface());
+  return shared_main_thread_contexts_;
+}
+
 void InProcessContextFactory::RemoveCompositor(Compositor* compositor) {
-  PerCompositorDataMap::iterator it = per_compositor_data_.find(compositor);
+  auto it = per_compositor_data_.find(compositor);
   if (it == per_compositor_data_.end())
     return;
   PerCompositorData* data = it->second.get();
-  GetFrameSinkManager()->UnregisterBeginFrameSource(
+  frame_sink_manager_->UnregisterBeginFrameSource(
       data->begin_frame_source.get());
   DCHECK(data);
 #if !defined(GPU_SURFACE_HANDLE_IS_ACCELERATED_WINDOW)
@@ -325,10 +352,6 @@ void InProcessContextFactory::RemoveCompositor(Compositor* compositor) {
     gpu::GpuSurfaceTracker::Get()->RemoveSurface(data->surface_handle);
 #endif
   per_compositor_data_.erase(it);
-}
-
-double InProcessContextFactory::GetRefreshRate() const {
-  return refresh_rate_;
 }
 
 gpu::GpuMemoryBufferManager*
@@ -362,9 +385,21 @@ void InProcessContextFactory::ResizeDisplay(ui::Compositor* compositor,
   per_compositor_data_[compositor]->display->Resize(size);
 }
 
-const viz::ResourceSettings& InProcessContextFactory::GetResourceSettings()
-    const {
-  return renderer_settings_.resource_settings;
+void InProcessContextFactory::DisableSwapUntilResize(
+    ui::Compositor* compositor) {
+  if (!per_compositor_data_.count(compositor))
+    return;
+  per_compositor_data_[compositor]->display->Resize(gfx::Size());
+}
+
+void InProcessContextFactory::SetDisplayColorMatrix(ui::Compositor* compositor,
+                                                    const SkMatrix44& matrix) {
+  auto iter = per_compositor_data_.find(compositor);
+  if (iter == per_compositor_data_.end())
+    return;
+
+  iter->second->output_color_matrix = matrix;
+  iter->second->display->SetColorMatrix(matrix);
 }
 
 void InProcessContextFactory::AddObserver(ContextFactoryObserver* observer) {
@@ -375,8 +410,22 @@ void InProcessContextFactory::RemoveObserver(ContextFactoryObserver* observer) {
   observer_list_.RemoveObserver(observer);
 }
 
-viz::FrameSinkManagerImpl* InProcessContextFactory::GetFrameSinkManager() {
-  return frame_sink_manager_;
+SkMatrix44 InProcessContextFactory::GetOutputColorMatrix(
+    Compositor* compositor) const {
+  auto iter = per_compositor_data_.find(compositor);
+  if (iter == per_compositor_data_.end())
+    return SkMatrix44(SkMatrix44::kIdentity_Constructor);
+
+  return iter->second->output_color_matrix;
+}
+
+void InProcessContextFactory::ResetOutputColorMatrixToIdentity(
+    ui::Compositor* compositor) {
+  auto iter = per_compositor_data_.find(compositor);
+  if (iter == per_compositor_data_.end())
+    return;
+
+  iter->second->output_color_matrix.setIdentity();
 }
 
 InProcessContextFactory::PerCompositorData*
@@ -402,7 +451,7 @@ InProcessContextFactory::CreatePerCompositorData(ui::Compositor* compositor) {
             // If we ever provide a valid surface here, then GpuSurfaceTracker
             // can be more strict about enforcing it.
             ,
-            nullptr
+            nullptr, false /* can_be_used_with_surface_control */
 #endif
             ));
 #endif

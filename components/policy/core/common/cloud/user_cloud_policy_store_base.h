@@ -13,6 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/cloud_policy_validator.h"
+#include "components/policy/core/common/policy_types.h"
 #include "components/policy/policy_export.h"
 
 namespace base {
@@ -25,14 +26,18 @@ namespace policy {
 // functionality.
 class POLICY_EXPORT UserCloudPolicyStoreBase : public CloudPolicyStore {
  public:
-  explicit UserCloudPolicyStoreBase(
-      scoped_refptr<base::SequencedTaskRunner> background_task_runner);
+  UserCloudPolicyStoreBase(
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner,
+      PolicyScope policy_scope,
+      PolicySource policy_source);
   ~UserCloudPolicyStoreBase() override;
+
+  PolicySource source() { return policy_source_; }
 
  protected:
   // Creates a validator configured to validate a user policy. The caller owns
   // the resulting object until StartValidation() is invoked.
-  std::unique_ptr<UserCloudPolicyValidator> CreateValidator(
+  virtual std::unique_ptr<UserCloudPolicyValidator> CreateValidator(
       std::unique_ptr<enterprise_management::PolicyFetchResponse> policy,
       CloudPolicyValidatorBase::ValidateTimestampOption option);
 
@@ -50,6 +55,8 @@ class POLICY_EXPORT UserCloudPolicyStoreBase : public CloudPolicyStore {
  private:
   // Task runner for background file operations.
   scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
+  PolicyScope policy_scope_;
+  PolicySource policy_source_;
 
   DISALLOW_COPY_AND_ASSIGN(UserCloudPolicyStoreBase);
 };

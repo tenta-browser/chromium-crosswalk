@@ -19,7 +19,6 @@
 #include "base/callback.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/sequenced_task_runner.h"
@@ -39,6 +38,7 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema_map.h"
+#include "components/strings/grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::UTF8ToUTF16;
@@ -102,7 +102,7 @@ bool InstallValue(const base::Value& value,
     }
 
     case base::Value::Type::DICTIONARY: {
-      const base::DictionaryValue* sub_dict = NULL;
+      const base::DictionaryValue* sub_dict = nullptr;
       if (!value.GetAsDictionary(&sub_dict))
         return false;
       for (base::DictionaryValue::Iterator it(*sub_dict);
@@ -116,7 +116,7 @@ bool InstallValue(const base::Value& value,
     }
 
     case base::Value::Type::LIST: {
-      const base::ListValue* list = NULL;
+      const base::ListValue* list = nullptr;
       if (!value.GetAsList(&list))
         return false;
       for (size_t i = 0; i < list->GetSize(); ++i) {
@@ -124,7 +124,7 @@ bool InstallValue(const base::Value& value,
         if (!list->Get(i, &item))
           return false;
         if (!InstallValue(*item, hive, path + kPathSep + name,
-                          base::UintToString16(i + 1))) {
+                          base::NumberToString16(i + 1))) {
           return false;
         }
       }
@@ -133,8 +133,14 @@ bool InstallValue(const base::Value& value,
 
     case base::Value::Type::BINARY:
       return false;
+
+    // TODO(crbug.com/859477): Remove after root cause is found.
+    case base::Value::Type::DEAD:
+      CHECK(false);
+      return false;
   }
-  NOTREACHED();
+  // TODO(crbug.com/859477): Revert to NOTREACHED() after root cause is found.
+  CHECK(false);
   return false;
 }
 
@@ -259,8 +265,8 @@ void ScopedGroupPolicyRegistrySandbox::ActivateOverrides() {
 }
 
 void ScopedGroupPolicyRegistrySandbox::RemoveOverrides() {
-  ASSERT_HRESULT_SUCCEEDED(RegOverridePredefKey(HKEY_LOCAL_MACHINE, 0));
-  ASSERT_HRESULT_SUCCEEDED(RegOverridePredefKey(HKEY_CURRENT_USER, 0));
+  ASSERT_HRESULT_SUCCEEDED(RegOverridePredefKey(HKEY_LOCAL_MACHINE, nullptr));
+  ASSERT_HRESULT_SUCCEEDED(RegOverridePredefKey(HKEY_CURRENT_USER, nullptr));
 }
 
 void ScopedGroupPolicyRegistrySandbox::DeleteKeys() {
@@ -287,7 +293,7 @@ void RegistryTestHarness::SetUp() {
 ConfigurationPolicyProvider* RegistryTestHarness::CreateProvider(
     SchemaRegistry* registry,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  base::win::SetDomainStateForTesting(true);
+  base::win::ScopedDomainStateForTesting scoped_domain(true);
   std::unique_ptr<AsyncPolicyLoader> loader(
       new PolicyLoaderWin(task_runner, kTestPolicyKey));
   return new AsyncPolicyProvider(registry, std::move(loader));
@@ -337,7 +343,7 @@ void RegistryTestHarness::InstallStringListPolicy(
     std::string element_value;
     if (!element->GetAsString(&element_value))
       continue;
-    std::string name(base::IntToString(index++));
+    std::string name(base::NumberToString(index++));
     key.WriteValue(UTF8ToUTF16(name).c_str(),
                    UTF8ToUTF16(element_value).c_str());
   }
@@ -362,7 +368,7 @@ void RegistryTestHarness::Install3rdPartyPolicy(
       base::string16(kTestPolicyKey) + kPathSep + kThirdParty + kPathSep;
   for (base::DictionaryValue::Iterator domain(*policies);
        !domain.IsAtEnd(); domain.Advance()) {
-    const base::DictionaryValue* components = NULL;
+    const base::DictionaryValue* components = nullptr;
     if (!domain.value().GetAsDictionary(&components)) {
       ADD_FAILURE();
       continue;
@@ -389,16 +395,16 @@ PolicyProviderTestHarness* RegistryTestHarness::CreateHKLM() {
 }  // namespace
 
 // Instantiate abstract test case for basic policy reading tests.
-INSTANTIATE_TEST_CASE_P(PolicyProviderWinTest,
-                        ConfigurationPolicyProviderTest,
-                        testing::Values(RegistryTestHarness::CreateHKCU,
-                                        RegistryTestHarness::CreateHKLM));
+INSTANTIATE_TEST_SUITE_P(PolicyProviderWinTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(RegistryTestHarness::CreateHKCU,
+                                         RegistryTestHarness::CreateHKLM));
 
 // Instantiate abstract test case for 3rd party policy reading tests.
-INSTANTIATE_TEST_CASE_P(ThirdPartyPolicyProviderWinTest,
-                        Configuration3rdPartyPolicyProviderTest,
-                        testing::Values(RegistryTestHarness::CreateHKCU,
-                                        RegistryTestHarness::CreateHKLM));
+INSTANTIATE_TEST_SUITE_P(ThirdPartyPolicyProviderWinTest,
+                         Configuration3rdPartyPolicyProviderTest,
+                         testing::Values(RegistryTestHarness::CreateHKCU,
+                                         RegistryTestHarness::CreateHKLM));
 
 // Test cases for windows policy provider specific functionality.
 class PolicyLoaderWinTest : public PolicyTestBase {
@@ -407,11 +413,10 @@ class PolicyLoaderWinTest : public PolicyTestBase {
   // files in chrome/test/data/policy/gpo.
   static const base::char16 kTestPolicyKey[];
 
-  PolicyLoaderWinTest() {}
+  PolicyLoaderWinTest() : scoped_domain_(false) {}
   ~PolicyLoaderWinTest() override {}
 
   void SetUp() override {
-    base::win::SetDomainStateForTesting(false);
     PolicyTestBase::SetUp();
 
     // Activate overrides of registry keys. gtest documentation guarantees
@@ -429,6 +434,7 @@ class PolicyLoaderWinTest : public PolicyTestBase {
   }
 
   ScopedGroupPolicyRegistrySandbox registry_sandbox_;
+  base::win::ScopedDomainStateForTesting scoped_domain_;
 };
 
 const base::char16 PolicyLoaderWinTest::kTestPolicyKey[] =
@@ -447,8 +453,18 @@ TEST_F(PolicyLoaderWinTest, HKLMOverHKCU) {
   PolicyBundle expected;
   expected.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
       .Set(test_keys::kKeyString, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE,
-           POLICY_SOURCE_PLATFORM, base::MakeUnique<base::Value>("hklm"),
+           POLICY_SOURCE_PLATFORM, std::make_unique<base::Value>("hklm"),
            nullptr);
+  expected.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+      .GetMutable(test_keys::kKeyString)
+      ->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+
+  PolicyMap::Entry conflict(POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                            POLICY_SOURCE_PLATFORM,
+                            std::make_unique<base::Value>("hkcu"), nullptr);
+  expected.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+      .GetMutable(test_keys::kKeyString)
+      ->AddConflictingPolicy(conflict);
   EXPECT_TRUE(Matches(expected));
 }
 
@@ -500,17 +516,53 @@ TEST_F(PolicyLoaderWinTest, Merge3rdPartyPolicies) {
   PolicyMap& expected_policy = expected.Get(ns);
   expected_policy.Set(
       "a", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
-      base::MakeUnique<base::Value>(kMachineMandatory), nullptr);
+      std::make_unique<base::Value>(kMachineMandatory), nullptr);
+  expected_policy.GetMutable("a")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+  expected_policy.GetMutable("a")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+  expected_policy.GetMutable("a")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+
+  PolicyMap::Entry a_conflict_1(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kMachineRecommended), nullptr);
+  PolicyMap::Entry a_conflict_2(
+      POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kUserMandatory), nullptr);
+  PolicyMap::Entry a_conflict_3(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kUserRecommended), nullptr);
+  expected_policy.GetMutable("a")->AddConflictingPolicy(a_conflict_1);
+  expected_policy.GetMutable("a")->AddConflictingPolicy(a_conflict_2);
+  expected_policy.GetMutable("a")->AddConflictingPolicy(a_conflict_3);
+
   expected_policy.Set("b", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                       POLICY_SOURCE_PLATFORM,
-                      base::MakeUnique<base::Value>(kUserMandatory), nullptr);
+                      std::make_unique<base::Value>(kUserMandatory), nullptr);
+  expected_policy.GetMutable("b")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+  expected_policy.GetMutable("b")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+
+  PolicyMap::Entry b_conflict_1(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kMachineRecommended), nullptr);
+  PolicyMap::Entry b_conflict_2(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kUserRecommended), nullptr);
+  expected_policy.GetMutable("b")->AddConflictingPolicy(b_conflict_1);
+  expected_policy.GetMutable("b")->AddConflictingPolicy(b_conflict_2);
+
   expected_policy.Set("c", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_MACHINE,
                       POLICY_SOURCE_PLATFORM,
-                      base::MakeUnique<base::Value>(kMachineRecommended),
+                      std::make_unique<base::Value>(kMachineRecommended),
                       nullptr);
+  expected_policy.GetMutable("c")->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
+
+  PolicyMap::Entry c_conflict_1(
+      POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      std::make_unique<base::Value>(kUserRecommended), nullptr);
+  expected_policy.GetMutable("c")->AddConflictingPolicy(c_conflict_1);
+
   expected_policy.Set("d", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
                       POLICY_SOURCE_PLATFORM,
-                      base::MakeUnique<base::Value>(kUserRecommended), nullptr);
+                      std::make_unique<base::Value>(kUserRecommended), nullptr);
   EXPECT_TRUE(Matches(expected));
 }
 
@@ -518,32 +570,29 @@ TEST_F(PolicyLoaderWinTest, LoadStringEncodedValues) {
   // Create a dictionary with all the types that can be stored encoded in a
   // string.
   const PolicyNamespace ns(POLICY_DOMAIN_EXTENSIONS, "string");
-  ASSERT_TRUE(RegisterSchema(
-      ns,
-      "{"
-      "  \"type\": \"object\","
-      "  \"id\": \"MainType\","
-      "  \"properties\": {"
-      "    \"null\": { \"type\": \"null\" },"
-      "    \"bool\": { \"type\": \"boolean\" },"
-      "    \"int\": { \"type\": \"integer\" },"
-      "    \"double\": { \"type\": \"number\" },"
-      "    \"list\": {"
-      "      \"type\": \"array\","
-      "      \"items\": { \"$ref\": \"MainType\" }"
-      "    },"
-      "    \"dict\": { \"$ref\": \"MainType\" }"
-      "  }"
-      "}"));
+  ASSERT_TRUE(RegisterSchema(ns,
+                             R"({
+        "type": "object",
+        "id": "MainType",
+        "properties": {
+          "bool": { "type": "boolean" },
+          "int": { "type": "integer" },
+          "double": { "type": "number" },
+          "list": {
+            "type": "array",
+            "items": { "$ref": "MainType" }
+          },
+          "dict": { "$ref": "MainType" }
+        }
+      })"));
 
   base::DictionaryValue policy;
-  policy.Set("null", base::MakeUnique<base::Value>());
   policy.SetBoolean("bool", true);
   policy.SetInteger("int", -123);
   policy.SetDouble("double", 456.78e9);
   base::ListValue list;
-  list.Append(base::MakeUnique<base::Value>(policy.Clone()));
-  list.Append(base::MakeUnique<base::Value>(policy.Clone()));
+  list.Append(std::make_unique<base::Value>(policy.Clone()));
+  list.Append(std::make_unique<base::Value>(policy.Clone()));
   policy.SetKey("list", list.Clone());
   // Encode |policy| before adding the "dict" entry.
   std::string encoded_dict;
@@ -554,7 +603,6 @@ TEST_F(PolicyLoaderWinTest, LoadStringEncodedValues) {
   base::JSONWriter::Write(list, &encoded_list);
   ASSERT_FALSE(encoded_list.empty());
   base::DictionaryValue encoded_policy;
-  encoded_policy.SetString("null", "");
   encoded_policy.SetString("bool", "1");
   encoded_policy.SetString("int", "-123");
   encoded_policy.SetString("double", "456.78e9");

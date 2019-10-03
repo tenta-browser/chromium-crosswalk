@@ -16,17 +16,16 @@ namespace content {
 class MockAppCacheService : public AppCacheServiceImpl {
  public:
   MockAppCacheService()
-    : AppCacheServiceImpl(NULL),
-      mock_delete_appcaches_for_origin_result_(net::OK),
-      delete_called_count_(0) {
-    storage_.reset(new MockAppCacheStorage(this));
+      : AppCacheServiceImpl(nullptr, nullptr),
+        mock_delete_appcaches_for_origin_result_(net::OK),
+        delete_called_count_(0) {
+    storage_ = std::make_unique<MockAppCacheStorage>(this);
   }
 
   // Just returns a canned completion code without actually
   // removing groups and caches in our mock storage instance.
-  void DeleteAppCachesForOrigin(
-      const GURL& origin,
-      const net::CompletionCallback& callback) override;
+  void DeleteAppCachesForOrigin(const url::Origin& origin,
+                                net::CompletionOnceCallback callback) override;
 
   void set_quota_manager_proxy(storage::QuotaManagerProxy* proxy) {
     quota_manager_proxy_ = proxy;

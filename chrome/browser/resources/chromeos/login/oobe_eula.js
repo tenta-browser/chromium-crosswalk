@@ -10,6 +10,8 @@
 Polymer({
   is: 'oobe-eula-md',
 
+  behaviors: [I18nBehavior, OobeDialogHostBehavior],
+
   properties: {
     /**
      * Shows "Loading..." section.
@@ -36,13 +38,30 @@ Polymer({
     },
 
     /**
+     * The TPM password shown on the installation settings page.
+     */
+    password: {
+      type: String,
+      value: null,
+    },
+
+    /**
      * Reference to OOBE screen object.
-     * @type {!OobeTypes.Screen}
+     * @type {!{
+     *     loadEulaToWebview_: function(Element),
+     *     onUsageStatsClicked_: function(boolean),
+     * }}
      */
     screen: {
       type: Object,
     },
   },
+
+  /**
+   * Flag that ensures that OOBE configuration is applied only once.
+   * @private {boolean}
+   */
+  configuration_applied_: false,
 
   focus: function() {
     if (this.eulaLoadingScreenShown) {
@@ -50,6 +69,34 @@ Polymer({
     } else {
       this.$.eulaDialog.show();
     }
+  },
+
+  /** Called when dialog is shown */
+  onBeforeShow: function() {
+    this.behaviors.forEach((behavior) => {
+      if (behavior.onBeforeShow)
+        behavior.onBeforeShow.call(this);
+    });
+    window.setTimeout(this.applyOobeConfiguration_.bind(this), 0);
+  },
+
+  /**
+   * Called when dialog is shown for the first time.
+   * @private
+   */
+  applyOobeConfiguration_: function() {
+    if (this.configuration_applied_)
+      return;
+    var configuration = Oobe.getInstance().getOobeConfiguration();
+    if (!configuration)
+      return;
+    if (configuration.eulaSendStatistics) {
+      this.usageStatsChecked = true;
+    }
+    if (configuration.eulaAutoAccept) {
+      this.eulaAccepted_();
+    }
+    this.configuration_applied_ = true;
   },
 
   /**
@@ -65,12 +112,15 @@ Polymer({
   updateLocalizedContent: function(event) {
     // This forces frame to reload.
     this.screen.loadEulaToWebview_(this.$.crosEulaFrame);
+    this.i18nUpdateLocale();
   },
 
   /**
    * This is 'on-tap' event handler for 'Accept' button.
+   *
+   * @private
    */
-  eulaAccepted_: function(event) {
+  eulaAccepted_: function() {
     chrome.send('login.EulaScreen.userActed', ['accept-button']);
   },
 
@@ -90,8 +140,19 @@ Polymer({
    */
   onInstallationSettingsClicked_: function() {
     chrome.send('eulaOnInstallationSettingsPopupOpened');
-    $('popup-overlay').hidden = false;
-    $('installation-settings-ok-button').focus();
+    this.$.eulaDialog.hidden = true;
+    this.$.installationSettingsDialog.hidden = false;
+    this.$['settings-close-button'].focus();
+  },
+
+  /**
+   * On-tap event handler for the close button on installation settings page.
+   *
+   * @private
+   */
+  onInstallationSettingsCloseClicked_: function() {
+    this.$.installationSettingsDialog.hidden = true;
+    this.$.eulaDialog.hidden = false;
   },
 
   /**
@@ -111,5 +172,23 @@ Polymer({
    */
   onEulaBackButtonPressed_: function() {
     chrome.send('login.EulaScreen.userActed', ['back-button']);
+  },
+
+  /**
+   * Returns true if the TPM password hasn't been received.
+   *
+   * @private
+   */
+  isWaitingForPassword_: function(password) {
+    return password == null;
+  },
+
+  /**
+   * Returns true if the TPM password has been received but it's empty.
+   *
+   * @private
+   */
+  isPasswordEmpty_: function(password) {
+    return password != null && password.length == 0;
   },
 });

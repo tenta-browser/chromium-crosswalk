@@ -10,8 +10,8 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "content/public/browser/web_contents.h"
@@ -83,7 +83,7 @@ bool RequestFileSystemDialogView::Accept() {
 
 gfx::Size RequestFileSystemDialogView::CalculatePreferredSize() const {
   return gfx::Size(kDialogMaxWidth,
-                   child_at(0)->GetHeightForWidth(kDialogMaxWidth));
+                   children().front()->GetHeightForWidth(kDialogMaxWidth));
 }
 
 RequestFileSystemDialogView::RequestFileSystemDialogView(
@@ -120,7 +120,7 @@ RequestFileSystemDialogView::RequestFileSystemDialogView(
                  placeholder_offsets[1] + volume_name.length()),
       bold_style);
 
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   AddChildView(label);
 }

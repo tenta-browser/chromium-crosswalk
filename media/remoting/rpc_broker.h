@@ -14,7 +14,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "media/remoting/rpc.pb.h"
+#include "media/remoting/media_remoting_rpc.pb.h"
 
 namespace media {
 namespace remoting {
@@ -95,7 +95,7 @@ class RpcBroker {
   // Callback that is run to send a serialized message.
   SendMessageCallback send_message_cb_;
 
-  base::WeakPtrFactory<RpcBroker> weak_factory_;
+  base::WeakPtrFactory<RpcBroker> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RpcBroker);
 };

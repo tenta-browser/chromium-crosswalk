@@ -4,6 +4,8 @@
 
 #include "net/http/http_auth_handler_mock.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
@@ -11,6 +13,7 @@
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_request_info.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -40,83 +43,19 @@ void PrintTo(const HttpAuthHandlerMock::State& state, ::std::ostream* os) {
 
 HttpAuthHandlerMock::HttpAuthHandlerMock()
     : state_(State::WAIT_FOR_INIT),
-      resolve_(RESOLVE_INIT),
       generate_async_(false),
       generate_rv_(OK),
-      auth_token_(NULL),
+      auth_token_(nullptr),
       first_round_(true),
       connection_based_(false),
       allows_default_credentials_(false),
-      allows_explicit_credentials_(true),
-      weak_factory_(this) {}
+      allows_explicit_credentials_(true) {}
 
 HttpAuthHandlerMock::~HttpAuthHandlerMock() = default;
-
-void HttpAuthHandlerMock::SetResolveExpectation(Resolve resolve) {
-  EXPECT_EQ(RESOLVE_INIT, resolve_);
-  resolve_ = resolve;
-}
-
-bool HttpAuthHandlerMock::NeedsCanonicalName() {
-  switch (resolve_) {
-    case RESOLVE_SYNC:
-    case RESOLVE_ASYNC:
-      return true;
-    case RESOLVE_SKIP:
-      resolve_ = RESOLVE_TESTED;
-      return false;
-    default:
-      NOTREACHED();
-      return false;
-  }
-}
-
-int HttpAuthHandlerMock::ResolveCanonicalName(
-    HostResolver* host_resolver, const CompletionCallback& callback) {
-  EXPECT_NE(RESOLVE_TESTED, resolve_);
-  int rv = OK;
-  switch (resolve_) {
-    case RESOLVE_SYNC:
-      resolve_ = RESOLVE_TESTED;
-      break;
-    case RESOLVE_ASYNC:
-      EXPECT_TRUE(callback_.is_null());
-      rv = ERR_IO_PENDING;
-      callback_ = callback;
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&HttpAuthHandlerMock::OnResolveCanonicalName,
-                                weak_factory_.GetWeakPtr()));
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
-  return rv;
-}
 
 void HttpAuthHandlerMock::SetGenerateExpectation(bool async, int rv) {
   generate_async_ = async;
   generate_rv_ = rv;
-}
-
-HttpAuth::AuthorizationResult HttpAuthHandlerMock::HandleAnotherChallenge(
-    HttpAuthChallengeTokenizer* challenge) {
-  EXPECT_THAT(state_, ::testing::AnyOf(State::WAIT_FOR_CHALLENGE,
-                                       State::WAIT_FOR_GENERATE_AUTH_TOKEN));
-  // If we receive an empty challenge for a connection based scheme, or a second
-  // challenge for a non connection based scheme, assume it's a rejection.
-  if (!is_connection_based() || challenge->base64_param().empty()) {
-    state_ = State::DONE;
-    return HttpAuth::AUTHORIZATION_RESULT_REJECT;
-  }
-
-  if (!base::LowerCaseEqualsASCII(challenge->scheme(), "mock")) {
-    state_ = State::DONE;
-    return HttpAuth::AUTHORIZATION_RESULT_INVALID;
-  }
-
-  state_ = State::WAIT_FOR_GENERATE_AUTH_TOKEN;
-  return HttpAuth::AUTHORIZATION_RESULT_ACCEPT;
 }
 
 bool HttpAuthHandlerMock::NeedsIdentity() {
@@ -144,19 +83,19 @@ bool HttpAuthHandlerMock::Init(HttpAuthChallengeTokenizer* challenge,
 int HttpAuthHandlerMock::GenerateAuthTokenImpl(
     const AuthCredentials* credentials,
     const HttpRequestInfo* request,
-    const CompletionCallback& callback,
+    CompletionOnceCallback callback,
     std::string* auth_token) {
   EXPECT_EQ(State::WAIT_FOR_GENERATE_AUTH_TOKEN, state_);
   first_round_ = false;
   request_url_ = request->url;
   if (generate_async_) {
     EXPECT_TRUE(callback_.is_null());
-    EXPECT_TRUE(auth_token_ == NULL);
-    callback_ = callback;
+    EXPECT_TRUE(auth_token_ == nullptr);
+    callback_ = std::move(callback);
     auth_token_ = auth_token;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&HttpAuthHandlerMock::OnGenerateAuthToken,
-                              weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&HttpAuthHandlerMock::OnGenerateAuthToken,
+                                  weak_factory_.GetWeakPtr()));
     state_ = State::TOKEN_PENDING;
     return ERR_IO_PENDING;
   } else {
@@ -171,13 +110,24 @@ int HttpAuthHandlerMock::GenerateAuthTokenImpl(
   }
 }
 
-void HttpAuthHandlerMock::OnResolveCanonicalName() {
-  EXPECT_EQ(RESOLVE_ASYNC, resolve_);
-  EXPECT_TRUE(!callback_.is_null());
-  resolve_ = RESOLVE_TESTED;
-  CompletionCallback callback = callback_;
-  callback_.Reset();
-  callback.Run(OK);
+HttpAuth::AuthorizationResult HttpAuthHandlerMock::HandleAnotherChallengeImpl(
+    HttpAuthChallengeTokenizer* challenge) {
+  EXPECT_THAT(state_, ::testing::AnyOf(State::WAIT_FOR_CHALLENGE,
+                                       State::WAIT_FOR_GENERATE_AUTH_TOKEN));
+  // If we receive an empty challenge for a connection based scheme, or a second
+  // challenge for a non connection based scheme, assume it's a rejection.
+  if (!is_connection_based() || challenge->base64_param().empty()) {
+    state_ = State::DONE;
+    return HttpAuth::AUTHORIZATION_RESULT_REJECT;
+  }
+
+  if (!base::LowerCaseEqualsASCII(challenge->scheme(), "mock")) {
+    state_ = State::DONE;
+    return HttpAuth::AUTHORIZATION_RESULT_INVALID;
+  }
+
+  state_ = State::WAIT_FOR_GENERATE_AUTH_TOKEN;
+  return HttpAuth::AUTHORIZATION_RESULT_ACCEPT;
 }
 
 void HttpAuthHandlerMock::OnGenerateAuthToken() {
@@ -191,10 +141,8 @@ void HttpAuthHandlerMock::OnGenerateAuthToken() {
   } else {
     state_ = State::DONE;
   }
-  auth_token_ = NULL;
-  CompletionCallback callback = callback_;
-  callback_.Reset();
-  callback.Run(generate_rv_);
+  auth_token_ = nullptr;
+  std::move(callback_).Run(generate_rv_);
 }
 
 HttpAuthHandlerMock::Factory::Factory()
@@ -217,6 +165,7 @@ int HttpAuthHandlerMock::Factory::CreateAuthHandler(
     CreateReason reason,
     int nonce_count,
     const NetLogWithSource& net_log,
+    HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
   if (handlers_[target].empty())
     return ERR_UNEXPECTED;

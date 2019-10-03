@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_VR_RENDERERS_BASE_RENDERER_H_
 
 #include "base/macros.h"
-#include "ui/gl/gl_bindings.h"
+#include "chrome/browser/vr/gl_bindings.h"
 
 namespace vr {
 
@@ -17,10 +17,13 @@ class BaseRenderer {
   virtual void Flush();
 
  protected:
+  BaseRenderer() = default;
   BaseRenderer(const char* vertex_src, const char* fragment_src);
 
-  GLuint program_handle_;
-  GLuint position_handle_;
+  GLuint program_handle_ = 0;
+  GLuint position_handle_ = 0;
+
+  GLuint clip_rect_handle_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(BaseRenderer);
 };

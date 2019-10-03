@@ -9,7 +9,7 @@
 #include <string>
 
 #include "content/browser/renderer_host/media/audio_output_authorization_handler.h"
-#include "content/browser/renderer_host/media/render_frame_audio_output_stream_factory.h"
+#include "content/browser/renderer_host/media/old_render_frame_audio_output_stream_factory.h"
 #include "content/browser/renderer_host/media/renderer_audio_output_stream_factory_context.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -40,6 +40,8 @@ class MediaStreamManager;
 //                 |
 // media::MojoAudioOutputStream
 //
+// Not needed after switching to serving audio streams with the audio service
+// (https://crbug.com/830493).
 class CONTENT_EXPORT RendererAudioOutputStreamFactoryContextImpl
     : public RendererAudioOutputStreamFactoryContext {
  public:
@@ -64,10 +66,10 @@ class CONTENT_EXPORT RendererAudioOutputStreamFactoryContextImpl
   std::unique_ptr<media::AudioOutputDelegate> CreateDelegate(
       const std::string& unique_device_id,
       int render_frame_id,
+      int stream_id,
       const media::AudioParameters& params,
+      media::mojom::AudioOutputStreamObserverPtr stream_observer,
       media::AudioOutputDelegate::EventHandler* handler) override;
-
-  static bool UseMojoFactories();
 
  private:
   // Used for hashing the device_id.
@@ -76,9 +78,6 @@ class CONTENT_EXPORT RendererAudioOutputStreamFactoryContextImpl
   MediaStreamManager* const media_stream_manager_;
   const AudioOutputAuthorizationHandler authorization_handler_;
   const int render_process_id_;
-
-  // All streams requires ids for logging, so we keep a count for that.
-  int next_stream_id_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(RendererAudioOutputStreamFactoryContextImpl);
 };

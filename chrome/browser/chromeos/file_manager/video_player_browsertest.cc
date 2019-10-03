@@ -4,26 +4,29 @@
 
 #include "chrome/browser/chromeos/file_manager/file_manager_browsertest_base.h"
 
-#include "chromeos/chromeos_switches.h"
+#include "base/test/scoped_feature_list.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "media/base/media_switches.h"
 
 namespace file_manager {
 
-template <GuestMode M>
+template <GuestMode MODE>
 class VideoPlayerBrowserTestBase : public FileManagerBrowserTestBase {
  public:
-  GuestMode GetGuestModeParam() const override { return M; }
-  const char* GetTestCaseNameParam() const override {
+  VideoPlayerBrowserTestBase() = default;
+
+ protected:
+  GuestMode GetGuestMode() const override { return MODE; }
+
+  const char* GetTestCaseName() const override {
     return test_case_name_.c_str();
   }
 
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(
-        chromeos::switches::kEnableVideoPlayerChromecastSupport);
-    FileManagerBrowserTestBase::SetUpCommandLine(command_line);
+  std::string GetFullTestCaseName() const override {
+    return test_case_name_;
   }
 
-  const char* GetTestManifestName() const override {
+  const char* GetTestExtensionManifestName() const override {
     return "video_player_test_manifest.json";
   }
 
@@ -31,6 +34,8 @@ class VideoPlayerBrowserTestBase : public FileManagerBrowserTestBase {
 
  private:
   std::string test_case_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(VideoPlayerBrowserTestBase);
 };
 
 typedef VideoPlayerBrowserTestBase<NOT_IN_GUEST_MODE> VideoPlayerBrowserTest;
@@ -42,49 +47,46 @@ IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenSingleVideoOnDownloads) {
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_OpenSingleVideoOnDownloads DISABLED_OpenSingleVideoOnDownloads
-#else
-#define MAYBE_OpenSingleVideoOnDownloads OpenSingleVideoOnDownloads
-#endif
 IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTestInGuestMode,
-                       MAYBE_OpenSingleVideoOnDownloads) {
+                       OpenSingleVideoOnDownloads) {
   set_test_case_name("openSingleVideoOnDownloads");
   StartTest();
 }
 
-// MEMORY_SANITIZER: http://crbug.com/508949
-// CHROME_OS: http://crbug.com/688568
-#if defined(MEMORY_SANITIZER) || defined(OS_CHROMEOS)
-#define MAYBE_OpenSingleVideoOnDrive DISABLED_OpenSingleVideoOnDrive
-#else
-#define MAYBE_OpenSingleVideoOnDrive OpenSingleVideoOnDrive
-#endif
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_OpenSingleVideoOnDrive) {
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenSingleVideoOnDrive) {
   set_test_case_name("openSingleVideoOnDrive");
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_CheckInitialElements DISABLED_CheckInitialElements
-#else
-#define MAYBE_CheckInitialElements CheckInitialElements
-#endif
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_CheckInitialElements) {
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenVideoWithSubtitle) {
+  set_test_case_name("openVideoWithSubtitle");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenVideoWithoutSubtitle) {
+  set_test_case_name("openVideoWithoutSubtitle");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenMultipleVideosOnDownloads) {
+  set_test_case_name("openMultipleVideosOnDownloads");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, CheckInitialElements) {
   set_test_case_name("checkInitialElements");
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_ClickControlButtons DISABLED_ClickControlButtons
-#else
-#define MAYBE_ClickControlButtons ClickControlButtons
-#endif
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_ClickControlButtons) {
-  set_test_case_name("clickControlButtons");
+// Flaky. Suspect due to a race when loading Chromecast integration.
+// See https://crbug.com/926035.
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, DISABLED_NativeMediaKey) {
+  // The HardwareMediaKeyHandling feature makes key handling flaky.
+  // See https://crbug.com/902519.
+  base::test::ScopedFeatureList disable_media_key_handling;
+  disable_media_key_handling.InitAndDisableFeature(
+      media::kHardwareMediaKeyHandling);
+  set_test_case_name("mediaKeyNative");
   StartTest();
 }
 

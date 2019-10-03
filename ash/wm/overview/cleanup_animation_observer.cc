@@ -4,6 +4,9 @@
 
 #include "ash/wm/overview/cleanup_animation_observer.h"
 
+#include <utility>
+
+#include "ash/wm/overview/overview_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/views/widget/widget.h"
 
@@ -28,13 +31,13 @@ void CleanupAnimationObserver::OnImplicitAnimationsCompleted() {
   if (!widget_)
     return;
   if (owner_) {
-    owner_->RemoveAndDestroyAnimationObserver(this);
+    owner_->RemoveAndDestroyExitAnimationObserver(this);
     return;
   }
   delete this;
 }
 
-void CleanupAnimationObserver::SetOwner(WindowSelectorDelegate* owner) {
+void CleanupAnimationObserver::SetOwner(OverviewDelegate* owner) {
   owner_ = owner;
 }
 

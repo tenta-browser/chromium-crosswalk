@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.omnibox.geo;
 
 import android.Manifest;
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -13,10 +12,9 @@ import android.content.pm.PackageManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.os.Build;
-import android.os.Build.VERSION_CODES;
 import android.os.Process;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import android.telephony.CellIdentityCdma;
 import android.telephony.CellIdentityGsm;
 import android.telephony.CellIdentityLte;
@@ -29,17 +27,19 @@ import android.telephony.CellInfoWcdma;
 import android.telephony.TelephonyManager;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.BuildInfo;
+import org.chromium.base.Callback;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.omnibox.geo.VisibleNetworks.VisibleCell;
 import org.chromium.chrome.browser.omnibox.geo.VisibleNetworks.VisibleWifi;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
-import javax.annotation.Nullable;
 
 /**
  * Util methods for platform networking APIs.
@@ -53,6 +53,21 @@ class PlatformNetworksManager {
      * {@link WifiManager} if it cannot get the ssid for the connected wifi access point.
      */
     static final String UNKNOWN_SSID = "<unknown ssid>";
+
+    /**
+     * Get the connected wifi, but do not use it (nullify it) if its BSSID is unknown.
+     *
+     * @param context The application context
+     * @param wifiManager Provides access to wifi information on the device
+     * @return The possibly null connected wifi
+     */
+    private static VisibleWifi getConnectedWifiIfKnown(Context context, WifiManager wifiManager) {
+        VisibleWifi connectedWifi = getConnectedWifi(context, wifiManager);
+        if (connectedWifi != null && connectedWifi.bssid() == null) {
+            return null;
+        }
+        return connectedWifi;
+    }
 
     static VisibleWifi getConnectedWifi(Context context, WifiManager wifiManager) {
         if (hasLocationAndWifiPermission(context)) {
@@ -111,44 +126,29 @@ class PlatformNetworksManager {
             ScanResult scanResult = scanResults.get(i);
             String bssid = scanResult.BSSID;
             if (bssid == null) continue;
-            Long scanResultTimestamp = scanResultTimestamp(scanResult);
-            Long wifiTimestamp = null;
-            if (scanResultTimestamp != null) {
-                long ageMs = elapsedTime - TimeUnit.MICROSECONDS.toMillis(scanResultTimestamp);
-                wifiTimestamp = currentTime - ageMs;
-            }
+            long ageMs = elapsedTime - TimeUnit.MICROSECONDS.toMillis(scanResult.timestamp);
+            long wifiTimestamp = currentTime - ageMs;
             visibleWifis.add(
                     VisibleWifi.create(scanResult.SSID, bssid, scanResult.level, wifiTimestamp));
         }
         return visibleWifis;
     }
 
-    @TargetApi(VERSION_CODES.JELLY_BEAN_MR1)
-    @Nullable
-    private static Long scanResultTimestamp(ScanResult scanResult) {
-        if (Build.VERSION.SDK_INT < VERSION_CODES.JELLY_BEAN_MR1) {
-            return null;
-        }
-        return scanResult.timestamp;
-    }
-
-    static Set<VisibleCell> getAllVisibleCells(Context context, TelephonyManager telephonyManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            // CellInfo is only available JB MR1 upwards.
-            return Collections.emptySet();
-        }
+    static void getAllVisibleCells(Context context, TelephonyManager telephonyManager,
+            Callback<Set<VisibleCell>> callback) {
         if (!hasLocationPermission(context)) {
-            return Collections.emptySet();
+            callback.onResult(Collections.emptySet());
+            return;
         }
-        return getAllVisibleCellsPostJellyBeanMr1(telephonyManager);
+
+        CellInfoDelegate.requestCellInfoUpdate(telephonyManager, (cellInfos) -> {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT,
+                    () -> callback.onResult(getAllVisibleCellsFromCellInfo(cellInfos)));
+        });
     }
 
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
-    private static Set<VisibleCell> getAllVisibleCellsPostJellyBeanMr1(
-            TelephonyManager telephonyManager) {
+    private static Set<VisibleCell> getAllVisibleCellsFromCellInfo(List<CellInfo> cellInfos) {
         Set<VisibleCell> visibleCells = new HashSet<>();
-        // Retrieve visible cell networks
-        List<CellInfo> cellInfos = telephonyManager.getAllCellInfo();
         if (cellInfos == null) {
             return visibleCells;
         }
@@ -157,36 +157,43 @@ class PlatformNetworksManager {
         long currentTime = sTimeProvider.getCurrentTime();
         for (int i = 0; i < cellInfos.size(); i++) {
             CellInfo cellInfo = cellInfos.get(i);
-            VisibleCell visibleCell =
-                    getVisibleCellPostJellyBeanMr1(cellInfo, elapsedTime, currentTime);
-            if (visibleCell.radioType() != VisibleCell.UNKNOWN_RADIO_TYPE) {
+            VisibleCell visibleCell = getVisibleCell(cellInfo, elapsedTime, currentTime);
+            if (visibleCell.radioType() != VisibleCell.RadioType.UNKNOWN) {
                 visibleCells.add(visibleCell);
             }
         }
         return visibleCells;
     }
 
-    static VisibleCell getConnectedCell(Context context, TelephonyManager telephonyManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            // CellInfo is only available JB MR1 upwards.
-            return VisibleCell.UNKNOWN_VISIBLE_CELL;
+    /**
+     * Get the connected cell network, but do not use it (nullify it) if its radio type is unknown.
+     *
+     * @param context The application context
+     * @param telephonyManager Provides access to cell information on the device
+     * @return The possibly null connected cell
+     */
+    private static VisibleCell getConnectedCellIfKnown(
+            Context context, TelephonyManager telephonyManager) {
+        VisibleCell connectedCell = getConnectedCell(context, telephonyManager);
+        if (connectedCell != null
+                && (connectedCell.radioType() == VisibleCell.RadioType.UNKNOWN
+                        || connectedCell.radioType()
+                                == VisibleCell.RadioType.UNKNOWN_MISSING_LOCATION_PERMISSION)) {
+            return null;
         }
-        return getConnectedCellPostJellyBeanMr1(context, telephonyManager);
+        return connectedCell;
     }
 
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
-    private static VisibleCell getConnectedCellPostJellyBeanMr1(
-            Context context, TelephonyManager telephonyManager) {
+    static VisibleCell getConnectedCell(Context context, TelephonyManager telephonyManager) {
         if (!hasLocationPermission(context)) {
             return VisibleCell.UNKNOWN_MISSING_LOCATION_PERMISSION_VISIBLE_CELL;
         }
         CellInfo cellInfo = getActiveCellInfo(telephonyManager);
-        return getVisibleCellPostJellyBeanMr1(
+        return getVisibleCell(
                 cellInfo, sTimeProvider.getElapsedRealtime(), sTimeProvider.getCurrentTime());
     }
 
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
-    private static VisibleCell getVisibleCellPostJellyBeanMr1(
+    private static VisibleCell getVisibleCell(
             @Nullable CellInfo cellInfo, long elapsedTime, long currentTime) {
         if (cellInfo == null) {
             return VisibleCell.UNKNOWN_VISIBLE_CELL;
@@ -195,7 +202,7 @@ class PlatformNetworksManager {
         long cellTimestamp = currentTime - cellInfoAge;
         if (cellInfo instanceof CellInfoCdma) {
             CellIdentityCdma cellIdentityCdma = ((CellInfoCdma) cellInfo).getCellIdentity();
-            return VisibleCell.builder(VisibleCell.CDMA_RADIO_TYPE)
+            return VisibleCell.builder(VisibleCell.RadioType.CDMA)
                     .setCellId(cellIdentityCdma.getBasestationId())
                     .setLocationAreaCode(cellIdentityCdma.getNetworkId())
                     .setMobileNetworkCode(cellIdentityCdma.getSystemId())
@@ -204,7 +211,7 @@ class PlatformNetworksManager {
         }
         if (cellInfo instanceof CellInfoGsm) {
             CellIdentityGsm cellIdentityGsm = ((CellInfoGsm) cellInfo).getCellIdentity();
-            return VisibleCell.builder(VisibleCell.GSM_RADIO_TYPE)
+            return VisibleCell.builder(VisibleCell.RadioType.GSM)
                     .setCellId(cellIdentityGsm.getCid())
                     .setLocationAreaCode(cellIdentityGsm.getLac())
                     .setMobileCountryCode(cellIdentityGsm.getMcc())
@@ -214,7 +221,7 @@ class PlatformNetworksManager {
         }
         if (cellInfo instanceof CellInfoLte) {
             CellIdentityLte cellIdLte = ((CellInfoLte) cellInfo).getCellIdentity();
-            return VisibleCell.builder(VisibleCell.LTE_RADIO_TYPE)
+            return VisibleCell.builder(VisibleCell.RadioType.LTE)
                     .setCellId(cellIdLte.getCi())
                     .setMobileCountryCode(cellIdLte.getMcc())
                     .setMobileNetworkCode(cellIdLte.getMnc())
@@ -223,11 +230,9 @@ class PlatformNetworksManager {
                     .setTimestamp(cellTimestamp)
                     .build();
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2
-                && cellInfo instanceof CellInfoWcdma) {
-            // CellInfoWcdma is only usable JB MR2 upwards.
+        if (cellInfo instanceof CellInfoWcdma) {
             CellIdentityWcdma cellIdentityWcdma = ((CellInfoWcdma) cellInfo).getCellIdentity();
-            return VisibleCell.builder(VisibleCell.WCDMA_RADIO_TYPE)
+            return VisibleCell.builder(VisibleCell.RadioType.WCDMA)
                     .setCellId(cellIdentityWcdma.getCid())
                     .setLocationAreaCode(cellIdentityWcdma.getLac())
                     .setMobileCountryCode(cellIdentityWcdma.getMcc())
@@ -243,7 +248,6 @@ class PlatformNetworksManager {
      * Returns a CellInfo object representing the currently registered base stations, containing
      * its identity fields and signal strength. Null if no base station is active.
      */
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     @Nullable
     private static CellInfo getActiveCellInfo(TelephonyManager telephonyManager) {
         int numRegisteredCellInfo = 0;
@@ -270,45 +274,58 @@ class PlatformNetworksManager {
     }
 
     /**
-     * Computes the visible networks.
+     * Computes the connected networks.
+     *
+     * Only includes network connections that are active or in the process of being set up.
      *
      * @param context The application context
-     * @param includeAllVisibleNotConnectedNetworks Whether to include all visible networks that are
-     *     not connected. This should only be true when performing a background non-synchronous
-     *     call, since including not connected networks can degrade latency.
      */
-    static VisibleNetworks computeVisibleNetworks(
-            Context context, boolean includeAllVisibleNotConnectedNetworks) {
-        WifiManager wifiManager = (WifiManager) context.getApplicationContext().getSystemService(
-                Context.WIFI_SERVICE);
-        TelephonyManager telephonyManager =
-                (TelephonyManager) context.getApplicationContext().getSystemService(
-                        Context.TELEPHONY_SERVICE);
+    static VisibleNetworks computeConnectedNetworks(Context context) {
+        WifiManager wifiManager = getWifiManager(context);
+        TelephonyManager telephonyManager = getTelephonyManager(context);
 
-        VisibleWifi connectedWifi;
-        VisibleCell connectedCell;
-        Set<VisibleWifi> allVisibleWifis = null;
-        Set<VisibleCell> allVisibleCells = null;
+        VisibleWifi connectedWifi = getConnectedWifiIfKnown(context, wifiManager);
+        VisibleCell connectedCell = getConnectedCellIfKnown(context, telephonyManager);
 
-        connectedWifi = getConnectedWifi(context, wifiManager);
-        if (connectedWifi != null && connectedWifi.bssid() == null) {
-            // If the connected wifi is unknown, do not use it.
-            connectedWifi = null;
-        }
-        connectedCell = getConnectedCell(context, telephonyManager);
-        if (connectedCell != null
-                && (connectedCell.radioType() == VisibleCell.UNKNOWN_RADIO_TYPE
-                           || connectedCell.radioType()
-                                   == VisibleCell.UNKNOWN_MISSING_LOCATION_PERMISSION_RADIO_TYPE)) {
-            // If the radio type is unknown, do not use it.
-            connectedCell = null;
-        }
-        if (includeAllVisibleNotConnectedNetworks) {
-            allVisibleWifis = getAllVisibleWifis(context, wifiManager);
-            allVisibleCells = getAllVisibleCells(context, telephonyManager);
-        }
-        return VisibleNetworks.create(
-                connectedWifi, connectedCell, allVisibleWifis, allVisibleCells);
+        return VisibleNetworks.create(connectedWifi, connectedCell, null, null);
+    }
+
+    /**
+     * Computes all visible networks.
+     *
+     * Along with connected networks, also includes all networks found in the most recent {@link
+     * WifiManager} scan, and triggers an update to get refreshed {@link TelephonyManager} {@link
+     * CellInfo} data. The {@link CellInfo} includes all available cell information from all radios
+     * on the device including the camped/registered, serving, and neighboring cells. This update
+     * can degrade latency which is why it is performed asynchronously.
+     *
+     * @param context The application context
+     * @param callback The callback to invoke with the results of this computation
+     */
+    static void computeVisibleNetworks(Context context, Callback<VisibleNetworks> callback) {
+        WifiManager wifiManager = getWifiManager(context);
+        TelephonyManager telephonyManager = getTelephonyManager(context);
+
+        VisibleWifi connectedWifi = getConnectedWifiIfKnown(context, wifiManager);
+        VisibleCell connectedCell = getConnectedCellIfKnown(context, telephonyManager);
+
+        Set<VisibleWifi> allVisibleWifis = getAllVisibleWifis(context, wifiManager);
+
+        getAllVisibleCells(context, telephonyManager, (allVisibleCells) -> {
+            callback.onResult(VisibleNetworks.create(
+                    connectedWifi, connectedCell, allVisibleWifis, allVisibleCells));
+        });
+    }
+
+    private static TelephonyManager getTelephonyManager(Context context) {
+        return (TelephonyManager) context.getApplicationContext().getSystemService(
+                Context.TELEPHONY_SERVICE);
+    }
+
+    private static WifiManager getWifiManager(Context context) {
+        Context applicationContext = context.getApplicationContext();
+        Object wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE);
+        return (WifiManager) wifiManager;
     }
 
     private static boolean hasPermission(Context context, String permission) {
@@ -318,6 +335,10 @@ class PlatformNetworksManager {
     }
 
     private static boolean hasLocationPermission(Context context) {
+        if (BuildInfo.isAtLeastQ()) {
+            return hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION);
+        }
+
         return hasPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
                 || hasPermission(context, Manifest.permission.ACCESS_FINE_LOCATION);
     }

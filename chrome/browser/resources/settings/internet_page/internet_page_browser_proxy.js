@@ -19,17 +19,18 @@ cr.define('settings', function() {
   /** @interface */
   class InternetPageBrowserProxy {
     /**
-     *  Shows configuration of connnected external VPN network.
-     *  @param {string} guid
+     * Shows configuration for external VPNs. Includes ThirdParty (extension
+     * configured) VPNs, and Arc VPNs.
+     * @param {string} guid
      */
-    showNetworkConfigure(guid) {}
+    configureThirdPartyVpn(guid) {}
 
     /**
-     * Sends add VPN request to external VPN provider.
-     * @param {string} networkType
+     * Sends an add VPN request to the external VPN provider (ThirdParty VPN
+     * extension or Arc VPN provider app).
      * @param {string} appId
      */
-    addThirdPartyVpn(networkType, appId) {}
+    addThirdPartyVpn(appId) {}
 
     /**
      * Requests Chrome to send list of Arc VPN providers.
@@ -42,6 +43,23 @@ cr.define('settings', function() {
      * @param {function(?Array<settings.ArcVpnProvider>):void} callback
      */
     setUpdateArcVpnProvidersCallback(callback) {}
+
+    /**
+     * Requests that Chrome send the list of devices whose "Google Play
+     * Services" notifications are disabled (these notifications must be enabled
+     * to utilize Instant Tethering). The names will be provided via
+     * setGmsCoreNotificationsDisabledDeviceNamesCallback().
+     */
+    requestGmsCoreNotificationsDisabledDeviceNames() {}
+
+    /**
+     * Sets the callback to be used to receive the list of devices whose "Google
+     * Play Services" notifications are disabled. |callback| is invoked with an
+     * array of the names of these devices; note that if no devices have this
+     * property, the provided list of device names is empty.
+     * @param {function(!Array<string>):void} callback
+     */
+    setGmsCoreNotificationsDisabledDeviceNamesCallback(callback) {}
   }
 
   /**
@@ -49,13 +67,13 @@ cr.define('settings', function() {
    */
   class InternetPageBrowserProxyImpl {
     /** @override */
-    showNetworkConfigure(guid) {
-      chrome.send('configureNetwork', [guid]);
+    configureThirdPartyVpn(guid) {
+      chrome.send('configureThirdPartyVpn', [guid]);
     }
 
     /** @override */
-    addThirdPartyVpn(networkType, appId) {
-      chrome.send('addNetwork', [networkType, appId]);
+    addThirdPartyVpn(appId) {
+      chrome.send('addThirdPartyVpn', [appId]);
     }
 
     /** @override */
@@ -66,6 +84,17 @@ cr.define('settings', function() {
     /** @override */
     setUpdateArcVpnProvidersCallback(callback) {
       cr.addWebUIListener('sendArcVpnProviders', callback);
+    }
+
+    /** @override */
+    requestGmsCoreNotificationsDisabledDeviceNames() {
+      chrome.send('requestGmsCoreNotificationsDisabledDeviceNames');
+    }
+
+    /** @override */
+    setGmsCoreNotificationsDisabledDeviceNamesCallback(callback) {
+      cr.addWebUIListener(
+          'sendGmsCoreNotificationsDisabledDeviceNames', callback);
     }
   }
 

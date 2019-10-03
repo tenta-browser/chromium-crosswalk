@@ -7,13 +7,12 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "chrome/android/chrome_jni_headers/JavascriptTabModalDialog_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "jni/JavascriptTabModalDialog_jni.h"
 #include "ui/android/window_android.h"
 
 using base::android::AttachCurrentThread;
@@ -21,26 +20,6 @@ using base::android::ConvertUTF16ToJavaString;
 using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
-
-// JavaScriptDialog:
-JavaScriptDialog::JavaScriptDialog(content::WebContents* parent_web_contents) {
-  parent_web_contents->GetDelegate()->ActivateContents(parent_web_contents);
-}
-
-JavaScriptDialog::~JavaScriptDialog() = default;
-
-base::WeakPtr<JavaScriptDialog> JavaScriptDialog::Create(
-    content::WebContents* parent_web_contents,
-    content::WebContents* alerting_web_contents,
-    const base::string16& title,
-    content::JavaScriptDialogType dialog_type,
-    const base::string16& message_text,
-    const base::string16& default_prompt_text,
-    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback) {
-  return JavaScriptDialogAndroid::Create(
-      parent_web_contents, alerting_web_contents, title, dialog_type,
-      message_text, default_prompt_text, std::move(dialog_callback));
-}
 
 // JavaScriptDialogAndroid:
 JavaScriptDialogAndroid::~JavaScriptDialogAndroid() {
@@ -60,10 +39,14 @@ base::WeakPtr<JavaScriptDialogAndroid> JavaScriptDialogAndroid::Create(
     content::JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
-    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback) {
-  return (new JavaScriptDialogAndroid(
-              parent_web_contents, alerting_web_contents, title, dialog_type,
-              message_text, default_prompt_text, std::move(dialog_callback)))
+    content::JavaScriptDialogManager::DialogClosedCallback
+        callback_on_button_clicked,
+    base::OnceClosure callback_on_cancelled) {
+  return (new JavaScriptDialogAndroid(parent_web_contents,
+                                      alerting_web_contents, title, dialog_type,
+                                      message_text, default_prompt_text,
+                                      std::move(callback_on_button_clicked),
+                                      std::move(callback_on_cancelled)))
       ->weak_factory_.GetWeakPtr();
 }
 
@@ -81,20 +64,23 @@ base::string16 JavaScriptDialogAndroid::GetUserInput() {
 void JavaScriptDialogAndroid::Accept(JNIEnv* env,
                                      const JavaParamRef<jobject>&,
                                      const JavaParamRef<jstring>& prompt) {
-  if (dialog_callback_) {
+  if (callback_on_button_clicked_) {
     base::string16 prompt_text =
         base::android::ConvertJavaStringToUTF16(env, prompt);
-    std::move(dialog_callback_).Run(true, prompt_text);
-    std::move(dialog_callback_).Reset();
+    std::move(callback_on_button_clicked_).Run(true, prompt_text);
   }
   delete this;
 }
 
 void JavaScriptDialogAndroid::Cancel(JNIEnv* env,
-                                     const JavaParamRef<jobject>&) {
-  if (dialog_callback_) {
-    std::move(dialog_callback_).Run(false, base::string16());
-    std::move(dialog_callback_).Reset();
+                                     const JavaParamRef<jobject>&,
+                                     jboolean button_clicked) {
+  if (button_clicked) {
+    if (callback_on_button_clicked_) {
+      std::move(callback_on_button_clicked_).Run(false, base::string16());
+    }
+  } else if (callback_on_cancelled_) {
+    std::move(callback_on_cancelled_).Run();
   }
   delete this;
 }
@@ -106,9 +92,11 @@ JavaScriptDialogAndroid::JavaScriptDialogAndroid(
     content::JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
-    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback)
-    : JavaScriptDialog(parent_web_contents),
-      dialog_callback_(std::move(dialog_callback)),
+    content::JavaScriptDialogManager::DialogClosedCallback
+        callback_on_button_clicked,
+    base::OnceClosure callback_on_cancelled)
+    : callback_on_button_clicked_(std::move(callback_on_button_clicked)),
+      callback_on_cancelled_(std::move(callback_on_cancelled)),
       weak_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 

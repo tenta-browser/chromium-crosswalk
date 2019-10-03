@@ -4,6 +4,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -16,6 +17,7 @@
 #include "net/base/net_errors.h"
 #include "net/server/web_socket_encoder.h"
 #include "net/socket/stream_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 using content::BrowserThread;
 using net::WebSocket;
@@ -25,6 +27,29 @@ namespace {
 const int kBufferSize = 16 * 1024;
 const char kCloseResponse[] = "\x88\x80\x2D\x0E\x1E\xFA";
 
+net::NetworkTrafficAnnotationTag kAndroidWebSocketTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("android_web_socket", R"(
+        semantics {
+          sender: "Android Web Socket"
+          description:
+            "Remote debugging is supported over existing ADB (Android Debug "
+            "Bridge) connection, in addition to raw USB connection. This "
+            "socket talks to the local ADB daemon which routes debugging "
+            "traffic to a remote device."
+          trigger:
+            "A user connects to an Android device using remote debugging."
+          data: "Any data required for remote debugging."
+          destination: LOCAL
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "To use adb with a device connected over USB, you must enable USB "
+            "debugging in the device system settings, under Developer options."
+          policy_exception_justification:
+            "This is not a network request and is only used for remote "
+            "debugging."
+        })");
 }  // namespace
 
 class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
@@ -39,8 +64,7 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
         weak_socket_(weak_socket),
         socket_(std::move(socket)),
         encoder_(net::WebSocketEncoder::CreateClient(extensions)),
-        response_buffer_(body_head),
-        weak_factory_(this) {
+        response_buffer_(body_head) {
     thread_checker_.DetachFromThread();
   }
 
@@ -48,9 +72,10 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
     DCHECK(thread_checker_.CalledOnValidThread());
     DCHECK(socket_);
 
-    scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(kBufferSize));
+    scoped_refptr<net::IOBuffer> buffer =
+        base::MakeRefCounted<net::IOBuffer>(kBufferSize);
 
-    if (response_buffer_.size() > 0)
+    if (!response_buffer_.empty())
       ProcessResponseBuffer(buffer);
     else
       Read(buffer);
@@ -132,10 +157,11 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
       return;
 
     scoped_refptr<net::StringIOBuffer> buffer =
-        new net::StringIOBuffer(request_buffer_);
+        base::MakeRefCounted<net::StringIOBuffer>(request_buffer_);
     result = socket_->Write(buffer.get(), buffer->size(),
                             base::Bind(&WebSocketImpl::SendPendingRequests,
-                                       weak_factory_.GetWeakPtr()));
+                                       weak_factory_.GetWeakPtr()),
+                            kAndroidWebSocketTrafficAnnotation);
     if (result != net::ERR_IO_PENDING)
       SendPendingRequests(result);
   }
@@ -157,7 +183,7 @@ class AndroidDeviceManager::AndroidWebSocket::WebSocketImpl {
   base::ThreadChecker thread_checker_;
   DISALLOW_COPY_AND_ASSIGN(WebSocketImpl);
 
-  base::WeakPtrFactory<WebSocketImpl> weak_factory_;
+  base::WeakPtrFactory<WebSocketImpl> weak_factory_{this};
 };
 
 AndroidDeviceManager::AndroidWebSocket::AndroidWebSocket(
@@ -167,8 +193,7 @@ AndroidDeviceManager::AndroidWebSocket::AndroidWebSocket(
     Delegate* delegate)
     : device_(device),
       socket_impl_(nullptr, base::OnTaskRunnerDeleter(device->task_runner_)),
-      delegate_(delegate),
-      weak_factory_(this) {
+      delegate_(delegate) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(delegate_);
   DCHECK(device_);

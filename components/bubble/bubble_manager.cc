@@ -31,6 +31,8 @@ BubbleReference BubbleManager::ShowBubble(
     case SHOW_BUBBLES:
       controller->Show();
       controllers_.push_back(std::move(controller));
+      for (auto& observer : observers_)
+        observer.OnBubbleShown(bubble_ref);
       break;
     case NO_MORE_BUBBLES:
       for (auto& observer : observers_)
@@ -79,6 +81,10 @@ void BubbleManager::AddBubbleManagerObserver(BubbleManagerObserver* observer) {
 void BubbleManager::RemoveBubbleManagerObserver(
     BubbleManagerObserver* observer) {
   observers_.RemoveObserver(observer);
+}
+
+size_t BubbleManager::GetBubbleCountForTesting() const {
+  return controllers_.size();
 }
 
 void BubbleManager::FinalizePendingRequests() {

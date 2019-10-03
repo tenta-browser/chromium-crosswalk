@@ -32,7 +32,7 @@ class TestMimeHandlerViewGuest : public MimeHandlerViewGuest {
 
   // MimeHandlerViewGuest override:
   void CreateWebContents(const base::DictionaryValue& create_params,
-                         const WebContentsCreatedCallback& callback) override;
+                         WebContentsCreatedCallback callback) override;
   void DidAttachToEmbedder() override;
 
  private:
@@ -43,7 +43,7 @@ class TestMimeHandlerViewGuest : public MimeHandlerViewGuest {
   // |create_params|.
   void CallBaseCreateWebContents(
       std::unique_ptr<base::DictionaryValue> create_params,
-      const WebContentsCreatedCallback& callback);
+      WebContentsCreatedCallback callback);
 
   // A value in milliseconds that the next creation of a guest's WebContents
   // will be delayed. After this creation is delayed, |delay_| will be reset to
@@ -54,7 +54,7 @@ class TestMimeHandlerViewGuest : public MimeHandlerViewGuest {
 
   // This is used to ensure pending tasks will not fire after this object is
   // destroyed.
-  base::WeakPtrFactory<TestMimeHandlerViewGuest> weak_ptr_factory_;
+  base::WeakPtrFactory<TestMimeHandlerViewGuest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestMimeHandlerViewGuest);
 };

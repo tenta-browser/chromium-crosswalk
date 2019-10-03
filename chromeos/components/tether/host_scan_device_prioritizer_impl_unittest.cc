@@ -6,9 +6,9 @@
 
 #include <memory>
 
+#include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/tether_host_response_recorder.h"
-#include "components/cryptauth/remote_device_test_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -16,23 +16,36 @@ namespace chromeos {
 
 namespace tether {
 
+namespace {
+
+multidevice::RemoteDeviceRef CreateRemoteDeviceRef(
+    int id,
+    int64_t last_update_time_millis) {
+  return multidevice::RemoteDeviceRefBuilder()
+      .SetPublicKey("publicKey" + std::to_string(id))
+      .SetLastUpdateTimeMillis(last_update_time_millis)
+      .Build();
+}
+
+}  // namespace
+
 class HostScanDevicePrioritizerImplTest : public testing::Test {
  protected:
   HostScanDevicePrioritizerImplTest()
-      : test_devices_(cryptauth::GenerateTestRemoteDevices(10)) {}
+      : test_devices_(multidevice::CreateRemoteDeviceRefListForTest(10)) {}
 
   void SetUp() override {
     pref_service_ =
-        base::MakeUnique<sync_preferences::TestingPrefServiceSyncable>();
+        std::make_unique<sync_preferences::TestingPrefServiceSyncable>();
     TetherHostResponseRecorder::RegisterPrefs(pref_service_->registry());
     recorder_ =
-        base::MakeUnique<TetherHostResponseRecorder>(pref_service_.get());
+        std::make_unique<TetherHostResponseRecorder>(pref_service_.get());
 
     prioritizer_ =
-        base::MakeUnique<HostScanDevicePrioritizerImpl>(recorder_.get());
+        std::make_unique<HostScanDevicePrioritizerImpl>(recorder_.get());
   }
 
-  std::vector<cryptauth::RemoteDevice> test_devices_;
+  multidevice::RemoteDeviceRefList test_devices_;
 
   std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> pref_service_;
   std::unique_ptr<TetherHostResponseRecorder> recorder_;
@@ -45,24 +58,24 @@ class HostScanDevicePrioritizerImplTest : public testing::Test {
 
 TEST_F(HostScanDevicePrioritizerImplTest,
        TestOnlyLastUpdateTime_RemoteDevices) {
-  test_devices_[0].last_update_time_millis = 15000L;
-  test_devices_[1].last_update_time_millis = 20000L;
-  test_devices_[2].last_update_time_millis = 300L;
-  test_devices_[3].last_update_time_millis = 10000L;
-  test_devices_[4].last_update_time_millis = 5000L;
-  test_devices_[5].last_update_time_millis = 30000L;
-  test_devices_[6].last_update_time_millis = 600L;
+  test_devices_[0] = CreateRemoteDeviceRef(0, 15000L);
+  test_devices_[1] = CreateRemoteDeviceRef(1, 20000L);
+  test_devices_[2] = CreateRemoteDeviceRef(2, 300L);
+  test_devices_[3] = CreateRemoteDeviceRef(3, 10000L);
+  test_devices_[4] = CreateRemoteDeviceRef(4, 5000L);
+  test_devices_[5] = CreateRemoteDeviceRef(5, 30000L);
+  test_devices_[6] = CreateRemoteDeviceRef(6, 600L);
 
   // Do not receive a TetherAvailabilityResponse or ConnectTetheringResponse.
 
-  std::vector<cryptauth::RemoteDevice> test_vector =
-      std::vector<cryptauth::RemoteDevice>{test_devices_[6], test_devices_[5],
-                                           test_devices_[4], test_devices_[3],
-                                           test_devices_[2], test_devices_[1],
-                                           test_devices_[0]};
+  multidevice::RemoteDeviceRefList test_vector =
+      multidevice::RemoteDeviceRefList{test_devices_[6], test_devices_[5],
+                                       test_devices_[4], test_devices_[3],
+                                       test_devices_[2], test_devices_[1],
+                                       test_devices_[0]};
 
   prioritizer_->SortByHostScanOrder(&test_vector);
-  EXPECT_EQ((std::vector<cryptauth::RemoteDevice>{
+  EXPECT_EQ((multidevice::RemoteDeviceRefList{
                 test_devices_[5], test_devices_[1], test_devices_[0],
                 test_devices_[3], test_devices_[4], test_devices_[6],
                 test_devices_[2]}),
@@ -80,14 +93,14 @@ TEST_F(HostScanDevicePrioritizerImplTest,
 
   // Do not receive a ConnectTetheringResponse.
 
-  std::vector<cryptauth::RemoteDevice> test_vector =
-      std::vector<cryptauth::RemoteDevice>{test_devices_[6], test_devices_[5],
-                                           test_devices_[4], test_devices_[3],
-                                           test_devices_[2], test_devices_[1],
-                                           test_devices_[0]};
+  multidevice::RemoteDeviceRefList test_vector =
+      multidevice::RemoteDeviceRefList{test_devices_[6], test_devices_[5],
+                                       test_devices_[4], test_devices_[3],
+                                       test_devices_[2], test_devices_[1],
+                                       test_devices_[0]};
 
   prioritizer_->SortByHostScanOrder(&test_vector);
-  EXPECT_EQ((std::vector<cryptauth::RemoteDevice>{
+  EXPECT_EQ((multidevice::RemoteDeviceRefList{
                 test_devices_[4], test_devices_[3], test_devices_[2],
                 test_devices_[1], test_devices_[0], test_devices_[6],
                 test_devices_[5]}),
@@ -106,14 +119,14 @@ TEST_F(HostScanDevicePrioritizerImplTest,
   // Receive ConnectTetheringResponse from device 0.
   recorder_->RecordSuccessfulConnectTetheringResponse(test_devices_[0]);
 
-  std::vector<cryptauth::RemoteDevice> test_vector =
-      std::vector<cryptauth::RemoteDevice>{test_devices_[6], test_devices_[5],
-                                           test_devices_[4], test_devices_[3],
-                                           test_devices_[2], test_devices_[1],
-                                           test_devices_[0]};
+  multidevice::RemoteDeviceRefList test_vector =
+      multidevice::RemoteDeviceRefList{test_devices_[6], test_devices_[5],
+                                       test_devices_[4], test_devices_[3],
+                                       test_devices_[2], test_devices_[1],
+                                       test_devices_[0]};
 
   prioritizer_->SortByHostScanOrder(&test_vector);
-  EXPECT_EQ((std::vector<cryptauth::RemoteDevice>{
+  EXPECT_EQ((multidevice::RemoteDeviceRefList{
                 test_devices_[0], test_devices_[4], test_devices_[3],
                 test_devices_[2], test_devices_[1], test_devices_[6],
                 test_devices_[5]}),
@@ -132,15 +145,15 @@ TEST_F(HostScanDevicePrioritizerImplTest,
   // Receive ConnectTetheringResponse from device 1.
   recorder_->RecordSuccessfulConnectTetheringResponse(test_devices_[1]);
 
-  std::vector<cryptauth::RemoteDevice> test_vector =
-      std::vector<cryptauth::RemoteDevice>{test_devices_[9], test_devices_[8],
-                                           test_devices_[7], test_devices_[6],
-                                           test_devices_[5], test_devices_[4],
-                                           test_devices_[3], test_devices_[2],
-                                           test_devices_[1], test_devices_[0]};
+  multidevice::RemoteDeviceRefList test_vector =
+      multidevice::RemoteDeviceRefList{test_devices_[9], test_devices_[8],
+                                       test_devices_[7], test_devices_[6],
+                                       test_devices_[5], test_devices_[4],
+                                       test_devices_[3], test_devices_[2],
+                                       test_devices_[1], test_devices_[0]};
 
   prioritizer_->SortByHostScanOrder(&test_vector);
-  EXPECT_EQ((std::vector<cryptauth::RemoteDevice>{
+  EXPECT_EQ((multidevice::RemoteDeviceRefList{
                 test_devices_[1], test_devices_[3], test_devices_[4],
                 test_devices_[2], test_devices_[0], test_devices_[9],
                 test_devices_[8], test_devices_[7], test_devices_[6],
@@ -150,16 +163,16 @@ TEST_F(HostScanDevicePrioritizerImplTest,
 
 TEST_F(HostScanDevicePrioritizerImplTest,
        TestLastUpdateTimeAndBothTypesOfResponses_RemoteDevices) {
-  test_devices_[0].last_update_time_millis = 2000L;
-  test_devices_[1].last_update_time_millis = 9000000L;
-  test_devices_[2].last_update_time_millis = 3000L;
-  test_devices_[3].last_update_time_millis = 7000L;
-  test_devices_[4].last_update_time_millis = 5000L;
-  test_devices_[5].last_update_time_millis = 4000L;
-  test_devices_[6].last_update_time_millis = 10L;
-  test_devices_[7].last_update_time_millis = 40L;
-  test_devices_[8].last_update_time_millis = 80L;
-  test_devices_[9].last_update_time_millis = 20L;
+  test_devices_[0] = CreateRemoteDeviceRef(0, 2000L);
+  test_devices_[1] = CreateRemoteDeviceRef(1, 9000000L);
+  test_devices_[2] = CreateRemoteDeviceRef(2, 3000L);
+  test_devices_[3] = CreateRemoteDeviceRef(3, 7000L);
+  test_devices_[4] = CreateRemoteDeviceRef(4, 5000L);
+  test_devices_[5] = CreateRemoteDeviceRef(5, 4000L);
+  test_devices_[6] = CreateRemoteDeviceRef(6, 10L);
+  test_devices_[7] = CreateRemoteDeviceRef(7, 40L);
+  test_devices_[8] = CreateRemoteDeviceRef(8, 80L);
+  test_devices_[9] = CreateRemoteDeviceRef(9, 20L);
 
   // Receive different order.
   recorder_->RecordSuccessfulTetherAvailabilityResponse(test_devices_[0]);
@@ -171,15 +184,15 @@ TEST_F(HostScanDevicePrioritizerImplTest,
   // Receive ConnectTetheringResponse from device 1.
   recorder_->RecordSuccessfulConnectTetheringResponse(test_devices_[1]);
 
-  std::vector<cryptauth::RemoteDevice> test_vector =
-      std::vector<cryptauth::RemoteDevice>{test_devices_[9], test_devices_[8],
-                                           test_devices_[7], test_devices_[6],
-                                           test_devices_[5], test_devices_[4],
-                                           test_devices_[3], test_devices_[2],
-                                           test_devices_[1], test_devices_[0]};
+  multidevice::RemoteDeviceRefList test_vector =
+      multidevice::RemoteDeviceRefList{test_devices_[9], test_devices_[8],
+                                       test_devices_[7], test_devices_[6],
+                                       test_devices_[5], test_devices_[4],
+                                       test_devices_[3], test_devices_[2],
+                                       test_devices_[1], test_devices_[0]};
 
   prioritizer_->SortByHostScanOrder(&test_vector);
-  EXPECT_EQ((std::vector<cryptauth::RemoteDevice>{
+  EXPECT_EQ((multidevice::RemoteDeviceRefList{
                 test_devices_[1], test_devices_[3], test_devices_[4],
                 test_devices_[2], test_devices_[0], test_devices_[5],
                 test_devices_[8], test_devices_[7], test_devices_[9],

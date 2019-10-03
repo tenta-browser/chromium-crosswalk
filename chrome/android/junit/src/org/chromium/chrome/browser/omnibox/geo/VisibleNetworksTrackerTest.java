@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.omnibox.geo;
 import static org.junit.Assert.assertEquals;
 
 import android.content.Context;
+import android.os.SystemClock;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -19,12 +20,13 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowSystemClock;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.Callback;
+import org.chromium.base.task.test.CustomShadowAsyncTask;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.omnibox.geo.VisibleNetworks.VisibleCell;
 import org.chromium.chrome.browser.omnibox.geo.VisibleNetworks.VisibleWifi;
 import org.chromium.chrome.browser.omnibox.geo.VisibleNetworksTrackerTest.ShadowPlatformNetworksManager;
-import org.chromium.testing.local.CustomShadowAsyncTask;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -34,7 +36,7 @@ import java.util.List;
 /**
  * Robolectric tests for {@link VisibleNetworksTracker}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE,
         shadows = {ShadowPlatformNetworksManager.class, CustomShadowAsyncTask.class,
                 ShadowSystemClock.class})
@@ -43,16 +45,15 @@ public class VisibleNetworksTrackerTest {
             VisibleWifi.create("ssid1", "11:11:11:11:11:11", 1, 10L);
     private static final VisibleWifi VISIBLE_WIFI_2 =
             VisibleWifi.create("ssid2", "11:11:11:11:11:12", 2, 20L);
-    private static final VisibleCell VISIBLE_CELL_1 =
-            VisibleCell.builder(VisibleCell.GSM_RADIO_TYPE)
-                    .setCellId(30)
-                    .setLocationAreaCode(31)
-                    .setMobileCountryCode(32)
-                    .setMobileNetworkCode(33)
-                    .setTimestamp(30L)
-                    .build();
+    private static final VisibleCell VISIBLE_CELL_1 = VisibleCell.builder(VisibleCell.RadioType.GSM)
+                                                              .setCellId(30)
+                                                              .setLocationAreaCode(31)
+                                                              .setMobileCountryCode(32)
+                                                              .setMobileNetworkCode(33)
+                                                              .setTimestamp(30L)
+                                                              .build();
     private static final VisibleCell VISIBLE_CELL_2 =
-            VisibleCell.builder(VisibleCell.CDMA_RADIO_TYPE)
+            VisibleCell.builder(VisibleCell.RadioType.CDMA)
                     .setCellId(40)
                     .setLocationAreaCode(41)
                     .setMobileCountryCode(42)
@@ -84,19 +85,14 @@ public class VisibleNetworksTrackerTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        ShadowSystemClock.setCurrentTimeMillis(CURRENT_TIME_MS);
+        SystemClock.setCurrentTimeMillis(CURRENT_TIME_MS);
         ShadowPlatformNetworksManager.sAllVisibleNetworks = new LinkedList<>(
                 Arrays.asList(FIRST_ALL_VISIBLE_NETWORKS, SECOND_ALL_VISIBLE_NETWORKS));
         ShadowPlatformNetworksManager.sOnlyConnectedNetworks = new LinkedList<>(
                 Arrays.asList(FIRST_ONLY_CONNECTED_NETWORKS, SECOND_ONLY_CONNECTED_NETWORKS));
 
         // Make sure that the cache is empty before every test.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable(){
-            @Override
-            public void run() {
-                VisibleNetworksTracker.clearCache();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { VisibleNetworksTracker.clearCache(); });
     }
 
     @Test
@@ -123,7 +119,7 @@ public class VisibleNetworksTrackerTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
         // Time to consider the first cached networks still as valid.
-        ShadowSystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_UNDER_THRESHOLD_TIME_MS);
+        SystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_UNDER_THRESHOLD_TIME_MS);
         visibleNetworks = VisibleNetworksTracker.getLastKnownVisibleNetworks(sContext);
 
         assertEquals(FIRST_ALL_VISIBLE_NETWORKS, visibleNetworks);
@@ -141,7 +137,7 @@ public class VisibleNetworksTrackerTest {
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
         // Time to consider the first cached networks as invalid. Should fetch the second ones.
-        ShadowSystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_OVER_THRESHOLD_TIME_MS);
+        SystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_OVER_THRESHOLD_TIME_MS);
         visibleNetworks = VisibleNetworksTracker.getLastKnownVisibleNetworks(sContext);
 
         assertEquals(SECOND_ONLY_CONNECTED_NETWORKS, visibleNetworks);
@@ -173,7 +169,7 @@ public class VisibleNetworksTrackerTest {
         assertEquals(CURRENT_TIME_MS, VisibleNetworksTracker.getCachedVisibleNetworksTime());
 
         // Time to consider the first cached networks still as valid, refresh should be a noop.
-        ShadowSystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_UNDER_THRESHOLD_TIME_MS);
+        SystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_UNDER_THRESHOLD_TIME_MS);
         VisibleNetworksTracker.refreshVisibleNetworks(sContext);
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
@@ -189,7 +185,7 @@ public class VisibleNetworksTrackerTest {
         assertEquals(CURRENT_TIME_MS, VisibleNetworksTracker.getCachedVisibleNetworksTime());
 
         // Time to consider the first cached networks as invalid. Should fetch the second ones.
-        ShadowSystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_OVER_THRESHOLD_TIME_MS);
+        SystemClock.setCurrentTimeMillis(CURRENT_TIME_MS + ELAPSED_OVER_THRESHOLD_TIME_MS);
         VisibleNetworksTracker.refreshVisibleNetworks(sContext);
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
 
@@ -208,10 +204,14 @@ public class VisibleNetworksTrackerTest {
         private static List<VisibleNetworks> sOnlyConnectedNetworks;
 
         @Implementation
-        public static VisibleNetworks computeVisibleNetworks(
-                Context context, boolean includeAllVisibleNotConnectedNetworks) {
-            return includeAllVisibleNotConnectedNetworks ? sAllVisibleNetworks.remove(0)
-                                                         : sOnlyConnectedNetworks.remove(0);
+        public static VisibleNetworks computeConnectedNetworks(Context context) {
+            return sOnlyConnectedNetworks.remove(0);
+        }
+
+        @Implementation
+        public static void computeVisibleNetworks(
+                Context context, Callback<VisibleNetworks> callback) {
+            callback.onResult(sAllVisibleNetworks.remove(0));
         }
     }
 }

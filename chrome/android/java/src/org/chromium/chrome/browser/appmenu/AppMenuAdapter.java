@@ -8,13 +8,18 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
+import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
+import android.support.annotation.IntDef;
+import android.support.v4.graphics.drawable.DrawableCompat;
+import android.support.v7.content.res.AppCompatResources;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -22,11 +27,14 @@ import android.widget.TextView;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper;
-import org.chromium.chrome.browser.widget.TintedImageButton;
+import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper.MenuItemState;
 import org.chromium.chrome.browser.widget.ViewHighlighter;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
+import org.chromium.ui.widget.ChromeImageButton;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 
 /**
@@ -41,41 +49,41 @@ import java.util.List;
  * 3) Hope that the icon row still fits on small phones.
  */
 class AppMenuAdapter extends BaseAdapter {
-    /**
-     * Regular Android menu item that contains a title and an icon if icon is specified.
-     */
-    private static final int STANDARD_MENU_ITEM = 0;
-
-    /**
-     * Menu item that has two buttons, the first one is a title and the second one is an icon.
-     * It is different from the regular menu item because it contains two separate buttons.
-     */
-    private static final int TITLE_BUTTON_MENU_ITEM = 1;
-
-    /**
-     * Menu item that has three buttons. Every one of these buttons is displayed as an icon.
-     */
-    private static final int THREE_BUTTON_MENU_ITEM = 2;
-
-    /**
-     * Menu item that has four buttons. Every one of these buttons is displayed as an icon.
-     */
-    private static final int FOUR_BUTTON_MENU_ITEM = 3;
-
-    /**
-     * Menu item that has five buttons. Every one of these buttons is displayed as an icon.
-     */
-    private static final int FIVE_BUTTON_MENU_ITEM = 4;
-
-    /**
-     * Menu item for updating Chrome; uses a custom layout.
-     */
-    private static final int UPDATE_MENU_ITEM = 5;
-
-    /**
-     * The number of view types specified above.  If you add a view type you MUST increment this.
-     */
-    private static final int VIEW_TYPE_COUNT = 6;
+    @IntDef({MenuItemType.STANDARD, MenuItemType.TITLE_BUTTON, MenuItemType.THREE_BUTTON,
+            MenuItemType.FOUR_BUTTON, MenuItemType.FIVE_BUTTON, MenuItemType.UPDATE})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface MenuItemType {
+        /**
+         * Regular Android menu item that contains a title and an icon if icon is specified.
+         */
+        int STANDARD = 0;
+        /**
+         * Menu item for updating Chrome; uses a custom layout.
+         */
+        int UPDATE = 1;
+        /**
+         * Menu item that has two buttons, the first one is a title and the second one is an icon.
+         * It is different from the regular menu item because it contains two separate buttons.
+         */
+        int TITLE_BUTTON = 2;
+        /**
+         * Menu item that has three buttons. Every one of these buttons is displayed as an icon.
+         */
+        int THREE_BUTTON = 3;
+        /**
+         * Menu item that has four buttons. Every one of these buttons is displayed as an icon.
+         */
+        int FOUR_BUTTON = 4;
+        /**
+         * Menu item that has five buttons. Every one of these buttons is displayed as an icon.
+         */
+        int FIVE_BUTTON = 5;
+        /**
+         * The number of view types specified above.  If you add a view type you MUST increment
+         * this.
+         */
+        int NUM_ENTRIES = 6;
+    }
 
     /** IDs of all of the buttons in icon_row_menu_item.xml. */
     private static final int[] BUTTON_IDS = {
@@ -99,16 +107,14 @@ class AppMenuAdapter extends BaseAdapter {
     private final int mNumMenuItems;
     private final Integer mHighlightedItemId;
     private final float mDpToPx;
-    private final boolean mTranslateMenuItemsOnShow;
 
     public AppMenuAdapter(AppMenu appMenu, List<MenuItem> menuItems, LayoutInflater inflater,
-            Integer highlightedItemId, boolean translateMenuItemsOnShow) {
+            Integer highlightedItemId) {
         mAppMenu = appMenu;
         mMenuItems = menuItems;
         mInflater = inflater;
         mHighlightedItemId = highlightedItemId;
         mNumMenuItems = menuItems.size();
-        mTranslateMenuItemsOnShow = translateMenuItemsOnShow;
         mDpToPx = inflater.getContext().getResources().getDisplayMetrics().density;
     }
 
@@ -119,26 +125,26 @@ class AppMenuAdapter extends BaseAdapter {
 
     @Override
     public int getViewTypeCount() {
-        return VIEW_TYPE_COUNT;
+        return MenuItemType.NUM_ENTRIES;
     }
 
     @Override
-    public int getItemViewType(int position) {
+    public @MenuItemType int getItemViewType(int position) {
         MenuItem item = getItem(position);
         int viewCount = item.hasSubMenu() ? item.getSubMenu().size() : 1;
 
         if (item.getItemId() == R.id.update_menu_id) {
-            return UPDATE_MENU_ITEM;
-        } else if (viewCount == 5) {
-            return FIVE_BUTTON_MENU_ITEM;
-        } else if (viewCount == 4) {
-            return FOUR_BUTTON_MENU_ITEM;
-        } else if (viewCount == 3) {
-            return THREE_BUTTON_MENU_ITEM;
+            return MenuItemType.UPDATE;
         } else if (viewCount == 2) {
-            return TITLE_BUTTON_MENU_ITEM;
+            return MenuItemType.TITLE_BUTTON;
+        } else if (viewCount == 3) {
+            return MenuItemType.THREE_BUTTON;
+        } else if (viewCount == 4) {
+            return MenuItemType.FOUR_BUTTON;
+        } else if (viewCount == 5) {
+            return MenuItemType.FIVE_BUTTON;
         }
-        return STANDARD_MENU_ITEM;
+        return MenuItemType.STANDARD;
     }
 
     @Override
@@ -158,7 +164,7 @@ class AppMenuAdapter extends BaseAdapter {
     public View getView(int position, View convertView, ViewGroup parent) {
         final MenuItem item = getItem(position);
         switch (getItemViewType(position)) {
-            case STANDARD_MENU_ITEM: {
+            case MenuItemType.STANDARD: {
                 StandardMenuItemViewHolder holder = null;
                 if (convertView == null
                         || !(convertView.getTag() instanceof StandardMenuItemViewHolder)) {
@@ -174,11 +180,10 @@ class AppMenuAdapter extends BaseAdapter {
                 } else {
                     holder = (StandardMenuItemViewHolder) convertView.getTag();
                 }
-
                 setupStandardMenuItemViewHolder(holder, convertView, item);
                 break;
             }
-            case UPDATE_MENU_ITEM: {
+            case MenuItemType.UPDATE: {
                 CustomMenuItemViewHolder holder = null;
                 if (convertView == null
                         || !(convertView.getTag() instanceof CustomMenuItemViewHolder)) {
@@ -195,31 +200,43 @@ class AppMenuAdapter extends BaseAdapter {
                 } else {
                     holder = (CustomMenuItemViewHolder) convertView.getTag();
                 }
-
                 setupStandardMenuItemViewHolder(holder, convertView, item);
-                String summary = UpdateMenuItemHelper.getInstance().getMenuItemSummaryText(
-                        mInflater.getContext());
-                if (TextUtils.isEmpty(summary)) {
-                    holder.summary.setVisibility(View.GONE);
-                } else {
-                    holder.summary.setText(summary);
-                }
+                MenuItemState itemState = UpdateMenuItemHelper.getInstance().getUiState().itemState;
+                if (itemState != null) {
+                    Resources resources = convertView.getResources();
 
+                    holder.text.setText(itemState.title);
+                    holder.text.setContentDescription(resources.getString(itemState.title));
+                    holder.text.setTextColor(
+                            ApiCompatibilityUtils.getColor(resources, itemState.titleColorId));
+
+                    if (!TextUtils.isEmpty(itemState.summary)) {
+                        holder.summary.setText(itemState.summary);
+                        holder.summary.setVisibility(View.VISIBLE);
+                    } else {
+                        holder.summary.setText("");
+                        holder.summary.setVisibility(View.GONE);
+                    }
+
+                    holder.image.setImageResource(itemState.icon);
+                    if (itemState.iconTintId != 0) {
+                        DrawableCompat.setTint(holder.image.getDrawable(),
+                                ApiCompatibilityUtils.getColor(resources, itemState.iconTintId));
+                    }
+                    convertView.setEnabled(itemState.enabled);
+                }
                 break;
             }
-            case THREE_BUTTON_MENU_ITEM: {
+            case MenuItemType.THREE_BUTTON:
                 convertView = createMenuItemRow(convertView, parent, item, 3);
                 break;
-            }
-            case FOUR_BUTTON_MENU_ITEM: {
+            case MenuItemType.FOUR_BUTTON:
                 convertView = createMenuItemRow(convertView, parent, item, 4);
                 break;
-            }
-            case FIVE_BUTTON_MENU_ITEM: {
+            case MenuItemType.FIVE_BUTTON:
                 convertView = createMenuItemRow(convertView, parent, item, 5);
                 break;
-            }
-            case TITLE_BUTTON_MENU_ITEM: {
+            case MenuItemType.TITLE_BUTTON: {
                 assert item.hasSubMenu();
                 final MenuItem titleItem = item.getSubMenu().getItem(0);
                 final MenuItem subItem = item.getSubMenu().getItem(1);
@@ -232,7 +249,7 @@ class AppMenuAdapter extends BaseAdapter {
                     holder = new TitleButtonMenuItemViewHolder();
                     holder.title = (TextView) convertView.findViewById(R.id.title);
                     holder.checkbox = (AppMenuItemIcon) convertView.findViewById(R.id.checkbox);
-                    holder.button = (TintedImageButton) convertView.findViewById(R.id.button);
+                    holder.button = (ChromeImageButton) convertView.findViewById(R.id.button);
                     holder.button.setTag(
                             R.id.menu_item_original_background, holder.button.getBackground());
 
@@ -249,6 +266,11 @@ class AppMenuAdapter extends BaseAdapter {
                 holder.title.setEnabled(titleItem.isEnabled());
                 holder.title.setFocusable(titleItem.isEnabled());
                 holder.title.setOnClickListener(v -> mAppMenu.onItemClick(titleItem));
+                if (TextUtils.isEmpty(titleItem.getTitleCondensed())) {
+                    holder.title.setContentDescription(null);
+                } else {
+                    holder.title.setContentDescription(titleItem.getTitleCondensed());
+                }
 
                 if (subItem.isCheckable()) {
                     // Display a checkbox for the MenuItem.
@@ -288,13 +310,13 @@ class AppMenuAdapter extends BaseAdapter {
 
         // The checkbox must be tinted to make Android consistently style it across OS versions.
         // http://crbug.com/571445
-        button.setTint(ApiCompatibilityUtils.getColorStateList(
-                button.getResources(), R.color.checkbox_tint));
+        ApiCompatibilityUtils.setImageTintList(button,
+                AppCompatResources.getColorStateList(button.getContext(), R.color.checkbox_tint));
 
         setupMenuButton(button, item);
     }
 
-    private void setupImageButton(TintedImageButton button, final MenuItem item) {
+    private void setupImageButton(ImageButton button, final MenuItem item) {
         // Store and recover the level of image as button.setimageDrawable
         // resets drawable to default level.
         int currentLevel = item.getIcon().getLevel();
@@ -302,8 +324,9 @@ class AppMenuAdapter extends BaseAdapter {
         item.getIcon().setLevel(currentLevel);
 
         if (item.isChecked()) {
-            button.setTint(ApiCompatibilityUtils.getColorStateList(
-                    button.getResources(), R.color.blue_mode_tint));
+            ApiCompatibilityUtils.setImageTintList(button,
+                    AppCompatResources.getColorStateList(
+                            button.getContext(), R.color.blue_mode_tint));
         }
 
         setupMenuButton(button, item);
@@ -364,17 +387,10 @@ class AppMenuAdapter extends BaseAdapter {
         final int startDelay = ENTER_ITEM_BASE_DELAY_MS + ENTER_ITEM_ADDL_DELAY_MS * position;
 
         AnimatorSet animation = new AnimatorSet();
-        if (mTranslateMenuItemsOnShow) {
-            final float offsetYPx = ENTER_STANDARD_ITEM_OFFSET_Y_DP * mDpToPx;
-            animation.playTogether(ObjectAnimator.ofFloat(view, View.ALPHA, 0.f, 1.f),
-                    ObjectAnimator.ofFloat(view, View.TRANSLATION_Y, offsetYPx, 0.f));
-            animation.setStartDelay(startDelay);
-        } else {
-            animation.playTogether(ObjectAnimator.ofFloat(view, View.ALPHA, 0.f, 1.f));
-            // Start delay is set to make sure disabling the animation in battery saver mode does
-            // not cause the view to stay at alpha 0 on Android O.
-            animation.setStartDelay(ENTER_ITEM_BASE_DELAY_MS);
-        }
+        final float offsetYPx = ENTER_STANDARD_ITEM_OFFSET_Y_DP * mDpToPx;
+        animation.playTogether(ObjectAnimator.ofFloat(view, View.ALPHA, 0.f, 1.f),
+                ObjectAnimator.ofFloat(view, View.TRANSLATION_Y, offsetYPx, 0.f));
+        animation.setStartDelay(startDelay);
         animation.setDuration(ENTER_ITEM_DURATION_MS);
         animation.setInterpolator(BakedBezierInterpolator.FADE_IN_CURVE);
 
@@ -445,8 +461,7 @@ class AppMenuAdapter extends BaseAdapter {
 
             // Save references to all the buttons.
             for (int i = 0; i < numItems; i++) {
-                TintedImageButton view =
-                        (TintedImageButton) convertView.findViewById(BUTTON_IDS[i]);
+                ImageButton view = convertView.findViewById(BUTTON_IDS[i]);
                 holder.buttons[i] = view;
                 holder.buttons[i].setTag(
                         R.id.menu_item_original_background, holder.buttons[i].getBackground());
@@ -482,16 +497,16 @@ class AppMenuAdapter extends BaseAdapter {
     }
 
     private static class RowItemViewHolder {
-        public TintedImageButton[] buttons;
+        public ImageButton[] buttons;
 
         RowItemViewHolder(int numButtons) {
-            buttons = new TintedImageButton[numButtons];
+            buttons = new ImageButton[numButtons];
         }
     }
 
     static class TitleButtonMenuItemViewHolder {
         public TextView title;
         public AppMenuItemIcon checkbox;
-        public TintedImageButton button;
+        public ImageButton button;
     }
 }

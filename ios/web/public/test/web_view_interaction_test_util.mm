@@ -4,11 +4,13 @@
 
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 
-#import "base/mac/bind_objc_block.h"
+#include "base/bind.h"
+#include "base/json/string_escape.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/testing/wait_util.h"
+#import "ios/web/js_messaging/crw_js_injector.h"
 #import "ios/web/public/web_state/ui/crw_web_view_scroll_view_proxy.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #import "ios/web/web_state/ui/crw_web_view_proxy_impl.h"
@@ -19,9 +21,9 @@
 #endif
 
 using web::NavigationManager;
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForUIElementTimeout;
-using testing::kWaitForJSCompletionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForUIElementTimeout;
+using base::test::ios::kWaitForJSCompletionTimeout;
 
 namespace web {
 namespace test {
@@ -29,7 +31,8 @@ namespace test {
 enum ElementAction {
   ELEMENT_ACTION_CLICK,
   ELEMENT_ACTION_FOCUS,
-  ELEMENT_ACTION_SUBMIT
+  ELEMENT_ACTION_SUBMIT,
+  ELEMENT_ACTION_SELECT,
 };
 
 std::unique_ptr<base::Value> ExecuteJavaScript(web::WebState* web_state,
@@ -37,7 +40,7 @@ std::unique_ptr<base::Value> ExecuteJavaScript(web::WebState* web_state,
   __block std::unique_ptr<base::Value> result;
   __block bool did_finish = false;
   web_state->ExecuteJavaScript(base::UTF8ToUTF16(script),
-                               base::BindBlockArc(^(const base::Value* value) {
+                               base::BindOnce(^(const base::Value* value) {
                                  if (value)
                                    result = value->CreateDeepCopy();
                                  did_finish = true;
@@ -66,17 +69,31 @@ std::unique_ptr<base::Value> ExecuteJavaScript(web::WebState* web_state,
   return stack_result;
 }
 
-CGRect GetBoundingRectOfElementWithId(web::WebState* web_state,
-                                      const std::string& element_id) {
+CGRect GetBoundingRectOfElement(web::WebState* web_state,
+                                ElementSelector* selector) {
+  std::string selector_script =
+      base::SysNSStringToUTF8(selector.selectorScript);
+  std::string selector_description =
+      base::SysNSStringToUTF8(selector.selectorDescription);
+  std::string quoted_description;
+  bool success = base::EscapeJSONString(
+      selector_description, true /* put_in_quotes */, &quoted_description);
+  if (!success) {
+    DLOG(ERROR) << "Error quoting description: "
+                << selector.selectorDescription;
+  }
+
   std::string kGetBoundsScript =
       "(function() {"
-      "  var element = document.getElementById('" +
-      element_id +
-      "');"
-      "  if (!element)"
-      "    return {'error': 'Element " +
-      element_id +
-      " not found'};"
+      "  var element = " +
+      selector_script +
+      ";"
+      "  if (!element) {"
+      "    var description = " +
+      quoted_description +
+      ";"
+      "    return {'error': 'Element ' + description + ' not found'};"
+      "  }"
       "  var rect = element.getBoundingClientRect();"
       "  return {"
       "      'left': rect.left,"
@@ -116,14 +133,24 @@ CGRect GetBoundingRectOfElementWithId(web::WebState* web_state,
 
   CGFloat scale = [[web_state->GetWebViewProxy() scrollViewProxy] zoomScale];
 
-  return CGRectMake(left * scale, top * scale, width * scale, height * scale);
+  CGRect elementFrame =
+      CGRectMake(left * scale, top * scale, width * scale, height * scale);
+  UIEdgeInsets contentInset =
+      web_state->GetWebViewProxy().scrollViewProxy.contentInset;
+  elementFrame =
+      CGRectOffset(elementFrame, contentInset.left, contentInset.top);
+
+  return elementFrame;
 }
 
-// Returns whether the Javascript action specified by |action| ran on
-// |element_id| in the passed |web_state|.
-bool RunActionOnWebViewElementWithId(web::WebState* web_state,
-                                     const std::string& element_id,
-                                     ElementAction action) {
+// Returns whether the Javascript action specified by |action| ran on the
+// element retrieved by the Javascript snippet |element_script| in the passed
+// |web_state|. |error| can be nil, and will return any error from executing
+// JavaScript.
+bool RunActionOnWebViewElementWithScript(web::WebState* web_state,
+                                         const std::string& element_script,
+                                         ElementAction action,
+                                         NSError* __autoreleasing* error) {
   CRWWebController* web_controller =
       static_cast<WebStateImpl*>(web_state)->GetWebController();
   const char* js_action = nullptr;
@@ -137,52 +164,95 @@ bool RunActionOnWebViewElementWithId(web::WebState* web_state,
     case ELEMENT_ACTION_SUBMIT:
       js_action = ".submit();";
       break;
+    case ELEMENT_ACTION_SELECT:
+      js_action = ".selected = true;";
+      break;
   }
-  NSString* script = [NSString
-      stringWithFormat:@"(function() {"
-                        "  var element = document.getElementById('%s');"
-                        "  if (element) {"
-                        "    element%s;"
-                        "    return true;"
-                        "  }"
-                        "  return false;"
-                        "})();",
-                       element_id.c_str(), js_action];
+  NSString* script = [NSString stringWithFormat:
+                                   @"(function() {"
+                                    "  var element = %s;"
+                                    "  if (element) {"
+                                    "    element%s;"
+                                    "    return true;"
+                                    "  }"
+                                    "  return false;"
+                                    "})();",
+                                   element_script.c_str(), js_action];
   __block bool did_complete = false;
   __block bool element_found = false;
+  __block NSError* block_error = nil;
 
   // |executeUserJavaScript:completionHandler:| is no-op for app-specific URLs,
   // so simulate a user gesture by calling TouchTracking method.
   [web_controller touched:YES];
-  [web_controller executeJavaScript:script
-                  completionHandler:^(id result, NSError*) {
-                    did_complete = true;
-                    element_found = [result boolValue];
-                  }];
+  [web_controller.jsInjector executeJavaScript:script
+                             completionHandler:^(id result, NSError* error) {
+                               did_complete = true;
+                               element_found = [result boolValue];
+                               block_error = [error copy];
+                             }];
 
   bool js_finished = WaitUntilConditionOrTimeout(kWaitForJSCompletionTimeout, ^{
     return did_complete;
   });
 
+  if (error) {
+    *error = block_error;
+  }
+
   return js_finished && element_found;
+}
+
+// Returns whether the Javascript action specified by |action| ran on
+// |element_id| in the passed |web_state|. |error| can be nil, and will return
+// any error from executing JavaScript.
+bool RunActionOnWebViewElementWithId(web::WebState* web_state,
+                                     const std::string& element_id,
+                                     ElementAction action,
+                                     NSError* __autoreleasing* error) {
+  std::string element_script =
+      base::StringPrintf("document.getElementById('%s')", element_id.c_str());
+  return RunActionOnWebViewElementWithScript(web_state, element_script, action,
+                                             error);
 }
 
 bool TapWebViewElementWithId(web::WebState* web_state,
                              const std::string& element_id) {
   return RunActionOnWebViewElementWithId(web_state, element_id,
-                                         ELEMENT_ACTION_CLICK);
+                                         ELEMENT_ACTION_CLICK, nil);
+}
+
+bool TapWebViewElementWithId(web::WebState* web_state,
+                             const std::string& element_id,
+                             NSError* __autoreleasing* error) {
+  return RunActionOnWebViewElementWithId(web_state, element_id,
+                                         ELEMENT_ACTION_CLICK, error);
+}
+
+bool TapWebViewElementWithIdInIframe(web::WebState* web_state,
+                                     const std::string& element_id) {
+  std::string element_script = base::StringPrintf(
+      "window.frames[0].document.getElementById('%s')", element_id.c_str());
+  return RunActionOnWebViewElementWithScript(web_state, element_script,
+                                             ELEMENT_ACTION_CLICK, nil);
 }
 
 bool FocusWebViewElementWithId(web::WebState* web_state,
                                const std::string& element_id) {
   return RunActionOnWebViewElementWithId(web_state, element_id,
-                                         ELEMENT_ACTION_FOCUS);
+                                         ELEMENT_ACTION_FOCUS, nil);
 }
 
 bool SubmitWebViewFormWithId(web::WebState* web_state,
                              const std::string& form_id) {
   return RunActionOnWebViewElementWithId(web_state, form_id,
-                                         ELEMENT_ACTION_SUBMIT);
+                                         ELEMENT_ACTION_SUBMIT, nil);
+}
+
+bool SelectWebViewElementWithId(web::WebState* web_state,
+                                const std::string& element_id) {
+  return RunActionOnWebViewElementWithId(web_state, element_id,
+                                         ELEMENT_ACTION_SELECT, nil);
 }
 
 }  // namespace test

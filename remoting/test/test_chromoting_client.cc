@@ -9,12 +9,12 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "net/base/request_priority.h"
 #include "net/socket/client_socket_factory.h"
 #include "remoting/base/chromium_url_request.h"
+#include "remoting/base/passthrough_oauth_token_getter.h"
 #include "remoting/base/url_request_context_getter.h"
 #include "remoting/client/audio/audio_player.h"
 #include "remoting/client/chromoting_client.h"
@@ -26,17 +26,16 @@
 #include "remoting/protocol/session_config.h"
 #include "remoting/protocol/third_party_client_authenticator.h"
 #include "remoting/protocol/transport_context.h"
-#include "remoting/signaling/xmpp_signal_strategy.h"
+#include "remoting/signaling/ftl_client_uuid_device_id_provider.h"
+#include "remoting/signaling/ftl_signal_strategy.h"
 #include "remoting/test/connection_setup_info.h"
 #include "remoting/test/test_video_renderer.h"
+#include "services/network/test/test_shared_url_loader_factory.h"
 
 namespace remoting {
 namespace test {
 
 namespace {
-const char kXmppHostName[] = "talk.google.com";
-const int kProdXmppPortNumber = 5222;
-const int kTestXmppPortNumber = 19316;
 
 // Used as the TokenFetcherCallback for App Remoting sessions.
 void FetchThirdPartyToken(
@@ -83,9 +82,11 @@ void TestChromotingClient::StartConnection(
   jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
 
   scoped_refptr<URLRequestContextGetter> request_context_getter;
-  request_context_getter = new URLRequestContextGetter(
-      base::ThreadTaskRunnerHandle::Get(),   // network_runner
-      base::ThreadTaskRunnerHandle::Get());  // file_runner
+  request_context_getter =
+      new URLRequestContextGetter(base::ThreadTaskRunnerHandle::Get());
+
+  auto test_shared_url_loader_factory =
+      base::MakeRefCounted<network::TestSharedURLLoaderFactory>();
 
   client_context_.reset(new ClientContext(base::ThreadTaskRunnerHandle::Get()));
 
@@ -105,18 +106,15 @@ void TestChromotingClient::StartConnection(
   }
 
   if (!signal_strategy_) {
-    XmppSignalStrategy::XmppServerConfig xmpp_server_config;
-    xmpp_server_config.host = kXmppHostName;
-    xmpp_server_config.port =
-        use_test_api_values ? kTestXmppPortNumber : kProdXmppPortNumber;
-    xmpp_server_config.use_tls = !use_test_api_values;
-    xmpp_server_config.username = connection_setup_info.user_name;
-    xmpp_server_config.auth_token = connection_setup_info.access_token;
-
     // Set up the signal strategy.  This must outlive the client object.
-    signal_strategy_.reset(
-        new XmppSignalStrategy(net::ClientSocketFactory::GetDefaultFactory(),
-                               request_context_getter, xmpp_server_config));
+    // TODO(yuweih): This doesn't work since FtlSignalStrategy only works with
+    // Tachyon ID. Either integrate with the new directory service or remove
+    // the test tool altogether.
+    signal_strategy_ = std::make_unique<FtlSignalStrategy>(
+        std::make_unique<PassthroughOAuthTokenGetter>(
+            connection_setup_info.user_name,
+            connection_setup_info.access_token),
+        std::make_unique<FtlClientUuidDeviceIdProvider>());
   }
 
   protocol::NetworkSettings network_settings(
@@ -124,9 +122,9 @@ void TestChromotingClient::StartConnection(
 
   scoped_refptr<protocol::TransportContext> transport_context(
       new protocol::TransportContext(
-          signal_strategy_.get(),
-          base::MakeUnique<protocol::ChromiumPortAllocatorFactory>(),
-          base::MakeUnique<ChromiumUrlRequestFactory>(request_context_getter),
+          std::make_unique<protocol::ChromiumPortAllocatorFactory>(),
+          std::make_unique<ChromiumUrlRequestFactory>(
+              test_shared_url_loader_factory),
           network_settings, protocol::TransportRole::CLIENT));
 
   protocol::ClientAuthenticationConfig client_auth_config;

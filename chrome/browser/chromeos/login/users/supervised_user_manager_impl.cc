@@ -4,13 +4,15 @@
 
 #include "chrome/browser/chromeos/login/users/supervised_user_manager_impl.h"
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
@@ -202,17 +204,17 @@ const user_manager::User* SupervisedUserManagerImpl::CreateUserRecord(
       local_state, kSupervisedUserManagerDisplayEmails);
 
   prefs_new_users_update->Insert(0,
-                                 base::MakeUnique<base::Value>(local_user_id));
+                                 std::make_unique<base::Value>(local_user_id));
 
   sync_id_update->SetWithoutPathExpansion(
-      local_user_id, base::MakeUnique<base::Value>(sync_user_id));
+      local_user_id, std::make_unique<base::Value>(sync_user_id));
   manager_update->SetWithoutPathExpansion(
       local_user_id,
-      base::MakeUnique<base::Value>(manager->GetAccountId().GetUserEmail()));
+      std::make_unique<base::Value>(manager->GetAccountId().GetUserEmail()));
   manager_name_update->SetWithoutPathExpansion(
-      local_user_id, base::MakeUnique<base::Value>(manager->GetDisplayName()));
+      local_user_id, std::make_unique<base::Value>(manager->GetDisplayName()));
   manager_email_update->SetWithoutPathExpansion(
-      local_user_id, base::MakeUnique<base::Value>(manager->display_email()));
+      local_user_id, std::make_unique<base::Value>(manager->display_email()));
 
   owner_->SaveUserDisplayName(AccountId::FromUserEmail(local_user_id),
                               display_name);
@@ -487,7 +489,7 @@ void SupervisedUserManagerImpl::UpdateManagerName(
     DCHECK(has_manager_id);
     if (user_id == manager_id) {
       manager_name_update->SetWithoutPathExpansion(
-          it.key(), base::MakeUnique<base::Value>(new_display_name));
+          it.key(), std::make_unique<base::Value>(new_display_name));
     }
   }
 }
@@ -504,7 +506,7 @@ void SupervisedUserManagerImpl::LoadSupervisedUserToken(
       ProfileHelper::Get()->GetUserByProfile(profile)->username_hash());
   PostTaskAndReplyWithResult(
       base::CreateTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})
           .get(),
       FROM_HERE, base::Bind(&LoadSyncToken, profile_dir), callback);

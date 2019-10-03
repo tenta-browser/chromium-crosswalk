@@ -14,6 +14,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
+#include "extensions/common/image_util.h"
 #include "extensions/common/manifest_constants.h"
 
 namespace extensions {
@@ -28,9 +29,11 @@ bool ExtensionActionHandler::Parse(Extension* extension,
                                    base::string16* error) {
   const char* key = nullptr;
   const char* error_key = nullptr;
+  ActionInfo::Type type = ActionInfo::TYPE_ACTION;
   if (extension->manifest()->HasKey(manifest_keys::kAction)) {
     key = manifest_keys::kAction;
     error_key = manifest_errors::kInvalidAction;
+    // type ACTION is correct.
   }
 
   if (extension->manifest()->HasKey(manifest_keys::kPageAction)) {
@@ -41,6 +44,7 @@ bool ExtensionActionHandler::Parse(Extension* extension,
     }
     key = manifest_keys::kPageAction;
     error_key = manifest_errors::kInvalidPageAction;
+    type = ActionInfo::TYPE_PAGE;
   }
 
   if (extension->manifest()->HasKey(manifest_keys::kBrowserAction)) {
@@ -51,6 +55,7 @@ bool ExtensionActionHandler::Parse(Extension* extension,
     }
     key = manifest_keys::kBrowserAction;
     error_key = manifest_errors::kInvalidBrowserAction;
+    type = ActionInfo::TYPE_BROWSER;
   }
 
   if (key) {
@@ -61,23 +66,20 @@ bool ExtensionActionHandler::Parse(Extension* extension,
     }
 
     std::unique_ptr<ActionInfo> action_info =
-        ActionInfo::Load(extension, dict, error);
+        ActionInfo::Load(extension, type, dict, error);
     if (!action_info)
       return false;  // Failed to parse extension action definition.
 
-    if (key == manifest_keys::kAction) {
-      ActionInfo::SetExtensionActionInfo(extension, action_info.release());
-    } else {
-      if (dict->HasKey(manifest_keys::kActionDefaultState)) {
-        *error =
-            base::ASCIIToUTF16(manifest_errors::kDefaultStateShouldNotBeSet);
-        return false;
-      }
-
-      if (key == manifest_keys::kPageAction)
-        ActionInfo::SetPageActionInfo(extension, action_info.release());
-      else
-        ActionInfo::SetBrowserActionInfo(extension, action_info.release());
+    switch (type) {
+      case ActionInfo::TYPE_ACTION:
+        ActionInfo::SetExtensionActionInfo(extension, std::move(action_info));
+        break;
+      case ActionInfo::TYPE_PAGE:
+        ActionInfo::SetPageActionInfo(extension, std::move(action_info));
+        break;
+      case ActionInfo::TYPE_BROWSER:
+        ActionInfo::SetBrowserActionInfo(extension, std::move(action_info));
+        break;
     }
   } else {  // No key, used for synthesizing an action for extensions with none.
     if (Manifest::IsComponentLocation(extension->location()))
@@ -93,9 +95,9 @@ bool ExtensionActionHandler::Parse(Extension* extension,
 
     // Set an empty page action. We use a page action (instead of a browser
     // action) because the action should not be seen as enabled on every page.
-    std::unique_ptr<ActionInfo> action_info(new ActionInfo());
+    auto action_info = std::make_unique<ActionInfo>(ActionInfo::TYPE_PAGE);
     action_info->synthesized = true;
-    ActionInfo::SetPageActionInfo(extension, action_info.release());
+    ActionInfo::SetPageActionInfo(extension, std::move(action_info));
   }
 
   return true;
@@ -114,24 +116,26 @@ bool ExtensionActionHandler::Validate(
     error_message = IDS_EXTENSION_LOAD_ICON_FOR_BROWSER_ACTION_FAILED;
   }
 
+  // Analyze the icons for visibility using the default toolbar color, since
+  // the majority of Chrome users don't modify their theme.
   if (action && !action->default_icon.empty() &&
       !file_util::ValidateExtensionIconSet(
-          action->default_icon, extension, error_message, error)) {
+          action->default_icon, extension, error_message,
+          image_util::kDefaultToolbarColor, error)) {
     return false;
   }
   return true;
 }
 
 bool ExtensionActionHandler::AlwaysParseForType(Manifest::Type type) const {
-  return type == Manifest::TYPE_EXTENSION;
+  return type == Manifest::TYPE_EXTENSION || type == Manifest::TYPE_USER_SCRIPT;
 }
 
-const std::vector<std::string> ExtensionActionHandler::Keys() const {
-  std::vector<std::string> keys;
-  keys.push_back(manifest_keys::kPageAction);
-  keys.push_back(manifest_keys::kBrowserAction);
-  keys.push_back(manifest_keys::kSynthesizeExtensionAction);
-  return keys;
+base::span<const char* const> ExtensionActionHandler::Keys() const {
+  static constexpr const char* kKeys[] = {
+      manifest_keys::kPageAction, manifest_keys::kBrowserAction,
+      manifest_keys::kSynthesizeExtensionAction};
+  return kKeys;
 }
 
 }  // namespace extensions

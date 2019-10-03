@@ -19,15 +19,15 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/sandboxed_unpacker.h"
+#include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
-class ExtensionService;
 class Profile;
 class TestingProfile;
 
@@ -42,6 +42,7 @@ class TestingPrefServiceSyncable;
 namespace extensions {
 
 class ExtensionRegistry;
+class ExtensionService;
 
 // A unittest infrastructure which creates an ExtensionService. Whenever
 // possible, use this instead of creating a browsertest.
@@ -76,6 +77,7 @@ class ExtensionServiceTestBase : public testing::Test {
 
   // testing::Test implementation.
   void SetUp() override;
+  void TearDown() override;
 
   // Create a set of InitParams to install an ExtensionService into |temp_dir_|.
   ExtensionServiceInitParams CreateDefaultInitParams();
@@ -176,10 +178,13 @@ class ExtensionServiceTestBase : public testing::Test {
   extensions::ExtensionRegistry* registry_;
 
 #if defined OS_CHROMEOS
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
+
+  // An override that ignores CRX3 publisher signatures.
+  SandboxedUnpacker::ScopedVerifierFormatOverrideForTest
+      verifier_format_override_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionServiceTestBase);
 };

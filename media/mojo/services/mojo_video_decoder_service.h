@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
 #include "media/base/decode_status.h"
@@ -17,14 +18,11 @@
 #include "media/mojo/interfaces/video_decoder.mojom.h"
 #include "media/mojo/services/media_mojo_export.h"
 #include "media/mojo/services/mojo_media_client.h"
-
-namespace gpu {
-struct SyncToken;
-}
+#include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace media {
 
-class ContentDecryptionModule;
+class CdmContextRef;
 class DecoderBuffer;
 class MojoCdmServiceContext;
 class MojoDecoderBufferReader;
@@ -34,7 +32,8 @@ class VideoFrame;
 
 // Implementation of a mojom::VideoDecoder which runs in the GPU process,
 // and wraps a media::VideoDecoder.
-class MEDIA_MOJO_EXPORT MojoVideoDecoderService : public mojom::VideoDecoder {
+class MEDIA_MOJO_EXPORT MojoVideoDecoderService final
+    : public mojom::VideoDecoder {
  public:
   explicit MojoVideoDecoderService(
       MojoMediaClient* mojo_media_client,
@@ -42,18 +41,21 @@ class MEDIA_MOJO_EXPORT MojoVideoDecoderService : public mojom::VideoDecoder {
   ~MojoVideoDecoderService() final;
 
   // mojom::VideoDecoder implementation
-  void Construct(mojom::VideoDecoderClientAssociatedPtrInfo client,
-                 mojom::MediaLogAssociatedPtrInfo media_log,
-                 mojo::ScopedDataPipeConsumerHandle decoder_buffer_pipe,
-                 mojom::CommandBufferIdPtr command_buffer_id) final;
+  void GetSupportedConfigs(GetSupportedConfigsCallback callback) final;
+  void Construct(
+      mojom::VideoDecoderClientAssociatedPtrInfo client,
+      mojom::MediaLogAssociatedPtrInfo media_log,
+      mojom::VideoFrameHandleReleaserRequest video_frame_handle_releaser,
+      mojo::ScopedDataPipeConsumerHandle decoder_buffer_pipe,
+      mojom::CommandBufferIdPtr command_buffer_id,
+      VideoDecoderImplementation implementation,
+      const gfx::ColorSpace& target_color_space) final;
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   int32_t cdm_id,
                   InitializeCallback callback) final;
   void Decode(mojom::DecoderBufferPtr buffer, DecodeCallback callback) final;
   void Reset(ResetCallback callback) final;
-  void OnReleaseMailbox(const base::UnguessableToken& release_token,
-                        const gpu::SyncToken& release_sync_token) final;
   void OnOverlayInfoChanged(const OverlayInfo& overlay_info) final;
 
  private:
@@ -61,46 +63,62 @@ class MEDIA_MOJO_EXPORT MojoVideoDecoderService : public mojom::VideoDecoder {
   // running mojom::VideoDecoder callbacks after connection error happens and
   // |this| is deleted. It's not safe to run the callbacks after a connection
   // error.
-  void OnDecoderInitialized(InitializeCallback callback,
-                            scoped_refptr<ContentDecryptionModule> cdm,
-                            bool success);
+  void OnDecoderInitialized(bool success);
   void OnReaderRead(DecodeCallback callback,
+                    std::unique_ptr<ScopedDecodeTrace> trace_event,
                     scoped_refptr<DecoderBuffer> buffer);
-  void OnDecoderDecoded(DecodeCallback callback, DecodeStatus status);
+  void OnDecoderDecoded(DecodeCallback callback,
+                        std::unique_ptr<ScopedDecodeTrace> trace_event,
+                        DecodeStatus status);
 
   // Called by |mojo_decoder_buffer_reader_| when reset is finished.
-  void OnReaderFlushed(ResetCallback callback);
+  void OnReaderFlushed();
 
-  void OnDecoderReset(ResetCallback callback);
-  void OnDecoderOutputWithReleaseCB(
-      MojoMediaClient::ReleaseMailboxCB release_cb,
-      const scoped_refptr<VideoFrame>& frame);
-  void OnDecoderOutput(base::Optional<base::UnguessableToken> release_token,
-                       const scoped_refptr<VideoFrame>& frame);
+  void OnDecoderReset();
+  void OnDecoderOutput(scoped_refptr<VideoFrame> frame);
+
+  void OnDecoderWaiting(WaitingReason reason);
 
   void OnDecoderRequestedOverlayInfo(
       bool restart_for_transitions,
       const ProvideOverlayInfoCB& provide_overlay_info_cb);
 
-  mojom::VideoDecoderClientAssociatedPtr client_;
-  std::unique_ptr<MojoMediaLog> media_log_;
-  std::unique_ptr<MojoDecoderBufferReader> mojo_decoder_buffer_reader_;
+  // Whether this instance is active (Decode() was called at least once).
+  bool is_active_instance_ = false;
 
+  // Decoder factory.
   MojoMediaClient* mojo_media_client_;
-  std::unique_ptr<media::VideoDecoder> decoder_;
-  std::map<base::UnguessableToken, MojoMediaClient::ReleaseMailboxCB>
-      release_mailbox_cbs_;
-  ProvideOverlayInfoCB provide_overlay_info_cb_;
 
-  // A helper object required to get CDM from CDM id.
+  // A helper object required to get the CDM from a CDM ID.
   MojoCdmServiceContext* const mojo_cdm_service_context_ = nullptr;
 
-  // Hold a reference to the CDM to keep it alive for the lifetime of the
-  // |decoder_|. The |cdm_| owns the CdmContext which is passed to |decoder_|.
-  scoped_refptr<ContentDecryptionModule> cdm_;
+  // Channel for sending async messages to the client.
+  mojom::VideoDecoderClientAssociatedPtr client_;
+
+  // Proxy object for providing media log services.
+  std::unique_ptr<MojoMediaLog> media_log_;
+
+  // Holds VideoFrame references on behalf of the client, until the client
+  // releases them or is disconnected.
+  mojo::StrongBindingPtr<mojom::VideoFrameHandleReleaser>
+      video_frame_handle_releaser_;
+
+  // Helper for reading DecoderBuffer data from the DataPipe.
+  std::unique_ptr<MojoDecoderBufferReader> mojo_decoder_buffer_reader_;
+
+  // Holds the CdmContextRef to keep the CdmContext alive for the lifetime of
+  // the |decoder_|.
+  std::unique_ptr<CdmContextRef> cdm_context_ref_;
+
+  std::unique_ptr<media::VideoDecoder> decoder_;
+
+  InitializeCallback init_cb_;
+  ResetCallback reset_cb_;
+
+  ProvideOverlayInfoCB provide_overlay_info_cb_;
 
   base::WeakPtr<MojoVideoDecoderService> weak_this_;
-  base::WeakPtrFactory<MojoVideoDecoderService> weak_factory_;
+  base::WeakPtrFactory<MojoVideoDecoderService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MojoVideoDecoderService);
 };

@@ -17,7 +17,6 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 
@@ -25,10 +24,7 @@ import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
  * Class responsible for testing the ContextualSearchRequest.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ContextualSearchRequestTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -42,9 +38,10 @@ public class ContextualSearchRequestTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
-                mRequest = new ContextualSearchRequest("barack obama", "barack", "", true);
+                mRequest =
+                        new ContextualSearchRequest("barack obama", "barack", "", true, null, null);
                 mNormalPriorityOnlyRequest =
-                        new ContextualSearchRequest("woody allen", "allen", "", false);
+                        new ContextualSearchRequest("woody allen", "allen", "", false, null, null);
             }
         });
     }
@@ -78,5 +75,29 @@ public class ContextualSearchRequestTest {
         mRequest.setNormalPriority();
         Assert.assertFalse(mRequest.isUsingLowPriority());
         Assert.assertFalse(mNormalPriorityOnlyRequest.isUsingLowPriority());
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"ContextualSearch"})
+    public void testServerProvidedUrls() {
+        String serverUrlFull = "https://www.google.com/search?obama&ctxs=2";
+        String serverUrlPreload = "https://www.google.com/s?obama&ctxs=2&pf=c&sns=1";
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
+            @Override
+            public void run() {
+                mRequest = new ContextualSearchRequest(
+                        "", "", "", true, serverUrlFull, serverUrlPreload);
+                mNormalPriorityOnlyRequest =
+                        new ContextualSearchRequest("", "", "", false, serverUrlFull, null);
+            }
+        });
+        Assert.assertTrue(mRequest.isUsingLowPriority());
+        Assert.assertEquals(serverUrlPreload, mRequest.getSearchUrl());
+        mRequest.setNormalPriority();
+        Assert.assertFalse(mRequest.isUsingLowPriority());
+        Assert.assertFalse(mNormalPriorityOnlyRequest.isUsingLowPriority());
+        Assert.assertEquals(serverUrlFull, mRequest.getSearchUrl());
+        Assert.assertEquals(serverUrlFull, mNormalPriorityOnlyRequest.getSearchUrl());
     }
 }

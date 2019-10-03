@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "ui/base/ime/input_method.h"
 #include "ui/base/ime/mock_input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/gfx/geometry/rect.h"
@@ -26,6 +27,8 @@ class TextInputTestBase : public InProcessBrowserTest {
 
   void SetUpInProcessBrowserTestFixture() override;
 
+  ui::InputMethod* GetInputMethod() const;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(TextInputTestBase);
 };
@@ -33,7 +36,7 @@ class TextInputTestBase : public InProcessBrowserTest {
 // Provides text input test utilities.
 class TextInputTestHelper : public ui::InputMethodObserver {
  public:
-  TextInputTestHelper();
+  explicit TextInputTestHelper(ui::InputMethod* input_method);
   ~TextInputTestHelper() override;
 
   // Returns the latest status notified to ui::InputMethod
@@ -55,6 +58,7 @@ class TextInputTestHelper : public ui::InputMethodObserver {
                                  const gfx::Rect& expected_composition_head);
   void WaitForSurroundingTextChanged(const base::string16& expected_text,
                                      const gfx::Range& expected_selection);
+  void WaitForPassageOfTimeMillis(const int milliseconds);
 
   // Converts from string to gfx::Rect. The string should be "x,y,width,height".
   // Returns false if the conversion failed.
@@ -70,6 +74,7 @@ class TextInputTestHelper : public ui::InputMethodObserver {
     WAIT_ON_CARET_BOUNDS_CHANGED,
     WAIT_ON_FOCUS,
     WAIT_ON_TEXT_INPUT_TYPE_CHANGED,
+    WAIT_ON_PASSAGE_OF_TIME,
   };
 
   // ui::InputMethodObserver overrides.
@@ -77,7 +82,7 @@ class TextInputTestHelper : public ui::InputMethodObserver {
   void OnBlur() override;
   void OnCaretBoundsChanged(const ui::TextInputClient* client) override;
   void OnTextInputStateChanged(const ui::TextInputClient* client) override;
-  void OnShowImeIfNeeded() override;
+  void OnShowVirtualKeyboardIfEnabled() override;
   void OnInputMethodDestroyed(const ui::InputMethod* input_method) override;
 
   // Represents waiting type of text input event.
@@ -89,6 +94,7 @@ class TextInputTestHelper : public ui::InputMethodObserver {
   gfx::Range selection_range_;
   bool focus_state_;
   ui::TextInputType latest_text_input_type_;
+  ui::InputMethod* input_method_;
 
   DISALLOW_COPY_AND_ASSIGN(TextInputTestHelper);
 };

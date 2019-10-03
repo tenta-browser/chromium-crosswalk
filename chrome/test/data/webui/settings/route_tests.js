@@ -8,7 +8,7 @@ suite('route', function() {
    * @return {!Promise}
    */
   function whenPopState(causeEvent) {
-    var promise = new Promise(function(resolve) {
+    const promise = new Promise(function(resolve) {
       window.addEventListener('popstate', function callback() {
         window.removeEventListener('popstate', callback);
         resolve();
@@ -30,30 +30,31 @@ suite('route', function() {
    * @param {!settings.Route} expectedNavigatePreviousResult
    * @return {!Promise}
    */
-  function testNavigateBackUsesHistory(previousRoute, currentRoute,
-                                       expectedNavigatePreviousResult) {
+  function testNavigateBackUsesHistory(
+      previousRoute, currentRoute, expectedNavigatePreviousResult) {
     settings.navigateTo(previousRoute);
     settings.navigateTo(currentRoute);
 
     return whenPopState(function() {
-      settings.navigateToPreviousRoute();
-    }).then(function() {
-      assertEquals(expectedNavigatePreviousResult,
-                   settings.getCurrentRoute());
-    });
+             settings.navigateToPreviousRoute();
+           })
+        .then(function() {
+          assertEquals(
+              expectedNavigatePreviousResult, settings.getCurrentRoute());
+        });
   }
 
   test('tree structure', function() {
     // Set up root page routes.
-    var BASIC = new settings.Route('/');
+    const BASIC = new settings.Route('/');
     assertEquals(0, BASIC.depth);
 
-    var ADVANCED = new settings.Route('/advanced');
+    const ADVANCED = new settings.Route('/advanced');
     assertFalse(ADVANCED.isSubpage());
     assertEquals(0, ADVANCED.depth);
 
     // Test a section route.
-    var PRIVACY = ADVANCED.createSection('/privacy', 'privacy');
+    const PRIVACY = ADVANCED.createSection('/privacy', 'privacy');
     assertEquals(ADVANCED, PRIVACY.parent);
     assertEquals(1, PRIVACY.depth);
     assertFalse(PRIVACY.isSubpage());
@@ -63,7 +64,7 @@ suite('route', function() {
     assertFalse(PRIVACY.contains(ADVANCED));
 
     // Test a subpage route.
-    var SITE_SETTINGS = PRIVACY.createChild('/siteSettings');
+    const SITE_SETTINGS = PRIVACY.createChild('/siteSettings');
     assertEquals('/siteSettings', SITE_SETTINGS.path);
     assertEquals(PRIVACY, SITE_SETTINGS.parent);
     assertEquals(2, SITE_SETTINGS.depth);
@@ -75,20 +76,20 @@ suite('route', function() {
     assertTrue(PRIVACY.contains(SITE_SETTINGS));
 
     // Test a sub-subpage route.
-    var SITE_SETTINGS_ALL = SITE_SETTINGS.createChild('all');
+    const SITE_SETTINGS_ALL = SITE_SETTINGS.createChild('all');
     assertEquals('/siteSettings/all', SITE_SETTINGS_ALL.path);
     assertEquals(SITE_SETTINGS, SITE_SETTINGS_ALL.parent);
     assertEquals(3, SITE_SETTINGS_ALL.depth);
     assertTrue(SITE_SETTINGS_ALL.isSubpage());
 
     // Test a non-subpage child of ADVANCED.
-    var CLEAR_BROWSER_DATA = ADVANCED.createChild('/clearBrowserData');
+    const CLEAR_BROWSER_DATA = ADVANCED.createChild('/clearBrowserData');
     assertFalse(CLEAR_BROWSER_DATA.isSubpage());
     assertEquals('', CLEAR_BROWSER_DATA.section);
   });
 
   test('no duplicate routes', function() {
-    var paths = new Set();
+    const paths = new Set();
     Object.values(settings.routes).forEach(function(route) {
       assertFalse(paths.has(route.path), route.path);
       paths.add(route.path);
@@ -127,7 +128,7 @@ suite('route', function() {
   });
 
   test('navigateTo respects removeSearch optional parameter', function() {
-    var params = new URLSearchParams('search=foo');
+    const params = new URLSearchParams('search=foo');
     settings.navigateTo(settings.routes.BASIC, params);
     assertEquals(params.toString(), settings.getQueryParameters().toString());
 
@@ -208,23 +209,23 @@ suite('route', function() {
     settings.pageVisibility = {
       advancedSettings: false,
       appearance: false,
+      autofill: false,
       defaultBrowser: false,
       onStartup: false,
-      passwordsAndForms: false,
       people: false,
       reset: false,
     };
 
-    var router = new settings.Router();
-    var hasRoute = route => router.getRoutes().hasOwnProperty(route);
+    const router = new settings.Router();
+    const hasRoute = route => router.getRoutes().hasOwnProperty(route);
 
     assertTrue(hasRoute('BASIC'));
 
     assertFalse(hasRoute('ADVANCED'));
     assertFalse(hasRoute('APPEARANCE'));
+    assertFalse(hasRoute('AUTOFILL'));
     assertFalse(hasRoute('DEFAULT_BROWSER'));
     assertFalse(hasRoute('ON_STARTUP'));
-    assertFalse(hasRoute('PASSWORDS'));
     assertFalse(hasRoute('PEOPLE'));
     assertFalse(hasRoute('RESET'));
   });
@@ -235,7 +236,7 @@ suite('route', function() {
         settings.resetRouteForTesting();
         // Check getting the absolute path while not inside settings returns the
         // correct path.
-        window.location.href = "https://example.com/path/to/page.html";
+        window.location.href = 'https://example.com/path/to/page.html';
         assertEquals(
             'chrome://settings/cloudPrinters',
             settings.routes.CLOUD_PRINTERS.getAbsolutePath());

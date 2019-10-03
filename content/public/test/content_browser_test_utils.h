@@ -5,22 +5,35 @@
 #ifndef CONTENT_PUBLIC_TEST_CONTENT_BROWSER_TEST_UTILS_H_
 #define CONTENT_PUBLIC_TEST_CONTENT_BROWSER_TEST_UTILS_H_
 
+#include <map>
+#include <string>
+
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "content/public/common/page_type.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
 namespace base {
 class FilePath;
-}
+
+namespace mac {
+class ScopedObjCClassSwizzler;
+}  // namespace mac
+}  // namespace base
 
 namespace gfx {
 class Point;
 class Range;
 class Rect;
-}
+}  // namespace gfx
+
+namespace net {
+namespace test_server {
+class EmbeddedTestServer;
+}  // namespace test_server
+}  // namespace net
 
 // A collections of functions designed for use with content_shell based browser
 // tests.
@@ -28,11 +41,11 @@ class Rect;
 // content\public\test\browser_test_utils.h
 
 namespace content {
-
-class MessageLoopRunner;
 class RenderFrameHost;
 class RenderWidgetHost;
 class Shell;
+class ToRenderFrameHost;
+class WebContents;
 
 // Generate the file path for testing a particular test.
 // The file for the tests is all located in
@@ -52,17 +65,25 @@ base::FilePath GetTestFilePath(const char* dir, const char* file);
 // content/test/data/<file>
 GURL GetTestUrl(const char* dir, const char* file);
 
-// Navigates |window| to |url|, blocking until the navigation finishes.
-// Returns true if the page was loaded successfully and the last committed
-// URL matches |url|.
+// Navigates |window| to |url|, blocking until the navigation finishes. Returns
+// true if the page was loaded successfully and the last committed URL matches
+// |url|.  This is a browser-initiated navigation that simulates a user typing
+// |url| into the address bar.
+//
 // TODO(alexmos): any tests that use this function and expect successful
 // navigations should do EXPECT_TRUE(NavigateToURL()).
 bool NavigateToURL(Shell* window, const GURL& url);
 
-void LoadDataWithBaseURL(Shell* window,
-                         const GURL& url,
-                         const std::string& data,
-                         const GURL& base_url);
+// Perform a renderer-initiated navigation of |window| to |url|, blocking
+// until the navigation finishes.  The navigation is done by assigning
+// location.href in the frame |adapter|. Returns true if the page was loaded
+// successfully and the last committed URL matches |url|.
+WARN_UNUSED_RESULT bool NavigateToURLFromRenderer(
+    const ToRenderFrameHost& adapter,
+    const GURL& url);
+WARN_UNUSED_RESULT bool NavigateToURLFromRendererWithoutUserGesture(
+    const ToRenderFrameHost& adapter,
+    const GURL& url);
 
 // Navigates |window| to |url|, blocking until the given number of navigations
 // finishes.
@@ -111,13 +132,61 @@ class ShellAddedObserver {
  private:
   void ShellCreated(Shell* shell);
 
-  Shell* shell_;
-  scoped_refptr<MessageLoopRunner> runner_;
+  Shell* shell_ = nullptr;
+  std::unique_ptr<base::RunLoop> runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellAddedObserver);
 };
 
 #if defined OS_MACOSX
+// An observer of the RenderWidgetHostViewCocoa which is the NSView
+// corresponding to the page.
+class RenderWidgetHostViewCocoaObserver {
+ public:
+  // The method name for 'didAddSubview'.
+  static constexpr char kDidAddSubview[] = "didAddSubview:";
+  static constexpr char kShowDefinitionForAttributedString[] =
+      "showDefinitionForAttributedString:atPoint:";
+
+  // Returns the method swizzler for the given |method_name|. This is useful
+  // when the original implementation of the method is needed.
+  static base::mac::ScopedObjCClassSwizzler* GetSwizzler(
+      const std::string& method_name);
+
+  // Returns the unique RenderWidgetHostViewCocoaObserver instance (if any) for
+  // the given WebContents. There can be at most one observer per WebContents
+  // and to create a new observer the older one has to be deleted first.
+  static RenderWidgetHostViewCocoaObserver* GetObserver(
+      WebContents* web_contents);
+
+  explicit RenderWidgetHostViewCocoaObserver(WebContents* web_contents);
+  virtual ~RenderWidgetHostViewCocoaObserver();
+
+  // Called when a new NSView is added as a subview of RWHVCocoa.
+  // |rect_in_root_view| represents the bounds of the NSView in RWHVCocoa
+  // coordinates. The view will be dismissed shortly after this call.
+  virtual void DidAddSubviewWillBeDismissed(
+      const gfx::Rect& rect_in_root_view) {}
+  // Called when RenderWidgeHostViewCocoa is asked to show definition of
+  // |for_word| using Mac's dictionary popup.
+  virtual void OnShowDefinitionForAttributedString(
+      const std::string& for_word) {}
+
+  WebContents* web_contents() const { return web_contents_; }
+
+ private:
+  static void SetUpSwizzlers();
+
+  static std::map<std::string,
+                  std::unique_ptr<base::mac::ScopedObjCClassSwizzler>>
+      rwhvcocoa_swizzlers_;
+  static std::map<WebContents*, RenderWidgetHostViewCocoaObserver*> observers_;
+
+  WebContents* const web_contents_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewCocoaObserver);
+};
+
 void SetWindowBounds(gfx::NativeWindow window, const gfx::Rect& bounds);
 
 // This method will request the string (word) at |point| inside the |rwh| where
@@ -141,6 +210,18 @@ void GetStringFromRangeForRenderWidget(
         result_callback);
 
 #endif
+
+// Adds http://<hostname_to_isolate>/ to the list of origins that require
+// isolation (for each of the hostnames in the |hostnames_to_isolate| vector).
+//
+// To ensure that the isolation applies to subsequent navigations in
+// |web_contents|, this function forces a BrowsingInstance swap by performing
+// one or two browser-initiated navigations in |web_contents| to another,
+// random, guid-based hostname.
+void IsolateOriginsForTesting(
+    net::test_server::EmbeddedTestServer* embedded_test_server,
+    WebContents* web_contents,
+    std::vector<std::string> hostnames_to_isolate);
 
 }  // namespace content
 

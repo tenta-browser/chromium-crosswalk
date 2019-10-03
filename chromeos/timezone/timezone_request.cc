@@ -8,9 +8,11 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -19,8 +21,11 @@
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 namespace chromeos {
 
@@ -96,7 +101,7 @@ void RecordUmaEvent(TimeZoneRequestEvent event) {
 }
 
 void RecordUmaResponseCode(int code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("TimeZone.TimeZoneRequest.ResponseCode", code);
+  base::UmaHistogramSparse("TimeZone.TimeZoneRequest.ResponseCode", code);
 }
 
 // Slow timezone resolve leads to bad user experience.
@@ -113,7 +118,7 @@ void RecordUmaResponseTime(base::TimeDelta elapsed, bool success) {
 void RecordUmaResult(TimeZoneRequestResult result, unsigned retries) {
   UMA_HISTOGRAM_ENUMERATION(
       "TimeZone.TimeZoneRequest.Result", result, TIMEZONE_REQUEST_RESULT_COUNT);
-  UMA_HISTOGRAM_SPARSE_SLOWLY("TimeZone.TimeZoneRequest.Retries", retries);
+  base::UmaHistogramSparse("TimeZone.TimeZoneRequest.Retries", retries);
 }
 
 // Creates the request url to send to the server.
@@ -178,8 +183,8 @@ bool ParseServerResponse(const GURL& server_url,
   // Parse the response, ignoring comments.
   std::string error_msg;
   std::unique_ptr<base::Value> response_value =
-      base::JSONReader::ReadAndReturnError(response_body, base::JSON_PARSE_RFC,
-                                           NULL, &error_msg);
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          response_body, base::JSON_PARSE_RFC, NULL, &error_msg);
   if (response_value == NULL) {
     PrintTimeZoneError(server_url, "JSONReader failed: " + error_msg, timezone);
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_MALFORMED);
@@ -207,7 +212,7 @@ bool ParseServerResponse(const GURL& server_url,
   }
 
   bool found = false;
-  for (size_t i = 0; i < arraysize(statusString2Enum); ++i) {
+  for (size_t i = 0; i < base::size(statusString2Enum); ++i) {
     if (status != statusString2Enum[i].string)
       continue;
 
@@ -282,7 +287,7 @@ std::unique_ptr<TimeZoneResponseData> GetTimeZoneFromResponse(
   }
   if (status_code != net::HTTP_OK) {
     std::string message = "Returned error code ";
-    message += base::IntToString(status_code);
+    message += base::NumberToString(status_code);
     PrintTimeZoneError(server_url, message, timezone.get());
     RecordUmaEvent(TIMEZONE_REQUEST_EVENT_RESPONSE_NOT_OK);
     return timezone;
@@ -306,11 +311,11 @@ GURL DefaultTimezoneProviderURL() {
 }
 
 TimeZoneRequest::TimeZoneRequest(
-    net::URLRequestContextGetter* url_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> factory,
     const GURL& service_url,
     const Geoposition& geoposition,
     base::TimeDelta retry_timeout)
-    : url_context_getter_(url_context_getter),
+    : shared_url_loader_factory_(std::move(factory)),
       service_url_(service_url),
       geoposition_(geoposition),
       retry_timeout_abs_(base::Time::Now() + retry_timeout),
@@ -318,8 +323,7 @@ TimeZoneRequest::TimeZoneRequest(
           kResolveTimeZoneRetrySleepOnServerErrorSeconds)),
       retry_sleep_on_bad_response_(base::TimeDelta::FromSeconds(
           kResolveTimeZoneRetrySleepBadResponseSeconds)),
-      retries_(0) {
-}
+      retries_(0) {}
 
 TimeZoneRequest::~TimeZoneRequest() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -337,15 +341,17 @@ void TimeZoneRequest::StartRequest() {
   request_started_at_ = base::Time::Now();
   ++retries_;
 
-  url_fetcher_ =
-      net::URLFetcher::Create(request_url_, net::URLFetcher::GET, this);
-  url_fetcher_->SetRequestContext(url_context_getter_.get());
-  url_fetcher_->SetLoadFlags(net::LOAD_BYPASS_CACHE |
-                             net::LOAD_DISABLE_CACHE |
-                             net::LOAD_DO_NOT_SAVE_COOKIES |
-                             net::LOAD_DO_NOT_SEND_COOKIES |
-                             net::LOAD_DO_NOT_SEND_AUTH_DATA);
-  url_fetcher_->Start();
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = request_url_;
+  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
+  request->allow_credentials = false;
+  url_loader_ = network::SimpleURLLoader::Create(std::move(request),
+                                                 NO_TRAFFIC_ANNOTATION_YET);
+
+  url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      shared_url_loader_factory_.get(),
+      base::BindOnce(&TimeZoneRequest::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 }
 
 void TimeZoneRequest::MakeRequest(TimeZoneResponseCallback callback) {
@@ -362,22 +368,23 @@ void TimeZoneRequest::Retry(bool server_error) {
       FROM_HERE, delay, this, &TimeZoneRequest::StartRequest);
 }
 
-void TimeZoneRequest::OnURLFetchComplete(const net::URLFetcher* source) {
-  DCHECK_EQ(url_fetcher_.get(), source);
-
-  net::URLRequestStatus status = source->GetStatus();
-  int response_code = source->GetResponseCode();
+void TimeZoneRequest::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  bool is_success = !!response_body;
+  int response_code = -1;
+  if (url_loader_->ResponseInfo() && url_loader_->ResponseInfo()->headers)
+    response_code = url_loader_->ResponseInfo()->headers->response_code();
   RecordUmaResponseCode(response_code);
 
   std::string data;
-  source->GetResponseAsString(&data);
   std::unique_ptr<TimeZoneResponseData> timezone = GetTimeZoneFromResponse(
-      status.is_success(), response_code, data, source->GetURL());
+      is_success, response_code, is_success ? *response_body : std::string(),
+      url_loader_->GetFinalURL());
   const bool server_error =
-      !status.is_success() || (response_code >= 500 && response_code < 600);
-  url_fetcher_.reset();
+      !is_success || (response_code >= 500 && response_code < 600);
+  url_loader_.reset();
 
-  DVLOG(1) << "TimeZoneRequest::OnURLFetchComplete(): timezone={"
+  DVLOG(1) << "TimeZoneRequest::OnSimpleLoaderComplete(): timezone={"
            << timezone->ToStringForDebug() << "}";
 
   const base::Time now = base::Time::Now();
@@ -421,13 +428,9 @@ std::string TimeZoneResponseData::ToStringForDebug() const {
   return base::StringPrintf(
       "dstOffset=%f, rawOffset=%f, timeZoneId='%s', timeZoneName='%s', "
       "error_message='%s', status=%u (%s)",
-      dstOffset,
-      rawOffset,
-      timeZoneId.c_str(),
-      timeZoneName.c_str(),
-      error_message.c_str(),
-      (unsigned)status,
-      (status < arraysize(status2string) ? status2string[status] : "unknown"));
+      dstOffset, rawOffset, timeZoneId.c_str(), timeZoneName.c_str(),
+      error_message.c_str(), (unsigned)status,
+      (status < base::size(status2string) ? status2string[status] : "unknown"));
 }
 
 }  // namespace chromeos

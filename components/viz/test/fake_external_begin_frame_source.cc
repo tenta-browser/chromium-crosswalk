@@ -4,6 +4,7 @@
 
 #include "components/viz/test/fake_external_begin_frame_source.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -17,8 +18,7 @@ FakeExternalBeginFrameSource::FakeExternalBeginFrameSource(
     bool tick_automatically)
     : BeginFrameSource(kNotRestartableId),
       tick_automatically_(tick_automatically),
-      milliseconds_per_frame_(1000.0 / refresh_rate),
-      weak_ptr_factory_(this) {
+      milliseconds_per_frame_(1000.0 / refresh_rate) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -75,7 +75,7 @@ bool FakeExternalBeginFrameSource::IsThrottled() const {
 
 BeginFrameArgs FakeExternalBeginFrameSource::CreateBeginFrameArgs(
     BeginFrameArgs::CreationLocation location,
-    base::SimpleTestTickClock* now_src) {
+    const base::TickClock* now_src) {
   return CreateBeginFrameArgsForTesting(location, source_id(),
                                         next_begin_frame_number_++, now_src);
 }
@@ -99,12 +99,11 @@ void FakeExternalBeginFrameSource::TestOnBeginFrame(
 
 void FakeExternalBeginFrameSource::PostTestOnBeginFrame() {
   begin_frame_task_.Reset(
-      base::Bind(&FakeExternalBeginFrameSource::TestOnBeginFrame,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&FakeExternalBeginFrameSource::TestOnBeginFrame,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     CreateBeginFrameArgs(BEGINFRAME_FROM_HERE)));
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(begin_frame_task_.callback(),
-                     CreateBeginFrameArgs(BEGINFRAME_FROM_HERE)),
+      FROM_HERE, begin_frame_task_.callback(),
       base::TimeDelta::FromMilliseconds(milliseconds_per_frame_));
   next_begin_frame_number_++;
 }

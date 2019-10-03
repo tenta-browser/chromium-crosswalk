@@ -26,9 +26,10 @@
 // Native JNI methods
 // ----------------------------------------------------------------------------
 #include <jni.h>
+#include <atomic>
+#include <type_traits>
 
 #include "base/android/jni_generator/jni_generator_helper.h"
-
 #include "base/android/jni_int_wrapper.h"
 
 // Step 1: forward declarations.
@@ -36,7 +37,7 @@ namespace {
 const char kNativeCallbacksClassPath[] =
     "com/google/vr/internal/controller/NativeCallbacks";
 // Leaking this jclass as we cannot use LazyInstance from some threads.
-base::subtle::AtomicWord g_NativeCallbacks_clazz __attribute__((unused)) = 0;
+std::atomic<jclass> g_NativeCallbacks_clazz __attribute__((unused)) (nullptr);
 #define NativeCallbacks_clazz(env)                            \
   base::android::LazyGetClass(env, kNativeCallbacksClassPath, \
                               &g_NativeCallbacks_clazz)
@@ -325,7 +326,8 @@ static bool RegisterNativesImpl(JNIEnv* env) {
   if (base::android::IsSelectiveJniRegistrationEnabled(env))
     return true;
 
-  const int kMethodsNativeCallbacksSize = arraysize(kMethodsNativeCallbacks);
+  const int kMethodsNativeCallbacksSize =
+      std::extent<decltype(kMethodsNativeCallbacks)>();
 
   if (env->RegisterNatives(NativeCallbacks_clazz(env), kMethodsNativeCallbacks,
                            kMethodsNativeCallbacksSize) < 0) {

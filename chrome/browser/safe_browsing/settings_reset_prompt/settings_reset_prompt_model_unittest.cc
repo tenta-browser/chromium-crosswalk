@@ -9,8 +9,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
@@ -94,7 +94,7 @@ class SettingsResetPromptModelTest
 
     profile_->CreateWebDataService();
     TemplateURLServiceFactory::GetInstance()->SetTestingFactory(
-        profile(), CreateTemplateURLServiceForTesting);
+        profile(), base::BindRepeating(&CreateTemplateURLServiceForTesting));
 
     SessionStartupPref::SetStartupPref(profile(), startup_pref_);
 
@@ -124,7 +124,7 @@ class SettingsResetPromptModelTest
     data.SetKeyword(base::ASCIIToUTF16("TestEngine"));
     data.SetURL(default_search);
     TemplateURL* template_url =
-        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
+        template_url_service->Add(std::make_unique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 
@@ -405,20 +405,20 @@ TEST_P(ResetStatesTest, PerformReset) {
     expected_reset_flags = ProfileResetter::HOMEPAGE;
 
   auto profile_resetter =
-      base::MakeUnique<NiceMock<MockProfileResetter>>(profile());
+      std::make_unique<NiceMock<MockProfileResetter>>(profile());
   EXPECT_CALL(*profile_resetter, MockReset(expected_reset_flags, _, _))
       .Times(1);
 
   ModelPointer model = CreateModel(reset_urls, std::move(profile_resetter));
-  model->PerformReset(base::MakeUnique<BrandcodedDefaultSettings>(),
+  model->PerformReset(std::make_unique<BrandcodedDefaultSettings>(),
                       base::Bind(&SettingsResetPromptModelTest::OnResetDone,
                                  base::Unretained(this)));
   EXPECT_EQ(reset_callbacks_, 1);
 }
 
-INSTANTIATE_TEST_CASE_P(SettingsResetPromptModel,
-                        ResetStatesTest,
-                        Combine(Bool(), Bool(), Bool()));
+INSTANTIATE_TEST_SUITE_P(SettingsResetPromptModel,
+                         ResetStatesTest,
+                         Combine(Bool(), Bool(), Bool()));
 
 }  // namespace
 }  // namespace safe_browsing

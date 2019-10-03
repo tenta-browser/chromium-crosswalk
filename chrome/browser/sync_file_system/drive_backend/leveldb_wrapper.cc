@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
 #include "third_party/leveldatabase/src/include/leveldb/slice.h"
@@ -164,7 +163,7 @@ void LevelDBWrapper::Delete(const std::string& key) {
 
 leveldb::Status LevelDBWrapper::Get(const std::string& key,
                                     std::string* value) {
-  PendingOperationMap::iterator itr = pending_.find(key);
+  auto itr = pending_.find(key);
   if (itr == pending_.end())
     return db_->Get(leveldb::ReadOptions(), key, value);
 
@@ -181,13 +180,12 @@ leveldb::Status LevelDBWrapper::Get(const std::string& key,
 }
 
 std::unique_ptr<LevelDBWrapper::Iterator> LevelDBWrapper::NewIterator() {
-  return base::MakeUnique<Iterator>(this);
+  return std::make_unique<Iterator>(this);
 }
 
 leveldb::Status LevelDBWrapper::Commit() {
   leveldb::WriteBatch batch;
-  for (PendingOperationMap::iterator itr = pending_.begin();
-       itr != pending_.end(); ++itr) {
+  for (auto itr = pending_.begin(); itr != pending_.end(); ++itr) {
     const leveldb::Slice key(itr->first);
     const Transaction& transaction = itr->second;
     switch (transaction.first) {

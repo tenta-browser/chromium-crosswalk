@@ -28,6 +28,8 @@ uintptr_t GetProgramCounter(const CONTEXT& context) {
   return context.Eip;
 #elif defined(ARCH_CPU_X86_64)
   return context.Rip;
+#elif defined(ARCH_CPU_ARM64)
+  return context.Pc;
 #endif
 }
 
@@ -65,7 +67,7 @@ void SetStabilityDataInt(base::StringPiece name, int64_t value) {
 }
 
 void RegisterStabilityVEH() {
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
   // ASAN on windows x64 is dynamically allocating the shadow memory on a
   // memory access violation by setting up an vector exception handler.
   // When instrumented with ASAN, this code may trigger an exception by

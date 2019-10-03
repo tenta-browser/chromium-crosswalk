@@ -4,8 +4,8 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/public/browser/render_view_host.h"
@@ -19,11 +19,6 @@
 #include "headless/public/headless_devtools_target.h"
 #include "headless/public/headless_web_contents.h"
 #include "headless/test/headless_browser_test.h"
-#include "headless/test/test_protocol_handler.h"
-#include "net/base/io_buffer.h"
-#include "net/http/http_response_headers.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
-#include "net/url_request/url_request_job.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -51,9 +46,7 @@ class HeadlessBrowserContextIsolationTest
     : public HeadlessAsyncDevTooledBrowserTest {
  public:
   HeadlessBrowserContextIsolationTest()
-      : browser_context_(nullptr),
-        web_contents2_(nullptr),
-        devtools_client2_(HeadlessDevToolsClient::Create()) {
+      : browser_context_(nullptr), web_contents2_(nullptr) {
     EXPECT_TRUE(embedded_test_server()->Start());
   }
 
@@ -66,6 +59,7 @@ class HeadlessBrowserContextIsolationTest
       return;
     }
 
+    devtools_client2_ = HeadlessDevToolsClient::Create();
     web_contents2_->GetDevToolsTarget()->AttachClient(devtools_client2_.get());
     HeadlessAsyncDevTooledBrowserTest::DevToolsTargetReady();
   }
@@ -95,8 +89,9 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client_->GetRuntime()->Evaluate(
         base::StringPrintf("document.cookie = '%s'", kMainPageCookie),
-        base::Bind(&HeadlessBrowserContextIsolationTest::OnFirstSetCookieResult,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &HeadlessBrowserContextIsolationTest::OnFirstSetCookieResult,
+            base::Unretained(this)));
   }
 
   void OnFirstSetCookieResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -104,7 +99,7 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client2_->GetRuntime()->Evaluate(
         base::StringPrintf("document.cookie = '%s'", kIsolatedPageCookie),
-        base::Bind(
+        base::BindOnce(
             &HeadlessBrowserContextIsolationTest::OnSecondSetCookieResult,
             base::Unretained(this)));
   }
@@ -116,8 +111,9 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client_->GetRuntime()->Evaluate(
         "document.cookie",
-        base::Bind(&HeadlessBrowserContextIsolationTest::OnFirstGetCookieResult,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &HeadlessBrowserContextIsolationTest::OnFirstGetCookieResult,
+            base::Unretained(this)));
   }
 
   void OnFirstGetCookieResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -125,7 +121,7 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client2_->GetRuntime()->Evaluate(
         "document.cookie",
-        base::Bind(
+        base::BindOnce(
             &HeadlessBrowserContextIsolationTest::OnSecondGetCookieResult,
             base::Unretained(this)));
   }
@@ -151,51 +147,8 @@ class HeadlessBrowserContextIsolationTest
   std::unique_ptr<LoadObserver> load_observer_;
 };
 
-HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessBrowserContextIsolationTest);
-
-IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ContextProtocolHandler) {
-  const std::string kResponseBody = "<p>HTTP response body</p>";
-  ProtocolHandlerMap protocol_handlers;
-  protocol_handlers[url::kHttpScheme] =
-      base::MakeUnique<TestProtocolHandler>(kResponseBody);
-
-  // Load a page which doesn't actually exist, but which is fetched by our
-  // custom protocol handler.
-  HeadlessBrowserContext* browser_context =
-      browser()
-          ->CreateBrowserContextBuilder()
-          .SetProtocolHandlers(std::move(protocol_handlers))
-          .Build();
-  HeadlessWebContents* web_contents =
-      browser_context->CreateWebContentsBuilder()
-          .SetInitialURL(GURL("http://not-an-actual-domain.tld/hello.html"))
-          .Build();
-  EXPECT_TRUE(WaitForLoad(web_contents));
-
-  EXPECT_EQ(kResponseBody,
-            EvaluateScript(web_contents, "document.body.innerHTML")
-                ->GetResult()
-                ->GetValue()
-                ->GetString());
-  web_contents->Close();
-
-  HeadlessBrowserContext* another_browser_context =
-      browser()->CreateBrowserContextBuilder().Build();
-
-  // Loading the same non-existent page using a tab with a different context
-  // should not work since the protocol handler only exists on the custom
-  // context.
-  web_contents =
-      another_browser_context->CreateWebContentsBuilder()
-          .SetInitialURL(GURL("http://not-an-actual-domain.tld/hello.html"))
-          .Build();
-  EXPECT_FALSE(WaitForLoad(web_contents));
-  EXPECT_EQ("", EvaluateScript(web_contents, "document.body.innerHTML")
-                    ->GetResult()
-                    ->GetValue()
-                    ->GetString());
-  web_contents->Close();
-}
+// TODO(https://crbug.com/930356): Re-enable test.
+DISABLED_HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessBrowserContextIsolationTest);
 
 IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, UserDataDir) {
   // We do not want to bother with posting tasks to create a temp dir.

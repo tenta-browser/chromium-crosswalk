@@ -43,14 +43,7 @@ size_t WebKeyboardEventTextLength(const blink::WebUChar* text) {
 NativeWebKeyboardEvent::NativeWebKeyboardEvent(blink::WebInputEvent::Type type,
                                                int modifiers,
                                                base::TimeTicks timestamp)
-    : NativeWebKeyboardEvent(type,
-                             modifiers,
-                             ui::EventTimeStampToSeconds(timestamp)) {}
-
-NativeWebKeyboardEvent::NativeWebKeyboardEvent(blink::WebInputEvent::Type type,
-                                               int modifiers,
-                                               double timestampSeconds)
-    : WebKeyboardEvent(type, modifiers, timestampSeconds),
+    : WebKeyboardEvent(type, modifiers, timestamp),
       os_event(NULL),
       skip_in_browser(false) {}
 
@@ -69,7 +62,11 @@ NativeWebKeyboardEvent::NativeWebKeyboardEvent(
   size_t unmod_text_length =
       WebKeyboardEventTextLength(web_event.unmodified_text);
 
-  if (text_length == 0)
+  // Perform the reverse operation on type that was done in
+  // UnmodifiedTextFromEvent(). Avoid using text_length as the control key may
+  // cause Mac to set [NSEvent characters] to "\0" which for us is
+  // indistinguishable from "".
+  if (unmod_text_length == 0)
     type = NSFlagsChanged;
 
   NSString* text =
@@ -82,13 +79,21 @@ NativeWebKeyboardEvent::NativeWebKeyboardEvent(
   os_event = [[NSEvent keyEventWithType:type
                                location:NSZeroPoint
                           modifierFlags:flags
-                              timestamp:web_event.TimeStampSeconds()
-                           windowNumber:[[native_view window] windowNumber]
+                              timestamp:ui::EventTimeStampToSeconds(
+                                            web_event.TimeStamp())
+                           windowNumber:[[native_view.GetNativeNSView() window]
+                                            windowNumber]
                                 context:nil
                              characters:text
             charactersIgnoringModifiers:unmodified_text
                               isARepeat:NO
                                 keyCode:web_event.native_key_code] retain];
+  // The eventRef is necessary for MacOS code (like NSMenu) to work later in the
+  // pipeline. As per documentation:
+  // https://developer.apple.com/documentation/appkit/nsevent/1525143-eventref
+  // "Other NSEvent objects create an EventRef when this property is first
+  // accessed, if possible".
+  [os_event eventRef];
 }
 
 NativeWebKeyboardEvent::NativeWebKeyboardEvent(gfx::NativeEvent native_event)

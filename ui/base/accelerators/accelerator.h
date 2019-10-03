@@ -15,7 +15,8 @@
 #include <utility>
 
 #include "base/strings/string16.h"
-#include "ui/base/accelerators/platform_accelerator.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -23,11 +24,7 @@
 namespace ui {
 
 class KeyEvent;
-class PlatformAccelerator;
 
-// This is a cross-platform class for accelerator keys used in menus.
-// |platform_accelerator| should be used to store platform specific data.
-//
 // While |modifiers| may include EF_IS_REPEAT, EF_IS_REPEAT is not considered
 // an intrinsic part of an Accelerator. This is done so that an accelerator
 // for a particular KeyEvent matches an accelerator with or without the repeat
@@ -41,10 +38,16 @@ class UI_BASE_EXPORT Accelerator {
   };
 
   Accelerator();
+  // |modifiers| consists of ui::EventFlags bitwise-or-ed together,
+  // for example:
+  //     Accelerator(ui::VKEY_Z, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN)
+  // would correspond to the shortcut "ctrl + shift + z".
+  //
   // NOTE: this constructor strips out non key related flags.
   Accelerator(KeyboardCode key_code,
               int modifiers,
-              KeyState key_state = KeyState::PRESSED);
+              KeyState key_state = KeyState::PRESSED,
+              base::TimeTicks time_stamp = base::TimeTicks());
   explicit Accelerator(const KeyEvent& key_event);
   Accelerator(const Accelerator& accelerator);
   ~Accelerator();
@@ -73,6 +76,10 @@ class UI_BASE_EXPORT Accelerator {
 
   int modifiers() const { return modifiers_; }
 
+  base::TimeTicks time_stamp() const { return time_stamp_; }
+
+  int source_device_id() const { return source_device_id_; }
+
   bool IsShiftDown() const;
   bool IsCtrlDown() const;
   bool IsAltDown() const;
@@ -82,14 +89,10 @@ class UI_BASE_EXPORT Accelerator {
   // Returns a string with the localized shortcut if any.
   base::string16 GetShortcutText() const;
 
-  void set_platform_accelerator(std::unique_ptr<PlatformAccelerator> p) {
-    platform_accelerator_ = std::move(p);
-  }
-
-  // This class keeps ownership of the returned object.
-  const PlatformAccelerator* platform_accelerator() const {
-    return platform_accelerator_.get();
-  }
+#if defined(OS_MACOSX)
+  base::string16 KeyCodeToMacSymbol() const;
+#endif
+  base::string16 KeyCodeToName() const;
 
   void set_interrupted_by_mouse_event(bool interrupted_by_mouse_event) {
     interrupted_by_mouse_event_ = interrupted_by_mouse_event;
@@ -100,6 +103,9 @@ class UI_BASE_EXPORT Accelerator {
   }
 
  private:
+  base::string16 ApplyLongFormModifiers(base::string16 shortcut) const;
+  base::string16 ApplyShortFormModifiers(base::string16 shortcut) const;
+
   // The keycode (VK_...).
   KeyboardCode key_code_;
 
@@ -108,17 +114,18 @@ class UI_BASE_EXPORT Accelerator {
   // The state of the Shift/Ctrl/Alt keys. This corresponds to Event::flags().
   int modifiers_;
 
-  // Stores platform specific data. May be NULL.
-  // TODO: this is only used in Mac code and should be removed from here.
-  // http://crbug.com/702823.
-  std::unique_ptr<PlatformAccelerator> platform_accelerator_;
+  // The |time_stamp_| of the KeyEvent.
+  base::TimeTicks time_stamp_;
 
   // Whether the accelerator is interrupted by a mouse press/release. This is
   // optionally used by AcceleratorController. Even this is set to true, the
   // accelerator may still be handled successfully. (Currently only
-  // TOGGLE_APP_LIST is disabled when mouse press/release occurs between
-  // search key down and up. See crbug.com/665897)
+  // TOGGLE_APP_LIST and TOGGLE_APP_LIST_FULLSCREEN are disabled when mouse
+  // press/release occurs between search key down and up. See crbug.com/665897)
   bool interrupted_by_mouse_event_;
+
+  // The |source_device_id_| of the KeyEvent.
+  int source_device_id_ = ui::ED_UNKNOWN_DEVICE;
 };
 
 // An interface that classes that want to register for keyboard accelerators

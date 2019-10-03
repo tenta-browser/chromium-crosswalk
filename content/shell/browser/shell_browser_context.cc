@@ -12,10 +12,15 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/keyed_service/core/simple_dependency_manager.h"
+#include "components/keyed_service/core/simple_factory_key.h"
+#include "components/keyed_service/core/simple_key_map.h"
 #include "components/network_session_configurator/common/network_switches.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
@@ -30,43 +35,43 @@
 #include "base/nix/xdg_util.h"
 #elif defined(OS_MACOSX)
 #include "base/base_paths_mac.h"
+#elif defined(OS_FUCHSIA)
+#include "base/base_paths_fuchsia.h"
 #endif
 
 namespace content {
 
-ShellBrowserContext::ShellResourceContext::ShellResourceContext()
-    : getter_(nullptr) {}
+ShellBrowserContext::ShellResourceContext::ShellResourceContext() {}
 
 ShellBrowserContext::ShellResourceContext::~ShellResourceContext() {
 }
 
-net::HostResolver*
-ShellBrowserContext::ShellResourceContext::GetHostResolver() {
-  CHECK(getter_);
-  return getter_->host_resolver();
-}
-
-net::URLRequestContext*
-ShellBrowserContext::ShellResourceContext::GetRequestContext() {
-  CHECK(getter_);
-  return getter_->GetURLRequestContext();
-}
-
 ShellBrowserContext::ShellBrowserContext(bool off_the_record,
-                                         net::NetLog* net_log)
+                                         bool delay_services_creation)
     : resource_context_(new ShellResourceContext),
       ignore_certificate_errors_(false),
       off_the_record_(off_the_record),
-      net_log_(net_log),
       guest_manager_(nullptr) {
   InitWhileIOAllowed();
-  BrowserContextDependencyManager::GetInstance()->
-      CreateBrowserContextServices(this);
+  if (!delay_services_creation) {
+    BrowserContextDependencyManager::GetInstance()
+        ->CreateBrowserContextServices(this);
+  }
 }
 
 ShellBrowserContext::~ShellBrowserContext() {
-  BrowserContextDependencyManager::GetInstance()->
-      DestroyBrowserContextServices(this);
+  NotifyWillBeDestroyed(this);
+
+  // The SimpleDependencyManager should always be passed after the
+  // BrowserContextDependencyManager. This is because the KeyedService instances
+  // in the BrowserContextDependencyManager's dependency graph can depend on the
+  // ones in the SimpleDependencyManager's graph.
+  DependencyManager::PerformInterlockedTwoPhaseShutdown(
+      BrowserContextDependencyManager::GetInstance(), this,
+      SimpleDependencyManager::GetInstance(), key_.get());
+
+  SimpleKeyMap::GetInstance()->Dissociate(this);
+
   // Need to destruct the ResourceContext before posting tasks which may delete
   // the URLRequestContext because ResourceContext's destructor will remove any
   // outstanding request while URLRequestContext's destructor ensures that there
@@ -77,8 +82,8 @@ ShellBrowserContext::~ShellBrowserContext() {
   }
   ShutdownStoragePartitions();
   if (url_request_getter_) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&ShellURLRequestContextGetter::NotifyContextShuttingDown,
                        url_request_getter_));
   }
@@ -96,7 +101,7 @@ void ShellBrowserContext::InitWhileIOAllowed() {
       if (!path_.IsAbsolute())
         path_ = base::MakeAbsoluteFilePath(path_);
       if (!path_.empty()) {
-        BrowserContext::Initialize(this, path_);
+        FinishInitWhileIOAllowed();
         return;
       }
     } else {
@@ -105,7 +110,7 @@ void ShellBrowserContext::InitWhileIOAllowed() {
   }
 
 #if defined(OS_WIN)
-  CHECK(PathService::Get(base::DIR_LOCAL_APP_DATA, &path_));
+  CHECK(base::PathService::Get(base::DIR_LOCAL_APP_DATA, &path_));
   path_ = path_.Append(std::wstring(L"content_shell"));
 #elif defined(OS_LINUX)
   std::unique_ptr<base::Environment> env(base::Environment::Create());
@@ -115,10 +120,13 @@ void ShellBrowserContext::InitWhileIOAllowed() {
                                  base::nix::kDotConfigDir));
   path_ = config_dir.Append("content_shell");
 #elif defined(OS_MACOSX)
-  CHECK(PathService::Get(base::DIR_APP_DATA, &path_));
+  CHECK(base::PathService::Get(base::DIR_APP_DATA, &path_));
   path_ = path_.Append("Chromium Content Shell");
 #elif defined(OS_ANDROID)
-  CHECK(PathService::Get(base::DIR_ANDROID_APP_DATA, &path_));
+  CHECK(base::PathService::Get(base::DIR_ANDROID_APP_DATA, &path_));
+  path_ = path_.Append(FILE_PATH_LITERAL("content_shell"));
+#elif defined(OS_FUCHSIA)
+  CHECK(base::PathService::Get(base::DIR_APP_DATA, &path_));
   path_ = path_.Append(FILE_PATH_LITERAL("content_shell"));
 #else
   NOTIMPLEMENTED();
@@ -126,7 +134,14 @@ void ShellBrowserContext::InitWhileIOAllowed() {
 
   if (!base::PathExists(path_))
     base::CreateDirectory(path_);
+
+  FinishInitWhileIOAllowed();
+}
+
+void ShellBrowserContext::FinishInitWhileIOAllowed() {
   BrowserContext::Initialize(this, path_);
+  key_ = std::make_unique<SimpleFactoryKey>(path_, off_the_record_);
+  SimpleKeyMap::GetInstance()->Associate(this, key_.get());
 }
 
 #if !defined(OS_ANDROID)
@@ -136,11 +151,11 @@ std::unique_ptr<ZoomLevelDelegate> ShellBrowserContext::CreateZoomLevelDelegate(
 }
 #endif  // !defined(OS_ANDROID)
 
-base::FilePath ShellBrowserContext::GetPath() const {
+base::FilePath ShellBrowserContext::GetPath() {
   return path_;
 }
 
-bool ShellBrowserContext::IsOffTheRecord() const {
+bool ShellBrowserContext::IsOffTheRecord() {
   return off_the_record_;
 }
 
@@ -160,8 +175,8 @@ ShellBrowserContext::CreateURLRequestContextGetter(
     URLRequestInterceptorScopedVector request_interceptors) {
   return new ShellURLRequestContextGetter(
       ignore_certificate_errors_, off_the_record_, GetPath(),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-      protocol_handlers, std::move(request_interceptors), net_log_);
+      base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}),
+      protocol_handlers, std::move(request_interceptors));
 }
 
 net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
@@ -170,30 +185,13 @@ net::URLRequestContextGetter* ShellBrowserContext::CreateRequestContext(
   DCHECK(!url_request_getter_.get());
   url_request_getter_ = CreateURLRequestContextGetter(
       protocol_handlers, std::move(request_interceptors));
-  resource_context_->set_url_request_context_getter(url_request_getter_.get());
   return url_request_getter_.get();
-}
-
-net::URLRequestContextGetter*
-ShellBrowserContext::CreateRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory,
-    ProtocolHandlerMap* protocol_handlers,
-    URLRequestInterceptorScopedVector request_interceptors) {
-  return nullptr;
 }
 
 net::URLRequestContextGetter*
     ShellBrowserContext::CreateMediaRequestContext()  {
   DCHECK(url_request_getter_.get());
   return url_request_getter_.get();
-}
-
-net::URLRequestContextGetter*
-    ShellBrowserContext::CreateMediaRequestContextForStoragePartition(
-        const base::FilePath& partition_path,
-        bool in_memory) {
-  return nullptr;
 }
 
 ResourceContext* ShellBrowserContext::GetResourceContext()  {
@@ -216,10 +214,16 @@ SSLHostStateDelegate* ShellBrowserContext::GetSSLHostStateDelegate() {
   return nullptr;
 }
 
-PermissionManager* ShellBrowserContext::GetPermissionManager() {
+PermissionControllerDelegate*
+ShellBrowserContext::GetPermissionControllerDelegate() {
   if (!permission_manager_.get())
     permission_manager_.reset(new ShellPermissionManager());
   return permission_manager_.get();
+}
+
+ClientHintsControllerDelegate*
+ShellBrowserContext::GetClientHintsControllerDelegate() {
+  return nullptr;
 }
 
 BackgroundFetchDelegate* ShellBrowserContext::GetBackgroundFetchDelegate() {

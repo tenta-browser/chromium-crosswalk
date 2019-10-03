@@ -8,7 +8,7 @@
 #include "base/bind_helpers.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "content/public/browser/browser_thread.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 
 using content::BrowserThread;
 
@@ -20,11 +20,11 @@ PointerDeviceObserver::PointerDeviceObserver()
 }
 
 PointerDeviceObserver::~PointerDeviceObserver() {
-  ui::InputDeviceManager::GetInstance()->RemoveObserver(this);
+  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
 }
 
 void PointerDeviceObserver::Init() {
-  ui::InputDeviceManager::GetInstance()->AddObserver(this);
+  ui::DeviceDataManager::GetInstance()->AddObserver(this);
 }
 
 void PointerDeviceObserver::CheckDevices() {
@@ -40,12 +40,12 @@ void PointerDeviceObserver::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void PointerDeviceObserver::OnMouseDeviceConfigurationChanged() {
-  CheckDevices();
-}
-
-void PointerDeviceObserver::OnTouchpadDeviceConfigurationChanged() {
-  CheckDevices();
+void PointerDeviceObserver::OnInputDeviceConfigurationChanged(
+    uint8_t input_device_types) {
+  if (input_device_types & (ui::InputDeviceEventObserver::kMouse |
+                            ui::InputDeviceEventObserver::kTouchpad)) {
+    CheckDevices();
+  }
 }
 
 void PointerDeviceObserver::CheckTouchpadExists() {

@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "components/prefs/pref_member.h"
+#import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 
 class GURL;
@@ -30,7 +31,6 @@ class HttpResponseHeaders;
 
 namespace web {
 class NavigationContext;
-class WebState;
 }
 
 namespace translate {
@@ -52,9 +52,10 @@ class LanguageDetectionController : public web::WebStateObserver {
 
   // Handles the "languageDetection.textCaptured" javascript command.
   // |interacting| is true if the user is currently interacting with the page.
-  bool OnTextCaptured(const base::DictionaryValue& value,
+  void OnTextCaptured(const base::DictionaryValue& value,
                       const GURL& url,
-                      bool interacting);
+                      bool user_is_interacting,
+                      web::WebFrame* sender_frame);
 
   // Completion handler used to retrieve the text buffered by the
   // JsLanguageDetectionManager.
@@ -77,6 +78,9 @@ class LanguageDetectionController : public web::WebStateObserver {
   // The WebState this instance is observing. Will be null after
   // WebStateDestroyed has been called.
   web::WebState* web_state_ = nullptr;
+
+  // Subscription for JS message.
+  std::unique_ptr<web::WebState::ScriptCommandSubscription> subscription_;
 
   JsLanguageDetectionManager* js_manager_;
   BooleanPrefMember translate_enabled_;

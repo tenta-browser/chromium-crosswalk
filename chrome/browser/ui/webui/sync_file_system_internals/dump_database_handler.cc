@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/sync_file_system_internals/dump_database_handler.h"
 
+#include "base/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync_file_system/sync_file_system_service.h"
 #include "chrome/browser/sync_file_system/sync_file_system_service_factory.h"
@@ -21,8 +22,8 @@ DumpDatabaseHandler::~DumpDatabaseHandler() {}
 void DumpDatabaseHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "getDatabaseDump",
-      base::Bind(&DumpDatabaseHandler::GetDatabaseDump,
-                 base::Unretained(this)));
+      base::BindRepeating(&DumpDatabaseHandler::GetDatabaseDump,
+                          base::Unretained(this)));
 }
 
 void DumpDatabaseHandler::GetDatabaseDump(const base::ListValue*) {

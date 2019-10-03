@@ -11,13 +11,14 @@
 
 namespace chrome {
 
-std::string GetChannelString() {
+std::string GetChannelName() {
 #if defined(GOOGLE_CHROME_BUILD)
   base::string16 channel(install_static::GetChromeChannelName());
-#if defined(SYZYASAN)
-  if (base::debug::IsBinaryInstrumented())
-    channel += L" SyzyASan";
-#endif
+#if defined(DCHECK_IS_CONFIGURABLE)
+  // Adorn the channel when DCHECKs are baked into the build, as there will be
+  // a performance hit. See https://crbug.com/812058 for details.
+  channel += L"-dcheck";
+#endif  // defined(DCHECK_IS_CONFIGURABLE)
   return base::UTF16ToASCII(channel);
 #else
   return std::string();

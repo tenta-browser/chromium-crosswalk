@@ -8,32 +8,46 @@
 #include <memory>
 
 #include "components/viz/common/gpu/vulkan_context_provider.h"
-#include "components/viz/common/viz_common_export.h"
-#include "gpu/vulkan/features.h"
+#include "components/viz/common/viz_vulkan_context_provider_export.h"
+#include "gpu/vulkan/buildflags.h"
+#if BUILDFLAG(ENABLE_VULKAN)
+#include "third_party/skia/include/gpu/vk/GrVkBackendContext.h"
+#endif
 
 namespace gpu {
+class VulkanImplementation;
 class VulkanDeviceQueue;
 }
 
 namespace viz {
 
-class VIZ_COMMON_EXPORT VulkanInProcessContextProvider
+class VIZ_VULKAN_CONTEXT_PROVIDER_EXPORT VulkanInProcessContextProvider
     : public VulkanContextProvider {
  public:
-  static scoped_refptr<VulkanInProcessContextProvider> Create();
+  static scoped_refptr<VulkanInProcessContextProvider> Create(
+      gpu::VulkanImplementation* vulkan_implementation);
 
-  bool Initialize();
   void Destroy();
 
   // VulkanContextProvider implementation
+  gpu::VulkanImplementation* GetVulkanImplementation() override;
   gpu::VulkanDeviceQueue* GetDeviceQueue() override;
-
- protected:
-  VulkanInProcessContextProvider();
-  ~VulkanInProcessContextProvider() override;
+  GrContext* GetGrContext() override;
+  GrVkSecondaryCBDrawContext* GetGrSecondaryCBDrawContext() override;
+  void EnqueueSecondaryCBSemaphores(
+      std::vector<VkSemaphore> semaphores) override;
+  void EnqueueSecondaryCBPostSubmitTask(base::OnceClosure closure) override;
 
  private:
+  explicit VulkanInProcessContextProvider(
+      gpu::VulkanImplementation* vulkan_implementation);
+  ~VulkanInProcessContextProvider() override;
+
+  bool Initialize();
+
 #if BUILDFLAG(ENABLE_VULKAN)
+  sk_sp<GrContext> gr_context_;
+  gpu::VulkanImplementation* vulkan_implementation_;
   std::unique_ptr<gpu::VulkanDeviceQueue> device_queue_;
 #endif
 

@@ -7,10 +7,13 @@
 
 #include <string>
 
+#include "base/optional.h"
 #include "base/time/time.h"
+#include "net/base/auth.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_vary_data.h"
-#include "net/proxy/proxy_server.h"
 #include "net/ssl/ssl_info.h"
 
 namespace base {
@@ -19,7 +22,6 @@ class Pickle;
 
 namespace net {
 
-class AuthChallengeInfo;
 class HttpResponseHeaders;
 class IOBufferWithSize;
 class SSLCertRequestInfo;
@@ -28,8 +30,8 @@ class NET_EXPORT HttpResponseInfo {
  public:
   // Describes the kind of connection used to fetch this response.
   //
-  // NOTE: Please keep in sync with Net.HttpResponseInfo.ConnectionInfo
-  // histogram in tools/metrics/histograms/histograms.xml.
+  // NOTE: Please keep in sync with ConnectionInfo enum in
+  // tools/metrics/histograms/enum.xml.
   // Because of that, and also because these values are persisted to
   // the cache, please make sure not to delete or reorder values.
   enum ConnectionInfo {
@@ -55,6 +57,13 @@ class NET_EXPORT HttpResponseInfo {
     CONNECTION_INFO_QUIC_41 = 19,
     CONNECTION_INFO_QUIC_42 = 20,
     CONNECTION_INFO_QUIC_43 = 21,
+    CONNECTION_INFO_QUIC_99 = 22,
+    CONNECTION_INFO_QUIC_44 = 23,
+    CONNECTION_INFO_QUIC_45 = 24,
+    CONNECTION_INFO_QUIC_46 = 25,
+    CONNECTION_INFO_QUIC_47 = 26,
+    CONNECTION_INFO_QUIC_999 = 27,
+    CONNECTION_INFO_QUIC_48 = 28,
     NUM_OF_CONNECTION_INFOS,
   };
 
@@ -148,6 +157,16 @@ class NET_EXPORT HttpResponseInfo {
   // used since.
   bool unused_since_prefetch;
 
+  // True if this resource is stale and needs async revalidation.
+  // This value is not persisted by Persist(); it is only ever set when the
+  // response is retrieved from the cache.
+  bool async_revalidation_requested;
+
+  // stale-while-revalidate, if any, will be honored until time given by
+  // |stale_revalidate_timeout|. This value is latched the first time
+  // stale-while-revalidate is used until the resource is revalidated.
+  base::Time stale_revalidate_timeout;
+
   // Remote address of the socket which fetched this resource.
   //
   // NOTE: If the response was served from the cache (was_cached is true),
@@ -155,7 +174,7 @@ class NET_EXPORT HttpResponseInfo {
   // originally.  This is true even if the response was re-validated using a
   // different remote address, or if some of the content came from a byte-range
   // request to a different address.
-  HostPortPair socket_address;
+  IPEndPoint remote_endpoint;
 
   // Protocol negotiated with the server.
   std::string alpn_negotiated_protocol;
@@ -173,7 +192,7 @@ class NET_EXPORT HttpResponseInfo {
 
   // If the response headers indicate a 401 or 407 failure, then this structure
   // will contain additional information about the authentication challenge.
-  scoped_refptr<AuthChallengeInfo> auth_challenge;
+  base::Optional<AuthChallengeInfo> auth_challenge;
 
   // The SSL client certificate request info.
   // TODO(wtc): does this really belong in HttpResponseInfo?  I put it here

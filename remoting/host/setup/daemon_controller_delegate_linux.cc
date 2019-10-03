@@ -13,9 +13,9 @@
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/md5.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
@@ -53,14 +53,14 @@ base::FilePath GetConfigPath() {
   std::string filename =
       "host#" + base::MD5String(net::GetHostName()) + ".json";
   base::FilePath homedir;
-  PathService::Get(base::DIR_HOME, &homedir);
+  base::PathService::Get(base::DIR_HOME, &homedir);
   return homedir.Append(".config/chrome-remote-desktop").Append(filename);
 }
 
 bool GetScriptPath(base::FilePath* result) {
 #ifndef NDEBUG
   base::FilePath out_dir;
-  PathService::Get(base::DIR_EXE, &out_dir);
+  base::PathService::Get(base::DIR_EXE, &out_dir);
   base::FilePath dev_exe = out_dir.AppendASCII(kDaemonDevScript);
   if (access(dev_exe.value().c_str(), X_OK) == 0) {
     *result = dev_exe;

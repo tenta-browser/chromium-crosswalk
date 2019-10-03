@@ -15,7 +15,7 @@ class ListValue;
 }
 
 namespace ui {
-class InputDeviceManager;
+class DeviceDataManager;
 }
 
 namespace chromeos {
@@ -52,20 +52,26 @@ class KeyboardHandler
   void OnJavascriptDisallowed() override;
 
   // ui::InputDeviceEventObserver implementation.
-  void OnKeyboardDeviceConfigurationChanged() override;
+  void OnInputDeviceConfigurationChanged(uint8_t input_device_types) override;
 
  private:
   // Initializes the page with the current keyboard information.
   void HandleInitialize(const base::ListValue* args);
 
-  // Shows the Ash keyboard shortcuts overlay.
-  void HandleShowKeyboardShortcutsOverlay(const base::ListValue* args) const;
+  // Shows the Ash keyboard shortcut viewer.
+  void HandleShowKeyboardShortcutViewer(const base::ListValue* args) const;
+
+  // Determines what types of keyboards are attached.
+  void HandleKeyboardChange(const base::ListValue* args);
 
   // Shows or hides the Caps Lock and Diamond key settings based on whether the
   // system status.
   void UpdateShowKeys();
 
-  ScopedObserver<ui::InputDeviceManager, KeyboardHandler> observer_;
+  // Sends the UI a message about whether hardware keyboard are attached.
+  void UpdateKeyboards();
+
+  ScopedObserver<ui::DeviceDataManager, KeyboardHandler> observer_;
 
   DISALLOW_COPY_AND_ASSIGN(KeyboardHandler);
 };

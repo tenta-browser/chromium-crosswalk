@@ -4,7 +4,9 @@
 
 #include "components/exo/wayland/clients/client_helper.h"
 
+#include <input-timestamps-unstable-v1-client-protocol.h>
 #include <linux-dmabuf-unstable-v1-client-protocol.h>
+#include <linux-explicit-synchronization-unstable-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
@@ -14,7 +16,10 @@
 
 #if defined(USE_GBM)
 #include <gbm.h>
-#endif
+#if defined(USE_VULKAN)
+#include "gpu/vulkan/vulkan_function_pointers.h"
+#endif  // defined(USE_VULKAN)
+#endif  // defined(USE_GBM)
 
 // Convenient macro that is used to define default deleters for object
 // types allowing them to be used with std::unique_ptr.
@@ -31,6 +36,7 @@ DEFAULT_DELETER(wl_compositor, wl_compositor_destroy)
 DEFAULT_DELETER(wl_display, wl_display_disconnect)
 DEFAULT_DELETER(wl_pointer, wl_pointer_destroy)
 DEFAULT_DELETER(wl_region, wl_region_destroy)
+DEFAULT_DELETER(wl_registry, wl_registry_destroy)
 DEFAULT_DELETER(wl_seat, wl_seat_destroy)
 DEFAULT_DELETER(wl_shell, wl_shell_destroy)
 DEFAULT_DELETER(wl_shell_surface, wl_shell_surface_destroy)
@@ -47,8 +53,20 @@ DEFAULT_DELETER(struct wp_presentation_feedback,
 DEFAULT_DELETER(zaura_shell, zaura_shell_destroy)
 DEFAULT_DELETER(zaura_surface, zaura_surface_destroy)
 DEFAULT_DELETER(zaura_output, zaura_output_destroy)
+DEFAULT_DELETER(zwp_linux_buffer_release_v1,
+                zwp_linux_buffer_release_v1_destroy)
+DEFAULT_DELETER(zwp_fullscreen_shell_v1, zwp_fullscreen_shell_v1_destroy)
+DEFAULT_DELETER(zwp_input_timestamps_manager_v1,
+                zwp_input_timestamps_manager_v1_destroy)
+DEFAULT_DELETER(zwp_input_timestamps_v1, zwp_input_timestamps_v1_destroy)
 DEFAULT_DELETER(zwp_linux_buffer_params_v1, zwp_linux_buffer_params_v1_destroy)
 DEFAULT_DELETER(zwp_linux_dmabuf_v1, zwp_linux_dmabuf_v1_destroy)
+DEFAULT_DELETER(zwp_linux_explicit_synchronization_v1,
+                zwp_linux_explicit_synchronization_v1_destroy)
+DEFAULT_DELETER(zwp_linux_surface_synchronization_v1,
+                zwp_linux_surface_synchronization_v1_destroy)
+DEFAULT_DELETER(zcr_vsync_feedback_v1, zcr_vsync_feedback_v1_destroy)
+DEFAULT_DELETER(zcr_vsync_timing_v1, zcr_vsync_timing_v1_destroy)
 
 #if defined(USE_GBM)
 DEFAULT_DELETER(gbm_bo, gbm_bo_destroy)

@@ -4,15 +4,15 @@
 
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
-#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
-#include "chrome/common/crash_keys.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/google_update_settings.h"
+#include "components/crash/core/common/crash_keys.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
@@ -119,6 +119,16 @@ void UpdateMetricsPrefsOnPermissionChange(bool metrics_enabled) {
     crash_keys::ClearMetricsClientId();
   }
 }
+
+#if !defined(OS_ANDROID)
+void ApplyMetricsReportingPolicy() {
+  GoogleUpdateSettings::CollectStatsConsentTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          base::IgnoreResult(&GoogleUpdateSettings::SetCollectStatsConsent),
+          ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled()));
+}
+#endif
 
 bool IsMetricsReportingPolicyManaged() {
   const PrefService* pref_service = g_browser_process->local_state();

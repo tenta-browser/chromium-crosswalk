@@ -15,23 +15,26 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.SearchGeolocationDisclosureTabHelper;
+import org.chromium.chrome.browser.preferences.website.ContentSettingValues;
+import org.chromium.chrome.browser.preferences.website.PermissionInfo;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.InfoBarTestAnimationListener;
 import org.chromium.chrome.test.util.InfoBarUtil;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.TimeoutException;
 
 /** Tests for the SearchGeolocationDisclosureInfobar. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class SearchGeolocationDisclosureInfoBarTest {
     private static final String SEARCH_PAGE = "/chrome/test/data/android/google.html";
 
@@ -41,11 +44,15 @@ public class SearchGeolocationDisclosureInfoBarTest {
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
 
-
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityOnBlankPage();
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
+        // Simulate the DSE being granted location (the test server isn't set to be the DSE).
+        PermissionInfo locationSettings = new PermissionInfo(
+                PermissionInfo.Type.GEOLOCATION, mTestServer.getURL(SEARCH_PAGE), null, false);
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT,
+                () -> locationSettings.setContentSetting(ContentSettingValues.ALLOW));
     }
 
     @After
@@ -62,8 +69,7 @@ public class SearchGeolocationDisclosureInfoBarTest {
                 "Wrong starting infobar count", 0, mActivityTestRule.getInfoBars().size());
 
         // Infobar should appear when doing the first search.
-        InfoBarContainer container =
-                mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer();
+        InfoBarContainer container = mActivityTestRule.getInfoBarContainer();
         InfoBarTestAnimationListener listener = new InfoBarTestAnimationListener();
         container.addAnimationListener(listener);
         mActivityTestRule.loadUrl(mTestServer.getURL(SEARCH_PAGE));
@@ -139,8 +145,7 @@ public class SearchGeolocationDisclosureInfoBarTest {
                 "Wrong starting infobar count", 0, mActivityTestRule.getInfoBars().size());
 
         // Infobar should appear when doing the first search.
-        InfoBarContainer container =
-                mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer();
+        InfoBarContainer container = mActivityTestRule.getInfoBarContainer();
         InfoBarTestAnimationListener listener = new InfoBarTestAnimationListener();
         container.addAnimationListener(listener);
         mActivityTestRule.loadUrl(mTestServer.getURL(SEARCH_PAGE));

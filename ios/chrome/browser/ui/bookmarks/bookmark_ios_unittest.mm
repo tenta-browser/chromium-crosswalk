@@ -4,7 +4,6 @@
 
 #include "ios/chrome/browser/ui/bookmarks/bookmark_ios_unittest.h"
 
-#include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -36,13 +35,14 @@ const BookmarkNode* BookmarkIOSUnitTest::AddBookmark(const BookmarkNode* parent,
                                                      NSString* title) {
   base::string16 c_title = base::SysNSStringToUTF16(title);
   GURL url(base::SysNSStringToUTF16(@"http://example.com/bookmark") + c_title);
-  return _bookmarkModel->AddURL(parent, parent->child_count(), c_title, url);
+  return _bookmarkModel->AddURL(parent, parent->children().size(), c_title,
+                                url);
 }
 
 const BookmarkNode* BookmarkIOSUnitTest::AddFolder(const BookmarkNode* parent,
                                                    NSString* title) {
   base::string16 c_title = base::SysNSStringToUTF16(title);
-  return _bookmarkModel->AddFolder(parent, parent->child_count(), c_title);
+  return _bookmarkModel->AddFolder(parent, parent->children().size(), c_title);
 }
 
 void BookmarkIOSUnitTest::ChangeTitle(NSString* title,

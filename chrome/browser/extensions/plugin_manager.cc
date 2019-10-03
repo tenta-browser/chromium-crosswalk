@@ -6,17 +6,19 @@
 
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
-#include "base/path_service.h"
+#include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/pepper_plugin_info.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/mime_types_handler.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_NACL)
@@ -53,8 +55,7 @@ void PluginManager::OnExtensionLoaded(content::BrowserContext* browser_context,
       NaClModuleInfo::GetNaClModules(extension);
   if (nacl_modules) {
     plugins_or_nacl_changed = true;
-    for (NaClModuleInfo::List::const_iterator module = nacl_modules->begin();
-         module != nacl_modules->end();
+    for (auto module = nacl_modules->begin(); module != nacl_modules->end();
          ++module) {
       RegisterNaClModule(*module);
     }
@@ -70,9 +71,9 @@ void PluginManager::OnExtensionLoaded(content::BrowserContext* browser_context,
     info.type = content::WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN;
     info.name = base::UTF8ToUTF16(extension->name());
     info.path = handler->GetPluginPath();
+    info.background_color = handler->GetBackgroundColor();
 
-    for (std::set<std::string>::const_iterator mime_type =
-         handler->mime_type_set().begin();
+    for (auto mime_type = handler->mime_type_set().begin();
          mime_type != handler->mime_type_set().end(); ++mime_type) {
       content::WebPluginMimeType mime_type_info;
       mime_type_info.mime_type = *mime_type;
@@ -102,8 +103,7 @@ void PluginManager::OnExtensionUnloaded(
       NaClModuleInfo::GetNaClModules(extension);
   if (nacl_modules) {
     plugins_or_nacl_changed = true;
-    for (NaClModuleInfo::List::const_iterator module = nacl_modules->begin();
-         module != nacl_modules->end();
+    for (auto module = nacl_modules->begin(); module != nacl_modules->end();
          ++module) {
       UnregisterNaClModule(*module);
     }
@@ -126,14 +126,13 @@ void PluginManager::OnExtensionUnloaded(
 #if BUILDFLAG(ENABLE_NACL)
 
 void PluginManager::RegisterNaClModule(const NaClModuleInfo& info) {
-  DCHECK(FindNaClModule(info.url) == nacl_module_list_.end());
   nacl_module_list_.push_front(info);
 }
 
 void PluginManager::UnregisterNaClModule(const NaClModuleInfo& info) {
-  NaClModuleInfo::List::iterator iter = FindNaClModule(info.url);
-  DCHECK(iter != nacl_module_list_.end());
-  nacl_module_list_.erase(iter);
+  auto iter = FindNaClModule(info.url);
+  if (iter != nacl_module_list_.end())
+    nacl_module_list_.erase(iter);
 }
 
 void PluginManager::UpdatePluginListWithNaClModules() {
@@ -141,11 +140,10 @@ void PluginManager::UpdatePluginListWithNaClModules() {
   // there is a MIME type that module wants to handle, so we need to add that
   // MIME type to plugins which handle NaCl modules in order to allow the
   // individual modules to handle these types.
-  base::FilePath path;
-  if (!PathService::Get(chrome::FILE_NACL_PLUGIN, &path))
-    return;
+  static const base::NoDestructor<base::FilePath> path(
+      ChromeContentClient::kNaClPluginFileName);
   const content::PepperPluginInfo* pepper_info =
-      PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(path);
+      PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(*path);
   if (!pepper_info)
     return;
 
@@ -183,8 +181,8 @@ void PluginManager::UpdatePluginListWithNaClModules() {
 }
 
 NaClModuleInfo::List::iterator PluginManager::FindNaClModule(const GURL& url) {
-  for (NaClModuleInfo::List::iterator iter = nacl_module_list_.begin();
-       iter != nacl_module_list_.end(); ++iter) {
+  for (auto iter = nacl_module_list_.begin(); iter != nacl_module_list_.end();
+       ++iter) {
     if (iter->url == url)
       return iter;
   }

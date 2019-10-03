@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -44,97 +43,109 @@ class ProxyDeviceEventDispatcher : public DeviceEventDispatcherEvdev {
 
   // DeviceEventDispatcher:
   void DispatchKeyEvent(const KeyEventParams& params) override {
-    ui_thread_runner_->PostTask(FROM_HERE,
-                                base::Bind(&EventFactoryEvdev::DispatchKeyEvent,
-                                           event_factory_evdev_, params));
+    ui_thread_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchKeyEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchMouseMoveEvent(const MouseMoveEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchMouseMoveEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchMouseMoveEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchMouseButtonEvent(const MouseButtonEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchMouseButtonEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchMouseButtonEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchMouseWheelEvent(const MouseWheelEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchMouseWheelEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchMouseWheelEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchPinchEvent(const PinchEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchPinchEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchPinchEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchScrollEvent(const ScrollEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchScrollEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchScrollEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchTouchEvent(const TouchEventParams& params) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchTouchEvent,
-                              event_factory_evdev_, params));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchTouchEvent,
+                                  event_factory_evdev_, params));
   }
 
   void DispatchGamepadEvent(const GamepadEvent& event) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchGamepadEvent,
-                              event_factory_evdev_, event));
+        FROM_HERE, base::BindOnce(&EventFactoryEvdev::DispatchGamepadEvent,
+                                  event_factory_evdev_, event));
   }
 
   void DispatchKeyboardDevicesUpdated(
       const std::vector<InputDevice>& devices) override {
     ui_thread_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&EventFactoryEvdev::DispatchKeyboardDevicesUpdated,
-                   event_factory_evdev_, devices));
+        base::BindOnce(&EventFactoryEvdev::DispatchKeyboardDevicesUpdated,
+                       event_factory_evdev_, devices));
   }
   void DispatchTouchscreenDevicesUpdated(
       const std::vector<TouchscreenDevice>& devices) override {
     ui_thread_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&EventFactoryEvdev::DispatchTouchscreenDevicesUpdated,
-                   event_factory_evdev_, devices));
+        base::BindOnce(&EventFactoryEvdev::DispatchTouchscreenDevicesUpdated,
+                       event_factory_evdev_, devices));
   }
   void DispatchMouseDevicesUpdated(
       const std::vector<InputDevice>& devices) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchMouseDevicesUpdated,
-                              event_factory_evdev_, devices));
+        FROM_HERE,
+        base::BindOnce(&EventFactoryEvdev::DispatchMouseDevicesUpdated,
+                       event_factory_evdev_, devices));
   }
   void DispatchTouchpadDevicesUpdated(
       const std::vector<InputDevice>& devices) override {
     ui_thread_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&EventFactoryEvdev::DispatchTouchpadDevicesUpdated,
-                   event_factory_evdev_, devices));
+        base::BindOnce(&EventFactoryEvdev::DispatchTouchpadDevicesUpdated,
+                       event_factory_evdev_, devices));
   }
   void DispatchDeviceListsComplete() override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchDeviceListsComplete,
-                              event_factory_evdev_));
+        FROM_HERE,
+        base::BindOnce(&EventFactoryEvdev::DispatchDeviceListsComplete,
+                       event_factory_evdev_));
   }
 
   void DispatchStylusStateChanged(StylusState stylus_state) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchStylusStateChanged,
-                              event_factory_evdev_, stylus_state));
+        FROM_HERE,
+        base::BindOnce(&EventFactoryEvdev::DispatchStylusStateChanged,
+                       event_factory_evdev_, stylus_state));
   }
 
   void DispatchGamepadDevicesUpdated(
+      const std::vector<GamepadDevice>& devices) override {
+    ui_thread_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&EventFactoryEvdev::DispatchGamepadDevicesUpdated,
+                       event_factory_evdev_, devices));
+  }
+
+  void DispatchUncategorizedDevicesUpdated(
       const std::vector<InputDevice>& devices) override {
     ui_thread_runner_->PostTask(
-        FROM_HERE, base::Bind(&EventFactoryEvdev::DispatchGamepadDevicesUpdated,
-                              event_factory_evdev_, devices));
+        FROM_HERE,
+        base::BindOnce(&EventFactoryEvdev::DispatchUncategorizedDevicesUpdated,
+                       event_factory_evdev_, devices));
   }
 
  private:
@@ -177,8 +188,8 @@ EventFactoryEvdev::EventFactoryEvdev(CursorDelegateEvdev* cursor,
       gamepad_provider_(GamepadProviderOzone::GetInstance()),
       keyboard_(&modifiers_,
                 keyboard_layout,
-                base::Bind(&EventFactoryEvdev::DispatchUiEvent,
-                           base::Unretained(this))),
+                base::BindRepeating(&EventFactoryEvdev::DispatchUiEvent,
+                                    base::Unretained(this))),
       cursor_(cursor),
       input_controller_(&keyboard_, &button_map_),
       touch_id_generator_(0),
@@ -306,7 +317,8 @@ void EventFactoryEvdev::DispatchPinchEvent(const PinchEventParams& params) {
                params.device_id);
   GestureEventDetails details(params.type);
   details.set_device_type(GestureDeviceType::DEVICE_TOUCHPAD);
-  details.set_scale(params.scale);
+  if (params.type == ET_GESTURE_PINCH_UPDATE)
+    details.set_scale(params.scale);
   GestureEvent event(params.location.x(), params.location.y(), 0,
                      params.timestamp, details);
   event.set_source_device_id(params.device_id);
@@ -332,13 +344,13 @@ void EventFactoryEvdev::DispatchTouchEvent(const TouchEventParams& params) {
 
   gfx::PointF location = GetTransformedEventLocation(params);
   PointerDetails details = GetTransformedEventPointerDetails(params);
+  details.twist = 0.f;
 
   // params.slot is guaranteed to be < kNumTouchEvdevSlots.
   int input_id = params.device_id * kNumTouchEvdevSlots + params.slot;
   details.id = touch_id_generator_.GetGeneratedID(input_id);
   TouchEvent touch_event(params.type, gfx::Point(), params.timestamp, details,
-                         modifiers_.GetModifierFlags() | params.flags,
-                         /* angle */ 0.f);
+                         modifiers_.GetModifierFlags() | params.flags);
   touch_event.set_location_f(location);
   touch_event.set_root_location_f(location);
   touch_event.set_source_device_id(params.device_id);
@@ -403,10 +415,18 @@ void EventFactoryEvdev::DispatchStylusStateChanged(StylusState stylus_state) {
   TRACE_EVENT0("evdev", "EventFactoryEvdev::DispatchStylusStateChanged");
   DeviceHotplugEventObserver* observer = DeviceDataManager::GetInstance();
   observer->OnStylusStateChanged(stylus_state);
-};
+}
+
+void EventFactoryEvdev::DispatchUncategorizedDevicesUpdated(
+    const std::vector<InputDevice>& devices) {
+  TRACE_EVENT0("evdev",
+               "EventFactoryEvdev::DispatchUncategorizedDevicesUpdated");
+  DeviceHotplugEventObserver* observer = DeviceDataManager::GetInstance();
+  observer->OnUncategorizedDevicesUpdated(devices);
+}
 
 void EventFactoryEvdev::DispatchGamepadDevicesUpdated(
-    const std::vector<InputDevice>& devices) {
+    const std::vector<GamepadDevice>& devices) {
   TRACE_EVENT0("evdev", "EventFactoryEvdev::DispatchGamepadDevicesUpdated");
   gamepad_provider_->DispatchGamepadDevicesUpdated(devices);
 }
@@ -446,12 +466,12 @@ void EventFactoryEvdev::WarpCursorTo(gfx::AcceleratedWidget widget,
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&EventFactoryEvdev::DispatchMouseMoveEvent,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 MouseMoveEventParams(
-                     -1 /* device_id */, EF_NONE, cursor_->GetLocation(),
-                     PointerDetails(EventPointerType::POINTER_TYPE_MOUSE),
-                     EventTimeForNow())));
+      base::BindOnce(&EventFactoryEvdev::DispatchMouseMoveEvent,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     MouseMoveEventParams(
+                         -1 /* device_id */, EF_NONE, cursor_->GetLocation(),
+                         PointerDetails(EventPointerType::POINTER_TYPE_MOUSE),
+                         EventTimeForNow())));
 }
 
 int EventFactoryEvdev::NextDeviceId() {
@@ -464,8 +484,8 @@ void EventFactoryEvdev::StartThread() {
       new ProxyDeviceEventDispatcher(base::ThreadTaskRunnerHandle::Get(),
                                      weak_ptr_factory_.GetWeakPtr()));
   thread_.Start(std::move(proxy_dispatcher), cursor_,
-                base::Bind(&EventFactoryEvdev::OnThreadStarted,
-                           weak_ptr_factory_.GetWeakPtr()));
+                base::BindOnce(&EventFactoryEvdev::OnThreadStarted,
+                               weak_ptr_factory_.GetWeakPtr()));
 }
 
 void EventFactoryEvdev::OnThreadStarted(

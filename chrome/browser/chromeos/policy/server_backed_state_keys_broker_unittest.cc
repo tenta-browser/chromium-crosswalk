@@ -7,10 +7,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
+#include "base/test/scoped_task_environment.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -33,7 +33,6 @@ class ServerBackedStateKeysBrokerTest : public testing::Test {
   }
 
   void ExpectGood() {
-    EXPECT_FALSE(broker_.pending());
     EXPECT_TRUE(broker_.available());
     EXPECT_EQ(state_keys_, broker_.state_keys());
     EXPECT_EQ(state_keys_.front(), broker_.current_state_key());
@@ -45,7 +44,7 @@ class ServerBackedStateKeysBrokerTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedMockTimeMessageLoopTaskRunner mocked_main_runner_;
   chromeos::FakeSessionManagerClient fake_session_manager_client_;
   ServerBackedStateKeysBroker broker_;
@@ -59,7 +58,6 @@ class ServerBackedStateKeysBrokerTest : public testing::Test {
 };
 
 TEST_F(ServerBackedStateKeysBrokerTest, Load) {
-  EXPECT_TRUE(broker_.pending());
   EXPECT_FALSE(broker_.available());
   EXPECT_TRUE(broker_.state_keys().empty());
   EXPECT_TRUE(broker_.current_state_key().empty());
@@ -91,7 +89,7 @@ TEST_F(ServerBackedStateKeysBrokerTest, Retry) {
   fake_session_manager_client_.set_server_backed_state_keys(state_keys_);
   updated_ = false;
   ServerBackedStateKeysBroker::Subscription subscription2 =
-      broker_.RegisterUpdateCallback(base::Bind(&base::DoNothing));
+      broker_.RegisterUpdateCallback(base::DoNothing());
   mocked_main_runner_->RunUntilIdle();
   EXPECT_TRUE(updated_);
   ExpectGood();

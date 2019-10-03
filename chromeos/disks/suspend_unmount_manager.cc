@@ -5,6 +5,8 @@
 #include "chromeos/disks/suspend_unmount_manager.h"
 
 #include "base/bind.h"
+#include "base/location.h"
+#include "chromeos/disks/disk.h"
 #include "chromeos/disks/disk_mount_manager.h"
 
 namespace chromeos {
@@ -16,18 +18,15 @@ void OnRefreshCompleted(bool success) {}
 }  // namespace
 
 SuspendUnmountManager::SuspendUnmountManager(
-    DiskMountManager* disk_mount_manager,
-    PowerManagerClient* power_manager_client)
-    : disk_mount_manager_(disk_mount_manager),
-      power_manager_client_(power_manager_client),
-      weak_ptr_factory_(this) {
-  power_manager_client_->AddObserver(this);
+    DiskMountManager* disk_mount_manager)
+    : disk_mount_manager_(disk_mount_manager), weak_ptr_factory_(this) {
+  PowerManagerClient::Get()->AddObserver(this);
 }
 
 SuspendUnmountManager::~SuspendUnmountManager() {
-  power_manager_client_->RemoveObserver(this);
-  if (!suspend_readiness_callback_.is_null())
-    suspend_readiness_callback_.Run();
+  PowerManagerClient::Get()->RemoveObserver(this);
+  if (block_suspend_token_)
+    PowerManagerClient::Get()->UnblockSuspend(block_suspend_token_);
 }
 
 void SuspendUnmountManager::SuspendImminent(
@@ -44,14 +43,15 @@ void SuspendUnmountManager::SuspendImminent(
     }
   }
   for (const auto& mount_path : mount_paths) {
-    if (suspend_readiness_callback_.is_null()) {
-      suspend_readiness_callback_ =
-          power_manager_client_->GetSuspendReadinessCallback();
+    if (block_suspend_token_.is_empty()) {
+      block_suspend_token_ = base::UnguessableToken::Create();
+      PowerManagerClient::Get()->BlockSuspend(block_suspend_token_,
+                                              "SuspendUnmountManager");
     }
     disk_mount_manager_->UnmountPath(
         mount_path, UNMOUNT_OPTIONS_NONE,
-        base::Bind(&SuspendUnmountManager::OnUnmountComplete,
-                   weak_ptr_factory_.GetWeakPtr(), mount_path));
+        base::BindOnce(&SuspendUnmountManager::OnUnmountComplete,
+                       weak_ptr_factory_.GetWeakPtr(), mount_path));
     unmounting_paths_.insert(mount_path);
   }
 }
@@ -60,9 +60,9 @@ void SuspendUnmountManager::SuspendDone(const base::TimeDelta& sleep_duration) {
   // SuspendDone can be called before OnUnmountComplete when suspend is
   // cancelled, or it takes long time to unmount volumes.
   unmounting_paths_.clear();
-  disk_mount_manager_->EnsureMountInfoRefreshed(base::Bind(&OnRefreshCompleted),
-                                                true /* force */);
-  suspend_readiness_callback_.Reset();
+  disk_mount_manager_->EnsureMountInfoRefreshed(
+      base::BindOnce(&OnRefreshCompleted), true /* force */);
+  block_suspend_token_ = {};
 }
 
 void SuspendUnmountManager::OnUnmountComplete(const std::string& mount_path,
@@ -70,9 +70,9 @@ void SuspendUnmountManager::OnUnmountComplete(const std::string& mount_path,
   // This can happen when unmount completes after suspend done is called.
   if (unmounting_paths_.erase(mount_path) != 1)
     return;
-  if (unmounting_paths_.empty() && !suspend_readiness_callback_.is_null()) {
-    suspend_readiness_callback_.Run();
-    suspend_readiness_callback_.Reset();
+  if (unmounting_paths_.empty() && block_suspend_token_) {
+    PowerManagerClient::Get()->UnblockSuspend(block_suspend_token_);
+    block_suspend_token_ = {};
   }
 }
 

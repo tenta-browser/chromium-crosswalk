@@ -8,47 +8,76 @@
  * button (taking up the whole 'row'). The name link comes from the intended use
  * of this element to take the user to another page in the app or to an external
  * page (somewhat like an HTML link).
- * Note: the ripple handling was taken from Polymer v1 paper-icon-button-light.
  */
 Polymer({
   is: 'cr-link-row',
-  extends: 'button',
-
-  behaviors: [Polymer.PaperRippleBehavior],
 
   properties: {
-    iconClass: String,
+    startIcon: {
+      type: String,
+      value: '',
+    },
 
-    label: String,
+    label: {
+      type: String,
+      value: '',
+    },
 
     subLabel: {
       type: String,
       /* Value used for noSubLabel attribute. */
       value: '',
     },
+
+    disabled: {
+      type: Boolean,
+      reflectToAttribute: true,
+    },
+
+    external: {
+      type: Boolean,
+      value: false,
+    },
+
+    usingSlottedLabel: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @private */
+    hideLabelWrapper_: {
+      type: Boolean,
+      computed: 'computeHideLabelWrapper_(label, usingSlottedLabel)',
+    },
   },
 
-  listeners: {
-    'down': '_rippleDown',
-    'up': '_rippleUp',
-    'focus': '_rippleDown',
-    'blur': '_rippleUp',
+  /** @type {boolean} */
+  get noink() {
+    return this.$.icon.noink;
   },
 
-  _rippleDown: function() {
-    this.getRipple().uiDownAction();
+  /** @type {boolean} */
+  set noink(value) {
+    this.$.icon.noink = value;
   },
 
-  _rippleUp: function() {
-    this.getRipple().uiUpAction();
+  focus: function() {
+    this.$.icon.focus();
   },
 
-  _createRipple: function() {
-    this._rippleContainer = this.$.icon;
-    var ripple = Polymer.PaperRippleBehavior._createRipple();
-    ripple.id = 'ink';
-    ripple.setAttribute('recenters', '');
-    ripple.classList.add('circle');
-    return ripple;
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeHideLabelWrapper_: function() {
+    return !(this.label || this.usingSlottedLabel);
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getIcon_: function() {
+    return this.external ? 'cr:open-in-new' : 'cr:arrow-right';
   },
 });

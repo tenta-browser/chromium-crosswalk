@@ -14,13 +14,22 @@ using ReferrerSanitizerTest = testing::Test;
 TEST_F(ReferrerSanitizerTest, SanitizesPolicyForEmptyReferrers) {
   EXPECT_DCHECK_DEATH(ignore_result(Referrer::SanitizeForRequest(
       GURL("https://a"),
-      Referrer(GURL(), static_cast<blink::WebReferrerPolicy>(200)))));
+      Referrer(GURL(), static_cast<network::mojom::ReferrerPolicy>(200)))));
 }
 
 TEST_F(ReferrerSanitizerTest, SanitizesPolicyForNonEmptyReferrers) {
   EXPECT_DCHECK_DEATH(ignore_result(Referrer::SanitizeForRequest(
       GURL("https://a"),
-      Referrer(GURL("http://b"), static_cast<blink::WebReferrerPolicy>(200)))));
+      Referrer(GURL("http://b"),
+               static_cast<network::mojom::ReferrerPolicy>(200)))));
+}
+
+TEST(ReferrerSanitizerTest, OnlyHTTPFamilyReferrer) {
+  auto result = Referrer::SanitizeForRequest(
+      GURL("https://a"),
+      Referrer(GURL("chrome-extension://ghbmnnjooekpmoecnnnilnnbdlolhkhi"),
+               network::mojom::ReferrerPolicy::kAlways));
+  EXPECT_TRUE(result.url.is_empty());
 }
 
 TEST(ReferrerTest, BlinkNetRoundTripConversion) {
@@ -36,10 +45,9 @@ TEST(ReferrerTest, BlinkNetRoundTripConversion) {
   };
 
   for (auto policy : policies) {
-    EXPECT_EQ(
-        Referrer::ReferrerPolicyForUrlRequest(Referrer(
-            GURL(), Referrer::NetReferrerPolicyToBlinkReferrerPolicy(policy))),
-        policy);
+    EXPECT_EQ(Referrer::ReferrerPolicyForUrlRequest(
+                  Referrer::NetReferrerPolicyToBlinkReferrerPolicy(policy)),
+              policy);
   }
 }
 

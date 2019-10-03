@@ -4,7 +4,7 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/chrome/browser/passwords/js_password_manager.h"
+#import "components/password_manager/ios/js_password_manager.h"
 #import "ios/web/public/test/web_js_test.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -14,7 +14,8 @@
 #error "This file requires ARC support."
 #endif
 
-// Unit tests for ios/chrome/browser/web/resources/password_controller.js
+// Unit tests for
+// components/password_manager/ios/resources/password_controller.js
 namespace {
 
 // Text fixture to test password controller.
@@ -22,7 +23,8 @@ class PasswordControllerJsTest
     : public web::WebJsTest<web::WebTestWithWebState> {
  public:
   PasswordControllerJsTest()
-      : web::WebJsTest<web::WebTestWithWebState>(@[ @"password_controller" ]) {}
+      : web::WebJsTest<web::WebTestWithWebState>(
+            @[ @"chrome_bundle_all_frames", @"chrome_bundle_main_frame" ]) {}
 };
 
 // IDs used in the Username and Password <input> elements.
@@ -74,10 +76,11 @@ TEST_F(PasswordControllerJsTest,
   NSString* const username = @"john.doe@gmail.com";
   NSString* const password = @"super!secret";
   LoadHtmlAndInject(GAIASignInForm(formAction, username, YES));
-  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
-                        @"__gCrWeb.fillPasswordForm(%@, '%@', '%@', '%@')",
-                        GAIASignInFormData(formAction), username, password,
-                        formAction));
+  EXPECT_NSEQ(
+      @YES,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords.fillPasswordForm(%@, '%@', '%@', '%@')",
+          GAIASignInFormData(formAction), username, password, formAction));
   // Verifies that the sign-in form has been filled with username/password.
   ExecuteJavaScriptOnElementsAndCheck(@"document.getElementById('%@').value",
                                       @[ kEmailInputID, kPasswordInputID ],
@@ -94,10 +97,11 @@ TEST_F(PasswordControllerJsTest,
   NSString* const username2 = @"jean.dubois@gmail.com";
   NSString* const password = @"super!secret";
   LoadHtmlAndInject(GAIASignInForm(formAction, username1, YES));
-  EXPECT_NSEQ(@NO, ExecuteJavaScriptWithFormat(
-                       @"__gCrWeb.fillPasswordForm(%@, '%@', '%@', '%@')",
-                       GAIASignInFormData(formAction), username2, password,
-                       formAction));
+  EXPECT_NSEQ(
+      @NO,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords.fillPasswordForm(%@, '%@', '%@', '%@')",
+          GAIASignInFormData(formAction), username2, password, formAction));
   // Verifies that the sign-in form has not been filled.
   ExecuteJavaScriptOnElementsAndCheck(@"document.getElementById('%@').value",
                                       @[ kEmailInputID, kPasswordInputID ],
@@ -114,10 +118,11 @@ TEST_F(PasswordControllerJsTest,
   NSString* const username2 = @"jane.doe@gmail.com";
   NSString* const password = @"super!secret";
   LoadHtmlAndInject(GAIASignInForm(formAction, username1, NO));
-  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
-                        @"__gCrWeb.fillPasswordForm(%@, '%@', '%@', '%@')",
-                        GAIASignInFormData(formAction), username2, password,
-                        formAction));
+  EXPECT_NSEQ(
+      @YES,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords.fillPasswordForm(%@, '%@', '%@', '%@')",
+          GAIASignInFormData(formAction), username2, password, formAction));
   // Verifies that the sign-in form has been filled with the new username
   // and password.
   ExecuteJavaScriptOnElementsAndCheck(@"document.getElementById('%@').value",
@@ -140,19 +145,24 @@ TEST_F(PasswordControllerJsTest,
   const std::string base_url = BaseUrl();
   NSString* result = [NSString
       stringWithFormat:
-          @"[{\"action\":\"https://chromium.test/generic_submit\","
-           "\"name\":\"login_form\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"name\",\"type\":\"text\"},"
-           "{\"element\":\"password\",\"type\":\"password\"},"
-           "{\"element\":\"gChrome~field~2\",\"type\":\"submit\"}],"
-           "\"usernameElement\":\"name\","
-           "\"usernameValue\":\"\","
-           "\"passwords\":[{\"element\":\"password\",\"value\":\"\"}]}]",
+          @"[{\"name\":\"login_form\",\"origin\":\"%s\",\"action\":\"https://"
+          @"chromium.test/generic_submit\",\"name_attribute\":\"login_form\","
+          @"\"id_attribute\":\"\",\"fields\":[{\"identifier\":\"name\","
+          @"\"name\":\"name\",\"name_attribute\":\"name\",\"id_attribute\":"
+          @"\"\",\"form_control_type\":\"text\",\"aria_label\":\"\","
+          @"\"aria_description\":\"\",\"should_autocomplete\":true,"
+          @"\"is_focusable\":true,\"max_length\":524288,\"is_checkable\":false,"
+          @"\"value\":\"\",\"label\":\"Name:\"},{\"identifier\":"
+          @"\"password\",\"name\":\"password\",\"name_attribute\":\"password\","
+          @"\"id_attribute\":\"\",\"form_control_type\":\"password\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,\"is_checkable\":false,\"value\":\"\","
+          @"\"label\":\"Password:\"}]}]",
           base_url.c_str()];
-  EXPECT_NSEQ(result,
-              ExecuteJavaScriptWithFormat(@"__gCrWeb.findPasswordForms()"));
-};
+  EXPECT_NSEQ(result, ExecuteJavaScriptWithFormat(
+                          @"__gCrWeb.passwords.findPasswordForms()"));
+}
 
 // Check that multiple password forms are identified and serialized correctly.
 TEST_F(PasswordControllerJsTest,
@@ -174,28 +184,40 @@ TEST_F(PasswordControllerJsTest,
   const std::string base_url = BaseUrl();
   NSString* result = [NSString
       stringWithFormat:
-          @"[{\"action\":\"https://chromium.test/generic_submit\","
-           "\"name\":\"login_form1\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"name\",\"type\":\"text\"},"
-           "{\"element\":\"password\",\"type\":\"password\"},"
-           "{\"element\":\"gChrome~field~2\",\"type\":\"submit\"}],"
-           "\"usernameElement\":\"name\","
-           "\"usernameValue\":\"\","
-           "\"passwords\":[{\"element\":\"password\",\"value\":\"\"}]},"
-           "{\"action\":\"https://chromium.test/generic_s2\","
-           "\"name\":\"login_form2\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"name2\",\"type\":\"text\"},"
-           "{\"element\":\"password2\",\"type\":\"password\"},"
-           "{\"element\":\"gChrome~field~2\",\"type\":\"submit\"}],"
-           "\"usernameElement\":\"name2\","
-           "\"usernameValue\":\"\","
-           "\"passwords\":[{\"element\":\"password2\",\"value\":\"\"}]}]",
+          @"[{\"name\":\"login_form1\",\"origin\":\"%s\",\"action\":\"%s"
+          @"generic_submit\",\"name_attribute\":\"\",\"id_attribute\":"
+          @"\"login_form1\",\"fields\":[{\"identifier\":\"name\","
+          @"\"name\":\"name\",\"name_attribute\":\"name\",\"id_attribute\":"
+          @"\"\",\"form_control_type\":\"text\",\"aria_label\":\"\","
+          @"\"aria_description\":\"\",\"should_autocomplete\":"
+          @"true,\"is_focusable\":true,\"max_length\":524288,\"is_checkable\":"
+          @"false,\"value\":\"\",\"label\":\"Name:\"},{\"identifier\":"
+          @"\"password\",\"name\":\"password\",\"name_attribute\":\"password\","
+          @"\"id_attribute\":\"\",\"form_control_type\":\"password\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,\"is_checkable\":false,\"value\":\"\","
+          @"\"label\":\"Password:\"}]},{\"name\":\"login_form2\",\"origin\":"
+          @"\"https://chromium.test/\",\"action\":\"https://chromium.test/"
+          @"generic_s2\",\"name_attribute\":\"login_form2\","
+          @"\"id_attribute\":\"\",\"fields\":[{\"identifier\":\"name2\","
+          @"\"name\":\"name2\",\"name_attribute\":\"name2\",\"id_attribute\":"
+          @"\"\",\"form_control_type\":\"text\",\"aria_label\":\"\","
+          @"\"aria_description\":\"\",\"should_autocomplete\":"
+          @"true,\"is_focusable\":true,\"max_length\":524288,\"is_checkable\":"
+          @"false,\"value\":\"\",\"label\":\"Name:\"},{\"identifier\":"
+          @"\"password2\",\"name\":\"password2\",\"name_attribute\":"
+          @"\"password2\",\"id_attribute\":\"\",\"form_control_type\":"
+          @"\"password\",\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,\"is_checkable\":false,"
+          @"\"value\":\"\","
+          @"\"label\":\"Password:\"}]}]",
           base_url.c_str(), base_url.c_str()];
-  EXPECT_NSEQ(result,
-              ExecuteJavaScriptWithFormat(@"__gCrWeb.findPasswordForms()"));
-};
+
+  EXPECT_NSEQ(result, ExecuteJavaScriptWithFormat(
+                          @"__gCrWeb.passwords.findPasswordForms()"));
+}
 
 // Test serializing of password forms.
 TEST_F(PasswordControllerJsTest, GetPasswordFormData) {
@@ -210,23 +232,31 @@ TEST_F(PasswordControllerJsTest, GetPasswordFormData) {
 
   const std::string base_url = BaseUrl();
   NSString* parameter = @"window.document.getElementsByTagName('form')[0]";
+
   NSString* result = [NSString
       stringWithFormat:
-          @"{\"action\":\"https://chromium.test/generic_submit\","
-           "\"name\":\"np\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"name\",\"type\":\"text\"},"
-           "{\"element\":\"password\",\"type\":\"password\"},"
-           "{\"element\":\"gChrome~field~2\",\"type\":\"submit\"}],"
-           "\"usernameElement\":\"name\","
-           "\"usernameValue\":\"\","
-           "\"passwords\":[{\"element\":\"password\",\"value\":\"\"}]}",
-          base_url.c_str()];
+          @"{\"name\":\"np\",\"origin\":\"%s\",\"action\":\"%sgeneric_submit\","
+          @"\"name_attribute\":\"np\",\"id_attribute\":\"np1\","
+          @"\"fields\":[{\"identifier\":\"name\",\"name\":\"name\","
+          @"\"name_attribute\":\"name\",\"id_attribute\":\"\",\"form_"
+          @"control_type\":\"text\",\"aria_label\":\"\","
+          @"\"aria_description\":\"\",\"should_autocomplete\":true,\"is_"
+          @"focusable\":true,\"max_length\":524288,\"is_checkable\":false,"
+          @"\"value\":\"\",\"label\":\"Name:\"},{\"identifier\":\"password\","
+          @"\"name\":\"password\",\"name_attribute\":\"password\","
+          @"\"id_attribute\":\"\",\"form_control_type\":\"password\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,"
+          @"\"is_checkable\":false,\"value\":\"\",\"label\":\"Password:\"}]}",
+          base_url.c_str(), base_url.c_str()];
+
   EXPECT_NSEQ(
       result,
       ExecuteJavaScriptWithFormat(
-          @"__gCrWeb.stringify(__gCrWeb.getPasswordFormData(%@))", parameter));
-};
+          @"__gCrWeb.stringify(__gCrWeb.passwords.getPasswordFormData(%@))",
+          parameter));
+}
 
 // Check that if a form action is not set then the action is parsed to the
 // current url.
@@ -243,19 +273,24 @@ TEST_F(PasswordControllerJsTest, FormActionIsNotSet) {
   const std::string base_url = BaseUrl();
   NSString* result = [NSString
       stringWithFormat:
-          @"[{\"action\":\"https://chromium.test/\","
-           "\"name\":\"login_form\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"name\",\"type\":\"text\"},"
-           "{\"element\":\"password\",\"type\":\"password\"},"
-           "{\"element\":\"gChrome~field~2\",\"type\":\"submit\"}],"
-           "\"usernameElement\":\"name\","
-           "\"usernameValue\":\"\","
-           "\"passwords\":[{\"element\":\"password\",\"value\":\"\"}]}]",
-          base_url.c_str()];
-  EXPECT_NSEQ(result,
-              ExecuteJavaScriptWithFormat(@"__gCrWeb.findPasswordForms()"));
-};
+          @"[{\"name\":\"login_form\",\"origin\":\"%s\",\"action\":\"%s\","
+          @"\"name_attribute\":\"login_form\",\"id_attribute\":\"\","
+          @"\"fields\":[{\"identifier\":\"name\",\"name\":\"name\","
+          @"\"name_attribute\":\"name\",\"id_attribute\":\"\",\"form_"
+          @"control_type\":\"text\",\"aria_label\":\"\","
+          @"\"aria_description\":\"\",\"should_autocomplete\":true,\"is_"
+          @"focusable\":true,\"max_length\":524288,\"is_checkable\":false,"
+          @"\"value\":\"\",\"label\":\"Name:\"},{\"identifier\":\"password\","
+          @"\"name\":\"password\",\"name_attribute\":\"password\","
+          @"\"id_attribute\":\"\",\"form_control_type\":\"password\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,"
+          @"\"is_checkable\":false,\"value\":\"\",\"label\":\"Password:\"}]}]",
+          base_url.c_str(), base_url.c_str()];
+  EXPECT_NSEQ(result, ExecuteJavaScriptWithFormat(
+                          @"__gCrWeb.passwords.findPasswordForms()"));
+}
 
 // Checks that a touchend event from a button which contains in a password form
 // works as a submission indicator for this password form.
@@ -269,9 +304,9 @@ TEST_F(PasswordControllerJsTest, TouchendAsSubmissionIndicator) {
        "</form>"
        "</body></html>");
 
-  // Call __gCrWeb.findPasswordForms in order to set an event handler on the
-  // button touchend event.
-  ExecuteJavaScriptWithFormat(@"__gCrWeb.findPasswordForms()");
+  // Call __gCrWeb.passwords.findPasswordForms in order to set an event handler
+  // on the button touchend event.
+  ExecuteJavaScriptWithFormat(@"__gCrWeb.passwords.findPasswordForms()");
 
   // Replace __gCrWeb.message.invokeOnHost with mock method for checking of call
   // arguments.
@@ -295,22 +330,31 @@ TEST_F(PasswordControllerJsTest, TouchendAsSubmissionIndicator) {
 
   NSString* expected_command = [NSString
       stringWithFormat:
-          @"{\"action\":\"%s\","
-           "\"name\":\"login_form\","
-           "\"origin\":\"%s\","
-           "\"fields\":[{\"element\":\"username\",\"type\":\"text\"},"
-           "{\"element\":\"password\",\"type\":\"password\"}],"
-           "\"usernameElement\":\"username\","
-           "\"usernameValue\":\"user1\","
-           "\"passwords\":[{\"element\":\"password\",\"value\":\"password1\"}],"
-           "\"command\":\"passwordForm.submitButtonClick\"}",
-          BaseUrl().c_str(), BaseUrl().c_str()];
+          @"{\"name\":\"login_form\",\"origin\":\"https://chromium.test/"
+          @"\",\"action\":\"%s\",\"name_attribute\":\"login_form\","
+          @"\"id_attribute\":\"login_form\",\"fields\":"
+          @"[{\"identifier\":\"username\","
+          @"\"name\":\"username\",\"name_attribute\":\"username\","
+          @"\"id_attribute\":\"\",\"form_control_type\":\"text\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,\"is_focusable\":true,"
+          @"\"max_length\":524288,"
+          @"\"is_checkable\":false,\"value\":\"user1\",\"label\":\"Name:\"},{"
+          @"\"identifier\":\"password\",\"name\":\"password\","
+          @"\"name_attribute\":\"password\",\"id_attribute\":\"\","
+          @"\"form_control_type\":\"password\","
+          @"\"aria_label\":\"\",\"aria_description\":\"\","
+          @"\"should_autocomplete\":true,"
+          @"\"is_focusable\":true,\"max_length\":524288,\"is_checkable\":false,"
+          @"\"value\":\"password1\",\"label\":\"Password:\"}],"
+          @"\"command\":\"passwordForm.submitButtonClick\"}",
+          BaseUrl().c_str()];
 
   // Check that invokeOnHost was called with the correct argument.
   EXPECT_NSEQ(
       expected_command,
       ExecuteJavaScriptWithFormat(@"__gCrWeb.stringify(invokeOnHostArgument)"));
-};
+}
 
 // Check that a form is filled if url of a page and url in form fill data are
 // different only in pathes.
@@ -342,11 +386,187 @@ TEST_F(PasswordControllerJsTest, OriginsAreDifferentInPathes) {
                     page_origin.c_str(), form_fill_data_origin.c_str()];
   EXPECT_NSEQ(@YES,
               ExecuteJavaScriptWithFormat(
-                  @"__gCrWeb.fillPasswordForm(%@, '%@', '%@', '%s')",
+                  @"__gCrWeb.passwords.fillPasswordForm(%@, '%@', '%@', '%s')",
                   form_fill_data, username, password, page_origin.c_str()));
   // Verifies that the sign-in form has been filled with username/password.
   ExecuteJavaScriptOnElementsAndCheck(@"document.getElementById('%@').value",
                                       @[ @"name", @"password" ],
                                       @[ username, password ]);
+}
+
+// Check that when instructed to fill a form named "bar", a form named "foo"
+// is not filled with generated password.
+TEST_F(PasswordControllerJsTest,
+       FillPasswordFormWithGeneratedPassword_FailsWhenFormNotFound) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"password\" id=\"ps1\" name=\"ps\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"bar";
+  NSString* const password = @"abc";
+  NSString* const newPasswordIdentifier = @"ps1";
+  EXPECT_NSEQ(
+      @NO,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords."
+          @"fillPasswordFormWithGeneratedPassword('%@',  '%@', '%@', '%@')",
+          formName, newPasswordIdentifier, @"", password));
+}
+
+// Check that filling a form without password fields fails.
+TEST_F(PasswordControllerJsTest,
+       FillPasswordFormWithGeneratedPassword_FailsWhenNoPasswordFields) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"text\" name=\"user\">"
+                     "      <input type=\"submit\" name=\"go\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"foo";
+  NSString* const password = @"abc";
+  NSString* const newPasswordIdentifier = @"ps1";
+  NSString* const confirmPasswordIdentifier = @"ps2";
+  EXPECT_NSEQ(
+      @NO, ExecuteJavaScriptWithFormat(
+               @"__gCrWeb.passwords."
+               @"fillPasswordFormWithGeneratedPassword('%@', '%@', '%@', '%@')",
+               formName, newPasswordIdentifier, confirmPasswordIdentifier,
+               password));
+}
+
+// Check that a matching and complete password form is successfully filled
+// with the generated password.
+TEST_F(PasswordControllerJsTest,
+       FillPasswordFormWithGeneratedPassword_SucceedsWhenFieldsFilled) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"text\" id=\"user\" name=\"user\">"
+                     "      <input type=\"password\" id=\"ps1\" name=\"ps1\">"
+                     "      <input type=\"password\" id=\"ps2\" name=\"ps2\">"
+                     "      <input type=\"submit\" name=\"go\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"foo";
+  NSString* const password = @"abc";
+  NSString* const newPasswordIdentifier = @"ps1";
+  NSString* const confirmPasswordIdentifier = @"ps2";
+  EXPECT_NSEQ(
+      @YES,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords."
+          @"fillPasswordFormWithGeneratedPassword('%@', '%@', '%@', '%@')",
+          formName, newPasswordIdentifier, confirmPasswordIdentifier,
+          password));
+  EXPECT_NSEQ(@YES,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('ps1').value == '%@'", password));
+  EXPECT_NSEQ(@YES,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('ps2').value == '%@'", password));
+  EXPECT_NSEQ(@NO,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('user').value == '%@'", password));
+}
+
+// Check that a matching and complete password field is successfully filled
+// with the generated password and that confirm field is untouched.
+TEST_F(
+    PasswordControllerJsTest,
+    FillPasswordFormWithGeneratedPassword_SucceedsWhenOnlyNewPasswordFilled) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"text\" id=\"user\" name=\"user\">"
+                     "      <input type=\"password\" id=\"ps1\" name=\"ps1\">"
+                     "      <input type=\"password\" id=\"ps2\" name=\"ps2\">"
+                     "      <input type=\"submit\" name=\"go\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"foo";
+  NSString* const password = @"abc";
+  NSString* const newPasswordIdentifier = @"ps1";
+  EXPECT_NSEQ(
+      @YES,
+      ExecuteJavaScriptWithFormat(
+          @"__gCrWeb.passwords."
+          @"fillPasswordFormWithGeneratedPassword('%@', '%@', '%@', '%@')",
+          formName, newPasswordIdentifier, @"", password));
+  EXPECT_NSEQ(@YES,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('ps1').value == '%@'", password));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('ps2').value == '%@'", @""));
+  EXPECT_NSEQ(@NO,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('user').value == '%@'", password));
+}
+
+// Check that a matching and complete confirm password field is successfully
+// filled with the generated password and that new password field is untouched.
+TEST_F(
+    PasswordControllerJsTest,
+    FillPasswordFormWithGeneratedPassword_FailsWhenOnlyConfirmPasswordFilled) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"text\" id=\"user\" name=\"user\">"
+                     "      <input type=\"password\" id=\"ps1\" name=\"ps1\">"
+                     "      <input type=\"password\" id=\"ps2\" name=\"ps2\">"
+                     "      <input type=\"submit\" name=\"go\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"foo";
+  NSString* const password = @"abc";
+  NSString* const confirmPasswordIdentifier = @"ps2";
+  EXPECT_NSEQ(
+      @NO, ExecuteJavaScriptWithFormat(
+               @"__gCrWeb.passwords."
+               @"fillPasswordFormWithGeneratedPassword('%@', '%@', '%@', '%@')",
+               formName, @"", confirmPasswordIdentifier, password));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('ps1').value == '%@'", @""));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('ps2').value == '%@'", @""));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('user').value == '%@'", @""));
+}
+
+// Check that unknown or null identifiers are handled gracefully.
+TEST_F(
+    PasswordControllerJsTest,
+    FillPasswordFormWithGeneratedPassword_SucceedsOnUnknownOrNullIdentifiers) {
+  LoadHtmlAndInject(@"<html>"
+                     "  <body>"
+                     "    <form name=\"foo\">"
+                     "      <input type=\"text\" id=\"user\" name=\"user\">"
+                     "      <input type=\"password\" id=\"ps1\" name=\"ps1\">"
+                     "      <input type=\"password\" id=\"ps2\" name=\"ps2\">"
+                     "      <input type=\"submit\" name=\"go\">"
+                     "    </form>"
+                     "  </body"
+                     "</html>");
+  NSString* const formName = @"foo";
+  NSString* const password = @"abc";
+  EXPECT_NSEQ(
+      @NO, ExecuteJavaScriptWithFormat(
+               @"__gCrWeb.passwords."
+               @"fillPasswordFormWithGeneratedPassword('%@', '%@', null, '%@')",
+               formName, @"hello", password));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('ps1').value == '%@'", @""));
+  EXPECT_NSEQ(@YES, ExecuteJavaScriptWithFormat(
+                        @"document.getElementById('ps2').value == '%@'", @""));
+  EXPECT_NSEQ(@NO,
+              ExecuteJavaScriptWithFormat(
+                  @"document.getElementById('user').value == '%@'", password));
 }
 }  // namespace

@@ -6,7 +6,7 @@
 
 #include "base/android/build_info.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -23,29 +23,22 @@
     }                                           \
   } while (0)
 
-// On N MR1+ we want to use high buffer sizes for power saving. Per Android
-// audio team, this should be in N MR1+ SDK, but it's not, so use a defined()
-// check instead of __API_LEVEL__ check.
-#if !defined(SL_ANDROID_KEY_PERFORMANCE_MODE)
-#define SL_ANDROID_KEY_PERFORMANCE_MODE \
-  ((const SLchar*)"androidPerformanceMode")
-
-// No specific performance requirement. Allows HW and SW pre/post processing.
-#define SL_ANDROID_PERFORMANCE_NONE ((SLuint32)0x00000000)
-
-// Priority given to latency. No HW or software pre/post processing. This is the
-// default if no performance mode is specified.
-#define SL_ANDROID_PERFORMANCE_LATENCY ((SLuint32)0x00000001)
-
-// Priority given to latency while still allowing HW pre and post processing.
-#define SL_ANDROID_PERFORMANCE_LATENCY_EFFECTS ((SLuint32)0x00000002)
-
-// Priority given to power saving if latency is not a concern. Allows HW and SW
-// pre/post processing.
-#define SL_ANDROID_PERFORMANCE_POWER_SAVING ((SLuint32)0x00000003)
-#endif
-
 namespace media {
+
+static bool IsFloatAudioSupported() {
+  const auto* build_info = base::android::BuildInfo::GetInstance();
+  if (build_info->sdk_int() < base::android::SDK_VERSION_LOLLIPOP)
+    return false;
+
+  // Vivo devices up until Lollipop used their own Audio Mixer which does not
+  // support float audio output. https://crbug.com/737188.
+  if (build_info->sdk_int() == base::android::SDK_VERSION_LOLLIPOP &&
+      base::EqualsCaseInsensitiveASCII(build_info->manufacturer(), "vivo")) {
+    return false;
+  }
+
+  return true;
+}
 
 OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
                                            const AudioParameters& params,
@@ -61,19 +54,10 @@ OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
       muted_(false),
       volume_(1.0),
       samples_per_second_(params.sample_rate()),
-      have_float_output_(
-          base::android::BuildInfo::GetInstance()->sdk_int() >=
-              base::android::SDK_VERSION_LOLLIPOP &&
-          // See http://crbug.com/737188; still shipping Lollipop in 2017, so no
-          // idea if later phones will be glitch free; thus blacklist all.
-          !base::EqualsCaseInsensitiveASCII(
-              base::android::BuildInfo::GetInstance()->manufacturer(),
-              "vivo")),
-      bytes_per_frame_(have_float_output_ ? params.channels() * sizeof(float)
-                                          : params.GetBytesPerFrame()),
-      buffer_size_bytes_(have_float_output_
-                             ? bytes_per_frame_ * params.frames_per_buffer()
-                             : params.GetBytesPerBuffer()),
+      sample_format_(IsFloatAudioSupported() ? kSampleFormatF32
+                                             : kSampleFormatS16),
+      bytes_per_frame_(params.GetBytesPerFrame(sample_format_)),
+      buffer_size_bytes_(params.GetBytesPerBuffer(sample_format_)),
       performance_mode_(SL_ANDROID_PERFORMANCE_NONE),
       delay_calculator_(samples_per_second_) {
   DVLOG(2) << "OpenSLESOutputStream::OpenSLESOutputStream("
@@ -88,14 +72,14 @@ OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
 
   audio_bus_ = AudioBus::Create(params);
 
-  if (have_float_output_) {
+  if (sample_format_ == kSampleFormatF32) {
     float_format_.formatType = SL_ANDROID_DATAFORMAT_PCM_EX;
     float_format_.numChannels = static_cast<SLuint32>(params.channels());
     // Despite the name, this field is actually the sampling rate in millihertz.
     float_format_.sampleRate =
         static_cast<SLuint32>(samples_per_second_ * 1000);
-    float_format_.bitsPerSample = 32;
-    float_format_.containerSize = 32;
+    float_format_.bitsPerSample = float_format_.containerSize =
+        SampleFormatToBitsPerChannel(sample_format_);
     float_format_.endianness = SL_BYTEORDER_LITTLEENDIAN;
     float_format_.channelMask =
         ChannelCountToSLESChannelMask(params.channels());
@@ -107,8 +91,8 @@ OpenSLESOutputStream::OpenSLESOutputStream(AudioManagerAndroid* manager,
   format_.numChannels = static_cast<SLuint32>(params.channels());
   // Despite the name, this field is actually the sampling rate in millihertz :|
   format_.samplesPerSec = static_cast<SLuint32>(samples_per_second_ * 1000);
-  format_.bitsPerSample = params.bits_per_sample();
-  format_.containerSize = params.bits_per_sample();
+  format_.bitsPerSample = format_.containerSize =
+      SampleFormatToBitsPerChannel(sample_format_);
   format_.endianness = SL_BYTEORDER_LITTLEENDIAN;
   format_.channelMask = ChannelCountToSLESChannelMask(params.channels());
 }
@@ -236,6 +220,10 @@ void OpenSLESOutputStream::Close() {
   audio_manager_->ReleaseOutputStream(this);
 }
 
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void OpenSLESOutputStream::Flush() {}
+
 void OpenSLESOutputStream::SetVolume(double volume) {
   DVLOG(2) << "OpenSLESOutputStream::SetVolume(" << volume << ")";
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -303,7 +291,7 @@ bool OpenSLESOutputStream::CreatePlayer() {
       SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE,
       static_cast<SLuint32>(kMaxNumOfBuffersInQueue)};
   SLDataSource audio_source;
-  if (have_float_output_)
+  if (sample_format_ == kSampleFormatF32)
     audio_source = {&simple_buffer_queue, &float_format_};
   else
     audio_source = {&simple_buffer_queue, &format_};
@@ -319,13 +307,9 @@ bool OpenSLESOutputStream::CreatePlayer() {
   const SLboolean interface_required[] = {SL_BOOLEAN_TRUE, SL_BOOLEAN_TRUE,
                                           SL_BOOLEAN_TRUE};
   LOG_ON_FAILURE_AND_RETURN(
-      (*engine)->CreateAudioPlayer(engine,
-                                   player_object_.Receive(),
-                                   &audio_source,
-                                   &audio_sink,
-                                   arraysize(interface_id),
-                                   interface_id,
-                                   interface_required),
+      (*engine)->CreateAudioPlayer(
+          engine, player_object_.Receive(), &audio_source, &audio_sink,
+          base::size(interface_id), interface_id, interface_required),
       false);
 
   // Create AudioPlayer and specify SL_IID_ANDROIDCONFIGURATION.
@@ -446,11 +430,15 @@ void OpenSLESOutputStream::FillBufferQueueNoLock() {
   // raw float, the data must be clipped and sanitized since it may come
   // from an untrusted source such as NaCl.
   audio_bus_->Scale(muted_ ? 0.0f : volume_);
-  if (!have_float_output_) {
-    audio_bus_->ToInterleaved(frames_filled, format_.bitsPerSample / 8,
-                              audio_data_[active_buffer_index_]);
+  if (sample_format_ == kSampleFormatS16) {
+    audio_bus_->ToInterleaved<SignedInt16SampleTypeTraits>(
+        frames_filled,
+        reinterpret_cast<int16_t*>(audio_data_[active_buffer_index_]));
   } else {
-    audio_bus_->ToInterleaved<Float32SampleTypeTraits>(
+    DCHECK_EQ(sample_format_, kSampleFormatF32);
+
+    // We skip clipping since that occurs at the shared memory boundary.
+    audio_bus_->ToInterleaved<Float32SampleTypeTraitsNoClip>(
         frames_filled,
         reinterpret_cast<float*>(audio_data_[active_buffer_index_]));
   }

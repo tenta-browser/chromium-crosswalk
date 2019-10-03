@@ -11,7 +11,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,12 +22,12 @@ namespace {
 
 const bool testbool1 = false;
 const bool testbool2 = true;
-const int testint = 2093847192;
-const long testlong = 1093847192;
+const int testint = 2'093'847'192;
+const long testlong = 1'093'847'192;
 const uint16_t testuint16 = 32123;
 const uint32_t testuint32 = 1593847192;
-const int64_t testint64 = -0x7E8CA9253104BDFCLL;
-const uint64_t testuint64 = 0xCE8CA9253104BDF7ULL;
+const int64_t testint64 = -0x7E8CA925'3104BDFCLL;
+const uint64_t testuint64 = 0xCE8CA925'3104BDF7ULL;
 const float testfloat = 3.1415926935f;
 const double testdouble = 2.71828182845904523;
 const std::string teststring("Hello world");  // note non-aligned string length
@@ -37,7 +37,7 @@ const char testrawstring[] = "Hello new world"; // Test raw string writing
 // Test raw char16 writing, assumes UTF16 encoding is ANSI for alpha chars.
 const char16 testrawstring16[] = {'A', 'l', 'o', 'h', 'a', 0};
 const char testdata[] = "AAA\0BBB\0";
-const int testdatalen = arraysize(testdata) - 1;
+const int testdatalen = base::size(testdata) - 1;
 
 // checks that the results can be read correctly from the Pickle
 void VerifyResult(const Pickle& pickle) {

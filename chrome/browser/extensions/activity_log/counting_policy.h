@@ -9,7 +9,6 @@
 
 #include <string>
 
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "chrome/browser/extensions/activity_log/activity_database.h"
 #include "chrome/browser/extensions/activity_log/activity_log_policy.h"
@@ -37,8 +36,8 @@ class CountingPolicy : public ActivityLogDatabasePolicy {
       const std::string& page_url,
       const std::string& arg_url,
       const int days_ago,
-      const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
-          callback) override;
+      base::OnceCallback<void(std::unique_ptr<Action::ActionVector>)> callback)
+      override;
 
   void Close() override;
 
@@ -68,8 +67,8 @@ class CountingPolicy : public ActivityLogDatabasePolicy {
  protected:
   // The ActivityDatabase::Delegate interface.  These are always called from
   // the database thread.
-  bool InitDatabase(sql::Connection* db) override;
-  bool FlushDatabase(sql::Connection* db) override;
+  bool InitDatabase(sql::Database* db) override;
+  bool FlushDatabase(sql::Database* db) override;
   void OnDatabaseFailure() override;
   void OnDatabaseClose() override;
 
@@ -113,11 +112,11 @@ class CountingPolicy : public ActivityLogDatabasePolicy {
   void DoDeleteDatabase();
 
   // Cleans old records from the activity log database.
-  bool CleanOlderThan(sql::Connection* db, const base::Time& cutoff);
+  bool CleanOlderThan(sql::Database* db, const base::Time& cutoff);
 
   // Cleans unused interned strings from the database.  This should be run
   // after deleting rows from the main log table to clean out stale values.
-  bool CleanStringTables(sql::Connection* db);
+  bool CleanStringTables(sql::Database* db);
 
   // API calls for which complete arguments should be logged.
   Util::ApiSet api_arg_whitelist_;

@@ -20,22 +20,23 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.BaseSwitches;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.download.DownloadTestRule;
 import org.chromium.chrome.browser.download.DownloadTestRule.CustomMainActivityStart;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.contextmenu.ContextMenuUtils;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.widget.Toast;
 
@@ -45,10 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Tests that toasts don't trigger HW acceleration.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP)
 public class ToastHWATest implements CustomMainActivityStart {
     @Rule
@@ -65,12 +63,7 @@ public class ToastHWATest implements CustomMainActivityStart {
 
     @Before
     public void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                FirstRunStatus.setFirstRunFlowComplete(true);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
 
         mDownloadTestRule.deleteFilesInDownloadDirectory(TEST_FILES);
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
@@ -78,12 +71,7 @@ public class ToastHWATest implements CustomMainActivityStart {
 
     @After
     public void tearDown() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                FirstRunStatus.setFirstRunFlowComplete(false);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(false));
 
         mTestServer.stopAndDestroyServer();
         mDownloadTestRule.deleteFilesInDownloadDirectory(TEST_FILES);
@@ -98,6 +86,7 @@ public class ToastHWATest implements CustomMainActivityStart {
     @Test
     @SmallTest
     @CommandLineFlags.Add(BaseSwitches.ENABLE_LOW_END_DEVICE_MODE)
+    @FlakyTest(message = "crbug.com/668217")
     public void testNoRenderThread() throws Exception {
         Utils.assertNoRenderThread();
     }
@@ -108,7 +97,7 @@ public class ToastHWATest implements CustomMainActivityStart {
      * BUG=crbug.com/668217
     */
     @Test
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/668217")
     public void testDownloadingToast() throws Exception {
         mDownloadTestRule.loadUrl(mTestServer.getURL(URL_PATH));
         mDownloadTestRule.assertWaitForPageScaleFactorMatch(0.5f);
@@ -132,7 +121,7 @@ public class ToastHWATest implements CustomMainActivityStart {
     @Test
     @SmallTest
     @CommandLineFlags.Add(BaseSwitches.ENABLE_LOW_END_DEVICE_MODE)
-    @RetryOnFailure
+    @FlakyTest(message = "crbug.com/668217")
     public void testOpenedInBackgroundToast() throws Exception {
         mDownloadTestRule.loadUrl(mTestServer.getURL(URL_PATH));
         mDownloadTestRule.assertWaitForPageScaleFactorMatch(0.5f);
@@ -151,6 +140,7 @@ public class ToastHWATest implements CustomMainActivityStart {
     @Test
     @SmallTest
     @CommandLineFlags.Add(BaseSwitches.ENABLE_LOW_END_DEVICE_MODE)
+    @FlakyTest(message = "crbug.com/668217")
     public void testToastNoAcceleration() throws Exception {
         // Toasts created on low-end devices shouldn't be HW accelerated.
         Assert.assertFalse(isToastAcceleratedWithContext(mDownloadTestRule.getActivity()));
@@ -172,7 +162,7 @@ public class ToastHWATest implements CustomMainActivityStart {
         final AtomicBoolean accelerated = new AtomicBoolean();
         final CallbackHelper listenerCalled = new CallbackHelper();
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 // We are using Toast.makeText(context, ...) instead of new Toast(context)

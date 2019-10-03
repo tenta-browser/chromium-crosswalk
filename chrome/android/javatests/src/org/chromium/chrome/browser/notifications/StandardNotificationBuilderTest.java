@@ -4,8 +4,11 @@
 
 package org.chromium.chrome.browser.notifications;
 
+import static android.content.Context.NOTIFICATION_SERVICE;
+
 import android.annotation.TargetApi;
 import android.app.Notification;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -30,7 +33,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.chrome.browser.widget.RoundedIconGenerator;
-import org.chromium.content.browser.test.NativeLibraryTestRule;
+import org.chromium.content_public.browser.test.NativeLibraryTestRule;
 
 /**
  * Instrumentation unit tests for StandardNotificationBuilder.
@@ -41,6 +44,9 @@ import org.chromium.content.browser.test.NativeLibraryTestRule;
  */
 @RunWith(BaseJUnit4ClassRunner.class)
 public class StandardNotificationBuilderTest {
+    private static final String NOTIFICATION_TAG = "TestNotificationTag";
+    private static final int NOTIFICATION_ID = 99;
+
     @Rule
     public NativeLibraryTestRule mActivityTestRule = new NativeLibraryTestRule();
 
@@ -52,7 +58,7 @@ public class StandardNotificationBuilderTest {
     }
 
     private NotificationBuilderBase createAllOptionsBuilder(
-            PendingIntent[] outContentAndDeleteIntents) {
+            PendingIntentProvider[] outContentAndDeleteIntents) {
         if (outContentAndDeleteIntents == null || outContentAndDeleteIntents.length != 2) {
             throw new IllegalArgumentException();
         }
@@ -60,11 +66,11 @@ public class StandardNotificationBuilderTest {
         Context context = InstrumentationRegistry.getTargetContext();
 
         Intent contentIntent = new Intent("contentIntent");
-        outContentAndDeleteIntents[0] = PendingIntent.getBroadcast(
+        outContentAndDeleteIntents[0] = PendingIntentProvider.getBroadcast(
                 context, 0 /* requestCode */, contentIntent, PendingIntent.FLAG_UPDATE_CURRENT);
 
         Intent deleteIntent = new Intent("deleteIntent");
-        outContentAndDeleteIntents[1] = PendingIntent.getBroadcast(
+        outContentAndDeleteIntents[1] = PendingIntentProvider.getBroadcast(
                 context, 1 /* requestCode */, deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT);
 
         Bitmap image = Bitmap.createBitmap(
@@ -79,14 +85,15 @@ public class StandardNotificationBuilderTest {
                 new int[] {Color.GRAY}, 1 /* width */, 1 /* height */, Bitmap.Config.ARGB_8888);
         actionIcon = actionIcon.copy(Bitmap.Config.ARGB_8888, true /* isMutable */);
 
-        return new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+        return new StandardNotificationBuilder(context)
                 .setTitle("title")
                 .setBody("body")
                 .setOrigin("origin")
+                .setChannelId(ChannelDefinitions.ChannelId.SITES)
                 .setTicker(new SpannableStringBuilder("ticker"))
                 .setImage(image)
                 .setLargeIcon(largeIcon)
-                .setSmallIcon(R.drawable.ic_chrome)
+                .setSmallIconId(R.drawable.ic_chrome)
                 .setDefaults(Notification.DEFAULT_ALL)
                 .setVibrate(new long[] {100L})
                 .setContentIntent(outContentAndDeleteIntents[0])
@@ -96,13 +103,20 @@ public class StandardNotificationBuilderTest {
                 .addSettingsAction(0 /* iconId */, "settings", null /* intent */);
     }
 
+    private Notification buildNotification(NotificationBuilderBase builder) {
+        NotificationMetadata metadata =
+                new NotificationMetadata(NotificationUmaTracker.SystemNotificationType.SITES,
+                        NOTIFICATION_TAG, NOTIFICATION_ID);
+        return builder.build(metadata).getNotification();
+    }
+
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
     public void testSetAll() {
-        PendingIntent[] contentAndDeleteIntents = new PendingIntent[2];
+        PendingIntentProvider[] contentAndDeleteIntents = new PendingIntentProvider[2];
         NotificationBuilderBase builder = createAllOptionsBuilder(contentAndDeleteIntents);
-        Notification notification = builder.build();
+        Notification notification = buildNotification(builder);
 
         Assert.assertEquals("title", NotificationTestUtil.getExtraTitle(notification));
         Assert.assertEquals("body", NotificationTestUtil.getExtraText(notification));
@@ -132,8 +146,6 @@ public class StandardNotificationBuilderTest {
         Assert.assertEquals(Notification.DEFAULT_ALL, notification.defaults);
         Assert.assertEquals(1, notification.vibrate.length);
         Assert.assertEquals(100L, notification.vibrate[0]);
-        Assert.assertEquals(contentAndDeleteIntents[0], notification.contentIntent);
-        Assert.assertEquals(contentAndDeleteIntents[1], notification.deleteIntent);
         Notification.Action[] actions = NotificationTestUtil.getActions(notification);
         Assert.assertEquals(3, actions.length);
         Assert.assertEquals("button 1", NotificationTestUtil.getActionTitle(actions[0]));
@@ -159,10 +171,10 @@ public class StandardNotificationBuilderTest {
     @SmallTest
     @Feature({"Browser", "Notifications"})
     public void testBigTextStyle() {
-        PendingIntent[] contentAndDeleteIntents = new PendingIntent[2];
+        PendingIntentProvider[] contentAndDeleteIntents = new PendingIntentProvider[2];
         NotificationBuilderBase builder = createAllOptionsBuilder(contentAndDeleteIntents);
         builder.setImage(null);
-        Notification notification = builder.build();
+        Notification notification = buildNotification(builder);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             // EXTRA_TEMPLATE was added in Android L; style cannot be verified in earlier versions.
@@ -176,32 +188,31 @@ public class StandardNotificationBuilderTest {
     @Feature({"Browser", "Notifications"})
     public void testSetSmallIcon() {
         Context context = InstrumentationRegistry.getTargetContext();
-        NotificationBuilderBase notificationBuilder =
-                new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES);
+        NotificationBuilderBase notificationBuilder = new StandardNotificationBuilder(context);
 
         Bitmap bitmap =
                 BitmapFactory.decodeResource(context.getResources(), R.drawable.chrome_sync_logo);
 
-        notificationBuilder.setSmallIcon(R.drawable.ic_chrome);
-        notificationBuilder.setSmallIcon(bitmap); // Should override on M+
+        notificationBuilder.setSmallIconId(R.drawable.ic_chrome);
+        notificationBuilder.setStatusBarIcon(bitmap);
+        notificationBuilder.setChannelId(ChannelDefinitions.ChannelId.SITES);
 
-        Notification notification = notificationBuilder.build();
+        Notification notification = buildNotification(notificationBuilder);
 
         Bitmap result = NotificationTestUtil.getSmallIconFromNotification(context, notification);
 
         Assert.assertNotNull(result);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (NotificationBuilderBase.deviceSupportsBitmapStatusBarIcons()) {
             // Check the white overlay was applied.
             Bitmap expected = bitmap.copy(bitmap.getConfig(), true);
             NotificationBuilderBase.applyWhiteOverlayToBitmap(expected);
             Assert.assertTrue(expected.sameAs(result));
 
             // Check using the same bitmap on another builder gives the same result.
-            NotificationBuilderBase otherBuilder =
-                    new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES);
-            otherBuilder.setSmallIcon(bitmap);
-            Notification otherNotification = otherBuilder.build();
+            NotificationBuilderBase otherBuilder = new StandardNotificationBuilder(context);
+            otherBuilder.setStatusBarIcon(bitmap).setChannelId(ChannelDefinitions.ChannelId.SITES);
+            Notification otherNotification = buildNotification(otherBuilder);
             Assert.assertTrue(expected.sameAs(
                     NotificationTestUtil.getSmallIconFromNotification(context, otherNotification)));
         } else {
@@ -209,6 +220,37 @@ public class StandardNotificationBuilderTest {
                     BitmapFactory.decodeResource(context.getResources(), R.drawable.ic_chrome);
             Assert.assertTrue(expected.sameAs(result));
         }
+    }
+
+    /**
+     * Regression test for crash observed on Samsung/Coolpad Marshmallow devices - see crbug/829367.
+     */
+    @Test
+    @MinAndroidSdkLevel(Build.VERSION_CODES.M)
+    @SmallTest
+    @Feature({"Browser", "Notifications"})
+    public void testRenotifyWithCustomBadgeDoesNotCrash() {
+        Context context = InstrumentationRegistry.getTargetContext();
+
+        NotificationBuilderBase builder = new StandardNotificationBuilder(context)
+                                                  .setChannelId(ChannelDefinitions.ChannelId.SITES)
+                                                  .setSmallIconId(R.drawable.ic_chrome);
+        Notification notification = buildNotification(builder);
+
+        Bitmap bitmap = Bitmap.createBitmap(new int[] {Color.BLUE}, 1, 1, Bitmap.Config.ARGB_8888);
+
+        NotificationBuilderBase otherBuilder =
+                new StandardNotificationBuilder(context)
+                        .setChannelId(ChannelDefinitions.ChannelId.SITES)
+                        .setSmallIconId(R.drawable.ic_chrome)
+                        .setStatusBarIcon(bitmap);
+        Notification notificationWithBitmap = buildNotification(otherBuilder);
+
+        NotificationManager notificationManager =
+                (NotificationManager) context.getSystemService(NOTIFICATION_SERVICE);
+
+        notificationManager.notify("tag-1", 1, notification);
+        notificationManager.notify("tag-1", 1, notificationWithBitmap);
     }
 
     @Test
@@ -219,10 +261,11 @@ public class StandardNotificationBuilderTest {
     public void testAddTextActionSetsRemoteInput() {
         Context context = InstrumentationRegistry.getTargetContext();
         NotificationBuilderBase notificationBuilder =
-                new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                new StandardNotificationBuilder(context)
+                        .setChannelId(ChannelDefinitions.ChannelId.SITES)
                         .addTextAction(null, "Action Title", null, "Placeholder");
 
-        Notification notification = notificationBuilder.build();
+        Notification notification = buildNotification(notificationBuilder);
 
         Assert.assertEquals(1, notification.actions.length);
         Assert.assertEquals("Action Title", notification.actions[0].title);

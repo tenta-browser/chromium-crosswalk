@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "content/browser/devtools/devtools_session.h"
+#include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -19,7 +19,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "net/cert/x509_certificate.h"
-#include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
+#include "net/cert/x509_util.h"
+#include "third_party/blink/public/platform/web_mixed_content_context_type.h"
 
 namespace content {
 namespace protocol {
@@ -69,34 +70,34 @@ void AddExplanations(
     const std::vector<SecurityStyleExplanation>& explanations_to_add,
     Explanations* explanations) {
   for (const auto& it : explanations_to_add) {
-    std::unique_ptr<protocol::Array<String>> certificate =
-        protocol::Array<String>::create();
+    auto certificate = std::make_unique<protocol::Array<String>>();
     if (it.certificate) {
-      std::string der;
-      std::string encoded;
-      bool rv = net::X509Certificate::GetDEREncoded(
-          it.certificate->os_cert_handle(), &der);
-      DCHECK(rv);
-      base::Base64Encode(der, &encoded);
+      certificate->emplace_back();
+      base::Base64Encode(net::x509_util::CryptoBufferAsStringPiece(
+                             it.certificate->cert_buffer()),
+                         &certificate->back());
 
-      certificate->addItem(encoded);
-
-      for (auto* cert : it.certificate->GetIntermediateCertificates()) {
-        rv = net::X509Certificate::GetDEREncoded(cert, &der);
-        DCHECK(rv);
-        base::Base64Encode(der, &encoded);
-        certificate->addItem(encoded);
+      for (const auto& cert : it.certificate->intermediate_buffers()) {
+        certificate->emplace_back();
+        base::Base64Encode(
+            net::x509_util::CryptoBufferAsStringPiece(cert.get()),
+            &certificate->back());
       }
     }
 
-    explanations->addItem(
+    auto recommendations =
+        std::make_unique<protocol::Array<String>>(it.recommendations);
+
+    explanations->emplace_back(
         Security::SecurityStateExplanation::Create()
             .SetSecurityState(security_style)
+            .SetTitle(it.title)
             .SetSummary(it.summary)
             .SetDescription(it.description)
             .SetCertificate(std::move(certificate))
             .SetMixedContentType(MixedContentTypeToProtocolMixedContentType(
                 it.mixed_content_type))
+            .SetRecommendations(std::move(recommendations))
             .Build());
   }
 }
@@ -106,8 +107,7 @@ void AddExplanations(
 // static
 std::vector<SecurityHandler*> SecurityHandler::ForAgentHost(
     DevToolsAgentHostImpl* host) {
-  return DevToolsSession::HandlersForAgentHost<SecurityHandler>(
-      host, Security::Metainfo::domainName);
+  return host->HandlersByName<SecurityHandler>(Security::Metainfo::domainName);
 }
 
 SecurityHandler::SecurityHandler()
@@ -134,7 +134,7 @@ void SecurityHandler::AttachToRenderFrameHost() {
   DidChangeVisibleSecurityState();
 }
 
-void SecurityHandler::SetRenderer(RenderProcessHost* process_host,
+void SecurityHandler::SetRenderer(int process_host_id,
                                   RenderFrameHostImpl* frame_host) {
   host_ = frame_host;
   if (enabled_ && host_)
@@ -143,6 +143,8 @@ void SecurityHandler::SetRenderer(RenderProcessHost* process_host,
 
 void SecurityHandler::DidChangeVisibleSecurityState() {
   DCHECK(enabled_);
+  if (!web_contents()->GetDelegate())
+    return;
 
   SecurityStyleExplanations security_style_explanations;
   blink::WebSecurityStyle security_style =
@@ -152,7 +154,7 @@ void SecurityHandler::DidChangeVisibleSecurityState() {
   const std::string security_state =
       SecurityStyleToProtocolSecurityState(security_style);
 
-  std::unique_ptr<Explanations> explanations = Explanations::create();
+  auto explanations = std::make_unique<Explanations>();
   AddExplanations(Security::SecurityStateEnum::Insecure,
                   security_style_explanations.insecure_explanations,
                   explanations.get());
@@ -166,22 +168,19 @@ void SecurityHandler::DidChangeVisibleSecurityState() {
                   security_style_explanations.info_explanations,
                   explanations.get());
 
+  // We can set everything to default values because this field is ignored by
+  // the frontend, though it's still required by the protocol. Once the field is
+  // deleted in the protocol, we can delete it here.
   std::unique_ptr<Security::InsecureContentStatus> insecure_status =
       Security::InsecureContentStatus::Create()
-          .SetRanMixedContent(security_style_explanations.ran_mixed_content)
-          .SetDisplayedMixedContent(
-              security_style_explanations.displayed_mixed_content)
-          .SetContainedMixedForm(
-              security_style_explanations.contained_mixed_form)
-          .SetRanContentWithCertErrors(
-              security_style_explanations.ran_content_with_cert_errors)
-          .SetDisplayedContentWithCertErrors(
-              security_style_explanations.displayed_content_with_cert_errors)
-          .SetRanInsecureContentStyle(SecurityStyleToProtocolSecurityState(
-              security_style_explanations.ran_insecure_content_style))
+          .SetRanMixedContent(false)
+          .SetDisplayedMixedContent(false)
+          .SetContainedMixedForm(false)
+          .SetRanContentWithCertErrors(false)
+          .SetDisplayedContentWithCertErrors(false)
+          .SetRanInsecureContentStyle(Security::SecurityStateEnum::Unknown)
           .SetDisplayedInsecureContentStyle(
-              SecurityStyleToProtocolSecurityState(
-                  security_style_explanations.displayed_insecure_content_style))
+              Security::SecurityStateEnum::Unknown)
           .Build();
 
   frontend_->SecurityStateChanged(
@@ -193,7 +192,7 @@ void SecurityHandler::DidChangeVisibleSecurityState() {
 }
 
 void SecurityHandler::DidFinishNavigation(NavigationHandle* navigation_handle) {
-  if (certificate_errors_overriden_)
+  if (cert_error_override_mode_ == CertErrorOverrideMode::kHandleEvents)
     FlushPendingCertificateErrorNotifications();
 }
 
@@ -206,15 +205,25 @@ void SecurityHandler::FlushPendingCertificateErrorNotifications() {
 bool SecurityHandler::NotifyCertificateError(int cert_error,
                                              const GURL& request_url,
                                              CertErrorCallback handler) {
+  if (cert_error_override_mode_ == CertErrorOverrideMode::kIgnoreAll) {
+    if (handler)
+      std::move(handler).Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE);
+    return true;
+  }
+
   if (!enabled_)
     return false;
+
   frontend_->CertificateError(++last_cert_error_id_,
                               net::ErrorToShortString(cert_error),
                               request_url.spec());
-  if (!certificate_errors_overriden_) {
+
+  if (!handler ||
+      cert_error_override_mode_ != CertErrorOverrideMode::kHandleEvents) {
     return false;
   }
-  cert_error_callbacks_[last_cert_error_id_] = handler;
+
+  cert_error_callbacks_[last_cert_error_id_] = std::move(handler);
   return true;
 }
 
@@ -228,7 +237,7 @@ Response SecurityHandler::Enable() {
 
 Response SecurityHandler::Disable() {
   enabled_ = false;
-  certificate_errors_overriden_ = false;
+  cert_error_override_mode_ = CertErrorOverrideMode::kDisabled;
   WebContentsObserver::Observe(nullptr);
   FlushPendingCertificateErrorNotifications();
   return Response::OK();
@@ -257,11 +266,27 @@ Response SecurityHandler::HandleCertificateError(int event_id,
 }
 
 Response SecurityHandler::SetOverrideCertificateErrors(bool override) {
-  if (override && !enabled_)
-    return Response::Error("Security domain not enabled");
-  certificate_errors_overriden_ = override;
-  if (!override)
+  if (override) {
+    if (!enabled_)
+      return Response::Error("Security domain not enabled");
+    if (cert_error_override_mode_ == CertErrorOverrideMode::kIgnoreAll)
+      return Response::Error("Certificate errors are already being ignored.");
+    cert_error_override_mode_ = CertErrorOverrideMode::kHandleEvents;
+  } else {
+    cert_error_override_mode_ = CertErrorOverrideMode::kDisabled;
     FlushPendingCertificateErrorNotifications();
+  }
+  return Response::OK();
+}
+
+Response SecurityHandler::SetIgnoreCertificateErrors(bool ignore) {
+  if (ignore) {
+    if (cert_error_override_mode_ == CertErrorOverrideMode::kHandleEvents)
+      return Response::Error("Certificate errors are already overridden.");
+    cert_error_override_mode_ = CertErrorOverrideMode::kIgnoreAll;
+  } else {
+    cert_error_override_mode_ = CertErrorOverrideMode::kDisabled;
+  }
   return Response::OK();
 }
 

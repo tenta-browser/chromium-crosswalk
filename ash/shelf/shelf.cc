@@ -6,40 +6,34 @@
 
 #include <memory>
 
-#include "ash/public/cpp/config.h"
+#include "ash/animation/animation_change_type.h"
+#include "ash/app_list/app_list_controller_impl.h"
+#include "ash/public/cpp/keyboard/keyboard_controller_observer.h"
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/shelf/shelf_bezel_event_handler.h"
 #include "ash/shelf/shelf_controller.h"
+#include "ash/shelf/shelf_focus_cycler.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_observer.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
+#include "ash/system/status_area_widget.h"
+#include "ash/wm/work_area_insets.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "ui/app_list/presenter/app_list.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace ash {
 
-namespace {
-
-// A callback that does nothing after shelf item selection handling.
-void NoopCallback(ShelfAction,
-                  base::Optional<std::vector<mojom::MenuItemPtr>>) {}
-
-}  // namespace
-
 // Shelf::AutoHideEventHandler -----------------------------------------------
 
 // Forwards mouse and gesture events to ShelfLayoutManager for auto-hide.
-// TODO(mash): Add similar event handling support for mash.
 class Shelf::AutoHideEventHandler : public ui::EventHandler {
  public:
-  explicit AutoHideEventHandler(ShelfLayoutManager* shelf_layout_manager)
-      : shelf_layout_manager_(shelf_layout_manager) {
+  explicit AutoHideEventHandler(Shelf* shelf) : shelf_(shelf) {
     Shell::Get()->AddPreTargetHandler(this);
   }
   ~AutoHideEventHandler() override {
@@ -48,27 +42,44 @@ class Shelf::AutoHideEventHandler : public ui::EventHandler {
 
   // ui::EventHandler:
   void OnMouseEvent(ui::MouseEvent* event) override {
-    shelf_layout_manager_->UpdateAutoHideForMouseEvent(
+    shelf_->shelf_layout_manager()->UpdateAutoHideForMouseEvent(
         event, static_cast<aura::Window*>(event->target()));
   }
   void OnGestureEvent(ui::GestureEvent* event) override {
-    shelf_layout_manager_->ProcessGestureEventOnWindow(
+    shelf_->shelf_layout_manager()->ProcessGestureEventOfAutoHideShelf(
         event, static_cast<aura::Window*>(event->target()));
+  }
+  void OnTouchEvent(ui::TouchEvent* event) override {
+    if (shelf_->auto_hide_behavior() != SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS)
+      return;
+
+    // The event target should be the shelf widget.
+    aura::Window* target = static_cast<aura::Window*>(event->target());
+    if (target != Shelf::ForWindow(target)->shelf_widget()->GetNativeView())
+      return;
+
+    // The touch-pressing event may hide the shelf. Lock the shelf's auto hide
+    // state to give the shelf a chance to handle the touch event before it
+    // being hidden.
+    ShelfLayoutManager* shelf_layout_manager = shelf_->shelf_layout_manager();
+    if (event->type() == ui::ET_TOUCH_PRESSED && shelf_->IsVisible()) {
+      shelf_layout_manager->LockAutoHideState(true);
+    } else if (event->type() == ui::ET_TOUCH_RELEASED ||
+               event->type() == ui::ET_TOUCH_CANCELLED) {
+      shelf_layout_manager->LockAutoHideState(false);
+    }
   }
 
  private:
-  ShelfLayoutManager* shelf_layout_manager_;
+  Shelf* shelf_;
   DISALLOW_COPY_AND_ASSIGN(AutoHideEventHandler);
 };
 
 // Shelf ---------------------------------------------------------------------
 
-Shelf::Shelf() : shelf_locking_manager_(this) {
-  // TODO: ShelfBezelEventHandler needs to work with mus too.
-  // http://crbug.com/636647
-  if (Shell::GetAshConfig() != Config::MASH)
-    bezel_event_handler_ = std::make_unique<ShelfBezelEventHandler>(this);
-}
+Shelf::Shelf()
+    : shelf_locking_manager_(this),
+      shelf_focus_cycler_(std::make_unique<ShelfFocusCycler>(this)) {}
 
 Shelf::~Shelf() = default;
 
@@ -77,11 +88,44 @@ Shelf* Shelf::ForWindow(aura::Window* window) {
   return RootWindowController::ForWindow(window)->shelf();
 }
 
+// static
+void Shelf::LaunchShelfItem(int item_index) {
+  const int item_count = ShelfModel::Get()->item_count();
+
+  // A negative argument will launch the last app. A positive argument will
+  // launch the app at the corresponding index, unless it's higher than the
+  // total number of apps, in which case we do nothing.
+  if (item_index >= item_count)
+    return;
+
+  const int found_index = item_index >= 0 ? item_index : item_count - 1;
+
+  // Set this one as active (or advance to the next item of its kind).
+  ActivateShelfItem(found_index);
+}
+
+// static
+void Shelf::ActivateShelfItem(int item_index) {
+  ActivateShelfItemOnDisplay(item_index, display::kInvalidDisplayId);
+}
+
+// static
+void Shelf::ActivateShelfItemOnDisplay(int item_index, int64_t display_id) {
+  const ShelfModel* shelf_model = ShelfModel::Get();
+  const ShelfItem& item = shelf_model->items()[item_index];
+  ShelfItemDelegate* item_delegate = shelf_model->GetShelfItemDelegate(item.id);
+  std::unique_ptr<ui::Event> event = std::make_unique<ui::KeyEvent>(
+      ui::ET_KEY_RELEASED, ui::VKEY_UNKNOWN, ui::EF_NONE);
+  item_delegate->ItemSelected(std::move(event), display_id, LAUNCH_FROM_SHELF,
+                              base::DoNothing());
+}
+
 void Shelf::CreateShelfWidget(aura::Window* root) {
   DCHECK(!shelf_widget_);
   aura::Window* shelf_container =
       root->GetChildById(kShellWindowId_ShelfContainer);
   shelf_widget_.reset(new ShelfWidget(shelf_container, this));
+  shelf_widget_->Initialize();
 
   DCHECK(!shelf_layout_manager_);
   shelf_layout_manager_ = shelf_widget_->shelf_layout_manager();
@@ -96,23 +140,29 @@ void Shelf::CreateShelfWidget(aura::Window* root) {
 }
 
 void Shelf::ShutdownShelfWidget() {
-  if (shelf_widget_)
-    shelf_widget_->Shutdown();
+  shelf_widget_->Shutdown();
 }
 
 void Shelf::DestroyShelfWidget() {
-  // May be called multiple times during shutdown.
+  DCHECK(shelf_widget_);
   shelf_widget_.reset();
 }
 
+bool Shelf::IsVisible() const {
+  return shelf_layout_manager_->IsVisible();
+}
+
+const aura::Window* Shelf::GetWindow() const {
+  return shelf_widget_ ? shelf_widget_->GetNativeWindow() : nullptr;
+}
+
 aura::Window* Shelf::GetWindow() {
-  return shelf_widget_->GetNativeWindow();
+  return const_cast<aura::Window*>(const_cast<const Shelf*>(this)->GetWindow());
 }
 
 void Shelf::SetAlignment(ShelfAlignment alignment) {
-  // Checks added for http://crbug.com/738011.
-  CHECK(shelf_widget_);
-  CHECK(shelf_layout_manager_);
+  if (!shelf_widget_)
+    return;
 
   if (alignment_ == alignment)
     return;
@@ -181,7 +231,8 @@ void Shelf::UpdateAutoHideState() {
 }
 
 ShelfBackgroundType Shelf::GetBackgroundType() const {
-  return shelf_widget_->GetBackgroundType();
+  return shelf_widget_ ? shelf_widget_->GetBackgroundType()
+                       : SHELF_BACKGROUND_DEFAULT;
 }
 
 void Shelf::UpdateVisibilityState() {
@@ -189,75 +240,32 @@ void Shelf::UpdateVisibilityState() {
     shelf_layout_manager_->UpdateVisibilityState();
 }
 
+void Shelf::SetSuspendVisibilityUpdate(bool value) {
+  if (shelf_layout_manager_)
+    shelf_layout_manager_->set_suspend_visibility_update(value);
+}
+
+void Shelf::MaybeUpdateShelfBackground() {
+  if (!shelf_layout_manager_)
+    return;
+
+  shelf_layout_manager_->MaybeUpdateShelfBackground(
+      AnimationChangeType::ANIMATE);
+}
+
 ShelfVisibilityState Shelf::GetVisibilityState() const {
   return shelf_layout_manager_ ? shelf_layout_manager_->visibility_state()
                                : SHELF_HIDDEN;
 }
 
-int Shelf::GetAccessibilityPanelHeight() const {
-  return shelf_layout_manager_ ? shelf_layout_manager_->chromevox_panel_height()
-                               : 0;
-}
-
-gfx::Rect Shelf::GetIdealBounds() {
+gfx::Rect Shelf::GetIdealBounds() const {
   return shelf_layout_manager_->GetIdealBounds();
-}
-
-gfx::Rect Shelf::GetUserWorkAreaBounds() const {
-  return shelf_layout_manager_ ? shelf_layout_manager_->user_work_area_bounds()
-                               : gfx::Rect();
-}
-
-void Shelf::UpdateIconPositionForPanel(aura::Window* panel) {
-  shelf_widget_->UpdateIconPositionForPanel(panel);
 }
 
 gfx::Rect Shelf::GetScreenBoundsOfItemIconForWindow(aura::Window* window) {
   if (!shelf_widget_)
     return gfx::Rect();
   return shelf_widget_->GetScreenBoundsOfItemIconForWindow(window);
-}
-
-// static
-void Shelf::LaunchShelfItem(int item_index) {
-  ShelfModel* shelf_model = Shell::Get()->shelf_model();
-  const ShelfItems& items = shelf_model->items();
-  int item_count = shelf_model->item_count();
-  int indexes_left = item_index >= 0 ? item_index : item_count;
-  int found_index = -1;
-
-  // Iterating until we have hit the index we are interested in which
-  // is true once indexes_left becomes negative.
-  for (int i = 0; i < item_count && indexes_left >= 0; i++) {
-    if (items[i].type != TYPE_APP_LIST) {
-      found_index = i;
-      indexes_left--;
-    }
-  }
-
-  // There are two ways how found_index can be valid: a.) the nth item was
-  // found (which is true when indexes_left is -1) or b.) the last item was
-  // requested (which is true when index was passed in as a negative number).
-  if (found_index >= 0 && (indexes_left == -1 || item_index < 0)) {
-    // Then set this one as active (or advance to the next item of its kind).
-    ActivateShelfItem(found_index);
-  }
-}
-
-// static
-void Shelf::ActivateShelfItem(int item_index) {
-  ActivateShelfItemOnDisplay(item_index, display::kInvalidDisplayId);
-}
-
-// static
-void Shelf::ActivateShelfItemOnDisplay(int item_index, int64_t display_id) {
-  ShelfModel* shelf_model = Shell::Get()->shelf_model();
-  const ShelfItem& item = shelf_model->items()[item_index];
-  ShelfItemDelegate* item_delegate = shelf_model->GetShelfItemDelegate(item.id);
-  std::unique_ptr<ui::Event> event = std::make_unique<ui::KeyEvent>(
-      ui::ET_KEY_RELEASED, ui::VKEY_UNKNOWN, ui::EF_NONE);
-  item_delegate->ItemSelected(std::move(event), display_id, LAUNCH_FROM_UNKNOWN,
-                              base::Bind(&NoopCallback));
 }
 
 bool Shelf::ProcessGestureEvent(const ui::GestureEvent& event) {
@@ -267,8 +275,14 @@ bool Shelf::ProcessGestureEvent(const ui::GestureEvent& event) {
   return shelf_layout_manager_->ProcessGestureEvent(event);
 }
 
+void Shelf::ProcessMouseEvent(const ui::MouseEvent& event) {
+  if (shelf_layout_manager_)
+    shelf_layout_manager_->ProcessMouseEventFromShelf(event);
+}
+
 void Shelf::ProcessMouseWheelEvent(const ui::MouseWheelEvent& event) {
-  Shell::Get()->app_list()->ProcessMouseWheelEvent(event);
+  if (Shell::Get()->app_list_controller())
+    Shell::Get()->app_list_controller()->ProcessMouseWheelEvent(event);
 }
 
 void Shelf::AddObserver(ShelfObserver* observer) {
@@ -285,11 +299,51 @@ void Shelf::NotifyShelfIconPositionsChanged() {
 }
 
 StatusAreaWidget* Shelf::GetStatusAreaWidget() const {
-  return shelf_widget_->status_area_widget();
+  return shelf_widget_ ? shelf_widget_->status_area_widget() : nullptr;
+}
+
+TrayBackgroundView* Shelf::GetSystemTrayAnchorView() const {
+  return GetStatusAreaWidget()->GetSystemTrayAnchor();
+}
+
+gfx::Rect Shelf::GetSystemTrayAnchorRect() const {
+  gfx::Rect work_area = GetWorkAreaInsets()->user_work_area_bounds();
+  switch (alignment_) {
+    case SHELF_ALIGNMENT_BOTTOM:
+    case SHELF_ALIGNMENT_BOTTOM_LOCKED:
+      return gfx::Rect(
+          base::i18n::IsRTL() ? work_area.x() : work_area.right() - 1,
+          work_area.bottom() - 1, 0, 0);
+    case SHELF_ALIGNMENT_LEFT:
+      return gfx::Rect(work_area.x(), work_area.bottom() - 1, 0, 0);
+    case SHELF_ALIGNMENT_RIGHT:
+      return gfx::Rect(work_area.right() - 1, work_area.bottom() - 1, 0, 0);
+  }
+  NOTREACHED();
+  return gfx::Rect();
+}
+
+bool Shelf::ShouldHideOnSecondaryDisplay(session_manager::SessionState state) {
+  if (Shell::GetPrimaryRootWindowController()->shelf() == this)
+    return false;
+
+  return state != session_manager::SessionState::ACTIVE;
 }
 
 void Shelf::SetVirtualKeyboardBoundsForTesting(const gfx::Rect& bounds) {
-  shelf_layout_manager_->OnKeyboardBoundsChanging(bounds);
+  KeyboardStateDescriptor state;
+  state.is_visible = !bounds.IsEmpty();
+  state.visual_bounds = bounds;
+  state.occluded_bounds_in_screen = bounds;
+  state.displaced_bounds_in_screen = gfx::Rect();
+  WorkAreaInsets* work_area_insets = GetWorkAreaInsets();
+  work_area_insets->OnKeyboardVisibilityChanged(state.is_visible);
+  work_area_insets->OnKeyboardVisibleBoundsChanged(state.visual_bounds);
+  work_area_insets->OnKeyboardOccludedBoundsChanged(
+      state.occluded_bounds_in_screen);
+  work_area_insets->OnKeyboardDisplacingBoundsChanged(
+      state.displaced_bounds_in_screen);
+  work_area_insets->OnKeyboardAppearanceChanged(state);
 }
 
 ShelfLockingManager* Shelf::GetShelfLockingManagerForTesting() {
@@ -300,19 +354,9 @@ ShelfView* Shelf::GetShelfViewForTesting() {
   return shelf_widget_->shelf_view_for_testing();
 }
 
-LoginShelfView* Shelf::GetLoginShelfViewForTesting() {
-  return shelf_widget_->login_shelf_view_for_testing();
-}
-
 void Shelf::WillDeleteShelfLayoutManager() {
-  if (Shell::GetAshConfig() == Config::MASH) {
-    // TODO(sky): this should be removed once Shell is used everywhere.
-    ShutdownShelfWidget();
-  }
-
   // Clear event handlers that might forward events to the destroyed instance.
   auto_hide_event_handler_.reset();
-  bezel_event_handler_.reset();
 
   DCHECK(shelf_layout_manager_);
   shelf_layout_manager_->RemoveObserver(this);
@@ -324,10 +368,8 @@ void Shelf::WillChangeVisibilityState(ShelfVisibilityState new_state) {
     observer.WillChangeVisibilityState(new_state);
   if (new_state != SHELF_AUTO_HIDE) {
     auto_hide_event_handler_.reset();
-  } else if (!auto_hide_event_handler_ &&
-             Shell::GetAshConfig() != Config::MASH) {
-    auto_hide_event_handler_ =
-        std::make_unique<AutoHideEventHandler>(shelf_layout_manager());
+  } else if (!auto_hide_event_handler_) {
+    auto_hide_event_handler_ = std::make_unique<AutoHideEventHandler>(this);
   }
 }
 
@@ -342,6 +384,12 @@ void Shelf::OnBackgroundUpdated(ShelfBackgroundType background_type,
     return;
   for (auto& observer : observers_)
     observer.OnBackgroundTypeChanged(background_type, change_type);
+}
+
+WorkAreaInsets* Shelf::GetWorkAreaInsets() const {
+  const aura::Window* window = GetWindow();
+  DCHECK(window);
+  return WorkAreaInsets::ForWindow(window->GetRootWindow());
 }
 
 }  // namespace ash

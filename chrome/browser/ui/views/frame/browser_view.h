@@ -13,9 +13,11 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "chrome/browser/banners/app_banner_manager.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
@@ -23,19 +25,22 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
-#include "chrome/browser/ui/infobar_container_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/views/exclusive_access_bubble_views_context.h"
 #include "chrome/browser/ui/views/extensions/extension_keybinding_registry_views.h"
+#include "chrome/browser/ui/views/feature_promos/reopen_tab_promo_controller.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
+#include "chrome/browser/ui/views/frame/browser_view_layout.h"
 #include "chrome/browser/ui/views/frame/contents_web_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
 #include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
+#include "chrome/browser/ui/views/intent_picker_bubble_view.h"
 #include "chrome/browser/ui/views/load_complete_listener.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
-#include "chrome/common/features.h"
-#include "components/omnibox/browser/omnibox_popup_model_observer.h"
+#include "chrome/common/buildflags.h"
+#include "components/infobars/core/infobar_container.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/gfx/native_widget_types.h"
@@ -45,27 +50,25 @@
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/client_view.h"
 
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/ui/views/intent_picker_bubble_view.h"
-#endif  // defined(OS_CHROMEOS)
-
 // NOTE: For more information about the objects and files in this directory,
 // view: http://dev.chromium.org/developers/design-documents/browser-window
 
 class BookmarkBarView;
 class Browser;
-class BrowserViewLayout;
 class ContentsLayoutManager;
 class DownloadShelfView;
 class ExclusiveAccessBubbleViews;
 class FullscreenControlHost;
 class InfoBarContainerView;
 class LocationBarView;
-class NewBackShortcutBubble;
+class PageActionIconContainer;
 class StatusBubbleViews;
 class TabStrip;
+class TabStripRegionView;
+class ToolbarButtonProvider;
 class ToolbarView;
 class TopContainerView;
+class TopControlsSlideControllerTest;
 class WebContentsCloseHandler;
 
 namespace extensions {
@@ -74,8 +77,11 @@ class Command;
 class Extension;
 }
 
+namespace version_info {
+enum class Channel;
+}
+
 namespace views {
-class AccessiblePaneView;
 class ExternalFocusTracker;
 class WebView;
 }
@@ -92,21 +98,19 @@ class BrowserView : public BrowserWindow,
                     public views::WidgetDelegate,
                     public views::WidgetObserver,
                     public views::ClientView,
-                    public InfoBarContainerDelegate,
+                    public infobars::InfoBarContainer::Delegate,
                     public LoadCompleteListener::Delegate,
-                    public OmniboxPopupModelObserver,
                     public ExclusiveAccessContext,
                     public ExclusiveAccessBubbleViewsContext,
-                    public extensions::ExtensionKeybindingRegistry::Delegate {
+                    public extensions::ExtensionKeybindingRegistry::Delegate,
+                    public ImmersiveModeController::Observer,
+                    public banners::AppBannerManager::Observer {
  public:
   // The browser view's class name.
   static const char kViewClassName[];
 
-  BrowserView();
+  explicit BrowserView(std::unique_ptr<Browser> browser);
   ~BrowserView() override;
-
-  // Takes ownership of |browser|.
-  void Init(Browser* browser);
 
   void set_frame(BrowserFrame* frame) { frame_ = frame; }
   BrowserFrame* frame() const { return frame_; }
@@ -139,17 +143,15 @@ class BrowserView : public BrowserWindow,
   Browser* browser() { return browser_.get(); }
   const Browser* browser() const { return browser_.get(); }
 
+  const TopControlsSlideController* top_controls_slide_controller() const {
+    return top_controls_slide_controller_.get();
+  }
+
   // Initializes (or re-initializes) the status bubble.  We try to only create
   // the bubble once and re-use it for the life of the browser, but certain
   // events (such as changing enabling/disabling Aero on Win) can force a need
   // to change some of the bubble's creation parameters.
   void InitStatusBubble();
-
-  // Returns the apparent bounds of the toolbar, in BrowserView coordinates.
-  // These differ from |toolbar_.bounds()| in that they match where the toolbar
-  // background image is drawn -- slightly outside the "true" bounds
-  // horizontally. Note that this returns the bounds for the toolbar area.
-  gfx::Rect GetToolbarBounds() const;
 
   // Returns the constraining bounding box that should be used to lay out the
   // FindBar within. This is _not_ the size of the find bar, just the bounding
@@ -171,8 +173,19 @@ class BrowserView : public BrowserWindow,
   // Container for the tabstrip, toolbar, etc.
   TopContainerView* top_container() { return top_container_; }
 
+  // Container for the web contents.
+  views::View* contents_container() { return contents_container_; }
+
+  void set_contents_border_widget(views::Widget* contents_border_widget) {
+    GetBrowserViewLayout()->set_contents_border_widget(contents_border_widget);
+  }
+  views::Widget* contents_border_widget() {
+    return GetBrowserViewLayout()->contents_border_widget();
+  }
+
   // Accessor for the TabStrip.
   TabStrip* tabstrip() { return tabstrip_; }
+  const TabStrip* tabstrip() const { return tabstrip_; }
 
   // Accessor for the Toolbar.
   ToolbarView* toolbar() { return toolbar_; }
@@ -195,8 +208,13 @@ class BrowserView : public BrowserWindow,
     return exclusive_access_bubble_.get();
   }
 
+  // Accessor for the contents WebView.
+  views::WebView* contents_web_view() { return contents_web_view_; }
+
   // Returns true if various window components are visible.
   bool IsTabStripVisible() const;
+
+  bool IsInfoBarVisible() const;
 
   // Returns true if the profile associated with this Browser window is
   // incognito.
@@ -209,10 +227,6 @@ class BrowserView : public BrowserWindow,
   // Returns true if the profile associated with this Browser window is
   // not incognito or a guest session.
   bool IsRegularOrGuestSession() const;
-
-  // Returns whether or not a client edge (the border around the web content)
-  // should be laid out and drawn.
-  bool HasClientEdge() const;
 
   // Provides the containing frame with the accelerator for the specified
   // command id. This can be used to provide menu item shortcut hints etc.
@@ -237,6 +251,18 @@ class BrowserView : public BrowserWindow,
     return browser_->is_type_tabbed();
   }
 
+  // Returns true if the Browser object associated with this BrowserView is a
+  // for an installed hosted app.
+  bool IsBrowserTypeHostedApp() const;
+
+  // Returns true if the top browser controls (a.k.a. top-chrome UIs) are
+  // allowed to slide up and down with the gesture scrolls on the current tab's
+  // page.
+  bool IsTopControlsSlideBehaviorEnabled() const;
+
+  // Returns the current shown ratio of the top browser controls.
+  float GetTopControlsSlideBehaviorShownRatio() const;
+
   // See ImmersiveModeController for description.
   ImmersiveModeController* immersive_mode_controller() const {
     return immersive_mode_controller_.get();
@@ -251,24 +277,38 @@ class BrowserView : public BrowserWindow,
 
   // Called after the widget's fullscreen state is changed without going through
   // FullscreenController. This method does any processing which was skipped.
-  // Only exiting fullscreen in this way is currently supported.
   void FullscreenStateChanged();
 
-  // Overridden from BrowserWindow:
+  // Sets the button provider for this BrowserView. Must be called before
+  // InitViews() which sets the ToolbarView as the default button provider.
+  void SetToolbarButtonProvider(ToolbarButtonProvider* provider);
+  ToolbarButtonProvider* toolbar_button_provider() {
+    return toolbar_button_provider_;
+  }
+
+  // BrowserWindow:
   void Show() override;
   void ShowInactive() override;
   void Hide() override;
+  bool IsVisible() const override;
   void SetBounds(const gfx::Rect& bounds) override;
   void Close() override;
   void Activate() override;
   void Deactivate() override;
   bool IsActive() const override;
   void FlashFrame(bool flash) override;
-  bool IsAlwaysOnTop() const override;
-  void SetAlwaysOnTop(bool always_on_top) override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
+  void SetZOrderLevel(ui::ZOrderLevel order) override;
   gfx::NativeWindow GetNativeWindow() const override;
+  void SetTopControlsShownRatio(content::WebContents* web_contents,
+                                float ratio) override;
+  bool DoBrowserControlsShrinkRendererSize(
+      const content::WebContents* contents) const override;
+  int GetTopControlsHeight() const override;
+  void SetTopControlsGestureScrollInProgress(bool in_progress) override;
   StatusBubble* GetStatusBubble() override;
   void UpdateTitleBar() override;
+  void UpdateFrameColor() override;
   void BookmarkBarStateChanged(
       BookmarkBar::AnimateChangeType change_type) override;
   void UpdateDevTools() override;
@@ -279,11 +319,14 @@ class BrowserView : public BrowserWindow,
                           content::WebContents* new_contents,
                           int index,
                           int reason) override;
+  void OnTabDetached(content::WebContents* contents, bool was_active) override;
+  void OnTabRestored(int command_id) override;
   void ZoomChangedForActiveTab(bool can_show_bubble) override;
   gfx::Rect GetRestoredBounds() const override;
   ui::WindowShowState GetRestoredState() const override;
   gfx::Rect GetBounds() const override;
   gfx::Size GetContentsSize() const override;
+  void SetContentsSize(const gfx::Size& size) override;
   bool IsMaximized() const override;
   bool IsMinimized() const override;
   void Maximize() override;
@@ -295,24 +338,28 @@ class BrowserView : public BrowserWindow,
   void UpdateExclusiveAccessExitBubbleContent(
       const GURL& url,
       ExclusiveAccessBubbleType bubble_type,
-      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback) override;
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
+      bool force_update) override;
   void OnExclusiveAccessUserInput() override;
   bool ShouldHideUIForFullscreen() const override;
   bool IsFullscreen() const override;
   bool IsFullscreenBubbleVisible() const override;
-  void MaybeShowNewBackShortcutBubble(bool forward) override;
-  void HideNewBackShortcutBubble() override;
+  PageActionIconContainer* GetOmniboxPageActionIconContainer() override;
+  PageActionIconContainer* GetToolbarPageActionIconContainer() override;
   LocationBar* GetLocationBar() const override;
   void SetFocusToLocationBar(bool select_all) override;
   void UpdateReloadStopState(bool is_loading, bool force) override;
   void UpdateToolbar(content::WebContents* contents) override;
+  void UpdateToolbarVisibility(bool visible, bool animate) override;
   void ResetToolbarTabState(content::WebContents* contents) override;
   void FocusToolbar() override;
   ToolbarActionsBar* GetToolbarActionsBar() override;
+  ExtensionsContainer* GetExtensionsContainer() override;
   void ToolbarSizeChanged(bool is_animating) override;
+  void TabDraggingStatusChanged(bool is_dragging) override;
   void FocusAppMenu() override;
   void FocusBookmarksToolbar() override;
-  void FocusInfobars() override;
+  void FocusInactivePopupForAccessibility() override;
   void RotatePaneFocus(bool forwards) override;
   void DestroyBrowser() override;
   bool IsBookmarkBarVisible() const override;
@@ -320,27 +367,39 @@ class BrowserView : public BrowserWindow,
   bool IsTabStripEditable() const override;
   bool IsToolbarVisible() const override;
   bool IsToolbarShowing() const override;
+  ClickToCallDialog* ShowClickToCallDialog(
+      content::WebContents* contents,
+      ClickToCallSharingDialogController* controller) override;
   void ShowUpdateChromeDialog() override;
-#if defined(OS_CHROMEOS)
   void ShowIntentPickerBubble(
       std::vector<IntentPickerBubbleView::AppInfo> app_info,
+      bool enable_stay_in_chrome,
+      bool show_persistence_options,
       IntentPickerResponse callback) override;
-  void SetIntentPickerViewVisibility(bool visible) override;
-#endif  //  defined(OS_CHROMEOS)
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override;
   autofill::SaveCardBubbleView* ShowSaveCreditCardBubble(
       content::WebContents* contents,
       autofill::SaveCardBubbleController* controller,
       bool is_user_gesture) override;
+  send_tab_to_self::SendTabToSelfBubbleView* ShowSendTabToSelfBubble(
+      content::WebContents* contents,
+      send_tab_to_self::SendTabToSelfBubbleController* controller,
+      bool is_user_gesture) override;
+  autofill::LocalCardMigrationBubble* ShowLocalCardMigrationBubble(
+      content::WebContents* contents,
+      autofill::LocalCardMigrationBubbleController* controller,
+      bool is_user_gesture) override;
   ShowTranslateBubbleResult ShowTranslateBubble(
       content::WebContents* contents,
       translate::TranslateStep step,
+      const std::string& source_language,
+      const std::string& target_language,
       translate::TranslateErrors::Type error_type,
       bool is_user_gesture) override;
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
   void ShowOneClickSigninConfirmation(
       const base::string16& email,
-      const StartSyncCallback& start_sync_callback) override;
+      base::OnceCallback<void(bool)> confirmed_callback) override;
 #endif
   // TODO(beng): Not an override, move somewhere else.
   void SetDownloadShelfVisible(bool visible);
@@ -351,16 +410,14 @@ class BrowserView : public BrowserWindow,
       Browser::DownloadClosePreventionType dialog_type,
       bool app_modal,
       const base::Callback<void(bool)>& callback) override;
-  void UserChangedTheme() override;
+  void UserChangedTheme(BrowserThemeChangeType theme_change_type) override;
   void ShowAppMenu() override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) override;
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) override;
   void CutCopyPaste(int command_id) override;
-  WindowOpenDisposition GetDispositionForPopupBounds(
-      const gfx::Rect& bounds) override;
-  FindBar* CreateFindBar() override;
+  std::unique_ptr<FindBar> CreateFindBar() override;
   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
       override;
   void ShowAvatarBubbleFromAvatarButton(
@@ -368,7 +425,7 @@ class BrowserView : public BrowserWindow,
       const signin::ManageAccountsParams& manage_accounts_params,
       signin_metrics::AccessPoint access_point,
       bool is_source_keyboard) override;
-  int GetRenderViewHeightInsetWithDetachedBookmarkBar() override;
+  void ShowHatsBubbleFromAppMenuButton() override;
   void ExecuteExtensionCommand(const extensions::Extension* extension,
                                const extensions::Command& command) override;
   ExclusiveAccessContext* GetExclusiveAccessContext() override;
@@ -379,26 +436,28 @@ class BrowserView : public BrowserWindow,
   std::string GetWorkspace() const override;
   bool IsVisibleOnAllWorkspaces() const override;
 
+  void ShowEmojiPanel() override;
+
   BookmarkBarView* GetBookmarkBarView() const;
   LocationBarView* GetLocationBarView() const;
-  views::View* GetTabContentsContainerView() const;
 
-  // Overridden from TabStripModelObserver:
-  void TabInsertedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* contents,
-                     int index,
-                     bool foreground) override;
-  void TabDetachedAt(content::WebContents* contents, int index) override;
-  void TabDeactivated(content::WebContents* contents) override;
+  void ShowInProductHelpPromo(InProductHelpFeature iph_feature) override;
+
+  // TabStripModelObserver:
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
   void TabStripEmpty() override;
-  void WillCloseAllTabs() override;
-  void CloseAllTabsCanceled() override;
+  void WillCloseAllTabs(TabStripModel* tab_strip_model) override;
+  void CloseAllTabsStopped(TabStripModel* tab_strip_model,
+                           CloseAllStoppedReason reason) override;
 
-  // Overridden from ui::AcceleratorProvider:
+  // ui::AcceleratorProvider:
   bool GetAcceleratorForCommandId(int command_id,
                                   ui::Accelerator* accelerator) const override;
 
-  // Overridden from views::WidgetDelegate:
+  // views::WidgetDelegate:
   bool CanResize() const override;
   bool CanMaximize() const override;
   bool CanMinimize() const override;
@@ -419,50 +478,50 @@ class BrowserView : public BrowserWindow,
                                ui::WindowShowState* show_state) const override;
   views::View* GetContentsView() override;
   views::ClientView* CreateClientView(views::Widget* widget) override;
+  views::View* CreateOverlayView() override;
   void OnWindowBeginUserBoundsChange() override;
+  void OnWindowEndUserBoundsChange() override;
   void OnWidgetMove() override;
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
   void GetAccessiblePanes(std::vector<View*>* panes) override;
 
-  // Overridden from views::WidgetObserver:
+  // views::WidgetObserver:
   void OnWidgetDestroying(views::Widget* widget) override;
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
 
-  // Overridden from views::ClientView:
+  // views::ClientView:
   bool CanClose() override;
   int NonClientHitTest(const gfx::Point& point) override;
   gfx::Size GetMinimumSize() const override;
 
-  // InfoBarContainerDelegate:
-  SkColor GetInfoBarSeparatorColor() const override;
+  // infobars::InfoBarContainer::Delegate:
   void InfoBarContainerStateChanged(bool is_animating) override;
-  bool DrawInfoBarArrows(int* x) const override;
 
-  // Overridden from views::View:
+  // views::View:
   const char* GetClassName() const override;
   void Layout() override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   void PaintChildren(const views::PaintInfo& paint_info) override;
+  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void ChildPreferredSizeChanged(View* child) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnThemeChanged() override;
 
-  // Overridden from ui::AcceleratorTarget:
+  // ui::AcceleratorTarget:
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
 
-  // OmniboxPopupModelObserver overrides
-  void OnOmniboxPopupShownOrHidden() override;
-
-  // ExclusiveAccessContext overrides
+  // ExclusiveAccessContext:
   Profile* GetProfile() override;
+  void UpdateUIForTabFullscreen(TabFullscreenState state) override;
   content::WebContents* GetActiveWebContents() override;
   void HideDownloadShelf() override;
   void UnhideDownloadShelf() override;
+  bool CanUserExitFullscreen() const override;
 
-  // ExclusiveAccessBubbleViewsContext overrides
+  // ExclusiveAccessBubbleViewsContext:
   ExclusiveAccessManager* GetExclusiveAccessManager() override;
   views::Widget* GetBubbleAssociatedWidget() override;
   ui::AcceleratorProvider* GetAcceleratorProvider() override;
@@ -474,9 +533,18 @@ class BrowserView : public BrowserWindow,
   void DestroyAnyExclusiveAccessBubble() override;
   bool CanTriggerOnMouse() const override;
 
-  // extension::ExtensionKeybindingRegistry::Delegate overrides
+  // extension::ExtensionKeybindingRegistry::Delegate:
   extensions::ActiveTabPermissionGranter* GetActiveTabPermissionGranter()
       override;
+
+  // ImmersiveModeController::Observer:
+  void OnImmersiveRevealStarted() override;
+  void OnImmersiveRevealEnded() override;
+  void OnImmersiveFullscreenExited() override;
+  void OnImmersiveModeControllerDestroyed() override;
+
+  // banners::AppBannerManager::Observer:
+  void OnInstallableWebAppStatusUpdated() override;
 
   // Creates an accessible tab label for screen readers that includes the tab
   // status for the given tab index. This takes the form of
@@ -485,31 +553,29 @@ class BrowserView : public BrowserWindow,
 
   // Testing interface:
   views::View* GetContentsContainerForTest() { return contents_container_; }
-  views::WebView* GetContentsWebViewForTest() { return contents_web_view_; }
   views::WebView* GetDevToolsWebViewForTest() { return devtools_web_view_; }
+  FullscreenControlHost* fullscreen_control_host_for_test() {
+    return fullscreen_control_host_.get();
+  }
 
-  // Called by BrowserFrame during theme changes.
-  void NativeThemeUpdated(const ui::NativeTheme* theme);
-
-  // Gets the FullscreenControlHost for this BrowserView, creating it if it does
-  // not yet exist.
-  FullscreenControlHost* GetFullscreenControlHost();
+  // Gets the amount to vertically shift the placement of the icons on the
+  // bookmark bar so the icons appear centered relative to the views above and
+  // below them.
+  int GetBookmarkBarContentVerticalOffset() const;
 
  private:
   // Do not friend BrowserViewLayout. Use the BrowserViewLayoutDelegate
   // interface to keep these two classes decoupled and testable.
   friend class BrowserViewLayoutDelegateImpl;
+  friend class TopControlsSlideControllerTest;
   FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, BrowserView);
+  FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, AccessibleWindowTitle);
 
   // If the browser is in immersive full screen mode, it will reveal the
   // tabstrip for a short duration. This is useful for shortcuts that perform
   // tab navigations and need to give users a visual clue as to what tabs are
   // affected.
   void RevealTabStripIfNeeded();
-
-  // Appends to |toolbars| a pointer to each AccessiblePaneView that
-  // can be traversed using F6, in the order they should be traversed.
-  void GetAccessiblePanes(std::vector<views::AccessiblePaneView*>* panes);
 
   // Constructs and initializes the child views.
   void InitViews();
@@ -532,11 +598,6 @@ class BrowserView : public BrowserWindow,
   // Browser type) and there should be a subsequent re-layout to show it.
   // |contents| can be null.
   bool MaybeShowBookmarkBar(content::WebContents* contents);
-
-  // Moves the bookmark bar view to the specified parent, which may be null,
-  // |this|, or |top_container_|. Ensures that |top_container_| stays in front
-  // of |bookmark_bar_view_|.
-  void SetBookmarkBarParent(views::View* new_parent);
 
   // Prepare to show an Info Bar for the specified WebContents. Returns
   // true if there is an Info Bar to show and one is supported for this Browser
@@ -601,14 +662,34 @@ class BrowserView : public BrowserWindow,
   // an existing showing one to the front.
   void ActivateAppModalDialog() const;
 
-  // Returns the max top arrow height for infobar.
-  int GetMaxTopInfoBarArrowHeight();
-
   // Retrieves the chrome command id associated with |accelerator|. The function
   // returns false if |accelerator| is unknown. Otherwise |command_id| will be
   // set to the chrome command id defined in //chrome/app/chrome_command_ids.h.
   bool FindCommandIdForAccelerator(const ui::Accelerator& accelerator,
                                    int* command_id) const;
+
+  // Called by GetAccessibleWindowTitle, split out to make it testable.
+  base::string16 GetAccessibleWindowTitleForChannelAndProfile(
+      version_info::Channel,
+      Profile* profile) const;
+
+  // Returns the amount of space between the bottom of the location bar to the
+  // bottom of the toolbar. This does not include the part of the toolbar that
+  // overlaps with the bookmark bar.
+  int GetBottomInsetOfLocationBarWithinToolbar() const;
+
+  // Reparents |top_container_| to be a child of |this| instead of
+  // |overlay_view_|.
+  void ReparentTopContainerForEndOfImmersive();
+
+  // Ensures that the correct focus order is set for child views, regardless of
+  // the actual child order.
+  void EnsureFocusOrder();
+
+  // Returns true when the window icon of this browser window can change based
+  // on the context. GetWindowIcon() method should return the same image if
+  // this returns false.
+  bool CanChangeWindowIcon() const;
 
   // The BrowserFrame that hosts this view.
   BrowserFrame* frame_ = nullptr;
@@ -651,11 +732,19 @@ class BrowserView : public BrowserWindow,
   // the top views in immersive fullscreen.
   TopContainerView* top_container_ = nullptr;
 
+  // The view that contains the tabstrip, new tab button, and grab handle space.
+  TabStripRegionView* tab_strip_region_view_ = nullptr;
+
   // The TabStrip.
   TabStrip* tabstrip_ = nullptr;
 
   // The Toolbar containing the navigation buttons, menus and the address bar.
   ToolbarView* toolbar_ = nullptr;
+
+  // The OverlayView for the widget, which is used to host |top_container_|
+  // during immersive reveal.
+  std::unique_ptr<views::ViewTargeterDelegate> overlay_view_targeter_;
+  views::View* overlay_view_ = nullptr;
 
   // The Bookmark Bar View for this window. Lazily created. May be null for
   // non-tabbed browsers like popups. May not be visible.
@@ -682,6 +771,10 @@ class BrowserView : public BrowserWindow,
   // Handled by ContentsLayoutManager.
   views::View* contents_container_ = nullptr;
 
+  // Provides access to the toolbar buttons this browser view uses. Buttons may
+  // appear in a hosted app frame or in a tabbed UI toolbar.
+  ToolbarButtonProvider* toolbar_button_provider_ = nullptr;
+
   // Tracks and stores the last focused view which is not the
   // devtools_web_view_ or any of its children. Used to restore focus once
   // the devtools_web_view_ is hidden.
@@ -696,33 +789,52 @@ class BrowserView : public BrowserWindow,
   // True if we have already been initialized.
   bool initialized_ = false;
 
-  // True if we're currently handling a theme change (i.e. inside
-  // OnThemeChanged()).
-  bool handling_theme_changed_ = false;
+  // True if (as of the last time it was checked) the frame type is native.
+  bool using_native_frame_ = true;
+
+#if defined(OS_WIN)
+  // True if (as of the last time it was checked) we're using a custom drawn
+  // title bar.
+  bool using_custom_titlebar_ = true;
+#endif
 
   // True when in ProcessFullscreen(). The flag is used to avoid reentrance and
   // to ignore requests to layout while in ProcessFullscreen() to reduce
   // jankiness.
   bool in_process_fullscreen_ = false;
 
-  std::unique_ptr<ExclusiveAccessBubbleViews> exclusive_access_bubble_;
+  // True if we're participating in a tab dragging process. The value can be
+  // true if the accociated browser is the dragged browser or the source browser
+  // that the drag tab(s) originates from. During tab dragging process, the
+  // dragged browser or the source browser's bounds may change, the fast resize
+  // strategy will be used to resize its web contents for smoother dragging.
+  bool in_tab_dragging_ = false;
 
-  std::unique_ptr<NewBackShortcutBubble> new_back_shortcut_bubble_;
-  base::TimeTicks last_back_shortcut_press_time_;
+  std::unique_ptr<ExclusiveAccessBubbleViews> exclusive_access_bubble_;
 
 #if defined(OS_WIN)
   // Helper class to listen for completion of first page load.
   std::unique_ptr<LoadCompleteListener> load_complete_listener_;
 #endif
 
-  // The timer used to update frames for the Loading Animation.
+  // The timer used to update frames for tab-loading animations.
   base::RepeatingTimer loading_animation_timer_;
+
+  // Start timestamp for all throbbers. Set when |loading_animation_timer_|
+  // starts and used for all consecutive tabs (while any are loading) to keep
+  // throbbers in sync.
+  base::TimeTicks loading_animation_start_;
 
   views::UnhandledKeyboardEventHandler unhandled_keyboard_event_handler_;
 
-  // If this flag is set then SetFocusToLocationBar() will set focus to the
-  // location bar even if the browser window is not active.
-  bool force_location_bar_focus_ = false;
+  // Whether OnWidgetActivationChanged should RestoreFocus. If this is set and
+  // is true, OnWidgetActivationChanged will call RestoreFocus. This is set
+  // to true when not set in Show() so that RestoreFocus on activation only
+  // happens for very first Show() calls.
+  base::Optional<bool> restore_focus_on_activation_;
+
+  // This is non-null on Chrome OS only.
+  std::unique_ptr<TopControlsSlideController> top_controls_slide_controller_;
 
   std::unique_ptr<ImmersiveModeController> immersive_mode_controller_;
 
@@ -735,6 +847,18 @@ class BrowserView : public BrowserWindow,
   std::unique_ptr<BrowserWindowHistogramHelper> histogram_helper_;
 
   std::unique_ptr<FullscreenControlHost> fullscreen_control_host_;
+
+  ReopenTabPromoController reopen_tab_promo_controller_{this};
+
+  struct ResizeSession {
+    // The time when user started resizing the window.
+    base::TimeTicks begin_timestamp;
+    base::TimeTicks last_resize_timestamp;
+    // The number of times the window size is changed from the start (i.e. since
+    // begin_timestamp).
+    size_t step_count = 0;
+  };
+  base::Optional<ResizeSession> interactive_resize_;
 
   mutable base::WeakPtrFactory<BrowserView> activate_modal_dialog_factory_{
       this};

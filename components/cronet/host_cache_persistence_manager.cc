@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
 #include "components/prefs/pref_service.h"
@@ -27,8 +27,7 @@ HostCachePersistenceManager::HostCachePersistenceManager(
       delay_(delay),
       net_log_(net::NetLogWithSource::Make(
           net_log,
-          net::NetLogSourceType::HOST_CACHE_PERSISTENCE_MANAGER)),
-      weak_factory_(this) {
+          net::NetLogSourceType::HOST_CACHE_PERSISTENCE_MANAGER)) {
   DCHECK(cache_);
   DCHECK(pref_service_);
 
@@ -60,8 +59,9 @@ void HostCachePersistenceManager::ReadFromDisk() {
   net_log_.BeginEvent(net::NetLogEventType::HOST_CACHE_PREF_READ);
   const base::ListValue* pref_value = pref_service_->GetList(pref_name_);
   bool success = cache_->RestoreFromListValue(*pref_value);
-  net_log_.EndEvent(net::NetLogEventType::HOST_CACHE_PREF_READ,
-                    net::NetLog::BoolCallback("success", success));
+  net_log_.AddEntryWithBoolParams(net::NetLogEventType::HOST_CACHE_PREF_READ,
+                                  net::NetLogEventPhase::END, "success",
+                                  success);
 
   UMA_HISTOGRAM_BOOLEAN("DNS.HostCache.RestoreSuccess", success);
   UMA_HISTOGRAM_COUNTS_1000("DNS.HostCache.RestoreSize", pref_value->GetSize());
@@ -75,8 +75,8 @@ void HostCachePersistenceManager::ScheduleWrite() {
 
   net_log_.AddEvent(net::NetLogEventType::HOST_CACHE_PERSISTENCE_START_TIMER);
   timer_.Start(FROM_HERE, delay_,
-               base::Bind(&HostCachePersistenceManager::WriteToDisk,
-                          weak_factory_.GetWeakPtr()));
+               base::BindOnce(&HostCachePersistenceManager::WriteToDisk,
+                              weak_factory_.GetWeakPtr()));
 }
 
 void HostCachePersistenceManager::WriteToDisk() {

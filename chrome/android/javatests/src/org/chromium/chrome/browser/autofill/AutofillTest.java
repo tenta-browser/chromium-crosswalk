@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.autofill;
 
 import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
-import android.graphics.Color;
 import android.support.test.filters.SmallTest;
 import android.view.View;
 
@@ -16,7 +15,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
@@ -27,9 +25,10 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.autofill.AutofillDelegate;
 import org.chromium.components.autofill.AutofillPopup;
 import org.chromium.components.autofill.AutofillSuggestion;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.ui.DropdownItem;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.ViewAndroidDelegate;
@@ -43,8 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class AutofillTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -61,19 +59,16 @@ public class AutofillTest {
         mMockAutofillCallback = new MockAutofillCallback();
         final ChromeActivity activity = mActivityTestRule.getActivity();
         final ViewAndroidDelegate viewDelegate =
-                ViewAndroidDelegate.createBasicDelegate(
-                        activity.getCurrentContentViewCore().getContainerView());
+                ViewAndroidDelegate.createBasicDelegate(activity.getActivityTab().getContentView());
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             View anchorView = viewDelegate.acquireView();
             viewDelegate.setViewPosition(anchorView, 50f, 500f, 500f, 500f, 10, 10);
 
             mWindowAndroid = new ActivityWindowAndroid(activity);
             mAutofillPopup = new AutofillPopup(activity, anchorView, mMockAutofillCallback);
-            mAutofillPopup.filterAndShow(new AutofillSuggestion[0], false /* isRtl */,
-                    Color.TRANSPARENT /* backgroundColor */,
-                    Color.TRANSPARENT /* dividerColor */, 0 /* dropdownItemHeight */,
-                    0 /* margin */);
+            mAutofillPopup.filterAndShow(
+                    new AutofillSuggestion[0], /* isRtl= */ false, /* isRefresh= */ false);
         });
     }
 
@@ -138,11 +133,10 @@ public class AutofillTest {
     }
 
     public void openAutofillPopupAndWaitUntilReady(final AutofillSuggestion[] suggestions) {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> mAutofillPopup.filterAndShow(suggestions, false /* isRtl */,
-                        Color.TRANSPARENT /* backgroundColor */,
-                        Color.TRANSPARENT /* dividerColor */, 0 /* dropdownItemHeight */,
-                        0 /* margin */));
+        TestThreadUtils.runOnUiThreadBlocking(
+                ()
+                        -> mAutofillPopup.filterAndShow(
+                                suggestions, /* isRtl= */ false, /* isRefresh= */ false));
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {

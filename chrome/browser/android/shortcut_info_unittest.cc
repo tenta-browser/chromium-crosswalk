@@ -7,8 +7,8 @@
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "content/public/common/manifest.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
 #include "url/gurl.h"
 
 class ShortcutInfoTest : public testing::Test {
@@ -17,7 +17,7 @@ class ShortcutInfoTest : public testing::Test {
 
  protected:
   ShortcutInfo info_;
-  content::Manifest manifest_;
+  blink::Manifest manifest_;
 
   DISALLOW_COPY_AND_ASSIGN(ShortcutInfoTest);
 };
@@ -46,11 +46,8 @@ TEST_F(ShortcutInfoTest, AllAttributesUpdate) {
   info_.background_color = 0xffaa0000;
   manifest_.background_color = 0xffbb0000;
 
-  info_.splash_screen_url = GURL("https://old.com/splash.html");
-  manifest_.splash_screen_url = GURL("https://new.com/splash.html");
-
   info_.icon_urls.push_back("https://old.com/icon.png");
-  content::Manifest::Icon icon;
+  blink::Manifest::ImageResource icon;
   icon.src = GURL("https://new.com/icon.png");
   manifest_.icons.push_back(icon);
 
@@ -63,7 +60,6 @@ TEST_F(ShortcutInfoTest, AllAttributesUpdate) {
   ASSERT_EQ(manifest_.display, info_.display);
   ASSERT_EQ(manifest_.theme_color, info_.theme_color);
   ASSERT_EQ(manifest_.background_color, info_.background_color);
-  ASSERT_EQ(manifest_.splash_screen_url, info_.splash_screen_url);
   ASSERT_EQ(1u, info_.icon_urls.size());
   ASSERT_EQ(manifest_.icons[0].src, GURL(info_.icon_urls[0]));
 }

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/compiler_specific.h"
+#include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
@@ -41,7 +42,14 @@ class ScopedCOMInitializer;
 #endif  // defined(OS_WIN)
 }  // namespace base
 
+#if defined(TOOLKIT_VIEWS)
+namespace views {
+class ViewsDelegate;
+}
+#endif  // defined(TOOLKIT_VIEWS)
+
 class Browser;
+class MainThreadStackSamplingProfiler;
 class Profile;
 #if defined(OS_MACOSX)
 class ScopedBundleSwizzlerMac;
@@ -76,7 +84,7 @@ class ScopedBundleSwizzlerMac;
 // InProcessBrowserTest::SetUpCommandLine(). If a test needs to change the
 // default command line, it can override SetUpDefaultCommandLine(), where it
 // should invoke InProcessBrowserTest::SetUpDefaultCommandLine() to get the
-// default swtiches, and modify them as needed.
+// default switches, and modify them as needed.
 //
 // SetUpOnMainThread() is called just after creating the default browser object
 // and before executing the real test code. It's mainly for setting up things
@@ -92,8 +100,6 @@ class ScopedBundleSwizzlerMac;
 // By default a single Browser is created in BrowserMain(). You can obviously
 // create more as needed.
 
-// InProcessBrowserTest disables the sandbox when running.
-//
 // See ui_test_utils for a handful of methods designed for use with this class.
 //
 // It's possible to write browser tests that span a restart by splitting each
@@ -111,6 +117,15 @@ class ScopedBundleSwizzlerMac;
 class InProcessBrowserTest : public content::BrowserTestBase {
  public:
   InProcessBrowserTest();
+
+#if defined(TOOLKIT_VIEWS)
+  // |views_delegate| is used for tests that want to use a derived class of
+  // ViewsDelegate to observe or modify things like window placement and Widget
+  // params.
+  explicit InProcessBrowserTest(
+      std::unique_ptr<views::ViewsDelegate> views_delegate);
+#endif
+
   ~InProcessBrowserTest() override;
 
   // Configures everything for an in process browser test, then invokes
@@ -131,10 +146,10 @@ class InProcessBrowserTest : public content::BrowserTestBase {
     global_browser_set_up_function_ = set_up_function;
   }
 
- protected:
   // Returns the browser created by BrowserMain().
   Browser* browser() const { return browser_; }
 
+ protected:
   // Closes the given browser and waits for it to release all its resources.
   void CloseBrowserSynchronously(Browser* browser);
 
@@ -146,6 +161,11 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // Closes all browsers. No guarantees are made about the destruction of
   // outstanding resources.
   void CloseAllBrowsers();
+
+  // Runs the main thread message loop until the BrowserProcess indicates
+  // we should quit. This will normally be called automatically during test
+  // teardown, but may instead be run manually by the test, if necessary.
+  void RunUntilBrowserProcessQuits();
 
   // Convenience methods for adding tabs to a Browser.
   void AddTabAtIndexToBrowser(Browser* browser,
@@ -171,6 +191,9 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // successful.
   virtual bool SetUpUserDataDirectory() WARN_UNUSED_RESULT;
 
+  // Initializes the display::Screen instance on X11.
+  virtual void SetScreenInstance();
+
   // BrowserTestBase:
   void PreRunTestOnMainThread() override;
   void PostRunTestOnMainThread() override;
@@ -188,8 +211,9 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // finish loading and shows the browser.
   Browser* CreateBrowser(Profile* profile);
 
-  // Similar to |CreateBrowser|, but creates an incognito browser.
-  Browser* CreateIncognitoBrowser();
+  // Similar to |CreateBrowser|, but creates an incognito browser. If |profile|
+  // is omitted, the currently active profile will be used.
+  Browser* CreateIncognitoBrowser(Profile* profile = nullptr);
 
   // Creates a browser for a popup window with a single tab (about:blank), waits
   // for the tab to finish loading, and shows the browser.
@@ -202,13 +226,6 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   // Called from the various CreateBrowser methods to add a blank tab, wait for
   // the navigation to complete, and show the browser's window.
   void AddBlankTabAndShow(Browser* browser);
-
-  // Enables running of accessibility audit for a particular test case.
-  //  - Call in test body to enable/disable for one test case.
-  //  - Call in SetUpOnMainThread() to enable for all test cases.
-  void EnableAccessibilityChecksForTestCase(bool enabled) {
-    run_accessibility_checks_for_test_case_ = enabled;
-  }
 
 #if !defined OS_MACOSX
   // Return a CommandLine object that is used to relaunch the browser_test
@@ -227,6 +244,9 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   }
 #endif  // OS_MACOSX
 
+  // Returns the test data path used by the embedded test server.
+  base::FilePath GetChromeTestDataDir() const;
+
   void set_exit_when_last_browser_closes(bool value) {
     exit_when_last_browser_closes_ = value;
   }
@@ -235,13 +255,8 @@ class InProcessBrowserTest : public content::BrowserTestBase {
     open_about_blank_on_browser_launch_ = value;
   }
 
-  // Runs accessibility checks and sets |error_message| if it fails.
-  bool RunAccessibilityChecks(std::string* error_message);
-
  private:
-  // Creates a user data directory for the test if one is needed. Returns true
-  // if successful.
-  virtual bool CreateUserDataDirectory() WARN_UNUSED_RESULT;
+  void Initialize();
 
   // Quits all open browsers and waits until there are no more browsers.
   void QuitBrowsers();
@@ -249,29 +264,32 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   static SetUpBrowserFunction* global_browser_set_up_function_;
 
   // Browser created in BrowserMain().
-  Browser* browser_;
+  Browser* browser_ = nullptr;
+
+  // Used to run the process until the BrowserProcess signals the test to quit.
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   // Temporary user data directory. Used only when a user data directory is not
   // specified in the command line.
   base::ScopedTempDir temp_user_data_dir_;
 
   // True if we should exit the tests after the last browser instance closes.
-  bool exit_when_last_browser_closes_;
+  bool exit_when_last_browser_closes_ = true;
 
   // True if the about:blank tab should be opened when the browser is launched.
-  bool open_about_blank_on_browser_launch_;
-
-  // True if the accessibility test should run for a particular test case.
-  // This is reset for every test case.
-  bool run_accessibility_checks_for_test_case_;
+  bool open_about_blank_on_browser_launch_ = true;
 
   // We use hardcoded quota settings to have a consistent testing environment.
   storage::QuotaSettings quota_settings_;
 
+  // Use a default download directory to make sure downloads don't end up in the
+  // system default location.
+  base::ScopedTempDir default_download_dir_;
+
   base::test::ScopedFeatureList scoped_feature_list_;
 
 #if defined(OS_MACOSX)
-  base::mac::ScopedNSAutoreleasePool* autorelease_pool_;
+  base::mac::ScopedNSAutoreleasePool* autorelease_pool_ = nullptr;
   std::unique_ptr<ScopedBundleSwizzlerMac> bundle_swizzler_;
 
   // Enable fake full keyboard access by default, so that tests don't depend on
@@ -284,6 +302,18 @@ class InProcessBrowserTest : public content::BrowserTestBase {
 #if defined(OS_WIN)
   std::unique_ptr<base::win::ScopedCOMInitializer> com_initializer_;
 #endif
+
+#if defined(TOOLKIT_VIEWS)
+  std::unique_ptr<views::ViewsDelegate> views_delegate_;
+#endif
+
+  std::unique_ptr<MainThreadStackSamplingProfiler> sampling_profiler_;
+
+  DISALLOW_COPY_AND_ASSIGN(InProcessBrowserTest);
 };
+
+// When including either in_process_browser_test.h or android_browser_test.h
+// depending on the platform, use this type alias as the test base class.
+using PlatformBrowserTest = InProcessBrowserTest;
 
 #endif  // CHROME_TEST_BASE_IN_PROCESS_BROWSER_TEST_H_

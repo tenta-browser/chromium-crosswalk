@@ -7,7 +7,7 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/enterprise_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -30,7 +30,7 @@ std::unique_ptr<UpdaterState::Attributes> UpdaterState::GetState(
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
   UpdaterState updater_state(is_machine);
   updater_state.ReadState();
-  return base::MakeUnique<Attributes>(updater_state.BuildAttributes());
+  return std::make_unique<Attributes>(updater_state.BuildAttributes());
 #else
   return nullptr;
 #endif  // OS_WIN or Mac
@@ -38,7 +38,7 @@ std::unique_ptr<UpdaterState::Attributes> UpdaterState::GetState(
 
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
 void UpdaterState::ReadState() {
-  is_enterprise_managed_ = IsEnterpriseManaged();
+  is_enterprise_managed_ = base::IsMachineExternallyManaged();
 
 #if defined(GOOGLE_CHROME_BUILD)
   updater_name_ = GetUpdaterName();
@@ -54,6 +54,10 @@ void UpdaterState::ReadState() {
 UpdaterState::Attributes UpdaterState::BuildAttributes() const {
   Attributes attributes;
 
+#if defined(OS_WIN)
+  // Only Windows implements this attribute in a meaningful way.
+  attributes["ismachine"] = is_machine_ ? "1" : "0";
+#endif  // OS_WIN
   attributes[kIsEnterpriseManaged] = is_enterprise_managed_ ? "1" : "0";
 
   attributes["name"] = updater_name_;
@@ -72,7 +76,7 @@ UpdaterState::Attributes UpdaterState::BuildAttributes() const {
       is_autoupdate_check_enabled_ ? "1" : "0";
 
   DCHECK((update_policy_ >= 0 && update_policy_ <= 3) || update_policy_ == -1);
-  attributes["updatepolicy"] = base::IntToString(update_policy_);
+  attributes["updatepolicy"] = base::NumberToString(update_policy_);
 
   return attributes;
 }

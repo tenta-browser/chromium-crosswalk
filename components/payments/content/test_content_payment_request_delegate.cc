@@ -5,6 +5,7 @@
 #include "components/payments/content/test_content_payment_request_delegate.h"
 
 #include "components/payments/content/payment_manifest_web_data_service.h"
+#include "components/payments/core/error_strings.h"
 
 namespace payments {
 
@@ -15,12 +16,21 @@ TestContentPaymentRequestDelegate::TestContentPaymentRequestDelegate(
 TestContentPaymentRequestDelegate::~TestContentPaymentRequestDelegate() {}
 
 scoped_refptr<PaymentManifestWebDataService>
-TestContentPaymentRequestDelegate ::GetPaymentManifestWebDataService() const {
+TestContentPaymentRequestDelegate::GetPaymentManifestWebDataService() const {
+  return nullptr;
+}
+
+PaymentRequestDisplayManager*
+TestContentPaymentRequestDelegate::GetDisplayManager() {
   return nullptr;
 }
 
 void TestContentPaymentRequestDelegate::ShowDialog(PaymentRequest* request) {
   core_delegate_.ShowDialog(request);
+}
+
+void TestContentPaymentRequestDelegate::RetryDialog() {
+  core_delegate_.RetryDialog();
 }
 
 void TestContentPaymentRequestDelegate::CloseDialog() {
@@ -31,8 +41,16 @@ void TestContentPaymentRequestDelegate::ShowErrorMessage() {
   core_delegate_.ShowErrorMessage();
 }
 
+void TestContentPaymentRequestDelegate::ShowProcessingSpinner() {
+  core_delegate_.ShowProcessingSpinner();
+}
+
 bool TestContentPaymentRequestDelegate::IsBrowserWindowActive() const {
   return core_delegate_.IsBrowserWindowActive();
+}
+
+bool TestContentPaymentRequestDelegate::SkipUiForBasicCard() const {
+  return false;
 }
 
 autofill::PersonalDataManager*
@@ -47,10 +65,6 @@ const std::string& TestContentPaymentRequestDelegate::GetApplicationLocale()
 
 bool TestContentPaymentRequestDelegate::IsIncognito() const {
   return core_delegate_.IsIncognito();
-}
-
-bool TestContentPaymentRequestDelegate::IsSslCertificateValid() {
-  return core_delegate_.IsSslCertificateValid();
 }
 
 const GURL& TestContentPaymentRequestDelegate::GetLastCommittedURL() const {
@@ -84,6 +98,19 @@ std::string TestContentPaymentRequestDelegate::GetAuthenticatedEmail() const {
 
 PrefService* TestContentPaymentRequestDelegate::GetPrefService() {
   return core_delegate_.GetPrefService();
+}
+
+void TestContentPaymentRequestDelegate::EmbedPaymentHandlerWindow(
+    const GURL& url,
+    PaymentHandlerOpenWindowCallback callback) {}
+
+bool TestContentPaymentRequestDelegate::IsInteractive() const {
+  return true;
+}
+
+std::string
+TestContentPaymentRequestDelegate::GetInvalidSslCertificateErrorMessage() {
+  return "";  // Empty string indicates valid SSL certificate.
 }
 
 autofill::TestAddressNormalizer*

@@ -4,11 +4,13 @@
 
 #include "chrome/browser/platform_util.h"
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/platform_util_internal.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -25,15 +27,15 @@ void VerifyAndOpenItemOnBlockingThread(const base::FilePath& path,
   base::File target_item(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!base::PathExists(path)) {
     if (!callback.is_null())
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::BindOnce(callback, OPEN_FAILED_PATH_NOT_FOUND));
     return;
   }
   if (base::DirectoryExists(path) != (type == OPEN_FOLDER)) {
     if (!callback.is_null())
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::BindOnce(callback, OPEN_FAILED_INVALID_TYPE));
     return;
   }
@@ -41,8 +43,8 @@ void VerifyAndOpenItemOnBlockingThread(const base::FilePath& path,
   if (shell_operations_allowed)
     internal::PlatformOpenVerifiedItem(path, type);
   if (!callback.is_null())
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                            base::BindOnce(callback, OPEN_SUCCEEDED));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                             base::BindOnce(callback, OPEN_SUCCEEDED));
 }
 
 }  // namespace
@@ -60,10 +62,20 @@ void OpenItem(Profile* profile,
               OpenItemType item_type,
               const OpenOperationCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  // TaskPriority::USER_BLOCKING because this is usually opened as a result of a
+  // user action (e.g. open-downloaded-file or show-item-in-folder).
+  // TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN because this doesn't need global
+  // state and can hang shutdown without this trait as it may result in an
+  // interactive dialog.
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
+                           {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+                            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
                            base::BindOnce(&VerifyAndOpenItemOnBlockingThread,
                                           full_path, item_type, callback));
+}
+
+bool IsBrowserLockedFullscreen(const Browser* browser) {
+  return false;
 }
 
 }  // namespace platform_util

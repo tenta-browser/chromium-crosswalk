@@ -13,14 +13,15 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "cc/test/test_shared_bitmap_manager.h"
+#include "content/public/common/widget_type.h"
 #include "content/public/renderer/render_thread.h"
 #include "ipc/ipc_test_sink.h"
 #include "ipc/message_filter.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
-#include "third_party/WebKit/public/web/WebPopupType.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
+#include "third_party/blink/public/mojom/frame/document_interface_broker.mojom.h"
 
 struct FrameHostMsg_CreateChildFrame_Params;
+struct FrameHostMsg_CreateChildFrame_Params_Reply;
 
 namespace IPC {
 class MessageFilter;
@@ -43,7 +44,7 @@ class RenderMessageFilter;
 // This class is a very simple mock of RenderThread. It simulates an IPC channel
 // which supports only three messages:
 // ViewHostMsg_CreateWidget : sync message sent by the Widget.
-// ViewMsg_Close : async, send to the Widget.
+// WidgetMsg_Close : async, send to the Widget.
 class MockRenderThread : public RenderThread {
  public:
   MockRenderThread();
@@ -71,19 +72,16 @@ class MockRenderThread : public RenderThread {
   void RecordComputedAction(const std::string& action) override;
   std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
       size_t buffer_size) override;
-  viz::SharedBitmapManager* GetSharedBitmapManager() override;
-  void RegisterExtension(v8::Extension* extension) override;
-  void ScheduleIdleHandler(int64_t initial_delay_ms) override;
-  void IdleHandler() override;
-  int64_t GetIdleNotificationDelayInMs() const override;
-  void SetIdleNotificationDelayInMs(
-      int64_t idle_notification_delay_in_ms) override;
+  void RegisterExtension(std::unique_ptr<v8::Extension> extension) override;
   int PostTaskToAllWebWorkers(const base::Closure& closure) override;
   bool ResolveProxy(const GURL& url, std::string* proxy_list) override;
   base::WaitableEvent* GetShutdownEvent() override;
   int32_t GetClientId() override;
+  bool IsOnline() override;
   void SetRendererProcessType(
-      blink::scheduler::RendererProcessType type) override;
+      blink::scheduler::WebRendererProcessType type) override;
+  blink::WebString GetUserAgent() override;
+  const blink::UserAgentMetadata& GetUserAgentMetadata() override;
 #if defined(OS_WIN)
   void PreCacheFont(const LOGFONT& log_font) override;
   void ReleaseCachedFonts() override;
@@ -93,30 +91,16 @@ class MockRenderThread : public RenderThread {
   void SetFieldTrialGroup(const std::string& trial_name,
                           const std::string& group_name) override;
 
-  //////////////////////////////////////////////////////////////////////////
-  // The following functions are called by the test itself.
-
-  void set_routing_id(int32_t id) { routing_id_ = id; }
-
-  int32_t opener_id() const { return opener_id_; }
-
-  void set_new_window_routing_id(int32_t id) { new_window_routing_id_ = id; }
-
-  void set_new_window_main_frame_widget_routing_id(int32_t id) {
-    new_window_main_frame_widget_routing_id_ = id;
-  }
-
-  void set_new_frame_routing_id(int32_t id) { new_frame_routing_id_ = id; }
-
-  // Simulates the Widget receiving a close message. This should result
-  // on releasing the internal reference counts and destroying the internal
-  // state.
-  void SendCloseMessage();
+  // Returns a new, unique routing ID that can be assigned to the next view,
+  // widget, or frame.
+  int32_t GetNextRoutingID();
 
   // Dispatches control messages to observers.
   bool OnControlMessageReceived(const IPC::Message& msg);
 
-  base::ObserverList<RenderThreadObserver>& observers() { return observers_; }
+  base::ObserverList<RenderThreadObserver>::Unchecked& observers() {
+    return observers_;
+  }
 
   // The View expects to be returned a valid |reply.route_id| different from its
   // own. We do not keep track of the newly created widget in MockRenderThread,
@@ -125,19 +109,39 @@ class MockRenderThread : public RenderThread {
                       mojom::CreateNewWindowReply* reply);
 
   // The Widget expects to be returned a valid route_id.
-  void OnCreateWidget(int opener_id,
-                      blink::WebPopupType popup_type,
-                      int* route_id);
+  void OnCreateWidget(int opener_id, int* route_id);
+
+  // Returns the request end of the InterfaceProvider interface whose client end
+  // was passed in to construct RenderFrame with |routing_id|; if any. The
+  // client end will be used by the RenderFrame to service interface requests
+  // originating from the initial empty document.
+  service_manager::mojom::InterfaceProviderRequest
+  TakeInitialInterfaceProviderRequestForFrame(int32_t routing_id);
+
+  // Returns the request end of the DocumentInterfaceBroker interface whose
+  // client end was passed in to construct RenderFrame with |routing_id|; if
+  // any. The client end will be used by the RenderFrame to service interface
+  // requests originating from the initial empty document.
+  blink::mojom::DocumentInterfaceBrokerRequest
+  TakeInitialDocumentInterfaceBrokerRequestForFrame(int32_t routing_id);
+
+  // Called from the RenderViewTest harness to supply the request end of the
+  // InterfaceProvider interface connection that the harness used to service the
+  // initial empty document in the RenderFrame with |routing_id|.
+  void PassInitialInterfaceProviderRequestForFrame(
+      int32_t routing_id,
+      service_manager::mojom::InterfaceProviderRequest
+          interface_provider_request);
+
  protected:
   // This function operates as a regular IPC listener. Subclasses
   // overriding this should first delegate to this implementation.
   virtual bool OnMessageReceived(const IPC::Message& msg);
 
   // The Frame expects to be returned a valid route_id different from its own.
-  void OnCreateChildFrame(const FrameHostMsg_CreateChildFrame_Params& params,
-                          int* new_render_frame_id,
-                          mojo::MessagePipeHandle* new_interface_provider,
-                          base::UnguessableToken* devtools_frame_token);
+  void OnCreateChildFrame(
+      const FrameHostMsg_CreateChildFrame_Params& params,
+      FrameHostMsg_CreateChildFrame_Params_Reply* params_reply);
 
 #if defined(OS_WIN)
   void OnDuplicateSection(base::SharedMemoryHandle renderer_handle,
@@ -146,17 +150,14 @@ class MockRenderThread : public RenderThread {
 
   IPC::TestSink sink_;
 
-  // Routing id what will be assigned to the Widget.
-  int32_t routing_id_;
+  // Routing ID what will be assigned to the next view, widget, or frame.
+  int32_t next_routing_id_;
 
-  // Opener id reported by the Widget.
-  int32_t opener_id_;
+  std::map<int32_t, service_manager::mojom::InterfaceProviderRequest>
+      frame_routing_id_to_initial_interface_provider_requests_;
 
-  // Routing id that will be assigned to a CreateWindow Widget.
-  int32_t new_window_routing_id_;
-  int32_t new_window_main_frame_routing_id_;
-  int32_t new_window_main_frame_widget_routing_id_;
-  int32_t new_frame_routing_id_;
+  std::map<int32_t, blink::mojom::DocumentInterfaceBrokerRequest>
+      frame_routing_id_to_initial_document_broker_requests_;
 
   // The last known good deserializer for sync messages.
   std::unique_ptr<IPC::MessageReplyDeserializer> reply_deserializer_;
@@ -165,9 +166,8 @@ class MockRenderThread : public RenderThread {
   std::vector<scoped_refptr<IPC::MessageFilter> > filters_;
 
   // Observers to notify.
-  base::ObserverList<RenderThreadObserver> observers_;
+  base::ObserverList<RenderThreadObserver>::Unchecked observers_;
 
-  cc::TestSharedBitmapManager shared_bitmap_manager_;
   std::unique_ptr<service_manager::Connector> connector_;
   service_manager::mojom::ConnectorRequest pending_connector_request_;
 

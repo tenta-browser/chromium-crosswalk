@@ -17,6 +17,7 @@
 #include "base/memory/aligned_memory.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_export.h"
@@ -27,7 +28,7 @@ template <typename T, typename U>
 struct TypeConverter;
 template <typename T>
 class StructPtr;
-};
+}  // namespace mojo
 
 namespace media {
 class AudioBus;
@@ -128,7 +129,7 @@ class MEDIA_EXPORT AudioBuffer
   void ReadFrames(int frames_to_copy,
                   int source_frame_offset,
                   int dest_frame_offset,
-                  AudioBus* dest);
+                  AudioBus* dest) const;
 
   // Trim an AudioBuffer by removing |frames_to_trim| frames from the start.
   // Timestamp and duration are adjusted to reflect the fewer frames.
@@ -145,7 +146,7 @@ class MEDIA_EXPORT AudioBuffer
   void TrimRange(int start, int end);
 
   // Return true if the buffer contains compressed bitstream.
-  bool IsBitstreamFormat();
+  bool IsBitstreamFormat() const;
 
   // Return the number of channels.
   int channel_count() const { return channel_count_; }
@@ -182,7 +183,7 @@ class MEDIA_EXPORT AudioBuffer
   // mojo::TypeConverter added as a friend so that AudioBuffer can be
   // transferred across a mojo connection.
   friend struct mojo::TypeConverter<mojo::StructPtr<mojom::AudioBuffer>,
-                                    scoped_refptr<AudioBuffer>>;
+                                    AudioBuffer>;
 
   // Allocates aligned contiguous buffer to hold all channel data (1 block for
   // interleaved data, |channel_count| blocks for planar data), copies
@@ -240,7 +241,7 @@ class MEDIA_EXPORT AudioBufferMemoryPool
  public:
   AudioBufferMemoryPool();
 
-  size_t get_pool_size_for_testing() const { return entries_.size(); }
+  size_t GetPoolSizeForTesting();
 
  private:
   friend class AudioBuffer;
@@ -254,7 +255,7 @@ class MEDIA_EXPORT AudioBufferMemoryPool
 
   base::Lock entry_lock_;
   using MemoryEntry = std::pair<AudioMemory, size_t>;
-  std::list<MemoryEntry> entries_;
+  std::list<MemoryEntry> entries_ GUARDED_BY(entry_lock_);
 
   DISALLOW_COPY_AND_ASSIGN(AudioBufferMemoryPool);
 };

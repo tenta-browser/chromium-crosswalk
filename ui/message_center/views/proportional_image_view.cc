@@ -48,12 +48,12 @@ const char* ProportionalImageView::GetClassName() const {
 }
 
 gfx::Size ProportionalImageView::GetImageDrawingSize() {
-  if (!visible())
+  if (!GetVisible())
     return gfx::Size();
 
   gfx::Size max_size = max_image_size_;
   max_size.SetToMin(GetContentsBounds().size());
-  return message_center::GetImageSizeForContainerSize(max_size, image_.size());
+  return GetImageSizeForContainerSize(max_size, image_.size());
 }
 
 }  // namespace message_center

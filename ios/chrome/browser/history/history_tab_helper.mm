@@ -5,15 +5,17 @@
 #import "ios/chrome/browser/history/history_tab_helper.h"
 
 #include "base/memory/ptr_util.h"
+#include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "components/ntp_snippets/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/navigation_context.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "net/http/http_response_headers.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -22,7 +24,19 @@
 #error "This file requires ARC support."
 #endif
 
-DEFINE_WEB_STATE_USER_DATA_KEY(HistoryTabHelper);
+namespace {
+
+base::Optional<base::string16> GetPageTitle(const web::NavigationItem& item) {
+  const base::string16& title = item.GetTitleForDisplay();
+  if (title.empty() ||
+      title == l10n_util::GetStringUTF16(IDS_DEFAULT_TAB_TITLE)) {
+    return base::nullopt;
+  }
+
+  return base::Optional<base::string16>(title);
+}
+
+}  // namespace
 
 HistoryTabHelper::~HistoryTabHelper() {
   DCHECK(!web_state_);
@@ -31,16 +45,15 @@ HistoryTabHelper::~HistoryTabHelper() {
 void HistoryTabHelper::UpdateHistoryPageTitle(const web::NavigationItem& item) {
   DCHECK(!delay_notification_);
 
-  const base::string16& title = item.GetTitleForDisplay();
+  const base::Optional<base::string16> title = GetPageTitle(item);
   // Don't update the history if current entry has no title.
-  if (title.empty() ||
-      title == l10n_util::GetStringUTF16(IDS_DEFAULT_TAB_TITLE)) {
+  if (!title) {
     return;
   }
 
   history::HistoryService* history_service = GetHistoryService();
   if (history_service) {
-    history_service->SetPageTitle(item.GetVirtualURL(), title);
+    history_service->SetPageTitle(item.GetVirtualURL(), title.value());
   }
 }
 
@@ -92,15 +105,23 @@ void HistoryTabHelper::DidFinishNavigation(
     return;
   }
 
-  DCHECK(web_state->GetNavigationManager()->GetVisibleItem());
-  web::NavigationItem* visible_item =
-      web_state_->GetNavigationManager()->GetVisibleItem();
-  DCHECK(!visible_item->GetTimestamp().is_null());
+  // TODO(crbug.com/931841): Remove GetLastCommittedItem nil check once
+  // HasComitted has been fixed.
+  if (!navigation_context->HasCommitted() ||
+      !web_state_->GetNavigationManager()->GetLastCommittedItem()) {
+    // Navigation was replaced or aborted.
+    return;
+  }
+
+  web::NavigationItem* last_committed_item =
+      web_state_->GetNavigationManager()->GetLastCommittedItem();
+  DCHECK(!last_committed_item->GetTimestamp().is_null());
 
   // Do not update the history database for back/forward navigations.
   // TODO(crbug.com/661667): on iOS the navigation is not currently tagged with
   // a ui::PAGE_TRANSITION_FORWARD_BACK transition.
-  const ui::PageTransition transition = visible_item->GetTransitionType();
+  const ui::PageTransition transition =
+      last_committed_item->GetTransitionType();
   if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {
     return;
   }
@@ -109,16 +130,18 @@ void HistoryTabHelper::DidFinishNavigation(
   // desktop, but prevents dumping huge view-source urls into the history
   // database. Keep it NDEBUG only because view-source:// URLs are enabled
   // on NDEBUG builds only.
-  const GURL& url = visible_item->GetURL();
+  const GURL& url = last_committed_item->GetURL();
 #ifndef NDEBUG
   if (url.SchemeIs(url::kDataScheme)) {
     return;
   }
 #endif
 
+  num_title_changes_ = 0;
+
   history::RedirectList redirects;
-  const GURL& original_url = visible_item->GetOriginalRequestURL();
-  const GURL& referrer_url = visible_item->GetReferrer().url;
+  const GURL& original_url = last_committed_item->GetOriginalRequestURL();
+  const GURL& referrer_url = last_committed_item->GetReferrer().url;
   if (original_url != url) {
     // Simulate a valid redirect chain in case of URLs that have been modified
     // by CRWWebController -finishHistoryNavigationFromEntry:.
@@ -134,8 +157,12 @@ void HistoryTabHelper::DidFinishNavigation(
 
   // Navigations originating from New Tab Page or Reading List should not
   // contribute to Most Visited.
+  const bool content_suggestions_navigation =
+      referrer_url == ntp_snippets::GetContentSuggestionsReferrerURL() &&
+      ui::PageTransitionCoreTypeIs(transition,
+                                   ui::PAGE_TRANSITION_AUTO_BOOKMARK);
   const bool consider_for_ntp_most_visited =
-      referrer_url != kNewTabPageReferrerURL &&
+      !content_suggestions_navigation &&
       referrer_url != kReadingListReferrerURL;
 
   // Top-level frame navigations are visible; everything else is hidden.
@@ -151,9 +178,12 @@ void HistoryTabHelper::DidFinishNavigation(
        navigation_context->GetResponseHeaders()->response_code() > 600) ||
       !ui::PageTransitionIsMainFrame(navigation_context->GetPageTransition());
   history::HistoryAddPageArgs add_page_args(
-      url, visible_item->GetTimestamp(), this, visible_item->GetUniqueID(),
-      referrer_url, redirects, transition, hidden, history::SOURCE_BROWSED,
-      /*did_replace_entry=*/false, consider_for_ntp_most_visited);
+      url, last_committed_item->GetTimestamp(), this,
+      last_committed_item->GetUniqueID(), referrer_url, redirects, transition,
+      hidden, history::SOURCE_BROWSED,
+      /*did_replace_entry=*/false, consider_for_ntp_most_visited,
+      navigation_context->IsSameDocument() ? GetPageTitle(*last_committed_item)
+                                           : base::nullopt);
 
   if (delay_notification_) {
     recorded_navigations_.push_back(std::move(add_page_args));
@@ -163,9 +193,15 @@ void HistoryTabHelper::DidFinishNavigation(
     history::HistoryService* history_service = GetHistoryService();
     if (history_service) {
       history_service->AddPage(add_page_args);
-      UpdateHistoryPageTitle(*visible_item);
+      UpdateHistoryPageTitle(*last_committed_item);
     }
   }
+}
+
+void HistoryTabHelper::PageLoaded(
+    web::WebState* web_state,
+    web::PageLoadCompletionStatus load_completion_status) {
+  last_load_completion_ = base::TimeTicks::Now();
 }
 
 void HistoryTabHelper::TitleWasSet(web::WebState* web_state) {
@@ -174,11 +210,23 @@ void HistoryTabHelper::TitleWasSet(web::WebState* web_state) {
     return;
   }
 
-  web::NavigationItem* last_committed_item =
-      web_state_->GetNavigationManager()->GetLastCommittedItem();
+  // Protect against pages changing their title too often during page load.
+  if (num_title_changes_ >= history::kMaxTitleChanges)
+    return;
 
-  if (last_committed_item) {
-    UpdateHistoryPageTitle(*last_committed_item);
+  // Only store page titles into history if they were set while the page was
+  // loading or during a brief span after load is complete. This fixes the case
+  // where a page uses a title change to alert a user of a situation but that
+  // title change ends up saved in history.
+  if (web_state->IsLoading() ||
+      (base::TimeTicks::Now() - last_load_completion_ <
+       history::GetTitleSettingWindow())) {
+    web::NavigationItem* last_committed_item =
+        web_state_->GetNavigationManager()->GetLastCommittedItem();
+    if (last_committed_item) {
+      UpdateHistoryPageTitle(*last_committed_item);
+      ++num_title_changes_;
+    }
   }
 }
 
@@ -197,3 +245,5 @@ history::HistoryService* HistoryTabHelper::GetHistoryService() {
   return ios::HistoryServiceFactory::GetForBrowserState(
       browser_state, ServiceAccessType::IMPLICIT_ACCESS);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(HistoryTabHelper)

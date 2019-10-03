@@ -4,9 +4,10 @@
 
 #include "extensions/browser/api/file_handlers/directory_util.h"
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_context.h"
 #include "net/base/filename_util.h"
@@ -50,7 +51,7 @@ void EntryIsDirectory(content::BrowserContext* context,
 }  // namespace
 
 IsDirectoryCollector::IsDirectoryCollector(content::BrowserContext* context)
-    : context_(context), left_(0), weak_ptr_factory_(this) {}
+    : context_(context), left_(0) {}
 
 IsDirectoryCollector::~IsDirectoryCollector() {}
 
@@ -68,7 +69,7 @@ void IsDirectoryCollector::CollectForEntriesPaths(
   if (!left_) {
     // Nothing to process.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback_, base::Passed(&result_)));
+        FROM_HERE, base::BindOnce(callback_, std::move(result_)));
     callback_ = CompletionCallback();
     return;
   }
@@ -86,7 +87,7 @@ void IsDirectoryCollector::OnIsDirectoryCollected(size_t index,
     result_->insert(paths_[index]);
   if (!--left_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback_, base::Passed(&result_)));
+        FROM_HERE, base::BindOnce(callback_, std::move(result_)));
     // Release the callback to avoid a circullar reference in case an instance
     // of this class is a member of a ref counted class, which instance is bound
     // to this callback.

@@ -4,23 +4,11 @@
 
 // Custom binding for the webViewRequest API.
 
-var binding = apiBridge || require('binding').Binding.create('webViewRequest');
-
 var declarativeWebRequestSchema =
     requireNative('schema_registry').GetSchema('declarativeWebRequest');
-var utils = require('utils');
-var validate = require('schemaUtils').validate;
 
-binding.registerCustomHook(function(api) {
+apiBridge.registerCustomHook(function(api) {
   var webViewRequest = api.compiledApi;
-
-  // Returns the schema definition of type |typeId| defined in
-  // |declarativeWebRequestScheme.types|.
-  function getSchema(typeId) {
-    return utils.lookup(declarativeWebRequestSchema.types,
-                        'id',
-                        'declarativeWebRequest.' + typeId);
-  }
 
   // Helper function for the constructor of concrete datatypes of the
   // declarative webRequest API.
@@ -34,15 +22,15 @@ binding.registerCustomHook(function(api) {
       }
     }
 
-    instance.instanceType = 'declarativeWebRequest.' + typeId;
-    var schema = getSchema(typeId);
-    validate([instance], [schema]);
+    var qualifiedType = 'declarativeWebRequest.' + typeId;
+    instance.instanceType = qualifiedType;
+    bindingUtil.validateType(qualifiedType, instance);
   }
 
   // Setup all data types for the declarative webRequest API from the schema.
   for (var i = 0; i < declarativeWebRequestSchema.types.length; ++i) {
     var typeSchema = declarativeWebRequestSchema.types[i];
-    var typeId = typeSchema.id.replace('declarativeWebRequest.', '');
+    var typeId = $String.replace(typeSchema.id, 'declarativeWebRequest.', '');
     var action = function(typeId) {
       return function(parameters) {
         setupInstance(this, parameters, typeId);
@@ -51,6 +39,3 @@ binding.registerCustomHook(function(api) {
     webViewRequest[typeId] = action;
   }
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

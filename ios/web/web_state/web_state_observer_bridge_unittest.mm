@@ -6,12 +6,11 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/scoped_observer.h"
-#include "ios/web/public/favicon_url.h"
+#import "ios/web/navigation/navigation_context_impl.h"
+#include "ios/web/public/favicon/favicon_url.h"
 #import "ios/web/public/test/fakes/crw_test_web_state_observer.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/web_state/form_activity_params.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
-#import "ios/web/web_state/navigation_context_impl.h"
 #include "net/http/http_response_headers.h"
 #include "testing/platform_test.h"
 
@@ -82,8 +81,9 @@ TEST_F(WebStateObserverBridgeTest, DidStartNavigation) {
   GURL url("https://chromium.test/");
   std::unique_ptr<web::NavigationContext> context =
       web::NavigationContextImpl::CreateNavigationContext(
-          &test_web_state_, url,
-          ui::PageTransition::PAGE_TRANSITION_FORWARD_BACK, false);
+          &test_web_state_, url, /*has_user_gesture=*/true,
+          ui::PageTransition::PAGE_TRANSITION_FORWARD_BACK,
+          /*is_renderer_initiated=*/false);
   observer_bridge_.DidStartNavigation(&test_web_state_, context.get());
 
   ASSERT_TRUE([observer_ didStartNavigationInfo]);
@@ -95,6 +95,7 @@ TEST_F(WebStateObserverBridgeTest, DidStartNavigation) {
   EXPECT_EQ(context->IsSameDocument(), actual_context->IsSameDocument());
   EXPECT_EQ(context->GetError(), actual_context->GetError());
   EXPECT_EQ(context->GetUrl(), actual_context->GetUrl());
+  EXPECT_EQ(context->HasUserGesture(), actual_context->HasUserGesture());
   EXPECT_TRUE(PageTransitionTypeIncludingQualifiersIs(
       ui::PageTransition::PAGE_TRANSITION_FORWARD_BACK,
       actual_context->GetPageTransition()));
@@ -109,8 +110,9 @@ TEST_F(WebStateObserverBridgeTest, DidFinishNavigation) {
   GURL url("https://chromium.test/");
   std::unique_ptr<web::NavigationContext> context =
       web::NavigationContextImpl::CreateNavigationContext(
-          &test_web_state_, url,
-          ui::PageTransition::PAGE_TRANSITION_FROM_ADDRESS_BAR, false);
+          &test_web_state_, url, /*has_user_gesture=*/true,
+          ui::PageTransition::PAGE_TRANSITION_FROM_ADDRESS_BAR,
+          /*is_renderer_initiated=*/false);
   observer_bridge_.DidFinishNavigation(&test_web_state_, context.get());
 
   ASSERT_TRUE([observer_ didFinishNavigationInfo]);
@@ -122,35 +124,12 @@ TEST_F(WebStateObserverBridgeTest, DidFinishNavigation) {
   EXPECT_EQ(context->IsSameDocument(), actual_context->IsSameDocument());
   EXPECT_EQ(context->GetError(), actual_context->GetError());
   EXPECT_EQ(context->GetUrl(), actual_context->GetUrl());
+  EXPECT_EQ(context->HasUserGesture(), actual_context->HasUserGesture());
   EXPECT_TRUE(PageTransitionTypeIncludingQualifiersIs(
       ui::PageTransition::PAGE_TRANSITION_FROM_ADDRESS_BAR,
       actual_context->GetPageTransition()));
   EXPECT_EQ(context->GetResponseHeaders(),
             actual_context->GetResponseHeaders());
-}
-
-// Tests |webState:didCommitNavigationWithDetails:| forwarding.
-TEST_F(WebStateObserverBridgeTest, NavigationItemCommitted) {
-  ASSERT_FALSE([observer_ commitNavigationInfo]);
-
-  LoadCommittedDetails load_details;
-  load_details.item = reinterpret_cast<web::NavigationItem*>(1);
-  load_details.previous_item_index = 15;
-  load_details.previous_url = GURL("https://chromium.test/");
-  load_details.is_in_page = true;
-
-  observer_bridge_.NavigationItemCommitted(&test_web_state_, load_details);
-
-  ASSERT_TRUE([observer_ commitNavigationInfo]);
-  EXPECT_EQ(&test_web_state_, [observer_ commitNavigationInfo]->web_state);
-  EXPECT_EQ(load_details.item,
-            [observer_ commitNavigationInfo]->load_details.item);
-  EXPECT_EQ(load_details.previous_item_index,
-            [observer_ commitNavigationInfo]->load_details.previous_item_index);
-  EXPECT_EQ(load_details.previous_url,
-            [observer_ commitNavigationInfo]->load_details.previous_url);
-  EXPECT_EQ(load_details.is_in_page,
-            [observer_ commitNavigationInfo]->load_details.is_in_page);
 }
 
 // Tests |webState:didLoadPageWithSuccess:| forwarding.
@@ -200,54 +179,6 @@ TEST_F(WebStateObserverBridgeTest, DidChangeVisibleSecurityState) {
   ASSERT_TRUE([observer_ didChangeVisibleSecurityStateInfo]);
   EXPECT_EQ(&test_web_state_,
             [observer_ didChangeVisibleSecurityStateInfo]->web_state);
-}
-
-// Tests |webStateDidSuppressDialog:| forwarding.
-TEST_F(WebStateObserverBridgeTest, DidSuppressDialog) {
-  ASSERT_FALSE([observer_ didSuppressDialogInfo]);
-
-  observer_bridge_.DidSuppressDialog(&test_web_state_);
-  ASSERT_TRUE([observer_ didSuppressDialogInfo]);
-  EXPECT_EQ(&test_web_state_, [observer_ didSuppressDialogInfo]->web_state);
-}
-
-// Tests |webState:didRegisterFormActivityWithParams:| forwarding.
-TEST_F(WebStateObserverBridgeTest, DocumentSubmitted) {
-  ASSERT_FALSE([observer_ submitDocumentInfo]);
-
-  std::string kTestFormName("form-name");
-  BOOL user_initiated = YES;
-  observer_bridge_.DocumentSubmitted(&test_web_state_, kTestFormName,
-                                     user_initiated);
-  ASSERT_TRUE([observer_ submitDocumentInfo]);
-  EXPECT_EQ(&test_web_state_, [observer_ submitDocumentInfo]->web_state);
-  EXPECT_EQ(kTestFormName, [observer_ submitDocumentInfo]->form_name);
-  EXPECT_EQ(user_initiated, [observer_ submitDocumentInfo]->user_initiated);
-}
-
-// Tests |webState:didRegisterFormActivity:...| forwarding.
-TEST_F(WebStateObserverBridgeTest, FormActivityRegistered) {
-  ASSERT_FALSE([observer_ formActivityInfo]);
-
-  FormActivityParams params;
-  params.form_name = "form-name";
-  params.field_name = "field-name";
-  params.field_type = "field-type";
-  params.type = "type";
-  params.value = "value";
-  params.input_missing = true;
-  observer_bridge_.FormActivityRegistered(&test_web_state_, params);
-  ASSERT_TRUE([observer_ formActivityInfo]);
-  EXPECT_EQ(&test_web_state_, [observer_ formActivityInfo]->web_state);
-  EXPECT_EQ(params.form_name,
-            [observer_ formActivityInfo]->form_activity.form_name);
-  EXPECT_EQ(params.field_name,
-            [observer_ formActivityInfo]->form_activity.field_name);
-  EXPECT_EQ(params.field_type,
-            [observer_ formActivityInfo]->form_activity.field_type);
-  EXPECT_EQ(params.type, [observer_ formActivityInfo]->form_activity.type);
-  EXPECT_EQ(params.value, [observer_ formActivityInfo]->form_activity.value);
-  EXPECT_TRUE([observer_ formActivityInfo]->form_activity.input_missing);
 }
 
 // Tests |webState:didUpdateFaviconURLCandidates:| forwarding.

@@ -1,5 +1,0 @@
-include_rules = [
-  "+components/signin/core/account_id",
-  "+components/user_manager",
-  "+google_apis",
-]

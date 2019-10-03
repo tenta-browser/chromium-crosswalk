@@ -31,6 +31,7 @@ class MEDIA_EXPORT AudioTrackOutputStream : public MuteableAudioOutputStream {
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
   void Close() override;
+  void Flush() override;
 
   // MuteableAudioOutputStream implementation.
   void SetMute(bool muted) override;
@@ -54,7 +55,7 @@ class MEDIA_EXPORT AudioTrackOutputStream : public MuteableAudioOutputStream {
   // Extra buffer for PCM format.
   std::unique_ptr<AudioBus> audio_bus_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Java AudioTrackOutputStream instance.
   base::android::ScopedJavaGlobalRef<jobject> j_audio_output_stream_;

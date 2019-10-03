@@ -11,7 +11,13 @@
 #include "media/capture/video/video_capture_system.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/service_context_ref.h"
-#include "services/video_capture/public/interfaces/device_factory.mojom.h"
+#include "services/video_capture/device_factory.h"
+#include "services/video_capture/public/mojom/devices_changed_observer.mojom.h"
+
+#if defined(OS_CHROMEOS)
+#include "media/capture/video/chromeos/mojo/cros_image_capture.mojom.h"
+#include "media/capture/video/chromeos/video_capture_device_factory_chromeos.h"
+#endif  // defined(OS_CHROMEOS)
 
 namespace video_capture {
 
@@ -21,23 +27,42 @@ class DeviceMediaToMojoAdapter;
 // mojom::DeviceFactory interface. Keeps track of device instances that have
 // been created to ensure that it does not create more than one instance of the
 // same media::VideoCaptureDevice at the same time.
-class DeviceFactoryMediaToMojoAdapter : public mojom::DeviceFactory {
+class DeviceFactoryMediaToMojoAdapter : public DeviceFactory {
  public:
+#if defined(OS_CHROMEOS)
   DeviceFactoryMediaToMojoAdapter(
-      std::unique_ptr<service_manager::ServiceContextRef> service_ref,
       std::unique_ptr<media::VideoCaptureSystem> capture_system,
-      const media::VideoCaptureJpegDecoderFactoryCB&
-          jpeg_decoder_factory_callback);
+      media::MojoMjpegDecodeAcceleratorFactoryCB jpeg_decoder_factory_callback,
+      scoped_refptr<base::SequencedTaskRunner> jpeg_decoder_task_runner);
+#else
+  DeviceFactoryMediaToMojoAdapter(
+      std::unique_ptr<media::VideoCaptureSystem> capture_system);
+#endif  // defined(OS_CHROMEOS)
   ~DeviceFactoryMediaToMojoAdapter() override;
 
-  // mojom::DeviceFactory implementation.
+  // DeviceFactory implementation.
+  void SetServiceRef(
+      std::unique_ptr<service_manager::ServiceContextRef> service_ref) override;
   void GetDeviceInfos(GetDeviceInfosCallback callback) override;
   void CreateDevice(const std::string& device_id,
                     mojom::DeviceRequest device_request,
                     CreateDeviceCallback callback) override;
-  void AddVirtualDevice(const media::VideoCaptureDeviceInfo& device_info,
-                        mojom::ProducerPtr producer,
-                        mojom::VirtualDeviceRequest virtual_device) override;
+  void AddSharedMemoryVirtualDevice(
+      const media::VideoCaptureDeviceInfo& device_info,
+      mojom::ProducerPtr producer,
+      bool send_buffer_handles_to_producer_as_raw_file_descriptors,
+      mojom::SharedMemoryVirtualDeviceRequest virtual_device) override;
+  void AddTextureVirtualDevice(
+      const media::VideoCaptureDeviceInfo& device_info,
+      mojom::TextureVirtualDeviceRequest virtual_device) override;
+  void RegisterVirtualDevicesChangedObserver(
+      mojom::DevicesChangedObserverPtr observer,
+      bool raise_event_if_virtual_devices_already_present) override;
+
+#if defined(OS_CHROMEOS)
+  void BindCrosImageCaptureRequest(
+      cros::mojom::CrosImageCaptureRequest request) override;
+#endif  // defined(OS_CHROMEOS)
 
  private:
   struct ActiveDeviceEntry {
@@ -58,12 +83,17 @@ class DeviceFactoryMediaToMojoAdapter : public mojom::DeviceFactory {
                              CreateDeviceCallback callback);
   void OnClientConnectionErrorOrClose(const std::string& device_id);
 
-  const std::unique_ptr<service_manager::ServiceContextRef> service_ref_;
+  std::unique_ptr<service_manager::ServiceContextRef> service_ref_;
   const std::unique_ptr<media::VideoCaptureSystem> capture_system_;
-  const media::VideoCaptureJpegDecoderFactoryCB jpeg_decoder_factory_callback_;
   std::map<std::string, ActiveDeviceEntry> active_devices_by_id_;
-  bool has_called_get_device_infos_;
 
+#if defined(OS_CHROMEOS)
+  const media::MojoMjpegDecodeAcceleratorFactoryCB
+      jpeg_decoder_factory_callback_;
+  scoped_refptr<base::SequencedTaskRunner> jpeg_decoder_task_runner_;
+#endif  // defined(OS_CHROMEOS)
+
+  bool has_called_get_device_infos_;
   base::WeakPtrFactory<DeviceFactoryMediaToMojoAdapter> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceFactoryMediaToMojoAdapter);

@@ -4,15 +4,14 @@
 
 #include "services/data_decoder/public/cpp/safe_xml_parser.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
-#include "base/unguessable_token.h"
 #include "base/values.h"
-#include "services/data_decoder/public/interfaces/constants.mojom.h"
-#include "services/data_decoder/public/interfaces/xml_parser.mojom.h"
+#include "services/data_decoder/public/mojom/constants.mojom.h"
+#include "services/data_decoder/public/mojom/xml_parser.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/constants.mojom.h"
 
 namespace data_decoder {
 
@@ -24,11 +23,11 @@ class SafeXmlParser {
   SafeXmlParser(service_manager::Connector* connector,
                 const std::string& unsafe_xml,
                 XmlParserCallback callback,
-                const std::string& batch_id);
+                const base::Token& batch_id);
   ~SafeXmlParser();
 
  private:
-  void ReportResults(std::unique_ptr<base::Value> parsed_json,
+  void ReportResults(base::Optional<base::Value> parsed_json,
                      const base::Optional<std::string>& error);
 
   XmlParserCallback callback_;
@@ -41,22 +40,22 @@ class SafeXmlParser {
 SafeXmlParser::SafeXmlParser(service_manager::Connector* connector,
                              const std::string& unsafe_xml,
                              XmlParserCallback callback,
-                             const std::string& batch_id)
+                             const base::Token& batch_id)
     : callback_(std::move(callback)) {
   DCHECK(callback_);  // Parsing without a callback is useless.
 
   // If no batch ID has been provided, use a random instance ID to guarantee the
   // connection is to a new service running in its own process.
-  service_manager::Identity identity(
-      mojom::kServiceName, service_manager::mojom::kInheritUserID,
-      batch_id.empty() ? base::UnguessableToken::Create().ToString()
-                       : batch_id);
-  connector->BindInterface(identity, &xml_parser_ptr_);
+  connector->BindInterface(
+      service_manager::ServiceFilter::ByNameWithId(
+          mojom::kServiceName,
+          batch_id.is_zero() ? base::Token::CreateRandom() : batch_id),
+      &xml_parser_ptr_);
 
   // Unretained(this) is safe as the xml_parser_ptr_ is owned by this class.
   xml_parser_ptr_.set_connection_error_handler(base::BindOnce(
       &SafeXmlParser::ReportResults, base::Unretained(this),
-      /*parsed_xml=*/nullptr,
+      /*parsed_xml=*/base::nullopt,
       base::make_optional(
           std::string("Connection error with the XML parser process."))));
   xml_parser_ptr_->Parse(
@@ -66,24 +65,27 @@ SafeXmlParser::SafeXmlParser(service_manager::Connector* connector,
 
 SafeXmlParser::~SafeXmlParser() = default;
 
-void SafeXmlParser::ReportResults(std::unique_ptr<base::Value> parsed_xml,
+void SafeXmlParser::ReportResults(base::Optional<base::Value> parsed_xml,
                                   const base::Optional<std::string>& error) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  std::move(callback_).Run(std::move(parsed_xml), error);
+  std::unique_ptr<base::Value> parsed_xml_ptr =
+      parsed_xml ? base::Value::ToUniquePtrValue(std::move(parsed_xml.value()))
+                 : nullptr;
+  std::move(callback_).Run(std::move(parsed_xml_ptr), error);
 
   // This should be the last interaction with this instance, safely delete.
   delete this;
 }
 
-const base::Value* GetChildren(const base::Value& element) {
+}  // namespace
+
+const base::Value* GetXmlElementChildren(const base::Value& element) {
   if (!element.is_dict())
     return nullptr;
   return element.FindKeyOfType(mojom::XmlParser::kChildrenKey,
                                base::Value::Type::LIST);
 }
-
-}  // namespace
 
 std::string GetXmlQualifiedName(const std::string& name_space,
                                 const std::string& name) {
@@ -93,7 +95,7 @@ std::string GetXmlQualifiedName(const std::string& name_space,
 void ParseXml(service_manager::Connector* connector,
               const std::string& unsafe_xml,
               XmlParserCallback callback,
-              const std::string& batch_id) {
+              const base::Token& batch_id) {
   new SafeXmlParser(connector, unsafe_xml, std::move(callback), batch_id);
 }
 
@@ -127,7 +129,7 @@ bool GetXmlElementTagName(const base::Value& element, std::string* tag_name) {
 
 bool GetXmlElementText(const base::Value& element, std::string* text) {
   DCHECK(text);
-  const base::Value* children = GetChildren(element);
+  const base::Value* children = GetXmlElementChildren(element);
   if (!children)
     return false;
 
@@ -171,7 +173,7 @@ bool GetXmlElementNamespacePrefix(const base::Value& element,
 
 int GetXmlElementChildrenCount(const base::Value& element,
                                const std::string& name) {
-  const base::Value* children = GetChildren(element);
+  const base::Value* children = GetXmlElementChildren(element);
   if (!children)
     return 0;
   int child_count = 0;
@@ -187,7 +189,7 @@ int GetXmlElementChildrenCount(const base::Value& element,
 
 const base::Value* GetXmlElementChildWithType(const base::Value& element,
                                               const std::string& type) {
-  const base::Value* children = GetChildren(element);
+  const base::Value* children = GetXmlElementChildren(element);
   if (!children)
     return nullptr;
   for (const base::Value& value : children->GetList()) {
@@ -201,7 +203,7 @@ const base::Value* GetXmlElementChildWithType(const base::Value& element,
 
 const base::Value* GetXmlElementChildWithTag(const base::Value& element,
                                              const std::string& tag) {
-  const base::Value* children = GetChildren(element);
+  const base::Value* children = GetXmlElementChildren(element);
   if (!children)
     return nullptr;
   for (const base::Value& value : children->GetList()) {
@@ -216,7 +218,7 @@ bool GetAllXmlElementChildrenWithTag(
     const base::Value& element,
     const std::string& tag,
     std::vector<const base::Value*>* children_out) {
-  const base::Value* children = GetChildren(element);
+  const base::Value* children = GetXmlElementChildren(element);
   if (!children)
     return false;
   bool found = false;

@@ -13,9 +13,9 @@
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "jni/LocalizationUtils_jni.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
 #include "ui/base/l10n/time_format.h"
+#include "ui/base/ui_base_jni_headers/LocalizationUtils_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -24,7 +24,6 @@ namespace l10n_util {
 
 jint JNI_LocalizationUtils_GetFirstStrongCharacterDirection(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& string) {
   return base::i18n::GetFirstStrongCharacterDirection(
       base::android::ConvertJavaStringToUTF16(env, string));
@@ -99,7 +98,6 @@ base::string16 GetDisplayNameForLocale(const std::string& locale,
 
 ScopedJavaLocalRef<jstring> JNI_LocalizationUtils_GetDurationString(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     jlong timeInMillis) {
   ScopedJavaLocalRef<jstring> jtime_remaining =
       base::android::ConvertUTF16ToJavaString(

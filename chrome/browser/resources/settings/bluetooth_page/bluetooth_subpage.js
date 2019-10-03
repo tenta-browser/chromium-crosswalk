@@ -4,9 +4,9 @@
 
 /**
  * Maximum number of bluetooth devices shown in bluetooth subpage.
- * @const {number}
+ * @type {number}
  */
-var MAX_NUMBER_DEVICE_SHOWN = 50;
+const MAX_NUMBER_DEVICE_SHOWN = 50;
 
 /**
  * @fileoverview
@@ -31,7 +31,7 @@ Polymer({
     },
 
     /** Reflects the bluetooth-page property. */
-    bluetoothToggleDisabled: Boolean,
+    stateChangeInProgress: Boolean,
 
     /**
      * The bluetooth adapter state, cached by bluetooth-page.
@@ -143,11 +143,24 @@ Polymer({
       type: Number,
       value: 1000,
     },
+
+    /**
+     * The time in milliseconds at which discovery was started attempt (when the
+     * page was opened with Bluetooth on, or when Bluetooth turned on while the
+     * page was active).
+     * @private {?number}
+     */
+    discoveryStartTimestampMs_: {
+      type: Number,
+      value: null,
+    },
+
   },
 
   observers: [
     'adapterStateChanged_(adapterState.*)',
     'deviceListChanged_(deviceList_.*)',
+    'listUpdateFrequencyMsChanged_(listUpdateFrequencyMs)',
   ],
 
   /**
@@ -157,55 +170,13 @@ Polymer({
    */
   updateTimerId_: undefined,
 
-  /**
-   * Listener for chrome.bluetooth.onBluetoothDeviceChanged events.
-   * @type {?function(!chrome.bluetooth.Device)}
-   * @private
-   */
-  bluetoothDeviceUpdatedListener_: null,
-
-  /**
-   * Listener for chrome.bluetooth.onBluetoothDeviceAdded events.
-   * @type {?function(!chrome.bluetooth.Device)}
-   * @private
-   */
-  bluetoothDeviceAddedListener_: null,
-
-  /**
-   * Listener for chrome.bluetooth.onBluetoothDeviceRemoved events.
-   * @type {?function(!chrome.bluetooth.Device)}
-   * @private
-   */
-  bluetoothDeviceRemovedListener_: null,
-
-  /** @override */
-  attached: function() {
-    this.bluetoothDeviceUpdatedListener_ =
-        this.bluetoothDeviceUpdatedListener_ ||
-        this.onBluetoothDeviceUpdated_.bind(this);
-    this.bluetooth.onDeviceChanged.addListener(
-        this.bluetoothDeviceUpdatedListener_);
-
-    this.bluetoothDeviceAddedListener_ = this.bluetoothDeviceAddedListener_ ||
-        this.onBluetoothDeviceAdded_.bind(this);
-    this.bluetooth.onDeviceAdded.addListener(
-        this.bluetoothDeviceAddedListener_);
-
-    this.bluetoothDeviceRemovedListener_ =
-        this.bluetoothDeviceRemovedListener_ ||
-        this.onBluetoothDeviceRemoved_.bind(this);
-    this.bluetooth.onDeviceRemoved.addListener(
-        this.bluetoothDeviceRemovedListener_);
-  },
-
   /** @override */
   detached: function() {
-    this.bluetooth.onDeviceAdded.removeListener(
-        assert(this.bluetoothDeviceAddedListener_));
-    this.bluetooth.onDeviceChanged.removeListener(
-        assert(this.bluetoothDeviceUpdatedListener_));
-    this.bluetooth.onDeviceRemoved.removeListener(
-        assert(this.bluetoothDeviceRemovedListener_));
+    if (this.updateTimerId_ !== undefined) {
+      window.clearInterval(this.updateTimerId_);
+      this.updateTimerId_ = undefined;
+      this.deviceList_ = [];
+    }
   },
 
   /**
@@ -215,6 +186,7 @@ Polymer({
    */
   currentRouteChanged: function(route) {
     this.updateDiscovery_();
+    this.startOrStopRefreshingDeviceList_();
   },
 
   /** @private */
@@ -225,110 +197,102 @@ Polymer({
   /** @private */
   adapterStateChanged_: function() {
     this.updateDiscovery_();
-    this.updateDeviceList_();
+    this.startOrStopRefreshingDeviceList_();
   },
 
   /** @private */
   deviceListChanged_: function() {
     this.saveScroll(this.$.pairedDevices);
     this.saveScroll(this.$.unpairedDevices);
-    this.pairedDeviceList_ = this.deviceList_.filter(function(device) {
-      return !!device.paired || !!device.connecting;
-    });
-    this.unpairedDeviceList_ = this.deviceList_.filter(function(device) {
-      return !device.paired && !device.connecting;
-    });
+
+    this.pairedDeviceList_ = this.getUpdatedDeviceList_(
+      this.pairedDeviceList_,
+      this.deviceList_.filter(d => d.paired || d.connecting));
+    this.unpairedDeviceList_ = this.getUpdatedDeviceList_(
+      this.unpairedDeviceList_,
+      this.deviceList_.filter(d => !(d.paired || d.connecting)));
+
+    this.$.pairedDevices.fire('iron-resize');
+    this.$.unpairedDevices.fire('iron-resize');
     this.updateScrollableContents();
     this.restoreScroll(this.$.unpairedDevices);
     this.restoreScroll(this.$.pairedDevices);
   },
 
+  /**
+   * Returns a copy of |oldDeviceList| but:
+   *   - Using the corresponding device objects in |newDeviceList|
+   *   - Removing devices not in |newDeviceList|
+   *   - Adding device not in |oldDeviceList| but in |newDeviceList| to the
+   *     end of the list.
+   *
+   * @param {!Array<!chrome.bluetooth.Device>} oldDeviceList
+   * @param {!Array<!chrome.bluetooth.Device>} newDeviceList
+   * @return {!Array<!chrome.bluetooth.Device>}
+   * @private
+   */
+  getUpdatedDeviceList_: function(oldDeviceList, newDeviceList) {
+    const newDeviceMap = new Map(newDeviceList.map(d => [d.address, d]));
+    const updatedDeviceList = [];
+
+    // Add elements of |oldDeviceList| that are in |newDeviceList| to
+    // |updatedDeviceList|.
+    for (const oldDevice of oldDeviceList) {
+      const newDevice = newDeviceMap.get(oldDevice.address);
+      if (newDevice === undefined) {
+        continue;
+      }
+      updatedDeviceList.push(newDevice);
+      newDeviceMap.delete(newDevice.address);
+    }
+
+    // Add all elements of |newDeviceList| that are not in |oldDeviceList| to
+    // |updatedDeviceList|.
+    for (const newDevice of newDeviceMap.values()) {
+      updatedDeviceList.push(newDevice);
+    }
+
+    return updatedDeviceList;
+  },
+
   /** @private */
   selectedPairedItemChanged_: function() {
-    if (this.selectedPairedItem_)
+    if (this.selectedPairedItem_) {
       this.connectDevice_(this.selectedPairedItem_);
+    }
   },
 
   /** @private */
   selectedUnpairedItemChanged_: function() {
-    if (this.selectedUnpairedItem_)
+    if (this.selectedUnpairedItem_) {
       this.connectDevice_(this.selectedUnpairedItem_);
+    }
   },
 
   /** @private */
   updateDiscovery_: function() {
-    if (!this.adapterState || !this.adapterState.powered)
+    if (!this.adapterState || !this.adapterState.powered) {
       return;
-    if (settings.getCurrentRoute() == settings.routes.BLUETOOTH_DEVICES)
+    }
+    if (settings.getCurrentRoute() == settings.routes.BLUETOOTH_DEVICES) {
       this.startDiscovery_();
-    else
+    } else {
       this.stopDiscovery_();
-  },
-
-  /**
-   * If bluetooth is enabled, request the complete list of devices and update
-   * this.deviceList_.
-   * @private
-   */
-  updateDeviceList_: function() {
-    if (!this.bluetoothToggleState) {
-      this.deviceList_ = [];
-      return;
     }
-    this.requestListUpdate_();
-  },
-
-  /**
-   * Process onDeviceChanged events.
-   * @param {!chrome.bluetooth.Device} device
-   * @private
-   */
-  onBluetoothDeviceUpdated_: function(device) {
-    var address = device.address;
-    if (this.dialogShown_ && this.pairingDevice_ &&
-        this.pairingDevice_.address == address) {
-      this.pairingDevice_ = device;
-    }
-    var index = this.deviceList_.findIndex(function(device) {
-      return device.address == address;
-    });
-    if (index >= 0)
-      this.set('deviceList_.' + index, device);
-  },
-
-  /**
-   * Process bluetooth.onDeviceAdded events.
-   * @param {!chrome.bluetooth.Device} device
-   * @private
-   */
-  onBluetoothDeviceAdded_: function(device) {
-    this.requestListUpdate_();
-  },
-
-  /**
-   * Process bluetooth.onDeviceRemoved events.
-   * @param {!chrome.bluetooth.Device} device
-   * @private
-   */
-  onBluetoothDeviceRemoved_: function(device) {
-    var address = device.address;
-    var index = this.deviceList_.findIndex(function(device) {
-      return device.address == address;
-    });
-    if (index >= 0)
-      this.splice('deviceList_', index, 1);
   },
 
   /** @private */
   startDiscovery_: function() {
-    if (!this.adapterState || this.adapterState.discovering)
+    if (!this.adapterState || this.adapterState.discovering) {
       return;
+    }
 
     this.bluetooth.startDiscovery(function() {
-      var lastError = chrome.runtime.lastError;
+      const lastError = chrome.runtime.lastError;
       if (lastError) {
-        if (lastError.message == 'Starting discovery failed')
-          return;  // May happen if also started elsewhere, ignore.
+        if (lastError.message == 'Starting discovery failed') {
+          return;
+        }  // May happen if also started elsewhere, ignore.
         console.error('startDiscovery Error: ' + lastError.message);
       }
     });
@@ -336,42 +300,40 @@ Polymer({
 
   /** @private */
   stopDiscovery_: function() {
-    if (!this.get('adapterState.discovering'))
+    if (!this.get('adapterState.discovering')) {
       return;
+    }
 
     this.bluetooth.stopDiscovery(function() {
-      var lastError = chrome.runtime.lastError;
+      const lastError = chrome.runtime.lastError;
       if (lastError) {
-        if (lastError.message == 'Failed to stop discovery')
-          return;  // May happen if also stopped elsewhere, ignore.
+        if (lastError.message == 'Failed to stop discovery') {
+          return;
+        }  // May happen if also stopped elsewhere, ignore.
         console.error('stopDiscovery Error: ' + lastError.message);
       }
     });
   },
 
   /**
-   * @param {!{detail: {action: string, device: !chrome.bluetooth.Device}}} e
+   * @param {!CustomEvent<!{
+   *     action: string, device:
+   *     !chrome.bluetooth.Device
+   * }>} e
    * @private
    */
   onDeviceEvent_: function(e) {
-    var action = e.detail.action;
-    var device = e.detail.device;
-    if (action == 'connect')
+    const action = e.detail.action;
+    const device = e.detail.device;
+    if (action == 'connect') {
       this.connectDevice_(device);
-    else if (action == 'disconnect')
+    } else if (action == 'disconnect') {
       this.disconnectDevice_(device);
-    else if (action == 'remove')
+    } else if (action == 'remove') {
       this.forgetDevice_(device);
-    else
+    } else {
       console.error('Unexected action: ' + action);
-  },
-
-  /**
-   * @param {!Event} event
-   * @private
-   */
-  stopTap_: function(event) {
-    event.stopPropagation();
+    }
   },
 
   /**
@@ -379,7 +341,9 @@ Polymer({
    * @private
    */
   onEnableTap_: function(event) {
-    this.bluetoothToggleState = !this.bluetoothToggleState;
+    if (this.isToggleEnabled_()) {
+      this.bluetoothToggleState = !this.bluetoothToggleState;
+    }
     event.stopPropagation();
   },
 
@@ -392,6 +356,15 @@ Polymer({
    */
   getOnOffString_: function(enabled, onstr, offstr) {
     return enabled ? onstr : offstr;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  isToggleEnabled_: function() {
+    return this.adapterState !== undefined && this.adapterState.available &&
+        !this.stateChangeInProgress;
   },
 
   /**
@@ -419,20 +392,38 @@ Polymer({
    * @private
    */
   connectDevice_: function(device) {
+    if (device.connecting || device.connected) {
+      return;
+    }
+
     // If the device is not paired, show the pairing dialog before connecting.
-    if (!device.paired) {
+    // TODO(crbug.com/966170): Need to check if the device is pairable as well.
+    const isPaired = device.paired;
+    if (!isPaired) {
       this.pairingDevice_ = device;
       this.openDialog_();
     }
 
-    var address = device.address;
+    if (isPaired !== undefined && device.transport !== undefined) {
+      this.recordDeviceSelectionDuration_(isPaired, device.transport);
+    }
+
+    const address = device.address;
     this.bluetoothPrivate.connect(address, result => {
+      if (isPaired) {
+        this.recordUserInitiatedReconnectionAttemptResult_(result);
+      }
+
       // If |pairingDevice_| has changed, ignore the connect result.
-      if (this.pairingDevice_ && address != this.pairingDevice_.address)
+      if (this.pairingDevice_ && address != this.pairingDevice_.address) {
         return;
+      }
+
       // Let the dialog handle any errors, otherwise close the dialog.
-      var dialog = this.$.deviceDialog;
-      if (dialog.handleError(device, chrome.runtime.lastError, result)) {
+      const dialog = this.$.deviceDialog;
+      if (dialog.endConnectionAttempt(
+              device, !isPaired /* wasPairing */, chrome.runtime.lastError,
+              result)) {
         this.openDialog_();
       } else if (
           result != chrome.bluetoothPrivate.ConnectResultType.IN_PROGRESS) {
@@ -466,14 +457,14 @@ Polymer({
             'Error forgetting: ' + device.name + ': ' +
             chrome.runtime.lastError.message);
       }
-      this.updateDeviceList_();
     });
   },
 
   /** @private */
   openDialog_: function() {
-    if (this.dialogShown_)
+    if (this.dialogShown_) {
       return;
+    }
     // Call flush so that the dialog gets sized correctly before it is opened.
     Polymer.dom.flush();
     this.$.deviceDialog.open();
@@ -485,81 +476,115 @@ Polymer({
     this.dialogShown_ = false;
     this.pairingDevice_ = undefined;
     // The list is dynamic so focus the first item.
-    var device = this.$$('#unpairedContainer bluetooth-device-list-item');
-    if (device)
+    const device = this.$$('#unpairedContainer bluetooth-device-list-item');
+    if (device) {
       device.focus();
+    }
   },
 
   /**
-   * Requests update for bluetooth list.
+   * Requests bluetooth device list from Chrome. Update deviceList_ once the
+   * results are returned from chrome.
    * @private
    */
-  requestListUpdate_: function() {
-    if (this.deviceList_.length == 0) {
-      // Update immediately for the initial device list.
-      this.bluetooth.getDevices(devices => {
-        this.populateDeviceList_(devices);
-      });
-      return;
-    }
+  refreshBluetoothList_: function() {
+    const filter = {
+      filterType: chrome.bluetooth.FilterType.KNOWN,
+      limit: MAX_NUMBER_DEVICE_SHOWN
+    };
+    this.bluetooth.getDevices(filter, devices => {
+      this.deviceList_ = devices;
+    });
+  },
 
-    // Return here because an update is already queued.
-    if (this.updateTimerId_ !== undefined)
-      return;
-
-    // Call bluetooth.getDevices once per listUpdateFrequencyMs.
-    this.updateTimerId_ = window.setTimeout(() => {
-      if (settings.getCurrentRoute() != settings.routes.BLUETOOTH_DEVICES) {
-        this.stopListUpdate_();
+  /** @private */
+  startOrStopRefreshingDeviceList_: function() {
+    if (this.adapterState && this.adapterState.powered) {
+      if (this.updateTimerId_ !== undefined) {
         return;
       }
 
-      this.bluetooth.getDevices(devices => {
-        this.populateDeviceList_(devices);
-      });
-      this.updateTimerId_ = undefined;
-    }, this.listUpdateFrequencyMs);
-  },
-
-  /**
-   * Stops update for bluetooth list.
-   * @private
-   */
-  stopListUpdate_: function() {
-    if (this.updateTimerId_ !== undefined) {
-      window.clearTimeout(this.updateTimerId_);
-      this.updateTimerId_ = undefined;
+      this.refreshBluetoothList_();
+      this.updateTimerId_ =
+        window.setInterval(this.refreshBluetoothList_.bind(this),
+                           this.listUpdateFrequencyMs);
+      this.discoveryStartTimestampMs_ = Date.now();
+      return;
     }
+    window.clearInterval(this.updateTimerId_);
+    this.updateTimerId_ = undefined;
+    this.discoveryStartTimestampMs_ = null;
+    this.deviceList_ = [];
   },
 
   /**
-   * Populate the device list from chrome.bluetooth.getDevices
-   * Limit the device number to MAX_NUMBER_DEVICE_SHOWN and
-   * prioritize paired/connecting devices over other devices.
-   * @param {!Array<!chrome.bluetooth.Device|undefined>} devices
+   * Restarts the timer when the frequency changes, which happens
+   * during tests.
+   */
+  listUpdateFrequencyMsChanged_: function() {
+    if (this.updateTimerId_ === undefined) {
+      return;
+    }
+
+    window.clearInterval(this.updateTimerId_);
+    this.updateTimerId_ = undefined;
+
+    this.startOrStopRefreshingDeviceList_();
+  },
+
+  /**
+   * Record metrics for user-initiated attempts to reconnect to an already
+   * paired device.
+   * @param {!chrome.bluetoothPrivate.ConnectResultType} result The connection
+   *     result.
    * @private
    */
-  populateDeviceList_: function(devices) {
-    var tempList = [];
-    var i;
-    for (i = 0; i < devices.length; i++) {
-      if (tempList.length == MAX_NUMBER_DEVICE_SHOWN)
-        break;
-
-      if (!!devices[i].paired || !!devices[i].connecting) {
-        tempList.push(devices[i]);
-        devices[i] = undefined;
+  recordUserInitiatedReconnectionAttemptResult_: function(result) {
+    let success;
+    if (chrome.runtime.lastError) {
+      success = false;
+    } else {
+      switch (result) {
+        case chrome.bluetoothPrivate.ConnectResultType.SUCCESS:
+          success = true;
+          break;
+        case chrome.bluetoothPrivate.ConnectResultType.AUTH_CANCELED:
+        case chrome.bluetoothPrivate.ConnectResultType.IN_PROGRESS:
+          // Don't record metrics until connection has ended, and don't record
+          // cancellations.
+          return;
+        default:
+          success = false;
+          break;
       }
     }
 
-    for (i = 0; i < devices.length; i++) {
-      if (tempList.length == MAX_NUMBER_DEVICE_SHOWN)
-        break;
+    chrome.bluetoothPrivate.recordReconnection(success);
+  },
 
-      if (devices[i] !== undefined)
-        tempList.push(devices[i]);
+  /**
+   * Record metrics for how long it took between when discovery started on the
+   * Settings page, and the user selected the device they wanted to connect to.
+   * @param {!boolean} wasPaired If the selected device was already
+   *     paired.
+   * @param {!chrome.bluetooth.Transport} transport The transport type
+   *     of the device.
+   * @private
+   */
+  recordDeviceSelectionDuration_: function(wasPaired, transport) {
+    if (!this.discoveryStartTimestampMs_) {
+      // It's not necessarily an error that |discoveryStartTimestampMs_| isn't
+      // present; it's intentionally cleared after the first device selection
+      // (see further on in this method). Recording subsequent device selections
+      // after the first would provide inflated durations that don't truly
+      // reflect how long it took for the user to find the device they're
+      // looking for.
+      return;
     }
 
-    this.deviceList_ = tempList;
+    chrome.bluetoothPrivate.recordDeviceSelection(
+        Date.now() - this.discoveryStartTimestampMs_, wasPaired, transport);
+
+    this.discoveryStartTimestampMs_ = null;
   },
 });

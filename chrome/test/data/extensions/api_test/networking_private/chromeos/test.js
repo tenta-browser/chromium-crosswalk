@@ -139,35 +139,17 @@ var availableTests = [
         }));
   },
   function startActivate() {
-    // Must connect to a network before we can activate it.
-    chrome.networkingPrivate.startConnect(
-        kCellularGuid, callbackPass(function() {
-          chrome.networkingPrivate.startActivate(
-              kCellularGuid, callbackPass(function() {
-                // For non Sprint networks, startActivate will delegate
-                // showing the activation UI to the browser host and not
-                // immediately activate the network.
-                chrome.networkingPrivate.getState(
-                    kCellularGuid, callbackPass(function(state) {
-                      assertEq(ActivationStateType.NOT_ACTIVATED,
-                               state.Cellular.ActivationState);
-                    }));
-              }));
-        }));
-  },
-  function startActivateSprint() {
-    // Must connect to a network before we can activate it.
-    chrome.networkingPrivate.startConnect(
-        kCellularGuid, callbackPass(function() {
-          chrome.networkingPrivate.startActivate(
-              kCellularGuid, callbackPass(function() {
-                chrome.networkingPrivate.getState(
-                    kCellularGuid, callbackPass(function(state) {
-                      assertEq(ActivationStateType.ACTIVATED,
-                               state.Cellular.ActivationState);
-                    }));
-              }));
-        }));
+    chrome.networkingPrivate.startActivate(
+      kCellularGuid, callbackPass(function() {
+        // For non Sprint networks, startActivate will delegate
+        // showing the activation UI to the browser host and not
+        // immediately activate the network.
+        chrome.networkingPrivate.getState(
+          kCellularGuid, callbackPass(function(state) {
+            assertEq(ActivationStateType.NOT_ACTIVATED,
+                     state.Cellular.ActivationState);
+          }));
+      }));
   },
   function startConnectNonexistent() {
     chrome.networkingPrivate.startConnect(
@@ -188,7 +170,7 @@ var availableTests = [
     chrome.networkingPrivate.createNetwork(
       false,  // shared
       { Type: NetworkType.WI_FI,
-        GUID: 'ignored_guid',
+        GUID: 'some_guid',
         WiFi: {
           SSID: 'wifi_created',
           Security: 'WEP-PSK'
@@ -196,7 +178,7 @@ var availableTests = [
       },
       callbackPass(function(guid) {
         assertFalse(guid == '');
-        assertFalse(guid == 'ignored_guid');
+        assertEq('some_guid', guid);
         chrome.networkingPrivate.getProperties(
             guid, callbackPass(function(properties) {
               assertEq(NetworkType.WI_FI, properties.Type);
@@ -292,7 +274,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           GUID: 'stub_wifi2_guid',
@@ -305,7 +288,8 @@ var availableTests = [
             Frequency: 5000,
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
 
@@ -328,7 +312,8 @@ var availableTests = [
                 HexSSID: "7769666931",
                 Security: 'WEP-PSK',
                 SignalStrength: 40,
-                SSID: "wifi1"
+                SSID: "wifi1",
+                TetheringState: "NotDetected"
               }
             }], result);
 
@@ -383,7 +368,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           Connectable: true,
@@ -433,7 +419,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
       }));
@@ -456,7 +443,8 @@ var availableTests = [
             HexSSID: "7769666931",
             Security: 'WEP-PSK',
             SignalStrength: 40,
-            SSID: "wifi1"
+            SSID: "wifi1",
+            TetheringState: "NotDetected"
           }
         }, {
           Connectable: true,
@@ -472,7 +460,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }], result);
       }));
@@ -506,7 +495,8 @@ var availableTests = [
     chrome.networkingPrivate.getDeviceStates(callbackPass(function(result) {
       assertEq([
         {Scanning: false, State: 'Enabled', Type: 'Ethernet'},
-        {Scanning: false, State: 'Enabled', Type: 'WiFi'},
+        {Scanning: false, State: 'Enabled', Type: 'WiFi',
+         ManagedNetworkAvailable: false},
         {State: 'Uninitialized', SIMPresent: true,
          SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
          Type: 'Cellular' },
@@ -560,6 +550,8 @@ var availableTests = [
           Source: 'User',
           StaticIPConfig: {
             IPAddress: '1.2.3.4',
+            Gateway: '0.0.0.0',
+            RoutingPrefix: 1,
             Type: 'IPv4'
           },
           Type: NetworkType.WI_FI,
@@ -570,7 +562,8 @@ var availableTests = [
             FrequencyList: [2400],
             SSID: 'wifi1',
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            TetheringState: "NotDetected"
           }
         }, result);
       }));
@@ -584,7 +577,6 @@ var availableTests = [
             ActivationState: ActivationStateType.NOT_ACTIVATED,
             AllowRoaming: false,
             AutoConnect: true,
-            Carrier: 'Cellular1_Carrier',
             Family: 'GSM',
             HomeProvider: {
               Code: '000000',
@@ -600,7 +592,8 @@ var availableTests = [
             ModelID:"test_model_id",
             NetworkTechnology: 'GSM',
             RoamingState: 'Home',
-            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3}
+            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
           },
           ConnectionState: ConnectionStateType.NOT_CONNECTED,
           GUID: kCellularGuid,
@@ -617,7 +610,6 @@ var availableTests = [
         assertEq({
           Cellular: {
             AllowRoaming: false,
-            Carrier: 'Cellular1_Carrier',
             ESN: "test_esn",
             Family: 'GSM',
             HomeProvider: {
@@ -632,12 +624,13 @@ var availableTests = [
             MIN: "test_min",
             ModelID:"test_model_id",
             SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            Scanning: false,
             SignalStrength: 0,
           },
           Connectable: false,
           ConnectionState: ConnectionStateType.NOT_CONNECTED,
           GUID: kCellularGuid,
-          Name: 'Cellular1_Provider',
+          Name: '',
           Priority: 0,
           Source: 'None',
           Type: NetworkType.CELLULAR,
@@ -649,7 +642,6 @@ var availableTests = [
       'stub_wifi2',
       callbackPass(function(result) {
         assertEq({
-          Connectable: true,
           ConnectionState: ConnectionStateType.NOT_CONNECTED,
           GUID: 'stub_wifi2',
           Name: {
@@ -669,7 +661,6 @@ var availableTests = [
           Type: NetworkType.WI_FI,
           WiFi: {
             AutoConnect: {
-              Active: false,
               UserEditable: true
             },
             HexSSID: {
@@ -682,6 +673,7 @@ var availableTests = [
             Passphrase: {
               Effective: 'UserSetting',
               UserEditable: true,
+              UserPolicy: 'FAKE_CREDENTIAL_VPaJDV9x',
               UserSetting: 'FAKE_CREDENTIAL_VPaJDV9x'
             },
             SSID: {
@@ -694,25 +686,19 @@ var availableTests = [
               UserPolicy: 'WPA-PSK'
             },
             SignalStrength: 80,
+            TetheringState: "NotDetected"
           }
         }, result);
       }));
   },
   function setCellularProperties() {
     var network_guid = kCellularGuid;
-    // Make sure we test Cellular.Carrier since it requires a special call
-    // to Shill.Device.SetCarrier.
-    var newCarrier = 'new_carrier';
     chrome.networkingPrivate.getProperties(
         network_guid,
         callbackPass(function(result) {
           assertEq(network_guid, result.GUID);
-          assertTrue(!result.Cellular || result.Cellular.Carrier != newCarrier);
           var new_properties = {
-            Priority: 1,
-            Cellular: {
-              Carrier: newCarrier,
-            },
+            Priority: 1
           };
           chrome.networkingPrivate.setProperties(
               network_guid,
@@ -725,8 +711,6 @@ var availableTests = [
                       assertEq(network_guid, result.GUID);
                       // Ensure that the properties were set.
                       assertEq(1, result['Priority']);
-                      assertTrue('Cellular' in result);
-                      assertEq(newCarrier, result.Cellular.Carrier);
                     }));
               }));
         }));
@@ -744,7 +728,9 @@ var availableTests = [
             },
             IPAddressConfigType: 'Static',
             StaticIPConfig: {
-              IPAddress: '1.2.3.4'
+              IPAddress: '1.2.3.4',
+              Gateway: '0.0.0.0',
+              RoutingPrefix: 1
             }
           };
           chrome.networkingPrivate.setProperties(
@@ -764,6 +750,8 @@ var availableTests = [
                       assertTrue('StaticIPConfig' in result);
                       assertEq('1.2.3.4',
                                result['StaticIPConfig']['IPAddress']);
+                      assertEq('0.0.0.0', result['StaticIPConfig']['Gateway']);
+                      assertEq(1, result['StaticIPConfig']['RoutingPrefix']);
                     }));
               }));
         }));
@@ -818,7 +806,8 @@ var availableTests = [
             HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
             SignalStrength: 80,
-            SSID: "wifi2_PSK"
+            SSID: "wifi2_PSK",
+            TetheringState: "NotDetected"
           }
         }, result);
       }));
@@ -859,9 +848,9 @@ var availableTests = [
     // Connecting to wifi2 should set wifi1 to offline. Connected or Connecting
     // networks should be listed first, sorted by type.
     var expected = ['stub_ethernet_guid',
-                    'stub_wifi2_guid',
                     'stub_wimax_guid',
                     'stub_vpn1_guid',
+                    'stub_wifi2_guid',
                     'stub_wifi1_guid',
                     'stub_vpn2_guid'];
     var done = chrome.test.callbackAdded();
@@ -879,6 +868,16 @@ var availableTests = [
     chrome.networkingPrivate.onDeviceStateListChanged.addListener(listener);
     chrome.networkingPrivate.disableNetworkType('WiFi');
   },
+  function onDeviceScanningChangedEvent() {
+    // Requesting a scan should trigger a device state list changed event when
+    // the scan completes.
+    var listener = callbackPass(function() {
+      chrome.networkingPrivate.onDeviceStateListChanged.removeListener(
+          listener);
+    });
+    chrome.networkingPrivate.onDeviceStateListChanged.addListener(listener);
+    chrome.networkingPrivate.requestNetworkScan('Cellular');
+  },
   function onCertificateListsChangedEvent() {
     chrome.test.listenOnce(
         chrome.networkingPrivate.onCertificateListsChanged, function() {});
@@ -889,15 +888,6 @@ var availableTests = [
       verificationProperties,
       callbackPass(function(isValid) {
         assertTrue(isValid);
-      }));
-  },
-  function verifyAndEncryptCredentials() {
-    var network_guid = 'stub_wifi2_guid';
-    chrome.networkingPrivate.verifyAndEncryptCredentials(
-      verificationProperties,
-      network_guid,
-      callbackPass(function(result) {
-        assertEq('encrypted_credentials', result);
       }));
   },
   function verifyAndEncryptData() {

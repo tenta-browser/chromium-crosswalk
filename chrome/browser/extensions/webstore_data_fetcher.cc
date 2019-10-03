@@ -7,15 +7,23 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
-#include "content/public/common/service_manager_connection.h"
+#include "components/safe_browsing/features.h"
+#include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/common/extension_urls.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
 #include "services/data_decoder/public/cpp/safe_json_parser.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace {
 
@@ -25,28 +33,19 @@ const char kInvalidWebstoreResponseError[] = "Invalid Chrome Web Store reponse";
 
 namespace extensions {
 
-WebstoreDataFetcher::WebstoreDataFetcher(
-    WebstoreDataFetcherDelegate* delegate,
-    net::URLRequestContextGetter* request_context,
-    const GURL& referrer_url,
-    const std::string webstore_item_id)
+WebstoreDataFetcher::WebstoreDataFetcher(WebstoreDataFetcherDelegate* delegate,
+                                         const GURL& referrer_url,
+                                         const std::string webstore_item_id)
     : delegate_(delegate),
-      request_context_(request_context),
       referrer_url_(referrer_url),
       id_(webstore_item_id),
-      max_auto_retries_(0) {
-}
+      max_auto_retries_(0) {}
 
 WebstoreDataFetcher::~WebstoreDataFetcher() {}
 
-void WebstoreDataFetcher::SetJsonPostData(const std::string& json) {
-  json_post_data_ = json;
-}
-
-void WebstoreDataFetcher::Start() {
+void WebstoreDataFetcher::Start(
+    network::mojom::URLLoaderFactory* url_loader_factory) {
   GURL webstore_data_url(extension_urls::GetWebstoreItemJsonDataURL(id_));
-  net::URLFetcher::RequestType request_type =
-      json_post_data_.empty() ? net::URLFetcher::GET : net::URLFetcher::POST;
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("webstore_data_fetcher", R"(
         semantics {
@@ -77,36 +76,36 @@ void WebstoreDataFetcher::Start() {
             "triggered if the user uses extensions."
           policy_exception_justification: "Not implemented."
         })");
-  webstore_data_url_fetcher_ = net::URLFetcher::Create(
-      webstore_data_url, request_type, this, traffic_annotation);
-  webstore_data_url_fetcher_->SetRequestContext(request_context_);
-  webstore_data_url_fetcher_->SetReferrer(referrer_url_.spec());
-  webstore_data_url_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
-                                           net::LOAD_DISABLE_CACHE);
 
-  if (!json_post_data_.empty()) {
-    webstore_data_url_fetcher_->SetUploadData("application/json",
-                                              json_post_data_);
-  }
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = webstore_data_url;
+  resource_request->load_flags =
+      net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DISABLE_CACHE;
+  resource_request->referrer = referrer_url_;
+  resource_request->method = "GET";
+  simple_url_loader_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation);
 
   if (max_auto_retries_ > 0) {
-    webstore_data_url_fetcher_->SetMaxRetriesOn5xx(max_auto_retries_);
-    webstore_data_url_fetcher_->SetAutomaticallyRetryOnNetworkChanges(
-        max_auto_retries_);
+    simple_url_loader_->SetRetryOptions(
+        max_auto_retries_,
+        network::SimpleURLLoader::RETRY_ON_5XX |
+            network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
   }
-  webstore_data_url_fetcher_->Start();
+  simple_url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory,
+      base::BindOnce(&WebstoreDataFetcher::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 }
 
-void WebstoreDataFetcher::OnJsonParseSuccess(
-    std::unique_ptr<base::Value> parsed_json) {
-  if (!parsed_json->is_dict()) {
+void WebstoreDataFetcher::OnJsonParseSuccess(base::Value parsed_json) {
+  if (!parsed_json.is_dict()) {
     OnJsonParseFailure(kInvalidWebstoreResponseError);
     return;
   }
 
-  delegate_->OnWebstoreResponseParseSuccess(
-      std::unique_ptr<base::DictionaryValue>(
-          static_cast<base::DictionaryValue*>(parsed_json.release())));
+  delegate_->OnWebstoreResponseParseSuccess(base::DictionaryValue::From(
+      base::Value::ToUniquePtrValue(std::move(parsed_json))));
 }
 
 void WebstoreDataFetcher::OnJsonParseFailure(
@@ -114,27 +113,18 @@ void WebstoreDataFetcher::OnJsonParseFailure(
   delegate_->OnWebstoreResponseParseFailure(error);
 }
 
-void WebstoreDataFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
-  CHECK_EQ(webstore_data_url_fetcher_.get(), source);
-
-  std::unique_ptr<net::URLFetcher> fetcher(
-      std::move(webstore_data_url_fetcher_));
-
-  if (!fetcher->GetStatus().is_success() ||
-      fetcher->GetResponseCode() != 200) {
+void WebstoreDataFetcher::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  if (!response_body) {
     delegate_->OnWebstoreRequestFailure();
     return;
   }
 
-  std::string webstore_json_data;
-  fetcher->GetResponseAsString(&webstore_json_data);
-
   // The parser will call us back via one of the callbacks.
   data_decoder::SafeJsonParser::Parse(
-      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
-      webstore_json_data,
-      base::Bind(&WebstoreDataFetcher::OnJsonParseSuccess, AsWeakPtr()),
-      base::Bind(&WebstoreDataFetcher::OnJsonParseFailure, AsWeakPtr()));
+      content::GetSystemConnector(), *response_body,
+      base::BindOnce(&WebstoreDataFetcher::OnJsonParseSuccess, AsWeakPtr()),
+      base::BindOnce(&WebstoreDataFetcher::OnJsonParseFailure, AsWeakPtr()));
 }
 
 }  // namespace extensions

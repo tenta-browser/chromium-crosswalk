@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
+#include "chrome/browser/permissions/chooser_context_base.h"
 #include "chrome/browser/ui/page_info/page_info.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -23,10 +25,6 @@ class GURL;
 class Profile;
 class PageInfo;
 
-namespace gfx {
-class Image;
-}
-
 namespace net {
 class X509Certificate;
 }
@@ -39,14 +37,6 @@ class X509Certificate;
 // etc.).
 class PageInfoUI {
  public:
-  // The Page Info UI contains several tabs. Each tab is associated with
-  // a unique tab id. The enum |TabId| contains all the ids for the tabs.
-  enum TabId {
-    TAB_ID_PERMISSIONS = 0,
-    TAB_ID_CONNECTION,
-    NUM_TAB_IDS,
-  };
-
   enum class SecuritySummaryColor {
     RED,
     GREEN,
@@ -94,16 +84,17 @@ class PageInfoUI {
     bool is_incognito;
   };
 
-  // |ChosenObjectInfo| contains information about a single |object| of a
-  // chooser |type| that the current website has been granted access to.
+  // |ChosenObjectInfo| contains information about a single |chooser_object| of
+  // a chooser |type| that the current website has been granted access to.
   struct ChosenObjectInfo {
-    ChosenObjectInfo(const PageInfo::ChooserUIInfo& ui_info,
-                     std::unique_ptr<base::DictionaryValue> object);
+    ChosenObjectInfo(
+        const PageInfo::ChooserUIInfo& ui_info,
+        std::unique_ptr<ChooserContextBase::Object> chooser_object);
     ~ChosenObjectInfo();
     // |ui_info| for this chosen object type.
     const PageInfo::ChooserUIInfo& ui_info;
-    // The opaque |object| representing the thing the user selected.
-    std::unique_ptr<base::DictionaryValue> object;
+    // The opaque |chooser_object| representing the thing the user selected.
+    std::unique_ptr<ChooserContextBase::Object> chooser_object;
   };
 
   // |IdentityInfo| contains information about the site's identity and
@@ -118,8 +109,8 @@ class PageInfoUI {
     std::string site_identity;
     // Status of the site's identity.
     PageInfo::SiteIdentityStatus identity_status;
-    // Helper to get security description info to display to the user.
-    std::unique_ptr<SecurityDescription> GetSecurityDescription() const;
+    // Site's Safe Browsing status.
+    PageInfo::SafeBrowsingStatus safe_browsing_status;
     // Textual description of the site's identity status that is displayed to
     // the user.
     std::string identity_status_description;
@@ -141,6 +132,13 @@ class PageInfoUI {
     // page info will include buttons to change corresponding password, and
     // to whitelist current site.
     bool show_change_password_buttons;
+  };
+
+  struct PageFeatureInfo {
+    PageFeatureInfo();
+
+    // True if VR content is being presented in a headset.
+    bool is_vr_presentation_in_headset;
   };
 
   using CookieInfoList = std::vector<CookieInfo>;
@@ -171,23 +169,10 @@ class PageInfoUI {
       const GURL& url);
 
   // Returns the color to use for the permission decision reason strings.
-  static SkColor GetPermissionDecisionTextColor();
-
-  // Returns the icon resource ID for the given permission |type| and |setting|.
-  static int GetPermissionIconID(ContentSettingsType type,
-                                 ContentSetting setting);
-
-  // Returns the icon for the given permissionInfo |info|.  If |info|'s current
-  // setting is CONTENT_SETTING_DEFAULT, it will return the icon for |info|'s
-  // default setting.
-  static const gfx::Image& GetPermissionIcon(const PermissionInfo& info);
+  static SkColor GetSecondaryTextColor();
 
   // Returns the UI string describing the given object |info|.
   static base::string16 ChosenObjectToUIString(const ChosenObjectInfo& info);
-
-  // Returns the icon for the given object |info|.
-  static const gfx::Image& GetChosenObjectIcon(const ChosenObjectInfo& info,
-                                               bool deleted);
 
 #if defined(OS_ANDROID)
   // Returns the identity icon ID for the given identity |status|.
@@ -196,11 +181,29 @@ class PageInfoUI {
   // Returns the connection icon ID for the given connection |status|.
   static int GetConnectionIconID(PageInfo::SiteConnectionStatus status);
 #else
+  // Returns icons for the given PermissionInfo |info|. If |info|'s current
+  // setting is CONTENT_SETTING_DEFAULT, it will return the icon for |info|'s
+  // default setting.
+  static const gfx::ImageSkia GetPermissionIcon(
+      const PermissionInfo& info,
+      const SkColor related_text_color);
+
+  // Returns the icon for the given object |info|.
+  static const gfx::ImageSkia GetChosenObjectIcon(
+      const ChosenObjectInfo& info,
+      bool deleted,
+      const SkColor related_text_color);
+
   // Returns the icon for the page Certificate.
-  static const gfx::ImageSkia GetCertificateIcon();
+  static const gfx::ImageSkia GetCertificateIcon(
+      const SkColor related_text_color);
 
   // Returns the icon for the button / link to Site settings.
-  static const gfx::ImageSkia GetSiteSettingsIcon();
+  static const gfx::ImageSkia GetSiteSettingsIcon(
+      const SkColor related_text_color);
+
+  // Returns the icon for VR settings.
+  static const gfx::ImageSkia GetVrSettingsIcon(SkColor related_text_color);
 #endif
 
   // Return true if the given ContentSettingsType is in PageInfoUI.
@@ -216,6 +219,19 @@ class PageInfoUI {
 
   // Sets site identity information.
   virtual void SetIdentityInfo(const IdentityInfo& identity_info) = 0;
+
+  virtual void SetPageFeatureInfo(const PageFeatureInfo& page_feature_info) = 0;
+
+  // Helper to get security description info to display to the user.
+  std::unique_ptr<PageInfoUI::SecurityDescription> GetSecurityDescription(
+      const IdentityInfo& identity_info) const;
+
+#if defined(FULL_SAFE_BROWSING)
+  // Creates security description for password reuse case.
+  virtual std::unique_ptr<PageInfoUI::SecurityDescription>
+  CreateSecurityDescriptionForPasswordReuse(
+      bool is_enterprise_password) const = 0;
+#endif
 };
 
 typedef PageInfoUI::CookieInfoList CookieInfoList;

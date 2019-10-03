@@ -16,7 +16,6 @@
 class BookmarkBarView;
 class Browser;
 class BrowserViewLayoutDelegate;
-class ContentsLayoutManager;
 class ImmersiveModeController;
 class InfoBarContainerView;
 class TabStrip;
@@ -28,6 +27,8 @@ class Size;
 
 namespace views {
 class ClientView;
+class View;
+class Widget;
 }
 
 namespace web_modal {
@@ -37,21 +38,18 @@ class WebContentsModalDialogHost;
 // The layout manager used in chrome browser.
 class BrowserViewLayout : public views::LayoutManager {
  public:
-  BrowserViewLayout();
-  ~BrowserViewLayout() override;
-
-  // Sets all the views to be managed. Takes ownership of |delegate|.
   // |browser_view| may be null in tests.
-  void Init(BrowserViewLayoutDelegate* delegate,
-            Browser* browser,
-            views::ClientView* browser_view,
-            views::View* top_container,
-            TabStrip* tab_strip,
-            views::View* toolbar,
-            InfoBarContainerView* infobar_container,
-            views::View* contents_container,
-            ContentsLayoutManager* contents_layout_manager,
-            ImmersiveModeController* immersive_mode_controller);
+  BrowserViewLayout(std::unique_ptr<BrowserViewLayoutDelegate> delegate,
+                    Browser* browser,
+                    views::ClientView* browser_view,
+                    views::View* top_container,
+                    views::View* tab_strip_region_view,
+                    TabStrip* tab_strip,
+                    views::View* toolbar,
+                    InfoBarContainerView* infobar_container,
+                    views::View* contents_container,
+                    ImmersiveModeController* immersive_mode_controller);
+  ~BrowserViewLayout() override;
 
   // Sets or updates views that are not available when |this| is initialized.
   void set_tab_strip(TabStrip* tab_strip) {
@@ -63,11 +61,12 @@ class BrowserViewLayout : public views::LayoutManager {
   void set_download_shelf(views::View* download_shelf) {
     download_shelf_ = download_shelf;
   }
+  void set_contents_border_widget(views::Widget* contents_border_widget) {
+    contents_border_widget_ = contents_border_widget;
+  }
+  views::Widget* contents_border_widget() { return contents_border_widget_; }
 
   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost();
-
-  // Returns the minimum size of the browser view.
-  gfx::Size GetMinimumSize();
 
   // Returns the bounding box, in widget coordinates,  for the find bar.
   gfx::Rect GetFindBarBoundingBox() const;
@@ -80,7 +79,11 @@ class BrowserViewLayout : public views::LayoutManager {
 
   // views::LayoutManager overrides:
   void Layout(views::View* host) override;
+  gfx::Size GetMinimumSize(const views::View* host) const override;
   gfx::Size GetPreferredSize(const views::View* host) const override;
+
+  // Returns true if an infobar is showing.
+  bool IsInfobarVisible() const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(BrowserViewLayoutTest, BrowserViewLayout);
@@ -89,6 +92,7 @@ class BrowserViewLayout : public views::LayoutManager {
   class WebContentsModalDialogHostViews;
 
   Browser* browser() { return browser_; }
+  const Browser* browser() const { return browser_; }
 
   // Layout the following controls, starting at |top|, returns the coordinate
   // of the bottom of the control, for laying out the next control.
@@ -107,10 +111,6 @@ class BrowserViewLayout : public views::LayoutManager {
   // the bookmark bar and the toolbar.
   void UpdateTopContainerBounds();
 
-  // Returns the vertical offset for the web contents to account for a
-  // detached bookmarks bar.
-  int GetContentsOffsetForBookmarkBar();
-
   // Returns the top margin to adjust the contents_container_ by. This is used
   // to make the bookmark bar and contents_container_ overlap so that the
   // preview contents hides the bookmark bar.
@@ -120,31 +120,32 @@ class BrowserViewLayout : public views::LayoutManager {
   // control, for laying out the previous control.
   int LayoutDownloadShelf(int bottom);
 
-  // Returns true if an infobar is showing.
-  bool InfobarVisible() const;
-
   // The delegate interface. May be a mock in tests.
-  std::unique_ptr<BrowserViewLayoutDelegate> delegate_;
+  const std::unique_ptr<BrowserViewLayoutDelegate> delegate_;
 
   // The browser from the owning BrowserView.
-  Browser* browser_;
+  Browser* const browser_;
 
   // The owning browser view.
-  views::ClientView* browser_view_;
+  views::ClientView* const browser_view_;
 
   // Child views that the layout manager manages.
   // NOTE: If you add a view, try to add it as a views::View, which makes
   // testing much easier.
-  views::View* top_container_;
-  TabStrip* tab_strip_;
-  views::View* toolbar_;
-  BookmarkBarView* bookmark_bar_;
-  InfoBarContainerView* infobar_container_;
-  views::View* contents_container_;
-  ContentsLayoutManager* contents_layout_manager_;
-  views::View* download_shelf_;
+  views::View* const top_container_;
+  views::View* const tab_strip_region_view_;
+  views::View* const toolbar_;
+  InfoBarContainerView* const infobar_container_;
+  views::View* const contents_container_;
+  ImmersiveModeController* const immersive_mode_controller_;
 
-  ImmersiveModeController* immersive_mode_controller_;
+  TabStrip* tab_strip_ = nullptr;
+  BookmarkBarView* bookmark_bar_ = nullptr;
+  views::View* download_shelf_ = nullptr;
+
+  // The widget displaying a border on top of contents container for
+  // highlighting the content. Not created by default.
+  views::Widget* contents_border_widget_ = nullptr;
 
   // The bounds within which the vertically-stacked contents of the BrowserView
   // should be laid out within. This is just the local bounds of the
@@ -160,7 +161,7 @@ class BrowserViewLayout : public views::LayoutManager {
 
   // The distance the web contents modal dialog is from the top of the window,
   // in pixels.
-  int web_contents_modal_dialog_top_y_;
+  int web_contents_modal_dialog_top_y_ = -1;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserViewLayout);
 };

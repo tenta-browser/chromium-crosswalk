@@ -8,13 +8,15 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_content_file_system_file_stream_reader.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_file_system_operation_runner.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_file_system_instance.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -80,8 +82,16 @@ class ArcContentFileSystemFileStreamReaderTest : public testing::Test {
     profile_ = std::make_unique<TestingProfile>();
     arc_service_manager_->set_browser_context(profile_.get());
     ArcFileSystemOperationRunner::GetFactory()->SetTestingFactoryAndUse(
-        profile_.get(), &CreateFileSystemOperationRunnerForTesting);
+        profile_.get(),
+        base::BindRepeating(&CreateFileSystemOperationRunnerForTesting));
     arc_service_manager_->arc_bridge_service()->file_system()->SetInstance(
+        &fake_file_system_);
+    WaitForInstanceReady(
+        arc_service_manager_->arc_bridge_service()->file_system());
+  }
+
+  void TearDown() override {
+    arc_service_manager_->arc_bridge_service()->file_system()->CloseInstance(
         &fake_file_system_);
   }
 
@@ -141,6 +151,20 @@ TEST_F(ArcContentFileSystemFileStreamReaderTest, GetLength) {
   net::TestInt64CompletionCallback callback;
   EXPECT_EQ(static_cast<int64_t>(strlen(kData)),
             callback.GetResult(reader.GetLength(callback.callback())));
+}
+
+TEST_F(ArcContentFileSystemFileStreamReaderTest, ReadError) {
+  ArcContentFileSystemFileStreamReader reader(
+      GURL("content://org.chromium.foo/error"), 0);
+  auto buffer = base::MakeRefCounted<net::IOBufferWithSize>(strlen(kData));
+  EXPECT_FALSE(ReadData(&reader, buffer.get()));
+}
+
+TEST_F(ArcContentFileSystemFileStreamReaderTest, GetLengthError) {
+  ArcContentFileSystemFileStreamReader reader(
+      GURL("content://org.chromium.foo/error"), 0);
+  net::TestInt64CompletionCallback callback;
+  EXPECT_LT(callback.GetResult(reader.GetLength(callback.callback())), 0);
 }
 
 }  // namespace arc

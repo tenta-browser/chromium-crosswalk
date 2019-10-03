@@ -8,13 +8,14 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/policy/device_policy_decoder_chromeos.h"
-#include "chrome/browser/chromeos/settings/install_attributes.h"
+#include "chrome/browser/chromeos/policy/value_validation/onc_device_policy_value_validator.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/ownership/owner_key_util.h"
+#include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
@@ -58,6 +59,12 @@ void DeviceCloudPolicyStoreChromeOS::Store(
   if (!install_attributes_->IsCloudManaged() ||
       !device_settings_service_->policy_data() || !public_key.get() ||
       !public_key->is_loaded()) {
+    LOG(ERROR) << "Policy store failed, is_cloud_managed: "
+               << install_attributes_->IsCloudManaged() << ", policy_data: "
+               << (device_settings_service_->policy_data() != nullptr)
+               << ", public_key: " << (public_key.get() != nullptr)
+               << ", public_key_is_loaded: "
+               << (public_key.get() ? public_key->is_loaded() : false);
     status_ = STATUS_BAD_STATE;
     NotifyStoreError();
     return;
@@ -79,6 +86,9 @@ void DeviceCloudPolicyStoreChromeOS::Store(
 }
 
 void DeviceCloudPolicyStoreChromeOS::Load() {
+  // Cancel all pending requests.
+  weak_factory_.InvalidateWeakPtrs();
+
   device_settings_service_->Load();
 }
 
@@ -115,21 +125,21 @@ void DeviceCloudPolicyStoreChromeOS::OnDeviceSettingsServiceShutdown() {
 std::unique_ptr<DeviceCloudPolicyValidator>
 DeviceCloudPolicyStoreChromeOS::CreateValidator(
     const em::PolicyFetchResponse& policy) {
-  std::unique_ptr<DeviceCloudPolicyValidator> validator(
-      DeviceCloudPolicyValidator::Create(
-          base::MakeUnique<em::PolicyFetchResponse>(policy),
-          background_task_runner_));
+  auto validator = std::make_unique<DeviceCloudPolicyValidator>(
+      std::make_unique<em::PolicyFetchResponse>(policy),
+      background_task_runner_);
   validator->ValidateDomain(install_attributes_->GetDomain());
   validator->ValidatePolicyType(dm_protocol::kChromeDevicePolicyType);
   validator->ValidatePayload();
+  validator->ValidateValues(std::make_unique<ONCDevicePolicyValueValidator>());
   return validator;
 }
 
 void DeviceCloudPolicyStoreChromeOS::OnPolicyToStoreValidated(
     DeviceCloudPolicyValidator* validator) {
+  validation_result_ = validator->GetValidationResult();
   if (!validator->success()) {
     status_ = STATUS_VALIDATION_ERROR;
-    validation_status_ = validator->status();
     NotifyStoreError();
     return;
   }
@@ -157,7 +167,7 @@ void DeviceCloudPolicyStoreChromeOS::UpdateFromService() {
   const chromeos::DeviceSettingsService::Status service_status =
       device_settings_service_->status();
   if (service_status == chromeos::DeviceSettingsService::STORE_SUCCESS) {
-    policy_ = base::MakeUnique<em::PolicyData>();
+    policy_ = std::make_unique<em::PolicyData>();
     const em::PolicyData* policy_data = device_settings_service_->policy_data();
     if (policy_data)
       policy_->MergeFrom(*policy_data);
@@ -165,7 +175,7 @@ void DeviceCloudPolicyStoreChromeOS::UpdateFromService() {
     PolicyMap new_policy_map;
     if (is_managed()) {
       DecodeDevicePolicy(*device_settings_service_->device_settings(),
-                         &new_policy_map);
+                         external_data_manager(), &new_policy_map);
     }
     policy_map_.Swap(&new_policy_map);
 

@@ -12,7 +12,7 @@
 
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "net/base/net_export.h"
 
 extern "C" struct z_stream_s;
@@ -23,8 +23,6 @@ class IOBufferWithSize;
 
 class NET_EXPORT_PRIVATE WebSocketDeflater {
  public:
-  // Do not reorder or remove entries of this enum. The values of them are used
-  // in UMA.
   enum ContextTakeOverMode {
     DO_NOT_TAKE_OVER_CONTEXT,
     TAKE_OVER_CONTEXT,

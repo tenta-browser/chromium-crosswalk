@@ -5,7 +5,6 @@
 #import "ios/web/navigation/serializable_user_data_manager_impl.h"
 
 #import "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -38,7 +37,7 @@ class SerializableUserDataManagerWrapper : public base::SupportsUserData::Data {
 
     web_state->SetUserData(
         kSerializableUserDataManagerKey,
-        base::MakeUnique<SerializableUserDataManagerWrapper>());
+        std::make_unique<SerializableUserDataManagerWrapper>());
     return static_cast<SerializableUserDataManagerWrapper*>(
         web_state->GetUserData(kSerializableUserDataManagerKey));
   }
@@ -54,7 +53,7 @@ class SerializableUserDataManagerWrapper : public base::SupportsUserData::Data {
 
 // static
 std::unique_ptr<SerializableUserData> SerializableUserData::Create() {
-  return base::MakeUnique<SerializableUserDataImpl>();
+  return std::make_unique<SerializableUserDataImpl>();
 }
 
 SerializableUserDataImpl::SerializableUserDataImpl() : data_(@{}) {}
@@ -72,44 +71,14 @@ void SerializableUserDataImpl::Encode(NSCoder* coder) {
 }
 
 void SerializableUserDataImpl::Decode(NSCoder* coder) {
-  NSMutableDictionary<NSString*, id<NSCoding>>* data =
-      [[coder decodeObjectForKey:kSerializedUserDataKey] mutableCopy];
-  if (!data) {
-    // Sessions saved with version M-57 or earlier do not have a serialized
-    // user data. Ensure that |data| is non-null.
-    // TODO(crbug.com/661633): remove this once migration from version M-57
-    // or earlier is no longer supported.
-    data = [NSMutableDictionary dictionary];
+  data_ = [[coder decodeObjectForKey:kSerializedUserDataKey] mutableCopy];
+  if (!data_) {
+    // Ensure that there is always a dictionary even if there was no data
+    // loaded from the coder (this can happen during unit testing or when
+    // loading really old session).
+    data_ = [NSMutableDictionary dictionary];
   }
-  [data addEntriesFromDictionary:GetDecodedLegacyValues(coder)];
-  data_.reset([data copy]);
   DCHECK(data_);
-}
-
-// static
-NSDictionary<NSString*, NSString*>*
-SerializableUserDataImpl::GetLegacyKeyConversion() {
-  // TODO(crbug.com/661633): those mappings where introduced between M57 and
-  // M58, so remove them after M67 has shipped to stable.
-  return @{
-    @"tabId" : @"TabID",
-    @"openerId" : @"OpenerID",
-    @"openerNavigationIndex" : @"OpenerNavigationIndex",
-  };
-}
-
-NSDictionary<NSString*, id<NSCoding>>*
-SerializableUserDataImpl::GetDecodedLegacyValues(NSCoder* coder) {
-  NSMutableDictionary<NSString*, id<NSCoding>>* legacy_values =
-      [[NSMutableDictionary alloc] init];
-  NSDictionary<NSString*, NSString*>* legacy_key_conversion =
-      GetLegacyKeyConversion();
-  for (NSString* legacy_key in [legacy_key_conversion allKeys]) {
-    id<NSCoding> value = [coder decodeObjectForKey:legacy_key];
-    NSString* new_key = [legacy_key_conversion objectForKey:legacy_key];
-    legacy_values[new_key] = value;
-  }
-  return [legacy_values copy];
 }
 
 // static
@@ -138,7 +107,7 @@ id<NSCoding> SerializableUserDataManagerImpl::GetValueForSerializationKey(
 
 std::unique_ptr<SerializableUserData>
 SerializableUserDataManagerImpl::CreateSerializableUserData() const {
-  return base::MakeUnique<SerializableUserDataImpl>(data_);
+  return std::make_unique<SerializableUserDataImpl>(data_);
 }
 
 void SerializableUserDataManagerImpl::AddSerializableUserData(
@@ -146,7 +115,7 @@ void SerializableUserDataManagerImpl::AddSerializableUserData(
   if (data) {
     SerializableUserDataImpl* data_impl =
         static_cast<SerializableUserDataImpl*>(data);
-    data_.reset([data_impl->data() mutableCopy]);
+    data_ = [data_impl->data() mutableCopy];
     DCHECK(data_);
   }
 }

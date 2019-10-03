@@ -4,73 +4,99 @@
 
 #include "ui/views/accessibility/ax_view_obj_wrapper.h"
 
-#include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/events/event_utils.h"
+#include "ui/accessibility/platform/ax_unique_id.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
+#include "ui/views/accessibility/ax_virtual_view.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
 
-AXViewObjWrapper::AXViewObjWrapper(View* view)  : view_(view) {
+AXViewObjWrapper::AXViewObjWrapper(AXAuraObjCache* aura_obj_cache, View* view)
+    : AXAuraObjWrapper(aura_obj_cache), view_(view) {
   if (view->GetWidget())
-    AXAuraObjCache::GetInstance()->GetOrCreate(view->GetWidget());
+    aura_obj_cache_->GetOrCreate(view->GetWidget());
+  view->AddObserver(this);
 }
 
-AXViewObjWrapper::~AXViewObjWrapper() {}
+AXViewObjWrapper::~AXViewObjWrapper() {
+  if (view_) {
+    view_->RemoveObserver(this);
+    view_ = nullptr;
+  }
+}
+
+bool AXViewObjWrapper::IsIgnored() {
+  return view_ ? view_->GetViewAccessibility().IsIgnored() : true;
+}
 
 AXAuraObjWrapper* AXViewObjWrapper::GetParent() {
-  AXAuraObjCache* cache = AXAuraObjCache::GetInstance();
+  if (!view_)
+    return nullptr;
+
   if (view_->parent())
-    return cache->GetOrCreate(view_->parent());
+    return aura_obj_cache_->GetOrCreate(view_->parent());
 
   if (view_->GetWidget())
-    return cache->GetOrCreate(view_->GetWidget());
+    return aura_obj_cache_->GetOrCreate(view_->GetWidget());
 
-  return NULL;
+  return nullptr;
 }
 
 void AXViewObjWrapper::GetChildren(
     std::vector<AXAuraObjWrapper*>* out_children) {
-  // TODO(dtseng): Need to handle |Widget| child of |View|.
-  for (int i = 0; i < view_->child_count(); ++i) {
-    if (!view_->child_at(i)->visible())
-      continue;
+  if (!view_)
+    return;
 
-    AXAuraObjWrapper* child =
-        AXAuraObjCache::GetInstance()->GetOrCreate(view_->child_at(i));
-    out_children->push_back(child);
+  const ViewAccessibility& view_accessibility = view_->GetViewAccessibility();
+  if (view_accessibility.IsLeaf())
+    return;
+
+  // TODO(dtseng): Need to handle |Widget| child of |View|.
+  for (View* child : view_->children()) {
+    if (child->GetVisible())
+      out_children->push_back(aura_obj_cache_->GetOrCreate(child));
   }
+
+  for (const auto& child : view_accessibility.virtual_children())
+    out_children->push_back(child->GetOrCreateWrapper(aura_obj_cache_));
 }
 
 void AXViewObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
-  view_->GetAccessibleNodeData(out_node_data);
+  if (!view_)
+    return;
 
-  out_node_data->id = GetID();
+  ViewAccessibility& view_accessibility = view_->GetViewAccessibility();
 
-  if (view_->IsAccessibilityFocusable())
-    out_node_data->AddState(ui::AX_STATE_FOCUSABLE);
-  if (!view_->visible())
-    out_node_data->AddState(ui::AX_STATE_INVISIBLE);
+  view_accessibility.GetAccessibleNodeData(out_node_data);
+  out_node_data->id = GetUniqueId();
 
-  if (!out_node_data->HasStringAttribute(ui::AX_ATTR_DESCRIPTION)) {
-    base::string16 description;
-    view_->GetTooltipText(gfx::Point(), &description);
-    out_node_data->AddStringAttribute(ui::AX_ATTR_DESCRIPTION,
-                                      base::UTF16ToUTF8(description));
+  if (view_accessibility.GetNextFocus()) {
+    out_node_data->AddIntAttribute(
+        ax::mojom::IntAttribute::kNextFocusId,
+        aura_obj_cache_->GetID(view_accessibility.GetNextFocus()));
   }
 
-  out_node_data->location = gfx::RectF(view_->GetBoundsInScreen());
+  if (view_accessibility.GetPreviousFocus()) {
+    out_node_data->AddIntAttribute(
+        ax::mojom::IntAttribute::kPreviousFocusId,
+        aura_obj_cache_->GetID(view_accessibility.GetPreviousFocus()));
+  }
 }
 
-int32_t AXViewObjWrapper::GetID() {
-  return AXAuraObjCache::GetInstance()->GetID(view_);
+int32_t AXViewObjWrapper::GetUniqueId() const {
+  return view_ ? view_->GetViewAccessibility().GetUniqueId() : -1;
 }
 
 bool AXViewObjWrapper::HandleAccessibleAction(const ui::AXActionData& action) {
-  return view_->HandleAccessibleAction(action);
+  return view_ ? view_->HandleAccessibleAction(action) : false;
+}
+
+void AXViewObjWrapper::OnViewIsDeleting(View* observed_view) {
+  view_ = nullptr;
 }
 
 }  // namespace views

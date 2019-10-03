@@ -30,10 +30,10 @@ public class TestBidirectionalStreamCallback extends BidirectionalStream.Callbac
 
     public ResponseStep mResponseStep = ResponseStep.NOTHING;
 
-    public boolean mOnErrorCalled = false;
-    public boolean mOnCanceledCalled = false;
+    public boolean mOnErrorCalled;
+    public boolean mOnCanceledCalled;
 
-    public int mHttpResponseDataLength = 0;
+    public int mHttpResponseDataLength;
     public String mResponseAsString = "";
 
     public UrlResponseInfo.HeaderBlock mTrailers;
@@ -74,6 +74,7 @@ public class TestBidirectionalStreamCallback extends BidirectionalStream.Callbac
     private final DirectExecutor mDirectExecutor;
 
     private class ExecutorThreadFactory implements ThreadFactory {
+        @Override
         public Thread newThread(Runnable r) {
             mExecutorThread = new Thread(r);
             return mExecutorThread;
@@ -388,6 +389,7 @@ public class TestBidirectionalStreamCallback extends BidirectionalStream.Callbac
             throw new IllegalStateException("Callback Exception.");
         }
         Runnable task = new Runnable() {
+            @Override
             public void run() {
                 stream.cancel();
             }

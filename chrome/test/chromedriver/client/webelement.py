@@ -31,8 +31,8 @@ class WebElement(object):
   def GetAttribute(self,name):
     return self._Execute(Command.GET_ELEMENT_ATTRIBUTE, {'name': name})
 
-  def HoverOver(self):
-    self._Execute(Command.HOVER_OVER_ELEMENT)
+  def GetProperty(self,name):
+    return self._Execute(Command.GET_ELEMENT_PROPERTY, {'name': name})
 
   def Click(self):
     self._Execute(Command.CLICK_ELEMENT)
@@ -50,16 +50,25 @@ class WebElement(object):
     self._Execute(Command.CLEAR_ELEMENT)
 
   def SendKeys(self, *values):
-    typing = []
-    for value in values:
-      if isinstance(value, int):
-        value = str(value)
-      for i in range(len(value)):
-        typing.append(value[i])
-    self._Execute(Command.SEND_KEYS_TO_ELEMENT, {'value': typing})
+    if self._chromedriver.w3c_compliant:
+      self._Execute(Command.SEND_KEYS_TO_ELEMENT, {'text': str(*values)})
+    else:
+      typing = []
+      for value in values:
+        if isinstance(value, int):
+          value = str(value)
+        for i in range(len(value)):
+          typing.append(value[i])
+        self._Execute(Command.SEND_KEYS_TO_ELEMENT, {'value': typing})
 
   def GetLocation(self):
     return self._Execute(Command.GET_ELEMENT_LOCATION)
 
+  def GetRect(self):
+    return self._Execute(Command.GET_ELEMENT_RECT)
+
   def IsDisplayed(self):
     return self._Execute(Command.IS_ELEMENT_DISPLAYED)
+
+  def TakeElementScreenshot(self):
+    return self._Execute(Command.ELEMENT_SCREENSHOT)

@@ -42,14 +42,13 @@ enum class ChromeBrowserStateType;
 }
 
 namespace net {
-class ChannelIDService;
 class CookieStore;
 class HttpServerProperties;
 class HttpTransactionFactory;
 class ProxyConfigService;
-class ProxyService;
+class ProxyResolutionService;
 class ReportSender;
-class SSLConfigService;
+class SystemCookieStore;
 class TransportSecurityPersister;
 class TransportSecurityState;
 class URLRequestJobFactoryImpl;
@@ -132,8 +131,6 @@ class ChromeBrowserStateIOData {
     AppRequestContext();
 
     void SetCookieStore(std::unique_ptr<net::CookieStore> cookie_store);
-    void SetChannelIDService(
-        std::unique_ptr<net::ChannelIDService> channel_id_service);
     void SetHttpNetworkSession(
         std::unique_ptr<net::HttpNetworkSession> http_network_session);
     void SetHttpTransactionFactory(
@@ -144,7 +141,6 @@ class ChromeBrowserStateIOData {
 
    private:
     std::unique_ptr<net::CookieStore> cookie_store_;
-    std::unique_ptr<net::ChannelIDService> channel_id_service_;
     std::unique_ptr<net::HttpNetworkSession> http_network_session_;
     std::unique_ptr<net::HttpTransactionFactory> http_factory_;
     std::unique_ptr<net::URLRequestJobFactory> job_factory_;
@@ -160,12 +156,15 @@ class ChromeBrowserStateIOData {
     IOSChromeIOThread* io_thread;
     scoped_refptr<content_settings::CookieSettings> cookie_settings;
     scoped_refptr<HostContentSettingsMap> host_content_settings_map;
-    scoped_refptr<net::SSLConfigService> ssl_config_service;
 
     // We need to initialize the ProxyConfigService from the UI thread
-    // because on linux it relies on initializing things through gconf,
+    // because on linux it relies on initializing things through gsettings,
     // and needs to be on the main thread.
     std::unique_ptr<net::ProxyConfigService> proxy_config_service;
+
+    // SystemCookieStore should be initialized from the UI thread as it depends
+    // on the |browser_state|.
+    std::unique_ptr<net::SystemCookieStore> system_cookie_store;
 
     // The browser state this struct was populated from. It's passed as a void*
     // to ensure it's not accidentally used on the IO thread.
@@ -192,12 +191,9 @@ class ChromeBrowserStateIOData {
   void ShutdownOnUIThread(
       std::unique_ptr<IOSChromeURLRequestContextGetterVector> context_getters);
 
-  // A ChannelIDService object is created by a derived class of
-  // ChromeBrowserStateIOData, and the derived class calls this method to set
-  // the channel_id_service_ member and transfers ownership to the base class.
-  void set_channel_id_service(net::ChannelIDService* channel_id_service) const;
-
-  net::ProxyService* proxy_service() const { return proxy_service_.get(); }
+  net::ProxyResolutionService* proxy_resolution_service() const {
+    return proxy_resolution_service_.get();
+  }
 
   net::HttpServerProperties* http_server_properties() const;
 
@@ -272,15 +268,11 @@ class ChromeBrowserStateIOData {
   // Member variables which are pointed to by the various context objects.
   mutable BooleanPrefMember enable_referrers_;
   mutable BooleanPrefMember enable_do_not_track_;
-  mutable BooleanPrefMember sync_disabled_;
-  mutable BooleanPrefMember signin_allowed_;
 
   BooleanPrefMember enable_metrics_;
 
-  // Pointed to by URLRequestContext.
-  mutable std::unique_ptr<net::ChannelIDService> channel_id_service_;
-
-  mutable std::unique_ptr<net::ProxyService> proxy_service_;
+  mutable std::unique_ptr<net::ProxyResolutionService>
+      proxy_resolution_service_;
   mutable std::unique_ptr<net::TransportSecurityState>
       transport_security_state_;
   mutable std::unique_ptr<net::CTVerifier> cert_transparency_verifier_;

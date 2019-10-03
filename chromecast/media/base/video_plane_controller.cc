@@ -11,6 +11,7 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -36,6 +37,30 @@ bool DisplayRectFValid(const RectF& r) {
 
 bool ResolutionSizeValid(const Size& s) {
   return s.width >= 0 && s.height >= 0;
+}
+
+// Translates a gfx::OverlayTransform into a VideoPlane::Transform.
+// Could be just a lookup table once we have unit tests for this code
+// to ensure it stays in sync with OverlayTransform.
+chromecast::media::VideoPlane::Transform ConvertTransform(
+    gfx::OverlayTransform transform) {
+  switch (transform) {
+    case gfx::OVERLAY_TRANSFORM_NONE:
+      return chromecast::media::VideoPlane::TRANSFORM_NONE;
+    case gfx::OVERLAY_TRANSFORM_FLIP_HORIZONTAL:
+      return chromecast::media::VideoPlane::FLIP_HORIZONTAL;
+    case gfx::OVERLAY_TRANSFORM_FLIP_VERTICAL:
+      return chromecast::media::VideoPlane::FLIP_VERTICAL;
+    case gfx::OVERLAY_TRANSFORM_ROTATE_90:
+      return chromecast::media::VideoPlane::ROTATE_90;
+    case gfx::OVERLAY_TRANSFORM_ROTATE_180:
+      return chromecast::media::VideoPlane::ROTATE_180;
+    case gfx::OVERLAY_TRANSFORM_ROTATE_270:
+      return chromecast::media::VideoPlane::ROTATE_270;
+    default:
+      NOTREACHED();
+      return chromecast::media::VideoPlane::TRANSFORM_NONE;
+  }
 }
 
 }  // namespace
@@ -155,21 +180,25 @@ VideoPlaneController::VideoPlaneController(
 
 VideoPlaneController::~VideoPlaneController() {}
 
-void VideoPlaneController::SetGeometry(const RectF& display_rect,
-                                       VideoPlane::Transform transform) {
+void VideoPlaneController::SetGeometry(const gfx::RectF& gfx_display_rect,
+                                       gfx::OverlayTransform gfx_transform) {
+  const RectF display_rect(gfx_display_rect.x(), gfx_display_rect.y(),
+                           gfx_display_rect.width(), gfx_display_rect.height());
+  VideoPlane::Transform transform = ConvertTransform(gfx_transform);
+
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(DisplayRectFValid(display_rect));
   if (have_video_plane_geometry_ &&
       RectFEqual(display_rect, video_plane_display_rect_) &&
       transform == video_plane_transform_) {
-    VLOG(2) << "No change found in geometry parameters.";
+    DVLOG(2) << "No change found in geometry parameters.";
     return;
   }
 
-  VLOG(1) << "New geometry parameters "
-          << " rect=" << display_rect.width << "x" << display_rect.height
-          << " @" << display_rect.x << "," << display_rect.y << " transform "
-          << transform;
+  LOG(INFO) << "New geometry parameters "
+            << " rect=" << display_rect.width << "x" << display_rect.height
+            << " @" << display_rect.x << "," << display_rect.y << " transform "
+            << transform;
 
   have_video_plane_geometry_ = true;
   video_plane_display_rect_ = display_rect;
@@ -182,12 +211,12 @@ void VideoPlaneController::SetScreenResolution(const Size& resolution) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(ResolutionSizeValid(resolution));
   if (have_screen_res_ && SizeEqual(resolution, screen_res_)) {
-    VLOG(2) << "No change found in screen resolution.";
+    DVLOG(2) << "No change found in screen resolution.";
     return;
   }
 
-  VLOG(1) << "New screen resolution " << resolution.width << "x"
-          << resolution.height;
+  LOG(INFO) << "New screen resolution " << resolution.width << "x"
+            << resolution.height;
 
   have_screen_res_ = true;
   screen_res_ = resolution;
@@ -197,13 +226,13 @@ void VideoPlaneController::SetScreenResolution(const Size& resolution) {
 
 void VideoPlaneController::Pause() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  VLOG(1) << "Pausing controller. No more VideoPlane SetGeometry calls.";
+  LOG(INFO) << "Pausing controller. No more VideoPlane SetGeometry calls.";
   is_paused_ = true;
 }
 
 void VideoPlaneController::Resume() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  VLOG(1) << "Resuming controller. VideoPlane SetGeometry calls are active.";
+  LOG(INFO) << "Resuming controller. VideoPlane SetGeometry calls are active.";
   is_paused_ = false;
   ClearVideoPlaneGeometry();
 }
@@ -215,12 +244,13 @@ bool VideoPlaneController::is_paused() const {
 
 void VideoPlaneController::MaybeRunSetGeometry() {
   if (is_paused_) {
-    VLOG(2) << "All VideoPlane SetGeometry calls are paused. Ignoring request.";
+    DVLOG(2)
+        << "All VideoPlane SetGeometry calls are paused. Ignoring request.";
     return;
   }
 
   if (!HaveDataForSetGeometry()) {
-    VLOG(2) << "Don't have all VideoPlane SetGeometry data. Ignoring request.";
+    DVLOG(2) << "Don't have all VideoPlane SetGeometry data. Ignoring request.";
     return;
   }
 

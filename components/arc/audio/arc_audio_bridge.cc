@@ -6,12 +6,12 @@
 
 #include <utility>
 
-#include "ash/system/audio/tray_audio.h"
+#include "ash/public/cpp/system_tray.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "chromeos/audio/audio_device.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/session/arc_bridge_service.h"
 
 namespace arc {
 namespace {
@@ -45,18 +45,15 @@ ArcAudioBridge* ArcAudioBridge::GetForBrowserContext(
 
 ArcAudioBridge::ArcAudioBridge(content::BrowserContext* context,
                                ArcBridgeService* bridge_service)
-    : arc_bridge_service_(bridge_service) {
+    : arc_bridge_service_(bridge_service),
+      cras_audio_handler_(chromeos::CrasAudioHandler::Get()) {
   arc_bridge_service_->audio()->SetHost(this);
   arc_bridge_service_->audio()->AddObserver(this);
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
-    cras_audio_handler_ = chromeos::CrasAudioHandler::Get();
-    cras_audio_handler_->AddAudioObserver(this);
-  }
+  cras_audio_handler_->AddAudioObserver(this);
 }
 
 ArcAudioBridge::~ArcAudioBridge() {
-  if (cras_audio_handler_)
-    cras_audio_handler_->RemoveAudioObserver(this);
+  cras_audio_handler_->RemoveAudioObserver(this);
   arc_bridge_service_->audio()->RemoveObserver(this);
   arc_bridge_service_->audio()->SetHost(nullptr);
 }
@@ -72,7 +69,7 @@ void ArcAudioBridge::OnConnectionClosed() {
 
 void ArcAudioBridge::ShowVolumeControls() {
   DVLOG(2) << "ArcAudioBridge::ShowVolumeControls";
-  ash::TrayAudio::ShowPopUpVolumeView();
+  ash::SystemTray::Get()->ShowVolumeSliderBubble();
 }
 
 void ArcAudioBridge::OnSystemVolumeUpdateRequest(int32_t percent) {
@@ -91,14 +88,18 @@ void ArcAudioBridge::OnAudioNodesChanged() {
       cras_audio_handler_->GetDeviceFromId(output_id);
   bool headphone_inserted =
       (output_device &&
-       output_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_HEADPHONE);
+       (output_device->type ==
+        chromeos::AudioDeviceType::AUDIO_TYPE_HEADPHONE ||
+        output_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_USB ||
+        output_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_LINEOUT));
 
   uint64_t input_id = cras_audio_handler_->GetPrimaryActiveInputNode();
   const chromeos::AudioDevice* input_device =
       cras_audio_handler_->GetDeviceFromId(input_id);
   bool microphone_inserted =
       (input_device &&
-       input_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_MIC);
+       (input_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_MIC ||
+        input_device->type == chromeos::AudioDeviceType::AUDIO_TYPE_USB));
 
   DVLOG(1) << "HEADPHONE " << headphone_inserted << " MICROPHONE "
            << microphone_inserted;
@@ -111,8 +112,8 @@ void ArcAudioBridge::OnOutputNodeVolumeChanged(uint64_t node_id, int volume) {
   SendVolumeState();
 }
 
-void ArcAudioBridge::OnOutputMuteChanged(bool mute_on, bool system_adjust) {
-  DVLOG(1) << "Output mute " << mute_on << " by system " << system_adjust;
+void ArcAudioBridge::OnOutputMuteChanged(bool mute_on) {
+  DVLOG(1) << "Output mute " << mute_on;
   muted_ = mute_on;
   SendVolumeState();
 }

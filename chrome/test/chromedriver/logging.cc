@@ -14,8 +14,7 @@
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -26,6 +25,7 @@
 #include "chrome/test/chromedriver/devtools_events_logger.h"
 #include "chrome/test/chromedriver/performance_logger.h"
 #include "chrome/test/chromedriver/session.h"
+#include "chrome/test/chromedriver/version.h"
 
 #if defined(OS_POSIX)
 #include <fcntl.h>
@@ -38,6 +38,8 @@ namespace {
 Log::Level g_log_level = Log::kWarning;
 
 int64_t g_start_time = 0;
+
+bool readable_timestamp;
 
 // Array indices are the Log::Level enum values.
 const char* const kLevelToName[] = {
@@ -52,7 +54,7 @@ const char* const kLevelToName[] = {
 const char* LevelToName(Log::Level level) {
   const int index = level - Log::kAll;
   CHECK_GE(index, 0);
-  CHECK_LT(static_cast<size_t>(index), arraysize(kLevelToName));
+  CHECK_LT(static_cast<size_t>(index), base::size(kLevelToName));
   return kLevelToName[index];
 }
 
@@ -109,13 +111,47 @@ bool HandleLogMessage(int severity,
 
   if (level >= g_log_level) {
     const char* level_name = LevelToName(level);
-    std::string entry = base::StringPrintf(
-        "[%.3lf][%s]: %s",
-        base::TimeDelta(base::TimeTicks::Now() -
-                        base::TimeTicks::FromInternalValue(g_start_time))
-            .InSecondsF(),
-        level_name,
-        message.c_str());
+    std::string entry;
+
+    if (readable_timestamp) {
+#if defined(OS_WIN)
+      SYSTEMTIME local_time;
+      GetLocalTime(&local_time);
+
+      entry = base::StringPrintf(
+          "[%02d-%02d-%04d %02d:%02d:%02d.%03d][%s]: %s",
+          local_time.wMonth, local_time.wDay, local_time.wYear,
+          local_time.wHour, local_time.wMinute, local_time.wSecond,
+          local_time.wMilliseconds,
+          level_name,
+          message.c_str());
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+      timeval tv;
+      gettimeofday(&tv, nullptr);
+      time_t t = tv.tv_sec;
+      struct tm local_time;
+      localtime_r(&t, &local_time);
+      struct tm* tm_time = &local_time;
+
+      entry = base::StringPrintf(
+          "[%02d-%02d-%04d %02d:%02d:%02d.%06ld][%s]: %s",
+          1 + tm_time->tm_mon, tm_time->tm_mday, 1900 + tm_time->tm_year,
+          tm_time->tm_hour, tm_time->tm_min, tm_time->tm_sec,
+          static_cast<long>(tv.tv_usec),
+          level_name,
+          message.c_str());
+#else
+#error Unsupported platform
+#endif
+    } else {
+      entry = base::StringPrintf(
+          "[%.3lf][%s]: %s",
+          base::TimeDelta(base::TimeTicks::Now() -
+                          base::TimeTicks::UnixEpoch())
+              .InSecondsF(),
+          level_name,
+          message.c_str());
+    }
     fprintf(stderr, "%s", entry.c_str());
     fflush(stderr);
   }
@@ -135,7 +171,7 @@ const char WebDriverLog::kPerformanceType[] = "performance";
 const char WebDriverLog::kDevToolsType[] = "devtools";
 
 bool WebDriverLog::NameToLevel(const std::string& name, Log::Level* out_level) {
-  for (size_t i = 0; i < arraysize(kNameToLevel); ++i) {
+  for (size_t i = 0; i < base::size(kNameToLevel); ++i) {
     if (name == kNameToLevel[i].name) {
       *out_level = kNameToLevel[i].level;
       return true;
@@ -170,9 +206,7 @@ std::unique_ptr<base::ListValue> WebDriverLog::GetAndClearEntries() {
 
 bool GetFirstErrorMessageFromList(const base::ListValue* list,
                                   std::string* message) {
-  for (base::ListValue::const_iterator it = list->begin();
-       it != list->end();
-       ++it) {
+  for (auto it = list->begin(); it != list->end(); ++it) {
     const base::DictionaryValue* log_entry = NULL;
     it->GetAsDictionary(&log_entry);
     if (log_entry != NULL) {
@@ -236,31 +270,63 @@ Log::Level WebDriverLog::min_level() const {
 }
 
 bool InitLogging() {
-  InitLogging(&InternalIsVLogOn);
   g_start_time = base::TimeTicks::Now().ToInternalValue();
-
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+
   if (cmd_line->HasSwitch("log-path")) {
     g_log_level = Log::kInfo;
     base::FilePath log_path = cmd_line->GetSwitchValuePath("log-path");
+
+    const base::FilePath::CharType* logMode = FILE_PATH_LITERAL("w");
+    if (cmd_line->HasSwitch("append-log")) {
+        logMode = FILE_PATH_LITERAL("a");
+    }
+  if (cmd_line->HasSwitch("readable-timestamp")) {
+    readable_timestamp = true;
+  }
 #if defined(OS_WIN)
-    FILE* redir_stderr = _wfreopen(log_path.value().c_str(), L"w", stderr);
+    FILE* redir_stderr = _wfreopen(log_path.value().c_str(), logMode, stderr);
 #else
-    FILE* redir_stderr = freopen(log_path.value().c_str(), "w", stderr);
+    FILE* redir_stderr = freopen(log_path.value().c_str(), logMode, stderr);
 #endif
     if (!redir_stderr) {
       printf("Failed to redirect stderr to log file.\n");
       return false;
     }
   }
-  if (cmd_line->HasSwitch("silent"))
-    g_log_level = Log::kOff;
 
-  if (cmd_line->HasSwitch("verbose"))
+  Log::truncate_logged_params = !cmd_line->HasSwitch("replayable");
+  Log::is_vlog_on_func = &InternalIsVLogOn;
+
+  int num_level_switches = 0;
+
+  if (cmd_line->HasSwitch("silent")) {
+    g_log_level = Log::kOff;
+    num_level_switches++;
+  }
+
+  if (cmd_line->HasSwitch("verbose")) {
     g_log_level = Log::kAll;
+    num_level_switches++;
+  }
+
+  if (cmd_line->HasSwitch("log-level")) {
+    if (!WebDriverLog::NameToLevel(cmd_line->GetSwitchValueASCII("log-level"),
+                                   &g_log_level)) {
+      printf("Invalid --log-level value.\n");
+      return false;
+    }
+    num_level_switches++;
+  }
+
+  if (num_level_switches > 1) {
+    printf("Only one of --log-level, --verbose, or --silent is allowed.\n");
+    return false;
+  }
 
   // Turn on VLOG for chromedriver. This is parsed during logging::InitLogging.
-  cmd_line->AppendSwitchASCII("vmodule", "*/chrome/test/chromedriver/*=3");
+  if (!cmd_line->HasSwitch("vmodule"))
+    cmd_line->AppendSwitchASCII("vmodule", "*/chrome/test/chromedriver/*=3");
 
   logging::SetMinLogLevel(logging::LOG_WARNING);
   logging::SetLogItems(false,   // enable_process_id
@@ -270,8 +336,14 @@ bool InitLogging() {
   logging::SetLogMessageHandler(&HandleLogMessage);
 
   logging::LoggingSettings logging_settings;
-  logging_settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
-  return logging::InitLogging(logging_settings);
+  logging_settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
+  bool res = logging::InitLogging(logging_settings);
+  if (cmd_line->HasSwitch("log-path") && res) {
+    VLOG(0) << "Starting ChromeDriver " << kChromeDriverVersion;
+    VLOG(0) << kPortProtectionMessage;
+  }
+  return res;
 }
 
 Status CreateLogs(
@@ -286,15 +358,13 @@ Status CreateLogs(
   Log::Level browser_log_level = Log::kWarning;
   const LoggingPrefs& prefs = capabilities.logging_prefs;
 
-  for (LoggingPrefs::const_iterator iter = prefs.begin();
-       iter != prefs.end();
-       ++iter) {
+  for (auto iter = prefs.begin(); iter != prefs.end(); ++iter) {
     std::string type = iter->first;
     Log::Level level = iter->second;
     if (type == WebDriverLog::kPerformanceType) {
       if (level != Log::kOff) {
-        logs.push_back(base::MakeUnique<WebDriverLog>(type, Log::kAll));
-        devtools_listeners.push_back(base::MakeUnique<PerformanceLogger>(
+        logs.push_back(std::make_unique<WebDriverLog>(type, Log::kAll));
+        devtools_listeners.push_back(std::make_unique<PerformanceLogger>(
             logs.back().get(), session, capabilities.perf_logging_prefs));
         PerformanceLogger* perf_log =
             static_cast<PerformanceLogger*>(devtools_listeners.back().get());
@@ -304,12 +374,12 @@ Status CreateLogs(
         // session->chrome will own |perf_log|, and |session| will own |proxy|.
         // session->command_listeners (the proxy) will be destroyed first.
         command_listeners.push_back(
-            base::MakeUnique<CommandListenerProxy>(perf_log));
+            std::make_unique<CommandListenerProxy>(perf_log));
       }
     } else if (type == WebDriverLog::kDevToolsType) {
-      logs.push_back(base::MakeUnique<WebDriverLog>(type, Log::kAll));
+      logs.push_back(std::make_unique<WebDriverLog>(type, Log::kAll));
       devtools_listeners.push_back(
-          base::MakeUnique<DevToolsEventsLogger>(
+          std::make_unique<DevToolsEventsLogger>(
             logs.back().get(),
             capabilities.devtools_events_logging_prefs.get()));
     } else if (type == WebDriverLog::kBrowserType) {
@@ -322,12 +392,12 @@ Status CreateLogs(
     }
   }
   // Create "browser" log -- should always exist.
-  logs.push_back(base::MakeUnique<WebDriverLog>(WebDriverLog::kBrowserType,
+  logs.push_back(std::make_unique<WebDriverLog>(WebDriverLog::kBrowserType,
                                                 browser_log_level));
   // If the level is OFF, don't even bother listening for DevTools events.
   if (browser_log_level != Log::kOff)
     devtools_listeners.push_back(
-        base::MakeUnique<ConsoleLogger>(logs.back().get()));
+        std::make_unique<ConsoleLogger>(logs.back().get()));
 
   out_logs->swap(logs);
   out_devtools_listeners->swap(devtools_listeners);

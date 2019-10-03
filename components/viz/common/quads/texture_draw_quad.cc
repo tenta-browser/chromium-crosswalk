@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -30,11 +30,12 @@ void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                              const float vertex_opacity[4],
                              bool y_flipped,
                              bool nearest_neighbor,
-                             bool secure_output_only) {
+                             bool secure_output_only,
+                             gfx::ProtectedVideoType protected_video_type) {
   needs_blending = needs_blending || vertex_opacity[0] != 1.0f ||
                    vertex_opacity[1] != 1.0f || vertex_opacity[2] != 1.0f ||
                    vertex_opacity[3] != 1.0f;
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kTextureContent, rect,
                    visible_rect, needs_blending);
   resources.ids[kResourceIdIndex] = resource_id;
   resources.count = 1;
@@ -49,6 +50,7 @@ void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
   this->y_flipped = y_flipped;
   this->nearest_neighbor = nearest_neighbor;
   this->secure_output_only = secure_output_only;
+  this->protected_video_type = protected_video_type;
 }
 
 void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
@@ -64,8 +66,9 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                              const float vertex_opacity[4],
                              bool y_flipped,
                              bool nearest_neighbor,
-                             bool secure_output_only) {
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
+                             bool secure_output_only,
+                             gfx::ProtectedVideoType protected_video_type) {
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kTextureContent, rect,
                    visible_rect, needs_blending);
   resources.ids[kResourceIdIndex] = resource_id;
   overlay_resources.size_in_pixels[kResourceIdIndex] = resource_size_in_pixels;
@@ -81,10 +84,11 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
   this->y_flipped = y_flipped;
   this->nearest_neighbor = nearest_neighbor;
   this->secure_output_only = secure_output_only;
+  this->protected_video_type = protected_video_type;
 }
 
 const TextureDrawQuad* TextureDrawQuad::MaterialCast(const DrawQuad* quad) {
-  DCHECK(quad->material == DrawQuad::TEXTURE_CONTENT);
+  DCHECK(quad->material == DrawQuad::Material::kTextureContent);
   return static_cast<const TextureDrawQuad*>(quad);
 }
 
@@ -104,6 +108,8 @@ void TextureDrawQuad::ExtendValue(base::trace_event::TracedValue* value) const {
 
   value->SetBoolean("y_flipped", y_flipped);
   value->SetBoolean("nearest_neighbor", nearest_neighbor);
+  value->SetInteger("protected_video_type",
+                    static_cast<int>(protected_video_type));
 }
 
 TextureDrawQuad::OverlayResources::OverlayResources() = default;

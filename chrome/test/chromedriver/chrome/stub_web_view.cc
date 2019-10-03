@@ -40,6 +40,14 @@ Status StubWebView::Reload(const Timeout* timeout) {
   return Status(kOk);
 }
 
+Status StubWebView::Freeze(const Timeout* timeout) {
+  return Status(kOk);
+}
+
+Status StubWebView::Resume(const Timeout* timeout) {
+  return Status(kOk);
+}
+
 Status StubWebView::SendCommand(const std::string& cmd,
                                 const base::DictionaryValue& params) {
   return Status(kOk);
@@ -83,6 +91,14 @@ Status StubWebView::CallUserAsyncFunction(
     const base::ListValue& args,
     const base::TimeDelta& timeout,
     std::unique_ptr<base::Value>* result) {
+  return Status(kOk);
+}
+
+Status StubWebView::CallUserSyncScript(const std::string& frame,
+                                       const std::string& script,
+                                       const base::ListValue& args,
+                                       const base::TimeDelta& timeout,
+                                       std::unique_ptr<base::Value>* result) {
   return Status(kOk);
 }
 
@@ -158,14 +174,21 @@ Status StubWebView::OverrideNetworkConditions(
   return Status(kOk);
 }
 
-Status StubWebView::CaptureScreenshot(std::string* screenshot) {
+Status StubWebView::OverrideDownloadDirectoryIfNeeded(
+    const std::string& download_directory) {
   return Status(kOk);
 }
 
-Status StubWebView::SetFileInputFiles(
-    const std::string& frame,
-    const base::DictionaryValue& element,
-    const std::vector<base::FilePath>& files) {
+Status StubWebView::CaptureScreenshot(
+    std::string* screenshot,
+    const base::DictionaryValue& params) {
+  return Status(kOk);
+}
+
+Status StubWebView::SetFileInputFiles(const std::string& frame,
+                                      const base::DictionaryValue& element,
+                                      const std::vector<base::FilePath>& files,
+                                      const bool append) {
   return Status(kOk);
 }
 
@@ -195,18 +218,18 @@ Status StubWebView::SynthesizeScrollGesture(int x,
   return Status(kOk);
 }
 
-Status StubWebView::SynthesizePinchGesture(int x, int y, double scale_factor) {
-  return Status(kOk);
+bool StubWebView::IsOOPIF(const std::string& frame_id) {
+  return false;
 }
 
-Status StubWebView::GetScreenOrientation(std::string* orientation) {
-  return Status(kOk);
+FrameTracker* StubWebView::GetFrameTracker() const {
+  return nullptr;
 }
 
-Status StubWebView::SetScreenOrientation(std::string orientation) {
-  return Status(kOk);
+std::unique_ptr<base::Value> StubWebView::GetCastSinks() {
+  return std::make_unique<base::Value>();
 }
 
-Status StubWebView::DeleteScreenOrientation() {
-  return Status(kOk);
+std::unique_ptr<base::Value> StubWebView::GetCastIssueMessage() {
+  return std::make_unique<base::Value>();
 }

@@ -16,15 +16,15 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
 #include "crypto/ec_private_key.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/log/net_log_with_source.h"
-#include "net/ssl/token_binding.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
-class ClientSocketHandle;
 class DrainableIOBuffer;
 class GrowableIOBuffer;
 class HttpChunkedDecoder;
@@ -34,16 +34,24 @@ class HttpResponseInfo;
 class IOBuffer;
 class SSLCertRequestInfo;
 class SSLInfo;
+class StreamSocket;
 class UploadDataStream;
 
 class NET_EXPORT_PRIVATE HttpStreamParser {
  public:
+  // |connection_is_reused| must be |true| if |stream_socket| has previously
+  // been used successfully for an HTTP/1.x request.
+  //
   // Any data in |read_buffer| will be used before reading from the socket
   // and any data left over after parsing the stream will be put into
   // |read_buffer|.  The left over data will start at offset 0 and the
   // buffer's offset will be set to the first free byte. |read_buffer| may
   // have its capacity changed.
-  HttpStreamParser(ClientSocketHandle* connection,
+  //
+  // It is not safe to call into the HttpStreamParser after destroying the
+  // |stream_socket|.
+  HttpStreamParser(StreamSocket* stream_socket,
+                   bool connection_is_reused,
                    const HttpRequestInfo* request,
                    GrowableIOBuffer* read_buffer,
                    const NetLogWithSource& net_log);
@@ -61,25 +69,23 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // some additional functionality
   int SendRequest(const std::string& request_line,
                   const HttpRequestHeaders& headers,
+                  const NetworkTrafficAnnotationTag& traffic_annotation,
                   HttpResponseInfo* response,
-                  const CompletionCallback& callback);
+                  CompletionOnceCallback callback);
 
-  int ReadResponseHeaders(const CompletionCallback& callback);
+  int ConfirmHandshake(CompletionOnceCallback callback);
 
-  int ReadResponseBody(IOBuffer* buf, int buf_len,
-                       const CompletionCallback& callback);
+  int ReadResponseHeaders(CompletionOnceCallback callback);
 
-  void Close(bool not_reusable);
+  int ReadResponseBody(IOBuffer* buf,
+                       int buf_len,
+                       CompletionOnceCallback callback);
 
   bool IsResponseBodyComplete() const;
 
   bool CanFindEndOfResponse() const;
 
   bool IsMoreDataBuffered() const;
-
-  bool IsConnectionReused() const;
-
-  void SetConnectionReused();
 
   // Returns true if the underlying connection can be reused.
   // The connection can be reused if:
@@ -96,13 +102,11 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
 
   int64_t sent_bytes() const { return sent_bytes_; }
 
+  base::TimeTicks response_start_time() { return response_start_time_; }
+
   void GetSSLInfo(SSLInfo* ssl_info);
 
   void GetSSLCertRequestInfo(SSLCertRequestInfo* cert_request_info);
-
-  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
-                                 TokenBindingType tb_type,
-                                 std::vector<uint8_t>* out);
 
   // Encodes the given |payload| in the chunked format to |output|.
   // Returns the number of bytes written to |output|. |output_size| should
@@ -181,11 +185,17 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // This handles most of the logic for DoReadHeadersComplete.
   int HandleReadHeaderResult(int result);
 
+  void RunConfirmHandshakeCallback(int rv);
+
   // Examines |read_buf_| to find the start and end of the headers. If they are
   // found, parse them with DoParseResponseHeaders().  Return the offset for
   // the end of the headers, or -1 if the complete headers were not found, or
   // with a net::Error if we encountered an error during parsing.
-  int FindAndParseResponseHeaders();
+  //
+  // |new_bytes| is the number of new bytes that have been appended to the end
+  // of |read_buf_| since the last call to this method (which must have returned
+  // -1).
+  int FindAndParseResponseHeaders(int new_bytes);
 
   // Parse the headers into response_.  Returns OK on success or a net::Error on
   // failure.
@@ -222,8 +232,8 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   int read_buf_unused_offset_;
 
   // The amount beyond |read_buf_unused_offset_| where the status line starts;
-  // -1 if not found yet.
-  int response_header_start_offset_;
+  // std::string::npos if not found yet.
+  size_t response_header_start_offset_;
 
   // The amount of received data.  If connection is reused then intermediate
   // value may be bigger than final.
@@ -237,6 +247,10 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // caller of SendRequest may have been destroyed - this happens in the case an
   // HttpResponseBodyDrainer is used.
   HttpResponseInfo* response_;
+
+  // Time at which the first bytes of the header response are about to be
+  // parsed.
+  base::TimeTicks response_start_time_;
 
   // Indicates the content length.  If this value is less than zero
   // (and chunked_decoder_ is null), then we must read until the server
@@ -256,23 +270,26 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   scoped_refptr<IOBuffer> user_read_buf_;
   int user_read_buf_len_;
 
+  // The callback to notify a user that the handshake has been confirmed.
+  CompletionOnceCallback confirm_handshake_callback_;
+
   // The callback to notify a user that their request or response is
   // complete or there was an error
-  CompletionCallback callback_;
+  CompletionOnceCallback callback_;
 
-  // In the client callback, the client can do anything, including
-  // destroying this class, so any pending callback must be issued
-  // after everything else is done.  When it is time to issue the client
-  // callback, move it from |callback_| to |scheduled_callback_|.
-  CompletionCallback scheduled_callback_;
+  // The underlying socket, owned by the caller. The HttpStreamParser must be
+  // destroyed before the caller destroys the socket, or relinquishes ownership
+  // of it.
+  StreamSocket* const stream_socket_;
 
-  // The underlying socket.
-  ClientSocketHandle* const connection_;
+  // Whether the socket has already been used. Only used in HTTP/0.9 detection
+  // logic.
+  const bool connection_is_reused_;
 
   NetLogWithSource net_log_;
 
   // Callback to be used when doing IO.
-  CompletionCallback io_callback_;
+  CompletionRepeatingCallback io_callback_;
 
   // Buffer used to read the request body from UploadDataStream.
   scoped_refptr<SeekableIOBuffer> request_body_read_buf_;
@@ -284,7 +301,9 @@ class NET_EXPORT_PRIVATE HttpStreamParser {
   // Error received when uploading the body, if any.
   int upload_error_;
 
-  base::WeakPtrFactory<HttpStreamParser> weak_ptr_factory_;
+  MutableNetworkTrafficAnnotationTag traffic_annotation_;
+
+  base::WeakPtrFactory<HttpStreamParser> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HttpStreamParser);
 };

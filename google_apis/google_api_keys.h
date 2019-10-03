@@ -60,8 +60,8 @@ namespace google_apis {
 
 extern const char kAPIKeysDevelopersHowToURL[];
 
-// Returns true if no dummy API keys or OAuth2 tokens are set.
-bool HasKeysConfigured();
+// Returns true if no dummy API key is set.
+bool HasAPIKeyConfigured();
 
 // Retrieves the API key, a.k.a. developer key, or a dummy string
 // if not set.
@@ -73,11 +73,17 @@ std::string GetAPIKey();
 // Non-stable channels may have a different Google API key.
 std::string GetNonStableAPIKey();
 
+// Retrieves the Chrome Remote Desktop API key.
+std::string GetRemotingAPIKey();
+
 #if defined(OS_IOS)
 // Sets the API key. This should be called as early as possible before this
 // API key is even accessed.
 void SetAPIKey(const std::string& api_key);
 #endif
+
+// Retrieves the key used to sign metrics (UMA/UKM) uploads.
+std::string GetMetricsKey();
 
 // Represents the different sets of client IDs and secrets in use.
 enum OAuth2Client {
@@ -88,6 +94,9 @@ enum OAuth2Client {
 
   CLIENT_NUM_ITEMS     // Must be last item.
 };
+
+// Returns true if no dummy OAuth2 client ID and secret are set.
+bool HasOAuthClientConfigured();
 
 // Retrieves the OAuth2 client ID for the specified client, or the
 // empty string if not set.

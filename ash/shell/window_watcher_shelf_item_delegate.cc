@@ -29,11 +29,9 @@ void WindowWatcherShelfItemDelegate::ItemSelected(
     ShelfLaunchSource source,
     ItemSelectedCallback callback) {
   aura::Window* window = watcher_->GetWindowByID(shelf_id());
-  if (window->type() == aura::client::WINDOW_TYPE_PANEL)
-    wm::MoveWindowToDisplay(window, display_id);
   window->Show();
   wm::ActivateWindow(window);
-  std::move(callback).Run(SHELF_ACTION_WINDOW_ACTIVATED, base::nullopt);
+  std::move(callback).Run(SHELF_ACTION_WINDOW_ACTIVATED, {});
 }
 
 void WindowWatcherShelfItemDelegate::ExecuteCommand(bool from_context_menu,

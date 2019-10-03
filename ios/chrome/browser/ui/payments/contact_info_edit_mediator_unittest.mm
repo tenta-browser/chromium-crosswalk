@@ -5,8 +5,8 @@
 #import "ios/chrome/browser/ui/payments/contact_info_edit_mediator.h"
 
 #include "base/mac/foundation_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #import "ios/chrome/browser/payments/payment_request_unittest_base.h"
@@ -27,13 +27,19 @@ class PaymentRequestContactInfoEditMediatorTest
     : public PaymentRequestUnitTestBase,
       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     CreateTestPaymentRequest();
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 };
 
 // Tests that the expected editor fields are created when creating a profile.
@@ -237,8 +243,9 @@ TEST_F(PaymentRequestContactInfoEditMediatorTest, ValidateEmptyRequiredField) {
       [mediator paymentRequestEditViewController:nil
                                    validateField:(EditorField*)field];
   EXPECT_TRUE([validationError
-      isEqualToString:l10n_util::GetNSString(
-                          IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE)]);
+      isEqualToString:
+          l10n_util::GetNSString(
+              IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE)]);
 }
 
 // Tests that the appropriate validation error should be expected if validating

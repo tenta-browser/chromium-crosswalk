@@ -6,22 +6,26 @@
 
 #include <utility>
 
+#include "ash/metrics/pip_uma.h"
+#include "ash/public/cpp/app_types.h"
 #include "ash/public/cpp/window_properties.h"
+#include "ash/shelf/shelf_constants.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/window_state.h"
 #include "ash/wm/window_state_util.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
-#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
+#include "ui/base/hit_test.h"
 #include "ui/display/screen.h"
+#include "ui/events/test/event_generator.h"
+#include "ui/wm/core/window_util.h"
 
-using ash::mojom::WindowStateType;
+using ash::WindowStateType;
 
 namespace ash {
-namespace wm {
 namespace {
 
 class AlwaysMaximizeTestState : public WindowState::State {
@@ -38,9 +42,9 @@ class AlwaysMaximizeTestState : public WindowState::State {
   void AttachState(WindowState* window_state,
                    WindowState::State* previous_state) override {
     // We always maximize.
-    if (state_type_ != mojom::WindowStateType::MAXIMIZED) {
+    if (state_type_ != WindowStateType::kMaximized) {
       window_state->Maximize();
-      state_type_ = mojom::WindowStateType::MAXIMIZED;
+      state_type_ = WindowStateType::kMaximized;
     }
   }
   void DetachState(WindowState* window_state) override {}
@@ -51,9 +55,8 @@ class AlwaysMaximizeTestState : public WindowState::State {
   DISALLOW_COPY_AND_ASSIGN(AlwaysMaximizeTestState);
 };
 
-}  // namespace
-
 using WindowStateTest = AshTestBase;
+using Sample = base::HistogramBase::Sample;
 
 // Test that a window gets properly snapped to the display's edges in a
 // multi monitor environment.
@@ -66,7 +69,7 @@ TEST_F(WindowStateTest, SnapWindowBasic) {
 
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   const WMEvent snap_left(WM_EVENT_SNAP_LEFT);
   window_state->OnWMEvent(&snap_left);
   gfx::Rect expected = gfx::Rect(kPrimaryDisplayWorkAreaBounds.x(),
@@ -109,7 +112,7 @@ TEST_F(WindowStateTest, SnapWindowMinimumSize) {
 
   // It should be possible to snap a window with a minimum size.
   delegate.set_minimum_size(gfx::Size(kWorkAreaBounds.width() - 1, 0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_TRUE(window_state->CanSnap());
   const WMEvent snap_right(WM_EVENT_SNAP_RIGHT);
   window_state->OnWMEvent(&snap_right);
@@ -118,16 +121,188 @@ TEST_F(WindowStateTest, SnapWindowMinimumSize) {
                 kWorkAreaBounds.width() - 1, kWorkAreaBounds.height());
   EXPECT_EQ(expected.ToString(), window->GetBoundsInScreen().ToString());
 
-  // It should not be possible to snap a window with a maximum size, or if it
-  // cannot be maximized.
+  // It should not be possible to snap a window with a maximum size defined.
   delegate.set_maximum_size(gfx::Size(kWorkAreaBounds.width() - 1, 0));
   EXPECT_FALSE(window_state->CanSnap());
   delegate.set_maximum_size(gfx::Size(0, kWorkAreaBounds.height() - 1));
   EXPECT_FALSE(window_state->CanSnap());
   delegate.set_maximum_size(gfx::Size());
   window->SetProperty(aura::client::kResizeBehaviorKey,
-                      ui::mojom::kResizeBehaviorCanResize);
+                      aura::client::kResizeBehaviorCanResize);
+  // It should be possible to snap a window with a maximum size, if it
+  // can be maximized.
+  EXPECT_TRUE(window_state->CanSnap());
+}
+
+// Test that a window's state type can be changed to PIP via a WM transition
+// event.
+TEST_F(WindowStateTest, CanTransitionToPipWindow) {
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  EXPECT_FALSE(window_state->IsPip());
+
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+  EXPECT_TRUE(window_state->IsPip());
+}
+
+// Test that a PIP window cannot be snapped.
+TEST_F(WindowStateTest, PipWindowCannotSnap) {
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  EXPECT_TRUE(window_state->CanSnap());
+
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
   EXPECT_FALSE(window_state->CanSnap());
+}
+
+TEST_F(WindowStateTest, ChromePipWindowUmaMetrics) {
+  base::HistogramTester histograms;
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_START)));
+  EXPECT_EQ(1,
+            histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                      Sample(AshPipEvents::CHROME_PIP_START)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 2);
+
+  const WMEvent enter_normal(WM_EVENT_NORMAL);
+  window_state->OnWMEvent(&enter_normal);
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_END)));
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::CHROME_PIP_END)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 4);
+}
+
+TEST_F(WindowStateTest, AndroidPipWindowUmaMetrics) {
+  base::HistogramTester histograms;
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+  window->SetProperty(aura::client::kAppType,
+                      static_cast<int>(ash::AppType::ARC_APP));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_START)));
+  EXPECT_EQ(1,
+            histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                      Sample(AshPipEvents::ANDROID_PIP_START)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 2);
+
+  const WMEvent enter_normal(WM_EVENT_NORMAL);
+  window_state->OnWMEvent(&enter_normal);
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_END)));
+  EXPECT_EQ(1,
+            histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                      Sample(AshPipEvents::ANDROID_PIP_END)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 4);
+}
+
+TEST_F(WindowStateTest, ChromePipWindowUmaMetricsCountsExitOnDestroy) {
+  base::HistogramTester histograms;
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
+  // Destroy the window.
+  window.reset();
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_END)));
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::CHROME_PIP_END)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 4);
+}
+
+TEST_F(WindowStateTest, AndroidPipWindowUmaMetricsCountsExitOnDestroy) {
+  base::HistogramTester histograms;
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
+  window->SetProperty(aura::client::kAppType,
+                      static_cast<int>(ash::AppType::ARC_APP));
+
+  WindowState* window_state = WindowState::Get(window.get());
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
+  // Destroy the window.
+  window.reset();
+
+  EXPECT_EQ(1, histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                         Sample(AshPipEvents::PIP_END)));
+  EXPECT_EQ(1,
+            histograms.GetBucketCount(kAshPipEventsHistogramName,
+                                      Sample(AshPipEvents::ANDROID_PIP_END)));
+  histograms.ExpectTotalCount(kAshPipEventsHistogramName, 4);
+}
+
+// Test that modal window dialogs can be snapped.
+TEST_F(WindowStateTest, SnapModalWindowWithoutMaximumSizeLimit) {
+  UpdateDisplay("0+0-600x900");
+  const gfx::Rect kWorkAreaBounds =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+
+  aura::test::TestWindowDelegate parent_delegate;
+  std::unique_ptr<aura::Window> parent_window(
+      CreateTestWindowInShellWithDelegate(
+          &parent_delegate, -1,
+          gfx::Rect(kWorkAreaBounds.width(), 0, kWorkAreaBounds.width() / 2,
+                    kWorkAreaBounds.height() - 1)));
+
+  aura::test::TestWindowDelegate delegate;
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
+      &delegate, -1, gfx::Rect(100, 100, 400, 500)));
+
+  delegate.set_minimum_size(gfx::Size(200, 300));
+  WindowState* window_state = WindowState::Get(window.get());
+  EXPECT_TRUE(window_state->CanSnap());
+
+  window->SetProperty(aura::client::kResizeBehaviorKey,
+                      aura::client::kResizeBehaviorCanResize |
+                          aura::client::kResizeBehaviorCanMaximize);
+  delegate.set_maximum_size(gfx::Size());
+  EXPECT_TRUE(window_state->CanSnap());
+
+  ::wm::AddTransientChild(parent_window.get(), window.get());
+  EXPECT_TRUE(window_state->CanSnap());
+
+  delegate.set_maximum_size(gfx::Size());
+  EXPECT_TRUE(window_state->CanSnap());
+
+  window->SetProperty(aura::client::kResizeBehaviorKey,
+                      aura::client::kResizeBehaviorCanResize);
+  EXPECT_TRUE(window_state->CanSnap());
+
+  // It should be possible to snap a modal window without maximum size.
+  window->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_WINDOW);
+  EXPECT_TRUE(window_state->CanSnap());
+
+  delegate.set_maximum_size(gfx::Size(300, 400));
+  EXPECT_FALSE(window_state->CanSnap());
+
+  ::wm::RemoveTransientChild(parent_window.get(), window.get());
 }
 
 // Test that the minimum size specified by aura::WindowDelegate gets respected.
@@ -180,40 +355,62 @@ TEST_F(WindowStateTest, TestIgnoreTooBigMinimumSize) {
   EXPECT_EQ(work_area_size.ToString(), window->bounds().size().ToString());
 
   // Maximizing the window should not allow it to go bigger than that either.
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   window_state->Maximize();
   EXPECT_EQ(work_area_size.ToString(), window->bounds().size().ToString());
 }
 
-// Test that setting the bounds of a snapped window keeps its snapped.
-TEST_F(WindowStateTest, SnapWindowSetBounds) {
+// Tests UpdateSnappedWidthRatio. (1) It should have ratio reset when window
+// enters snapped state; (2) it should update ratio on bounds event when
+// snapped.
+TEST_F(WindowStateTest, UpdateSnapWidthRatioTest) {
   UpdateDisplay("0+0-900x600");
   const gfx::Rect kWorkAreaBounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
-
-  std::unique_ptr<aura::Window> window(
-      CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
-  WindowState* window_state = GetWindowState(window.get());
-  const WMEvent snap_left(WM_EVENT_SNAP_LEFT);
-  window_state->OnWMEvent(&snap_left);
-  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
+  aura::test::TestWindowDelegate delegate;
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
+      &delegate, -1, gfx::Rect(100, 100, 100, 100)));
+  delegate.set_window_component(HTRIGHT);
+  WindowState* window_state = WindowState::Get(window.get());
+  const WMEvent cycle_snap_left(WM_EVENT_CYCLE_SNAP_LEFT);
+  window_state->OnWMEvent(&cycle_snap_left);
+  EXPECT_EQ(WindowStateType::kLeftSnapped, window_state->GetStateType());
   gfx::Rect expected =
       gfx::Rect(kWorkAreaBounds.x(), kWorkAreaBounds.y(),
                 kWorkAreaBounds.width() / 2, kWorkAreaBounds.height());
-  EXPECT_EQ(expected.ToString(), window->GetBoundsInScreen().ToString());
+  EXPECT_EQ(expected, window->GetBoundsInScreen());
+  EXPECT_EQ(0.5f, *window_state->snapped_width_ratio());
 
-  // Snapped windows can have any width.
-  expected.set_width(500);
-  window->SetBounds(gfx::Rect(10, 10, 500, 300));
-  EXPECT_EQ(expected.ToString(), window->GetBoundsInScreen().ToString());
-  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
+  // Drag to change snapped window width.
+  const int kIncreasedWidth = 225;
+  ui::test::EventGenerator* generator = GetEventGenerator();
+  generator->MoveMouseTo(window->bounds().right(), window->bounds().y());
+  generator->PressLeftButton();
+  generator->MoveMouseTo(window->bounds().right() + kIncreasedWidth,
+                         window->bounds().y());
+  generator->ReleaseLeftButton();
+  expected.set_width(expected.width() + kIncreasedWidth);
+  EXPECT_EQ(expected, window->GetBoundsInScreen());
+  EXPECT_EQ(WindowStateType::kLeftSnapped, window_state->GetStateType());
+  EXPECT_EQ(0.75f, *window_state->snapped_width_ratio());
+
+  // Another cycle snap left event will restore window state to normal.
+  window_state->OnWMEvent(&cycle_snap_left);
+  EXPECT_EQ(WindowStateType::kNormal, window_state->GetStateType());
+  EXPECT_FALSE(window_state->snapped_width_ratio());
+
+  // Another cycle snap left event will snap window and reset snapped width
+  // ratio.
+  window_state->OnWMEvent(&cycle_snap_left);
+  EXPECT_EQ(WindowStateType::kLeftSnapped, window_state->GetStateType());
+  EXPECT_EQ(0.5f, *window_state->snapped_width_ratio());
 }
 
 // Test that snapping left/right preserves the restore bounds.
 TEST_F(WindowStateTest, RestoreBounds) {
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
 
   EXPECT_TRUE(window_state->IsNormalStateType());
 
@@ -253,7 +450,7 @@ TEST_F(WindowStateTest, RestoreBounds) {
 // at the snapped bounds and not at the auto-managed (centered) bounds.
 TEST_F(WindowStateTest, AutoManaged) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   window_state->SetWindowPositionManaged(true);
   window->Hide();
   window->SetBounds(gfx::Rect(100, 100, 100, 100));
@@ -278,7 +475,7 @@ TEST_F(WindowStateTest, AutoManaged) {
 // Test that the replacement of a State object works as expected.
 TEST_F(WindowStateTest, SimpleStateSwap) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_FALSE(window_state->IsMaximized());
   window_state->SetStateObject(std::unique_ptr<WindowState::State>(
       new AlwaysMaximizeTestState(window_state->GetStateType())));
@@ -289,7 +486,7 @@ TEST_F(WindowStateTest, SimpleStateSwap) {
 // original one restores the window to its original state.
 TEST_F(WindowStateTest, StateSwapRestore) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_FALSE(window_state->IsMaximized());
   std::unique_ptr<WindowState::State> old(
       window_state->SetStateObject(std::unique_ptr<WindowState::State>(
@@ -304,7 +501,7 @@ TEST_F(WindowStateTest, StateSwapRestore) {
 TEST_F(WindowStateTest, RestoredWindowBoundsShrink) {
   UpdateDisplay("0+0-600x900");
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_FALSE(window_state->IsMaximized());
   gfx::Rect work_area =
       display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
@@ -321,22 +518,24 @@ TEST_F(WindowStateTest, RestoredWindowBoundsShrink) {
 }
 
 TEST_F(WindowStateTest, DoNotResizeMaximizedWindowInFullscreen) {
+  const int shelf_inset_first = 600 - ShelfConstants::shelf_size();
+  const int shelf_inset_second = 700 - ShelfConstants::shelf_size();
   std::unique_ptr<aura::Window> maximized(CreateTestWindowInShellWithId(0));
   std::unique_ptr<aura::Window> fullscreen(CreateTestWindowInShellWithId(1));
-  WindowState* maximized_state = GetWindowState(maximized.get());
+  WindowState* maximized_state = WindowState::Get(maximized.get());
   maximized_state->Maximize();
   ASSERT_TRUE(maximized_state->IsMaximized());
-  EXPECT_EQ(gfx::Rect(0, 0, 800, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 800, shelf_inset_first).ToString(),
             maximized->GetBoundsInScreen().ToString());
 
   // Entering fullscreen mode will not update the maximized window's size
   // under fullscreen.
   WMEvent fullscreen_event(WM_EVENT_FULLSCREEN);
-  WindowState* fullscreen_state = GetWindowState(fullscreen.get());
+  WindowState* fullscreen_state = WindowState::Get(fullscreen.get());
   fullscreen_state->OnWMEvent(&fullscreen_event);
   ASSERT_TRUE(fullscreen_state->IsFullscreen());
   ASSERT_TRUE(maximized_state->IsMaximized());
-  EXPECT_EQ(gfx::Rect(0, 0, 800, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 800, shelf_inset_first).ToString(),
             maximized->GetBoundsInScreen().ToString());
 
   // Updating display size will update the maximum window size.
@@ -345,15 +544,15 @@ TEST_F(WindowStateTest, DoNotResizeMaximizedWindowInFullscreen) {
   fullscreen.reset();
 
   // Exiting fullscreen will update the maximized window to the work area.
-  EXPECT_EQ(gfx::Rect(0, 0, 900, 652).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 900, shelf_inset_second).ToString(),
             maximized->GetBoundsInScreen().ToString());
 }
 
 TEST_F(WindowStateTest, TrustedPinned) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_FALSE(window_state->IsTrustedPinned());
-  wm::PinWindow(window.get(), true /* trusted */);
+  window_util::PinWindow(window.get(), true /* trusted */);
   EXPECT_TRUE(window_state->IsTrustedPinned());
 
   gfx::Rect work_area =
@@ -378,7 +577,7 @@ TEST_F(WindowStateTest, TrustedPinned) {
 
 TEST_F(WindowStateTest, AllowSetBoundsDirect) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   EXPECT_FALSE(window_state->IsMaximized());
   gfx::Rect work_area =
       display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
@@ -411,26 +610,26 @@ TEST_F(WindowStateTest, AllowSetBoundsDirect) {
 
 TEST_F(WindowStateTest, FullscreenMinimizedSwitching) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
 
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsFullscreen());
 
   // Toggling the fullscreen window should restore to normal.
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsNormalStateType());
 
   window_state->Maximize();
   ASSERT_TRUE(window_state->IsMaximized());
 
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsFullscreen());
 
   // Toggling the fullscreen window should restore to maximized.
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsMaximized());
 
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsFullscreen());
 
   // Minimize from fullscreen.
@@ -442,7 +641,7 @@ TEST_F(WindowStateTest, FullscreenMinimizedSwitching) {
   ASSERT_TRUE(window_state->IsFullscreen());
 
   // Toggling the fullscreen window should restore to maximized.
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsMaximized());
 
   // Minimize from fullscreen.
@@ -450,19 +649,19 @@ TEST_F(WindowStateTest, FullscreenMinimizedSwitching) {
   ASSERT_TRUE(window_state->IsMinimized());
 
   // Fullscreen a minimized window.
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsFullscreen());
 
   // Toggling the fullscreen window should not return to minimized. It should
   // return to the state before minimizing and fullscreen.
-  ash::wm::ToggleFullScreen(window_state, nullptr);
+  ToggleFullScreen(window_state, nullptr);
   ASSERT_TRUE(window_state->IsMaximized());
 }
 
 TEST_F(WindowStateTest, CanConsumeSystemKeys) {
   std::unique_ptr<aura::Window> window(
       CreateTestWindowInShellWithBounds(gfx::Rect(100, 100, 100, 100)));
-  WindowState* window_state = GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
 
   EXPECT_FALSE(window_state->CanConsumeSystemKeys());
 
@@ -470,8 +669,103 @@ TEST_F(WindowStateTest, CanConsumeSystemKeys) {
   EXPECT_TRUE(window_state->CanConsumeSystemKeys());
 }
 
+TEST_F(WindowStateTest,
+       RestoreStateAfterEnteringPipViaOcculusionAndDismissingPip) {
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  WindowState* window_state = WindowState::Get(window.get());
+  window->Show();
+  EXPECT_TRUE(window->layer()->visible());
+
+  // Ensure a maximized window gets maximized again after it enters PIP via
+  // occlusion, gets minimized, and unminimized.
+  window_state->Maximize();
+  EXPECT_TRUE(window_state->IsMaximized());
+
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+  EXPECT_TRUE(window_state->IsPip());
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  window_state->Unminimize();
+  EXPECT_TRUE(window_state->IsMaximized());
+
+  // Ensure a freeform window gets freeform again after it enters PIP via
+  // occulusion, gets minimized, and unminimized.
+  ::wm::SetWindowState(window.get(), ui::SHOW_STATE_NORMAL);
+
+  window_state->OnWMEvent(&enter_pip);
+  EXPECT_TRUE(window_state->IsPip());
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  window_state->Unminimize();
+  EXPECT_TRUE(window_state->GetStateType() == WindowStateType::kNormal);
+}
+
+TEST_F(WindowStateTest, RestoreStateAfterEnterPipViaMinimizeAndDismissingPip) {
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  WindowState* window_state = WindowState::Get(window.get());
+  window->Show();
+  EXPECT_TRUE(window->layer()->visible());
+
+  // Ensure a maximized window gets maximized again after it enters PIP via
+  // minimize, gets minimized, and unminimized.
+  window_state->Maximize();
+  EXPECT_TRUE(window_state->IsMaximized());
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+  EXPECT_TRUE(window_state->IsPip());
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  window_state->Unminimize();
+  EXPECT_TRUE(window_state->IsMaximized());
+
+  // Ensure a freeform window gets freeform again after it enters PIP via
+  // minimize, gets minimized, and unminimized.
+  ::wm::SetWindowState(window.get(), ui::SHOW_STATE_NORMAL);
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  window_state->OnWMEvent(&enter_pip);
+  EXPECT_TRUE(window_state->IsPip());
+
+  window_state->Minimize();
+  EXPECT_TRUE(window_state->IsMinimized());
+
+  window_state->Unminimize();
+  EXPECT_TRUE(window_state->GetStateType() == WindowStateType::kNormal);
+}
+
+TEST_F(WindowStateTest, SetBoundsUpdatesSizeOfPipRestoreBounds) {
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  WindowState* window_state = WindowState::Get(window.get());
+  window->Show();
+  window->SetBounds(gfx::Rect(0, 0, 50, 50));
+
+  const WMEvent enter_pip(WM_EVENT_PIP);
+  window_state->OnWMEvent(&enter_pip);
+
+  EXPECT_TRUE(window_state->IsPip());
+  EXPECT_TRUE(window_state->HasRestoreBounds());
+  EXPECT_EQ(gfx::Rect(8, 8, 50, 50), window_state->GetRestoreBoundsInScreen());
+  window_state->window()->SetBounds(gfx::Rect(100, 100, 100, 100));
+  // SetBounds only updates the size of the restore bounds.
+  EXPECT_EQ(gfx::Rect(8, 8, 100, 100),
+            window_state->GetRestoreBoundsInScreen());
+}
+
 // TODO(skuhne): Add more unit test to verify the correctness for the restore
 // operation.
 
-}  // namespace wm
+}  // namespace
 }  // namespace ash

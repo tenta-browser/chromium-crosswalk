@@ -17,6 +17,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
@@ -24,11 +25,10 @@ import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.website.SingleCategoryPreferences;
 import org.chromium.chrome.browser.preferences.website.SingleWebsitePreferences;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ActivityUtils;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
 /**
  * Instrumentation tests for the Notification Platform Bridge.
@@ -39,8 +39,7 @@ import org.chromium.content.browser.test.util.CriteriaHelper;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class NotificationPlatformBridgeIntentTest {
     /**
      * Name of the Intent extra holding the notification id. This is set by the framework when a
@@ -59,8 +58,8 @@ public class NotificationPlatformBridgeIntentTest {
     @MediumTest
     @Feature({"Browser", "Notifications"})
     public void testLaunchNotificationPreferencesForCategory() {
-        Assert.assertFalse(
-                "The native library should not be loaded yet", LibraryLoader.isInitialized());
+        Assert.assertFalse("The native library should not be loaded yet",
+                LibraryLoader.getInstance().isInitialized());
 
         final Context context = InstrumentationRegistry.getInstrumentation()
                                         .getTargetContext()
@@ -81,8 +80,8 @@ public class NotificationPlatformBridgeIntentTest {
                 });
         Assert.assertNotNull("Could not find the Preferences activity", activity);
 
-        SingleCategoryPreferences fragment =
-                ActivityUtils.waitForFragmentToAttach(activity, SingleCategoryPreferences.class);
+        SingleCategoryPreferences fragment = ActivityUtils.waitForFragmentToAttachCompat(
+                activity, SingleCategoryPreferences.class);
         Assert.assertNotNull("Could not find the SingleCategoryPreferences fragment", fragment);
     }
 
@@ -95,8 +94,8 @@ public class NotificationPlatformBridgeIntentTest {
     @MediumTest
     @Feature({"Browser", "Notifications"})
     public void testLaunchNotificationPreferencesForWebsite() {
-        Assert.assertFalse(
-                "The native library should not be loaded yet", LibraryLoader.isInitialized());
+        Assert.assertFalse("The native library should not be loaded yet",
+                LibraryLoader.getInstance().isInitialized());
 
         final Context context = InstrumentationRegistry.getInstrumentation()
                                         .getTargetContext()
@@ -109,9 +108,7 @@ public class NotificationPlatformBridgeIntentTest {
                         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         .putExtra(EXTRA_NOTIFICATION_ID, NotificationPlatformBridge.PLATFORM_ID)
                         .putExtra(NotificationConstants.EXTRA_NOTIFICATION_TAG,
-                                NotificationPlatformBridge.makePlatformTag(
-                                        "42" /* notificationId */, "https://example.com",
-                                        null /* tag */));
+                                "p#https://example.com#0" /* notificationId */);
 
         Preferences activity = ActivityUtils.waitForActivity(
                 InstrumentationRegistry.getInstrumentation(), Preferences.class, new Runnable() {
@@ -122,8 +119,8 @@ public class NotificationPlatformBridgeIntentTest {
                 });
         Assert.assertNotNull("Could not find the Preferences activity", activity);
 
-        SingleWebsitePreferences fragment =
-                ActivityUtils.waitForFragmentToAttach(activity, SingleWebsitePreferences.class);
+        SingleWebsitePreferences fragment = ActivityUtils.waitForFragmentToAttachCompat(
+                activity, SingleWebsitePreferences.class);
         Assert.assertNotNull("Could not find the SingleWebsitePreferences fragment", fragment);
     }
 
@@ -137,10 +134,11 @@ public class NotificationPlatformBridgeIntentTest {
      */
     @Test
     @MediumTest
+    @DisabledTest(message = "https://crbug.com/950635")
     @Feature({"Browser", "Notifications"})
     public void testLaunchProcessForNotificationActivation() throws Exception {
-        Assert.assertFalse(
-                "The native library should not be loaded yet", LibraryLoader.isInitialized());
+        Assert.assertFalse("The native library should not be loaded yet",
+                LibraryLoader.getInstance().isInitialized());
         Assert.assertNull(NotificationPlatformBridge.getInstanceForTests());
 
         Context context = InstrumentationRegistry.getInstrumentation()
@@ -154,7 +152,6 @@ public class NotificationPlatformBridgeIntentTest {
         intent.putExtra(NotificationConstants.EXTRA_NOTIFICATION_INFO_PROFILE_ID, "Default");
         intent.putExtra(
                 NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN, "https://example.com");
-        intent.putExtra(NotificationConstants.EXTRA_NOTIFICATION_INFO_TAG, "tag");
 
         PendingIntent pendingIntent = PendingIntent.getBroadcast(
                 context, 0 /* request code */, intent, PendingIntent.FLAG_UPDATE_CURRENT);
@@ -169,7 +166,8 @@ public class NotificationPlatformBridgeIntentTest {
             }
         });
 
-        Assert.assertTrue("The native library should be loaded now", LibraryLoader.isInitialized());
+        Assert.assertTrue("The native library should be loaded now",
+                LibraryLoader.getInstance().isInitialized());
         Assert.assertNotNull(NotificationPlatformBridge.getInstanceForTests());
     }
 }

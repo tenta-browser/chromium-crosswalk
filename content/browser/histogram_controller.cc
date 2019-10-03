@@ -7,15 +7,18 @@
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_handle.h"
+#include "base/task/post_task.h"
 #include "content/browser/histogram_subscriber.h"
 #include "content/common/histogram_fetcher.mojom.h"
 #include "content/public/browser/browser_child_process_host_iterator.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/bind_interface_helpers.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/process_type.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 
 namespace content {
 
@@ -41,8 +44,8 @@ void HistogramController::OnHistogramDataCollected(
     int sequence_number,
     const std::vector<std::string>& pickled_histograms) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&HistogramController::OnHistogramDataCollected,
                        base::Unretained(this), sequence_number,
                        pickled_histograms));
@@ -54,35 +57,6 @@ void HistogramController::OnHistogramDataCollected(
                                           pickled_histograms);
   }
 }
-
-class FetcherCallbackRunner {
- public:
-  FetcherCallbackRunner(int sequence_number)
-      : sequence_number_(sequence_number), did_run_(false) {}
-
-  ~FetcherCallbackRunner() {
-    if (!did_run_) {
-      Run(std::vector<std::string>());
-    }
-  }
-  static content::mojom::ChildHistogramFetcher::
-      GetChildNonPersistentHistogramDataCallback
-      Make(int sequence_number) {
-    return base::BindOnce(
-        &FetcherCallbackRunner::Run,
-        std::make_unique<FetcherCallbackRunner>(sequence_number));
-  }
-
-  void Run(const std::vector<std::string>& pickled_histograms) {
-    did_run_ = true;
-    HistogramController::GetInstance()->OnHistogramDataCollected(
-        sequence_number_, pickled_histograms);
-  }
-
- private:
-  int sequence_number_;
-  bool did_run_;
-};
 
 void HistogramController::Register(HistogramSubscriber* subscriber) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -117,22 +91,22 @@ HistogramController::GetChildHistogramFetcherMap() {
 
 template void HistogramController::SetHistogramMemory(
     ChildProcessHost* host,
-    mojo::ScopedSharedBufferHandle shared_buffer);
+    base::WritableSharedMemoryRegion shared_region);
 
 template void HistogramController::SetHistogramMemory(
     RenderProcessHost* host,
-    mojo::ScopedSharedBufferHandle shared_buffer);
+    base::WritableSharedMemoryRegion shared_region);
 
 template <class T>
 void HistogramController::SetHistogramMemory(
     T* host,
-    mojo::ScopedSharedBufferHandle shared_buffer) {
+    base::WritableSharedMemoryRegion shared_region) {
   content::mojom::ChildHistogramFetcherFactoryPtr
       child_histogram_fetcher_factory;
   content::mojom::ChildHistogramFetcherPtr child_histogram_fetcher;
   content::BindInterface(host, &child_histogram_fetcher_factory);
   child_histogram_fetcher_factory->CreateFetcher(
-      std::move(shared_buffer), mojo::MakeRequest(&child_histogram_fetcher));
+      std::move(shared_region), mojo::MakeRequest(&child_histogram_fetcher));
   InsertChildHistogramFetcherInterface(host,
                                        std::move(child_histogram_fetcher));
 }
@@ -143,9 +117,9 @@ void HistogramController::InsertChildHistogramFetcherInterface(
     content::mojom::ChildHistogramFetcherPtr child_histogram_fetcher) {
   // Broken pipe means remove this from the map. The map size is a proxy for
   // the number of known processes
-  child_histogram_fetcher.set_connection_error_handler(
-      base::Bind(&HistogramController::RemoveChildHistogramFetcherInterface<T>,
-                 base::Unretained(this), base::Unretained(host)));
+  child_histogram_fetcher.set_connection_error_handler(base::BindOnce(
+      &HistogramController::RemoveChildHistogramFetcherInterface<T>,
+      base::Unretained(this), base::Unretained(host)));
   GetChildHistogramFetcherMap<T>()[host] = std::move(child_histogram_fetcher);
 }
 
@@ -180,19 +154,22 @@ void HistogramController::GetHistogramDataFromChildProcesses(
     // In some cases, there may be no child process of the given type (for
     // example, the GPU process may not exist and there may instead just be a
     // GPU thread in the browser process). If that's the case, then the process
-    // handle will be base::kNullProcessHandle and we shouldn't ask it for data.
-    if (data.handle == base::kNullProcessHandle)
+    // will be invalid and we shouldn't ask it for data.
+    if (!data.GetProcess().IsValid())
       continue;
 
     if (auto* child_histogram_fetcher =
             GetChildHistogramFetcherInterface(iter.GetHost())) {
       child_histogram_fetcher->GetChildNonPersistentHistogramData(
-          FetcherCallbackRunner::Make(sequence_number));
+          mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+              base::BindOnce(&HistogramController::OnHistogramDataCollected,
+                             base::Unretained(this), sequence_number),
+              std::vector<std::string>()));
       ++pending_processes;
     }
   }
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&HistogramController::OnPendingProcesses,
                      base::Unretained(this), sequence_number, pending_processes,
                      true));
@@ -207,14 +184,17 @@ void HistogramController::GetHistogramData(int sequence_number) {
     if (auto* child_histogram_fetcher =
             GetChildHistogramFetcherInterface(it.GetCurrentValue())) {
       child_histogram_fetcher->GetChildNonPersistentHistogramData(
-          FetcherCallbackRunner::Make(sequence_number));
+          mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+              base::BindOnce(&HistogramController::OnHistogramDataCollected,
+                             base::Unretained(this), sequence_number),
+              std::vector<std::string>()));
       ++pending_processes;
     }
   }
   OnPendingProcesses(sequence_number, pending_processes, false);
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&HistogramController::GetHistogramDataFromChildProcesses,
                      base::Unretained(this), sequence_number));
 }

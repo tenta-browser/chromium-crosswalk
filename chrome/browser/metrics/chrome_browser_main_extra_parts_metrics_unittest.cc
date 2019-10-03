@@ -7,15 +7,17 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_service_manager_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/screen.h"
 #include "ui/display/test/test_screen.h"
-#include "ui/events/test/device_data_manager_test_api.h"
 #include "ui/gfx/geometry/size.h"
+
+#if defined(USE_OZONE) || defined(USE_X11)
+#include "ui/events/devices/device_data_manager_test_api.h"
+#endif
 
 namespace {
 
@@ -30,8 +32,9 @@ class ChromeBrowserMainExtraPartsMetricsTest : public testing::Test {
   ~ChromeBrowserMainExtraPartsMetricsTest() override;
 
  protected:
-  // Test API wrapping |device_data_manager_|.
-  ui::test::DeviceDataManagerTestAPI device_data_manager_test_api_;
+#if defined(USE_OZONE) || defined(USE_X11)
+  ui::DeviceDataManagerTestApi device_data_manager_test_api_;
+#endif
 
  private:
   // Provides a message loop and allows the use of the task scheduler
@@ -67,8 +70,9 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
 
 // Verify a TouchEventsEnabled value isn't recorded during PostBrowserStart if
 // the device scan hasn't completed yet.
+// TODO(https://crbug.com/940076): Consistently flaky.
 TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
-       VerifyTouchEventsEnabledIsNotRecordedAfterPostBrowserStart) {
+       DISABLED_VerifyTouchEventsEnabledIsNotRecordedAfterPostBrowserStart) {
   base::HistogramTester histogram_tester;
 
   ChromeBrowserMainExtraPartsMetrics test_target;

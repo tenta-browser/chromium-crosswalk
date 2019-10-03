@@ -38,7 +38,6 @@ class Feature {
     WEB_PAGE_CONTEXT,
     BLESSED_WEB_PAGE_CONTEXT,
     WEBUI_CONTEXT,
-    SERVICE_WORKER_CONTEXT,
     LOCK_SCREEN_EXTENSION_CONTEXT,
   };
 
@@ -149,8 +148,8 @@ class Feature {
   // method instead.
   virtual Availability IsAvailableToEnvironment() const = 0;
 
-  virtual bool IsIdInBlacklist(const HashedExtensionId& hashed_id) const = 0;
-  virtual bool IsIdInWhitelist(const HashedExtensionId& hashed_id) const = 0;
+  virtual bool IsIdInBlocklist(const HashedExtensionId& hashed_id) const = 0;
+  virtual bool IsIdInAllowlist(const HashedExtensionId& hashed_id) const = 0;
 
  protected:
   std::string name_;

@@ -7,6 +7,20 @@
  */
 login.createScreen(
     'ActiveDirectoryPasswordChangeScreen', 'ad-password-change', function() {
+      /**
+       * Horizontal padding for the error bubble.
+       * @type {number}
+       * @const
+       */
+      var BUBBLE_HORIZONTAL_PADDING = 65;
+
+      /**
+       * Vertical padding for the error bubble.
+       * @type {number}
+       * @const
+       */
+      var BUBBLE_VERTICAL_PADDING = -144;
+
       return {
         EXTERNAL_API: [],
 
@@ -43,7 +57,6 @@ login.createScreen(
         onBeforeShow: function(data) {
           // Active Directory password change screen is similar to Active
           // Directory login screen. So we restore bottom bar controls.
-          Oobe.getInstance().headerHidden = false;
           this.adPasswordChanged_.reset();
           if ('username' in data)
             this.adPasswordChanged_.username = data.username;
@@ -58,7 +71,8 @@ login.createScreen(
          */
         showErrorBubble: function(loginAttempts, error) {
           $('bubble').showContentForElement(
-              $('ad-password-change'), cr.ui.Bubble.Attachment.LEFT, error);
+              $('ad-password-change'), cr.ui.Bubble.Attachment.BOTTOM, error,
+              BUBBLE_HORIZONTAL_PADDING, BUBBLE_VERTICAL_PADDING);
         },
       };
     });

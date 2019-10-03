@@ -65,28 +65,37 @@ const char* ProtoEnumToString(sync_pb::TabNavigation::BlockedState state);
 
 const char* ProtoEnumToString(sync_pb::TabNavigation::PasswordState state);
 
+const char* ProtoEnumToString(sync_pb::UserConsentSpecifics::Feature feature);
+
 const char* ProtoEnumToString(
     sync_pb::UserEventSpecifics::Translation::Interaction interaction);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::UserConsent::ConsentStatus status);
+    sync_pb::UserEventSpecifics::UserConsent::Feature feature);
+
+const char* ProtoEnumToString(sync_pb::UserConsentTypes::ConsentStatus status);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseDetected::
-        SafeBrowsingStatus::ReportingPopulation
-            safe_browsing_reporting_population);
+    sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus::
+        ReportingPopulation safe_browsing_reporting_population);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-        PasswordReuseDialogInteraction::InteractionResult interaction_result);
+    sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction::
+        InteractionResult interaction_result);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        LookupResult lookup_result);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::LookupResult
+        lookup_result);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        ReputationVerdict verdict);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::ReputationVerdict verdict);
+
+// TODO(markusheintz): Remove.
+const char* ProtoEnumToString(
+    sync_pb::GaiaPasswordReuse::PasswordCaptured::EventTrigger trigger);
+
+const char* ProtoEnumToString(
+    sync_pb::UserEventSpecifics::GaiaPasswordCaptured::EventTrigger trigger);
 
 const char* ProtoEnumToString(
     sync_pb::WalletMaskedCreditCard::WalletCardClass wallet_card_class);
@@ -99,6 +108,24 @@ const char* ProtoEnumToString(
 
 const char* ProtoEnumToString(
     sync_pb::WalletMetadataSpecifics::Type wallet_metadata_type);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::SecurityType security_type);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::AutomaticallyConnectOption
+        automatically_connect_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::IsPreferredOption
+        is_preferred_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::MeteredOption metered_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration::ProxyOption
+        proxy_option);
 
 const char* ProtoEnumToString(
     sync_pb::WifiCredentialSpecifics::SecurityClass security_class);

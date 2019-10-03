@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/http/http_response_headers.h"
 #include "url/gurl.h"
@@ -15,14 +14,12 @@ namespace net {
 
 WebSocketHandshakeResponseInfo::WebSocketHandshakeResponseInfo(
     const GURL& url,
-    int status_code,
-    const std::string& status_text,
     scoped_refptr<HttpResponseHeaders> headers,
+    const IPEndPoint& remote_endpoint,
     base::Time response_time)
     : url(url),
-      status_code(status_code),
-      status_text(status_text),
-      headers(headers),
+      headers(std::move(headers)),
+      remote_endpoint(remote_endpoint),
       response_time(response_time) {}
 
 WebSocketHandshakeResponseInfo::~WebSocketHandshakeResponseInfo() = default;

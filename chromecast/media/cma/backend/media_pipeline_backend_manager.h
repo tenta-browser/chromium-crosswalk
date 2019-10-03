@@ -16,14 +16,20 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list_threadsafe.h"
 #include "base/single_thread_task_runner.h"
-#include "chromecast/public/media/media_pipeline_backend.h"
+#include "base/timer/timer.h"
+#include "chromecast/public/media/decoder_config.h"
 #include "chromecast/public/media/media_pipeline_device_params.h"
 
 namespace chromecast {
 namespace media {
 
-class AudioDecoderWrapper;
 enum class AudioContentType;
+class CastDecoderBuffer;
+class CmaBackend;
+class ExtraAudioStream;
+class MediaPipelineBackendWrapper;
+class ActiveAudioDecoderWrapper;
+class ActiveMediaPipelineBackendWrapper;
 
 // This class tracks all created media backends, tracking whether or not volume
 // feedback sounds should be enabled based on the currently active backends.
@@ -82,10 +88,20 @@ class MediaPipelineBackendManager {
       scoped_refptr<base::SingleThreadTaskRunner> media_task_runner);
   ~MediaPipelineBackendManager();
 
-  // Creates a media pipeline backend. Must be called on the same thread as
+  // Creates a CMA backend. Must be called on the same thread as
   // |media_task_runner_|.
-  std::unique_ptr<MediaPipelineBackend> CreateMediaPipelineBackend(
+  std::unique_ptr<CmaBackend> CreateCmaBackend(
       const MediaPipelineDeviceParams& params);
+
+  // Inform that a backend previously created is destroyed.
+  // Must be called on the same thread as |media_task_runner_|.
+  void BackendDestroyed(MediaPipelineBackendWrapper* backend_wrapper);
+  // |backend_wrapper| will use a VideoDecoder.
+  // MediaPipelineBackendManager needs to record the backend that uses the
+  // VideoDecoder; and if there is an active backend using VideoDecoder, that
+  // backend needs to be revoked.
+  // Must be called on the same thread as |media_task_runner_|.
+  void BackendUseVideoDecoder(MediaPipelineBackendWrapper* backend_wrapper);
 
   base::SingleThreadTaskRunner* task_runner() const {
     return media_task_runner_.get();
@@ -96,14 +112,18 @@ class MediaPipelineBackendManager {
   void AddAllowVolumeFeedbackObserver(AllowVolumeFeedbackObserver* observer);
   void RemoveAllowVolumeFeedbackObserver(AllowVolumeFeedbackObserver* observer);
 
-  // Logically pauses/resumes a backend instance, without actually pausing or
-  // resuming it. This is used by multiroom output to avoid playback stutter on
-  // resume. |backend| must have been created via a call to this instance's
-  // CreateMediaPipelineBackend().
-  void LogicalPause(MediaPipelineBackend* backend);
-  void LogicalResume(MediaPipelineBackend* backend);
+  // Add/remove a playing audio stream that is not accounted for by a
+  // CmaBackend instance (for example, direct audio output using
+  // CastMediaShlib::AddDirectAudioSource()). |sfx| indicates whether or not
+  // the stream is a sound effects stream (has no effect on volume feedback).
+  void AddExtraPlayingStream(bool sfx,
+                             const AudioContentType type,
+                             ExtraAudioStream* extra_audio_stream = nullptr);
+  void RemoveExtraPlayingStream(bool sfx,
+                                const AudioContentType type,
+                                ExtraAudioStream* extra_audio_stream = nullptr);
 
-  // Sets a global multiplier for output volume for streams fo the given |type|.
+  // Sets a global multiplier for output volume for streams of the given |type|.
   // The multiplier may be any value >= 0; if the resulting volume for an
   // individual stream would be > 1.0, that stream's volume is clamped to 1.0.
   // The default multiplier is 1.0. May be called on any thread.
@@ -116,12 +136,18 @@ class MediaPipelineBackendManager {
 
   BufferDelegate* buffer_delegate() const { return buffer_delegate_; }
 
- private:
-  friend class MediaPipelineBackendWrapper;
-  friend class AudioDecoderWrapper;
+  bool IsPlaying(bool include_sfx, AudioContentType type);
 
-  void AddAudioDecoder(AudioDecoderWrapper* decoder);
-  void RemoveAudioDecoder(AudioDecoderWrapper* decoder);
+  // If |power_save_enabled| is |false|, power save will be turned off and
+  // automatic power save will be disabled until this is called with |true|.
+  void SetPowerSaveEnabled(bool power_save_enabled);
+
+ private:
+  friend class ActiveMediaPipelineBackendWrapper;
+  friend class ActiveAudioDecoderWrapper;
+
+  void AddAudioDecoder(ActiveAudioDecoderWrapper* decoder);
+  void RemoveAudioDecoder(ActiveAudioDecoderWrapper* decoder);
 
   // Backend wrapper instances must use these APIs when allocating and releasing
   // decoder objects, so we can enforce global limit on #concurrent decoders.
@@ -129,23 +155,41 @@ class MediaPipelineBackendManager {
   void DecrementDecoderCount(DecoderType type);
 
   // Update the count of playing non-effects audio streams.
-  void UpdatePlayingAudioCount(int change);
+  void UpdatePlayingAudioCount(bool sfx,
+                               const AudioContentType type,
+                               int change);
+  int TotalPlayingAudioStreamsCount();
+  int TotalPlayingNoneffectsAudioStreamsCount();
+
+  void EnterPowerSaveMode();
 
   const scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
 
   // Total count of decoders created
   int decoder_count_[NUM_DECODER_TYPES];
 
+  // Total number of playing audio streams.
+  base::flat_map<AudioContentType, int> playing_audio_streams_count_;
+
   // Total number of playing non-effects streams.
-  int playing_noneffects_audio_streams_count_;
+  base::flat_map<AudioContentType, int> playing_noneffects_audio_streams_count_;
 
   scoped_refptr<base::ObserverListThreadSafe<AllowVolumeFeedbackObserver>>
       allow_volume_feedback_observers_;
 
-  base::flat_set<AudioDecoderWrapper*> audio_decoders_;
+  base::flat_set<ActiveAudioDecoderWrapper*> audio_decoders_;
+  base::flat_map<AudioContentType, base::flat_set<ExtraAudioStream*>>
+      extra_audio_streams_;
   base::flat_map<AudioContentType, float> global_volume_multipliers_;
 
+  // Previously issued MediaPipelineBackendWrapper that uses a video decoder.
+  MediaPipelineBackendWrapper* backend_wrapper_using_video_decoder_;
+
   BufferDelegate* buffer_delegate_;
+
+  bool power_save_enabled_ = true;
+
+  base::OneShotTimer power_save_timer_;
 
   base::WeakPtrFactory<MediaPipelineBackendManager> weak_factory_;
 

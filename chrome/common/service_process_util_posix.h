@@ -13,7 +13,7 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_for_io.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 
@@ -25,13 +25,15 @@ MultiProcessLock* TakeServiceRunningLock(bool waiting);
 #if defined(OS_MACOSX)
 #include "base/files/file_path_watcher.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "chrome/common/mac/service_management.h"
 
 namespace base {
 class CommandLine;
 }
 
-CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
-                                                 bool for_auto_launch);
+mac::services::JobOptions GetServiceProcessJobOptions(
+    base::CommandLine* cmd_line,
+    bool for_auto_launch);
 #endif  // OS_MACOSX
 
 namespace base {
@@ -41,7 +43,8 @@ class WaitableEvent;
 // Watches for |kTerminateMessage| to be written to the file descriptor it is
 // watching. When it reads |kTerminateMessage|, it performs |terminate_task_|.
 // Used here to monitor the socket listening to g_signal_socket.
-class ServiceProcessTerminateMonitor : public base::MessageLoopForIO::Watcher {
+class ServiceProcessTerminateMonitor
+    : public base::MessagePumpForIO::FdWatcher {
  public:
 
   enum {
@@ -51,7 +54,7 @@ class ServiceProcessTerminateMonitor : public base::MessageLoopForIO::Watcher {
   explicit ServiceProcessTerminateMonitor(const base::Closure& terminate_task);
   ~ServiceProcessTerminateMonitor() override;
 
-  // MessageLoopForIO::Watcher overrides
+  // MessagePumpForIO::FdWatcher overrides
   void OnFileCanReadWithoutBlocking(int fd) override;
   void OnFileCanWriteWithoutBlocking(int fd) override;
 
@@ -70,14 +73,14 @@ struct ServiceProcessState::StateData {
 #if defined(OS_MACOSX)
   bool WatchExecutable();
 
-  base::ScopedCFTypeRef<CFDictionaryRef> launchd_conf;
+  mac::services::JobCheckinInfo job_info;
   base::FilePathWatcher executable_watcher;
 #else
   std::unique_ptr<MultiProcessLock> initializing_lock;
   std::unique_ptr<MultiProcessLock> running_lock;
 #endif
   std::unique_ptr<ServiceProcessTerminateMonitor> terminate_monitor;
-  base::MessageLoopForIO::FileDescriptorWatcher watcher;
+  base::MessagePumpForIO::FdWatchController watcher;
   int sockets[2];
   struct sigaction old_action;
   bool set_action;

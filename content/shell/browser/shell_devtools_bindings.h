@@ -6,8 +6,10 @@
 #define CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_BINDINGS_H_
 
 #include <memory>
+#include <set>
 
 #include "base/compiler_specific.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -15,7 +17,6 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_frontend_host.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "net/url_request/url_fetcher_delegate.h"
 
 #if !defined(OS_ANDROID)
 #include "content/public/browser/devtools_frontend_host.h"
@@ -32,20 +33,20 @@ class NavigationHandle;
 class ShellDevToolsDelegate {
  public:
   virtual void Close() = 0;
-  virtual ~ShellDevToolsDelegate(){};
+  virtual ~ShellDevToolsDelegate() {}
 };
 
 class WebContents;
 
 class ShellDevToolsBindings : public WebContentsObserver,
-                              public DevToolsAgentHostClient,
-                              public net::URLFetcherDelegate {
+                              public DevToolsAgentHostClient {
  public:
   ShellDevToolsBindings(WebContents* devtools_contents,
                         WebContents* inspected_contents,
                         ShellDevToolsDelegate* delegate);
 
   void InspectElementAt(int x, int y);
+  virtual void Attach();
 
   void CallClientFunction(const std::string& function_name,
                           const base::Value* arg1,
@@ -55,23 +56,17 @@ class ShellDevToolsBindings : public WebContentsObserver,
 
   WebContents* inspected_contents() { return inspected_contents_; }
 
- protected:
+ private:
   // content::DevToolsAgentHostClient implementation.
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override;
 
-  void SetPreferences(const std::string& json);
-  virtual void HandleMessageFromDevToolsFrontend(const std::string& message);
+  void HandleMessageFromDevToolsFrontend(const std::string& message);
 
- private:
   // WebContentsObserver overrides
   void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
-  void DocumentAvailableInMainFrame() override;
   void WebContentsDestroyed() override;
-
-  // net::URLFetcherDelegate overrides.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
 
   void SendMessageAck(int request_id, const base::Value* arg1);
 
@@ -83,12 +78,16 @@ class ShellDevToolsBindings : public WebContentsObserver,
 #if !defined(OS_ANDROID)
   std::unique_ptr<DevToolsFrontendHost> frontend_host_;
 #endif
-  using PendingRequestsMap = std::map<const net::URLFetcher*, int>;
-  PendingRequestsMap pending_requests_;
+
+  class NetworkResourceLoader;
+  std::set<std::unique_ptr<NetworkResourceLoader>, base::UniquePtrComparator>
+      loaders_;
+
   base::DictionaryValue preferences_;
+
   using ExtensionsAPIs = std::map<std::string, std::string>;
   ExtensionsAPIs extensions_api_;
-  base::WeakPtrFactory<ShellDevToolsBindings> weak_factory_;
+  base::WeakPtrFactory<ShellDevToolsBindings> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ShellDevToolsBindings);
 };

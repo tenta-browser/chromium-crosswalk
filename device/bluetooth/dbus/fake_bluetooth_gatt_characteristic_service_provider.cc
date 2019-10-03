@@ -10,6 +10,7 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "device/bluetooth/bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/dbus/bluetooth_gatt_attribute_value_delegate.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_gatt_manager_client.h"
@@ -114,9 +115,8 @@ void FakeBluetoothGattCharacteristicServiceProvider::SendValueChanged(
 
 void FakeBluetoothGattCharacteristicServiceProvider::GetValue(
     const dbus::ObjectPath& device_path,
-    const device::BluetoothLocalGattService::Delegate::ValueCallback& callback,
-    const device::BluetoothLocalGattService::Delegate::ErrorCallback&
-        error_callback) {
+    device::BluetoothLocalGattService::Delegate::ValueCallback callback,
+    device::BluetoothLocalGattService::Delegate::ErrorCallback error_callback) {
   VLOG(1) << "GATT characteristic value Get request: " << object_path_.value()
           << " UUID: " << uuid_;
   // Check if this characteristic is registered.
@@ -125,27 +125,27 @@ void FakeBluetoothGattCharacteristicServiceProvider::GetValue(
           bluez::BluezDBusManager::Get()->GetBluetoothGattManagerClient());
   if (!fake_bluetooth_gatt_manager_client->IsServiceRegistered(service_path_)) {
     VLOG(1) << "GATT characteristic not registered.";
-    error_callback.Run();
+    std::move(error_callback).Run();
     return;
   }
 
   if (!CanRead(flags_)) {
     VLOG(1) << "GATT characteristic not readable.";
-    error_callback.Run();
+    std::move(error_callback).Run();
     return;
   }
 
   // Pass on to the delegate.
   DCHECK(delegate_);
-  delegate_->GetValue(device_path, callback, error_callback);
+  delegate_->GetValue(device_path, std::move(callback),
+                      std::move(error_callback));
 }
 
 void FakeBluetoothGattCharacteristicServiceProvider::SetValue(
     const dbus::ObjectPath& device_path,
     const std::vector<uint8_t>& value,
-    const base::Closure& callback,
-    const device::BluetoothLocalGattService::Delegate::ErrorCallback&
-        error_callback) {
+    base::OnceClosure callback,
+    device::BluetoothLocalGattService::Delegate::ErrorCallback error_callback) {
   VLOG(1) << "GATT characteristic value Set request: " << object_path_.value()
           << " UUID: " << uuid_;
   // Check if this characteristic is registered.
@@ -154,19 +154,51 @@ void FakeBluetoothGattCharacteristicServiceProvider::SetValue(
           bluez::BluezDBusManager::Get()->GetBluetoothGattManagerClient());
   if (!fake_bluetooth_gatt_manager_client->IsServiceRegistered(service_path_)) {
     VLOG(1) << "GATT characteristic not registered.";
-    error_callback.Run();
+    std::move(error_callback).Run();
     return;
   }
 
   if (!CanWrite(flags_)) {
     VLOG(1) << "GATT characteristic not writeable.";
-    error_callback.Run();
+    std::move(error_callback).Run();
     return;
   }
 
   // Pass on to the delegate.
   DCHECK(delegate_);
-  delegate_->SetValue(device_path, value, callback, error_callback);
+  delegate_->SetValue(device_path, value, std::move(callback),
+                      std::move(error_callback));
+}
+
+void FakeBluetoothGattCharacteristicServiceProvider::PrepareSetValue(
+    const dbus::ObjectPath& device_path,
+    const std::vector<uint8_t>& value,
+    int offset,
+    bool has_subsequent_write,
+    base::OnceClosure callback,
+    device::BluetoothLocalGattService::Delegate::ErrorCallback error_callback) {
+  VLOG(1) << "GATT characteristic value Prepare Set request: "
+          << object_path_.value() << " UUID: " << uuid_;
+  // Check if this characteristic is registered.
+  FakeBluetoothGattManagerClient* fake_bluetooth_gatt_manager_client =
+      static_cast<FakeBluetoothGattManagerClient*>(
+          bluez::BluezDBusManager::Get()->GetBluetoothGattManagerClient());
+  if (!fake_bluetooth_gatt_manager_client->IsServiceRegistered(service_path_)) {
+    VLOG(1) << "GATT characteristic not registered.";
+    std::move(error_callback).Run();
+    return;
+  }
+
+  if (!CanWrite(flags_)) {
+    VLOG(1) << "GATT characteristic not writeable.";
+    std::move(error_callback).Run();
+    return;
+  }
+
+  // Pass on to the delegate.
+  DCHECK(delegate_);
+  delegate_->PrepareSetValue(device_path, value, offset, has_subsequent_write,
+                             std::move(callback), std::move(error_callback));
 }
 
 bool FakeBluetoothGattCharacteristicServiceProvider::NotificationsChange(
@@ -189,7 +221,10 @@ bool FakeBluetoothGattCharacteristicServiceProvider::NotificationsChange(
 
   // Pass on to the delegate.
   DCHECK(delegate_);
-  start ? delegate_->StartNotifications() : delegate_->StopNotifications();
+  start ? delegate_->StartNotifications(object_path_,
+                                        device::BluetoothGattCharacteristic::
+                                            NotificationType::kNotification)
+        : delegate_->StopNotifications(object_path_);
 
   return true;
 }

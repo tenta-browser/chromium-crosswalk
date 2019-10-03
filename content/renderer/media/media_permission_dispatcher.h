@@ -14,8 +14,9 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
+#include "content/renderer/render_frame_impl.h"
 #include "media/base/media_permission.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission.mojom.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -26,13 +27,7 @@ namespace content {
 // MediaPermission implementation using content PermissionService.
 class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
  public:
-  using ConnectToServiceCB = base::RepeatingCallback<void(
-      mojo::InterfaceRequest<blink::mojom::PermissionService>)>;
-  using IsEncryptedMediaEnabledCB = base::RepeatingCallback<bool()>;
-
-  MediaPermissionDispatcher(
-      const ConnectToServiceCB& connect_to_service_cb,
-      const IsEncryptedMediaEnabledCB& is_encrypted_media_enabled_cb);
+  explicit MediaPermissionDispatcher(RenderFrameImpl* render_frame);
   ~MediaPermissionDispatcher() override;
 
   // Called when the frame owning this MediaPermissionDispatcher is navigated.
@@ -42,12 +37,9 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
   // Note: Can be called on any thread. The |permission_status_cb| will always
   // be fired on the thread where these methods are called.
   void HasPermission(Type type,
-                     const GURL& security_origin,
-                     const PermissionStatusCB& permission_status_cb) override;
-  void RequestPermission(
-      Type type,
-      const GURL& security_origin,
-      const PermissionStatusCB& permission_status_cb) override;
+                     PermissionStatusCB permission_status_cb) override;
+  void RequestPermission(Type type,
+                         PermissionStatusCB permission_status_cb) override;
   bool IsEncryptedMediaEnabled() override;
 
  private:
@@ -56,7 +48,7 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
 
   // Register PermissionStatusCBs. Returns |request_id| that can be used to make
   // PermissionService calls.
-  uint32_t RegisterCallback(const PermissionStatusCB& permission_status_cb);
+  uint32_t RegisterCallback(PermissionStatusCB permission_status_cb);
 
   // Ensure there is a connection to the permission service and return it.
   blink::mojom::PermissionService* GetPermissionService();
@@ -68,17 +60,20 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
   // Callback for |permission_service_| connection errors.
   void OnConnectionError();
 
-  ConnectToServiceCB connect_to_service_cb_;
-  IsEncryptedMediaEnabledCB is_encrypted_media_enabled_cb_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   uint32_t next_request_id_;
   RequestMap requests_;
   blink::mojom::PermissionServicePtr permission_service_;
 
+  // The |RenderFrameImpl| that owns this MediaPermissionDispatcher.  It's okay
+  // to hold a raw pointer here because the lifetime of this object is bounded
+  // by the render frame's life (the latter holds a unique pointer to this).
+  RenderFrameImpl* const render_frame_;
+
   // Used to safely post MediaPermission calls for execution on |task_runner_|.
   base::WeakPtr<MediaPermissionDispatcher> weak_ptr_;
 
-  base::WeakPtrFactory<MediaPermissionDispatcher> weak_factory_;
+  base::WeakPtrFactory<MediaPermissionDispatcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaPermissionDispatcher);
 };

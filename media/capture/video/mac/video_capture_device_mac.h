@@ -75,6 +75,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   void ReceiveFrame(const uint8_t* video_frame,
                     int video_frame_length,
                     const VideoCaptureFormat& frame_format,
+                    const gfx::ColorSpace color_space,
                     int aspect_numerator,
                     int aspect_denominator,
                     base::TimeDelta timestamp);
@@ -87,7 +88,9 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   void OnPhotoError();
 
   // Forwarder to VideoCaptureDevice::Client::OnError().
-  void ReceiveError(const base::Location& from_here, const std::string& reason);
+  void ReceiveError(VideoCaptureError error,
+                    const base::Location& from_here,
+                    const std::string& reason);
 
   // Forwarder to VideoCaptureDevice::Client::OnLog().
   void LogMessage(const std::string& message);
@@ -97,7 +100,8 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
                                       VideoCaptureTransportType transport_type);
 
  private:
-  void SetErrorState(const base::Location& from_here,
+  void SetErrorState(VideoCaptureError error,
+                     const base::Location& from_here,
                      const std::string& reason);
   bool UpdateCaptureResolution();
 

@@ -161,8 +161,13 @@ class TaskObserverPerfTest : public TaskPerfTest {
  public:
   void Init() override {
     TaskPerfTest::Init();
-    for (size_t i = 0; i < threads_.size(); i++) {
-      threads_[i]->message_loop()->AddTaskObserver(&message_loop_observer);
+    for (auto& i : threads_) {
+      i->task_runner()->PostTask(
+          FROM_HERE, BindOnce(
+                         [](MessageLoopObserver* observer) {
+                           MessageLoopCurrent::Get()->AddTaskObserver(observer);
+                         },
+                         Unretained(&message_loop_observer)));
     }
   }
 };

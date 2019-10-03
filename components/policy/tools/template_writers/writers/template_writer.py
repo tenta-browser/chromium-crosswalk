@@ -20,12 +20,6 @@ class TemplateWriter(object):
           'branding': 'Google Chrome' or 'Chromium'
           'mac_bundle_id': The Mac bundle id of Chrome. (Only set when building
             for Mac.)
-      messages: List of all the message strings from the grd file. Most of them
-        are also present in the policy data structures that are passed to
-        methods. That is the preferred way of accessing them, this should only
-        be used in exceptional cases. An example for its use is the
-        IDS_POLICY_WIN_SUPPORTED_WINXPSP2 message in ADM files, because that
-        cannot be associated with any policy or group.
     '''
     self.platforms = platforms
     self.config = config
@@ -75,12 +69,12 @@ class TemplateWriter(object):
       return False
 
     for supported_on in policy['supported_on']:
-      if not self._IsVersionSupported(supported_on):
+      if not self.IsVersionSupported(policy, supported_on):
         continue
       if '*' in self.platforms:
         return True
-      if any(platform in self.platforms for platform in
-             supported_on['platforms']):
+      if any(
+          platform in self.platforms for platform in supported_on['platforms']):
         return True
     return False
 
@@ -92,8 +86,11 @@ class TemplateWriter(object):
     '''Checks if the given policy can be mandatory.'''
     return policy.get('features', {}).get('can_be_mandatory', True)
 
-  def IsPolicySupportedOnPlatform(
-      self, policy, platform, product=None, management=None):
+  def IsPolicySupportedOnPlatform(self,
+                                  policy,
+                                  platform,
+                                  product=None,
+                                  management=None):
     '''Checks if |policy| is supported on |product| for |platform|. If
     |product| is not specified, only the platform support is checked.
     If |management| is specified, also checks for support for Chrome OS
@@ -114,9 +111,20 @@ class TemplateWriter(object):
     for supported_on in policy['supported_on']:
       if (platform in supported_on['platforms'] and
           (not product or product in supported_on['product']) and
-          self._IsVersionSupported(supported_on)):
+          self.IsVersionSupported(policy, supported_on)):
         return True
     return False
+
+  def IsPolicySupportedOnWindows(self, policy, product=None):
+    ''' Checks if |policy| is supported on any Windows platform.
+
+    Args:
+      policy: The dictionary of the policy.
+      product: Optional product to check; one of
+        'chrome', 'chrome_frame', 'chrome_os', 'webview'
+    '''
+    return (self.IsPolicySupportedOnPlatform(policy, 'win', product) or
+            self.IsPolicySupportedOnPlatform(policy, 'win7', product))
 
   def IsCrOSManagementSupported(self, policy, management):
     '''Checks whether |policy| supports the Chrome OS |management| type.
@@ -131,6 +139,18 @@ class TemplateWriter(object):
     return management in policy.get('supported_chrome_os_management',
                                     ['active_directory', 'google_cloud'])
 
+  def IsVersionSupported(self, policy, supported_on):
+    '''Checks whether the policy is supported on current version'''
+    major_version = self._GetChromiumMajorVersion()
+    if not major_version:
+      return True
+
+    since_version = supported_on.get('since_version', None)
+    until_version = supported_on.get('until_version', None)
+
+    return ((not since_version or int(since_version) <= major_version) and
+            (not until_version or int(until_version) >= major_version))
+
   def _GetChromiumVersionString(self):
     '''Returns the Chromium version string stored in the environment variable
     version (if it is set).
@@ -144,18 +164,6 @@ class TemplateWriter(object):
     in config.
     '''
     return self.config.get('major_version', None)
-
-  def _IsVersionSupported(self, supported_on):
-    '''Checks whether the policy is supoorted on current version'''
-    major_version = self._GetChromiumMajorVersion()
-    if not major_version:
-      return True
-
-    since_version = supported_on.get('since_version', None)
-    until_version = supported_on.get('until_version', None)
-
-    return ((not since_version or int(since_version) <= major_version) and
-            (not until_version or int(until_version) >= major_version))
 
   def _GetPoliciesForWriter(self, group):
     '''Filters the list of policies in the passed group that are supported by
@@ -362,3 +370,36 @@ class TemplateWriter(object):
       str_key = policy['name']
     # Groups come before regular policies.
     return (not is_group, str_key)
+
+  def GetLocalizedMessage(self, msg_id):
+    '''Returns a localized message for this writer.
+
+    Args:
+      msg_id: The identifier of the message.
+
+    Returns:
+      The localized message.
+    '''
+    return self.messages['doc_' + msg_id]['text']
+
+  def HasExpandedPolicyDescription(self, policy):
+    '''Returns whether the policy has expanded documentation containing the link
+    to the documentation with schema and formatting.
+    '''
+    return (policy['type'] in ('dict', 'external') or 'url_schema' in policy or
+            'validation_schema' in policy or 'description_schema' in policy)
+
+  def GetExpandedPolicyDescription(self, policy):
+    '''Returns the expanded description of the policy containing the link to the
+    documentation with schema and formatting.
+    '''
+    schema_description_link_text = self.GetLocalizedMessage(
+        'schema_description_link')
+    url = None
+    if 'url_schema' in policy:
+      url = policy['url_schema']
+    if (policy['type'] in ('dict', 'external') or
+        'validation_schema' in policy or 'description_schema' in policy):
+      url = 'https://www.chromium.org/administrators/policy-list-3#' + policy[
+          'name']
+    return schema_description_link_text.replace('$6', url) if url else ''

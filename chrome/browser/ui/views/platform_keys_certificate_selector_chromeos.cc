@@ -5,15 +5,14 @@
 #include "chrome/browser/ui/views/platform_keys_certificate_selector_chromeos.h"
 
 #include <stddef.h>
+#include <memory>
 #include <utility>
 
-#include "base/callback_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/grit/generated_resources.h"
 #include "net/ssl/client_cert_identity.h"
 #include "net/ssl/ssl_private_key.h"
@@ -36,7 +35,7 @@ class ClientCertIdentityPlatformKeys : public net::ClientCertIdentity {
   ~ClientCertIdentityPlatformKeys() override = default;
 
   void AcquirePrivateKey(
-      const base::Callback<void(scoped_refptr<net::SSLPrivateKey>)>&
+      base::OnceCallback<void(scoped_refptr<net::SSLPrivateKey>)>
           private_key_callback) override {
     NOTREACHED();
   }
@@ -47,7 +46,7 @@ net::ClientCertIdentityList CertificateListToIdentityList(
   net::ClientCertIdentityList identities;
   for (const auto& cert : certs) {
     identities.push_back(
-        base::MakeUnique<ClientCertIdentityPlatformKeys>(cert));
+        std::make_unique<ClientCertIdentityPlatformKeys>(cert));
   }
   return identities;
 }
@@ -72,7 +71,7 @@ PlatformKeysCertificateSelector::~PlatformKeysCertificateSelector() {
   // Ensure to call back even if the dialog was closed because of the views
   // hierarchy being destroyed.
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(nullptr);
+    std::move(callback_).Run(nullptr);
 }
 
 void PlatformKeysCertificateSelector::Init() {
@@ -93,15 +92,14 @@ void PlatformKeysCertificateSelector::Init() {
 
 bool PlatformKeysCertificateSelector::Cancel() {
   DCHECK(!callback_.is_null());
-  base::ResetAndReturn(&callback_).Run(nullptr);
+  std::move(callback_).Run(nullptr);
   return true;
 }
 
 void PlatformKeysCertificateSelector::AcceptCertificate(
     std::unique_ptr<net::ClientCertIdentity> identity) {
   DCHECK(!callback_.is_null());
-  base::ResetAndReturn(&callback_)
-      .Run(base::WrapRefCounted(identity->certificate()));
+  std::move(callback_).Run(base::WrapRefCounted(identity->certificate()));
 }
 
 void ShowPlatformKeysCertificateSelector(

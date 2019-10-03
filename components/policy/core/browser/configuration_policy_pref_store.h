@@ -21,6 +21,7 @@ class PrefValueMap;
 
 namespace policy {
 
+class BrowserPolicyConnectorBase;
 class ConfigurationPolicyHandlerList;
 
 // An implementation of PrefStore that bridges policy settings as read from the
@@ -33,6 +34,7 @@ class POLICY_EXPORT ConfigurationPolicyPrefStore
   // Does not take ownership of |service| nor |handler_list|, which must outlive
   // the store. Only policies of the given |level| will be mapped.
   ConfigurationPolicyPrefStore(
+      BrowserPolicyConnectorBase* policy_connector,
       PolicyService* service,
       const ConfigurationPolicyHandlerList* handler_list,
       PolicyLevel level);
@@ -63,6 +65,9 @@ class POLICY_EXPORT ConfigurationPolicyPrefStore
   // to the policies currently provided by the policy service.
   PrefValueMap* CreatePreferencesFromPolicies();
 
+  // May be null in tests.
+  BrowserPolicyConnectorBase* policy_connector_;
+
   // The PolicyService from which policy settings are read.
   PolicyService* policy_service_;
 
@@ -76,7 +81,7 @@ class POLICY_EXPORT ConfigurationPolicyPrefStore
   // Current policy preferences.
   std::unique_ptr<PrefValueMap> prefs_;
 
-  base::ObserverList<PrefStore::Observer, true> observers_;
+  base::ObserverList<PrefStore::Observer, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(ConfigurationPolicyPrefStore);
 };

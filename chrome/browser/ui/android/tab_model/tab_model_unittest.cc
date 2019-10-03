@@ -36,15 +36,19 @@ class TestTabModel : public TabModel {
     return NULL;
   }
   void CreateTab(TabAndroid* parent,
-                 content::WebContents* web_contents,
-                 int parent_tab_id) override {}
+                 content::WebContents* web_contents) override {}
+  void HandlePopupNavigation(TabAndroid* parent,
+                             NavigateParams* params) override {}
   content::WebContents* CreateNewTabForDevTools(const GURL& url) override {
     return NULL;
   }
   bool IsSessionRestoreInProgress() const override { return false; }
+  bool IsCurrentModel() const override { return false; }
   TabAndroid* GetTabAt(int index) const override { return NULL; }
   void SetActiveIndex(int index) override {}
   void CloseTabAt(int index) override {}
+  void AddObserver(TabModelObserver* observer) override {}
+  void RemoveObserver(TabModelObserver* observer) override {}
 };
 }  // namespace
 

@@ -4,19 +4,19 @@
 
 #include "components/domain_reliability/monitor.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/domain_reliability/baked_in_configs.h"
 #include "components/domain_reliability/google_configs.h"
 #include "components/domain_reliability/header.h"
 #include "components/domain_reliability/quic_error_mapping.h"
-#include "net/base/ip_endpoint.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -77,9 +77,7 @@ const char* kDomainReliabilityHeaderName = "NEL";
 DomainReliabilityMonitor::DomainReliabilityMonitor(
     const std::string& upload_reporter_string,
     const DomainReliabilityContext::UploadAllowedCallback&
-        upload_allowed_callback,
-    const scoped_refptr<base::SingleThreadTaskRunner>& pref_thread,
-    const scoped_refptr<base::SingleThreadTaskRunner>& network_thread)
+        upload_allowed_callback)
     : time_(new ActualTime()),
       upload_reporter_string_(upload_reporter_string),
       upload_allowed_callback_(upload_allowed_callback),
@@ -87,20 +85,14 @@ DomainReliabilityMonitor::DomainReliabilityMonitor(
           DomainReliabilityScheduler::Params::GetFromFieldTrialsOrDefaults()),
       dispatcher_(time_.get()),
       context_manager_(this),
-      pref_task_runner_(pref_thread),
-      network_task_runner_(network_thread),
-      moved_to_network_thread_(false),
-      discard_uploads_set_(false),
-      weak_factory_(this) {
-  DCHECK(OnPrefThread());
+      discard_uploads_set_(false) {
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
 DomainReliabilityMonitor::DomainReliabilityMonitor(
     const std::string& upload_reporter_string,
     const DomainReliabilityContext::UploadAllowedCallback&
         upload_allowed_callback,
-    const scoped_refptr<base::SingleThreadTaskRunner>& pref_thread,
-    const scoped_refptr<base::SingleThreadTaskRunner>& network_thread,
     std::unique_ptr<MockableTime> time)
     : time_(std::move(time)),
       upload_reporter_string_(upload_reporter_string),
@@ -109,57 +101,27 @@ DomainReliabilityMonitor::DomainReliabilityMonitor(
           DomainReliabilityScheduler::Params::GetFromFieldTrialsOrDefaults()),
       dispatcher_(time_.get()),
       context_manager_(this),
-      pref_task_runner_(pref_thread),
-      network_task_runner_(network_thread),
-      moved_to_network_thread_(false),
-      discard_uploads_set_(false),
-      weak_factory_(this) {
-  DCHECK(OnPrefThread());
+      discard_uploads_set_(false) {
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
 DomainReliabilityMonitor::~DomainReliabilityMonitor() {
-  if (moved_to_network_thread_) {
-    net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
-    DCHECK(OnNetworkThread());
-  } else {
-    DCHECK(OnPrefThread());
-  }
-}
-
-void DomainReliabilityMonitor::MoveToNetworkThread() {
-  DCHECK(OnPrefThread());
-  DCHECK(!moved_to_network_thread_);
-
-  network_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&net::NetworkChangeNotifier::AddNetworkChangeObserver,
-                 base::Unretained(this)));
-  moved_to_network_thread_ = true;
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
 void DomainReliabilityMonitor::InitURLRequestContext(
     net::URLRequestContext* url_request_context) {
   DCHECK(url_request_context);
-  DCHECK(OnNetworkThread());
-  DCHECK(moved_to_network_thread_);
 
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
-      new net::TrivialURLRequestContextGetter(url_request_context,
-                                              network_task_runner_);
+      new net::TrivialURLRequestContextGetter(
+          url_request_context, base::ThreadTaskRunnerHandle::Get());
   InitURLRequestContext(url_request_context_getter);
 }
 
 void DomainReliabilityMonitor::InitURLRequestContext(
     const scoped_refptr<net::URLRequestContextGetter>&
         url_request_context_getter) {
-  DCHECK(OnNetworkThread());
-  DCHECK(moved_to_network_thread_);
-
-  // Make sure the URLRequestContext actually lives on what was declared to be
-  // the network thread.
-  DCHECK(url_request_context_getter->GetNetworkTaskRunner()->
-         RunsTasksInCurrentSequence());
-
   uploader_ = DomainReliabilityUploader::Create(time_.get(),
                                                 url_request_context_getter);
 }
@@ -169,9 +131,6 @@ void DomainReliabilityMonitor::Shutdown() {
 }
 
 void DomainReliabilityMonitor::AddBakedInConfigs() {
-  DCHECK(OnNetworkThread());
-  DCHECK(moved_to_network_thread_);
-
   for (size_t i = 0; kBakedInJsonConfigs[i]; ++i) {
     base::StringPiece json(kBakedInJsonConfigs[i]);
     std::unique_ptr<const DomainReliabilityConfig> config =
@@ -191,8 +150,6 @@ void DomainReliabilityMonitor::AddBakedInConfigs() {
 }
 
 void DomainReliabilityMonitor::SetDiscardUploads(bool discard_uploads) {
-  DCHECK(OnNetworkThread());
-  DCHECK(moved_to_network_thread_);
   DCHECK(uploader_);
 
   uploader_->SetDiscardUploads(discard_uploads);
@@ -200,7 +157,6 @@ void DomainReliabilityMonitor::SetDiscardUploads(bool discard_uploads) {
 }
 
 void DomainReliabilityMonitor::OnBeforeRedirect(net::URLRequest* request) {
-  DCHECK(OnNetworkThread());
   DCHECK(discard_uploads_set_);
 
   // Record the redirect itself in addition to the final request.
@@ -209,7 +165,6 @@ void DomainReliabilityMonitor::OnBeforeRedirect(net::URLRequest* request) {
 
 void DomainReliabilityMonitor::OnCompleted(net::URLRequest* request,
                                            bool started) {
-  DCHECK(OnNetworkThread());
   DCHECK(discard_uploads_set_);
 
   if (!started)
@@ -230,10 +185,8 @@ void DomainReliabilityMonitor::OnNetworkChanged(
 }
 
 void DomainReliabilityMonitor::ClearBrowsingData(
-   DomainReliabilityClearMode mode,
-   const base::Callback<bool(const GURL&)>& origin_filter) {
-  DCHECK(OnNetworkThread());
-
+    DomainReliabilityClearMode mode,
+    const base::Callback<bool(const GURL&)>& origin_filter) {
   switch (mode) {
     case CLEAR_BEACONS:
       context_manager_.ClearBeacons(origin_filter);
@@ -247,8 +200,6 @@ void DomainReliabilityMonitor::ClearBrowsingData(
 }
 
 std::unique_ptr<base::Value> DomainReliabilityMonitor::GetWebUIData() const {
-  DCHECK(OnNetworkThread());
-
   std::unique_ptr<base::DictionaryValue> data_value(
       new base::DictionaryValue());
   data_value->Set("contexts", context_manager_.GetWebUIData());
@@ -257,8 +208,6 @@ std::unique_ptr<base::Value> DomainReliabilityMonitor::GetWebUIData() const {
 
 DomainReliabilityContext* DomainReliabilityMonitor::AddContextForTesting(
     std::unique_ptr<const DomainReliabilityConfig> config) {
-  DCHECK(OnNetworkThread());
-
   return context_manager_.AddContextForConfig(std::move(config));
 }
 
@@ -269,11 +218,10 @@ void DomainReliabilityMonitor::ForceUploadsForTesting() {
 std::unique_ptr<DomainReliabilityContext>
 DomainReliabilityMonitor::CreateContextForConfig(
     std::unique_ptr<const DomainReliabilityConfig> config) {
-  DCHECK(OnNetworkThread());
   DCHECK(config);
   DCHECK(config->IsValid());
 
-  return base::MakeUnique<DomainReliabilityContext>(
+  return std::make_unique<DomainReliabilityContext>(
       time_.get(), scheduler_params_, upload_reporter_string_,
       &last_network_change_time_, upload_allowed_callback_, &dispatcher_,
       uploader_.get(), std::move(config));
@@ -292,7 +240,7 @@ DomainReliabilityMonitor::RequestInfo::RequestInfo(
   request.GetLoadTimingInfo(&load_timing_info);
   request.GetConnectionAttempts(&connection_attempts);
   request.PopulateNetErrorDetails(&details);
-  if (!request.GetRemoteEndpoint(&remote_endpoint))
+  if (!request.GetTransactionRemoteEndpoint(&remote_endpoint))
     remote_endpoint = net::IPEndPoint();
 }
 
@@ -327,7 +275,6 @@ bool DomainReliabilityMonitor::RequestInfo::ShouldReportRequest(
 void DomainReliabilityMonitor::OnRequestLegComplete(
     const RequestInfo& request) {
   // Check these again because unit tests call this directly.
-  DCHECK(OnNetworkThread());
   DCHECK(discard_uploads_set_);
 
   MaybeHandleHeader(request);
@@ -336,7 +283,7 @@ void DomainReliabilityMonitor::OnRequestLegComplete(
     return;
 
   int response_code;
-  if (request.response_info.headers.get())
+  if (request.response_info.headers)
     response_code = request.response_info.headers->response_code();
   else
     response_code = -1;
@@ -394,7 +341,7 @@ void DomainReliabilityMonitor::OnRequestLegComplete(
 
 void DomainReliabilityMonitor::MaybeHandleHeader(
     const RequestInfo& request) {
-  if (!request.response_info.headers.get())
+  if (!request.response_info.headers)
     return;
 
   size_t iter = 0;
@@ -410,9 +357,9 @@ void DomainReliabilityMonitor::MaybeHandleHeader(
   std::string ignored_header_value;
   if (request.response_info.headers->EnumerateHeader(
           &iter, kHeaderNameString, &ignored_header_value)) {
-    LOG(WARNING) << "Request to " << request.url << " had (at least) two "
-                 << kHeaderNameString << " headers: \"" << header_value
-                 << "\" and \"" << ignored_header_value << "\".";
+    DLOG(WARNING) << "Request to " << request.url << " had (at least) two "
+                  << kHeaderNameString << " headers: \"" << header_value
+                  << "\" and \"" << ignored_header_value << "\".";
     return;
   }
 
@@ -430,9 +377,9 @@ void DomainReliabilityMonitor::MaybeHandleHeader(
       context_manager_.ClearConfig(origin);
       break;
     case DomainReliabilityHeader::PARSE_ERROR:
-      LOG(WARNING) << "Request to " << request.url << " had invalid "
-                   << kHeaderNameString << " header \"" << header_value
-                   << "\".";
+      DLOG(WARNING) << "Request to " << request.url << " had invalid "
+                    << kHeaderNameString << " header \"" << header_value
+                    << "\".";
       break;
   }
 }

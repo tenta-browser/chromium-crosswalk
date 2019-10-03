@@ -9,13 +9,14 @@
 
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
-#include "base/memory/aligned_memory.h"
 #include "base/values.h"
-#include "chromecast/media/cma/backend/stream_mixer.h"
+#include "chromecast/media/base/aligned_buffer.h"
+#include "chromecast/public/media/audio_post_processor2_shlib.h"
+#include "chromecast/public/media/media_pipeline_backend.h"
 #include "chromecast/public/volume_control.h"
 
 namespace media {
@@ -24,11 +25,11 @@ class AudioBus;
 
 namespace chromecast {
 namespace media {
-
+class MixerInput;
 class PostProcessingPipeline;
 
-// FilterGroup mixes StreamMixer::InputQueues and/or FilterGroups,
-// mixes their outputs, and applies DSP to them.
+// FilterGroup mixes MixerInputs and/or FilterGroups, mixes their outputs, and
+// applies DSP to them.
 
 // FilterGroups are added at construction. These cannot be removed.
 
@@ -36,60 +37,53 @@ class PostProcessingPipeline;
 // MixAndFilter() is called (they must be added each time data is queried).
 class FilterGroup {
  public:
-  enum class GroupType { kStream, kFinalMix, kLinearize };
   // |num_channels| indicates number of input audio channels.
-  // |type| indicates where in the pipeline this FilterGroup sits.
-  //    some features are specific to certain locations:
-  //     - mono mixer takes place at the end of kFinalMix.
-  //     - channel selection occurs before post-processing in kLinearize.
-  // |mix_to_mono| enables mono mixing in the pipeline. The number of audio
-  //    output channels will be 1 if it is set to true, otherwise it remains
-  //    same as |num_channels|.
   // |name| is used for debug printing
   // |pipeline| - processing pipeline.
-  // |device_ids| is a set of strings that is used as a filter to determine
-  //   if an InputQueue belongs to this group (InputQueue->name() must exactly
-  //   match an entry in |device_ids| to be processed by this group).
-  // |mixed_inputs| are FilterGroups that will be mixed into this FilterGroup.
-  //   ex: the final mix ("mix") FilterGroup mixes all other filter groups.
-  // FilterGroups currently use either InputQueues OR FilterGroups as inputs,
-  //   but there is no technical limitation preventing mixing input classes.
-
   FilterGroup(int num_channels,
-              GroupType type,
-              bool mix_to_mono,
               const std::string& name,
-              std::unique_ptr<PostProcessingPipeline> pipeline,
-              const std::unordered_set<std::string>& device_ids,
-              const std::vector<FilterGroup*>& mixed_inputs);
+              std::unique_ptr<PostProcessingPipeline> pipeline);
 
   ~FilterGroup();
 
-  // Sets the sample rate of the post-processors.
-  void Initialize(int output_samples_per_second);
+  // |input| will be recursively mixed into this FilterGroup's input buffer when
+  // MixAndFilter() is called. Registering a FilterGroup as an input to more
+  // than one FilterGroup will result in incorrect behavior.
+  void AddMixedInput(FilterGroup* input);
 
-  // Returns |true| if this FilterGroup is appropriate to process |input|.
-  bool CanProcessInput(StreamMixer::InputQueue* input);
+  // Recursively sets the sample rate of the post-processors and FilterGroups.
+  // This should only be called externally on the output node of the FilterGroup
+  // tree.
+  // Groups that feed this group may receive different values due to resampling.
+  // After calling Initialize(), input_samples_per_second() and
+  // input_frames_per_write() may be called to determine the input rate/size.
+  void Initialize(const AudioPostProcessor2::Config& output_config);
 
-  // Adds |input| to |active_inputs_|.
-  void AddActiveInput(StreamMixer::InputQueue* input);
+  // Adds/removes |input| from |active_inputs_|.
+  void AddInput(MixerInput* input);
+  void RemoveInput(MixerInput* input);
 
   // Mixes all active inputs and passes them through the audio filter.
   // Returns the largest volume of all streams with data.
   //         return value will be zero IFF there is no data and
   //         the PostProcessingPipeline is not ringing.
-  float MixAndFilter(int chunk_size);
+  float MixAndFilter(
+      int num_frames,
+      MediaPipelineBackend::AudioDecoder::RenderingDelay rendering_delay);
 
   // Gets the current delay of this filter group's AudioPostProcessors.
   // (Not recursive).
   int64_t GetRenderingDelayMicroseconds();
 
-  // Clear all |active_inputs_|. This should be called before AddActiveInputs
-  // on each mixing iteration.
-  void ClearActiveInputs();
+  // Gets the delay of this FilterGroup and all downstream FilterGroups.
+  // Computed recursively when MixAndFilter() is called.
+  MediaPipelineBackend::AudioDecoder::RenderingDelay
+  GetRenderingDelayToOutput();
 
-  // Retrieves a pointer to the output buffer.
-  float* interleaved() { return interleaved_.get(); }
+  // Retrieves a pointer to the output buffer. This will crash if called before
+  // MixAndFilter(), and the data & memory location may change each time
+  // MixAndFilter() is called.
+  float* GetOutputBuffer();
 
   // Get the last used volume.
   float last_volume() const { return last_volume_; }
@@ -99,48 +93,58 @@ class FilterGroup {
   // Returns number of audio output channels from the filter group.
   int GetOutputChannelCount() const;
 
+  // Returns the expected sample rate for inputs to this group.
+  int GetInputSampleRate() const { return input_samples_per_second_; }
+
   // Sends configuration string |config| to all post processors with the given
   // |name|.
   void SetPostProcessorConfig(const std::string& name,
                               const std::string& config);
 
-  // Toggles the mono mixer.
-  void SetMixToMono(bool mix_to_mono);
-
-  // Sets the active channel.
+  // Sets the active channel for post processors.
   void UpdatePlayoutChannel(int playout_channel);
 
-  // Get loudest content type
-  AudioContentType loudest_content_type() const {
-    return loudest_content_type_;
-  }
+  // Get content type
+  AudioContentType content_type() const { return content_type_; }
+
+  // Recursively print the layout of the pipeline.
+  void PrintTopology() const;
+
+  // Add |stream_type| to the list of streams this processor handles.
+  void AddStreamType(const std::string& stream_type);
+
+  int input_frames_per_write() const { return input_frames_per_write_; }
+  int input_samples_per_second() const { return input_samples_per_second_; }
 
  private:
-  void ResizeBuffersIfNecessary(int chunk_size);
+  // Resizes temp_buffers_ and mixed_.
+  void ResizeBuffers();
+  void AddTempBuffer(int num_channels, int num_frames);
 
   const int num_channels_;
-  const GroupType type_;
-  bool mix_to_mono_;
-  int playout_channel_;
   const std::string name_;
-  const std::unordered_set<std::string> device_ids_;
   std::vector<FilterGroup*> mixed_inputs_;
-  std::vector<StreamMixer::InputQueue*> active_inputs_;
+  std::vector<std::string> stream_types_;
+  base::flat_set<MixerInput*> active_inputs_;
 
-  int output_samples_per_second_;
-  int frames_zeroed_;
-  float last_volume_;
-  int64_t delay_frames_;
-  AudioContentType loudest_content_type_;
+  int playout_channel_selection_ = kChannelAll;
+  AudioPostProcessor2::Config output_config_;
+  int input_samples_per_second_ = 0;
+  int input_frames_per_write_ = 0;
+  int frames_zeroed_ = 0;
+  float last_volume_ = 0.0;
+  double delay_seconds_ = 0;
+  MediaPipelineBackend::AudioDecoder::RenderingDelay rendering_delay_to_output_;
+  AudioContentType content_type_ = AudioContentType::kMedia;
 
   // Buffers that hold audio data while it is mixed.
   // These are kept as members of this class to minimize copies and
   // allocations.
-  std::unique_ptr<::media::AudioBus> temp_;
+  std::vector<std::unique_ptr<::media::AudioBus>> temp_buffers_;
   std::unique_ptr<::media::AudioBus> mixed_;
 
   // Interleaved data must be aligned to 16 bytes.
-  std::unique_ptr<float, base::AlignedFreeDeleter> interleaved_;
+  AlignedBuffer<float> interleaved_;
 
   std::unique_ptr<PostProcessingPipeline> post_processing_pipeline_;
 

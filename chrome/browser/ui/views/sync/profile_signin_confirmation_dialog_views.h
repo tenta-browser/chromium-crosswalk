@@ -42,12 +42,12 @@ class ProfileSigninConfirmationDialogViews : public views::DialogDelegateView,
   base::string16 GetWindowTitle() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   int GetDefaultDialogButton() const override;
-  views::View* CreateExtraView() override;
+  std::unique_ptr<views::View> CreateExtraView() override;
   bool Accept() override;
   bool Cancel() override;
   ui::ModalType GetModalType() const override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
 
   // views::WidgetDelegate::
   void WindowClosing() override;

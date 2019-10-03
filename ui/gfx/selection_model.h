@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <iosfwd>
 #include <string>
 
 #include "ui/gfx/gfx_export.h"
@@ -24,7 +25,9 @@ namespace gfx {
 //       RIGHT_TO_LEFT             CURSOR_LEFT           CURSOR_FORWARD
 enum VisualCursorDirection {
   CURSOR_LEFT,
-  CURSOR_RIGHT
+  CURSOR_RIGHT,
+  CURSOR_UP,
+  CURSOR_DOWN
 };
 enum LogicalCursorDirection {
   CURSOR_BACKWARD,
@@ -106,6 +109,9 @@ class GFX_EXPORT SelectionModel {
   //          6                  abc|FED                     abcFED|
   LogicalCursorDirection caret_affinity_;
 };
+
+GFX_EXPORT std::ostream& operator<<(std::ostream& out,
+                                    const SelectionModel& model);
 
 }  // namespace gfx
 

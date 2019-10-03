@@ -14,9 +14,12 @@ Commands:
 
 (You can also import this as a module.)
 """
+from __future__ import print_function
 
 import argparse
+import codecs
 import cgi
+import json
 import os
 import shutil
 import re
@@ -25,9 +28,9 @@ import sys
 import tempfile
 
 # TODO(agrieve): Move build_utils.WriteDepFile into a non-android directory.
-_REPOSITORY_ROOT = os.path.dirname(os.path.dirname(__file__))
-sys.path.append(os.path.join(_REPOSITORY_ROOT, 'build/android/gyp/util'))
-import build_utils
+_REPOSITORY_ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(_REPOSITORY_ROOT, 'build/android/gyp'))
+from util import build_utils
 
 
 # Paths from the root of the tree to directories to skip.
@@ -35,11 +38,8 @@ PRUNE_PATHS = set([
     # Placeholder directory only, not third-party code.
     os.path.join('third_party','adobe'),
 
-    # Already covered by //third_party/android_tools.
+    # Will remove it once converted private sdk using cipd.
     os.path.join('third_party','android_tools_internal'),
-
-    # Apache 2.0 license. See crbug.com/140478
-    os.path.join('third_party','bidichecker'),
 
     # Build files only, not third-party code.
     os.path.join('third_party','widevine'),
@@ -91,6 +91,9 @@ PRUNE_PATHS = set([
     # For testing only, presents on some bots.
     os.path.join('isolate_deps_dir'),
 
+    # Mock test data.
+    os.path.join('tools', 'binary_size', 'libsupersize', 'testdata'),
+
     # Overrides some WebRTC files, same license. Skip this one.
     os.path.join('third_party', 'webrtc_overrides'),
 ])
@@ -101,14 +104,19 @@ PRUNE_DIRS = (VCS_METADATA_DIRS +
               ('out', 'Debug', 'Release',  # build files
                'layout_tests'))            # lots of subdirs
 
+# A third_party directory can define this file, containing a list of
+# subdirectories to process in addition to itself. Intended for directories
+# that contain multiple others as transitive dependencies.
+ADDITIONAL_PATHS_FILENAME = 'additional_readme_paths.json'
+
 ADDITIONAL_PATHS = (
-    os.path.join('breakpad'),
     os.path.join('chrome', 'common', 'extensions', 'docs', 'examples'),
     os.path.join('chrome', 'test', 'chromeos', 'autotest'),
     os.path.join('chrome', 'test', 'data'),
     os.path.join('native_client'),
     os.path.join('testing', 'gmock'),
     os.path.join('testing', 'gtest'),
+    os.path.join('third_party', 'boringssl', 'src', 'third_party', 'fiat'),
     os.path.join('tools', 'gyp'),
     os.path.join('tools', 'page_cycler', 'acid3'),
     os.path.join('url', 'third_party', 'mozilla'),
@@ -145,6 +153,12 @@ SPECIAL_CASES = {
         "URL": "http://code.google.com/p/angleproject/",
         "License": "BSD",
     },
+    os.path.join('third_party', 'angle', 'third_party', 'vulkan-headers'): {
+        "Name": "Vulkan-Headers",
+        "URL": "https://github.com/KhronosGroup/Vulkan-Headers",
+        "License": "Apache 2.0",
+        "License File": "src/LICENSE.txt",
+    },
     os.path.join('third_party', 'cros_system_api'): {
         "Name": "Chromium OS system API",
         "URL": "http://www.chromium.org/chromium-os",
@@ -179,17 +193,48 @@ SPECIAL_CASES = {
         "License": "BSD",
         "License File": "NOT_SHIPPED",
     },
+    os.path.join('third_party', 'crashpad', 'crashpad', 'third_party',
+                 'lss'): {
+        "Name": "linux-syscall-support",
+        "URL": "https://chromium.googlesource.com/linux-syscall-support/",
+        "License": "BSD",
+        "License File": "NOT_SHIPPED",
+    },
+    os.path.join('third_party', 'crashpad', 'crashpad', 'third_party',
+                 'mini_chromium'): {
+        "Name": "mini_chromium",
+        "URL": "https://chromium.googlesource.com/chromium/mini_chromium/",
+        "License": "BSD",
+        "License File": "NOT_SHIPPED",
+    },
+    os.path.join('third_party', 'crashpad', 'crashpad', 'third_party', 'xnu'): {
+        "Name": "xnu",
+        "URL": "https://opensource.apple.com/source/xnu/",
+        "License": "Apple Public Source License 2.0",
+        "License File": "APPLE_LICENSE",
+    },
+    os.path.join('third_party', 'crashpad', 'crashpad', 'third_party',
+                 'zlib'): {
+        "Name": "zlib",
+        "URL": "https://zlib.net/",
+        "License": "zlib",
+        "License File": "NOT_SHIPPED",
+    },
     os.path.join('third_party', 'v8-i18n'): {
         "Name": "Internationalization Library for v8",
         "URL": "http://code.google.com/p/v8-i18n/",
         "License": "Apache 2.0",
     },
-    os.path.join('third_party', 'WebKit'): {
+    os.path.join('third_party', 'blink'): {
+        # about:credits doesn't show "Blink" but "WebKit".
+        # Blink is a fork of WebKit, and Chromium project has maintained it
+        # since the fork.  about:credits needs to mention the code before
+        # the fork.
         "Name": "WebKit",
         "URL": "http://webkit.org/",
         "License": "BSD and LGPL v2 and LGPL v2.1",
         # Absolute path here is resolved as relative to the source root.
-        "License File": "/third_party/WebKit/LICENSE_FOR_ABOUT_CREDITS",
+        "License File": "/third_party/blink/LICENSE_FOR_ABOUT_CREDITS",
     },
     os.path.join('third_party', 'webpagereplay'): {
         "Name": "webpagereplay",
@@ -259,17 +304,19 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('base', 'third_party', 'symbolize'),
     os.path.join('base', 'third_party', 'xdg_mime'),
     os.path.join('base', 'third_party', 'xdg_user_dirs'),
+    os.path.join('buildtools', 'third_party', 'libc++'),
+    os.path.join('buildtools', 'third_party', 'libc++abi'),
     os.path.join('chrome', 'installer', 'mac', 'third_party', 'bsdiff'),
     os.path.join('chrome', 'installer', 'mac', 'third_party', 'xz'),
     os.path.join('chrome', 'test', 'data', 'third_party', 'kraken'),
     os.path.join('chrome', 'test', 'data', 'third_party', 'spaceport'),
     os.path.join('chrome', 'third_party', 'mock4js'),
     os.path.join('chrome', 'third_party', 'mozilla_security_manager'),
-    os.path.join('third_party', 'WebKit'),
     os.path.join('third_party', 'angle'),
     os.path.join('third_party', 'apple_apsl'),
     os.path.join('third_party', 'apple_sample_code'),
     os.path.join('third_party', 'ashmem'),
+    os.path.join('third_party', 'blink'),
     os.path.join('third_party', 'bspatch'),
     os.path.join('third_party', 'cacheinvalidation'),
     os.path.join('third_party', 'cld'),
@@ -283,12 +330,12 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'libXNVCtrl'),
     os.path.join('third_party', 'libevent'),
     os.path.join('third_party', 'libjpeg'),
+    os.path.join('third_party', 'libovr'),
     os.path.join('third_party', 'libusb'),
     os.path.join('third_party', 'libxslt'),
     os.path.join('third_party', 'lss'),
     os.path.join('third_party', 'lzma_sdk'),
     os.path.join('third_party', 'mesa'),
-    os.path.join('third_party', 'molokocacao'),
     os.path.join('third_party', 'motemplate'),
     os.path.join('third_party', 'mozc'),
     os.path.join('third_party', 'mozilla'),
@@ -308,7 +355,6 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'usb_ids'),
     os.path.join('third_party', 'v8-i18n'),
     os.path.join('third_party', 'wtl'),
-    os.path.join('third_party', 'yara'),
     os.path.join('third_party', 'yasm'),
     os.path.join('v8', 'strongtalk'),
 ])
@@ -334,7 +380,6 @@ def AbsolutePath(path, filename, root):
 
 def ParseDir(path, root, require_license_file=True, optional_keys=None):
     """Examine a third_party/foo component and extract its metadata."""
-
     # Parse metadata fields out of README.chromium.
     # We examine "LICENSE" for the license file by default.
     metadata = {
@@ -354,20 +399,20 @@ def ParseDir(path, root, require_license_file=True, optional_keys=None):
         readme_path = os.path.join(root, path, 'README.chromium')
         if not os.path.exists(readme_path):
             raise LicenseError("missing README.chromium or licenses.py "
-                               "SPECIAL_CASES entry in %s" % path)
+                               "SPECIAL_CASES entry in %s\n" % path)
 
         for line in open(readme_path):
             line = line.strip()
             if not line:
                 break
-            for key in metadata.keys() + optional_keys:
+            for key in list(metadata.keys()) + optional_keys:
                 field = key + ": "
                 if line.startswith(field):
                     metadata[key] = line[len(field):]
 
     # Check that all expected metadata is present.
     errors = []
-    for key, value in metadata.iteritems():
+    for key, value in metadata.items():
         if not value:
             errors.append("couldn't find '" + key + "' line "
                           "in README.chromium or licences.py "
@@ -391,7 +436,7 @@ def ParseDir(path, root, require_license_file=True, optional_keys=None):
         metadata["License File"] = license_path
 
     if errors:
-        raise LicenseError(";\n".join(errors))
+        raise LicenseError("Errors in %s:\n %s\n" % (path, ";\n ".join(errors)))
     return metadata
 
 
@@ -434,8 +479,15 @@ def FindThirdPartyDirs(prune_paths, root):
             # Add all subdirectories that are not marked for skipping.
             for dir in dirs:
                 dirpath = os.path.join(path, dir)
+                additional_paths_file = os.path.join(
+                    root, dirpath, ADDITIONAL_PATHS_FILENAME)
                 if dirpath not in prune_paths:
                     third_party_dirs.add(dirpath)
+                if os.path.exists(additional_paths_file):
+                    with open(additional_paths_file) as paths_file:
+                        extra_paths = json.load(paths_file)
+                        third_party_dirs.update([
+                                os.path.join(dirpath, p) for p in extra_paths])
 
             # Don't recurse into any subdirs from here.
             dirs[:] = []
@@ -462,7 +514,7 @@ def FindThirdPartyDirsWithFiles(root):
 # //buildtools.
 def _GnBinary():
     exe = 'gn'
-    if sys.platform == 'linux2':
+    if sys.platform.startswith('linux'):
         subdir = 'linux64'
     elif sys.platform == 'darwin':
         subdir = 'mac'
@@ -474,23 +526,38 @@ def _GnBinary():
     return os.path.join(_REPOSITORY_ROOT, 'buildtools', subdir, exe)
 
 
-def GetThirdPartyDepsFromGNDepsOutput(gn_deps):
+def GetThirdPartyDepsFromGNDepsOutput(gn_deps, target_os):
     """Returns third_party/foo directories given the output of "gn desc deps".
 
     Note that it always returns the direct sub-directory of third_party
     where README.chromium and LICENSE files are, so that it can be passed to
     ParseDir(). e.g.:
-        .../third_party/cld_3/src/src/BUILD.gn -> .../third_party/cld_3
+        third_party/cld_3/src/src/BUILD.gn -> third_party/cld_3
+
+    It returns relative paths from _REPOSITORY_ROOT, not absolute paths.
     """
     third_party_deps = set()
-    for build_dep in gn_deps.split():
-        m = re.search(r'^(.+/third_party/[^/]+)/(.+/)?BUILD\.gn$', build_dep)
-        if m and not os.path.join('build', 'secondary') in build_dep:
-            third_party_deps.add(m.group(1))
+    for absolute_build_dep in gn_deps.split():
+        relative_build_dep = os.path.relpath(
+            absolute_build_dep, _REPOSITORY_ROOT)
+        m = re.search(
+            r'^((.+[/\\])?third_party[/\\][^/\\]+[/\\])(.+[/\\])?BUILD\.gn$',
+            relative_build_dep)
+        if not m:
+            continue
+        third_party_path = m.group(1)
+        if any(third_party_path.startswith(p + os.sep) for p in PRUNE_PATHS):
+            continue
+        if (target_os == 'ios' and
+            any(third_party_path.startswith(p + os.sep)
+                for p in KNOWN_NON_IOS_LIBRARIES)):
+            # Skip over files that are known not to be used on iOS.
+            continue
+        third_party_deps.add(third_party_path[:-1])
     return third_party_deps
 
 
-def FindThirdPartyDeps(gn_out_dir, gn_target):
+def FindThirdPartyDeps(gn_out_dir, gn_target, target_os):
     if not gn_out_dir:
         raise RuntimeError("--gn-out-dir is required if --gn-target is used.")
 
@@ -506,11 +573,13 @@ def FindThirdPartyDeps(gn_out_dir, gn_target):
         gn_deps = subprocess.check_output([
             _GnBinary(), "desc", tmp_dir, gn_target,
             "deps", "--as=buildfile", "--all"])
+        if isinstance(gn_deps, bytes):
+            gn_deps = gn_deps.decode("utf-8")
     finally:
         if tmp_dir and os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir)
 
-    return GetThirdPartyDepsFromGNDepsOutput(gn_deps)
+    return GetThirdPartyDepsFromGNDepsOutput(gn_deps, target_os)
 
 
 def ScanThirdPartyDirs(root=None):
@@ -523,12 +592,12 @@ def ScanThirdPartyDirs(root=None):
     for path in sorted(third_party_dirs):
         try:
             metadata = ParseDir(path, root)
-        except LicenseError, e:
+        except LicenseError as e:
             errors.append((path, e.args[0]))
             continue
 
     for path, error in sorted(errors):
-        print path + ": " + error
+        print(path + ": " + error)
 
     return len(errors) == 0
 
@@ -560,7 +629,7 @@ def GenerateCredits(
         }
 
     if gn_target:
-        third_party_dirs = FindThirdPartyDeps(gn_out_dir, gn_target)
+        third_party_dirs = FindThirdPartyDeps(gn_out_dir, gn_target, target_os)
 
         # Sanity-check to raise a build error if invalid gn_... settings are
         # somehow passed to this script.
@@ -606,7 +675,7 @@ def GenerateCredits(
                 continue
         entries.append(MetadataToTemplateEntry(metadata, entry_template))
 
-    entries.sort(key=lambda entry: (entry['name'], entry['content']))
+    entries.sort(key=lambda entry: (entry['name'].lower(), entry['content']))
     for entry_id, entry in enumerate(entries):
         entry['content'] = entry['content'].replace('{{id}}', str(entry_id))
 
@@ -629,7 +698,7 @@ def GenerateCredits(
         with open(output_file, 'w') as output:
           output.write(template_contents)
     else:
-      print template_contents
+      print(template_contents)
 
     if depfile:
       assert output_file
@@ -655,11 +724,11 @@ def _ReadFile(path):
     Returns:
       The contents of the file as a string.
     """
-    with open(os.path.join(_REPOSITORY_ROOT, path), 'rb') as f:
+    with codecs.open(os.path.join(_REPOSITORY_ROOT, path), 'r', 'utf-8') as f:
         return f.read()
 
 
-def GenerateLicenseFile(output_file, gn_out_dir, gn_target):
+def GenerateLicenseFile(output_file, gn_out_dir, gn_target, target_os):
     """Generate a plain-text LICENSE file which can be used when you ship a part
     of Chromium code (specified by gn_target) as a stand-alone library
     (e.g., //ios/web_view).
@@ -667,7 +736,7 @@ def GenerateLicenseFile(output_file, gn_out_dir, gn_target):
     The LICENSE file contains licenses of both Chromium and third-party
     libraries which gn_target depends on. """
 
-    third_party_dirs = FindThirdPartyDeps(gn_out_dir, gn_target)
+    third_party_dirs = FindThirdPartyDeps(gn_out_dir, gn_target, target_os)
 
     # Start with Chromium's LICENSE file.
     content = [_ReadFile('LICENSE')]
@@ -677,7 +746,7 @@ def GenerateLicenseFile(output_file, gn_out_dir, gn_target):
         metadata = ParseDir(
             directory, _REPOSITORY_ROOT, require_license_file=True)
         content.append('-' * 20)
-        content.append(directory.split('/')[-1])
+        content.append(directory.split(os.sep)[-1])
         content.append('-' * 20)
         license_file = metadata['License File']
         if license_file and license_file != NOT_SHIPPED:
@@ -686,12 +755,11 @@ def GenerateLicenseFile(output_file, gn_out_dir, gn_target):
     content_text = '\n'.join(content)
 
     if output_file:
-        with open(output_file, 'w') as output:
+        with codecs.open(output_file, 'w', 'utf-8') as output:
             output.write(content_text)
     else:
-        print content_text
+        print(content_text)
 
-    return True
 
 
 def main():
@@ -721,11 +789,15 @@ def main():
                                args.gn_out_dir, args.gn_target, args.depfile):
             return 1
     elif args.command == 'license_file':
-        if not GenerateLicenseFile(
-                args.output_file, args.gn_out_dir, args.gn_target):
+        try:
+            GenerateLicenseFile(
+                args.output_file, args.gn_out_dir, args.gn_target,
+                args.target_os)
+        except LicenseError as e:
+            print("Failed to parse README.chromium: {}".format(e))
             return 1
     else:
-        print __doc__
+        print(__doc__)
         return 1
 
 

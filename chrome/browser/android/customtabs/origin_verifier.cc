@@ -4,21 +4,29 @@
 
 #include "chrome/browser/android/customtabs/origin_verifier.h"
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/values.h"
+#include "base/bind.h"
+#include "chrome/android/chrome_jni_headers/OriginVerifier_jni.h"
 #include "chrome/browser/android/digital_asset_links/digital_asset_links_handler.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "content/public/browser/browser_thread.h"
-#include "jni/OriginVerifier_jni.h"
+#include "content/public/browser/storage_partition.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
+using digital_asset_links::RelationshipCheckResult;
 
 namespace customtabs {
+
+// static variables are zero-initialized.
+int OriginVerifier::clear_browsing_data_call_count_for_tests_;
 
 OriginVerifier::OriginVerifier(JNIEnv* env,
                                const JavaRef<jobject>& obj,
@@ -27,8 +35,9 @@ OriginVerifier::OriginVerifier(JNIEnv* env,
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   DCHECK(profile);
   asset_link_handler_ =
-      base::MakeUnique<digital_asset_links::DigitalAssetLinksHandler>(
-          profile->GetRequestContext());
+      std::make_unique<digital_asset_links::DigitalAssetLinksHandler>(
+          content::BrowserContext::GetDefaultStoragePartition(profile)
+              ->GetURLLoaderFactoryForBrowserProcess());
 }
 
 OriginVerifier::~OriginVerifier() = default;
@@ -60,22 +69,30 @@ bool OriginVerifier::VerifyOrigin(JNIEnv* env,
 }
 
 void OriginVerifier::OnRelationshipCheckComplete(
-    std::unique_ptr<base::DictionaryValue> response) {
+    RelationshipCheckResult result) {
   JNIEnv* env = base::android::AttachCurrentThread();
 
-  bool verified = false;
-
-  if (response) {
-    response->GetBoolean(
-        digital_asset_links::kDigitalAssetLinksCheckResponseKeyLinked,
-        &verified);
-  }
-  Java_OriginVerifier_originVerified(env, jobject_, verified);
+  Java_OriginVerifier_onOriginVerificationResult(env,
+                                                 jobject_,
+                                                 static_cast<jint>(result));
 }
 
 void OriginVerifier::Destroy(JNIEnv* env,
                              const base::android::JavaRef<jobject>& obj) {
   delete this;
+}
+
+// static
+void OriginVerifier::ClearBrowsingData() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+
+  Java_OriginVerifier_clearBrowsingData(env);
+  clear_browsing_data_call_count_for_tests_++;
+}
+
+// static
+int OriginVerifier::GetClearBrowsingDataCallCountForTesting() {
+  return clear_browsing_data_call_count_for_tests_;
 }
 
 static jlong JNI_OriginVerifier_Init(

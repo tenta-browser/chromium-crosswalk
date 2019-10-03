@@ -13,7 +13,7 @@
 #include "components/history/core/browser/history_types.h"
 
 namespace sql {
-class Connection;
+class Database;
 }
 
 namespace history {
@@ -41,10 +41,6 @@ class VisitSegmentDatabase {
   bool UpdateSegmentRepresentationURL(SegmentID segment_id,
                                       URLID url_id);
 
-  // Return the ID of the URL currently used to represent this segment or 0 if
-  // an error occured.
-  URLID GetSegmentRepresentationURL(SegmentID segment_id);
-
   // Create a segment for the provided URL ID with the given name. Returns the
   // ID of the newly created segment, or 0 on failure.
   SegmentID CreateSegment(URLID url_id, const std::string& segment_name);
@@ -62,20 +58,13 @@ class VisitSegmentDatabase {
       int max_result_count,
       const base::Callback<bool(const GURL&)>& url_filter);
 
-  // Delete all the segment usage data which is older than the provided time
-  // stamp.
-  bool DeleteSegmentData(base::Time older_than);
-
-  // Change the presentation id for the segment identified by |segment_id|
-  bool SetSegmentPresentationIndex(SegmentID segment_id, int index);
-
   // Delete the segment currently using the provided url for representation.
   // This will also delete any associated segment usage data.
   bool DeleteSegmentForURL(URLID url_id);
 
  protected:
   // Returns the database for the functions in this interface.
-  virtual sql::Connection& GetDB() = 0;
+  virtual sql::Database& GetDB() = 0;
 
   // Creates the tables used by this class if necessary. Returns true on
   // success.

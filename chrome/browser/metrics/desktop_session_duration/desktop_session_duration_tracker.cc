@@ -13,27 +13,27 @@ namespace metrics {
 
 namespace {
 
-DesktopSessionDurationTracker* g_instance = nullptr;
-
-const base::TimeDelta kZeroTime = base::TimeDelta::FromSeconds(0);
+DesktopSessionDurationTracker* g_desktop_session_duration_tracker_instance =
+    nullptr;
 
 }  // namespace
 
 // static
 void DesktopSessionDurationTracker::Initialize() {
-  DCHECK(!g_instance);
-  g_instance = new DesktopSessionDurationTracker;
+  DCHECK(!g_desktop_session_duration_tracker_instance);
+  g_desktop_session_duration_tracker_instance =
+      new DesktopSessionDurationTracker;
 }
 
 // static
 bool DesktopSessionDurationTracker::IsInitialized() {
-  return g_instance != nullptr;
+  return g_desktop_session_duration_tracker_instance != nullptr;
 }
 
 // static
 DesktopSessionDurationTracker* DesktopSessionDurationTracker::Get() {
-  DCHECK(g_instance);
-  return g_instance;
+  DCHECK(g_desktop_session_duration_tracker_instance);
+  return g_desktop_session_duration_tracker_instance;
 }
 
 void DesktopSessionDurationTracker::StartTimer(base::TimeDelta duration) {
@@ -78,9 +78,9 @@ void DesktopSessionDurationTracker::OnUserEvent() {
 
 // static
 void DesktopSessionDurationTracker::CleanupForTesting() {
-  DCHECK(g_instance);
-  delete g_instance;
-  g_instance = nullptr;
+  DCHECK(g_desktop_session_duration_tracker_instance);
+  delete g_desktop_session_duration_tracker_instance;
+  g_desktop_session_duration_tracker_instance = nullptr;
 }
 
 void DesktopSessionDurationTracker::OnAudioStart() {
@@ -99,15 +99,14 @@ void DesktopSessionDurationTracker::OnAudioEnd() {
   // last 5 minutes so the session can be terminated.
   if (!timer_.IsRunning()) {
     DVLOG(4) << "Ending session due to audio ending";
-    EndSession(kZeroTime);
+    EndSession(base::TimeDelta());
   }
 }
 
 DesktopSessionDurationTracker::DesktopSessionDurationTracker()
     : session_start_(base::TimeTicks::Now()),
       last_user_event_(session_start_),
-      audio_tracker_(this),
-      weak_factory_(this) {
+      audio_tracker_(this) {
   InitInactivityTimeout();
 }
 
@@ -129,6 +128,7 @@ void DesktopSessionDurationTracker::OnTimerFired() {
 }
 
 void DesktopSessionDurationTracker::StartSession() {
+  DCHECK(!in_session_);
   in_session_ = true;
   is_first_session_ = false;
   session_start_ = base::TimeTicks::Now();
@@ -140,24 +140,33 @@ void DesktopSessionDurationTracker::StartSession() {
 
 void DesktopSessionDurationTracker::EndSession(
     base::TimeDelta time_to_discount) {
+  DCHECK(in_session_);
   in_session_ = false;
+
+  // Cancel the inactivity timer, to prevent the session from ending a second
+  // time when it expires.
+  timer_.Stop();
 
   base::TimeDelta delta = base::TimeTicks::Now() - session_start_;
 
   // Trim any timeouts from the session length and lower bound to a session of
   // length 0.
   delta -= time_to_discount;
-  if (delta < kZeroTime)
-    delta = kZeroTime;
+  if (delta < base::TimeDelta())
+    delta = base::TimeDelta();
 
   for (Observer& observer : observer_list_)
-    observer.OnSessionEnded(delta);
+    observer.OnSessionEnded(delta, session_start_ + delta);
 
   DVLOG(4) << "Logging session length of " << delta.InSeconds() << " seconds.";
 
   // Note: This metric is recorded separately for Android in
   // UmaSessionStats::UmaEndSession.
   UMA_HISTOGRAM_LONG_TIMES("Session.TotalDuration", delta);
+
+  UMA_HISTOGRAM_CUSTOM_TIMES("Session.TotalDurationMax1Day", delta,
+                             base::TimeDelta::FromMilliseconds(1),
+                             base::TimeDelta::FromHours(24), 50);
 }
 
 void DesktopSessionDurationTracker::InitInactivityTimeout() {

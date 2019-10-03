@@ -16,8 +16,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "base/task_runner.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/test/scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -41,7 +41,11 @@ void WriteData(base::ScopedFD fd, const std::string& data) {
 class PipeReaderTest : public testing::Test {
  public:
   PipeReaderTest() = default;
-  ~PipeReaderTest() override = default;
+  ~PipeReaderTest() override {
+    // Flush the ScopedTaskEnvironment to prevent leaks of PostTaskAndReply
+    // callbacks.
+    task_environment_.RunUntilIdle();
+  }
 
   scoped_refptr<base::TaskRunner> GetTaskRunner() {
     return task_environment_.GetMainThreadTaskRunner();
@@ -93,7 +97,6 @@ TEST_F(PipeReaderTest, LargeData) {
 
 TEST_F(PipeReaderTest, Cancel) {
   auto reader = std::make_unique<PipeReader>(GetTaskRunner());
-  base::RunLoop run_loop;
   base::ScopedFD write_fd =
       reader->StartIO(base::BindOnce([](base::Optional<std::string> result) {
         FAIL();  // Unexpected to be called.

@@ -32,6 +32,7 @@ class CC_DEBUG_EXPORT LayerTreeDebugState {
   bool show_fps_counter;
   DebugBorderTypes show_debug_borders;
 
+  bool show_layout_shift_regions;
   bool show_paint_rects;
   bool show_property_changed_rects;
   bool show_surface_damage_rects;
@@ -45,6 +46,8 @@ class CC_DEBUG_EXPORT LayerTreeDebugState {
   int slow_down_raster_scale_factor;
   bool rasterize_only_visible_content;
   bool show_picture_borders;
+
+  bool show_hit_test_borders;
 
   void SetRecordRenderingStats(bool enabled);
   bool RecordRenderingStats() const;

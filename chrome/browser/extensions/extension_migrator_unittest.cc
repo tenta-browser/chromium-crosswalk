@@ -4,9 +4,10 @@
 
 #include "chrome/browser/extensions/extension_migrator.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
@@ -23,12 +24,8 @@ namespace {
 const char kOldId[] = "oooooooooooooooooooooooooooooooo";
 const char kNewId[] = "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn";
 
-scoped_refptr<Extension> CreateExtension(const std::string& id) {
-  return ExtensionBuilder()
-      .SetManifest(
-          DictionaryBuilder().Set("name", "test").Set("version", "0.1").Build())
-      .SetID(id)
-      .Build();
+scoped_refptr<const Extension> CreateExtension(const std::string& id) {
+  return ExtensionBuilder("test").SetID(id).Build();
 }
 
 }  // namespace
@@ -52,14 +49,14 @@ class ExtensionMigratorTest : public ExtensionServiceTestBase {
   }
 
   void AddMigratorProvider() {
-    service()->AddProviderForTesting(base::MakeUnique<ExternalProviderImpl>(
+    service()->AddProviderForTesting(std::make_unique<ExternalProviderImpl>(
         service(), new ExtensionMigrator(profile(), kOldId, kNewId), profile(),
         Manifest::EXTERNAL_PREF, Manifest::EXTERNAL_PREF_DOWNLOAD,
         Extension::FROM_WEBSTORE | Extension::WAS_INSTALLED_BY_DEFAULT));
   }
 
   void AddExtension(const std::string& id) {
-    scoped_refptr<Extension> fake_app = CreateExtension(id);
+    scoped_refptr<const Extension> fake_app = CreateExtension(id);
     service()->AddExtension(fake_app.get());
   }
 

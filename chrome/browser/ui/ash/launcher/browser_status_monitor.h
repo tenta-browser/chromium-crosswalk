@@ -16,20 +16,14 @@
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
-#include "ui/wm/public/activation_change_observer.h"
-
-namespace aura {
-class Window;
-}  // namespace aura
 
 class Browser;
 
 // BrowserStatusMonitor monitors creation/deletion of Browser and its
 // TabStripModel to keep the launcher representation up to date as the
 // active tab changes.
-class BrowserStatusMonitor : public wm::ActivationChangeObserver,
-                             public BrowserTabStripTrackerDelegate,
-                             public chrome::BrowserListObserver,
+class BrowserStatusMonitor : public BrowserTabStripTrackerDelegate,
+                             public BrowserListObserver,
                              public TabStripModelObserver {
  public:
   explicit BrowserStatusMonitor(ChromeLauncherController* launcher_controller);
@@ -47,41 +41,24 @@ class BrowserStatusMonitor : public wm::ActivationChangeObserver,
   virtual void ActiveUserChanged(const std::string& user_email) {}
 
   // A shortcut to call the ChromeLauncherController's UpdateAppState().
-  void UpdateAppItemState(content::WebContents* contents,
-                          ChromeLauncherController::AppState app_state);
+  void UpdateAppItemState(content::WebContents* contents, bool remove);
 
   // A shortcut to call the BrowserShortcutLauncherItemController's
   // UpdateBrowserItemState().
   void UpdateBrowserItemState();
 
-  // wm::ActivationChangeObserver overrides:
-  void OnWindowActivated(wm::ActivationChangeObserver::ActivationReason reason,
-                         aura::Window* gained_active,
-                         aura::Window* lost_active) override;
-
   // BrowserTabStripTrackerDelegate overrides:
   bool ShouldTrackBrowser(Browser* browser) override;
 
-  // chrome::BrowserListObserver overrides:
+  // BrowserListObserver overrides:
   void OnBrowserAdded(Browser* browser) override;
   void OnBrowserRemoved(Browser* browser) override;
 
   // TabStripModelObserver overrides:
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override;
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* old_contents,
-                     content::WebContents* new_contents,
-                     int index) override;
-  void TabInsertedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* contents,
-                     int index,
-                     bool foreground) override;
-  void TabClosingAt(TabStripModel* tab_strip_mode,
-                    content::WebContents* contents,
-                    int index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
 
   // Called from our own |LocalWebContentsObserver| when web contents did go
   // away without any other notification. This might happen in case of
@@ -104,14 +81,20 @@ class BrowserStatusMonitor : public wm::ActivationChangeObserver,
  private:
   class LocalWebContentsObserver;
 
+  // Called by TabStripModelChanged()
+  void OnActiveTabChanged(content::WebContents* old_contents,
+                          content::WebContents* new_contents);
+  void OnTabReplaced(TabStripModel* tab_strip_model,
+                     content::WebContents* old_contents,
+                     content::WebContents* new_contents);
+  void OnTabInserted(content::WebContents* contents);
+  void OnTabClosing(content::WebContents* contents);
+
   // Create LocalWebContentsObserver for |contents|.
   void AddWebContentsObserver(content::WebContents* contents);
 
   // Remove LocalWebContentsObserver for |contents|.
   void RemoveWebContentsObserver(content::WebContents* contents);
-
-  // Returns the ShelfID for |contents|.
-  ash::ShelfID GetShelfIDForWebContents(content::WebContents* contents);
 
   // Sets the shelf id for browsers represented by the browser shortcut item.
   void SetShelfIDForBrowserWindowContents(Browser* browser,

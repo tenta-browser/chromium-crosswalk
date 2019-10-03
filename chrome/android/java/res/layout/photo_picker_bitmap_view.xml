@@ -10,6 +10,7 @@
 <view class="org.chromium.chrome.browser.photo_picker.PickerBitmapView"
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
@@ -23,16 +24,37 @@
             android:id="@+id/bitmap_view"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:contentDescription="@null" />
+            tools:ignore="ContentDescription" />
 
         <ImageView
             android:id="@+id/scrim"
             android:layout_width="64dp"
             android:layout_height="64dp"
             android:background="@drawable/file_picker_scrim"
-            android:contentDescription="@null"
+            tools:ignore="ContentDescription"
             android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/video_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:layout_marginEnd="6dp"
+            android:layout_gravity="end"
+            style="@style/TextAppearance.WhiteBody"/>
     </FrameLayout>
+
+    <ImageView
+        android:id="@+id/play_video"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:layout_marginStart="2dp"
+        android:layout_marginBottom="2dp"
+        android:layout_marginEnd="2dp"
+        android:contentDescription="@string/accessibility_play_video"
+        android:layout_gravity="bottom|end"
+        android:visibility="gone"
+        app:srcCompat="@drawable/ic_play_circle_filled_blue" />
 
     <ImageView
         android:id="@+id/selected"
@@ -40,7 +62,7 @@
         android:layout_height="26dp"
         android:layout_marginStart="2dp"
         android:layout_marginTop="2dp"
-        android:contentDescription="@null"
+        tools:ignore="ContentDescription"
         android:visibility="gone"
         app:srcCompat="@drawable/checkmark_blue" />
 
@@ -51,7 +73,7 @@
         android:layout_marginStart="4dp"
         android:layout_marginTop="4dp"
         android:background="@drawable/circle_white"
-        android:contentDescription="@null"
+        tools:ignore="ContentDescription"
         android:visibility="gone" />
 
     <!-- Special tiles, that give access to the camera and gallery  -->
@@ -69,8 +91,8 @@
             android:adjustViewBounds="true"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:contentDescription="@null"
-            android:tint="@color/photo_picker_special_tile_color" />
+            tools:ignore="ContentDescription"
+            android:tint="@color/photo_picker_tile_bg_color" />
 
         <TextView
             android:id="@+id/special_tile_label"
@@ -78,8 +100,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="@dimen/photo_picker_label_gap"
             android:gravity="center"
-            android:textColor="@color/photo_picker_special_tile_color"
-            android:textSize="14sp"
-            style="@style/RobotoMediumStyle" />
+            android:textAppearance="@style/TextAppearance.PhotoPickerSpecialTile" />
     </LinearLayout>
 </view>

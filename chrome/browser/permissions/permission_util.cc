@@ -46,40 +46,20 @@ std::string PermissionUtil::GetPermissionString(
       return "AccessibilityEvents";
     case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
       return "ClipboardRead";
-    default:
-      break;
-  }
-  NOTREACHED();
-  return std::string();
-}
-
-std::string PermissionUtil::ConvertContentSettingsTypeToSafeBrowsingName(
-    ContentSettingsType permission_type) {
-  switch (permission_type) {
-    case CONTENT_SETTINGS_TYPE_GEOLOCATION:
-      return "GEOLOCATION";
-    case CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
-      return "NOTIFICATIONS";
-    case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
-      return "MIDI_SYSEX";
-    case CONTENT_SETTINGS_TYPE_DURABLE_STORAGE:
-      return "DURABLE_STORAGE";
-    case CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER:
-      return "PROTECTED_MEDIA_IDENTIFIER";
-    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
-      return "AUDIO_CAPTURE";
-    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
-      return "VIDEO_CAPTURE";
-    case CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC:
-      return "BACKGROUND_SYNC";
-    case CONTENT_SETTINGS_TYPE_PLUGINS:
-      return "FLASH";
-    case CONTENT_SETTINGS_TYPE_SENSORS:
-      return "SENSORS";
-    case CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS:
-      return "ACCESSIBILITY_EVENTS";
-    case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
-      return "CLIPBOARD_READ";
+    case CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE:
+      return "ClipboardWrite";
+    case CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER:
+      return "PaymentHandler";
+    case CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH:
+      return "BackgroundFetch";
+    case CONTENT_SETTINGS_TYPE_IDLE_DETECTION:
+      return "IdleDetection";
+    case CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC:
+      return "PeriodicBackgroundSync";
+    case CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN:
+      return "WakeLockScreen";
+    case CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM:
+      return "WakeLockSystem";
     default:
       break;
   }
@@ -107,6 +87,8 @@ PermissionRequestType PermissionUtil::GetRequestType(ContentSettingsType type) {
       return PermissionRequestType::PERMISSION_ACCESSIBILITY_EVENTS;
     case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
       return PermissionRequestType::PERMISSION_CLIPBOARD_READ;
+    case CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER:
+      return PermissionRequestType::PERMISSION_PAYMENT_HANDLER;
     default:
       NOTREACHED();
       return PermissionRequestType::UNKNOWN;
@@ -148,6 +130,16 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
     *out = PermissionType::ACCESSIBILITY_EVENTS;
   } else if (type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ) {
     *out = PermissionType::CLIPBOARD_READ;
+  } else if (type == CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER) {
+    *out = PermissionType::PAYMENT_HANDLER;
+  } else if (type == CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH) {
+    *out = PermissionType::BACKGROUND_FETCH;
+  } else if (type == CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC) {
+    *out = PermissionType::PERIODIC_BACKGROUND_SYNC;
+  } else if (type == CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN) {
+    *out = PermissionType::WAKE_LOCK_SCREEN;
+  } else if (type == CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM) {
+    *out = PermissionType::WAKE_LOCK_SYSTEM;
   } else {
     return false;
   }
@@ -170,6 +162,11 @@ bool PermissionUtil::IsPermission(ContentSettingsType type) {
     case CONTENT_SETTINGS_TYPE_SENSORS:
     case CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS:
     case CONTENT_SETTINGS_TYPE_CLIPBOARD_READ:
+    case CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER:
+    case CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH:
+    case CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC:
+    case CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN:
+    case CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM:
       return true;
     default:
       return false;
@@ -222,7 +219,9 @@ PermissionUtil::ScopedRevocationReporter::~ScopedRevocationReporter() {
   ContentSetting final_content_setting = settings_map->GetContentSetting(
       primary_url_, secondary_url_, content_type_, std::string());
   if (final_content_setting != CONTENT_SETTING_ALLOW) {
+    // PermissionUmaUtil takes origins, even though they're typed as GURL.
+    GURL requesting_origin = primary_url_.GetOrigin();
     PermissionUmaUtil::PermissionRevoked(content_type_, source_ui_,
-                                         primary_url_, profile_);
+                                         requesting_origin, profile_);
   }
 }

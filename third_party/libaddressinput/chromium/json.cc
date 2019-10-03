@@ -28,8 +28,8 @@ namespace {
   // |json| is converted to a |c_str()| here because rapidjson and other parts
   // of the standalone library use char* rather than std::string.
   ::std::unique_ptr<const base::Value> parsed(
-      base::JSONReader::Read(json.c_str()));
-  *parser_error = !parsed || !parsed->IsType(base::Value::Type::DICTIONARY);
+      base::JSONReader::ReadDeprecated(json.c_str()));
+  *parser_error = !parsed || !parsed->is_dict();
 
   if (*parser_error)
     result.reset(new base::DictionaryValue);
@@ -57,7 +57,7 @@ class Json::JsonImpl {
     if (sub_dicts_.empty()) {
       for (base::DictionaryValue::Iterator it(dict_); !it.IsAtEnd();
            it.Advance()) {
-        if (it.value().IsType(base::Value::Type::DICTIONARY)) {
+        if (it.value().is_dict()) {
           const base::DictionaryValue* sub_dict = NULL;
           it.value().GetAsDictionary(&sub_dict);
           owned_sub_dicts_.push_back(

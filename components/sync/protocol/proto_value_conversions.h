@@ -19,7 +19,6 @@ class AppSettingSpecifics;
 class AppSpecifics;
 class ArcPackageSpecifics;
 class ArticleSpecifics;
-class AttachmentIdProto;
 class AutofillProfileSpecifics;
 class AutofillSpecifics;
 class AutofillWalletSpecifics;
@@ -47,16 +46,20 @@ class ManagedUserSettingSpecifics;
 class ManagedUserSharedSettingSpecifics;
 class ManagedUserSpecifics;
 class ManagedUserWhitelistSpecifics;
+class MountainShareSpecifics;
 class NavigationRedirect;
 class NigoriSpecifics;
 class PasswordSpecifics;
 class PasswordSpecificsData;
+class PaymentsCustomerData;
 class PreferenceSpecifics;
 class PrinterPPDReference;
 class PrinterSpecifics;
 class PriorityPreferenceSpecifics;
 class ReadingListSpecifics;
 class SearchEngineSpecifics;
+class SecurityEventSpecifics;
+class SendTabToSelfSpecifics;
 class SessionHeader;
 class SessionSpecifics;
 class SessionTab;
@@ -69,10 +72,14 @@ class TabNavigation;
 class ThemeSpecifics;
 class TimeRangeDirective;
 class TypedUrlSpecifics;
+class UrlDirective;
+class UserConsentSpecifics;
 class UserEventSpecifics;
 class WalletMaskedCreditCard;
 class WalletMetadataSpecifics;
 class WalletPostalAddress;
+class WebAppSpecifics;
+class WifiConfigurationSpecifics;
 class WifiCredentialSpecifics;
 }  // namespace sync_pb
 
@@ -105,9 +112,6 @@ std::unique_ptr<base::DictionaryValue> ArcPackageSpecificsToValue(
 
 std::unique_ptr<base::DictionaryValue> ArticleSpecificsToValue(
     const sync_pb::ArticleSpecifics& article_specifics);
-
-std::unique_ptr<base::DictionaryValue> AttachmentIdProtoToValue(
-    const sync_pb::AttachmentIdProto& proto);
 
 std::unique_ptr<base::DictionaryValue> AutofillProfileSpecificsToValue(
     const sync_pb::AutofillProfileSpecifics& autofill_profile_specifics);
@@ -187,6 +191,9 @@ std::unique_ptr<base::DictionaryValue> ManagedUserWhitelistSpecificsToValue(
     const sync_pb::ManagedUserWhitelistSpecifics&
         managed_user_whitelist_specifics);
 
+std::unique_ptr<base::DictionaryValue> MountainShareSpecificsToValue(
+    const sync_pb::MountainShareSpecifics& mountain_share_specifics);
+
 std::unique_ptr<base::DictionaryValue> NavigationRedirectToValue(
     const sync_pb::NavigationRedirect& navigation_redirect);
 
@@ -198,6 +205,9 @@ std::unique_ptr<base::DictionaryValue> PasswordSpecificsToValue(
 
 std::unique_ptr<base::DictionaryValue> PasswordSpecificsDataToValue(
     const sync_pb::PasswordSpecificsData& password_specifics_data);
+
+std::unique_ptr<base::DictionaryValue> PaymentsCustomerDataToValue(
+    const sync_pb::PaymentsCustomerData& payments_customer_data);
 
 std::unique_ptr<base::DictionaryValue> PreferenceSpecificsToValue(
     const sync_pb::PreferenceSpecifics& password_specifics);
@@ -216,6 +226,12 @@ std::unique_ptr<base::DictionaryValue> ReadingListSpecificsToValue(
 
 std::unique_ptr<base::DictionaryValue> SearchEngineSpecificsToValue(
     const sync_pb::SearchEngineSpecifics& search_engine_specifics);
+
+std::unique_ptr<base::DictionaryValue> SendTabToSelfSpecificsToValue(
+    const sync_pb::SendTabToSelfSpecifics& send_tab_specifics);
+
+std::unique_ptr<base::DictionaryValue> SecurityEventSpecificsToValue(
+    const sync_pb::SecurityEventSpecifics& security_event_specifics);
 
 std::unique_ptr<base::DictionaryValue> SessionHeaderToValue(
     const sync_pb::SessionHeader& session_header);
@@ -252,6 +268,12 @@ std::unique_ptr<base::DictionaryValue> TimeRangeDirectiveToValue(
 std::unique_ptr<base::DictionaryValue> TypedUrlSpecificsToValue(
     const sync_pb::TypedUrlSpecifics& typed_url_specifics);
 
+std::unique_ptr<base::DictionaryValue> UrlDirectiveToValue(
+    const sync_pb::UrlDirective& time_range_directive);
+
+std::unique_ptr<base::DictionaryValue> UserConsentSpecificsToValue(
+    const sync_pb::UserConsentSpecifics& user_consent_specifics);
+
 std::unique_ptr<base::DictionaryValue> UserEventSpecificsToValue(
     const sync_pb::UserEventSpecifics& user_event_specifics);
 
@@ -263,6 +285,12 @@ std::unique_ptr<base::DictionaryValue> WalletMetadataSpecificsToValue(
 
 std::unique_ptr<base::DictionaryValue> WalletPostalAddressToValue(
     const sync_pb::WalletPostalAddress& wallet_postal_address);
+
+std::unique_ptr<base::DictionaryValue> WebAppSpecificsToValue(
+    const sync_pb::WebAppSpecifics& web_app_specifics);
+
+std::unique_ptr<base::DictionaryValue> WifiConfigurationSpecificsToValue(
+    const sync_pb::WifiConfigurationSpecifics& wifi_configuration_specifics);
 
 std::unique_ptr<base::DictionaryValue> WifiCredentialSpecificsToValue(
     const sync_pb::WifiCredentialSpecifics& wifi_credential_specifics);

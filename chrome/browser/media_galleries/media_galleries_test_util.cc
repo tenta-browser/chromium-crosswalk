@@ -11,7 +11,6 @@
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -42,22 +41,22 @@ scoped_refptr<extensions::Extension> AddMediaGalleriesApp(
     const std::string& name,
     const std::vector<std::string>& media_galleries_permissions,
     Profile* profile) {
-  auto manifest = base::MakeUnique<base::DictionaryValue>();
+  auto manifest = std::make_unique<base::DictionaryValue>();
   manifest->SetString(extensions::manifest_keys::kName, name);
   manifest->SetString(extensions::manifest_keys::kVersion, "0.1");
   manifest->SetInteger(extensions::manifest_keys::kManifestVersion, 2);
-  auto background_script_list = base::MakeUnique<base::ListValue>();
+  auto background_script_list = std::make_unique<base::ListValue>();
   background_script_list->AppendString("background.js");
   manifest->Set(extensions::manifest_keys::kPlatformAppBackgroundScripts,
                 std::move(background_script_list));
 
-  auto permission_detail_list = base::MakeUnique<base::ListValue>();
+  auto permission_detail_list = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < media_galleries_permissions.size(); i++)
     permission_detail_list->AppendString(media_galleries_permissions[i]);
-  auto media_galleries_permission = base::MakeUnique<base::DictionaryValue>();
+  auto media_galleries_permission = std::make_unique<base::DictionaryValue>();
   media_galleries_permission->Set("mediaGalleries",
                                   std::move(permission_detail_list));
-  auto permission_list = base::MakeUnique<base::ListValue>();
+  auto permission_list = std::make_unique<base::ListValue>();
   permission_list->Append(std::move(media_galleries_permission));
   manifest->Set(extensions::manifest_keys::kPermissions,
                 std::move(permission_list));
@@ -80,7 +79,7 @@ scoped_refptr<extensions::Extension> AddMediaGalleriesApp(
       extensions::Extension::ENABLED,
       syncer::StringOrdinal::CreateInitialOrdinal(),
       std::string());
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   extension_service->AddExtension(extension.get());
   extension_service->EnableExtension(extension->id());
@@ -106,21 +105,21 @@ void EnsureMediaDirectoriesExists::ChangeMediaPathOverrides() {
   // a CHECK crash.
   music_override_.reset();
   std::string music_path_string("music");
-  music_path_string.append(base::IntToString(times_overrides_changed_));
+  music_path_string.append(base::NumberToString(times_overrides_changed_));
   music_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_MUSIC,
       fake_dir_.GetPath().AppendASCII(music_path_string)));
 
   pictures_override_.reset();
   std::string pictures_path_string("pictures");
-  pictures_path_string.append(base::IntToString(times_overrides_changed_));
+  pictures_path_string.append(base::NumberToString(times_overrides_changed_));
   pictures_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_PICTURES,
       fake_dir_.GetPath().AppendASCII(pictures_path_string)));
 
   video_override_.reset();
   std::string videos_path_string("videos");
-  videos_path_string.append(base::IntToString(times_overrides_changed_));
+  videos_path_string.append(base::NumberToString(times_overrides_changed_));
   video_override_.reset(new base::ScopedPathOverride(
       chrome::DIR_USER_VIDEOS,
       fake_dir_.GetPath().AppendASCII(videos_path_string)));

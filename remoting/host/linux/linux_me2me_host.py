@@ -117,7 +117,7 @@ SHORT_BACKOFF_THRESHOLD = 5
 MAX_LAUNCH_FAILURES = SHORT_BACKOFF_THRESHOLD + 10
 
 # Number of seconds to save session output to the log.
-SESSION_OUTPUT_TIME_LIMIT_SECONDS = 30
+SESSION_OUTPUT_TIME_LIMIT_SECONDS = 300
 
 # Host offline reason if the X server retry count is exceeded.
 HOST_OFFLINE_REASON_X_SERVER_RETRIES_EXCEEDED = "X_SERVER_RETRIES_EXCEEDED"
@@ -1010,8 +1010,15 @@ class ParentProcessLogger(object):
       self._logging_handler = None
     if not self._write_file.closed:
       if success:
-        self._write_file.write("READY\n")
-        self._write_file.flush()
+        try:
+          self._write_file.write("READY\n")
+          self._write_file.flush()
+        except IOError:
+          # A "broken pipe" IOError can happen if the receiving process
+          # (remoting_user_session) has exited (probably due to timeout waiting
+          # for the host to start).
+          # Trapping the error here means the host can continue running.
+          logging.info("Caught IOError writing READY message.")
       self._write_file.close()
 
   @staticmethod
@@ -1412,6 +1419,9 @@ Web Store: https://chrome.google.com/remotedesktop"""
   parser.add_argument("--watch-resolution", dest="watch_resolution",
                       type=int, nargs=2, default=False, action="store",
                       help=argparse.SUPPRESS)
+  parser.add_argument("--skip-config-upgrade", dest="skip_config_upgrade",
+                      default=False, action="store_true",
+                      help="Skip running the config upgrade tool.")
   parser.add_argument(dest="args", nargs="*", help=argparse.SUPPRESS)
   options = parser.parse_args()
 
@@ -1577,6 +1587,15 @@ Web Store: https://chrome.google.com/remotedesktop"""
 
   # Register an exit handler to clean up session process and the PID file.
   atexit.register(cleanup)
+
+  # Run the config upgrade tool, to update the refresh token if needed.
+  # TODO(lambroslambrou): Respect CHROME_REMOTE_DESKTOP_HOST_EXTRA_PARAMS
+  # and the GOOGLE_CLIENT... variables, and fix the tool to work in a
+  # test environment.
+  if not options.skip_config_upgrade:
+    args = [HOST_BINARY_PATH, "--upgrade-token",
+            "--host-config=%s" % config_file]
+    subprocess.check_call(args);
 
   # Load the initial host configuration.
   host_config = Config(config_file)
@@ -1749,6 +1768,9 @@ Web Store: https://chrome.google.com/remotedesktop"""
         # Nothing to do for Mac-only status 104 (login screen unsupported)
         elif os.WEXITSTATUS(status) == 105:
           logging.info("Username is blocked by policy - exiting.")
+          return 0
+        elif os.WEXITSTATUS(status) == 106:
+          logging.info("Host has been deleted - exiting.")
           return 0
         else:
           logging.info("Host exited with status %s." % os.WEXITSTATUS(status))

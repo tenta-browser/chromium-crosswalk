@@ -35,10 +35,12 @@ class CastDeviceProvider
 
   // ServiceDiscoveryDeviceLister::Delegate implementation:
   void OnDeviceChanged(
+      const std::string& service_type,
       bool added,
       const local_discovery::ServiceDescription& service_description) override;
-  void OnDeviceRemoved(const std::string& service_name) override;
-  void OnDeviceCacheFlushed() override;
+  void OnDeviceRemoved(const std::string& service_type,
+                       const std::string& service_name) override;
+  void OnDeviceCacheFlushed(const std::string& service_type) override;
 
  private:
   class DeviceListerDelegate;
@@ -55,7 +57,7 @@ class CastDeviceProvider
   // Maps a service name to the hostname (IP address).
   std::map<std::string, std::string> service_hostname_map_;
 
-  base::WeakPtrFactory<CastDeviceProvider> weak_factory_;
+  base::WeakPtrFactory<CastDeviceProvider> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastDeviceProvider);
 };

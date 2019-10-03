@@ -10,8 +10,8 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/bindings_export.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
 
 namespace mojo {
@@ -33,8 +33,9 @@ struct MessageHeader : internal::StructHeader {
   uint32_t name;
   // 0 or either of the enum values defined above.
   uint32_t flags;
-  // Unused padding to make the struct size a multiple of 8 bytes.
-  uint32_t padding;
+  // A unique (hopefully) id for a message. Used in tracing to match trace
+  // events for sending and receiving a message.
+  uint32_t trace_id;
 };
 static_assert(sizeof(MessageHeader) == 24, "Bad sizeof(MessageHeader)");
 
@@ -54,7 +55,7 @@ static_assert(sizeof(MessageHeaderV2) == 48, "Bad sizeof(MessageHeaderV2)");
 
 #pragma pack(pop)
 
-class MOJO_CPP_BINDINGS_EXPORT MessageDispatchContext {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MessageDispatchContext {
  public:
   explicit MessageDispatchContext(Message* message);
   ~MessageDispatchContext();
@@ -70,19 +71,15 @@ class MOJO_CPP_BINDINGS_EXPORT MessageDispatchContext {
   DISALLOW_COPY_AND_ASSIGN(MessageDispatchContext);
 };
 
-class MOJO_CPP_BINDINGS_EXPORT SyncMessageResponseSetup {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) SyncMessageResponseSetup {
  public:
   static void SetCurrentSyncResponseMessage(Message* message);
 };
 
-MOJO_CPP_BINDINGS_EXPORT size_t
-ComputeSerializedMessageSize(uint32_t flags,
-                             size_t payload_size,
-                             size_t payload_interface_id_count);
-
-// Used by generated bindings to bypass validation for unserialized message
-// objects and control messages.
-MOJO_CPP_BINDINGS_EXPORT bool IsUnserializedOrControlMessage(Message* message);
+COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE)
+size_t ComputeSerializedMessageSize(uint32_t flags,
+                                    size_t payload_size,
+                                    size_t payload_interface_id_count);
 
 }  // namespace internal
 }  // namespace mojo

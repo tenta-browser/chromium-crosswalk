@@ -5,16 +5,16 @@
 #include "content/browser/loader/intercepting_resource_handler.h"
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/loader/null_resource_controller.h"
 #include "content/browser/loader/resource_controller.h"
-#include "content/public/common/resource_response.h"
 #include "net/base/io_buffer.h"
 #include "net/url_request/url_request.h"
+#include "services/network/public/cpp/resource_response.h"
 
 namespace content {
 
@@ -28,6 +28,15 @@ class InterceptingResourceHandler::Controller : public ResourceController {
   void Resume() override {
     MarkAsUsed();
     intercepting_handler_->ResumeInternal();
+  }
+
+  void ResumeForRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers) override {
+    DCHECK(removed_headers.empty() && modified_headers.IsEmpty())
+        << "Removing or modifying headers from the |new_handler| is not used "
+           "and not supported. See https://crbug.com/845683.";
+    Resume();
   }
 
   void Cancel() override {
@@ -59,14 +68,12 @@ class InterceptingResourceHandler::Controller : public ResourceController {
 InterceptingResourceHandler::InterceptingResourceHandler(
     std::unique_ptr<ResourceHandler> next_handler,
     net::URLRequest* request)
-    : LayeredResourceHandler(request, std::move(next_handler)),
-      weak_ptr_factory_(this) {
-}
+    : LayeredResourceHandler(request, std::move(next_handler)) {}
 
 InterceptingResourceHandler::~InterceptingResourceHandler() {}
 
 void InterceptingResourceHandler::OnResponseStarted(
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
   // If there's no need to switch handlers, just start acting as a blind
   // pass-through ResourceHandler.
@@ -278,8 +285,8 @@ void InterceptingResourceHandler::OnBufferReceived() {
   // already handles that case, anyways, so could share that code with the
   // no-swap path as well. Or better, just have MimeSniffingResourceHandler
   // create and manage the buffer itself.
-  first_read_buffer_double_ =
-      new net::IOBuffer(static_cast<size_t>(first_read_buffer_size_));
+  first_read_buffer_double_ = base::MakeRefCounted<net::IOBuffer>(
+      static_cast<size_t>(first_read_buffer_size_));
   *parent_read_buffer_ = first_read_buffer_double_;
   *parent_read_buffer_size_ = first_read_buffer_size_;
 

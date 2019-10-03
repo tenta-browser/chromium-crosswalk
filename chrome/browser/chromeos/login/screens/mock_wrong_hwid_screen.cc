@@ -4,28 +4,23 @@
 
 #include "chrome/browser/chromeos/login/screens/mock_wrong_hwid_screen.h"
 
-using testing::AtLeast;
-using testing::NotNull;
-
 namespace chromeos {
 
 MockWrongHWIDScreen::MockWrongHWIDScreen(
-    BaseScreenDelegate* base_screen_delegate,
-    WrongHWIDScreenView* view)
-    : WrongHWIDScreen(base_screen_delegate, view) {}
+    WrongHWIDScreenView* view,
+    const base::RepeatingClosure& exit_callback)
+    : WrongHWIDScreen(view, exit_callback) {}
 
 MockWrongHWIDScreen::~MockWrongHWIDScreen() {}
 
-MockWrongHWIDScreenView::MockWrongHWIDScreenView() : delegate_(nullptr) {
-  EXPECT_CALL(*this, MockSetDelegate(NotNull())).Times(AtLeast(1));
-}
+MockWrongHWIDScreenView::MockWrongHWIDScreenView() = default;
 
 MockWrongHWIDScreenView::~MockWrongHWIDScreenView() {
   if (delegate_)
     delegate_->OnViewDestroyed(this);
 }
 
-void MockWrongHWIDScreenView::SetDelegate(Delegate* delegate) {
+void MockWrongHWIDScreenView::SetDelegate(WrongHWIDScreen* delegate) {
   delegate_ = delegate;
   MockSetDelegate(delegate);
 }

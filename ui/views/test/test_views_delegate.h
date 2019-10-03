@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/views_delegate.h"
@@ -58,10 +57,10 @@ class TestViewsDelegate : public ViewsDelegate {
   ui::ContextFactoryPrivate* GetContextFactoryPrivate() override;
 
  private:
-  ui::ContextFactory* context_factory_;
-  ui::ContextFactoryPrivate* context_factory_private_;
-  bool use_desktop_native_widgets_;
-  bool use_transparent_windows_;
+  ui::ContextFactory* context_factory_ = nullptr;
+  ui::ContextFactoryPrivate* context_factory_private_ = nullptr;
+  bool use_desktop_native_widgets_ = false;
+  bool use_transparent_windows_ = false;
   std::unique_ptr<LayoutProvider> layout_provider_ =
       std::make_unique<LayoutProvider>();
 

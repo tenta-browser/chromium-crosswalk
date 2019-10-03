@@ -7,19 +7,18 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/features.h"
 #include "chrome/grit/browser_resources.h"
 #include "extensions/common/constants.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/keyboard/ui/grit/keyboard_resources.h"
 #include "chrome/browser/chromeos/input_method/component_extension_ime_manager_impl.h"
-#include "components/chrome_apps/grit/chrome_apps_resources.h"
 #include "ui/file_manager/grit/file_manager_resources.h"
-#include "ui/keyboard/grit/keyboard_resources.h"
 #endif
 
 namespace extensions {
@@ -30,16 +29,19 @@ bool IsComponentExtensionWhitelisted(const std::string& extension_id) {
     extension_misc::kMediaRouterStableExtensionId,
     extension_misc::kPdfExtensionId,
 #if defined(OS_CHROMEOS)
+    extension_misc::kAssessmentAssistantExtensionId,
+    extension_misc::kAutoclickExtensionId,
     extension_misc::kChromeVoxExtensionId,
+    extension_misc::kEspeakSpeechSynthesisExtensionId,
+    extension_misc::kGoogleSpeechSynthesisExtensionId,
     extension_misc::kSelectToSpeakExtensionId,
-    extension_misc::kSpeechSynthesisExtensionId,
     extension_misc::kSwitchAccessExtensionId,
-    extension_misc::kZIPUnpackerExtensionId,
     extension_misc::kZipArchiverExtensionId,
+    extension_misc::kChromeCameraAppId,
 #endif
   };
 
-  for (size_t i = 0; i < arraysize(kAllowed); ++i) {
+  for (size_t i = 0; i < base::size(kAllowed); ++i) {
     if (extension_id == kAllowed[i])
       return true;
   }
@@ -59,7 +61,6 @@ bool IsComponentExtensionWhitelisted(const std::string& extension_id) {
 bool IsComponentExtensionWhitelisted(int manifest_resource_id) {
   switch (manifest_resource_id) {
     // Please keep the list in alphabetical order.
-    case IDR_BOOKMARKS_MANIFEST:
 #if BUILDFLAG(ENABLE_APP_LIST)
     case IDR_CHROME_APP_MANIFEST:
 #endif
@@ -68,7 +69,6 @@ bool IsComponentExtensionWhitelisted(int manifest_resource_id) {
 #endif
     case IDR_CRYPTOTOKEN_MANIFEST:
     case IDR_FEEDBACK_MANIFEST:
-    case IDR_GAIA_AUTH_MANIFEST:
 #if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
     case IDR_HANGOUT_SERVICES_MANIFEST:
 #endif
@@ -83,13 +83,10 @@ bool IsComponentExtensionWhitelisted(int manifest_resource_id) {
     // Separate ChromeOS list, as it is quite large.
     case IDR_ARC_SUPPORT_MANIFEST:
     case IDR_AUDIO_PLAYER_MANIFEST:
-    case IDR_CHROME_APPS_WEBSTORE_WIDGET_MANIFEST:
     case IDR_CONNECTIVITY_DIAGNOSTICS_LAUNCHER_MANIFEST:
     case IDR_CONNECTIVITY_DIAGNOSTICS_MANIFEST:
     case IDR_CROSH_BUILTIN_MANIFEST:
     case IDR_DEMO_APP_MANIFEST:
-    case IDR_EASY_UNLOCK_MANIFEST:
-    case IDR_EASY_UNLOCK_MANIFEST_SIGNIN:
     case IDR_ECHO_MANIFEST:
     case IDR_FILEMANAGER_MANIFEST:
     case IDR_FIRST_RUN_DIALOG_MANIFEST:
@@ -113,5 +110,26 @@ bool IsComponentExtensionWhitelisted(int manifest_resource_id) {
   NOTREACHED();
   return false;
 }
+
+#if defined(OS_CHROMEOS)
+bool IsComponentExtensionWhitelistedForSignInProfile(
+    const std::string& extension_id) {
+  const char* const kAllowed[] = {
+      extension_misc::kAutoclickExtensionId,
+      extension_misc::kChromeVoxExtensionId,
+      extension_misc::kEspeakSpeechSynthesisExtensionId,
+      extension_misc::kGoogleSpeechSynthesisExtensionId,
+      extension_misc::kSelectToSpeakExtensionId,
+      extension_misc::kSwitchAccessExtensionId,
+  };
+
+  for (size_t i = 0; i < base::size(kAllowed); ++i) {
+    if (extension_id == kAllowed[i])
+      return true;
+  }
+
+  return false;
+}
+#endif
 
 }  // namespace extensions

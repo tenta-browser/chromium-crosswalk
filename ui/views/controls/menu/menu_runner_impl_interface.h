@@ -8,9 +8,11 @@
 #include <stdint.h>
 
 #include "base/callback_forward.h"
+#include "base/containers/flat_set.h"
 #include "ui/views/controls/menu/menu_runner.h"
 
 namespace views {
+class MenuButtonController;
 
 namespace internal {
 
@@ -25,7 +27,7 @@ class MenuRunnerImplInterface {
   static MenuRunnerImplInterface* Create(
       ui::MenuModel* menu_model,
       int32_t run_types,
-      const base::Closure& on_menu_closed_callback);
+      base::RepeatingClosure on_menu_closed_callback);
 
   // Returns true if we're in a nested run loop running the menu.
   virtual bool IsRunning() const = 0;
@@ -35,7 +37,7 @@ class MenuRunnerImplInterface {
 
   // Runs the menu. See MenuRunner::RunMenuAt for more details.
   virtual void RunMenuAt(Widget* parent,
-                         MenuButton* button,
+                         MenuButtonController* button_controller,
                          const gfx::Rect& bounds,
                          MenuAnchorPosition anchor,
                          int32_t run_types) = 0;
@@ -48,7 +50,7 @@ class MenuRunnerImplInterface {
 
  protected:
   // Call Release() to delete.
-  virtual ~MenuRunnerImplInterface() {}
+  virtual ~MenuRunnerImplInterface() = default;
 };
 
 }  // namespace internal

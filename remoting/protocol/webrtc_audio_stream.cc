@@ -11,9 +11,9 @@
 #include "remoting/protocol/audio_source.h"
 #include "remoting/protocol/webrtc_audio_source_adapter.h"
 #include "remoting/protocol/webrtc_transport.h"
-#include "third_party/webrtc/api/mediastreaminterface.h"
-#include "third_party/webrtc/api/peerconnectioninterface.h"
-#include "third_party/webrtc/rtc_base/refcount.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
+#include "third_party/webrtc/api/peer_connection_interface.h"
+#include "third_party/webrtc/rtc_base/ref_count.h"
 
 namespace remoting {
 namespace protocol {
@@ -22,15 +22,7 @@ const char kAudioStreamLabel[] = "audio_stream";
 const char kAudioTrackLabel[] = "system_audio";
 
 WebrtcAudioStream::WebrtcAudioStream() = default;
-
-WebrtcAudioStream::~WebrtcAudioStream() {
-  if (stream_) {
-    for (const auto& track : stream_->GetAudioTracks()) {
-      stream_->RemoveTrack(track.get());
-    }
-    peer_connection_->RemoveStream(stream_.get());
-  }
-}
+WebrtcAudioStream::~WebrtcAudioStream() = default;
 
 void WebrtcAudioStream::Start(
     scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner,
@@ -50,17 +42,15 @@ void WebrtcAudioStream::Start(
       peer_connection_factory->CreateAudioTrack(kAudioTrackLabel,
                                                 source_adapter_.get());
 
-  stream_ = peer_connection_factory->CreateLocalMediaStream(kAudioStreamLabel);
+  webrtc::RtpTransceiverInit init;
+  init.stream_ids = {kAudioStreamLabel};
 
-  // AddTrack() may fail only if there is another track with the same name,
-  // which is impossible because it's a brand new stream.
-  bool result = stream_->AddTrack(audio_track.get());
-  DCHECK(result);
+  // value() DCHECKs if AddTransceiver() fails, which only happens if a track
+  // was already added with the stream label.
+  auto transceiver =
+      peer_connection_->AddTransceiver(audio_track, init).value();
 
-  // AddStream() may fail if there is another stream with the same name or when
-  // the PeerConnection is closed, neither is expected.
-  result = peer_connection_->AddStream(stream_.get());
-  DCHECK(result);
+  webrtc_transport->OnAudioTransceiverCreated(transceiver);
 }
 
 void WebrtcAudioStream::Pause(bool pause) {

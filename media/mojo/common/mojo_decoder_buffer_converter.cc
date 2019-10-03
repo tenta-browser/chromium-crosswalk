@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
@@ -14,16 +15,11 @@
 #include "media/base/cdm_context.h"
 #include "media/base/decoder_buffer.h"
 #include "media/mojo/common/media_type_converters.h"
+#include "media/mojo/common/mojo_pipe_read_write_util.h"
+
+using media::mojo_pipe_read_write_util::IsPipeReadWriteError;
 
 namespace media {
-
-namespace {
-
-bool IsPipeReadWriteError(MojoResult result) {
-  return result != MOJO_RESULT_OK && result != MOJO_RESULT_SHOULD_WAIT;
-}
-
-}  // namespace
 
 uint32_t GetDefaultDecoderBufferConverterCapacity(DemuxerStream::Type type) {
   uint32_t capacity = 0;
@@ -63,7 +59,9 @@ std::unique_ptr<MojoDecoderBufferReader> MojoDecoderBufferReader::Create(
 MojoDecoderBufferReader::MojoDecoderBufferReader(
     mojo::ScopedDataPipeConsumerHandle consumer_handle)
     : consumer_handle_(std::move(consumer_handle)),
-      pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
+      pipe_watcher_(FROM_HERE,
+                    mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                    base::SequencedTaskRunnerHandle::Get()),
       armed_(false),
       bytes_read_(0) {
   DVLOG(1) << __func__;
@@ -286,7 +284,9 @@ std::unique_ptr<MojoDecoderBufferWriter> MojoDecoderBufferWriter::Create(
 MojoDecoderBufferWriter::MojoDecoderBufferWriter(
     mojo::ScopedDataPipeProducerHandle producer_handle)
     : producer_handle_(std::move(producer_handle)),
-      pipe_watcher_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
+      pipe_watcher_(FROM_HERE,
+                    mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                    base::SequencedTaskRunnerHandle::Get()),
       armed_(false),
       bytes_written_(0) {
   DVLOG(1) << __func__;
@@ -317,7 +317,7 @@ void MojoDecoderBufferWriter::ScheduleNextWrite() {
 }
 
 mojom::DecoderBufferPtr MojoDecoderBufferWriter::WriteDecoderBuffer(
-    const scoped_refptr<DecoderBuffer>& media_buffer) {
+    scoped_refptr<DecoderBuffer> media_buffer) {
   DVLOG(3) << __func__;
 
   // DecoderBuffer cannot be written if the pipe is already closed.
@@ -329,14 +329,14 @@ mojom::DecoderBufferPtr MojoDecoderBufferWriter::WriteDecoderBuffer(
   }
 
   mojom::DecoderBufferPtr mojo_buffer =
-      mojom::DecoderBuffer::From(media_buffer);
+      mojom::DecoderBuffer::From(*media_buffer);
 
   // A non-EOS buffer can have zero size. See http://crbug.com/663438
   if (media_buffer->end_of_stream() || media_buffer->data_size() == 0)
     return mojo_buffer;
 
   // Queue writing the buffer's data into our DataPipe.
-  pending_buffers_.push_back(media_buffer);
+  pending_buffers_.push_back(std::move(media_buffer));
 
   // Do nothing if a write is already scheduled. Otherwise, to reduce latency,
   // always try to write data to the pipe first.

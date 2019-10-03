@@ -13,11 +13,12 @@ namespace policy {
 
 namespace {
 
-const int kDefaultCommandTimeoutInMinutes = 3;
+constexpr base::TimeDelta kDefaultCommandTimeout =
+    base::TimeDelta::FromMinutes(10);
+constexpr base::TimeDelta kDefaultCommandExpirationTime =
+    base::TimeDelta::FromMinutes(10);
 
 }  // namespace
-
-namespace em = enterprise_management;
 
 RemoteCommandJob::~RemoteCommandJob() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -25,8 +26,9 @@ RemoteCommandJob::~RemoteCommandJob() {
     Terminate();
 }
 
-bool RemoteCommandJob::Init(base::TimeTicks now,
-                            const em::RemoteCommand& command) {
+bool RemoteCommandJob::Init(
+    base::TimeTicks now,
+    const enterprise_management::RemoteCommand& command) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_EQ(NOT_INITIALIZED, status_);
 
@@ -60,38 +62,15 @@ bool RemoteCommandJob::Init(base::TimeTicks now,
     return false;
   }
 
-  switch (command.type()) {
-    case em::RemoteCommand_Type_COMMAND_ECHO_TEST: {
-      SYSLOG(INFO) << "Remote echo test command " << unique_id_
-                   << " initialized.";
-      break;
-    }
-    case em::RemoteCommand_Type_DEVICE_REBOOT: {
-      SYSLOG(INFO) << "Remote reboot command " << unique_id_ << " initialized.";
-      break;
-    }
-    case em::RemoteCommand_Type_DEVICE_SCREENSHOT: {
-      SYSLOG(INFO) << "Remote screenshot command " << unique_id_
-                   << " initialized.";
-      break;
-    }
-    case em::RemoteCommand_Type_DEVICE_SET_VOLUME: {
-      SYSLOG(INFO) << "Remote set volume command " << unique_id_
-                   << " initialized.";
-      break;
-    }
-    case em::RemoteCommand_Type_DEVICE_FETCH_STATUS: {
-      SYSLOG(INFO) << "Remote fetch device status command " << unique_id_
-                   << " initialized.";
-      break;
-    }
-  }
+  SYSLOG(INFO) << "Remote command type " << command.type() << " with id "
+               << command.command_id() << " initialized.";
+
   status_ = NOT_STARTED;
   return true;
 }
 
 bool RemoteCommandJob::Run(base::TimeTicks now,
-                           const FinishedCallback& finished_callback) {
+                           FinishedCallback finished_callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (status_ == INVALID) {
@@ -111,11 +90,12 @@ bool RemoteCommandJob::Run(base::TimeTicks now,
 
   execution_started_time_ = now;
   status_ = RUNNING;
-  finished_callback_ = finished_callback;
+  finished_callback_ = std::move(finished_callback);
 
-  RunImpl(base::Bind(&RemoteCommandJob::OnCommandExecutionFinishedWithResult,
+  RunImpl(
+      base::BindOnce(&RemoteCommandJob::OnCommandExecutionFinishedWithResult,
                      weak_factory_.GetWeakPtr(), true),
-          base::Bind(&RemoteCommandJob::OnCommandExecutionFinishedWithResult,
+      base::BindOnce(&RemoteCommandJob::OnCommandExecutionFinishedWithResult,
                      weak_factory_.GetWeakPtr(), false));
 
   // The command is expected to run asynchronously.
@@ -137,12 +117,12 @@ void RemoteCommandJob::Terminate() {
 
   TerminateImpl();
 
-  if (!finished_callback_.is_null())
-    finished_callback_.Run();
+  if (finished_callback_)
+    std::move(finished_callback_).Run();
 }
 
-base::TimeDelta RemoteCommandJob::GetCommmandTimeout() const {
-  return base::TimeDelta::FromMinutes(kDefaultCommandTimeoutInMinutes);
+base::TimeDelta RemoteCommandJob::GetCommandTimeout() const {
+  return kDefaultCommandTimeout;
 }
 
 bool RemoteCommandJob::IsExecutionFinished() const {
@@ -159,16 +139,14 @@ std::unique_ptr<std::string> RemoteCommandJob::GetResultPayload() const {
   return result_payload_->Serialize();
 }
 
-RemoteCommandJob::RemoteCommandJob()
-    : status_(NOT_INITIALIZED), weak_factory_(this) {
-}
+RemoteCommandJob::RemoteCommandJob() : status_(NOT_INITIALIZED) {}
 
 bool RemoteCommandJob::ParseCommandPayload(const std::string& command_payload) {
   return true;
 }
 
 bool RemoteCommandJob::IsExpired(base::TimeTicks now) {
-  return false;
+  return now > issued_time() + kDefaultCommandExpirationTime;
 }
 
 void RemoteCommandJob::TerminateImpl() {
@@ -183,8 +161,8 @@ void RemoteCommandJob::OnCommandExecutionFinishedWithResult(
 
   result_payload_ = std::move(result_payload);
 
-  if (!finished_callback_.is_null())
-    finished_callback_.Run();
+  if (finished_callback_)
+    std::move(finished_callback_).Run();
 }
 
 }  // namespace policy

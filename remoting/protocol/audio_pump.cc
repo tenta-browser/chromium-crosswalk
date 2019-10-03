@@ -11,7 +11,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/audio_bus.h"
@@ -43,7 +42,7 @@ std::unique_ptr<media::AudioBus> AudioPacketToAudioBus(
 std::unique_ptr<remoting::AudioPacket> AudioBusToAudioPacket(
     const media::AudioBus& packet) {
   std::unique_ptr<remoting::AudioPacket> result =
-      base::MakeUnique<remoting::AudioPacket>();
+      std::make_unique<remoting::AudioPacket>();
   result->add_data()->resize(
       packet.channels() * packet.frames() * sizeof(int16_t));
   packet.ToInterleaved<media::SignedInt16SampleTypeTraits>(
@@ -190,8 +189,8 @@ void AudioPump::Core::EncodeAudioPacket(std::unique_ptr<AudioPacket> packet) {
   bytes_pending_ += packet_size;
 
   pump_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&AudioPump::SendAudioPacket, pump_,
-                            base::Passed(&encoded_packet), packet_size));
+      FROM_HERE, base::BindOnce(&AudioPump::SendAudioPacket, pump_,
+                                std::move(encoded_packet), packet_size));
 }
 
 std::unique_ptr<AudioPacket> AudioPump::Core::Downmix(
@@ -208,7 +207,7 @@ std::unique_ptr<AudioPacket> AudioPump::Core::Downmix(
 
   if (!mixer_ || mixer_input_layout_ != input_layout) {
     mixer_input_layout_ = input_layout;
-    mixer_ = base::MakeUnique<media::ChannelMixer>(
+    mixer_ = std::make_unique<media::ChannelMixer>(
         input_layout, media::CHANNEL_LAYOUT_STEREO);
   }
 
@@ -237,7 +236,7 @@ AudioPump::AudioPump(
                        std::move(audio_encoder)));
 
   audio_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::Start, base::Unretained(core_.get())));
+      FROM_HERE, base::BindOnce(&Core::Start, base::Unretained(core_.get())));
 }
 
 AudioPump::~AudioPump() {
@@ -251,7 +250,7 @@ void AudioPump::Pause(bool pause) {
 
   audio_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Core::Pause, base::Unretained(core_.get()), pause));
+      base::BindOnce(&Core::Pause, base::Unretained(core_.get()), pause));
 }
 
 void AudioPump::SendAudioPacket(std::unique_ptr<AudioPacket> packet, int size) {
@@ -266,7 +265,7 @@ void AudioPump::SendAudioPacket(std::unique_ptr<AudioPacket> packet, int size) {
 void AudioPump::OnPacketSent(int size) {
   audio_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Core::OnPacketSent, base::Unretained(core_.get()), size));
+      base::BindOnce(&Core::OnPacketSent, base::Unretained(core_.get()), size));
 }
 
 }  // namespace protocol

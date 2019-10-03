@@ -15,8 +15,10 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_select_files_handler.h"
 #include "chrome/browser/chromeos/arc/fileapi/file_stream_forwarder.h"
 #include "components/arc/common/file_system.mojom.h"
+#include "components/arc/session/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "storage/browser/fileapi/watcher_manager.h"
 
@@ -33,13 +35,16 @@ namespace arc {
 class ArcBridgeService;
 
 // This class handles file system related IPC from the ARC container.
-class ArcFileSystemBridge : public KeyedService, public mojom::FileSystemHost {
+class ArcFileSystemBridge
+    : public KeyedService,
+      public ConnectionObserver<mojom::FileSystemInstance>,
+      public mojom::FileSystemHost {
  public:
   class Observer {
    public:
-    virtual void OnDocumentChanged(
-        int64_t watcher_id,
-        storage::WatcherManager::ChangeType type) = 0;
+    virtual void OnDocumentChanged(int64_t watcher_id,
+                                   storage::WatcherManager::ChangeType type) {}
+    virtual void OnRootsChanged() {}
 
    protected:
     virtual ~Observer() {}
@@ -55,6 +60,8 @@ class ArcFileSystemBridge : public KeyedService, public mojom::FileSystemHost {
   // Returns the instance for the given BrowserContext, or nullptr if the
   // browser |context| is not allowed to use ARC.
   static ArcFileSystemBridge* GetForBrowserContext(
+      content::BrowserContext* context);
+  static ArcFileSystemBridge* GetForBrowserContextForTesting(
       content::BrowserContext* context);
 
   // Handles a read request.
@@ -81,8 +88,19 @@ class ArcFileSystemBridge : public KeyedService, public mojom::FileSystemHost {
                    GetFileTypeCallback callback) override;
   void OnDocumentChanged(int64_t watcher_id,
                          storage::WatcherManager::ChangeType type) override;
+  void OnRootsChanged() override;
   void OpenFileToRead(const std::string& url,
                       OpenFileToReadCallback callback) override;
+  void SelectFiles(mojom::SelectFilesRequestPtr request,
+                   SelectFilesCallback callback) override;
+  void OnFileSelectorEvent(mojom::FileSelectorEventPtr event,
+                           OnFileSelectorEventCallback callback) override;
+  void GetFileSelectorElements(
+      mojom::GetFileSelectorElementsRequestPtr request,
+      GetFileSelectorElementsCallback callback) override;
+
+  // ConnectionObserver<mojom::FileSystemInstance> overrides:
+  void OnConnectionClosed() override;
 
  private:
   // Used to implement OpenFileToRead().
@@ -103,12 +121,14 @@ class ArcFileSystemBridge : public KeyedService, public mojom::FileSystemHost {
 
   Profile* const profile_;
   ArcBridgeService* const bridge_service_;  // Owned by ArcServiceManager
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   // Map from file descriptor IDs to requested URLs.
   std::map<std::string, GURL> id_to_url_;
 
   std::list<FileStreamForwarderPtr> file_stream_forwarders_;
+
+  std::unique_ptr<ArcSelectFilesHandlersManager> select_files_handlers_manager_;
 
   base::WeakPtrFactory<ArcFileSystemBridge> weak_ptr_factory_;
 

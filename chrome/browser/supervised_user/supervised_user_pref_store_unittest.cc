@@ -5,13 +5,12 @@
 #include <set>
 #include <string>
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
-#include "chrome/browser/net/safe_search_util.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_pref_store.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
+#include "chrome/common/net/safe_search_util.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/testing_pref_store.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -60,7 +59,7 @@ void SupervisedUserPrefStoreFixture::OnPrefValueChanged(
     const std::string& key) {
   const base::Value* value = NULL;
   ASSERT_TRUE(pref_store_->GetValue(key, &value));
-  changed_prefs_.Set(key, base::MakeUnique<base::Value>(value->Clone()));
+  changed_prefs_.Set(key, std::make_unique<base::Value>(value->Clone()));
 }
 
 void SupervisedUserPrefStoreFixture::OnInitializationCompleted(bool succeeded) {
@@ -74,7 +73,7 @@ void SupervisedUserPrefStoreFixture::OnInitializationCompleted(bool succeeded) {
 
 class SupervisedUserPrefStoreTest : public ::testing::Test {
  public:
-  SupervisedUserPrefStoreTest() : service_(nullptr) {}
+  SupervisedUserPrefStoreTest() {}
   void SetUp() override;
   void TearDown() override;
 

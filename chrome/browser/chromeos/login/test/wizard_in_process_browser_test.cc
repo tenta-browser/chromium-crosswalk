@@ -16,12 +16,12 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "content/public/browser/notification_service.h"
 
 namespace chromeos {
 
-WizardInProcessBrowserTest::WizardInProcessBrowserTest(OobeScreen screen)
+WizardInProcessBrowserTest::WizardInProcessBrowserTest(OobeScreenId screen)
     : screen_(screen) {}
 
 void WizardInProcessBrowserTest::SetUp() {
@@ -44,11 +44,18 @@ void WizardInProcessBrowserTest::SetUpOnMainThread() {
 }
 
 void WizardInProcessBrowserTest::TearDownOnMainThread() {
-  ASSERT_TRUE(base::MessageLoopForUI::IsCurrent());
+  ASSERT_TRUE(base::MessageLoopCurrentForUI::IsSet());
 
-  // LoginDisplayHost owns controllers and all windows.
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, host_);
-  base::RunLoop().RunUntilIdle();
+  if (!host_)
+    return;
+
+  // LoginDisplayHost owns controllers and all windows. It needs to be destroyed
+  // here because the derived tests have clean-up code assuming LoginDisplayHost
+  // is gone.
+  base::RunLoop run_loop;
+  host_->Finalize(run_loop.QuitClosure());
+  run_loop.Run();
+  host_ = nullptr;
 }
 
 }  // namespace chromeos

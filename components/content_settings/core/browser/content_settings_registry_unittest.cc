@@ -66,7 +66,7 @@ TEST_F(ContentSettingsRegistryTest, Properties) {
   // Check that the whitelisted types are correct.
   std::vector<std::string> expected_whitelist;
   expected_whitelist.push_back("chrome");
-  expected_whitelist.push_back("chrome-devtools");
+  expected_whitelist.push_back("devtools");
   EXPECT_EQ(expected_whitelist, info->whitelisted_schemes());
 
   // Check the other properties are populated correctly.
@@ -132,10 +132,12 @@ TEST_F(ContentSettingsRegistryTest, Inheritance) {
   // disable features like popup blocking, download blocking or ad blocking.
   // They do not allow access to user data.
   const ContentSettingsType whitelist[] = {
+      CONTENT_SETTINGS_TYPE_PLUGINS,              //
       CONTENT_SETTINGS_TYPE_POPUPS,               //
       CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,  //
       CONTENT_SETTINGS_TYPE_ADS,                  //
-      CONTENT_SETTINGS_TYPE_DURABLE_STORAGE,
+      CONTENT_SETTINGS_TYPE_DURABLE_STORAGE,      //
+      CONTENT_SETTINGS_TYPE_LEGACY_COOKIE_ACCESS,
   };
 
   for (const ContentSettingsInfo* info : *registry()) {
@@ -150,13 +152,10 @@ TEST_F(ContentSettingsRegistryTest, Inheritance) {
                 ContentSettingsInfo::INHERIT_IN_INCOGNITO);
       continue;
     }
-    ContentSettingsType type = info->website_settings_info()->type();
     if (info->incognito_behavior() ==
             ContentSettingsInfo::INHERIT_IN_INCOGNITO &&
-        std::find(std::begin(whitelist), std::end(whitelist), type) ==
-            std::end(whitelist)) {
+        !base::Contains(whitelist, info->website_settings_info()->type()))
       FAIL() << "Content setting not whitelisted.";
-    }
   }
 }
 
@@ -173,7 +172,7 @@ TEST_F(ContentSettingsRegistryTest, IsDefaultSettingValid) {
   EXPECT_FALSE(info->IsDefaultSettingValid(CONTENT_SETTING_ALLOW));
 #endif
 
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
   info = registry()->Get(CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER);
   EXPECT_FALSE(info->IsDefaultSettingValid(CONTENT_SETTING_ALLOW));
 #endif

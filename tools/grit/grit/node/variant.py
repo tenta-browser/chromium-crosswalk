@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +5,7 @@
 '''The <skeleton> element.
 '''
 
+from __future__ import print_function
 
 from grit.node import base
 
@@ -26,7 +26,7 @@ class SkeletonNode(base.Node):
     return {'encoding' : ''}
 
   def _ContentType(self):
-    if self.attrs.has_key('file'):
+    if 'file' in self.attrs:
       return self._CONTENT_TYPE_NONE
     else:
       return self._CONTENT_TYPE_CDATA
@@ -39,4 +39,3 @@ class SkeletonNode(base.Node):
 
   def GetInputPath(self):
     return self.attrs['file']
-

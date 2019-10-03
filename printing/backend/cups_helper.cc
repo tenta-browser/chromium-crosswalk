@@ -40,6 +40,7 @@ const char kHighGray[] = "High.Gray";
 
 constexpr char kDuplex[] = "Duplex";
 constexpr char kDuplexNone[] = "None";
+constexpr char kDuplexNoTumble[] = "DuplexNoTumble";
 constexpr char kDuplexTumble[] = "DuplexTumble";
 constexpr char kPageSize[] = "PageSize";
 
@@ -51,8 +52,6 @@ constexpr char kBrotherPrintQuality[] = "BRPrintQuality";
 // Samsung printer specific options.
 constexpr char kSamsungColorTrue[] = "True";
 constexpr char kSamsungColorFalse[] = "False";
-
-const double kMicronsPerPoint = 10.0f * kHundrethsMMPerInch / kPointsPerInch;
 
 void ParseLpOptions(const base::FilePath& filepath,
                     base::StringPiece printer_name,
@@ -67,9 +66,8 @@ void ParseLpOptions(const base::FilePath& filepath,
   const size_t kDestLen = sizeof(kDest) - 1;
   const size_t kDefaultLen = sizeof(kDefault) - 1;
 
-  for (base::StringPiece line :
-       base::SplitStringPiece(content, "\n", base::KEEP_WHITESPACE,
-                              base::SPLIT_WANT_NONEMPTY)) {
+  for (base::StringPiece line : base::SplitStringPiece(
+           content, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
     if (base::StartsWith(line, base::StringPiece(kDefault, kDefaultLen),
                          base::CompareCase::INSENSITIVE_ASCII) &&
         isspace(line[kDefaultLen])) {
@@ -119,7 +117,7 @@ void MarkLpOptions(base::StringPiece printer_name, ppd_file_t** ppd) {
   std::vector<base::FilePath> file_locations;
   file_locations.push_back(base::FilePath(kSystemLpOptionPath));
   base::FilePath homedir;
-  PathService::Get(base::DIR_HOME, &homedir);
+  base::PathService::Get(base::DIR_HOME, &homedir);
   file_locations.push_back(base::FilePath(homedir.Append(kUserLpOptionPath)));
 
   for (const base::FilePath& location : file_locations) {
@@ -134,23 +132,31 @@ void MarkLpOptions(base::StringPiece printer_name, ppd_file_t** ppd) {
 }
 
 void GetDuplexSettings(ppd_file_t* ppd,
-                       bool* duplex_capable,
+                       std::vector<DuplexMode>* duplex_modes,
                        DuplexMode* duplex_default) {
   ppd_choice_t* duplex_choice = ppdFindMarkedChoice(ppd, kDuplex);
-  if (!duplex_choice) {
-    ppd_option_t* option = ppdFindOption(ppd, kDuplex);
-    if (!option)
-      option = ppdFindOption(ppd, kBrotherDuplex);
-    if (!option)
-      return;
+  ppd_option_t* option = ppdFindOption(ppd, kDuplex);
+  if (!option)
+    option = ppdFindOption(ppd, kBrotherDuplex);
 
+  if (!option)
+    return;
+
+  if (!duplex_choice)
     duplex_choice = ppdFindChoice(option, option->defchoice);
-  }
+
+  if (ppdFindChoice(option, kDuplexNone))
+    duplex_modes->push_back(SIMPLEX);
+
+  if (ppdFindChoice(option, kDuplexNoTumble))
+    duplex_modes->push_back(LONG_EDGE);
+
+  if (ppdFindChoice(option, kDuplexTumble))
+    duplex_modes->push_back(SHORT_EDGE);
 
   if (!duplex_choice)
     return;
 
-  *duplex_capable = true;
   const char* choice = duplex_choice->choice;
   if (EqualsCaseInsensitiveASCII(choice, kDuplexNone)) {
     *duplex_default = SIMPLEX;
@@ -228,8 +234,8 @@ bool GetPrintOutModeColorSettings(ppd_file_t* ppd,
   // value.
   ppd_choice_t* printout_mode_choice = ppdFindMarkedChoice(ppd, kPrintoutMode);
   if (!printout_mode_choice) {
-      printout_mode_choice = ppdFindChoice(printout_mode,
-                                           printout_mode->defchoice);
+    printout_mode_choice =
+        ppdFindChoice(printout_mode, printout_mode->defchoice);
   }
   if (printout_mode_choice) {
     if (EqualsCaseInsensitiveASCII(printout_mode_choice->choice, kNormalGray) ||
@@ -263,8 +269,8 @@ bool GetColorModeSettings(ppd_file_t* ppd,
 
   ppd_choice_t* mode_choice = ppdFindMarkedChoice(ppd, kColorMode);
   if (!mode_choice) {
-    mode_choice = ppdFindChoice(color_mode_option,
-                                color_mode_option->defchoice);
+    mode_choice =
+        ppdFindChoice(color_mode_option, color_mode_option->defchoice);
   }
 
   if (mode_choice) {
@@ -326,8 +332,8 @@ bool GetHPColorSettings(ppd_file_t* ppd,
 
   ppd_choice_t* mode_choice = ppdFindMarkedChoice(ppd, kColorMode);
   if (!mode_choice) {
-    mode_choice = ppdFindChoice(color_mode_option,
-                                color_mode_option->defchoice);
+    mode_choice =
+        ppdFindChoice(color_mode_option, color_mode_option->defchoice);
   }
   if (mode_choice) {
     *color_is_default = EqualsCaseInsensitiveASCII(mode_choice->choice, kColor);
@@ -340,7 +346,7 @@ bool GetProcessColorModelSettings(ppd_file_t* ppd,
                                   ColorModel* color_model_for_color,
                                   bool* color_is_default) {
   // Canon printers use "ProcessColorModel" attribute in their PPDs.
-  ppd_option_t* color_mode_option =  ppdFindOption(ppd, kProcessColorModel);
+  ppd_option_t* color_mode_option = ppdFindOption(ppd, kProcessColorModel);
   if (!color_mode_option)
     return false;
 
@@ -354,8 +360,8 @@ bool GetProcessColorModelSettings(ppd_file_t* ppd,
 
   ppd_choice_t* mode_choice = ppdFindMarkedChoice(ppd, kProcessColorModel);
   if (!mode_choice) {
-    mode_choice = ppdFindChoice(color_mode_option,
-                                color_mode_option->defchoice);
+    mode_choice =
+        ppdFindChoice(color_mode_option, color_mode_option->defchoice);
   }
 
   if (mode_choice) {
@@ -415,7 +421,7 @@ HttpConnectionCUPS::~HttpConnectionCUPS() {
 }
 
 void HttpConnectionCUPS::SetBlocking(bool blocking) {
-  httpBlocking(http_, blocking ?  1 : 0);
+  httpBlocking(http_, blocking ? 1 : 0);
 }
 
 http_t* HttpConnectionCUPS::http() {
@@ -430,10 +436,8 @@ bool ParsePpdCapabilities(base::StringPiece printer_name,
     return false;
 
   int data_size = printer_capabilities.length();
-  if (data_size != base::WriteFile(
-                       ppd_file_path,
-                       printer_capabilities.data(),
-                       data_size)) {
+  if (data_size !=
+      base::WriteFile(ppd_file_path, printer_capabilities.data(), data_size)) {
     base::DeleteFile(ppd_file_path, false);
     return false;
   }
@@ -454,7 +458,7 @@ bool ParsePpdCapabilities(base::StringPiece printer_name,
   caps.collate_default = true;
   caps.copies_capable = true;
 
-  GetDuplexSettings(ppd, &caps.duplex_capable, &caps.duplex_default);
+  GetDuplexSettings(ppd, &caps.duplex_modes, &caps.duplex_default);
 
   bool is_color = false;
   ColorModel cm_color = UNKNOWN_COLOR_MODEL, cm_black = UNKNOWN_COLOR_MODEL;
@@ -462,9 +466,9 @@ bool ParsePpdCapabilities(base::StringPiece printer_name,
     VLOG(1) << "Unknown printer color model";
   }
 
-  caps.color_changeable = ((cm_color != UNKNOWN_COLOR_MODEL) &&
-                           (cm_black != UNKNOWN_COLOR_MODEL) &&
-                           (cm_color != cm_black));
+  caps.color_changeable =
+      ((cm_color != UNKNOWN_COLOR_MODEL) && (cm_black != UNKNOWN_COLOR_MODEL) &&
+       (cm_color != cm_black));
   caps.color_default = is_color;
   caps.color_model = cm_color;
   caps.bw_model = cm_black;
@@ -474,8 +478,8 @@ bool ParsePpdCapabilities(base::StringPiece printer_name,
     ppd_option_t* paper_option = ppdFindOption(ppd, kPageSize);
     for (int i = 0; i < ppd->num_sizes; ++i) {
       gfx::Size paper_size_microns(
-          static_cast<int>(ppd->sizes[i].width * kMicronsPerPoint + 0.5),
-          static_cast<int>(ppd->sizes[i].length * kMicronsPerPoint + 0.5));
+          ConvertUnit(ppd->sizes[i].width, kPointsPerInch, kMicronsPerInch),
+          ConvertUnit(ppd->sizes[i].length, kPointsPerInch, kMicronsPerInch));
       if (paper_size_microns.width() > 0 && paper_size_microns.height() > 0) {
         PrinterSemanticCapsAndDefaults::Paper paper;
         paper.size_um = paper_size_microns;

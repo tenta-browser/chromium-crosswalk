@@ -8,9 +8,9 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/callback.h"
+#include "components/invalidation/impl/jni_headers/InvalidationService_jni.h"
 #include "components/invalidation/public/object_id_invalidation_map.h"
 #include "google/cacheinvalidation/types.pb.h"
-#include "jni/InvalidationService_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
@@ -93,9 +93,8 @@ std::string InvalidationServiceAndroid::GetInvalidatorClientId() const {
       Java_InvalidationService_getInvalidatorClientId(env, java_ref_);
 
   // Convert it into a more convenient format for C++.
-  std::vector<uint8_t> id_bytes;
-  base::android::JavaByteArrayToByteVector(env, id_bytes_java.obj(), &id_bytes);
-  std::string id(id_bytes.begin(), id_bytes.end());
+  std::string id;
+  base::android::JavaByteArrayToString(env, id_bytes_java, &id);
 
   return id;
 }
@@ -106,10 +105,6 @@ InvalidationLogger* InvalidationServiceAndroid::GetInvalidationLogger() {
 
 void InvalidationServiceAndroid::RequestDetailedStatus(
     base::Callback<void(const base::DictionaryValue&)> return_callback) const {
-}
-
-IdentityProvider* InvalidationServiceAndroid::GetIdentityProvider() {
-  return NULL;
 }
 
 void InvalidationServiceAndroid::TriggerStateChangeForTest(

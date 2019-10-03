@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "components/autofill/ios/form_util/form_activity_observer.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_user_data.h"
 
@@ -16,6 +17,7 @@
 // input events. Such events may change the page's Security Level.
 class InsecureInputTabHelper
     : public web::WebStateObserver,
+      public autofill::FormActivityObserver,
       public web::WebStateUserData<InsecureInputTabHelper> {
  public:
   ~InsecureInputTabHelper() override;
@@ -23,30 +25,31 @@ class InsecureInputTabHelper
   static InsecureInputTabHelper* GetOrCreateForWebState(
       web::WebState* web_state);
 
-  // This method should be called when a form containing a password field is
-  // parsed in a non-secure context.
-  void DidShowPasswordFieldInInsecureContext();
-
-  // This method should be called when the autofill component detects a credit
-  // card field was interacted with in a non-secure context.
-  void DidInteractWithNonsecureCreditCardInput();
-
   // This method should be called when the user edits a field in a non-secure
   // context.
   void DidEditFieldInInsecureContext();
 
  private:
   friend class web::WebStateUserData<InsecureInputTabHelper>;
+
   explicit InsecureInputTabHelper(web::WebState* web_state);
 
+  // FormActivityObserver implementation.
+  void FormActivityRegistered(
+      web::WebState* web_state,
+      web::WebFrame* sender_frame,
+      const autofill::FormActivityParams& params) override;
+
   // WebStateObserver implementation.
-  void FormActivityRegistered(web::WebState* web_state,
-                              const web::FormActivityParams& params) override;
+  void DidFinishNavigation(web::WebState* web_state,
+                           web::NavigationContext* navigation_context) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // The WebState this instance is observing. Will be null after
   // WebStateDestroyed has been called.
   web::WebState* web_state_ = nullptr;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(InsecureInputTabHelper);
 };

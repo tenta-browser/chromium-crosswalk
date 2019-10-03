@@ -8,6 +8,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -20,6 +21,10 @@
 class PrefRegistrySimple;
 class PrefService;
 
+namespace enterprise_management {
+class PolicyData;
+}
+
 namespace chromeos {
 
 class InstallAttributes;
@@ -27,11 +32,8 @@ class InstallAttributes;
 namespace attestation {
 class AttestationFlow;
 }
-}
 
-namespace net {
-class URLRequestContextGetter;
-}
+}  // namespace chromeos
 
 namespace policy {
 
@@ -39,14 +41,19 @@ class AffiliatedCloudPolicyInvalidator;
 class AffiliatedInvalidationServiceProvider;
 class AffiliatedRemoteCommandsInvalidator;
 class BluetoothPolicyHandler;
-class ActiveDirectoryPolicyManager;
+class DeviceActiveDirectoryPolicyManager;
 class DeviceCloudPolicyInitializer;
 class DeviceLocalAccountPolicyService;
+class DeviceNetworkConfigurationUpdater;
+class DeviceWiFiAllowedHandler;
 struct EnrollmentConfig;
+class HostnameHandler;
 class MinimumVersionPolicyHandler;
-class NetworkConfigurationUpdater;
 class ProxyPolicyProvider;
 class ServerBackedStateKeysBroker;
+class TPMAutoUpdateModePolicyHandler;
+class DeviceScheduledUpdateChecker;
+class DeviceCloudExternalDataPolicyHandler;
 
 // Extends ChromeBrowserPolicyConnector with the setup specific to Chrome OS.
 class BrowserPolicyConnectorChromeOS
@@ -57,9 +64,15 @@ class BrowserPolicyConnectorChromeOS
 
   ~BrowserPolicyConnectorChromeOS() override;
 
-  void Init(
-      PrefService* local_state,
-      scoped_refptr<net::URLRequestContextGetter> request_context) override;
+  // ChromeBrowserPolicyConnector:
+  void Init(PrefService* local_state,
+            scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+      override;
+
+  // Checks whether this devices is under any kind of enterprise management.
+  bool IsEnterpriseManaged() const override;
+
+  bool HasMachineLevelPolicies() override;
 
   // Shutdown() is called from BrowserProcessImpl::StartTearDown() but |this|
   // observes some objects that get destroyed earlier. PreShutdown() is called
@@ -68,9 +81,6 @@ class BrowserPolicyConnectorChromeOS
   void PreShutdown();
 
   void Shutdown() override;
-
-  // Checks whether this devices is under any kind of enterprise management.
-  bool IsEnterpriseManaged() const;
 
   // Checks whether this is a cloud (DM server) managed enterprise device.
   bool IsCloudManaged() const;
@@ -93,14 +103,26 @@ class BrowserPolicyConnectorChromeOS
   // Returns the device asset ID if it is set.
   std::string GetDeviceAssetID() const;
 
+  // Returns the machine name if it is set.
+  std::string GetMachineName() const;
+
+  // Returns the device annotated location if it is set.
+  std::string GetDeviceAnnotatedLocation() const;
+
   // Returns the cloud directory API ID or an empty string if it is not set.
   std::string GetDirectoryApiID() const;
+
+  // Returns the organization logo URL or an empty string if it is not set.
+  std::string GetCustomerLogoURL() const;
 
   // Returns the device mode. For Chrome OS this function will return the mode
   // stored in the lockbox, or DEVICE_MODE_CONSUMER if the lockbox has been
   // locked empty, or DEVICE_MODE_UNKNOWN if the device has not been owned yet.
   // For other OSes the function will always return DEVICE_MODE_CONSUMER.
   DeviceMode GetDeviceMode() const;
+
+  // Delegates to chromeos::InstallAttributes::Get()
+  chromeos::InstallAttributes* GetInstallAttributes() const;
 
   // Get the enrollment configuration for the device as decided by various
   // factors. See DeviceCloudPolicyInitializer::GetPrescribedEnrollmentConfig()
@@ -113,7 +135,8 @@ class BrowserPolicyConnectorChromeOS
   }
 
   // May be nullptr, e.g. for cloud-managed devices.
-  ActiveDirectoryPolicyManager* GetDeviceActiveDirectoryPolicyManager() const {
+  DeviceActiveDirectoryPolicyManager* GetDeviceActiveDirectoryPolicyManager()
+      const {
     return device_active_directory_policy_manager_;
   }
 
@@ -127,10 +150,6 @@ class BrowserPolicyConnectorChromeOS
     return device_local_account_policy_service_.get();
   }
 
-  chromeos::InstallAttributes* GetInstallAttributes() const {
-    return install_attributes_.get();
-  }
-
   // May be nullptr, e.g. for devices managed by Active Directory.
   ServerBackedStateKeysBroker* GetStateKeysBroker() const {
     return state_keys_broker_.get();
@@ -139,6 +158,18 @@ class BrowserPolicyConnectorChromeOS
   MinimumVersionPolicyHandler* GetMinimumVersionPolicyHandler() const {
     return minimum_version_policy_handler_.get();
   }
+
+  DeviceNetworkConfigurationUpdater* GetDeviceNetworkConfigurationUpdater()
+      const {
+    return device_network_configuration_updater_.get();
+  }
+
+  TPMAutoUpdateModePolicyHandler* GetTPMAutoUpdateModePolicyHandler() const {
+    return tpm_auto_update_mode_policy_handler_.get();
+  }
+
+  // Returns device's market segment.
+  MarketSegment GetEnterpriseMarketSegment() const;
 
   // The browser-global PolicyService is created before Profiles are ready, to
   // provide managed values for the local state PrefService. It includes a
@@ -155,13 +186,6 @@ class BrowserPolicyConnectorChromeOS
   void SetDeviceCloudPolicyInitializerForTesting(
       std::unique_ptr<DeviceCloudPolicyInitializer> initializer);
 
-  // Sets the install attributes for testing. Must be called before the browser
-  // is created. RemoveInstallAttributesForTesting must be called after the test
-  // to free the attributes.
-  static void SetInstallAttributesForTesting(
-      chromeos::InstallAttributes* attributes);
-  static void RemoveInstallAttributesForTesting();
-
   // Registers device refresh rate pref.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
@@ -170,6 +194,11 @@ class BrowserPolicyConnectorChromeOS
   void OnDeviceCloudPolicyManagerDisconnected() override;
 
   chromeos::AffiliationIDSet GetDeviceAffiliationIDs() const;
+
+ protected:
+  // ChromeBrowserPolicyConnector:
+  std::vector<std::unique_ptr<policy::ConfigurationPolicyProvider>>
+  CreatePolicyProviders() override;
 
  private:
   // Set the timezone as soon as the policies are available.
@@ -184,13 +213,15 @@ class BrowserPolicyConnectorChromeOS
   std::unique_ptr<chromeos::attestation::AttestationFlow>
   CreateAttestationFlow();
 
+  // Returns the device policy data or nullptr if it does not exist.
+  const enterprise_management::PolicyData* GetDevicePolicy() const;
+
   // Components of the device cloud policy implementation.
   std::unique_ptr<ServerBackedStateKeysBroker> state_keys_broker_;
-  std::unique_ptr<chromeos::InstallAttributes> install_attributes_;
   std::unique_ptr<AffiliatedInvalidationServiceProvider>
       affiliated_invalidation_service_provider_;
   DeviceCloudPolicyManagerChromeOS* device_cloud_policy_manager_ = nullptr;
-  ActiveDirectoryPolicyManager* device_active_directory_policy_manager_ =
+  DeviceActiveDirectoryPolicyManager* device_active_directory_policy_manager_ =
       nullptr;
   PrefService* local_state_ = nullptr;
   std::unique_ptr<DeviceCloudPolicyInitializer>
@@ -203,8 +234,15 @@ class BrowserPolicyConnectorChromeOS
       device_remote_commands_invalidator_;
 
   std::unique_ptr<BluetoothPolicyHandler> bluetooth_policy_handler_;
-
+  std::unique_ptr<HostnameHandler> hostname_handler_;
   std::unique_ptr<MinimumVersionPolicyHandler> minimum_version_policy_handler_;
+  std::unique_ptr<DeviceWiFiAllowedHandler> device_wifi_allowed_handler_;
+  std::unique_ptr<TPMAutoUpdateModePolicyHandler>
+      tpm_auto_update_mode_policy_handler_;
+  std::unique_ptr<DeviceScheduledUpdateChecker>
+      device_scheduled_update_checker_;
+  std::vector<std::unique_ptr<policy::DeviceCloudExternalDataPolicyHandler>>
+      device_cloud_external_data_policy_handlers_;
 
   // This policy provider is used on Chrome OS to feed user policy into the
   // global PolicyService instance. This works by installing the cloud policy
@@ -214,7 +252,12 @@ class BrowserPolicyConnectorChromeOS
   // pointer to get to the ProxyPolicyProvider at SetUserPolicyDelegate().
   ProxyPolicyProvider* global_user_cloud_policy_provider_ = nullptr;
 
-  std::unique_ptr<NetworkConfigurationUpdater> network_configuration_updater_;
+  std::unique_ptr<DeviceNetworkConfigurationUpdater>
+      device_network_configuration_updater_;
+
+  // The ConfigurationPolicyProviders created in the constructor are initially
+  // added here, and then pushed to the super class in BuildPolicyProviders().
+  std::vector<std::unique_ptr<ConfigurationPolicyProvider>> providers_for_init_;
 
   base::WeakPtrFactory<BrowserPolicyConnectorChromeOS> weak_ptr_factory_;
 

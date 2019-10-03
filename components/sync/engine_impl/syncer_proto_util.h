@@ -28,10 +28,6 @@ namespace syncer {
 class ServerConnectionManager;
 struct SyncProtocolError;
 
-namespace syncable {
-class Directory;
-}
-
 // Returns the types to migrate from the data in |response|.
 ModelTypeSet GetTypesToMigrate(const sync_pb::ClientToServerResponse& response);
 
@@ -41,13 +37,19 @@ SyncProtocolError ConvertErrorPBToSyncProtocolError(
 
 class SyncerProtoUtil {
  public:
+  // Adds all fields that must be sent on every request, which includes store
+  // birthday, protocol version, client chips, api keys, etc. |msg| must be not
+  // null. Must be called before calling PostClientToServerMessage().
+  static void AddRequiredFieldsToClientToServerMessage(
+      const SyncCycle* cycle,
+      sync_pb::ClientToServerMessage* msg);
+
   // Posts the given message and fills the buffer with the returned value.
   // Returns true on success.  Also handles store birthday verification: will
-  // produce a SyncError if the birthday is incorrect.
-  // NOTE: This will add all fields that must be sent on every request, which
-  // includes store birthday, protocol version, client chips, api keys, etc.
+  // produce a SyncError if the birthday is incorrect. Before calling this
+  // method, AddRequiredFieldsToClientToServerMessage() must be called.
   static SyncerError PostClientToServerMessage(
-      sync_pb::ClientToServerMessage* msg,
+      const sync_pb::ClientToServerMessage& msg,
       sync_pb::ClientToServerResponse* response,
       SyncCycle* cycle,
       ModelTypeSet* partial_failure_data_types);
@@ -68,11 +70,6 @@ class SyncerProtoUtil {
   static const std::string& NameFromCommitEntryResponse(
       const sync_pb::CommitResponse_EntryResponse& entry);
 
-  // Persist the bag of chips if it is present in the response.
-  static void PersistBagOfChips(
-      syncable::Directory* dir,
-      const sync_pb::ClientToServerResponse& response);
-
   // EntitySpecifics is used as a filter for the GetUpdates message to tell
   // the server which datatypes to send back.  This adds a datatype so that
   // it's included in the filter.
@@ -88,14 +85,6 @@ class SyncerProtoUtil {
   // to have a smaller footprint than the protobuf's built-in pretty printer.
   static std::string SyncEntityDebugString(const sync_pb::SyncEntity& entry);
 
-  // Pull the birthday from the dir and put it into the msg.
-  static void AddRequestBirthday(syncable::Directory* dir,
-                                 sync_pb::ClientToServerMessage* msg);
-
-  // Pull the bag of chips from the dir and put it into the msg.
-  static void AddBagOfChips(syncable::Directory* dir,
-                            sync_pb::ClientToServerMessage* msg);
-
   // Set the protocol version field in the outgoing message.
   static void SetProtocolVersion(sync_pb::ClientToServerMessage* msg);
 
@@ -105,18 +94,12 @@ class SyncerProtoUtil {
   // Helper functions for PostClientToServerMessage.
 
   // Analyzes error fields and store birthday in response message, compares
-  // store birthday with value in directory and returns corresponding
-  // SyncProtocolError. If needed updates store birthday in directory.
+  // store birthday with the one in the sync cycle and returns corresponding
+  // SyncProtocolError. If needed updates store birthday in the cycle context.
   // This function makes it easier to test error handling.
   static SyncProtocolError GetProtocolErrorFromResponse(
       const sync_pb::ClientToServerResponse& response,
-      syncable::Directory* dir);
-
-  // Verifies the store birthday, alerting/resetting as appropriate if there's a
-  // mismatch. Return false if the syncer should be stuck.
-  static bool VerifyResponseBirthday(
-      const sync_pb::ClientToServerResponse& response,
-      syncable::Directory* dir);
+      SyncCycleContext* context);
 
   // Returns true if sync is disabled by admin for a dasher account.
   static bool IsSyncDisabledByAdmin(

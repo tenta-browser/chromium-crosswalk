@@ -4,35 +4,61 @@
 
 #include "chrome/browser/ui/ash/session_util.h"
 
-#include "ash/content/shell_content_state.h"
-#include "ash/resources/grit/ash_resources.h"
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "build/build_config.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/aura/window.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia_operations.h"
 
-content::BrowserContext* GetActiveBrowserContext() {
+namespace {
+
+// Gets the browser context (profile) associated with |window|. Either the
+// profile of the user who owns the window or the profile of the desktop on
+// which the window is positioned (for teleported windows) is returned, based on
+// |presenting|.
+const content::BrowserContext* GetBrowserContextForWindow(
+    const aura::Window* window,
+    bool presenting) {
+  DCHECK(window);
+  auto* window_manager = MultiUserWindowManagerHelper::GetWindowManager();
+  // Speculative fix for multi-profile crash. crbug.com/661821
+  if (!window_manager)
+    return nullptr;
+
+  const AccountId& account_id =
+      presenting ? window_manager->GetUserPresentingWindow(window)
+                 : window_manager->GetWindowOwner(window);
+  return account_id.is_valid()
+             ? multi_user_util::GetProfileFromAccountId(account_id)
+             : nullptr;
+}
+
+}  // namespace
+
+const content::BrowserContext* GetActiveBrowserContext() {
   DCHECK(user_manager::UserManager::Get()->GetLoggedInUsers().size());
   return ProfileManager::GetActiveUserProfile();
 }
 
 bool CanShowWindowForUser(
-    aura::Window* window,
+    const aura::Window* window,
     const GetActiveBrowserContextCallback& get_context_callback) {
   DCHECK(window);
   if (user_manager::UserManager::Get()->GetLoggedInUsers().size() > 1u) {
-    content::BrowserContext* active_browser_context =
+    const content::BrowserContext* active_browser_context =
         get_context_callback.Run();
-    ash::ShellContentState* state = ash::ShellContentState::GetInstance();
-    content::BrowserContext* owner_browser_context =
-        state->GetBrowserContextForWindow(window);
-    content::BrowserContext* shown_browser_context =
-        state->GetUserPresentingBrowserContextForWindow(window);
+    const content::BrowserContext* owner_browser_context =
+        GetBrowserContextForWindow(window, false);
+    const content::BrowserContext* shown_browser_context =
+        GetBrowserContextForWindow(window, true);
 
     if (owner_browser_context && active_browser_context &&
         owner_browser_context != active_browser_context &&

@@ -16,9 +16,9 @@
 
 class PrefService;
 
-namespace cryptauth {
-class CryptAuthService;
-}  // namespace cryptauth
+namespace session_manager {
+class SessionManager;
+}  // namespace session_manager
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -31,12 +31,22 @@ class NetworkConnect;
 class NetworkConnectionHandler;
 class NetworkStateHandler;
 
+namespace device_sync {
+class DeviceSyncClient;
+}  // namespace device_sync
+
+namespace secure_channel {
+class SecureChannelClient;
+}  // namespace secure_channel
+
 namespace tether {
 
 class AsynchronousShutdownObjectContainer;
 class CrashRecoveryManager;
+class GmsCoreNotificationsStateTrackerImpl;
 class NotificationPresenter;
 class SynchronousShutdownObjectContainer;
+class TetherHostFetcher;
 
 // Initializes the Tether component.
 class TetherComponentImpl : public TetherComponent {
@@ -46,47 +56,64 @@ class TetherComponentImpl : public TetherComponent {
   class Factory {
    public:
     static std::unique_ptr<TetherComponent> NewInstance(
-        cryptauth::CryptAuthService* cryptauth_service,
+        device_sync::DeviceSyncClient* device_sync_client,
+        secure_channel::SecureChannelClient* secure_channel_client,
+        TetherHostFetcher* tether_host_fetcher,
         NotificationPresenter* notification_presenter,
+        GmsCoreNotificationsStateTrackerImpl*
+            gms_core_notifications_state_tracker,
         PrefService* pref_service,
         NetworkStateHandler* network_state_handler,
         ManagedNetworkConfigurationHandler*
             managed_network_configuration_handler,
         NetworkConnect* network_connect,
         NetworkConnectionHandler* network_connection_handler,
-        scoped_refptr<device::BluetoothAdapter> adapter);
+        scoped_refptr<device::BluetoothAdapter> adapter,
+        session_manager::SessionManager* session_manager);
 
     static void SetInstanceForTesting(Factory* factory);
 
    protected:
     virtual std::unique_ptr<TetherComponent> BuildInstance(
-        cryptauth::CryptAuthService* cryptauth_service,
+        device_sync::DeviceSyncClient* device_sync_client,
+        secure_channel::SecureChannelClient* secure_channel_client,
+        TetherHostFetcher* tether_host_fetcher,
         NotificationPresenter* notification_presenter,
+        GmsCoreNotificationsStateTrackerImpl*
+            gms_core_notifications_state_tracker,
         PrefService* pref_service,
         NetworkStateHandler* network_state_handler,
         ManagedNetworkConfigurationHandler*
             managed_network_configuration_handler,
         NetworkConnect* network_connect,
         NetworkConnectionHandler* network_connection_handler,
-        scoped_refptr<device::BluetoothAdapter> adapter);
+        scoped_refptr<device::BluetoothAdapter> adapter,
+        session_manager::SessionManager* session_manager);
 
    private:
     static Factory* factory_instance_;
   };
 
+  ~TetherComponentImpl() override;
+
+  // TetherComponent:
+  void RequestShutdown(const ShutdownReason& shutdown_reason) override;
+
+ protected:
   TetherComponentImpl(
-      cryptauth::CryptAuthService* cryptauth_service,
+      device_sync::DeviceSyncClient* device_sync_client,
+      secure_channel::SecureChannelClient* secure_channel_client,
+      TetherHostFetcher* tether_host_fetcher,
       NotificationPresenter* notification_presenter,
+      GmsCoreNotificationsStateTrackerImpl*
+          gms_core_notifications_state_tracker,
       PrefService* pref_service,
       NetworkStateHandler* network_state_handler,
       ManagedNetworkConfigurationHandler* managed_network_configuration_handler,
       NetworkConnect* network_connect,
       NetworkConnectionHandler* network_connection_handler,
-      scoped_refptr<device::BluetoothAdapter> adapter);
-  ~TetherComponentImpl() override;
-
-  // TetherComponent:
-  void RequestShutdown() override;
+      scoped_refptr<device::BluetoothAdapter> adapter,
+      session_manager::SessionManager* session_manager);
 
  private:
   void OnPreCrashStateRestored();
@@ -100,6 +127,7 @@ class TetherComponentImpl : public TetherComponent {
   std::unique_ptr<CrashRecoveryManager> crash_recovery_manager_;
 
   bool has_shutdown_been_requested_ = false;
+  ShutdownReason shutdown_reason_;
 
   base::WeakPtrFactory<TetherComponentImpl> weak_ptr_factory_;
 

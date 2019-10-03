@@ -15,9 +15,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
+#include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
-#include "chrome/browser/policy/test/local_policy_test_server.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_paths.h"
@@ -32,21 +31,23 @@
 #include "components/policy/proto/chrome_extension_policy.pb.h"
 #include "components/policy/proto/cloud_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/policy/test_support/local_policy_test_server.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "extensions/common/extension.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #else
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/net/system_network_context_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/primary_account_mutator.h"
 #endif
 
 using testing::InvokeWithoutArgs;
@@ -92,24 +93,28 @@ const char kTestPolicy2JSON[] = "{\"Another\":\"turn_it_off\"}";
 
 }  // namespace
 
-class ComponentCloudPolicyTest : public ExtensionBrowserTest {
+class ComponentCloudPolicyTest : public extensions::ExtensionBrowserTest {
  protected:
   ComponentCloudPolicyTest() {}
   ~ComponentCloudPolicyTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionBrowserTest::SetUpCommandLine(command_line);
+    extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
 #if defined(OS_CHROMEOS)
     // ExtensionBrowserTest sets the login users to a non-managed value;
     // replace it. This is the default username sent in policy blobs from the
     // testserver.
     command_line->AppendSwitchASCII(::chromeos::switches::kLoginUser,
                                     PolicyBuilder::kFakeUsername);
+    // Let policy code know that policy is not required to be cached at startup
+    // (it can be loaded asynchronously).
+    command_line->AppendSwitchASCII(
+        ::chromeos::switches::kProfileRequiresPolicy, "false");
 #endif
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    test_server_.RegisterClient(kDMToken, kDeviceID);
+    test_server_.RegisterClient(kDMToken, kDeviceID, {} /* state_keys */);
     EXPECT_TRUE(test_server_.UpdatePolicyData(
         dm_protocol::kChromeExtensionPolicyType, kTestExtension, kTestPolicy));
     ASSERT_TRUE(test_server_.Start());
@@ -118,11 +123,11 @@ class ComponentCloudPolicyTest : public ExtensionBrowserTest {
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     command_line->AppendSwitchASCII(switches::kDeviceManagementUrl, url);
 
-    ExtensionBrowserTest::SetUpInProcessBrowserTestFixture();
+    extensions::ExtensionBrowserTest::SetUpInProcessBrowserTestFixture();
   }
 
   void SetUpOnMainThread() override {
-    ExtensionBrowserTest::SetUpOnMainThread();
+    extensions::ExtensionBrowserTest::SetUpOnMainThread();
     ASSERT_TRUE(PolicyServiceIsEmpty(g_browser_process->policy_service()))
         << "Pre-existing policies in this machine will make this test fail.";
 
@@ -143,18 +148,19 @@ class ComponentCloudPolicyTest : public ExtensionBrowserTest {
 
   void TearDownOnMainThread() override {
     event_listener_.reset();
-    ExtensionBrowserTest::TearDownOnMainThread();
+    extensions::ExtensionBrowserTest::TearDownOnMainThread();
   }
 
   scoped_refptr<const extensions::Extension> LoadExtension(
       const base::FilePath::CharType* path) {
     base::FilePath full_path;
-    if (!PathService::Get(chrome::DIR_TEST_DATA, &full_path)) {
+    if (!base::PathService::Get(chrome::DIR_TEST_DATA, &full_path)) {
       ADD_FAILURE();
       return NULL;
     }
     scoped_refptr<const extensions::Extension> extension(
-        ExtensionBrowserTest::LoadExtension(full_path.Append(path)));
+        extensions::ExtensionBrowserTest::LoadExtension(
+            full_path.Append(path)));
     if (!extension.get()) {
       ADD_FAILURE();
       return NULL;
@@ -169,28 +175,26 @@ class ComponentCloudPolicyTest : public ExtensionBrowserTest {
 
 #if defined(OS_CHROMEOS)
     UserCloudPolicyManagerChromeOS* policy_manager =
-        UserPolicyManagerFactoryChromeOS::GetCloudPolicyManagerForProfile(
-            browser()->profile());
+        browser()->profile()->GetUserCloudPolicyManagerChromeOS();
     ASSERT_TRUE(policy_manager);
 #else
     // Mock a signed-in user. This is used by the UserCloudPolicyStore to pass
-    // the username to the UserCloudPolicyValidator.
-    SigninManager* signin_manager =
-        SigninManagerFactory::GetForProfile(browser()->profile());
-    ASSERT_TRUE(signin_manager);
-    signin_manager->SetAuthenticatedAccountInfo("12345",
-                                                PolicyBuilder::kFakeUsername);
+    // the account id to the UserCloudPolicyValidator.
+    signin::SetPrimaryAccount(
+        IdentityManagerFactory::GetForProfile(browser()->profile()),
+        PolicyBuilder::kFakeUsername);
 
     UserCloudPolicyManager* policy_manager =
-        UserCloudPolicyManagerFactory::GetForBrowserContext(
-            browser()->profile());
+        browser()->profile()->GetUserCloudPolicyManager();
     ASSERT_TRUE(policy_manager);
-    policy_manager->SetSigninUsername(PolicyBuilder::kFakeUsername);
-    policy_manager->Connect(g_browser_process->local_state(),
-                            g_browser_process->system_request_context(),
-                            UserCloudPolicyManager::CreateCloudPolicyClient(
-                                connector->device_management_service(),
-                                g_browser_process->system_request_context()));
+    policy_manager->SetSigninAccountId(
+        PolicyBuilder::GetFakeAccountIdForTesting());
+    policy_manager->Connect(
+        g_browser_process->local_state(),
+        UserCloudPolicyManager::CreateCloudPolicyClient(
+            connector->device_management_service(),
+            g_browser_process->shared_url_loader_factory()));
+
 #endif  // defined(OS_CHROMEOS)
 
     // Register the cloud policy client.
@@ -201,7 +205,9 @@ class ComponentCloudPolicyTest : public ExtensionBrowserTest {
     EXPECT_CALL(observer, OnRegistrationStateChanged(_))
         .WillOnce(InvokeWithoutArgs(&run_loop, &base::RunLoop::Quit));
     client_->AddObserver(&observer);
-    client_->SetupRegistration(kDMToken, kDeviceID);
+    client_->SetupRegistration(
+        kDMToken, kDeviceID,
+        std::vector<std::string>() /* user_affiliation_ids */);
     run_loop.Run();
     Mock::VerifyAndClearExpectations(&observer);
     client_->RemoveObserver(&observer);
@@ -209,18 +215,19 @@ class ComponentCloudPolicyTest : public ExtensionBrowserTest {
 
 #if !defined(OS_CHROMEOS)
   void SignOut() {
-    SigninManager* signin_manager =
-        SigninManagerFactory::GetForProfile(browser()->profile());
-    ASSERT_TRUE(signin_manager);
-    signin_manager->SignOut(signin_metrics::SIGNOUT_TEST,
-                            signin_metrics::SignoutDelete::IGNORE_METRIC);
+    auto* primary_account_mutator =
+        IdentityManagerFactory::GetForProfile(browser()->profile())
+            ->GetPrimaryAccountMutator();
+    primary_account_mutator->ClearPrimaryAccount(
+        signin::PrimaryAccountMutator::ClearAccountsAction::kDefault,
+        signin_metrics::SIGNOUT_TEST,
+        signin_metrics::SignoutDelete::IGNORE_METRIC);
   }
 #endif
 
   void RefreshPolicies() {
     ProfilePolicyConnector* profile_connector =
-        ProfilePolicyConnectorFactory::GetForBrowserContext(
-            browser()->profile());
+        browser()->profile()->GetProfilePolicyConnector();
     PolicyService* policy_service = profile_connector->policy_service();
     base::RunLoop run_loop;
     policy_service->RefreshPolicies(run_loop.QuitClosure());
@@ -267,7 +274,13 @@ IN_PROC_BROWSER_TEST_F(ComponentCloudPolicyTest, UpdateExtensionPolicy) {
   EXPECT_TRUE(policy_listener2.WaitUntilSatisfied());
 }
 
-IN_PROC_BROWSER_TEST_F(ComponentCloudPolicyTest, InstallNewExtension) {
+// Flaky on Mac. http://crbug.com/816647
+#if defined(OS_MACOSX)
+#define MAYBE_InstallNewExtension DISABLED_InstallNewExtension
+#else
+#define MAYBE_InstallNewExtension InstallNewExtension
+#endif
+IN_PROC_BROWSER_TEST_F(ComponentCloudPolicyTest, MAYBE_InstallNewExtension) {
   event_listener_->Reply("idle");
   event_listener_.reset();
 

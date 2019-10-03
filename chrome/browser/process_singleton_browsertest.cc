@@ -185,7 +185,7 @@ class ProcessSingletonTest : public InProcessBrowserTest {
     static const int kNbTries = 10;
     int num_tries = 0;
     base::FilePath program;
-    ASSERT_TRUE(PathService::Get(base::FILE_EXE, &program));
+    ASSERT_TRUE(base::PathService::Get(base::FILE_EXE, &program));
     base::FilePath::StringType exe_name = program.BaseName().value();
     while (base::GetProcessCount(exe_name, &process_tree_filter) > 0 &&
            num_tries++ < kNbTries) {
@@ -257,8 +257,7 @@ IN_PROC_BROWSER_TEST_F(ProcessSingletonTest, MAYBE_StartupRaceCondition) {
       chrome_starters_[i]->Reset();
 
       ASSERT_TRUE(chrome_starter_threads_[i]->IsRunning());
-      ASSERT_NE(static_cast<base::MessageLoop*>(NULL),
-                chrome_starter_threads_[i]->message_loop());
+      ASSERT_TRUE(chrome_starter_threads_[i]->task_runner());
 
       chrome_starter_threads_[i]->task_runner()->PostTask(
           FROM_HERE,

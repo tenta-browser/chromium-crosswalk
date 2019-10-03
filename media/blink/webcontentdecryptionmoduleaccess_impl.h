@@ -5,14 +5,16 @@
 #ifndef MEDIA_BLINK_WEBCONTENTDECRYPTIONMODULEACCESS_IMPL_H_
 #define MEDIA_BLINK_WEBCONTENTDECRYPTIONMODULEACCESS_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/cdm_config.h"
-#include "third_party/WebKit/public/platform/WebContentDecryptionModuleAccess.h"
-#include "third_party/WebKit/public/platform/WebContentDecryptionModuleResult.h"
-#include "third_party/WebKit/public/platform/WebMediaKeySystemConfiguration.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_content_decryption_module_access.h"
+#include "third_party/blink/public/platform/web_content_decryption_module_result.h"
+#include "third_party/blink/public/platform/web_media_key_system_configuration.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 namespace media {
 
@@ -21,7 +23,17 @@ class WebEncryptedMediaClientImpl;
 class WebContentDecryptionModuleAccessImpl
     : public blink::WebContentDecryptionModuleAccess {
  public:
-  static WebContentDecryptionModuleAccessImpl* Create(
+  // Allow typecasting from blink type as this is the only implementation.
+  static WebContentDecryptionModuleAccessImpl* From(
+      blink::WebContentDecryptionModuleAccess* cdm_access);
+
+  static std::unique_ptr<WebContentDecryptionModuleAccessImpl> Create(
+      const blink::WebString& key_system,
+      const blink::WebSecurityOrigin& security_origin,
+      const blink::WebMediaKeySystemConfiguration& configuration,
+      const CdmConfig& cdm_config,
+      const base::WeakPtr<WebEncryptedMediaClientImpl>& client);
+  WebContentDecryptionModuleAccessImpl(
       const blink::WebString& key_system,
       const blink::WebSecurityOrigin& security_origin,
       const blink::WebMediaKeySystemConfiguration& configuration,
@@ -30,18 +42,14 @@ class WebContentDecryptionModuleAccessImpl
   ~WebContentDecryptionModuleAccessImpl() override;
 
   // blink::WebContentDecryptionModuleAccess interface.
+  blink::WebString GetKeySystem() override;
   blink::WebMediaKeySystemConfiguration GetConfiguration() override;
   void CreateContentDecryptionModule(
-      blink::WebContentDecryptionModuleResult result) override;
+      blink::WebContentDecryptionModuleResult result,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
+  bool UseHardwareSecureCodecs() const override;
 
  private:
-  WebContentDecryptionModuleAccessImpl(
-      const blink::WebString& key_system,
-      const blink::WebSecurityOrigin& security_origin,
-      const blink::WebMediaKeySystemConfiguration& configuration,
-      const CdmConfig& cdm_config,
-      const base::WeakPtr<WebEncryptedMediaClientImpl>& client);
-
   const blink::WebString key_system_;
   const blink::WebSecurityOrigin security_origin_;
   const blink::WebMediaKeySystemConfiguration configuration_;

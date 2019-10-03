@@ -7,10 +7,9 @@ class TestPrivacyPageBrowserProxy extends TestBrowserProxy {
   constructor() {
     super([
       'getMetricsReporting',
-      'getSafeBrowsingExtendedReporting',
       'setMetricsReportingEnabled',
-      'setSafeBrowsingExtendedReportingEnabled',
       'showManageSSLCertificates',
+      'setBlockAutoplayEnabled',
     ]);
 
     /** @type {!MetricsReporting} */
@@ -37,13 +36,7 @@ class TestPrivacyPageBrowserProxy extends TestBrowserProxy {
   }
 
   /** @override */
-  getSafeBrowsingExtendedReporting() {
-    this.methodCalled('getSafeBrowsingExtendedReporting');
-    return Promise.resolve(true);
-  }
-
-  /** @override */
-  setSafeBrowsingExtendedReportingEnabled(enabled) {
-    this.methodCalled('setSafeBrowsingExtendedReportingEnabled', enabled);
+  setBlockAutoplayEnabled(enabled) {
+    this.methodCalled('setBlockAutoplayEnabled', enabled);
   }
 }

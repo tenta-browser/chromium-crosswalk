@@ -6,23 +6,24 @@
 
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/dom_distiller/core/article_distillation_update.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/distilled_content_store.h"
 #include "components/dom_distiller/core/fake_distiller.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using testing::Return;
 using testing::_;
+using testing::Return;
 
 namespace dom_distiller {
 namespace test {
 
 class FakeViewRequestDelegate : public ViewRequestDelegate {
  public:
-  virtual ~FakeViewRequestDelegate() {}
+  ~FakeViewRequestDelegate() override {}
   MOCK_METHOD1(OnArticleReady,
                void(const DistilledArticleProto* article_proto));
   MOCK_METHOD1(OnArticleUpdated,
@@ -61,7 +62,6 @@ class MockSaveCallback {
 class DomDistillerTaskTrackerTest : public testing::Test {
  public:
   void SetUp() override {
-    message_loop_.reset(new base::MessageLoop());
     entry_id_ = "id0";
     page_0_url_ = GURL("http://www.example.com/1");
     page_1_url_ = GURL("http://www.example.com/2");
@@ -78,7 +78,7 @@ class DomDistillerTaskTrackerTest : public testing::Test {
   }
 
  protected:
-  std::unique_ptr<base::MessageLoop> message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   std::string entry_id_;
   GURL page_0_url_;
   GURL page_1_url_;
@@ -235,8 +235,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcher) {
   content_store.InjectContent(entry_with_blob, stored_distilled_article);
   TestCancelCallback cancel_callback;
 
-  TaskTracker task_tracker(
-      entry_with_blob, cancel_callback.GetCallback(), &content_store);
+  TaskTracker task_tracker(entry_with_blob, cancel_callback.GetCallback(),
+                           &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
   std::unique_ptr<ViewerHandle> handle(
@@ -269,8 +269,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherFinishesFirst) {
   InMemoryContentStore content_store(kDefaultMaxNumCachedEntries);
   content_store.InjectContent(entry_with_blob, stored_distilled_article);
   TestCancelCallback cancel_callback;
-  TaskTracker task_tracker(
-      entry_with_blob, cancel_callback.GetCallback(), &content_store);
+  TaskTracker task_tracker(entry_with_blob, cancel_callback.GetCallback(),
+                           &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
   std::unique_ptr<ViewerHandle> handle(
@@ -311,8 +311,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestBlobFetcherWithoutBlob) {
       new DistilledArticleProto(CreateDistilledArticleForEntry(entry)));
 
   TestCancelCallback cancel_callback;
-  TaskTracker task_tracker(
-      GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
+  TaskTracker task_tracker(GetDefaultEntry(), cancel_callback.GetCallback(),
+                           &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
   std::unique_ptr<ViewerHandle> handle(
@@ -345,8 +345,8 @@ TEST_F(DomDistillerTaskTrackerTest, TestDistillerFailsFirst) {
   MockContentStore content_store;
 
   TestCancelCallback cancel_callback;
-  TaskTracker task_tracker(
-      GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
+  TaskTracker task_tracker(GetDefaultEntry(), cancel_callback.GetCallback(),
+                           &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
   std::unique_ptr<ViewerHandle> handle(
@@ -386,8 +386,8 @@ TEST_F(DomDistillerTaskTrackerTest, ContentIsSaved) {
 
   MockContentStore content_store;
   TestCancelCallback cancel_callback;
-  TaskTracker task_tracker(
-      GetDefaultEntry(), cancel_callback.GetCallback(), &content_store);
+  TaskTracker task_tracker(GetDefaultEntry(), cancel_callback.GetCallback(),
+                           &content_store);
 
   FakeViewRequestDelegate viewer_delegate;
   std::unique_ptr<ViewerHandle> handle(

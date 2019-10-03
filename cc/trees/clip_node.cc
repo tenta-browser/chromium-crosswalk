@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ptr_util.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "cc/trees/clip_node.h"
+
 #include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
-#include "cc/trees/clip_node.h"
 #include "cc/trees/property_tree.h"
+
+#include "base/trace_event/traced_value.h"
 
 namespace cc {
 
@@ -22,7 +23,7 @@ ClipNode::ClipNode(const ClipNode& other) = default;
 
 ClipNode& ClipNode::operator=(const ClipNode& other) = default;
 
-ClipNode::~ClipNode() {}
+ClipNode::~ClipNode() = default;
 
 bool ClipNode::operator==(const ClipNode& other) const {
   return id == other.id && parent_id == other.parent_id &&

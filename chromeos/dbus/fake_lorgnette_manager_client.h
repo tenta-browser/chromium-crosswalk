@@ -16,7 +16,7 @@ namespace chromeos {
 
 // Lorgnette LorgnetteManagerClient implementation used on Linux desktop,
 // which does nothing.
-class CHROMEOS_EXPORT FakeLorgnetteManagerClient
+class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeLorgnetteManagerClient
     : public LorgnetteManagerClient {
  public:
   FakeLorgnetteManagerClient();
@@ -24,21 +24,20 @@ class CHROMEOS_EXPORT FakeLorgnetteManagerClient
 
   void Init(dbus::Bus* bus) override;
 
-  void ListScanners(const ListScannersCallback& callback) override;
-  void ScanImageToString(
-      std::string device_name,
-      const ScanProperties& properties,
-      const ScanImageToStringCallback& callback) override;
+  void ListScanners(DBusMethodCallback<ScannerTable> callback) override;
+  void ScanImageToString(std::string device_name,
+                         const ScanProperties& properties,
+                         DBusMethodCallback<std::string> callback) override;
 
   // Adds a fake scanner table entry, which will be returned by ListScanners().
-  void AddScannerTableEntry(const std::string device_name,
+  void AddScannerTableEntry(const std::string& device_name,
                             const ScannerTableEntry& entry);
 
   // Adds a fake scan data, which will be returned by ScanImageToString(),
   // if |device_name| and |properties| are matched.
   void AddScanData(const std::string& device_name,
                    const ScanProperties& properties,
-                   const std::string data);
+                   const std::string& data);
 
  private:
   ScannerTable scanner_table_;

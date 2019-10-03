@@ -15,10 +15,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chromeos/printing/printing_constants.h"
@@ -47,7 +47,8 @@ void MaybeCreateCache(const base::FilePath& base_dir) {
 // allows I/O.
 PpdCache::FindResult FindImpl(const base::FilePath& cache_dir,
                               const std::string& key) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   PpdCache::FindResult result;
   result.success = false;
@@ -87,12 +88,14 @@ PpdCache::FindResult FindImpl(const base::FilePath& cache_dir,
 }
 
 // Store implementation, blocks on file access.  Must be run on a thread that
-// allows I/O.
+// allows I/O.  If |age| is non-zero, explicitly set the age of the resulting
+// file to be |age| before Now.
 void StoreImpl(const base::FilePath& cache_dir,
                const std::string& key,
-               const std::string& contents) {
-  base::AssertBlockingAllowed();
-
+               const std::string& contents,
+               base::TimeDelta age) {
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   MaybeCreateCache(cache_dir);
   if (contents.size() > kMaxPpdSizeBytes) {
     LOG(ERROR) << "Ignoring attempt to cache large object";
@@ -111,6 +114,12 @@ void StoreImpl(const base::FilePath& cache_dir,
       if (!base::DeleteFile(path, false)) {
         LOG(ERROR) << "Failed to cleanup failed creation.";
       }
+    } else {
+      // Successfully wrote the file, adjust the age if requested.
+      if (!age.is_zero()) {
+        base::Time mod_time = base::Time::Now() - age;
+        file.SetTimes(mod_time, mod_time);
+      }
     }
   }
 }
@@ -122,14 +131,13 @@ void StoreImpl(const base::FilePath& cache_dir,
 // callback is run.
 class PpdCacheImpl : public PpdCache {
  public:
-  explicit PpdCacheImpl(const base::FilePath& cache_base_dir)
+  explicit PpdCacheImpl(
+      const base::FilePath& cache_base_dir,
+      scoped_refptr<base::SequencedTaskRunner> fetch_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> store_task_runner)
       : cache_base_dir_(cache_base_dir),
-        fetch_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-            {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
-             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
-        store_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-            {base::TaskPriority::BACKGROUND, base::MayBlock(),
-             base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {}
+        fetch_task_runner_(std::move(fetch_task_runner)),
+        store_task_runner_(std::move(store_task_runner)) {}
 
   // Public API functions.
   void Find(const std::string& key, FindCallback cb) override {
@@ -140,11 +148,18 @@ class PpdCacheImpl : public PpdCache {
 
   // Store the given contents at the given key.  If cb is non-null, it will
   // be invoked on completion.
-  void Store(const std::string& key,
-             const std::string& contents,
-             const base::Closure& cb) override {
-    store_task_runner_->PostTaskAndReply(
-        FROM_HERE, base::Bind(&StoreImpl, cache_base_dir_, key, contents), cb);
+  void Store(const std::string& key, const std::string& contents) override {
+    store_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&StoreImpl, cache_base_dir_, key, contents,
+                                  base::TimeDelta()));
+  }
+
+  void StoreForTesting(const std::string& key,
+                       const std::string& contents,
+                       base::TimeDelta age) override {
+    store_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&StoreImpl, cache_base_dir_, key, contents, age));
   }
 
  private:
@@ -161,7 +176,21 @@ class PpdCacheImpl : public PpdCache {
 
 // static
 scoped_refptr<PpdCache> PpdCache::Create(const base::FilePath& cache_base_dir) {
-  return scoped_refptr<PpdCache>(new PpdCacheImpl(cache_base_dir));
+  return scoped_refptr<PpdCache>(
+      new PpdCacheImpl(cache_base_dir,
+                       base::CreateSequencedTaskRunnerWithTraits(
+                           {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
+                            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}),
+                       base::CreateSequencedTaskRunnerWithTraits(
+                           {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
+                            base::TaskShutdownBehavior::BLOCK_SHUTDOWN})));
+}
+
+scoped_refptr<PpdCache> PpdCache::CreateForTesting(
+    const base::FilePath& cache_base_dir,
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner) {
+  return scoped_refptr<PpdCache>(
+      new PpdCacheImpl(cache_base_dir, io_task_runner, io_task_runner));
 }
 
 }  // namespace chromeos

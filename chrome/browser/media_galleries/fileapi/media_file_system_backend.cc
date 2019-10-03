@@ -16,7 +16,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/lazy_task_runner.h"
+#include "base/task/lazy_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -27,6 +28,7 @@
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_histograms.h"
 #include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -58,7 +60,8 @@ const char kMediaGalleryMountPrefix[] = "media_galleries-";
 
 base::LazySequencedTaskRunner g_media_task_runner =
     LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
-        base::TaskTraits(base::MayBlock(),
+        base::TaskTraits(base::ThreadPool(),
+                         base::MayBlock(),
                          base::TaskPriority::USER_VISIBLE,
                          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN));
 
@@ -69,8 +72,8 @@ void OnPreferencesInit(
     base::OnceCallback<void(base::File::Error result)> callback) {
   content::WebContents* contents = web_contents_getter.Run();
   if (!contents) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(std::move(callback), base::File::FILE_ERROR_FAILED));
     return;
   }
@@ -91,7 +94,7 @@ void AttemptAutoMountOnUIThread(
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
-    ExtensionService* extension_service =
+    extensions::ExtensionService* extension_service =
         extensions::ExtensionSystem::Get(profile)->extension_service();
     const extensions::Extension* extension =
         extension_service->GetExtensionById(storage_domain,
@@ -118,9 +121,15 @@ void AttemptAutoMountOnUIThread(
     }
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(std::move(callback), base::File::FILE_ERROR_NOT_FOUND));
+}
+
+content::WebContents* GetWebContentsFromFrameTreeNodeID(
+    int frame_tree_node_id) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
 }
 
 }  // namespace
@@ -128,9 +137,10 @@ void AttemptAutoMountOnUIThread(
 MediaFileSystemBackend::MediaFileSystemBackend(
     const base::FilePath& profile_path)
     : profile_path_(profile_path),
-      media_path_filter_(new MediaPathFilter),
-      media_copy_or_move_file_validator_factory_(new MediaFileValidatorFactory),
-      native_media_file_util_(new NativeMediaFileUtil(media_path_filter_.get()))
+      media_copy_or_move_file_validator_factory_(
+          std::make_unique<MediaFileValidatorFactory>()),
+      native_media_file_util_(
+          std::make_unique<NativeMediaFileUtil>(g_media_task_runner.Get()))
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
       ,
       device_media_async_file_util_(
@@ -167,20 +177,19 @@ std::string MediaFileSystemBackend::ConstructMountName(
   name.append(extension_id);
   name.append("-");
   if (pref_id != kInvalidMediaGalleryPrefId)
-    name.append(base::Uint64ToString(pref_id));
+    name.append(base::NumberToString(pref_id));
   base::ReplaceChars(name, " /", "_", &name);
   return name;
 }
 
 // static
 bool MediaFileSystemBackend::AttemptAutoMountForURLRequest(
-    const net::URLRequest* url_request,
+    const storage::FileSystemRequestInfo& request_info,
     const storage::FileSystemURL& filesystem_url,
-    const std::string& storage_domain,
     base::OnceCallback<void(base::File::Error result)> callback) {
-  if (storage_domain.empty() ||
+  if (request_info.storage_domain.empty() ||
       filesystem_url.type() != storage::kFileSystemTypeExternal ||
-      storage_domain != filesystem_url.origin().host()) {
+      request_info.storage_domain != filesystem_url.origin().host()) {
     return false;
   }
 
@@ -196,16 +205,24 @@ bool MediaFileSystemBackend::AttemptAutoMountForURLRequest(
                         base::CompareCase::SENSITIVE))
     return false;
 
-  const content::ResourceRequestInfo* request_info =
-      content::ResourceRequestInfo::ForRequest(url_request);
-  if (!request_info)
-    return false;
+  content::ResourceRequestInfo::WebContentsGetter web_contents_getter;
+  if (request_info.content_id) {
+    web_contents_getter = base::BindRepeating(
+        &GetWebContentsFromFrameTreeNodeID, request_info.content_id);
+  } else {
+    content::ResourceRequestInfo* resource_request_info =
+        content::ResourceRequestInfo::ForRequest(request_info.request);
+    if (!resource_request_info)
+      return false;
+    web_contents_getter =
+        resource_request_info->GetWebContentsGetterForRequest();
+  }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&AttemptAutoMountOnUIThread,
-                     request_info->GetWebContentsGetterForRequest(),
-                     storage_domain, mount_point, std::move(callback)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&AttemptAutoMountOnUIThread, web_contents_getter,
+                     request_info.storage_domain, mount_point,
+                     std::move(callback)));
   return true;
 }
 
@@ -318,10 +335,9 @@ MediaFileSystemBackend::CreateFileStreamReader(
   }
 #endif
 
-  return std::unique_ptr<storage::FileStreamReader>(
-      storage::FileStreamReader::CreateForLocalFile(
-          context->default_file_task_runner(), url.path(), offset,
-          expected_modification_time));
+  return storage::FileStreamReader::CreateForLocalFile(
+      context->default_file_task_runner(), url.path(), offset,
+      expected_modification_time);
 }
 
 std::unique_ptr<storage::FileStreamWriter>
@@ -329,10 +345,9 @@ MediaFileSystemBackend::CreateFileStreamWriter(
     const FileSystemURL& url,
     int64_t offset,
     FileSystemContext* context) const {
-  return std::unique_ptr<storage::FileStreamWriter>(
-      storage::FileStreamWriter::CreateForLocalFile(
-          context->default_file_task_runner(), url.path(), offset,
-          storage::FileStreamWriter::OPEN_EXISTING_FILE));
+  return storage::FileStreamWriter::CreateForLocalFile(
+      context->default_file_task_runner(), url.path(), offset,
+      storage::FileStreamWriter::OPEN_EXISTING_FILE);
 }
 
 storage::FileSystemQuotaUtil* MediaFileSystemBackend::GetQuotaUtil() {

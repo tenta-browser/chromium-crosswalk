@@ -15,7 +15,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/certificate_viewer.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/guest_view/browser/guest_view_base.h"
@@ -26,6 +26,7 @@
 #include "ui/base/models/table_model.h"
 #include "ui/base/models/table_model_observer.h"
 #include "ui/views/controls/button/md_text_button.h"
+#include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/table/table_view.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
@@ -200,21 +201,22 @@ void CertificateSelector::Show() {
 
 void CertificateSelector::InitWithText(
     std::unique_ptr<views::View> text_label) {
-  views::GridLayout* const layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* const layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
 
   const int kColumnSetId = 0;
   views::ColumnSet* const column_set = layout->AddColumnSet(kColumnSetId);
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1,
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1.0,
                         views::GridLayout::USE_PREF, 0, 0);
 
-  layout->StartRow(0, kColumnSetId);
-  layout->AddView(text_label.release());
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId);
+  layout->AddView(std::move(text_label));
 
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const int vertical_spacing = provider->GetDistanceMetric(
       views::DISTANCE_RELATED_CONTROL_VERTICAL);
 
-  layout->AddPaddingRow(0, vertical_spacing);
+  layout->AddPaddingRow(views::GridLayout::kFixedSize, vertical_spacing);
 
   std::vector<ui::TableColumn> columns;
   columns.push_back(ui::TableColumn(IDS_CERT_SELECTOR_SUBJECT_COLUMN,
@@ -227,15 +229,16 @@ void CertificateSelector::InitWithText(
   }
   columns.push_back(ui::TableColumn(IDS_CERT_SELECTOR_SERIAL_COLUMN,
                                     ui::TableColumn::LEFT, -1, 0.2f));
-  table_ = new views::TableView(model_.get(), columns, views::TEXT_ONLY,
-                                true /* single_selection */);
-  table_->set_observer(this);
-  layout->StartRow(1, kColumnSetId);
-  layout->AddView(table_->CreateParentIfNecessary(), 1, 1,
-                  views::GridLayout::FILL, views::GridLayout::FILL,
+  auto table = std::make_unique<views::TableView>(
+      model_.get(), columns, views::TEXT_ONLY, true /* single_selection */);
+  table_ = table.get();
+  table->set_observer(this);
+  layout->StartRow(1.0, kColumnSetId);
+  layout->AddView(views::TableView::CreateScrollViewWithTable(std::move(table)),
+                  1, 1, views::GridLayout::FILL, views::GridLayout::FILL,
                   kTableViewWidth, kTableViewHeight);
 
-  layout->AddPaddingRow(0, vertical_spacing);
+  layout->AddPaddingRow(views::GridLayout::kFixedSize, vertical_spacing);
 }
 
 ui::TableModel* CertificateSelector::table_model_for_testing() const {
@@ -277,11 +280,12 @@ views::View* CertificateSelector::GetInitiallyFocusedView() {
   return table_;
 }
 
-views::View* CertificateSelector::CreateExtraView() {
+std::unique_ptr<views::View> CertificateSelector::CreateExtraView() {
   DCHECK(!view_cert_button_);
-  view_cert_button_ = views::MdTextButton::CreateSecondaryUiButton(
+  auto view_cert_button = views::MdTextButton::CreateSecondaryUiButton(
       this, l10n_util::GetStringUTF16(IDS_PAGE_INFO_CERT_INFO_BUTTON));
-  return view_cert_button_;
+  view_cert_button_ = view_cert_button.get();
+  return view_cert_button;
 }
 
 ui::ModalType CertificateSelector::GetModalType() const {

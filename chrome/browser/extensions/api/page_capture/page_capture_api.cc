@@ -10,22 +10,23 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/sessions/session_tab_helper.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
-#include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/mhtml_generation_params.h"
 #include "extensions/common/extension_messages.h"
+#include "extensions/common/permissions/permissions_data.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/extensions/public_session_permission_helper.h"
@@ -45,10 +46,11 @@ const char kFileTooBigError[] = "The MHTML file generated is too big.";
 const char kMHTMLGenerationFailedError[] = "Failed to generate MHTML.";
 const char kTemporaryFileError[] = "Failed to create a temporary file.";
 const char kTabClosedError[] = "Cannot find the tab for this request.";
+const char kPageCaptureNotAllowed[] =
+    "Don't have permissions required to capture this page.";
 #if defined(OS_CHROMEOS)
 const char kUserDenied[] = "User denied request.";
 #endif
-
 constexpr base::TaskTraits kCreateTemporaryFileTaskTraits = {
     // Requires IO.
     base::MayBlock(),
@@ -72,9 +74,9 @@ PageCaptureSaveAsMHTMLFunction::PageCaptureSaveAsMHTMLFunction() {
 
 PageCaptureSaveAsMHTMLFunction::~PageCaptureSaveAsMHTMLFunction() {
   if (mhtml_file_.get()) {
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&ClearFileReferenceOnIOThread,
-                                           base::Passed(&mhtml_file_)));
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
+        base::BindOnce(&ClearFileReferenceOnIOThread, std::move(mhtml_file_)));
   }
 }
 
@@ -95,7 +97,7 @@ bool PageCaptureSaveAsMHTMLFunction::RunAsync() {
   // time, we show the user a dialog where they can choose whether to allow the
   // extension access to the API.
 #if defined(OS_CHROMEOS)
-  if (profiles::IsPublicSession()) {
+  if (profiles::ArePublicSessionRestrictionsEnabled()) {
     WebContents* web_contents = GetWebContents();
     if (!web_contents) {
       ReturnFailure(kTabClosedError);
@@ -113,11 +115,42 @@ bool PageCaptureSaveAsMHTMLFunction::RunAsync() {
   }
 #endif
 
+  if (!CanCaptureCurrentPage()) {
+    return false;
+  }
   base::PostTaskWithTraits(
       FROM_HERE, kCreateTemporaryFileTaskTraits,
       base::BindOnce(&PageCaptureSaveAsMHTMLFunction::CreateTemporaryFile,
                      this));
   return true;
+}
+
+bool PageCaptureSaveAsMHTMLFunction::CanCaptureCurrentPage() {
+  WebContents* web_contents = GetWebContents();
+  if (!web_contents) {
+    error_ = kTabClosedError;
+    return false;
+  }
+  const GURL& url = web_contents->GetLastCommittedURL();
+  const GURL origin_url = url::Origin::Create(url).GetURL();
+  bool can_capture_page = false;
+  if (origin_url.SchemeIs(url::kFileScheme)) {
+    // We special case file schemes, since we don't check for URL permissions
+    // in CanCaptureVisiblePage() with the pageCapture API. This ensures
+    // file:// URLs are only capturable with the proper permission.
+    can_capture_page = extensions::util::AllowFileAccess(
+        extension()->id(), web_contents->GetBrowserContext());
+  } else {
+    std::string error;
+    can_capture_page = extension()->permissions_data()->CanCaptureVisiblePage(
+        url, SessionTabHelper::IdForTab(web_contents).id(), &error,
+        extensions::CaptureRequirement::kPageCapture);
+  }
+
+  if (!can_capture_page) {
+    error_ = kPageCaptureNotAllowed;
+  }
+  return can_capture_page;
 }
 
 bool PageCaptureSaveAsMHTMLFunction::OnMessageReceived(
@@ -157,10 +190,9 @@ void PageCaptureSaveAsMHTMLFunction::ResolvePermissionRequest(
 #endif
 
 void PageCaptureSaveAsMHTMLFunction::CreateTemporaryFile() {
-  base::AssertBlockingAllowed();
   bool success = base::CreateTemporaryFile(&mhtml_path_);
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&PageCaptureSaveAsMHTMLFunction::TemporaryFileCreatedOnIO,
                      this, success));
 }
@@ -185,8 +217,8 @@ void PageCaptureSaveAsMHTMLFunction::TemporaryFileCreatedOnIO(bool success) {
              base::TaskShutdownBehavior::BLOCK_SHUTDOWN})
             .get());
   }
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&PageCaptureSaveAsMHTMLFunction::TemporaryFileCreatedOnUI,
                      this, success));
 }
@@ -209,7 +241,7 @@ void PageCaptureSaveAsMHTMLFunction::TemporaryFileCreatedOnUI(bool success) {
 
   web_contents->GenerateMHTML(
       content::MHTMLGenerationParams(mhtml_path_),
-      base::Bind(&PageCaptureSaveAsMHTMLFunction::MHTMLGenerated, this));
+      base::BindOnce(&PageCaptureSaveAsMHTMLFunction::MHTMLGenerated, this));
 }
 
 void PageCaptureSaveAsMHTMLFunction::MHTMLGenerated(int64_t mhtml_file_size) {
@@ -245,9 +277,8 @@ void PageCaptureSaveAsMHTMLFunction::ReturnSuccess(int64_t file_size) {
     return;
   }
 
-  int child_id = render_frame_host()->GetProcess()->GetID();
-  ChildProcessSecurityPolicy::GetInstance()->GrantReadFile(
-      child_id, mhtml_path_);
+  ChildProcessSecurityPolicy::GetInstance()->GrantReadFile(source_process_id(),
+                                                           mhtml_path_);
 
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("mhtmlFilePath", mhtml_path_.value());
@@ -265,13 +296,9 @@ WebContents* PageCaptureSaveAsMHTMLFunction::GetWebContents() {
   Browser* browser = NULL;
   content::WebContents* web_contents = NULL;
 
-  if (!ExtensionTabUtil::GetTabById(params_->details.tab_id,
-                                    GetProfile(),
-                                    include_incognito(),
-                                    &browser,
-                                    NULL,
-                                    &web_contents,
-                                    NULL)) {
+  if (!ExtensionTabUtil::GetTabById(params_->details.tab_id, GetProfile(),
+                                    include_incognito_information(), &browser,
+                                    NULL, &web_contents, NULL)) {
     return NULL;
   }
   return web_contents;

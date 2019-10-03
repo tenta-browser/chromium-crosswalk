@@ -4,34 +4,39 @@
 
 #include "ui/aura/test/aura_test_context_factory.h"
 
-#include "cc/test/fake_output_surface.h"
-#include "cc/test/test_context_provider.h"
-#include "components/viz/test/test_layer_tree_frame_sink.h"
+#include "cc/test/test_layer_tree_frame_sink.h"
+#include "components/viz/test/fake_output_surface.h"
+#include "components/viz/test/fake_skia_output_surface.h"
+#include "components/viz/test/test_context_provider.h"
 
 namespace aura {
 namespace test {
 namespace {
 
-class FrameSinkClient : public viz::TestLayerTreeFrameSinkClient {
+class FrameSinkClient : public cc::TestLayerTreeFrameSinkClient {
  public:
   explicit FrameSinkClient(
       scoped_refptr<viz::ContextProvider> display_context_provider)
       : display_context_provider_(std::move(display_context_provider)) {}
 
-  // viz::TestLayerTreeFrameSinkClient:
+  // cc::TestLayerTreeFrameSinkClient:
+  std::unique_ptr<viz::SkiaOutputSurface> CreateDisplaySkiaOutputSurface()
+      override {
+    return viz::FakeSkiaOutputSurface::Create3d();
+  }
+
   std::unique_ptr<viz::OutputSurface> CreateDisplayOutputSurface(
       scoped_refptr<viz::ContextProvider> compositor_context_provider)
       override {
-    return cc::FakeOutputSurface::Create3d(
+    return viz::FakeOutputSurface::Create3d(
         std::move(display_context_provider_));
   }
   void DisplayReceivedLocalSurfaceId(
       const viz::LocalSurfaceId& local_surface_id) override {}
   void DisplayReceivedCompositorFrame(
       const viz::CompositorFrame& frame) override {}
-  void DisplayWillDrawAndSwap(
-      bool will_draw_and_swap,
-      const viz::RenderPassList& render_passes) override {}
+  void DisplayWillDrawAndSwap(bool will_draw_and_swap,
+                              viz::RenderPassList* render_passes) override {}
   void DisplayDidDrawAndSwap() override {}
 
  private:
@@ -48,15 +53,15 @@ AuraTestContextFactory::~AuraTestContextFactory() = default;
 
 void AuraTestContextFactory::CreateLayerTreeFrameSink(
     base::WeakPtr<ui::Compositor> compositor) {
-  scoped_refptr<cc::TestContextProvider> context_provider =
-      cc::TestContextProvider::Create();
+  scoped_refptr<viz::TestContextProvider> context_provider =
+      viz::TestContextProvider::Create();
   std::unique_ptr<FrameSinkClient> frame_sink_client =
       std::make_unique<FrameSinkClient>(context_provider);
   constexpr bool synchronous_composite = false;
   constexpr bool disable_display_vsync = false;
-  const double refresh_rate = GetRefreshRate();
-  auto frame_sink = std::make_unique<viz::TestLayerTreeFrameSink>(
-      context_provider, cc::TestContextProvider::CreateWorker(), nullptr,
+  const double refresh_rate = 200.0;
+  auto frame_sink = std::make_unique<cc::TestLayerTreeFrameSink>(
+      context_provider, viz::TestContextProvider::CreateWorker(),
       GetGpuMemoryBufferManager(), renderer_settings(),
       base::ThreadTaskRunnerHandle::Get().get(), synchronous_composite,
       disable_display_vsync, refresh_rate);

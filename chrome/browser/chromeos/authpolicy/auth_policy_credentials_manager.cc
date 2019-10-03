@@ -4,14 +4,16 @@
 
 #include "chrome/browser/chromeos/authpolicy/auth_policy_credentials_manager.h"
 
-#include "base/files/file_util.h"
+#include <memory>
+#include <utility>
+
+#include "ash/public/cpp/notification_utils.h"
+#include "ash/public/cpp/vector_icons/vector_icons.h"
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/singleton.h"
-#include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -22,8 +24,10 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "chromeos/dbus/auth_policy_client.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/components/account_manager/account_manager.h"
+#include "chromeos/components/account_manager/account_manager_factory.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/dbus/auth_policy/auth_policy_client.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -31,10 +35,10 @@
 #include "dbus/message.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
+
+namespace chromeos {
 
 namespace {
 
@@ -42,109 +46,54 @@ constexpr base::TimeDelta kGetUserStatusCallsInterval =
     base::TimeDelta::FromHours(1);
 constexpr char kProfileSigninNotificationId[] = "chrome://settings/signin/";
 
-// Prefix for KRB5CCNAME environment variable. Defines credential cache type.
-constexpr char kKrb5CCFilePrefix[] = "FILE:";
-// Directory in the user home to store Kerberos files.
-constexpr char kKrb5Directory[] = "kerberos";
-// Environment variable pointing to credential cache file.
-constexpr char kKrb5CCEnvName[] = "KRB5CCNAME";
-// Credential cache file name.
-constexpr char kKrb5CCFile[] = "krb5cc";
-// Environment variable pointing to Kerberos config file.
-constexpr char kKrb5ConfEnvName[] = "KRB5_CONFIG";
-// Kerberos config file name.
-constexpr char kKrb5ConfFile[] = "krb5.conf";
-
-// A notification delegate for the sign-out button.
-// TODO(estade): Can this be a HandleNotificationButtonClickDelegate?
-class SigninNotificationDelegate : public message_center::NotificationDelegate {
- public:
-  SigninNotificationDelegate();
-
-  // NotificationDelegate:
-  void Click() override;
-  void ButtonClick(int button_index) override;
-
- protected:
-  ~SigninNotificationDelegate() override = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SigninNotificationDelegate);
-};
-
-SigninNotificationDelegate::SigninNotificationDelegate() {}
-
-void SigninNotificationDelegate::Click() {
-  chrome::AttemptUserExit();
-}
-
-void SigninNotificationDelegate::ButtonClick(int button_index) {
-  chrome::AttemptUserExit();
-}
-
-// Writes |blob| into file <UserPath>/kerberos/|file_name|. First writes into
-// temporary file and then replace existing one.
-void WriteFile(const std::string& file_name, const std::string& blob) {
-  base::FilePath dir;
-  PathService::Get(base::DIR_HOME, &dir);
-  dir = dir.Append(kKrb5Directory);
-  base::File::Error error;
-  if (!base::CreateDirectoryAndGetError(dir, &error)) {
-    LOG(ERROR) << "Failed to create '" << dir.value()
-               << "' directory: " << base::File::ErrorToString(error);
-    return;
-  }
-
-  base::FilePath temp_file;
-  if (!base::CreateTemporaryFileInDir(dir, &temp_file))
+// Sets up Chrome OS Account Manager.
+// |profile| is a non-owning pointer to |Profile|.
+// |account_id| is the |AccountId| for the Device Account.
+void SetupAccountManager(Profile* profile, const AccountId& account_id) {
+  if (!switches::IsAccountManagerEnabled())
     return;
 
-  if (base::WriteFile(temp_file, blob.data(), blob.size()) !=
-      static_cast<int>(blob.size())) {
-    LOG(ERROR) << "Failed to write file: " << temp_file.value();
-    return;
-  }
-
-  base::FilePath dest_file = dir.Append(file_name);
-  if (!base::ReplaceFile(temp_file, dest_file, &error)) {
-    LOG(ERROR) << "Failed to replace '" << dest_file.value() << "' with '"
-               << temp_file.value()
-               << "' :" << base::File::ErrorToString(error);
-  }
+  AccountManagerFactory* factory =
+      g_browser_process->platform_part()->GetAccountManagerFactory();
+  DCHECK(factory);
+  AccountManager* account_manager =
+      factory->GetAccountManager(profile->GetPath().value());
+  DCHECK(account_manager);
+  // |AccountManager::UpsertAccount| is idempotent and safe to call multiple
+  // times.
+  account_manager->UpsertAccount(
+      AccountManager::AccountKey{
+          account_id.GetObjGuid(),
+          account_manager::AccountType::ACCOUNT_TYPE_ACTIVE_DIRECTORY},
+      account_id.GetUserEmail(), AccountManager::kActiveDirectoryDummyToken);
 }
 
 }  // namespace
 
-namespace chromeos {
-
 AuthPolicyCredentialsManager::AuthPolicyCredentialsManager(Profile* profile)
-    : profile_(profile) {
+    : profile_(profile),
+      kerberos_files_handler_(base::BindRepeating(
+          &AuthPolicyCredentialsManager::GetUserKerberosFiles,
+          base::Unretained(this))) {
   const user_manager::User* user =
-      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
+      ProfileHelper::Get()->GetUserByProfile(profile);
   CHECK(user && user->IsActiveDirectoryUser());
   StartObserveNetwork();
   account_id_ = user->GetAccountId();
   GetUserStatus();
   GetUserKerberosFiles();
 
-  // Setting environment variables for GSSAPI library.
-  std::unique_ptr<base::Environment> env(base::Environment::Create());
-  base::FilePath path;
-  PathService::Get(base::DIR_HOME, &path);
-  path = path.Append(kKrb5Directory);
-  env->SetVar(kKrb5CCEnvName,
-              kKrb5CCFilePrefix + path.Append(kKrb5CCFile).value());
-  env->SetVar(kKrb5ConfEnvName, path.Append(kKrb5ConfFile).value());
-
   // Connecting to the signal sent by authpolicyd notifying that Kerberos files
   // have changed.
-  chromeos::DBusThreadManager::Get()->GetAuthPolicyClient()->ConnectToSignal(
+  AuthPolicyClient::Get()->ConnectToSignal(
       authpolicy::kUserKerberosFilesChangedSignal,
       base::Bind(
           &AuthPolicyCredentialsManager::OnUserKerberosFilesChangedCallback,
           weak_factory_.GetWeakPtr()),
       base::Bind(&AuthPolicyCredentialsManager::OnSignalConnectedCallback,
                  weak_factory_.GetWeakPtr()));
+
+  SetupAccountManager(profile, user->GetAccountId());
 }
 
 AuthPolicyCredentialsManager::~AuthPolicyCredentialsManager() {}
@@ -154,12 +103,12 @@ void AuthPolicyCredentialsManager::Shutdown() {
 }
 
 void AuthPolicyCredentialsManager::DefaultNetworkChanged(
-    const chromeos::NetworkState* network) {
+    const NetworkState* network) {
   GetUserStatusIfConnected(network);
 }
 
 void AuthPolicyCredentialsManager::NetworkConnectionStateChanged(
-    const chromeos::NetworkState* network) {
+    const NetworkState* network) {
   GetUserStatusIfConnected(network);
 }
 
@@ -167,13 +116,21 @@ void AuthPolicyCredentialsManager::OnShuttingDown() {
   StopObserveNetwork();
 }
 
+KerberosFilesHandler*
+AuthPolicyCredentialsManager::GetKerberosFilesHandlerForTesting() {
+  return &kerberos_files_handler_;
+}
+
 void AuthPolicyCredentialsManager::GetUserStatus() {
   DCHECK(!is_get_status_in_progress_);
   is_get_status_in_progress_ = true;
   rerun_get_status_on_error_ = false;
   scheduled_get_user_status_call_.Cancel();
-  chromeos::DBusThreadManager::Get()->GetAuthPolicyClient()->GetUserStatus(
-      account_id_.GetObjGuid(),
+  authpolicy::GetUserStatusRequest request;
+  request.set_user_principal_name(account_id_.GetUserEmail());
+  request.set_account_id(account_id_.GetObjGuid());
+  AuthPolicyClient::Get()->GetUserStatus(
+      request,
       base::BindOnce(&AuthPolicyCredentialsManager::OnGetUserStatusCallback,
                      weak_factory_.GetWeakPtr()));
 }
@@ -193,64 +150,62 @@ void AuthPolicyCredentialsManager::OnGetUserStatusCallback(
     }
     return;
   }
-  CHECK(user_status.account_info().account_id() == account_id_.GetObjGuid());
   rerun_get_status_on_error_ = false;
-  if (user_status.has_account_info())
-    UpdateDisplayAndGivenName(user_status.account_info());
 
-  DCHECK(user_status.has_password_status());
-  switch (user_status.password_status()) {
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID:
-      // do nothing
-      break;
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_EXPIRED:
-      ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_EXPIRED);
-      break;
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_CHANGED:
-      ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_CHANGED);
-      break;
+  // user_status.account_info() is missing if the TGT is invalid.
+  if (user_status.has_account_info()) {
+    CHECK(user_status.account_info().account_id() == account_id_.GetObjGuid());
+    UpdateDisplayAndGivenName(user_status.account_info());
   }
 
+  // user_status.password_status() is missing if the TGT is invalid or device is
+  // offline.
+  bool force_online_signin = false;
+  if (user_status.has_password_status()) {
+    switch (user_status.password_status()) {
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID:
+        break;
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_EXPIRED:
+        ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_EXPIRED);
+        force_online_signin = true;
+        break;
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_CHANGED:
+        ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_CHANGED);
+        force_online_signin = true;
+        break;
+    }
+  }
+
+  // user_status.tgt_status() is always present.
   DCHECK(user_status.has_tgt_status());
   switch (user_status.tgt_status()) {
     case authpolicy::ActiveDirectoryUserStatus::TGT_VALID:
-      // do nothing
       break;
     case authpolicy::ActiveDirectoryUserStatus::TGT_EXPIRED:
     case authpolicy::ActiveDirectoryUserStatus::TGT_NOT_FOUND:
       ShowNotification(IDS_ACTIVE_DIRECTORY_REFRESH_AUTH_TOKEN);
       break;
   }
-  const bool ok = user_status.tgt_status() ==
-                      authpolicy::ActiveDirectoryUserStatus::TGT_VALID &&
-                  user_status.password_status() ==
-                      authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID;
-  user_manager::UserManager::Get()->SaveForceOnlineSignin(account_id_, !ok);
+
+  user_manager::UserManager::Get()->SaveForceOnlineSignin(account_id_,
+                                                          force_online_signin);
 }
 
 void AuthPolicyCredentialsManager::GetUserKerberosFiles() {
-  chromeos::DBusThreadManager::Get()
-      ->GetAuthPolicyClient()
-      ->GetUserKerberosFiles(
-          account_id_.GetObjGuid(),
-          base::BindOnce(
-              &AuthPolicyCredentialsManager::OnGetUserKerberosFilesCallback,
-              weak_factory_.GetWeakPtr()));
+  AuthPolicyClient::Get()->GetUserKerberosFiles(
+      account_id_.GetObjGuid(),
+      base::BindOnce(
+          &AuthPolicyCredentialsManager::OnGetUserKerberosFilesCallback,
+          weak_factory_.GetWeakPtr()));
 }
 
 void AuthPolicyCredentialsManager::OnGetUserKerberosFilesCallback(
     authpolicy::ErrorType error,
     const authpolicy::KerberosFiles& kerberos_files) {
-  if (kerberos_files.has_krb5cc()) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-        base::BindOnce(&WriteFile, kKrb5CCFile, kerberos_files.krb5cc()));
-  }
-  if (kerberos_files.has_krb5conf()) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-        base::BindOnce(&WriteFile, kKrb5ConfFile, kerberos_files.krb5conf()));
-  }
+  auto nullstr = base::Optional<std::string>();
+  kerberos_files_handler_.SetFiles(
+      kerberos_files.has_krb5cc() ? kerberos_files.krb5cc() : nullstr,
+      kerberos_files.has_krb5conf() ? kerberos_files.krb5conf() : nullstr);
 }
 
 void AuthPolicyCredentialsManager::ScheduleGetUserStatus() {
@@ -267,21 +222,20 @@ void AuthPolicyCredentialsManager::ScheduleGetUserStatus() {
 }
 
 void AuthPolicyCredentialsManager::StartObserveNetwork() {
-  DCHECK(chromeos::NetworkHandler::IsInitialized());
+  DCHECK(NetworkHandler::IsInitialized());
   if (is_observing_network_)
     return;
   is_observing_network_ = true;
-  chromeos::NetworkHandler::Get()->network_state_handler()->AddObserver(
-      this, FROM_HERE);
+  NetworkHandler::Get()->network_state_handler()->AddObserver(this, FROM_HERE);
 }
 
 void AuthPolicyCredentialsManager::StopObserveNetwork() {
   if (!is_observing_network_)
     return;
-  DCHECK(chromeos::NetworkHandler::IsInitialized());
+  DCHECK(NetworkHandler::IsInitialized());
   is_observing_network_ = false;
-  chromeos::NetworkHandler::Get()->network_state_handler()->RemoveObserver(
-      this, FROM_HERE);
+  NetworkHandler::Get()->network_state_handler()->RemoveObserver(this,
+                                                                 FROM_HERE);
 }
 
 void AuthPolicyCredentialsManager::UpdateDisplayAndGivenName(
@@ -311,41 +265,38 @@ void AuthPolicyCredentialsManager::ShowNotification(int message_id) {
                                       profile_->GetProfileUserName() +
                                       std::to_string(message_id);
   message_center::NotifierId notifier_id(
-      message_center::NotifierId::SYSTEM_COMPONENT,
+      message_center::NotifierType::SYSTEM_COMPONENT,
       kProfileSigninNotificationId);
 
   // Set |profile_id| for multi-user notification blocker.
   notifier_id.profile_id = profile_->GetProfileUserName();
 
-  message_center::Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
-      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE),
-      l10n_util::GetStringUTF16(message_id),
-      message_center::IsNewStyleNotificationEnabled()
-          ? gfx::Image()
-          : ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                IDR_NOTIFICATION_ALERT),
-      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
-      GURL(notification_id), notifier_id, data,
-      new SigninNotificationDelegate());
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification.set_accent_color(
-        message_center::kSystemNotificationColorCriticalWarning);
-    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
-        kNotificationWarningIcon, message_center::kSmallImageSizeMD,
-        message_center::kSystemNotificationColorWarning)));
-    notification.set_vector_small_image(kNotificationWarningIcon);
-  }
-  notification.SetSystemPriority();
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating([](base::Optional<int> button_index) {
+            chrome::AttemptUserExit();
+          }));
+
+  std::unique_ptr<message_center::Notification> notification =
+      ash::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
+          l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE),
+          l10n_util::GetStringUTF16(message_id),
+          l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
+          GURL(notification_id), notifier_id, data, std::move(delegate),
+          ash::kNotificationWarningIcon,
+          message_center::SystemNotificationWarningLevel::WARNING);
+  notification->SetSystemPriority();
 
   // Add the notification.
   NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
-      NotificationHandler::Type::TRANSIENT, notification);
+      NotificationHandler::Type::TRANSIENT, *notification,
+      /*metadata=*/nullptr);
   shown_notifications_.insert(message_id);
 }
 
 void AuthPolicyCredentialsManager::GetUserStatusIfConnected(
-    const chromeos::NetworkState* network) {
+    const NetworkState* network) {
   if (!network || !network->IsConnectedState())
     return;
   if (is_get_status_in_progress_) {
@@ -378,17 +329,6 @@ AuthPolicyCredentialsManagerFactory::GetInstance() {
   return base::Singleton<AuthPolicyCredentialsManagerFactory>::get();
 }
 
-// static
-KeyedService*
-AuthPolicyCredentialsManagerFactory::BuildForProfileIfActiveDirectory(
-    Profile* profile) {
-  const user_manager::User* user =
-      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
-  if (!user || !user->IsActiveDirectoryUser())
-    return nullptr;
-  return GetInstance()->GetServiceForBrowserContext(profile, true /* create */);
-}
-
 AuthPolicyCredentialsManagerFactory::AuthPolicyCredentialsManagerFactory()
     : BrowserContextKeyedServiceFactory(
           "AuthPolicyCredentialsManager",
@@ -396,9 +336,21 @@ AuthPolicyCredentialsManagerFactory::AuthPolicyCredentialsManagerFactory()
 
 AuthPolicyCredentialsManagerFactory::~AuthPolicyCredentialsManagerFactory() {}
 
+bool AuthPolicyCredentialsManagerFactory::ServiceIsCreatedWithBrowserContext()
+    const {
+  return true;
+}
+
 KeyedService* AuthPolicyCredentialsManagerFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
+  // UserManager is usually not initialized in tests.
+  if (!user_manager::UserManager::IsInitialized())
+    return nullptr;
   Profile* profile = Profile::FromBrowserContext(context);
+  const user_manager::User* user =
+      ProfileHelper::Get()->GetUserByProfile(profile);
+  if (!user || !user->IsActiveDirectoryUser())
+    return nullptr;
   return new AuthPolicyCredentialsManager(profile);
 }
 

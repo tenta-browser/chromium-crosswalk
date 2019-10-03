@@ -4,21 +4,24 @@
 
 #include "components/viz/service/display/gl_renderer_copier.h"
 
-#include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/stl_util.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/frame_sinks/copy_output_util.h"
+#include "components/viz/common/gl_i420_converter.h"
+#include "components/viz/common/gl_scaler.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "components/viz/service/display/texture_deleter.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
@@ -46,150 +49,98 @@ base::UnguessableToken SourceOf(const CopyOutputRequest& request) {
   return request.has_source() ? request.source() : base::UnguessableToken();
 }
 
+// Creates a new texture, binds it to the GL_TEXTURE_2D target, and initializes
+// its default parameters.
+GLuint CreateDefaultTexture2D(gpu::gles2::GLES2Interface* gl) {
+  GLuint result = 0;
+  gl->GenTextures(1, &result);
+  gl->BindTexture(GL_TEXTURE_2D, result);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  return result;
+}
+
+// Creates or re-creates a texture, only if needed, to ensure a texture of the
+// given |required| size is defined. |texture| and |size| are I/O parameters,
+// read to determine what to do and updated if any changes are made.
+void EnsureTextureDefinedWithSize(gpu::gles2::GLES2Interface* gl,
+                                  const gfx::Size& required,
+                                  GLuint* texture,
+                                  gfx::Size* size) {
+  if (*texture != 0 && *size == required)
+    return;
+  if (*texture == 0) {
+    *texture = CreateDefaultTexture2D(gl);
+  } else {
+    gl->BindTexture(GL_TEXTURE_2D, *texture);
+  }
+  gl->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, required.width(), required.height(),
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  *size = required;
+}
+
+// Sets the fields of |params| to scale/transform the image in the source
+// framebuffer to meet the requirements of the |request|.
+void PopulateScalerParameters(const CopyOutputRequest& request,
+                              const gfx::ColorSpace& source_color_space,
+                              const gfx::ColorSpace& output_color_space,
+                              bool flipped_source,
+                              GLScaler::Parameters* params) {
+  params->scale_from = request.scale_from();
+  params->scale_to = request.scale_to();
+  params->source_color_space = source_color_space;
+  params->output_color_space = output_color_space;
+  // For downscaling, use the GOOD quality setting (appropriate for
+  // thumbnailing); and, for upscaling, use the BEST quality.
+  const bool is_downscale_in_both_dimensions =
+      request.scale_to().x() < request.scale_from().x() &&
+      request.scale_to().y() < request.scale_from().y();
+  params->quality = is_downscale_in_both_dimensions
+                        ? GLScaler::Parameters::Quality::GOOD
+                        : GLScaler::Parameters::Quality::BEST;
+  params->is_flipped_source = flipped_source;
+}
+
 }  // namespace
 
 GLRendererCopier::GLRendererCopier(
     scoped_refptr<ContextProvider> context_provider,
-    TextureDeleter* texture_deleter,
-    ComputeWindowRectCallback window_rect_callback)
+    TextureDeleter* texture_deleter)
     : context_provider_(std::move(context_provider)),
-      texture_deleter_(texture_deleter),
-      window_rect_callback_(std::move(window_rect_callback)),
-      helper_(context_provider_->ContextGL(),
-              context_provider_->ContextSupport()) {}
+      texture_deleter_(texture_deleter) {}
 
 GLRendererCopier::~GLRendererCopier() {
   for (auto& entry : cache_)
-    FreeCachedResources(&entry.second);
+    entry.second->Free(context_provider_->ContextGL());
 }
 
 void GLRendererCopier::CopyFromTextureOrFramebuffer(
     std::unique_ptr<CopyOutputRequest> request,
-    const gfx::Rect& output_rect,
+    const copy_output::RenderPassGeometry& geometry,
     GLenum internal_format,
     GLuint framebuffer_texture,
     const gfx::Size& framebuffer_texture_size,
+    bool flipped_source,
     const gfx::ColorSpace& color_space) {
-  // Finalize the source subrect, as the entirety of the RenderPass's output
-  // optionally clamped to the requested copy area. Then, compute the result
-  // rect, which is the selection clamped to the maximum possible result bounds.
-  // If there will be zero pixels of output or the scaling ratio was not
-  // reasonable, do not proceed.
-  gfx::Rect copy_rect = output_rect;
-  if (request->has_area())
-    copy_rect.Intersect(request->area());
-  const gfx::Rect result_bounds =
-      request->is_scaled() ? copy_output::ComputeResultRect(
-                                 gfx::Rect(copy_rect.size()),
-                                 request->scale_from(), request->scale_to())
-                           : gfx::Rect(copy_rect.size());
-  gfx::Rect result_rect = result_bounds;
-  if (request->has_result_selection())
-    result_rect.Intersect(request->result_selection());
-  if (result_rect.IsEmpty())
-    return;
+  const gfx::Rect& result_rect = geometry.result_selection;
 
-  // Execute the cheapest workflow that satisfies the copy request.
-  switch (request->result_format()) {
-    case ResultFormat::RGBA_BITMAP: {
-      if (request->is_scaled()) {
-        const GLuint result_texture = RenderResultTexture(
-            *request, copy_rect, internal_format, framebuffer_texture,
-            framebuffer_texture_size, result_rect);
-        const base::UnguessableToken& request_source = SourceOf(*request);
-        StartReadbackFromTexture(std::move(request), result_texture,
-                                 gfx::Rect(result_rect.size()), result_rect,
+  // Fast-Path: If no transformation is necessary and no new textures need to be
+  // generated, read-back directly from the currently-bound framebuffer.
+  if (request->result_format() == ResultFormat::RGBA_BITMAP &&
+      !request->is_scaled()) {
+    StartReadbackFromFramebuffer(std::move(request), geometry.readback_offset,
+                                 flipped_source, false, result_rect,
                                  color_space);
-        CacheObjectsOrDelete(request_source, CacheEntry::kResultTexture, 1,
-                             &result_texture);
-      } else {
-        StartReadbackFromFramebuffer(
-            std::move(request),
-            window_rect_callback_.Run(result_rect +
-                                      copy_rect.OffsetFromOrigin()),
-            result_rect, color_space);
-      }
-      break;
-    }
-
-    case ResultFormat::RGBA_TEXTURE: {
-      const GLuint result_texture = RenderResultTexture(
-          *request, copy_rect, internal_format, framebuffer_texture,
-          framebuffer_texture_size, result_rect);
-      SendTextureResult(std::move(request), result_texture, result_rect,
-                        color_space);
-      break;
-    }
-
-    case ResultFormat::I420_PLANES: {
-      // The optimized single-copy path, provided by GLBufferI420Result,
-      // requires that the result be accessed via a task in the same task runner
-      // sequence as the GLRendererCopier. Since I420_PLANES requests are meant
-      // to be VIZ-internal, this is an acceptable limitation to enforce.
-      DCHECK(request->SendsResultsInCurrentSequence());
-
-      // I420 readback always requires a source texture. If a
-      // |framebuffer_texture| was not provided (or scaling was requested), a
-      // texture must first be rendered from the currently-bound framebuffer.
-      if (request->is_scaled() || framebuffer_texture == 0) {
-        const GLuint result_texture = RenderResultTexture(
-            *request, copy_rect, internal_format, framebuffer_texture,
-            framebuffer_texture_size, result_rect);
-        const base::UnguessableToken& request_source = SourceOf(*request);
-        StartI420ReadbackFromTexture(
-            std::move(request), result_texture, result_rect.size(),
-            gfx::Rect(result_rect.size()), result_rect, color_space);
-        CacheObjectsOrDelete(request_source, CacheEntry::kResultTexture, 1,
-                             &result_texture);
-      } else {
-        StartI420ReadbackFromTexture(
-            std::move(request), framebuffer_texture, framebuffer_texture_size,
-            window_rect_callback_.Run(result_rect +
-                                      copy_rect.OffsetFromOrigin()),
-            result_rect, color_space);
-      }
-      break;
-    }
+    return;
   }
-}
 
-void GLRendererCopier::FreeUnusedCachedResources() {
-  ++purge_counter_;
+  gfx::Rect sampling_rect = geometry.sampling_bounds;
 
-  // Purge all cache entries that should no longer be kept alive, freeing any
-  // resources they held.
-  const auto IsTooOld = [this](const decltype(cache_)::value_type& entry) {
-    return static_cast<int32_t>(purge_counter_ -
-                                entry.second.purge_count_at_last_use) >=
-           kKeepalivePeriod;
-  };
-  for (auto& entry : cache_) {
-    if (IsTooOld(entry))
-      FreeCachedResources(&entry.second);
-  }
-  base::EraseIf(cache_, IsTooOld);
-}
-
-GLuint GLRendererCopier::RenderResultTexture(
-    const CopyOutputRequest& request,
-    const gfx::Rect& framebuffer_copy_rect,
-    GLenum internal_format,
-    GLuint framebuffer_texture,
-    const gfx::Size& framebuffer_texture_size,
-    const gfx::Rect& result_rect) {
-  // Compute the sampling rect. This is the region of the framebuffer, in window
-  // coordinates, which contains the pixels that can affect the result.
-  //
-  // TODO(crbug.com/775740): When executing for scaling copy requests, use the
-  // scaler's ComputeRegionOfInfluence() utility to compute a smaller sampling
-  // rect so that a smaller source copy can be made below. But first, the scaler
-  // implementation needs to be fixed to account for fractional source offsets.
-  gfx::Rect sampling_rect = window_rect_callback_.Run(
-      request.is_scaled()
-          ? framebuffer_copy_rect
-          : (result_rect + framebuffer_copy_rect.OffsetFromOrigin()));
-
-  auto* const gl = context_provider_->ContextGL();
+  const base::UnguessableToken requester = SourceOf(*request);
+  std::unique_ptr<ReusableThings> things =
+      TakeReusableThingsOrCreate(requester);
 
   // Determine the source texture: This is either the one attached to the
   // framebuffer, or a copy made from the framebuffer. Its format will be the
@@ -206,92 +157,307 @@ GLuint GLRendererCopier::RenderResultTexture(
     source_texture = framebuffer_texture;
     source_texture_size = framebuffer_texture_size;
   } else {
-    // Optimization: If the texture copy completely satsifies the request, just
-    // return it as the result texture. The request must not include scaling nor
-    // a texture mailbox to use for delivering results. The texture format must
-    // also be GL_RGBA, as described by CopyOutputResult::Format::RGBA_TEXTURE.
-    const int purpose = (!request.is_scaled() && !request.has_mailbox() &&
-                         internal_format == GL_RGBA)
-                            ? CacheEntry::kResultTexture
-                            : CacheEntry::kFramebufferCopyTexture;
-    TakeCachedObjectsOrCreate(SourceOf(request), purpose, 1, &source_texture);
-    gl->BindTexture(GL_TEXTURE_2D, source_texture);
-    gl->CopyTexImage2D(GL_TEXTURE_2D, 0, internal_format, sampling_rect.x(),
-                       sampling_rect.y(), sampling_rect.width(),
-                       sampling_rect.height(), 0);
-    if (purpose == CacheEntry::kResultTexture)
-      return source_texture;
+    auto* const gl = context_provider_->ContextGL();
+    if (things->fb_copy_texture == 0) {
+      things->fb_copy_texture = CreateDefaultTexture2D(gl);
+      things->fb_copy_texture_internal_format = static_cast<GLenum>(GL_NONE);
+      things->fb_copy_texture_size = gfx::Size();
+    } else {
+      gl->BindTexture(GL_TEXTURE_2D, things->fb_copy_texture);
+    }
+    if (things->fb_copy_texture_internal_format == internal_format &&
+        things->fb_copy_texture_size == sampling_rect.size()) {
+      // Copy the framebuffer pixels without redefining the texture.
+      gl->CopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, sampling_rect.x(),
+                            sampling_rect.y(), sampling_rect.width(),
+                            sampling_rect.height());
+    } else {
+      // Copy the framebuffer pixels into a newly-defined texture.
+      gl->CopyTexImage2D(GL_TEXTURE_2D, 0, internal_format, sampling_rect.x(),
+                         sampling_rect.y(), sampling_rect.width(),
+                         sampling_rect.height(), 0);
+      things->fb_copy_texture_internal_format = internal_format;
+      things->fb_copy_texture_size = sampling_rect.size();
+    }
+    source_texture = things->fb_copy_texture;
     source_texture_size = sampling_rect.size();
     sampling_rect.set_origin(gfx::Point());
   }
 
-  // Determine the result texture: If the copy request provided a valid one, use
-  // it instead of one owned by GLRendererCopier.
-  GLuint result_texture = 0;
-  if (request.has_mailbox()) {
-    if (!request.mailbox().IsZero()) {
-      if (request.sync_token().HasData())
-        gl->WaitSyncTokenCHROMIUM(request.sync_token().GetConstData());
-      result_texture = gl->CreateAndConsumeTextureCHROMIUM(
-          GL_TEXTURE_2D, request.mailbox().name);
-    }
+  // Revert the Y-flipping of the sampling rect coordinates for GLScaler, which
+  // always assumes the source offset is assuming a origin-at-top-left
+  // coordinate space.
+  if (flipped_source) {
+    sampling_rect.set_y(source_texture_size.height() - sampling_rect.bottom());
   }
-  if (result_texture == 0) {
-    TakeCachedObjectsOrCreate(SourceOf(request), CacheEntry::kResultTexture, 1,
-                              &result_texture);
-  }
-  gl->BindTexture(GL_TEXTURE_2D, result_texture);
-  gl->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, result_rect.width(),
-                 result_rect.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
-  // Populate the result texture with a scaled/exact copy.
-  if (request.is_scaled()) {
-    std::unique_ptr<GLHelper::ScalerInterface> scaler =
-        TakeCachedScalerOrCreate(request);
-    scaler->Scale(source_texture, source_texture_size,
-                  sampling_rect.OffsetFromOrigin(), result_texture,
-                  result_rect);
-    CacheScalerOrDelete(SourceOf(request), std::move(scaler));
+  switch (request->result_format()) {
+    case ResultFormat::RGBA_BITMAP:
+      EnsureTextureDefinedWithSize(context_provider_->ContextGL(),
+                                   result_rect.size(), &things->result_texture,
+                                   &things->result_texture_size);
+      RenderResultTexture(*request, flipped_source, color_space, source_texture,
+                          source_texture_size, sampling_rect, result_rect,
+                          things->result_texture, things.get());
+      StartReadbackFromTexture(std::move(request), result_rect, color_space,
+                               things.get());
+      break;
+
+    case ResultFormat::RGBA_TEXTURE:
+      RenderAndSendTextureResult(
+          std::move(request), flipped_source, color_space, source_texture,
+          source_texture_size, sampling_rect, result_rect, things.get());
+      break;
+
+    case ResultFormat::I420_PLANES:
+      // The optimized single-copy path, provided by GLPixelBufferI420Result,
+      // requires that the result be accessed via a task in the same task runner
+      // sequence as the GLRendererCopier. Since I420_PLANES requests are meant
+      // to be VIZ-internal, this is an acceptable limitation to enforce.
+      DCHECK(request->SendsResultsInCurrentSequence() || async_gl_task_runner_);
+
+      const gfx::Rect aligned_rect = RenderI420Textures(
+          *request, flipped_source, color_space, source_texture,
+          source_texture_size, sampling_rect, result_rect, things.get());
+      StartI420ReadbackFromTextures(std::move(request), aligned_rect,
+                                    result_rect, things.get());
+      break;
+  }
+
+  StashReusableThingsOrDelete(requester, std::move(things));
+}
+
+void GLRendererCopier::FreeUnusedCachedResources() {
+  ++purge_counter_;
+
+  // Purge all cache entries that should no longer be kept alive, freeing any
+  // resources they held.
+  const auto IsTooOld = [this](const decltype(cache_)::value_type& entry) {
+    return static_cast<int32_t>(purge_counter_ -
+                                entry.second->purge_count_at_last_use) >=
+           kKeepalivePeriod;
+  };
+  for (auto& entry : cache_) {
+    if (IsTooOld(entry))
+      entry.second->Free(context_provider_->ContextGL());
+  }
+  base::EraseIf(cache_, IsTooOld);
+}
+
+void GLRendererCopier::RenderResultTexture(
+    const CopyOutputRequest& request,
+    bool flipped_source,
+    const gfx::ColorSpace& source_color_space,
+    GLuint source_texture,
+    const gfx::Size& source_texture_size,
+    const gfx::Rect& sampling_rect,
+    const gfx::Rect& result_rect,
+    GLuint result_texture,
+    ReusableThings* things) {
+  DCHECK_NE(request.result_format(), ResultFormat::I420_PLANES);
+
+  GLScaler::Parameters params;
+  PopulateScalerParameters(request, source_color_space, source_color_space,
+                           flipped_source, &params);
+  if (request.result_format() == ResultFormat::RGBA_BITMAP) {
+    // Render the result in top-down row order, and swizzle, within the GPU so
+    // these things don't have to be done, less efficiently, on the CPU later.
+    params.flip_output = flipped_source;
+    params.swizzle[0] =
+        ShouldSwapRedAndBlueForBitmapReadback() ? GL_BGRA_EXT : GL_RGBA;
   } else {
-    DCHECK_SIZE_EQ(sampling_rect.size(), result_rect.size());
-    gl->CopySubTextureCHROMIUM(
-        source_texture, 0 /* source_level */, GL_TEXTURE_2D, result_texture,
-        0 /* dest_level */, 0 /* xoffset */, 0 /* yoffset */, sampling_rect.x(),
-        sampling_rect.y(), sampling_rect.width(), sampling_rect.height(), false,
-        false, false);
+    // Texture results are always in bottom-up row order.
+    DCHECK_EQ(request.result_format(), ResultFormat::RGBA_TEXTURE);
+    params.flip_output = !flipped_source;
+    DCHECK_EQ(params.swizzle[0], static_cast<GLenum>(GL_RGBA));
   }
 
-  // If |source_texture| was a copy, maybe cache it for future requests.
-  if (framebuffer_texture == 0) {
-    CacheObjectsOrDelete(SourceOf(request), CacheEntry::kFramebufferCopyTexture,
-                         1, &source_texture);
+  if (!things->scaler)
+    things->scaler = std::make_unique<GLScaler>(context_provider_);
+  if (!GLScaler::ParametersAreEquivalent(params, things->scaler->params())) {
+    const bool is_configured = things->scaler->Configure(params);
+    // GLRendererCopier should never use illegal or unsupported options, nor
+    // be using GLScaler with an invalid GL context.
+    DCHECK(is_configured);
   }
 
-  return result_texture;
+  const bool success = things->scaler->Scale(
+      source_texture, source_texture_size, sampling_rect.OffsetFromOrigin(),
+      result_texture, result_rect);
+  DCHECK(success);
+}
+
+gfx::Rect GLRendererCopier::RenderI420Textures(
+    const CopyOutputRequest& request,
+    bool flipped_source,
+    const gfx::ColorSpace& source_color_space,
+    GLuint source_texture,
+    const gfx::Size& source_texture_size,
+    const gfx::Rect& sampling_rect,
+    const gfx::Rect& result_rect,
+    ReusableThings* things) {
+  DCHECK_EQ(request.result_format(), ResultFormat::I420_PLANES);
+
+  // Compute required Y/U/V texture sizes and re-define them, if necessary. See
+  // class comments for GLI420Converter for an explanation of how planar data is
+  // packed into RGBA textures.
+  const gfx::Rect aligned_rect = GLI420Converter::ToAlignedRect(result_rect);
+  const gfx::Size required_luma_size(aligned_rect.width() / kRGBABytesPerPixel,
+                                     aligned_rect.height());
+  const gfx::Size required_chroma_size(required_luma_size.width() / 2,
+                                       required_luma_size.height() / 2);
+  gfx::Size u_texture_size(things->y_texture_size.width() / 2,
+                           things->y_texture_size.height() / 2);
+  gfx::Size v_texture_size = u_texture_size;
+  auto* const gl = context_provider_->ContextGL();
+  EnsureTextureDefinedWithSize(gl, required_luma_size, &things->yuv_textures[0],
+                               &things->y_texture_size);
+  EnsureTextureDefinedWithSize(gl, required_chroma_size,
+                               &things->yuv_textures[1], &u_texture_size);
+  EnsureTextureDefinedWithSize(gl, required_chroma_size,
+                               &things->yuv_textures[2], &v_texture_size);
+
+  GLI420Converter::Parameters params;
+  PopulateScalerParameters(request, source_color_space,
+                           gfx::ColorSpace::CreateREC709(), flipped_source,
+                           &params);
+  // I420 readback assumes content is in top-down row order. Also, set the
+  // output swizzle to match the readback format so that image bitmaps don't
+  // have to be byte-order-swizzled on the CPU later.
+  params.flip_output = flipped_source;
+  params.swizzle[0] = GetOptimalReadbackFormat();
+
+  if (!things->i420_converter) {
+    things->i420_converter =
+        std::make_unique<GLI420Converter>(context_provider_);
+  }
+  if (!GLI420Converter::ParametersAreEquivalent(
+          params, things->i420_converter->params())) {
+    const bool is_configured = things->i420_converter->Configure(params);
+    // GLRendererCopier should never use illegal or unsupported options, nor
+    // be using GLI420Converter with an invalid GL context.
+    DCHECK(is_configured);
+  }
+
+  const bool success = things->i420_converter->Convert(
+      source_texture, source_texture_size, sampling_rect.OffsetFromOrigin(),
+      aligned_rect, things->yuv_textures.data());
+  DCHECK(success);
+
+  return aligned_rect;
 }
 
 void GLRendererCopier::StartReadbackFromTexture(
     std::unique_ptr<CopyOutputRequest> request,
-    GLuint source_texture,
-    const gfx::Rect& copy_rect,
     const gfx::Rect& result_rect,
-    const gfx::ColorSpace& color_space) {
-  // Bind |source_texture| to a framebuffer, and then start readback from that.
-  GLuint framebuffer = 0;
-  const base::UnguessableToken& request_source = SourceOf(*request);
-  TakeCachedObjectsOrCreate(request_source, CacheEntry::kReadbackFramebuffer, 1,
-                            &framebuffer);
+    const gfx::ColorSpace& color_space,
+    ReusableThings* things) {
+  DCHECK_EQ(request->result_format(), ResultFormat::RGBA_BITMAP);
+
   auto* const gl = context_provider_->ContextGL();
-  gl->BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+  if (things->readback_framebuffer == 0) {
+    gl->GenFramebuffers(1, &things->readback_framebuffer);
+  }
+  gl->BindFramebuffer(GL_FRAMEBUFFER, things->readback_framebuffer);
   gl->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           source_texture, 0);
-  StartReadbackFromFramebuffer(std::move(request), copy_rect, result_rect,
-                               color_space);
-  CacheObjectsOrDelete(request_source, CacheEntry::kReadbackFramebuffer, 1,
-                       &framebuffer);
+                           things->result_texture, 0);
+  StartReadbackFromFramebuffer(std::move(request), gfx::Vector2d(), false,
+                               ShouldSwapRedAndBlueForBitmapReadback(),
+                               result_rect, color_space);
 }
 
 namespace {
+
+class GLPixelBufferRGBAResult : public CopyOutputResult {
+ public:
+  GLPixelBufferRGBAResult(const gfx::Rect& result_rect,
+                          const gfx::ColorSpace& color_space,
+                          scoped_refptr<ContextProvider> context_provider,
+                          GLuint transfer_buffer,
+                          bool is_upside_down,
+                          bool swap_red_and_blue)
+      : CopyOutputResult(CopyOutputResult::Format::RGBA_BITMAP, result_rect),
+        color_space_(color_space),
+        context_provider_(std::move(context_provider)),
+        transfer_buffer_(transfer_buffer),
+        is_upside_down_(is_upside_down),
+        swap_red_and_blue_(swap_red_and_blue) {}
+
+  ~GLPixelBufferRGBAResult() final {
+    if (transfer_buffer_)
+      context_provider_->ContextGL()->DeleteBuffers(1, &transfer_buffer_);
+  }
+
+  bool ReadRGBAPlane(uint8_t* dest, int stride) const final {
+    const int src_bytes_per_row = size().width() * kRGBABytesPerPixel;
+    DCHECK_GE(stride, src_bytes_per_row);
+
+    // No need to read from GPU memory if a cached bitmap already exists.
+    if (rect().IsEmpty() || cached_bitmap()->readyToDraw())
+      return CopyOutputResult::ReadRGBAPlane(dest, stride);
+
+    auto* const gl = context_provider_->ContextGL();
+    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, transfer_buffer_);
+    const uint8_t* pixels = static_cast<uint8_t*>(gl->MapBufferCHROMIUM(
+        GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, GL_READ_ONLY));
+    if (pixels) {
+      if (is_upside_down_) {
+        dest += (size().height() - 1) * stride;
+        stride = -stride;
+      }
+      const uint8_t* src = pixels;
+      if (swap_red_and_blue_) {
+        for (int y = 0; y < size().height();
+             ++y, src += src_bytes_per_row, dest += stride) {
+          for (int x = 0; x < kRGBABytesPerPixel * size().width();
+               x += kRGBABytesPerPixel) {
+            dest[x + 2] = src[x + 0];
+            dest[x + 1] = src[x + 1];
+            dest[x + 0] = src[x + 2];
+            dest[x + 3] = src[x + 3];
+          }
+        }
+      } else {
+        for (int y = 0; y < size().height();
+             ++y, src += src_bytes_per_row, dest += stride) {
+          memcpy(dest, src, src_bytes_per_row);
+        }
+      }
+      gl->UnmapBufferCHROMIUM(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM);
+    }
+    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
+    return !!pixels;
+  }
+
+  gfx::ColorSpace GetRGBAColorSpace() const final { return color_space_; }
+
+  const SkBitmap& AsSkBitmap() const final {
+    if (rect().IsEmpty())
+      return *cached_bitmap();  // Return "null" bitmap for empty result.
+
+    if (cached_bitmap()->readyToDraw())
+      return *cached_bitmap();
+
+    SkBitmap result_bitmap;
+    result_bitmap.allocPixels(SkImageInfo::MakeN32Premul(
+        size().width(), size().height(), GetRGBAColorSpace().ToSkColorSpace()));
+    ReadRGBAPlane(static_cast<uint8_t*>(result_bitmap.getPixels()),
+                  result_bitmap.rowBytes());
+    *cached_bitmap() = result_bitmap;
+    // Now that we have a cached bitmap, no need to read from GPU memory
+    // anymore.
+    context_provider_->ContextGL()->DeleteBuffers(1, &transfer_buffer_);
+    transfer_buffer_ = 0;
+    return *cached_bitmap();
+  }
+
+ private:
+  const gfx::ColorSpace color_space_;
+  const scoped_refptr<ContextProvider> context_provider_;
+  mutable GLuint transfer_buffer_;
+  const bool is_upside_down_;
+  const bool swap_red_and_blue_;
+};
 
 // Manages the execution of one asynchronous framebuffer readback and contains
 // all the relevant state needed to complete a copy request. The constructor
@@ -309,15 +475,20 @@ class ReadPixelsWorkflow {
   // Saves all revelant state and initiates the GL asynchronous read-pixels
   // workflow.
   ReadPixelsWorkflow(std::unique_ptr<CopyOutputRequest> copy_request,
-                     const gfx::Rect& copy_rect,
+                     const gfx::Vector2d& readback_offset,
+                     bool flipped_source,
+                     bool swap_red_and_blue,
                      const gfx::Rect& result_rect,
+                     const gfx::ColorSpace& color_space,
                      scoped_refptr<ContextProvider> context_provider,
                      GLenum readback_format)
       : copy_request_(std::move(copy_request)),
+        flipped_source_(flipped_source),
+        swap_red_and_blue_(swap_red_and_blue),
         result_rect_(result_rect),
-        context_provider_(std::move(context_provider)),
-        readback_format_(readback_format) {
-    DCHECK(readback_format_ == GL_RGBA || readback_format_ == GL_BGRA_EXT);
+        color_space_(color_space),
+        context_provider_(std::move(context_provider)) {
+    DCHECK(readback_format == GL_RGBA || readback_format == GL_BGRA_EXT);
 
     auto* const gl = context_provider_->ContextGL();
 
@@ -332,9 +503,9 @@ class ReadPixelsWorkflow {
     // when Finish() should be run.
     gl->GenQueriesEXT(1, &query_);
     gl->BeginQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM, query_);
-    gl->ReadPixels(copy_rect.x(), copy_rect.y(), copy_rect.width(),
-                   copy_rect.height(), readback_format_, GL_UNSIGNED_BYTE,
-                   nullptr);
+    gl->ReadPixels(readback_offset.x(), readback_offset.y(),
+                   result_rect.width(), result_rect.height(), readback_format,
+                   GL_UNSIGNED_BYTE, nullptr);
     gl->EndQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM);
     gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
   }
@@ -345,7 +516,8 @@ class ReadPixelsWorkflow {
   ~ReadPixelsWorkflow() {
     auto* const gl = context_provider_->ContextGL();
     gl->DeleteQueriesEXT(1, &query_);
-    gl->DeleteBuffers(1, &transfer_buffer_);
+    if (transfer_buffer_)
+      gl->DeleteBuffers(1, &transfer_buffer_);
   }
 
   GLuint query() const { return query_; }
@@ -353,49 +525,25 @@ class ReadPixelsWorkflow {
   // Callback for the asynchronous glReadPixels(). The pixels are read from the
   // transfer buffer, and a CopyOutputResult is sent to the requestor.
   void Finish() {
-    auto* const gl = context_provider_->ContextGL();
-
-    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, transfer_buffer_);
-    const uint8_t* pixels = static_cast<uint8_t*>(gl->MapBufferCHROMIUM(
-        GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, GL_READ_ONLY));
-    if (!pixels) {
-      // CopyOutputRequest will auto-send an empty result when its destructor
-      // is run from ~ReadPixelsWorkflow().
-      return;
+    auto result = std::make_unique<GLPixelBufferRGBAResult>(
+        result_rect_, color_space_, context_provider_, transfer_buffer_,
+        flipped_source_, swap_red_and_blue_);
+    transfer_buffer_ = 0;  // Ownerhip was transferred to the result.
+    if (!copy_request_->SendsResultsInCurrentSequence()) {
+      // Force readback into a SkBitmap now, because after PostTask we don't
+      // have access to |context_provider_|.
+      result->AsSkBitmap();
     }
-
-    // Create the result bitmap, making sure to flip the image in the Y
-    // dimension.
-    //
-    // TODO(crbug/758057): Plumb-through color space into the output bitmap.
-    SkBitmap result_bitmap;
-    const int bytes_per_row = result_rect_.width() * kRGBABytesPerPixel;
-    result_bitmap.allocPixels(
-        SkImageInfo::Make(result_rect_.width(), result_rect_.height(),
-                          (readback_format_ == GL_BGRA_EXT)
-                              ? kBGRA_8888_SkColorType
-                              : kRGBA_8888_SkColorType,
-                          kPremul_SkAlphaType),
-        bytes_per_row);
-    for (int y = 0; y < result_rect_.height(); ++y) {
-      const int flipped_y = (result_rect_.height() - y - 1);
-      const uint8_t* const src_row = pixels + flipped_y * bytes_per_row;
-      void* const dest_row = result_bitmap.getAddr(0, y);
-      memcpy(dest_row, src_row, bytes_per_row);
-    }
-    gl->UnmapBufferCHROMIUM(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM);
-
-    copy_request_->SendResult(std::make_unique<CopyOutputSkBitmapResult>(
-        result_rect_, result_bitmap));
-
-    // |transfer_buffer_| and |query_| will be deleted soon by the destructor.
+    copy_request_->SendResult(std::move(result));
   }
 
  private:
   const std::unique_ptr<CopyOutputRequest> copy_request_;
+  const bool flipped_source_;
+  const bool swap_red_and_blue_;
   const gfx::Rect result_rect_;
+  const gfx::ColorSpace color_space_;
   const scoped_refptr<ContextProvider> context_provider_;
-  const GLenum readback_format_;
   GLuint transfer_buffer_ = 0;
   GLuint query_ = 0;
 };
@@ -404,66 +552,57 @@ class ReadPixelsWorkflow {
 
 void GLRendererCopier::StartReadbackFromFramebuffer(
     std::unique_ptr<CopyOutputRequest> request,
-    const gfx::Rect& copy_rect,
+    const gfx::Vector2d& readback_offset,
+    bool flipped_source,
+    bool swapped_red_and_blue,
     const gfx::Rect& result_rect,
     const gfx::ColorSpace& color_space) {
-  DCHECK_NE(request->result_format(), ResultFormat::RGBA_TEXTURE);
-  DCHECK_SIZE_EQ(copy_rect.size(), result_rect.size());
+  DCHECK_EQ(request->result_format(), ResultFormat::RGBA_BITMAP);
 
   auto workflow = std::make_unique<ReadPixelsWorkflow>(
-      std::move(request), copy_rect, result_rect, context_provider_,
-      GetOptimalReadbackFormat());
+      std::move(request), readback_offset, flipped_source,
+      ShouldSwapRedAndBlueForBitmapReadback() != swapped_red_and_blue,
+      result_rect, color_space, context_provider_, GetOptimalReadbackFormat());
   const GLuint query = workflow->query();
   context_provider_->ContextSupport()->SignalQuery(
-      query, base::Bind(&ReadPixelsWorkflow::Finish, base::Passed(&workflow)));
+      query, base::BindOnce(&ReadPixelsWorkflow::Finish, std::move(workflow)));
 }
 
-void GLRendererCopier::SendTextureResult(
+void GLRendererCopier::RenderAndSendTextureResult(
     std::unique_ptr<CopyOutputRequest> request,
-    GLuint result_texture,
+    bool flipped_source,
+    const gfx::ColorSpace& color_space,
+    GLuint source_texture,
+    const gfx::Size& source_texture_size,
+    const gfx::Rect& sampling_rect,
     const gfx::Rect& result_rect,
-    const gfx::ColorSpace& color_space) {
+    ReusableThings* things) {
   DCHECK_EQ(request->result_format(), ResultFormat::RGBA_TEXTURE);
 
-  auto* const gl = context_provider_->ContextGL();
-
-  // Package the |result_texture| into a mailbox with the required
-  // synchronization mechanisms. This lets the requestor ensure operations
-  // within its own GL context will be using the texture at a point in time
-  // after the texture has been rendered (via GLRendererCopier's GL context).
-  gpu::Mailbox mailbox;
-  if (request->has_mailbox()) {
-    mailbox = request->mailbox();
-  } else {
-    gl->GenMailboxCHROMIUM(mailbox.name);
-    gl->ProduceTextureDirectCHROMIUM(result_texture, GL_TEXTURE_2D,
-                                     mailbox.name);
-  }
-  const GLuint64 fence_sync = gl->InsertFenceSyncCHROMIUM();
-  gl->ShallowFlushCHROMIUM();
+  auto* sii = context_provider_->SharedImageInterface();
+  gpu::Mailbox mailbox =
+      sii->CreateSharedImage(ResourceFormat::RGBA_8888, result_rect.size(),
+                             color_space, gpu::SHARED_IMAGE_USAGE_GLES2);
+  auto* gl = context_provider_->ContextGL();
+  gl->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
+  GLuint texture = gl->CreateAndTexStorage2DSharedImageCHROMIUM(mailbox.name);
+  gl->BeginSharedImageAccessDirectCHROMIUM(
+      texture, GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM);
+  RenderResultTexture(*request, flipped_source, color_space, source_texture,
+                      source_texture_size, sampling_rect, result_rect, texture,
+                      things);
+  gl->EndSharedImageAccessDirectCHROMIUM(texture);
+  gl->DeleteTextures(1, &texture);
   gpu::SyncToken sync_token;
-  gl->GenSyncTokenCHROMIUM(fence_sync, sync_token.GetData());
+  gl->GenSyncTokenCHROMIUM(sync_token.GetData());
 
-  // Create a |release_callback| appropriate to the situation: If the
-  // |result_texture| was provided in the mailbox of the copy request,
-  // create a no-op release callback because the requestor owns the texture.
-  // Otherwise, create a callback that deletes what was created in this GL
-  // context.
-  std::unique_ptr<SingleReleaseCallback> release_callback;
-  if (request->has_mailbox()) {
-    gl->DeleteTextures(1, &result_texture);
-    // TODO(crbug/754872): This non-null release callback wart is going away
-    // soon, as copy requestors won't need pool/manage textures anymore.
-    release_callback = SingleReleaseCallback::Create(
-        base::Bind([](const gpu::SyncToken&, bool) {}));
-  } else {
-    // Note: There's no need to try to pool/re-use the result texture from here,
-    // since only clients that are trying to re-invent video capture would see
-    // any significant performance benefit. Instead, such clients should use the
-    // video capture services provided by VIZ.
-    release_callback =
-        texture_deleter_->GetReleaseCallback(context_provider_, result_texture);
-  }
+  // Create a callback that deletes what was created in this GL context.
+  // Note: There's no need to try to pool/re-use the result texture from here,
+  // since only clients that are trying to re-invent video capture would see any
+  // significant performance benefit. Instead, such clients should use the video
+  // capture services provided by VIZ.
+  auto release_callback =
+      texture_deleter_->GetReleaseCallback(context_provider_, mailbox);
 
   request->SendResult(std::make_unique<CopyOutputTextureResult>(
       result_rect, mailbox, sync_token, color_space,
@@ -478,19 +617,43 @@ namespace {
 // buffer into client-provided memory.
 class GLPixelBufferI420Result : public CopyOutputResult {
  public:
-  GLPixelBufferI420Result(const gfx::Rect& result_rect,
-                          scoped_refptr<ContextProvider> context_provider,
-                          GLuint transfer_buffer,
-                          int y_stride,
-                          int chroma_stride)
+  // |aligned_rect| identifies the region of result pixels in the pixel buffer,
+  // while the |result_rect| is the subregion that is exposed to the client.
+  GLPixelBufferI420Result(
+      const gfx::Rect& aligned_rect,
+      const gfx::Rect& result_rect,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<ContextProvider> context_provider,
+      GLuint transfer_buffer)
       : CopyOutputResult(CopyOutputResult::Format::I420_PLANES, result_rect),
+        aligned_rect_(aligned_rect),
+        task_runner_(task_runner),
         context_provider_(std::move(context_provider)),
-        transfer_buffer_(transfer_buffer),
-        y_stride_(y_stride),
-        chroma_stride_(chroma_stride) {}
+        transfer_buffer_(transfer_buffer) {
+    auto* const gl = context_provider_->ContextGL();
+    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, transfer_buffer_);
+    pixels_ = static_cast<uint8_t*>(gl->MapBufferCHROMIUM(
+        GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, GL_READ_ONLY));
+    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
+  }
 
   ~GLPixelBufferI420Result() final {
-    context_provider_->ContextGL()->DeleteBuffers(1, &transfer_buffer_);
+    auto cleanup = base::BindOnce(
+        [](scoped_refptr<ContextProvider> context_provider,
+           GLuint transfer_buffer) {
+          auto* const gl = context_provider->ContextGL();
+          gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM,
+                         transfer_buffer);
+          gl->UnmapBufferCHROMIUM(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM);
+          gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
+          gl->DeleteBuffers(1, &transfer_buffer);
+        },
+        context_provider_, transfer_buffer_);
+    if (task_runner_) {
+      task_runner_->PostTask(FROM_HERE, std::move(cleanup));
+    } else {
+      std::move(cleanup).Run();
+    }
   }
 
   bool ReadI420Planes(uint8_t* y_out,
@@ -504,10 +667,7 @@ class GLPixelBufferI420Result : public CopyOutputResult {
     DCHECK_GE(u_out_stride, chroma_row_bytes);
     DCHECK_GE(v_out_stride, chroma_row_bytes);
 
-    auto* const gl = context_provider_->ContextGL();
-    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, transfer_buffer_);
-    const uint8_t* pixels = static_cast<uint8_t*>(gl->MapBufferCHROMIUM(
-        GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, GL_READ_ONLY));
+    uint8_t* pixels = pixels_;
     if (pixels) {
       const auto CopyPlane = [](const uint8_t* src, int src_stride,
                                 int row_bytes, int num_rows, uint8_t* out,
@@ -517,28 +677,33 @@ class GLPixelBufferI420Result : public CopyOutputResult {
           memcpy(out, src, row_bytes);
         }
       };
-      CopyPlane(pixels, y_stride_, size().width(), size().height(), y_out,
-                y_out_stride);
-      pixels += y_stride_ * size().height();
+      const int y_stride = aligned_rect_.width();
+      const gfx::Vector2d result_offset =
+          rect().OffsetFromOrigin() - aligned_rect_.OffsetFromOrigin();
+      const int y_start_offset =
+          result_offset.y() * y_stride + result_offset.x();
+      CopyPlane(pixels + y_start_offset, y_stride, size().width(),
+                size().height(), y_out, y_out_stride);
+      pixels += y_stride * aligned_rect_.height();
+      const int chroma_stride = aligned_rect_.width() / 2;
+      const int chroma_start_offset =
+          ((result_offset.y() / 2) * chroma_stride) + (result_offset.x() / 2);
       const int chroma_height = (size().height() + 1) / 2;
-      CopyPlane(pixels, chroma_stride_, chroma_row_bytes, chroma_height, u_out,
-                u_out_stride);
-      pixels += chroma_stride_ * chroma_height;
-      CopyPlane(pixels, chroma_stride_, chroma_row_bytes, chroma_height, v_out,
-                v_out_stride);
-      gl->UnmapBufferCHROMIUM(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM);
+      CopyPlane(pixels + chroma_start_offset, chroma_stride, chroma_row_bytes,
+                chroma_height, u_out, u_out_stride);
+      pixels += chroma_stride * (aligned_rect_.height() / 2);
+      CopyPlane(pixels + chroma_start_offset, chroma_stride, chroma_row_bytes,
+                chroma_height, v_out, v_out_stride);
     }
-    gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
-
     return !!pixels;
   }
 
  private:
+  const gfx::Rect aligned_rect_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   const scoped_refptr<ContextProvider> context_provider_;
   const GLuint transfer_buffer_;
-  const int y_stride_;
-  const int chroma_stride_;
-  const gfx::Vector2d i420_offset_;
+  uint8_t* pixels_;
 };
 
 // Like the ReadPixelsWorkflow, except for I420 planes readback. Because there
@@ -550,29 +715,30 @@ class GLPixelBufferI420Result : public CopyOutputResult {
 // Please see class comments for ReadPixelsWorkflow for discussion about how GL
 // context loss is handled during the workflow.
 //
-// Also, see gl_helper.h for an explanation of how planar data is packed into
-// RGBA textures, and how Y/Chroma plane rounding work.
+// Also, see class comments for GLI420Converter for an explanation of how planar
+// data is packed into RGBA textures.
 class ReadI420PlanesWorkflow
     : public base::RefCountedThreadSafe<ReadI420PlanesWorkflow> {
  public:
-  ReadI420PlanesWorkflow(std::unique_ptr<CopyOutputRequest> copy_request,
-                         const gfx::Rect& result_rect,
-                         scoped_refptr<ContextProvider> context_provider)
+  ReadI420PlanesWorkflow(
+      std::unique_ptr<CopyOutputRequest> copy_request,
+      const gfx::Rect& aligned_rect,
+      const gfx::Rect& result_rect,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      scoped_refptr<ContextProvider> context_provider)
       : copy_request_(std::move(copy_request)),
+        aligned_rect_(aligned_rect),
         result_rect_(result_rect),
-        context_provider_(std::move(context_provider)),
-        y_texture_size_(
-            I420Converter::GetYPlaneTextureSize(result_rect.size())),
-        chroma_texture_size_(
-            I420Converter::GetChromaPlaneTextureSize(result_rect.size())) {
+        task_runner_(std::move(task_runner)),
+        context_provider_(std::move(context_provider)) {
     // Create a buffer for the pixel transfer: A single buffer is used and will
     // contain the Y plane, then the U plane, then the V plane.
     auto* const gl = context_provider_->ContextGL();
     gl->GenBuffers(1, &transfer_buffer_);
     gl->BindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, transfer_buffer_);
-    const int y_plane_bytes = kRGBABytesPerPixel * y_texture_size_.GetArea();
+    const int y_plane_bytes = kRGBABytesPerPixel * y_texture_size().GetArea();
     const int chroma_plane_bytes =
-        kRGBABytesPerPixel * chroma_texture_size_.GetArea();
+        kRGBABytesPerPixel * chroma_texture_size().GetArea();
     gl->BufferData(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM,
                    y_plane_bytes + 2 * chroma_plane_bytes, nullptr,
                    GL_STREAM_READ);
@@ -594,7 +760,8 @@ class ReadI420PlanesWorkflow
     DCHECK_NE(queries_[plane], 0u);
     auto* const gl = context_provider_->ContextGL();
     gl->BeginQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM, queries_[plane]);
-    const gfx::Size& size = plane == 0 ? y_texture_size_ : chroma_texture_size_;
+    const gfx::Size& size =
+        plane == 0 ? y_texture_size() : chroma_texture_size();
     // Note: While a PIXEL_PACK_BUFFER is bound, OpenGL interprets the last
     // argument to ReadPixels() as a byte offset within the buffer instead of
     // an actual pointer in system memory.
@@ -605,7 +772,7 @@ class ReadI420PlanesWorkflow
     gl->EndQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM);
     context_provider_->ContextSupport()->SignalQuery(
         queries_[plane],
-        base::Bind(&ReadI420PlanesWorkflow::OnFinishedPlane, this, plane));
+        base::BindOnce(&ReadI420PlanesWorkflow::OnFinishedPlane, this, plane));
   }
 
   void UnbindTransferBuffer() {
@@ -626,6 +793,16 @@ class ReadI420PlanesWorkflow
     }
   }
 
+  gfx::Size y_texture_size() const {
+    return gfx::Size(aligned_rect_.width() / kRGBABytesPerPixel,
+                     aligned_rect_.height());
+  }
+
+  gfx::Size chroma_texture_size() const {
+    return gfx::Size(aligned_rect_.width() / kRGBABytesPerPixel / 2,
+                     aligned_rect_.height() / 2);
+  }
+
   void OnFinishedPlane(int plane) {
     context_provider_->ContextGL()->DeleteQueriesEXT(1, &queries_[plane]);
     queries_[plane] = 0;
@@ -633,18 +810,17 @@ class ReadI420PlanesWorkflow
     // If all three readbacks have completed, send the result.
     if (queries_ == std::array<GLuint, 3>{{0, 0, 0}}) {
       copy_request_->SendResult(std::make_unique<GLPixelBufferI420Result>(
-          result_rect_, context_provider_, transfer_buffer_,
-          kRGBABytesPerPixel * y_texture_size_.width(),
-          kRGBABytesPerPixel * chroma_texture_size_.width()));
+          aligned_rect_, result_rect_, task_runner_, context_provider_,
+          transfer_buffer_));
       transfer_buffer_ = 0;  // Ownership was transferred to the result.
     }
   }
 
   const std::unique_ptr<CopyOutputRequest> copy_request_;
+  const gfx::Rect aligned_rect_;
   const gfx::Rect result_rect_;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   const scoped_refptr<ContextProvider> context_provider_;
-  const gfx::Size y_texture_size_;
-  const gfx::Size chroma_texture_size_;
   GLuint transfer_buffer_;
   std::array<int, 3> data_offsets_;
   std::array<GLuint, 3> queries_;
@@ -652,237 +828,76 @@ class ReadI420PlanesWorkflow
 
 }  // namespace
 
-void GLRendererCopier::StartI420ReadbackFromTexture(
+void GLRendererCopier::StartI420ReadbackFromTextures(
     std::unique_ptr<CopyOutputRequest> request,
-    GLuint source_texture,
-    const gfx::Size& source_texture_size,
-    const gfx::Rect& copy_rect,
+    const gfx::Rect& aligned_rect,
     const gfx::Rect& result_rect,
-    const gfx::ColorSpace& color_space) {
+    ReusableThings* things) {
   DCHECK_EQ(request->result_format(), ResultFormat::I420_PLANES);
-  DCHECK_SIZE_EQ(copy_rect.size(), result_rect.size());
 
-  // Get the GL objects needed for I420 readback.
-  const base::UnguessableToken& source = SourceOf(*request);
-  std::array<GLuint, 3> plane_textures;
-  TakeCachedObjectsOrCreate(source, CacheEntry::kYPlaneTexture, 3,
-                            plane_textures.data());
-  std::array<GLuint, 3> plane_framebuffers;
-  TakeCachedObjectsOrCreate(source, CacheEntry::kReadbackFramebuffer, 3,
-                            plane_framebuffers.data());
-
-  // Run-once, if needed: If the optimal readback format has not yet been
-  // determined, call GetOptimalReadbackFormat() now. It will query the GL
-  // implementation, which requires a bound framebuffer, ready for readback.
-  // Therefore, just set-up the Y plane's texture+framebuffer and go for it.
-  // This must be done now so that the I420Converter can be configured according
-  // to the readback format.
   auto* const gl = context_provider_->ContextGL();
-  if (optimal_readback_format_ == static_cast<GLenum>(GL_NONE)) {
-    gl->BindTexture(GL_TEXTURE_2D, plane_textures[0]);
-    const gfx::Size& y_texture_size =
-        I420Converter::GetYPlaneTextureSize(result_rect.size());
-    gl->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, y_texture_size.width(),
-                   y_texture_size.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                   nullptr);
-    gl->BindFramebuffer(GL_FRAMEBUFFER, plane_framebuffers[0]);
-    gl->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, plane_textures[0], 0);
-    GetOptimalReadbackFormat();
-  }
-
-  // Convert the |source_texture| into separate Y+U+V planes.
-  std::unique_ptr<I420Converter> converter =
-      TakeCachedI420ConverterOrCreate(source);
-  // TODO(crbug/758057): Plumb-in proper color space conversion into
-  // I420Converter. If the request did not specify one, use Rec. 709.
-  converter->Convert(source_texture, source_texture_size,
-                     copy_rect.OffsetFromOrigin(), nullptr, result_rect,
-                     plane_textures[0], plane_textures[1], plane_textures[2]);
+  if (things->yuv_readback_framebuffers[0] == 0)
+    gl->GenFramebuffers(3, things->yuv_readback_framebuffers.data());
 
   // Execute three asynchronous read-pixels operations, one for each plane. The
   // CopyOutputRequest is passed to the ReadI420PlanesWorkflow, which will send
   // the CopyOutputResult once all readback operations are complete.
   const auto workflow = base::MakeRefCounted<ReadI420PlanesWorkflow>(
-      std::move(request), result_rect, context_provider_);
+      std::move(request), aligned_rect, result_rect, async_gl_task_runner_,
+      context_provider_);
   workflow->BindTransferBuffer();
   for (int plane = 0; plane < 3; ++plane) {
-    gl->BindFramebuffer(GL_FRAMEBUFFER, plane_framebuffers[plane]);
+    gl->BindFramebuffer(GL_FRAMEBUFFER,
+                        things->yuv_readback_framebuffers[plane]);
     gl->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, plane_textures[plane], 0);
-    workflow->StartPlaneReadback(plane, converter->GetReadbackFormat());
+                             GL_TEXTURE_2D, things->yuv_textures[plane], 0);
+    workflow->StartPlaneReadback(plane, GetOptimalReadbackFormat());
   }
   workflow->UnbindTransferBuffer();
-
-  // Clean up.
-  CacheI420ConverterOrDelete(source, std::move(converter));
-  CacheObjectsOrDelete(source, CacheEntry::kReadbackFramebuffer, 3,
-                       plane_framebuffers.data());
-  CacheObjectsOrDelete(source, CacheEntry::kYPlaneTexture, 3,
-                       plane_textures.data());
 }
 
-void GLRendererCopier::TakeCachedObjectsOrCreate(
-    const base::UnguessableToken& for_source,
-    int first,
-    int count,
-    GLuint* names) {
-  for (int i = 0; i < count; ++i)
-    names[i] = 0;
-
-  // If the objects can be found in the cache, take them and return them.
-  if (!for_source.is_empty()) {
-    auto& cached_object_names = cache_[for_source].object_names;
-    if (cached_object_names[first] != 0) {
-      for (int i = 0; i < count; ++i) {
-        names[i] = cached_object_names[first + i];
-        // Assumption: The caller is always using the same |first| and |count|
-        // args, and so every GLuint copied to |names| should be non-zero.
-        DCHECK_NE(names[i], 0u);
-        cached_object_names[first + i] = 0;
-      }
-      return;
+std::unique_ptr<GLRendererCopier::ReusableThings>
+GLRendererCopier::TakeReusableThingsOrCreate(
+    const base::UnguessableToken& requester) {
+  if (!requester.is_empty()) {
+    const auto it = cache_.find(requester);
+    if (it != cache_.end()) {
+      auto things = std::move(it->second);
+      cache_.erase(it);
+      return things;
     }
   }
 
-  // Generate new ones.
-  auto* const gl = context_provider_->ContextGL();
-  if (first >= CacheEntry::kReadbackFramebuffer) {
-    gl->GenFramebuffers(count, names);
+  return std::make_unique<ReusableThings>();
+}
+
+void GLRendererCopier::StashReusableThingsOrDelete(
+    const base::UnguessableToken& requester,
+    std::unique_ptr<ReusableThings> things) {
+  if (requester.is_empty()) {
+    things->Free(context_provider_->ContextGL());
   } else {
-    gl->GenTextures(count, names);
-    for (int i = 0; i < count; ++i) {
-      gl->BindTexture(GL_TEXTURE_2D, names[i]);
-      gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-      gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-      gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-      gl->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    }
+    things->purge_count_at_last_use = purge_counter_;
+    cache_[requester] = std::move(things);
   }
-}
-
-void GLRendererCopier::CacheObjectsOrDelete(
-    const base::UnguessableToken& for_source,
-    int first,
-    int count,
-    const GLuint* names) {
-  // Do not cache objects for copy requests without a common source.
-  if (for_source.is_empty()) {
-    auto* const gl = context_provider_->ContextGL();
-    if (first >= CacheEntry::kReadbackFramebuffer)
-      gl->DeleteFramebuffers(count, names);
-    else
-      gl->DeleteTextures(count, names);
-    return;
-  }
-
-  CacheEntry& entry = cache_[for_source];
-  for (int i = 0; i < count; ++i) {
-    DCHECK_EQ(entry.object_names[first + i], 0u);
-    entry.object_names[first + i] = names[i];
-  }
-  entry.purge_count_at_last_use = purge_counter_;
-}
-
-std::unique_ptr<GLHelper::ScalerInterface>
-GLRendererCopier::TakeCachedScalerOrCreate(
-    const CopyOutputRequest& for_request) {
-  // If an identically-configured scaler can be found in the cache, take it and
-  // return it. If a differently-configured scaler was found, delete it.
-  if (for_request.has_source()) {
-    std::unique_ptr<GLHelper::ScalerInterface>& cached_scaler =
-        cache_[for_request.source()].scaler;
-    if (cached_scaler) {
-      if (cached_scaler->IsSameScaleRatio(for_request.scale_from(),
-                                          for_request.scale_to())) {
-        return std::move(cached_scaler);
-      } else {
-        cached_scaler.reset();
-      }
-    }
-  }
-
-  // At this point, a new instance must be created. For downscaling, use the
-  // GOOD quality setting (appropriate for thumbnailing); and, for upscaling,
-  // use the BEST quality.
-  const bool is_downscale_in_both_dimensions =
-      for_request.scale_to().x() < for_request.scale_from().x() &&
-      for_request.scale_to().y() < for_request.scale_from().y();
-  const GLHelper::ScalerQuality quality = is_downscale_in_both_dimensions
-                                              ? GLHelper::SCALER_QUALITY_GOOD
-                                              : GLHelper::SCALER_QUALITY_BEST;
-  return helper_.CreateScaler(quality, for_request.scale_from(),
-                              for_request.scale_to(), true, false, false);
-}
-
-void GLRendererCopier::CacheScalerOrDelete(
-    const base::UnguessableToken& for_source,
-    std::unique_ptr<GLHelper::ScalerInterface> scaler) {
-  // If the request has a source, cache |scaler| for the next copy request.
-  // Otherwise, |scaler| will be auto-deleted on out-of-scope.
-  if (!for_source.is_empty()) {
-    CacheEntry& entry = cache_[for_source];
-    entry.scaler = std::move(scaler);
-    entry.purge_count_at_last_use = purge_counter_;
-  }
-}
-
-std::unique_ptr<I420Converter>
-GLRendererCopier::TakeCachedI420ConverterOrCreate(
-    const base::UnguessableToken& for_source) {
-  // If there is an I420 converter in the cache for the request's source, take
-  // it and return it.
-  if (!for_source.is_empty()) {
-    std::unique_ptr<I420Converter>& cached_converter =
-        cache_[for_source].i420_converter;
-    if (cached_converter)
-      return std::move(cached_converter);
-  }
-
-  // A new one must be created: The converter will also do the Y-flip and byte
-  // swizzling in GL so that the data copied from the mapped pixel buffer is in
-  // the exact row and byte ordering needed for GLPixelBufferI420Result.
-  return helper_.CreateI420Converter(
-      true, true, GetOptimalReadbackFormat() == GL_BGRA_EXT, true);
-}
-
-void GLRendererCopier::CacheI420ConverterOrDelete(
-    const base::UnguessableToken& for_source,
-    std::unique_ptr<I420Converter> i420_converter) {
-  // If the request has a source, cache |i420_converter| for the next copy
-  // request. Otherwise, it will be auto-deleted on out-of-scope.
-  if (!for_source.is_empty()) {
-    CacheEntry& entry = cache_[for_source];
-    entry.i420_converter = std::move(i420_converter);
-    entry.purge_count_at_last_use = purge_counter_;
-  }
-}
-
-void GLRendererCopier::FreeCachedResources(CacheEntry* entry) {
-  auto* const gl = context_provider_->ContextGL();
-  size_t i = 0;
-  for (; i < static_cast<size_t>(CacheEntry::kReadbackFramebuffer); ++i) {
-    if (entry->object_names[i] != 0)
-      gl->DeleteTextures(1, &(entry->object_names[i]));
-  }
-  for (; i < entry->object_names.size(); ++i) {
-    if (entry->object_names[i] != 0)
-      gl->DeleteFramebuffers(1, &(entry->object_names[i]));
-  }
-  entry->object_names.fill(0);
-  entry->scaler.reset();
-  entry->i420_converter.reset();
 }
 
 GLenum GLRendererCopier::GetOptimalReadbackFormat() {
   if (optimal_readback_format_ != GL_NONE)
     return optimal_readback_format_;
 
+  // Preconditions: GetOptimalReadbackFormat() requires a valid context and a
+  // complete framebuffer set up. The latter must be guaranteed by all possible
+  // callers of this method.
+  auto* const gl = context_provider_->ContextGL();
+  if (gl->GetGraphicsResetStatusKHR() != GL_NO_ERROR)
+    return GL_RGBA;  // No context: Just return a sane default.
+  DCHECK(gl->CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+
   // If the GL implementation internally uses the GL_BGRA_EXT+GL_UNSIGNED_BYTE
   // format+type combination, then consider that the optimal readback
   // format+type. Otherwise, use GL_RGBA+GL_UNSIGNED_BYTE, which all platforms
   // must support, per the GLES 2.0 spec.
-  auto* const gl = context_provider_->ContextGL();
   GLint type = 0;
   GLint readback_format = 0;
   gl->GetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &type);
@@ -895,22 +910,56 @@ GLenum GLRendererCopier::GetOptimalReadbackFormat() {
   return optimal_readback_format_;
 }
 
-GLRendererCopier::CacheEntry::CacheEntry() {
-  object_names.fill(0);
+bool GLRendererCopier::ShouldSwapRedAndBlueForBitmapReadback() {
+  const bool skbitmap_is_bgra = (kN32_SkColorType == kBGRA_8888_SkColorType);
+  const bool readback_will_be_bgra =
+      (GetOptimalReadbackFormat() == GL_BGRA_EXT);
+  return skbitmap_is_bgra != readback_will_be_bgra;
 }
 
-GLRendererCopier::CacheEntry::CacheEntry(CacheEntry&&) = default;
-GLRendererCopier::CacheEntry& GLRendererCopier::CacheEntry::operator=(
-    CacheEntry&&) = default;
+GLRendererCopier::ReusableThings::ReusableThings() = default;
 
-GLRendererCopier::CacheEntry::~CacheEntry() {
+GLRendererCopier::ReusableThings::~ReusableThings() {
   // Ensure all resources were freed by this point. Resources aren't explicity
   // freed here, in the destructor, because some require access to the GL
-  // context. See FreeCachedResources().
-  DCHECK(std::find_if(object_names.begin(), object_names.end(),
-                      [](GLuint x) { return x != 0; }) == object_names.end());
+  // context. See Free().
+  DCHECK_EQ(fb_copy_texture, 0u);
   DCHECK(!scaler);
+  DCHECK_EQ(result_texture, 0u);
+  DCHECK_EQ(readback_framebuffer, 0u);
   DCHECK(!i420_converter);
+  constexpr std::array<GLuint, 3> kAllZeros = {0, 0, 0};
+  DCHECK(yuv_textures == kAllZeros);
+  DCHECK(yuv_readback_framebuffers == kAllZeros);
+}
+
+void GLRendererCopier::ReusableThings::Free(gpu::gles2::GLES2Interface* gl) {
+  if (fb_copy_texture != 0) {
+    gl->DeleteTextures(1, &fb_copy_texture);
+    fb_copy_texture = 0;
+    fb_copy_texture_internal_format = static_cast<GLenum>(GL_NONE);
+    fb_copy_texture_size = gfx::Size();
+  }
+  scaler.reset();
+  if (result_texture != 0) {
+    gl->DeleteTextures(1, &result_texture);
+    result_texture = 0;
+    result_texture_size = gfx::Size();
+  }
+  if (readback_framebuffer != 0) {
+    gl->DeleteFramebuffers(1, &readback_framebuffer);
+    readback_framebuffer = 0;
+  }
+  i420_converter.reset();
+  if (yuv_textures[0] != 0) {
+    gl->DeleteTextures(3, yuv_textures.data());
+    yuv_textures = {0, 0, 0};
+    y_texture_size = gfx::Size();
+  }
+  if (yuv_readback_framebuffers[0] != 0) {
+    gl->DeleteFramebuffers(3, yuv_readback_framebuffers.data());
+    yuv_readback_framebuffers = {0, 0, 0};
+  }
 }
 
 }  // namespace viz

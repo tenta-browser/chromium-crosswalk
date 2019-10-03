@@ -8,10 +8,12 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Canvas;
+import android.os.Build;
 import android.support.annotation.Nullable;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.animation.FastOutLinearInInterpolator;
@@ -29,7 +31,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ntp.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.cards.CardViewHolder;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageAdapter;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder;
@@ -50,11 +51,9 @@ import java.util.Set;
 public class SuggestionsRecyclerView extends RecyclerView {
     private static final Interpolator DISMISS_INTERPOLATOR = new FastOutLinearInInterpolator();
     private static final int DISMISS_ANIMATION_TIME_MS = 300;
-    private static final int NEW_CONTENT_HIGHLIGHT_DURATION_MS = 3000;
 
     private final GestureDetector mGestureDetector;
     private final LinearLayoutManager mLayoutManager;
-    private final SuggestionsMetrics.ScrollEventReporter mScrollEventReporter;
 
     // The ScrollToLoadListener triggers loading more content when the user is near the end.
     @Nullable private ScrollToLoadListener mScrollToLoadListener;
@@ -76,20 +75,25 @@ public class SuggestionsRecyclerView extends RecyclerView {
      * Whether the {@link SuggestionsRecyclerView} and its children should react to touch events.
      */
     private boolean mTouchEnabled = true;
-    private boolean mScrollEnabled = true;
 
     /** The ui config for this view. */
     private UiConfig mUiConfig;
 
-    /** The context menu manager for this view. */
-    private ContextMenuManager mContextMenuManager;
+    private Runnable mCloseContextMenuCallback;
+
+    private boolean mIsCardBeingSwiped;
 
     public SuggestionsRecyclerView(Context context) {
         this(context, null);
     }
 
-    @SuppressWarnings("RestrictTo")
     public SuggestionsRecyclerView(Context context, AttributeSet attrs) {
+        this(context, attrs, new LinearLayoutManager(context));
+    }
+
+    @SuppressWarnings("RestrictTo")
+    protected SuggestionsRecyclerView(
+            Context context, AttributeSet attrs, LinearLayoutManager layoutManager) {
         super(new ContextThemeWrapper(context, R.style.NewTabPageRecyclerView), attrs);
 
         Resources res = getContext().getResources();
@@ -99,6 +103,7 @@ public class SuggestionsRecyclerView extends RecyclerView {
         setFocusable(true);
         setFocusableInTouchMode(true);
         setContentDescription(res.getString(R.string.accessibility_new_tab_page));
+        setClipToPadding(false);
 
         mGestureDetector =
                 new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
@@ -109,15 +114,20 @@ public class SuggestionsRecyclerView extends RecyclerView {
                         return retVal;
                     }
                 });
-        mLayoutManager = new LinearLayoutManager(getContext());
-        setLayoutManager(mLayoutManager);
+        mLayoutManager = layoutManager;
+        setLayoutManager(layoutManager);
         setHasFixedSize(true);
 
         ItemTouchHelper helper = new ItemTouchHelper(new ItemTouchCallbacks());
         helper.attachToRecyclerView(this);
 
-        mScrollEventReporter = new SuggestionsMetrics.ScrollEventReporter();
-        addOnScrollListener(mScrollEventReporter);
+        addOnScrollListener(new SuggestionsMetrics.ScrollEventReporter());
+
+        // Work around https://crbug.com/943873 where default focus highlight shows up after
+        // toggling dark mode.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            setDefaultFocusHighlightEnabled(false);
+        }
     }
 
     public boolean isFirstItemVisible() {
@@ -132,34 +142,46 @@ public class SuggestionsRecyclerView extends RecyclerView {
         mTouchEnabled = enabled;
     }
 
-    @Override
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
-        mGestureDetector.onTouchEvent(ev);
-        if (!mTouchEnabled) return true;
-        return super.onInterceptTouchEvent(ev);
+    /**
+     * Returns the approximate adapter position that the user has scrolled to. The purpose of this
+     * value is that it can be stored and later retrieved to restore a scroll position that is
+     * familiar to the user, showing (part of) the same content the user was previously looking at.
+     * This position is valid for that purpose regardless of device orientation changes. Note that
+     * if the underlying data has changed in the meantime, different content would be shown for this
+     * position.
+     */
+    public int getScrollPosition() {
+        return getLinearLayoutManager().findFirstVisibleItemPosition();
     }
 
     /**
-     * Toggle whether scrolling is enabled.
+     * @return Whether the {@link SuggestionsRecyclerView} and its children should react to touch
+     * events.
      */
-    public void setScrollEnabled(boolean enabled) {
-        mScrollEnabled = enabled;
+    protected boolean getTouchEnabled() {
+        return mTouchEnabled;
+    }
+
+    @Override
+    public boolean onInterceptTouchEvent(MotionEvent ev) {
+        mGestureDetector.onTouchEvent(ev);
+        if (!getTouchEnabled()) return true;
+        return super.onInterceptTouchEvent(ev);
     }
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN && !mScrollEnabled) {
-            setLayoutFrozen(true);
-        } else if (ev.getActionMasked() == MotionEvent.ACTION_UP
+        if (ev.getActionMasked() == MotionEvent.ACTION_UP
                 || ev.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             setLayoutFrozen(false);
         }
         return super.dispatchTouchEvent(ev);
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        if (!mTouchEnabled) return false;
+        if (!getTouchEnabled()) return false;
 
         // Action down would already have been handled in onInterceptTouchEvent
         if (ev.getActionMasked() != MotionEvent.ACTION_DOWN) {
@@ -192,18 +214,10 @@ public class SuggestionsRecyclerView extends RecyclerView {
         // be through a OnLayoutChangeListener, but then we get notified of the change after the
         // layout pass, which means that the new style will only be visible after layout happens
         // again. We prefer updating here to avoid having to require that additional layout pass.
-        mUiConfig.updateDisplayStyle();
+        if (mUiConfig != null) mUiConfig.updateDisplayStyle();
 
         // Close the Context Menu as it may have moved (https://crbug.com/642688).
-        mContextMenuManager.closeContextMenu();
-    }
-
-    /** Highlights the current length of the view by temporarily showing the scrollbar. */
-    public void highlightContentLength() {
-        int defaultDelay = getScrollBarDefaultDelayBeforeFade();
-        setScrollBarDefaultDelayBeforeFade(NEW_CONTENT_HIGHLIGHT_DURATION_MS);
-        awakenScrollBars();
-        setScrollBarDefaultDelayBeforeFade(defaultDelay);
+        if (mCloseContextMenuCallback != null) mCloseContextMenuCallback.run();
     }
 
     @Override
@@ -216,9 +230,9 @@ public class SuggestionsRecyclerView extends RecyclerView {
         super.onLayout(changed, l, t, r, b);
     }
 
-    public void init(UiConfig uiConfig, ContextMenuManager contextMenuManager) {
+    public void init(UiConfig uiConfig, Runnable closeContextMenuCallback) {
         mUiConfig = uiConfig;
-        mContextMenuManager = contextMenuManager;
+        mCloseContextMenuCallback = closeContextMenuCallback;
     }
 
     public NewTabPageAdapter getNewTabPageAdapter() {
@@ -328,32 +342,6 @@ public class SuggestionsRecyclerView extends RecyclerView {
     }
 
     /**
-     * To be triggered when a snippet is bound to a ViewHolder.
-     */
-    public void onCardBound(CardViewHolder cardViewHolder) {}
-
-    /**
-     * To be triggered when a snippet impression is triggered.
-     */
-    public void onSnippetImpression() {}
-
-    /**
-     * To be triggered when a card is tapped, optionally intercepting the event.
-     * @return {@code true} when the holder should not be notified about the tap.
-     */
-    public boolean interceptCardTapped(CardViewHolder cardViewHolder) {
-        return false;
-    }
-
-    public int getCompensationHeight() {
-        return mCompensationHeight;
-    }
-
-    public SuggestionsMetrics.ScrollEventReporter getScrollEventReporter() {
-        return mScrollEventReporter;
-    }
-
-    /**
      * Resets a card's properties affected by swipe to dismiss. Intended to be used as
      * {@link NewTabPageViewHolder.PartialBindCallback}
      */
@@ -364,7 +352,7 @@ public class SuggestionsRecyclerView extends RecyclerView {
     /**
      * Sets the ScrollToLoadListener for the RecyclerView.
      */
-    public void setScrollToLoadListener(ScrollToLoadListener scrollToLoadListener) {
+    public void setScrollToLoadListener(@Nullable ScrollToLoadListener scrollToLoadListener) {
         mScrollToLoadListener = scrollToLoadListener;
         addOnScrollListener(mScrollToLoadListener);
     }
@@ -418,6 +406,8 @@ public class SuggestionsRecyclerView extends RecyclerView {
         @Override
         public void onChildDraw(Canvas c, RecyclerView recyclerView, ViewHolder viewHolder,
                 float dX, float dY, int actionState, boolean isCurrentlyActive) {
+            mIsCardBeingSwiped = isCurrentlyActive && dX != 0.f;
+
             // In some cases a removed child may call this method when unrelated items are
             // interacted with (https://crbug.com/664466, b/32900699), but in that case
             // getSiblingDismissalViewHolders() below will return an empty list.
@@ -428,6 +418,14 @@ public class SuggestionsRecyclerView extends RecyclerView {
                 updateViewStateForDismiss(dX, siblingViewHolder);
             }
         }
+    }
+
+    /**
+     * Tells if one of card views is being swiped now.
+     * @return {@code true} if a card view is being swiped.
+     */
+    public boolean isCardBeingSwiped() {
+        return mIsCardBeingSwiped;
     }
 
     private List<ViewHolder> getDismissalGroupViewHolders(ViewHolder viewHolder) {

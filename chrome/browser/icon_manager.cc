@@ -16,16 +16,16 @@ namespace {
 
 void RunCallbackIfNotCanceled(
     const base::CancelableTaskTracker::IsCanceledCallback& is_canceled,
-    const IconManager::IconRequestCallback& callback,
-    gfx::Image* image) {
+    IconManager::IconRequestCallback callback,
+    gfx::Image image) {
   if (is_canceled.Run())
     return;
-  callback.Run(image);
+  std::move(callback).Run(std::move(image));
 }
 
 }  // namespace
 
-IconManager::IconManager() : weak_factory_(this) {}
+IconManager::IconManager() {}
 
 IconManager::~IconManager() {
 }
@@ -41,24 +41,24 @@ gfx::Image* IconManager::LookupIconFromFilepath(const base::FilePath& file_path,
   if (icon_it == icon_cache_.end())
     return nullptr;
 
-  return icon_it->second.get();
+  return &icon_it->second;
 }
 
 base::CancelableTaskTracker::TaskId IconManager::LoadIcon(
     const base::FilePath& file_path,
     IconLoader::IconSize size,
-    const IconRequestCallback& callback,
+    IconRequestCallback callback,
     base::CancelableTaskTracker* tracker) {
   base::CancelableTaskTracker::IsCanceledCallback is_canceled;
   base::CancelableTaskTracker::TaskId id =
       tracker->NewTrackedTaskId(&is_canceled);
-  IconRequestCallback callback_runner = base::Bind(
-      &RunCallbackIfNotCanceled, is_canceled, callback);
+  IconRequestCallback callback_runner = base::BindOnce(
+      &RunCallbackIfNotCanceled, is_canceled, std::move(callback));
 
   IconLoader* loader = IconLoader::Create(
       file_path, size,
-      base::Bind(&IconManager::OnIconLoaded, weak_factory_.GetWeakPtr(),
-                 callback_runner, file_path, size));
+      base::BindOnce(&IconManager::OnIconLoaded, weak_factory_.GetWeakPtr(),
+                     std::move(callback_runner), file_path, size));
   loader->Start();
 
   return id;
@@ -67,19 +67,17 @@ base::CancelableTaskTracker::TaskId IconManager::LoadIcon(
 void IconManager::OnIconLoaded(IconRequestCallback callback,
                                base::FilePath file_path,
                                IconLoader::IconSize size,
-                               std::unique_ptr<gfx::Image> result,
+                               gfx::Image result,
                                const IconLoader::IconGroup& group) {
   // Cache the bitmap. Watch out: |result| may be null, which indicates a
   // failure. We assume that if we have an entry in |icon_cache_| it must not be
   // null.
   CacheKey key(group, size);
-  if (result) {
-    callback.Run(result.get());
+  std::move(callback).Run(result);
+  if (!result.IsEmpty())
     icon_cache_[key] = std::move(result);
-  } else {
-    callback.Run(nullptr);
+  else
     icon_cache_.erase(key);
-  }
 
   group_cache_[file_path] = group;
 }

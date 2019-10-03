@@ -6,7 +6,6 @@
        doesn't ignore this. -->
   <manifest xmlns:android="http://schemas.android.com/apk/res/android"
       package="org.chromium.content_shell_apk.tests">
-    <uses-sdk android:minSdkVersion="16" android:targetSdkVersion="23" />
     <uses-permission android:name="android.permission.RUN_INSTRUMENTATION" />
     <!-- We add an application tag here just so that we can indicate that this
          package needs to link against the android.test library, which is
@@ -19,9 +18,5 @@
 
     <instrumentation android:name="org.chromium.base.test.BaseChromiumAndroidJUnitRunner"
         android:targetPackage="org.chromium.content_shell_apk"
-        chromium-junit4="true"
         android:label="JUnit4-based tests for org.chromium.content_shell_apk" />
-    <instrumentation android:name="org.chromium.content.browser.test.ContentInstrumentationTestRunner"
-        android:targetPackage="org.chromium.content_shell_apk"
-        android:label="Tests for org.chromium.content_shell_apk"/>
 </manifest>

@@ -16,6 +16,10 @@
 #include "build/build_config.h"
 #include "url/gurl.h"
 
+#if defined(OS_FUCHSIA)
+#include "base/base_paths_fuchsia.h"
+#endif
+
 namespace net {
 
 namespace {
@@ -23,11 +27,9 @@ namespace {
 base::FilePath GetTestServerConfigFilePath() {
   base::FilePath dir;
 #if defined(OS_ANDROID)
-  PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &dir);
-#elif defined(OS_FUCHSIA)
-  dir = base::FilePath("/system");
+  base::PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &dir);
 #else
-  PathService::Get(base::DIR_TEMP, &dir);
+  base::PathService::Get(base::DIR_TEMP, &dir);
 #endif
   return dir.AppendASCII("net-test-server-config");
 }
@@ -57,8 +59,8 @@ RemoteTestServerConfig RemoteTestServerConfig::Load() {
   if (!ReadFileToString(config_path, &config_json))
     LOG(FATAL) << "Failed to read " << config_path.value();
 
-  std::unique_ptr<base::DictionaryValue> config =
-      base::DictionaryValue::From(base::JSONReader::Read(config_json));
+  std::unique_ptr<base::DictionaryValue> config = base::DictionaryValue::From(
+      base::JSONReader::ReadDeprecated(config_json));
   if (!config)
     LOG(FATAL) << "Failed to parse " << config_path.value();
 

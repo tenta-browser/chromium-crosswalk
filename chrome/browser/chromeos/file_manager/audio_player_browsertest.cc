@@ -4,18 +4,28 @@
 
 #include "chrome/browser/chromeos/file_manager/file_manager_browsertest_base.h"
 
+#include "base/test/scoped_feature_list.h"
+#include "media/base/media_switches.h"
+
 namespace file_manager {
 
-template <GuestMode M>
+template <GuestMode MODE>
 class AudioPlayerBrowserTestBase : public FileManagerBrowserTestBase {
  public:
-  GuestMode GetGuestModeParam() const override { return M; }
-  const char* GetTestCaseNameParam() const override {
+  AudioPlayerBrowserTestBase() = default;
+
+ protected:
+  GuestMode GetGuestMode() const override { return MODE; }
+
+  const char* GetTestCaseName() const override {
     return test_case_name_.c_str();
   }
 
- protected:
-  const char* GetTestManifestName() const override {
+  std::string GetFullTestCaseName() const override {
+    return test_case_name_;
+  }
+
+  const char* GetTestExtensionManifestName() const override {
     return "audio_player_test_manifest.json";
   }
 
@@ -23,19 +33,15 @@ class AudioPlayerBrowserTestBase : public FileManagerBrowserTestBase {
 
  private:
   std::string test_case_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(AudioPlayerBrowserTestBase);
 };
 
 typedef AudioPlayerBrowserTestBase<NOT_IN_GUEST_MODE> AudioPlayerBrowserTest;
 typedef AudioPlayerBrowserTestBase<IN_GUEST_MODE>
     AudioPlayerBrowserTestInGuestMode;
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_OpenAudioOnDownloads DISABLED_OpenAudioOnDownloads
-#else
-#define MAYBE_OpenAudioOnDownloads OpenAudioOnDownloads
-#endif
-IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, MAYBE_OpenAudioOnDownloads) {
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, OpenAudioOnDownloads) {
   set_test_case_name("openAudioOnDownloads");
   StartTest();
 }
@@ -46,45 +52,43 @@ IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTestInGuestMode,
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_OpenAudioOnDrive DISABLED_OpenAudioOnDrive
-#else
-#define MAYBE_OpenAudioOnDrive OpenAudioOnDrive
-#endif
-IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, MAYBE_OpenAudioOnDrive) {
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, OpenAudioOnDrive) {
   set_test_case_name("openAudioOnDrive");
   StartTest();
 }
 
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_TogglePlayState DISABLED_TogglePlayState
-#else
-#define MAYBE_TogglePlayState TogglePlayState
-#endif
-IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, MAYBE_TogglePlayState) {
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, TogglePlayState) {
   set_test_case_name("togglePlayState");
   StartTest();
 }
 
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_ChangeVolumeLevel DISABLED_ChangeVolumeLevel
-#else
-#define MAYBE_ChangeVolumeLevel ChangeVolumeLevel
-#endif
-IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, MAYBE_ChangeVolumeLevel) {
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, ChangeVolumeLevel) {
   set_test_case_name("changeVolumeLevel");
   StartTest();
 }
 
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_ChangeTracks DISABLED_ChangeTracks
-#else
-// Also disable because of flakyness. http://crbug.com/618198
-#define MAYBE_ChangeTracks DISABLED_ChangeTracks
-#endif
-IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, MAYBE_ChangeTracks) {
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, ChangeTracks) {
   set_test_case_name("changeTracks");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, ChangeTracksPlayList) {
+  set_test_case_name("changeTracksPlayList");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, ChangeTracksPlayListIcon) {
+  set_test_case_name("changeTracksPlayListIcon");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(AudioPlayerBrowserTest, NativeMediaKey) {
+  // The HardwareMediaKeyHandling feature makes key handling flaky.
+  // See https://crbug.com/902519.
+  base::test::ScopedFeatureList disable_media_key_handling;
+  disable_media_key_handling.InitAndDisableFeature(
+      media::kHardwareMediaKeyHandling);
+  set_test_case_name("mediaKeyNative");
   StartTest();
 }
 

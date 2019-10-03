@@ -4,18 +4,14 @@
 
 package org.chromium.chrome.browser.page_info;
 
-import android.app.Dialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
-import android.graphics.Color;
 import android.provider.Browser;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.view.Window;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -27,36 +23,49 @@ import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ResourceId;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.vr.UiUnsupportedMode;
+import org.chromium.chrome.browser.vr.VrModuleProvider;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
+import org.chromium.ui.modaldialog.DialogDismissalCause;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.widget.ButtonCompat;
 
 /**
  * Java side of Android implementation of the page info UI.
  */
-public class ConnectionInfoPopup implements OnClickListener {
+public class ConnectionInfoPopup implements OnClickListener, ModalDialogProperties.Controller {
     private static final String TAG = "ConnectionInfoPopup";
 
     private static final String HELP_URL =
             "https://support.google.com/chrome/answer/95617";
-    private static final int DESCRIPTION_TEXT_SIZE_SP = 12;
+
     private final Context mContext;
-    private final Dialog mDialog;
+    private final ModalDialogManager mModalDialogManager;
+    private PropertyModel mDialogModel;
     private final LinearLayout mContainer;
     private final WebContents mWebContents;
+    private final WebContentsObserver mWebContentsObserver;
     private final int mPaddingWide, mPaddingThin;
     private final long mNativeConnectionInfoPopup;
-    private TextView mCertificateViewer, mMoreInfoLink;
+    private final CertificateViewer mCertificateViewer;
+    private TextView mCertificateViewerTextView, mMoreInfoLink;
     private ViewGroup mCertificateLayout, mDescriptionLayout;
     private Button mResetCertDecisionsButton;
     private String mLinkUrl;
 
-    private ConnectionInfoPopup(Context context, WebContents webContents) {
+    private ConnectionInfoPopup(Context context, Tab tab) {
         mContext = context;
-        mWebContents = webContents;
+        mModalDialogManager = tab.getActivity().getModalDialogManager();
+        mWebContents = tab.getWebContents();
+
+        mCertificateViewer = new CertificateViewer(mContext);
 
         mContainer = new LinearLayout(mContext);
         mContainer.setOrientation(LinearLayout.VERTICAL);
-        mContainer.setBackgroundColor(Color.WHITE);
         mPaddingWide = (int) context.getResources().getDimension(
                 R.dimen.connection_info_padding_wide);
         mPaddingThin = (int) context.getResources().getDimension(
@@ -64,34 +73,22 @@ public class ConnectionInfoPopup implements OnClickListener {
         mContainer.setPadding(mPaddingWide, mPaddingWide, mPaddingWide,
                 mPaddingWide - mPaddingThin);
 
-        mDialog = new Dialog(mContext);
-        mDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        mDialog.setCanceledOnTouchOutside(true);
         // This needs to come after other member initialization.
-        mNativeConnectionInfoPopup = nativeInit(this, webContents);
-        final WebContentsObserver webContentsObserver =
-                new WebContentsObserver(mWebContents) {
+        mNativeConnectionInfoPopup = nativeInit(this, mWebContents);
+        mWebContentsObserver = new WebContentsObserver(mWebContents) {
             @Override
             public void navigationEntryCommitted() {
                 // If a navigation is committed (e.g. from in-page redirect), the data we're
                 // showing is stale so dismiss the dialog.
-                mDialog.dismiss();
+                dismissDialog(DialogDismissalCause.UNKNOWN);
             }
 
             @Override
             public void destroy() {
                 super.destroy();
-                mDialog.dismiss();
+                dismissDialog(DialogDismissalCause.UNKNOWN);
             }
         };
-        mDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
-            @Override
-            public void onDismiss(DialogInterface dialog) {
-                assert mNativeConnectionInfoPopup != 0;
-                webContentsObserver.destroy();
-                nativeDestroy(mNativeConnectionInfoPopup);
-            }
-        });
     }
 
     /**
@@ -117,23 +114,22 @@ public class ConnectionInfoPopup implements OnClickListener {
     private void addDescriptionSection(int enumeratedIconId, String headline, String description) {
         View section = addSection(enumeratedIconId, headline, description);
         assert mDescriptionLayout == null;
-        mDescriptionLayout = (ViewGroup) section.findViewById(R.id.connection_info_text_layout);
+        mDescriptionLayout = section.findViewById(R.id.connection_info_text_layout);
     }
 
     private View addSection(int enumeratedIconId, String headline, String description) {
         View section = LayoutInflater.from(mContext).inflate(R.layout.connection_info,
                 null);
-        ImageView i = (ImageView) section.findViewById(R.id.connection_info_icon);
+        ImageView i = section.findViewById(R.id.connection_info_icon);
         int drawableId = ResourceId.mapToDrawableId(enumeratedIconId);
         i.setImageResource(drawableId);
 
-        TextView h = (TextView) section.findViewById(R.id.connection_info_headline);
+        TextView h = section.findViewById(R.id.connection_info_headline);
         h.setText(headline);
         if (TextUtils.isEmpty(headline)) h.setVisibility(View.GONE);
 
-        TextView d = (TextView) section.findViewById(R.id.connection_info_description);
+        TextView d = section.findViewById(R.id.connection_info_description);
         d.setText(description);
-        d.setTextSize(DESCRIPTION_TEXT_SIZE_SP);
         if (TextUtils.isEmpty(description)) d.setVisibility(View.GONE);
 
         mContainer.addView(section);
@@ -141,30 +137,26 @@ public class ConnectionInfoPopup implements OnClickListener {
     }
 
     private void setCertificateViewer(String label) {
-        assert mCertificateViewer == null;
-        mCertificateViewer = new TextView(mContext);
-        mCertificateViewer.setText(label);
-        mCertificateViewer.setTextColor(
-                ApiCompatibilityUtils.getColor(mContext.getResources(), R.color.google_blue_700));
-        mCertificateViewer.setTextSize(DESCRIPTION_TEXT_SIZE_SP);
-        mCertificateViewer.setOnClickListener(this);
-        mCertificateViewer.setPadding(0, mPaddingThin, 0, 0);
-        mCertificateLayout.addView(mCertificateViewer);
+        assert mCertificateViewerTextView == null;
+        mCertificateViewerTextView = new TextView(mContext);
+        mCertificateViewerTextView.setText(label);
+        ApiCompatibilityUtils.setTextAppearance(
+                mCertificateViewerTextView, R.style.TextAppearance_BlueLink3);
+        mCertificateViewerTextView.setOnClickListener(this);
+        mCertificateViewerTextView.setPadding(0, mPaddingThin, 0, 0);
+        mCertificateLayout.addView(mCertificateViewerTextView);
+    }
+
+    private void dismissDialog(@DialogDismissalCause int dismissalCause) {
+        mModalDialogManager.dismissDialog(mDialogModel, dismissalCause);
     }
 
     @CalledByNative
     private void addResetCertDecisionsButton(String label) {
-        assert mNativeConnectionInfoPopup != 0;
         assert mResetCertDecisionsButton == null;
 
-        mResetCertDecisionsButton = new Button(mContext);
+        mResetCertDecisionsButton = new ButtonCompat(mContext, R.style.FilledButtonThemeOverlay);
         mResetCertDecisionsButton.setText(label);
-        mResetCertDecisionsButton.setBackgroundResource(
-                R.drawable.connection_info_reset_cert_decisions);
-        mResetCertDecisionsButton.setTextColor(ApiCompatibilityUtils.getColor(
-                mContext.getResources(),
-                R.color.connection_info_popup_reset_cert_decisions_button));
-        mResetCertDecisionsButton.setTextSize(DESCRIPTION_TEXT_SIZE_SP);
         mResetCertDecisionsButton.setOnClickListener(this);
 
         LinearLayout container = new LinearLayout(mContext);
@@ -179,9 +171,7 @@ public class ConnectionInfoPopup implements OnClickListener {
         mMoreInfoLink = new TextView(mContext);
         mLinkUrl = HELP_URL;
         mMoreInfoLink.setText(linkText);
-        mMoreInfoLink.setTextColor(
-                ApiCompatibilityUtils.getColor(mContext.getResources(), R.color.google_blue_700));
-        mMoreInfoLink.setTextSize(DESCRIPTION_TEXT_SIZE_SP);
+        ApiCompatibilityUtils.setTextAppearance(mMoreInfoLink, R.style.TextAppearance_BlueLink3);
         mMoreInfoLink.setPadding(0, mPaddingThin, 0, 0);
         mMoreInfoLink.setOnClickListener(this);
         mDescriptionLayout.addView(mMoreInfoLink);
@@ -192,39 +182,67 @@ public class ConnectionInfoPopup implements OnClickListener {
     private void showDialog() {
         ScrollView scrollView = new ScrollView(mContext);
         scrollView.addView(mContainer);
-        mDialog.addContentView(scrollView,
-                new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.MATCH_PARENT));
 
-        mDialog.getWindow().setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        mDialog.show();
+        mDialogModel = new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
+                               .with(ModalDialogProperties.CONTROLLER, this)
+                               .with(ModalDialogProperties.CUSTOM_VIEW, scrollView)
+                               .with(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE, true)
+                               .build();
+
+        mModalDialogManager.showDialog(mDialogModel, ModalDialogManager.ModalDialogType.APP, true);
     }
 
     @Override
     public void onClick(View v) {
         if (mResetCertDecisionsButton == v) {
             nativeResetCertDecisions(mNativeConnectionInfoPopup, mWebContents);
-            mDialog.dismiss();
-        } else if (mCertificateViewer == v) {
+            dismissDialog(DialogDismissalCause.ACTION_ON_CONTENT);
+        } else if (mCertificateViewerTextView == v) {
             byte[][] certChain = CertificateChainHelper.getCertificateChain(mWebContents);
             if (certChain == null) {
                 // The WebContents may have been destroyed/invalidated. If so,
                 // ignore this request.
                 return;
             }
-            CertificateViewer.showCertificateChain(mContext, certChain);
-        } else if (mMoreInfoLink == v) {
-            mDialog.dismiss();
-            try {
-                Intent i = Intent.parseUri(mLinkUrl, Intent.URI_INTENT_SCHEME);
-                i.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
-                i.putExtra(Browser.EXTRA_APPLICATION_ID, mContext.getPackageName());
-                mContext.startActivity(i);
-            } catch (Exception ex) {
-                // Do nothing intentionally.
-                Log.w(TAG, "Bad URI %s", mLinkUrl, ex);
+            if (VrModuleProvider.getDelegate().isInVr()) {
+                VrModuleProvider.getDelegate().requestToExitVrAndRunOnSuccess(() -> {
+                    mCertificateViewer.showCertificateChain(certChain);
+                }, UiUnsupportedMode.UNHANDLED_CERTIFICATE_INFO);
+                return;
             }
+            mCertificateViewer.showCertificateChain(certChain);
+        } else if (mMoreInfoLink == v) {
+            if (VrModuleProvider.getDelegate().isInVr()) {
+                VrModuleProvider.getDelegate().requestToExitVrAndRunOnSuccess(
+                        this ::showConnectionSecurityInfo,
+                        UiUnsupportedMode.UNHANDLED_CONNECTION_SECURITY_INFO);
+                return;
+            }
+            showConnectionSecurityInfo();
+        }
+    }
+
+    @Override
+    public void onClick(PropertyModel model, int buttonType) {}
+
+    @Override
+    public void onDismiss(PropertyModel model, int dismissalCause) {
+        assert mNativeConnectionInfoPopup != 0;
+        mWebContentsObserver.destroy();
+        nativeDestroy(mNativeConnectionInfoPopup);
+        mDialogModel = null;
+    }
+
+    private void showConnectionSecurityInfo() {
+        dismissDialog(DialogDismissalCause.ACTION_ON_CONTENT);
+        try {
+            Intent i = Intent.parseUri(mLinkUrl, Intent.URI_INTENT_SCHEME);
+            i.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
+            i.putExtra(Browser.EXTRA_APPLICATION_ID, mContext.getPackageName());
+            mContext.startActivity(i);
+        } catch (Exception ex) {
+            // Do nothing intentionally.
+            Log.w(TAG, "Bad URI %s", mLinkUrl, ex);
         }
     }
 
@@ -235,11 +253,11 @@ public class ConnectionInfoPopup implements OnClickListener {
      * visible.
      *
      * @param context Context which is used for launching a dialog.
-     * @param webContents The WebContents for which to show Website information. This
-     *         information is retrieved for the visible entry.
+     * @param tab The tab hosting the web contents for which to show website information. This
+     *            information is retrieved for the visible entry.
      */
-    public static void show(Context context, WebContents webContents) {
-        new ConnectionInfoPopup(context, webContents);
+    public static void show(Context context, Tab tab) {
+        new ConnectionInfoPopup(context, tab);
     }
 
     private static native long nativeInit(ConnectionInfoPopup popup,

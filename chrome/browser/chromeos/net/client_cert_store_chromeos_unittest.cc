@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
@@ -123,8 +124,7 @@ TEST_F(ClientCertStoreChromeOSTest, RequestWaitsForNSSInitAndSucceeds) {
   ASSERT_TRUE(cert_1.get());
 
   // Request any client certificate, which is expected to match client_1.
-  scoped_refptr<net::SSLCertRequestInfo> request_all(
-      new net::SSLCertRequestInfo());
+  auto request_all = base::MakeRefCounted<net::SSLCertRequestInfo>();
 
   net::ClientCertIdentityList selected_identities;
   base::RunLoop run_loop;
@@ -162,8 +162,7 @@ TEST_F(ClientCertStoreChromeOSTest, RequestsAfterNSSInitSucceed) {
       "client_1.pem", "client_1.pk8", test_db.slot(), &nss_cert_1));
   ASSERT_TRUE(cert_1.get());
 
-  scoped_refptr<net::SSLCertRequestInfo> request_all(
-      new net::SSLCertRequestInfo());
+  auto request_all = base::MakeRefCounted<net::SSLCertRequestInfo>();
 
   base::RunLoop run_loop;
   net::ClientCertIdentityList selected_identities;
@@ -194,8 +193,7 @@ TEST_F(ClientCertStoreChromeOSTest, Filter) {
       "client_2.pem", "client_2.pk8", test_db.slot(), &nss_cert_2));
   ASSERT_TRUE(cert_2.get());
 
-  scoped_refptr<net::SSLCertRequestInfo> request_all(
-      new net::SSLCertRequestInfo());
+  auto request_all = base::MakeRefCounted<net::SSLCertRequestInfo>();
 
   {
     base::RunLoop run_loop;
@@ -208,7 +206,8 @@ TEST_F(ClientCertStoreChromeOSTest, Filter) {
     run_loop.Run();
 
     ASSERT_EQ(1u, selected_identities.size());
-    EXPECT_TRUE(cert_1->Equals(selected_identities[0]->certificate()));
+    EXPECT_TRUE(
+        cert_1->EqualsExcludingChain(selected_identities[0]->certificate()));
   }
 
   {
@@ -222,7 +221,8 @@ TEST_F(ClientCertStoreChromeOSTest, Filter) {
     run_loop.Run();
 
     ASSERT_EQ(1u, selected_identities.size());
-    EXPECT_TRUE(cert_2->Equals(selected_identities[0]->certificate()));
+    EXPECT_TRUE(
+        cert_2->EqualsExcludingChain(selected_identities[0]->certificate()));
   }
 }
 
@@ -251,7 +251,7 @@ TEST_F(ClientCertStoreChromeOSTest, CertRequestMatching) {
   std::vector<std::string> authority_1(
       1, std::string(reinterpret_cast<const char*>(kAuthority1DN),
                      sizeof(kAuthority1DN)));
-  scoped_refptr<net::SSLCertRequestInfo> request(new net::SSLCertRequestInfo());
+  auto request = base::MakeRefCounted<net::SSLCertRequestInfo>();
   request->cert_authorities = authority_1;
 
   base::RunLoop run_loop;
@@ -262,7 +262,8 @@ TEST_F(ClientCertStoreChromeOSTest, CertRequestMatching) {
   run_loop.Run();
 
   ASSERT_EQ(1u, selected_identities.size());
-  EXPECT_TRUE(cert_1->Equals(selected_identities[0]->certificate()));
+  EXPECT_TRUE(
+      cert_1->EqualsExcludingChain(selected_identities[0]->certificate()));
 }
 
 }  // namespace chromeos

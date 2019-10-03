@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/omnibox/alternate_nav_infobar_delegate.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/text_elider.h"
@@ -22,7 +22,7 @@
 // static
 std::unique_ptr<infobars::InfoBar> AlternateNavInfoBarDelegate::CreateInfoBar(
     std::unique_ptr<AlternateNavInfoBarDelegate> delegate) {
-  return base::MakeUnique<AlternateNavInfoBarView>(std::move(delegate));
+  return std::make_unique<AlternateNavInfoBarView>(std::move(delegate));
 }
 
 
@@ -30,10 +30,23 @@ std::unique_ptr<infobars::InfoBar> AlternateNavInfoBarDelegate::CreateInfoBar(
 
 AlternateNavInfoBarView::AlternateNavInfoBarView(
     std::unique_ptr<AlternateNavInfoBarDelegate> delegate)
-    : InfoBarView(std::move(delegate)),
-      label_1_(NULL),
-      link_(NULL),
-      label_2_(NULL) {}
+    : InfoBarView(std::move(delegate)) {
+  auto* delegate_ptr = GetDelegate();
+  size_t offset;
+  base::string16 message_text = delegate_ptr->GetMessageTextWithOffset(&offset);
+  DCHECK_NE(base::string16::npos, offset);
+  label_1_text_ = message_text.substr(0, offset);
+  label_1_ = CreateLabel(label_1_text_);
+  AddChildView(label_1_);
+
+  link_text_ = delegate_ptr->GetLinkText();
+  link_ = CreateLink(link_text_, this);
+  AddChildView(link_);
+
+  label_2_text_ = message_text.substr(offset);
+  label_2_ = CreateLabel(label_2_text_);
+  AddChildView(label_2_);
+}
 
 AlternateNavInfoBarView::~AlternateNavInfoBarView() {
 }
@@ -43,14 +56,14 @@ void AlternateNavInfoBarView::ElideLabels(Labels* labels, int available_width) {
   views::Label* last_label = labels->back();
   labels->pop_back();
   int used_width = 0;
-  for (Labels::iterator i(labels->begin()); i != labels->end(); ++i)
+  for (auto i(labels->begin()); i != labels->end(); ++i)
     used_width += (*i)->GetPreferredSize().width();
   int last_label_width = std::min(last_label->GetPreferredSize().width(),
                                   available_width - used_width);
   if (last_label_width < last_label->GetMinimumSize().width()) {
     last_label_width = 0;
     if (!labels->empty())
-      labels->back()->SetText(labels->back()->text() + gfx::kEllipsisUTF16);
+      labels->back()->SetText(labels->back()->GetText() + gfx::kEllipsisUTF16);
   }
   last_label->SetSize(gfx::Size(last_label_width, last_label->height()));
   if (!labels->empty())
@@ -72,31 +85,6 @@ void AlternateNavInfoBarView::Layout() {
   label_1_->SetPosition(gfx::Point(StartX(), OffsetY(label_1_)));
   link_->SetPosition(gfx::Point(label_1_->bounds().right(), OffsetY(link_)));
   label_2_->SetPosition(gfx::Point(link_->bounds().right(), OffsetY(label_2_)));
-}
-
-void AlternateNavInfoBarView::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
-  if (details.is_add && (details.child == this) && (label_1_ == NULL)) {
-    AlternateNavInfoBarDelegate* delegate = GetDelegate();
-    size_t offset;
-    base::string16 message_text = delegate->GetMessageTextWithOffset(&offset);
-    DCHECK_NE(base::string16::npos, offset);
-    label_1_text_ = message_text.substr(0, offset);
-    label_1_ = CreateLabel(label_1_text_);
-    AddViewToContentArea(label_1_);
-
-    link_text_ = delegate->GetLinkText();
-    link_ = CreateLink(link_text_, this);
-    AddViewToContentArea(link_);
-
-    label_2_text_ = message_text.substr(offset);
-    label_2_ = CreateLabel(label_2_text_);
-    AddViewToContentArea(label_2_);
-  }
-
-  // This must happen after adding all other children so InfoBarView can ensure
-  // the close button is the last child.
-  InfoBarView::ViewHierarchyChanged(details);
 }
 
 int AlternateNavInfoBarView::ContentMinimumWidth() const {

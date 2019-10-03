@@ -14,13 +14,12 @@
 
 #include "linker_jni.h"
 
-#include <sys/mman.h>
 #include <jni.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "legacy_linker_jni.h"
-#include "modern_linker_jni.h"
 
 namespace chromium_android_linker {
 
@@ -82,65 +81,6 @@ bool InitFieldId(JNIEnv* env,
   return true;
 }
 
-// Initialize a jmethodID corresponding to the static method of a given
-// |clazz|, with name |method_name| and signature |method_sig|.
-// |env| is the current JNI environment handle.
-// On success, return true and set |*method_id|.
-bool InitStaticMethodId(JNIEnv* env,
-                        jclass clazz,
-                        const char* method_name,
-                        const char* method_sig,
-                        jmethodID* method_id) {
-  *method_id = env->GetStaticMethodID(clazz, method_name, method_sig);
-  if (!*method_id) {
-    LOG_ERROR("Could not find ID for static method '%s'", method_name);
-    return false;
-  }
-  LOG_INFO("Found ID %p for static method '%s'", *method_id, method_name);
-  return true;
-}
-
-// Initialize a jfieldID corresponding to the static field of a given |clazz|,
-// with name |field_name| and signature |field_sig|.
-// |env| is the current JNI environment handle.
-// On success, return true and set |*field_id|.
-bool InitStaticFieldId(JNIEnv* env,
-                       jclass clazz,
-                       const char* field_name,
-                       const char* field_sig,
-                       jfieldID* field_id) {
-  *field_id = env->GetStaticFieldID(clazz, field_name, field_sig);
-  if (!*field_id) {
-    LOG_ERROR("Could not find ID for static field '%s'", field_name);
-    return false;
-  }
-  LOG_INFO("Found ID %p for static field '%s'", *field_id, field_name);
-  return true;
-}
-
-// Initialize a jint corresponding to the static integer field of a class
-// with class name |class_name| and field name |field_name|.
-// |env| is the current JNI environment handle.
-// On success, return true and set |*value|.
-bool InitStaticInt(JNIEnv* env,
-                   const char* class_name,
-                   const char* field_name,
-                   jint* value) {
-  jclass clazz;
-  if (!InitClassReference(env, class_name, &clazz))
-    return false;
-
-  jfieldID field_id;
-  if (!InitStaticFieldId(env, clazz, field_name, "I", &field_id))
-    return false;
-
-  *value = env->GetStaticIntField(clazz, field_id);
-  LOG_INFO("Found value %d for class '%s', static field '%s'",
-           *value, class_name, field_name);
-
-  return true;
-}
-
 // Use Android ASLR to create a random address into which we expect to be
 // able to load libraries. Note that this is probabilistic; we unmap the
 // address we get from mmap and assume we can re-map into it later. This
@@ -148,13 +88,11 @@ bool InitStaticInt(JNIEnv* env,
 // then loads the library normally at any available address.
 // |env| is the current JNI environment handle, and |clazz| a class.
 // Returns the address selected by ASLR, or 0 on error.
-jlong GetRandomBaseLoadAddress(JNIEnv* env, jclass clazz) {
+JNI_GENERATOR_EXPORT jlong
+Java_org_chromium_base_library_1loader_Linker_nativeGetRandomBaseLoadAddress(
+    JNIEnv* env,
+    jclass clazz) {
   size_t bytes = kAddressSpaceReservationSize;
-
-#if RESERVE_BREAKPAD_GUARD_REGION
-  // Pad the requested address space size for a Breakpad guard region.
-  bytes += kBreakpadGuardRegionBytes;
-#endif
 
   void* address =
       mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -164,44 +102,14 @@ jlong GetRandomBaseLoadAddress(JNIEnv* env, jclass clazz) {
   }
   munmap(address, bytes);
 
-#if RESERVE_BREAKPAD_GUARD_REGION
-  // Allow for a Breakpad guard region ahead of the returned address.
-  address = reinterpret_cast<void*>(
-      reinterpret_cast<uintptr_t>(address) + kBreakpadGuardRegionBytes);
-#endif
-
   LOG_INFO("Random base load address is %p", address);
   return static_cast<jlong>(reinterpret_cast<uintptr_t>(address));
 }
 
 namespace {
 
-const JNINativeMethod kNativeMethods[] = {
-    {"nativeGetRandomBaseLoadAddress",
-     "("
-     ")"
-     "J",
-     reinterpret_cast<void*>(&GetRandomBaseLoadAddress)},
-};
-
-const size_t kNumNativeMethods =
-    sizeof(kNativeMethods) / sizeof(kNativeMethods[0]);
-
 // JNI_OnLoad() initialization hook.
 bool LinkerJNIInit(JavaVM* vm, JNIEnv* env) {
-  LOG_INFO("Entering");
-
-  // Register native methods.
-  jclass linker_class;
-  if (!InitClassReference(env,
-                          "org/chromium/base/library_loader/Linker",
-                          &linker_class))
-    return false;
-
-  LOG_INFO("Registering native methods");
-  if (env->RegisterNatives(linker_class, kNativeMethods, kNumNativeMethods) < 0)
-    return false;
-
   // Find LibInfo field ids.
   LOG_INFO("Caching field IDs");
   if (!s_lib_info_fields.Init(env)) {
@@ -224,8 +132,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
   }
 
   // Initialize linker base and implementations.
-  if (!LinkerJNIInit(vm, env)
-      || !LegacyLinkerJNIInit(vm, env) || !ModernLinkerJNIInit(vm, env)) {
+  if (!LinkerJNIInit(vm, env) || !LegacyLinkerJNIInit(vm, env)) {
     return -1;
   }
 

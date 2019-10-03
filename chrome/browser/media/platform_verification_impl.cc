@@ -6,10 +6,10 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if BUILDFLAG(ENABLE_CDM_STORAGE_ID)
 #include "chrome/browser/media/cdm_storage_id.h"
@@ -60,8 +60,7 @@ PlatformVerificationImpl::PlatformVerificationImpl(
     content::RenderFrameHost* render_frame_host,
     media::mojom::PlatformVerificationRequest request)
     : FrameServiceBase(render_frame_host, std::move(request)),
-      render_frame_host_(render_frame_host),
-      weak_factory_(this) {}
+      render_frame_host_(render_frame_host) {}
 
 PlatformVerificationImpl::~PlatformVerificationImpl() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);

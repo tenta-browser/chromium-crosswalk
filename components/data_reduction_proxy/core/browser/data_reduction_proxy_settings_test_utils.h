@@ -10,15 +10,12 @@
 #include <string>
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_piece.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/prefs/testing_pref_service.h"
-#include "net/log/test_net_log.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,7 +30,7 @@ class MockDataReductionProxySettings : public C {
  public:
   MockDataReductionProxySettings<C>() : C() {
   }
-  MOCK_METHOD0(GetOriginalProfilePrefs, PrefService*());
+  MOCK_CONST_METHOD0(GetOriginalProfilePrefs, PrefService*());
   MOCK_METHOD0(GetLocalStatePrefs, PrefService*());
   MOCK_CONST_METHOD1(RecordStartupState, void(ProxyStartupState state));
 };
@@ -50,8 +47,8 @@ class DataReductionProxySettingsTestBase : public testing::Test {
   void SetUp() override;
 
   template <class C>
-  void ResetSettings(std::unique_ptr<base::Clock> clock);
-  virtual void ResetSettings(std::unique_ptr<base::Clock> clock) = 0;
+  void ResetSettings(base::Clock* clock);
+  virtual void ResetSettings(base::Clock* clock) = 0;
 
   void ExpectSetProxyPrefs(bool expected_enabled,
                            bool expected_at_startup);
@@ -69,7 +66,7 @@ class DataReductionProxySettingsTestBase : public testing::Test {
                                          base::StringPiece group_name);
 
  protected:
-  base::MessageLoopForIO message_loop_;
+  base::SingleThreadTaskExecutor io_task_executor_{base::MessagePump::Type::IO};
   std::unique_ptr<DataReductionProxyTestContext> test_context_;
   std::unique_ptr<DataReductionProxySettings> settings_;
   base::Time last_update_time_;
@@ -84,9 +81,8 @@ class ConcreteDataReductionProxySettingsTest
     : public DataReductionProxySettingsTestBase {
  public:
   typedef MockDataReductionProxySettings<C> MockSettings;
-  void ResetSettings(std::unique_ptr<base::Clock> clock) override {
-    return DataReductionProxySettingsTestBase::ResetSettings<C>(
-        std::move(clock));
+  void ResetSettings(base::Clock* clock) override {
+    return DataReductionProxySettingsTestBase::ResetSettings<C>(clock);
   }
 };
 

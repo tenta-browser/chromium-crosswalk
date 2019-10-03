@@ -12,13 +12,10 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/arc/auth/arc_auth_code_fetcher.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
 
 namespace enterprise_management {
 class DeviceManagementResponse;
-}
-
-namespace policy {
-class DeviceManagementRequestJob;
 }
 
 namespace arc {
@@ -31,16 +28,17 @@ class ArcRobotAuthCodeFetcher : public ArcAuthCodeFetcher {
   ~ArcRobotAuthCodeFetcher() override;
 
   // ArcAuthCodeFetcher:
-  void Fetch(const FetchCallback& callback) override;
+  void Fetch(FetchCallback callback) override;
 
  private:
   void OnFetchRobotAuthCodeCompleted(
       FetchCallback callback,
+      policy::DeviceManagementService::Job* job,
       policy::DeviceManagementStatus status,
       int net_error,
       const enterprise_management::DeviceManagementResponse& response);
 
-  std::unique_ptr<policy::DeviceManagementRequestJob> fetch_request_job_;
+  std::unique_ptr<policy::DeviceManagementService::Job> fetch_request_job_;
   base::WeakPtrFactory<ArcRobotAuthCodeFetcher> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcRobotAuthCodeFetcher);

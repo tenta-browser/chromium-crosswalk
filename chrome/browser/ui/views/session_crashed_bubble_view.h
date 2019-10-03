@@ -9,7 +9,7 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/session_crashed_bubble.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/styled_label_listener.h"
 
 namespace views {
@@ -40,6 +40,7 @@ class SessionCrashedBubbleView : public SessionCrashedBubble,
   friend class SessionCrashedBubbleViewTest;
 
   SessionCrashedBubbleView(views::View* anchor_view,
+                           const gfx::Rect& anchor_rect,
                            Browser* browser,
                            bool offer_uma_optin);
   ~SessionCrashedBubbleView() override;
@@ -49,7 +50,6 @@ class SessionCrashedBubbleView : public SessionCrashedBubble,
   bool ShouldShowWindowTitle() const override;
   bool ShouldShowCloseButton() const override;
   void OnWidgetDestroying(views::Widget* widget) override;
-  views::View* CreateFootnoteView() override;
   bool Accept() override;
   bool Cancel() override;
   bool Close() override;
@@ -64,6 +64,10 @@ class SessionCrashedBubbleView : public SessionCrashedBubble,
                               const gfx::Range& range,
                               int event_flags) override;
 
+  // Creates a view allowing the user to opt-in to reporting information to UMA.
+  // Returns nullptr if offer is unavailable.
+  std::unique_ptr<views::View> CreateUmaOptInView();
+
   // Restore previous session after user selects so.
   void RestorePreviousSession();
 
@@ -71,7 +75,7 @@ class SessionCrashedBubbleView : public SessionCrashedBubble,
   void OpenStartupPages();
 
   // Enable UMA if the user accepted the offer.
-  void MaybeEnableUMA();
+  void MaybeEnableUma();
 
   // Close and destroy the bubble.
   void CloseBubble();

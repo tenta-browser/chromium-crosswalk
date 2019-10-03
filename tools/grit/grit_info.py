@@ -6,6 +6,8 @@
 '''Tool to determine inputs and outputs of a grit file.
 '''
 
+from __future__ import print_function
+
 import optparse
 import os
 import posixpath
@@ -104,12 +106,14 @@ def Inputs(filename, defines, ids_file, target_platform=None):
 
 
 def PrintUsage():
-  print 'USAGE: ./grit_info.py --inputs [-D foo] [-f resource_ids] <grd-file>'
-  print ('       ./grit_info.py --outputs [-D foo] [-f resource_ids] ' +
-      '<out-prefix> <grd-file>')
+  print('USAGE: ./grit_info.py --inputs [-D foo] [-f resource_ids] <grd-file>')
+  print('       ./grit_info.py --outputs [-D foo] [-f resource_ids] ' +
+        '<out-prefix> <grd-file>')
 
 
 def DoMain(argv):
+  os.environ['cwd'] = os.getcwd()
+
   parser = optparse.OptionParser()
   parser.add_option("--inputs", action="store_true", dest="inputs")
   parser.add_option("--outputs", action="store_true", dest="outputs")
@@ -119,12 +123,6 @@ def DoMain(argv):
   parser.add_option("-E", action="append", dest="build_env", default=[])
   parser.add_option("-p", action="store", dest="predetermined_ids_file")
   parser.add_option("-w", action="append", dest="whitelist_files", default=[])
-  parser.add_option("--output-all-resource-defines", action="store_true",
-                    dest="output_all_resource_defines", default=True,
-                    help="Unused")
-  parser.add_option("--no-output-all-resource-defines", action="store_false",
-                    dest="output_all_resource_defines", default=True,
-                    help="Unused")
   parser.add_option("-f", dest="ids_file", default="")
   parser.add_option("-t", dest="target_platform", default=None)
 
@@ -175,17 +173,13 @@ def DoMain(argv):
 
 
 def main(argv):
-  if sys.version_info < (2, 6):
-    print "GRIT requires Python 2.6 or later."
-    return 1
-
   try:
     result = DoMain(argv[1:])
-  except WrongNumberOfArguments, e:
+  except WrongNumberOfArguments as e:
     PrintUsage()
-    print e
+    print(e)
     return 1
-  print result
+  print(result)
   return 0
 
 

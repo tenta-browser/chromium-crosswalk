@@ -248,9 +248,8 @@ void WorkerProcessLauncherTest::LaunchProcessAndConnect(
   DoLaunchProcess();
 
   task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&WorkerProcessLauncherTest::ConnectClient,
-                 base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&WorkerProcessLauncherTest::ConnectClient,
+                                base::Unretained(this)));
 }
 
 void WorkerProcessLauncherTest::FailLaunchAndStopWorker(
@@ -259,10 +258,9 @@ void WorkerProcessLauncherTest::FailLaunchAndStopWorker(
 
   event_handler->OnFatalError();
 
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&WorkerProcessLauncherTest::StopWorker,
-                 base::Unretained(this)));
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&WorkerProcessLauncherTest::StopWorker,
+                                        base::Unretained(this)));
 }
 
 void WorkerProcessLauncherTest::KillProcess() {
@@ -343,7 +341,7 @@ void WorkerProcessLauncherTest::StopWorker() {
 
 void WorkerProcessLauncherTest::QuitMainMessageLoop() {
   message_loop_.task_runner()->PostTask(
-      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+      FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
 }
 
 void WorkerProcessLauncherTest::DoLaunchProcess() {

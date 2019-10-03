@@ -10,12 +10,8 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
-#include "content/browser/compositor/gpu_vsync_begin_frame_source.h"
 #include "ui/gfx/swap_result.h"
-
-namespace viz {
-class CompositorOverlayCandidateValidator;
-}
+#include "ui/latency/latency_tracker.h"
 
 namespace gfx {
 struct PresentationFeedback;
@@ -23,10 +19,10 @@ struct PresentationFeedback;
 
 namespace gpu {
 class CommandBufferProxyImpl;
-struct GpuProcessHostedCALayerTreeParamsMac;
+struct SwapBuffersCompleteParams;
 }
 
-namespace ui {
+namespace viz {
 class ContextProviderCommandBuffer;
 }
 
@@ -37,32 +33,20 @@ class ReflectorTexture;
 // viz::OutputSurface that also handles vsync parameter updates
 // arriving from the GPU process.
 class GpuBrowserCompositorOutputSurface
-    : public BrowserCompositorOutputSurface,
-      public GpuVSyncControl,
-      public viz::OutputSurface::LatencyInfoCache::Client {
+    : public BrowserCompositorOutputSurface {
  public:
   GpuBrowserCompositorOutputSurface(
-      scoped_refptr<ui::ContextProviderCommandBuffer> context,
-      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
-          overlay_candidate_validator);
+      scoped_refptr<viz::ContextProviderCommandBuffer> context);
 
   ~GpuBrowserCompositorOutputSurface() override;
 
   // Called when a swap completion is sent from the GPU process.
-  // The argument |params_mac| is used to communicate parameters needed on Mac
-  // to display the CALayer for the swap in the browser process.
-  // TODO(ccameron): Remove |params_mac| when the CALayer tree is hosted in the
-  // browser process.
   virtual void OnGpuSwapBuffersCompleted(
-      const gfx::SwapResponse& response,
-      const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac);
+      std::vector<ui::LatencyInfo> latency_info,
+      const gpu::SwapBuffersCompleteParams& params);
 
   // BrowserCompositorOutputSurface implementation.
   void OnReflectorChanged() override;
-#if defined(OS_MACOSX)
-  void SetSurfaceSuspendedForRecycle(bool suspended) override;
-#endif
 
   // viz::OutputSurface implementation.
   void BindToClient(viz::OutputSurfaceClient* client) override;
@@ -79,20 +63,14 @@ class GpuBrowserCompositorOutputSurface
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
   gfx::BufferFormat GetOverlayBufferFormat() const override;
+  unsigned UpdateGpuFence() override;
 
-  bool SurfaceIsSuspendForRecycle() const override;
   void SetDrawRectangle(const gfx::Rect& rect) override;
 
-  // GpuVSyncControl implementation.
-  void SetNeedsVSync(bool needs_vsync) override;
-
-  // OutputSurface::LatencyInfoCache::Client implementation.
-  void LatencyInfoCompleted(
-      const std::vector<ui::LatencyInfo>& latency_info) override;
-
  protected:
-  void OnPresentation(uint64_t swap_id,
-                      const gfx::PresentationFeedback& feedback);
+  void OnPresentation(const gfx::PresentationFeedback& feedback);
+  void OnUpdateVSyncParameters(base::TimeTicks timebase,
+                               base::TimeDelta interval);
   gpu::CommandBufferProxyImpl* GetCommandBufferProxy();
 
   viz::OutputSurfaceClient* client_ = nullptr;
@@ -102,9 +80,12 @@ class GpuBrowserCompositorOutputSurface
   // True if the draw rectangle has been set at all since the last resize.
   bool has_set_draw_rectangle_since_last_resize_ = false;
   gfx::Size size_;
-  LatencyInfoCache latency_info_cache_;
+  ui::LatencyTracker latency_tracker_;
 
  private:
+  base::WeakPtrFactory<GpuBrowserCompositorOutputSurface> weak_ptr_factory_{
+      this};
+
   DISALLOW_COPY_AND_ASSIGN(GpuBrowserCompositorOutputSurface);
 };
 

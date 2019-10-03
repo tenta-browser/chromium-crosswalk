@@ -4,14 +4,17 @@
 
 #include "third_party/leveldatabase/env_chromium.h"
 
+#include <atomic>
+#include <limits>
 #include <utility>
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include <dirent.h>
 #include <sys/types.h>
 #endif
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
@@ -20,12 +23,14 @@
 #include "base/macros.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/process/process_metrics.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/system/sys_info.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -33,8 +38,16 @@
 #include "build/build_config.h"
 #include "third_party/leveldatabase/chromium_logger.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
+#include "third_party/leveldatabase/leveldb_features.h"
 #include "third_party/leveldatabase/src/include/leveldb/options.h"
 #include "third_party/re2/src/re2/re2.h"
+
+#if defined(OS_WIN)
+#undef DeleteFile
+#define base_DeleteFile base::DeleteFileW
+#else  // defined(OS_WIN)
+#define base_DeleteFile base::DeleteFile
+#endif  // defined(OS_WIN)
 
 using base::FilePath;
 using base::trace_event::MemoryAllocatorDump;
@@ -44,77 +57,32 @@ using leveldb::FileLock;
 using leveldb::Slice;
 using leveldb::Status;
 
+const base::Feature kLevelDBFileHandleEviction{
+    "LevelDBFileHandleEviction", base::FEATURE_ENABLED_BY_DEFAULT};
+
 namespace leveldb_env {
-
-// Helper class to limit resource usage to avoid exhaustion. Currently used to
-// limit read-only file usage so that we do not end up running out of file
-// descriptors, or running into kernel performance problems for very large
-// databases.
-class Semaphore {
- public:
-  // Limit maximum number of resources to |n|.
-  explicit Semaphore(intptr_t n) { SetAvailable(n); }
-
-  // If another resource is available, acquire it and return true.
-  // Else return false.
-  bool TryAcquire() {
-    if (GetAvailable() <= 0)
-      return false;
-    leveldb::MutexLock l(&mutex_);
-    intptr_t x = GetAvailable();
-    if (x <= 0) {
-      return false;
-    } else {
-      SetAvailable(x - 1);
-      return true;
-    }
-  }
-
-  // Release a resource acquired by a previous call to TryAcquire() that
-  // returned true.
-  void Release() {
-    leveldb::MutexLock l(&mutex_);
-    SetAvailable(GetAvailable() + 1);
-  }
-
- private:
-  intptr_t GetAvailable() const {
-    return reinterpret_cast<intptr_t>(available_.Acquire_Load());
-  }
-
-  // REQUIRES: mutex_ must be held
-  void SetAvailable(intptr_t v) {
-    DCHECK_LE(0, v);
-    available_.Release_Store(reinterpret_cast<void*>(v));
-  }
-
-  leveldb::port::Mutex mutex_;
-  leveldb::port::AtomicPointer available_;
-
-  DISALLOW_COPY_AND_ASSIGN(Semaphore);
-};
-
 namespace {
+
+// After this limit we don't bother doing file eviction for leveldb for speed,
+// memory usage, and simplicity.
+const constexpr size_t kFileLimitToDisableEviction = 10'000;
 
 const FilePath::CharType table_extension[] = FILE_PATH_LITERAL(".ldb");
 
 static const FilePath::CharType kLevelDBTestDirectoryPrefix[] =
     FILE_PATH_LITERAL("leveldb-test-");
 
-static base::File::Error LastFileError() {
-#if defined(OS_WIN)
-  return base::File::OSErrorToFileError(GetLastError());
-#else
-  return base::File::OSErrorToFileError(errno);
-#endif
-}
+// This name should not be changed or users involved in a crash might not be
+// able to recover data.
+static const char kDatabaseNameSuffixForRebuildDB[] = "__tmp_for_rebuild";
 
 // Making direct platform in lieu of using base::FileEnumerator because the
 // latter can fail quietly without return an error result.
 static base::File::Error GetDirectoryEntries(const FilePath& dir_param,
                                              std::vector<FilePath>* result) {
   TRACE_EVENT0("leveldb", "ChromiumEnv::GetDirectoryEntries");
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   result->clear();
 #if defined(OS_WIN)
   FilePath dir_filepath = dir_param.Append(FILE_PATH_LITERAL("*"));
@@ -249,7 +217,7 @@ class ChromiumSequentialFile : public leveldb::SequentialFile {
     TRACE_EVENT1("leveldb", "ChromiumSequentialFile::Read", "size", n);
     int bytes_read = file_.ReadAtCurrentPosNoBestEffort(scratch, n);
     if (bytes_read == -1) {
-      base::File::Error error = LastFileError();
+      base::File::Error error = base::File::GetLastFileError();
       uma_logger_->RecordErrorAt(kSequentialFileRead);
       return MakeIOError(filename_, base::File::ErrorToString(error),
                          kSequentialFileRead, error);
@@ -262,7 +230,7 @@ class ChromiumSequentialFile : public leveldb::SequentialFile {
 
   Status Skip(uint64_t n) override {
     if (file_.Seek(base::File::FROM_CURRENT, n) == -1) {
-      base::File::Error error = LastFileError();
+      base::File::Error error = base::File::GetLastFileError();
       uma_logger_->RecordErrorAt(kSequentialFileSkip);
       return MakeIOError(filename_, base::File::ErrorToString(error),
                          kSequentialFileSkip, error);
@@ -274,29 +242,114 @@ class ChromiumSequentialFile : public leveldb::SequentialFile {
  private:
   std::string filename_;
   base::File file_;
-  const UMALogger* uma_logger_;
+  const UMALogger* const uma_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromiumSequentialFile);
+};
+
+void DeleteFile(const Slice& key, void* value) {
+  delete static_cast<base::File*>(value);
+};
+
+Status ReadFromFileToScratch(uint64_t offset,
+                             size_t n,
+                             Slice* result,
+                             char* scratch,
+                             base::File* file,
+                             const base::FilePath& file_path,
+                             const UMALogger* uma_logger) {
+  int bytes_read = file->Read(offset, scratch, n);
+  if (bytes_read < 0) {
+    uma_logger->RecordErrorAt(kRandomAccessFileRead);
+    return MakeIOError(file_path.AsUTF8Unsafe(), "Could not perform read",
+                       kRandomAccessFileRead);
+  }
+  *result = Slice(scratch, (bytes_read < 0) ? 0 : bytes_read);
+  if (bytes_read > 0)
+    uma_logger->RecordBytesRead(bytes_read);
+
+  return Status::OK();
+}
+
+// The cache mechanism uses leveldb's LRU cache, which is a threadsafe sharded
+// LRU cache. The keys use the pointer value of |this|, and the values are file
+// objects.
+// Each object will only use its own cache entry, so the |Erase| call in the
+// object destructor should synchronously delete the file from the cache. This
+// ensures that pointer location re-use won't re-use an entry in the cache as
+// the entry at |this| will always have been deleted.
+// Files are always cleaned up with |DeleteFile|, which will be called when the
+// ChromiumEvictableRandomAccessFile is deleted, the cache is deleted, or the
+// file is evicted.
+class ChromiumEvictableRandomAccessFile : public leveldb::RandomAccessFile {
+ public:
+  ChromiumEvictableRandomAccessFile(base::FilePath file_path,
+                                    base::File file,
+                                    leveldb::Cache* file_cache,
+                                    const UMALogger* uma_logger)
+      : filepath_(std::move(file_path)),
+        uma_logger_(uma_logger),
+        file_cache_(file_cache),
+        cache_key_data_(this),
+        cache_key_(
+            leveldb::Slice(reinterpret_cast<const char*>(&cache_key_data_),
+                           sizeof(cache_key_data_))) {
+    DCHECK(file_cache_);
+    base::File* heap_file = new base::File(std::move(file));
+    // A |charge| of '1' is used because the capacity is the file handle limit,
+    // and each entry is one file.
+    file_cache_->Release(file_cache_->Insert(cache_key_, heap_file,
+                                             1 /* charge */, &DeleteFile));
+  }
+
+  virtual ~ChromiumEvictableRandomAccessFile() {
+    file_cache_->Erase(cache_key_);
+  }
+
+  Status Read(uint64_t offset,
+              size_t n,
+              Slice* result,
+              char* scratch) const override {
+    TRACE_EVENT2("leveldb", "ChromiumEvictableRandomAccessFile::Read", "offset",
+                 offset, "size", n);
+    leveldb::Cache::Handle* handle = file_cache_->Lookup(cache_key_);
+    if (!handle) {
+      int flags = base::File::FLAG_READ | base::File::FLAG_OPEN;
+      auto new_file = std::make_unique<base::File>(filepath_, flags);
+      if (!new_file->IsValid()) {
+        return MakeIOError(filepath_.AsUTF8Unsafe(), "Could not perform read",
+                           kRandomAccessFileRead);
+      }
+      handle = file_cache_->Insert(cache_key_, new_file.release(),
+                                   sizeof(base::File), &DeleteFile);
+    }
+    base::File* file = static_cast<base::File*>(file_cache_->Value(handle));
+    Status status = ReadFromFileToScratch(offset, n, result, scratch, file,
+                                          filepath_, uma_logger_);
+    file_cache_->Release(handle);
+    return status;
+  }
+
+ private:
+  const base::FilePath filepath_;
+  const UMALogger* const uma_logger_;
+  mutable leveldb::Cache* file_cache_;
+  const ChromiumEvictableRandomAccessFile* cache_key_data_;
+  leveldb::Slice cache_key_;
+
+  DISALLOW_COPY_AND_ASSIGN(ChromiumEvictableRandomAccessFile);
 };
 
 class ChromiumRandomAccessFile : public leveldb::RandomAccessFile {
  public:
   ChromiumRandomAccessFile(base::FilePath file_path,
                            base::File file,
-                           const UMALogger* uma_logger,
-                           Semaphore* file_semaphore)
+                           const UMALogger* uma_logger)
       : filepath_(std::move(file_path)),
         file_(std::move(file)),
-        uma_logger_(uma_logger),
-        file_semaphore_(file_semaphore),
-        open_before_read_(!file_semaphore->TryAcquire()) {
-    if (open_before_read_)
-      file_.Close();  // Open file on every access.
-  }
-  virtual ~ChromiumRandomAccessFile() {
-    if (!open_before_read_)
-      file_semaphore_->Release();
-  }
+        uma_logger_(uma_logger) {}
+
+  virtual ~ChromiumRandomAccessFile() {}
 
   Status Read(uint64_t offset,
               size_t n,
@@ -304,36 +357,14 @@ class ChromiumRandomAccessFile : public leveldb::RandomAccessFile {
               char* scratch) const override {
     TRACE_EVENT2("leveldb", "ChromiumRandomAccessFile::Read", "offset", offset,
                  "size", n);
-    if (open_before_read_) {
-      DCHECK(!file_.IsValid());
-      int flags = base::File::FLAG_READ | base::File::FLAG_OPEN;
-      file_.Initialize(filepath_, flags);
-      if (!file_.IsValid()) {
-        return MakeIOError(filepath_.AsUTF8Unsafe(), "Could not perform read",
-                           kRandomAccessFileRead);
-      }
-    }
-    int bytes_read = file_.Read(offset, scratch, n);
-    if (open_before_read_)
-      file_.Close();
-    *result = Slice(scratch, (bytes_read < 0) ? 0 : bytes_read);
-    if (bytes_read < 0) {
-      uma_logger_->RecordErrorAt(kRandomAccessFileRead);
-      return MakeIOError(filepath_.AsUTF8Unsafe(), "Could not perform read",
-                         kRandomAccessFileRead);
-    }
-    if (bytes_read > 0)
-      uma_logger_->RecordBytesRead(bytes_read);
-    return Status::OK();
+    return ReadFromFileToScratch(offset, n, result, scratch, &file_, filepath_,
+                                 uma_logger_);
   }
 
  private:
   const base::FilePath filepath_;
   mutable base::File file_;
   const UMALogger* uma_logger_;
-  Semaphore* file_semaphore_;
-  // If true, file_ is closed and we open on every read.
-  bool open_before_read_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromiumRandomAccessFile);
 };
@@ -380,7 +411,7 @@ ChromiumWritableFile::ChromiumWritableFile(const std::string& fname,
 
 Status ChromiumWritableFile::SyncParent() {
   TRACE_EVENT0("leveldb", "SyncParent");
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
   FilePath path = FilePath::FromUTF8Unsafe(parent_dir_);
   base::File f(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!f.IsValid()) {
@@ -389,7 +420,7 @@ Status ChromiumWritableFile::SyncParent() {
                        f.error_details());
   }
   if (!f.Flush()) {
-    base::File::Error error = LastFileError();
+    base::File::Error error = base::File::GetLastFileError();
     uma_logger_->RecordOSError(kSyncParent, error);
     return MakeIOError(parent_dir_, base::File::ErrorToString(error),
                        kSyncParent, error);
@@ -403,7 +434,7 @@ Status ChromiumWritableFile::Append(const Slice& data) {
   DCHECK(uma_logger_);
   int bytes_written = file_.WriteAtCurrentPos(data.data(), data.size());
   if (static_cast<size_t>(bytes_written) != data.size()) {
-    base::File::Error error = LastFileError();
+    base::File::Error error = base::File::GetLastFileError();
     uma_logger_->RecordOSError(kWritableFileAppend, error);
     return MakeIOError(filename_, base::File::ErrorToString(error),
                        kWritableFileAppend, error);
@@ -427,18 +458,27 @@ Status ChromiumWritableFile::Flush() {
 Status ChromiumWritableFile::Sync() {
   TRACE_EVENT0("leveldb", "WritableFile::Sync");
 
+  // leveldb's implicit contract for Sync() is that if this instance is for a
+  // manifest file then the directory is also sync'ed, to ensure new files
+  // referred to by the manifest are in the filesystem.
+  //
+  // This needs to happen before the manifest file is flushed to disk, to
+  // avoid crashing in a state where the manifest refers to files that are not
+  // yet on disk.
+  //
+  // See leveldb's env_posix.cc.
+  if (file_type_ == kManifest) {
+    Status status = SyncParent();
+    if (!status.ok())
+      return status;
+  }
+
   if (!file_.Flush()) {
-    base::File::Error error = LastFileError();
+    base::File::Error error = base::File::GetLastFileError();
     uma_logger_->RecordErrorAt(kWritableFileSync);
     return MakeIOError(filename_, base::File::ErrorToString(error),
                        kWritableFileSync, error);
   }
-
-  // leveldb's implicit contract for Sync() is that if this instance is for a
-  // manifest file then the directory is also sync'ed. See leveldb's
-  // env_posix.cc.
-  if (file_type_ == kManifest)
-    return SyncParent();
 
   return Status::OK();
 }
@@ -446,10 +486,9 @@ Status ChromiumWritableFile::Sync() {
 base::LazyInstance<ChromiumEnv>::Leaky default_env = LAZY_INSTANCE_INITIALIZER;
 
 // Return the maximum number of read-only files to keep open.
-int MaxOpenFiles() {
+size_t GetLevelDBFileLimit(size_t max_file_descriptors) {
   // Allow use of 20% of available file descriptors for read-only files.
-  int open_read_only_file_limit = base::GetMaxFds() / 5;
-  return open_read_only_file_limit;
+  return max_file_descriptors / 5;
 }
 
 std::string GetDumpNameForDB(const leveldb::DB* db) {
@@ -517,7 +556,7 @@ void RecordCacheUsageInTracing(ProcessMemoryDump* pmd,
 
 Options::Options() {
 // Note: Ensure that these default values correspond to those in
-// components/leveldb/public/interfaces/leveldb.mojom.
+// components/services/leveldb/public/mojom/leveldb.mojom.
 // TODO(cmumford) Create struct-trait for leveldb.mojom.OpenOptions to force
 // users to pass in a leveldb_env::Options instance (and it's defaults).
 //
@@ -529,7 +568,12 @@ Options::Options() {
   // https://crbug.com/460568
   reuse_logs = false;
 #else
-  reuse_logs = true;
+  // Low end devices have limited RAM. Reusing logs will prevent the database
+  // from being compacted on open and instead load the log file back into the
+  // memory buffer which won't be written until it hits the maximum size
+  // (leveldb::Options::write_buffer_size - 4MB by default). The downside here
+  // is that databases opens take longer as the open is blocked on compaction.
+  reuse_logs = !base::SysInfo::IsLowEndDevice();
 #endif
   // By default use a single shared block cache to conserve memory. The owner of
   // this object can create their own, or set to NULL to have leveldb create a
@@ -681,7 +725,7 @@ int GetCorruptionCode(const leveldb::Status& status) {
   const int kOtherError = 0;
   int error = kOtherError;
   const std::string& str_error = status.ToString();
-  const size_t kNumPatterns = arraysize(patterns);
+  const size_t kNumPatterns = base::size(patterns);
   for (size_t i = 0; i < kNumPatterns; ++i) {
     if (str_error.find(patterns[i]) != std::string::npos) {
       error = i + 1;
@@ -694,7 +738,7 @@ int GetCorruptionCode(const leveldb::Status& status) {
 int GetNumCorruptionCodes() {
   // + 1 for the "other" error that is returned when a corruption message
   // doesn't match any of the patterns.
-  return arraysize(patterns) + 1;
+  return base::size(patterns) + 1;
 }
 
 std::string GetCorruptionMessage(const leveldb::Status& status) {
@@ -714,6 +758,10 @@ bool IndicatesDiskFull(const leveldb::Status& status) {
   return (result == leveldb_env::METHOD_AND_BFE &&
           static_cast<base::File::Error>(error) ==
               base::File::FILE_ERROR_NO_SPACE);
+}
+
+std::string DatabaseNameForRewriteDB(const std::string& original_name) {
+  return original_name + kDatabaseNameSuffixForRebuildDB;
 }
 
 // Given the size of the disk, identified by |disk_size| in bytes, determine the
@@ -753,8 +801,13 @@ ChromiumEnv::ChromiumEnv(const std::string& name)
     : kMaxRetryTimeMillis(1000),
       name_(name),
       bgsignal_(&mu_),
-      started_bgthread_(false),
-      file_semaphore_(new Semaphore(MaxOpenFiles())) {
+      started_bgthread_(false) {
+  size_t max_open_files = base::GetMaxFds();
+  if (base::FeatureList::IsEnabled(kLevelDBFileHandleEviction) &&
+      max_open_files < kFileLimitToDisableEviction) {
+    file_cache_.reset(
+        leveldb::NewLRUCache(GetLevelDBFileLimit(max_open_files)));
+  }
   uma_ioerror_base_name_ = name_ + ".IOError.BFE";
 }
 
@@ -823,13 +876,14 @@ void ChromiumEnv::DeleteBackupFiles(const FilePath& dir) {
                                   FILE_PATH_LITERAL("*.bak"));
   for (base::FilePath fname = dir_reader.Next(); !fname.empty();
        fname = dir_reader.Next()) {
-    histogram->AddBoolean(base::DeleteFile(fname, false));
+    histogram->AddBoolean(base_DeleteFile(fname, false));
   }
 }
 
 // Test must call this *before* opening any random-access files.
 void ChromiumEnv::SetReadOnlyFileLimitForTesting(int max_open_files) {
-  file_semaphore_.reset(new Semaphore(max_open_files));
+  DCHECK(!file_cache_ || file_cache_->TotalCharge() == 0);
+  file_cache_.reset(leveldb::NewLRUCache(max_open_files));
 }
 
 Status ChromiumEnv::GetChildren(const std::string& dir,
@@ -856,7 +910,7 @@ Status ChromiumEnv::DeleteFile(const std::string& fname) {
   Status result;
   FilePath fname_filepath = FilePath::FromUTF8Unsafe(fname);
   // TODO(jorlow): Should we assert this is a file?
-  if (!base::DeleteFile(fname_filepath, false)) {
+  if (!base_DeleteFile(fname_filepath, false)) {
     result = MakeIOError(fname, "Could not delete file.", kDeleteFile);
     RecordErrorAt(kDeleteFile);
   }
@@ -880,7 +934,7 @@ Status ChromiumEnv::CreateDir(const std::string& name) {
 Status ChromiumEnv::DeleteDir(const std::string& name) {
   Status result;
   // TODO(jorlow): Should we assert this is a directory?
-  if (!base::DeleteFile(FilePath::FromUTF8Unsafe(name), false)) {
+  if (!base_DeleteFile(FilePath::FromUTF8Unsafe(name), false)) {
     result = MakeIOError(name, "Could not delete directory.", kDeleteDir);
     RecordErrorAt(kDeleteDir);
   }
@@ -940,22 +994,8 @@ Status ChromiumEnv::LockFile(const std::string& fname, FileLock** lock) {
   } while (!file.IsValid() && retrier.ShouldKeepTrying(error_code));
 
   if (!file.IsValid()) {
-    if (error_code == base::File::FILE_ERROR_NOT_FOUND) {
-      FilePath parent = FilePath::FromUTF8Unsafe(fname).DirName();
-      FilePath last_parent;
-      int num_missing_ancestors = 0;
-      do {
-        if (base::DirectoryExists(parent))
-          break;
-        ++num_missing_ancestors;
-        last_parent = parent;
-        parent = parent.DirName();
-      } while (parent != last_parent);
-      RecordLockFileAncestors(num_missing_ancestors);
-    }
-
-    result = MakeIOError(fname, FileErrorString(error_code), kLockFile,
-                         error_code);
+    result =
+        MakeIOError(fname, FileErrorString(error_code), kLockFile, error_code);
     RecordOSError(kLockFile, error_code);
     return result;
   }
@@ -1056,8 +1096,13 @@ Status ChromiumEnv::NewRandomAccessFile(const std::string& fname,
   base::FilePath file_path = FilePath::FromUTF8Unsafe(fname);
   base::File file(file_path, flags);
   if (file.IsValid()) {
-    *result = new ChromiumRandomAccessFile(
-        std::move(file_path), std::move(file), this, file_semaphore_.get());
+    if (file_cache_) {
+      *result = new ChromiumEvictableRandomAccessFile(
+          std::move(file_path), std::move(file), file_cache_.get(), this);
+    } else {
+      *result = new ChromiumRandomAccessFile(std::move(file_path),
+                                             std::move(file), this);
+    }
     return Status::OK();
   }
   base::File::Error error_code = file.error_details();
@@ -1124,10 +1169,6 @@ void ChromiumEnv::RecordBytesWritten(int amount) const {
   RecordStorageBytesWritten(name_.c_str(), amount);
 }
 
-void ChromiumEnv::RecordLockFileAncestors(int num_missing_ancestors) const {
-  GetLockFileAncestorHistogram()->Add(num_missing_ancestors);
-}
-
 base::HistogramBase* ChromiumEnv::GetOSErrorHistogram(MethodID method,
                                                       int limit) const {
   std::string uma_name;
@@ -1142,17 +1183,6 @@ base::HistogramBase* ChromiumEnv::GetMethodIOErrorHistogram() const {
   uma_name.append(".IOError");
   return base::LinearHistogram::FactoryGet(uma_name, 1, kNumEntries,
       kNumEntries + 1, base::Histogram::kUmaTargetedHistogramFlag);
-}
-
-base::HistogramBase* ChromiumEnv::GetLockFileAncestorHistogram() const {
-  std::string uma_name(name_);
-  uma_name.append(".LockFileAncestorsNotFound");
-  const int kMin = 1;
-  const int kMax = 10;
-  const int kNumBuckets = 11;
-  return base::LinearHistogram::FactoryGet(
-      uma_name, kMin, kMax, kNumBuckets,
-      base::Histogram::kUmaTargetedHistogramFlag);
 }
 
 base::HistogramBase* ChromiumEnv::GetRetryTimeHistogram(MethodID method) const {
@@ -1290,6 +1320,8 @@ class DBTracker::TrackedDBImpl : public base::LinkNode<TrackedDBImpl>,
 
   ~TrackedDBImpl() override {
     tracker_->DatabaseDestroyed(this, shared_read_cache_use_);
+    base::ScopedAllowBaseSyncPrimitives allow_base_sync_primitives;
+    db_.reset();
   }
 
   const std::string& name() const override { return name_; }
@@ -1355,8 +1387,8 @@ class DBTracker::TrackedDBImpl : public base::LinkNode<TrackedDBImpl>,
   DISALLOW_COPY_AND_ASSIGN(TrackedDBImpl);
 };
 
-// Reports live databases to memory-infra. For each live database the following
-// information is reported:
+// Reports live databases and in-memory env's to memory-infra. For each live
+// database the following information is reported:
 // 1. Instance pointer (to disambiguate databases).
 // 2. Memory taken by the database, with the shared cache being attributed
 // equally to each database sharing 3. The name of the database (when not in
@@ -1378,6 +1410,8 @@ class DBTracker::TrackedDBImpl : public base::LinkNode<TrackedDBImpl>,
 //   block_cache              0 KiB           100 KiB
 //     browser                0 KiB           40 KiB
 //     web                    0 KiB           60 KiB
+//   memenv_0x7FE80F2040A0    4 KiB           4 KiB
+//   memenv_0x7FE80F3040A0    4 KiB           4 KiB
 //
 class DBTracker::MemoryDumpProvider
     : public base::trace_event::MemoryDumpProvider {
@@ -1427,6 +1461,7 @@ void DBTracker::MemoryDumpProvider::DumpAllDatabases(ProcessMemoryDump* pmd) {
   DBTracker::GetInstance()->VisitDatabases(
       base::BindRepeating(&DBTracker::MemoryDumpProvider::DumpVisitor,
                           base::Unretained(this), base::Unretained(pmd)));
+  leveldb_chrome::DumpAllTrackedEnvs(pmd);
 }
 
 void DBTracker::MemoryDumpProvider::DumpVisitor(ProcessMemoryDump* pmd,
@@ -1489,6 +1524,14 @@ MemoryAllocatorDump* DBTracker::GetOrCreateAllocatorDump(
   // attributed to each database sharing it.
   GetInstance()->mdp_->DumpAllDatabases(pmd);
   return pmd->GetAllocatorDump(GetDumpNameForDB(tracked_db));
+}
+
+// static
+MemoryAllocatorDump* DBTracker::GetOrCreateAllocatorDump(
+    ProcessMemoryDump* pmd,
+    leveldb::Env* tracked_memenv) {
+  GetInstance()->mdp_->DumpAllDatabases(pmd);
+  return leveldb_chrome::GetEnvAllocatorDump(pmd, tracked_memenv);
 }
 
 void DBTracker::UpdateHistograms() {
@@ -1568,11 +1611,83 @@ leveldb::Status OpenDB(const leveldb_env::Options& options,
     mem_options.write_buffer_size = 0;  // minimum size.
     s = DBTracker::GetInstance()->OpenDatabase(mem_options, name, &tracked_db);
   } else {
+    std::string tmp_name = DatabaseNameForRewriteDB(name);
+    // If Chrome crashes during rewrite, there might be a temporary db but
+    // no actual db.
+    if (options.env->FileExists(tmp_name) &&
+        !options.env->FileExists(name + "/CURRENT")) {
+      s = leveldb::DestroyDB(name, options);
+      if (!s.ok())
+        return s;
+      s = options.env->RenameFile(tmp_name, name);
+      if (!s.ok())
+        return s;
+    }
     s = DBTracker::GetInstance()->OpenDatabase(options, name, &tracked_db);
+    // It is possible that the database was partially deleted during a
+    // rewrite and can't be opened anymore.
+    if (!s.ok() && options.env->FileExists(tmp_name)) {
+      s = leveldb::DestroyDB(name, options);
+      if (!s.ok())
+        return s;
+      s = options.env->RenameFile(tmp_name, name);
+      if (!s.ok())
+        return s;
+      s = DBTracker::GetInstance()->OpenDatabase(options, name, &tracked_db);
+    }
+    // There might be a temporary database that needs to be cleaned up.
+    if (options.env->FileExists(tmp_name)) {
+      leveldb::DestroyDB(tmp_name, options);
+    }
   }
   if (s.ok())
     dbptr->reset(tracked_db);
   return s;
+}
+
+leveldb::Status RewriteDB(const leveldb_env::Options& options,
+                          const std::string& name,
+                          std::unique_ptr<leveldb::DB>* dbptr) {
+  DCHECK(options.create_if_missing);
+  if (!base::FeatureList::IsEnabled(leveldb::kLevelDBRewriteFeature))
+    return Status::OK();
+  if (leveldb_chrome::IsMemEnv(options.env))
+    return Status::OK();
+  TRACE_EVENT1("leveldb", "ChromiumEnv::RewriteDB", "name", name);
+  leveldb::Status s;
+  std::string tmp_name = DatabaseNameForRewriteDB(name);
+  if (options.env->FileExists(tmp_name)) {
+    s = leveldb::DestroyDB(tmp_name, options);
+    if (!s.ok())
+      return s;
+  }
+  // Copy all data from *dbptr to a temporary db.
+  std::unique_ptr<leveldb::DB> tmp_db;
+  s = leveldb_env::OpenDB(options, tmp_name, &tmp_db);
+  if (!s.ok())
+    return s;
+  std::unique_ptr<leveldb::Iterator> it(
+      (*dbptr)->NewIterator(leveldb::ReadOptions()));
+  for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    s = tmp_db->Put(leveldb::WriteOptions(), it->key(), it->value());
+    if (!s.ok())
+      break;
+  }
+  it.reset();
+  tmp_db.reset();
+  if (!s.ok()) {
+    leveldb::DestroyDB(tmp_name, options);
+    return s;
+  }
+  // Replace the old database with tmp_db.
+  (*dbptr).reset();
+  s = leveldb::DestroyDB(name, options);
+  if (!s.ok())
+    return s;
+  s = options.env->RenameFile(tmp_name, name);
+  if (!s.ok())
+    return s;
+  return leveldb_env::OpenDB(options, name, dbptr);
 }
 
 base::StringPiece MakeStringPiece(const leveldb::Slice& s) {

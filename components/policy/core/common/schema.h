@@ -33,7 +33,11 @@ struct POLICY_EXPORT PropertiesNode;
 // list items might be ignored (or dropped in Normalize()) or trigger whole
 // dictionary/list validation failure.
 enum SchemaOnErrorStrategy {
-  // No errors will be allowed.
+  // No errors will be allowed. This should not be used for policies, since it
+  // basically prevents future changes to the policy (Server sends newField, but
+  // clients running older versions of Chrome reject the policy because they
+  // don't know newField). Prefer to use |SCHEMA_ALLOW_UNKNOWN| for policies
+  // instead.
   SCHEMA_STRICT = 0,
   // Unknown properties in the top-level dictionary will be ignored.
   SCHEMA_ALLOW_UNKNOWN_TOPLEVEL,
@@ -48,6 +52,10 @@ enum SchemaOnErrorStrategy {
   SCHEMA_ALLOW_INVALID,
 };
 
+// Schema validation options for Schema::ParseToDictAndValidate().
+constexpr int kSchemaOptionsNone = 0;
+constexpr int kSchemaOptionsIgnoreUnknownAttributes = 1 << 0;
+
 class Schema;
 
 typedef std::vector<Schema> SchemaList;
@@ -56,6 +64,18 @@ typedef std::vector<Schema> SchemaList;
 // types of inner elements, for structured types.
 // Objects of this class refer to external, immutable data and are cheap to
 // copy.
+//
+// See components/policy/core/common/json_schema_constants.h for a list of
+// supported features and data types. Only these features and data-types are
+// supported and enforced. For the full schema proposal see
+// https://json-schema.org/understanding-json-schema/index.html.
+//
+// There are also these departures from the proposal:
+//  - "additionalProperties": false is not supported. The value of
+//    "additionalProperties" has to be a schema if present. Otherwise, the
+//    behavior for unknown attributes is controlled by |SchemaOnErrorStrategy|.
+//  - "sensitiveValue" (bool) marks a value to be sensitive. This is used to
+//    mask those values in the UI by calling |MaskSensitiveValues()|.
 class POLICY_EXPORT Schema {
  public:
   // Used internally to store shared data.
@@ -80,6 +100,21 @@ class POLICY_EXPORT Schema {
   // the internal representation. If |schema| is invalid then an invalid Schema
   // is returned and |error| contains a reason for the failure.
   static Schema Parse(const std::string& schema, std::string* error);
+
+  // Verifies if |schema| is a valid JSON v3 schema. When this validation passes
+  // then |schema| is valid JSON that can be parsed into a Value, and that Value
+  // can be used to build a |Schema|. Returns the parsed Value when |schema|
+  // validated, otherwise returns nullptr. In that case, |error| contains an
+  // error description. For performance reasons, currently IsValidSchema() won't
+  // check the correctness of regular expressions used in "pattern" and
+  // "patternProperties" and in Validate() invalid regular expression don't
+  // accept any strings.
+  // |options| is a bitwise-OR combination of the options above (see
+  // |kSchemaOptions*| above).
+  static std::unique_ptr<base::Value> ParseToDictAndValidate(
+      const std::string& schema,
+      int options,
+      std::string* error);
 
   // Returns true if this Schema is valid. Schemas returned by the methods below
   // may be invalid, and in those cases the other methods must not be used.
@@ -112,6 +147,13 @@ class POLICY_EXPORT Schema {
                  std::string* error_path,
                  std::string* error,
                  bool* changed) const;
+
+  // Modifies |value| in place - masks values that have been marked as sensitive
+  // ("sensitiveValue": true) in this Schema. Note that |value| may not be
+  // schema-valid according to this Schema after this function returns - the
+  // masking is performed by replacing values with string values, so the value
+  // types may not correspond to this Schema anymore.
+  void MaskSensitiveValues(base::Value* value) const;
 
   // Used to iterate over the known properties of Type::DICTIONARY schemas.
   class POLICY_EXPORT Iterator {
@@ -155,6 +197,10 @@ class POLICY_EXPORT Schema {
   // Returns all Schemas from pattern properties that match |key|. May be empty.
   SchemaList GetPatternProperties(const std::string& key) const;
 
+  // Returns this Schema's required properties. May be empty if the Schema has
+  // no required properties.
+  std::vector<std::string> GetRequiredProperties() const;
+
   // Returns the Schema for additional properties. If additional properties are
   // not allowed for this Schema then the Schema returned is not valid.
   Schema GetAdditionalProperties() const;
@@ -176,6 +222,23 @@ class POLICY_EXPORT Schema {
   // otherwise invalid memory will be read. A CHECK is currently enforcing this.
   Schema GetItems() const;
 
+  // Gets the validation schema associated with this |schema| - or if there
+  // isn't one, returns an empty invalid schema. There are a few policies that
+  // contain embedded JSON - these policies have a schema for validating that
+  // JSON that is more complicated than the regular schema. For other policies
+  // it is not defined. To get the validation schema for a policy, call
+  // |chrome_schema.GetValidationSchema().GetKnownProperty(policy_name)|, where
+  // |chrome_schema| is the root schema that has all policies as children.
+  Schema GetValidationSchema() const;
+
+  // If this returns true, the value described by this schema should not be
+  // displayed on the UI.
+  bool IsSensitiveValue() const;
+
+  // If this returns true, the schema contains child elements that contain
+  // sensitive values.
+  bool HasSensitiveChildren() const;
+
  private:
   // Builds a schema pointing to the inner structure of |storage|,
   // rooted at |node|.
@@ -184,6 +247,8 @@ class POLICY_EXPORT Schema {
 
   bool ValidateIntegerRestriction(int index, int value) const;
   bool ValidateStringRestriction(int index, const char* str) const;
+
+  void MaskSensitiveValuesRecursive(base::Value* value) const;
 
   scoped_refptr<const InternalStorage> storage_;
   const internal::SchemaNode* node_;

@@ -6,10 +6,10 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "components/url_formatter/android/jni_headers/UrlFormatter_jni.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_formatter/url_formatter.h"
-#include "jni/UrlFormatter_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -29,7 +29,6 @@ namespace android {
 
 static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FixupUrl(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   DCHECK(url);
   GURL fixed_url = url_formatter::FixupURL(
@@ -40,18 +39,41 @@ static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FixupUrl(
              : ScopedJavaLocalRef<jstring>();
 }
 
-static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForDisplay(
+static ScopedJavaLocalRef<jstring>
+JNI_UrlFormatter_FormatUrlForDisplayOmitScheme(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrl(
-               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url)));
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url),
+               url_formatter::kFormatUrlOmitDefaults |
+                   url_formatter::kFormatUrlOmitHTTPS,
+               net::UnescapeRule::SPACES, nullptr, nullptr, nullptr));
+}
+
+static ScopedJavaLocalRef<jstring>
+JNI_UrlFormatter_FormatUrlForDisplayOmitHTTPScheme(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& url) {
+  return base::android::ConvertUTF16ToJavaString(
+      env, url_formatter::FormatUrl(
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url),
+               url_formatter::kFormatUrlOmitDefaults, net::UnescapeRule::SPACES,
+               nullptr, nullptr, nullptr));
+}
+
+static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForCopy(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& url) {
+  return base::android::ConvertUTF16ToJavaString(
+      env, url_formatter::FormatUrl(
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url),
+               url_formatter::kFormatUrlOmitNothing, net::UnescapeRule::NORMAL,
+               nullptr, nullptr, nullptr));
 }
 
 static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForSecurityDisplay(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrlForSecurityDisplay(
@@ -61,7 +83,6 @@ static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForSecurityDisplay(
 static ScopedJavaLocalRef<jstring>
 JNI_UrlFormatter_FormatUrlForSecurityDisplayOmitScheme(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrlForSecurityDisplay(

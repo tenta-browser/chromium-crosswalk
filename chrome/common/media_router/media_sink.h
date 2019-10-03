@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/optional.h"
+#include "chrome/common/media_router/media_route_provider_helper.h"
 #include "third_party/icu/source/common/unicode/uversion.h"
 
 namespace U_ICU_NAMESPACE {
@@ -19,14 +20,21 @@ namespace media_router {
 // IconTypes are listed in the order in which sinks should be sorted.
 // The order must stay in sync with
 // chrome/browser/resources/media_router/media_router_data.js.
-enum SinkIconType {
-  CAST,
-  CAST_AUDIO_GROUP,
-  CAST_AUDIO,
-  MEETING,
-  HANGOUT,
-  EDUCATION,
-  GENERIC
+//
+// NOTE: This enum is used for recording the MediaRouter.Sink.SelectedType
+// metrics, so if we want to reorder it, we must create a separate enum that
+// preserves the ordering, and map from this enum to the new one in
+// MediaRouterMetrics::RecordMediaSinkType().
+enum class SinkIconType {
+  CAST = 0,
+  CAST_AUDIO_GROUP = 1,
+  CAST_AUDIO = 2,
+  MEETING = 3,
+  HANGOUT = 4,
+  EDUCATION = 5,
+  WIRED_DISPLAY = 6,
+  GENERIC = 7,
+  TOTAL_COUNT = 8  // Add new types above this line.
 };
 
 // Represents a sink to which media can be routed.
@@ -35,13 +43,18 @@ class MediaSink {
  public:
   using Id = std::string;
 
+  // TODO(takumif): Remove the default argument for |provider_id|.
   MediaSink(const MediaSink::Id& sink_id,
             const std::string& name,
-            const SinkIconType icon_type);
+            SinkIconType icon_type,
+            MediaRouteProviderId provider_id = MediaRouteProviderId::UNKNOWN);
   MediaSink(const MediaSink& other);
+  MediaSink(MediaSink&& other) noexcept;
   MediaSink();
-
   ~MediaSink();
+
+  MediaSink& operator=(const MediaSink& other);
+  MediaSink& operator=(MediaSink&& other) noexcept;
 
   void set_sink_id(const MediaSink::Id& sink_id) { sink_id_ = sink_id; }
   const MediaSink::Id& id() const { return sink_id_; }
@@ -62,10 +75,15 @@ class MediaSink {
   void set_icon_type(SinkIconType icon_type) { icon_type_ = icon_type; }
   SinkIconType icon_type() const { return icon_type_; }
 
-  // This method only compares IDs.
-  bool Equals(const MediaSink& other) const;
+  void set_provider_id(MediaRouteProviderId provider_id) {
+    provider_id_ = provider_id;
+  }
+  MediaRouteProviderId provider_id() const { return provider_id_; }
 
-  // This method compares all fields.
+  // Returns true if the sink is from the Cloud MRP; however, as this is based
+  // solely on the icon type, is not guaranteed to be correct 100% of the time.
+  bool IsMaybeCloudSink() const;
+
   bool operator==(const MediaSink& other) const;
   bool operator!=(const MediaSink& other) const;
 
@@ -73,13 +91,6 @@ class MediaSink {
   // using |collator|, and finally their IDs.
   bool CompareUsingCollator(const MediaSink& other,
                             const icu::Collator* collator) const;
-
-  // For storing in sets and in maps as keys.
-  struct Compare {
-    bool operator()(const MediaSink& sink1, const MediaSink& sink2) const {
-      return sink1.id() < sink2.id();
-    }
-  };
 
  private:
   // Unique identifier for the MediaSink.
@@ -96,6 +107,9 @@ class MediaSink {
 
   // The type of icon that corresponds with the MediaSink.
   SinkIconType icon_type_ = SinkIconType::GENERIC;
+
+  // The ID of the MediaRouteProvider that the MediaSink belongs to.
+  MediaRouteProviderId provider_id_ = MediaRouteProviderId::UNKNOWN;
 };
 
 }  // namespace media_router

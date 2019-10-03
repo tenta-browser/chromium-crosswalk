@@ -20,7 +20,7 @@
 #include "media/formats/mp4/avc.h"
 #include "media/formats/mp4/box_reader.h"
 #include "media/formats/mp4/fourccs.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 namespace media {
 namespace mp4 {
@@ -39,7 +39,7 @@ enum SampleFlags {
   T(const T& other);                      \
   ~T() override;                          \
   bool Parse(BoxReader* reader) override; \
-  FourCC BoxType() const override;
+  FourCC BoxType() const override
 
 struct MEDIA_EXPORT FileType : Box {
   DECLARE_BOX_METHODS(FileType);
@@ -155,6 +155,7 @@ struct MEDIA_EXPORT ProtectionSchemeInfo : Box {
   SchemeInfo info;
 
   bool HasSupportedScheme() const;
+  bool IsCbcsEncryptionScheme() const;
 };
 
 struct MEDIA_EXPORT MovieHeader : Box {
@@ -167,6 +168,12 @@ struct MEDIA_EXPORT MovieHeader : Box {
   uint64_t duration;
   int32_t rate;
   int16_t volume;
+  // A 3x3 matrix of [ A B C ]
+  //                 [ D E F ]
+  //                 [ U V W ]
+  // Where A-F are 16.16 fixed point decimals
+  // And U, V, W are 2.30 fixed point decimals.
+  DisplayMatrix display_matrix;
   uint32_t next_track_id;
 };
 
@@ -180,6 +187,7 @@ struct MEDIA_EXPORT TrackHeader : Box {
   int16_t layer;
   int16_t alternate_group;
   int16_t volume;
+  DisplayMatrix display_matrix;  // See MovieHeader.display_matrix
   uint32_t width;
   uint32_t height;
 };
@@ -210,6 +218,7 @@ struct MEDIA_EXPORT HandlerReference : Box {
   std::string name;
 };
 
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
 struct MEDIA_EXPORT AVCDecoderConfigurationRecord : Box {
   DECLARE_BOX_METHODS(AVCDecoderConfigurationRecord);
 
@@ -235,12 +244,21 @@ struct MEDIA_EXPORT AVCDecoderConfigurationRecord : Box {
  private:
   bool ParseInternal(BufferReader* reader, MediaLog* media_log);
 };
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 struct MEDIA_EXPORT VPCodecConfigurationRecord : Box {
   DECLARE_BOX_METHODS(VPCodecConfigurationRecord);
 
   VideoCodecProfile profile;
 };
+
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+struct MEDIA_EXPORT AV1CodecConfigurationRecord : Box {
+  DECLARE_BOX_METHODS(AV1CodecConfigurationRecord);
+
+  VideoCodecProfile profile;
+};
+#endif
 
 struct MEDIA_EXPORT PixelAspectRatioBox : Box {
   DECLARE_BOX_METHODS(PixelAspectRatioBox);
@@ -272,7 +290,9 @@ struct MEDIA_EXPORT ElementaryStreamDescriptor : Box {
   DECLARE_BOX_METHODS(ElementaryStreamDescriptor);
 
   uint8_t object_type;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
   AAC aac;
+#endif
 };
 
 struct MEDIA_EXPORT FlacSpecificBox : Box {
@@ -295,6 +315,16 @@ struct MEDIA_EXPORT FlacSpecificBox : Box {
   uint8_t bits_per_sample;
 };
 
+struct MEDIA_EXPORT OpusSpecificBox : Box {
+  DECLARE_BOX_METHODS(OpusSpecificBox);
+  std::vector<uint8_t> extradata;
+
+  base::TimeDelta seek_preroll;
+  uint16_t codec_delay_in_frames;
+  uint8_t channel_count;
+  uint32_t sample_rate;
+};
+
 struct MEDIA_EXPORT AudioSampleEntry : Box {
   DECLARE_BOX_METHODS(AudioSampleEntry);
 
@@ -307,6 +337,7 @@ struct MEDIA_EXPORT AudioSampleEntry : Box {
   ProtectionSchemeInfo sinf;
   ElementaryStreamDescriptor esds;
   FlacSpecificBox dfla;
+  OpusSpecificBox dops;
 };
 
 struct MEDIA_EXPORT SampleDescription : Box {
@@ -516,6 +547,18 @@ struct MEDIA_EXPORT MovieFragment : Box {
   MovieFragmentHeader header;
   std::vector<TrackFragment> tracks;
   std::vector<ProtectionSystemSpecificHeader> pssh;
+};
+
+struct MEDIA_EXPORT ID3v2Box : Box {
+  DECLARE_BOX_METHODS(ID3v2Box);
+
+  // Up to a maximum of the first 128 bytes of the ID3v2 box.
+  std::vector<uint8_t> id3v2_data;
+};
+
+struct MEDIA_EXPORT MetadataBox : Box {
+  DECLARE_BOX_METHODS(MetadataBox);
+  bool used_shaka_packager;
 };
 
 #undef DECLARE_BOX

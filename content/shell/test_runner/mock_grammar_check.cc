@@ -9,10 +9,10 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "content/shell/test_runner/test_common.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebTextCheckingResult.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
 
 namespace test_runner {
 
@@ -46,7 +46,7 @@ bool MockGrammarCheck::CheckGrammarOfString(
       {"the the adlj adaasj sdklj. there there", 33, 5},
       {"zz apple orange.", 0, 16},
   };
-  for (size_t i = 0; i < arraysize(kGrammarErrors); ++i) {
+  for (size_t i = 0; i < base::size(kGrammarErrors); ++i) {
     size_t offset = 0;
     base::string16 error(
         kGrammarErrors[i].text,

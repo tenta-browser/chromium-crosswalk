@@ -3,13 +3,17 @@
 // found in the LICENSE file.
 
 #include "mojo/public/cpp/bindings/lib/binding_state.h"
-
 #include "mojo/public/cpp/bindings/lib/task_runner_helper.h"
+#include "mojo/public/cpp/bindings/mojo_buildflags.h"
+
+#if BUILDFLAG(MOJO_RANDOM_DELAYS_ENABLED)
+#include "mojo/public/cpp/bindings/lib/test_random_mojo_delays.h"
+#endif
 
 namespace mojo {
 namespace internal {
 
-BindingStateBase::BindingStateBase() : weak_ptr_factory_(this) {}
+BindingStateBase::BindingStateBase() = default;
 
 BindingStateBase::~BindingStateBase() = default;
 
@@ -41,6 +45,8 @@ void BindingStateBase::Close() {
   if (!router_)
     return;
 
+  weak_ptr_factory_.InvalidateWeakPtrs();
+
   endpoint_client_.reset();
   router_->CloseMessagePipe();
   router_ = nullptr;
@@ -69,6 +75,11 @@ void BindingStateBase::FlushForTesting() {
   endpoint_client_->FlushForTesting();
 }
 
+void BindingStateBase::EnableBatchDispatch() {
+  DCHECK(is_bound());
+  router_->EnableBatchDispatch();
+}
+
 void BindingStateBase::EnableTestingMode() {
   DCHECK(is_bound());
   router_->EnableTestingMode();
@@ -79,33 +90,43 @@ scoped_refptr<internal::MultiplexRouter> BindingStateBase::RouterForTesting() {
 }
 
 void BindingStateBase::BindInternal(
-    ScopedMessagePipeHandle handle,
-    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    PendingReceiverState* receiver_state,
+    scoped_refptr<base::SequencedTaskRunner> runner,
     const char* interface_name,
     std::unique_ptr<MessageReceiver> request_validator,
     bool passes_associated_kinds,
     bool has_sync_methods,
     MessageReceiverWithResponderStatus* stub,
     uint32_t interface_version) {
-  DCHECK(!router_);
+  DCHECK(!is_bound()) << "Attempting to bind interface that is already bound: "
+                      << interface_name;
 
   auto sequenced_runner =
       GetTaskRunnerToUseFromUserProvidedTaskRunner(std::move(runner));
+
   MultiplexRouter::Config config =
       passes_associated_kinds
           ? MultiplexRouter::MULTI_INTERFACE
           : (has_sync_methods
                  ? MultiplexRouter::SINGLE_INTERFACE_WITH_SYNC_METHODS
                  : MultiplexRouter::SINGLE_INTERFACE);
-  router_ =
-      new MultiplexRouter(std::move(handle), config, false, sequenced_runner);
+  router_ = new MultiplexRouter(std::move(receiver_state->pipe), config, false,
+                                sequenced_runner);
   router_->SetMasterInterfaceName(interface_name);
+  router_->SetConnectionGroup(std::move(receiver_state->connection_group));
 
   endpoint_client_.reset(new InterfaceEndpointClient(
       router_->CreateLocalEndpointHandle(kMasterInterfaceId), stub,
       std::move(request_validator), has_sync_methods,
-      std::move(sequenced_runner), interface_version));
+      std::move(sequenced_runner), interface_version, interface_name));
+  endpoint_client_->SetIdleTrackingEnabledCallback(
+      base::BindOnce(&MultiplexRouter::SetConnectionGroup, router_));
+
+#if BUILDFLAG(MOJO_RANDOM_DELAYS_ENABLED)
+  MakeBindingRandomlyPaused(base::SequencedTaskRunnerHandle::Get(),
+                            weak_ptr_factory_.GetWeakPtr());
+#endif
 }
 
-}  // namesapce internal
+}  // namespace internal
 }  // namespace mojo

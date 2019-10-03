@@ -9,7 +9,6 @@
 #include <linux/input.h>
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -38,8 +37,10 @@ EventReaderLibevdevCros::EventReaderLibevdevCros(
                           id,
                           devinfo.device_type(),
                           devinfo.name(),
+                          devinfo.phys(),
                           devinfo.vendor_id(),
-                          devinfo.product_id()),
+                          devinfo.product_id(),
+                          devinfo.version()),
       has_keyboard_(devinfo.HasKeyboard()),
       has_mouse_(devinfo.HasMouse()),
       has_touchpad_(devinfo.HasTouchpad()),
@@ -128,7 +129,7 @@ void EventReaderLibevdevCros::OnLogMessage(void* data,
   else if (level >= LOGLEVEL_WARNING)
     LOG(WARNING) << "libevdev: " << FormatLog(fmt, args);
   else
-    VLOG(3) << "libevdev: " << FormatLog(fmt, args);
+    DVLOG(3) << "libevdev: " << FormatLog(fmt, args);
   va_end(args);
 }
 

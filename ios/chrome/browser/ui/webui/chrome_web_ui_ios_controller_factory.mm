@@ -4,24 +4,28 @@
 
 #include "ios/chrome/browser/ui/webui/chrome_web_ui_ios_controller_factory.h"
 
+#import <Foundation/Foundation.h>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#include "ios/chrome/browser/experimental_flags.h"
+#include "ios/chrome/browser/system_flags.h"
 #include "ios/chrome/browser/ui/webui/about_ui.h"
 #include "ios/chrome/browser/ui/webui/crashes_ui.h"
 #include "ios/chrome/browser/ui/webui/flags_ui.h"
 #include "ios/chrome/browser/ui/webui/gcm/gcm_internals_ui.h"
+#include "ios/chrome/browser/ui/webui/inspect/inspect_ui.h"
 #include "ios/chrome/browser/ui/webui/net_export/net_export_ui.h"
 #include "ios/chrome/browser/ui/webui/ntp_tiles_internals_ui.h"
 #include "ios/chrome/browser/ui/webui/omaha_ui.h"
 #include "ios/chrome/browser/ui/webui/password_manager_internals_ui_ios.h"
-#include "ios/chrome/browser/ui/webui/physical_web_ui.h"
 #include "ios/chrome/browser/ui/webui/signin_internals_ui_ios.h"
 #include "ios/chrome/browser/ui/webui/suggestions_ui.h"
 #include "ios/chrome/browser/ui/webui/sync_internals/sync_internals_ui.h"
 #include "ios/chrome/browser/ui/webui/terms_ui.h"
+#include "ios/chrome/browser/ui/webui/translate_internals/translate_internals_ui.h"
+#include "ios/chrome/browser/ui/webui/ukm_internals_ui.h"
+#include "ios/chrome/browser/ui/webui/user_actions_ui.h"
 #include "ios/chrome/browser/ui/webui/version_ui.h"
 #include "url/gurl.h"
 
@@ -42,20 +46,19 @@ using WebUIIOSFactoryFunction =
 template <class T>
 std::unique_ptr<WebUIIOSController> NewWebUIIOS(WebUIIOS* web_ui,
                                                 const GURL& url) {
-  return base::MakeUnique<T>(web_ui);
+  return std::make_unique<T>(web_ui);
 }
 
 template <class T>
 std::unique_ptr<WebUIIOSController> NewWebUIIOSWithHost(WebUIIOS* web_ui,
                                                         const GURL& url) {
-  return base::MakeUnique<T>(web_ui, url.host());
+  return std::make_unique<T>(web_ui, url.host());
 }
 
 // Returns a function that can be used to create the right type of WebUIIOS for
 // a tab, based on its URL. Returns NULL if the URL doesn't have WebUIIOS
 // associated with it.
-WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(WebUIIOS* web_ui,
-                                                   const GURL& url) {
+WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
   // This will get called a lot to check all URLs, so do a quick check of other
   // schemes to filter out most URLs.
   if (!url.SchemeIs(kChromeUIScheme))
@@ -69,8 +72,12 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(WebUIIOS* web_ui,
     return &NewWebUIIOSWithHost<AboutUI>;
   if (url_host == kChromeUICrashesHost)
     return &NewWebUIIOS<CrashesUI>;
+  if (url_host == kChromeUIFlagsHost)
+    return &NewWebUIIOS<FlagsUI>;
   if (url_host == kChromeUIGCMInternalsHost)
     return &NewWebUIIOS<GCMInternalsUI>;
+  if (url_host == kChromeUIInspectHost)
+    return &NewWebUIIOS<InspectUI>;
   if (url_host == kChromeUINetExportHost)
     return &NewWebUIIOS<NetExportUI>;
   if (url_host == kChromeUINTPTilesInternalsHost)
@@ -79,33 +86,43 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(WebUIIOS* web_ui,
     return &NewWebUIIOS<OmahaUI>;
   if (url_host == kChromeUIPasswordManagerInternalsHost)
     return &NewWebUIIOS<PasswordManagerInternalsUIIOS>;
-  if (experimental_flags::IsPhysicalWebEnabled()) {
-    if (url_host == kChromeUIPhysicalWebHost)
-      return &NewWebUIIOS<PhysicalWebUI>;
-  }
   if (url_host == kChromeUISignInInternalsHost)
     return &NewWebUIIOS<SignInInternalsUIIOS>;
   if (url.host_piece() == kChromeUISuggestionsHost)
     return &NewWebUIIOS<suggestions::SuggestionsUI>;
+  if (url.host_piece() == kChromeUITranslateInternalsHost)
+    return &NewWebUIIOS<TranslateInternalsUI>;
+  if (url_host == kChromeUIURLKeyedMetricsHost)
+    return &NewWebUIIOS<UkmInternalsUI>;
+  if (url_host == kChromeUIUserActionsHost)
+    return &NewWebUIIOS<UserActionsUI>;
   if (url_host == kChromeUISyncInternalsHost)
     return &NewWebUIIOS<SyncInternalsUI>;
   if (url_host == kChromeUITermsHost)
     return &NewWebUIIOSWithHost<TermsUI>;
   if (url_host == kChromeUIVersionHost)
     return &NewWebUIIOS<VersionUI>;
-  if (url_host == kChromeUIFlagsHost)
-    return &NewWebUIIOS<FlagsUI>;
 
   return nullptr;
 }
 
 }  // namespace
 
+NSInteger ChromeWebUIIOSControllerFactory::GetErrorCodeForWebUIURL(
+    const GURL& url) const {
+  if (url.host() == kChromeUIDinoHost) {
+    return NSURLErrorNotConnectedToInternet;
+  }
+  if (GetWebUIIOSFactoryFunction(url))
+    return 0;
+  return NSURLErrorUnsupportedURL;
+}
+
 std::unique_ptr<WebUIIOSController>
 ChromeWebUIIOSControllerFactory::CreateWebUIIOSControllerForURL(
     WebUIIOS* web_ui,
     const GURL& url) const {
-  WebUIIOSFactoryFunction function = GetWebUIIOSFactoryFunction(web_ui, url);
+  WebUIIOSFactoryFunction function = GetWebUIIOSFactoryFunction(url);
   if (!function)
     return nullptr;
 
@@ -115,7 +132,8 @@ ChromeWebUIIOSControllerFactory::CreateWebUIIOSControllerForURL(
 // static
 ChromeWebUIIOSControllerFactory*
 ChromeWebUIIOSControllerFactory::GetInstance() {
-  return base::Singleton<ChromeWebUIIOSControllerFactory>::get();
+  static base::NoDestructor<ChromeWebUIIOSControllerFactory> instance;
+  return instance.get();
 }
 
 ChromeWebUIIOSControllerFactory::ChromeWebUIIOSControllerFactory() {}

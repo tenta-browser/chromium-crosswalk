@@ -12,12 +12,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
 import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
@@ -25,19 +24,24 @@ import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
 import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
+import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Misc. Content Suggestions instrumentation tests.
  */
+// TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+// clang-format off
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@Features.DisableFeatures(ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS)
 public class ContentSuggestionsTest {
+    // clang-format on
+
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
@@ -50,7 +54,6 @@ public class ContentSuggestionsTest {
     @Test
     @SmallTest
     @Feature("Suggestions")
-    @CommandLineFlags.Add("enable-features=ContentSuggestionsSettings")
     public void testRemoteSuggestionsEnabled() throws InterruptedException {
         NewTabPage ntp = loadNTPWithSearchSuggestState(true);
         SuggestionsUiDelegate uiDelegate = ntp.getManagerForTesting();
@@ -61,23 +64,19 @@ public class ContentSuggestionsTest {
     @Test
     @SmallTest
     @Feature("Suggestions")
-    @CommandLineFlags.Add("enable-features=ContentSuggestionsSettings")
     public void testRemoteSuggestionsDisabled() throws InterruptedException {
         NewTabPage ntp = loadNTPWithSearchSuggestState(false);
         SuggestionsUiDelegate uiDelegate = ntp.getManagerForTesting();
-        Assert.assertFalse(
+        // Since header is expandable, category should still be enabled.
+        Assert.assertEquals(true,
                 isCategoryEnabled(uiDelegate.getSuggestionsSource(), KnownCategories.ARTICLES));
     }
 
     private NewTabPage loadNTPWithSearchSuggestState(final boolean enabled)
             throws InterruptedException {
         Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PrefServiceBridge.getInstance().setSearchSuggestEnabled(enabled);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> PrefServiceBridge.getInstance().setSearchSuggestEnabled(enabled));
 
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
         NewTabPageTestUtils.waitForNtpLoaded(tab);

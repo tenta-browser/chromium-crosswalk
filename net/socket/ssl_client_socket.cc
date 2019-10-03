@@ -4,15 +4,12 @@
 
 #include "net/socket/ssl_client_socket.h"
 
-#include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
-#include "base/strings/string_util.h"
-#include "build/build_config.h"
-#include "crypto/ec_private_key.h"
-#include "net/base/net_errors.h"
+#include <string>
+
+#include "base/logging.h"
 #include "net/socket/ssl_client_socket_impl.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/ssl_config_service.h"
+#include "net/socket/stream_socket.h"
+#include "net/ssl/ssl_key_logger.h"
 
 namespace net {
 
@@ -21,23 +18,8 @@ SSLClientSocket::SSLClientSocket()
       stapled_ocsp_response_received_(false) {}
 
 // static
-void SSLClientSocket::SetSSLKeyLogFile(const base::FilePath& path) {
-#if !defined(OS_NACL)
-  SSLClientSocketImpl::SetSSLKeyLogFile(path);
-#else
-  NOTIMPLEMENTED();
-#endif
-}
-
-bool SSLClientSocket::IgnoreCertError(int error, int load_flags) {
-  if (error == OK)
-    return true;
-  return (load_flags & LOAD_IGNORE_ALL_CERT_ERRORS) &&
-         IsCertificateError(error);
-}
-
-SSLErrorDetails SSLClientSocket::GetConnectErrorDetails() const {
-  return SSLErrorDetails::kOther;
+void SSLClientSocket::SetSSLKeyLogger(std::unique_ptr<SSLKeyLogger> logger) {
+  SSLClientSocketImpl::SetSSLKeyLogger(std::move(logger));
 }
 
 // static
@@ -61,6 +43,33 @@ std::vector<uint8_t> SSLClientSocket::SerializeNextProtos(
   }
 
   return wire_protos;
+}
+
+SSLClientContext::SSLClientContext(
+    CertVerifier* cert_verifier,
+    TransportSecurityState* transport_security_state,
+    CTVerifier* cert_transparency_verifier,
+    CTPolicyEnforcer* ct_policy_enforcer,
+    SSLClientSessionCache* ssl_client_session_cache)
+    : cert_verifier_(cert_verifier),
+      transport_security_state_(transport_security_state),
+      cert_transparency_verifier_(cert_transparency_verifier),
+      ct_policy_enforcer_(ct_policy_enforcer),
+      ssl_client_session_cache_(ssl_client_session_cache) {
+  CHECK(cert_verifier_);
+  CHECK(transport_security_state_);
+  CHECK(cert_transparency_verifier_);
+  CHECK(ct_policy_enforcer_);
+}
+
+SSLClientContext::~SSLClientContext() = default;
+
+std::unique_ptr<SSLClientSocket> SSLClientContext::CreateSSLClientSocket(
+    std::unique_ptr<StreamSocket> stream_socket,
+    const HostPortPair& host_and_port,
+    const SSLConfig& ssl_config) {
+  return std::make_unique<SSLClientSocketImpl>(this, std::move(stream_socket),
+                                               host_and_port, ssl_config);
 }
 
 }  // namespace net

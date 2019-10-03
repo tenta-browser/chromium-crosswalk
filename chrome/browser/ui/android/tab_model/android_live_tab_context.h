@@ -26,13 +26,14 @@ class AndroidLiveTabContext : public sessions::LiveTabContext {
 
   // Overridden from LiveTabContext:
   void ShowBrowserWindow() override;
-  const SessionID& GetSessionID() const override;
+  SessionID GetSessionID() const override;
   int GetTabCount() const override;
   int GetSelectedIndex() const override;
   std::string GetAppName() const override;
   sessions::LiveTab* GetLiveTabAt(int index) const override;
   sessions::LiveTab* GetActiveLiveTab() const override;
   bool IsTabPinned(int index) const override;
+  base::Optional<base::Token> GetTabGroupForTab(int index) const override;
   const gfx::Rect GetRestoredBounds() const override;
   ui::WindowShowState GetRestoredState() const override;
   std::string GetWorkspace() const override;
@@ -41,6 +42,7 @@ class AndroidLiveTabContext : public sessions::LiveTabContext {
       int tab_index,
       int selected_navigation,
       const std::string& extension_app_id,
+      base::Optional<base::Token> group,
       bool select,
       bool pin,
       bool from_last_session,
@@ -48,6 +50,7 @@ class AndroidLiveTabContext : public sessions::LiveTabContext {
       const std::string& user_agent_override) override;
   sessions::LiveTab* ReplaceRestoredTab(
       const std::vector<sessions::SerializedNavigationEntry>& navigations,
+      base::Optional<base::Token> group,
       int selected_navigation,
       bool from_last_session,
       const std::string& extension_app_id,
@@ -57,8 +60,7 @@ class AndroidLiveTabContext : public sessions::LiveTabContext {
 
   static LiveTabContext* FindContextForWebContents(
       const content::WebContents* contents);
-  static sessions::LiveTabContext* FindContextWithID(
-      SessionID::id_type desired_id);
+  static sessions::LiveTabContext* FindContextWithID(SessionID desired_id);
 
  private:
   TabModel* tab_model_;

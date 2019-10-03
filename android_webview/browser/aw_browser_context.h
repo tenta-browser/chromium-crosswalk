@@ -8,32 +8,36 @@
 #include <memory>
 #include <vector>
 
-#include "android_webview/browser/aw_safe_browsing_ui_manager.h"
 #include "android_webview/browser/aw_ssl_host_state_delegate.h"
+#include "android_webview/browser/net/aw_proxy_config_monitor.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "components/prefs/pref_change_registrar.h"
-#include "components/safe_browsing/android/remote_database_manager.h"
+#include "components/keyed_service/core/simple_factory_key.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "components/visitedlink/browser/visitedlink_delegate.h"
-#include "components/web_restrictions/browser/web_restrictions_client.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/content_browser_client.h"
-#include "net/url_request/url_request_job_factory.h"
 
 class GURL;
 class PrefService;
 
+namespace autofill {
+class AutocompleteHistoryManager;
+}
+
 namespace content {
-class PermissionManager;
+class PermissionControllerDelegate;
 class ResourceContext;
 class SSLHostStateDelegate;
 class WebContents;
 }
 
+namespace download {
+class InProgressDownloadManager;
+}
+
 namespace policy {
-class URLBlacklistManager;
 class BrowserPolicyConnectorBase;
 }
 
@@ -41,30 +45,16 @@ namespace visitedlink {
 class VisitedLinkMaster;
 }
 
-namespace safe_browsing {
-class TriggerManager;
-}  // namespace safe_browsing
-
 namespace android_webview {
 
 class AwFormDatabaseService;
 class AwQuotaManagerBridge;
-class AwSafeBrowsingWhitelistManager;
 class AwURLRequestContextGetter;
-
-namespace prefs {
-
-// Used for Kerberos authentication.
-extern const char kAuthAndroidNegotiateAccountType[];
-extern const char kAuthServerWhitelist[];
-extern const char kWebRestrictionsAuthority[];
-
-}  // namespace prefs
 
 class AwBrowserContext : public content::BrowserContext,
                          public visitedlink::VisitedLinkDelegate {
  public:
-  AwBrowserContext(const base::FilePath path);
+  AwBrowserContext();
   ~AwBrowserContext() override;
 
   // Currently only one instance per process is supported.
@@ -75,6 +65,16 @@ class AwBrowserContext : public content::BrowserContext,
   static AwBrowserContext* FromWebContents(
       content::WebContents* web_contents);
 
+  base::FilePath GetCacheDir();
+  base::FilePath GetPrefStorePath();
+  static base::FilePath GetCookieStorePath();
+  static base::FilePath GetContextStoragePath();
+
+  static void RegisterPrefs(PrefRegistrySimple* registry);
+
+  // Get the list of authentication schemes to support.
+  static std::vector<std::string> GetAuthSchemes();
+
   // Maps to BrowserMainParts::PreMainMessageLoopRun.
   void PreMainMessageLoopRun();
 
@@ -83,21 +83,21 @@ class AwBrowserContext : public content::BrowserContext,
 
   AwQuotaManagerBridge* GetQuotaManagerBridge();
   AwFormDatabaseService* GetFormDatabaseService();
-  AwURLRequestContextGetter* GetAwURLRequestContext();
-
-  policy::URLBlacklistManager* GetURLBlacklistManager();
-  web_restrictions::WebRestrictionsClient* GetWebRestrictionProvider();
+  autofill::AutocompleteHistoryManager* GetAutocompleteHistoryManager();
 
   // content::BrowserContext implementation.
-  base::FilePath GetPath() const override;
-  bool IsOffTheRecord() const override;
+  base::FilePath GetPath() override;
+  bool IsOffTheRecord() override;
   content::ResourceContext* GetResourceContext() override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
   content::PushMessagingService* GetPushMessagingService() override;
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
-  content::PermissionManager* GetPermissionManager() override;
+  content::PermissionControllerDelegate* GetPermissionControllerDelegate()
+      override;
+  content::ClientHintsControllerDelegate* GetClientHintsControllerDelegate()
+      override;
   content::BackgroundFetchDelegate* GetBackgroundFetchDelegate() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
   content::BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate()
@@ -105,27 +105,24 @@ class AwBrowserContext : public content::BrowserContext,
   net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   net::URLRequestContextGetter* CreateMediaRequestContext() override;
-  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
+  download::InProgressDownloadManager* RetriveInProgressDownloadManager()
+      override;
 
   // visitedlink::VisitedLinkDelegate implementation.
   void RebuildTable(const scoped_refptr<URLEnumerator>& enumerator) override;
 
-  AwSafeBrowsingUIManager* GetSafeBrowsingUIManager() const;
-  safe_browsing::RemoteSafeBrowsingDatabaseManager* GetSafeBrowsingDBManager();
-  safe_browsing::TriggerManager* GetSafeBrowsingTriggerManager() const;
-  AwSafeBrowsingWhitelistManager* GetSafeBrowsingWhitelistManager() const;
+  PrefService* GetPrefService() const { return user_pref_service_.get(); }
+
+  void SetExtendedReportingAllowed(bool allowed);
+
+  network::mojom::NetworkContextParamsPtr GetNetworkContextParams(
+      bool in_memory,
+      const base::FilePath& relative_partition_path);
 
  private:
-  void InitUserPrefService();
-  void OnWebRestrictionsAuthorityChanged();
+  void CreateUserPrefService();
+  void MigrateLocalStatePrefs();
 
   // The file path where data for this context is persisted.
   base::FilePath context_storage_path_;
@@ -133,28 +130,18 @@ class AwBrowserContext : public content::BrowserContext,
   scoped_refptr<AwURLRequestContextGetter> url_request_context_getter_;
   scoped_refptr<AwQuotaManagerBridge> quota_manager_bridge_;
   std::unique_ptr<AwFormDatabaseService> form_database_service_;
+  std::unique_ptr<autofill::AutocompleteHistoryManager>
+      autocomplete_history_manager_;
 
   std::unique_ptr<visitedlink::VisitedLinkMaster> visitedlink_master_;
   std::unique_ptr<content::ResourceContext> resource_context_;
 
   std::unique_ptr<PrefService> user_pref_service_;
   std::unique_ptr<policy::BrowserPolicyConnectorBase> browser_policy_connector_;
-  std::unique_ptr<policy::URLBlacklistManager> blacklist_manager_;
-
   std::unique_ptr<AwSSLHostStateDelegate> ssl_host_state_delegate_;
-  std::unique_ptr<content::PermissionManager> permission_manager_;
-  std::unique_ptr<web_restrictions::WebRestrictionsClient>
-      web_restriction_provider_;
-  PrefChangeRegistrar pref_change_registrar_;
+  std::unique_ptr<content::PermissionControllerDelegate> permission_manager_;
 
-  scoped_refptr<AwSafeBrowsingUIManager> safe_browsing_ui_manager_;
-  std::unique_ptr<safe_browsing::TriggerManager> safe_browsing_trigger_manager_;
-  scoped_refptr<safe_browsing::RemoteSafeBrowsingDatabaseManager>
-      safe_browsing_db_manager_;
-  bool safe_browsing_db_manager_started_ = false;
-
-  std::unique_ptr<AwSafeBrowsingWhitelistManager>
-      safe_browsing_whitelist_manager_;
+  SimpleFactoryKey simple_factory_key_;
 
   DISALLOW_COPY_AND_ASSIGN(AwBrowserContext);
 };

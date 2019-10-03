@@ -8,49 +8,6 @@ namespace offline_pages {
 
 namespace {
 
-static std::string OfflinerRequestStatusToString(
-    Offliner::RequestStatus request_status) {
-  switch (request_status) {
-    case Offliner::UNKNOWN:
-      return "UNKNOWN";
-    case Offliner::LOADED:
-      return "LOADED";
-    case Offliner::SAVED:
-      return "SAVED";
-    case Offliner::REQUEST_COORDINATOR_CANCELED:
-      return "REQUEST_COORDINATOR_CANCELED";
-    case Offliner::LOADING_CANCELED:
-      return "LOADING_CANCELED";
-    case Offliner::LOADING_FAILED:
-      return "LOADING_FAILED";
-    case Offliner::SAVE_FAILED:
-      return "SAVE_FAILED";
-    case Offliner::FOREGROUND_CANCELED:
-      return "FOREGROUND_CANCELED";
-    case Offliner::REQUEST_COORDINATOR_TIMED_OUT:
-      return "REQUEST_COORDINATOR_TIMED_OUT";
-    case Offliner::DEPRECATED_LOADING_NOT_STARTED:
-      return "DEPRECATED_LOADING_NOT_STARTED";
-    case Offliner::LOADING_FAILED_NO_RETRY:
-      return "LOADING_FAILED_NO_RETRY";
-    case Offliner::LOADING_FAILED_NO_NEXT:
-      return "LOADING_FAILED_NO_NEXT";
-    case Offliner::LOADING_NOT_ACCEPTED:
-      return "LOADING_NOT_ACCEPTED";
-    case Offliner::QUEUE_UPDATE_FAILED:
-      return "QUEUE_UPDATE_FAILED";
-    case Offliner::BACKGROUND_SCHEDULER_CANCELED:
-      return "BACKGROUND_SCHEDULER_CANCELED";
-    case Offliner::SAVED_ON_LAST_RETRY:
-      return "SAVED_ON_LAST_RETRY";
-    case Offliner::BROWSER_KILLED:
-      return "BROWSER_KILLED";
-    default:
-      NOTREACHED();
-      return std::to_string(static_cast<int>(request_status));
-  }
-}
-
 static std::string BackgroundSavePageResultToString(
     RequestNotifier::BackgroundSavePageResult result) {
   switch (result) {
@@ -72,6 +29,8 @@ static std::string BackgroundSavePageResultToString(
       return "START_COUNT_EXCEEDED";
     case RequestNotifier::BackgroundSavePageResult::USER_CANCELED:
       return "REMOVED";
+    case RequestNotifier::BackgroundSavePageResult::DOWNLOAD_THROTTLED:
+      return "DOWNLOAD_THROTTLED";
     default:
       NOTREACHED();
       return std::to_string(static_cast<int>(result));
@@ -101,7 +60,7 @@ void RequestCoordinatorEventLogger::RecordOfflinerResult(
   std::string request_id_str = std::to_string(request_id);
   RecordActivity("Background save attempt for " + name_space + ":" +
                  request_id_str + " - " +
-                 OfflinerRequestStatusToString(new_status));
+                 Offliner::RequestStatusToString(new_status));
 }
 
 void RequestCoordinatorEventLogger::RecordDroppedSavePageRequest(

@@ -19,18 +19,17 @@
 #include "base/files/file_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "chrome/browser/prerender/prerender_field_trial.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/metrics/persistent_system_profile.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/common/content_switches.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if defined(OS_WIN)
 #include "base/win/pe_image.h"
@@ -53,7 +52,6 @@ namespace chrome {
 namespace {
 
 void SetupStunProbeTrial() {
-#if BUILDFLAG(ENABLE_WEBRTC)
   std::map<std::string, std::string> params;
   if (!variations::GetVariationParams("StunProbeTrial2", &params))
     return;
@@ -70,7 +68,6 @@ void SetupStunProbeTrial() {
 
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kWebRtcStunProbeTrialParameter, cmd_param);
-#endif
 }
 
 #if defined(OS_WIN)
@@ -92,11 +89,15 @@ void RecordChromeModuleInfo(
 
   GUID guid;
   DWORD age;
-  pe.GetDebugId(&guid, &age);
-  module.age = age;
-  static_assert(sizeof(module.identifier) >= sizeof(guid),
-                "Identifier field must be able to contain a GUID.");
-  memcpy(module.identifier, &guid, sizeof(guid));
+  if (pe.GetDebugId(&guid, &age, /* pdb_filename= */ nullptr,
+                    /* pdb_filename_length= */ nullptr)) {
+    module.age = age;
+    static_assert(sizeof(module.identifier) >= sizeof(guid),
+                  "Identifier field must be able to contain a GUID.");
+    memcpy(module.identifier, &guid, sizeof(guid));
+  } else {
+    memset(module.identifier, 0, sizeof(module.identifier));
+  }
 
   module.file = "chrome.dll";
   module.debug_file = "chrome.dll.pdb";
@@ -109,8 +110,6 @@ void SetupStabilityDebugging() {
           browser_watcher::kStabilityDebuggingFeature)) {
     return;
   }
-
-  SCOPED_UMA_HISTOGRAM_TIMER("ActivityTracker.Record.SetupTime");
 
   // TODO(bcwhite): Adjust these numbers once there is real data to show
   // just how much of an arena is necessary.
@@ -150,7 +149,7 @@ void SetupStabilityDebugging() {
         browser_watcher::StabilityRecordEvent::kGotTracker);
     // Record product, version, channel, special build and platform.
     wchar_t exe_file[MAX_PATH] = {};
-    CHECK(::GetModuleFileName(nullptr, exe_file, arraysize(exe_file)));
+    CHECK(::GetModuleFileName(nullptr, exe_file, base::size(exe_file)));
 
     base::string16 product_name;
     base::string16 version_number;
@@ -189,8 +188,8 @@ void SetupStabilityDebugging() {
     if (should_flush) {
       base::PostTaskWithTraits(
           FROM_HERE, {base::MayBlock()},
-          base::Bind(&base::PersistentMemoryAllocator::Flush,
-                     base::Unretained(global_tracker->allocator()), true));
+          base::BindOnce(&base::PersistentMemoryAllocator::Flush,
+                         base::Unretained(global_tracker->allocator()), true));
     }
 
     // Store a copy of the system profile in this allocator. There will be some
@@ -207,11 +206,10 @@ void SetupStabilityDebugging() {
 }  // namespace
 
 void SetupDesktopFieldTrials() {
-  prerender::ConfigurePrerender();
+  prerender::ConfigureNoStatePrefetch();
   SetupStunProbeTrial();
 #if defined(OS_WIN)
   SetupStabilityDebugging();
-  base::FeatureList::IsEnabled(features::kModuleDatabase);
 #endif  // defined(OS_WIN)
 }
 

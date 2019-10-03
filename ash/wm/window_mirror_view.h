@@ -9,6 +9,8 @@
 
 #include "ash/ash_export.h"
 #include "base/macros.h"
+#include "ui/aura/window_observer.h"
+#include "ui/aura/window_occlusion_tracker.h"
 #include "ui/views/view.h"
 
 namespace aura {
@@ -21,24 +23,34 @@ class LayerTreeOwner;
 
 namespace ash {
 
-namespace wm {
-
-// A view that mirrors the client area of a single window.
-class WindowMirrorView : public views::View {
+// A view that mirrors the client area of a single (source) window.
+class ASH_EXPORT WindowMirrorView : public views::View,
+                                    public aura::WindowObserver {
  public:
-  WindowMirrorView(aura::Window* window, bool trilinear_filtering);
+  WindowMirrorView(aura::Window* source, bool trilinear_filtering_on_init);
   ~WindowMirrorView() override;
+
+  // Returns the source of the mirror.
+  aura::Window* source() { return source_; }
+
+  // Recreates |layer_owner_|.
+  void RecreateMirrorLayers();
+
+  // aura::WindowObserver:
+  void OnWindowDestroying(aura::Window* window) override;
 
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override;
   void OnVisibleBoundsChanged() override;
+  void AddedToWidget() override;
+  void RemovedFromWidget() override;
 
  private:
   void InitLayerOwner();
 
-  // Gets the root of the layer tree that was lifted from |target_| (and is now
+  // Gets the root of the layer tree that was lifted from |source_| (and is now
   // a child of |this->layer()|).
   ui::Layer* GetMirrorLayer();
 
@@ -47,7 +59,10 @@ class WindowMirrorView : public views::View {
   gfx::Rect GetClientAreaBounds() const;
 
   // The original window that is being represented by |this|.
-  aura::Window* target_;
+  aura::Window* source_;
+
+  // The window which contains this mirror view.
+  aura::Window* target_ = nullptr;
 
   // Retains ownership of the mirror layer tree. This is lazily initialized
   // the first time the view becomes visible.
@@ -57,10 +72,12 @@ class WindowMirrorView : public views::View {
   // InitLayerOwner().
   bool trilinear_filtering_on_init_;
 
+  std::unique_ptr<aura::WindowOcclusionTracker::ScopedForceVisible>
+      force_occlusion_tracker_visible_;
+
   DISALLOW_COPY_AND_ASSIGN(WindowMirrorView);
 };
 
-}  // namespace wm
 }  // namespace ash
 
 #endif  // ASH_WM_WINDOW_MIRROR_VIEW_H_

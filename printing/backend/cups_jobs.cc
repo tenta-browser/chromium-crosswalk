@@ -14,9 +14,10 @@
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/version.h"
 #include "printing/backend/cups_deleters.h"
+#include "printing/backend/cups_ipp_util.h"
 
 namespace printing {
 namespace {
@@ -110,12 +111,6 @@ constexpr std::array<const char* const, 3> kPrinterAttributes{
 constexpr std::array<const char* const, 4> kPrinterInfo{
     {kPrinterMakeAndModel, kIppVersionsSupported, kIppFeaturesSupported,
      kDocumentFormatSupported}};
-
-using ScopedIppPtr = std::unique_ptr<ipp_t, void (*)(ipp_t*)>;
-
-ScopedIppPtr WrapIpp(ipp_t* ipp) {
-  return ScopedIppPtr(ipp, &ippDelete);
-}
 
 using ScopedHttpPtr = std::unique_ptr<http_t, HttpDeleter>;
 
@@ -302,12 +297,6 @@ void ParseJobs(ipp_t* response,
   }
 }
 
-// Returns the uri for printer with |id| as served by CUPS.  Assumes that |id|
-// is a valid CUPS printer name and performs no error checking or escaping.
-std::string PrinterUriFromName(const std::string& id) {
-  return base::StringPrintf("ipp://localhost/printers/%s", id.c_str());
-}
-
 // Extracts PrinterInfo fields from |response| and populates |printer_info|.
 // Returns true if at least printer-make-and-model and ipp-versions-supported
 // were read.
@@ -330,8 +319,7 @@ bool ParsePrinterInfo(ipp_t* response, PrinterInfo* printer_info) {
     } else if (name == base::StringPiece(kIppFeaturesSupported)) {
       std::vector<std::string> features;
       ParseCollection(attr, &features);
-      printer_info->ipp_everywhere =
-          base::ContainsValue(features, kIppEverywhere);
+      printer_info->ipp_everywhere = base::Contains(features, kIppEverywhere);
     } else if (name == base::StringPiece(kDocumentFormatSupported)) {
       ParseCollection(attr, &printer_info->document_formats);
     }
@@ -359,6 +347,10 @@ PrinterInfo::PrinterInfo() = default;
 
 PrinterInfo::~PrinterInfo() = default;
 
+std::string PrinterUriFromName(const std::string& id) {
+  return base::StringPrintf("ipp://localhost/printers/%s", id.c_str());
+}
+
 void ParseJobsResponse(ipp_t* response,
                        const std::string& printer_id,
                        std::vector<CupsJob>* jobs) {
@@ -385,7 +377,6 @@ ScopedIppPtr GetPrinterAttributes(http_t* http,
                                   int num_attributes,
                                   const char* const* attributes,
                                   ipp_status_t* status) {
-  base::AssertBlockingAllowed();
   DCHECK(http);
 
   // CUPS expects a leading slash for resource names.  Add one if it's missing.
@@ -405,6 +396,8 @@ ScopedIppPtr GetPrinterAttributes(http_t* http,
 
   DCHECK_EQ(ippValidateAttributes(request.get()), 1);
 
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   auto response = WrapIpp(cupsDoRequest(http, request.release(), rp.c_str()));
   *status = ippGetStatusCode(response.get());
 
@@ -434,25 +427,29 @@ void ParsePrinterStatus(ipp_t* response, PrinterStatus* printer_status) {
   }
 }
 
-bool GetPrinterInfo(const std::string& address,
-                    const int port,
-                    const std::string& resource,
-                    bool encrypted,
-                    PrinterInfo* printer_info) {
-  base::AssertBlockingAllowed();
-
+PrinterQueryResult GetPrinterInfo(const std::string& address,
+                                  const int port,
+                                  const std::string& resource,
+                                  bool encrypted,
+                                  PrinterInfo* printer_info) {
   ScopedHttpPtr http = ScopedHttpPtr(httpConnect2(
       address.c_str(), port, nullptr, AF_INET,
-      encrypted ? HTTP_ENCRYPTION_REQUIRED : HTTP_ENCRYPTION_IF_REQUESTED, 0,
+      encrypted ? HTTP_ENCRYPTION_ALWAYS : HTTP_ENCRYPTION_IF_REQUESTED, 0,
       kHttpConnectTimeoutMs, nullptr));
   if (!http) {
     LOG(WARNING) << "Could not connect to host";
-    return false;
+    return PrinterQueryResult::UNREACHABLE;
   }
+
+  // TODO(crbug.com/821497): Use a library to canonicalize the URL.
+  size_t first_non_slash = resource.find_first_not_of('/');
+  const std::string path = (first_non_slash == std::string::npos)
+                               ? ""
+                               : resource.substr(first_non_slash);
 
   std::string printer_uri =
       base::StringPrintf("%s://%s:%d/%s", encrypted ? kIppsScheme : kIppScheme,
-                         address.c_str(), port, resource.c_str());
+                         address.c_str(), port, path.c_str());
 
   ipp_status_t status;
   ScopedIppPtr response =
@@ -460,17 +457,18 @@ bool GetPrinterInfo(const std::string& address,
                            kPrinterInfo.size(), kPrinterInfo.data(), &status);
   if (status != IPP_STATUS_OK || response.get() == nullptr) {
     LOG(WARNING) << "Get attributes failure: " << status;
-    return false;
+    return PrinterQueryResult::UNKNOWN_FAILURE;
   }
 
-  return ParsePrinterInfo(response.get(), printer_info);
+  if (ParsePrinterInfo(response.get(), printer_info)) {
+    return PrinterQueryResult::SUCCESS;
+  }
+  return PrinterQueryResult::UNKNOWN_FAILURE;
 }
 
 bool GetPrinterStatus(http_t* http,
                       const std::string& printer_id,
                       PrinterStatus* printer_status) {
-  base::AssertBlockingAllowed();
-
   ipp_status_t status;
   const std::string printer_uri = PrinterUriFromName(printer_id);
 
@@ -491,7 +489,6 @@ bool GetCupsJobs(http_t* http,
                  int limit,
                  JobCompletionState which,
                  std::vector<CupsJob>* jobs) {
-  base::AssertBlockingAllowed();
   DCHECK(http);
 
   auto request = WrapIpp(ippNewRequest(IPP_OP_GET_JOBS));
@@ -518,6 +515,8 @@ bool GetCupsJobs(http_t* http,
     return false;
   }
 
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   // cupsDoRequest will delete the request.
   auto response = WrapIpp(cupsDoRequest(http, request.release(), "/"));
 

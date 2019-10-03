@@ -5,9 +5,10 @@
 #include "chrome/browser/icon_loader.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/nix/mime_util_xdg.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "ui/views/linux_ui/linux_ui.h"
 
 // static
@@ -18,10 +19,10 @@ IconLoader::IconGroup IconLoader::GroupForFilepath(
 
 // static
 scoped_refptr<base::TaskRunner> IconLoader::GetReadIconTaskRunner() {
-  // ReadIcon() calls into views::LinuxUI and GTK2 code, so it must be on the UI
+  // ReadIcon() calls into views::LinuxUI and GTK code, so it must be on the UI
   // thread.
-  return content::BrowserThread::GetTaskRunnerForThread(
-      content::BrowserThread::UI);
+  return base::CreateSingleThreadTaskRunnerWithTraits(
+      {content::BrowserThread::UI});
 }
 
 void IconLoader::ReadIcon() {
@@ -40,16 +41,14 @@ void IconLoader::ReadIcon() {
       NOTREACHED();
   }
 
-  std::unique_ptr<gfx::Image> image;
+  gfx::Image image;
   views::LinuxUI* ui = views::LinuxUI::instance();
   if (ui) {
-    image = base::MakeUnique<gfx::Image>(
-        ui->GetIconForContentType(group_, size_pixels));
-    if (image->IsEmpty())
-      image = nullptr;
+    image = gfx::Image(ui->GetIconForContentType(group_, size_pixels));
   }
 
   target_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(callback_, base::Passed(&image), group_));
+      FROM_HERE,
+      base::BindOnce(std::move(callback_), std::move(image), group_));
   delete this;
 }

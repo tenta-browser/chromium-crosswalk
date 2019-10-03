@@ -62,6 +62,18 @@ bool CsrssDisconnectCleanup() {
   return true;
 }
 
+// Used by EnumSystemLocales for warming up.
+static BOOL CALLBACK EnumLocalesProcEx(LPWSTR lpLocaleString,
+                                       DWORD dwFlags,
+                                       LPARAM lParam) {
+  return TRUE;
+}
+
+// Additional warmup done just when CSRSS is being disconnected.
+bool CsrssDisconnectWarmup() {
+  return ::EnumSystemLocalesEx(EnumLocalesProcEx, LOCALE_WINDOWS, 0, 0);
+}
+
 // Checks if we have handle entries pending and runs the closer.
 // Updates is_csrss_connected based on which handle types are closed.
 bool CloseOpenHandles(bool* is_csrss_connected) {
@@ -69,7 +81,7 @@ bool CloseOpenHandles(bool* is_csrss_connected) {
     HandleCloserAgent handle_closer;
     handle_closer.InitializeHandlesToClose(is_csrss_connected);
     if (!*is_csrss_connected) {
-      if (!CsrssDisconnectCleanup()) {
+      if (!CsrssDisconnectWarmup() || !CsrssDisconnectCleanup()) {
         return false;
       }
     }
@@ -78,11 +90,6 @@ bool CloseOpenHandles(bool* is_csrss_connected) {
   }
   return true;
 }
-
-// GetUserDefaultLocaleName is not available on WIN XP.  So we'll
-// load it on-the-fly.
-const wchar_t kKernel32DllName[] = L"kernel32.dll";
-typedef decltype(GetUserDefaultLocaleName)* GetUserDefaultLocaleNameFunction;
 
 // Warm up language subsystems before the sandbox is turned on.
 // Tested on Win8.1 x64:
@@ -96,23 +103,8 @@ bool WarmupWindowsLocales() {
   // warmup all of these functions, but let's not assume that.
   ::GetUserDefaultLangID();
   ::GetUserDefaultLCID();
-  static GetUserDefaultLocaleNameFunction GetUserDefaultLocaleName_func =
-      nullptr;
-  if (!GetUserDefaultLocaleName_func) {
-    HMODULE kernel32_dll = ::GetModuleHandle(kKernel32DllName);
-    if (!kernel32_dll) {
-      return false;
-    }
-    GetUserDefaultLocaleName_func =
-        reinterpret_cast<GetUserDefaultLocaleNameFunction>(
-            GetProcAddress(kernel32_dll, "GetUserDefaultLocaleName"));
-    if (!GetUserDefaultLocaleName_func) {
-      return false;
-    }
-  }
   wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {0};
-  return (0 != GetUserDefaultLocaleName_func(
-                   localeName, LOCALE_NAME_MAX_LENGTH * sizeof(wchar_t)));
+  return (0 != ::GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH));
 }
 
 // Used as storage for g_target_services, because other allocation facilities
@@ -223,37 +215,29 @@ bool TargetServicesBase::TestIPCPing(int version) {
   return true;
 }
 
-ProcessState::ProcessState() : process_state_(0), csrss_connected_(true) {}
-
-bool ProcessState::IsKernel32Loaded() const {
-  return process_state_ != 0;
-}
+ProcessState::ProcessState()
+    : process_state_(ProcessStateInternal::NONE), csrss_connected_(true) {}
 
 bool ProcessState::InitCalled() const {
-  return process_state_ > 1;
+  return process_state_ >= ProcessStateInternal::INIT_CALLED;
 }
 
 bool ProcessState::RevertedToSelf() const {
-  return process_state_ > 2;
+  return process_state_ >= ProcessStateInternal::REVERTED_TO_SELF;
 }
 
 bool ProcessState::IsCsrssConnected() const {
   return csrss_connected_;
 }
 
-void ProcessState::SetKernel32Loaded() {
-  if (!process_state_)
-    process_state_ = 1;
-}
-
 void ProcessState::SetInitCalled() {
-  if (process_state_ < 2)
-    process_state_ = 2;
+  if (process_state_ < ProcessStateInternal::INIT_CALLED)
+    process_state_ = ProcessStateInternal::INIT_CALLED;
 }
 
 void ProcessState::SetRevertedToSelf() {
-  if (process_state_ < 3)
-    process_state_ = 3;
+  if (process_state_ < ProcessStateInternal::REVERTED_TO_SELF)
+    process_state_ = ProcessStateInternal::REVERTED_TO_SELF;
 }
 
 void ProcessState::SetCsrssConnected(bool csrss_connected) {

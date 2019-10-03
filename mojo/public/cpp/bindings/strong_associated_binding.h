@@ -48,9 +48,10 @@ class StrongAssociatedBinding {
   // to the new StrongAssociatedBinding instance.
   static StrongAssociatedBindingPtr<Interface> Create(
       std::unique_ptr<Interface> impl,
-      AssociatedInterfaceRequest<Interface> request) {
-    StrongAssociatedBinding* binding =
-        new StrongAssociatedBinding(std::move(impl), std::move(request));
+      AssociatedInterfaceRequest<Interface> request,
+      scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
+    StrongAssociatedBinding* binding = new StrongAssociatedBinding(
+        std::move(impl), std::move(request), std::move(task_runner));
     return binding->weak_factory_.GetWeakPtr();
   }
 
@@ -82,11 +83,20 @@ class StrongAssociatedBinding {
   // stimulus.
   void FlushForTesting() { binding_.FlushForTesting(); }
 
+  // Allows test code to swap the interface implementation.
+  std::unique_ptr<Interface> SwapImplForTesting(
+      std::unique_ptr<Interface> new_impl) {
+    binding_.SwapImplForTesting(new_impl.get());
+    impl_.swap(new_impl);
+    return new_impl;
+  }
+
  private:
   StrongAssociatedBinding(std::unique_ptr<Interface> impl,
-                          AssociatedInterfaceRequest<Interface> request)
+                          AssociatedInterfaceRequest<Interface> request,
+                          scoped_refptr<base::SequencedTaskRunner> task_runner)
       : impl_(std::move(impl)),
-        binding_(impl_.get(), std::move(request)),
+        binding_(impl_.get(), std::move(request), std::move(task_runner)),
         weak_factory_(this) {
     binding_.set_connection_error_with_reason_handler(base::Bind(
         &StrongAssociatedBinding::OnConnectionError, base::Unretained(this)));
@@ -117,9 +127,10 @@ class StrongAssociatedBinding {
 template <typename Interface, typename Impl>
 StrongAssociatedBindingPtr<Interface> MakeStrongAssociatedBinding(
     std::unique_ptr<Impl> impl,
-    AssociatedInterfaceRequest<Interface> request) {
-  return StrongAssociatedBinding<Interface>::Create(std::move(impl),
-                                                    std::move(request));
+    AssociatedInterfaceRequest<Interface> request,
+    scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
+  return StrongAssociatedBinding<Interface>::Create(
+      std::move(impl), std::move(request), std::move(task_runner));
 }
 
 }  // namespace mojo

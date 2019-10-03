@@ -15,10 +15,6 @@
 
 namespace extension_urls {
 
-// This returns the compile-time constant webstore update url specific to
-// Chrome. Usually you should prefer using GetWebstoreUpdateUrl.
-const char* GetDefaultWebstoreUpdateUrl();
-
 // Field to use with webstore URL for tracking launch source.
 extern const char kWebstoreSourceField[];
 
@@ -31,20 +27,11 @@ extern const char kLaunchSourceAppListInfoDialog[];
 
 namespace extension_misc {
 
-// The extension id of the bookmark manager.
-extern const char kBookmarkManagerId[];
-
-// The extension id of the Camera application.
-extern const char kCameraAppId[];
-
 // The extension id of the Calculator application.
 extern const char kCalculatorAppId[];
 
 // The extension id of the Calendar application.
 extern const char kCalendarAppId[];
-
-// The extension id of the Chrome component application.
-extern const char kChromeAppId[];
 
 // The extension id of the Chrome Remote Desktop application.
 extern const char kChromeRemoteDesktopAppId[];
@@ -55,29 +42,20 @@ extern const char kCloudPrintAppId[];
 // The extension id of the Data Saver extension.
 extern const char kDataSaverExtensionId[];
 
-// The extension id of the Drive extension.
-extern const char kDriveExtensionId[];
+// The extension id of the Google Docs Offline extension.
+extern const char kDocsOfflineExtensionId[];
 
 // The extension id of the Drive hosted app.
 extern const char kDriveHostedAppId[];
 
-// The extension id of the Easy Unlock component application.
-extern const char kEasyUnlockAppId[];
-
 // The extension id of the Enterprise Web Store component application.
 extern const char kEnterpriseWebStoreAppId[];
-
-// The extension id of the Files Manager application.
-extern const char kFilesManagerAppId[];
 
 // The extension id of GMail application.
 extern const char kGmailAppId[];
 
 // The extension id of the Google Doc application.
 extern const char kGoogleDocAppId[];
-
-// The extension id of the Google Keep application.
-extern const char kGoogleKeepAppId[];
 
 // The extension id of the Google Maps application.
 extern const char kGoogleMapsAppId[];
@@ -118,14 +96,17 @@ extern const char kCroshBuiltinAppId[];
 // The extension id of the Text Editor application.
 extern const char kTextEditorAppId[];
 
-// The extension id of the Youtube application.
-extern const char kYoutubeAppId[];
-
 // The extension id of the in-app payments support application.
 extern const char kInAppPaymentsSupportAppId[];
 
 // The extension id of the stable media router extension.
 extern const char kMediaRouterStableExtensionId[];
+
+// The extension id of the Chrome Reporting extension.
+extern const char kCloudReportingExtensionId[];
+
+// A list of all the first party extension IDs, last entry is null.
+extern const char* const kBuiltInFirstPartyExtensionIds[];
 
 // The buckets used for app launches.
 enum AppLaunchBucket {
@@ -213,10 +194,14 @@ enum AppLaunchBucket {
   APP_LAUNCH_BUCKET_INVALID
 };
 
-// The extension id of the ChromeVox extension.
-extern const char kChromeVoxExtensionId[];
-
 #if defined(OS_CHROMEOS)
+// The extension id of the Assessment Assistant extension.
+extern const char kAssessmentAssistantExtensionId[];
+// The extension id of the Automatic Clicks extension.
+extern const char kAutoclickExtensionId[];
+// Path to preinstalled Automatic Clicks extension (relative to
+// |chrome::DIR_RESOURCES|).
+extern const char kAutoclickExtensionPath[];
 // Path to preinstalled ChromeVox screen reader extension (relative to
 // |chrome::DIR_RESOURCES|).
 extern const char kChromeVoxExtensionPath[];
@@ -238,20 +223,28 @@ extern const char kConnectivityDiagnosticsPath[];
 extern const char kConnectivityDiagnosticsLauncherPath[];
 // The extension id of the first run dialog application.
 extern const char kFirstRunDialogId[];
-// Path to preinstalled speech synthesis extension.
-extern const char kSpeechSynthesisExtensionPath[];
-// The extension id of the speech synthesis extension.
-extern const char kSpeechSynthesisExtensionId[];
+// Path to preinstalled Google speech synthesis extension.
+extern const char kGoogleSpeechSynthesisExtensionPath[];
+// The extension id of the Google speech synthesis extension.
+extern const char kGoogleSpeechSynthesisExtensionId[];
+// Path to preinstalled eSpeak-NG speech synthesis extension.
+extern const char kEspeakSpeechSynthesisExtensionPath[];
+// The extension id of the eSpeak-NG speech synthesis extension.
+extern const char kEspeakSpeechSynthesisExtensionId[];
 // The extension id of the wallpaper manager application.
 extern const char kWallpaperManagerId[];
-// The app id of the webstore widget component app.
-extern const char kWebstoreWidgetAppId[];
-// The extension id of the new ZIP unpacker extension.
-extern const char kZIPUnpackerExtensionId[];
 // The extension id of the zip archiver extension.
 extern const char kZipArchiverExtensionId[];
 // Path to preinstalled zip archiver extension.
 extern const char kZipArchiverExtensionPath[];
+// The app ID of Chrome camera app.
+extern const char kChromeCameraAppId[];
+// The dev app ID of Chrome camera app.
+extern const char kChromeCameraAppDevId[];
+// Path to preinstalled Chrome camera app.
+extern const char kChromeCameraAppPath[];
+// The app ID of the Kiosk Next Home app.
+extern const char kKioskNextHomeAppId[];
 #endif
 
 // What causes an extension to be installed? Used in histograms, so don't

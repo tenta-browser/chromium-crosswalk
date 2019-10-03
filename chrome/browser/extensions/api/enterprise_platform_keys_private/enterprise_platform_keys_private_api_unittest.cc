@@ -14,26 +14,28 @@
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/attestation/attestation_constants.h"
 #include "chromeos/attestation/mock_attestation_flow.h"
 #include "chromeos/cryptohome/async_method_caller.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
-#include "chromeos/dbus/fake_cryptohome_client.h"
+#include "chromeos/dbus/constants/attestation_constants.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
+#include "chromeos/tpm/stub_install_attributes.h"
+#include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/account_id/account_id.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "extensions/common/extension_builder.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -56,6 +58,7 @@ const int kDBusError = 1;
 const int kUserRejected = 2;
 const int kGetCertificateFailed = 3;
 const int kResetRequired = 4;
+const int kPrepareKeyAttestationUnsupported = 5;
 
 const char kUserEmail[] = "test@google.com";
 
@@ -111,10 +114,12 @@ void GetCertificateCallbackTrue(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, true, "certificate"));
+      FROM_HERE,
+      base::BindRepeating(callback, chromeos::attestation::ATTESTATION_SUCCESS,
+                          "certificate"));
 }
 
-void GetCertificateCallbackFalse(
+void GetCertificateCallbackUnspecifiedFailure(
     chromeos::attestation::AttestationCertificateProfile certificate_profile,
     const AccountId& account_id,
     const std::string& request_origin,
@@ -122,7 +127,24 @@ void GetCertificateCallbackFalse(
     const chromeos::attestation::AttestationFlow::CertificateCallback&
         callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, false, ""));
+      FROM_HERE,
+      base::BindRepeating(
+          callback, chromeos::attestation::ATTESTATION_UNSPECIFIED_FAILURE,
+          ""));
+}
+
+void GetCertificateCallbackBadRequestFailure(
+    chromeos::attestation::AttestationCertificateProfile certificate_profile,
+    const AccountId& account_id,
+    const std::string& request_origin,
+    bool force_new_key,
+    const chromeos::attestation::AttestationFlow::CertificateCallback&
+        callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindRepeating(
+          callback,
+          chromeos::attestation::ATTESTATION_SERVER_BAD_REQUEST_FAILURE, ""));
 }
 
 class EPKPChallengeKeyTestBase : public BrowserWithTestWindowTest {
@@ -149,7 +171,7 @@ class EPKPChallengeKeyTestBase : public BrowserWithTestWindowTest {
 
     stub_install_attributes_.SetCloudManaged("google.com", "device_id");
 
-    settings_helper_.ReplaceProvider(chromeos::kDeviceAttestationEnabled);
+    settings_helper_.ReplaceDeviceSettingsProviderWithStub();
     settings_helper_.SetBoolean(chromeos::kDeviceAttestationEnabled, true);
   }
 
@@ -180,17 +202,18 @@ class EPKPChallengeKeyTestBase : public BrowserWithTestWindowTest {
   }
 
   // Derived classes can override this method to set the required authenticated
-  // user in the SigninManager class.
+  // user in the IdentityManager class.
   virtual void SetAuthenticatedUser() {
-    SigninManagerFactory::GetForProfile(browser()->profile())->
-        SetAuthenticatedAccountInfo("12345", kUserEmail);
+    auto* identity_manager =
+        IdentityManagerFactory::GetForProfile(browser()->profile());
+    signin::MakePrimaryAccountAvailable(identity_manager, kUserEmail);
   }
 
   chromeos::FakeCryptohomeClient cryptohome_client_;
   NiceMock<cryptohome::MockAsyncMethodCaller> mock_async_method_caller_;
   NiceMock<chromeos::attestation::MockAttestationFlow> mock_attestation_flow_;
   chromeos::ScopedCrosSettingsTestHelper settings_helper_;
-  scoped_refptr<Extension> extension_;
+  scoped_refptr<const Extension> extension_;
   chromeos::StubInstallAttributes stub_install_attributes_;
   ProfileType profile_type_;
   // fake_user_manager_ is owned by user_manager_enabler_.
@@ -199,7 +222,7 @@ class EPKPChallengeKeyTestBase : public BrowserWithTestWindowTest {
   PrefService* prefs_ = nullptr;
 
  private:
-  scoped_refptr<Extension> CreateExtension() {
+  scoped_refptr<const Extension> CreateExtension() {
     switch (profile_type_) {
       case ProfileType::USER_PROFILE:
         return ExtensionBuilder("Test").Build();
@@ -279,7 +302,7 @@ TEST_F(EPKPChallengeMachineKeyTest, DoesKeyExistDbusFailed) {
 
 TEST_F(EPKPChallengeMachineKeyTest, GetCertificateFailed) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
-      .WillRepeatedly(Invoke(GetCertificateCallbackFalse));
+      .WillRepeatedly(Invoke(GetCertificateCallbackUnspecifiedFailure));
 
   EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
@@ -301,13 +324,23 @@ TEST_F(EPKPChallengeMachineKeyTest, KeyExists) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeMachineKeyTest, AttestationNotPrepared) {
   cryptohome_client_.set_tpm_attestation_is_prepared(false);
 
   EXPECT_EQ(GetCertificateError(kResetRequired),
+            utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
+}
+
+// Test that we get proper error message in case we don't have TPM.
+TEST_F(EPKPChallengeMachineKeyTest, AttestationUnsupported) {
+  cryptohome_client_.set_tpm_attestation_is_prepared(false);
+  cryptohome_client_.set_tpm_is_enabled(false);
+
+  EXPECT_EQ(GetCertificateError(kPrepareKeyAttestationUnsupported),
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
 }
 
@@ -344,14 +377,14 @@ TEST_P(EPKPChallengeMachineKeyAllProfilesTest, Success) {
       .Times(1);
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
-      func_.get(), kArgs, browser(), utils::NONE));
+      func_.get(), kArgs, browser(), extensions::api_test_utils::NONE));
 
   std::string response;
   value->GetAsString(&response);
   EXPECT_EQ("cmVzcG9uc2U=" /* Base64 encoding of 'response' */, response);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AllProfiles,
     EPKPChallengeMachineKeyAllProfilesTest,
     ::testing::Values(EPKPChallengeKeyTestBase::ProfileType::USER_PROFILE,
@@ -430,9 +463,17 @@ TEST_F(EPKPChallengeUserKeyTest, DoesKeyExistDbusFailed) {
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
 }
 
-TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailed) {
+TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailedWithUnspecifiedFailure) {
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
-      .WillRepeatedly(Invoke(GetCertificateCallbackFalse));
+      .WillRepeatedly(Invoke(GetCertificateCallbackUnspecifiedFailure));
+
+  EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
+            utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
+}
+
+TEST_F(EPKPChallengeUserKeyTest, GetCertificateFailedWithBadRequestFailure) {
+  EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
+      .WillRepeatedly(Invoke(GetCertificateCallbackBadRequestFailure));
 
   EXPECT_EQ(GetCertificateError(kGetCertificateFailed),
             utils::RunFunctionAndReturnError(func_.get(), kArgs, browser()));
@@ -457,21 +498,23 @@ TEST_F(EPKPChallengeUserKeyTest, KeyRegistrationFailed) {
 
 TEST_F(EPKPChallengeUserKeyTest, KeyExists) {
   cryptohome_client_.SetTpmAttestationUserCertificate(
-      cryptohome::Identification(AccountId::FromUserEmail(kUserEmail)),
+      cryptohome::CreateAccountIdentifierFromAccountId(
+          AccountId::FromUserEmail(kUserEmail)),
       "attest-ent-user", std::string());
   // GetCertificate must not be called if the key exists.
   EXPECT_CALL(mock_attestation_flow_, GetCertificate(_, _, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), kArgs, browser(),
+                                 extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeUserKeyTest, KeyNotRegistered) {
   EXPECT_CALL(mock_async_method_caller_, TpmAttestationRegisterKey(_, _, _, _))
       .Times(0);
 
-  EXPECT_TRUE(utils::RunFunction(
-      func_.get(), "[\"Y2hhbGxlbmdl\", false]", browser(), utils::NONE));
+  EXPECT_TRUE(utils::RunFunction(func_.get(), "[\"Y2hhbGxlbmdl\", false]",
+                                 browser(), extensions::api_test_utils::NONE));
 }
 
 TEST_F(EPKPChallengeUserKeyTest, PersonalDevice) {
@@ -506,7 +549,7 @@ TEST_F(EPKPChallengeUserKeyTest, Success) {
       .Times(1);
 
   std::unique_ptr<base::Value> value(utils::RunFunctionAndReturnSingleResult(
-      func_.get(), kArgs, browser(), utils::NONE));
+      func_.get(), kArgs, browser(), extensions::api_test_utils::NONE));
 
   std::string response;
   value->GetAsString(&response);
@@ -544,9 +587,10 @@ class EPKPChallengeMachineKeyUnmanagedUserTest
     : public EPKPChallengeMachineKeyTest {
  protected:
   void SetAuthenticatedUser() override {
-    SigninManagerFactory::GetForProfile(browser()->profile())
-        ->SetAuthenticatedAccountInfo(account_id_.GetGaiaId(),
-                                      account_id_.GetUserEmail());
+    auto* identity_manager =
+        IdentityManagerFactory::GetForProfile(browser()->profile());
+    signin::MakePrimaryAccountAvailable(identity_manager,
+                                        account_id_.GetUserEmail());
   }
 
   TestingProfile* CreateProfile() override {
@@ -554,8 +598,11 @@ class EPKPChallengeMachineKeyUnmanagedUserTest
     return profile_manager()->CreateTestingProfile(account_id_.GetUserEmail());
   }
 
-  const AccountId account_id_ =
-      AccountId::FromUserEmailGaiaId("test@chromium.com", "12345");
+ private:
+  const std::string kOtherEmail = "test@chromium.com";
+  const AccountId account_id_ = AccountId::FromUserEmailGaiaId(
+      kOtherEmail,
+      signin::GetTestGaiaIdForEmail(kOtherEmail));
 };
 
 TEST_F(EPKPChallengeMachineKeyUnmanagedUserTest, UserNotManaged) {
@@ -566,9 +613,10 @@ TEST_F(EPKPChallengeMachineKeyUnmanagedUserTest, UserNotManaged) {
 class EPKPChallengeUserKeyUnmanagedUserTest : public EPKPChallengeUserKeyTest {
  protected:
   void SetAuthenticatedUser() override {
-    SigninManagerFactory::GetForProfile(browser()->profile())
-        ->SetAuthenticatedAccountInfo(account_id_.GetGaiaId(),
-                                      account_id_.GetUserEmail());
+    auto* identity_manager =
+        IdentityManagerFactory::GetForProfile(browser()->profile());
+    signin::MakePrimaryAccountAvailable(identity_manager,
+                                        account_id_.GetUserEmail());
   }
 
   TestingProfile* CreateProfile() override {
@@ -576,8 +624,11 @@ class EPKPChallengeUserKeyUnmanagedUserTest : public EPKPChallengeUserKeyTest {
     return profile_manager()->CreateTestingProfile(account_id_.GetUserEmail());
   }
 
-  const AccountId account_id_ =
-      AccountId::FromUserEmailGaiaId("test@chromium.com", "12345");
+ private:
+  const std::string kOtherEmail = "test@chromium.com";
+  const AccountId account_id_ = AccountId::FromUserEmailGaiaId(
+      kOtherEmail,
+      signin::GetTestGaiaIdForEmail(kOtherEmail));
 };
 
 TEST_F(EPKPChallengeUserKeyUnmanagedUserTest, UserNotManaged) {

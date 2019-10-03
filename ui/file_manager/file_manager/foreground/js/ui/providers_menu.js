@@ -4,104 +4,110 @@
 
 /**
  * Fills out the menu for mounting or installing new providers.
- *
- * @param {!ProvidersModel} model
- * @param {!cr.ui.Menu} menu
- * @constructor
- * @struct
  */
-function ProvidersMenu(model, menu) {
+class ProvidersMenu {
   /**
-   * @private {!ProvidersModel}}
-   * @const
+   * @param {!ProvidersModel} model
+   * @param {!cr.ui.Menu} menu
    */
-  this.model_ = model;
+  constructor(model, menu) {
+    /**
+     * @private {!ProvidersModel}}
+     * @const
+     */
+    this.model_ = model;
 
-  /**
-   * @private {!cr.ui.Menu}
-   * @const
-   */
-  this.menu_ = menu;
+    /**
+     * @private {!cr.ui.Menu}
+     * @const
+     */
+    this.menu_ = menu;
 
-  this.menu_.addSeparator();
+    this.menu_.addSeparator();
 
-  /**
-   * @private {!Element}
-   * @const
-   */
-  this.separator_ = assert(this.menu_.firstElementChild);
+    /**
+     * @private {!Element}
+     * @const
+     */
+    this.separator_ = assert(this.menu_.firstElementChild);
 
-  var installItem = this.addMenuItem_();
-  installItem.command = '#install-new-extension';
+    const installItem = this.addMenuItem_();
+    installItem.command = '#install-new-extension';
 
-  this.menu_.addEventListener('update', this.onUpdate_.bind(this));
-}
-
-/**
- * @private
- */
-ProvidersMenu.prototype.clearExtensions_ = function() {
-  var childNode = this.menu_.firstElementChild;
-  while (childNode !== this.separator_) {
-    var node = childNode;
-    childNode = childNode.nextElementSibling;
-    this.menu_.removeChild(node);
+    this.menu_.addEventListener('update', this.onUpdate_.bind(this));
   }
-};
 
-/**
- * @return {!cr.ui.FilesMenuItem}
- * @private
- */
-ProvidersMenu.prototype.addMenuItem_ = function() {
-  var menuItem = this.menu_.addMenuItem({});
-  cr.ui.decorate(/** @type {!Element} */ (menuItem), cr.ui.FilesMenuItem);
-  return /** @type {!cr.ui.FilesMenuItem} */ (menuItem);
-};
+  /**
+   * @private
+   */
+  clearProviders_() {
+    let childNode = this.menu_.firstElementChild;
+    while (childNode !== this.separator_) {
+      const node = childNode;
+      childNode = childNode.nextElementSibling;
+      this.menu_.removeChild(node);
+    }
+  }
 
-/**
- * @param {string} extensionId
- * @param {string} extensionName
- * @private
- */
-ProvidersMenu.prototype.addExtension_ = function(extensionId, extensionName) {
-  var item = this.addMenuItem_();
-  item.label = extensionName;
+  /**
+   * @return {!cr.ui.FilesMenuItem}
+   * @private
+   */
+  addMenuItem_() {
+    const menuItem = this.menu_.addMenuItem({});
+    cr.ui.decorate(/** @type {!Element} */ (menuItem), cr.ui.FilesMenuItem);
+    return /** @type {!cr.ui.FilesMenuItem} */ (menuItem);
+  }
 
-  var iconImage = '-webkit-image-set(' +
-      'url(chrome://extension-icon/' + extensionId + '/16/1) 1x, ' +
-      'url(chrome://extension-icon/' + extensionId + '/32/1) 2x);';
-  item.iconStartImage = iconImage;
+  /**
+   * @param {string} providerId ID of the provider.
+   * @param {!chrome.fileManagerPrivate.IconSet} iconSet Set of icons for the
+   * provider.
+   * @param {string} name Already localized name of the provider.
+   * @private
+   */
+  addProvider_(providerId, iconSet, name) {
+    const item = this.addMenuItem_();
+    item.label = name;
 
-  item.addEventListener(
-      'activate', this.onItemActivate_.bind(this, extensionId));
+    const iconImage = util.iconSetToCSSBackgroundImageValue(iconSet);
+    item.iconStartImage = iconImage;
 
-  // Move the element before the separator.
-  this.menu_.insertBefore(item, this.separator_);
-};
+    item.addEventListener(
+        'activate', this.onItemActivate_.bind(this, providerId));
 
-/**
- * @param {!Event} event
- * @private
- */
-ProvidersMenu.prototype.onUpdate_ = function(event) {
-  this.model_.getMountableProviders().then(function(extensions) {
-    this.clearExtensions_();
-    extensions.forEach(function(extension) {
-      this.addExtension_(extension.extensionId, extension.extensionName);
-    }.bind(this));
+    // Move the element before the separator.
+    this.menu_.insertBefore(item, this.separator_);
+  }
 
-    // Reposition the menu, so all items are always visible.
-    cr.ui.positionPopupAroundElement(event.menuButton, this.menu_,
-        event.menuButton.anchorType, event.menuButton.invertLeftRight);
-  }.bind(this));
-};
+  /**
+   * @param {!Event} event
+   * @private
+   */
+  onUpdate_(event) {
+    this.model_.getMountableProviders().then(providers => {
+      this.clearProviders_();
+      providers.forEach(provider => {
+        this.addProvider_(provider.providerId, provider.iconSet, provider.name);
+      });
+    });
+  }
 
-/**
- * @param {string} extensionId
- * @param {!Event} event
- * @private
- */
-ProvidersMenu.prototype.onItemActivate_ = function(extensionId, event) {
-  this.model_.requestMount(extensionId);
-};
+  /**
+   * @param {string} providerId
+   * @param {!Event} event
+   * @private
+   */
+  onItemActivate_(providerId, event) {
+    this.model_.requestMount(providerId);
+  }
+
+  /**
+   *  Sends an 'update' event to the sub menu to trigger
+   *  a reload of its content.
+   */
+  updateSubMenu() {
+    const updateEvent = new Event('update');
+    this.menu_.dispatchEvent(updateEvent);
+  }
+}

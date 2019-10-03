@@ -11,7 +11,6 @@ import android.view.ViewGroup;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
-import org.chromium.chrome.browser.compositor.animation.CompositorAnimator.AnimatorUpdateListener;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelAnimation;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelInflater;
@@ -66,7 +65,7 @@ public class ContextualSearchBarBannerControl extends OverlayPanelInflater {
      * The padded height of the Bar Banner in pixels. Set to zero initially, calculated on the first
      * call.
      */
-    private float mPaddedHeightPx = 0.f;
+    private float mPaddedHeightPx;
 
     /**
      * The precomputed minimum width of the Ripple resource in pixels.
@@ -251,26 +250,47 @@ public class ContextualSearchBarBannerControl extends OverlayPanelInflater {
      * Animates the Bar Banner appearance.
      */
     public void animateAppearance() {
-        AnimatorUpdateListener listener = new AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(CompositorAnimator animator) {
-                float percentage = animator.getAnimatedFraction();
-                mRippleWidthPx = Math.round(MathUtils.interpolate(
-                        mRippleMinimumWidthPx, mRippleMaximumWidthPx, percentage));
-
-                mRippleOpacity = MathUtils.interpolate(0.f, 1.f, percentage);
-
-                float textOpacityDelay = 0.5f;
-                float textOpacityPercentage =
-                        Math.max(0.f, percentage - textOpacityDelay) / (1.f - textOpacityDelay);
-                mTextOpacity = MathUtils.interpolate(0.f, 1.f, textOpacityPercentage);
-            }
-        };
-
-        CompositorAnimator appearance =
+        CompositorAnimator rippleWidth = CompositorAnimator.ofFloat(
+                mOverlayPanel.getAnimationHandler(), mRippleMinimumWidthPx, mRippleMaximumWidthPx,
+                OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS,
+                animator -> { mRippleWidthPx = animator.getAnimatedValue(); });
+        CompositorAnimator rippleOpacity =
                 CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(), 0.f, 1.f,
-                        OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, listener);
-        appearance.start();
+                        OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS,
+                        animator -> { mRippleOpacity = animator.getAnimatedValue(); });
+        CompositorAnimator textOpacity =
+                CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(), 0.f, 1.f,
+                        OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS / 2,
+                        animator -> { mTextOpacity = animator.getAnimatedValue(); });
+        textOpacity.setStartDelay(OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS / 2);
+
+        rippleWidth.start();
+        rippleOpacity.start();
+        textOpacity.start();
+    }
+
+    /**
+     * Animates the Bar Banner disappearance.
+     */
+    private void animateDisappearance() {
+        mIsHiding = true;
+        CompositorAnimator disappearance =
+                CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(), getPaddedHeightPx(),
+                        0.f, OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
+        disappearance.addUpdateListener(animator -> {
+            if (isVisible()) {
+                mHeightPx = animator.getAnimatedValue();
+            }
+        });
+        disappearance.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mHeightPx = 0.f;
+                mIsHiding = false;
+                hide();
+            }
+        });
+        disappearance.start();
     }
 
     /**

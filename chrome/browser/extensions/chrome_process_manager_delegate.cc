@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/one_shot_event.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_service.h"
@@ -21,20 +23,18 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/one_shot_event.h"
 #include "extensions/common/permissions/permissions_data.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chromeos/chromeos_switches.h"
+#include "chrome/browser/extensions/component_extensions_whitelist/whitelist.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 namespace extensions {
 
 ChromeProcessManagerDelegate::ChromeProcessManagerDelegate() {
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_BROWSER_WINDOW_READY,
-                 content::NotificationService::AllSources());
+  BrowserList::AddObserver(this);
   registrar_.Add(this,
                  chrome::NOTIFICATION_PROFILE_CREATED,
                  content::NotificationService::AllSources());
@@ -44,6 +44,7 @@ ChromeProcessManagerDelegate::ChromeProcessManagerDelegate() {
 }
 
 ChromeProcessManagerDelegate::~ChromeProcessManagerDelegate() {
+  BrowserList::RemoveObserver(this);
 }
 
 bool ChromeProcessManagerDelegate::AreBackgroundPagesAllowedForContext(
@@ -73,7 +74,7 @@ bool ChromeProcessManagerDelegate::IsExtensionBackgroundPageAllowed(
   if (is_signin_profile) {
     // Check for flag.
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kDisableLoginScreenApps)) {
+            ::switches::kDisableLoginScreenApps)) {
       return false;
     }
 
@@ -83,16 +84,15 @@ bool ChromeProcessManagerDelegate::IsExtensionBackgroundPageAllowed(
             ->GetForceInstallList();
 
     // For the ChromeOS login profile, only allow apps installed by device
-    // policy.
-    return login_screen_apps_list->HasKey(extension.id());
+    // policy or that are explicitly whitelisted.
+    return login_screen_apps_list->HasKey(extension.id()) ||
+           IsComponentExtensionWhitelistedForSignInProfile(extension.id());
   }
 
   if (chromeos::ProfileHelper::IsLockScreenAppProfile(profile) &&
       !profile->IsOffTheRecord()) {
-    return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-               chromeos::switches::kDisableLockScreenApps) &&
-           extension.permissions_data()->HasAPIPermission(
-               APIPermission::kLockScreen);
+    return extension.permissions_data()->HasAPIPermission(
+        APIPermission::kLockScreen);
   }
 #endif
 
@@ -112,10 +112,10 @@ bool ChromeProcessManagerDelegate::DeferCreatingStartupBackgroundHosts(
 
   // There are no browser windows open and the browser process was
   // started to show the app launcher. Background hosts will be loaded later
-  // via NOTIFICATION_BROWSER_WINDOW_READY. http://crbug.com/178260
+  // via OnBrowserAdded(). http://crbug.com/178260
   return chrome::GetBrowserCount(profile) == 0 &&
          base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kShowAppList);
+             ::switches::kShowAppList);
 }
 
 void ChromeProcessManagerDelegate::Observe(
@@ -123,11 +123,6 @@ void ChromeProcessManagerDelegate::Observe(
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
   switch (type) {
-    case chrome::NOTIFICATION_BROWSER_WINDOW_READY: {
-      Browser* browser = content::Source<Browser>(source).ptr();
-      OnBrowserWindowReady(browser);
-      break;
-    }
     case chrome::NOTIFICATION_PROFILE_CREATED: {
       Profile* profile = content::Source<Profile>(source).ptr();
       OnProfileCreated(profile);
@@ -143,7 +138,7 @@ void ChromeProcessManagerDelegate::Observe(
   }
 }
 
-void ChromeProcessManagerDelegate::OnBrowserWindowReady(Browser* browser) {
+void ChromeProcessManagerDelegate::OnBrowserAdded(Browser* browser) {
   Profile* profile = browser->profile();
   DCHECK(profile);
 

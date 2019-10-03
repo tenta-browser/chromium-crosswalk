@@ -7,12 +7,14 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "device/vr/public/mojom/isolated_xr_service.mojom.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_export.h"
-#include "device/vr/vr_service.mojom.h"
 
 namespace device {
 
-// Must match VRViewerType in enums.xml.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class VrViewerType {
   GVR_UNKNOWN = 0,
   GVR_CARDBOARD = 1,
@@ -22,33 +24,20 @@ enum class VrViewerType {
   OPENVR_UNKNOWN = 20,
   OPENVR_VIVE = 21,
   OPENVR_RIFT_CV1 = 22,
-  VIEWER_TYPE_COUNT,
+  OCULUS_UNKNOWN = 40,                 // Going through Oculus APIs
+  WINDOWS_MIXED_REALITY_UNKNOWN = 60,  // Going through WMR APIs
+  OPENXR_UNKNOWN = 70,                 // Going through OpenXR APIs
 };
 
-const unsigned int VR_DEVICE_LAST_ID = 0xFFFFFFFF;
-
-// Represents one of the platform's VR devices. Owned by the respective
-// VRDeviceProvider.
-// TODO(mthiesse, crbug.com/769373): Remove DEVICE_VR_EXPORT.
-class DEVICE_VR_EXPORT VRDevice {
- public:
-  virtual ~VRDevice() {}
-
-  virtual unsigned int GetId() const = 0;
-  virtual void PauseTracking() = 0;
-  virtual void ResumeTracking() = 0;
-  virtual void Blur() = 0;
-  virtual void Focus() = 0;
-  virtual mojom::VRDisplayInfoPtr GetVRDisplayInfo() = 0;
-  virtual void SetMagicWindowEnabled(bool enabled) = 0;
-
-  // TODO(mthiesse): The browser should handle browser-side exiting of
-  // presentation before device/ is even aware presentation is being exited.
-  // Then the browser should call ExitPresent() on Device, which does device/
-  // exiting of presentation before notifying displays. This is currently messy
-  // because browser-side notions of presentation are mostly Android-specific.
-  virtual void OnExitPresent() = 0;
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class XrRuntimeAvailable {
+  NONE = 0,
+  OPENVR = 1,
+  kMaxValue = OPENVR,
 };
+
+void LogViewerType(VrViewerType);  // Implemented in vr_device_base.cc
 
 }  // namespace device
 

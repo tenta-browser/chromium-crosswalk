@@ -4,8 +4,7 @@
 
 #include "ui/events/blink/web_input_event_builders_win.h"
 
-#include <windowsx.h>
-
+#include "base/win/windowsx_shim.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/events/blink/blink_event_util.h"
 #include "ui/events/event_utils.h"
@@ -23,7 +22,7 @@ static const unsigned long kDefaultScrollCharsPerWheelDelta = 1;
 // WebMouseEvent --------------------------------------------------------------
 
 static int g_last_click_count = 0;
-static double g_last_click_time = 0;
+static base::TimeTicks g_last_click_time;
 
 static LPARAM GetRelativeCursorPos(HWND hwnd) {
   POINT pos = {-1, -1};
@@ -37,7 +36,7 @@ WebMouseEvent WebMouseEventBuilder::Build(
     UINT message,
     WPARAM wparam,
     LPARAM lparam,
-    double time_stamp,
+    base::TimeTicks time_stamp,
     blink::WebPointerProperties::PointerType pointer_type) {
   WebInputEvent::Type type = WebInputEvent::Type::kUndefined;
   WebMouseEvent::Button button = WebMouseEvent::Button::kNoButton;
@@ -78,6 +77,14 @@ WebMouseEvent WebMouseEventBuilder::Build(
       type = WebInputEvent::kMouseDown;
       button = WebMouseEvent::Button::kRight;
       break;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONDBLCLK:
+      type = WebInputEvent::kMouseDown;
+      if ((HIWORD(wparam) & XBUTTON1))
+        button = WebMouseEvent::Button::kBack;
+      else if ((HIWORD(wparam) & XBUTTON2))
+        button = WebMouseEvent::Button::kForward;
+      break;
     case WM_LBUTTONUP:
       type = WebInputEvent::kMouseUp;
       button = WebMouseEvent::Button::kLeft;
@@ -89,6 +96,13 @@ WebMouseEvent WebMouseEventBuilder::Build(
     case WM_RBUTTONUP:
       type = WebInputEvent::kMouseUp;
       button = WebMouseEvent::Button::kRight;
+      break;
+    case WM_XBUTTONUP:
+      type = WebInputEvent::kMouseUp;
+      if ((HIWORD(wparam) & XBUTTON1))
+        button = WebMouseEvent::Button::kBack;
+      else if ((HIWORD(wparam) & XBUTTON2))
+        button = WebMouseEvent::Button::kForward;
       break;
     default:
       NOTREACHED();
@@ -107,6 +121,10 @@ WebMouseEvent WebMouseEventBuilder::Build(
     modifiers |= WebInputEvent::kMiddleButtonDown;
   if (wparam & MK_RBUTTON)
     modifiers |= WebInputEvent::kRightButtonDown;
+  if (wparam & MK_XBUTTON1)
+    modifiers |= WebInputEvent::kBackButtonDown;
+  if (wparam & MK_XBUTTON2)
+    modifiers |= WebInputEvent::kForwardButtonDown;
 
   WebMouseEvent result(type, modifiers, time_stamp);
   result.pointer_type = pointer_type;
@@ -133,13 +151,14 @@ WebMouseEvent WebMouseEventBuilder::Build(
   static int last_click_position_y;
   static WebMouseEvent::Button last_click_button = WebMouseEvent::Button::kLeft;
 
-  double current_time = result.TimeStampSeconds();
+  base::TimeTicks current_time = result.TimeStamp();
   bool cancel_previous_click =
       (abs(last_click_position_x - result.PositionInWidget().x) >
        (::GetSystemMetrics(SM_CXDOUBLECLK) / 2)) ||
       (abs(last_click_position_y - result.PositionInWidget().y) >
        (::GetSystemMetrics(SM_CYDOUBLECLK) / 2)) ||
-      ((current_time - g_last_click_time) * 1000.0 > ::GetDoubleClickTime());
+      ((current_time - g_last_click_time).InMilliseconds() >
+       ::GetDoubleClickTime());
 
   if (result.GetType() == WebInputEvent::kMouseDown) {
     if (!cancel_previous_click && (result.button == last_click_button)) {
@@ -157,7 +176,7 @@ WebMouseEvent WebMouseEventBuilder::Build(
       g_last_click_count = 0;
       last_click_position_x = 0;
       last_click_position_y = 0;
-      g_last_click_time = 0;
+      g_last_click_time = base::TimeTicks();
     }
   }
   result.click_count = g_last_click_count;
@@ -172,7 +191,7 @@ WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
     UINT message,
     WPARAM wparam,
     LPARAM lparam,
-    double time_stamp,
+    base::TimeTicks time_stamp,
     blink::WebPointerProperties::PointerType pointer_type) {
   WebMouseWheelEvent result(
       WebInputEvent::kMouseWheel,

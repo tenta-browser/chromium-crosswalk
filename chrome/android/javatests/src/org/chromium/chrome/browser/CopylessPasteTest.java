@@ -16,7 +16,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -27,10 +26,11 @@ import org.chromium.blink.mojom.document_metadata.Property;
 import org.chromium.blink.mojom.document_metadata.Values;
 import org.chromium.blink.mojom.document_metadata.WebPage;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.url.mojom.Url;
 
@@ -41,8 +41,8 @@ import java.util.concurrent.TimeoutException;
  * Tests Copyless Paste AppIndexing using instrumented tests.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG, "enable-features=CopylessPaste"})
+@CommandLineFlags.
+Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-features=CopylessPaste"})
 @Restriction(Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE)
 public class CopylessPasteTest {
     @Rule
@@ -69,14 +69,14 @@ public class CopylessPasteTest {
 
         AppIndexingUtil.setCallbackForTesting(webpage -> mCallbackHelper.notifyCalled(webpage));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
+        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
         mActivityTestRule.startMainActivityOnBlankPage();
     }
 
     @After
     public void tearDown() throws Exception {
         mTestServer.stopAndDestroyServer();
-        ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(false));
+        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(false));
         AppIndexingUtil.setCallbackForTesting(null);
     }
 
@@ -117,8 +117,8 @@ public class CopylessPasteTest {
     @Feature({"CopylessPaste"})
     public void testInvalidScheme() throws InterruptedException, TimeoutException {
         // CopylessPaste only parses http and https.
-        mActivityTestRule.loadUrl("chrome://newtab");
-        mActivityTestRule.loadUrl("chrome://about");
+        mActivityTestRule.loadUrl(UrlConstants.NTP_NON_NATIVE_URL);
+        mActivityTestRule.loadUrl(UrlConstants.ABOUT_URL);
         Assert.assertEquals(0, mCallbackHelper.getCallCount());
     }
 
@@ -164,7 +164,7 @@ public class CopylessPasteTest {
         e.properties[1].values.setStringValues(new String[] {"Hotel Name"});
         expected.entities = new Entity[1];
         expected.entities[0] = e;
-        Assert.assertEquals(expected, extracted);
+        Assert.assertEquals(expected.serialize(), extracted.serialize());
     }
 
     /**

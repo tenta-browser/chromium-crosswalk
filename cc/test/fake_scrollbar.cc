@@ -30,10 +30,11 @@ FakeScrollbar::FakeScrollbar(bool paint,
       thumb_opacity_(1),
       needs_paint_thumb_(true),
       needs_paint_track_(true),
+      has_tickmarks_(false),
       track_rect_(0, 0, 100, 10),
       fill_color_(SK_ColorGREEN) {}
 
-FakeScrollbar::~FakeScrollbar() {}
+FakeScrollbar::~FakeScrollbar() = default;
 
 ScrollbarOrientation FakeScrollbar::Orientation() const {
   return orientation_;
@@ -53,6 +54,14 @@ int FakeScrollbar::ThumbThickness() const {
   return thumb_thickness_;
 }
 
+gfx::Rect FakeScrollbar::BackButtonRect() const {
+  return back_button_rect_;
+}
+
+gfx::Rect FakeScrollbar::ForwardButtonRect() const {
+  return forward_button_rect_;
+}
+
 int FakeScrollbar::ThumbLength() const {
   return thumb_length_;
 }
@@ -69,6 +78,10 @@ bool FakeScrollbar::NeedsPaintPart(ScrollbarPart part) const {
   if (part == THUMB)
     return needs_paint_thumb_;
   return needs_paint_track_;
+}
+
+bool FakeScrollbar::HasTickmarks() const {
+  return has_tickmarks_;
 }
 
 void FakeScrollbar::PaintPart(PaintCanvas* canvas,

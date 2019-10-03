@@ -6,9 +6,8 @@
 
 #include <utility>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
@@ -112,7 +111,7 @@ class ExtensionSpecialStoragePolicyTest : public testing::Test {
     manifest.SetString(keys::kName, "Protected");
     manifest.SetString(keys::kVersion, "1");
     manifest.SetString(keys::kLaunchWebURL, "http://explicit/protected/start");
-    auto list = base::MakeUnique<base::ListValue>();
+    auto list = std::make_unique<base::ListValue>();
     list->AppendString("http://explicit/protected");
     list->AppendString("*://*.wildcards/protected");
     manifest.Set(keys::kWebURLs, std::move(list));
@@ -134,10 +133,10 @@ class ExtensionSpecialStoragePolicyTest : public testing::Test {
     manifest.SetString(keys::kName, "Unlimited");
     manifest.SetString(keys::kVersion, "1");
     manifest.SetString(keys::kLaunchWebURL, "http://explicit/unlimited/start");
-    auto list = base::MakeUnique<base::ListValue>();
+    auto list = std::make_unique<base::ListValue>();
     list->AppendString("unlimitedStorage");
     manifest.Set(keys::kPermissions, std::move(list));
-    list = base::MakeUnique<base::ListValue>();
+    list = std::make_unique<base::ListValue>();
     list->AppendString("http://explicit/unlimited");
     list->AppendString("*://*.wildcards/unlimited");
     manifest.Set(keys::kWebURLs, std::move(list));
@@ -205,7 +204,7 @@ TEST_F(ExtensionSpecialStoragePolicyTest, EmptyPolicy) {
 
 TEST_F(ExtensionSpecialStoragePolicyTest, AppWithProtectedStorage) {
   scoped_refptr<Extension> extension(CreateProtectedApp());
-  policy_->GrantRightsForExtension(extension.get(), NULL);
+  policy_->GrantRightsForExtension(extension.get());
   ExtensionSet protecting_extensions;
   protecting_extensions.Insert(extension);
   ExtensionSet empty_set;
@@ -226,7 +225,7 @@ TEST_F(ExtensionSpecialStoragePolicyTest, AppWithProtectedStorage) {
 
 TEST_F(ExtensionSpecialStoragePolicyTest, AppWithUnlimitedStorage) {
   scoped_refptr<Extension> extension(CreateUnlimitedApp());
-  policy_->GrantRightsForExtension(extension.get(), NULL);
+  policy_->GrantRightsForExtension(extension.get());
   ExtensionSet protecting_extensions;
   protecting_extensions.Insert(extension);
   ExtensionSet empty_set;
@@ -258,7 +257,7 @@ TEST_F(ExtensionSpecialStoragePolicyTest, HasIsolatedStorage) {
   const GURL kHttpUrl("http://foo");
   const GURL kExtensionUrl("chrome-extension://bar");
   scoped_refptr<Extension> app(CreateRegularApp());
-  policy_->GrantRightsForExtension(app.get(), NULL);
+  policy_->GrantRightsForExtension(app.get());
 
   EXPECT_FALSE(policy_->HasIsolatedStorage(kHttpUrl));
   EXPECT_FALSE(policy_->HasIsolatedStorage(kExtensionUrl));
@@ -268,8 +267,8 @@ TEST_F(ExtensionSpecialStoragePolicyTest, HasIsolatedStorage) {
 TEST_F(ExtensionSpecialStoragePolicyTest, OverlappingApps) {
   scoped_refptr<Extension> protected_app(CreateProtectedApp());
   scoped_refptr<Extension> unlimited_app(CreateUnlimitedApp());
-  policy_->GrantRightsForExtension(protected_app.get(), NULL);
-  policy_->GrantRightsForExtension(unlimited_app.get(), NULL);
+  policy_->GrantRightsForExtension(protected_app.get());
+  policy_->GrantRightsForExtension(unlimited_app.get());
   ExtensionSet protecting_extensions;
   ExtensionSet empty_set;
   protecting_extensions.Insert(protected_app);
@@ -363,23 +362,23 @@ TEST_F(ExtensionSpecialStoragePolicyTest, NotificationTest) {
     SpecialStoragePolicy::STORAGE_UNLIMITED,
   };
 
-  ASSERT_EQ(arraysize(apps), arraysize(change_flags));
-  for (size_t i = 0; i < arraysize(apps); ++i) {
+  ASSERT_EQ(base::size(apps), base::size(change_flags));
+  for (size_t i = 0; i < base::size(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     observer.ExpectGrant(apps[i]->id(), change_flags[i]);
-    policy_->GrantRightsForExtension(apps[i].get(), NULL);
+    policy_->GrantRightsForExtension(apps[i].get());
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
-  for (size_t i = 0; i < arraysize(apps); ++i) {
+  for (size_t i = 0; i < base::size(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
-    policy_->GrantRightsForExtension(apps[i].get(), NULL);
+    policy_->GrantRightsForExtension(apps[i].get());
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
-  for (size_t i = 0; i < arraysize(apps); ++i) {
+  for (size_t i = 0; i < base::size(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     observer.ExpectRevoke(apps[i]->id(), change_flags[i]);
     policy_->RevokeRightsForExtension(apps[i].get());
@@ -387,7 +386,7 @@ TEST_F(ExtensionSpecialStoragePolicyTest, NotificationTest) {
     EXPECT_TRUE(observer.IsCompleted());
   }
 
-  for (size_t i = 0; i < arraysize(apps); ++i) {
+  for (size_t i = 0; i < base::size(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     policy_->RevokeRightsForExtension(apps[i].get());
     base::RunLoop().RunUntilIdle();

@@ -8,12 +8,13 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
 #include "base/cancelable_callback.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/chromeos/authpolicy/authpolicy_helper.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_screen_view.h"
 #include "chrome/browser/chromeos/login/enrollment/enterprise_enrollment_helper.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
@@ -27,14 +28,13 @@ namespace base {
 class ElapsedTimer;
 }
 
-namespace pairing_chromeos {
-class ControllerPairingController;
-}
-
 namespace chromeos {
 
-class BaseScreenDelegate;
 class ScreenManager;
+
+namespace test {
+class EnrollmentHelperMixin;
+}
 
 // The screen implementation that links the enterprise enrollment UI into the
 // OOBE wizard.
@@ -44,18 +44,17 @@ class EnrollmentScreen
       public EnrollmentScreenView::Controller,
       public ActiveDirectoryJoinDelegate {
  public:
-  EnrollmentScreen(BaseScreenDelegate* base_screen_delegate,
-                   EnrollmentScreenView* view);
+  enum class Result { COMPLETED, BACK };
+
+  using ScreenExitCallback = base::RepeatingCallback<void(Result result)>;
+  EnrollmentScreen(EnrollmentScreenView* view,
+                   const ScreenExitCallback& exit_callback);
   ~EnrollmentScreen() override;
 
   static EnrollmentScreen* Get(ScreenManager* manager);
 
   // Setup how this screen will handle enrollment.
-  //   |shark_controller| is an interface that is used to communicate with a
-  //     remora device or a slave device for remote enrollment.
-  void SetParameters(
-      const policy::EnrollmentConfig& enrollment_config,
-      pairing_chromeos::ControllerPairingController* shark_controller);
+  void SetEnrollmentConfig(const policy::EnrollmentConfig& enrollment_config);
 
   // BaseScreen implementation:
   void Show() override;
@@ -68,7 +67,11 @@ class EnrollmentScreen
   void OnRetry() override;
   void OnCancel() override;
   void OnConfirmationClosed() override;
-  void OnAdJoined(const std::string& realm) override;
+  void OnActiveDirectoryCredsProvided(const std::string& machine_name,
+                                      const std::string& distinguished_name,
+                                      int encryption_types,
+                                      const std::string& username,
+                                      const std::string& password) override;
   void OnDeviceAttributeProvided(const std::string& asset_id,
                                  const std::string& location) override;
 
@@ -78,41 +81,43 @@ class EnrollmentScreen
       const EnrollmentLicenseMap& licenses) override;
   void OnEnrollmentError(policy::EnrollmentStatus status) override;
   void OnOtherError(EnterpriseEnrollmentHelper::OtherError error) override;
-  void OnDeviceEnrolled(const std::string& additional_token) override;
+  void OnDeviceEnrolled() override;
   void OnDeviceAttributeUploadCompleted(bool success) override;
   void OnDeviceAttributeUpdatePermission(bool granted) override;
+  void OnRestoreAfterRollbackCompleted() override;
 
   // ActiveDirectoryJoinDelegate implementation:
-  void JoinDomain(OnDomainJoinedCallback on_joined_callback) override;
+  void JoinDomain(const std::string& dm_token,
+                  const std::string& domain_join_config,
+                  OnDomainJoinedCallback on_joined_callback) override;
 
   // Used for testing.
   EnrollmentScreenView* GetView() { return view_; }
 
+  void set_exit_callback_for_testing(const ScreenExitCallback& callback) {
+    exit_callback_ = callback;
+  }
+
+ protected:
+  // Expose the exit_callback to test screen overrides.
+  ScreenExitCallback* exit_callback() { return &exit_callback_; }
+
  private:
   friend class MultiLicenseEnrollmentScreenUnitTest;
   friend class ZeroTouchEnrollmentScreenUnitTest;
+  friend class AutomaticReenrollmentScreenUnitTest;
+  friend class test::EnrollmentHelperMixin;
+
   FRIEND_TEST_ALL_PREFIXES(AttestationAuthEnrollmentScreenTest, TestCancel);
   FRIEND_TEST_ALL_PREFIXES(ForcedAttestationAuthEnrollmentScreenTest,
                            TestCancel);
   FRIEND_TEST_ALL_PREFIXES(MultiAuthEnrollmentScreenTest, TestCancel);
-  FRIEND_TEST_ALL_PREFIXES(EnterpriseEnrollmentTest,
-                           TestProperPageGetsLoadedOnEnrollmentSuccess);
-  FRIEND_TEST_ALL_PREFIXES(EnterpriseEnrollmentTest,
-                           TestAttributePromptPageGetsLoaded);
-  FRIEND_TEST_ALL_PREFIXES(EnterpriseEnrollmentTest,
-                           TestAuthCodeGetsProperlyReceivedFromGaia);
-  FRIEND_TEST_ALL_PREFIXES(EnterpriseEnrollmentTest,
-                           TestActiveDirectoryEnrollment_Success);
-  FRIEND_TEST_ALL_PREFIXES(EnterpriseEnrollmentTest,
-                           TestActiveDirectoryEnrollment_UIErrors);
-  FRIEND_TEST_ALL_PREFIXES(HandsOffNetworkScreenTest, RequiresNoInput);
-  FRIEND_TEST_ALL_PREFIXES(HandsOffNetworkScreenTest, ContinueClickedOnlyOnce);
-  FRIEND_TEST_ALL_PREFIXES(ZeroTouchEnrollmentScreenUnitTest, Retries);
+  FRIEND_TEST_ALL_PREFIXES(ZeroTouchEnrollmentScreenUnitTest, Retry);
   FRIEND_TEST_ALL_PREFIXES(ZeroTouchEnrollmentScreenUnitTest, TestSuccess);
   FRIEND_TEST_ALL_PREFIXES(ZeroTouchEnrollmentScreenUnitTest,
-                           DoesNotRetryOnTopOfUser);
+                           DoNotRetryOnTopOfUser);
   FRIEND_TEST_ALL_PREFIXES(ZeroTouchEnrollmentScreenUnitTest,
-                           DoesNotRetryAfterSuccess);
+                           DoNotRetryAfterSuccess);
 
   // The authentication mechanisms that this class can use.
   enum Auth {
@@ -134,9 +139,6 @@ class EnrollmentScreen
   // Used as a callback for EnterpriseEnrollmentHelper::ClearAuth.
   virtual void OnAuthCleared(const base::Closure& callback);
 
-  // Sends an enrollment access token to a remote device.
-  void SendEnrollmentAuthToken(const std::string& token);
-
   // Shows successful enrollment status after all enrollment related file
   // operations are completed.
   void ShowEnrollmentStatusOnSuccess();
@@ -147,6 +149,10 @@ class EnrollmentScreen
 
   // Do attestation based enrollment.
   void AuthenticateUsingAttestation();
+
+  // Starts flow that would handle necessary steps to restore after version
+  // rollback.
+  void RestoreAfterRollback();
 
   // Shows the interactive screen. Resets auth then shows the signin screen.
   void ShowInteractiveScreen();
@@ -172,14 +178,20 @@ class EnrollmentScreen
   // Called by OnRetry() and AutomaticRetry().
   void ProcessRetry();
 
-  pairing_chromeos::ControllerPairingController* shark_controller_ = nullptr;
+  // Callback for Active Directory domain join.
+  void OnActiveDirectoryJoined(const std::string& machine_name,
+                               const std::string& username,
+                               authpolicy::ErrorType error,
+                               const std::string& machine_domain);
 
   EnrollmentScreenView* view_;
+  ScreenExitCallback exit_callback_;
   policy::EnrollmentConfig config_;
   policy::EnrollmentConfig enrollment_config_;
   Auth current_auth_ = AUTH_OAUTH;
   Auth last_auth_ = AUTH_OAUTH;
   bool enrollment_failed_once_ = false;
+  bool enrollment_succeeded_ = false;
   std::string enrolling_user_domain_;
   std::unique_ptr<base::ElapsedTimer> elapsed_timer_;
   net::BackoffEntry::Policy retry_policy_;
@@ -188,8 +200,12 @@ class EnrollmentScreen
   int num_retries_ = 0;
   std::unique_ptr<EnterpriseEnrollmentHelper> enrollment_helper_;
   OnDomainJoinedCallback on_joined_callback_;
-  base::WeakPtrFactory<EnrollmentScreen> weak_ptr_factory_;
 
+  // Helper to call AuthPolicyClient and cancel calls if needed. Used to join
+  // Active Directory domain.
+  std::unique_ptr<AuthPolicyHelper> authpolicy_login_helper_;
+
+  base::WeakPtrFactory<EnrollmentScreen> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(EnrollmentScreen);
 };
 

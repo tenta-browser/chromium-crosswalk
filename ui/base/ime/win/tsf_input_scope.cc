@@ -24,7 +24,7 @@ void AppendNonTrivialInputScope(std::vector<InputScope>* input_scopes,
   if (input_scope == IS_DEFAULT)
     return;
 
-  if (base::ContainsValue(*input_scopes, input_scope))
+  if (base::Contains(*input_scopes, input_scope))
     return;
 
   input_scopes->push_back(input_scope);
@@ -138,13 +138,9 @@ InputScope ConvertTextInputTypeToInputScope(TextInputType text_input_type) {
 
 InputScope ConvertTextInputModeToInputScope(TextInputMode text_input_mode) {
   switch (text_input_mode) {
-    case TEXT_INPUT_MODE_FULL_WIDTH_LATIN:
-      return IS_ALPHANUMERIC_FULLWIDTH;
-    case TEXT_INPUT_MODE_KANA:
-      return IS_HIRAGANA;
-    case TEXT_INPUT_MODE_KATAKANA:
-      return IS_KATAKANA_FULLWIDTH;
     case TEXT_INPUT_MODE_NUMERIC:
+      return IS_DIGITS;
+    case TEXT_INPUT_MODE_DECIMAL:
       return IS_NUMBER;
     case TEXT_INPUT_MODE_TEL:
       return IS_TELEPHONE_FULLTELEPHONENUMBER;
@@ -152,6 +148,8 @@ InputScope ConvertTextInputModeToInputScope(TextInputMode text_input_mode) {
       return IS_EMAIL_SMTPEMAILADDRESS;
     case TEXT_INPUT_MODE_URL:
       return IS_URL;
+    case TEXT_INPUT_MODE_SEARCH:
+      return IS_SEARCH;
     default:
       return IS_DEFAULT;
   }
@@ -160,7 +158,7 @@ InputScope ConvertTextInputModeToInputScope(TextInputMode text_input_mode) {
 }  // namespace
 
 void InitializeTsfForInputScopes() {
-  DCHECK(base::MessageLoopForUI::IsCurrent());
+  DCHECK(base::MessageLoopCurrentForUI::IsSet());
   // Thread safety is not required because this function is under UI thread.
   if (!g_get_proc_done) {
     g_get_proc_done = true;
@@ -190,8 +188,18 @@ std::vector<InputScope> GetInputScopes(TextInputType text_input_type,
 }
 
 ITfInputScope* CreateInputScope(TextInputType text_input_type,
-                                TextInputMode text_input_mode) {
-  return new TSFInputScope(GetInputScopes(text_input_type, text_input_mode));
+                                TextInputMode text_input_mode,
+                                bool should_do_learning) {
+  std::vector<InputScope> input_scopes;
+  // Should set input scope to IS_PRIVATE if we are in "incognito" or "guest"
+  // mode. Note that the IS_PRIVATE input scope is only support from WIN10.
+  if (!should_do_learning &&
+      (base::win::GetVersion() >= base::win::Version::WIN10)) {
+    input_scopes.push_back(IS_PRIVATE);
+  } else {
+    input_scopes = GetInputScopes(text_input_type, text_input_mode);
+  }
+  return new TSFInputScope(input_scopes);
 }
 
 void SetInputScopeForTsfUnawareWindow(HWND window_handle,

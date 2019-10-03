@@ -8,6 +8,8 @@
 #import <ChromeWebView/ChromeWebView.h>
 #import <UIKit/UIKit.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 // Accessibility label added to the back button.
 extern NSString* const kWebViewShellBackButtonAccessibilityLabel;
 // Accessibility label added to the forward button.
@@ -18,13 +20,14 @@ extern NSString* const kWebViewShellAddressFieldAccessibilityLabel;
 extern NSString* const
     kWebViewShellJavaScriptDialogTextFieldAccessibiltyIdentifier;
 
-// Implements the main UI for web_view_shell, including the toolbar and web
-// view.
+// Implements the main UI for ios_web_view_shell.
 @interface ShellViewController : UIViewController
 
 // CWV view which renders the web page.
 @property(nonatomic, strong) CWVWebView* webView;
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_SHELL_SHELL_VIEW_CONTROLLER_H_

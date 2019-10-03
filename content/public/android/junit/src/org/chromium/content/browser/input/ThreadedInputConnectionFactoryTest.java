@@ -13,6 +13,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -32,20 +33,21 @@ import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadow.api.Shadow;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.util.ReflectionHelpers;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.content_public.browser.InputMethodManagerWrapper;
 
 import java.util.concurrent.Callable;
 
 /**
  * Unit tests for {@ThreadedInputConnectionFactory}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class ThreadedInputConnectionFactoryTest {
-
     /**
      * A testable version of ThreadedInputConnectionFactory.
      */
@@ -95,7 +97,7 @@ public class ThreadedInputConnectionFactoryTest {
     }
 
     @Mock
-    private ImeAdapter mImeAdapter;
+    private ImeAdapterImpl mImeAdapter;
     @Mock
     private View mContainerView;
     @Mock
@@ -116,6 +118,12 @@ public class ThreadedInputConnectionFactoryTest {
 
     @Before
     public void setUp() throws Exception {
+        // ThreadedInputConnectionFactory#initializeAndGet() logic is activated under N, so pretend
+        // that we're in L. Note that this is to workaround crbug.com/944476 that
+        // @Config(..., sdk = Build.VERSION_CODES.LOLLIPOP) doesn't work.
+        ReflectionHelpers.setStaticField(
+                Build.VERSION.class, "SDK_INT", Build.VERSION_CODES.LOLLIPOP);
+
         MockitoAnnotations.initMocks(this);
 
         mEditorInfo = new EditorInfo();
@@ -123,10 +131,10 @@ public class ThreadedInputConnectionFactoryTest {
 
         mContext = Mockito.mock(Context.class);
         mContainerView = Mockito.mock(View.class);
-        mImeAdapter = Mockito.mock(ImeAdapter.class);
+        mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
         mInputMethodManager = Mockito.mock(InputMethodManager.class);
 
-        mFactory = new TestFactory(new InputMethodManagerWrapper(mContext));
+        mFactory = new TestFactory(new InputMethodManagerWrapperImpl(mContext));
         mFactory.onWindowFocusChanged(true);
         mImeHandler = mFactory.getHandler();
         mImeShadowLooper = (ShadowLooper) Shadow.extract(mImeHandler.getLooper());
@@ -146,15 +154,16 @@ public class ThreadedInputConnectionFactoryTest {
             @Override
             public InputConnection call() throws Exception {
                 return mFactory.initializeAndGet(
-                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, mEditorInfo);
+                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, 0, mEditorInfo);
             }
         };
-        when(mProxyView.onCreateInputConnection(any(EditorInfo.class))).thenAnswer(
-                new Answer<InputConnection>() {
-                    @Override
-                    public InputConnection answer(InvocationOnMock invocation) throws Throwable {
-                        return ThreadUtils.runOnUiThreadBlockingNoException(callable);
-                    }
+        when(mProxyView.onCreateInputConnection(any(EditorInfo.class)))
+                .thenAnswer((InvocationOnMock invocation) -> {
+                    mFactory.setTriggerDelayedOnCreateInputConnection(false);
+                    InputConnection connection =
+                            ThreadUtils.runOnUiThreadBlockingNoException(callable);
+                    mFactory.setTriggerDelayedOnCreateInputConnection(true);
+                    return connection;
                 });
 
         when(mInputMethodManager.isActive(mContainerView)).thenAnswer(new Answer<Boolean>() {
@@ -188,7 +197,7 @@ public class ThreadedInputConnectionFactoryTest {
             @Override
             public void run() {
                 assertNull(mFactory.initializeAndGet(
-                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, mEditorInfo));
+                        mContainerView, mImeAdapter, 1, 0, 0, 0, 0, 0, mEditorInfo));
             }
         });
     }

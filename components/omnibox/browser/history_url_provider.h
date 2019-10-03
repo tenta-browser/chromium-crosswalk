@@ -15,7 +15,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/threading/thread_checker.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/history_match.h"
@@ -106,8 +106,12 @@ struct HistoryURLProviderParams {
                            bool trim_http,
                            const AutocompleteMatch& what_you_typed_match,
                            const TemplateURL* default_search_provider,
-                           const SearchTermsData& search_terms_data);
+                           const SearchTermsData* search_terms_data);
   ~HistoryURLProviderParams();
+
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
 
   const scoped_refptr<base::SequencedTaskRunner> origin_task_runner;
 
@@ -130,7 +134,7 @@ struct HistoryURLProviderParams {
   // the query runs, the query will be abandoned.  This allows us to avoid
   // running queries that are no longer needed.  Since we don't care if we run
   // the extra queries, the lack of signaling is not a problem.
-  base::CancellationFlag cancel_flag;
+  base::AtomicFlag cancel_flag;
 
   // Set by ExecuteWithDB() on the history thread when the query could not be
   // performed because the history system failed to properly init the database.
@@ -199,6 +203,10 @@ class HistoryURLProvider : public HistoryProvider {
   void Start(const AutocompleteInput& input, bool minimal_changes) override;
   void Stop(bool clear_cached_results, bool due_to_user_inactivity) override;
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const override;
+
   // Returns a match representing a navigation to |destination_url|, highlighted
   // appropriately against |input|.  |trim_http| controls whether the match's
   // |fill_into_edit| and |contents| should have any HTTP stripped off, and
@@ -221,6 +229,14 @@ class HistoryURLProvider : public HistoryProvider {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest, HUPScoringExperiment);
+  FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest, DoTrimHttpScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest,
+                           DontTrimHttpSchemeIfInputHasScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest,
+                           DontTrimHttpSchemeIfInputMatchesInScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest,
+                           DontTrimHttpsSchemeIfInputMatchesInScheme);
+  FRIEND_TEST_ALL_PREFIXES(HistoryURLProviderTest, DoTrimHttpsScheme);
 
   enum MatchType {
     NORMAL,

@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "remoting/base/capabilities.h"
 #include "remoting/base/constants.h"
 #include "remoting/client/client_context.h"
@@ -22,6 +21,7 @@
 #include "remoting/protocol/video_renderer.h"
 #include "remoting/protocol/webrtc_connection_to_host.h"
 #include "remoting/signaling/jid_util.h"
+#include "remoting/signaling/signaling_address.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 
 namespace remoting {
@@ -127,6 +127,11 @@ void ChromotingClient::Start(
   }
 }
 
+void ChromotingClient::Close() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  connection_->Disconnect(protocol::OK);
+}
+
 void ChromotingClient::SetCapabilities(
     const protocol::Capabilities& capabilities) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -185,11 +190,11 @@ void ChromotingClient::SetVideoLayout(const protocol::VideoLayout& layout) {
   user_interface_->SetDesktopSize(size_pixels,
                                   webrtc::DesktopVector(x_dpi, y_dpi));
 
-  mouse_input_scaler_.set_input_size(size_pixels);
+  mouse_input_scaler_.set_input_size(webrtc::DesktopSize(size_pixels));
   mouse_input_scaler_.set_output_size(
       connection_->config().protocol() == protocol::SessionConfig::Protocol::ICE
-          ? size_pixels
-          : size_dips);
+          ? webrtc::DesktopSize(size_pixels)
+          : webrtc::DesktopSize(size_dips));
 }
 
 void ChromotingClient::InjectClipboardEvent(
@@ -245,13 +250,13 @@ void ChromotingClient::OnSignalStrategyStateChange(
     VLOG(1) << "Signaling connection closed.";
     mouse_input_scaler_.set_input_stub(nullptr);
     connection_.reset();
-    user_interface_->OnConnectionState(protocol::ConnectionToHost::CLOSED,
+    user_interface_->OnConnectionState(protocol::ConnectionToHost::FAILED,
                                        protocol::SIGNALING_ERROR);
   }
 }
 
 bool ChromotingClient::OnSignalStrategyIncomingStanza(
-    const buzz::XmlElement* stanza) {
+    const jingle_xmpp::XmlElement* stanza) {
   return false;
 }
 
@@ -259,7 +264,7 @@ void ChromotingClient::StartConnection() {
   DCHECK(thread_checker_.CalledOnValidThread());
   auto session = session_manager_->Connect(
       SignalingAddress(host_jid_),
-      base::MakeUnique<protocol::NegotiatingClientAuthenticator>(
+      std::make_unique<protocol::NegotiatingClientAuthenticator>(
           signal_strategy_->GetLocalAddress().id(), host_jid_,
           client_auth_config_));
   if (host_experiment_sender_) {

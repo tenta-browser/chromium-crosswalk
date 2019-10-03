@@ -7,16 +7,20 @@ package org.chromium.chrome.browser.download.ui;
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNull;
 
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.Callback;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.download.DownloadInfo;
 import org.chromium.chrome.browser.download.DownloadItem;
+import org.chromium.chrome.browser.download.DownloadManagerService.DownloadObserver;
 import org.chromium.chrome.browser.widget.ThumbnailProvider;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
+import org.chromium.components.download.DownloadState;
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.LaunchLocation;
 import org.chromium.components.offline_items_collection.LegacyHelpers;
 import org.chromium.components.offline_items_collection.OfflineContentProvider;
 import org.chromium.components.offline_items_collection.OfflineItem;
@@ -24,8 +28,9 @@ import org.chromium.components.offline_items_collection.OfflineItem.Progress;
 import org.chromium.components.offline_items_collection.OfflineItemFilter;
 import org.chromium.components.offline_items_collection.OfflineItemProgressUnit;
 import org.chromium.components.offline_items_collection.OfflineItemState;
+import org.chromium.components.offline_items_collection.RenameResult;
+import org.chromium.components.offline_items_collection.ShareCallback;
 import org.chromium.components.offline_items_collection.VisualsCallback;
-import org.chromium.content_public.browser.DownloadState;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -44,19 +49,19 @@ public class StubbedProvider implements BackendProvider {
 
         public final List<DownloadItem> regularItems = new ArrayList<>();
         public final List<DownloadItem> offTheRecordItems = new ArrayList<>();
-        private DownloadHistoryAdapter mAdapter;
+        private DownloadObserver mObserver;
 
         @Override
-        public void addDownloadHistoryAdapter(DownloadHistoryAdapter adapter) {
+        public void addDownloadObserver(DownloadObserver observer) {
             addCallback.notifyCalled();
-            assertNull(mAdapter);
-            mAdapter = adapter;
+            assertNull(mObserver);
+            mObserver = observer;
         }
 
         @Override
-        public void removeDownloadHistoryAdapter(DownloadHistoryAdapter adapter) {
+        public void removeDownloadObserver(DownloadObserver observer) {
             removeCallback.notifyCalled();
-            mAdapter = null;
+            mObserver = null;
         }
 
         @Override
@@ -64,7 +69,7 @@ public class StubbedProvider implements BackendProvider {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    mAdapter.onAllDownloadsRetrieved(
+                    mObserver.onAllDownloadsRetrieved(
                             isOffTheRecord ? offTheRecordItems : regularItems, isOffTheRecord);
                 }
             });
@@ -79,11 +84,12 @@ public class StubbedProvider implements BackendProvider {
         }
 
         @Override
-        public void removeDownload(final String guid, final boolean isOffTheRecord) {
+        public void removeDownload(
+                final String guid, final boolean isOffTheRecord, boolean externallyRemoved) {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    mAdapter.onDownloadItemRemoved(guid, isOffTheRecord);
+                    mObserver.onDownloadItemRemoved(guid, isOffTheRecord);
                     removeDownloadCallback.notifyCalled();
                 }
             });
@@ -96,6 +102,10 @@ public class StubbedProvider implements BackendProvider {
 
         @Override
         public void updateLastAccessTime(String downloadGuid, boolean isOffTheRecord) {}
+
+        @Override
+        public void renameDownload(ContentId id, String name,
+                Callback<Integer /*RenameResult*/> callback, boolean isOffTheRecord) {}
     }
 
     /** Stubs out the OfflineContentProvider. */
@@ -111,13 +121,6 @@ public class StubbedProvider implements BackendProvider {
             // Immediately indicate that the delegate has loaded.
             observer = addedObserver;
             addCallback.notifyCalled();
-
-            ThreadUtils.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    observer.onItemsAvailable();
-                }
-            });
         }
 
         @Override
@@ -128,8 +131,8 @@ public class StubbedProvider implements BackendProvider {
         }
 
         @Override
-        public ArrayList<OfflineItem> getAllItems() {
-            return items;
+        public void getAllItems(Callback<ArrayList<OfflineItem>> callback) {
+            mHandler.post(() -> callback.onResult(items));
         }
 
         @Override
@@ -151,7 +154,7 @@ public class StubbedProvider implements BackendProvider {
         }
 
         @Override
-        public void openItem(ContentId id) {}
+        public void openItem(@LaunchLocation int location, ContentId id) {}
         @Override
         public void pauseDownload(ContentId id) {}
         @Override
@@ -160,17 +163,25 @@ public class StubbedProvider implements BackendProvider {
         public void cancelDownload(ContentId id) {}
 
         @Override
-        public boolean areItemsAvailable() {
-            return true;
+        public void getItemById(ContentId id, Callback<OfflineItem> callback) {
+            mHandler.post(() -> callback.onResult(null));
         }
 
         @Override
-        public OfflineItem getItemById(ContentId id) {
-            return null;
+        public void getVisualsForItem(ContentId id, VisualsCallback callback) {
+            mHandler.post(() -> callback.onVisualsAvailable(id, null));
         }
 
         @Override
-        public void getVisualsForItem(ContentId id, VisualsCallback callback) {}
+        public void getShareInfoForItem(ContentId id, ShareCallback callback) {
+            mHandler.post(() -> callback.onShareInfoAvailable(id, null));
+        }
+
+        @Override
+        public void renameItem(
+                ContentId id, String name, Callback<Integer /*RenameResult*/> callback) {
+            mHandler.post(() -> callback.onResult(RenameResult.SUCCESS));
+        }
     }
 
     /** Stubs out all attempts to get thumbnails for files. */
@@ -188,6 +199,17 @@ public class StubbedProvider implements BackendProvider {
         public void cancelRetrieval(ThumbnailRequest request) {}
     }
 
+    /** Stubs out the UIDelegate. */
+    public class StubbedUIDelegate implements UIDelegate {
+        @Override
+        public void deleteItem(DownloadHistoryItemWrapper item) {
+            mHandler.post(() -> item.removePermanently());
+        }
+
+        @Override
+        public void shareItem(DownloadHistoryItemWrapper item) {}
+    }
+
     private static final long ONE_GIGABYTE = 1024L * 1024L * 1024L;
 
     private final Handler mHandler;
@@ -195,6 +217,7 @@ public class StubbedProvider implements BackendProvider {
     private final StubbedOfflineContentProvider mOfflineContentProvider;
     private final SelectionDelegate<DownloadHistoryItemWrapper> mSelectionDelegate;
     private final StubbedThumbnailProvider mStubbedThumbnailProvider;
+    private UIDelegate mUIDelegate;
 
     public StubbedProvider() {
         mHandler = new Handler(Looper.getMainLooper());
@@ -202,6 +225,11 @@ public class StubbedProvider implements BackendProvider {
         mOfflineContentProvider = new StubbedOfflineContentProvider();
         mSelectionDelegate = new DownloadItemSelectionDelegate();
         mStubbedThumbnailProvider = new StubbedThumbnailProvider();
+        mUIDelegate = new StubbedUIDelegate();
+    }
+
+    public void setUIDelegate(UIDelegate delegate) {
+        mUIDelegate = delegate;
     }
 
     @Override
@@ -222,6 +250,11 @@ public class StubbedProvider implements BackendProvider {
     @Override
     public StubbedThumbnailProvider getThumbnailProvider() {
         return mStubbedThumbnailProvider;
+    }
+
+    @Override
+    public UIDelegate getUIDelegate() {
+        return mUIDelegate;
     }
 
     @Override
@@ -285,13 +318,15 @@ public class StubbedProvider implements BackendProvider {
                     .setDownloadGuid("sixth_guid")
                     .setMimeType("audio/mp3");
         } else if (which == 6) {
-            builder = new DownloadInfo.Builder()
-                    .setUrl("https://sigh.com")
-                    .setBytesReceived(ONE_GIGABYTE)
-                    .setFileName("huge_image.png")
-                    .setFilePath("/storage/fake_path/Downloads/huge_image.png")
-                    .setDownloadGuid("seventh_guid")
-                    .setMimeType("image/png");
+            builder =
+                    new DownloadInfo.Builder()
+                            .setUrl("https://sigh.com")
+                            .setBytesReceived(ONE_GIGABYTE)
+                            .setFileName("huge_image.png")
+                            .setFilePath(Environment.getExternalStorageDirectory().getAbsolutePath()
+                                    + "/fake_path/Downloads/huge_image.png")
+                            .setDownloadGuid("seventh_guid")
+                            .setMimeType("image/png");
         } else if (which == 7) {
             builder = new DownloadInfo.Builder()
                     .setUrl("https://sleepy.com")
@@ -372,7 +407,7 @@ public class StubbedProvider implements BackendProvider {
         offlineItem.filePath = targetPath;
         offlineItem.creationTimeMs = startTime;
         offlineItem.totalSizeBytes = totalSize;
-        offlineItem.filter = OfflineItemFilter.FILTER_PAGE;
+        offlineItem.filter = OfflineItemFilter.PAGE;
         return offlineItem;
     }
 

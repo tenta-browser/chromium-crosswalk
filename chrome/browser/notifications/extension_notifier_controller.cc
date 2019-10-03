@@ -4,6 +4,7 @@
 
 #include "chrome/browser/notifications/extension_notifier_controller.h"
 
+#include "ash/public/cpp/notifier_metadata.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/chrome_app_icon_loader.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
@@ -15,16 +16,16 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "ui/message_center/notifier_id.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 
 ExtensionNotifierController::ExtensionNotifierController(Observer* observer)
     : observer_(observer) {}
 
 ExtensionNotifierController::~ExtensionNotifierController() {}
 
-std::vector<ash::mojom::NotifierUiDataPtr>
-ExtensionNotifierController::GetNotifierList(Profile* profile) {
-  std::vector<ash::mojom::NotifierUiDataPtr> ui_data;
+std::vector<ash::NotifierMetadata> ExtensionNotifierController::GetNotifierList(
+    Profile* profile) {
+  std::vector<ash::NotifierMetadata> notifiers;
   const extensions::ExtensionSet& extension_set =
       extensions::ExtensionRegistry::Get(profile)->enabled_extensions();
   // The extension icon size has to be 32x32 at least to load bigger icons if
@@ -50,27 +51,17 @@ ExtensionNotifierController::GetNotifierList(Profile* profile) {
       continue;
 
     message_center::NotifierId notifier_id(
-        message_center::NotifierId::APPLICATION, extension->id());
-    // This may be null in unit tests.
-    extensions::EventRouter* event_router =
-        extensions::EventRouter::Get(profile);
-    bool has_advanced_settings_button =
-        event_router
-            ? event_router->ExtensionHasEventListener(
-                  extension->id(),
-                  extensions::api::notifications::OnShowSettings::kEventName)
-            : false;
+        message_center::NotifierType::APPLICATION, extension->id());
     NotifierStateTracker* const notifier_state_tracker =
         NotifierStateTrackerFactory::GetForProfile(profile);
-    ui_data.push_back(ash::mojom::NotifierUiData::New(
+    notifiers.emplace_back(
         notifier_id, base::UTF8ToUTF16(extension->name()),
-        has_advanced_settings_button,
         notifier_state_tracker->IsNotifierEnabled(notifier_id),
-        gfx::ImageSkia()));
+        false /* enforced */, gfx::ImageSkia());
     app_icon_loader_->FetchImage(extension->id());
   }
 
-  return ui_data;
+  return notifiers;
 }
 
 void ExtensionNotifierController::SetNotifierEnabled(
@@ -82,25 +73,10 @@ void ExtensionNotifierController::SetNotifierEnabled(
   observer_->OnNotifierEnabledChanged(notifier_id, enabled);
 }
 
-void ExtensionNotifierController::OnNotifierAdvancedSettingsRequested(
-    Profile* profile,
-    const message_center::NotifierId& notifier_id) {
-  const std::string& extension_id = notifier_id.id;
-
-  extensions::EventRouter* event_router = extensions::EventRouter::Get(profile);
-  std::unique_ptr<base::ListValue> args(new base::ListValue());
-
-  std::unique_ptr<extensions::Event> event(new extensions::Event(
-      extensions::events::NOTIFICATIONS_ON_SHOW_SETTINGS,
-      extensions::api::notifications::OnShowSettings::kEventName,
-      std::move(args)));
-  event_router->DispatchEventToExtension(extension_id, std::move(event));
-}
-
 void ExtensionNotifierController::OnAppImageUpdated(
     const std::string& id,
     const gfx::ImageSkia& image) {
   observer_->OnIconImageUpdated(
-      message_center::NotifierId(message_center::NotifierId::APPLICATION, id),
+      message_center::NotifierId(message_center::NotifierType::APPLICATION, id),
       image);
 }

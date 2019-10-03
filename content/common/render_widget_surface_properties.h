@@ -26,11 +26,13 @@ struct CONTENT_EXPORT RenderWidgetSurfaceProperties {
   bool operator==(const RenderWidgetSurfaceProperties& other) const;
   bool operator!=(const RenderWidgetSurfaceProperties& other) const;
 
+  std::string ToDiffString(const RenderWidgetSurfaceProperties& other) const;
+
   gfx::Size size;
   float device_scale_factor = 0;
-#ifdef OS_ANDROID
   float top_controls_height = 0;
   float top_controls_shown_ratio = 0;
+#ifdef OS_ANDROID
   float bottom_controls_height = 0;
   float bottom_controls_shown_ratio = 0;
   viz::Selection<gfx::SelectionBound> selection;

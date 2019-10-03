@@ -10,7 +10,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_runner.h"
-#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/common/importer/imported_bookmark_entry.h"
 #include "chrome/common/importer/importer_autofill_form_data_entry.h"
@@ -32,13 +31,10 @@ const int kNumAutofillFormDataToSend = 100;
 } // namespace
 
 ExternalProcessImporterBridge::ExternalProcessImporterBridge(
-    const base::DictionaryValue& localized_strings,
+    const base::flat_map<uint32_t, std::string>& localized_strings,
     scoped_refptr<chrome::mojom::ThreadSafeProfileImportObserverPtr> observer)
-    : observer_(std::move(observer)) {
-  // Bridge needs to make its own copy because OS 10.6 autoreleases the
-  // localized_strings value that is passed in (see http://crbug.com/46003 ).
-  localized_strings_.reset(localized_strings.DeepCopy());
-}
+    : localized_strings_(std::move(localized_strings)),
+      observer_(std::move(observer)) {}
 
 void ExternalProcessImporterBridge::AddBookmarks(
     const std::vector<ImportedBookmarkEntry>& bookmarks,
@@ -49,11 +45,9 @@ void ExternalProcessImporterBridge::AddBookmarks(
   // Debug bounds-check which prevents pushing an iterator beyond its end()
   // (i.e., |it + 2 < s.end()| crashes in debug mode if |i + 1 == s.end()|).
   int bookmarks_left = bookmarks.end() - bookmarks.begin();
-  for (std::vector<ImportedBookmarkEntry>::const_iterator it =
-           bookmarks.begin(); it < bookmarks.end();) {
+  for (auto it = bookmarks.begin(); it < bookmarks.end();) {
     std::vector<ImportedBookmarkEntry> bookmark_group;
-    std::vector<ImportedBookmarkEntry>::const_iterator end_group =
-        it + std::min(bookmarks_left, kNumBookmarksToSend);
+    auto end_group = it + std::min(bookmarks_left, kNumBookmarksToSend);
     bookmark_group.assign(it, end_group);
 
     (*observer_)->OnBookmarksImportGroup(bookmark_group);
@@ -67,13 +61,6 @@ void ExternalProcessImporterBridge::AddHomePage(const GURL& home_page) {
   (*observer_)->OnHomePageImportReady(home_page);
 }
 
-#if defined(OS_WIN)
-void ExternalProcessImporterBridge::AddIE7PasswordInfo(
-    const importer::ImporterIE7PasswordInfo& password_info) {
-  (*observer_)->OnIE7PasswordReceived(password_info);
-}
-#endif
-
 void ExternalProcessImporterBridge::SetFavicons(
     const favicon_base::FaviconUsageDataList& favicons) {
   (*observer_)->OnFaviconsImportStart(favicons.size());
@@ -82,11 +69,9 @@ void ExternalProcessImporterBridge::SetFavicons(
   // Debug bounds-check which prevents pushing an iterator beyond its end()
   // (i.e., |it + 2 < s.end()| crashes in debug mode if |i + 1 == s.end()|).
   int favicons_left = favicons.end() - favicons.begin();
-  for (favicon_base::FaviconUsageDataList::const_iterator it = favicons.begin();
-       it < favicons.end();) {
+  for (auto it = favicons.begin(); it < favicons.end();) {
     favicon_base::FaviconUsageDataList favicons_group;
-    favicon_base::FaviconUsageDataList::const_iterator end_group =
-        it + std::min(favicons_left, kNumFaviconsToSend);
+    auto end_group = it + std::min(favicons_left, kNumFaviconsToSend);
     favicons_group.assign(it, end_group);
 
     (*observer_)->OnFaviconsImportGroup(favicons_group);
@@ -105,11 +90,9 @@ void ExternalProcessImporterBridge::SetHistoryItems(
   // Debug bounds-check which prevents pushing an iterator beyond its end()
   // (i.e., |it + 2 < s.end()| crashes in debug mode if |i + 1 == s.end()|).
   int rows_left = rows.end() - rows.begin();
-  for (std::vector<ImporterURLRow>::const_iterator it = rows.begin();
-       it < rows.end();) {
+  for (auto it = rows.begin(); it < rows.end();) {
     std::vector<ImporterURLRow> row_group;
-    std::vector<ImporterURLRow>::const_iterator end_group =
-        it + std::min(rows_left, kNumHistoryRowsToSend);
+    auto end_group = it + std::min(rows_left, kNumHistoryRowsToSend);
     row_group.assign(it, end_group);
 
     (*observer_)->OnHistoryImportGroup(row_group, visit_source);
@@ -144,13 +127,10 @@ void ExternalProcessImporterBridge::SetAutofillFormData(
   // its end() (i.e., |it + 2 < s.end()| crashes in debug mode if |i + 1 ==
   // s.end()|).
   int autofill_form_data_entries_left = entries.end() - entries.begin();
-  for (std::vector<ImporterAutofillFormDataEntry>::const_iterator it =
-           entries.begin();
-       it < entries.end();) {
+  for (auto it = entries.begin(); it < entries.end();) {
     std::vector<ImporterAutofillFormDataEntry> autofill_form_data_entry_group;
-    std::vector<ImporterAutofillFormDataEntry>::const_iterator end_group =
-        it +
-        std::min(autofill_form_data_entries_left, kNumAutofillFormDataToSend);
+    auto end_group = it + std::min(autofill_form_data_entries_left,
+                                   kNumAutofillFormDataToSend);
     autofill_form_data_entry_group.assign(it, end_group);
 
     (*observer_)->OnAutofillFormDataImportGroup(autofill_form_data_entry_group);
@@ -179,9 +159,8 @@ void ExternalProcessImporterBridge::NotifyEnded() {
 
 base::string16 ExternalProcessImporterBridge::GetLocalizedString(
     int message_id) {
-  base::string16 message;
-  localized_strings_->GetString(base::IntToString(message_id), &message);
-  return message;
+  DCHECK(localized_strings_.count(message_id));
+  return base::UTF8ToUTF16(localized_strings_[message_id]);
 }
 
 ExternalProcessImporterBridge::~ExternalProcessImporterBridge() {}

@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_ANDROID_WEB_CONTENTS_OBSERVER_PROXY_H_
 
 #include <jni.h>
+#include <memory>
 
 #include "base/android/jni_weak_ref.h"
 #include "base/macros.h"
@@ -40,11 +41,11 @@ class WebContentsObserverProxy : public WebContentsObserver {
                    const base::string16& error_description) override;
   void DocumentAvailableInMainFrame() override;
   void DidFirstVisuallyNonEmptyPaint() override;
-  void WasShown() override;
-  void WasHidden() override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
   void TitleWasSet(NavigationEntry* entry) override;
 
   void DidStartNavigation(NavigationHandle* navigation_handle) override;
+  void DidRedirectNavigation(NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
 
   void DidFinishLoad(RenderFrameHost* render_frame_host,
@@ -52,12 +53,19 @@ class WebContentsObserverProxy : public WebContentsObserver {
   void DocumentLoadedInFrame(RenderFrameHost* render_frame_host) override;
   void NavigationEntryCommitted(
       const LoadCommittedDetails& load_details) override;
+  void NavigationEntriesDeleted() override;
+  void NavigationEntryChanged(
+      const EntryChangedDetails& change_details) override;
   void WebContentsDestroyed() override;
   void DidAttachInterstitialPage() override;
   void DidDetachInterstitialPage() override;
-  void DidChangeThemeColor(SkColor color) override;
+  void DidChangeThemeColor(base::Optional<SkColor> color) override;
   void MediaEffectivelyFullscreenChanged(bool is_fullscreen) override;
   void SetToBaseURLForDataURLIfNeeded(std::string* url);
+  void ViewportFitChanged(blink::mojom::ViewportFit value) override;
+  void DidReloadLoFiImages() override;
+  void OnWebContentsFocused(RenderWidgetHost*) override;
+  void OnWebContentsLostFocus(RenderWidgetHost*) override;
 
   base::android::ScopedJavaGlobalRef<jobject> java_observer_;
   GURL base_url_of_last_started_data_url_;

@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_H_
 
 #include <stdint.h>
-
 #include <memory>
 
 #include "base/files/file.h"
@@ -14,7 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "ui/gfx/native_pixmap_handle.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/vsync_provider.h"
@@ -41,12 +40,12 @@ class Rect;
 namespace ui {
 
 class DrmDeviceManager;
+class DrmFramebuffer;
 class DrmGpuDisplayManager;
 class GbmBuffer;
-class ScanoutBufferGenerator;
 class ScreenManager;
 
-struct OverlayPlane;
+struct DrmOverlayPlane;
 
 // Holds all the DRM related state and performs all DRM related operations.
 //
@@ -62,7 +61,7 @@ class DrmThread : public base::Thread,
   DrmThread();
   ~DrmThread() override;
 
-  void Start();
+  void Start(base::OnceClosure binding_completer);
 
   // Must be called on the DRM thread. All methods for use from the GPU thread.
   // DrmThreadProxy (on GPU)thread) is the client for these methods.
@@ -70,31 +69,39 @@ class DrmThread : public base::Thread,
                     const gfx::Size& size,
                     gfx::BufferFormat format,
                     gfx::BufferUsage usage,
-                    scoped_refptr<GbmBuffer>* buffer);
-  void CreateBufferFromFds(gfx::AcceleratedWidget widget,
-                           const gfx::Size& size,
-                           gfx::BufferFormat format,
-                           std::vector<base::ScopedFD>&& fds,
-                           const std::vector<gfx::NativePixmapPlane>& planes,
-                           scoped_refptr<GbmBuffer>* buffer);
-  void GetScanoutFormats(gfx::AcceleratedWidget widget,
-                         std::vector<gfx::BufferFormat>* scanout_formats);
-  void AddBindingCursorDevice(ozone::mojom::DeviceCursorRequest request);
+                    uint32_t flags,
+                    std::unique_ptr<GbmBuffer>* buffer,
+                    scoped_refptr<DrmFramebuffer>* framebuffer);
+  using CreateBufferAsyncCallback =
+      base::OnceCallback<void(std::unique_ptr<GbmBuffer>,
+                              scoped_refptr<DrmFramebuffer>)>;
+  void CreateBufferAsync(gfx::AcceleratedWidget widget,
+                         const gfx::Size& size,
+                         gfx::BufferFormat format,
+                         gfx::BufferUsage usage,
+                         uint32_t flags,
+                         CreateBufferAsyncCallback callback);
+  void CreateBufferFromHandle(gfx::AcceleratedWidget widget,
+                              const gfx::Size& size,
+                              gfx::BufferFormat format,
+                              gfx::NativePixmapHandle handle,
+                              std::unique_ptr<GbmBuffer>* buffer,
+                              scoped_refptr<DrmFramebuffer>* framebuffer);
+  void SetClearOverlayCacheCallback(base::RepeatingClosure callback);
   void AddBindingDrmDevice(ozone::mojom::DrmDeviceRequest request);
 
   // DrmWindowProxy (on GPU thread) is the client for these methods.
   void SchedulePageFlip(gfx::AcceleratedWidget widget,
-                        const std::vector<OverlayPlane>& planes,
-                        SwapCompletionOnceCallback callback);
-  void GetVSyncParameters(
-      gfx::AcceleratedWidget widget,
-      const gfx::VSyncProvider::UpdateVSyncCallback& callback);
+                        std::vector<DrmOverlayPlane> planes,
+                        SwapCompletionOnceCallback submission_callback,
+                        PresentationOnceCallback presentation_callback);
+
+  void IsDeviceAtomic(gfx::AcceleratedWidget widget, bool* is_atomic);
 
   // ozone::mojom::DrmDevice
-  void StartDrmDevice(StartDrmDeviceCallback callback) override;
-  void CreateWindow(const gfx::AcceleratedWidget& widget) override;
-  void DestroyWindow(const gfx::AcceleratedWidget& widget) override;
-  void SetWindowBounds(const gfx::AcceleratedWidget& widget,
+  void CreateWindow(gfx::AcceleratedWidget widget) override;
+  void DestroyWindow(gfx::AcceleratedWidget widget) override;
+  void SetWindowBounds(gfx::AcceleratedWidget widget,
                        const gfx::Rect& bounds) override;
   void TakeDisplayControl(base::OnceCallback<void(bool)> callback) override;
   void RelinquishDisplayControl(
@@ -117,41 +124,54 @@ class DrmThread : public base::Thread,
   void SetHDCPState(int64_t display_id,
                     display::HDCPState state,
                     base::OnceCallback<void(int64_t, bool)> callback) override;
-  void SetColorCorrection(
+  void SetColorMatrix(int64_t display_id,
+                      const std::vector<float>& color_matrix) override;
+  void SetGammaCorrection(
       int64_t display_id,
       const std::vector<display::GammaRampRGBEntry>& degamma_lut,
-      const std::vector<display::GammaRampRGBEntry>& gamma_lut,
-      const std::vector<float>& correction_matrix) override;
+      const std::vector<display::GammaRampRGBEntry>& gamma_lut) override;
   void CheckOverlayCapabilities(
-      const gfx::AcceleratedWidget& widget,
+      gfx::AcceleratedWidget widget,
       const OverlaySurfaceCandidateList& overlays,
-      base::OnceCallback<void(const gfx::AcceleratedWidget&,
+      base::OnceCallback<void(gfx::AcceleratedWidget,
                               const OverlaySurfaceCandidateList&,
                               const OverlayStatusList&)> callback) override;
+  void GetDeviceCursor(
+      ozone::mojom::DeviceCursorAssociatedRequest cursor) override;
 
   // ozone::mojom::DeviceCursor
-  void SetCursor(const gfx::AcceleratedWidget& widget,
+  void SetCursor(gfx::AcceleratedWidget widget,
                  const std::vector<SkBitmap>& bitmaps,
                  const gfx::Point& location,
                  int32_t frame_delay_ms) override;
-  void MoveCursor(const gfx::AcceleratedWidget& widget,
+  void MoveCursor(gfx::AcceleratedWidget widget,
                   const gfx::Point& location) override;
 
   // base::Thread:
   void Init() override;
 
  private:
+  void OnPlanesReadyForPageFlip(gfx::AcceleratedWidget widget,
+                                SwapCompletionOnceCallback submission_callback,
+                                PresentationOnceCallback presentation_callback,
+                                std::vector<DrmOverlayPlane> planes);
+
   std::unique_ptr<DrmDeviceManager> device_manager_;
-  std::unique_ptr<ScanoutBufferGenerator> buffer_generator_;
   std::unique_ptr<ScreenManager> screen_manager_;
   std::unique_ptr<DrmGpuDisplayManager> display_manager_;
 
-  // The mojo implementation requires a BindingSet because the DrmThread serves
-  // requests from two different client threads.
-  mojo::BindingSet<ozone::mojom::DeviceCursor> bindings_;
+  base::OnceClosure complete_early_binding_requests_;
 
-  // The mojo implementation of DrmDevice can use a simple binding.
-  mojo::Binding<ozone::mojom::DrmDevice> binding_;
+  // The mojo implementation requires an AssociatedBindingSet because the
+  // DrmThread serves requests from two different client threads.
+  mojo::AssociatedBindingSet<ozone::mojom::DeviceCursor> cursor_bindings_;
+
+  // This is a BindingSet because the regular Binding causes the sequence
+  // checker in InterfaceEndpointClient to fail during teardown.
+  // TODO(samans): Figure out why.
+  mojo::BindingSet<ozone::mojom::DrmDevice> drm_bindings_;
+
+  base::WeakPtrFactory<DrmThread> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DrmThread);
 };

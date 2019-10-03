@@ -9,18 +9,25 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/android/preferences/preferences_launcher.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/infobars/core/infobar_delegate.h"
+#include "components/infobars/core/infobar.h"
+#include "components/infobars/core/infobar_manager.h"
+#include "components/password_manager/core/browser/manage_passwords_referrer.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "url/gurl.h"
 
 GeneratedPasswordSavedInfoBarDelegateAndroid::
     ~GeneratedPasswordSavedInfoBarDelegateAndroid() {}
 
 void GeneratedPasswordSavedInfoBarDelegateAndroid::OnInlineLinkClicked() {
-  chrome::android::PreferencesLauncher::ShowPasswordSettings();
+  chrome::android::PreferencesLauncher::ShowPasswordSettings(
+      InfoBarService::WebContentsFromInfoBar(infobar()),
+      password_manager::ManagePasswordsReferrer::
+          kPasswordGenerationConfirmation);
 }
 
 GeneratedPasswordSavedInfoBarDelegateAndroid::
@@ -29,14 +36,11 @@ GeneratedPasswordSavedInfoBarDelegateAndroid::
   base::string16 link = l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_LINK);
 
   size_t offset = 0;
-  message_text_ = l10n_util::GetStringFUTF16(
-      IDS_MANAGE_PASSWORDS_CONFIRM_GENERATED_TEXT_INFOBAR, link, &offset);
+  message_text_ =
+      l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_CONFIRM_SAVED_TITLE);
+  details_message_text_ = l10n_util::GetStringFUTF16(
+      IDS_MANAGE_PASSWORDS_CONFIRM_GENERATED_TEXT, link, &offset);
   inline_link_range_ = gfx::Range(offset, offset + link.length());
-}
-
-infobars::InfoBarDelegate::Type
-GeneratedPasswordSavedInfoBarDelegateAndroid::GetInfoBarType() const {
-  return PAGE_ACTION_TYPE;
 }
 
 infobars::InfoBarDelegate::InfoBarIdentifier

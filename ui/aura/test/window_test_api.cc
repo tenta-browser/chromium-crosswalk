@@ -4,7 +4,6 @@
 
 #include "ui/aura/test/window_test_api.h"
 
-#include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 
@@ -25,6 +24,14 @@ bool WindowTestApi::ContainsMouse() const {
   return host &&
          window_->ContainsPointInRoot(
              host->dispatcher()->GetLastMouseLocationInRoot());
+}
+
+void WindowTestApi::DisableFrameSinkRegistration() {
+  window_->disable_frame_sink_id_registration_ = true;
+}
+
+void WindowTestApi::SetOcclusionState(aura::Window::OcclusionState state) {
+  window_->SetOcclusionInfo(state, SkRegion());
 }
 
 }  // namespace test

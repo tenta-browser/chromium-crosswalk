@@ -6,46 +6,54 @@
 
 #include <zircon/syscalls.h>
 
-#include "base/compiler_specific.h"
-#include "base/numerics/checked_math.h"
+#include "base/fuchsia/fuchsia_logging.h"
+#include "base/time/time_override.h"
 
 namespace base {
 
-namespace {
-
-// Helper function to map an unsigned integer with nanosecond timebase to a
-// signed integer with microsecond timebase.
-ALWAYS_INLINE int64_t ZxTimeToMicroseconds(zx_time_t nanos) {
-  const zx_time_t micros =
-      nanos / static_cast<zx_time_t>(base::Time::kNanosecondsPerMicrosecond);
-  return static_cast<int64_t>(micros);
-}
-
-}  // namespace
-
 // Time -----------------------------------------------------------------------
 
-// static
-Time Time::Now() {
-  const zx_time_t nanos_since_unix_epoch = zx_time_get(ZX_CLOCK_UTC);
-  CHECK(nanos_since_unix_epoch != 0);
+namespace subtle {
+Time TimeNowIgnoringOverride() {
+  zx_time_t nanos_since_unix_epoch;
+  zx_status_t status = zx_clock_get(ZX_CLOCK_UTC, &nanos_since_unix_epoch);
+  ZX_CHECK(status == ZX_OK, status);
   // The following expression will overflow in the year 289938 A.D.:
-  return Time(ZxTimeToMicroseconds(nanos_since_unix_epoch) +
-              kTimeTToMicrosecondsOffset);
+  return Time::FromZxTime(nanos_since_unix_epoch);
 }
 
-// static
-Time Time::NowFromSystemTime() {
-  return Now();
+Time TimeNowFromSystemTimeIgnoringOverride() {
+  // Just use TimeNowIgnoringOverride() because it returns the system time.
+  return TimeNowIgnoringOverride();
 }
+}  // namespace subtle
 
 // TimeTicks ------------------------------------------------------------------
 
-// static
-TimeTicks TimeTicks::Now() {
-  const zx_time_t nanos_since_boot = zx_time_get(ZX_CLOCK_MONOTONIC);
+namespace subtle {
+TimeTicks TimeTicksNowIgnoringOverride() {
+  const zx_time_t nanos_since_boot = zx_clock_get_monotonic();
   CHECK(nanos_since_boot != 0);
-  return TimeTicks(ZxTimeToMicroseconds(nanos_since_boot));
+  return TimeTicks::FromZxTime(nanos_since_boot);
+}
+}  // namespace subtle
+
+// static
+TimeDelta TimeDelta::FromZxDuration(zx_duration_t nanos) {
+  return TimeDelta::FromNanoseconds(nanos);
+}
+
+zx_duration_t TimeDelta::ToZxDuration() const {
+  return InNanoseconds();
+}
+
+// static
+Time Time::FromZxTime(zx_time_t nanos_since_unix_epoch) {
+  return Time::UnixEpoch() + TimeDelta::FromNanoseconds(nanos_since_unix_epoch);
+}
+
+zx_time_t Time::ToZxTime() const {
+  return (*this - Time::UnixEpoch()).InNanoseconds();
 }
 
 // static
@@ -65,20 +73,24 @@ bool TimeTicks::IsConsistentAcrossProcesses() {
 
 // static
 TimeTicks TimeTicks::FromZxTime(zx_time_t nanos_since_boot) {
-  return TimeTicks(ZxTimeToMicroseconds(nanos_since_boot));
+  return TimeTicks() + TimeDelta::FromNanoseconds(nanos_since_boot);
 }
 
 zx_time_t TimeTicks::ToZxTime() const {
-  CheckedNumeric<zx_time_t> result(base::Time::kNanosecondsPerMicrosecond);
-  result *= us_;
-  return result.ValueOrDie();
+  return (*this - TimeTicks()).InNanoseconds();
 }
 
-// static
-ThreadTicks ThreadTicks::Now() {
-  const zx_time_t nanos_since_thread_started = zx_time_get(ZX_CLOCK_THREAD);
-  CHECK(nanos_since_thread_started != 0);
-  return ThreadTicks(ZxTimeToMicroseconds(nanos_since_thread_started));
+// ThreadTicks ----------------------------------------------------------------
+
+namespace subtle {
+ThreadTicks ThreadTicksNowIgnoringOverride() {
+  zx_time_t nanos_since_thread_started;
+  zx_status_t status =
+      zx_clock_get(ZX_CLOCK_THREAD, &nanos_since_thread_started);
+  ZX_CHECK(status == ZX_OK, status);
+  DCHECK(nanos_since_thread_started != 0);
+  return ThreadTicks() + TimeDelta::FromNanoseconds(nanos_since_thread_started);
 }
+}  // namespace subtle
 
 }  // namespace base

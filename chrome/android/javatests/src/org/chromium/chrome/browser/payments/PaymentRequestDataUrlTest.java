@@ -14,25 +14,20 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /** Web payments test for data URL.  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestDataUrlTest implements MainActivityStartCallback {
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule = new PaymentRequestTestRule(
             "data:text/html,<html><head>"
                     + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, "
                     + "maximum-scale=1\"></head><body><button id=\"buy\" onclick=\"try { "
-                    + "(new PaymentRequest([{supportedMethods: ['basic-card']}], "
+                    + "(new PaymentRequest([{supportedMethods: 'basic-card'}], "
                     + "{total: {label: 'Total', "
                     + " amount: {currency: 'USD', value: '1.00'}}})).show(); "
                     + "} catch(e) { "
@@ -41,16 +36,14 @@ public class PaymentRequestDataUrlTest implements MainActivityStartCallback {
             this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {}
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {}
 
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void test() throws InterruptedException, ExecutionException, TimeoutException {
+    public void test() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.openPageAndClickNode("buy");
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"SecurityError: Failed to construct 'PaymentRequest': "
-                        + "Must be in a secure context"});
+                new String[] {"PaymentRequest is not defined"});
     }
 }

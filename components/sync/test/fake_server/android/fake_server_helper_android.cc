@@ -12,14 +12,16 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
+#include "base/time/time.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/base/time.h"
 #include "components/sync/engine/net/network_resources.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "components/sync/test/fake_server/bookmark_entity_builder.h"
 #include "components/sync/test/fake_server/fake_server.h"
+#include "components/sync/test/fake_server/fake_server_jni/FakeServerHelper_jni.h"
 #include "components/sync/test/fake_server/fake_server_network_resources.h"
 #include "components/sync/test/fake_server/fake_server_verifier.h"
-#include "jni/FakeServerHelper_jni.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -89,9 +91,8 @@ jboolean FakeServerHelperAndroid::VerifySessions(
     jlong fake_server,
     const JavaParamRef<jobjectArray>& url_array) {
   std::multiset<std::string> tab_urls;
-  for (int i = 0; i < env->GetArrayLength(url_array); i++) {
-    jstring s = (jstring)env->GetObjectArrayElement(url_array, i);
-    tab_urls.insert(base::android::ConvertJavaStringToUTF8(env, s));
+  for (auto j_string : url_array.ReadElements<jstring>()) {
+    tab_urls.insert(base::android::ConvertJavaStringToUTF8(env, j_string));
   }
   fake_server::SessionsHierarchy expected_sessions;
   expected_sessions.AddWindow(tab_urls);
@@ -135,7 +136,8 @@ void FakeServerHelperAndroid::InjectUniqueClientEntity(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     jlong fake_server,
-    const JavaParamRef<jstring>& name,
+    const JavaParamRef<jstring>& non_unique_name,
+    const JavaParamRef<jstring>& client_tag,
     const JavaParamRef<jbyteArray>& serialized_entity_specifics) {
   fake_server::FakeServer* fake_server_ptr =
       reinterpret_cast<fake_server::FakeServer*>(fake_server);
@@ -144,10 +146,26 @@ void FakeServerHelperAndroid::InjectUniqueClientEntity(
   DeserializeEntitySpecifics(env, serialized_entity_specifics,
                              &entity_specifics);
 
+  int64_t now = syncer::TimeToProtoTime(base::Time::Now());
   fake_server_ptr->InjectEntity(
-      syncer::PersistentUniqueClientEntity::CreateFromEntitySpecifics(
-          base::android::ConvertJavaStringToUTF8(env, name), entity_specifics,
-          12345, 12345));
+      syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+          base::android::ConvertJavaStringToUTF8(env, non_unique_name),
+          base::android::ConvertJavaStringToUTF8(env, client_tag),
+          entity_specifics, /*creation_time=*/now, /*last_modified_time=*/now));
+}
+
+void FakeServerHelperAndroid::SetWalletData(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    jlong fake_server,
+    const base::android::JavaParamRef<jbyteArray>& serialized_entity) {
+  fake_server::FakeServer* fake_server_ptr =
+      reinterpret_cast<fake_server::FakeServer*>(fake_server);
+
+  sync_pb::SyncEntity entity;
+  DeserializeEntity(env, serialized_entity, &entity);
+
+  fake_server_ptr->SetWalletData({entity});
 }
 
 void FakeServerHelperAndroid::ModifyEntitySpecifics(
@@ -167,15 +185,24 @@ void FakeServerHelperAndroid::ModifyEntitySpecifics(
       base::android::ConvertJavaStringToUTF8(env, id), entity_specifics);
 }
 
+void FakeServerHelperAndroid::DeserializeEntity(JNIEnv* env,
+                                                jbyteArray serialized_entity,
+                                                sync_pb::SyncEntity* entity) {
+  int bytes_length = env->GetArrayLength(serialized_entity);
+  jbyte* bytes = env->GetByteArrayElements(serialized_entity, nullptr);
+  std::string string(reinterpret_cast<char*>(bytes), bytes_length);
+
+  if (!entity->ParseFromString(string))
+    NOTREACHED() << "Could not deserialize Entity";
+}
+
 void FakeServerHelperAndroid::DeserializeEntitySpecifics(
     JNIEnv* env,
-    jbyteArray serialized_entity_specifics,
+    const JavaParamRef<jbyteArray>& serialized_entity_specifics,
     sync_pb::EntitySpecifics* entity_specifics) {
-  int specifics_bytes_length = env->GetArrayLength(serialized_entity_specifics);
-  jbyte* specifics_bytes =
-      env->GetByteArrayElements(serialized_entity_specifics, nullptr);
-  std::string specifics_string(reinterpret_cast<char*>(specifics_bytes),
-                               specifics_bytes_length);
+  std::string specifics_string;
+  base::android::JavaByteArrayToString(env, serialized_entity_specifics,
+                                       &specifics_string);
 
   if (!entity_specifics->ParseFromString(specifics_string))
     NOTREACHED() << "Could not deserialize EntitySpecifics";
@@ -294,13 +321,12 @@ void FakeServerHelperAndroid::DeleteEntity(
     const JavaParamRef<jobject>& obj,
     jlong fake_server,
     const JavaParamRef<jstring>& id,
-    const base::android::JavaParamRef<jstring>& client_defined_unique_tag) {
+    const base::android::JavaParamRef<jstring>& client_tag_hash) {
   fake_server::FakeServer* fake_server_ptr =
       reinterpret_cast<fake_server::FakeServer*>(fake_server);
   std::string native_id = base::android::ConvertJavaStringToUTF8(env, id);
   fake_server_ptr->InjectEntity(syncer::PersistentTombstoneEntity::CreateNew(
-      native_id,
-      base::android::ConvertJavaStringToUTF8(env, client_defined_unique_tag)));
+      native_id, base::android::ConvertJavaStringToUTF8(env, client_tag_hash)));
 }
 
 void FakeServerHelperAndroid::ClearServerData(JNIEnv* env,

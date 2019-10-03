@@ -7,17 +7,18 @@
 #include <stddef.h>
 
 #include <memory>
+#include <set>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
+#include "build/build_config.h"
+#include "content/browser/bad_message.h"
+#include "content/browser/permissions/permission_controller_impl.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/permission_manager.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/common/content_features.h"
-#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom-shared.h"
 
 using blink::mojom::PermissionDescriptorPtr;
 using blink::mojom::PermissionName;
@@ -28,88 +29,89 @@ namespace content {
 
 namespace {
 
-PermissionType PermissionDescriptorToPermissionType(
-    const PermissionDescriptorPtr& descriptor) {
+bool PermissionDescriptorToPermissionType(
+    const PermissionDescriptorPtr& descriptor,
+    PermissionType* permission_type) {
   switch (descriptor->name) {
     case PermissionName::GEOLOCATION:
-      return PermissionType::GEOLOCATION;
+      *permission_type = PermissionType::GEOLOCATION;
+      return true;
     case PermissionName::NOTIFICATIONS:
-      return PermissionType::NOTIFICATIONS;
+      *permission_type = PermissionType::NOTIFICATIONS;
+      return true;
     case PermissionName::MIDI: {
       if (descriptor->extension && descriptor->extension->is_midi() &&
           descriptor->extension->get_midi()->sysex) {
-        return PermissionType::MIDI_SYSEX;
+        *permission_type = PermissionType::MIDI_SYSEX;
+        return true;
       }
-      return PermissionType::MIDI;
+      *permission_type = PermissionType::MIDI;
+      return true;
     }
     case PermissionName::PROTECTED_MEDIA_IDENTIFIER:
-      return PermissionType::PROTECTED_MEDIA_IDENTIFIER;
+#if defined(ENABLE_PROTECTED_MEDIA_IDENTIFIER_PERMISSION)
+      *permission_type = PermissionType::PROTECTED_MEDIA_IDENTIFIER;
+      return true;
+#else
+      NOTIMPLEMENTED();
+      return false;
+#endif  // defined(ENABLE_PROTECTED_MEDIA_IDENTIFIER_PERMISSION)
     case PermissionName::DURABLE_STORAGE:
-      return PermissionType::DURABLE_STORAGE;
+      *permission_type = PermissionType::DURABLE_STORAGE;
+      return true;
     case PermissionName::AUDIO_CAPTURE:
-      return PermissionType::AUDIO_CAPTURE;
+      *permission_type = PermissionType::AUDIO_CAPTURE;
+      return true;
     case PermissionName::VIDEO_CAPTURE:
-      return PermissionType::VIDEO_CAPTURE;
+      *permission_type = PermissionType::VIDEO_CAPTURE;
+      return true;
     case PermissionName::BACKGROUND_SYNC:
-      return PermissionType::BACKGROUND_SYNC;
+      *permission_type = PermissionType::BACKGROUND_SYNC;
+      return true;
     case PermissionName::SENSORS:
-      return PermissionType::SENSORS;
+      *permission_type = PermissionType::SENSORS;
+      return true;
     case PermissionName::ACCESSIBILITY_EVENTS:
-      return PermissionType::ACCESSIBILITY_EVENTS;
+      *permission_type = PermissionType::ACCESSIBILITY_EVENTS;
+      return true;
     case PermissionName::CLIPBOARD_READ:
-      return PermissionType::CLIPBOARD_READ;
+      *permission_type = PermissionType::CLIPBOARD_READ;
+      return true;
     case PermissionName::CLIPBOARD_WRITE:
-      return PermissionType::CLIPBOARD_WRITE;
+      *permission_type = PermissionType::CLIPBOARD_WRITE;
+      return true;
+    case PermissionName::PAYMENT_HANDLER:
+      *permission_type = PermissionType::PAYMENT_HANDLER;
+      return true;
+    case PermissionName::BACKGROUND_FETCH:
+      *permission_type = PermissionType::BACKGROUND_FETCH;
+      return true;
+    case PermissionName::IDLE_DETECTION:
+      *permission_type = PermissionType::IDLE_DETECTION;
+      return true;
+    case PermissionName::PERIODIC_BACKGROUND_SYNC:
+      *permission_type = PermissionType::PERIODIC_BACKGROUND_SYNC;
+      return true;
+    case PermissionName::WAKE_LOCK:
+      if (descriptor->extension && descriptor->extension->is_wake_lock()) {
+        switch (descriptor->extension->get_wake_lock()->type) {
+          case blink::mojom::WakeLockType::kScreen:
+            *permission_type = PermissionType::WAKE_LOCK_SCREEN;
+            break;
+          case blink::mojom::WakeLockType::kSystem:
+            *permission_type = PermissionType::WAKE_LOCK_SYSTEM;
+            break;
+          default:
+            NOTREACHED();
+            return false;
+        }
+        return true;
+      }
+      break;
   }
 
   NOTREACHED();
-  return PermissionType::NUM;
-}
-
-blink::FeaturePolicyFeature PermissionTypeToFeaturePolicyFeature(
-    PermissionType type) {
-  switch (type) {
-    case PermissionType::MIDI:
-    case PermissionType::MIDI_SYSEX:
-      return blink::FeaturePolicyFeature::kMidiFeature;
-    case PermissionType::GEOLOCATION:
-      return blink::FeaturePolicyFeature::kGeolocation;
-    case PermissionType::PROTECTED_MEDIA_IDENTIFIER:
-      return blink::FeaturePolicyFeature::kEncryptedMedia;
-    case PermissionType::AUDIO_CAPTURE:
-      return blink::FeaturePolicyFeature::kMicrophone;
-    case PermissionType::VIDEO_CAPTURE:
-      return blink::FeaturePolicyFeature::kCamera;
-    case PermissionType::NOTIFICATIONS:
-    case PermissionType::DURABLE_STORAGE:
-    case PermissionType::BACKGROUND_SYNC:
-    case PermissionType::FLASH:
-    case PermissionType::SENSORS:
-    case PermissionType::ACCESSIBILITY_EVENTS:
-    case PermissionType::CLIPBOARD_READ:
-    case PermissionType::CLIPBOARD_WRITE:
-    case PermissionType::NUM:
-      // These aren't exposed by feature policy.
-      return blink::FeaturePolicyFeature::kNotFound;
-  }
-
-  NOTREACHED();
-  return blink::FeaturePolicyFeature::kNotFound;
-}
-
-bool AllowedByFeaturePolicy(RenderFrameHost* rfh, PermissionType type) {
-  if (!base::FeatureList::IsEnabled(
-          features::kUseFeaturePolicyForPermissions)) {
-    // Default to ignoring the feature policy.
-    return true;
-  }
-
-  blink::FeaturePolicyFeature feature_policy_feature =
-      PermissionTypeToFeaturePolicyFeature(type);
-  if (feature_policy_feature == blink::FeaturePolicyFeature::kNotFound)
-    return true;
-
-  return rfh->IsFeatureEnabled(feature_policy_feature);
+  return false;
 }
 
 // This function allows the usage of the the multiple request map with single
@@ -127,88 +129,49 @@ class PermissionServiceImpl::PendingRequest {
  public:
   PendingRequest(std::vector<PermissionType> types,
                  RequestPermissionsCallback callback)
-      : types_(types),
-        callback_(std::move(callback)),
-        has_result_been_set_(types.size(), false),
-        results_(types.size(), PermissionStatus::DENIED) {}
+      : callback_(std::move(callback)), request_size_(types.size()) {}
 
   ~PendingRequest() {
     if (callback_.is_null())
       return;
 
-    std::vector<PermissionStatus> result(types_.size(),
-                                         PermissionStatus::DENIED);
-    std::move(callback_).Run(result);
+    std::move(callback_).Run(
+        std::vector<PermissionStatus>(request_size_, PermissionStatus::DENIED));
   }
 
   int id() const { return id_; }
   void set_id(int id) { id_ = id; }
 
-  size_t RequestSize() const { return types_.size(); }
-
-  void SetResult(int index, PermissionStatus result) {
-    DCHECK_EQ(false, has_result_been_set_[index]);
-    has_result_been_set_[index] = true;
-    results_[index] = result;
-  }
-
-  bool HasResultBeenSet(size_t index) const {
-    return has_result_been_set_[index];
-  }
-
-  void RunCallback() {
-    // Check that all results have been set.
-    DCHECK(std::find(has_result_been_set_.begin(), has_result_been_set_.end(),
-                     false) == has_result_been_set_.end());
-    std::move(callback_).Run(results_);
+  void RunCallback(const std::vector<PermissionStatus>& results) {
+    std::move(callback_).Run(results);
   }
 
  private:
-  // Request ID received from the PermissionManager.
+  // Request ID received from the PermissionController.
   int id_;
-  std::vector<PermissionType> types_;
   RequestPermissionsCallback callback_;
-
-  std::vector<bool> has_result_been_set_;
-  std::vector<PermissionStatus> results_;
+  size_t request_size_;
 };
 
-PermissionServiceImpl::PermissionServiceImpl(PermissionServiceContext* context)
-    : context_(context), weak_factory_(this) {}
+PermissionServiceImpl::PermissionServiceImpl(PermissionServiceContext* context,
+                                             const url::Origin& origin)
+    : context_(context), origin_(origin) {}
 
-PermissionServiceImpl::~PermissionServiceImpl() {
-  BrowserContext* browser_context = context_->GetBrowserContext();
-  if (!browser_context)
-    return;
-
-  PermissionManager* permission_manager =
-      browser_context->GetPermissionManager();
-  if (!permission_manager)
-    return;
-
-  // Cancel pending requests.
-  for (RequestsMap::Iterator<PendingRequest> it(&pending_requests_);
-       !it.IsAtEnd(); it.Advance()) {
-    permission_manager->CancelPermissionRequest(it.GetCurrentValue()->id());
-  }
-  pending_requests_.Clear();
-}
+PermissionServiceImpl::~PermissionServiceImpl() {}
 
 void PermissionServiceImpl::RequestPermission(
     PermissionDescriptorPtr permission,
-    const url::Origin& origin,
     bool user_gesture,
     PermissionStatusCallback callback) {
   std::vector<PermissionDescriptorPtr> permissions;
   permissions.push_back(std::move(permission));
-  RequestPermissions(std::move(permissions), origin, user_gesture,
+  RequestPermissions(std::move(permissions), user_gesture,
                      base::BindOnce(&PermissionRequestResponseCallbackWrapper,
-                                    base::Passed(&callback)));
+                                    std::move(callback)));
 }
 
 void PermissionServiceImpl::RequestPermissions(
     std::vector<PermissionDescriptorPtr> permissions,
-    const url::Origin& origin,
     bool user_gesture,
     RequestPermissionsCallback callback) {
   // This condition is valid if the call is coming from a ChildThread instead of
@@ -222,36 +185,40 @@ void PermissionServiceImpl::RequestPermissions(
   if (!browser_context)
     return;
 
-  if (!context_->render_frame_host() ||
-      !browser_context->GetPermissionManager()) {
+  if (!context_->render_frame_host()) {
     std::vector<PermissionStatus> result(permissions.size());
     for (size_t i = 0; i < permissions.size(); ++i)
-      result[i] = GetPermissionStatus(permissions[i], origin);
+      result[i] = GetPermissionStatus(permissions[i]);
     std::move(callback).Run(result);
     return;
   }
 
   std::vector<PermissionType> types(permissions.size());
-  for (size_t i = 0; i < types.size(); ++i)
-    types[i] = PermissionDescriptorToPermissionType(permissions[i]);
+  std::set<PermissionType> duplicates_check;
+  for (size_t i = 0; i < types.size(); ++i) {
+    if (!PermissionDescriptorToPermissionType(permissions[i], &types[i])) {
+      ReceivedBadMessage();
+      return;
+    }
+    // Each permission should appear at most once in the message.
+    bool inserted = duplicates_check.insert(types[i]).second;
+    if (!inserted) {
+      ReceivedBadMessage();
+      return;
+    }
+  }
 
   std::unique_ptr<PendingRequest> pending_request =
       std::make_unique<PendingRequest>(types, std::move(callback));
-  std::vector<PermissionType> request_types;
-  for (size_t i = 0; i < types.size(); ++i) {
-    // Check feature policy.
-    if (!AllowedByFeaturePolicy(context_->render_frame_host(), types[i]))
-      pending_request->SetResult(i, PermissionStatus::DENIED);
-    else
-      request_types.push_back(types[i]);
-  }
 
   int pending_request_id = pending_requests_.Add(std::move(pending_request));
-  int id = browser_context->GetPermissionManager()->RequestPermissions(
-      request_types, context_->render_frame_host(), origin.GetURL(),
-      user_gesture,
-      base::Bind(&PermissionServiceImpl::OnRequestPermissionsResponse,
-                 weak_factory_.GetWeakPtr(), pending_request_id));
+  int id =
+      PermissionControllerImpl::FromBrowserContext(browser_context)
+          ->RequestPermissions(
+              types, context_->render_frame_host(), origin_.GetURL(),
+              user_gesture,
+              base::Bind(&PermissionServiceImpl::OnRequestPermissionsResponse,
+                         weak_factory_.GetWeakPtr(), pending_request_id));
 
   // Check if the request still exists. It may have been removed by the
   // the response callback.
@@ -264,40 +231,26 @@ void PermissionServiceImpl::RequestPermissions(
 
 void PermissionServiceImpl::OnRequestPermissionsResponse(
     int pending_request_id,
-    const std::vector<PermissionStatus>& partial_result) {
+    const std::vector<PermissionStatus>& results) {
   PendingRequest* request = pending_requests_.Lookup(pending_request_id);
-  auto partial_result_it = partial_result.begin();
-  // Fill in the unset results in the request. Some results in the request are
-  // set synchronously because they are blocked by feature policy. Others are
-  // determined by a call to RequestPermission. All unset results will be
-  // contained in |partial_result| in the same order that they were requested.
-  // We fill in the unset results in the request with |partial_result|.
-  for (size_t i = 0; i < request->RequestSize(); ++i) {
-    if (!request->HasResultBeenSet(i)) {
-      request->SetResult(i, *partial_result_it);
-      ++partial_result_it;
-    }
-  }
-  DCHECK(partial_result.end() == partial_result_it);
-
-  request->RunCallback();
+  request->RunCallback(results);
   pending_requests_.Remove(pending_request_id);
 }
 
 void PermissionServiceImpl::HasPermission(PermissionDescriptorPtr permission,
-                                          const url::Origin& origin,
                                           PermissionStatusCallback callback) {
-  std::move(callback).Run(GetPermissionStatus(permission, origin));
+  std::move(callback).Run(GetPermissionStatus(permission));
 }
 
 void PermissionServiceImpl::RevokePermission(
     PermissionDescriptorPtr permission,
-    const url::Origin& origin,
     PermissionStatusCallback callback) {
-  PermissionType permission_type =
-      PermissionDescriptorToPermissionType(permission);
-  PermissionStatus status =
-      GetPermissionStatusFromType(permission_type, origin);
+  PermissionType permission_type;
+  if (!PermissionDescriptorToPermissionType(permission, &permission_type)) {
+    ReceivedBadMessage();
+    return;
+  }
+  PermissionStatus status = GetPermissionStatusFromType(permission_type);
 
   // Resetting the permission should only be possible if the permission is
   // already granted.
@@ -306,72 +259,82 @@ void PermissionServiceImpl::RevokePermission(
     return;
   }
 
-  ResetPermissionStatus(permission_type, origin);
+  ResetPermissionStatus(permission_type);
 
-  std::move(callback).Run(GetPermissionStatusFromType(permission_type, origin));
+  std::move(callback).Run(GetPermissionStatusFromType(permission_type));
 }
 
 void PermissionServiceImpl::AddPermissionObserver(
     PermissionDescriptorPtr permission,
-    const url::Origin& origin,
     PermissionStatus last_known_status,
     PermissionObserverPtr observer) {
-  PermissionStatus current_status = GetPermissionStatus(permission, origin);
+  PermissionStatus current_status = GetPermissionStatus(permission);
   if (current_status != last_known_status) {
     observer->OnPermissionStatusChange(current_status);
     last_known_status = current_status;
   }
 
-  context_->CreateSubscription(PermissionDescriptorToPermissionType(permission),
-                               origin, std::move(observer));
+  PermissionType type;
+  if (!PermissionDescriptorToPermissionType(permission, &type)) {
+    ReceivedBadMessage();
+    return;
+  }
+
+  context_->CreateSubscription(type, origin_, std::move(observer));
 }
 
 PermissionStatus PermissionServiceImpl::GetPermissionStatus(
-    const PermissionDescriptorPtr& permission,
-    const url::Origin& origin) {
-  return GetPermissionStatusFromType(
-      PermissionDescriptorToPermissionType(permission), origin);
+    const PermissionDescriptorPtr& permission) {
+  PermissionType type;
+  if (!PermissionDescriptorToPermissionType(permission, &type)) {
+    ReceivedBadMessage();
+    return PermissionStatus::DENIED;
+  }
+  return GetPermissionStatusFromType(type);
 }
 
 PermissionStatus PermissionServiceImpl::GetPermissionStatusFromType(
-    PermissionType type,
-    const url::Origin& origin) {
+    PermissionType type) {
   BrowserContext* browser_context = context_->GetBrowserContext();
   if (!browser_context)
     return PermissionStatus::DENIED;
 
-  if (!browser_context->GetPermissionManager())
-    return PermissionStatus::DENIED;
-
-  // If there is no frame (i.e. this is a worker) ignore the feature policy.
-  if (context_->render_frame_host() &&
-      !AllowedByFeaturePolicy(context_->render_frame_host(), type)) {
-    return PermissionStatus::DENIED;
+  GURL requesting_origin(origin_.GetURL());
+  if (context_->render_frame_host()) {
+    return BrowserContext::GetPermissionController(browser_context)
+        ->GetPermissionStatusForFrame(type, context_->render_frame_host(),
+                                      requesting_origin);
   }
 
-  GURL requesting_origin(origin.Serialize());
-  // If the embedding_origin is empty we'll use |origin| instead.
-  GURL embedding_origin = context_->GetEmbeddingOrigin();
-  return browser_context->GetPermissionManager()->GetPermissionStatus(
-      type, requesting_origin,
-      embedding_origin.is_empty() ? requesting_origin : embedding_origin);
+  DCHECK(context_->GetEmbeddingOrigin().is_empty());
+  return BrowserContext::GetPermissionController(browser_context)
+      ->GetPermissionStatus(type, requesting_origin, requesting_origin);
 }
 
-void PermissionServiceImpl::ResetPermissionStatus(PermissionType type,
-                                                  const url::Origin& origin) {
+void PermissionServiceImpl::ResetPermissionStatus(PermissionType type) {
   BrowserContext* browser_context = context_->GetBrowserContext();
   if (!browser_context)
     return;
 
-  if (!browser_context->GetPermissionManager())
-    return;
-
-  GURL requesting_origin(origin.Serialize());
-  // If the embedding_origin is empty we'll use |origin| instead.
+  GURL requesting_origin(origin_.GetURL());
+  // If the embedding_origin is empty we'll use |origin_| instead.
   GURL embedding_origin = context_->GetEmbeddingOrigin();
-  browser_context->GetPermissionManager()->ResetPermission(
-      type, requesting_origin,
-      embedding_origin.is_empty() ? requesting_origin : embedding_origin);
+  PermissionControllerImpl::FromBrowserContext(browser_context)
+      ->ResetPermission(
+          type, requesting_origin,
+          embedding_origin.is_empty() ? requesting_origin : embedding_origin);
+}
+
+void PermissionServiceImpl::ReceivedBadMessage() {
+  if (context_->render_frame_host()) {
+    bad_message::ReceivedBadMessage(
+        context_->render_frame_host()->GetProcess(),
+        bad_message::PERMISSION_SERVICE_BAD_PERMISSION_DESCRIPTOR);
+  } else {
+    bad_message::ReceivedBadMessage(
+        context_->render_process_host(),
+        bad_message::PERMISSION_SERVICE_BAD_PERMISSION_DESCRIPTOR);
+  }
 }
 
 }  // namespace content

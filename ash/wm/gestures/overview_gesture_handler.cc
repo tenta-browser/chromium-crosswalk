@@ -4,8 +4,11 @@
 
 #include "ash/wm/gestures/overview_gesture_handler.h"
 
+#include "ash/public/cpp/ash_features.h"
 #include "ash/shell.h"
-#include "ash/wm/overview/window_selector_controller.h"
+#include "ash/wm/desks/desks_controller.h"
+#include "ash/wm/desks/desks_histogram_enums.h"
+#include "ash/wm/overview/overview_controller.h"
 #include "base/metrics/user_metrics.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -19,13 +22,15 @@ const float OverviewGestureHandler::vertical_threshold_pixels_ = 300;
 // three-finger scroll.
 const float OverviewGestureHandler::horizontal_threshold_pixels_ = 330;
 
-OverviewGestureHandler::OverviewGestureHandler() : scroll_x_(0), scroll_y_(0) {}
+OverviewGestureHandler::OverviewGestureHandler() = default;
 
 OverviewGestureHandler::~OverviewGestureHandler() = default;
 
 bool OverviewGestureHandler::ProcessScrollEvent(const ui::ScrollEvent& event) {
+  const int finger_count = event.finger_count();
   if (event.type() == ui::ET_SCROLL_FLING_START ||
-      event.type() == ui::ET_SCROLL_FLING_CANCEL || event.finger_count() != 3) {
+      event.type() == ui::ET_SCROLL_FLING_CANCEL ||
+      (finger_count != 3 && finger_count != 4)) {
     scroll_x_ = scroll_y_ = 0;
     return false;
   }
@@ -33,12 +38,33 @@ bool OverviewGestureHandler::ProcessScrollEvent(const ui::ScrollEvent& event) {
   scroll_x_ += event.x_offset();
   scroll_y_ += event.y_offset();
 
-  WindowSelectorController* window_selector_controller =
-      Shell::Get()->window_selector_controller();
+  // Horizontal 4-finger scroll switches desks if possible.
+  if (finger_count == 4) {
+    if (!features::IsVirtualDesksEnabled())
+      return false;
+
+    if (std::fabs(scroll_x_) < std::fabs(scroll_y_))
+      return false;
+
+    if (std::fabs(scroll_x_) < horizontal_threshold_pixels_)
+      return false;
+
+    const bool going_left = scroll_x_ > 0;
+    scroll_x_ = scroll_y_ = 0;
+
+    // This does not invert if the user changes their touchpad settings
+    // currently. The scroll works Australian way (scroll left to go to the
+    // desk on the right and vice versa).
+    DesksController::Get()->ActivateAdjacentDesk(
+        going_left, DesksSwitchSource::kDeskSwitchTouchpad);
+    return true;
+  }
+
+  OverviewController* overview_controller = Shell::Get()->overview_controller();
 
   // Horizontal 3-finger scroll moves selection when already in overview mode.
   if (std::fabs(scroll_x_) >= std::fabs(scroll_y_)) {
-    if (!window_selector_controller->IsSelecting()) {
+    if (!overview_controller->InOverviewSession()) {
       scroll_x_ = scroll_y_ = 0;
       return false;
     }
@@ -47,12 +73,12 @@ bool OverviewGestureHandler::ProcessScrollEvent(const ui::ScrollEvent& event) {
 
     const int increment = scroll_x_ > 0 ? 1 : -1;
     scroll_x_ = scroll_y_ = 0;
-    window_selector_controller->IncrementSelection(increment);
+    overview_controller->IncrementSelection(increment);
     return true;
   }
 
   // Use vertical 3-finger scroll gesture up to enter overview, down to exit.
-  if (window_selector_controller->IsSelecting()) {
+  if (overview_controller->InOverviewSession()) {
     if (scroll_y_ < 0)
       scroll_x_ = scroll_y_ = 0;
     if (scroll_y_ < vertical_threshold_pixels_)
@@ -67,11 +93,13 @@ bool OverviewGestureHandler::ProcessScrollEvent(const ui::ScrollEvent& event) {
   // Reset scroll amount on toggling.
   scroll_x_ = scroll_y_ = 0;
   base::RecordAction(base::UserMetricsAction("Touchpad_Gesture_Overview"));
-  if (window_selector_controller->IsSelecting() &&
-      window_selector_controller->AcceptSelection()) {
-    return true;
+  if (overview_controller->InOverviewSession()) {
+    if (overview_controller->AcceptSelection())
+      return true;
+    overview_controller->EndOverview();
+  } else {
+    overview_controller->StartOverview();
   }
-  window_selector_controller->ToggleOverview();
   return true;
 }
 

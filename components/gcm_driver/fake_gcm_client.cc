@@ -65,8 +65,7 @@ FakeGCMClient::FakeGCMClient(
       start_mode_(DELAYED_START),
       start_mode_overridding_(RESPECT_START_MODE),
       ui_thread_(ui_thread),
-      io_thread_(io_thread),
-      weak_ptr_factory_(this) {}
+      io_thread_(io_thread) {}
 
 FakeGCMClient::~FakeGCMClient() {
 }
@@ -75,8 +74,12 @@ void FakeGCMClient::Initialize(
     const ChromeBuildInfo& chrome_build_info,
     const base::FilePath& store_path,
     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
-    const scoped_refptr<net::URLRequestContextGetter>&
-        url_request_context_getter,
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+    base::RepeatingCallback<
+        void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+        get_socket_factory_callback,
+    const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
+    network::NetworkConnectionTracker* network_connection_tracker,
     std::unique_ptr<Encryptor> encryptor,
     Delegate* delegate) {
   product_category_for_subtypes_ =
@@ -104,7 +107,7 @@ void FakeGCMClient::DoStart() {
   started_ = true;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&FakeGCMClient::Started, weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&FakeGCMClient::Started, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FakeGCMClient::Stop() {
@@ -114,7 +117,7 @@ void FakeGCMClient::Stop() {
 }
 
 void FakeGCMClient::Register(
-    const linked_ptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
 
   std::string registration_id;
@@ -135,24 +138,25 @@ void FakeGCMClient::Register(
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakeGCMClient::RegisterFinished,
-                            weak_ptr_factory_.GetWeakPtr(), registration_info,
-                            registration_id));
+      FROM_HERE, base::BindOnce(&FakeGCMClient::RegisterFinished,
+                                weak_ptr_factory_.GetWeakPtr(),
+                                std::move(registration_info), registration_id));
 }
 
 bool FakeGCMClient::ValidateRegistration(
-    const linked_ptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     const std::string& registration_id) {
   return true;
 }
 
 void FakeGCMClient::Unregister(
-    const linked_ptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakeGCMClient::UnregisterFinished,
-                            weak_ptr_factory_.GetWeakPtr(), registration_info));
+      FROM_HERE,
+      base::BindOnce(&FakeGCMClient::UnregisterFinished,
+                     weak_ptr_factory_.GetWeakPtr(), registration_info));
 }
 
 void FakeGCMClient::Send(const std::string& app_id,
@@ -161,8 +165,9 @@ void FakeGCMClient::Send(const std::string& app_id,
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakeGCMClient::SendFinished,
-                            weak_ptr_factory_.GetWeakPtr(), app_id, message));
+      FROM_HERE,
+      base::BindOnce(&FakeGCMClient::SendFinished,
+                     weak_ptr_factory_.GetWeakPtr(), app_id, message));
 }
 
 void FakeGCMClient::RecordDecryptionFailure(const std::string& app_id,
@@ -200,7 +205,8 @@ void FakeGCMClient::RemoveAccountMapping(const std::string& account_id) {
 void FakeGCMClient::SetLastTokenFetchTime(const base::Time& time) {
 }
 
-void FakeGCMClient::UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) {}
+void FakeGCMClient::UpdateHeartbeatTimer(
+    std::unique_ptr<base::RetainingOneShotTimer> timer) {}
 
 void FakeGCMClient::AddInstanceIDData(const std::string& app_id,
                                       const std::string& instance_id,
@@ -238,7 +244,7 @@ void FakeGCMClient::PerformDelayedStart() {
 
   io_thread_->PostTask(
       FROM_HERE,
-      base::Bind(&FakeGCMClient::DoStart, weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&FakeGCMClient::DoStart, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FakeGCMClient::ReceiveMessage(const std::string& app_id,
@@ -247,20 +253,16 @@ void FakeGCMClient::ReceiveMessage(const std::string& app_id,
 
   io_thread_->PostTask(
       FROM_HERE,
-      base::Bind(&FakeGCMClient::MessageReceived,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 app_id,
-                 message));
+      base::BindOnce(&FakeGCMClient::MessageReceived,
+                     weak_ptr_factory_.GetWeakPtr(), app_id, message));
 }
 
 void FakeGCMClient::DeleteMessages(const std::string& app_id) {
   DCHECK(ui_thread_->RunsTasksInCurrentSequence());
 
-  io_thread_->PostTask(
-      FROM_HERE,
-      base::Bind(&FakeGCMClient::MessagesDeleted,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 app_id));
+  io_thread_->PostTask(FROM_HERE,
+                       base::BindOnce(&FakeGCMClient::MessagesDeleted,
+                                      weak_ptr_factory_.GetWeakPtr(), app_id));
 }
 
 void FakeGCMClient::Started() {
@@ -269,17 +271,16 @@ void FakeGCMClient::Started() {
 }
 
 void FakeGCMClient::RegisterFinished(
-    const linked_ptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     const std::string& registrion_id) {
-  delegate_->OnRegisterFinished(
-      registration_info,
-      registrion_id,
-      registrion_id.empty() ? SERVER_ERROR : SUCCESS);
+  delegate_->OnRegisterFinished(std::move(registration_info), registrion_id,
+                                registrion_id.empty() ? SERVER_ERROR : SUCCESS);
 }
 
 void FakeGCMClient::UnregisterFinished(
-    const linked_ptr<RegistrationInfo>& registration_info) {
-  delegate_->OnUnregisterFinished(registration_info, GCMClient::SUCCESS);
+    scoped_refptr<RegistrationInfo> registration_info) {
+  delegate_->OnUnregisterFinished(std::move(registration_info),
+                                  GCMClient::SUCCESS);
 }
 
 void FakeGCMClient::SendFinished(const std::string& app_id,
@@ -294,14 +295,15 @@ void FakeGCMClient::SendFinished(const std::string& app_id,
     send_error_details.additional_data = message.data;
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&FakeGCMClient::MessageSendError,
-                   weak_ptr_factory_.GetWeakPtr(), app_id, send_error_details),
+        base::BindOnce(&FakeGCMClient::MessageSendError,
+                       weak_ptr_factory_.GetWeakPtr(), app_id,
+                       send_error_details),
         base::TimeDelta::FromMilliseconds(200));
   } else if(message.id.find("ack") != std::string::npos) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&FakeGCMClient::SendAcknowledgement,
-                   weak_ptr_factory_.GetWeakPtr(), app_id, message.id),
+        base::BindOnce(&FakeGCMClient::SendAcknowledgement,
+                       weak_ptr_factory_.GetWeakPtr(), app_id, message.id),
         base::TimeDelta::FromMilliseconds(200));
   }
 }

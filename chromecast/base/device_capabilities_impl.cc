@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromecast/base/serializers.h"
@@ -64,13 +65,13 @@ std::unique_ptr<DeviceCapabilities> DeviceCapabilities::Create() {
 std::unique_ptr<DeviceCapabilities> DeviceCapabilities::CreateForTesting() {
   DeviceCapabilities* capabilities = new DeviceCapabilitiesImpl;
   capabilities->SetCapability(kKeyBluetoothSupported,
-                              base::MakeUnique<base::Value>(false));
+                              std::make_unique<base::Value>(false));
   capabilities->SetCapability(kKeyDisplaySupported,
-                              base::MakeUnique<base::Value>(true));
+                              std::make_unique<base::Value>(true));
   capabilities->SetCapability(kKeyHiResAudioSupported,
-                              base::MakeUnique<base::Value>(false));
+                              std::make_unique<base::Value>(false));
   capabilities->SetCapability(kKeyAssistantSupported,
-                              base::MakeUnique<base::Value>(true));
+                              std::make_unique<base::Value>(true));
   return base::WrapUnique(capabilities);
 }
 
@@ -103,16 +104,13 @@ void DeviceCapabilities::Validator::SetPrivateValidatedValue(
 
 DeviceCapabilities::Data::Data()
     : dictionary_(new base::DictionaryValue),
-      json_string_(SerializeToJson(*dictionary_)) {
-  DCHECK(json_string_.get());
-}
+      json_string_(*SerializeToJson(*dictionary_)) {}
 
 DeviceCapabilities::Data::Data(
     std::unique_ptr<const base::DictionaryValue> dictionary)
     : dictionary_(std::move(dictionary)),
-      json_string_(SerializeToJson(*dictionary_)) {
+      json_string_(*SerializeToJson(*dictionary_)) {
   DCHECK(dictionary_.get());
-  DCHECK(json_string_.get());
 }
 
 DeviceCapabilitiesImpl::Data::~Data() {}
@@ -148,7 +146,14 @@ DeviceCapabilitiesImpl::DeviceCapabilitiesImpl()
 
 DeviceCapabilitiesImpl::~DeviceCapabilitiesImpl() {
   // Make sure that any registered Validators have unregistered at this point
-  DCHECK(validator_map_.empty());
+  DCHECK(validator_map_.empty())
+      << "Some validators weren't properly unregistered: " << [this] {
+           std::vector<std::string> keys;
+           for (const auto& pair : validator_map_) {
+             keys.push_back(pair.first);
+           }
+           return base::JoinString(keys, ", ");
+         }();
   // Make sure that all observers have been removed at this point
   observer_list_->AssertEmpty();
 }
@@ -161,7 +166,7 @@ void DeviceCapabilitiesImpl::Register(const std::string& key,
   base::AutoLock auto_lock(validation_lock_);
   // Check that a validator has not already been registered for this key
   DCHECK_EQ(0u, validator_map_.count(key));
-  validator_map_[key] = base::MakeUnique<ValidatorInfo>(validator);
+  validator_map_[key] = std::make_unique<ValidatorInfo>(validator);
 }
 
 void DeviceCapabilitiesImpl::Unregister(const std::string& key,
@@ -337,7 +342,7 @@ void DeviceCapabilitiesImpl::SetPublicValidatedValue(
       public_data_->dictionary().Get(path, &cur_value) &&
       cur_value->Equals(new_value.get());
   if (capability_unchanged) {
-    VLOG(1) << "Ignoring unchanged public capability: " << path;
+    DVLOG(1) << "Ignoring unchanged public capability: " << path;
     return;
   }
 
@@ -396,7 +401,7 @@ void DeviceCapabilitiesImpl::SetPrivateValidatedValue(
   bool capability_unchanged = all_data_->dictionary().Get(path, &cur_value) &&
                               cur_value->Equals(new_value.get());
   if (capability_unchanged) {
-    VLOG(1) << "Ignoring unchanged capability: " << path;
+    DVLOG(1) << "Ignoring unchanged capability: " << path;
     return;
   }
 

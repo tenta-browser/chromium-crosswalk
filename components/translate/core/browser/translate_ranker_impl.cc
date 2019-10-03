@@ -5,13 +5,15 @@
 #include "components/translate/core/browser/translate_ranker_impl.h"
 
 #include <cmath>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/strings/string_util.h"
@@ -27,6 +29,7 @@
 #include "components/variations/variations_associated_data.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/metrics_proto/translate_event.pb.h"
 #include "url/gurl.h"
 
@@ -79,6 +82,10 @@ RankerModelStatus ValidateModel(const RankerModel& model) {
 const char kDefaultTranslateRankerModelURL[] =
     "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/"
     "translate/android/translate_ranker_model_android_20170918.pb.bin";
+#elif defined(USE_AURA)
+const char kDefaultTranslateRankerModelURL[] =
+    "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/"
+    "translate/2017/03/translate_ranker_model_20170329.pb.bin";
 #else
 const char kDefaultTranslateRankerModelURL[] =
     "https://www.gstatic.com/chrome/intelligence/assist/ranker/models/"
@@ -91,7 +98,7 @@ const base::Feature kTranslateRankerEnforcement{
     "TranslateRankerEnforcement", base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kTranslateRankerAutoBlacklistOverride{
-    "TranslateRankerAutoBlacklistOverride", base::FEATURE_DISABLED_BY_DEFAULT};
+    "TranslateRankerAutoBlacklistOverride", base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kTranslateRankerPreviousLanguageMatchesOverride{
     "TranslateRankerPreviousLanguageMatchesOverride",
@@ -157,15 +164,14 @@ TranslateRankerImpl::TranslateRankerImpl(const base::FilePath& model_path,
           translate::kTranslateRankerAutoBlacklistOverride)),
       is_previous_language_matches_override_enabled_(
           base::FeatureList::IsEnabled(
-              translate::kTranslateRankerPreviousLanguageMatchesOverride)),
-      weak_ptr_factory_(this) {
+              translate::kTranslateRankerPreviousLanguageMatchesOverride)) {
   if (is_query_enabled_ || is_enforcement_enabled_) {
-    model_loader_ = base::MakeUnique<assist_ranker::RankerModelLoaderImpl>(
+    model_loader_ = std::make_unique<assist_ranker::RankerModelLoaderImpl>(
         base::Bind(&ValidateModel),
         base::Bind(&TranslateRankerImpl::OnModelAvailable,
                    weak_ptr_factory_.GetWeakPtr()),
-        TranslateDownloadManager::GetInstance()->request_context(), model_path,
-        model_url, kUmaPrefix);
+        TranslateDownloadManager::GetInstance()->url_loader_factory(),
+        model_path, model_url, kUmaPrefix);
     // Kick off the initial load from cache.
     model_loader_->NotifyOfRankerActivity();
   }
@@ -315,16 +321,13 @@ void TranslateRankerImpl::FlushTranslateEvents(
 
 void TranslateRankerImpl::SendEventToUKM(
     const metrics::TranslateEventProto& event,
-    const GURL& url) {
+    ukm::SourceId ukm_source_id) {
   if (!ukm_recorder_) {
     DVLOG(3) << "No UKM service.";
     return;
   }
-  DVLOG(3) << "Sending event for url: " << url.spec();
-  ukm::SourceId source_id = ukm_recorder_->GetNewSourceID();
-  ukm_recorder_->UpdateSourceURL(source_id, url);
-  // TODO(hamelphi): Remove hashing functions once UKM accepts strings metrics.
-  ukm::builders::Translate(source_id)
+
+  ukm::builders::Translate(ukm_source_id)
       .SetSourceLanguage(base::HashMetricName(event.source_language()))
       .SetTargetLanguage(base::HashMetricName(event.target_language()))
       .SetCountry(base::HashMetricName(event.country()))
@@ -339,12 +342,12 @@ void TranslateRankerImpl::SendEventToUKM(
 
 void TranslateRankerImpl::AddTranslateEvent(
     const metrics::TranslateEventProto& event,
-    const GURL& url) {
+    ukm::SourceId ukm_source_id) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   if (is_logging_enabled_) {
     DVLOG(3) << "Adding translate ranker event.";
-    if (url.is_valid()) {
-      SendEventToUKM(event, url);
+    if (ukm_source_id != ukm::kInvalidSourceId) {
+      SendEventToUKM(event, ukm_source_id);
     }
     event_cache_.push_back(event);
   }
@@ -361,19 +364,19 @@ bool TranslateRankerImpl::CheckModelLoaderForTesting() {
 
 void TranslateRankerImpl::RecordTranslateEvent(
     int event_type,
-    const GURL& url,
+    ukm::SourceId ukm_source_id,
     metrics::TranslateEventProto* translate_event) {
   DCHECK(metrics::TranslateEventProto::EventType_IsValid(event_type));
   translate_event->set_event_type(
       static_cast<metrics::TranslateEventProto::EventType>(event_type));
   translate_event->set_event_timestamp_sec(
       (base::TimeTicks::Now() - base::TimeTicks()).InSeconds());
-  AddTranslateEvent(*translate_event, url);
+  AddTranslateEvent(*translate_event, ukm_source_id);
 }
 
 bool TranslateRankerImpl::ShouldOverrideDecision(
     int event_type,
-    const GURL& url,
+    ukm::SourceId ukm_source_id,
     metrics::TranslateEventProto* translate_event) {
   DCHECK(metrics::TranslateEventProto::EventType_IsValid(event_type));
   if ((event_type == metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE &&
@@ -386,7 +389,7 @@ bool TranslateRankerImpl::ShouldOverrideDecision(
     DVLOG(3) << "Overriding decision of type: " << event_type;
     return true;
   } else {
-    RecordTranslateEvent(event_type, url, translate_event);
+    RecordTranslateEvent(event_type, ukm_source_id, translate_event);
     return false;
   }
 }

@@ -6,28 +6,31 @@
 #define CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/macros.h"
 #include "base/optional.h"
+#include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/common/content_export.h"
-#include "services/network/public/cpp/url_loader_completion_status.h"
+#include "content/public/common/previews_state.h"
 
-class GURL;
+namespace net {
+class HttpRequestHeaders;
+}
 
 namespace content {
 
 class AppCacheNavigationHandle;
+class BrowserContext;
 class NavigationUIData;
 class NavigationURLLoaderDelegate;
 class NavigationURLLoaderFactory;
+class PrefetchedSignedExchangeCache;
 class ResourceContext;
 class ServiceWorkerNavigationHandle;
 class StoragePartition;
-class ThrottlingURLLoader;
 struct NavigationRequestInfo;
-struct ResourceRequest;
 
 // PlzNavigate: The navigation logic's UI thread entry point into the resource
 // loading stack. It exposes an interface to control the request prior to
@@ -44,13 +47,18 @@ class CONTENT_EXPORT NavigationURLLoader {
   // structure. Information like has_user_gesture and
   // should_replace_current_entry shouldn't be needed at this layer.
   static std::unique_ptr<NavigationURLLoader> Create(
+      BrowserContext* browser_context,
       ResourceContext* resource_context,
       StoragePartition* storage_partition,
       std::unique_ptr<NavigationRequestInfo> request_info,
       std::unique_ptr<NavigationUIData> navigation_ui_data,
       ServiceWorkerNavigationHandle* service_worker_handle,
       AppCacheNavigationHandle* appcache_handle,
-      NavigationURLLoaderDelegate* delegate);
+      scoped_refptr<PrefetchedSignedExchangeCache>
+          prefetched_signed_exchange_cache,
+      NavigationURLLoaderDelegate* delegate,
+      std::vector<std::unique_ptr<NavigationLoaderInterceptor>>
+          initial_interceptors = {});
 
   // For testing purposes; sets the factory for use in testing.
   static void SetFactoryForTesting(NavigationURLLoaderFactory* factory);
@@ -58,26 +66,15 @@ class CONTENT_EXPORT NavigationURLLoader {
   virtual ~NavigationURLLoader() {}
 
   // Called in response to OnRequestRedirected to continue processing the
-  // request.
-  virtual void FollowRedirect() = 0;
+  // request. |new_previews_state| will be updated for newly created URLLoaders,
+  // but the existing default URLLoader will not see |new_previews_state| unless
+  // the URLLoader happens to be reset.
+  virtual void FollowRedirect(const std::vector<std::string>& removed_headers,
+                              const net::HttpRequestHeaders& modified_headers,
+                              PreviewsState new_previews_state) = 0;
 
   // Called in response to OnResponseStarted to process the response.
   virtual void ProceedWithResponse() = 0;
-
-  // Callback to intercept the response from the URLLoader. Only used when
-  // network service is enabled. Args: the initial resource request,
-  // the URLLoader for sending the request, url chain, optional completion
-  // status if it has already been received.
-  using NavigationInterceptionCB = base::OnceCallback<void(
-      std::unique_ptr<ResourceRequest>,
-      std::unique_ptr<ThrottlingURLLoader>,
-      std::vector<GURL>,
-      base::Optional<network::URLLoaderCompletionStatus>)>;
-
-  // This method is called to intercept the url response. Caller is responsible
-  // for handling the URLLoader later on. The callback should be called on the
-  // same thread that URLLoader is constructed.
-  virtual void InterceptNavigation(NavigationInterceptionCB callback) = 0;
 
  protected:
   NavigationURLLoader() {}

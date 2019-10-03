@@ -4,6 +4,8 @@
 
 #include "components/arc/test/fake_intent_helper_instance.h"
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "base/bind.h"
@@ -65,18 +67,19 @@ void FakeIntentHelperInstance::HandleIntent(mojom::IntentInfoPtr intent,
 void FakeIntentHelperInstance::HandleUrl(const std::string& url,
                                          const std::string& package_name) {}
 
-void FakeIntentHelperInstance::HandleUrlList(
+void FakeIntentHelperInstance::HandleUrlListDeprecated(
     std::vector<mojom::UrlWithMimeTypePtr> urls,
     mojom::ActivityNamePtr activity,
     mojom::ActionType action) {}
 
 void FakeIntentHelperInstance::InitDeprecated(
     mojom::IntentHelperHostPtr host_ptr) {
-  Init(std::move(host_ptr), base::BindOnce(&base::DoNothing));
+  Init(std::move(host_ptr), base::DoNothing());
 }
 
 void FakeIntentHelperInstance::Init(mojom::IntentHelperHostPtr host_ptr,
                                     InitCallback callback) {
+  host_ = std::move(host_ptr);
   std::move(callback).Run();
 }
 
@@ -102,8 +105,7 @@ void FakeIntentHelperInstance::RequestIntentHandlerList(
   }
   // Post the reply to run asynchronously to match the real implementation.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(std::move(callback), base::Passed(std::move(handlers))));
+      FROM_HERE, base::BindOnce(std::move(callback), std::move(handlers)));
 }
 
 void FakeIntentHelperInstance::RequestUrlHandlerList(
@@ -119,6 +121,26 @@ void FakeIntentHelperInstance::SendBroadcast(const std::string& action,
                                              const std::string& cls,
                                              const std::string& extras) {
   broadcasts_.emplace_back(action, package_name, cls, extras);
+}
+
+void FakeIntentHelperInstance::ClassifySelectionDeprecated(
+    const std::string& text,
+    ::arc::mojom::ScaleFactor scale_factor,
+    ClassifySelectionDeprecatedCallback callback) {}
+
+void FakeIntentHelperInstance::RequestTextSelectionActions(
+    const std::string& text,
+    ::arc::mojom::ScaleFactor scale_factor,
+    RequestTextSelectionActionsCallback callback) {}
+
+std::vector<FakeIntentHelperInstance::Broadcast>
+FakeIntentHelperInstance::GetBroadcastsForAction(
+    const std::string& action) const {
+  std::vector<Broadcast> result;
+  std::copy_if(broadcasts_.begin(), broadcasts_.end(),
+               std::back_inserter(result),
+               [action](const Broadcast& b) { return b.action == action; });
+  return result;
 }
 
 }  // namespace arc

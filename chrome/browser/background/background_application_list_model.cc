@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <set>
+#include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
+#include "base/one_shot_event.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/background/background_contents_service.h"
@@ -32,7 +34,6 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
-#include "extensions/common/one_shot_event.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ui/base/l10n/l10n_util_collator.h"
@@ -74,12 +75,12 @@ class BackgroundApplicationListModel::Application
   void RequestIcon(extension_misc::ExtensionIcons size);
 
   const Extension* extension_;
-  std::unique_ptr<gfx::ImageSkia> icon_;
+  gfx::ImageSkia icon_;
   BackgroundApplicationListModel* model_;
 };
 
 namespace {
-void GetServiceApplications(ExtensionService* service,
+void GetServiceApplications(extensions::ExtensionService* service,
                             ExtensionList* applications_result) {
   ExtensionRegistry* registry = ExtensionRegistry::Get(service->profile());
   const ExtensionSet& enabled_extensions = registry->enabled_extensions();
@@ -107,15 +108,10 @@ void GetServiceApplications(ExtensionService* service,
 
 }  // namespace
 
-void
-BackgroundApplicationListModel::Observer::OnApplicationDataChanged(
-    const Extension* extension, Profile* profile) {
-}
+void BackgroundApplicationListModel::Observer::OnApplicationDataChanged() {}
 
-void
-BackgroundApplicationListModel::Observer::OnApplicationListChanged(
-    Profile* profile) {
-}
+void BackgroundApplicationListModel::Observer::OnApplicationListChanged(
+    const Profile* profile) {}
 
 BackgroundApplicationListModel::Observer::~Observer() {
 }
@@ -132,8 +128,8 @@ void BackgroundApplicationListModel::Application::OnImageLoaded(
     const gfx::Image& image) {
   if (image.IsEmpty())
     return;
-  icon_.reset(image.CopyImageSkia());
-  model_->SendApplicationDataChangedNotifications(extension_);
+  icon_ = image.AsImageSkia();
+  model_->SendApplicationDataChangedNotifications();
 }
 
 void BackgroundApplicationListModel::Application::RequestIcon(
@@ -146,25 +142,21 @@ void BackgroundApplicationListModel::Application::RequestIcon(
       base::Bind(&Application::OnImageLoaded, AsWeakPtr()));
 }
 
-BackgroundApplicationListModel::~BackgroundApplicationListModel() {
-}
+BackgroundApplicationListModel::~BackgroundApplicationListModel() = default;
 
 BackgroundApplicationListModel::BackgroundApplicationListModel(Profile* profile)
-    : profile_(profile),
-      ready_(false),
-      extension_registry_observer_(this),
-      weak_ptr_factory_(this) {
+    : profile_(profile) {
   DCHECK(profile_);
+  background_contents_service_observer_.Add(
+      BackgroundContentsServiceFactory::GetForProfile(profile));
+
   registrar_.Add(this,
                  extensions::NOTIFICATION_EXTENSION_PERMISSIONS_UPDATED,
                  content::Source<Profile>(profile));
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_BACKGROUND_CONTENTS_SERVICE_CHANGED,
-                 content::Source<Profile>(profile));
   extensions::ExtensionSystem::Get(profile_)->ready().Post(
       FROM_HERE,
-      base::Bind(&BackgroundApplicationListModel::OnExtensionSystemReady,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&BackgroundApplicationListModel::OnExtensionSystemReady,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BackgroundApplicationListModel::AddObserver(Observer* observer) {
@@ -184,7 +176,7 @@ void BackgroundApplicationListModel::AssociateApplicationData(
       return;
     }
     std::unique_ptr<Application> application_ptr =
-        base::MakeUnique<Application>(this, extension);
+        std::make_unique<Application>(this, extension);
     application = application_ptr.get();
     applications_[extension->id()] = std::move(application_ptr);
     application->RequestIcon(extension_misc::EXTENSION_ICON_BITTY);
@@ -218,13 +210,13 @@ BackgroundApplicationListModel::FindApplication(
   return (found == applications_.end()) ? nullptr : found->second.get();
 }
 
-const gfx::ImageSkia* BackgroundApplicationListModel::GetIcon(
+gfx::ImageSkia BackgroundApplicationListModel::GetIcon(
     const Extension* extension) {
   const Application* application = FindApplication(extension);
   if (application)
-    return application->icon_.get();
+    return application->icon_;
   AssociateApplicationData(extension);
-  return nullptr;
+  return gfx::ImageSkia();
 }
 
 int BackgroundApplicationListModel::GetPosition(
@@ -284,31 +276,16 @@ void BackgroundApplicationListModel::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  ExtensionService* service = extensions::ExtensionSystem::Get(profile_)->
-      extension_service();
-  if (!service || !service->is_ready())
-    return;
-
-  switch (type) {
-    case extensions::NOTIFICATION_EXTENSION_PERMISSIONS_UPDATED:
-      OnExtensionPermissionsUpdated(
-          content::Details<UpdatedExtensionPermissionsInfo>(details)->extension,
-          content::Details<UpdatedExtensionPermissionsInfo>(details)->reason,
-          content::Details<UpdatedExtensionPermissionsInfo>(details)->
-              permissions);
-      break;
-    case chrome::NOTIFICATION_BACKGROUND_CONTENTS_SERVICE_CHANGED:
-      Update();
-      break;
-    default:
-      NOTREACHED() << "Received unexpected notification";
-  }
+  DCHECK_EQ(type, extensions::NOTIFICATION_EXTENSION_PERMISSIONS_UPDATED);
+  OnExtensionPermissionsUpdated(
+      content::Details<UpdatedExtensionPermissionsInfo>(details)->extension,
+      content::Details<UpdatedExtensionPermissionsInfo>(details)->reason,
+      content::Details<UpdatedExtensionPermissionsInfo>(details)->permissions);
 }
 
-void BackgroundApplicationListModel::SendApplicationDataChangedNotifications(
-    const Extension* extension) {
+void BackgroundApplicationListModel::SendApplicationDataChangedNotifications() {
   for (auto& observer : observers_)
-    observer.OnApplicationDataChanged(extension, profile_);
+    observer.OnApplicationDataChanged();
 }
 
 void BackgroundApplicationListModel::OnExtensionLoaded(
@@ -332,6 +309,7 @@ void BackgroundApplicationListModel::OnExtensionUnloaded(
 }
 
 void BackgroundApplicationListModel::OnExtensionSystemReady() {
+  ready_ = true;
   // All initial extensions will be loaded when extension system ready. So we
   // can get everything here.
   Update();
@@ -343,12 +321,19 @@ void BackgroundApplicationListModel::OnExtensionSystemReady() {
   // for the extension system, which isn't a guarantee. Thus, register here and
   // associate all initial extensions.
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
-  ready_ = true;
 }
 
 void BackgroundApplicationListModel::OnShutdown(ExtensionRegistry* registry) {
   DCHECK_EQ(ExtensionRegistry::Get(profile_), registry);
   extension_registry_observer_.Remove(registry);
+}
+
+void BackgroundApplicationListModel::OnBackgroundContentsServiceChanged() {
+  Update();
+}
+
+void BackgroundApplicationListModel::OnBackgroundContentsServiceDestroying() {
+  background_contents_service_observer_.RemoveAll();
 }
 
 void BackgroundApplicationListModel::OnExtensionPermissionsUpdated(
@@ -382,8 +367,11 @@ void BackgroundApplicationListModel::RemoveObserver(Observer* observer) {
 // differs from the old list, it generates OnApplicationListChanged events for
 // each observer.
 void BackgroundApplicationListModel::Update() {
-  ExtensionService* service = extensions::ExtensionSystem::Get(profile_)->
-      extension_service();
+  if (!ready_)
+    return;
+
+  extensions::ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile_)->extension_service();
 
   // Discover current background applications, compare with previous list, which
   // is consistently sorted, and notify observers if they differ.

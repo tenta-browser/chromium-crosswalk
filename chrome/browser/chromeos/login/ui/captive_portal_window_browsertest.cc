@@ -9,22 +9,21 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
-#include "chrome/browser/chromeos/login/screens/network_error_view.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/chromeos/login/ui/captive_portal_window_proxy.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chrome/browser/chromeos/net/network_portal_detector_test_impl.h"
+#include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/dbus/fake_shill_manager_client.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/dbus/shill/fake_shill_manager_client.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 
 namespace chromeos {
@@ -74,29 +73,23 @@ class CaptivePortalWindowTest : public InProcessBrowserTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(chromeos::switches::kForceLoginManagerInTests);
     command_line->AppendSwitch(chromeos::switches::kLoginManager);
+    command_line->AppendSwitch(chromeos::switches::kDisableHIDDetectionOnOOBE);
   }
 
   void SetUpOnMainThread() override {
-    host_ = LoginDisplayHost::default_host();
     content::WebContents* web_contents =
-        host_->GetWebUILoginView()->GetWebContents();
+        LoginDisplayHost::default_host()->GetOobeWebContents();
     captive_portal_window_proxy_.reset(
         new CaptivePortalWindowProxy(&delegate_, web_contents));
   }
 
   void TearDownOnMainThread() override {
     captive_portal_window_proxy_.reset();
-
-    ASSERT_TRUE(base::MessageLoopForUI::IsCurrent());
-    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, host_);
-    base::RunLoop().RunUntilIdle();
   }
 
  private:
   std::unique_ptr<CaptivePortalWindowProxy> captive_portal_window_proxy_;
   CaptivePortalWindowProxyStubDelegate delegate_;
-
-  LoginDisplayHost* host_;
 };
 
 IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, Show) {
@@ -110,6 +103,8 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, ShowClose) {
   CheckState(true, 0);
 
   Close();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 0);
 }
 
@@ -123,6 +118,8 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, OnRedirected) {
   CheckState(true, 1);
 
   Close();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 1);
 }
 
@@ -136,6 +133,8 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, OnOriginalURLLoaded) {
   CheckState(true, 1);
 
   OnOriginalURLLoaded();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 1);
 }
 
@@ -149,12 +148,16 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, MultipleCalls) {
   CheckState(true, 0);
 
   Close();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 0);
 
   OnRedirected();
   CheckState(false, 1);
 
   OnOriginalURLLoaded();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 1);
 
   Show();
@@ -164,6 +167,8 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, MultipleCalls) {
   CheckState(true, 2);
 
   Close();
+  // Wait for widget to be destroyed
+  base::RunLoop().RunUntilIdle();
   CheckState(false, 2);
 
   OnOriginalURLLoaded();
@@ -172,7 +177,8 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowTest, MultipleCalls) {
 
 class CaptivePortalWindowCtorDtorTest : public LoginManagerTest {
  public:
-  CaptivePortalWindowCtorDtorTest() : LoginManagerTest(false) {}
+  CaptivePortalWindowCtorDtorTest()
+      : LoginManagerTest(false, true /* should_initialize_webui */) {}
   ~CaptivePortalWindowCtorDtorTest() override {}
 
   void SetUpInProcessBrowserTestFixture() override {
@@ -220,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalWindowCtorDtorTest, OpenPortalDialog) {
 
   ASSERT_EQ(PortalDetectorStrategy::STRATEGY_ID_LOGIN_SCREEN, strategy_id());
   network_portal_detector()->NotifyObserversForTesting();
-  OobeScreenWaiter(OobeScreen::SCREEN_ERROR_MESSAGE).Wait();
+  OobeScreenWaiter(ErrorScreenView::kScreenId).Wait();
   ASSERT_EQ(PortalDetectorStrategy::STRATEGY_ID_ERROR_SCREEN, strategy_id());
 
   error_screen->ShowCaptivePortal();

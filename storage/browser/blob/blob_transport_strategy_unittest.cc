@@ -4,18 +4,23 @@
 
 #include "storage/browser/blob/blob_transport_strategy.h"
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_restrictions.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/core/embedder/embedder.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/test/mock_bytes_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/blob/data_element.mojom.h"
 
 namespace storage {
 
@@ -58,7 +63,7 @@ class BlobTransportStrategyTest : public testing::Test {
     limits_.min_page_file_size = kTestBlobStorageMinFileSizeBytes;
     limits_.max_file_size = kTestBlobStorageMaxFileSizeBytes;
 
-    mojo::edk::SetDefaultProcessErrorCallback(base::Bind(
+    mojo::core::SetDefaultProcessErrorCallback(base::BindRepeating(
         &BlobTransportStrategyTest::OnBadMessage, base::Unretained(this)));
 
     // Disallow IO on the main loop.
@@ -68,8 +73,8 @@ class BlobTransportStrategyTest : public testing::Test {
   void TearDown() override {
     base::ThreadRestrictions::SetIOAllowed(true);
 
-    mojo::edk::SetDefaultProcessErrorCallback(
-        mojo::edk::ProcessErrorCallback());
+    mojo::core::SetDefaultProcessErrorCallback(
+        mojo::core::ProcessErrorCallback());
   }
 
   void OnBadMessage(const std::string& error) {
@@ -80,7 +85,7 @@ class BlobTransportStrategyTest : public testing::Test {
       const std::string& bytes,
       base::Optional<base::Time> time) {
     blink::mojom::BytesProviderPtr result;
-    auto provider = base::MakeUnique<MockBytesProvider>(
+    auto provider = std::make_unique<MockBytesProvider>(
         std::vector<uint8_t>(bytes.begin(), bytes.end()), &reply_request_count_,
         &stream_request_count_, &file_request_count_, time);
     bytes_provider_runner_->PostTask(
@@ -198,11 +203,11 @@ TEST_P(BasicTests, WithBytes) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(BlobTransportStrategyTest,
-                        BasicTests,
-                        testing::Values(MemoryStrategy::NONE_NEEDED,
-                                        MemoryStrategy::IPC,
-                                        MemoryStrategy::SHARED_MEMORY));
+INSTANTIATE_TEST_SUITE_P(BlobTransportStrategyTest,
+                         BasicTests,
+                         testing::Values(MemoryStrategy::NONE_NEEDED,
+                                         MemoryStrategy::IPC,
+                                         MemoryStrategy::SHARED_MEMORY));
 
 class BasicErrorTests : public BlobTransportStrategyTest,
                         public testing::WithParamInterface<MemoryStrategy> {};
@@ -268,10 +273,10 @@ TEST_P(BasicErrorTests, TooManyBytesInProvider) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(BlobTransportStrategyTest,
-                        BasicErrorTests,
-                        testing::Values(MemoryStrategy::IPC,
-                                        MemoryStrategy::SHARED_MEMORY));
+INSTANTIATE_TEST_SUITE_P(BlobTransportStrategyTest,
+                         BasicErrorTests,
+                         testing::Values(MemoryStrategy::IPC,
+                                         MemoryStrategy::SHARED_MEMORY));
 
 TEST_F(BlobTransportStrategyTest, DataStreamChunksData) {
   BlobDataBuilder builder(kId);

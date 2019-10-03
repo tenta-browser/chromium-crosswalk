@@ -4,11 +4,13 @@
 
 #include "chrome/browser/notifications/web_page_notifier_controller.h"
 
+#include "ash/public/cpp/notifier_metadata.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/notifications/desktop_notification_profile_util.h"
+#include "chrome/browser/notifications/notification_permission_context.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -20,12 +22,14 @@ WebPageNotifierController::WebPageNotifierController(Observer* observer)
 
 WebPageNotifierController::~WebPageNotifierController() {}
 
-std::vector<ash::mojom::NotifierUiDataPtr>
-WebPageNotifierController::GetNotifierList(Profile* profile) {
-  std::vector<ash::mojom::NotifierUiDataPtr> notifiers;
+std::vector<ash::NotifierMetadata> WebPageNotifierController::GetNotifierList(
+    Profile* profile) {
+  std::vector<ash::NotifierMetadata> notifiers;
 
   ContentSettingsForOneType settings;
-  DesktopNotificationProfileUtil::GetNotificationsSettings(profile, &settings);
+  HostContentSettingsMapFactory::GetForProfile(profile)->GetSettingsForOneType(
+      CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+      content_settings::ResourceIdentifier(), &settings);
 
   favicon::FaviconService* const favicon_service =
       FaviconServiceFactory::GetForProfile(profile,
@@ -46,10 +50,14 @@ WebPageNotifierController::GetNotifierList(Profile* profile) {
     message_center::NotifierId notifier_id(url);
     NotifierStateTracker* const notifier_state_tracker =
         NotifierStateTrackerFactory::GetForProfile(profile);
-    notifiers.push_back(ash::mojom::NotifierUiData::New(
-        notifier_id, name, false,
+    content_settings::SettingInfo info;
+    HostContentSettingsMapFactory::GetForProfile(profile)->GetWebsiteSetting(
+        url, GURL(), CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string(), &info);
+    notifiers.emplace_back(
+        notifier_id, name,
         notifier_state_tracker->IsNotifierEnabled(notifier_id),
-        gfx::ImageSkia()));
+        info.source == content_settings::SETTING_SOURCE_POLICY,
+        gfx::ImageSkia());
     patterns_[url_pattern] = iter->primary_pattern;
     // Note that favicon service obtains the favicon from history. This means
     // that it will fail to obtain the image if there are no history data for
@@ -88,13 +96,9 @@ void WebPageNotifierController::SetNotifierEnabled(
 
   if (differs_from_default_value) {
     if (notifier_id.url.is_valid()) {
-      if (enabled) {
-        DesktopNotificationProfileUtil::GrantPermission(profile,
-                                                        notifier_id.url);
-      } else {
-        DesktopNotificationProfileUtil::DenyPermission(profile,
-                                                       notifier_id.url);
-      }
+      NotificationPermissionContext::UpdatePermission(
+          profile, notifier_id.url,
+          enabled ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
     } else {
       LOG(ERROR) << "Invalid url pattern: "
                  << notifier_id.url.possibly_invalid_spec();
@@ -114,7 +118,7 @@ void WebPageNotifierController::SetNotifierEnabled(
 
     if (pattern.IsValid()) {
       // Note that we don't use
-      // DesktopNotificationProfileUtil::ClearSetting()
+      // NotificationPermissionContext::UpdatePermission()
       // here because pattern might be from user manual input and not match
       // the default one used by ClearSetting().
       HostContentSettingsMapFactory::GetForProfile(profile)

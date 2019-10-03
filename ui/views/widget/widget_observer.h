@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_WIDGET_WIDGET_OBSERVER_H_
 #define UI_VIEWS_WIDGET_WIDGET_OBSERVER_H_
 
+#include "base/observer_list_types.h"
 #include "ui/views/views_export.h"
 
 namespace gfx {
@@ -16,7 +17,7 @@ namespace views {
 class Widget;
 
 // Observers can listen to various events on the Widgets.
-class VIEWS_EXPORT WidgetObserver {
+class VIEWS_EXPORT WidgetObserver : public base::CheckedObserver {
  public:
   // The closing notification is sent immediately in response to (i.e. in the
   // same call stack as) a request to close the Widget (via Close() or
@@ -36,8 +37,11 @@ class VIEWS_EXPORT WidgetObserver {
   // widget has been destroyed.
   virtual void OnWidgetDestroyed(Widget* widget) {}
 
-  virtual void OnWidgetVisibilityChanging(Widget* widget, bool visible) {}
+  // Called before RunShellDrag() is called and after it returns.
+  virtual void OnWidgetDragWillStart(Widget* widget) {}
+  virtual void OnWidgetDragComplete(Widget* widget) {}
 
+  virtual void OnWidgetVisibilityChanging(Widget* widget, bool visible) {}
   virtual void OnWidgetVisibilityChanged(Widget* widget, bool visible) {}
 
   virtual void OnWidgetActivationChanged(Widget* widget, bool active) {}
@@ -46,7 +50,7 @@ class VIEWS_EXPORT WidgetObserver {
                                      const gfx::Rect& new_bounds) {}
 
  protected:
-  virtual ~WidgetObserver() {}
+  ~WidgetObserver() override = default;
 };
 
 }  // namespace views

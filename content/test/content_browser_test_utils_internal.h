@@ -14,14 +14,22 @@
 #include <string>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/run_loop.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "build/build_config.h"
+#include "content/browser/bad_message.h"
+#include "content/common/frame_messages.h"
+#include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/common/file_chooser_params.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_utils.h"
+#include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -31,18 +39,25 @@ class RenderFrameHost;
 class Shell;
 class SiteInstance;
 class ToRenderFrameHost;
-struct ScreenInfo;
 
 // Navigates the frame represented by |node| to |url|, blocking until the
 // navigation finishes.
 void NavigateFrameToURL(FrameTreeNode* node, const GURL& url);
 
 // Sets the DialogManager to proceed by default or not when showing a
-// BeforeUnload dialog.
-void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed);
+// BeforeUnload dialog, and if it proceeds, what value to return.
+void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed, bool success);
 
 // Extends the ToRenderFrameHost mechanism to FrameTreeNodes.
 RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node);
+
+// Helper function to navigate a window to a |url|, using a browser-initiated
+// navigation that will stay in the same BrowsingInstance.  Most
+// browser-initiated navigations swap BrowsingInstances, but some tests need a
+// navigation to swap processes for cross-site URLs (even outside of
+// --site-per-process) while staying in the same BrowsingInstance.
+WARN_UNUSED_RESULT bool NavigateToURLInSameBrowsingInstance(Shell* window,
+                                                            const GURL& url);
 
 // Creates compact textual representations of the state of the frame tree that
 // is appropriate for use in assertions.
@@ -92,48 +107,27 @@ Shell* OpenPopup(const ToRenderFrameHost& opener,
                  const GURL& url,
                  const std::string& name);
 
-// This class can be used to stall any resource request, based on an URL match.
-// There is no explicit way to resume the request; it should be used carefully.
-// Note: This class likely doesn't work with PlzNavigate.
-// TODO(nasko): Reimplement this class using NavigationThrottle, once it has
-// the ability to defer navigation requests.
-class NavigationStallDelegate : public ResourceDispatcherHostDelegate {
- public:
-  explicit NavigationStallDelegate(const GURL& url);
-
- private:
-  // ResourceDispatcherHostDelegate
-  void RequestBeginning(net::URLRequest* request,
-                        content::ResourceContext* resource_context,
-                        content::AppCacheService* appcache_service,
-                        ResourceType resource_type,
-                        std::vector<std::unique_ptr<content::ResourceThrottle>>*
-                            throttles) override;
-
-  GURL url_;
-};
-
 // Helper for mocking choosing a file via a file dialog.
 class FileChooserDelegate : public WebContentsDelegate {
  public:
   // Constructs a WebContentsDelegate that mocks a file dialog.
   // The mocked file dialog will always reply that the user selected |file|.
-  FileChooserDelegate(const base::FilePath& file);
+  // |callback| is invoked when RunFileChooser() is called.
+  FileChooserDelegate(const base::FilePath& file, base::OnceClosure callback);
+  ~FileChooserDelegate() override;
 
   // Implementation of WebContentsDelegate::RunFileChooser.
   void RunFileChooser(RenderFrameHost* render_frame_host,
-                      const FileChooserParams& params) override;
+                      std::unique_ptr<content::FileSelectListener> listener,
+                      const blink::mojom::FileChooserParams& params) override;
 
-  // Whether the file dialog was shown.
-  bool file_chosen() const { return file_chosen_; }
-
-  // Copy of the params passed to RunFileChooser.
-  FileChooserParams params() const { return params_; }
+  // The params passed to RunFileChooser.
+  const blink::mojom::FileChooserParams& params() const { return *params_; }
 
  private:
   base::FilePath file_;
-  bool file_chosen_;
-  FileChooserParams params_;
+  base::OnceClosure callback_;
+  blink::mojom::FileChooserParamsPtr params_;
 };
 
 // This class is a TestNavigationManager that only monitors notifications within
@@ -179,44 +173,171 @@ class UrlCommitObserver : WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(UrlCommitObserver);
 };
 
-// Class to sniff incoming IPCs for FrameHostMsg_UpdateResizeParams messages.
-// This allows the message to continue to the target child so that processing
-// can be verified by tests.
-class UpdateResizeParamsMessageFilter : public content::BrowserMessageFilter {
+// Waits for a kill of the given RenderProcessHost and returns the
+// BadMessageReason that caused a //content-triggerred kill.
+//
+// Example usage:
+//   RenderProcessHostKillWaiter kill_waiter(render_process_host);
+//   ... test code that triggers a renderer kill ...
+//   EXPECT_EQ(bad_message::RFH_INVALID_ORIGIN_ON_COMMIT, kill_waiter.Wait());
+//
+// Tests that don't expect kills (e.g. tests where a renderer process exits
+// normally, like RenderFrameHostManagerTest.ProcessExitWithSwappedOutViews)
+// should use RenderProcessHostWatcher instead of RenderProcessHostKillWaiter.
+class RenderProcessHostKillWaiter {
  public:
-  UpdateResizeParamsMessageFilter();
+  explicit RenderProcessHostKillWaiter(RenderProcessHost* render_process_host);
 
-  gfx::Rect last_rect() const { return last_rect_; }
-
-  void WaitForRect();
-  void ResetRectRunLoop();
-
-  // Returns the new viz::FrameSinkId immediately if the IPC has been received.
-  // Otherwise this will block the UI thread until it has been received, then it
-  // will return the new viz::FrameSinkId.
-  viz::FrameSinkId GetOrWaitForId();
-
- protected:
-  ~UpdateResizeParamsMessageFilter() override;
+  // Waits until the renderer process exits.  Returns the bad message that made
+  // //content kill the renderer.  |base::nullopt| is returned if the renderer
+  // was killed outside of //content or exited normally.
+  base::Optional<bad_message::BadMessageReason> Wait() WARN_UNUSED_RESULT;
 
  private:
-  void OnUpdateResizeParams(const gfx::Rect& rect,
-                            const ScreenInfo& screen_info,
-                            uint64_t sequence_number,
-                            const viz::SurfaceId& surface_id);
-  void OnUpdatedFrameRectOnUI(const gfx::Rect& rect);
-  void OnUpdatedFrameSinkIdOnUI();
+  RenderProcessHostWatcher exit_watcher_;
+  base::HistogramTester histogram_tester_;
+
+  DISALLOW_COPY_AND_ASSIGN(RenderProcessHostKillWaiter);
+};
+
+class ShowWidgetMessageFilter : public content::BrowserMessageFilter {
+ public:
+  ShowWidgetMessageFilter();
 
   bool OnMessageReceived(const IPC::Message& message) override;
 
-  viz::FrameSinkId frame_sink_id_;
-  base::RunLoop frame_sink_id_run_loop_;
+  gfx::Rect last_initial_rect() const { return initial_rect_; }
 
-  std::unique_ptr<base::RunLoop> frame_rect_run_loop_;
-  bool frame_rect_received_;
-  gfx::Rect last_rect_;
+  int last_routing_id() const { return routing_id_; }
 
-  DISALLOW_COPY_AND_ASSIGN(UpdateResizeParamsMessageFilter);
+  void Wait();
+
+  void Reset();
+
+ private:
+  ~ShowWidgetMessageFilter() override;
+
+  void OnShowWidget(int route_id, const gfx::Rect& initial_rect);
+
+#if defined(OS_MACOSX) || defined(OS_ANDROID)
+  void OnShowPopup(const FrameHostMsg_ShowPopup_Params& params);
+#endif
+
+  void OnShowWidgetOnUI(int route_id, const gfx::Rect& initial_rect);
+
+  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  gfx::Rect initial_rect_;
+  int routing_id_ = MSG_ROUTING_NONE;
+
+  DISALLOW_COPY_AND_ASSIGN(ShowWidgetMessageFilter);
+};
+
+// A BrowserMessageFilter that drops a blacklisted message.
+class DropMessageFilter : public BrowserMessageFilter {
+ public:
+  DropMessageFilter(uint32_t message_class, uint32_t drop_message_id);
+
+ protected:
+  ~DropMessageFilter() override;
+
+ private:
+  // BrowserMessageFilter:
+  bool OnMessageReceived(const IPC::Message& message) override;
+
+  const uint32_t drop_message_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(DropMessageFilter);
+};
+
+// A BrowserMessageFilter that observes a message without handling it, and
+// reports when it was seen.
+class ObserveMessageFilter : public BrowserMessageFilter {
+ public:
+  ObserveMessageFilter(uint32_t message_class, uint32_t watch_message_id);
+
+  bool has_received_message() { return received_; }
+
+  // Spins a RunLoop until the message is observed.
+  void Wait();
+
+ protected:
+  ~ObserveMessageFilter() override;
+
+  // BrowserMessageFilter:
+  bool OnMessageReceived(const IPC::Message& message) override;
+
+ private:
+  void QuitWait();
+
+  const uint32_t watch_message_id_;
+  bool received_ = false;
+  base::OnceClosure quit_closure_;
+
+  DISALLOW_COPY_AND_ASSIGN(ObserveMessageFilter);
+};
+
+// This observer waits until WebContentsObserver::OnRendererUnresponsive
+// notification.
+class UnresponsiveRendererObserver : public WebContentsObserver {
+ public:
+  explicit UnresponsiveRendererObserver(WebContents* web_contents);
+  ~UnresponsiveRendererObserver() override;
+
+  RenderProcessHost* Wait(base::TimeDelta timeout = base::TimeDelta::Max());
+
+ private:
+  // WebContentsObserver:
+  void OnRendererUnresponsive(RenderProcessHost* render_process_host) override;
+
+  RenderProcessHost* captured_render_process_host_ = nullptr;
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(UnresponsiveRendererObserver);
+};
+
+// Helper class that overrides the JavaScriptDialogManager of a WebContents
+// to endlessly block on beforeunload.
+class BeforeUnloadBlockingDelegate : public JavaScriptDialogManager,
+                                     public WebContentsDelegate {
+ public:
+  explicit BeforeUnloadBlockingDelegate(WebContentsImpl* web_contents);
+  ~BeforeUnloadBlockingDelegate() override;
+  void Wait();
+
+  // WebContentsDelegate
+
+  JavaScriptDialogManager* GetJavaScriptDialogManager(
+      WebContents* source) override;
+
+  // JavaScriptDialogManager
+
+  void RunJavaScriptDialog(WebContents* web_contents,
+                           RenderFrameHost* render_frame_host,
+                           JavaScriptDialogType dialog_type,
+                           const base::string16& message_text,
+                           const base::string16& default_prompt_text,
+                           DialogClosedCallback callback,
+                           bool* did_suppress_message) override;
+
+  void RunBeforeUnloadDialog(WebContents* web_contents,
+                             RenderFrameHost* render_frame_host,
+                             bool is_reload,
+                             DialogClosedCallback callback) override;
+
+  bool HandleJavaScriptDialog(WebContents* web_contents,
+                              bool accept,
+                              const base::string16* prompt_override) override;
+
+  void CancelDialogs(WebContents* web_contents, bool reset_state) override {}
+
+ private:
+  WebContentsImpl* web_contents_;
+
+  DialogClosedCallback callback_;
+
+  std::unique_ptr<base::RunLoop> run_loop_ = std::make_unique<base::RunLoop>();
+
+  DISALLOW_COPY_AND_ASSIGN(BeforeUnloadBlockingDelegate);
 };
 
 }  // namespace content

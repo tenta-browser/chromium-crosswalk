@@ -2,15 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
+
 if (is_android) {
   import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")
 }
 
-source_set("public") {
+jumbo_source_set("public") {
   sources = [
+    "configuration.cc",
+    "configuration.h",
     "event_constants.cc",
     "event_constants.h",
+    "feature_configurations.cc",
+    "feature_configurations.h",
     "feature_constants.cc",
     "feature_constants.h",
     "feature_list.cc",
@@ -21,9 +27,26 @@ source_set("public") {
 
   deps = [
     "//base",
-    "//components/feature_engagement:features",
+    "//components/feature_engagement:buildflags",
     "//components/flags_ui",
     "//components/keyed_service/core",
+  ]
+}
+
+jumbo_source_set("unit_tests") {
+  testonly = true
+
+  visibility = [ "//components/feature_engagement:unit_tests" ]
+
+  # IMPORTANT NOTE: When adding new tests, also remember to update the list of
+  # tests in //components/feature_engagement/components_unittests.filter
+  sources = [
+    "configuration_unittest.cc",
+  ]
+
+  deps = [
+    ":public",
+    "//testing/gtest",
   ]
 }
 
@@ -37,7 +60,7 @@ if (is_android) {
 
     deps = [
       "//base:base_java",
-      "//third_party/android_tools:android_support_annotations_java",
+      "//third_party/android_deps:com_android_support_support_annotations_java",
     ]
 
     srcjar_deps = [ ":public_java_enums_srcjar" ]

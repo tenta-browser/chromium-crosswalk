@@ -7,12 +7,13 @@
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/pattern.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/tracing_controller.h"
 #include "third_party/zlib/zlib.h"
@@ -38,9 +39,9 @@ class StringTraceDataEndpoint : public TracingController::TraceDataEndpoint {
     scoped_refptr<base::RefCountedString> str =
         base::RefCountedString::TakeString(&tmp);
 
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(completion_callback_, base::Passed(std::move(metadata)),
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
+        base::BindOnce(completion_callback_, std::move(metadata),
                        base::RetainedRef(str)));
   }
 
@@ -60,23 +61,26 @@ class StringTraceDataEndpoint : public TracingController::TraceDataEndpoint {
 class FileTraceDataEndpoint : public TracingController::TraceDataEndpoint {
  public:
   explicit FileTraceDataEndpoint(const base::FilePath& trace_file_path,
-                                 const base::Closure& callback)
+                                 const base::Closure& callback,
+                                 base::TaskPriority write_priority)
       : file_path_(trace_file_path),
         completion_callback_(callback),
-        file_(nullptr) {}
+        may_block_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+            {base::MayBlock(), write_priority})) {}
 
   void ReceiveTraceChunk(std::unique_ptr<std::string> chunk) override {
-    background_task_runner_->PostTask(
+    may_block_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&FileTraceDataEndpoint::ReceiveTraceChunkOnBlockingThread,
-                   this, base::Passed(std::move(chunk))));
+        base::BindOnce(
+            &FileTraceDataEndpoint::ReceiveTraceChunkOnBlockingThread, this,
+            std::move(chunk)));
   }
 
   void ReceiveTraceFinalContents(
       std::unique_ptr<const base::DictionaryValue>) override {
-    background_task_runner_->PostTask(
+    may_block_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&FileTraceDataEndpoint::CloseOnBlockingThread, this));
+        base::BindOnce(&FileTraceDataEndpoint::CloseOnBlockingThread, this));
   }
 
  private:
@@ -89,7 +93,8 @@ class FileTraceDataEndpoint : public TracingController::TraceDataEndpoint {
   }
 
   bool OpenFileIfNeededOnBlockingThread() {
-    base::AssertBlockingAllowed();
+    base::ScopedBlockingCall scoped_blocking_call(
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     if (file_ != nullptr)
       return true;
     file_ = base::OpenFile(file_path_, "w");
@@ -106,8 +111,8 @@ class FileTraceDataEndpoint : public TracingController::TraceDataEndpoint {
       file_ = nullptr;
     }
 
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&FileTraceDataEndpoint::FinalizeOnUIThread, this));
   }
 
@@ -115,10 +120,8 @@ class FileTraceDataEndpoint : public TracingController::TraceDataEndpoint {
 
   base::FilePath file_path_;
   base::Closure completion_callback_;
-  FILE* file_;
-  const scoped_refptr<base::SequencedTaskRunner> background_task_runner_ =
-      base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND});
+  FILE* file_ = nullptr;
+  const scoped_refptr<base::SequencedTaskRunner> may_block_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(FileTraceDataEndpoint);
 };
@@ -132,14 +135,14 @@ class CompressedTraceDataEndpoint
         already_tried_open_(false),
         background_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
             {compress_with_background_priority
-                 ? base::TaskPriority::BACKGROUND
+                 ? base::TaskPriority::BEST_EFFORT
                  : base::TaskPriority::USER_VISIBLE})) {}
 
   void ReceiveTraceChunk(std::unique_ptr<std::string> chunk) override {
     background_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&CompressedTraceDataEndpoint::CompressOnBackgroundThread,
-                       this, base::Passed(std::move(chunk))));
+                       this, std::move(chunk)));
   }
 
   void ReceiveTraceFinalContents(
@@ -147,7 +150,7 @@ class CompressedTraceDataEndpoint
     background_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&CompressedTraceDataEndpoint::CloseOnBackgroundThread,
-                       this, base::Passed(std::move(metadata))));
+                       this, std::move(metadata)));
   }
 
  private:
@@ -237,8 +240,9 @@ TracingController::CreateStringEndpoint(
 
 scoped_refptr<TracingController::TraceDataEndpoint>
 TracingController::CreateFileEndpoint(const base::FilePath& file_path,
-                                      const base::Closure& callback) {
-  return new FileTraceDataEndpoint(file_path, callback);
+                                      const base::Closure& callback,
+                                      base::TaskPriority write_priority) {
+  return new FileTraceDataEndpoint(file_path, callback, write_priority);
 }
 
 scoped_refptr<TracingController::TraceDataEndpoint>

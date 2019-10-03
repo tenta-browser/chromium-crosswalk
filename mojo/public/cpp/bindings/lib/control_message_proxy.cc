@@ -12,6 +12,8 @@
 #include "base/callback_helpers.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#include "mojo/public/cpp/bindings/interface_endpoint_client.h"
 #include "mojo/public/cpp/bindings/lib/serialization.h"
 #include "mojo/public/cpp/bindings/lib/validation_util.h"
 #include "mojo/public/cpp/bindings/message.h"
@@ -21,6 +23,8 @@ namespace mojo {
 namespace internal {
 
 namespace {
+
+const char kMessageTag[] = "ControlMessageProxy";
 
 bool ValidateControlResponse(Message* message) {
   ValidationContext validation_context(message->payload(),
@@ -39,12 +43,12 @@ bool ValidateControlResponse(Message* message) {
 }
 
 using RunCallback =
-    base::Callback<void(interface_control::RunResponseMessageParamsPtr)>;
+    base::OnceCallback<void(interface_control::RunResponseMessageParamsPtr)>;
 
 class RunResponseForwardToCallback : public MessageReceiver {
  public:
-  explicit RunResponseForwardToCallback(const RunCallback& callback)
-      : callback_(callback) {}
+  explicit RunResponseForwardToCallback(RunCallback callback)
+      : callback_(std::move(callback)) {}
   bool Accept(Message* message) override;
 
  private:
@@ -65,24 +69,25 @@ bool RunResponseForwardToCallback::Accept(Message* message) {
   Deserialize<interface_control::RunResponseMessageParamsDataView>(
       params, &params_ptr, &context);
 
-  callback_.Run(std::move(params_ptr));
+  std::move(callback_).Run(std::move(params_ptr));
   return true;
 }
 
-void SendRunMessage(MessageReceiverWithResponder* receiver,
+void SendRunMessage(InterfaceEndpointClient* endpoint,
                     interface_control::RunInputPtr input_ptr,
-                    const RunCallback& callback) {
+                    RunCallback callback) {
   auto params_ptr = interface_control::RunMessageParams::New();
   params_ptr->input = std::move(input_ptr);
   Message message(interface_control::kRunMessageId,
                   Message::kFlagExpectsResponse, 0, 0, nullptr);
+  message.set_heap_profiler_tag(kMessageTag);
   SerializationContext context;
   interface_control::internal::RunMessageParams_Data::BufferWriter params;
   Serialize<interface_control::RunMessageParamsDataView>(
       params_ptr, message.payload_buffer(), &params, &context);
   std::unique_ptr<MessageReceiver> responder =
-      std::make_unique<RunResponseForwardToCallback>(callback);
-  ignore_result(receiver->AcceptWithResponder(&message, std::move(responder)));
+      std::make_unique<RunResponseForwardToCallback>(std::move(callback));
+  endpoint->SendControlMessageWithResponder(&message, std::move(responder));
 }
 
 Message ConstructRunOrClosePipeMessage(
@@ -91,6 +96,7 @@ Message ConstructRunOrClosePipeMessage(
   params_ptr->input = std::move(input_ptr);
   Message message(interface_control::kRunOrClosePipeMessageId, 0, 0, 0,
                   nullptr);
+  message.set_heap_profiler_tag(kMessageTag);
   SerializationContext context;
   interface_control::internal::RunOrClosePipeMessageParams_Data::BufferWriter
       params;
@@ -100,10 +106,11 @@ Message ConstructRunOrClosePipeMessage(
 }
 
 void SendRunOrClosePipeMessage(
-    MessageReceiverWithResponder* receiver,
+    InterfaceEndpointClient* endpoint,
     interface_control::RunOrClosePipeInputPtr input_ptr) {
   Message message(ConstructRunOrClosePipeMessage(std::move(input_ptr)));
-  ignore_result(receiver->Accept(&message));
+  message.set_heap_profiler_tag(kMessageTag);
+  endpoint->SendControlMessage(&message);
 }
 
 void RunVersionCallback(
@@ -115,25 +122,29 @@ void RunVersionCallback(
   callback.Run(version);
 }
 
-void RunClosure(const base::Closure& callback,
+void RunClosure(base::OnceClosure callback,
                 interface_control::RunResponseMessageParamsPtr run_response) {
-  callback.Run();
+  std::move(callback).Run();
 }
 
 }  // namespace
 
-ControlMessageProxy::ControlMessageProxy(MessageReceiverWithResponder* receiver)
-    : receiver_(receiver) {
-}
+ControlMessageProxy::ControlMessageProxy(InterfaceEndpointClient* owner)
+    : owner_(owner) {}
 
-ControlMessageProxy::~ControlMessageProxy() = default;
+ControlMessageProxy::~ControlMessageProxy() {
+  // If this is destroyed in the middle of a flush, make sure the callback is
+  // still run.
+  if (!pending_flush_callback_.is_null())
+    RunFlushForTestingClosure();
+}
 
 void ControlMessageProxy::QueryVersion(
     const base::Callback<void(uint32_t)>& callback) {
   auto input_ptr = interface_control::RunInput::New();
   input_ptr->set_query_version(interface_control::QueryVersion::New());
-  SendRunMessage(receiver_, std::move(input_ptr),
-                 base::Bind(&RunVersionCallback, callback));
+  SendRunMessage(owner_, std::move(input_ptr),
+                 base::BindOnce(&RunVersionCallback, callback));
 }
 
 void ControlMessageProxy::RequireVersion(uint32_t version) {
@@ -141,33 +152,61 @@ void ControlMessageProxy::RequireVersion(uint32_t version) {
   require_version->version = version;
   auto input_ptr = interface_control::RunOrClosePipeInput::New();
   input_ptr->set_require_version(std::move(require_version));
-  SendRunOrClosePipeMessage(receiver_, std::move(input_ptr));
+  SendRunOrClosePipeMessage(owner_, std::move(input_ptr));
 }
 
 void ControlMessageProxy::FlushForTesting() {
-  if (encountered_error_)
-    return;
-
-  auto input_ptr = interface_control::RunInput::New();
-  input_ptr->set_flush_for_testing(interface_control::FlushForTesting::New());
-  base::RunLoop run_loop;
-  run_loop_quit_closure_ = run_loop.QuitClosure();
-  SendRunMessage(
-      receiver_, std::move(input_ptr),
-      base::Bind(&RunClosure,
-                 base::Bind(&ControlMessageProxy::RunFlushForTestingClosure,
-                            base::Unretained(this))));
+  base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+  FlushAsyncForTesting(run_loop.QuitClosure());
   run_loop.Run();
 }
 
+void ControlMessageProxy::FlushAsyncForTesting(base::OnceClosure callback) {
+  if (encountered_error_) {
+    base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                     std::move(callback));
+    return;
+  }
+
+  auto input_ptr = interface_control::RunInput::New();
+  input_ptr->set_flush_for_testing(interface_control::FlushForTesting::New());
+  DCHECK(!pending_flush_callback_);
+  pending_flush_callback_ = std::move(callback);
+  SendRunMessage(
+      owner_, std::move(input_ptr),
+      base::BindOnce(
+          &RunClosure,
+          base::BindOnce(&ControlMessageProxy::RunFlushForTestingClosure,
+                         base::Unretained(this))));
+}
+
 void ControlMessageProxy::RunFlushForTestingClosure() {
-  DCHECK(!run_loop_quit_closure_.is_null());
-  base::ResetAndReturn(&run_loop_quit_closure_).Run();
+  DCHECK(!pending_flush_callback_.is_null());
+  std::move(pending_flush_callback_).Run();
+}
+
+void ControlMessageProxy::EnableIdleTracking(base::TimeDelta timeout) {
+  auto input = interface_control::RunOrClosePipeInput::New();
+  input->set_enable_idle_tracking(
+      interface_control::EnableIdleTracking::New(timeout.InMicroseconds()));
+  SendRunOrClosePipeMessage(owner_, std::move(input));
+}
+
+void ControlMessageProxy::SendMessageAck() {
+  auto input = interface_control::RunOrClosePipeInput::New();
+  input->set_message_ack(interface_control::MessageAck::New());
+  SendRunOrClosePipeMessage(owner_, std::move(input));
+}
+
+void ControlMessageProxy::NotifyIdle() {
+  auto input = interface_control::RunOrClosePipeInput::New();
+  input->set_notify_idle(interface_control::NotifyIdle::New());
+  SendRunOrClosePipeMessage(owner_, std::move(input));
 }
 
 void ControlMessageProxy::OnConnectionError() {
   encountered_error_ = true;
-  if (!run_loop_quit_closure_.is_null())
+  if (!pending_flush_callback_.is_null())
     RunFlushForTestingClosure();
 }
 

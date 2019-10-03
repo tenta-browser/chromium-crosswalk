@@ -2,29 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/auto_reset.h"
 #include "base/optional.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/common/chrome_features.h"
 #include "components/bubble/bubble_controller.h"
 #include "components/bubble/bubble_ui.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_constants.h"
-#include "ui/base/ui_base_features.h"
 
 using extensions::Manifest;
 using ActionType = extensions::ExtensionBuilder::ActionType;
 
 class ExtensionInstalledBubbleBrowserTest
-    : public SupportsTestDialog<ExtensionBrowserTest> {
+    : public SupportsTestDialog<extensions::ExtensionBrowserTest> {
  public:
   ExtensionInstalledBubbleBrowserTest()
       : disable_animations_(&ToolbarActionsBar::disable_animations_for_testing_,
@@ -37,7 +37,7 @@ class ExtensionInstalledBubbleBrowserTest
       std::unique_ptr<base::DictionaryValue> extra_keys = nullptr);
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override;
+  void ShowUi(const std::string& name) override;
 
   BubbleController* GetExtensionBubbleControllerFromManager(
       BubbleManager* manager) const {
@@ -75,13 +75,13 @@ ExtensionInstalledBubbleBrowserTest::MakeBubble(
     builder.MergeManifest(std::move(extra_keys));
   scoped_refptr<const extensions::Extension> extension = builder.Build();
   extension_service()->AddExtension(extension.get());
-  auto bubble = base::MakeUnique<ExtensionInstalledBubble>(
+  auto bubble = std::make_unique<ExtensionInstalledBubble>(
       extension.get(), browser(), SkBitmap());
   bubble->Initialize();
   return bubble;
 }
 
-void ExtensionInstalledBubbleBrowserTest::ShowDialog(const std::string& name) {
+void ExtensionInstalledBubbleBrowserTest::ShowUi(const std::string& name) {
   // Default to Manifest::COMPONENT to test all anchoring locations. Without
   // this, a page action is added automatically, which will always be the
   // preferred anchor.
@@ -97,7 +97,7 @@ void ExtensionInstalledBubbleBrowserTest::ShowDialog(const std::string& name) {
   if (name == "SignInPromo" || name == "NoAction")
     location = Manifest::INTERNAL;
 
-  auto extra_keys = base::MakeUnique<base::DictionaryValue>();
+  auto extra_keys = std::make_unique<base::DictionaryValue>();
   if (name == "Omnibox")
     extra_keys->SetString(extensions::manifest_keys::kOmniboxKeyword, "foo");
 
@@ -106,39 +106,41 @@ void ExtensionInstalledBubbleBrowserTest::ShowDialog(const std::string& name) {
   manager->ShowBubble(std::move(bubble));
 }
 
+// TODO(crbug.com/854355): Fix the ownership of ExtensionInstalledBubble and
+// re-enable these tests.
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_BrowserAction) {
-  RunDialog();
+                       DISABLED_InvokeUi_BrowserAction) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_PageAction) {
-  RunDialog();
+                       DISABLED_InvokeUi_PageAction) {
+  ShowAndVerifyUi();
 }
 
 // Test anchoring to the app menu.
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_InstalledByDefault) {
-  RunDialog();
+                       DISABLED_InvokeUi_InstalledByDefault) {
+  ShowAndVerifyUi();
 }
 
 // Test anchoring to the omnibox.
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_Omnibox) {
-  RunDialog();
+                       DISABLED_InvokeUi_Omnibox) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_SignInPromo) {
-  RunDialog();
+                       DISABLED_InvokeUi_SignInPromo) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
-                       InvokeDialog_NoAction) {
+                       DISABLED_InvokeUi_NoAction) {
   // Sign in to supppress the signin promo.
-  SigninManagerFactory::GetForProfile(browser()->profile())
-      ->SetAuthenticatedAccountInfo("test", "test@example.com");
-  RunDialog();
+  signin::MakePrimaryAccountAvailable(
+      IdentityManagerFactory::GetForProfile(profile()), "test@example.com");
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
@@ -157,17 +159,16 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
   }
 }
 
+// http://crbug.com/822022
+#if defined(OS_CHROMEOS)
+#define MAYBE_CloseBubbleUI DISABLED_CloseBubbleUI
+#else
+#define MAYBE_CloseBubbleUI CloseBubbleUI
+#endif
 // Tests if the BubbleController gets removed from the BubbleManager when
 // the BubbleUi is closed.
-IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest, CloseBubbleUi) {
-  base::test::ScopedFeatureList scoped_feature_list;
-#if defined(OS_MACOSX)
-  scoped_feature_list.InitWithFeatures(
-      {features::kSecondaryUiMd, features::kShowAllDialogsWithViewsToolkit},
-      {});
-#else
-  scoped_feature_list.InitWithFeatures({features::kSecondaryUiMd}, {});
-#endif
+IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
+                       MAYBE_CloseBubbleUI) {
   auto bubble = MakeBubble("No action", base::nullopt);
   BubbleManager* manager = browser()->GetBubbleManager();
   manager->ShowBubble(std::move(bubble));

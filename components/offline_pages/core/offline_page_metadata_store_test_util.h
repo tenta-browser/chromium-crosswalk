@@ -11,8 +11,8 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/test/simple_test_clock.h"
-#include "base/test/test_simple_task_runner.h"
-#include "components/offline_pages/core/offline_page_metadata_store_sql.h"
+#include "base/test/test_mock_time_task_runner.h"
+#include "components/offline_pages/core/offline_page_metadata_store.h"
 
 namespace base {
 class ScopedTempDir;
@@ -21,12 +21,12 @@ class SimpleTestClock;
 
 namespace offline_pages {
 
-// Encapsulates the OfflinePageMetadataStoreSQL and provides synchronous
+// Encapsulates the OfflinePageMetadataStore and provides synchronous
 // operations on the store, for test writing convenience.
 class OfflinePageMetadataStoreTestUtil {
  public:
   explicit OfflinePageMetadataStoreTestUtil(
-      scoped_refptr<base::TestSimpleTaskRunner> task_runner);
+      scoped_refptr<base::TestMockTimeTaskRunner> task_runner);
   ~OfflinePageMetadataStoreTestUtil();
 
   // Builds a new store in a temporary directory.
@@ -36,7 +36,7 @@ class OfflinePageMetadataStoreTestUtil {
   // Releases the ownership of currently controlled store. But still keeps a raw
   // pointer to the previously owned store in |store_ptr|, until the next time
   // BuildStore*() is called.
-  std::unique_ptr<OfflinePageMetadataStoreSQL> ReleaseStore();
+  std::unique_ptr<OfflinePageMetadataStore> ReleaseStore();
   // Deletes the currently held store that was previously built.
   void DeleteStore();
 
@@ -49,20 +49,20 @@ class OfflinePageMetadataStoreTestUtil {
   // Gets offline page by offline_id.
   std::unique_ptr<OfflinePageItem> GetPageByOfflineId(int64_t offline_id);
 
-  OfflinePageMetadataStoreSQL* store() { return store_ptr_; }
+  OfflinePageMetadataStore* store() { return store_ptr_; }
 
   base::SimpleTestClock* clock() { return &clock_; }
 
  private:
   void RunUntilIdle();
 
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
+  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
   base::ScopedTempDir temp_directory_;
   // TODO(romax): Refactor the test util along with the similar one used in
   // Prefetching, to remove the ownership to the store. And clean up related
   // usage of |store_ptr_|.
-  std::unique_ptr<OfflinePageMetadataStoreSQL> store_;
-  OfflinePageMetadataStoreSQL* store_ptr_;
+  std::unique_ptr<OfflinePageMetadataStore> store_;
+  OfflinePageMetadataStore* store_ptr_;
   base::SimpleTestClock clock_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflinePageMetadataStoreTestUtil);

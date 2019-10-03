@@ -6,11 +6,9 @@
 
 #include "sandbox/win/src/sid.h"
 
-#define _ATL_NO_EXCEPTIONS
-#include <atlbase.h>
-#include <atlsecurity.h>
 #include <sddl.h>
 
+#include "base/win/atl.h"
 #include "base/win/windows_version.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -100,7 +98,7 @@ TEST(SidTest, GetPSID) {
 }
 
 TEST(SidTest, KnownCapability) {
-  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::Version::WIN8)
     return;
 
   Sid sid_invalid_well_known =
@@ -130,7 +128,7 @@ TEST(SidTest, KnownCapability) {
 }
 
 TEST(SidTest, NamedCapability) {
-  if (base::win::GetVersion() < base::win::VERSION_WIN10)
+  if (base::win::GetVersion() < base::win::Version::WIN10)
     return;
 
   Sid sid_nullptr = Sid::FromNamedCapability(nullptr);

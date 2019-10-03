@@ -5,17 +5,22 @@
 
 <FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginTop="@dimen/payments_section_small_spacing"
-    android:layout_marginBottom="@dimen/payments_section_small_spacing">
+    android:layout_marginTop="@dimen/editor_dialog_section_small_spacing"
+    android:layout_marginBottom="@dimen/editor_dialog_section_small_spacing">
 
     <org.chromium.chrome.browser.widget.CompatibilityTextInputLayout
         android:id="@+id/text_input_layout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="wrap_content"
+        app:errorTextAppearance="@style/TextAppearance.ErrorCaption">
 
+        <!-- TODO(crbug.com/900912): Fix and remove lint ignore -->
         <AutoCompleteTextView
+            tools:ignore="LabelFor"
             android:id="@+id/text_view"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -37,7 +42,7 @@
             android:layout_gravity="center_vertical"
             android:layout_marginStart="8dp"
             android:adjustViewBounds="true"
-            android:contentDescription="@null"
+            tools:ignore="ContentDescription"
             android:clickable="false"
             android:visibility="gone"/>
 
@@ -46,7 +51,7 @@
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:padding="12dp"
-            android:contentDescription="@null"
+            tools:ignore="ContentDescription"
             android:visibility="gone"/>
     </LinearLayout>
 </FrameLayout>

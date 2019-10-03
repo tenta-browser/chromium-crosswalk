@@ -34,11 +34,14 @@ class HttpServerRequestInfo;
 class HttpServerResponseInfo;
 }
 
+namespace network {
+class TransitionalURLLoaderFactoryOwner;
+}
+
 class Adb;
 class DeviceManager;
-class PortManager;
-class PortServer;
 class URLRequestContextGetter;
+class WrapperURLLoaderFactory;
 
 enum HttpMethod {
   kGet,
@@ -67,8 +70,7 @@ class HttpHandler {
   HttpHandler(const base::Closure& quit_func,
               const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
               const std::string& url_base,
-              int adb_port,
-              std::unique_ptr<PortServer> port_server);
+              int adb_port);
   ~HttpHandler();
 
   void Handle(const net::HttpServerRequestInfo& request,
@@ -83,10 +85,14 @@ class HttpHandler {
   typedef std::vector<CommandMapping> CommandMap;
 
   Command WrapToCommand(const char* name,
-                        const SessionCommand& session_command);
-  Command WrapToCommand(const char* name, const WindowCommand& window_command);
+                        const SessionCommand& session_command,
+                        bool w3c_standard_command = true);
   Command WrapToCommand(const char* name,
-                        const ElementCommand& element_command);
+                        const WindowCommand& window_command,
+                        bool w3c_standard_command = true);
+  Command WrapToCommand(const char* name,
+                        const ElementCommand& element_command,
+                        bool w3c_standard_command = true);
   void HandleCommand(const net::HttpServerRequestInfo& request,
                      const std::string& trimmed_path,
                      const HttpResponseSenderFunc& send_response_func);
@@ -113,15 +119,16 @@ class HttpHandler {
   std::string url_base_;
   bool received_shutdown_;
   scoped_refptr<URLRequestContextGetter> context_getter_;
+  std::unique_ptr<network::TransitionalURLLoaderFactoryOwner>
+      url_loader_factory_owner_;
+  std::unique_ptr<WrapperURLLoaderFactory> wrapper_url_loader_factory_;
   SyncWebSocketFactory socket_factory_;
   SessionThreadMap session_thread_map_;
   std::unique_ptr<CommandMap> command_map_;
   std::unique_ptr<Adb> adb_;
   std::unique_ptr<DeviceManager> device_manager_;
-  std::unique_ptr<PortServer> port_server_;
-  std::unique_ptr<PortManager> port_manager_;
 
-  base::WeakPtrFactory<HttpHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<HttpHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HttpHandler);
 };

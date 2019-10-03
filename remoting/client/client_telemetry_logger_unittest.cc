@@ -59,16 +59,10 @@ class FakeLogWriter : public ChromotingEventLogWriter {
 
   // ChromotingEventLogWriter overrides.
   void Log(const ChromotingEvent& entry) override;
-  void SetAuthToken(const std::string& auth_token) override;
-  void SetAuthClosure(const base::Closure& closure) override;
-
-  const std::string& auth_token() const { return auth_token_; }
-  const base::Closure& auth_closure() const { return auth_closure_; }
 
  private:
   base::circular_deque<ChromotingEvent> expected_events_;
   std::string auth_token_;
-  base::Closure auth_closure_;
 };
 
 void FakeLogWriter::AddExpectedEvent(const ChromotingEvent& entry) {
@@ -83,14 +77,6 @@ void FakeLogWriter::Log(const ChromotingEvent& entry) {
   expected_events_.pop_front();
 }
 
-void FakeLogWriter::SetAuthToken(const std::string& auth_token) {
-  auth_token_ = auth_token;
-}
-
-void FakeLogWriter::SetAuthClosure(const base::Closure& closure) {
-  auth_closure_ = closure;
-}
-
 class ClientTelemetryLoggerTest : public testing::Test {
  public:
   // testing::Test override.
@@ -103,8 +89,9 @@ class ClientTelemetryLoggerTest : public testing::Test {
 
 void ClientTelemetryLoggerTest::SetUp() {
   log_writer_.reset(new FakeLogWriter());
-  logger_.reset(new ClientTelemetryLogger(log_writer_.get(),
-                                          ChromotingEvent::Mode::ME2ME));
+  logger_.reset(new ClientTelemetryLogger(
+      log_writer_.get(), ChromotingEvent::Mode::ME2ME,
+      ChromotingEvent::SessionEntryPoint::CONNECT_BUTTON));
 }
 
 TEST_F(ClientTelemetryLoggerTest, LogSessionStateChange) {
@@ -129,7 +116,7 @@ TEST_F(ClientTelemetryLoggerTest, LogStatistics) {
   protocol::PerformanceTracker perf_tracker;
   log_writer_->AddExpectedEvent(
       ChromotingEvent(ChromotingEvent::Type::CONNECTION_STATISTICS));
-  logger_->LogStatistics(&perf_tracker);
+  logger_->LogStatistics(perf_tracker);
 }
 
 TEST_F(ClientTelemetryLoggerTest, SessionIdGeneration) {
@@ -168,7 +155,7 @@ TEST_F(ClientTelemetryLoggerTest, SessionIdExpiration) {
   logger_->SetSessionIdGenerationTimeForTest(base::TimeTicks::Now() -
                                              base::TimeDelta::FromDays(2));
   protocol::PerformanceTracker perf_tracker;
-  logger_->LogStatistics(&perf_tracker);
+  logger_->LogStatistics(perf_tracker);
   EXPECT_NE(last_id, logger_->session_id());
 }
 

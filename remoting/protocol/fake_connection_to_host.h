@@ -24,12 +24,13 @@ class FakeConnectionToHost : public protocol::ConnectionToHost {
   void set_client_stub(protocol::ClientStub* client_stub) override;
   void set_clipboard_stub(protocol::ClipboardStub* clipboard_stub) override;
   void set_video_renderer(protocol::VideoRenderer* video_renderer) override;
-  virtual void InitializeAudio(
+  void InitializeAudio(
       scoped_refptr<base::SingleThreadTaskRunner> audio_decode_task_runner,
       base::WeakPtr<protocol::AudioStub> audio_stub) override;
   void Connect(std::unique_ptr<protocol::Session> session,
                scoped_refptr<protocol::TransportContext> transport_context,
                HostEventCallback* event_callback) override;
+  void Disconnect(protocol::ErrorCode error) override;
   const protocol::SessionConfig& config() override;
   protocol::ClipboardStub* clipboard_forwarder() override;
   protocol::HostStub* host_stub() override;

@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_manager_delegate.h"
+#include "base/values.h"
+#include "content/public/browser/devtools_agent_host.h"
 
 namespace content {
 
@@ -22,6 +23,11 @@ std::string DevToolsManagerDelegate::GetTargetDescription(WebContents* wc) {
   return std::string();
 }
 
+bool DevToolsManagerDelegate::AllowInspectingRenderFrameHost(
+    RenderFrameHost* rfh) {
+  return true;
+}
+
 DevToolsAgentHost::List DevToolsManagerDelegate::RemoteDebuggingTargets() {
   return DevToolsAgentHost::GetOrCreateAll();
 }
@@ -31,35 +37,42 @@ scoped_refptr<DevToolsAgentHost> DevToolsManagerDelegate::CreateNewTarget(
   return nullptr;
 }
 
-void DevToolsManagerDelegate::SessionCreated(
-    content::DevToolsAgentHost* agent_host,
-    int session_id) {}
-
-void DevToolsManagerDelegate::SessionDestroyed(
-    content::DevToolsAgentHost* agent_host,
-    int session_id) {}
-
-bool DevToolsManagerDelegate::HandleCommand(DevToolsAgentHost* agent_host,
-                                            int session_id,
-                                            base::DictionaryValue* command) {
-  return false;
+std::vector<BrowserContext*> DevToolsManagerDelegate::GetBrowserContexts() {
+  return std::vector<BrowserContext*>();
 }
 
-bool DevToolsManagerDelegate::HandleAsyncCommand(
-    DevToolsAgentHost* agent_host,
-    int session_id,
-    base::DictionaryValue* command,
-    const CommandCallback& callback) {
-  return false;
+BrowserContext* DevToolsManagerDelegate::GetDefaultBrowserContext() {
+  return nullptr;
+}
+
+BrowserContext* DevToolsManagerDelegate::CreateBrowserContext() {
+  return nullptr;
+}
+
+void DevToolsManagerDelegate::DisposeBrowserContext(BrowserContext*,
+                                                    DisposeCallback callback) {
+  std::move(callback).Run(false, "Browser Context disposal is not supported");
+}
+
+void DevToolsManagerDelegate::ClientAttached(DevToolsAgentHost* agent_host,
+                                             DevToolsAgentHostClient* client) {}
+void DevToolsManagerDelegate::ClientDetached(DevToolsAgentHost* agent_host,
+                                             DevToolsAgentHostClient* client) {}
+
+void DevToolsManagerDelegate::HandleCommand(DevToolsAgentHost* agent_host,
+                                            DevToolsAgentHostClient* client,
+                                            const std::string& method,
+                                            const std::string& message,
+                                            NotHandledCallback callback) {
+  std::move(callback).Run(message);
 }
 
 std::string DevToolsManagerDelegate::GetDiscoveryPageHTML() {
   return std::string();
 }
 
-std::string DevToolsManagerDelegate::GetFrontendResource(
-    const std::string& path) {
-  return std::string();
+bool DevToolsManagerDelegate::HasBundledFrontendResources() {
+  return false;
 }
 
 bool DevToolsManagerDelegate::IsBrowserTargetDiscoverable() {

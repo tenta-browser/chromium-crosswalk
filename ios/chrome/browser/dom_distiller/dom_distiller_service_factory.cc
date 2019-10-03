@@ -8,9 +8,7 @@
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/no_destructor.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/distiller.h"
 #include "components/dom_distiller/core/dom_distiller_service.h"
@@ -18,12 +16,13 @@
 #include "components/dom_distiller/ios/distiller_page_factory_ios.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
-#include "components/leveldb_proto/proto_database.h"
-#include "components/leveldb_proto/proto_database_impl.h"
+#include "components/leveldb_proto/public/proto_database.h"
+#include "components/leveldb_proto/public/proto_database_provider.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace {
 // A simple wrapper for DomDistillerService to expose it as a
@@ -53,7 +52,8 @@ namespace dom_distiller {
 
 // static
 DomDistillerServiceFactory* DomDistillerServiceFactory::GetInstance() {
-  return base::Singleton<DomDistillerServiceFactory>::get();
+  static base::NoDestructor<DomDistillerServiceFactory> instance;
+  return instance.get();
 }
 
 // static
@@ -74,23 +74,22 @@ DomDistillerServiceFactory::~DomDistillerServiceFactory() {}
 std::unique_ptr<KeyedService>
 DomDistillerServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-
   std::unique_ptr<DistillerPageFactory> distiller_page_factory =
-      base::MakeUnique<DistillerPageFactoryIOS>(context);
+      std::make_unique<DistillerPageFactoryIOS>(context);
 
   std::unique_ptr<DistillerURLFetcherFactory> distiller_url_fetcher_factory =
-      base::MakeUnique<DistillerURLFetcherFactory>(
-          context->GetRequestContext());
+      std::make_unique<DistillerURLFetcherFactory>(
+          context->GetSharedURLLoaderFactory());
 
   dom_distiller::proto::DomDistillerOptions options;
   std::unique_ptr<DistillerFactory> distiller_factory =
-      base::MakeUnique<DistillerFactoryImpl>(
+      std::make_unique<DistillerFactoryImpl>(
           std::move(distiller_url_fetcher_factory), options);
   std::unique_ptr<DistilledPagePrefs> distilled_page_prefs =
-      base::MakeUnique<DistilledPagePrefs>(
+      std::make_unique<DistilledPagePrefs>(
           ios::ChromeBrowserState::FromBrowserState(context)->GetPrefs());
 
-  return base::MakeUnique<DomDistillerKeyedService>(
+  return std::make_unique<DomDistillerKeyedService>(
       nullptr, std::move(distiller_factory), std::move(distiller_page_factory),
       std::move(distilled_page_prefs));
 }

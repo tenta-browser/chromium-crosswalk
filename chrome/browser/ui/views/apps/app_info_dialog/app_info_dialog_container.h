@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_APPS_APP_INFO_DIALOG_APP_INFO_DIALOG_CONTAINER_H_
 #define CHROME_BROWSER_UI_VIEWS_APPS_APP_INFO_DIALOG_APP_INFO_DIALOG_CONTAINER_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace views {
@@ -17,18 +19,16 @@ class View;
 #if BUILDFLAG(ENABLE_APP_LIST)
 
 // Creates a new dialog containing |view| that can be displayed inside the app
-// list, covering the entire app list and adding a close button. Takes ownership
-// of |view|.
+// list, covering the entire app list and adding a close button.
 views::DialogDelegateView* CreateAppListContainerForView(
-    views::View* view,
-    const base::Closure& close_callback);
+    std::unique_ptr<views::View> view);
 
 #endif  // ENABLE_APP_LIST
 
 // Creates a new native dialog of the given |size| containing |view| with a
-// close button and draggable titlebar. Takes ownership of |view|.
+// close button and draggable titlebar.
 views::DialogDelegateView* CreateDialogContainerForView(
-    views::View* view,
+    std::unique_ptr<views::View> view,
     const gfx::Size& size,
     const base::Closure& close_callback);
 

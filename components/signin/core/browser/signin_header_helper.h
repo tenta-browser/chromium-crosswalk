@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "components/prefs/pref_member.h"
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/public/base/account_consistency_method.h"
+#include "components/signin/public/base/signin_buildflags.h"
 #include "url/gurl.h"
 
 namespace content_settings {
@@ -39,12 +40,13 @@ extern const char kDiceResponseHeader[];
 // The ServiceType specified by Gaia in the response header accompanying the 204
 // response. This indicates the action Chrome is supposed to lead the user to
 // perform.
-enum GAIAServiceType {
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.signin
+enum GAIAServiceType : int {
   GAIA_SERVICE_TYPE_NONE = 0,    // No Gaia response header.
   GAIA_SERVICE_TYPE_SIGNOUT,     // Logout all existing sessions.
   GAIA_SERVICE_TYPE_INCOGNITO,   // Open an incognito tab.
   GAIA_SERVICE_TYPE_ADDSESSION,  // Add a secondary account.
-  GAIA_SERVICE_TYPE_REAUTH,      // Re-authenticate an account.
   GAIA_SERVICE_TYPE_SIGNUP,      // Create a new account.
   GAIA_SERVICE_TYPE_DEFAULT,     // All other cases.
 };
@@ -144,25 +146,43 @@ struct DiceResponseParams {
   DISALLOW_COPY_AND_ASSIGN(DiceResponseParams);
 };
 
+class RequestAdapter {
+ public:
+  explicit RequestAdapter(net::URLRequest* request);
+  virtual ~RequestAdapter();
+
+  virtual const GURL& GetUrl();
+  virtual bool HasHeader(const std::string& name);
+  virtual void RemoveRequestHeaderByName(const std::string& name);
+  virtual void SetExtraHeaderByName(const std::string& name,
+                                    const std::string& value);
+
+ protected:
+  net::URLRequest* const request_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(RequestAdapter);
+};
+
 // Base class for managing the signin headers (Dice and Chrome-Connected).
 class SigninHeaderHelper {
  public:
   // Appends or remove the header to a network request if necessary.
   // Returns whether the request has the request header.
-  bool AppendOrRemoveRequestHeader(net::URLRequest* request,
+  bool AppendOrRemoveRequestHeader(RequestAdapter* request,
                                    const GURL& redirect_url,
                                    const char* header_name,
                                    const std::string& header_value);
 
   // Returns wether an account consistency header should be built for this
   // request.
-  bool ShouldBuildRequestHeader(
+  virtual bool ShouldBuildRequestHeader(
       const GURL& url,
-      const content_settings::CookieSettings* cookie_settings);
+      const content_settings::CookieSettings* cookie_settings) = 0;
 
  protected:
-  SigninHeaderHelper() {}
-  virtual ~SigninHeaderHelper() {}
+  SigninHeaderHelper();
+  virtual ~SigninHeaderHelper();
 
   // Dictionary of fields in a account consistency response header.
   using ResponseHeaderDictionary = std::multimap<std::string, std::string>;
@@ -175,17 +195,17 @@ class SigninHeaderHelper {
  private:
   // Returns whether the url is eligible for the request header.
   virtual bool IsUrlEligibleForRequestHeader(const GURL& url) = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(SigninHeaderHelper);
 };
 
-// Returns true if signin cookies are allowed.
-bool SettingsAllowSigninCookies(
-    const content_settings::CookieSettings* cookie_settings);
 
 // Returns the CHROME_CONNECTED cookie, or an empty string if it should not be
 // added to the request to |url|.
 std::string BuildMirrorRequestCookieIfPossible(
     const GURL& url,
     const std::string& account_id,
+    AccountConsistencyMethod account_consistency,
     const content_settings::CookieSettings* cookie_settings,
     int profile_mode_mask);
 
@@ -193,11 +213,11 @@ std::string BuildMirrorRequestCookieIfPossible(
 // the exception of requests from gaia webview.
 // Removes the header in case it should not be transfered to a redirected url.
 void AppendOrRemoveMirrorRequestHeader(
-    net::URLRequest* request,
+    RequestAdapter* request,
     const GURL& redirect_url,
     const std::string& account_id,
+    AccountConsistencyMethod account_consistency,
     const content_settings::CookieSettings* cookie_settings,
-    bool is_mirror_enabled,
     int profile_mode_mask);
 
 // Adds the Dice to all Gaia requests from a connected profile, with the
@@ -205,13 +225,13 @@ void AppendOrRemoveMirrorRequestHeader(
 // Removes the header in case it should not be transfered to a redirected url.
 // Returns whether the request has the Dice request header.
 bool AppendOrRemoveDiceRequestHeader(
-    net::URLRequest* request,
+    RequestAdapter* request,
     const GURL& redirect_url,
     const std::string& account_id,
     bool sync_enabled,
-    bool sync_has_auth_error,
-    BooleanPrefMember* dice_pref_member,
-    const content_settings::CookieSettings* cookie_settings);
+    AccountConsistencyMethod account_consistency,
+    const content_settings::CookieSettings* cookie_settings,
+    const std::string& device_id);
 
 // Returns the parameters contained in the X-Chrome-Manage-Accounts response
 // header.

@@ -8,9 +8,7 @@
 #include <shellapi.h>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/display/win/dpi.h"
@@ -53,24 +51,24 @@ void IconLoader::ReadIcon() {
       NOTREACHED();
   }
 
-  std::unique_ptr<gfx::Image> image;
+  gfx::Image image;
 
   SHFILEINFO file_info = { 0 };
   if (SHGetFileInfo(group_.c_str(), FILE_ATTRIBUTE_NORMAL, &file_info,
                      sizeof(SHFILEINFO),
                      SHGFI_ICON | size | SHGFI_USEFILEATTRIBUTES)) {
-    std::unique_ptr<SkBitmap> bitmap(
-        IconUtil::CreateSkBitmapFromHICON(file_info.hIcon));
-    if (bitmap.get()) {
-      gfx::ImageSkia image_skia(gfx::ImageSkiaRep(*bitmap,
-                                                  display::win::GetDPIScale()));
+    const SkBitmap bitmap = IconUtil::CreateSkBitmapFromHICON(file_info.hIcon);
+    if (!bitmap.isNull()) {
+      gfx::ImageSkia image_skia(
+          gfx::ImageSkiaRep(bitmap, display::win::GetDPIScale()));
       image_skia.MakeThreadSafe();
-      image = base::MakeUnique<gfx::Image>(image_skia);
+      image = gfx::Image(image_skia);
       DestroyIcon(file_info.hIcon);
     }
   }
 
   target_task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback_, base::Passed(&image), group_));
+      FROM_HERE,
+      base::BindOnce(std::move(callback_), std::move(image), group_));
   delete this;
 }

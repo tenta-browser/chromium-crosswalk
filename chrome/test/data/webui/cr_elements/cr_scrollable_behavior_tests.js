@@ -3,13 +3,13 @@
 // found in the LICENSE file.
 
 suite('cr-scrollable-behavior', function() {
-  /** @type {CrScrollableListElement} */ var testElement;
-  /** @type {HTMLDivElement} */ var container;
-  /** @type {IronListElement} */ var ironList;
+  /** @type {CrScrollableListElement} */ let testElement;
+  /** @type {HTMLDivElement} */ let container;
+  /** @type {IronListElement} */ let ironList;
 
   suiteSetup(function() {
     document.body.innerHTML = `
-      <dom-module is="test-element">
+      <dom-module id="test-element">
         <template>
           <style>
             #container {
@@ -52,10 +52,10 @@ suite('cr-scrollable-behavior', function() {
     container = testElement.$$('#container');
     ironList = testElement.$$('iron-list');
 
-    // Wait for requestAnimationFrame for CrScrollableBehavior to set the
-    // initial scrollable class properties.
-    window.requestAnimationFrame(function() {
-      done();
+    // Wait for CrScrollableBehavior to set the initial scrollable class
+    // properties.
+    window.requestAnimationFrame(() => {
+      test_util.waitForRender().then(done);
     });
   });
 
@@ -82,7 +82,7 @@ suite('cr-scrollable-behavior', function() {
     scrollToIndex(2);
     assertTrue(container.classList.contains('can-scroll'));
     assertTrue(container.classList.contains('is-scrolled'));
-    var scrollTop = container.scrollTop;
+    const scrollTop = container.scrollTop;
     testElement.saveScroll(ironList);
     testElement.items = ['apple', 'bannana', 'cactus', 'cucumber', 'doughnut'];
     testElement.restoreScroll(ironList);

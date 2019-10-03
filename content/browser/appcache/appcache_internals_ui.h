@@ -9,6 +9,7 @@
 
 #include <list>
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -19,6 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "net/base/io_buffer.h"
+#include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
 
 namespace base {
 class ListValue;
@@ -33,31 +35,37 @@ namespace content {
 // and AppCache storage which live on the IO thread.
 class AppCacheInternalsUI : public WebUIController {
  public:
+  struct ProxyResponseEnquiry {
+    std::string manifest_url;
+    int64_t group_id;
+    int64_t response_id;
+  };
+
   explicit AppCacheInternalsUI(WebUI* web_ui);
   ~AppCacheInternalsUI() override;
 
+  base::WeakPtr<AppCacheInternalsUI> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
   class Proxy : public AppCacheStorage::Delegate,
                 public base::RefCountedThreadSafe<Proxy> {
    public:
     friend class AppCacheInternalsUI;
 
-    struct ResponseEnquiry {
-      std::string manifest_url;
-      int64_t group_id;
-      int64_t response_id;
-    };
+    Proxy(base::WeakPtr<AppCacheInternalsUI> appcache_internals_ui,
+          const base::FilePath& storage_partition);
 
    private:
     friend class base::RefCountedThreadSafe<Proxy>;
 
-    Proxy(base::WeakPtr<AppCacheInternalsUI> appcache_internals_ui,
-          const base::FilePath& storage_partition);
     ~Proxy() override;
 
     void RequestAllAppCacheInfo();
     void DeleteAppCache(const std::string& manifest_url);
     void RequestAppCacheDetails(const std::string& manifest_url);
-    void RequestFileDetails(const ResponseEnquiry& response_enquiry);
+    void RequestFileDetails(const ProxyResponseEnquiry& response_enquiry);
     void HandleFileDetailsRequest();
     void OnAllAppCacheInfoReady(
         scoped_refptr<AppCacheInfoCollection> collection,
@@ -69,7 +77,7 @@ class AppCacheInternalsUI : public WebUIController {
     void OnResponseInfoLoaded(AppCacheResponseInfo* response_info,
                               int64_t response_id) override;
     void OnResponseDataReadComplete(
-        const ResponseEnquiry& response_enquiry,
+        const ProxyResponseEnquiry& response_enquiry,
         scoped_refptr<AppCacheResponseInfo> response_info,
         std::unique_ptr<AppCacheResponseReader> reader,
         scoped_refptr<net::IOBuffer> response_data,
@@ -82,16 +90,11 @@ class AppCacheInternalsUI : public WebUIController {
     base::WeakPtr<AppCacheServiceImpl> appcache_service_;
     base::FilePath partition_path_;
     scoped_refptr<AppCacheStorageReference> disabled_appcache_storage_ref_;
-    std::list<ResponseEnquiry> response_enquiries_;
+    std::list<ProxyResponseEnquiry> response_enquiries_;
     bool preparing_response_;
     bool shutdown_called_;
   };
 
-  base::WeakPtr<AppCacheInternalsUI> AsWeakPtr() {
-    return weak_ptr_factory_.GetWeakPtr();
-  }
-
- private:
   void CreateProxyForPartition(StoragePartition* storage_partition);
   // Commands from Javascript side.
   void GetAllAppCache(const base::ListValue* args);
@@ -108,12 +111,13 @@ class AppCacheInternalsUI : public WebUIController {
   void OnAppCacheDetailsReady(
       const base::FilePath& partition_path,
       const std::string& manifest_url,
-      std::unique_ptr<AppCacheResourceInfoVector> resource_info_vector);
-  void OnFileDetailsReady(const Proxy::ResponseEnquiry& response_enquiry,
+      std::unique_ptr<std::vector<blink::mojom::AppCacheResourceInfo>>
+          resource_info_vector);
+  void OnFileDetailsReady(const ProxyResponseEnquiry& response_enquiry,
                           scoped_refptr<AppCacheResponseInfo> response_info,
                           scoped_refptr<net::IOBuffer> response_data,
                           int data_length);
-  void OnFileDetailsFailed(const Proxy::ResponseEnquiry& response_enquiry,
+  void OnFileDetailsFailed(const ProxyResponseEnquiry& response_enquiry,
                            int data_length);
 
   BrowserContext* browser_context() {
@@ -122,7 +126,7 @@ class AppCacheInternalsUI : public WebUIController {
 
   Proxy* GetProxyForPartitionPath(const base::FilePath& path);
   std::list<scoped_refptr<Proxy>> appcache_proxies_;
-  base::WeakPtrFactory<AppCacheInternalsUI> weak_ptr_factory_;
+  base::WeakPtrFactory<AppCacheInternalsUI> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppCacheInternalsUI);
 };

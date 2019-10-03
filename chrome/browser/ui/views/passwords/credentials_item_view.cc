@@ -7,13 +7,13 @@
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/common/password_form.h"
+#include "third_party/skia/include/core/SkPath.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/path.h"
 #include "ui/views/border.h"
 #include "ui/views/bubble/tooltip_icon.h"
 #include "ui/views/controls/image_view.h"
@@ -45,7 +45,7 @@ class CircularImageView : public views::ImageView {
 void CircularImageView::OnPaint(gfx::Canvas* canvas) {
   // Display the avatar picture as a circle.
   gfx::Rect bounds(GetImageBounds());
-  gfx::Path circular_mask;
+  SkPath circular_mask;
   circular_mask.addCircle(
       SkIntToScalar(bounds.x() + bounds.right()) / 2,
       SkIntToScalar(bounds.y() + bounds.bottom()) / 2,
@@ -62,14 +62,13 @@ CredentialsItemView::CredentialsItemView(
     const base::string16& lower_text,
     SkColor hover_color,
     const autofill::PasswordForm* form,
-    net::URLRequestContextGetter* request_context)
+    network::mojom::URLLoaderFactory* loader_factory)
     : Button(button_listener),
       form_(form),
       upper_label_(nullptr),
       lower_label_(nullptr),
       info_icon_(nullptr),
-      hover_color_(hover_color),
-      weak_ptr_factory_(this) {
+      hover_color_(hover_color) {
   set_notify_enter_exit_on_child(true);
   // Create an image-view for the avatar. Make sure it ignores events so that
   // the parent can receive the events instead.
@@ -84,15 +83,13 @@ CredentialsItemView::CredentialsItemView(
     // Fetch the actual avatar.
     AccountAvatarFetcher* fetcher = new AccountAvatarFetcher(
         form_->icon_url, weak_ptr_factory_.GetWeakPtr());
-    fetcher->Start(request_context);
+    fetcher->Start(loader_factory);
   }
   AddChildView(image_view_);
 
   // TODO(tapted): Check these (and the STYLE_ values below) against the spec on
   // http://crbug.com/651681.
-  const int kLabelContext = ChromeLayoutProvider::Get()->IsHarmonyMode()
-                                ? CONTEXT_BODY_TEXT_SMALL
-                                : CONTEXT_DEPRECATED_SMALL;
+  const int kLabelContext = CONTEXT_BODY_TEXT_SMALL;
 
   if (!upper_text.empty()) {
     upper_label_ = new views::Label(upper_text, kLabelContext,

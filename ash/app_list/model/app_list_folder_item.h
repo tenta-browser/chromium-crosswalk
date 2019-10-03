@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,6 @@
 #include "base/macros.h"
 
 namespace gfx {
-class ImageSkia;
 class Rect;
 }  // namespace gfx
 
@@ -40,11 +40,8 @@ class APP_LIST_MODEL_EXPORT AppListFolderItem : public AppListItem,
 
   static const char kItemType[];
 
-  AppListFolderItem(const std::string& id, FolderType folder_type);
+  explicit AppListFolderItem(const std::string& id);
   ~AppListFolderItem() override;
-
-  // Returns the icon of one of the top items with |item_index|.
-  const gfx::ImageSkia& GetTopIcon(size_t item_index);
 
   // Returns the target icon bounds for |item| to fly back to its parent folder
   // icon in animation UI. If |item| is one of the top item icon, this will
@@ -65,18 +62,27 @@ class APP_LIST_MODEL_EXPORT AppListFolderItem : public AppListItem,
   FolderType folder_type() const { return folder_type_; }
 
   // AppListItem overrides:
-  void Activate(int event_flags) override;
   const char* GetItemType() const override;
-  ui::MenuModel* GetContextMenuModel() override;
   AppListItem* FindChildItem(const std::string& id) override;
   size_t ChildItemCount() const override;
-  bool CompareForTest(const AppListItem* other) const override;
+
+  // Persistent folders will be retained even if there is 1 app in them.
+  bool IsPersistent() const;
+  void SetIsPersistent(bool is_persistent);
+
+  // Returns true if this folder is a candidate for auto-removal (based on its
+  // type and the number of children it has).
+  bool ShouldAutoRemove() const;
 
   // Returns an id for a new folder.
   static std::string GenerateId();
 
   // FolderImageObserver overrides:
   void OnFolderImageUpdated() override;
+
+  // Informs the folder item of an item being dragged, that it may notify its
+  // image.
+  void NotifyOfDraggedItem(AppListItem* dragged_item);
 
  private:
   // The type of folder; may affect behavior of folder views.

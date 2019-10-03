@@ -11,8 +11,6 @@
 #include "base/strings/string16.h"
 #include "base/version.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
-#include "content/public/browser/download_interrupt_reasons.h"
-#include "content/public/browser/download_item.h"
 #include "url/gurl.h"
 
 class PluginInstallerObserver;
@@ -43,9 +41,9 @@ class PluginInstaller {
   FRIEND_TEST_ALL_PREFIXES(PluginInstallerTest, StartInstalling_FailedStart);
   FRIEND_TEST_ALL_PREFIXES(PluginInstallerTest, StartInstalling_Interrupted);
 
-  base::ObserverList<PluginInstallerObserver> observers_;
+  base::ObserverList<PluginInstallerObserver>::Unchecked observers_;
   int strong_observer_count_;
-  base::ObserverList<WeakPluginInstallerObserver> weak_observers_;
+  base::ObserverList<WeakPluginInstallerObserver>::Unchecked weak_observers_;
   DISALLOW_COPY_AND_ASSIGN(PluginInstaller);
 };
 

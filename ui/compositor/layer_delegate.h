@@ -10,6 +10,7 @@
 
 namespace gfx {
 class Rect;
+class Transform;
 }
 
 namespace ui {
@@ -35,8 +36,20 @@ class COMPOSITOR_EXPORT LayerDelegate {
   // the property was set directly or by an animation. This will be called
   // before the first frame of an animation is rendered and when the animation
   // ends, but not necessarily at every frame of the animation.
-  virtual void OnLayerTransformed(PropertyChangeReason reason);
+  virtual void OnLayerTransformed(const gfx::Transform& old_transform,
+                                  PropertyChangeReason reason);
   virtual void OnLayerOpacityChanged(PropertyChangeReason reason);
+
+  // Invoked when the alpha shape is set.
+  virtual void OnLayerAlphaShapeChanged();
+
+  // Invoked when whether the layer fills its bounds opaquely or not changed.
+  virtual void OnLayerFillsBoundsOpaquelyChanged();
+
+  // Called when it is a good opportunity for the delegate to update any visual
+  // state or schedule any additional regions to be painted. Soon after this is
+  // called OnPaintLayer() is called.
+  virtual void UpdateVisualState();
 
  protected:
   virtual ~LayerDelegate() {}

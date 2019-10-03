@@ -48,9 +48,6 @@ class USER_MANAGER_EXPORT UserManager {
     virtual void OnUserProfileImageUpdated(const User& user,
                                            const gfx::ImageSkia& profile_image);
 
-    // Called when the child status of the given user has changed.
-    virtual void OnChildStatusChanged(const User& user);
-
     // Called when any of the device cros settings which are responsible for
     // user sign in are changed.
     virtual void OnUsersSignInConstraintsChanged();
@@ -176,14 +173,6 @@ class USER_MANAGER_EXPORT UserManager {
 
   // Invoked by session manager to inform session start.
   virtual void OnSessionStarted() = 0;
-
-  // Invoked once profile initialization has been completed. This allows various
-  // subsystems (for example, policy framework) to skip an expensive online
-  // initialization process, and also allows the signin screen to force an
-  // online signin if it knows that profile initialization has not yet
-  // completed. |user| is the User associated with the profile that has
-  // completed initialization.
-  virtual void OnProfileInitialized(User* user) = 0;
 
   // Removes the user from the device. Note, it will verify that the given user
   // isn't the owner, so calling this method for the owner will take no effect.
@@ -327,10 +316,6 @@ class USER_MANAGER_EXPORT UserManager {
       const gfx::ImageSkia& profile_image) = 0;
   virtual void NotifyUsersSignInConstraintsChanged() = 0;
 
-  // Resets this profile to be regarded as if it has never been initialized
-  // before. Used on profile wipe.
-  virtual void ResetProfileEverInitialized(const AccountId& account_id) = 0;
-
   // Returns true if supervised users allowed.
   virtual bool AreSupervisedUsersAllowed() const = 0;
 
@@ -392,7 +377,7 @@ class USER_MANAGER_EXPORT UserManager {
   // |on_resolved_callback| as reply callback.
   virtual void ScheduleResolveLocale(
       const std::string& locale,
-      const base::Closure& on_resolved_callback,
+      base::OnceClosure on_resolved_callback,
       std::string* out_resolved_locale) const = 0;
 
   // Returns true if |image_index| is a valid default user image index.

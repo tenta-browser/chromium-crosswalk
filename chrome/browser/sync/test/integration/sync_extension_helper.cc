@@ -20,7 +20,6 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/pending_extension_info.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
-#include "chrome/browser/extensions/signin/gaia_auth_extension_loader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
@@ -100,10 +99,11 @@ std::string SyncExtensionHelper::InstallExtension(
 
 void SyncExtensionHelper::UninstallExtension(
     Profile* profile, const std::string& name) {
-  ExtensionService::UninstallExtensionHelper(
-      extensions::ExtensionSystem::Get(profile)->extension_service(),
-      crx_file::id_util::GenerateId(name),
-      extensions::UNINSTALL_REASON_SYNC);
+  extensions::ExtensionSystem::Get(profile)
+      ->extension_service()
+      ->UninstallExtension(crx_file::id_util::GenerateId(name),
+                           extensions::UNINSTALL_REASON_SYNC,
+                           nullptr /* error */);
 }
 
 std::vector<std::string> SyncExtensionHelper::GetInstalledExtensionNames(
@@ -222,15 +222,10 @@ SyncExtensionHelper::ExtensionStateMap
       extensions::ExtensionRegistry::Get(profile)
           ->GenerateInstalledExtensionsSet());
 
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile)->extension_service();
   for (const scoped_refptr<const Extension>& extension : *extensions) {
     const std::string& id = extension->id();
-    // When doing Chrome account sign in though the Gaia extension, the Gaia
-    // extensions gets installed once and used by multiple profiles.  This will
-    // cause extension list of profiles to not match.
-    if (id == extensions::kGaiaAuthExtensionId)
-      continue;
     ExtensionState& extension_state = extension_state_map[id];
     extension_state.enabled_state =
         extension_service->IsExtensionEnabled(id) ?
@@ -276,8 +271,8 @@ bool SyncExtensionHelper::ExtensionStatesMatch(
     return false;
   }
 
-  ExtensionStateMap::const_iterator it1 = state_map1.begin();
-  ExtensionStateMap::const_iterator it2 = state_map2.begin();
+  auto it1 = state_map1.begin();
+  auto it2 = state_map2.begin();
   while (it1 != state_map1.end()) {
     if (it1->first != it2->first) {
       DVLOG(1) << "Extensions for profile " << profile1->GetDebugName()
@@ -295,7 +290,7 @@ bool SyncExtensionHelper::ExtensionStatesMatch(
 }
 
 std::string SyncExtensionHelper::CreateFakeExtensionName(int index) {
-  return extension_name_prefix_ + base::IntToString(index);
+  return extension_name_prefix_ + base::NumberToString(index);
 }
 
 bool SyncExtensionHelper::ExtensionNameToIndex(const std::string& name,
@@ -311,7 +306,8 @@ bool SyncExtensionHelper::ExtensionNameToIndex(const std::string& name,
 }
 
 void SyncExtensionHelper::SetupProfile(Profile* profile) {
-  extensions::ExtensionSystem::Get(profile)->InitForRegularProfile(true);
+  extensions::ExtensionSystem::Get(profile)->InitForRegularProfile(
+      true /* extensions_enabled */);
   profile_extensions_.insert(make_pair(profile, ExtensionNameMap()));
 }
 
@@ -336,6 +332,7 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
   const std::string& public_key = NameToPublicKey(name);
   source.SetString(extensions::manifest_keys::kPublicKey, public_key);
   source.SetString(extensions::manifest_keys::kVersion, "0.0.0.0");
+  source.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
   switch (type) {
     case Manifest::TYPE_EXTENSION:
       // Do nothing.
@@ -409,7 +406,7 @@ scoped_refptr<Extension> SyncExtensionHelper::GetExtension(
     ADD_FAILURE();
     return nullptr;
   }
-  ProfileExtensionNameMap::iterator it = profile_extensions_.find(profile);
+  auto it = profile_extensions_.find(profile);
   if (it == profile_extensions_.end()) {
     ADD_FAILURE();
     return nullptr;

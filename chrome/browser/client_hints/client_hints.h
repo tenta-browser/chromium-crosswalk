@@ -6,37 +6,41 @@
 #define CHROME_BROWSER_CLIENT_HINTS_CLIENT_HINTS_H_
 
 #include <memory>
+#include <string>
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "content/public/browser/client_hints_controller_delegate.h"
 
 class GURL;
 
-namespace content {
-class BrowserContext;
-}
-
-namespace content_settings {
-class CookieSettings;
-}
-
-namespace net {
-class HttpRequestHeaders;
-class URLRequest;
-}
-
 namespace client_hints {
 
-// Allow the embedder to return additional headers related to client hints that
-// should be sent when fetching |url|. May return a nullptr.
-std::unique_ptr<net::HttpRequestHeaders>
-GetAdditionalNavigationRequestClientHintsHeaders(
-    content::BrowserContext* context,
-    const GURL& url);
+class ClientHints : public KeyedService,
+                    public content::ClientHintsControllerDelegate {
+ public:
+  explicit ClientHints(content::BrowserContext* context);
+  ~ClientHints() override;
 
-// Called before |request| goes on the network.
-void RequestBeginning(
-    net::URLRequest* request,
-    scoped_refptr<content_settings::CookieSettings> cookie_settings);
+  // content::ClientHintsControllerDelegate:
+  network::NetworkQualityTracker* GetNetworkQualityTracker() override;
+
+  void GetAllowedClientHintsFromSource(
+      const GURL& url,
+      blink::WebEnabledClientHints* client_hints) override;
+
+  bool IsJavaScriptAllowed(const GURL& url) override;
+
+  std::string GetAcceptLanguageString() override;
+
+  blink::UserAgentMetadata GetUserAgentMetadata() override;
+
+ private:
+  content::BrowserContext* context_;
+
+  DISALLOW_COPY_AND_ASSIGN(ClientHints);
+};
 
 }  // namespace client_hints
 

@@ -74,7 +74,7 @@ void MDnsAPI::SetDnsSdRegistryForTesting(DnsSdRegistry* dns_sd_registry) {
 void MDnsAPI::ForceDiscovery() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DnsSdRegistry* registry = dns_sd_registry();
-  return registry->ForceDiscovery();
+  return registry->ResetAndDiscover();
 }
 
 DnsSdRegistry* MDnsAPI::dns_sd_registry() {
@@ -113,8 +113,8 @@ void MDnsAPI::UpdateMDnsListeners() {
   // mDNS unregistration is performed for difference(previous, cur).
   // The mDNS device list is refreshed if the listener count has grown for
   // a service type in union(cur, previous).
-  ServiceTypeCounts::iterator i_cur = current_service_counts.begin();
-  ServiceTypeCounts::iterator i_prev = prev_service_counts_.begin();
+  auto i_cur = current_service_counts.begin();
+  auto i_prev = prev_service_counts_.begin();
   while (i_cur != current_service_counts.end() ||
          i_prev != prev_service_counts_.end()) {
     if (i_prev == prev_service_counts_.end() ||
@@ -156,12 +156,11 @@ void MDnsAPI::OnDnsSdEvent(const std::string& service_type,
       // the wiser.  Instead, changing the event to pass the number of
       // discovered instances would allow the caller to know when the list is
       // truncated and tell the user something meaningful in the extension/app.
-      WriteToConsole(service_type,
-                     content::CONSOLE_MESSAGE_LEVEL_WARNING,
-                     base::StringPrintf(
-                         "Truncating number of service instances in "
-                         "onServiceList to maximum allowed: %d",
-                         api::mdns::MAX_SERVICE_INSTANCES_PER_EVENT));
+      WriteToConsole(
+          service_type, blink::mojom::ConsoleMessageLevel::kWarning,
+          base::StringPrintf("Truncating number of service instances in "
+                             "onServiceList to maximum allowed: %d",
+                             api::mdns::MAX_SERVICE_INSTANCES_PER_EVENT));
       break;
     }
     mdns::MDnsService mdns_service;
@@ -173,7 +172,7 @@ void MDnsAPI::OnDnsSdEvent(const std::string& service_type,
   }
 
   std::unique_ptr<base::ListValue> results = mdns::OnServiceList::Create(args);
-  auto event = base::MakeUnique<Event>(events::MDNS_ON_SERVICE_LIST,
+  auto event = std::make_unique<Event>(events::MDNS_ON_SERVICE_LIST,
                                        mdns::OnServiceList::kEventName,
                                        std::move(results), browser_context_);
   event->filter_info.service_type = service_type;
@@ -232,7 +231,7 @@ void MDnsAPI::GetValidOnServiceListListeners(
 }
 
 void MDnsAPI::WriteToConsole(const std::string& service_type,
-                             content::ConsoleMessageLevel level,
+                             blink::mojom::ConsoleMessageLevel level,
                              const std::string& message) {
   // Get all the extensions with an onServiceList listener for a particular
   // service type.

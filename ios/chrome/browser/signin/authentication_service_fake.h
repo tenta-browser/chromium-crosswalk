@@ -7,14 +7,18 @@
 
 #include <memory>
 
-#include "base/mac/scoped_nsobject.h"
 #import "ios/chrome/browser/signin/authentication_service.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
+
+namespace signin {
+class IdentityManager;
+}
 
 namespace web {
 class BrowserState;
 }
 
+// Fake implementation of AuthenticationService that can be used by tests.
 class AuthenticationServiceFake : public AuthenticationService {
  public:
   static std::unique_ptr<KeyedService> CreateAuthenticationService(
@@ -22,24 +26,24 @@ class AuthenticationServiceFake : public AuthenticationService {
 
   ~AuthenticationServiceFake() override;
 
-  void SignIn(ChromeIdentity* identity,
-              const std::string& hosted_domain) override;
+  void SignIn(ChromeIdentity* identity) override;
 
   void SignOut(signin_metrics::ProfileSignout signout_source,
                ProceduralBlock completion) override;
 
   void SetHaveAccountsChanged(bool changed);
 
-  bool HaveAccountsChanged() override;
+  bool HaveAccountsChanged() const override;
 
-  bool IsAuthenticated() override;
+  bool IsAuthenticated() const override;
 
-  ChromeIdentity* GetAuthenticatedIdentity() override;
-
-  NSString* GetAuthenticatedUserEmail() override;
+  ChromeIdentity* GetAuthenticatedIdentity() const override;
 
  private:
-  explicit AuthenticationServiceFake(ios::ChromeBrowserState* browser_state);
+  AuthenticationServiceFake(PrefService* pref_service,
+                            SyncSetupService* sync_setup_service,
+                            signin::IdentityManager* identity_manager,
+                            syncer::SyncService* sync_service);
 
   __strong ChromeIdentity* authenticated_identity_;
   bool have_accounts_changed_;

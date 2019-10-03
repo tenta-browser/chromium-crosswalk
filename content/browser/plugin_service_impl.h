@@ -8,7 +8,7 @@
 #ifndef CONTENT_BROWSER_PLUGIN_SERVICE_IMPL_H_
 #define CONTENT_BROWSER_PLUGIN_SERVICE_IMPL_H_
 
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if !BUILDFLAG(ENABLE_PLUGINS)
 #error "Plugins should be enabled"
@@ -21,6 +21,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
+#include "base/optional.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event_watcher.h"
@@ -32,14 +33,7 @@
 #include "content/public/common/pepper_plugin_info.h"
 #include "ipc/ipc_channel_handle.h"
 #include "url/gurl.h"
-
-#if defined(OS_WIN)
-#include "base/win/registry.h"
-#endif
-
-#if defined(OS_POSIX) && !defined(OS_OPENBSD) && !defined(OS_ANDROID)
-#include "base/files/file_path_watcher.h"
-#endif
+#include "url/origin.h"
 
 namespace content {
 class BrowserContext;
@@ -74,7 +68,7 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   base::string16 GetPluginDisplayNameByPath(
       const base::FilePath& path) override;
   void GetPlugins(GetPluginsCallback callback) override;
-  PepperPluginInfo* GetRegisteredPpapiPluginInfo(
+  const PepperPluginInfo* GetRegisteredPpapiPluginInfo(
       const base::FilePath& plugin_path) override;
   void SetFilter(PluginServiceFilter* filter) override;
   PluginServiceFilter* GetFilter() override;
@@ -86,6 +80,9 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   void GetInternalPlugins(std::vector<WebPluginInfo>* plugins) override;
   bool PpapiDevChannelSupported(BrowserContext* browser_context,
                                 const GURL& document_url) override;
+  int CountPpapiPluginProcessesForProfile(
+      const base::FilePath& plugin_path,
+      const base::FilePath& profile_data_directory) override;
 
   // Returns the plugin process host corresponding to the plugin process that
   // has been started by this service. This will start a process to host the
@@ -94,7 +91,8 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   PpapiPluginProcessHost* FindOrStartPpapiPluginProcess(
       int render_process_id,
       const base::FilePath& plugin_path,
-      const base::FilePath& profile_data_directory);
+      const base::FilePath& profile_data_directory,
+      const base::Optional<url::Origin>& origin_lock);
   PpapiPluginProcessHost* FindOrStartPpapiBrokerProcess(
       int render_process_id, const base::FilePath& plugin_path);
 
@@ -104,6 +102,7 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   void OpenChannelToPpapiPlugin(int render_process_id,
                                 const base::FilePath& plugin_path,
                                 const base::FilePath& profile_data_directory,
+                                const base::Optional<url::Origin>& origin_lock,
                                 PpapiPluginProcessHost::PluginClient* client);
   void OpenChannelToPpapiBroker(int render_process_id,
                                 int render_frame_id,
@@ -113,35 +112,42 @@ class CONTENT_EXPORT PluginServiceImpl : public PluginService {
   // Used to monitor plugin stability.
   void RegisterPluginCrash(const base::FilePath& plugin_path);
 
+  // For testing without creating many, many processes.
+  void SetMaxPpapiProcessesPerProfileForTesting(int number) {
+    max_ppapi_processes_per_profile_ = number;
+  }
+
  private:
   friend struct base::DefaultSingletonTraits<PluginServiceImpl>;
+
+  // Pulled out of the air, seems reasonable.
+  static constexpr int kDefaultMaxPpapiProcessesPerProfile = 15;
+
+  // Helper for recording URLs to UKM.
+  static void RecordBrokerUsage(int render_process_id, int render_frame_id);
 
   // Creates the PluginServiceImpl object, but doesn't actually build the plugin
   // list yet.  It's generated lazily.
   PluginServiceImpl();
   ~PluginServiceImpl() override;
 
-#if defined(OS_WIN)
-  void OnKeyChanged(base::win::RegKey* key);
-#endif
-
   // Returns the plugin process host corresponding to the plugin process that
   // has been started by this service. Returns NULL if no process has been
   // started.
   PpapiPluginProcessHost* FindPpapiPluginProcess(
       const base::FilePath& plugin_path,
-      const base::FilePath& profile_data_directory);
+      const base::FilePath& profile_data_directory,
+      const base::Optional<url::Origin>& origin_lock);
   PpapiPluginProcessHost* FindPpapiBrokerProcess(
       const base::FilePath& broker_path);
 
   void RegisterPepperPlugins();
 
-  // Loads the plugins synchronously in a thread pool.
-  std::vector<WebPluginInfo> GetPluginsInternal();
-
   std::vector<PepperPluginInfo> ppapi_plugins_;
 
-  // Weak pointer; outlives us.
+  int max_ppapi_processes_per_profile_ = kDefaultMaxPpapiProcessesPerProfile;
+
+  // Weak pointer; set during the startup on UI thread and must outlive us.
   PluginServiceFilter* filter_;
 
   // Used to load plugins from disk.

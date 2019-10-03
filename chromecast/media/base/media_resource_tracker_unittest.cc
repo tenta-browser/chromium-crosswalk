@@ -7,8 +7,8 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -62,8 +62,8 @@ class MediaResourceTrackerTest : public ::testing::Test {
     test_mocks_.reset(new MediaResourceTrackerTestMocks());
 
     resource_tracker_ = new TestMediaResourceTracker(
-        test_mocks_.get(), message_loop_.task_runner(),
-        message_loop_.task_runner());
+        test_mocks_.get(), scoped_task_environment_.GetMainThreadTaskRunner(),
+        scoped_task_environment_.GetMainThreadTaskRunner());
   }
 
   void InitializeMediaLib() {
@@ -72,7 +72,7 @@ class MediaResourceTrackerTest : public ::testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   TestMediaResourceTracker* resource_tracker_;
   std::unique_ptr<MediaResourceTrackerTestMocks> test_mocks_;
 
@@ -181,8 +181,8 @@ TEST_F(MediaResourceTrackerTest, DestroyWithPendingFinalize) {
   EXPECT_CALL(*test_mocks_, Finalize()).Times(0);
   EXPECT_CALL(*test_mocks_, Destroyed()).Times(0);
   resource_tracker_->FinalizeMediaLib(
-      base::Bind(&MediaResourceTrackerTestMocks::FinalizeCallback,
-                 base::Unretained(test_mocks_.get())));
+      base::BindOnce(&MediaResourceTrackerTestMocks::FinalizeCallback,
+                     base::Unretained(test_mocks_.get())));
   resource_tracker_->FinalizeAndDestroy();
   base::RunLoop().RunUntilIdle();
 
@@ -204,6 +204,8 @@ TEST_F(MediaResourceTrackerTest, ScopedUsage) {
   }
   EXPECT_EQ(0u, resource_tracker_->media_use_count());
 
+  EXPECT_CALL(*test_mocks_, Finalize()).Times(1);
+  EXPECT_CALL(*test_mocks_, Destroyed()).Times(1);
   resource_tracker_->FinalizeAndDestroy();
   base::RunLoop().RunUntilIdle();
 }

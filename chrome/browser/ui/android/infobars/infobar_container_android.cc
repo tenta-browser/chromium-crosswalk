@@ -6,14 +6,13 @@
 
 #include "base/android/jni_android.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
+#include "chrome/android/chrome_jni_headers/InfoBarContainer_jni.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/android/infobars/infobar_android.h"
 #include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/InfoBarContainer_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -32,8 +31,11 @@ void InfoBarContainerAndroid::SetWebContents(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& web_contents) {
-  InfoBarService* infobar_service = InfoBarService::FromWebContents(
-      content::WebContents::FromJavaWebContents(web_contents));
+  InfoBarService* infobar_service =
+      web_contents
+          ? InfoBarService::FromWebContents(
+                content::WebContents::FromJavaWebContents(web_contents))
+          : nullptr;
   ChangeInfoBarManager(infobar_service);
 }
 
@@ -49,10 +51,8 @@ void InfoBarContainerAndroid::PlatformSpecificAddInfoBar(
   InfoBarAndroid* android_bar = static_cast<InfoBarAndroid*>(infobar);
   if (!android_bar) {
     // TODO(bulach): CLANK: implement other types of InfoBars.
-    // TODO(jrg): this will always print out WARNING_TYPE as an int.
-    // Try and be more helpful.
-    NOTIMPLEMENTED() << "CLANK: infobar type "
-                     << infobar->delegate()->GetInfoBarType();
+    NOTIMPLEMENTED() << "CLANK: infobar identifier "
+                     << infobar->delegate()->GetIdentifier();
     return;
   }
 
@@ -66,19 +66,19 @@ void InfoBarContainerAndroid::AttachJavaInfoBar(InfoBarAndroid* android_bar) {
 
   if (Java_InfoBarContainer_hasInfoBars(
           env, weak_java_infobar_container_.get(env))) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("InfoBar.Shown.Hidden",
-                                android_bar->delegate()->GetIdentifier());
+    base::UmaHistogramSparse("InfoBar.Shown.Hidden",
+                             android_bar->delegate()->GetIdentifier());
     uintptr_t native_ptr = Java_InfoBarContainer_getTopNativeInfoBarPtr(
         env, weak_java_infobar_container_.get(env));
     if (native_ptr) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("InfoBar.Shown.Hiding",
-                                  reinterpret_cast<InfoBarAndroid*>(native_ptr)
-                                      ->delegate()
-                                      ->GetIdentifier());
+      base::UmaHistogramSparse("InfoBar.Shown.Hiding",
+                               reinterpret_cast<InfoBarAndroid*>(native_ptr)
+                                   ->delegate()
+                                   ->GetIdentifier());
     }
   } else {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("InfoBar.Shown.Visible",
-                                android_bar->delegate()->GetIdentifier());
+    base::UmaHistogramSparse("InfoBar.Shown.Visible",
+                             android_bar->delegate()->GetIdentifier());
   }
 
   base::android::ScopedJavaLocalRef<jobject> java_infobar =

@@ -4,7 +4,6 @@
 
 #include "chrome/browser/sessions/session_service_test_helper.h"
 
-#include "base/message_loop/message_loop.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "components/sessions/core/base_session_service_test_helper.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
@@ -57,8 +56,7 @@ void SessionServiceTestHelper::SetForceBrowserNotAliveWithNoWindows(
 // Be sure and null out service to force closing the file.
 void SessionServiceTestHelper::ReadWindows(
     std::vector<std::unique_ptr<sessions::SessionWindow>>* windows,
-    SessionID::id_type* active_window_id) {
-  Time last_time;
+    SessionID* active_window_id) {
   std::vector<std::unique_ptr<sessions::SessionCommand>> read_commands;
   sessions::BaseSessionServiceTestHelper test_helper(
       service_->GetBaseSessionServiceForTest());
@@ -122,4 +120,15 @@ void SessionServiceTestHelper::RunTaskOnBackendThread(
   sessions::BaseSessionServiceTestHelper test_helper(
       service_->GetBaseSessionServiceForTest());
   test_helper.RunTaskOnBackendThread(from_here, task);
+}
+
+void SessionServiceTestHelper::SetAvailableRange(
+    const SessionID& tab_id,
+    const std::pair<int, int>& range) {
+  service_->SetAvailableRangeForTest(tab_id, range);
+}
+
+bool SessionServiceTestHelper::GetAvailableRange(const SessionID& tab_id,
+                                                 std::pair<int, int>* range) {
+  return service_->GetAvailableRangeForTest(tab_id, range);
 }

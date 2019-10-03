@@ -8,8 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
+#include "chromeos/network/network_type_pattern.h"
 
 namespace chromeos {
 
@@ -18,7 +19,7 @@ class NetworkState;
 
 // Observer class for all network state changes, including changes to
 // active (connecting or connected) services.
-class CHROMEOS_EXPORT NetworkStateHandlerObserver {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkStateHandlerObserver {
  public:
   NetworkStateHandlerObserver();
   virtual ~NetworkStateHandlerObserver();
@@ -26,7 +27,8 @@ class CHROMEOS_EXPORT NetworkStateHandlerObserver {
   // The list of networks changed.
   virtual void NetworkListChanged();
 
-  // The list of devices changed, or a property changed (e.g. scanning).
+  // The list of devices changed. Use DevicePropertiesUpdated to be notified
+  // when a Device property changes.
   virtual void DeviceListChanged();
 
   // The default network changed (includes VPNs) or one of its properties
@@ -39,6 +41,13 @@ class CHROMEOS_EXPORT NetworkStateHandlerObserver {
   // The connection state of |network| changed.
   virtual void NetworkConnectionStateChanged(const NetworkState* network);
 
+  // Triggered when the connection state of any current or previously active
+  // (connected or connecting) network changes. Includes significant changes to
+  // the signal strength. Provides the current list of active networks, which
+  // may include a VPN.
+  virtual void ActiveNetworksChanged(
+      const std::vector<const NetworkState*>& active_networks);
+
   // One or more properties of |network| have been updated. Note: this will get
   // called in *addition* to NetworkConnectionStateChanged() when the
   // connection state property changes. Use this to track properties like
@@ -48,8 +57,8 @@ class CHROMEOS_EXPORT NetworkStateHandlerObserver {
   // One or more properties of |device| have been updated.
   virtual void DevicePropertiesUpdated(const DeviceState* device);
 
-  // A scan for has been requested.
-  virtual void ScanRequested();
+  // A scan for a given network type has been requested.
+  virtual void ScanRequested(const NetworkTypePattern& type);
 
   // A scan for |device| completed.
   virtual void ScanCompleted(const DeviceState* device);

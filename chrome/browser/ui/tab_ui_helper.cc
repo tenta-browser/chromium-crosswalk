@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/tab_ui_helper.h"
 
+#include "base/bind.h"
+#include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,13 +19,11 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/resources/grit/ui_resources.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(TabUIHelper);
-
 namespace {
 
 base::string16 FormatUrlToSubdomain(const GURL& url) {
   base::string16 formated_url = url_formatter::FormatUrl(
-      url, url_formatter::kFormatUrlExperimentalOmitTrivialSubdomains,
+      url, url_formatter::kFormatUrlOmitTrivialSubdomains,
       net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
   return base::UTF8ToUTF16(GURL(formated_url).host());
 }
@@ -31,12 +31,10 @@ base::string16 FormatUrlToSubdomain(const GURL& url) {
 }  // namespace
 
 TabUIHelper::TabUIData::TabUIData(const GURL& url)
-    : title(FormatUrlToSubdomain(url)),
-      favicon(ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          IDR_DEFAULT_FAVICON)) {}
+    : title(FormatUrlToSubdomain(url)), favicon(favicon::GetDefaultFavicon()) {}
 
 TabUIHelper::TabUIHelper(content::WebContents* contents)
-    : WebContentsObserver(contents), weak_ptr_factory_(this) {}
+    : WebContentsObserver(contents) {}
 TabUIHelper::~TabUIHelper() {}
 
 base::string16 TabUIHelper::GetTitle() const {
@@ -47,7 +45,7 @@ base::string16 TabUIHelper::GetTitle() const {
   if (tab_ui_data_)
     return tab_ui_data_->title;
 
-#ifdef OS_MACOSX
+#if defined(OS_MACOSX)
   return l10n_util::GetStringUTF16(IDS_BROWSER_WINDOW_MAC_TAB_UNTITLED);
 #else
   return base::string16();
@@ -57,12 +55,7 @@ base::string16 TabUIHelper::GetTitle() const {
 gfx::Image TabUIHelper::GetFavicon() const {
   if (ShouldUseFaviconFromHistory() && tab_ui_data_)
     return tab_ui_data_->favicon;
-
-#ifdef OS_MACOSX
-  return gfx::Image();
-#else
   return favicon::TabFaviconFromWebContents(web_contents());
-#endif
 }
 
 bool TabUIHelper::ShouldHideThrobber() const {
@@ -113,7 +106,7 @@ bool TabUIHelper::ShouldUseFaviconFromHistory() const {
 
 void TabUIHelper::FetchFaviconFromHistory(
     const GURL& url,
-    const favicon_base::FaviconImageCallback& callback) {
+    favicon_base::FaviconImageCallback callback) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
   favicon::FaviconService* favicon_service =
@@ -121,7 +114,7 @@ void TabUIHelper::FetchFaviconFromHistory(
                                            ServiceAccessType::EXPLICIT_ACCESS);
   // |favicon_service| might be null when testing.
   if (favicon_service) {
-    favicon_service->GetFaviconImageForPageURL(url, callback,
+    favicon_service->GetFaviconImageForPageURL(url, std::move(callback),
                                                &favicon_tracker_);
   }
 }
@@ -157,3 +150,5 @@ void TabUIHelper::UpdateFavicon(
     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TAB);
   }
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(TabUIHelper)

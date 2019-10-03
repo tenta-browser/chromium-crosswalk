@@ -13,24 +13,6 @@
 
 namespace syncer {
 
-namespace {
-
-std::unique_ptr<ModelTypeChangeProcessor> CreateAndAssignProcessor(
-    RecordingModelTypeChangeProcessor** processor_address,
-    bool expect_error,
-    ModelType type,
-    ModelTypeSyncBridge* bridge) {
-  auto processor = std::make_unique<RecordingModelTypeChangeProcessor>();
-  *processor_address = processor.get();
-  if (expect_error)
-    processor->ExpectError();
-  // Not all compilers are smart enough to up cast during copy elision, so we
-  // explicitly create a correctly typed unique_ptr.
-  return base::WrapUnique(processor.release());
-}
-
-}  // namespace
-
 RecordingModelTypeChangeProcessor::RecordingModelTypeChangeProcessor() {}
 
 RecordingModelTypeChangeProcessor::~RecordingModelTypeChangeProcessor() {}
@@ -56,9 +38,14 @@ void RecordingModelTypeChangeProcessor::UpdateStorageKey(
       storage_key, FakeModelTypeSyncBridge::CopyEntityData(entity_data)));
 }
 
-void RecordingModelTypeChangeProcessor::UntrackEntity(
-    const EntityData& entity_data) {
-  untrack_set_.insert(FakeModelTypeSyncBridge::CopyEntityData(entity_data));
+void RecordingModelTypeChangeProcessor::UntrackEntityForStorageKey(
+    const std::string& storage_key) {
+  untrack_for_storage_key_set_.insert(storage_key);
+}
+
+void RecordingModelTypeChangeProcessor::UntrackEntityForClientTagHash(
+    const std::string& client_tag_hash) {
+  untrack_for_client_tag_hash_set_.insert(client_tag_hash);
 }
 
 void RecordingModelTypeChangeProcessor::ModelReadyToSync(
@@ -70,18 +57,24 @@ bool RecordingModelTypeChangeProcessor::IsTrackingMetadata() {
   return is_tracking_metadata_;
 }
 
+std::string RecordingModelTypeChangeProcessor::TrackedAccountId() {
+  return "";
+}
+
 void RecordingModelTypeChangeProcessor::SetIsTrackingMetadata(
     bool is_tracking) {
   is_tracking_metadata_ = is_tracking;
 }
 
 // static
-ModelTypeSyncBridge::ChangeProcessorFactory
-RecordingModelTypeChangeProcessor::FactoryForBridgeTest(
-    RecordingModelTypeChangeProcessor** processor_address,
-    bool expect_error) {
-  return base::Bind(&CreateAndAssignProcessor,
-                    base::Unretained(processor_address), expect_error);
+std::unique_ptr<ModelTypeChangeProcessor>
+RecordingModelTypeChangeProcessor::CreateProcessorAndAssignRawPointer(
+    RecordingModelTypeChangeProcessor** processor_address) {
+  auto processor = std::make_unique<RecordingModelTypeChangeProcessor>();
+  *processor_address = processor.get();
+  // Not all compilers are smart enough to up cast during copy elision, so we
+  // explicitly create a correctly typed unique_ptr.
+  return base::WrapUnique(processor.release());
 }
 
 }  //  namespace syncer

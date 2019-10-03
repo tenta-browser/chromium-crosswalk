@@ -21,7 +21,7 @@ BluetoothGattNotifySession::BluetoothGattNotifySession(
 
 BluetoothGattNotifySession::~BluetoothGattNotifySession() {
   if (active_) {
-    Stop(base::Bind(&base::DoNothing));
+    Stop(base::DoNothing());
   }
 }
 
@@ -39,12 +39,13 @@ bool BluetoothGattNotifySession::IsActive() {
          characteristic_->IsNotifying();
 }
 
-void BluetoothGattNotifySession::Stop(const base::Closure& callback) {
+void BluetoothGattNotifySession::Stop(base::OnceClosure callback) {
   active_ = false;
   if (characteristic_ != nullptr) {
-    characteristic_->StopNotifySession(this, callback);
+    characteristic_->StopNotifySession(this, std::move(callback));
   } else {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(callback));
   }
 }
 

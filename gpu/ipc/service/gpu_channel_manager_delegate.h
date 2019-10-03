@@ -7,13 +7,24 @@
 
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/ipc/common/surface_handle.h"
+#include "gpu/ipc/service/display_context.h"
 
 class GURL;
 
 namespace gpu {
 
+// TODO(kylechar): Rename this class. It's used to provide GpuServiceImpl
+// functionality to multiple classes in src/gpu/ so delegate is inaccurate.
 class GpuChannelManagerDelegate {
  public:
+  // Registers/unregistered display compositor contexts that don't have a GPU
+  // channel and aren't tracked by GpuChannelManager.
+  virtual void RegisterDisplayContext(DisplayContext* display_context) = 0;
+  virtual void UnregisterDisplayContext(DisplayContext* display_context) = 0;
+
+  // Force the loss of all GL contexts.
+  virtual void LoseAllContexts() = 0;
+
   // Called on any successful context creation.
   virtual void DidCreateContextSuccessfully() = 0;
 
@@ -40,17 +51,25 @@ class GpuChannelManagerDelegate {
                                  const std::string& key,
                                  const std::string& shader) = 0;
 
+  // Cleanly exits the GPU process in response to an error. This will not exit
+  // with in-process GPU as that would also exit the browser. This can only be
+  // called from the GPU thread.
+  virtual void MaybeExitOnContextLost() = 0;
+
+  // Returns true if the GPU process is exiting. This can be called from any
+  // thread.
+  virtual bool IsExiting() const = 0;
+
 #if defined(OS_WIN)
-  virtual void SendAcceleratedSurfaceCreatedChildWindow(
-      SurfaceHandle parent_window,
-      SurfaceHandle child_window) = 0;
+  // Tells the delegate that |child_window| was created in the GPU process and
+  // to send an IPC to make SetParent() syscall. This syscall is blocked by the
+  // GPU sandbox and must be made in the browser process.
+  virtual void SendCreatedChildWindow(SurfaceHandle parent_window,
+                                      SurfaceHandle child_window) = 0;
 #endif
 
-  // Sets the currently active URL.  Use GURL() to clear the URL.
-  virtual void SetActiveURL(const GURL& url) = 0;
-
  protected:
-  virtual ~GpuChannelManagerDelegate() {}
+  virtual ~GpuChannelManagerDelegate() = default;
 };
 
 }  // namespace gpu

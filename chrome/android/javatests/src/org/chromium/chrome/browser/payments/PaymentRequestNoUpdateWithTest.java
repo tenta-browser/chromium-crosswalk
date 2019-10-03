@@ -4,10 +4,10 @@
 
 package org.chromium.chrome.browser.payments;
 
-import android.content.DialogInterface;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -21,10 +21,10 @@ import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -33,18 +33,18 @@ import java.util.concurrent.TimeoutException;
  * timeouts.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestNoUpdateWithTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mRule =
             new PaymentRequestTestRule("payment_request_no_update_with_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         helper.setProfile(new AutofillProfile("" /* guid */, "https://www.example.com" /* origin */,
                 "Lisa Simpson", "Acme Inc.", "123 Main", "California", "Los Angeles", "", "90210",
@@ -72,7 +72,8 @@ public class PaymentRequestNoUpdateWithTest implements MainActivityStartCallback
         mRule.clickAndWait(R.id.button_primary, mRule.getReadyForUnmaskInput());
         mRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mRule.getReadyToUnmask());
-        mRule.clickCardUnmaskButtonAndWait(DialogInterface.BUTTON_POSITIVE, mRule.getDismissed());
+        mRule.clickCardUnmaskButtonAndWait(
+                ModalDialogProperties.ButtonType.POSITIVE, mRule.getDismissed());
         mRule.expectResultContains(new String[] {"freeShipping"});
     }
 
@@ -90,7 +91,8 @@ public class PaymentRequestNoUpdateWithTest implements MainActivityStartCallback
         mRule.clickAndWait(R.id.button_primary, mRule.getReadyForUnmaskInput());
         mRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mRule.getReadyToUnmask());
-        mRule.clickCardUnmaskButtonAndWait(DialogInterface.BUTTON_POSITIVE, mRule.getDismissed());
+        mRule.clickCardUnmaskButtonAndWait(
+                ModalDialogProperties.ButtonType.POSITIVE, mRule.getDismissed());
         mRule.expectResultContains(new String[] {"freeShipping"});
     }
 
@@ -107,7 +109,8 @@ public class PaymentRequestNoUpdateWithTest implements MainActivityStartCallback
         mRule.clickAndWait(R.id.button_primary, mRule.getReadyForUnmaskInput());
         mRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mRule.getReadyToUnmask());
-        mRule.clickCardUnmaskButtonAndWait(DialogInterface.BUTTON_POSITIVE, mRule.getDismissed());
+        mRule.clickCardUnmaskButtonAndWait(
+                ModalDialogProperties.ButtonType.POSITIVE, mRule.getDismissed());
         mRule.expectResultContains(new String[] {"updatedShipping"});
     }
 }

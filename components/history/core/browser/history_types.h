@@ -17,6 +17,7 @@
 #include "base/containers/stack_container.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/favicon_base/favicon_types.h"
@@ -72,7 +73,8 @@ class VisitRow {
            base::Time arg_visit_time,
            VisitID arg_referring_visit,
            ui::PageTransition arg_transition,
-           SegmentID arg_segment_id);
+           SegmentID arg_segment_id,
+           bool arg_incremented_omnibox_typed_score);
   ~VisitRow();
 
   // ID of this row (visit ID, used a a referrer for other visits).
@@ -99,6 +101,9 @@ class VisitRow {
   // This includes both active and inactive time as long as
   // the visit was present.
   base::TimeDelta visit_duration;
+
+  // Records whether the visit incremented the omnibox typed score.
+  bool incremented_omnibox_typed_score = false;
 
   // Compares two visits based on dates, for sorting.
   bool operator<(const VisitRow& other) const {
@@ -136,6 +141,9 @@ class QueryResults {
 
   QueryResults();
   ~QueryResults();
+
+  QueryResults(QueryResults&& other) noexcept;
+  QueryResults& operator=(QueryResults&& other) noexcept;
 
   void set_reached_beginning(bool reached) { reached_beginning_ = reached; }
   bool reached_beginning() { return reached_beginning_; }
@@ -197,7 +205,7 @@ class QueryResults {
   void AdjustResultMap(size_t begin, size_t end, ptrdiff_t delta);
 
   // Whether the query reaches the beginning of the database.
-  bool reached_beginning_;
+  bool reached_beginning_ = false;
 
   // The ordered list of results. The pointers inside this are owned by this
   // QueryResults object.
@@ -267,6 +275,10 @@ struct QueryOptions {
 // QueryURLResult encapsulates the result of a call to HistoryBackend::QueryURL.
 struct QueryURLResult {
   QueryURLResult();
+  QueryURLResult(const QueryURLResult&);
+  QueryURLResult(QueryURLResult&&) noexcept;
+  QueryURLResult& operator=(const QueryURLResult&);
+  QueryURLResult& operator=(QueryURLResult&&) noexcept;
   ~QueryURLResult();
 
   // Indicates whether the call to HistoryBackend::QueryURL was successfull
@@ -294,9 +306,7 @@ struct VisibleVisitCountToHostResult {
 // Holds the per-URL information of the most visited query.
 struct MostVisitedURL {
   MostVisitedURL();
-  MostVisitedURL(const GURL& url,
-                 const base::string16& title,
-                 base::Time last_forced_time = base::Time());
+  MostVisitedURL(const GURL& url, const base::string16& title);
   MostVisitedURL(const GURL& url,
                  const base::string16& title,
                  const RedirectList& preceding_redirects);
@@ -310,11 +320,6 @@ struct MostVisitedURL {
 
   GURL url;
   base::string16 title;
-
-  // If this is a URL for which we want to force a thumbnail, records the last
-  // time it was forced so we can evict it when more recent URLs are requested.
-  // If it's not a forced thumbnail, keep a time of 0.
-  base::Time last_forced_time;
 
   RedirectList redirects;
 
@@ -361,7 +366,11 @@ struct HistoryAddPageArgs {
   //   HistoryAddPageArgs(
   //       GURL(), base::Time(), NULL, 0, GURL(),
   //       RedirectList(), ui::PAGE_TRANSITION_LINK,
-  //       false, SOURCE_BROWSED, false, true)
+  //       false, SOURCE_BROWSED, false, true,
+  //       base::nullopt)
+  //
+  // TODO(avi): Is ContextID needed, now that we have a globally-unique
+  // nav_entry_id? https://crbug.com/859902
   HistoryAddPageArgs();
   HistoryAddPageArgs(const GURL& url,
                      base::Time time,
@@ -373,7 +382,8 @@ struct HistoryAddPageArgs {
                      bool hidden,
                      VisitSource source,
                      bool did_replace_entry,
-                     bool consider_for_ntp_most_visited);
+                     bool consider_for_ntp_most_visited,
+                     base::Optional<base::string16> title = base::nullopt);
   HistoryAddPageArgs(const HistoryAddPageArgs& other);
   ~HistoryAddPageArgs();
 
@@ -392,25 +402,13 @@ struct HistoryAddPageArgs {
   // doesn't guarantee it's relevant for Most Visited, since other requirements
   // exist (e.g. certain page transition types).
   bool consider_for_ntp_most_visited;
+  base::Optional<base::string16> title;
 };
 
 // TopSites -------------------------------------------------------------------
 
 typedef std::vector<MostVisitedURL> MostVisitedURLList;
 typedef std::vector<FilteredURL> FilteredURLList;
-
-// Used by TopSites to store the thumbnails.
-struct Images {
-  Images();
-  Images(const Images& other);
-  ~Images();
-
-  scoped_refptr<base::RefCountedMemory> thumbnail;
-  ThumbnailScore thumbnail_score;
-
-  // TODO(brettw): this will eventually store the favicon.
-  // scoped_refptr<base::RefCountedBytes> favicon;
-};
 
 struct MostVisitedURLWithRank {
   MostVisitedURL url;
@@ -429,36 +427,7 @@ struct TopSitesDelta {
   MostVisitedURLWithRankList moved;
 };
 
-typedef std::map<GURL, scoped_refptr<base::RefCountedBytes>> URLToThumbnailMap;
-
-// Used when migrating most visited thumbnails out of history and into topsites.
-struct ThumbnailMigration {
-  ThumbnailMigration();
-  ~ThumbnailMigration();
-
-  MostVisitedURLList most_visited;
-  URLToThumbnailMap url_to_thumbnail_map;
-};
-
-typedef std::map<GURL, Images> URLToImagesMap;
-
-class MostVisitedThumbnails
-    : public base::RefCountedThreadSafe<MostVisitedThumbnails> {
- public:
-  MostVisitedThumbnails();
-
-  MostVisitedURLList most_visited;
-  URLToImagesMap url_to_images_map;
-
- private:
-  friend class base::RefCountedThreadSafe<MostVisitedThumbnails>;
-  virtual ~MostVisitedThumbnails();
-
-  DISALLOW_COPY_AND_ASSIGN(MostVisitedThumbnails);
-};
-
-// Map from host to visit count, sorted by visit count descending.
-typedef std::vector<std::pair<std::string, int>> TopHostsList;
+typedef base::RefCountedData<MostVisitedURLList> MostVisitedThreadSafe;
 
 // Map from origins to a count of matching URLs and the last visited time to any
 // URL under that origin.
@@ -467,10 +436,11 @@ typedef std::map<GURL, std::pair<int, base::Time>> OriginCountAndLastVisitMap;
 // Statistics -----------------------------------------------------------------
 
 // HistoryCountResult encapsulates the result of a call to
-// HistoryBackend::GetHistoryCount.
+// HistoryBackend::GetHistoryCount or
+// HistoryBackend::CountUniqueHostsVisitedLastMonth.
 struct HistoryCountResult {
-  // Indicates whether the call to HistoryBackend::GetHistoryCount was
-  // successful or not. If false, then |count| is undefined.
+  // Indicates whether the call was successful or not. If false, then |count|
+  // is undefined.
   bool success = false;
   int count = 0;
 };
@@ -581,6 +551,136 @@ struct ExpireHistoryArgs {
   std::set<GURL> urls;
   base::Time begin_time;
   base::Time end_time;
+};
+
+// Represents the time range of a history deletion. If |IsValid()| is false,
+// the time range doesn't apply to this deletion e.g. because only a list of
+// urls was deleted.
+class DeletionTimeRange {
+ public:
+  static DeletionTimeRange Invalid();
+
+  static DeletionTimeRange AllTime();
+
+  DeletionTimeRange(base::Time begin, base::Time end)
+      : begin_(begin), end_(end) {
+    DCHECK(IsValid());
+  }
+
+  base::Time begin() const {
+    DCHECK(IsValid());
+    return begin_;
+  }
+
+  base::Time end() const {
+    DCHECK(IsValid());
+    return end_;
+  }
+
+  bool IsValid() const;
+
+  // Returns true if this time range covers history from the beginning of time.
+  bool IsAllTime() const;
+
+ private:
+  // Creates an invalid time range by assigning impossible start and end times.
+  DeletionTimeRange() : begin_(base::Time::Max()), end_(base::Time::Min()) {}
+
+  // Begin of a history deletion.
+  base::Time begin_;
+  // End of a history deletion.
+  base::Time end_;
+};
+
+// Describes the urls that have been removed due to a history deletion.
+// If |IsAllHistory()| returns true, all urls haven been deleted.
+// In this case, |deleted_rows()| and |favicon_urls()| are undefined.
+// Otherwise |deleted_rows()| contains the urls where all visits have been
+// removed from history.
+// If |expired()| returns true, this deletion is due to a regularly performed
+// history expiration. Otherwise it is an explicit deletion due to a user
+// action.
+class DeletionInfo {
+ public:
+  // Returns a DeletionInfo that covers all history.
+  static DeletionInfo ForAllHistory();
+  // Returns a DeletionInfo with invalid time range for the given urls.
+  static DeletionInfo ForUrls(URLRows deleted_rows,
+                              std::set<GURL> favicon_urls);
+
+  DeletionInfo(const DeletionTimeRange& time_range,
+               bool is_from_expiration,
+               URLRows deleted_rows,
+               std::set<GURL> favicon_urls,
+               base::Optional<std::set<GURL>> restrict_urls);
+
+  ~DeletionInfo();
+  // Move-only because of potentially large containers.
+  DeletionInfo(DeletionInfo&& other) noexcept;
+  DeletionInfo& operator=(DeletionInfo&& rhs) noexcept;
+
+  // If IsAllHistory() returns true, all URLs are deleted and |deleted_rows()|
+  //  and |favicon_urls()| are undefined.
+  bool IsAllHistory() const { return time_range_.IsAllTime(); }
+
+  // If time_range.IsValid() is true, |restrict_urls| (or all URLs if empty)
+  // between time_range.begin() and time_range.end() have been removed.
+  const DeletionTimeRange& time_range() const { return time_range_; }
+
+  // Restricts deletions within |time_range()|.
+  const base::Optional<std::set<GURL>>& restrict_urls() const {
+    return restrict_urls_;
+  }
+
+  // Returns true, if the URL deletion is due to expiration.
+  bool is_from_expiration() const { return is_from_expiration_; }
+
+  // Returns the list of the deleted URLs.
+  // Undefined if |IsAllHistory()| returns true.
+  const URLRows& deleted_rows() const { return deleted_rows_; }
+
+  // Returns the list of favicon URLs that correspond to the deleted URLs.
+  // Undefined if |IsAllHistory()| returns true.
+  const std::set<GURL>& favicon_urls() const { return favicon_urls_; }
+
+  // Returns a map from origins with deleted urls to a count of remaining URLs
+  // and the last visited time.
+  const OriginCountAndLastVisitMap& deleted_urls_origin_map() const {
+    // The map should only be accessed after it has been populated.
+    DCHECK(deleted_rows_.empty() || !deleted_urls_origin_map_.empty());
+    return deleted_urls_origin_map_;
+  }
+
+  // Populates deleted_urls_origin_map.
+  void set_deleted_urls_origin_map(OriginCountAndLastVisitMap origin_map) {
+    DCHECK(deleted_urls_origin_map_.empty());
+    deleted_urls_origin_map_ = std::move(origin_map);
+  }
+
+ private:
+  DeletionTimeRange time_range_;
+  bool is_from_expiration_;
+  URLRows deleted_rows_;
+  std::set<GURL> favicon_urls_;
+  base::Optional<std::set<GURL>> restrict_urls_;
+  OriginCountAndLastVisitMap deleted_urls_origin_map_;
+
+  DISALLOW_COPY_AND_ASSIGN(DeletionInfo);
+};
+
+// Represents a visit to a domain.
+class DomainVisit {
+ public:
+  DomainVisit(const std::string& domain, base::Time visit_time)
+      : domain_(domain), visit_time_(visit_time) {}
+
+  const std::string& domain() const { return domain_; }
+
+  const base::Time visit_time() const { return visit_time_; }
+
+ private:
+  std::string domain_;
+  base::Time visit_time_;
 };
 
 }  // namespace history

@@ -9,10 +9,13 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "ios/net/cookies/cookie_store_ios_client.h"
+#include "net/cookies/cookie_change_dispatcher.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_store.h"
+#include "net/log/net_log_with_source.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -33,14 +36,15 @@ class TestPersistentCookieStore
 
  private:
   // net::CookieMonster::PersistentCookieStore implementation:
-  void Load(const LoadedCallback& loaded_callback) override;
+  void Load(LoadedCallback loaded_callback,
+            const NetLogWithSource& net_log) override;
   void LoadCookiesForKey(const std::string& key,
-                         const LoadedCallback& loaded_callback) override;
+                         LoadedCallback loaded_callback) override;
   void AddCookie(const net::CanonicalCookie& cc) override;
   void UpdateCookieAccessTime(const net::CanonicalCookie& cc) override;
   void DeleteCookie(const net::CanonicalCookie& cc) override;
   void SetForceKeepSessionState() override;
-  void SetBeforeFlushCallback(base::RepeatingClosure callback) override;
+  void SetBeforeCommitCallback(base::RepeatingClosure callback) override;
   void Flush(base::OnceClosure callback) override;
 
   ~TestPersistentCookieStore() override;
@@ -48,24 +52,6 @@ class TestPersistentCookieStore
   const GURL kTestCookieURL;
   LoadedCallback loaded_callback_;
   bool flushed_;
-};
-
-// Helper callback to be passed to CookieStore::GetCookiesWithOptionsAsync().
-class GetCookieCallback {
- public:
-  GetCookieCallback();
-
-  // Returns true if the callback has been run.
-  bool did_run();
-
-  // Returns the parameter of the callback.
-  const std::string& cookie_line();
-
-  void Run(const std::string& cookie_line);
-
- private:
-  bool did_run_;
-  std::string cookie_line_;
 };
 
 class TestCookieStoreIOSClient : public CookieStoreIOSClient {
@@ -91,7 +77,7 @@ class ScopedTestingCookieStoreIOSClient {
 void RecordCookieChanges(std::vector<net::CanonicalCookie>* out_cookies,
                          std::vector<bool>* out_removes,
                          const net::CanonicalCookie& cookie,
-                         net::CookieStore::ChangeCause cause);
+                         net::CookieChangeCause cause);
 
 // Sets a cookie.
 void SetCookie(const std::string& cookie_line,

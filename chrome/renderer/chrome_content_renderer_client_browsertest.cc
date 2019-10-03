@@ -7,8 +7,11 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -20,8 +23,8 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/common/content_constants.h"
-#include "content/public/common/url_loader_throttle.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/test/browser_test_utils.h"
@@ -34,15 +37,12 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
 #include "url/gurl.h"
 
 using InstantProcessNavigationTest = ChromeRenderViewTest;
 using ChromeContentRendererClientSearchBoxTest = ChromeRenderViewTest;
-
-const base::FilePath::CharType kDocRoot[] =
-    FILE_PATH_LITERAL("chrome/test/data");
 
 const char kHtmlWithIframe[] ="<iframe srcdoc=\"Nothing here\"></iframe>";
 
@@ -52,11 +52,10 @@ const char kHtmlWithIframe[] ="<iframe srcdoc=\"Nothing here\"></iframe>";
 TEST_F(InstantProcessNavigationTest, ForkForNavigationsFromInstantProcess) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kInstantProcess);
-  bool unused;
   ChromeContentRendererClient* client =
       static_cast<ChromeContentRendererClient*>(content_renderer_client_.get());
-  EXPECT_TRUE(client->ShouldFork(
-      GetMainFrame(), GURL("http://foo"), "GET", false, false, &unused));
+  EXPECT_TRUE(client->ShouldFork(GetMainFrame(), GURL("http://foo"), "GET",
+                                 false, false));
 }
 
 // Tests that renderer-initiated navigations from a non-Instant render process
@@ -70,16 +69,13 @@ TEST_F(InstantProcessNavigationTest, ForkForNavigationsToNewTabURLs) {
   client->RenderThreadStarted();
   SearchBouncer::GetInstance()->SetNewTabPageURL(
       GURL("http://example.com/newtab"));
-  bool unused;
   EXPECT_TRUE(client->ShouldFork(
-      GetMainFrame(), GURL("http://example.com/newtab"), "GET", false, false,
-      &unused));
+      GetMainFrame(), GURL("http://example.com/newtab"), "GET", false, false));
   EXPECT_FALSE(client->ShouldFork(GetMainFrame(),
                                   GURL("http://example.com/search?q=foo"),
-                                  "GET", false, false, &unused));
-  EXPECT_FALSE(client->ShouldFork(
-      GetMainFrame(), GURL("http://example.com/"), "GET", false, false,
-      &unused));
+                                  "GET", false, false));
+  EXPECT_FALSE(client->ShouldFork(GetMainFrame(), GURL("http://example.com/"),
+                                  "GET", false, false));
 }
 
 TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
@@ -91,7 +87,8 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
   // Load a page that contains an iframe.
   LoadHTML(kHtmlWithIframe);
 
-  ChromeContentRendererClient client;
+  ChromeContentRendererClient* client =
+      static_cast<ChromeContentRendererClient*>(content_renderer_client_.get());
 
   // Create a thumbnail URL containing the correct render view ID and an
   // arbitrary instant restricted ID.
@@ -99,12 +96,13 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
       "chrome-search:/thumb/%i/1",
       render_frame->GetRenderView()->GetRoutingID()));
 
-  std::vector<std::unique_ptr<content::URLLoaderThrottle>> throttles;
   GURL result;
+  bool attach_same_site_cookies;
   // Make sure the SearchBox rewrites a thumbnail request from the main frame.
-  EXPECT_TRUE(client.WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
-                                     blink::WebURL(thumbnail_url), &throttles,
-                                     &result));
+  client->WillSendRequest(GetMainFrame(), ui::PAGE_TRANSITION_LINK,
+                          blink::WebURL(thumbnail_url), nullptr, &result,
+                          &attach_same_site_cookies);
+  EXPECT_NE(result, thumbnail_url);
 
   // Make sure the SearchBox rewrites a thumbnail request from the iframe.
   blink::WebFrame* child_frame = GetMainFrame()->FirstChild();
@@ -112,9 +110,10 @@ TEST_F(ChromeContentRendererClientSearchBoxTest, RewriteThumbnailURL) {
   ASSERT_TRUE(child_frame->IsWebLocalFrame());
   blink::WebLocalFrame* local_child =
       static_cast<blink::WebLocalFrame*>(child_frame);
-  EXPECT_TRUE(client.WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
-                                     blink::WebURL(thumbnail_url), &throttles,
-                                     &result));
+  client->WillSendRequest(local_child, ui::PAGE_TRANSITION_LINK,
+                          blink::WebURL(thumbnail_url), nullptr, &result,
+                          &attach_same_site_cookies);
+  EXPECT_NE(result, thumbnail_url);
 }
 
 // The tests below examine Youtube requests that use the Flash API and ensure
@@ -169,8 +168,8 @@ class ChromeContentRendererClientBrowserTest :
 
     EXPECT_EQ(request.relative_url, GetParam().expected_url)
         << "URL is wrong for test " << GetParam().name;
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     message_runner_->QuitClosure());
+    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                             message_runner_->QuitClosure());
   }
 
   void WaitForYouTubeRequest() {
@@ -180,7 +179,7 @@ class ChromeContentRendererClientBrowserTest :
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");
 
-    https_server_->ServeFilesFromSourceDirectory(base::FilePath(kDocRoot));
+    https_server_->ServeFilesFromSourceDirectory(GetChromeTestDataDir());
     https_server_->RegisterRequestMonitor(base::Bind(
         &ChromeContentRendererClientBrowserTest::MonitorRequestHandler,
         base::Unretained(this)));
@@ -230,7 +229,6 @@ IN_PROC_BROWSER_TEST_P(ChromeContentRendererClientBrowserTest,
   WaitForYouTubeRequest();
 }
 
-INSTANTIATE_TEST_CASE_P(
-    FlashEmbeds,
-    ChromeContentRendererClientBrowserTest,
-    ::testing::ValuesIn(kFlashEmbedsTestData));
+INSTANTIATE_TEST_SUITE_P(FlashEmbeds,
+                         ChromeContentRendererClientBrowserTest,
+                         ::testing::ValuesIn(kFlashEmbedsTestData));

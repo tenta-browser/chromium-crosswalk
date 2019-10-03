@@ -9,12 +9,8 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 class TokenWebData;
 class WebDataServiceWrapper;
@@ -46,6 +42,12 @@ class WebViewWebDataServiceWrapperFactory
   GetAutofillWebDataForBrowserState(WebViewBrowserState* browser_state,
                                     ServiceAccessType access_type);
 
+  // Returns the account-scoped AutofillWebDataService associated with the
+  // |browser_state|.
+  static scoped_refptr<autofill::AutofillWebDataService>
+  GetAutofillWebDataForAccount(WebViewBrowserState* browser_state,
+                               ServiceAccessType access_type);
+
   // Returns the TokenWebData associated with |browser_state|.
   static scoped_refptr<TokenWebData> GetTokenWebDataForBrowserState(
       WebViewBrowserState* browser_state,
@@ -54,8 +56,7 @@ class WebViewWebDataServiceWrapperFactory
   static WebViewWebDataServiceWrapperFactory* GetInstance();
 
  private:
-  friend struct base::DefaultSingletonTraits<
-      WebViewWebDataServiceWrapperFactory>;
+  friend class base::NoDestructor<WebViewWebDataServiceWrapperFactory>;
 
   WebViewWebDataServiceWrapperFactory();
   ~WebViewWebDataServiceWrapperFactory() override;

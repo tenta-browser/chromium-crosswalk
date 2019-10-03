@@ -29,7 +29,7 @@ void BackgroundIO::Cancel() {
   // controller_ may be in use from the background thread at this time.
   base::AutoLock lock(controller_lock_);
   DCHECK(controller_);
-  controller_ = NULL;
+  controller_ = nullptr;
 }
 
 BackgroundIO::~BackgroundIO() = default;
@@ -52,14 +52,14 @@ void BackgroundIO::NotifyController() {
 void InFlightIO::WaitForPendingIO() {
   while (!io_list_.empty()) {
     // Block the current thread until all pending IO completes.
-    IOList::iterator it = io_list_.begin();
+    auto it = io_list_.begin();
     InvokeCallback(it->get(), true);
   }
 }
 
 void InFlightIO::DropPendingIO() {
   while (!io_list_.empty()) {
-    IOList::iterator it = io_list_.begin();
+    auto it = io_list_.begin();
     BackgroundIO* operation = it->get();
     operation->Cancel();
     DCHECK(io_list_.find(operation) != io_list_.end());
@@ -77,7 +77,7 @@ void InFlightIO::OnIOComplete(BackgroundIO* operation) {
 #endif
 
   callback_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&BackgroundIO::OnIOSignalled, operation));
+      FROM_HERE, base::BindOnce(&BackgroundIO::OnIOSignalled, operation));
   operation->io_completed()->Signal();
 }
 
@@ -85,7 +85,7 @@ void InFlightIO::OnIOComplete(BackgroundIO* operation) {
 void InFlightIO::InvokeCallback(BackgroundIO* operation, bool cancel_task) {
   {
     // http://crbug.com/74623
-    base::ThreadRestrictions::ScopedAllowWait allow_wait;
+    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
     operation->io_completed()->Wait();
   }
   running_ = true;

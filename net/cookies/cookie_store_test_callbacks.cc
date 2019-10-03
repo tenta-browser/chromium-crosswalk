@@ -8,29 +8,36 @@
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
 
 CookieCallback::CookieCallback(base::Thread* run_in_thread)
-    : run_in_thread_(run_in_thread), run_in_loop_(NULL) {}
+    : run_in_thread_(run_in_thread), was_run_(false) {}
 
 CookieCallback::CookieCallback()
-    : run_in_thread_(NULL), run_in_loop_(base::MessageLoop::current()) {}
+    : run_in_thread_(nullptr),
+      run_in_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      was_run_(false) {}
 
 CookieCallback::~CookieCallback() = default;
 
-void CookieCallback::CallbackEpilogue() {
-  base::MessageLoop* expected_loop = NULL;
+void CookieCallback::ValidateThread() const {
+  scoped_refptr<base::SingleThreadTaskRunner> expected_task_runner;
   if (run_in_thread_) {
-    DCHECK(!run_in_loop_);
-    expected_loop = run_in_thread_->message_loop();
-  } else if (run_in_loop_) {
-    expected_loop = run_in_loop_;
+    DCHECK(!run_in_task_runner_);
+    expected_task_runner = run_in_thread_->task_runner();
+  } else if (run_in_task_runner_) {
+    expected_task_runner = run_in_task_runner_;
   }
-  ASSERT_TRUE(expected_loop != NULL);
+  ASSERT_TRUE(expected_task_runner);
+  EXPECT_TRUE(expected_task_runner->BelongsToCurrentThread());
+}
 
-  EXPECT_EQ(expected_loop, base::MessageLoop::current());
+void CookieCallback::CallbackEpilogue() {
+  ValidateThread();
+  was_run_ = true;
   loop_to_quit_.Quit();
 }
 
@@ -38,10 +45,10 @@ void CookieCallback::WaitUntilDone() {
   loop_to_quit_.Run();
 }
 
-StringResultCookieCallback::StringResultCookieCallback() = default;
-StringResultCookieCallback::StringResultCookieCallback(
-    base::Thread* run_in_thread)
-    : CookieCallback(run_in_thread) {}
+bool CookieCallback::was_run() const {
+  ValidateThread();
+  return was_run_;
+}
 
 NoResultCookieCallback::NoResultCookieCallback() = default;
 NoResultCookieCallback::NoResultCookieCallback(base::Thread* run_in_thread)
@@ -53,8 +60,10 @@ GetCookieListCallback::GetCookieListCallback(base::Thread* run_in_thread)
 
 GetCookieListCallback::~GetCookieListCallback() = default;
 
-void GetCookieListCallback::Run(const CookieList& cookies) {
+void GetCookieListCallback::Run(const CookieList& cookies,
+                                const CookieStatusList& excluded_cookies) {
   cookies_ = cookies;
+  excluded_cookies_ = excluded_cookies;
   CallbackEpilogue();
 }
 

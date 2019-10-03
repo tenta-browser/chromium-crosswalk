@@ -11,8 +11,8 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,7 +33,7 @@ const wchar_t kAutolaunchKeyValue[] = L"GoogleChromeAutoLaunch";
 // different installations of Chrome don't conflict.
 base::string16 GetAutoLaunchKeyName() {
   base::FilePath path;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &path))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &path))
     NOTREACHED();
   // Background auto-launch is only supported for the Default profile at the
   // moment, but keep the door opened to a multi-profile implementation by
@@ -42,9 +42,9 @@ base::string16 GetAutoLaunchKeyName() {
 
   std::string input(path.AsUTF8Unsafe());
   uint8_t hash[16];
-  crypto::SHA256HashString(input, hash, arraysize(hash));
+  crypto::SHA256HashString(input, hash, base::size(hash));
   return base::string16(kAutolaunchKeyValue) + base::ASCIIToUTF16("_") +
-         base::ASCIIToUTF16(base::HexEncode(hash, arraysize(hash)));
+         base::ASCIIToUTF16(base::HexEncode(hash, base::size(hash)));
 }
 
 }  // namespace
@@ -53,7 +53,7 @@ namespace auto_launch_util {
 
 void EnableBackgroundStartAtLogin() {
   base::FilePath application_dir;
-  if (!PathService::Get(base::DIR_EXE, &application_dir))
+  if (!base::PathService::Get(base::DIR_EXE, &application_dir))
     NOTREACHED();
 
   base::CommandLine cmd_line(application_dir.Append(installer::kChromeExe));

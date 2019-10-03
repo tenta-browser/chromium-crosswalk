@@ -7,97 +7,30 @@
 
 #include <map>
 #include <memory>
-#include <string>
-#include <vector>
 
 #include "base/macros.h"
-#include "base/threading/thread_checker.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-// Needed on shared build with MSVS2010 to avoid multiple definitions of
-// std::vector<IPEndPoint>.
-#include "net/base/address_list.h"
-#include "net/base/ip_endpoint.h"  // win requires size of IPEndPoint
 #include "net/base/net_export.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_hosts.h"
-
-namespace base {
-class Value;
-}
+#include "url/gurl.h"
 
 namespace net {
 
-// Default to 1 second timeout (before exponential backoff).
-const int64_t kDnsDefaultTimeoutMs = 1000;
-
-// DnsConfig stores configuration of the system resolver.
-struct NET_EXPORT_PRIVATE DnsConfig {
-  DnsConfig();
-  DnsConfig(const DnsConfig& other);
-  virtual ~DnsConfig();
-
-  bool Equals(const DnsConfig& d) const;
-
-  bool EqualsIgnoreHosts(const DnsConfig& d) const;
-
-  void CopyIgnoreHosts(const DnsConfig& src);
-
-  // Returns a Value representation of |this|. For performance reasons, the
-  // Value only contains the number of hosts rather than the full list.
-  std::unique_ptr<base::Value> ToValue() const;
-
-  bool IsValid() const {
-    return !nameservers.empty();
-  }
-
-  // List of name server addresses.
-  std::vector<IPEndPoint> nameservers;
-  // Suffix search list; used on first lookup when number of dots in given name
-  // is less than |ndots|.
-  std::vector<std::string> search;
-
-  DnsHosts hosts;
-
-  // True if there are options set in the system configuration that are not yet
-  // supported by DnsClient.
-  bool unhandled_options;
-
-  // AppendToMultiLabelName: is suffix search performed for multi-label names?
-  // True, except on Windows where it can be configured.
-  bool append_to_multi_label_name;
-
-  // Indicates that source port randomization is required. This uses additional
-  // resources on some platforms.
-  bool randomize_ports;
-
-  // Resolver options; see man resolv.conf.
-
-  // Minimum number of dots before global resolution precedes |search|.
-  int ndots;
-  // Time between retransmissions, see res_state.retrans.
-  base::TimeDelta timeout;
-  // Maximum number of attempts, see res_state.retry.
-  int attempts;
-  // Round robin entries in |nameservers| for subsequent requests.
-  bool rotate;
-  // Enable EDNS0 extensions.
-  bool edns0;
-
-  // Indicates system configuration uses local IPv6 connectivity, e.g.,
-  // DirectAccess. This is exposed for HostResolver to skip IPv6 probes,
-  // as it may cause them to return incorrect results.
-  bool use_local_ipv6;
-};
-
 // Service for reading system DNS settings, on demand or when signalled by
-// internal watchers and NetworkChangeNotifier.
+// internal watchers and NetworkChangeNotifier. This object is not thread-safe
+// and methods may perform blocking I/O so methods must be called on a sequence
+// that allows blocking (i.e. base::MayBlock).
 class NET_EXPORT_PRIVATE DnsConfigService {
  public:
   // Callback interface for the client, called on the same thread as
   // ReadConfig() and WatchConfig().
   typedef base::Callback<void(const DnsConfig& config)> CallbackType;
 
-  // Creates the platform-specific DnsConfigService.
+  // Creates the platform-specific DnsConfigService. May return |nullptr| if
+  // reading system DNS settings is not supported on the current platform.
   static std::unique_ptr<DnsConfigService> CreateSystemService();
 
   DnsConfigService();
@@ -112,6 +45,11 @@ class NET_EXPORT_PRIVATE DnsConfigService {
   // changes from last call or has to be withdrawn. Can be called at most once.
   // Might require MessageLoopForIO.
   void WatchConfig(const CallbackType& callback);
+
+  // Triggers invalidation and re-read of the current configuration (followed by
+  // invocation of the callback). For use only on platforms expecting
+  // network-stack-external notifications of DNS config changes.
+  virtual void RefreshConfig();
 
  protected:
   enum WatchStatus {
@@ -140,7 +78,7 @@ class NET_EXPORT_PRIVATE DnsConfigService {
 
   void set_watch_failed(bool value) { watch_failed_ = value; }
 
-  THREAD_CHECKER(thread_checker_);
+  SEQUENCE_CHECKER(sequence_checker_);
 
  private:
   // The timer counts from the last Invalidate* until complete config is read.

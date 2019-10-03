@@ -10,7 +10,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -30,6 +29,7 @@ namespace gfx {
 class Image;
 }
 
+class AccountId;
 class PrefService;
 class ProfileAttributesEntry;
 class ProfileAvatarDownloader;
@@ -39,8 +39,7 @@ class ProfileAttributesStorage
  public:
   using Observer = ProfileInfoCacheObserver;
 
-  ProfileAttributesStorage(PrefService* prefs,
-                           const base::FilePath& user_data_dir);
+  explicit ProfileAttributesStorage(PrefService* prefs);
   virtual ~ProfileAttributesStorage();
 
   // If the |supervised_user_id| is non-empty, the profile will be marked to be
@@ -53,7 +52,13 @@ class ProfileAttributesStorage
                           const std::string& gaia_id,
                           const base::string16& user_name,
                           size_t icon_index,
-                          const std::string& supervised_user_id) = 0;
+                          const std::string& supervised_user_id,
+                          const AccountId& account_id) = 0;
+
+  // Removes the profile matching given |account_id| from this storage.
+  // Calculates profile path and calls RemoveProfile() on it.
+  virtual void RemoveProfileByAccountId(const AccountId& account_id) = 0;
+
   // Removes the profile at |profile_path| from this storage. Does not delete or
   // affect the actual profile's data.
   virtual void RemoveProfile(const base::FilePath& profile_path) = 0;
@@ -129,22 +134,20 @@ class ProfileAttributesStorage
   // profile pictures and the ProfileAvatarDownloader that is used to download
   // the high res avatars.
   void SaveAvatarImageAtPath(const base::FilePath& profile_path,
-                             const gfx::Image* image,
+                             gfx::Image image,
                              const std::string& key,
                              const base::FilePath& image_path);
 
-  PrefService* prefs_;
-  base::FilePath user_data_dir_;
+  PrefService* const prefs_;
   mutable std::unordered_map<base::FilePath::StringType,
                              std::unique_ptr<ProfileAttributesEntry>>
       profile_attributes_entries_;
 
-  mutable base::ObserverList<Observer> observer_list_;
+  mutable base::ObserverList<Observer>::Unchecked observer_list_;
 
   // A cache of gaia/high res avatar profile pictures. This cache is updated
   // lazily so it needs to be mutable.
-  mutable std::unordered_map<std::string, std::unique_ptr<gfx::Image>>
-      cached_avatar_images_;
+  mutable std::unordered_map<std::string, gfx::Image> cached_avatar_images_;
 
   // Marks a profile picture as loading from disk. This prevents a picture from
   // loading multiple times.
@@ -160,7 +163,7 @@ class ProfileAttributesStorage
 
   // Determines of the ProfileAvatarDownloader should be created and executed
   // or not. Only set to true for tests.
-  bool disable_avatar_download_for_testing_;
+  bool disable_avatar_download_for_testing_ = false;
 
   // Task runner used for file operation on avatar images.
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
@@ -170,7 +173,7 @@ class ProfileAttributesStorage
   // decoded into |image|.
   void OnAvatarPictureLoaded(const base::FilePath& profile_path,
                              const std::string& key,
-                             gfx::Image** image) const;
+                             gfx::Image image) const;
 
   // Called when the picture given by |file_name| has been saved to disk. Used
   // both for the GAIA profile picture and the high res avatar files.

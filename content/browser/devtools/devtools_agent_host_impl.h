@@ -12,29 +12,32 @@
 #include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/macros.h"
+#include "base/process/kill.h"
 #include "content/browser/devtools/devtools_io_context.h"
+#include "content/browser/devtools/devtools_renderer_channel.h"
+#include "content/browser/devtools/devtools_session.h"
 #include "content/common/content_export.h"
-#include "content/common/devtools.mojom.h"
-#include "content/common/devtools_messages.h"
+#include "content/public/browser/certificate_request_result_type.h"
 #include "content/public/browser/devtools_agent_host.h"
 
 namespace content {
 
 class BrowserContext;
-class DevToolsSession;
 
 // Describes interface for managing devtools agents from the browser process.
 class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
  public:
   // DevToolsAgentHost implementation.
-  void AttachClient(DevToolsAgentHostClient* client) override;
-  void ForceAttachClient(DevToolsAgentHostClient* client) override;
+  bool AttachClient(DevToolsAgentHostClient* client) override;
   bool DetachClient(DevToolsAgentHostClient* client) override;
   bool DispatchProtocolMessage(DevToolsAgentHostClient* client,
                                const std::string& message) override;
   bool IsAttached() override;
-  void InspectElement(DevToolsAgentHostClient* client, int x, int y) override;
+  void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
   std::string GetId() override;
+  std::string CreateIOStreamFromData(
+      scoped_refptr<base::RefCountedMemory> data) override;
   std::string GetParentId() override;
   std::string GetOpenerId() override;
   std::string GetDescription() override;
@@ -48,72 +51,62 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   bool Inspect();
 
+  template <typename Handler>
+  std::vector<Handler*> HandlersByName(const std::string& name) {
+    std::vector<Handler*> result;
+    if (sessions_.empty())
+      return result;
+    for (DevToolsSession* session : sessions_) {
+      auto it = session->handlers().find(name);
+      if (it != session->handlers().end())
+        result.push_back(static_cast<Handler*>(it->second.get()));
+    }
+    return result;
+  }
+
  protected:
   DevToolsAgentHostImpl(const std::string& id);
   ~DevToolsAgentHostImpl() override;
 
   static bool ShouldForceCreation();
 
-  virtual void AttachSession(DevToolsSession* session) = 0;
-  virtual void DetachSession(int session_id) = 0;
-  virtual bool DispatchProtocolMessage(
-      DevToolsSession* session,
-      const std::string& message) = 0;
-  bool SendProtocolMessageToClient(int session_id,
-                                   const std::string& message) override;
-  virtual void InspectElement(DevToolsSession* session, int x, int y);
+  // Returning |false| will block the attach.
+  virtual bool AttachSession(DevToolsSession* session);
+  virtual void DetachSession(DevToolsSession* session);
+  virtual void UpdateRendererChannel(bool force);
 
   void NotifyCreated();
   void NotifyNavigated();
-  void ForceDetachAllClients();
-  void ForceDetachSession(DevToolsSession* session);
+  void NotifyCrashed(base::TerminationStatus status);
+  void ForceDetachAllSessions();
+  void ForceDetachRestrictedSessions(
+      const std::vector<DevToolsSession*>& restricted_sessions);
   DevToolsIOContext* GetIOContext() { return &io_context_; }
+  DevToolsRendererChannel* GetRendererChannel() { return &renderer_channel_; }
 
-  base::flat_set<DevToolsSession*>& sessions() { return sessions_; }
-  DevToolsSession* SessionById(int session_id);
+  const std::vector<DevToolsSession*>& sessions() const { return sessions_; }
 
  private:
-  friend class DevToolsAgentHost; // for static methods
+  friend class DevToolsAgentHost;  // for static methods
   friend class DevToolsSession;
-  void InnerAttachClient(DevToolsAgentHostClient* client);
-  void InnerDetachClient(DevToolsAgentHostClient* client);
+  friend class DevToolsRendererChannel;
+
+  bool AttachInternal(std::unique_ptr<DevToolsSession> session);
+  void DetachInternal(DevToolsSession* session);
   void NotifyAttached();
   void NotifyDetached();
   void NotifyDestroyed();
   DevToolsSession* SessionByClient(DevToolsAgentHostClient* client);
 
   const std::string id_;
-  base::flat_set<DevToolsSession*> sessions_;
-  base::flat_map<int, DevToolsSession*> session_by_id_;
+  std::vector<DevToolsSession*> sessions_;
   base::flat_map<DevToolsAgentHostClient*, std::unique_ptr<DevToolsSession>>
       session_by_client_;
   DevToolsIOContext io_context_;
+  DevToolsRendererChannel renderer_channel_;
   static int s_force_creation_count_;
-  static int s_last_session_id_;
-};
 
-class DevToolsMessageChunkProcessor {
- public:
-  using SendMessageIPCCallback = base::Callback<void(int, const std::string&)>;
-  using SendMessageCallback = base::Callback<void(const std::string&)>;
-  DevToolsMessageChunkProcessor(const SendMessageIPCCallback& ipc_callback,
-                                const SendMessageCallback& callback);
-  ~DevToolsMessageChunkProcessor();
-
-  const std::string& state_cookie() const { return state_cookie_; }
-  void set_state_cookie(const std::string& cookie) { state_cookie_ = cookie; }
-  int last_call_id() const { return last_call_id_; }
-  bool ProcessChunkedMessageFromAgent(const DevToolsMessageChunk& chunk);
-  bool ProcessChunkedMessageFromAgent(mojom::DevToolsMessageChunkPtr chunk);
-  void Reset();
-
- private:
-  SendMessageIPCCallback ipc_callback_;
-  SendMessageCallback callback_;
-  std::string message_buffer_;
-  uint32_t message_buffer_size_;
-  std::string state_cookie_;
-  int last_call_id_;
+  DISALLOW_COPY_AND_ASSIGN(DevToolsAgentHostImpl);
 };
 
 }  // namespace content

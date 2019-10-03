@@ -9,17 +9,15 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_login_verifier.h"
-#include "chrome/browser/chromeos/login/signin/oauth2_token_fetcher.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "google_apis/gaia/oauth2_token_service.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 class GoogleServiceAuthError;
 class Profile;
-class ProfileOAuth2TokenService;
 
 namespace chromeos {
 
@@ -27,8 +25,7 @@ namespace chromeos {
 // OAuth2 refresh tokens or pre-authenticated cookie jar.
 class OAuth2LoginManager : public KeyedService,
                            public OAuth2LoginVerifier::Delegate,
-                           public OAuth2TokenFetcher::Delegate,
-                           public OAuth2TokenService::Observer {
+                           public signin::IdentityManager::Observer {
  public:
   // Session restore states.
   enum SessionRestoreState {
@@ -51,7 +48,12 @@ class OAuth2LoginManager : public KeyedService,
   enum SessionRestoreStrategy {
     // Generate OAuth2 refresh token from authentication profile's cookie jar.
     // Restore session from generated OAuth2 refresh token.
-    RESTORE_FROM_COOKIE_JAR,
+    //
+    // This value is no longer used as generating OAuth 2 refresh tokens from
+    // cookies is no longer supported.
+    // TODO(http://crbug.com/882838) Remove the entry
+    // DEPRECATED_RESTORE_FROM_COOKIE_JAR.
+    DEPRECATED_RESTORE_FROM_COOKIE_JAR,
     // Restore session from saved OAuth2 refresh token from TokenServices.
     RESTORE_FROM_SAVED_OAUTH2_REFRESH_TOKEN,
     // Restore session from OAuth2 refresh token passed via command line.
@@ -83,12 +85,11 @@ class OAuth2LoginManager : public KeyedService,
   // Restores and verifies OAuth tokens following specified |restore_strategy|.
   // For |restore_strategy| RESTORE_FROM_PASSED_OAUTH2_REFRESH_TOKEN, parameter
   // |oauth2_refresh_token| needs to have a non-empty value.
-  // For |restore_strategy| RESTORE_FROM_COOKIE_JAR |auth_request_context| must
-  // be initialized.
-  void RestoreSession(net::URLRequestContextGetter* auth_request_context,
-                      SessionRestoreStrategy restore_strategy,
-                      const std::string& oauth2_refresh_token,
-                      const std::string& oauth2_access_token);
+  // For |restore_strategy| DDEPRECATED_RESTORE_FROM_COOKIE_JAR.
+  void RestoreSession(
+      SessionRestoreStrategy restore_strategy,
+      const std::string& oauth2_refresh_token,
+      const std::string& oauth2_access_token);
 
   // Continues session restore after transient network errors.
   void ContinueSessionRestore();
@@ -111,7 +112,7 @@ class OAuth2LoginManager : public KeyedService,
   bool ShouldBlockTabLoading() const;
 
  private:
-  friend class MergeSessionLoadPageTest;
+  friend class MergeSessionNavigationThrottleTest;
   friend class OAuth2Test;
 
   // Session restore outcomes (for UMA).
@@ -151,20 +152,16 @@ class OAuth2LoginManager : public KeyedService,
       const std::vector<gaia::ListedAccount>& accounts) override;
   void OnListAccountsFailure(bool connection_error) override;
 
-  // OAuth2TokenFetcher::Delegate overrides.
-  void OnOAuth2TokensAvailable(
-      const GaiaAuthConsumer::ClientOAuthResult& oauth2_tokens) override;
-  void OnOAuth2TokensFetchFailed() override;
-
-  // OAuth2TokenService::Observer implementation:
-  void OnRefreshTokenAvailable(const std::string& user_email) override;
+  // signin::IdentityManager::Observer implementation:
+  void OnRefreshTokenUpdatedForAccount(
+      const CoreAccountInfo& account_info) override;
 
   // Signals delegate that authentication is completed, kicks off token fetching
   // process.
   void CompleteAuthentication();
 
-  // Retrieves ProfileOAuth2TokenService for |user_profile_|.
-  ProfileOAuth2TokenService* GetTokenService();
+  // Retrieves IdentityManager for |user_profile_|.
+  signin::IdentityManager* GetIdentityManager();
 
   // Retrieves the primary account for |user_profile_|.
   std::string GetPrimaryAccountId();
@@ -174,19 +171,6 @@ class OAuth2LoginManager : public KeyedService,
   // account id is not present, GetAccountInfoOfRefreshToken will be called to
   // retrieve the associated account info.
   void StoreOAuth2Token();
-
-  // Update the token service and inform listeners of a new refresh token.
-  void UpdateCredentials(const std::string& account_id);
-
-  // Notify that the refresh tokens are loaded and ready to use.
-  void FireRefreshTokensLoaded();
-
-  // Attempts to fetch OAuth2 tokens by using pre-authenticated cookie jar from
-  // provided |auth_profile|.
-  void FetchOAuth2Tokens();
-
-  // Reports when all tokens are loaded.
-  void ReportOAuth2TokensLoaded();
 
   // Checks if primary account sessions cookies are stale and restores them
   // if needed.
@@ -217,14 +201,12 @@ class OAuth2LoginManager : public KeyedService,
   // Keeps the track if we have already reported OAuth2 token being loaded
   // by OAuth2TokenService.
   Profile* user_profile_;
-  scoped_refptr<net::URLRequestContextGetter> auth_request_context_;
   SessionRestoreStrategy restore_strategy_;
   SessionRestoreState state_;
 
   // Whether there is pending TokenService::LoadCredentials call.
   bool pending_token_service_load_ = false;
 
-  std::unique_ptr<OAuth2TokenFetcher> oauth2_token_fetcher_;
   std::unique_ptr<OAuth2LoginVerifier> login_verifier_;
 
   // OAuth2 refresh token.
@@ -240,7 +222,7 @@ class OAuth2LoginManager : public KeyedService,
   // Makes sure list is empty on destruction.
   // TODO(zelidrag|gspencer): Figure out how to get rid of ProfileHelper so we
   // can change the line below to base::ObserverList<Observer, true>.
-  base::ObserverList<Observer, false> observer_list_;
+  base::ObserverList<Observer, false>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(OAuth2LoginManager);
 };

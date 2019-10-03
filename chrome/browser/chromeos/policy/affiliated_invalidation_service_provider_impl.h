@@ -6,17 +6,22 @@
 #define CHROME_BROWSER_CHROMEOS_POLICY_AFFILIATED_INVALIDATION_SERVICE_PROVIDER_IMPL_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/policy/affiliated_invalidation_service_provider.h"
+#include "components/invalidation/public/identity_provider.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
 namespace invalidation {
 class InvalidationService;
-class TiclInvalidationService;
+}
+
+namespace instance_id {
+class InstanceIDDriver;
 }
 
 namespace policy {
@@ -38,8 +43,8 @@ class AffiliatedInvalidationServiceProviderImpl
   void UnregisterConsumer(Consumer* consumer) override;
   void Shutdown() override;
 
-  invalidation::TiclInvalidationService*
-      GetDeviceInvalidationServiceForTest() const;
+  invalidation::InvalidationService* GetDeviceInvalidationServiceForTest()
+      const;
 
  private:
   // Helper that monitors the status of a single |InvalidationService|.
@@ -68,15 +73,29 @@ class AffiliatedInvalidationServiceProviderImpl
   // Destroy the device-global invalidation service, if any.
   void DestroyDeviceInvalidationService();
 
-  content::NotificationRegistrar registrar_;
+  // Initializes and returns either TiclInvalidationService or
+  // FCMInvalidationService depending on the feature kPolicyFcmInvalidations.
+  std::unique_ptr<invalidation::InvalidationService>
+  InitializeDeviceInvalidationService();
 
-  // Device-global invalidation service.
-  std::unique_ptr<invalidation::TiclInvalidationService>
-      device_invalidation_service_;
+  content::NotificationRegistrar registrar_;
 
   // State observer for the device-global invalidation service.
   std::unique_ptr<InvalidationServiceObserver>
       device_invalidation_service_observer_;
+
+  // The |device_identity_provider_| must be declared before
+  // |device_invalidation_service_| because the service has a pointer to it.
+  std::unique_ptr<invalidation::IdentityProvider> device_identity_provider_;
+
+  // The |device_instance_id_driver_| must be declared before
+  // |device_invalidation_service_| because the service has a pointer to it. Not
+  // null only when FCM is enabled.
+  std::unique_ptr<instance_id::InstanceIDDriver> device_instance_id_driver_;
+
+  // Device-global invalidation service.
+  std::unique_ptr<invalidation::InvalidationService>
+      device_invalidation_service_;
 
   // State observers for logged-in users' invalidation services.
   std::vector<std::unique_ptr<InvalidationServiceObserver>>
@@ -87,7 +106,7 @@ class AffiliatedInvalidationServiceProviderImpl
   // for use.
   invalidation::InvalidationService* invalidation_service_;
 
-  base::ObserverList<Consumer, true> consumers_;
+  base::ObserverList<Consumer, true>::Unchecked consumers_;
   int consumer_count_;
 
   bool is_shut_down_;

@@ -5,13 +5,16 @@
 package org.chromium.chrome.browser.offlinepages.prefetch;
 
 import android.content.Context;
+import android.os.Build;
+import android.text.format.DateUtils;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.chrome.browser.DeviceConditions;
 import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask;
-import org.chromium.chrome.browser.offlinepages.DeviceConditions;
+import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask.StartBeforeNativeResult;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.background_task_scheduler.BackgroundTask.TaskFinishedCallback;
@@ -22,7 +25,6 @@ import org.chromium.components.background_task_scheduler.TaskParameters;
 import org.chromium.net.ConnectionType;
 
 import java.util.Calendar;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Detects when the user has been offline and notifies them if they have offline content.
@@ -120,20 +122,20 @@ public class OfflineNotificationBackgroundTask extends NativeBackgroundTask {
     }
 
     @Override
-    public int onStartTaskBeforeNativeLoaded(
+    public @StartBeforeNativeResult int onStartTaskBeforeNativeLoaded(
             Context context, TaskParameters taskParameters, TaskFinishedCallback callback) {
         if (shouldNotReschedule()) {
             resetPrefs();
-            return NativeBackgroundTask.DONE;
+            return StartBeforeNativeResult.DONE;
         }
 
-        DeviceConditions deviceConditions = DeviceConditions.getCurrentConditions(context);
-        if (deviceConditions.getNetConnectionType(context) != ConnectionType.CONNECTION_NONE) {
+        if (DeviceConditions.getCurrentNetConnectionType(context)
+                != ConnectionType.CONNECTION_NONE) {
             scheduleTaskWhenOnline();
 
             // We schedule ourselves and return DONE because we want to reschedule using the normal
             // 1 hour timeout rather than Android's default 30s * 2^n exponential backoff schedule.
-            return NativeBackgroundTask.DONE;
+            return StartBeforeNativeResult.DONE;
         }
 
         int offlineCounter = PrefetchPrefs.getOfflineCounter();
@@ -141,10 +143,10 @@ public class OfflineNotificationBackgroundTask extends NativeBackgroundTask {
         PrefetchPrefs.setOfflineCounter(offlineCounter);
         if (offlineCounter < OFFLINE_POLLING_ATTEMPTS) {
             scheduleTask(DETECTION_MODE_OFFLINE);
-            return NativeBackgroundTask.DONE;
+            return StartBeforeNativeResult.DONE;
         }
 
-        return NativeBackgroundTask.LOAD_NATIVE;
+        return StartBeforeNativeResult.LOAD_NATIVE;
     }
 
     @Override
@@ -185,9 +187,9 @@ public class OfflineNotificationBackgroundTask extends NativeBackgroundTask {
     private static long delayForDetectionMode(int detectionMode) {
         switch (detectionMode) {
             case DETECTION_MODE_ONLINE:
-                return TimeUnit.MINUTES.toMillis(DEFAULT_START_DELAY_MINUTES);
+                return DateUtils.MINUTE_IN_MILLIS * DEFAULT_START_DELAY_MINUTES;
             case DETECTION_MODE_OFFLINE:
-                return TimeUnit.MINUTES.toMillis(OFFLINE_POLL_DELAY_MINUTES);
+                return DateUtils.MINUTE_IN_MILLIS * OFFLINE_POLL_DELAY_MINUTES;
             default:
                 return -1;
         }
@@ -239,7 +241,12 @@ public class OfflineNotificationBackgroundTask extends NativeBackgroundTask {
         boolean tooManyIgnoredNotifications =
                 PrefetchPrefs.getIgnoredNotificationCounter() >= IGNORED_NOTIFICATION_MAX;
 
-        return noNewPages || tooManyIgnoredNotifications;
+        // Always enable on O+ devices because notification settings are handled at the system
+        // level, so the value of this pref can be ignored.
+        boolean disabledByPref = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                && !PrefetchPrefs.getNotificationEnabled();
+
+        return noNewPages || tooManyIgnoredNotifications || disabledByPref;
     }
 
     private void resetPrefs() {

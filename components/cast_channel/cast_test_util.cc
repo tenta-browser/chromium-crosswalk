@@ -6,7 +6,9 @@
 
 #include <utility>
 
+#include "base/token.h"
 #include "net/base/ip_address.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace cast_channel {
 
@@ -30,8 +32,7 @@ MockCastSocketObserver::MockCastSocketObserver() {}
 MockCastSocketObserver::~MockCastSocketObserver() {}
 
 MockCastSocketService::MockCastSocketService(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner)
-    : CastSocketService() {
+    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner) {
   SetTaskRunnerForTest(task_runner);
 }
 MockCastSocketService::~MockCastSocketService() {}
@@ -47,5 +48,16 @@ MockCastSocket::~MockCastSocket() {}
 net::IPEndPoint CreateIPEndPointForTest() {
   return net::IPEndPoint(net::IPAddress(192, 168, 1, 1), 8009);
 }
+
+MockCastMessageHandler::MockCastMessageHandler(
+    MockCastSocketService* socket_service)
+    : CastMessageHandler(socket_service,
+                         /* connector */ nullptr,
+                         base::Token{},
+                         "userAgent",
+                         "1.2.3.4",
+                         "en-US") {}
+
+MockCastMessageHandler::~MockCastMessageHandler() = default;
 
 }  // namespace cast_channel

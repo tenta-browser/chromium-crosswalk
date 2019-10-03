@@ -4,52 +4,67 @@
 
 #include "gpu/ipc/gpu_in_process_thread_service.h"
 
-#include "base/lazy_instance.h"
+#include <utility>
+#include <vector>
+
+#include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "gpu/command_buffer/service/scheduler.h"
+#include "gpu/ipc/scheduler_sequence.h"
 
 namespace gpu {
 
 GpuInProcessThreadService::GpuInProcessThreadService(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    gpu::SyncPointManager* sync_point_manager,
-    gpu::gles2::MailboxManager* mailbox_manager,
+    Scheduler* scheduler,
+    SyncPointManager* sync_point_manager,
+    MailboxManager* mailbox_manager,
     scoped_refptr<gl::GLShareGroup> share_group,
-    const GpuFeatureInfo& gpu_feature_info)
-    : gpu::InProcessCommandBuffer::Service(GpuPreferences(),
-                                           mailbox_manager,
-                                           share_group,
-                                           gpu_feature_info),
+    gl::GLSurfaceFormat share_group_surface_format,
+    const GpuFeatureInfo& gpu_feature_info,
+    const GpuPreferences& gpu_preferences,
+    SharedImageManager* shared_image_manager,
+    gles2::ProgramCache* program_cache,
+    scoped_refptr<SharedContextState> shared_context_state)
+    : CommandBufferTaskExecutor(gpu_preferences,
+                                gpu_feature_info,
+                                sync_point_manager,
+                                mailbox_manager,
+                                share_group,
+                                share_group_surface_format,
+                                shared_image_manager,
+                                program_cache,
+                                std::move(shared_context_state)),
       task_runner_(task_runner),
-      sync_point_manager_(sync_point_manager) {}
+      scheduler_(scheduler) {}
 
-void GpuInProcessThreadService::ScheduleTask(const base::Closure& task) {
-  task_runner_->PostTask(FROM_HERE, task);
-}
+GpuInProcessThreadService::~GpuInProcessThreadService() = default;
 
-void GpuInProcessThreadService::ScheduleDelayedWork(const base::Closure& task) {
-  task_runner_->PostDelayedTask(FROM_HERE, task,
-                                base::TimeDelta::FromMilliseconds(2));
-}
-bool GpuInProcessThreadService::UseVirtualizedGLContexts() {
-  return true;
-}
-
-gpu::SyncPointManager* GpuInProcessThreadService::sync_point_manager() {
-  return sync_point_manager_;
-}
-
-void GpuInProcessThreadService::AddRef() const {
-  base::RefCountedThreadSafe<GpuInProcessThreadService>::AddRef();
-}
-
-void GpuInProcessThreadService::Release() const {
-  base::RefCountedThreadSafe<GpuInProcessThreadService>::Release();
-}
-
-bool GpuInProcessThreadService::BlockThreadOnWaitSyncToken() const {
+bool GpuInProcessThreadService::ForceVirtualizedGLContexts() const {
   return false;
 }
 
-GpuInProcessThreadService::~GpuInProcessThreadService() {}
+bool GpuInProcessThreadService::ShouldCreateMemoryTracker() const {
+  return true;
+}
+
+std::unique_ptr<SingleTaskSequence>
+GpuInProcessThreadService::CreateSequence() {
+  return std::make_unique<SchedulerSequence>(scheduler_);
+}
+
+void GpuInProcessThreadService::ScheduleOutOfOrderTask(base::OnceClosure task) {
+  task_runner_->PostTask(FROM_HERE, std::move(task));
+}
+
+void GpuInProcessThreadService::ScheduleDelayedWork(base::OnceClosure task) {
+  task_runner_->PostDelayedTask(FROM_HERE, std::move(task),
+                                base::TimeDelta::FromMilliseconds(2));
+}
+
+void GpuInProcessThreadService::PostNonNestableToClient(
+    base::OnceClosure callback) {
+  NOTREACHED();
+}
 
 }  // namespace gpu

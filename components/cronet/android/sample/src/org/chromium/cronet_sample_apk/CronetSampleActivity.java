@@ -83,6 +83,7 @@ public class CronetSampleActivity extends Activity {
             final String url = info.getUrl();
             final String text = "Completed " + url + " (" + info.getHttpStatusCode() + ")";
             CronetSampleActivity.this.runOnUiThread(new Runnable() {
+                @Override
                 public void run() {
                     mResultText.setText(text);
                     mReceiveDataText.setText(receivedData);
@@ -98,6 +99,7 @@ public class CronetSampleActivity extends Activity {
             final String url = mUrl;
             final String text = "Failed " + mUrl + " (" + error.getMessage() + ")";
             CronetSampleActivity.this.runOnUiThread(new Runnable() {
+                @Override
                 public void run() {
                     mResultText.setText(text);
                     promptForURL(url);
@@ -112,6 +114,12 @@ public class CronetSampleActivity extends Activity {
         setContentView(R.layout.activity_main);
         mResultText = (TextView) findViewById(R.id.resultView);
         mReceiveDataText = (TextView) findViewById(R.id.dataView);
+        mReceiveDataText.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                promptForURL(mUrl);
+            }
+        });
 
         CronetEngine.Builder myBuilder = new CronetEngine.Builder(this);
         myBuilder.enableHttpCache(CronetEngine.Builder.HTTP_CACHE_IN_MEMORY, 100 * 1024)
@@ -140,6 +148,7 @@ public class CronetSampleActivity extends Activity {
         alert.setView(alertView);
 
         alert.setPositiveButton("Load", new DialogInterface.OnClickListener() {
+            @Override
             public void onClick(DialogInterface dialog, int button) {
                 String url = urlInput.getText().toString();
                 String postData = postInput.getText().toString();

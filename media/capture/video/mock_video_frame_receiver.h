@@ -19,19 +19,20 @@ class MockVideoFrameReceiver : public VideoFrameReceiver {
   MOCK_METHOD3(
       MockOnFrameReadyInBuffer,
       void(int buffer_id,
-           std::unique_ptr<media::VideoCaptureDevice::Client::Buffer::
-                               ScopedAccessPermission>* buffer_read_permission,
+           std::unique_ptr<
+               VideoCaptureDevice::Client::Buffer::ScopedAccessPermission>*
+               buffer_read_permission,
            const gfx::Size&));
-  MOCK_METHOD0(OnError, void());
+  MOCK_METHOD1(OnError, void(media::VideoCaptureError error));
+  MOCK_METHOD1(OnFrameDropped, void(media::VideoCaptureFrameDropReason reason));
   MOCK_METHOD1(OnLog, void(const std::string& message));
   MOCK_METHOD1(OnBufferRetired, void(int buffer_id));
   MOCK_METHOD0(OnStarted, void());
   MOCK_METHOD0(OnStartedUsingGpuDecode, void());
+  MOCK_METHOD0(OnStopped, void());
 
-  void OnNewBufferHandle(
-      int buffer_id,
-      std::unique_ptr<media::VideoCaptureDevice::Client::Buffer::HandleProvider>
-          handle_provider) override {
+  void OnNewBuffer(int buffer_id,
+                   media::mojom::VideoBufferHandlePtr buffer_handle) override {
     MockOnNewBufferHandle(buffer_id);
   }
 
@@ -39,7 +40,7 @@ class MockVideoFrameReceiver : public VideoFrameReceiver {
       int32_t buffer_id,
       int frame_feedback_id,
       std::unique_ptr<
-          media::VideoCaptureDevice::Client::Buffer::ScopedAccessPermission>
+          VideoCaptureDevice::Client::Buffer::ScopedAccessPermission>
           buffer_read_permission,
       media::mojom::VideoFrameInfoPtr frame_info) override {
     MockOnFrameReadyInBuffer(buffer_id, &buffer_read_permission,

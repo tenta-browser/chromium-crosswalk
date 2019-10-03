@@ -19,7 +19,6 @@
 #include "base/logging_win.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
 #include "base/process/memory.h"
@@ -33,6 +32,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/syslog_logging.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -69,14 +69,12 @@ bool chrome_logging_failed_ = false;
 // Assertion handler for logging errors that occur when dialogs are
 // silenced.  To record a new error, pass the log string associated
 // with that error in the str parameter.
-MSVC_DISABLE_OPTIMIZE();
-void SilentRuntimeAssertHandler(const char* file,
-                                int line,
-                                const base::StringPiece message,
-                                const base::StringPiece stack_trace) {
+NOINLINE void SilentRuntimeAssertHandler(const char* file,
+                                         int line,
+                                         const base::StringPiece message,
+                                         const base::StringPiece stack_trace) {
   base::debug::BreakDebugger();
 }
-MSVC_ENABLE_OPTIMIZE();
 
 // Suppresses error/assertion dialogs and enables the logging of
 // those errors into silenced_errors_.
@@ -115,7 +113,7 @@ LoggingDestination DetermineLoggingDestination(
     // Let --enable-logging=stderr force only stderr, particularly useful for
     // non-debug builds where otherwise you can't get logs to stderr at all.
     if (command_line.GetSwitchValueASCII(switches::kEnableLogging) == "stderr")
-      log_mode = LOG_TO_SYSTEM_DEBUG_LOG;
+      log_mode = LOG_TO_SYSTEM_DEBUG_LOG | LOG_TO_STDERR;
     else
       log_mode = kDefaultLoggingMode;
   } else {
@@ -128,7 +126,7 @@ bool GetLogsPath(base::FilePath* result) {
 #ifdef NDEBUG
   // Release builds write to the data dir. This is a copy of the Windows
   // implementation of GetDefaultUserDataDirectory().
-  if (!PathService::Get(base::DIR_LOCAL_APP_DATA, result))
+  if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, result))
     return false;
   *result = result->Append(install_static::GetChromeInstallSubDirectory());
   *result = result->Append(chrome::kUserDataDirname);
@@ -136,7 +134,7 @@ bool GetLogsPath(base::FilePath* result) {
 
 #else
   // Debug builds write next to the binary (in the build tree)
-  return PathService::Get(base::DIR_EXE, result);
+  return base::PathService::Get(base::DIR_EXE, result);
 #endif  // NDEBUG
 }
 
@@ -319,13 +317,14 @@ bool BrowserMonitor::StartWatching(
     return false;
 
   if (!background_thread_.StartWithOptions(
-        base::Thread::Options(base::MessageLoop::TYPE_IO, 0))) {
+          base::Thread::Options(base::MessagePump::Type::IO, 0))) {
     return false;
   }
 
   if (!background_thread_.task_runner()->PostTask(
-          FROM_HERE, base::Bind(&BrowserMonitor::Watch, base::Unretained(this),
-                                base::Passed(&on_initialized_event)))) {
+          FROM_HERE,
+          base::BindOnce(&BrowserMonitor::Watch, base::Unretained(this),
+                         std::move(on_initialized_event)))) {
     background_thread_.Stop();
     return false;
   }
@@ -357,8 +356,9 @@ void BrowserMonitor::Watch(base::win::ScopedHandle on_initialized_event) {
   // Note that the browser has exited.
   browser_exited_.Signal();
 
-  main_thread_->PostTask(FROM_HERE,
-      base::Bind(&BrowserMonitor::BrowserExited, base::Unretained(this)));
+  main_thread_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&BrowserMonitor::BrowserExited, base::Unretained(this)));
 }
 
 void BrowserMonitor::BrowserExited() {
@@ -415,9 +415,10 @@ extern "C" int WatcherMain(const base::char16* registry_path,
   base::win::RegisterInvalidParamHandler();
   base::win::SetupCRT(cmd_line);
 
-  // Run a UI message loop on the main thread.
+  // Run a UI task executor on the main thread.
   base::PlatformThread::SetName("WatcherMainThread");
-  base::MessageLoop msg_loop(base::MessageLoop::TYPE_UI);
+  base::SingleThreadTaskExecutor main_thread_task_executor(
+      base::MessagePump::Type::UI);
 
   base::RunLoop run_loop;
   BrowserMonitor monitor(registry_path, &run_loop);

@@ -11,14 +11,14 @@
 #include "chrome/browser/media/media_storage_id_salt.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
-#include "media/media_features.h"
-#include "rlz/features/features.h"
+#include "media/media_buildflags.h"
+#include "rlz/buildflags/buildflags.h"
 #include "url/origin.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/bind.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
-#include "media/base/scoped_callback_runner.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #endif
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
@@ -55,7 +55,7 @@ std::vector<uint8_t> CalculateStorageId(
     return {};
   }
 
-  if (origin.unique()) {
+  if (origin.opaque()) {
     DLOG(ERROR) << "Unexpected origin: " << origin;
     return {};
   }
@@ -105,7 +105,8 @@ void ComputeStorageId(const std::vector<uint8_t>& profile_salt,
 
 #elif defined(OS_CHROMEOS)
   CdmStorageIdCallback scoped_callback =
-      media::ScopedCallbackRunner(std::move(callback), std::vector<uint8_t>());
+      mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback),
+                                                  std::vector<uint8_t>());
   chromeos::SystemSaltGetter::Get()->GetSystemSalt(
       base::Bind(&ComputeAndReturnStorageId, profile_salt, origin,
                  base::Passed(&scoped_callback)));

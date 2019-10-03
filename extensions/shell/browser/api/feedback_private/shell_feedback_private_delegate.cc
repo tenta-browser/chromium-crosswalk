@@ -40,6 +40,24 @@ ShellFeedbackPrivateDelegate::CreateSingleLogSource(
   NOTIMPLEMENTED();
   return nullptr;
 }
+
+void ShellFeedbackPrivateDelegate::FetchExtraLogs(
+    scoped_refptr<feedback::FeedbackData> feedback_data,
+    FetchExtraLogsCallback callback) const {
+  NOTIMPLEMENTED();
+  std::move(callback).Run(feedback_data);
+}
+
+void ShellFeedbackPrivateDelegate::UnloadFeedbackExtension(
+    content::BrowserContext* context) const {
+  NOTIMPLEMENTED();
+}
+
+api::feedback_private::LandingPageType
+ShellFeedbackPrivateDelegate::GetLandingPageType(
+    const feedback::FeedbackData& feedback_data) const {
+  return api::feedback_private::LANDING_PAGE_TYPE_NOLANDINGPAGE;
+}
 #endif
 
 std::string ShellFeedbackPrivateDelegate::GetSignedInUserEmail(

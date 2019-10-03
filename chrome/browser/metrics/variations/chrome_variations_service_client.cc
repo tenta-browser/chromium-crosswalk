@@ -7,11 +7,13 @@
 #include "base/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/version_info.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-#include "chrome/browser/upgrade_detector_impl.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector_impl.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -32,7 +34,7 @@ base::Version GetVersionForSimulation() {
 
   // TODO(asvitkine): Get the version that will be used on restart instead of
   // the current version on Android, iOS and ChromeOS.
-  return base::Version(version_info::GetVersionNumber());
+  return version_info::GetVersion();
 }
 
 }  // namespace
@@ -41,27 +43,20 @@ ChromeVariationsServiceClient::ChromeVariationsServiceClient() {}
 
 ChromeVariationsServiceClient::~ChromeVariationsServiceClient() {}
 
-std::string ChromeVariationsServiceClient::GetApplicationLocale() {
-  return g_browser_process->GetApplicationLocale();
-}
-
 base::Callback<base::Version(void)>
 ChromeVariationsServiceClient::GetVersionForSimulationCallback() {
   return base::Bind(&GetVersionForSimulation);
 }
 
-net::URLRequestContextGetter*
-ChromeVariationsServiceClient::GetURLRequestContext() {
-  return g_browser_process->system_request_context();
+scoped_refptr<network::SharedURLLoaderFactory>
+ChromeVariationsServiceClient::GetURLLoaderFactory() {
+  return g_browser_process->system_network_context_manager()
+      ->GetSharedURLLoaderFactory();
 }
 
 network_time::NetworkTimeTracker*
 ChromeVariationsServiceClient::GetNetworkTimeTracker() {
   return g_browser_process->network_time_tracker();
-}
-
-version_info::Channel ChromeVariationsServiceClient::GetChannel() {
-  return chrome::GetChannel();
 }
 
 bool ChromeVariationsServiceClient::OverridesRestrictParameter(
@@ -73,4 +68,8 @@ bool ChromeVariationsServiceClient::OverridesRestrictParameter(
 #else
   return false;
 #endif
+}
+
+version_info::Channel ChromeVariationsServiceClient::GetChannel() {
+  return chrome::GetChannel();
 }

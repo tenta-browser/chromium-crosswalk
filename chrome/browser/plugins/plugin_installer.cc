@@ -10,16 +10,10 @@
 #include "base/bind_helpers.h"
 #include "base/process/process.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/plugins/plugin_installer_observer.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/download_item.h"
-#include "content/public/browser/download_manager.h"
-#include "content/public/browser/download_url_parameters.h"
 #include "content/public/browser/web_contents.h"
-
-using content::DownloadItem;
 
 PluginInstaller::PluginInstaller() : strong_observer_count_(0) {}
 
@@ -54,7 +48,7 @@ void PluginInstaller::OpenDownloadURL(const GURL& plugin_url,
   web_contents->OpenURL(content::OpenURLParams(
       plugin_url,
       content::Referrer(web_contents->GetURL(),
-                        blink::kWebReferrerPolicyDefault),
+                        network::mojom::ReferrerPolicy::kDefault),
       WindowOpenDisposition::NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED,
       false));
   for (PluginInstallerObserver& observer : observers_)

@@ -13,10 +13,40 @@
  * should be treated as 'default'.
  * @enum {string}
  */
-var ContentSettingProvider = {
+const ContentSettingProvider = {
   EXTENSION: 'extension',
   PREFERENCE: 'preference',
 };
+
+/**
+ * Stores information about if a content setting is valid, and why.
+ * @typedef {{isValid: boolean,
+ *            reason: ?string}}
+ */
+let IsValid;
+
+/**
+ * Stores origin information. The |hasPermissionSettings| will be set to true
+ * when this origin has permissions or when there is a pattern permission
+ * affecting this origin.
+ * @typedef {{origin: string,
+ *            engagement: number,
+ *            usage: number,
+              numCookies: number,
+              hasPermissionSettings: boolean}}
+ */
+let OriginInfo;
+
+/**
+ * Represents a list of sites, grouped under the same eTLD+1. For example, an
+ * origin "https://www.example.com" would be grouped together with
+ * "https://login.example.com" and "http://example.com" under a common eTLD+1 of
+ * "example.com".
+ * @typedef {{etldPlus1: string,
+ *            numCookies: number,
+ *            origins: Array<OriginInfo>}}
+ */
+let SiteGroup;
 
 /**
  * The site exception information passed from the C++ handler.
@@ -28,7 +58,7 @@ var ContentSettingProvider = {
  *            setting: !settings.ContentSetting,
  *            source: !settings.SiteSettingSource}}
  */
-var RawSiteException;
+let RawSiteException;
 
 /**
  * The site exception after it has been converted/filtered for UI use.
@@ -40,45 +70,48 @@ var RawSiteException;
  *            displayName: string,
  *            setting: !settings.ContentSetting,
  *            enforcement: ?chrome.settingsPrivate.Enforcement,
- *            controlledBy: !chrome.settingsPrivate.ControlledBy}}
+ *            controlledBy: !chrome.settingsPrivate.ControlledBy,
+ *            showAndroidSmsNote: (boolean|undefined)}}
  */
-var SiteException;
+let SiteException;
+
+/**
+ * The chooser exception information passed from the C++ handler.
+ * See also: ChooserException.
+ * @typedef {{chooserType: !settings.ChooserType,
+ *            displayName: string,
+ *            object: Object,
+ *            sites: Array<!RawSiteException>}}
+ */
+let RawChooserException;
+
+/**
+ * The chooser exception after it has been converted/filtered for UI use.
+ * See also: RawChooserException.
+ * @typedef {{chooserType: !settings.ChooserType,
+ *            displayName: string,
+ *            object: Object,
+ *            sites: Array<!SiteException>}}
+ */
+let ChooserException;
 
 /**
  * @typedef {{setting: !settings.ContentSetting,
  *            source: !ContentSettingProvider}}
  */
-var DefaultContentSetting;
+let DefaultContentSetting;
 
 /**
  * @typedef {{name: string,
  *            id: string}}
  */
-var MediaPickerEntry;
+let MediaPickerEntry;
 
 /**
  * @typedef {{protocol: string,
  *            spec: string}}
  */
-var ProtocolHandlerEntry;
-
-/**
- * @typedef {{name: string,
- *            product-id: Number,
- *            serial-number: string,
- *            vendor-id: Number}}
- */
-var UsbDeviceDetails;
-
-/**
- * @typedef {{embeddingOrigin: string,
- *            object: UsbDeviceDetails,
- *            objectName: string,
- *            origin: string,
- *            setting: string,
- *            source: string}}
- */
-var UsbDeviceEntry;
+let ProtocolHandlerEntry;
 
 /**
  * @typedef {{origin: string,
@@ -86,7 +119,7 @@ var UsbDeviceEntry;
  *            source: string,
  *            zoom: string}}
  */
-var ZoomLevelEntry;
+let ZoomLevelEntry;
 
 cr.define('settings', function() {
   /** @interface */
@@ -104,6 +137,31 @@ cr.define('settings', function() {
      * @return {!Promise<!DefaultContentSetting>}
      */
     getDefaultValueForContentType(contentType) {}
+
+    /**
+     * Gets a list of sites, grouped by eTLD+1, affected by any of the content
+     * settings specified by |contentTypes|.
+     * @param {!Array<!settings.ContentSettingsTypes>} contentTypes A list of
+     *     the content types to retrieve sites for.
+     * @return {!Promise<!Array<!SiteGroup>>}
+     */
+    getAllSites(contentTypes) {}
+
+    /**
+     * Gets the chooser exceptions for a particular chooser type.
+     * @param {settings.ChooserType} chooserType The chooser type to grab
+     *     exceptions from.
+     * @return {!Promise<!Array<!RawChooserException>>}
+     */
+    getChooserExceptionList(chooserType) {}
+
+    /**
+     * Converts a given number of bytes into a human-readable format, with data
+     * units.
+     * @param {number} numBytes The number of bytes to convert.
+     * @return {!Promise<string>}
+     */
+    getFormattedBytes(numBytes) {}
 
     /**
      * Gets the exceptions (site list) for a particular category.
@@ -137,6 +195,13 @@ cr.define('settings', function() {
     setOriginPermissions(origin, contentTypes, blanketSetting) {}
 
     /**
+     * Clears the flag that's set when the user has changed the Flash permission
+     * for this particular origin.
+     * @param {string} origin The origin to clear the Flash preference for.
+     */
+    clearFlashPref(origin) {}
+
+    /**
      * Resets the category permission for a given origin (expressed as primary
      * and secondary patterns). Only use this if intending to remove an
      * exception - use setOriginPermissions() for origin-scoped settings.
@@ -149,6 +214,17 @@ cr.define('settings', function() {
      */
     resetCategoryPermissionForPattern(
         primaryPattern, secondaryPattern, contentType, incognito) {}
+
+    /**
+     * Removes a particular chooser object permission by origin and embedding
+     * origin.
+     * @param {settings.ChooserType} chooserType The chooser exception type
+     * @param {string} origin The origin to look up the permission for.
+     * @param {string} embeddingOrigin the embedding origin to look up.
+     * @param {!Object} exception The exception to revoke permission for.
+     */
+    resetChooserExceptionForSite(
+        chooserType, origin, embeddingOrigin, exception) {}
 
     /**
      * Sets the category permission for a given origin (expressed as primary and
@@ -173,11 +249,14 @@ cr.define('settings', function() {
     isOriginValid(origin) {}
 
     /**
-     * Checks whether a pattern is valid.
+     * Checks whether a setting is valid.
      * @param {string} pattern The pattern to check.
-     * @return {!Promise<boolean>} True if the pattern is valid.
+     * @param {settings.ContentSettingsTypes} category What kind of setting,
+     *     e.g. Location, Camera, Cookies, etc.
+     * @return {!Promise<IsValid>} Contains whether or not the pattern is
+     *     valid for the type, and if it is invalid, the reason why.
      */
-    isPatternValid(pattern) {}
+    isPatternValidForType(pattern, category) {}
 
     /**
      * Gets the list of default capture devices for a given type of media. List
@@ -234,22 +313,6 @@ cr.define('settings', function() {
     removeProtocolHandler(protocol, url) {}
 
     /**
-     * Fetches a list of all USB devices and the sites permitted to use them.
-     * @return {!Promise<!Array<!UsbDeviceEntry>>} The list of USB devices.
-     */
-    fetchUsbDevices() {}
-
-    /**
-     * Removes a particular USB device object permission by origin and embedding
-     * origin.
-     * @param {string} origin The origin to look up the permission for.
-     * @param {string} embeddingOrigin the embedding origin to look up.
-     * @param {!UsbDeviceDetails} usbDevice The USB device to revoke permission
-     *     for.
-     */
-    removeUsbDevice(origin, embeddingOrigin, usbDevice) {}
-
-    /**
      * Fetches the incognito status of the current profile (whether an incognito
      * profile exists). Returns the results via onIncognitoStatusChanged.
      */
@@ -274,6 +337,24 @@ cr.define('settings', function() {
      */
     showAndroidManageAppLinks() {}
     // </if>
+
+    /**
+     * Fetches the current block autoplay state. Returns the results via
+     * onBlockAutoplayStatusChanged.
+     */
+    fetchBlockAutoplayStatus() {}
+
+    /**
+     * Clears all the web storage data and cookies for a given etld+1.
+     * @param {string} etldPlus1 The etld+1 to clear data from.
+     */
+    clearEtldPlus1DataAndCookies(etldPlus1) {}
+
+    /**
+     * Record All Sites Page action for metrics.
+     *  @param {number} action number.
+     */
+    recordAction(action) {}
   }
 
   /**
@@ -288,6 +369,21 @@ cr.define('settings', function() {
     /** @override */
     getDefaultValueForContentType(contentType) {
       return cr.sendWithPromise('getDefaultValueForContentType', contentType);
+    }
+
+    /** @override */
+    getAllSites(contentTypes) {
+      return cr.sendWithPromise('getAllSites', contentTypes);
+    }
+
+    /** @override */
+    getChooserExceptionList(chooserType) {
+      return cr.sendWithPromise('getChooserExceptionList', chooserType);
+    }
+
+    /** @override */
+    getFormattedBytes(numBytes) {
+      return cr.sendWithPromise('getFormattedBytes', numBytes);
     }
 
     /** @override */
@@ -307,11 +403,24 @@ cr.define('settings', function() {
     }
 
     /** @override */
+    clearFlashPref(origin) {
+      chrome.send('clearFlashPref', [origin]);
+    }
+
+    /** @override */
     resetCategoryPermissionForPattern(
         primaryPattern, secondaryPattern, contentType, incognito) {
       chrome.send(
           'resetCategoryPermissionForPattern',
           [primaryPattern, secondaryPattern, contentType, incognito]);
+    }
+
+    /** @override */
+    resetChooserExceptionForSite(
+        chooserType, origin, embeddingOrigin, exception) {
+      chrome.send(
+          'resetChooserExceptionForSite',
+          [chooserType, origin, embeddingOrigin, exception]);
     }
 
     /** @override */
@@ -331,8 +440,8 @@ cr.define('settings', function() {
     }
 
     /** @override */
-    isPatternValid(pattern) {
-      return cr.sendWithPromise('isPatternValid', pattern);
+    isPatternValidForType(pattern, category) {
+      return cr.sendWithPromise('isPatternValidForType', pattern, category);
     }
 
     /** @override */
@@ -362,22 +471,12 @@ cr.define('settings', function() {
 
     /** @override */
     setProtocolDefault(protocol, url) {
-      chrome.send('setDefault', [[protocol, url]]);
+      chrome.send('setDefault', [protocol, url]);
     }
 
     /** @override */
     removeProtocolHandler(protocol, url) {
-      chrome.send('removeHandler', [[protocol, url]]);
-    }
-
-    /** @override */
-    fetchUsbDevices() {
-      return cr.sendWithPromise('fetchUsbDevices');
-    }
-
-    /** @override */
-    removeUsbDevice(origin, embeddingOrigin, usbDevice) {
-      chrome.send('removeUsbDevice', [origin, embeddingOrigin, usbDevice]);
+      chrome.send('removeHandler', [protocol, url]);
     }
 
     /** @override */
@@ -401,6 +500,21 @@ cr.define('settings', function() {
       chrome.send('showAndroidManageAppLinks');
     }
     // </if>
+
+    /** @override */
+    fetchBlockAutoplayStatus() {
+      chrome.send('fetchBlockAutoplayStatus');
+    }
+
+    /** @override */
+    clearEtldPlus1DataAndCookies(etldPlus1) {
+      chrome.send('clearEtldPlus1DataAndCookies', [etldPlus1]);
+    }
+
+    /** @override */
+    recordAction(action) {
+      chrome.send('recordAction', [action]);
+    }
   }
 
   // The singleton instance_ is replaced with a test version of this wrapper

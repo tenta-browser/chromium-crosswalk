@@ -12,6 +12,7 @@ namespace cc {
 LayerTreeDebugState::LayerTreeDebugState()
     : show_fps_counter(false),
       show_debug_borders(false),
+      show_layout_shift_regions(false),
       show_paint_rects(false),
       show_property_changed_rects(false),
       show_surface_damage_rects(false),
@@ -24,12 +25,13 @@ LayerTreeDebugState::LayerTreeDebugState()
       slow_down_raster_scale_factor(0),
       rasterize_only_visible_content(false),
       show_picture_borders(false),
+      show_hit_test_borders(false),
       record_rendering_stats_(false) {}
 
 LayerTreeDebugState::LayerTreeDebugState(const LayerTreeDebugState& other) =
     default;
 
-LayerTreeDebugState::~LayerTreeDebugState() {}
+LayerTreeDebugState::~LayerTreeDebugState() = default;
 
 void LayerTreeDebugState::SetRecordRenderingStats(bool enabled) {
   record_rendering_stats_ = enabled;
@@ -48,7 +50,7 @@ bool LayerTreeDebugState::ShowHudRects() const {
          show_surface_damage_rects || show_screen_space_rects ||
          show_touch_event_handler_rects || show_wheel_event_handler_rects ||
          show_scroll_event_handler_rects || show_non_fast_scrollable_rects ||
-         show_layer_animation_bounds_rects;
+         show_layer_animation_bounds_rects || show_layout_shift_regions;
 }
 
 bool LayerTreeDebugState::ShowMemoryStats() const {
@@ -60,6 +62,7 @@ bool LayerTreeDebugState::Equal(const LayerTreeDebugState& a,
   return (
       a.show_fps_counter == b.show_fps_counter &&
       a.show_debug_borders == b.show_debug_borders &&
+      a.show_layout_shift_regions == b.show_layout_shift_regions &&
       a.show_paint_rects == b.show_paint_rects &&
       a.show_property_changed_rects == b.show_property_changed_rects &&
       a.show_surface_damage_rects == b.show_surface_damage_rects &&
@@ -73,6 +76,7 @@ bool LayerTreeDebugState::Equal(const LayerTreeDebugState& a,
       a.slow_down_raster_scale_factor == b.slow_down_raster_scale_factor &&
       a.rasterize_only_visible_content == b.rasterize_only_visible_content &&
       a.show_picture_borders == b.show_picture_borders &&
+      a.show_hit_test_borders == b.show_hit_test_borders &&
       a.record_rendering_stats_ == b.record_rendering_stats_);
 }
 
@@ -83,6 +87,7 @@ LayerTreeDebugState LayerTreeDebugState::Unite(const LayerTreeDebugState& a,
   r.show_fps_counter |= b.show_fps_counter;
   r.show_debug_borders |= b.show_debug_borders;
 
+  r.show_layout_shift_regions |= b.show_layout_shift_regions;
   r.show_paint_rects |= b.show_paint_rects;
   r.show_property_changed_rects |= b.show_property_changed_rects;
   r.show_surface_damage_rects |= b.show_surface_damage_rects;
@@ -97,6 +102,8 @@ LayerTreeDebugState LayerTreeDebugState::Unite(const LayerTreeDebugState& a,
     r.slow_down_raster_scale_factor = b.slow_down_raster_scale_factor;
   r.rasterize_only_visible_content |= b.rasterize_only_visible_content;
   r.show_picture_borders |= b.show_picture_borders;
+
+  r.show_hit_test_borders |= b.show_hit_test_borders;
 
   r.record_rendering_stats_ |= b.record_rendering_stats_;
 

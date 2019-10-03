@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/tether_constants.h"
@@ -32,23 +31,23 @@ class NetworkListSorterTest : public testing::Test {
   NetworkListSorterTest() = default;
 
   void SetUp() override {
-    network_list_sorter_ = base::MakeUnique<NetworkListSorter>();
+    network_list_sorter_ = std::make_unique<NetworkListSorter>();
   }
 
   void GenerateTestList() {
-    list_ = base::MakeUnique<NetworkStateHandler::ManagedStateList>();
+    list_ = std::make_unique<NetworkStateHandler::ManagedStateList>();
 
-    auto state0 = base::MakeUnique<NetworkState>(kGuid0);
+    auto state0 = std::make_unique<NetworkState>(kGuid0);
     state0->SetGuid(kGuid0);
     state0->set_visible(true);
     list_->emplace_back(std::move(state0));
 
-    auto state1 = base::MakeUnique<NetworkState>(kGuid1);
+    auto state1 = std::make_unique<NetworkState>(kGuid1);
     state1->SetGuid(kGuid1);
     state1->set_visible(true);
     list_->emplace_back(std::move(state1));
 
-    auto state2 = base::MakeUnique<NetworkState>(kGuid2);
+    auto state2 = std::make_unique<NetworkState>(kGuid2);
     state2->SetGuid(kGuid2);
     state2->set_visible(true);
     list_->emplace_back(std::move(state2));
@@ -80,9 +79,9 @@ class NetworkListSorterTest : public testing::Test {
 
 TEST_F(NetworkListSorterTest, ConnectionState) {
   GenerateTestList();
-  NetworkAtIndex(0)->set_connection_state(shill::kStateIdle);
-  NetworkAtIndex(1)->set_connection_state(shill::kStateAssociation);
-  NetworkAtIndex(2)->set_connection_state(shill::kStateOnline);
+  NetworkAtIndex(0)->set_connection_state_for_testing(shill::kStateIdle);
+  NetworkAtIndex(1)->set_connection_state_for_testing(shill::kStateAssociation);
+  NetworkAtIndex(2)->set_connection_state_for_testing(shill::kStateOnline);
   SortAndVerifySortOrder(2, 1, 0);
 }
 
@@ -118,9 +117,9 @@ TEST_F(NetworkListSorterTest, Name) {
 
 TEST_F(NetworkListSorterTest, Carrier) {
   GenerateTestList();
-  NetworkAtIndex(0)->set_carrier("c");
-  NetworkAtIndex(1)->set_carrier("b");
-  NetworkAtIndex(2)->set_carrier("a");
+  NetworkAtIndex(0)->set_tether_carrier("c");
+  NetworkAtIndex(1)->set_tether_carrier("b");
+  NetworkAtIndex(2)->set_tether_carrier("a");
   SortAndVerifySortOrder(2, 1, 0);
 }
 

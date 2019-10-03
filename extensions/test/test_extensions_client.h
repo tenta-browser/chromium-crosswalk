@@ -33,10 +33,6 @@ class TestExtensionsClient : public ExtensionsClient {
   const PermissionMessageProvider& GetPermissionMessageProvider()
       const override;
   const std::string GetProductName() override;
-  std::unique_ptr<FeatureProvider> CreateFeatureProvider(
-      const std::string& name) const override;
-  std::unique_ptr<JSONFeatureProviderSource> CreateAPIFeatureSource()
-      const override;
   void FilterHostPermissions(const URLPatternSet& hosts,
                              URLPatternSet* new_hosts,
                              PermissionIDSet* permissions) const override;
@@ -46,10 +42,6 @@ class TestExtensionsClient : public ExtensionsClient {
       const Extension* extension,
       const APIPermissionSet& api_permissions) const override;
   bool IsScriptableURL(const GURL& url, std::string* error) const override;
-  bool IsAPISchemaGenerated(const std::string& name) const override;
-  base::StringPiece GetAPISchema(const std::string& name) const override;
-  bool ShouldSuppressFatalErrors() const override;
-  void RecordDidSuppressFatalError() override;
   const GURL& GetWebstoreBaseURL() const override;
   const GURL& GetWebstoreUpdateURL() const override;
   bool IsBlacklistUpdateURL(const GURL& url) const override;
@@ -65,7 +57,7 @@ class TestExtensionsClient : public ExtensionsClient {
   std::set<BrowserImagePathsFilter*> browser_image_filters_;
 
   const GURL webstore_base_url_;
-  const GURL webstore_update_url_;
+  GURL webstore_update_url_;
 
   DISALLOW_COPY_AND_ASSIGN(TestExtensionsClient);
 };

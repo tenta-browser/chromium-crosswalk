@@ -5,7 +5,6 @@
 package org.chromium.chromoting;
 
 import android.content.Context;
-import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -68,7 +67,7 @@ public class OAuthTokenConsumer {
             }
 
             @Override
-            public void onError(OAuthTokenFetcher.Error error) {
+            public void onError(@OAuthTokenFetcher.Error int error) {
                 mWaitingForAuthToken = false;
                 if (error != OAuthTokenFetcher.Error.INTERRUPTED) {
                     callback.onError(error);
@@ -95,37 +94,33 @@ public class OAuthTokenConsumer {
      *                 callback.
      */
     public void revokeLatestToken(final OAuthTokenFetcher.Callback callback) {
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... params) {
-                try {
-                    GoogleAuthUtil.clearToken(mContext, mLatestToken);
-                    mLatestToken = null;
-                    if (callback != null) {
-                        new Handler(Looper.getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                callback.onTokenFetched(null);
-                            }
-                        });
-                    }
-                } catch (GoogleAuthException e) {
-                    if (callback != null) {
-                        handleErrorOnMainThread(callback, OAuthTokenFetcher.Error.UNEXPECTED);
-                        callback.onError(OAuthTokenFetcher.Error.UNEXPECTED);
-                    }
-                } catch (IOException e) {
-                    if (callback != null) {
-                        handleErrorOnMainThread(callback, OAuthTokenFetcher.Error.NETWORK);
-                    }
+        OAuthTokenFetcher.TASK_RUNNER.postTask(() -> {
+            try {
+                GoogleAuthUtil.clearToken(mContext, mLatestToken);
+                mLatestToken = null;
+                if (callback != null) {
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            callback.onTokenFetched(null);
+                        }
+                    });
                 }
-                return null;
+            } catch (GoogleAuthException e) {
+                if (callback != null) {
+                    handleErrorOnMainThread(callback, OAuthTokenFetcher.Error.UNEXPECTED);
+                    callback.onError(OAuthTokenFetcher.Error.UNEXPECTED);
+                }
+            } catch (IOException e) {
+                if (callback != null) {
+                    handleErrorOnMainThread(callback, OAuthTokenFetcher.Error.NETWORK);
+                }
             }
-        }.execute();
+        });
     }
 
-    private void handleErrorOnMainThread(final OAuthTokenFetcher.Callback callback,
-                                         final OAuthTokenFetcher.Error error) {
+    private void handleErrorOnMainThread(
+            final OAuthTokenFetcher.Callback callback, final @OAuthTokenFetcher.Error int error) {
         new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override
             public void run() {

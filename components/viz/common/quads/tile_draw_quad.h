@@ -29,7 +29,7 @@ class VIZ_COMMON_EXPORT TileDrawQuad : public ContentDrawQuadBase {
               // coordinates consistent across all quad types: crbug.com/487370
               const gfx::RectF& tex_coord_rect,
               const gfx::Size& texture_size,
-              bool swizzle_contents,
+              bool is_premultiplied,
               bool nearest_neighbor,
               bool force_anti_aliasing_off);
 
@@ -43,7 +43,7 @@ class VIZ_COMMON_EXPORT TileDrawQuad : public ContentDrawQuadBase {
               // coordinates consistent across all quad types: crbug.com/487370
               const gfx::RectF& tex_coord_rect,
               const gfx::Size& texture_size,
-              bool swizzle_contents,
+              bool is_premultiplied,
               bool nearest_neighbor,
               bool force_anti_aliasing_off);
 

@@ -7,10 +7,10 @@
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/common/render_view_messages.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "components/web_restrictions/browser/web_restrictions_mojo_implementation.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -20,8 +20,8 @@
 
 namespace android_webview {
 
-AwRenderViewHostExt::AwRenderViewHostExt(
-    AwRenderViewHostExtClient* client, content::WebContents* contents)
+AwRenderViewHostExt::AwRenderViewHostExt(AwRenderViewHostExtClient* client,
+                                         content::WebContents* contents)
     : content::WebContentsObserver(contents),
       client_(client),
       background_color_(SK_ColorWHITE),
@@ -37,7 +37,7 @@ AwRenderViewHostExt::~AwRenderViewHostExt() {
 void AwRenderViewHostExt::DocumentHasImages(DocumentHasImagesResult result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!web_contents()->GetRenderViewHost()) {
-    result.Run(false);
+    std::move(result).Run(false);
     return;
   }
   static uint32_t next_id = 1;
@@ -46,11 +46,11 @@ void AwRenderViewHostExt::DocumentHasImages(DocumentHasImagesResult result) {
   // because it only makes sense on the main frame.
   if (web_contents()->GetMainFrame()->Send(new AwViewMsg_DocumentHasImages(
           web_contents()->GetMainFrame()->GetRoutingID(), this_id))) {
-    image_requests_callback_map_[this_id] = result;
+    image_requests_callback_map_[this_id] = std::move(result);
   } else {
     // Still have to respond to the API call WebView#docuemntHasImages.
     // Otherwise the listener of the response may be starved.
-    result.Run(false);
+    std::move(result).Run(false);
   }
 }
 
@@ -116,6 +116,17 @@ void AwRenderViewHostExt::SetBackgroundColor(SkColor c) {
   }
 }
 
+void AwRenderViewHostExt::SetWillSuppressErrorPage(bool suppress) {
+  // We need to store state on the browser-side, as state might need to be
+  // synchronized again later (see AwRenderViewHostExt::RenderFrameCreated)
+  if (will_suppress_error_page_ == suppress)
+    return;
+  will_suppress_error_page_ = suppress;
+
+  web_contents()->SendToAllFrames(new AwViewMsg_WillSuppressErrorPage(
+      MSG_ROUTING_NONE, will_suppress_error_page_));
+}
+
 void AwRenderViewHostExt::SetJsOnlineProperty(bool network_up) {
   web_contents()->GetRenderViewHost()->Send(
       new AwViewMsg_SetJsOnlineProperty(network_up));
@@ -123,16 +134,10 @@ void AwRenderViewHostExt::SetJsOnlineProperty(bool network_up) {
 
 void AwRenderViewHostExt::SmoothScroll(int target_x,
                                        int target_y,
-                                       long duration_ms) {
-  web_contents()->GetMainFrame()->Send(new AwViewMsg_SmoothScroll(
-      web_contents()->GetMainFrame()->GetRoutingID(), target_x, target_y,
-      static_cast<int>(duration_ms)));
-}
-
-void AwRenderViewHostExt::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-  web_contents()->GetMainFrame()->Send(new AwViewMsg_SetBackgroundColor(
-      web_contents()->GetMainFrame()->GetRoutingID(), background_color_));
+                                       uint64_t duration_ms) {
+  web_contents()->GetMainFrame()->Send(
+      new AwViewMsg_SmoothScroll(web_contents()->GetMainFrame()->GetRoutingID(),
+                                 target_x, target_y, duration_ms));
 }
 
 void AwRenderViewHostExt::RenderViewHostChanged(
@@ -142,8 +147,8 @@ void AwRenderViewHostExt::RenderViewHostChanged(
 }
 
 void AwRenderViewHostExt::ClearImageRequests() {
-  for (const auto& pair : image_requests_callback_map_) {
-    pair.second.Run(false);
+  for (auto& pair : image_requests_callback_map_) {
+    std::move(pair.second).Run(false);
   }
 
   image_requests_callback_map_.clear();
@@ -151,9 +156,18 @@ void AwRenderViewHostExt::ClearImageRequests() {
 
 void AwRenderViewHostExt::RenderFrameCreated(
     content::RenderFrameHost* frame_host) {
-  registry_.AddInterface(
-      base::Bind(&web_restrictions::WebRestrictionsMojoImplementation::Create,
-                 AwBrowserContext::GetDefault()->GetWebRestrictionProvider()));
+  if (!frame_host->GetParent()) {
+    frame_host->Send(new AwViewMsg_SetBackgroundColor(
+        frame_host->GetRoutingID(), background_color_));
+  }
+
+  // Synchronizing error page suppression state down to the renderer cannot be
+  // done when RenderViewHostChanged is fired (similar to how other settings do
+  // it) because for cross-origin navigations in multi-process mode, the
+  // navigation will already have started then. Also, newly created subframes
+  // need to inherit the state.
+  frame_host->Send(new AwViewMsg_WillSuppressErrorPage(
+      frame_host->GetRoutingID(), will_suppress_error_page_));
 }
 
 void AwRenderViewHostExt::DidFinishNavigation(
@@ -187,7 +201,7 @@ bool AwRenderViewHostExt::OnMessageReceived(
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
-  return handled ? true : WebContentsObserver::OnMessageReceived(message);
+  return handled;
 }
 
 void AwRenderViewHostExt::OnInterfaceRequestFromFrame(
@@ -214,7 +228,7 @@ void AwRenderViewHostExt::OnDocumentHasImagesResponse(
   if (pending_req == image_requests_callback_map_.end()) {
     DLOG(WARNING) << "unexpected DocumentHasImages Response: " << msg_id;
   } else {
-    pending_req->second.Run(has_images);
+    std::move(pending_req->second).Run(has_images);
     image_requests_callback_map_.erase(pending_req);
   }
 }

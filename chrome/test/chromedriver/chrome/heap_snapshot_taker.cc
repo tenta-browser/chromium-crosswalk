@@ -9,7 +9,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
 #include "chrome/test/chromedriver/chrome/status.h"
@@ -28,12 +28,7 @@ Status HeapSnapshotTaker::TakeSnapshot(std::unique_ptr<base::Value>* snapshot) {
 
   Status status3(kOk);
   if (status1.IsOk() && status2.IsOk()) {
-    std::unique_ptr<base::Value> value = base::JSONReader::Read(snapshot_);
-    if (!value) {
-      status3 = Status(kUnknownError, "heap snapshot not in JSON format");
-    } else {
-      *snapshot = std::move(value);
-    }
+    *snapshot = std::make_unique<base::Value>(std::move(snapshot_));
   }
   snapshot_.clear();
   if (status1.IsError()) {
@@ -52,7 +47,7 @@ Status HeapSnapshotTaker::TakeSnapshotInternal() {
       "HeapProfiler.collectGarbage",
       "HeapProfiler.takeHeapSnapshot"
   };
-  for (size_t i = 0; i < arraysize(kMethods); ++i) {
+  for (size_t i = 0; i < base::size(kMethods); ++i) {
     Status status = client_->SendCommand(kMethods[i], params);
     if (status.IsError())
       return status;

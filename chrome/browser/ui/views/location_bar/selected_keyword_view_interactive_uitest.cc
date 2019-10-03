@@ -21,7 +21,14 @@ void InputKeys(Browser* browser, const std::vector<ui::KeyboardCode>& keys) {
   }
 }
 
-using SelectedKeywordViewTest = ExtensionBrowserTest;
+class SelectedKeywordViewTest : public extensions::ExtensionBrowserTest {
+ public:
+  SelectedKeywordViewTest() = default;
+  ~SelectedKeywordViewTest() override = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(SelectedKeywordViewTest);
+};
 
 // Tests that an extension's short name is registered as the value of the
 // extension's omnibox keyword. When the extension's omnibox keyword is
@@ -46,7 +53,7 @@ IN_PROC_BROWSER_TEST_F(SelectedKeywordViewTest,
 
   // Verify that the label in the omnibox is the extension's shortname.
   EXPECT_EQ(extension->short_name(),
-            base::UTF16ToUTF8(selected_keyword_view->label()->text()));
+            base::UTF16ToUTF8(selected_keyword_view->label()->GetText()));
 }
 
 }  // namespace

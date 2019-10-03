@@ -23,9 +23,10 @@ std::vector<GLImplementation> GetAllowedGLImplementations() {
   return GetSurfaceFactoryOzone()->GetAllowedGLImplementations();
 }
 
-bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info) {
+bool GetGLWindowSystemBindingInfo(const GLVersionInfo& gl_info,
+                                  GLWindowSystemBindingInfo* info) {
   if (HasGLOzone())
-    return GetGLOzone()->GetGLWindowSystemBindingInfo(info);
+    return GetGLOzone()->GetGLWindowSystemBindingInfo(gl_info, info);
 
   return false;
 }
@@ -49,8 +50,10 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
       stub_context->SetUseStubApi(true);
       return stub_context;
     }
+    case kGLImplementationDisabled:
+      return nullptr;
     default:
-      NOTREACHED();
+      NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
   return nullptr;
 }
@@ -66,7 +69,7 @@ scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
     case kGLImplementationStubGL:
       return InitializeGLSurface(new GLSurfaceStub());
     default:
-      NOTREACHED();
+      NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
 
   return nullptr;
@@ -99,7 +102,7 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
     case kGLImplementationStubGL:
       return InitializeGLSurface(new GLSurfaceStub);
     default:
-      NOTREACHED();
+      NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
 
   return nullptr;
@@ -116,7 +119,7 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
     case kGLImplementationStubGL:
       break;
     default:
-      NOTREACHED();
+      NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
   }
 }
 
@@ -129,7 +132,7 @@ bool InitializeExtensionSettingsOneOffPlatform() {
     case kGLImplementationStubGL:
       return true;
     default:
-      NOTREACHED();
+      NOTREACHED() << "Expected Mock or Stub, actual:" << GetGLImplementation();
       return false;
   }
 }

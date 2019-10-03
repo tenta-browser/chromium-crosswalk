@@ -7,12 +7,29 @@
 #include <math.h>
 
 #include <algorithm>
-#include <memory>
 #include <set>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/run_loop.h"
 #include "base/strings/pattern.h"
+#include "base/trace_event/trace_buffer.h"
+#include "base/trace_event/trace_config.h"
+#include "base/trace_event/trace_log.h"
 #include "base/values.h"
+
+namespace {
+void OnTraceDataCollected(base::OnceClosure quit_closure,
+                          base::trace_event::TraceResultBuffer* buffer,
+                          const scoped_refptr<base::RefCountedString>& json,
+                          bool has_more_events) {
+  buffer->AddFragment(json->data());
+  if (!has_more_events)
+    std::move(quit_closure).Run();
+}
+}  // namespace
 
 namespace trace_analyzer {
 
@@ -86,32 +103,53 @@ bool TraceEvent::SetFromJSON(const base::Value* event_value) {
     return false;
   }
   if (!dictionary->GetDictionary("args", &args)) {
-    LOG(ERROR) << "args is missing from TraceEvent JSON";
-    return false;
+    std::string stripped_args;
+    // If argument filter is enabled, the arguments field contains a string
+    // value.
+    if (!dictionary->GetString("args", &stripped_args) ||
+        stripped_args != "__stripped__") {
+      LOG(ERROR) << "args is missing from TraceEvent JSON";
+      return false;
+    }
   }
   if (require_id && !dictionary->GetString("id", &id)) {
     LOG(ERROR) << "id is missing from ASYNC_BEGIN/ASYNC_END TraceEvent JSON";
     return false;
   }
 
+  dictionary->GetDouble("tdur", &thread_duration);
+  dictionary->GetDouble("tts", &thread_timestamp);
+  dictionary->GetString("scope", &scope);
+  dictionary->GetString("bind_id", &bind_id);
+  dictionary->GetBoolean("flow_out", &flow_out);
+  dictionary->GetBoolean("flow_in", &flow_in);
+
+  const base::DictionaryValue* id2;
+  if (dictionary->GetDictionary("id2", &id2)) {
+    id2->GetString("global", &global_id2);
+    id2->GetString("local", &local_id2);
+  }
+
   // For each argument, copy the type and create a trace_analyzer::TraceValue.
-  for (base::DictionaryValue::Iterator it(*args); !it.IsAtEnd();
-       it.Advance()) {
-    std::string str;
-    bool boolean = false;
-    int int_num = 0;
-    double double_num = 0.0;
-    if (it.value().GetAsString(&str)) {
-      arg_strings[it.key()] = str;
-    } else if (it.value().GetAsInteger(&int_num)) {
-      arg_numbers[it.key()] = static_cast<double>(int_num);
-    } else if (it.value().GetAsBoolean(&boolean)) {
-      arg_numbers[it.key()] = static_cast<double>(boolean ? 1 : 0);
-    } else if (it.value().GetAsDouble(&double_num)) {
-      arg_numbers[it.key()] = double_num;
+  if (args) {
+    for (base::DictionaryValue::Iterator it(*args); !it.IsAtEnd();
+         it.Advance()) {
+      std::string str;
+      bool boolean = false;
+      int int_num = 0;
+      double double_num = 0.0;
+      if (it.value().GetAsString(&str)) {
+        arg_strings[it.key()] = str;
+      } else if (it.value().GetAsInteger(&int_num)) {
+        arg_numbers[it.key()] = static_cast<double>(int_num);
+      } else if (it.value().GetAsBoolean(&boolean)) {
+        arg_numbers[it.key()] = static_cast<double>(boolean ? 1 : 0);
+      } else if (it.value().GetAsDouble(&double_num)) {
+        arg_numbers[it.key()] = double_num;
+      }
+      // Record all arguments as values.
+      arg_values[it.key()] = it.value().CreateDeepCopy();
     }
-    // Record all arguments as values.
-    arg_values[it.key()] = it.value().CreateDeepCopy();
   }
 
   return true;
@@ -438,13 +476,11 @@ bool Query::GetAsString(const TraceEvent& event, std::string* str) const {
 
 const TraceEvent* Query::SelectTargetEvent(const TraceEvent* event,
                                            TraceEventMember member) {
-  if (member >= OTHER_FIRST_MEMBER && member <= OTHER_LAST_MEMBER) {
+  if (member >= OTHER_FIRST_MEMBER && member <= OTHER_LAST_MEMBER)
     return event->other_event;
-  } else if (member >= PREV_FIRST_MEMBER && member <= PREV_LAST_MEMBER) {
+  if (member >= PREV_FIRST_MEMBER && member <= PREV_LAST_MEMBER)
     return event->prev_event;
-  } else {
-    return event;
-  }
+  return event;
 }
 
 bool Query::GetMemberValueAsDouble(const TraceEvent& event,
@@ -504,8 +540,7 @@ bool Query::GetMemberValueAsDouble(const TraceEvent& event,
     case OTHER_ARG:
     case PREV_ARG: {
       // Search for the argument name and return its value if found.
-      std::map<std::string, double>::const_iterator num_i =
-          the_event->arg_numbers.find(string_);
+      auto num_i = the_event->arg_numbers.find(string_);
       if (num_i == the_event->arg_numbers.end())
         return false;
       *num = num_i->second;
@@ -555,8 +590,7 @@ bool Query::GetMemberValueAsString(const TraceEvent& event,
     case OTHER_ARG:
     case PREV_ARG: {
       // Search for the argument name and return its value if found.
-      std::map<std::string, std::string>::const_iterator str_i =
-          the_event->arg_strings.find(string_);
+      auto str_i = the_event->arg_strings.find(string_);
       if (str_i == the_event->arg_strings.end())
         return false;
       *str = str_i->second;
@@ -678,32 +712,27 @@ size_t FindMatchingEvents(const std::vector<TraceEvent>& events,
                           const Query& query,
                           TraceEventVector* output,
                           bool ignore_metadata_events) {
-  for (size_t i = 0; i < events.size(); ++i) {
-    if (ignore_metadata_events && events[i].phase == TRACE_EVENT_PHASE_METADATA)
+  for (const auto& i : events) {
+    if (ignore_metadata_events && i.phase == TRACE_EVENT_PHASE_METADATA)
       continue;
-    if (query.Evaluate(events[i]))
-      output->push_back(&events[i]);
+    if (query.Evaluate(i))
+      output->push_back(&i);
   }
   return output->size();
 }
 
 bool ParseEventsFromJson(const std::string& json,
                          std::vector<TraceEvent>* output) {
-  std::unique_ptr<base::Value> root = base::JSONReader::Read(json);
+  base::Optional<base::Value> root = base::JSONReader::Read(json);
 
-  base::ListValue* root_list = nullptr;
-  if (!root.get() || !root->GetAsList(&root_list))
+  if (!root || !root->is_list())
     return false;
 
-  for (size_t i = 0; i < root_list->GetSize(); ++i) {
-    base::Value* item = nullptr;
-    if (root_list->Get(i, &item)) {
-      TraceEvent event;
-      if (event.SetFromJSON(item))
-        output->push_back(std::move(event));
-      else
-        return false;
-    }
+  for (const auto& item : root->GetList()) {
+    TraceEvent event;
+    if (!event.SetFromJSON(&item))
+      return false;
+    output->push_back(std::move(event));
   }
 
   return true;
@@ -777,11 +806,7 @@ void TraceAnalyzer::AssociateEvents(const Query& first,
   // Search for matching begin/end event pairs. When a matching end is found,
   // it is associated with the begin event.
   std::vector<TraceEvent*> begin_stack;
-  for (size_t event_index = 0; event_index < raw_events_.size();
-       ++event_index) {
-
-    TraceEvent& this_event = raw_events_[event_index];
-
+  for (auto& this_event : raw_events_) {
     if (second.Evaluate(this_event)) {
       // Search stack for matching begin, starting from end.
       for (int stack_index = static_cast<int>(begin_stack.size()) - 1;
@@ -814,20 +839,18 @@ void TraceAnalyzer::AssociateEvents(const Query& first,
 }
 
 void TraceAnalyzer::MergeAssociatedEventArgs() {
-  for (size_t i = 0; i < raw_events_.size(); ++i) {
+  for (auto& i : raw_events_) {
     // Merge all associated events with the first event.
-    const TraceEvent* other = raw_events_[i].other_event;
+    const TraceEvent* other = i.other_event;
     // Avoid looping by keeping set of encountered TraceEvents.
     std::set<const TraceEvent*> encounters;
-    encounters.insert(&raw_events_[i]);
+    encounters.insert(&i);
     while (other && encounters.find(other) == encounters.end()) {
       encounters.insert(other);
-      raw_events_[i].arg_numbers.insert(
-          other->arg_numbers.begin(),
-          other->arg_numbers.end());
-      raw_events_[i].arg_strings.insert(
-          other->arg_strings.begin(),
-          other->arg_strings.end());
+      i.arg_numbers.insert(other->arg_numbers.begin(),
+                           other->arg_numbers.end());
+      i.arg_strings.insert(other->arg_strings.begin(),
+                           other->arg_strings.end());
       other = other->other_event;
     }
   }
@@ -861,8 +884,7 @@ const std::string& TraceAnalyzer::GetThreadName(
 }
 
 void TraceAnalyzer::ParseMetadata() {
-  for (size_t i = 0; i < raw_events_.size(); ++i) {
-    TraceEvent& this_event = raw_events_[i];
+  for (const auto& this_event : raw_events_) {
     // Check for thread name metadata.
     if (this_event.phase != TRACE_EVENT_PHASE_METADATA ||
         this_event.name != "thread_name")
@@ -872,6 +894,34 @@ void TraceAnalyzer::ParseMetadata() {
     if (string_it != this_event.arg_strings.end())
       thread_names_[this_event.thread] = string_it->second;
   }
+}
+
+// Utility functions for collecting process-local traces and creating a
+// |TraceAnalyzer| from the result.
+
+void Start(const std::string& category_filter_string) {
+  DCHECK(!base::trace_event::TraceLog::GetInstance()->IsEnabled());
+  base::trace_event::TraceLog::GetInstance()->SetEnabled(
+      base::trace_event::TraceConfig(category_filter_string, ""),
+      base::trace_event::TraceLog::RECORDING_MODE);
+}
+
+std::unique_ptr<TraceAnalyzer> Stop() {
+  DCHECK(base::trace_event::TraceLog::GetInstance()->IsEnabled());
+  base::trace_event::TraceLog::GetInstance()->SetDisabled();
+
+  base::trace_event::TraceResultBuffer buffer;
+  base::trace_event::TraceResultBuffer::SimpleOutput trace_output;
+  buffer.SetOutputCallback(trace_output.GetCallback());
+  base::RunLoop run_loop;
+  buffer.Start();
+  base::trace_event::TraceLog::GetInstance()->Flush(
+      base::BindRepeating(&OnTraceDataCollected, run_loop.QuitClosure(),
+                          base::Unretained(&buffer)));
+  run_loop.Run();
+  buffer.Finish();
+
+  return base::WrapUnique(TraceAnalyzer::Create(trace_output.json_output));
 }
 
 // TraceEventVector utility functions.

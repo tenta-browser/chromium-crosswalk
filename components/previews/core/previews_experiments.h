@@ -11,30 +11,62 @@
 
 #include "base/time/time.h"
 #include "net/nqe/effective_connection_type.h"
+#include "url/gurl.h"
 
 namespace previews {
 
+// Types of previews. This enum must remain synchronized with the enum
+// |PreviewsType| in tools/metrics/histograms/enums.xml.
 enum class PreviewsType {
+  // Used to indicate that there is no preview type.
   NONE = 0,
 
   // The user is shown an offline page as a preview.
   OFFLINE = 1,
 
-  // Replace images with placeholders.
-  LOFI = 2,
+  // Replace images with placeholders. Deprecated, and should not be used.
+  DEPRECATED_LOFI = 2,
 
   // The user is shown a server lite page.
   LITE_PAGE = 3,
 
-  // AMP version of the page is shown as a preview.
-  AMP_REDIRECTION = 4,
+  // AMP version of the page is shown as a preview. Deprecated, and should not
+  // be used.
+  DEPRECATED_AMP_REDIRECTION = 4,
 
   // Preview that disables JavaScript for the navigation.
   NOSCRIPT = 5,
 
+  // Special value that indicates that no specific type is identified. This
+  // might be used for checks or logging that applies to any type.
+  UNSPECIFIED = 6,
+
+  // Request that resource loading hints be used during pageload.
+  RESOURCE_LOADING_HINTS = 7,
+
+  // Allows the browser to redirect navigations to a Lite Page server.
+  LITE_PAGE_REDIRECT = 8,
+
+  // Preview that defers script execution until after parsing completes.
+  DEFER_ALL_SCRIPT = 9,
+
   // Insert new enum values here. Keep values sequential to allow looping from
   // NONE+1 to LAST-1. Also add the enum to Previews.Types histogram suffix.
-  LAST = 6,
+  LAST = 10,
+};
+
+enum class CoinFlipHoldbackResult {
+  // Either the page load was not eligible for any previews, or the coin flip
+  // holdback experiment was disabled.
+  kNotSet = 0,
+
+  // A preview was likely for the page load, and a random coin flip allowed the
+  // preview to be shown to the user.
+  kAllowed = 1,
+
+  // A preview was likely for the page load, and a random coin flip did not
+  // allow the preview to be shown to the user.
+  kHoldback = 2,
 };
 
 typedef std::vector<std::pair<PreviewsType, int>> PreviewsTypeList;
@@ -76,32 +108,107 @@ base::TimeDelta SingleOptOutDuration();
 // shown as a preview.
 base::TimeDelta OfflinePreviewFreshnessDuration();
 
-// The threshold of EffectiveConnectionType above which preview |type| will be
+// The amount of time that a Server Lite Page Preview navigation can take before
+// it is killed and the original page is loaded.
+base::TimeDelta LitePagePreviewsNavigationTimeoutDuration();
+
+// The host for Lite Page server previews.
+GURL GetLitePagePreviewsDomainURL();
+
+// The duration of a single bypass for Lite Page Server Previews.
+base::TimeDelta LitePagePreviewsSingleBypassDuration();
+
+// Whether or not to trigger a preview for a navigation to localhost. Provided
+// as an experiment for automated and manual testing.
+bool LitePagePreviewsTriggerOnLocalhost();
+
+// Whether to request a Lite Page Server Preview even if there are optimization
+// page hints for the host.
+bool LitePagePreviewsOverridePageHints();
+
+// The maximum data byte size for the server-provided blacklist. This is
+// a client-side safety limit for RAM use in case server sends too large of
+// a blacklist.
+int LitePageRedirectPreviewMaxServerBlacklistByteSize();
+
+// The maximum number of times that a Lite Page Redirect preview should restart
+// a navigation.
+size_t LitePageRedirectPreviewMaxNavigationRestarts();
+
+// Whether we should preresolve the lite page redirect server.
+bool LitePageRedirectPreviewShouldPresolve();
+
+// The duration in between preresolving the lite page redirect server.
+base::TimeDelta LitePageRedirectPreviewPresolveInterval();
+
+// The maximum number of seconds to loadshed the Previews server for.
+int PreviewServerLoadshedMaxSeconds();
+
+// Returns true if we should only report metrics and not trigger when the Lite
+// Page Redirect preview is enabled.
+bool IsInLitePageRedirectControl();
+
+// The default EffectiveConnectionType threshold where preview |type| will be
 // triggered.
 net::EffectiveConnectionType GetECTThresholdForPreview(
     previews::PreviewsType type);
 
+// The maximum EffectiveConnectionType threshold where this client session is
+// allowed to trigger previews (for slow page triggered previews). This may be
+// Finch configured on a session basis to limit the proportion of previews
+// triggered at faster connections.
+net::EffectiveConnectionType GetSessionMaxECTThreshold();
+
+// Whether any previews are allowed. Acts as a kill-switch or holdback check.
+bool ArePreviewsAllowed();
+
 // Whether the preview type is enabled.
 bool IsOfflinePreviewsEnabled();
-bool IsClientLoFiEnabled();
-bool IsAMPRedirectionPreviewEnabled();
 bool IsNoScriptPreviewsEnabled();
+bool IsResourceLoadingHintsEnabled();
+bool IsLitePageServerPreviewsEnabled();
+bool IsDeferAllScriptPreviewsEnabled();
 
 // The blacklist version for each preview type.
 int OfflinePreviewsVersion();
-int ClientLoFiVersion();
-int AMPRedirectionPreviewsVersion();
+int LitePageServerPreviewsVersion();
 int NoScriptPreviewsVersion();
+int ResourceLoadingHintsVersion();
+int DeferAllScriptPreviewsVersion();
 
-// Whether server optimization hints are enabled.
-bool IsOptimizationHintsEnabled();
+// For estimating NoScript data savings, this is the percentage factor to
+// multiple by the network bytes for inflating the original_bytes count.
+int NoScriptPreviewsInflationPercent();
 
-// The threshold of EffectiveConnectionType above which Client Lo-Fi previews
-// should not be served.
-net::EffectiveConnectionType EffectiveConnectionTypeThresholdForClientLoFi();
+// For estimating NoScript data savings, this is the number of bytes to
+// for inflating the original_bytes count.
+int NoScriptPreviewsInflationBytes();
 
-// Returns the hosts that are blacklisted by the Client Lo-Fi field trial.
-std::vector<std::string> GetBlackListedHostsForClientLoFiFieldTrial();
+// For estimating ResourceLoadingHints data savings, this is the percentage
+// factor to multiple by the network bytes for inflating the original_bytes
+// count.
+int ResourceLoadingHintsPreviewsInflationPercent();
+
+// For estimating ResourceLoadingHints data savings, this is the number of
+// bytes to for inflating the original_bytes count.
+int ResourceLoadingHintsPreviewsInflationBytes();
+
+// The maximum number of pref entries that should be kept by
+// PreviewsOfflineHelper.
+size_t OfflinePreviewsHelperMaxPrefSize();
+
+// Forces the coin flip holdback, if enabled, to always come up "holdback".
+bool ShouldOverrideNavigationCoinFlipToHoldback();
+
+// Forces the coin flip holdback, if enabled, to always come up "allowed".
+bool ShouldOverrideNavigationCoinFlipToAllowed();
+
+// Returns true if the given url matches an excluded media suffix.
+bool ShouldExcludeMediaSuffix(const GURL& url);
+
+// Returns true if the logic to detect redirect loops with defer all script
+// preview using a cache is enabled.
+bool DetectDeferRedirectLoopsUsingCache();
 
 }  // namespace params
 

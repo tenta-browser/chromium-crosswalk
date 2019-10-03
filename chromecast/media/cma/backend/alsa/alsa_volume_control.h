@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_for_io.h"
 #include "chromecast/media/cma/backend/system_volume_control.h"
 #include "media/audio/alsa/alsa_wrapper.h"
 
@@ -19,7 +19,7 @@ namespace media {
 
 // SystemVolumeControl implementation for ALSA.
 class AlsaVolumeControl : public SystemVolumeControl,
-                          public base::MessageLoopForIO::Watcher {
+                          public base::MessagePumpForIO::FdWatcher {
  public:
   explicit AlsaVolumeControl(Delegate* delegate);
   ~AlsaVolumeControl() override;
@@ -30,6 +30,8 @@ class AlsaVolumeControl : public SystemVolumeControl,
   void SetVolume(float level) override;
   bool IsMuted() override;
   void SetMuted(bool muted) override;
+  void SetPowerSave(bool power_save_on) override;
+  void SetLimit(float limit) override;
 
  private:
   class ScopedAlsaMixer;
@@ -41,17 +43,22 @@ class AlsaVolumeControl : public SystemVolumeControl,
                                         const std::string& mixer_element_name,
                                         const std::string& mute_card_name);
   static std::string GetMuteDeviceName();
+  static std::vector<std::string> GetAmpElementNames();
+  static std::string GetAmpDeviceName();
 
   static int VolumeOrMuteChangeCallback(snd_mixer_elem_t* elem,
                                         unsigned int mask);
 
+  bool SetElementMuted(ScopedAlsaMixer* mixer, bool muted);
+
   void RefreshMixerFds(ScopedAlsaMixer* mixer);
 
-  // base::MessageLoopForIO::Watcher implementation:
+  // base::MessagePumpForIO::FdWatcher implementation:
   void OnFileCanReadWithoutBlocking(int fd) override;
   void OnFileCanWriteWithoutBlocking(int fd) override;
 
   void OnVolumeOrMuteChanged();
+
   Delegate* const delegate_;
 
   const std::unique_ptr<::media::AlsaWrapper> alsa_;
@@ -59,6 +66,8 @@ class AlsaVolumeControl : public SystemVolumeControl,
   const std::string volume_mixer_element_name_;
   const std::string mute_mixer_device_name_;
   const std::string mute_mixer_element_name_;
+  const std::string amp_mixer_device_name_;
+  const std::vector<std::string> amp_mixer_element_names_;
 
   long volume_range_min_;  // NOLINT(runtime/int)
   long volume_range_max_;  // NOLINT(runtime/int)
@@ -66,8 +75,9 @@ class AlsaVolumeControl : public SystemVolumeControl,
   std::unique_ptr<ScopedAlsaMixer> volume_mixer_;
   std::unique_ptr<ScopedAlsaMixer> mute_mixer_;
   ScopedAlsaMixer* mute_mixer_ptr_;
+  std::vector<std::unique_ptr<ScopedAlsaMixer>> amp_mixers_;
 
-  std::vector<std::unique_ptr<base::MessageLoopForIO::FileDescriptorWatcher>>
+  std::vector<std::unique_ptr<base::MessagePumpForIO::FdWatchController>>
       file_descriptor_watchers_;
 
   DISALLOW_COPY_AND_ASSIGN(AlsaVolumeControl);

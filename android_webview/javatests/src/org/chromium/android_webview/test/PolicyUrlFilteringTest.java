@@ -4,6 +4,8 @@
 
 package org.chromium.android_webview.test;
 
+import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.SINGLE_PROCESS;
+
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
@@ -19,11 +21,10 @@ import org.junit.runner.RunWith;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.ErrorCodeConversionHelper;
 import org.chromium.android_webview.policy.AwPolicyProvider;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.util.TestWebServer;
 import org.chromium.policy.AbstractAppRestrictionsProvider;
 import org.chromium.policy.CombinedPolicyProvider;
@@ -75,12 +76,12 @@ public class PolicyUrlFilteringTest {
     @MediumTest
     @Feature({"AndroidWebView", "Policy"})
     // Run in single process only. crbug.com/615484
-    @SkipCommandLineParameterization
+    @OnlyRunIn(SINGLE_PROCESS)
     @RetryOnFailure
     public void testBlacklistedUrl() throws Throwable {
         final AwPolicyProvider testProvider =
                 new AwPolicyProvider(mActivityTestRule.getActivity().getApplicationContext());
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> CombinedPolicyProvider.get().registerProvider(testProvider));
 
         navigateAndCheckOutcome(mFooTestUrl, 0 /* error count before */, 0 /* error count after*/);
@@ -93,6 +94,7 @@ public class PolicyUrlFilteringTest {
     }
 
     // Tests getting a successful navigation with a whitelist.
+    // clang-format off
     @Test
     @MediumTest
     @Feature({"AndroidWebView", "Policy"})
@@ -100,8 +102,7 @@ public class PolicyUrlFilteringTest {
             @Policies.Item(key = sBlacklistPolicyName, stringArray = {"*"}),
             @Policies.Item(key = sWhitelistPolicyName, stringArray = {sFooWhitelistFilter})
     })
-    // Run in single process only. crbug.com/660517
-    @SkipCommandLineParameterization
+    @OnlyRunIn(SINGLE_PROCESS) // http://crbug.com/660517
     public void testWhitelistedUrl() throws Throwable {
         navigateAndCheckOutcome(mFooTestUrl, 0 /* error count before */, 0 /* error count after */);
 
@@ -110,6 +111,7 @@ public class PolicyUrlFilteringTest {
         Assert.assertEquals(ErrorCodeConversionHelper.ERROR_CONNECT,
                 mContentsClient.getOnReceivedErrorHelper().getErrorCode());
     }
+    // clang-format on
 
     // Tests that bad policy values are properly handled
     @Test
@@ -159,7 +161,7 @@ public class PolicyUrlFilteringTest {
         AbstractAppRestrictionsProvider.setTestRestrictions(
                 PolicyData.asBundle(Arrays.asList(policies)));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> testProvider.refresh());
+        TestThreadUtils.runOnUiThreadBlocking(() -> testProvider.refresh());
 
         // To avoid race conditions
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();

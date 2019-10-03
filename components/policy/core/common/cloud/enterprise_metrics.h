@@ -5,118 +5,19 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_ENTERPRISE_METRICS_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_ENTERPRISE_METRICS_H_
 
+#include "build/build_config.h"
 #include "components/policy/policy_export.h"
 
 namespace policy {
 
 // Metrics collected for enterprise events.
 
-// Events related to fetching, saving and loading DM server tokens.
-// These metrics are collected both for device and user tokens.
-// This enum is used to define the buckets for an enumerated UMA histogram.
-// Hence,
-//   (a) existing enumerated constants should never be deleted or reordered, and
-//   (b) new constants should only be appended at the end of the enumeration.
-enum MetricToken {
-  // A cached token was successfully loaded from disk.
-  kMetricTokenLoadSucceeded = 0,
-  // Reading a cached token from disk failed.
-  kMetricTokenLoadFailed = 1,
-
-  // A token fetch request was sent to the DM server.
-  kMetricTokenFetchRequested = 2,
-  // The request was invalid, or the HTTP request failed.
-  kMetricTokenFetchRequestFailed = 3,
-  // Error HTTP status received, or the DM server failed in another way.
-  kMetricTokenFetchServerFailed = 4,
-  // A response to the fetch request was received.
-  kMetricTokenFetchResponseReceived = 5,
-  // The response received was invalid. This happens when some expected data
-  // was not present in the response.
-  kMetricTokenFetchBadResponse = 6,
-  // DM server reported that management is not supported.
-  kMetricTokenFetchManagementNotSupported = 7,
-  // DM server reported that the given device ID was not found.
-  kMetricTokenFetchDeviceNotFound = 8,
-  // DM token successfully retrieved.
-  kMetricTokenFetchOK = 9,
-
-  // Successfully cached a token to disk.
-  kMetricTokenStoreSucceeded = 10,
-  // Caching a token to disk failed.
-  kMetricTokenStoreFailed = 11,
-
-  // DM server reported that the device-id generated is not unique.
-  kMetricTokenFetchDeviceIdConflict = 12,
-  // DM server reported that the serial number we try to register is invalid.
-  kMetricTokenFetchInvalidSerialNumber = 13,
-  // DM server reported that the licenses for the domain have expired or been
-  // exhausted.
-  kMetricMissingLicenses = 14,
-
-  kMetricTokenSize  // Must be the last.
-};
-
-// Events related to fetching, saving and loading user and device policies.
-// This enum is used to define the buckets for an enumerated UMA histogram.
-// Hence,
-//   (a) existing enumerated constants should never be deleted or reordered, and
-//   (b) new constants should only be appended at the end of the enumeration.
-enum MetricPolicy {
-  // A cached policy was successfully loaded from disk.
-  kMetricPolicyLoadSucceeded = 0,
-  // Reading a cached policy from disk failed.
-  kMetricPolicyLoadFailed = 1,
-
-  // A policy fetch request was sent to the DM server.
-  kMetricPolicyFetchRequested = 2,
-  // The request was invalid, or the HTTP request failed.
-  kMetricPolicyFetchRequestFailed = 3,
-  // Error HTTP status received, or the DM server failed in another way.
-  kMetricPolicyFetchServerFailed = 4,
-  // Policy not found for the given user or device.
-  kMetricPolicyFetchNotFound = 5,
-  // DM server didn't accept the token used in the request.
-  kMetricPolicyFetchInvalidToken = 6,
-  // A response to the policy fetch request was received.
-  kMetricPolicyFetchResponseReceived = 7,
-  // The policy response message didn't contain a policy, or other data was
-  // missing.
-  kMetricPolicyFetchBadResponse = 8,
-  // Failed to decode the policy.
-  kMetricPolicyFetchInvalidPolicy = 9,
-  // The device policy was rejected because its signature was invalid.
-  kMetricPolicyFetchBadSignature = 10,
-  // Rejected policy because its timestamp is in the future.
-  kMetricPolicyFetchTimestampInFuture = 11,
-  // Device policy rejected because the device is not managed.
-  kMetricPolicyFetchNonEnterpriseDevice = 12,
-  // The policy was provided for a username that is different from the device
-  // owner, and the policy was rejected.
-  kMetricPolicyFetchUserMismatch = 13,
-  // The policy was rejected for another reason. Currently this can happen
-  // only for device policies, when the SignedSettings fail to store or retrieve
-  // a stored policy.
-  kMetricPolicyFetchOtherFailed = 14,
-  // The fetched policy was accepted.
-  kMetricPolicyFetchOK = 15,
-  // The policy just fetched didn't have any changes compared to the cached
-  // policy.
-  kMetricPolicyFetchNotModified = 16,
-
-  // Successfully cached a policy to disk.
-  kMetricPolicyStoreSucceeded = 17,
-  // Caching a policy to disk failed.
-  kMetricPolicyStoreFailed = 18,
-
-  kMetricPolicySize  // Must be the last.
-};
-
 // Events related to device enrollment.
 // This enum is used to define the buckets for an enumerated UMA histogram.
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
-//   (b) new constants should only be appended at the end of the enumeration.
+//   (b) new constants should only be appended at the end of the enumeration
+//       (update tools/metrics/histograms/enums.xml as well).
 enum MetricEnrollment {
   // User pressed 'Cancel' during the enrollment process.
   kMetricEnrollmentCancelled = 0,
@@ -199,10 +100,8 @@ enum MetricEnrollment {
   kMetricEnrollmentRegisterPolicyResponseInvalid = 40,
   // OAuth token fetch failed: account not signed up.
   kMetricEnrollmentAccountNotSignedUp = 41,
-  // OAuth token fetch failed: account deleted.
-  kMetricEnrollmentAccountDeleted = 42,
-  // OAuth token fetch failed: account disabled.
-  kMetricEnrollmentAccountDisabled = 43,
+  /* kMetricEnrollmentAccountDeleted = 42 REMOVED */
+  /* kMetricEnrollmentAccountDisabled = 43 REMOVED */
   // Re-enrollment pre-check failed: domain does not match install attributes.
   kMetricEnrollmentPrecheckDomainMismatch = 44,
   // Lockbox backend failed to initialize.
@@ -231,13 +130,20 @@ enum MetricEnrollment {
   kMetricEnrollmentStoreDMTokenFailed = 56,
   // Failed to get available licenses.
   kMetricEnrollmentLicenseRequestFailed = 57,
+  // Registration failed: Consumer account with packaged license.
+  kMetricEnrollmentRegisterConsumerAccountWithPackagedLicense = 58,
+  // Device was not pre-provisioned for Zero-Touch.
+  kMetricEnrollmentDeviceNotPreProvisioned = 59,
+  // Max value for use with enumeration histogram UMA functions.
+  kMaxValue = kMetricEnrollmentDeviceNotPreProvisioned
 };
 
 // Events related to policy refresh.
 // This enum is used to define the buckets for an enumerated UMA histogram.
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
-//   (b) new constants should only be appended at the end of the enumeration.
+//   (b) new constants should only be appended at the end of the enumeration
+//       (update tools/metrics/histograms/enums.xml as well).
 enum MetricPolicyRefresh {
   // A refresh occurred while the policy was not invalidated and the policy was
   // changed. Invalidations were enabled.
@@ -262,7 +168,8 @@ enum MetricPolicyRefresh {
 // This enum is used to define the buckets for an enumerated UMA histogram.
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
-//   (b) new constants should only be appended at the end of the enumeration.
+//   (b) new constants should only be appended at the end of the enumeration
+//       (update tools/metrics/histograms/enums.xml as well).
 enum PolicyInvalidationType {
   // The invalidation contained no payload.
   POLICY_INVALIDATION_TYPE_NO_PAYLOAD = 0,
@@ -276,15 +183,50 @@ enum PolicyInvalidationType {
   POLICY_INVALIDATION_TYPE_SIZE  // Must be the last.
 };
 
+#if defined(OS_CHROMEOS)
+// Events related to Chrome OS user policy which cause session abort.
+// This enum is used to define the buckets for an enumerated UMA histogram.
+// Hence,
+//   (a) existing enumerated constants should never be deleted or reordered, and
+//   (b) new constants should only be appended at the end of the enumeration
+//       (update tools/metrics/histograms/enums.xml as well).
+enum class MetricUserPolicyChromeOSSessionAbortType {
+  // Abort of asynchronous user policy initialization when the user is managed
+  // with the Google cloud management.
+  kInitWithGoogleCloudManagement = 0,
+  // Abort of asynchronous user policy initialization when the user is managed
+  // with the Active Directory management.
+  kInitWithActiveDirectoryManagement = 1,
+  // Abort of blocking (synchronous) user policy initialization when the user is
+  // managed with the Google cloud management.
+  kBlockingInitWithGoogleCloudManagement = 2,
+  // Abort of blocking (synchronous) user policy initialization when the user is
+  // managed with the Active Directory management.
+  kBlockingInitWithActiveDirectoryManagement = 3,
+
+  kCount,  // Must be the last.
+};
+#endif  // defined(OS_CHROMEOS)
+
 // Names for the UMA counters. They are shared from here since the events
 // from the same enum above can be triggered in different files, and must use
 // the same UMA histogram name.
-POLICY_EXPORT extern const char kMetricToken[];
-POLICY_EXPORT extern const char kMetricPolicy[];
 POLICY_EXPORT extern const char kMetricUserPolicyRefresh[];
+POLICY_EXPORT extern const char kMetricUserPolicyRefreshFcm[];
+POLICY_EXPORT extern const char kMetricUserPolicyRefreshTicl[];
 POLICY_EXPORT extern const char kMetricUserPolicyInvalidations[];
+POLICY_EXPORT extern const char kMetricUserPolicyInvalidationsFcm[];
+POLICY_EXPORT extern const char kMetricUserPolicyInvalidationsTicl[];
+POLICY_EXPORT extern const char kMetricUserPolicyChromeOSSessionAbort[];
 POLICY_EXPORT extern const char kMetricDevicePolicyRefresh[];
+POLICY_EXPORT extern const char kMetricDevicePolicyRefreshFcm[];
+POLICY_EXPORT extern const char kMetricDevicePolicyRefreshTicl[];
 POLICY_EXPORT extern const char kMetricDevicePolicyInvalidations[];
+POLICY_EXPORT extern const char kMetricDevicePolicyInvalidationsFcm[];
+POLICY_EXPORT extern const char kMetricDevicePolicyInvalidationsTicl[];
+POLICY_EXPORT extern const char kMetricPolicyInvalidationRegistration[];
+POLICY_EXPORT extern const char kMetricPolicyInvalidationRegistrationFcm[];
+POLICY_EXPORT extern const char kMetricPolicyInvalidationRegistrationTicl[];
 
 }  // namespace policy
 

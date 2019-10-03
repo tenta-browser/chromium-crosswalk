@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/passwords/passwords_model_delegate_mock.h"
 
 #include "components/autofill/core/common/password_form.h"
+#include "components/signin/public/identity_manager/account_info.h"
 
 PasswordsModelDelegateMock::PasswordsModelDelegateMock() = default;
 

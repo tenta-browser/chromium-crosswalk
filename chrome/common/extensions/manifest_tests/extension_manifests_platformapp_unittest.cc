@@ -6,8 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/features/simple_feature.h"
@@ -21,6 +20,7 @@
 namespace extensions {
 
 namespace errors = manifest_errors;
+namespace keys = manifest_keys;
 
 class PlatformAppsManifestTest : public ChromeManifestTest {
 };
@@ -45,7 +45,7 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
              ErrorUtils::FormatErrorMessage(
                  errors::kInvalidManifestVersionOld, "2", "apps")),
   };
-  RunTestcases(error_testcases, arraysize(error_testcases), EXPECT_TYPE_ERROR);
+  RunTestcases(error_testcases, base::size(error_testcases), EXPECT_TYPE_ERROR);
 
   Testcase warning_testcases[] = {
       Testcase(
@@ -54,19 +54,19 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
           "apps, but this is a packaged app."),
       Testcase("init_invalid_platform_app_4.json",
                "'background' is only allowed for extensions, legacy packaged "
-               "apps, and"
-               " hosted apps, but this is a packaged app."),
+               "apps, hosted apps, and login screen extensions, but this is a "
+               "packaged app."),
       Testcase("init_invalid_platform_app_5.json",
                "'background' is only allowed for extensions, legacy packaged "
-               "apps, and"
-               " hosted apps, but this is a packaged app."),
+               "apps, hosted apps, and login screen extensions, but this is a "
+               "packaged app."),
       Testcase("incognito_invalid_platform_app.json",
                "'incognito' is only allowed for extensions and legacy packaged "
                "apps, "
                "but this is a packaged app."),
   };
-  RunTestcases(
-      warning_testcases, arraysize(warning_testcases), EXPECT_TYPE_WARNING);
+  RunTestcases(warning_testcases, base::size(warning_testcases),
+               EXPECT_TYPE_WARNING);
 }
 
 TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
@@ -81,12 +81,12 @@ TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
         "'app.content_security_policy' is not allowed for specified extension "
             "ID.")
   };
-  RunTestcases(
-      warning_testcases, arraysize(warning_testcases), EXPECT_TYPE_WARNING);
+  RunTestcases(warning_testcases, base::size(warning_testcases),
+               EXPECT_TYPE_WARNING);
 
-  // Whitelisted ones can (this is the ID corresponding to the base 64 encoded
+  // Allowlisted ones can (this is the ID corresponding to the base 64 encoded
   // key in the init_platform_app_csp.json manifest.)
-  SimpleFeature::ScopedThreadUnsafeWhitelistForTest whitelist(
+  SimpleFeature::ScopedThreadUnsafeAllowlistForTest allowlist(
       "ahplfneplbnjcflhdgkkjeiglkkfeelb");
   scoped_refptr<Extension> extension =
       LoadAndExpectSuccess("init_platform_app_csp.json");
@@ -97,10 +97,11 @@ TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
             CSPInfo::GetResourceContentSecurityPolicy(extension.get(),
                                                       std::string()));
 
-  // But even whitelisted ones must specify a secure policy.
+  // But even allowlisted ones must specify a secure policy.
   LoadAndExpectWarning(
       "init_platform_app_csp_insecure.json",
-      ErrorUtils::FormatErrorMessage(errors::kInvalidCSPInsecureValue,
+      ErrorUtils::FormatErrorMessage(errors::kInvalidCSPInsecureValueIgnored,
+                                     keys::kPlatformAppContentSecurityPolicy,
                                      "http://www.google.com", "default-src"));
 }
 
@@ -118,18 +119,17 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   // testing. The requirements are that (1) it be a valid platform app, and (2)
   // it contain no permissions dictionary.
   std::string error;
-  std::unique_ptr<base::DictionaryValue> manifest(
-      LoadManifest("init_valid_platform_app.json", &error));
+  base::Value manifest = LoadManifest("init_valid_platform_app.json", &error);
 
   std::vector<std::unique_ptr<ManifestData>> manifests;
   // Create each manifest.
   for (const char* api_name : kPlatformAppExperimentalApis) {
-    auto permissions = base::MakeUnique<base::ListValue>();
-    permissions->AppendString("experimental");
-    permissions->AppendString(api_name);
-    manifest->Set("permissions", std::move(permissions));
+    base::Value permissions(base::Value::Type::LIST);
+    permissions.GetList().push_back(base::Value("experimental"));
+    permissions.GetList().push_back(base::Value(api_name));
+    manifest.SetKey("permissions", std::move(permissions));
     manifests.push_back(
-        base::MakeUnique<ManifestData>(manifest->CreateDeepCopy(), ""));
+        std::make_unique<ManifestData>(manifest.CreateDeepCopy(), ""));
   }
   // First try to load without any flags. This should warn for every API.
   for (const std::unique_ptr<ManifestData>& manifest : manifests) {

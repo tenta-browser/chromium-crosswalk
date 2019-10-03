@@ -13,16 +13,16 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "gpu/command_buffer/common/id_type.h"
+#include "base/util/type_safety/id_type.h"
 #include "url/gurl.h"
 
 namespace content {
 
 class SavePackage;
-using SavePackageId = gpu::IdType32<SavePackage>;
+using SavePackageId = util::IdType32<SavePackage>;
 
 class SaveItem;
-using SaveItemId = gpu::IdType32<SaveItem>;
+using SaveItemId = util::IdType32<SaveItem>;
 
 // Map from save_item_id into final file path.
 using FinalNamesMap =
@@ -57,9 +57,7 @@ struct SaveFileCreateInfo {
                      SavePackageId save_package_id,
                      int render_process_id,
                      int render_frame_routing_id,
-                     int request_id,
-                     const std::string& content_disposition,
-                     int64_t total_bytes);
+                     const std::string& content_disposition);
 
   SaveFileCreateInfo(const SaveFileCreateInfo& other);
 
@@ -79,12 +77,8 @@ struct SaveFileCreateInfo {
   // IDs for looking up the contents we are associated with.
   int render_process_id;
   int render_frame_routing_id;
-  // Handle for informing the ResourceDispatcherHost of a UI based cancel.
-  int request_id;
   // Disposition info from HTTP response.
   std::string content_disposition;
-  // Total bytes of saved file.
-  int64_t total_bytes;
   // Source type of saved file.
   SaveFileSource save_source;
 };

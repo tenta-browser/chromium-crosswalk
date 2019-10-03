@@ -22,32 +22,23 @@ class FirstRunTest : public testing::Test {
   FirstRunTest() : user_data_dir_override_(chrome::DIR_USER_DATA) {}
   ~FirstRunTest() override {}
 
+  void TearDown() override {
+    first_run::ResetCachedSentinelDataForTesting();
+    Test::TearDown();
+  }
+
  private:
   base::ScopedPathOverride user_data_dir_override_;
 
   DISALLOW_COPY_AND_ASSIGN(FirstRunTest);
 };
 
-TEST_F(FirstRunTest, SetupMasterPrefsFromInstallPrefs_VariationsSeed) {
-  installer::MasterPreferences install_prefs(
-      "{\"variations_compressed_seed\":\"xyz\"}");
-  EXPECT_EQ(1U, install_prefs.master_dictionary().size());
-
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_EQ("xyz", out_prefs.compressed_variations_seed);
-  // Variations prefs should have been extracted (removed) from the dictionary.
-  EXPECT_TRUE(install_prefs.master_dictionary().empty());
-}
-
 TEST_F(FirstRunTest, SetupMasterPrefsFromInstallPrefs_NoVariationsSeed) {
   installer::MasterPreferences install_prefs("{ }");
   EXPECT_TRUE(install_prefs.master_dictionary().empty());
 
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_TRUE(out_prefs.compressed_variations_seed.empty());
-  EXPECT_TRUE(out_prefs.variations_seed_signature.empty());
+  EXPECT_TRUE(install_prefs.GetCompressedVariationsSeed().empty());
+  EXPECT_TRUE(install_prefs.GetVariationsSeedSignature().empty());
 }
 
 TEST_F(FirstRunTest, SetupMasterPrefsFromInstallPrefs_VariationsSeedSignature) {
@@ -56,38 +47,10 @@ TEST_F(FirstRunTest, SetupMasterPrefsFromInstallPrefs_VariationsSeedSignature) {
       " \"variations_seed_signature\":\"abc\"}");
   EXPECT_EQ(2U, install_prefs.master_dictionary().size());
 
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_EQ("xyz", out_prefs.compressed_variations_seed);
-  EXPECT_EQ("abc", out_prefs.variations_seed_signature);
+  EXPECT_EQ("xyz", install_prefs.GetCompressedVariationsSeed());
+  EXPECT_EQ("abc", install_prefs.GetVariationsSeedSignature());
   // Variations prefs should have been extracted (removed) from the dictionary.
   EXPECT_TRUE(install_prefs.master_dictionary().empty());
-}
-
-TEST_F(FirstRunTest,
-       SetupMasterPrefsFromInstallPrefs_WelcomePageOnOSUpgradeMissing) {
-  installer::MasterPreferences install_prefs("{\"distribution\":{}}");
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_TRUE(out_prefs.welcome_page_on_os_upgrade_enabled);
-}
-
-TEST_F(FirstRunTest,
-       SetupMasterPrefsFromInstallPrefs_WelcomePageOnOSUpgradeEnabled) {
-  installer::MasterPreferences install_prefs(
-      "{\"distribution\":{\"welcome_page_on_os_upgrade_enabled\": true}}");
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_TRUE(out_prefs.welcome_page_on_os_upgrade_enabled);
-}
-
-TEST_F(FirstRunTest,
-       SetupMasterPrefsFromInstallPrefs_WelcomePageOnOSUpgradeDisabled) {
-  installer::MasterPreferences install_prefs(
-      "{\"distribution\":{\"welcome_page_on_os_upgrade_enabled\": false}}");
-  MasterPrefs out_prefs;
-  internal::SetupMasterPrefsFromInstallPrefs(install_prefs, &out_prefs);
-  EXPECT_FALSE(out_prefs.welcome_page_on_os_upgrade_enabled);
 }
 
 // No switches and no sentinel present. This is the standard case for first run.
@@ -134,7 +97,7 @@ TEST_F(FirstRunTest, GetFirstRunSentinelCreationTime_Created) {
   first_run::CreateSentinelIfNeeded();
   // Gets the creation time of the first run sentinel.
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   base::File::Info info;
   ASSERT_TRUE(base::GetFileInfo(user_data_dir.Append(chrome::kFirstRunSentinel),
                                 &info));
@@ -144,7 +107,7 @@ TEST_F(FirstRunTest, GetFirstRunSentinelCreationTime_Created) {
 
 TEST_F(FirstRunTest, GetFirstRunSentinelCreationTime_NotCreated) {
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   base::File::Info info;
   ASSERT_FALSE(base::GetFileInfo(
       user_data_dir.Append(chrome::kFirstRunSentinel), &info));

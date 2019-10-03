@@ -6,6 +6,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/reading_list/core/reading_list_model.h"
@@ -13,16 +14,14 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/reading_list/offline_url_utils.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_manager.h"
-#include "ios/web/public/reload_type.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/navigation/reload_type.h"
+#import "ios/web/public/web_state/web_state_user_data.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-DEFINE_WEB_STATE_USER_DATA_KEY(ReadingListWebStateObserver);
 
 // static
 void ReadingListWebStateObserver::CreateForWebState(
@@ -160,7 +159,7 @@ void ReadingListWebStateObserver::StartCheckingLoading() {
     return;
   }
   try_number_ = 0;
-  timer_.reset(new base::Timer(false, true));
+  timer_.reset(new base::RepeatingTimer());
   const base::TimeDelta kDelayUntilLoadingProgressIsChecked =
       base::TimeDelta::FromMilliseconds(1500);
   timer_->Start(
@@ -267,10 +266,11 @@ void ReadingListWebStateObserver::LoadOfflineReadingListEntry() {
     item = navigationManager->GetLastCommittedItem();
     item->SetURL(url);
     item->SetVirtualURL(pending_url_);
-    // It is not possible to call |navigationManager->Reload| at that point as
-    // an error page is currently displayed.
-    // Calling Reload will eventually call |ErrorPageContent reload| which
-    // simply loads |pending_url_| and will erase the distilled_url.
+    // Changing navigation item from web to native an calling
+    // |navigationManager->Reload| will not insert NativeContent. This is a bug
+    // which will not be fixed because NativeContent support is deprecated.
+    // Offline Version will be eventually rewritten without relying on
+    // NativeContent (crbug.com/725239).
     // Instead, go to the index that will branch further in the reload stack
     // and avoid this situation.
     navigationManager->GoToIndex(
@@ -299,3 +299,5 @@ void ReadingListWebStateObserver::LoadOfflineReadingListEntry() {
   reading_list_model_->SetReadStatus(entry->URL(), true);
   UMA_HISTOGRAM_BOOLEAN("ReadingList.OfflineVersionDisplayed", true);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(ReadingListWebStateObserver)

@@ -4,8 +4,7 @@
 
 #import "ios/chrome/browser/prerender/prerender_service_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/prerender/prerender_service.h"
@@ -24,7 +23,8 @@ PrerenderService* PrerenderServiceFactory::GetForBrowserState(
 
 // static
 PrerenderServiceFactory* PrerenderServiceFactory::GetInstance() {
-  return base::Singleton<PrerenderServiceFactory>::get();
+  static base::NoDestructor<PrerenderServiceFactory> instance;
+  return instance.get();
 }
 
 PrerenderServiceFactory::PrerenderServiceFactory()
@@ -38,7 +38,7 @@ std::unique_ptr<KeyedService> PrerenderServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return base::MakeUnique<PrerenderService>(browser_state);
+  return std::make_unique<PrerenderService>(browser_state);
 }
 
 bool PrerenderServiceFactory::ServiceIsNULLWhileTesting() const {

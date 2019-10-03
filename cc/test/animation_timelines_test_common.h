@@ -8,9 +8,9 @@
 #include <memory>
 #include <unordered_map>
 
-#include "cc/animation/animation.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/animation_host.h"
+#include "cc/animation/keyframe_model.h"
 #include "cc/trees/mutator_host_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/scroll_offset.h"
@@ -18,8 +18,8 @@
 
 namespace cc {
 
-class AnimationPlayer;
-class AnimationTicker;
+class KeyframeEffect;
+class SingleKeyframeEffectAnimation;
 
 class TestLayer {
  public:
@@ -31,6 +31,7 @@ class TestLayer {
   int transform_x() const;
   int transform_y() const;
   float brightness() const;
+  float invert() const;
 
   const gfx::Transform& transform() const { return transform_; }
   void set_transform(const gfx::Transform& transform) {
@@ -48,6 +49,12 @@ class TestLayer {
   void set_filters(const FilterOperations& filters) {
     filters_ = filters;
     mutated_properties_[TargetProperty::FILTER] = true;
+  }
+
+  FilterOperations backdrop_filters() const { return backdrop_filters_; }
+  void set_backdrop_filters(const FilterOperations& backdrop_filters) {
+    backdrop_filters_ = backdrop_filters;
+    mutated_properties_[TargetProperty::BACKDROP_FILTER] = true;
   }
 
   gfx::ScrollOffset scroll_offset() const { return scroll_offset_; }
@@ -82,6 +89,7 @@ class TestLayer {
   gfx::Transform transform_;
   float opacity_;
   FilterOperations filters_;
+  FilterOperations backdrop_filters_;
   gfx::ScrollOffset scroll_offset_;
 
   TargetProperties has_potential_animation_;
@@ -96,8 +104,8 @@ class TestHostClient : public MutatorHostClient {
 
   void ClearMutatedProperties();
 
-  bool IsElementInList(ElementId element_id,
-                       ElementListType list_type) const override;
+  bool IsElementInPropertyTrees(ElementId element_id,
+                                ElementListType list_type) const override;
 
   void SetMutatorsNeedCommit() override;
   void SetMutatorsNeedRebuildPropertyTrees() override;
@@ -105,6 +113,11 @@ class TestHostClient : public MutatorHostClient {
   void SetElementFilterMutated(ElementId element_id,
                                ElementListType list_type,
                                const FilterOperations& filters) override;
+
+  void SetElementBackdropFilterMutated(
+      ElementId element_id,
+      ElementListType list_type,
+      const FilterOperations& backdrop_filters) override;
 
   void SetElementOpacityMutated(ElementId element_id,
                                 ElementListType list_type,
@@ -119,10 +132,14 @@ class TestHostClient : public MutatorHostClient {
       ElementListType list_type,
       const gfx::ScrollOffset& scroll_offset) override;
 
-  void ElementIsAnimatingChanged(ElementId element_id,
+  void ElementIsAnimatingChanged(const PropertyToElementIdMap& element_id_map,
                                  ElementListType list_type,
                                  const PropertyAnimationState& mask,
                                  const PropertyAnimationState& state) override;
+  void AnimationScalesChanged(ElementId element_id,
+                              ElementListType list_type,
+                              float maximum_scale,
+                              float starting_scale) override;
 
   void ScrollOffsetAnimationFinished() override {}
 
@@ -130,11 +147,14 @@ class TestHostClient : public MutatorHostClient {
   gfx::ScrollOffset GetScrollOffsetForAnimation(
       ElementId element_id) const override;
 
+  void NotifyAnimationWorkletStateChange(AnimationWorkletMutationState state,
+                                         ElementListType tree_type) override {}
+
   bool mutators_need_commit() const { return mutators_need_commit_; }
   void set_mutators_need_commit(bool need) { mutators_need_commit_ = need; }
 
-  void RegisterElement(ElementId element_id, ElementListType list_type);
-  void UnregisterElement(ElementId element_id, ElementListType list_type);
+  void RegisterElementId(ElementId element_id, ElementListType list_type);
+  void UnregisterElementId(ElementId element_id, ElementListType list_type);
 
   AnimationHost* host() {
     DCHECK(host_);
@@ -147,6 +167,8 @@ class TestHostClient : public MutatorHostClient {
 
   FilterOperations GetFilters(ElementId element_id,
                               ElementListType list_type) const;
+  FilterOperations GetBackdropFilters(ElementId element_id,
+                                      ElementListType list_type) const;
   float GetOpacity(ElementId element_id, ElementListType list_type) const;
   gfx::Transform GetTransform(ElementId element_id,
                               ElementListType list_type) const;
@@ -164,10 +186,17 @@ class TestHostClient : public MutatorHostClient {
                                       ElementListType list_type) const;
   bool GetFilterIsCurrentlyAnimating(ElementId element_id,
                                      ElementListType list_type) const;
+  bool GetHasPotentialBackdropFilterAnimation(ElementId element_id,
+                                              ElementListType list_type) const;
+  bool GetBackdropFilterIsCurrentlyAnimating(ElementId element_id,
+                                             ElementListType list_type) const;
 
   void ExpectFilterPropertyMutated(ElementId element_id,
                                    ElementListType list_type,
                                    float brightness) const;
+  void ExpectBackdropFilterPropertyMutated(ElementId element_id,
+                                           ElementListType list_type,
+                                           float invert) const;
   void ExpectOpacityPropertyMutated(ElementId element_id,
                                     ElementListType list_type,
                                     float opacity) const;
@@ -236,12 +265,12 @@ class AnimationTimelinesTest : public testing::Test {
   void SetUp() override;
   void TearDown() override;
 
-  void GetImplTimelineAndPlayerByID();
+  void GetImplTimelineAndAnimationByID();
 
   void CreateTestLayer(bool needs_active_value_observations,
                        bool needs_pending_value_observations);
-  void AttachTimelinePlayerLayer();
-  virtual void CreateImplTimelineAndPlayer();
+  void AttachTimelineAnimationLayer();
+  virtual void CreateImplTimelineAndAnimation();
 
   void CreateTestMainLayer();
   void DestroyTestMainLayer();
@@ -252,12 +281,13 @@ class AnimationTimelinesTest : public testing::Test {
   void TickAnimationsTransferEvents(base::TimeTicks time,
                                     unsigned expect_events);
 
-  AnimationTicker* GetTickerForElementId(ElementId element_id);
-  AnimationTicker* GetImplTickerForLayerId(ElementId element_id);
+  KeyframeEffect* GetKeyframeEffectForElementId(ElementId element_id);
+  KeyframeEffect* GetImplKeyframeEffectForLayerId(ElementId element_id);
 
   int NextTestLayerId();
 
-  bool CheckTickerTimelineNeedsPushProperties(bool needs_push_properties) const;
+  bool CheckKeyframeEffectTimelineNeedsPushProperties(
+      bool needs_push_properties) const;
 
   void PushProperties();
 
@@ -268,17 +298,17 @@ class AnimationTimelinesTest : public testing::Test {
   AnimationHost* host_impl_;
 
   const int timeline_id_;
-  const int player_id_;
+  const int animation_id_;
   ElementId element_id_;
 
   int next_test_layer_id_;
 
   scoped_refptr<AnimationTimeline> timeline_;
-  scoped_refptr<AnimationPlayer> player_;
+  scoped_refptr<SingleKeyframeEffectAnimation> animation_;
   scoped_refptr<ElementAnimations> element_animations_;
 
   scoped_refptr<AnimationTimeline> timeline_impl_;
-  scoped_refptr<AnimationPlayer> player_impl_;
+  scoped_refptr<SingleKeyframeEffectAnimation> animation_impl_;
   scoped_refptr<ElementAnimations> element_animations_impl_;
 };
 

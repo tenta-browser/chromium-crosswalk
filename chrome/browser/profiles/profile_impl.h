@@ -18,10 +18,11 @@
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl_io_data.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
+#include "components/keyed_service/core/simple_factory_key.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/content_browser_client.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
@@ -37,26 +38,17 @@ class KioskTest;
 class LocaleChangeGuard;
 class Preferences;
 class SupervisedUserTestBase;
-}
+}  // namespace chromeos
 #endif
 
 namespace base {
 class SequencedTaskRunner;
 }
 
-namespace domain_reliability {
-class DomainReliabilityMonitor;
-}
-
 namespace policy {
 class ConfigurationPolicyProvider;
 class ProfilePolicyConnector;
-class SchemaRegistryService;
-}
-
-namespace ssl_config {
-class SSLConfigServiceManager;
-}
+}  // namespace policy
 
 namespace sync_preferences {
 class PrefServiceSyncable;
@@ -81,7 +73,6 @@ class ProfileImpl : public Profile {
   std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
 #endif
-  base::FilePath GetPath() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::ResourceContext* GetResourceContext() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
@@ -90,23 +81,31 @@ class ProfileImpl : public Profile {
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate()
       override;
-  content::PermissionManager* GetPermissionManager() override;
+  content::PermissionControllerDelegate* GetPermissionControllerDelegate()
+      override;
+  content::ClientHintsControllerDelegate* GetClientHintsControllerDelegate()
+      override;
   content::BackgroundFetchDelegate* GetBackgroundFetchDelegate() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
   net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors) override;
   net::URLRequestContextGetter* CreateMediaRequestContext() override;
-  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
-  void RegisterInProcessServices(StaticServiceMap* services) override;
+  void SetCorsOriginAccessListForOrigin(
+      const url::Origin& source_origin,
+      std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
+      std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
+      base::OnceClosure closure) override;
+  content::SharedCorsOriginAccessList* GetSharedCorsOriginAccessList() override;
+  std::unique_ptr<service_manager::Service> HandleServiceRequest(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request) override;
   std::string GetMediaDeviceIDSalt() override;
+  download::InProgressDownloadManager* RetriveInProgressDownloadManager()
+      override;
+  content::NativeFileSystemPermissionContext*
+  GetNativeFileSystemPermissionContext() override;
+  content::ContentIndexProvider* GetContentIndexProvider() override;
 
   // Profile implementation:
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
@@ -114,7 +113,10 @@ class ProfileImpl : public Profile {
   // not the Chrome user's display name.
   std::string GetProfileUserName() const override;
   ProfileType GetProfileType() const override;
+  base::FilePath GetPath() override;
+  bool IsOffTheRecord() override;
   bool IsOffTheRecord() const override;
+  base::FilePath GetPath() const override;
   Profile* GetOffTheRecordProfile() override;
   void DestroyOffTheRecordProfile() override;
   bool HasOffTheRecordProfile() override;
@@ -123,6 +125,8 @@ class ProfileImpl : public Profile {
   bool IsSupervised() const override;
   bool IsChild() const override;
   bool IsLegacySupervised() const override;
+  bool IsIndependentOffTheRecordProfile() override;
+  bool AllowsBrowserWindows() const override;
   ExtensionSpecialStoragePolicy* GetExtensionSpecialStoragePolicy() override;
   PrefService* GetPrefs() override;
   const PrefService* GetPrefs() const override;
@@ -131,26 +135,37 @@ class ProfileImpl : public Profile {
 #endif
   PrefService* GetOffTheRecordPrefs() override;
   PrefService* GetReadOnlyOffTheRecordPrefs() override;
+  policy::SchemaRegistryService* GetPolicySchemaRegistryService() override;
+#if defined(OS_CHROMEOS)
+  policy::UserCloudPolicyManagerChromeOS* GetUserCloudPolicyManagerChromeOS()
+      override;
+  policy::ActiveDirectoryPolicyManager* GetActiveDirectoryPolicyManager()
+      override;
+#else
+  policy::UserCloudPolicyManager* GetUserCloudPolicyManager() override;
+#endif  // defined(OS_CHROMEOS)
+  policy::ProfilePolicyConnector* GetProfilePolicyConnector() override;
+  const policy::ProfilePolicyConnector* GetProfilePolicyConnector()
+      const override;
   net::URLRequestContextGetter* GetRequestContext() override;
-  net::URLRequestContextGetter* GetRequestContextForExtensions() override;
-  net::SSLConfigService* GetSSLConfigService() override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   bool IsSameProfile(Profile* profile) override;
   base::Time GetStartTime() const override;
+  ProfileKey* GetProfileKey() const override;
   base::FilePath last_selected_directory() override;
   void set_last_selected_directory(const base::FilePath& path) override;
-  chrome_browser_net::Predictor* GetNetworkPredictor() override;
   GURL GetHomePage() override;
   bool WasCreatedByVersionOrLater(const std::string& version) override;
   void SetExitType(ExitType exit_type) override;
   ExitType GetLastSessionExitType() override;
+  bool ShouldRestoreOldSessionCookies() override;
+  bool ShouldPersistSessionCookies() override;
 
 #if defined(OS_CHROMEOS)
   void ChangeAppLocale(const std::string& locale, AppLocaleChangedVia) override;
   void OnLogin() override;
   void InitChromeOSPreferences() override;
 #endif  // defined(OS_CHROMEOS)
-
-  PrefProxyConfigTracker* GetProxyConfigTracker() override;
 
  private:
 #if defined(OS_CHROMEOS)
@@ -169,6 +184,15 @@ class ProfileImpl : public Profile {
               Delegate* delegate,
               CreateMode create_mode,
               scoped_refptr<base::SequencedTaskRunner> io_task_runner);
+
+#if defined(OS_ANDROID)
+  // Takes the ownership of the pre-created PrefService and other objects if
+  // they have been created.
+  void TakePrefsFromStartupData();
+#endif
+
+  // Creates |prefs| from scratch in normal startup.
+  void LoadPrefsForNormalStartup(bool async_prefs);
 
   // Does final initialization. Should be called after prefs were loaded.
   void DoFinalInit();
@@ -191,21 +215,11 @@ class ProfileImpl : public Profile {
   void UpdateAvatarInStorage();
   void UpdateIsEphemeralInStorage();
 
-  void GetMediaCacheParameters(base::FilePath* cache_path, int* max_size);
-
-  PrefProxyConfigTracker* CreateProxyConfigTracker();
-
-  std::unique_ptr<domain_reliability::DomainReliabilityMonitor>
-  CreateDomainReliabilityMonitor(PrefService* local_state);
-
-  // Creates an instance of the Identity Service for this Profile, populating it
-  // with the appropriate instances of its dependencies.
-  std::unique_ptr<service_manager::Service> CreateIdentityService();
+  policy::ConfigurationPolicyProvider* configuration_policy_provider();
 
   PrefChangeRegistrar pref_change_registrar_;
 
   base::FilePath path_;
-  base::FilePath base_cache_path_;
 
   // Task runner used for file access in the profile path.
   scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
@@ -219,12 +233,28 @@ class ProfileImpl : public Profile {
   // TODO(mnissler, joaodasilva): The |profile_policy_connector_| provides the
   // PolicyService that the |prefs_| depend on, and must outlive |prefs_|. This
   // can be removed once |prefs_| becomes a KeyedService too.
-  // |profile_policy_connector_| in turn depends on
-  // |configuration_policy_provider_|, which depends on
-  // |schema_registry_service_|.
+
+  // - |prefs_| depends on |profile_policy_connector_|
+  // - |profile_policy_connector_| depends on configuration_policy_provider(),
+  //   which can be:
+  //     - |user_cloud_policy_manager_|;
+  //     - |user_cloud_policy_manager_chromeos_|;
+  //     - or |active_directory_policy_manager_|.
+  // - configuration_policy_provider() depends on |schema_registry_service_|
+
   std::unique_ptr<policy::SchemaRegistryService> schema_registry_service_;
-  std::unique_ptr<policy::ConfigurationPolicyProvider>
-      configuration_policy_provider_;
+
+  // configuration_policy_provider() is either of these, or nullptr in some
+  // tests.
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<policy::UserCloudPolicyManagerChromeOS>
+      user_cloud_policy_manager_chromeos_;
+  std::unique_ptr<policy::ActiveDirectoryPolicyManager>
+      active_directory_policy_manager_;
+#else
+  std::unique_ptr<policy::UserCloudPolicyManager> user_cloud_policy_manager_;
+#endif
+
   std::unique_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
 
   // Keep |prefs_| on top for destruction order because |extension_prefs_|,
@@ -240,8 +270,6 @@ class ProfileImpl : public Profile {
   scoped_refptr<ExtensionSpecialStoragePolicy>
       extension_special_storage_policy_;
 #endif
-  std::unique_ptr<ssl_config::SSLConfigServiceManager>
-      ssl_config_service_manager_;
 
   // Exit type the last time the profile was opened. This is set only once from
   // prefs.
@@ -256,13 +284,15 @@ class ProfileImpl : public Profile {
   // See GetStartTime for details.
   base::Time start_time_;
 
+  // The key to index KeyedService instances created by
+  // SimpleKeyedServiceFactory.
+  std::unique_ptr<ProfileKey> key_;
+
 #if defined(OS_CHROMEOS)
   std::unique_ptr<chromeos::Preferences> chromeos_preferences_;
 
   std::unique_ptr<chromeos::LocaleChangeGuard> locale_change_guard_;
 #endif
-
-  std::unique_ptr<PrefProxyConfigTracker> pref_proxy_config_tracker_;
 
   // TODO(mmenke):  This should be removed from the Profile, and use a
   // BrowserContextKeyedService instead.
@@ -285,7 +315,8 @@ class ProfileImpl : public Profile {
 
   Profile::Delegate* delegate_;
 
-  chrome_browser_net::Predictor* predictor_;
+  scoped_refptr<content::SharedCorsOriginAccessList>
+      shared_cors_origin_access_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileImpl);
 };

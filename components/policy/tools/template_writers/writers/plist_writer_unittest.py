@@ -2,9 +2,7 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
 '''Unit tests for writers.plist_writer'''
-
 
 import os
 import sys
@@ -92,16 +90,17 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     policy_json = '''
       {
         'policy_definitions': [],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
 
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium': '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
-    expected_output = self._GetExpectedOutputs(
-        'Chromium', 'com.example.Test', '<array/>')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
+    expected_output = self._GetExpectedOutputs('Chromium', 'com.example.Test',
+                                               '<array/>')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testEmptyVersion(self):
@@ -109,20 +108,19 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     policy_json = '''
       {
         'policy_definitions': [],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
 
     output = self.GetOutput(
-        policy_json,
-        {'_chromium': '1',
-         'mac_bundle_id': 'com.example.Test',
-         'version': '39.0.0.0'},
-        'plist')
+        policy_json, {
+            '_chromium': '1',
+            'mac_bundle_id': 'com.example.Test',
+            'version': '39.0.0.0'
+        }, 'plist')
     expected_output = self._GetExpectedOutputsWithVersion(
-        'Chromium',
-        'com.example.Test',
-        '<array/>',
+        'Chromium', 'com.example.Test', '<array/>',
         'chromium version: 39.0.0.0')
     self.assertEquals(output.strip(), expected_output.strip())
 
@@ -146,13 +144,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {}
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -195,13 +194,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
            },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {}
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -246,13 +246,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {}
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -292,13 +293,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'caption': '',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -342,13 +344,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'caption': '',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -404,13 +407,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'caption': '',
           }
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -457,13 +461,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -507,13 +512,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Google_Chrome', 'com.example.Test2', '''<array>
       <dict>
@@ -562,13 +568,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Google_Chrome', 'com.example.Test2', '''<array>
       <dict>
@@ -613,13 +620,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'caption': '',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -659,13 +667,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'caption': '',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Chromium', 'com.example.Test', '''<array>
       <dict>
@@ -706,13 +715,14 @@ class PListWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'desc': '',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {},
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist')
     expected_output = self._GetExpectedOutputs(
         'Google_Chrome', 'com.example.Test2', '''<array/>''')
     self.assertEquals(output.strip(), expected_output.strip())

@@ -15,12 +15,14 @@
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "net/base/escape.h"
 #include "net/base/ip_address.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
 #include "url/url_canon_ip.h"
+#include "url/url_constants.h"
 
 namespace net {
 
@@ -34,6 +36,23 @@ bool IsHostCharAlphanumeric(char c) {
 
 bool IsNormalizedLocalhostTLD(const std::string& host) {
   return base::EndsWith(host, ".localhost", base::CompareCase::SENSITIVE);
+}
+
+// Helper function used by GetIdentityFromURL. If |escaped_text| can be "safely
+// unescaped" to a valid UTF-8 string, return that string, as UTF-16. Otherwise,
+// convert it as-is to UTF-16. "Safely unescaped" is defined as having no
+// escaped character between '0x00' and '0x1F', inclusive.
+base::string16 UnescapeIdentityString(base::StringPiece escaped_text) {
+  std::string unescaped_text;
+  if (UnescapeBinaryURLComponentSafe(
+          escaped_text, false /* fail_on_path_separators */, &unescaped_text)) {
+    base::string16 result;
+    if (base::UTF8ToUTF16(unescaped_text.data(), unescaped_text.length(),
+                          &result)) {
+      return result;
+    }
+  }
+  return base::UTF8ToUTF16(escaped_text);
 }
 
 }  // namespace
@@ -154,25 +173,19 @@ bool GetValueForKeyInQuery(const GURL& url,
   return false;
 }
 
-bool ParseHostAndPort(std::string::const_iterator host_and_port_begin,
-                      std::string::const_iterator host_and_port_end,
-                      std::string* host,
-                      int* port) {
-  if (host_and_port_begin >= host_and_port_end)
+bool ParseHostAndPort(base::StringPiece input, std::string* host, int* port) {
+  if (input.empty())
     return false;
 
-  // When using url, we use char*.
-  const char* auth_begin = &(*host_and_port_begin);
-  int auth_len = host_and_port_end - host_and_port_begin;
-
-  url::Component auth_component(0, auth_len);
+  url::Component auth_component(0, input.size());
   url::Component username_component;
   url::Component password_component;
   url::Component hostname_component;
   url::Component port_component;
 
-  url::ParseAuthority(auth_begin, auth_component, &username_component,
-      &password_component, &hostname_component, &port_component);
+  url::ParseAuthority(input.data(), auth_component, &username_component,
+                      &password_component, &hostname_component,
+                      &port_component);
 
   // There shouldn't be a username/password.
   if (username_component.is_valid() || password_component.is_valid())
@@ -183,7 +196,7 @@ bool ParseHostAndPort(std::string::const_iterator host_and_port_begin,
 
   int parsed_port_number = -1;
   if (port_component.is_nonempty()) {
-    parsed_port_number = url::ParsePort(auth_begin, port_component);
+    parsed_port_number = url::ParsePort(input.data(), port_component);
 
     // If parsing failed, port_number will be either PORT_INVALID or
     // PORT_UNSPECIFIED, both of which are negative.
@@ -198,11 +211,10 @@ bool ParseHostAndPort(std::string::const_iterator host_and_port_begin,
 
   // If the hostname starts with a bracket, it is either an IPv6 literal or
   // invalid. If it is an IPv6 literal then strip the brackets.
-  if (hostname_component.len > 0 &&
-      auth_begin[hostname_component.begin] == '[') {
-    if (auth_begin[hostname_component.end() - 1] == ']' &&
-        url::IPv6AddressToNumber(
-            auth_begin, hostname_component, tmp_ipv6_addr)) {
+  if (hostname_component.len > 0 && input[hostname_component.begin] == '[') {
+    if (input[hostname_component.end() - 1] == ']' &&
+        url::IPv6AddressToNumber(input.data(), hostname_component,
+                                 tmp_ipv6_addr)) {
       // Strip the brackets.
       hostname_component.begin++;
       hostname_component.len -= 2;
@@ -212,17 +224,10 @@ bool ParseHostAndPort(std::string::const_iterator host_and_port_begin,
   }
 
   // Pass results back to caller.
-  host->assign(auth_begin + hostname_component.begin, hostname_component.len);
+  host->assign(input.data() + hostname_component.begin, hostname_component.len);
   *port = parsed_port_number;
 
   return true;  // Success.
-}
-
-bool ParseHostAndPort(const std::string& host_and_port,
-                      std::string* host,
-                      int* port) {
-  return ParseHostAndPort(
-      host_and_port.begin(), host_and_port.end(), host, port);
 }
 
 
@@ -315,7 +320,7 @@ bool IsHostnameNonUnique(const std::string& hostname) {
     return false;
 
   // If |hostname| is an IP address, check to see if it's in an IANA-reserved
-  // range.
+  // range reserved for non-publicly routable networks.
   if (host_info.IsIPAddress()) {
     IPAddress host_addr;
     if (!host_addr.AssignFromIPLiteral(hostname.substr(
@@ -325,7 +330,7 @@ bool IsHostnameNonUnique(const std::string& hostname) {
     switch (host_info.family) {
       case url::CanonHostInfo::IPV4:
       case url::CanonHostInfo::IPV6:
-        return host_addr.IsReserved();
+        return !host_addr.IsPubliclyRoutable();
       case url::CanonHostInfo::NEUTRAL:
       case url::CanonHostInfo::BROKEN:
         return false;
@@ -346,7 +351,11 @@ bool IsHostnameNonUnique(const std::string& hostname) {
       registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
 }
 
-bool IsLocalhost(base::StringPiece host) {
+bool IsLocalhost(const GURL& url) {
+  return HostStringIsLocalhost(url.HostNoBracketsPiece());
+}
+
+bool HostStringIsLocalhost(base::StringPiece host) {
   if (IsLocalHostname(host, nullptr))
     return true;
 
@@ -382,17 +391,26 @@ GURL SimplifyUrlForRequest(const GURL& url) {
   return url.ReplaceComponents(replacements);
 }
 
+GURL ChangeWebSocketSchemeToHttpScheme(const GURL& url) {
+  DCHECK(url.SchemeIsWSOrWSS());
+  GURL::Replacements replace_scheme;
+  replace_scheme.SetSchemeStr(url.SchemeIs(url::kWssScheme) ? url::kHttpsScheme
+                                                            : url::kHttpScheme);
+  return url.ReplaceComponents(replace_scheme);
+}
+
 void GetIdentityFromURL(const GURL& url,
                         base::string16* username,
                         base::string16* password) {
-  UnescapeRule::Type flags =
-      UnescapeRule::SPACES | UnescapeRule::PATH_SEPARATORS |
-      UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS;
-  *username = UnescapeAndDecodeUTF8URLComponent(url.username(), flags);
-  *password = UnescapeAndDecodeUTF8URLComponent(url.password(), flags);
+  *username = UnescapeIdentityString(url.username());
+  *password = UnescapeIdentityString(url.password());
 }
 
 bool HasGoogleHost(const GURL& url) {
+  return IsGoogleHost(url.host_piece());
+}
+
+bool IsGoogleHost(base::StringPiece host) {
   static const char* kGoogleHostSuffixes[] = {
       ".google.com",
       ".youtube.com",
@@ -407,7 +425,6 @@ bool HasGoogleHost(const GURL& url) {
       ".googleapis.com",
       ".ytimg.com",
   };
-  base::StringPiece host = url.host_piece();
   for (const char* suffix : kGoogleHostSuffixes) {
     // Here it's possible to get away with faster case-sensitive comparisons
     // because the list above is all lowercase, and a GURL's host name will

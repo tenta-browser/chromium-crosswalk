@@ -13,6 +13,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/url_formatter/url_formatter.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
+#include "ios/web/navigation/wk_navigation_util.h"
 #import "ios/web/public/web_client.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/text_elider.h"
@@ -48,7 +49,7 @@ NavigationItemImpl::NavigationItemImpl()
       is_created_from_hash_change_(false),
       should_skip_repost_form_confirmation_(false),
       navigation_initiation_type_(web::NavigationInitiationType::NONE),
-      is_unsafe_(false) {}
+      is_untrusted_(false) {}
 
 NavigationItemImpl::~NavigationItemImpl() {
 }
@@ -66,7 +67,7 @@ NavigationItemImpl::NavigationItemImpl(const NavigationItemImpl& item)
       ssl_(item.ssl_),
       timestamp_(item.timestamp_),
       user_agent_type_(item.user_agent_type_),
-      http_request_headers_([item.http_request_headers_ copy]),
+      http_request_headers_([item.http_request_headers_ mutableCopy]),
       serialized_state_object_([item.serialized_state_object_ copy]),
       is_created_from_push_state_(item.is_created_from_push_state_),
       has_state_been_replaced_(item.has_state_been_replaced_),
@@ -74,8 +75,9 @@ NavigationItemImpl::NavigationItemImpl(const NavigationItemImpl& item)
       should_skip_repost_form_confirmation_(
           item.should_skip_repost_form_confirmation_),
       post_data_([item.post_data_ copy]),
+      error_retry_state_machine_(item.error_retry_state_machine_),
       navigation_initiation_type_(item.navigation_initiation_type_),
-      is_unsafe_(item.is_unsafe_),
+      is_untrusted_(item.is_untrusted_),
       cached_display_title_(item.cached_display_title_) {}
 
 int NavigationItemImpl::GetUniqueID() const {
@@ -93,6 +95,12 @@ const GURL& NavigationItemImpl::GetOriginalRequestURL() const {
 void NavigationItemImpl::SetURL(const GURL& url) {
   url_ = url;
   cached_display_title_.clear();
+  error_retry_state_machine_.SetURL(url);
+  if (!wk_navigation_util::URLNeedsUserAgentType(url)) {
+    SetUserAgentType(web::UserAgentType::NONE);
+  } else if (GetUserAgentType() == web::UserAgentType::NONE) {
+    SetUserAgentType(web::UserAgentType::MOBILE);
+  }
 }
 
 const GURL& NavigationItemImpl::GetURL() const {
@@ -117,6 +125,8 @@ const GURL& NavigationItemImpl::GetVirtualURL() const {
 }
 
 void NavigationItemImpl::SetTitle(const base::string16& title) {
+  if (title_ == title)
+    return;
   title_ = title;
   cached_display_title_.clear();
 }
@@ -145,8 +155,9 @@ const base::string16& NavigationItemImpl::GetTitleForDisplay() const {
   if (!cached_display_title_.empty())
     return cached_display_title_;
 
-  cached_display_title_ =
-      NavigationItemImpl::GetDisplayTitleForURL(GetVirtualURL());
+  // File urls have different display rules, so use one if it is present.
+  cached_display_title_ = NavigationItemImpl::GetDisplayTitleForURL(
+      GetURL().SchemeIsFile() ? GetURL() : GetVirtualURL());
   return cached_display_title_;
 }
 
@@ -184,8 +195,16 @@ base::Time NavigationItemImpl::GetTimestamp() const {
 
 void NavigationItemImpl::SetUserAgentType(UserAgentType type) {
   user_agent_type_ = type;
-  DCHECK_EQ(GetWebClient()->IsAppSpecificURL(GetVirtualURL()),
+  DCHECK_EQ(!wk_navigation_util::URLNeedsUserAgentType(GetURL()),
             user_agent_type_ == UserAgentType::NONE);
+}
+
+void NavigationItemImpl::SetUntrusted() {
+  is_untrusted_ = true;
+}
+
+bool NavigationItemImpl::IsUntrusted() {
+  return is_untrusted_;
 }
 
 UserAgentType NavigationItemImpl::GetUserAgentType() const {
@@ -193,7 +212,7 @@ UserAgentType NavigationItemImpl::GetUserAgentType() const {
 }
 
 bool NavigationItemImpl::HasPostData() const {
-  return post_data_.get() != nil;
+  return post_data_ != nil;
 }
 
 NSDictionary* NavigationItemImpl::GetHttpRequestHeaders() const {
@@ -208,16 +227,16 @@ void NavigationItemImpl::AddHttpRequestHeaders(
   if (http_request_headers_)
     [http_request_headers_ addEntriesFromDictionary:additional_headers];
   else
-    http_request_headers_.reset([additional_headers mutableCopy]);
+    http_request_headers_ = [additional_headers mutableCopy];
 }
 
 void NavigationItemImpl::SetSerializedStateObject(
     NSString* serialized_state_object) {
-  serialized_state_object_.reset(serialized_state_object);
+  serialized_state_object_ = serialized_state_object;
 }
 
 NSString* NavigationItemImpl::GetSerializedStateObject() const {
-  return serialized_state_object_.get();
+  return serialized_state_object_;
 }
 
 void NavigationItemImpl::SetIsCreatedFromPushState(bool push_state) {
@@ -263,28 +282,32 @@ bool NavigationItemImpl::ShouldSkipRepostFormConfirmation() const {
 }
 
 void NavigationItemImpl::SetPostData(NSData* post_data) {
-  post_data_.reset(post_data);
+  post_data_ = post_data;
 }
 
 NSData* NavigationItemImpl::GetPostData() const {
-  return post_data_.get();
+  return post_data_;
 }
 
 void NavigationItemImpl::RemoveHttpRequestHeaderForKey(NSString* key) {
   DCHECK(key);
   [http_request_headers_ removeObjectForKey:key];
   if (![http_request_headers_ count])
-    http_request_headers_.reset();
+    http_request_headers_ = nil;
 }
 
 void NavigationItemImpl::ResetHttpRequestHeaders() {
-  http_request_headers_.reset();
+  http_request_headers_ = nil;
 }
 
 void NavigationItemImpl::ResetForCommit() {
   // Navigation initiation type is only valid for pending navigations, thus
   // always reset to NONE after the item is committed.
   SetNavigationInitiationType(web::NavigationInitiationType::NONE);
+}
+
+ErrorRetryStateMachine& NavigationItemImpl::error_retry_state_machine() {
+  return error_retry_state_machine_;
 }
 
 // static
@@ -310,13 +333,15 @@ base::string16 NavigationItemImpl::GetDisplayTitleForURL(const GURL& url) {
 NSString* NavigationItemImpl::GetDescription() const {
   return [NSString
       stringWithFormat:
-          @"url:%s originalurl:%s referrer: %s title:%s transition:%d "
+          @"url:%s virtual_url_:%s originalurl:%s referrer: %s title:%s "
+          @"transition:%d "
            "displayState:%@ userAgentType:%s is_create_from_push_state: %@ "
            "has_state_been_replaced: %@ is_created_from_hash_change: %@ "
            "navigation_initiation_type: %d",
-          url_.spec().c_str(), original_request_url_.spec().c_str(),
-          referrer_.url.spec().c_str(), base::UTF16ToUTF8(title_).c_str(),
-          transition_type_, page_display_state_.GetDescription(),
+          url_.spec().c_str(), virtual_url_.spec().c_str(),
+          original_request_url_.spec().c_str(), referrer_.url.spec().c_str(),
+          base::UTF16ToUTF8(title_).c_str(), transition_type_,
+          page_display_state_.GetDescription(),
           GetUserAgentTypeDescription(user_agent_type_).c_str(),
           is_created_from_push_state_ ? @"true" : @"false",
           has_state_been_replaced_ ? @"true" : @"false",

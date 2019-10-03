@@ -7,19 +7,24 @@
 
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/input_event_shim.h"
 #include "content/common/content_export.h"
 #include "content/common/drag_event_source_info.h"
 #include "content/public/common/drop_data.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
-#include "third_party/WebKit/public/platform/WebDragOperation.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/common/manifest/web_display_mode.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom.h"
+#include "third_party/blink/public/platform/web_drag_operation.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace blink {
+class WebMouseEvent;
 class WebMouseWheelEvent;
 class WebGestureEvent;
 }
@@ -33,13 +38,10 @@ namespace rappor {
 class Sample;
 }
 
-namespace ukm {
-class UkmRecorder;
-}
-
 namespace content {
 
 class BrowserAccessibilityManager;
+class RenderFrameHostImpl;
 class RenderWidgetHostImpl;
 class RenderWidgetHostInputEventRouter;
 class RenderViewHostDelegateView;
@@ -56,6 +58,13 @@ struct NativeWebKeyboardEvent;
 //  of the RenderWidgetHost.
 class CONTENT_EXPORT RenderWidgetHostDelegate {
  public:
+  // Functions for controlling the browser top controls slide behavior with page
+  // gesture scrolling.
+  virtual void SetTopControlsShownRatio(
+      RenderWidgetHostImpl* render_widget_host,
+      float ratio) {}
+  virtual void SetTopControlsGestureScrollInProgress(bool in_progress) {}
+
   // The RenderWidgetHost has just been created.
   virtual void RenderWidgetCreated(RenderWidgetHostImpl* render_widget_host) {}
 
@@ -65,24 +74,24 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // The RenderWidgetHost got the focus.
   virtual void RenderWidgetGotFocus(RenderWidgetHostImpl* render_widget_host) {}
 
+  // If a main frame navigation is in progress, this will return the zoom level
+  // for the pending page. Otherwise, this returns the zoom level for the
+  // current page. Note that subframe navigations do not affect the zoom level,
+  // which is tracked at the level of the page.
+  virtual double GetPendingPageZoomLevel();
+
   // The RenderWidgetHost lost the focus.
   virtual void RenderWidgetLostFocus(
       RenderWidgetHostImpl* render_widget_host) {}
 
   // The RenderWidget was resized.
   virtual void RenderWidgetWasResized(RenderWidgetHostImpl* render_widget_host,
+                                      const ScreenInfo& screen_info,
                                       bool width_changed) {}
 
   // The contents auto-resized and the container should match it.
   virtual void ResizeDueToAutoResize(RenderWidgetHostImpl* render_widget_host,
-                                     const gfx::Size& new_size,
-                                     uint64_t sequence_number) {}
-
-  // The screen info has changed.
-  virtual void ScreenInfoChanged() {}
-
-  // Retrieve screen information.
-  virtual void GetScreenInfo(ScreenInfo* screen_info);
+                                     const gfx::Size& new_size) {}
 
   // Callback to give the browser a chance to handle the specified keyboard
   // event before sending it to the renderer. See enum for details on return
@@ -90,22 +99,30 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   virtual KeyboardEventProcessingResult PreHandleKeyboardEvent(
       const NativeWebKeyboardEvent& event);
 
+  // Callback to give the browser a chance to handle the specified mouse
+  // event before sending it to the renderer.
+  // Returns true if the |event| was handled.
+  // TODO(carlosil, nasko): remove once committed interstitial pages are
+  // fully implemented.
+  virtual bool PreHandleMouseEvent(const blink::WebMouseEvent& event);
+
   // Callback to inform the browser that the renderer did not process the
   // specified events. This gives an opportunity to the browser to process the
   // event (used for keyboard shortcuts).
-  virtual void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) {}
+  virtual bool HandleKeyboardEvent(const NativeWebKeyboardEvent& event);
 
   // Callback to inform the browser that the renderer did not process the
   // specified mouse wheel event.  Returns true if the browser has handled
   // the event itself.
   virtual bool HandleWheelEvent(const blink::WebMouseWheelEvent& event);
 
-  // Notification the user has performed a direct interaction (mouse down,
-  // scroll, raw key down, gesture tap, or browser-initiated navigation) while
-  // focus was on the page. Informs the delegate that a user is interacting with
-  // a site.
-  virtual void OnUserInteraction(RenderWidgetHostImpl* render_widget_host,
-                                 const blink::WebInputEvent::Type type) {}
+  // Notification that an input event from the user was dispatched to the
+  // widget.
+  virtual void DidReceiveInputEvent(RenderWidgetHostImpl* render_widget_host,
+                                    const blink::WebInputEvent::Type type) {}
+
+  // Asks whether the page is in a state of ignoring input events.
+  virtual bool ShouldIgnoreInputEvents();
 
   // Callback to give the browser a chance to handle the specified gesture
   // event before sending it to the renderer.
@@ -162,12 +179,21 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
 
   // Notification that the renderer has become unresponsive. The
   // delegate can use this notification to show a warning to the user.
-  virtual void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host) {}
+  // See also WebContentsDelegate::RendererUnresponsive.
+  virtual void RendererUnresponsive(
+      RenderWidgetHostImpl* render_widget_host,
+      base::RepeatingClosure hang_monitor_restarter) {}
 
   // Notification that a previously unresponsive renderer has become
   // responsive again. The delegate can use this notification to end the
   // warning shown to the user.
   virtual void RendererResponsive(RenderWidgetHostImpl* render_widget_host) {}
+
+  // Notification that a cross-process subframe on this page has crashed, and a
+  // sad frame is shown if the subframe was visible.  |frame_visibility|
+  // specifies whether the subframe is visible, scrolled out of view, or hidden
+  // (e.g., with "display: none").
+  virtual void SubframeCrashed(blink::mojom::FrameVisibility visibility) {}
 
   // Requests to lock the mouse. Once the request is approved or rejected,
   // GotResponseToLockMouseRequest() will be called on the requesting render
@@ -179,7 +205,12 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
                                   bool privileged) {}
 
   // Returns whether the associated tab is in fullscreen mode.
-  virtual bool IsFullscreenForCurrentTab() const;
+  virtual bool IsFullscreenForCurrentTab();
+
+  // Returns true if the widget's frame content needs to be stored before
+  // eviction and displayed until a new frame is generated. If false, a white
+  // solid color is displayed instead.
+  virtual bool ShouldShowStaleContentOnEviction();
 
   // Returns the display mode for the view.
   virtual blink::WebDisplayMode GetDisplayMode(
@@ -198,11 +229,24 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // locked.
   virtual RenderWidgetHostImpl* GetMouseLockWidget();
 
+  // Requests to lock the keyboard. Once the request is approved or rejected,
+  // GotResponseToKeyboardLockRequest() will be called on the requesting render
+  // widget host.
+  virtual bool RequestKeyboardLock(RenderWidgetHostImpl* render_widget_host,
+                                   bool esc_key_locked);
+
+  // Cancels a previous keyboard lock request.
+  virtual void CancelKeyboardLock(RenderWidgetHostImpl* render_widget_host) {}
+
+  // Returns the widget that holds the keyboard lock or nullptr if not locked.
+  virtual RenderWidgetHostImpl* GetKeyboardLockWidget();
+
   // Called when the visibility of the RenderFrameProxyHost in outer
   // WebContents changes. This method is only called on an inner WebContents and
   // will eventually notify all the RenderWidgetHostViews belonging to that
   // WebContents.
-  virtual void OnRenderFrameProxyVisibilityChanged(bool visible) {}
+  virtual void OnRenderFrameProxyVisibilityChanged(
+      blink::mojom::FrameVisibility visibility) {}
 
   // Update the renderer's cache of the screen rect of the view and window.
   virtual void SendScreenRects() {}
@@ -214,6 +258,7 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // the RenderWidgetHost to ask the delegate if it can be shown in the event of
   // something other than the WebContents attempting to enable visibility of
   // this RenderWidgetHost.
+  // TODO(nasko): Move this to RenderViewHostDelegate.
   virtual bool IsHidden();
 
   // Returns the associated RenderViewHostDelegateView*, if possible.
@@ -253,10 +298,10 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // if the eTLD+1 is not known for |render_widget_host|.
   virtual bool AddDomainInfoToRapporSample(rappor::Sample* sample);
 
-  // Update UkmRecorder for the given source with the URL. This is used for
-  // URL-keyed metrics to set the url for a report.
-  virtual void UpdateUrlForUkmSource(ukm::UkmRecorder* service,
-                                     ukm::SourceId ukm_source_id);
+  // Get the UKM source ID for current content. This is used for providing
+  // data about the content to the URL-keyed metrics service.
+  // Note: This is also exposed by the RenderFrameHostDelegate.
+  virtual ukm::SourceId GetUkmSourceIdForLastCommittedSource() const;
 
   // Notifies the delegate that a focused editable element has been touched
   // inside this RenderWidgetHost. If |editable| is true then the focused
@@ -267,9 +312,6 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
   // not a WebContents, returns nullptr.
   virtual WebContents* GetAsWebContents();
 
-  // Notifies that a CompositorFrame was received from the renderer.
-  virtual void DidReceiveCompositorFrame() {}
-
   // Gets the size set by a top-level frame with auto-resize enabled.
   virtual gfx::Size GetAutoResizeSize();
 
@@ -278,6 +320,18 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
 
   // Returns true if there is context menu shown on page.
   virtual bool IsShowingContextMenuOnPage() const;
+
+  // Returns an object that will override handling of Text Input and Mouse
+  // Lock events from the renderer.
+  virtual InputEventShim* GetInputEventShim() const;
+
+  // Notifies all renderers in a page about changes to the size of the visible
+  // viewport.
+  virtual void NotifyVisibleViewportSizeChanged(
+      const gfx::Size& visible_viewport_size) {}
+
+  // Returns the focused frame across all delegates, or nullptr if none.
+  virtual RenderFrameHostImpl* GetFocusedFrameFromFocusedDelegate();
 
  protected:
   virtual ~RenderWidgetHostDelegate() {}

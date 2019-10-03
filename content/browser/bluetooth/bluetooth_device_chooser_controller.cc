@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -81,16 +80,10 @@ const int k80thPercentileRSSI = -52;
 
 namespace content {
 
-bool BluetoothDeviceChooserController::use_test_scan_duration_ = false;
+// Sets the default duration for a Bluetooth scan to 60 seconds.
+int64_t BluetoothDeviceChooserController::scan_duration_ = 60;
 
 namespace {
-// Max length of device name in filter. Bluetooth 5.0 3.C.3.2.2.3 states that
-// the maximum device name length is 248 bytes (UTF-8 encoded).
-constexpr size_t kMaxLengthForDeviceName = 248;
-
-// The duration of a Bluetooth Scan in seconds.
-constexpr int kScanDuration = 60;
-constexpr int kTestScanDuration = 0;
 
 void LogRequestDeviceOptions(
     const blink::mojom::WebBluetoothRequestDeviceOptionsPtr& options) {
@@ -119,47 +112,6 @@ void LogRequestDeviceOptions(
   }
 }
 
-bool IsEmptyOrInvalidFilter(
-    const blink::mojom::WebBluetoothLeScanFilterPtr& filter) {
-  // At least one member needs to be present.
-  if (!filter->name && !filter->name_prefix && !filter->services)
-    return true;
-
-  // The renderer will never send a name or a name_prefix longer than
-  // kMaxLengthForDeviceName.
-  if (filter->name && filter->name->size() > kMaxLengthForDeviceName)
-    return true;
-  if (filter->name_prefix && filter->name_prefix->size() == 0)
-    return true;
-  if (filter->name_prefix &&
-      filter->name_prefix->size() > kMaxLengthForDeviceName)
-    return true;
-
-  return false;
-}
-
-bool HasEmptyOrInvalidFilter(
-    const base::Optional<
-        std::vector<blink::mojom::WebBluetoothLeScanFilterPtr>>& filters) {
-  if (!filters) {
-    return true;
-  }
-
-  return filters->empty()
-             ? true
-             : filters->end() != std::find_if(filters->begin(), filters->end(),
-                                              IsEmptyOrInvalidFilter);
-}
-
-bool IsOptionsInvalid(
-    const blink::mojom::WebBluetoothRequestDeviceOptionsPtr& options) {
-  if (options->accept_all_devices) {
-    return options->filters.has_value();
-  } else {
-    return HasEmptyOrInvalidFilter(options->filters);
-  }
-}
-
 bool MatchesFilter(const std::string* device_name,
                    const UUIDSet& device_uuids,
                    const blink::mojom::WebBluetoothLeScanFilterPtr& filter) {
@@ -180,7 +132,7 @@ bool MatchesFilter(const std::string* device_name,
 
   if (filter->services) {
     for (const auto& service : filter->services.value()) {
-      if (!base::ContainsKey(device_uuids, service)) {
+      if (!base::Contains(device_uuids, service)) {
         return false;
       }
     }
@@ -236,8 +188,7 @@ void StopDiscoverySession(
   // Nothing goes wrong if the discovery session fails to stop, and we don't
   // need to wait for it before letting the user's script proceed, so we ignore
   // the results here.
-  discovery_session->Stop(base::Bind(&base::DoNothing),
-                          base::Bind(&base::DoNothing));
+  discovery_session->Stop(base::DoNothing(), base::DoNothing());
 }
 
 UMARequestDeviceOutcome OutcomeFromChooserEvent(BluetoothChooser::Event event) {
@@ -282,16 +233,11 @@ BluetoothDeviceChooserController::BluetoothDeviceChooserController(
       web_contents_(WebContents::FromRenderFrameHost(render_frame_host_)),
       discovery_session_timer_(
           FROM_HERE,
-          // TODO(jyasskin): Add a way for tests to control the dialog
-          // directly, and change this to a reasonable discovery timeout.
-          base::TimeDelta::FromSeconds(
-              use_test_scan_duration_ ? kTestScanDuration : kScanDuration),
+          base::TimeDelta::FromSeconds(scan_duration_),
           base::Bind(&BluetoothDeviceChooserController::StopDeviceDiscovery,
                      // base::Timer guarantees it won't call back after its
                      // destructor starts.
-                     base::Unretained(this)),
-          /*is_repeating=*/false),
-      weak_ptr_factory_(this) {
+                     base::Unretained(this))) {
   CHECK(adapter_);
 }
 
@@ -319,13 +265,6 @@ void BluetoothDeviceChooserController::GetDevice(
 
   success_callback_ = success_callback;
   error_callback_ = error_callback;
-
-  // The renderer should never send invalid options.
-  if (IsOptionsInvalid(options)) {
-    web_bluetooth_service_->CrashRendererAndClosePipe(
-        bad_message::BDH_INVALID_OPTIONS);
-    return;
-  }
   options_ = std::move(options);
   LogRequestDeviceOptions(options_);
 
@@ -353,9 +292,9 @@ void BluetoothDeviceChooserController::GetDevice(
                           REQUEST_DEVICE_FROM_CROSS_ORIGIN_IFRAME);
     return;
   }
-  // The above also excludes unique origins, which are not even same-origin with
+  // The above also excludes opaque origins, which are not even same-origin with
   // themselves.
-  DCHECK(!requesting_origin.unique());
+  DCHECK(!requesting_origin.opaque());
 
   if (!adapter_->IsPresent()) {
     DVLOG(1) << "Bluetooth Adapter not present. Can't serve requestDevice.";
@@ -379,7 +318,7 @@ void BluetoothDeviceChooserController::GetDevice(
         BLOCK_GLOBALLY_DISABLED: {
       // Log to the developer console.
       web_contents_->GetMainFrame()->AddMessageToConsole(
-          content::CONSOLE_MESSAGE_LEVEL_INFO,
+          blink::mojom::ConsoleMessageLevel::kInfo,
           "Bluetooth permission has been blocked.");
       // Block requests.
       RecordRequestDeviceOutcome(
@@ -398,7 +337,7 @@ void BluetoothDeviceChooserController::GetDevice(
 
   if (WebContentsDelegate* delegate = web_contents_->GetDelegate()) {
     chooser_ = delegate->RunBluetoothChooser(render_frame_host_,
-                                             chooser_event_handler);
+                                             std::move(chooser_event_handler));
   }
 
   if (!chooser_.get()) {
@@ -491,8 +430,16 @@ int BluetoothDeviceChooserController::CalculateSignalStrengthLevel(
   }
 }
 
-void BluetoothDeviceChooserController::SetTestScanDurationForTesting() {
-  BluetoothDeviceChooserController::use_test_scan_duration_ = true;
+void BluetoothDeviceChooserController::SetTestScanDurationForTesting(
+    TestScanDurationSetting setting) {
+  switch (setting) {
+    case TestScanDurationSetting::IMMEDIATE_TIMEOUT:
+      scan_duration_ = 0;
+      break;
+    case TestScanDurationSetting::NEVER_TIMEOUT:
+      scan_duration_ = base::TimeDelta::Max().InSeconds();
+      break;
+  }
 }
 
 void BluetoothDeviceChooserController::PopulateConnectedDevices() {
@@ -614,9 +561,8 @@ void BluetoothDeviceChooserController::OnBluetoothChooserEvent(
 void BluetoothDeviceChooserController::PostSuccessCallback(
     const std::string& device_address) {
   if (!base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::BindOnce(success_callback_, base::Passed(std::move(options_)),
-                         device_address))) {
+          FROM_HERE, base::BindOnce(success_callback_, std::move(options_),
+                                    device_address))) {
     LOG(WARNING) << "No TaskRunner.";
   }
 }

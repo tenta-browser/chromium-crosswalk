@@ -9,8 +9,11 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_request_test_util.h"
+#include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
+#include "net/http/http_util.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace rappor {
@@ -22,8 +25,9 @@ const char kTestMimeType[] = "text/plain";
 
 class TestLogUploader : public LogUploader {
  public:
-  explicit TestLogUploader(net::URLRequestContextGetter* request_context) :
-      LogUploader(GURL(kTestServerURL), kTestMimeType, request_context) {
+  explicit TestLogUploader(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+      : LogUploader(GURL(kTestServerURL), kTestMimeType, url_loader_factory) {
     Start();
   }
 
@@ -62,28 +66,20 @@ class LogUploaderTest : public testing::Test {
  public:
   LogUploaderTest()
       : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        request_context_(new net::TestURLRequestContextGetter(
-            base::ThreadTaskRunnerHandle::Get())),
-        factory_(nullptr) {}
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
  protected:
   // Required for base::ThreadTaskRunnerHandle::Get().
   base::test::ScopedTaskEnvironment scoped_task_environment_;
-  scoped_refptr<net::TestURLRequestContextGetter> request_context_;
-  net::FakeURLFetcherFactory factory_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(LogUploaderTest);
 };
 
 TEST_F(LogUploaderTest, Success) {
-  TestLogUploader uploader(request_context_.get());
-
-  factory_.SetFakeResponse(GURL(kTestServerURL),
-                           std::string(),
-                           net::HTTP_OK,
-                           net::URLRequestStatus::SUCCESS);
+  TestLogUploader uploader(test_url_loader_factory_.GetSafeWeakWrapper());
+  test_url_loader_factory_.AddResponse(kTestServerURL, "");
 
   uploader.QueueLog("log1");
   base::RunLoop().RunUntilIdle();
@@ -92,12 +88,15 @@ TEST_F(LogUploaderTest, Success) {
 }
 
 TEST_F(LogUploaderTest, Rejection) {
-  TestLogUploader uploader(request_context_.get());
+  TestLogUploader uploader(test_url_loader_factory_.GetSafeWeakWrapper());
 
-  factory_.SetFakeResponse(GURL(kTestServerURL),
-                           std::string(),
-                           net::HTTP_BAD_REQUEST,
-                           net::URLRequestStatus::SUCCESS);
+  network::ResourceResponseHead response_head;
+  std::string headers("HTTP/1.1 400 Bad Request\nContent-type: text/html\n\n");
+  response_head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
+  response_head.mime_type = "text/html";
+  test_url_loader_factory_.AddResponse(GURL(kTestServerURL), response_head, "",
+                                       network::URLLoaderCompletionStatus());
 
   uploader.QueueLog("log1");
   base::RunLoop().RunUntilIdle();
@@ -106,12 +105,16 @@ TEST_F(LogUploaderTest, Rejection) {
 }
 
 TEST_F(LogUploaderTest, Failure) {
-  TestLogUploader uploader(request_context_.get());
+  TestLogUploader uploader(test_url_loader_factory_.GetSafeWeakWrapper());
 
-  factory_.SetFakeResponse(GURL(kTestServerURL),
-                           std::string(),
-                           net::HTTP_INTERNAL_SERVER_ERROR,
-                           net::URLRequestStatus::SUCCESS);
+  network::ResourceResponseHead response_head;
+  std::string headers(
+      "HTTP/1.1 500 Internal Server Error\nContent-type: text/html\n\n");
+  response_head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
+  response_head.mime_type = "text/html";
+  test_url_loader_factory_.AddResponse(GURL(kTestServerURL), response_head, "",
+                                       network::URLLoaderCompletionStatus());
 
   uploader.QueueLog("log1");
   base::RunLoop().RunUntilIdle();
@@ -129,10 +132,7 @@ TEST_F(LogUploaderTest, Failure) {
   base::RunLoop().RunUntilIdle();
   EXPECT_GT(uploader.last_interval_set(), error_interval);
 
-  factory_.SetFakeResponse(GURL(kTestServerURL),
-                           std::string(),
-                           net::HTTP_OK,
-                           net::URLRequestStatus::SUCCESS);
+  test_url_loader_factory_.AddResponse(kTestServerURL, "");
 
   // A success should revert to base interval while queue is not empty.
   for (int i = 0; i < 9; i++) {

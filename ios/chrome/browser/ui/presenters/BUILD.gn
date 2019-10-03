@@ -7,12 +7,14 @@ source_set("presenters") {
   sources = [
     "contained_presenter.h",
     "contained_presenter_delegate.h",
+    "non_modal_view_controller_presenter.h",
+    "non_modal_view_controller_presenter.mm",
     "vertical_animation_container.h",
     "vertical_animation_container.mm",
   ]
   deps = [
     "//base",
-    "//ios/chrome/browser/ui/util:constraints_ui",
+    "//ios/chrome/common/ui_util",
   ]
 }
 

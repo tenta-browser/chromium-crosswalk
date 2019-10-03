@@ -5,22 +5,24 @@
 #include "components/omnibox/browser/suggestion_answer.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-std::unique_ptr<SuggestionAnswer> ParseAnswer(const std::string& answer_json) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(answer_json);
-  base::DictionaryValue* dict;
-  if (!value || !value->GetAsDictionary(&dict))
-    return nullptr;
+bool ParseAnswer(const std::string& answer_json, SuggestionAnswer* answer) {
+  base::Optional<base::Value> value = base::JSONReader::Read(answer_json);
+  if (!value || !value->is_dict())
+    return false;
 
-  return SuggestionAnswer::ParseAnswer(dict);
+  // ParseAnswer previously did not change the default answer type of -1, so
+  // here we keep the same behavior by explicitly supplying default value.
+  return SuggestionAnswer::ParseAnswer(*value, base::UTF8ToUTF16("-1"), answer);
 }
 
 }  // namespace
@@ -35,7 +37,7 @@ TEST(SuggestionAnswerTest, CopiesAreEqual) {
   SuggestionAnswer answer1;
   EXPECT_TRUE(answer1.Equals(SuggestionAnswer(answer1)));
 
-  auto answer2 = base::MakeUnique<SuggestionAnswer>();
+  auto answer2 = std::make_unique<SuggestionAnswer>();
   answer2->set_type(832345);
   EXPECT_TRUE(answer2->Equals(SuggestionAnswer(*answer2)));
 
@@ -44,9 +46,9 @@ TEST(SuggestionAnswerTest, CopiesAreEqual) {
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }] } } "
       "] }";
-  answer2 = ParseAnswer(json);
-  ASSERT_TRUE(answer2);
-  EXPECT_TRUE(answer2->Equals(SuggestionAnswer(*answer2)));
+  SuggestionAnswer answer3;
+  ASSERT_TRUE(ParseAnswer(json, &answer3));
+  EXPECT_TRUE(answer3.Equals(SuggestionAnswer(answer3)));
 }
 
 TEST(SuggestionAnswerTest, DifferentValuesAreUnequal) {
@@ -59,84 +61,87 @@ TEST(SuggestionAnswerTest, DifferentValuesAreUnequal) {
       "              \"at\": { \"t\": \"slatfatf\", \"tt\": 42 }, "
       "              \"st\": { \"t\": \"oh hi, Mark\", \"tt\": 729347 } } } "
       "] }";
-  std::unique_ptr<SuggestionAnswer> answer1 = ParseAnswer(json);
-  ASSERT_TRUE(answer1);
+  SuggestionAnswer answer1;
+  ASSERT_TRUE(ParseAnswer(json, &answer1));
 
   // Same but with a different answer type.
-  std::unique_ptr<SuggestionAnswer> answer2 =
-      SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->set_type(44);
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  SuggestionAnswer answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.set_type(44);
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with a different type for one of the text fields.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->first_line_.text_fields_[1].type_ = 1;
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.first_line_.text_fields_[1].type_ = 1;
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with different text for one of the text fields.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->first_line_.text_fields_[0].text_ = base::UTF8ToUTF16("some text");
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.first_line_.text_fields_[0].text_ = base::UTF8ToUTF16("some text");
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with a new URL on the second line.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->second_line_.image_url_ = GURL("http://foo.com/bar.png");
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.second_line_.image_url_ = GURL("http://foo.com/bar.png");
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with the additional text removed from the second line.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->second_line_.additional_text_.reset();
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.second_line_.additional_text_.reset();
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with the status text removed from the second line.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer2->second_line_.status_text_.reset();
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer2.second_line_.status_text_.reset();
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with the status text removed from the second line of the first
   // answer.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer1->second_line_.status_text_.reset();
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer1.second_line_.status_text_.reset();
+  EXPECT_FALSE(answer1.Equals(answer2));
 
   // Same but with the additional text removed from the second line of the first
   // answer.
-  answer2 = SuggestionAnswer::copy(answer1.get());
-  EXPECT_TRUE(answer1->Equals(*answer2));
-  answer1->second_line_.additional_text_.reset();
-  EXPECT_FALSE(answer1->Equals(*answer2));
+  answer2 = answer1;
+  EXPECT_TRUE(answer1.Equals(answer2));
+  answer1.second_line_.additional_text_.reset();
+  EXPECT_FALSE(answer1.Equals(answer2));
 }
 
 TEST(SuggestionAnswerTest, EmptyJsonIsInvalid) {
-  ASSERT_FALSE(ParseAnswer(""));
+  SuggestionAnswer answer;
+  ASSERT_FALSE(ParseAnswer("", &answer));
 }
 
 TEST(SuggestionAnswerTest, MalformedJsonIsInvalid) {
-  ASSERT_FALSE(ParseAnswer("} malformed json {"));
+  SuggestionAnswer answer;
+  ASSERT_FALSE(ParseAnswer("} malformed json {", &answer));
 }
 
 TEST(SuggestionAnswerTest, TextFieldsRequireBothTextAndType) {
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\" }] } }, "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 
   json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"tt\": 8 }] } }, "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 }
 
 TEST(SuggestionAnswerTest, ImageLinesMustContainAtLeastOneTextField) {
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }, "
@@ -146,22 +151,23 @@ TEST(SuggestionAnswerTest, ImageLinesMustContainAtLeastOneTextField) {
       "              \"at\": { \"t\": \"slatfatf\", \"tt\": 42 }, "
       "              \"st\": { \"t\": \"oh hi, Mark\", \"tt\": 729347 } } } "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 }
 
 TEST(SuggestionAnswerTest, ExactlyTwoLinesRequired) {
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 
   json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }] } } "
       "] }";
-  ASSERT_TRUE(ParseAnswer(json));
+  ASSERT_TRUE(ParseAnswer(json, &answer));
 
   json =
       "{ \"l\": ["
@@ -169,17 +175,18 @@ TEST(SuggestionAnswerTest, ExactlyTwoLinesRequired) {
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }] } } "
       "  { \"il\": { \"t\": [{ \"t\": \"yet more text\", \"tt\": 13 }] } } "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 }
 
 TEST(SuggestionAnswerTest, URLPresent) {
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }], "
       "              \"i\": { \"d\": \"\" } } } "
       "] }";
-  ASSERT_FALSE(ParseAnswer(json));
+  ASSERT_FALSE(ParseAnswer(json, &answer));
 
   json =
       "{ \"l\": ["
@@ -187,7 +194,7 @@ TEST(SuggestionAnswerTest, URLPresent) {
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }], "
       "              \"i\": { \"d\": \"https://example.com/foo.jpg\" } } } "
       "] }";
-  ASSERT_TRUE(ParseAnswer(json));
+  ASSERT_TRUE(ParseAnswer(json, &answer));
 
   json =
       "{ \"l\": ["
@@ -195,10 +202,11 @@ TEST(SuggestionAnswerTest, URLPresent) {
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }], "
       "              \"i\": { \"d\": \"//example.com/foo.jpg\" } } } "
       "] }";
-  ASSERT_TRUE(ParseAnswer(json));
+  ASSERT_TRUE(ParseAnswer(json, &answer));
 }
 
 TEST(SuggestionAnswerTest, ValidPropertyValues) {
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }, "
@@ -208,12 +216,11 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
       "              \"at\": { \"t\": \"slatfatf\", \"tt\": 42 }, "
       "              \"st\": { \"t\": \"oh hi, Mark\", \"tt\": 729347 } } } "
       "] }";
-  std::unique_ptr<SuggestionAnswer> answer = ParseAnswer(json);
-  ASSERT_TRUE(answer);
-  answer->set_type(420527);
-  EXPECT_EQ(420527, answer->type());
+  ASSERT_TRUE(ParseAnswer(json, &answer));
+  answer.set_type(420527);
+  EXPECT_EQ(420527, answer.type());
 
-  const SuggestionAnswer::ImageLine& first_line = answer->first_line();
+  const SuggestionAnswer::ImageLine& first_line = answer.first_line();
   EXPECT_EQ(2U, first_line.text_fields().size());
   EXPECT_EQ(base::UTF8ToUTF16("text"), first_line.text_fields()[0].text());
   EXPECT_EQ(8, first_line.text_fields()[0].type());
@@ -228,7 +235,7 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
   EXPECT_TRUE(first_line.image_url().is_valid());
   EXPECT_EQ(GURL("https://example.com/foo.jpg"), first_line.image_url());
 
-  const SuggestionAnswer::ImageLine& second_line = answer->second_line();
+  const SuggestionAnswer::ImageLine& second_line = answer.second_line();
   EXPECT_EQ(1U, second_line.text_fields().size());
   EXPECT_EQ(
       base::UTF8ToUTF16("other text"), second_line.text_fields()[0].text());
@@ -252,36 +259,96 @@ TEST(SuggestionAnswerTest, ValidPropertyValues) {
 
 TEST(SuggestionAnswerTest, AddImageURLsTo) {
   SuggestionAnswer::URLs urls;
+  SuggestionAnswer answer;
   std::string json =
       "{ \"l\": ["
       "  { \"il\": { \"t\": [{ \"t\": \"text\", \"tt\": 8 }] } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 5 }] } }] }";
-  std::unique_ptr<SuggestionAnswer> answer = ParseAnswer(json);
-  ASSERT_TRUE(answer);
-  answer->AddImageURLsTo(&urls);
+  ASSERT_TRUE(ParseAnswer(json, &answer));
+  answer.AddImageURLsTo(&urls);
   ASSERT_EQ(0U, urls.size());
 
+  {
+    // Test with the image URL supplied by the "i" (image) param.
+    json =
+        "{ \"i\": { \"d\": \"https://gstatic.com/foo.png\", \"t\": 3 },"
+        "  \"l\" : ["
+        "    { \"il\": { \"t\": [{ \"t\": \"some text\", \"tt\": 5 }] } },"
+        "    { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 8 }] } }"
+        "  ]}";
+    ASSERT_TRUE(ParseAnswer(json, &answer));
+    answer.AddImageURLsTo(&urls);
+    ASSERT_EQ(1U, urls.size());
+    EXPECT_EQ(GURL("https://gstatic.com/foo.png"), urls[0]);
+    urls.clear();
+  }
+
+  // Test with the image URL supplied by the "il" (image line) param.
   json =
       "{ \"l\" : ["
       "  { \"il\": { \"t\": [{ \"t\": \"some text\", \"tt\": 5 }] } },"
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 8 }],"
       "              \"i\": { \"d\": \"//gstatic.com/foo.png\", \"t\": 3 }}}]}";
-  answer = ParseAnswer(json);
-  ASSERT_TRUE(answer);
-  answer->AddImageURLsTo(&urls);
+  ASSERT_TRUE(ParseAnswer(json, &answer));
+  answer.AddImageURLsTo(&urls);
   ASSERT_EQ(1U, urls.size());
   EXPECT_EQ(GURL("https://gstatic.com/foo.png"), urls[0]);
+  urls.clear();
 
+  // Test with image URLs supplied by both the "i" and "il" params. In this
+  // case, prefer the URL provided by the "i" param because the new answer code
+  // uses this.
+  json =
+      "{ \"i\": { \"d\": \"https://gstatic.com/foo.png\", \"t\": 3 },"
+      "  \"l\" : ["
+      "    { \"il\": { \"t\": [{ \"t\": \"some text\", \"tt\": 5 }] } },"
+      "    { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 8 }],"
+      "              \"i\": { \"d\": \"//gstatic.com/bar.png\", \"t\": 3 }}}"
+      "  ]}";
+  ASSERT_TRUE(ParseAnswer(json, &answer));
+  answer.AddImageURLsTo(&urls);
+  ASSERT_EQ(1U, urls.size());
+  EXPECT_EQ(GURL("https://gstatic.com/foo.png"), urls[0]);
+  urls.clear();
+
+  // Test with the image URL supplied by both "il" params. In this case, prefer
+  // the URL in the second line as the first is currently not used.
   json =
       "{ \"l\" : ["
       "  { \"il\": { \"t\": [{ \"t\": \"some text\", \"tt\": 5 }],"
       "              \"i\": { \"d\": \"//gstatic.com/foo.png\" } } }, "
       "  { \"il\": { \"t\": [{ \"t\": \"other text\", \"tt\": 8 }],"
       "              \"i\": { \"d\": \"//gstatic.com/bar.jpg\", \"t\": 3 }}}]}";
-  answer = ParseAnswer(json);
-  ASSERT_TRUE(answer);
-  answer->AddImageURLsTo(&urls);
-  ASSERT_EQ(3U, urls.size());
-  EXPECT_EQ(GURL("https://gstatic.com/foo.png"), urls[1]);
-  EXPECT_EQ(GURL("https://gstatic.com/bar.jpg"), urls[2]);
+  ASSERT_TRUE(ParseAnswer(json, &answer));
+  answer.AddImageURLsTo(&urls);
+  ASSERT_EQ(1U, urls.size());
+  EXPECT_EQ(GURL("https://gstatic.com/bar.jpg"), urls[0]);
+}
+
+TEST(SuggestionAnswerTest, LogAnswerUsed) {
+  {
+    base::HistogramTester histograms;
+    base::Optional<SuggestionAnswer> answer;
+    SuggestionAnswer::LogAnswerUsed(answer);
+    histograms.ExpectUniqueSample(SuggestionAnswer::kAnswerUsedUmaHistogramName,
+                                  0, 1);
+  }
+
+  {
+    base::HistogramTester histograms;
+    SuggestionAnswer answer;
+    answer.set_type(8);
+    SuggestionAnswer::LogAnswerUsed(answer);
+    histograms.ExpectUniqueSample(SuggestionAnswer::kAnswerUsedUmaHistogramName,
+                                  8, 1);
+  }
+
+  {
+    base::HistogramTester histograms;
+    SuggestionAnswer answer;
+    answer.set_type(5);
+    SuggestionAnswer::LogAnswerUsed(answer);
+    histograms.ExpectUniqueSample(SuggestionAnswer::kAnswerUsedUmaHistogramName,
+                                  5, 1);
+  }
 }

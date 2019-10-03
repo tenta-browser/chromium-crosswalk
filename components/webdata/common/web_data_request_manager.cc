@@ -10,7 +10,7 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_task_runner_handle.h"
 
@@ -105,9 +105,8 @@ void WebDataRequestManager::RequestCompleted(
   // effectively does a std::move() on |request|!
   scoped_refptr<base::SequencedTaskRunner> task_runner =
       request->GetTaskRunner();
-  auto task =
-      base::BindOnce(&WebDataRequestManager::RequestCompletedOnThread, this,
-                     base::Passed(&request), base::Passed(&result));
+  auto task = base::BindOnce(&WebDataRequestManager::RequestCompletedOnThread,
+                             this, std::move(request), std::move(result));
   if (task_runner)
     task_runner->PostTask(FROM_HERE, std::move(task));
   else

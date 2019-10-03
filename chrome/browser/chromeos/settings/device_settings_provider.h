@@ -19,9 +19,11 @@
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/pref_value_map.h"
 
+class PrefService;
+
 namespace base {
 class Value;
-}
+}  // namespace base
 
 namespace enterprise_management {
 class ChromeDeviceSettingsProto;
@@ -30,6 +32,8 @@ class ChromeDeviceSettingsProto;
 namespace chromeos {
 
 // CrosSettingsProvider implementation that works with device settings.
+// Dependency: chromeos::InstallAttributes must be initialized while this class
+// is in use.
 //
 // Note that the write path is in the process of being migrated to
 // OwnerSettingsServiceChromeOS (crbug.com/230018).
@@ -42,7 +46,8 @@ class DeviceSettingsProvider
   typedef base::Callback<policy::DeviceMode(void)> GetDeviceModeCallback;
 
   DeviceSettingsProvider(const NotifyObserversCallback& notify_cb,
-                         DeviceSettingsService* device_settings_service);
+                         DeviceSettingsService* device_settings_service,
+                         PrefService* pref_service);
   ~DeviceSettingsProvider() override;
 
   // Returns true if |path| is handled by this provider.
@@ -53,9 +58,22 @@ class DeviceSettingsProvider
   TrustedStatus PrepareTrustedValues(const base::Closure& callback) override;
   bool HandlesSetting(const std::string& path) const override;
 
+  // Helper function that decodes policies from provided proto into the pref
+  // map.
+  static void DecodePolicies(
+      const enterprise_management::ChromeDeviceSettingsProto& policy,
+      PrefValueMap* new_values_cache);
+
+  void DoSetForTesting(const std::string& path, const base::Value& value) {
+    DoSet(path, value);
+  }
+
  private:
-  // CrosSettingsProvider implementation:
-  void DoSet(const std::string& path, const base::Value& value) override;
+  // TODO(https://crbug.com/433840): There are no longer any actual callers of
+  // DeviceSettingsProvider::DoSet, but it is still called in the tests.
+  // Still TODO: remove the calls from the test, and remove the extra state
+  // that this class will no longer need (ie, cached written values).
+  void DoSet(const std::string& path, const base::Value& value);
 
   // DeviceSettingsService::Observer implementation:
   void OwnershipStatusChanged() override;
@@ -100,6 +118,8 @@ class DeviceSettingsProvider
   std::vector<base::Closure> callbacks_;
 
   DeviceSettingsService* device_settings_service_;
+  PrefService* local_state_;
+
   mutable PrefValueMap migration_values_;
 
   TrustedStatus trusted_status_;
@@ -127,6 +147,11 @@ class DeviceSettingsProvider
   FRIEND_TEST_ALL_PREFIXES(DeviceSettingsProviderTest,
                            PolicyFailedPermanentlyNotification);
   FRIEND_TEST_ALL_PREFIXES(DeviceSettingsProviderTest, PolicyLoadNotification);
+  // TODO(https://crbug.com/433840) Remove these once DoSet is removed.
+  FRIEND_TEST_ALL_PREFIXES(DeviceSettingsProviderTest, SetPrefFailed);
+  FRIEND_TEST_ALL_PREFIXES(DeviceSettingsProviderTest, SetPrefSucceed);
+  FRIEND_TEST_ALL_PREFIXES(DeviceSettingsProviderTest, SetPrefTwice);
+
   DISALLOW_COPY_AND_ASSIGN(DeviceSettingsProvider);
 };
 

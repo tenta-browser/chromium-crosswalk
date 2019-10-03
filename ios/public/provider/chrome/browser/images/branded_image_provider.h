@@ -5,12 +5,15 @@
 #ifndef IOS_PUBLIC_PROVIDER_CHROME_BROWSER_IMAGES_BRANDED_IMAGE_PROVIDER_H_
 #define IOS_PUBLIC_PROVIDER_CHROME_BROWSER_IMAGES_BRANDED_IMAGE_PROVIDER_H_
 
-#include "base/macros.h"
-#include "ios/public/provider/chrome/browser/images/whats_new_icon.h"
+#import <UIKit/UIKit.h>
 
-@class UIImage;
+#include "base/macros.h"
+#include "ios/public/provider/chrome/browser/images/branded_image_icon_types.h"
 
 // BrandedImageProvider vends images that contain embedder-specific branding.
+// When adding method to this class, do not forget to add Chromium specific
+// implementation to ChromiumBrandedImageProvider (the file may not be in the
+// Xcode project if you are using internal sources).
 class BrandedImageProvider {
  public:
   BrandedImageProvider();
@@ -36,14 +39,24 @@ class BrandedImageProvider {
   // the signin confirmation screen.
   virtual UIImage* GetSigninConfirmationPersonalizeServicesImage();
 
-  // Sets |image_id| to contain the resource id corresponding to the 24pt x 24pt
-  // image for the toolbar voice search button.  If this method returns false,
-  // |image_id| is invalid and callers should fall back to a default image.  The
-  // returned image should be used for all toolbar styles and all button states.
-  virtual bool GetToolbarVoiceSearchButtonImageId(int* image_id);
+  // Returns two 24pt x 24pt images to use for toolbar voice search button. The
+  // images corresponds to the normal and pressed state.
+  virtual NSArray<UIImage*>* GetToolbarVoiceSearchButtonImages(bool incognito);
 
   // Returns the 24pt x 24pt image corresponding to the given icon |type|.
   virtual UIImage* GetWhatsNewIconImage(WhatsNewIcon type);
+
+  // Returns the 24pt x 24pt image to use for the "Download Google Drive" icon
+  // on Download Manager UI.
+  virtual UIImage* GetDownloadGoogleDriveImage();
+
+  // Returns the 28pt x 28pt image to use for the "Search" icon in the toolbar.
+  virtual UIImage* GetToolbarSearchIcon(SearchEngineIcon type,
+                                        bool dark_version);
+
+  // Returns the 30pt x 30pt image to use for the fallback icon for answers in
+  // the omnibox popup and in the omnibox as the default search engine icon.
+  virtual UIImage* GetOmniboxAnswerIcon();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BrandedImageProvider);

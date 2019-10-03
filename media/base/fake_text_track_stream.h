@@ -6,11 +6,14 @@
 #define MEDIA_BASE_FAKE_TEXT_TRACK_STREAM_H_
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/video_decoder_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+namespace base {
+class SingleThreadTaskRunner;
+}
 
 namespace media {
 
@@ -23,6 +26,7 @@ class FakeTextTrackStream : public DemuxerStream {
 
   // DemuxerStream implementation.
   void Read(const ReadCB&) override;
+  bool IsReadPending() const override;
   MOCK_METHOD0(audio_decoder_config, AudioDecoderConfig());
   MOCK_METHOD0(video_decoder_config, VideoDecoderConfig());
   Type type() const override;

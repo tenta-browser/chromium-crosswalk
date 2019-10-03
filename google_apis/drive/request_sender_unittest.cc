@@ -4,7 +4,8 @@
 
 #include "google_apis/drive/request_sender.h"
 
-#include "base/memory/ptr_util.h"
+#include <utility>
+
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "google_apis/drive/base_requests.h"
@@ -42,7 +43,7 @@ class TestAuthService : public DummyAuthService {
 
     if (refresh_token() == kTestRefreshToken) {
       const std::string token =
-          kTestAccessToken + base::IntToString(auth_try_count_);
+          kTestAccessToken + base::NumberToString(auth_try_count_);
       set_access_token(token);
       callback.Run(HTTP_SUCCESS, token);
     } else {
@@ -60,9 +61,9 @@ class RequestSenderTest : public testing::Test {
  protected:
   RequestSenderTest()
       : auth_service_(new TestAuthService),
-        request_sender_(auth_service_,
-                        NULL,
-                        NULL,
+        request_sender_(base::WrapUnique(auth_service_),
+                        nullptr,
+                        nullptr,
                         "dummy-user-agent",
                         TRAFFIC_ANNOTATION_FOR_TESTS) {
     auth_service_->set_refresh_token(kTestRefreshToken);
@@ -140,7 +141,7 @@ class TestRequest : public AuthenticatedRequestInterface {
 TEST_F(RequestSenderTest, StartAndFinishRequest) {
   bool start_called  = false;
   FinishReason finish_reason = NONE;
-  std::unique_ptr<TestRequest> request = base::MakeUnique<TestRequest>(
+  std::unique_ptr<TestRequest> request = std::make_unique<TestRequest>(
       &request_sender_, &start_called, &finish_reason);
   TestRequest* request_ptr = request.get();
   base::WeakPtr<AuthenticatedRequestInterface> weak_ptr =
@@ -165,7 +166,7 @@ TEST_F(RequestSenderTest, StartAndFinishRequest) {
 TEST_F(RequestSenderTest, StartAndCancelRequest) {
   bool start_called  = false;
   FinishReason finish_reason = NONE;
-  std::unique_ptr<TestRequest> request = base::MakeUnique<TestRequest>(
+  std::unique_ptr<TestRequest> request = std::make_unique<TestRequest>(
       &request_sender_, &start_called, &finish_reason);
   base::WeakPtr<AuthenticatedRequestInterface> weak_ptr = request->GetWeakPtr();
 
@@ -185,7 +186,7 @@ TEST_F(RequestSenderTest, NoRefreshToken) {
 
   bool start_called  = false;
   FinishReason finish_reason = NONE;
-  std::unique_ptr<TestRequest> request = base::MakeUnique<TestRequest>(
+  std::unique_ptr<TestRequest> request = std::make_unique<TestRequest>(
       &request_sender_, &start_called, &finish_reason);
   base::WeakPtr<AuthenticatedRequestInterface> weak_ptr = request->GetWeakPtr();
 
@@ -204,7 +205,7 @@ TEST_F(RequestSenderTest, ValidRefreshTokenAndNoAccessToken) {
 
   bool start_called  = false;
   FinishReason finish_reason = NONE;
-  std::unique_ptr<TestRequest> request = base::MakeUnique<TestRequest>(
+  std::unique_ptr<TestRequest> request = std::make_unique<TestRequest>(
       &request_sender_, &start_called, &finish_reason);
   TestRequest* request_ptr = request.get();
   base::WeakPtr<AuthenticatedRequestInterface> weak_ptr =
@@ -226,7 +227,7 @@ TEST_F(RequestSenderTest, ValidRefreshTokenAndNoAccessToken) {
 TEST_F(RequestSenderTest, AccessTokenRejectedSeveralTimes) {
   bool start_called  = false;
   FinishReason finish_reason = NONE;
-  std::unique_ptr<TestRequest> request = base::MakeUnique<TestRequest>(
+  std::unique_ptr<TestRequest> request = std::make_unique<TestRequest>(
       &request_sender_, &start_called, &finish_reason);
   TestRequest* request_ptr = request.get();
   base::WeakPtr<AuthenticatedRequestInterface> weak_ptr =

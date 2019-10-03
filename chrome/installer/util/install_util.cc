@@ -9,30 +9,36 @@
 
 #include <shellapi.h>
 #include <shlobj.h>
-#include <shlwapi.h>
+
+#include <algorithm>
+#include <iterator>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/values.h"
-#include "base/version.h"
 #include "base/win/registry.h"
+#include "base/win/shlwapi.h"
+#include "base/win/shortcut.h"
+#include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/install_util.h"
-#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/installation_state.h"
+#include "chrome/installer/util/installer_util_strings.h"
 #include "chrome/installer/util/l10n_string_util.h"
+#include "chrome/installer/util/shell_util.h"
 #include "chrome/installer/util/util_constants.h"
 #include "chrome/installer/util/work_item_list.h"
 
@@ -41,7 +47,27 @@ using installer::ProductState;
 
 namespace {
 
+// DowngradeVersion holds the version from which Chrome was downgraded. In case
+// of multiple downgrades (e.g., 75->74->73), it retains the highest version
+// installed prior to any downgrades. DowngradeVersion is deleted on upgrade
+// once Chrome reaches the version from which it was downgraded.
 const wchar_t kRegDowngradeVersion[] = L"DowngradeVersion";
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class StartMenuShortcutStatus {
+  kSuccess = 0,
+  kGetShortcutPathFailed = 1,
+  kShortcutMissing = 2,
+  kToastActivatorClsidIncorrect = 3,
+  kReadShortcutPropertyFailed = 4,
+  kMaxValue = kReadShortcutPropertyFailed,
+};
+
+void LogStartMenuShortcutStatus(StartMenuShortcutStatus status) {
+  UMA_HISTOGRAM_ENUMERATION("Notifications.Windows.StartMenuShortcutStatus",
+                            status);
+}
 
 // Creates a zero-sized non-decorated foreground window that doesn't appear
 // in the taskbar. This is used as a parent window for calls to ShellExecuteEx
@@ -77,6 +103,24 @@ HWND CreateUACForegroundWindow() {
     ::SetForegroundWindow(foreground_window);
   }
   return foreground_window;
+}
+
+// Returns Registry key path of Chrome policies. This is used by the policies
+// that are shared between Chrome and installer.
+base::string16 GetChromePoliciesRegistryPath() {
+  base::string16 key_path = L"SOFTWARE\\Policies\\";
+  install_static::AppendChromeInstallSubDirectory(
+      install_static::InstallDetails::Get().mode(), false /* !include_suffix */,
+      &key_path);
+  return key_path;
+}
+
+// Retruns the registry key path and value name where the cloud management
+// enrollment option is stored.
+void GetCloudManagementBlockOnFailureRegistryPath(base::string16* key_path,
+                                                  base::string16* value_name) {
+  *key_path = GetChromePoliciesRegistryPath();
+  *value_name = L"CloudManagementEnrollmentMandatory";
 }
 
 }  // namespace
@@ -159,64 +203,54 @@ base::CommandLine InstallUtil::GetChromeUninstallCmd(bool system_install) {
   return base::CommandLine(base::CommandLine::NO_PROGRAM);
 }
 
-void InstallUtil::GetChromeVersion(BrowserDistribution* dist,
-                                   bool system_install,
-                                   base::Version* version) {
-  DCHECK(dist);
+base::Version InstallUtil::GetChromeVersion(bool system_install) {
+  base::Version version;
   RegKey key;
-  HKEY reg_root = (system_install) ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  LONG result = key.Open(reg_root,
-                         dist->GetVersionKey().c_str(),
-                         KEY_QUERY_VALUE | KEY_WOW64_32KEY);
-
   base::string16 version_str;
-  if (result == ERROR_SUCCESS)
-    result = key.ReadValue(google_update::kRegVersionField, &version_str);
-
-  *version = base::Version();
-  if (result == ERROR_SUCCESS && !version_str.empty()) {
-    VLOG(1) << "Existing " << dist->GetDisplayName() << " version found "
-            << version_str;
-    *version = base::Version(base::UTF16ToASCII(version_str));
-  } else {
-    DCHECK_EQ(ERROR_FILE_NOT_FOUND, result);
-    VLOG(1) << "No existing " << dist->GetDisplayName()
-            << " install found.";
+  if (key.Open(system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
+               install_static::GetClientsKeyPath().c_str(),
+               KEY_QUERY_VALUE | KEY_WOW64_32KEY) == ERROR_SUCCESS &&
+      key.ReadValue(google_update::kRegVersionField, &version_str) ==
+          ERROR_SUCCESS &&
+      !version_str.empty()) {
+    version = base::Version(base::UTF16ToASCII(version_str));
   }
+
+  if (version.IsValid())
+    VLOG(1) << "Existing Chrome version found: " << version.GetString();
+  else
+    VLOG(1) << "No existing Chrome install found.";
+
+  return version;
 }
 
-void InstallUtil::GetCriticalUpdateVersion(BrowserDistribution* dist,
-                                           bool system_install,
-                                           base::Version* version) {
-  DCHECK(dist);
+base::Version InstallUtil::GetCriticalUpdateVersion() {
+  base::Version version;
   RegKey key;
-  HKEY reg_root = (system_install) ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  LONG result = key.Open(reg_root,
-                         dist->GetVersionKey().c_str(),
-                         KEY_QUERY_VALUE | KEY_WOW64_32KEY);
-
   base::string16 version_str;
-  if (result == ERROR_SUCCESS)
-    result = key.ReadValue(google_update::kRegCriticalVersionField,
-                           &version_str);
-
-  *version = base::Version();
-  if (result == ERROR_SUCCESS && !version_str.empty()) {
-    VLOG(1) << "Critical Update version for " << dist->GetDisplayName()
-            << " found " << version_str;
-    *version = base::Version(base::UTF16ToASCII(version_str));
-  } else {
-    DCHECK_EQ(ERROR_FILE_NOT_FOUND, result);
-    VLOG(1) << "No existing " << dist->GetDisplayName()
-            << " install found.";
+  if (key.Open(install_static::IsSystemInstall() ? HKEY_LOCAL_MACHINE
+                                                 : HKEY_CURRENT_USER,
+               install_static::GetClientsKeyPath().c_str(),
+               KEY_QUERY_VALUE | KEY_WOW64_32KEY) == ERROR_SUCCESS &&
+      key.ReadValue(google_update::kRegCriticalVersionField, &version_str) ==
+          ERROR_SUCCESS &&
+      !version_str.empty()) {
+    version = base::Version(base::UTF16ToASCII(version_str));
   }
+
+  if (version.IsValid())
+    VLOG(1) << "Critical Update version found: " << version.GetString();
+  else
+    VLOG(1) << "No existing Chrome install found.";
+
+  return version;
 }
 
 bool InstallUtil::IsOSSupported() {
   // We do not support anything prior to Windows 7.
   VLOG(1) << base::SysInfo::OperatingSystemName() << ' '
           << base::SysInfo::OperatingSystemVersion();
-  return base::win::GetVersion() >= base::win::VERSION_WIN7;
+  return base::win::GetVersion() >= base::win::Version::WIN7;
 }
 
 void InstallUtil::AddInstallerResultItems(
@@ -273,16 +307,63 @@ bool InstallUtil::IsPerUserInstall() {
 bool InstallUtil::IsFirstRunSentinelPresent() {
   // TODO(msw): Consolidate with first_run::internal::IsFirstRunSentinelPresent.
   base::FilePath user_data_dir;
-  return !PathService::Get(chrome::DIR_USER_DATA, &user_data_dir) ||
+  return !base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir) ||
          base::PathExists(user_data_dir.Append(chrome::kFirstRunSentinel));
 }
 
 // static
-bool InstallUtil::GetEULASentinelFilePath(base::FilePath* path) {
-  base::FilePath user_data_dir;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+bool InstallUtil::IsStartMenuShortcutWithActivatorGuidInstalled() {
+  base::FilePath shortcut_path;
+
+  if (!ShellUtil::GetShortcutPath(ShellUtil::SHORTCUT_LOCATION_START_MENU_ROOT,
+                                  install_static::IsSystemInstall()
+                                      ? ShellUtil::SYSTEM_LEVEL
+                                      : ShellUtil::CURRENT_USER,
+                                  &shortcut_path)) {
+    LogStartMenuShortcutStatus(StartMenuShortcutStatus::kGetShortcutPathFailed);
     return false;
-  *path = user_data_dir.Append(installer::kEULASentinelFile);
+  }
+
+  shortcut_path = shortcut_path.Append(GetShortcutName() + installer::kLnkExt);
+  if (!base::PathExists(shortcut_path)) {
+    LogStartMenuShortcutStatus(StartMenuShortcutStatus::kShortcutMissing);
+    return false;
+  }
+
+  base::win::ShortcutProperties properties;
+  if (!base::win::ResolveShortcutProperties(
+          shortcut_path,
+          base::win::ShortcutProperties::PROPERTIES_TOAST_ACTIVATOR_CLSID,
+          &properties)) {
+    LogStartMenuShortcutStatus(
+        StartMenuShortcutStatus::kReadShortcutPropertyFailed);
+    return false;
+  }
+
+  if (!::IsEqualCLSID(properties.toast_activator_clsid,
+                      install_static::GetToastActivatorClsid())) {
+    LogStartMenuShortcutStatus(
+        StartMenuShortcutStatus::kToastActivatorClsidIncorrect);
+
+    return false;
+  }
+
+  LogStartMenuShortcutStatus(StartMenuShortcutStatus::kSuccess);
+  return true;
+}
+
+// static
+base::string16 InstallUtil::GetToastActivatorRegistryPath() {
+  return STRING16_LITERAL("Software\\Classes\\CLSID\\") +
+         base::win::String16FromGUID(install_static::GetToastActivatorClsid());
+}
+
+// static
+bool InstallUtil::GetEulaSentinelFilePath(base::FilePath* path) {
+  base::FilePath user_data_dir;
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+    return false;
+  *path = user_data_dir.Append(installer::kEulaSentinelFile);
   return true;
 }
 
@@ -294,8 +375,8 @@ bool InstallUtil::DeleteRegistryKey(HKEY root_key,
                                     REGSAM wow64_access) {
   VLOG(1) << "Deleting registry key " << key_path;
   RegKey target_key;
-  LONG result = target_key.Open(root_key, key_path.c_str(),
-                                KEY_READ | KEY_WRITE | wow64_access);
+  LONG result =
+      target_key.Open(root_key, key_path.c_str(), DELETE | wow64_access);
 
   if (result == ERROR_FILE_NOT_FOUND)
     return true;
@@ -379,8 +460,9 @@ InstallUtil::ConditionalDeleteResult InstallUtil::DeleteRegistryValueIf(
                  << (value_name ? value_name : L"(Default)")
                  << " error: " << result;
       delete_result = DELETE_FAILED;
+    } else {
+      delete_result = DELETED;
     }
-    delete_result = DELETED;
   }
   return delete_result;
 }
@@ -422,9 +504,9 @@ void InstallUtil::AppendModeSwitch(base::CommandLine* command_line) {
 // static
 base::string16 InstallUtil::GetCurrentDate() {
   static const wchar_t kDateFormat[] = L"yyyyMMdd";
-  wchar_t date_str[arraysize(kDateFormat)] = {0};
-  int len = GetDateFormatW(LOCALE_INVARIANT, 0, NULL, kDateFormat,
-                           date_str, arraysize(date_str));
+  wchar_t date_str[base::size(kDateFormat)] = {0};
+  int len = GetDateFormatW(LOCALE_INVARIANT, 0, NULL, kDateFormat, date_str,
+                           base::size(date_str));
   if (len) {
     --len;  // Subtract terminating \0.
   } else {
@@ -453,43 +535,152 @@ bool InstallUtil::ProgramCompare::GetInfo(const base::File& file,
 }
 
 // static
-base::Version InstallUtil::GetDowngradeVersion(
-    bool system_install,
-    const BrowserDistribution* dist) {
-  DCHECK(dist);
-  base::win::RegKey key;
+base::Optional<base::Version> InstallUtil::GetDowngradeVersion() {
+  RegKey key;
   base::string16 downgrade_version;
-  if (key.Open(system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
-               dist->GetStateKey().c_str(),
+  if (key.Open(install_static::IsSystemInstall() ? HKEY_LOCAL_MACHINE
+                                                 : HKEY_CURRENT_USER,
+               install_static::GetClientStateKeyPath().c_str(),
                KEY_QUERY_VALUE | KEY_WOW64_32KEY) != ERROR_SUCCESS ||
       key.ReadValue(kRegDowngradeVersion, &downgrade_version) !=
-          ERROR_SUCCESS) {
-    return base::Version();
+          ERROR_SUCCESS ||
+      downgrade_version.empty()) {
+    return base::nullopt;
   }
-  return base::Version(base::UTF16ToASCII(downgrade_version));
+  base::Version version(base::UTF16ToASCII(downgrade_version));
+  if (!version.IsValid())
+    return base::nullopt;
+  return version;
 }
 
 // static
 void InstallUtil::AddUpdateDowngradeVersionItem(
-    bool system_install,
+    HKEY root,
     const base::Version* current_version,
     const base::Version& new_version,
-    const BrowserDistribution* dist,
     WorkItemList* list) {
   DCHECK(list);
-  DCHECK(dist);
-  base::Version downgrade_version = GetDowngradeVersion(system_install, dist);
-  HKEY root = system_install ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-  if (!current_version ||
-      (*current_version <= new_version &&
-       ((!downgrade_version.IsValid() || downgrade_version <= new_version)))) {
-    list->AddDeleteRegValueWorkItem(root, dist->GetStateKey(), KEY_WOW64_32KEY,
-                                    kRegDowngradeVersion);
-  } else if (*current_version > new_version && !downgrade_version.IsValid()) {
-    list->AddSetRegValueWorkItem(
-        root, dist->GetStateKey(), KEY_WOW64_32KEY, kRegDowngradeVersion,
-        base::ASCIIToUTF16(current_version->GetString()), true);
+  const auto downgrade_version = GetDowngradeVersion();
+  if (current_version && new_version < *current_version) {
+    // This is a downgrade. Write the value if this is the first one (i.e., no
+    // previous value exists). Otherwise, leave any existing value in place.
+    if (!downgrade_version) {
+      list->AddSetRegValueWorkItem(
+          root, install_static::GetClientStateKeyPath(), KEY_WOW64_32KEY,
+          kRegDowngradeVersion,
+          base::ASCIIToUTF16(current_version->GetString()), true);
+    }
+  } else if (!current_version || new_version >= downgrade_version) {
+    // This is a new install or an upgrade to/past a previous DowngradeVersion.
+    list->AddDeleteRegValueWorkItem(root,
+                                    install_static::GetClientStateKeyPath(),
+                                    KEY_WOW64_32KEY, kRegDowngradeVersion);
   }
+}
+
+// static
+void InstallUtil::GetMachineLevelUserCloudPolicyEnrollmentTokenRegistryPath(
+    base::string16* key_path,
+    base::string16* value_name,
+    base::string16* old_value_name) {
+  // This token applies to all installs on the machine, even though only a
+  // system install can set it.  This is to prevent users from doing a user
+  // install of chrome to get around policies.
+  *key_path = GetChromePoliciesRegistryPath();
+  *value_name = L"CloudManagementEnrollmentToken";
+  *old_value_name = L"MachineLevelUserCloudPolicyEnrollmentToken";
+}
+
+// static
+void InstallUtil::GetMachineLevelUserCloudPolicyDMTokenRegistryPath(
+    base::string16* key_path,
+    base::string16* value_name) {
+  // This token applies to all installs on the machine, even though only a
+  // system install can set it.  This is to prevent users from doing a user
+  // install of chrome to get around policies.
+  *key_path = L"SOFTWARE\\";
+  install_static::AppendChromeInstallSubDirectory(
+      install_static::InstallDetails::Get().mode(), false /* !include_suffix */,
+      key_path);
+  key_path->append(L"\\Enrollment");
+  *value_name = L"dmtoken";
+}
+
+// static
+base::string16 InstallUtil::GetMachineLevelUserCloudPolicyEnrollmentToken() {
+  // Because chrome needs to know if machine level user cloud policies must be
+  // initialized even before the entire policy service is brought up, this
+  // helper function exists to directly read the token from the system policies.
+  //
+  // Putting the enrollment token in the system policy area is a convenient
+  // way for administrators to enroll chrome throughout their fleet by pushing
+  // this token via SCCM.
+  // TODO(rogerta): This may not be the best place for the helpers dealing with
+  // the enrollment and/or DM tokens.  See crbug.com/823852 for details.
+  base::string16 key_path;
+  base::string16 value_name;
+  base::string16 old_value_name;
+  GetMachineLevelUserCloudPolicyEnrollmentTokenRegistryPath(
+      &key_path, &value_name, &old_value_name);
+
+  base::string16 value;
+  RegKey key(HKEY_LOCAL_MACHINE, key_path.c_str(), KEY_QUERY_VALUE);
+  if (key.ReadValue(value_name.c_str(), &value) == ERROR_FILE_NOT_FOUND)
+    key.ReadValue(old_value_name.c_str(), &value);
+
+  return value;
+}
+
+// static
+bool InstallUtil::ShouldCloudManagementBlockOnFailure() {
+  base::string16 key_path;
+  base::string16 value_name;
+  GetCloudManagementBlockOnFailureRegistryPath(&key_path, &value_name);
+
+  DWORD value = 0;
+  RegKey(HKEY_LOCAL_MACHINE, key_path.c_str(), KEY_QUERY_VALUE)
+      .ReadValueDW(value_name.c_str(), &value);
+
+  return value != 0;
+}
+
+// static
+base::string16 InstallUtil::GetDisplayName() {
+  return GetShortcutName();
+}
+
+// static
+base::string16 InstallUtil::GetAppDescription() {
+  return installer::GetLocalizedString(IDS_SHORTCUT_TOOLTIP_BASE);
+}
+
+// static
+base::string16 InstallUtil::GetPublisherName() {
+  return installer::GetLocalizedString(IDS_ABOUT_VERSION_COMPANY_NAME_BASE);
+}
+
+// static
+base::string16 InstallUtil::GetShortcutName() {
+  // IDS_PRODUCT_NAME is automatically mapped to the mode-specific shortcut
+  // name; see MODE_SPECIFIC_STRINGS in prebuild/create_string_rc.py.
+  return installer::GetLocalizedString(IDS_PRODUCT_NAME_BASE);
+}
+
+// static
+base::string16 InstallUtil::GetChromeShortcutDirNameDeprecated() {
+  return GetShortcutName();
+}
+
+// static
+base::string16 InstallUtil::GetChromeAppsShortcutDirName() {
+  // IDS_APP_SHORTCUTS_SUBDIR_NAME is automatically mapped to the mode-specific
+  // dir name; see MODE_SPECIFIC_STRINGS in prebuild/create_string_rc.py.
+  return installer::GetLocalizedString(IDS_APP_SHORTCUTS_SUBDIR_NAME_BASE);
+}
+
+// static
+base::string16 InstallUtil::GetLongAppDescription() {
+  return installer::GetLocalizedString(IDS_PRODUCT_DESCRIPTION_BASE);
 }
 
 InstallUtil::ProgramCompare::ProgramCompare(const base::FilePath& path_to_match)
@@ -545,4 +736,26 @@ bool InstallUtil::ProgramCompare::EvaluatePath(
           info.dwVolumeSerialNumber == file_info_.dwVolumeSerialNumber &&
           info.nFileIndexHigh == file_info_.nFileIndexHigh &&
           info.nFileIndexLow == file_info_.nFileIndexLow);
+}
+
+// static
+base::string16 InstallUtil::GuidToSquid(base::StringPiece16 guid) {
+  base::string16 squid;
+  squid.reserve(32);
+  auto* input = guid.begin();
+  auto output = std::back_inserter(squid);
+
+  // Reverse-copy relevant characters, skipping separators.
+  std::reverse_copy(input + 0, input + 8, output);
+  std::reverse_copy(input + 9, input + 13, output);
+  std::reverse_copy(input + 14, input + 18, output);
+  std::reverse_copy(input + 19, input + 21, output);
+  std::reverse_copy(input + 21, input + 23, output);
+  std::reverse_copy(input + 24, input + 26, output);
+  std::reverse_copy(input + 26, input + 28, output);
+  std::reverse_copy(input + 28, input + 30, output);
+  std::reverse_copy(input + 30, input + 32, output);
+  std::reverse_copy(input + 32, input + 34, output);
+  std::reverse_copy(input + 34, input + 36, output);
+  return squid;
 }

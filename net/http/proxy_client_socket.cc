@@ -19,10 +19,12 @@
 
 namespace net {
 
+void ProxyClientSocket::SetStreamPriority(RequestPriority priority) {}
+
 // static
 void ProxyClientSocket::BuildTunnelRequest(
     const HostPortPair& endpoint,
-    const HttpRequestHeaders& auth_headers,
+    const HttpRequestHeaders& extra_headers,
     const std::string& user_agent,
     std::string* request_line,
     HttpRequestHeaders* request_headers) {
@@ -39,7 +41,7 @@ void ProxyClientSocket::BuildTunnelRequest(
   if (!user_agent.empty())
     request_headers->SetHeader(HttpRequestHeaders::kUserAgent, user_agent);
 
-  request_headers->MergeFrom(auth_headers);
+  request_headers->MergeFrom(extra_headers);
 }
 
 // static
@@ -50,26 +52,10 @@ int ProxyClientSocket::HandleProxyAuthChallenge(
   DCHECK(response->headers.get());
   int rv = auth->HandleAuthChallenge(response->headers, response->ssl_info,
                                      false, true, net_log);
-  response->auth_challenge = auth->auth_info();
+  auth->TakeAuthInfo(&response->auth_challenge);
   if (rv == OK)
     return ERR_PROXY_AUTH_REQUESTED;
   return rv;
-}
-
-// static
-void ProxyClientSocket::LogBlockedTunnelResponse(int http_status_code,
-                                                 bool is_https_proxy) {
-  if (is_https_proxy) {
-    UMA_HISTOGRAM_CUSTOM_ENUMERATION(
-        "Net.BlockedTunnelResponse.HttpsProxy",
-        HttpUtil::MapStatusCodeForHistogram(http_status_code),
-        HttpUtil::GetStatusCodesForHistogram());
-  } else {
-    UMA_HISTOGRAM_CUSTOM_ENUMERATION(
-        "Net.BlockedTunnelResponse.HttpProxy",
-        HttpUtil::MapStatusCodeForHistogram(http_status_code),
-        HttpUtil::GetStatusCodesForHistogram());
-  }
 }
 
 // static
@@ -107,30 +93,6 @@ bool ProxyClientSocket::SanitizeProxyAuth(HttpResponseInfo* response) {
   }
 
   response->headers->RemoveHeaders(headers_to_remove);
-
-  return true;
-}
-
-// static
-bool ProxyClientSocket::SanitizeProxyRedirect(HttpResponseInfo* response) {
-  DCHECK(response && response->headers.get());
-
-  std::string location;
-  if (!response->headers->IsRedirect(&location))
-    return false;
-
-  // Return minimal headers; set "Content-Length: 0" to ignore response body.
-  std::string fake_response_headers = base::StringPrintf(
-      "HTTP/1.0 302 Found\n"
-      "Location: %s\n"
-      "Content-Length: 0\n"
-      "Connection: close\n"
-      "\n",
-      location.c_str());
-  std::string raw_headers =
-      HttpUtil::AssembleRawHeaders(fake_response_headers.data(),
-                                   fake_response_headers.length());
-  response->headers = new HttpResponseHeaders(raw_headers);
 
   return true;
 }

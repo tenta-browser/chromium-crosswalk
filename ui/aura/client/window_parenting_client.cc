@@ -9,14 +9,14 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/class_property.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(aura::client::WindowParentingClient*)
+DEFINE_UI_CLASS_PROPERTY_TYPE(aura::client::WindowParentingClient*)
 
 namespace aura {
 namespace client {
 
 DEFINE_UI_CLASS_PROPERTY_KEY(WindowParentingClient*,
-                          kRootWindowWindowParentingClientKey,
-                          NULL);
+                             kRootWindowWindowParentingClientKey,
+                             NULL)
 
 void SetWindowParentingClient(Window* window,
                               WindowParentingClient* window_tree_client) {

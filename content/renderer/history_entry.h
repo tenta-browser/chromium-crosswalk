@@ -38,12 +38,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebHistoryItem.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_history_item.h"
 
 namespace content {
 
@@ -84,7 +83,7 @@ class CONTENT_EXPORT HistoryEntry {
  private:
   std::unique_ptr<HistoryNode> root_;
 
-  base::WeakPtrFactory<HistoryEntry> weak_ptr_factory_;
+  base::WeakPtrFactory<HistoryEntry> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HistoryEntry);
 };

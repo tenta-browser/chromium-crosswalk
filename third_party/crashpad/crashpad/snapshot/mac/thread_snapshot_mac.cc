@@ -16,7 +16,7 @@
 
 #include "base/logging.h"
 #include "snapshot/mac/cpu_context_mac.h"
-#include "snapshot/mac/process_reader.h"
+#include "snapshot/mac/process_reader_mac.h"
 
 namespace crashpad {
 namespace internal {
@@ -38,8 +38,8 @@ ThreadSnapshotMac::~ThreadSnapshotMac() {
 }
 
 bool ThreadSnapshotMac::Initialize(
-    ProcessReader* process_reader,
-    const ProcessReader::Thread& process_reader_thread) {
+    ProcessReaderMac* process_reader,
+    const ProcessReaderMac::Thread& process_reader_thread) {
   INITIALIZATION_STATE_SET_INITIALIZING(initialized_);
 
   thread_ = process_reader_thread.port;
@@ -49,7 +49,7 @@ bool ThreadSnapshotMac::Initialize(
   thread_specific_data_address_ =
       process_reader_thread.thread_specific_data_address;
 
-  stack_.Initialize(process_reader,
+  stack_.Initialize(process_reader->Memory(),
                     process_reader_thread.stack_region_address,
                     process_reader_thread.stack_region_size);
 

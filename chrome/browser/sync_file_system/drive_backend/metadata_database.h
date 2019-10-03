@@ -14,7 +14,6 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -403,7 +402,7 @@ class MetadataDatabase {
 
   std::unique_ptr<MetadataDatabaseIndexInterface> index_;
 
-  base::WeakPtrFactory<MetadataDatabase> weak_ptr_factory_;
+  base::WeakPtrFactory<MetadataDatabase> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MetadataDatabase);
 };

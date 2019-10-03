@@ -3,20 +3,18 @@
 // found in the LICENSE file.
 
 #include "chromecast/base/metrics/cast_metrics_helper.h"
-#include "jni/CastMetricsHelper_jni.h"
+#include "chromecast/browser/jni_headers/CastMetricsHelper_jni.h"
 
 using base::android::JavaParamRef;
 
 namespace chromecast {
 namespace shell {
 
-void JNI_CastMetricsHelper_LogMediaPlay(JNIEnv* env,
-                                        const JavaParamRef<jclass>& clazz) {
+void JNI_CastMetricsHelper_LogMediaPlay(JNIEnv* env) {
   metrics::CastMetricsHelper::GetInstance()->LogMediaPlay();
 }
 
-void JNI_CastMetricsHelper_LogMediaPause(JNIEnv* env,
-                                         const JavaParamRef<jclass>& clazz) {
+void JNI_CastMetricsHelper_LogMediaPause(JNIEnv* env) {
   metrics::CastMetricsHelper::GetInstance()->LogMediaPause();
 }
 

@@ -8,7 +8,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -25,18 +25,19 @@ std::string CredentialInfoToJsCredential(
     return base::StringPrintf(
         "new FederatedCredential({id: %s, name: %s, iconURL: %s, provider: "
         "%s})",
-        base::GetQuotedJSONString(info.id).c_str(),
-        base::GetQuotedJSONString(info.name).c_str(),
+        base::GetQuotedJSONString(info.id.value_or(base::string16())).c_str(),
+        base::GetQuotedJSONString(info.name.value_or(base::string16())).c_str(),
         base::GetQuotedJSONString(info.icon.spec()).c_str(),
         base::GetQuotedJSONString(info.federation.GetURL().spec()).c_str());
   }
   if (info.type == password_manager::CredentialType::CREDENTIAL_TYPE_PASSWORD) {
     return base::StringPrintf(
         "new PasswordCredential({id: %s, name: %s, iconURL: %s, password: %s})",
-        base::GetQuotedJSONString(info.id).c_str(),
-        base::GetQuotedJSONString(info.name).c_str(),
+        base::GetQuotedJSONString(info.id.value_or(base::string16())).c_str(),
+        base::GetQuotedJSONString(info.name.value_or(base::string16())).c_str(),
         base::GetQuotedJSONString(info.icon.spec()).c_str(),
-        base::GetQuotedJSONString(info.password).c_str());
+        base::GetQuotedJSONString(info.password.value_or(base::string16()))
+            .c_str());
   }
   /* if (info.type == CREDENTIAL_TYPE_EMPTY) */
   return std::string();

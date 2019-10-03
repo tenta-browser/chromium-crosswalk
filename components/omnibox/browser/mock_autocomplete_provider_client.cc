@@ -4,13 +4,19 @@
 
 #include "components/omnibox/browser/mock_autocomplete_provider_client.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
 
 MockAutocompleteProviderClient::MockAutocompleteProviderClient() {
-  contextual_suggestions_service_ =
-      base::MakeUnique<ContextualSuggestionsService>(
-          /*signin_manager=*/nullptr, /*token_service=*/nullptr,
-          GetRequestContext());
+  shared_factory_ =
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          &test_url_loader_factory_);
+
+  remote_suggestions_service_ = std::make_unique<RemoteSuggestionsService>(
+      /*identity_manager=*/nullptr, GetURLLoaderFactory());
+  document_suggestions_service_ = std::make_unique<DocumentSuggestionsService>(
+      /*identity_manager=*/nullptr, GetURLLoaderFactory());
+  pedal_provider_ = std::make_unique<OmniboxPedalProvider>(*this);
+  browser_update_available_ = false;
 }
 
 MockAutocompleteProviderClient::~MockAutocompleteProviderClient() {

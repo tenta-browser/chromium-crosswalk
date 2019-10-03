@@ -4,8 +4,11 @@
 
 #include "media/audio/audio_debug_recording_helper.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
-#include "base/files/file_path.h"
+#include "base/files/file.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "media/audio/audio_debug_file_writer.h"
@@ -19,8 +22,7 @@ AudioDebugRecordingHelper::AudioDebugRecordingHelper(
     : params_(params),
       recording_enabled_(0),
       task_runner_(std::move(task_runner)),
-      on_destruction_closure_(std::move(on_destruction_closure)),
-      weak_factory_(this) {}
+      on_destruction_closure_(std::move(on_destruction_closure)) {}
 
 AudioDebugRecordingHelper::~AudioDebugRecordingHelper() {
   if (on_destruction_closure_)
@@ -28,14 +30,30 @@ AudioDebugRecordingHelper::~AudioDebugRecordingHelper() {
 }
 
 void AudioDebugRecordingHelper::EnableDebugRecording(
-    const base::FilePath& file_name) {
+    AudioDebugRecordingStreamType stream_type,
+    uint32_t id,
+    CreateWavFileCallback create_file_callback) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!debug_writer_);
-  DCHECK(!file_name.empty());
 
   debug_writer_ = CreateAudioDebugFileWriter(params_);
-  debug_writer_->Start(
-      file_name.AddExtension(debug_writer_->GetFileNameExtension()));
+  std::move(create_file_callback)
+      .Run(stream_type, id,
+           base::BindOnce(&AudioDebugRecordingHelper::StartDebugRecordingToFile,
+                          weak_factory_.GetWeakPtr()));
+}
+
+void AudioDebugRecordingHelper::StartDebugRecordingToFile(base::File file) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+
+  if (!file.IsValid()) {
+    PLOG(ERROR) << "Invalid debug recording file, error="
+                << file.error_details();
+    debug_writer_.reset();
+    return;
+  }
+
+  debug_writer_->Start(std::move(file));
 
   base::subtle::NoBarrier_Store(&recording_enabled_, 1);
 }
@@ -78,8 +96,8 @@ void AudioDebugRecordingHelper::OnData(const AudioBus* source) {
 
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&AudioDebugRecordingHelper::DoWrite,
-                 weak_factory_.GetWeakPtr(), base::Passed(&audio_bus_copy)));
+      base::BindOnce(&AudioDebugRecordingHelper::DoWrite,
+                     weak_factory_.GetWeakPtr(), std::move(audio_bus_copy)));
 }
 
 void AudioDebugRecordingHelper::DoWrite(std::unique_ptr<media::AudioBus> data) {
@@ -92,7 +110,7 @@ void AudioDebugRecordingHelper::DoWrite(std::unique_ptr<media::AudioBus> data) {
 std::unique_ptr<AudioDebugFileWriter>
 AudioDebugRecordingHelper::CreateAudioDebugFileWriter(
     const AudioParameters& params) {
-  return base::MakeUnique<AudioDebugFileWriter>(params);
+  return std::make_unique<AudioDebugFileWriter>(params);
 }
 
 }  // namespace media

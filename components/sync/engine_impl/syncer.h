@@ -57,10 +57,9 @@ class Syncer {
   // purposes.  It describes the reson for performing this initial download.
   // Returns: false if an error occurred and retries should backoff, true
   // otherwise.
-  virtual bool ConfigureSyncShare(
-      const ModelTypeSet& request_types,
-      sync_pb::GetUpdatesCallerInfo::GetUpdatesSource source,
-      SyncCycle* cycle);
+  virtual bool ConfigureSyncShare(const ModelTypeSet& request_types,
+                                  sync_pb::SyncEnums::GetUpdatesOrigin origin,
+                                  SyncCycle* cycle);
 
   // Requests to download updates for the |request_types|.  For a well-behaved
   // client with a working connection to the invalidations server, this should
@@ -70,16 +69,10 @@ class Syncer {
   // otherwise.
   virtual bool PollSyncShare(ModelTypeSet request_types, SyncCycle* cycle);
 
-  // Posts a ClearServerData command.
-  // Returns: false if an error occurred and retries should backoff, true
-  // otherwise.
-  virtual bool PostClearServerData(SyncCycle* cycle);
-
  private:
   bool DownloadAndApplyUpdates(ModelTypeSet* request_types,
                                SyncCycle* cycle,
-                               const GetUpdatesDelegate& delegate,
-                               bool create_mobile_bookmarks_folder);
+                               const GetUpdatesDelegate& delegate);
 
   // This function will commit batches of unsynced items to the server until the
   // number of unsynced and ready to commit items reaches zero or an error is
@@ -94,7 +87,7 @@ class Syncer {
   bool ExitRequested();
 
   bool HandleCycleEnd(SyncCycle* cycle,
-                      sync_pb::GetUpdatesCallerInfo::GetUpdatesSource source);
+                      sync_pb::SyncEnums::GetUpdatesOrigin origin);
 
   CancelationSignal* const cancelation_signal_;
 

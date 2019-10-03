@@ -13,9 +13,12 @@
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/texture_in_use_response.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/latency/latency_info.h"
 
 namespace gfx {
+struct CALayerParams;
 struct PresentationFeedback;
+struct SwapTimings;
 }  // namespace gfx
 
 namespace viz {
@@ -23,21 +26,32 @@ namespace viz {
 class VIZ_SERVICE_EXPORT OutputSurfaceClient {
  public:
   // A notification that the swap of the backbuffer to the hardware is complete
-  // and is now visible to the user.
-  virtual void DidReceiveSwapBuffersAck(uint64_t swap_id) = 0;
+  // and is now visible to the user, along with timing information on when the
+  // swapping of the backbuffer started and completed.
+  virtual void DidReceiveSwapBuffersAck(const gfx::SwapTimings& timings) = 0;
 
   // For surfaceless/ozone implementations to create damage for the next frame.
   virtual void SetNeedsRedrawRect(const gfx::Rect& damage_rect) = 0;
 
-  // For overlays.
+  // For synchronizing IOSurface use with the macOS WindowServer.
   virtual void DidReceiveTextureInUseResponses(
       const gpu::TextureInUseResponses& responses) = 0;
 
-  // A notification that the presentation feedback for a CompositorFrame with
-  // given |swap_id|. See |gfx::PresentationFeedback| for detail.
+  // For displaying a swapped frame's contents on macOS.
+  virtual void DidReceiveCALayerParams(
+      const gfx::CALayerParams& ca_layer_params) = 0;
+
+  // For sending swap sizes back to the browser process. Currently only used on
+  // Android.
+  virtual void DidSwapWithSize(const gfx::Size& pixel_size) = 0;
+
+  // See |gfx::PresentationFeedback| for detail.
   virtual void DidReceivePresentationFeedback(
-      uint64_t swap_id,
       const gfx::PresentationFeedback& feedback) {}
+
+  // Call after a swap occurs with all LatencyInfo aggregated up to that point.
+  virtual void DidFinishLatencyInfo(
+      const std::vector<ui::LatencyInfo>& latency_info) = 0;
 
  protected:
   virtual ~OutputSurfaceClient() {}

@@ -7,7 +7,6 @@
 
 #include "base/macros.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
-#include "ui/gfx/range/range.h"
 
 // Base class for some of the password manager infobar delegates, e.g.
 // SavePasswordInfoBarDelegate.
@@ -15,10 +14,11 @@ class PasswordManagerInfoBarDelegate : public ConfirmInfoBarDelegate {
  public:
   ~PasswordManagerInfoBarDelegate() override;
 
-  const gfx::Range& message_link_range() const { return message_link_range_; }
+  // Getter for the message displayed in adition to the title. If no message
+  // was set, this returns and empty string.
+  base::string16 GetDetailsMessageText() const;
 
   // ConfirmInfoBarDelegate:
-  Type GetInfoBarType() const override;
   InfoBarAutomationType GetInfoBarAutomationType() const override;
   int GetIconId() const override;
   bool ShouldExpire(const NavigationDetails& details) const override;
@@ -30,16 +30,15 @@ class PasswordManagerInfoBarDelegate : public ConfirmInfoBarDelegate {
   PasswordManagerInfoBarDelegate();
 
   void SetMessage(const base::string16& message);
-  void SetMessageLinkRange(const gfx::Range& message_link_range);
+  void SetDetailsMessage(const base::string16& details_message);
 
  private:
   // Message for the infobar: branded as a part of Google Smart Lock for signed
   // users.
   base::string16 message_;
 
-  // If set, describes the location of the link to the help center article for
-  // Smart Lock.
-  gfx::Range message_link_range_;
+  // Used to display aditional information about where the passwords were saved.
+  base::string16 details_message_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordManagerInfoBarDelegate);
 };

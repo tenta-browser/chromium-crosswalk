@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_DRM_HOST_DRM_DISPLAY_HOST_MANAGER_H_
 
 #include <stdint.h>
-
 #include <map>
 #include <memory>
 
@@ -20,6 +19,7 @@
 #include "ui/events/ozone/device/device_event_observer.h"
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
 #include "ui/ozone/platform/drm/host/gpu_thread_observer.h"
+#include "ui/ozone/public/ozone_platform.h"
 
 namespace ui {
 
@@ -38,10 +38,12 @@ struct DisplaySnapshot_Params;
 // This is used from both the IPC and the in-process versions in  MUS.
 class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
  public:
-  DrmDisplayHostManager(GpuThreadAdapter* proxy,
-                        DeviceManager* device_manager,
-                        DrmOverlayManager* overlay_manager,
-                        InputControllerEvdev* input_controller);
+  DrmDisplayHostManager(
+      GpuThreadAdapter* proxy,
+      DeviceManager* device_manager,
+      OzonePlatform::InitializedHostProperties* host_properties,
+      DrmOverlayManager* overlay_manager,
+      InputControllerEvdev* input_controller);
   ~DrmDisplayHostManager() override;
 
   DrmDisplayHost* GetDisplay(int64_t display_id);
@@ -49,10 +51,9 @@ class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
   // External API.
   void AddDelegate(DrmNativeDisplayDelegate* delegate);
   void RemoveDelegate(DrmNativeDisplayDelegate* delegate);
-  void TakeDisplayControl(const display::DisplayControlCallback& callback);
-  void RelinquishDisplayControl(
-      const display::DisplayControlCallback& callback);
-  void UpdateDisplays(const display::GetDisplaysCallback& callback);
+  void TakeDisplayControl(display::DisplayControlCallback callback);
+  void RelinquishDisplayControl(display::DisplayControlCallback callback);
+  void UpdateDisplays(display::GetDisplaysCallback callback);
 
   // DeviceEventObserver overrides:
   void OnDeviceEvent(const DeviceEvent& event) override;
@@ -95,22 +96,22 @@ class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
   void OnUpdateGraphicsDevice();
   void OnRemoveGraphicsDevice(const base::FilePath& path);
 
-  void RunUpdateDisplaysCallback(
-      const display::GetDisplaysCallback& callback) const;
+  void RunUpdateDisplaysCallback(display::GetDisplaysCallback callback) const;
 
   void NotifyDisplayDelegate() const;
 
-  GpuThreadAdapter* proxy_;                 // Not owned.
-  DeviceManager* device_manager_;           // Not owned.
-  DrmOverlayManager* overlay_manager_;      // Not owned.
-  InputControllerEvdev* input_controller_;  // Not owned.
+  GpuThreadAdapter* const proxy_;                 // Not owned.
+  DeviceManager* const device_manager_;           // Not owned.
+  // TODO(crbug.com/936425): Remove after VizDisplayCompositor feature launches.
+  DrmOverlayManager* const overlay_manager_;      // Not owned.
+  InputControllerEvdev* const input_controller_;  // Not owned.
 
   DrmNativeDisplayDelegate* delegate_ = nullptr;  // Not owned.
 
   // File path for the primary graphics card which is opened by default in the
   // GPU process. We'll avoid opening this in hotplug events since it will race
   // with the GPU process trying to open it and aquire DRM master.
-  base::FilePath primary_graphics_card_path_;
+  const base::FilePath primary_graphics_card_path_;
 
   // Keeps track if there is a dummy display. This happens on initialization
   // when there is no connection to the GPU to update the displays.

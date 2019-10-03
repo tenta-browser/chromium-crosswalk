@@ -4,21 +4,25 @@
 
 import json
 import os
+import re
 import sys
 
 from gpu_tests import gpu_integration_test
 from gpu_tests import cloud_storage_integration_test_base
-from gpu_tests import maps_expectations
 from gpu_tests import path_util
 from gpu_tests import color_profile_manager
 
 from py_utils import cloud_storage
 
-wpr_path = os.path.join(path_util.GetChromiumSrcDir(),
-                        'tools', 'perf', 'page_sets', 'data')
+from telemetry.util import image_util
 
-data_path = os.path.join(path_util.GetChromiumSrcDir(),
+_MAPS_PERF_TEST_PATH = os.path.join(
+  path_util.GetChromiumSrcDir(), 'tools', 'perf', 'page_sets', 'maps_perf_test')
+
+_DATA_PATH = os.path.join(path_util.GetChromiumSrcDir(),
                          'content', 'test', 'gpu', 'gpu_tests')
+
+_TOLERANCE = 3
 
 class MapsIntegrationTest(
     cloud_storage_integration_test_base.CloudStorageIntegrationTestBase):
@@ -34,10 +38,6 @@ class MapsIntegrationTest(
     return 'maps'
 
   @classmethod
-  def _CreateExpectations(cls):
-    return maps_expectations.MapsExpectations()
-
-  @classmethod
   def SetUpProcess(cls):
     options = cls.GetParsedCommandLineOptions()
     color_profile_manager.ForceUntilExitSRGB(
@@ -47,8 +47,10 @@ class MapsIntegrationTest(
         '--force-color-profile=srgb',
         '--ensure-forced-color-profile']
     cls.CustomizeBrowserArgs(browser_args)
-    cls.StartWPRServer(os.path.join(wpr_path, 'maps_005.wprgo'),
-                       cloud_storage.PUBLIC_BUCKET)
+    cloud_storage.GetIfChanged(
+      os.path.join(_MAPS_PERF_TEST_PATH, 'load_dataset'),
+      cloud_storage.PUBLIC_BUCKET)
+    cls.SetStaticServerDirs([_MAPS_PERF_TEST_PATH])
     cls.StartBrowser()
 
   @classmethod
@@ -60,45 +62,81 @@ class MapsIntegrationTest(
   def GenerateGpuTests(cls, options):
     cls.SetParsedCommandLineOptions(options)
     yield('Maps_maps',
-          'http://map-test/performance.html',
+          'file://performance.html',
           ('maps_pixel_expectations.json'))
 
   def _ReadPixelExpectations(self, expectations_file):
-    expectations_path = os.path.join(data_path, expectations_file)
+    expectations_path = os.path.join(_DATA_PATH, expectations_file)
     with open(expectations_path, 'r') as f:
       json_contents = json.load(f)
     return json_contents
 
-  def _SpinWaitOnRAF(self, iterations, timeout=60):
-    self.tab.ExecuteJavaScript("""
-        window.__spinWaitOnRAFDone = false;
-        var iterationsLeft = {{ iterations }};
+  @classmethod
+  def _UploadErrorImagesToCloudStorage(cls, image_name, screenshot, ref_img):
+    """For a failing run, uploads the failing image, reference image (if
+    supplied), and diff image (if reference image was supplied) to cloud
+    storage. This subsumes the functionality of the
+    archive_gpu_pixel_test_results.py script."""
+    machine_name = re.sub(r'\W+', '_',
+                          cls.GetParsedCommandLineOptions().test_machine_name)
+    upload_dir = '%s_%s_telemetry' % (
+      cls.GetParsedCommandLineOptions().build_revision, machine_name)
+    base_bucket = '%s/runs/%s' % (
+        cls._error_image_cloud_storage_bucket, upload_dir)
+    image_name_with_revision = '%s_%s.png' % (
+      image_name, cls.GetParsedCommandLineOptions().build_revision)
+    cls._UploadBitmapToCloudStorage(
+      base_bucket + '/gen', image_name_with_revision, screenshot,
+      public=True)
+    if ref_img is not None:
+      cls._UploadBitmapToCloudStorage(
+        base_bucket + '/ref', image_name_with_revision, ref_img, public=True)
+      diff_img = image_util.Diff(screenshot, ref_img)
+      cls._UploadBitmapToCloudStorage(
+        base_bucket + '/diff', image_name_with_revision, diff_img,
+        public=True)
+    print ('See http://%s.commondatastorage.googleapis.com/'
+           'view_test_results.html?%s for this run\'s test results') % (
+      cls._error_image_cloud_storage_bucket, upload_dir)
 
-        function spin() {
-          iterationsLeft--;
-          if (iterationsLeft == 0) {
-            window.__spinWaitOnRAFDone = true;
-            return;
-          }
-          window.requestAnimationFrame(spin);
-        }
-        window.requestAnimationFrame(spin);
-        """, iterations=iterations)
-    self.tab.WaitForJavaScriptCondition(
-        'window.__spinWaitOnRAFDone', timeout=timeout)
+  def _ValidateScreenshotSamples(self, tab, url, screenshot, expectations,
+                                 tolerance, device_pixel_ratio):
+    """Samples the given screenshot and verifies pixel color values.
+       The sample locations and expected color values are given in expectations.
+       In case any of the samples do not match the expected color, it raises
+       a Failure and dumps the screenshot locally or cloud storage depending on
+       what machine the test is being run."""
+    try:
+      self._CompareScreenshotSamples(
+        tab, screenshot, expectations, tolerance, device_pixel_ratio,
+        self.GetParsedCommandLineOptions().test_machine_name)
+    except Exception:
+      # An exception raised from self.fail() indicates a failure.
+      image_name = self._UrlToImageName(url)
+      if self.GetParsedCommandLineOptions().test_machine_name:
+        self._UploadErrorImagesToCloudStorage(image_name, screenshot, None)
+      else:
+        self._WriteErrorImages(
+          self.GetParsedCommandLineOptions().generated_dir, image_name,
+          screenshot, None)
+      raise
 
   def RunActualGpuTest(self, url, *args):
     tab = self.tab
     pixel_expectations_file = args[0]
     action_runner = tab.action_runner
     action_runner.Navigate(url)
-    action_runner.WaitForJavaScriptCondition(
-        'window.testDone', timeout=320)
+    action_runner.WaitForJavaScriptCondition('window.startTest != undefined')
+    action_runner.EvaluateJavaScript('window.startTest()')
+    action_runner.WaitForJavaScriptCondition('window.testDone', timeout=320)
 
-    # TODO(kbr): This should not be necessary, but it's not clear if the test
-    # is failing on the bots in its absence. Remove once we can verify that
-    # it's safe to do so.
-    self._SpinWaitOnRAF(3)
+    # Wait for the page to process immediate work and load tiles.
+    action_runner.EvaluateJavaScript('''
+        window.testCompleted = false;
+        requestIdleCallback(
+            () => window.testCompleted = true,
+            { timeout : 10000 })''')
+    action_runner.WaitForJavaScriptCondition('window.testCompleted', timeout=30)
 
     if not tab.screenshot_supported:
       self.fail('Browser does not support screenshot capture')
@@ -117,7 +155,8 @@ class MapsIntegrationTest(
     # the test-machine-name argument being specified on the command
     # line.
     expected = self._ReadPixelExpectations(pixel_expectations_file)
-    self._ValidateScreenshotSamples(tab, url, screenshot, expected, dpr)
+    self._ValidateScreenshotSamples(
+      tab, url, screenshot, expected, _TOLERANCE, dpr)
 
 def load_tests(loader, tests, pattern):
   del loader, tests, pattern  # Unused.

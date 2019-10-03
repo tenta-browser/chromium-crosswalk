@@ -12,13 +12,11 @@ namespace chrome_pdf {
 
 PreviewModeClient::PreviewModeClient(Client* client) : client_(client) {}
 
-void PreviewModeClient::DocumentSizeUpdated(const pp::Size& size) {}
-
 void PreviewModeClient::Invalidate(const pp::Rect& rect) {
   NOTREACHED();
 }
 
-void PreviewModeClient::Scroll(const pp::Point& point) {
+void PreviewModeClient::DidScroll(const pp::Point& point) {
   NOTREACHED();
 }
 
@@ -28,6 +26,10 @@ void PreviewModeClient::ScrollToX(int x_in_screen_coords) {
 
 void PreviewModeClient::ScrollToY(int y_in_screen_coords,
                                   bool compensate_for_toolbar) {
+  NOTREACHED();
+}
+
+void PreviewModeClient::ScrollBy(const pp::Point& point) {
   NOTREACHED();
 }
 
@@ -58,9 +60,6 @@ void PreviewModeClient::NotifySelectedFindResultChanged(
     int current_find_index) {
   NOTREACHED();
 }
-
-void PreviewModeClient::NotifyPageBecameVisible(
-    const PDFEngine::PageFeatures* page_features) {}
 
 void PreviewModeClient::GetDocumentPassword(
     pp::CompletionCallbackWithOutput<pp::Var> callback) {
@@ -110,25 +109,12 @@ pp::URLLoader PreviewModeClient::CreateURLLoader() {
   return pp::URLLoader();
 }
 
-void PreviewModeClient::ScheduleCallback(int id, base::TimeDelta delay) {
-  NOTREACHED();
-}
-
-void PreviewModeClient::ScheduleTouchTimerCallback(int id,
-                                                   base::TimeDelta delay) {
-  NOTREACHED();
-}
-
 std::vector<PDFEngine::Client::SearchStringResult>
 PreviewModeClient::SearchString(const base::char16* string,
                                 const base::char16* term,
                                 bool case_sensitive) {
   NOTREACHED();
   return std::vector<SearchStringResult>();
-}
-
-void PreviewModeClient::DocumentPaintOccurred() {
-  NOTREACHED();
 }
 
 void PreviewModeClient::DocumentLoadComplete(
@@ -149,13 +135,6 @@ void PreviewModeClient::DocumentHasUnsupportedFeature(
   NOTREACHED();
 }
 
-void PreviewModeClient::FontSubstituted() {
-  NOTREACHED();
-}
-
-void PreviewModeClient::DocumentLoadProgress(uint32_t available,
-                                             uint32_t doc_size) {}
-
 void PreviewModeClient::FormTextFieldFocusChange(bool in_focus) {
   NOTREACHED();
 }
@@ -165,7 +144,9 @@ bool PreviewModeClient::IsPrintPreview() {
   return false;
 }
 
-void PreviewModeClient::CancelBrowserDownload() {}
+float PreviewModeClient::GetToolbarHeightInScreenCoords() {
+  return 0.0f;
+}
 
 uint32_t PreviewModeClient::GetBackgroundColor() {
   NOTREACHED();

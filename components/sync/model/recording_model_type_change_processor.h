@@ -31,9 +31,12 @@ class RecordingModelTypeChangeProcessor : public FakeModelTypeChangeProcessor {
   void UpdateStorageKey(const EntityData& entity_data,
                         const std::string& storage_key,
                         MetadataChangeList* metadata_change_list) override;
-  void UntrackEntity(const EntityData& entity_data) override;
+  void UntrackEntityForStorageKey(const std::string& storage_key) override;
+  void UntrackEntityForClientTagHash(
+      const std::string& client_tag_hash) override;
   void ModelReadyToSync(std::unique_ptr<MetadataBatch> batch) override;
   bool IsTrackingMetadata() override;
+  std::string TrackedAccountId() override;
 
   void SetIsTrackingMetadata(bool is_tracking);
 
@@ -49,26 +52,29 @@ class RecordingModelTypeChangeProcessor : public FakeModelTypeChangeProcessor {
 
   const std::set<std::string>& delete_set() const { return delete_set_; }
 
-  const std::set<std::unique_ptr<EntityData>>& untrack_set() const {
-    return untrack_set_;
+  const std::set<std::string>& untrack_for_storage_key_set() const {
+    return untrack_for_storage_key_set_;
+  }
+
+  const std::set<std::string>& untrack_for_client_tag_hash_set() const {
+    return untrack_for_client_tag_hash_set_;
   }
 
   MetadataBatch* metadata() const { return metadata_.get(); }
 
-  // Returns a callback that constructs a processor and assigns a raw pointer to
-  // the given address. The caller must ensure that the address passed in is
-  // still valid whenever the callback is run. This can be useful for tests that
-  // want to verify the RecordingModelTypeChangeProcessor was given data by the
-  // bridge they are testing.
-  static ModelTypeSyncBridge::ChangeProcessorFactory FactoryForBridgeTest(
-      RecordingModelTypeChangeProcessor** processor_address,
-      bool expect_error = false);
+  // Constructs the processor and assigns its raw pointer to the given address.
+  // This way, the tests can keep the raw pointer for verifying expectations
+  // while the unique pointer is owned by the bridge being tested.
+  static std::unique_ptr<ModelTypeChangeProcessor>
+  CreateProcessorAndAssignRawPointer(
+      RecordingModelTypeChangeProcessor** processor_address);
 
  private:
   std::multimap<std::string, std::unique_ptr<EntityData>> put_multimap_;
   std::multimap<std::string, std::unique_ptr<EntityData>> update_multimap_;
   std::set<std::string> delete_set_;
-  std::set<std::unique_ptr<EntityData>> untrack_set_;
+  std::set<std::string> untrack_for_storage_key_set_;
+  std::set<std::string> untrack_for_client_tag_hash_set_;
   std::unique_ptr<MetadataBatch> metadata_;
   bool is_tracking_metadata_ = true;
 };

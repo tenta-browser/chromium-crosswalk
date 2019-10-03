@@ -65,7 +65,7 @@ void SetReceivingInfo(const std::vector<gcm::ReceivingActivity>& receives,
     row->AppendDouble(receive.time.ToJsTime());
     row->AppendString(receive.app_id);
     row->AppendString(receive.from);
-    row->AppendString(base::IntToString(receive.message_byte_size));
+    row->AppendString(base::NumberToString(receive.message_byte_size));
     row->AppendString(receive.event);
     row->AppendString(receive.details);
     receive_info->Append(std::move(row));
@@ -132,6 +132,10 @@ void SetGCMInternalsInfo(const gcm::GCMClient::GCMStatistics* stats,
     if (stats->android_id > 0) {
       device_info->SetString(
           kAndroidId, base::StringPrintf("0x%" PRIx64, stats->android_id));
+    }
+    if (stats->android_secret > 0) {
+      device_info->SetString(kAndroidSecret,
+                             base::NumberToString(stats->android_secret));
     }
     device_info->SetInteger(kSendQueueSize, stats->send_queue_size);
     device_info->SetInteger(kResendQueueSize, stats->resend_queue_size);

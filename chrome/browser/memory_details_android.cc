@@ -12,9 +12,11 @@
 #include "base/bind.h"
 #include "base/process/process_iterator.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/grit/chromium_strings.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/process_type.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -55,16 +57,21 @@ void GetProcessDataMemoryInformation(
     pmi.pid = *i;
     pmi.num_processes = 1;
 
-    if (pmi.pid == base::GetCurrentProcId())
+    base::ProcessId current_pid = base::GetCurrentProcId();
+    if (pmi.pid == current_pid)
       pmi.process_type = content::PROCESS_TYPE_BROWSER;
     else
       pmi.process_type = content::PROCESS_TYPE_UNKNOWN;
 
     std::unique_ptr<base::ProcessMetrics> metrics(
         base::ProcessMetrics::CreateProcessMetrics(*i));
-    metrics->GetWorkingSetKBytes(&pmi.working_set);
-    // TODO(dcastagna): Compute number of open fds (pmi.num_open_fds) and soft
-    // limits (pmi.open_fds_soft_limit) on android.
+
+    // TODO(ssid): Reading "/proc/fd" only works for current process. For child
+    // processes, the values need to be computed by the process itself.
+    if (pmi.pid == current_pid) {
+      pmi.num_open_fds = metrics->GetOpenFdCount();
+      pmi.open_fds_soft_limit = metrics->GetOpenFdSoftLimit();
+    }
 
     out->processes.push_back(pmi);
   }
@@ -108,7 +115,8 @@ ProcessData* MemoryDetails::ChromeBrowser() {
 
 void MemoryDetails::CollectProcessData(
     const std::vector<ProcessMemoryInformation>& chrome_processes) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
 
   std::vector<ProcessMemoryInformation> all_processes(chrome_processes);
   AddNonChildChromeProcesses(&all_processes);
@@ -137,7 +145,7 @@ void MemoryDetails::CollectProcessData(
   process_data_.push_back(current_browser);
 
   // Finally return to the browser thread.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&MemoryDetails::CollectChildInfoOnUIThread, this));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&MemoryDetails::CollectChildInfoOnUIThread, this));
 }

@@ -4,11 +4,15 @@
 
 #include "net/http/http_auth_handler_ntlm.h"
 
+#include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_interfaces.h"
+#include "net/dns/host_resolver.h"
+#include "net/http/http_auth_handler_ntlm.h"
 #include "net/http/http_auth_preferences.h"
+#include "net/ssl/ssl_info.h"
 
 namespace net {
 
@@ -20,6 +24,14 @@ uint64_t GetMSTime() {
 
 void GenerateRandom(uint8_t* output, size_t n) {
   base::RandBytes(output, n);
+}
+
+void RecordNtlmV2Usage(bool is_v2, bool is_secure) {
+  auto bucket = is_v2 ? is_secure ? NtlmV2Usage::kEnabledOverSecure
+                                  : NtlmV2Usage::kEnabledOverInsecure
+                      : is_secure ? NtlmV2Usage::kDisabledOverSecure
+                                  : NtlmV2Usage::kDisabledOverInsecure;
+  UMA_HISTOGRAM_ENUMERATION("Net.HttpAuthNtlmV2Usage", bucket);
 }
 
 }  // namespace
@@ -40,7 +52,7 @@ HttpAuthHandlerNTLM::HttpAuthHandlerNTLM(
     const HttpAuthPreferences* http_auth_preferences)
     : ntlm_client_(ntlm::NtlmFeatures(
           http_auth_preferences ? http_auth_preferences->NtlmV2Enabled()
-                                : false)) {}
+                                : true)) {}
 
 bool HttpAuthHandlerNTLM::NeedsIdentity() {
   // This gets called for each round-trip.  Only require identity on
@@ -89,7 +101,8 @@ HttpAuthHandlerNTLM::Factory::Factory() = default;
 
 HttpAuthHandlerNTLM::Factory::~Factory() = default;
 
-ntlm::Buffer HttpAuthHandlerNTLM::GetNextToken(const ntlm::Buffer& in_token) {
+std::vector<uint8_t> HttpAuthHandlerNTLM::GetNextToken(
+    base::span<const uint8_t> in_token) {
   // If in_token is non-empty, then assume it contains a challenge message,
   // and generate the Authenticate message in reply. Otherwise return the
   // Negotiate message.
@@ -99,7 +112,7 @@ ntlm::Buffer HttpAuthHandlerNTLM::GetNextToken(const ntlm::Buffer& in_token) {
 
   std::string hostname = get_host_name_proc_();
   if (hostname.empty())
-    return ntlm::Buffer();
+    return {};
   uint8_t client_challenge[8];
   generate_random_proc_(client_challenge, 8);
   uint64_t client_time = get_ms_time_proc_();
@@ -118,6 +131,7 @@ int HttpAuthHandlerNTLM::Factory::CreateAuthHandler(
     CreateReason reason,
     int digest_nonce_count,
     const NetLogWithSource& net_log,
+    HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
   if (reason == CREATE_PREEMPTIVE)
     return ERR_UNSUPPORTED_AUTH_SCHEME;
@@ -130,6 +144,9 @@ int HttpAuthHandlerNTLM::Factory::CreateAuthHandler(
   if (!tmp_handler->InitFromChallenge(challenge, target, ssl_info, origin,
                                       net_log))
     return ERR_INVALID_RESPONSE;
+  RecordNtlmV2Usage(
+      http_auth_preferences() ? http_auth_preferences()->NtlmV2Enabled() : true,
+      ssl_info.is_valid());
   handler->swap(tmp_handler);
   return OK;
 }

@@ -48,6 +48,114 @@ InputMethodEngine::~InputMethodEngine() {
   CloseImeWindows();
 }
 
+void InputMethodEngine::FocusOut() {
+  InputMethodEngineBase::FocusOut();
+  if (follow_cursor_window_)
+    follow_cursor_window_->Hide();
+}
+
+void InputMethodEngine::SetCompositionBounds(
+    const std::vector<gfx::Rect>& bounds) {
+  InputMethodEngineBase::SetCompositionBounds(bounds);
+  if (!bounds.empty()) {
+    current_cursor_bounds_ = bounds[0];
+    if (follow_cursor_window_)
+      follow_cursor_window_->FollowCursor(current_cursor_bounds_);
+  }
+}
+
+void InputMethodEngine::UpdateComposition(
+    const ui::CompositionText& composition_text,
+    uint32_t cursor_pos,
+    bool is_visible) {
+  composition_ = composition_text;
+
+  // Use a thin underline with text color by default.
+  if (composition_.ime_text_spans.empty()) {
+    composition_.ime_text_spans.push_back(ui::ImeTextSpan(
+        ui::ImeTextSpan::Type::kComposition, 0, composition_.text.length(),
+        ui::ImeTextSpan::Thickness::kThin, SK_ColorTRANSPARENT));
+  }
+
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  // If the IME extension is handling key event, hold the composition text
+  // until the key event is handled.
+  if (input_context && !handling_key_event_) {
+    input_context->UpdateCompositionText(composition_, cursor_pos, is_visible);
+    composition_ = ui::CompositionText();
+  } else {
+    composition_changed_ = true;
+  }
+}
+
+bool InputMethodEngine::SetCompositionRange(
+    uint32_t before,
+    uint32_t after,
+    const std::vector<ui::ImeTextSpan>& text_spans) {
+  // Not supported on non-Chrome OS platforms.
+  return false;
+}
+
+void InputMethodEngine::CommitTextToInputContext(int context_id,
+                                                 const std::string& text) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  // If the IME extension is handling key event, hold the text until the key
+  // event is handled.
+  if (input_context && !handling_key_event_) {
+    input_context->CommitText(text);
+    text_ = "";
+  } else {
+    // Append the text to the buffer, as it allows committing text multiple
+    // times when processing a key event.
+    text_ += text;
+    commit_text_changed_ = true;
+  }
+}
+
+void InputMethodEngine::DeleteSurroundingTextToInputContext(
+    int offset,
+    size_t number_of_chars) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->DeleteSurroundingText(offset, number_of_chars);
+}
+
+bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
+                                     const std::string& code) {
+  DCHECK(event);
+
+  // input.ime.sendKeyEvents API is only allowed to work on text fields.
+  if (current_input_type_ == ui::TEXT_INPUT_TYPE_NONE)
+    return false;
+
+  if (event->key_code() == ui::VKEY_UNKNOWN)
+    event->set_key_code(ui::DomCodeToUsLayoutKeyboardCode(event->code()));
+
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+
+  // ENTER et al. keys are allowed to work only on http:, https: etc.
+  if (!IsValidKeyForAllPages(event)) {
+    if (IsSpecialPage(input_context->GetInputMethod()))
+      return false;
+  }
+
+  input_context->SendKeyEvent(event);
+  return true;
+}
+
+void InputMethodEngine::ConfirmCompositionText() {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->ConfirmCompositionText();
+}
+
 bool InputMethodEngine::IsActive() const {
   return true;
 }
@@ -115,65 +223,6 @@ void InputMethodEngine::CloseImeWindows() {
   normal_windows_.clear();
 }
 
-void InputMethodEngine::FocusOut() {
-  InputMethodEngineBase::FocusOut();
-  if (follow_cursor_window_)
-    follow_cursor_window_->Hide();
-}
-
-void InputMethodEngine::SetCompositionBounds(
-    const std::vector<gfx::Rect>& bounds) {
-  InputMethodEngineBase::SetCompositionBounds(bounds);
-  if (!bounds.empty()) {
-    current_cursor_bounds_ = bounds[0];
-    if (follow_cursor_window_)
-      follow_cursor_window_->FollowCursor(current_cursor_bounds_);
-  }
-}
-
-void InputMethodEngine::UpdateComposition(
-    const ui::CompositionText& composition_text,
-    uint32_t cursor_pos,
-    bool is_visible) {
-  composition_ = composition_text;
-
-  // Use a black thin underline by default.
-  if (composition_.ime_text_spans.empty()) {
-    composition_.ime_text_spans.push_back(ui::ImeTextSpan(
-        ui::ImeTextSpan::Type::kComposition, 0, composition_.text.length(),
-        SK_ColorBLACK, false /* thick */, SK_ColorTRANSPARENT));
-  }
-
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  // If the IME extension is handling key event, hold the composition text
-  // until the key event is handled.
-  if (input_context && !handling_key_event_) {
-    input_context->UpdateCompositionText(composition_, cursor_pos, is_visible);
-    composition_ = ui::CompositionText();
-  } else {
-    composition_changed_ = true;
-  }
-}
-
-void InputMethodEngine::CommitTextToInputContext(int context_id,
-                                                 const std::string& text) {
-  // Append the text to the buffer, as it allows committing text multiple times
-  // when processing a key event.
-  text_ += text;
-
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  // If the IME extension is handling key event, hold the text until the key
-  // event is handled.
-  if (input_context && !handling_key_event_) {
-    input_context->CommitText(text_);
-    text_ = "";
-  } else {
-    commit_text_changed_ = true;
-  }
-}
-
 void InputMethodEngine::OnWindowDestroyed(ui::ImeWindow* ime_window) {
   if (ime_window == follow_cursor_window_) {
     follow_cursor_window_ = nullptr;
@@ -195,32 +244,6 @@ ui::ImeWindow* InputMethodEngine::FindWindowById(int window_id) const {
       return ime_window;
   }
   return nullptr;
-}
-
-bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
-                                     const std::string& code) {
-  DCHECK(event);
-
-  // input.ime.sendKeyEvents API is only allowed to work on text fields.
-  if (current_input_type_ == ui::TEXT_INPUT_TYPE_NONE)
-    return false;
-
-  if (event->key_code() == ui::VKEY_UNKNOWN)
-    event->set_key_code(ui::DomCodeToUsLayoutKeyboardCode(event->code()));
-
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (!input_context)
-    return false;
-
-  // ENTER et al. keys are allowed to work only on http:, https: etc.
-  if (!IsValidKeyForAllPages(event)) {
-    if (IsSpecialPage(input_context->GetInputMethod()))
-      return false;
-  }
-
-  input_context->SendKeyEvent(event);
-  return true;
 }
 
 bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
@@ -255,7 +278,8 @@ bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
   // Checks if the last committed url is whitelisted url.
   url::Origin origin = url::Origin::Create(url);
   std::vector<GURL> whitelist_urls{GURL(url::kAboutBlankURL),
-                                   GURL(chrome::kChromeUINewTabURL)};
+                                   GURL(chrome::kChromeUINewTabURL),
+                                   GURL(chrome::kChromeSearchLocalNtpUrl)};
   for (const GURL& whitelist_url : whitelist_urls) {
     if (url::Origin::Create(whitelist_url).IsSameOriginWith(origin))
       return false;
@@ -269,14 +293,13 @@ bool InputMethodEngine::IsValidKeyForAllPages(ui::KeyEvent* ui_event) {
                                                            ui::VKEY_RETURN};
   if (ui_event->GetDomKey().IsCharacter() && !ui_event->IsControlDown() &&
       !ui_event->IsCommandDown()) {
-    return !base::ContainsValue(invalid_character_keycodes,
-                                ui_event->key_code());
+    return !base::Contains(invalid_character_keycodes, ui_event->key_code());
   }
 
   // Whitelists Backspace key and arrow keys.
   std::vector<ui::KeyboardCode> whitelist_keycodes{
       ui::VKEY_BACK, ui::VKEY_LEFT, ui::VKEY_RIGHT, ui::VKEY_UP, ui::VKEY_DOWN};
-  return base::ContainsValue(whitelist_keycodes, ui_event->key_code());
+  return base::Contains(whitelist_keycodes, ui_event->key_code());
 }
 
 }  // namespace input_method

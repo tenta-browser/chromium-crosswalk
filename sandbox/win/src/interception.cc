@@ -142,14 +142,12 @@ ResultCode InterceptionManager::InitializeInterceptions() {
     return SBOX_ERROR_CANNOT_SETUP_INTERCEPTION_CONFIG_BUFFER;
 
   void* remote_buffer;
-  ResultCode rc =
-      CopyDataToChild(local_buffer.get(), buffer_bytes, &remote_buffer);
-
-  if (rc != SBOX_ALL_OK)
-    return rc;
+  if (!CopyToChildMemory(child_->Process(), local_buffer.get(), buffer_bytes,
+                         &remote_buffer))
+    return SBOX_ERROR_CANNOT_COPY_DATA_TO_CHILD;
 
   bool hot_patch_needed = (0 != buffer_bytes);
-  rc = PatchNtdll(hot_patch_needed);
+  ResultCode rc = PatchNtdll(hot_patch_needed);
 
   if (rc != SBOX_ALL_OK)
     return rc;
@@ -276,7 +274,7 @@ bool InterceptionManager::SetupDllInfo(const InterceptionData& data,
   dll_info->record_bytes = required;
   dll_info->offset_to_functions = required;
   dll_info->num_functions = 0;
-  data.dll._Copy_s(dll_info->dll_name, data.dll.size(), data.dll.size());
+  data.dll.copy(dll_info->dll_name, data.dll.size());
   dll_info->dll_name[data.dll.size()] = L'\0';
 
   return true;
@@ -317,12 +315,12 @@ bool InterceptionManager::SetupInterceptionInfo(const InterceptionData& data,
   function->interceptor_address = data.interceptor_address;
   char* names = function->function;
 
-  data.function._Copy_s(names, name_bytes, name_bytes);
+  data.function.copy(names, name_bytes);
   names += name_bytes;
   *names++ = '\0';
 
   // interceptor follows the function_name
-  data.interceptor._Copy_s(names, interceptor_bytes, interceptor_bytes);
+  data.interceptor.copy(names, interceptor_bytes);
   names += interceptor_bytes;
   *names++ = '\0';
 
@@ -331,36 +329,6 @@ bool InterceptionManager::SetupInterceptionInfo(const InterceptionData& data,
   dll_info->record_bytes += required;
 
   return true;
-}
-
-ResultCode InterceptionManager::CopyDataToChild(const void* local_buffer,
-                                                size_t buffer_bytes,
-                                                void** remote_buffer) const {
-  DCHECK(remote_buffer);
-  if (0 == buffer_bytes) {
-    *remote_buffer = nullptr;
-    return SBOX_ALL_OK;
-  }
-
-  HANDLE child = child_->Process();
-
-  // Allocate memory on the target process without specifying the address
-  void* remote_data = ::VirtualAllocEx(child, nullptr, buffer_bytes, MEM_COMMIT,
-                                       PAGE_READWRITE);
-  if (!remote_data)
-    return SBOX_ERROR_NO_SPACE;
-
-  SIZE_T bytes_written;
-  bool success = ::WriteProcessMemory(child, remote_data, local_buffer,
-                                      buffer_bytes, &bytes_written);
-  if (!success || bytes_written != buffer_bytes) {
-    ::VirtualFreeEx(child, remote_data, 0, MEM_RELEASE);
-    return SBOX_ERROR_CANNOT_COPY_DATA_TO_CHILD;
-  }
-
-  *remote_buffer = remote_data;
-
-  return SBOX_ALL_OK;
 }
 
 // Only return true if the child should be able to perform this interception.
@@ -482,13 +450,13 @@ ResultCode InterceptionManager::PatchClientFunctions(
 #else
   base::win::OSInfo* os_info = base::win::OSInfo::GetInstance();
   if (os_info->wow64_status() == base::win::OSInfo::WOW64_ENABLED) {
-    if (os_info->version() >= base::win::VERSION_WIN10)
+    if (os_info->version() >= base::win::Version::WIN10)
       thunk.reset(new Wow64W10ResolverThunk(child_->Process(), relaxed_));
-    else if (os_info->version() >= base::win::VERSION_WIN8)
+    else if (os_info->version() >= base::win::Version::WIN8)
       thunk.reset(new Wow64W8ResolverThunk(child_->Process(), relaxed_));
     else
       thunk.reset(new Wow64ResolverThunk(child_->Process(), relaxed_));
-  } else if (os_info->version() >= base::win::VERSION_WIN8) {
+  } else if (os_info->version() >= base::win::Version::WIN8) {
     thunk.reset(new Win8ResolverThunk(child_->Process(), relaxed_));
   } else {
     thunk.reset(new ServiceResolverThunk(child_->Process(), relaxed_));

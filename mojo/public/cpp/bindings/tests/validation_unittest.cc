@@ -11,18 +11,18 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_math.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/c/system/macros.h"
-#include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/connector.h"
 #include "mojo/public/cpp/bindings/filter_chain.h"
-#include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/message_header_validator.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/tests/validation_test_input_parser.h"
 #include "mojo/public/cpp/system/core.h"
 #include "mojo/public/cpp/system/message.h"
@@ -42,18 +42,16 @@ Message CreateRawMessage(size_t size) {
   DCHECK(handle.is_valid());
 
   DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size));
+  MojoAppendMessageDataOptions options;
+  options.struct_size = sizeof(options);
+  options.flags = MOJO_APPEND_MESSAGE_DATA_FLAG_COMMIT_SIZE;
   void* buffer;
   uint32_t buffer_size;
-  rv = MojoAttachSerializedMessageBuffer(handle->value(),
-                                         static_cast<uint32_t>(size), nullptr,
-                                         0, &buffer, &buffer_size);
+  rv = MojoAppendMessageData(handle->value(), static_cast<uint32_t>(size),
+                             nullptr, 0, &options, &buffer, &buffer_size);
   DCHECK_EQ(MOJO_RESULT_OK, rv);
 
-  rv = MojoCommitSerializedMessageContents(
-      handle->value(), static_cast<uint32_t>(size), nullptr, nullptr);
-  DCHECK_EQ(MOJO_RESULT_OK, rv);
-
-  return Message(std::move(handle));
+  return Message::CreateFromMessageHandle(&handle);
 }
 
 template <typename T>
@@ -222,7 +220,7 @@ class ValidationTest : public testing::Test {
   ValidationTest() {}
 
  protected:
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 class ValidationIntegrationTest : public ValidationTest {
@@ -286,9 +284,8 @@ class IntegrationTestInterfaceImpl : public IntegrationTestInterface {
  public:
   ~IntegrationTestInterfaceImpl() override {}
 
-  void Method0(BasicStructPtr param0,
-               const Method0Callback& callback) override {
-    callback.Run(std::vector<uint8_t>());
+  void Method0(BasicStructPtr param0, Method0Callback callback) override {
+    std::move(callback).Run(std::vector<uint8_t>());
   }
 };
 
@@ -446,28 +443,29 @@ TEST_F(ValidationTest, ResponseBoundsCheck) {
   RunValidationTests("resp_boundscheck_", &validators);
 }
 
-// Test that InterfacePtr<X> applies the correct validators and they don't
-// conflict with each other:
+// Test that Remote<X> applies the correct validators and they don't conflict
+// with each other:
 //   - MessageHeaderValidator
 //   - X::ResponseValidator_
-TEST_F(ValidationIntegrationTest, InterfacePtr) {
-  IntegrationTestInterfacePtr interface_ptr = MakeProxy(
-      InterfacePtrInfo<IntegrationTestInterface>(testee_endpoint(), 0u));
-  interface_ptr.internal_state()->EnableTestingMode();
+TEST_F(ValidationIntegrationTest, Remote) {
+  Remote<IntegrationTestInterface> remote(
+      PendingRemote<IntegrationTestInterface>(testee_endpoint(), 0u));
+  remote.internal_state()->EnableTestingMode();
 
   RunValidationTests("integration_intf_resp", test_message_receiver());
   RunValidationTests("integration_msghdr", test_message_receiver());
 }
 
-// Test that Binding<X> applies the correct validators and they don't
-// conflict with each other:
+// Test that Receiver<X> applies the correct validators and they don't conflict
+// with each other:
 //   - MessageHeaderValidator
 //   - X::RequestValidator_
-TEST_F(ValidationIntegrationTest, Binding) {
+TEST_F(ValidationIntegrationTest, Receiver) {
   IntegrationTestInterfaceImpl interface_impl;
-  Binding<IntegrationTestInterface> binding(
-      &interface_impl, IntegrationTestInterfaceRequest(testee_endpoint()));
-  binding.EnableTestingMode();
+  Receiver<IntegrationTestInterface> receiver(
+      &interface_impl,
+      PendingReceiver<IntegrationTestInterface>(testee_endpoint()));
+  receiver.internal_state()->EnableTestingMode();
 
   RunValidationTests("integration_intf_rqst", test_message_receiver());
   RunValidationTests("integration_msghdr", test_message_receiver());

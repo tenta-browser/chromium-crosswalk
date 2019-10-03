@@ -14,26 +14,25 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
+#include "build/buildflag.h"
 #include "crypto/ec_private_key.h"
+#include "net/base/completion_once_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
-#include "net/base/network_throttle_manager.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_stream_factory.h"
+#include "net/http/http_stream_request.h"
 #include "net/http/http_transaction.h"
 #include "net/log/net_log_with_source.h"
-#include "net/proxy/proxy_service.h"
+#include "net/net_buildflags.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/socket/connection_attempts.h"
-#include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_config_service.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
-
-namespace crypto {
-class ECPrivateKey;
-}
 
 namespace net {
 
@@ -41,7 +40,6 @@ class BidirectionalStreamImpl;
 class HttpAuthController;
 class HttpNetworkSession;
 class HttpStream;
-class HttpStreamRequest;
 class IOBuffer;
 class ProxyInfo;
 class SSLPrivateKey;
@@ -49,8 +47,7 @@ struct HttpRequestInfo;
 
 class NET_EXPORT_PRIVATE HttpNetworkTransaction
     : public HttpTransaction,
-      public HttpStreamRequest::Delegate,
-      public NetworkThrottleManager::ThrottleDelegate {
+      public HttpStreamRequest::Delegate {
  public:
   HttpNetworkTransaction(RequestPriority priority,
                          HttpNetworkSession* session);
@@ -59,19 +56,19 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // HttpTransaction methods:
   int Start(const HttpRequestInfo* request_info,
-            const CompletionCallback& callback,
+            CompletionOnceCallback callback,
             const NetLogWithSource& net_log) override;
-  int RestartIgnoringLastError(const CompletionCallback& callback) override;
+  int RestartIgnoringLastError(CompletionOnceCallback callback) override;
   int RestartWithCertificate(scoped_refptr<X509Certificate> client_cert,
                              scoped_refptr<SSLPrivateKey> client_private_key,
-                             const CompletionCallback& callback) override;
+                             CompletionOnceCallback callback) override;
   int RestartWithAuth(const AuthCredentials& credentials,
-                      const CompletionCallback& callback) override;
+                      CompletionOnceCallback callback) override;
   bool IsReadyToRestartForAuth() override;
 
   int Read(IOBuffer* buf,
            int buf_len,
-           const CompletionCallback& callback) override;
+           CompletionOnceCallback callback) override;
   void StopCaching() override;
   bool GetFullRequestHeaders(HttpRequestHeaders* headers) const override;
   int64_t GetTotalReceivedBytes() const override;
@@ -109,7 +106,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       std::unique_ptr<WebSocketHandshakeStreamBase> stream) override;
   void OnStreamFailed(int status,
                       const NetErrorDetails& net_error_details,
-                      const SSLConfig& used_ssl_config) override;
+                      const SSLConfig& used_ssl_config,
+                      const ProxyInfo& used_proxy_info) override;
   void OnCertificateError(int status,
                           const SSLConfig& used_ssl_config,
                           const SSLInfo& ssl_info) override;
@@ -119,19 +117,14 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
                         HttpAuthController* auth_controller) override;
   void OnNeedsClientAuth(const SSLConfig& used_ssl_config,
                          SSLCertRequestInfo* cert_info) override;
-  void OnHttpsProxyTunnelResponse(const HttpResponseInfo& response_info,
-                                  const SSLConfig& used_ssl_config,
-                                  const ProxyInfo& used_proxy_info,
-                                  std::unique_ptr<HttpStream> stream) override;
 
   void OnQuicBroken() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
 
-  // NetworkThrottleManager::Delegate methods:
-  void OnThrottleUnblocked(NetworkThrottleManager::Throttle* throttle) override;
-
  private:
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
+  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest,
+                           CreateWebSocketHandshakeStream);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateReceived);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateSent);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateOverflow);
@@ -142,8 +135,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
                            FlowControlNegativeSendWindowSize);
 
   enum State {
-    STATE_THROTTLE,
-    STATE_THROTTLE_COMPLETE,
     STATE_NOTIFY_BEFORE_CREATE_STREAM,
     STATE_CREATE_STREAM,
     STATE_CREATE_STREAM_COMPLETE,
@@ -153,10 +144,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
     STATE_GENERATE_PROXY_AUTH_TOKEN_COMPLETE,
     STATE_GENERATE_SERVER_AUTH_TOKEN,
     STATE_GENERATE_SERVER_AUTH_TOKEN_COMPLETE,
-    STATE_GET_PROVIDED_TOKEN_BINDING_KEY,
-    STATE_GET_PROVIDED_TOKEN_BINDING_KEY_COMPLETE,
-    STATE_GET_REFERRED_TOKEN_BINDING_KEY,
-    STATE_GET_REFERRED_TOKEN_BINDING_KEY_COMPLETE,
     STATE_INIT_REQUEST_BODY,
     STATE_INIT_REQUEST_BODY_COMPLETE,
     STATE_BUILD_REQUEST,
@@ -173,8 +160,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   };
 
   bool IsSecureRequest() const;
-  bool IsTokenBindingEnabled() const;
-  void RecordTokenBindingSupport() const;
 
   // Returns true if the request is using an HTTP(S) proxy without being
   // tunneled via the CONNECT method.
@@ -190,8 +175,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // argument receive the result from the previous state.  If a method returns
   // ERR_IO_PENDING, then the result from OnIOComplete will be passed to the
   // next state method as the result arg.
-  int DoThrottle();
-  int DoThrottleComplete();
   int DoNotifyBeforeCreateStream();
   int DoCreateStream();
   int DoCreateStreamComplete(int result);
@@ -201,10 +184,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoGenerateProxyAuthTokenComplete(int result);
   int DoGenerateServerAuthToken();
   int DoGenerateServerAuthTokenComplete(int result);
-  int DoGetProvidedTokenBindingKey();
-  int DoGetProvidedTokenBindingKeyComplete(int result);
-  int DoGetReferredTokenBindingKey();
-  int DoGetReferredTokenBindingKeyComplete(int result);
   int DoInitRequestBody();
   int DoInitRequestBodyComplete(int result);
   int DoBuildRequest();
@@ -219,7 +198,26 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoDrainBodyForAuthRestartComplete(int result);
 
   int BuildRequestHeaders(bool using_http_proxy_without_tunnel);
-  int BuildTokenBindingHeader(std::string* out);
+
+#if BUILDFLAG(ENABLE_REPORTING)
+  // Processes the Report-To header, if one exists. This header configures where
+  // the Reporting API (in //net/reporting) will send reports for the origin.
+  void ProcessReportToHeader();
+
+  // Processes the NEL header, if one exists. This header configures whether
+  // network errors will be reported to a specified group of endpoints using the
+  // Reporting API.
+  void ProcessNetworkErrorLoggingHeader();
+
+  // Calls GenerateNetworkErrorLoggingReport() if |rv| represents a NET_ERROR
+  // other than ERR_IO_PENDING.
+  void GenerateNetworkErrorLoggingReportIfError(int rv);
+
+  // Generates a NEL report about this request.  The NetworkErrorLoggingService
+  // will discard the report if there is no NEL policy registered for this
+  // origin.
+  void GenerateNetworkErrorLoggingReport(int rv);
+#endif
 
   // Writes a log message to help debugging in the field when we block a proxy
   // response to a CONNECT request.
@@ -232,13 +230,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // ERR_PROXY_HTTP_1_1_REQUIRED has to be handled.
   int HandleHttp11Required(int error);
 
-  // Called to possibly handle a client authentication error.
-  void HandleClientAuthError(int error);
-
-  // Called to possibly recover from an SSL handshake error.  Sets next_state_
+  // Called to possibly handle a client authentication error. Sets next_state_
   // and returns OK if recovering from the error.  Otherwise, the same error
   // code is returned.
-  int HandleSSLHandshakeError(int error);
+  int HandleSSLClientAuthError(int error);
 
   // Called to possibly recover from the given error.  Sets next_state_ and
   // returns OK if recovering from the error.  Otherwise, the same error code
@@ -255,6 +250,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Returns true if there have already been |kMaxRetryAttempts| retries for
   // HTTP2 or QUIC network errors, and no further retries should be attempted.
   bool HasExceededMaxRetries() const;
+
+  // Increments the number of restarts and returns true if the restart may
+  // proceed.
+  bool CheckMaxRestarts();
 
   // Resets the connection and the request headers for resend.  Called when
   // ShouldResendRequest() is true.
@@ -299,8 +298,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Returns true if this transaction is for a WebSocket handshake
   bool ForWebSocketHandshake() const;
 
-  void SetStream(HttpStream* stream);
-
   void CopyConnectionAttemptsFromStreamRequest();
 
   // Returns true if response "Content-Encoding" headers respect
@@ -315,8 +312,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // cleared by RestartWithAuth().
   HttpAuth::Target pending_auth_target_;
 
-  CompletionCallback io_callback_;
-  CompletionCallback callback_;
+  CompletionRepeatingCallback io_callback_;
+  CompletionOnceCallback callback_;
 
   HttpNetworkSession* session_;
 
@@ -339,17 +336,36 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // True if we've validated the headers that the stream parser has returned.
   bool headers_valid_;
 
+  // True if we can send the request over early data.
+  bool can_send_early_data_;
+
+  // True if |server_ssl_config_.client_cert| was looked up from the
+  // SSLClientAuthCache, rather than provided externally by the caller.
+  bool server_ssl_client_cert_was_cached_;
+
+  // SSL configuration used for the server and proxy, respectively. Note
+  // |server_ssl_config_| may be updated from the HttpStreamFactory, which will
+  // be applied on retry.
+  //
+  // TODO(davidben): Mutating it is weird and relies on HttpStreamFactory
+  // modifications being idempotent. Address this as part of other work to make
+  // sense of SSLConfig (related to https://crbug.com/488043).
   SSLConfig server_ssl_config_;
   SSLConfig proxy_ssl_config_;
 
-  // Keys to use for signing message in Token Binding header.
-  std::unique_ptr<crypto::ECPrivateKey> provided_token_binding_key_;
-  std::unique_ptr<crypto::ECPrivateKey> referred_token_binding_key_;
-  // Object to manage lookup of |provided_token_binding_key_| and
-  // |referred_token_binding_key_|.
-  ChannelIDService::Request token_binding_request_;
-
   HttpRequestHeaders request_headers_;
+#if BUILDFLAG(ENABLE_REPORTING)
+  // Whether a NEL report has already been generated. Reset when restarting.
+  bool network_error_logging_report_generated_;
+  // Cache some fields from |request_| that we'll need to construct a NEL
+  // report about the request.  (NEL report construction happens after we've
+  // cleared the |request_| pointer.)
+  std::string request_method_;
+  std::string request_referrer_;
+  std::string request_user_agent_;
+  int request_reporting_upload_depth_;
+  base::TimeTicks start_timeticks_;
+#endif
 
   // The size in bytes of the buffer we use to drain the response body that
   // we want to throw away.  The response body is typically a small error
@@ -406,18 +422,17 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Network error details for this transaction.
   NetErrorDetails net_error_details_;
 
-  // Communicate lifetime of transaction to the throttler, and
-  // throttled state to the transaction.
-  std::unique_ptr<NetworkThrottleManager::Throttle> throttle_;
-
-  // Number of retries made for network errors like ERR_SPDY_PING_FAILED,
-  // ERR_SPDY_SERVER_REFUSED_STREAM, ERR_QUIC_HANDSHAKE_FAILED and
+  // Number of retries made for network errors like ERR_HTTP2_PING_FAILED,
+  // ERR_HTTP2_SERVER_REFUSED_STREAM, ERR_QUIC_HANDSHAKE_FAILED and
   // ERR_QUIC_PROTOCOL_ERROR. Currently we stop after 3 tries
   // (including the initial request) and fail the request.
   // This count excludes retries on reused sockets since a well
   // behaved server may time those out and thus the number
   // of times we can retry a request on reused sockets is limited.
   size_t retry_attempts_;
+
+  // Number of times the transaction was restarted via a RestartWith* call.
+  size_t num_restarts_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpNetworkTransaction);
 };

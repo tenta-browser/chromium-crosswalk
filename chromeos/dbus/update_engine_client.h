@@ -10,9 +10,9 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "dbus/message.h"
@@ -21,7 +21,7 @@
 namespace chromeos {
 
 // UpdateEngineClient is used to communicate with the update engine.
-class CHROMEOS_EXPORT UpdateEngineClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) UpdateEngineClient : public DBusClient {
  public:
   // Edges for state machine
   //    IDLE->CHECKING_FOR_UPDATE
@@ -48,17 +48,17 @@ class CHROMEOS_EXPORT UpdateEngineClient : public DBusClient {
 
   // The status of the ongoing update attempt.
   struct Status {
-    Status() : status(UPDATE_STATUS_IDLE),
-               download_progress(0.0),
-               last_checked_time(0),
-               new_size(0) {
-    }
-
-    UpdateStatusOperation status;
-    double download_progress;   // 0.0 - 1.0
-    int64_t last_checked_time;  // As reported by std::time().
+    UpdateStatusOperation status = UPDATE_STATUS_IDLE;
+    // 0.0 - 1.0
+    double download_progress = 0.0;
+    // As reported by std::time().
+    int64_t last_checked_time = 0;
     std::string new_version;
-    int64_t new_size;           // Valid during DOWNLOADING, in bytes.
+    // Valid during DOWNLOADING, in bytes.
+    int64_t new_size = 0;
+    // True if the update is actually a rollback and the device will be wiped
+    // when rebooted.
+    bool is_rollback = false;
   };
 
   // The result code used for RequestUpdateCheck().
@@ -145,10 +145,10 @@ class CHROMEOS_EXPORT UpdateEngineClient : public DBusClient {
   // Called once GetEolStatus() is complete. Takes one parameter;
   // - EndOfLife Status: the end of life status of the device.
   using GetEolStatusCallback =
-      base::Callback<void(update_engine::EndOfLifeStatus status)>;
+      base::OnceCallback<void(update_engine::EndOfLifeStatus status)>;
 
   // Get EndOfLife status of the device and calls |callback| when completed.
-  virtual void GetEolStatus(const GetEolStatusCallback& callback) = 0;
+  virtual void GetEolStatus(GetEolStatusCallback callback) = 0;
 
   // Either allow or disallow receiving updates over cellular connections.
   // Synchronous (blocking) method.
@@ -177,9 +177,6 @@ class CHROMEOS_EXPORT UpdateEngineClient : public DBusClient {
       const std::string& update_version,
       int64_t update_size,
       const UpdateOverCellularOneTimePermissionCallback& callback) = 0;
-
-  // Returns an empty UpdateCheckCallback that does nothing.
-  static UpdateCheckCallback EmptyUpdateCheckCallback();
 
   // Creates the instance.
   static UpdateEngineClient* Create(DBusClientImplementationType type);

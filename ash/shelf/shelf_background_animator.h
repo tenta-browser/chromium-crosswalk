@@ -10,9 +10,8 @@
 
 #include "ash/ash_export.h"
 #include "ash/public/cpp/shelf_types.h"
-#include "ash/session/session_observer.h"
+#include "ash/public/cpp/wallpaper_controller_observer.h"
 #include "ash/shelf/shelf_observer.h"
-#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -28,7 +27,7 @@ enum class AnimationChangeType;
 class Shelf;
 class ShelfBackgroundAnimatorObserver;
 class ShelfBackgroundAnimatorTestApi;
-class WallpaperController;
+class WallpaperControllerImpl;
 
 // Central controller for the Shelf and Dock opacity animations.
 //
@@ -39,12 +38,10 @@ class WallpaperController;
 //
 //  Material Design:
 //    1. Shelf button backgrounds
-//    2. Overlay for the SHELF_BACKGROUND_OVERLAP and SHELF_BACKGROUND_MAXIMIZED
-//       states.
+//    2. Overlay for the SHELF_BACKGROUND_MAXIMIZED state.
 class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
                                            public gfx::AnimationDelegate,
-                                           public WallpaperControllerObserver,
-                                           public SessionObserver {
+                                           public WallpaperControllerObserver {
  public:
   // The maximum alpha value that can be used.
   static const int kMaxAlpha = SK_AlphaOPAQUE;
@@ -54,7 +51,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // wallpaper changes if not null.
   ShelfBackgroundAnimator(ShelfBackgroundType background_type,
                           Shelf* shelf,
-                          WallpaperController* wallpaper_controller);
+                          WallpaperControllerImpl* wallpaper_controller);
   ~ShelfBackgroundAnimator() override;
 
   ShelfBackgroundType target_background_type() const {
@@ -94,11 +91,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
                                AnimationChangeType change_type) override;
 
   // WallpaperControllerObserver:
-  void OnWallpaperDataChanged() override;
   void OnWallpaperColorsChanged() override;
-
-  // SessionObserver:
-  void OnSessionStateChanged(session_manager::SessionState state) override;
 
  private:
   friend class ShelfBackgroundAnimatorTestApi;
@@ -153,8 +146,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // Sets the target values for |shelf_background_values| and
   // |item_background_values| according to |background_type|.
   void GetTargetValues(ShelfBackgroundType background_type,
-                       AnimationValues* shelf_background_values,
-                       AnimationValues* item_background_values) const;
+                       AnimationValues* shelf_background_values) const;
 
   // Updates the animation values corresponding to the |t| value between 0 and
   // 1.
@@ -167,7 +159,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   Shelf* shelf_;
 
   // The wallpaper controller to observe for changes and to extract colors from.
-  WallpaperController* wallpaper_controller_;
+  WallpaperControllerImpl* wallpaper_controller_;
 
   // The background type that this is animating towards or has reached.
   ShelfBackgroundType target_background_type_ = SHELF_BACKGROUND_DEFAULT;
@@ -175,7 +167,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // The last background type this is animating away from.
   ShelfBackgroundType previous_background_type_ = SHELF_BACKGROUND_MAXIMIZED;
 
-  // Drives the animtion.
+  // Drives the animation.
   std::unique_ptr<gfx::SlideAnimation> animator_;
 
   // Tracks the shelf background animation values.
@@ -184,9 +176,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // Tracks the item background animation values.
   AnimationValues item_background_values_;
 
-  base::ObserverList<ShelfBackgroundAnimatorObserver> observers_;
-
-  ScopedSessionObserver scoped_session_observer_;
+  base::ObserverList<ShelfBackgroundAnimatorObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfBackgroundAnimator);
 };

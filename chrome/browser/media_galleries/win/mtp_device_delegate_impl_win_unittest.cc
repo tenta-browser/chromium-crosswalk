@@ -7,9 +7,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
@@ -48,7 +48,7 @@ void GetGalleryInfoCallback(
     FSInfoMap* results,
     const std::vector<MediaFileSystemInfo>& file_systems) {
   for (size_t i = 0; i < file_systems.size(); ++i) {
-    ASSERT_FALSE(base::ContainsKey(*results, file_systems[i].pref_id));
+    ASSERT_FALSE(base::Contains(*results, file_systems[i].pref_id));
     (*results)[file_systems[i].pref_id] = file_systems[i];
   }
 }
@@ -159,7 +159,8 @@ void MTPDeviceDelegateImplWinTest::CheckGalleryInfo(
     EXPECT_EQ(0UL, info.transient_device_id.size());
 }
 
-TEST_F(MTPDeviceDelegateImplWinTest, GalleryNameMTP) {
+// TODO(https://crbug.com/868254): Failing on Win7 Tests (1). Fix and enable.
+TEST_F(MTPDeviceDelegateImplWinTest, DISABLED_GalleryNameMTP) {
   base::FilePath location(
       PortableDeviceWatcherWin::GetStoragePathFromStorageId(
           TestPortableDeviceWatcherWin::kStorageUniqueIdA));

@@ -60,14 +60,13 @@ class RuntimeHooksDelegateTest : public NativeExtensionBindingsSystemUnittest {
     bindings_system()->api_system()->GetHooksForAPI("runtime")->SetDelegate(
         std::make_unique<RuntimeHooksDelegate>(messaging_service_.get()));
 
-    scoped_refptr<Extension> mutable_extension = BuildExtension();
-    RegisterExtension(mutable_extension);
-    extension_ = mutable_extension;
+    extension_ = BuildExtension();
+    RegisterExtension(extension_);
 
     v8::HandleScope handle_scope(isolate());
     v8::Local<v8::Context> context = MainContext();
 
-    script_context_ = CreateScriptContext(context, mutable_extension.get(),
+    script_context_ = CreateScriptContext(context, extension_.get(),
                                           Feature::BLESSED_EXTENSION_CONTEXT);
     script_context_->set_url(extension_->url());
     bindings_system()->UpdateBindingsForContext(script_context_);
@@ -80,7 +79,7 @@ class RuntimeHooksDelegateTest : public NativeExtensionBindingsSystemUnittest {
   }
   bool UseStrictIPCMessageSender() override { return true; }
 
-  virtual scoped_refptr<Extension> BuildExtension() {
+  virtual scoped_refptr<const Extension> BuildExtension() {
     return ExtensionBuilder("foo").Build();
   }
 
@@ -104,15 +103,10 @@ TEST_F(RuntimeHooksDelegateTest, RuntimeId) {
   v8::Local<v8::Context> context = MainContext();
 
   {
-    DictionaryBuilder connectable;
-    connectable.Set("matches",
-                    ListBuilder().Append("*://example.com/*").Build());
-    scoped_refptr<Extension> connectable_extension =
+    scoped_refptr<const Extension> connectable_extension =
         ExtensionBuilder("connectable")
-            .MergeManifest(
-                DictionaryBuilder()
-                    .Set("externally_connectable", connectable.Build())
-                    .Build())
+            .SetManifestPath({"externally_connectable", "matches"},
+                             ListBuilder().Append("*://example.com/*").Build())
             .Build();
     RegisterExtension(connectable_extension);
   }
@@ -125,7 +119,7 @@ TEST_F(RuntimeHooksDelegateTest, RuntimeId) {
 
   {
     v8::Local<v8::Value> id = get_id(context);
-    EXPECT_EQ(extension()->id(), gin::V8ToString(id));
+    EXPECT_EQ(extension()->id(), gin::V8ToString(isolate(), id));
   }
 
   {
@@ -168,12 +162,14 @@ TEST_F(RuntimeHooksDelegateTest, GetURL) {
     v8::Local<v8::Value> url = RunFunction(get_url, context, 0, nullptr);
     ASSERT_FALSE(url.IsEmpty());
     ASSERT_TRUE(url->IsString());
-    EXPECT_EQ(expected_url.spec(), gin::V8ToString(url));
+    EXPECT_EQ(expected_url.spec(), gin::V8ToString(isolate(), url));
   };
 
   get_url("''", extension()->url());
   get_url("'foo'", extension()->GetResourceURL("foo"));
   get_url("'/foo'", extension()->GetResourceURL("foo"));
+  get_url("'https://www.google.com'",
+          GURL(extension()->url().spec() + "https://www.google.com"));
 }
 
 TEST_F(RuntimeHooksDelegateTest, Connect) {
@@ -254,6 +250,18 @@ TEST_F(RuntimeHooksDelegateTest, SendMessage) {
                          R"("string message")", other_target, false,
                          SendMessageTester::CLOSED);
 
+  // The sender could omit the ID by passing null or undefined explicitly.
+  // Regression tests for https://crbug.com/828664.
+  tester.TestSendMessage("null, {data: 'hello'}, function() {}",
+                         kStandardMessage, self_target, false,
+                         SendMessageTester::OPEN);
+  tester.TestSendMessage("null, 'test', function() {}", R"("test")",
+                         self_target, false, SendMessageTester::OPEN);
+  tester.TestSendMessage("null, 'test'", R"("test")", self_target, false,
+                         SendMessageTester::CLOSED);
+  tester.TestSendMessage("undefined, 'test', function() {}", R"("test")",
+                         self_target, false, SendMessageTester::OPEN);
+
   // Funny case. The only required argument is `message`, which can be any type.
   // This means that if an extension provides a <string, object> pair for the
   // first three arguments, it could apply to either the target id and the
@@ -290,13 +298,59 @@ TEST_F(RuntimeHooksDelegateTest, SendMessageErrors) {
   send_message("'some id', 'some message', {}, {}");
 }
 
+TEST_F(RuntimeHooksDelegateTest, SendMessageWithTrickyOptions) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  SendMessageTester tester(ipc_message_sender(), script_context(), 0,
+                           "runtime");
+
+  MessageTarget self_target = MessageTarget::ForExtension(extension()->id());
+  constexpr char kStandardMessage[] = R"({"data":"hello"})";
+  {
+    // Even though we parse the message options separately, we do a conversion
+    // of the object passed into the API. This means that something subtle like
+    // this, which throws on the second access of a property, shouldn't trip us
+    // up.
+    constexpr char kTrickyConnectOptions[] =
+        R"({data: 'hello'},
+           {
+             get includeTlsChannelId() {
+               if (this.checkedOnce)
+                 throw new Error('tricked!');
+               this.checkedOnce = true;
+               return true;
+             }
+           })";
+    tester.TestSendMessage(kTrickyConnectOptions, kStandardMessage, self_target,
+                           true, SendMessageTester::CLOSED);
+  }
+  {
+    // A different form of trickiness: the options object doesn't have the
+    // includeTlsChannelId key (which is acceptable, since its optional), but
+    // any attempt to access the key on an object without a value for it results
+    // in an error. Our argument parsing code should protect us from this.
+    constexpr const char kMessWithObjectPrototype[] =
+        R"((function() {
+             Object.defineProperty(
+                 Object.prototype, 'includeTlsChannelId',
+                 { get() { throw new Error('tricked!'); } });
+           }))";
+    v8::Local<v8::Function> mess_with_proto =
+        FunctionFromString(context, kMessWithObjectPrototype);
+    RunFunction(mess_with_proto, context, 0, nullptr);
+    tester.TestSendMessage("{data: 'hello'}, {}", kStandardMessage, self_target,
+                           false, SendMessageTester::CLOSED);
+  }
+}
+
 class RuntimeHooksDelegateNativeMessagingTest
     : public RuntimeHooksDelegateTest {
  public:
   RuntimeHooksDelegateNativeMessagingTest() {}
   ~RuntimeHooksDelegateNativeMessagingTest() override {}
 
-  scoped_refptr<Extension> BuildExtension() override {
+  scoped_refptr<const Extension> BuildExtension() override {
     return ExtensionBuilder("foo").AddPermission("nativeMessaging").Build();
   }
 };
@@ -376,14 +430,15 @@ TEST_F(RuntimeHooksDelegateNativeMessagingTest, SendNativeMessage) {
                                        expected_target, kEmptyExpectedChannel,
                                        kExpectedIncludeTlsChannelId));
     Message message(expected_message, false);
-    EXPECT_CALL(
-        *ipc_message_sender(),
-        SendPostMessageToPort(MSG_ROUTING_NONE, expected_port_id, message));
-    if (expected_port_status == CLOSED) {
-      EXPECT_CALL(
-          *ipc_message_sender(),
-          SendCloseMessagePort(MSG_ROUTING_NONE, expected_port_id, true));
-    }
+    EXPECT_CALL(*ipc_message_sender(),
+                SendPostMessageToPort(expected_port_id, message));
+    // Note: we don't close native message ports immediately. See comment in
+    // OneTimeMessageSender.
+    // if (expected_port_status == CLOSED) {
+    //   EXPECT_CALL(
+    //       *ipc_message_sender(),
+    //       SendCloseMessagePort(expected_port_id, true));
+    // }
     v8::Local<v8::Function> send_message = FunctionFromString(
         context, base::StringPrintf(kSendMessageTemplate, args));
     RunFunction(send_message, context, 0, nullptr);

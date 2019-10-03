@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/clock.h"
 #include "components/ntp_snippets/features.h"
@@ -46,9 +47,9 @@ const double kActiveConsumerClicksAtLeastOncePerHours = 96;
 const char kActiveConsumerClicksAtLeastOncePerHoursParam[] =
     "user_classifier_active_consumer_clicks_at_least_once_per_hours";
 
-// The previous value in production was 72, i.e. 3 days. The new value is a
-// cautios shift in the direction we want (having slightly more rare users).
-const double kRareUserOpensNTPAtMostOncePerHours = 66;
+// The previous value in production was 66, i.e. 2.75 days. The new value is a
+// shift in the direction we want (having more active users).
+const double kRareUserOpensNTPAtMostOncePerHours = 96;
 const char kRareUserOpensNTPAtMostOncePerHoursParam[] =
     "user_classifier_rare_user_opens_ntp_at_most_once_per_hours";
 
@@ -82,15 +83,15 @@ const char* kInitialHoursBetweenEventsParams[] = {
     "user_classifier_default_interval_suggestions_shown",
     "user_classifier_default_interval_suggestions_used"};
 
-static_assert(arraysize(kMetrics) ==
+static_assert(base::size(kMetrics) ==
                       static_cast<int>(UserClassifier::Metric::COUNT) &&
-                  arraysize(kMetricKeys) ==
+                  base::size(kMetricKeys) ==
                       static_cast<int>(UserClassifier::Metric::COUNT) &&
-                  arraysize(kLastTimeKeys) ==
+                  base::size(kLastTimeKeys) ==
                       static_cast<int>(UserClassifier::Metric::COUNT) &&
-                  arraysize(kInitialHoursBetweenEvents) ==
+                  base::size(kInitialHoursBetweenEvents) ==
                       static_cast<int>(UserClassifier::Metric::COUNT) &&
-                  arraysize(kInitialHoursBetweenEventsParams) ==
+                  base::size(kInitialHoursBetweenEventsParams) ==
                       static_cast<int>(UserClassifier::Metric::COUNT),
               "Fill in info for all metrics.");
 
@@ -184,10 +185,9 @@ double GetMetricValueForEstimateHoursBetweenEvents(
 
 }  // namespace
 
-UserClassifier::UserClassifier(PrefService* pref_service,
-                               std::unique_ptr<base::Clock> clock)
+UserClassifier::UserClassifier(PrefService* pref_service, base::Clock* clock)
     : pref_service_(pref_service),
-      clock_(std::move(clock)),
+      clock_(clock),
       discount_rate_per_hour_(GetDiscountRatePerHour()),
       min_hours_(GetMinHours()),
       max_hours_(GetMaxHours()),

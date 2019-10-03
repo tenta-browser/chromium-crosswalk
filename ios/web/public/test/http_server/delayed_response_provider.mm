@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #import "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/test/embedded_test_server/http_response.h"
 
@@ -27,7 +26,7 @@ class DelayedHttpResponse : public net::test_server::BasicHttpResponse {
       const net::test_server::SendBytesCallback& send,
       const net::test_server::SendCompleteCallback& done) override {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(send, ToResponseString(), done),
+        FROM_HERE, base::BindOnce(send, ToResponseString(), done),
         base::TimeDelta::FromSecondsD(delay_));
   }
 
@@ -53,7 +52,7 @@ bool DelayedResponseProvider::CanHandleRequest(const Request& request) {
 std::unique_ptr<net::test_server::HttpResponse>
 DelayedResponseProvider::GetEmbeddedTestServerResponse(const Request& request) {
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
-      base::MakeUnique<DelayedHttpResponse>(delay_));
+      std::make_unique<DelayedHttpResponse>(delay_));
   http_response->set_content_type("text/html");
   http_response->set_content("Slow Page");
   return std::move(http_response);

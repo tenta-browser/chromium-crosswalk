@@ -25,24 +25,23 @@ TextRenderer::TextRenderer(
     : task_runner_(task_runner),
       add_text_track_cb_(add_text_track_cb),
       state_(kUninitialized),
-      pending_read_count_(0),
-      weak_factory_(this) {}
+      pending_read_count_(0) {}
 
 TextRenderer::~TextRenderer() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   text_track_state_map_.clear();
-  if (!pause_cb_.is_null())
-    base::ResetAndReturn(&pause_cb_).Run();
+  if (pause_cb_)
+    std::move(pause_cb_).Run();
 }
 
 void TextRenderer::Initialize(const base::Closure& ended_cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  DCHECK(!ended_cb.is_null());
+  DCHECK(ended_cb);
   DCHECK_EQ(kUninitialized, state_)  << "state_ " << state_;
   DCHECK(text_track_state_map_.empty());
   DCHECK_EQ(pending_read_count_, 0);
   DCHECK(pending_eos_set_.empty());
-  DCHECK(ended_cb_.is_null());
+  DCHECK(!ended_cb_);
 
   ended_cb_ = ended_cb;
   state_ = kPaused;
@@ -130,15 +129,14 @@ bool TextRenderer::HasTracks() const {
   return !text_track_state_map_.empty();
 }
 
-void TextRenderer::BufferReady(
-    DemuxerStream* stream,
-    DemuxerStream::Status status,
-    const scoped_refptr<DecoderBuffer>& input) {
+void TextRenderer::BufferReady(DemuxerStream* stream,
+                               DemuxerStream::Status status,
+                               scoped_refptr<DecoderBuffer> input) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_NE(status, DemuxerStream::kConfigChanged);
 
   if (status == DemuxerStream::kAborted) {
-    DCHECK(!input.get());
+    DCHECK(!input);
     DCHECK_GT(pending_read_count_, 0);
     DCHECK(pending_eos_set_.find(stream) != pending_eos_set_.end());
 
@@ -158,7 +156,7 @@ void TextRenderer::BufferReady(
       case kPausePending:
         if (pending_read_count_ == 0) {
           state_ = kPaused;
-          base::ResetAndReturn(&pause_cb_).Run();
+          std::move(pause_cb_).Run();
         }
 
         return;
@@ -254,7 +252,7 @@ void TextRenderer::CueReady(
       }
 
       state_ = kPaused;
-      base::ResetAndReturn(&pause_cb_).Run();
+      std::move(pause_cb_).Run();
 
       return;
     }
@@ -285,7 +283,7 @@ void TextRenderer::CueReady(
   if (pending_read_count_ == 0) {
       DCHECK_EQ(state_, kPausePending) << "state_ " << state_;
       state_ = kPaused;
-      base::ResetAndReturn(&pause_cb_).Run();
+      std::move(pause_cb_).Run();
   }
 }
 

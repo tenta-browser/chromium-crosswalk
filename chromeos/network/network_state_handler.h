@@ -7,24 +7,23 @@
 
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/managed_state.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
+#include "chromeos/network/network_state.h"
 #include "chromeos/network/network_type_pattern.h"
 #include "chromeos/network/shill_property_handler.h"
 
 namespace base {
-class DictionaryValue;
 class ListValue;
 class Location;
 class Value;
@@ -60,7 +59,7 @@ class NetworkStateHandlerTest;
 //   the initial properties are received. The GUID will be consistent for
 //   the duration of a session, even if the network drops out and returns.
 
-class CHROMEOS_EXPORT NetworkStateHandler
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkStateHandler
     : public internal::ShillPropertyHandler::Listener {
  public:
   typedef std::vector<std::unique_ptr<ManagedState>> ManagedStateList;
@@ -95,6 +94,7 @@ class CHROMEOS_EXPORT NetworkStateHandler
                    const base::Location& from_here);
   void RemoveObserver(NetworkStateHandlerObserver* observer,
                       const base::Location& from_here);
+  bool HasObserver(NetworkStateHandlerObserver* observer);
 
   // Returns the state for technology |type|. Only
   // NetworkTypePattern::Primitive, ::Mobile, ::Ethernet, and ::Tether are
@@ -161,17 +161,34 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // differ.
   const NetworkState* DefaultNetwork() const;
 
-  // Returns the primary connected network of matching |type|, otherwise NULL.
+  // Returns the primary connected network matching |type|, otherwise null.
   const NetworkState* ConnectedNetworkByType(const NetworkTypePattern& type);
 
-  // Like ConnectedNetworkByType() but returns a connecting network or NULL.
-  const NetworkState* ConnectingNetworkByType(
-      const NetworkTypePattern& type) const;
+  // Returns the primary connecting network matching |type|, otherwise null.
+  const NetworkState* ConnectingNetworkByType(const NetworkTypePattern& type);
+
+  // Returns the primary active network of matching |type|, otherwise null.
+  // See also GetActiveNetworkListByType.
+  const NetworkState* ActiveNetworkByType(const NetworkTypePattern& type);
 
   // Like ConnectedNetworkByType() but returns any matching visible network or
   // NULL. Mostly useful for mobile networks where there is generally only one
   // network. Note: O(N).
   const NetworkState* FirstNetworkByType(const NetworkTypePattern& type);
+
+  // Sets the |connect_requested_| property of a NetworkState for
+  // |service_path| if it exists. This is used to inform the UI that a network
+  // is connecting before the state is set in Shill. If |connect_requested| is
+  // true, NetworkState::IsConnectingState() will return true. This will cause
+  // the network to be sorted first and it will be part of the active list.
+  void SetNetworkConnectRequested(const std::string& service_path,
+                                  bool connect_requested);
+
+  // Called from Chrome's network portal detector to indicate whether Chrome has
+  // detected that the network is in a captive portal state. This may or may
+  // not match the network's |is_captive_portal_| which is provided by Shill.
+  void SetNetworkChromePortalDetected(const std::string& service_path,
+                                      bool portal_detected);
 
   // Returns the aa:bb formatted hardware (MAC) address for the first connected
   // network matching |type|, or an empty string if none is connected.
@@ -199,6 +216,14 @@ class CHROMEOS_EXPORT NetworkStateHandler
                             bool visible_only,
                             size_t limit,
                             NetworkStateList* list);
+
+  // Sets |list| to contain the active networks matching |type|. An 'active'
+  // network is connecting or connected, and the first connected active network
+  // is the primary or 'default' network providing connectivity (which may be a
+  // VPN, use NetworkTypePattern::NonVirtual() to ignore VPNs). See
+  // GetNetworkListByType for notes on |list| results.
+  void GetActiveNetworkListByType(const NetworkTypePattern& type,
+                                  NetworkStateList* list);
 
   // Finds and returns the NetworkState associated with |service_path| or NULL
   // if not found. If |configured_only| is true, only returns saved entries
@@ -314,9 +339,19 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // Sets the list of devices on which portal check is enabled.
   void SetCheckPortalList(const std::string& check_portal_list);
 
+  // Sets a provider id (e.g. extension id) for a hex encoded SSID. If
+  // |provider_id| is empty the entry will be erased.
+  void SetCaptivePortalProviderForHexSsid(const std::string& hex_ssid,
+                                          const std::string& provider_id,
+                                          const std::string& provider_name);
+
   // Sets the Manager.WakeOnLan property. Note: we do not track this state, we
   // only set it.
   void SetWakeOnLanEnabled(bool enabled);
+
+  // Sets the HostName property. Note: we do not track this property, we
+  // only set it.
+  void SetHostname(const std::string& hostname);
 
   // Enable or disable network bandwidth throttling, on all interfaces on the
   // system. If |enabled| is true, |upload_rate_kbits| and |download_rate_kbits|
@@ -325,6 +360,11 @@ class CHROMEOS_EXPORT NetworkStateHandler
   void SetNetworkThrottlingStatus(bool enabled,
                                   uint32_t upload_rate_kbits,
                                   uint32_t download_rate_kbits);
+
+  // Sets the Fast Transition property. 802.11r Fast BSS Transition allows
+  // wireless Access Points to share information before a device initiates a
+  // reassociation. This allows devices to roam much more quickly.
+  void SetFastTransitionStatus(bool enabled);
 
   const std::string& GetCheckPortalListForTest() const {
     return check_portal_list_;
@@ -340,9 +380,27 @@ class CHROMEOS_EXPORT NetworkStateHandler
     return default_network_path_;
   }
 
-  // Sets the |last_error_| property of the matching NetworkState for tests.
-  void SetLastErrorForTest(const std::string& service_path,
-                           const std::string& error);
+  // Sets the |error_| property of the matching NetworkState for tests.
+  void SetErrorForTest(const std::string& service_path,
+                       const std::string& error);
+
+  // Sets |allow_only_policy_networks_to_connect_|,
+  // |allow_only_policy_networks_to_connect_if_available_| and
+  // |blacklisted_hex_ssids_| and calls |UpdateBlockedWifiNetworksInternal()|.
+  virtual void UpdateBlockedWifiNetworks(
+      bool only_managed,
+      bool available_only,
+      const std::vector<std::string>& blacklisted_hex_ssids);
+
+  // Returns the NetworkState associated to the wifi device's
+  // available_managed_network_path or |nullptr| if no managed network is
+  // available.
+  const NetworkState* GetAvailableManagedWifiNetwork() const;
+
+  // Returns true if the AllowOnlyPolicyNetworksToConnect policy is enabled or
+  // if the AllowOnlyPolicyNetworksToConnectIfAvailable policy is enabled and
+  // there is a managed wifi network available.
+  bool OnlyManagedWifiNetworksAllowed() const;
 
   // Constructs and initializes an instance for testing.
   static std::unique_ptr<NetworkStateHandler> InitializeForTest();
@@ -368,10 +426,10 @@ class CHROMEOS_EXPORT NetworkStateHandler
 
   // Parses the properties for the network service or device. Mostly calls
   // managed->PropertyChanged(key, value) for each dictionary entry.
-  void UpdateManagedStateProperties(
-      ManagedState::ManagedType type,
-      const std::string& path,
-      const base::DictionaryValue& properties) override;
+  // |properties| is expected to be type DICTIONARY.
+  void UpdateManagedStateProperties(ManagedState::ManagedType type,
+                                    const std::string& path,
+                                    const base::Value& properties) override;
 
   // Called by ShillPropertyHandler when a watched service property changes.
   void UpdateNetworkServiceProperty(const std::string& service_path,
@@ -384,12 +442,11 @@ class CHROMEOS_EXPORT NetworkStateHandler
                             const base::Value& value) override;
 
   // Called by ShillPropertyHandler when a watched network or device
-  // IPConfig property changes.
-  void UpdateIPConfigProperties(
-      ManagedState::ManagedType type,
-      const std::string& path,
-      const std::string& ip_config_path,
-      const base::DictionaryValue& properties) override;
+  // IPConfig property changes. |properties| is expected to be type DICTIONARY.
+  void UpdateIPConfigProperties(ManagedState::ManagedType type,
+                                const std::string& path,
+                                const std::string& ip_config_path,
+                                const base::Value& properties) override;
 
   // Called by ShillPropertyHandler when the portal check list manager property
   // changes.
@@ -415,6 +472,18 @@ class CHROMEOS_EXPORT NetworkStateHandler
   typedef std::map<std::string, std::string> SpecifierGuidMap;
   friend class NetworkStateHandlerTest;
   FRIEND_TEST_ALL_PREFIXES(NetworkStateHandlerTest, NetworkStateHandlerStub);
+  FRIEND_TEST_ALL_PREFIXES(NetworkStateHandlerTest, BlockedByPolicyBlacklisted);
+  FRIEND_TEST_ALL_PREFIXES(NetworkStateHandlerTest, BlockedByPolicyOnlyManaged);
+  FRIEND_TEST_ALL_PREFIXES(NetworkStateHandlerTest,
+                           BlockedByPolicyOnlyManagedIfAvailable);
+
+  // Implementation for GetNetworkListByType and GetActiveNetworkListByType.
+  void GetNetworkListByTypeImpl(const NetworkTypePattern& type,
+                                bool configured_only,
+                                bool visible_only,
+                                bool active_only,
+                                size_t limit,
+                                NetworkStateList* list);
 
   // Sorts the network list. Called when all network updates have been received,
   // or when the network list is requested but the list is in an unsorted state.
@@ -431,18 +500,28 @@ class CHROMEOS_EXPORT NetworkStateHandler
   void UpdateNetworkStats();
 
   // NetworkState specific method for UpdateManagedStateProperties which
-  // notifies observers.
+  // notifies observers. |properties| is expected to be type DICTIONARY.
   void UpdateNetworkStateProperties(NetworkState* network,
-                                    const base::DictionaryValue& properties);
+                                    const base::Value& properties);
 
   // Ensure a valid GUID for NetworkState.
   void UpdateGuid(NetworkState* network);
 
+  // Look for a matching captive portal provider in
+  // |hex_ssid_to_captive_portal_provider_map_|.
+  void UpdateCaptivePortalProvider(NetworkState* network);
+
+  // Update networkState properties from the associated DeviceState.
+  void UpdateCellularStateFromDevice(NetworkState* network);
+
   // Cellular networks may not have an associated Shill Service (e.g. when the
-  // SIM is locked or a mobile network is not available). To simplify the UI,
-  // if a Cellular Device exists |cellular_networks| will be modified to contain
-  // exactly one network, creating a default network if necessary.
-  void EnsureCellularNetwork(ManagedStateList* cellular_networks);
+  // SIM is locked or a mobile network is not available). This returns a new
+  // default cellular network if necessary.
+  std::unique_ptr<NetworkState> MaybeCreateDefaultCellularNetwork();
+
+  // Removes the default Cellular network if it exists. Called when there is
+  // more than one Cellular network in the list.
+  void RemoveDefaultCellularNetwork();
 
   // Sends NetworkListChanged() to observers and logs an event.
   void NotifyNetworkListChanged();
@@ -454,6 +533,8 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // be called by Get[Network|Device]State, even though they return non-const
   // pointers.
   DeviceState* GetModifiableDeviceState(const std::string& device_path) const;
+  DeviceState* GetModifiableDeviceStateByType(
+      const NetworkTypePattern& type) const;
   NetworkState* GetModifiableNetworkState(
       const std::string& service_path) const;
   NetworkState* GetModifiableNetworkStateFromGuid(
@@ -464,12 +545,25 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // Gets the list specified by |type|.
   ManagedStateList* GetManagedList(ManagedState::ManagedType type);
 
-  // Helper function to notify observers. Calls CheckDefaultNetworkChanged().
-  // Returns true if NotifyDefaultNetworkChanged() was called.
-  bool OnNetworkConnectionStateChanged(NetworkState* network);
+  // Helper function that calls NotifyNetworkConnectionStateChanged and,
+  // for the default network, OnDefaultNetworkConnectionStateChanged and
+  // NotifyDefaultNetworkChanged.
+  void OnNetworkConnectionStateChanged(NetworkState* network);
+
+  // Verifies the connection state of the default network. Returns false
+  // if the connection state change should be ignored.
+  bool VerifyDefaultNetworkConnectionStateChange(NetworkState* network);
+
+  // Notifies observers when a network's connection state changes.
+  void NotifyNetworkConnectionStateChanged(NetworkState* network);
 
   // Notifies observers when the default network or its properties change.
-  void NotifyDefaultNetworkChanged(const NetworkState* default_network);
+  void NotifyDefaultNetworkChanged();
+
+  // Notifies observers when the active state of any current or previously
+  // active network changes, or the active networks order changes.
+  bool ActiveNetworksChanged(const NetworkStateList& active_networks);
+  void NotifyIfActiveNetworksChanged();
 
   // Notifies observers about changes to |network|, including IPConfg.
   void NotifyNetworkPropertiesUpdated(const NetworkState* network);
@@ -478,7 +572,7 @@ class CHROMEOS_EXPORT NetworkStateHandler
   void NotifyDevicePropertiesUpdated(const DeviceState* device);
 
   // Called to ask observers to scan for networks.
-  void NotifyScanRequested();
+  void NotifyScanRequested(const NetworkTypePattern& type);
 
   // Called whenever Device.Scanning state transitions to false.
   void NotifyScanCompleted(const DeviceState* device);
@@ -518,11 +612,24 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // it is not present in |device_list_| if it is TECHNOLOGY_UNAVAILABLE.
   void EnsureTetherDeviceState();
 
+  // Updates the network's |blocked_by_policy_| depending on
+  // |allow_only_policy_networks_to_connect_| and |blacklisted_hex_ssids_|.
+  // Returns true if the value changed.
+  bool UpdateBlockedByPolicy(NetworkState* network) const;
+
+  // Updates the device's |managed_network_available_| depending on the list of
+  // networks associated with this device. Calls
+  // |UpdateBlockedWifiNetworksInternal()| if the availability changed.
+  void UpdateManagedWifiNetworkAvailable();
+
+  // Calls |UpdateBlockedByPolicy()| for each wifi network.
+  void UpdateBlockedWifiNetworksInternal();
+
   // Shill property handler instance, owned by this class.
   std::unique_ptr<internal::ShillPropertyHandler> shill_property_handler_;
 
   // Observer list
-  base::ObserverList<NetworkStateHandlerObserver, true> observers_;
+  base::ObserverList<NetworkStateHandlerObserver, true>::Unchecked observers_;
 
   // List of managed network states
   ManagedStateList network_list_;
@@ -530,6 +637,10 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // List of managed Tether network states, which exist separately from
   // |network_list_|.
   ManagedStateList tether_network_list_;
+
+  // List of active networks, used to limit ActiveNetworksChanged events.
+  class ActiveNetworkState;
+  std::vector<ActiveNetworkState> active_network_list_;
 
   // Set to true when the network list is sorted, cleared when network updates
   // arrive. Used to trigger sorting when needed.
@@ -548,6 +659,11 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // NetworkState that is not saved in a profile.
   SpecifierGuidMap specifier_guid_map_;
 
+  // Map of hex SSIDs to captive portal provider info.
+  // Used to set NetworkState::captive_portal_provider_.
+  std::map<std::string, NetworkState::CaptivePortalProviderInfo>
+      hex_ssid_to_captive_portal_provider_map_;
+
   // The state corresponding to the Tether device type. This value is managed by
   // the Tether component.
   TechnologyState tether_technology_state_ =
@@ -561,6 +677,12 @@ class CHROMEOS_EXPORT NetworkStateHandler
 
   // Ensure that we do not delete any networks while notifying observers.
   bool notifying_network_observers_ = false;
+
+  // Policies which control WiFi blocking (Controlled from
+  // |ManagedNetworkConfigurationHandler| by calling |UpdateBlockedNetworks()|).
+  bool allow_only_policy_networks_to_connect_ = false;
+  bool allow_only_policy_networks_to_connect_if_available_ = false;
+  std::vector<std::string> blacklisted_hex_ssids_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

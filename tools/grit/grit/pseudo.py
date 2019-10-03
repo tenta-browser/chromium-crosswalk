@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -21,6 +20,8 @@ diaresis, and circumflex), and we write the "p" in the P-language as a Hebrew
 character Qof.  It looks sort of like a latin character "p" but it is outside
 the latin-1 character set which will stress character encoding bugs.
 '''
+
+from __future__ import print_function
 
 from grit import lazy_re
 from grit import tclib
@@ -125,4 +126,3 @@ def PseudoMessage(message):
       transl.AppendText(PseudoString(part))
 
   return transl
-

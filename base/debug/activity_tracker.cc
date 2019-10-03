@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/atomic_sequence_num.h"
+#include "base/bits.h"
 #include "base/debug/stack_trace.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -25,6 +26,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 
 namespace base {
 namespace debug {
@@ -51,26 +53,11 @@ const char kProcessPhaseDataKey[] = "process-phase";
 // in the same memory space.
 AtomicSequenceNumber g_next_id;
 
-union ThreadRef {
-  int64_t as_id;
-#if defined(OS_WIN)
-  // On Windows, the handle itself is often a pseudo-handle with a common
-  // value meaning "this thread" and so the thread-id is used. The former
-  // can be converted to a thread-id with a system call.
-  PlatformThreadId as_tid;
-#elif defined(OS_POSIX)
-  // On Posix, the handle is always a unique identifier so no conversion
-  // needs to be done. However, it's value is officially opaque so there
-  // is no one correct way to convert it to a numerical identifier.
-  PlatformThreadHandle::Handle as_handle;
-#endif
-};
-
 // Gets the next non-zero identifier. It is only unique within a process.
 uint32_t GetNextDataId() {
   uint32_t id;
-  while ((id = g_next_id.GetNext()) == 0)
-    ;
+  while ((id = g_next_id.GetNext()) == 0) {
+  }
   return id;
 }
 
@@ -105,12 +92,12 @@ PersistentMemoryAllocator::Reference AllocateFrom(
 
 // Determines the previous aligned index.
 size_t RoundDownToAlignment(size_t index, size_t alignment) {
-  return index & (0 - alignment);
+  return bits::AlignDown(index, alignment);
 }
 
 // Determines the next aligned index.
 size_t RoundUpToAlignment(size_t index, size_t alignment) {
-  return (index + (alignment - 1)) & (0 - alignment);
+  return bits::Align(index, alignment);
 }
 
 // Converts "tick" timing into wall time.
@@ -119,6 +106,21 @@ Time WallTimeFromTickTime(int64_t ticks_start, int64_t ticks, Time time_start) {
 }
 
 }  // namespace
+
+union ThreadRef {
+  int64_t as_id;
+#if defined(OS_WIN)
+  // On Windows, the handle itself is often a pseudo-handle with a common
+  // value meaning "this thread" and so the thread-id is used. The former
+  // can be converted to a thread-id with a system call.
+  PlatformThreadId as_tid;
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  // On Posix and Fuchsia, the handle is always a unique identifier so no
+  // conversion needs to be done. However, its value is officially opaque so
+  // there is no one correct way to convert it to a numerical identifier.
+  PlatformThreadHandle::Handle as_handle;
+#endif
+};
 
 OwningProcess::OwningProcess() = default;
 OwningProcess::~OwningProcess() = default;
@@ -260,8 +262,9 @@ void Activity::FillFrom(Activity* activity,
   activity->activity_type = type;
   activity->data = data;
 
-#if defined(SYZYASAN)
-  // Create a stacktrace from the current location and get the addresses.
+#if (!defined(OS_NACL) && DCHECK_IS_ON()) || defined(ADDRESS_SANITIZER)
+  // Create a stacktrace from the current location and get the addresses for
+  // improved debuggability.
   StackTrace stack_trace;
   size_t stack_depth;
   const void* const* stack_addrs = stack_trace.Addresses(&stack_depth);
@@ -690,7 +693,6 @@ ThreadActivityTracker::ThreadActivityTracker(void* base, size_t size)
 #endif
       stack_slots_(
           static_cast<uint32_t>((size - sizeof(Header)) / sizeof(Activity))) {
-
   // Verify the parameters but fail gracefully if they're not valid so that
   // production code based on external inputs will not crash.  IsValid() will
   // return false in this case.
@@ -734,7 +736,7 @@ ThreadActivityTracker::ThreadActivityTracker(void* base, size_t size)
 
 #if defined(OS_WIN)
     header_->thread_ref.as_tid = PlatformThread::CurrentId();
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
     header_->thread_ref.as_handle =
         PlatformThread::CurrentHandle().platform_handle();
 #endif
@@ -1303,32 +1305,19 @@ bool GlobalActivityTracker::CreateWithLocalMemory(size_t size,
 
 // static
 bool GlobalActivityTracker::CreateWithSharedMemory(
-    std::unique_ptr<SharedMemory> shm,
+    base::WritableSharedMemoryMapping mapping,
     uint64_t id,
     StringPiece name,
     int stack_depth) {
-  if (shm->mapped_size() == 0 ||
-      !SharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(*shm)) {
+  if (!mapping.IsValid() ||
+      !WritableSharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(
+          mapping)) {
     return false;
   }
-  CreateWithAllocator(std::make_unique<SharedPersistentMemoryAllocator>(
-                          std::move(shm), id, name, false),
+  CreateWithAllocator(std::make_unique<WritableSharedPersistentMemoryAllocator>(
+                          std::move(mapping), id, name),
                       stack_depth, 0);
   return true;
-}
-
-// static
-bool GlobalActivityTracker::CreateWithSharedMemoryHandle(
-    const SharedMemoryHandle& handle,
-    size_t size,
-    uint64_t id,
-    StringPiece name,
-    int stack_depth) {
-  std::unique_ptr<SharedMemory> shm(
-      new SharedMemory(handle, /*readonly=*/false));
-  if (!shm->Map(size))
-    return false;
-  return CreateWithSharedMemory(std::move(shm), id, name, stack_depth);
 }
 
 // static
@@ -1356,6 +1345,10 @@ GlobalActivityTracker::ReleaseForTesting() {
 }
 
 ThreadActivityTracker* GlobalActivityTracker::CreateTrackerForCurrentThread() {
+  // It is not safe to use TLS once TLS has been destroyed.
+  if (base::ThreadLocalStorage::HasBeenDestroyed())
+    return nullptr;
+
   DCHECK(!this_thread_tracker_.Get());
 
   PersistentMemoryAllocator::Reference mem_reference;
@@ -1370,23 +1363,14 @@ ThreadActivityTracker* GlobalActivityTracker::CreateTrackerForCurrentThread() {
     // because the underlying allocator wasn't given enough memory to satisfy
     // to all possible requests.
     NOTREACHED();
-    // Report the thread-count at which the allocator was full so that the
-    // failure can be seen and underlying memory resized appropriately.
-    UMA_HISTOGRAM_COUNTS_1000(
-        "ActivityTracker.ThreadTrackers.MemLimitTrackerCount",
-        thread_tracker_count_.load(std::memory_order_relaxed));
+
     // Return null, just as if tracking wasn't enabled.
     return nullptr;
   }
 
   // Convert the memory block found above into an actual memory address.
   // Doing the conversion as a Header object enacts the 32/64-bit size
-  // consistency checks which would not otherwise be done. Unfortunately,
-  // some older compilers and MSVC don't have standard-conforming definitions
-  // of std::atomic which cause it not to be plain-old-data. Don't check on
-  // those platforms assuming that the checks on other platforms will be
-  // sufficient.
-  // TODO(bcwhite): Review this after major compiler releases.
+  // consistency checks which would not otherwise be done.
   DCHECK(mem_reference);
   void* mem_base;
   mem_base =
@@ -1397,24 +1381,18 @@ ThreadActivityTracker* GlobalActivityTracker::CreateTrackerForCurrentThread() {
 
   // Create a tracker with the acquired memory and set it as the tracker
   // for this particular thread in thread-local-storage.
-  ManagedActivityTracker* tracker =
-      new ManagedActivityTracker(mem_reference, mem_base, stack_memory_size_);
+  auto tracker = std::make_unique<ManagedActivityTracker>(
+      mem_reference, mem_base, stack_memory_size_);
   DCHECK(tracker->IsValid());
-  this_thread_tracker_.Set(tracker);
-  int old_count = thread_tracker_count_.fetch_add(1, std::memory_order_relaxed);
-
-  UMA_HISTOGRAM_EXACT_LINEAR("ActivityTracker.ThreadTrackers.Count",
-                             old_count + 1, static_cast<int>(kMaxThreadCount));
-  return tracker;
+  auto* tracker_raw = tracker.get();
+  this_thread_tracker_.Set(std::move(tracker));
+  thread_tracker_count_.fetch_add(1, std::memory_order_relaxed);
+  return tracker_raw;
 }
 
 void GlobalActivityTracker::ReleaseTrackerForCurrentThreadForTesting() {
-  ThreadActivityTracker* tracker =
-      reinterpret_cast<ThreadActivityTracker*>(this_thread_tracker_.Get());
-  if (tracker) {
+  if (this_thread_tracker_.Get())
     this_thread_tracker_.Set(nullptr);
-    delete tracker;
-  }
 }
 
 void GlobalActivityTracker::SetBackgroundTaskRunner(
@@ -1437,7 +1415,7 @@ void GlobalActivityTracker::RecordProcessLaunch(
   DCHECK_NE(0, pid);
 
   base::AutoLock lock(global_tracker_lock_);
-  if (base::ContainsKey(known_processes_, pid)) {
+  if (base::Contains(known_processes_, pid)) {
     // TODO(bcwhite): Measure this in UMA.
     NOTREACHED() << "Process #" << process_id
                  << " was previously recorded as \"launched\""
@@ -1457,12 +1435,12 @@ void GlobalActivityTracker::RecordProcessLaunch(
     ProcessId process_id,
     const FilePath::StringType& exe,
     const FilePath::StringType& args) {
-  const int64_t pid = process_id;
   if (exe.find(FILE_PATH_LITERAL(" "))) {
-    RecordProcessLaunch(pid, FilePath::StringType(FILE_PATH_LITERAL("\"")) +
-                                 exe + FILE_PATH_LITERAL("\" ") + args);
+    RecordProcessLaunch(process_id,
+                        FilePath::StringType(FILE_PATH_LITERAL("\"")) + exe +
+                            FILE_PATH_LITERAL("\" ") + args);
   } else {
-    RecordProcessLaunch(pid, exe + FILE_PATH_LITERAL(' ') + args);
+    RecordProcessLaunch(process_id, exe + FILE_PATH_LITERAL(' ') + args);
   }
 }
 
@@ -1496,7 +1474,7 @@ void GlobalActivityTracker::RecordProcessExit(ProcessId process_id,
     task_runner->PostTask(
         FROM_HERE,
         BindOnce(&GlobalActivityTracker::CleanupAfterProcess, Unretained(this),
-                 pid, now_stamp, exit_code, Passed(&command_line)));
+                 pid, now_stamp, exit_code, std::move(command_line)));
     return;
   }
 
@@ -1652,7 +1630,6 @@ GlobalActivityTracker::GlobalActivityTracker(
     : allocator_(std::move(allocator)),
       stack_memory_size_(ThreadActivityTracker::SizeForStackDepth(stack_depth)),
       process_id_(process_id == 0 ? GetCurrentProcId() : process_id),
-      this_thread_tracker_(&OnTLSDestroy),
       thread_tracker_count_(0),
       thread_tracker_allocator_(allocator_.get(),
                                 kTypeIdActivityTracker,
@@ -1732,11 +1709,6 @@ void GlobalActivityTracker::RecordExceptionImpl(const void* pc,
 
   tracker->RecordExceptionActivity(pc, origin, Activity::ACT_EXCEPTION,
                                    ActivityData::ForException(code));
-}
-
-// static
-void GlobalActivityTracker::OnTLSDestroy(void* value) {
-  delete reinterpret_cast<ManagedActivityTracker*>(value);
 }
 
 ScopedActivity::ScopedActivity(const void* program_counter,

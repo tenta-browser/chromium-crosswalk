@@ -4,6 +4,8 @@
 
 #import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper.h"
 
+#include <memory>
+
 #include "base/memory/ptr_util.h"
 #include "components/captive_portal/captive_portal_detector.h"
 #import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper_delegate.h"
@@ -14,26 +16,28 @@
 #error "This file requires ARC support."
 #endif
 
-DEFINE_WEB_STATE_USER_DATA_KEY(CaptivePortalDetectorTabHelper);
-
 // static
 void CaptivePortalDetectorTabHelper::CreateForWebState(
     web::WebState* web_state,
-    id<CaptivePortalDetectorTabHelperDelegate> delegate) {
+    id<CaptivePortalDetectorTabHelperDelegate> delegate,
+    network::mojom::URLLoaderFactory* loader_factory_for_testing) {
   DCHECK(web_state);
   if (!FromWebState(web_state)) {
-    web_state->SetUserData(UserDataKey(),
-                           base::WrapUnique(new CaptivePortalDetectorTabHelper(
-                               web_state, delegate)));
+    web_state->SetUserData(
+        UserDataKey(), base::WrapUnique(new CaptivePortalDetectorTabHelper(
+                           web_state, delegate, loader_factory_for_testing)));
   }
 }
 
 CaptivePortalDetectorTabHelper::CaptivePortalDetectorTabHelper(
     web::WebState* web_state,
-    id<CaptivePortalDetectorTabHelperDelegate> delegate)
+    id<CaptivePortalDetectorTabHelperDelegate> delegate,
+    network::mojom::URLLoaderFactory* loader_factory_for_testing)
     : delegate_(delegate),
-      detector_(base::MakeUnique<captive_portal::CaptivePortalDetector>(
-          web_state->GetBrowserState()->GetRequestContext())) {
+      detector_(std::make_unique<captive_portal::CaptivePortalDetector>(
+          loader_factory_for_testing
+              ? loader_factory_for_testing
+              : web_state->GetBrowserState()->GetURLLoaderFactory())) {
   DCHECK(delegate);
 }
 
@@ -49,3 +53,5 @@ void CaptivePortalDetectorTabHelper::DisplayCaptivePortalLoginPage(
 }
 
 CaptivePortalDetectorTabHelper::~CaptivePortalDetectorTabHelper() = default;
+
+WEB_STATE_USER_DATA_KEY_IMPL(CaptivePortalDetectorTabHelper)

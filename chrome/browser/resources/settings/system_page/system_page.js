@@ -19,19 +19,28 @@ Polymer({
     /** @private */
     isProxyEnforcedByPolicy_: {
       type: Boolean,
-      computed: 'computeIsProxyEnforcedByPolicy_(prefs.proxy.*)',
+    },
+
+    /** @private */
+    isProxyDefault_: {
+      type: Boolean,
     },
   },
 
+  observers: [
+    'observeProxyPrefChanged_(prefs.proxy.*)',
+  ],
+
   /**
-   * @return {boolean}
    * @private
    */
-  computeIsProxyEnforcedByPolicy_: function() {
-    var pref = this.get('prefs.proxy');
+  observeProxyPrefChanged_: function() {
+    const pref = this.get('prefs.proxy');
     // TODO(dbeam): do types of policy other than USER apply on ChromeOS?
-    return pref.enforcement == chrome.settingsPrivate.Enforcement.ENFORCED &&
+    this.isProxyEnforcedByPolicy_ =
+        pref.enforcement == chrome.settingsPrivate.Enforcement.ENFORCED &&
         pref.controlledBy == chrome.settingsPrivate.ControlledBy.USER_POLICY;
+    this.isProxyDefault_ = !this.isProxyEnforcedByPolicy_ && !pref.extensionId;
   },
 
   /** @private */
@@ -46,8 +55,9 @@ Polymer({
 
   /** @private */
   onProxyTap_: function() {
-    if (!this.isProxyEnforcedByPolicy_)
+    if (this.isProxyDefault_) {
       settings.SystemPageBrowserProxyImpl.getInstance().showProxySettings();
+    }
   },
 
   /** @private */
@@ -64,7 +74,7 @@ Polymer({
    * @private
    */
   shouldShowRestart_: function(enabled) {
-    var proxy = settings.SystemPageBrowserProxyImpl.getInstance();
+    const proxy = settings.SystemPageBrowserProxyImpl.getInstance();
     return enabled != proxy.wasHardwareAccelerationEnabledAtStartup();
   },
 });

@@ -18,14 +18,14 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "content/browser/browser_main_loop.h"
-#include "content/browser/indexed_db/indexed_db_factory.h"
+#include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "content/public/browser/indexed_db_context.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/quota/special_storage_policy.h"
-#include "storage/common/quota/quota_types.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace base {
+class Clock;
 class ListValue;
 class FilePath;
 class SequencedTaskRunner;
@@ -36,8 +36,12 @@ class Origin;
 }
 
 namespace content {
-
 class IndexedDBConnection;
+class IndexedDBFactoryImpl;
+
+namespace indexed_db {
+class LevelDBFactory;
+}
 
 class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
  public:
@@ -47,6 +51,7 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
     FORCE_CLOSE_BACKING_STORE_FAILURE,
     FORCE_CLOSE_INTERNALS_PAGE,
     FORCE_CLOSE_COPY_ORIGIN,
+    FORCE_SCHEMA_DOWNGRADE_INTERNALS_PAGE,
     // Append new values here and update IDBContextForcedCloseReason in
     // enums.xml.
     FORCE_CLOSE_REASON_MAX
@@ -61,7 +66,7 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
         const base::string16& object_store_name) = 0;
 
    protected:
-    virtual ~Observer() {};
+    virtual ~Observer() {}
   };
 
   // The indexed db directory.
@@ -71,38 +76,34 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
   IndexedDBContextImpl(
       const base::FilePath& data_path,
       scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy,
-      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy);
+      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
+      base::Clock* clock);
 
-  IndexedDBFactory* GetIDBFactory();
+  IndexedDBFactoryImpl* GetIDBFactory();
 
-  // Disables the exit-time deletion of session-only data.
-  void SetForceKeepSessionState() { force_keep_session_state_ = true; }
+  // Called by StoragePartitionImpl to clear session-only data.
+  void Shutdown();
+
+
+  int64_t GetOriginDiskUsage(const url::Origin& origin);
 
   // IndexedDBContext implementation:
-  base::SequencedTaskRunner* TaskRunner() const override;
-  std::vector<IndexedDBInfo> GetAllOriginsInfo() override;
-  int64_t GetOriginDiskUsage(const GURL& origin_url) override;
-  void DeleteForOrigin(const GURL& origin_url) override;
-  void CopyOriginData(const GURL& origin_url,
-                      IndexedDBContext* dest_context) override;
-  base::FilePath GetFilePathForTesting(const GURL& origin_url) const override;
-  void ResetCachesForTesting() override;
-
-  // TODO(jsbell): Replace IndexedDBContext members with these.
-  int64_t GetOriginDiskUsage(const url::Origin& origin);
-  void DeleteForOrigin(const url::Origin& origin);
+  base::SequencedTaskRunner* TaskRunner() override;
+  std::vector<StorageUsageInfo> GetAllOriginsInfo() override;
+  void DeleteForOrigin(const url::Origin& origin) override;
   void CopyOriginData(const url::Origin& origin,
-                      IndexedDBContext* dest_context);
-  base::FilePath GetFilePathForTesting(const url::Origin& origin) const;
+                      IndexedDBContext* dest_context) override;
+  base::FilePath GetFilePathForTesting(const url::Origin& origin) override;
+  void ResetCachesForTesting() override;
+  void SetForceKeepSessionState() override;
 
-  // Methods called by IndexedDBDispatcherHost for quota support.
+  // Methods called by IndexedDBFactoryImpl or IndexedDBDispatcherHost for
+  // quota support.
+  void FactoryOpened(const url::Origin& origin);
   void ConnectionOpened(const url::Origin& origin, IndexedDBConnection* db);
   void ConnectionClosed(const url::Origin& origin, IndexedDBConnection* db);
   void TransactionComplete(const url::Origin& origin);
   void DatabaseDeleted(const url::Origin& origin);
-
-  static base::FilePath GetBlobStoreFileName(const url::Origin& origin);
-  static base::FilePath GetLevelDBFileName(const url::Origin& origin);
 
   // Called when blob files have been cleaned (an aggregated delayed task).
   void BlobFilesCleaned(const url::Origin& origin);
@@ -122,11 +123,14 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
   // ForceClose takes a value rather than a reference since it may release the
   // owning object.
   void ForceClose(const url::Origin origin, ForceCloseReason reason);
+  bool ForceSchemaDowngrade(const url::Origin& origin);
+  V2SchemaCorruptionStatus HasV2SchemaCorruption(const url::Origin& origin);
   // GetStoragePaths returns all paths owned by this database, in arbitrary
   // order.
   std::vector<base::FilePath> GetStoragePaths(const url::Origin& origin) const;
 
   base::FilePath data_path() const { return data_path_; }
+  bool IsInMemoryContext() const { return data_path_.empty(); }
   size_t GetConnectionCount(const url::Origin& origin);
   int GetOriginBlobFileCount(const url::Origin& origin);
 
@@ -149,6 +153,8 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
   void NotifyIndexedDBContentChanged(const url::Origin& origin,
                                      const base::string16& database_name,
                                      const base::string16& object_store_name);
+
+  void SetLevelDBFactoryForTesting(indexed_db::LevelDBFactory* factory);
 
  protected:
   ~IndexedDBContextImpl() override;
@@ -174,16 +180,16 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
   void QueryDiskAndUpdateQuotaUsage(const url::Origin& origin);
   base::Time GetOriginLastModified(const url::Origin& origin);
 
+  // Returns |origin_set_| (this context's in-memory cache of origins with
+  // backing stores); the cache will be primed as needed by checking disk.
   std::set<url::Origin>* GetOriginSet();
-  bool AddToOriginSet(const url::Origin& origin) {
-    return GetOriginSet()->insert(origin).second;
-  }
-  void RemoveFromOriginSet(const url::Origin& origin) {
-    GetOriginSet()->erase(origin);
-  }
 
-  scoped_refptr<IndexedDBFactory> factory_;
+  std::unique_ptr<IndexedDBFactoryImpl> indexeddb_factory_;
+
+  // If |data_path_| is empty then this is an incognito session and the backing
+  // store will be held in-memory rather than on-disk.
   base::FilePath data_path_;
+
   // If true, nothing (not even session-only data) should be deleted on exit.
   bool force_keep_session_state_;
   scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy_;
@@ -191,7 +197,9 @@ class CONTENT_EXPORT IndexedDBContextImpl : public IndexedDBContext {
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   std::unique_ptr<std::set<url::Origin>> origin_set_;
   std::map<url::Origin, int64_t> origin_size_map_;
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
+  indexed_db::LevelDBFactory* leveldb_factory_for_testing_ = nullptr;
+  base::Clock* clock_;
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBContextImpl);
 };

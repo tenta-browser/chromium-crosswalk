@@ -4,23 +4,22 @@
 
 package org.chromium.chrome.browser.tab;
 
+import android.os.Bundle;
 import android.view.ViewGroup;
 
+import org.chromium.chrome.browser.AppHooks;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.ui.base.ViewAndroidDelegate;
 
 /**
  * Implementation of the abstract class {@link ViewAndroidDelegate} for Chrome.
  */
 class TabViewAndroidDelegate extends ViewAndroidDelegate {
-    /** Used for logging. */
-    private static final String TAG = "TabVAD";
-
     private final Tab mTab;
-    private final ViewGroup mContainerView;
 
     TabViewAndroidDelegate(Tab tab, ViewGroup containerView) {
+        super(containerView);
         mTab = tab;
-        mContainerView = containerView;
     }
 
     @Override
@@ -29,22 +28,26 @@ class TabViewAndroidDelegate extends ViewAndroidDelegate {
     }
 
     @Override
-    public void onTopControlsChanged(float topControlsOffsetY, float topContentOffsetY) {
-        mTab.onOffsetsChanged(topControlsOffsetY, Float.NaN, topContentOffsetY);
+    public void onTopControlsChanged(int topControlsOffsetY, int contentOffsetY) {
+        TabBrowserControlsState.get(mTab).setTopOffset(topControlsOffsetY, contentOffsetY);
     }
 
     @Override
-    public void onBottomControlsChanged(float bottomControlsOffsetY, float bottomContentOffsetY) {
-        mTab.onOffsetsChanged(Float.NaN, bottomControlsOffsetY, Float.NaN);
+    public void onBottomControlsChanged(int bottomControlsOffsetY, int bottomContentOffsetY) {
+        TabBrowserControlsState.get(mTab).setBottomOffset(bottomControlsOffsetY);
     }
 
     @Override
     public int getSystemWindowInsetBottom() {
-        return mTab.getSystemWindowInsetBottom();
+        ChromeActivity activity = mTab.getActivity();
+        if (activity != null && activity.getInsetObserverView() != null) {
+            return activity.getInsetObserverView().getSystemWindowInsetsBottom();
+        }
+        return 0;
     }
 
     @Override
-    public ViewGroup getContainerView() {
-        return mContainerView;
+    public void performPrivateImeCommand(String action, Bundle data) {
+        AppHooks.get().performPrivateImeCommand(mTab.getWebContents(), action, data);
     }
 }

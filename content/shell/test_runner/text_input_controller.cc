@@ -11,16 +11,16 @@
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
-#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
-#include "third_party/WebKit/public/platform/WebInputEventResult.h"
-#include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
-#include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebImeTextSpan.h"
-#include "third_party/WebKit/public/web/WebInputMethodController.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebRange.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_coalesced_input_event.h"
+#include "third_party/blink/public/platform/web_input_event_result.h"
+#include "third_party/blink/public/platform/web_keyboard_event.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_ime_text_span.h"
+#include "third_party/blink/public/web/web_input_method_controller.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_range.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/events/base_event_utils.h"
 #include "v8/include/v8.h"
@@ -46,8 +46,12 @@ class TextInputControllerBindings
 
   void InsertText(const std::string& text);
   void UnmarkText();
+  void UnmarkAndUnselectText();
   void DoCommand(const std::string& text);
+  void ExtendSelectionAndDelete(int before, int after);
+  void DeleteSurroundingText(int before, int after);
   void SetMarkedText(const std::string& text, int start, int length);
+  void SetMarkedTextFromExistingText(int start, int length);
   bool HasMarkedText();
   std::vector<int> MarkedRange();
   std::vector<int> SelectedRange();
@@ -81,7 +85,10 @@ void TextInputControllerBindings::Install(
   if (bindings.IsEmpty())
     return;
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "textInputController"), bindings.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "textInputController"),
+            bindings.ToV8())
+      .Check();
 }
 
 TextInputControllerBindings::TextInputControllerBindings(
@@ -96,8 +103,16 @@ TextInputControllerBindings::GetObjectTemplateBuilder(v8::Isolate* isolate) {
              isolate)
       .SetMethod("insertText", &TextInputControllerBindings::InsertText)
       .SetMethod("unmarkText", &TextInputControllerBindings::UnmarkText)
+      .SetMethod("unmarkAndUnselectText",
+                 &TextInputControllerBindings::UnmarkAndUnselectText)
       .SetMethod("doCommand", &TextInputControllerBindings::DoCommand)
+      .SetMethod("extendSelectionAndDelete",
+                 &TextInputControllerBindings::ExtendSelectionAndDelete)
+      .SetMethod("deleteSurroundingText",
+                 &TextInputControllerBindings::DeleteSurroundingText)
       .SetMethod("setMarkedText", &TextInputControllerBindings::SetMarkedText)
+      .SetMethod("setMarkedTextFromExistingText",
+                 &TextInputControllerBindings::SetMarkedTextFromExistingText)
       .SetMethod("hasMarkedText", &TextInputControllerBindings::HasMarkedText)
       .SetMethod("markedRange", &TextInputControllerBindings::MarkedRange)
       .SetMethod("selectedRange", &TextInputControllerBindings::SelectedRange)
@@ -118,9 +133,25 @@ void TextInputControllerBindings::UnmarkText() {
     controller_->UnmarkText();
 }
 
+void TextInputControllerBindings::UnmarkAndUnselectText() {
+  if (controller_)
+    controller_->UnmarkAndUnselectText();
+}
+
 void TextInputControllerBindings::DoCommand(const std::string& text) {
   if (controller_)
     controller_->DoCommand(text);
+}
+
+void TextInputControllerBindings::ExtendSelectionAndDelete(int before,
+                                                           int after) {
+  if (controller_)
+    controller_->ExtendSelectionAndDelete(before, after);
+}
+
+void TextInputControllerBindings::DeleteSurroundingText(int before, int after) {
+  if (controller_)
+    controller_->DeleteSurroundingText(before, after);
 }
 
 void TextInputControllerBindings::SetMarkedText(const std::string& text,
@@ -128,6 +159,12 @@ void TextInputControllerBindings::SetMarkedText(const std::string& text,
                                                 int length) {
   if (controller_)
     controller_->SetMarkedText(text, start, length);
+}
+
+void TextInputControllerBindings::SetMarkedTextFromExistingText(int start,
+                                                                int end) {
+  if (controller_)
+    controller_->SetMarkedTextFromExistingText(start, end);
 }
 
 bool TextInputControllerBindings::HasMarkedText() {
@@ -159,10 +196,8 @@ void TextInputControllerBindings::ForceTextInputStateUpdate() {
 }
 // TextInputController ---------------------------------------------------------
 
-TextInputController::TextInputController(
-    WebViewTestProxyBase* web_view_test_proxy_base)
-    : web_view_test_proxy_base_(web_view_test_proxy_base),
-      weak_factory_(this) {}
+TextInputController::TextInputController(WebViewTestProxy* web_view_test_proxy)
+    : web_view_test_proxy_(web_view_test_proxy) {}
 
 TextInputController::~TextInputController() {}
 
@@ -185,14 +220,40 @@ void TextInputController::UnmarkText() {
   }
 }
 
+void TextInputController::UnmarkAndUnselectText() {
+  if (auto* controller = GetInputMethodController()) {
+    controller->FinishComposingText(
+        blink::WebInputMethodController::kDoNotKeepSelection);
+  }
+}
+
 void TextInputController::DoCommand(const std::string& text) {
   if (view()->MainFrame()) {
-    if (!view()->MainFrame()->ToWebLocalFrame()) {
-      CHECK(false) << "This function cannot be called if the main frame is not"
-                      "a local frame.";
-    }
+    CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                     "called if the main frame "
+                                                     "is not a local frame.";
     view()->MainFrame()->ToWebLocalFrame()->ExecuteCommand(
         blink::WebString::FromUTF8(text));
+  }
+}
+
+void TextInputController::ExtendSelectionAndDelete(int before, int after) {
+  if (view()->MainFrame()) {
+    CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                     "called if the main frame "
+                                                     "is not a local frame.";
+    view()->MainFrame()->ToWebLocalFrame()->ExtendSelectionAndDelete(before,
+                                                                     after);
+  }
+}
+
+void TextInputController::DeleteSurroundingText(int before, int after) {
+  if (view()->MainFrame()) {
+    CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                     "called if the main frame "
+                                                     "is not a local frame.";
+    view()->MainFrame()->ToWebLocalFrame()->DeleteSurroundingText(before,
+                                                                  after);
   }
 }
 
@@ -212,12 +273,12 @@ void TextInputController::SetMarkedText(const std::string& text,
     ime_text_span.start_offset = start;
     ime_text_span.end_offset = start + length;
   }
-  ime_text_span.thick = true;
+  ime_text_span.thickness = ui::mojom::ImeTextSpanThickness::kThick;
   ime_text_spans.push_back(ime_text_span);
   if (start + length < static_cast<int>(web_text.length())) {
     ime_text_span.start_offset = ime_text_span.end_offset;
     ime_text_span.end_offset = web_text.length();
-    ime_text_span.thick = false;
+    ime_text_span.thickness = ui::mojom::ImeTextSpanThickness::kThin;
     ime_text_spans.push_back(ime_text_span);
   }
 
@@ -227,14 +288,25 @@ void TextInputController::SetMarkedText(const std::string& text,
   }
 }
 
+void TextInputController::SetMarkedTextFromExistingText(int start, int end) {
+  if (!view()->MainFrame())
+    return;
+
+  CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                   "called if the main frame "
+                                                   "is not a local frame.";
+
+  view()->MainFrame()->ToWebLocalFrame()->SetCompositionFromExistingText(
+      start, end, std::vector<blink::WebImeTextSpan>());
+}
+
 bool TextInputController::HasMarkedText() {
   if (!view()->MainFrame())
     return false;
 
-  if (!view()->MainFrame()->ToWebLocalFrame()) {
-    CHECK(false) << "This function cannot be called if the main frame is not"
-                    "a local frame.";
-  }
+  CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                   "called if the main frame "
+                                                   "is not a local frame.";
 
   return view()->MainFrame()->ToWebLocalFrame()->HasMarkedText();
 }
@@ -243,10 +315,9 @@ std::vector<int> TextInputController::MarkedRange() {
   if (!view()->MainFrame())
     return std::vector<int>();
 
-  if (!view()->MainFrame()->ToWebLocalFrame()) {
-    CHECK(false) << "This function cannot be called if the main frame is not"
-                    "a local frame.";
-  }
+  CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                   "called if the main frame "
+                                                   "is not a local frame.";
 
   blink::WebRange range = view()->MainFrame()->ToWebLocalFrame()->MarkedRange();
   std::vector<int> int_array(2);
@@ -260,10 +331,9 @@ std::vector<int> TextInputController::SelectedRange() {
   if (!view()->MainFrame())
     return std::vector<int>();
 
-  if (!view()->MainFrame()->ToWebLocalFrame()) {
-    CHECK(false) << "This function cannot be called if the main frame is not"
-                    "a local frame.";
-  }
+  CHECK(view()->MainFrame()->ToWebLocalFrame()) << "This function cannot be "
+                                                   "called if the main frame "
+                                                   "is not a local frame.";
 
   blink::WebRange range =
       view()->MainFrame()->ToWebLocalFrame()->SelectionRange();
@@ -298,12 +368,13 @@ std::vector<int> TextInputController::FirstRectForCharacterRange(
 void TextInputController::SetComposition(const std::string& text) {
   // Sends a keydown event with key code = 0xE5 to emulate input method
   // behavior.
-  blink::WebKeyboardEvent key_down(
-      blink::WebInputEvent::kRawKeyDown, blink::WebInputEvent::kNoModifiers,
-      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+  blink::WebKeyboardEvent key_down(blink::WebInputEvent::kRawKeyDown,
+                                   blink::WebInputEvent::kNoModifiers,
+                                   ui::EventTimeForNow());
 
   key_down.windows_key_code = 0xE5;  // VKEY_PROCESSKEY
-  view()->HandleInputEvent(blink::WebCoalescedInputEvent(key_down));
+  view()->MainFrameWidget()->HandleInputEvent(
+      blink::WebCoalescedInputEvent(key_down));
 
   // The value returned by std::string::length() may not correspond to the
   // actual number of encoded characters in sequences of multi-byte or
@@ -313,8 +384,8 @@ void TextInputController::SetComposition(const std::string& text) {
 
   std::vector<blink::WebImeTextSpan> ime_text_spans;
   ime_text_spans.push_back(blink::WebImeTextSpan(
-      blink::WebImeTextSpan::Type::kComposition, 0, textLength, SK_ColorBLACK,
-      false, SK_ColorTRANSPARENT));
+      blink::WebImeTextSpan::Type::kComposition, 0, textLength,
+      ui::mojom::ImeTextSpanThickness::kThin, SK_ColorTRANSPARENT));
   if (auto* controller = GetInputMethodController()) {
     controller->SetComposition(
         newText, blink::WebVector<blink::WebImeTextSpan>(ime_text_spans),
@@ -323,16 +394,16 @@ void TextInputController::SetComposition(const std::string& text) {
 }
 
 void TextInputController::ForceTextInputStateUpdate() {
-  // TODO(lukasza): Finish adding OOPIF support to the layout tests harness.
+  // TODO(lukasza): Finish adding OOPIF support to the web tests harness.
   CHECK(view()->MainFrame()->IsWebLocalFrame())
       << "WebView does not have a local main frame and"
          " cannot handle input method controller tasks.";
-  web_view_test_proxy_base_->delegate()->ForceTextInputStateUpdate(
+  web_view_test_proxy_->delegate()->ForceTextInputStateUpdate(
       view()->MainFrame()->ToWebLocalFrame());
 }
 
 blink::WebView* TextInputController::view() {
-  return web_view_test_proxy_base_->web_view();
+  return web_view_test_proxy_->webview();
 }
 
 blink::WebInputMethodController*
@@ -340,7 +411,7 @@ TextInputController::GetInputMethodController() {
   if (!view()->MainFrame())
     return nullptr;
 
-  // TODO(lukasza): Finish adding OOPIF support to the layout tests harness.
+  // TODO(lukasza): Finish adding OOPIF support to the web tests harness.
   CHECK(view()->MainFrame()->IsWebLocalFrame())
       << "WebView does not have a local main frame and"
          " cannot handle input method controller tasks.";

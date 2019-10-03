@@ -5,8 +5,6 @@
 #ifndef ASH_TOUCH_TOUCH_HUD_PROJECTION_H_
 #define ASH_TOUCH_TOUCH_HUD_PROJECTION_H_
 
-#include <map>
-
 #include "ash/touch/touch_observer_hud.h"
 #include "base/macros.h"
 
@@ -14,12 +12,13 @@ namespace ash {
 class TouchHudRenderer;
 
 // A heads-up display to show active touch points on the screen. As a derivative
-// of TouchObserverHUD, objects of this class manage their own lifetime.
-class TouchHudProjection : public TouchObserverHUD {
+// of TouchObserverHud, objects of this class manage their own lifetime. Used
+// for the --show-taps flag.
+class TouchHudProjection : public TouchObserverHud {
  public:
   explicit TouchHudProjection(aura::Window* initial_root);
 
-  // Overriden from TouchObserverHUD.
+  // TouchObserverHud:
   void Clear() override;
 
  private:
@@ -27,7 +26,7 @@ class TouchHudProjection : public TouchObserverHUD {
 
   ~TouchHudProjection() override;
 
-  // Overriden from TouchObserverHUD.
+  // TouchObserverHud:
   void OnTouchEvent(ui::TouchEvent* event) override;
   void SetHudForRootWindowController(RootWindowController* controller) override;
   void UnsetHudForRootWindowController(

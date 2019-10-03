@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
@@ -71,7 +74,7 @@ void ExtensionMessageBubbleController::Delegate::SetBubbleInfoBeenAcknowledged(
   extensions::ExtensionPrefs* prefs = extensions::ExtensionPrefs::Get(profile_);
   prefs->UpdateExtensionPref(
       extension_id, pref_name,
-      value ? base::MakeUnique<base::Value>(value) : nullptr);
+      value ? std::make_unique<base::Value>(value) : nullptr);
 }
 
 std::string
@@ -150,8 +153,8 @@ base::string16 ExtensionMessageBubbleController::GetExtensionListForDisplay() {
     int old_size = extension_list.size();
     extension_list.erase(extension_list.begin() + kMaxExtensionsToShow,
                          extension_list.end());
-    extension_list.push_back(delegate_->GetOverflowText(base::IntToString16(
-        old_size - kMaxExtensionsToShow)));
+    extension_list.push_back(delegate_->GetOverflowText(
+        base::NumberToString16(old_size - kMaxExtensionsToShow)));
   }
   const base::char16 bullet_point = 0x2022;
   base::string16 prefix = bullet_point + base::ASCIIToUTF16(" ");
@@ -279,7 +282,7 @@ void ExtensionMessageBubbleController::HandleExtensionUnloadOrUninstall() {
   // If the callback is set, then that means that OnShown() was called, and the
   // bubble was displayed.
   if (close_bubble_callback_ && GetExtensionIdList().empty()) {
-    base::ResetAndReturn(&close_bubble_callback_).Run();
+    std::move(close_bubble_callback_).Run();
   }
   // If the bubble refers to multiple extensions, we do not close the bubble.
 }

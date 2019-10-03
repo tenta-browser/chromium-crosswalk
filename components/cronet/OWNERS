@@ -1,7 +1,4 @@
-kapishnikov@chromium.org
-mef@chromium.org
-mgersh@chromium.org
-pauljensen@chromium.org
-xunjieli@chromium.org
+file://net/OWNERS
 
 # COMPONENT: Internals>Network>Library
+# TEAM: net-dev@chromium.org

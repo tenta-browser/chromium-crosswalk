@@ -35,14 +35,15 @@ class TestMetricsServiceClient : public MetricsServiceClient {
   std::string GetVersionString() override;
   void CollectFinalMetricsForLog(const base::Closure& done_callback) override;
   std::unique_ptr<MetricsLogUploader> CreateUploader(
-      base::StringPiece server_url,
-      base::StringPiece insecure_server_url,
+      const GURL& server_url,
+      const GURL& insecure_server_url,
       base::StringPiece mime_type,
       MetricsLogUploader::MetricServiceType service_type,
       const MetricsLogUploader::UploadCallback& on_upload_complete) override;
   base::TimeDelta GetStandardUploadInterval() override;
   bool IsReportingPolicyManaged() override;
   EnableMetricsDefault GetMetricsReportingDefaultState() override;
+  std::string GetAppPackageName() override;
 
   const std::string& get_client_id() const { return client_id_; }
   // Returns a weak ref to the last created uploader.

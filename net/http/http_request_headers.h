@@ -17,14 +17,13 @@
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
+#include "net/log/net_log_capture_mode.h"
 
 namespace base {
 class Value;
 }
 
 namespace net {
-
-class NetLogCaptureMode;
 
 class NET_EXPORT HttpRequestHeaders {
  public:
@@ -84,13 +83,17 @@ class NET_EXPORT HttpRequestHeaders {
   static const char kProxyConnection[];
   static const char kRange[];
   static const char kReferer[];
+  static const char kSecOriginPolicy[];
   static const char kTransferEncoding[];
-  static const char kTokenBinding[];
   static const char kUserAgent[];
 
   HttpRequestHeaders();
   HttpRequestHeaders(const HttpRequestHeaders& other);
+  HttpRequestHeaders(HttpRequestHeaders&& other);
   ~HttpRequestHeaders();
+
+  HttpRequestHeaders& operator=(const HttpRequestHeaders& other);
+  HttpRequestHeaders& operator=(HttpRequestHeaders&& other);
 
   bool IsEmpty() const { return headers_.empty(); }
 
@@ -169,9 +172,8 @@ class NET_EXPORT HttpRequestHeaders {
 
   // Takes in the request line and returns a Value for use with the NetLog
   // containing both the request line and all headers fields.
-  std::unique_ptr<base::Value> NetLogCallback(
-      const std::string* request_line,
-      NetLogCaptureMode capture_mode) const;
+  base::Value NetLogParams(const std::string& request_line,
+                           NetLogCaptureMode capture_mode) const;
 
   const HeaderVector& GetHeaderVector() const { return headers_; }
 

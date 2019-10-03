@@ -10,17 +10,16 @@
 #include "base/time/time.h"
 
 // Returns common timeouts to use in tests. Makes it possible to adjust
-// the timeouts for different environments (like Valgrind).
+// the timeouts for different environments (like TSan).
 class TestTimeouts {
  public:
-  // Argument that can be passed on the command line to indicate "no timeout".
-  static constexpr const char kNoTimeoutSwitchValue[] = "-1";
-
   // Initializes the timeouts. Non thread-safe. Should be called exactly once
   // by the test suite.
   static void Initialize();
 
-  // Timeout for actions that are expected to finish "almost instantly".
+  // Timeout for actions that are expected to finish "almost instantly".  This
+  // is used in various tests to post delayed tasks and usually functions more
+  // like a delay value than a timeout.
   static base::TimeDelta tiny_timeout() {
     DCHECK(initialized_);
     return base::TimeDelta::FromMilliseconds(tiny_timeout_ms_);
@@ -33,9 +32,11 @@ class TestTimeouts {
     return base::TimeDelta::FromMilliseconds(action_timeout_ms_);
   }
 
-  // Timeout longer than the above, but still suitable to use
-  // multiple times in a single test. Use if the timeout above
-  // is not sufficient.
+  // Timeout longer than the above, suitable to wait on success conditions which
+  // can take a while to achieve but still should expire on failure before
+  // |test_launcher_timeout()| terminates the process. Note that
+  // test_launcher_timeout() can be reached nonetheless when multiple such
+  // actions are compounded in the same test.
   static base::TimeDelta action_max_timeout() {
     DCHECK(initialized_);
     return base::TimeDelta::FromMilliseconds(action_max_timeout_ms_);

@@ -32,14 +32,20 @@ class PaymentRequestCreditCardEditMediatorTest
     : public PaymentRequestUnitTestBase,
       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     AddAutofillProfile(autofill::test::GetFullProfile());
     CreateTestPaymentRequest();
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 };
 
 // Tests that the expected editor fields are created when creating a card.
@@ -244,8 +250,9 @@ TEST_F(PaymentRequestCreditCardEditMediatorTest, ValidateEmptyRequiredField) {
       [mediator paymentRequestEditViewController:nil
                                    validateField:(EditorField*)field];
   EXPECT_TRUE([validationError
-      isEqualToString:l10n_util::GetNSString(
-                          IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE)]);
+      isEqualToString:
+          l10n_util::GetNSString(
+              IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE)]);
 }
 
 // Tests that the appropriate validation error should be expected if validating

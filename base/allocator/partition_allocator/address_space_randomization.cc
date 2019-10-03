@@ -6,11 +6,14 @@
 
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/allocator/partition_allocator/spin_lock.h"
-#include "base/lazy_instance.h"
+#include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
+#include <windows.h>  // Must be in front of other Windows header files.
+
 #include <VersionHelpers.h>
 #endif
 
@@ -20,7 +23,7 @@ namespace {
 
 // This is the same PRNG as used by tcmalloc for mapping address randomness;
 // see http://burtleburtle.net/bob/rand/smallprng.html
-struct ranctx {
+struct RandomContext {
   subtle::SpinLock lock;
   bool initialized;
   uint32_t a;
@@ -29,11 +32,14 @@ struct ranctx {
   uint32_t d;
 };
 
-static LazyInstance<ranctx>::Leaky s_ranctx = LAZY_INSTANCE_INITIALIZER;
+RandomContext* GetRandomContext() {
+  static NoDestructor<RandomContext> s_RandomContext;
+  return s_RandomContext.get();
+}
 
 #define rot(x, k) (((x) << (k)) | ((x) >> (32 - (k))))
 
-uint32_t ranvalInternal(ranctx* x) {
+uint32_t RandomValueInternal(RandomContext* x) {
   uint32_t e = x->a - rot(x->b, 27);
   x->a = x->b ^ rot(x->c, 17);
   x->b = x->c + x->d;
@@ -44,7 +50,7 @@ uint32_t ranvalInternal(ranctx* x) {
 
 #undef rot
 
-uint32_t ranval(ranctx* x) {
+uint32_t RandomValue(RandomContext* x) {
   subtle::SpinLock::Guard guard(x->lock);
   if (UNLIKELY(!x->initialized)) {
     const uint64_t r1 = RandUint64();
@@ -58,13 +64,13 @@ uint32_t ranval(ranctx* x) {
     x->initialized = true;
   }
 
-  return ranvalInternal(x);
+  return RandomValueInternal(x);
 }
 
 }  // namespace
 
 void SetRandomPageBaseSeed(int64_t seed) {
-  ranctx* x = s_ranctx.Pointer();
+  RandomContext* x = GetRandomContext();
   subtle::SpinLock::Guard guard(x->lock);
   // Set RNG to initial state.
   x->initialized = true;
@@ -73,18 +79,15 @@ void SetRandomPageBaseSeed(int64_t seed) {
 }
 
 void* GetRandomPageBase() {
-  uintptr_t random = static_cast<uintptr_t>(ranval(s_ranctx.Pointer()));
+  uintptr_t random = static_cast<uintptr_t>(RandomValue(GetRandomContext()));
 
 #if defined(ARCH_CPU_64_BITS)
   random <<= 32ULL;
-  random |= static_cast<uintptr_t>(ranval(s_ranctx.Pointer()));
+  random |= static_cast<uintptr_t>(RandomValue(GetRandomContext()));
 
 // The kASLRMask and kASLROffset constants will be suitable for the
 // OS and build configuration.
-#if defined(MEMORY_TOOL_REPLACES_ALLOCATOR) || defined(OS_POSIX)
-  random &= internal::kASLRMask;
-  random += internal::kASLROffset;
-#else   // defined(OS_WIN)
+#if defined(OS_WIN) && !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
   // Windows >= 8.1 has the full 47 bits. Use them where available.
   static bool windows_81 = false;
   static bool windows_81_initialized = false;
@@ -98,7 +101,10 @@ void* GetRandomPageBase() {
     random &= internal::kASLRMask;
   }
   random += internal::kASLROffset;
-#endif  // defined(OS_WIN)
+#else
+  random &= internal::kASLRMask;
+  random += internal::kASLROffset;
+#endif  // defined(OS_WIN) && !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
 #else   // defined(ARCH_CPU_32_BITS)
 #if defined(OS_WIN)
   // On win32 host systems the randomization plus huge alignment causes

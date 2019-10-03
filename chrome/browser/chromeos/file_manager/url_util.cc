@@ -6,10 +6,13 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "net/base/escape.h"
 
 namespace file_manager {
@@ -20,6 +23,7 @@ const char kAllowedPaths[] = "allowedPaths";
 const char kNativePath[] = "nativePath";
 const char kNativeOrDrivePath[] = "nativeOrDrivePath";
 const char kAnyPath[] = "anyPath";
+const char kAnyPathOrUrl[] = "anyPathOrUrl";
 
 // Returns a file manager URL for the given |path|.
 GURL GetFileManagerUrl(const char* path) {
@@ -36,6 +40,7 @@ std::string GetDialogTypeAsString(
       break;
 
     case ui::SelectFileDialog::SELECT_FOLDER:
+    case ui::SelectFileDialog::SELECT_EXISTING_FOLDER:
       type_str = "folder";
       break;
 
@@ -54,9 +59,6 @@ std::string GetDialogTypeAsString(
     case ui::SelectFileDialog::SELECT_OPEN_MULTI_FILE:
       type_str = "open-multi-file";
       break;
-
-    default:
-      NOTREACHED();
   }
 
   return type_str;
@@ -76,7 +78,8 @@ GURL GetFileManagerMainPageUrlWithParams(
     const std::string& target_name,
     const ui::SelectFileDialog::FileTypeInfo* file_types,
     int file_type_index,
-    const base::FilePath::StringType& default_extension) {
+    const base::FilePath::StringType& default_extension,
+    bool show_android_picker_apps) {
   base::DictionaryValue arg_value;
   arg_value.SetString("type", GetDialogTypeAsString(type));
   arg_value.SetString("title", title);
@@ -84,16 +87,17 @@ GURL GetFileManagerMainPageUrlWithParams(
   arg_value.SetString("selectionURL", selection_url.spec());
   arg_value.SetString("targetName", target_name);
   arg_value.SetString("defaultExtension", default_extension);
+  arg_value.SetBoolean("showAndroidPickerApps", show_android_picker_apps);
 
   if (file_types) {
-    auto types_list = base::MakeUnique<base::ListValue>();
+    auto types_list = std::make_unique<base::ListValue>();
     for (size_t i = 0; i < file_types->extensions.size(); ++i) {
-      auto extensions_list = base::MakeUnique<base::ListValue>();
+      auto extensions_list = std::make_unique<base::ListValue>();
       for (size_t j = 0; j < file_types->extensions[i].size(); ++j) {
         extensions_list->AppendString(file_types->extensions[i][j]);
       }
 
-      auto dict = base::MakeUnique<base::DictionaryValue>();
+      auto dict = std::make_unique<base::DictionaryValue>();
       dict->Set("extensions", std::move(extensions_list));
 
       if (i < file_types->extension_description_overrides.size()) {
@@ -117,7 +121,10 @@ GURL GetFileManagerMainPageUrlWithParams(
   if (file_types) {
     switch (file_types->allowed_paths) {
       case ui::SelectFileDialog::FileTypeInfo::NATIVE_PATH:
-        arg_value.SetString(kAllowedPaths, kNativePath);
+        if (base::FeatureList::IsEnabled(chromeos::features::kDriveFs))
+          arg_value.SetString(kAllowedPaths, kNativeOrDrivePath);
+        else
+          arg_value.SetString(kAllowedPaths, kNativePath);
         break;
       case ui::SelectFileDialog::FileTypeInfo::NATIVE_OR_DRIVE_PATH:
         arg_value.SetString(kAllowedPaths, kNativeOrDrivePath);
@@ -125,7 +132,12 @@ GURL GetFileManagerMainPageUrlWithParams(
       case ui::SelectFileDialog::FileTypeInfo::ANY_PATH:
         arg_value.SetString(kAllowedPaths, kAnyPath);
         break;
+      case ui::SelectFileDialog::FileTypeInfo::ANY_PATH_OR_URL:
+        arg_value.SetString(kAllowedPaths, kAnyPathOrUrl);
+        break;
     }
+  } else if (base::FeatureList::IsEnabled(chromeos::features::kDriveFs)) {
+    arg_value.SetString(kAllowedPaths, kNativeOrDrivePath);
   } else {
     arg_value.SetString(kAllowedPaths, kNativePath);
   }

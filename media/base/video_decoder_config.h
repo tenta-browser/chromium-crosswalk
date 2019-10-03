@@ -17,7 +17,7 @@
 #include "media/base/media_export.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
 #include "media/base/video_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -27,25 +27,28 @@ namespace media {
 MEDIA_EXPORT VideoCodec
 VideoCodecProfileToVideoCodec(VideoCodecProfile profile);
 
+// Describes the content of a video stream, as described by the media container
+// (or otherwise determined by the demuxer).
 class MEDIA_EXPORT VideoDecoderConfig {
  public:
   // Constructs an uninitialized object. Clients should call Initialize() with
   // appropriate values before using.
   VideoDecoderConfig();
 
+  enum class AlphaMode { kHasAlpha, kIsOpaque };
+
   // Constructs an initialized object. It is acceptable to pass in NULL for
   // |extra_data|, otherwise the memory is copied.
   VideoDecoderConfig(VideoCodec codec,
                      VideoCodecProfile profile,
-                     VideoPixelFormat format,
-                     ColorSpace color_space,
-                     VideoRotation rotation,
+                     AlphaMode alpha_mode,
+                     const VideoColorSpace& color_space,
+                     VideoTransformation transformation,
                      const gfx::Size& coded_size,
                      const gfx::Rect& visible_rect,
                      const gfx::Size& natural_size,
                      const std::vector<uint8_t>& extra_data,
                      const EncryptionScheme& encryption_scheme);
-
   VideoDecoderConfig(const VideoDecoderConfig& other);
 
   ~VideoDecoderConfig();
@@ -53,9 +56,9 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // Resets the internal state of this object.
   void Initialize(VideoCodec codec,
                   VideoCodecProfile profile,
-                  VideoPixelFormat format,
-                  ColorSpace color_space,
-                  VideoRotation rotation,
+                  AlphaMode alpha_mode,
+                  const VideoColorSpace& color_space,
+                  VideoTransformation transformation,
                   const gfx::Size& coded_size,
                   const gfx::Rect& visible_rect,
                   const gfx::Size& natural_size,
@@ -79,32 +82,43 @@ class MEDIA_EXPORT VideoDecoderConfig {
 
   VideoCodec codec() const { return codec_; }
   VideoCodecProfile profile() const { return profile_; }
+  AlphaMode alpha_mode() const { return alpha_mode_; }
 
-  // Video format used to determine YUV buffer sizes.
-  VideoPixelFormat format() const { return format_; }
-
-  // The default color space of the decoded frames. Decoders should output
-  // frames tagged with this color space unless they find a different value in
-  // the bitstream.
-  ColorSpace color_space() const { return color_space_; }
-
-  // Default is VIDEO_ROTATION_0.
-  VideoRotation video_rotation() const { return rotation_; }
+  // Difference between encoded and display orientation.
+  //
+  // Default is VIDEO_ROTATION_0. Note that rotation should be applied after
+  // scaling to natural_size().
+  //
+  // TODO(sandersd): Which direction is orientation measured in?
+  VideoTransformation video_transformation() const { return transformation_; }
 
   // Deprecated. TODO(wolenetz): Remove. See https://crbug.com/665539.
   // Width and height of video frame immediately post-decode. Not all pixels
   // in this region are valid.
   const gfx::Size& coded_size() const { return coded_size_; }
 
-  // Region of |coded_size_| that is visible.
+  // Region of coded_size() that contains image data, also known as the clean
+  // aperture. Usually, but not always, origin-aligned (top-left).
   const gfx::Rect& visible_rect() const { return visible_rect_; }
 
   // Final visible width and height of a video frame with aspect ratio taken
-  // into account.
+  // into account. Image data in the visible_rect() should be scaled to this
+  // size for display.
   const gfx::Size& natural_size() const { return natural_size_; }
 
-  // Optional byte data required to initialize video decoders, such as H.264
-  // AVCC data.
+  // The shape of encoded pixels. Given visible_rect() and a pixel aspect ratio,
+  // it is possible to compute natural_size() (see video_util.h).
+  //
+  // TODO(crbug.com/837337): This should be explicitly set (replacing
+  // |natural_size|). It should also be possible to determine whether it was set
+  // at all, since in-stream information may override it if it was not.
+  double GetPixelAspectRatio() const;
+
+  // Optional video decoder initialization data, such as H.264 AVCC.
+  //
+  // Note: FFmpegVideoDecoder assumes that H.264 is in AVC format if there is
+  // |extra_data|, and in Annex B format if there is not. We should probably add
+  // explicit signaling of encoded format.
   void SetExtraData(const std::vector<uint8_t>& extra_data);
   const std::vector<uint8_t>& extra_data() const { return extra_data_; }
 
@@ -118,9 +132,11 @@ class MEDIA_EXPORT VideoDecoderConfig {
     return encryption_scheme_;
   }
 
-  void set_color_space_info(const VideoColorSpace& color_space_info);
+  // Color space of the image data.
+  void set_color_space_info(const VideoColorSpace& color_space);
   const VideoColorSpace& color_space_info() const;
 
+  // Dynamic range of the image data.
   void set_hdr_metadata(const HDRMetadata& hdr_metadata);
   const base::Optional<HDRMetadata>& hdr_metadata() const;
 
@@ -132,12 +148,9 @@ class MEDIA_EXPORT VideoDecoderConfig {
   VideoCodec codec_;
   VideoCodecProfile profile_;
 
-  VideoPixelFormat format_;
+  AlphaMode alpha_mode_;
 
-  // TODO(servolk): Deprecated, use color_space_info_ instead.
-  ColorSpace color_space_;
-
-  VideoRotation rotation_;
+  VideoTransformation transformation_;
 
   // Deprecated. TODO(wolenetz): Remove. See https://crbug.com/665539.
   gfx::Size coded_size_;

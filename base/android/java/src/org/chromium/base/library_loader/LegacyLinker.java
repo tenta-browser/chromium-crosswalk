@@ -4,20 +4,20 @@
 
 package org.chromium.base.library_loader;
 
+import android.annotation.SuppressLint;
 import android.os.Bundle;
 import android.os.Parcel;
+import android.support.annotation.Nullable;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.SysUtils;
-import org.chromium.base.ThreadUtils;
-import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.MainDex;
+import org.chromium.base.annotations.JniIgnoreNatives;
 
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-import javax.annotation.Nullable;
+import javax.annotation.concurrent.GuardedBy;
 
 /*
  * For more, see Technical note, Security considerations, and the explanation
@@ -32,10 +32,10 @@ import javax.annotation.Nullable;
  *
  * For more on the operations performed by the Linker, see {@link Linker}.
  */
-@MainDex
+@JniIgnoreNatives
 class LegacyLinker extends Linker {
     // Log tag for this class.
-    private static final String TAG = "LibraryLoader";
+    private static final String TAG = "LegacyLinker";
 
     // Becomes true after linker initialization.
     private boolean mInitialized;
@@ -47,10 +47,6 @@ class LegacyLinker extends Linker {
     // finishLibraryLoad().
     private boolean mWaitForSharedRelros;
 
-    // Becomes true when initialization determines that the browser process can use the
-    // shared RELRO.
-    private boolean mBrowserUsesSharedRelro;
-
     // The map of all RELRO sections either created or used in this process.
     private Bundle mSharedRelros;
 
@@ -61,88 +57,37 @@ class LegacyLinker extends Linker {
     // A value of -1 indicates not yet initialized.
     private long mCurrentLoadAddress = -1;
 
-    // Becomes true once prepareLibraryLoad() has been called.
-    private boolean mPrepareLibraryLoadCalled;
-
     // The map of libraries that are currently loaded in this process.
     private HashMap<String, LibInfo> mLoadedLibraries;
 
-    // Private singleton constructor, and singleton factory method.
-    private LegacyLinker() { }
-    static Linker create() {
-        return new LegacyLinker();
-    }
+    LegacyLinker() {}
 
     // Used internally to initialize the linker's data. Assumes lock is held.
     // Loads JNI, and sets mMemoryDeviceConfig and mBrowserUsesSharedRelro.
+    @GuardedBy("sLock")
     private void ensureInitializedLocked() {
-        assert Thread.holdsLock(mLock);
+        assert Thread.holdsLock(sLock);
 
-        if (mInitialized || !NativeLibraries.sUseLinker) {
-            return;
-        }
+        if (mInitialized) return;
 
         // On first call, load libchromium_android_linker.so. Cannot be done in the
         // constructor because instantiation occurs on the UI thread.
         loadLinkerJniLibrary();
 
-        if (mMemoryDeviceConfig == MEMORY_DEVICE_CONFIG_INIT) {
-            if (SysUtils.isLowEndDevice()) {
-                mMemoryDeviceConfig = MEMORY_DEVICE_CONFIG_LOW;
-            } else {
-                mMemoryDeviceConfig = MEMORY_DEVICE_CONFIG_NORMAL;
-            }
-        }
-
-        // Cannot run in the constructor because SysUtils.isLowEndDevice() relies
-        // on CommandLine, which may not be available at instantiation.
-        switch (BROWSER_SHARED_RELRO_CONFIG) {
-            case BROWSER_SHARED_RELRO_CONFIG_NEVER:
-                mBrowserUsesSharedRelro = false;
-                break;
-            case BROWSER_SHARED_RELRO_CONFIG_LOW_RAM_ONLY:
-                if (mMemoryDeviceConfig == MEMORY_DEVICE_CONFIG_LOW) {
-                    mBrowserUsesSharedRelro = true;
-                    Log.w(TAG, "Low-memory device: shared RELROs used in all processes");
-                } else {
-                    mBrowserUsesSharedRelro = false;
-                }
-                break;
-            case BROWSER_SHARED_RELRO_CONFIG_ALWAYS:
-                Log.w(TAG, "Beware: shared RELROs used in all processes!");
-                mBrowserUsesSharedRelro = true;
-                break;
-            default:
-                Log.wtf(TAG, "FATAL: illegal shared RELRO config");
-                throw new AssertionError();
-        }
-
         mInitialized = true;
-    }
-
-    /**
-     * Call this method to determine if the linker will try to use shared RELROs
-     * for the browser process.
-     */
-    @Override
-    public boolean isUsingBrowserSharedRelros() {
-        synchronized (mLock) {
-            ensureInitializedLocked();
-            return mInBrowserProcess && mBrowserUsesSharedRelro;
-        }
     }
 
     /**
      * Call this method just before loading any native shared libraries in this process.
      */
     @Override
-    public void prepareLibraryLoad() {
-        if (DEBUG) {
-            Log.i(TAG, "prepareLibraryLoad() called");
-        }
-        synchronized (mLock) {
+    public void prepareLibraryLoad(@Nullable String apkFilePath) {
+        if (DEBUG) Log.i(TAG, "prepareLibraryLoad() called");
+        synchronized (sLock) {
             ensureInitializedLocked();
-            mPrepareLibraryLoadCalled = true;
+            if (apkFilePath != null) {
+                nativeAddZipArchivePath(apkFilePath);
+            }
 
             if (mInBrowserProcess) {
                 // Force generation of random base load address, as well
@@ -159,22 +104,19 @@ class LegacyLinker extends Linker {
      */
     @Override
     public void finishLibraryLoad() {
-        if (DEBUG) {
-            Log.i(TAG, "finishLibraryLoad() called");
-        }
-        synchronized (mLock) {
+        if (DEBUG) Log.i(TAG, "finishLibraryLoad() called");
+
+        synchronized (sLock) {
             ensureInitializedLocked();
             if (DEBUG) {
-                Log.i(TAG, String.format(
-                        Locale.US,
-                        "mInBrowserProcess=%b mBrowserUsesSharedRelro=%b mWaitForSharedRelros=%b",
-                        mInBrowserProcess, mBrowserUsesSharedRelro, mWaitForSharedRelros));
+                String message =
+                        String.format(Locale.US, "mInBrowserProcess=%b mWaitForSharedRelros=%b",
+                                mInBrowserProcess, mWaitForSharedRelros);
+                Log.i(TAG, message);
             }
 
             if (mLoadedLibraries == null) {
-                if (DEBUG) {
-                    Log.i(TAG, "No libraries loaded");
-                }
+                if (DEBUG) Log.i(TAG, "No libraries loaded");
             } else {
                 if (mInBrowserProcess) {
                     // Create new Bundle containing RELRO section information
@@ -185,9 +127,7 @@ class LegacyLinker extends Linker {
                         dumpBundle(mSharedRelros);
                     }
 
-                    if (mBrowserUsesSharedRelro) {
-                        useSharedRelrosLocked(mSharedRelros);
-                    }
+                    useSharedRelrosLocked(mSharedRelros);
                 }
 
                 if (mWaitForSharedRelros) {
@@ -196,7 +136,7 @@ class LegacyLinker extends Linker {
                     // Wait until the shared relro bundle is received from useSharedRelros().
                     while (mSharedRelros == null) {
                         try {
-                            mLock.wait();
+                            sLock.wait();
                         } catch (InterruptedException ie) {
                             // Restore the thread's interrupt status.
                             Thread.currentThread().interrupt();
@@ -211,12 +151,10 @@ class LegacyLinker extends Linker {
 
             // If testing, run tests now that all libraries are loaded and initialized.
             if (NativeLibraries.sEnableLinkerTests) {
-                runTestRunnerClassForTesting(mMemoryDeviceConfig, mInBrowserProcess);
+                runTestRunnerClassForTesting(mInBrowserProcess);
             }
         }
-        if (DEBUG) {
-            Log.i(TAG, "finishLibraryLoad() exiting");
-        }
+        if (DEBUG) Log.i(TAG, "finishLibraryLoad() exiting");
     }
 
     /**
@@ -243,16 +181,13 @@ class LegacyLinker extends Linker {
             clonedBundle.readFromParcel(parcel);
             parcel.recycle();
         }
-        if (DEBUG) {
-            Log.i(TAG, "useSharedRelros() called with " + bundle
-                    + ", cloned " + clonedBundle);
-        }
-        synchronized (mLock) {
+        if (DEBUG) Log.i(TAG, "useSharedRelros() called with %s, cloned %s", bundle, clonedBundle);
+        synchronized (sLock) {
             // Note that in certain cases, this can be called before
             // initServiceProcess() in service processes.
             mSharedRelros = clonedBundle;
             // Tell any listener blocked in finishLibraryLoad() about it.
-            mLock.notifyAll();
+            sLock.notifyAll();
         }
     }
 
@@ -265,21 +200,15 @@ class LegacyLinker extends Linker {
      */
     @Override
     public Bundle getSharedRelros() {
-        if (DEBUG) {
-            Log.i(TAG, "getSharedRelros() called");
-        }
-        synchronized (mLock) {
+        if (DEBUG) Log.i(TAG, "getSharedRelros() called");
+        synchronized (sLock) {
             if (!mInBrowserProcess) {
-                if (DEBUG) {
-                    Log.i(TAG, "... returning null Bundle");
-                }
+                if (DEBUG) Log.i(TAG, "... returning null Bundle");
                 return null;
             }
 
             // Return the Bundle created in finishLibraryLoad().
-            if (DEBUG) {
-                Log.i(TAG, "... returning " + mSharedRelros);
-            }
+            if (DEBUG) Log.i(TAG, "... returning %s", mSharedRelros);
             return mSharedRelros;
         }
     }
@@ -290,14 +219,11 @@ class LegacyLinker extends Linker {
      */
     @Override
     public void disableSharedRelros() {
-        if (DEBUG) {
-            Log.i(TAG, "disableSharedRelros() called");
-        }
-        synchronized (mLock) {
+        if (DEBUG) Log.i(TAG, "disableSharedRelros() called");
+        synchronized (sLock) {
             ensureInitializedLocked();
             mInBrowserProcess = false;
             mWaitForSharedRelros = false;
-            mBrowserUsesSharedRelro = false;
         }
     }
 
@@ -311,14 +237,12 @@ class LegacyLinker extends Linker {
     @Override
     public void initServiceProcess(long baseLoadAddress) {
         if (DEBUG) {
-            Log.i(TAG, String.format(
-                    Locale.US, "initServiceProcess(0x%x) called",
-                    baseLoadAddress));
+            Log.i(TAG,
+                    String.format(Locale.US, "initServiceProcess(0x%x) called", baseLoadAddress));
         }
-        synchronized (mLock) {
+        synchronized (sLock) {
             ensureInitializedLocked();
             mInBrowserProcess = false;
-            mBrowserUsesSharedRelro = false;
             mWaitForSharedRelros = true;
             mBaseLoadAddress = baseLoadAddress;
             mCurrentLoadAddress = baseLoadAddress;
@@ -335,7 +259,7 @@ class LegacyLinker extends Linker {
      */
     @Override
     public long getBaseLoadAddress() {
-        synchronized (mLock) {
+        synchronized (sLock) {
             ensureInitializedLocked();
             if (!mInBrowserProcess) {
                 Log.w(TAG, "Shared RELRO sections are disabled in this process!");
@@ -344,17 +268,17 @@ class LegacyLinker extends Linker {
 
             setupBaseLoadAddressLocked();
             if (DEBUG) {
-                Log.i(TAG, String.format(
-                        Locale.US, "getBaseLoadAddress() returns 0x%x",
-                        mBaseLoadAddress));
+                Log.i(TAG,
+                        String.format(
+                                Locale.US, "getBaseLoadAddress() returns 0x%x", mBaseLoadAddress));
             }
             return mBaseLoadAddress;
         }
     }
 
     // Used internally to lazily setup the common random base load address.
+    @GuardedBy("sLock")
     private void setupBaseLoadAddressLocked() {
-        assert Thread.holdsLock(mLock);
         if (mBaseLoadAddress == -1) {
             mBaseLoadAddress = getRandomBaseLoadAddress();
             mCurrentLoadAddress = mBaseLoadAddress;
@@ -362,7 +286,6 @@ class LegacyLinker extends Linker {
                 // If the random address is 0 there are issues with finding enough
                 // free address space, so disable RELRO shared / fixed load addresses.
                 Log.w(TAG, "Disabling shared RELROs due address space pressure");
-                mBrowserUsesSharedRelro = false;
                 mWaitForSharedRelros = false;
             }
         }
@@ -370,9 +293,7 @@ class LegacyLinker extends Linker {
 
     // Used for debugging only.
     private void dumpBundle(Bundle bundle) {
-        if (DEBUG) {
-            Log.i(TAG, "Bundle has " + bundle.size() + " items: " + bundle);
-        }
+        if (DEBUG) Log.i(TAG, "Bundle has " + bundle.size() + " items: " + bundle);
     }
 
     /**
@@ -383,30 +304,22 @@ class LegacyLinker extends Linker {
      * @param bundle Bundle instance generated with createSharedRelroBundle() in
      * another process.
      */
+    @GuardedBy("sLock")
     private void useSharedRelrosLocked(Bundle bundle) {
-        assert Thread.holdsLock(mLock);
-
-        if (DEBUG) {
-            Log.i(TAG, "Linker.useSharedRelrosLocked() called");
-        }
+        assert Thread.holdsLock(sLock);
+        if (DEBUG) Log.i(TAG, "Linker.useSharedRelrosLocked() called");
 
         if (bundle == null) {
-            if (DEBUG) {
-                Log.i(TAG, "null bundle!");
-            }
+            if (DEBUG) Log.i(TAG, "null bundle!");
             return;
         }
 
         if (mLoadedLibraries == null) {
-            if (DEBUG) {
-                Log.i(TAG, "No libraries loaded!");
-            }
+            if (DEBUG) Log.i(TAG, "No libraries loaded!");
             return;
         }
 
-        if (DEBUG) {
-            dumpBundle(bundle);
-        }
+        if (DEBUG) dumpBundle(bundle);
         HashMap<String, LibInfo> relroMap = createLibInfoMapFromBundle(bundle);
 
         // Apply the RELRO section to all libraries that were already loaded.
@@ -414,21 +327,36 @@ class LegacyLinker extends Linker {
             String libName = entry.getKey();
             LibInfo libInfo = entry.getValue();
             if (!nativeUseSharedRelro(libName, libInfo)) {
-                Log.w(TAG, "Could not use shared RELRO section for " + libName);
+                Log.w(TAG, "Could not use shared RELRO section for %s", libName);
             } else {
-                if (DEBUG) {
-                    Log.i(TAG, "Using shared RELRO section for " + libName);
-                }
+                if (DEBUG) Log.i(TAG, "Using shared RELRO section for %s", libName);
             }
         }
 
         // In service processes, close all file descriptors from the map now.
-        if (!mInBrowserProcess) {
-            closeLibInfoMap(relroMap);
-        }
+        if (!mInBrowserProcess) closeLibInfoMap(relroMap);
 
+        if (DEBUG) Log.i(TAG, "Linker.useSharedRelrosLocked() exiting");
+    }
+
+    /**
+     * Load the Linker JNI library. Throws UnsatisfiedLinkError on error.
+     */
+    @SuppressLint({"UnsafeDynamicallyLoadedCode"})
+    protected static void loadLinkerJniLibrary() {
+        LibraryLoader.setEnvForNative();
         if (DEBUG) {
-            Log.i(TAG, "Linker.useSharedRelrosLocked() exiting");
+            String libName = "lib" + LINKER_JNI_LIBRARY + ".so";
+            Log.i(TAG, "Loading %s", libName);
+        }
+        try {
+            System.loadLibrary(LINKER_JNI_LIBRARY);
+        } catch (UnsatisfiedLinkError e) {
+            if (LibraryLoader.PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION) {
+                System.load(LibraryLoader.getExtractedLibraryPath(
+                        ContextUtils.getApplicationContext().getApplicationInfo(),
+                        LINKER_JNI_LIBRARY));
+            }
         }
     }
 
@@ -441,27 +369,17 @@ class LegacyLinker extends Linker {
      * equivalent, so you can only open one library in a given zip file. The
      * library must not be the Chromium linker library.
      *
-     * @param zipFilePath The path of the zip file containing the library (or null).
      * @param libFilePath The path of the library (possibly in the zip file).
      * @param isFixedAddressPermitted If true, uses a fixed load address if one was
      * supplied, otherwise ignores the fixed address and loads wherever available.
      */
     @Override
-    void loadLibraryImpl(@Nullable String zipFilePath,
-                         String libFilePath,
-                         boolean isFixedAddressPermitted) {
+    void loadLibraryImpl(String libFilePath, boolean isFixedAddressPermitted) {
         if (DEBUG) {
-            Log.i(TAG, "loadLibraryImpl: "
-                    + zipFilePath + ", " + libFilePath + ", " + isFixedAddressPermitted);
+            Log.i(TAG, "loadLibraryImpl: " + libFilePath + ", " + isFixedAddressPermitted);
         }
-        synchronized (mLock) {
+        synchronized (sLock) {
             ensureInitializedLocked();
-
-            // Security: Ensure prepareLibraryLoad() was called before.
-            // In theory, this can be done lazily here, but it's more consistent
-            // to use a pair of functions (i.e. prepareLibraryLoad() + finishLibraryLoad())
-            // that wrap all calls to loadLibrary() in the library loader.
-            assert mPrepareLibraryLoadCalled;
 
             if (mLoadedLibraries == null) {
                 mLoadedLibraries = new HashMap<String, LibInfo>();
@@ -477,7 +395,7 @@ class LegacyLinker extends Linker {
             LibInfo libInfo = new LibInfo();
             long loadAddress = 0;
             if (isFixedAddressPermitted) {
-                if ((mInBrowserProcess && mBrowserUsesSharedRelro) || mWaitForSharedRelros) {
+                if (mInBrowserProcess || mWaitForSharedRelros) {
                     // Load the library at a fixed address.
                     loadAddress = mCurrentLoadAddress;
 
@@ -491,21 +409,11 @@ class LegacyLinker extends Linker {
                 }
             }
 
-            String sharedRelRoName = libFilePath;
-            if (zipFilePath != null) {
-                if (!nativeLoadLibraryInZipFile(zipFilePath, libFilePath, loadAddress, libInfo)) {
-                    String errorMessage = "Unable to load library: " + libFilePath
-                                          + ", in: " + zipFilePath;
-                    Log.e(TAG, errorMessage);
-                    throw new UnsatisfiedLinkError(errorMessage);
-                }
-                sharedRelRoName = zipFilePath;
-            } else {
-                if (!nativeLoadLibrary(libFilePath, loadAddress, libInfo)) {
-                    String errorMessage = "Unable to load library: " + libFilePath;
-                    Log.e(TAG, errorMessage);
-                    throw new UnsatisfiedLinkError(errorMessage);
-                }
+            final String sharedRelRoName = libFilePath;
+            if (!nativeLoadLibrary(libFilePath, loadAddress, libInfo)) {
+                String errorMessage = "Unable to load library: " + libFilePath;
+                Log.e(TAG, errorMessage);
+                throw new UnsatisfiedLinkError(errorMessage);
             }
 
             // Print the load address to the logcat when testing the linker. The format
@@ -515,27 +423,24 @@ class LegacyLinker extends Linker {
             // Where <library-name> is the library name, and <address> is the hexadecimal load
             // address.
             if (NativeLibraries.sEnableLinkerTests) {
-                String tag = mInBrowserProcess ? "BROWSER_LIBRARY_ADDRESS"
-                                               : "RENDERER_LIBRARY_ADDRESS";
-                Log.i(TAG, String.format(
-                        Locale.US, "%s: %s %x", tag, libFilePath, libInfo.mLoadAddress));
+                String tag =
+                        mInBrowserProcess ? "BROWSER_LIBRARY_ADDRESS" : "RENDERER_LIBRARY_ADDRESS";
+                Log.i(TAG,
+                        String.format(
+                                Locale.US, "%s: %s %x", tag, libFilePath, libInfo.mLoadAddress));
             }
 
             if (mInBrowserProcess) {
                 // Create a new shared RELRO section at the 'current' fixed load address.
                 if (!nativeCreateSharedRelro(sharedRelRoName, mCurrentLoadAddress, libInfo)) {
-                    Log.w(TAG, String.format(
-                            Locale.US, "Could not create shared RELRO for %s at %x",
-                            libFilePath,
-                            mCurrentLoadAddress));
+                    Log.w(TAG,
+                            String.format(Locale.US, "Could not create shared RELRO for %s at %x",
+                                    libFilePath, mCurrentLoadAddress));
                 } else {
                     if (DEBUG) {
-                        Log.i(TAG, String.format(
-                                Locale.US,
-                                "Created shared RELRO for %s at %x: %s",
-                                sharedRelRoName,
-                                mCurrentLoadAddress,
-                                libInfo.toString()));
+                        Log.i(TAG,
+                                String.format(Locale.US, "Created shared RELRO for %s at %x: %s",
+                                        sharedRelRoName, mCurrentLoadAddress, libInfo.toString()));
                     }
                 }
             }
@@ -545,8 +450,7 @@ class LegacyLinker extends Linker {
                 // is not 0, this is an explicit library load address. Otherwise,
                 // this is an explicit load address for relocated RELRO sections
                 // only.
-                mCurrentLoadAddress = libInfo.mLoadAddress + libInfo.mLoadSize
-                                      + BREAKPAD_GUARD_REGION_BYTES;
+                mCurrentLoadAddress = libInfo.mLoadAddress + libInfo.mLoadSize;
             }
 
             mLoadedLibraries.put(sharedRelRoName, libInfo);
@@ -557,31 +461,6 @@ class LegacyLinker extends Linker {
     }
 
     /**
-     * Move activity from the native thread to the main UI thread.
-     * Called from native code on its own thread. Posts a callback from
-     * the UI thread back to native code.
-     *
-     * @param opaque Opaque argument.
-     */
-    @CalledByNative
-    public static void postCallbackOnMainThread(final long opaque) {
-        ThreadUtils.postOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                nativeRunCallbackOnUiThread(opaque);
-            }
-        });
-    }
-
-    /**
-     * Native method to run callbacks on the main UI thread.
-     * Supplied by the crazy linker and called by postCallbackOnMainThread.
-     *
-     * @param opaque Opaque crazy linker arguments.
-     */
-    private static native void nativeRunCallbackOnUiThread(long opaque);
-
-    /**
      * Native method used to load a library.
      *
      * @param library Platform specific library name (e.g. libfoo.so)
@@ -590,24 +469,17 @@ class LegacyLinker extends Linker {
      * of this LibInfo instance will set on success.
      * @return true for success, false otherwise.
      */
-    private static native boolean nativeLoadLibrary(String library,
-                                                    long loadAddress,
-                                                    LibInfo libInfo);
+    private static native boolean nativeLoadLibrary(
+            String library, long loadAddress, LibInfo libInfo);
 
     /**
-     * Native method used to load a library which is inside a zipfile.
+     * Native method used to add a zip archive or APK to the search path
+     * for native libraries. Allows loading directly from it.
      *
-     * @param zipfileName Filename of the zip file containing the library.
-     * @param library Platform specific library name (e.g. libfoo.so)
-     * @param loadAddress Explicit load address, or 0 for randomized one.
-     * @param libInfo If not null, the mLoadAddress and mLoadSize fields
-     * of this LibInfo instance will set on success.
+     * @param zipfilePath Path of the zip file containing the libraries.
      * @return true for success, false otherwise.
      */
-    private static native boolean nativeLoadLibraryInZipFile(@Nullable String zipfileName,
-                                                             String libraryName,
-                                                             long loadAddress,
-                                                             LibInfo libInfo);
+    private static native boolean nativeAddZipArchivePath(String zipFilePath);
 
     /**
      * Native method used to create a shared RELRO section.
@@ -623,9 +495,8 @@ class LegacyLinker extends Linker {
      * and mRelroFd will be set.
      * @return true on success, false otherwise.
      */
-    private static native boolean nativeCreateSharedRelro(String library,
-                                                          long loadAddress,
-                                                          LibInfo libInfo);
+    private static native boolean nativeCreateSharedRelro(
+            String library, long loadAddress, LibInfo libInfo);
 
     /**
      * Native method used to use a shared RELRO section.
@@ -634,6 +505,5 @@ class LegacyLinker extends Linker {
      * @param libInfo A LibInfo instance containing valid RELRO information
      * @return true on success.
      */
-    private static native boolean nativeUseSharedRelro(String library,
-                                                       LibInfo libInfo);
+    private static native boolean nativeUseSharedRelro(String library, LibInfo libInfo);
 }

@@ -4,11 +4,21 @@
 
 #include "chrome/browser/sync/test/integration/status_change_checker.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/timer/timer.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
-StatusChangeChecker::StatusChangeChecker() : timed_out_(false) {}
+namespace {
+
+constexpr base::TimeDelta kTimeout = base::TimeDelta::FromSeconds(30);
+
+}  // namespace
+
+StatusChangeChecker::StatusChangeChecker()
+    : run_loop_(base::RunLoop::Type::kNestableTasksAllowed),
+      timed_out_(false) {}
 
 StatusChangeChecker::~StatusChangeChecker() {}
 
@@ -26,22 +36,9 @@ bool StatusChangeChecker::TimedOut() const {
   return timed_out_;
 }
 
-base::TimeDelta StatusChangeChecker::GetTimeoutDuration() {
-  return base::TimeDelta::FromSeconds(45);
-}
-
-void StatusChangeChecker::StartBlockingWait() {
-  base::OneShotTimer timer;
-  timer.Start(FROM_HERE,
-              GetTimeoutDuration(),
-              base::Bind(&StatusChangeChecker::OnTimeout,
-                         base::Unretained(this)));
-
-  base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed).Run();
-}
-
 void StatusChangeChecker::StopWaiting() {
-  base::RunLoop::QuitCurrentWhenIdleDeprecated();
+  if (run_loop_.running())
+    run_loop_.Quit();
 }
 
 void StatusChangeChecker::CheckExitCondition() {
@@ -52,8 +49,19 @@ void StatusChangeChecker::CheckExitCondition() {
   }
 }
 
+void StatusChangeChecker::StartBlockingWait() {
+  DCHECK(!run_loop_.running());
+
+  base::OneShotTimer timer;
+  timer.Start(FROM_HERE, kTimeout,
+              base::BindRepeating(&StatusChangeChecker::OnTimeout,
+                                  base::Unretained(this)));
+
+  run_loop_.Run();
+}
+
 void StatusChangeChecker::OnTimeout() {
-  DVLOG(1) << "Await -> Timed out: " << GetDebugMessage();
+  ADD_FAILURE() << "Await -> Timed out: " << GetDebugMessage();
   timed_out_ = true;
   StopWaiting();
 }

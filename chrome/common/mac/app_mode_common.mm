@@ -4,12 +4,13 @@
 
 #include "chrome/common/mac/app_mode_common.h"
 
-#include "base/files/file_util.h"
+#import <Foundation/Foundation.h>
+#include <type_traits>
 
 namespace app_mode {
 
-const char kAppShimSocketShortName[] = "Socket";
-const char kAppShimSocketSymlinkName[] = "App Shim Socket";
+const char kAppShimBootstrapNameFragment[] = "apps";
+const char kMojoChannelMacSignalFile[] = "apps_use_mojo_channel_mac";
 
 const char kRunningChromeVersionSymlinkName[] = "RunningChromeVersion";
 
@@ -33,6 +34,7 @@ NSString* const kCFBundleDisplayNameKey = @"CFBundleDisplayName";
 NSString* const kCFBundleShortVersionStringKey = @"CFBundleShortVersionString";
 NSString* const kCrBundleVersionKey = @"CrBundleVersion";
 NSString* const kLSHasLocalizedDisplayNameKey = @"LSHasLocalizedDisplayName";
+NSString* const kNSHighResolutionCapableKey = @"NSHighResolutionCapable";
 NSString* const kBrowserBundleIDKey = @"CrBundleIdentifier";
 NSString* const kCrAppModeShortcutIDKey = @"CrAppModeShortcutID";
 NSString* const kCrAppModeShortcutNameKey = @"CrAppModeShortcutName";
@@ -40,6 +42,8 @@ NSString* const kCrAppModeShortcutURLKey = @"CrAppModeShortcutURL";
 NSString* const kCrAppModeUserDataDirKey = @"CrAppModeUserDataDir";
 NSString* const kCrAppModeProfileDirKey = @"CrAppModeProfileDir";
 NSString* const kCrAppModeProfileNameKey = @"CrAppModeProfileName";
+NSString* const kCrAppModeMajorVersionKey = @"CrAppModeMajorVersionKey";
+NSString* const kCrAppModeMinorVersionKey = @"CrAppModeMinorVersionKey";
 
 NSString* const kLastRunAppBundlePathPrefsKey = @"LastRunAppBundlePath";
 
@@ -49,22 +53,24 @@ NSString* const kShortcutURLPlaceholder = @"APP_MODE_SHORTCUT_URL";
 NSString* const kShortcutBrowserBundleIDPlaceholder =
                     @"APP_MODE_BROWSER_BUNDLE_ID";
 
-ChromeAppModeInfo::ChromeAppModeInfo()
-    : major_version(0),
-      minor_version(0),
-      argc(0),
-      argv(0) {
-}
+static_assert(std::is_pod<ChromeAppModeInfo>::value == true,
+              "ChromeAppModeInfo must be a POD type");
 
-ChromeAppModeInfo::~ChromeAppModeInfo() {
-}
-
-void VerifySocketPermissions(const base::FilePath& socket_path) {
-  CHECK(base::PathIsWritable(socket_path));
-  base::FilePath socket_dir = socket_path.DirName();
-  int socket_dir_mode = 0;
-  CHECK(base::GetPosixFilePermissions(socket_dir, &socket_dir_mode));
-  CHECK_EQ(0700, socket_dir_mode);
-}
+// ChromeAppModeInfo is built into the app_shim_loader binary that is not
+// updated with Chrome. If the layout of this structure changes, then Chrome
+// must rebuild all app shims. See https://crrev.com/362634 as an example.
+static_assert(
+    offsetof(ChromeAppModeInfo, argc) == 0x0 &&
+        offsetof(ChromeAppModeInfo, argv) == 0x8 &&
+        offsetof(ChromeAppModeInfo, chrome_framework_path) == 0x10 &&
+        offsetof(ChromeAppModeInfo, chrome_outer_bundle_path) == 0x18 &&
+        offsetof(ChromeAppModeInfo, app_mode_bundle_path) == 0x20 &&
+        offsetof(ChromeAppModeInfo, app_mode_id) == 0x28 &&
+        offsetof(ChromeAppModeInfo, app_mode_name) == 0x30 &&
+        offsetof(ChromeAppModeInfo, app_mode_url) == 0x38 &&
+        offsetof(ChromeAppModeInfo, user_data_dir) == 0x40 &&
+        offsetof(ChromeAppModeInfo, profile_dir) == 0x48,
+    "ChromeAppModeInfo layout has changed; bump the APP_SHIM_VERSION_NUMBER "
+    "in chrome/common/mac/app_mode_common.h. (And fix this static_assert.)");
 
 }  // namespace app_mode

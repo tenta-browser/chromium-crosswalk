@@ -4,7 +4,6 @@
 
 #include "extensions/renderer/bindings/api_binding_test.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "gin/array_buffer.h"
 #include "gin/public/context_holder.h"
@@ -31,11 +30,11 @@ void APIBindingTest::SetUp() {
 #endif
 
   gin::IsolateHolder::Initialize(gin::IsolateHolder::kStrictMode,
-                                 gin::IsolateHolder::kStableV8Extras,
                                  gin::ArrayBufferAllocator::SharedInstance());
 
-  isolate_holder_ =
-      std::make_unique<gin::IsolateHolder>(base::ThreadTaskRunnerHandle::Get());
+  isolate_holder_ = std::make_unique<gin::IsolateHolder>(
+      base::ThreadTaskRunnerHandle::Get(),
+      gin::IsolateHolder::IsolateType::kTest);
   isolate()->Enter();
 
   v8::HandleScope handle_scope(isolate());
@@ -111,6 +110,7 @@ v8::Local<v8::Context> APIBindingTest::MainContext() {
 
 void APIBindingTest::DisposeContext(v8::Local<v8::Context> context) {
   if (main_context_holder_ && context == main_context_holder_->context()) {
+    context->Exit();
     OnWillDisposeContext(context);
     main_context_holder_.reset();
     return;

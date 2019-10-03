@@ -11,10 +11,11 @@
 #include "base/files/file_util.h"
 #include "base/nix/xdg_util.h"
 #include "base/process/launch.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
 #include "chrome/browser/tab_contents/tab_util.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -63,7 +64,8 @@ void ShowLinuxProxyConfigUrl(int render_process_id, int render_view_id) {
 
 // Start the given proxy configuration utility.
 bool StartProxyConfigUtil(const char* const command[]) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   // base::LaunchProcess() returns true ("success") if the fork()
   // succeeds, but not necessarily the exec(). We'd like to be able to
   // use StartProxyConfigUtil() to search possible options and stop on
@@ -81,7 +83,7 @@ bool StartProxyConfigUtil(const char* const command[]) {
     LOG(ERROR) << "StartProxyConfigUtil failed to start " << command[0];
     return false;
   }
-  base::EnsureProcessGetsReaped(process.Pid());
+  base::EnsureProcessGetsReaped(std::move(process));
   return true;
 }
 
@@ -89,11 +91,13 @@ bool StartProxyConfigUtil(const char* const command[]) {
 // failure to do so, show the Linux proxy config URL in a new tab instead.
 void DetectAndStartProxyConfigUtil(int render_process_id,
                                    int render_view_id) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   bool launched = false;
   switch (base::nix::GetDesktopEnvironment(env.get())) {
+    case base::nix::DESKTOP_ENVIRONMENT_CINNAMON:
     case base::nix::DESKTOP_ENVIRONMENT_GNOME:
     case base::nix::DESKTOP_ENVIRONMENT_PANTHEON:
     case base::nix::DESKTOP_ENVIRONMENT_UNITY: {
@@ -129,9 +133,9 @@ void DetectAndStartProxyConfigUtil(int render_process_id,
 
   if (launched)
     return;
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&ShowLinuxProxyConfigUrl,
-                                         render_process_id, render_view_id));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(&ShowLinuxProxyConfigUrl,
+                                          render_process_id, render_view_id));
 }
 
 }  // namespace

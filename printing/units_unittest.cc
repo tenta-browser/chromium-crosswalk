@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "printing/units.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest/include/gtest/gtest-spi.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 namespace printing {
 
@@ -50,15 +50,6 @@ TEST(UnitsTest, Convertions) {
   EXPECT_EQ(0, ConvertUnitDouble(0, 100, 100));
   EXPECT_DOUBLE_EQ(0.000002, ConvertUnitDouble(2, 1000, 0.001));
   EXPECT_EQ(2000000, ConvertUnitDouble(2, 0.001, 1000));
-
-  EXPECT_EQ(kHundrethsMMPerInch, ConvertMilliInchToHundredThousanthMeter(1000));
-  EXPECT_EQ(-kHundrethsMMPerInch,
-            ConvertMilliInchToHundredThousanthMeter(-1000));
-  EXPECT_EQ(0, ConvertMilliInchToHundredThousanthMeter(0));
-  EXPECT_EQ(1000, ConvertHundredThousanthMeterToMilliInch(kHundrethsMMPerInch));
-  EXPECT_EQ(-1000,
-            ConvertHundredThousanthMeterToMilliInch(-kHundrethsMMPerInch));
-  EXPECT_EQ(0, ConvertHundredThousanthMeterToMilliInch(0));
 
   EXPECT_EQ(8.25, ConvertPixelsToPointDouble(11.0));
   // Round down.

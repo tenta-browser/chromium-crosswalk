@@ -37,8 +37,8 @@ class FullStreamUIPolicy : public ActivityLogDatabasePolicy {
       const std::string& page_url,
       const std::string& arg_url,
       const int days_ago,
-      const base::Callback<void(std::unique_ptr<Action::ActionVector>)>&
-          callback) override;
+      base::OnceCallback<void(std::unique_ptr<Action::ActionVector>)> callback)
+      override;
 
   void Close() override;
 
@@ -67,8 +67,8 @@ class FullStreamUIPolicy : public ActivityLogDatabasePolicy {
 
   // The ActivityDatabase::Delegate interface.  These are always called from
   // the database thread.
-  bool InitDatabase(sql::Connection* db) override;
-  bool FlushDatabase(sql::Connection* db) override;
+  bool InitDatabase(sql::Database* db) override;
+  bool FlushDatabase(sql::Database* db) override;
   void OnDatabaseFailure() override;
   void OnDatabaseClose() override;
 

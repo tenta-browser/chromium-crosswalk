@@ -10,19 +10,20 @@
 #include <memory>
 #include <string>
 
+#include "base/task_runner.h"
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 
 namespace net {
 struct RedirectInfo;
 }
 
 namespace network {
+struct ResourceResponseInfo;
 struct URLLoaderCompletionStatus;
 }
 
 namespace content {
-
-struct ResourceResponseInfo;
 
 // This is implemented by our custom resource loader within content. The Peer
 // and it's bridge should have identical lifetimes as they represent each end of
@@ -33,25 +34,6 @@ struct ResourceResponseInfo;
 // for more information.
 class CONTENT_EXPORT RequestPeer {
  public:
-  // This class represents data gotten from the Browser process. Each data
-  // consists of |payload|, |length|, |encoded_data_length| and
-  // |encoded_body_length|. The payload is valid only when the data instance is
-  // valid.
-  // In order to work with Chrome resource loading IPC, it is desirable to
-  // reclaim data in FIFO order in a RequestPeer in terms of performance.
-  // |payload|, |length|, |encoded_data_length| and |encoded_body_length|
-  // functions are thread-safe, but the data object itself must be destroyed on
-  // the original thread.
-  class CONTENT_EXPORT ReceivedData {
-   public:
-    virtual ~ReceivedData() {}
-    virtual const char* payload() const = 0;
-    virtual int length() const = 0;
-  };
-
-  // A ThreadSafeReceivedData can be deleted on ANY thread.
-  class CONTENT_EXPORT ThreadSafeReceivedData : public ReceivedData {};
-
   // Called as upload progress is made.
   // note: only for requests with upload progress enabled.
   virtual void OnUploadProgress(uint64_t position, uint64_t size) = 0;
@@ -60,25 +42,18 @@ class CONTENT_EXPORT RequestPeer {
   // suppress the redirect.  The ResourceResponseInfo provides information about
   // the redirect response and the RedirectInfo includes information about the
   // request to be made if the method returns true.
-  virtual bool OnReceivedRedirect(const net::RedirectInfo& redirect_info,
-                                  const ResourceResponseInfo& info) = 0;
+  virtual bool OnReceivedRedirect(
+      const net::RedirectInfo& redirect_info,
+      const network::ResourceResponseInfo& info) = 0;
 
   // Called when response headers are available (after all redirects have
   // been followed).
-  virtual void OnReceivedResponse(const ResourceResponseInfo& info) = 0;
+  virtual void OnReceivedResponse(
+      const network::ResourceResponseInfo& info) = 0;
 
-  // Called when a chunk of response data is downloaded.  This method may be
-  // called multiple times or not at all if an error occurs.  This method is
-  // only called if RequestInfo::download_to_file was set to true, and in
-  // that case, OnReceivedData will not be called.
-  // The encoded_data_length is the length of the encoded data transferred
-  // over the network, which could be different from data length (e.g. for
-  // gzipped content).
-  virtual void OnDownloadedData(int len, int encoded_data_length) = 0;
-
-  // Called when a chunk of response data is available. This method may
-  // be called multiple times or not at all if an error occurs.
-  virtual void OnReceivedData(std::unique_ptr<ReceivedData> data) = 0;
+  // Called when the response body becomes available.
+  virtual void OnStartLoadingResponseBody(
+      mojo::ScopedDataPipeConsumerHandle body) = 0;
 
   // Called when the transfer size is updated. This method may be called
   // multiple times or not at all. The transfer size is the length of the
@@ -95,6 +70,9 @@ class CONTENT_EXPORT RequestPeer {
   // the resource load.
   virtual void OnCompletedRequest(
       const network::URLLoaderCompletionStatus& status) = 0;
+
+  // Returns the task runner on which this request peer is running.
+  virtual scoped_refptr<base::TaskRunner> GetTaskRunner() = 0;
 
   virtual ~RequestPeer() {}
 };

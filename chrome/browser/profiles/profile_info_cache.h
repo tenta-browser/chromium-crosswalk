@@ -59,7 +59,8 @@ class ProfileInfoCache : public ProfileInfoInterface,
                          const std::string& gaia_id,
                          const base::string16& user_name,
                          size_t icon_index,
-                         const std::string& supervised_user_id);
+                         const std::string& supervised_user_id,
+                         const AccountId& account_id);
   // Deprecated. Use RemoveProfile instead.
   void DeleteProfileFromCache(const base::FilePath& profile_path);
 
@@ -123,7 +124,7 @@ class ProfileInfoCache : public ProfileInfoInterface,
   // Warning: This will re-sort profiles and thus may change indices!
   void SetGAIAGivenNameOfProfileAtIndex(size_t index,
                                         const base::string16& name);
-  void SetGAIAPictureOfProfileAtIndex(size_t index, const gfx::Image* image);
+  void SetGAIAPictureOfProfileAtIndex(size_t index, gfx::Image image);
   void SetIsUsingGAIAPictureOfProfileAtIndex(size_t index, bool value);
   void SetProfileSigninRequiredAtIndex(size_t index, bool value);
   void SetProfileIsUsingDefaultNameAtIndex(size_t index, bool value);
@@ -143,7 +144,9 @@ class ProfileInfoCache : public ProfileInfoInterface,
                   const std::string& gaia_id,
                   const base::string16& user_name,
                   size_t icon_index,
-                  const std::string& supervised_user_id) override;
+                  const std::string& supervised_user_id,
+                  const AccountId& account_id) override;
+  void RemoveProfileByAccountId(const AccountId& account_id) override;
   void RemoveProfile(const base::FilePath& profile_path) override;
 
   bool GetProfileAttributesWithPath(const base::FilePath& path,
@@ -176,11 +179,8 @@ class ProfileInfoCache : public ProfileInfoInterface,
   // used by the profiles.
   void MigrateLegacyProfileNamesAndDownloadAvatars();
 
-  // Remove statistics values that have previously been stored and are not used
-  // anymore.
-  void RemoveDeprecatedStatistics();
-
   std::vector<std::string> sorted_keys_;
+  const base::FilePath user_data_dir_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileInfoCache);
 };

@@ -8,16 +8,18 @@
 
 #include "base/bind.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/win/registry.h"
+#include "chrome/chrome_elf/blacklist/blacklist.h"
+#include "chrome/chrome_elf/chrome_elf_constants.h"
+#include "chrome/chrome_elf/dll_hash/dll_hash.h"
 #include "chrome/common/chrome_version.h"
 #include "chrome/install_static/install_util.h"
-#include "chrome_elf/blacklist/blacklist.h"
-#include "chrome_elf/chrome_elf_constants.h"
-#include "chrome_elf/dll_hash/dll_hash.h"
 #include "components/variations/variations_associated_data.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_features.h"
 #include "services/service_manager/sandbox/features.h"
@@ -85,7 +87,7 @@ void ReportSuccessfulBlocks() {
     base::WideToUTF8(blocked_dlls[i], wcslen(blocked_dlls[i]), &dll_name_utf8);
     int uma_hash = DllNameToHash(dll_name_utf8);
 
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Blacklist.Blocked", uma_hash);
+    base::UmaHistogramSparse("Blacklist.Blocked", uma_hash);
   }
 }
 
@@ -112,10 +114,9 @@ void InitializeChromeElf() {
   // Schedule another task to report all successful interceptions later.
   // This time delay should be long enough to catch any dlls that attempt to
   // inject after Chrome has started up.
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&ReportSuccessfulBlocks),
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&ReportSuccessfulBlocks),
       base::TimeDelta::FromSeconds(kBlacklistReportingDelaySec));
 
   // Make sure the early finch emergency "off switch" for

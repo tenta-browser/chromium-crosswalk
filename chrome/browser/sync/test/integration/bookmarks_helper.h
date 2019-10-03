@@ -5,13 +5,19 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_BOOKMARKS_HELPER_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_BOOKMARKS_HELPER_H_
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "chrome/browser/sync/test/integration/await_match_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
+#include "components/sync/engine_impl/loopback_server/loopback_server_entity.h"
+#include "components/sync/nigori/cryptographer.h"
+#include "components/sync/test/fake_server/fake_server.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "url/gurl.h"
 
 class GURL;
 
@@ -55,7 +61,7 @@ const bookmarks::BookmarkNode* AddURL(int profile,
 // profile |profile| at position |index|. Returns a pointer to the node that
 // was added.
 const bookmarks::BookmarkNode* AddURL(int profile,
-                                      int index,
+                                      size_t index,
                                       const std::string& title,
                                       const GURL& url) WARN_UNUSED_RESULT;
 
@@ -64,7 +70,7 @@ const bookmarks::BookmarkNode* AddURL(int profile,
 // was added.
 const bookmarks::BookmarkNode* AddURL(int profile,
                                       const bookmarks::BookmarkNode* parent,
-                                      int index,
+                                      size_t index,
                                       const std::string& title,
                                       const GURL& url) WARN_UNUSED_RESULT;
 
@@ -76,7 +82,7 @@ const bookmarks::BookmarkNode* AddFolder(int profile, const std::string& title)
 // Adds a folder named |title| to the bookmark bar of profile |profile| at
 // position |index|. Returns a pointer to the folder that was added.
 const bookmarks::BookmarkNode* AddFolder(int profile,
-                                         int index,
+                                         size_t index,
                                          const std::string& title)
     WARN_UNUSED_RESULT;
 
@@ -85,7 +91,7 @@ const bookmarks::BookmarkNode* AddFolder(int profile,
 // was added.
 const bookmarks::BookmarkNode* AddFolder(int profile,
                                          const bookmarks::BookmarkNode* parent,
-                                         int index,
+                                         size_t index,
                                          const std::string& title)
     WARN_UNUSED_RESULT;
 
@@ -134,11 +140,11 @@ const bookmarks::BookmarkNode* SetURL(int profile,
 void Move(int profile,
           const bookmarks::BookmarkNode* node,
           const bookmarks::BookmarkNode* new_parent,
-          int index);
+          size_t index);
 
 // Removes the node in the bookmark model of profile |profile| under the node
 // |parent| at position |index|.
-void Remove(int profile, const bookmarks::BookmarkNode* parent, int index);
+void Remove(int profile, const bookmarks::BookmarkNode* parent, size_t index);
 
 // Removes all non-permanent nodes in the bookmark model of profile |profile|.
 void RemoveAll(int profile);
@@ -182,24 +188,22 @@ const bookmarks::BookmarkNode* GetUniqueNodeByURL(int profile, const GURL& url)
     WARN_UNUSED_RESULT;
 
 // Returns the number of bookmarks in bookmark model of profile |profile|.
-int CountAllBookmarks(int profile) WARN_UNUSED_RESULT;
+size_t CountAllBookmarks(int profile) WARN_UNUSED_RESULT;
 
 // Returns the number of bookmarks in bookmark model of profile |profile|
 // whose titles match the string |title|.
-int CountBookmarksWithTitlesMatching(
-    int profile,
-    const std::string& title) WARN_UNUSED_RESULT;
+size_t CountBookmarksWithTitlesMatching(int profile, const std::string& title)
+    WARN_UNUSED_RESULT;
 
 // Returns the number of bookmarks in bookmark model of profile |profile|
 // whose URLs match the |url|.
-int CountBookmarksWithUrlsMatching(int profile,
-                                   const GURL& url) WARN_UNUSED_RESULT;
+size_t CountBookmarksWithUrlsMatching(int profile,
+                                      const GURL& url) WARN_UNUSED_RESULT;
 
 // Returns the number of bookmark folders in the bookmark model of profile
 // |profile| whose titles contain the query string |title|.
-int CountFoldersWithTitlesMatching(
-    int profile,
-    const std::string& title) WARN_UNUSED_RESULT;
+size_t CountFoldersWithTitlesMatching(int profile, const std::string& title)
+    WARN_UNUSED_RESULT;
 
 // Creates a favicon of |color| with image reps of the platform's supported
 // scale factors (eg MacOS) in addition to 1x.
@@ -209,19 +213,25 @@ gfx::Image CreateFavicon(SkColor color);
 gfx::Image Create1xFaviconFromPNGFile(const std::string& path);
 
 // Returns a URL identifiable by |i|.
-std::string IndexedURL(int i);
+std::string IndexedURL(size_t i);
 
 // Returns a URL title identifiable by |i|.
-std::string IndexedURLTitle(int i);
+std::string IndexedURLTitle(size_t i);
 
 // Returns a folder name identifiable by |i|.
-std::string IndexedFolderName(int i);
+std::string IndexedFolderName(size_t i);
 
 // Returns a subfolder name identifiable by |i|.
-std::string IndexedSubfolderName(int i);
+std::string IndexedSubfolderName(size_t i);
 
 // Returns a subsubfolder name identifiable by |i|.
-std::string IndexedSubsubfolderName(int i);
+std::string IndexedSubsubfolderName(size_t i);
+
+// Creates a server-side entity representing a bookmark with the given title and
+// URL.
+std::unique_ptr<syncer::LoopbackServerEntity> CreateBookmarkServerEntity(
+    const std::string& title,
+    const GURL& url);
 
 }  // namespace bookmarks_helper
 
@@ -263,6 +273,37 @@ class BookmarksTitleChecker : public SingleClientStatusChangeChecker {
   const int profile_index_;
   const std::string title_;
   const int expected_count_;
+};
+
+// Checker used to block until the bookmarks on the server match a given set of
+// expected bookmarks.
+class ServerBookmarksEqualityChecker : public SingleClientStatusChangeChecker {
+ public:
+  struct ExpectedBookmark {
+    std::string title;
+    GURL url;
+  };
+
+  // If a |cryptographer| is provided (i.e. is not nullptr), it is assumed that
+  // the server-side data should be encrypted, and the provided cryptographer
+  // will be used to decrypt the data prior to checking for equality.
+  ServerBookmarksEqualityChecker(
+      syncer::ProfileSyncService* service,
+      fake_server::FakeServer* fake_server,
+      const std::vector<ExpectedBookmark>& expected_bookmarks,
+      syncer::Cryptographer* cryptographer);
+
+  bool IsExitConditionSatisfied() override;
+  std::string GetDebugMessage() const override;
+
+  ~ServerBookmarksEqualityChecker() override;
+
+ private:
+  fake_server::FakeServer* fake_server_;
+  syncer::Cryptographer* cryptographer_;
+  const std::vector<ExpectedBookmark> expected_bookmarks_;
+
+  DISALLOW_COPY_AND_ASSIGN(ServerBookmarksEqualityChecker);
 };
 
 // Checker used to block until the actual number of bookmarks with the given url

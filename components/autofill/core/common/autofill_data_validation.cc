@@ -39,8 +39,7 @@ bool IsValidFormFieldData(const FormFieldData& field) {
 }
 
 bool IsValidFormData(const FormData& form) {
-  if (!IsValidString16(form.name) ||
-      !IsValidGURL(form.origin) ||
+  if (!IsValidString16(form.name) || !IsValidGURL(form.url) ||
       !IsValidGURL(form.action))
     return false;
 
@@ -67,14 +66,6 @@ bool IsValidPasswordFormFillData(const PasswordFormFillData& form) {
     if (!IsValidString16(it.first) ||
         !IsValidString16(it.second.password) ||
         !IsValidString(it.second.realm))
-      return false;
-  }
-
-  for (const auto& it : form.other_possible_usernames) {
-    if (!IsValidString16(it.first.username) ||
-        !IsValidString16(it.first.password) ||
-        !IsValidString(it.first.realm) ||
-        !IsValidString16Vector(it.second))
       return false;
   }
 

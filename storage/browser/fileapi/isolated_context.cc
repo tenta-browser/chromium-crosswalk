@@ -7,9 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -57,8 +58,8 @@ static base::LazyInstance<IsolatedContext>::Leaky g_isolated_context =
 IsolatedContext::FileInfoSet::FileInfoSet() = default;
 IsolatedContext::FileInfoSet::~FileInfoSet() = default;
 
-bool IsolatedContext::FileInfoSet::AddPath(
-    const base::FilePath& path, std::string* registered_name) {
+bool IsolatedContext::FileInfoSet::AddPath(const base::FilePath& path,
+                                           std::string* registered_name) {
   // The given path should not contain any '..' and should be absolute.
   if (path.ReferencesParent() || !path.IsAbsolute())
     return false;
@@ -86,23 +87,64 @@ bool IsolatedContext::FileInfoSet::AddPath(
   return true;
 }
 
-bool IsolatedContext::FileInfoSet::AddPathWithName(
-    const base::FilePath& path, const std::string& name) {
+bool IsolatedContext::FileInfoSet::AddPathWithName(const base::FilePath& path,
+                                                   const std::string& name) {
   // The given path should not contain any '..' and should be absolute.
   if (path.ReferencesParent() || !path.IsAbsolute())
     return false;
-  return fileset_.insert(
-      MountPointInfo(name, path.NormalizePathSeparators())).second;
+  return fileset_.insert(MountPointInfo(name, path.NormalizePathSeparators()))
+      .second;
+}
+
+//--------------------------------------------------------------------------
+
+IsolatedContext::ScopedFSHandle::ScopedFSHandle(std::string file_system_id)
+    : file_system_id_(std::move(file_system_id)) {
+  if (!file_system_id_.empty())
+    IsolatedContext::GetInstance()->AddReference(file_system_id_);
+}
+
+IsolatedContext::ScopedFSHandle::~ScopedFSHandle() {
+  if (!file_system_id_.empty())
+    IsolatedContext::GetInstance()->RemoveReference(file_system_id_);
+}
+
+IsolatedContext::ScopedFSHandle::ScopedFSHandle(const ScopedFSHandle& other)
+    : ScopedFSHandle(other.id()) {}
+
+IsolatedContext::ScopedFSHandle::ScopedFSHandle(ScopedFSHandle&& other)
+    : file_system_id_(std::move(other.file_system_id_)) {
+  // Moving from a string leaves it in a unspecified state, we need to make sure
+  // to leave it empty, so explicitly clear it.
+  other.file_system_id_.clear();
+}
+
+IsolatedContext::ScopedFSHandle& IsolatedContext::ScopedFSHandle::operator=(
+    const ScopedFSHandle& other) {
+  if (!file_system_id_.empty())
+    IsolatedContext::GetInstance()->RemoveReference(file_system_id_);
+  file_system_id_ = other.id();
+  if (!file_system_id_.empty())
+    IsolatedContext::GetInstance()->AddReference(file_system_id_);
+  return *this;
+}
+
+IsolatedContext::ScopedFSHandle& IsolatedContext::ScopedFSHandle::operator=(
+    ScopedFSHandle&& other) {
+  if (!file_system_id_.empty())
+    IsolatedContext::GetInstance()->RemoveReference(file_system_id_);
+  file_system_id_ = std::move(other.file_system_id_);
+  // Moving from a string leaves it in a unspecified state, we need to make sure
+  // to leave it empty, so explicitly clear it.
+  other.file_system_id_.clear();
+  return *this;
 }
 
 //--------------------------------------------------------------------------
 
 class IsolatedContext::Instance {
  public:
-  enum PathType {
-    PLATFORM_PATH,
-    VIRTUAL_PATH
-  };
+  enum PathType { PLATFORM_PATH, VIRTUAL_PATH };
 
   // For a single-path isolated file system, which could be registered by
   // IsolatedContext::RegisterFileSystemForPath() or
@@ -166,10 +208,7 @@ IsolatedContext::Instance::Instance(FileSystemType type,
 
 IsolatedContext::Instance::Instance(FileSystemType type,
                                     const std::set<MountPointInfo>& files)
-    : type_(type),
-      path_type_(PLATFORM_PATH),
-      files_(files),
-      ref_counts_(0) {
+    : type_(type), path_type_(PLATFORM_PATH), files_(files), ref_counts_(0) {
   DCHECK(!IsSinglePathIsolatedFileSystem(type_));
 }
 
@@ -191,8 +230,7 @@ bool IsolatedContext::Instance::ResolvePathForName(const std::string& name,
 
     return file_info_.name == name;
   }
-  std::set<MountPointInfo>::const_iterator found = files_.find(
-      MountPointInfo(name, base::FilePath()));
+  auto found = files_.find(MountPointInfo(name, base::FilePath()));
   if (found == files_.end())
     return false;
   *path = found->path;
@@ -220,18 +258,18 @@ std::string IsolatedContext::RegisterDraggedFileSystem(
   base::AutoLock locker(lock_);
   std::string filesystem_id = GetNewFileSystemId();
   instance_map_[filesystem_id] =
-      base::MakeUnique<Instance>(kFileSystemTypeDragged, files.fileset());
+      std::make_unique<Instance>(kFileSystemTypeDragged, files.fileset());
   return filesystem_id;
 }
 
-std::string IsolatedContext::RegisterFileSystemForPath(
+IsolatedContext::ScopedFSHandle IsolatedContext::RegisterFileSystemForPath(
     FileSystemType type,
     const std::string& filesystem_id,
     const base::FilePath& path_in,
     std::string* register_name) {
   base::FilePath path(path_in.NormalizePathSeparators());
   if (path.ReferencesParent() || !path.IsAbsolute())
-    return std::string();
+    return ScopedFSHandle();
   std::string name;
   if (register_name && !register_name->empty()) {
     name = *register_name;
@@ -241,12 +279,16 @@ std::string IsolatedContext::RegisterFileSystemForPath(
       register_name->assign(name);
   }
 
-  base::AutoLock locker(lock_);
-  std::string new_id = GetNewFileSystemId();
-  instance_map_[new_id] = base::MakeUnique<Instance>(
-      type, filesystem_id, MountPointInfo(name, path), Instance::PLATFORM_PATH);
-  path_to_id_map_[path].insert(new_id);
-  return new_id;
+  std::string new_id;
+  {
+    base::AutoLock locker(lock_);
+    new_id = GetNewFileSystemId();
+    instance_map_[new_id] = std::make_unique<Instance>(
+        type, filesystem_id, MountPointInfo(name, path),
+        Instance::PLATFORM_PATH);
+    path_to_id_map_[path].insert(new_id);
+  }
+  return ScopedFSHandle(new_id);
 }
 
 std::string IsolatedContext::RegisterFileSystemForVirtualPath(
@@ -258,7 +300,7 @@ std::string IsolatedContext::RegisterFileSystemForVirtualPath(
   if (path.ReferencesParent())
     return std::string();
   std::string filesystem_id = GetNewFileSystemId();
-  instance_map_[filesystem_id] = base::MakeUnique<Instance>(
+  instance_map_[filesystem_id] = std::make_unique<Instance>(
       type,
       std::string(),  // filesystem_id
       MountPointInfo(register_name, cracked_path_prefix),
@@ -276,8 +318,8 @@ bool IsolatedContext::RevokeFileSystem(const std::string& filesystem_id) {
   return UnregisterFileSystem(filesystem_id);
 }
 
-bool IsolatedContext::GetRegisteredPath(
-    const std::string& filesystem_id, base::FilePath* path) const {
+bool IsolatedContext::GetRegisteredPath(const std::string& filesystem_id,
+                                        base::FilePath* path) const {
   DCHECK(path);
   base::AutoLock locker(lock_);
   auto found = instance_map_.find(filesystem_id);
@@ -309,8 +351,7 @@ bool IsolatedContext::CrackVirtualPath(
   virtual_path.GetComponents(&components);
   if (components.size() < 1)
     return false;
-  std::vector<base::FilePath::StringType>::iterator component_iter =
-      components.begin();
+  auto component_iter = components.begin();
   std::string fsid = base::FilePath(*component_iter++).MaybeAsASCII();
   if (fsid.empty())
     return false;
@@ -354,7 +395,7 @@ FileSystemURL IsolatedContext::CrackURL(const GURL& url) const {
 }
 
 FileSystemURL IsolatedContext::CreateCrackedFileSystemURL(
-    const GURL& origin,
+    const url::Origin& origin,
     FileSystemType type,
     const base::FilePath& path) const {
   return CrackFileSystemURL(FileSystemURL(origin, type, path));
@@ -366,9 +407,8 @@ void IsolatedContext::RevokeFileSystemByPath(const base::FilePath& path_in) {
   auto ids_iter = path_to_id_map_.find(path);
   if (ids_iter == path_to_id_map_.end())
     return;
-  std::set<std::string>& ids = ids_iter->second;
-  for (auto iter = ids.begin(); iter != ids.end(); ++iter)
-    instance_map_.erase(*iter);
+  for (auto& id : ids_iter->second)
+    instance_map_.erase(id);
   path_to_id_map_.erase(ids_iter);
 }
 
@@ -403,8 +443,7 @@ bool IsolatedContext::GetDraggedFileInfo(
   if (found == instance_map_.end() ||
       found->second->type() != kFileSystemTypeDragged)
     return false;
-  files->assign(found->second->files().begin(),
-                found->second->files().end());
+  files->assign(found->second->files().begin(), found->second->files().end());
   return true;
 }
 

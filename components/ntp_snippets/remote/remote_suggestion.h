@@ -32,7 +32,7 @@ class RemoteSuggestion {
  public:
   using PtrVector = std::vector<std::unique_ptr<RemoteSuggestion>>;
 
-  enum ContentType { UNKNOWN, VIDEO };
+  enum class ContentType { UNKNOWN, VIDEO };
 
   ~RemoteSuggestion();
 
@@ -43,9 +43,6 @@ class RemoteSuggestion {
   CreateFromContentSuggestionsDictionary(const base::DictionaryValue& dict,
                                          int remote_category_id,
                                          const base::Time& fetch_date);
-
-  static std::unique_ptr<RemoteSuggestion>
-  CreateFromContextualSuggestionsDictionary(const base::DictionaryValue& dict);
 
   // Creates an RemoteSuggestion from a protocol buffer. Returns a null pointer
   // if the protocol buffer doesn't correspond to a valid suggestion.
@@ -96,8 +93,7 @@ class RemoteSuggestion {
 
   // If this suggestion has all the data we need to show a full card to the user
   bool is_complete() const {
-    return !id().empty() && !title().empty() && !snippet().empty() &&
-           salient_image_url().is_valid() && !publish_date().is_null() &&
+    return !id().empty() && !title().empty() && !publish_date().is_null() &&
            !expiry_date().is_null() && !publisher_name().empty();
   }
 
@@ -128,7 +124,7 @@ class RemoteSuggestion {
  private:
   RemoteSuggestion(const std::vector<std::string>& ids, int remote_category_id);
 
-  // base::MakeUnique doesn't work if the ctor is private.
+  // std::make_unique doesn't work if the ctor is private.
   static std::unique_ptr<RemoteSuggestion> MakeUnique(
       const std::vector<std::string>& ids,
       int remote_category_id);

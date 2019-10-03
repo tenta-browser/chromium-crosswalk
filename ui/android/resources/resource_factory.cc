@@ -2,23 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "jni/ResourceFactory_jni.h"
 #include "ui/android/resources/nine_patch_resource.h"
+#include "ui/android/ui_android_jni_headers/ResourceFactory_jni.h"
 #include "ui/gfx/geometry/rect.h"
 
 using base::android::JavaParamRef;
 
 namespace ui {
 
-jlong JNI_ResourceFactory_CreateBitmapResource(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
+jlong JNI_ResourceFactory_CreateBitmapResource(JNIEnv* env) {
   return reinterpret_cast<intptr_t>(new Resource());
 }
 
 jlong JNI_ResourceFactory_CreateNinePatchBitmapResource(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     jint padding_left,
     jint padding_top,
     jint padding_right,

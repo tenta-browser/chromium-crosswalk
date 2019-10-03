@@ -10,7 +10,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/filter/source_stream.h"
@@ -34,13 +34,11 @@ class NET_EXPORT_PRIVATE FilterSourceStream : public SourceStream {
 
   int Read(IOBuffer* read_buffer,
            int read_buffer_size,
-           const CompletionCallback& callback) override;
+           CompletionOnceCallback callback) override;
 
   std::string Description() const override;
 
   static SourceType ParseEncodingType(const std::string& encoding);
-
-  static void ReportContentDecodingFailed(SourceType type);
 
  private:
   enum State {
@@ -110,7 +108,7 @@ class NET_EXPORT_PRIVATE FilterSourceStream : public SourceStream {
   // Not null if there is a pending Read.
   scoped_refptr<IOBuffer> output_buffer_;
   int output_buffer_size_;
-  CompletionCallback callback_;
+  CompletionOnceCallback callback_;
 
   // Reading from |upstream_| has returned 0 byte or an error code.
   bool upstream_end_reached_;

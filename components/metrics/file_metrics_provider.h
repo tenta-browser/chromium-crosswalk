@@ -222,6 +222,12 @@ class FileMetricsProvider : public MetricsProvider,
     // The file was skipped because it's being written by this process.
     ACCESS_RESULT_THIS_PID,
 
+    // The file had no embedded system profile.
+    ACCESS_RESULT_NO_PROFILE,
+
+    // The file had internal data corruption.
+    ACCESS_RESULT_DATA_CORRUPTION,
+
     ACCESS_RESULT_MAX
   };
 
@@ -261,6 +267,12 @@ class FileMetricsProvider : public MetricsProvider,
   static AccessResult HandleFilterSource(SourceInfo* source,
                                          const base::FilePath& path);
 
+  // The part of ProvideIndependentMetrics that runs as a background task.
+  static bool ProvideIndependentMetricsOnTaskRunner(
+      SourceInfo* source,
+      SystemProfileProto* system_profile_proto,
+      base::HistogramSnapshotManager* snapshot_manager);
+
   // Creates a task to check all monitored sources for updates.
   void ScheduleSourcesCheck();
 
@@ -276,8 +288,10 @@ class FileMetricsProvider : public MetricsProvider,
 
   // metrics::MetricsProvider:
   void OnDidCreateMetricsLog() override;
-  bool ProvideIndependentMetrics(
-      SystemProfileProto* system_profile_proto,
+  bool HasIndependentMetrics() override;
+  void ProvideIndependentMetrics(
+      base::OnceCallback<void(bool)> done_callback,
+      ChromeUserMetricsExtension* uma_proto,
       base::HistogramSnapshotManager* snapshot_manager) override;
   bool HasPreviousSessionData() override;
   void RecordInitialHistogramSnapshots(
@@ -285,6 +299,12 @@ class FileMetricsProvider : public MetricsProvider,
 
   // base::StatisticsRecorder::HistogramProvider:
   void MergeHistogramDeltas() override;
+
+  // The part of ProvideIndependentMetrics that runs after background task.
+  void ProvideIndependentMetricsCleanup(
+      base::OnceCallback<void(bool)> done_callback,
+      std::unique_ptr<SourceInfo> source,
+      bool success);
 
   // A task-runner capable of performing I/O.
   scoped_refptr<base::TaskRunner> task_runner_;
@@ -307,7 +327,7 @@ class FileMetricsProvider : public MetricsProvider,
   PrefService* pref_service_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<FileMetricsProvider> weak_factory_;
+  base::WeakPtrFactory<FileMetricsProvider> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FileMetricsProvider);
 };

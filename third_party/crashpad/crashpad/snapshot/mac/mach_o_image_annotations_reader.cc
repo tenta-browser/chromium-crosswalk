@@ -24,21 +24,19 @@
 #include "client/crashpad_info.h"
 #include "client/simple_string_dictionary.h"
 #include "snapshot/mac/mach_o_image_reader.h"
-#include "snapshot/mac/process_reader.h"
+#include "snapshot/mac/process_reader_mac.h"
 #include "snapshot/snapshot_constants.h"
-#include "util/mach/task_memory.h"
 #include "util/stdlib/strnlen.h"
 
 namespace crashpad {
 
 MachOImageAnnotationsReader::MachOImageAnnotationsReader(
-    ProcessReader* process_reader,
+    ProcessReaderMac* process_reader,
     const MachOImageReader* image_reader,
     const std::string& name)
     : name_(name),
       process_reader_(process_reader),
-      image_reader_(image_reader) {
-}
+      image_reader_(image_reader) {}
 
 std::vector<std::string> MachOImageAnnotationsReader::Vector() const {
   std::vector<std::string> vector_annotations;
@@ -180,9 +178,9 @@ void MachOImageAnnotationsReader::ReadCrashpadSimpleAnnotations(
   }
 }
 
-// TODO(rsesek): When there is a platform-agnostic remote memory reader
-// interface available, use it so that the implementation is not duplicated
-// in the PEImageAnnotationsReader.
+// TODO(https://crbug.com/crashpad/270): Replace implementations of
+// ReadCrashpadAnnotationsList and ReadCrashpadSimpleAnnotations with the
+// platform-agnostic implementations in ImageAnnotationReader.
 void MachOImageAnnotationsReader::ReadCrashpadAnnotationsList(
     std::vector<AnnotationSnapshot>* annotations) const {
   process_types::CrashpadInfo crashpad_info;

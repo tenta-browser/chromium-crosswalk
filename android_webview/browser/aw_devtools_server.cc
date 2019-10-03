@@ -7,8 +7,9 @@
 #include <utility>
 
 #include "android_webview/browser/aw_contents.h"
-#include "android_webview/browser/browser_view_renderer.h"
+#include "android_webview/browser/gfx/browser_view_renderer.h"
 #include "android_webview/common/aw_content_client.h"
+#include "android_webview/native_jni/AwDevToolsServer_jni.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/json/json_writer.h"
@@ -21,7 +22,6 @@
 #include "content/public/browser/devtools_socket_factory.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/user_agent.h"
-#include "jni/AwDevToolsServer_jni.h"
 #include "net/base/net_errors.h"
 #include "net/socket/unix_domain_server_socket_posix.h"
 
@@ -30,8 +30,6 @@ using content::DevToolsAgentHost;
 
 namespace {
 
-const char kFrontEndURL[] =
-    "http://chrome-devtools-frontend.appspot.com/serve_rev/%s/inspector.html";
 const char kSocketNameFormat[] = "webview_devtools_remote_%d";
 const char kTetheringSocketName[] = "webview_devtools_tethering_%d_%d";
 
@@ -48,7 +46,7 @@ class UnixDomainServerSocketFactory : public content::DevToolsSocketFactory {
   std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
     std::unique_ptr<net::UnixDomainServerSocket> socket(
         new net::UnixDomainServerSocket(
-            base::Bind(&content::CanUserConnectToDevTools),
+            base::BindRepeating(&content::CanUserConnectToDevTools),
             true /* use_abstract_namespace */));
     if (socket->BindAndListen(socket_name_, kBackLog) != net::OK)
       return std::unique_ptr<net::ServerSocket>();
@@ -62,7 +60,7 @@ class UnixDomainServerSocketFactory : public content::DevToolsSocketFactory {
                                ++last_tethering_socket_);
     std::unique_ptr<net::UnixDomainServerSocket> socket(
         new net::UnixDomainServerSocket(
-            base::Bind(&content::CanUserConnectToDevTools),
+            base::BindRepeating(&content::CanUserConnectToDevTools),
             true /* use_abstract_namespace */));
     if (socket->BindAndListen(*name, kBackLog) != net::OK)
       return std::unique_ptr<net::ServerSocket>();
@@ -96,7 +94,6 @@ void AwDevToolsServer::Start() {
           base::StringPrintf(kSocketNameFormat, getpid())));
   DevToolsAgentHost::StartRemoteDebuggingServer(
       std::move(factory),
-      base::StringPrintf(kFrontEndURL, content::GetWebKitRevision().c_str()),
       base::FilePath(), base::FilePath());
 }
 

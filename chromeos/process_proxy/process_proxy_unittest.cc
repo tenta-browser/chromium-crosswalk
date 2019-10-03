@@ -11,12 +11,13 @@
 #include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/callback_forward.h"
+#include "base/command_line.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
@@ -32,6 +33,7 @@ const char kTestLineToSend[] = "abcdefgh\n";
 const char kTestLineExpected[] = "abcdefgh\r\n";
 
 const char kCatCommand[] = "cat";
+const char kFakeUserHash[] = "0123456789abcdef";
 const char kStdoutType[] = "stdout";
 const int kTestLineNum = 100;
 
@@ -45,8 +47,9 @@ class TestRunner {
  public:
   TestRunner() = default;
   virtual ~TestRunner() = default;
-  virtual void SetupExpectations(int terminal_id) = 0;
-  virtual void OnSomeRead(int terminal_id,
+  virtual void SetupExpectations(const std::string& id,
+                                 base::ProcessHandle handle) = 0;
+  virtual void OnSomeRead(const std::string& id,
                           const std::string& type,
                           const std::string& output) = 0;
   virtual void StartRegistryTest(ProcessProxyRegistry* registry) = 0;
@@ -56,7 +59,8 @@ class TestRunner {
   }
 
  protected:
-  int terminal_id_;
+  std::string id_;
+  base::ProcessHandle handle_;
 
   base::OnceClosure done_read_closure_;
 };
@@ -65,8 +69,10 @@ class RegistryTestRunner : public TestRunner {
  public:
   ~RegistryTestRunner() override = default;
 
-  void SetupExpectations(int terminal_id) override {
-    terminal_id_ = terminal_id;
+  void SetupExpectations(const std::string& id,
+                         base::ProcessHandle handle) override {
+    id_ = id;
+    handle_ = handle;
     left_to_check_index_[0] = 0;
     left_to_check_index_[1] = 0;
     // We consider that a line processing has started if a value in
@@ -83,11 +89,11 @@ class RegistryTestRunner : public TestRunner {
   // abc|abcdef|defgh|gh). To deal with that, we allow to test received text
   // against two lines. The lines MUST NOT have two same characters for this
   // algorithm to work.
-  void OnSomeRead(int terminal_id,
+  void OnSomeRead(const std::string& id,
                   const std::string& type,
                   const std::string& output) override {
     EXPECT_EQ(type, kStdoutType);
-    EXPECT_EQ(terminal_id_, terminal_id);
+    EXPECT_EQ(id_, id);
 
     bool valid = true;
     for (size_t i = 0; i < output.length(); i++) {
@@ -106,13 +112,13 @@ class RegistryTestRunner : public TestRunner {
 
   void StartRegistryTest(ProcessProxyRegistry* registry) override {
     for (int i = 0; i < kTestLineNum; i++) {
-      EXPECT_TRUE(registry->SendInput(terminal_id_, kTestLineToSend));
+      EXPECT_TRUE(registry->SendInput(id_, kTestLineToSend));
     }
   }
 
  private:
   bool ProcessReceivedCharacter(char received, size_t stream) {
-    if (stream >= arraysize(left_to_check_index_))
+    if (stream >= base::size(left_to_check_index_))
       return false;
     bool success = left_to_check_index_[stream] < expected_line_.length() &&
         expected_line_[left_to_check_index_[stream]] == received;
@@ -143,21 +149,24 @@ class RegistryNotifiedOnProcessExitTestRunner : public TestRunner {
  public:
   ~RegistryNotifiedOnProcessExitTestRunner() override = default;
 
-  void SetupExpectations(int terminal_id) override {
+  void SetupExpectations(const std::string& id,
+                         base::ProcessHandle handle) override {
     output_received_ = false;
-    terminal_id_ = terminal_id;
+    id_ = id;
+    handle_ = handle;
   }
 
-  void OnSomeRead(int terminal_id,
+  void OnSomeRead(const std::string& id,
                   const std::string& type,
                   const std::string& output) override {
-    EXPECT_EQ(terminal_id_, terminal_id);
+    EXPECT_EQ(id_, id);
     if (!output_received_) {
+      base::ScopedAllowBaseSyncPrimitivesForTesting allow_sync_primitives;
       output_received_ = true;
       EXPECT_EQ(type, "stdout");
       EXPECT_EQ(output, "p");
       base::Process process =
-          base::Process::DeprecatedGetProcessFromHandle(terminal_id_);
+          base::Process::DeprecatedGetProcessFromHandle(handle_);
       process.Terminate(0, true);
       return;
     }
@@ -167,7 +176,7 @@ class RegistryNotifiedOnProcessExitTestRunner : public TestRunner {
   }
 
   void StartRegistryTest(ProcessProxyRegistry* registry) override {
-    EXPECT_TRUE(registry->SendInput(terminal_id_, "p"));
+    EXPECT_TRUE(registry->SendInput(id_, "p"));
   }
 
  private:
@@ -185,33 +194,38 @@ class ProcessProxyTest : public testing::Test {
   void InitRegistryTest(base::OnceClosure done_closure) {
     registry_ = ProcessProxyRegistry::Get();
 
-    terminal_id_ = registry_->OpenProcess(
-        kCatCommand,
-        base::Bind(&ProcessProxyTest::HandleRead, base::Unretained(this)));
+    base::CommandLine cmdline{{kCatCommand}};
+    bool success = registry_->OpenProcess(
+        cmdline, kFakeUserHash,
+        base::Bind(&ProcessProxyTest::HandleRead, base::Unretained(this)),
+        &id_);
+    handle_ = registry_->GetProcessHandleForTesting(id_);
 
-    EXPECT_GE(terminal_id_, 0);
+    EXPECT_TRUE(success);
     test_runner_->set_done_read_closure(std::move(done_closure));
-    test_runner_->SetupExpectations(terminal_id_);
+    test_runner_->SetupExpectations(id_, handle_);
     test_runner_->StartRegistryTest(registry_);
   }
 
-  void HandleRead(int terminal_id,
+  void HandleRead(const std::string& id,
                   const std::string& output_type,
                   const std::string& output) {
-    test_runner_->OnSomeRead(terminal_id, output_type, output);
-    registry_->AckOutput(terminal_id);
+    test_runner_->OnSomeRead(id, output_type, output);
+    registry_->AckOutput(id);
   }
 
   void EndRegistryTest(base::OnceClosure done_closure) {
-    registry_->CloseProcess(terminal_id_);
+    base::ScopedAllowBaseSyncPrimitivesForTesting allow_sync_primitives;
+
+    registry_->CloseProcess(id_);
 
     int unused_exit_code = 0;
     base::TerminationStatus status =
-        base::GetTerminationStatus(terminal_id_, &unused_exit_code);
+        base::GetTerminationStatus(handle_, &unused_exit_code);
     EXPECT_NE(base::TERMINATION_STATUS_STILL_RUNNING, status);
     if (status == base::TERMINATION_STATUS_STILL_RUNNING) {
       base::Process process =
-          base::Process::DeprecatedGetProcessFromHandle(terminal_id_);
+          base::Process::DeprecatedGetProcessFromHandle(handle_);
       process.Terminate(0, true);
     }
 
@@ -250,7 +264,8 @@ class ProcessProxyTest : public testing::Test {
   base::ShadowingAtExitManager shadowing_at_exit_manager_;
 
   ProcessProxyRegistry* registry_;
-  int terminal_id_;
+  std::string id_;
+  base::ProcessHandle handle_;
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
 };

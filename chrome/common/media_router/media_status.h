@@ -12,12 +12,6 @@
 
 namespace media_router {
 
-struct HangoutsMediaStatusExtraData {
-  // Whether the session associated with the Hangouts MediaRoute is presenting
-  // content in "local present" (aka high-bandwidth) mode.
-  bool local_present = false;
-};
-
 struct MirroringMediaStatusExtraData {
   explicit MirroringMediaStatusExtraData(bool media_remoting_enabled);
   ~MirroringMediaStatusExtraData();
@@ -42,12 +36,6 @@ struct MediaStatus {
   // The main title of the media. For example, in a MediaStatus representing
   // a YouTube Cast session, this could be the title of the video.
   std::string title;
-
-  // Text describing the media, or a secondary title. For example, in a
-  // MediaStatus representing a YouTube Cast session, this could be "YouTube".
-  //
-  // DEPRECATED.  TODO(crbug.com/786208): Remove this when no longer used.
-  std::string description;
 
   // If this is true, the media can be played and paused.
   bool can_play_pause = false;
@@ -76,9 +64,6 @@ struct MediaStatus {
 
   // Current playback position. Must be less than or equal to |duration|.
   base::TimeDelta current_time;
-
-  // Only set for Hangouts routes.
-  base::Optional<HangoutsMediaStatusExtraData> hangouts_extra_data;
 
   // Only set for mirroring routes.
   base::Optional<MirroringMediaStatusExtraData> mirroring_extra_data;

@@ -7,18 +7,27 @@
 
 #include <stdint.h>
 
+#include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "chromecast_export.h"
+#include "volume_control.h"
 
 namespace chromecast {
 namespace media {
 
 enum SampleFormat : int;
 
+struct AudioOutputRedirectionConfig;
+class AudioOutputRedirectorToken;
+class DirectAudioSource;
+class DirectAudioSourceToken;
 class MediaPipelineBackend;
 struct MediaPipelineDeviceParams;
+class RedirectedAudioOutput;
 class VideoPlane;
 
 // Provides access to platform-specific media systems and hardware resources.
@@ -32,6 +41,8 @@ class VideoPlane;
 // from other tests.
 class CHROMECAST_EXPORT CastMediaShlib {
  public:
+  using ResultCallback =
+      std::function<void(bool success, const std::string& message)>;
   // Observer for audio loopback data.
   class LoopbackAudioObserver {
    public:
@@ -120,18 +131,59 @@ class CHROMECAST_EXPORT CastMediaShlib {
   static void RemoveLoopbackAudioObserver(LoopbackAudioObserver* observer)
       __attribute__((__weak__));
 
+  // Reset the post processing pipeline. |callback| will be called with
+  // |success| = |true| if the new config loads without error.
+  static void ResetPostProcessors(ResultCallback callback)
+      __attribute__((__weak__));
+
   // Updates all postprocessors with the given |name| to have new configuration
   // |config|.
   static void SetPostProcessorConfig(const std::string& name,
                                      const std::string& config)
       __attribute__((__weak__));
 
-  // Only used on Chromecast: set and clear an image on the video plane.
-  // Image data is 8-bit ARGB format; |data| buffer byte length must be
-  // |width|*|height|*4. Returns whether the image could be successfully set.
-  static bool SetVideoPlaneImage(int width, int height, const uint8_t* data)
+  // Sets up a direct audio source for output. The media backend will pull audio
+  // directly from |source| whenever more output data is needed; this provides
+  // low-latency output. The source must remain valid until
+  // OnAudioPlaybackComplete() has been called on it.
+  // Returns nullptr if a direct source cannot be added. Otherwise, returns a
+  // token that must be passed to RemoveDirectAudioSource() to remove the source
+  // when desired.
+  static DirectAudioSourceToken* AddDirectAudioSource(
+      DirectAudioSource* source,
+      const MediaPipelineDeviceParams& params,
+      int playout_channel) __attribute__((__weak__));
+
+  // Removes a direct audio source, given the |token| that was returned by
+  // AddDirectAudioSource().
+  static void RemoveDirectAudioSource(DirectAudioSourceToken* token)
       __attribute__((__weak__));
-  static void ClearVideoPlaneImage() __attribute__((__weak__));
+
+  // Sets the volume multiplier for a direct audio source, given the |token|
+  // that was returned by AddDirectAudioSource().
+  static void SetDirectAudioSourceVolume(DirectAudioSourceToken* token,
+                                         float multiplier)
+      __attribute__((__weak__));
+
+  // Adds an audio output redirector configured according to |config|, where the
+  // matching audio streams will be redirected to |output|. Returns a token that
+  // may be used to remove the redirection (via RemoveAudioOutputRedirection()),
+  // or nullptr if the redirection could not be added (ie, if the config is
+  // invalid).
+  static AudioOutputRedirectorToken* AddAudioOutputRedirection(
+      const AudioOutputRedirectionConfig& config,
+      std::unique_ptr<RedirectedAudioOutput> output) __attribute__((__weak__));
+
+  // Removes an audio output redirector, given the |token| that was returned by
+  // AddAudioOutputRedirection().
+  static void RemoveAudioOutputRedirection(AudioOutputRedirectorToken* token)
+      __attribute__((__weak__));
+
+  // Updates the set of streams that an audio output redirector should apply to.
+  static void ModifyAudioOutputRedirection(
+      AudioOutputRedirectorToken* token,
+      std::vector<std::pair<AudioContentType, std::string /* device ID */>>
+          stream_match_patterns) __attribute__((__weak__));
 };
 
 }  // namespace media

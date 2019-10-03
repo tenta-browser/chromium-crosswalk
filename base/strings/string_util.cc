@@ -21,8 +21,8 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/third_party/icu/icu_utf.h"
@@ -31,19 +31,6 @@
 namespace base {
 
 namespace {
-
-// Force the singleton used by EmptyString[16] to be a unique type. This
-// prevents other code that might accidentally use Singleton<string> from
-// getting our internal one.
-struct EmptyStrings {
-  EmptyStrings() = default;
-  const std::string s;
-  const string16 s16;
-
-  static EmptyStrings* GetInstance() {
-    return Singleton<EmptyStrings>::get();
-  }
-};
 
 // Used by ReplaceStringPlaceholders to track the position in the string of
 // replaced parameters.
@@ -81,37 +68,32 @@ inline void AppendToString(string_type* target,
 
 // Assuming that a pointer is the size of a "machine word", then
 // uintptr_t is an integer type that is also a machine word.
-typedef uintptr_t MachineWord;
-const uintptr_t kMachineWordAlignmentMask = sizeof(MachineWord) - 1;
+using MachineWord = uintptr_t;
 
-inline bool IsAlignedToMachineWord(const void* pointer) {
-  return !(reinterpret_cast<MachineWord>(pointer) & kMachineWordAlignmentMask);
+inline bool IsMachineWordAligned(const void* pointer) {
+  return !(reinterpret_cast<MachineWord>(pointer) & (sizeof(MachineWord) - 1));
 }
 
-template<typename T> inline T* AlignToMachineWord(T* pointer) {
-  return reinterpret_cast<T*>(reinterpret_cast<MachineWord>(pointer) &
-                              ~kMachineWordAlignmentMask);
-}
-
-template<size_t size, typename CharacterType> struct NonASCIIMask;
-template<> struct NonASCIIMask<4, char16> {
-    static inline uint32_t value() { return 0xFF80FF80U; }
+template <typename CharacterType>
+struct NonASCIIMask;
+template <>
+struct NonASCIIMask<char> {
+  static constexpr MachineWord value() {
+    return static_cast<MachineWord>(0x8080808080808080ULL);
+  }
 };
-template<> struct NonASCIIMask<4, char> {
-    static inline uint32_t value() { return 0x80808080U; }
-};
-template<> struct NonASCIIMask<8, char16> {
-    static inline uint64_t value() { return 0xFF80FF80FF80FF80ULL; }
-};
-template<> struct NonASCIIMask<8, char> {
-    static inline uint64_t value() { return 0x8080808080808080ULL; }
+template <>
+struct NonASCIIMask<char16> {
+  static constexpr MachineWord value() {
+    return static_cast<MachineWord>(0xFF80FF80FF80FF80ULL);
+  }
 };
 #if defined(WCHAR_T_IS_UTF32)
-template<> struct NonASCIIMask<4, wchar_t> {
-    static inline uint32_t value() { return 0xFFFFFF80U; }
-};
-template<> struct NonASCIIMask<8, wchar_t> {
-    static inline uint64_t value() { return 0xFFFFFF80FFFFFF80ULL; }
+template <>
+struct NonASCIIMask<wchar_t> {
+  static constexpr MachineWord value() {
+    return static_cast<MachineWord>(0xFFFFFF80FFFFFF80ULL);
+  }
 };
 #endif  // WCHAR_T_IS_UTF32
 
@@ -238,11 +220,13 @@ bool EqualsCaseInsensitiveASCII(StringPiece16 a, StringPiece16 b) {
 }
 
 const std::string& EmptyString() {
-  return EmptyStrings::GetInstance()->s;
+  static const base::NoDestructor<std::string> s;
+  return *s;
 }
 
 const string16& EmptyString16() {
-  return EmptyStrings::GetInstance()->s16;
+  static const base::NoDestructor<string16> s16;
+  return *s16;
 }
 
 template <class StringType>
@@ -252,7 +236,7 @@ bool ReplaceCharsT(const StringType& input,
                    StringType* output);
 
 bool ReplaceChars(const string16& input,
-                  const StringPiece16& replace_chars,
+                  StringPiece16 replace_chars,
                   const string16& replace_with,
                   string16* output) {
   return ReplaceCharsT(input, replace_chars, StringPiece16(replace_with),
@@ -260,20 +244,20 @@ bool ReplaceChars(const string16& input,
 }
 
 bool ReplaceChars(const std::string& input,
-                  const StringPiece& replace_chars,
+                  StringPiece replace_chars,
                   const std::string& replace_with,
                   std::string* output) {
   return ReplaceCharsT(input, replace_chars, StringPiece(replace_with), output);
 }
 
 bool RemoveChars(const string16& input,
-                 const StringPiece16& remove_chars,
+                 StringPiece16 remove_chars,
                  string16* output) {
   return ReplaceCharsT(input, remove_chars, StringPiece16(), output);
 }
 
 bool RemoveChars(const std::string& input,
-                 const StringPiece& remove_chars,
+                 StringPiece remove_chars,
                  std::string* output) {
   return ReplaceCharsT(input, remove_chars, StringPiece(), output);
 }
@@ -338,13 +322,13 @@ BasicStringPiece<Str> TrimStringPieceT(BasicStringPiece<Str> input,
 }
 
 StringPiece16 TrimString(StringPiece16 input,
-                         const StringPiece16& trim_chars,
+                         StringPiece16 trim_chars,
                          TrimPositions positions) {
   return TrimStringPieceT(input, trim_chars, positions);
 }
 
 StringPiece TrimString(StringPiece input,
-                       const StringPiece& trim_chars,
+                       StringPiece trim_chars,
                        TrimPositions positions) {
   return TrimStringPieceT(input, trim_chars, positions);
 }
@@ -459,65 +443,70 @@ std::string CollapseWhitespaceASCII(const std::string& text,
   return CollapseWhitespaceT(text, trim_sequences_with_line_breaks);
 }
 
-bool ContainsOnlyChars(const StringPiece& input,
-                       const StringPiece& characters) {
+bool ContainsOnlyChars(StringPiece input, StringPiece characters) {
   return input.find_first_not_of(characters) == StringPiece::npos;
 }
 
-bool ContainsOnlyChars(const StringPiece16& input,
-                       const StringPiece16& characters) {
+bool ContainsOnlyChars(StringPiece16 input, StringPiece16 characters) {
   return input.find_first_not_of(characters) == StringPiece16::npos;
 }
 
 template <class Char>
 inline bool DoIsStringASCII(const Char* characters, size_t length) {
+  if (!length)
+    return true;
+  constexpr MachineWord non_ascii_bit_mask = NonASCIIMask<Char>::value();
   MachineWord all_char_bits = 0;
   const Char* end = characters + length;
 
   // Prologue: align the input.
-  while (!IsAlignedToMachineWord(characters) && characters != end) {
-    all_char_bits |= *characters;
-    ++characters;
-  }
+  while (!IsMachineWordAligned(characters) && characters < end)
+    all_char_bits |= *characters++;
+  if (all_char_bits & non_ascii_bit_mask)
+    return false;
 
   // Compare the values of CPU word size.
-  const Char* word_end = AlignToMachineWord(end);
-  const size_t loop_increment = sizeof(MachineWord) / sizeof(Char);
-  while (characters < word_end) {
+  constexpr size_t chars_per_word = sizeof(MachineWord) / sizeof(Char);
+  constexpr int batch_count = 16;
+  while (characters <= end - batch_count * chars_per_word) {
+    all_char_bits = 0;
+    for (int i = 0; i < batch_count; ++i) {
+      all_char_bits |= *(reinterpret_cast<const MachineWord*>(characters));
+      characters += chars_per_word;
+    }
+    if (all_char_bits & non_ascii_bit_mask)
+      return false;
+  }
+
+  // Process the remaining words.
+  all_char_bits = 0;
+  while (characters <= end - chars_per_word) {
     all_char_bits |= *(reinterpret_cast<const MachineWord*>(characters));
-    characters += loop_increment;
+    characters += chars_per_word;
   }
 
   // Process the remaining bytes.
-  while (characters != end) {
-    all_char_bits |= *characters;
-    ++characters;
-  }
+  while (characters < end)
+    all_char_bits |= *characters++;
 
-  MachineWord non_ascii_bit_mask =
-      NonASCIIMask<sizeof(MachineWord), Char>::value();
   return !(all_char_bits & non_ascii_bit_mask);
 }
 
-bool IsStringASCII(const StringPiece& str) {
+bool IsStringASCII(StringPiece str) {
   return DoIsStringASCII(str.data(), str.length());
 }
 
-bool IsStringASCII(const StringPiece16& str) {
-  return DoIsStringASCII(str.data(), str.length());
-}
-
-bool IsStringASCII(const string16& str) {
+bool IsStringASCII(StringPiece16 str) {
   return DoIsStringASCII(str.data(), str.length());
 }
 
 #if defined(WCHAR_T_IS_UTF32)
-bool IsStringASCII(const std::wstring& str) {
+bool IsStringASCII(WStringPiece str) {
   return DoIsStringASCII(str.data(), str.length());
 }
 #endif
 
-bool IsStringUTF8(const StringPiece& str) {
+bool IsStringUTF8(StringPiece str) {
   const char *src = str.data();
   int32_t src_len = static_cast<int32_t>(str.length());
   int32_t char_index = 0;
@@ -681,17 +670,17 @@ string16 FormatBytesUnlocalized(int64_t bytes) {
   size_t dimension = 0;
   const int kKilo = 1024;
   while (unit_amount >= kKilo &&
-         dimension < arraysize(kByteStringsUnlocalized) - 1) {
+         dimension < base::size(kByteStringsUnlocalized) - 1) {
     unit_amount /= kKilo;
     dimension++;
   }
 
   char buf[64];
   if (bytes != 0 && dimension > 0 && unit_amount < 100) {
-    base::snprintf(buf, arraysize(buf), "%.1lf%s", unit_amount,
+    base::snprintf(buf, base::size(buf), "%.1lf%s", unit_amount,
                    kByteStringsUnlocalized[dimension]);
   } else {
-    base::snprintf(buf, arraysize(buf), "%.0lf%s", unit_amount,
+    base::snprintf(buf, base::size(buf), "%.0lf%s", unit_amount,
                    kByteStringsUnlocalized[dimension]);
   }
 
@@ -938,6 +927,11 @@ char16* WriteInto(string16* str, size_t length_with_null) {
   return WriteIntoT(str, length_with_null);
 }
 
+#if defined(_MSC_VER) && !defined(__clang__)
+// Work around VC++ code-gen bug. https://crbug.com/804884
+#pragma optimize("", off)
+#endif
+
 // Generic version for all JoinString overloads. |list_type| must be a sequence
 // (std::vector or std::initializer_list) of strings/StringPieces (std::string,
 // string16, StringPiece or StringPiece16). |string_type| is either std::string
@@ -984,6 +978,11 @@ string16 JoinString(const std::vector<string16>& parts,
                     StringPiece16 separator) {
   return JoinStringT(parts, separator);
 }
+
+#if defined(_MSC_VER) && !defined(__clang__)
+// Work around VC++ code-gen bug. https://crbug.com/804884
+#pragma optimize("", on)
+#endif
 
 std::string JoinString(const std::vector<StringPiece>& parts,
                        StringPiece separator) {
@@ -1066,7 +1065,7 @@ string16 ReplaceStringPlaceholders(const string16& format_string,
   return DoReplaceStringPlaceholders(format_string, subst, offsets);
 }
 
-std::string ReplaceStringPlaceholders(const StringPiece& format_string,
+std::string ReplaceStringPlaceholders(StringPiece format_string,
                                       const std::vector<std::string>& subst,
                                       std::vector<size_t>* offsets) {
   return DoReplaceStringPlaceholders(format_string, subst, offsets);

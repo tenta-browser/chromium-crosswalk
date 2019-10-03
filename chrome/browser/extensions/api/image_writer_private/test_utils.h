@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
@@ -44,7 +45,7 @@ const char kTestFileSystemType[] = "vfat";
 class MockOperationManager : public OperationManager {
  public:
   explicit MockOperationManager(content::BrowserContext* context);
-  virtual ~MockOperationManager();
+  ~MockOperationManager() override;
 
   MOCK_METHOD3(OnProgress, void(const ExtensionId& extension_id,
                                 image_writer_api::Stage stage,
@@ -69,7 +70,7 @@ class FakeDiskMountManager : public chromeos::disks::MockDiskMountManager {
 
   void UnmountDeviceRecursively(
       const std::string& device_path,
-      const UnmountDeviceRecursivelyCallbackType& callback) override;
+      UnmountDeviceRecursivelyCallbackType callback) override;
 
  private:
   DiskMap disks_;
@@ -203,9 +204,6 @@ class ImageWriterUnitTestBase : public testing::Test {
 
   ImageWriterTestUtils test_utils_;
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-
- private:
   content::TestBrowserThreadBundle thread_bundle_;
 };
 

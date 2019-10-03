@@ -4,6 +4,7 @@
 
 #include "chrome/browser/browsing_data/browsing_data_local_storage_helper.h"
 
+#include "base/bind_helpers.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -23,7 +24,7 @@ TEST_F(CannedBrowsingDataLocalStorageTest, Empty) {
       new CannedBrowsingDataLocalStorageHelper(&profile));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddLocalStorage(origin);
+  helper->Add(url::Origin::Create(origin));
   ASSERT_FALSE(helper->empty());
   helper->Reset();
   ASSERT_TRUE(helper->empty());
@@ -40,50 +41,29 @@ TEST_F(CannedBrowsingDataLocalStorageTest, Delete) {
       new CannedBrowsingDataLocalStorageHelper(&profile));
 
   EXPECT_TRUE(helper->empty());
-  helper->AddLocalStorage(origin1);
-  helper->AddLocalStorage(origin2);
-  helper->AddLocalStorage(origin3);
-  EXPECT_EQ(3u, helper->GetLocalStorageCount());
-  helper->DeleteOrigin(origin2);
-  EXPECT_EQ(2u, helper->GetLocalStorageCount());
-  helper->DeleteOrigin(origin1);
-  EXPECT_EQ(1u, helper->GetLocalStorageCount());
-
-  // Local storage for a suborigin
-  // (https://www.chromestatus.com/feature/5569465034997760) should be deleted
-  // when the corresponding physical origin is deleted.
-  const GURL suborigin_on_origin_3("http-so://suborigin.foo.example.com");
-  helper->AddLocalStorage(suborigin_on_origin_3);
-  EXPECT_EQ(2u, helper->GetLocalStorageCount());
-  helper->DeleteOrigin(origin3);
-  EXPECT_EQ(0u, helper->GetLocalStorageCount());
-  helper->AddLocalStorage(suborigin_on_origin_3);
-  EXPECT_EQ(1u, helper->GetLocalStorageCount());
-  helper->DeleteOrigin(origin3);
-  EXPECT_EQ(0u, helper->GetLocalStorageCount());
-
-  // Similarly, the suborigin should be deleted when the corresponding
-  // physical origin is deleted.
-  helper->AddLocalStorage(origin3);
-  helper->AddLocalStorage(suborigin_on_origin_3);
-  EXPECT_EQ(2u, helper->GetLocalStorageCount());
-  helper->DeleteOrigin(suborigin_on_origin_3);
-  EXPECT_EQ(0u, helper->GetLocalStorageCount());
+  helper->Add(url::Origin::Create(origin1));
+  helper->Add(url::Origin::Create(origin2));
+  helper->Add(url::Origin::Create(origin3));
+  EXPECT_EQ(3u, helper->GetCount());
+  helper->DeleteOrigin(url::Origin::Create(origin2), base::DoNothing());
+  EXPECT_EQ(2u, helper->GetCount());
+  helper->DeleteOrigin(url::Origin::Create(origin1), base::DoNothing());
+  EXPECT_EQ(1u, helper->GetCount());
 }
 
 TEST_F(CannedBrowsingDataLocalStorageTest, IgnoreExtensionsAndDevTools) {
   TestingProfile profile;
 
   const GURL origin1("chrome-extension://abcdefghijklmnopqrstuvwxyz/");
-  const GURL origin2("chrome-devtools://abcdefghijklmnopqrstuvwxyz/");
+  const GURL origin2("devtools://abcdefghijklmnopqrstuvwxyz/");
 
   scoped_refptr<CannedBrowsingDataLocalStorageHelper> helper(
       new CannedBrowsingDataLocalStorageHelper(&profile));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddLocalStorage(origin1);
+  helper->Add(url::Origin::Create(origin1));
   ASSERT_TRUE(helper->empty());
-  helper->AddLocalStorage(origin2);
+  helper->Add(url::Origin::Create(origin2));
   ASSERT_TRUE(helper->empty());
 }
 

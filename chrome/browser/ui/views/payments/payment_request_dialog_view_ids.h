@@ -56,7 +56,9 @@ enum class DialogViewID : int {
   // The following are Label objects.
   SHIPPING_OPTION_DESCRIPTION,
   SHIPPING_OPTION_AMOUNT,
-  SHIPPING_ADDRESS_SECTION_HEADER_LABEL,
+
+  // Used in warning labels. This is unique at the scope of the each sheet.
+  WARNING_LABEL,
 
   // Used in profile labels to annotate each line of the grouping.
   PROFILE_LABEL_LINE_1,
@@ -88,6 +90,9 @@ enum class DialogViewID : int {
 
   // The combobox to choose a billing address to associate to a credit card.
   CREDIT_CARD_BILLING_ADDRESS,
+
+  // The sheet opens payment app window.
+  PAYMENT_APP_OPENED_WINDOW_SHEET,
 
   // NOTE: Keep these values last.
   // Used to offset the IDs of input fields, which gets added to the Autofill

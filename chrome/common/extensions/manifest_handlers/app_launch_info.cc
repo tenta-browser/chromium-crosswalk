@@ -63,10 +63,9 @@ const AppLaunchInfo& GetAppLaunchInfo(const Extension* extension) {
 }  // namespace
 
 AppLaunchInfo::AppLaunchInfo()
-    : launch_container_(LAUNCH_CONTAINER_TAB),
+    : launch_container_(LaunchContainer::kLaunchContainerTab),
       launch_width_(0),
-      launch_height_(0) {
-}
+      launch_height_(0) {}
 
 AppLaunchInfo::~AppLaunchInfo() {
 }
@@ -161,8 +160,13 @@ bool AppLaunchInfo::LoadLaunchURL(Extension* extension, base::string16* error) {
     // Ensure the launch web URL is a valid absolute URL and web extent scheme.
     GURL url(launch_url);
     URLPattern pattern(Extension::kValidWebExtentSchemes);
-    if (extension->from_bookmark())
-      pattern.SetValidSchemes(Extension::kValidBookmarkAppSchemes);
+    if (extension->from_bookmark()) {
+      // System Web Apps are bookmark apps that point to chrome:// URLs.
+      int valid_schemes = Extension::kValidBookmarkAppSchemes;
+      if (extension->location() == Manifest::EXTERNAL_COMPONENT)
+        valid_schemes |= URLPattern::SCHEME_CHROMEUI;
+      pattern.SetValidSchemes(valid_schemes);
+    }
     if ((!url.is_valid() || !pattern.SetScheme(url.scheme()))) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           errors::kInvalidLaunchValue,
@@ -238,16 +242,19 @@ bool AppLaunchInfo::LoadLaunchContainer(Extension* extension,
     return false;
   }
 
-  if (launch_container_string == values::kLaunchContainerPanel) {
-    launch_container_ = LAUNCH_CONTAINER_PANEL;
+  if (launch_container_string == values::kLaunchContainerPanelDeprecated) {
+    launch_container_ = LaunchContainer::kLaunchContainerPanelDeprecated;
   } else if (launch_container_string == values::kLaunchContainerTab) {
-    launch_container_ = LAUNCH_CONTAINER_TAB;
+    launch_container_ = LaunchContainer::kLaunchContainerTab;
   } else {
     *error = base::ASCIIToUTF16(errors::kInvalidLaunchContainer);
     return false;
   }
 
-  bool can_specify_initial_size = launch_container_ == LAUNCH_CONTAINER_PANEL;
+  // TODO(manucornet): Remove this special behavior now that panels are
+  // deprecated.
+  bool can_specify_initial_size =
+      launch_container_ == LaunchContainer::kLaunchContainerPanelDeprecated;
 
   // Validate the container width if present.
   if (!ReadLaunchDimension(extension->manifest(),
@@ -289,7 +296,7 @@ void AppLaunchInfo::OverrideLaunchURL(Extension* extension,
 
   URLPattern pattern(Extension::kValidWebExtentSchemes);
   URLPattern::ParseResult result = pattern.Parse(override_url.spec());
-  DCHECK_EQ(result, URLPattern::PARSE_SUCCESS);
+  DCHECK_EQ(result, URLPattern::ParseResult::kSuccess);
   pattern.SetPath(pattern.path() + '*');
   extension->AddWebExtentPattern(pattern);
 }
@@ -313,15 +320,11 @@ bool AppLaunchManifestHandler::AlwaysParseForType(Manifest::Type type) const {
   return type == Manifest::TYPE_LEGACY_PACKAGED_APP;
 }
 
-const std::vector<std::string> AppLaunchManifestHandler::Keys() const {
-  static const char* const keys[] = {
-    keys::kLaunchLocalPath,
-    keys::kLaunchWebURL,
-    keys::kLaunchContainer,
-    keys::kLaunchHeight,
-    keys::kLaunchWidth
-  };
-  return std::vector<std::string>(keys, keys + arraysize(keys));
+base::span<const char* const> AppLaunchManifestHandler::Keys() const {
+  static constexpr const char* kKeys[] = {
+      keys::kLaunchLocalPath, keys::kLaunchWebURL, keys::kLaunchContainer,
+      keys::kLaunchHeight, keys::kLaunchWidth};
+  return kKeys;
 }
 
 }  // namespace extensions

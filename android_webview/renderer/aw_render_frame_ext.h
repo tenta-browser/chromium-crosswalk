@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size.h"
@@ -27,20 +27,24 @@ namespace android_webview {
 // WebKit directly to implement (and that aren't needed in the chrome app).
 class AwRenderFrameExt : public content::RenderFrameObserver {
  public:
-  AwRenderFrameExt(content::RenderFrame* render_frame);
+  explicit AwRenderFrameExt(content::RenderFrame* render_frame);
+
+  static AwRenderFrameExt* FromRenderFrame(content::RenderFrame* render_frame);
+
+  bool GetWillSuppressErrorPage();
 
  private:
   ~AwRenderFrameExt() override;
 
   // RenderFrameObserver:
-  void OnInterfaceRequestForFrame(
+  bool OnAssociatedInterfaceRequestForFrame(
       const std::string& interface_name,
-      mojo::ScopedMessagePipeHandle* interface_pipe) override;
-  void DidCommitProvisionalLoad(bool is_new_navigation,
-                                bool is_same_document_navigation) override;
+      mojo::ScopedInterfaceEndpointHandle* handle) override;
+  void DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                ui::PageTransition transition) override;
 
   bool OnMessageReceived(const IPC::Message& message) override;
-  void FocusedNodeChanged(const blink::WebNode& node) override;
+  void FocusedElementChanged(const blink::WebElement& element) override;
   void OnDestruct() override;
 
   void OnDocumentHasImagesRequest(uint32_t id);
@@ -55,14 +59,19 @@ class AwRenderFrameExt : public content::RenderFrameObserver {
 
   void OnSetBackgroundColor(SkColor c);
 
-  void OnSmoothScroll(int target_x, int target_y, int duration_ms);
+  void OnSmoothScroll(int target_x, int target_y, uint64_t duration_ms);
+
+  void OnSetWillSuppressErrorPage(bool suppress);
 
   blink::WebView* GetWebView();
   blink::WebFrameWidget* GetWebFrameWidget();
 
   url::Origin last_origin_;
 
-  std::unique_ptr<service_manager::BinderRegistry> registry_;
+  blink::AssociatedInterfaceRegistry registry_;
+
+  // Some WebView users might want to show their own error pages / logic
+  bool will_suppress_error_page_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(AwRenderFrameExt);
 };

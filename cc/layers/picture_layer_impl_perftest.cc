@@ -4,9 +4,8 @@
 
 #include "cc/layers/picture_layer_impl.h"
 
-#include "base/macros.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/base/lap_timer.h"
+#include "base/timer/lap_timer.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_frame_sink.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
@@ -50,9 +49,12 @@ class PictureLayerImplPerfTest : public testing::Test {
                base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
                kTimeCheckInterval) {}
 
+  PictureLayerImplPerfTest(const PictureLayerImplPerfTest&) = delete;
+  PictureLayerImplPerfTest& operator=(const PictureLayerImplPerfTest&) = delete;
+
   void SetUp() override {
     host_impl_.SetVisible(true);
-    host_impl_.InitializeRenderer(layer_tree_frame_sink_.get());
+    host_impl_.InitializeFrameSink(layer_tree_frame_sink_.get());
   }
 
   void SetupPendingTree(const gfx::Size& layer_bounds) {
@@ -77,7 +79,7 @@ class PictureLayerImplPerfTest : public testing::Test {
   void RunRasterQueueConstructAndIterateTest(const std::string& test_name,
                                              int num_tiles,
                                              const gfx::Size& viewport_size) {
-    host_impl_.SetViewportSize(viewport_size);
+    host_impl_.active_tree()->SetDeviceViewportSize(viewport_size);
     host_impl_.pending_tree()->UpdateDrawProperties();
 
     timer_.Reset();
@@ -100,7 +102,7 @@ class PictureLayerImplPerfTest : public testing::Test {
 
   void RunRasterQueueConstructTest(const std::string& test_name,
                                    const gfx::Rect& viewport) {
-    host_impl_.SetViewportSize(viewport.size());
+    host_impl_.active_tree()->SetDeviceViewportSize(viewport.size());
     host_impl_.pending_tree()
         ->property_trees()
         ->scroll_tree.UpdateScrollOffsetBaseForTesting(
@@ -124,7 +126,7 @@ class PictureLayerImplPerfTest : public testing::Test {
       const std::string& test_name,
       int num_tiles,
       const gfx::Size& viewport_size) {
-    host_impl_.SetViewportSize(viewport_size);
+    host_impl_.active_tree()->SetDeviceViewportSize(viewport_size);
     host_impl_.pending_tree()->UpdateDrawProperties();
 
     timer_.Reset();
@@ -148,7 +150,7 @@ class PictureLayerImplPerfTest : public testing::Test {
 
   void RunEvictionQueueConstructTest(const std::string& test_name,
                                      const gfx::Rect& viewport) {
-    host_impl_.SetViewportSize(viewport.size());
+    host_impl_.active_tree()->SetDeviceViewportSize(viewport.size());
     host_impl_.pending_tree()
         ->property_trees()
         ->scroll_tree.UpdateScrollOffsetBaseForTesting(
@@ -174,10 +176,7 @@ class PictureLayerImplPerfTest : public testing::Test {
   std::unique_ptr<LayerTreeFrameSink> layer_tree_frame_sink_;
   FakeLayerTreeHostImpl host_impl_;
   FakePictureLayerImpl* pending_layer_;
-  LapTimer timer_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PictureLayerImplPerfTest);
+  base::LapTimer timer_;
 };
 
 TEST_F(PictureLayerImplPerfTest, TilingSetRasterQueueConstructAndIterate) {

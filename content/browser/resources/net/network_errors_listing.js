@@ -7,18 +7,18 @@ cr.define('errorCodes', function() {
 
   /**
    * Generate the page content.
-   * @param {Array.<Object>} errorCodes Error codes array consisting of a
+   * @param {Array<Object>} errorCodes Error codes array consisting of a
    *    numerical error ID and error code string.
    */
   function listErrorCodes(errorCodes) {
-    var errorPageUrl = 'chrome://network-error/';
-    var errorCodesList = document.createElement('ul');
-    for (var i = 0; i < errorCodes.length; i++) {
-      var listEl = document.createElement('li');
-      var errorCodeLinkEl = document.createElement('a');
+    const errorPageUrl = 'chrome://network-error/';
+    const errorCodesList = document.createElement('ul');
+    for (let i = 0; i < errorCodes.length; i++) {
+      const listEl = document.createElement('li');
+      const errorCodeLinkEl = document.createElement('a');
       errorCodeLinkEl.href = errorPageUrl + errorCodes[i].errorId;
-      errorCodeLinkEl.textContent = errorCodes[i].errorCode + ' (' +
-          errorCodes[i].errorId + ')';
+      errorCodeLinkEl.textContent =
+          errorCodes[i].errorCode + ' (' + errorCodes[i].errorId + ')';
       listEl.appendChild(errorCodeLinkEl);
       errorCodesList.appendChild(listEl);
     }
@@ -26,12 +26,12 @@ cr.define('errorCodes', function() {
   }
 
   function initialize() {
-    var xhr = new XMLHttpRequest();
+    const xhr = new XMLHttpRequest();
     xhr.open('GET', 'network-error-data.json');
     xhr.addEventListener('load', function(e) {
       if (xhr.status === 200) {
         try {
-          var data = JSON.parse(xhr.responseText);
+          const data = JSON.parse(xhr.responseText);
           listErrorCodes(data['errorCodes']);
         } catch (e) {
           $('pages').innerText = 'Could not parse the error codes data. ' +
@@ -42,9 +42,7 @@ cr.define('errorCodes', function() {
     xhr.send();
   }
 
-  return {
-    initialize: initialize
-  };
+  return {initialize: initialize};
 });
 
 document.addEventListener('DOMContentLoaded', errorCodes.initialize);

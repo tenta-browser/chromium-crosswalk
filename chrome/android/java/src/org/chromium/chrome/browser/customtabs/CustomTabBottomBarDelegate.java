@@ -23,32 +23,49 @@ import org.chromium.base.Log;
 import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchManager;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchObserver;
+import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager;
+import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.OverlayPanelManagerObserver;
+import org.chromium.chrome.browser.dependency_injection.ActivityScope;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager.FullscreenListener;
-import org.chromium.chrome.browser.gsa.GSAContextDisplaySelection;
+import org.chromium.chrome.browser.night_mode.RemoteViewsWithNightModeInflater;
+import org.chromium.chrome.browser.night_mode.SystemNightModeMonitor;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
 
 import java.util.List;
 
+import javax.inject.Inject;
+
 /**
  * Delegate that manages bottom bar area inside of {@link CustomTabActivity}.
  */
-class CustomTabBottomBarDelegate implements FullscreenListener {
+@ActivityScope
+public class CustomTabBottomBarDelegate implements FullscreenListener {
     private static final String TAG = "CustomTab";
     private static final CachedMetrics.ActionEvent REMOTE_VIEWS_SHOWN =
             new CachedMetrics.ActionEvent("CustomTabsRemoteViewsShown");
     private static final CachedMetrics.ActionEvent REMOTE_VIEWS_UPDATED =
             new CachedMetrics.ActionEvent("CustomTabsRemoteViewsUpdated");
     private static final int SLIDE_ANIMATION_DURATION_MS = 400;
-    private ChromeActivity mActivity;
-    private ChromeFullscreenManager mFullscreenManager;
+
+    private final ChromeActivity mActivity;
+    private final ChromeFullscreenManager mFullscreenManager;
+    private final CustomTabIntentDataProvider mDataProvider;
+    private final CustomTabNightModeStateController mNightModeStateController;
+    private final SystemNightModeMonitor mSystemNightModeMonitor;
+
     private ViewGroup mBottomBarView;
-    private CustomTabIntentDataProvider mDataProvider;
+    @Nullable private View mBottomBarContentView;
     private PendingIntent mClickPendingIntent;
     private int[] mClickableIDs;
+    private boolean mShowShadow = true;
+
+    /**
+     * The override height in pixels. A value of -1 is interpreted as "not set" and means it should
+     * not be used.
+     */
+    private int mBottomBarHeightOverride = -1;
 
     private OnClickListener mBottomBarClickListener = new OnClickListener() {
         @Override
@@ -60,11 +77,16 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
         }
     };
 
+    @Inject
     public CustomTabBottomBarDelegate(ChromeActivity activity,
-            CustomTabIntentDataProvider dataProvider, ChromeFullscreenManager fullscreenManager) {
+            CustomTabIntentDataProvider dataProvider, ChromeFullscreenManager fullscreenManager,
+            CustomTabNightModeStateController nightModeStateController,
+            SystemNightModeMonitor systemNightModeMonitor) {
         mActivity = activity;
         mDataProvider = dataProvider;
         mFullscreenManager = fullscreenManager;
+        mNightModeStateController = nightModeStateController;
+        mSystemNightModeMonitor = systemNightModeMonitor;
         fullscreenManager.addListener(this);
     }
 
@@ -72,7 +94,24 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
      * Makes the bottom bar area to show, if any.
      */
     public void showBottomBarIfNecessary() {
-        if (!mDataProvider.shouldShowBottomBar()) return;
+        if (!shouldShowBottomBar()) return;
+
+        getBottomBarView()
+                .findViewById(R.id.bottombar_shadow)
+                .setVisibility(mShowShadow ? View.VISIBLE : View.GONE);
+
+        if (mBottomBarContentView != null) {
+            getBottomBarView().addView(mBottomBarContentView);
+            mBottomBarContentView.addOnLayoutChangeListener(new OnLayoutChangeListener() {
+                @Override
+                public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                    mBottomBarContentView.removeOnLayoutChangeListener(this);
+                    mFullscreenManager.setBottomControlsHeight(getBottomBarHeight());
+                }
+            });
+            return;
+        }
 
         RemoteViews remoteViews = mDataProvider.getBottomBarRemoteViews();
         if (remoteViews != null) {
@@ -80,29 +119,25 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
             mClickableIDs = mDataProvider.getClickableViewIDs();
             mClickPendingIntent = mDataProvider.getRemoteViewsPendingIntent();
             showRemoteViews(remoteViews);
-        } else {
-            List<CustomButtonParams> items = mDataProvider.getCustomButtonsOnBottombar();
-            if (items.isEmpty()) return;
-            LinearLayout layout = new LinearLayout(mActivity);
-            layout.setId(R.id.custom_tab_bottom_bar_wrapper);
-            layout.setBackgroundColor(mDataProvider.getBottomBarColor());
-            for (CustomButtonParams params : items) {
-                if (params.showOnToolbar()) continue;
-                final PendingIntent pendingIntent = params.getPendingIntent();
-                OnClickListener clickListener = null;
-                if (pendingIntent != null) {
-                    clickListener = new OnClickListener() {
-                        @Override
-                        public void onClick(View v) {
-                            sendPendingIntentWithUrl(pendingIntent, null, mActivity);
-                        }
-                    };
-                }
-                layout.addView(
-                        params.buildBottomBarButton(mActivity, getBottomBarView(), clickListener));
-            }
-            getBottomBarView().addView(layout);
+            return;
         }
+
+        List<CustomButtonParams> items = mDataProvider.getCustomButtonsOnBottombar();
+        if (items.isEmpty()) return;
+        LinearLayout layout = new LinearLayout(mActivity);
+        layout.setId(R.id.custom_tab_bottom_bar_wrapper);
+        layout.setBackgroundColor(mDataProvider.getBottomBarColor());
+        for (CustomButtonParams params : items) {
+            if (params.showOnToolbar()) continue;
+            final PendingIntent pendingIntent = params.getPendingIntent();
+            OnClickListener clickListener = null;
+            if (pendingIntent != null) {
+                clickListener = v -> sendPendingIntentWithUrl(pendingIntent, null, mActivity);
+            }
+            layout.addView(
+                    params.buildBottomBarButton(mActivity, getBottomBarView(), clickListener));
+        }
+        getBottomBarView().addView(layout);
     }
 
     /**
@@ -112,7 +147,7 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
     public void updateBottomBarButtons(CustomButtonParams params) {
         ImageButton button = (ImageButton) getBottomBarView().findViewById(params.getId());
         button.setContentDescription(params.getDescription());
-        button.setImageDrawable(params.getIcon(mActivity.getResources()));
+        button.setImageDrawable(params.getIcon(mActivity));
     }
 
     /**
@@ -142,14 +177,40 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
     }
 
     /**
+     * Sets the content of the bottom bar.
+     */
+    public void setBottomBarContentView(View view) {
+        mBottomBarContentView = view;
+    }
+
+    /**
+     * Sets the visibility of the bottom bar shadow.
+     */
+    public void setShowShadow(boolean show) {
+        mShowShadow = show;
+    }
+
+    /**
      * @return The height of the bottom bar, excluding its top shadow.
      */
     public int getBottomBarHeight() {
-        if (!mDataProvider.shouldShowBottomBar() || mBottomBarView == null
+        if (!shouldShowBottomBar() || mBottomBarView == null
                 || mBottomBarView.getChildCount() < 2) {
             return 0;
         }
+        if (mBottomBarHeightOverride != -1) return mBottomBarHeightOverride;
         return mBottomBarView.getChildAt(1).getHeight();
+    }
+
+    /**
+     * Sets a height override for the bottom bar. If this value is not set, the height of the
+     * content is used instead.
+     *
+     * @param height The override height in pixels. A value of -1 is interpreted as "not set" and
+     *     means it will not be used.
+     */
+    public void setBottomBarHeight(int height) {
+        mBottomBarHeightOverride = height;
     }
 
     /**
@@ -157,40 +218,46 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
      */
     private ViewGroup getBottomBarView() {
         if (mBottomBarView == null) {
+            assert isViewReady() : "The required view stub couldn't be found! (Called too early?)";
             ViewStub bottomBarStub = ((ViewStub) mActivity.findViewById(R.id.bottombar_stub));
             mBottomBarView = (ViewGroup) bottomBarStub.inflate();
         }
         return mBottomBarView;
     }
 
-    public void addContextualSearchObserver() {
-        ContextualSearchManager manager = mActivity.getContextualSearchManager();
-        if (manager != null) {
-            ContextualSearchObserver observer = new ContextualSearchObserver() {
-                @Override
-                public void onShowContextualSearch(
-                        @Nullable GSAContextDisplaySelection selectionContext) {
-                    if (mBottomBarView == null) return;
-                    mBottomBarView.animate()
-                            .alpha(0)
-                            .setInterpolator(BakedBezierInterpolator.TRANSFORM_CURVE)
-                            .setDuration(SLIDE_ANIMATION_DURATION_MS)
-                            .start();
-                }
-                @Override
-                public void onHideContextualSearch() {
-                    if (mBottomBarView == null) return;
-                    mBottomBarView.animate()
-                            .alpha(1)
-                            .setInterpolator(BakedBezierInterpolator.TRANSFORM_CURVE)
-                            .setDuration(SLIDE_ANIMATION_DURATION_MS)
-                            .start();
-                }
-            };
-            manager.addObserver(observer);
-        }
+    public void addOverlayPanelManagerObserver() {
+        if (mActivity.getCompositorViewHolder().getLayoutManager() == null) return;
+        OverlayPanelManager manager =
+                mActivity.getCompositorViewHolder().getLayoutManager().getOverlayPanelManager();
+
+        manager.addObserver(new OverlayPanelManagerObserver() {
+            @Override
+            public void onOverlayPanelShown() {
+                if (mBottomBarView == null) return;
+                mBottomBarView.animate()
+                        .alpha(0)
+                        .setInterpolator(BakedBezierInterpolator.TRANSFORM_CURVE)
+                        .setDuration(SLIDE_ANIMATION_DURATION_MS)
+                        .withEndAction(() -> mBottomBarView.setVisibility(View.GONE))
+                        .start();
+            }
+            @Override
+            public void onOverlayPanelHidden() {
+                if (mBottomBarView == null) return;
+                mBottomBarView.setVisibility(View.VISIBLE);
+                mBottomBarView.animate()
+                        .alpha(1)
+                        .setInterpolator(BakedBezierInterpolator.TRANSFORM_CURVE)
+                        .setDuration(SLIDE_ANIMATION_DURATION_MS)
+                        .start();
+            }
+        });
     }
 
+    /**
+     * This method remove bottomBarView completely.
+     * If you need to hide it temporarily use {@link #hideBottomBar(boolean)}.
+     */
     private void hideBottomBar() {
         if (mBottomBarView == null) return;
         mBottomBarView.animate().alpha(0f).translationY(mBottomBarView.getHeight())
@@ -207,30 +274,29 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
     }
 
     private boolean showRemoteViews(RemoteViews remoteViews) {
-        try {
-            final View inflatedView =
-                    remoteViews.apply(mActivity.getApplicationContext(), getBottomBarView());
-            if (mClickableIDs != null && mClickPendingIntent != null) {
-                for (int id: mClickableIDs) {
-                    if (id < 0) return false;
-                    View view = inflatedView.findViewById(id);
-                    if (view != null) view.setOnClickListener(mBottomBarClickListener);
-                }
+        final View inflatedView = RemoteViewsWithNightModeInflater.inflate(remoteViews,
+                getBottomBarView(), mNightModeStateController.isInNightMode(),
+                mSystemNightModeMonitor.isSystemNightModeOn());
+
+        if (inflatedView == null) return false;
+
+        if (mClickableIDs != null && mClickPendingIntent != null) {
+            for (int id : mClickableIDs) {
+                if (id < 0) return false;
+                View view = inflatedView.findViewById(id);
+                if (view != null) view.setOnClickListener(mBottomBarClickListener);
             }
-            getBottomBarView().addView(inflatedView, 1);
-            inflatedView.addOnLayoutChangeListener(new OnLayoutChangeListener() {
-                @Override
-                public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                    inflatedView.removeOnLayoutChangeListener(this);
-                    mFullscreenManager.setBottomControlsHeight(v.getHeight());
-                }
-            });
-            return true;
-        } catch (RemoteViews.ActionException e) {
-            Log.e(TAG, "Failed to inflate the RemoteViews", e);
-            return false;
         }
+        getBottomBarView().addView(inflatedView, 1);
+        inflatedView.addOnLayoutChangeListener(new OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                    int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                inflatedView.removeOnLayoutChangeListener(this);
+                mFullscreenManager.setBottomControlsHeight(getBottomBarHeight());
+            }
+        });
+        return true;
     }
 
     private static void sendPendingIntentWithUrl(PendingIntent pendingIntent, Intent extraIntent,
@@ -245,15 +311,26 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
         }
     }
 
+    private boolean shouldShowBottomBar() {
+        return mBottomBarContentView != null || mDataProvider.shouldShowBottomBar();
+    }
+
+    /**
+     * Returns whether the view was or can be inflated.
+     * @return True if the ViewStub is present or was inflated. False otherwise.
+     */
+    private boolean isViewReady() {
+        return mBottomBarView != null || mActivity.findViewById(R.id.bottombar_stub) != null;
+    }
+
     // FullscreenListener methods
     @Override
-    public void onControlsOffsetChanged(float topOffset, float bottomOffset,
-            boolean needsAnimate) {
+    public void onControlsOffsetChanged(int topOffset, int bottomOffset, boolean needsAnimate) {
         if (mBottomBarView != null) mBottomBarView.setTranslationY(bottomOffset);
         // If the bottom bar is not visible use the top controls as a guide to set state.
-        float offset = getBottomBarHeight() == 0 ? topOffset : bottomOffset;
-        float height = getBottomBarHeight() == 0 ? mFullscreenManager.getTopControlsHeight()
-                                                 : mFullscreenManager.getBottomControlsHeight();
+        int offset = getBottomBarHeight() == 0 ? topOffset : bottomOffset;
+        int height = getBottomBarHeight() == 0 ? mFullscreenManager.getTopControlsHeight()
+                                               : mFullscreenManager.getBottomControlsHeight();
         // Avoid spamming this callback across process boundaries, by only sending messages at
         // absolute transitions.
         if (Math.abs(offset) == height || offset == 0) {
@@ -264,11 +341,43 @@ class CustomTabBottomBarDelegate implements FullscreenListener {
 
     @Override
     public void onBottomControlsHeightChanged(int bottomControlsHeight) {
-        getBottomBarView().setTranslationY(mFullscreenManager.getBottomControlOffset());
+        if (!isViewReady()) return;
+        // Bottom offset might not have been received by FullscreenManager at this point, so
+        // using getBrowserControlHiddenRatio(), http://crbug.com/928903.
+        getBottomBarView().setTranslationY(mFullscreenManager.getBrowserControlHiddenRatio()
+                * bottomControlsHeight);
     }
 
     @Override
-    public void onContentOffsetChanged(float offset) { }
+    public void onUpdateViewportSize() {
+        if (mBottomBarView == null) return; // Check bottom bar view but don't inflate it.
+        // Hide the container of the bottom bar while the extension is showing. This doesn't
+        // affect the content.
+        boolean keyboardExtensionHidesBottomBar =
+                mActivity.getManualFillingComponent().getKeyboardExtensionViewResizer().getHeight()
+                > 0;
+        hideBottomBar(keyboardExtensionHidesBottomBar);
+    }
+
+    /**
+     * This method temporarily hides bottomBarView.
+     *
+     * If you need to remove bottom bar completely use {@link #hideBottomBar()}.
+     *
+     * @param hidesBottomBar whether bottom bar needs to be hidden.
+     */
+    public void hideBottomBar(boolean hidesBottomBar) {
+        if (hidesBottomBar) {
+            getBottomBarView().setVisibility(View.GONE);
+            mFullscreenManager.setBottomControlsHeight(0);
+        } else {
+            getBottomBarView().setVisibility(View.VISIBLE);
+            mFullscreenManager.setBottomControlsHeight(getBottomBarHeight());
+        }
+    }
+
+    @Override
+    public void onContentOffsetChanged(int offset) {}
 
     @Override
     public void onToggleOverlayVideoMode(boolean enabled) { }

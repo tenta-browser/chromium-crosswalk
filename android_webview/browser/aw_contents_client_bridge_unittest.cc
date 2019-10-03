@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "android_webview/test/android_webview_unittests_jni/MockAwContentsClientBridge_jni.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/scoped_java_ref.h"
@@ -15,7 +16,6 @@
 #include "base/run_loop.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "jni/MockAwContentsClientBridge_jni.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_private_key.h"
@@ -88,7 +88,7 @@ void AwContentsClientBridgeTest::SetUp() {
   bridge_.reset(new AwContentsClientBridge(env_, jbridge_));
   selected_cert_ = nullptr;
   cert_selected_callbacks_ = 0;
-  cert_request_info_ = new net::SSLCertRequestInfo;
+  cert_request_info_ = base::MakeRefCounted<net::SSLCertRequestInfo>();
 }
 
 void AwContentsClientBridgeTest::CertSelected(
@@ -116,14 +116,13 @@ void AwContentsClientBridgeTest::TestCertType(
   cert_request_info_->cert_key_types.push_back(type);
   bridge_->SelectClientCertificate(
       cert_request_info_.get(),
-      base::MakeUnique<TestClientCertificateDelegate>(this));
+      std::make_unique<TestClientCertificateDelegate>(this));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, cert_selected_callbacks_);
   ScopedJavaLocalRef<jobjectArray> key_types =
       Java_MockAwContentsClientBridge_getKeyTypes(env_, jbridge_);
   std::vector<std::string> vec;
-  base::android::AppendJavaStringArrayToStringVector(env_, key_types.obj(),
-                                                     &vec);
+  base::android::AppendJavaStringArrayToStringVector(env_, key_types, &vec);
   EXPECT_EQ(1u, vec.size());
   EXPECT_EQ(expected_name, vec[0]);
 }

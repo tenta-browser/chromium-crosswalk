@@ -9,13 +9,12 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/md5.h"
 #include "components/drive/file_errors.h"
 #include "google_apis/drive/drive_api_error_codes.h"
 #include "google_apis/drive/drive_common_callbacks.h"
 
 namespace base {
-class CancellationFlag;
+class AtomicFlag;
 class Location;
 class FilePath;
 class TaskRunner;
@@ -59,7 +58,7 @@ std::string CanonicalizeResourceId(const std::string& resource_id);
 // Returns the (base-16 encoded) MD5 digest of the file content at |file_path|,
 // or an empty string if an error is found.
 std::string GetMd5Digest(const base::FilePath& file_path,
-                         const base::CancellationFlag* cancellation_flag);
+                         const base::AtomicFlag* cancellation_flag);
 
 // Returns preferred file extension for hosted documents which have given mime
 // type.

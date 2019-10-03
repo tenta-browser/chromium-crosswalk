@@ -5,7 +5,7 @@
 #ifndef STORAGE_COMMON_FILEAPI_FILE_SYSTEM_TYPES_H_
 #define STORAGE_COMMON_FILEAPI_FILE_SYSTEM_TYPES_H_
 
-#include "third_party/WebKit/public/platform/WebFileSystemType.h"
+#include "third_party/blink/public/platform/web_file_system_type.h"
 
 namespace storage {
 
@@ -123,7 +123,10 @@ enum FileSystemType {
   // A filesystem to provide access to documents providers in ARC.
   kFileSystemTypeArcDocumentsProvider,
 
-  kFileSystemTypeLast = kFileSystemTypeArcDocumentsProvider,
+  // Indicates a DriveFS filesystem which provides access to Google Drive.
+  kFileSystemTypeDriveFs,
+
+  kFileSystemTypeLast = kFileSystemTypeDriveFs,
 
   // --------------------------------------------------------------------
   // Marks the end of internal type enum. (This is not the actual fs type)

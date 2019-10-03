@@ -9,7 +9,6 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -21,6 +20,7 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema_registry.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -79,9 +79,9 @@ ConfigurationPolicyProvider* TestHarness::CreateProvider(
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
   // Create and initialize the store.
   store_.NotifyStoreLoaded();
-  ConfigurationPolicyProvider* provider =
-      new CloudPolicyManager(dm_protocol::kChromeUserPolicyType, std::string(),
-                             &store_, task_runner, task_runner);
+  ConfigurationPolicyProvider* provider = new CloudPolicyManager(
+      dm_protocol::kChromeUserPolicyType, std::string(), &store_, task_runner,
+      network::TestNetworkConnectionTracker::CreateGetter());
   Mock::VerifyAndClearExpectations(&store_);
   return provider;
 }
@@ -92,21 +92,21 @@ void TestHarness::InstallStringPolicy(const std::string& policy_name,
                                       const std::string& policy_value) {
   store_.policy_map_.Set(policy_name, policy_level(), policy_scope(),
                          POLICY_SOURCE_CLOUD,
-                         base::MakeUnique<base::Value>(policy_value), nullptr);
+                         std::make_unique<base::Value>(policy_value), nullptr);
 }
 
 void TestHarness::InstallIntegerPolicy(const std::string& policy_name,
                                        int policy_value) {
   store_.policy_map_.Set(policy_name, policy_level(), policy_scope(),
                          POLICY_SOURCE_CLOUD,
-                         base::MakeUnique<base::Value>(policy_value), nullptr);
+                         std::make_unique<base::Value>(policy_value), nullptr);
 }
 
 void TestHarness::InstallBooleanPolicy(const std::string& policy_name,
                                        bool policy_value) {
   store_.policy_map_.Set(policy_name, policy_level(), policy_scope(),
                          POLICY_SOURCE_CLOUD,
-                         base::MakeUnique<base::Value>(policy_value), nullptr);
+                         std::make_unique<base::Value>(policy_value), nullptr);
 }
 
 void TestHarness::InstallStringListPolicy(const std::string& policy_name,
@@ -135,22 +135,22 @@ PolicyProviderTestHarness* TestHarness::CreateRecommended() {
 }
 
 // Instantiate abstract test case for basic policy reading tests.
-INSTANTIATE_TEST_CASE_P(
-    UserCloudPolicyManagerProviderTest,
-    ConfigurationPolicyProviderTest,
-    testing::Values(TestHarness::CreateMandatory,
-                    TestHarness::CreateRecommended));
+INSTANTIATE_TEST_SUITE_P(UserCloudPolicyManagerProviderTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(TestHarness::CreateMandatory,
+                                         TestHarness::CreateRecommended));
 
 class TestCloudPolicyManager : public CloudPolicyManager {
  public:
   TestCloudPolicyManager(
       CloudPolicyStore* store,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner)
-      : CloudPolicyManager(dm_protocol::kChromeUserPolicyType,
-                           std::string(),
-                           store,
-                           task_runner,
-                           task_runner) {}
+      : CloudPolicyManager(
+            dm_protocol::kChromeUserPolicyType,
+            std::string(),
+            store,
+            task_runner,
+            network::TestNetworkConnectionTracker::CreateGetter()) {}
   ~TestCloudPolicyManager() override {}
 
   // Publish the protected members for testing.
@@ -175,7 +175,7 @@ class CloudPolicyManagerTest : public testing::Test {
   void SetUp() override {
     // Set up a policy map for testing.
     policy_map_.Set("key", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                    POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>("value"),
+                    POLICY_SOURCE_CLOUD, std::make_unique<base::Value>("value"),
                     nullptr);
     expected_bundle_.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
         .CopyFrom(policy_map_);
@@ -233,7 +233,7 @@ TEST_F(CloudPolicyManagerTest, InitAndShutdown) {
   EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   MockCloudPolicyClient* client = new MockCloudPolicyClient();
-  EXPECT_CALL(*client, SetupRegistration(_, _));
+  EXPECT_CALL(*client, SetupRegistration(_, _, _));
   manager_->core()->Connect(std::unique_ptr<CloudPolicyClient>(client));
   Mock::VerifyAndClearExpectations(client);
   EXPECT_TRUE(manager_->client());
@@ -309,7 +309,7 @@ TEST_F(CloudPolicyManagerTest, RefreshSuccessful) {
   // Simulate a store load.
   store_.policy_.reset(new em::PolicyData(policy_.policy_data()));
   EXPECT_CALL(observer_, OnUpdatePolicy(manager_.get()));
-  EXPECT_CALL(*client, SetupRegistration(_, _));
+  EXPECT_CALL(*client, SetupRegistration(_, _, _));
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(client);
   Mock::VerifyAndClearExpectations(&observer_);

@@ -10,6 +10,8 @@
 #include "base/android/jni_string.h"
 #include "base/feature_list.h"
 #include "build/build_config.h"
+#include "chrome/android/chrome_jni_headers/PermissionDialogController_jni.h"
+#include "chrome/android/chrome_jni_headers/PermissionDialogDelegate_jni.h"
 #include "chrome/browser/android/resource_mapper.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,8 +19,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/PermissionDialogController_jni.h"
-#include "jni/PermissionDialogDelegate_jni.h"
 #include "ui/android/window_android.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -65,6 +65,7 @@ void PermissionDialogDelegate::CreateJavaDelegate(JNIEnv* env,
       env, reinterpret_cast<uintptr_t>(this), tab->GetJavaObject(),
       base::android::ToJavaIntArray(env, content_settings_types),
       ResourceMapper::MapFromChromiumId(permission_prompt_->GetIconId()),
+      ConvertUTF16ToJavaString(env, permission_prompt_->GetTitleText()),
       ConvertUTF16ToJavaString(env, permission_prompt_->GetMessageText()),
       primaryButtonText, secondaryButtonText));
 }

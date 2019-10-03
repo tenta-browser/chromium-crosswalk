@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -105,7 +106,7 @@ class SyncWorkerTest : public testing::Test,
 
   void SetUp() override {
     ASSERT_TRUE(profile_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_ = leveldb_chrome::NewMemEnv("SyncWorkerTest");
 
     extension_service_.reset(new MockExtensionService);
     std::unique_ptr<drive::DriveServiceInterface> fake_drive_service(

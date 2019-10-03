@@ -4,6 +4,7 @@
 
 #include "chrome/browser/policy/managed_bookmarks_policy_handler.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/json/json_reader.h"
@@ -15,7 +16,7 @@
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/policy_constants.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/value_builder.h"
@@ -37,46 +38,47 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_FALSE(store_->GetValue(bookmarks::prefs::kManagedBookmarks, NULL));
 
   PolicyMap policy;
-  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             POLICY_SOURCE_CLOUD,
-             base::JSONReader::Read("["
-                                    // The following gets filtered out from the
-                                    // JSON string when parsed.
-                                    "  {"
-                                    "    \"toplevel_name\": \"abc 123\""
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Google\","
-                                    "    \"url\": \"google.com\""
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Empty Folder\","
-                                    "    \"children\": []"
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Big Folder\","
-                                    "    \"children\": ["
-                                    "      {"
-                                    "        \"name\": \"Youtube\","
-                                    "        \"url\": \"youtube.com\""
-                                    "      },"
-                                    "      {"
-                                    "        \"name\": \"Chromium\","
-                                    "        \"url\": \"chromium.org\""
-                                    "      },"
-                                    "      {"
-                                    "        \"name\": \"More Stuff\","
-                                    "        \"children\": ["
-                                    "          {"
-                                    "            \"name\": \"Bugs\","
-                                    "            \"url\": \"crbug.com\""
-                                    "          }"
-                                    "        ]"
-                                    "      }"
-                                    "    ]"
-                                    "  }"
-                                    "]"),
-             nullptr);
+  policy.Set(
+      key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+      POLICY_SOURCE_CLOUD,
+      base::JSONReader::ReadDeprecated("["
+                                       // The following gets filtered out from
+                                       // the JSON string when parsed.
+                                       "  {"
+                                       "    \"toplevel_name\": \"abc 123\""
+                                       "  },"
+                                       "  {"
+                                       "    \"name\": \"Google\","
+                                       "    \"url\": \"google.com\""
+                                       "  },"
+                                       "  {"
+                                       "    \"name\": \"Empty Folder\","
+                                       "    \"children\": []"
+                                       "  },"
+                                       "  {"
+                                       "    \"name\": \"Big Folder\","
+                                       "    \"children\": ["
+                                       "      {"
+                                       "        \"name\": \"Youtube\","
+                                       "        \"url\": \"youtube.com\""
+                                       "      },"
+                                       "      {"
+                                       "        \"name\": \"Chromium\","
+                                       "        \"url\": \"chromium.org\""
+                                       "      },"
+                                       "      {"
+                                       "        \"name\": \"More Stuff\","
+                                       "        \"children\": ["
+                                       "          {"
+                                       "            \"name\": \"Bugs\","
+                                       "            \"url\": \"crbug.com\""
+                                       "          }"
+                                       "        ]"
+                                       "      }"
+                                       "    ]"
+                                       "  }"
+                                       "]"),
+      nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
   EXPECT_TRUE(
@@ -145,12 +147,12 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, ApplyPolicySettingsNoTitle) {
   PolicyMap policy;
   policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
-             base::JSONReader::Read("["
-                                    "  {"
-                                    "    \"name\": \"Google\","
-                                    "    \"url\": \"google.com\""
-                                    "  }"
-                                    "]"),
+             base::JSONReader::ReadDeprecated("["
+                                              "  {"
+                                              "    \"name\": \"Google\","
+                                              "    \"url\": \"google.com\""
+                                              "  }"
+                                              "]"),
              nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
@@ -184,7 +186,7 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, WrongPolicyType) {
   // unparsed base::Value. Any type other than ListValue should fail.
   policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
-             base::MakeUnique<base::Value>("["
+             std::make_unique<base::Value>("["
                                            "  {"
                                            "    \"name\": \"Google\","
                                            "    \"url\": \"google.com\""
@@ -198,16 +200,17 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, WrongPolicyType) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 TEST_F(ManagedBookmarksPolicyHandlerTest, UnknownKeys) {
   PolicyMap policy;
-  policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             POLICY_SOURCE_CLOUD,
-             base::JSONReader::Read("["
-                                    "  {"
-                                    "    \"name\": \"Google\","
-                                    "    \"unknown\": \"should be ignored\","
-                                    "    \"url\": \"google.com\""
-                                    "  }"
-                                    "]"),
-             nullptr);
+  policy.Set(
+      key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+      POLICY_SOURCE_CLOUD,
+      base::JSONReader::ReadDeprecated("["
+                                       "  {"
+                                       "    \"name\": \"Google\","
+                                       "    \"unknown\": \"should be ignored\","
+                                       "    \"url\": \"google.com\""
+                                       "  }"
+                                       "]"),
+      nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;
   EXPECT_TRUE(
@@ -230,24 +233,24 @@ TEST_F(ManagedBookmarksPolicyHandlerTest, BadBookmark) {
   PolicyMap policy;
   policy.Set(key::kManagedBookmarks, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
              POLICY_SOURCE_CLOUD,
-             base::JSONReader::Read("["
-                                    "  {"
-                                    "    \"name\": \"Empty\","
-                                    "    \"url\": \"\""
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Invalid type\","
-                                    "    \"url\": 4"
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Invalid URL\","
-                                    "    \"url\": \"?\""
-                                    "  },"
-                                    "  {"
-                                    "    \"name\": \"Google\","
-                                    "    \"url\": \"google.com\""
-                                    "  }"
-                                    "]"),
+             base::JSONReader::ReadDeprecated("["
+                                              "  {"
+                                              "    \"name\": \"Empty\","
+                                              "    \"url\": \"\""
+                                              "  },"
+                                              "  {"
+                                              "    \"name\": \"Invalid type\","
+                                              "    \"url\": 4"
+                                              "  },"
+                                              "  {"
+                                              "    \"name\": \"Invalid URL\","
+                                              "    \"url\": \"?\""
+                                              "  },"
+                                              "  {"
+                                              "    \"name\": \"Google\","
+                                              "    \"url\": \"google.com\""
+                                              "  }"
+                                              "]"),
              nullptr);
   UpdateProviderPolicy(policy);
   const base::Value* pref_value = NULL;

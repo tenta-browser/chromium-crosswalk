@@ -17,7 +17,7 @@
 namespace display {
 class DisplayLayout;
 class DisplayManager;
-}
+}  // namespace display
 
 namespace ash {
 
@@ -57,8 +57,9 @@ class ASH_EXPORT DisplayConfigurationController
       const display::UnifiedDesktopLayoutMatrix& matrix);
 
   // Sets the mirror mode with a fade-in/fade-out animation. Affects all
-  // displays.
-  void SetMirrorMode(bool mirror);
+  // displays. If |throttle| is true, this will fail if called within the
+  // throttle time.
+  void SetMirrorMode(bool mirror, bool throttle);
 
   // Sets the display's rotation with animation if available.
   void SetDisplayRotation(int64_t display_id,
@@ -70,21 +71,30 @@ class ASH_EXPORT DisplayConfigurationController
   // the target rotation when the display is being rotated.
   display::Display::Rotation GetTargetRotation(int64_t display_id);
 
-  // Sets the primary display id.
-  void SetPrimaryDisplayId(int64_t display_id);
+  // Sets the primary display id. If |throttle| is true, this will fail if
+  // called within the throttle time.
+  void SetPrimaryDisplayId(int64_t display_id, bool throttle);
+
+  // In Unified Desktop mode, we consider the display in which the shelf will be
+  // placed to be the "primary mirroring display". Note that this is different
+  // from the "normal" primary display, which is just the single unified display
+  // in unified mode. This display will be:
+  //   - The bottom-left in the matrix if the shelf alignment is "bottom",
+  //   - The top-left in the matrix if the shelf alignment is "left",
+  //   - The top-right in the matrix if the shelf alignment is "right".
+  // This should only be called when Unified Desktop mode is active.
+  display::Display GetPrimaryMirroringDisplayForUnifiedDesktop() const;
 
   // WindowTreeHostManager::Observer
   void OnDisplayConfigurationChanged() override;
 
+  static void DisableAnimatorForTest();
+
  protected:
   friend class DisplayConfigurationControllerTestApi;
 
-  // Allow tests to skip animations.
-  void ResetAnimatorForTest();
-
-  void SetScreenRotationAnimatorForTest(
-      int64_t display_id,
-      std::unique_ptr<ScreenRotationAnimator> animator);
+  // Allow tests to enable or disable animations.
+  void SetAnimatorForTest(bool enable);
 
  private:
   class DisplayChangeLimiter;

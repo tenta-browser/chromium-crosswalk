@@ -5,6 +5,7 @@
 #ifndef UI_BASE_MODELS_SIMPLE_MENU_MODEL_H_
 #define UI_BASE_MODELS_SIMPLE_MENU_MODEL_H_
 
+#include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -13,10 +14,7 @@
 #include "base/strings/string16.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/models/menu_model.h"
-
-namespace gfx {
-class Image;
-}
+#include "ui/gfx/image/image.h"
 
 namespace ui {
 
@@ -32,9 +30,14 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
    public:
     ~Delegate() override {}
 
-    // Methods for determining the state of specific command ids.
-    virtual bool IsCommandIdChecked(int command_id) const = 0;
-    virtual bool IsCommandIdEnabled(int command_id) const = 0;
+    // Makes |command_id| appear toggled true if it's a "check" or "radio" type
+    // menu item. This has no effect for menu items with no boolean state.
+    virtual bool IsCommandIdChecked(int command_id) const;
+
+    // Delegate should return true if |command_id| should be enabled.
+    virtual bool IsCommandIdEnabled(int command_id) const;
+
+    // Delegate should return true if |command_id| should be visible.
     virtual bool IsCommandIdVisible(int command_id) const;
 
     // Some command ids have labels, sublabels, minor text and icons that change
@@ -48,17 +51,16 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
     virtual bool GetIconForCommandId(int command_id,
                                      gfx::Image* icon) const;
 
-    // Notifies the delegate that the item with the specified command id was
-    // visually highlighted within the menu.
-    virtual void CommandIdHighlighted(int command_id);
-
     // Performs the action associates with the specified command id.
     // The passed |event_flags| are the flags from the event which issued this
     // command and they can be examined to find modifier keys.
     virtual void ExecuteCommand(int command_id, int event_flags) = 0;
 
     // Notifies the delegate that the menu is about to show.
-    virtual void MenuWillShow(SimpleMenuModel* source);
+    // Slight hack: Prefix with "On" to make sure this doesn't conflict with
+    // MenuModel::MenuWillShow(), since many classes derive from both
+    // SimpleMenuModel and SimpleMenuModel::Delegate.
+    virtual void OnMenuWillShow(SimpleMenuModel* source);
 
     // Notifies the delegate that the menu has closed.
     virtual void MenuClosed(SimpleMenuModel* source);
@@ -78,10 +80,19 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   // Methods for adding items to the model.
   void AddItem(int command_id, const base::string16& label);
   void AddItemWithStringId(int command_id, int string_id);
+  void AddItemWithIcon(int command_id,
+                       const base::string16& label,
+                       const gfx::ImageSkia& icon);
+  void AddItemWithStringIdAndIcon(int command_id,
+                                  int string_id,
+                                  const gfx::ImageSkia& icon);
   void AddCheckItem(int command_id, const base::string16& label);
   void AddCheckItemWithStringId(int command_id, int string_id);
   void AddRadioItem(int command_id, const base::string16& label, int group_id);
   void AddRadioItemWithStringId(int command_id, int string_id, int group_id);
+  void AddHighlightedItemWithIcon(int command_id,
+                                  const base::string16& label,
+                                  const gfx::ImageSkia& icon);
 
   // Adds a separator of the specified type to the model.
   // - Adding a separator after another separator is always invalid if they
@@ -90,13 +101,24 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   //   or SPACING. NORMAL separators are silently ignored if the model is empty.
   void AddSeparator(MenuSeparatorType separator_type);
 
-  // These three methods take pointers to various sub-models. These models
-  // should be owned by the same owner of this SimpleMenuModel.
+  // These methods take pointers to various sub-models. These models should be
+  // owned by the same owner of this SimpleMenuModel.
   void AddButtonItem(int command_id, ButtonMenuItemModel* model);
   void AddSubMenu(int command_id,
                   const base::string16& label,
                   MenuModel* model);
   void AddSubMenuWithStringId(int command_id, int string_id, MenuModel* model);
+  void AddSubMenuWithStringIdAndIcon(int command_id,
+                                     int string_id,
+                                     MenuModel* model,
+                                     const gfx::ImageSkia& icon);
+  void AddActionableSubMenu(int command_id,
+                            const base::string16& label,
+                            MenuModel* model);
+  void AddActionableSubmenuWithStringIdAndIcon(int command_id,
+                                               int string_id,
+                                               MenuModel* model,
+                                               const gfx::ImageSkia& icon);
 
   // Methods for inserting items into the model.
   void InsertItemAt(int index, int command_id, const base::string16& label);
@@ -125,11 +147,23 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   // Sets the icon for the item at |index|.
   void SetIcon(int index, const gfx::Image& icon);
 
+  // Sets the label for the item at |index|.
+  void SetLabel(int index, const base::string16& label);
+
   // Sets the sublabel for the item at |index|.
   void SetSublabel(int index, const base::string16& sublabel);
 
   // Sets the minor text for the item at |index|.
   void SetMinorText(int index, const base::string16& minor_text);
+
+  // Sets the minor icon for the item at |index|.
+  void SetMinorIcon(int index, const gfx::VectorIcon& minor_icon);
+
+  // Sets whether the item at |index| is enabled.
+  void SetEnabledAt(int index, bool enabled);
+
+  // Sets whether the item at |index| is visible.
+  void SetVisibleAt(int index, bool visible);
 
   // Clears all items. Note that it does not free MenuModel of submenu.
   void Clear();
@@ -147,6 +181,7 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   base::string16 GetLabelAt(int index) const override;
   base::string16 GetSublabelAt(int index) const override;
   base::string16 GetMinorTextAt(int index) const override;
+  const gfx::VectorIcon* GetMinorIconAt(int index) const override;
   bool IsItemDynamicAt(int index) const override;
   bool GetAcceleratorAt(int index, ui::Accelerator* accelerator) const override;
   bool IsItemCheckedAt(int index) const override;
@@ -155,15 +190,11 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   ui::ButtonMenuItemModel* GetButtonMenuItemAt(int index) const override;
   bool IsEnabledAt(int index) const override;
   bool IsVisibleAt(int index) const override;
-  void HighlightChangedTo(int index) override;
   void ActivatedAt(int index) override;
   void ActivatedAt(int index, int event_flags) override;
   MenuModel* GetSubmenuModelAt(int index) const override;
   void MenuWillShow() override;
   void MenuWillClose() override;
-  void SetMenuModelDelegate(
-      ui::MenuModelDelegate* menu_model_delegate) override;
-  MenuModelDelegate* GetMenuModelDelegate() const override;
 
  protected:
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
@@ -174,7 +205,26 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   virtual void MenuItemsChanged();
 
  private:
-  struct Item;
+  struct Item {
+    Item(Item&&);
+    Item(int command_id, ItemType type, base::string16 label);
+    Item& operator=(Item&&);
+    ~Item();
+
+    int command_id = 0;
+    ItemType type = TYPE_COMMAND;
+    base::string16 label;
+    base::string16 sublabel;
+    base::string16 minor_text;
+    const gfx::VectorIcon* minor_icon = nullptr;
+    gfx::Image icon;
+    int group_id = -1;
+    MenuModel* submenu = nullptr;
+    ButtonMenuItemModel* button_model = nullptr;
+    MenuSeparatorType separator_type = NORMAL_SEPARATOR;
+    bool enabled = true;
+    bool visible = true;
+  };
 
   typedef std::vector<Item> ItemVector;
 
@@ -182,8 +232,8 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   int ValidateItemIndex(int index) const;
 
   // Functions for inserting items into |items_|.
-  void AppendItem(const Item& item);
-  void InsertItemAtIndex(const Item& item, int index);
+  void AppendItem(Item item);
+  void InsertItemAtIndex(Item item, int index);
   void ValidateItem(const Item& item);
 
   // Notify the delegate that the menu is closed.
@@ -193,9 +243,7 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
 
   Delegate* delegate_;
 
-  MenuModelDelegate* menu_model_delegate_;
-
-  base::WeakPtrFactory<SimpleMenuModel> method_factory_;
+  base::WeakPtrFactory<SimpleMenuModel> method_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SimpleMenuModel);
 };

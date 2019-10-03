@@ -33,9 +33,9 @@ struct AXTextEdit {
 // object. The renderer converts webkit's accessibility tree into a
 // WebAccessibility tree and passes it to the browser process over IPC.
 // This class converts it into a format Cocoa can query.
-@interface BrowserAccessibilityCocoa : NSObject {
+@interface BrowserAccessibilityCocoa : NSAccessibilityElement {
  @private
-  content::BrowserAccessibility* browserAccessibility_;
+  content::BrowserAccessibility* owner_;
   base::scoped_nsobject<NSMutableArray> children_;
   // Stores the previous value of an edit field.
   base::string16 oldValue_;
@@ -55,14 +55,14 @@ struct AXTextEdit {
 
 // Convenience method to get the internal, cross-platform role
 // from browserAccessibility_.
-- (ui::AXRole)internalRole;
+- (ax::mojom::Role)internalRole;
 
 // Convenience method to get the BrowserAccessibilityDelegate from
 // the manager.
 - (content::BrowserAccessibilityDelegate*)delegate;
 
 // Get the BrowserAccessibility that this object wraps.
-- (content::BrowserAccessibility*)browserAccessibility;
+- (content::BrowserAccessibility*)owner;
 
 // Computes the text that was added or deleted in a text field after an edit.
 - (content::AXTextEdit)computeTextEdit;
@@ -70,9 +70,10 @@ struct AXTextEdit {
 // Determines if this object is alive, i.e. it hasn't been detached.
 - (BOOL)instanceActive;
 
-// Convert the local objet's origin to a global point.
-- (NSPoint)pointInScreen:(NSPoint)origin
-                    size:(NSSize)size;
+// Convert from the view's local coordinate system (with the origin in the upper
+// left) to the primary NSScreen coordinate system (with the origin in the lower
+// left).
+- (NSRect)rectInScreen:(gfx::Rect)rect;
 
 // Return the method name for the given attribute. For testing only.
 - (NSString*)methodNameForAttribute:(NSString*)attribute;
@@ -82,9 +83,6 @@ struct AXTextEdit {
 
 - (NSString*)valueForRange:(NSRange)range;
 - (NSAttributedString*)attributedValueForRange:(NSRange)range;
-
-- (BOOL)isRowHeaderForCurrentCell:(content::BrowserAccessibility*)header;
-- (BOOL)isColumnHeaderForCurrentCell:(content::BrowserAccessibility*)header;
 
 // Internally-used property.
 @property(nonatomic, readonly) NSPoint origin;
@@ -100,7 +98,7 @@ struct AXTextEdit {
 @property(nonatomic, readonly) NSArray* columns;
 @property(nonatomic, readonly) NSArray* columnHeaders;
 @property(nonatomic, readonly) NSValue* columnIndexRange;
-@property(nonatomic, readonly) NSString* description;
+@property(nonatomic, readonly) NSString* descriptionForAccessibility;
 @property(nonatomic, readonly) NSNumber* disclosing;
 @property(nonatomic, readonly) id disclosedByRow;
 @property(nonatomic, readonly) NSNumber* disclosureLevel;

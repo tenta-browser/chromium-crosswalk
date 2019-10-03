@@ -4,86 +4,120 @@
 
 'use strict';
 
-(function() {
-
-/**
- * Tests if the gallery shows up for the selected image and is loaded
- * successfully.
- *
- * @param {string} path Directory path to be tested.
- */
-function imageOpen(path) {
-  var appId;
-  var galleryAppId;
-
-  var expectedFilesBefore =
-      TestEntryInfo.getExpectedRows(path == RootPath.DRIVE ?
-          BASIC_DRIVE_ENTRY_SET : BASIC_LOCAL_ENTRY_SET).sort();
-  var expectedFilesAfter =
-      expectedFilesBefore.concat([ENTRIES.image3.getExpectedRow()]).sort();
-
-  StepsRunner.run([
-    function() {
-      setupAndWaitUntilReady(null, path, this.next);
-    },
-    // Select the song.
-    function(results) {
-      appId = results.windowId;
-
-      // Add an additional image file.
-      addEntries(['local', 'drive'], [ENTRIES.image3], this.next);
-    },
-    function(result) {
-      chrome.test.assertTrue(result);
-      remoteCall.waitForFileListChange(appId, expectedFilesBefore.length).
-          then(this.next);
-    },
-    function(actualFilesAfter) {
-      chrome.test.assertEq(expectedFilesAfter, actualFilesAfter);
-      // Open a file in the Files app.
-      remoteCall.callRemoteTestUtil(
-          'openFile', appId, ['My Desktop Background.png'], this.next);
-    },
-    function(result) {
-      chrome.test.assertTrue(result);
-      // Wait for the window.
-      galleryApp.waitForWindow('gallery.html').then(this.next);
-    },
-    function(inAppId) {
-      galleryAppId = inAppId;
-      // Wait for the file opened.
-      galleryApp.waitForSlideImage(
-          galleryAppId, 800, 600, 'My Desktop Background').then(this.next);
-    },
-    function() {
-      // Open another file in the Files app.
-      remoteCall.callRemoteTestUtil(
-          'openFile', appId, ['image3.jpg'], this.next);
-    },
-    function(result) {
-      chrome.test.assertTrue(result);
-      // Wait for the file opened.
-      galleryApp.waitForSlideImage(
-          galleryAppId, 640, 480, 'image3').then(this.next);
-    },
-    function() {
-      // Close window
-      galleryApp.closeWindowAndWait(galleryAppId).then(this.next);
-    },
-    // Wait for closing.
-    function(result) {
-      chrome.test.assertTrue(result, 'Fail to close the window');
-      checkIfNoErrorsOccured(this.next);
+(() => {
+  /**
+   * Tests opening (then closing) the image Gallery from Files app.
+   *
+   * @param {string} path Directory path (Downloads or Drive).
+   */
+  async function imageOpen(path) {
+    // File open events are not reported for legacy Drive.
+    if (path !== RootPath.DRIVE ||
+        await sendTestMessage({name: 'getDriveFsEnabled'}) === 'true') {
+      await sendTestMessage({
+        name: 'expectFileTask',
+        fileNames: [ENTRIES.image3.targetPath],
+        openType: 'launch'
+      });
     }
-  ]);
-}
 
-testcase.imageOpenDownloads = function() {
-  imageOpen(RootPath.DOWNLOADS);
-};
+    // Open Files.App on |path|, add image3 to Downloads and Drive.
+    const appId =
+        await setupAndWaitUntilReady(path, [ENTRIES.image3], [ENTRIES.image3]);
 
-testcase.imageOpenDrive = function() {
-  imageOpen(RootPath.DRIVE);
-};
+    // Open the image file in Files app.
+    chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+        'openFile', appId, [ENTRIES.image3.targetPath]));
 
+    // Check: the Gallery window should open.
+    const galleryAppId = await galleryApp.waitForWindow('gallery.html');
+
+    // Check: the image should appear in the Gallery window.
+    await galleryApp.waitForSlideImage(galleryAppId, 640, 480, 'image3');
+
+    // Close the Gallery window.
+    chrome.test.assertTrue(
+        await galleryApp.closeWindowAndWait(galleryAppId),
+        'Failed to close Gallery window');
+  }
+
+  /**
+   * Tests opening the image Gallery from Files app: once the Gallery opens and
+   * shows the initial image, open a different image from FilesApp.
+   *
+   * @param {string} path Directory path (Downloads or Drive).
+   */
+  async function imageOpenGalleryOpen(path) {
+    // File open events are not reported for legacy Drive.
+    if (path !== RootPath.DRIVE ||
+        await sendTestMessage({name: 'getDriveFsEnabled'}) === 'true') {
+      await sendTestMessage({
+        name: 'expectFileTask',
+        fileNames: [ENTRIES.image3.targetPath, ENTRIES.desktop.targetPath],
+        openType: 'launch'
+      });
+    }
+
+    const testImages = [ENTRIES.image3, ENTRIES.desktop];
+
+    // Open Files.App on |path|, add test images to Downloads and Drive.
+    const appId = await setupAndWaitUntilReady(path, testImages, testImages);
+
+    // Open an image file in Files app.
+    chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+        'openFile', appId, [ENTRIES.image3.targetPath]));
+
+    // Wait for the expected 3
+    const caller = getCaller();
+    await repeatUntil(async () => {
+      const a11yMessages =
+          await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+
+      if (a11yMessages.length === 3) {
+        return true;
+      }
+
+      return pending(
+          caller,
+          'Waiting for 3 a11y messages, got: ' + JSON.stringify(a11yMessages));
+    });
+
+    // Fetch A11y messages.
+    const a11yMessages =
+        await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+
+    // Check that opening the file was announced to screen reader.
+    chrome.test.assertEq(3, a11yMessages.length);
+    chrome.test.assertEq('Opening file image3.jpg.', a11yMessages[2]);
+
+    // Check: the Gallery window should open.
+    const galleryAppId = await galleryApp.waitForWindow('gallery.html');
+
+    // Check: the image should appear in the Gallery window.
+    await galleryApp.waitForSlideImage(galleryAppId, 640, 480, 'image3');
+
+    // Now open a different image file in Files app.
+    await remoteCall.callRemoteTestUtil(
+        'openFile', appId, [ENTRIES.desktop.targetPath]);
+
+    // Check: the new image should appear in the Gallery window.
+    await galleryApp.waitForSlideImage(
+        galleryAppId, 800, 600, 'My Desktop Background');
+  }
+
+  testcase.imageOpenDownloads = () => {
+    return imageOpen(RootPath.DOWNLOADS);
+  };
+
+  testcase.imageOpenDrive = () => {
+    return imageOpen(RootPath.DRIVE);
+  };
+
+  testcase.imageOpenGalleryOpenDownloads = () => {
+    return imageOpenGalleryOpen(RootPath.DOWNLOADS);
+  };
+
+  testcase.imageOpenGalleryOpenDrive = () => {
+    return imageOpenGalleryOpen(RootPath.DRIVE);
+  };
 })();

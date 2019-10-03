@@ -11,17 +11,20 @@ source_set("promos") {
   ]
   deps = [
     "//base",
-    "//components/signin/core/browser",
+    "//components/signin/public/base",
+    "//components/unified_consent",
     "//components/version_info",
     "//ios/chrome/app:tests_hook",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/signin",
-    "//ios/chrome/browser/ui/authentication",
     "//ios/chrome/browser/ui/commands",
     "//ios/public/provider/chrome/browser",
     "//ios/public/provider/chrome/browser/signin",
     "//net",
+  ]
+  public_deps = [
+    "//ios/chrome/browser/ui/authentication",
   ]
   libs = [ "UIKit.framework" ]
 }

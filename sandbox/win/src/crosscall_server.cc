@@ -7,14 +7,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
 #include <string>
 #include <vector>
 
-#include "base/atomicops.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/crosscall_params.h"
+
+// See comment in atomicops.h. This is needed any time windows.h is included
+// after atomicops.h.
+#undef MemoryBarrier
 
 // This code performs the ipc message validation. Potential security flaws
 // on the ipc are likelier to be found in this code than in the rest of
@@ -157,7 +161,7 @@ CrossCallParamsEx* CrossCallParamsEx::CreateFromBuffer(void* buffer_base,
     // Avoid compiler optimizations across this point. Any value stored in
     // memory should be stored for real, and values previously read from memory
     // should be actually read.
-    base::subtle::MemoryBarrier();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
 
     min_declared_size =
         sizeof(CrossCallParams) + ((param_count + 1) * sizeof(ParamInfo));
@@ -177,19 +181,23 @@ CrossCallParamsEx* CrossCallParamsEx::CreateFromBuffer(void* buffer_base,
     return nullptr;
   }
 
-  const char* last_byte = &backing_mem[declared_size];
-  const char* first_byte = &backing_mem[min_declared_size];
+  // Here and below we're making use of uintptr_t to have well-defined integer
+  // overflow when doing pointer arithmetic.
+  auto backing_mem_ptr = reinterpret_cast<uintptr_t>(backing_mem);
+  auto last_byte = reinterpret_cast<uintptr_t>(&backing_mem[declared_size]);
+  auto first_byte =
+      reinterpret_cast<uintptr_t>(&backing_mem[min_declared_size]);
 
   // Verify here that all and each parameters make sense. This is done in the
   // local copy.
   for (uint32_t ix = 0; ix != param_count; ++ix) {
     uint32_t size = 0;
     ArgType type;
-    char* address = reinterpret_cast<char*>(
+    auto address = reinterpret_cast<uintptr_t>(
         copied_params->GetRawParameter(ix, &size, &type));
     if ((!address) ||                                     // No null params.
         (INVALID_TYPE >= type) || (LAST_TYPE <= type) ||  // Unknown type.
-        (address < backing_mem) ||         // Start cannot point before buffer.
+        (address < backing_mem_ptr) ||     // Start cannot point before buffer.
         (address < first_byte) ||          // Start cannot point too low.
         (address > last_byte) ||           // Start cannot point past buffer.
         ((address + size) < address) ||    // Invalid size.

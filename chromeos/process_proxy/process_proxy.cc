@@ -9,12 +9,17 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/file_descriptor_posix.h"
 #include "base/files/file_util.h"
+#include "base/guid.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
@@ -27,8 +32,6 @@ enum PseudoTerminalFd {
   PT_MASTER_FD,
   PT_SLAVE_FD
 };
-
-const int kInvalidFd = -1;
 
 void StopOutputWatcher(
     std::unique_ptr<chromeos::ProcessOutputWatcher> watcher) {
@@ -45,23 +48,25 @@ ProcessProxy::ProcessProxy() : process_launched_(false), callback_set_(false) {
   ClearFdPair(pt_pair_);
 }
 
-int ProcessProxy::Open(const std::string& command) {
+bool ProcessProxy::Open(const base::CommandLine& cmdline,
+                        const std::string& user_id_hash,
+                        std::string* id) {
   if (process_launched_)
-    return -1;
+    return false;
 
   if (!CreatePseudoTerminalPair(pt_pair_)) {
-    return -1;
+    return false;
   }
 
-  int process_id = LaunchProcess(command, pt_pair_[PT_SLAVE_FD]);
-  process_launched_ = process_id >= 0;
+  process_launched_ =
+      LaunchProcess(cmdline, user_id_hash, pt_pair_[PT_SLAVE_FD], id);
 
   if (process_launched_) {
     CloseFd(&pt_pair_[PT_SLAVE_FD]);
   } else {
     CloseFdPair(pt_pair_);
   }
-  return process_id;
+  return process_launched_;
 }
 
 bool ProcessProxy::StartWatchingOutput(
@@ -89,8 +94,8 @@ bool ProcessProxy::StartWatchingOutput(
       master_copy, base::Bind(&ProcessProxy::OnProcessOutput, this)));
 
   watcher_runner_->PostTask(
-      FROM_HERE, base::Bind(&ProcessOutputWatcher::Start,
-                            base::Unretained(output_watcher_.get())));
+      FROM_HERE, base::BindOnce(&ProcessOutputWatcher::Start,
+                                base::Unretained(output_watcher_.get())));
 
   return true;
 }
@@ -102,8 +107,8 @@ void ProcessProxy::OnProcessOutput(ProcessOutputType type,
     return;
 
   callback_runner_->PostTask(
-      FROM_HERE, base::Bind(&ProcessProxy::CallOnProcessOutputCallback, this,
-                            type, output, callback));
+      FROM_HERE, base::BindOnce(&ProcessProxy::CallOnProcessOutputCallback,
+                                this, type, output, callback));
 }
 
 void ProcessProxy::CallOnProcessOutputCallback(ProcessOutputType type,
@@ -133,7 +138,7 @@ void ProcessProxy::StopWatching() {
 
   watcher_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&StopOutputWatcher, base::Passed(&output_watcher_)));
+      base::BindOnce(&StopOutputWatcher, std::move(output_watcher_)));
 }
 
 void ProcessProxy::Close() {
@@ -145,7 +150,8 @@ void ProcessProxy::Close() {
   callback_.Reset();
   callback_runner_ = NULL;
 
-  process_->Terminate(0, true /* wait */);
+  process_.Terminate(0, /* wait */ false);
+  base::EnsureProcessTerminated(std::move(process_));
 
   StopWatching();
   CloseFdPair(pt_pair_);
@@ -219,7 +225,10 @@ bool ProcessProxy::CreatePseudoTerminalPair(int *pt_pair) {
   return true;
 }
 
-int ProcessProxy::LaunchProcess(const std::string& command, int slave_fd) {
+bool ProcessProxy::LaunchProcess(const base::CommandLine& cmdline,
+                                 const std::string& user_id_hash,
+                                 int slave_fd,
+                                 std::string* id) {
   base::LaunchOptions options;
 
   // Redirect crosh  process' output and input so we can read it.
@@ -231,16 +240,28 @@ int ProcessProxy::LaunchProcess(const std::string& command, int slave_fd) {
   options.allow_new_privs = base::CommandLine::ForCurrentProcess()->
       HasSwitch(chromeos::switches::kSystemInDevMode);
   options.ctrl_terminal_fd = slave_fd;
-  options.environ["TERM"] = "xterm";
+  // TODO(vapier): Ideally we'd just use the env settings from hterm itself.
+  // We can't let the user inject any env var they want, but we should be able
+  // to filter the $TERM value dynamically.
+  options.environment["TERM"] = "xterm-256color";
+  options.environment["CROS_USER_ID_HASH"] = user_id_hash;
 
   // Launch the process.
-  process_.reset(new base::Process(base::LaunchProcess(
-      base::CommandLine(base::FilePath(command)), options)));
+  process_ = base::LaunchProcess(cmdline, options);
+
+  // If the process is valid, generate a new random id.
+  // https://crbug.com/352465
+  if (process_.IsValid()) {
+    // We use the GUID API as it's trivial and works well enough.
+    // We prepend the pid to avoid random number collisions.  It should be a
+    // guaranteed unique id for the life of this Chrome session.
+    *id = std::to_string(process_.Pid()) + "-" + base::GenerateGUID();
+  }
 
   // TODO(rvargas) crbug/417532: This is somewhat wrong but the interface of
   // Open vends pid_t* so ownership is quite vague anyway, and Process::Close
   // doesn't do much in POSIX.
-  return process_->IsValid() ? process_->Pid() : -1;
+  return process_.IsValid();
 }
 
 void ProcessProxy::CloseFdPair(int* pipe) {
@@ -249,16 +270,20 @@ void ProcessProxy::CloseFdPair(int* pipe) {
 }
 
 void ProcessProxy::CloseFd(int* fd) {
-  if (*fd != kInvalidFd) {
+  if (*fd != base::kInvalidFd) {
     if (IGNORE_EINTR(close(*fd)) != 0)
       DPLOG(WARNING) << "close fd failed.";
   }
-  *fd = kInvalidFd;
+  *fd = base::kInvalidFd;
 }
 
 void ProcessProxy::ClearFdPair(int* pipe) {
-  pipe[PT_MASTER_FD] = kInvalidFd;
-  pipe[PT_SLAVE_FD] = kInvalidFd;
+  pipe[PT_MASTER_FD] = base::kInvalidFd;
+  pipe[PT_SLAVE_FD] = base::kInvalidFd;
+}
+
+base::ProcessHandle ProcessProxy::GetProcessHandleForTesting() {
+  return process_.IsValid() ? process_.Handle() : base::kNullProcessHandle;
 }
 
 }  // namespace chromeos

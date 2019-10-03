@@ -7,13 +7,13 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/prefs/pref_service.h"
-#include "components/sync/base/experiments.h"
 #include "components/sync/driver/sync_client.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/model/sync_error.h"
@@ -22,22 +22,25 @@
 namespace browser_sync {
 
 AutofillProfileDataTypeController::AutofillProfileDataTypeController(
-    scoped_refptr<base::SingleThreadTaskRunner> db_thread,
+    scoped_refptr<base::SequencedTaskRunner> db_thread,
     const base::Closure& dump_stack,
+    syncer::SyncService* sync_service,
     syncer::SyncClient* sync_client,
+    const PersonalDataManagerProvider& pdm_provider,
     const scoped_refptr<autofill::AutofillWebDataService>& web_data_service)
     : AsyncDirectoryTypeController(syncer::AUTOFILL_PROFILE,
                                    dump_stack,
+                                   sync_service,
                                    sync_client,
                                    syncer::GROUP_DB,
                                    std::move(db_thread)),
-      sync_client_(sync_client),
+      pdm_provider_(pdm_provider),
       web_data_service_(web_data_service),
       callback_registered_(false),
       currently_enabled_(IsEnabled()) {
-  pref_registrar_.Init(sync_client_->GetPrefService());
+  pref_registrar_.Init(sync_client->GetPrefService());
   pref_registrar_.Add(
-      autofill::prefs::kAutofillEnabled,
+      autofill::prefs::kAutofillProfileEnabled,
       base::Bind(&AutofillProfileDataTypeController::OnUserPrefChanged,
                  base::AsWeakPtr(this)));
 }
@@ -51,7 +54,7 @@ void AutofillProfileDataTypeController::OnPersonalDataChanged() {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(state(), MODEL_STARTING);
 
-  sync_client_->GetPersonalDataManager()->RemoveObserver(this);
+  pdm_provider_.Run()->RemoveObserver(this);
 
   if (!web_data_service_)
     return;
@@ -72,16 +75,14 @@ bool AutofillProfileDataTypeController::StartModels() {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(state(), MODEL_STARTING);
 
-  if (!IsEnabled()) {
-    DisableForPolicy();
+  if (!IsEnabled())
     return false;
-  }
+
+  autofill::PersonalDataManager* personal_data = pdm_provider_.Run();
 
   // Waiting for the personal data is subtle:  we do this as the PDM resets
   // its cache of unique IDs once it gets loaded. If we were to proceed with
   // association, the local ids in the mappings would wind up colliding.
-  autofill::PersonalDataManager* personal_data =
-      sync_client_->GetPersonalDataManager();
   if (!personal_data->IsDataLoaded()) {
     personal_data->AddObserver(this);
     return false;
@@ -105,7 +106,7 @@ bool AutofillProfileDataTypeController::StartModels() {
 
 void AutofillProfileDataTypeController::StopModels() {
   DCHECK(CalledOnValidThread());
-  sync_client_->GetPersonalDataManager()->RemoveObserver(this);
+  pdm_provider_.Run()->RemoveObserver(this);
 }
 
 bool AutofillProfileDataTypeController::ReadyForStart() const {
@@ -121,30 +122,15 @@ void AutofillProfileDataTypeController::OnUserPrefChanged() {
     return;  // No change to sync state.
   currently_enabled_ = new_enabled;
 
-  if (currently_enabled_) {
-    // The preference was just enabled. Trigger a reconfiguration. This will do
-    // nothing if the type isn't preferred.
-    syncer::SyncService* sync_service = sync_client_->GetSyncService();
-    sync_service->ReenableDatatype(type());
-  } else {
-    DisableForPolicy();
-  }
+  sync_service()->ReadyForStartChanged(type());
 }
 
 bool AutofillProfileDataTypeController::IsEnabled() {
   DCHECK(CalledOnValidThread());
 
   // Require the user-visible pref to be enabled to sync Autofill Profile data.
-  PrefService* ps = sync_client_->GetPrefService();
-  return ps->GetBoolean(autofill::prefs::kAutofillEnabled);
-}
-
-void AutofillProfileDataTypeController::DisableForPolicy() {
-  if (state() != NOT_RUNNING && state() != STOPPING) {
-    CreateErrorHandler()->OnUnrecoverableError(
-        syncer::SyncError(FROM_HERE, syncer::SyncError::DATATYPE_POLICY_ERROR,
-                          "Profile syncing is disabled by policy.", type()));
-  }
+  return autofill::prefs::IsProfileAutofillEnabled(
+      sync_client()->GetPrefService());
 }
 
 }  // namespace browser_sync

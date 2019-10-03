@@ -5,29 +5,50 @@
 #ifndef CHROME_COMMON_MAC_APP_MODE_COMMON_H_
 #define CHROME_COMMON_MAC_APP_MODE_COMMON_H_
 
-#import <Foundation/Foundation.h>
+#include <CoreServices/CoreServices.h>
 
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
+#include "base/strings/stringize_macros.h"
+
+#ifdef __OBJC__
+@class NSString;
+#else
+class NSString;
+#endif
 
 // This file contains constants, interfaces, etc. which are common to the
 // browser application and the app mode loader (a.k.a. shim).
 
+// The version of the ChromeAppModeInfo struct below. If the format of the
+// struct ever changes, be sure to update the APP_SHIM_VERSION_NUMBER here and
+// the corresponding line in //chrome/app/framework.order .
+#define APP_SHIM_VERSION_NUMBER 6
+
+// All the other macro magic to make APP_SHIM_VERSION_NUMBER usable.
+#define APP_MODE_CONCAT(a, b) a##b
+#define APP_MODE_CONCAT2(a, b) APP_MODE_CONCAT(a, b)
+#define APP_SHIM_ENTRY_POINT_NAME \
+  APP_MODE_CONCAT2(ChromeAppModeStart_v, APP_SHIM_VERSION_NUMBER)
+#define APP_SHIM_ENTRY_POINT_NAME_STRING STRINGIZE(APP_SHIM_ENTRY_POINT_NAME)
+
 namespace app_mode {
 
-// These are keys for an Apple Event ping that the app shim process sends to
-// Chrome to get confirmation that Chrome is alive. The main Chrome process
-// doesn't need to register any handlers for them -- the event is just sent for
-// the empty reply that's automatically returned by the system.
-const AEEventClass kAEChromeAppClass = 'cApp';
-const AEEventID kAEChromeAppPing = 'ping';
+// Mach message ID used by the shim to connect to Chrome.
+constexpr mach_msg_id_t kBootstrapMsgId = 'apps';
 
-// The IPC socket used to communicate between app shims and Chrome will be
-// created under a temporary directory with this name.
-extern const char kAppShimSocketShortName[];
-// A symlink to allow the app shim to find the socket will be created under the
-// user data dir with this name.
-extern const char kAppShimSocketSymlinkName[];
+// Name fragment of the Mach server endpoint published in the bootstrap
+// namespace. The full name is "<bundle-id>.apps.<profile_path_hash>".
+// <bundle-id> is the BaseBundleID() and <profile_path_hash> is an MD5 hash
+// of the full profile directory path.
+extern const char kAppShimBootstrapNameFragment[];
+
+// TODO(rsesek): Delete this after ensuring the file has been cleaned up.
+// The name of a file placed in the profile directory to indicate that app
+// shims should connect over Mach IPC rather than a UNIX domain socket. If
+// a file named this does not exist, app shims will fall back to the UNIX
+// domain socket.
+extern const char kMojoChannelMacSignalFile[];
 
 // A symlink used to store the version string of the currently running Chrome.
 // The shim will read this to determine which version of the framework to load.
@@ -83,6 +104,11 @@ extern NSString* const kCrBundleVersionKey;
 // (e.g. Content/Resources/en.lproj/)
 extern NSString* const kLSHasLocalizedDisplayNameKey;
 
+// Key specifying whether or not high DPI display is supported at all. If this
+// is not set to true then all graphics (including system dialogs and display
+// property queries) will behave as though all displays are low DPI.
+extern NSString* const kNSHighResolutionCapableKey;
+
 // The key under which the browser's bundle ID will be stored in the
 // app mode launcher bundle's Info.plist.
 extern NSString* const kBrowserBundleIDKey;
@@ -109,6 +135,10 @@ extern NSString* const kCrAppModeProfileNameKey;
 // system using this key.
 extern NSString* const kLastRunAppBundlePathPrefsKey;
 
+// The key for the major and minor version of an app.
+extern NSString* const kCrAppModeMajorVersionKey;
+extern NSString* const kCrAppModeMinorVersionKey;
+
 // Placeholders used in the app mode loader bundle' Info.plist:
 extern NSString* const kShortcutIdPlaceholder; // Extension shortcut ID.
 extern NSString* const kShortcutNamePlaceholder; // Extension name.
@@ -116,60 +146,51 @@ extern NSString* const kShortcutURLPlaceholder;
 // Bundle ID of the Chrome browser bundle.
 extern NSString* const kShortcutBrowserBundleIDPlaceholder;
 
-// Current major/minor version numbers of |ChromeAppModeInfo| (defined below).
-const unsigned kCurrentChromeAppModeInfoMajorVersion = 1;
-const unsigned kCurrentChromeAppModeInfoMinorVersion = 3;
-
 // The structure used to pass information from the app mode loader to the
-// (browser) framework. This is versioned using major and minor version numbers,
-// written below as v<major>.<minor>. Version-number checking is done by the
-// framework, and the framework must accept all structures with the same major
-// version number. It may refuse to load if the major version of the structure
-// is different from the one it accepts.
+// (browser) framework via the entry point ChromeAppModeStart_vN.
+//
+// As long as the name of the entry point is kept constant and
+// APP_SHIM_VERSION_NUMBER does not change, the layout of this structure
+// **MUST NOT CHANGE**, even across Chromium versions. This implies that no
+// base/ or std:: types may be used in this structure.
+//
+// However, this structure *may* be changed as long as the
+// APP_SHIM_VERSION_NUMBER above is updated; don't forget to also update the
+// corresponding line in //chrome/app/framework.order .
 struct ChromeAppModeInfo {
- public:
-  ChromeAppModeInfo();
-  ~ChromeAppModeInfo();
+  // Original |argc| and |argv| of the App Mode shortcut.
+  int argc;
+  char** argv;
 
-  // Major and minor version number of this structure.
-  unsigned major_version;  // Required: all versions
-  unsigned minor_version;  // Required: all versions
+  // Path of the Chromium Framework, as UTF-8. This will be the input to
+  // SetOverrideFrameworkBundlePath().
+  const char* chrome_framework_path;
 
-  // Original |argc| and |argv|.
-  int argc;  // Required: v1.0
-  char** argv;  // Required: v1.0
-
-  // Versioned path to the browser which is being loaded.
-  base::FilePath chrome_versioned_path;  // Required: v1.0
-
-  // Path to Chrome app bundle.
-  base::FilePath chrome_outer_bundle_path;  // Required: v1.0
+  // Path to Chromium app bundle, as UTF-8.
+  const char* chrome_outer_bundle_path;
 
   // Information about the App Mode shortcut:
 
-  // Path to the App Mode Loader application bundle that launched the process.
-  base::FilePath app_mode_bundle_path;  // Optional: v1.0
+  // Path to the App Mode Loader application bundle that launched the process,
+  // as UTF-8.
+  const char* app_mode_bundle_path;
 
-  // Short ID string, preferably derived from |app_mode_short_name|. Should be
-  // safe for the file system.
-  std::string app_mode_id;  // Required: v1.0
+  // Short UTF-8 ID string, preferably derived from |app_mode_short_name|.
+  // Should be safe for the file system.
+  const char* app_mode_id;
 
-  // Unrestricted (e.g., several-word) UTF8-encoded name for the shortcut.
-  base::string16 app_mode_name;  // Optional: v1.0
+  // Unrestricted (e.g., several-word) UTF-8-encoded name for the shortcut.
+  const char* app_mode_name;
 
-  // URL for the shortcut. Must be a valid URL.
-  std::string app_mode_url;  // Required: v1.0
+  // URL for the shortcut. Must be a valid UTF-8-encoded URL.
+  const char* app_mode_url;
 
-  // Path to the app's user data directory.
-  base::FilePath user_data_dir;
+  // Path to the app's user data directory, as UTF-8.
+  const char* user_data_dir;
 
-  // Directory of the profile associated with the app.
-  base::FilePath profile_dir;
+  // Directory of the profile associated with the app, as UTF-8.
+  const char* profile_dir;
 };
-
-// Check that the socket and its parent directory have the correct permissions
-// and are owned by the user.
-void VerifySocketPermissions(const base::FilePath& socket_path);
 
 }  // namespace app_mode
 

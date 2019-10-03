@@ -13,7 +13,7 @@
 #include "ash/display/window_tree_host_manager.h"
 #include "base/macros.h"
 #include "ui/display/display_observer.h"
-#include "ui/display/manager/chromeos/display_configurator.h"
+#include "ui/display/manager/display_configurator.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -24,17 +24,18 @@ class Widget;
 namespace ash {
 
 // An event filter which handles system level gesture events. Objects of this
-// class manage their own lifetime.
-class ASH_EXPORT TouchObserverHUD
+// class manage their own lifetime. TODO(estade): find a more descriptive name
+// for this class that aligns with its subclasses (or consider using composition
+// over inheritance).
+class ASH_EXPORT TouchObserverHud
     : public ui::EventHandler,
       public views::WidgetObserver,
       public display::DisplayObserver,
       public display::DisplayConfigurator::Observer,
       public WindowTreeHostManager::Observer {
  public:
-  // Called to clear touch points and traces from the screen. Default
-  // implementation does nothing. Sub-classes should implement appropriately.
-  virtual void Clear();
+  // Called to clear touch points and traces from the screen.
+  virtual void Clear() = 0;
 
   // Removes the HUD from the screen.
   void Remove();
@@ -44,9 +45,9 @@ class ASH_EXPORT TouchObserverHUD
  protected:
   // |widget_name| is set on Widget::InitParams::name, and is used purely for
   // debugging.
-  TouchObserverHUD(aura::Window* initial_root, const std::string& widget_name);
+  TouchObserverHud(aura::Window* initial_root, const std::string& widget_name);
 
-  ~TouchObserverHUD() override;
+  ~TouchObserverHud() override;
 
   virtual void SetHudForRootWindowController(
       RootWindowController* controller) = 0;
@@ -55,23 +56,22 @@ class ASH_EXPORT TouchObserverHUD
 
   views::Widget* widget() { return widget_; }
 
-  // Overriden from ui::EventHandler.
-  void OnTouchEvent(ui::TouchEvent* event) override;
+  // ui::EventHandler:
+  void OnTouchEvent(ui::TouchEvent* event) override = 0;
 
-  // Overridden from views::WidgetObserver.
+  // views::WidgetObserver:
   void OnWidgetDestroying(views::Widget* widget) override;
 
-  // Overridden from display::DisplayObserver.
-  void OnDisplayAdded(const display::Display& new_display) override;
+  // display::DisplayObserver:
   void OnDisplayRemoved(const display::Display& old_display) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
-  // Overriden from display::DisplayConfigurator::Observer.
+  // display::DisplayConfigurator::Observer:
   void OnDisplayModeChanged(
       const display::DisplayConfigurator::DisplayStateList& outputs) override;
 
-  // Overriden form WindowTreeHostManager::Observer.
+  // WindowTreeHostManager::Observer:
   void OnDisplaysInitialized() override;
   void OnDisplayConfigurationChanging() override;
   void OnDisplayConfigurationChanged() override;
@@ -84,7 +84,7 @@ class ASH_EXPORT TouchObserverHUD
 
   views::Widget* widget_;
 
-  DISALLOW_COPY_AND_ASSIGN(TouchObserverHUD);
+  DISALLOW_COPY_AND_ASSIGN(TouchObserverHud);
 };
 
 }  // namespace ash

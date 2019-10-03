@@ -19,18 +19,18 @@ class H264BitstreamBufferAppendBitsTest
 // TODO(posciak): More tests!
 
 TEST_P(H264BitstreamBufferAppendBitsTest, AppendAndVerifyBits) {
-  H264BitstreamBuffer b;
+  auto b = base::MakeRefCounted<H264BitstreamBuffer>();
   uint64_t num_bits = GetParam();
   // TODO(posciak): Tests for >64 bits.
   ASSERT_LE(num_bits, 64u);
   uint64_t num_bytes = (num_bits + 7) / 8;
 
-  b.AppendBits(num_bits, kTestPattern);
-  b.FlushReg();
+  b->AppendBits(num_bits, kTestPattern);
+  b->FlushReg();
 
-  EXPECT_EQ(b.BytesInBuffer(), num_bytes);
+  EXPECT_EQ(b->BytesInBuffer(), num_bytes);
 
-  uint8_t* ptr = b.data();
+  const uint8_t* ptr = b->data();
   uint64_t got = 0;
   uint64_t expected = kTestPattern;
 
@@ -51,8 +51,8 @@ TEST_P(H264BitstreamBufferAppendBitsTest, AppendAndVerifyBits) {
   EXPECT_EQ(got, expected) << std::hex << "0x" << got << " vs 0x" << expected;
 }
 
-INSTANTIATE_TEST_CASE_P(AppendNumBits,
-                        H264BitstreamBufferAppendBitsTest,
-                        ::testing::Range(static_cast<uint64_t>(1),
-                                         static_cast<uint64_t>(65)));
+INSTANTIATE_TEST_SUITE_P(AppendNumBits,
+                         H264BitstreamBufferAppendBitsTest,
+                         ::testing::Range(static_cast<uint64_t>(1),
+                                          static_cast<uint64_t>(65)));
 }  // namespace media

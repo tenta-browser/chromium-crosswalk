@@ -4,18 +4,24 @@
 
 #include "components/exo/keyboard.h"
 
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/public/cpp/app_types.h"
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/exo/input_trace.h"
 #include "components/exo/keyboard_delegate.h"
 #include "components/exo/keyboard_device_configuration_delegate.h"
 #include "components/exo/seat.h"
+#include "components/exo/shell_surface.h"
+#include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/window.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/events/base_event_utils.h"
-#include "ui/events/devices/input_device.h"
-#include "ui/events/devices/input_device_manager.h"
 #include "ui/events/event.h"
 #include "ui/views/widget/widget.h"
 
@@ -38,10 +44,9 @@ const struct {
   ui::KeyboardCode keycode;
   int modifiers;
 } kReservedAccelerators[] = {
-    {ui::VKEY_SPACE, ui::EF_CONTROL_DOWN},
-    {ui::VKEY_SPACE, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN},
     {ui::VKEY_F13, ui::EF_NONE},
-    {ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN}};
+    {ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN},
+    {ui::VKEY_Z, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN}};
 
 bool ProcessAccelerator(Surface* surface, const ui::KeyEvent* event) {
   views::Widget* widget =
@@ -54,6 +59,10 @@ bool ProcessAccelerator(Surface* surface, const ui::KeyEvent* event) {
 }
 
 bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
+  // When IME is blocked, Exo can handle any key events.
+  if (WMHelper::GetInstance()->IsImeBlocked(focus->window()))
+    return false;
+
   // Check if IME consumed the event, to avoid it to be doubly processed.
   // First let us see whether IME is active and is in text input mode.
   views::Widget* widget =
@@ -69,24 +78,29 @@ bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
   if (event->key_code() == ui::VKEY_PROCESSKEY)
     return true;
 
+  // Except for PROCESSKEY, never discard "key-up" events. A keydown not paired
+  // by a keyup can trigger a never-ending key repeat in the client, which can
+  // never be desirable.
+  if (event->type() == ui::ET_KEY_RELEASED)
+    return false;
+
   // Case 2:
   // When IME ate a key event and generated a single character input, it leaves
   // the key event as-is, and in addition calls the active ui::TextInputClient's
   // InsertChar() method. (In our case, arc::ArcImeService::InsertChar()).
   //
-  // In Chrome OS (and Web) convention, the two calls wont't cause duplicates,
+  // In Chrome OS (and Web) convention, the two calls won't cause duplicates,
   // because key-down events do not mean any character inputs there.
   // (InsertChar issues a DOM "keypress" event, which is distinct from keydown.)
   // Unfortunately, this is not necessary the case for our clients that may
   // treat keydown as a trigger of text inputs. We need suppression for keydown.
-  if (event->type() == ui::ET_KEY_PRESSED) {
-    // Same condition as components/arc/ime/arc_ime_service.cc#InsertChar.
-    const base::char16 ch = event->GetCharacter();
-    const bool is_control_char =
-        (0x00 <= ch && ch <= 0x1f) || (0x7f <= ch && ch <= 0x9f);
-    if (!is_control_char && !ui::IsSystemKeyModifier(event->flags()))
-      return true;
-  }
+  //
+  // Same condition as components/arc/ime/arc_ime_service.cc#InsertChar.
+  const base::char16 ch = event->GetCharacter();
+  const bool is_control_char =
+      (0x00 <= ch && ch <= 0x1f) || (0x7f <= ch && ch <= 0x9f);
+  if (!is_control_char && !ui::IsSystemKeyModifier(event->flags()))
+    return true;
 
   // Case 3:
   // Workaround for apps that doesn't handle hardware keyboard events well.
@@ -106,23 +120,37 @@ bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
   return false;
 }
 
-bool IsPhysicalKeyboardEnabled() {
-  // The internal keyboard is enabled if tablet mode is not enabled.
-  if (!WMHelper::GetInstance()->IsTabletModeWindowManagerEnabled())
-    return true;
-
-  for (auto& keyboard :
-       ui::InputDeviceManager::GetInstance()->GetKeyboardDevices()) {
-    if (keyboard.type != ui::InputDeviceType::INPUT_DEVICE_INTERNAL)
-      return true;
-  }
-  return false;
+bool IsVirtualKeyboardEnabled() {
+  return keyboard::GetAccessibilityKeyboardEnabled() ||
+         keyboard::GetTouchKeyboardEnabled() ||
+         (keyboard::KeyboardUIController::HasInstance() &&
+          keyboard::KeyboardUIController::Get()->IsEnableFlagSet(
+              keyboard::KeyboardEnableFlag::kCommandLineEnabled));
 }
 
 bool IsReservedAccelerator(const ui::KeyEvent* event) {
   for (const auto& accelerator : kReservedAccelerators) {
     if (event->flags() == accelerator.modifiers &&
         event->key_code() == accelerator.keycode) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Returns false if an accelerator is not reserved or it's not enabled.
+bool ProcessAcceleratorIfReserved(Surface* surface, ui::KeyEvent* event) {
+  return IsReservedAccelerator(event) && ProcessAccelerator(surface, event);
+}
+
+// Returns true if surface belongs to an ARC application.
+// TODO(yhanada, https://crbug.com/847500): Remove this when we find a way
+// to fix https://crbug.com/847500 without breaking ARC++ apps.
+bool IsArcSurface(Surface* surface) {
+  aura::Window* window = surface->window();
+  for (; window; window = window->parent()) {
+    if (window->GetProperty(aura::client::kAppType) ==
+        static_cast<int>(ash::AppType::ARC_APP)) {
       return true;
     }
   }
@@ -140,11 +168,9 @@ Keyboard::Keyboard(KeyboardDelegate* delegate, Seat* seat)
       expiration_delay_for_pending_key_acks_(base::TimeDelta::FromMilliseconds(
           kExpirationDelayForPendingKeyAcksMs)),
       weak_ptr_factory_(this) {
-  auto* helper = WMHelper::GetInstance();
   AddEventHandler();
   seat_->AddObserver(this);
-  helper->AddTabletModeObserver(this);
-  helper->AddInputDeviceEventObserver(this);
+  keyboard::KeyboardUIController::Get()->AddObserver(this);
   OnSurfaceFocused(seat_->GetFocusedSurface());
 }
 
@@ -153,11 +179,9 @@ Keyboard::~Keyboard() {
     observer.OnKeyboardDestroying(this);
   if (focus_)
     focus_->RemoveSurfaceObserver(this);
-  auto* helper = WMHelper::GetInstance();
   RemoveEventHandler();
   seat_->RemoveObserver(this);
-  helper->RemoveTabletModeObserver(this);
-  helper->RemoveInputDeviceEventObserver(this);
+  keyboard::KeyboardUIController::Get()->RemoveObserver(this);
 }
 
 bool Keyboard::HasDeviceConfigurationDelegate() const {
@@ -167,7 +191,7 @@ bool Keyboard::HasDeviceConfigurationDelegate() const {
 void Keyboard::SetDeviceConfigurationDelegate(
     KeyboardDeviceConfigurationDelegate* delegate) {
   device_configuration_delegate_ = delegate;
-  OnKeyboardDeviceConfigurationChanged();
+  OnKeyboardEnabledChanged(IsVirtualKeyboardEnabled());
 }
 
 void Keyboard::AddObserver(KeyboardObserver* observer) {
@@ -179,7 +203,7 @@ bool Keyboard::HasObserver(KeyboardObserver* observer) const {
 }
 
 void Keyboard::RemoveObserver(KeyboardObserver* observer) {
-  observer_list_.HasObserver(observer);
+  observer_list_.RemoveObserver(observer);
 }
 
 void Keyboard::SetNeedKeyboardKeyAcks(bool need_acks) {
@@ -206,21 +230,60 @@ void Keyboard::AckKeyboardKey(uint32_t serial, bool handled) {
 // ui::EventHandler overrides:
 
 void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
-  int modifier_flags = event->flags() & kModifierMask;
-  if (modifier_flags != modifier_flags_) {
-    modifier_flags_ = modifier_flags;
-    if (focus_)
-      delegate_->OnKeyboardModifiers(modifier_flags_);
+  if (!focus_)
+    return;
+
+  // Ignore synthetic key repeat events.
+  if (event->is_repeat())
+    return;
+
+  // If the event target is not an exo::Surface, let another handler process the
+  // event. This check may not be necessary once https://crbug.com/624168 is
+  // resolved.
+  if (!GetShellMainSurface(static_cast<aura::Window*>(event->target())) &&
+      !Surface::AsSurface(static_cast<aura::Window*>(event->target()))) {
+    return;
+  }
+
+  TRACE_EXO_INPUT_EVENT(event);
+
+  // Process reserved accelerators before sending it to client.
+  if (ProcessAcceleratorIfReserved(focus_, event)) {
+    // Discard a key press event if it's a reserved accelerator and it's
+    // enabled.
+    event->SetHandled();
   }
 
   // When IME ate a key event, we use the event only for tracking key states and
   // ignore for further processing. Otherwise it is handled in two places (IME
   // and client) and causes undesired behavior.
-  bool consumed_by_ime = focus_ ? ConsumedByIme(focus_, event) : false;
+  bool consumed_by_ime = ConsumedByIme(focus_, event);
+
+  // Always update modifiers.
+  int modifier_flags = event->flags() & kModifierMask;
+  if (modifier_flags != modifier_flags_) {
+    modifier_flags_ = modifier_flags;
+    delegate_->OnKeyboardModifiers(modifier_flags_);
+  }
+
+  // TODO(yhanada): This is a quick fix for https://crbug.com/859071. Remove
+  // ARC-specific code path once we can find a way to manage press/release
+  // events pair for synthetic events.
+  ui::DomCode physical_code =
+      seat_->physical_code_for_currently_processing_event();
+  if (physical_code == ui::DomCode::NONE && focus_belongs_to_arc_app_) {
+    // This key event is a synthetic event.
+    // Consider DomCode field of the event as a physical code
+    // for synthetic events when focus surface belongs to an ARC application.
+    physical_code = event->code();
+  }
 
   switch (event->type()) {
-    case ui::ET_KEY_PRESSED:
-      if (focus_ && !consumed_by_ime && !IsReservedAccelerator(event)) {
+    case ui::ET_KEY_PRESSED: {
+      // Process key press event if not already handled and not already pressed.
+      auto it = pressed_keys_.find(physical_code);
+      if (it == pressed_keys_.end() && !consumed_by_ime && !event->handled() &&
+          physical_code != ui::DomCode::NONE) {
         uint32_t serial =
             delegate_->OnKeyboardKey(event->time_stamp(), event->code(), true);
         if (are_keyboard_key_acks_needed_) {
@@ -230,12 +293,21 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
                             expiration_delay_for_pending_key_acks_}});
           event->SetHandled();
         }
+        // Keep track of both the physical code and potentially re-written
+        // code that this event generated.
+        pressed_keys_.insert({physical_code, event->code()});
       }
-      break;
-    case ui::ET_KEY_RELEASED:
-      if (focus_ && !consumed_by_ime && !IsReservedAccelerator(event)) {
+    } break;
+    case ui::ET_KEY_RELEASED: {
+      // Process key release event if currently pressed.
+      auto it = pressed_keys_.find(physical_code);
+      if (it != pressed_keys_.end()) {
+        // We use the code that was generate when the physical key was
+        // pressed rather than the current event code. This allows events
+        // to be re-written before dispatch, while still allowing the
+        // client to track the state of the physical keyboard.
         uint32_t serial =
-            delegate_->OnKeyboardKey(event->time_stamp(), event->code(), false);
+            delegate_->OnKeyboardKey(event->time_stamp(), it->second, false);
         if (are_keyboard_key_acks_needed_) {
           pending_key_acks_.insert(
               {serial,
@@ -243,8 +315,9 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
                             expiration_delay_for_pending_key_acks_}});
           event->SetHandled();
         }
+        pressed_keys_.erase(it);
       }
-      break;
+    } break;
     default:
       NOTREACHED();
       break;
@@ -267,29 +340,6 @@ void Keyboard::OnSurfaceDestroying(Surface* surface) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// ui::InputDeviceEventObserver overrides:
-
-void Keyboard::OnKeyboardDeviceConfigurationChanged() {
-  if (device_configuration_delegate_) {
-    device_configuration_delegate_->OnKeyboardTypeChanged(
-        IsPhysicalKeyboardEnabled());
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// ash::TabletModeObserver overrides:
-
-void Keyboard::OnTabletModeStarted() {
-  OnKeyboardDeviceConfigurationChanged();
-}
-
-void Keyboard::OnTabletModeEnding() {}
-
-void Keyboard::OnTabletModeEnded() {
-  OnKeyboardDeviceConfigurationChanged();
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // SeatObserver overrides:
 
 void Keyboard::OnSurfaceFocusing(Surface* gaining_focus) {}
@@ -304,6 +354,19 @@ void Keyboard::OnSurfaceFocused(Surface* gained_focus) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// ash::KeyboardControllerObserver overrides:
+
+void Keyboard::OnKeyboardEnabledChanged(bool enabled) {
+  if (device_configuration_delegate_) {
+    // Ignore kAndroidDisabled which affects |enabled| and just test for a11y
+    // and touch enabled keyboards. TODO(yhanada): Fix this using an Android
+    // specific KeyboardUI implementation. https://crbug.com/897655.
+    bool is_physical = !IsVirtualKeyboardEnabled();
+    device_configuration_delegate_->OnKeyboardTypeChanged(is_physical);
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Keyboard, private:
 
 void Keyboard::SetFocus(Surface* surface) {
@@ -315,10 +378,12 @@ void Keyboard::SetFocus(Surface* surface) {
   }
   if (surface) {
     modifier_flags_ = seat_->modifier_flags() & kModifierMask;
+    pressed_keys_ = seat_->pressed_keys();
     delegate_->OnKeyboardModifiers(modifier_flags_);
-    delegate_->OnKeyboardEnter(surface, seat_->pressed_keys());
+    delegate_->OnKeyboardEnter(surface, pressed_keys_);
     focus_ = surface;
     focus_->AddSurfaceObserver(this);
+    focus_belongs_to_arc_app_ = IsArcSurface(surface);
   }
 }
 
@@ -326,7 +391,7 @@ void Keyboard::ProcessExpiredPendingKeyAcks() {
   DCHECK(process_expired_pending_key_acks_pending_);
   process_expired_pending_key_acks_pending_ = false;
 
-  // Check pending acks and process them as if it's not handled if
+  // Check pending acks and process them as if it is handled if
   // expiration time passed.
   base::TimeTicks current_time = base::TimeTicks::Now();
 
@@ -337,12 +402,8 @@ void Keyboard::ProcessExpiredPendingKeyAcks() {
     if (it->second.second > current_time)
       break;
 
+    // Expiration time has passed, assume the event was handled.
     pending_key_acks_.erase(it);
-
-    // |pending_key_acks_| may change and an iterator of it become invalid when
-    // |ProcessAccelerator| is called.
-    if (focus_)
-      ProcessAccelerator(focus_, &event);
   }
 
   if (pending_key_acks_.empty())

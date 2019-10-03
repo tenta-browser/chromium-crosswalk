@@ -32,11 +32,29 @@ class ContentSettingsInfo {
     INHERIT_IF_LESS_PERMISSIVE
   };
 
+  enum StorageBehavior {
+    // The setting is stored and used in future sessions.
+    PERSISTENT,
+    // The setting is only valid throughout the current session.
+    EPHEMERAL,
+  };
+
+  enum OriginRestriction {
+    // This flag indicates content types that only allow exceptions to be set
+    // on secure origins.
+    EXCEPTIONS_ON_SECURE_ORIGINS_ONLY,
+    // This flag indicates content types that allow exceptions to be set on
+    // secure and insecure origins.
+    EXCEPTIONS_ON_SECURE_AND_INSECURE_ORIGINS,
+  };
+
   // This object does not take ownership of |website_settings_info|.
   ContentSettingsInfo(const WebsiteSettingsInfo* website_settings_info,
                       const std::vector<std::string>& whitelisted_schemes,
                       const std::set<ContentSetting>& valid_settings,
-                      IncognitoBehavior incognito_behavior);
+                      IncognitoBehavior incognito_behavior,
+                      StorageBehavior storage_behavior,
+                      OriginRestriction origin_restriction);
   ~ContentSettingsInfo();
 
   const WebsiteSettingsInfo* website_settings_info() const {
@@ -53,12 +71,16 @@ class ContentSettingsInfo {
   bool IsDefaultSettingValid(ContentSetting setting) const;
 
   IncognitoBehavior incognito_behavior() const { return incognito_behavior_; }
+  StorageBehavior storage_behavior() const { return storage_behavior_; }
+  OriginRestriction origin_restriction() const { return origin_restriction_; }
 
  private:
   const WebsiteSettingsInfo* website_settings_info_;
   const std::vector<std::string> whitelisted_schemes_;
   const std::set<ContentSetting> valid_settings_;
   const IncognitoBehavior incognito_behavior_;
+  const StorageBehavior storage_behavior_;
+  const OriginRestriction origin_restriction_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingsInfo);
 };

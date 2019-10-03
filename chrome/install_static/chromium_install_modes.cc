@@ -4,6 +4,8 @@
 
 // Brand-specific constants and install modes for Chromium.
 
+#include "chrome/install_static/chromium_install_modes.h"
+
 #include <stdlib.h>
 
 #include "chrome/app/chrome_dll_resource.h"
@@ -22,6 +24,8 @@ const size_t kProductPathNameLength = _countof(kProductPathName) - 1;
 const wchar_t kBinariesAppGuid[] = L"";
 
 const wchar_t kBinariesPathName[] = L"Chromium Binaries";
+
+const char kSafeBrowsingName[] = "chromium";
 
 const InstallConstants kInstallModes[] = {
     // The primary (and only) install mode for Chromium.
@@ -43,6 +47,17 @@ const InstallConstants kInstallModes[] = {
          0x4EC9,
          {0xBD, 0x14, 0x8A, 0x0F, 0xDE, 0x97, 0x51,
           0x59}},  // Toast Activator CLSID.
+        {0xD133B120,
+         0x6DB4,
+         0x4D6B,
+         {0x8B, 0xFE, 0x83, 0xBF, 0x8C, 0xA1, 0xB1, 0xB0}},  // Elevator CLSID.
+
+        {0xb88c45b9,
+         0x8825,
+         0x4629,
+         {0xb8, 0x3e, 0x77, 0xcc, 0x67, 0xd9, 0xce,
+          0xed}},  // IElevator IID and TypeLib
+                   // {B88C45B9-8825-4629-B83E-77CC67D9CEED}.
         L"",       // Empty default channel name since no update integration.
         ChannelStrategy::UNSUPPORTED,
         true,   // Supports system-level installs.
@@ -51,6 +66,8 @@ const InstallConstants kInstallModes[] = {
         true,   // Supported multi-install.
         icon_resources::kApplicationIndex,  // App icon resource index.
         IDR_MAINFRAME,                      // App icon resource id.
+        L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
+        L"924012148-",  // App container sid prefix for sandbox.
     },
 };
 

@@ -26,6 +26,7 @@ struct DialSinkExtraData {
 
   DialSinkExtraData();
   DialSinkExtraData(const DialSinkExtraData& other);
+  DialSinkExtraData(DialSinkExtraData&& other);
   ~DialSinkExtraData();
 
   bool operator==(const DialSinkExtraData& other) const;
@@ -54,6 +55,7 @@ struct CastSinkExtraData {
 
   CastSinkExtraData();
   CastSinkExtraData(const CastSinkExtraData& other);
+  CastSinkExtraData(CastSinkExtraData&& other);
   ~CastSinkExtraData();
 
   bool operator==(const CastSinkExtraData& other) const;
@@ -73,26 +75,23 @@ class MediaSinkInternal {
 
   // Used to push instance of this class into vector.
   MediaSinkInternal(const MediaSinkInternal& other);
+  MediaSinkInternal(MediaSinkInternal&& other) noexcept;
 
   ~MediaSinkInternal();
 
   MediaSinkInternal& operator=(const MediaSinkInternal& other);
+  MediaSinkInternal& operator=(MediaSinkInternal&& other) noexcept;
   bool operator==(const MediaSinkInternal& other) const;
   bool operator!=(const MediaSinkInternal& other) const;
   // Sorted by sink id.
   bool operator<(const MediaSinkInternal& other) const;
 
-  // Used by mojo.
-  void set_sink_id(const MediaSink::Id& sink_id) { sink_.set_sink_id(sink_id); }
-  void set_name(const std::string& name) { sink_.set_name(name); }
-  void set_description(const std::string& description) {
-    sink_.set_description(description);
-  }
-  void set_domain(const std::string& domain) { sink_.set_domain(domain); }
-  void set_icon_type(SinkIconType icon_type) { sink_.set_icon_type(icon_type); }
-
   void set_sink(const MediaSink& sink);
   const MediaSink& sink() const { return sink_; }
+  MediaSink& sink() { return sink_; }
+
+  // TOOD(jrw): Use this method where appropriate.
+  const MediaSink::Id& id() const { return sink_.id(); }
 
   void set_dial_data(const DialSinkExtraData& dial_data);
 
@@ -103,14 +102,24 @@ class MediaSinkInternal {
 
   // Must only be called if the sink is a Cast sink.
   const CastSinkExtraData& cast_data() const;
+  CastSinkExtraData& cast_data();
+
+  // TOOD(jrw): Use this method where appropriate.
+  int cast_channel_id() const { return cast_data().cast_channel_id; }
 
   bool is_dial_sink() const { return sink_type_ == SinkType::DIAL; }
   bool is_cast_sink() const { return sink_type_ == SinkType::CAST; }
 
   static bool IsValidSinkId(const std::string& sink_id);
 
+  // Returns processed device id without "uuid:" and "-", e.g. input
+  // "uuid:6d238518-a574-eab1-017e-d0975c039081" and output
+  // "6d238518a574eab1017ed0975c039081"
+  static std::string ProcessDeviceUUID(const std::string& device_uuid);
+
  private:
   void InternalCopyConstructFrom(const MediaSinkInternal& other);
+  void InternalMoveConstructFrom(MediaSinkInternal&& other);
   void InternalCleanup();
 
   enum class SinkType { GENERIC, DIAL, CAST };

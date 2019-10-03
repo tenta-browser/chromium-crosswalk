@@ -46,7 +46,7 @@ WebSocketInflater::WebSocketInflater(size_t input_queue_capacity,
 bool WebSocketInflater::Initialize(int window_bits) {
   DCHECK_LE(8, window_bits);
   DCHECK_GE(15, window_bits);
-  stream_.reset(new z_stream);
+  stream_ = std::make_unique<z_stream>();
   memset(stream_.get(), 0, sizeof(*stream_));
   int result = inflateInit2(stream_.get(), -window_bits);
   if (result != Z_OK) {
@@ -86,8 +86,7 @@ bool WebSocketInflater::Finish() {
 }
 
 scoped_refptr<IOBufferWithSize> WebSocketInflater::GetOutput(size_t size) {
-  scoped_refptr<ShrinkableIOBufferWithSize> buffer =
-      new ShrinkableIOBufferWithSize(size);
+  auto buffer = base::MakeRefCounted<ShrinkableIOBufferWithSize>(size);
   size_t num_bytes_copied = 0;
 
   while (num_bytes_copied < size && output_buffer_.Size() > 0) {
@@ -97,7 +96,7 @@ scoped_refptr<IOBufferWithSize> WebSocketInflater::GetOutput(size_t size) {
     num_bytes_copied += num_bytes_to_copy;
     int result = InflateChokedInput();
     if (result != Z_OK && result != Z_BUF_ERROR)
-      return NULL;
+      return nullptr;
   }
   buffer->Shrink(num_bytes_copied);
   return buffer;
@@ -145,7 +144,7 @@ int WebSocketInflater::Inflate(const char* next_in,
 
 int WebSocketInflater::InflateChokedInput() {
   if (input_queue_.IsEmpty())
-    return InflateWithFlush(NULL, 0);
+    return InflateWithFlush(nullptr, 0);
 
   int result = Z_BUF_ERROR;
   while (!input_queue_.IsEmpty()) {
@@ -244,7 +243,7 @@ void WebSocketInflater::InputQueue::Push(const char* data, size_t size) {
   while (num_copied_bytes < size) {
     DCHECK(IsEmpty() || tail_of_last_buffer_ == capacity_);
 
-    buffers_.push_back(new IOBufferWithSize(capacity_));
+    buffers_.push_back(base::MakeRefCounted<IOBufferWithSize>(capacity_));
     tail_of_last_buffer_ = 0;
     num_copied_bytes +=
         PushToLastBuffer(&data[num_copied_bytes], size - num_copied_bytes);

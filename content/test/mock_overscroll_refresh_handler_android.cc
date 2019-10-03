@@ -13,7 +13,10 @@ MockOverscrollRefreshHandlerAndroid::MockOverscrollRefreshHandlerAndroid()
 
 MockOverscrollRefreshHandlerAndroid::~MockOverscrollRefreshHandlerAndroid() {}
 
-bool MockOverscrollRefreshHandlerAndroid::PullStart() {
+bool MockOverscrollRefreshHandlerAndroid::PullStart(OverscrollAction type,
+                                                    float startx,
+                                                    float starty,
+                                                    bool navigateForward) {
   // The first GestureScrollUpdate starts the pull, but does not update the
   // pull. For the purpose of testing, we'll be consistent with aura
   // overscroll and consider this an update.
@@ -21,7 +24,7 @@ bool MockOverscrollRefreshHandlerAndroid::PullStart() {
   return true;
 }
 
-void MockOverscrollRefreshHandlerAndroid::PullUpdate(float) {
+void MockOverscrollRefreshHandlerAndroid::PullUpdate(float, float) {
   OnPullUpdate();
 }
 

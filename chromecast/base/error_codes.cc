@@ -36,8 +36,8 @@ ErrorCode GetInitialErrorCode() {
   int initial_error_code = 0;
   if (base::StringToInt(initial_error_code_str, &initial_error_code) &&
       initial_error_code >= NO_ERROR && initial_error_code <= ERROR_UNKNOWN) {
-    VLOG(1) << "Initial error from " << GetInitialErrorFilePath().value()
-            << ": " << initial_error_code;
+    DVLOG(1) << "Initial error from " << GetInitialErrorFilePath().value()
+             << ": " << initial_error_code;
     return static_cast<ErrorCode>(initial_error_code);
   }
 
@@ -52,7 +52,7 @@ bool SetInitialErrorCode(ErrorCode initial_error_code) {
 
   if (initial_error_code > NO_ERROR && initial_error_code <= ERROR_UNKNOWN) {
     const std::string initial_error_code_str(
-        base::IntToString(initial_error_code));
+        base::NumberToString(initial_error_code));
     int fd = creat(error_file_path.c_str(), 0640);
     if (fd < 0) {
       PLOG(ERROR) << "Could not open error code file";

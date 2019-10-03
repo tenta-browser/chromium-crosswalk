@@ -36,9 +36,8 @@ struct TestingRemoteCommandsServer::RemoteCommandWithCallback {
 };
 
 TestingRemoteCommandsServer::TestingRemoteCommandsServer()
-    : clock_(new base::DefaultTickClock()),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_factory_(this) {
+    : clock_(base::DefaultTickClock::GetInstance()),
+      task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   weak_ptr_to_this_ = weak_factory_.GetWeakPtr();
 }
 
@@ -110,8 +109,8 @@ TestingRemoteCommandsServer::FetchCommands(
       // Post task to the original thread which will report the result.
       task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&TestingRemoteCommandsServer::ReportJobResult,
-                     weak_ptr_to_this_, reported_callback, job_result));
+          base::BindOnce(&TestingRemoteCommandsServer::ReportJobResult,
+                         weak_ptr_to_this_, reported_callback, job_result));
     }
   }
 
@@ -135,10 +134,9 @@ TestingRemoteCommandsServer::FetchCommands(
   return fetched_commands;
 }
 
-void TestingRemoteCommandsServer::SetClock(
-    std::unique_ptr<base::TickClock> clock) {
+void TestingRemoteCommandsServer::SetClock(const base::TickClock* clock) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  clock_ = std::move(clock);
+  clock_ = clock;
 }
 
 size_t TestingRemoteCommandsServer::NumberOfCommandsPendingResult() const {

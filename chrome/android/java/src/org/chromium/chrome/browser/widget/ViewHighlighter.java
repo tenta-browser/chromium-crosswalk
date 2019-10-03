@@ -9,6 +9,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.view.View;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.R;
 
@@ -34,24 +35,35 @@ public class ViewHighlighter {
     public static void turnOnHighlight(View view, boolean circular) {
         if (view == null) return;
 
+        PulseDrawable pulseDrawable = circular ? PulseDrawable.createCircle(view.getContext())
+                                               : PulseDrawable.createHighlight(view.getContext());
+
+        attachViewAsHighlight(view, pulseDrawable);
+    }
+
+    /**
+     * Attach a custom PulseDrawable as a highlight layer over the view.
+     *
+     * Will not highlight if the view is already highlighted.
+     *
+     * @param view The view to be highlighted.
+     * @param pulseDrawable The highlight.
+     */
+    public static void attachViewAsHighlight(View view, PulseDrawable pulseDrawable) {
         boolean highlighted = view.getTag(R.id.highlight_state) != null
                 ? (boolean) view.getTag(R.id.highlight_state)
                 : false;
         if (highlighted) return;
 
-        PulseDrawable pulseDrawable = circular
-                ? PulseDrawable.createCircle(ContextUtils.getApplicationContext())
-                : PulseDrawable.createHighlight();
-
-        Resources resources = ContextUtils.getApplicationContext().getResources();
-        Drawable background = (Drawable) view.getBackground();
+        Resources resources = view.getContext().getResources();
+        Drawable background = view.getBackground();
         if (background != null) {
             background = background.getConstantState().newDrawable(resources);
         }
 
-        LayerDrawable drawable =
-                new LayerDrawable(background == null ? new Drawable[] {pulseDrawable}
-                                                     : new Drawable[] {background, pulseDrawable});
+        LayerDrawable drawable = ApiCompatibilityUtils.createLayerDrawable(background == null
+                        ? new Drawable[] {pulseDrawable}
+                        : new Drawable[] {background, pulseDrawable});
         view.setBackground(drawable);
         view.setTag(R.id.highlight_state, true);
 

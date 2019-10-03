@@ -4,7 +4,7 @@
 
 #include "chrome/browser/extensions/extension_management_constants.h"
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 
 namespace extensions {
 namespace schema_constants {
@@ -16,12 +16,13 @@ const char kAllowed[] = "allowed";
 const char kBlocked[] = "blocked";
 const char kForceInstalled[] = "force_installed";
 const char kNormalInstalled[] = "normal_installed";
+const char kRemoved[] = "removed";
 
 const char kBlockedPermissions[] = "blocked_permissions";
 const char kAllowedPermissions[] = "allowed_permissions";
 
-const char kRuntimeBlockedHosts[] = "runtime_blocked_hosts";
-const char kRuntimeAllowedHosts[] = "runtime_allowed_hosts";
+const char kPolicyBlockedHosts[] = "runtime_blocked_hosts";
+const char kPolicyAllowedHosts[] = "runtime_allowed_hosts";
 const size_t kMaxItemsURLPatternSet = 100;
 
 const char kUpdateUrl[] = "update_url";
@@ -45,7 +46,7 @@ const AllowedTypesMapEntry kAllowedTypesMap[] = {
   // policy.
 };
 
-const size_t kAllowedTypesMapSize = arraysize(kAllowedTypesMap);
+const size_t kAllowedTypesMapSize = base::size(kAllowedTypesMap);
 
 Manifest::Type GetManifestType(const std::string& name) {
   for (size_t index = 0; index < kAllowedTypesMapSize; ++index) {

@@ -22,16 +22,14 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.chrome.browser.metrics.WebappUma;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.metrics.WebappSplashUmaCache;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 
 /**
  * Tests for splash screens with an icon registered in WebappRegistry.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class WebappSplashScreenIconTest {
     @Rule
     public final WebappActivityTestRule mActivityTestRule = new WebappActivityTestRule();
@@ -66,8 +64,8 @@ public class WebappSplashScreenIconTest {
     public void testUmaCustomIcon() {
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
-                        WebappUma.HISTOGRAM_SPLASHSCREEN_ICON_TYPE,
-                        WebappUma.SPLASHSCREEN_ICON_TYPE_CUSTOM));
+                        WebappSplashUmaCache.HISTOGRAM_SPLASHSCREEN_ICON_TYPE,
+                        WebappSplashUmaCache.SplashIconType.CUSTOM));
 
         Bitmap icon =
                 ShortcutHelper.decodeBitmapFromString(WebappActivityTestRule.TEST_SPLASH_ICON);
@@ -75,6 +73,6 @@ public class WebappSplashScreenIconTest {
                 / mActivityTestRule.getActivity().getResources().getDisplayMetrics().density);
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
-                        WebappUma.HISTOGRAM_SPLASHSCREEN_ICON_SIZE, sizeInDp));
+                        WebappSplashUmaCache.HISTOGRAM_SPLASHSCREEN_ICON_SIZE, sizeInDp));
     }
 }

@@ -4,22 +4,22 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
+#import "base/test/ios/wait_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#import "ios/testing/wait_util.h"
 #include "ios/web/grit/ios_web_resources.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/web_state/web_state_interface_provider.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/service/web_state_interface_provider.h"
+#import "ios/web/public/test/navigation_test_util.h"
+#import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/webui/web_ui_ios_controller.h"
 #include "ios/web/public/webui/web_ui_ios_controller_factory.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "ios/web/test/grit/test_resources.h"
 #include "ios/web/test/mojo_test.mojom.h"
 #include "ios/web/test/test_url_constants.h"
 #import "ios/web/test/web_int_test.h"
-#import "ios/web/web_state/ui/crw_web_controller.h"
-#import "ios/web/web_state/web_state_impl.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
@@ -103,7 +103,6 @@ class TestUI : public WebUIIOSController {
     source->AddResourcePath("mojo_bindings.js", IDR_IOS_MOJO_BINDINGS_JS);
     source->AddResourcePath("mojo_test.mojom.js", IDR_MOJO_TEST_MOJO_JS);
     source->SetDefaultResource(IDR_MOJO_TEST_HTML);
-    source->UseGzip();
 
     web::WebState* web_state = web_ui->GetWebState();
     web::WebUIIOSDataSource::Add(web_state->GetBrowserState(), source);
@@ -125,9 +124,16 @@ class TestWebUIControllerFactory : public WebUIIOSControllerFactory {
   std::unique_ptr<WebUIIOSController> CreateWebUIIOSControllerForURL(
       WebUIIOS* web_ui,
       const GURL& url) const override {
-    DCHECK_EQ(url.scheme(), kTestWebUIScheme);
+    if (!url.SchemeIs(kTestWebUIScheme))
+      return nullptr;
     DCHECK_EQ(url.host(), kTestWebUIURLHost);
-    return base::MakeUnique<TestUI>(web_ui, ui_handler_);
+    return std::make_unique<TestUI>(web_ui, ui_handler_);
+  }
+
+  NSInteger GetErrorCodeForWebUIURL(const GURL& url) const override {
+    if (url.SchemeIs(kTestWebUIScheme))
+      return 0;
+    return NSURLErrorUnsupportedURL;
   }
 
  private:
@@ -141,12 +147,14 @@ class WebUIMojoTest : public WebIntTest {
  protected:
   void SetUp() override {
     WebIntTest::SetUp();
-    ui_handler_ = base::MakeUnique<TestUIHandler>();
-    web::WebState::CreateParams params(GetBrowserState());
-    web_state_ = base::MakeUnique<web::WebStateImpl>(params);
-    web_state_->GetNavigationManagerImpl().InitializeSession();
-    WebUIIOSControllerFactory::RegisterFactory(
-        new TestWebUIControllerFactory(ui_handler_.get()));
+    @autoreleasepool {
+      ui_handler_ = std::make_unique<TestUIHandler>();
+      WebState::CreateParams params(GetBrowserState());
+      web_state_ = WebState::Create(params);
+      factory_ =
+          std::make_unique<TestWebUIControllerFactory>(ui_handler_.get());
+      WebUIIOSControllerFactory::RegisterFactory(factory_.get());
+    }
   }
 
   void TearDown() override {
@@ -161,19 +169,21 @@ class WebUIMojoTest : public WebIntTest {
       // WebThread::UI once WebThreadBundle is destroyed.
       web_state_.reset();
       ui_handler_.reset();
+      WebUIIOSControllerFactory::DeregisterFactory(factory_.get());
     }
 
     WebIntTest::TearDown();
   }
 
   // Returns WebState which loads test WebUI page.
-  WebStateImpl* web_state() { return web_state_.get(); }
+  WebState* web_state() { return web_state_.get(); }
   // Returns UI handler which communicates with WebUI page.
   TestUIHandler* test_ui_handler() { return ui_handler_.get(); }
 
  private:
-  std::unique_ptr<WebStateImpl> web_state_;
+  std::unique_ptr<WebState> web_state_;
   std::unique_ptr<TestUIHandler> ui_handler_;
+  std::unique_ptr<TestWebUIControllerFactory> factory_;
 };
 
 // Tests that JS can send messages to the native code and vice versa.
@@ -181,26 +191,28 @@ class WebUIMojoTest : public WebIntTest {
 // |TestUIHandler| successfully receives "ack" message from WebUI page.
 TEST_F(WebUIMojoTest, MessageExchange) {
   @autoreleasepool {
-    web_state()->GetView();  // WebState won't load URL without view.
-    GURL url(url::SchemeHostPort(kTestWebUIScheme, kTestWebUIURLHost, 0)
-                 .Serialize());
-    NavigationManager::WebLoadParams load_params(url);
-    web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
+    url::SchemeHostPort tuple(kTestWebUIScheme, kTestWebUIURLHost, 0);
+    GURL url(tuple.Serialize());
+    test::LoadUrl(web_state(), url);
+    // LoadIfNecessary is needed because the view is not created (but needed)
+    // when loading the page. TODO(crbug.com/705819): Remove this call.
+    web_state()->GetNavigationManager()->LoadIfNecessary();
 
     // Wait until |TestUIHandler| receives "fin" message from WebUI page.
-    bool fin_received = testing::WaitUntilConditionOrTimeout(kMessageTimeout, ^{
-      // Flush any pending tasks. Don't RunUntilIdle() because
-      // RunUntilIdle() is incompatible with mojo::SimpleWatcher's
-      // automatic arming behavior, which Mojo JS still depends upon.
-      //
-      // TODO(crbug.com/701875): Introduce the full watcher API to JS and get
-      // rid of this hack.
-      base::RunLoop loop;
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                    loop.QuitClosure());
-      loop.Run();
-      return test_ui_handler()->IsFinReceived();
-    });
+    bool fin_received =
+        base::test::ios::WaitUntilConditionOrTimeout(kMessageTimeout, ^{
+          // Flush any pending tasks. Don't RunUntilIdle() because
+          // RunUntilIdle() is incompatible with mojo::SimpleWatcher's
+          // automatic arming behavior, which Mojo JS still depends upon.
+          //
+          // TODO(crbug.com/701875): Introduce the full watcher API to JS and
+          // get rid of this hack.
+          base::RunLoop loop;
+          base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                        loop.QuitClosure());
+          loop.Run();
+          return test_ui_handler()->IsFinReceived();
+        });
 
     ASSERT_TRUE(fin_received);
     EXPECT_FALSE(web_state()->IsLoading());

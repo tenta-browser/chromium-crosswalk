@@ -17,7 +17,6 @@
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/path_service.h"
@@ -28,6 +27,8 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
+#include "chrome/browser/chromeos/login/test/device_state_mixin.h"
+#include "chrome/browser/chromeos/login/test/fake_gaia_mixin.h"
 #include "chrome/browser/chromeos/login/users/avatar/user_image_manager_impl.h"
 #include "chrome/browser/chromeos/login/users/avatar/user_image_manager_test_util.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
@@ -38,21 +39,19 @@
 #include "chrome/browser/chromeos/policy/cloud_external_data_manager_base_test_util.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_downloader.h"
-#include "chrome/browser/signin/account_tracker_service_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chromeos/chromeos_paths.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/dbus/constants/dbus_paths.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "components/ownership/mock_owner_key_util.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
@@ -61,16 +60,18 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/user_manager/user_manager.h"
 #include "crypto/rsa_private_key.h"
-#include "google_apis/gaia/gaia_oauth_client.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "google_apis/gaia/gaia_urls.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_fetcher_delegate.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "net/url_request/url_request_status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -86,10 +87,10 @@ namespace {
 // Because policy is not needed in some tests it is better to use e-mails that
 // are definitely not enterprise. This lets us to avoid faking of policy fetch
 // procedure.
-constexpr char kTestUser1[] = "test-user@gmail.com";
-constexpr char kTestUser1GaiaId[] = "1111111111";
-constexpr char kTestUser2[] = "test-user2@gmail.com";
-constexpr char kTestUser2GaiaId[] = "2222222222";
+constexpr char kTestUserEmail1[] = "test-user@gmail.com";
+constexpr char kTestUserEmail2[] = "test-user2@gmail.com";
+
+constexpr char kRandomTokenStrForTesting[] = "random-token-str-for-testing";
 
 policy::CloudPolicyStore* GetStoreForUser(const user_manager::User* user) {
   Profile* profile = ProfileHelper::Get()->GetProfileByUserUnsafe(user);
@@ -98,8 +99,7 @@ policy::CloudPolicyStore* GetStoreForUser(const user_manager::User* user) {
     return NULL;
   }
   policy::UserCloudPolicyManagerChromeOS* policy_manager =
-      policy::UserPolicyManagerFactoryChromeOS::GetCloudPolicyManagerForProfile(
-          profile);
+      profile->GetUserCloudPolicyManagerChromeOS();
   if (!policy_manager) {
     ADD_FAILURE();
     return NULL;
@@ -114,7 +114,7 @@ class UserImageChangeWaiter : public user_manager::UserManager::Observer {
 
   void Wait() {
     user_manager::UserManager::Get()->AddObserver(this);
-    run_loop_ = base::MakeUnique<base::RunLoop>();
+    run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
     user_manager::UserManager::Get()->RemoveObserver(this);
   }
@@ -135,15 +135,48 @@ class UserImageChangeWaiter : public user_manager::UserManager::Observer {
 
 class UserImageManagerTest : public LoginManagerTest,
                              public user_manager::UserManager::Observer {
+ public:
+  std::unique_ptr<net::test_server::BasicHttpResponse> HandleRequest(
+      const net::test_server::HttpRequest& request) {
+    if (request.relative_url.find("/avatar.jpg") == std::string::npos)
+      return nullptr;
+
+    // Check whether the token string is the same.
+    EXPECT_TRUE(request.headers.find(net::HttpRequestHeaders::kAuthorization) !=
+                request.headers.end());
+    const std::string authorization_header =
+        request.headers.at(net::HttpRequestHeaders::kAuthorization);
+    const size_t pos = authorization_header.find(" ");
+    EXPECT_TRUE(pos != std::string::npos);
+    const std::string token = authorization_header.substr(pos + 1);
+    EXPECT_TRUE(token == kRandomTokenStrForTesting);
+
+    std::string profile_image_data;
+    base::FilePath test_data_dir;
+    EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
+    {
+      base::ScopedAllowBlockingForTesting allow_io;
+      EXPECT_TRUE(ReadFileToString(
+          test_data_dir.Append("chromeos").Append("avatar1.jpg"),
+          &profile_image_data));
+    }
+    std::unique_ptr<net::test_server::BasicHttpResponse> response =
+        std::make_unique<net::test_server::BasicHttpResponse>();
+    response->set_content_type("image/jpeg");
+    response->set_code(net::HTTP_OK);
+    response->set_content(profile_image_data);
+    return response;
+  }
+
  protected:
-  UserImageManagerTest() : LoginManagerTest(true) {}
+  UserImageManagerTest() : LoginManagerTest(true, true) {}
 
   // LoginManagerTest overrides:
   void SetUpInProcessBrowserTestFixture() override {
     LoginManagerTest::SetUpInProcessBrowserTestFixture();
 
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir_));
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir_));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_));
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -157,9 +190,27 @@ class UserImageManagerTest : public LoginManagerTest,
   }
 
   void SetUpOnMainThread() override {
+    // Set up the test server.
+    controllable_http_response_ =
+        std::make_unique<net::test_server::ControllableHttpResponse>(
+            embedded_test_server(), "/avatar.jpg",
+            true /*relative_url_is_prefix*/);
+    ASSERT_TRUE(embedded_test_server()->Started());
+
     LoginManagerTest::SetUpOnMainThread();
     local_state_ = g_browser_process->local_state();
     user_manager::UserManager::Get()->AddObserver(this);
+
+    // FakeGaia authorizes requests for profile info.
+    FakeGaia::AccessTokenInfo token_info;
+    token_info.any_scope = true;
+    token_info.audience = GaiaUrls::GetInstance()->oauth2_chrome_client_id();
+    token_info.token = kRandomTokenStrForTesting;
+    token_info.email = test_account_id1_.GetUserEmail();
+    fake_gaia_.fake_gaia()->IssueOAuthToken(kRandomTokenStrForTesting,
+                                            token_info);
+    fake_gaia_.fake_gaia()->MapEmailToGaiaId(
+        kTestUserEmail1, signin::GetTestGaiaIdForEmail(kTestUserEmail1));
   }
 
   void TearDownOnMainThread() override {
@@ -220,69 +271,41 @@ class UserImageManagerTest : public LoginManagerTest,
         .AddExtension(extension);
   }
 
-  // Seeds the AccountTrackerService with test data so the ProfileDownloader can
-  // retrieve the picture URL and fetch the image.
-  void SeedAccountTrackerService(const AccountId& account_id,
-                                 Profile* profile) {
-    AccountInfo info;
-    info.account_id = std::string();
-    info.gaia = account_id.GetUserEmail();
-    info.email = account_id.GetUserEmail();
-    info.full_name = account_id.GetUserEmail();
-    info.given_name = account_id.GetUserEmail();
-    info.hosted_domain = AccountTrackerService::kNoHostedDomainFound;
-    info.locale = account_id.GetUserEmail();
-    info.picture_url = "http://localhost/avatar.jpg";
-    info.is_child_account = false;
-
-    AccountTrackerServiceFactory::GetForProfile(profile)->SeedAccountInfo(info);
-  }
-
-  // Completes the download of all non-image profile data for the user
-  // |account_id|.  This method must only be called after a profile data
-  // download has been started.  |url_fetcher_factory| will capture
-  // the net::TestURLFetcher created by the ProfileDownloader to
-  // download the profile image.
-  void CompleteProfileMetadataDownload(
-      const AccountId& account_id,
-      net::TestURLFetcherFactory* url_fetcher_factory) {
-    ProfileDownloader* profile_downloader =
-        reinterpret_cast<UserImageManagerImpl*>(
-            ChromeUserManager::Get()->GetUserImageManager(account_id))
-            ->profile_downloader_.get();
-    ASSERT_TRUE(profile_downloader);
-
-    static_cast<OAuth2TokenService::Consumer*>(profile_downloader)
-        ->OnGetTokenSuccess(NULL, std::string(),
-                            base::Time::Now() + base::TimeDelta::FromDays(1));
+  void UpdatePrimaryAccountInfo(Profile* profile) {
+    auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+    signin::SetRefreshTokenForPrimaryAccount(identity_manager,
+                                             kRandomTokenStrForTesting);
+    CoreAccountInfo core_info = identity_manager->GetPrimaryAccountInfo();
+    AccountInfo account_info;
+    account_info.email = core_info.email;
+    account_info.gaia = core_info.gaia;
+    account_info.account_id = core_info.account_id;
+    account_info.is_under_advanced_protection =
+        core_info.is_under_advanced_protection;
+    account_info.full_name = account_info.email;
+    account_info.given_name = account_info.email;
+    account_info.hosted_domain = kNoHostedDomainFound;
+    account_info.locale = account_info.email;
+    account_info.picture_url =
+        embedded_test_server()->GetURL("/avatar.jpg").spec();
+    account_info.is_child_account = false;
+    signin::UpdateAccountInfoForAccount(identity_manager, account_info);
   }
 
   // Completes the download of the currently logged-in user's profile image.
   // This method must only be called after a profile data download including
-  // the profile image has been started, the download of all non-image data has
-  // been completed by calling CompleteProfileMetadataDownload() and the
-  // net::TestURLFetcher created by the ProfileDownloader to download the
-  // profile image has been captured by |url_fetcher_factory|.
-  void CompleteProfileImageDownload(
-      net::TestURLFetcherFactory* url_fetcher_factory) {
-    std::string profile_image_data;
-    base::FilePath test_data_dir;
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
-    EXPECT_TRUE(
-        ReadFileToString(test_data_dir.Append("chromeos").Append("avatar1.jpg"),
-                         &profile_image_data));
+  // the profile image has been started.
+  void CompleteProfileImageDownload() {
+    controllable_http_response_->WaitForRequest();
+    std::unique_ptr<net::test_server::BasicHttpResponse> response =
+        HandleRequest(*controllable_http_response_->http_request());
+    controllable_http_response_->Send(response->ToResponseString());
+    controllable_http_response_->Done();
 
     base::RunLoop run_loop;
     PrefChangeRegistrar pref_change_registrar;
     pref_change_registrar.Init(local_state_);
     pref_change_registrar.Add("UserDisplayName", run_loop.QuitClosure());
-    net::TestURLFetcher* fetcher = url_fetcher_factory->GetFetcherByID(0);
-    ASSERT_TRUE(fetcher);
-    fetcher->SetResponseString(profile_image_data);
-    fetcher->set_status(
-        net::URLRequestStatus(net::URLRequestStatus::SUCCESS, net::OK));
-    fetcher->set_response_code(200);
-    fetcher->delegate()->OnURLFetchComplete(fetcher);
     run_loop.Run();
 
     const user_manager::User* user =
@@ -301,20 +324,28 @@ class UserImageManagerTest : public LoginManagerTest,
 
   PrefService* local_state_;
 
-  std::unique_ptr<gfx::ImageSkia> decoded_image_;
+  gfx::ImageSkia decoded_image_;
 
   std::unique_ptr<base::RunLoop> run_loop_;
 
-  const AccountId test_account_id1_ =
-      AccountId::FromUserEmailGaiaId(kTestUser1, kTestUser1GaiaId);
-  const AccountId test_account_id2_ =
-      AccountId::FromUserEmailGaiaId(kTestUser2, kTestUser2GaiaId);
-  const AccountId enterprise_account_id_ =
-      AccountId::FromUserEmailGaiaId(kEnterpriseUser1, kEnterpriseUser1GaiaId);
-  const cryptohome::Identification cryptohome_id_ =
-      cryptohome::Identification(enterprise_account_id_);
+  std::unique_ptr<net::test_server::ControllableHttpResponse>
+      controllable_http_response_;
+
+  const AccountId test_account_id1_ = AccountId::FromUserEmailGaiaId(
+      kTestUserEmail1,
+      signin::GetTestGaiaIdForEmail(kTestUserEmail1));
+  const AccountId test_account_id2_ = AccountId::FromUserEmailGaiaId(
+      kTestUserEmail2,
+      signin::GetTestGaiaIdForEmail(kTestUserEmail2));
+  const AccountId enterprise_account_id_ = AccountId::FromUserEmailGaiaId(
+      FakeGaiaMixin::kEnterpriseUser1,
+      signin::GetTestGaiaIdForEmail(FakeGaiaMixin::kEnterpriseUser1));
+  const cryptohome::AccountIdentifier cryptohome_id_ =
+      cryptohome::CreateAccountIdentifierFromAccountId(enterprise_account_id_);
 
  private:
+  FakeGaiaMixin fake_gaia_{&mixin_host_, embedded_test_server()};
+
   DISALLOW_COPY_AND_ASSIGN(UserImageManagerTest);
 };
 
@@ -409,13 +440,13 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImage) {
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(test_account_id1_, "jpg"));
 
-  const std::unique_ptr<gfx::ImageSkia> saved_image =
+  const gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(test_account_id1_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(custom_image.width(), saved_image->width());
-  EXPECT_EQ(custom_image.height(), saved_image->height());
+  EXPECT_EQ(custom_image.width(), saved_image.width());
+  EXPECT_EQ(custom_image.height(), saved_image.height());
 }
 
 IN_PROC_BROWSER_TEST_F(UserImageManagerTest, PRE_SaveUserImageFromFile) {
@@ -431,9 +462,9 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImageFromFile) {
 
   const base::FilePath custom_image_path =
       test_data_dir_.Append(test::kUserAvatarImage1RelativePath);
-  const std::unique_ptr<gfx::ImageSkia> custom_image =
+  const gfx::ImageSkia custom_image =
       test::ImageLoader(custom_image_path).Load();
-  ASSERT_TRUE(custom_image);
+  ASSERT_FALSE(custom_image.isNull());
 
   run_loop_.reset(new base::RunLoop);
   UserImageManager* user_image_manager =
@@ -443,44 +474,45 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImageFromFile) {
 
   EXPECT_FALSE(user->HasDefaultImage());
   EXPECT_EQ(user_manager::User::USER_IMAGE_EXTERNAL, user->image_index());
-  EXPECT_TRUE(test::AreImagesEqual(*custom_image, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(custom_image, user->GetImage()));
   ExpectUserImageInfo(test_account_id1_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(test_account_id1_, "jpg"));
 
-  const std::unique_ptr<gfx::ImageSkia> saved_image =
+  const gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(test_account_id1_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(custom_image->width(), saved_image->width());
-  EXPECT_EQ(custom_image->height(), saved_image->height());
+  EXPECT_EQ(custom_image.width(), saved_image.width());
+  EXPECT_EQ(custom_image.height(), saved_image.height());
 
   // Replace the user image with a PNG file with transparent pixels.
   const base::FilePath transparent_image_path =
       test_data_dir_.Append(test::kUserAvatarImage3RelativePath);
-  const std::unique_ptr<gfx::ImageSkia> transparent_image =
+  const gfx::ImageSkia transparent_image =
       test::ImageLoader(transparent_image_path).Load();
-  ASSERT_TRUE(transparent_image);
+  ASSERT_FALSE(transparent_image.isNull());
   // This image should have transparent pixels (i.e. not opaque).
-  EXPECT_FALSE(SkBitmap::ComputeIsOpaque(*transparent_image->bitmap()));
+  EXPECT_FALSE(SkBitmap::ComputeIsOpaque(*transparent_image.bitmap()));
 
   run_loop_.reset(new base::RunLoop);
   user_image_manager->SaveUserImageFromFile(transparent_image_path);
   run_loop_->Run();
 
-  EXPECT_TRUE(test::AreImagesEqual(*transparent_image, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(transparent_image, user->GetImage()));
   ExpectUserImageInfo(test_account_id1_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(test_account_id1_, "png"));
 
-  const std::unique_ptr<gfx::ImageSkia> new_saved_image =
+  const gfx::ImageSkia new_saved_image =
       test::ImageLoader(GetUserImagePath(test_account_id1_, "png")).Load();
-  ASSERT_TRUE(new_saved_image);
+  ASSERT_FALSE(new_saved_image.isNull());
 
   // The saved image should have transparent pixels (i.e. not opaque).
-  EXPECT_FALSE(SkBitmap::ComputeIsOpaque(*new_saved_image->bitmap()));
+  EXPECT_FALSE(SkBitmap::ComputeIsOpaque(*new_saved_image.bitmap()));
 
+  base::ScopedAllowBlockingForTesting allow_io;
   // The old user image file in JPEG should be deleted. Only the PNG version
   // should stay.
   EXPECT_FALSE(base::PathExists(GetUserImagePath(test_account_id1_, "jpg")));
@@ -502,8 +534,7 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImageFromProfileImage) {
 
   UserImageManagerImpl::IgnoreProfileDataDownloadDelayForTesting();
   LoginUser(test_account_id1_);
-  Profile* profile = ProfileHelper::Get()->GetProfileByUserUnsafe(user);
-  SeedAccountTrackerService(test_account_id1_, profile);
+  UpdatePrimaryAccountInfo(ProfileHelper::Get()->GetProfileByUserUnsafe(user));
 
   run_loop_.reset(new base::RunLoop);
   UserImageManager* user_image_manager =
@@ -511,9 +542,7 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImageFromProfileImage) {
   user_image_manager->SaveUserImageFromProfileImage();
   run_loop_->Run();
 
-  net::TestURLFetcherFactory url_fetcher_factory;
-  CompleteProfileMetadataDownload(test_account_id1_, &url_fetcher_factory);
-  CompleteProfileImageDownload(&url_fetcher_factory);
+  CompleteProfileImageDownload();
 
   const gfx::ImageSkia& profile_image =
       user_image_manager->DownloadedProfileImage();
@@ -524,13 +553,13 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest, SaveUserImageFromProfileImage) {
   ExpectUserImageInfo(test_account_id1_, user_manager::User::USER_IMAGE_PROFILE,
                       GetUserImagePath(test_account_id1_, "jpg"));
 
-  const std::unique_ptr<gfx::ImageSkia> saved_image =
+  const gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(test_account_id1_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(profile_image.width(), saved_image->width());
-  EXPECT_EQ(profile_image.height(), saved_image->height());
+  EXPECT_EQ(profile_image.width(), saved_image.width());
+  EXPECT_EQ(profile_image.height(), saved_image.height());
 }
 
 IN_PROC_BROWSER_TEST_F(UserImageManagerTest,
@@ -543,8 +572,9 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest,
 // images while the profile image download is still in progress. Verifies that
 // when the download completes, the profile image is ignored and does not
 // clobber the default image chosen in the meantime.
+// TODO(crbug.com/888784) disabled due to flaky timeouts.
 IN_PROC_BROWSER_TEST_F(UserImageManagerTest,
-                       ProfileImageDownloadDoesNotClobber) {
+                       DISABLED_ProfileImageDownloadDoesNotClobber) {
   const user_manager::User* user =
       user_manager::UserManager::Get()->FindUser(test_account_id1_);
   ASSERT_TRUE(user);
@@ -554,8 +584,7 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest,
 
   UserImageManagerImpl::IgnoreProfileDataDownloadDelayForTesting();
   LoginUser(test_account_id1_);
-  Profile* profile = ProfileHelper::Get()->GetProfileByUserUnsafe(user);
-  SeedAccountTrackerService(test_account_id1_, profile);
+  UpdatePrimaryAccountInfo(ProfileHelper::Get()->GetProfileByUserUnsafe(user));
 
   run_loop_.reset(new base::RunLoop);
   UserImageManager* user_image_manager =
@@ -563,13 +592,10 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerTest,
   user_image_manager->SaveUserImageFromProfileImage();
   run_loop_->Run();
 
-  net::TestURLFetcherFactory url_fetcher_factory;
-  CompleteProfileMetadataDownload(test_account_id1_, &url_fetcher_factory);
-
   user_image_manager->SaveUserDefaultImageIndex(
       default_user_image::kFirstDefaultImageIndex);
 
-  CompleteProfileImageDownload(&url_fetcher_factory);
+  CompleteProfileImageDownload();
 
   EXPECT_TRUE(user->HasDefaultImage());
   EXPECT_EQ(default_user_image::kFirstDefaultImageIndex, user->image_index());
@@ -583,8 +609,7 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
                                    public policy::CloudPolicyStore::Observer {
  protected:
   UserImageManagerPolicyTest()
-      : owner_key_util_(new ownership::MockOwnerKeyUtil()),
-        fake_session_manager_client_(new chromeos::FakeSessionManagerClient) {}
+      : owner_key_util_(new ownership::MockOwnerKeyUtil()) {}
 
   // UserImageManagerTest overrides:
   void SetUpInProcessBrowserTestFixture() override {
@@ -593,16 +618,11 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
         ->SetOwnerKeyUtilForTesting(owner_key_util_);
     owner_key_util_->SetPublicKeyFromPrivateKey(
         *device_policy_.GetSigningKey());
-    fake_session_manager_client_->set_device_policy(device_policy_.GetBlob());
-    DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        std::unique_ptr<SessionManagerClient>(fake_session_manager_client_));
+    // Override FakeSessionManagerClient. This will be shut down by the browser.
+    SessionManagerClient::InitializeFakeInMemory();
+    FakeSessionManagerClient::Get()->set_device_policy(
+        device_policy_.GetBlob());
 
-    // Set up fake install attributes.
-    std::unique_ptr<chromeos::StubInstallAttributes> attributes =
-        base::MakeUnique<chromeos::StubInstallAttributes>();
-    attributes->SetCloudManaged("fake-domain", "fake-id");
-    policy::BrowserPolicyConnectorChromeOS::SetInstallAttributesForTesting(
-        attributes.release());
     UserImageManagerTest::SetUpInProcessBrowserTestFixture();
   }
 
@@ -610,8 +630,8 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
     UserImageManagerTest::SetUpOnMainThread();
 
     base::FilePath user_keys_dir;
-    ASSERT_TRUE(
-        PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
+    ASSERT_TRUE(base::PathService::Get(
+        chromeos::dbus_paths::DIR_USER_POLICY_KEYS, &user_keys_dir));
     const std::string sanitized_username =
         chromeos::CryptohomeClient::GetStubSanitizedUsername(cryptohome_id_);
     const base::FilePath user_key_file =
@@ -626,11 +646,12 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
         static_cast<int>(user_key_bits.size()));
     user_policy_.policy_data().set_username(
         enterprise_account_id_.GetUserEmail());
+    user_policy_.policy_data().set_gaia_id(enterprise_account_id_.GetGaiaId());
 
     policy_image_ = test::ImageLoader(test_data_dir_.Append(
                                           test::kUserAvatarImage2RelativePath))
                         .Load();
-    ASSERT_TRUE(policy_image_);
+    ASSERT_FALSE(policy_image_.isNull());
   }
 
   // policy::CloudPolicyStore::Observer overrides:
@@ -645,6 +666,7 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
   }
 
   std::string ConstructPolicy(const std::string& relative_path) {
+    base::ScopedAllowBlockingForTesting allow_io;
     std::string image_data;
     if (!base::ReadFileToString(test_data_dir_.Append(relative_path),
                                 &image_data)) {
@@ -660,12 +682,13 @@ class UserImageManagerPolicyTest : public UserImageManagerTest,
     return policy;
   }
 
+  DeviceStateMixin device_state_{
+      &mixin_host_, DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
   policy::UserPolicyBuilder user_policy_;
   policy::DevicePolicyBuilder device_policy_;
   scoped_refptr<ownership::MockOwnerKeyUtil> owner_key_util_;
-  FakeSessionManagerClient* fake_session_manager_client_;
 
-  std::unique_ptr<gfx::ImageSkia> policy_image_;
+  gfx::ImageSkia policy_image_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(UserImageManagerPolicyTest);
@@ -696,33 +719,33 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerPolicyTest, DISABLED_SetAndClear) {
   user_policy_.payload().mutable_useravatarimage()->set_value(
       ConstructPolicy(test::kUserAvatarImage2RelativePath));
   user_policy_.Build();
-  fake_session_manager_client_->set_user_policy(cryptohome_id_,
-                                                user_policy_.GetBlob());
+  FakeSessionManagerClient::Get()->set_user_policy(cryptohome_id_,
+                                                   user_policy_.GetBlob());
   run_loop_.reset(new base::RunLoop);
   store->Load();
   run_loop_->Run();
 
   EXPECT_FALSE(user->HasDefaultImage());
   EXPECT_EQ(user_manager::User::USER_IMAGE_EXTERNAL, user->image_index());
-  EXPECT_TRUE(test::AreImagesEqual(*policy_image_, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(policy_image_, user->GetImage()));
   ExpectUserImageInfo(enterprise_account_id_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(enterprise_account_id_, "jpg"));
 
-  std::unique_ptr<gfx::ImageSkia> saved_image =
+  gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(enterprise_account_id_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(policy_image_->width(), saved_image->width());
-  EXPECT_EQ(policy_image_->height(), saved_image->height());
+  EXPECT_EQ(policy_image_.width(), saved_image.width());
+  EXPECT_EQ(policy_image_.height(), saved_image.height());
 
   // Clear policy. Verify that the user image switches to a random default
   // image.
   user_policy_.payload().Clear();
   user_policy_.Build();
-  fake_session_manager_client_->set_user_policy(cryptohome_id_,
-                                                user_policy_.GetBlob());
+  FakeSessionManagerClient::Get()->set_user_policy(cryptohome_id_,
+                                                   user_policy_.GetBlob());
   run_loop_.reset(new base::RunLoop);
   store->AddObserver(this);
   store->Load();
@@ -803,26 +826,26 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerPolicyTest, PolicyOverridesUser) {
   user_policy_.payload().mutable_useravatarimage()->set_value(
       ConstructPolicy(test::kUserAvatarImage2RelativePath));
   user_policy_.Build();
-  fake_session_manager_client_->set_user_policy(cryptohome_id_,
-                                                user_policy_.GetBlob());
+  FakeSessionManagerClient::Get()->set_user_policy(cryptohome_id_,
+                                                   user_policy_.GetBlob());
   run_loop_.reset(new base::RunLoop);
   store->Load();
   run_loop_->Run();
 
   EXPECT_FALSE(user->HasDefaultImage());
   EXPECT_EQ(user_manager::User::USER_IMAGE_EXTERNAL, user->image_index());
-  EXPECT_TRUE(test::AreImagesEqual(*policy_image_, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(policy_image_, user->GetImage()));
   ExpectUserImageInfo(enterprise_account_id_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(enterprise_account_id_, "jpg"));
 
-  std::unique_ptr<gfx::ImageSkia> saved_image =
+  gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(enterprise_account_id_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(policy_image_->width(), saved_image->width());
-  EXPECT_EQ(policy_image_->height(), saved_image->height());
+  EXPECT_EQ(policy_image_.width(), saved_image.width());
+  EXPECT_EQ(policy_image_.height(), saved_image.height());
 }
 
 IN_PROC_BROWSER_TEST_F(UserImageManagerPolicyTest,
@@ -850,26 +873,26 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerPolicyTest, UserDoesNotOverridePolicy) {
   user_policy_.payload().mutable_useravatarimage()->set_value(
       ConstructPolicy(test::kUserAvatarImage2RelativePath));
   user_policy_.Build();
-  fake_session_manager_client_->set_user_policy(cryptohome_id_,
-                                                user_policy_.GetBlob());
+  FakeSessionManagerClient::Get()->set_user_policy(cryptohome_id_,
+                                                   user_policy_.GetBlob());
   run_loop_.reset(new base::RunLoop);
   store->Load();
   run_loop_->Run();
 
   EXPECT_FALSE(user->HasDefaultImage());
   EXPECT_EQ(user_manager::User::USER_IMAGE_EXTERNAL, user->image_index());
-  EXPECT_TRUE(test::AreImagesEqual(*policy_image_, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(policy_image_, user->GetImage()));
   ExpectUserImageInfo(enterprise_account_id_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(enterprise_account_id_, "jpg"));
 
-  std::unique_ptr<gfx::ImageSkia> saved_image =
+  gfx::ImageSkia saved_image =
       test::ImageLoader(GetUserImagePath(enterprise_account_id_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(policy_image_->width(), saved_image->width());
-  EXPECT_EQ(policy_image_->height(), saved_image->height());
+  EXPECT_EQ(policy_image_.width(), saved_image.width());
+  EXPECT_EQ(policy_image_.height(), saved_image.height());
 
   // Choose a different user image. Verify that the user image does not change
   // as policy takes precedence.
@@ -880,18 +903,18 @@ IN_PROC_BROWSER_TEST_F(UserImageManagerPolicyTest, UserDoesNotOverridePolicy) {
 
   EXPECT_FALSE(user->HasDefaultImage());
   EXPECT_EQ(user_manager::User::USER_IMAGE_EXTERNAL, user->image_index());
-  EXPECT_TRUE(test::AreImagesEqual(*policy_image_, user->GetImage()));
+  EXPECT_TRUE(test::AreImagesEqual(policy_image_, user->GetImage()));
   ExpectUserImageInfo(enterprise_account_id_,
                       user_manager::User::USER_IMAGE_EXTERNAL,
                       GetUserImagePath(enterprise_account_id_, "jpg"));
 
   saved_image =
       test::ImageLoader(GetUserImagePath(enterprise_account_id_, "jpg")).Load();
-  ASSERT_TRUE(saved_image);
+  ASSERT_FALSE(saved_image.isNull());
 
   // Check image dimensions. Images can't be compared since JPEG is lossy.
-  EXPECT_EQ(policy_image_->width(), saved_image->width());
-  EXPECT_EQ(policy_image_->height(), saved_image->height());
+  EXPECT_EQ(policy_image_.width(), saved_image.width());
+  EXPECT_EQ(policy_image_.height(), saved_image.height());
 }
 
 }  // namespace chromeos

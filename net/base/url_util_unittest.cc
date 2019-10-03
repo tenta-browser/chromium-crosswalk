@@ -211,16 +211,15 @@ TEST(UrlUtilTest, ParseHostAndPort) {
     {"[]", false, "", -1},
   };
 
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (const auto& test : tests) {
     std::string host;
     int port;
-    bool ok = ParseHostAndPort(tests[i].input, &host, &port);
+    bool ok = ParseHostAndPort(test.input, &host, &port);
+    EXPECT_EQ(test.success, ok);
 
-    EXPECT_EQ(tests[i].success, ok);
-
-    if (tests[i].success) {
-      EXPECT_EQ(tests[i].expected_host, host);
-      EXPECT_EQ(tests[i].expected_port, port);
+    if (test.success) {
+      EXPECT_EQ(test.expected_host, host);
+      EXPECT_EQ(test.expected_port, port);
     }
   }
 }
@@ -236,9 +235,9 @@ TEST(UrlUtilTest, GetHostAndPort) {
     { GURL("http://[1::2]/x"), "[1::2]:80"},
     { GURL("http://[::a]:33/x"), "[::a]:33"},
   };
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-    std::string host_and_port = GetHostAndPort(tests[i].url);
-    EXPECT_EQ(std::string(tests[i].expected_host_and_port), host_and_port);
+  for (const auto& test : tests) {
+    std::string host_and_port = GetHostAndPort(test.url);
+    EXPECT_EQ(std::string(test.expected_host_and_port), host_and_port);
   }
 }
 
@@ -254,9 +253,9 @@ TEST(UrlUtilTest, GetHostAndOptionalPort) {
     { GURL("http://[1::2]/x"), "[1::2]"},
     { GURL("http://[::a]:33/x"), "[::a]:33"},
   };
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-    std::string host_and_port = GetHostAndOptionalPort(tests[i].url);
-    EXPECT_EQ(std::string(tests[i].expected_host_and_port), host_and_port);
+  for (const auto& test : tests) {
+    std::string host_and_port = GetHostAndOptionalPort(test.url);
+    EXPECT_EQ(std::string(test.expected_host_and_port), host_and_port);
   }
 }
 
@@ -302,9 +301,9 @@ TEST(UrlUtilTest, CompliantHost) {
       {"1.2.3.4.5.", true},
   };
 
-  for (size_t i = 0; i < arraysize(compliant_host_cases); ++i) {
-    EXPECT_EQ(compliant_host_cases[i].expected_output,
-              IsCanonicalizedHostCompliant(compliant_host_cases[i].host));
+  for (const auto& compliant_host : compliant_host_cases) {
+    EXPECT_EQ(compliant_host.expected_output,
+              IsCanonicalizedHostCompliant(compliant_host.host));
   }
 }
 
@@ -384,51 +383,56 @@ TEST_P(UrlUtilNonUniqueNameTest, IsHostnameNonUnique) {
   EXPECT_EQ(test_data.is_unique, IsUnique(test_data.hostname));
 }
 
-INSTANTIATE_TEST_CASE_P(, UrlUtilNonUniqueNameTest,
-                        testing::ValuesIn(kNonUniqueNameTestData));
+INSTANTIATE_TEST_SUITE_P(,
+                         UrlUtilNonUniqueNameTest,
+                         testing::ValuesIn(kNonUniqueNameTestData));
 
 TEST(UrlUtilTest, IsLocalhost) {
-  EXPECT_TRUE(IsLocalhost("localhost"));
-  EXPECT_TRUE(IsLocalhost("localHosT"));
-  EXPECT_TRUE(IsLocalhost("localhost."));
-  EXPECT_TRUE(IsLocalhost("localHost."));
-  EXPECT_TRUE(IsLocalhost("localhost.localdomain"));
-  EXPECT_TRUE(IsLocalhost("localhost.localDOMain"));
-  EXPECT_TRUE(IsLocalhost("localhost.localdomain."));
-  EXPECT_TRUE(IsLocalhost("localhost6"));
-  EXPECT_TRUE(IsLocalhost("localhost6."));
-  EXPECT_TRUE(IsLocalhost("localhost6.localdomain6"));
-  EXPECT_TRUE(IsLocalhost("localhost6.localdomain6."));
-  EXPECT_TRUE(IsLocalhost("127.0.0.1"));
-  EXPECT_TRUE(IsLocalhost("127.0.1.0"));
-  EXPECT_TRUE(IsLocalhost("127.1.0.0"));
-  EXPECT_TRUE(IsLocalhost("127.0.0.255"));
-  EXPECT_TRUE(IsLocalhost("127.0.255.0"));
-  EXPECT_TRUE(IsLocalhost("127.255.0.0"));
-  EXPECT_TRUE(IsLocalhost("::1"));
-  EXPECT_TRUE(IsLocalhost("0:0:0:0:0:0:0:1"));
-  EXPECT_TRUE(IsLocalhost("foo.localhost"));
-  EXPECT_TRUE(IsLocalhost("foo.localhost."));
-  EXPECT_TRUE(IsLocalhost("foo.localhoST"));
-  EXPECT_TRUE(IsLocalhost("foo.localhoST."));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost"));
+  EXPECT_TRUE(HostStringIsLocalhost("localHosT"));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost."));
+  EXPECT_TRUE(HostStringIsLocalhost("localHost."));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost.localdomain"));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost.localDOMain"));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost.localdomain."));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost6"));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost6."));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost6.localdomain6"));
+  EXPECT_TRUE(HostStringIsLocalhost("localhost6.localdomain6."));
+  EXPECT_TRUE(HostStringIsLocalhost("127.0.0.1"));
+  EXPECT_TRUE(HostStringIsLocalhost("127.0.1.0"));
+  EXPECT_TRUE(HostStringIsLocalhost("127.1.0.0"));
+  EXPECT_TRUE(HostStringIsLocalhost("127.0.0.255"));
+  EXPECT_TRUE(HostStringIsLocalhost("127.0.255.0"));
+  EXPECT_TRUE(HostStringIsLocalhost("127.255.0.0"));
+  EXPECT_TRUE(HostStringIsLocalhost("::1"));
+  EXPECT_TRUE(HostStringIsLocalhost("0:0:0:0:0:0:0:1"));
+  EXPECT_TRUE(HostStringIsLocalhost("foo.localhost"));
+  EXPECT_TRUE(HostStringIsLocalhost("foo.localhost."));
+  EXPECT_TRUE(HostStringIsLocalhost("foo.localhoST"));
+  EXPECT_TRUE(HostStringIsLocalhost("foo.localhoST."));
 
-  EXPECT_FALSE(IsLocalhost("localhostx"));
-  EXPECT_FALSE(IsLocalhost("localhost.x"));
-  EXPECT_FALSE(IsLocalhost("foo.localdomain"));
-  EXPECT_FALSE(IsLocalhost("foo.localdomain.x"));
-  EXPECT_FALSE(IsLocalhost("localhost6x"));
-  EXPECT_FALSE(IsLocalhost("localhost.localdomain6"));
-  EXPECT_FALSE(IsLocalhost("localhost6.localdomain"));
-  EXPECT_FALSE(IsLocalhost("127.0.0.1.1"));
-  EXPECT_FALSE(IsLocalhost(".127.0.0.255"));
-  EXPECT_FALSE(IsLocalhost("::2"));
-  EXPECT_FALSE(IsLocalhost("::1:1"));
-  EXPECT_FALSE(IsLocalhost("0:0:0:0:1:0:0:1"));
-  EXPECT_FALSE(IsLocalhost("::1:1"));
-  EXPECT_FALSE(IsLocalhost("0:0:0:0:0:0:0:0:1"));
-  EXPECT_FALSE(IsLocalhost("foo.localhost.com"));
-  EXPECT_FALSE(IsLocalhost("foo.localhoste"));
-  EXPECT_FALSE(IsLocalhost("foo.localhos"));
+  EXPECT_FALSE(HostStringIsLocalhost("localhostx"));
+  EXPECT_FALSE(HostStringIsLocalhost("localhost.x"));
+  EXPECT_FALSE(HostStringIsLocalhost("foo.localdomain"));
+  EXPECT_FALSE(HostStringIsLocalhost("foo.localdomain.x"));
+  EXPECT_FALSE(HostStringIsLocalhost("localhost6x"));
+  EXPECT_FALSE(HostStringIsLocalhost("localhost.localdomain6"));
+  EXPECT_FALSE(HostStringIsLocalhost("localhost6.localdomain"));
+  EXPECT_FALSE(HostStringIsLocalhost("127.0.0.1.1"));
+  EXPECT_FALSE(HostStringIsLocalhost(".127.0.0.255"));
+  EXPECT_FALSE(HostStringIsLocalhost("::2"));
+  EXPECT_FALSE(HostStringIsLocalhost("::1:1"));
+  EXPECT_FALSE(HostStringIsLocalhost("0:0:0:0:1:0:0:1"));
+  EXPECT_FALSE(HostStringIsLocalhost("::1:1"));
+  EXPECT_FALSE(HostStringIsLocalhost("0:0:0:0:0:0:0:0:1"));
+  EXPECT_FALSE(HostStringIsLocalhost("foo.localhost.com"));
+  EXPECT_FALSE(HostStringIsLocalhost("foo.localhoste"));
+  EXPECT_FALSE(HostStringIsLocalhost("foo.localhos"));
+  EXPECT_FALSE(HostStringIsLocalhost("[::1]"));
+
+  GURL localhost6("http://[::1]/");
+  EXPECT_TRUE(IsLocalhost(localhost6));
 }
 
 TEST(UrlUtilTest, SimplifyUrlForRequest) {
@@ -467,12 +471,26 @@ TEST(UrlUtilTest, SimplifyUrlForRequest) {
       "foobar://user:pass@google.com:80/sup?yo",
     },
   };
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-    SCOPED_TRACE(base::StringPrintf("Test[%" PRIuS "]: %s", i,
-                                    tests[i].input_url));
-    GURL input_url(GURL(tests[i].input_url));
-    GURL expected_url(GURL(tests[i].expected_simplified_url));
+  for (const auto& test : tests) {
+    SCOPED_TRACE(test.input_url);
+    GURL input_url(GURL(test.input_url));
+    GURL expected_url(GURL(test.expected_simplified_url));
     EXPECT_EQ(expected_url, SimplifyUrlForRequest(input_url));
+  }
+}
+
+TEST(UrlUtilTest, ChangeWebSocketSchemeToHttpScheme) {
+  struct {
+    const char* const input_url;
+    const char* const expected_output_url;
+  } tests[] = {
+      {"ws://google.com:78/path?query=1", "http://google.com:78/path?query=1"},
+      {"wss://google.com:441/path?q=1", "https://google.com:441/path?q=1"}};
+  for (const auto& test : tests) {
+    GURL input_url(test.input_url);
+    GURL expected_output_url(test.expected_output_url);
+    EXPECT_EQ(expected_output_url,
+              ChangeWebSocketSchemeToHttpScheme(input_url));
   }
 }
 
@@ -482,52 +500,86 @@ TEST(UrlUtilTest, GetIdentityFromURL) {
     const char* const expected_username;
     const char* const expected_password;
   } tests[] = {
-    {
-      "http://username:password@google.com",
-      "username",
-      "password",
-    },
-    { // Test for http://crbug.com/19200
-      "http://username:p@ssword@google.com",
-      "username",
-      "p@ssword",
-    },
-    { // Special URL characters should be unescaped.
-      "http://username:p%3fa%26s%2fs%23@google.com",
-      "username",
-      "p?a&s/s#",
-    },
-    { // Username contains %20.
-      "http://use rname:password@google.com",
-      "use rname",
-      "password",
-    },
-    { // Keep %00 as is.
-      "http://use%00rname:password@google.com",
-      "use%00rname",
-      "password",
-    },
-    { // Use a '+' in the username.
-      "http://use+rname:password@google.com",
-      "use+rname",
-      "password",
-    },
-    { // Use a '&' in the password.
-      "http://username:p&ssword@google.com",
-      "username",
-      "p&ssword",
-    },
+      {
+          "http://username:password@google.com",
+          "username",
+          "password",
+      },
+      {
+          // Test for http://crbug.com/19200
+          "http://username:p@ssword@google.com",
+          "username",
+          "p@ssword",
+      },
+      {
+          // Special URL characters should be unescaped.
+          "http://username:p%3fa%26s%2fs%23@google.com",
+          "username",
+          "p?a&s/s#",
+      },
+      {
+          // Username contains %20, password %25.
+          "http://use rname:password%25@google.com",
+          "use rname",
+          "password%",
+      },
+      {
+          // Username and password contain forward / backward slashes.
+          "http://username%2F:password%5C@google.com",
+          "username/",
+          "password\\",
+      },
+      {
+          // Keep %00 and %01 as-is, and ignore other escaped characters when
+          // present.
+          "http://use%00rname%20:pass%01word%25@google.com",
+          "use%00rname%20",
+          "pass%01word%25",
+      },
+      {
+          // Keep CR and LF as-is.
+          "http://use%0Arname:pass%0Dword@google.com",
+          "use%0Arname",
+          "pass%0Dword",
+      },
+      {
+          // Use a '+' in the username.
+          "http://use+rname:password@google.com",
+          "use+rname",
+          "password",
+      },
+      {
+          // Use a '&' in the password.
+          "http://username:p&ssword@google.com",
+          "username",
+          "p&ssword",
+      },
+      {
+          // These UTF-8 characters are considered unsafe to unescape by
+          // UnescapeURLComponent, but raise no special concerns as part of the
+          // identity portion of a URL.
+          "http://%F0%9F%94%92:%E2%80%82@google.com",
+          "\xF0\x9F\x94\x92",
+          "\xE2\x80\x82",
+      },
+      {
+          // Leave invalid UTF-8 alone, and leave valid UTF-8 characters alone
+          // if there's also an invalid character in the string - strings should
+          // not be partially unescaped.
+          "http://%81:%E2%80%82%E2%80@google.com",
+          "%81",
+          "%E2%80%82%E2%80",
+      },
   };
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-    SCOPED_TRACE(base::StringPrintf("Test[%" PRIuS "]: %s", i,
-                                    tests[i].input_url));
-    GURL url(tests[i].input_url);
+  for (const auto& test : tests) {
+    SCOPED_TRACE(test.input_url);
+    GURL url(test.input_url);
 
     base::string16 username, password;
     GetIdentityFromURL(url, &username, &password);
 
-    EXPECT_EQ(ASCIIToUTF16(tests[i].expected_username), username);
-    EXPECT_EQ(ASCIIToUTF16(tests[i].expected_password), password);
+    EXPECT_EQ(base::UTF8ToUTF16(test.expected_username), username);
+    EXPECT_EQ(base::UTF8ToUTF16(test.expected_password), password);
   }
 }
 
@@ -576,9 +628,8 @@ TEST(UrlUtilTest, GoogleHost) {
       {GURL("http://oggole.com"), false},
   };
 
-  for (size_t i = 0; i < arraysize(google_host_cases); ++i) {
-    EXPECT_EQ(google_host_cases[i].expected_output,
-              HasGoogleHost(google_host_cases[i].url));
+  for (const auto& host : google_host_cases) {
+    EXPECT_EQ(host.expected_output, HasGoogleHost(host.url));
   }
 }
 

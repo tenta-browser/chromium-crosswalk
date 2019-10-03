@@ -4,10 +4,6 @@
      found in the LICENSE file. -->
 
 <resources>
-    <declare-styleable name="TintedImage">
-        <attr name="chrometint" format="color" />
-    </declare-styleable>
-
     <declare-styleable name="HyperlinkPreference">
         <!-- The URL to load when the preference is clicked -->
         <attr name="url" format="string" />
@@ -18,6 +14,11 @@
     <declare-styleable name="LearnMorePreference">
         <!-- The context that should be sent to HelpAndFeedback activity. -->
         <attr name="helpContext" format="string" />
+    </declare-styleable>
+
+    <declare-styleable name="ChromeBasePreference">
+        <!-- The tint color for the icon set by android:icon. -->
+        <attr name="iconTint" format="color" />
     </declare-styleable>
 
     <declare-styleable name="ChromeSwitchPreference">
@@ -38,8 +39,8 @@
         <attr name="floatLabelHint" format="reference|string" />
     </declare-styleable>
 
-    <declare-styleable name="EmptyAlertEditText">
-        <attr name="alertMessage" format="string" />
+    <declare-styleable name="BookmarkTextInputLayout">
+        <attr name="emptyErrorMessage" format="string" />
     </declare-styleable>
 
     <declare-styleable name="PaddedFrameLayout">
@@ -49,6 +50,8 @@
 
     <declare-styleable name="BoundedView">
         <attr name="maxWidth" format="dimension" />
+        <attr name="maxWidthLandscape" format="dimension" />
+        <attr name="maxWidthPortrait" format="dimension" />
         <attr name="maxHeight" format="dimension" />
     </declare-styleable>
 
@@ -60,14 +63,7 @@
 
     <declare-styleable name="RadioButtonWithDescription">
         <attr name="titleText" format="string" />
-    </declare-styleable>
-
-    <declare-styleable name="TextMessageWithLinkAndIconPreference">
-        <!-- Used on a TextMessageWithLinkAndIconPreference that is followed
-             by another TextMessageWithLinkAndIconPreference to remove the
-             bottom spacing, so that related paragraphs of text are closer
-             to each other. -->
-        <attr name="noBottomSpacing" format="boolean" />
+        <attr name="descriptionText" format="string" />
     </declare-styleable>
 
     <declare-styleable name="SpinnerPreference">
@@ -80,5 +76,20 @@
     <declare-styleable name="ListMenuButton">
         <!-- Used to customize the width of the popup menu. -->
         <attr name="menuWidth" format="reference|dimension" />
+    </declare-styleable>
+
+    <declare-styleable name="TextViewWithCompoundDrawables">
+        <attr name="drawableWidth" format="dimension"/>
+        <attr name="drawableHeight" format="dimension"/>
+        <!-- drawableTint wasn't added in Android until API level 23. -->
+        <attr name="chromeDrawableTint" format="color"/>
+    </declare-styleable>
+
+    <declare-styleable name="TileGridLayout">
+        <attr name="minHorizontalSpacing" format="dimension"/>
+    </declare-styleable>
+
+    <declare-styleable name="ExploreSitesTileView">
+        <attr name="iconCornerRadius" format="dimension"/>
     </declare-styleable>
 </resources>

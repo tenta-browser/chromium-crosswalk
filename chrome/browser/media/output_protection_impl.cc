@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "chrome/browser/media/output_protection_proxy.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,8 +33,7 @@ OutputProtectionImpl::OutputProtectionImpl(
     media::mojom::OutputProtectionRequest request)
     : FrameServiceBase(render_frame_host, std::move(request)),
       render_process_id_(render_frame_host->GetProcess()->GetID()),
-      render_frame_id_(render_frame_host->GetRoutingID()),
-      weak_factory_(this) {}
+      render_frame_id_(render_frame_host->GetRoutingID()) {}
 
 OutputProtectionImpl::~OutputProtectionImpl() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);

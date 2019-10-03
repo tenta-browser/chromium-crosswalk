@@ -8,6 +8,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "cc/base/math_util.h"
+#include "cc/layers/heads_up_display_layer_impl.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/layer_list_iterator.h"
 #include "cc/layers/render_surface_impl.h"
@@ -24,13 +25,13 @@ std::unique_ptr<DebugRectHistory> DebugRectHistory::Create() {
   return base::WrapUnique(new DebugRectHistory());
 }
 
-DebugRectHistory::DebugRectHistory() {}
+DebugRectHistory::DebugRectHistory() = default;
 
-DebugRectHistory::~DebugRectHistory() {}
+DebugRectHistory::~DebugRectHistory() = default;
 
 void DebugRectHistory::SaveDebugRectsForCurrentFrame(
     LayerTreeImpl* tree_impl,
-    LayerImpl* hud_layer,
+    HeadsUpDisplayLayerImpl* hud_layer,
     const RenderSurfaceList& render_surface_list,
     const LayerTreeDebugState& debug_state) {
   // For now, clear all rects from previous frames. In the future we may want to
@@ -49,6 +50,9 @@ void DebugRectHistory::SaveDebugRectsForCurrentFrame(
   if (debug_state.show_non_fast_scrollable_rects)
     SaveNonFastScrollableRects(tree_impl);
 
+  if (debug_state.show_layout_shift_regions)
+    SaveLayoutShiftRects(hud_layer);
+
   if (debug_state.show_paint_rects)
     SavePaintRects(tree_impl);
 
@@ -62,6 +66,14 @@ void DebugRectHistory::SaveDebugRectsForCurrentFrame(
     SaveScreenSpaceRects(render_surface_list);
 }
 
+void DebugRectHistory::SaveLayoutShiftRects(HeadsUpDisplayLayerImpl* hud) {
+  for (gfx::Rect rect : hud->LayoutShiftRects()) {
+    debug_rects_.push_back(DebugRect(
+        LAYOUT_SHIFT_RECT_TYPE,
+        MathUtil::MapEnclosingClippedRect(hud->ScreenSpaceTransform(), rect)));
+  }
+}
+
 void DebugRectHistory::SavePaintRects(LayerTreeImpl* tree_impl) {
   // We would like to visualize where any layer's paint rect (update rect) has
   // changed, regardless of whether this layer is skipped for actual drawing or
@@ -72,10 +84,10 @@ void DebugRectHistory::SavePaintRects(LayerTreeImpl* tree_impl) {
     if (invalidation_region.IsEmpty() || !layer->DrawsContent())
       continue;
 
-    for (Region::Iterator it(invalidation_region); it.has_rect(); it.next()) {
-      debug_rects_.push_back(DebugRect(
-          PAINT_RECT_TYPE, MathUtil::MapEnclosingClippedRect(
-                               layer->ScreenSpaceTransform(), it.rect())));
+    for (gfx::Rect rect : invalidation_region) {
+      debug_rects_.push_back(
+          DebugRect(PAINT_RECT_TYPE, MathUtil::MapEnclosingClippedRect(
+                                         layer->ScreenSpaceTransform(), rect)));
     }
   }
 }
@@ -136,10 +148,10 @@ void DebugRectHistory::SaveTouchEventHandlerRectsCallback(LayerImpl* layer) {
        touch_action_index != kTouchActionMax; ++touch_action_index) {
     auto touch_action = static_cast<TouchAction>(touch_action_index);
     Region region = touch_action_region.GetRegionForTouchAction(touch_action);
-    for (Region::Iterator iter(region); iter.has_rect(); iter.next()) {
+    for (gfx::Rect rect : region) {
       debug_rects_.emplace_back(TOUCH_EVENT_HANDLER_RECT_TYPE,
                                 MathUtil::MapEnclosingClippedRect(
-                                    layer->ScreenSpaceTransform(), iter.rect()),
+                                    layer->ScreenSpaceTransform(), rect),
                                 touch_action);
     }
   }
@@ -187,12 +199,10 @@ void DebugRectHistory::SaveNonFastScrollableRects(LayerTreeImpl* tree_impl) {
 }
 
 void DebugRectHistory::SaveNonFastScrollableRectsCallback(LayerImpl* layer) {
-  for (Region::Iterator iter(layer->non_fast_scrollable_region());
-       iter.has_rect(); iter.next()) {
-    debug_rects_.push_back(
-        DebugRect(NON_FAST_SCROLLABLE_RECT_TYPE,
-                  MathUtil::MapEnclosingClippedRect(
-                      layer->ScreenSpaceTransform(), iter.rect())));
+  for (gfx::Rect rect : layer->non_fast_scrollable_region()) {
+    debug_rects_.push_back(DebugRect(NON_FAST_SCROLLABLE_RECT_TYPE,
+                                     MathUtil::MapEnclosingClippedRect(
+                                         layer->ScreenSpaceTransform(), rect)));
   }
 }
 

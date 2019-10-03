@@ -9,14 +9,15 @@
 #include <string.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/hash/sha1.h"
 #include "base/json/json_writer.h"
 #include "base/rand_util.h"
-#include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -30,6 +31,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log_source.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/websockets/websocket_frame.h"
 
 #if defined(OS_WIN)
@@ -58,18 +60,23 @@ bool ResolveHost(const std::string& host,
 
 }  // namespace
 
-WebSocket::WebSocket(const GURL& url, WebSocketListener* listener)
+WebSocket::WebSocket(const GURL& url,
+                     WebSocketListener* listener,
+                     size_t read_buffer_size)
     : url_(url),
       listener_(listener),
       state_(INITIALIZED),
-      write_buffer_(new net::DrainableIOBuffer(new net::IOBuffer(0), 0)),
-      read_buffer_(new net::IOBufferWithSize(4096)) {}
+      write_buffer_(base::MakeRefCounted<net::DrainableIOBuffer>(
+          base::MakeRefCounted<net::IOBuffer>(0),
+          0)),
+      read_buffer_(
+          base::MakeRefCounted<net::IOBufferWithSize>(read_buffer_size)) {}
 
 WebSocket::~WebSocket() {
   CHECK(thread_checker_.CalledOnValidThread());
 }
 
-void WebSocket::Connect(const net::CompletionCallback& callback) {
+void WebSocket::Connect(net::CompletionOnceCallback callback) {
   CHECK(thread_checker_.CalledOnValidThread());
   CHECK_EQ(INITIALIZED, state_);
 
@@ -80,7 +87,7 @@ void WebSocket::Connect(const net::CompletionCallback& callback) {
     addresses = net::AddressList::CreateFromIPAddress(address, port);
   } else {
     if (!ResolveHost(url_.HostNoBrackets(), port, &addresses)) {
-      callback.Run(net::ERR_ADDRESS_UNREACHABLE);
+      std::move(callback).Run(net::ERR_ADDRESS_UNREACHABLE);
       return;
     }
     base::ListValue endpoints;
@@ -95,14 +102,16 @@ void WebSocket::Connect(const net::CompletionCallback& callback) {
   socket_.reset(new net::TCPClientSocket(addresses, NULL, NULL, source));
 
   state_ = CONNECTING;
-  connect_callback_ = callback;
-  int code = socket_->Connect(base::Bind(
-      &WebSocket::OnSocketConnect, base::Unretained(this)));
+  connect_callback_ = std::move(callback);
+  int code = socket_->Connect(
+      base::BindOnce(&WebSocket::OnSocketConnect, base::Unretained(this)));
+  VLOG(4) << "WebSocket::Connect code=" << net::ErrorToShortString(code);
   if (code != net::ERR_IO_PENDING)
     OnSocketConnect(code);
 }
 
 bool WebSocket::Send(const std::string& message) {
+  VLOG(4) << "WebSocket::Send " << message;
   CHECK(thread_checker_.CalledOnValidThread());
   if (state_ != OPEN)
     return false;
@@ -126,6 +135,9 @@ bool WebSocket::Send(const std::string& message) {
 }
 
 void WebSocket::OnSocketConnect(int code) {
+  VLOG(4) << "WebSocket::OnSocketConnect code="
+          << net::ErrorToShortString(code);
+
   if (code != net::OK) {
     VLOG(1) << "failed to connect to " << url_.HostNoBracketsPiece()
             << " (error " << code << ")";
@@ -147,7 +159,14 @@ void WebSocket::OnSocketConnect(int code) {
       url_.path().c_str(),
       url_.host().c_str(),
       sec_key_.c_str());
+  VLOG(4) << "WebSocket::OnSocketConnect handshake\n" << handshake;
   Write(handshake);
+  if (state_ == CLOSED) {
+    // The call to Write() above would call Close() if it encounters an error,
+    // in which case it's no longer safe to do anything else. Close() has
+    // already called the callback function, if any.
+    return;
+  }
   Read();
 }
 
@@ -176,30 +195,36 @@ void WebSocket::ContinueWritingIfNecessary() {
   if (!write_buffer_->BytesRemaining()) {
     if (pending_write_.empty())
       return;
-    write_buffer_ = new net::DrainableIOBuffer(
-        new net::StringIOBuffer(pending_write_),
+    write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+        base::MakeRefCounted<net::StringIOBuffer>(pending_write_),
         pending_write_.length());
     pending_write_.clear();
   }
-  int code =
-      socket_->Write(write_buffer_.get(),
-                     write_buffer_->BytesRemaining(),
-                     base::Bind(&WebSocket::OnWrite, base::Unretained(this)));
+  int code = socket_->Write(
+      write_buffer_.get(), write_buffer_->BytesRemaining(),
+      base::BindOnce(&WebSocket::OnWrite, base::Unretained(this)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   if (code != net::ERR_IO_PENDING)
     OnWrite(code);
 }
 
 void WebSocket::Read() {
-  int code =
-      socket_->Read(read_buffer_.get(),
-                    read_buffer_->size(),
-                    base::Bind(&WebSocket::OnRead, base::Unretained(this)));
-  if (code != net::ERR_IO_PENDING)
-    OnRead(code);
+  while (true) {
+    int code = socket_->Read(
+        read_buffer_.get(), read_buffer_->size(),
+        base::BindOnce(&WebSocket::OnRead, base::Unretained(this), true));
+    if (code == net::ERR_IO_PENDING)
+      break;
+
+    OnRead(false, code);
+    if (state_ == CLOSED)
+      break;
+  }
 }
 
-void WebSocket::OnRead(int code) {
+void WebSocket::OnRead(bool read_again, int code) {
   if (code <= 0) {
+    VLOG(4) << "WebSocket::OnRead error " << net::ErrorToShortString(code);
     Close(code ? code : net::ERR_FAILED);
     return;
   }
@@ -209,25 +234,31 @@ void WebSocket::OnRead(int code) {
   else if (state_ == OPEN)
     OnReadDuringOpen(read_buffer_->data(), code);
 
-  if (state_ != CLOSED)
+  // If we were called by the event loop due to arrival of data, call Read()
+  // again to read more data. If we were called by Read(), however, simply
+  // return to Read() and let it call socket_->Read() to read more data, and
+  // potentially call OnRead() again. This is necessary to avoid mutual
+  // recursion between Read and OnRead, which can cause stack overflow (e.g.,
+  // see https://crbug.com/877105).
+  if (read_again && state_ != CLOSED)
     Read();
 }
 
 void WebSocket::OnReadDuringHandshake(const char* data, int len) {
+  VLOG(4) << "WebSocket::OnReadDuringHandshake\n" << std::string(data, len);
   handshake_response_ += std::string(data, len);
-  int headers_end = net::HttpUtil::LocateEndOfHeaders(
+  size_t headers_end = net::HttpUtil::LocateEndOfHeaders(
       handshake_response_.data(), handshake_response_.size(), 0);
-  if (headers_end == -1)
+  if (headers_end == std::string::npos)
     return;
 
   const char kMagicKey[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
   std::string websocket_accept;
   base::Base64Encode(base::SHA1HashString(sec_key_ + kMagicKey),
                      &websocket_accept);
-  scoped_refptr<net::HttpResponseHeaders> headers(
-      new net::HttpResponseHeaders(
-          net::HttpUtil::AssembleRawHeaders(
-              handshake_response_.data(), headers_end)));
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          base::StringPiece(handshake_response_.data(), headers_end)));
   if (headers->response_code() != 101 ||
       !headers->HasHeaderValue("Upgrade", "WebSocket") ||
       !headers->HasHeaderValue("Connection", "Upgrade") ||
@@ -252,6 +283,7 @@ void WebSocket::OnReadDuringOpen(const char* data, int len) {
     if (buffer.get())
       next_message_ += std::string(buffer->data(), buffer->size());
     if (frame_chunks[i]->final_chunk) {
+      VLOG(4) << "WebSocket::OnReadDuringOpen " << next_message_;
       listener_->OnMessageReceived(next_message_);
       next_message_.clear();
     }
@@ -259,10 +291,8 @@ void WebSocket::OnReadDuringOpen(const char* data, int len) {
 }
 
 void WebSocket::InvokeConnectCallback(int code) {
-  net::CompletionCallback temp = connect_callback_;
-  connect_callback_.Reset();
-  CHECK(!temp.is_null());
-  temp.Run(code);
+  CHECK(!connect_callback_.is_null());
+  std::move(connect_callback_).Run(code);
 }
 
 void WebSocket::Close(int code) {

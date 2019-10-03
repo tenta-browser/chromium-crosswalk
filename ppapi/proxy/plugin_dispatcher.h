@@ -11,7 +11,6 @@
 #include <string>
 #include <unordered_map>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -45,7 +44,7 @@ class ResourceCreationAPI;
 namespace proxy {
 
 // Used to keep track of per-instance data.
-struct InstanceData {
+struct PPAPI_PROXY_EXPORT InstanceData {
   InstanceData();
   ~InstanceData();
 
@@ -55,7 +54,7 @@ struct InstanceData {
   scoped_refptr<TrackedCallback> mouse_lock_callback;
 
   // A map of singleton resources which are lazily created.
-  typedef std::map<SingletonResourceID, scoped_refptr<Resource> >
+  typedef std::map<SingletonResourceID, scoped_refptr<Resource>>
       SingletonResourceMap;
   SingletonResourceMap singleton_resources;
 
@@ -71,18 +70,29 @@ struct InstanceData {
   std::unique_ptr<MessageHandler> message_handler;
 
   // Flush info for PpapiCommandBufferProxy::OrderingBarrier().
-  struct FlushInfo {
+  struct PPAPI_PROXY_EXPORT FlushInfo {
     FlushInfo();
     ~FlushInfo();
     bool flush_pending;
     HostResource resource;
     int32_t put_offset;
   };
-  FlushInfo flush_info_;
+  FlushInfo flush_info;
+};
+
+class PPAPI_PROXY_EXPORT LockedSender {
+ public:
+  // Unlike |Send()|, this function continues to hold the Pepper proxy lock
+  // until we are finished sending |msg|, even if it is a synchronous message.
+  virtual bool SendAndStayLocked(IPC::Message* msg) = 0;
+
+ protected:
+  virtual ~LockedSender() {}
 };
 
 class PPAPI_PROXY_EXPORT PluginDispatcher
     : public Dispatcher,
+      public LockedSender,
       public base::SupportsWeakPtr<PluginDispatcher> {
  public:
   class PPAPI_PROXY_EXPORT PluginDelegate : public ProxyChannel::Delegate {
@@ -179,7 +189,7 @@ class PPAPI_PROXY_EXPORT PluginDispatcher
 
   // Unlike |Send()|, this function continues to hold the Pepper proxy lock
   // until we are finished sending |msg|, even if it is a synchronous message.
-  bool SendAndStayLocked(IPC::Message* msg);
+  bool SendAndStayLocked(IPC::Message* msg) override;
 
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& msg) override;
@@ -224,7 +234,7 @@ class PPAPI_PROXY_EXPORT PluginDispatcher
   // be the pointer to the interface pointer supplied by the plugin if it's
   // supported, or NULL if it's not supported. This allows us to cache failures
   // and not req-query if a plugin doesn't support the interface.
-  typedef base::hash_map<std::string, const void*> InterfaceMap;
+  typedef std::unordered_map<std::string, const void*> InterfaceMap;
   InterfaceMap plugin_interfaces_;
 
   typedef std::unordered_map<PP_Instance, std::unique_ptr<InstanceData>>

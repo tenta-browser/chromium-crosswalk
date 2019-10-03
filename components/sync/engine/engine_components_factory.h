@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/time/time.h"
 #include "components/sync/engine/model_safe_worker.h"
 
 namespace syncer {
@@ -46,21 +47,6 @@ class EngineComponentsFactory {
     BACKOFF_SHORT_INITIAL_RETRY_OVERRIDE
   };
 
-  enum PreCommitUpdatesPolicy {
-    // By default, the server will enable or disable this experiment through the
-    // sync protocol's experiments data type.
-    SERVER_CONTROLLED_PRE_COMMIT_UPDATE_AVOIANCE,
-
-    // This flag overrides the server's decision and enables the pre-commit
-    // update avoidance experiment.
-    FORCE_ENABLE_PRE_COMMIT_UPDATE_AVOIDANCE,
-  };
-
-  enum class NudgeDelay {
-    DEFAULT_NUDGE_DELAY,
-    SHORT_NUDGE_DELAY,
-  };
-
   // Configuration options for internal components. This struct is expected
   // to grow and shrink over time with transient features / experiments,
   // roughly following command line flags in chrome. Implementations of
@@ -69,8 +55,7 @@ class EngineComponentsFactory {
   struct Switches {
     EncryptionMethod encryption_method;
     BackoffOverride backoff_override;
-    NudgeDelay nudge_delay;
-    PreCommitUpdatesPolicy pre_commit_updates_policy;
+    bool force_short_nudge_delay_for_test;
   };
 
   // For selecting the types of storage to use to persist sync data when
@@ -100,12 +85,17 @@ class EngineComponentsFactory {
       const std::vector<SyncEngineEventListener*>& listeners,
       DebugInfoGetter* debug_info_getter,
       ModelTypeRegistry* model_type_registry,
-      const std::string& invalidator_client_id) = 0;
+      const std::string& invalidator_client_id,
+      const std::string& store_birthday,
+      const std::string& bag_of_chips,
+      base::TimeDelta poll_interval) = 0;
 
   virtual std::unique_ptr<syncable::DirectoryBackingStore>
-  BuildDirectoryBackingStore(StorageOption storage,
-                             const std::string& dir_name,
-                             const base::FilePath& backing_filepath) = 0;
+  BuildDirectoryBackingStore(
+      StorageOption storage,
+      const std::string& dir_name,
+      const base::RepeatingCallback<std::string()>& cache_guid_generator,
+      const base::FilePath& backing_filepath) = 0;
 
   // Returns the Switches struct that this object is using as configuration, if
   // the implementation is making use of one.

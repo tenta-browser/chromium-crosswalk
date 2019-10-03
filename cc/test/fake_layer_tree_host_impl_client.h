@@ -27,17 +27,28 @@ class FakeLayerTreeHostImplClient : public LayerTreeHostImplClient {
   void PostAnimationEventsToMainThreadOnImplThread(
       std::unique_ptr<MutatorEvents> events) override;
   bool IsInsideDraw() override;
+  bool IsBeginMainFrameExpected() override;
   void RenewTreePriority() override {}
-  void PostDelayedAnimationTaskOnImplThread(const base::Closure& task,
+  void PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
                                             base::TimeDelta delay) override {}
   void DidActivateSyncTree() override {}
   void WillPrepareTiles() override {}
   void DidPrepareTiles() override {}
   void DidCompletePageScaleAnimationOnImplThread() override {}
-  void OnDrawForLayerTreeFrameSink(bool resourceless_software_draw) override {}
+  void OnDrawForLayerTreeFrameSink(bool resourceless_software_draw,
+                                   bool skip_draw) override {}
   void NeedsImplSideInvalidation(bool needs_first_draw_on_activation) override;
   void RequestBeginMainFrameNotExpected(bool new_state) override {}
   void NotifyImageDecodeRequestFinished() override {}
+  void DidPresentCompositorFrameOnImplThread(
+      uint32_t frame_token,
+      std::vector<LayerTreeHost::PresentationTimeCallback> callbacks,
+      const gfx::PresentationFeedback& feedback) override {}
+
+  void NotifyAnimationWorkletStateChange(AnimationWorkletMutationState state,
+                                         ElementListType tree_type) override {}
+  void NotifyPaintWorkletStateChange(
+      Scheduler::PaintWorkletState state) override {}
 
   void reset_did_request_impl_side_invalidation() {
     did_request_impl_side_invalidation_ = false;

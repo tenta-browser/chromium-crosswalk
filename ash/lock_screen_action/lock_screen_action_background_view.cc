@@ -48,11 +48,13 @@ class LockScreenActionBackgroundView::NoteBackground
     gfx::Point center = base::i18n::IsRTL() ? GetLocalBounds().origin()
                                             : GetLocalBounds().top_right();
     auto ink_drop_ripple = std::make_unique<views::FloodFillInkDropRipple>(
-        size(), gfx::Insets(), center, SK_ColorBLACK, 1);
+        size(), gfx::Insets(), center, GetInkDropBaseColor(), 1);
     ink_drop_ripple->set_use_hide_transform_duration_for_hide_fade_out(true);
     ink_drop_ripple->set_duration_factor(1.5);
     return ink_drop_ripple;
   }
+
+  SkColor GetInkDropBaseColor() const override { return SK_ColorBLACK; }
 
  private:
   views::InkDropObserver* observer_;
@@ -61,16 +63,17 @@ class LockScreenActionBackgroundView::NoteBackground
 };
 
 LockScreenActionBackgroundView::LockScreenActionBackgroundView() {
-  auto* layout_manager = new views::BoxLayout(views::BoxLayout::kVertical);
+  auto layout_manager = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical);
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
-  SetLayoutManager(layout_manager);
+      views::BoxLayout::CrossAxisAlignment::kStretch);
+  auto* layout_ptr = SetLayoutManager(std::move(layout_manager));
 
   background_ = new NoteBackground(this);
   AddChildView(background_);
   // Make background view flexible - the constant does not really matter given
   // that |background_| is the only child, as long as it's greater than 0.
-  layout_manager->SetFlexForView(background_, 1 /*flex_weight*/);
+  layout_ptr->SetFlexForView(background_, 1 /*flex_weight*/);
 }
 
 LockScreenActionBackgroundView::~LockScreenActionBackgroundView() = default;

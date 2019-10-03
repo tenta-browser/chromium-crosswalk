@@ -8,26 +8,28 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Bundle;
 import android.provider.Browser;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
+import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.ServiceTabLauncher;
-import org.chromium.chrome.browser.TabState;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tab.TabIdManager;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.tabmodel.AsyncTabParamsManager;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.PageTransition;
-
-import java.util.Map;
 
 /**
  * Asynchronously creates Tabs by creating/starting up Activities.
@@ -43,6 +45,21 @@ public class TabDelegate extends TabCreator {
         mIsIncognito = incognito;
     }
 
+    /**
+     * @return Running Activity that owns the given Tab, null if the Activity couldn't be found.
+     */
+    private static Activity getActivityForTabId(int id) {
+        if (id == Tab.INVALID_TAB_ID) return null;
+
+        for (Activity runningActivity : ApplicationStatus.getRunningActivities()) {
+            if (!(runningActivity instanceof ChromeActivity)) continue;
+
+            ChromeActivity activity = (ChromeActivity) runningActivity;
+            if (activity.getTabModelSelector().getTabById(id) != null) return activity;
+        }
+        return null;
+    }
+
     @Override
     public boolean createsTabsAsynchronously() {
         return true;
@@ -55,19 +72,21 @@ public class TabDelegate extends TabCreator {
      */
     @Override
     public Tab createFrozenTab(TabState state, int id, int index) {
-        return Tab.createFrozenTabFromState(
-                id, state.isIncognito(), null, Tab.INVALID_TAB_ID, state);
+        return TabBuilder.createFromFrozenState()
+                .setId(id)
+                .setIncognito(state.isIncognito())
+                .build();
     }
 
     @Override
-    public boolean createTabWithWebContents(Tab parent, WebContents webContents, int parentId,
-            TabLaunchType type, String url) {
+    public boolean createTabWithWebContents(
+            Tab parent, WebContents webContents, @TabLaunchType int type, String url) {
         if (url == null) url = "";
 
         AsyncTabCreationParams asyncParams =
                 new AsyncTabCreationParams(
                         new LoadUrlParams(url, PageTransition.AUTO_TOPLEVEL), webContents);
-        createNewTab(asyncParams, type, parentId);
+        createNewTab(asyncParams, type, parent != null ? parent.getId() : Tab.INVALID_TAB_ID);
         return true;
     }
 
@@ -79,8 +98,8 @@ public class TabDelegate extends TabCreator {
      * @param activity      The current {@link Activity}
      * @param parentId      The ID of the parent tab, or {@link Tab#INVALID_TAB_ID}.
      */
-    public void createTabInOtherWindow(LoadUrlParams loadUrlParams, Activity activity,
-            int parentId) {
+    public void createTabInOtherWindow(
+            LoadUrlParams loadUrlParams, Activity activity, int parentId) {
         Intent intent = createNewTabIntent(
                 new AsyncTabCreationParams(loadUrlParams), parentId, false);
 
@@ -90,17 +109,18 @@ public class TabDelegate extends TabCreator {
 
         MultiWindowUtils.setOpenInOtherWindowIntentExtras(intent, activity, targetActivity);
         IntentHandler.addTrustedIntentExtras(intent);
-        MultiWindowUtils.onMultiInstanceModeStarted();
-        activity.startActivity(intent);
+        MultiInstanceManager.onMultiInstanceModeStarted();
+        activity.startActivity(
+                intent, MultiWindowUtils.getOpenInOtherWindowActivityOptions(activity));
     }
 
     @Override
-    public Tab launchUrl(String url, TabLaunchType type) {
+    public Tab launchUrl(String url, @TabLaunchType int type) {
         return createNewTab(new LoadUrlParams(url), type, null);
     }
 
     @Override
-    public Tab createNewTab(LoadUrlParams loadUrlParams, TabLaunchType type, Tab parent) {
+    public Tab createNewTab(LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent) {
         AsyncTabCreationParams asyncParams = new AsyncTabCreationParams(loadUrlParams);
         createNewTab(asyncParams, type, parent == null ? Tab.INVALID_TAB_ID : parent.getId());
         return null;
@@ -113,7 +133,7 @@ public class TabDelegate extends TabCreator {
      * @param parentId        ID of the parent tab, if it exists.
      */
     public void createNewTab(
-            AsyncTabCreationParams asyncParams, TabLaunchType type, int parentId) {
+            AsyncTabCreationParams asyncParams, @TabLaunchType int type, int parentId) {
         assert asyncParams != null;
 
         // Tabs should't be launched in affiliated mode when a webcontents exists.
@@ -144,17 +164,10 @@ public class TabDelegate extends TabCreator {
         if (componentName == null) {
             intent.setClass(ContextUtils.getApplicationContext(), ChromeLauncherActivity.class);
         } else {
-            intent.setComponent(componentName);
+            ChromeTabbedActivity.setNonAliasedComponent(intent, componentName);
         }
-
-        Map<String, String> extraHeaders = asyncParams.getLoadUrlParams().getExtraHeaders();
-        if (extraHeaders != null && !extraHeaders.isEmpty()) {
-            Bundle bundle = new Bundle();
-            for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
-                bundle.putString(header.getKey(), header.getValue());
-            }
-            intent.putExtra(Browser.EXTRA_HEADERS, bundle);
-        }
+        IntentHandler.setIntentExtraHeaders(
+                asyncParams.getLoadUrlParams().getExtraHeaders(), intent);
 
         intent.putExtra(IntentHandler.EXTRA_TAB_ID, assignedTabId);
         intent.putExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, mIsIncognito);
@@ -167,7 +180,7 @@ public class TabDelegate extends TabCreator {
 
         if (isChromeUI) intent.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
 
-        Activity parentActivity = ActivityDelegate.getActivityForTabId(parentId);
+        Activity parentActivity = getActivityForTabId(parentId);
         if (parentActivity != null && parentActivity.getIntent() != null) {
             intent.putExtra(IntentHandler.EXTRA_PARENT_INTENT, parentActivity.getIntent());
         }

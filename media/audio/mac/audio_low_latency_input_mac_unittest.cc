@@ -6,11 +6,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/environment.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "media/audio/audio_device_description.h"
@@ -32,9 +33,9 @@ using ::testing::NotNull;
 
 namespace media {
 
-ACTION_P4(CheckCountAndPostQuitTask, count, limit, loop, closure) {
+ACTION_P4(CheckCountAndPostQuitTask, count, limit, task_runner, closure) {
   if (++*count >= limit) {
-    loop->task_runner()->PostTask(FROM_HERE, closure);
+    task_runner->PostTask(FROM_HERE, closure);
   }
 }
 
@@ -88,12 +89,13 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
               double volume) override {
     const int num_samples = src->frames() * src->channels();
     std::unique_ptr<int16_t> interleaved(new int16_t[num_samples]);
-    const int bytes_per_sample = sizeof(*interleaved);
-    src->ToInterleaved(src->frames(), bytes_per_sample, interleaved.get());
+    src->ToInterleaved<SignedInt16SampleTypeTraits>(src->frames(),
+                                                    interleaved.get());
 
     // Store data data in a temporary buffer to avoid making blocking
     // fwrite() calls in the audio callback. The complete buffer will be
     // written to file in the destructor.
+    const int bytes_per_sample = sizeof(*interleaved);
     const int size = bytes_per_sample * num_samples;
     if (buffer_.Append((const uint8_t*)interleaved.get(), size)) {
       bytes_to_write_ += size;
@@ -111,9 +113,10 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
 class MacAudioInputTest : public testing::Test {
  protected:
   MacAudioInputTest()
-      : message_loop_(base::MessageLoop::TYPE_UI),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
         audio_manager_(AudioManager::CreateForTesting(
-            base::MakeUnique<TestAudioThread>())) {
+            std::make_unique<TestAudioThread>())) {
     // Wait for the AudioManager to finish any initialization on the audio loop.
     base::RunLoop().RunUntilIdle();
   }
@@ -133,7 +136,7 @@ class MacAudioInputTest : public testing::Test {
     int samples_per_packet = fs / 100;
     AudioInputStream* ais = audio_manager_->MakeAudioInputStream(
         AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                        CHANNEL_LAYOUT_STEREO, fs, 16, samples_per_packet),
+                        CHANNEL_LAYOUT_STEREO, fs, samples_per_packet),
         AudioDeviceDescription::kDefaultDeviceId,
         base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
     EXPECT_TRUE(ais);
@@ -147,7 +150,7 @@ class MacAudioInputTest : public testing::Test {
     int samples_per_packet = fs / 100;
     AudioInputStream* ais = audio_manager_->MakeAudioInputStream(
         AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-                        fs, 16, samples_per_packet),
+                        fs, samples_per_packet),
         AudioDeviceDescription::kDefaultDeviceId,
         base::Bind(&MacAudioInputTest::OnLogMessage, base::Unretained(this)));
     EXPECT_TRUE(ais);
@@ -156,7 +159,7 @@ class MacAudioInputTest : public testing::Test {
 
   void OnLogMessage(const std::string& message) { log_message_ = message; }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<AudioManager> audio_manager_;
   std::string log_message_;
 };
@@ -215,8 +218,9 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyMonoRecording) {
   base::RunLoop run_loop;
   EXPECT_CALL(sink, OnData(NotNull(), _, _))
       .Times(AtLeast(10))
-      .WillRepeatedly(CheckCountAndPostQuitTask(&count, 10, &message_loop_,
-                                                run_loop.QuitClosure()));
+      .WillRepeatedly(CheckCountAndPostQuitTask(
+          &count, 10, scoped_task_environment_.GetMainThreadTaskRunner(),
+          run_loop.QuitClosure()));
   ais->Start(&sink);
   run_loop.Run();
   ais->Stop();
@@ -250,8 +254,9 @@ TEST_F(MacAudioInputTest, AUAudioInputStreamVerifyStereoRecording) {
   base::RunLoop run_loop;
   EXPECT_CALL(sink, OnData(NotNull(), _, _))
       .Times(AtLeast(10))
-      .WillRepeatedly(CheckCountAndPostQuitTask(&count, 10, &message_loop_,
-                                                run_loop.QuitClosure()));
+      .WillRepeatedly(CheckCountAndPostQuitTask(
+          &count, 10, scoped_task_environment_.GetMainThreadTaskRunner(),
+          run_loop.QuitClosure()));
   ais->Start(&sink);
   run_loop.Run();
   ais->Stop();
@@ -283,6 +288,56 @@ TEST_F(MacAudioInputTest, DISABLED_AUAudioInputStreamRecordToFile) {
   ais->Stop();
   fprintf(stderr, "               >> Recording has stopped.\n");
   ais->Close();
+}
+
+TEST(MacAudioInputUpmixerTest, Upmix16bit) {
+  constexpr int kNumFrames = 512;
+  constexpr int kBytesPerSample = sizeof(int16_t);
+  int16_t mono[kNumFrames];
+  int16_t stereo[kNumFrames * 2];
+
+  // Fill the mono buffer and the first half of the stereo buffer with data
+  for (int i = 0; i != kNumFrames; ++i) {
+    mono[i] = i;
+    stereo[i] = i;
+  }
+
+  AudioBuffer audio_buffer;
+  audio_buffer.mNumberChannels = 2;
+  audio_buffer.mDataByteSize = kNumFrames * kBytesPerSample * 2;
+  audio_buffer.mData = stereo;
+  AUAudioInputStream::UpmixMonoToStereoInPlace(&audio_buffer, kBytesPerSample);
+
+  // Assert that the samples have been distributed properly
+  for (int i = 0; i != kNumFrames; ++i) {
+    ASSERT_EQ(mono[i], stereo[i * 2]);
+    ASSERT_EQ(mono[i], stereo[i * 2 + 1]);
+  }
+}
+
+TEST(MacAudioInputUpmixerTest, Upmix32bit) {
+  constexpr int kNumFrames = 512;
+  constexpr int kBytesPerSample = sizeof(int32_t);
+  int32_t mono[kNumFrames];
+  int32_t stereo[kNumFrames * 2];
+
+  // Fill the mono buffer and the first half of the stereo buffer with data
+  for (int i = 0; i != kNumFrames; ++i) {
+    mono[i] = i;
+    stereo[i] = i;
+  }
+
+  AudioBuffer audio_buffer;
+  audio_buffer.mNumberChannels = 2;
+  audio_buffer.mDataByteSize = kNumFrames * kBytesPerSample * 2;
+  audio_buffer.mData = stereo;
+  AUAudioInputStream::UpmixMonoToStereoInPlace(&audio_buffer, kBytesPerSample);
+
+  // Assert that the samples have been distributed properly
+  for (int i = 0; i != kNumFrames; ++i) {
+    ASSERT_EQ(mono[i], stereo[i * 2]);
+    ASSERT_EQ(mono[i], stereo[i * 2 + 1]);
+  }
 }
 
 }  // namespace media

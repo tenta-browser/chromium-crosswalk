@@ -27,7 +27,7 @@ Polymer({
     focusConfig_: {
       type: Object,
       value: function() {
-        var map = new Map();
+        const map = new Map();
         if (settings.routes.ANDROID_APPS_DETAILS) {
           map.set(
               settings.routes.ANDROID_APPS_DETAILS.path,
@@ -58,7 +58,19 @@ Polymer({
       // Filter out events coming from 'Learn more' link
       return;
     }
-    if (this.androidAppsInfo.playStoreEnabled)
+    if (this.androidAppsInfo.playStoreEnabled) {
       settings.navigateTo(settings.routes.ANDROID_APPS_DETAILS);
+    }
+  },
+
+  /**
+   * @param {!MouseEvent} event
+   * @private
+   */
+  onManageAndroidAppsTap_: function(event) {
+    // |event.detail| is the click count. Keyboard events will have 0 clicks.
+    const isKeyboardAction = event.detail == 0;
+    settings.AndroidAppsBrowserProxyImpl.getInstance().showAndroidAppsSettings(
+        isKeyboardAction);
   },
 });

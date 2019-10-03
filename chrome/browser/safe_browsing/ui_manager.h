@@ -15,15 +15,14 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
-#include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "components/safe_browsing/base_ui_manager.h"
+#include "components/security_interstitials/content/unsafe_resource.h"
 
 class GURL;
 
 namespace content {
 class WebContents;
-struct PermissionReportInfo;
 }  // namespace content
 
 namespace history {
@@ -58,25 +57,27 @@ class SafeBrowsingUIManager : public BaseUIManager {
   explicit SafeBrowsingUIManager(
       const scoped_refptr<SafeBrowsingService>& service);
 
-  // Called to stop or shutdown operations on the io_thread. This may be called
+  // Called to stop or shutdown operations on the UI thread. This may be called
   // multiple times during the life of the UIManager. Should be called
-  // on IO thread. If shutdown is true, the manager is disabled permanently.
-  void StopOnIOThread(bool shutdown) override;
+  // on UI thread. If shutdown is true, the manager is disabled permanently.
+  void Stop(bool shutdown);
 
   // Called on the IO thread by the ThreatDetails with the serialized
   // protocol buffer, so the service can send it over.
   void SendSerializedThreatDetails(const std::string& serialized) override;
 
+  // Calls |BaseUIManager::OnBlockingPageDone()| and triggers
+  // |OnSecurityInterstitialProceeded| event if |proceed| is true.
+  void OnBlockingPageDone(const std::vector<UnsafeResource>& resources,
+                          bool proceed,
+                          content::WebContents* web_contents,
+                          const GURL& main_frame_url) override;
+
   // Report hits to unsafe contents (malware, phishing, unsafe download URL)
   // to the server. Can only be called on UI thread.  The hit report will
   // only be sent if the user has enabled SBER and is not in incognito mode.
-  void MaybeReportSafeBrowsingHit(
-      const safe_browsing::HitReport& hit_report,
-      const content::WebContents* web_contents) override;
-
-  // Report permission action to SafeBrowsing servers. Can only be called on UI
-  // thread.
-  void ReportPermissionAction(const PermissionReportInfo& report_info);
+  void MaybeReportSafeBrowsingHit(const safe_browsing::HitReport& hit_report,
+                                  content::WebContents* web_contents) override;
 
   // Creates the whitelist URL set for tests that create a blocking page
   // themselves and then simulate OnBlockingPageDone(). OnBlockingPageDone()
@@ -96,10 +97,6 @@ class SafeBrowsingUIManager : public BaseUIManager {
  protected:
   ~SafeBrowsingUIManager() override;
 
-  // Call protocol manager on IO thread to report hits of unsafe contents.
-  void ReportSafeBrowsingHitOnIOThread(
-      const safe_browsing::HitReport& hit_report) override;
-
   // Creates a hit report for the given resource and calls
   // MaybeReportSafeBrowsingHit. This also notifies all observers in
   // |observer_list_|.
@@ -108,18 +105,17 @@ class SafeBrowsingUIManager : public BaseUIManager {
   // Calls SafeBrowsingBlockingPage::ShowBlockingPage().
   void ShowBlockingPageForResource(const UnsafeResource& resource) override;
 
+  // Returns true if SB committed interstitials are enabled.
+  bool SafeBrowsingInterstitialsAreCommittedNavigations() override;
+
   // Helper method to ensure hit reports are only sent when the user has
   // opted in to extended reporting and is not currently in incognito mode.
   static bool ShouldSendHitReport(const HitReport& hit_report,
-                                  const content::WebContents* web_contents);
+                                  content::WebContents* web_contents);
 
  private:
   friend class SafeBrowsingUIManagerTest;
   friend class TestSafeBrowsingUIManager;
-
-  // Report permission action to SafeBrowsing servers.
-  void ReportPermissionActionOnIOThread(
-      const PermissionReportInfo& report_info);
 
   static GURL GetMainFrameWhitelistUrlForResourceForTesting(
       const safe_browsing::SafeBrowsingUIManager::UnsafeResource& resource);
@@ -127,7 +123,7 @@ class SafeBrowsingUIManager : public BaseUIManager {
   // Safebrowsing service.
   scoped_refptr<SafeBrowsingService> sb_service_;
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingUIManager);
 };

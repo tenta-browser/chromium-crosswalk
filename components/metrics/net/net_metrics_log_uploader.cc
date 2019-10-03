@@ -5,22 +5,52 @@
 #include "components/metrics/net/net_metrics_log_uploader.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "base/rand_util.h"
+#include "base/task/post_task.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/encrypted_messages/encrypted_message.pb.h"
 #include "components/encrypted_messages/message_encrypter.h"
 #include "components/metrics/metrics_log_uploader.h"
 #include "net/base/load_flags.h"
+#include "net/base/url_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "third_party/metrics_proto/reporting_info.pb.h"
 #include "url/gurl.h"
 
 namespace {
 
 const base::Feature kHttpRetryFeature{"UMAHttpRetry",
-                                      base::FEATURE_DISABLED_BY_DEFAULT};
+                                      base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Run ablation on UMA collector connectivity to client. This study will
+// ablate a clients upload of all logs that use |metrics::ReportingService|
+// to upload logs. This include |metrics::MetricsReportingService| for uploading
+// UMA logs. |ukm::UKMReportionService| for uploading UKM logs.
+// Rappor service use |rappor::LogUploader| which is not a
+// |metrics::ReportingService| so, it won't be ablated.
+// similar frequency.
+// To restrict the study to UMA or UKM, set the "service-affected" param.
+const base::Feature kAblateMetricsLogUploadFeature{
+    "AblateMetricsLogUpload", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Fraction of Collector uploads that should be failed artificially.
+constexpr base::FeatureParam<int> kParamFailureRate{
+    &kAblateMetricsLogUploadFeature, "failure-rate", 100};
+
+// HTTP Error code to pass when artificially failing uploads.
+constexpr base::FeatureParam<int> kParamErrorCode{
+    &kAblateMetricsLogUploadFeature, "error-code", 503};
+
+// Service type to ablate. Can be "UMA" or "UKM". Leave it empty to ablate all.
+constexpr base::FeatureParam<std::string> kParamAblateServiceType{
+    &kAblateMetricsLogUploadFeature, "service-type", ""};
 
 // Constants used for encrypting logs that are sent over HTTP. The
 // corresponding private key is used by the metrics server to decrypt logs.
@@ -72,21 +102,21 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
         })");
   }
   DCHECK_EQ(service_type, metrics::MetricsLogUploader::UKM);
+  // TODO(https://crbug.com/951781): Update this annotation once Unity is
+  // enabled on ChromeOS by default.
   return net::DefineNetworkTrafficAnnotation("metrics_report_ukm", R"(
       semantics {
         sender: "Metrics UKM Log Uploader"
         description:
-          "Report of usage statistics that are keyed by URLs to Chromium, "
-          "sent only if the profile has History Sync. This includes "
-          "information about the web pages you visit and your usage of them, "
-          "such as page load speed. This will also include URLs and "
-          "statistics related to downloaded files. If Extension Sync is "
-          "enabled, these statistics will also include information about "
-          "the extensions that have been installed from Chrome Web Store. "
-          "Google only stores usage statistics associated with published "
-          "extensions, and URLs that are known by Google’s search index. "
-          "Usage statistics are tied to a pseudonymous machine identifier "
-          "and not to your email address."
+          "Report of usage statistics that are keyed by URLs to Chromium. This "
+          "includes information about the web pages you visit and your usage "
+          "of them, such as page load speed. This will also include URLs and "
+          "statistics related to downloaded files. These statistics may also "
+          "include information about the extensions that have been installed "
+          "from Chrome Web Store. Google only stores usage statistics "
+          "associated with published extensions, and URLs that are known by "
+          "Google’s search index. Usage statistics are tied to a "
+          "pseudonymous machine identifier and not to your email address."
         trigger:
           "Reports are automatically generated on startup and at intervals "
           "while Chromium is running with Sync enabled."
@@ -97,11 +127,19 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
       policy {
         cookies_allowed: NO
         setting:
-          "Users can enable or disable this feature by disabling "
-          "'Automatically send usage statistics and crash reports to Google' "
-          "in Chromium's settings under Advanced Settings, Privacy. This is "
-          "only enabled if all active profiles have History/Extension Sync "
-          "enabled without a Sync passphrase."
+          "On ChromeOS, users can enable or disable this feature by disabling "
+          "'Automatically send diagnostic and usage data to Google' in "
+          "Chrome's settings under Advanced Settings, Privacy. This is only "
+          "enabled if all active profiles have History Sync enabled without a "
+          "Sync passphrase. "
+          "On all other platforms, users can enable or disable this feature by "
+          "disabling 'Make searches and browsing better' in Chrome's settings "
+          "under Advanced Settings, Privacy. This has to be enabled for all "
+          "active profiles. This is only enabled if the user has "
+          "'Help improve Chrome's features and performance' enabled in the "
+          "same settings menu. "
+          "On all platforms, information about the installed extensions is "
+          "sent only if Extension Sync is enabled."
         chrome_policy {
           MetricsReportingEnabled {
             policy_options {mode: MANDATORY}
@@ -121,30 +159,61 @@ std::string SerializeReportingInfo(
   return result;
 }
 
+// Encrypts a |plaintext| string, using the encrypted_messages component,
+// returns |encrypted| which is a serialized EncryptedMessage object. Returns
+// false if there was a problem encrypting.
+bool EncryptString(const std::string& plaintext, std::string* encrypted) {
+  encrypted_messages::EncryptedMessage encrypted_message;
+  if (!encrypted_messages::EncryptSerializedMessage(
+          kServerPublicKey, kServerPublicKeyVersion, kEncryptedMessageLabel,
+          plaintext, &encrypted_message)) {
+    NOTREACHED() << "Error encrypting string.";
+    return false;
+  }
+  if (!encrypted_message.SerializeToString(encrypted)) {
+    NOTREACHED() << "Error serializing encrypted string.";
+    return false;
+  }
+  return true;
+}
+
+// Encrypts a |plaintext| string and returns |encoded|, which is a base64
+// encoded serialized EncryptedMessage object. Returns false if there was a
+// problem encrypting or serializing.
+bool EncryptAndBase64EncodeString(const std::string& plaintext,
+                                  std::string* encoded) {
+  std::string encrypted_text;
+  if (!EncryptString(plaintext, &encrypted_text))
+    return false;
+
+  base::Base64Encode(encrypted_text, encoded);
+  return true;
+}
+
 }  // namespace
 
 namespace metrics {
 
 NetMetricsLogUploader::NetMetricsLogUploader(
-    net::URLRequestContextGetter* request_context_getter,
-    base::StringPiece server_url,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    const GURL& server_url,
     base::StringPiece mime_type,
     MetricsLogUploader::MetricServiceType service_type,
     const MetricsLogUploader::UploadCallback& on_upload_complete)
-    : request_context_getter_(request_context_getter),
+    : url_loader_factory_(std::move(url_loader_factory)),
       server_url_(server_url),
       mime_type_(mime_type.data(), mime_type.size()),
       service_type_(service_type),
       on_upload_complete_(on_upload_complete) {}
 
 NetMetricsLogUploader::NetMetricsLogUploader(
-    net::URLRequestContextGetter* request_context_getter,
-    base::StringPiece server_url,
-    base::StringPiece insecure_server_url,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    const GURL& server_url,
+    const GURL& insecure_server_url,
     base::StringPiece mime_type,
     MetricsLogUploader::MetricServiceType service_type,
     const MetricsLogUploader::UploadCallback& on_upload_complete)
-    : request_context_getter_(request_context_getter),
+    : url_loader_factory_(std::move(url_loader_factory)),
       server_url_(server_url),
       insecure_server_url_(insecure_server_url),
       mime_type_(mime_type.data(), mime_type.size()),
@@ -156,6 +225,7 @@ NetMetricsLogUploader::~NetMetricsLogUploader() {
 
 void NetMetricsLogUploader::UploadLog(const std::string& compressed_log_data,
                                       const std::string& log_hash,
+                                      const std::string& log_signature,
                                       const ReportingInfo& reporting_info) {
   // If this attempt is a retry, there was a network error, the last attempt was
   // over https, and there is an insecure url set, attempt this upload over
@@ -165,111 +235,134 @@ void NetMetricsLogUploader::UploadLog(const std::string& compressed_log_data,
       reporting_info.last_error_code() != 0 &&
       reporting_info.last_attempt_was_https() &&
       base::FeatureList::IsEnabled(kHttpRetryFeature)) {
-    UploadLogToURL(compressed_log_data, log_hash, reporting_info,
+    UploadLogToURL(compressed_log_data, log_hash, log_signature, reporting_info,
                    insecure_server_url_);
     return;
   }
-  UploadLogToURL(compressed_log_data, log_hash, reporting_info, server_url_);
+  UploadLogToURL(compressed_log_data, log_hash, log_signature, reporting_info,
+                 server_url_);
 }
 
 void NetMetricsLogUploader::UploadLogToURL(
     const std::string& compressed_log_data,
     const std::string& log_hash,
+    const std::string& log_signature,
     const ReportingInfo& reporting_info,
     const GURL& url) {
   DCHECK(!log_hash.empty());
-  current_fetch_ =
-      net::URLFetcher::Create(url, net::URLFetcher::POST, this,
-                              GetNetworkTrafficAnnotation(service_type_));
-  auto service = data_use_measurement::DataUseUserData::UMA;
 
-  switch (service_type_) {
-    case MetricsLogUploader::UMA:
-      service = data_use_measurement::DataUseUserData::UMA;
-      break;
-    case MetricsLogUploader::UKM:
-      service = data_use_measurement::DataUseUserData::UKM;
-      break;
-  }
-  data_use_measurement::DataUseUserData::AttachToFetcher(current_fetch_.get(),
-                                                         service);
-  current_fetch_->SetRequestContext(request_context_getter_);
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = url;
+  // Drop cookies and auth data.
+  resource_request->allow_credentials = false;
+  resource_request->method = "POST";
+
   std::string reporting_info_string = SerializeReportingInfo(reporting_info);
-  // If we are not using HTTPS for this upload, encrypt it.
-  if (!url.SchemeIs(url::kHttpsScheme)) {
-    std::string encrypted_message;
-    if (!EncryptString(compressed_log_data, &encrypted_message)) {
-      current_fetch_.reset();
-      on_upload_complete_.Run(0, net::ERR_FAILED, false);
-      return;
-    }
-    current_fetch_->SetUploadData(mime_type_, encrypted_message);
-
-    std::string encrypted_hash;
+  // If we are not using HTTPS for this upload, encrypt it. We do not encrypt
+  // requests to localhost to allow testing with a local collector that doesn't
+  // have decryption enabled.
+  bool should_encrypt =
+      !url.SchemeIs(url::kHttpsScheme) && !net::IsLocalhost(url);
+  if (should_encrypt) {
     std::string base64_encoded_hash;
-    if (!EncryptString(log_hash, &encrypted_hash)) {
-      current_fetch_.reset();
-      on_upload_complete_.Run(0, net::ERR_FAILED, false);
+    if (!EncryptAndBase64EncodeString(log_hash, &base64_encoded_hash)) {
+      HTTPFallbackAborted();
       return;
     }
-    base::Base64Encode(encrypted_hash, &base64_encoded_hash);
-    current_fetch_->AddExtraRequestHeader("X-Chrome-UMA-Log-SHA1: " +
-                                          base64_encoded_hash);
+    resource_request->headers.SetHeader("X-Chrome-UMA-Log-SHA1",
+                                        base64_encoded_hash);
 
-    std::string encrypted_reporting_info;
-    std::string base64_reporting_info;
-    if (!EncryptString(reporting_info_string, &encrypted_reporting_info)) {
-      current_fetch_.reset();
-      on_upload_complete_.Run(0, net::ERR_FAILED, false);
+    std::string base64_encoded_signature;
+    if (!EncryptAndBase64EncodeString(log_signature,
+                                      &base64_encoded_signature)) {
+      HTTPFallbackAborted();
       return;
     }
-    base::Base64Encode(encrypted_reporting_info, &base64_reporting_info);
-    current_fetch_->AddExtraRequestHeader("X-Chrome-UMA-ReportingInfo: " +
-                                          base64_reporting_info);
+    resource_request->headers.SetHeader("X-Chrome-UMA-Log-HMAC-SHA256",
+                                        base64_encoded_signature);
+
+    std::string base64_reporting_info;
+    if (!EncryptAndBase64EncodeString(reporting_info_string,
+                                      &base64_reporting_info)) {
+      HTTPFallbackAborted();
+      return;
+    }
+    resource_request->headers.SetHeader("X-Chrome-UMA-ReportingInfo",
+                                        base64_reporting_info);
   } else {
-    current_fetch_->AddExtraRequestHeader("X-Chrome-UMA-Log-SHA1: " + log_hash);
-    current_fetch_->AddExtraRequestHeader("X-Chrome-UMA-ReportingInfo:" +
-                                          reporting_info_string);
-    current_fetch_->SetUploadData(mime_type_, compressed_log_data);
+    resource_request->headers.SetHeader("X-Chrome-UMA-Log-SHA1", log_hash);
+    resource_request->headers.SetHeader("X-Chrome-UMA-Log-HMAC-SHA256",
+                                        log_signature);
+    resource_request->headers.SetHeader("X-Chrome-UMA-ReportingInfo",
+                                        reporting_info_string);
     // Tell the server that we're uploading gzipped protobufs only if we are not
     // encrypting, since encrypted messages have to be decrypted server side
     // after decryption, not before.
-    current_fetch_->AddExtraRequestHeader("content-encoding: gzip");
+    resource_request->headers.SetHeader("content-encoding", "gzip");
   }
-  // Drop cookies and auth data.
-  current_fetch_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
-                               net::LOAD_DO_NOT_SEND_AUTH_DATA |
-                               net::LOAD_DO_NOT_SEND_COOKIES);
-  current_fetch_->Start();
+
+  url_loader_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), GetNetworkTrafficAnnotation(service_type_));
+
+  if (should_encrypt) {
+    std::string encrypted_message;
+    if (!EncryptString(compressed_log_data, &encrypted_message)) {
+      url_loader_.reset();
+      HTTPFallbackAborted();
+      return;
+    }
+    url_loader_->AttachStringForUpload(encrypted_message, mime_type_);
+  } else {
+    url_loader_->AttachStringForUpload(compressed_log_data, mime_type_);
+  }
+
+  if (base::FeatureList::IsEnabled(kAblateMetricsLogUploadFeature)) {
+    int failure_rate = kParamFailureRate.Get();
+    std::string service_restrict = kParamAblateServiceType.Get();
+    bool should_ablate =
+        service_restrict.empty() ||
+        (service_type_ == MetricsLogUploader::UMA &&
+         service_restrict == "UMA") ||
+        (service_type_ == MetricsLogUploader::UKM && service_restrict == "UKM");
+    if (should_ablate && base::RandInt(0, 99) < failure_rate) {
+      // Simulate collector outage by not actually trying to upload the
+      // logs but instead call on_upload_complete_ immediately.
+      bool was_https = url.SchemeIs(url::kHttpsScheme);
+      url_loader_.reset();
+      base::SequencedTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::BindOnce(on_upload_complete_, kParamErrorCode.Get(),
+                                    net::ERR_FAILED, was_https));
+      return;
+    }
+  }
+  // It's safe to use |base::Unretained(this)| here, because |this| owns
+  // the |url_loader_|, and the callback will be cancelled if the |url_loader_|
+  // is destroyed.
+  url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&NetMetricsLogUploader::OnURLLoadComplete,
+                     base::Unretained(this)));
 }
 
-void NetMetricsLogUploader::OnURLFetchComplete(const net::URLFetcher* source) {
-  // We're not allowed to re-use the existing |URLFetcher|s, so free them here.
-  // Note however that |source| is aliased to the fetcher, so we should be
-  // careful not to delete it too early.
-  DCHECK_EQ(current_fetch_.get(), source);
-  int response_code = source->GetResponseCode();
-  if (response_code == net::URLFetcher::RESPONSE_CODE_INVALID)
-    response_code = -1;
-  int error_code = 0;
-  const net::URLRequestStatus& request_status = source->GetStatus();
-  if (request_status.status() != net::URLRequestStatus::SUCCESS) {
-    error_code = request_status.error();
-  }
-  bool was_https = source->GetURL().SchemeIs(url::kHttpsScheme);
-  current_fetch_.reset();
+void NetMetricsLogUploader::HTTPFallbackAborted() {
+  // The callbark is called with: a response code of 0 to indicate no upload was
+  // attempted, a generic net error, and false to indicate it wasn't a secure
+  // connection.
+  on_upload_complete_.Run(0, net::ERR_FAILED, false);
+}
+
+// The callback is only invoked if |url_loader_| it was bound against is alive.
+void NetMetricsLogUploader::OnURLLoadComplete(
+    std::unique_ptr<std::string> response_body) {
+  int response_code = -1;
+  if (url_loader_->ResponseInfo() && url_loader_->ResponseInfo()->headers)
+    response_code = url_loader_->ResponseInfo()->headers->response_code();
+
+  int error_code = url_loader_->NetError();
+
+  bool was_https = url_loader_->GetFinalURL().SchemeIs(url::kHttpsScheme);
+  url_loader_.reset();
   on_upload_complete_.Run(response_code, error_code, was_https);
 }
 
-bool NetMetricsLogUploader::EncryptString(const std::string& plaintext,
-                                          std::string* encrypted) {
-  encrypted_messages::EncryptedMessage encrypted_message;
-  if (!encrypted_messages::EncryptSerializedMessage(
-          kServerPublicKey, kServerPublicKeyVersion, kEncryptedMessageLabel,
-          plaintext, &encrypted_message) ||
-      !encrypted_message.SerializeToString(encrypted)) {
-    return false;
-  }
-  return true;
-}
 }  // namespace metrics

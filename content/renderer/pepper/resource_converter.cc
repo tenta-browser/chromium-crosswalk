@@ -7,25 +7,24 @@
 #include <stddef.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/pepper_file_system_host.h"
 #include "content/renderer/pepper/pepper_media_stream_audio_track_host.h"
 #include "content/renderer/pepper/pepper_media_stream_video_track_host.h"
 #include "ipc/ipc_message.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/resource_var.h"
 #include "ppapi/shared_impl/scoped_pp_var.h"
 #include "storage/common/fileapi/file_system_util.h"
-#include "third_party/WebKit/public/platform/WebFileSystem.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/web/WebDOMFileSystem.h"
-#include "third_party/WebKit/public/web/WebDOMMediaStreamTrack.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_file_system_type.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/web/web_dom_file_system.h"
+#include "third_party/blink/public/web/web_dom_media_stream_track.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 using ppapi::ResourceVar;
 
@@ -33,26 +32,25 @@ namespace content {
 namespace {
 
 void FlushComplete(
-    const base::Callback<void(bool)>& callback,
-    const std::vector<scoped_refptr<content::HostResourceVar> >& browser_vars,
+    base::OnceCallback<void(bool)> callback,
+    const std::vector<scoped_refptr<content::HostResourceVar>>& browser_vars,
     const std::vector<int>& pending_host_ids) {
   CHECK(browser_vars.size() == pending_host_ids.size());
   for (size_t i = 0; i < browser_vars.size(); ++i) {
     browser_vars[i]->set_pending_browser_host_id(pending_host_ids[i]);
   }
-  callback.Run(true);
+  std::move(callback).Run(true);
 }
 
-// Converts a blink::WebFileSystem::Type to a PP_FileSystemType.
-PP_FileSystemType WebFileSystemTypeToPPAPI(blink::WebFileSystem::Type type) {
+PP_FileSystemType WebFileSystemTypeToPPAPI(blink::WebFileSystemType type) {
   switch (type) {
-    case blink::WebFileSystem::kTypeTemporary:
+    case blink::WebFileSystemType::kWebFileSystemTypeTemporary:
       return PP_FILESYSTEMTYPE_LOCALTEMPORARY;
-    case blink::WebFileSystem::kTypePersistent:
+    case blink::WebFileSystemType::kWebFileSystemTypePersistent:
       return PP_FILESYSTEMTYPE_LOCALPERSISTENT;
-    case blink::WebFileSystem::kTypeIsolated:
+    case blink::WebFileSystemType::kWebFileSystemTypeIsolated:
       return PP_FILESYSTEMTYPE_ISOLATED;
-    case blink::WebFileSystem::kTypeExternal:
+    case blink::WebFileSystemType::kWebFileSystemTypeExternal:
       return PP_FILESYSTEMTYPE_EXTERNAL;
     default:
       NOTREACHED();
@@ -164,7 +162,6 @@ bool DOMMediaStreamTrackToResource(
     std::unique_ptr<IPC::Message>* create_message) {
   DCHECK(!dom_media_stream_track.IsNull());
   *pending_renderer_id = 0;
-#if BUILDFLAG(ENABLE_WEBRTC)
   const blink::WebMediaStreamTrack track = dom_media_stream_track.Component();
   const std::string id = track.Source().Id().Utf8();
 
@@ -190,7 +187,6 @@ bool DOMMediaStreamTrackToResource(
         new PpapiPluginMsg_MediaStreamAudioTrack_CreateFromPendingHost(id));
     return true;
   }
-#endif
   return false;
 }
 
@@ -276,11 +272,10 @@ bool ResourceConverterImpl::NeedsFlush() {
   return !browser_host_create_messages_.empty();
 }
 
-void ResourceConverterImpl::Flush(const base::Callback<void(bool)>& callback) {
+void ResourceConverterImpl::Flush(base::OnceCallback<void(bool)> callback) {
   RendererPpapiHost::GetForPPInstance(instance_)->CreateBrowserResourceHosts(
-      instance_,
-      browser_host_create_messages_,
-      base::Bind(&FlushComplete, callback, browser_vars_));
+      instance_, browser_host_create_messages_,
+      base::BindOnce(&FlushComplete, std::move(callback), browser_vars_));
   browser_host_create_messages_.clear();
   browser_vars_.clear();
 }

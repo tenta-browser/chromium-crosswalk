@@ -18,7 +18,7 @@ A brief overview of static initialization:
 4) at run time, on startup the binary runs all function pointers.
 
 The functions in (1) all have mangled names of the form
-  _GLOBAL__I_foobar.cc
+  _GLOBAL__I_foobar.cc or __cxx_global_var_initN
 using objdump, we can disassemble those functions and dump all symbols that
 they reference.
 """
@@ -38,8 +38,10 @@ NOTES = {
 IS_GIT_WORKSPACE = (subprocess.Popen(
     ['git', 'rev-parse'], stderr=subprocess.PIPE).wait() == 0)
 
+
 class Demangler(object):
   """A wrapper around c++filt to provide a function to demangle symbols."""
+
   def __init__(self, toolchain):
     self.cppfilt = subprocess.Popen([toolchain + 'c++filt'],
                                     stdin=subprocess.PIPE,
@@ -49,6 +51,7 @@ class Demangler(object):
     """Given mangled symbol |sym|, return its demangled form."""
     self.cppfilt.stdin.write(sym + '\n')
     return self.cppfilt.stdout.readline().strip()
+
 
 # Matches for example: "cert_logger.pb.cc", capturing "cert_logger".
 protobuf_filename_re = re.compile(r'(.*)\.pb\.cc$')
@@ -71,6 +74,7 @@ def QualifyFilenameAsProto(filename):
       return filename # Multiple hits, can't help.
     candidate = line.strip()
   return candidate
+
 
 # Regex matching the substring of a symbol's demangled text representation most
 # likely to appear in a source file.
@@ -99,16 +103,27 @@ def QualifyFilename(filename, symbol):
     candidate = line.strip()
   return candidate
 
-# Regex matching nm output for the symbols we're interested in.
+
+# Regex matching nm output for the symbols we're interested in. The two formats
+# we are interested in are _GLOBAL__sub_I_<filename> and _cxx_global_var_initN.
 # See test_ParseNmLine for examples.
-nm_re = re.compile(r'(\S+) (\S+) t (?:_ZN12)?_GLOBAL__(?:sub_)?I_(.*)')
+nm_re = re.compile(
+    r'''(\S+)\s(\S+)\st\s                # Symbol start address and size
+        (
+          (?:_ZN12)?_GLOBAL__(?:sub_)?I_ # Pattern with filename
+        |
+          __cxx_global_var_init\d*       # Pattern without filename
+        )(.*)                            # capture the filename''',
+    re.X)
 def ParseNmLine(line):
-  """Given a line of nm output, parse static initializers as a
-  (file, start, size) tuple."""
+  """Parse static initializers from a line of nm output.
+
+  Given a line of nm output, parse static initializers as a
+  (file, start, size, symbol) tuple."""
   match = nm_re.match(line)
   if match:
-    addr, size, filename = match.groups()
-    return (filename, int(addr, 16), int(size, 16))
+    addr, size, prefix, filename = match.groups()
+    return (filename, int(addr, 16), int(size, 16), prefix+filename)
 
 
 def test_ParseNmLine():
@@ -116,19 +131,33 @@ def test_ParseNmLine():
   parse = ParseNmLine(
     '0000000001919920 0000000000000008 t '
     '_ZN12_GLOBAL__I_safe_browsing_service.cc')
-  assert parse == ('safe_browsing_service.cc', 26319136, 8), parse
+  assert parse == ('safe_browsing_service.cc', 26319136, 8,
+                   '_ZN12_GLOBAL__I_safe_browsing_service.cc'), parse
 
   parse = ParseNmLine(
     '00000000026b9eb0 0000000000000024 t '
     '_GLOBAL__sub_I_extension_specifics.pb.cc')
-  assert parse == ('extension_specifics.pb.cc', 40607408, 36), parse
+  assert parse == ('extension_specifics.pb.cc', 40607408, 36,
+                   '_GLOBAL__sub_I_extension_specifics.pb.cc'), parse
+
+  parse = ParseNmLine(
+    '0000000002e75a60 0000000000000016 t __cxx_global_var_init')
+  assert parse == ('', 48716384, 22, '__cxx_global_var_init'), parse
+
+  parse = ParseNmLine(
+    '0000000002e75a60 0000000000000016 t __cxx_global_var_init89')
+  assert parse == ('', 48716384, 22, '__cxx_global_var_init89'), parse
+
 
 # Just always run the test; it is fast enough.
 test_ParseNmLine()
 
 
 def ParseNm(toolchain, binary):
-  """Given a binary, yield static initializers as (file, start, size) tuples."""
+  """Yield static initializers for the given binary.
+
+  Given a binary, yield static initializers as (file, start, size, symbol)
+  tuples."""
   nm = subprocess.Popen([toolchain + 'nm', '-S', binary],
                         stdout=subprocess.PIPE)
   for line in nm.stdout:
@@ -136,11 +165,12 @@ def ParseNm(toolchain, binary):
     if parse:
       yield parse
 
+
 # Regex matching objdump output for the symbols we're interested in.
 # Example line:
 #     12354ab:  (disassembly, including <FunctionReference>)
 disassembly_re = re.compile(r'^\s+[0-9a-f]+:.*<(\S+)>')
-def ExtractSymbolReferences(toolchain, binary, start, end):
+def ExtractSymbolReferences(toolchain, binary, start, end, symbol):
   """Given a span of addresses, returns symbol references from disassembly."""
   cmd = [toolchain + 'objdump', binary, '--disassemble',
          '--start-address=0x%x' % start, '--stop-address=0x%x' % end]
@@ -158,12 +188,13 @@ def ExtractSymbolReferences(toolchain, binary, start, end):
       if ref.startswith('.LC') or ref.startswith('_DYNAMIC'):
         # Ignore these, they are uninformative.
         continue
-      if ref.startswith('_GLOBAL__I_'):
+      if re.match(symbol, ref):
         # Probably a relative jump within this function.
         continue
       refs.add(ref)
 
   return sorted(refs)
+
 
 def main():
   parser = optparse.OptionParser(usage='%prog [option] filename')
@@ -188,7 +219,7 @@ def main():
   files = ParseNm(opts.toolchain, binary)
   if opts.diffable:
     files = sorted(files)
-  for filename, addr, size in files:
+  for filename, addr, size, symbol in files:
     file_count += 1
     ref_output = []
 
@@ -201,7 +232,7 @@ def main():
       ref_output.append('[empty ctor, but it still has cost on gcc <4.6]')
     else:
       for ref in ExtractSymbolReferences(opts.toolchain, binary, addr,
-                                         addr+size):
+                                         addr+size, symbol):
         initializer_count += 1
 
         ref = demangler.Demangle(ref)
@@ -235,6 +266,7 @@ def main():
                                                        file_count)
 
   return 0
+
 
 if '__main__' == __name__:
   sys.exit(main())

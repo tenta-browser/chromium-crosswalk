@@ -2,10 +2,8 @@
 <!DOCTYPE translationbundle>
 <translationbundle lang="zh-TW">
 <translation id="1002108253973310084">偵測到不相容的通訊協定版本。請確認兩台電腦都安裝了最新版本的軟體，然後再試一次。</translation>
+<translation id="1008557486741366299">現在不要</translation>
 <translation id="1050693411695664090">不佳</translation>
-<translation id="1059802506829356230">• 外觀與風格推陳出新。
-• 提升執行效能、回應速度和穩定性。
-• 可透過 Windows 或 Linux 電腦播放音訊。</translation>
 <translation id="1152528166145813711">選取…</translation>
 <translation id="1199593201721843963">停用遠端連線</translation>
 <translation id="1291443878853470558">你必須啟用遠端連線，才能透過 Chromoting 存取這台電腦。</translation>
@@ -26,6 +24,7 @@
 <translation id="1520828917794284345">將桌面調整為合適大小</translation>
 <translation id="154040539590487450">無法啟動遠端存取服務。</translation>
 <translation id="1546934824884762070">發生未預期的錯誤，請向開發人員回報這個問題。</translation>
+<translation id="1624185583382384493">Chrome 遠端桌面現已推出網路版。歡迎試試我們的<ph name="LINK_BEGIN" />網路應用程式<ph name="LINK_END" />！不僅快速、免費，還提供更多功能，包括更完善的多螢幕支援。</translation>
 <translation id="1643640058022401035">如果離開這個頁面，你的 Chromoting 工作階段也會結束。</translation>
 <translation id="1654128982815600832">正在啟用這台電腦的遠端連線...</translation>
 <translation id="170207782578677537">無法註冊這台電腦。</translation>
@@ -65,11 +64,17 @@
 <translation id="2314101195544969792">您的「<ph name="APPLICATION_NAME" />」工作階段已閒置一段時間，且即將中斷連線。</translation>
 <translation id="2317666076142640974">歡迎搶先體驗最新 <ph name="LINK_BEGIN" />Chrome 遠端桌面網路應用程式<ph name="LINK_END" />，並提供意見給我們。</translation>
 <translation id="2320166752086256636">隱藏鍵盤</translation>
+<translation id="2332192922827071008">開啟偏好設定</translation>
 <translation id="2353140552984634198">你可以透過 Chromoting 安全地存取這台電腦。</translation>
 <translation id="2359808026110333948">繼續</translation>
 <translation id="2366718077645204424">無法連線到主機，原因可能與你使用的網路設定有關。</translation>
 <translation id="2370754117186920852"><ph name="OPTIONAL_OFFLINE_REASON" />上次上線時間：<ph name="RELATIVE_TIMESTAMP" />。</translation>
 <translation id="2405928220797050937">我們已不再支援這個應用程式。為確保你取得最新功能和安全性更新，請使用 <ph name="LINK_BEGIN" />Chrome 遠端桌面網路應用程式<ph name="LINK_END" />。</translation>
+<translation id="2431841749166974386">你必須先完成一項額外的設定步驟，才能使用 <ph name="PRODUCT_NAME" />從遠端控制這部電腦。
+
+如要啟用這項功能，請先選取 [<ph name="BUTTON_NAME" />] 以開啟「安全性和隱私權」偏好設定窗格，然後勾選 [<ph name="SERVICE_SCRIPT_NAME" />] 旁邊的方塊。
+
+如果現有的 [<ph name="SERVICE_SCRIPT_NAME" />] 已勾選，請將其移除並再次新增。</translation>
 <translation id="2499160551253595098">允許我們收集使用統計資料和當機報告，協助我們改善 Chrome 遠端桌面。</translation>
 <translation id="2509394361235492552">已連線至「<ph name="HOSTNAME" />」</translation>
 <translation id="2512228156274966424">注意：如要確保所有鍵盤快捷鍵都能正常使用，請將 Chrome 遠端桌面設定為 [在視窗中開啟]。</translation>
@@ -85,6 +90,7 @@
 <translation id="2841013758207633010">時間</translation>
 <translation id="2851754573186462851">Chromium 應用程式串流</translation>
 <translation id="2888969873284818612">發生網路錯誤。系統將在您的裝置恢復網路連線後重新啟動應用程式。</translation>
+<translation id="2891243864890517178">適用於 Mac (OS X Yosemite 10.10 以上版本)</translation>
 <translation id="289405675947420287">透過 iOS 裝置安全地存取你的電腦，不僅快速、簡易，而且完全免費。
 
 • 在你要從遠端存取的電腦上，從 Chrome 線上應用程式商店下載 Chrome 遠端桌面應用程式。
@@ -102,13 +108,13 @@
 <translation id="3106379468611574572">遠端電腦未回應你的連線要求。請確認遠端電腦已在線上，然後再試一次。</translation>
 <translation id="310979712355504754">全部刪除</translation>
 <translation id="3150823315463303127">主機無法讀取政策。</translation>
+<translation id="3171922709365450819">由於需要第三方驗證，因此這個用戶端不支援這部裝置。</translation>
 <translation id="3194245623920924351">Chrome 遠端桌面</translation>
 <translation id="3197730452537982411">遠端桌面</translation>
 <translation id="324272851072175193">寄送說明電子郵件</translation>
 <translation id="3258789396564295715">你可以透過 Chrome 遠端桌面安全地存取這台電腦。</translation>
 <translation id="3286521253923406898">Chromoting 主機控制器</translation>
 <translation id="3305934114213025800"><ph name="PRODUCT_NAME" /> 要求進行變更。</translation>
-<translation id="331779822864701136">• 支援 Android 8.0 Oreo。</translation>
 <translation id="332624996707057614">編輯電腦名稱</translation>
 <translation id="3339299787263251426">安全地透過網際網路存取您的電腦</translation>
 <translation id="3360306038446926262">視窗</translation>
@@ -124,7 +130,6 @@
 <translation id="369442766917958684">離線。</translation>
 <translation id="3695446226812920698">操作說明</translation>
 <translation id="3718805989288361841">Chrome 遠端桌面的政策設定有誤。如需協助，請與系統管理員聯絡。</translation>
-<translation id="3759645055923345178">設定完成後，只要輸入 PIN 碼或存取碼，即可透過這個頁面存取該電腦</translation>
 <translation id="3776024066357219166">你的 Chrome 遠端桌面工作階段已結束。</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">請在下方確認你的帳戶和 PIN，以便授予 Chrome 遠端桌面存取權限。</translation>
@@ -137,17 +142,21 @@
 <translation id="3989511127559254552">您必須先授予電腦的延伸存取權限，才能繼續操作 (只需執行一次)。</translation>
 <translation id="4006787130661126000">你必須啟用遠端連線，才能透過 Chrome 遠端桌面存取這台電腦。</translation>
 <translation id="405887016757208221">遠端電腦無法初始化工作階段。如果問題持續發生，請嘗試重新設定主機。</translation>
+<translation id="4060747889721220580">下載檔案</translation>
 <translation id="4068946408131579958">所有連線</translation>
 <translation id="409800995205263688">注意：政策設定僅允許你網路中的電腦相互連線。</translation>
+<translation id="4126409073460786861">設定完成後請重新整理本頁面。之後你只要選擇自己的裝置並輸入 PIN 碼，就可以存取這部電腦</translation>
 <translation id="4145029455188493639">目前登入的帳戶是 <ph name="EMAIL_ADDRESS" />。</translation>
 <translation id="4155497795971509630">找不到部分必要元件。請確認您已安裝最新版本的軟體，然後再試一次。</translation>
 <translation id="4156740505453712750">如要保護這台電腦，避免不明人士入侵，請選擇一個<ph name="BOLD_START" />至少 6 位數<ph name="BOLD_END" />的 PIN。當使用者從其他位置連線時，必須先輸入這個 PIN 驗證身分。</translation>
+<translation id="4169432154993690151">如要選擇個人資料相片，你必須允許 Chrome 遠端桌面存取你的攝影機</translation>
 <translation id="4176825807642096119">存取碼</translation>
 <translation id="4207623512727273241">請先執行安裝程式，然後再繼續操作。</translation>
 <translation id="4227991223508142681">主機帳戶管理公用程式</translation>
 <translation id="4240294130679914010">Chromoting 主機解除安裝程式</translation>
 <translation id="4277463233460010382">這台電腦已設為允許一或多個用戶端可不輸入 PIN 進行連線。</translation>
 <translation id="4277736576214464567">存取碼無效，請再試一次。</translation>
+<translation id="4281844954008187215">服務條款</translation>
 <translation id="4361728918881830843">如要為其他電腦啟用遠端連線，請在你想要連線的電腦上安裝 Chrome 遠端桌面，然後按一下 [<ph name="BUTTON_NAME" />]。</translation>
 <translation id="4394049700291259645">停用</translation>
 <translation id="4405930547258349619">核心資料庫</translation>
@@ -172,7 +181,7 @@
 支援
 電腦
 PC</translation>
-<translation id="4736223761657662401">連線紀錄</translation>
+<translation id="4736223761657662401">連線記錄</translation>
 <translation id="4741792197137897469">驗證失敗，請重新登入 Chrome。</translation>
 <translation id="477305884757156764">應用程式的運作速度過慢。</translation>
 <translation id="4784508858340177375">X 伺服器當機或無法啟動。</translation>
@@ -191,6 +200,7 @@ PC</translation>
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (離線)</translation>
 <translation id="5070121137485264635">遠端主機要求你向第三方網站進行驗證。如要繼續，你必須授予額外權限，讓 Chrome 遠端桌面能夠存取這個位址：</translation>
 <translation id="507204348399810022">您確定要停用與「<ph name="HOSTNAME" />」之間的遠端連線嗎？</translation>
+<translation id="5081343395220691640">無法與伺服器通訊：<ph name="ERROR" /></translation>
 <translation id="5156271271724754543">請在兩個方塊中輸入相同的 PIN。</translation>
 <translation id="5170982930780719864">主機 ID 無效。</translation>
 <translation id="518094545883702183">這些資訊只會用於診斷您所回報的問題，並且僅供相關調查人員存取。此外，系統會在 30 天後刪除這些資訊。</translation>
@@ -235,29 +245,31 @@ PC</translation>
 <translation id="6198252989419008588">變更 PIN</translation>
 <translation id="6204583485351780592"><ph name="HOSTNAME" /> (版本過舊)</translation>
 <translation id="6221358653751391898">您尚未登入 Chrome，請登入並再試一次。</translation>
+<translation id="6227369581881558336">Chrome 遠端桌面現已推出網路版，並增加了檔案傳輸等新功能！歡迎試試我們的<ph name="LINK_BEGIN" />網路應用程式<ph name="LINK_END" />。</translation>
 <translation id="6284412385303060032">在控制台登入畫面執行的主機已關閉。這樣才能切換成在個別使用者工作階段中執行的主機，以支援帷幕模式。</translation>
 <translation id="629730747756840877">帳戶</translation>
 <translation id="6304318647555713317">用戶端</translation>
 <translation id="6381670701864002291">其他。</translation>
 <translation id="6398765197997659313">退出全螢幕模式</translation>
 <translation id="6441316101718669559">這個平台不支援桌面整合。您仍然可以使用該應用程式，但使用者體驗可能不如預期。</translation>
+<translation id="6502629188777329097">安全存取你的電腦</translation>
 <translation id="652218476070540101">正在更新這台電腦的 PIN...</translation>
 <translation id="6527303717912515753">分享</translation>
-<translation id="6541219117979389420">應用程式紀錄可能含有私人資訊，包括您的身分 (電子郵件地址)，以及 Google 雲端硬碟檔案與資料夾的名稱和屬性。</translation>
+<translation id="6541219117979389420">應用程式記錄可能含有私人資訊，包括您的身分 (電子郵件地址)，以及 Google 雲端硬碟檔案與資料夾的名稱和屬性。</translation>
 <translation id="6542902059648396432">回報問題…</translation>
 <translation id="6550675742724504774">選項</translation>
 <translation id="6570205395680337606">重設應用程式。所有未儲存的變更都會遺失。</translation>
-<translation id="6572345186230665992">適用於 Mac (OS X Mavericks 10.9 以上版本)</translation>
 <translation id="6583902294974160967">支援</translation>
 <translation id="6612717000975622067">傳送 Ctrl-Alt-Del</translation>
 <translation id="6654753848497929428">共用</translation>
 <translation id="6668065415969892472">你的 PIN 已更新。</translation>
 <translation id="6681800064886881394">Copyright 2013 Google Inc. 保留所有權利。</translation>
 <translation id="6705482892455291412">對方輸入存取碼後，系統會提示你接受連線，展開共用工作階段。</translation>
-<translation id="6746493157771801606">清除紀錄</translation>
+<translation id="6746493157771801606">清除記錄</translation>
 <translation id="6748108480210050150">寄件者</translation>
 <translation id="677755392401385740">已為下列使用者啟動主機：<ph name="HOST_USERNAME" />。</translation>
 <translation id="6865175692670882333">檢視/編輯</translation>
+<translation id="6913710942997637770">如要選擇個人資料相片，你必須允許 Chrome 遠端桌面存取你的相片</translation>
 <translation id="6930242544192836755">持續時間</translation>
 <translation id="6939719207673461467">顯示/隱藏鍵盤。</translation>
 <translation id="6944854424004126054">還原視窗</translation>
@@ -268,11 +280,13 @@ PC</translation>
 <translation id="6998989275928107238">收件者</translation>
 <translation id="7019153418965365059">不明主機錯誤：<ph name="HOST_OFFLINE_REASON" />。</translation>
 <translation id="701976023053394610">遠端協助</translation>
+<translation id="7026930240735156896">請按照操作說明設定電腦，以便執行遠端存取作業</translation>
 <translation id="7038683108611689168">允許我們收集使用統計資料和當機報告，協助我們改善 Chromoting。</translation>
 <translation id="7067321367069083429">把螢幕當作觸控螢幕使用</translation>
 <translation id="7116737094673640201">歡迎使用 Chrome 遠端桌面</translation>
 <translation id="7144878232160441200">重試</translation>
 <translation id="7149517134817561223">要對 Chrome 遠端桌面主機發出指令的應用程式。</translation>
+<translation id="7213491505512310433">提升穩定性並修正錯誤。</translation>
 <translation id="7215059001581613786">請輸入一個至少 6 位數的 PIN。</translation>
 <translation id="7312846573060934304">主機已離線。</translation>
 <translation id="7319983568955948908">停止共用</translation>
@@ -280,7 +294,6 @@ PC</translation>
 <translation id="7434397035092923453">用戶端遭拒絕存取：<ph name="CLIENT_USERNAME" />。</translation>
 <translation id="7444276978508498879">已連線至用戶端：<ph name="CLIENT_USERNAME" />。</translation>
 <translation id="7526139040829362392">變更帳戶</translation>
-<translation id="7589941250119944644">Chrome 遠端桌面現已推出全新的線上版本。歡迎試試我們的<ph name="LINK_BEGIN" />網路應用程式<ph name="LINK_END" />！不僅快速、免費，更完整保留過去的所有功能。</translation>
 <translation id="7606912958770842224">啟用遠端連線</translation>
 <translation id="7628469622942688817">在這個裝置上儲存我的 PIN 碼。</translation>
 <translation id="7649070708921625228">說明</translation>
@@ -289,10 +302,10 @@ PC</translation>
 <translation id="7672203038394118626">這台電腦的遠端連線已停用。</translation>
 <translation id="7678209621226490279">靠左固定</translation>
 <translation id="7693372326588366043">重新整理主機清單</translation>
+<translation id="7714222945760997814">回報這個問題</translation>
 <translation id="7782471917492991422">請檢查電腦的電源管理設定，確認電腦在閒置時不會進入休眠狀態。</translation>
 <translation id="7810127880729796595">顯示統計資料 (連線品質：<ph name="QUALITY" />)</translation>
 <translation id="7836926030608666805">找不到部分必要元件。請確認您執行的是最新版本的 Chrome，然後再試一次。</translation>
-<translation id="7850909060902317210">安裝 Chrome 遠端桌面軟體，並按照操作說明完成設定程序</translation>
 <translation id="7868137160098754906">請為遠端電腦輸入你的 PIN。</translation>
 <translation id="7869445566579231750">您沒有執行這個應用程式的權限。</translation>
 <translation id="7895403300744144251">遠端電腦的安全性政策禁止從您的帳戶連線。</translation>
@@ -309,13 +322,14 @@ PC</translation>
 <translation id="809687642899217504">我的電腦</translation>
 <translation id="811307782653349804">無論你人在哪裡，都能存取自己的電腦。</translation>
 <translation id="8116630183974937060">發生網路錯誤。請確認你的裝置已連線至網路，然後再試一次。</translation>
+<translation id="8123581458650016326">允許遠端使用者控制這部電腦</translation>
 <translation id="8178433417677596899">讓兩端的使用者都能看到同一個螢幕畫面，是遠端技術支援作業的利器。</translation>
 <translation id="8187079423890319756">Copyright 2013 The Chromium Authors. 保留所有權利。</translation>
 <translation id="8196755618196986400">如果您允許我們要求您提供更進一步的資訊，凡是您提交的意見回饋都會包含您的電子郵件地址。</translation>
 <translation id="8244400547700556338">瞭解詳情</translation>
 <translation id="8261506727792406068">刪除</translation>
 <translation id="8355326866731426344">這個存取碼將於 <ph name="TIMEOUT" /> 後失效</translation>
-<translation id="8355485110405946777">包括應用程式紀錄，以協助我們解決您的問題 (紀錄可能含有私人資訊)。</translation>
+<translation id="8355485110405946777">包括應用程式記錄，以協助我們解決您的問題 (記錄可能含有私人資訊)。</translation>
 <translation id="837021510621780684">從這台電腦</translation>
 <translation id="8383794970363966105">你必須在裝置上新增 Google 帳戶，才能使用 Chromoting。</translation>
 <translation id="8386846956409881180">用於設定主機的 OAuth 憑證無效。</translation>
@@ -331,6 +345,7 @@ PC</translation>
 <translation id="8747048596626351634">工作階段當機或無法啟動。如果遠端電腦有 ~/.chrome-remote-desktop-session，請確認該檔案開始執行長期運作的前景程序，例如桌面環境或視窗管理員。</translation>
 <translation id="8759753423332885148">瞭解詳情</translation>
 <translation id="8791202241915690908">下載 Chromoting 主機安裝程式</translation>
+<translation id="8804164990146287819">隱私權政策</translation>
 <translation id="894763922177556086">良好</translation>
 <translation id="895780780740011433">適用於 Windows 7 以上版本</translation>
 <translation id="897805526397249209">如要為其他電腦啟用遠端連線，請在你想要連線的電腦上安裝 Chromoting，然後按一下 [<ph name="BUTTON_NAME" />]。</translation>

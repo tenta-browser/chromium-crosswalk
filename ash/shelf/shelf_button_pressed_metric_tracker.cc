@@ -17,7 +17,7 @@ const char ShelfButtonPressedMetricTracker::
         "Ash.Shelf.TimeBetweenWindowMinimizedAndActivatedActions";
 
 ShelfButtonPressedMetricTracker::ShelfButtonPressedMetricTracker()
-    : tick_clock_(new base::DefaultTickClock()),
+    : tick_clock_(base::DefaultTickClock::GetInstance()),
       time_of_last_minimize_(base::TimeTicks()),
       last_minimized_source_button_(nullptr) {}
 
@@ -62,6 +62,7 @@ void ShelfButtonPressedMetricTracker::RecordButtonPressedAction(
   switch (performed_action) {
     case SHELF_ACTION_NONE:
     case SHELF_ACTION_APP_LIST_SHOWN:
+    case SHELF_ACTION_APP_LIST_DISMISSED:
       break;
     case SHELF_ACTION_NEW_WINDOW_CREATED:
       Shell::Get()->metrics()->RecordUserMetricsAction(

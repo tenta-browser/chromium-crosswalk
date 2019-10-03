@@ -60,13 +60,10 @@ SolidColorScrollbarLayer::SolidColorScrollbarLayer(
                                           is_left_side_vertical_scrollbar,
                                           scroll_element_id) {
   Layer::SetOpacity(0.f);
+  SetIsScrollbar(true);
 }
 
-SolidColorScrollbarLayer::~SolidColorScrollbarLayer() {}
-
-ScrollbarLayerInterface* SolidColorScrollbarLayer::ToScrollbarLayer() {
-  return this;
-}
+SolidColorScrollbarLayer::~SolidColorScrollbarLayer() = default;
 
 void SolidColorScrollbarLayer::SetOpacity(float opacity) {
   // The opacity of a solid color scrollbar layer is always 0 on main thread.
@@ -78,6 +75,8 @@ void SolidColorScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
   Layer::PushPropertiesTo(layer);
   SolidColorScrollbarLayerImpl* scrollbar_layer =
       static_cast<SolidColorScrollbarLayerImpl*>(layer);
+
+  DCHECK(!scrollbar_layer->HitTestable());
 
   scrollbar_layer->SetScrollElementId(
       solid_color_scrollbar_layer_inputs_.scroll_element_id);
@@ -96,7 +95,13 @@ void SolidColorScrollbarLayer::SetScrollElementId(ElementId element_id) {
     return;
 
   solid_color_scrollbar_layer_inputs_.scroll_element_id = element_id;
-  SetNeedsFullTreeSync();
+  SetNeedsCommit();
+}
+
+bool SolidColorScrollbarLayer::HitTestable() const {
+  // Android scrollbars can't be interacted with by user input. They should
+  // avoid hit testing so we don't enter any scrollbar scrolling code paths.
+  return false;
 }
 
 }  // namespace cc

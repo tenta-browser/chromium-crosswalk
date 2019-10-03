@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * Protocol + host parts of extension URL.
- * @type {string}
- * @const
- */
-var FILE_MANAGER_HOST = 'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj';
-
 // All of these scripts could be imported with a single call to importScripts,
 // but then load and compile time errors would all be reported from the same
-// line.
-importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/metadata_parser.js');
-importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/byte_reader.js');
+// line. Note: update component_extension_resources.grd when adding new parsers.
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/metadata_parser.js');
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/byte_reader.js');
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/exif_parser.js');
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/image_parsers.js');
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/mpeg_parser.js');
+importScripts(
+    'chrome-extension://hhaomjibdihmijegdhdafkllkbggdgoj/foreground/js/metadata/id3_parser.js');
 
 /**
  * Dispatches metadata requests to the correct parser.
@@ -27,19 +30,24 @@ function MetadataDispatcher(port) {
   this.port_ = port;
   this.port_.onmessage = this.onMessage.bind(this);
 
-  // Make sure to update component_extension_resources.grd
-  // when adding new parsers.
-  importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/exif_parser.js');
-  importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/image_parsers.js');
-  importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/mpeg_parser.js');
-  importScripts(FILE_MANAGER_HOST + '/foreground/js/metadata/id3_parser.js');
-
-  var patterns = [];
+  const patterns = [];
 
   this.parserInstances_ = [];
-  for (var i = 0; i < MetadataDispatcher.parserClasses_.length; i++) {
-    var parserClass = MetadataDispatcher.parserClasses_[i];
-    var parser = new parserClass(this);
+
+  /** @type {!Array<function(new:MetadataParser, !MetadataParserLogger)>} */
+  const parserClasses = [
+    BmpParser,
+    ExifParser,
+    GifParser,
+    IcoParser,
+    Id3Parser,
+    MpegParser,
+    PngParser,
+    WebpParser,
+  ];
+
+  for (const parserClass of parserClasses) {
+    const parser = new parserClass(this);
     this.parserInstances_.push(parser);
     patterns.push(parser.urlFilter.source);
   }
@@ -51,12 +59,6 @@ function MetadataDispatcher(port) {
     request: this.request_.bind(this)
   };
 }
-
-/**
- * List of registered parser classes.
- * @private {!Array<function(new:MetadataParser, !MetadataParserLogger)>}
- */
-MetadataDispatcher.parserClasses_ = [];
 
 /**
  * Verbose logging for the dispatcher.
@@ -98,7 +100,7 @@ MetadataDispatcher.prototype.request_ = function(fileURL) {
  * @param {...(Object|string)} var_args Arguments.
  */
 MetadataDispatcher.prototype.error = function(var_args) {
-  var ary = Array.apply(null, arguments);
+  const ary = Array.apply(null, arguments);
   this.postMessage('error', ary);
 };
 
@@ -109,7 +111,7 @@ MetadataDispatcher.prototype.error = function(var_args) {
  * @param {...(Object|string)} var_args Arguments.
  */
 MetadataDispatcher.prototype.log = function(var_args) {
-  var ary = Array.apply(null, arguments);
+  const ary = Array.apply(null, arguments);
   this.postMessage('log', ary);
 };
 
@@ -118,8 +120,9 @@ MetadataDispatcher.prototype.log = function(var_args) {
  * @param {...(Object|string)} var_args Arguments.
  */
 MetadataDispatcher.prototype.vlog = function(var_args) {
-  if (this.verbose)
+  if (this.verbose) {
     this.log.apply(this, arguments);
+  }
 };
 
 /**
@@ -136,7 +139,7 @@ MetadataDispatcher.prototype.postMessage = function(verb, args) {
  * @param {Event} event Event object.
  */
 MetadataDispatcher.prototype.onMessage = function(event) {
-  var data = event.data;
+  const data = event.data;
 
   if (this.messageHandlers_.hasOwnProperty(data.verb)) {
     this.messageHandlers_[data.verb].apply(this, data.arguments);
@@ -150,8 +153,8 @@ MetadataDispatcher.prototype.onMessage = function(event) {
  * @param {function(Object)} callback Completion callback.
  */
 MetadataDispatcher.prototype.processOneFile = function(fileURL, callback) {
-  var self = this;
-  var currentStep = -1;
+  const self = this;
+  let currentStep = -1;
 
   /**
    * @param {...} var_args Arguments.
@@ -161,22 +164,23 @@ MetadataDispatcher.prototype.processOneFile = function(fileURL, callback) {
     steps[++currentStep].apply(self, arguments);
   }
 
-  var metadata;
+  let metadata;
 
   /**
    * @param {*} err An error.
    * @param {string=} opt_stepName Step name.
    */
   function onError(err, opt_stepName) {
-    self.error(fileURL, opt_stepName || steps[currentStep].name, err.toString(),
+    self.error(
+        fileURL, opt_stepName || steps[currentStep].name, err.toString(),
         metadata);
   }
 
-  var steps = [
+  const steps = [
     // Step one, find the parser matching the url.
     function detectFormat() {
-      for (var i = 0; i != self.parserInstances_.length; i++) {
-        var parser = self.parserInstances_[i];
+      for (let i = 0; i != self.parserInstances_.length; i++) {
+        const parser = self.parserInstances_[i];
         if (fileURL.match(parser.urlFilter)) {
           // Create the metadata object as early as possible so that we can
           // pass it with the error message.
@@ -190,15 +194,16 @@ MetadataDispatcher.prototype.processOneFile = function(fileURL, callback) {
 
     // Step two, turn the url into an entry.
     function getEntry(parser) {
-      webkitResolveLocalFileSystemURL(
-          fileURL,
-          function(entry) { nextStep(entry, parser); },
-          onError);
+      webkitResolveLocalFileSystemURL(fileURL, entry => {
+        nextStep(entry, parser);
+      }, onError);
     },
 
     // Step three, turn the entry into a file.
     function getFile(entry, parser) {
-      entry.file(function(file) { nextStep(file, parser); }, onError);
+      entry.file(file => {
+        nextStep(file, parser);
+      }, onError);
     },
 
     // Step four, parse the file content.
@@ -218,11 +223,11 @@ MetadataDispatcher.prototype.processOneFile = function(fileURL, callback) {
 // Webworker spec says that the worker global object is called self.  That's
 // a terrible name since we use it all over the chrome codebase to capture
 // the 'this' keyword in lambdas.
-var global = self;
+const global = self;
 
 if (global.constructor.name == 'SharedWorkerGlobalScope') {
-  global.addEventListener('connect', function(e) {
-    var port = e.ports[0];
+  global.addEventListener('connect', e => {
+    const port = e.ports[0];
     new MetadataDispatcher(port);
     port.start();
   });
@@ -230,11 +235,3 @@ if (global.constructor.name == 'SharedWorkerGlobalScope') {
   // Non-shared worker.
   new MetadataDispatcher(global);
 }
-
-/**
- * @param {function(new:MetadataParser, !MetadataParserLogger)} parserClass
- *     Parser constructor function.
- */
-registerParserClass = function(parserClass) {
-  MetadataDispatcher.parserClasses_.push(parserClass);
-};

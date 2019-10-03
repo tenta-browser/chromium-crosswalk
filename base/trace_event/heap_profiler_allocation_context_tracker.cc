@@ -8,12 +8,19 @@
 #include <iterator>
 
 #include "base/atomicops.h"
-#include "base/debug/debugging_flags.h"
+#include "base/debug/debugging_buildflags.h"
 #include "base/debug/leak_annotations.h"
 #include "base/debug/stack_trace.h"
+#include "base/no_destructor.h"
+#include "base/stl_util.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_local_storage.h"
 #include "base/trace_event/heap_profiler_allocation_context.h"
+#include "build/build_config.h"
+
+#if defined(OS_ANDROID) && BUILDFLAG(CAN_UNWIND_WITH_CFI_TABLE)
+#include "base/trace_event/cfi_backtrace_android.h"
+#endif
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
 #include <sys/prctl.h>
@@ -32,12 +39,16 @@ const size_t kMaxTaskDepth = 16u;
 AllocationContextTracker* const kInitializingSentinel =
     reinterpret_cast<AllocationContextTracker*>(-1);
 
-ThreadLocalStorage::StaticSlot g_tls_alloc_ctx_tracker = TLS_INITIALIZER;
-
 // This function is added to the TLS slot to clean up the instance when the
 // thread exits.
 void DestructAllocationContextTracker(void* alloc_ctx_tracker) {
   delete static_cast<AllocationContextTracker*>(alloc_ctx_tracker);
+}
+
+ThreadLocalStorage::Slot& AllocationContextTrackerTLS() {
+  static NoDestructor<ThreadLocalStorage::Slot> tls_alloc_ctx_tracker(
+      &DestructAllocationContextTracker);
+  return *tls_alloc_ctx_tracker;
 }
 
 // Cannot call ThreadIdNameManager::GetName because it holds a lock and causes
@@ -68,15 +79,15 @@ const char* GetAndLeakThreadName() {
 // static
 AllocationContextTracker*
 AllocationContextTracker::GetInstanceForCurrentThread() {
-  AllocationContextTracker* tracker =
-      static_cast<AllocationContextTracker*>(g_tls_alloc_ctx_tracker.Get());
+  AllocationContextTracker* tracker = static_cast<AllocationContextTracker*>(
+      AllocationContextTrackerTLS().Get());
   if (tracker == kInitializingSentinel)
     return nullptr;  // Re-entrancy case.
 
   if (!tracker) {
-    g_tls_alloc_ctx_tracker.Set(kInitializingSentinel);
+    AllocationContextTrackerTLS().Set(kInitializingSentinel);
     tracker = new AllocationContextTracker();
-    g_tls_alloc_ctx_tracker.Set(tracker);
+    AllocationContextTrackerTLS().Set(tracker);
   }
 
   return tracker;
@@ -86,6 +97,7 @@ AllocationContextTracker::AllocationContextTracker()
     : thread_name_(nullptr), ignore_scope_depth_(0) {
   tracked_stack_.reserve(kMaxStackDepth);
   task_contexts_.reserve(kMaxTaskDepth);
+  task_contexts_.push_back("UntrackedTask");
 }
 AllocationContextTracker::~AllocationContextTracker() = default;
 
@@ -98,11 +110,6 @@ void AllocationContextTracker::SetCurrentThreadName(const char* name) {
 
 // static
 void AllocationContextTracker::SetCaptureMode(CaptureMode mode) {
-  // When enabling capturing, also initialize the TLS slot. This does not create
-  // a TLS instance yet.
-  if (mode != CaptureMode::DISABLED && !g_tls_alloc_ctx_tracker.initialized())
-    g_tls_alloc_ctx_tracker.Initialize(DestructAllocationContextTracker);
-
   // Release ordering ensures that when a thread observes |capture_mode_| to
   // be true through an acquire load, the TLS slot has been initialized.
   subtle::Release_Store(&capture_mode_, static_cast<int32_t>(mode));
@@ -157,8 +164,8 @@ void AllocationContextTracker::PushCurrentTaskContext(const char* context) {
 void AllocationContextTracker::PopCurrentTaskContext(const char* context) {
   // Guard for stack underflow. If tracing was started with a TRACE_EVENT in
   // scope, the context was never pushed, so it is possible that pop is called
-  // on an empty stack.
-  if (task_contexts_.empty())
+  // on an empty stack. Note that the context always contains "UntrackedTask".
+  if (task_contexts_.size() == 1)
     return;
 
   DCHECK_EQ(context, task_contexts_.back())
@@ -214,20 +221,27 @@ bool AllocationContextTracker::GetContextSnapshot(AllocationContext* ctx) {
 // kMaxFrameCount + 1 frames, so that we know if there are more frames
 // than our backtrace capacity.
 #if !defined(OS_NACL)  // We don't build base/debug/stack_trace.cc for NaCl.
-#if BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+#if defined(OS_ANDROID) && BUILDFLAG(CAN_UNWIND_WITH_CFI_TABLE)
         const void* frames[Backtrace::kMaxFrameCount + 1];
-        static_assert(arraysize(frames) >= Backtrace::kMaxFrameCount,
+        static_assert(base::size(frames) >= Backtrace::kMaxFrameCount,
+                      "not requesting enough frames to fill Backtrace");
+        size_t frame_count =
+            CFIBacktraceAndroid::GetInitializedInstance()->Unwind(
+                frames, base::size(frames));
+#elif BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+        const void* frames[Backtrace::kMaxFrameCount + 1];
+        static_assert(base::size(frames) >= Backtrace::kMaxFrameCount,
                       "not requesting enough frames to fill Backtrace");
         size_t frame_count = debug::TraceStackFramePointers(
-            frames, arraysize(frames),
+            frames, base::size(frames),
             1 /* exclude this function from the trace */);
-#else   // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+#else
         // Fall-back to capturing the stack with base::debug::StackTrace,
         // which is likely slower, but more reliable.
         base::debug::StackTrace stack_trace(Backtrace::kMaxFrameCount + 1);
         size_t frame_count = 0u;
         const void* const* frames = stack_trace.Addresses(&frame_count);
-#endif  // BUILDFLAG(CAN_UNWIND_WITH_FRAME_POINTERS)
+#endif
 
         // If there are too many frames, keep the ones furthest from main().
         size_t backtrace_capacity = backtrace_end - backtrace;
@@ -247,13 +261,7 @@ bool AllocationContextTracker::GetContextSnapshot(AllocationContext* ctx) {
 
   ctx->backtrace.frame_count = backtrace - std::begin(ctx->backtrace.frames);
 
-  // TODO(ssid): Fix crbug.com/594803 to add file name as 3rd dimension
-  // (component name) in the heap profiler and not piggy back on the type name.
-  if (!task_contexts_.empty()) {
-    ctx->type_name = task_contexts_.back();
-  } else {
-    ctx->type_name = nullptr;
-  }
+  ctx->type_name = TaskContext();
 
   return true;
 }

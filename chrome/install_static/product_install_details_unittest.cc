@@ -13,10 +13,10 @@
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
+#include "chrome/chrome_elf/nt_registry/nt_registry.h"
 #include "chrome/install_static/install_constants.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
-#include "chrome_elf/nt_registry/nt_registry.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -71,7 +71,7 @@ TEST(ProductInstallDetailsTest, PathIsInProgramFiles) {
 
   // 32-bit on 32-bit: only check C:\Program Files.
   // 32-bit and 64-bit on 64-bit: check both.
-  const bool is_x64 = base::win::OSInfo::GetInstance()->architecture() !=
+  const bool is_x64 = base::win::OSInfo::GetArchitecture() !=
                       base::win::OSInfo::X86_ARCHITECTURE;
   std::vector<int> program_files_keys;
   program_files_keys.push_back(base::DIR_PROGRAM_FILESX86);
@@ -364,8 +364,8 @@ TEST_P(MakeProductDetailsTest, UpdateCohortName) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(All,
-                        MakeProductDetailsTest,
-                        testing::ValuesIn(kTestData));
+INSTANTIATE_TEST_SUITE_P(All,
+                         MakeProductDetailsTest,
+                         testing::ValuesIn(kTestData));
 
 }  // namespace install_static

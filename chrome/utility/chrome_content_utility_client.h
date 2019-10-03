@@ -9,9 +9,13 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "content/public/utility/content_utility_client.h"
+#include "printing/buildflags/buildflags.h"
 
-class UtilityMessageHandler;
+namespace printing {
+class PrintingHandler;
+}
 
 class ChromeContentUtilityClient : public content::ContentUtilityClient {
  public:
@@ -24,20 +28,30 @@ class ChromeContentUtilityClient : public content::ContentUtilityClient {
   // content::ContentUtilityClient:
   void UtilityThreadStarted() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  void RegisterServices(StaticServiceMap* services) override;
+  bool HandleServiceRequest(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request) override;
   void RegisterNetworkBinders(
       service_manager::BinderRegistry* registry) override;
-
-  static void PreSandboxStartup();
+  void RunMainThreadService(mojo::GenericPendingReceiver receiver) override;
+  void RunIOThreadService(mojo::GenericPendingReceiver* receiver) override;
 
   // See NetworkBinderProvider above.
   static void SetNetworkBinderCreationCallback(
       const NetworkBinderCreationCallback& callback);
 
  private:
-  // IPC message handlers.
-  using Handlers = std::vector<std::unique_ptr<UtilityMessageHandler>>;
-  Handlers handlers_;
+  std::unique_ptr<service_manager::Service> MaybeCreateMainThreadService(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request);
+  std::unique_ptr<service_manager::Service> MaybeCreateElevatedService(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request);
+
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  // Last IPC message handler.
+  std::unique_ptr<printing::PrintingHandler> printing_handler_;
+#endif
 
   // True if the utility process runs with elevated privileges.
   bool utility_process_running_elevated_;

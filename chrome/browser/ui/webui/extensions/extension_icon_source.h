@@ -53,6 +53,7 @@ class ExtensionIconSource : public content::URLDataSource,
                             public base::SupportsWeakPtr<ExtensionIconSource> {
  public:
   explicit ExtensionIconSource(Profile* profile);
+  ~ExtensionIconSource() override;
 
   // Gets the URL of the |extension| icon in the given |icon_size|, falling back
   // based on the |match| type. If |grayscale|, the URL will be for the
@@ -67,19 +68,17 @@ class ExtensionIconSource : public content::URLDataSource,
   static SkBitmap* LoadImageByResourceId(int resource_id);
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
-  std::string GetMimeType(const std::string&) const override;
+  std::string GetSource() override;
+  std::string GetMimeType(const std::string&) override;
   void StartDataRequest(
       const std::string& path,
       const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
-  bool AllowCaching() const override;
+  bool AllowCaching() override;
 
  private:
   // Encapsulates the request parameters for |request_id|.
   struct ExtensionIconRequest;
-
-  ~ExtensionIconSource() override;
 
   // Returns the bitmap for the default app image.
   const SkBitmap* GetDefaultAppImage();

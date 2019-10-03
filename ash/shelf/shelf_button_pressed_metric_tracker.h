@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "ash/ash_export.h"
-#include "ash/public/interfaces/shelf.mojom.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/macros.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -70,7 +70,7 @@ class ASH_EXPORT ShelfButtonPressedMetricTracker {
   void ResetMinimizedData();
 
   // Time source for performed action times.
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Stores the time of the last window minimize action.
   base::TimeTicks time_of_last_minimize_;

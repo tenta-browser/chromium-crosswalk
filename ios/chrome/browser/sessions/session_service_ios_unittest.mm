@@ -19,7 +19,7 @@
 #import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
-#import "ios/web/public/crw_session_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -59,7 +59,7 @@ class SessionServiceTest : public PlatformTest {
   // |filename| or nil if the file cannot be found.
   NSString* SessionPathForTestData(const base::FilePath::CharType* filename) {
     base::FilePath session_path;
-    if (!PathService::Get(ios::DIR_TEST_DATA, &session_path))
+    if (!base::PathService::Get(ios::DIR_TEST_DATA, &session_path))
       return nil;
 
     session_path = session_path.Append(FILE_PATH_LITERAL("sessions"));

@@ -13,22 +13,20 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "net/base/network_delegate.h"
 #include "net/url_request/url_request_redirect_job.h"
-#include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
 using content::ChildProcessSecurityPolicy;
@@ -38,8 +36,7 @@ namespace {
 const ProtocolHandler& LookupHandler(
     const ProtocolHandlerRegistry::ProtocolHandlerMap& handler_map,
     const std::string& scheme) {
-  ProtocolHandlerRegistry::ProtocolHandlerMap::const_iterator p =
-      handler_map.find(scheme);
+  auto p = handler_map.find(scheme);
 
   if (p != handler_map.end())
     return p->second;
@@ -62,58 +59,23 @@ bool ShouldRemoveHandlersNotInOS() {
 #endif
 }
 
+GURL TranslateUrl(
+    const ProtocolHandlerRegistry::ProtocolHandlerMap& handler_map,
+    const GURL& url) {
+  const ProtocolHandler& handler = LookupHandler(handler_map, url.scheme());
+  if (handler.IsEmpty())
+    return GURL();
+
+  GURL translated_url(handler.TranslateUrl(url));
+  if (!translated_url.is_valid())
+    return GURL();
+
+  return translated_url;
+}
+
 }  // namespace
 
 // IOThreadDelegate ------------------------------------------------------------
-
-// IOThreadDelegate is an IO thread specific object. Access to the class should
-// all be done via the IO thread. The registry living on the UI thread makes
-// a best effort to update the IO object after local updates are completed.
-class ProtocolHandlerRegistry::IOThreadDelegate
-    : public base::RefCountedThreadSafe<
-          ProtocolHandlerRegistry::IOThreadDelegate> {
- public:
-  // Creates a new instance. If |enabled| is true the registry is considered
-  // enabled on the IO thread.
-  explicit IOThreadDelegate(bool enabled);
-
-  // Returns true if the protocol has a default protocol handler.
-  // Should be called only from the IO thread.
-  bool IsHandledProtocol(const std::string& scheme) const;
-
-  // Clears the default for the provided protocol.
-  // Should be called only from the IO thread.
-  void ClearDefault(const std::string& scheme);
-
-  // Makes this ProtocolHandler the default handler for its protocol.
-  // Should be called only from the IO thread.
-  void SetDefault(const ProtocolHandler& handler);
-
-  // Creates a URL request job for the given request if there is a matching
-  // protocol handler, returns NULL otherwise.
-  net::URLRequestJob* MaybeCreateJob(
-      net::URLRequest* request, net::NetworkDelegate* network_delegate) const;
-
-  // Indicate that the registry has been enabled in the IO thread's
-  // copy of the data.
-  void Enable() { enabled_ = true; }
-
-  // Indicate that the registry has been disabled in the IO thread's copy of
-  // the data.
-  void Disable() { enabled_ = false; }
-
- private:
-  friend class base::RefCountedThreadSafe<IOThreadDelegate>;
-  virtual ~IOThreadDelegate();
-
-  // Copy of protocol handlers use only on the IO thread.
-  ProtocolHandlerRegistry::ProtocolHandlerMap default_handlers_;
-
-  // Is the registry enabled on the IO thread.
-  bool enabled_;
-
-  DISALLOW_COPY_AND_ASSIGN(IOThreadDelegate);
-};
 
 ProtocolHandlerRegistry::IOThreadDelegate::IOThreadDelegate(bool)
     : enabled_(true) {}
@@ -138,6 +100,12 @@ void ProtocolHandlerRegistry::IOThreadDelegate::SetDefault(
   default_handlers_.insert(std::make_pair(handler.protocol(), handler));
 }
 
+GURL ProtocolHandlerRegistry::IOThreadDelegate::Translate(
+    const GURL& url) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  return TranslateUrl(default_handlers_, url);
+}
+
 // Create a new job for the supplied |URLRequest| if a default handler
 // is registered and the associated handler is able to interpret
 // the url from |request|.
@@ -145,14 +113,9 @@ net::URLRequestJob* ProtocolHandlerRegistry::IOThreadDelegate::MaybeCreateJob(
     net::URLRequest* request, net::NetworkDelegate* network_delegate) const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  ProtocolHandler handler = LookupHandler(default_handlers_,
-                                          request->url().scheme());
-  if (handler.IsEmpty())
-    return NULL;
-
-  GURL translated_url(handler.TranslateUrl(request->url()));
-  if (!translated_url.is_valid())
-    return NULL;
+  GURL translated_url(Translate(request->url()));
+  if (translated_url.is_empty())
+    return nullptr;
 
   return new net::URLRequestRedirectJob(
       request, network_delegate, translated_url,
@@ -160,69 +123,14 @@ net::URLRequestJob* ProtocolHandlerRegistry::IOThreadDelegate::MaybeCreateJob(
       "Protocol Handler Registry");
 }
 
-// JobInterceptorFactory -------------------------------------------------------
-
-// Instances of JobInterceptorFactory are produced for ownership by the IO
-// thread where it handler URL requests. We should never hold
-// any pointers on this class, only produce them in response to
-// requests via |ProtocolHandlerRegistry::CreateJobInterceptorFactory|.
-ProtocolHandlerRegistry::JobInterceptorFactory::JobInterceptorFactory(
-    IOThreadDelegate* io_thread_delegate)
-    : io_thread_delegate_(io_thread_delegate) {
-  DCHECK(io_thread_delegate_.get());
-  DETACH_FROM_THREAD(thread_checker_);
-}
-
-ProtocolHandlerRegistry::JobInterceptorFactory::~JobInterceptorFactory() {
-}
-
-void ProtocolHandlerRegistry::JobInterceptorFactory::Chain(
-    std::unique_ptr<net::URLRequestJobFactory> job_factory) {
-  job_factory_ = std::move(job_factory);
-}
-
-net::URLRequestJob*
-ProtocolHandlerRegistry::JobInterceptorFactory::
-MaybeCreateJobWithProtocolHandler(
-    const std::string& scheme,
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate) const {
+void ProtocolHandlerRegistry::IOThreadDelegate::Enable() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  net::URLRequestJob* job = io_thread_delegate_->MaybeCreateJob(
-      request, network_delegate);
-  if (job)
-    return job;
-  return job_factory_->MaybeCreateJobWithProtocolHandler(
-      scheme, request, network_delegate);
+  enabled_ = true;
 }
 
-net::URLRequestJob*
-ProtocolHandlerRegistry::JobInterceptorFactory::MaybeInterceptRedirect(
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate,
-    const GURL& location) const {
-  return job_factory_->MaybeInterceptRedirect(
-      request, network_delegate, location);
-}
-
-net::URLRequestJob*
-ProtocolHandlerRegistry::JobInterceptorFactory::MaybeInterceptResponse(
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate) const {
-  return job_factory_->MaybeInterceptResponse(request, network_delegate);
-}
-
-bool ProtocolHandlerRegistry::JobInterceptorFactory::IsHandledProtocol(
-    const std::string& scheme) const {
+void ProtocolHandlerRegistry::IOThreadDelegate::Disable() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return io_thread_delegate_->IsHandledProtocol(scheme) ||
-      job_factory_->IsHandledProtocol(scheme);
-}
-
-bool ProtocolHandlerRegistry::JobInterceptorFactory::IsSafeRedirectTarget(
-    const GURL& location) const {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return job_factory_->IsSafeRedirectTarget(location);
+  enabled_ = false;
 }
 
 // Delegate --------------------------------------------------------------------
@@ -280,8 +188,7 @@ ProtocolHandlerRegistry::ProtocolHandlerRegistry(
       enabled_(true),
       is_loading_(false),
       is_loaded_(false),
-      io_thread_delegate_(new IOThreadDelegate(enabled_)),
-      weak_ptr_factory_(this) {}
+      io_thread_delegate_(new IOThreadDelegate(enabled_)) {}
 
 bool ProtocolHandlerRegistry::SilentlyHandleRegisterHandlerRequest(
     const ProtocolHandler& handler) {
@@ -329,8 +236,7 @@ bool ProtocolHandlerRegistry::AttemptReplace(const ProtocolHandler& handler) {
   ProtocolHandlerList to_replace(GetReplacedHandlers(handler));
   if (to_replace.empty())
     return false;
-  for (ProtocolHandlerList::iterator p = to_replace.begin();
-       p != to_replace.end(); ++p) {
+  for (auto p = to_replace.begin(); p != to_replace.end(); ++p) {
     RemoveHandler(*p);
   }
   if (make_new_handler_default) {
@@ -349,8 +255,7 @@ ProtocolHandlerRegistry::GetReplacedHandlers(
   const ProtocolHandlerList* handlers = GetHandlerList(handler.protocol());
   if (!handlers)
     return replaced_handlers;
-  for (ProtocolHandlerList::const_iterator p = handlers->begin();
-       p != handlers->end(); p++) {
+  for (auto p = handlers->begin(); p != handlers->end(); ++p) {
     if (handler.IsSameOrigin(*p)) {
       replaced_handlers.push_back(*p);
     }
@@ -362,9 +267,9 @@ void ProtocolHandlerRegistry::ClearDefault(const std::string& scheme) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   default_handlers_.erase(scheme);
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::BindOnce(&IOThreadDelegate::ClearDefault,
-                                         io_thread_delegate_, scheme));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                           base::BindOnce(&IOThreadDelegate::ClearDefault,
+                                          io_thread_delegate_, scheme));
   Save();
   NotifyChanged();
 }
@@ -381,11 +286,11 @@ void ProtocolHandlerRegistry::InstallDefaultsForChromeOS() {
   AddPredefinedHandler(
       ProtocolHandler::CreateProtocolHandler(
           "mailto",
-          GURL(l10n_util::GetStringUTF8(IDS_GOOGLE_MAILTO_HANDLER_URL))));
+          GURL("https://mail.google.com/mail/?extsrc=mailto&amp;url=%s")));
   AddPredefinedHandler(
       ProtocolHandler::CreateProtocolHandler(
           "webcal",
-          GURL(l10n_util::GetStringUTF8(IDS_GOOGLE_WEBCAL_HANDLER_URL))));
+          GURL("https://www.google.com/calendar/render?cid=%s")));
 #else
   NOTREACHED();  // this method should only ever be called in chromeos.
 #endif
@@ -447,11 +352,46 @@ ProtocolHandlerRegistry::ProtocolHandlerList
 ProtocolHandlerRegistry::GetHandlersFor(
     const std::string& scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  ProtocolHandlerMultiMap::const_iterator p = protocol_handlers_.find(scheme);
+  auto p = protocol_handlers_.find(scheme);
   if (p == protocol_handlers_.end()) {
     return ProtocolHandlerList();
   }
   return p->second;
+}
+
+ProtocolHandlerRegistry::ProtocolHandlerList
+ProtocolHandlerRegistry::GetUserDefinedHandlers(base::Time begin,
+                                                base::Time end) const {
+  ProtocolHandlerRegistry::ProtocolHandlerList result;
+  for (const auto& entry : user_protocol_handlers_) {
+    for (const ProtocolHandler& handler : entry.second) {
+      if (base::Contains(predefined_protocol_handlers_, handler))
+        continue;
+      if (begin <= handler.last_modified() && handler.last_modified() < end)
+        result.push_back(handler);
+    }
+  }
+  return result;
+}
+
+ProtocolHandlerRegistry::ProtocolHandlerList
+ProtocolHandlerRegistry::GetUserIgnoredHandlers(base::Time begin,
+                                                base::Time end) const {
+  ProtocolHandlerRegistry::ProtocolHandlerList result;
+  for (const ProtocolHandler& handler : user_ignored_protocol_handlers_) {
+    if (begin <= handler.last_modified() && handler.last_modified() < end)
+      result.push_back(handler);
+  }
+  return result;
+}
+
+void ProtocolHandlerRegistry::ClearUserDefinedHandlers(base::Time begin,
+                                                       base::Time end) {
+  for (const ProtocolHandler& handler : GetUserDefinedHandlers(begin, end))
+    RemoveHandler(handler);
+
+  for (const ProtocolHandler& handler : GetUserIgnoredHandlers(begin, end))
+    RemoveIgnoredHandler(handler);
 }
 
 ProtocolHandlerRegistry::ProtocolHandlerList
@@ -487,7 +427,7 @@ bool ProtocolHandlerRegistry::IsRegistered(
   if (!handlers) {
     return false;
   }
-  return base::ContainsValue(*handlers, handler);
+  return base::Contains(*handlers, handler);
 }
 
 bool ProtocolHandlerRegistry::IsRegisteredByUser(
@@ -567,6 +507,11 @@ bool ProtocolHandlerRegistry::IsHandledProtocol(
 
 void ProtocolHandlerRegistry::RemoveHandler(
     const ProtocolHandler& handler) {
+  if (IsIgnored(handler)) {
+    RemoveIgnoredHandler(handler);
+    return;
+  }
+
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   ProtocolHandlerList& handlers = protocol_handlers_[handler.protocol()];
   bool erase_success = false;
@@ -577,15 +522,15 @@ void ProtocolHandlerRegistry::RemoveHandler(
     if (!HandlerExists(handler, &policy_protocol_handlers_))
       EraseHandler(handler, &protocol_handlers_);
   }
-  ProtocolHandlerMap::iterator q = default_handlers_.find(handler.protocol());
+  auto q = default_handlers_.find(handler.protocol());
   if (erase_success && q != default_handlers_.end() && q->second == handler) {
     // Make the new top handler in the list the default.
     if (!handlers.empty()) {
       // NOTE We pass a copy because SetDefault() modifies handlers.
       SetDefault(ProtocolHandler(handlers[0]));
     } else {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&IOThreadDelegate::ClearDefault, io_thread_delegate_,
                          q->second.protocol()));
 
@@ -614,14 +559,19 @@ const ProtocolHandler& ProtocolHandlerRegistry::GetHandlerFor(
   return LookupHandler(default_handlers_, scheme);
 }
 
+GURL ProtocolHandlerRegistry::Translate(const GURL& url) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return TranslateUrl(default_handlers_, url);
+}
+
 void ProtocolHandlerRegistry::Enable() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (enabled_) {
     return;
   }
   enabled_ = true;
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&IOThreadDelegate::Enable, io_thread_delegate_));
 
   ProtocolHandlerMap::const_iterator p;
@@ -638,8 +588,8 @@ void ProtocolHandlerRegistry::Disable() {
     return;
   }
   enabled_ = false;
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&IOThreadDelegate::Disable, io_thread_delegate_));
 
   ProtocolHandlerMap::const_iterator p;
@@ -671,11 +621,18 @@ ProtocolHandlerRegistry::~ProtocolHandlerRegistry() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
+void ProtocolHandlerRegistry::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void ProtocolHandlerRegistry::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
 void ProtocolHandlerRegistry::PromoteHandler(const ProtocolHandler& handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(IsRegistered(handler));
-  ProtocolHandlerMultiMap::iterator p =
-      protocol_handlers_.find(handler.protocol());
+  auto p = protocol_handlers_.find(handler.protocol());
   ProtocolHandlerList& list = p->second;
   list.erase(std::find(list.begin(), list.end(), handler));
   list.insert(list.begin(), handler);
@@ -703,7 +660,7 @@ const ProtocolHandlerRegistry::ProtocolHandlerList*
 ProtocolHandlerRegistry::GetHandlerList(
     const std::string& scheme) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  ProtocolHandlerMultiMap::const_iterator p = protocol_handlers_.find(scheme);
+  auto p = protocol_handlers_.find(scheme);
   if (p == protocol_handlers_.end()) {
     return NULL;
   }
@@ -721,15 +678,14 @@ void ProtocolHandlerRegistry::SetDefault(const ProtocolHandler& handler) {
   default_handlers_.erase(handler.protocol());
   default_handlers_.insert(std::make_pair(handler.protocol(), handler));
   PromoteHandler(handler);
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::BindOnce(&IOThreadDelegate::SetDefault,
-                                         io_thread_delegate_, handler));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                           base::BindOnce(&IOThreadDelegate::SetDefault,
+                                          io_thread_delegate_, handler));
 }
 
 void ProtocolHandlerRegistry::InsertHandler(const ProtocolHandler& handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  ProtocolHandlerMultiMap::iterator p =
-      protocol_handlers_.find(handler.protocol());
+  auto p = protocol_handlers_.find(handler.protocol());
 
   if (p != protocol_handlers_.end()) {
     p->second.push_back(handler);
@@ -744,14 +700,12 @@ void ProtocolHandlerRegistry::InsertHandler(const ProtocolHandler& handler) {
 base::Value* ProtocolHandlerRegistry::EncodeRegisteredHandlers() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::ListValue* protocol_handlers = new base::ListValue();
-  for (ProtocolHandlerMultiMap::iterator i = user_protocol_handlers_.begin();
-       i != user_protocol_handlers_.end();
-       ++i) {
-    for (ProtocolHandlerList::iterator j = i->second.begin();
-         j != i->second.end(); ++j) {
+  for (auto i = user_protocol_handlers_.begin();
+       i != user_protocol_handlers_.end(); ++i) {
+    for (auto j = i->second.begin(); j != i->second.end(); ++j) {
       std::unique_ptr<base::DictionaryValue> encoded = j->Encode();
       if (IsDefault(*j)) {
-        encoded->Set("default", base::MakeUnique<base::Value>(true));
+        encoded->Set("default", std::make_unique<base::Value>(true));
       }
       protocol_handlers->Append(std::move(encoded));
     }
@@ -762,21 +716,16 @@ base::Value* ProtocolHandlerRegistry::EncodeRegisteredHandlers() {
 base::Value* ProtocolHandlerRegistry::EncodeIgnoredHandlers() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::ListValue* handlers = new base::ListValue();
-  for (ProtocolHandlerList::iterator i =
-           user_ignored_protocol_handlers_.begin();
-       i != user_ignored_protocol_handlers_.end();
-       ++i) {
+  for (auto i = user_ignored_protocol_handlers_.begin();
+       i != user_ignored_protocol_handlers_.end(); ++i) {
     handlers->Append(i->Encode());
   }
   return handlers;
 }
 
 void ProtocolHandlerRegistry::NotifyChanged() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_PROTOCOL_HANDLER_REGISTRY_CHANGED,
-      content::Source<content::BrowserContext>(context_),
-      content::NotificationService::NoDetails());
+  for (auto& observer : observers_)
+    observer.OnProtocolHandlerRegistryChanged();
 }
 
 void ProtocolHandlerRegistry::RegisterProtocolHandler(
@@ -873,7 +822,7 @@ bool ProtocolHandlerRegistry::HandlerExists(const ProtocolHandler& handler,
 
 bool ProtocolHandlerRegistry::HandlerExists(const ProtocolHandler& handler,
                                             const ProtocolHandlerList& list) {
-  return base::ContainsValue(list, handler);
+  return base::Contains(list, handler);
 }
 
 void ProtocolHandlerRegistry::EraseHandler(const ProtocolHandler& handler,
@@ -902,6 +851,7 @@ void ProtocolHandlerRegistry::AddPredefinedHandler(
   DCHECK(!is_loaded_);  // Must be called prior InitProtocolSettings.
   RegisterProtocolHandler(handler, USER);
   SetDefault(handler);
+  predefined_protocol_handlers_.push_back(handler);
 }
 
 shell_integration::DefaultWebClientWorkerCallback
@@ -910,14 +860,4 @@ ProtocolHandlerRegistry::GetDefaultWebClientCallback(
   return base::Bind(
       &ProtocolHandlerRegistry::OnSetAsDefaultProtocolClientFinished,
       weak_ptr_factory_.GetWeakPtr(), protocol);
-}
-
-std::unique_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
-ProtocolHandlerRegistry::CreateJobInterceptorFactory() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  // this is always created on the UI thread (in profile_io's
-  // InitializeOnUIThread. Any method calls must be done
-  // on the IO thread (this is checked).
-  return std::unique_ptr<JobInterceptorFactory>(
-      new JobInterceptorFactory(io_thread_delegate_.get()));
 }

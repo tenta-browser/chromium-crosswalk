@@ -4,11 +4,12 @@
 
 #include "chromecast/media/cma/base/demuxer_stream_adapter.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/callback_helpers.h"
+#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "chromecast/media/cma/base/balanced_media_task_runner_factory.h"
-#include "chromecast/media/cma/base/cma_logging.h"
 #include "chromecast/media/cma/base/decoder_buffer_adapter.h"
 #include "chromecast/media/cma/base/simple_media_task_runner.h"
 #include "media/base/bind_to_current_loop.h"
@@ -63,7 +64,7 @@ void DemuxerStreamAdapter::ReadInternal(const ReadCB& read_cb) {
 
 void DemuxerStreamAdapter::Flush(const base::Closure& flush_cb) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  CMALOG(kLogControl) << __FUNCTION__;
+  LOG(INFO) << __FUNCTION__;
 
   // Flush cancels any pending read.
   is_pending_read_ = false;
@@ -90,7 +91,7 @@ void DemuxerStreamAdapter::Flush(const base::Closure& flush_cb) {
   weak_factory_.InvalidateWeakPtrs();
   weak_this_ = weak_factory_.GetWeakPtr();
 
-  CMALOG(kLogControl) << "Flush done";
+  LOG(INFO) << "Flush done";
   flush_cb.Run();
 }
 
@@ -114,15 +115,15 @@ void DemuxerStreamAdapter::RequestBuffer(const ReadCB& read_cb) {
 void DemuxerStreamAdapter::OnNewBuffer(
     const ReadCB& read_cb,
     ::media::DemuxerStream::Status status,
-    const scoped_refptr<::media::DecoderBuffer>& input) {
+    scoped_refptr<::media::DecoderBuffer> input) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   is_pending_demuxer_read_ = false;
 
   // Just discard the buffer in the flush stage.
   if (!flush_cb_.is_null()) {
-    CMALOG(kLogControl) << "Flush done";
-    base::ResetAndReturn(&flush_cb_).Run();
+    LOG(INFO) << "Flush done";
+    std::move(flush_cb_).Run();
     return;
   }
 
@@ -160,7 +161,8 @@ void DemuxerStreamAdapter::OnNewBuffer(
 
   // Provides the buffer as well as possibly valid audio and video configs.
   is_pending_read_ = false;
-  scoped_refptr<DecoderBufferBase> buffer(new DecoderBufferAdapter(input));
+  scoped_refptr<DecoderBufferBase> buffer(
+      new DecoderBufferAdapter(std::move(input)));
   read_cb.Run(buffer, audio_config_, video_config_);
 
   // Back to the default audio/video config:

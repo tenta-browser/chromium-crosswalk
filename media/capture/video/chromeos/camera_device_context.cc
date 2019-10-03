@@ -4,11 +4,33 @@
 
 #include "media/capture/video/chromeos/camera_device_context.h"
 
+namespace {
+media::VideoRotation CameraFrameOrientationToVideoRotation(
+    int frame_orientation) {
+  switch (frame_orientation) {
+    case 0:
+      return media::VideoRotation::VIDEO_ROTATION_0;
+    case 90:
+      return media::VideoRotation::VIDEO_ROTATION_90;
+    case 180:
+      return media::VideoRotation::VIDEO_ROTATION_180;
+    case 270:
+      return media::VideoRotation::VIDEO_ROTATION_270;
+    default:
+      NOTREACHED() << "Invalid frame orientation " << frame_orientation;
+      return media::VideoRotation::VIDEO_ROTATION_0;
+  }
+}
+}  // namespace
+
 namespace media {
 
 CameraDeviceContext::CameraDeviceContext(
     std::unique_ptr<VideoCaptureDevice::Client> client)
-    : state_(State::kStopped), rotation_(0), client_(std::move(client)) {
+    : state_(State::kStopped),
+      sensor_orientation_(0),
+      screen_rotation_(0),
+      client_(std::move(client)) {
   DCHECK(client_);
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
@@ -27,32 +49,73 @@ CameraDeviceContext::State CameraDeviceContext::GetState() {
   return state_;
 }
 
-void CameraDeviceContext::SetErrorState(const base::Location& from_here,
+void CameraDeviceContext::SetErrorState(media::VideoCaptureError error,
+                                        const base::Location& from_here,
                                         const std::string& reason) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_ = State::kError;
   LOG(ERROR) << reason;
-  client_->OnError(from_here, reason);
+  client_->OnError(error, from_here, reason);
 }
 
 void CameraDeviceContext::LogToClient(std::string message) {
   client_->OnLog(message);
 }
 
-void CameraDeviceContext::SubmitCapturedData(
-    const uint8_t* data,
-    int length,
+void CameraDeviceContext::SubmitCapturedVideoCaptureBuffer(
+    VideoCaptureDevice::Client::Buffer buffer,
     const VideoCaptureFormat& frame_format,
     base::TimeTicks reference_time,
     base::TimeDelta timestamp) {
-  client_->OnIncomingCapturedData(data, length, frame_format, rotation_,
-                                  reference_time, timestamp);
+  VideoFrameMetadata metadata;
+  metadata.SetRotation(
+      VideoFrameMetadata::Key::ROTATION,
+      CameraFrameOrientationToVideoRotation(GetCameraFrameOrientation()));
+  // TODO: Figure out the right color space for the camera frame.  We may need
+  // to populate the camera metadata with the color space reported by the V4L2
+  // device.
+  client_->OnIncomingCapturedBufferExt(
+      std::move(buffer), frame_format, gfx::ColorSpace(), reference_time,
+      timestamp, gfx::Rect(frame_format.frame_size), std::move(metadata));
 }
 
-void CameraDeviceContext::SetRotation(int rotation) {
+void CameraDeviceContext::SubmitCapturedGpuMemoryBuffer(
+    gfx::GpuMemoryBuffer* buffer,
+    const VideoCaptureFormat& frame_format,
+    base::TimeTicks reference_time,
+    base::TimeDelta timestamp) {
+  client_->OnIncomingCapturedGfxBuffer(buffer, frame_format,
+                                       GetCameraFrameOrientation(),
+                                       reference_time, timestamp);
+}
+
+void CameraDeviceContext::SetSensorOrientation(int sensor_orientation) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(rotation >= 0 && rotation < 360 && rotation % 90 == 0);
-  rotation_ = rotation;
+  DCHECK(sensor_orientation >= 0 && sensor_orientation < 360 &&
+         sensor_orientation % 90 == 0);
+  sensor_orientation_ = sensor_orientation;
+}
+
+void CameraDeviceContext::SetScreenRotation(int screen_rotation) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(screen_rotation >= 0 && screen_rotation < 360 &&
+         screen_rotation % 90 == 0);
+  screen_rotation_ = screen_rotation;
+}
+
+int CameraDeviceContext::GetCameraFrameOrientation() {
+  return (sensor_orientation_ + screen_rotation_) % 360;
+}
+
+bool CameraDeviceContext::ReserveVideoCaptureBufferFromPool(
+    gfx::Size size,
+    VideoPixelFormat format,
+    VideoCaptureDevice::Client::Buffer* buffer) {
+  // Use a dummy frame feedback id as we don't need it.
+  constexpr int kDummyFrameFeedbackId = 0;
+  auto result =
+      client_->ReserveOutputBuffer(size, format, kDummyFrameFeedbackId, buffer);
+  return result == VideoCaptureDevice::Client::ReserveResult::kSucceeded;
 }
 
 }  // namespace media

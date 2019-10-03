@@ -7,11 +7,16 @@
 
 #include <memory>
 
+#include "base/memory/ref_counted.h"
 #include "components/feedback/system_logs/system_logs_source.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/api/feedback_private.h"
 #include "ui/gfx/geometry/rect.h"
+
+namespace feedback {
+class FeedbackData;
+}  // namespace feedback
 
 namespace extensions {
 
@@ -32,10 +37,13 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
 #endif  // defined(OS_CHROMEOS)
 
   void RequestFeedbackForFlow(const std::string& description_template,
+                              const std::string& description_placeholder_text,
                               const std::string& category_tag,
                               const std::string& extra_diagnostics,
                               const GURL& page_url,
-                              api::feedback_private::FeedbackFlow flow);
+                              api::feedback_private::FeedbackFlow flow,
+                              bool from_assistant = false,
+                              bool include_bluetooth_logs = false);
 
   // BrowserContextKeyedAPI implementation.
   static BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>*
@@ -83,7 +91,7 @@ class FeedbackPrivateGetStringsFunction : public UIThreadExtensionFunction {
 class FeedbackPrivateGetUserEmailFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getUserEmail",
-                             FEEDBACKPRIVATE_GETUSEREMAIL);
+                             FEEDBACKPRIVATE_GETUSEREMAIL)
 
  protected:
   ~FeedbackPrivateGetUserEmailFunction() override {}
@@ -94,7 +102,7 @@ class FeedbackPrivateGetSystemInformationFunction
     : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getSystemInformation",
-                             FEEDBACKPRIVATE_GETSYSTEMINFORMATION);
+                             FEEDBACKPRIVATE_GETSYSTEMINFORMATION)
 
  protected:
   ~FeedbackPrivateGetSystemInformationFunction() override {}
@@ -109,7 +117,7 @@ class FeedbackPrivateGetSystemInformationFunction
 class FeedbackPrivateReadLogSourceFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.readLogSource",
-                             FEEDBACKPRIVATE_READLOGSOURCE);
+                             FEEDBACKPRIVATE_READLOGSOURCE)
 
  protected:
   ~FeedbackPrivateReadLogSourceFunction() override {}
@@ -117,32 +125,36 @@ class FeedbackPrivateReadLogSourceFunction : public UIThreadExtensionFunction {
 
 #if defined(OS_CHROMEOS)
  private:
-  void OnCompleted(const api::feedback_private::ReadLogSourceResult& result);
+  void OnCompleted(
+      std::unique_ptr<api::feedback_private::ReadLogSourceResult> result);
 #endif  // defined(OS_CHROMEOS)
 };
 
 class FeedbackPrivateSendFeedbackFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.sendFeedback",
-                             FEEDBACKPRIVATE_SENDFEEDBACK);
+                             FEEDBACKPRIVATE_SENDFEEDBACK)
 
  protected:
   ~FeedbackPrivateSendFeedbackFunction() override {}
   ResponseAction Run() override;
 
  private:
-  void OnCompleted(bool success);
+  void OnAllLogsFetched(bool send_histograms,
+                        bool send_bluetooth_logs,
+                        scoped_refptr<feedback::FeedbackData> feedback_data);
+  void OnCompleted(api::feedback_private::LandingPageType type, bool success);
 };
 
-class FeedbackPrivateLogSrtPromptResultFunction
+class FeedbackPrivateLoginFeedbackCompleteFunction
     : public UIThreadExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("feedbackPrivate.logSrtPromptResult",
-                             FEEDBACKPRIVATE_LOGSRTPROMPTRESULT);
+  DECLARE_EXTENSION_FUNCTION("feedbackPrivate.loginFeedbackComplete",
+                             FEEDBACKPRIVATE_LOGINFEEDBACKCOMPLETE)
 
  protected:
-  ~FeedbackPrivateLogSrtPromptResultFunction() override {}
-  AsyncExtensionFunction::ResponseAction Run() override;
+  ~FeedbackPrivateLoginFeedbackCompleteFunction() override {}
+  ResponseAction Run() override;
 };
 
 }  // namespace extensions

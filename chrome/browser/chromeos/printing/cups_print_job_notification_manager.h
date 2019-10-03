@@ -6,18 +6,17 @@
 #define CHROME_BROWSER_CHROMEOS_PRINTING_CUPS_PRINT_JOB_NOTIFICATION_MANAGER_H_
 
 #include <memory>
-#include <string>
 #include <unordered_map>
 
 #include "base/macros.h"
 #include "chrome/browser/chromeos/printing/cups_print_job_manager.h"
-#include "chrome/browser/chromeos/printing/cups_print_job_notification.h"
 
 class Profile;
 
 namespace chromeos {
 
 class CupsPrintJob;
+class CupsPrintJobNotification;
 
 class CupsPrintJobNotificationManager : public CupsPrintJobManager::Observer {
  public:
@@ -30,19 +29,19 @@ class CupsPrintJobNotificationManager : public CupsPrintJobManager::Observer {
   ~CupsPrintJobNotificationManager() override;
 
   // CupsPrintJobManager::Observer overrides:
-  void OnPrintJobCreated(CupsPrintJob* job) override;
-  void OnPrintJobStarted(CupsPrintJob* job) override;
-  void OnPrintJobUpdated(CupsPrintJob* job) override;
-  void OnPrintJobSuspended(CupsPrintJob* job) override;
-  void OnPrintJobResumed(CupsPrintJob* job) override;
-  void OnPrintJobDone(CupsPrintJob* job) override;
-  void OnPrintJobError(CupsPrintJob* job) override;
-  void OnPrintJobCancelled(CupsPrintJob* job) override;
+  void OnPrintJobCreated(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobStarted(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobUpdated(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobSuspended(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobResumed(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobDone(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobError(base::WeakPtr<CupsPrintJob> job) override;
+  void OnPrintJobCancelled(base::WeakPtr<CupsPrintJob> job) override;
 
   void OnPrintJobNotificationRemoved(CupsPrintJobNotification* notification);
 
  private:
-  void UpdateNotification(CupsPrintJob* job);
+  void UpdateNotification(base::WeakPtr<CupsPrintJob> job);
 
   PrintJobNotificationMap notification_map_;
   CupsPrintJobManager* print_job_manager_;

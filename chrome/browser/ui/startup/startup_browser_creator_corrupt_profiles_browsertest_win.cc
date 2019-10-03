@@ -19,6 +19,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/chrome_paths.h"
@@ -62,7 +63,7 @@ void CreateAndSwitchToProfile(const std::string& basepath) {
   base::RunLoop run_loop;
   profile_manager->CreateProfileAsync(
       path, base::Bind(&UnblockOnProfileInitialized, run_loop.QuitClosure()),
-      base::string16(), std::string(), std::string());
+      base::string16(), std::string());
   // Run the message loop to allow profile creation to take place; the loop is
   // terminated by UnblockOnProfileCreation when the profile is created.
   run_loop.Run();
@@ -117,7 +118,7 @@ class StartupBrowserCreatorCorruptProfileTest : public InProcessBrowserTest {
 
   bool DeleteProfileData(const std::string& basepath) {
     base::FilePath user_data_dir;
-    if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+    if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
       return false;
 
     base::FilePath dir_to_delete = user_data_dir.AppendASCII(basepath);
@@ -127,7 +128,7 @@ class StartupBrowserCreatorCorruptProfileTest : public InProcessBrowserTest {
 
   bool RemoveCreateDirectoryPermissionForUserDataDirectory() {
     base::FilePath user_data_dir;
-    return PathService::Get(chrome::DIR_USER_DATA, &user_data_dir) &&
+    return base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir) &&
            base::DenyFilePermission(user_data_dir, FILE_ADD_SUBDIRECTORY);
   }
 
@@ -358,6 +359,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorCorruptProfileTest,
                        PRE_DoNotStartLockedProfile) {
   // Lock the default profile. The user manager is shown after the profile is
   // locked.
+  signin_util::SetForceSigninForTesting(true);
   profiles::LockProfile(browser()->profile());
   ExpectUserManagerToShow();
 }
@@ -365,6 +367,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorCorruptProfileTest,
 bool StartupBrowserCreatorCorruptProfileTest::
     SetUpUserDataDirectoryForDoNotStartLockedProfile() {
   SetExpectTestBodyToRun(false);
+  signin_util::SetForceSigninForTesting(true);
   return RemoveCreateDirectoryPermissionForUserDataDirectory();
 }
 
@@ -415,8 +418,9 @@ bool StartupBrowserCreatorCorruptProfileTest::
   return RemoveCreateDirectoryPermissionForUserDataDirectory();
 }
 
+// Flaky: https://crbug.com/951787
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorCorruptProfileTest,
-                       DeletedProfileFallbackToUserManager) {
+                       DISABLED_DeletedProfileFallbackToUserManager) {
   CheckBrowserWindows({});
   ExpectUserManagerToShow();
 }

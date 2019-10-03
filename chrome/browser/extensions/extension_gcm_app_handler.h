@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
-#include "components/gcm_driver/common/gcm_messages.h"
+#include "components/gcm_driver/common/gcm_message.h"
 #include "components/gcm_driver/gcm_app_handler.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/instance_id/instance_id.h"
@@ -103,7 +103,7 @@ class ExtensionGCMAppHandler : public gcm::GCMAppHandler,
 
   std::unique_ptr<extensions::GcmJsEventRouter> js_event_router_;
 
-  base::WeakPtrFactory<ExtensionGCMAppHandler> weak_factory_;
+  base::WeakPtrFactory<ExtensionGCMAppHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionGCMAppHandler);
 };

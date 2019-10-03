@@ -12,11 +12,13 @@ import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.TextView;
 
+import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeStringConstants;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.payments.SettingsAutofillAndPaymentsObserver;
 
 /**
  * Server credit card settings.
@@ -24,6 +26,9 @@ import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 public class AutofillServerCardEditor extends AutofillCreditCardEditor {
     private View mLocalCopyLabel;
     private View mClearLocalCopy;
+
+    @UsedByReflection("AutofillPaymentMethodsFragment.java")
+    public AutofillServerCardEditor() {}
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
@@ -97,6 +102,7 @@ public class AutofillServerCardEditor extends AutofillCreditCardEditor {
             mCard.setBillingAddressId(
                     ((AutofillProfile) mBillingAddress.getSelectedItem()).getGUID());
             PersonalDataManager.getInstance().updateServerCardBillingAddress(mCard);
+            SettingsAutofillAndPaymentsObserver.getInstance().notifyOnCreditCardUpdated(mCard);
         }
         return true;
     }

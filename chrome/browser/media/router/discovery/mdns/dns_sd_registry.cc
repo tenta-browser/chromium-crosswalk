@@ -6,12 +6,10 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
 #include "chrome/browser/media/router/discovery/mdns/dns_sd_device_lister.h"
-#include "chrome/common/features.h"
-#include "components/cast_channel/cast_channel_util.h"
+#include "chrome/common/buildflags.h"
 
 using local_discovery::ServiceDiscoveryClient;
 using local_discovery::ServiceDiscoverySharedClient;
@@ -53,8 +51,8 @@ int DnsSdRegistry::ServiceTypeData::GetListenerCount() {
 bool DnsSdRegistry::ServiceTypeData::UpdateService(
     bool added,
     const DnsSdService& service) {
-  DnsSdRegistry::DnsSdServiceList::iterator it = std::find_if(
-      service_list_.begin(), service_list_.end(), IsSameServiceName(service));
+  auto it = std::find_if(service_list_.begin(), service_list_.end(),
+                         IsSameServiceName(service));
   // Set to true when a service is updated in or added to the registry.
   bool updated_or_added = added;
   bool known = (it != service_list_.end());
@@ -77,8 +75,7 @@ bool DnsSdRegistry::ServiceTypeData::UpdateService(
 
 bool DnsSdRegistry::ServiceTypeData::RemoveService(
     const std::string& service_name) {
-  for (DnsSdRegistry::DnsSdServiceList::iterator it = service_list_.begin();
-       it != service_list_.end(); ++it) {
+  for (auto it = service_list_.begin(); it != service_list_.end(); ++it) {
     if ((*it).service_name == service_name) {
       service_list_.erase(it);
       return true;
@@ -87,8 +84,9 @@ bool DnsSdRegistry::ServiceTypeData::RemoveService(
   return false;
 }
 
-void DnsSdRegistry::ServiceTypeData::ForceDiscovery() {
-  lister_->Discover();
+void DnsSdRegistry::ServiceTypeData::ResetAndDiscover() {
+  lister_->Reset();
+  ClearServices();
 }
 
 bool DnsSdRegistry::ServiceTypeData::ClearServices() {
@@ -148,10 +146,10 @@ void DnsSdRegistry::Publish(const std::string& service_type) {
   DispatchApiEvent(service_type);
 }
 
-void DnsSdRegistry::ForceDiscovery() {
+void DnsSdRegistry::ResetAndDiscover() {
   DCHECK(thread_checker_.CalledOnValidThread());
   for (const auto& next_service : service_data_map_) {
-    next_service.second->ForceDiscovery();
+    next_service.second->ResetAndDiscover();
   }
 }
 
@@ -173,7 +171,7 @@ void DnsSdRegistry::RegisterDnsSdListener(const std::string& service_type) {
                               service_discovery_client_.get()));
   dns_sd_device_lister->Discover();
   service_data_map_[service_type] =
-      base::MakeUnique<ServiceTypeData>(std::move(dns_sd_device_lister));
+      std::make_unique<ServiceTypeData>(std::move(dns_sd_device_lister));
   DispatchApiEvent(service_type);
 }
 
@@ -198,8 +196,11 @@ void DnsSdRegistry::ServiceChanged(const std::string& service_type,
   if (!IsRegistered(service_type))
     return;
 
+  // TODO(imcheng): This should be validated upstream in
+  // dns_sd_device_lister.cc, i.e., |service.ip_address| should be a
+  // valid net::IPAddress.
   net::IPAddress ip_address;
-  if (!cast_channel::IsValidCastIPAddressString(service.ip_address)) {
+  if (!ip_address.AssignFromIPLiteral(service.ip_address)) {
     VLOG(1) << "Invalid IP address: " << service.ip_address;
     return;
   }

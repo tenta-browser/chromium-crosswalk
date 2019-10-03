@@ -4,13 +4,18 @@
 
 #include "ios/chrome/browser/prefs/browser_prefs.h"
 
-#include "components/autofill/core/browser/autofill_manager.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/dom_distiller/core/distilled_page_prefs.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
 #include "components/gcm_driver/gcm_channel_status_syncer.h"
 #import "components/handoff/handoff_manager.h"
+#include "components/history/core/common/pref_names.h"
+#include "components/invalidation/impl/invalidator_registrar_with_memory.h"
+#include "components/invalidation/impl/per_user_topic_registration_manager.h"
+#include "components/language/core/browser/language_prefs.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/network_time/network_time_tracker.h"
 #include "components/ntp_snippets/category_rankers/click_based_category_ranker.h"
@@ -29,49 +34,57 @@
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/rappor/rappor_service_impl.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
-#include "components/signin/core/browser/signin_pref_names.h"
-#include "components/ssl_config/ssl_config_service_manager.h"
+#include "components/sessions/core/session_id_generator.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_locale_settings.h"
 #include "components/sync/base/sync_prefs.h"
+#include "components/sync_device_info/device_info_prefs.h"
+#include "components/sync_sessions/session_sync_prefs.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "components/translate/core/browser/translate_prefs.h"
+#include "components/ukm/ios/features.h"
+#include "components/unified_consent/unified_consent_service.h"
 #include "components/update_client/update_client.h"
 #include "components/variations/service/variations_service.h"
 #include "components/web_resource/web_resource_pref_names.h"
 #include "ios/chrome/browser/browser_state/browser_state_info_cache.h"
-#include "ios/chrome/browser/desktop_promotion/desktop_promotion_sync_service.h"
 #include "ios/chrome/browser/first_run/first_run.h"
 #import "ios/chrome/browser/geolocation/omnibox_geolocation_local_state.h"
 #import "ios/chrome/browser/memory/memory_debugger_manager.h"
 #import "ios/chrome/browser/metrics/ios_chrome_metrics_service_client.h"
 #include "ios/chrome/browser/notification_promo.h"
-#include "ios/chrome/browser/physical_web/physical_web_prefs_registration.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_mediator.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_path_cache.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
 #include "ios/chrome/browser/voice/voice_search_prefs_registration.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#include "ios/public/provider/chrome/browser/user/special_user_prefs.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
+namespace {
+const char kReverseAutologinEnabled[] = "reverse_autologin.enabled";
+}
+
 void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
   BrowserStateInfoCache::RegisterPrefs(registry);
   flags_ui::PrefServiceFlagsStorage::RegisterPrefs(registry);
   gcm::GCMChannelStatusSyncer::RegisterPrefs(registry);
-  ios::SigninManagerFactory::RegisterPrefs(registry);
+  signin::IdentityManager::RegisterLocalStatePrefs(registry);
   IOSChromeMetricsServiceClient::RegisterPrefs(registry);
   network_time::NetworkTimeTracker::RegisterPrefs(registry);
   ios::NotificationPromo::RegisterPrefs(registry);
   PrefProxyConfigTrackerImpl::RegisterPrefs(registry);
   rappor::RapporServiceImpl::RegisterPrefs(registry);
-  ssl_config::SSLConfigServiceManager::RegisterPrefs(registry);
+  sessions::SessionIdGenerator::RegisterPrefs(registry);
   update_client::RegisterPrefs(registry);
   variations::VariationsService::RegisterPrefs(registry);
-  RegisterPhysicalWebLocalStatePrefs(registry);
 
   // Preferences related to the browser state manager.
   registry->RegisterStringPref(prefs::kBrowserStateLastUsed, std::string());
@@ -85,20 +98,26 @@ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
                                 false);
 
   // Preferences related to the application context.
-  registry->RegisterStringPref(prefs::kApplicationLocale, std::string());
+  registry->RegisterStringPref(language::prefs::kApplicationLocale,
+                               std::string());
   registry->RegisterBooleanPref(prefs::kEulaAccepted, false);
   registry->RegisterBooleanPref(metrics::prefs::kMetricsReportingEnabled,
                                 false);
   registry->RegisterBooleanPref(prefs::kLastSessionExitedCleanly, true);
-  registry->RegisterBooleanPref(prefs::kMetricsReportingWifiOnly, true);
+  registry->RegisterIntegerPref(prefs::kSpecialUserType,
+                                prefs::kSpecialUserTypeUnknown);
+  if (!base::FeatureList::IsEnabled(kUmaCellular)) {
+    registry->RegisterBooleanPref(prefs::kMetricsReportingWifiOnly, true);
+  }
 }
 
 void RegisterBrowserStatePrefs(user_prefs::PrefRegistrySyncable* registry) {
-  autofill::AutofillManager::RegisterProfilePrefs(registry);
+  autofill::prefs::RegisterProfilePrefs(registry);
   dom_distiller::DistilledPagePrefs::RegisterProfilePrefs(registry);
   FirstRun::RegisterProfilePrefs(registry);
   gcm::GCMChannelStatusSyncer::RegisterProfilePrefs(registry);
   HostContentSettingsMap::RegisterProfilePrefs(registry);
+  language::LanguagePrefs::RegisterProfilePrefs(registry);
   ntp_snippets::ClickBasedCategoryRanker::RegisterProfilePrefs(registry);
   ntp_snippets::ContentSuggestionsService::RegisterProfilePrefs(registry);
   ntp_snippets::RemoteSuggestionsProviderImpl::RegisterProfilePrefs(registry);
@@ -111,15 +130,20 @@ void RegisterBrowserStatePrefs(user_prefs::PrefRegistrySyncable* registry) {
   password_manager::PasswordManager::RegisterProfilePrefs(registry);
   payments::RegisterProfilePrefs(registry);
   PrefProxyConfigTrackerImpl::RegisterProfilePrefs(registry);
+  RegisterVoiceSearchBrowserStatePrefs(registry);
+  sync_sessions::SessionSyncPrefs::RegisterProfilePrefs(registry);
+  syncer::DeviceInfoPrefs::RegisterProfilePrefs(registry);
   syncer::SyncPrefs::RegisterProfilePrefs(registry);
+  syncer::PerUserTopicRegistrationManager::RegisterProfilePrefs(registry);
+  syncer::InvalidatorRegistrarWithMemory::RegisterProfilePrefs(registry);
   TemplateURLPrepopulateData::RegisterProfilePrefs(registry);
   translate::TranslatePrefs::RegisterProfilePrefs(registry);
+  unified_consent::UnifiedConsentService::RegisterPrefs(registry);
   variations::VariationsService::RegisterProfilePrefs(registry);
   ZeroSuggestProvider::RegisterProfilePrefs(registry);
-  DesktopPromotionSyncService::RegisterDesktopPromotionUserPrefs(registry);
-  RegisterVoiceSearchBrowserStatePrefs(registry);
 
   [BookmarkMediator registerBrowserStatePrefs:registry];
+  [BookmarkPathCache registerBrowserStatePrefs:registry];
   [SigninPromoViewMediator registerBrowserStatePrefs:registry];
   [HandoffManager registerBrowserStatePrefs:registry];
 
@@ -130,13 +154,9 @@ void RegisterBrowserStatePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(
       prefs::kOfferTranslateEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterStringPref(prefs::kAcceptLanguages,
-                               l10n_util::GetStringUTF8(IDS_ACCEPT_LANGUAGES));
   registry->RegisterStringPref(prefs::kDefaultCharset,
                                l10n_util::GetStringUTF8(IDS_DEFAULT_ENCODING),
                                user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterInt64Pref(prefs::kRateThisAppDialogLastShownTime, 0,
-                              user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
       prefs::kNetworkPredictionEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
@@ -157,6 +177,8 @@ void RegisterBrowserStatePrefs(user_prefs::PrefRegistrySyncable* registry) {
 
   // Register prefs used by Clear Browsing Data UI.
   browsing_data::prefs::RegisterBrowserUserPrefs(registry);
+
+  registry->RegisterBooleanPref(kReverseAutologinEnabled, true);
 }
 
 // This method should be periodically pruned of year+ old migrations.
@@ -165,9 +187,22 @@ void MigrateObsoleteLocalStatePrefs(PrefService* prefs) {
 
 // This method should be periodically pruned of year+ old migrations.
 void MigrateObsoleteBrowserStatePrefs(PrefService* prefs) {
-  // Added 07/2014.
-  translate::TranslatePrefs::MigrateUserPrefs(prefs, prefs::kAcceptLanguages);
+  // Added 01/2018.
+  prefs->ClearPref(::prefs::kNtpShownPage);
 
-  // Added 08/2015.
-  prefs->ClearPref(::prefs::kSigninSharedAuthenticationUserId);
+  // Added 8/2018.
+  autofill::prefs::MigrateDeprecatedAutofillPrefs(prefs);
+
+  // Added 10/2018.
+  prefs->ClearPref(kReverseAutologinEnabled);
+
+  // Added 07/2019.
+  syncer::MigrateSyncSuppressedPref(prefs);
+  syncer::ClearObsoleteMemoryPressurePrefs(prefs);
+  syncer::MigrateSessionsToProxyTabsPrefs(prefs);
+  syncer::ClearObsoleteUserTypePrefs(prefs);
+  syncer::ClearObsoleteClearServerDataPrefs(prefs);
+  syncer::ClearObsoleteAuthErrorPrefs(prefs);
+  syncer::ClearObsoleteFirstSyncTime(prefs);
+  syncer::ClearObsoleteSyncLongPollIntervalSeconds(prefs);
 }

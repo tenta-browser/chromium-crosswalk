@@ -4,15 +4,17 @@
 
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
 
+#include <utility>
+
 #include "base/synchronization/waitable_event.h"
 
 namespace ui {
 
 namespace {
 
-void OnRunPostedTaskAndSignal(const base::Closure& callback,
+void OnRunPostedTaskAndSignal(base::OnceClosure callback,
                               base::WaitableEvent* wait) {
-  callback.Run();
+  std::move(callback).Run();
   wait->Signal();
 }
 
@@ -20,11 +22,12 @@ void OnRunPostedTaskAndSignal(const base::Closure& callback,
 
 void PostSyncTask(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   base::WaitableEvent wait(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   bool success = task_runner->PostTask(
-      FROM_HERE, base::Bind(OnRunPostedTaskAndSignal, callback, &wait));
+      FROM_HERE,
+      base::BindOnce(OnRunPostedTaskAndSignal, std::move(callback), &wait));
   if (success)
     wait.Wait();
 }

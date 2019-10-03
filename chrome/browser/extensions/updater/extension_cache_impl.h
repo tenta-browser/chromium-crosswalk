@@ -14,6 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/task/task_traits.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/updater/extension_cache.h"
@@ -24,7 +25,7 @@ template <typename T> struct DefaultSingletonTraits;
 
 namespace extensions {
 
-class ExtensionCacheDelegate;
+class ChromeOSExtensionCacheDelegate;
 class LocalExtensionCache;
 
 // Singleton call that caches extensions .crx files to share them between
@@ -32,7 +33,9 @@ class LocalExtensionCache;
 class ExtensionCacheImpl : public ExtensionCache,
                            public content::NotificationObserver {
  public:
-  explicit ExtensionCacheImpl(std::unique_ptr<ExtensionCacheDelegate> delegate);
+  explicit ExtensionCacheImpl(
+      std::unique_ptr<ChromeOSExtensionCacheDelegate> delegate,
+      base::TaskPriority task_priority = base::TaskPriority::BEST_EFFORT);
   ~ExtensionCacheImpl() override;
 
   // Implementation of ExtensionCache.

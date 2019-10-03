@@ -22,7 +22,7 @@ class MEDIA_EXPORT StreamTextureWrapper {
   // Initialize the underlying StreamTexture.
   // See StreamTextureWrapperImpl.
   virtual void Initialize(
-      const base::Closure& received_frame_cb,
+      const base::RepeatingClosure& received_frame_cb,
       const gfx::Size& natural_size,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
       const StreamTextureWrapperInitCB& init_cb) = 0;
@@ -40,6 +40,10 @@ class MEDIA_EXPORT StreamTextureWrapper {
   // See StreamTextureWrapperImpl.
   virtual void ForwardStreamTextureForSurfaceRequest(
       const base::UnguessableToken& request_token) = 0;
+
+  // Clears the |received_frame_cb| passed in Initialize().
+  // Should be safe to call from any thread.
+  virtual void ClearReceivedFrameCBOnAnyThread() = 0;
 
   struct Deleter {
     inline void operator()(StreamTextureWrapper* ptr) const { ptr->Destroy(); }

@@ -10,7 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "chrome/services/file_util/public/interfaces/safe_archive_analyzer.mojom.h"
+#include "chrome/services/file_util/public/mojom/safe_archive_analyzer.mojom.h"
 
 namespace safe_browsing {
 struct ArchiveAnalyzerResults;
@@ -19,8 +19,6 @@ struct ArchiveAnalyzerResults;
 namespace service_manager {
 class Connector;
 }
-
-namespace chrome {
 
 // This class is used to analyze DMG files in a sandboxed utility process
 // for file download protection. This class lives on the UI thread, which
@@ -32,6 +30,7 @@ class SandboxedDMGAnalyzer
       base::Callback<void(const safe_browsing::ArchiveAnalyzerResults&)>;
 
   SandboxedDMGAnalyzer(const base::FilePath& dmg_file,
+                       const uint64_t max_size,
                        const ResultCallback& callback,
                        service_manager::Connector* connector);
 
@@ -58,6 +57,9 @@ class SandboxedDMGAnalyzer
   // The file path of the file to analyze.
   const base::FilePath file_path_;
 
+  // Maximum file size allowed by FilePolicy
+  const uint64_t max_size_;
+
   // Callback invoked on the UI thread with the file analyze results.
   const ResultCallback callback_;
 
@@ -65,11 +67,9 @@ class SandboxedDMGAnalyzer
   service_manager::Connector* connector_;
 
   // Pointer to the SafeArchiveAnalyzer interface. Only used from the UI thread.
-  mojom::SafeArchiveAnalyzerPtr analyzer_ptr_;
+  chrome::mojom::SafeArchiveAnalyzerPtr analyzer_ptr_;
 
   DISALLOW_COPY_AND_ASSIGN(SandboxedDMGAnalyzer);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_SERVICES_FILE_UTIL_SANDBOXED_DMG_ANALYZER_MAC_H_

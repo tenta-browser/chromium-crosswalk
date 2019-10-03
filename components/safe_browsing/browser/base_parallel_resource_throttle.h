@@ -22,7 +22,6 @@ class UrlCheckerDelegate;
 
 // A thin wrapper around BrowserURLLoaderThrottle to adapt to the
 // content::ResourceThrottle interface.
-// Used when --enable-features=S13nSafeBrowsingParallelUrlCheck is in effect.
 class BaseParallelResourceThrottle : public content::ResourceThrottle {
  protected:
   BaseParallelResourceThrottle(
@@ -37,7 +36,7 @@ class BaseParallelResourceThrottle : public content::ResourceThrottle {
   void WillRedirectRequest(const net::RedirectInfo& redirect_info,
                            bool* defer) override;
   void WillProcessResponse(bool* defer) override;
-  const char* GetNameForLogging() const override;
+  const char* GetNameForLogging() override;
   bool MustProcessResponseBeforeReadingBody() override;
 
   // Cancels the resource load. This calls ResourceThrottle::Cancel() but also

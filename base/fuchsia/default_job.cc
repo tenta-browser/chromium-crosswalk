@@ -4,7 +4,7 @@
 
 #include "base/fuchsia/default_job.h"
 
-#include <zircon/process.h>
+#include <zircon/types.h>
 
 #include "base/logging.h"
 
@@ -12,17 +12,29 @@ namespace base {
 
 namespace {
 zx_handle_t g_job = ZX_HANDLE_INVALID;
-}  // namespace
-
-zx_handle_t GetDefaultJob() {
-  if (g_job == ZX_HANDLE_INVALID)
-    return zx_job_default();
-  return g_job;
 }
 
-void SetDefaultJob(ScopedZxHandle job) {
-  DCHECK_EQ(ZX_HANDLE_INVALID, g_job);
+zx::unowned_job GetDefaultJob() {
+  if (g_job == ZX_HANDLE_INVALID)
+    return zx::job::default_job();
+  return zx::unowned_job(g_job);
+}
+
+void SetDefaultJob(zx::job job) {
+  DCHECK_EQ(g_job, ZX_HANDLE_INVALID);
   g_job = job.release();
+}
+
+ScopedDefaultJobForTest::ScopedDefaultJobForTest(zx::job new_default_job) {
+  DCHECK(new_default_job.is_valid());
+  old_default_job_.reset(g_job);
+  g_job = new_default_job.release();
+}
+
+ScopedDefaultJobForTest::~ScopedDefaultJobForTest() {
+  DCHECK_NE(g_job, ZX_HANDLE_INVALID);
+  zx::job my_default_job(g_job);
+  g_job = old_default_job_.release();
 }
 
 }  // namespace base

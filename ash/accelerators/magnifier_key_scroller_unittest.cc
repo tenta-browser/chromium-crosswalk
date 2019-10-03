@@ -8,6 +8,7 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_util.h"
+#include "base/run_loop.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/events/event.h"
 #include "ui/events/test/event_generator.h"
@@ -51,57 +52,57 @@ TEST_F(MagnifierKeyScrollerTest, Basic) {
   controller->SetEnabled(true);
 
   EXPECT_EQ("200,150", controller->GetWindowPosition().ToString());
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
 
   // Click and Release generates the press event upon release.
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   EXPECT_EQ("200,150", controller->GetWindowPosition().ToString());
   EXPECT_FALSE(delegate.event());
 
-  generator.ReleaseKey(ui::VKEY_DOWN, 0);
+  generator->ReleaseKey(ui::VKEY_DOWN, 0);
   EXPECT_EQ("200,150", controller->GetWindowPosition().ToString());
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_PRESSED, delegate.event()->type());
   delegate.reset();
 
   // Click and hold scrolls the magnifier screen.
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   EXPECT_EQ("200,150", controller->GetWindowPosition().ToString());
   EXPECT_FALSE(delegate.event());
 
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   EXPECT_EQ("200,300", controller->GetWindowPosition().ToString());
   EXPECT_FALSE(delegate.event());
 
-  generator.ReleaseKey(ui::VKEY_DOWN, 0);
+  generator->ReleaseKey(ui::VKEY_DOWN, 0);
   EXPECT_EQ("200,300", controller->GetWindowPosition().ToString());
   EXPECT_FALSE(delegate.event());
 
   // Events are passed normally when the magnifier is off.
   controller->SetEnabled(false);
 
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_PRESSED, delegate.event()->type());
   delegate.reset();
 
-  generator.ReleaseKey(ui::VKEY_DOWN, 0);
+  generator->ReleaseKey(ui::VKEY_DOWN, 0);
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_RELEASED, delegate.event()->type());
   delegate.reset();
 
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_PRESSED, delegate.event()->type());
   delegate.reset();
 
-  generator.PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
+  generator->PressKey(ui::VKEY_DOWN, ui::EF_SHIFT_DOWN);
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_PRESSED, delegate.event()->type());
   delegate.reset();
 
-  generator.ReleaseKey(ui::VKEY_DOWN, 0);
+  generator->ReleaseKey(ui::VKEY_DOWN, 0);
   ASSERT_TRUE(delegate.event());
   EXPECT_EQ(ui::ET_KEY_RELEASED, delegate.event()->type());
   delegate.reset();

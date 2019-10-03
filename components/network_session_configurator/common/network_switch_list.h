@@ -4,6 +4,7 @@
 
 // This file deliberately has no header guard, as it's inlined in a number of
 // files.
+// no-include-guard-because-multiply-included
 
 // Disables the QUIC protocol.
 NETWORK_SWITCH(kDisableQuic, "disable-quic")
@@ -11,16 +12,15 @@ NETWORK_SWITCH(kDisableQuic, "disable-quic")
 // Disables the HTTP/2 protocol.
 NETWORK_SWITCH(kDisableHttp2, "disable-http2")
 
+// Enable Websocket over HTTP/2.
+NETWORK_SWITCH(kEnableWebsocketOverHttp2, "enable-websocket-over-http2")
+
 // Enables Alternate-Protocol when the port is user controlled (> 1024).
 NETWORK_SWITCH(kEnableUserAlternateProtocolPorts,
                "enable-user-controlled-alternate-protocol-ports")
 
 // Enables the QUIC protocol.  This is a temporary testing flag.
 NETWORK_SWITCH(kEnableQuic, "enable-quic")
-
-// Enable use of experimental TCP sockets API for sending data in the
-// SYN packet.
-NETWORK_SWITCH(kEnableTcpFastOpen, "enable-tcp-fastopen")
 
 // Ignores certificate-related errors.
 NETWORK_SWITCH(kIgnoreCertificateErrors, "ignore-certificate-errors")
@@ -61,7 +61,3 @@ NETWORK_SWITCH(kTestingFixedHttpsPort, "testing-fixed-https-port")
 // TODO(mmenke): Can we just remove this?  host-resolver-rules is more generally
 // useful.
 NETWORK_SWITCH(kHostRules, "host-rules")
-
-// Uses experimental simple cache backend if possible when set to "on", and
-// blockfile backend when set to "off".
-NETWORK_SWITCH(kUseSimpleCacheBackend, "use-simple-cache-backend")

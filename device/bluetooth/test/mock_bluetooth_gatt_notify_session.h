@@ -24,10 +24,11 @@ class MockBluetoothGattNotifySession : public BluetoothGattNotifySession {
  public:
   explicit MockBluetoothGattNotifySession(
       base::WeakPtr<BluetoothRemoteGattCharacteristic> characteristic);
-  virtual ~MockBluetoothGattNotifySession();
+  ~MockBluetoothGattNotifySession() override;
 
   MOCK_METHOD0(IsActive, bool());
-  MOCK_METHOD1(Stop, void(const base::Closure&));
+  void Stop(base::OnceClosure c) override { Stop_(c); }
+  MOCK_METHOD1(Stop_, void(base::OnceClosure&));
 
   // Starts notifying the adapter's observers that the characteristic's value
   // changed.

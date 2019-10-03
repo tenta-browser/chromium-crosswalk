@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "media/cast/common/rtp_time.h"
 #include "media/cast/net/cast_transport_config.h"
 #include "media/cast/sender/audio_encoder.h"
@@ -24,8 +23,7 @@ AudioSender::AudioSender(scoped_refptr<CastEnvironment> cast_environment,
                   transport_sender,
                   audio_config,
                   NewFixedCongestionControl(audio_config.max_bitrate)),
-      samples_in_encoder_(0),
-      weak_factory_(this) {
+      samples_in_encoder_(0) {
   if (!audio_config.use_external_encoder) {
     audio_encoder_.reset(new AudioEncoder(
         cast_environment, audio_config.channels, audio_config.rtp_timebase,

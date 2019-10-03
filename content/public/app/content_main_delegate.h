@@ -21,6 +21,7 @@ class CommandLine;
 namespace service_manager {
 class BackgroundServiceManager;
 class Identity;
+class ZygoteForkDelegate;
 }  // namespace service_manager
 
 namespace content {
@@ -29,7 +30,6 @@ class ContentBrowserClient;
 class ContentGpuClient;
 class ContentRendererClient;
 class ContentUtilityClient;
-class ZygoteForkDelegate;
 struct MainFunctionParams;
 
 class CONTENT_EXPORT ContentMainDelegate {
@@ -66,11 +66,6 @@ class CONTENT_EXPORT ContentMainDelegate {
   virtual bool ProcessRegistersWithSystemProcess(
       const std::string& process_type);
 
-  // Used to determine if we should send the mach port to the parent process or
-  // not. The embedder usually sends it for all child processes, use this to
-  // override this behavior.
-  virtual bool ShouldSendMachPort(const std::string& process_type);
-
   // Allows the embedder to override initializing the sandbox. This is needed
   // because some processes might not want to enable it right away or might not
   // want it at all.
@@ -81,16 +76,31 @@ class CONTENT_EXPORT ContentMainDelegate {
   // specify one or more zygote delegates if it wishes by storing them in
   // |*delegates|.
   virtual void ZygoteStarting(
-      std::vector<std::unique_ptr<ZygoteForkDelegate>>* delegates);
+      std::vector<std::unique_ptr<service_manager::ZygoteForkDelegate>>*
+          delegates);
 
   // Called every time the zygote process forks.
   virtual void ZygoteForked() {}
 #endif  // defined(OS_LINUX)
 
-  // TODO(vadimt, yiyaoliu): Remove this function once crbug.com/453640 is
-  // fixed.
-  // Returns whether or not profiler recording should be enabled.
-  virtual bool ShouldEnableProfilerRecording();
+  // Allows the embedder to prevent locking the scheme registry. The scheme
+  // registry is the list of URL schemes we recognize, with some additional
+  // information about each scheme such as whether it expects a host. The
+  // scheme registry is not thread-safe, so by default it is locked before any
+  // threads are created to ensure single-threaded access. An embedder can
+  // override this to prevent the scheme registry from being locked during
+  // startup, but if they do so then they are responsible for making sure that
+  // the registry is only accessed in a thread-safe way, and for calling
+  // url::LockSchemeRegistries() when initialization is complete. If possible,
+  // prefer registering additional schemes through
+  // ContentClient::AddAdditionalSchemes over preventing the scheme registry
+  // from being locked.
+  virtual bool ShouldLockSchemeRegistry();
+
+  // Fatal errors during initialization are reported by this function, so that
+  // the embedder can implement graceful exit by displaying some message and
+  // returning initialization error code. Default behavior is CHECK(false).
+  virtual int TerminateForFatalInitializationError();
 
   // Overrides the Service Manager process type to use for the currently running
   // process.
@@ -111,8 +121,35 @@ class CONTENT_EXPORT ContentMainDelegate {
       const base::Closure& quit_closure,
       service_manager::BackgroundServiceManager* service_manager);
 
+  // Allows the embedder to perform platform-specific initializatioion before
+  // creating the main message loop.
+  virtual void PreCreateMainMessageLoop() {}
+
+  // Returns true if content should create field trials and initialize the
+  // FeatureList instance for this process. Default implementation returns true.
+  // Embedders that need to control when and/or how FeatureList should be
+  // created should override and return false.
+  virtual bool ShouldCreateFeatureList();
+
+  // Allows the embedder to perform its own initialization after content
+  // performed its own and already brought up MessageLoop, ThreadPool, field
+  // trials and FeatureList (by default).
+  // |is_running_tests| indicates whether it is running in tests.
+  virtual void PostEarlyInitialization(bool is_running_tests) {}
+
+  // Allows the embedder to perform initialization once field trials/FeatureList
+  // initialization has completed if ShouldCreateFeatureList() returns true.
+  // Otherwise, the embedder is responsible for calling this method once feature
+  // list initialization is complete.
+  virtual void PostFieldTrialInitialization() {}
+
+  // Allows the embedder to perform its own initialization after the
+  // TaskScheduler is started.
+  virtual void PostTaskSchedulerStart() {}
+
  protected:
   friend class ContentClientInitializer;
+  friend class BrowserTestBase;
 
   // Called once per relevant process type to allow the embedder to customize
   // content. If an embedder wants the default (empty) implementation, don't

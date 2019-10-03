@@ -10,15 +10,15 @@ import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.DiscardableReferencePool.DiscardableReference;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.lang.ref.WeakReference;
 
 /**
  * Tests for {@link DiscardableReferencePool}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class DiscardableReferencePoolTest {
     /**
@@ -37,6 +37,64 @@ public class DiscardableReferencePoolTest {
         // Drop reference to the object itself, to allow it to be garbage-collected.
         object = null;
 
+        pool.drain();
+
+        // The discardable reference should be null now.
+        Assert.assertNull(discardableReference.get());
+
+        // The object is not (strongly) reachable anymore, so the weak reference may or may not be
+        // null (it could be if a GC has happened since the pool was drained).
+        // After an explicit GC call it definitely should be null.
+        Runtime.getRuntime().gc();
+
+        Assert.assertNull(weakReference.get());
+    }
+
+    @Test
+    public void testRemoveAfterDrainDoesNotThrow() {
+        DiscardableReferencePool pool = new DiscardableReferencePool();
+
+        Object object = new Object();
+        WeakReference<Object> weakReference = new WeakReference<>(object);
+
+        DiscardableReference<Object> discardableReference = pool.put(object);
+        Assert.assertEquals(object, discardableReference.get());
+
+        // Release the strong reference.
+        object = null;
+
+        pool.drain();
+
+        // Shouldn't throw any exception.
+        pool.remove(discardableReference);
+
+        // The discardable reference should be null now.
+        Assert.assertNull(discardableReference.get());
+
+        // The object is not (strongly) reachable anymore, so the weak reference may or may not be
+        // null (it could be if a GC has happened since the pool was drained).
+        // After an explicit GC call it definitely should be null.
+        Runtime.getRuntime().gc();
+
+        Assert.assertNull(weakReference.get());
+    }
+
+    @Test
+    public void testDrainAfterRemoveDoesNotThrow() {
+        DiscardableReferencePool pool = new DiscardableReferencePool();
+
+        Object object = new Object();
+        WeakReference<Object> weakReference = new WeakReference<>(object);
+
+        DiscardableReference<Object> discardableReference = pool.put(object);
+        Assert.assertEquals(object, discardableReference.get());
+
+        // Release the strong reference.
+        object = null;
+
+        pool.remove(discardableReference);
+
+        // Shouldn't throw any exception.
         pool.drain();
 
         // The discardable reference should be null now.

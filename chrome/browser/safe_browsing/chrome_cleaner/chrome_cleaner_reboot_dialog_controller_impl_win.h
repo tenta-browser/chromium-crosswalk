@@ -16,7 +16,7 @@ namespace safe_browsing {
 
 class ChromeCleanerRebootDialogControllerImpl
     : public ChromeCleanerRebootDialogController,
-      public chrome::BrowserListObserver {
+      public BrowserListObserver {
  public:
   class PromptDelegate {
    public:
@@ -24,7 +24,6 @@ class ChromeCleanerRebootDialogControllerImpl
     virtual void ShowChromeCleanerRebootPrompt(
         Browser* browser,
         ChromeCleanerRebootDialogControllerImpl* controller) = 0;
-    virtual void OpenSettingsPage(Browser* browser) = 0;
     virtual void OnSettingsPageIsActiveTab() = 0;
   };
 
@@ -40,7 +39,6 @@ class ChromeCleanerRebootDialogControllerImpl
       std::unique_ptr<PromptDelegate> delegate);
 
   // ChromeCleanerRebootDialogController overrides.
-  void DialogShown() override;
   void Accept() override;
   void Cancel() override;
   void Close() override;
@@ -61,8 +59,9 @@ class ChromeCleanerRebootDialogControllerImpl
   void MaybeStartRebootPrompt();
 
   // Shows the reboot prompt dialog in |browser| if the reboot prompt experiment
-  // is on and the Settings page is not the currently active tab. Otherwise,
-  // this will reopen the Settings page on a background tab.
+  // is on and the Settings page containing Chrome Cleanup UI is not the
+  // currently active tab. Otherwise, this will reopen the Settings page on a
+  // background tab.
   void StartRebootPromptForBrowser(Browser* browser);
 
   void OnInteractionDone();

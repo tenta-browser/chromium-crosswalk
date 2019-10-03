@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "components/nacl/renderer/histogram.h"
 #include "components/nacl/renderer/nexe_load_manager.h"
@@ -20,7 +21,7 @@ TrustedPluginChannel::TrustedPluginChannel(
     : nexe_load_manager_(nexe_load_manager),
       binding_(this, std::move(request)),
       is_helper_nexe_(is_helper_nexe) {
-  binding_.set_connection_error_handler(base::Bind(
+  binding_.set_connection_error_handler(base::BindOnce(
       &TrustedPluginChannel::OnChannelError, base::Unretained(this)));
 }
 

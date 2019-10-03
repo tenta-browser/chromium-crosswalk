@@ -10,6 +10,7 @@
 #include <iterator>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
@@ -21,9 +22,7 @@
 namespace extensions {
 
 FakeSafeBrowsingDatabaseManager::FakeSafeBrowsingDatabaseManager(bool enabled)
-    : LocalSafeBrowsingDatabaseManager(base::WrapRefCounted(
-          safe_browsing::SafeBrowsingService::CreateSafeBrowsingService())),
-      enabled_(enabled) {}
+    : enabled_(enabled) {}
 
 FakeSafeBrowsingDatabaseManager::~FakeSafeBrowsingDatabaseManager() {
 }
@@ -86,7 +85,7 @@ FakeSafeBrowsingDatabaseManager& FakeSafeBrowsingDatabaseManager::RemoveUnsafe(
 }
 
 void FakeSafeBrowsingDatabaseManager::NotifyUpdate() {
-  LocalSafeBrowsingDatabaseManager::NotifyDatabaseUpdateFinished(true);
+  NotifyDatabaseUpdateFinished();
 }
 
 bool FakeSafeBrowsingDatabaseManager::CheckExtensionIDs(
@@ -95,38 +94,18 @@ bool FakeSafeBrowsingDatabaseManager::CheckExtensionIDs(
   if (!enabled_)
     return true;
 
-  // Need to construct the full SafeBrowsingCheck rather than calling
-  // OnCheckExtensionsResult directly because it's protected. Grr!
-  std::vector<std::string> extension_ids_vector(extension_ids.begin(),
-                                                extension_ids.end());
-  std::vector<safe_browsing::SBFullHash> extension_id_hashes;
-  std::transform(extension_ids_vector.begin(), extension_ids_vector.end(),
-                 std::back_inserter(extension_id_hashes),
-                 safe_browsing::StringToSBFullHash);
-
-  std::unique_ptr<SafeBrowsingCheck> safe_browsing_check(
-      new SafeBrowsingCheck(std::vector<GURL>(), extension_id_hashes, client,
-                            safe_browsing::EXTENSIONBLACKLIST,
-                            safe_browsing::CreateSBThreatTypeSet(
-                                {safe_browsing::SB_THREAT_TYPE_EXTENSION})));
-
-  for (size_t i = 0; i < extension_ids_vector.size(); ++i) {
-    const std::string& extension_id = extension_ids_vector[i];
+  std::set<safe_browsing::FullHash> unsafe_extension_ids;
+  for (const auto& extension_id : extension_ids) {
     if (unsafe_ids_.count(extension_id))
-      safe_browsing_check->full_hash_results[i] =
-          safe_browsing::SB_THREAT_TYPE_EXTENSION;
+      unsafe_extension_ids.insert(extension_id);
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::BindOnce(&FakeSafeBrowsingDatabaseManager::OnSafeBrowsingResult,
-                     this, base::Passed(&safe_browsing_check)));
+      base::BindOnce(
+          &SafeBrowsingDatabaseManager::Client::OnCheckExtensionsResult,
+          base::Unretained(client), unsafe_extension_ids));
   return false;
-}
-
-void FakeSafeBrowsingDatabaseManager::OnSafeBrowsingResult(
-    std::unique_ptr<SafeBrowsingCheck> result) {
-  result->OnSafeBrowsingResult();
 }
 
 }  // namespace extensions

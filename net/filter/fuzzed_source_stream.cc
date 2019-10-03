@@ -5,11 +5,14 @@
 #include "net/filter/fuzzed_source_stream.h"
 
 #include <algorithm>
+#include <string>
+#include <utility>
 
-#include "base/test/fuzzed_data_provider.h"
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "third_party/libFuzzer/src/utils/FuzzedDataProvider.h"
 
 namespace net {
 
@@ -20,7 +23,7 @@ const Error kReadErrors[] = {OK, ERR_FAILED, ERR_CONTENT_DECODING_FAILED};
 
 }  // namespace
 
-FuzzedSourceStream::FuzzedSourceStream(base::FuzzedDataProvider* data_provider)
+FuzzedSourceStream::FuzzedSourceStream(FuzzedDataProvider* data_provider)
     : SourceStream(SourceStream::TYPE_NONE),
       data_provider_(data_provider),
       read_pending_(false),
@@ -32,14 +35,14 @@ FuzzedSourceStream::~FuzzedSourceStream() {
 
 int FuzzedSourceStream::Read(IOBuffer* buf,
                              int buf_len,
-                             const CompletionCallback& callback) {
+                             CompletionOnceCallback callback) {
   DCHECK(!read_pending_);
   DCHECK(!end_returned_);
   DCHECK_LE(0, buf_len);
 
   bool sync = data_provider_->ConsumeBool();
-  int result = data_provider_->ConsumeUint32InRange(0, buf_len);
-  std::string data = data_provider_->ConsumeBytes(result);
+  int result = data_provider_->ConsumeIntegralInRange(0, buf_len);
+  std::string data = data_provider_->ConsumeBytesAsString(result);
   result = data.size();
 
   if (result <= 0)
@@ -47,7 +50,7 @@ int FuzzedSourceStream::Read(IOBuffer* buf,
 
   if (sync) {
     if (result > 0) {
-      std::copy(data.data(), data.data() + result, buf->data());
+      std::copy(data.data(), data.data() + data.size(), buf->data());
     } else {
       end_returned_ = true;
     }
@@ -59,9 +62,9 @@ int FuzzedSourceStream::Read(IOBuffer* buf,
   read_pending_ = true;
   // |this| is owned by the caller so use base::Unretained is safe.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&FuzzedSourceStream::OnReadComplete, base::Unretained(this),
-                 callback, data, pending_read_buf, result));
+      FROM_HERE, base::BindOnce(&FuzzedSourceStream::OnReadComplete,
+                                base::Unretained(this), std::move(callback),
+                                data, pending_read_buf, result));
   return ERR_IO_PENDING;
 }
 
@@ -69,7 +72,7 @@ std::string FuzzedSourceStream::Description() const {
   return "";
 }
 
-void FuzzedSourceStream::OnReadComplete(const CompletionCallback& callback,
+void FuzzedSourceStream::OnReadComplete(CompletionOnceCallback callback,
                                         const std::string& fuzzed_data,
                                         scoped_refptr<IOBuffer> read_buf,
                                         int result) {
@@ -82,7 +85,7 @@ void FuzzedSourceStream::OnReadComplete(const CompletionCallback& callback,
     end_returned_ = true;
   }
   read_pending_ = false;
-  callback.Run(result);
+  std::move(callback).Run(result);
 }
 
 }  // namespace net

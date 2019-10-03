@@ -17,15 +17,15 @@
 #include "base/values.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_context.h"
 #include "chrome/browser/android/contextualsearch/resolved_search_term.h"
-#include "net/url_request/url_fetcher_delegate.h"
 
 namespace content {
 class WebContents;
 }
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace network {
+class SharedURLLoaderFactory;
+class SimpleURLLoader;
+}  // namespace network
 
 class Profile;
 class TemplateURLService;
@@ -34,8 +34,7 @@ class ContextualSearchFieldTrial;
 // Handles tasks for the ContextualSearchManager in a separable and testable
 // way, without the complication of being connected to a Java object.
 class ContextualSearchDelegate
-    : public net::URLFetcherDelegate,
-      public base::SupportsWeakPtr<ContextualSearchDelegate> {
+    : public base::SupportsWeakPtr<ContextualSearchDelegate> {
  public:
   // Provides the Resolved Search Term, called when the Resolve Request returns.
   typedef base::Callback<void(const ResolvedSearchTerm&)>
@@ -45,22 +44,25 @@ class ContextualSearchDelegate
       void(const std::string&, const base::string16&, size_t, size_t)>
       SurroundingTextCallback;
 
-  // ID used in creating URLFetcher for Contextual Search results.
-  static const int kContextualSearchURLFetcherID;
-
   // Constructs a delegate that will always call back to the given callbacks
   // when search term resolution or surrounding text responses are available.
   ContextualSearchDelegate(
-      net::URLRequestContextGetter* url_request_context,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       TemplateURLService* template_url_service,
       const SearchTermResolutionCallback& search_term_callback,
       const SurroundingTextCallback& surrounding_callback);
-  ~ContextualSearchDelegate() override;
+  virtual ~ContextualSearchDelegate();
 
   // Gathers surrounding text and saves it locally in the given context.
   void GatherAndSaveSurroundingText(
       base::WeakPtr<ContextualSearchContext> contextual_search_context,
       content::WebContents* web_contents);
+
+  // If the caller chooses not to call |GatherAndSaveSurroundingText| then they
+  // must call this method to set the active context before calling
+  // |StartSearchTermResolutionRequest|.
+  void SetActiveContext(
+      base::WeakPtr<ContextualSearchContext> contextual_search_context);
 
   // Starts an asynchronous search term resolution request.
   // The given context includes some content from a web page and must be able
@@ -72,6 +74,8 @@ class ContextualSearchDelegate
       content::WebContents* web_contents);
 
   // Gets the target language for translation purposes for this user.
+  // TODO(donnd): remove these language accessors once the transition to the
+  // Chrome Language Model is complete.
   std::string GetTargetLanguage();
 
   // Returns the accept languages preference string.
@@ -100,18 +104,16 @@ class ContextualSearchDelegate
                            SampleSurroundingTextSameStartEnd);
   FRIEND_TEST_ALL_PREFIXES(ContextualSearchDelegateTest,
                            DecodeSearchTermFromJsonResponse);
-  FRIEND_TEST_ALL_PREFIXES(ContextualSearchDelegateTest, DecodeStringMentions);
 
-  // net::URLFetcherDelegate:
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void OnUrlLoadComplete(std::unique_ptr<std::string> response_body);
 
   // Resolves the search term specified by the current context.
   // Only needed for tests.  TODO(donnd): make private and friend?
   void ResolveSearchTermFromContext();
 
   // Builds and returns the search term resolution request URL.
-  // |selection| is used as the default query.
-  std::string BuildRequestUrl(std::string selection);
+  // |context| is used to help build the query.
+  std::string BuildRequestUrl(ContextualSearchContext* context);
 
   // Uses the TemplateURL service to construct a search term resolution URL from
   // the given parameters.
@@ -121,14 +123,9 @@ class ContextualSearchDelegate
       const bool may_send_base_page_url);
 
   void OnTextSurroundingSelectionAvailable(
-    const base::string16& surrounding_text,
-    int start_offset,
-    int end_offset);
-
-  // Populates the discourse context and adds it to the HTTP header of the
-  // search term resolution request.
-  void SetDiscourseContextAndAddToHeader(
-      const ContextualSearchContext& context);
+      const base::string16& surrounding_text,
+      uint32_t start_offset,
+      uint32_t end_offset);
 
   // Populates and returns the discourse context.
   std::string GetDiscourseContext(const ContextualSearchContext& context);
@@ -160,7 +157,11 @@ class ContextualSearchDelegate
       std::string* thumbnail_url,
       std::string* caption,
       std::string* quick_action_uri,
-      QuickActionCategory* quick_action_category);
+      QuickActionCategory* quick_action_category,
+      int64_t* logged_event_id,
+      std::string* search_url_full,
+      std::string* search_url_preload,
+      int* coca_card_tag);
 
   // Extracts the start and end location from a mentions list, and sets the
   // integers referenced by |startResult| and |endResult|.
@@ -192,10 +193,10 @@ class ContextualSearchDelegate
   }
 
   // The current request in progress, or NULL.
-  std::unique_ptr<net::URLFetcher> search_term_fetcher_;
+  std::unique_ptr<network::SimpleURLLoader> url_loader_;
 
-  // Holds the URL request context. Not owned.
-  net::URLRequestContextGetter* url_request_context_;
+  // Holds the URL loader factory.
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Holds the TemplateURLService. Not owned.
   TemplateURLService* template_url_service_;

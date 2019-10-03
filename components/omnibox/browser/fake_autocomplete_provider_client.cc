@@ -4,8 +4,9 @@
 
 #include "components/omnibox/browser/fake_autocomplete_provider_client.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -14,11 +15,11 @@
 #include "components/omnibox/browser/in_memory_url_index.h"
 #include "components/omnibox/browser/in_memory_url_index_test_util.h"
 #include "components/omnibox/browser/shortcuts_backend.h"
+#include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_service.h"
 
 FakeAutocompleteProviderClient::FakeAutocompleteProviderClient(
-    bool create_history_db)
-    : is_tab_open_with_url_(false) {
+    bool create_history_db) {
   set_template_url_service(std::make_unique<TemplateURLService>(nullptr, 0));
 
   bookmark_model_ = bookmarks::TestBookmarkClient::CreateModel();
@@ -43,6 +44,9 @@ FakeAutocompleteProviderClient::~FakeAutocompleteProviderClient() {
   // its destructor.
   GetInMemoryURLIndex()->Shutdown();
   set_in_memory_url_index(nullptr);
+  // History service can have its own thread. So we need to explicitly shut down
+  // it to prevent memory leaks.
+  GetHistoryService()->Shutdown();
   // Note that RunUntilIdle() must still be called after this, from
   // whichever task model is being used, probably ScopedTaskEnvironment,
   // or there will be memory leaks.
@@ -65,11 +69,6 @@ InMemoryURLIndex* FakeAutocompleteProviderClient::GetInMemoryURLIndex() {
   return in_memory_url_index_.get();
 }
 
-const SearchTermsData& FakeAutocompleteProviderClient::GetSearchTermsData()
-    const {
-  return search_terms_data_;
-}
-
 scoped_refptr<ShortcutsBackend>
 FakeAutocompleteProviderClient::GetShortcutsBackend() {
   return shortcuts_backend_;
@@ -80,6 +79,9 @@ FakeAutocompleteProviderClient::GetShortcutsBackendIfExists() {
   return shortcuts_backend_;
 }
 
-bool FakeAutocompleteProviderClient::IsTabOpenWithURL(const GURL& url) {
-  return is_tab_open_with_url_;
+bool FakeAutocompleteProviderClient::IsTabOpenWithURL(
+    const GURL& url,
+    const AutocompleteInput* input) {
+  return !substring_to_match_.empty() &&
+         url.spec().find(substring_to_match_) != std::string::npos;
 }

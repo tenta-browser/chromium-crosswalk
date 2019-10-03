@@ -18,6 +18,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "gtest/gtest.h"
@@ -66,15 +67,16 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
       {4, "\360\220\204\202", 2, {0xd800, 0xdd02}},  // 𐄂 (non-BMP)
   };
 
-  for (size_t index = 0; index < arraysize(kTestData); ++index) {
+  for (size_t index = 0; index < base::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index].input_string));
 
     // Make sure that the expected output string with its NUL terminator fits in
     // the space provided.
-    ASSERT_EQ(kTestData[index]
-                  .output_string[arraysize(kTestData[index].output_string) - 1],
-              0);
+    ASSERT_EQ(
+        kTestData[index]
+            .output_string[base::size(kTestData[index].output_string) - 1],
+        0);
 
     string_file.Reset();
     crashpad::internal::MinidumpUTF16StringWriter string_writer;
@@ -84,12 +86,11 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
 
     const size_t expected_utf16_units_with_nul =
         kTestData[index].output_length + 1;
-    MINIDUMP_STRING tmp = {0};
+    MINIDUMP_STRING* tmp;
     ALLOW_UNUSED_LOCAL(tmp);
     const size_t expected_utf16_bytes =
-        expected_utf16_units_with_nul * sizeof(tmp.Buffer[0]);
-    ASSERT_EQ(string_file.string().size(),
-              sizeof(MINIDUMP_STRING) + expected_utf16_bytes);
+        expected_utf16_units_with_nul * sizeof(tmp->Buffer[0]);
+    ASSERT_EQ(string_file.string().size(), sizeof(*tmp) + expected_utf16_bytes);
 
     const MINIDUMP_STRING* minidump_string =
         MinidumpStringAtRVA(string_file.string(), 0);
@@ -101,6 +102,12 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
   }
 }
 
+// Related tracking issues:
+// https://fuchsia.atlassian.net/browse/DX-487
+// https://bugs.chromium.org/p/chromium/issues/detail?id=872892
+// https://bugs.chromium.org/p/chromium/issues/detail?id=889582
+// TODO: Re-enable test once LUCI supports invalid UTF8 characters in test logs.
+#if !defined(CRASHPAD_IS_IN_FUCHSIA)
 TEST(MinidumpStringWriter, ConvertInvalidUTF8ToUTF16) {
   StringFile string_file;
 
@@ -113,7 +120,7 @@ TEST(MinidumpStringWriter, ConvertInvalidUTF8ToUTF16) {
       "\303\0\251",  // NUL in middle of valid sequence
   };
 
-  for (size_t index = 0; index < arraysize(kTestData); ++index) {
+  for (size_t index = 0; index < base::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index]));
     string_file.Reset();
@@ -129,17 +136,18 @@ TEST(MinidumpStringWriter, ConvertInvalidUTF8ToUTF16) {
     const MINIDUMP_STRING* minidump_string =
         MinidumpStringAtRVA(string_file.string(), 0);
     EXPECT_TRUE(minidump_string);
-    MINIDUMP_STRING tmp = {0};
+    MINIDUMP_STRING* tmp;
     ALLOW_UNUSED_LOCAL(tmp);
-    EXPECT_EQ(minidump_string->Length,
-              string_file.string().size() - sizeof(MINIDUMP_STRING) -
-                  sizeof(tmp.Buffer[0]));
+    EXPECT_EQ(
+        minidump_string->Length,
+        string_file.string().size() - sizeof(*tmp) - sizeof(tmp->Buffer[0]));
     base::string16 output_string =
         MinidumpStringAtRVAAsString(string_file.string(), 0);
     EXPECT_FALSE(output_string.empty());
     EXPECT_NE(output_string.find(0xfffd), base::string16::npos);
   }
 }
+#endif  // !defined(CRASHPAD_IS_IN_FUCHSIA)
 
 TEST(MinidumpStringWriter, MinidumpUTF8StringWriter) {
   StringFile string_file;
@@ -175,7 +183,7 @@ TEST(MinidumpStringWriter, MinidumpUTF8StringWriter) {
       {4, "\360\220\204\202"},  // 𐄂 (non-BMP)
   };
 
-  for (size_t index = 0; index < arraysize(kTestData); ++index) {
+  for (size_t index = 0; index < base::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index].string));
 

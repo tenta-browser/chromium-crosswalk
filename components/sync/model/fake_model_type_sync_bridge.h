@@ -15,6 +15,7 @@
 #include "components/sync/model/entity_data.h"
 #include "components/sync/model/metadata_batch.h"
 #include "components/sync/model/model_error.h"
+#include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/model_type_sync_bridge.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync/protocol/model_type_state.pb.h"
@@ -53,6 +54,7 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
     void PutMetadata(const std::string& key,
                      const sync_pb::EntityMetadata& metadata);
     void RemoveData(const std::string& key);
+    void ClearAllData();
     void RemoveMetadata(const std::string& key);
     bool HasData(const std::string& key) const;
     bool HasMetadata(const std::string& key) const;
@@ -89,7 +91,7 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
   };
 
   explicit FakeModelTypeSyncBridge(
-      const ChangeProcessorFactory& change_processor_factory);
+      std::unique_ptr<ModelTypeChangeProcessor> change_processor);
   ~FakeModelTypeSyncBridge() override;
 
   // Local data modification. Emulates signals from the model thread.
@@ -103,6 +105,10 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
   // Local data deletion.
   void DeleteItem(const std::string& key);
 
+  // Deletes local data without notifying the processor (useful for modeling
+  // faulty bridges).
+  void MimicBugToLooseItemWithoutNotifyingProcessor(const std::string& key);
+
   // ModelTypeSyncBridge implementation
   std::unique_ptr<MetadataChangeList> CreateMetadataChangeList() override;
   base::Optional<ModelError> MergeSyncData(
@@ -112,16 +118,17 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
       std::unique_ptr<MetadataChangeList> metadata_change_list,
       EntityChangeList entity_changes) override;
   void GetData(StorageKeyList storage_keys, DataCallback callback) override;
-  void GetAllData(DataCallback callback) override;
+  void GetAllDataForDebugging(DataCallback callback) override;
   std::string GetClientTag(const EntityData& entity_data) override;
   std::string GetStorageKey(const EntityData& entity_data) override;
   bool SupportsGetStorageKey() const override;
-  void SetSupportsGetStorageKey(bool supports_get_storage_key);
   ConflictResolution ResolveConflict(
-      const EntityData& local_data,
+      const std::string& storage_key,
       const EntityData& remote_data) const override;
+  void ApplyStopSyncChanges(
+      std::unique_ptr<MetadataChangeList> delete_metadata_change_list) override;
 
-  // Store a resolution for the next call to ResolveConflict. Note that if this
+  // Stores a resolution for the next call to ResolveConflict. Note that if this
   // is a USE_NEW resolution, the data will only exist for one resolve call.
   void SetConflictResolution(ConflictResolution resolution);
 
@@ -133,10 +140,23 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
   // test code here, this function is needed to manually copy it.
   static std::unique_ptr<EntityData> CopyEntityData(const EntityData& old_data);
 
-  // Set storage key which will be ignored by bridge.
-  void SetKeyToIgnore(const std::string key);
+  // Influences the way the bridge produces storage key. If set to true, the
+  // bridge will compute a storage key deterministically from specifics, via
+  // GetStorageKey(). If set to false, it will return autoincrement-like storage
+  // keys that cannot be inferred from specifics, and exercise
+  // UpdateStorageKey() for remote changes to report storage keys.
+  void SetSupportsGetStorageKey(bool supports_get_storage_key);
 
-  const Store& db() { return *db_; }
+  // Returns the last generated autoincrement-like storage key, applicable only
+  // for the SetSupportsGetStorageKey(false) case (otherwise the storage key
+  // gets inferred deterministically from specifics).
+  std::string GetLastGeneratedStorageKey() const;
+
+  // Add values that will be ignored by bridge.
+  void AddValueToIgnore(const std::string& value);
+
+  const Store& db() const { return *db_; }
+  Store* mutable_db() { return db_.get(); }
 
  protected:
   // Contains all of the data and metadata state.
@@ -146,13 +166,13 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
   // Applies |change_list| to the metadata store.
   void ApplyMetadataChangeList(std::unique_ptr<MetadataChangeList> change_list);
 
-  std::string GetStorageKeyImpl(const EntityData& entity_data);
+  std::string GenerateStorageKey(const EntityData& entity_data);
 
   // The conflict resolution to use for calls to ResolveConflict.
-  std::unique_ptr<ConflictResolution> conflict_resolution_;
+  ConflictResolution conflict_resolution_;
 
-  // The storage keys which bridge will ignore.
-  std::unordered_set<std::string> keys_to_ignore_;
+  // The keys that the bridge will ignore.
+  std::unordered_set<std::string> values_to_ignore_;
 
   // Whether an error should be produced on the next bridge call.
   bool error_next_ = false;
@@ -161,6 +181,11 @@ class FakeModelTypeSyncBridge : public ModelTypeSyncBridge {
   // responsible for calling UpdateStorageKey when processing new entities in
   // MergeSyncData/ApplySyncChanges.
   bool supports_get_storage_key_ = true;
+
+  // Last dynamically-generated storage key, for the case where
+  // |supports_get_storage_key_| == false (otherwise the storage key gets
+  // inferred deterministically from specifics).
+  int last_generated_storage_key_ = 0;
 };
 
 }  // namespace syncer

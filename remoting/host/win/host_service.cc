@@ -16,10 +16,10 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/thread.h"
 #include "base/win/message_window.h"
 #include "base/win/scoped_com_initializer.h"
@@ -204,8 +204,8 @@ void HostService::CreateLauncher(
     scoped_refptr<AutoThreadTaskRunner> task_runner) {
   // Launch the I/O thread.
   scoped_refptr<AutoThreadTaskRunner> io_task_runner =
-      AutoThread::CreateWithType(
-          kIoThreadName, task_runner, base::MessageLoop::TYPE_IO);
+      AutoThread::CreateWithType(kIoThreadName, task_runner,
+                                 base::MessagePump::Type::IO);
   if (!io_task_runner.get()) {
     LOG(FATAL) << "Failed to start the I/O thread";
     return;
@@ -237,9 +237,10 @@ int HostService::RunAsService() {
 }
 
 void HostService::RunAsServiceImpl() {
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
   base::RunLoop run_loop;
-  main_task_runner_ = message_loop.task_runner();
+  main_task_runner_ = main_task_executor.task_runner();
   weak_ptr_ = weak_factory_.GetWeakPtr();
 
   // Register the service control handler.
@@ -295,9 +296,10 @@ void HostService::RunAsServiceImpl() {
 }
 
 int HostService::RunInConsole() {
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
   base::RunLoop run_loop;
-  main_task_runner_ = message_loop.task_runner();
+  main_task_runner_ = main_task_executor.task_runner();
   weak_ptr_ = weak_factory_.GetWeakPtr();
 
   int result = kInitializationFailed;
@@ -382,8 +384,8 @@ BOOL WINAPI HostService::ConsoleControlHandler(DWORD event) {
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
       self->main_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&HostService::StopDaemonProcess,
-                                self->weak_ptr_));
+          FROM_HERE,
+          base::BindOnce(&HostService::StopDaemonProcess, self->weak_ptr_));
       return TRUE;
 
     default:
@@ -404,14 +406,17 @@ DWORD WINAPI HostService::ServiceControlHandler(DWORD control,
     case SERVICE_CONTROL_SHUTDOWN:
     case SERVICE_CONTROL_STOP:
       self->main_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&HostService::StopDaemonProcess,
-                                self->weak_ptr_));
+          FROM_HERE,
+          base::BindOnce(&HostService::StopDaemonProcess, self->weak_ptr_));
       return NO_ERROR;
 
     case SERVICE_CONTROL_SESSIONCHANGE:
-      self->main_task_runner_->PostTask(FROM_HERE, base::Bind(
-          &HostService::OnSessionChange, self->weak_ptr_, event_type,
-          reinterpret_cast<WTSSESSION_NOTIFICATION*>(event_data)->dwSessionId));
+      self->main_task_runner_->PostTask(
+          FROM_HERE,
+          base::BindOnce(&HostService::OnSessionChange, self->weak_ptr_,
+                         event_type,
+                         reinterpret_cast<WTSSESSION_NOTIFICATION*>(event_data)
+                             ->dwSessionId));
       return NO_ERROR;
 
     default:

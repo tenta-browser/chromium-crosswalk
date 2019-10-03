@@ -11,15 +11,16 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "media/base/cdm_context.h"
 #include "media/base/cdm_promise.h"
 #include "media/base/content_decryption_module.h"
 #include "media/base/key_systems.h"
 #include "media/blink/cdm_result_promise.h"
 #include "media/blink/cdm_session_adapter.h"
 #include "media/blink/webcontentdecryptionmodulesession_impl.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "url/origin.h"
 
 namespace media {
@@ -33,26 +34,28 @@ bool ConvertHdcpVersion(const blink::WebString& hdcp_version_string,
 
   std::string hdcp_version_ascii = hdcp_version_string.Ascii();
 
-  // TODO(xhwang): This implementation assumes exact string match. Update this
-  // when we have the string format speced in the spec/registry.
+  // The strings are specified in the explainer doc:
+  // https://github.com/WICG/hdcp-detection/blob/master/explainer.md
   if (hdcp_version_ascii.empty())
     *hdcp_version = HdcpVersion::kHdcpVersionNone;
-  else if (hdcp_version_ascii == "hdcp-1.0")
+  else if (hdcp_version_ascii == "1.0")
     *hdcp_version = HdcpVersion::kHdcpVersion1_0;
-  else if (hdcp_version_ascii == "hdcp-1.1")
+  else if (hdcp_version_ascii == "1.1")
     *hdcp_version = HdcpVersion::kHdcpVersion1_1;
-  else if (hdcp_version_ascii == "hdcp-1.2")
+  else if (hdcp_version_ascii == "1.2")
     *hdcp_version = HdcpVersion::kHdcpVersion1_2;
-  else if (hdcp_version_ascii == "hdcp-1.3")
+  else if (hdcp_version_ascii == "1.3")
     *hdcp_version = HdcpVersion::kHdcpVersion1_3;
-  else if (hdcp_version_ascii == "hdcp-1.4")
+  else if (hdcp_version_ascii == "1.4")
     *hdcp_version = HdcpVersion::kHdcpVersion1_4;
-  else if (hdcp_version_ascii == "hdcp-2.0")
+  else if (hdcp_version_ascii == "2.0")
     *hdcp_version = HdcpVersion::kHdcpVersion2_0;
-  else if (hdcp_version_ascii == "hdcp-2.1")
+  else if (hdcp_version_ascii == "2.1")
     *hdcp_version = HdcpVersion::kHdcpVersion2_1;
-  else if (hdcp_version_ascii == "hdcp-2.2")
+  else if (hdcp_version_ascii == "2.2")
     *hdcp_version = HdcpVersion::kHdcpVersion2_2;
+  else if (hdcp_version_ascii == "2.3")
+    *hdcp_version = HdcpVersion::kHdcpVersion2_3;
   else
     return false;
 
@@ -151,9 +154,17 @@ void WebContentDecryptionModuleImpl::GetStatusForPolicy(
                                 result, std::string())));
 }
 
-scoped_refptr<ContentDecryptionModule>
-WebContentDecryptionModuleImpl::GetCdm() {
-  return adapter_->GetCdm();
+std::unique_ptr<CdmContextRef>
+WebContentDecryptionModuleImpl::GetCdmContextRef() {
+  return adapter_->GetCdmContextRef();
+}
+
+std::string WebContentDecryptionModuleImpl::GetKeySystem() const {
+  return adapter_->GetKeySystem();
+}
+
+CdmConfig WebContentDecryptionModuleImpl::GetCdmConfig() const {
+  return adapter_->GetCdmConfig();
 }
 
 }  // namespace media

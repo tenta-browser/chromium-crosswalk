@@ -6,6 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "components/metrics/metrics_service.h"
+#include "components/signin/core/browser/cookie_settings_util.h"
 #include "components/signin/ios/browser/account_consistency_service.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/browser_state_info_cache.h"
@@ -13,8 +14,9 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager.h"
 #include "ios/chrome/browser/signin/account_consistency_service_factory.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios.h"
-#include "ios/chrome/browser/web_data_service_factory.h"
+#include "ios/chrome/browser/webdata_services/web_data_service_factory.h"
 #include "ios/chrome/common/channel_info.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -22,22 +24,20 @@
 
 IOSChromeSigninClient::IOSChromeSigninClient(
     ios::ChromeBrowserState* browser_state,
-    SigninErrorController* signin_error_controller,
     scoped_refptr<content_settings::CookieSettings> cookie_settings,
-    scoped_refptr<HostContentSettingsMap> host_content_settings_map,
-    scoped_refptr<TokenWebData> token_web_data)
-    : IOSSigninClient(browser_state->GetPrefs(),
-                      browser_state->GetRequestContext(),
-                      signin_error_controller,
-                      cookie_settings,
-                      host_content_settings_map,
-                      token_web_data),
+    scoped_refptr<HostContentSettingsMap> host_content_settings_map)
+    : network_callback_helper_(
+          std::make_unique<WaitForNetworkCallbackHelper>()),
       browser_state_(browser_state),
-      signin_error_controller_(signin_error_controller) {}
+      cookie_settings_(cookie_settings),
+      host_content_settings_map_(host_content_settings_map) {
+}
 
-base::Time IOSChromeSigninClient::GetInstallDate() {
-  return base::Time::FromTimeT(
-      GetApplicationContext()->GetMetricsService()->GetInstallDate());
+IOSChromeSigninClient::~IOSChromeSigninClient() {
+}
+
+void IOSChromeSigninClient::Shutdown() {
+  network_callback_helper_.reset();
 }
 
 // Returns a string describing the chrome version environment. Version format:
@@ -47,61 +47,52 @@ std::string IOSChromeSigninClient::GetProductVersion() {
   return GetVersionString();
 }
 
-void IOSChromeSigninClient::OnSignedIn(const std::string& account_id,
-                                       const std::string& gaia_id,
-                                       const std::string& username,
-                                       const std::string& password) {
-  ios::ChromeBrowserStateManager* browser_state_manager =
-      GetApplicationContext()->GetChromeBrowserStateManager();
-  BrowserStateInfoCache* cache =
-      browser_state_manager->GetBrowserStateInfoCache();
-  size_t index = cache->GetIndexOfBrowserStateWithPath(
-      browser_state_->GetOriginalChromeBrowserState()->GetStatePath());
-  if (index != std::string::npos) {
-    cache->SetAuthInfoOfBrowserStateAtIndex(index, gaia_id,
-                                            base::UTF8ToUTF16(username));
-  }
+PrefService* IOSChromeSigninClient::GetPrefs() {
+  return browser_state_->GetPrefs();
 }
 
-void IOSChromeSigninClient::OnSignedOut() {
-  BrowserStateInfoCache* cache = GetApplicationContext()
-                                     ->GetChromeBrowserStateManager()
-                                     ->GetBrowserStateInfoCache();
-  size_t index = cache->GetIndexOfBrowserStateWithPath(
-      browser_state_->GetOriginalChromeBrowserState()->GetStatePath());
+scoped_refptr<network::SharedURLLoaderFactory>
+IOSChromeSigninClient::GetURLLoaderFactory() {
+  return browser_state_->GetSharedURLLoaderFactory();
+}
 
-  // If sign out occurs because Sync setup was in progress and the browser state
-  // got deleted, then it is no longer in the cache.
-  if (index == std::string::npos)
-    return;
+network::mojom::CookieManager* IOSChromeSigninClient::GetCookieManager() {
+  return browser_state_->GetCookieManager();
+}
 
-  cache->SetAuthInfoOfBrowserStateAtIndex(index, std::string(),
-                                          base::string16());
+void IOSChromeSigninClient::DoFinalInit() {}
+
+bool IOSChromeSigninClient::AreSigninCookiesAllowed() {
+  return signin::SettingsAllowSigninCookies(cookie_settings_.get());
+}
+
+bool IOSChromeSigninClient::AreSigninCookiesDeletedOnExit() {
+  return signin::SettingsDeleteSigninCookiesOnExit(cookie_settings_.get());
+}
+
+void IOSChromeSigninClient::AddContentSettingsObserver(
+    content_settings::Observer* observer) {
+  host_content_settings_map_->AddObserver(observer);
+}
+
+void IOSChromeSigninClient::RemoveContentSettingsObserver(
+    content_settings::Observer* observer) {
+  host_content_settings_map_->RemoveObserver(observer);
+}
+
+void IOSChromeSigninClient::DelayNetworkCall(base::OnceClosure callback) {
+  network_callback_helper_->HandleCallback(std::move(callback));
 }
 
 std::unique_ptr<GaiaAuthFetcher> IOSChromeSigninClient::CreateGaiaAuthFetcher(
     GaiaAuthConsumer* consumer,
-    const std::string& source,
-    net::URLRequestContextGetter* getter) {
-  return std::make_unique<GaiaAuthFetcherIOS>(consumer, source, getter,
-                                              browser_state_);
+    gaia::GaiaSource source) {
+  return std::make_unique<GaiaAuthFetcherIOS>(
+      consumer, source, GetURLLoaderFactory(), browser_state_);
 }
 
 void IOSChromeSigninClient::PreGaiaLogout(base::OnceClosure callback) {
   AccountConsistencyService* accountConsistencyService =
       ios::AccountConsistencyServiceFactory::GetForBrowserState(browser_state_);
   accountConsistencyService->RemoveChromeConnectedCookies(std::move(callback));
-}
-
-void IOSChromeSigninClient::OnErrorChanged() {
-  BrowserStateInfoCache* cache = GetApplicationContext()
-                                     ->GetChromeBrowserStateManager()
-                                     ->GetBrowserStateInfoCache();
-  size_t index = cache->GetIndexOfBrowserStateWithPath(
-      browser_state_->GetOriginalChromeBrowserState()->GetStatePath());
-  if (index == std::string::npos)
-    return;
-
-  cache->SetBrowserStateIsAuthErrorAtIndex(
-      index, signin_error_controller_->HasError());
 }

@@ -4,13 +4,17 @@
 
 #include "chrome/browser/extensions/api/image_writer_private/write_from_url_operation.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/test/base/testing_profile.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/url_request/test_url_request_interceptor.h"
+#include "content/public/browser/storage_partition.h"
+#include "content/public/test/url_loader_interceptor.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 namespace image_writer {
@@ -26,23 +30,23 @@ using testing::Lt;
 
 const char kTestImageUrl[] = "http://localhost/test/image.zip";
 
-typedef net::LocalHostTestURLRequestInterceptor GetInterceptor;
-
 }  // namespace
 
 // This class gives us a generic Operation with the ability to set or inspect
 // the current path to the image file.
 class WriteFromUrlOperationForTest : public WriteFromUrlOperation {
  public:
-  WriteFromUrlOperationForTest(base::WeakPtr<OperationManager> manager,
-                               const ExtensionId& extension_id,
-                               net::URLRequestContextGetter* request_context,
-                               GURL url,
-                               const std::string& hash,
-                               const std::string& storage_unit_id)
+  WriteFromUrlOperationForTest(
+      base::WeakPtr<OperationManager> manager,
+      const ExtensionId& extension_id,
+      network::mojom::URLLoaderFactoryPtrInfo factory_info,
+      GURL url,
+      const std::string& hash,
+      const std::string& storage_unit_id)
       : WriteFromUrlOperation(manager,
+                              /*connector=*/nullptr,
                               extension_id,
-                              request_context,
+                              std::move(factory_info),
                               url,
                               hash,
                               storage_unit_id,
@@ -88,44 +92,61 @@ class WriteFromUrlOperationForTest : public WriteFromUrlOperation {
 
 class ImageWriterWriteFromUrlOperationTest : public ImageWriterUnitTestBase {
  protected:
-  ImageWriterWriteFromUrlOperationTest() : manager_(&test_profile_) {}
-
-  void SetUp() override {
-    ImageWriterUnitTestBase::SetUp();
-
-    // Turn on interception and set up our dummy file.
-    get_interceptor_.reset(new GetInterceptor(
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-        base::CreateTaskRunnerWithTraits(
-            {base::MayBlock(), base::TaskPriority::BACKGROUND,
-             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})));
-    get_interceptor_->SetResponse(GURL(kTestImageUrl),
-                                  test_utils_.GetImagePath());
-  }
+  ImageWriterWriteFromUrlOperationTest()
+      : url_loader_interceptor_(base::BindRepeating(
+            &ImageWriterWriteFromUrlOperationTest::HandleRequest,
+            base::Unretained(this))),
+        url_interception_count_(0),
+        manager_(&test_profile_) {}
 
   void TearDown() override {
     ImageWriterUnitTestBase::TearDown();
   }
 
+  // Intercepts network requests.
+  bool HandleRequest(content::URLLoaderInterceptor::RequestParams* params) {
+    if (params->url_request.url == GURL(kTestImageUrl)) {
+      url_interception_count_++;
+      content::URLLoaderInterceptor::WriteResponse(test_utils_.GetImagePath(),
+                                                   params->client.get());
+      return true;
+    }
+    return false;
+  }
+
   scoped_refptr<WriteFromUrlOperationForTest> CreateOperation(
       const GURL& url,
       const std::string& hash) {
+    network::mojom::URLLoaderFactoryPtrInfo url_loader_factory_ptr_info;
+    content::BrowserContext::GetDefaultStoragePartition(&test_profile_)
+        ->GetURLLoaderFactoryForBrowserProcess()
+        ->Clone(mojo::MakeRequest(&url_loader_factory_ptr_info));
+
     scoped_refptr<WriteFromUrlOperationForTest> operation(
         new WriteFromUrlOperationForTest(
             manager_.AsWeakPtr(), kDummyExtensionId,
-            test_profile_.GetRequestContext(), url, hash,
+            std::move(url_loader_factory_ptr_info), url, hash,
             test_utils_.GetDevicePath().AsUTF8Unsafe()));
     operation->Start();
     return operation;
   }
 
   TestingProfile test_profile_;
-  std::unique_ptr<GetInterceptor> get_interceptor_;
+  content::URLLoaderInterceptor url_loader_interceptor_;
+  int url_interception_count_;
 
   MockOperationManager manager_;
 };
 
-TEST_F(ImageWriterWriteFromUrlOperationTest, SelectTargetWithoutExtension) {
+// Crashes on Tsan.  http://crbug.com/859317
+#if defined(THREAD_SANITIZER)
+#define MAYBE_SelectTargetWithoutExtension DISABLED_SelectTargetWithoutExtension
+#define MAYBE_SelectTargetWithExtension DISABLED_SelectTargetWithExtension
+#else
+#define MAYBE_SelectTargetWithoutExtension SelectTargetWithoutExtension
+#define MAYBE_SelectTargetWithExtension SelectTargetWithExtension
+#endif
+TEST_F(ImageWriterWriteFromUrlOperationTest, MAYBE_SelectTargetWithoutExtension) {
   scoped_refptr<WriteFromUrlOperationForTest> operation =
       CreateOperation(GURL("http://localhost/foo/bar"), "");
 
@@ -140,7 +161,7 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, SelectTargetWithoutExtension) {
   content::RunAllTasksUntilIdle();
 }
 
-TEST_F(ImageWriterWriteFromUrlOperationTest, SelectTargetWithExtension) {
+TEST_F(ImageWriterWriteFromUrlOperationTest, MAYBE_SelectTargetWithExtension) {
   scoped_refptr<WriteFromUrlOperationForTest> operation =
       CreateOperation(GURL("http://localhost/foo/bar.zip"), "");
 
@@ -153,6 +174,9 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, SelectTargetWithExtension) {
 
   operation->Cancel();
 }
+#undef MAYBE_SelectTargetWithoutExtension
+#undef MAYBE_SelectTargetWithExtension
+
 
 TEST_F(ImageWriterWriteFromUrlOperationTest, DownloadFile) {
   // This test actually triggers the URL fetch code, which will drain the
@@ -169,10 +193,6 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, DownloadFile) {
 
   EXPECT_CALL(
       manager_,
-      OnProgress(kDummyExtensionId, image_writer_api::STAGE_DOWNLOAD, _))
-      .Times(AtLeast(1));
-  EXPECT_CALL(
-      manager_,
       OnProgress(kDummyExtensionId, image_writer_api::STAGE_DOWNLOAD, 0))
       .Times(AnyNumber());
   EXPECT_CALL(
@@ -187,7 +207,7 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, DownloadFile) {
   EXPECT_TRUE(base::ContentsEqual(test_utils_.GetImagePath(),
                                   operation->GetImagePath()));
 
-  EXPECT_EQ(1, get_interceptor_->GetHitCount());
+  EXPECT_EQ(1, url_interception_count_);
 
   operation->Cancel();
 }
@@ -218,11 +238,30 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, VerifyFile) {
   operation->SetImagePath(test_utils_.GetImagePath());
   {
     base::RunLoop run_loop;
-    operation->VerifyDownload(run_loop.QuitClosure());
+    // The OnProgress tasks are posted with priority USER_VISIBLE priority so
+    // post the quit closure with the same priority to ensure it doesn't run too
+    // soon.
+    operation->VerifyDownload(base::Bind(
+        [](base::OnceClosure quit_closure) {
+          base::PostTaskWithTraits(
+              FROM_HERE,
+              {content::BrowserThread::UI, base::TaskPriority::USER_VISIBLE},
+              std::move(quit_closure));
+        },
+        run_loop.QuitClosure()));
+
     run_loop.Run();
   }
 
   operation->Cancel();
+
+  // The OnProgress calls we're expecting are posted to the Operation's
+  // SequencedTaskRunner. Flush it before the mock's expectations are checked.
+  {
+    base::RunLoop run_loop;
+    operation->PostTask(run_loop.QuitClosure());
+    run_loop.Run();
+  }
 }
 
 }  // namespace image_writer

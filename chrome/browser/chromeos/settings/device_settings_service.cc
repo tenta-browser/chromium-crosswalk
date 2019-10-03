@@ -13,8 +13,6 @@
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
 #include "chrome/browser/chromeos/policy/off_hours/device_off_hours_controller.h"
 #include "chrome/browser/chromeos/policy/off_hours/off_hours_policy_applier.h"
 #include "chrome/browser/chromeos/settings/session_manager_operation.h"
@@ -68,9 +66,28 @@ DeviceSettingsService* DeviceSettingsService::Get() {
   return g_device_settings_service;
 }
 
+// static
+const char* DeviceSettingsService::StatusToString(Status status) {
+  switch (status) {
+    case STORE_SUCCESS:
+      return "SUCCESS";
+    case STORE_KEY_UNAVAILABLE:
+      return "KEY_UNAVAILABLE";
+    case STORE_OPERATION_FAILED:
+      return "OPERATION_FAILED";
+    case STORE_NO_POLICY:
+      return "NO_POLICY";
+    case STORE_INVALID_POLICY:
+      return "INVALID_POLICY";
+    case STORE_VALIDATION_ERROR:
+      return "VALIDATION_ERROR";
+  }
+  return "UNKNOWN";
+}
+
 DeviceSettingsService::DeviceSettingsService() {
   device_off_hours_controller_ =
-      base::MakeUnique<policy::off_hours::DeviceOffHoursController>();
+      std::make_unique<policy::off_hours::DeviceOffHoursController>();
 }
 
 DeviceSettingsService::~DeviceSettingsService() {
@@ -105,8 +122,12 @@ void DeviceSettingsService::UnsetSessionManager() {
 }
 
 void DeviceSettingsService::SetDeviceMode(policy::DeviceMode device_mode) {
-  // Device mode can only change once.
-  DCHECK_EQ(policy::DEVICE_MODE_PENDING, device_mode_);
+  if (device_mode_ == device_mode)
+    return;
+
+  // Device mode can only change if was not set yet.
+  DCHECK(policy::DEVICE_MODE_PENDING == device_mode_ ||
+         policy::DEVICE_MODE_NOT_SET == device_mode_);
   device_mode_ = device_mode;
   if (GetOwnershipStatus() != OWNERSHIP_UNKNOWN) {
     RunPendingOwnershipStatusCallbacks();
@@ -145,10 +166,10 @@ void DeviceSettingsService::Store(
     const base::Closure& callback) {
   // On Active Directory managed devices policy is written only by authpolicyd.
   CHECK(device_mode_ != policy::DEVICE_MODE_ENTERPRISE_AD);
-  Enqueue(linked_ptr<SessionManagerOperation>(new StoreSettingsOperation(
+  Enqueue(std::make_unique<StoreSettingsOperation>(
       base::Bind(&DeviceSettingsService::HandleCompletedAsyncOperation,
                  weak_factory_.GetWeakPtr(), callback),
-      std::move(policy))));
+      std::move(policy)));
 }
 
 DeviceSettingsService::OwnershipStatus
@@ -165,7 +186,7 @@ void DeviceSettingsService::GetOwnershipStatusAsync(
   if (GetOwnershipStatus() != OWNERSHIP_UNKNOWN) {
     // Report status immediately.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, GetOwnershipStatus()));
+        FROM_HERE, base::BindOnce(callback, GetOwnershipStatus()));
   } else {
     // If the key hasn't been loaded yet, enqueue the callback to be fired when
     // the next SessionManagerOperation completes. If no operation is pending,
@@ -245,9 +266,10 @@ void DeviceSettingsService::PropertyChangeComplete(bool success) {
 }
 
 void DeviceSettingsService::Enqueue(
-    const linked_ptr<SessionManagerOperation>& operation) {
-  pending_operations_.push_back(operation);
-  if (pending_operations_.front().get() == operation.get())
+    std::unique_ptr<SessionManagerOperation> operation) {
+  const bool was_empty = pending_operations_.empty();
+  pending_operations_.push_back(std::move(operation));
+  if (was_empty)
     StartNextOperation();
 }
 
@@ -257,11 +279,10 @@ void DeviceSettingsService::EnqueueLoad(bool request_key_load) {
     request_key_load = false;
     cloud_validations = false;
   }
-  linked_ptr<SessionManagerOperation> operation(new LoadSettingsOperation(
+  Enqueue(std::make_unique<LoadSettingsOperation>(
       request_key_load, cloud_validations, false /*force_immediate_load*/,
       base::Bind(&DeviceSettingsService::HandleCompletedAsyncOperation,
                  weak_factory_.GetWeakPtr(), base::Closure())));
-  Enqueue(operation);
 }
 
 void DeviceSettingsService::EnsureReload(bool request_key_load) {
@@ -313,7 +334,8 @@ void DeviceSettingsService::HandleCompletedOperation(
         device_settings_.swap(off_device_settings);
     }
   } else if (status != STORE_KEY_UNAVAILABLE) {
-    LOG(ERROR) << "Session manager operation failed: " << status;
+    LOG(ERROR) << "Session manager operation failed: " << status << " ("
+               << StatusToString(status) << ")";
   }
 
   public_key_ = scoped_refptr<PublicKey>(operation->public_key());
@@ -331,13 +353,8 @@ void DeviceSettingsService::HandleCompletedOperation(
 }
 
 void DeviceSettingsService::NotifyOwnershipStatusChanged() const {
-  for (auto& observer : observers_) {
+  for (auto& observer : observers_)
     observer.OwnershipStatusChanged();
-  }
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_OWNERSHIP_STATUS_CHANGED,
-      content::Source<DeviceSettingsService>(this),
-      content::NotificationService::NoDetails());
 }
 
 void DeviceSettingsService::NotifyDeviceSettingsUpdated() const {

@@ -13,7 +13,7 @@
 #include "base/timer/timer.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_host.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
+#include "services/device/public/mojom/wake_lock.mojom.h"
 
 namespace base {
 class Time;
@@ -67,7 +67,7 @@ class PepperFlashBrowserHost : public ppapi::host::ResourceHost {
 
   // For fetching the Flash LSO settings.
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
-  base::WeakPtrFactory<PepperFlashBrowserHost> weak_factory_;
+  base::WeakPtrFactory<PepperFlashBrowserHost> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PepperFlashBrowserHost);
 };

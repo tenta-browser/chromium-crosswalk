@@ -53,13 +53,13 @@ class TestMenuDelegate : public MenuDelegate {
   MenuItemView* show_context_menu_source_ = nullptr;
 
   // ID of last executed command.
-  int execute_command_id_;
+  int execute_command_id_ = 0;
 
   // The number of times OnMenuClosed was called.
-  int on_menu_closed_called_count_;
+  int on_menu_closed_called_count_ = 0;
 
   // The value of the last call to OnMenuClosed.
-  MenuItemView* on_menu_closed_menu_;
+  MenuItemView* on_menu_closed_menu_ = nullptr;
 
   // The number of times WillHideMenu was called.
   int will_hide_menu_count_ = 0;
@@ -67,7 +67,7 @@ class TestMenuDelegate : public MenuDelegate {
   // The value of the last call to WillHideMenu.
   MenuItemView* will_hide_menu_ = nullptr;
 
-  bool on_perform_drop_called_;
+  bool on_perform_drop_called_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TestMenuDelegate);
 };
@@ -82,7 +82,7 @@ class MenuControllerTestApi {
   MenuControllerTestApi();
   ~MenuControllerTestApi();
 
-  MenuController* controller() { return controller_.get(); };
+  MenuController* controller() { return controller_.get(); }
 
   // Clears out the current and pending states, without notifying the associated
   // menu items.
@@ -97,6 +97,15 @@ class MenuControllerTestApi {
 
   DISALLOW_COPY_AND_ASSIGN(MenuControllerTestApi);
 };
+
+// On platforms which have menu closure animations, these functions are
+// necessary to:
+//   1) Disable those animations (make them take zero time) to avoid slowing
+//      down tests;
+//   2) Wait for maybe-asynchronous menu closure to finish.
+// On platforms without menu closure animations, these do nothing.
+void DisableMenuClosureAnimations();
+void WaitForMenuClosureAnimation();
 
 }  // namespace test
 }  // namespace views

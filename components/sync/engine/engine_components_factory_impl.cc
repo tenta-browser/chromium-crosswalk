@@ -13,12 +13,6 @@
 #include "components/sync/engine_impl/syncer.h"
 #include "components/sync/syncable/on_disk_directory_backing_store.h"
 
-using base::TimeDelta;
-
-namespace {
-const int kShortNudgeDelayDurationMS = 1;
-}
-
 namespace syncer {
 
 EngineComponentsFactoryImpl::EngineComponentsFactoryImpl(
@@ -43,19 +37,8 @@ std::unique_ptr<SyncScheduler> EngineComponentsFactoryImpl::BuildScheduler(
       std::make_unique<SyncSchedulerImpl>(name, delay.release(), context,
                                           new Syncer(cancelation_signal),
                                           ignore_auth_credentials);
-  if (switches_.nudge_delay == NudgeDelay::SHORT_NUDGE_DELAY) {
-    // Set the default nudge delay to 0 because the default is used as a floor
-    // for override values, and we don't want the below override to be ignored.
-    scheduler->SetDefaultNudgeDelay(TimeDelta::FromMilliseconds(0));
-    // Only protocol types can have their delay customized.
-    ModelTypeSet protocol_types = syncer::ProtocolTypes();
-    std::map<ModelType, base::TimeDelta> nudge_delays;
-    for (ModelTypeSet::Iterator it = protocol_types.First(); it.Good();
-         it.Inc()) {
-      nudge_delays[it.Get()] =
-          TimeDelta::FromMilliseconds(kShortNudgeDelayDurationMS);
-    }
-    scheduler->OnReceivedCustomNudgeDelays(nudge_delays);
+  if (switches_.force_short_nudge_delay_for_test) {
+    scheduler->ForceShortNudgeDelayForTest();
   }
   return std::move(scheduler);
 }
@@ -67,24 +50,27 @@ std::unique_ptr<SyncCycleContext> EngineComponentsFactoryImpl::BuildContext(
     const std::vector<SyncEngineEventListener*>& listeners,
     DebugInfoGetter* debug_info_getter,
     ModelTypeRegistry* model_type_registry,
-    const std::string& invalidation_client_id) {
-  return std::unique_ptr<SyncCycleContext>(
-      new SyncCycleContext(connection_manager, directory, extensions_activity,
-                           listeners, debug_info_getter, model_type_registry,
-                           switches_.encryption_method == ENCRYPTION_KEYSTORE,
-                           switches_.pre_commit_updates_policy ==
-                               FORCE_ENABLE_PRE_COMMIT_UPDATE_AVOIDANCE,
-                           invalidation_client_id));
+    const std::string& invalidation_client_id,
+    const std::string& store_birthday,
+    const std::string& bag_of_chips,
+    base::TimeDelta poll_interval) {
+  return std::make_unique<SyncCycleContext>(
+      connection_manager, directory, extensions_activity, listeners,
+      debug_info_getter, model_type_registry,
+      switches_.encryption_method == ENCRYPTION_KEYSTORE,
+      invalidation_client_id, store_birthday, bag_of_chips, poll_interval);
 }
 
 std::unique_ptr<syncable::DirectoryBackingStore>
 EngineComponentsFactoryImpl::BuildDirectoryBackingStore(
     StorageOption storage,
     const std::string& dir_name,
+    const base::RepeatingCallback<std::string()>& cache_guid_generator,
     const base::FilePath& backing_filepath) {
   if (storage == STORAGE_ON_DISK) {
     return std::unique_ptr<syncable::DirectoryBackingStore>(
-        new syncable::OnDiskDirectoryBackingStore(dir_name, backing_filepath));
+        new syncable::OnDiskDirectoryBackingStore(
+            dir_name, cache_guid_generator, backing_filepath));
   } else {
     NOTREACHED();
     return std::unique_ptr<syncable::DirectoryBackingStore>();

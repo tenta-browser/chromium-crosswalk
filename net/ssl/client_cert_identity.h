@@ -36,7 +36,7 @@ class NET_EXPORT ClientCertIdentity {
   // run synchronously or asynchronously.  The caller is responsible for
   // keeping the ClientCertIdentity alive until the callback is run.
   virtual void AcquirePrivateKey(
-      const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
+      base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
           private_key_callback) = 0;
 
 #if defined(OS_MACOSX)
@@ -49,14 +49,15 @@ class NET_EXPORT ClientCertIdentity {
   // are the same as for AcquirePrivateKey above.
   static void SelfOwningAcquirePrivateKey(
       std::unique_ptr<ClientCertIdentity> identity,
-      const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
+      base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
           private_key_callback);
 
   // Sets the intermediates of |certificate()| to |intermediates|. Note that
   // this will change the value of |certificate()|, and any references that
   // were retained to the previous value will not reflect the updated
   // intermediates list.
-  void SetIntermediates(X509Certificate::OSCertHandles intermediates);
+  void SetIntermediates(
+      std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates);
 
  private:
   scoped_refptr<net::X509Certificate> cert_;

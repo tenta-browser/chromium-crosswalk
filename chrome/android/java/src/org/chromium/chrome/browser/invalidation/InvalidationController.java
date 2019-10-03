@@ -5,9 +5,7 @@
 package org.chromium.chrome.browser.invalidation;
 
 import android.annotation.SuppressLint;
-import android.content.Context;
 import android.content.Intent;
-import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -16,10 +14,11 @@ import com.google.ipc.invalidation.ticl.android2.channel.AndroidGcmController;
 
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.FieldTrialList;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.components.invalidation.InvalidationClientService;
 import org.chromium.components.signin.ChromeSigninController;
@@ -133,13 +132,6 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     @SuppressLint("StaticFieldLeak")
     private static InvalidationController sInstance;
 
-    private final Context mContext;
-
-    /**
-     * Whether session sync invalidations can be disabled.
-     */
-    private final boolean mCanDisableSessionInvalidations;
-
     /**
      * Whether the controller was started.
      */
@@ -192,8 +184,8 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
 
         Intent registerIntent = InvalidationIntentProtocol.createRegisterIntent(
                 ChromeSigninController.get().getSignedInUser(), typesToRegister);
-        registerIntent.setClass(
-                mContext, InvalidationClientService.getRegisteredClass());
+        registerIntent.setClass(ContextUtils.getApplicationContext(),
+                InvalidationClientService.getRegisteredClass());
         startServiceIfPossible(registerIntent);
     }
 
@@ -203,14 +195,11 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     private void ensureGcmIsInitialized() {
         if (mGcmInitialized) return;
         mGcmInitialized = true;
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... arg0) {
-                boolean useGcmUpstream = true;
-                AndroidGcmController.get(mContext).initializeGcm(useGcmUpstream);
-                return null;
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
+            boolean useGcmUpstream = true;
+            AndroidGcmController.get(ContextUtils.getApplicationContext())
+                    .initializeGcm(useGcmUpstream);
+        });
     }
 
     @VisibleForTesting
@@ -224,8 +213,8 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     private void start() {
         mStarted = true;
         mEnableSessionInvalidationsTimer.resume();
-        Intent intent = new Intent(
-                mContext, InvalidationClientService.getRegisteredClass());
+        Intent intent = new Intent(ContextUtils.getApplicationContext(),
+                InvalidationClientService.getRegisteredClass());
         startServiceIfPossible(intent);
     }
 
@@ -235,8 +224,8 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     public void stop() {
         mStarted = false;
         mEnableSessionInvalidationsTimer.pause();
-        Intent intent = new Intent(
-                mContext, InvalidationClientService.getRegisteredClass());
+        Intent intent = new Intent(ContextUtils.getApplicationContext(),
+                InvalidationClientService.getRegisteredClass());
         intent.putExtra(InvalidationIntentProtocol.EXTRA_STOP, true);
         startServiceIfPossible(intent);
     }
@@ -246,12 +235,12 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
         // for O. See crbug.com/680812.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                mContext.startService(intent);
+                ContextUtils.getApplicationContext().startService(intent);
             } catch (IllegalStateException exception) {
                 Log.e(TAG, "Failed to start service from exception: ", exception);
             }
         } else {
-            mContext.startService(intent);
+            ContextUtils.getApplicationContext().startService(intent);
         }
     }
 
@@ -266,8 +255,6 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
      * Called when a RecentTabsPage is opened.
      */
     public void onRecentTabsPageOpened() {
-        if (!mCanDisableSessionInvalidations) return;
-
         ++mNumRecentTabPages;
         if (mNumRecentTabPages == 1) {
             setSessionInvalidationsEnabled(true, REGISTER_FOR_SESSION_SYNC_INVALIDATIONS_DELAY_MS);
@@ -278,8 +265,6 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
      * Called when a RecentTabsPage is closed.
      */
     public void onRecentTabsPageClosed() {
-        if (!mCanDisableSessionInvalidations) return;
-
         --mNumRecentTabPages;
         if (mNumRecentTabPages == 0) {
             setSessionInvalidationsEnabled(
@@ -292,21 +277,10 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
      *
      * Calling this method will create the instance if it does not yet exist.
      */
-    public static InvalidationController get(Context context) {
+    public static InvalidationController get() {
         synchronized (LOCK) {
             if (sInstance == null) {
-                // The PageRevisitInstrumentation trial needs sessions invalidations to be on such
-                // that local session data is current and can be used to perform checks.
-                boolean requireInvalidationsForInstrumentation =
-                        FieldTrialList.findFullName("PageRevisitInstrumentation").equals("Enabled");
-                // If the NTP is trying to suggest foreign tabs, then recieving invalidations is
-                // vital, otherwise data is stale and less useful.
-                boolean requireInvalidationsForSuggestions = ChromeFeatureList.isEnabled(
-                        ChromeFeatureList.NTP_FOREIGN_SESSIONS_SUGGESTIONS);
-                boolean canDisableSessionInvalidations = !requireInvalidationsForInstrumentation
-                        && !requireInvalidationsForSuggestions;
-
-                sInstance = new InvalidationController(context, canDisableSessionInvalidations);
+                sInstance = new InvalidationController();
             }
             return sInstance;
         }
@@ -338,12 +312,10 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
      * Creates an instance using {@code context} to send intents.
      */
     @VisibleForTesting
-    InvalidationController(Context context, boolean canDisableSessionInvalidations) {
-        Context appContext = context.getApplicationContext();
-        if (appContext == null) throw new NullPointerException("Unable to get application context");
-        mContext = appContext;
-        mCanDisableSessionInvalidations = canDisableSessionInvalidations;
-        mSessionInvalidationsEnabled = !mCanDisableSessionInvalidations;
+    InvalidationController() {
+        if (ContextUtils.getApplicationContext() == null)
+            throw new NullPointerException("Unable to get application context");
+        mSessionInvalidationsEnabled = false;
         mEnableSessionInvalidationsTimer = new Timer();
 
         ApplicationStatus.registerApplicationStateListener(this);
@@ -353,7 +325,7 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     public void onApplicationStateChange(int newState) {
         // The isSyncEnabled() check is used to check whether the InvalidationController would be
         // started if it did not stop itself when the application is paused.
-        if (AndroidSyncSettings.isSyncEnabled(mContext)) {
+        if (AndroidSyncSettings.get().isSyncEnabled()) {
             if (newState == ApplicationState.HAS_RUNNING_ACTIVITIES) {
                 start();
             } else if (newState == ApplicationState.HAS_PAUSED_ACTIVITIES) {

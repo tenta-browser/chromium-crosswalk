@@ -4,6 +4,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/run_loop.h"
@@ -12,19 +13,11 @@
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/signin_error_controller_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/browser_sync/profile_sync_service_mock.h"
-#include "components/signin/core/browser/fake_auth_status_provider.h"
-#include "components/signin/core/browser/signin_error_controller.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/platform_test.h"
 
@@ -81,7 +74,7 @@ TEST_F(AppControllerTest, LastProfile) {
 
   // Delete the active profile.
   profile_manager_.profile_manager()->ScheduleProfileForDeletion(
-      dest_path1, ProfileManager::CreateCallback());
+      dest_path1, base::DoNothing());
 
   base::RunLoop().RunUntilIdle();
 

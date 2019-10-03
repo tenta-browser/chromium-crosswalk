@@ -8,7 +8,9 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 
 namespace content {
@@ -36,13 +38,30 @@ class PermissionsUpdater {
         std::unique_ptr<const PermissionSet>* granted_permissions) = 0;
   };
 
+  // If INIT_FLAG_TRANSIENT is specified, this updater is being used for an
+  // extension that is not actually installed (and instead is just being
+  // initialized e.g. to display the permission warnings in an install prompt).
+  // In these cases, this updater should follow all rules below.
+  //   a) don't check prefs for stored permissions.
+  //   b) don't send notifications of permission changes, because there is no
+  //      installed extension that would be affected.
   enum InitFlag {
     INIT_FLAG_NONE = 0,
     INIT_FLAG_TRANSIENT = 1 << 0,
   };
 
   enum RemoveType {
+    // Permissions will be removed from the active set of permissions, but not
+    // the stored granted permissions. This allows the extension to re-add the
+    // permissions without further prompting.
     REMOVE_SOFT,
+    // Permissions will be removed from the active set of permissions and the
+    // stored granted permissions. The extension will need to re-prompt the
+    // user to re-add the permissions.
+    // TODO(devlin): REMOVE_HARD is only exercised in unit tests, but we have
+    // the desire to be able to able to surface revoking optional permissions to
+    // the user. We should either a) pursue it in earnest or b) remove support
+    // (and potentially add it back at a later date).
     REMOVE_HARD,
   };
 
@@ -54,27 +73,50 @@ class PermissionsUpdater {
   // Sets a delegate to provide platform-specific logic. This should be set
   // during startup (to ensure all extensions are initialized through the
   // delegate).
-  // |delegate| is a singleton instance and is leaked.
-  static void SetPlatformDelegate(Delegate* delegate);
+  static void SetPlatformDelegate(std::unique_ptr<Delegate> delegate);
 
-  // Adds the set of |permissions| to the |extension|'s active permission set
-  // and sends the relevant messages and notifications. This method assumes the
-  // user has already been prompted, if necessary, for the extra permissions.
-  void AddPermissions(const Extension* extension,
-                      const PermissionSet& permissions);
+  // Grants |permissions| that were defined as optional in the manifest to
+  // |extension|, updating the active permission set and notifying any
+  // observers. This method assumes the user has already been prompted, if
+  // necessary, for the extra permissions.
+  // NOTE: This should only be used for granting permissions defined in the
+  // extension's optional permissions set through the permissions API.
+  void GrantOptionalPermissions(const Extension& extension,
+                                const PermissionSet& permissions,
+                                base::OnceClosure completion_callback);
 
-  // Removes the set of |permissions| from the |extension|'s active permission
-  // set and sends the relevant messages and notifications.
-  // If |remove_type| is REMOVE_HARD, this removes the permissions from the
-  // granted permissions in the prefs (meaning that the extension would have
-  // to prompt the user again for permission).
-  // You should use REMOVE_HARD to ensure the extension cannot silently regain
-  // the permission, which is the case when the permission is removed by the
-  // user. If it's the extension itself removing the permission, it is safe to
-  // use REMOVE_SOFT.
-  void RemovePermissions(const Extension* extension,
-                         const PermissionSet& permissions,
-                         RemoveType remove_type);
+  // Grants |permissions| that were withheld at installation and granted at
+  // runtime to |extension|, updating the active permission set and notifying
+  // any observers. |permissions| may contain permissions that were not
+  // explicitly requested by the extension; if this happens, those permissions
+  // will be added to the runtime-granted permissions in the preferences, but
+  // will not be granted to the extension object or process itself.
+  // NOTE: This should only be used for granting permissions through the runtime
+  // host permissions feature.
+  void GrantRuntimePermissions(const Extension& extension,
+                               const PermissionSet& permissions,
+                               base::OnceClosure completion_callback);
+
+  // Removes |permissions| that were defined as optional in the manifest from
+  // the |extension|, updating the active permission set and notifying any
+  // observers. |remove_type| specifies whether the permissions should be
+  // revoked from the preferences, thus requiring the extension to re-prompt
+  // the user if it wants to add them back.
+  // NOTE: This should only be used for removing permissions defined in the
+  // extension's optional permissions set through the permissions API.
+  void RevokeOptionalPermissions(const Extension& extension,
+                                 const PermissionSet& permissions,
+                                 RemoveType remove_type,
+                                 base::OnceClosure completion_callback);
+
+  // Removes |permissions| that were withheld at installation and granted at
+  // runtime from |extension|, updating the active permission set and notifying
+  // any observers.
+  // NOTE: This should only be used for removing permissions through the runtime
+  // host permissions feature.
+  void RevokeRuntimePermissions(const Extension& extension,
+                                const PermissionSet& permissions,
+                                base::OnceClosure completion_callback);
 
   // Removes the |permissions| from |extension| and makes no effort to determine
   // if doing so is safe in the slightlest. This method shouldn't be used,
@@ -110,43 +152,80 @@ class PermissionsUpdater {
   // required by the extension.
   void InitializePermissions(const Extension* extension);
 
+  // Adds |permissions| to |extension| without doing any validation or
+  // persisting values in prefs.
+  // TODO(devlin): We shouldn't need this, even for tests. Tests shouldn't be
+  // testing behavior that is impossible in production.
+  void AddPermissionsForTesting(const Extension& extension,
+                                const PermissionSet& permissions);
+
  private:
+  class NetworkPermissionsUpdateHelper;
+
   enum EventType {
     ADDED,
     REMOVED,
     POLICY,
   };
 
-  // Sets the |extension|'s active permissions to |active| and records the
-  // change in the prefs. If |withheld| is non-null, also sets the extension's
-  // withheld permissions to |withheld|. Otherwise, |withheld| permissions are
-  // not changed.
-  void SetPermissions(const Extension* extension,
-                      std::unique_ptr<const PermissionSet> active,
-                      std::unique_ptr<const PermissionSet> withheld);
-
-  // Dispatches specified event to the extension.
-  void DispatchEvent(const std::string& extension_id,
-                     events::HistogramValue histogram_value,
-                     const char* event_name,
-                     const PermissionSet& changed_permissions);
+  // A bit mask of the permission set to be updated in ExtensionPrefs.
+  enum PermissionsStore {
+    kNone = 0,
+    kGrantedPermissions = 1 << 0,
+    kRuntimeGrantedPermissions = 1 << 1,
+    kActivePermissions = 1 << 2,
+  };
 
   // Issues the relevant events, messages and notifications when the
   // |extension|'s permissions have |changed| (|changed| is the delta).
   // Specifically, this sends the EXTENSION_PERMISSIONS_UPDATED notification,
   // the ExtensionMsg_UpdatePermissions IPC message, and fires the
   // onAdded/onRemoved events in the extension.
-  void NotifyPermissionsUpdated(EventType event_type,
-                                const Extension* extension,
-                                const PermissionSet& changed);
+  static void NotifyPermissionsUpdated(
+      content::BrowserContext* browser_context,
+      EventType event_type,
+      scoped_refptr<const Extension> extension,
+      std::unique_ptr<const PermissionSet> changed,
+      base::OnceClosure completion_callback);
 
-  // Issues the relevant events, messages and notifications when the
-  // default scope management policy have changed.
+  // Issues the relevant events, messages and notifications when the default
+  // scope management policy have changed.
   // Specifically, this sends the ExtensionMsg_UpdateDefaultHostRestrictions
   // IPC message.
-  void NotifyDefaultPolicyHostRestrictionsUpdated(
-      const URLPatternSet& default_runtime_blocked_hosts,
-      const URLPatternSet& default_runtime_allowed_hosts);
+  static void NotifyDefaultPolicyHostRestrictionsUpdated(
+      content::BrowserContext* browser_context,
+      const URLPatternSet default_runtime_blocked_hosts,
+      const URLPatternSet default_runtime_allowed_hosts);
+
+  // Sets the |extension|'s active permissions to |active|, and calculates and
+  // sets the |extension|'s new withheld permissions. If |update_prefs| is true,
+  // also updates the set of active permissions in the extension preferences.
+  void SetPermissions(const Extension* extension,
+                      std::unique_ptr<const PermissionSet> active,
+                      bool update_prefs);
+
+  // Adds the given |active_permissions_to_add| to |extension|'s current
+  // active permissions (i.e., the permissions associated with the |extension|
+  // object and the extension's process). Updates the preferences according to
+  // |permission_store_mask| with |prefs_permissions_to_add|.
+  // The sets of |prefs_permissions_to_add| and |active_permissions_to_add| may
+  // differ in the case of granting a wider set of permissions than what the
+  // extension explicitly requested, as described in GrantRuntimePermissions().
+  void AddPermissionsImpl(const Extension& extension,
+                          const PermissionSet& active_permissions_to_add,
+                          int permission_store_mask,
+                          const PermissionSet& prefs_permissions_to_add,
+                          base::OnceClosure completion_callback);
+
+  // Removes the given |active_permissions_to_remove| from |extension|'s current
+  // active permissions. Updates the preferences according to
+  // |permission_store_mask| with |prefs_permissions_to_remove|. As above, the
+  // permission sets may be different.
+  void RemovePermissionsImpl(const Extension& extension,
+                             const PermissionSet& active_permissions_to_remove,
+                             int permission_store_mask,
+                             const PermissionSet& prefs_permissions_to_remove,
+                             base::OnceClosure completion_callback);
 
   // The associated BrowserContext.
   content::BrowserContext* browser_context_;

@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 
 namespace chromecast {
 namespace media {
@@ -52,6 +51,12 @@ class SystemVolumeControl {
 
   // Sets the system mute state to |muted|.
   virtual void SetMuted(bool muted) = 0;
+
+  // Sets the system power save state to |power_save_on|.
+  virtual void SetPowerSave(bool power_save_on) = 0;
+
+  // Sets the volume limit to be applied to the system volume.
+  virtual void SetLimit(float limit) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SystemVolumeControl);

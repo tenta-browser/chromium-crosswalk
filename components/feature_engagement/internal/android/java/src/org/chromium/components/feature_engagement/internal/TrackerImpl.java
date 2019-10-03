@@ -8,11 +8,13 @@ import android.support.annotation.CheckResult;
 import android.support.annotation.Nullable;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CommandLine;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.annotations.JCaller;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.NativeCall;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.feature_engagement.TriggerState;
+import org.chromium.ui.UiSwitches;
 
 /**
  * Java side of the JNI bridge between TrackerImpl in Java
@@ -44,13 +46,13 @@ public class TrackerImpl implements Tracker {
         @Override
         public void release() {
             assert mNativePtr != 0;
-            nativeRelease(mNativePtr);
+            nativeRelease(this, mNativePtr);
             assert mNativePtr == 0;
         }
-
-        @NativeCall("DisplayLockHandleAndroid")
-        private native void nativeRelease(long nativeDisplayLockHandleAndroid);
     }
+
+    private static native void nativeRelease(
+            @JCaller DisplayLockHandleAndroid caller, long nativeDisplayLockHandleAndroid);
 
     /**
      * The pointer to the feature_engagement::TrackerImplAndroid JNI bridge.
@@ -74,6 +76,11 @@ public class TrackerImpl implements Tracker {
 
     @Override
     public boolean shouldTriggerHelpUI(String feature) {
+        // Disable all IPH if the UI is in screenshot mode. For context, see crbug.com/964012.
+        if (CommandLine.getInstance().hasSwitch(UiSwitches.ENABLE_SCREENSHOT_UI_MODE)) {
+            return false;
+        }
+
         assert mNativePtr != 0;
         return nativeShouldTriggerHelpUI(mNativePtr, feature);
     }

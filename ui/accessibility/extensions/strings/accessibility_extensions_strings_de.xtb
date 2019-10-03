@@ -35,7 +35,7 @@
 <translation id="5041932793799765940">Farbanpassung</translation>
 <translation id="5094574508723441140">Kontrasterhöhung</translation>
 <translation id="5173942593318174089">Cursorposition mit Animation markieren</translation>
-<translation id="5287723860611749454">&lt;p&gt;Mit den Pfeiltasten können Sie durch das Dokument navigieren. &lt;/p&gt;&lt;p&gt;Klicken Sie an einer Stelle, um den Cursor dort zu platzieren. &lt;/p&gt; &lt;p&gt;   Mit &lt;span class='key'&gt;Shift&lt;/span&gt; + Pfeiltaste können Sie Text auswählen.&lt;/p&gt;</translation>
+<translation id="5287723860611749454">&lt;p&gt;Mit den Pfeiltasten können Sie durch das Dokument navigieren. &lt;/p&gt;&lt;p&gt;Klicken Sie an einer Stelle, um den Cursor dort zu platzieren. &lt;/p&gt; &lt;p&gt;   Mit &lt;span class='key'&gt;Umschalttaste&lt;/span&gt; + Pfeiltaste können Sie Text auswählen.&lt;/p&gt;</translation>
 <translation id="5331422999063554397">Farbumkehrung</translation>
 <translation id="5555153510860501336">Hoher Kontrast ist deaktiviert.</translation>
 <translation id="5558600050691192317">Tastaturbefehle</translation>
@@ -52,7 +52,7 @@
 <translation id="6550675742724504774">Optionen</translation>
 <translation id="6838518108677880446">Einrichtung:</translation>
 <translation id="690628312087070417">Wenn der Cursor zu einer weit entfernten Stelle springt:</translation>
-<translation id="6965382102122355670">OK</translation>
+<translation id="6965382102122355670">Ok</translation>
 <translation id="7379645913608427028">Grad</translation>
 <translation id="7384431257964758081">Hoher Kontrast ist aktiviert.</translation>
 <translation id="7586636300921797327">Schritt 2: Verschieben Sie den Regler, bis alle Sterne in der ausgewählten Zeile sichtbar sind.</translation>

@@ -9,25 +9,26 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sync_sessions/synced_tab_delegate.h"
-#include "content/public/browser/web_contents_user_data.h"
 
 namespace content {
 class WebContents;
 }
 
-class TabContentsSyncedTabDelegate
-    : public sync_sessions::SyncedTabDelegate,
-      public content::WebContentsUserData<TabContentsSyncedTabDelegate> {
+namespace tasks {
+class TaskTabHelper;
+}
+
+// Partial implementation of SyncedTabDelegate for the cases where the tab has
+// (either initially or late) a WebContents.
+class TabContentsSyncedTabDelegate : public sync_sessions::SyncedTabDelegate {
  public:
+  TabContentsSyncedTabDelegate();
   ~TabContentsSyncedTabDelegate() override;
 
   // SyncedTabDelegate:
-  SessionID::id_type GetWindowId() const override;
-  SessionID::id_type GetSessionId() const override;
   bool IsBeingDestroyed() const override;
   std::string GetExtensionAppId() const override;
   bool IsInitialBlankNavigation() const override;
@@ -36,24 +37,27 @@ class TabContentsSyncedTabDelegate
   GURL GetVirtualURLAtIndex(int i) const override;
   GURL GetFaviconURLAtIndex(int i) const override;
   ui::PageTransition GetTransitionAtIndex(int i) const override;
+  std::string GetPageLanguageAtIndex(int i) const override;
   void GetSerializedNavigationAtIndex(
       int i,
       sessions::SerializedNavigationEntry* serialized_entry) const override;
   bool ProfileIsSupervised() const override;
   const std::vector<std::unique_ptr<const sessions::SerializedNavigationEntry>>*
   GetBlockedNavigations() const override;
-  bool IsPlaceholderTab() const override;
-  int GetSyncId() const override;
-  void SetSyncId(int sync_id) override;
   bool ShouldSync(sync_sessions::SyncSessionsClient* sessions_client) override;
-  SessionID::id_type GetSourceTabID() const override;
+  int64_t GetTaskIdForNavigationId(int nav_id) const override;
+  int64_t GetParentTaskIdForNavigationId(int nav_id) const override;
+  int64_t GetRootTaskIdForNavigationId(int nav_id) const override;
+
+ protected:
+  const content::WebContents* web_contents() const;
+  content::WebContents* web_contents();
+  void SetWebContents(content::WebContents* web_contents);
 
  private:
-  explicit TabContentsSyncedTabDelegate(content::WebContents* web_contents);
-  friend class content::WebContentsUserData<TabContentsSyncedTabDelegate>;
+  const tasks::TaskTabHelper* task_tab_helper() const;
 
   content::WebContents* web_contents_;
-  int sync_session_id_;
 
   DISALLOW_COPY_AND_ASSIGN(TabContentsSyncedTabDelegate);
 };

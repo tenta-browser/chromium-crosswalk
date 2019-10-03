@@ -50,7 +50,7 @@ struct HttpRequest;
 // The common use case for unit tests is below:
 //
 // void SetUp() {
-//   test_server_.reset(new EmbeddedTestServer());
+//   test_server_ = std::make_unique<EmbeddedTestServer>();
 //   test_server_->RegisterRequestHandler(
 //       base::Bind(&FooTest::HandleRequest, base::Unretained(this)));
 //   ASSERT_TRUE(test_server_.Start());
@@ -61,7 +61,7 @@ struct HttpRequest;
 //   if (absolute_url.path() != "/test")
 //     return std::unique_ptr<HttpResponse>();
 //
-//   std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse());
+//   auto http_response = std::make_unique<BasicHttpResponse>();
 //   http_response->set_code(net::HTTP_OK);
 //   http_response->set_content("hello");
 //   http_response->set_content_type("text/plain");
@@ -103,12 +103,22 @@ class EmbeddedTestServer {
     // Causes the testserver to use a hostname that is a domain
     // instead of an IP.
     CERT_COMMON_NAME_IS_DOMAIN,
+
+    // A certificate that only contains a commonName, rather than also
+    // including a subjectAltName extension.
+    CERT_COMMON_NAME_ONLY,
+
+    // A certificate that is a leaf certificate signed with SHA-1.
+    CERT_SHA1_LEAF,
+
+    // A certificate that is signed by an intermediate certificate.
+    CERT_OK_BY_INTERMEDIATE,
   };
 
-  typedef base::Callback<std::unique_ptr<HttpResponse>(
+  typedef base::RepeatingCallback<std::unique_ptr<HttpResponse>(
       const HttpRequest& request)>
       HandleRequestCallback;
-  typedef base::Callback<void(const HttpRequest& request)>
+  typedef base::RepeatingCallback<void(const HttpRequest& request)>
       MonitorRequestCallback;
 
   // Creates a http test server. Start() must be called to start the server.
@@ -138,11 +148,11 @@ class EmbeddedTestServer {
   // This is the equivalent of calling InitializeAndListen() followed by
   // StartAcceptingConnections().
   // Returns whether a listening socket has been successfully created.
-  bool Start() WARN_UNUSED_RESULT;
+  bool Start(int port = 0) WARN_UNUSED_RESULT;
 
   // Starts listening for incoming connections but will not yet accept them.
   // Returns whether a listening socket has been succesfully created.
-  bool InitializeAndListen() WARN_UNUSED_RESULT;
+  bool InitializeAndListen(int port = 0) WARN_UNUSED_RESULT;
 
   // Starts the Accept IO Thread and begins accepting connections.
   void StartAcceptingConnections();
@@ -151,9 +161,7 @@ class EmbeddedTestServer {
   bool ShutdownAndWaitUntilComplete() WARN_UNUSED_RESULT;
 
   // Checks if the server has started listening for incoming connections.
-  bool Started() const {
-    return listen_socket_.get() != NULL;
-  }
+  bool Started() const { return listen_socket_.get() != nullptr; }
 
   static base::FilePath GetRootCertPemPath();
 
@@ -180,11 +188,17 @@ class EmbeddedTestServer {
   // Returns the address list needed to connect to the server.
   bool GetAddressList(AddressList* address_list) const WARN_UNUSED_RESULT;
 
+  // Returns the IP Address to connect to the server as a string.
+  std::string GetIPLiteralString() const;
+
   // Returns the port number used by the server.
   uint16_t port() const { return port_; }
 
   void SetSSLConfig(ServerCertificate cert, const SSLServerConfig& ssl_config);
   void SetSSLConfig(ServerCertificate cert);
+
+  bool ResetSSLConfig(ServerCertificate cert,
+                      const SSLServerConfig& ssl_config);
 
   // Returns the file name of the certificate the server is using. The test
   // certificates can be found in net/data/ssl/certificates/.
@@ -234,6 +248,10 @@ class EmbeddedTestServer {
  private:
   // Shuts down the server.
   void ShutdownOnIOThread();
+
+  // Resets the SSLServerConfig on the IO thread.
+  void ResetSSLConfigOnIOThread(ServerCertificate cert,
+                                const SSLServerConfig& ssl_config);
 
   // Upgrade the TCP connection to one over SSL.
   std::unique_ptr<StreamSocket> DoSSLUpgrade(
@@ -301,7 +319,7 @@ class EmbeddedTestServer {
   ServerCertificate cert_;
   std::unique_ptr<SSLServerContext> context_;
 
-  base::WeakPtrFactory<EmbeddedTestServer> weak_factory_;
+  base::WeakPtrFactory<EmbeddedTestServer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EmbeddedTestServer);
 };

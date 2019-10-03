@@ -16,11 +16,11 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 
 namespace chromeos {
@@ -124,13 +124,14 @@ class ProcessOutputWatcherTest : public testing::Test {
     failed_ = !expectations_.CheckExpectations(output, type);
     if (failed_ || expectations_.IsDone()) {
       ASSERT_FALSE(test_case_done_callback_.is_null());
-      message_loop_.task_runner()->PostTask(FROM_HERE,
-                                            test_case_done_callback_);
+      scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
+          FROM_HERE, test_case_done_callback_);
       test_case_done_callback_.Reset();
     }
 
     ASSERT_FALSE(ack_callback.is_null());
-    message_loop_.task_runner()->PostTask(FROM_HERE, ack_callback);
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(FROM_HERE,
+                                                                 ack_callback);
   }
 
  protected:
@@ -157,8 +158,8 @@ class ProcessOutputWatcherTest : public testing::Test {
                                             base::Unretained(this))));
 
     output_watch_thread_->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ProcessOutputWatcher::Start,
-                              base::Unretained(crosh_watcher.get())));
+        FROM_HERE, base::BindOnce(&ProcessOutputWatcher::Start,
+                                  base::Unretained(crosh_watcher.get())));
 
     for (size_t i = 0; i < test_cases.size(); i++) {
       expectations_.SetTestCase(test_cases[i]);
@@ -184,14 +185,14 @@ class ProcessOutputWatcherTest : public testing::Test {
 
     output_watch_thread_->task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&StopProcessOutputWatcher, base::Passed(&crosh_watcher)));
+        base::BindOnce(&StopProcessOutputWatcher, std::move(crosh_watcher)));
 
     EXPECT_NE(-1, IGNORE_EINTR(close(pt_pipe[1])));
   }
 
  private:
   base::Closure test_case_done_callback_;
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::Thread> output_watch_thread_;
   bool output_watch_thread_started_;
   bool failed_;

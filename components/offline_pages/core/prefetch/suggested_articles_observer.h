@@ -33,9 +33,6 @@ class SuggestedArticlesObserver
   void SetContentSuggestionsServiceAndObserve(
       ntp_snippets::ContentSuggestionsService* service);
 
-  // TODO(dewittj): Make this private when the SQL store is up and running.
-  bool GetCurrentSuggestions(std::vector<PrefetchURL>* result);
-
   // ContentSuggestionsService::Observer overrides.
   void OnNewSuggestions(ntp_snippets::Category category) override;
   void OnCategoryStatusChanged(
@@ -46,11 +43,16 @@ class SuggestedArticlesObserver
   void OnFullRefreshRequired() override;
   void ContentSuggestionsServiceShutdown() override;
 
+  // Starts prefetching current suggestions if available.
+  void ConsumeSuggestions();
+
   // Returns a pointer to the list of testing articles. If there is no such
   // list, allocates one before returning the list.  The observer owns the list.
   std::vector<ntp_snippets::ContentSuggestion>* GetTestingArticles();
 
  private:
+  bool GetCurrentSuggestions(std::vector<PrefetchURL>* result);
+
   // Unowned, only used when we are called by observer methods (so the
   // pointer will be valid).
   ntp_snippets::ContentSuggestionsService* content_suggestions_service_ =

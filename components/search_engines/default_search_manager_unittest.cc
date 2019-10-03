@@ -11,7 +11,6 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -32,9 +31,9 @@ namespace {
 void SetOverrides(sync_preferences::TestingPrefServiceSyncable* prefs,
                   bool update) {
   prefs->SetUserPref(prefs::kSearchProviderOverridesVersion,
-                     base::MakeUnique<base::Value>(1));
-  auto overrides = base::MakeUnique<base::ListValue>();
-  auto entry = base::MakeUnique<base::DictionaryValue>();
+                     std::make_unique<base::Value>(1));
+  auto overrides = std::make_unique<base::ListValue>();
+  auto entry = std::make_unique<base::DictionaryValue>();
 
   entry->SetString("name", update ? "new_foo" : "foo");
   entry->SetString("keyword", update ? "new_fook" : "fook");
@@ -43,17 +42,17 @@ void SetOverrides(sync_preferences::TestingPrefServiceSyncable* prefs,
   entry->SetString("encoding", "UTF-8");
   entry->SetInteger("id", 1001);
   entry->SetString("suggest_url", "http://foo.com/suggest?q={searchTerms}");
-  auto alternate_urls = base::MakeUnique<base::ListValue>();
+  auto alternate_urls = std::make_unique<base::ListValue>();
   alternate_urls->AppendString("http://foo.com/alternate?q={searchTerms}");
   entry->Set("alternate_urls", std::move(alternate_urls));
   overrides->Append(std::move(entry));
 
-  entry = base::MakeUnique<base::DictionaryValue>();
+  entry = std::make_unique<base::DictionaryValue>();
   entry->SetInteger("id", 1002);
   entry->SetString("name", update ? "new_bar" : "bar");
   entry->SetString("keyword", update ? "new_bark" : "bark");
   entry->SetString("encoding", std::string());
-  overrides->Append(base::MakeUnique<base::Value>(entry->Clone()));
+  overrides->Append(std::make_unique<base::Value>(entry->Clone()));
   entry->SetInteger("id", 1003);
   entry->SetString("name", "baz");
   entry->SetString("keyword", "bazk");
@@ -81,7 +80,7 @@ void SetPolicy(sync_preferences::TestingPrefServiceSyncable* prefs,
 
 class DefaultSearchManagerTest : public testing::Test {
  public:
-  DefaultSearchManagerTest() {};
+  DefaultSearchManagerTest() {}
 
   void SetUp() override {
     pref_service_.reset(new sync_preferences::TestingPrefServiceSyncable);
@@ -138,7 +137,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByUserPref) {
 
   // Setting a user pref overrides the pre-populated values.
   std::unique_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
-  manager.SetUserSelectedDefaultSearchEngine(*data.get());
+  manager.SetUserSelectedDefaultSearchEngine(*data);
 
   ExpectSimilar(data.get(), manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_USER, source);
@@ -149,7 +148,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByUserPref) {
       GenerateDummyTemplateURLData("user2");
   DefaultSearchManager other_manager(pref_service(),
                                      DefaultSearchManager::ObserverCallback());
-  other_manager.SetUserSelectedDefaultSearchEngine(*new_data.get());
+  other_manager.SetUserSelectedDefaultSearchEngine(*new_data);
 
   ExpectSimilar(new_data.get(), manager.GetDefaultSearchEngine(&source));
   EXPECT_EQ(DefaultSearchManager::FROM_USER, source);
@@ -197,7 +196,7 @@ TEST_F(DefaultSearchManagerTest, DefaultSearchSetByPolicy) {
   DefaultSearchManager manager(pref_service(),
                                DefaultSearchManager::ObserverCallback());
   std::unique_ptr<TemplateURLData> data = GenerateDummyTemplateURLData("user");
-  manager.SetUserSelectedDefaultSearchEngine(*data.get());
+  manager.SetUserSelectedDefaultSearchEngine(*data);
 
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_FALLBACK;
   ExpectSimilar(data.get(), manager.GetDefaultSearchEngine(&source));

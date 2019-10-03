@@ -6,6 +6,7 @@
 #define COMPONENTS_SAFE_BROWSING_BASE_UI_MANAGER_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind_helpers.h"
@@ -34,23 +35,20 @@ class BaseUIManager
 
   BaseUIManager();
 
-  // Called to stop or shutdown operations on the io_thread. This may be called
-  // multiple times during the life of the UIManager. Should be called
-  // on IO thread. If shutdown is true, the manager is disabled permanently.
-  // This currently is a no-op in the base class.
-  virtual void StopOnIOThread(bool shutdown);
-
   // Called on the UI thread to display an interstitial page.
-  // |url| is the url of the resource that matches a safe browsing list.
-  // If the request contained a chain of redirects, |url| is the last url
-  // in the chain, and |original_url| is the first one (the root of the
-  // chain). Otherwise, |original_url| = |url|.
+  // |resource| is the unsafe resource that triggered the interstitial.
   virtual void DisplayBlockingPage(const UnsafeResource& resource);
 
   // This is a no-op in the base class, but should be overridden to send threat
-  // details. Called on the IO thread by the ThreatDetails with the serialized
+  // details. Called on the UI thread by the ThreatDetails with the serialized
   // protocol buffer.
   virtual void SendSerializedThreatDetails(const std::string& serialized);
+
+  // Updates the whitelist URL set for |web_contents|. Called on the UI thread.
+  void AddToWhitelistUrlSet(const GURL& whitelist_url,
+                            content::WebContents* web_contents,
+                            bool is_pending,
+                            SBThreatType threat_type);
 
   // This is a no-op in the base class, but should be overridden to report hits
   // to the unsafe contents (malware, phishing, unsafe download URL)
@@ -58,7 +56,7 @@ class BaseUIManager
   // report if the user has enabled SBER and is not currently in incognito mode.
   virtual void MaybeReportSafeBrowsingHit(
       const safe_browsing::HitReport& hit_report,
-      const content::WebContents* web_contents);
+      content::WebContents* web_contents);
 
   // A convenience wrapper method for IsUrlWhitelistedOrPendingForWebContents.
   virtual bool IsWhitelisted(const UnsafeResource& resource);
@@ -104,20 +102,22 @@ class BaseUIManager
   // e.g. about::blank page, or chrome's new tab page.
   virtual const GURL default_safe_page() const;
 
+  // Adds an UnsafeResource |resource| for |url| to unsafe_resources_,
+  // this should be called whenever a resource load is blocked due to a SB hit.
+  void AddUnsafeResource(GURL url,
+                         security_interstitials::UnsafeResource resource);
+
+  // Checks if an UnsafeResource |resource| exists for |url|, if so, it is
+  // removed from the vector, assigned to |resource| and the function returns
+  // true. Otherwise the function returns false and nothing gets assigned to
+  // |resource|.
+  bool PopUnsafeResourceForURL(
+      GURL url,
+      security_interstitials::UnsafeResource* resource);
+
  protected:
   friend class ChromePasswordProtectionService;
   virtual ~BaseUIManager();
-
-  // Updates the whitelist URL set for |web_contents|. Called on the UI thread.
-  void AddToWhitelistUrlSet(const GURL& whitelist_url,
-                            content::WebContents* web_contents,
-                            bool is_pending,
-                            SBThreatType threat_type);
-
-  // This is a no-op that should be overridden to call protocol manager on IO
-  // thread to report hits of unsafe contents.
-  virtual void ReportSafeBrowsingHitOnIOThread(
-      const safe_browsing::HitReport& hit_report);
 
   // Removes |whitelist_url| from the whitelist for |web_contents|.
   // Called on the UI thread.
@@ -142,7 +142,18 @@ class BaseUIManager
   virtual void ShowBlockingPageForResource(const UnsafeResource& resource);
 
  private:
+  // When true, we immediately cancel navigations that have been blocked by Safe
+  // Browsing, otherwise we call show on the interstitial. Currently this is
+  // only enabled for main frame navigations.
+  virtual bool SafeBrowsingInterstitialsAreCommittedNavigations();
+
   friend class base::RefCountedThreadSafe<BaseUIManager>;
+
+  // Stores unsafe resources so they can be fetched from a navigation throttle
+  // in the committed interstitials flow. Implemented as a pair vector since
+  // most of the time it will be empty or contain a single element.
+  std::vector<std::pair<GURL, security_interstitials::UnsafeResource>>
+      unsafe_resources_;
 
   DISALLOW_COPY_AND_ASSIGN(BaseUIManager);
 };

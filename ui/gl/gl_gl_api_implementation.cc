@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,6 +15,7 @@
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gl_version_info.h"
+#include "ui/gl/shader_tracking.h"
 
 namespace gl {
 
@@ -31,21 +31,8 @@ static bool g_debug_bindings_enabled = false;
 
 namespace {
 
-static inline GLenum GetInternalFormat(const GLVersionInfo* version,
-                                       GLenum internal_format) {
-  if (!version->is_es) {
-    if (internal_format == GL_BGRA_EXT || internal_format == GL_BGRA8_EXT)
-      return GL_RGBA8;
-  }
-  if (version->is_es3 && version->is_mesa) {
-    // Mesa bug workaround: Mipmapping does not work when using GL_BGRA_EXT
-    if (internal_format == GL_BGRA_EXT)
-      return GL_RGBA;
-  }
-  return internal_format;
-}
-
-// TODO(epenner): Could the above function be merged into this and removed?
+// TODO(epenner): Could the above function be merged into GetInternalFormat and
+// removed?
 static inline GLenum GetTexInternalFormat(const GLVersionInfo* version,
                                           GLenum internal_format,
                                           GLenum format,
@@ -59,6 +46,9 @@ static inline GLenum GetTexInternalFormat(const GLVersionInfo* version,
       switch (type) {
         case GL_UNSIGNED_BYTE:
           gl_internal_format = GL_R8_EXT;
+          break;
+        case GL_UNSIGNED_SHORT:
+          gl_internal_format = GL_R16_EXT;
           break;
         case GL_HALF_FLOAT_OES:
           gl_internal_format = GL_R16F_EXT;
@@ -88,25 +78,6 @@ static inline GLenum GetTexInternalFormat(const GLVersionInfo* version,
           break;
       }
       return gl_internal_format;
-    }
-  }
-
-  if (type == GL_FLOAT && version->is_angle && version->is_es &&
-      version->major_version == 2) {
-    // It's possible that the texture is using a sized internal format, and
-    // ANGLE exposing GLES2 API doesn't support those.
-    // TODO(oetuaho@nvidia.com): Remove these conversions once ANGLE has the
-    // support.
-    // http://code.google.com/p/angleproject/issues/detail?id=556
-    switch (format) {
-      case GL_RGBA:
-        gl_internal_format = GL_RGBA;
-        break;
-      case GL_RGB:
-        gl_internal_format = GL_RGB;
-        break;
-      default:
-        break;
     }
   }
 
@@ -148,14 +119,6 @@ static inline GLenum GetTexInternalFormat(const GLVersionInfo* version,
         if (!version->is_es)
           gl_internal_format = GL_ALPHA32F_ARB;
         break;
-      // RED and RG are reached here because on Desktop GL core profile,
-      // LUMINANCE/ALPHA formats are emulated through RED and RG in Chrome.
-      case GL_RED:
-        gl_internal_format = GL_R32F;
-        break;
-      case GL_RG:
-        gl_internal_format = GL_RG32F;
-        break;
       default:
         // We can't assert here because if the client context is ES3,
         // all sized internal_format will reach here.
@@ -181,16 +144,7 @@ static inline GLenum GetTexInternalFormat(const GLVersionInfo* version,
         if (!version->is_es)
           gl_internal_format = GL_ALPHA16F_ARB;
         break;
-      // RED and RG are reached here because on Desktop GL core profile,
-      // LUMINANCE/ALPHA formats are emulated through RED and RG in Chrome.
-      case GL_RED:
-        gl_internal_format = GL_R16F;
-        break;
-      case GL_RG:
-        gl_internal_format = GL_RG16F;
-        break;
       default:
-        NOTREACHED();
         break;
     }
   }
@@ -240,6 +194,19 @@ static inline GLenum GetPixelType(const GLVersionInfo* version,
 }
 
 }  // anonymous namespace
+
+GLenum GetInternalFormat(const GLVersionInfo* version, GLenum internal_format) {
+  if (!version->is_es) {
+    if (internal_format == GL_BGRA_EXT || internal_format == GL_BGRA8_EXT)
+      return GL_RGBA8;
+  }
+  if (version->is_es3 && version->is_mesa) {
+    // Mesa bug workaround: Mipmapping does not work when using GL_BGRA_EXT
+    if (internal_format == GL_BGRA_EXT)
+      return GL_RGBA;
+  }
+  return internal_format;
+}
 
 void InitializeStaticGLBindingsGL() {
   g_current_gl_context_tls = new base::ThreadLocalPointer<CurrentGL>;
@@ -356,7 +323,8 @@ void RealGLApi::glTexImage2DFn(GLenum target,
 
   // TODO(yizhou): Check if cubemap, 3d texture or texture2d array has the same
   // bug on intel mac.
-  if (gl_workarounds_.reset_teximage2d_base_level && target == GL_TEXTURE_2D) {
+  if (!version_->is_angle && gl_workarounds_.reset_teximage2d_base_level &&
+      target == GL_TEXTURE_2D) {
     GLint base_level = 0;
     GLApiBase::glGetTexParameterivFn(target, GL_TEXTURE_BASE_LEVEL,
                                      &base_level);
@@ -450,9 +418,9 @@ void RealGLApi::glClearColorFn(GLclampf red,
                                GLclampf green,
                                GLclampf blue,
                                GLclampf alpha) {
-  if (gl_workarounds_.clear_to_zero_or_one_broken && (1 == red || 0 == red) &&
-      (1 == green || 0 == green) && (1 == blue || 0 == blue) &&
-      (1 == alpha || 0 == alpha)) {
+  if (!version_->is_angle && gl_workarounds_.clear_to_zero_or_one_broken &&
+      (1 == red || 0 == red) && (1 == green || 0 == green) &&
+      (1 == blue || 0 == blue) && (1 == alpha || 0 == alpha)) {
     if (1 == alpha)
       alpha = 2;
     else
@@ -501,6 +469,33 @@ void RealGLApi::glDepthRangeFn(GLclampd z_near, GLclampd z_far) {
   }
 }
 
+void RealGLApi::glUseProgramFn(GLuint program) {
+  ShaderTracking* shader_tracking = ShaderTracking::GetInstance();
+  if (shader_tracking) {
+    std::vector<char> buffers[2];
+    char* strings[2] = {nullptr, nullptr};
+    if (program) {
+      // The following only works with ANGLE backend because ANGLE makes sure
+      // a program's shaders are not actually deleted and source can still be
+      // queried even if glDeleteShaders() has been called on them.
+
+      // Also, in theory, different shaders can be attached to the program
+      // after the last link, but for now, ignore such corner case patterns.
+      GLsizei count = 0;
+      GLuint shaders[2] = {0};
+      glGetAttachedShadersFn(program, 2, &count, shaders);
+      for (GLsizei ii = 0; ii < std::min(2, count); ++ii) {
+        buffers[ii].resize(ShaderTracking::kMaxShaderSize);
+        glGetShaderSourceFn(shaders[ii], ShaderTracking::kMaxShaderSize,
+                            nullptr, buffers[ii].data());
+        strings[ii] = buffers[ii].data();
+      }
+    }
+    shader_tracking->SetShaders(strings[0], strings[1]);
+  }
+  GLApiBase::glUseProgramFn(program);
+}
+
 void RealGLApi::InitializeFilteredExtensionsIfNeeded() {
   DCHECK(disabled_exts_.size());
   if (filtered_exts_.size())
@@ -519,7 +514,7 @@ void RealGLApi::InitializeFilteredExtensionsIfNeeded() {
       const char* gl_extension = reinterpret_cast<const char*>(
           GLApiBase::glGetStringiFn(GL_EXTENSIONS, i));
       DCHECK(gl_extension);
-      if (!base::ContainsValue(disabled_exts_, gl_extension))
+      if (!base::Contains(disabled_exts_, gl_extension))
         filtered_exts_.push_back(gl_extension);
     }
     filtered_exts_str_ = base::JoinString(filtered_exts_, " ");

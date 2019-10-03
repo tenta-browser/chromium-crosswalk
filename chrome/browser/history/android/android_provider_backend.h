@@ -9,7 +9,6 @@
 #include <memory>
 #include <set>
 
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -332,7 +331,7 @@ class AndroidProviderBackend : public base::SupportsUserData::Data {
   const base::FilePath android_cache_db_filename_;
 
   // The history db's connection.
-  sql::Connection* db_;
+  sql::Database* db_;
 
   HistoryDatabase* history_db_;
 

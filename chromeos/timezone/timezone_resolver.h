@@ -8,21 +8,24 @@
 #include <memory>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
-#include "chromeos/chromeos_export.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "url/gurl.h"
 
 class PrefRegistrySimple;
 class PrefService;
+
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace chromeos {
 
 struct TimeZoneResponseData;
 
 // This class implements periodic timezone synchronization.
-class CHROMEOS_EXPORT TimeZoneResolver {
+class COMPONENT_EXPORT(CHROMEOS_TIMEZONE) TimeZoneResolver {
  public:
   class TimeZoneResolverImpl;
 
@@ -32,7 +35,8 @@ class CHROMEOS_EXPORT TimeZoneResolver {
 
   // chromeos::DelayNetworkCall cannot be used directly due to link
   // restrictions.
-  using DelayNetworkCallClosure = base::Callback<void(const base::Closure&)>;
+  using DelayNetworkCallClosure =
+      base::RepeatingCallback<void(base::OnceClosure)>;
 
   class Delegate {
    public:
@@ -54,7 +58,7 @@ class CHROMEOS_EXPORT TimeZoneResolver {
   static const char kLastTimeZoneRefreshTime[];
 
   TimeZoneResolver(Delegate* delegate,
-                   scoped_refptr<net::URLRequestContextGetter> context,
+                   scoped_refptr<network::SharedURLLoaderFactory> factory,
                    const GURL& url,
                    const ApplyTimeZoneCallback& apply_timezone,
                    const DelayNetworkCallClosure& delay_network_call,
@@ -70,9 +74,8 @@ class CHROMEOS_EXPORT TimeZoneResolver {
   // Register prefs to LocalState.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  scoped_refptr<net::URLRequestContextGetter> context() const {
-    return context_;
-  }
+  scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory()
+      const;
 
   DelayNetworkCallClosure delay_network_call() const {
     return delay_network_call_;
@@ -96,7 +99,7 @@ class CHROMEOS_EXPORT TimeZoneResolver {
  private:
   Delegate* delegate_;
 
-  scoped_refptr<net::URLRequestContextGetter> context_;
+  scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
   const GURL url_;
 
   const ApplyTimeZoneCallback apply_timezone_;

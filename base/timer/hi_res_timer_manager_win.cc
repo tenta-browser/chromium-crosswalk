@@ -9,7 +9,7 @@
 #include "base/atomicops.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 
 namespace base {
@@ -29,19 +29,18 @@ void ReportHighResolutionTimerUsage() {
 
 HighResolutionTimerManager::HighResolutionTimerManager()
     : hi_res_clock_available_(false) {
-  PowerMonitor* power_monitor = PowerMonitor::Get();
-  DCHECK(power_monitor != NULL);
-  power_monitor->AddObserver(this);
-  UseHiResClock(!power_monitor->IsOnBatteryPower());
+  DCHECK(PowerMonitor::IsInitialized());
+  PowerMonitor::AddObserver(this);
+  UseHiResClock(!PowerMonitor::IsOnBatteryPower());
 
   // Start polling the high resolution timer usage.
   Time::ResetHighResolutionTimerUsage();
   timer_.Start(FROM_HERE, kUsageSampleInterval,
-               Bind(&ReportHighResolutionTimerUsage));
+               BindRepeating(&ReportHighResolutionTimerUsage));
 }
 
 HighResolutionTimerManager::~HighResolutionTimerManager() {
-  PowerMonitor::Get()->RemoveObserver(this);
+  PowerMonitor::RemoveObserver(this);
   UseHiResClock(false);
 }
 

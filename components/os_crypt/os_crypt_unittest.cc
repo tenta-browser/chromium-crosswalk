@@ -152,7 +152,7 @@ class OSCryptConcurrencyTest : public testing::Test {
  public:
   OSCryptConcurrencyTest() { OSCryptMocker::SetUp(); }
 
-  ~OSCryptConcurrencyTest() override { OSCryptMocker::TearDown(); };
+  ~OSCryptConcurrencyTest() override { OSCryptMocker::TearDown(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(OSCryptConcurrencyTest);
@@ -170,7 +170,7 @@ TEST_F(OSCryptConcurrencyTest, ConcurrentInitialization) {
   // Make calls.
   for (base::Thread* thread : threads) {
     ASSERT_TRUE(thread->task_runner()->PostTask(
-        FROM_HERE, base::Bind([]() -> void {
+        FROM_HERE, base::BindOnce([]() -> void {
           std::string plaintext = "secrets";
           std::string encrypted;
           std::string decrypted;

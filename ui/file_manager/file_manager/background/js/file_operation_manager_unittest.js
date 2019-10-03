@@ -4,50 +4,41 @@
 'use strict';
 
 /**
- * Mock of chrome.runtime.
+ * Mock chrome APIs.
  * @type {Object}
- * @const
  */
-chrome.runtime = {
+const mockChrome = {};
+
+mockChrome.runtime = {
   lastError: null
 };
 
-/**
- * Mock of chrome.power.
- * @type {Object}
- * @const
- */
-chrome.power = {
+mockChrome.power = {
   requestKeepAwake: function() {
-    chrome.power.keepAwakeRequested = true;
+    mockChrome.power.keepAwakeRequested = true;
   },
   releaseKeepAwake: function() {
-    chrome.power.keepAwakeRequested = false;
+    mockChrome.power.keepAwakeRequested = false;
   },
   keepAwakeRequested: false
 };
 
-/**
- * Mock of chrome.fileManagerPrivate.
- * @type {Object}
- * @const
- */
-chrome.fileManagerPrivate = {
+mockChrome.fileManagerPrivate = {
   onCopyProgress: {
     addListener: function(callback) {
-      chrome.fileManagerPrivate.onCopyProgress.listener_ = callback;
+      mockChrome.fileManagerPrivate.onCopyProgress.listener_ = callback;
     },
     removeListener: function() {
-      chrome.fileManagerPrivate.onCopyProgress.listener_ = null;
+      mockChrome.fileManagerPrivate.onCopyProgress.listener_ = null;
     },
     listener_: null
   }
 };
 
 /**
- * Logs events of file operation manager.
- * @param {!FileOperationManager} fileOperationManager A target file operation
- *     manager.
+ * Logs copy-progress events from a file operation manager.
+ * @param {!FileOperationManager} fileOperationManager The target file
+ *    operation manager.
  * @constructor
  * @struct
  */
@@ -56,16 +47,17 @@ function EventLogger(fileOperationManager) {
   this.numberOfBeginEvents = 0;
   this.numberOfErrorEvents = 0;
   this.numberOfSuccessEvents = 0;
-  fileOperationManager.addEventListener('copy-progress',
-      this.onCopyProgress_.bind(this));
+  fileOperationManager.addEventListener(
+      'copy-progress', this.onCopyProgress_.bind(this));
 }
 
 /**
- * Handles copy-progress event.
+ * Log file operation manager copy-progress event details.
  * @param {Event} event An event.
  * @private
  */
 EventLogger.prototype.onCopyProgress_ = function(event) {
+  event = /** @type {FileOperationProgressEvent} */ (event);
   if (event.reason === 'BEGIN') {
     this.events.push(event);
     this.numberOfBeginEvents++;
@@ -85,7 +77,7 @@ EventLogger.prototype.onCopyProgress_ = function(event) {
  * @param {string} blockedDestination Destination url of an entry whose request
  *     should be blocked.
  * @param {!Entry} sourceEntry Source entry. Single source entry is supported.
- * @param {!Array<!FakeFileSystem>} fileSystems File systems.
+ * @param {!Array<!MockFileSystem>} fileSystems File systems array.
  * @constructor
  * @struct
  */
@@ -98,7 +90,7 @@ function BlockableFakeStartCopy(blockedDestination, sourceEntry, fileSystems) {
 }
 
 /**
- * A fake implemencation of startCopy function.
+ * Fake implementation of startCopy function.
  * @param {!Entry} source
  * @param {!Entry} destination
  * @param {string} newName
@@ -106,7 +98,7 @@ function BlockableFakeStartCopy(blockedDestination, sourceEntry, fileSystems) {
  */
 BlockableFakeStartCopy.prototype.startCopyFunc = function(
     source, destination, newName, callback) {
-  var makeStatus = function(type) {
+  const makeStatus = type => {
     return {
       type: type,
       sourceUrl: source.toURL(),
@@ -114,19 +106,21 @@ BlockableFakeStartCopy.prototype.startCopyFunc = function(
     };
   };
 
-  var completeCopyOperation = function(copyId) {
-    var newPath = joinPath('/', newName);
-    var fileSystem = getFileSystemForURL(
-        this.fileSystems_, destination.toURL());
-    fileSystem.entries[newPath] = this.sourceEntry_.clone(newPath);
+  const completeCopyOperation = copyId => {
+    const newPath = joinPath('/', newName);
+    const fileSystem =
+        getFileSystemForURL(this.fileSystems_, destination.toURL());
+    const mockEntry = /** @type {!MockEntry} */ (this.sourceEntry_);
+    fileSystem.entries[newPath] =
+        /** @type {!MockEntry} */ (mockEntry.clone(newPath));
     listener(copyId, makeStatus('end_copy_entry'));
     listener(copyId, makeStatus('success'));
-  }.bind(this);
+  };
 
   this.startCopyId_++;
 
   callback(this.startCopyId_);
-  var listener = chrome.fileManagerPrivate.onCopyProgress.listener_;
+  var listener = mockChrome.fileManagerPrivate.onCopyProgress.listener_;
   listener(this.startCopyId_, makeStatus('begin_copy_entry'));
   listener(this.startCopyId_, makeStatus('progress'));
 
@@ -141,31 +135,33 @@ BlockableFakeStartCopy.prototype.startCopyFunc = function(
 /**
  * Fake volume manager.
  * @constructor
- * @structs
+ * @struct
  */
 function FakeVolumeManager() {}
 
 /**
  * Returns fake volume info.
  * @param {!Entry} entry
- * @return {VolumeInfo} A fake volume info.
+ * @return {!Object}
  */
 FakeVolumeManager.prototype.getVolumeInfo = function(entry) {
-  return { volumeId: entry.filesystem.name };
-}
+  return {volumeId: entry.filesystem.name};
+};
 
 /**
  * Returns file system of the url.
- * @param {!Array<!FakeFileSystem>} fileSystems
+ * @param {!Array<!MockFileSystem>} fileSystems
  * @param {string} url
- * @return {!FakeFileSystem}
+ * @return {!MockFileSystem}
  */
 function getFileSystemForURL(fileSystems, url) {
-  for (var i = 0; i < fileSystems.length; i++) {
-    if (new RegExp('^filesystem:' + fileSystems[i].name + '/').test(url))
+  for (let i = 0; i < fileSystems.length; i++) {
+    if (new RegExp('^filesystem:' + fileSystems[i].name + '/').test(url)) {
       return fileSystems[i];
+    }
   }
-  throw new Error('Unexpected url: ' + url + '.');
+
+  throw new Error('Unexpected url: ' + url);
 }
 
 /**
@@ -173,22 +169,23 @@ function getFileSystemForURL(fileSystems, url) {
  * @type {number}
  * @const
  */
-var DIRECTORY_SIZE = -1;
+const DIRECTORY_SIZE = -1;
 
 /**
  * Creates test file system.
- * @param {string} id File system ID.
- * @param {Object<number>} entries Map of entries' paths and their size.
- *     If the size is equals to DIRECTORY_SIZE, the entry is directory.
+ * @param {string} id File system Id.
+ * @param {Object<number>} entries Map of entry paths and their size.
+ *     If the entry size is DIRECTORY_SIZE, the entry is a directory.
+ * @return {!MockFileSystem}
  */
 function createTestFileSystem(id, entries) {
-  var fileSystem = new MockFileSystem(id, 'filesystem:' + id);
-  for (var path in entries) {
+  const fileSystem = new MockFileSystem(id, 'filesystem:' + id);
+  for (const path in entries) {
     if (entries[path] === DIRECTORY_SIZE) {
       fileSystem.entries[path] = new MockDirectoryEntry(fileSystem, path);
     } else {
-      fileSystem.entries[path] =
-          new MockFileEntry(fileSystem, path, {size: entries[path]});
+      const metadata = /** @type {!Metadata} */ ({size: entries[path]});
+      fileSystem.entries[path] = new MockFileEntry(fileSystem, path, metadata);
     }
   }
   return fileSystem;
@@ -196,20 +193,23 @@ function createTestFileSystem(id, entries) {
 
 /**
  * Resolves URL on the file system.
- * @param {FakeFileSystem} fileSystem Fake file system.
+ * @param {!MockFileSystem} fileSystem File system.
  * @param {string} url URL.
- * @param {function(MockEntry)} success Success callback.
- * @param {function()} failure Failure callback.
+ * @param {function(!Entry)} success Success callback.
+ * @param {function(!FileError)=} opt_failure Failure callback.
  */
-function resolveTestFileSystemURL(fileSystem, url, success, failure) {
-  for (var name in fileSystem.entries) {
-    var entry = fileSystem.entries[name];
+function resolveTestFileSystemURL(fileSystem, url, success, opt_failure) {
+  for (const name in fileSystem.entries) {
+    const entry = fileSystem.entries[name];
     if (entry.toURL() == url) {
       success(entry);
       return;
     }
   }
-  failure();
+
+  if (opt_failure) {
+    opt_failure(new FileError());
+  }
 }
 
 /**
@@ -218,20 +218,25 @@ function resolveTestFileSystemURL(fileSystem, url, success, failure) {
  * @return {Promise} Promise to be fulfilled with an event list.
  */
 function waitForEvents(fileOperationManager) {
-  return new Promise(function(fulfill) {
-    var events = [];
-    fileOperationManager.addEventListener('copy-progress', function(event) {
+  return new Promise(fulfill => {
+    const events = [];
+    fileOperationManager.addEventListener('copy-progress', event => {
+      event = /** @type {FileOperationProgressEvent} */ (event);
       events.push(event);
-      if (event.reason === 'SUCCESS')
+      if (event.reason === 'SUCCESS') {
         fulfill(events);
+      }
     });
-    fileOperationManager.addEventListener('entries-changed', function(event) {
+    fileOperationManager.addEventListener('entries-changed', event => {
+      event = /** @type {FileOperationProgressEvent} */ (event);
       events.push(event);
     });
-    fileOperationManager.addEventListener('delete', function(event) {
+    fileOperationManager.addEventListener('delete', event => {
+      event = /** @type {FileOperationProgressEvent} */ (event);
       events.push(event);
-      if (event.reason === 'SUCCESS')
+      if (event.reason === 'SUCCESS') {
         fulfill(events);
+      }
     });
   });
 }
@@ -240,70 +245,82 @@ function waitForEvents(fileOperationManager) {
  * Placeholder for mocked volume manager.
  * @type {(FakeVolumeManager|{getVolumeInfo: function()}?)}
  */
-var volumeManager;
+let volumeManager;
 
-var volumeManagerFactory = {};
+var volumeManagerFactory = volumeManagerFactory || {};
 
 /**
- * Provide VolumeManager.getInstande() for FileOperationManager using mocked
+ * Provide VolumeManager.getInstance() for FileOperationManager using mocked
  * volume manager instance.
- * @type {!Promise<(FakeVolumeManager|{getVolumeInfo: function()}?)>}
+ * @return {Promise}
  */
-volumeManagerFactory.getInstance = function() {
+volumeManagerFactory.getInstance = () => {
   return Promise.resolve(volumeManager);
 };
 
 /**
  * Test target.
- * @type {FileOperationManager}
+ * @type {FileOperationManagerImpl}
  */
-var fileOperationManager;
+let fileOperationManager;
 
 /**
  * Initializes the test environment.
  */
 function setUp() {
+  // Install mock chrome APIs.
+  installMockChrome(mockChrome);
 }
 
 /**
  * Tests the fileOperationUtil.resolvePath function.
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testResolvePath(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/file': 10,
-    '/directory': DIRECTORY_SIZE
+    '/directory': DIRECTORY_SIZE,
   });
-  var root = fileSystem.root;
-  var rootPromise = fileOperationUtil.resolvePath(root, '/');
-  var filePromise = fileOperationUtil.resolvePath(root, '/file');
-  var directoryPromise = fileOperationUtil.resolvePath(root, '/directory');
-  var errorPromise = fileOperationUtil.resolvePath(root, '/not_found').then(
-      function() { assertTrue(false, 'The NOT_FOUND error is not reported.'); },
-      function(error) { return error.name; });
-  reportPromise(Promise.all([
-    rootPromise,
-    filePromise,
-    directoryPromise,
-    errorPromise
-  ]).then(function(results) {
-    assertArrayEquals([
-      fileSystem.entries['/'],
-      fileSystem.entries['/file'],
-      fileSystem.entries['/directory'],
-      'NotFoundError'
-    ], results);
-  }), callback);
+  const root = fileSystem.root;
+  const rootPromise = fileOperationUtil.resolvePath(root, '/');
+  const filePromise = fileOperationUtil.resolvePath(root, '/file');
+  const directoryPromise = fileOperationUtil.resolvePath(root, '/directory');
+  const errorPromise =
+      fileOperationUtil.resolvePath(root, '/not_found')
+          .then(
+              () => {
+                assertTrue(false, 'The NOT_FOUND error is not reported.');
+              },
+              error => {
+                return error.name;
+              });
+  reportPromise(
+      Promise
+          .all([
+            rootPromise,
+            filePromise,
+            directoryPromise,
+            errorPromise,
+          ])
+          .then(results => {
+            assertArrayEquals(
+                [
+                  fileSystem.entries['/'],
+                  fileSystem.entries['/file'],
+                  fileSystem.entries['/directory'],
+                  'NotFoundError',
+                ],
+                results);
+          }),
+      callback);
 }
 
 /**
- * @param {function(boolean)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testFindEntriesRecursively(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/file.txt': 10,
     '/file (1).txt': 10,
@@ -318,26 +335,28 @@ function testFindEntriesRecursively(callback) {
     '/DCIM/IMG_1235 (9).txt': 10,
   });
 
-  var foundFiles = [];
-  fileOperationUtil.findEntriesRecursively(
-      fileSystem.root,
-      function(fileEntry) {
-        foundFiles.push(fileEntry);
-      })
-      .then(
-          function() {
-            assertEquals(12, foundFiles.length);
-            callback(false);
+  const foundFiles = [];
+  fileOperationUtil
+      .findEntriesRecursively(
+          fileSystem.root,
+          fileEntry => {
+            foundFiles.push(fileEntry);
           })
-      .catch(callback);
+      .then(() => {
+        assertEquals(12, foundFiles.length);
+        callback(false);
+      })
+      .catch(() => {
+        const error = true;
+        callback(error);
+      });
 }
 
 /**
- * @param {function(boolean)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testFindFilesRecursively(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/file.txt': 10,
     '/file (1).txt': 10,
@@ -352,30 +371,31 @@ function testFindFilesRecursively(callback) {
     '/DCIM/IMG_1235 (9).txt': 10,
   });
 
-  var foundFiles = [];
-  fileOperationUtil.findFilesRecursively(
-      fileSystem.root,
-      function(fileEntry) {
-        foundFiles.push(fileEntry);
-      })
-      .then(
-          function() {
-            assertEquals(10, foundFiles.length);
-            foundFiles.forEach(
-                function(entry) {
-                  assertTrue(entry.isFile);
-                });
-            callback(false);
+  const foundFiles = [];
+  fileOperationUtil
+      .findFilesRecursively(
+          fileSystem.root,
+          fileEntry => {
+            foundFiles.push(fileEntry);
           })
-      .catch(callback);
+      .then(() => {
+        assertEquals(10, foundFiles.length);
+        foundFiles.forEach(entry => {
+          assertTrue(entry.isFile);
+        });
+        callback(false);
+      })
+      .catch(() => {
+        const error = true;
+        callback(error);
+      });
 }
 
 /**
- * @param {function(boolean)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testGatherEntriesRecursively(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/file.txt': 10,
     '/file (1).txt': 10,
@@ -391,26 +411,27 @@ function testGatherEntriesRecursively(callback) {
   });
 
   fileOperationUtil.gatherEntriesRecursively(fileSystem.root)
-      .then(
-          function(gatheredFiles) {
-            assertEquals(12, gatheredFiles.length);
-            callback(false);
-          })
-      .catch(callback);
+      .then(gatheredFiles => {
+        assertEquals(12, gatheredFiles.length);
+        callback(false);
+      })
+      .catch(() => {
+        const error = true;
+        callback(error);
+      });
 }
 
 /**
  * Tests the fileOperationUtil.deduplicatePath
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testDeduplicatePath(callback) {
-  var fileSystem1 = createTestFileSystem('testVolume', {'/': DIRECTORY_SIZE});
-  var fileSystem2 = createTestFileSystem('testVolume', {
+  const fileSystem1 = createTestFileSystem('testVolume', {'/': DIRECTORY_SIZE});
+  const fileSystem2 = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
-    '/file.txt': 10
+    '/file.txt': 10,
   });
-  var fileSystem3 = createTestFileSystem('testVolume', {
+  const fileSystem3 = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/file.txt': 10,
     '/file (1).txt': 10,
@@ -424,23 +445,23 @@ function testDeduplicatePath(callback) {
     '/file (9).txt': 10,
   });
 
-  var nonExistingPromise =
-      fileOperationUtil.deduplicatePath(fileSystem1.root, 'file.txt').
-      then(function(path) {
-        assertEquals('file.txt', path);
-      });
-  var existingPathPromise =
-      fileOperationUtil.deduplicatePath(fileSystem2.root, 'file.txt').
-      then(function(path) {
-        assertEquals('file (1).txt', path);
-      });
-  var moreExistingPathPromise =
-      fileOperationUtil.deduplicatePath(fileSystem3.root, 'file.txt').
-      then(function(path) {
-        assertEquals('file (10).txt', path);
-      });
+  const nonExistingPromise =
+      fileOperationUtil.deduplicatePath(fileSystem1.root, 'file.txt')
+          .then(path => {
+            assertEquals('file.txt', path);
+          });
+  const existingPathPromise =
+      fileOperationUtil.deduplicatePath(fileSystem2.root, 'file.txt')
+          .then(path => {
+            assertEquals('file (1).txt', path);
+          });
+  const moreExistingPathPromise =
+      fileOperationUtil.deduplicatePath(fileSystem3.root, 'file.txt')
+          .then(path => {
+            assertEquals('file (10).txt', path);
+          });
 
-  var testPromise = Promise.all([
+  const testPromise = Promise.all([
     nonExistingPromise,
     existingPathPromise,
     moreExistingPathPromise,
@@ -449,22 +470,22 @@ function testDeduplicatePath(callback) {
 }
 
 /**
- * Tests the fileOperationUtil.paste.
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * Tests fileOperationManager copy.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testCopy(callback) {
   // Prepare entries and their resolver.
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/test.txt': 10,
   });
-  window.webkitResolveLocalFileSystemURL =
-      resolveTestFileSystemURL.bind(null, fileSystem);
+  window.webkitResolveLocalFileSystemURL = (url, success, failure) => {
+    resolveTestFileSystemURL(fileSystem, url, success, failure);
+  };
 
-  chrome.fileManagerPrivate.startCopy =
-      function(source, destination, newName, callback) {
-        var makeStatus = function(type) {
+  mockChrome.fileManagerPrivate.startCopy =
+      (source, destination, newName, callback) => {
+        const makeStatus = type => {
           return {
             type: type,
             sourceUrl: source.toURL(),
@@ -472,396 +493,429 @@ function testCopy(callback) {
           };
         };
         callback(1);
-        var listener = chrome.fileManagerPrivate.onCopyProgress.listener_;
+        const listener = mockChrome.fileManagerPrivate.onCopyProgress.listener_;
         listener(1, makeStatus('begin_copy_entry'));
         listener(1, makeStatus('progress'));
-        var newPath = joinPath('/', newName);
+        const newPath = joinPath('/', newName);
+        const entry = /** @type {!MockEntry} */
+            (fileSystem.entries['/test.txt']);
         fileSystem.entries[newPath] =
-            fileSystem.entries['/test.txt'].clone(newPath);
+            /** @type {!MockEntry} */ (entry.clone(newPath));
         listener(1, makeStatus('end_copy_entry'));
         listener(1, makeStatus('success'));
       };
 
   volumeManager = new FakeVolumeManager();
-  fileOperationManager = new FileOperationManager();
+  fileOperationManager = new FileOperationManagerImpl();
 
-  // Observing manager's events.
-  var eventsPromise = waitForEvents(fileOperationManager);
+  // Observe the file operation manager's events.
+  const eventsPromise = waitForEvents(fileOperationManager);
 
   // Verify the events.
-  reportPromise(eventsPromise.then(function(events) {
-    var firstEvent = events[0];
-    assertEquals('BEGIN', firstEvent.reason);
-    assertEquals(1, firstEvent.status.numRemainingItems);
-    assertEquals(0, firstEvent.status.processedBytes);
-    assertEquals(1, firstEvent.status.totalBytes);
+  reportPromise(
+      eventsPromise.then(events => {
+        const firstEvent = events[0];
+        assertEquals('BEGIN', firstEvent.reason);
+        assertEquals(1, firstEvent.status.numRemainingItems);
+        assertEquals(0, firstEvent.status.processedBytes);
+        assertEquals(1, firstEvent.status.totalBytes);
 
-    var lastEvent = events[events.length - 1];
-    assertEquals('SUCCESS', lastEvent.reason);
-    assertEquals(0, lastEvent.status.numRemainingItems);
-    assertEquals(10, lastEvent.status.processedBytes);
-    assertEquals(10, lastEvent.status.totalBytes);
+        const lastEvent = events[events.length - 1];
+        assertEquals('SUCCESS', lastEvent.reason);
+        assertEquals(0, lastEvent.status.numRemainingItems);
+        assertEquals(10, lastEvent.status.processedBytes);
+        assertEquals(10, lastEvent.status.totalBytes);
 
-    assertTrue(events.some(function(event) {
-      return event.type === 'entries-changed' &&
-          event.kind === util.EntryChangedKind.CREATED &&
-          event.entries[0].fullPath === '/test (1).txt';
-    }));
+        assertTrue(events.some(event => {
+          return event.type === 'entries-changed' &&
+              event.kind === util.EntryChangedKind.CREATED &&
+              event.entries[0].fullPath === '/test (1).txt';
+        }));
 
-    assertFalse(events.some(function(event) {
-      return event.type === 'delete';
-    }));
-  }), callback);
+        assertFalse(events.some(event => {
+          return event.type === 'delete';
+        }));
+      }),
+      callback);
 
   fileOperationManager.paste(
       [fileSystem.entries['/test.txt']],
-      fileSystem.entries['/'],
-      false);
+      /** @type {!DirectoryEntry} */ (fileSystem.entries['/']), false);
 }
 
 /**
- * Tests the fileOperationUtil.paste for copying files in sequential. When
- * destination volumes are same, copy operations should run in sequential.
+ * Tests copying files when the destination volumes are same: the copy
+ * operations should be run sequentially.
  */
 function testCopyInSequential(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  // Prepare entries and their resolver.
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/dest': DIRECTORY_SIZE,
-    '/test.txt': 10
+    '/test.txt': 10,
   });
-
-  window.webkitResolveLocalFileSystemURL =
-      resolveTestFileSystemURL.bind(null, fileSystem);
-
-  var blockableFakeStartCopy = new BlockableFakeStartCopy(
-      'filesystem:testVolume/dest',
-      fileSystem.entries['/test.txt'],
-      [fileSystem]);
-  chrome.fileManagerPrivate.startCopy =
-      blockableFakeStartCopy.startCopyFunc.bind(blockableFakeStartCopy);
-
-  volumeManager = new FakeVolumeManager();
-  fileOperationManager = new FileOperationManager();
-
-  var eventLogger = new EventLogger(fileOperationManager);
-
-  // Copy test.txt to /dest. This operation will be blocked.
-  fileOperationManager.paste([fileSystem.entries['/test.txt']],
-      fileSystem.entries['/dest'],
-      false);
-
-  var firstOperationTaskId;
-  reportPromise(waitUntil(function() {
-    // Wait until the first operation is blocked.
-    return blockableFakeStartCopy.resolveBlockedOperationCallback !== null;
-  }).then(function() {
-    assertEquals(1, eventLogger.events.length);
-    assertEquals('BEGIN', eventLogger.events[0].reason);
-    firstOperationTaskId = eventLogger.events[0].taskId;
-
-    // Copy test.txt to /. This operation should be blocked.
-    fileOperationManager.paste([fileSystem.entries['/test.txt']],
-        fileSystem.entries['/'],
-        false);
-
-    return waitUntil(function() {
-      return fileOperationManager.getPendingCopyTasksForTesting().length === 1;
-    });
-  }).then(function() {
-    // Asserts that the second operation is added to pending copy tasks. Current
-    // implementation run tasks synchronusly after adding it to pending tasks.
-    // TODO(yawano) This check deeply depends on the implementation. Find a
-    //     better way to test this.
-    var pendingTask = fileOperationManager.getPendingCopyTasksForTesting()[0];
-    assertEquals(fileSystem.entries['/'], pendingTask.targetDirEntry);
-
-    blockableFakeStartCopy.resolveBlockedOperationCallback();
-
-    return waitUntil(function() {
-      return eventLogger.numberOfSuccessEvents === 2;
-    });
-  }).then(function() {
-    // Events should be the following.
-    // BEGIN: first operation
-    // BEGIN: second operation
-    // SUCCESS: first operation
-    // SUCCESS: second operation
-    var events = eventLogger.events;
-    assertEquals(4, events.length);
-    assertEquals('BEGIN', events[0].reason);
-    assertEquals(firstOperationTaskId, events[0].taskId);
-    assertEquals('BEGIN', events[1].reason);
-    assertTrue(events[1].taskId !== firstOperationTaskId);
-    assertEquals('SUCCESS', events[2].reason);
-    assertEquals(firstOperationTaskId, events[2].taskId);
-    assertEquals('SUCCESS', events[3].reason);
-    assertEquals(events[1].taskId, events[3].taskId);
-  }), callback);
-}
-
-/**
- * Tests the fileOperationUtil.paste for copying files in paralell. When
- * destination volumes are different, copy operations can run in paralell.
- */
-function testCopyInParallel(callback) {
-  var fileSystemA = createTestFileSystem('volumeA', {
-    '/': DIRECTORY_SIZE,
-    '/test.txt': 10
-  });
-  var fileSystemB = createTestFileSystem('volumeB', {
-    '/': DIRECTORY_SIZE,
-  });
-  var fileSystems = [fileSystemA, fileSystemB];
-
-  window.webkitResolveLocalFileSystemURL = function(url, success, failure) {
-    return resolveTestFileSystemURL(
-        getFileSystemForURL(fileSystems, url), url, success, failure);
+  window.webkitResolveLocalFileSystemURL = (url, success, failure) => {
+    resolveTestFileSystemURL(fileSystem, url, success, failure);
   };
 
-  var blockableFakeStartCopy = new BlockableFakeStartCopy(
-      'filesystem:volumeB/',
-      fileSystemA.entries['/test.txt'],
-      fileSystems);
-  chrome.fileManagerPrivate.startCopy =
+  const blockableFakeStartCopy = new BlockableFakeStartCopy(
+      'filesystem:testVolume/dest', fileSystem.entries['/test.txt'],
+      [fileSystem]);
+  mockChrome.fileManagerPrivate.startCopy =
       blockableFakeStartCopy.startCopyFunc.bind(blockableFakeStartCopy);
 
   volumeManager = new FakeVolumeManager();
-  fileOperationManager = new FileOperationManager();
+  fileOperationManager = new FileOperationManagerImpl();
 
-  var eventLogger = new EventLogger(fileOperationManager);
+  // Observe the file operation manager's events.
+  const eventLogger = new EventLogger(fileOperationManager);
 
-  // Copy test.txt from volume A to volume B.
-  fileOperationManager.paste([fileSystemA.entries['/test.txt']],
-      fileSystemB.entries['/'],
-      false);
+  // Copy test.txt to /dest. This operation should be blocked.
+  fileOperationManager.paste(
+      [fileSystem.entries['/test.txt']],
+      /** @type {!DirectoryEntry} */ (fileSystem.entries['/dest']), false);
 
-  var firstOperationTaskId;
-  reportPromise(waitUntil(function() {
-    return blockableFakeStartCopy.resolveBlockedOperationCallback !== null;
-  }).then(function() {
-    assertEquals(1, eventLogger.events.length);
-    assertEquals('BEGIN', eventLogger.events[0].reason);
-    firstOperationTaskId = eventLogger.events[0].taskId;
+  let firstOperationTaskId;
+  reportPromise(
+      waitUntil(() => {
+        // Wait until the first operation is blocked.
+        return blockableFakeStartCopy.resolveBlockedOperationCallback !== null;
+      })
+          .then(() => {
+            assertEquals(1, eventLogger.events.length);
+            assertEquals('BEGIN', eventLogger.events[0].reason);
+            firstOperationTaskId = eventLogger.events[0].taskId;
 
-    // Copy test.txt from volume A to volume A. This should not be blocked by
-    // the previous operation.
-    fileOperationManager.paste([fileSystemA.entries['/test.txt']],
-        fileSystemA.entries['/'],
-        false);
+            // Copy test.txt to /. This operation should be blocked.
+            fileOperationManager.paste(
+                [fileSystem.entries['/test.txt']],
+                /** @type {!DirectoryEntry} */ (fileSystem.entries['/']),
+                false);
 
-    // Wait until the second operation is completed.
-    return waitUntil(function() {
-      return eventLogger.numberOfSuccessEvents === 1;
-    });
-  }).then(function() {
-    // Resolve the blocked operation.
-    blockableFakeStartCopy.resolveBlockedOperationCallback();
+            return waitUntil(() => {
+              return fileOperationManager.getPendingCopyTasksForTesting()
+                         .length === 1;
+            });
+          })
+          .then(() => {
+            // Asserts that the second operation is added to pending copy tasks.
+            // Current implementation run tasks synchronusly after adding it to
+            // pending tasks.
+            // TODO(yawano) This check deeply depends on the implementation.
+            // Find a
+            //     better way to test this.
+            const pendingTask =
+                fileOperationManager.getPendingCopyTasksForTesting()[0];
+            assertEquals(fileSystem.entries['/'], pendingTask.targetDirEntry);
 
-    // Wait until the blocked operation is completed.
-    return waitUntil(function() {
-      return eventLogger.numberOfSuccessEvents === 2;
-    });
-  }).then(function() {
-    // Events should be following.
-    // BEGIN: first operation
-    // BEGIN: second operation
-    // SUCCESS: second operation
-    // SUCCESS: first operation
-    var events = eventLogger.events;
-    assertEquals(4, events.length);
-    assertEquals('BEGIN', events[0].reason);
-    assertEquals(firstOperationTaskId, events[0].taskId);
-    assertEquals('BEGIN', events[1].reason);
-    assertTrue(firstOperationTaskId !== events[1].taskId);
-    assertEquals('SUCCESS', events[2].reason);
-    assertEquals(events[1].taskId, events[2].taskId);
-    assertEquals('SUCCESS', events[3].reason);
-    assertEquals(firstOperationTaskId, events[3].taskId);
-  }), callback);
+            blockableFakeStartCopy.resolveBlockedOperationCallback();
+
+            return waitUntil(() => {
+              return eventLogger.numberOfSuccessEvents === 2;
+            });
+          })
+          .then(() => {
+            // Events should be the following.
+            // BEGIN: first operation
+            // BEGIN: second operation
+            // SUCCESS: first operation
+            // SUCCESS: second operation
+            const events = eventLogger.events;
+            assertEquals(4, events.length);
+            assertEquals('BEGIN', events[0].reason);
+            assertEquals(firstOperationTaskId, events[0].taskId);
+            assertEquals('BEGIN', events[1].reason);
+            assertTrue(events[1].taskId !== firstOperationTaskId);
+            assertEquals('SUCCESS', events[2].reason);
+            assertEquals(firstOperationTaskId, events[2].taskId);
+            assertEquals('SUCCESS', events[3].reason);
+            assertEquals(events[1].taskId, events[3].taskId);
+          }),
+      callback);
 }
 
 /**
- * Test case that a copy fails since destination volume is not available.
+ * Tests copying files when the destination volumes are different: the copy
+ * operations should be run in parallel.
+ */
+function testCopyInParallel(callback) {
+  // Prepare entries and their resolver.
+  const fileSystemA = createTestFileSystem('volumeA', {
+    '/': DIRECTORY_SIZE,
+    '/test.txt': 10,
+  });
+  const fileSystemB = createTestFileSystem('volumeB', {
+    '/': DIRECTORY_SIZE,
+  });
+  const fileSystems = [fileSystemA, fileSystemB];
+
+  window.webkitResolveLocalFileSystemURL = (url, success, failure) => {
+    const system = getFileSystemForURL(fileSystems, url);
+    resolveTestFileSystemURL(system, url, success, failure);
+  };
+
+  const blockableFakeStartCopy = new BlockableFakeStartCopy(
+      'filesystem:volumeB/', fileSystemA.entries['/test.txt'], fileSystems);
+  mockChrome.fileManagerPrivate.startCopy =
+      blockableFakeStartCopy.startCopyFunc.bind(blockableFakeStartCopy);
+
+  volumeManager = new FakeVolumeManager();
+  fileOperationManager = new FileOperationManagerImpl();
+
+  // Observe the file operation manager's events.
+  const eventLogger = new EventLogger(fileOperationManager);
+
+  // Copy test.txt from volume A to volume B.
+  fileOperationManager.paste(
+      [fileSystemA.entries['/test.txt']],
+      /** @type {!DirectoryEntry} */ (fileSystemB.entries['/']), false);
+
+  let firstOperationTaskId;
+  reportPromise(
+      waitUntil(() => {
+        return blockableFakeStartCopy.resolveBlockedOperationCallback !== null;
+      })
+          .then(() => {
+            assertEquals(1, eventLogger.events.length);
+            assertEquals('BEGIN', eventLogger.events[0].reason);
+            firstOperationTaskId = eventLogger.events[0].taskId;
+
+            // Copy test.txt from volume A to volume A. This should not be
+            // blocked by the previous operation.
+            fileOperationManager.paste(
+                [fileSystemA.entries['/test.txt']],
+                /** @type {!DirectoryEntry} */ (fileSystemA.entries['/']),
+                false);
+
+            // Wait until the second operation is completed.
+            return waitUntil(() => {
+              return eventLogger.numberOfSuccessEvents === 1;
+            });
+          })
+          .then(() => {
+            // Resolve the blocked operation.
+            blockableFakeStartCopy.resolveBlockedOperationCallback();
+
+            // Wait until the blocked operation is completed.
+            return waitUntil(() => {
+              return eventLogger.numberOfSuccessEvents === 2;
+            });
+          })
+          .then(() => {
+            // Events should be following.
+            // BEGIN: first operation
+            // BEGIN: second operation
+            // SUCCESS: second operation
+            // SUCCESS: first operation
+            const events = eventLogger.events;
+            assertEquals(4, events.length);
+            assertEquals('BEGIN', events[0].reason);
+            assertEquals(firstOperationTaskId, events[0].taskId);
+            assertEquals('BEGIN', events[1].reason);
+            assertTrue(firstOperationTaskId !== events[1].taskId);
+            assertEquals('SUCCESS', events[2].reason);
+            assertEquals(events[1].taskId, events[2].taskId);
+            assertEquals('SUCCESS', events[3].reason);
+            assertEquals(firstOperationTaskId, events[3].taskId);
+          }),
+      callback);
+}
+
+/**
+ * Tests that copy operations fail when the destination volume is not
+ * available.
  */
 function testCopyFails(callback) {
-  var fileSystem = createTestFileSystem('testVolume', {
+  // Prepare entries.
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
-    '/test.txt': 10
+    '/test.txt': 10,
   });
 
   volumeManager = {
     /* Mocking volume manager. */
     getVolumeInfo: function() {
-      // Return null to simulate that the volume info is not available.
+      // Returns null to indicate that the volume is not available.
       return null;
     }
   };
-  fileOperationManager = new FileOperationManager();
+  fileOperationManager = new FileOperationManagerImpl();
 
-  var eventLogger = new EventLogger(fileOperationManager);
+  // Observe the file operation manager's events.
+  const eventLogger = new EventLogger(fileOperationManager);
 
-  // Copy test.txt to /.
-  fileOperationManager.paste([fileSystem.entries['/test.txt']],
-      fileSystem.entries['/'],
-      false);
+  // Copy test.txt to /, which should fail.
+  fileOperationManager.paste(
+      [fileSystem.entries['/test.txt']],
+      /** @type {!DirectoryEntry} */ (fileSystem.entries['/']), false);
 
-  reportPromise(waitUntil(function() {
-    return eventLogger.numberOfErrorEvents === 1;
-  }).then(function() {
-    // Since the task fails with an error, pending copy tasks should be empty.
-    assertEquals(0,
-        fileOperationManager.getPendingCopyTasksForTesting().length);
+  reportPromise(
+      waitUntil(() => {
+        return eventLogger.numberOfErrorEvents === 1;
+      }).then(() => {
+        // Since the task fails with an error, pending copy tasks should be
+        // empty.
+        assertEquals(
+            0, fileOperationManager.getPendingCopyTasksForTesting().length);
 
-    // Check events.
-    var events = eventLogger.events;
-    assertEquals(2, events.length);
-    assertEquals('BEGIN', events[0].reason);
-    assertEquals('ERROR', events[1].reason);
-    assertEquals(events[0].taskId, events[1].taskId);
-  }), callback);
+        // Check events.
+        const events = eventLogger.events;
+        assertEquals(2, events.length);
+        assertEquals('BEGIN', events[0].reason);
+        assertEquals('ERROR', events[1].reason);
+        assertEquals(events[0].taskId, events[1].taskId);
+      }),
+      callback);
 }
 
 /**
  * Tests the fileOperationUtil.paste for move.
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testMove(callback) {
   // Prepare entries and their resolver.
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/directory': DIRECTORY_SIZE,
     '/test.txt': 10,
   });
-  window.webkitResolveLocalFileSystemURL =
-      resolveTestFileSystemURL.bind(null, fileSystem);
+  window.webkitResolveLocalFileSystemURL = (url, success, failure) => {
+    resolveTestFileSystemURL(fileSystem, url, success, failure);
+  };
 
   volumeManager = new FakeVolumeManager();
-  fileOperationManager = new FileOperationManager();
+  fileOperationManager = new FileOperationManagerImpl();
 
-  // Observing manager's events.
-  var eventsPromise = waitForEvents(fileOperationManager);
+  // Observe the file operation manager's events.
+  const eventsPromise = waitForEvents(fileOperationManager);
 
   // Verify the events.
-  reportPromise(eventsPromise.then(function(events) {
-    var firstEvent = events[0];
-    assertEquals('BEGIN', firstEvent.reason);
-    assertEquals(1, firstEvent.status.numRemainingItems);
-    assertEquals(0, firstEvent.status.processedBytes);
-    assertEquals(1, firstEvent.status.totalBytes);
+  reportPromise(
+      eventsPromise.then(events => {
+        const firstEvent = events[0];
+        assertEquals('BEGIN', firstEvent.reason);
+        assertEquals(1, firstEvent.status.numRemainingItems);
+        assertEquals(0, firstEvent.status.processedBytes);
+        assertEquals(1, firstEvent.status.totalBytes);
 
-    var lastEvent = events[events.length - 1];
-    assertEquals('SUCCESS', lastEvent.reason);
-    assertEquals(0, lastEvent.status.numRemainingItems);
-    assertEquals(1, lastEvent.status.processedBytes);
-    assertEquals(1, lastEvent.status.totalBytes);
+        const lastEvent = events[events.length - 1];
+        assertEquals('SUCCESS', lastEvent.reason);
+        assertEquals(0, lastEvent.status.numRemainingItems);
+        assertEquals(1, lastEvent.status.processedBytes);
+        assertEquals(1, lastEvent.status.totalBytes);
 
-    assertTrue(events.some(function(event) {
-      return event.type === 'entries-changed' &&
-          event.kind === util.EntryChangedKind.DELETED &&
-          event.entries[0].fullPath === '/test.txt';
-    }));
+        assertTrue(events.some(event => {
+          return event.type === 'entries-changed' &&
+              event.kind === util.EntryChangedKind.DELETED &&
+              event.entries[0].fullPath === '/test.txt';
+        }));
 
-    assertTrue(events.some(function(event) {
-      return event.type === 'entries-changed' &&
-          event.kind === util.EntryChangedKind.CREATED &&
-          event.entries[0].fullPath === '/directory/test.txt';
-    }));
+        assertTrue(events.some(event => {
+          return event.type === 'entries-changed' &&
+              event.kind === util.EntryChangedKind.CREATED &&
+              event.entries[0].fullPath === '/directory/test.txt';
+        }));
 
-    assertFalse(events.some(function(event) {
-      return event.type === 'delete';
-    }));
-  }), callback);
+        assertFalse(events.some(event => {
+          return event.type === 'delete';
+        }));
+      }),
+      callback);
 
   fileOperationManager.paste(
       [fileSystem.entries['/test.txt']],
-      fileSystem.entries['/directory'],
-      true);
+      /** @type {!DirectoryEntry} */ (fileSystem.entries['/directory']), true);
 }
 
 /**
- * Tests the fileOperationUtil.deleteEntries.
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * Tests fileOperationManager.deleteEntries.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testDelete(callback) {
   // Prepare entries and their resolver.
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/test.txt': 10,
   });
-  window.webkitResolveLocalFileSystemURL =
-      resolveTestFileSystemURL.bind(null, fileSystem);
+  window.webkitResolveLocalFileSystemURL = (url, success, failure) => {
+    resolveTestFileSystemURL(fileSystem, url, success, failure);
+  };
 
   // Observing manager's events.
-  reportPromise(waitForEvents(fileOperationManager).then(function(events) {
-    assertEquals('delete', events[0].type);
-    assertEquals('BEGIN', events[0].reason);
-    assertEquals(10, events[0].totalBytes);
-    assertEquals(0, events[0].processedBytes);
+  reportPromise(
+      waitForEvents(fileOperationManager).then(events => {
+        assertEquals('delete', events[0].type);
+        assertEquals('BEGIN', events[0].reason);
+        assertEquals(10, events[0].totalBytes);
+        assertEquals(0, events[0].processedBytes);
 
-    var lastEvent = events[events.length - 1];
-    assertEquals('delete', lastEvent.type);
-    assertEquals('SUCCESS', lastEvent.reason);
-    assertEquals(10, lastEvent.totalBytes);
-    assertEquals(10, lastEvent.processedBytes);
+        const lastEvent = events[events.length - 1];
+        assertEquals('delete', lastEvent.type);
+        assertEquals('SUCCESS', lastEvent.reason);
+        assertEquals(10, lastEvent.totalBytes);
+        assertEquals(10, lastEvent.processedBytes);
 
-    assertFalse(events.some(function(event) {
-      return event.type === 'copy-progress';
-    }));
-  }), callback);
+        assertFalse(events.some(event => {
+          return event.type === 'copy-progress';
+        }));
+      }),
+      callback);
 
   fileOperationManager.deleteEntries([fileSystem.entries['/test.txt']]);
 }
 
 /**
- * Tests the fileOperationUtil.zipSelection.
- * @param {function(boolean:hasError)} callback Callback to be passed true on
- *     error.
+ * Tests fileOperationManager.zipSelection.
+ * @param {function(boolean)} callback Callback to be passed true on error.
  */
 function testZip(callback) {
   // Prepare entries and their resolver.
-  var fileSystem = createTestFileSystem('testVolume', {
+  const fileSystem = createTestFileSystem('testVolume', {
     '/': DIRECTORY_SIZE,
     '/test.txt': 10,
   });
-  window.webkitResolveLocalFileSystemURL =
-      resolveTestFileSystemURL.bind(null, fileSystem);
-  chrome.fileManagerPrivate.zipSelection =
-      function(parent, sources, newName, success, error) {
-        var newPath = joinPath('/', newName);
-        var newEntry = new MockFileEntry(fileSystem, newPath, {size: 10});
-        fileSystem.entries[newPath] = newEntry;
-        success(newEntry);
-      };
+  window.webkitResolveLocalFileSystemURL = function(url, success, failure) {
+    resolveTestFileSystemURL(fileSystem, url, success, failure);
+  };
+
+  mockChrome.fileManagerPrivate.zipSelection = function(
+      sources, parent, newName, success, error) {
+    const newPath = joinPath('/', newName);
+    const newEntry = new MockFileEntry(
+        fileSystem, newPath, /** @type {!Metadata} */ ({size: 10}));
+    fileSystem.entries[newPath] = newEntry;
+    success(newEntry);
+  };
 
   volumeManager = new FakeVolumeManager();
-  fileOperationManager = new FileOperationManager();
+  fileOperationManager = new FileOperationManagerImpl();
 
   // Observing manager's events.
-  reportPromise(waitForEvents(fileOperationManager).then(function(events) {
-    assertEquals('copy-progress', events[0].type);
-    assertEquals('BEGIN', events[0].reason);
-    assertEquals(1, events[0].status.totalBytes);
-    assertEquals(0, events[0].status.processedBytes);
+  reportPromise(
+      waitForEvents(fileOperationManager).then(events => {
+        assertEquals('copy-progress', events[0].type);
+        assertEquals('BEGIN', events[0].reason);
+        assertEquals(1, events[0].status.totalBytes);
+        assertEquals(0, events[0].status.processedBytes);
 
-    var lastEvent = events[events.length - 1];
-    assertEquals('copy-progress', lastEvent.type);
-    assertEquals('SUCCESS', lastEvent.reason);
-    assertEquals(10, lastEvent.status.totalBytes);
-    assertEquals(10, lastEvent.status.processedBytes);
+        const lastEvent = events[events.length - 1];
+        assertEquals('copy-progress', lastEvent.type);
+        assertEquals('SUCCESS', lastEvent.reason);
+        assertEquals(10, lastEvent.status.totalBytes);
+        assertEquals(10, lastEvent.status.processedBytes);
 
-    assertFalse(events.some(function(event) {
-      return event.type === 'delete';
-    }));
+        assertFalse(events.some(event => {
+          return event.type === 'delete';
+        }));
 
-    assertTrue(events.some(function(event) {
-      return event.type === 'entries-changed' &&
-          event.entries[0].fullPath === '/test.zip';
-    }));
-  }), callback);
+        assertTrue(events.some(event => {
+          return event.type === 'entries-changed' &&
+              event.entries[0].fullPath === '/test.zip';
+        }));
+      }),
+      callback);
 
   fileOperationManager.zipSelection(
-      fileSystem.entries['/'],
-      [fileSystem.entries['/test.txt']]);
+      [fileSystem.entries['/test.txt']],
+      /** @type {!DirectoryEntry} */ (fileSystem.entries['/']));
 }

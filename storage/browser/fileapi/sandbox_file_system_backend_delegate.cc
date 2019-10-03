@@ -10,6 +10,8 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
@@ -24,6 +26,7 @@
 #include "storage/browser/fileapi/file_system_url.h"
 #include "storage/browser/fileapi/file_system_usage_cache.h"
 #include "storage/browser/fileapi/obfuscated_file_util.h"
+#include "storage/browser/fileapi/obfuscated_file_util_memory_delegate.h"
 #include "storage/browser/fileapi/quota/quota_backend_impl.h"
 #include "storage/browser/fileapi/quota/quota_reservation.h"
 #include "storage/browser/fileapi/quota/quota_reservation_manager.h"
@@ -32,6 +35,7 @@
 #include "storage/browser/fileapi/sandbox_quota_observer.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/fileapi/file_system_util.h"
+#include "url/origin.h"
 
 namespace storage {
 
@@ -89,13 +93,13 @@ std::set<std::string> GetKnownTypeStrings() {
   return known_type_strings;
 }
 
-class ObfuscatedOriginEnumerator
+class SandboxObfuscatedOriginEnumerator
     : public SandboxFileSystemBackendDelegate::OriginEnumerator {
  public:
-  explicit ObfuscatedOriginEnumerator(ObfuscatedFileUtil* file_util) {
-    enum_.reset(file_util->CreateOriginEnumerator());
+  explicit SandboxObfuscatedOriginEnumerator(ObfuscatedFileUtil* file_util) {
+    enum_ = file_util->CreateOriginEnumerator();
   }
-  ~ObfuscatedOriginEnumerator() override = default;
+  ~SandboxObfuscatedOriginEnumerator() override = default;
 
   GURL Next() override { return enum_->Next(); }
 
@@ -108,12 +112,11 @@ class ObfuscatedOriginEnumerator
   std::unique_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enum_;
 };
 
-void OpenFileSystemOnFileTaskRunner(
-    ObfuscatedFileUtil* file_util,
-    const GURL& origin_url,
-    FileSystemType type,
-    OpenFileSystemMode mode,
-    base::File::Error* error_ptr) {
+void OpenSandboxFileSystemOnFileTaskRunner(ObfuscatedFileUtil* file_util,
+                                           const GURL& origin_url,
+                                           FileSystemType type,
+                                           OpenFileSystemMode mode,
+                                           base::File::Error* error_ptr) {
   DCHECK(error_ptr);
   const bool create = (mode == OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT);
   file_util->GetDirectoryForOriginAndType(
@@ -178,18 +181,20 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
     base::SequencedTaskRunner* file_task_runner,
     const base::FilePath& profile_path,
     storage::SpecialStoragePolicy* special_storage_policy,
-    const FileSystemOptions& file_system_options)
+    const FileSystemOptions& file_system_options,
+    leveldb::Env* env_override)
     : file_task_runner_(file_task_runner),
       quota_manager_proxy_(quota_manager_proxy),
-      sandbox_file_util_(new AsyncFileUtilAdapter(
+      sandbox_file_util_(std::make_unique<AsyncFileUtilAdapter>(
           new ObfuscatedFileUtil(special_storage_policy,
                                  profile_path.Append(kFileSystemDirectory),
-                                 file_system_options.env_override(),
-                                 file_task_runner,
-                                 base::Bind(&GetTypeStringForURL),
+                                 env_override,
+                                 base::BindRepeating(&GetTypeStringForURL),
                                  GetKnownTypeStrings(),
-                                 this))),
-      file_system_usage_cache_(new FileSystemUsageCache(file_task_runner)),
+                                 this,
+                                 file_system_options.is_incognito()))),
+      file_system_usage_cache_(std::make_unique<FileSystemUsageCache>(
+          file_system_options.is_incognito())),
       quota_observer_(new SandboxQuotaObserver(quota_manager_proxy,
                                                file_task_runner,
                                                obfuscated_file_util(),
@@ -211,17 +216,16 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
       !file_task_runner_->RunsTasksInCurrentSequence()) {
     std::vector<std::string> types_to_prepopulate(
         &kPrepopulateTypes[0],
-        &kPrepopulateTypes[arraysize(kPrepopulateTypes)]);
+        &kPrepopulateTypes[base::size(kPrepopulateTypes)]);
     file_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&ObfuscatedFileUtil::MaybePrepopulateDatabase,
-                  base::Unretained(obfuscated_file_util()),
-                  types_to_prepopulate));
+        FROM_HERE, base::BindOnce(&ObfuscatedFileUtil::MaybePrepopulateDatabase,
+                                  base::Unretained(obfuscated_file_util()),
+                                  types_to_prepopulate));
   }
 }
 
 SandboxFileSystemBackendDelegate::~SandboxFileSystemBackendDelegate() {
-  io_thread_checker_.DetachFromThread();
+  DETACH_FROM_THREAD(io_thread_checker_);
 
   if (!file_task_runner_->RunsTasksInCurrentSequence()) {
     DeleteSoon(file_task_runner_.get(), quota_reservation_manager_.release());
@@ -233,7 +237,7 @@ SandboxFileSystemBackendDelegate::~SandboxFileSystemBackendDelegate() {
 
 SandboxFileSystemBackendDelegate::OriginEnumerator*
 SandboxFileSystemBackendDelegate::CreateOriginEnumerator() {
-  return new ObfuscatedOriginEnumerator(obfuscated_file_util());
+  return new SandboxObfuscatedOriginEnumerator(obfuscated_file_util());
 }
 
 base::FilePath
@@ -268,21 +272,23 @@ void SandboxFileSystemBackendDelegate::OpenFileSystem(
       (quota_manager_proxy_.get())
           ? base::BindOnce(&QuotaManagerProxy::NotifyStorageAccessed,
                            quota_manager_proxy_,
-                           storage::QuotaClient::kFileSystem, origin_url,
+                           storage::QuotaClient::kFileSystem,
+                           url::Origin::Create(origin_url),
                            FileSystemTypeToQuotaStorageType(type))
-          : base::BindOnce(&base::DoNothing);
+          : base::DoNothing();
 
   base::File::Error* error_ptr = new base::File::Error;
   file_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::BindOnce(&OpenFileSystemOnFileTaskRunner, obfuscated_file_util(),
-                     origin_url, type, mode, base::Unretained(error_ptr)),
+      base::BindOnce(&OpenSandboxFileSystemOnFileTaskRunner,
+                     obfuscated_file_util(), origin_url, type, mode,
+                     base::Unretained(error_ptr)),
       base::BindOnce(&DidOpenFileSystem, weak_factory_.GetWeakPtr(),
                      std::move(quota_callback),
                      base::BindOnce(std::move(callback), root_url, name),
                      base::Owned(error_ptr)));
 
-  io_thread_checker_.DetachFromThread();
+  DETACH_FROM_THREAD(io_thread_checker_);
   is_filesystem_opened_ = true;
 }
 
@@ -309,17 +315,16 @@ SandboxFileSystemBackendDelegate::CreateFileSystemOperationContext(
   return operation_context;
 }
 
-std::unique_ptr<storage::FileStreamReader>
+std::unique_ptr<FileStreamReader>
 SandboxFileSystemBackendDelegate::CreateFileStreamReader(
     const FileSystemURL& url,
     int64_t offset,
     const base::Time& expected_modification_time,
     FileSystemContext* context) const {
   if (!IsAccessValid(url))
-    return std::unique_ptr<storage::FileStreamReader>();
-  return std::unique_ptr<storage::FileStreamReader>(
-      storage::FileStreamReader::CreateForFileSystemFile(
-          context, url, offset, expected_modification_time));
+    return nullptr;
+  return FileStreamReader::CreateForFileSystemFile(context, url, offset,
+                                                   expected_modification_time);
 }
 
 std::unique_ptr<FileStreamWriter>
@@ -349,15 +354,22 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
   bool result = obfuscated_file_util()->DeleteDirectoryForOriginAndType(
       origin_url, GetTypeString(type));
   if (result && proxy && usage) {
-    proxy->NotifyStorageModified(storage::QuotaClient::kFileSystem,
-                                 origin_url,
-                                 FileSystemTypeToQuotaStorageType(type),
-                                 -usage);
+    proxy->NotifyStorageModified(
+        storage::QuotaClient::kFileSystem, url::Origin::Create(origin_url),
+        FileSystemTypeToQuotaStorageType(type), -usage);
   }
 
   if (result)
     return base::File::FILE_OK;
   return base::File::FILE_ERROR_FAILED;
+}
+
+void SandboxFileSystemBackendDelegate::PerformStorageCleanupOnFileTaskRunner(
+    FileSystemContext* context,
+    storage::QuotaManagerProxy* proxy,
+    FileSystemType type) {
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
+  obfuscated_file_util()->RewriteDatabases();
 }
 
 void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
@@ -404,14 +416,15 @@ int64_t SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
 
   // Don't use usage cache and return recalculated usage for sticky invalidated
   // origins.
-  if (base::ContainsKey(sticky_dirty_origins_,
-                        std::make_pair(origin_url, type)))
+  if (base::Contains(sticky_dirty_origins_, std::make_pair(origin_url, type)))
     return RecalculateUsage(file_system_context, origin_url, type);
 
   base::FilePath base_path =
       GetBaseDirectoryForOriginAndType(origin_url, type, false);
-  if (base_path.empty() || !base::DirectoryExists(base_path))
+  if (base_path.empty() ||
+      !obfuscated_file_util()->delegate()->DirectoryExists(base_path)) {
     return 0;
+  }
   base::FilePath usage_file_path =
       base_path.Append(FileSystemUsageCache::kUsageFileName);
 
@@ -443,14 +456,17 @@ SandboxFileSystemBackendDelegate::CreateQuotaReservationOnFileTaskRunner(
     FileSystemType type) {
   DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(quota_reservation_manager_);
-  return quota_reservation_manager_->CreateReservation(origin, type);
+  return quota_reservation_manager_->CreateReservation(
+      url::Origin::Create(origin), type);
 }
 
 void SandboxFileSystemBackendDelegate::AddFileUpdateObserver(
     FileSystemType type,
     FileUpdateObserver* observer,
     base::SequencedTaskRunner* task_runner) {
+#if DCHECK_IS_ON()
   DCHECK(!is_filesystem_opened_ || io_thread_checker_.CalledOnValidThread());
+#endif
   update_observers_[type] =
       update_observers_[type].AddObserver(observer, task_runner);
 }
@@ -459,7 +475,9 @@ void SandboxFileSystemBackendDelegate::AddFileChangeObserver(
     FileSystemType type,
     FileChangeObserver* observer,
     base::SequencedTaskRunner* task_runner) {
+#if DCHECK_IS_ON()
   DCHECK(!is_filesystem_opened_ || io_thread_checker_.CalledOnValidThread());
+#endif
   change_observers_[type] =
       change_observers_[type].AddObserver(observer, task_runner);
 }
@@ -468,35 +486,34 @@ void SandboxFileSystemBackendDelegate::AddFileAccessObserver(
     FileSystemType type,
     FileAccessObserver* observer,
     base::SequencedTaskRunner* task_runner) {
+#if DCHECK_IS_ON()
   DCHECK(!is_filesystem_opened_ || io_thread_checker_.CalledOnValidThread());
+#endif
   access_observers_[type] =
       access_observers_[type].AddObserver(observer, task_runner);
 }
 
 const UpdateObserverList* SandboxFileSystemBackendDelegate::GetUpdateObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, UpdateObserverList>::const_iterator iter =
-      update_observers_.find(type);
+  auto iter = update_observers_.find(type);
   if (iter == update_observers_.end())
-    return NULL;
+    return nullptr;
   return &iter->second;
 }
 
 const ChangeObserverList* SandboxFileSystemBackendDelegate::GetChangeObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, ChangeObserverList>::const_iterator iter =
-      change_observers_.find(type);
+  auto iter = change_observers_.find(type);
   if (iter == change_observers_.end())
-    return NULL;
+    return nullptr;
   return &iter->second;
 }
 
 const AccessObserverList* SandboxFileSystemBackendDelegate::GetAccessObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, AccessObserverList>::const_iterator iter =
-      access_observers_.find(type);
+  auto iter = access_observers_.find(type);
   if (iter == access_observers_.end())
-    return NULL;
+    return nullptr;
   return &iter->second;
 }
 
@@ -530,7 +547,7 @@ FileSystemFileUtil* SandboxFileSystemBackendDelegate::sync_file_util() {
 
 bool SandboxFileSystemBackendDelegate::IsAccessValid(
     const FileSystemURL& url) const {
-  if (!IsAllowedScheme(url.origin()))
+  if (!IsAllowedScheme(url.origin().GetURL()))
     return false;
 
   if (url.path().ReferencesParent())
@@ -547,12 +564,12 @@ bool SandboxFileSystemBackendDelegate::IsAccessValid(
   // http://dev.w3.org/2009/dap/file-system/file-dir-sys.html#naming-restrictions
   base::FilePath filename = VirtualPath::BaseName(url.path());
   // See if the name is allowed to create.
-  for (size_t i = 0; i < arraysize(kRestrictedNames); ++i) {
-    if (filename.value() == kRestrictedNames[i])
+  for (const auto* const restricted_name : kRestrictedNames) {
+    if (filename.value() == restricted_name)
       return false;
   }
-  for (size_t i = 0; i < arraysize(kRestrictedChars); ++i) {
-    if (filename.value().find(kRestrictedChars[i]) !=
+  for (const auto& restricted_char : kRestrictedChars) {
+    if (filename.value().find(restricted_char) !=
         base::FilePath::StringType::npos)
       return false;
   }
@@ -697,20 +714,25 @@ ObfuscatedFileUtil* SandboxFileSystemBackendDelegate::obfuscated_file_util() {
   return static_cast<ObfuscatedFileUtil*>(sync_file_util());
 }
 
+base::WeakPtr<ObfuscatedFileUtilMemoryDelegate>
+SandboxFileSystemBackendDelegate::memory_file_util_delegate() {
+  DCHECK(obfuscated_file_util()->is_incognito());
+  return static_cast<ObfuscatedFileUtilMemoryDelegate*>(
+             obfuscated_file_util()->delegate())
+      ->GetWeakPtr();
+}
+
 // Declared in obfuscated_file_util.h.
 // static
 ObfuscatedFileUtil* ObfuscatedFileUtil::CreateForTesting(
     storage::SpecialStoragePolicy* special_storage_policy,
     const base::FilePath& file_system_directory,
     leveldb::Env* env_override,
-    base::SequencedTaskRunner* file_task_runner) {
-  return new ObfuscatedFileUtil(special_storage_policy,
-                                file_system_directory,
+    bool is_incognito) {
+  return new ObfuscatedFileUtil(special_storage_policy, file_system_directory,
                                 env_override,
-                                file_task_runner,
-                                base::Bind(&GetTypeStringForURL),
-                                GetKnownTypeStrings(),
-                                NULL);
+                                base::BindRepeating(&GetTypeStringForURL),
+                                GetKnownTypeStrings(), nullptr, is_incognito);
 }
 
 }  // namespace storage

@@ -10,6 +10,10 @@
 
 #include "v8/include/v8.h"
 
+namespace blink {
+class WebLocalFrame;
+}
+
 namespace extensions {
 class ScriptContext;
 struct Message;
@@ -27,6 +31,7 @@ extern const char kOnRequestEvent[];
 extern const char kOnRequestExternalEvent[];
 extern const char kOnConnectEvent[];
 extern const char kOnConnectExternalEvent[];
+extern const char kOnConnectNativeEvent[];
 
 extern const int kNoFrameId;
 
@@ -36,8 +41,10 @@ std::unique_ptr<Message> MessageFromV8(v8::Local<v8::Context> context,
                                        v8::Local<v8::Value> value,
                                        std::string* error);
 // Same as above, but expects a serialized JSON string instead of a value.
-std::unique_ptr<Message> MessageFromJSONString(v8::Local<v8::String> json,
-                                               std::string* error);
+std::unique_ptr<Message> MessageFromJSONString(v8::Isolate* isolate,
+                                               v8::Local<v8::String> json,
+                                               std::string* error,
+                                               blink::WebLocalFrame* web_frame);
 
 // Converts a message to a v8 value. This is expected not to fail, since it
 // should only be used for messages that have been validated.
@@ -48,13 +55,6 @@ v8::Local<v8::Value> MessageToV8(v8::Local<v8::Context> context,
 // valid integer, but is stored in V8 as a number). This will DCHECK that
 // |value| is either an int32 or -0.
 int ExtractIntegerId(v8::Local<v8::Value> value);
-
-// The result of the call to ParseMessageOptions().
-enum ParseOptionsResult {
-  TYPE_ERROR,  // The arguments were invalid.
-  THROWN,      // The script threw an error during parsing.
-  SUCCESS,     // Parsing succeeded.
-};
 
 // Flags for ParseMessageOptions().
 enum ParseOptionsFlags {
@@ -70,16 +70,11 @@ struct MessageOptions {
   bool include_tls_channel_id = false;
 };
 
-// Parses the parameters sent to sendMessage or connect, returning the result of
-// the attempted parse. If |check_for_channel_name| is true, also checks for a
-// provided channel name (this is only true for connect() calls). Populates the
-// result in |params_out| or |error_out| (depending on the success of the
-// parse).
-ParseOptionsResult ParseMessageOptions(v8::Local<v8::Context> context,
-                                       v8::Local<v8::Object> v8_options,
-                                       int flags,
-                                       MessageOptions* options_out,
-                                       std::string* error_out);
+// Parses and returns the options parameter for sendMessage or connect.
+// |flags| specifies additional properties to look for on the object.
+MessageOptions ParseMessageOptions(v8::Local<v8::Context> context,
+                                   v8::Local<v8::Object> v8_options,
+                                   int flags);
 
 // Parses the target from |v8_target_id|, or uses the extension associated with
 // the |script_context| as a default. Returns true on success, and false on

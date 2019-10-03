@@ -33,6 +33,7 @@ extern const char kProcessTypeDesktop[];
 extern const char kProcessTypeHost[];
 extern const char kProcessTypeRdpDesktopSession[];
 extern const char kProcessTypeEvaluateCapability[];
+extern const char kProcessTypeFileChooser[];
 
 extern const char kEvaluateCapabilitySwitchName[];
 
@@ -40,6 +41,8 @@ extern const char kEvaluateCapabilitySwitchName[];
 #if defined(OS_WIN)
 // Executes EvaluateD3D() function.
 extern const char kEvaluateD3D[];
+// Executes Evaluate3dDisplayMode() function.
+extern const char kEvaluate3dDisplayMode[];
 #endif
 
 // Used to pass the HWND for the parent process to a child process.
@@ -54,6 +57,9 @@ extern const char kOutputSwitchName[];
 // Token used to create a message pipe between a pair of child and parent
 // processes.
 extern const char kMojoPipeToken[];
+
+// Switch to upgrade the host config with a new refresh token.
+extern const char kUpgradeTokenSwitchName[];
 
 }  // namespace remoting
 

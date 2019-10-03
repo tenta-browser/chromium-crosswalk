@@ -23,8 +23,13 @@ class MockImageGenerator : public FakePaintImageGenerator {
       : FakePaintImageGenerator(
             SkImageInfo::MakeN32Premul(size.width(), size.height())) {}
 
-  MOCK_METHOD5(GetPixels,
-               bool(const SkImageInfo&, void*, size_t, size_t, uint32_t));
+  MOCK_METHOD6(GetPixels,
+               bool(const SkImageInfo&,
+                    void*,
+                    size_t,
+                    size_t,
+                    PaintImage::GeneratorClientId,
+                    uint32_t));
 };
 
 class MockImageProvider : public ImageProvider {
@@ -32,17 +37,18 @@ class MockImageProvider : public ImageProvider {
   MockImageProvider() = default;
   ~MockImageProvider() override = default;
 
-  ScopedDecodedDrawImage GetDecodedDrawImage(
+  ImageProvider::ScopedResult GetRasterContent(
       const DrawImage& draw_image) override {
+    DCHECK(!draw_image.paint_image().IsPaintWorklet());
     draw_image_ = draw_image;
 
     SkBitmap bitmap;
     bitmap.allocN32Pixels(10, 10);
     bitmap.eraseColor(SK_ColorBLACK);
     sk_sp<SkImage> image = SkImage::MakeFromBitmap(bitmap);
-    return ScopedDecodedDrawImage(
-        DecodedDrawImage(image, SkSize::MakeEmpty(), SkSize::Make(1.0f, 1.0f),
-                         draw_image.filter_quality()));
+    return ScopedResult(DecodedDrawImage(image, SkSize::MakeEmpty(),
+                                         SkSize::Make(1.0f, 1.0f),
+                                         draw_image.filter_quality(), true));
   }
 
   const DrawImage& draw_image() const { return draw_image_; }
@@ -56,9 +62,8 @@ class MockImageProvider : public ImageProvider {
 TEST(PaintShaderTest, RasterizationRectForRecordShaders) {
   SkMatrix local_matrix = SkMatrix::MakeScale(0.5f, 0.5f);
   auto record_shader = PaintShader::MakePaintRecord(
-      sk_make_sp<PaintOpBuffer>(), SkRect::MakeWH(100, 100),
-      SkShader::TileMode::kClamp_TileMode, SkShader::TileMode::kClamp_TileMode,
-      &local_matrix);
+      sk_make_sp<PaintOpBuffer>(), SkRect::MakeWH(100, 100), SkTileMode::kClamp,
+      SkTileMode::kClamp, &local_matrix);
 
   SkRect tile_rect;
   SkMatrix ctm = SkMatrix::MakeScale(0.5f, 0.5f);
@@ -82,8 +87,9 @@ TEST(PaintShaderTest, DecodePaintRecord) {
   record->push<DrawImageOp>(paint_image, 0.f, 0.f, nullptr);
   SkMatrix local_matrix = SkMatrix::MakeScale(0.5f, 0.5f);
   auto record_shader = PaintShader::MakePaintRecord(
-      record, SkRect::MakeWH(100, 100), SkShader::TileMode::kClamp_TileMode,
-      SkShader::TileMode::kClamp_TileMode, &local_matrix);
+      record, SkRect::MakeWH(100, 100), SkTileMode::kClamp, SkTileMode::kClamp,
+      &local_matrix);
+  record_shader->set_has_animated_images(true);
 
   PaintOpBuffer buffer;
   PaintFlags flags;
@@ -93,13 +99,13 @@ TEST(PaintShaderTest, DecodePaintRecord) {
 
   MockImageProvider image_provider;
   SaveCountingCanvas canvas;
-  buffer.Playback(&canvas, &image_provider);
+  buffer.Playback(&canvas, PlaybackParams(&image_provider));
 
   EXPECT_EQ(canvas.draw_rect_, SkRect::MakeWH(100, 100));
   SkShader* shader = canvas.paint_.getShader();
   ASSERT_TRUE(shader);
   SkMatrix decoded_local_matrix;
-  SkShader::TileMode xy[2];
+  SkTileMode xy[2];
   SkImage* skia_image = shader->isAImage(&decoded_local_matrix, xy);
   ASSERT_TRUE(skia_image);
   EXPECT_TRUE(skia_image->isLazyGenerated());
@@ -114,7 +120,8 @@ TEST(PaintShaderTest, DecodePaintRecord) {
 
   // Using the shader requests decode for images at the correct scale.
   EXPECT_EQ(image_provider.draw_image().paint_image(), paint_image);
-  EXPECT_EQ(image_provider.draw_image().scale(), SkSize::Make(0.25f, 0.25f));
+  EXPECT_EQ(image_provider.draw_image().scale().width(), 0.25f);
+  EXPECT_EQ(image_provider.draw_image().scale().height(), 0.25f);
 }
 
 }  // namespace cc

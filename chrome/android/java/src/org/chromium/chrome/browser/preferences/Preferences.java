@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.preferences;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.app.Fragment;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -14,21 +13,25 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.graphics.BitmapFactory;
 import android.nfc.NfcAdapter;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
-import android.preference.Preference;
-import android.preference.PreferenceFragment;
-import android.preference.PreferenceFragment.OnPreferenceStartFragmentCallback;
-import android.support.v7.app.AppCompatActivity;
+import android.support.graphics.drawable.VectorDrawableCompat;
+import android.support.v4.app.Fragment;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceFragmentCompat;
+import android.support.v7.widget.RecyclerView;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -41,12 +44,29 @@ import org.chromium.chrome.browser.profiles.ProfileManagerUtils;
  * through settings, a separate Preferences activity is created for each screen. Thus each fragment
  * may freely modify its activity's action bar or title. This mimics the behavior of
  * android.preference.PreferenceActivity.
+ *
+ * If the preference overrides the root layout (e.g. {@link HomepageEditor}), add the following:
+ * 1) preferences_action_bar_shadow.xml to the custom XML hierarchy and
+ * 2) an OnScrollChangedListener to the main content's view's view tree observer via
+ *    PreferenceUtils.getShowShadowOnScrollListener(...).
  */
-public class Preferences extends AppCompatActivity implements
-        OnPreferenceStartFragmentCallback {
+public class Preferences extends ChromeBaseAppCompatActivity
+        implements PreferenceFragmentCompat.OnPreferenceStartFragmentCallback {
+    /**
+     * Preference fragments may implement this interface to intercept "Back" button taps in this
+     * activity.
+     */
+    public interface OnBackPressedListener {
+        /**
+         * Called when the user taps "Back".
+         * @return Whether "Back" button was handled by the fragment. If this method returns false,
+         *         the activity should handle the event itself.
+         */
+        boolean onBackPressed();
+    }
 
-    public static final String EXTRA_SHOW_FRAGMENT = "show_fragment";
-    public static final String EXTRA_SHOW_FRAGMENT_ARGUMENTS = "show_fragment_args";
+    static final String EXTRA_SHOW_FRAGMENT = "show_fragment";
+    static final String EXTRA_SHOW_FRAGMENT_ARGUMENTS = "show_fragment_args";
 
     private static final String TAG = "Preferences";
 
@@ -87,13 +107,16 @@ public class Preferences extends AppCompatActivity implements
         Bundle initialArguments = getIntent().getBundleExtra(EXTRA_SHOW_FRAGMENT_ARGUMENTS);
 
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        getSupportActionBar().setElevation(0);
 
         // If savedInstanceState is non-null, then the activity is being
         // recreated and super.onCreate() has already recreated the fragment.
         if (savedInstanceState == null) {
             if (initialFragment == null) initialFragment = MainPreferences.class.getName();
+
             Fragment fragment = Fragment.instantiate(this, initialFragment, initialArguments);
-            getFragmentManager().beginTransaction()
+            getSupportFragmentManager()
+                    .beginTransaction()
                     .replace(android.R.id.content, fragment)
                     .commit();
         }
@@ -107,7 +130,6 @@ public class Preferences extends AppCompatActivity implements
             if (nfcAdapter != null) nfcAdapter.setNdefPushMessage(null, this);
         }
 
-
         Resources res = getResources();
         ApiCompatibilityUtils.setTaskDescription(this, res.getString(R.string.app_name),
                 BitmapFactory.decodeResource(res, R.mipmap.app_icon),
@@ -117,8 +139,8 @@ public class Preferences extends AppCompatActivity implements
     // OnPreferenceStartFragmentCallback:
 
     @Override
-    public boolean onPreferenceStartFragment(PreferenceFragment preferenceFragment,
-            Preference preference) {
+    public boolean onPreferenceStartFragment(
+            PreferenceFragmentCompat caller, Preference preference) {
         startFragment(preference.getFragment(), preference.getExtras());
         return true;
     }
@@ -140,13 +162,21 @@ public class Preferences extends AppCompatActivity implements
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            Fragment fragment = getFragmentManager().findFragmentById(android.R.id.content);
-            if (fragment instanceof PreferenceFragment && fragment.getView() != null) {
-                // Set list view padding to 0 so dividers are the full width of the screen.
-                fragment.getView().findViewById(android.R.id.list).setPadding(0, 0, 0, 0);
-            }
+        Fragment fragment = getMainFragmentCompat();
+        if (fragment == null || fragment.getView() == null
+                || fragment.getView().findViewById(R.id.list) == null) {
+            return;
         }
+        View contentView = fragment.getActivity().findViewById(android.R.id.content);
+        if (contentView == null || !(contentView instanceof FrameLayout)) {
+            return;
+        }
+        View inflatedView = View.inflate(getApplicationContext(),
+                R.layout.preferences_action_bar_shadow, (ViewGroup) contentView);
+        RecyclerView recyclerView = fragment.getView().findViewById(R.id.list);
+        recyclerView.getViewTreeObserver().addOnScrollChangedListener(
+                PreferenceUtils.getShowShadowOnScrollListener(
+                        recyclerView, inflatedView.findViewById(R.id.shadow)));
     }
 
     @Override
@@ -184,12 +214,13 @@ public class Preferences extends AppCompatActivity implements
     }
 
     /**
-     * Returns the fragment showing as this activity's main content, typically a PreferenceFragment.
-     * This does not include DialogFragments or other Fragments shown on top of the main content.
+     * Returns the fragment showing as this activity's main content, typically a {@link
+     * PreferenceFragmentCompat}. This does not include dialogs or other {@link Fragment}s shown on
+     * top of the main content.
      */
     @VisibleForTesting
-    public Fragment getFragmentForTest() {
-        return getFragmentManager().findFragmentById(android.R.id.content);
+    public Fragment getMainFragmentCompat() {
+        return getSupportFragmentManager().findFragmentById(android.R.id.content);
     }
 
     @Override
@@ -198,7 +229,8 @@ public class Preferences extends AppCompatActivity implements
         // By default, every screen in Settings shows a "Help & feedback" menu item.
         MenuItem help = menu.add(
                 Menu.NONE, R.id.menu_id_general_help, Menu.CATEGORY_SECONDARY, R.string.menu_help);
-        help.setIcon(R.drawable.ic_help_and_feedback);
+        help.setIcon(VectorDrawableCompat.create(
+                getResources(), R.drawable.ic_help_and_feedback, getTheme()));
         return true;
     }
 
@@ -213,6 +245,11 @@ public class Preferences extends AppCompatActivity implements
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        Fragment mainFragmentCompat = getMainFragmentCompat();
+        if (mainFragmentCompat != null && mainFragmentCompat.onOptionsItemSelected(item)) {
+            return true;
+        }
+
         if (item.getItemId() == android.R.id.home) {
             finish();
             return true;
@@ -222,6 +259,20 @@ public class Preferences extends AppCompatActivity implements
             return true;
         }
         return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    public void onBackPressed() {
+        Fragment activeFragment = getMainFragmentCompat();
+        if (!(activeFragment instanceof OnBackPressedListener)) {
+            super.onBackPressed();
+            return;
+        }
+        OnBackPressedListener listener = (OnBackPressedListener) activeFragment;
+        if (!listener.onBackPressed()) {
+            // Fragment hasn't handled this event, fall back to AppCompatActivity handling.
+            super.onBackPressed();
+        }
     }
 
     private void ensureActivityNotExported() {

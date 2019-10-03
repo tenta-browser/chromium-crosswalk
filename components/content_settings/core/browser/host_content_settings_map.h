@@ -18,6 +18,7 @@
 #include "base/observer_list.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/user_modifiable_provider.h"
@@ -57,7 +58,9 @@ class HostContentSettingsMap : public content_settings::Observer,
     POLICY_PROVIDER = 0,
     SUPERVISED_PROVIDER,
     CUSTOM_EXTENSION_PROVIDER,
+    INSTALLED_WEBAPP_PROVIDER,
     NOTIFICATION_ANDROID_PROVIDER,
+    EPHEMERAL_PROVIDER,
     PREF_PROVIDER,
     DEFAULT_PROVIDER,
 
@@ -69,12 +72,12 @@ class HostContentSettingsMap : public content_settings::Observer,
   };
 
   // This should be called on the UI thread, otherwise |thread_checker_| handles
-  // CalledOnValidThread() wrongly. Only one (or neither) of
-  // |is_incognito_profile| and |is_guest_profile| should be true.
+  // CalledOnValidThread() wrongly. |is_off_the_record| indicates incognito
+  // profile or a guest session.
   HostContentSettingsMap(PrefService* prefs,
-                         bool is_incognito_profile,
-                         bool is_guest_profile,
-                         bool store_last_modified);
+                         bool is_off_the_record,
+                         bool store_last_modified,
+                         bool migrate_requesting_and_top_level_origin_settings);
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
@@ -131,7 +134,7 @@ class HostContentSettingsMap : public content_settings::Observer,
   // the |SETTING_SOURCE_WHITELIST| and the |primary_pattern| and
   // |secondary_pattern| are set to a wildcard pattern.  If there is no content
   // setting, NULL is returned and the |source| field of |info| is set to
-  // |SETTING_SOURCE_NONE|. The pattern fiels of |info| are set to empty
+  // |SETTING_SOURCE_NONE|. The pattern fields of |info| are set to empty
   // patterns.
   // May be called on any thread.
   std::unique_ptr<base::Value> GetWebsiteSetting(
@@ -228,6 +231,10 @@ class HostContentSettingsMap : public content_settings::Observer,
       const GURL& secondary_url,
       ContentSettingsType type) const;
 
+  // Checks whether the specified |type| controls a feature that is restricted
+  // to secure origins.
+  bool IsRestrictedToSecureOrigins(ContentSettingsType type) const;
+
   // Sets the most specific rule that currently defines the setting for the
   // given content type. TODO(raymes): Remove this once all content settings
   // are scoped to origin scope. There is no scope more narrow than origin
@@ -259,10 +266,11 @@ class HostContentSettingsMap : public content_settings::Observer,
 
   // If |pattern_predicate| is null, this method is equivalent to the above.
   // Otherwise, it only deletes exceptions matched by |pattern_predicate| that
-  // were modified at or after |begin_time|.
+  // were modified at or after |begin_time| and before |end_time|.
   void ClearSettingsForOneTypeWithPredicate(
       ContentSettingsType content_type,
       base::Time begin_time,
+      base::Time end_time,
       const PatternSourcePredicate& pattern_predicate);
 
   // RefcountedKeyedService implementation.
@@ -272,7 +280,7 @@ class HostContentSettingsMap : public content_settings::Observer,
   void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
                                const ContentSettingsPattern& secondary_pattern,
                                ContentSettingsType content_type,
-                               std::string resource_identifier) override;
+                               const std::string& resource_identifier) override;
 
   // Returns the ProviderType associated with the given source string.
   // TODO(estade): I regret adding this. At the moment there are no legitimate
@@ -280,9 +288,8 @@ class HostContentSettingsMap : public content_settings::Observer,
   // to convert backwards.
   static ProviderType GetProviderTypeFromSource(const std::string& source);
 
-  bool is_incognito() const {
-    return is_incognito_;
-  }
+  // Whether this settings map is for an incognito or guest session.
+  bool IsOffTheRecord() const { return is_off_the_record_; }
 
   // Adds/removes an observer for content settings changes.
   void AddObserver(content_settings::Observer* observer);
@@ -305,6 +312,11 @@ class HostContentSettingsMap : public content_settings::Observer,
  private:
   friend class base::RefCountedThreadSafe<HostContentSettingsMap>;
   friend class content_settings::TestUtils;
+  FRIEND_TEST_ALL_PREFIXES(HostContentSettingsMapTest,
+                           MigrateRequestingAndTopLevelOriginSettings);
+  FRIEND_TEST_ALL_PREFIXES(
+      HostContentSettingsMapTest,
+      MigrateRequestingAndTopLevelOriginSettingsResetsEmbeddedSetting);
 
   ~HostContentSettingsMap() override;
 
@@ -372,6 +384,21 @@ class HostContentSettingsMap : public content_settings::Observer,
       ContentSettingsPattern* primary_pattern,
       ContentSettingsPattern* secondary_pattern);
 
+  // Make sure existing non-default Flash settings set by the user are marked to
+  // always show the Flash setting for this site in Page Info.
+  // TODO(patricialor): Remove after m66 (migration code).
+  void InitializePluginsDataSettings();
+
+  // Migrate requesting and top level origin content settings to remove all
+  // settings that have a top level pattern. If there is a pattern set for
+  // (http://x.com, http://y.com) this will remove that pattern and also remove
+  // (http://y.com, *). The reason the second pattern is removed is to ensure
+  // that permission won't automatically be granted to x.com when it's embedded
+  // in y.com when permission delegation is enabled.
+  // TODO(raymes): Remove 2 milestones after permission delegation ships.
+  // https://crbug.com/818004.
+  void MigrateRequestingAndTopLevelOriginSettings();
+
 #ifndef NDEBUG
   // This starts as the thread ID of the thread that constructs this
   // object, and remains until used by a different thread, at which
@@ -385,8 +412,8 @@ class HostContentSettingsMap : public content_settings::Observer,
   // Weak; owned by the Profile.
   PrefService* prefs_;
 
-  // Whether this settings map is for an incognito session.
-  bool is_incognito_;
+  // Whether this settings map is for an incognito or guest session.
+  bool is_off_the_record_;
 
   // Whether ContentSettings in the PrefProvider will store a last_modified
   // timestamp.
@@ -409,9 +436,9 @@ class HostContentSettingsMap : public content_settings::Observer,
 
   base::ThreadChecker thread_checker_;
 
-  base::ObserverList<content_settings::Observer> observers_;
+  base::ObserverList<content_settings::Observer>::Unchecked observers_;
 
-  base::WeakPtrFactory<HostContentSettingsMap> weak_ptr_factory_;
+  base::WeakPtrFactory<HostContentSettingsMap> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HostContentSettingsMap);
 };

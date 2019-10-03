@@ -4,12 +4,17 @@
 
 #include "gpu/ipc/host/shader_disk_cache.h"
 
+#include "base/bind.h"
+#include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/sys_info.h"
+#include "base/memory/ref_counted.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/config/gpu_preferences.h"
+#include "gpu/config/gpu_switches.h"
 #include "net/base/cache_type.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -20,6 +25,22 @@ namespace {
 
 static const base::FilePath::CharType kGpuCachePath[] =
     FILE_PATH_LITERAL("GPUCache");
+
+#if !defined(OS_ANDROID)
+size_t GetCustomCacheSizeBytesIfExists(base::StringPiece switch_string) {
+  const base::CommandLine& process_command_line =
+      *base::CommandLine::ForCurrentProcess();
+  size_t cache_size;
+  if (process_command_line.HasSwitch(switch_string)) {
+    if (base::StringToSizeT(
+            process_command_line.GetSwitchValueASCII(switch_string),
+            &cache_size)) {
+      return cache_size * 1024;  // Bytes
+    }
+  }
+  return 0;
+}
+#endif
 
 }  // namespace
 
@@ -53,7 +74,7 @@ class ShaderDiskCacheEntry : public base::ThreadChecker {
   std::string shader_;
   disk_cache::Entry* entry_;
   base::WeakPtr<ShaderDiskCacheEntry> weak_ptr_;
-  base::WeakPtrFactory<ShaderDiskCacheEntry> weak_ptr_factory_;
+  base::WeakPtrFactory<ShaderDiskCacheEntry> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ShaderDiskCacheEntry);
 };
@@ -91,7 +112,7 @@ class ShaderDiskReadHelper : public base::ThreadChecker {
   std::unique_ptr<disk_cache::Backend::Iterator> iter_;
   scoped_refptr<net::IOBufferWithSize> buf_;
   disk_cache::Entry* entry_;
-  base::WeakPtrFactory<ShaderDiskReadHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<ShaderDiskReadHelper> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ShaderDiskReadHelper);
 };
@@ -103,7 +124,7 @@ class ShaderClearHelper : public base::ThreadChecker {
                     const base::FilePath& path,
                     const base::Time& delete_begin,
                     const base::Time& delete_end,
-                    const base::Closure& callback);
+                    base::OnceClosure callback);
   ~ShaderClearHelper();
 
   void Clear();
@@ -119,26 +140,27 @@ class ShaderClearHelper : public base::ThreadChecker {
   base::FilePath path_;
   base::Time delete_begin_;
   base::Time delete_end_;
-  base::Closure callback_;
-  base::WeakPtrFactory<ShaderClearHelper> weak_ptr_factory_;
+  base::OnceClosure callback_;
+  base::WeakPtrFactory<ShaderClearHelper> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ShaderClearHelper);
 };
 
 // When the cache is asked to open an entry an Entry** is passed to it. The
-// underying Entry* must stay alive for the duration of the call, so it is
-// owned by the callback. If the underlying state machine is deleted before
-// the callback runs, close the entry.
+// underlying Entry* must stay alive for the duration of the call, so it is ref
+// counted. If the underlying state machine is deleted before the callback runs,
+// close the entry.
 template <typename T>
-void OnEntryOpenComplete(base::WeakPtr<T> state_machine,
-                         std::unique_ptr<disk_cache::Entry*> entry,
-                         int rv) {
+void OnEntryOpenComplete(
+    base::WeakPtr<T> state_machine,
+    scoped_refptr<base::RefCountedData<disk_cache::Entry*>> entry_ptr,
+    int rv) {
   if (!state_machine) {
     if (rv == net::OK)
-      (*entry)->Close();
+      entry_ptr->data->Close();
     return;
   }
-  state_machine->set_entry(*entry);
+  state_machine->set_entry(entry_ptr->data);
   state_machine->OnOpComplete(rv);
 }
 
@@ -152,8 +174,7 @@ ShaderDiskCacheEntry::ShaderDiskCacheEntry(ShaderDiskCache* cache,
       op_type_(OPEN_ENTRY),
       key_(key),
       shader_(shader),
-      entry_(nullptr),
-      weak_ptr_factory_(this) {
+      entry_(nullptr) {
   weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
 }
 
@@ -166,19 +187,18 @@ ShaderDiskCacheEntry::~ShaderDiskCacheEntry() {
 void ShaderDiskCacheEntry::Cache() {
   DCHECK(CalledOnValidThread());
 
-  // The Entry* passed to the cache must stay alive even if this class is
-  // deleted, so store it in the callback.
-  auto entry = std::make_unique<disk_cache::Entry*>(nullptr);
-  disk_cache::Entry** closure_owned_entry_ptr = entry.get();
-  auto callback = base::Bind(&OnEntryOpenComplete<ShaderDiskCacheEntry>,
-                             weak_ptr_factory_.GetWeakPtr(),
-                             base::Passed(std::move(entry)));
+  // The Entry* passed to the cache may be used after this class is deleted or
+  // after the callback is deleted, so make it ref counted.
+  auto entry_ptr =
+      base::MakeRefCounted<base::RefCountedData<disk_cache::Entry*>>();
+  auto callback = base::BindOnce(&OnEntryOpenComplete<ShaderDiskCacheEntry>,
+                                 weak_ptr_factory_.GetWeakPtr(), entry_ptr);
 
-  int rv =
-      cache_->backend()->OpenEntry(key_, closure_owned_entry_ptr, callback);
+  int rv = cache_->backend()->OpenEntry(key_, net::HIGHEST, &entry_ptr->data,
+                                        std::move(callback));
 
   if (rv != net::ERR_IO_PENDING) {
-    entry_ = *closure_owned_entry_ptr;
+    entry_ = entry_ptr->data;
     OnOpComplete(rv);
   }
 }
@@ -216,19 +236,18 @@ int ShaderDiskCacheEntry::OpenCallback(int rv) {
 
   op_type_ = CREATE_ENTRY;
 
-  // The Entry* passed to the cache must stay alive even if this class is
-  // deleted, so store it in the callback.
-  auto entry = std::make_unique<disk_cache::Entry*>(nullptr);
-  disk_cache::Entry** closure_owned_entry_ptr = entry.get();
-  auto callback = base::Bind(&OnEntryOpenComplete<ShaderDiskCacheEntry>,
-                             weak_ptr_factory_.GetWeakPtr(),
-                             base::Passed(std::move(entry)));
+  // The Entry* passed to the cache may be used after this class is deleted or
+  // after the callback is deleted, so make it ref counted.
+  auto entry_ptr =
+      base::MakeRefCounted<base::RefCountedData<disk_cache::Entry*>>();
+  auto callback = base::BindOnce(&OnEntryOpenComplete<ShaderDiskCacheEntry>,
+                                 weak_ptr_factory_.GetWeakPtr(), entry_ptr);
 
-  int create_rv =
-      cache_->backend()->CreateEntry(key_, closure_owned_entry_ptr, callback);
+  int create_rv = cache_->backend()->CreateEntry(
+      key_, net::HIGHEST, &entry_ptr->data, std::move(callback));
 
   if (create_rv != net::ERR_IO_PENDING)
-    entry_ = *closure_owned_entry_ptr;
+    entry_ = entry_ptr->data;
   return create_rv;
 }
 
@@ -241,10 +260,10 @@ int ShaderDiskCacheEntry::WriteCallback(int rv) {
   }
 
   op_type_ = WRITE_DATA;
-  scoped_refptr<net::StringIOBuffer> io_buf = new net::StringIOBuffer(shader_);
+  auto io_buf = base::MakeRefCounted<net::StringIOBuffer>(shader_);
   return entry_->WriteData(1, 0, io_buf.get(), shader_.length(),
-                           base::Bind(&ShaderDiskCacheEntry::OnOpComplete,
-                                      weak_ptr_factory_.GetWeakPtr()),
+                           base::BindOnce(&ShaderDiskCacheEntry::OnOpComplete,
+                                          weak_ptr_factory_.GetWeakPtr()),
                            false);
 }
 
@@ -262,9 +281,8 @@ ShaderDiskReadHelper::ShaderDiskReadHelper(ShaderDiskCache* cache,
     : cache_(cache),
       shader_loaded_callback_(callback),
       op_type_(OPEN_NEXT),
-      buf_(NULL),
-      entry_(NULL),
-      weak_ptr_factory_(this) {}
+      buf_(nullptr),
+      entry_(nullptr) {}
 
 ShaderDiskReadHelper::~ShaderDiskReadHelper() {
   DCHECK(CalledOnValidThread());
@@ -308,18 +326,17 @@ int ShaderDiskReadHelper::OpenNextEntry() {
   if (!iter_)
     iter_ = cache_->backend()->CreateIterator();
 
-  // The Entry* passed to the cache must stay alive even if this class is
-  // deleted, so store it in the callback.
-  auto entry = std::make_unique<disk_cache::Entry*>(nullptr);
-  disk_cache::Entry** closure_owned_entry_ptr = entry.get();
-  auto callback = base::Bind(&OnEntryOpenComplete<ShaderDiskReadHelper>,
-                             weak_ptr_factory_.GetWeakPtr(),
-                             base::Passed(std::move(entry)));
+  // The Entry* passed to the cache may be used after this class is deleted or
+  // after the callback is deleted, so make it ref counted.
+  auto entry_ptr =
+      base::MakeRefCounted<base::RefCountedData<disk_cache::Entry*>>();
+  auto callback = base::BindOnce(&OnEntryOpenComplete<ShaderDiskReadHelper>,
+                                 weak_ptr_factory_.GetWeakPtr(), entry_ptr);
 
-  int rv = iter_->OpenNextEntry(closure_owned_entry_ptr, callback);
+  int rv = iter_->OpenNextEntry(&entry_ptr->data, std::move(callback));
 
   if (rv != net::ERR_IO_PENDING)
-    entry_ = *closure_owned_entry_ptr;
+    entry_ = entry_ptr->data;
   return rv;
 }
 
@@ -335,10 +352,10 @@ int ShaderDiskReadHelper::OpenNextEntryComplete(int rv) {
     return rv;
 
   op_type_ = READ_COMPLETE;
-  buf_ = new net::IOBufferWithSize(entry_->GetDataSize(1));
+  buf_ = base::MakeRefCounted<net::IOBufferWithSize>(entry_->GetDataSize(1));
   return entry_->ReadData(1, 0, buf_.get(), buf_->size(),
-                          base::Bind(&ShaderDiskReadHelper::OnOpComplete,
-                                     weak_ptr_factory_.GetWeakPtr()));
+                          base::BindOnce(&ShaderDiskReadHelper::OnOpComplete,
+                                         weak_ptr_factory_.GetWeakPtr()));
 }
 
 int ShaderDiskReadHelper::ReadComplete(int rv) {
@@ -348,9 +365,9 @@ int ShaderDiskReadHelper::ReadComplete(int rv) {
                                 std::string(buf_->data(), buf_->size()));
   }
 
-  buf_ = NULL;
+  buf_ = nullptr;
   entry_->Close();
-  entry_ = NULL;
+  entry_ = nullptr;
 
   op_type_ = OPEN_NEXT;
   return net::OK;
@@ -371,15 +388,14 @@ ShaderClearHelper::ShaderClearHelper(ShaderCacheFactory* factory,
                                      const base::FilePath& path,
                                      const base::Time& delete_begin,
                                      const base::Time& delete_end,
-                                     const base::Closure& callback)
+                                     base::OnceClosure callback)
     : factory_(factory),
       cache_(std::move(cache)),
       op_type_(VERIFY_CACHE_SETUP),
       path_(path),
       delete_begin_(delete_begin),
       delete_end_(delete_end),
-      callback_(callback),
-      weak_ptr_factory_(this) {}
+      callback_(std::move(callback)) {}
 
 ShaderClearHelper::~ShaderClearHelper() {
   DCHECK(CalledOnValidThread());
@@ -396,18 +412,19 @@ void ShaderClearHelper::DoClearShaderCache(int rv) {
     switch (op_type_) {
       case VERIFY_CACHE_SETUP:
         rv = cache_->SetAvailableCallback(
-            base::Bind(&ShaderClearHelper::DoClearShaderCache,
-                       weak_ptr_factory_.GetWeakPtr()));
+            base::BindOnce(&ShaderClearHelper::DoClearShaderCache,
+                           weak_ptr_factory_.GetWeakPtr()));
         op_type_ = DELETE_CACHE;
         break;
       case DELETE_CACHE:
-        rv = cache_->Clear(delete_begin_, delete_end_,
-                           base::Bind(&ShaderClearHelper::DoClearShaderCache,
-                                      weak_ptr_factory_.GetWeakPtr()));
+        rv =
+            cache_->Clear(delete_begin_, delete_end_,
+                          base::BindOnce(&ShaderClearHelper::DoClearShaderCache,
+                                         weak_ptr_factory_.GetWeakPtr()));
         op_type_ = TERMINATE;
         break;
       case TERMINATE:
-        callback_.Run();
+        std::move(callback_).Run();
         // Calling CacheCleared() destroys |this|.
         factory_->CacheCleared(path_);
         rv = net::ERR_IO_PENDING;  // Break the loop.
@@ -419,9 +436,9 @@ void ShaderClearHelper::DoClearShaderCache(int rv) {
 ////////////////////////////////////////////////////////////////////////////////
 // ShaderCacheFactory
 
-ShaderCacheFactory::ShaderCacheFactory() {}
+ShaderCacheFactory::ShaderCacheFactory() = default;
 
-ShaderCacheFactory::~ShaderCacheFactory() {}
+ShaderCacheFactory::~ShaderCacheFactory() = default;
 
 void ShaderCacheFactory::SetCacheInfo(int32_t client_id,
                                       const base::FilePath& path) {
@@ -438,7 +455,7 @@ scoped_refptr<ShaderDiskCache> ShaderCacheFactory::Get(int32_t client_id) {
   DCHECK(CalledOnValidThread());
   ClientIdToPathMap::iterator iter = client_id_to_path_map_.find(client_id);
   if (iter == client_id_to_path_map_.end())
-    return NULL;
+    return nullptr;
   return ShaderCacheFactory::GetByPath(iter->second);
 }
 
@@ -449,7 +466,7 @@ scoped_refptr<ShaderDiskCache> ShaderCacheFactory::GetByPath(
   if (iter != shader_cache_map_.end())
     return iter->second;
 
-  ShaderDiskCache* cache = new ShaderDiskCache(this, path);
+  auto cache = base::WrapRefCounted(new ShaderDiskCache(this, path));
   cache->Init();
   return cache;
 }
@@ -468,12 +485,13 @@ void ShaderCacheFactory::RemoveFromCache(const base::FilePath& key) {
 void ShaderCacheFactory::ClearByPath(const base::FilePath& path,
                                      const base::Time& delete_begin,
                                      const base::Time& delete_end,
-                                     const base::Closure& callback) {
+                                     base::OnceClosure callback) {
   DCHECK(CalledOnValidThread());
   DCHECK(!callback.is_null());
 
-  auto helper = std::make_unique<ShaderClearHelper>(
-      this, GetByPath(path), path, delete_begin, delete_end, callback);
+  auto helper = std::make_unique<ShaderClearHelper>(this, GetByPath(path), path,
+                                                    delete_begin, delete_end,
+                                                    std::move(callback));
 
   // We could receive requests to clear the same path with different
   // begin/end times. So, we keep a list of requests. If we haven't seen this
@@ -498,12 +516,13 @@ void ShaderCacheFactory::ClearByPath(const base::FilePath& path,
 void ShaderCacheFactory::ClearByClientId(int32_t client_id,
                                          const base::Time& delete_begin,
                                          const base::Time& delete_end,
-                                         const base::Closure& callback) {
+                                         base::OnceClosure callback) {
   DCHECK(CalledOnValidThread());
   ClientIdToPathMap::iterator iter = client_id_to_path_map_.find(client_id);
   if (iter == client_id_to_path_map_.end())
     return;
-  return ClearByPath(iter->second, delete_begin, delete_end, callback);
+  return ClearByPath(iter->second, delete_begin, delete_end,
+                     std::move(callback));
 }
 
 void ShaderCacheFactory::CacheCleared(const base::FilePath& path) {
@@ -553,7 +572,7 @@ void ShaderDiskCache::Init() {
   int rv = disk_cache::CreateCacheBackend(
       net::SHADER_CACHE, net::CACHE_BACKEND_DEFAULT,
       cache_path_.Append(kGpuCachePath), CacheSizeBytes(), true, nullptr,
-      &backend_, base::Bind(&ShaderDiskCache::CacheCreatedCallback, this));
+      &backend_, base::BindOnce(&ShaderDiskCache::CacheCreatedCallback, this));
 
   if (rv == net::OK)
     cache_available_ = true;
@@ -571,13 +590,13 @@ void ShaderDiskCache::Cache(const std::string& key, const std::string& shader) {
 
 int ShaderDiskCache::Clear(const base::Time begin_time,
                            const base::Time end_time,
-                           const net::CompletionCallback& completion_callback) {
+                           net::CompletionOnceCallback completion_callback) {
   int rv;
   if (begin_time.is_null()) {
-    rv = backend_->DoomAllEntries(completion_callback);
+    rv = backend_->DoomAllEntries(std::move(completion_callback));
   } else {
-    rv =
-        backend_->DoomEntriesBetween(begin_time, end_time, completion_callback);
+    rv = backend_->DoomEntriesBetween(begin_time, end_time,
+                                      std::move(completion_callback));
   }
   return rv;
 }
@@ -589,10 +608,10 @@ int32_t ShaderDiskCache::Size() {
 }
 
 int ShaderDiskCache::SetAvailableCallback(
-    const net::CompletionCallback& callback) {
+    net::CompletionOnceCallback callback) {
   if (cache_available_)
     return net::OK;
-  available_callback_ = callback;
+  available_callback_ = std::move(callback);
   return net::ERR_IO_PENDING;
 }
 
@@ -608,8 +627,8 @@ void ShaderDiskCache::CacheCreatedCallback(int rv) {
 
 void ShaderDiskCache::EntryComplete(ShaderDiskCacheEntry* entry) {
   entries_.erase(entry);
-  if (entries_.empty() && !cache_complete_callback_.is_null())
-    cache_complete_callback_.Run(net::OK);
+  if (entries_.empty() && cache_complete_callback_)
+    std::move(cache_complete_callback_).Run(net::OK);
 }
 
 void ShaderDiskCache::ReadComplete() {
@@ -619,24 +638,26 @@ void ShaderDiskCache::ReadComplete() {
   // of the old cache values off disk. This prevents a potential race where we
   // are reading from disk and execute a cache clear at the same time.
   cache_available_ = true;
-  if (!available_callback_.is_null()) {
-    available_callback_.Run(net::OK);
-    available_callback_.Reset();
-  }
+  if (available_callback_)
+    std::move(available_callback_).Run(net::OK);
 }
 
 int ShaderDiskCache::SetCacheCompleteCallback(
-    const net::CompletionCallback& callback) {
+    net::CompletionOnceCallback callback) {
   if (entries_.empty()) {
     return net::OK;
   }
-  cache_complete_callback_ = callback;
+  cache_complete_callback_ = std::move(callback);
   return net::ERR_IO_PENDING;
 }
 
 // static
 size_t ShaderDiskCache::CacheSizeBytes() {
 #if !defined(OS_ANDROID)
+  size_t custom_cache_size =
+      GetCustomCacheSizeBytesIfExists(switches::kShaderDiskCacheSizeKB);
+  if (custom_cache_size)
+    return custom_cache_size;
   return kDefaultMaxProgramCacheMemoryBytes;
 #else   // !defined(OS_ANDROID)
   if (!base::SysInfo::IsLowEndDevice())

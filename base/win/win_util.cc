@@ -6,24 +6,24 @@
 
 #include <aclapi.h>
 #include <cfgmgr32.h>
+#include <initguid.h>
 #include <powrprof.h>
 #include <shobjidl.h>  // Must be before propkey.
-#include <initguid.h>
+
 #include <inspectable.h>
 #include <mdmregistration.h>
 #include <objbase.h>
 #include <propkey.h>
-#include <propvarutil.h>
 #include <psapi.h>
 #include <roapi.h>
 #include <sddl.h>
 #include <setupapi.h>
 #include <shellscalingapi.h>
-#include <shlwapi.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <tchar.h> // Must be before tpcshrd.h or for any use of _T macro
+#include <strsafe.h>
+#include <tchar.h>  // Must be before tpcshrd.h or for any use of _T macro
 #include <tpcshrd.h>
 #include <uiviewsettingsinterop.h>
 #include <windows.ui.viewmanagement.h>
@@ -42,13 +42,17 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/scoped_thread_priority.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/core_winrt_util.h"
+#include "base/win/propvarutil.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_hstring.h"
 #include "base/win/scoped_propvariant.h"
+#include "base/win/shlwapi.h"
+#include "base/win/win_client_metrics.h"
 #include "base/win/windows_version.h"
 
 namespace base {
@@ -69,13 +73,12 @@ bool SetPropVariantValueForPropertyStore(
   if (SUCCEEDED(result))
     return true;
 #if DCHECK_IS_ON()
-  ScopedCoMem<OLECHAR> guidString;
-  ::StringFromCLSID(property_key.fmtid, &guidString);
   if (HRESULT_FACILITY(result) == FACILITY_WIN32)
     ::SetLastError(HRESULT_CODE(result));
   // See third_party/perl/c/i686-w64-mingw32/include/propkey.h for GUID and
   // PID definitions.
-  DPLOG(ERROR) << "Failed to set property with GUID " << guidString << " PID "
+  DPLOG(ERROR) << "Failed to set property with GUID "
+               << String16FromGUID(property_key.fmtid) << " PID "
                << property_key.pid;
 #endif
   return false;
@@ -97,26 +100,97 @@ POWER_PLATFORM_ROLE GetPlatformRole() {
 // Windows versions GetProcAddress will return null and report failure so that
 // callers can fall back on the deprecated SetProcessDPIAware.
 bool SetProcessDpiAwarenessWrapper(PROCESS_DPI_AWARENESS value) {
-  decltype(&::SetProcessDpiAwareness) set_process_dpi_awareness_func =
-      reinterpret_cast<decltype(&::SetProcessDpiAwareness)>(GetProcAddress(
-          GetModuleHandle(L"user32.dll"), "SetProcessDpiAwarenessInternal"));
+  if (!IsUser32AndGdi32Available())
+    return false;
+
+  static const auto set_process_dpi_awareness_func =
+      reinterpret_cast<decltype(&::SetProcessDpiAwareness)>(
+          GetUser32FunctionPointer("SetProcessDpiAwarenessInternal"));
   if (set_process_dpi_awareness_func) {
     HRESULT hr = set_process_dpi_awareness_func(value);
     if (SUCCEEDED(hr))
       return true;
     DLOG_IF(ERROR, hr == E_ACCESSDENIED)
-        << "Access denied error from SetProcessDpiAwarenessInternal. Function "
-           "called twice, or manifest was used.";
+        << "Access denied error from SetProcessDpiAwarenessInternal. "
+           "Function called twice, or manifest was used.";
     NOTREACHED()
         << "SetProcessDpiAwarenessInternal failed with unexpected error: "
         << hr;
     return false;
   }
 
-  DCHECK_LT(GetVersion(), VERSION_WIN8_1) << "SetProcessDpiAwarenessInternal "
-                                             "should be available on all "
-                                             "platforms >= Windows 8.1";
+  DCHECK_LT(GetVersion(), Version::WIN8_1) << "SetProcessDpiAwarenessInternal "
+                                              "should be available on all "
+                                              "platforms >= Windows 8.1";
   return false;
+}
+
+// Enable V2 per-monitor high-DPI support for the process. This will cause
+// Windows to scale dialogs, comctl32 controls, context menus, and non-client
+// area owned by this process on a per-monitor basis. If per-monitor V2 is not
+// available (i.e., prior to Windows 10 1703) or fails, returns false.
+// https://docs.microsoft.com/en-us/windows/desktop/hidpi/dpi-awareness-context
+bool EnablePerMonitorV2() {
+  if (!IsUser32AndGdi32Available())
+    return false;
+
+  static const auto set_process_dpi_awareness_context_func =
+      reinterpret_cast<decltype(&::SetProcessDpiAwarenessContext)>(
+          GetUser32FunctionPointer("SetProcessDpiAwarenessContext"));
+  if (set_process_dpi_awareness_context_func) {
+    return set_process_dpi_awareness_context_func(
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  }
+
+  DCHECK_LT(GetVersion(), Version::WIN10_RS2)
+      << "SetProcessDpiAwarenessContext should be available on all platforms"
+         " >= Windows 10 Redstone 2";
+
+  return false;
+}
+
+bool* GetDomainEnrollmentStateStorage() {
+  static bool state = IsOS(OS_DOMAINMEMBER);
+  return &state;
+}
+
+bool* GetRegisteredWithManagementStateStorage() {
+  static bool state = []() {
+    // Mitigate the issues caused by loading DLLs on a background thread
+    // (http://crbug/973868).
+    base::ScopedThreadMayLoadLibraryOnBackgroundThread priority_boost(
+        FROM_HERE);
+
+    ScopedNativeLibrary library(
+        FilePath(FILE_PATH_LITERAL("MDMRegistration.dll")));
+    if (!library.is_valid())
+      return false;
+
+    using IsDeviceRegisteredWithManagementFunction =
+        decltype(&::IsDeviceRegisteredWithManagement);
+    IsDeviceRegisteredWithManagementFunction
+        is_device_registered_with_management_function =
+            reinterpret_cast<IsDeviceRegisteredWithManagementFunction>(
+                library.GetFunctionPointer("IsDeviceRegisteredWithManagement"));
+    if (!is_device_registered_with_management_function)
+      return false;
+
+    BOOL is_managed = FALSE;
+    HRESULT hr =
+        is_device_registered_with_management_function(&is_managed, 0, nullptr);
+    return SUCCEEDED(hr) && is_managed;
+  }();
+
+  return &state;
+}
+
+NativeLibrary PinUser32Internal(NativeLibraryLoadError* error) {
+  static NativeLibraryLoadError load_error;
+  static const NativeLibrary user32_module =
+      PinSystemLibrary(FILE_PATH_LITERAL("user32.dll"), &load_error);
+  if (!user32_module && error)
+    error->code = load_error.code;
+  return user32_module;
 }
 
 }  // namespace
@@ -127,7 +201,7 @@ bool SetProcessDpiAwarenessWrapper(PROCESS_DPI_AWARENESS value) {
 // it to always return UserInteractionMode_Touch which as per documentation
 // indicates tablet mode.
 bool IsWindows10TabletMode(HWND hwnd) {
-  if (GetVersion() < VERSION_WIN10)
+  if (GetVersion() < Version::WIN10)
     return false;
 
   if (!ResolveCoreWinRTDelayload() ||
@@ -163,8 +237,9 @@ bool IsWindows10TabletMode(HWND hwnd) {
 bool IsKeyboardPresentOnSlate(std::string* reason, HWND hwnd) {
   bool result = false;
 
-  if (GetVersion() < VERSION_WIN8) {
-    *reason = "Detection not supported";
+  if (GetVersion() < Version::WIN8) {
+    if (reason)
+      *reason = "Detection not supported";
     return false;
   }
 
@@ -217,11 +292,8 @@ bool IsKeyboardPresentOnSlate(std::string* reason, HWND hwnd) {
   //    if we find ACPI\* or HID\VID* keyboards.
 
   typedef BOOL (WINAPI* GetAutoRotationState)(PAR_STATE state);
-
-  GetAutoRotationState get_rotation_state =
-      reinterpret_cast<GetAutoRotationState>(::GetProcAddress(
-          GetModuleHandle(L"user32.dll"), "GetAutoRotationState"));
-
+  static const auto get_rotation_state = reinterpret_cast<GetAutoRotationState>(
+      GetUser32FunctionPointer("GetAutoRotationState"));
   if (get_rotation_state) {
     AR_STATE auto_rotation_state = AR_ENABLED;
     get_rotation_state(&auto_rotation_state);
@@ -231,8 +303,8 @@ bool IsKeyboardPresentOnSlate(std::string* reason, HWND hwnd) {
       // the current configuration, then we can assume that this is a desktop
       // or a traditional laptop.
       if (reason) {
-        *reason += (auto_rotation_state & AR_NOSENSOR) ? "AR_NOSENSOR\n" :
-                                                         "AR_NOT_SUPPORTED\n";
+        *reason += (auto_rotation_state & AR_NOSENSOR) ? "AR_NOSENSOR\n"
+                                                       : "AR_NOT_SUPPORTED\n";
         result = true;
       } else {
         return true;
@@ -263,19 +335,20 @@ bool IsKeyboardPresentOnSlate(std::string* reason, HWND hwnd) {
       break;
 
     // Get the device ID.
-    wchar_t device_id[MAX_DEVICE_ID_LEN];
-    CONFIGRET status = CM_Get_Device_ID(device_info_data.DevInst,
-                                        device_id,
-                                        MAX_DEVICE_ID_LEN,
-                                        0);
+    char16 device_id[MAX_DEVICE_ID_LEN];
+    CONFIGRET status =
+        CM_Get_Device_ID(device_info_data.DevInst, as_writable_wcstr(device_id),
+                         MAX_DEVICE_ID_LEN, 0);
     if (status == CR_SUCCESS) {
       // To reduce the scope of the hack we only look for ACPI and HID\\VID
       // prefixes in the keyboard device ids.
-      if (StartsWith(device_id, L"ACPI", CompareCase::INSENSITIVE_ASCII) ||
-          StartsWith(device_id, L"HID\\VID", CompareCase::INSENSITIVE_ASCII)) {
+      if (StartsWith(device_id, STRING16_LITERAL("ACPI"),
+                     CompareCase::INSENSITIVE_ASCII) ||
+          StartsWith(device_id, STRING16_LITERAL("HID\\VID"),
+                     CompareCase::INSENSITIVE_ASCII)) {
         if (reason) {
           *reason += "device: ";
-          *reason += WideToUTF8(device_id);
+          *reason += UTF16ToUTF8(device_id);
           *reason += '\n';
         }
         // The heuristic we are using is to check the count of keyboards and
@@ -302,7 +375,7 @@ void GetNonClientMetrics(NONCLIENTMETRICS_XP* metrics) {
   DCHECK(success);
 }
 
-bool GetUserSidString(std::wstring* user_sid) {
+bool GetUserSidString(string16* user_sid) {
   // Get the current token.
   HANDLE token = NULL;
   if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token))
@@ -324,7 +397,7 @@ bool GetUserSidString(std::wstring* user_sid) {
   if (!::ConvertSidToStringSid(user->User.Sid, &sid_string))
     return false;
 
-  *user_sid = sid_string;
+  *user_sid = as_u16cstr(sid_string);
 
   ::LocalFree(sid_string);
 
@@ -337,12 +410,16 @@ bool UserAccountControlIsEnabled() {
   //   http://code.google.com/p/chromium/issues/detail?id=61644
   ThreadRestrictions::ScopedAllowIO allow_io;
 
-  RegKey key(HKEY_LOCAL_MACHINE,
-             L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
-             KEY_READ);
+  RegKey key(
+      HKEY_LOCAL_MACHINE,
+      STRING16_LITERAL(
+          "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System"),
+      KEY_READ);
   DWORD uac_enabled;
-  if (key.ReadValueDW(L"EnableLUA", &uac_enabled) != ERROR_SUCCESS)
+  if (key.ReadValueDW(STRING16_LITERAL("EnableLUA"), &uac_enabled) !=
+      ERROR_SUCCESS) {
     return true;
+  }
   // Users can set the EnableLUA value to something arbitrary, like 2, which
   // Vista will treat as UAC enabled, so we make sure it is not set to 0.
   return (uac_enabled != 0);
@@ -364,9 +441,9 @@ bool SetBooleanValueForPropertyStore(IPropertyStore* property_store,
 
 bool SetStringValueForPropertyStore(IPropertyStore* property_store,
                                     const PROPERTYKEY& property_key,
-                                    const wchar_t* property_string_value) {
+                                    const char16* property_string_value) {
   ScopedPropVariant property_value;
-  if (FAILED(InitPropVariantFromString(property_string_value,
+  if (FAILED(InitPropVariantFromString(as_wcstr(property_string_value),
                                        property_value.Receive()))) {
     return false;
   }
@@ -390,11 +467,12 @@ bool SetClsidForPropertyStore(IPropertyStore* property_store,
 }
 
 bool SetAppIdForPropertyStore(IPropertyStore* property_store,
-                              const wchar_t* app_id) {
+                              const char16* app_id) {
   // App id should be less than 64 chars and contain no space. And recommended
   // format is CompanyName.ProductName[.SubProduct.ProductNumber].
   // See http://msdn.microsoft.com/en-us/library/dd378459%28VS.85%29.aspx
-  DCHECK(lstrlen(app_id) < 64 && wcschr(app_id, L' ') == NULL);
+  DCHECK_LT(lstrlen(as_wcstr(app_id)), 64);
+  DCHECK_EQ(wcschr(as_wcstr(app_id), L' '), nullptr);
 
   return SetStringValueForPropertyStore(property_store,
                                         PKEY_AppUserModel_ID,
@@ -402,7 +480,7 @@ bool SetAppIdForPropertyStore(IPropertyStore* property_store,
 }
 
 static const char16 kAutoRunKeyPath[] =
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    STRING16_LITERAL("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 
 bool AddCommandToAutoRun(HKEY root_key, const string16& name,
                          const string16& command) {
@@ -445,7 +523,7 @@ void SetAbortBehaviorForCrashReporting() {
 }
 
 bool IsTabletDevice(std::string* reason, HWND hwnd) {
-  if (GetVersion() < VERSION_WIN8) {
+  if (GetVersion() < Version::WIN8) {
     if (reason)
       *reason = "Tablet device detection not supported below Windows 8\n";
     return false;
@@ -453,6 +531,21 @@ bool IsTabletDevice(std::string* reason, HWND hwnd) {
 
   if (IsWindows10TabletMode(hwnd))
     return true;
+
+  return IsDeviceUsedAsATablet(reason);
+}
+
+// This method is used to set the right interactions media queries,
+// see https://drafts.csswg.org/mediaqueries-4/#mf-interaction. It doesn't
+// check the Windows 10 tablet mode because it doesn't reflect the actual
+// input configuration of the device and can be manually triggered by the user
+// independently from the hardware state.
+bool IsDeviceUsedAsATablet(std::string* reason) {
+  if (GetVersion() < Version::WIN8) {
+    if (reason)
+      *reason = "Tablet device detection not supported below Windows 8\n";
+    return false;
+  }
 
   if (GetSystemMetrics(SM_MAXIMUMTOUCHES) == 0) {
     if (reason) {
@@ -476,27 +569,20 @@ bool IsTabletDevice(std::string* reason, HWND hwnd) {
   // See
   // https://msdn.microsoft.com/en-us/library/windows/desktop/dn629263(v=vs.85).aspx
   typedef decltype(GetAutoRotationState)* GetAutoRotationStateType;
-  GetAutoRotationStateType get_auto_rotation_state_func =
-      reinterpret_cast<GetAutoRotationStateType>(GetProcAddress(
-          GetModuleHandle(L"user32.dll"), "GetAutoRotationState"));
-
+  static const auto get_auto_rotation_state_func =
+      reinterpret_cast<GetAutoRotationStateType>(
+          GetUser32FunctionPointer("GetAutoRotationState"));
   if (get_auto_rotation_state_func) {
-    AR_STATE rotation_state;
-    ZeroMemory(&rotation_state, sizeof(AR_STATE));
-    if (get_auto_rotation_state_func(&rotation_state)) {
-      if ((rotation_state & AR_NOT_SUPPORTED) || (rotation_state & AR_LAPTOP) ||
-          (rotation_state & AR_NOSENSOR))
-        return false;
-    }
+    AR_STATE rotation_state = AR_ENABLED;
+    if (get_auto_rotation_state_func(&rotation_state) &&
+        (rotation_state & (AR_NOT_SUPPORTED | AR_LAPTOP | AR_NOSENSOR)) != 0)
+      return false;
   }
 
   // PlatformRoleSlate was added in Windows 8+.
   POWER_PLATFORM_ROLE role = GetPlatformRole();
-  bool mobile_power_profile = (role == PlatformRoleMobile);
-  bool slate_power_profile = (role == PlatformRoleSlate);
-
   bool is_tablet = false;
-  if (mobile_power_profile || slate_power_profile) {
+  if (role == PlatformRoleMobile || role == PlatformRoleSlate) {
     is_tablet = !GetSystemMetrics(SM_CONVERTIBLESLATEMODE);
     if (!is_tablet) {
       if (reason) {
@@ -517,58 +603,12 @@ bool IsTabletDevice(std::string* reason, HWND hwnd) {
   return is_tablet;
 }
 
-enum DomainEnrollmentState {UNKNOWN = -1, NOT_ENROLLED, ENROLLED};
-static volatile long int g_domain_state = UNKNOWN;
-
 bool IsEnrolledToDomain() {
-  // Doesn't make any sense to retry inside a user session because joining a
-  // domain will only kick in on a restart.
-  if (g_domain_state == UNKNOWN) {
-    ::InterlockedCompareExchange(&g_domain_state,
-                                 IsOS(OS_DOMAINMEMBER) ?
-                                     ENROLLED : NOT_ENROLLED,
-                                 UNKNOWN);
-  }
-
-  return g_domain_state == ENROLLED;
+  return *GetDomainEnrollmentStateStorage();
 }
 
 bool IsDeviceRegisteredWithManagement() {
-  static bool is_device_registered_with_management = []() {
-    ScopedNativeLibrary library(
-        FilePath(FILE_PATH_LITERAL("MDMRegistration.dll")));
-    if (!library.is_valid())
-      return false;
-
-    using IsDeviceRegisteredWithManagementFunction =
-        decltype(&::IsDeviceRegisteredWithManagement);
-    IsDeviceRegisteredWithManagementFunction
-        is_device_registered_with_management_function =
-            reinterpret_cast<IsDeviceRegisteredWithManagementFunction>(
-                library.GetFunctionPointer("IsDeviceRegisteredWithManagement"));
-    if (!is_device_registered_with_management_function)
-      return false;
-
-    BOOL is_managed = false;
-    HRESULT hr =
-        is_device_registered_with_management_function(&is_managed, 0, nullptr);
-    return SUCCEEDED(hr) && is_managed;
-  }();
-  return is_device_registered_with_management;
-}
-
-bool IsEnterpriseManaged() {
-  // TODO(rogerta): this function should really be:
-  //
-  //    return IsEnrolledToDomain() || IsDeviceRegisteredWithManagement();
-  //
-  // However, for now it is decided to collect some UMA metrics about
-  // IsDeviceRegisteredWithMdm() before changing chrome's behavior.
-  return IsEnrolledToDomain();
-}
-
-void SetDomainStateForTesting(bool state) {
-  g_domain_state = state ? ENROLLED : NOT_ENROLLED;
+  return *GetRegisteredWithManagementStateStorage();
 }
 
 bool IsUser32AndGdi32Available() {
@@ -576,7 +616,7 @@ bool IsUser32AndGdi32Available() {
     // If win32k syscalls aren't disabled, then user32 and gdi32 are available.
 
     // Can't disable win32k prior to windows 8.
-    if (GetVersion() < VERSION_WIN8)
+    if (GetVersion() < Version::WIN8)
       return true;
 
     typedef decltype(
@@ -679,18 +719,131 @@ bool IsProcessPerMonitorDpiAware() {
 }
 
 void EnableHighDPISupport() {
-  // Enable per-monitor DPI for Win10 or above instead of Win8.1 since Win8.1
-  // does not have EnableChildWindowDpiMessage, necessary for correct non-client
-  // area scaling across monitors.
+  if (!IsUser32AndGdi32Available())
+    return;
+
+  // Enable per-monitor V2 if it is available (Win10 1703 or later).
+  if (EnablePerMonitorV2())
+    return;
+
+  // Fall back to per-monitor DPI for older versions of Win10 instead of
+  // Win8.1 since Win8.1 does not have EnableChildWindowDpiMessage,
+  // necessary for correct non-client area scaling across monitors.
   PROCESS_DPI_AWARENESS process_dpi_awareness =
-      GetVersion() >= VERSION_WIN10 ? PROCESS_PER_MONITOR_DPI_AWARE
-                                    : PROCESS_SYSTEM_DPI_AWARE;
+      GetVersion() >= Version::WIN10 ? PROCESS_PER_MONITOR_DPI_AWARE
+                                     : PROCESS_SYSTEM_DPI_AWARE;
   if (!SetProcessDpiAwarenessWrapper(process_dpi_awareness)) {
     // For windows versions where SetProcessDpiAwareness is not available or
     // failed, try its predecessor.
     BOOL result = ::SetProcessDPIAware();
     DCHECK(result) << "SetProcessDPIAware failed.";
   }
+}
+
+string16 String16FromGUID(REFGUID rguid) {
+  // This constant counts the number of characters in the formatted string,
+  // including the null termination character.
+  constexpr int kGuidStringCharacters =
+      1 + 8 + 1 + 4 + 1 + 4 + 1 + 4 + 1 + 12 + 1 + 1;
+  wchar_t guid_string[kGuidStringCharacters];
+  CHECK(SUCCEEDED(StringCchPrintfW(
+      guid_string, kGuidStringCharacters,
+      L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", rguid.Data1,
+      rguid.Data2, rguid.Data3, rguid.Data4[0], rguid.Data4[1], rguid.Data4[2],
+      rguid.Data4[3], rguid.Data4[4], rguid.Data4[5], rguid.Data4[6],
+      rguid.Data4[7])));
+  return string16(as_u16cstr(guid_string), kGuidStringCharacters - 1);
+}
+
+bool PinUser32(NativeLibraryLoadError* error) {
+  return PinUser32Internal(error) != nullptr;
+}
+
+void* GetUser32FunctionPointer(const char* function_name,
+                               NativeLibraryLoadError* error) {
+  NativeLibrary user32_module = PinUser32Internal(error);
+  if (user32_module)
+    return GetFunctionPointerFromNativeLibrary(user32_module, function_name);
+  return nullptr;
+}
+
+string16 GetWindowObjectName(HANDLE handle) {
+  // Get the size of the name.
+  string16 object_name;
+
+  DWORD size = 0;
+  ::GetUserObjectInformation(handle, UOI_NAME, nullptr, 0, &size);
+  if (!size) {
+    DPCHECK(false);
+    return object_name;
+  }
+
+  LOG_ASSERT(size % sizeof(wchar_t) == 0u);
+
+  // Query the name of the object.
+  if (!::GetUserObjectInformation(
+          handle, UOI_NAME, WriteInto(&object_name, size / sizeof(wchar_t)),
+          size, &size)) {
+    DPCHECK(false);
+  }
+
+  return object_name;
+}
+
+bool IsRunningUnderDesktopName(StringPiece16 desktop_name) {
+  HDESK thread_desktop = ::GetThreadDesktop(::GetCurrentThreadId());
+  if (!thread_desktop)
+    return false;
+
+  string16 current_desktop_name = GetWindowObjectName(thread_desktop);
+  return EqualsCaseInsensitiveASCII(current_desktop_name, desktop_name);
+}
+
+// This method is used to detect whether current session is a remote session.
+// See:
+// https://docs.microsoft.com/en-us/windows/desktop/TermServ/detecting-the-terminal-services-environment
+bool IsCurrentSessionRemote() {
+  if (::GetSystemMetrics(SM_REMOTESESSION))
+    return true;
+
+  DWORD current_session_id = 0;
+
+  if (!::ProcessIdToSessionId(::GetCurrentProcessId(), &current_session_id))
+    return false;
+
+  static constexpr wchar_t kRdpSettingsKeyName[] =
+      L"SYSTEM\\CurrentControlSet\\Control\\Terminal Server";
+  base::win::RegKey key(HKEY_LOCAL_MACHINE, kRdpSettingsKeyName, KEY_READ);
+  if (!key.Valid())
+    return false;
+
+  static constexpr wchar_t kGlassSessionIdValueName[] = L"GlassSessionId";
+  DWORD glass_session_id = 0;
+  if (key.ReadValueDW(kGlassSessionIdValueName, &glass_session_id) !=
+      ERROR_SUCCESS)
+    return false;
+
+  return current_session_id != glass_session_id;
+}
+
+ScopedDomainStateForTesting::ScopedDomainStateForTesting(bool state)
+    : initial_state_(IsEnrolledToDomain()) {
+  *GetDomainEnrollmentStateStorage() = state;
+}
+
+ScopedDomainStateForTesting::~ScopedDomainStateForTesting() {
+  *GetDomainEnrollmentStateStorage() = initial_state_;
+}
+
+ScopedDeviceRegisteredWithManagementForTesting::
+    ScopedDeviceRegisteredWithManagementForTesting(bool state)
+    : initial_state_(IsDeviceRegisteredWithManagement()) {
+  *GetRegisteredWithManagementStateStorage() = state;
+}
+
+ScopedDeviceRegisteredWithManagementForTesting::
+    ~ScopedDeviceRegisteredWithManagementForTesting() {
+  *GetRegisteredWithManagementStateStorage() = initial_state_;
 }
 
 }  // namespace win

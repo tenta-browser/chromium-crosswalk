@@ -16,15 +16,16 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "chrome/services/media_gallery_util/public/cpp/safe_audio_video_checker.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "net/base/mime_util.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "third_party/WebKit/common/mime_util/mime_util.h"
+#include "third_party/blink/public/common/mime_util/mime_util.h"
 
 namespace {
 
@@ -45,7 +46,7 @@ class SupportedAudioVideoExtensions {
   }
 
   bool HasSupportedAudioVideoExtension(const base::FilePath& file) {
-    return base::ContainsKey(audio_video_extensions_, file.Extension());
+    return base::Contains(audio_video_extensions_, file.Extension());
   }
 
  private:
@@ -58,7 +59,8 @@ base::LazyInstance<SupportedAudioVideoExtensions>::DestructorAtExit
     g_audio_video_extensions = LAZY_INSTANCE_INITIALIZER;
 
 base::File OpenBlocking(const base::FilePath& path) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   return base::File(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
 }
 
@@ -77,33 +79,27 @@ void SupportedAudioVideoChecker::StartPreWriteValidation(
   DCHECK(callback_.is_null());
   callback_ = result_callback;
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&SupportedAudioVideoChecker::RetrieveConnectorOnUIThread,
                      weak_factory_.GetWeakPtr()));
 }
 
 SupportedAudioVideoChecker::SupportedAudioVideoChecker(
     const base::FilePath& path)
-    : path_(path),
-      weak_factory_(this) {
-}
+    : path_(path) {}
 
 // static
 void SupportedAudioVideoChecker::RetrieveConnectorOnUIThread(
     base::WeakPtr<SupportedAudioVideoChecker> this_ptr) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  std::unique_ptr<service_manager::Connector> connector =
-      content::ServiceManagerConnection::GetForProcess()
-          ->GetConnector()
-          ->Clone();
   // We need a fresh connector so that we can use it on the IO thread. It has
   // to be retrieved from the UI thread. We must use static method and pass a
   // WeakPtr around as WeakPtrs are not thread-safe.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&SupportedAudioVideoChecker::OnConnectorRetrieved,
-                     this_ptr, std::move(connector)));
+                     this_ptr, content::GetSystemConnector()->Clone()));
 }
 
 // static
@@ -130,7 +126,7 @@ void SupportedAudioVideoChecker::OnFileOpen(
     return;
   }
 
-  safe_checker_ = new SafeAudioVideoChecker(std::move(file), callback_,
-                                            std::move(connector));
+  safe_checker_ = std::make_unique<SafeAudioVideoChecker>(
+      std::move(file), callback_, std::move(connector));
   safe_checker_->Start();
 }

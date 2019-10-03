@@ -8,11 +8,13 @@
 #include <stdlib.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log.h"
 #include "net/socket/socket_test_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -26,8 +28,10 @@ const size_t kWriteChunkSize = 1024U;
 int WriteNetSocket(net::Socket* socket,
                    const scoped_refptr<net::IOBuffer>& buf,
                    int buf_len,
-                   const net::CompletionCallback& callback) {
-  return socket->Write(buf.get(), buf_len, callback);
+                   net::CompletionOnceCallback callback,
+                   const net::NetworkTrafficAnnotationTag& traffic_annotation) {
+  return socket->Write(buf.get(), buf_len, std::move(callback),
+                       traffic_annotation);
 }
 
 class SocketDataProvider: public net::SocketDataProvider {
@@ -100,11 +104,12 @@ class BufferedSocketWriterTest : public testing::Test {
                                                &socket_data_provider_));
     socket_data_provider_.set_connect_data(
         net::MockConnect(net::SYNCHRONOUS, net::OK));
-    EXPECT_EQ(net::OK, socket_->Connect(net::CompletionCallback()));
+    EXPECT_EQ(net::OK, socket_->Connect(net::CompletionOnceCallback()));
 
     writer_.reset(new BufferedSocketWriter());
-    test_buffer_ = new net::IOBufferWithSize(kTestBufferSize);
-    test_buffer_2_ = new net::IOBufferWithSize(kTestBufferSize);
+    test_buffer_ = base::MakeRefCounted<net::IOBufferWithSize>(kTestBufferSize);
+    test_buffer_2_ =
+        base::MakeRefCounted<net::IOBufferWithSize>(kTestBufferSize);
     for (int i = 0; i < kTestBufferSize; ++i) {
       test_buffer_->data()[i] = rand() % 256;
       test_buffer_2_->data()[i] = rand() % 256;
@@ -115,7 +120,7 @@ class BufferedSocketWriterTest : public testing::Test {
     writer_->Start(base::Bind(&WriteNetSocket, socket_.get()),
                    base::Bind(&BufferedSocketWriterTest::OnWriteFailed,
                               base::Unretained(this)));
-  };
+  }
 
   void OnWriteFailed(int error) {
     write_error_ = error;
@@ -135,22 +140,25 @@ class BufferedSocketWriterTest : public testing::Test {
   }
 
   void TestWrite() {
-    writer_->Write(test_buffer_, base::Closure());
-    writer_->Write(test_buffer_2_, base::Closure());
+    writer_->Write(test_buffer_, base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS);
+    writer_->Write(test_buffer_2_, base::Closure(),
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
     base::RunLoop().RunUntilIdle();
     VerifyWrittenData();
   }
 
   void TestAppendInCallback() {
-    writer_->Write(test_buffer_, base::Bind(
-        base::IgnoreResult(&BufferedSocketWriter::Write),
-        base::Unretained(writer_.get()), test_buffer_2_,
-        base::Closure()));
+    writer_->Write(
+        test_buffer_,
+        base::BindOnce(base::IgnoreResult(&BufferedSocketWriter::Write),
+                       base::Unretained(writer_.get()), test_buffer_2_,
+                       base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS),
+        TRAFFIC_ANNOTATION_FOR_TESTS);
     base::RunLoop().RunUntilIdle();
     VerifyWrittenData();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   net::NetLog net_log_;
   SocketDataProvider socket_data_provider_;
   std::unique_ptr<net::StreamSocket> socket_;
@@ -199,12 +207,14 @@ TEST_F(BufferedSocketWriterTest, AppendInCallbackAsync) {
 TEST_F(BufferedSocketWriterTest, DestroyFromCallback) {
   StartWriter();
   socket_data_provider_.set_async_write(true);
-  writer_->Write(test_buffer_, base::Bind(
-      &BufferedSocketWriterTest::DestroyWriter,
-      base::Unretained(this)));
-  writer_->Write(test_buffer_2_, base::Bind(
-      &BufferedSocketWriterTest::Unexpected,
-      base::Unretained(this)));
+  writer_->Write(test_buffer_,
+                 base::Bind(&BufferedSocketWriterTest::DestroyWriter,
+                            base::Unretained(this)),
+                 TRAFFIC_ANNOTATION_FOR_TESTS);
+  writer_->Write(
+      test_buffer_2_,
+      base::Bind(&BufferedSocketWriterTest::Unexpected, base::Unretained(this)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   socket_data_provider_.set_async_write(false);
   base::RunLoop().RunUntilIdle();
   ASSERT_GE(socket_data_provider_.written_data().size(),
@@ -218,12 +228,13 @@ TEST_F(BufferedSocketWriterTest, DestroyFromCallback) {
 TEST_F(BufferedSocketWriterTest, TestWriteErrorSync) {
   StartWriter();
   socket_data_provider_.set_write_limit(kWriteChunkSize);
-  writer_->Write(test_buffer_, base::Closure());
+  writer_->Write(test_buffer_, base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS);
   socket_data_provider_.set_async_write(true);
   socket_data_provider_.set_next_write_error(net::ERR_FAILED);
-  writer_->Write(test_buffer_2_,
-                 base::Bind(&BufferedSocketWriterTest::Unexpected,
-                            base::Unretained(this)));
+  writer_->Write(
+      test_buffer_2_,
+      base::Bind(&BufferedSocketWriterTest::Unexpected, base::Unretained(this)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   socket_data_provider_.set_async_write(false);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(net::ERR_FAILED, write_error_);
@@ -235,12 +246,13 @@ TEST_F(BufferedSocketWriterTest, TestWriteErrorSync) {
 TEST_F(BufferedSocketWriterTest, TestWriteErrorAsync) {
   StartWriter();
   socket_data_provider_.set_write_limit(kWriteChunkSize);
-  writer_->Write(test_buffer_, base::Closure());
+  writer_->Write(test_buffer_, base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS);
   socket_data_provider_.set_async_write(true);
   socket_data_provider_.set_next_write_error(net::ERR_FAILED);
-  writer_->Write(test_buffer_2_,
-                 base::Bind(&BufferedSocketWriterTest::Unexpected,
-                            base::Unretained(this)));
+  writer_->Write(
+      test_buffer_2_,
+      base::Bind(&BufferedSocketWriterTest::Unexpected, base::Unretained(this)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(net::ERR_FAILED, write_error_);
   EXPECT_EQ(static_cast<size_t>(test_buffer_->size()),
@@ -248,8 +260,8 @@ TEST_F(BufferedSocketWriterTest, TestWriteErrorAsync) {
 }
 
 TEST_F(BufferedSocketWriterTest, WriteBeforeStart) {
-  writer_->Write(test_buffer_, base::Closure());
-  writer_->Write(test_buffer_2_, base::Closure());
+  writer_->Write(test_buffer_, base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS);
+  writer_->Write(test_buffer_2_, base::Closure(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
   StartWriter();
   base::RunLoop().RunUntilIdle();

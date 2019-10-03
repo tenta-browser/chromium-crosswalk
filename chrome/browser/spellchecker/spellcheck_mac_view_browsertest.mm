@@ -6,7 +6,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
@@ -34,7 +34,7 @@ IN_PROC_BROWSER_TEST_F(SpellCheckMacViewBrowserTest, SpellCheckPanelVisible) {
                                embedded_test_server()->GetURL("/title1.html"));
 
   SEL show_guess_panel = NSSelectorFromString(@"showGuessPanel:");
-  [web_contents->GetRenderWidgetHostView()->GetNativeView()
+  [web_contents->GetRenderWidgetHostView()->GetNativeView().GetNativeNSView()
       performSelector:show_guess_panel];
   browser_client.RunUntilBind();
   spellcheck::SpellCheckMockPanelHost* host =

@@ -8,13 +8,14 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "chromecast/base/metrics/cast_metrics_helper.h"
 #include "chromecast/media/cdm/cast_cdm_context.h"
 #include "chromecast/media/cma/base/buffering_defs.h"
-#include "chromecast/media/cma/base/cma_logging.h"
 #include "chromecast/media/cma/base/coded_frame_provider.h"
 #include "chromecast/media/cma/base/decoder_config_adapter.h"
 #include "chromecast/media/cma/pipeline/av_pipeline_impl.h"
+#include "chromecast/media/cma/pipeline/cdm_decryptor.h"
 #include "chromecast/public/graphics_types.h"
 #include "chromecast/public/media/decoder_config.h"
 #include "media/base/video_decoder_config.h"
@@ -26,9 +27,8 @@ namespace {
 const size_t kMaxVideoFrameSize = 1024 * 1024;
 }
 
-VideoPipelineImpl::VideoPipelineImpl(
-    MediaPipelineBackend::VideoDecoder* decoder,
-    const VideoPipelineClient& client)
+VideoPipelineImpl::VideoPipelineImpl(CmaBackend::VideoDecoder* decoder,
+                                     const VideoPipelineClient& client)
     : AvPipelineImpl(decoder, client.av_pipeline_client),
       video_decoder_(decoder),
       natural_size_changed_cb_(client.natural_size_changed_cb) {
@@ -43,8 +43,7 @@ VideoPipelineImpl::~VideoPipelineImpl() {
     std::unique_ptr<CodedFrameProvider> frame_provider) {
   DCHECK_GT(configs.size(), 0u);
   for (const auto& config : configs) {
-    CMALOG(kLogControl) << __FUNCTION__ << " "
-                        << config.AsHumanReadableString();
+    LOG(INFO) << __FUNCTION__ << " " << config.AsHumanReadableString();
   }
 
   if (frame_provider) {
@@ -55,7 +54,7 @@ VideoPipelineImpl::~VideoPipelineImpl() {
   if (configs.empty()) {
     return ::media::PIPELINE_ERROR_INITIALIZATION_FAILED;
   }
-  DCHECK(configs.size() <= 2);
+  DCHECK_LE(configs.size(), 2U);
   DCHECK(configs[0].IsValidConfig());
   encryption_schemes_.resize(configs.size());
 
@@ -105,8 +104,8 @@ void VideoPipelineImpl::OnUpdateConfig(
     const ::media::AudioDecoderConfig& audio_config,
     const ::media::VideoDecoderConfig& video_config) {
   if (video_config.IsValidConfig()) {
-    CMALOG(kLogControl) << __FUNCTION__ << " id:" << id << " "
-                        << video_config.AsHumanReadableString();
+    LOG(INFO) << __FUNCTION__ << " id:" << id << " "
+              << video_config.AsHumanReadableString();
 
     DCHECK_LT(id, encryption_schemes_.size());
     VideoConfig cast_video_config =
@@ -120,10 +119,13 @@ void VideoPipelineImpl::OnUpdateConfig(
   }
 }
 
-const EncryptionScheme& VideoPipelineImpl::GetEncryptionScheme(
-    StreamId id) const {
+EncryptionScheme VideoPipelineImpl::GetEncryptionScheme(StreamId id) const {
   DCHECK_LT(id, encryption_schemes_.size());
   return encryption_schemes_[static_cast<int>(id)];
+}
+
+std::unique_ptr<StreamDecryptor> VideoPipelineImpl::CreateDecryptor() {
+  return std::make_unique<CdmDecryptor>(false /* clear_buffer_needed */);
 }
 
 void VideoPipelineImpl::UpdateStatistics() {
@@ -132,7 +134,7 @@ void VideoPipelineImpl::UpdateStatistics() {
 
   // TODO(mbjorge): Give Statistics a default constructor when the
   // next system update happens. b/32802298
-  MediaPipelineBackend::VideoDecoder::Statistics video_stats = {};
+  CmaBackend::VideoDecoder::Statistics video_stats = {};
   video_decoder_->GetStatistics(&video_stats);
 
   ::media::PipelineStatistics current_stats;

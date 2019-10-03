@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.webapps;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.os.Build;
 import android.support.test.filters.SmallTest;
 import android.text.TextUtils;
 
@@ -16,8 +17,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
@@ -32,9 +33,11 @@ import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.TabLoadObserver;
 import org.chromium.chrome.test.util.browser.TabTitleObserver;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.common.ContentSwitches;
+import org.chromium.chrome.test.util.browser.WebappTestPage;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.net.test.EmbeddedTestServerRule;
 
 import java.util.concurrent.Callable;
@@ -44,8 +47,7 @@ import java.util.concurrent.Callable;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class AddToHomescreenManagerTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -57,50 +59,48 @@ public class AddToHomescreenManagerTest {
     private static final String WEBAPP_ACTION_NAME = "WEBAPP_ACTION";
 
     private static final String WEBAPP_TITLE = "Webapp shortcut";
-    private static final String WEBAPP_HTML = UrlUtils.encodeHtmlDataUri(
-            "<html><head>"
+    private static final String WEBAPP_HTML = UrlUtils.encodeHtmlDataUri("<html><head>"
             + "<meta name=\"mobile-web-app-capable\" content=\"yes\" />"
             + "<title>" + WEBAPP_TITLE + "</title>"
             + "</head><body>Webapp capable</body></html>");
     private static final String EDITED_WEBAPP_TITLE = "Webapp shortcut edited";
 
     private static final String SECOND_WEBAPP_TITLE = "Webapp shortcut #2";
-    private static final String SECOND_WEBAPP_HTML = UrlUtils.encodeHtmlDataUri(
-            "<html><head>"
+    private static final String SECOND_WEBAPP_HTML = UrlUtils.encodeHtmlDataUri("<html><head>"
             + "<meta name=\"mobile-web-app-capable\" content=\"yes\" />"
             + "<title>" + SECOND_WEBAPP_TITLE + "</title>"
             + "</head><body>Webapp capable again</body></html>");
 
     private static final String NORMAL_TITLE = "Plain shortcut";
-    private static final String NORMAL_HTML = UrlUtils.encodeHtmlDataUri(
-            "<html>"
+    private static final String NORMAL_HTML = UrlUtils.encodeHtmlDataUri("<html>"
             + "<head><title>" + NORMAL_TITLE + "</title></head>"
             + "<body>Not Webapp capable</body></html>");
 
     private static final String META_APP_NAME_PAGE_TITLE = "Not the right title";
     private static final String META_APP_NAME_TITLE = "Web application-name";
-    private static final String META_APP_NAME_HTML = UrlUtils.encodeHtmlDataUri(
-            "<html><head>"
+    private static final String META_APP_NAME_HTML = UrlUtils.encodeHtmlDataUri("<html><head>"
             + "<meta name=\"mobile-web-app-capable\" content=\"yes\" />"
             + "<meta name=\"application-name\" content=\"" + META_APP_NAME_TITLE + "\">"
             + "<title>" + META_APP_NAME_PAGE_TITLE + "</title>"
             + "</head><body>Webapp capable</body></html>");
 
-    private static final String MANIFEST_PATH = "/chrome/test/data/banners/manifest_test_page.html";
-    private static final String MANIFEST_TITLE = "Web app banner test page";
-
-    private static final String EVENT_WEBAPP_PATH =
-            "/chrome/test/data/banners/appinstalled_test_page.html";
-    private static final String EVENT_WEBAPP_TITLE = "appinstalled event test page";
+    private static final String NON_MASKABLE_MANIFEST_TEST_PAGE_PATH =
+            "/chrome/test/data/banners/manifest_test_page.html";
+    private static final String MASKABLE_MANIFEST_TEST_PAGE_PATH =
+            "/chrome/test/data/banners/manifest_test_page.html?manifest=manifest_maskable.json";
+    private static final String MANIFEST_TEST_PAGE_TITLE = "Web app banner test page";
 
     private static class TestShortcutHelperDelegate extends ShortcutHelper.Delegate {
         public String mRequestedShortcutTitle;
         public Intent mRequestedShortcutIntent;
+        public boolean mRequestedShortcutAdaptable;
 
         @Override
-        public void addShortcutToHomescreen(String title, Bitmap icon, Intent shortcutIntent) {
+        public void addShortcutToHomescreen(
+                String title, Bitmap icon, boolean iconAdaptable, Intent shortcutIntent) {
             mRequestedShortcutTitle = title;
             mRequestedShortcutIntent = shortcutIntent;
+            mRequestedShortcutAdaptable = iconAdaptable;
         }
 
         @Override
@@ -111,6 +111,7 @@ public class AddToHomescreenManagerTest {
         public void clearRequestedShortcutData() {
             mRequestedShortcutTitle = null;
             mRequestedShortcutIntent = null;
+            mRequestedShortcutAdaptable = false;
         }
     }
 
@@ -123,7 +124,6 @@ public class AddToHomescreenManagerTest {
         }
 
         private class WebappDataStorageWrapper extends WebappDataStorage {
-
             public WebappDataStorageWrapper(String webappId) {
                 super(webappId);
             }
@@ -153,22 +153,19 @@ public class AddToHomescreenManagerTest {
 
         @Override
         public void showDialog() {
-            AddToHomescreenManager.Observer observer = new AddToHomescreenManager.Observer() {
+            mDialog = new AddToHomescreenDialog(mActivity, TestAddToHomescreenManager.this) {
                 @Override
-                public void onUserTitleAvailable(
-                        String title, String url, boolean isTitleEditable) {
+                public void onUserTitleAvailable(String title, String url, boolean isWebapp) {
                     if (TextUtils.isEmpty(mTitle)) {
                         mTitle = title;
                     }
                 }
 
                 @Override
-                public void onReadyToAdd(Bitmap icon) {
-                    TestAddToHomescreenManager.this.addShortcut(mTitle);
+                public void onIconAvailable(Bitmap icon) {
+                    TestAddToHomescreenManager.this.addToHomescreen(mTitle);
                 }
             };
-
-            setObserver(observer);
         }
     }
 
@@ -210,6 +207,33 @@ public class AddToHomescreenManagerTest {
                 SECOND_WEBAPP_HTML, newLaunchIntent.getStringExtra(ShortcutHelper.EXTRA_URL));
         Assert.assertEquals(WEBAPP_ACTION_NAME, newLaunchIntent.getAction());
         Assert.assertEquals(mActivity.getPackageName(), newLaunchIntent.getPackage());
+    }
+
+    @Test
+    @SmallTest
+    @Feature("{Webapp}")
+    // The test manifest fulfills the requirements of a WebAPK so disable WebAPKs to force plain old
+    // add to home screen.
+    @CommandLineFlags.Add({"disable-features=ImprovedA2HS"})
+    @DisableIf.Build(sdk_is_less_than = Build.VERSION_CODES.O)
+    public void testAddAdaptableShortcut() throws Exception {
+        // Test the baseline of no adaptive icon.
+        loadUrl(mTestServerRule.getServer().getURL(NON_MASKABLE_MANIFEST_TEST_PAGE_PATH),
+                MANIFEST_TEST_PAGE_TITLE);
+        addShortcutToTab(mTab, "", true);
+
+        Assert.assertFalse(mShortcutHelperDelegate.mRequestedShortcutAdaptable);
+
+        mShortcutHelperDelegate.clearRequestedShortcutData();
+
+        // Test the adaptive icon.
+        loadUrl(mTestServerRule.getServer().getURL(MASKABLE_MANIFEST_TEST_PAGE_PATH),
+                MANIFEST_TEST_PAGE_TITLE);
+        addShortcutToTab(mTab, "", true);
+
+        // TODO(crbug.com/977173): re-enable maskable icon support once server support
+        // is ready.
+        Assert.assertFalse(mShortcutHelperDelegate.mRequestedShortcutAdaptable);
     }
 
     @Test
@@ -278,7 +302,8 @@ public class AddToHomescreenManagerTest {
         final TestDataStorageFactory dataStorageFactory = new TestDataStorageFactory();
         WebappDataStorage.setFactoryForTests(dataStorageFactory);
 
-        loadUrl(mTestServerRule.getServer().getURL(MANIFEST_PATH), MANIFEST_TITLE);
+        loadUrl(WebappTestPage.getServiceWorkerUrl(mTestServerRule.getServer()),
+                WebappTestPage.PAGE_TITLE);
         addShortcutToTab(mTab, "", true);
 
         // Make sure that the splash screen image was downloaded.
@@ -297,13 +322,16 @@ public class AddToHomescreenManagerTest {
         Assert.assertEquals(idealSize, splashImage.getHeight());
     }
 
-    /** Tests that the appinstalled event is fired when an app is installed.
+    /**
+     * Tests that the appinstalled event is fired when an app is installed.
      */
     @Test
     @SmallTest
     @Feature("{Webapp}")
     public void testAddWebappShortcutAppInstalledEvent() throws Exception {
-        loadUrl(mTestServerRule.getServer().getURL(EVENT_WEBAPP_PATH), EVENT_WEBAPP_TITLE);
+        loadUrl(WebappTestPage.getServiceWorkerUrlWithAction(
+                        mTestServerRule.getServer(), "verify_appinstalled"),
+                WebappTestPage.PAGE_TITLE);
         addShortcutToTab(mTab, "", true);
 
         // Wait for the tab title to change. This will happen (due to the JavaScript that runs
@@ -334,36 +362,22 @@ public class AddToHomescreenManagerTest {
     }
 
     private void startManagerOnUiThread(final AddToHomescreenManager manager) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                manager.start();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { manager.start(); });
     }
 
     private void destroyManagerOnUiThread(final AddToHomescreenManager manager) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                manager.destroy();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { manager.destroy(); });
     }
 
     /**
      * Spawns popup via window.open() at {@link url}.
      */
     private Tab spawnPopupInBackground(final String url) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTab.getWebContents().evaluateJavaScriptForTests(
-                        "(function() {"
-                        + "window.open('" + url + "');"
-                        + "})()",
-                        null);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mTab.getWebContents().evaluateJavaScriptForTests("(function() {"
+                            + "window.open('" + url + "');"
+                            + "})()",
+                    null);
         });
 
         CriteriaHelper.pollUiThread(Criteria.equals(2, new Callable<Integer>() {

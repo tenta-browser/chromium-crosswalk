@@ -4,8 +4,13 @@
 
 #include "ui/base/dragdrop/os_exchange_data.h"
 
+#include <utility>
+#include <vector>
+
+#include "base/callback.h"
 #include "base/pickle.h"
 #include "build/build_config.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "url/gurl.h"
 
@@ -18,7 +23,7 @@ OSExchangeData::DownloadFileInfo::DownloadFileInfo(
       downloader(downloader) {
 }
 
-OSExchangeData::DownloadFileInfo::~DownloadFileInfo() {}
+OSExchangeData::DownloadFileInfo::~DownloadFileInfo() = default;
 
 OSExchangeData::OSExchangeData()
     : provider_(OSExchangeDataProviderFactory::CreateProvider()) {
@@ -56,7 +61,7 @@ void OSExchangeData::SetFilenames(
   provider_->SetFilenames(filenames);
 }
 
-void OSExchangeData::SetPickledData(const Clipboard::FormatType& format,
+void OSExchangeData::SetPickledData(const ClipboardFormatType& format,
                                     const base::Pickle& data) {
   provider_->SetPickledData(format, data);
 }
@@ -79,7 +84,7 @@ bool OSExchangeData::GetFilenames(std::vector<FileInfo>* filenames) const {
   return provider_->GetFilenames(filenames);
 }
 
-bool OSExchangeData::GetPickledData(const Clipboard::FormatType& format,
+bool OSExchangeData::GetPickledData(const ClipboardFormatType& format,
                                     base::Pickle* data) const {
   return provider_->GetPickledData(format, data);
 }
@@ -96,14 +101,13 @@ bool OSExchangeData::HasFile() const {
   return provider_->HasFile();
 }
 
-bool OSExchangeData::HasCustomFormat(
-    const Clipboard::FormatType& format) const {
+bool OSExchangeData::HasCustomFormat(const ClipboardFormatType& format) const {
   return provider_->HasCustomFormat(format);
 }
 
 bool OSExchangeData::HasAnyFormat(
     int formats,
-    const std::set<Clipboard::FormatType>& format_types) const {
+    const std::set<ClipboardFormatType>& format_types) const {
   if ((formats & STRING) != 0 && HasString())
     return true;
   if ((formats & URL) != 0 && HasURL(CONVERT_FILENAMES))
@@ -134,6 +138,22 @@ void OSExchangeData::SetFileContents(const base::FilePath& filename,
 bool OSExchangeData::GetFileContents(base::FilePath* filename,
                                      std::string* file_contents) const {
   return provider_->GetFileContents(filename, file_contents);
+}
+
+bool OSExchangeData::HasVirtualFilenames() const {
+  return provider_->HasVirtualFilenames();
+}
+
+bool OSExchangeData::GetVirtualFilenames(
+    std::vector<FileInfo>* filenames) const {
+  return provider_->GetVirtualFilenames(filenames);
+}
+
+bool OSExchangeData::GetVirtualFilesAsTempFiles(
+    base::OnceCallback<
+        void(const std::vector<std::pair<base::FilePath, base::FilePath>>&)>
+        callback) const {
+  return provider_->GetVirtualFilesAsTempFiles(std::move(callback));
 }
 
 void OSExchangeData::SetDownloadFileInfo(const DownloadFileInfo& download) {

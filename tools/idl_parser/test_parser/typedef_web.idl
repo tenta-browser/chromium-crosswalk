@@ -92,13 +92,6 @@ typedef DOMString MyString;
 typedef object MyObject;
 
 /** TREE
- *Typedef(MyDate)
- *  Type()
- *    PrimitiveType(Date)
- */
-typedef Date MyDate;
-
-/** TREE
  *Typedef(MyFloat)
  *  Type()
  *    PrimitiveType(float)
@@ -165,3 +158,25 @@ typedef record<ByteString, int> MyRecord;
  *    Error(Unexpected keyword "double" after "<".)
  */
 typedef record<double, ByteString> MyInvalidRecord;
+
+/** TREE
+ *Typedef(MyAnnotationInUnion)
+ *  Type()
+ *    UnionType()
+ *      Type()
+ *        StringType(DOMString)
+ *        ExtAttributes()
+ *          ExtAttribute(TreatNullAs) = "EmptyString"
+ *      Type()
+ *        PrimitiveType(long)
+ *        ExtAttributes()
+ *          ExtAttribute(Clamp)
+ */
+typedef ([TreatNullAs=EmptyString] DOMString or [Clamp] long) MyAnnotationInUnion;
+
+/** TREE
+ *Typedef(Date)
+ *  Type()
+ *    PrimitiveType(double)
+ */
+typedef double Date;

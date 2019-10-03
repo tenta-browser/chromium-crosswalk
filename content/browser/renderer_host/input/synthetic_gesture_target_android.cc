@@ -6,17 +6,19 @@
 
 #include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
-#include "jni/SyntheticGestureTarget_jni.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/platform/WebMouseEvent.h"
-#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
-#include "third_party/WebKit/public/platform/WebTouchEvent.h"
+#include "content/public/android/content_jni_headers/SyntheticGestureTarget_jni.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
+#include "third_party/blink/public/platform/web_touch_event.h"
 #include "ui/android/view_android.h"
 #include "ui/gfx/android/view_configuration.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
+using blink::WebGestureEvent;
 using blink::WebInputEvent;
 using blink::WebMouseEvent;
 using blink::WebMouseWheelEvent;
@@ -67,11 +69,11 @@ void SyntheticGestureTargetAndroid::TouchSetScrollDeltas(int x,
 
 void SyntheticGestureTargetAndroid::TouchInject(MotionEventAction action,
                                                 int pointer_count,
-                                                int64_t time_in_ms) {
+                                                base::TimeTicks time) {
   TRACE_EVENT0("input", "SyntheticGestureTargetAndroid::TouchInject");
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_SyntheticGestureTarget_inject(env, java_ref_, action, pointer_count,
-                                     time_in_ms);
+                                     time.since_origin().InMilliseconds());
 }
 
 void SyntheticGestureTargetAndroid::DispatchWebTouchEventToPlatform(
@@ -101,8 +103,7 @@ void SyntheticGestureTargetAndroid::DispatchWebTouchEventToPlatform(
                     point->id);
   }
 
-  TouchInject(action, num_touches,
-              static_cast<int64_t>(web_touch.TimeStampSeconds() * 1000.0));
+  TouchInject(action, num_touches, web_touch.TimeStamp());
 }
 
 void SyntheticGestureTargetAndroid::DispatchWebMouseWheelEventToPlatform(
@@ -111,8 +112,16 @@ void SyntheticGestureTargetAndroid::DispatchWebMouseWheelEventToPlatform(
   TouchSetScrollDeltas(web_wheel.PositionInWidget().x,
                        web_wheel.PositionInWidget().y, web_wheel.delta_x,
                        web_wheel.delta_y);
-  TouchInject(MOTION_EVENT_ACTION_SCROLL, 1,
-              static_cast<int64_t>(web_wheel.TimeStampSeconds() * 1000.0));
+  TouchInject(MOTION_EVENT_ACTION_SCROLL, 1, web_wheel.TimeStamp());
+}
+
+void SyntheticGestureTargetAndroid::DispatchWebGestureEventToPlatform(
+    const WebGestureEvent& web_gesture,
+    const ui::LatencyInfo& latency_info) {
+  DCHECK_EQ(blink::WebGestureDevice::kTouchpad, web_gesture.SourceDevice());
+  DCHECK(blink::WebInputEvent::IsPinchGestureEventType(web_gesture.GetType()) ||
+         blink::WebInputEvent::IsFlingGestureEventType(web_gesture.GetType()));
+  GetView()->SendGestureEvent(web_gesture);
 }
 
 void SyntheticGestureTargetAndroid::DispatchWebMouseEventToPlatform(
@@ -136,6 +145,13 @@ float SyntheticGestureTargetAndroid::GetMinScalingSpanInDips() const {
   // TODO(jdduke): Have all targets use the same ui::GestureConfiguration
   // codepath.
   return gfx::ViewConfiguration::GetMinScalingSpanInDips();
+}
+
+RenderWidgetHostViewAndroid* SyntheticGestureTargetAndroid::GetView() const {
+  auto* view = static_cast<RenderWidgetHostViewAndroid*>(
+      render_widget_host()->GetView());
+  DCHECK(view);
+  return view;
 }
 
 }  // namespace content

@@ -64,7 +64,7 @@ namespace {
 class MockScreenCapturerCallback : public webrtc::DesktopCapturer::Callback {
  public:
   MockScreenCapturerCallback() = default;
-  virtual ~MockScreenCapturerCallback() = default;
+  ~MockScreenCapturerCallback() override = default;
 
   MOCK_METHOD2(OnCaptureResultPtr,
                void(webrtc::DesktopCapturer::Result result,
@@ -300,8 +300,7 @@ void IpcDesktopEnvironmentTest::SetUp() {
       .Times(AnyNumber())
       .WillRepeatedly(InvokeWithoutArgs(
           this, &IpcDesktopEnvironmentTest::DeleteDesktopEnvironment));
-  EXPECT_CALL(client_session_control_, OnLocalMouseMoved(_))
-      .Times(0);
+  EXPECT_CALL(client_session_control_, OnLocalPointerMoved(_, _)).Times(0);
   EXPECT_CALL(client_session_control_, SetDisableInputs(_))
       .Times(0);
 

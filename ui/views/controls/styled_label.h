@@ -7,6 +7,8 @@
 
 #include <list>
 #include <map>
+#include <memory>
+#include <set>
 
 #include "base/macros.h"
 #include "base/optional.h"
@@ -15,6 +17,7 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/range/range.h"
+#include "ui/gfx/text_constants.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/view.h"
@@ -31,8 +34,21 @@ class StyledLabelListener;
 // In this case, leading whitespace is ignored.
 class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
  public:
-  // Internal class name.
-  static const char kViewClassName[];
+  METADATA_HEADER(StyledLabel);
+
+  // TestApi is used for tests to get internal implementation details.
+  class VIEWS_EXPORT TestApi {
+   public:
+    explicit TestApi(StyledLabel* view);
+    ~TestApi();
+
+    const std::map<View*, gfx::Range>& link_targets();
+
+   private:
+    StyledLabel* const view_;
+
+    DISALLOW_COPY_AND_ASSIGN(TestApi);
+  };
 
   // Parameters that define label style for a styled label's text range.
   struct VIEWS_EXPORT RangeStyleInfo {
@@ -62,6 +78,10 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
 
     // If set, the whole range will be put on a single line.
     bool disable_line_wrapping = false;
+
+    // A custom view shown instead of the underlying text. Ownership of custom
+    // views must be passed to StyledLabel via AddCustomView().
+    View* custom_view = nullptr;
   };
 
   // Note that any trailing whitespace in |text| will be trimmed.
@@ -69,9 +89,8 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   ~StyledLabel() override;
 
   // Sets the text to be displayed, and clears any previous styling.
+  const base::string16& GetText() const;
   void SetText(const base::string16& text);
-
-  const base::string16& text() const { return text_; }
 
   // Returns the font list that results from the default text context and style
   // for ranges. This can be used as the basis for a range |custom_font|.
@@ -81,30 +100,33 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // |range| must be contained in |text_|.
   void AddStyleRange(const gfx::Range& range, const RangeStyleInfo& style_info);
 
-  // Set the context of this text. All ranges have the same context.
+  // Passes ownership of a custom view for use by RangeStyleInfo structs.
+  void AddCustomView(std::unique_ptr<View> custom_view);
+
+  // Get/Set the context of this text. All ranges have the same context.
   // |text_context| must be a value from views::style::TextContext.
+  int GetTextContext() const;
   void SetTextContext(int text_context);
 
   // Set the default text style.
   // |text_style| must be a value from views::style::TextStyle.
+  int GetDefaultTextStyle() const;
   void SetDefaultTextStyle(int text_style);
 
   // Get or set the distance in pixels between baselines of multi-line text.
   // Default is 0, indicating the distance between lines should be the standard
   // one for the label's text, font list, and platform.
+  int GetLineHeight() const;
   void SetLineHeight(int height);
 
-  // Sets the color of the background on which the label is drawn. This won't
-  // be explicitly drawn, but the label will force the text color to be
+  // Gets/Sets the color of the background on which the label is drawn. This
+  // won't be explicitly drawn, but the label will force the text color to be
   // readable over it.
+  SkColor GetDisplayedOnBackgroundColor() const;
   void SetDisplayedOnBackgroundColor(SkColor color);
-  SkColor displayed_on_background_color() const {
-    return displayed_on_background_color_;
-  }
 
-  void set_auto_color_readability_enabled(bool auto_color_readability) {
-    auto_color_readability_enabled_ = auto_color_readability;
-  }
+  bool GetAutoColorReadabilityEnabled() const;
+  void SetAutoColorReadabilityEnabled(bool auto_color_readability);
 
   // Resizes the label so its width is set to the width of the longest line and
   // its height deduced accordingly.
@@ -115,8 +137,7 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   void SizeToFit(int max_width);
 
   // View:
-  const char* GetClassName() const override;
-  gfx::Insets GetInsets() const override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int w) const override;
   void Layout() override;
@@ -125,6 +146,12 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // LinkListener implementation:
   void LinkClicked(Link* source, int event_flags) override;
 
+  // Sets the horizontal alignment; the argument value is mirrored in RTL UI.
+  void SetHorizontalAlignment(gfx::HorizontalAlignment alignment);
+
+  // Clears all the styles applied to the label.
+  void ClearStyleRanges();
+
  private:
   struct StyleRange {
     StyleRange(const gfx::Range& range,
@@ -132,14 +159,14 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
         : range(range),
           style_info(style_info) {
     }
-    ~StyleRange() {}
+    ~StyleRange() = default;
 
     bool operator<(const StyleRange& other) const;
 
     gfx::Range range;
     RangeStyleInfo style_info;
   };
-  typedef std::list<StyleRange> StyleRanges;
+  using StyleRanges = std::list<StyleRange>;
 
   // Returns the default line height, based on the default style.
   int GetDefaultLineHeight() const;
@@ -154,6 +181,15 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // the results in |calculated_size_|, |width_at_last_layout_|, and
   // |width_at_last_size_calculation_|. Returns the needed size.
   gfx::Size CalculateAndDoLayout(int width, bool dry_run);
+
+  // Adjusts the offsets of the views in a line for alignment and other line
+  // parameters.
+  void AdvanceOneLine(int* line_number,
+                      gfx::Point* offset,
+                      int* max_line_height,
+                      int width,
+                      std::vector<View*>* views_in_a_line,
+                      bool new_line = true);
 
   // The text to display.
   base::string16 text_;
@@ -174,6 +210,9 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // that correspond to ranges with is_link style set will be added to the map.
   std::map<View*, gfx::Range> link_targets_;
 
+  // Owns the custom views used to replace ranges of text with icons, etc.
+  std::set<std::unique_ptr<View>> custom_views_;
+
   // This variable saves the result of the last GetHeightForWidth call in order
   // to avoid repeated calculation.
   mutable gfx::Size calculated_size_;
@@ -187,6 +226,10 @@ class VIEWS_EXPORT StyledLabel : public View, public LinkListener {
   // Controls whether the text is automatically re-colored to be readable on the
   // background.
   bool auto_color_readability_enabled_;
+
+  // The horizontal alignment. This value is flipped for RTL. The default
+  // behavior is to align left in LTR UI and right in RTL UI.
+  gfx::HorizontalAlignment horizontal_alignment_ = gfx::ALIGN_LEFT;
 
   DISALLOW_COPY_AND_ASSIGN(StyledLabel);
 };

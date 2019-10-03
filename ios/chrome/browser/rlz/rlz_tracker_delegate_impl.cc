@@ -4,6 +4,7 @@
 
 #include "ios/chrome/browser/rlz/rlz_tracker_delegate_impl.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "components/omnibox/browser/omnibox_event_global_tracker.h"
@@ -14,7 +15,8 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/google/google_brand.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 RLZTrackerDelegateImpl::RLZTrackerDelegateImpl() {}
 
@@ -58,8 +60,9 @@ bool RLZTrackerDelegateImpl::IsOnUIThread() {
   return web::WebThread::CurrentlyOn(web::WebThread::UI);
 }
 
-net::URLRequestContextGetter* RLZTrackerDelegateImpl::GetRequestContext() {
-  return GetApplicationContext()->GetSystemURLRequestContext();
+scoped_refptr<network::SharedURLLoaderFactory>
+RLZTrackerDelegateImpl::GetURLLoaderFactory() {
+  return GetApplicationContext()->GetSharedURLLoaderFactory();
 }
 
 bool RLZTrackerDelegateImpl::GetBrand(std::string* brand) {
@@ -110,6 +113,11 @@ void RLZTrackerDelegateImpl::SetOmniboxSearchCallback(
 void RLZTrackerDelegateImpl::SetHomepageSearchCallback(
     const base::Closure& callback) {
   NOTREACHED();
+}
+
+bool RLZTrackerDelegateImpl::ShouldUpdateExistingAccessPointRlz() {
+  NOTREACHED();
+  return false;
 }
 
 void RLZTrackerDelegateImpl::OnURLOpenedFromOmnibox(OmniboxLog* log) {

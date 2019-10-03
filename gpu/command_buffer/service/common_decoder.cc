@@ -10,7 +10,9 @@
 #include <algorithm>
 
 #include "base/numerics/safe_math.h"
+#include "base/stl_util.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
+#include "gpu/command_buffer/service/decoder_client.h"
 
 namespace gpu {
 namespace {
@@ -32,18 +34,18 @@ const CommonDecoder::CommandInfo CommonDecoder::command_info[] = {
 
 CommonDecoder::Bucket::Bucket() : size_(0) {}
 
-CommonDecoder::Bucket::~Bucket() {}
+CommonDecoder::Bucket::~Bucket() = default;
 
 void* CommonDecoder::Bucket::GetData(size_t offset, size_t size) const {
   if (OffsetSizeValid(offset, size)) {
     return data_.get() + offset;
   }
-  return NULL;
+  return nullptr;
 }
 
 void CommonDecoder::Bucket::SetSize(size_t size) {
   if (size != size_) {
-    data_.reset(size ? new int8_t[size] : NULL);
+    data_.reset(size ? new int8_t[size] : nullptr);
     size_ = size;
     memset(data_.get(), 0, size);
   }
@@ -59,7 +61,7 @@ bool CommonDecoder::Bucket::SetData(
 }
 
 void CommonDecoder::Bucket::SetFromString(const char* str) {
-  // Strings are passed NULL terminated to distinguish between empty string
+  // Strings are passed nullptr terminated to distinguish between empty string
   // and no string.
   if (!str) {
     SetSize(0);
@@ -126,13 +128,15 @@ bool CommonDecoder::Bucket::GetAsStrings(
   return true;
 }
 
-CommonDecoder::CommonDecoder(CommandBufferServiceBase* command_buffer_service)
+CommonDecoder::CommonDecoder(DecoderClient* client,
+                             CommandBufferServiceBase* command_buffer_service)
     : command_buffer_service_(command_buffer_service),
+      client_(client),
       max_bucket_size_(kDefaultMaxBucketSize) {
   DCHECK(command_buffer_service_);
 }
 
-CommonDecoder::~CommonDecoder() {}
+CommonDecoder::~CommonDecoder() = default;
 
 void* CommonDecoder::GetAddressAndCheckSize(unsigned int shm_id,
                                             unsigned int data_offset,
@@ -176,7 +180,7 @@ const char* CommonDecoder::GetCommonCommandName(
 
 CommonDecoder::Bucket* CommonDecoder::GetBucket(uint32_t bucket_id) const {
   BucketMap::const_iterator iter(buckets_.find(bucket_id));
-  return iter != buckets_.end() ? &(*iter->second) : NULL;
+  return iter != buckets_.end() ? &(*iter->second) : nullptr;
 }
 
 CommonDecoder::Bucket* CommonDecoder::CreateBucket(uint32_t bucket_id) {
@@ -212,7 +216,7 @@ RETURN_TYPE GetImmediateDataAs(const volatile COMMAND_TYPE& pod) {
 error::Error CommonDecoder::DoCommonCommand(unsigned int command,
                                             unsigned int arg_count,
                                             const volatile void* cmd_data) {
-  if (command < arraysize(command_info)) {
+  if (command < base::size(command_info)) {
     const CommandInfo& info = command_info[command];
     unsigned int info_arg_count = static_cast<unsigned int>(info.arg_count);
     if ((info.arg_flags == cmd::kFixed && arg_count == info_arg_count) ||
@@ -310,7 +314,7 @@ error::Error CommonDecoder::HandleGetBucketStart(
   int32_t data_memory_id = args.data_memory_id;
   uint32_t data_memory_offset = args.data_memory_offset;
   uint32_t data_memory_size = args.data_memory_size;
-  uint8_t* data = NULL;
+  uint8_t* data = nullptr;
   if (data_memory_size != 0 || data_memory_id != 0 || data_memory_offset != 0) {
     data = GetSharedMemoryAs<uint8_t*>(data_memory_id, data_memory_offset,
                                        data_memory_size);
@@ -359,6 +363,21 @@ error::Error CommonDecoder::HandleGetBucketData(uint32_t immediate_data_size,
       return error::kInvalidArguments;
   }
   memcpy(data, src, size);
+  return error::kNoError;
+}
+
+error::Error CommonDecoder::HandleInsertFenceSync(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile cmd::InsertFenceSync& c =
+      *static_cast<const volatile cmd::InsertFenceSync*>(cmd_data);
+
+  const uint64_t release_count = c.release_count();
+  client_->OnFenceSyncRelease(release_count);
+  // Exit inner command processing loop so that we check the scheduling state
+  // and yield if necessary as we may have unblocked a higher priority
+  // context.
+  ExitCommandProcessingEarly();
   return error::kNoError;
 }
 

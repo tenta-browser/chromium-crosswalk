@@ -14,7 +14,8 @@
 #include "base/process/process_handle.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
+#include "components/sessions/core/session_id.h"
+#include "third_party/blink/public/platform/web_cache.h"
 #include "ui/gfx/image/image_skia.h"
 
 class Profile;
@@ -36,11 +37,12 @@ class Task {
     UNKNOWN = 0,
 
     /* Singleton processes first that don't belong to a particular tab. */
-    BROWSER, /* The main browser process. */
-    GPU,     /* A graphics process. */
-    ARC,     /* An ARC process. */
-    ZYGOTE,  /* A Linux zygote process. */
-    UTILITY, /* A browser utility process. */
+    BROWSER,  /* The main browser process. */
+    GPU,      /* A graphics process. */
+    ARC,      /* An ARC process. */
+    CROSTINI, /* A Crostini VM process. */
+    ZYGOTE,   /* A Linux zygote process. */
+    UTILITY,  /* A browser utility process. */
 
     /* Per-Tab processes next. */
     RENDERER,  /* A normal WebContents renderer process. */
@@ -52,6 +54,7 @@ class Task {
     WORKER,         /* A web worker process. */
     NACL,           /* A NativeClient loader or broker process. */
     SANDBOX_HELPER, /* A sandbox helper process. */
+    SERVICE_WORKER, /* A service worker running on the renderer process. */
   };
 
   // Create a task with the given |title| and the given favicon |icon|. This
@@ -121,9 +124,9 @@ class Task {
   virtual base::string16 GetProfileName() const;
 
   // Returns the unique ID of the tab if this task represents a renderer
-  // WebContents used for a tab. Returns -1 if this task does not represent
-  // a renderer, or a contents of a tab.
-  virtual int GetTabId() const;
+  // WebContents used for a tab. Returns SessionID::InvalidValue() if this task
+  // does not represent a renderer, or a contents of a tab.
+  virtual SessionID GetTabId() const;
 
   // For Tasks that represent a subactivity of some other task (e.g. a plugin
   // embedded in a page), this returns the Task representing the parent
@@ -152,6 +155,9 @@ class Task {
   // Returns the keep-alive counter if the Task is an event page, -1 otherwise.
   virtual int GetKeepaliveCount() const;
 
+  // Returns true if the task is running inside a VM.
+  virtual bool IsRunningInVM() const;
+
   int64_t task_id() const { return task_id_; }
 
   // Returns the instantaneous rate, in bytes per second, of network usage
@@ -175,6 +181,10 @@ class Task {
   const base::ProcessId& process_id() const { return process_id_; }
 
  protected:
+  // If |*result_image| is not already set, fetch the image with id
+  // |id| from the resource database and put in |*result_image|.
+  // Returns |*result_image|.
+  static gfx::ImageSkia* FetchIcon(int id, gfx::ImageSkia** result_image);
   void set_title(const base::string16& new_title) { title_ = new_title; }
   void set_rappor_sample_name(const std::string& sample) {
     rappor_sample_name_ = sample;

@@ -9,9 +9,11 @@
 
 #include <vector>
 
+#include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/bind.h"
+#include "chrome/android/chrome_jni_headers/HistoryReportJniBridge_jni.h"
 #include "chrome/browser/android/history_report/data_observer.h"
 #include "chrome/browser/android/history_report/data_provider.h"
 #include "chrome/browser/android/history_report/delta_file_commons.h"
@@ -26,7 +28,6 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "jni/HistoryReportJniBridge_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -145,6 +146,12 @@ void HistoryReportJniBridge::RemoveUsageReports(
   usage_reports_buffer_service_->Remove(to_remove);
 }
 
+void HistoryReportJniBridge::ClearUsageReports(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {
+  usage_reports_buffer_service_->Clear();
+}
+
 void HistoryReportJniBridge::NotifyDataChanged() {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
@@ -176,6 +183,11 @@ void HistoryReportJniBridge::StartReporting() {
 jboolean HistoryReportJniBridge::AddHistoricVisitsToUsageReportsBuffer(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
+  DCHECK(!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  // Waiting is okay here because this is called from a background thread
+  // in Java.
+  base::ScopedAllowBaseSyncPrimitives allow_sync;
+
   data_provider_->StartVisitMigrationToUsageBuffer(
       usage_reports_buffer_service_.get());
   // TODO(nileshagrawal): Return true when actually done,

@@ -15,7 +15,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/engagement/site_engagement_details.mojom.h"
-#include "third_party/WebKit/public/platform/site_engagement.mojom.h"
+#include "third_party/blink/public/mojom/site_engagement/site_engagement.mojom.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -87,9 +87,6 @@ class SiteEngagementScore {
     // period prior to clock_->Now().
     LAST_ENGAGEMENT_GRACE_PERIOD_IN_HOURS,
 
-    // The number of points given for having notification permission granted.
-    NOTIFICATION_PERMISSION_POINTS,
-
     // The number of points given for interacting with a displayed notification.
     NOTIFICATION_INTERACTION_POINTS,
 
@@ -115,7 +112,6 @@ class SiteEngagementScore {
   static double GetHighEngagementBoundary();
   static double GetMaxDecaysPerScore();
   static double GetLastEngagementGracePeriodInHours();
-  static double GetNotificationPermissionPoints();
   static double GetNotificationInteractionPoints();
 
   // Sets fixed parameter values for testing site engagement. Ensure that any
@@ -191,7 +187,6 @@ class SiteEngagementScore {
 
   // Array holding the values corresponding to each item in Variation array.
   static ParamValues& GetParamValues();
-  static ParamValues BuildParamValues();
 
   // Keys used in the content settings dictionary.
   static const char kRawScoreKey[];
@@ -209,9 +204,6 @@ class SiteEngagementScore {
 
   // Determine bonus from being installed, and having been launched recently..
   double BonusIfShortcutLaunched() const;
-
-  // Determine bonus from having been granted notifications permission.
-  double BonusIfHasNotifications() const;
 
   // Updates the content settings dictionary |score_dict| with the current score
   // fields. Returns true if |score_dict| changed, otherwise return false.

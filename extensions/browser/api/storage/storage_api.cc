@@ -11,9 +11,10 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/quota_service.h"
@@ -50,6 +51,15 @@ ExtensionFunction::ResponseAction SettingsFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(settings_namespace_ !=
                               settings_namespace::INVALID);
 
+  if (extension()->is_login_screen_extension() &&
+      settings_namespace_ != settings_namespace::MANAGED) {
+    // Login screen extensions are not allowed to use local/sync storage for
+    // security reasons (see crbug.com/978443).
+    return RespondNow(Error(base::StringPrintf(
+        "\"%s\" is not available for login screen extensions",
+        settings_namespace_string.c_str())));
+  }
+
   StorageFrontend* frontend = StorageFrontend::Get(browser_context());
   if (!frontend->IsStorageEnabled(settings_namespace_)) {
     return RespondNow(Error(
@@ -67,10 +77,9 @@ ExtensionFunction::ResponseAction SettingsFunction::Run() {
 
 void SettingsFunction::AsyncRunWithStorage(ValueStore* storage) {
   ResponseValue response = RunWithStorage(storage);
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&SettingsFunction::Respond, this, base::Passed(&response)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&SettingsFunction::Respond, this, std::move(response)));
 }
 
 ExtensionFunction::ResponseValue SettingsFunction::UseReadResult(
@@ -106,8 +115,7 @@ void AddAllStringValues(const base::ListValue& from,
                         std::vector<std::string>* to) {
   DCHECK(to->empty());
   std::string as_string;
-  for (base::ListValue::const_iterator it = from.begin();
-       it != from.end(); ++it) {
+  for (auto it = from.begin(); it != from.end(); ++it) {
     if (it->GetAsString(&as_string)) {
       to->push_back(as_string);
     }
@@ -173,10 +181,11 @@ ExtensionFunction::ResponseValue StorageStorageAreaGetFunction::RunWithStorage(
         return UseReadResult(std::move(result));
       }
 
-      base::DictionaryValue* with_default_values = as_dict->DeepCopy();
+      std::unique_ptr<base::DictionaryValue> with_default_values =
+          as_dict->CreateDeepCopy();
       with_default_values->MergeDictionary(&result.settings());
       return UseReadResult(ValueStore::ReadResult(
-          base::WrapUnique(with_default_values), result.PassStatus()));
+          std::move(with_default_values), result.PassStatus()));
     }
 
     default:

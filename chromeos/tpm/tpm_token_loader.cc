@@ -10,10 +10,9 @@
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/tpm/tpm_token_info_getter.h"
 #include "crypto/nss_util.h"
 
@@ -24,7 +23,7 @@ namespace {
 void PostResultToTaskRunner(scoped_refptr<base::SequencedTaskRunner> runner,
                             const base::Callback<void(bool)>& callback,
                             bool success) {
-  runner->PostTask(FROM_HERE, base::Bind(callback, success));
+  runner->PostTask(FROM_HERE, base::BindOnce(callback, success));
 }
 
 }  // namespace
@@ -65,10 +64,9 @@ bool TPMTokenLoader::IsInitialized() {
 TPMTokenLoader::TPMTokenLoader(bool for_test)
     : initialized_for_test_(for_test),
       tpm_token_state_(TPM_STATE_UNKNOWN),
-      tpm_token_info_getter_(
-          TPMTokenInfoGetter::CreateForSystemToken(
-              DBusThreadManager::Get()->GetCryptohomeClient(),
-              base::ThreadTaskRunnerHandle::Get())),
+      tpm_token_info_getter_(TPMTokenInfoGetter::CreateForSystemToken(
+          CryptohomeClient::Get(),
+          base::ThreadTaskRunnerHandle::Get())),
       tpm_token_slot_id_(-1),
       can_start_before_login_(false),
       weak_factory_(this) {
@@ -150,10 +148,9 @@ void TPMTokenLoader::ContinueTokenInitialization() {
   switch (tpm_token_state_) {
     case TPM_STATE_UNKNOWN: {
       crypto_task_runner_->PostTaskAndReply(
-          FROM_HERE,
-          base::Bind(&crypto::EnableTPMTokenForNSS),
-          base::Bind(&TPMTokenLoader::OnTPMTokenEnabledForNSS,
-                     weak_factory_.GetWeakPtr()));
+          FROM_HERE, base::BindOnce(&crypto::EnableTPMTokenForNSS),
+          base::BindOnce(&TPMTokenLoader::OnTPMTokenEnabledForNSS,
+                         weak_factory_.GetWeakPtr()));
       tpm_token_state_ = TPM_INITIALIZATION_STARTED;
       return;
     }
@@ -174,9 +171,8 @@ void TPMTokenLoader::ContinueTokenInitialization() {
     case TPM_TOKEN_INFO_RECEIVED: {
       crypto_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(
-              &crypto::InitializeTPMTokenAndSystemSlot,
-              tpm_token_slot_id_,
+          base::BindOnce(
+              &crypto::InitializeTPMTokenAndSystemSlot, tpm_token_slot_id_,
               base::Bind(&PostResultToTaskRunner,
                          base::ThreadTaskRunnerHandle::Get(),
                          base::Bind(&TPMTokenLoader::OnTPMTokenInitialized,

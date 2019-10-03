@@ -5,25 +5,25 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_DELEGATE_H_
 #define UI_BASE_IME_INPUT_METHOD_DELEGATE_H_
 
-#include "ui/base/ime/ui_base_ime_export.h"
-#include "ui/events/event_dispatcher.h"
+#include "base/component_export.h"
 
 namespace ui {
 
 class KeyEvent;
 
+struct EventDispatchDetails;
+
 namespace internal {
 
 // An interface implemented by the object that handles events sent back from an
 // ui::InputMethod implementation.
-class UI_BASE_IME_EXPORT InputMethodDelegate {
+class COMPONENT_EXPORT(UI_BASE_IME) InputMethodDelegate {
  public:
   virtual ~InputMethodDelegate() {}
 
-  // Dispatch a key event already processed by the input method.
-  // Returns true if the event was processed.
-  virtual ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* key_event) = 0;
+  // Dispatch a key event already processed by the input method. Returns the
+  // status of processing.
+  virtual EventDispatchDetails DispatchKeyEventPostIME(KeyEvent* key_event) = 0;
 };
 
 }  // namespace internal

@@ -9,7 +9,7 @@
 #include "base/json/string_escape.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
-#include "components/sync/base/cryptographer.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/protocol/proto_memory_estimations.h"
 #include "components/sync/protocol/proto_value_conversions.h"
 #include "components/sync/syncable/syncable_columns.h"
@@ -122,7 +122,7 @@ void SetEncryptableProtoValues(const EntryKernel& kernel,
 // Helper functions for SetFieldValues().
 
 std::unique_ptr<base::Value> Int64ToValue(int64_t i) {
-  return std::make_unique<base::Value>(base::Int64ToString(i));
+  return std::make_unique<base::Value>(base::NumberToString(i));
 }
 
 std::unique_ptr<base::Value> TimeToValue(const base::Time& t) {
@@ -143,11 +143,6 @@ std::unique_ptr<base::Value> StringToValue(const std::string& str) {
 
 std::unique_ptr<base::Value> UniquePositionToValue(const UniquePosition& pos) {
   return std::make_unique<base::Value>(pos.ToDebugString());
-}
-
-std::unique_ptr<base::Value> AttachmentMetadataToValue(
-    const sync_pb::AttachmentMetadata& a) {
-  return std::make_unique<base::Value>(a.SerializeAsString());
 }
 
 // Estimates memory usage of ProtoValuePtr<T> arrays where consecutive
@@ -216,11 +211,6 @@ std::unique_ptr<base::DictionaryValue> EntryKernel::ToValue(
                  &UniquePositionToValue, UNIQUE_POSITION_FIELDS_BEGIN,
                  UNIQUE_POSITION_FIELDS_END - 1);
 
-  // AttachmentMetadata fields
-  SetFieldValues(*this, kernel_info.get(), &GetAttachmentMetadataFieldString,
-                 &AttachmentMetadataToValue, ATTACHMENT_METADATA_FIELDS_BEGIN,
-                 ATTACHMENT_METADATA_FIELDS_END - 1);
-
   // Bit temps.
   SetFieldValues(*this, kernel_info.get(), &GetBitTempString, &BooleanToValue,
                  BIT_TEMPS_BEGIN, BIT_TEMPS_END - 1);
@@ -234,8 +224,7 @@ size_t EntryKernel::EstimateMemoryUsage() const {
     memory_usage_ = EstimateMemoryUsage(string_fields) +
                     EstimateSharedMemoryUsage(specifics_fields) +
                     EstimateMemoryUsage(id_fields) +
-                    EstimateMemoryUsage(unique_position_fields) +
-                    EstimateSharedMemoryUsage(attachment_metadata_fields);
+                    EstimateMemoryUsage(unique_position_fields);
   }
   return memory_usage_;
 }
@@ -243,8 +232,7 @@ size_t EntryKernel::EstimateMemoryUsage() const {
 std::unique_ptr<base::ListValue> EntryKernelMutationMapToValue(
     const EntryKernelMutationMap& mutations) {
   std::unique_ptr<base::ListValue> list(new base::ListValue());
-  for (EntryKernelMutationMap::const_iterator it = mutations.begin();
-       it != mutations.end(); ++it) {
+  for (auto it = mutations.begin(); it != mutations.end(); ++it) {
     list->Append(EntryKernelMutationToValue(it->second));
   }
   return list;
@@ -291,13 +279,6 @@ std::ostream& operator<<(std::ostream& os, const EntryKernel& entry_kernel) {
     os << g_metas_columns[i].name << ": "
        << kernel->ref(static_cast<UniquePositionField>(i)).ToDebugString()
        << ", ";
-  }
-  for (; i < ATTACHMENT_METADATA_FIELDS_END; ++i) {
-    std::string escaped_str = base::EscapeBytesAsInvalidJSONString(
-        kernel->ref(static_cast<AttachmentMetadataField>(i))
-            .SerializeAsString(),
-        false);
-    os << g_metas_columns[i].name << ": " << escaped_str << ", ";
   }
   os << "TempFlags: ";
   for (; i < BIT_TEMPS_END; ++i) {

@@ -17,6 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/sync/base/weak_handle.h"
+#include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/model_association_manager.h"
 #include "components/sync/engine/model_type_configurer.h"
 
@@ -26,7 +27,6 @@ class DataTypeController;
 class DataTypeDebugInfoListener;
 class DataTypeEncryptionHandler;
 class DataTypeManagerObserver;
-class SyncClient;
 struct DataTypeConfigurationStats;
 
 // List of data types grouped by priority and ordered from high priority to
@@ -37,7 +37,6 @@ class DataTypeManagerImpl : public DataTypeManager,
                             public ModelAssociationManagerDelegate {
  public:
   DataTypeManagerImpl(
-      SyncClient* sync_client,
       ModelTypeSet initial_types,
       const WeakHandle<DataTypeDebugInfoListener>& debug_info_listener,
       const DataTypeController::TypeMap* controllers,
@@ -47,15 +46,15 @@ class DataTypeManagerImpl : public DataTypeManager,
   ~DataTypeManagerImpl() override;
 
   // DataTypeManager interface.
-  void Configure(ModelTypeSet desired_types, ConfigureReason reason) override;
-  void ReenableType(ModelType type) override;
+  void Configure(ModelTypeSet desired_types,
+                 const ConfigureContext& context) override;
+  void ReadyForStartChanged(ModelType type) override;
   void ResetDataTypeErrors() override;
 
   // Needed only for backend migration.
-  void PurgeForMigration(ModelTypeSet undesired_types,
-                         ConfigureReason reason) override;
+  void PurgeForMigration(ModelTypeSet undesired_types) override;
 
-  void Stop() override;
+  void Stop(ShutdownReason reason) override;
   ModelTypeSet GetActiveDataTypes() const override;
   bool IsNigoriEnabled() const override;
   State state() const override;
@@ -141,21 +140,27 @@ class DataTypeManagerImpl : public DataTypeManager,
   // DataTypeController::ReadyForStart().
   void UpdateUnreadyTypeErrors(const ModelTypeSet& desired_types);
 
+  // Update unready state for |type|, such that data_type_status_table_ matches
+  // DataTypeController::ReadyForStart(). Returns true if there was an actual
+  // change.
+  bool UpdateUnreadyTypeError(ModelType type);
+
   // Post a task to reconfigure when no downloading or association are running.
   void ProcessReconfigure();
 
-  void Restart(ConfigureReason reason);
+  // Programmatically force reconfiguration of data type (if needed).
+  void ForceReconfiguration();
+
+  void Restart();
   void DownloadReady(ModelTypeSet types_to_download,
                      ModelTypeSet first_sync_types,
                      ModelTypeSet failed_configuration_types);
 
-  // Notification from the SBH that download failed due to a transient
-  // error and it will be retried.
-  void OnDownloadRetry();
   void NotifyStart();
   void NotifyDone(const ConfigureResult& result);
 
-  void ConfigureImpl(ModelTypeSet desired_types, ConfigureReason reason);
+  void ConfigureImpl(ModelTypeSet desired_types,
+                     const ConfigureContext& context);
 
   // Calls data type controllers of requested types to register with backend.
   void RegisterTypesWithBackend();
@@ -174,7 +179,7 @@ class DataTypeManagerImpl : public DataTypeManager,
   // is busy performing association.
   void StartNextAssociation(AssociationGroup group);
 
-  void StopImpl();
+  void StopImpl(ShutdownReason reason);
 
   // Returns the currently enabled types.
   ModelTypeSet GetEnabledTypes() const;
@@ -182,14 +187,20 @@ class DataTypeManagerImpl : public DataTypeManager,
   // Adds or removes |type| from |downloaded_types_| based on |downloaded|.
   void SetTypeDownloaded(ModelType type, bool downloaded);
 
-  SyncClient* sync_client_;
   ModelTypeConfigurer* configurer_;
 
   // Map of all data type controllers that are available for sync.
   // This list is determined at startup by various command line flags.
   const DataTypeController::TypeMap* controllers_;
   State state_;
+
+  // Types that requested in current configuration cycle.
   ModelTypeSet last_requested_types_;
+
+  // Context information (e.g. the reason) for the last reconfigure attempt.
+  // Note: this will be set to a valid value only when |needs_reconfigure_| is
+  // set.
+  ConfigureContext last_requested_context_;
 
   // A set of types that were enabled at the time initialization with the
   // |model_association_manager_| was last attempted.
@@ -198,10 +209,6 @@ class DataTypeManagerImpl : public DataTypeManager,
   // Whether an attempt to reconfigure was made while we were busy configuring.
   // The |last_requested_types_| will reflect the newest set of requested types.
   bool needs_reconfigure_;
-
-  // The reason for the last reconfigure attempt. Note: this will be set to a
-  // valid value only when |needs_reconfigure_| is set.
-  ConfigureReason last_configure_reason_;
 
   // The last time Restart() was called.
   base::Time last_restart_time_;
@@ -263,15 +270,12 @@ class DataTypeManagerImpl : public DataTypeManager,
   // Association and time stats of data type configuration.
   std::vector<DataTypeConfigurationStats> configuration_stats_;
 
-  // True iff we are in the process of catching up datatypes.
-  bool catch_up_in_progress_;
-
   // Configuration process is started when ModelAssociationManager notifies
   // DataTypeManager that all types are ready for configure.
   // This flag ensures that this process is started only once.
   bool download_started_;
 
-  base::WeakPtrFactory<DataTypeManagerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<DataTypeManagerImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DataTypeManagerImpl);
 };

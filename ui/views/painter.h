@@ -11,14 +11,15 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "third_party/skia/include/core/SkBlendMode.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/nine_image_painter_factory.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/views_export.h"
 
 namespace gfx {
 class Canvas;
 class ImageSkia;
-class Insets;
 class InsetsF;
 class Rect;
 class Size;
@@ -54,15 +55,21 @@ class VIEWS_EXPORT Painter {
 
   // Creates a painter that draws a RoundRect with a solid color and given
   // corner radius.
-  static std::unique_ptr<Painter> CreateSolidRoundRectPainter(SkColor color,
-                                                              float radius);
+  static std::unique_ptr<Painter> CreateSolidRoundRectPainter(
+      SkColor color,
+      float radius,
+      const gfx::Insets& insets = gfx::Insets(),
+      SkBlendMode blend_mode = SkBlendMode::kSrcOver,
+      bool antialias = true);
 
   // Creates a painter that draws a RoundRect with a solid color and a given
   // corner radius, and also adds a 1px border (inset) in the given color.
   static std::unique_ptr<Painter> CreateRoundRectWith1PxBorderPainter(
       SkColor bg_color,
       SkColor stroke_color,
-      float radius);
+      float radius,
+      SkBlendMode blend_mode = SkBlendMode::kSrcOver,
+      bool antialias = true);
 
   // Creates a painter that divides |image| into nine regions. The four corners
   // are rendered at the size specified in insets (eg. the upper-left corner is
@@ -79,10 +86,6 @@ class VIEWS_EXPORT Painter {
   // Top-Left/Top/Top-Right/Left/[Center]/Right/Bottom-Left/Bottom/Bottom-Right.
   static std::unique_ptr<Painter> CreateImageGridPainter(const int image_ids[]);
 
-  // Factory methods for creating painters intended for rendering focus.
-  static std::unique_ptr<Painter> CreateDashedFocusPainter();
-  static std::unique_ptr<Painter> CreateDashedFocusPainterWithInsets(
-      const gfx::Insets& insets);
   // Deprecated: used the InsetsF version below.
   static std::unique_ptr<Painter> CreateSolidFocusPainter(
       SkColor color,

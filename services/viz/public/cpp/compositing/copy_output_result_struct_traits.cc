@@ -4,6 +4,7 @@
 
 #include "services/viz/public/cpp/compositing/copy_output_result_struct_traits.h"
 
+#include "base/bind.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace {
@@ -40,6 +41,98 @@ void Release(viz::mojom::TextureReleaserPtr ptr,
 namespace mojo {
 
 // static
+viz::mojom::CopyOutputResultFormat
+EnumTraits<viz::mojom::CopyOutputResultFormat, viz::CopyOutputResult::Format>::
+    ToMojom(viz::CopyOutputResult::Format format) {
+  switch (format) {
+    case viz::CopyOutputResult::Format::RGBA_BITMAP:
+      return viz::mojom::CopyOutputResultFormat::RGBA_BITMAP;
+    case viz::CopyOutputResult::Format::RGBA_TEXTURE:
+      return viz::mojom::CopyOutputResultFormat::RGBA_TEXTURE;
+    case viz::CopyOutputResult::Format::I420_PLANES:
+      break;  // Not intended for transport across service boundaries.
+  }
+  NOTREACHED();
+  return viz::mojom::CopyOutputResultFormat::RGBA_BITMAP;
+}
+
+// static
+bool EnumTraits<viz::mojom::CopyOutputResultFormat,
+                viz::CopyOutputResult::Format>::
+    FromMojom(viz::mojom::CopyOutputResultFormat input,
+              viz::CopyOutputResult::Format* out) {
+  switch (input) {
+    case viz::mojom::CopyOutputResultFormat::RGBA_BITMAP:
+      *out = viz::CopyOutputResult::Format::RGBA_BITMAP;
+      return true;
+    case viz::mojom::CopyOutputResultFormat::RGBA_TEXTURE:
+      *out = viz::CopyOutputResult::Format::RGBA_TEXTURE;
+      return true;
+  }
+  return false;
+}
+
+// static
+viz::CopyOutputResult::Format
+StructTraits<viz::mojom::CopyOutputResultDataView,
+             std::unique_ptr<viz::CopyOutputResult>>::
+    format(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  return result->format();
+}
+
+// static
+const gfx::Rect& StructTraits<viz::mojom::CopyOutputResultDataView,
+                              std::unique_ptr<viz::CopyOutputResult>>::
+    rect(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  return result->rect();
+}
+
+// static
+const SkBitmap& StructTraits<viz::mojom::CopyOutputResultDataView,
+                             std::unique_ptr<viz::CopyOutputResult>>::
+    bitmap(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  // This will return a non-drawable bitmap if the result was not
+  // RGBA_BITMAP or if the result is empty.
+  return result->AsSkBitmap();
+}
+
+// static
+base::Optional<gpu::Mailbox>
+StructTraits<viz::mojom::CopyOutputResultDataView,
+             std::unique_ptr<viz::CopyOutputResult>>::
+    mailbox(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  if (result->format() != viz::CopyOutputResult::Format::RGBA_TEXTURE ||
+      result->IsEmpty()) {
+    return base::nullopt;
+  }
+  return result->GetTextureResult()->mailbox;
+}
+
+// static
+base::Optional<gpu::SyncToken>
+StructTraits<viz::mojom::CopyOutputResultDataView,
+             std::unique_ptr<viz::CopyOutputResult>>::
+    sync_token(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  if (result->format() != viz::CopyOutputResult::Format::RGBA_TEXTURE ||
+      result->IsEmpty()) {
+    return base::nullopt;
+  }
+  return result->GetTextureResult()->sync_token;
+}
+
+// static
+base::Optional<gfx::ColorSpace>
+StructTraits<viz::mojom::CopyOutputResultDataView,
+             std::unique_ptr<viz::CopyOutputResult>>::
+    color_space(const std::unique_ptr<viz::CopyOutputResult>& result) {
+  if (result->format() != viz::CopyOutputResult::Format::RGBA_TEXTURE ||
+      result->IsEmpty()) {
+    return base::nullopt;
+  }
+  return result->GetTextureResult()->color_space;
+}
+
+// static
 viz::mojom::TextureReleaserPtr
 StructTraits<viz::mojom::CopyOutputResultDataView,
              std::unique_ptr<viz::CopyOutputResult>>::
@@ -67,16 +160,16 @@ bool StructTraits<viz::mojom::CopyOutputResultDataView,
   if (!data.ReadFormat(&format) || !data.ReadRect(&rect))
     return false;
 
+  if (rect.IsEmpty()) {
+    // An empty rect implies an empty result.
+    *out_p = std::make_unique<viz::CopyOutputResult>(format, gfx::Rect());
+    return true;
+  }
+
   switch (format) {
     case viz::CopyOutputResult::Format::RGBA_BITMAP: {
       SkBitmap bitmap;
-      if (!data.ReadBitmap(&bitmap))
-        return false;
-
-      bool has_bitmap = bitmap.readyToDraw();
-
-      // The rect should be empty iff there is no bitmap.
-      if (!(has_bitmap == !rect.IsEmpty()))
+      if (!data.ReadBitmap(&bitmap) || !bitmap.readyToDraw())
         return false;
 
       *out_p = std::make_unique<viz::CopyOutputSkBitmapResult>(
@@ -95,13 +188,7 @@ bool StructTraits<viz::mojom::CopyOutputResultDataView,
       if (!data.ReadColorSpace(&color_space) || !color_space)
         return false;
 
-      bool has_mailbox = !mailbox->IsZero();
-
-      // The rect should be empty iff there is no texture.
-      if (!(has_mailbox == !rect.IsEmpty()))
-        return false;
-
-      if (!has_mailbox) {
+      if (mailbox->IsZero()) {
         // Returns an empty result.
         *out_p = std::make_unique<viz::CopyOutputResult>(
             viz::CopyOutputResult::Format::RGBA_TEXTURE, gfx::Rect());

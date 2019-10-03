@@ -8,18 +8,24 @@
 #include <memory>
 #include <string>
 
+#include "base/optional.h"
+#include "extensions/common/constants.h"
+
 namespace base {
 class DictionaryValue;
 }
 
 namespace content {
 class BrowserContext;
+class WebContents;
 }
 
 namespace gfx {
 class ImageSkia;
 }
 
+class Browser;
+class GURL;
 class Profile;
 
 namespace extensions {
@@ -34,11 +40,6 @@ namespace util {
 void SetIsIncognitoEnabled(const std::string& extension_id,
                            content::BrowserContext* context,
                            bool enabled);
-
-// Returns true if |extension| can see events and data from another sub-profile
-// (incognito to original profile, or vice versa).
-bool CanCrossIncognito(const extensions::Extension* extension,
-                       content::BrowserContext* context);
 
 // Returns true if |extension| can be loaded in incognito.
 bool CanLoadInIncognito(const extensions::Extension* extension,
@@ -96,18 +97,23 @@ std::unique_ptr<base::DictionaryValue> GetExtensionInfo(
 const gfx::ImageSkia& GetDefaultExtensionIcon();
 const gfx::ImageSkia& GetDefaultAppIcon();
 
-// Returns true if the bookmark apps feature is enabled.
-//
-// TODO(benwells): http://crbug.com/441128: Remove this entirely once the
-// feature is stable.
-bool IsNewBookmarkAppsEnabled();
-
-// TODO(dominickn): http://crbug.com/517682: Remove this entirely once
-// open in window is stable on Mac.
-bool CanHostedAppsOpenInWindows();
-
 // Returns true for custodian-installed extensions in a supervised profile.
 bool IsExtensionSupervised(const Extension* extension, Profile* profile);
+
+// Finds the first PWA with |url| in its scope, returns nullptr if there are
+// none.
+const Extension* GetInstalledPwaForUrl(
+    content::BrowserContext* context,
+    const GURL& url,
+    base::Optional<LaunchContainer> launch_container_filter = base::nullopt);
+
+// Finds the first PWA with the active tab's url in its scope, returns nullptr
+// if there are none or the tab's is not secure.
+const Extension* GetPwaForSecureActiveTab(Browser* browser);
+
+// Returns true if the |web_contents| belongs to a browser that is a windowed
+// app.
+bool IsWebContentsInAppWindow(content::WebContents* web_contents);
 
 }  // namespace util
 }  // namespace extensions

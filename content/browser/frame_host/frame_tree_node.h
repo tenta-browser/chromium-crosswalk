@@ -20,8 +20,11 @@
 #include "content/common/content_export.h"
 #include "content/common/frame_owner_properties.h"
 #include "content/common/frame_replication_state.h"
-#include "third_party/WebKit/common/frame_policy.h"
-#include "third_party/WebKit/public/platform/WebInsecureRequestPolicy.h"
+#include "third_party/blink/public/common/frame/frame_owner_element_type.h"
+#include "third_party/blink/public/common/frame/frame_policy.h"
+#include "third_party/blink/public/common/frame/user_activation_state.h"
+#include "third_party/blink/public/common/frame/user_activation_update_type.h"
+#include "third_party/blink/public/platform/web_insecure_request_policy.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -31,12 +34,21 @@ class FrameTree;
 class NavigationRequest;
 class Navigator;
 class RenderFrameHostImpl;
+class NavigationEntryImpl;
 struct ContentSecurityPolicyHeader;
 
 // When a page contains iframes, its renderer process maintains a tree structure
 // of those frames. We are mirroring this tree in the browser process. This
 // class represents a node in this tree and is a wrapper for all objects that
 // are frame-specific (as opposed to page-specific).
+//
+// Each FrameTreeNode has a current RenderFrameHost, which can change over
+// time as the frame is navigated. Any immediate subframes of the current
+// document are tracked using FrameTreeNodes owned by the current
+// RenderFrameHost, rather than as children of FrameTreeNode itself. This
+// allows subframe FrameTreeNodes to stay alive while a RenderFrameHost is
+// still alive - for example while pending deletion, after a new current
+// RenderFrameHost has replaced it.
 class CONTENT_EXPORT FrameTreeNode {
  public:
   class Observer {
@@ -60,16 +72,14 @@ class CONTENT_EXPORT FrameTreeNode {
   // calling the constructor.
   FrameTreeNode(FrameTree* frame_tree,
                 Navigator* navigator,
-                RenderFrameHostDelegate* render_frame_delegate,
-                RenderWidgetHostDelegate* render_widget_delegate,
-                RenderFrameHostManager::Delegate* manager_delegate,
                 FrameTreeNode* parent,
                 blink::WebTreeScopeType scope,
                 const std::string& name,
                 const std::string& unique_name,
                 bool is_created_by_script,
                 const base::UnguessableToken& devtools_frame_token,
-                const FrameOwnerProperties& frame_owner_properties);
+                const FrameOwnerProperties& frame_owner_properties,
+                blink::FrameOwnerElementType owner_type);
 
   ~FrameTreeNode();
 
@@ -77,14 +87,6 @@ class CONTENT_EXPORT FrameTreeNode {
   void RemoveObserver(Observer* observer);
 
   bool IsMainFrame() const;
-
-  FrameTreeNode* AddChild(std::unique_ptr<FrameTreeNode> child,
-                          int process_id,
-                          int frame_routing_id);
-  void RemoveChild(FrameTreeNode* child);
-
-  // Clears process specific-state in this node to prepare for a new process.
-  void ResetForNewProcess();
 
   // Clears any state in this node which was set by the document itself (CSP
   // Headers, Feature Policy Headers, and CSP-set sandbox flags), and notifies
@@ -122,9 +124,9 @@ class CONTENT_EXPORT FrameTreeNode {
     return devtools_frame_token_;
   }
 
-  size_t child_count() const {
-    return children_.size();
-  }
+  size_t child_count() const { return current_frame_host()->child_count(); }
+
+  unsigned int depth() const { return depth_; }
 
   FrameTreeNode* parent() const { return parent_; }
 
@@ -145,7 +147,7 @@ class CONTENT_EXPORT FrameTreeNode {
   void SetOriginalOpener(FrameTreeNode* opener);
 
   FrameTreeNode* child_at(size_t index) const {
-    return children_[index].get();
+    return current_frame_host()->child_at(index);
   }
 
   // Returns the URL of the last committed page in the current frame.
@@ -192,9 +194,6 @@ class CONTENT_EXPORT FrameTreeNode {
   // Set the current name and notify proxies about the update.
   void SetFrameName(const std::string& name, const std::string& unique_name);
 
-  // Set the frame's feature policy header, clearing any existing header.
-  void SetFeaturePolicyHeader(const blink::ParsedFeaturePolicy& parsed_header);
-
   // Add CSP headers to replication state, notify proxies about the update.
   void AddContentSecurityPolicies(
       const std::vector<ContentSecurityPolicyHeader>& headers);
@@ -202,6 +201,11 @@ class CONTENT_EXPORT FrameTreeNode {
   // Sets the current insecure request policy, and notifies proxies about the
   // update.
   void SetInsecureRequestPolicy(blink::WebInsecureRequestPolicy policy);
+
+  // Sets the current set of insecure urls to upgrade, and notifies proxies
+  // about the update.
+  void SetInsecureNavigationsSet(
+      const std::vector<uint32_t>& insecure_navigations_set);
 
   // Returns the latest frame policy (sandbox flags and container policy) for
   // this frame. This includes flags inherited from parent frames and the latest
@@ -263,8 +267,6 @@ class CONTENT_EXPORT FrameTreeNode {
     return render_manager_.current_frame_host();
   }
 
-  bool IsDescendantOf(FrameTreeNode* other) const;
-
   // Return the node immediately preceding this node in its parent's
   // |children_|, or nullptr if there is no such node.
   FrameTreeNode* PreviousSibling() const;
@@ -276,10 +278,13 @@ class CONTENT_EXPORT FrameTreeNode {
   // Returns true if this node is in a loading state.
   bool IsLoading() const;
 
-  // Returns this node's loading progress.
-  double loading_progress() const { return loading_progress_; }
-
   NavigationRequest* navigation_request() { return navigation_request_.get(); }
+
+  // Transfers the ownership of the NavigationRequest to |render_frame_host|.
+  // From ReadyToCommit to DidCommit, the NavigationRequest is owned by the
+  // RenderFrameHost that is committing the navigation.
+  void TransferNavigationRequestOwnership(
+      RenderFrameHostImpl* render_frame_host);
 
   // PlzNavigate
   // Takes ownership of |navigation_request| and makes it the current
@@ -297,13 +302,6 @@ class CONTENT_EXPORT FrameTreeNode {
   // |inform_renderer| is true, an IPC will be sent to the renderer process to
   // inform it that the navigation it requested was cancelled.
   void ResetNavigationRequest(bool keep_state, bool inform_renderer);
-
-  // Returns true if this node is in a state where the loading progress is being
-  // tracked.
-  bool has_started_loading() const;
-
-  // Resets this node's loading progress.
-  void reset_loading_progress();
 
   // A RenderFrameHost in this node started loading.
   // |to_different_document| will be true unless the load is a fragment
@@ -342,7 +340,14 @@ class CONTENT_EXPORT FrameTreeNode {
   // Returns the BlameContext associated with this node.
   FrameTreeNodeBlameContext& blame_context() { return blame_context_; }
 
-  void OnSetHasReceivedUserGesture();
+  // Updates the user activation state in the browser frame tree and in the
+  // frame trees in all renderer processes except the renderer for this node
+  // (which initiated the update).  Returns |false| if the update tries to
+  // consume an already consumed/expired transient state, |true| otherwise.  See
+  // the comment on user_activation_state_ below.
+  bool UpdateUserActivationState(blink::UserActivationUpdateType update_type);
+
+  void OnSetHasReceivedUserGestureBeforeNavigation(bool value);
 
   // Returns the sandbox flags currently in effect for this frame. This includes
   // flags inherited from parent frames, the currently active flags from the
@@ -358,10 +363,64 @@ class CONTENT_EXPORT FrameTreeNode {
 
   // Updates the active sandbox flags in this frame, in response to a
   // Content-Security-Policy header adding additional flags, in addition to
-  // those given to this frame by its parent. Note that on navigation, these
-  // updates will be cleared, and the flags in the pending frame policy will be
-  // applied to the frame.
-  void UpdateActiveSandboxFlags(blink::WebSandboxFlags sandbox_flags);
+  // those given to this frame by its parent, or in response to the
+  // Feature-Policy header being set. Note that on navigation, these updates
+  // will be cleared, and the flags in the pending frame policy will be applied
+  // to the frame.
+  void UpdateFramePolicyHeaders(
+      blink::WebSandboxFlags sandbox_flags,
+      const blink::ParsedFeaturePolicy& parsed_header);
+
+  // Returns whether the frame received a user gesture.
+  bool has_received_user_gesture() const {
+    return replication_state_.has_received_user_gesture;
+  }
+
+  // Returns whether the frame received a user gesture on a previous navigation
+  // on the same eTLD+1.
+  bool has_received_user_gesture_before_nav() const {
+    return replication_state_.has_received_user_gesture_before_nav;
+  }
+
+  // When a tab is discarded, WebContents sets was_discarded on its
+  // root FrameTreeNode.
+  // In addition, when a child frame is created, this bit is passed on from
+  // parent to child.
+  // When a navigation request is created, was_discarded is passed on to the
+  // request and reset to false in FrameTreeNode.
+  void set_was_discarded() { was_discarded_ = true; }
+  bool was_discarded() const { return was_discarded_; }
+
+  // Returns the sticky bit of the User Activation v2 state of the
+  // |FrameTreeNode|.
+  bool HasBeenActivated() const {
+    return user_activation_state_.HasBeenActive();
+  }
+
+  // Returns the transient bit of the User Activation v2 state of the
+  // |FrameTreeNode|.
+  bool HasTransientUserActivation() {
+    return user_activation_state_.IsActive();
+  }
+
+  // Transfers user activation state from |source| frame to |this| and notifies
+  // proxies in non-source and non-target renderer processes to transfer the
+  // activation state from the source proxy to the target.
+  void TransferUserActivationFrom(RenderFrameHostImpl* source_rfh);
+
+  // Remove history entries for all frames created by script in this frame's
+  // subtree. If a frame created by a script is removed, then its history entry
+  // will never be reused - this saves memory.
+  void PruneChildFrameNavigationEntries(NavigationEntryImpl* entry);
+
+  blink::FrameOwnerElementType frame_owner_element_type() const {
+    return replication_state_.frame_owner_element_type;
+  }
+  // Only meaningful to call on a root frame. The value of |feature_state| will
+  // be nontrivial if there is an opener which is restricted in some of the
+  // feature policies.
+  void SetOpenerFeaturePolicyState(
+      const blink::FeaturePolicy::FeatureState& feature_state);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SitePerProcessFeaturePolicyBrowserTest,
@@ -372,6 +431,12 @@ class CONTENT_EXPORT FrameTreeNode {
   class OpenerDestroyedObserver;
 
   FrameTreeNode* GetSibling(int relative_offset) const;
+
+  bool NotifyUserActivation();
+
+  bool ConsumeTransientUserActivation();
+
+  bool ClearUserActivation();
 
   // The next available browser-global FrameTreeNode ID.
   static int next_frame_tree_node_id_;
@@ -394,7 +459,10 @@ class CONTENT_EXPORT FrameTreeNode {
   const int frame_tree_node_id_;
 
   // The parent node of this frame. |nullptr| if this node is the root.
-  FrameTreeNode* parent_;
+  FrameTreeNode* const parent_;
+
+  // Number of edges from this node to the root. 0 if this is the root.
+  const unsigned int depth_;
 
   // The frame that opened this frame, if any.  Will be set to null if the
   // opener is closed, or if this frame disowns its opener by setting its
@@ -415,9 +483,6 @@ class CONTENT_EXPORT FrameTreeNode {
   // An observer that clears this node's |original_opener_| if the opener is
   // destroyed.
   std::unique_ptr<OpenerDestroyedObserver> original_opener_observer_;
-
-  // The immediate children of this specific frame.
-  std::vector<std::unique_ptr<FrameTreeNode>> children_;
 
   // Whether this frame has committed any real load, replacing its initial
   // about:blank page.
@@ -460,18 +525,21 @@ class CONTENT_EXPORT FrameTreeNode {
   // Note that dynamic updates only take effect on the next frame navigation.
   FrameOwnerProperties frame_owner_properties_;
 
-  // Used to track this node's loading progress (from 0 to 1).
-  double loading_progress_;
-
   // PlzNavigate
   // Owns an ongoing NavigationRequest until it is ready to commit. It will then
   // be reset and a RenderFrameHost will be responsible for the navigation.
   std::unique_ptr<NavigationRequest> navigation_request_;
 
   // List of objects observing this FrameTreeNode.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   base::TimeTicks last_focus_time_;
+
+  bool was_discarded_;
+
+  // The user activation state of the current frame.  See |UserActivationState|
+  // for details on how this state is maintained.
+  blink::UserActivationState user_activation_state_;
 
   // A helper for tracing the snapshots of this FrameTreeNode and attributing
   // browser process activities to this node (when possible).  It is unrelated

@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/service/viz_service_export.h"
 
@@ -53,6 +53,10 @@ class VIZ_SERVICE_EXPORT SurfaceReference {
 struct SurfaceReferenceHash {
   size_t operator()(const SurfaceReference& ref) const { return ref.hash(); }
 };
+
+VIZ_SERVICE_EXPORT std::ostream& operator<<(
+    std::ostream& out,
+    const SurfaceReference& surface_reference);
 
 }  // namespace viz
 

@@ -16,18 +16,9 @@ void StubPasswordManagerDriver::FillPasswordForm(
     const autofill::PasswordFormFillData& form_data) {
 }
 
-void StubPasswordManagerDriver::AllowPasswordGenerationForForm(
-    const autofill::PasswordForm& form) {
-}
-
-void StubPasswordManagerDriver::FormsEligibleForGenerationFound(
-    const std::vector<autofill::PasswordFormGenerationData>& forms) {}
-
 void StubPasswordManagerDriver::GeneratedPasswordAccepted(
     const base::string16& password) {
 }
-
-void StubPasswordManagerDriver::UserSelectedManualGenerationOption() {}
 
 void StubPasswordManagerDriver::FillSuggestion(const base::string16& username,
                                                const base::string16& password) {
@@ -44,8 +35,8 @@ void StubPasswordManagerDriver::ShowInitialPasswordAccountSuggestions(
 void StubPasswordManagerDriver::ClearPreviewedForm() {
 }
 
-PasswordGenerationManager*
-StubPasswordManagerDriver::GetPasswordGenerationManager() {
+PasswordGenerationFrameHelper*
+StubPasswordManagerDriver::GetPasswordGenerationHelper() {
   return nullptr;
 }
 
@@ -66,6 +57,8 @@ bool StubPasswordManagerDriver::IsMainFrame() const {
   return true;
 }
 
-void StubPasswordManagerDriver::MatchingBlacklistedFormFound() {}
+const GURL& StubPasswordManagerDriver::GetLastCommittedURL() const {
+  return GURL::EmptyGURL();
+}
 
 }  // namespace password_manager

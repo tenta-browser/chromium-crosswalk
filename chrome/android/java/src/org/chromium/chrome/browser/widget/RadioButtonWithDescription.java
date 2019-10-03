@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.os.Bundle;
 import android.os.Parcelable;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.SparseArray;
 import android.view.LayoutInflater;
@@ -25,9 +26,15 @@ import java.util.List;
  * A RadioButton with a title and descriptive text to the right.
  */
 public class RadioButtonWithDescription extends RelativeLayout implements OnClickListener {
+    /**
+     * Interface to listen to radio button changes.
+     */
+    public interface OnCheckedChangeListener { abstract void onCheckedChanged(); }
+
     private RadioButton mRadioButton;
     private TextView mTitle;
     private TextView mDescription;
+    private OnCheckedChangeListener mOnCheckedChangeListener;
 
     private List<RadioButtonWithDescription> mGroup;
 
@@ -47,9 +54,19 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
 
         if (attrs != null) applyAttributes(attrs);
 
+        setMinimumHeight(getResources().getDimensionPixelSize(R.dimen.min_touch_target_size));
+
+        final int lateralPadding = getResources().getDimensionPixelSize(
+                R.dimen.radio_button_with_description_lateral_padding);
+        final int verticalPadding = getResources().getDimensionPixelSize(
+                R.dimen.radio_button_with_description_vertical_padding);
+        setPaddingRelative(lateralPadding, verticalPadding, lateralPadding, verticalPadding);
+
         // We want RadioButtonWithDescription to handle the clicks itself.
-        mRadioButton.setClickable(false);
         setOnClickListener(this);
+        // Make it focusable for navigation via key events (tab/up/down keys)
+        // with Bluetooth keyboard. See: crbug.com/936143
+        setFocusable(true);
     }
 
     private void applyAttributes(AttributeSet attrs) {
@@ -58,6 +75,15 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
 
         String titleText = a.getString(R.styleable.RadioButtonWithDescription_titleText);
         if (titleText != null) mTitle.setText(titleText);
+
+        String descriptionText =
+                a.getString(R.styleable.RadioButtonWithDescription_descriptionText);
+        if (descriptionText != null) {
+            mDescription.setText(descriptionText);
+            mDescription.setVisibility(View.VISIBLE);
+        } else {
+            ((LayoutParams) mTitle.getLayoutParams()).addRule(RelativeLayout.CENTER_VERTICAL);
+        }
 
         a.recycle();
     }
@@ -71,6 +97,10 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
         }
 
         setChecked(true);
+
+        if (mOnCheckedChangeListener != null) {
+            mOnCheckedChangeListener.onCheckedChanged();
+        }
     }
 
     /**
@@ -85,6 +115,14 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
      */
     public void setDescriptionText(CharSequence text) {
         mDescription.setText(text);
+
+        if (TextUtils.isEmpty(text)) {
+            ((LayoutParams) mTitle.getLayoutParams()).addRule(RelativeLayout.CENTER_VERTICAL);
+            mDescription.setVisibility(View.GONE);
+        } else {
+            ((LayoutParams) mTitle.getLayoutParams()).removeRule(RelativeLayout.CENTER_VERTICAL);
+            mDescription.setVisibility(View.VISIBLE);
+        }
     }
 
     /**
@@ -99,6 +137,14 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
      */
     public void setChecked(boolean checked) {
         mRadioButton.setChecked(checked);
+        // Retain focus on RadioButtonWithDescription after radio button is checked.
+        // Otherwise focus is lost. This is required for Bluetooth keyboard navigation.
+        // See: crbug.com/936143
+        if (checked) requestFocus();
+    }
+
+    public void setOnCheckedChangeListener(OnCheckedChangeListener listener) {
+        mOnCheckedChangeListener = listener;
     }
 
     /**

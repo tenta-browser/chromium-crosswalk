@@ -4,13 +4,10 @@
 
 /** @fileoverview Runs the Polymer Accessibility Settings tests. */
 
-/** @const {string} Path to root from chrome/test/data/webui/settings/a11y. */
-const ROOT_PATH = '../../../../../../';
-
 // Polymer BrowserTest fixture and aXe-core accessibility audit.
 GEN_INCLUDE([
-  ROOT_PATH + 'chrome/test/data/webui/a11y/accessibility_test.js',
-  ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js',
+  '//chrome/test/data/webui/a11y/accessibility_test.js',
+  '//chrome/test/data/webui/polymer_browser_test_base.js',
 ]);
 
 /**
@@ -26,7 +23,7 @@ SettingsAccessibilityTest.axeOptions = {
     // Disable 'skip-link' check since there are few tab stops before the main
     // content.
     'skip-link': {enabled: false},
-  // TODO(crbug.com/761461): enable after addressing flaky tests.
+    // TODO(crbug.com/761461): enable after addressing flaky tests.
     'color-contrast': {enabled: false},
   }
 };
@@ -37,6 +34,18 @@ SettingsAccessibilityTest.violationFilter = {
   'aria-valid-attr': function(nodeResult) {
     return nodeResult.element.hasAttribute('aria-active-attribute');
   },
+  'button-name': function(nodeResult) {
+    if (nodeResult.element.classList.contains('icon-expand-more')) {
+      return true;
+    }
+
+    // Ignore the <button> residing within cr-toggle and cr-checkbox, which has
+    // tabindex -1 anyway.
+    const parentNode = nodeResult.element.parentNode;
+    return parentNode && parentNode.host &&
+        (parentNode.host.tagName == 'CR-TOGGLE' ||
+         parentNode.host.tagName == 'CR-CHECKBOX');
+  },
 };
 
 SettingsAccessibilityTest.prototype = {
@@ -46,9 +55,10 @@ SettingsAccessibilityTest.prototype = {
   browsePreload: 'chrome://settings/',
 
   // Include files that define the mocha tests.
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
+  extraLibraries: [
+    ...PolymerTest.prototype.extraLibraries,
     '../ensure_lazy_loaded.js',
-  ]),
+  ],
 
   // TODO(hcarmona): Remove once ADT is not longer in the testing infrastructure
   runAccessibilityChecks: false,

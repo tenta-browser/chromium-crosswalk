@@ -11,7 +11,6 @@
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
@@ -24,9 +23,9 @@
 
 namespace cc {
 class Animation;
-class AnimationPlayer;
 class AnimationTimeline;
 class Layer;
+class SingleKeyframeEffectAnimation;
 }
 
 namespace gfx {
@@ -101,10 +100,13 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   virtual void SetColor(SkColor color);
   SkColor GetTargetColor() const;
 
-  // Sets the color temperature on the delegate. May cause an implicit
-  // animation.
-  virtual void SetTemperature(float temperature);
-  float GetTargetTemperature() const;
+  // Sets the clip rect on the delegate. May cause an implicit animation.
+  virtual void SetClipRect(const gfx::Rect& clip_rect);
+  gfx::Rect GetTargetClipRect() const;
+
+  // Sets the rounded corners on the delegate. May cause an implicit animation.
+  virtual void SetRoundedCorners(const gfx::RoundedCornersF& rounded_corners);
+  gfx::RoundedCornersF GetTargetRoundedCorners() const;
 
   // Returns the default length of animations, including adjustment for slow
   // animation mode if set.
@@ -119,12 +121,12 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   // Unsubscribe from |cc_layer_| and subscribe to |new_layer|.
   void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
 
-  // Attach AnimationPlayer to Layer and AnimationTimeline
+  // Attach Animation to Layer and AnimationTimeline
   void AttachLayerAndTimeline(Compositor* compositor);
-  // Detach AnimationPlayer from Layer and AnimationTimeline
+  // Detach Animation from Layer and AnimationTimeline
   void DetachLayerAndTimeline(Compositor* compositor);
 
-  cc::AnimationPlayer* GetAnimationPlayerForTesting() const;
+  cc::SingleKeyframeEffectAnimation* GetAnimationForTesting() const;
 
   // Sets the animation preemption strategy. This determines the behaviour if
   // a property is set during an animation. The default is
@@ -278,7 +280,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
 
   using RunningAnimations = std::vector<RunningAnimation>;
   using AnimationQueue =
-      base::circular_deque<linked_ptr<LayerAnimationSequence>>;
+      base::circular_deque<std::unique_ptr<LayerAnimationSequence>>;
 
   // Finishes all animations by either advancing them to their final state or by
   // aborting them.
@@ -376,11 +378,12 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
       std::unique_ptr<cc::AnimationCurve> curve) override {}
 
   // Implementation of LayerThreadedAnimationDelegate.
-  void AddThreadedAnimation(std::unique_ptr<cc::Animation> animation) override;
-  void RemoveThreadedAnimation(int animation_id) override;
+  void AddThreadedAnimation(
+      std::unique_ptr<cc::KeyframeModel> keyframe_model) override;
+  void RemoveThreadedAnimation(int keyframe_model_id) override;
 
-  void AttachLayerToAnimationPlayer(int layer_id);
-  void DetachLayerFromAnimationPlayer();
+  void AttachLayerToAnimation(int layer_id);
+  void DetachLayerFromAnimation();
 
   void set_animation_metrics_reporter(AnimationMetricsReporter* reporter) {
     animation_metrics_reporter_ = reporter;
@@ -393,7 +396,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   LayerAnimationDelegate* delegate_;
 
   // Plays CC animations.
-  scoped_refptr<cc::AnimationPlayer> animation_player_;
+  scoped_refptr<cc::SingleKeyframeEffectAnimation> animation_;
 
   // The currently running animations.
   RunningAnimations running_animations_;
@@ -430,7 +433,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
 
   // Observers are notified when layer animations end, are scheduled or are
   // aborted.
-  base::ObserverList<LayerAnimationObserver> observers_;
+  base::ObserverList<LayerAnimationObserver>::Unchecked observers_;
 
   std::vector<std::unique_ptr<ImplicitAnimationObserver>> owned_observer_list_;
 

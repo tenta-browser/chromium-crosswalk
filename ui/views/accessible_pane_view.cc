@@ -4,8 +4,8 @@
 
 #include "ui/views/accessible_pane_view.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include <memory>
+
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/views/focus/focus_search.h"
 #include "ui/views/view_tracker.h"
@@ -26,8 +26,9 @@ class AccessiblePaneViewFocusSearch : public FocusSearch {
 
  protected:
   View* GetParent(View* v) override {
-    return accessible_pane_view_->ContainsForFocusSearch(root(), v) ?
-        accessible_pane_view_->GetParentForFocusSearch(v) : NULL;
+    return accessible_pane_view_->ContainsForFocusSearch(root(), v)
+               ? accessible_pane_view_->GetParentForFocusSearch(v)
+               : nullptr;
   }
 
   // Returns true if |v| is contained within the hierarchy rooted at |root|.
@@ -42,17 +43,8 @@ class AccessiblePaneViewFocusSearch : public FocusSearch {
 };
 
 AccessiblePaneView::AccessiblePaneView()
-    : pane_has_focus_(false),
-      allow_deactivate_on_esc_(false),
-      focus_manager_(NULL),
-      home_key_(ui::VKEY_HOME, ui::EF_NONE),
-      end_key_(ui::VKEY_END, ui::EF_NONE),
-      escape_key_(ui::VKEY_ESCAPE, ui::EF_NONE),
-      left_key_(ui::VKEY_LEFT, ui::EF_NONE),
-      right_key_(ui::VKEY_RIGHT, ui::EF_NONE),
-      last_focused_view_tracker_(std::make_unique<ViewTracker>()),
-      method_factory_(this) {
-  focus_search_.reset(new AccessiblePaneViewFocusSearch(this));
+    : last_focused_view_tracker_(std::make_unique<ViewTracker>()) {
+  focus_search_ = std::make_unique<AccessiblePaneViewFocusSearch>(this);
 }
 
 AccessiblePaneView::~AccessiblePaneView() {
@@ -62,7 +54,7 @@ AccessiblePaneView::~AccessiblePaneView() {
 }
 
 bool AccessiblePaneView::SetPaneFocus(views::View* initial_focus) {
-  if (!visible())
+  if (!GetVisible())
     return false;
 
   if (!focus_manager_)
@@ -74,10 +66,8 @@ bool AccessiblePaneView::SetPaneFocus(views::View* initial_focus) {
 
   // Use the provided initial focus if it's visible and enabled, otherwise
   // use the first focusable child.
-  if (!initial_focus ||
-      !ContainsForFocusSearch(this, initial_focus) ||
-      !initial_focus->visible() ||
-      !initial_focus->enabled()) {
+  if (!initial_focus || !ContainsForFocusSearch(this, initial_focus) ||
+      !initial_focus->GetVisible() || !initial_focus->GetEnabled()) {
     initial_focus = GetFirstFocusableChild();
   }
 
@@ -110,7 +100,7 @@ bool AccessiblePaneView::SetPaneFocusAndFocusDefault() {
 }
 
 views::View* AccessiblePaneView::GetDefaultFocusableChild() {
-  return NULL;
+  return nullptr;
 }
 
 View* AccessiblePaneView::GetParentForFocusSearch(View* v) {
@@ -136,7 +126,10 @@ views::View* AccessiblePaneView::GetFirstFocusableChild() {
   FocusTraversable* dummy_focus_traversable;
   views::View* dummy_focus_traversable_view;
   return focus_search_->FindNextFocusableView(
-      NULL, false, views::FocusSearch::DOWN, false,
+      nullptr, FocusSearch::SearchDirection::kForwards,
+      FocusSearch::TraversalDirection::kDown,
+      FocusSearch::StartingViewPolicy::kSkipStartingView,
+      FocusSearch::AnchoredDialogPolicy::kCanGoIntoAnchoredDialog,
       &dummy_focus_traversable, &dummy_focus_traversable_view);
 }
 
@@ -144,7 +137,10 @@ views::View* AccessiblePaneView::GetLastFocusableChild() {
   FocusTraversable* dummy_focus_traversable;
   views::View* dummy_focus_traversable_view;
   return focus_search_->FindNextFocusableView(
-      this, true, views::FocusSearch::DOWN, false,
+      this, FocusSearch::SearchDirection::kBackwards,
+      FocusSearch::TraversalDirection::kDown,
+      FocusSearch::StartingViewPolicy::kSkipStartingView,
+      FocusSearch::AnchoredDialogPolicy::kCanGoIntoAnchoredDialog,
       &dummy_focus_traversable, &dummy_focus_traversable_view);
 }
 
@@ -155,7 +151,7 @@ views::FocusTraversable* AccessiblePaneView::GetPaneFocusTraversable() {
   if (pane_has_focus_)
     return this;
   else
-    return NULL;
+    return nullptr;
 }
 
 bool AccessiblePaneView::AcceleratorPressed(
@@ -169,6 +165,9 @@ bool AccessiblePaneView::AcceleratorPressed(
     case ui::VKEY_ESCAPE: {
       RemovePaneFocus();
       View* last_focused_view = last_focused_view_tracker_->view();
+      // Ignore |last_focused_view| if it's no longer in the same widget.
+      if (last_focused_view && GetWidget() != last_focused_view->GetWidget())
+        last_focused_view = nullptr;
       if (last_focused_view) {
         focus_manager_->SetFocusedViewWithReason(
             last_focused_view, FocusManager::kReasonFocusRestore);
@@ -197,7 +196,7 @@ bool AccessiblePaneView::AcceleratorPressed(
 }
 
 void AccessiblePaneView::SetVisible(bool flag) {
-  if (visible() && !flag && pane_has_focus_) {
+  if (GetVisible() && !flag && pane_has_focus_) {
     RemovePaneFocus();
     focus_manager_->RestoreFocusedView();
   }
@@ -205,7 +204,7 @@ void AccessiblePaneView::SetVisible(bool flag) {
 }
 
 void AccessiblePaneView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_PANE;
+  node_data->role = ax::mojom::Role::kPane;
 }
 
 void AccessiblePaneView::RequestFocus() {
@@ -248,12 +247,16 @@ views::FocusSearch* AccessiblePaneView::GetFocusSearch() {
 
 views::FocusTraversable* AccessiblePaneView::GetFocusTraversableParent() {
   DCHECK(pane_has_focus_);
-  return NULL;
+  return nullptr;
 }
 
 views::View* AccessiblePaneView::GetFocusTraversableParentView() {
   DCHECK(pane_has_focus_);
-  return NULL;
+  return nullptr;
 }
+
+BEGIN_METADATA(AccessiblePaneView)
+METADATA_PARENT_CLASS(View)
+END_METADATA()
 
 }  // namespace views

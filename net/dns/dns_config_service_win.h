@@ -36,6 +36,12 @@ namespace net {
 
 namespace internal {
 
+// Converts a UTF-16 domain name to ASCII, possibly using punycode.
+// Returns true if the conversion succeeds and output is not empty. In case of
+// failure, |domain| might become dirty.
+bool NET_EXPORT_PRIVATE ParseDomainASCII(base::StringPiece16 widestr,
+                                         std::string* domain);
+
 // Parses |value| as search list (comma-delimited list of domain names) from
 // a registry key and stores it in |out|. Returns true on success. Empty
 // entries (e.g., "chromium.org,,org") terminate the list. Non-ascii hostnames
@@ -118,6 +124,11 @@ ConfigParseWinResult NET_EXPORT_PRIVATE ConvertSettingsToDnsConfig(
     const DnsSystemSettings& settings,
     DnsConfig* dns_config);
 
+// Service for reading and watching Windows system DNS settings. This object is
+// not thread-safe and methods may perform blocking I/O so methods must be
+// called on a sequence that allows blocking (i.e. base::MayBlock). It may be
+// constructed on a different sequence than which it's later called on.
+// WatchConfig() must be called prior to ReadConfig().
 // Use DnsConfigService::CreateSystemService to use it outside of tests.
 class NET_EXPORT_PRIVATE DnsConfigServiceWin : public DnsConfigService {
  public:

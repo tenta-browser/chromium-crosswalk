@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <map>
 #include <vector>
 
 #include "base/macros.h"
@@ -37,14 +38,38 @@ using NGramHashTableProber = DefaultProber<NGram, NGramHasher>;
 using UrlRuleOffset = flatbuffers::Offset<flat::UrlRule>;
 using UrlPatternIndexOffset = flatbuffers::Offset<flat::UrlPatternIndex>;
 
+using FlatStringOffset = flatbuffers::Offset<flatbuffers::String>;
+using FlatDomains = flatbuffers::Vector<FlatStringOffset>;
+using FlatDomainsOffset = flatbuffers::Offset<FlatDomains>;
+
+struct OffsetVectorCompare {
+  bool operator()(const std::vector<FlatStringOffset>& a,
+                  const std::vector<FlatStringOffset>& b) const;
+};
+using FlatDomainMap = std::
+    map<std::vector<FlatStringOffset>, FlatDomainsOffset, OffsetVectorCompare>;
+
 constexpr size_t kNGramSize = 5;
 static_assert(kNGramSize <= sizeof(NGram), "NGram type is too narrow.");
+
+// The default element types mask as specified by the flatbuffer schema.
+constexpr uint16_t kDefaultFlatElementTypesMask =
+    flat::ElementType_ANY & ~flat::ElementType_MAIN_FRAME;
+
+// The default element types mask used by a proto::UrlRule.
+constexpr uint32_t kDefaultProtoElementTypesMask =
+    proto::ELEMENT_TYPE_ALL & ~proto::ELEMENT_TYPE_POPUP;
 
 // Serializes the |rule| to the FlatBuffer |builder|, and returns an offset to
 // it in the resulting buffer. Returns null offset iff the |rule| could not be
 // serialized because of unsupported options or it is otherwise invalid.
+//
+// |domain_map| Should point to a non-nullptr map of domain vectors to their
+// existing offsets. It is used to de-dupe domain vectors in the serialized
+// rules.
 UrlRuleOffset SerializeUrlRule(const proto::UrlRule& rule,
-                               flatbuffers::FlatBufferBuilder* builder);
+                               flatbuffers::FlatBufferBuilder* builder,
+                               FlatDomainMap* domain_map);
 
 // Performs three-way comparison between two domains. In the total order defined
 // by this predicate, the lengths of domains will be monotonically decreasing.
@@ -53,6 +78,12 @@ UrlRuleOffset SerializeUrlRule(const proto::UrlRule& rule,
 // |rhs_domain|, zero if |lhs_domain| is equal to |rhs_domain| and a positive
 // value if |lhs_domain| should be ordered after |rhs_domain|.
 int CompareDomains(base::StringPiece lhs_domain, base::StringPiece rhs_domain);
+
+// The current format version of UrlPatternIndex.
+// Increase this value when introducing an incompatible change to the
+// UrlPatternIndex schema (flat/url_pattern_index.fbs). url_pattern_index
+// clients can use this as a signal to rebuild rulesets.
+constexpr int kUrlPatternIndexFormatVersion = 5;
 
 // The class used to construct an index over the URL patterns of a set of URL
 // rules. The rules themselves need to be converted to FlatBuffers format by the
@@ -114,12 +145,18 @@ class UrlPatternIndexMatcher {
   // nullptr, then all requests return no match.
   explicit UrlPatternIndexMatcher(const flat::UrlPatternIndex* flat_index);
   ~UrlPatternIndexMatcher();
+  UrlPatternIndexMatcher(UrlPatternIndexMatcher&&);
+  UrlPatternIndexMatcher& operator=(UrlPatternIndexMatcher&&);
 
   // If the index contains one or more UrlRules that match the request, returns
   // one of them, depending on the |strategy|. Otherwise, returns nullptr.
   //
   // Notes on parameters:
-  //  - |url| should be valid, otherwise the return value is nullptr.
+  //  - |url| should be valid and not longer than url::kMaxURLChars, otherwise
+  //    the return value is nullptr. The length limit is chosen due to
+  //    performance implications of matching giant URLs, along with the fact
+  //    that in many places in Chrome (e.g. at the IPC layer), URLs longer than
+  //    this are dropped already.
   //  - Exactly one of |element_type| and |activation_type| should be specified,
   //    i.e., not equal to *_UNSPECIFIED, otherwise the return value is nullptr.
   //  - |is_third_party| should be pre-computed by the caller, e.g. using the

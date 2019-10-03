@@ -30,6 +30,17 @@ class UrlCheckerDelegate;
 // be used to handle queries from renderers. But it is also used to handle
 // queries from the browser. In that case, the public methods are called
 // directly instead of through Mojo.
+//
+// To be considered "safe", a URL must not appear in the SafeBrowsing blacklists
+// (see SafeBrowsingService for details).
+//
+// Note that the SafeBrowsing check takes at most kCheckUrlTimeoutMs
+// milliseconds. If it takes longer than this, then the system defaults to
+// treating the URL as safe.
+//
+// If the URL is classified as dangerous, a warning interstitial page is
+// displayed. In that case, the user can click through the warning page if they
+// decides to procced with loading the URL anyway.
 class SafeBrowsingUrlCheckerImpl : public mojom::SafeBrowsingUrlChecker,
                                    public SafeBrowsingDatabaseManager::Client {
  public:
@@ -159,7 +170,7 @@ class SafeBrowsingUrlCheckerImpl : public mojom::SafeBrowsingUrlChecker,
   // Timer to abort the SafeBrowsing check if it takes too long.
   base::OneShotTimer timer_;
 
-  base::WeakPtrFactory<SafeBrowsingUrlCheckerImpl> weak_factory_;
+  base::WeakPtrFactory<SafeBrowsingUrlCheckerImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingUrlCheckerImpl);
 };

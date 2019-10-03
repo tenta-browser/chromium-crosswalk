@@ -5,6 +5,7 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 
+#include <cstddef>
 #include <string>
 #include <utility>
 
@@ -21,7 +22,7 @@ class AssociatedInterfaceRequest {
   // Constructs an empty AssociatedInterfaceRequest, representing that the
   // client is not requesting an implementation of Interface.
   AssociatedInterfaceRequest() {}
-  AssociatedInterfaceRequest(decltype(nullptr)) {}
+  AssociatedInterfaceRequest(std::nullptr_t) {}
 
   explicit AssociatedInterfaceRequest(ScopedInterfaceEndpointHandle handle)
       : handle_(std::move(handle)) {}
@@ -41,7 +42,7 @@ class AssociatedInterfaceRequest {
   // Assigning to nullptr resets the AssociatedInterfaceRequest to an empty
   // state, closing the interface endpoint handle currently bound to it (if
   // any).
-  AssociatedInterfaceRequest& operator=(decltype(nullptr)) {
+  AssociatedInterfaceRequest& operator=(std::nullptr_t) {
     handle_.reset();
     return *this;
   }
@@ -49,6 +50,8 @@ class AssociatedInterfaceRequest {
   // Indicates whether the request currently contains a valid interface endpoint
   // handle.
   bool is_pending() const { return handle_.is_valid(); }
+
+  explicit operator bool() const { return handle_.is_valid(); }
 
   ScopedInterfaceEndpointHandle PassHandle() { return std::move(handle_); }
 

@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -28,7 +29,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 
-class ExtensionService;
 class ExtensionServiceTest;
 class SkBitmap;
 struct WebApplicationInfo;
@@ -37,8 +37,13 @@ namespace base {
 class SequencedTaskRunner;
 }
 
+namespace service_manager {
+class Connector;
+}
+
 namespace extensions {
 class CrxInstallError;
+class ExtensionService;
 class ExtensionUpdaterTest;
 class PreloadCheckGroup;
 
@@ -101,8 +106,11 @@ class CrxInstaller : public SandboxedUnpackerClient {
       std::unique_ptr<ExtensionInstallPrompt> client,
       const WebstoreInstaller::Approval* approval);
 
-  // Install the crx in |source_file|.
+  // Install the crx in |source_file|. The file must be a CRX3. A publisher
+  // proof in the file is required unless off-webstore installation is allowed.
   void InstallCrx(const base::FilePath& source_file);
+
+  // Install the crx in |source_file|.
   void InstallCrxFile(const CRXFileInfo& source_file);
 
   // Install the unpacked crx in |unpacked_dir|.
@@ -119,7 +127,18 @@ class CrxInstaller : public SandboxedUnpackerClient {
   // Convert the specified web app into an extension and install it.
   void InstallWebApp(const WebApplicationInfo& web_app);
 
+  // Update the extension |extension_id| with the unpacked crx in
+  // |unpacked_dir|.
+  // If |delete_source_| is true, |unpacked_dir| will be removed at the end of
+  // the update.
+  void UpdateExtensionFromUnpackedCrx(const std::string& extension_id,
+                                      const std::string& public_key,
+                                      const base::FilePath& unpacked_dir);
+
   void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
+
+  void InitializeCreationFlagsForUpdate(const Extension* extension,
+                                        const int initial_flags);
 
   int creation_flags() const { return creation_flags_; }
   void set_creation_flags(int val) { creation_flags_ = val; }
@@ -226,8 +245,13 @@ class CrxInstaller : public SandboxedUnpackerClient {
   // invalid if this isn't an update.
   const base::Version& current_version() const { return current_version_; }
 
+  static void set_connector_for_test(service_manager::Connector* connector) {
+    connector_for_test_ = connector;
+  }
+
  private:
   friend class ::ExtensionServiceTest;
+  friend class BookmarkAppInstallFinalizerTest;
   friend class ExtensionUpdaterTest;
 
   CrxInstaller(base::WeakPtr<ExtensionService> service_weak,
@@ -243,7 +267,7 @@ class CrxInstaller : public SandboxedUnpackerClient {
 
   // Called after OnUnpackSuccess as a last check to see whether the install
   // should complete.
-  CrxInstallError AllowInstall(const Extension* extension);
+  base::Optional<CrxInstallError> AllowInstall(const Extension* extension);
 
   // SandboxedUnpackerClient
   void OnUnpackFailure(const CrxInstallError& error) override;
@@ -283,7 +307,7 @@ class CrxInstaller : public SandboxedUnpackerClient {
   void ReportSuccessFromFileThread();
   void ReportSuccessFromUIThread();
   void NotifyCrxInstallBegin();
-  void NotifyCrxInstallComplete(bool success);
+  void NotifyCrxInstallComplete(const base::Optional<CrxInstallError>& error);
 
   // Deletes temporary directory and crx file if needed.
   void CleanupTempFiles();
@@ -295,6 +319,9 @@ class CrxInstaller : public SandboxedUnpackerClient {
   // Show re-enable prompt if the update is initiated from the settings page
   // and needs additional permissions.
   void ConfirmReEnable();
+
+  // Returns the connector to the ServiceManager.
+  service_manager::Connector* GetConnector() const;
 
   void set_install_flag(int flag, bool val) {
     if (val)
@@ -371,11 +398,6 @@ class CrxInstaller : public SandboxedUnpackerClient {
   // to false.
   bool delete_source_;
 
-  // Whether to create an app shortcut after successful installation. This is
-  // set based on the user's selection in the UI and can only ever be true for
-  // apps.
-  bool create_app_shortcut_;
-
   // The ordinal of the NTP apps page |extension_| will be shown on.
   syncer::StringOrdinal page_ordinal_;
 
@@ -427,7 +449,7 @@ class CrxInstaller : public SandboxedUnpackerClient {
   extension_misc::CrxInstallCause install_cause_;
 
   // Creation flags to use for the extension.  These flags will be used
-  // when calling Extenion::Create() by the crx installer.
+  // when calling Extension::Create() by the crx installer.
   int creation_flags_;
 
   // Whether to allow off store installation.
@@ -472,6 +494,8 @@ class CrxInstaller : public SandboxedUnpackerClient {
 
   // Invoked when the install is completed.
   InstallerResultCallback installer_callback_;
+
+  static service_manager::Connector* connector_for_test_;
 
   DISALLOW_COPY_AND_ASSIGN(CrxInstaller);
 };

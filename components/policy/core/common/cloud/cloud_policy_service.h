@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/policy_export.h"
@@ -37,7 +38,12 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
     // Invoked when CloudPolicyService has finished initializing (any initial
     // policy load activity has completed and the CloudPolicyClient has
     // been registered, if possible).
-    virtual void OnInitializationCompleted(CloudPolicyService* service) = 0;
+    virtual void OnCloudPolicyServiceInitializationCompleted() = 0;
+
+    // Called when policy refresh finshed. |success| indicates whether refresh
+    // was successful.
+    virtual void OnPolicyRefreshed(bool success) {}
+
     virtual ~Observer() {}
   };
 
@@ -48,13 +54,9 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
                      CloudPolicyStore* store);
   ~CloudPolicyService() override;
 
-  // Returns the domain that manages this user/device, according to the current
-  // policy blob. Empty if not managed/not available.
-  std::string ManagedBy() const;
-
   // Refreshes policy. |callback| will be invoked after the operation completes
   // or aborts because of errors.
-  void RefreshPolicy(const RefreshPolicyCallback& callback);
+  virtual void RefreshPolicy(const RefreshPolicyCallback& callback);
 
   // Unregisters the device. |callback| will be invoked after the operation
   // completes or aborts because of errors. All pending refresh policy requests
@@ -74,7 +76,16 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   void OnStoreLoaded(CloudPolicyStore* store) override;
   void OnStoreError(CloudPolicyStore* store) override;
 
+  void ReportValidationResult(CloudPolicyStore* store);
+
   bool IsInitializationComplete() const { return initialization_complete_; }
+
+  // If initial policy refresh was completed returns its result.
+  // This allows ChildPolicyObserver to know whether policy was fetched before
+  // profile creation.
+  base::Optional<bool> initial_policy_refresh_result() const {
+    return initial_policy_refresh_result_;
+  }
 
  private:
   // Helper function that is called when initialization may be complete, and
@@ -125,9 +136,18 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   // is complete).
   bool initialization_complete_;
 
+  // Set to true if initial policy refresh was successful. Set to false
+  // otherwise.
+  base::Optional<bool> initial_policy_refresh_result_;
+
   // Observers who will receive notifications when the service has finished
   // initializing.
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
+
+  // Identifier from the stored policy. Policy validations results are only
+  // reported once if the validated policy's data signature matches with this
+  // one. Will be cleared once we send the validation report.
+  std::string policy_pending_validation_signature_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyService);
 };

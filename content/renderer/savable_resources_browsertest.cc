@@ -17,8 +17,8 @@
 #include "net/base/filename_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace content {
 
@@ -46,7 +46,7 @@ class SavableResourcesTest : public ContentBrowserTest {
     // Load the test file.
     NavigateToURL(shell(), file_url);
 
-    PostTaskToInProcessRendererAndWait(base::Bind(
+    PostTaskToInProcessRendererAndWait(base::BindOnce(
         &SavableResourcesTest::CheckResources, base::Unretained(this),
         page_file_path, expected_resources_matcher,
         expected_subframe_urls_matcher, file_url,

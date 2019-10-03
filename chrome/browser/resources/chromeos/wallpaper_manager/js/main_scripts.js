@@ -11,8 +11,6 @@
 // <include src="../../../../../../ui/webui/resources/js/cr/ui.js">
 // <include src="../../../../../../ui/webui/resources/js/cr/event_target.js">
 // <include
-// src="../../../../../../ui/webui/resources/js/cr/ui/touch_handler.js">
-// <include
 // src="../../../../../../ui/webui/resources/js/cr/ui/array_data_model.js">
 // <include src="../../../../../../ui/webui/resources/js/cr/ui/list_item.js">
 // <include
@@ -34,7 +32,6 @@
 // <include src="constants.js">
 // <include src="util.js">
 // <include src="progress_manager.js">
-// <include src="wallpaper_directories.js">
 // <include src="wallpaper_categories_list.js">
 // <include src="wallpaper_images_grid.js">
 // <include src="wallpaper_manager.js">

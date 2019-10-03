@@ -6,24 +6,33 @@
 #define CHROME_BROWSER_CHROMEOS_SETTINGS_DEVICE_IDENTITY_PROVIDER_H_
 
 #include "base/macros.h"
-#include "google_apis/gaia/identity_provider.h"
+#include "components/invalidation/public/identity_provider.h"
 
 namespace chromeos {
 
 class DeviceOAuth2TokenService;
 
 // Identity provider implementation backed by DeviceOAuth2TokenService.
-class DeviceIdentityProvider : public IdentityProvider {
+class DeviceIdentityProvider : public invalidation::IdentityProvider {
  public:
   explicit DeviceIdentityProvider(
       chromeos::DeviceOAuth2TokenService* token_service);
   ~DeviceIdentityProvider() override;
 
   // IdentityProvider:
-  std::string GetActiveUsername() override;
-  std::string GetActiveAccountId() override;
-  OAuth2TokenService* GetTokenService() override;
-  bool RequestLogin() override;
+  CoreAccountId GetActiveAccountId() override;
+  bool IsActiveAccountWithRefreshToken() override;
+  std::unique_ptr<invalidation::ActiveAccountAccessTokenFetcher>
+  FetchAccessToken(
+      const std::string& oauth_consumer_name,
+      const OAuth2AccessTokenManager::ScopeSet& scopes,
+      invalidation::ActiveAccountAccessTokenCallback callback) override;
+  void InvalidateAccessToken(const OAuth2AccessTokenManager::ScopeSet& scopes,
+                             const std::string& access_token) override;
+  void SetActiveAccountId(const CoreAccountId& account_id) override;
+
+  void OnRefreshTokenAvailable(const CoreAccountId& account_id);
+  void OnRefreshTokenRevoked(const CoreAccountId& account_id);
 
  private:
   chromeos::DeviceOAuth2TokenService* token_service_;

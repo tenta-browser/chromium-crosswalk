@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/i18n/number_formatting.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
@@ -21,10 +22,11 @@
 #include "base/strings/nullable_string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification_common.h"
-#include "chrome/browser/notifications/notification_display_service.h"
-#include "chrome/browser/notifications/notification_display_service_factory.h"
+#include "chrome/browser/notifications/notification_display_service_impl.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -32,16 +34,18 @@
 #include "chrome/browser/ui/cocoa/notifications/notification_constants_mac.h"
 #import "chrome/browser/ui/cocoa/notifications/notification_delivery.h"
 #import "chrome/browser/ui/cocoa/notifications/notification_response_builder_mac.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/crash/content/app/crashpad.h"
 #include "components/url_formatter/elide_url.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "third_party/WebKit/public/platform/modules/notifications/WebNotificationConstants.h"
+#include "third_party/blink/public/platform/modules/notifications/web_notification_constants.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_types.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_types.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -65,31 +69,6 @@
 
 namespace {
 
-// Callback to run once the profile has been loaded in order to perform a
-// given |operation| in a notification.
-void ProfileLoadedCallback(NotificationCommon::Operation operation,
-                           NotificationHandler::Type notification_type,
-                           const GURL& origin,
-                           const std::string& notification_id,
-                           const base::Optional<int>& action_index,
-                           const base::Optional<base::string16>& reply,
-                           const base::Optional<bool>& by_user,
-                           Profile* profile) {
-  if (!profile) {
-    // TODO(miguelg): Add UMA for this condition.
-    // Perhaps propagate this through PersistentNotificationStatus.
-    LOG(WARNING) << "Profile not loaded correctly";
-    return;
-  }
-
-  auto* display_service =
-      NotificationDisplayServiceFactory::GetForProfile(profile);
-
-  display_service->ProcessNotificationOperation(operation, notification_type,
-                                                origin, notification_id,
-                                                action_index, reply, by_user);
-}
-
 // Loads the profile and process the Notification response
 void DoProcessNotificationResponse(NotificationCommon::Operation operation,
                                    NotificationHandler::Type type,
@@ -102,13 +81,21 @@ void DoProcessNotificationResponse(NotificationCommon::Operation operation,
                                    const base::Optional<bool>& by_user) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
+  // Profile ID can be empty for system notifications, which are not bound to a
+  // profile, but system notifications are transient and thus not handled by
+  // this NotificationPlatformBridge.
+  // When transient notifications are supported, this should route the
+  // notification response to the system NotificationDisplayService.
+  DCHECK(!profile_id.empty());
+
   ProfileManager* profileManager = g_browser_process->profile_manager();
   DCHECK(profileManager);
 
   profileManager->LoadProfile(
       profile_id, incognito,
-      base::Bind(&ProfileLoadedCallback, operation, type, origin,
-                 notification_id, action_index, reply, by_user));
+      base::Bind(&NotificationDisplayServiceImpl::ProfileLoadedCallback,
+                 operation, type, origin, notification_id, action_index, reply,
+                 by_user));
 }
 
 // This enum backs an UMA histogram, so it should be treated as append-only.
@@ -214,10 +201,11 @@ NotificationPlatformBridgeMac::~NotificationPlatformBridgeMac() {
 }
 
 // static
-NotificationPlatformBridge* NotificationPlatformBridge::Create() {
+std::unique_ptr<NotificationPlatformBridge>
+NotificationPlatformBridge::Create() {
   base::scoped_nsobject<AlertDispatcherImpl> alert_dispatcher(
       [[AlertDispatcherImpl alloc] init]);
-  return new NotificationPlatformBridgeMac(
+  return std::make_unique<NotificationPlatformBridgeMac>(
       [NSUserNotificationCenter defaultUserNotificationCenter],
       alert_dispatcher.get());
 }
@@ -230,8 +218,7 @@ bool NotificationPlatformBridge::CanHandleType(
 
 void NotificationPlatformBridgeMac::Display(
     NotificationHandler::Type notification_type,
-    const std::string& profile_id,
-    bool incognito,
+    Profile* profile,
     const message_center::Notification& notification,
     std::unique_ptr<NotificationCommon::Metadata> metadata) {
   base::scoped_nsobject<NotificationBuilder> builder(
@@ -262,8 +249,11 @@ void NotificationPlatformBridgeMac::Display(
     [builder setIcon:notification.icon().ToNSImage()];
   }
 
-  [builder setShowSettingsButton:(notification_type !=
-                                  NotificationHandler::Type::EXTENSION)];
+  [builder
+      setShowSettingsButton:(notification_type !=
+                                 NotificationHandler::Type::EXTENSION &&
+                             notification_type !=
+                                 NotificationHandler::Type::SEND_TAB_TO_SELF)];
   std::vector<message_center::ButtonInfo> buttons = notification.buttons();
   if (!buttons.empty()) {
     DCHECK_LE(buttons.size(), blink::kWebNotificationMaxActions);
@@ -295,8 +285,8 @@ void NotificationPlatformBridgeMac::Display(
 
   [builder setOrigin:base::SysUTF8ToNSString(notification.origin_url().spec())];
   [builder setNotificationId:base::SysUTF8ToNSString(notification.id())];
-  [builder setProfileId:base::SysUTF8ToNSString(profile_id)];
-  [builder setIncognito:incognito];
+  [builder setProfileId:base::SysUTF8ToNSString(GetProfileId(profile))];
+  [builder setIncognito:profile->IsOffTheRecord()];
   [builder
       setNotificationType:[NSNumber numberWithInteger:static_cast<NSInteger>(
                                                           notification_type)]];
@@ -313,10 +303,10 @@ void NotificationPlatformBridgeMac::Display(
   }
 }
 
-void NotificationPlatformBridgeMac::Close(const std::string& profile_id,
+void NotificationPlatformBridgeMac::Close(Profile* profile,
                                           const std::string& notification_id) {
   NSString* candidate_id = base::SysUTF8ToNSString(notification_id);
-  NSString* current_profile_id = base::SysUTF8ToNSString(profile_id);
+  NSString* current_profile_id = base::SysUTF8ToNSString(GetProfileId(profile));
 
   bool notification_removed = false;
   for (NSUserNotification* toast in
@@ -344,20 +334,21 @@ void NotificationPlatformBridgeMac::Close(const std::string& profile_id,
 }
 
 void NotificationPlatformBridgeMac::GetDisplayed(
-    const std::string& profile_id,
-    bool incognito,
-    const GetDisplayedNotificationsCallback& callback) const {
-  [alert_dispatcher_
-      getDisplayedAlertsForProfileId:base::SysUTF8ToNSString(profile_id)
-                           incognito:incognito
-                  notificationCenter:notification_center_
-                            callback:callback];
+    Profile* profile,
+    GetDisplayedNotificationsCallback callback) const {
+  [alert_dispatcher_ getDisplayedAlertsForProfileId:base::SysUTF8ToNSString(
+                                                        GetProfileId(profile))
+                                          incognito:profile->IsOffTheRecord()
+                                 notificationCenter:notification_center_
+                                           callback:std::move(callback)];
 }
 
 void NotificationPlatformBridgeMac::SetReadyCallback(
     NotificationBridgeReadyCallback callback) {
   std::move(callback).Run(true);
 }
+
+void NotificationPlatformBridgeMac::DisplayServiceShutDown(Profile* profile) {}
 
 // static
 void NotificationPlatformBridgeMac::ProcessNotificationResponse(
@@ -387,16 +378,16 @@ void NotificationPlatformBridgeMac::ProcessNotificationResponse(
     action_index = button_index.intValue;
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::Bind(DoProcessNotificationResponse,
-                 static_cast<NotificationCommon::Operation>(
-                     operation.unsignedIntValue),
-                 static_cast<NotificationHandler::Type>(
-                     notification_type.unsignedIntValue),
-                 profile_id, [is_incognito boolValue],
-                 GURL(notification_origin), notification_id, action_index,
-                 base::nullopt /* reply */, true /* by_user */));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(DoProcessNotificationResponse,
+                     static_cast<NotificationCommon::Operation>(
+                         operation.unsignedIntValue),
+                     static_cast<NotificationHandler::Type>(
+                         notification_type.unsignedIntValue),
+                     profile_id, [is_incognito boolValue],
+                     GURL(notification_origin), notification_id, action_index,
+                     base::nullopt /* reply */, true /* by_user */));
 }
 
 // static
@@ -474,7 +465,7 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
 - (void)userNotificationCenter:(NSUserNotificationCenter*)center
        didActivateNotification:(NSUserNotification*)notification {
   NSDictionary* notificationResponse =
-      [NotificationResponseBuilder buildDictionary:notification];
+      [NotificationResponseBuilder buildActivatedDictionary:notification];
   NotificationPlatformBridgeMac::ProcessNotificationResponse(
       notificationResponse);
 }
@@ -488,9 +479,23 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
 - (void)userNotificationCenter:(NSUserNotificationCenter*)center
                didDismissAlert:(NSUserNotification*)notification {
   NSDictionary* notificationResponse =
-      [NotificationResponseBuilder buildDictionary:notification];
+      [NotificationResponseBuilder buildDismissedDictionary:notification];
   NotificationPlatformBridgeMac::ProcessNotificationResponse(
       notificationResponse);
+}
+
+// Overriden from _NSUserNotificationCenterDelegatePrivate.
+// Emitted when a user closes a notification from the notification center.
+// This is an undocumented method introduced in 10.8 according to
+// https://bugzilla.mozilla.org/show_bug.cgi?id=852648#c21
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+    didRemoveDeliveredNotifications:(NSArray*)notifications {
+  for (NSUserNotification* notification in notifications) {
+    NSDictionary* notificationResponse =
+        [NotificationResponseBuilder buildDismissedDictionary:notification];
+    NotificationPlatformBridgeMac::ProcessNotificationResponse(
+        notificationResponse);
+  }
 }
 
 - (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
@@ -566,9 +571,11 @@ getDisplayedAlertsForProfileId:(NSString*)profileId
                      incognito:(BOOL)incognito
             notificationCenter:(NSUserNotificationCenter*)notificationCenter
                       callback:(GetDisplayedNotificationsCallback)callback {
+  // Create a copyable version of the OnceCallback because ObjectiveC blocks
+  // copy all referenced variables via copy constructor.
+  auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
   auto reply = ^(NSArray* alerts) {
-    std::unique_ptr<std::set<std::string>> displayedNotifications =
-        std::make_unique<std::set<std::string>>();
+    std::set<std::string> displayedNotifications;
 
     for (NSUserNotification* toast in
          [notificationCenter deliveredNotifications]) {
@@ -579,18 +586,18 @@ getDisplayedAlertsForProfileId:(NSString*)profileId
           boolValue];
       if ([toastProfileId isEqualToString:profileId] &&
           incognito == incognitoNotification) {
-        displayedNotifications->insert(base::SysNSStringToUTF8([toast.userInfo
+        displayedNotifications.insert(base::SysNSStringToUTF8([toast.userInfo
             objectForKey:notification_constants::kNotificationId]));
       }
     }
 
     for (NSString* alert in alerts)
-      displayedNotifications->insert(base::SysNSStringToUTF8(alert));
+      displayedNotifications.insert(base::SysNSStringToUTF8(alert));
 
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
-        base::Bind(callback, base::Passed(&displayedNotifications),
-                   true /* supports_synchronization */));
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
+        base::BindOnce(copyable_callback, std::move(displayedNotifications),
+                       true /* supports_synchronization */));
   };
 
   [[self serviceProxy] getDisplayedAlertsForProfileId:profileId

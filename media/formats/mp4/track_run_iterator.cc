@@ -9,14 +9,17 @@
 #include <limits>
 #include <memory>
 
-#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
 #include "media/base/demuxer_memory_limit.h"
+#include "media/base/encryption_scheme.h"
+#include "media/base/media_util.h"
 #include "media/base/timestamp_constants.h"
 #include "media/formats/mp4/rcheck.h"
 #include "media/formats/mp4/sample_to_group_iterator.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 namespace media {
 namespace mp4 {
@@ -51,6 +54,8 @@ struct TrackRunInfo {
   int aux_info_default_size;
   std::vector<uint8_t> aux_info_sizes;  // Populated if default_size == 0.
   int aux_info_total_size;
+
+  EncryptionScheme encryption_scheme;
 
   std::vector<CencSampleEncryptionInfoEntry> fragment_sample_encryption_info;
 
@@ -114,7 +119,11 @@ DecodeTimestamp DecodeTimestampFromRational(int64_t numer, int64_t denom) {
 }
 
 TrackRunIterator::TrackRunIterator(const Movie* moov, MediaLog* media_log)
-    : moov_(moov), media_log_(media_log), sample_offset_(0) {
+    : moov_(moov),
+      media_log_(media_log),
+      sample_dts_(0),
+      sample_cts_(0),
+      sample_offset_(0) {
   CHECK(moov);
 }
 
@@ -342,20 +351,40 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
           traf.sample_group_description.entries;
 
       const TrackEncryption* track_encryption;
+      const ProtectionSchemeInfo* sinf;
       tri.is_audio = (stsd.type == kAudio);
       if (tri.is_audio) {
         RCHECK(!stsd.audio_entries.empty());
         if (desc_idx >= stsd.audio_entries.size())
           desc_idx = 0;
         tri.audio_description = &stsd.audio_entries[desc_idx];
+        sinf = &tri.audio_description->sinf;
         track_encryption = &tri.audio_description->sinf.info.track_encryption;
       } else {
         RCHECK(!stsd.video_entries.empty());
         if (desc_idx >= stsd.video_entries.size())
           desc_idx = 0;
         tri.video_description = &stsd.video_entries[desc_idx];
+        sinf = &tri.video_description->sinf;
         track_encryption = &tri.video_description->sinf.info.track_encryption;
       }
+
+      if (!sinf->HasSupportedScheme()) {
+        tri.encryption_scheme = Unencrypted();
+      } else {
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+        tri.encryption_scheme = EncryptionScheme(
+            sinf->IsCbcsEncryptionScheme()
+                ? EncryptionScheme::CIPHER_MODE_AES_CBC
+                : EncryptionScheme::CIPHER_MODE_AES_CTR,
+            EncryptionPattern(track_encryption->default_crypt_byte_block,
+                              track_encryption->default_skip_byte_block));
+#else
+        DCHECK(!sinf->IsCbcsEncryptionScheme());
+        tri.encryption_scheme = AesCtrEncryptionScheme();
+#endif
+      }
+
       // Initialize aux_info variables only if no sample encryption entries.
       if (sample_encryption_entries_count == 0 &&
           traf.auxiliary_offset.offsets.size() > j) {
@@ -396,16 +425,40 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
 
       // Avoid allocating insane sample counts for invalid media.
       const size_t max_sample_count =
-          kDemuxerMemoryLimit / sizeof(decltype(tri.samples)::value_type);
+          GetDemuxerMemoryLimit() / sizeof(decltype(tri.samples)::value_type);
       RCHECK_MEDIA_LOGGED(
           base::strict_cast<size_t>(trun.sample_count) <= max_sample_count,
           media_log_, "Metadata overhead exceeds storage limit.");
       tri.samples.resize(trun.sample_count);
+
+      int empty_sample_count = 0;
+      int empty_samples_in_sequence_count = 0;
+
+      UMA_HISTOGRAM_COUNTS_1M("Media.MSE.Mp4TrunSampleCount",
+                              trun.sample_count);
+
       for (size_t k = 0; k < trun.sample_count; k++) {
         if (!PopulateSampleInfo(*trex, traf.header, trun, edit_list_offset, k,
                                 &tri.samples[k], traf.sdtp.sample_depends_on(k),
                                 tri.is_audio, media_log_)) {
           return false;
+        }
+
+        UMA_HISTOGRAM_COUNTS_1M("Media.MSE.Mp4SampleSize", tri.samples[k].size);
+
+        if (tri.samples[k].size == 0) {
+          empty_sample_count++;
+          empty_samples_in_sequence_count++;
+        }
+
+        // Report the number of consecutive zero-sized samples seen in a
+        // sequence. Can report counts for 1 or more such sequences within the
+        // same trun, and a sequence can be as short as just 1 empty sample.
+        if (empty_samples_in_sequence_count &&
+            (tri.samples[k].size != 0 || k == trun.sample_count - 1)) {
+          UMA_HISTOGRAM_COUNTS_1M("Media.MSE.Mp4ConsecutiveEmptySamples",
+                                  empty_samples_in_sequence_count);
+          empty_samples_in_sequence_count = 0;
         }
 
         RCHECK(std::numeric_limits<int64_t>::max() - tri.samples[k].duration >
@@ -426,6 +479,10 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
           RCHECK(GetSampleEncryptionInfoEntry(tri, index));
         is_sample_to_group_valid = sample_to_group_itr.Advance();
       }
+
+      UMA_HISTOGRAM_COUNTS_1M("Media.MSE.Mp4EmptySamplesInTRun",
+                              empty_sample_count);
+
       if (sample_encryption_entries_count > 0) {
         RCHECK(sample_encryption_entries_count >=
                sample_count_sum + trun.sample_count);
@@ -443,10 +500,11 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
           // If we don't have a per-sample IV, get the constant IV.
           bool is_encrypted = index == 0 ? track_encryption->is_encrypted
                                          : info_entry->is_encrypted;
-          // We only support setting the pattern values in the 'tenc' box for
-          // the track (not varying on per sample group basis).
-          // Thus we need to verify that the settings in the sample group match
-          // those in the 'tenc'.
+#if defined(IS_CHROMECAST)
+          // On Chromecast, we only support setting the pattern values in the
+          // 'tenc' box for the track (not varying on per sample group basis).
+          // Thus we need to verify that the settings in the sample group
+          // match those in the 'tenc'.
           if (is_encrypted && index != 0) {
             RCHECK_MEDIA_LOGGED(info_entry->crypt_byte_block ==
                                     track_encryption->default_crypt_byte_block,
@@ -461,6 +519,7 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
                                 "sample group does not match that in the tenc "
                                 "box . This is not currently supported.");
           }
+#endif  // defined(IS_CHROMECAST)
           if (is_encrypted && !iv_size) {
             const uint8_t constant_iv_size =
                 index == 0 ? track_encryption->default_constant_iv_size
@@ -471,7 +530,7 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
                            : info_entry->constant_iv;
             memcpy(entry.initialization_vector, constant_iv, constant_iv_size);
           }
-#endif
+#endif  // BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
         }
       }
       runs_.push_back(tri);
@@ -593,7 +652,7 @@ int64_t TrackRunIterator::GetMaxClearOffset() {
       offset = std::min(offset, aux_info_offset());
   }
   if (run_itr_ != runs_.end()) {
-    std::vector<TrackRunInfo>::const_iterator next_run = run_itr_ + 1;
+    auto next_run = run_itr_ + 1;
     if (next_run != runs_.end()) {
       offset = std::min(offset, next_run->sample_start_offset);
       if (next_run->aux_info_total_size)
@@ -670,16 +729,21 @@ bool TrackRunIterator::is_keyframe() const {
   return sample_itr_->is_keyframe;
 }
 
-const TrackEncryption& TrackRunIterator::track_encryption() const {
+const ProtectionSchemeInfo& TrackRunIterator::protection_scheme_info() const {
   if (is_audio())
-    return audio_description().sinf.info.track_encryption;
-  return video_description().sinf.info.track_encryption;
+    return audio_description().sinf;
+  return video_description().sinf;
+}
+
+const TrackEncryption& TrackRunIterator::track_encryption() const {
+  return protection_scheme_info().info.track_encryption;
 }
 
 std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
   DCHECK(is_encrypted());
   size_t sample_idx = sample_itr_ - run_itr_->samples.begin();
   const std::vector<uint8_t>& kid = GetKeyId(sample_idx);
+  std::string key_id(kid.begin(), kid.end());
 
   if (run_itr_->sample_encryption_entries.empty()) {
     DCHECK_EQ(0, aux_info_size());
@@ -688,36 +752,60 @@ std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
     // with full sample encryption. That case will fall through to here.
     SampleEncryptionEntry sample_encryption_entry;
     if (ApplyConstantIv(sample_idx, &sample_encryption_entry)) {
-      return std::unique_ptr<DecryptConfig>(new DecryptConfig(
-          std::string(reinterpret_cast<const char*>(&kid[0]), kid.size()),
-          std::string(reinterpret_cast<const char*>(
-                          sample_encryption_entry.initialization_vector),
-                      arraysize(sample_encryption_entry.initialization_vector)),
-          sample_encryption_entry.subsamples));
+      std::string iv(reinterpret_cast<const char*>(
+                         sample_encryption_entry.initialization_vector),
+                     base::size(sample_encryption_entry.initialization_vector));
+      switch (run_itr_->encryption_scheme.mode()) {
+        case EncryptionScheme::CIPHER_MODE_UNENCRYPTED:
+          return nullptr;
+        case EncryptionScheme::CIPHER_MODE_AES_CTR:
+          return DecryptConfig::CreateCencConfig(
+              key_id, iv, sample_encryption_entry.subsamples);
+        case EncryptionScheme::CIPHER_MODE_AES_CBC:
+          return DecryptConfig::CreateCbcsConfig(
+              key_id, iv, sample_encryption_entry.subsamples,
+              run_itr_->encryption_scheme.pattern());
+      }
     }
 #endif
     MEDIA_LOG(ERROR, media_log_) << "Sample encryption info is not available.";
-    return std::unique_ptr<DecryptConfig>();
+    return nullptr;
   }
 
   DCHECK_LT(sample_idx, run_itr_->sample_encryption_entries.size());
   const SampleEncryptionEntry& sample_encryption_entry =
       run_itr_->sample_encryption_entries[sample_idx];
+  std::string iv(reinterpret_cast<const char*>(
+                     sample_encryption_entry.initialization_vector),
+                 base::size(sample_encryption_entry.initialization_vector));
 
   size_t total_size = 0;
   if (!sample_encryption_entry.subsamples.empty() &&
       (!sample_encryption_entry.GetTotalSizeOfSubsamples(&total_size) ||
        total_size != static_cast<size_t>(sample_size()))) {
     MEDIA_LOG(ERROR, media_log_) << "Incorrect CENC subsample size.";
-    return std::unique_ptr<DecryptConfig>();
+    return nullptr;
   }
 
-  return std::unique_ptr<DecryptConfig>(new DecryptConfig(
-      std::string(reinterpret_cast<const char*>(&kid[0]), kid.size()),
-      std::string(reinterpret_cast<const char*>(
-                      sample_encryption_entry.initialization_vector),
-                  arraysize(sample_encryption_entry.initialization_vector)),
-      sample_encryption_entry.subsamples));
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+  if (protection_scheme_info().IsCbcsEncryptionScheme()) {
+    uint32_t index = GetGroupDescriptionIndex(sample_idx);
+    uint32_t encrypt_blocks =
+        (index == 0)
+            ? track_encryption().default_crypt_byte_block
+            : GetSampleEncryptionInfoEntry(*run_itr_, index)->crypt_byte_block;
+    uint32_t skip_blocks =
+        (index == 0)
+            ? track_encryption().default_skip_byte_block
+            : GetSampleEncryptionInfoEntry(*run_itr_, index)->skip_byte_block;
+    return DecryptConfig::CreateCbcsConfig(
+        key_id, iv, sample_encryption_entry.subsamples,
+        EncryptionPattern(encrypt_blocks, skip_blocks));
+  }
+#endif
+
+  return DecryptConfig::CreateCencConfig(key_id, iv,
+                                         sample_encryption_entry.subsamples);
 }
 
 uint32_t TrackRunIterator::GetGroupDescriptionIndex(

@@ -5,7 +5,6 @@
 #ifndef IOS_WEB_NET_COOKIE_NOTIFICATION_BRIDGE_H_
 #define IOS_WEB_NET_COOKIE_NOTIFICATION_BRIDGE_H_
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 
 @class NSNotification;
@@ -13,8 +12,8 @@
 namespace web {
 
 // CookieNotificationBridge listens to
-// NSHTTPCookieManagerCookiesChangedNotification on the main thread and re-sends
-// it to the cookie store on the IO thread.
+// NSHTTPCookieManagerCookiesChangedNotification on the posting thread and
+// re-sends it to the cookie store on the IO thread.
 class CookieNotificationBridge {
  public:
   CookieNotificationBridge();
@@ -22,7 +21,7 @@ class CookieNotificationBridge {
 
  private:
   static void OnNotificationReceived(NSNotification* notification);
-  base::scoped_nsprotocol<id> observer_;
+  id observer_;
 
   DISALLOW_COPY_AND_ASSIGN(CookieNotificationBridge);
 };

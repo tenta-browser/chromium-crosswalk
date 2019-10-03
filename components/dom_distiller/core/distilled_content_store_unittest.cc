@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -78,12 +78,11 @@ class InMemoryContentStoreTest : public testing::Test {
 
 // Tests whether saving and then loading a single article works as expected.
 TEST_F(InMemoryContentStoreTest, SaveAndLoadSingleArticle) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
   const ArticleEntry entry = CreateEntry("test-id", "url1", "url2", "url3");
   const DistilledArticleProto stored_proto =
       CreateDistilledArticleForEntry(entry);
-  store_->SaveContent(entry,
-                      stored_proto,
+  store_->SaveContent(entry, stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -102,7 +101,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadSingleArticle) {
 // Tests that loading articles which have never been stored, yields a callback
 // where success is false.
 TEST_F(InMemoryContentStoreTest, LoadNonExistentArticle) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
   const ArticleEntry entry = CreateEntry("bogus-id", "url1", "url2", "url3");
   store_->LoadContent(entry,
                       base::Bind(&InMemoryContentStoreTest::OnLoadCallback,
@@ -115,13 +114,12 @@ TEST_F(InMemoryContentStoreTest, LoadNonExistentArticle) {
 // of save and store does not matter when the total number of articles does not
 // exceed |kDefaultMaxNumCachedEntries|.
 TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
   // Store first article.
   const ArticleEntry first_entry = CreateEntry("first", "url1", "url2", "url3");
   const DistilledArticleProto first_stored_proto =
       CreateDistilledArticleForEntry(first_entry);
-  store_->SaveContent(first_entry,
-                      first_stored_proto,
+  store_->SaveContent(first_entry, first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -133,8 +131,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
       CreateEntry("second", "url4", "url5", "url6");
   const DistilledArticleProto second_stored_proto =
       CreateDistilledArticleForEntry(second_entry);
-  store_->SaveContent(second_entry,
-                      second_stored_proto,
+  store_->SaveContent(second_entry, second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -165,7 +162,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMultipleArticles) {
 // Verifies that the content store does not store unlimited number of articles,
 // but expires the oldest ones when the limit for number of articles is reached.
 TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
 
   // Create a new store with only |kMaxNumArticles| articles as the limit.
   const int kMaxNumArticles = 3;
@@ -175,8 +172,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
   const ArticleEntry first_entry = CreateEntry("first", "url1", "url2", "url3");
   const DistilledArticleProto first_stored_proto =
       CreateDistilledArticleForEntry(first_entry);
-  store_->SaveContent(first_entry,
-                      first_stored_proto,
+  store_->SaveContent(first_entry, first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -188,8 +184,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
       CreateEntry("second", "url4", "url5", "url6");
   const DistilledArticleProto second_stored_proto =
       CreateDistilledArticleForEntry(second_entry);
-  store_->SaveContent(second_entry,
-                      second_stored_proto,
+  store_->SaveContent(second_entry, second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -200,8 +195,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
   const ArticleEntry third_entry = CreateEntry("third", "url7", "url8", "url9");
   const DistilledArticleProto third_stored_proto =
       CreateDistilledArticleForEntry(third_entry);
-  store_->SaveContent(third_entry,
-                      third_stored_proto,
+  store_->SaveContent(third_entry, third_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -225,8 +219,7 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
       CreateEntry("fourth", "url10", "url11", "url12");
   const DistilledArticleProto fourth_stored_proto =
       CreateDistilledArticleForEntry(fourth_entry);
-  store_->SaveContent(fourth_entry,
-                      fourth_stored_proto,
+  store_->SaveContent(fourth_entry, fourth_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -246,12 +239,11 @@ TEST_F(InMemoryContentStoreTest, SaveAndLoadMoreThanMaxArticles) {
 
 // Tests whether saving and then loading a single article works as expected.
 TEST_F(InMemoryContentStoreTest, LookupArticleByURL) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
   const ArticleEntry entry = CreateEntry("test-id", "url1", "url2", "url3");
   const DistilledArticleProto stored_proto =
       CreateDistilledArticleForEntry(entry);
-  store_->SaveContent(entry,
-                      stored_proto,
+  store_->SaveContent(entry, stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -283,7 +275,7 @@ TEST_F(InMemoryContentStoreTest, LookupArticleByURL) {
 // Verifies that the content store does not store unlimited number of articles,
 // but expires the oldest ones when the limit for number of articles is reached.
 TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment task_environment;
 
   // Create a new store with only |kMaxNumArticles| articles as the limit.
   const int kMaxNumArticles = 1;
@@ -293,8 +285,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
   const ArticleEntry first_entry = CreateEntry("first", "url1", "url2", "url3");
   const DistilledArticleProto first_stored_proto =
       CreateDistilledArticleForEntry(first_entry);
-  store_->SaveContent(first_entry,
-                      first_stored_proto,
+  store_->SaveContent(first_entry, first_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
@@ -318,8 +309,7 @@ TEST_F(InMemoryContentStoreTest, LoadArticleByURLAfterExpungedFromCache) {
       CreateEntry("second", "url4", "url5", "url6");
   const DistilledArticleProto second_stored_proto =
       CreateDistilledArticleForEntry(second_entry);
-  store_->SaveContent(second_entry,
-                      second_stored_proto,
+  store_->SaveContent(second_entry, second_stored_proto,
                       base::Bind(&InMemoryContentStoreTest::OnSaveCallback,
                                  base::Unretained(this)));
   base::RunLoop().RunUntilIdle();

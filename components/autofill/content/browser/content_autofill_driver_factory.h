@@ -8,10 +8,11 @@
 #include <string>
 
 #include "base/supports_user_data.h"
-#include "components/autofill/content/common/autofill_driver.mojom.h"
+#include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
 #include "components/autofill/core/browser/autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 
 namespace content {
 class RenderFrameHost;
@@ -28,6 +29,13 @@ class ContentAutofillDriverFactory : public AutofillDriverFactory,
                                      public content::WebContentsObserver,
                                      public base::SupportsUserData::Data {
  public:
+  ContentAutofillDriverFactory(
+      content::WebContents* web_contents,
+      AutofillClient* client,
+      const std::string& app_locale,
+      AutofillManager::AutofillDownloadManagerState enable_download_manager,
+      AutofillProvider* provider);
+
   ~ContentAutofillDriverFactory() override;
 
   static void CreateForWebContentsAndDelegate(
@@ -46,7 +54,7 @@ class ContentAutofillDriverFactory : public AutofillDriverFactory,
   static ContentAutofillDriverFactory* FromWebContents(
       content::WebContents* contents);
   static void BindAutofillDriver(
-      mojom::AutofillDriverRequest request,
+      mojo::PendingAssociatedReceiver<mojom::AutofillDriver> pending_receiver,
       content::RenderFrameHost* render_frame_host);
 
   // Gets the |ContentAutofillDriver| associated with |render_frame_host|.
@@ -59,18 +67,11 @@ class ContentAutofillDriverFactory : public AutofillDriverFactory,
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
-  void WasHidden() override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
 
   static const char kContentAutofillDriverFactoryWebContentsUserDataKey[];
 
  private:
-  ContentAutofillDriverFactory(
-      content::WebContents* web_contents,
-      AutofillClient* client,
-      const std::string& app_locale,
-      AutofillManager::AutofillDownloadManagerState enable_download_manager,
-      AutofillProvider* provider);
-
   std::string app_locale_;
   AutofillManager::AutofillDownloadManagerState enable_download_manager_;
   AutofillProvider* provider_;

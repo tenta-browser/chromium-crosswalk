@@ -7,12 +7,13 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #import "components/autofill/ios/browser/credit_card_util.h"
+#include "components/payments/core/autofill_card_validation.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "components/payments/core/strings_util.h"
 #include "components/strings/grit/components_strings.h"
@@ -24,7 +25,7 @@
 #import "ios/chrome/browser/ui/payments/cells/payment_method_item.h"
 #import "ios/chrome/browser/ui/payments/payment_request_edit_consumer.h"
 #import "ios/chrome/browser/ui/payments/payment_request_editor_field.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -47,27 +48,12 @@ bool IsValidCreditCardNumber(const base::string16& card_number,
   std::set<std::string> supported_card_networks(
       payment_request->supported_card_networks().begin(),
       payment_request->supported_card_networks().end());
-  if (!::autofill::IsValidCreditCardNumberForBasicCardNetworks(
-          card_number, supported_card_networks, error_message)) {
-    return false;
-  }
-
-  // Check if another credit card has already been created with this number.
-  // TODO(crbug.com/725604): the UI should offer to load / update the existing
-  // credit card info.
-  autofill::CreditCard* existing_card =
-      payment_request->GetPersonalDataManager()->GetCreditCardByNumber(
-          base::UTF16ToASCII(card_number));
-  // If a card exists, it could be the one currently being edited.
-  if (!existing_card || (credit_card_to_edit && credit_card_to_edit->guid() ==
-                                                    existing_card->guid())) {
-    return true;
-  }
-  if (error_message) {
-    *error_message = l10n_util::GetStringUTF16(
-        IDS_PAYMENTS_VALIDATION_ALREADY_USED_CREDIT_CARD_NUMBER);
-  }
-  return false;
+  return ::autofill::IsValidCreditCardNumberForBasicCardNetworks(
+      card_number, supported_card_networks, error_message);
+  // TODO(crbug.com/725604): The UI should offer to load / update the existing
+  // credit card info if another local credit card has already been created with
+  // this number. (Does not apply to server cards, which can be accessed only in
+  // tokenized form through Google Pay.)
 }
 
 }  // namespace
@@ -148,11 +134,11 @@ bool IsValidCreditCardNumber(const base::string16& card_number,
   if (!self.creditCard)
     return l10n_util::GetNSString(IDS_PAYMENTS_ADD_CARD_LABEL);
 
-  const autofill::CreditCardCompletionStatus status =
-      autofill::GetCompletionStatusForCard(
+  const payments::CreditCardCompletionStatus status =
+      payments::GetCompletionStatusForCard(
           *self.creditCard, self.paymentRequest->GetApplicationLocale(),
           self.paymentRequest->billing_profiles());
-  return base::SysUTF16ToNSString(autofill::GetEditDialogTitleForCard(status));
+  return base::SysUTF16ToNSString(payments::GetEditDialogTitleForCard(status));
 }
 
 - (CollectionViewItem*)headerItem {
@@ -199,12 +185,17 @@ bool IsValidCreditCardNumber(const base::string16& card_number,
   return !_creditCard || autofill::IsCreditCardLocal(*_creditCard);
 }
 
-- (void)formatValueForEditorField:(EditorField*)field {
-  if (field.autofillUIType == AutofillUITypeCreditCardNumber) {
-    field.value = base::SysUTF16ToNSString(
+- (BOOL)shouldFormatValueForAutofillUIType:(AutofillUIType)type {
+  return (type == AutofillUITypeCreditCardNumber);
+}
+
+- (NSString*)formatValue:(NSString*)value autofillUIType:(AutofillUIType)type {
+  if (type == AutofillUITypeCreditCardNumber) {
+    return base::SysUTF16ToNSString(
         payments::data_util::FormatCardNumberForDisplay(
-            base::SysNSStringToUTF16(field.value)));
+            base::SysNSStringToUTF16(value)));
   }
+  return nil;
 }
 
 - (UIImage*)iconIdentifyingEditorField:(EditorField*)field {
@@ -254,7 +245,7 @@ bool IsValidCreditCardNumber(const base::string16& card_number,
     return !errorMessage.empty() ? base::SysUTF16ToNSString(errorMessage) : nil;
   } else if (field.isRequired) {
     return l10n_util::GetNSString(
-        IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE);
+        IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE);
   }
   return nil;
 }

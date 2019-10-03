@@ -4,6 +4,7 @@
 
 #include "net/url_request/url_request_simple_job.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -11,7 +12,7 @@
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -34,17 +35,14 @@ void CopyData(const scoped_refptr<IOBuffer>& buf,
 
 URLRequestSimpleJob::URLRequestSimpleJob(URLRequest* request,
                                          NetworkDelegate* network_delegate)
-    : URLRangeRequestJob(request, network_delegate),
-      next_data_offset_(0),
-      weak_factory_(this) {
-}
+    : URLRangeRequestJob(request, network_delegate), next_data_offset_(0) {}
 
 void URLRequestSimpleJob::Start() {
   // Start reading asynchronously so that all error reporting and data
   // callbacks happen as they would for network requests.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&URLRequestSimpleJob::StartAsync, weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestSimpleJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void URLRequestSimpleJob::Kill() {
@@ -85,7 +83,7 @@ int URLRequestSimpleJob::ReadRawData(IOBuffer* buf, int buf_size) {
 int URLRequestSimpleJob::GetData(std::string* mime_type,
                                  std::string* charset,
                                  std::string* data,
-                                 const CompletionCallback& callback) const {
+                                 CompletionOnceCallback callback) const {
   NOTREACHED();
   return ERR_UNEXPECTED;
 }
@@ -94,9 +92,10 @@ int URLRequestSimpleJob::GetRefCountedData(
     std::string* mime_type,
     std::string* charset,
     scoped_refptr<base::RefCountedMemory>* data,
-    const CompletionCallback& callback) const {
+    CompletionOnceCallback callback) const {
   scoped_refptr<base::RefCountedString> str_data(new base::RefCountedString());
-  int result = GetData(mime_type, charset, &str_data->data(), callback);
+  int result =
+      GetData(mime_type, charset, &str_data->data(), std::move(callback));
   *data = str_data;
   return result;
 }

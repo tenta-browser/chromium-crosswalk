@@ -19,10 +19,10 @@ group("jni") {
 shared_library("remoting_client_jni") {
   deps = [
     "//remoting/android:jni_headers",
-    "//remoting/android:remoting_jni_registration",
     "//remoting/base",
     "//remoting/client",
     "//remoting/client/display",
+    "//remoting/proto/remoting/v1:directory_grpc_library",
     "//remoting/protocol",
     "//ui/gfx",
   ]
@@ -31,12 +31,12 @@ shared_library("remoting_client_jni") {
     "egl_thread_context.h",
     "jni_client.cc",
     "jni_client.h",
+    "jni_directory_service.cc",
+    "jni_directory_service.h",
     "jni_gl_display_handler.cc",
     "jni_gl_display_handler.h",
     "jni_oauth_token_getter.cc",
     "jni_oauth_token_getter.h",
-    "jni_pairing_secret_fetcher.cc",
-    "jni_pairing_secret_fetcher.h",
     "jni_runtime_delegate.cc",
     "jni_runtime_delegate.h",
     "jni_touch_event_data.cc",
@@ -47,12 +47,17 @@ shared_library("remoting_client_jni") {
     "android",
     "EGL",
   ]
-  configs += [ "//remoting/build/config:enable_webrtc_remoting_client" ]
+  configs -= [ "//build/config/android:hide_all_but_jni_onload" ]
+  configs += [
+    "//build/config/android:hide_all_but_jni",
+    "//remoting/build/config:enable_webrtc_remoting_client",
+  ]
   assert_no_deps = [ "//third_party/ffmpeg:*" ]
 }
 
 java_cpp_enum("jni_enums") {
   sources = [
+    "jni_directory_service.h",
     "jni_oauth_token_getter.h",
   ]
 }

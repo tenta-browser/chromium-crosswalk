@@ -37,8 +37,7 @@
 
 #include <algorithm>
 
-#include "base/memory/ptr_util.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 using blink::WebFrame;
 using blink::WebHistoryItem;
@@ -85,7 +84,7 @@ void HistoryEntry::HistoryNode::RemoveChildren() {
   children_.clear();
 }
 
-HistoryEntry::HistoryEntry() : weak_ptr_factory_(this) {
+HistoryEntry::HistoryEntry() {
   root_.reset(
       new HistoryNode(weak_ptr_factory_.GetWeakPtr(), WebHistoryItem()));
 }
@@ -93,8 +92,7 @@ HistoryEntry::HistoryEntry() : weak_ptr_factory_(this) {
 HistoryEntry::~HistoryEntry() {
 }
 
-HistoryEntry::HistoryEntry(const WebHistoryItem& root)
-    : weak_ptr_factory_(this) {
+HistoryEntry::HistoryEntry(const WebHistoryItem& root) {
   root_.reset(new HistoryNode(weak_ptr_factory_.GetWeakPtr(), root));
 }
 

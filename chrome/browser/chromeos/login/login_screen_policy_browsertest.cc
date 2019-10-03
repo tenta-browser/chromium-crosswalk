@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/public/cpp/login_screen.h"
+#include "ash/public/cpp/login_screen_model.h"
+#include "ash/public/cpp/login_screen_test_api.h"
+#include "ash/public/cpp/login_types.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
@@ -9,12 +14,14 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
+#include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/ui/ash/login_screen_client.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/user_manager/user_manager.h"
@@ -31,19 +38,23 @@ namespace chromeos {
 
 class LoginScreenPolicyTest : public policy::DevicePolicyCrosBrowserTest {
  public:
+  LoginScreenPolicyTest() = default;
+
   void RefreshDevicePolicyAndWaitForSettingChange(
       const char* cros_setting_name);
 
  protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kLoginManager);
-    command_line->AppendSwitch(switches::kForceLoginManagerInTests);
+  void WaitForLoginScreen() {
+    content::WindowedNotificationObserver(
+        chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
+        content::NotificationService::AllSources())
+        .Wait();
   }
 
-  void SetUpInProcessBrowserTestFixture() override {
-    InstallOwnerKey();
-    MarkAsEnterpriseOwned();
-    DevicePolicyCrosBrowserTest::SetUpInProcessBrowserTestFixture();
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    policy::DevicePolicyCrosBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kLoginManager);
+    command_line->AppendSwitch(switches::kForceLoginManagerInTests);
   }
 
   void TearDownOnMainThread() override {
@@ -51,7 +62,11 @@ class LoginScreenPolicyTest : public policy::DevicePolicyCrosBrowserTest {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::BindOnce(&chrome::AttemptExit));
     base::RunLoop().RunUntilIdle();
+    policy::DevicePolicyCrosBrowserTest::TearDownOnMainThread();
   }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LoginScreenPolicyTest);
 };
 
 void LoginScreenPolicyTest::RefreshDevicePolicyAndWaitForSettingChange(
@@ -66,22 +81,8 @@ void LoginScreenPolicyTest::RefreshDevicePolicyAndWaitForSettingChange(
   runner->Run();
 }
 
-IN_PROC_BROWSER_TEST_F(LoginScreenPolicyTest, DisableSupervisedUsers) {
-  EXPECT_FALSE(user_manager::UserManager::Get()->AreSupervisedUsersAllowed());
-
-  em::ChromeDeviceSettingsProto& proto(device_policy()->payload());
-  proto.mutable_supervised_users_settings()->set_supervised_users_enabled(true);
-  RefreshDevicePolicyAndWaitForSettingChange(
-      chromeos::kAccountsPrefSupervisedUsersEnabled);
-
-  EXPECT_TRUE(user_manager::UserManager::Get()->AreSupervisedUsersAllowed());
-}
-
 IN_PROC_BROWSER_TEST_F(LoginScreenPolicyTest, RestrictInputMethods) {
-  content::WindowedNotificationObserver(
-      chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
-      content::NotificationService::AllSources())
-      .Wait();
+  WaitForLoginScreen();
 
   input_method::InputMethodManager* imm =
       input_method::InputMethodManager::Get();
@@ -107,10 +108,7 @@ IN_PROC_BROWSER_TEST_F(LoginScreenPolicyTest, RestrictInputMethods) {
 }
 
 IN_PROC_BROWSER_TEST_F(LoginScreenPolicyTest, PolicyInputMethodsListEmpty) {
-  content::WindowedNotificationObserver(
-      chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
-      content::NotificationService::AllSources())
-      .Wait();
+  WaitForLoginScreen();
 
   input_method::InputMethodManager* imm =
       input_method::InputMethodManager::Get();
@@ -129,6 +127,71 @@ IN_PROC_BROWSER_TEST_F(LoginScreenPolicyTest, PolicyInputMethodsListEmpty) {
   ASSERT_EQ(0U, imm->GetActiveIMEState()->GetAllowedInputMethods().size());
 }
 
+class LoginScreenGuestButtonPolicy : public LoginScreenPolicyTest {
+ public:
+  LoginScreenGuestButtonPolicy() {
+    device_state_.SetState(
+        DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LoginScreenGuestButtonPolicy);
+};
+
+IN_PROC_BROWSER_TEST_F(LoginScreenGuestButtonPolicy, NoUsers) {
+  WaitForLoginScreen();
+
+  // Default.
+  EXPECT_TRUE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  // When there are no users - should be the same as OOBE.
+  test::ExecuteOobeJS("chrome.send('showGuestInOobe', [false]);");
+  EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  test::ExecuteOobeJS("chrome.send('showGuestInOobe', [true]);");
+  EXPECT_TRUE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  {
+    em::ChromeDeviceSettingsProto& proto(device_policy()->payload());
+    proto.mutable_guest_mode_enabled()->set_guest_mode_enabled(false);
+    RefreshDevicePolicyAndWaitForSettingChange(
+        chromeos::kAccountsPrefAllowGuest);
+
+    EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+    test::ExecuteOobeJS("chrome.send('showGuestInOobe', [true]);");
+    // Should not affect.
+    EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+  }
+
+  {
+    em::ChromeDeviceSettingsProto& proto(device_policy()->payload());
+    proto.mutable_guest_mode_enabled()->set_guest_mode_enabled(true);
+    RefreshDevicePolicyAndWaitForSettingChange(
+        chromeos::kAccountsPrefAllowGuest);
+
+    EXPECT_TRUE(ash::LoginScreenTestApi::IsGuestButtonShown());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(LoginScreenGuestButtonPolicy, HasUsers) {
+  WaitForLoginScreen();
+  EXPECT_TRUE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  ash::LoginScreen::Get()->GetModel()->SetUserList({{}});
+  EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  // Should not affect.
+  test::ExecuteOobeJS("chrome.send('showGuestInOobe', [true]);");
+  EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  ash::LoginScreen::Get()->GetModel()->SetUserList({});
+  EXPECT_TRUE(ash::LoginScreenTestApi::IsGuestButtonShown());
+
+  test::ExecuteOobeJS("chrome.send('showGuestInOobe', [false]);");
+  EXPECT_FALSE(ash::LoginScreenTestApi::IsGuestButtonShown());
+}
+
 class LoginScreenLocalePolicyTest : public LoginScreenPolicyTest {
  protected:
   LoginScreenLocalePolicyTest() {}
@@ -143,12 +206,12 @@ class LoginScreenLocalePolicyTest : public LoginScreenPolicyTest {
 };
 
 IN_PROC_BROWSER_TEST_F(LoginScreenLocalePolicyTest,
-                       PRE_LoginLocaleEnforcedByPolicy) {
+                       DISABLED_PRE_LoginLocaleEnforcedByPolicy) {
   chromeos::StartupUtils::MarkOobeCompleted();
 }
 
 IN_PROC_BROWSER_TEST_F(LoginScreenLocalePolicyTest,
-                       LoginLocaleEnforcedByPolicy) {
+                       DISABLED_LoginLocaleEnforcedByPolicy) {
   // Verifies that the default locale can be overridden with policy.
   EXPECT_EQ("fr", g_browser_process->GetApplicationLocale());
   base::string16 french_title =

@@ -5,14 +5,17 @@
 #import "ios/web/net/cookies/wk_http_system_cookie_store.h"
 
 #import <Foundation/Foundation.h>
-#import <WebKit/Webkit.h>
+#import <WebKit/WebKit.h>
 
+#include <memory>
+
+#import "base/test/ios/wait_util.h"
 #include "ios/net/cookies/system_cookie_store_unittest_template.h"
-#import "ios/testing/wait_util.h"
+#include "ios/web/public/test/fakes/test_browser_state.h"
+#include "ios/web/public/test/scoped_testing_web_client.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
+#import "ios/web/web_state/ui/wk_web_view_configuration_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(__IPHONE_11_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_11_0)
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -22,20 +25,17 @@ namespace net {
 
 // Test class that conforms to net::SystemCookieStoreTestDelegate to exercise
 // WKHTTPSystemCookieStore.
-class API_AVAILABLE(ios(11.0)) WKHTTPSystemCookieStoreTestDelegate {
+class WKHTTPSystemCookieStoreTestDelegate {
  public:
   WKHTTPSystemCookieStoreTestDelegate() {
-    if (@available(iOS 11, *)) {
-      shared_store_ =
-          [WKWebsiteDataStore nonPersistentDataStore].httpCookieStore;
-      store_ = base::MakeUnique<web::WKHTTPSystemCookieStore>(shared_store_);
-    }
-  }
-
-  bool IsTestEnabled() {
-    if (@available(iOS 11, *))
-      return true;
-    return false;
+    // Using off the record browser state so it will use non-persistent
+    // datastore.
+    browser_state_.SetOffTheRecord(true);
+    web::WKWebViewConfigurationProvider& config_provider =
+        web::WKWebViewConfigurationProvider::FromBrowserState(&browser_state_);
+    shared_store_ = config_provider.GetWebViewConfiguration()
+                        .websiteDataStore.httpCookieStore;
+    store_ = std::make_unique<web::WKHTTPSystemCookieStore>(&config_provider);
   }
 
   bool IsCookieSet(NSHTTPCookie* system_cookie, NSURL* url) {
@@ -55,8 +55,8 @@ class API_AVAILABLE(ios(11.0)) WKHTTPSystemCookieStoreTestDelegate {
       is_set = [result_cookie.value isEqualToString:system_cookie.value];
       verification_done = true;
     }];
-    bool callback_success = testing::WaitUntilConditionOrTimeout(
-        testing::kWaitForCookiesTimeout, ^bool {
+    bool callback_success = base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForCookiesTimeout, ^bool {
           return verification_done;
         });
     EXPECT_TRUE(callback_success);
@@ -75,8 +75,8 @@ class API_AVAILABLE(ios(11.0)) WKHTTPSystemCookieStoreTestDelegate {
                   }];
       }
     }];
-    bool callback_success = testing::WaitUntilConditionOrTimeout(
-        testing::kWaitForCookiesTimeout, ^bool {
+    bool callback_success = base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForCookiesTimeout, ^bool {
           return cookies_found == cookies_deleted;
         });
     EXPECT_TRUE(callback_success);
@@ -87,8 +87,8 @@ class API_AVAILABLE(ios(11.0)) WKHTTPSystemCookieStoreTestDelegate {
     [shared_store_ getAllCookies:^(NSArray<NSHTTPCookie*>* cookies) {
       cookies_count = cookies.count;
     }];
-    bool callback_success = testing::WaitUntilConditionOrTimeout(
-        testing::kWaitForCookiesTimeout, ^bool {
+    bool callback_success = base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForCookiesTimeout, ^bool {
           return cookies_count > -1;
         });
     EXPECT_TRUE(callback_success);
@@ -99,16 +99,14 @@ class API_AVAILABLE(ios(11.0)) WKHTTPSystemCookieStoreTestDelegate {
 
  private:
   web::TestWebThreadBundle web_thread_;
-  WKHTTPCookieStore* shared_store_;
+  web::TestBrowserState browser_state_;
+  WKHTTPCookieStore* shared_store_ = nil;
   std::unique_ptr<web::WKHTTPSystemCookieStore> store_;
 };
 
 API_AVAILABLE(ios(11.0))
-INSTANTIATE_TYPED_TEST_CASE_P(WKHTTPSystemCookieStore,
-                              SystemCookieStoreTest,
-                              WKHTTPSystemCookieStoreTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(WKHTTPSystemCookieStore,
+                               SystemCookieStoreTest,
+                               WKHTTPSystemCookieStoreTestDelegate);
 
 }  // namespace net
-
-#endif  // defined(__IPHONE_11_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >=
-//__IPHONE_11_0)

@@ -28,7 +28,7 @@
 namespace crashpad {
 namespace internal {
 
-class MemorySnapshotWin;
+class MemorySnapshotGeneric;
 
 class CaptureMemoryDelegateWin : public CaptureMemory::Delegate {
  public:
@@ -38,15 +38,15 @@ class CaptureMemoryDelegateWin : public CaptureMemory::Delegate {
   //! \param[in] thread The thread being inspected. Memory ranges overlapping
   //!     this thread's stack will be ignored on the assumption that they're
   //!     already captured elsewhere.
-  //! \param[in] snapshots A vector of MemorySnapshotWin to which the captured
-  //!     memory will be added.
+  //! \param[in] snapshots A vector of MemorySnapshotGeneric to which the
+  //!     captured memory will be added.
   //! \param[in] budget_remaining If non-null, a pointer to the remaining number
   //!     of bytes to capture. If this is `0`, no further memory will be
   //!     captured.
   CaptureMemoryDelegateWin(
       ProcessReaderWin* process_reader,
       const ProcessReaderWin::Thread& thread,
-      std::vector<std::unique_ptr<MemorySnapshotWin>>* snapshots,
+      std::vector<std::unique_ptr<MemorySnapshotGeneric>>* snapshots,
       uint32_t* budget_remaining);
 
   // MemoryCaptureDelegate:
@@ -54,12 +54,13 @@ class CaptureMemoryDelegateWin : public CaptureMemory::Delegate {
   bool ReadMemory(uint64_t at, uint64_t num_bytes, void* into) const override;
   std::vector<CheckedRange<uint64_t>> GetReadableRanges(
       const CheckedRange<uint64_t, uint64_t>& range) const override;
-  void AddNewMemorySnapshot(const CheckedRange<uint64_t, uint64_t>& range);
+  void AddNewMemorySnapshot(
+      const CheckedRange<uint64_t, uint64_t>& range) override;
 
  private:
   CheckedRange<uint64_t, uint64_t> stack_;
   ProcessReaderWin* process_reader_;  // weak
-  std::vector<std::unique_ptr<MemorySnapshotWin>>* snapshots_;  // weak
+  std::vector<std::unique_ptr<MemorySnapshotGeneric>>* snapshots_;  // weak
   uint32_t* budget_remaining_;
 };
 

@@ -16,11 +16,9 @@
 #include "base/time/time.h"
 #include "components/spellcheck/common/spellcheck_common.h"
 #include "components/spellcheck/common/spellcheck_result.h"
-#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 
 using base::TimeTicks;
-using content::BrowserMessageFilter;
 using content::BrowserThread;
 
 namespace {
@@ -164,14 +162,18 @@ bool PlatformSupportsLanguage(const std::string& current_language) {
   return [availableLanguages containsObject:mac_lang_code];
 }
 
-void SetLanguage(const std::string& lang_to_set) {
+void SetLanguage(const std::string& lang_to_set,
+                 base::OnceCallback<void(bool)> callback) {
   // Do not set any language right now, since Chrome should honor the
   // system spellcheck settings. (http://crbug.com/166046)
   // Fix this once Chrome actually allows setting a spellcheck language
   // in chrome://settings.
   //  NSString* NS_lang_to_set = ConvertLanguageCodeToMac(lang_to_set);
   //  [SharedSpellChecker() setLanguage:NS_lang_to_set];
+  std::move(callback).Run(true);
 }
+
+void DisableLanguage(const std::string& lang_to_disable) {}
 
 static int last_seen_tag_;
 
@@ -240,9 +242,10 @@ void CloseDocumentWithTag(int tag) {
 
 void RequestTextCheck(int document_tag,
                       const base::string16& text,
-                      TextCheckCompleteCallback callback) {
+                      TextCheckCompleteCallback passed_callback) {
   NSString* text_to_check = base::SysUTF16ToNSString(text);
   NSRange range_to_check = NSMakeRange(0, [text_to_check length]);
+  __block TextCheckCompleteCallback callback(std::move(passed_callback));
 
   [SharedSpellChecker()
       requestCheckingOfString:text_to_check
@@ -270,7 +273,7 @@ void RequestTextCheck(int document_tag,
                 [result range].length));
           }
           // TODO(groby): Verify we don't need to post from here.
-          callback.Run(check_results);
+          std::move(callback).Run(check_results);
       }];
 }
 

@@ -4,9 +4,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <functional>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
@@ -19,15 +22,23 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/thread_test_helper.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/browser/indexed_db/indexed_db_factory_impl.h"
+#include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
+#include "content/browser/indexed_db/indexed_db_origin_state.h"
+#include "content/browser/indexed_db/indexed_db_origin_state_handle.h"
+#include "content/browser/indexed_db/leveldb/leveldb_env.h"
 #include "content/browser/indexed_db/mock_browsertest_indexed_db_class_factory.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -38,6 +49,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/shell/browser/shell.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
@@ -57,16 +69,21 @@ using url::Origin;
 
 namespace content {
 
+namespace {
+const Origin kFileOrigin = Origin::Create(GURL("file:///"));
+}
+
 // This browser test is aimed towards exercising the IndexedDB bindings and
 // the actual implementation that lives in the browser side.
 class IndexedDBBrowserTest : public ContentBrowserTest,
                              public ::testing::WithParamInterface<const char*> {
  public:
-  IndexedDBBrowserTest() : disk_usage_(-1) {}
+  IndexedDBBrowserTest() = default;
 
   void SetUp() override {
     GetTestClassFactory()->Reset();
     IndexedDBClassFactory::SetIndexedDBClassFactoryGetter(GetIDBClassFactory);
+    indexed_db::LevelDBFactory::SetFactoryGetterForTesting(GetLevelDBFactory);
     ContentBrowserTest::SetUp();
   }
 
@@ -83,7 +100,9 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
         failure_class, failure_method, fail_on_instance_num, fail_on_call_num);
   }
 
-  void SimpleTest(const GURL& test_url, bool incognito = false) {
+  void SimpleTest(const GURL& test_url,
+                  bool incognito = false,
+                  Shell** shell_out = nullptr) {
     // The test page will perform tests on IndexedDB, then navigate to either
     // a #pass or #fail ref.
     Shell* the_browser = incognito ? CreateOffTheRecordBrowser() : shell();
@@ -100,6 +119,8 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
           &js_result));
       FAIL() << "Failed: " << js_result;
     }
+    if (shell_out)
+      *shell_out = the_browser;
   }
 
   void NavigateAndWaitForTitle(Shell* shell,
@@ -116,10 +137,11 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
     EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
   }
 
-  IndexedDBContextImpl* GetContext() {
-    StoragePartition* partition =
-        BrowserContext::GetDefaultStoragePartition(
-            shell()->web_contents()->GetBrowserContext());
+  IndexedDBContextImpl* GetContext(Shell* browser = nullptr) {
+    if (!browser)
+      browser = shell();
+    StoragePartition* partition = BrowserContext::GetDefaultStoragePartition(
+        browser->web_contents()->GetBrowserContext());
     return static_cast<IndexedDBContextImpl*>(partition->GetIndexedDBContext());
   }
 
@@ -133,8 +155,8 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
   static void SetTempQuota(int per_host_quota_kilobytes,
                            scoped_refptr<QuotaManager> qm) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&IndexedDBBrowserTest::SetTempQuota,
                          per_host_quota_kilobytes, qm));
       return;
@@ -145,37 +167,85 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
         storage::GetHardCodedSettings(per_host_quota_kilobytes * KB));
   }
 
-  virtual int64_t RequestDiskUsage() {
-    PostTaskAndReplyWithResult(
-        GetContext()->TaskRunner(), FROM_HERE,
-        base::BindOnce(&IndexedDBContext::GetOriginDiskUsage, GetContext(),
-                       GURL("file:///")),
-        base::BindOnce(&IndexedDBBrowserTest::DidGetDiskUsage,
-                       base::Unretained(this)));
-    scoped_refptr<base::ThreadTestHelper> helper(
-        new base::ThreadTestHelper(GetContext()->TaskRunner()));
-    EXPECT_TRUE(helper->Run());
-    // Wait for DidGetDiskUsage to be called.
-    base::RunLoop().RunUntilIdle();
-    return disk_usage_;
+  void DeleteForOrigin(const Origin& origin, Shell* browser = nullptr) {
+    base::RunLoop loop;
+    IndexedDBContextImpl* context = GetContext();
+    context->TaskRunner()->PostTask(FROM_HERE,
+                                    base::BindLambdaForTesting([&]() {
+                                      context->DeleteForOrigin(kFileOrigin);
+                                      loop.Quit();
+                                    }));
+    loop.Run();
   }
 
-  virtual int RequestBlobFileCount() {
-    PostTaskAndReplyWithResult(
-        GetContext()->TaskRunner(), FROM_HERE,
-        base::BindOnce(&IndexedDBContextImpl::GetOriginBlobFileCount,
-                       GetContext(), Origin::Create(GURL("file:///"))),
-        base::BindOnce(&IndexedDBBrowserTest::DidGetBlobFileCount,
-                       base::Unretained(this)));
-    scoped_refptr<base::ThreadTestHelper> helper(
-        new base::ThreadTestHelper(GetContext()->TaskRunner()));
-    EXPECT_TRUE(helper->Run());
-    // Wait for DidGetBlobFileCount to be called.
-    base::RunLoop().RunUntilIdle();
-    return blob_file_count_;
+  int64_t RequestUsage(const Origin& origin, Shell* browser = nullptr) {
+    base::RunLoop loop;
+    int64_t size;
+    IndexedDBContextImpl* context = GetContext(browser);
+    context->TaskRunner()->PostTask(
+        FROM_HERE, base::BindLambdaForTesting([&]() {
+          size = context->GetOriginDiskUsage(origin);
+          loop.Quit();
+        }));
+    loop.Run();
+    return size;
   }
 
- private:
+  int RequestBlobFileCount(const Origin& origin) {
+    base::RunLoop loop;
+    int count;
+    IndexedDBContextImpl* context = GetContext();
+    context->TaskRunner()->PostTask(
+        FROM_HERE, base::BindLambdaForTesting([&]() {
+          count = context->GetOriginBlobFileCount(origin);
+          loop.Quit();
+        }));
+    loop.Run();
+    return count;
+  }
+
+  bool RequestSchemaDowngrade(const Origin& origin) {
+    base::RunLoop loop;
+    bool downgraded;
+    IndexedDBContextImpl* context = GetContext();
+    context->TaskRunner()->PostTask(
+        FROM_HERE, base::BindLambdaForTesting([&]() {
+          downgraded = context->ForceSchemaDowngrade(origin);
+          loop.Quit();
+        }));
+    loop.Run();
+    return downgraded;
+  }
+
+  V2SchemaCorruptionStatus RequestHasV2SchemaCorruption(Origin origin) {
+    base::RunLoop loop;
+    V2SchemaCorruptionStatus status;
+    IndexedDBContextImpl* context = GetContext();
+    context->TaskRunner()->PostTask(
+        FROM_HERE, base::BindLambdaForTesting([&]() {
+          status = context->HasV2SchemaCorruption(origin);
+          loop.Quit();
+        }));
+    loop.Run();
+    return status;
+  }
+
+  // Synchronously writes to the IndexedDB database at the given origin by
+  // posting a task to the idb task runner and waiting.
+  void WriteToIndexedDB(const Origin& origin,
+                        std::string key,
+                        std::string value) {
+    base::RunLoop loop;
+    GetContext()->TaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&IndexedDBBrowserTest::WriteToIndexedDBOnIDBSequence,
+                       base::Unretained(this),
+                       base::WrapRefCounted(GetContext()), origin,
+                       std::move(key), std::move(value), loop.QuitClosure()));
+    loop.Run();
+  }
+
+ protected:
   static MockBrowserTestIndexedDBClassFactory* GetTestClassFactory() {
     static ::base::LazyInstance<MockBrowserTestIndexedDBClassFactory>::Leaky
         s_factory = LAZY_INSTANCE_INITIALIZER;
@@ -186,12 +256,37 @@ class IndexedDBBrowserTest : public ContentBrowserTest,
     return GetTestClassFactory();
   }
 
-  virtual void DidGetDiskUsage(int64_t bytes) { disk_usage_ = bytes; }
+  static indexed_db::LevelDBFactory* GetLevelDBFactory() {
+    return GetTestClassFactory();
+  }
 
-  virtual void DidGetBlobFileCount(int count) { blob_file_count_ = count; }
+ private:
+  void WriteToIndexedDBOnIDBSequence(
+      scoped_refptr<IndexedDBContextImpl> context,
+      const Origin& origin,
+      std::string key,
+      std::string value,
+      base::OnceClosure done) {
+    base::ScopedClosureRunner done_runner(std::move(done));
+    IndexedDBOriginStateHandle handle;
+    leveldb::Status s;
+    std::tie(handle, s, std::ignore, std::ignore, std::ignore) =
+        context->GetIDBFactory()->GetOrOpenOriginFactory(origin,
+                                                         context->data_path());
+    CHECK(s.ok()) << s.ToString();
+    CHECK(handle.IsHeld());
 
-  int64_t disk_usage_;
-  int blob_file_count_ = 0;
+    TransactionalLevelDBDatabase* db =
+        handle.origin_state()->backing_store()->db();
+    s = db->Put(key, &value);
+    CHECK(s.ok()) << s.ToString();
+
+    // Force close to ensure a cold start on the next database open.
+    handle.origin_state()->ForceClose();
+    handle.Release();
+    CHECK(!context->GetIDBFactory()->IsBackingStoreOpen(origin));
+    context.reset();
+  }
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBBrowserTest);
 };
@@ -272,6 +367,47 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, Bug109187Test) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), url, 1);
 }
 
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, Bug941965Test) {
+  // Double-open an incognito window to test that saving & reading a blob from
+  // indexeddb works.
+  Shell* incognito_browser = nullptr;
+  SimpleTest(GetTestUrl("indexeddb", "simple_blob_read.html"), true,
+             &incognito_browser);
+  ASSERT_TRUE(incognito_browser);
+  incognito_browser->Close();
+  incognito_browser = nullptr;
+  SimpleTest(GetTestUrl("indexeddb", "simple_blob_read.html"), true,
+             &incognito_browser);
+  ASSERT_TRUE(incognito_browser);
+  incognito_browser->Close();
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, NegativeDBSchemaVersion) {
+  const GURL database_open_url = GetTestUrl("indexeddb", "database_test.html");
+  const Origin origin = Origin::Create(database_open_url);
+  // Create the database.
+  SimpleTest(database_open_url);
+  // -10, little endian.
+  std::string value = "\xF6\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
+  WriteToIndexedDB(origin, SchemaVersionKey::Encode(), value);
+  // Crash the tab to ensure no old navigations are picked up.
+  CrashTab(shell()->web_contents());
+  SimpleTest(GetTestUrl("indexeddb", "open_bad_db.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, NegativeDBDataVersion) {
+  const GURL database_open_url = GetTestUrl("indexeddb", "database_test.html");
+  const Origin origin = Origin::Create(database_open_url);
+  // Create the database.
+  SimpleTest(database_open_url);
+  // -10, little endian.
+  std::string value = "\xF6\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
+  WriteToIndexedDB(origin, DataVersionKey::Encode(), value);
+  // Crash the tab to ensure no old navigations are picked up.
+  CrashTab(shell()->web_contents());
+  SimpleTest(GetTestUrl("indexeddb", "open_bad_db.html"));
+}
+
 class IndexedDBBrowserTestWithLowQuota : public IndexedDBBrowserTest {
  public:
   IndexedDBBrowserTestWithLowQuota() {}
@@ -299,6 +435,20 @@ class IndexedDBBrowserTestWithGCExposed : public IndexedDBBrowserTest {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(IndexedDBBrowserTestWithGCExposed);
+};
+
+class IndexedDBBrowserTestWithExperimentalWebFeatures
+    : public IndexedDBBrowserTest {
+ public:
+  IndexedDBBrowserTestWithExperimentalWebFeatures() = default;
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(
+        switches::kEnableExperimentalWebPlatformFeatures);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(IndexedDBBrowserTestWithExperimentalWebFeatures);
 };
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithGCExposed,
@@ -359,10 +509,10 @@ class IndexedDBBrowserTestWithVersion123456Schema : public
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithVersion123456Schema,
                        DestroyTest) {
-  int64_t original_size = RequestDiskUsage();
+  int64_t original_size = RequestUsage(kFileOrigin);
   EXPECT_GT(original_size, 0);
   SimpleTest(GetTestUrl("indexeddb", "open_bad_db.html"));
-  int64_t new_size = RequestDiskUsage();
+  int64_t new_size = RequestUsage(kFileOrigin);
   EXPECT_GT(new_size, 0);
   EXPECT_NE(original_size, new_size);
 }
@@ -374,10 +524,10 @@ class IndexedDBBrowserTestWithVersion987654SSVData : public
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithVersion987654SSVData,
                        DestroyTest) {
-  int64_t original_size = RequestDiskUsage();
+  int64_t original_size = RequestUsage(kFileOrigin);
   EXPECT_GT(original_size, 0);
   SimpleTest(GetTestUrl("indexeddb", "open_bad_db.html"));
-  int64_t new_size = RequestDiskUsage();
+  int64_t new_size = RequestUsage(kFileOrigin);
   EXPECT_GT(new_size, 0);
   EXPECT_NE(original_size, new_size);
 }
@@ -389,10 +539,10 @@ class IndexedDBBrowserTestWithCorruptLevelDB : public
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithCorruptLevelDB,
                        DestroyTest) {
-  int64_t original_size = RequestDiskUsage();
+  int64_t original_size = RequestUsage(kFileOrigin);
   EXPECT_GT(original_size, 0);
   SimpleTest(GetTestUrl("indexeddb", "open_bad_db.html"));
-  int64_t new_size = RequestDiskUsage();
+  int64_t new_size = RequestUsage(kFileOrigin);
   EXPECT_GT(new_size, 0);
   EXPECT_NE(original_size, new_size);
 }
@@ -404,10 +554,43 @@ class IndexedDBBrowserTestWithMissingSSTFile : public
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithMissingSSTFile,
                        DestroyTest) {
-  int64_t original_size = RequestDiskUsage();
+  int64_t original_size = RequestUsage(kFileOrigin);
   EXPECT_GT(original_size, 0);
   SimpleTest(GetTestUrl("indexeddb", "open_missing_table.html"));
-  int64_t new_size = RequestDiskUsage();
+  int64_t new_size = RequestUsage(kFileOrigin);
+  EXPECT_GT(new_size, 0);
+  EXPECT_NE(original_size, new_size);
+}
+
+// IndexedDBBrowserTestWithCrbug899446* capture IDB instances from Chrome stable
+// to verify that the current code can read those instances.  For more info on
+// a case when Chrome canary couldn't read stable's IDB instances, see
+// https://crbug.com/899446.
+
+class IndexedDBBrowserTestWithCrbug899446
+    : public IndexedDBBrowserTestWithPreexistingLevelDB {
+  std::string EnclosingLevelDBDir() override { return "crbug899446"; }
+};
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithCrbug899446, StableTest) {
+  int64_t original_size = RequestUsage(kFileOrigin);
+  EXPECT_GT(original_size, 0);
+  SimpleTest(GetTestUrl("indexeddb", "crbug899446.html"));
+  int64_t new_size = RequestUsage(kFileOrigin);
+  EXPECT_GT(new_size, 0);
+  EXPECT_NE(original_size, new_size);
+}
+
+class IndexedDBBrowserTestWithCrbug899446Noai
+    : public IndexedDBBrowserTestWithPreexistingLevelDB {
+  std::string EnclosingLevelDBDir() override { return "crbug899446_noai"; }
+};
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithCrbug899446Noai, StableTest) {
+  int64_t original_size = RequestUsage(kFileOrigin);
+  EXPECT_GT(original_size, 0);
+  SimpleTest(GetTestUrl("indexeddb", "crbug899446_noai.html"));
+  int64_t new_size = RequestUsage(kFileOrigin);
   EXPECT_GT(new_size, 0);
   EXPECT_NE(original_size, new_size);
 }
@@ -420,7 +603,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, LevelDBLogFileTest) {
   base::FilePath log_file_path =
       GetContext()->data_path().Append(leveldb_dir).Append(log_file);
   {
-    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verification;
+    base::ScopedAllowBlockingForTesting allow_blocking;
     int64_t size;
     EXPECT_TRUE(base::GetFileSize(log_file_path, &size));
     EXPECT_GT(size, 0);
@@ -429,7 +612,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, LevelDBLogFileTest) {
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, CanDeleteWhenOverQuotaTest) {
   SimpleTest(GetTestUrl("indexeddb", "fill_up_5k.html"));
-  int64_t size = RequestDiskUsage();
+  int64_t size = RequestUsage(kFileOrigin);
   const int kQuotaKilobytes = 2;
   EXPECT_GT(size, kQuotaKilobytes * 1024);
   SetQuota(kQuotaKilobytes);
@@ -438,13 +621,8 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, CanDeleteWhenOverQuotaTest) {
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, EmptyBlob) {
   // First delete all IDB's for the test origin
-  // TODO(jsbell): Remove static_cast<> when overloads are eliminated.
-  GetContext()->TaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(static_cast<void (IndexedDBContextImpl::*)(const GURL&)>(
-                         &IndexedDBContextImpl::DeleteForOrigin),
-                     GetContext(), GURL("file:///")));
-  EXPECT_EQ(0, RequestBlobFileCount());  // Start with no blob files.
+  DeleteForOrigin(kFileOrigin);
+  EXPECT_EQ(0, RequestBlobFileCount(kFileOrigin));  // Start with no blob files.
   const GURL test_url = GetTestUrl("indexeddb", "empty_blob.html");
   // For some reason Android's futimes fails (EPERM) in this test. Do not assert
   // file times on Android, but do so on other platforms. crbug.com/467247
@@ -455,7 +633,7 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, EmptyBlob) {
   SimpleTest(GURL(test_url.spec()));
 #endif
   // Test stores one blob and one file to disk, so expect two files.
-  EXPECT_EQ(2, RequestBlobFileCount());
+  EXPECT_EQ(2, RequestBlobFileCount(kFileOrigin));
 }
 
 // Very flaky on many bots. See crbug.com/459835
@@ -493,19 +671,31 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, BlobsCountAgainstQuota) {
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteForOriginDeletesBlobs) {
   SimpleTest(GetTestUrl("indexeddb", "write_4mb_blob.html"));
-  int64_t size = RequestDiskUsage();
+  int64_t size = RequestUsage(kFileOrigin);
   // This assertion assumes that we do not compress blobs.
   EXPECT_GT(size, 4 << 20 /* 4 MB */);
-  // TODO(jsbell): Remove static_cast<> when overloads are eliminated.
-  GetContext()->TaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(static_cast<void (IndexedDBContextImpl::*)(const GURL&)>(
-                         &IndexedDBContextImpl::DeleteForOrigin),
-                     GetContext(), GURL("file:///")));
-  scoped_refptr<base::ThreadTestHelper> helper(
-      new base::ThreadTestHelper(GetContext()->TaskRunner()));
-  ASSERT_TRUE(helper->Run());
-  EXPECT_EQ(0, RequestDiskUsage());
+  DeleteForOrigin(kFileOrigin);
+  EXPECT_EQ(0, RequestUsage(kFileOrigin));
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteForOriginIncognito) {
+  const GURL test_url = GetTestUrl("indexeddb", "fill_up_5k.html");
+  const Origin origin = Origin::Create(test_url);
+
+  Shell* browser = CreateOffTheRecordBrowser();
+  NavigateToURLBlockUntilNavigationsComplete(browser, test_url, 2);
+
+  EXPECT_GT(RequestUsage(origin, browser), 5 * 1024);
+
+  IndexedDBContextImpl* context = GetContext(browser);
+  base::RunLoop loop;
+  context->TaskRunner()->PostTask(FROM_HERE, base::BindLambdaForTesting([&]() {
+                                    context->DeleteForOrigin(origin);
+                                    loop.Quit();
+                                  }));
+  loop.Run();
+
+  EXPECT_EQ(0, RequestUsage(origin, browser));
 }
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DiskFullOnCommit) {
@@ -531,29 +721,41 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DiskFullOnCommit) {
 
 namespace {
 
-static void CompactIndexedDBBackingStore(
-    scoped_refptr<IndexedDBContextImpl> context,
-    const Origin& origin) {
-  IndexedDBFactory* factory = context->GetIDBFactory();
+std::unique_ptr<net::test_server::HttpResponse> ServePath(
+    std::string request_path) {
+  base::FilePath resource_path =
+      content::GetTestFilePath("indexeddb", request_path.c_str());
+  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
+      new net::test_server::BasicHttpResponse);
+  http_response->set_code(net::HTTP_OK);
 
-  std::pair<IndexedDBFactory::OriginDBMapIterator,
-            IndexedDBFactory::OriginDBMapIterator>
-      range = factory->GetOpenDatabasesForOrigin(origin);
+  std::string file_contents;
+  if (!base::ReadFileToString(resource_path, &file_contents))
+    NOTREACHED() << "could not read file " << resource_path;
+  http_response->set_content(file_contents);
+  return std::move(http_response);
+}
 
-  if (range.first == range.second)  // If no open db's for this origin
+void CompactIndexedDBBackingStore(scoped_refptr<IndexedDBContextImpl> context,
+                                  const Origin& origin) {
+  IndexedDBFactoryImpl* factory = context->GetIDBFactory();
+
+  std::vector<IndexedDBDatabase*> databases =
+      factory->GetOpenDatabasesForOrigin(origin);
+
+  if (databases.empty())
     return;
 
   // Compact the first db's backing store since all the db's are in the same
   // backing store.
-  IndexedDBDatabase* db = range.first->second;
+  IndexedDBDatabase* db = databases[0];
   IndexedDBBackingStore* backing_store = db->backing_store();
   backing_store->Compact();
 }
 
-static void CorruptIndexedDBDatabase(
-    IndexedDBContextImpl* context,
-    const Origin& origin,
-    base::WaitableEvent* signal_when_finished) {
+void CorruptIndexedDBDatabase(IndexedDBContextImpl* context,
+                              const Origin& origin,
+                              base::WaitableEvent* signal_when_finished) {
   CompactIndexedDBBackingStore(context, origin);
 
   int num_files = 0;
@@ -587,9 +789,9 @@ static void CorruptIndexedDBDatabase(
   signal_when_finished->Signal();
 }
 
-static const char s_corrupt_db_test_prefix[] = "/corrupt/test/";
+const char s_corrupt_db_test_prefix[] = "/corrupt/test/";
 
-static std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
+std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
     IndexedDBContextImpl* context,
     const Origin& origin,
     const std::string& path,
@@ -616,9 +818,8 @@ static std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
         base::WaitableEvent::InitialState::NOT_SIGNALED);
     context->TaskRunner()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&CorruptIndexedDBDatabase, base::ConstRef(context),
-                       origin, &signal_when_finished));
+        FROM_HERE, base::BindOnce(&CorruptIndexedDBDatabase, std::cref(context),
+                                  origin, &signal_when_finished));
     signal_when_finished.Wait();
 
     std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
@@ -640,17 +841,9 @@ static std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
       std::string escaped_value(
           request_query.substr(value_pos.begin, value_pos.len));
 
-      std::string key = net::UnescapeURLComponent(
-          escaped_key,
-          net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-              net::UnescapeRule::PATH_SEPARATORS |
-              net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+      std::string key = net::UnescapeBinaryURLComponent(escaped_key);
 
-      std::string value = net::UnescapeURLComponent(
-          escaped_value,
-          net::UnescapeRule::NORMAL | net::UnescapeRule::SPACES |
-              net::UnescapeRule::PATH_SEPARATORS |
-              net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+      std::string value = net::UnescapeBinaryURLComponent(escaped_value);
 
       if (key == "method")
         fail_method = value;
@@ -693,17 +886,20 @@ static std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
     return std::move(http_response);
   }
 
-  // A request for a test resource
-  base::FilePath resource_path =
-      content::GetTestFilePath("indexeddb", request_path.c_str());
-  std::unique_ptr<net::test_server::BasicHttpResponse> http_response(
-      new net::test_server::BasicHttpResponse);
-  http_response->set_code(net::HTTP_OK);
-  std::string file_contents;
-  if (!base::ReadFileToString(resource_path, &file_contents))
+  return ServePath(request_path);
+}
+
+const char s_indexeddb_test_prefix[] = "/indexeddb/test/";
+
+std::unique_ptr<net::test_server::HttpResponse> StaticFileRequestHandler(
+    const std::string& path,
+    IndexedDBBrowserTest* test,
+    const net::test_server::HttpRequest& request) {
+  if (path.find(s_indexeddb_test_prefix) == std::string::npos)
     return std::unique_ptr<net::test_server::HttpResponse>();
-  http_response->set_content(file_contents);
-  return std::move(http_response);
+  std::string request_path =
+      request.relative_url.substr(std::string(s_indexeddb_test_prefix).size());
+  return ServePath(request_path);
 }
 
 }  // namespace
@@ -726,23 +922,23 @@ IN_PROC_BROWSER_TEST_P(IndexedDBBrowserTest, OperationOnCorruptedOpenDatabase) {
   SimpleTest(embedded_test_server()->GetURL(test_file));
 }
 
-INSTANTIATE_TEST_CASE_P(IndexedDBBrowserTestInstantiation,
-                        IndexedDBBrowserTest,
-                        ::testing::Values("failGetBlobJournal",
-                                          "get",
-                                          "getAll",
-                                          "iterate",
-                                          "failTransactionCommit",
-                                          "clearObjectStore"));
+INSTANTIATE_TEST_SUITE_P(IndexedDBBrowserTestInstantiation,
+                         IndexedDBBrowserTest,
+                         ::testing::Values("failGetBlobJournal",
+                                           "get",
+                                           "getAll",
+                                           "iterate",
+                                           "failTransactionCommit",
+                                           "clearObjectStore"));
 
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteCompactsBackingStore) {
   const GURL test_url = GetTestUrl("indexeddb", "delete_compact.html");
   SimpleTest(GURL(test_url.spec() + "#fill"));
-  int64_t after_filling = RequestDiskUsage();
+  int64_t after_filling = RequestUsage(kFileOrigin);
   EXPECT_GT(after_filling, 0);
 
   SimpleTest(GURL(test_url.spec() + "#purge"));
-  int64_t after_deleting = RequestDiskUsage();
+  int64_t after_deleting = RequestUsage(kFileOrigin);
   EXPECT_LT(after_deleting, after_filling);
 
   // The above tests verify basic assertions - that filling writes data and
@@ -828,9 +1024,38 @@ IN_PROC_BROWSER_TEST_F(
   base::string16 expected_title16(ASCIIToUTF16("setVersion(3) complete"));
   TitleWatcher title_watcher(new_shell->web_contents(), expected_title16);
 
-  shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0, true);
+  shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0);
   shell()->Close();
 
+  EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
+}
+
+// Testing abort ordering for commit. Verifies that an explicitly committed
+// transaction blocked by another pending transaction will be committed rather
+// than aborted in the event that the page crashes before its committed.
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithExperimentalWebFeatures,
+                       CommitContinuesOnAbort) {
+  // Sets up a database, opens four transactions against it such that two end
+  // up indefinitely blocked, one of which is explicitly committed.
+  NavigateAndWaitForTitle(shell(), "blocked_explicit_commit.html", "#tab1",
+                          "transactions registered");
+
+  // Crashes the tab to cause the database set up above to force close with the
+  // blocked transactions still open.
+  ScopedAllowRendererCrashes scoped_allow_renderer_crashes(shell());
+  shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0);
+
+  // Reopens the same page that was just crashed and inspects the database to
+  // see the results of the transactions that were open at time of crash.
+  Shell* new_shell = CreateBrowser();
+  GURL url = GetTestUrl("indexeddb", "blocked_explicit_commit.html");
+  url = GURL(url.spec() + "#tab2");
+  base::string16 expected_title16(
+      ASCIIToUTF16("transactions aborted and committed as expected"));
+  TitleWatcher title_watcher(new_shell->web_contents(), expected_title16);
+  title_watcher.AlsoWaitForTitle(
+      ASCIIToUTF16("fail - transactions did not abort and commit as expected"));
+  NavigateToURL(new_shell, url);
   EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
 }
 
@@ -839,17 +1064,65 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ForceCloseEventTest) {
   NavigateAndWaitForTitle(shell(), "force_close_event.html", nullptr,
                           "connection ready");
-  // TODO(jsbell): Remove static_cast<> when overloads are eliminated.
-  GetContext()->TaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(static_cast<void (IndexedDBContextImpl::*)(const GURL&)>(
-                         &IndexedDBContextImpl::DeleteForOrigin),
-                     GetContext(), GURL("file:///")));
-
+  DeleteForOrigin(kFileOrigin);
   base::string16 expected_title16(ASCIIToUTF16("connection closed"));
   TitleWatcher title_watcher(shell()->web_contents(), expected_title16);
   title_watcher.AlsoWaitForTitle(ASCIIToUTF16("connection closed with error"));
   EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
+}
+
+// The V2 schema corruption test runs in a separate class to avoid corrupting
+// an IDB store that other tests use.
+class IndexedDBBrowserTestV2SchemaCorruption : public IndexedDBBrowserTest {
+ public:
+  void SetUp() override {
+    GetTestClassFactory()->Reset();
+    IndexedDBClassFactory::SetIndexedDBClassFactoryGetter(GetIDBClassFactory);
+    ContentBrowserTest::SetUp();
+  }
+};
+
+// Verify the V2 schema corruption lifecycle:
+// - create a current version backing store (v3 or later)
+// - add an object store, some data, and an object that contains a blob
+// - verify the object+blob are stored in the object store
+// - verify the backing store doesn't have v2 schema corruption
+// - force the schema to downgrade to v2
+// - verify the backing store has v2 schema corruption
+// - verify the object+blob can be fetched
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestV2SchemaCorruption, LifecycleTest) {
+  ASSERT_TRUE(embedded_test_server()->Started() ||
+              embedded_test_server()->InitializeAndListen());
+  const Origin origin = Origin::Create(embedded_test_server()->base_url());
+  embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
+      &StaticFileRequestHandler, s_indexeddb_test_prefix, this));
+  embedded_test_server()->StartAcceptingConnections();
+
+  // Set up the IndexedDB instance so it contains our reference data.
+  std::string test_file =
+      std::string(s_indexeddb_test_prefix) + "v2schemacorrupt_setup.html";
+  SimpleTest(embedded_test_server()->GetURL(test_file));
+
+  // Verify the backing store does not have corruption.
+  V2SchemaCorruptionStatus has_corruption =
+      RequestHasV2SchemaCorruption(origin);
+  ASSERT_EQ(has_corruption, V2SchemaCorruptionStatus::kNo);
+
+  // Revert schema to v2.  This closes the targeted backing store.
+  bool schema_downgrade = RequestSchemaDowngrade(origin);
+  ASSERT_EQ(schema_downgrade, true);
+
+  // Re-open the backing store and verify it has corruption.
+  test_file =
+      std::string(s_indexeddb_test_prefix) + "v2schemacorrupt_reopen.html";
+  SimpleTest(embedded_test_server()->GetURL(test_file));
+  has_corruption = RequestHasV2SchemaCorruption(origin);
+  ASSERT_EQ(has_corruption, V2SchemaCorruptionStatus::kYes);
+
+  // Verify that the saved blob is get-able with a v2 backing store.
+  test_file =
+      std::string(s_indexeddb_test_prefix) + "v2schemacorrupt_verify.html";
+  SimpleTest(embedded_test_server()->GetURL(test_file));
 }
 
 class IndexedDBBrowserTestSingleProcess : public IndexedDBBrowserTest {
@@ -859,8 +1132,14 @@ class IndexedDBBrowserTestSingleProcess : public IndexedDBBrowserTest {
   }
 };
 
+// https://crbug.com/788788
+#if defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+#define MAYBE_RenderThreadShutdownTest DISABLED_RenderThreadShutdownTest
+#else
+#define MAYBE_RenderThreadShutdownTest RenderThreadShutdownTest
+#endif  // defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestSingleProcess,
-                       RenderThreadShutdownTest) {
+                       MAYBE_RenderThreadShutdownTest) {
   SimpleTest(GetTestUrl("indexeddb", "shutdown_with_requests.html"));
 }
 

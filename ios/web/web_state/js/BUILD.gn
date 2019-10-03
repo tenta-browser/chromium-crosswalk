@@ -7,21 +7,14 @@ import("//ios/build/config.gni")
 source_set("js") {
   deps = [
     "//base",
+    "//ios/web/js_messaging",
     "//ios/web/public",
-    "//ios/web/web_state/ui:crw_wk_script_message_router",
+    "//ios/web/public/deprecated",
   ]
 
   sources = [
     "crw_js_injection_manager.mm",
     "crw_js_injection_receiver.mm",
-    "crw_js_plugin_placeholder_manager.h",
-    "crw_js_plugin_placeholder_manager.mm",
-    "crw_js_post_request_loader.h",
-    "crw_js_post_request_loader.mm",
-    "crw_js_window_id_manager.h",
-    "crw_js_window_id_manager.mm",
-    "page_script_util.h",
-    "page_script_util.mm",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]

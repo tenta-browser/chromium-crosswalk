@@ -5,7 +5,7 @@
 #include "media/capture/video_capture_types.h"
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
@@ -14,33 +14,20 @@ namespace media {
 
 // This list is ordered by precedence of use.
 static VideoPixelFormat const kSupportedCapturePixelFormats[] = {
-    PIXEL_FORMAT_I420,  PIXEL_FORMAT_YV12,  PIXEL_FORMAT_NV12,
-    PIXEL_FORMAT_NV21,  PIXEL_FORMAT_UYVY,  PIXEL_FORMAT_YUY2,
-    PIXEL_FORMAT_RGB24, PIXEL_FORMAT_RGB32, PIXEL_FORMAT_ARGB,
-    PIXEL_FORMAT_MJPEG,
+    PIXEL_FORMAT_I420,  PIXEL_FORMAT_YV12, PIXEL_FORMAT_NV12,
+    PIXEL_FORMAT_NV21,  PIXEL_FORMAT_UYVY, PIXEL_FORMAT_YUY2,
+    PIXEL_FORMAT_RGB24, PIXEL_FORMAT_ARGB, PIXEL_FORMAT_MJPEG,
 };
 
 VideoCaptureFormat::VideoCaptureFormat()
-    : frame_rate(0.0f),
-      pixel_format(PIXEL_FORMAT_UNKNOWN),
-      pixel_storage(PIXEL_STORAGE_CPU) {}
+    : frame_rate(0.0f), pixel_format(PIXEL_FORMAT_UNKNOWN) {}
 
 VideoCaptureFormat::VideoCaptureFormat(const gfx::Size& frame_size,
                                        float frame_rate,
                                        VideoPixelFormat pixel_format)
     : frame_size(frame_size),
       frame_rate(frame_rate),
-      pixel_format(pixel_format),
-      pixel_storage(PIXEL_STORAGE_CPU) {}
-
-VideoCaptureFormat::VideoCaptureFormat(const gfx::Size& frame_size,
-                                       float frame_rate,
-                                       VideoPixelFormat pixel_format,
-                                       VideoPixelStorage pixel_storage)
-    : frame_size(frame_size),
-      frame_rate(frame_rate),
-      pixel_format(pixel_format),
-      pixel_storage(pixel_storage) {}
+      pixel_format(pixel_format) {}
 
 bool VideoCaptureFormat::IsValid() const {
   return (frame_size.width() < media::limits::kMaxDimension) &&
@@ -62,22 +49,8 @@ std::string VideoCaptureFormat::ToString(const VideoCaptureFormat& format) {
   // Beware: This string is parsed by manager.js:parseVideoCaptureFormat_,
   // take care when changing the formatting.
   return base::StringPrintf(
-      "(%s)@%.3ffps, pixel format: %s, storage: %s",
-      format.frame_size.ToString().c_str(), format.frame_rate,
-      VideoPixelFormatToString(format.pixel_format).c_str(),
-      PixelStorageToString(format.pixel_storage).c_str());
-}
-
-// static
-std::string VideoCaptureFormat::PixelStorageToString(
-    VideoPixelStorage storage) {
-  switch (storage) {
-    case PIXEL_STORAGE_CPU:
-      return "CPU";
-  }
-  NOTREACHED() << "Invalid VideoPixelStorage provided: "
-               << static_cast<int>(storage);
-  return std::string();
+      "(%s)@%.3ffps, pixel format: %s", format.frame_size.ToString().c_str(),
+      format.frame_rate, VideoPixelFormatToString(format.pixel_format).c_str());
 }
 
 // static
@@ -86,23 +59,25 @@ bool VideoCaptureFormat::ComparePixelFormatPreference(
     const VideoPixelFormat& rhs) {
   auto* format_lhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + arraysize(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
       lhs);
   auto* format_rhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + arraysize(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
       rhs);
   return format_lhs < format_rhs;
 }
 
 VideoCaptureParams::VideoCaptureParams()
-    : resolution_change_policy(RESOLUTION_POLICY_FIXED_RESOLUTION),
-      power_line_frequency(PowerLineFrequency::FREQUENCY_DEFAULT) {}
+    : buffer_type(VideoCaptureBufferType::kSharedMemory),
+      resolution_change_policy(ResolutionChangePolicy::FIXED_RESOLUTION),
+      power_line_frequency(PowerLineFrequency::FREQUENCY_DEFAULT),
+      enable_face_detection(false) {}
 
 bool VideoCaptureParams::IsValid() const {
   return requested_format.IsValid() &&
-         resolution_change_policy >= RESOLUTION_POLICY_FIXED_RESOLUTION &&
-         resolution_change_policy <= RESOLUTION_POLICY_LAST &&
+         resolution_change_policy >= ResolutionChangePolicy::FIXED_RESOLUTION &&
+         resolution_change_policy <= ResolutionChangePolicy::LAST &&
          power_line_frequency >= PowerLineFrequency::FREQUENCY_DEFAULT &&
          power_line_frequency <= PowerLineFrequency::FREQUENCY_MAX;
 }
@@ -121,11 +96,11 @@ VideoCaptureParams::SuggestConstraints() const {
   // policy.
   gfx::Size min_frame_size;
   switch (resolution_change_policy) {
-    case RESOLUTION_POLICY_FIXED_RESOLUTION:
+    case ResolutionChangePolicy::FIXED_RESOLUTION:
       min_frame_size = max_frame_size;
       break;
 
-    case RESOLUTION_POLICY_FIXED_ASPECT_RATIO: {
+    case ResolutionChangePolicy::FIXED_ASPECT_RATIO: {
       // TODO(miu): This is a place-holder until "min constraints" are plumbed-
       // in from the MediaStream framework.  http://crbug.com/473336
       constexpr int kMinLines = 180;
@@ -146,7 +121,7 @@ VideoCaptureParams::SuggestConstraints() const {
       break;
     }
 
-    case RESOLUTION_POLICY_ANY_WITHIN_LIMIT:
+    case ResolutionChangePolicy::ANY_WITHIN_LIMIT:
       if (!max_frame_size.IsEmpty())
         min_frame_size = gfx::Size(2, 2);
       break;
@@ -156,7 +131,7 @@ VideoCaptureParams::SuggestConstraints() const {
 
   return SuggestedConstraints{
       min_frame_size, max_frame_size,
-      resolution_change_policy == RESOLUTION_POLICY_FIXED_ASPECT_RATIO};
+      resolution_change_policy == ResolutionChangePolicy::FIXED_ASPECT_RATIO};
 }
 
 }  // namespace media

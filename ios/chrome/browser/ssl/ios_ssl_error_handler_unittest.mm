@@ -4,22 +4,28 @@
 
 #include "ios/chrome/browser/ssl/ios_ssl_error_handler.h"
 
-#include "base/mac/bind_objc_block.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/bind.h"
+#include "base/run_loop.h"
+#import "base/test/ios/wait_util.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper.h"
-#include "ios/chrome/browser/ssl/captive_portal_features.h"
-#include "ios/web/public/interstitials/web_interstitial.h"
+#import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper_delegate.h"
+#include "ios/web/public/security/web_interstitial.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
 #import "ios/web/public/web_state/web_state.h"
+#include "net/http/http_status_code.h"
 #include "net/ssl/ssl_info.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+using base::test::ios::kWaitForUIElementTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace {
 const char kTestCertFileName[] = "ok_cert.pem";
@@ -37,10 +43,17 @@ class IOSSSLErrorHandlerTest : public web::WebTestWithWebState {
   // web::WebTestWithWebState overrides:
   void SetUp() override {
     web::WebTestWithWebState::SetUp();
+
+    test_loader_factory_.AddResponse("http://www.gstatic.com/generate_204", "",
+                                     net::HTTP_NO_CONTENT);
+
     id captive_portal_detector_tab_helper_delegate = [OCMockObject
         mockForProtocol:@protocol(CaptivePortalDetectorTabHelperDelegate)];
+    // Use a testing URLLoaderFactory so that these tests don't attempt to make
+    // network requests.
     CaptivePortalDetectorTabHelper::CreateForWebState(
-        web_state(), captive_portal_detector_tab_helper_delegate);
+        web_state(), captive_portal_detector_tab_helper_delegate,
+        &test_loader_factory_);
     ASSERT_TRUE(cert_);
     ASSERT_FALSE(web_state()->IsShowingWebInterstitial());
 
@@ -50,10 +63,24 @@ class IOSSSLErrorHandlerTest : public web::WebTestWithWebState {
   }
   web::BrowserState* GetBrowserState() override { return browser_state_.get(); }
 
+  // Waits for and returns true if an interstitial is displayed. Returns false
+  // otherwise.
+  WARN_UNUSED_RESULT bool WaitForInterstitialDisplayed() {
+    // Required in order for CaptivePortalDetector to receive simulated network
+    // response from |test_loader_factory_|.
+    base::RunLoop().RunUntilIdle();
+
+    // Wait for the interstitial to be displayed.
+    return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
+      return web_state()->IsShowingWebInterstitial();
+    });
+  }
+
   // Returns certificate for testing.
   scoped_refptr<net::X509Certificate> cert() { return cert_; }
 
  private:
+  network::TestURLLoaderFactory test_loader_factory_;
   TestChromeBrowserState::Builder builder_;
   std::unique_ptr<TestChromeBrowserState> browser_state_;
   scoped_refptr<net::X509Certificate> cert_;
@@ -61,22 +88,18 @@ class IOSSSLErrorHandlerTest : public web::WebTestWithWebState {
 
 // Tests non-overridable error handling.
 TEST_F(IOSSSLErrorHandlerTest, NonOverridable) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kCaptivePortalFeature);
-
   net::SSLInfo ssl_info;
   ssl_info.cert = cert();
   GURL url(kTestHostName);
   __block bool do_not_proceed_callback_called = false;
   IOSSSLErrorHandler::HandleSSLError(
       web_state(), net::ERR_CERT_AUTHORITY_INVALID, ssl_info, url, false,
-      base::BindBlockArc(^(bool proceed) {
+      base::BindRepeating(^(bool proceed) {
         EXPECT_FALSE(proceed);
         do_not_proceed_callback_called = true;
       }));
 
-  // Make sure that interstitial is displayed.
-  EXPECT_TRUE(web_state()->IsShowingWebInterstitial());
+  EXPECT_TRUE(WaitForInterstitialDisplayed());
   web::WebInterstitial* interstitial = web_state()->GetWebInterstitial();
   EXPECT_TRUE(interstitial);
 
@@ -88,22 +111,18 @@ TEST_F(IOSSSLErrorHandlerTest, NonOverridable) {
 // Tests proceed with overridable error.
 // Flaky: http://crbug.com/660343.
 TEST_F(IOSSSLErrorHandlerTest, DISABLED_OverridableProceed) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kCaptivePortalFeature);
-
   net::SSLInfo ssl_info;
   ssl_info.cert = cert();
   GURL url(kTestHostName);
   __block bool proceed_callback_called = false;
   IOSSSLErrorHandler::HandleSSLError(
       web_state(), net::ERR_CERT_AUTHORITY_INVALID, ssl_info, url, true,
-      base::BindBlockArc(^(bool proceed) {
+      base::BindRepeating(^(bool proceed) {
         EXPECT_TRUE(proceed);
         proceed_callback_called = true;
       }));
 
-  // Make sure that interstitial is displayed.
-  EXPECT_TRUE(web_state()->IsShowingWebInterstitial());
+  EXPECT_TRUE(WaitForInterstitialDisplayed());
   web::WebInterstitial* interstitial = web_state()->GetWebInterstitial();
   EXPECT_TRUE(interstitial);
 
@@ -114,22 +133,18 @@ TEST_F(IOSSSLErrorHandlerTest, DISABLED_OverridableProceed) {
 
 // Tests do not proceed with overridable error.
 TEST_F(IOSSSLErrorHandlerTest, OverridableDontProceed) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kCaptivePortalFeature);
-
   net::SSLInfo ssl_info;
   ssl_info.cert = cert();
   GURL url(kTestHostName);
   __block bool do_not_proceed_callback_called = false;
   IOSSSLErrorHandler::HandleSSLError(
       web_state(), net::ERR_CERT_AUTHORITY_INVALID, ssl_info, url, true,
-      base::BindBlockArc(^(bool proceed) {
+      base::BindRepeating(^(bool proceed) {
         EXPECT_FALSE(proceed);
         do_not_proceed_callback_called = true;
       }));
 
-  // Make sure that interstitial is displayed.
-  EXPECT_TRUE(web_state()->IsShowingWebInterstitial());
+  EXPECT_TRUE(WaitForInterstitialDisplayed());
   web::WebInterstitial* interstitial = web_state()->GetWebInterstitial();
   EXPECT_TRUE(interstitial);
 

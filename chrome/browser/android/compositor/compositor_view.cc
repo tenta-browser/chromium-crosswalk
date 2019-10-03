@@ -21,6 +21,7 @@
 #include "cc/layers/layer_collections.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
+#include "chrome/android/chrome_jni_headers/CompositorView_jni.h"
 #include "chrome/browser/android/compositor/layer/toolbar_layer.h"
 #include "chrome/browser/android/compositor/layer_title_cache.h"
 #include "chrome/browser/android/compositor/scene_layer/scene_layer.h"
@@ -29,7 +30,6 @@
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
-#include "jni/CompositorView_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/android/resources/resource_manager.h"
 #include "ui/android/resources/ui_resource_provider.h"
@@ -44,12 +44,12 @@ jlong JNI_CompositorView_Init(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     jboolean low_mem_device,
-    jlong native_window_android,
+    const JavaParamRef<jobject>& jwindow_android,
     const JavaParamRef<jobject>& jlayer_title_cache,
     const JavaParamRef<jobject>& jtab_content_manager) {
   CompositorView* view;
   ui::WindowAndroid* window_android =
-      reinterpret_cast<ui::WindowAndroid*>(native_window_android);
+      ui::WindowAndroid::FromJavaWindowAndroid(jwindow_android);
   LayerTitleCache* layer_title_cache =
       LayerTitleCache::FromJavaObject(jlayer_title_cache);
   TabContentManager* tab_content_manager =
@@ -91,6 +91,15 @@ CompositorView::CompositorView(JNIEnv* env,
 
   root_layer_->SetIsDrawable(true);
   root_layer_->SetBackgroundColor(SK_ColorWHITE);
+
+  // It is safe to not keep a ref on the feature checker because it adds one
+  // internally in CheckGpuFeatureAvailability and unrefs after the callback is
+  // dispatched.
+  auto surface_control_feature_checker = content::GpuFeatureChecker::Create(
+      gpu::GpuFeatureType::GPU_FEATURE_TYPE_ANDROID_SURFACE_CONTROL,
+      base::Bind(&CompositorView::OnSurfaceControlFeatureStatusUpdate,
+                 weak_factory_.GetWeakPtr()));
+  surface_control_feature_checker->CheckGpuFeatureAvailability();
 }
 
 CompositorView::~CompositorView() {
@@ -116,6 +125,12 @@ base::android::ScopedJavaLocalRef<jobject> CompositorView::GetResourceManager(
   return compositor_->GetResourceManager().GetJavaObject();
 }
 
+void CompositorView::RecreateSurface() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  compositor_->SetSurface(nullptr, false);
+  Java_CompositorView_recreateSurface(env, obj_);
+}
+
 void CompositorView::UpdateLayerTreeHost() {
   JNIEnv* env = base::android::AttachCurrentThread();
   // TODO(wkorman): Rename JNI interface to onCompositorUpdateLayerTreeHost.
@@ -127,13 +142,22 @@ void CompositorView::DidSwapFrame(int pending_frames) {
   Java_CompositorView_didSwapFrame(env, obj_, pending_frames);
 }
 
-void CompositorView::DidSwapBuffers() {
+void CompositorView::DidSwapBuffers(const gfx::Size& swap_size) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_CompositorView_didSwapBuffers(env, obj_);
+  bool swapped_current_size =
+      swap_size == gfx::Size(content_width_, content_height_);
+  Java_CompositorView_didSwapBuffers(env, obj_, swapped_current_size);
 }
 
 ui::UIResourceProvider* CompositorView::GetUIResourceProvider() {
   return compositor_ ? &compositor_->GetUIResourceProvider() : nullptr;
+}
+
+void CompositorView::OnSurfaceControlFeatureStatusUpdate(bool available) {
+  if (available) {
+    JNIEnv* env = base::android::AttachCurrentThread();
+    Java_CompositorView_notifyWillUseSurfaceControl(env, obj_);
+  }
 }
 
 void CompositorView::SurfaceCreated(JNIEnv* env,
@@ -144,7 +168,7 @@ void CompositorView::SurfaceCreated(JNIEnv* env,
 
 void CompositorView::SurfaceDestroyed(JNIEnv* env,
                                       const JavaParamRef<jobject>& object) {
-  compositor_->SetSurface(nullptr);
+  compositor_->SetSurface(nullptr, false);
   current_surface_format_ = 0;
   tab_content_manager_->OnUIResourcesWereEvicted();
 }
@@ -154,11 +178,12 @@ void CompositorView::SurfaceChanged(JNIEnv* env,
                                     jint format,
                                     jint width,
                                     jint height,
+                                    bool can_be_used_with_surface_control,
                                     const JavaParamRef<jobject>& surface) {
   DCHECK(surface);
   if (current_surface_format_ != format) {
     current_surface_format_ = format;
-    compositor_->SetSurface(surface);
+    compositor_->SetSurface(surface, can_be_used_with_surface_control);
   }
   gfx::Size size = gfx::Size(width, height);
   compositor_->SetWindowBounds(size);
@@ -249,25 +274,39 @@ void CompositorView::SetNeedsComposite(JNIEnv* env,
   compositor_->SetNeedsComposite();
 }
 
-void CompositorView::BrowserChildProcessHostDisconnected(
-    const content::ChildProcessData& data) {
-  LOG(WARNING) << "Child process disconnected (type=" << data.process_type
-               << ") pid=" << data.handle << ")";
+void CompositorView::BrowserChildProcessKilled(
+    const content::ChildProcessData& data,
+    const content::ChildProcessTerminationInfo& info) {
+  LOG(WARNING) << "Child process died (type=" << data.process_type
+               << ") pid=" << data.GetProcess().Pid() << ")";
   if (base::android::BuildInfo::GetInstance()->sdk_int() <=
           base::android::SDK_VERSION_JELLY_BEAN_MR2 &&
       data.process_type == content::PROCESS_TYPE_GPU) {
     JNIEnv* env = base::android::AttachCurrentThread();
-    compositor_->SetSurface(nullptr);
-    Java_CompositorView_onJellyBeanSurfaceDisconnectWorkaround(
-        env, obj_, overlay_video_mode_);
+    compositor_->SetSurface(nullptr, false);
+    Java_CompositorView_recreateSurface(env, obj_);
   }
 }
 
-void CompositorView::BrowserChildProcessCrashed(
-    const content::ChildProcessData& data,
-    int exit_code) {
-  // The Android TERMINATION_STATUS_OOM_PROTECTED hack causes us to never go
-  // through here but through BrowserChildProcessHostDisconnected() instead.
+void CompositorView::SetCompositorWindow(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& object,
+    const JavaParamRef<jobject>& window_android) {
+  ui::WindowAndroid* wa =
+      ui::WindowAndroid::FromJavaWindowAndroid(window_android);
+  compositor_->SetRootWindow(wa);
+}
+
+void CompositorView::CacheBackBufferForCurrentSurface(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& object) {
+  compositor_->CacheBackBufferForCurrentSurface();
+}
+
+void CompositorView::EvictCachedBackBuffer(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& object) {
+  compositor_->EvictCachedBackBuffer();
 }
 
 }  // namespace android

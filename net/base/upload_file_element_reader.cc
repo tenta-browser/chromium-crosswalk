@@ -38,8 +38,7 @@ UploadFileElementReader::UploadFileElementReader(
       content_length_(0),
       bytes_remaining_(0),
       next_state_(State::IDLE),
-      init_called_while_operation_pending_(false),
-      weak_ptr_factory_(this) {
+      init_called_while_operation_pending_(false) {
   DCHECK(file.IsValid());
   DCHECK(task_runner_.get());
   file_stream_ = std::make_unique<FileStream>(std::move(file), task_runner);
@@ -59,8 +58,7 @@ UploadFileElementReader::UploadFileElementReader(
       content_length_(0),
       bytes_remaining_(0),
       next_state_(State::IDLE),
-      init_called_while_operation_pending_(false),
-      weak_ptr_factory_(this) {
+      init_called_while_operation_pending_(false) {
   DCHECK(task_runner_.get());
 }
 
@@ -70,7 +68,7 @@ const UploadFileElementReader* UploadFileElementReader::AsFileReader() const {
   return this;
 }
 
-int UploadFileElementReader::Init(const CompletionCallback& callback) {
+int UploadFileElementReader::Init(CompletionOnceCallback callback) {
   DCHECK(!callback.is_null());
 
   bytes_remaining_ = 0;
@@ -81,7 +79,7 @@ int UploadFileElementReader::Init(const CompletionCallback& callback) {
   // waiting.
   if (next_state_ == State::OPEN_COMPLETE) {
     DCHECK(file_stream_);
-    pending_callback_ = callback;
+    pending_callback_ = std::move(callback);
     return ERR_IO_PENDING;
   }
 
@@ -89,7 +87,7 @@ int UploadFileElementReader::Init(const CompletionCallback& callback) {
   // restarting the request.
   if (next_state_ != State::IDLE) {
     init_called_while_operation_pending_ = true;
-    pending_callback_ = callback;
+    pending_callback_ = std::move(callback);
     return ERR_IO_PENDING;
   }
 
@@ -104,7 +102,7 @@ int UploadFileElementReader::Init(const CompletionCallback& callback) {
   }
   int result = DoLoop(OK);
   if (result == ERR_IO_PENDING)
-    pending_callback_ = callback;
+    pending_callback_ = std::move(callback);
   return result;
 }
 
@@ -120,7 +118,7 @@ uint64_t UploadFileElementReader::BytesRemaining() const {
 
 int UploadFileElementReader::Read(IOBuffer* buf,
                                   int buf_length,
-                                  const CompletionCallback& callback) {
+                                  CompletionOnceCallback callback) {
   DCHECK(!callback.is_null());
   DCHECK_EQ(next_state_, State::IDLE);
   DCHECK(file_stream_);
@@ -133,14 +131,14 @@ int UploadFileElementReader::Read(IOBuffer* buf,
   next_state_ = State::READ_COMPLETE;
   int result = file_stream_->Read(
       buf, num_bytes_to_read,
-      base::Bind(base::IgnoreResult(&UploadFileElementReader::OnIOComplete),
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(base::IgnoreResult(&UploadFileElementReader::OnIOComplete),
+                     weak_ptr_factory_.GetWeakPtr()));
 
   if (result != ERR_IO_PENDING)
     result = DoLoop(result);
 
   if (result == ERR_IO_PENDING)
-    pending_callback_ = callback;
+    pending_callback_ = std::move(callback);
 
   return result;
 }
@@ -201,8 +199,8 @@ int UploadFileElementReader::DoOpen() {
   int result = file_stream_->Open(
       path_,
       base::File::FLAG_OPEN | base::File::FLAG_READ | base::File::FLAG_ASYNC,
-      base::Bind(&UploadFileElementReader::OnIOComplete,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&UploadFileElementReader::OnIOComplete,
+                     weak_ptr_factory_.GetWeakPtr()));
   DCHECK_GT(0, result);
   return result;
 }
@@ -227,7 +225,7 @@ int UploadFileElementReader::DoSeek() {
   next_state_ = State::GET_FILE_INFO;
   return file_stream_->Seek(
       range_offset_,
-      base::Bind(
+      base::BindOnce(
           [](base::WeakPtr<UploadFileElementReader> weak_this, int64_t result) {
             if (!weak_this)
               return;
@@ -249,7 +247,7 @@ int UploadFileElementReader::DoGetFileInfo(int result) {
   base::File::Info* owned_file_info = new base::File::Info;
   result = file_stream_->GetFileInfo(
       owned_file_info,
-      base::Bind(
+      base::BindOnce(
           [](base::WeakPtr<UploadFileElementReader> weak_this,
              base::File::Info* file_info, int result) {
             if (!weak_this)

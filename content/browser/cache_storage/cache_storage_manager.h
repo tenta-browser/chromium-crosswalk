@@ -5,165 +5,84 @@
 #ifndef CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_MANAGER_H_
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_MANAGER_H_
 
-#include <map>
-#include <memory>
 #include <string>
-#include <vector>
 
-#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "content/browser/cache_storage/cache_storage.h"
-#include "content/browser/cache_storage/cache_storage_context_impl.h"
+#include "content/browser/cache_storage/cache_storage_handle.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cache_storage_context.h"
-#include "content/public/browser/cache_storage_usage_info.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "content/public/browser/storage_usage_info.h"
 #include "storage/browser/quota/quota_client.h"
-#include "url/gurl.h"
-
-namespace base {
-class SequencedTaskRunner;
-}
 
 namespace storage {
 class BlobStorageContext;
-class QuotaManagerProxy;
+}
+
+namespace url {
+class Origin;
 }
 
 namespace content {
 
-class CacheStorageQuotaClient;
+enum class CacheStorageOwner {
+  kMinValue,
 
-// Keeps track of a CacheStorage per origin. There is one
-// CacheStorageManager per ServiceWorkerContextCore.
+  // Caches that can be accessed by the JS CacheStorage API (developer facing).
+  kCacheAPI = kMinValue,
+
+  // Private cache to store background fetch downloads.
+  kBackgroundFetch,
+
+  kMaxValue = kBackgroundFetch
+};
+
+// Keeps track of a CacheStorage per origin. There is one CacheStorageManager
+// per CacheStorageOwner. Created and accessed from a single sequence.
 // TODO(jkarlin): Remove CacheStorage from memory once they're no
 // longer in active use.
-class CONTENT_EXPORT CacheStorageManager {
+class CONTENT_EXPORT CacheStorageManager
+    : public base::RefCounted<CacheStorageManager> {
  public:
-  static std::unique_ptr<CacheStorageManager> Create(
-      const base::FilePath& path,
-      scoped_refptr<base::SequencedTaskRunner> cache_task_runner,
-      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy);
+  // Open the CacheStorage for the given origin and owner.  A reference counting
+  // handle is returned which can be stored and used similar to a weak pointer.
+  virtual CacheStorageHandle OpenCacheStorage(const url::Origin& origin,
+                                              CacheStorageOwner owner) = 0;
 
-  static std::unique_ptr<CacheStorageManager> Create(
-      CacheStorageManager* old_manager);
-
-  // Map a database identifier (computed from an origin) to the path.
-  static base::FilePath ConstructOriginPath(const base::FilePath& root_path,
-                                            const GURL& origin);
-
-  virtual ~CacheStorageManager();
-
-  // Methods to support the CacheStorage spec. These methods call the
-  // corresponding CacheStorage method on the appropriate thread.
-  void OpenCache(const GURL& origin,
-                 const std::string& cache_name,
-                 CacheStorage::CacheAndErrorCallback callback);
-  void HasCache(const GURL& origin,
-                const std::string& cache_name,
-                CacheStorage::BoolAndErrorCallback callback);
-  void DeleteCache(const GURL& origin,
-                   const std::string& cache_name,
-                   CacheStorage::BoolAndErrorCallback callback);
-  void EnumerateCaches(const GURL& origin,
-                       CacheStorage::IndexCallback callback);
-  void MatchCache(const GURL& origin,
-                  const std::string& cache_name,
-                  std::unique_ptr<ServiceWorkerFetchRequest> request,
-                  const CacheStorageCacheQueryParams& match_params,
-                  CacheStorageCache::ResponseCallback callback);
-  void MatchAllCaches(const GURL& origin,
-                      std::unique_ptr<ServiceWorkerFetchRequest> request,
-                      const CacheStorageCacheQueryParams& match_params,
-                      CacheStorageCache::ResponseCallback callback);
-
-  // This must be called before creating any of the public *Cache functions
-  // above.
-  void SetBlobParametersForCache(
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
-      base::WeakPtr<storage::BlobStorageContext> blob_storage_context);
-
-  void AddObserver(CacheStorageContextImpl::Observer* observer);
-  void RemoveObserver(CacheStorageContextImpl::Observer* observer);
-
-  void NotifyCacheListChanged(const GURL& origin);
-  void NotifyCacheContentChanged(const GURL& origin, const std::string& name);
-
-  base::WeakPtr<CacheStorageManager> AsWeakPtr() {
-    return weak_ptr_factory_.GetWeakPtr();
-  }
-
-  base::FilePath root_path() const { return root_path_; }
-
- private:
-  friend class CacheStorageContextImpl;
-  friend class CacheStorageManagerTest;
-  friend class CacheStorageQuotaClient;
-
-  typedef std::map<GURL, std::unique_ptr<CacheStorage>> CacheStorageMap;
-
-  CacheStorageManager(
-      const base::FilePath& path,
-      scoped_refptr<base::SequencedTaskRunner> cache_task_runner,
-      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy);
-
-  // The returned CacheStorage* is owned by this manager.
-  CacheStorage* FindOrCreateCacheStorage(const GURL& origin);
-
-  // QuotaClient and Browsing Data Deletion support
-  void GetAllOriginsUsage(
-      const CacheStorageContext::GetUsageInfoCallback& callback);
-  void GetAllOriginsUsageGetSizes(
-      std::unique_ptr<std::vector<CacheStorageUsageInfo>> usage_info,
-      const CacheStorageContext::GetUsageInfoCallback& callback);
-
-  void GetOriginUsage(const GURL& origin_url,
-                      const storage::QuotaClient::GetUsageCallback& callback);
-  void GetOrigins(const storage::QuotaClient::GetOriginsCallback& callback);
-  void GetOriginsForHost(
+  // QuotaClient and Browsing Data Deletion support.
+  virtual void GetAllOriginsUsage(
+      CacheStorageOwner owner,
+      CacheStorageContext::GetUsageInfoCallback callback) = 0;
+  virtual void GetOriginUsage(
+      const url::Origin& origin_url,
+      CacheStorageOwner owner,
+      storage::QuotaClient::GetUsageCallback callback) = 0;
+  virtual void GetOrigins(
+      CacheStorageOwner owner,
+      storage::QuotaClient::GetOriginsCallback callback) = 0;
+  virtual void GetOriginsForHost(
       const std::string& host,
-      const storage::QuotaClient::GetOriginsCallback& callback);
-  void DeleteOriginData(const GURL& origin,
-                        const storage::QuotaClient::DeletionCallback& callback);
-  void DeleteOriginData(const GURL& origin);
-  void DeleteOriginDidClose(
-      const GURL& origin,
-      const storage::QuotaClient::DeletionCallback& callback,
-      std::unique_ptr<CacheStorage> cache_storage,
-      int64_t origin_size);
+      CacheStorageOwner owner,
+      storage::QuotaClient::GetOriginsCallback callback) = 0;
+  virtual void DeleteOriginData(
+      const url::Origin& origin,
+      CacheStorageOwner owner,
+      storage::QuotaClient::DeletionCallback callback) = 0;
+  virtual void DeleteOriginData(const url::Origin& origin,
+                                CacheStorageOwner owner) = 0;
 
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter()
-      const {
-    return request_context_getter_;
-  }
+  // This must be called before any of the public Cache functions above.
+  virtual void SetBlobParametersForCache(
+      base::WeakPtr<storage::BlobStorageContext> blob_storage_context) = 0;
 
-  base::WeakPtr<storage::BlobStorageContext> blob_storage_context() const {
-    return blob_context_;
-  }
+  static bool IsValidQuotaOrigin(const url::Origin& origin);
 
-  scoped_refptr<base::SequencedTaskRunner> cache_task_runner() const {
-    return cache_task_runner_;
-  }
+ protected:
+  friend class base::RefCounted<CacheStorageManager>;
 
-  bool IsMemoryBacked() const { return root_path_.empty(); }
-
-  base::FilePath root_path_;
-  scoped_refptr<base::SequencedTaskRunner> cache_task_runner_;
-
-  scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;
-
-  // The map owns the CacheStorages and the CacheStorages are only accessed on
-  // |cache_task_runner_|.
-  CacheStorageMap cache_storage_map_;
-
-  base::ObserverList<CacheStorageContextImpl::Observer> observers_;
-
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  base::WeakPtr<storage::BlobStorageContext> blob_context_;
-
-  base::WeakPtrFactory<CacheStorageManager> weak_ptr_factory_;
-  DISALLOW_COPY_AND_ASSIGN(CacheStorageManager);
+  CacheStorageManager() = default;
+  virtual ~CacheStorageManager() = default;
 };
 
 }  // namespace content

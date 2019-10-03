@@ -5,6 +5,7 @@
 #include <string>
 
 #include "base/strings/stringprintf.h"
+#include "base/system/sys_info.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
 #include "components/crx_file/id_util.h"
@@ -25,13 +26,17 @@ bool Contains(const std::string& source, const std::string& target) {
 TEST(WebstoreInstallerTest, PlatformParams) {
   std::string id = crx_file::id_util::GenerateId("some random string");
   std::string source = "inline";
-  GURL url = WebstoreInstaller::GetWebstoreInstallURL(id,
-      WebstoreInstaller::INSTALL_SOURCE_INLINE);
+  GURL url = WebstoreInstaller::GetWebstoreInstallURL(
+      id, WebstoreInstaller::INSTALL_SOURCE_INLINE);
   std::string query = url.query();
   EXPECT_TRUE(
       Contains(query, StringPrintf("os=%s", UpdateQueryParams::GetOS())));
   EXPECT_TRUE(
       Contains(query, StringPrintf("arch=%s", UpdateQueryParams::GetArch())));
+  EXPECT_TRUE(Contains(
+      query,
+      StringPrintf("os_arch=%s",
+                   base::SysInfo().OperatingSystemArchitecture().c_str())));
   EXPECT_TRUE(Contains(
       query, StringPrintf("nacl_arch=%s", UpdateQueryParams::GetNaclArch())));
   EXPECT_TRUE(

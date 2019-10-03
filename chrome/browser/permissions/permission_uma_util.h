@@ -22,23 +22,31 @@ class GURL;
 class PermissionRequest;
 class Profile;
 
-// This should stay in sync with the SourceUI enum in the permission report
-// protobuf (src/chrome/common/safe_browsing/permission_report.proto).
+// Any new values should be inserted immediately prior to NUM.
 enum class PermissionSourceUI {
+  // Permission prompt.
   PROMPT = 0,
+
+  // Origin info bubble.
+  // https://www.chromium.org/Home/chromium-security/enamel/goals-for-the-origin-info-bubble
   OIB = 1,
+
+  // chrome://settings/content/siteDetails?site=[SITE]
+  // chrome://settings/content/[PERMISSION TYPE]
   SITE_SETTINGS = 2,
+
+  // Page action bubble.
   PAGE_ACTION = 3,
 
-  // Always keep this at the end.
-  NUM,
-};
+  // Permission settings from Android.
+  // Currently this value is only used when revoking notification permission in
+  // Android O+ system channel settings.
+  ANDROID_SETTINGS = 4,
 
-// Any new values should be inserted immediately prior to NUM.
-enum class SafeBrowsingResponse {
-  NOT_BLACKLISTED = 0,
-  TIMEOUT = 1,
-  BLACKLISTED = 2,
+  // Permission settings as part of the event's UI.
+  // Currently this value is only used when revoking notification permission
+  // through the notification UI.
+  INLINE_SETTINGS = 5,
 
   // Always keep this at the end.
   NUM,
@@ -47,34 +55,12 @@ enum class SafeBrowsingResponse {
 // Any new values should be inserted immediately prior to NUM.
 enum class PermissionEmbargoStatus {
   NOT_EMBARGOED = 0,
-  PERMISSIONS_BLACKLISTING = 1,
+  // Removed: PERMISSIONS_BLACKLISTING = 1,
   REPEATED_DISMISSALS = 2,
   REPEATED_IGNORES = 3,
 
   // Keep this at the end.
   NUM,
-};
-
-// A bundle for the information sent in a PermissionReport.
-struct PermissionReportInfo {
-  PermissionReportInfo(
-      const GURL& origin,
-      ContentSettingsType permission,
-      PermissionAction action,
-      PermissionSourceUI source_ui,
-      PermissionRequestGestureType gesture_type,
-      int num_prior_dismissals,
-      int num_prior_ignores);
-
-  PermissionReportInfo(const PermissionReportInfo& other);
-
-  GURL origin;
-  ContentSettingsType permission;
-  PermissionAction action;
-  PermissionSourceUI source_ui;
-  PermissionRequestGestureType gesture_type;
-  int num_prior_dismissals;
-  int num_prior_ignores;
 };
 
 // Provides a convenient way of logging UMA for permission related operations.
@@ -89,29 +75,9 @@ class PermissionUmaUtil {
   static const char kPermissionsPromptDenied[];
   static const char kPermissionsPromptDeniedGesture[];
   static const char kPermissionsPromptDeniedNoGesture[];
-  static const char kPermissionsPromptAcceptedPriorDismissCountPrefix[];
-  static const char kPermissionsPromptAcceptedPriorIgnoreCountPrefix[];
-  static const char kPermissionsPromptDeniedPriorDismissCountPrefix[];
-  static const char kPermissionsPromptDeniedPriorIgnoreCountPrefix[];
-  static const char kPermissionsPromptDismissedPriorDismissCountPrefix[];
-  static const char kPermissionsPromptDismissedPriorIgnoreCountPrefix[];
-  static const char kPermissionsPromptIgnoredPriorDismissCountPrefix[];
-  static const char kPermissionsPromptIgnoredPriorIgnoreCountPrefix[];
 
   static void PermissionRequested(ContentSettingsType permission,
                                   const GURL& requesting_origin);
-  static void PermissionGranted(ContentSettingsType permission,
-                                PermissionRequestGestureType gesture_type,
-                                const GURL& requesting_origin,
-                                Profile* profile);
-  static void PermissionDenied(ContentSettingsType permission,
-                               PermissionRequestGestureType gesture_type,
-                               const GURL& requesting_origin,
-                               Profile* profile);
-  static void PermissionDismissed(ContentSettingsType permission,
-                                  PermissionRequestGestureType gesture_type,
-                                  const GURL& requesting_origin,
-                                  Profile* profile);
   static void PermissionRevoked(ContentSettingsType permission,
                                 PermissionSourceUI source_ui,
                                 const GURL& revoked_origin,
@@ -124,9 +90,6 @@ class PermissionUmaUtil {
       PermissionStatusSource source);
 
   static void RecordEmbargoStatus(PermissionEmbargoStatus embargo_status);
-
-  static void RecordSafeBrowsingResponse(base::TimeDelta response_time,
-                                         SafeBrowsingResponse response);
 
   // UMA specifically for when permission prompts are shown. This should be
   // roughly equivalent to the metrics above, however it is
@@ -142,40 +105,21 @@ class PermissionUmaUtil {
 
   static void PermissionPromptResolved(
       const std::vector<PermissionRequest*>& requests,
-      const content::WebContents* web_contents,
+      content::WebContents* web_contents,
       PermissionAction permission_action);
 
-  // Records the request type and gesture type for a shown, accepted, and denied
-  // prompt. Defined separately as Android must call this method explicitly
-  // until the removal of PermissionQueueController is completed.
-  static void RecordPermissionPromptShown(
-      PermissionRequestType request_type,
-      PermissionRequestGestureType gesture_type);
-
-  static void RecordPermissionPromptAccepted(
-      PermissionRequestType request_type,
-      PermissionRequestGestureType gesture_type);
-
-  static void RecordPermissionPromptDenied(
-      PermissionRequestType request_type,
-      PermissionRequestGestureType gesture_type);
-
   static void RecordWithBatteryBucket(const std::string& histogram);
-
-  // Permission Action Reporting data is only sent in official, Chrome branded
-  // builds. This function allows this to be overridden for testing.
-  static void FakeOfficialBuildForTest();
 
  private:
   friend class PermissionUmaUtilTest;
 
-  static bool IsOptedIntoPermissionActionReporting(Profile* profile);
-
+  // web_contents may be null when for recording non-prompt actions.
   static void RecordPermissionAction(ContentSettingsType permission,
                                      PermissionAction action,
                                      PermissionSourceUI source_ui,
                                      PermissionRequestGestureType gesture_type,
                                      const GURL& requesting_origin,
+                                     const content::WebContents* web_contents,
                                      Profile* profile);
 
   // Records |count| total prior actions for a prompt of type |permission|
@@ -188,9 +132,6 @@ class PermissionUmaUtil {
   static void RecordPromptDecided(
       const std::vector<PermissionRequest*>& requests,
       bool accepted);
-
-  static void PermissionIgnored(const std::vector<PermissionRequest*>& requests,
-                                const content::WebContents* web_contents);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(PermissionUmaUtil);
 };

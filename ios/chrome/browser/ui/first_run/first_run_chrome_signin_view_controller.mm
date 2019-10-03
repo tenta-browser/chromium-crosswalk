@@ -6,7 +6,8 @@
 
 #import "base/ios/block_types.h"
 #include "base/metrics/user_metrics.h"
-#include "components/signin/core/browser/signin_metrics.h"
+#include "components/signin/public/base/signin_metrics.h"
+#include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/first_run/first_run_configuration.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
@@ -14,12 +15,15 @@
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #import "ios/chrome/browser/ui/first_run/first_run_util.h"
 #import "ios/chrome/browser/ui/promos/signin_promo_view_controller.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
+#import "ios/web/public/web_state/web_state.h"
+
 #import "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -89,9 +93,12 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
 
   if (!_hasRecordedSigninStarted) {
     _hasRecordedSigninStarted = YES;
-    base::RecordAction(base::UserMetricsAction("Signin_Signin_FromStartPage"));
     signin_metrics::LogSigninAccessPointStarted(
-        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE);
+        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
+    signin_metrics::RecordSigninUserActionForAccessPoint(
+        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
   }
 
   // Save the version number to prevent showing the SSO Recall promo on the next
@@ -105,7 +112,8 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
 
 - (void)finishFirstRunAndDismissWithCompletion:(ProceduralBlock)completion {
   DCHECK(self.presentingViewController);
-  FinishFirstRun(self.browserState, [_tabModel currentTab], _firstRunConfig,
+  web::WebState* currentWebState = _tabModel.webStateList->GetActiveWebState();
+  FinishFirstRun(self.browserState, currentWebState, _firstRunConfig,
                  self.presenter);
   [self.presentingViewController dismissViewControllerAnimated:YES
                                                     completion:^{
@@ -119,7 +127,7 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
 
 - (void)willStartSignIn:(ChromeSigninViewController*)controller {
   DCHECK_EQ(self, controller);
-  controller.shouldClearData = SHOULD_CLEAR_DATA_CLEAR_DATA;
+  controller.shouldClearData = SHOULD_CLEAR_DATA_MERGE_DATA;
   [_firstRunConfig setSignInAttempted:YES];
 }
 
@@ -167,16 +175,22 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
   DCHECK_EQ(self, controller);
 
   // User is done with First Run after explicit sign-in accept.
-  // Save a reference to the presentingViewController since this view controller
-  // will be dismissed.
-  __weak UIViewController* baseViewController = self.presentingViewController;
-  __weak id<ApplicationCommands> weakDispatcher = self.dispatcher;
-  [self finishFirstRunAndDismissWithCompletion:^{
-    if (showAccountsSettings) {
-      [weakDispatcher
-          showAccountsSettingsFromViewController:baseViewController];
-    }
-  }];
+  ProceduralBlock completion = nil;
+  if (showAccountsSettings) {
+    // Save a reference to the presentingViewController since this view
+    // controller will be dismissed.
+    __weak UIViewController* baseViewController = self.presentingViewController;
+    __weak id<ApplicationCommands> dispatcher = self.dispatcher;
+    completion = ^{
+      if (unified_consent::IsUnifiedConsentFeatureEnabled()) {
+        [dispatcher
+            showAdvancedSigninSettingsFromViewController:baseViewController];
+      } else {
+        [dispatcher showAccountsSettingsFromViewController:baseViewController];
+      }
+    };
+  }
+  [self finishFirstRunAndDismissWithCompletion:completion];
 }
 
 #pragma mark ChromeSigninViewController

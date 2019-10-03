@@ -4,9 +4,6 @@
 
 package org.chromium.chrome.browser.ntp.snippets;
 
-import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
-
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -21,8 +18,11 @@ import android.util.TypedValue;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
+import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestRule;
@@ -30,25 +30,22 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
 import org.chromium.base.DiscardableReferencePool;
-import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
-import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
-import org.chromium.base.test.params.ParameterSet;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.test.params.ParameterAnnotations;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.favicon.IconType;
 import org.chromium.chrome.browser.favicon.LargeIconBridge;
-import org.chromium.chrome.browser.ntp.ContextMenuManager;
-import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder;
-import org.chromium.chrome.browser.ntp.cards.SignInPromo;
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
+import org.chromium.chrome.browser.night_mode.NightModeTestUtils;
+import org.chromium.chrome.browser.ntp.NewTabPage;
+import org.chromium.chrome.browser.ntp.cards.PersonalizedPromoViewHolder;
 import org.chromium.chrome.browser.ntp.cards.SuggestionsCategoryInfo;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.chrome.browser.signin.DisplayableProfileData;
 import org.chromium.chrome.browser.signin.SigninAccessPoint;
 import org.chromium.chrome.browser.signin.SigninPromoController;
@@ -62,7 +59,6 @@ import org.chromium.chrome.browser.suggestions.SuggestionsRanker;
 import org.chromium.chrome.browser.suggestions.SuggestionsRecyclerView;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
 import org.chromium.chrome.browser.suggestions.ThumbnailGradient;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.ThumbnailProvider;
 import org.chromium.chrome.browser.widget.ThumbnailProvider.ThumbnailRequest;
 import org.chromium.chrome.browser.widget.displaystyle.HorizontalDisplayStyle;
@@ -71,13 +67,13 @@ import org.chromium.chrome.browser.widget.displaystyle.VerticalDisplayStyle;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.RenderTestRule;
-import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.compositor.layouts.DisableChromeAnimations;
 import org.chromium.chrome.test.util.browser.suggestions.DummySuggestionsEventReporter;
 import org.chromium.chrome.test.util.browser.suggestions.FakeSuggestionsSource;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.NetworkChangeNotifier;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -88,9 +84,8 @@ import java.util.Locale;
  * Tests for the appearance of Article Snippets.
  */
 @RunWith(ParameterizedRunner.class)
-@UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ArticleSnippetsTest {
     @Rule
     public SuggestionsDependenciesRule mSuggestionsDeps = new SuggestionsDependenciesRule();
@@ -105,17 +100,6 @@ public class ArticleSnippetsTest {
     @Rule
     public TestRule mDisableChromeAnimations = new DisableChromeAnimations();
 
-    private final boolean mChromeHomeEnabled;
-
-    @ClassParameter
-    private static List<ParameterSet> sClassParams = new ArrayList<>();
-    static {
-        sClassParams.add(new ParameterSet().name("ChromeHomeDisabled").value(false));
-        if (!DeviceFormFactor.isTablet()) {
-            sClassParams.add(new ParameterSet().name("ChromeHomeEnabled").value(true));
-        }
-    }
-
     private SuggestionsUiDelegate mUiDelegate;
     private FakeSuggestionsSource mSnippetsSource;
     private MockThumbnailProvider mThumbnailProvider;
@@ -124,7 +108,7 @@ public class ArticleSnippetsTest {
     private ContextMenuManager mContextMenuManager;
     private FrameLayout mContentView;
     private SnippetArticleViewHolder mSuggestion;
-    private NewTabPageViewHolder mSigninPromo;
+    private PersonalizedPromoViewHolder mSigninPromo;
 
     private UiConfig mUiConfig;
 
@@ -133,23 +117,20 @@ public class ArticleSnippetsTest {
 
     private long mTimestamp;
 
-    public ArticleSnippetsTest(boolean chromeHomeEnabled) {
-        mChromeHomeEnabled = chromeHomeEnabled;
-        if (chromeHomeEnabled) {
-            mRenderTestRule.setVariantPrefix("modern");
-        }
+    @BeforeClass
+    public static void setUpBeforeActivityLaunched() {
+        NightModeTestUtils.setUpNightModeBeforeChromeActivityLaunched();
+    }
+
+    @ParameterAnnotations.UseMethodParameterBefore(NightModeTestUtils.NightModeParams.class)
+    public void setupNightMode(boolean nightModeEnabled) {
+        NightModeTestUtils.setUpNightModeForChromeActivity(nightModeEnabled);
+        mRenderTestRule.setNightModeEnabled(nightModeEnabled);
     }
 
     @Before
     public void setUp() throws Exception {
-        if (mChromeHomeEnabled) {
-            Features.getInstance().enable(ChromeFeatureList.CHROME_HOME);
-        } else {
-            Features.getInstance().disable(ChromeFeatureList.CHROME_HOME);
-        }
-
         mActivityTestRule.startMainActivityOnBlankPage();
-        ChromePreferenceManager.getInstance().setNewTabPageGenericSigninPromoDismissed(true);
         mThumbnailProvider = new MockThumbnailProvider();
         mSnippetsSource = new FakeSuggestionsSource();
         mSuggestionsDeps.getFactory().thumbnailProvider = mThumbnailProvider;
@@ -159,21 +140,14 @@ public class ArticleSnippetsTest {
 
         mTimestamp = System.currentTimeMillis() - 5 * DateUtils.MINUTE_IN_MILLIS;
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             if (!NetworkChangeNotifier.isInitialized()) {
                 NetworkChangeNotifier.init();
             }
             NetworkChangeNotifier.forceConnectivityState(true);
         });
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            FeatureUtilities.resetChromeHomeEnabledForTests();
-            FeatureUtilities.cacheChromeHomeEnabled();
-        });
-
-        assertThat(FeatureUtilities.isChromeHomeEnabled(), is(mChromeHomeEnabled));
-
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             ChromeActivity activity = mActivityTestRule.getActivity();
             mContentView = new FrameLayout(activity);
             mUiConfig = new UiConfig(mContentView);
@@ -182,20 +156,30 @@ public class ArticleSnippetsTest {
 
             mRecyclerView = new SuggestionsRecyclerView(activity);
             mContextMenuManager = new ContextMenuManager(mUiDelegate.getNavigationDelegate(),
-                    mRecyclerView::setTouchEnabled, activity::closeContextMenu);
-            mRecyclerView.init(mUiConfig, mContextMenuManager);
+                    mRecyclerView::setTouchEnabled, activity::closeContextMenu,
+                    NewTabPage.CONTEXT_MENU_USER_ACTION_PREFIX);
+            mRecyclerView.init(mUiConfig, activity::closeContextMenu);
 
             mSuggestion = new SnippetArticleViewHolder(mRecyclerView, mContextMenuManager,
                     mUiDelegate, mUiConfig, /* offlinePageBridge = */ null);
-            mSigninPromo = new SignInPromo.GenericPromoViewHolder(
-                    mRecyclerView, mContextMenuManager, mUiConfig);
         });
+    }
+
+    @After
+    public void tearDown() {
+        if (mSigninPromo != null) mSigninPromo.setSigninPromoControllerForTests(null);
+    }
+
+    @AfterClass
+    public static void tearDownAfterActivityDestroyed() {
+        NightModeTestUtils.tearDownNightModeAfterChromeActivityDestroyed();
     }
 
     @Test
     @MediumTest
     @Feature({"ArticleSnippets", "RenderTest"})
-    public void testSnippetAppearance() throws IOException {
+    @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
+    public void testSnippetAppearance(boolean nightModeEnabled) throws IOException {
         SuggestionsCategoryInfo fullCategoryInfo = new SuggestionsCategoryInfo(FULL_CATEGORY,
                 "Section Title", ContentSuggestionsCardLayout.FULL_CARD,
                 ContentSuggestionsAdditionalAction.NONE,
@@ -251,7 +235,7 @@ public class ArticleSnippetsTest {
                 null); // Thumbnail dominant color
 
         // See how everything looks in narrow layout.
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             // Since we inform the UiConfig manually about the desired display style, the only
             // reason we actually change the LayoutParams is for the rendered Views to look right.
             ViewGroup.LayoutParams params = mContentView.getLayoutParams();
@@ -276,48 +260,8 @@ public class ArticleSnippetsTest {
     @Test
     @MediumTest
     @Feature({"ArticleSnippets", "RenderTest"})
-    public void testDownloadSuggestion() throws IOException {
-        String downloadFilePath =
-                UrlUtils.getIsolatedTestFilePath("chrome/test/data/android/capybara.jpg");
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            SnippetArticle downloadSuggestion = new SnippetArticle(KnownCategories.DOWNLOADS, "id1",
-                    "test_image.jpg", "example.com", "http://example.com",
-                    mTimestamp, // Publish timestamp
-                    10f, // Score
-                    mTimestamp, // Fetch timestamp
-                    false, // Is video suggestion
-                    null); // Thumbnail dominant color
-            downloadSuggestion.setAssetDownloadData("asdf", downloadFilePath, "image/jpeg");
-            SuggestionsCategoryInfo downloadsCategory = new SuggestionsCategoryInfo(
-                    KnownCategories.DOWNLOADS, "Downloads", ContentSuggestionsCardLayout.FULL_CARD,
-                    ContentSuggestionsAdditionalAction.NONE,
-                    /* show_if_empty = */ true, "No suggestions");
-
-            mSuggestion.onBindViewHolder(downloadSuggestion, downloadsCategory);
-            mContentView.addView(mSuggestion.itemView);
-        });
-
-        mRenderTestRule.render(mSuggestion.itemView, "download_snippet_placeholder");
-
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        List<ThumbnailRequest> requests = mThumbnailProvider.getRequests();
-        Assert.assertEquals(1, requests.size());
-        ThumbnailRequest request = requests.get(0);
-        Assert.assertEquals(downloadFilePath, request.getFilePath());
-
-        Bitmap thumbnail = BitmapFactory.decodeFile(downloadFilePath);
-
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            mThumbnailProvider.fulfillRequest(request, thumbnail);
-        });
-
-        mRenderTestRule.render(mSuggestion.itemView, "download_snippet_thumbnail");
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"ArticleSnippets", "RenderTest"})
-    public void testVideoSuggestion() throws IOException {
+    @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
+    public void testVideoSuggestion(boolean nightModeEnabled) throws IOException {
         SuggestionsCategoryInfo categoryInfo = new SuggestionsCategoryInfo(FULL_CATEGORY,
                 "Section Title", ContentSuggestionsCardLayout.FULL_CARD,
                 ContentSuggestionsAdditionalAction.NONE,
@@ -369,23 +313,10 @@ public class ArticleSnippetsTest {
     @Test
     @MediumTest
     @Feature({"ArticleSnippets", "RenderTest"})
-    public void testGenericSigninPromo() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            mRecyclerView.init(mUiConfig, null);
-            mRecyclerView.setAdapter(null);
-            mSigninPromo = new SignInPromo.GenericPromoViewHolder(mRecyclerView, null, mUiConfig);
-            ((SignInPromo.GenericPromoViewHolder) mSigninPromo)
-                    .onBindViewHolder(new SignInPromo.GenericSigninPromoData(), null);
-            mContentView.addView(mSigninPromo.itemView);
-        });
-        mRenderTestRule.render(mSigninPromo.itemView, "signin_promo");
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"ArticleSnippets", "RenderTest"})
-    public void testPersonalizedSigninPromosNoAccounts() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+    @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
+    public void testPersonalizedSigninPromosNoAccounts(boolean nightModeEnabled)
+            throws IOException {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             createPersonalizedSigninPromo(null);
             mContentView.addView(mSigninPromo.itemView);
         });
@@ -395,8 +326,10 @@ public class ArticleSnippetsTest {
     @Test
     @MediumTest
     @Feature({"ArticleSnippets", "RenderTest"})
-    public void testPersonalizedSigninPromosWithAccount() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+    @ParameterAnnotations.UseMethodParameter(NightModeTestUtils.NightModeParams.class)
+    public void testPersonalizedSigninPromosWithAccount(boolean nightModeEnabled)
+            throws IOException {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             createPersonalizedSigninPromo(getTestProfileData());
             mContentView.addView(mSigninPromo.itemView);
         });
@@ -406,10 +339,9 @@ public class ArticleSnippetsTest {
     private void createPersonalizedSigninPromo(@Nullable DisplayableProfileData profileData) {
         SigninPromoController signinPromoController =
                 new SigninPromoController(SigninAccessPoint.NTP_CONTENT_SUGGESTIONS);
-        mSigninPromo = new SignInPromo.PersonalizedPromoViewHolder(
-                mRecyclerView, mUiConfig, null, null, signinPromoController);
-        ((SignInPromo.PersonalizedPromoViewHolder) mSigninPromo)
-                .bindAndConfigureViewForTests(profileData);
+        mSigninPromo = new PersonalizedPromoViewHolder(mRecyclerView, null, mUiConfig);
+        mSigninPromo.setSigninPromoControllerForTests(signinPromoController);
+        mSigninPromo.bindAndConfigureViewForTests(profileData);
     }
 
     private DisplayableProfileData getTestProfileData() {
@@ -424,12 +356,12 @@ public class ArticleSnippetsTest {
 
     private void renderSuggestion(SnippetArticle suggestion, SuggestionsCategoryInfo categoryInfo,
             String renderId) throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mSuggestion.onBindViewHolder(suggestion, categoryInfo);
             mContentView.addView(mSuggestion.itemView);
         });
         mRenderTestRule.render(mSuggestion.itemView, renderId);
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mContentView.removeView(mSuggestion.itemView);
             mSuggestion.recycle();
         });
@@ -542,14 +474,14 @@ public class ArticleSnippetsTest {
     private class MockImageFetcher extends ImageFetcher {
         public MockImageFetcher(
                 SuggestionsSource suggestionsSource, DiscardableReferencePool referencePool) {
-            super(suggestionsSource, null, referencePool, null);
+            super(suggestionsSource, null, referencePool);
         }
 
         @Override
-        public void makeFaviconRequest(SnippetArticle suggestion, final int faviconSizePx,
-                final Callback<Bitmap> faviconCallback) {
+        public void makeFaviconRequest(
+                SnippetArticle suggestion, final Callback<Bitmap> faviconCallback) {
             // Run the callback asynchronously in case the caller made that assumption.
-            ThreadUtils.postOnUiThread(() -> {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> {
                 // Return an arbitrary drawable.
                 faviconCallback.onResult(getBitmap(R.drawable.star_green));
             });
@@ -559,7 +491,7 @@ public class ArticleSnippetsTest {
         public void makeLargeIconRequest(final String url, final int largeIconSizePx,
                 final LargeIconBridge.LargeIconCallback callback) {
             // Run the callback asynchronously in case the caller made that assumption.
-            ThreadUtils.postOnUiThread(() -> {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> {
                 // Return an arbitrary drawable.
                 callback.onLargeIconAvailable(
                         getBitmap(R.drawable.star_green), largeIconSizePx, true, IconType.INVALID);

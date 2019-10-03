@@ -28,7 +28,7 @@ constexpr char kTestUserGaiaId[] = "1234567890";
 
 class BrowserLoginTest : public chromeos::LoginManagerTest {
  public:
-  BrowserLoginTest() : LoginManagerTest(true) {}
+  BrowserLoginTest() : LoginManagerTest(true, true) {}
   ~BrowserLoginTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -63,7 +63,7 @@ IN_PROC_BROWSER_TEST_F(BrowserLoginTest, BrowserActive) {
 
   const views::View* focused_view = focus_manager->GetFocusedView();
   EXPECT_TRUE(focused_view != NULL);
-  EXPECT_EQ(VIEW_ID_OMNIBOX, focused_view->id());
+  EXPECT_EQ(VIEW_ID_OMNIBOX, focused_view->GetID());
 }
 
 }  // namespace chromeos

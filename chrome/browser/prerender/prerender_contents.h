@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/prerender/prerender_final_status.h"
@@ -28,6 +29,7 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/gfx/geometry/rect.h"
+#include "url/origin.h"
 
 class Profile;
 
@@ -45,10 +47,13 @@ namespace history {
 struct HistoryAddPageArgs;
 }
 
+namespace memory_instrumentation {
+class GlobalMemoryDump;
+}
+
 namespace prerender {
 
 class PrerenderManager;
-class PrerenderResourceThrottle;
 
 class PrerenderContents : public content::NotificationObserver,
                           public content::WebContentsObserver,
@@ -68,6 +73,7 @@ class PrerenderContents : public content::NotificationObserver,
         Profile* profile,
         const GURL& url,
         const content::Referrer& referrer,
+        const base::Optional<url::Origin>& initiator_origin,
         Origin origin) = 0;
 
    private:
@@ -114,9 +120,6 @@ class PrerenderContents : public content::NotificationObserver,
   void SetPrerenderMode(PrerenderMode mode);
   PrerenderMode prerender_mode() const { return prerender_mode_; }
 
-  // Returns true iff the method given is valid for prerendering.
-  bool IsValidHttpMethod(const std::string& method);
-
   static Factory* CreateFactory();
 
   // Returns a PrerenderContents from the given web_contents, if it's used for
@@ -138,15 +141,11 @@ class PrerenderContents : public content::NotificationObserver,
   // it if not.
   void DestroyWhenUsingTooManyResources();
 
-  content::RenderViewHost* GetRenderViewHostMutable();
-  const content::RenderViewHost* GetRenderViewHost() const;
+  content::RenderViewHost* GetRenderViewHost();
 
   PrerenderManager* prerender_manager() { return prerender_manager_; }
 
-  base::string16 title() const { return title_; }
   const GURL& prerender_url() const { return prerender_url_; }
-  const content::Referrer& referrer() const { return referrer_; }
-  bool has_stopped_loading() const { return has_stopped_loading_; }
   bool has_finished_loading() const { return has_finished_loading_; }
   bool prerendering_has_started() const { return prerendering_has_started_; }
 
@@ -168,7 +167,7 @@ class PrerenderContents : public content::NotificationObserver,
   // |url| and |session_storage_namespace|.
   bool Matches(
       const GURL& url,
-      const content::SessionStorageNamespace* session_storage_namespace) const;
+      content::SessionStorageNamespace* session_storage_namespace) const;
 
   // content::WebContentsObserver implementation.
   void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
@@ -226,25 +225,8 @@ class PrerenderContents : public content::NotificationObserver,
 
   std::unique_ptr<base::DictionaryValue> GetAsValue() const;
 
-  // Returns whether a pending cross-site navigation is happening.
-  // This could happen with renderer-issued navigations, such as a
-  // MouseEvent being dispatched by a link to a website installed as an app.
-  bool IsCrossSiteNavigationPending() const;
-
   // Marks prerender as used and releases any throttled resource requests.
   void PrepareForUse();
-
-  // Called when a PrerenderResourceThrottle defers a request. If the prerender
-  // is used it'll be resumed on the IO thread, otherwise they will get
-  // cancelled automatically if prerendering is cancelled.
-  void AddResourceThrottle(
-      const base::WeakPtr<PrerenderResourceThrottle>& throttle);
-
-  // Called when a PrerenderResourceThrottle changes a resource priority to
-  // net::IDLE. The resources are reset back to their original priorities when
-  // the prerender contents is swapped in.
-  void AddIdleResource(
-      const base::WeakPtr<PrerenderResourceThrottle>& throttle);
 
   // Increments the number of bytes fetched over the network for this prerender.
   void AddNetworkBytes(int64_t bytes);
@@ -261,6 +243,7 @@ class PrerenderContents : public content::NotificationObserver,
                     Profile* profile,
                     const GURL& url,
                     const content::Referrer& referrer,
+                    const base::Optional<url::Origin>& initiator_origin,
                     Origin origin);
 
   // Set the final status for how the PrerenderContents was used. This
@@ -280,11 +263,7 @@ class PrerenderContents : public content::NotificationObserver,
   virtual void OnRenderViewHostCreated(
       content::RenderViewHost* new_render_view_host);
 
-  content::NotificationRegistrar& notification_registrar() {
-    return notification_registrar_;
-  }
-
-  content::WebContents* CreateWebContents(
+  std::unique_ptr<content::WebContents> CreateWebContents(
       content::SessionStorageNamespace* session_storage_namespace);
 
   PrerenderMode prerender_mode_;
@@ -301,7 +280,7 @@ class PrerenderContents : public content::NotificationObserver,
   // The session storage namespace id for use in matching. We must save it
   // rather than get it from the RenderViewHost since in the control group
   // we won't have a RenderViewHost.
-  int64_t session_storage_namespace_id_;
+  std::string session_storage_namespace_id_;
 
  private:
   class WebContentsDelegateImpl;
@@ -310,17 +289,22 @@ class PrerenderContents : public content::NotificationObserver,
   friend class PrerenderContentsFactoryImpl;
 
   // Returns the ProcessMetrics for the render process, if it exists.
-  base::ProcessMetrics* MaybeGetProcessMetrics();
+  void DidGetMemoryUsage(
+      bool success,
+      std::unique_ptr<memory_instrumentation::GlobalMemoryDump> dump);
 
   // chrome::mojom::PrerenderCanceler:
   void CancelPrerenderForPrinting() override;
+  void CancelPrerenderForUnsupportedMethod() override;
+  void CancelPrerenderForUnsupportedScheme(const GURL& url) override;
+  void CancelPrerenderForSyncDeferredRedirect() override;
 
   void OnPrerenderCancelerRequest(
       chrome::mojom::PrerenderCancelerRequest request);
 
   mojo::Binding<chrome::mojom::PrerenderCanceler> prerender_canceler_binding_;
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   // The prerender manager owning this object.
   PrerenderManager* prerender_manager_;
@@ -331,24 +315,19 @@ class PrerenderContents : public content::NotificationObserver,
   // The referrer.
   content::Referrer referrer_;
 
+  // The origin of the page requesting the prerender. Empty when the prerender
+  // is browser initiated.
+  base::Optional<url::Origin> initiator_origin_;
+
   // The profile being used
   Profile* profile_;
 
-  // Information about the title and URL of the page that this class as a
-  // RenderViewHostDelegate has received from the RenderView.
-  // Used to apply to the new RenderViewHost delegate that might eventually
-  // own the contained RenderViewHost when the prerendered page is shown
-  // in a WebContents.
-  base::string16 title_;
-  GURL url_;
   content::NotificationRegistrar notification_registrar_;
 
   // A vector of URLs that this prerendered page matches against.
   // This array can contain more than element as a result of redirects,
   // such as HTTP redirects or javascript redirects.
   std::vector<GURL> alias_urls_;
-
-  bool has_stopped_loading_;
 
   // True when the main frame has finished loading.
   bool has_finished_loading_;
@@ -359,9 +338,9 @@ class PrerenderContents : public content::NotificationObserver,
   // Used solely to prevent double deletion.
   bool prerendering_has_been_cancelled_;
 
-  // Process Metrics of the render process associated with the
-  // RenderViewHost for this object.
-  std::unique_ptr<base::ProcessMetrics> process_metrics_;
+  // Pid of the render process associated with the RenderViewHost for this
+  // object.
+  base::ProcessId process_pid_;
 
   std::unique_ptr<WebContentsDelegateImpl> web_contents_delegate_;
 
@@ -380,19 +359,13 @@ class PrerenderContents : public content::NotificationObserver,
   // Caches pages to be added to the history.
   AddPageVector add_page_vector_;
 
-  // Resources that are throttled, pending a prerender use. Can only access a
-  // throttle on the IO thread.
-  std::vector<base::WeakPtr<PrerenderResourceThrottle> > resource_throttles_;
-  // Resources for which the priority was lowered to net::IDLE.
-  std::vector<base::WeakPtr<PrerenderResourceThrottle>> idle_resources_;
-
   // A running tally of the number of bytes this prerender has caused to be
   // transferred over the network for resources.  Updated with AddNetworkBytes.
   int64_t network_bytes_;
 
   service_manager::BinderRegistry registry_;
 
-  base::WeakPtrFactory<PrerenderContents> weak_factory_;
+  base::WeakPtrFactory<PrerenderContents> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderContents);
 };

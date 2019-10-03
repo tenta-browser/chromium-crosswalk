@@ -15,6 +15,7 @@
 #include "content/public/browser/web_ui.h"
 
 class WebUIBrowserTest;
+class MojoWebUIBrowserTest;
 
 namespace base {
 class ListValue;
@@ -22,6 +23,7 @@ class ListValue;
 
 namespace content {
 
+class TestWebUI;
 class WebUI;
 class WebUIImpl;
 
@@ -135,8 +137,10 @@ class CONTENT_EXPORT WebUIMessageHandler {
  private:
   // Provide external classes access to web_ui(), set_web_ui(), and
   // RenderViewReused.
+  friend class TestWebUI;
   friend class WebUIImpl;
   friend class ::WebUIBrowserTest;
+  friend class ::MojoWebUIBrowserTest;
 
   // TODO(dbeam): disallow JavaScript when a renderer process crashes.
   // http://crbug.com/610450

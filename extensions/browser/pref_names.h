@@ -39,10 +39,6 @@ extern const char kAllowedTypes[];
 // A boolean that tracks whether apps are allowed to enter fullscreen mode.
 extern const char kAppFullscreenAllowed[];
 
-// Integer which specifies the launch type that bookmark apps are created with
-// by default.
-extern const char kBookmarkAppCreationLaunchType[];
-
 // Dictionary pref that keeps track of per-extension settings. The keys are
 // extension ids.
 extern const char kExtensions[];
@@ -51,6 +47,9 @@ extern const char kExtensions[];
 // Values are expected to conform to the schema of the ExtensionManagement
 // policy.
 extern const char kExtensionManagement[];
+
+// Policy that indicates whether CRX2 extension updates are allowed.
+extern const char kInsecureExtensionUpdatesEnabled[];
 
 // A whitelist of extension ids the user can install: exceptions from the
 // following blacklist.
@@ -68,19 +67,16 @@ extern const char kInstallDenyList[];
 // accessed through extensions::ExternalPolicyProvider.
 extern const char kInstallForceList[];
 
-// A list containing apps that Chrome will silently install on the login screen
-// on Chrome OS at startup time. It is a list of strings, each string contains
-// an app ID and an update URL, delimited by a semicolon.
-// This preference is set by an admin policy, and meant to be only
-// accessed through extensions::ExternalPolicyProvider.
-extern const char kInstallLoginScreenAppList[];
+// A list containing apps or extensions that Chrome will silently install on the
+// login screen on Chrome OS at startup time. It is a list of strings, each
+// string contains an app ID and an update URL, delimited by a semicolon. This
+// preference is set by an admin policy, and meant to be only accessed through
+// extensions::ExternalPolicyProvider.
+extern const char kLoginScreenExtensions[];
 
 // String pref for what version chrome was last time the extension prefs were
 // loaded.
 extern const char kLastChromeVersion[];
-
-// Time of the last extensions auto-update check.
-extern const char kLastUpdateCheck[];
 
 // Blacklist and whitelist for Native Messaging Hosts.
 extern const char kNativeMessagingBlacklist[];
@@ -91,6 +87,10 @@ extern const char kNativeMessagingUserLevelHosts[];
 
 // Time of the next scheduled extensions auto-update checks.
 extern const char kNextUpdateCheck[];
+
+// A preference that tracks extensions pinned to the toolbar. This is a list
+// object stored in the Preferences file. The extensions are stored by ID.
+extern const char kPinnedExtensions[];
 
 // Indicates on-disk data might have skeletal data that needs to be cleaned
 // on the next start of the browser.

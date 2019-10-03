@@ -37,7 +37,7 @@ class FtpDirectoryListingParserTest
 TEST_P(FtpDirectoryListingParserTest, Parse) {
   FtpTestParam param = GetParam();
   base::FilePath test_dir;
-  PathService::Get(base::DIR_SOURCE_ROOT, &test_dir);
+  base::PathService::Get(base::DIR_SOURCE_ROOT, &test_dir);
   test_dir = test_dir.AppendASCII("net");
   test_dir = test_dir.AppendASCII("data");
   test_dir = test_dir.AppendASCII("ftp");
@@ -176,10 +176,10 @@ const FtpTestParam kTestParams[] = {
     {"dir-listing-windows-2", OK},
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        FtpDirectoryListingParserTest,
-                        testing::ValuesIn(kTestParams),
-                        TestName);
+INSTANTIATE_TEST_SUITE_P(,
+                         FtpDirectoryListingParserTest,
+                         testing::ValuesIn(kTestParams),
+                         TestName);
 
 }  // namespace
 

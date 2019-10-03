@@ -4,19 +4,20 @@
 
 #include "chrome/browser/renderer_context_menu/context_menu_content_type_factory.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "chrome/common/url_constants.h"
 #include "components/renderer_context_menu/context_menu_content_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/guest_view/web_view/context_menu_content_type_web_view.h"
 #include "chrome/browser/renderer_context_menu/context_menu_content_type_app_mode.h"
 #include "chrome/browser/renderer_context_menu/context_menu_content_type_extension_popup.h"
-#include "chrome/browser/renderer_context_menu/context_menu_content_type_panel.h"
 #include "chrome/browser/renderer_context_menu/context_menu_content_type_platform_app.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/view_type_utils.h"
@@ -28,11 +29,6 @@
 #endif
 
 namespace {
-
-bool CheckInternalResourcesURL(const GURL& url) {
-  return url.SchemeIs(content::kChromeUIScheme) &&
-         (url.host_piece() == chrome::kChromeUISyncResourcesHost);
-}
 
 bool IsUserSessionBlocked() {
 #if defined(OS_CHROMEOS)
@@ -67,47 +63,44 @@ ContextMenuContentTypeFactory::~ContextMenuContentTypeFactory() {
 }
 
 // static.
-ContextMenuContentType* ContextMenuContentTypeFactory::Create(
+std::unique_ptr<ContextMenuContentType> ContextMenuContentTypeFactory::Create(
     content::WebContents* web_contents,
     const content::ContextMenuParams& params) {
   if (IsUserSessionBlocked())
-    return new NullContextMenuContentType(web_contents, params);
+    return std::make_unique<NullContextMenuContentType>(web_contents, params);
 
-  return SetInternalResourcesURLChecker(CreateInternal(web_contents, params));
-}
-
-// static.
-ContextMenuContentType*
-ContextMenuContentTypeFactory::SetInternalResourcesURLChecker(
-    ContextMenuContentType* content_type) {
-  content_type->set_internal_resources_url_checker(
-      base::Bind(&CheckInternalResourcesURL));
-  return content_type;
+  return CreateInternal(web_contents, params);
 }
 
 // static
-ContextMenuContentType* ContextMenuContentTypeFactory::CreateInternal(
+std::unique_ptr<ContextMenuContentType>
+ContextMenuContentTypeFactory::CreateInternal(
     content::WebContents* web_contents,
     const content::ContextMenuParams& params) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  if (chrome::IsRunningInForcedAppMode())
-    return new ContextMenuContentTypeAppMode(web_contents, params);
+  if (chrome::IsRunningInForcedAppMode()) {
+    return base::WrapUnique(
+        new ContextMenuContentTypeAppMode(web_contents, params));
+  }
 
-  if (extensions::WebViewGuest::FromWebContents(web_contents))
-    return new ContextMenuContentTypeWebView(web_contents, params);
+  if (extensions::WebViewGuest::FromWebContents(web_contents)) {
+    return base::WrapUnique(
+        new ContextMenuContentTypeWebView(web_contents, params));
+  }
 
   const extensions::ViewType view_type = extensions::GetViewType(web_contents);
 
-  if (view_type == extensions::VIEW_TYPE_APP_WINDOW ||
-      view_type == extensions::VIEW_TYPE_LAUNCHER_PAGE)
-    return new ContextMenuContentTypePlatformApp(web_contents, params);
+  if (view_type == extensions::VIEW_TYPE_APP_WINDOW) {
+    return base::WrapUnique(
+        new ContextMenuContentTypePlatformApp(web_contents, params));
+  }
 
-  if (view_type == extensions::VIEW_TYPE_EXTENSION_POPUP)
-    return new ContextMenuContentTypeExtensionPopup(web_contents, params);
+  if (view_type == extensions::VIEW_TYPE_EXTENSION_POPUP) {
+    return base::WrapUnique(
+        new ContextMenuContentTypeExtensionPopup(web_contents, params));
+  }
 
-  if (view_type == extensions::VIEW_TYPE_PANEL)
-    return new ContextMenuContentTypePanel(web_contents, params);
 #endif
 
-  return new ContextMenuContentType(web_contents, params, true);
+  return std::make_unique<ContextMenuContentType>(web_contents, params, true);
 }

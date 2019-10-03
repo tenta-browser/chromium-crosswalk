@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/ppb_file_io.h"
 #include "ppapi/c/ppb_file_ref.h"

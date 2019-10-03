@@ -9,7 +9,6 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -97,7 +96,7 @@ class AudioServiceImpl : public AudioService,
   // chromeos::CrasAudioHandler::AudioObserver overrides.
   void OnOutputNodeVolumeChanged(uint64_t id, int volume) override;
   void OnInputNodeGainChanged(uint64_t id, int gain) override;
-  void OnOutputMuteChanged(bool mute_on, bool system_adjust) override;
+  void OnOutputMuteChanged(bool mute_on) override;
   void OnInputMuteChanged(bool mute_on) override;
   void OnAudioNodesChanged() override;
   void OnActiveOutputNodeChanged() override;
@@ -116,7 +115,7 @@ class AudioServiceImpl : public AudioService,
   AudioDeviceInfo ToAudioDeviceInfo(const chromeos::AudioDevice& device);
 
   // List of observers.
-  base::ObserverList<AudioService::Observer> observer_list_;
+  base::ObserverList<AudioService::Observer>::Unchecked observer_list_;
 
   chromeos::CrasAudioHandler* cras_audio_handler_;
 
@@ -130,21 +129,20 @@ class AudioServiceImpl : public AudioService,
 };
 
 AudioServiceImpl::AudioServiceImpl(AudioDeviceIdCalculator* id_calculator)
-    : cras_audio_handler_(NULL),
+    : cras_audio_handler_(chromeos::CrasAudioHandler::Get()),
       id_calculator_(id_calculator),
       weak_ptr_factory_(this) {
   CHECK(id_calculator_);
 
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
-    cras_audio_handler_ = chromeos::CrasAudioHandler::Get();
+  if (cras_audio_handler_)
     cras_audio_handler_->AddAudioObserver(this);
-  }
 }
 
 AudioServiceImpl::~AudioServiceImpl() {
-  if (cras_audio_handler_ && chromeos::CrasAudioHandler::IsInitialized()) {
-    cras_audio_handler_->RemoveAudioObserver(this);
-  }
+  // The CrasAudioHandler global instance may have already been destroyed, so
+  // do not used the cached pointer here.
+  if (chromeos::CrasAudioHandler::Get())
+    chromeos::CrasAudioHandler::Get()->RemoveAudioObserver(this);
 }
 
 void AudioServiceImpl::AddObserver(AudioService::Observer* observer) {
@@ -170,7 +168,7 @@ bool AudioServiceImpl::GetInfo(OutputInfo* output_info_out,
   for (size_t i = 0; i < devices.size(); ++i) {
     if (!devices[i].is_input) {
       OutputDeviceInfo info;
-      info.id = base::Uint64ToString(devices[i].id);
+      info.id = base::NumberToString(devices[i].id);
       info.name = devices[i].device_name + ": " + devices[i].display_name;
       info.is_active = devices[i].active;
       info.volume =
@@ -180,7 +178,7 @@ bool AudioServiceImpl::GetInfo(OutputInfo* output_info_out,
       output_info_out->push_back(std::move(info));
     } else {
       InputDeviceInfo info;
-      info.id = base::Uint64ToString(devices[i].id);
+      info.id = base::NumberToString(devices[i].id);
       info.name = devices[i].device_name + ": " + devices[i].display_name;
       info.is_active = devices[i].active;
       info.gain =
@@ -202,10 +200,10 @@ bool AudioServiceImpl::GetDevices(const api::audio::DeviceFilter* filter,
 
   bool accept_input =
       !(filter && filter->stream_types) ||
-      base::ContainsValue(*filter->stream_types, api::audio::STREAM_TYPE_INPUT);
-  bool accept_output = !(filter && filter->stream_types) ||
-                       base::ContainsValue(*filter->stream_types,
-                                           api::audio::STREAM_TYPE_OUTPUT);
+      base::Contains(*filter->stream_types, api::audio::STREAM_TYPE_INPUT);
+  bool accept_output =
+      !(filter && filter->stream_types) ||
+      base::Contains(*filter->stream_types, api::audio::STREAM_TYPE_OUTPUT);
 
   for (const auto& device : devices) {
     if (filter && filter->is_active && *filter->is_active != device.active)
@@ -354,7 +352,7 @@ bool AudioServiceImpl::GetAudioNodeIdList(
 AudioDeviceInfo AudioServiceImpl::ToAudioDeviceInfo(
     const chromeos::AudioDevice& device) {
   AudioDeviceInfo info;
-  info.id = base::Uint64ToString(device.id);
+  info.id = base::NumberToString(device.id);
   info.stream_type = device.is_input
                          ? extensions::api::audio::STREAM_TYPE_INPUT
                          : extensions::api::audio::STREAM_TYPE_OUTPUT;
@@ -376,7 +374,7 @@ void AudioServiceImpl::OnOutputNodeVolumeChanged(uint64_t id, int volume) {
   NotifyLevelChanged(id, volume);
 }
 
-void AudioServiceImpl::OnOutputMuteChanged(bool mute_on, bool system_adjust) {
+void AudioServiceImpl::OnOutputMuteChanged(bool mute_on) {
   NotifyMuteChanged(false, mute_on);
 }
 
@@ -407,7 +405,7 @@ void AudioServiceImpl::NotifyDeviceChanged() {
 
 void AudioServiceImpl::NotifyLevelChanged(uint64_t id, int level) {
   for (auto& observer : observer_list_)
-    observer.OnLevelChanged(base::Uint64ToString(id), level);
+    observer.OnLevelChanged(base::NumberToString(id), level);
 
   // Notify DeviceChanged event for backward compatibility.
   // TODO(jennyz): remove this code when the old version of hotrod retires.

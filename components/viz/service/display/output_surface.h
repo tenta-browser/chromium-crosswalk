@@ -6,18 +6,22 @@
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_OUTPUT_SURFACE_H_
 
 #include <memory>
+#include <vector>
 
+#include "base/callback_helpers.h"
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
+#include "components/viz/common/display/update_vsync_parameters_callback.h"
 #include "components/viz/common/gpu/context_provider.h"
-#include "components/viz/common/gpu/vulkan_context_provider.h"
+#include "components/viz/common/gpu/gpu_vsync_callback.h"
 #include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/service/display/overlay_candidate_validator.h"
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/texture_in_use_response.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "ui/gfx/color_space.h"
 #include "ui/latency/latency_info.h"
 
@@ -30,6 +34,7 @@ struct SwapResponse;
 namespace viz {
 class OutputSurfaceClient;
 class OutputSurfaceFrame;
+class SkiaOutputSurface;
 
 // This class represents a platform-independent API for presenting
 // buffers to display via GPU or software compositing. Implementations
@@ -49,15 +54,28 @@ class VIZ_SERVICE_EXPORT OutputSurface {
     // Note: HasExternalStencilTest() must return false when an output surface
     // has been configured for stencil usage.
     bool supports_stencil = false;
+    // Whether this OutputSurface supports post sub buffer or not.
+    bool supports_post_sub_buffer = false;
+    // Whether this OutputSurface supports gpu vsync callbacks.
+    bool supports_gpu_vsync = false;
+    // Whether this OutputSurface supports pre transform. If it is supported,
+    // the chrome will set the output surface size in hardware natural
+    // orientation, and will render transformed content on back buffers based
+    // on the current system transform. So the OS presentation engine can
+    // present buffers onto the screen directly.
+    bool supports_pre_transform = false;
+    // Whether this OutputSurface should skip DrawAndSwap(). This is true for
+    // the unified display on Chrome OS. All drawing is handled by the physical
+    // displays so the unified display should skip that work.
+    bool skips_draw = false;
   };
 
+  // Constructor for skia-based compositing.
+  OutputSurface();
   // Constructor for GL-based compositing.
   explicit OutputSurface(scoped_refptr<ContextProvider> context_provider);
   // Constructor for software compositing.
   explicit OutputSurface(std::unique_ptr<SoftwareOutputDevice> software_device);
-  // Constructor for Vulkan-based compositing.
-  explicit OutputSurface(
-      scoped_refptr<VulkanContextProvider> vulkan_context_provider);
 
   virtual ~OutputSurface();
 
@@ -68,12 +86,20 @@ class VIZ_SERVICE_EXPORT OutputSurface {
   // In the event of a lost context, the entire output surface should be
   // recreated.
   ContextProvider* context_provider() const { return context_provider_.get(); }
-  VulkanContextProvider* vulkan_context_provider() const {
-    return vulkan_context_provider_.get();
-  }
   SoftwareOutputDevice* software_device() const {
     return software_device_.get();
   }
+
+  // Downcasts to SkiaOutputSurface if it is one and returns nullptr otherwise.
+  virtual SkiaOutputSurface* AsSkiaOutputSurface();
+
+  void set_color_matrix(const SkMatrix44& color_matrix) {
+    color_matrix_ = color_matrix;
+  }
+  const SkMatrix44& color_matrix() const { return color_matrix_; }
+
+  // Only useful for GPU backend.
+  virtual gpu::SurfaceHandle GetSurfaceHandle() const;
 
   virtual void BindToClient(OutputSurfaceClient* client) = 0;
 
@@ -85,12 +111,8 @@ class VIZ_SERVICE_EXPORT OutputSurface {
   virtual void BindFramebuffer() = 0;
 
   // Marks that the given rectangle will be drawn to on the default, bound
-  // framebuffer. Only valid for surfaces with dc_layers in the context
-  // capabilities.
+  // framebuffer.
   virtual void SetDrawRectangle(const gfx::Rect& rect) = 0;
-
-  // Get the class capable of informing cc of hardware overlay capability.
-  virtual OverlayCandidateValidator* GetOverlayCandidateValidator() const = 0;
 
   // Returns true if a main image overlay plane should be scheduled.
   virtual bool IsDisplayedAsOverlayPlane() const = 0;
@@ -100,9 +122,6 @@ class VIZ_SERVICE_EXPORT OutputSurface {
 
   // Get the format for the main image's overlay.
   virtual gfx::BufferFormat GetOverlayBufferFormat() const = 0;
-
-  // If this returns true, then the surface will not attempt to draw.
-  virtual bool SurfaceIsSuspendForRecycle() const = 0;
 
   virtual void Reshape(const gfx::Size& size,
                        float device_scale_factor,
@@ -122,57 +141,70 @@ class VIZ_SERVICE_EXPORT OutputSurface {
   // after returning from this method in order to unblock the next frame.
   virtual void SwapBuffers(OutputSurfaceFrame frame) = 0;
 
-  // A helper class for implementations of OutputSurface that want to cache
-  // LatencyInfos that can be updated when we get the corresponding
-  // gfx::SwapResponse.
-  class VIZ_SERVICE_EXPORT LatencyInfoCache {
-   public:
-    class Client {
-     public:
-      virtual ~Client() = default;
-      virtual void LatencyInfoCompleted(
-          const std::vector<ui::LatencyInfo>& latency_info) = 0;
-    };
+  // Updates the GpuFence associated with this surface. The id of a newly
+  // created GpuFence is returned, or if an error occurs, or fences are not
+  // supported, the special id of 0 (meaning "no fence") is returned.  In all
+  // cases, any previously associated fence is destroyed. The returned fence id
+  // corresponds to the GL id used by the CHROMIUM_gpu_fence GL extension and
+  // can be passed directly to any related extension functions.
+  virtual unsigned UpdateGpuFence() = 0;
 
-    explicit LatencyInfoCache(Client* client);
-    ~LatencyInfoCache();
+  // Sets callback to receive updated vsync parameters after SwapBuffers() if
+  // supported.
+  virtual void SetUpdateVSyncParametersCallback(
+      UpdateVSyncParametersCallback callback) = 0;
 
-    // Returns true if there's a snapshot request.
-    bool WillSwap(std::vector<ui::LatencyInfo> latency_info);
-    void OnSwapBuffersCompleted(const gfx::SwapResponse& response);
+  // Set a callback for vsync signal from GPU service for begin frames.  The
+  // callbacks must be received on the calling thread.
+  virtual void SetGpuVSyncCallback(GpuVSyncCallback callback);
 
-   private:
-    struct SwapInfo {
-      SwapInfo(uint64_t id, std::vector<ui::LatencyInfo> info);
-      SwapInfo(SwapInfo&& src);
-      SwapInfo& operator=(SwapInfo&& src);
-      ~SwapInfo();
-      uint64_t swap_id;
-      std::vector<ui::LatencyInfo> latency_info;
-      DISALLOW_COPY_AND_ASSIGN(SwapInfo);
-    };
+  // Enable or disable vsync callback based on whether begin frames are needed.
+  virtual void SetGpuVSyncEnabled(bool enabled);
 
-    Client* client_ = nullptr;
+  // When the device is rotated, the scene prepared by the UI is in the logical
+  // screen space as seen by the user. However, attempting to scanout a buffer
+  // with its content in this logical space may be unsupported or inefficient
+  // when rendered by the display hardware.
+  //
+  // In order to avoid this, this API provides the OutputSurface with the
+  // transform/rotation that should be applied to the display compositor's
+  // output. This is the same rotation as the physical rotation on the display.
+  // In some cases, this is done natively by the graphics backend (
+  // For instance, this is already done by GL drivers on Android. See
+  // https://source.android.com/devices/graphics/implement#pre-rotation).
+  //
+  // If not supported natively, the OutputSurface should return the transform
+  // needed in GetDisplayTransform for it to explicitly applied by the
+  // compositor.
+  virtual void SetDisplayTransformHint(gfx::OverlayTransform transform) = 0;
+  virtual gfx::OverlayTransform GetDisplayTransform() = 0;
 
-    // Incremented in sync with the ImageTransportSurface's swap_id_.
-    uint64_t swap_id_ = 0;
-    base::circular_deque<SwapInfo> swap_infos_;
+  virtual base::ScopedClosureRunner GetCacheBackBufferCb();
 
-    // We only expect a couple swap acks outstanding, but there are cases where
-    // we will get timestamps for swaps from several frames ago when using
-    // platform extensions like eglGetFrameTimestampsANDROID.
-    static constexpr size_t kCacheCountMax = 10;
+  // Only used for pre-OOP-D code path of BrowserCompositorOutputSurface.
+  // TODO(weiliangc): Remove it when reflector code is removed.
+  virtual bool IsSoftwareMirrorMode() const;
 
-    DISALLOW_COPY_AND_ASSIGN(LatencyInfoCache);
-  };
+  // If set to true, the OutputSurface must deliver
+  // OutputSurfaceclient::DidSwapWithSize notifications to its client.
+  // OutputSurfaces which support delivering swap size notifications should
+  // override this.
+  virtual void SetNeedsSwapSizeNotifications(
+      bool needs_swap_size_notifications);
+
+  // Updates timing info on the provided LatencyInfo when swap completes.
+  static void UpdateLatencyInfoOnSwap(
+      const gfx::SwapResponse& response,
+      std::vector<ui::LatencyInfo>* latency_info);
 
  protected:
   struct OutputSurface::Capabilities capabilities_;
   scoped_refptr<ContextProvider> context_provider_;
-  scoped_refptr<VulkanContextProvider> vulkan_context_provider_;
   std::unique_ptr<SoftwareOutputDevice> software_device_;
 
  private:
+  SkMatrix44 color_matrix_;
+
   DISALLOW_COPY_AND_ASSIGN(OutputSurface);
 };
 

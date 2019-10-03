@@ -5,18 +5,17 @@
 #ifndef CHROMEOS_LOGIN_AUTH_FAKE_EXTENDED_AUTHENTICATOR_H_
 #define CHROMEOS_LOGIN_AUTH_FAKE_EXTENDED_AUTHENTICATOR_H_
 
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/login/auth/extended_authenticator.h"
 #include "chromeos/login/auth/user_context.h"
-
-class AccountId;
 
 namespace chromeos {
 
 class AuthFailure;
 
-class CHROMEOS_EXPORT FakeExtendedAuthenticator : public ExtendedAuthenticator {
+class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) FakeExtendedAuthenticator
+    : public ExtendedAuthenticator {
  public:
   FakeExtendedAuthenticator(NewAuthStatusConsumer* consumer,
                             const UserContext& expected_user_context);
@@ -29,9 +28,6 @@ class CHROMEOS_EXPORT FakeExtendedAuthenticator : public ExtendedAuthenticator {
                            const ResultCallback& success_callback) override;
   void AuthenticateToCheck(const UserContext& context,
                            const base::Closure& success_callback) override;
-  void CreateMount(const AccountId& account_id,
-                   const std::vector<cryptohome::KeyDefinition>& keys,
-                   const ResultCallback& success_callback) override;
   void AddKey(const UserContext& context,
               const cryptohome::KeyDefinition& key,
               bool replace_existing,

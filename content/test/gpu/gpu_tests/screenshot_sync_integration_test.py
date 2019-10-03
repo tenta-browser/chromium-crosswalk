@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import math
 import os
 import random
 import sys
@@ -9,7 +10,6 @@ import sys
 from gpu_tests import color_profile_manager
 from gpu_tests import gpu_integration_test
 from gpu_tests import path_util
-from gpu_tests import screenshot_sync_expectations
 
 from telemetry.util import image_util
 from telemetry.util import rgba_color
@@ -43,6 +43,7 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
 
   @classmethod
   def AddCommandlineArgs(cls, parser):
+    super(ScreenshotSyncIntegrationTest, cls).AddCommandlineArgs(parser)
     parser.add_option(
       '--dont-restore-color-profile-after-test',
       dest='dont_restore_color_profile_after_test',
@@ -69,10 +70,6 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       '--force-color-profile=srgb',
       '--ensure-forced-color-profile',
       '--test-type=gpu'] + browser_args
-
-  @classmethod
-  def _CreateExpectations(cls):
-    return screenshot_sync_expectations.ScreenshotSyncExpectations()
 
   @classmethod
   def GenerateGpuTests(cls, options):
@@ -118,10 +115,18 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     tab.EvaluateJavaScript(
         "window.draw({{ red }}, {{ green }}, {{ blue }});",
         red=canvasRGB.r, green=canvasRGB.g, blue=canvasRGB.b)
-    screenshot = tab.Screenshot(5)
+    screenshot = tab.Screenshot(10)
+    # Avoid checking along antialiased boundary due to limited Adreno 3xx
+    # interpolation precision (crbug.com/847984). We inset by one CSS pixel
+    # adjusted by the device pixel ratio.
+    inset = int(math.ceil(tab.EvaluateJavaScript('window.devicePixelRatio')))
+    # It seems that we should be able to set start_x to 2 * inset (one to
+    # account for the inner div having left=1 and one to avoid sampling the
+    # aa edge). For reasons not fully understood this is insufficent on
+    # several bots (N9, 6P, mac-rel).
     start_x = 10
-    start_y = 0
-    outer_size = 256
+    start_y = inset
+    outer_size = 256 - inset
     skip = 10
     for y in range(start_y, outer_size, skip):
       for x in range(start_x, outer_size, skip):
@@ -134,6 +139,13 @@ class ScreenshotSyncIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     repetitions = 20
     for _ in range(0, repetitions):
       self._CheckScreenshot()
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'test_expectations',
+                     'screenshot_sync_expectations.txt')]
 
 def load_tests(loader, tests, pattern):
   del loader, tests, pattern  # Unused.

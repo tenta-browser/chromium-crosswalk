@@ -9,27 +9,37 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
+#include "chrome/browser/image_fetcher/image_decoder_impl.h"
+#include "chrome/browser/ntp_tiles/chrome_custom_links_manager_factory.h"
 #include "chrome/browser/ntp_tiles/chrome_popular_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/suggestions/image_decoder_impl.h"
 #include "chrome/browser/search/suggestions/suggestions_service_factory.h"
-#include "chrome/browser/supervised_user/supervised_user_service.h"
-#include "chrome/browser/supervised_user/supervised_user_service_factory.h"
-#include "chrome/browser/supervised_user/supervised_user_service_observer.h"
-#include "chrome/browser/supervised_user/supervised_user_url_filter.h"
-#include "chrome/browser/thumbnails/thumbnail_list_source.h"
+#include "chrome/common/buildflags.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/image_fetcher/core/image_fetcher_impl.h"
 #include "components/ntp_tiles/icon_cacher_impl.h"
 #include "components/ntp_tiles/metrics.h"
 #include "components/ntp_tiles/most_visited_sites.h"
+#include "content/public/browser/storage_partition.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/explore_sites/most_visited_client.h"
+#endif
+
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#include "chrome/browser/supervised_user/supervised_user_service.h"
+#include "chrome/browser/supervised_user/supervised_user_service_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_service_observer.h"
+#include "chrome/browser/supervised_user/supervised_user_url_filter.h"
+#endif
 
 using suggestions::SuggestionsServiceFactory;
 
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 namespace {
 
 class SupervisorBridge : public ntp_tiles::MostVisitedSitesSupervisor,
@@ -105,6 +115,7 @@ void SupervisorBridge::OnURLFilterChanged() {
 }
 
 }  // namespace
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 
 // static
 std::unique_ptr<ntp_tiles::MostVisitedSites>
@@ -114,7 +125,7 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
     return nullptr;
   }
 
-  return base::MakeUnique<ntp_tiles::MostVisitedSites>(
+  auto most_visited_sites = std::make_unique<ntp_tiles::MostVisitedSites>(
       profile->GetPrefs(), TopSitesFactory::GetForProfile(profile),
       SuggestionsServiceFactory::GetForProfile(profile),
 #if defined(OS_ANDROID)
@@ -122,12 +133,28 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
 #else
       nullptr,
 #endif
-      base::MakeUnique<ntp_tiles::IconCacherImpl>(
+#if !defined(OS_ANDROID)
+      ChromeCustomLinksManagerFactory::NewForProfile(profile),
+#else
+      nullptr,
+#endif
+      std::make_unique<ntp_tiles::IconCacherImpl>(
           FaviconServiceFactory::GetForProfile(
               profile, ServiceAccessType::IMPLICIT_ACCESS),
           LargeIconServiceFactory::GetForBrowserContext(profile),
-          base::MakeUnique<image_fetcher::ImageFetcherImpl>(
-              base::MakeUnique<suggestions::ImageDecoderImpl>(),
-              profile->GetRequestContext())),
-      base::MakeUnique<SupervisorBridge>(profile));
+          std::make_unique<image_fetcher::ImageFetcherImpl>(
+              std::make_unique<ImageDecoderImpl>(),
+              content::BrowserContext::GetDefaultStoragePartition(profile)
+                  ->GetURLLoaderFactoryForBrowserProcess())),
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+      std::make_unique<SupervisorBridge>(profile)
+#else
+      nullptr
+#endif
+  );
+#if defined(OS_ANDROID)
+  most_visited_sites->SetExploreSitesClient(
+      explore_sites::MostVisitedClient::Create());
+#endif
+  return most_visited_sites;
 }

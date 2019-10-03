@@ -8,18 +8,19 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace exo {
 class Buffer;
 
-// Shared memory abstraction. Provides a wrapper around base::SharedMemory
-// with functionality to create buffers from the memory to use for display.
+// Shared memory abstraction. Provides a wrapper around
+// base::UnsafeSharedMemoryRegion with functionality to create buffers from the
+// memory to use for display.
 class SharedMemory {
  public:
-  explicit SharedMemory(const base::SharedMemoryHandle& handle);
+  explicit SharedMemory(base::UnsafeSharedMemoryRegion shared_memory_region);
   ~SharedMemory();
 
   // Creates a buffer from the shared memory. The buffer is created offset bytes
@@ -32,8 +33,11 @@ class SharedMemory {
                                        unsigned offset,
                                        int stride);
 
+  size_t GetSize() const;
+  bool Resize(const size_t new_size);
+
  private:
-  base::SharedMemory shared_memory_;
+  base::UnsafeSharedMemoryRegion shared_memory_region_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedMemory);
 };

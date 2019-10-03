@@ -6,12 +6,15 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_task_environment.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_browser_thread.h"
@@ -39,7 +42,8 @@ const char kClearCookiesHeader[] = "Clear-Site-Data: \"cookies\"";
 
 void WaitForUIThread() {
   base::RunLoop run_loop;
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, run_loop.QuitClosure());
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           run_loop.QuitClosure());
   run_loop.Run();
 }
 
@@ -63,8 +67,8 @@ class TestThrottle : public ClearSiteDataThrottle {
 
   void SetResponseHeaders(const std::string& headers) {
     std::string headers_with_status_code = "HTTP/1.1 200\n" + headers;
-    headers_ = new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-        headers_with_status_code.c_str(), headers_with_status_code.size()));
+    headers_ = base::MakeRefCounted<net::HttpResponseHeaders>(
+        net::HttpUtil::AssembleRawHeaders(headers_with_status_code));
   }
 
   MOCK_METHOD4(ClearSiteData,
@@ -129,7 +133,7 @@ class StringConsoleMessagesDelegate : public ConsoleMessagesDelegate {
  private:
   static void OutputFormattedMessage(std::string* output_buffer,
                                      WebContents* web_contents,
-                                     ConsoleMessageLevel level,
+                                     blink::mojom::ConsoleMessageLevel level,
                                      const std::string& formatted_text) {
     *output_buffer += formatted_text + "\n";
   }
@@ -160,9 +164,9 @@ TEST_F(ClearSiteDataThrottleTest, MaybeCreateThrottleForRequest) {
       ClearSiteDataThrottle::MaybeCreateThrottleForRequest(request.get()));
 
   // We can create the throttle for a valid ResourceRequestInfo.
-  ResourceRequestInfo::AllocateForTesting(request.get(), RESOURCE_TYPE_IMAGE,
-                                          nullptr, 0, 0, 0, false, true, true,
-                                          false, nullptr);
+  ResourceRequestInfo::AllocateForTesting(
+      request.get(), ResourceType::kImage, nullptr, 0, 0, 0, false,
+      ResourceInterceptPolicy::kAllowAll, true, false, nullptr);
   EXPECT_TRUE(
       ClearSiteDataThrottle::MaybeCreateThrottleForRequest(request.get()));
 }
@@ -179,24 +183,17 @@ TEST_F(ClearSiteDataThrottleTest, ParseHeaderAndExecuteClearingTask) {
       // One data type.
       {"\"cookies\"", true, false, false},
       {"\"storage\"", false, true, false},
-
-      // TODO(crbug.com/762417): The "cache" parameter is temporarily disabled.
-      // Therefore, a header consisting solely of the "cache" parameter is
-      // invalid. As this test verifies the behavior of Clear-Site-Data with
-      // valid headers, we will omit such test case.
+      {"\"cache\"", false, false, true},
 
       // Two data types.
       {"\"cookies\", \"storage\"", true, true, false},
-
-      // TODO(crbug.com/762417): The "cache" parameter is temporarily disabled.
-      {"\"cookies\", \"cache\"", true, false, false},
-      {"\"storage\", \"cache\"", false, true, false},
+      {"\"cookies\", \"cache\"", true, false, true},
+      {"\"storage\", \"cache\"", false, true, true},
 
       // Three data types.
-      // TODO(crbug.com/762417): The "cache" parameter is temporarily disabled.
-      {"\"storage\", \"cache\", \"cookies\"", true, true, false},
-      {"\"cache\", \"cookies\", \"storage\"", true, true, false},
-      {"\"cookies\", \"storage\", \"cache\"", true, true, false},
+      {"\"storage\", \"cache\", \"cookies\"", true, true, true},
+      {"\"cache\", \"cookies\", \"storage\"", true, true, true},
+      {"\"cookies\", \"storage\", \"cache\"", true, true, true},
 
       // The wildcard datatype is not yet shipped.
       {"\"*\", \"storage\"", false, true, false},
@@ -214,16 +211,15 @@ TEST_F(ClearSiteDataThrottleTest, ParseHeaderAndExecuteClearingTask) {
 
       // Unknown types are ignored, but we still proceed with the deletion for
       // those that we recognize.
-      {"\"storage\", \"foo\"", false, true, false},
+      {"\"cache\", \"foo\"", false, false, true},
   };
 
   std::vector<TestCase> experimental_test_cases = {
       // Wildcard.
-      // TODO(crbug.com/762417): The "cache" parameter is temporarily disabled.
-      {"\"*\"", true, true, false},
-      {"\"*\", \"storage\"", true, true, false},
-      {"\"cache\", \"*\", \"storage\"", true, true, false},
-      {"\"*\", \"cookies\", \"*\"", true, true, false},
+      {"\"*\"", true, true, true},
+      {"\"*\", \"storage\"", true, true, true},
+      {"\"cache\", \"*\", \"storage\"", true, true, true},
+      {"\"*\", \"cookies\", \"*\"", true, true, true},
   };
 
   const std::vector<TestCase>* test_case_sets[] = {&standard_test_cases,
@@ -290,9 +286,6 @@ TEST_F(ClearSiteDataThrottleTest, InvalidHeader) {
                     {"\"passwords\"",
                      "Unrecognized type: \"passwords\".\n"
                      "No recognized types specified.\n"},
-                    {"\"cache\"",
-                     "The \"cache\" datatype is temporarily not supported.\n"
-                     "No recognized types specified.\n"},
                     // The wildcard datatype is not yet shipped.
                     {"[ \"*\" ]",
                      "Unrecognized type: [ \"*\" ].\n"
@@ -321,7 +314,7 @@ TEST_F(ClearSiteDataThrottleTest, InvalidHeader) {
 
     std::string multiline_message;
     for (const auto& message : console_delegate.messages()) {
-      EXPECT_EQ(CONSOLE_MESSAGE_LEVEL_ERROR, message.level);
+      EXPECT_EQ(blink::mojom::ConsoleMessageLevel::kError, message.level);
       multiline_message += message.text + "\n";
     }
 
@@ -348,10 +341,13 @@ TEST_F(ClearSiteDataThrottleTest, LoadDoNotSaveCookies) {
   throttle.WillProcessResponse(&defer);
   EXPECT_TRUE(defer);
   EXPECT_EQ(1u, console_delegate->messages().size());
-  EXPECT_EQ("Cleared data types: \"cookies\".",
-            console_delegate->messages().front().text);
+  EXPECT_EQ(
+      "Cleared data types: \"cookies\". "
+      "Clearing channel IDs and HTTP authentication cache is currently "
+      "not supported, as it breaks active network connections.",
+      console_delegate->messages().front().text);
   EXPECT_EQ(console_delegate->messages().front().level,
-            CONSOLE_MESSAGE_LEVEL_INFO);
+            blink::mojom::ConsoleMessageLevel::kInfo);
   testing::Mock::VerifyAndClearExpectations(&throttle);
 
   request->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES);
@@ -363,7 +359,7 @@ TEST_F(ClearSiteDataThrottleTest, LoadDoNotSaveCookies) {
       "The request's credentials mode prohibits modifying cookies "
       "and other local data.",
       console_delegate->messages().rbegin()->text);
-  EXPECT_EQ(CONSOLE_MESSAGE_LEVEL_ERROR,
+  EXPECT_EQ(blink::mojom::ConsoleMessageLevel::kError,
             console_delegate->messages().rbegin()->level);
   testing::Mock::VerifyAndClearExpectations(&throttle);
 }
@@ -414,8 +410,9 @@ TEST_F(ClearSiteDataThrottleTest, InvalidOrigin) {
 
     EXPECT_EQ(defer, test_case.expect_success);
     EXPECT_EQ(console_delegate->messages().size(), 1u);
-    EXPECT_EQ(test_case.expect_success ? CONSOLE_MESSAGE_LEVEL_INFO
-                                       : CONSOLE_MESSAGE_LEVEL_ERROR,
+    EXPECT_EQ(test_case.expect_success
+                  ? blink::mojom::ConsoleMessageLevel::kInfo
+                  : blink::mojom::ConsoleMessageLevel::kError,
               console_delegate->messages().front().level);
     if (!test_case.expect_success) {
       EXPECT_EQ(test_case.error_message,
@@ -557,10 +554,13 @@ TEST_F(ClearSiteDataThrottleTest, FormattedConsoleOutput) {
     const char* url;
     const char* output;
   } kTestCases[] = {
-      // Successful deletion outputs one line.
+      // Successful deletion outputs one line, and in case of cookies, also
+      // a disclaimer about omitted data (crbug.com/798760).
       {"\"cookies\"", "https://origin1.com/foo",
        "Clear-Site-Data header on 'https://origin1.com/foo': "
-       "Cleared data types: \"cookies\".\n"},
+       "Cleared data types: \"cookies\". "
+       "Clearing channel IDs and HTTP authentication cache is currently "
+       "not supported, as it breaks active network connections.\n"},
 
       // Another successful deletion.
       {"\"storage\"", "https://origin2.com/foo",
@@ -589,9 +589,9 @@ TEST_F(ClearSiteDataThrottleTest, FormattedConsoleOutput) {
        "No recognized types specified.\n"},
 
       // Successful deletion on the same URL.
-      {"\"cookies\"", "https://origin3.com/bar",
+      {"\"cache\"", "https://origin3.com/bar",
        "Clear-Site-Data header on 'https://origin3.com/bar': "
-       "Cleared data types: \"cookies\".\n"},
+       "Cleared data types: \"cache\".\n"},
 
       // Redirect to the original URL.
       // Successful deletion outputs one line.
@@ -610,8 +610,8 @@ TEST_F(ClearSiteDataThrottleTest, FormattedConsoleOutput) {
                               nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
     ResourceRequestInfo::AllocateForTesting(
         request.get(),
-        navigation ? RESOURCE_TYPE_SUB_FRAME : RESOURCE_TYPE_IMAGE, nullptr, 0,
-        0, 0, false, true, true, false, nullptr);
+        navigation ? ResourceType::kSubFrame : ResourceType::kImage, nullptr, 0,
+        0, 0, false, ResourceInterceptPolicy::kAllowAll, true, false, nullptr);
 
     std::string output_buffer;
     std::unique_ptr<RedirectableTestThrottle> throttle =
@@ -629,7 +629,7 @@ TEST_F(ClearSiteDataThrottleTest, FormattedConsoleOutput) {
     bool defer;
     throttle->WillStartRequest(&defer);
 
-    for (size_t i = 0; i < arraysize(kTestCases); i++) {
+    for (size_t i = 0; i < base::size(kTestCases); i++) {
       throttle->SetResponseHeaders(std::string(kClearSiteDataHeaderPrefix) +
                                    kTestCases[i].header);
 
@@ -638,7 +638,7 @@ TEST_F(ClearSiteDataThrottleTest, FormattedConsoleOutput) {
       throttle->SetCurrentURLForTesting(GURL(kTestCases[i].url));
 
       net::RedirectInfo redirect_info;
-      if (i < arraysize(kTestCases) - 1)
+      if (i < base::size(kTestCases) - 1)
         throttle->WillRedirectRequest(redirect_info, &defer);
       else
         throttle->WillProcessResponse(&defer);

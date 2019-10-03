@@ -4,9 +4,13 @@
 
 #include "content/browser/indexed_db/indexed_db_pre_close_task_queue.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/sequenced_task_runner_handle.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
 #include "third_party/leveldatabase/env_chromium.h"
+
+using blink::IndexedDBDatabaseMetadata;
 
 namespace content {
 
@@ -16,13 +20,12 @@ IndexedDBPreCloseTaskQueue::IndexedDBPreCloseTaskQueue(
     std::list<std::unique_ptr<IndexedDBPreCloseTaskQueue::PreCloseTask>> tasks,
     base::OnceClosure on_complete,
     base::TimeDelta max_run_time,
-    std::unique_ptr<base::Timer> timer)
+    std::unique_ptr<base::OneShotTimer> timer)
     : tasks_(std::move(tasks)),
       on_done_(std::move(on_complete)),
       timeout_time_(max_run_time),
       timeout_timer_(std::move(timer)),
-      task_runner_(base::SequencedTaskRunnerHandle::Get()),
-      ptr_factory_(this) {}
+      task_runner_(base::SequencedTaskRunnerHandle::Get()) {}
 IndexedDBPreCloseTaskQueue::~IndexedDBPreCloseTaskQueue() {}
 
 void IndexedDBPreCloseTaskQueue::StopForNewConnection() {
@@ -45,9 +48,10 @@ void IndexedDBPreCloseTaskQueue::Start(
     OnComplete();
     return;
   }
-  timeout_timer_->Start(FROM_HERE, timeout_time_,
-                        base::Bind(&IndexedDBPreCloseTaskQueue::StopForTimout,
-                                   ptr_factory_.GetWeakPtr()));
+  timeout_timer_->Start(
+      FROM_HERE, timeout_time_,
+      base::BindOnce(&IndexedDBPreCloseTaskQueue::StopForTimout,
+                     ptr_factory_.GetWeakPtr()));
   leveldb::Status status = std::move(metadata_fetcher).Run(&metadata_);
   if (!status.ok()) {
     StopForMetadataError(status);

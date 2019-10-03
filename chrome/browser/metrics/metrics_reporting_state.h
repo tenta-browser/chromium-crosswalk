@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_METRICS_METRICS_REPORTING_STATE_H_
 
 #include "base/callback.h"
+#include "build/build_config.h"
 #include "components/metrics/metrics_service_client.h"
 
 typedef base::Callback<void(bool)> OnMetricsReportingCallbackType;
@@ -18,7 +19,7 @@ void ChangeMetricsReportingState(bool enabled);
 // stops the metrics service based on the new state and then runs |callback_fn|
 // (which can be null) with the updated state (as the operation may fail). On
 // platforms other than CrOS and Android, also updates the underlying pref.
-// TODO(gayane): Support setting the pref on all platforms.
+// TODO(https://crbug.com/880936): Support setting the pref on all platforms.
 void ChangeMetricsReportingStateWithReply(
     bool enabled,
     const OnMetricsReportingCallbackType& callback_fn);
@@ -27,6 +28,12 @@ void ChangeMetricsReportingStateWithReply(
 // this clears various client ids. When opting in, this resets saving crash
 // prefs, so as not to trigger upload of various stale data.
 void UpdateMetricsPrefsOnPermissionChange(bool metrics_enabled);
+
+#if !defined(OS_ANDROID)
+// Propagates the state of metrics reporting pref (which may be policy
+// managed) to GoogleUpdateSettings.
+void ApplyMetricsReportingPolicy();
+#endif
 
 // Returns whether MetricsReporting can be modified by the user (except
 // Android).

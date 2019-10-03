@@ -5,11 +5,13 @@
 #ifndef CHROMEOS_DBUS_IMAGE_LOADER_CLIENT_H_
 #define CHROMEOS_DBUS_IMAGE_LOADER_CLIENT_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
+#include "base/files/file_path.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 
@@ -17,7 +19,7 @@ namespace chromeos {
 
 // ImageLoaderClient is used to communicate with the ImageLoader service, which
 // registers and loads component updates on Chrome OS.
-class CHROMEOS_EXPORT ImageLoaderClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) ImageLoaderClient : public DBusClient {
  public:
   ~ImageLoaderClient() override;
 
@@ -33,6 +35,13 @@ class CHROMEOS_EXPORT ImageLoaderClient : public DBusClient {
   virtual void LoadComponent(const std::string& name,
                              DBusMethodCallback<std::string> callback) = 0;
 
+  // Mounts a component given the |name| and install path |path|, then returns
+  // the mount point (if call is successful).
+  virtual void LoadComponentAtPath(
+      const std::string& name,
+      const base::FilePath& path,
+      DBusMethodCallback<base::FilePath> callback) = 0;
+
   // Requests the currently registered version of the given component |name|.
   virtual void RequestComponentVersion(
       const std::string& name,
@@ -42,9 +51,13 @@ class CHROMEOS_EXPORT ImageLoaderClient : public DBusClient {
   virtual void RemoveComponent(const std::string& name,
                                DBusMethodCallback<bool> callback) = 0;
 
+  // Unmounts all mount points given component |name|.
+  virtual void UnmountComponent(const std::string& name,
+                                DBusMethodCallback<bool> callback) = 0;
+
   // Factory function, creates a new instance and returns ownership.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static ImageLoaderClient* Create();
+  static std::unique_ptr<ImageLoaderClient> Create();
 
  protected:
   // Create() should be used instead.

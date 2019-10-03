@@ -4,23 +4,19 @@
 
 #include "chrome/browser/ssl/cert_verifier_browser_test.h"
 
-#include "chrome/browser/profiles/profile_io_data.h"
-#include "net/cert/mock_cert_verifier.h"
+CertVerifierBrowserTest::CertVerifierBrowserTest() = default;
 
-CertVerifierBrowserTest::CertVerifierBrowserTest()
-    : InProcessBrowserTest(),
-      mock_cert_verifier_(new net::MockCertVerifier()) {}
+CertVerifierBrowserTest::~CertVerifierBrowserTest() = default;
 
-CertVerifierBrowserTest::~CertVerifierBrowserTest() {}
+void CertVerifierBrowserTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  mock_cert_verifier_.SetUpCommandLine(command_line);
+}
 
 void CertVerifierBrowserTest::SetUpInProcessBrowserTestFixture() {
-  ProfileIOData::SetCertVerifierForTesting(mock_cert_verifier_.get());
+  mock_cert_verifier_.SetUpInProcessBrowserTestFixture();
 }
 
 void CertVerifierBrowserTest::TearDownInProcessBrowserTestFixture() {
-  ProfileIOData::SetCertVerifierForTesting(nullptr);
-}
-
-net::MockCertVerifier* CertVerifierBrowserTest::mock_cert_verifier() {
-  return mock_cert_verifier_.get();
+  mock_cert_verifier_.TearDownInProcessBrowserTestFixture();
 }

@@ -39,6 +39,8 @@ const char* WaitInterval::GetModeString(BlockingMode mode) {
   return "";
 }
 
+#undef ENUM_CASE
+
 DataTypeTracker::DataTypeTracker()
     : local_nudge_count_(0),
       local_refresh_request_count_(0),
@@ -123,10 +125,11 @@ void DataTypeTracker::RecordCommitConflict() {
 }
 
 void DataTypeTracker::RecordSuccessfulSyncCycle() {
-  // If we were bloacked, then we would have been excluded from this cycle's
+  // If we were blocked, then we would have been excluded from this cycle's
   // GetUpdates and Commit actions.  Our state remains unchanged.
-  if (IsBlocked())
+  if (IsBlocked()) {
     return;
+  }
 
   // Reset throttling and backoff state.
   unblock_time_ = base::TimeTicks();
@@ -150,8 +153,24 @@ void DataTypeTracker::RecordSuccessfulSyncCycle() {
     last_dropped_invalidation_.reset();
   }
 
+  // The initial sync should generally have happened as part of a "configure"
+  // sync cycle, before this method gets called (i.e. after a successful
+  // "normal" sync cycle). However, in some cases the initial sync might not
+  // have happened, e.g. if this one data type got blocked or throttled during
+  // the configure cycle. For those cases, also clear |initial_sync_required_|
+  // here.
   initial_sync_required_ = false;
+
   sync_required_to_resolve_conflict_ = false;
+}
+
+void DataTypeTracker::RecordInitialSyncDone() {
+  // If we were blocked during the initial sync cycle, then the initial sync is
+  // not actually done. Our state remains unchanged.
+  if (IsBlocked()) {
+    return;
+  }
+  initial_sync_required_ = false;
 }
 
 // This limit will take effect on all future invalidations received.
@@ -164,6 +183,9 @@ bool DataTypeTracker::IsSyncRequired() const {
 }
 
 bool DataTypeTracker::IsGetUpdatesRequired() const {
+  // TODO(crbug.com/926184): Maybe this shouldn't check IsInitialSyncRequired():
+  // The initial sync is done in a configuration cycle, while this method
+  // refers to normal cycles.
   return !IsBlocked() &&
          (HasRefreshRequestPending() || HasPendingInvalidation() ||
           IsInitialSyncRequired() || IsSyncRequiredToResolveConflict());
@@ -283,7 +305,7 @@ void DataTypeTracker::UpdateLocalNudgeDelay(base::TimeDelta delay) {
 }
 
 WaitInterval::BlockingMode DataTypeTracker::GetBlockingMode() const {
-  if (!wait_interval_.get()) {
+  if (!wait_interval_) {
     return WaitInterval::UNKNOWN;
   }
   return wait_interval_->mode;

@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.notifications.channels;
 
-import android.app.NotificationManager;
-import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
 
@@ -19,6 +17,8 @@ import org.chromium.chrome.browser.notifications.NotificationManagerProxyImpl;
 public class ChannelsUpdater {
     @VisibleForTesting
     static final String CHANNELS_VERSION_KEY = "channels_version_key";
+
+    private static final Object sLock = new Object();
 
     private final ChannelsInitializer mChannelsInitializer;
     private final SharedPreferences mSharedPreferences;
@@ -35,10 +35,8 @@ public class ChannelsUpdater {
         public static final ChannelsUpdater INSTANCE = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
                 ? new ChannelsUpdater(false /* isAtLeastO */, null, null, -1)
                 : new ChannelsUpdater(true /* isAtLeastO */, ContextUtils.getAppSharedPreferences(),
-                          new ChannelsInitializer(
-                                  new NotificationManagerProxyImpl(
-                                          (NotificationManager) ContextUtils.getApplicationContext()
-                                                  .getSystemService(Context.NOTIFICATION_SERVICE)),
+                          new ChannelsInitializer(new NotificationManagerProxyImpl(
+                                                          ContextUtils.getApplicationContext()),
                                   ContextUtils.getApplicationContext().getResources()),
                           ChannelDefinitions.CHANNELS_VERSION);
     }
@@ -58,11 +56,21 @@ public class ChannelsUpdater {
     }
 
     public void updateChannels() {
-        if (!mIsAtLeastO) return;
-        assert mChannelsInitializer != null;
-        mChannelsInitializer.deleteLegacyChannels();
-        mChannelsInitializer.initializeStartupChannels();
-        storeChannelVersionInPrefs();
+        synchronized (sLock) {
+            if (!mIsAtLeastO) return;
+            assert mChannelsInitializer != null;
+            mChannelsInitializer.deleteLegacyChannels();
+            mChannelsInitializer.initializeStartupChannels();
+            storeChannelVersionInPrefs();
+        }
+    }
+
+    public void updateLocale() {
+        synchronized (sLock) {
+            if (!mIsAtLeastO) return;
+            assert mChannelsInitializer != null;
+            mChannelsInitializer.updateLocale(ContextUtils.getApplicationContext().getResources());
+        }
     }
 
     private void storeChannelVersionInPrefs() {

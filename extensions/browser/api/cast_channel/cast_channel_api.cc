@@ -13,24 +13,26 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "components/cast_channel/cast_channel_enum.h"
-#include "components/cast_channel/cast_channel_util.h"
 #include "components/cast_channel/cast_message_util.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/cast_socket_service.h"
 #include "components/cast_channel/keep_alive_delegate.h"
 #include "components/cast_channel/logger.h"
 #include "components/cast_channel/proto/cast_channel.pb.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/cast_channel/cast_channel_enum_util.h"
 #include "extensions/browser/api/cast_channel/cast_message_util.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/event_router_factory.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
@@ -111,11 +113,17 @@ bool IsValidConnectInfoPort(const ConnectInfo& connect_info) {
 }
 
 bool IsValidConnectInfoIpAddress(const ConnectInfo& connect_info) {
-  return cast_channel::IsValidCastIPAddressString(connect_info.ip_address);
+  // Note: this isn't technically correct since policy or feature might allow
+  // public IPs, but this code path is no longer used. see TODO below.
+  net::IPAddress ip_address;
+  return ip_address.AssignFromIPLiteral(connect_info.ip_address) &&
+         !ip_address.IsPubliclyRoutable();
 }
 
 }  // namespace
 
+// TODO(https://crbug.com/752604): Remove unused cast.channel API functions now
+// that in-browser Cast discovery has launched in M64.
 CastChannelAPI::CastChannelAPI(content::BrowserContext* context)
     : browser_context_(context),
       cast_socket_service_(cast_channel::CastSocketService::GetInstance()) {
@@ -232,7 +240,7 @@ void CastChannelAsyncApiFunction::SetResultFromSocket(
   FillChannelInfo(socket, &channel_info);
   api::cast_channel::ChannelError error = ToChannelError(socket.error_state());
   if (error != api::cast_channel::CHANNEL_ERROR_NONE) {
-    SetError("Channel socket error = " + base::IntToString(error));
+    SetError("Channel socket error = " + base::NumberToString(error));
   }
   SetResultFromChannelInfo(channel_info);
 }
@@ -249,7 +257,7 @@ void CastChannelAsyncApiFunction::SetResultFromError(
   channel_info.connect_info.auth =
       api::cast_channel::CHANNEL_AUTH_TYPE_SSL_VERIFIED;
   SetResultFromChannelInfo(channel_info);
-  SetError("Channel error = " + base::IntToString(error));
+  SetError("Channel error = " + base::NumberToString(error));
 }
 
 void CastChannelAsyncApiFunction::SetResultFromChannelInfo(
@@ -324,7 +332,7 @@ void CastChannelOpenFunction::AsyncWorkStart() {
     cast_socket_service_->SetSocketForTest(std::move(test_socket));
 
   cast_channel::CastSocketOpenParams open_params(
-      *ip_endpoint_, ExtensionsBrowserClient::Get()->GetNetLog(),
+      *ip_endpoint_,
       base::TimeDelta::FromMilliseconds(connect_info.timeout.get()
                                             ? *connect_info.timeout
                                             : kDefaultConnectTimeoutMillis),
@@ -333,6 +341,9 @@ void CastChannelOpenFunction::AsyncWorkStart() {
                                       : CastDeviceCapability::NONE);
 
   cast_socket_service_->OpenSocket(
+      base::BindRepeating([] {
+        return ExtensionsBrowserClient::Get()->GetSystemNetworkContext();
+      }),
       open_params, base::BindOnce(&CastChannelOpenFunction::OnOpen, this));
 }
 
@@ -393,6 +404,14 @@ void CastChannelSendFunction::AsyncWorkStart() {
     return;
   }
 
+  if (socket->ready_state() == cast_channel::ReadyState::CLOSED ||
+      !socket->transport()) {
+    SetResultFromError(params_->channel.channel_id,
+                       api::cast_channel::CHANNEL_ERROR_CHANNEL_NOT_OPEN);
+    AsyncWorkCompleted();
+    return;
+  }
+
   CastMessage message_to_send;
   if (!MessageInfoToCastMessage(params_->message, &message_to_send)) {
     SetResultFromError(params_->channel.channel_id,
@@ -401,7 +420,7 @@ void CastChannelSendFunction::AsyncWorkStart() {
     return;
   }
   socket->transport()->SendMessage(
-      message_to_send, base::Bind(&CastChannelSendFunction::OnSend, this));
+      message_to_send, base::BindOnce(&CastChannelSendFunction::OnSend, this));
 }
 
 void CastChannelSendFunction::OnSend(int result) {
@@ -439,7 +458,7 @@ void CastChannelCloseFunction::AsyncWorkStart() {
                        api::cast_channel::CHANNEL_ERROR_INVALID_CHANNEL_ID);
     AsyncWorkCompleted();
   } else {
-    socket->Close(base::Bind(&CastChannelCloseFunction::OnClose, this));
+    socket->Close(base::BindOnce(&CastChannelCloseFunction::OnClose, this));
   }
 }
 
@@ -496,9 +515,8 @@ void CastChannelAPI::CastMessageHandler::OnError(
       OnError::Create(channel_info, error_info);
   std::unique_ptr<Event> event(new Event(
       events::CAST_CHANNEL_ON_ERROR, OnError::kEventName, std::move(results)));
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(ui_dispatch_cb_, base::Passed(std::move(event))));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(ui_dispatch_cb_, std::move(event)));
 }
 
 void CastChannelAPI::CastMessageHandler::OnMessage(
@@ -518,9 +536,8 @@ void CastChannelAPI::CastMessageHandler::OnMessage(
   std::unique_ptr<Event> event(new Event(events::CAST_CHANNEL_ON_MESSAGE,
                                          OnMessage::kEventName,
                                          std::move(results)));
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(ui_dispatch_cb_, base::Passed(std::move(event))));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(ui_dispatch_cb_, std::move(event)));
 }
 
 }  // namespace extensions

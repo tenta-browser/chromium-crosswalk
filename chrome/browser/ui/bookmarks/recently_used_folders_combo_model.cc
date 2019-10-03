@@ -88,10 +88,8 @@ RecentlyUsedFoldersComboModel::RecentlyUsedFoldersComboModel(
   items_.push_back(Item(NULL, Item::TYPE_SEPARATOR));
   items_.push_back(Item(NULL, Item::TYPE_CHOOSE_ANOTHER_FOLDER));
 
-  std::vector<Item>::iterator it = std::find(items_.begin(),
-                                             items_.end(),
-                                             Item(node->parent(),
-                                                  Item::TYPE_NODE));
+  auto it = std::find(items_.begin(), items_.end(),
+                      Item(node->parent(), Item::TYPE_NODE));
   node_parent_index_ = static_cast<int>(it - items_.begin());
 }
 
@@ -147,27 +145,24 @@ void RecentlyUsedFoldersComboModel::BookmarkModelBeingDeleted(
 void RecentlyUsedFoldersComboModel::BookmarkNodeMoved(
     BookmarkModel* model,
     const BookmarkNode* old_parent,
-    int old_index,
+    size_t old_index,
     const BookmarkNode* new_parent,
-    int new_index) {
-}
+    size_t new_index) {}
 
 void RecentlyUsedFoldersComboModel::BookmarkNodeAdded(
     BookmarkModel* model,
     const BookmarkNode* parent,
-    int index) {
-}
+    size_t index) {}
 
 void RecentlyUsedFoldersComboModel::OnWillRemoveBookmarks(
     BookmarkModel* model,
     const BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const BookmarkNode* node) {
   // Changing is rare enough that we don't attempt to readjust the contents.
   // Update |items_| so we aren't left pointing to a deleted node.
   bool changed = false;
-  for (std::vector<Item>::iterator i = items_.begin();
-       i != items_.end();) {
+  for (auto i = items_.begin(); i != items_.end();) {
     if (i->type == Item::TYPE_NODE && i->node->HasAncestor(node)) {
       i = items_.erase(i);
       changed = true;
@@ -184,7 +179,7 @@ void RecentlyUsedFoldersComboModel::OnWillRemoveBookmarks(
 void RecentlyUsedFoldersComboModel::BookmarkNodeRemoved(
     BookmarkModel* model,
     const BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const BookmarkNode* node,
     const std::set<GURL>& removed_urls) {}
 
@@ -209,8 +204,7 @@ void RecentlyUsedFoldersComboModel::BookmarkAllUserNodesRemoved(
   // Changing is rare enough that we don't attempt to readjust the contents.
   // Update |items_| so we aren't left pointing to a deleted node.
   bool changed = false;
-  for (std::vector<Item>::iterator i = items_.begin();
-       i != items_.end();) {
+  for (auto i = items_.begin(); i != items_.end();) {
     if (i->type == Item::TYPE_NODE &&
         !bookmark_model_->is_permanent_node(i->node)) {
       i = items_.erase(i);
@@ -234,7 +228,7 @@ void RecentlyUsedFoldersComboModel::MaybeChangeParent(
   const BookmarkNode* new_parent = GetNodeAt(selected_index);
   if (new_parent != node->parent()) {
     base::RecordAction(base::UserMetricsAction("BookmarkBubble_ChangeParent"));
-    bookmark_model_->Move(node, new_parent, new_parent->child_count());
+    bookmark_model_->Move(node, new_parent, new_parent->children().size());
   }
 }
 
@@ -245,9 +239,8 @@ const BookmarkNode* RecentlyUsedFoldersComboModel::GetNodeAt(int index) {
 }
 
 void RecentlyUsedFoldersComboModel::RemoveNode(const BookmarkNode* node) {
-  std::vector<Item>::iterator it = std::find(items_.begin(),
-                                             items_.end(),
-                                             Item(node, Item::TYPE_NODE));
+  auto it =
+      std::find(items_.begin(), items_.end(), Item(node, Item::TYPE_NODE));
   if (it != items_.end())
     items_.erase(it);
 }

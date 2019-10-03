@@ -15,7 +15,6 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/unrecoverable_error_handler.h"
 #include "components/sync/driver/sync_api_component_factory.h"
-#include "components/sync/driver/sync_client.h"
 #include "components/sync/model/local_change_observer.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_error.h"
@@ -39,36 +38,16 @@ void SetNodeSpecifics(const sync_pb::EntitySpecifics& entity_specifics,
   if (GetModelTypeFromSpecifics(entity_specifics) == PASSWORDS) {
     write_node->SetPasswordSpecifics(
         entity_specifics.password().client_only_encrypted_data());
+  } else if (GetModelTypeFromSpecifics(entity_specifics) ==
+             WIFI_CONFIGURATIONS) {
+    write_node->SetWifiConfigurationSpecifics(
+        entity_specifics.wifi_configuration().client_only_encrypted_data());
   } else {
     write_node->SetEntitySpecifics(entity_specifics);
   }
 }
 
-// Helper function to convert AttachmentId to AttachmentMetadataRecord.
-sync_pb::AttachmentMetadataRecord AttachmentIdToRecord(
-    const AttachmentId& attachment_id) {
-  sync_pb::AttachmentMetadataRecord record;
-  *record.mutable_id() = attachment_id.GetProto();
-  return record;
-}
-
-// Replace |write_nodes|'s attachment ids with |attachment_ids|.
-void SetAttachmentMetadata(const AttachmentIdList& attachment_ids,
-                           WriteNode* write_node) {
-  DCHECK(write_node);
-  sync_pb::AttachmentMetadata attachment_metadata;
-  std::transform(
-      attachment_ids.begin(), attachment_ids.end(),
-      RepeatedFieldBackInserter(attachment_metadata.mutable_record()),
-      AttachmentIdToRecord);
-  write_node->SetAttachmentMetadata(attachment_metadata);
-}
-
-SyncData BuildRemoteSyncData(
-    int64_t sync_id,
-    const ReadNode& read_node,
-    const AttachmentServiceProxy& attachment_service_proxy) {
-  const AttachmentIdList& attachment_ids = read_node.GetAttachmentIds();
+SyncData BuildRemoteSyncData(int64_t sync_id, const ReadNode& read_node) {
   switch (read_node.GetModelType()) {
     case PASSWORDS: {
       // Passwords must be accessed differently, to account for their
@@ -77,9 +56,16 @@ SyncData BuildRemoteSyncData(
       password_holder.mutable_password()
           ->mutable_client_only_encrypted_data()
           ->CopyFrom(read_node.GetPasswordSpecifics());
-      return SyncData::CreateRemoteData(
-          sync_id, password_holder, read_node.GetModificationTime(),
-          attachment_ids, attachment_service_proxy);
+      return SyncData::CreateRemoteData(sync_id, password_holder);
+    }
+    case WIFI_CONFIGURATIONS: {
+      // Wifi configs must be accessed differently, to account for their
+      // encryption, and stored into a temporary EntitySpecifics.
+      sync_pb::EntitySpecifics wifi_configuration_holder;
+      wifi_configuration_holder.mutable_wifi_configuration()
+          ->mutable_client_only_encrypted_data()
+          ->CopyFrom(read_node.GetWifiConfigurationSpecifics());
+      return SyncData::CreateRemoteData(sync_id, wifi_configuration_holder);
     }
     case SESSIONS:
       // Include tag hashes for sessions data type to allow discarding during
@@ -91,14 +77,11 @@ SyncData BuildRemoteSyncData(
       // another copy of this string around.
       return SyncData::CreateRemoteData(
           sync_id, read_node.GetEntitySpecifics(),
-          read_node.GetModificationTime(), attachment_ids,
-          attachment_service_proxy, read_node.GetEntry()->GetUniqueClientTag());
+          read_node.GetEntry()->GetUniqueClientTag());
     default:
       // Use the specifics directly, encryption has already been handled.
-      return SyncData::CreateRemoteData(sync_id, read_node.GetEntitySpecifics(),
-                                        read_node.GetModificationTime(),
-                                        attachment_ids,
-                                        attachment_service_proxy);
+      return SyncData::CreateRemoteData(sync_id,
+                                        read_node.GetEntitySpecifics());
   }
 }
 
@@ -109,39 +92,14 @@ GenericChangeProcessor::GenericChangeProcessor(
     std::unique_ptr<DataTypeErrorHandler> error_handler,
     const base::WeakPtr<SyncableService>& local_service,
     const base::WeakPtr<SyncMergeResult>& merge_result,
-    UserShare* user_share,
-    SyncClient* sync_client,
-    std::unique_ptr<AttachmentStoreForSync> attachment_store)
+    UserShare* user_share)
     : ChangeProcessor(std::move(error_handler)),
       type_(type),
       local_service_(local_service),
       merge_result_(merge_result),
-      share_handle_(user_share),
-      weak_ptr_factory_(this) {
+      share_handle_(user_share) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK_NE(type_, UNSPECIFIED);
-  if (attachment_store) {
-    std::string store_birthday;
-    {
-      ReadTransaction trans(FROM_HERE, share_handle());
-      store_birthday = trans.GetStoreBirthday();
-    }
-    attachment_service_ =
-        sync_client->GetSyncApiComponentFactory()->CreateAttachmentService(
-            std::move(attachment_store), *user_share, store_birthday, type,
-            this);
-    attachment_service_weak_ptr_factory_ =
-        std::make_unique<base::WeakPtrFactory<AttachmentService>>(
-            attachment_service_.get());
-    attachment_service_proxy_ = AttachmentServiceProxy(
-        base::SequencedTaskRunnerHandle::Get(),
-        attachment_service_weak_ptr_factory_->GetWeakPtr());
-    UploadAllAttachmentsNotOnServer();
-  } else {
-    attachment_service_proxy_ =
-        AttachmentServiceProxy(base::SequencedTaskRunnerHandle::Get(),
-                               base::WeakPtr<AttachmentService>());
-  }
 }
 
 GenericChangeProcessor::~GenericChangeProcessor() {
@@ -154,23 +112,20 @@ void GenericChangeProcessor::ApplyChangesFromSyncModel(
     const ImmutableChangeRecordList& changes) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(syncer_changes_.empty());
-  for (ChangeRecordList::const_iterator it = changes.Get().begin();
-       it != changes.Get().end(); ++it) {
+  for (auto it = changes.Get().begin(); it != changes.Get().end(); ++it) {
     if (it->action == ChangeRecord::ACTION_DELETE) {
       std::unique_ptr<sync_pb::EntitySpecifics> specifics;
       if (it->specifics.has_password()) {
-        DCHECK(it->extra.get());
+        DCHECK(it->extra.has_value());
         specifics = std::make_unique<sync_pb::EntitySpecifics>(it->specifics);
         specifics->mutable_password()
             ->mutable_client_only_encrypted_data()
             ->CopyFrom(it->extra->unencrypted());
       }
-      const AttachmentIdList empty_list_of_attachment_ids;
-      syncer_changes_.push_back(SyncChange(
-          FROM_HERE, SyncChange::ACTION_DELETE,
-          SyncData::CreateRemoteData(
-              it->id, specifics ? *specifics : it->specifics, base::Time(),
-              empty_list_of_attachment_ids, attachment_service_proxy_)));
+      syncer_changes_.push_back(
+          SyncChange(FROM_HERE, SyncChange::ACTION_DELETE,
+                     SyncData::CreateRemoteData(
+                         it->id, specifics ? *specifics : it->specifics)));
     } else {
       SyncChange::SyncChangeType action =
           (it->action == ChangeRecord::ACTION_ADD) ? SyncChange::ACTION_ADD
@@ -180,14 +135,13 @@ void GenericChangeProcessor::ApplyChangesFromSyncModel(
       if (read_node.InitByIdLookup(it->id) != BaseNode::INIT_OK) {
         SyncError error(FROM_HERE, SyncError::DATATYPE_ERROR,
                         "Failed to look up data for received change with id " +
-                            base::Int64ToString(it->id),
+                            base::NumberToString(it->id),
                         GetModelTypeFromSpecifics(it->specifics));
         error_handler()->OnUnrecoverableError(error);
         return;
       }
       syncer_changes_.push_back(SyncChange(
-          FROM_HERE, action,
-          BuildRemoteSyncData(it->id, read_node, attachment_service_proxy_)));
+          FROM_HERE, action, BuildRemoteSyncData(it->id, read_node)));
     }
   }
 }
@@ -196,7 +150,7 @@ void GenericChangeProcessor::CommitChangesFromSyncModel() {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   if (syncer_changes_.empty())
     return;
-  if (!local_service_.get()) {
+  if (!local_service_) {
     ModelType type = syncer_changes_[0].sync_data().GetDataType();
     SyncError error(FROM_HERE, SyncError::DATATYPE_ERROR,
                     "Local service destroyed.", type);
@@ -249,12 +203,6 @@ void GenericChangeProcessor::RemoveLocalChangeObserver(
   local_change_observers_.RemoveObserver(observer);
 }
 
-void GenericChangeProcessor::OnAttachmentUploaded(
-    const AttachmentId& attachment_id) {
-  WriteTransaction trans(FROM_HERE, share_handle());
-  trans.UpdateEntriesMarkAttachmentAsOnServer(attachment_id);
-}
-
 SyncError GenericChangeProcessor::GetAllSyncDataReturnError(
     SyncDataList* current_sync_data) const {
   DCHECK(sequence_checker_.CalledOnValidSequence());
@@ -285,8 +233,8 @@ SyncError GenericChangeProcessor::GetAllSyncDataReturnError(
                       type_);
       return error;
     }
-    current_sync_data->push_back(BuildRemoteSyncData(
-        sync_child_node.GetId(), sync_child_node, attachment_service_proxy_));
+    current_sync_data->push_back(
+        BuildRemoteSyncData(sync_child_node.GetId(), sync_child_node));
   }
   return SyncError();
 }
@@ -430,14 +378,10 @@ SyncError GenericChangeProcessor::ProcessSyncChanges(
     return SyncError();
   }
 
-  // Keep track of brand new attachments so we can persist them on this device
-  // and upload them to the server.
-  AttachmentIdSet new_attachments;
-
   WriteTransaction trans(from_here, share_handle());
 
-  for (SyncChangeList::const_iterator iter = list_of_changes.begin();
-       iter != list_of_changes.end(); ++iter) {
+  for (auto iter = list_of_changes.begin(); iter != list_of_changes.end();
+       ++iter) {
     const SyncChange& change = *iter;
     DCHECK_EQ(change.sync_data().GetDataType(), type_);
     std::string type_str = ModelTypeToString(type_);
@@ -445,23 +389,19 @@ SyncError GenericChangeProcessor::ProcessSyncChanges(
     if (change.change_type() == SyncChange::ACTION_DELETE) {
       SyncError error =
           AttemptDelete(change, type_, type_str, &sync_node, error_handler());
-      if (error.IsSet()) {
-        NOTREACHED();
+      if (error.IsSet())
         return error;
-      }
-      if (merge_result_.get()) {
+      if (merge_result_) {
         merge_result_->set_num_items_deleted(
             merge_result_->num_items_deleted() + 1);
       }
     } else if (change.change_type() == SyncChange::ACTION_ADD) {
-      SyncError error = HandleActionAdd(change, type_str, trans, &sync_node,
-                                        &new_attachments);
+      SyncError error = HandleActionAdd(change, type_str, trans, &sync_node);
       if (error.IsSet()) {
         return error;
       }
     } else if (change.change_type() == SyncChange::ACTION_UPDATE) {
-      SyncError error = HandleActionUpdate(change, type_str, trans, &sync_node,
-                                           &new_attachments);
+      SyncError error = HandleActionUpdate(change, type_str, trans, &sync_node);
       if (error.IsSet()) {
         return error;
       }
@@ -477,26 +417,6 @@ SyncError GenericChangeProcessor::ProcessSyncChanges(
     }
   }
 
-  if (!new_attachments.empty()) {
-    // If datatype uses attachments it should have supplied attachment store
-    // which would initialize attachment_service_. Fail if it isn't so.
-    if (!attachment_service_.get()) {
-      SyncError error(
-          FROM_HERE, SyncError::DATATYPE_ERROR,
-          "Datatype performs attachment operation without initializing "
-          "attachment store",
-          type_);
-      error_handler()->OnUnrecoverableError(error);
-      NOTREACHED();
-      return error;
-    }
-    AttachmentIdList ids_to_upload;
-    ids_to_upload.reserve(new_attachments.size());
-    std::copy(new_attachments.begin(), new_attachments.end(),
-              std::back_inserter(ids_to_upload));
-    attachment_service_->UploadAttachments(ids_to_upload);
-  }
-
   return SyncError();
 }
 
@@ -504,12 +424,10 @@ SyncError GenericChangeProcessor::ProcessSyncChanges(
 // modifying any code around an OnUnrecoverableError call, else the compiler
 // attempts to merge it with other calls, losing useful information in
 // breakpad uploads.
-SyncError GenericChangeProcessor::HandleActionAdd(
-    const SyncChange& change,
-    const std::string& type_str,
-    const WriteTransaction& trans,
-    WriteNode* sync_node,
-    AttachmentIdSet* new_attachments) {
+SyncError GenericChangeProcessor::HandleActionAdd(const SyncChange& change,
+                                                  const std::string& type_str,
+                                                  const WriteTransaction& trans,
+                                                  WriteNode* sync_node) {
   // TODO(sync): Handle other types of creation (custom parents, folders,
   // etc.).
   const SyncDataLocal sync_data_local(change.sync_data());
@@ -563,12 +481,7 @@ SyncError GenericChangeProcessor::HandleActionAdd(
   sync_node->SetTitle(change.sync_data().GetTitle());
   SetNodeSpecifics(sync_data_local.GetSpecifics(), sync_node);
 
-  AttachmentIdList attachment_ids = sync_data_local.GetAttachmentIds();
-  SetAttachmentMetadata(attachment_ids, sync_node);
-
-  // Return any newly added attachments.
-  new_attachments->insert(attachment_ids.begin(), attachment_ids.end());
-  if (merge_result_.get()) {
+  if (merge_result_) {
     merge_result_->set_num_items_added(merge_result_->num_items_added() + 1);
   }
   return SyncError();
@@ -581,8 +494,7 @@ SyncError GenericChangeProcessor::HandleActionUpdate(
     const SyncChange& change,
     const std::string& type_str,
     const WriteTransaction& trans,
-    WriteNode* sync_node,
-    AttachmentIdSet* new_attachments) {
+    WriteNode* sync_node) {
   const SyncDataLocal sync_data_local(change.sync_data());
   BaseNode::InitByLookupResult result = sync_node->InitByClientTagLookup(
       sync_data_local.GetDataType(), sync_data_local.GetTag());
@@ -627,13 +539,8 @@ SyncError GenericChangeProcessor::HandleActionUpdate(
 
   sync_node->SetTitle(change.sync_data().GetTitle());
   SetNodeSpecifics(sync_data_local.GetSpecifics(), sync_node);
-  AttachmentIdList attachment_ids = sync_data_local.GetAttachmentIds();
-  SetAttachmentMetadata(attachment_ids, sync_node);
 
-  // Return any newly added attachments.
-  new_attachments->insert(attachment_ids.begin(), attachment_ids.end());
-
-  if (merge_result_.get()) {
+  if (merge_result_) {
     merge_result_->set_num_items_modified(merge_result_->num_items_modified() +
                                           1);
   }
@@ -678,30 +585,11 @@ UserShare* GenericChangeProcessor::share_handle() const {
   return share_handle_;
 }
 
-void GenericChangeProcessor::UploadAllAttachmentsNotOnServer() {
-  DCHECK(sequence_checker_.CalledOnValidSequence());
-  DCHECK(attachment_service_.get());
-  AttachmentIdList ids;
-  {
-    ReadTransaction trans(FROM_HERE, share_handle());
-    trans.GetAttachmentIdsToUpload(type_, &ids);
-  }
-  if (!ids.empty()) {
-    attachment_service_->UploadAttachments(ids);
-  }
-}
-
 void GenericChangeProcessor::NotifyLocalChangeObservers(
     const syncable::Entry* current_entry,
     const SyncChange& change) {
   for (auto& observer : local_change_observers_)
     observer.OnLocalChange(current_entry, change);
-}
-
-std::unique_ptr<AttachmentService>
-GenericChangeProcessor::GetAttachmentService() const {
-  return std::unique_ptr<AttachmentService>(
-      new AttachmentServiceProxy(attachment_service_proxy_));
 }
 
 }  // namespace syncer

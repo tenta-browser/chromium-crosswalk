@@ -12,54 +12,30 @@
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "services/metrics/public/cpp/metrics_export.h"
-#include "services/metrics/public/cpp/ukm_entry_builder.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
-#include "services/metrics/public/interfaces/ukm_interface.mojom.h"
+#include "services/metrics/public/mojom/ukm_interface.mojom-forward.h"
 #include "url/gurl.h"
 
-class ContextualSearchRankerLoggerImpl;
-class DocumentWritePageLoadMetricsObserver;
-class FromGWSPageLoadMetricsLogger;
-class PluginInfoHostImpl;
-class ServiceWorkerPageLoadMetricsObserver;
-class SubresourceFilterMetricsObserver;
-class UkmPageLoadMetricsObserver;
-class UseCounterPageLoadMetricsObserver;
-class LocalNetworkRequestsPageLoadMetricsObserver;
+class PermissionUmaUtil;
 
 namespace blink {
-class AutoplayUmaHelper;
-}
-
-namespace cc {
-class UkmManager;
-}
-
-namespace password_manager {
-class PasswordManagerMetricsRecorder;
-}  // namespace password_manager
-
-namespace previews {
-class PreviewsUKMObserver;
-}
+class Document;
+}  // namespace blink
 
 namespace metrics {
 class UkmRecorderInterface;
-}
-
-namespace ui {
-class LatencyTracker;
-}  // namespace ui
+}  // namespace metrics
 
 namespace ukm {
 
 class DelegatingUkmRecorder;
-class UkmEntryBuilder;
 class TestRecordingHelper;
+class UkmBackgroundRecorderService;
 
 namespace internal {
-class UkmEntryBuilderBase;
-}
+class SourceUrlRecorderWebContentsObserver;
+}  // namespace internal
 
 // This feature controls whether UkmService should be created.
 METRICS_EXPORT extern const base::Feature kUkmFeature;
@@ -80,49 +56,46 @@ class METRICS_EXPORT UkmRecorder {
   // session.
   static SourceId GetNewSourceID();
 
-  // Update the URL on the source keyed to the given source ID. If the source
-  // does not exist, it will create a new UkmSource object.
-  virtual void UpdateSourceURL(SourceId source_id, const GURL& url) = 0;
-
- private:
-  friend ContextualSearchRankerLoggerImpl;
-  friend DelegatingUkmRecorder;
-  friend DocumentWritePageLoadMetricsObserver;
-  friend FromGWSPageLoadMetricsLogger;
-  friend LocalNetworkRequestsPageLoadMetricsObserver;
-  friend PluginInfoHostImpl;
-  friend ServiceWorkerPageLoadMetricsObserver;
-  friend SubresourceFilterMetricsObserver;
-  friend TestRecordingHelper;
-  friend UkmPageLoadMetricsObserver;
-  friend UseCounterPageLoadMetricsObserver;
-  friend blink::AutoplayUmaHelper;
-  friend cc::UkmManager;
-  friend internal::UkmEntryBuilderBase;
-  friend metrics::UkmRecorderInterface;
-  friend ui::LatencyTracker;
-  friend password_manager::PasswordManagerMetricsRecorder;
-  friend previews::PreviewsUKMObserver;
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, AddEntryWithEmptyMetrics);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, EntryBuilderAndSerialization);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest,
-                           LogsUploadedOnlyWhenHavingSourcesOrEntries);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, MetricsProviderTest);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, PersistAndPurge);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, WhitelistEntryTest);
-
-  // Get a new UkmEntryBuilder object for the specified source ID and event,
-  // which can get metrics added to.
-  //
-  // This API being private is intentional. Any client using UKM needs to
-  // declare itself to be a friend of UkmService and go through code review
-  // process.
-  std::unique_ptr<UkmEntryBuilder> GetEntryBuilder(SourceId source_id,
-                                                   const char* event_name);
-
- private:
   // Add an entry to the UkmEntry list.
   virtual void AddEntry(mojom::UkmEntryPtr entry) = 0;
+
+  // Disables sampling for testing purposes.
+  virtual void DisableSamplingForTesting() {}
+
+ protected:
+  // Type-safe wrappers for Update<X> functions.
+  void RecordOtherURL(base::UkmSourceId source_id, const GURL& url);
+  void RecordAppURL(base::UkmSourceId source_id, const GURL& url);
+
+ private:
+  friend DelegatingUkmRecorder;
+  friend TestRecordingHelper;
+  friend UkmBackgroundRecorderService;
+  friend blink::Document;
+  friend metrics::UkmRecorderInterface;
+  friend PermissionUmaUtil;
+
+  // Associates the SourceId with a URL. Most UKM recording code should prefer
+  // to use a shared SourceId that is already associated with a URL, rather
+  // than using this API directly. New uses of this API must be audited to
+  // maintain privacy constraints.
+  virtual void UpdateSourceURL(SourceId source_id, const GURL& url) = 0;
+
+  // Associates the SourceId with an app URL for APP_ID sources. This method
+  // should only be called by AppSourceUrlRecorder and DelegatingUkmRecorder.
+  virtual void UpdateAppURL(SourceId source_id, const GURL& url) = 0;
+
+  // Associates navigation data with the UkmSource keyed by |source_id|. This
+  // should only be called by SourceUrlRecorderWebContentsObserver, for
+  // navigation sources.
+  virtual void RecordNavigation(
+      SourceId source_id,
+      const UkmSource::NavigationData& navigation_data) = 0;
+
+  // Marks a source as no longer needed to kept alive in memory. Called by
+  // SourceUrlRecorderWebContentsObserver when a browser tab or its WebContents
+  // are no longer alive. Not to be used through mojo interface.
+  virtual void MarkSourceForDeletion(ukm::SourceId source_id) = 0;
 
   DISALLOW_COPY_AND_ASSIGN(UkmRecorder);
 };

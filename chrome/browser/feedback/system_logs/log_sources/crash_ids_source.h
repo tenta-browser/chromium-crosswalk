@@ -20,20 +20,22 @@ class CrashIdsSource : public SystemLogsSource {
   ~CrashIdsSource() override;
 
   // SystemLogsSource:
-  void Fetch(const SysLogsSourceCallback& callback) override;
+  void Fetch(SysLogsSourceCallback callback) override;
 
  private:
   void OnUploadListAvailable();
-  void RespondWithCrashIds(const SysLogsSourceCallback& callback) const;
+  void RespondWithCrashIds(SysLogsSourceCallback callback);
 
   scoped_refptr<UploadList> crash_upload_list_;
 
-  // A comma-separated list of crash IDs as expected by the server.
+  // A comma-separated list of crash IDs as expected by the server. The first
+  // is for the last hour, the second is for the pat 120 days.
   std::string crash_ids_list_;
+  std::string all_crash_ids_list_;
 
   // Contains any pending fetch requests waiting for the crash upload list to
   // finish loading.
-  std::vector<base::Closure> pending_requests_;
+  std::vector<base::OnceClosure> pending_requests_;
 
   // True if the crash list is currently being loaded.
   bool pending_crash_list_loading_;

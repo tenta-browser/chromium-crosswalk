@@ -7,7 +7,6 @@
 
 #include "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
 
-#include "base/mac/scoped_nsobject.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 @class NSMutableArray;
@@ -25,9 +24,10 @@ class FakeChromeIdentityService : public ChromeIdentityService {
   static FakeChromeIdentityService* GetInstanceFromChromeProvider();
 
   // ChromeIdentityService implementation.
-  UINavigationController* CreateAccountDetailsController(
+  DismissASMViewControllerBlock PresentAccountDetailsController(
       ChromeIdentity* identity,
-      id<ChromeIdentityBrowserOpener> browser_opener) override;
+      UIViewController* viewController,
+      BOOL animated) override;
   ChromeIdentityInteractionManager* CreateChromeIdentityInteractionManager(
       ios::ChromeBrowserState* browser_state,
       id<ChromeIdentityInteractionManagerDelegate> delegate) const override;
@@ -43,7 +43,6 @@ class FakeChromeIdentityService : public ChromeIdentityService {
 
   virtual void GetAccessToken(ChromeIdentity* identity,
                               const std::string& client_id,
-                              const std::string& client_secret,
                               const std::set<std::string>& scopes,
                               ios::AccessTokenCallback callback) override;
 
@@ -56,6 +55,9 @@ class FakeChromeIdentityService : public ChromeIdentityService {
   virtual void GetHostedDomainForIdentity(
       ChromeIdentity* identity,
       GetHostedDomainCallback callback) override;
+
+  virtual NSString* GetCachedHostedDomainForIdentity(
+      ChromeIdentity* identity) override;
 
   MOCK_METHOD1(GetMDMDeviceStatus,
                ios::MDMDeviceStatus(NSDictionary* user_info));
@@ -71,7 +73,8 @@ class FakeChromeIdentityService : public ChromeIdentityService {
   // Adds the identities given their name.
   void AddIdentities(NSArray* identitiesNames);
 
-  // Adds |identity| to the available identities.
+  // Adds |identity| to the available identities. No-op if the identity
+  // is already added.
   void AddIdentity(ChromeIdentity* identity);
 
   // Removes |identity| from the available identities. No-op if the identity
@@ -82,7 +85,7 @@ class FakeChromeIdentityService : public ChromeIdentityService {
   void SetFakeMDMError(bool fakeMDMError);
 
  private:
-  base::scoped_nsobject<NSMutableArray> identities_;
+  NSMutableArray* identities_;
 
   // If true, call to GetAccessToken() fakes a MDM error.
   bool _fakeMDMError;

@@ -20,7 +20,11 @@ settings.defaultResourceLoaded = true;
 Polymer({
   is: 'settings-ui',
 
-  behaviors: [settings.RouteObserverBehavior, CrContainerShadowBehavior],
+  behaviors: [
+    settings.RouteObserverBehavior,
+    CrContainerShadowBehavior,
+    FindShortcutBehavior,
+  ],
 
   properties: {
     /**
@@ -29,10 +33,19 @@ Polymer({
     prefs: Object,
 
     /** @private */
-    advancedOpened_: {
+    advancedOpenedInMain_: {
       type: Boolean,
       value: false,
       notify: true,
+      observer: 'onAdvancedOpenedInMainChanged_',
+    },
+
+    /** @private */
+    advancedOpenedInMenu_: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onAdvancedOpenedInMenuChanged_',
     },
 
     /** @private {boolean} */
@@ -41,16 +54,31 @@ Polymer({
       value: false,
     },
 
+    /** @private */
+    narrow_: {
+      type: Boolean,
+      observer: 'onNarrowChanged_',
+    },
+
     /**
-     * @private {!GuestModePageVisibility}
+     * @private {!PageVisibility}
      */
     pageVisibility_: {type: Object, value: settings.pageVisibility},
+
+    /** @private */
+    showApps_: Boolean,
 
     /** @private */
     showAndroidApps_: Boolean,
 
     /** @private */
-    showMultidevice_: Boolean,
+    showCrostini_: Boolean,
+
+    /** @private */
+    showParentalControls_: Boolean,
+
+    /** @private */
+    showPluginVm_: Boolean,
 
     /** @private */
     havePlayStoreApp_: Boolean,
@@ -59,7 +87,7 @@ Polymer({
     lastSearchQuery_: {
       type: String,
       value: '',
-    }
+    },
   },
 
   listeners: {
@@ -78,17 +106,19 @@ Polymer({
    */
   ready: function() {
     // Lazy-create the drawer the first time it is opened or swiped into view.
-    listenOnce(this.$.drawer, 'open-changed', () => {
+    listenOnce(this.$.drawer, 'cr-drawer-opening', () => {
       this.$.drawerTemplate.if = true;
     });
 
     window.addEventListener('popstate', e => {
-      this.$.drawer.closeDrawer();
+      this.$.drawer.cancel();
     });
 
     CrPolicyStrings = {
       controlledSettingExtension:
           loadTimeData.getString('controlledSettingExtension'),
+      controlledSettingExtensionWithoutName:
+          loadTimeData.getString('controlledSettingExtensionWithoutName'),
       controlledSettingPolicy:
           loadTimeData.getString('controlledSettingPolicy'),
       controlledSettingRecommendedMatches:
@@ -98,7 +128,14 @@ Polymer({
       // <if expr="chromeos">
       controlledSettingShared:
           loadTimeData.getString('controlledSettingShared'),
-      controlledSettingOwner: loadTimeData.getString('controlledSettingOwner'),
+      controlledSettingWithOwner:
+          loadTimeData.getString('controlledSettingWithOwner'),
+      controlledSettingNoOwner:
+          loadTimeData.getString('controlledSettingNoOwner'),
+      controlledSettingParent:
+          loadTimeData.getString('controlledSettingParent'),
+      controlledSettingChildRestriction:
+          loadTimeData.getString('controlledSettingChildRestriction'),
       // </if>
     };
 
@@ -106,6 +143,7 @@ Polymer({
     CrOncStrings = {
       OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
       OncTypeEthernet: loadTimeData.getString('OncTypeEthernet'),
+      OncTypeMobile: loadTimeData.getString('OncTypeMobile'),
       OncTypeTether: loadTimeData.getString('OncTypeTether'),
       OncTypeVPN: loadTimeData.getString('OncTypeVPN'),
       OncTypeWiFi: loadTimeData.getString('OncTypeWiFi'),
@@ -118,6 +156,8 @@ Polymer({
           loadTimeData.getString('networkListItemConnectingTo'),
       networkListItemInitializing:
           loadTimeData.getString('networkListItemInitializing'),
+      networkListItemScanning:
+          loadTimeData.getString('networkListItemScanning'),
       networkListItemNotConnected:
           loadTimeData.getString('networkListItemNotConnected'),
       networkListItemNoNetwork:
@@ -126,12 +166,25 @@ Polymer({
     };
     // </if>
 
-    this.showAndroidApps_ = loadTimeData.valueExists('androidAppsVisible') &&
+    // The SplitSettings feature hides OS settings in the browser settings page.
+    // https://crbug.com/950007
+    const showOSSettings = loadTimeData.getBoolean('showOSSettings');
+    this.showApps_ = showOSSettings && loadTimeData.valueExists('showApps') &&
+        loadTimeData.getBoolean('showApps');
+    this.showAndroidApps_ = showOSSettings &&
+        loadTimeData.valueExists('androidAppsVisible') &&
         loadTimeData.getBoolean('androidAppsVisible');
-    this.showMultidevice_ = this.showAndroidApps_ &&
-        loadTimeData.valueExists('enableMultideviceSettings') &&
-        loadTimeData.getBoolean('enableMultideviceSettings');
-    this.havePlayStoreApp_ = loadTimeData.valueExists('havePlayStoreApp') &&
+    this.showCrostini_ = showOSSettings &&
+        loadTimeData.valueExists('showCrostini') &&
+        loadTimeData.getBoolean('showCrostini');
+    this.showParentalControls_ = showOSSettings &&
+        loadTimeData.valueExists('showParentalControls') &&
+        loadTimeData.getBoolean('showParentalControls');
+    this.showPluginVm_ = showOSSettings &&
+        loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm');
+    this.havePlayStoreApp_ = showOSSettings &&
+        loadTimeData.valueExists('havePlayStoreApp') &&
         loadTimeData.getBoolean('havePlayStoreApp');
 
     this.addEventListener('show-container', () => {
@@ -156,6 +209,34 @@ Polymer({
     // Preload bold Roboto so it doesn't load and flicker the first time used.
     document.fonts.load('bold 12px Roboto');
     settings.setGlobalScrollTarget(this.$.container);
+
+    const scrollToTop = top => new Promise(resolve => {
+      if (this.$.container.scrollTop === top) {
+        resolve();
+        return;
+      }
+
+      // When transitioning  back to main page from a subpage on ChromeOS, using
+      // 'smooth' scroll here results in the scroll changing to whatever is last
+      // value of |top|. This happens even after setting the scroll position the
+      // UI or programmatically.
+      const behavior = cr.isChromeOS ? 'auto' : 'smooth';
+      this.$.container.scrollTo({top: top, behavior: behavior});
+      const onScroll = () => {
+        this.debounce('scrollEnd', () => {
+          this.$.container.removeEventListener('scroll', onScroll);
+          resolve();
+        }, 75);
+      };
+      this.$.container.addEventListener('scroll', onScroll);
+    });
+    this.addEventListener('scroll-to-top', e => {
+      scrollToTop(e.detail.top).then(e.detail.callback);
+    });
+    this.addEventListener('scroll-to-bottom', e => {
+      scrollToTop(e.detail.bottom - this.$.container.clientHeight)
+          .then(e.detail.callback);
+    });
   },
 
   /** @override */
@@ -165,14 +246,15 @@ Polymer({
 
   /** @param {!settings.Route} route */
   currentRouteChanged: function(route) {
-    var urlSearchQuery = settings.getQueryParameters().get('search') || '';
-    if (urlSearchQuery == this.lastSearchQuery_)
+    const urlSearchQuery = settings.getQueryParameters().get('search') || '';
+    if (urlSearchQuery == this.lastSearchQuery_) {
       return;
+    }
 
     this.lastSearchQuery_ = urlSearchQuery;
 
-    var toolbar = /** @type {!CrToolbarElement} */ (this.$$('cr-toolbar'));
-    var searchField =
+    const toolbar = /** @type {!CrToolbarElement} */ (this.$$('cr-toolbar'));
+    const searchField =
         /** @type {CrToolbarSearchFieldElement} */ (toolbar.getSearchField());
 
     // If the search was initiated by directly entering a search URL, need to
@@ -186,13 +268,26 @@ Polymer({
     this.$.main.searchContents(urlSearchQuery);
   },
 
+  // Override FindShortcutBehavior methods.
+  handleFindShortcut: function(modalContextOpen) {
+    if (modalContextOpen) {
+      return false;
+    }
+    this.$$('cr-toolbar').getSearchField().showAndFocus();
+    return true;
+  },
+
+  // Override FindShortcutBehavior methods.
+  searchInputHasFocus: function() {
+    return this.$$('cr-toolbar').getSearchField().isSearchFocused();
+  },
+
   /**
-   * @param {!CustomEvent} e
+   * @param {!CustomEvent<string>} e
    * @private
    */
   onRefreshPref_: function(e) {
-    var prefName = /** @type {string} */ (e.detail);
-    return /** @type {SettingsPrefsElement} */ (this.$.prefs).refresh(prefName);
+    return /** @type {SettingsPrefsElement} */ (this.$.prefs).refresh(e.detail);
   },
 
   /**
@@ -201,14 +296,7 @@ Polymer({
    * @private
    */
   onSearchChanged_: function(e) {
-    // Trim leading whitespace only, to prevent searching for empty string. This
-    // still allows the user to search for 'foo bar', while taking a long pause
-    // after typing 'foo '.
-    var query = e.detail.replace(/^\s+/, '');
-    // Prevent duplicate history entries.
-    if (query == this.lastSearchQuery_)
-      return;
-
+    const query = e.detail;
     settings.navigateTo(
         settings.routes.BASIC,
         query.length > 0 ?
@@ -218,12 +306,11 @@ Polymer({
   },
 
   /**
-   * @param {!Event} event
+   * Called when a section is selected.
    * @private
    */
-  onIronActivate_: function(event) {
-    if (event.detail.item.id != 'advancedSubmenu')
-      this.$.drawer.closeDrawer();
+  onIronActivate_: function() {
+    this.$.drawer.close();
   },
 
   /** @private */
@@ -231,8 +318,21 @@ Polymer({
     this.$.drawer.toggle();
   },
 
-  /** @private */
-  onMenuClosed_: function() {
+  /**
+   * When this is called, The drawer animation is finished, and the dialog no
+   * longer has focus. The selected section will gain focus if one was selected.
+   * Otherwise, the drawer was closed due being canceled, and the main settings
+   * container is given focus. That way the arrow keys can be used to scroll
+   * the container, and pressing tab focuses a component in settings.
+   * @private
+   */
+  onMenuClose_: function() {
+    if (!this.$.drawer.wasCanceled()) {
+      // If a navigation happened, MainPageBehavior#currentRouteChanged handles
+      // focusing the corresponding section.
+      return;
+    }
+
     // Add tab index so that the container can be focused.
     this.$.container.setAttribute('tabindex', '-1');
     this.$.container.focus();
@@ -240,5 +340,26 @@ Polymer({
     listenOnce(this.$.container, ['blur', 'pointerdown'], () => {
       this.$.container.removeAttribute('tabindex');
     });
+  },
+
+  /** @private */
+  onAdvancedOpenedInMainChanged_: function() {
+    if (this.advancedOpenedInMain_) {
+      this.advancedOpenedInMenu_ = true;
+    }
+  },
+
+  /** @private */
+  onAdvancedOpenedInMenuChanged_: function() {
+    if (this.advancedOpenedInMenu_) {
+      this.advancedOpenedInMain_ = true;
+    }
+  },
+
+  /** @private */
+  onNarrowChanged_: function() {
+    if (this.$.drawer.open && !this.narrow_) {
+      this.$.drawer.close();
+    }
   },
 });

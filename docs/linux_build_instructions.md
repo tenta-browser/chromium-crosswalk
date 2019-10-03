@@ -15,9 +15,9 @@ Are you a Google employee? See
 *   A 64-bit Intel machine with at least 8GB of RAM. More than 16GB is highly
     recommended.
 *   At least 100GB of free disk space.
-*   You must have Git and Python installed already.
+*   You must have Git and Python v2 installed already.
 
-Most development is done on Ubuntu (currently 14.04, Trusty Tahr). There are
+Most development is done on Ubuntu (currently 16.04, Xenial Xerus). There are
 some instructions for other distros below, but they are mostly unsupported.
 
 ## Install `depot_tools`
@@ -34,6 +34,14 @@ in your `~/.bashrc` or `~/.zshrc`). Assuming you cloned `depot_tools` to
 
 ```shell
 $ export PATH="$PATH:/path/to/depot_tools"
+```
+
+When cloning `depot_tools` to your home directory **do not** use `~` on PATH,
+otherwise `gclient runhooks` will fail to run. Rather, you should use either
+`$HOME` or the absolute path:
+
+```shell
+$ export PATH="$PATH:${HOME}/depot_tools"
 ```
 
 ## Get the code
@@ -76,6 +84,10 @@ $ cd src
 Once you have checked out the code, and assuming you're using Ubuntu, run
 [build/install-build-deps.sh](/build/install-build-deps.sh)
 
+```shell
+$ ./build/install-build-deps.sh
+```
+
 You may need to adjust the build dependencies for other distros. There are
 some [notes](#notes) at the end of this document, but we make no guarantees
 for their accuracy.
@@ -97,10 +109,10 @@ development and testing purposes.
 
 ## Setting up the build
 
-Chromium uses [Ninja](https://ninja-build.org) as its main build tool along
-with a tool called [GN](../tools/gn/docs/quick_start.md) to generate `.ninja`
-files. You can create any number of *build directories* with different
-configurations. To create a build directory, run:
+Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
+a tool called [GN](https://gn.googlesource.com/gn/+/master/docs/quick_start.md)
+to generate `.ninja` files. You can create any number of *build directories*
+with different configurations. To create a build directory, run:
 
 ```shell
 $ gn gen out/Default
@@ -150,7 +162,7 @@ symbols at all. Either will speed up the build compared to full symbols.
 
 Due to its extensive use of templates, the Blink code produces about half
 of our debug symbols. If you don't ever need to debug Blink, you can set
-the GN arg `remove_webcore_debug_symbols=true`.
+the GN arg `blink_symbol_level=0`.
 
 #### Use Icecc
 
@@ -231,12 +243,15 @@ hyperthreaded, 12 GB RAM)
 Build Chromium (the "chrome" target) with Ninja using the command:
 
 ```shell
-$ ninja -C out/Default chrome
+$ autoninja -C out/Default chrome
 ```
+
+(`autoninja` is a wrapper that automatically provides optimal values for the
+arguments passed to `ninja`.)
 
 You can get a list of all of the other build targets from GN by running `gn ls
 out/Default` from the command line. To compile one, pass the GN label to Ninja
-with no preceding "//" (so, for `//chrome/test:unit_tests` use `ninja -C
+with no preceding "//" (so, for `//chrome/test:unit_tests` use `autoninja -C
 out/Default chrome/test:unit_tests`).
 
 ## Run Chromium
@@ -329,8 +344,7 @@ Instead of running `install-build-deps.sh` to install build dependencies, run:
 
 ```shell
 $ sudo pacman -S --needed python perl gcc gcc-libs bison flex gperf pkgconfig \
-nss alsa-lib gconf glib2 gtk2 nspr ttf-ms-fonts freetype2 cairo dbus \
-libgnome-keyring
+nss alsa-lib glib2 gtk3 nspr ttf-ms-fonts freetype2 cairo dbus libgnome-keyring
 ```
 
 For the optional packages on Arch Linux:
@@ -340,36 +354,20 @@ For the optional packages on Arch Linux:
     in AUR/`yaourt`
 *   `sun-java6-fonts` do not seem to be in main repository or AUR.
 
-### Debian
+### Crostini (Debian based)
 
-Some tests require the `ttf-mscorefonts-installer` package from the `contrib`
-component. `contrib` packages may have dependencies on non-free software.
+First install the `file` and `lsb-release` commands for the script to run properly:
 
-If you need to run tests requiring MS TTF fonts, you can edit your apt
-`sources.list` by adding `contrib` to the end of each line beginning with `deb`.
-You might end up with something like this:
-
-```
-deb http://ftp.us.debian.org/debian/ jessie main contrib
-deb-src http://ftp.us.debian.org/debian/ jessie main contrib
-
-deb http://security.debian.org/ jessie/updates main contrib
-deb-src http://security.debian.org/ jessie/updates main contrib
-
-# jessie-updates, previously known as 'volatile'
-deb http://ftp.us.debian.org/debian/ jessie-updates main contrib
-deb-src http://ftp.us.debian.org/debian/ jessie-updates main contrib
+```shell
+$ sudo apt-get install file lsb-release
 ```
 
-Next, run:
+Then invoke install-build-deps.sh with the `--no-arm` argument,
+because the ARM toolchain doesn't exist for this configuration:
 
-``` shell
-$ sudo apt-get update
-$ sudo apt-get install ttf-mscorefonts-installer
+```shell
+$ sudo install-build-deps.sh --no-arm
 ```
-
-If you already have the `contrib` component enabled, `install-build-deps.sh`
-will install `ttf-mscorefonts-installer` for you.
 
 ### Fedora
 
@@ -379,16 +377,16 @@ Instead of running `build/install-build-deps.sh`, run:
 su -c 'yum install git python bzip2 tar pkgconfig atk-devel alsa-lib-devel \
 bison binutils brlapi-devel bluez-libs-devel bzip2-devel cairo-devel \
 cups-devel dbus-devel dbus-glib-devel expat-devel fontconfig-devel \
-freetype-devel gcc-c++ GConf2-devel glib2-devel glibc.i686 gperf \
-glib2-devel gtk2-devel gtk3-devel java-1.*.0-openjdk-devel libatomic \
-libcap-devel libffi-devel libgcc.i686 libgnome-keyring-devel libjpeg-devel \
-libstdc++.i686 libX11-devel libXScrnSaver-devel libXtst-devel \
-libxkbcommon-x11-devel ncurses-compat-libs nspr-devel nss-devel pam-devel \
-pango-devel pciutils-devel pulseaudio-libs-devel zlib.i686 httpd mod_ssl \
-php php-cli python-psutil wdiff xorg-x11-server-Xvfb'
+freetype-devel gcc-c++ glib2-devel glibc.i686 gperf glib2-devel \
+gtk3-devel java-1.*.0-openjdk-devel libatomic libcap-devel libffi-devel \
+libgcc.i686 libgnome-keyring-devel libjpeg-devel libstdc++.i686 libX11-devel \
+libXScrnSaver-devel libXtst-devel libxkbcommon-x11-devel ncurses-compat-libs \
+nspr-devel nss-devel pam-devel pango-devel pciutils-devel \
+pulseaudio-libs-devel zlib.i686 httpd mod_ssl php php-cli python-psutil wdiff \
+xorg-x11-server-Xvfb'
 ```
 
-The fonts needed by Blink's LayoutTests can be obtained by following [these
+The fonts needed by Blink's web tests can be obtained by following [these
 instructions](https://gist.github.com/pwnall/32a3b11c2b10f6ae5c6a6de66c1e12ae).
 For the optional packages:
 
@@ -399,22 +397,6 @@ For the optional packages:
 
 You can just run `emerge www-client/chromium`.
 
-### Mandriva
-
-Instead of running `build/install-build-deps.sh`, run:
-
-```shell
-urpmi lib64fontconfig-devel lib64alsa2-devel lib64dbus-1-devel \
-lib64GConf2-devel lib64freetype6-devel lib64atk1.0-devel lib64gtk+2.0_0-devel \
-lib64pango1.0-devel lib64cairo-devel lib64nss-devel lib64nspr-devel g++ python \
-perl bison flex subversion gperf
-```
-
-* `msttcorefonts` are not available, you will need to build your own (see
-  instructions, not hard to do, see
-  [mandriva_msttcorefonts.md](mandriva_msttcorefonts.md)) or use `drakfont` to
-  import the fonts from a Windows installation.
-
 ### OpenSUSE
 
 Use `zypper` command to install dependencies:
@@ -422,16 +404,14 @@ Use `zypper` command to install dependencies:
 (openSUSE 11.1 and higher)
 
 ```shell
-sudo zypper in subversion pkg-config python perl \
-     bison flex gperf mozilla-nss-devel glib2-devel gtk-devel \
-     wdiff lighttpd gcc gcc-c++ gconf2-devel mozilla-nspr \
-     mozilla-nspr-devel php5-fastcgi alsa-devel libexpat-devel \
+sudo zypper in subversion pkg-config python perl bison flex gperf \
+     mozilla-nss-devel glib2-devel gtk-devel wdiff lighttpd gcc gcc-c++ \
+     mozilla-nspr mozilla-nspr-devel php5-fastcgi alsa-devel libexpat-devel \
      libjpeg-devel libbz2-devel
 ```
 
 For 11.0, use `libnspr4-0d` and `libnspr4-dev` instead of `mozilla-nspr` and
-`mozilla-nspr-devel`, and use `php5-cgi` instead of `php5-fastcgi`. And need
-`gtk2-devel`.
+`mozilla-nspr-devel`, and use `php5-cgi` instead of `php5-fastcgi`.
 
 (openSUSE 11.0)
 
@@ -439,7 +419,7 @@ For 11.0, use `libnspr4-0d` and `libnspr4-dev` instead of `mozilla-nspr` and
 sudo zypper in subversion pkg-config python perl \
      bison flex gperf mozilla-nss-devel glib2-devel gtk-devel \
      libnspr4-0d libnspr4-dev wdiff lighttpd gcc gcc-c++ libexpat-devel \
-     php5-cgi gconf2-devel alsa-devel gtk2-devel jpeg-devel
+     php5-cgi alsa-devel gtk3-devel jpeg-devel
 ```
 
 The Ubuntu package `sun-java6-fonts` contains a subset of Java of the fonts used.

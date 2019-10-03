@@ -4,6 +4,8 @@
 
 #include "components/reading_list/core/reading_list_entry.h"
 
+#include <memory>
+
 #include "base/json/json_string_value_serializer.h"
 #include "base/memory/ptr_util.h"
 #include "components/reading_list/core/offline_url_utils.h"
@@ -49,7 +51,7 @@ const net::BackoffEntry::Policy ReadingListEntry::kBackoffPolicy = {
 ReadingListEntry::ReadingListEntry(const GURL& url,
                                    const std::string& title,
                                    const base::Time& now)
-    : ReadingListEntry(url, title, now, nullptr){};
+    : ReadingListEntry(url, title, now, nullptr) {}
 
 ReadingListEntry::ReadingListEntry(const GURL& url,
                                    const std::string& title,
@@ -104,7 +106,7 @@ ReadingListEntry::ReadingListEntry(
   if (backoff) {
     backoff_ = std::move(backoff);
   } else {
-    backoff_ = base::MakeUnique<net::BackoffEntry>(&kBackoffPolicy);
+    backoff_ = std::make_unique<net::BackoffEntry>(&kBackoffPolicy);
   }
   DCHECK(creation_time_us_);
   DCHECK(update_time_us_);
@@ -535,7 +537,7 @@ void ReadingListEntry::MergeWithEntry(const ReadingListEntry& other) {
 std::unique_ptr<reading_list::ReadingListLocal>
 ReadingListEntry::AsReadingListLocal(const base::Time& now) const {
   std::unique_ptr<reading_list::ReadingListLocal> pb_entry =
-      base::MakeUnique<reading_list::ReadingListLocal>();
+      std::make_unique<reading_list::ReadingListLocal>();
 
   // URL is used as the key for the database and sync as there is only one entry
   // per URL.
@@ -614,7 +616,7 @@ ReadingListEntry::AsReadingListLocal(const base::Time& now) const {
 std::unique_ptr<sync_pb::ReadingListSpecifics>
 ReadingListEntry::AsReadingListSpecifics() const {
   std::unique_ptr<sync_pb::ReadingListSpecifics> pb_entry =
-      base::MakeUnique<sync_pb::ReadingListSpecifics>();
+      std::make_unique<sync_pb::ReadingListSpecifics>();
 
   // URL is used as the key for the database and sync as there is only one entry
   // per URL.

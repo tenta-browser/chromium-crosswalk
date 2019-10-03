@@ -13,7 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/free_deleter.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -32,10 +32,9 @@ class AddressSorterWin : public AddressSorter {
   ~AddressSorterWin() override {}
 
   // AddressSorter:
-  void Sort(const AddressList& list,
-            const CallbackType& callback) const override {
+  void Sort(const AddressList& list, CallbackType callback) const override {
     DCHECK(!list.empty());
-    scoped_refptr<Job> job = new Job(list, callback);
+    Job::Start(list, std::move(callback));
   }
 
  private:
@@ -43,17 +42,30 @@ class AddressSorterWin : public AddressSorter {
   // performs the necessary conversions to/from AddressList.
   class Job : public base::RefCountedThreadSafe<Job> {
    public:
-    Job(const AddressList& list, const CallbackType& callback)
-        : callback_(callback),
-          buffer_size_(sizeof(SOCKET_ADDRESS_LIST) +
-                       list.size() * (sizeof(SOCKET_ADDRESS) +
-                                      sizeof(SOCKADDR_STORAGE))),
-          input_buffer_(reinterpret_cast<SOCKET_ADDRESS_LIST*>(
-              malloc(buffer_size_))),
-          output_buffer_(reinterpret_cast<SOCKET_ADDRESS_LIST*>(
-              malloc(buffer_size_))),
+    static void Start(const AddressList& list, CallbackType callback) {
+      auto job = base::WrapRefCounted(new Job(list, std::move(callback)));
+      base::PostTaskWithTraitsAndReply(
+          FROM_HERE,
+          {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+          base::BindOnce(&Job::Run, job),
+          base::BindOnce(&Job::OnComplete, job));
+    }
+
+   private:
+    friend class base::RefCountedThreadSafe<Job>;
+
+    Job(const AddressList& list, CallbackType callback)
+        : callback_(std::move(callback)),
+          buffer_size_((sizeof(SOCKET_ADDRESS_LIST) +
+                        base::CheckedNumeric<DWORD>(list.size()) *
+                            (sizeof(SOCKET_ADDRESS) + sizeof(SOCKADDR_STORAGE)))
+                           .ValueOrDie<DWORD>()),
+          input_buffer_(
+              reinterpret_cast<SOCKET_ADDRESS_LIST*>(malloc(buffer_size_))),
+          output_buffer_(
+              reinterpret_cast<SOCKET_ADDRESS_LIST*>(malloc(buffer_size_))),
           success_(false) {
-      input_buffer_->iAddressCount = list.size();
+      input_buffer_->iAddressCount = base::checked_cast<INT>(list.size());
       SOCKADDR_STORAGE* storage = reinterpret_cast<SOCKADDR_STORAGE*>(
           input_buffer_->Address + input_buffer_->iAddressCount);
 
@@ -72,18 +84,11 @@ class AddressSorterWin : public AddressSorter {
         input_buffer_->Address[i].lpSockaddr = addr;
         input_buffer_->Address[i].iSockaddrLength = addr_len;
       }
-
-      base::PostTaskWithTraitsAndReply(
-          FROM_HERE,
-          {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-          base::Bind(&Job::Run, this), base::Bind(&Job::OnComplete, this));
     }
 
-   private:
-    friend class base::RefCountedThreadSafe<Job>;
     ~Job() {}
 
-    // Executed asynchronously in TaskScheduler.
+    // Executed asynchronously in ThreadPool.
     void Run() {
       SOCKET sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
       if (sock == INVALID_SOCKET)
@@ -91,7 +96,7 @@ class AddressSorterWin : public AddressSorter {
       DWORD result_size = 0;
       int result = WSAIoctl(sock, SIO_ADDRESS_LIST_SORT, input_buffer_.get(),
                             buffer_size_, output_buffer_.get(), buffer_size_,
-                            &result_size, NULL, NULL);
+                            &result_size, nullptr, nullptr);
       if (result == SOCKET_ERROR) {
         LOG(ERROR) << "SIO_ADDRESS_LIST_SORT failed " << WSAGetLastError();
       } else {
@@ -120,11 +125,11 @@ class AddressSorterWin : public AddressSorter {
           list.push_back(ipe);
         }
       }
-      callback_.Run(success_, list);
+      std::move(callback_).Run(success_, list);
     }
 
-    const CallbackType callback_;
-    const size_t buffer_size_;
+    CallbackType callback_;
+    const DWORD buffer_size_;
     std::unique_ptr<SOCKET_ADDRESS_LIST, base::FreeDeleter> input_buffer_;
     std::unique_ptr<SOCKET_ADDRESS_LIST, base::FreeDeleter> output_buffer_;
     bool success_;

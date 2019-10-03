@@ -7,6 +7,8 @@
 #include "base/macros.h"
 #include "base/strings/pattern.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/task_manager/task_manager_browsertest_util.h"
@@ -20,6 +22,7 @@
 #include "chrome/browser/ui/task_manager/task_manager_columns.h"
 #include "chrome/browser/ui/task_manager/task_manager_table_model.h"
 #include "chrome/browser/ui/views/task_manager_view.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -28,10 +31,16 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_utils.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/views/controls/table/table_view.h"
+
+#if defined(OS_CHROMEOS)
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
+#endif
 
 namespace task_manager {
 
@@ -39,7 +48,11 @@ using browsertest_util::WaitForTaskManagerRows;
 
 class TaskManagerViewTest : public InProcessBrowserTest {
  public:
-  TaskManagerViewTest() {}
+  TaskManagerViewTest() {
+#if defined(OS_MACOSX)
+    feature_list_.InitAndEnableFeature(features::kViewsTaskManager);
+#endif
+  }
   ~TaskManagerViewTest() override {}
 
   void SetUpOnMainThread() override {
@@ -80,18 +93,20 @@ class TaskManagerViewTest : public InProcessBrowserTest {
   }
 
   // Looks up a tab based on its tab ID.
-  content::WebContents* FindWebContentsByTabId(SessionID::id_type tab_id) {
-    for (TabContentsIterator it; !it.done(); it.Next()) {
-      if (SessionTabHelper::IdForTab(*it) == tab_id)
-        return *it;
-    }
-    return nullptr;
+  content::WebContents* FindWebContentsByTabId(SessionID tab_id) {
+    auto& all_tabs = AllTabContentses();
+    auto tab_id_matches = [tab_id](content::WebContents* web_contents) {
+      return SessionTabHelper::IdForTab(web_contents) == tab_id;
+    };
+    auto it = std::find_if(all_tabs.begin(), all_tabs.end(), tab_id_matches);
+
+    return (it == all_tabs.end()) ? nullptr : *it;
   }
 
   // Returns the current TaskManagerTableModel index for a particular tab. Don't
   // cache this value, since it can change whenever the message loop runs.
   int FindRowForTab(content::WebContents* tab) {
-    int32_t tab_id = SessionTabHelper::IdForTab(tab);
+    SessionID tab_id = SessionTabHelper::IdForTab(tab);
     std::unique_ptr<TaskManagerTester> tester =
         TaskManagerTester::Create(base::Closure());
     for (int i = 0; i < tester->GetRowCount(); ++i) {
@@ -102,6 +117,8 @@ class TaskManagerViewTest : public InProcessBrowserTest {
   }
 
  private:
+  base::test::ScopedFeatureList feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(TaskManagerViewTest);
 };
 
@@ -210,7 +227,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, InitialSelection) {
             FindRowForTab(browser()->tab_strip_model()->GetWebContentsAt(1)));
 
   // Activate tab 0. The selection should not change.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
   EXPECT_EQ(GetTable()->FirstSelectedRow(),
             FindRowForTab(browser()->tab_strip_model()->GetWebContentsAt(1)));
@@ -293,11 +311,15 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, SelectionConsistency) {
   EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
 
-  // Press the button, which kills the process of the selected row.
-  PressKillButton();
+  {
+    content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
 
-  // Two rows should disappear.
-  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+    // Press the button, which kills the process of the selected row.
+    PressKillButton();
+
+    // Two rows should disappear.
+    ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+  }
 
   // A later row should now be selected. The selection should be after the 4
   // rows sharing the tabs[0] process, and it should be at or before
@@ -322,5 +344,37 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, SelectionConsistency) {
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 1), pattern));
   EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[2]));
 }
+
+// Make sure the task manager's bounds are saved across instances on Chrome OS.
+#if defined(OS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, RestoreBounds) {
+  chrome::ShowTaskManager(browser());
+
+  const gfx::Rect default_bounds =
+      GetView()->GetWidget()->GetWindowBoundsInScreen();
+  const gfx::Rect non_default_bounds = default_bounds + gfx::Vector2d(0, 17);
+
+  GetView()->GetWidget()->SetBounds(non_default_bounds);
+  GetView()->GetWidget()->CloseNow();
+
+  chrome::ShowTaskManager(browser());
+  EXPECT_EQ(non_default_bounds,
+            GetView()->GetWidget()->GetWindowBoundsInScreen());
+
+  // Also make sure that the task manager is not restored off-screen.
+  // This is a regression test for https://crbug.com/308606
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayMatching(non_default_bounds);
+  const gfx::Rect offscreen_bounds =
+      default_bounds + gfx::Vector2d(0, display.bounds().bottom());
+  GetView()->GetWidget()->SetBounds(offscreen_bounds);
+  GetView()->GetWidget()->CloseNow();
+
+  chrome::ShowTaskManager(browser());
+  gfx::Rect restored_bounds = GetView()->GetWidget()->GetWindowBoundsInScreen();
+  EXPECT_NE(offscreen_bounds, restored_bounds);
+  EXPECT_TRUE(display.bounds().Contains(restored_bounds));
+}
+#endif
 
 }  // namespace task_manager

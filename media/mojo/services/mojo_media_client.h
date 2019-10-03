@@ -11,47 +11,47 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
+#include "base/unguessable_token.h"
 #include "media/base/overlay_info.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
+#include "media/mojo/buildflags.h"
 #include "media/mojo/interfaces/video_decoder.mojom.h"
 #include "media/mojo/services/media_mojo_export.h"
+#include "media/video/supported_video_decoder_config.h"
 
 namespace base {
 class SingleThreadTaskRunner;
-}
+class Token;
+}  // namespace base
 
-namespace gpu {
-struct SyncToken;
-}
+namespace gfx {
+class ColorSpace;
+}  // namespace gfx
 
 namespace service_manager {
 class Connector;
-class ServiceContextRefFactory;
 namespace mojom {
 class InterfaceProvider;
-}
+}  // namespace mojom
 }  // namespace service_manager
 
 namespace media {
 
 class AudioDecoder;
-class AudioRendererSink;
 class CdmFactory;
+class CdmProxy;
 class MediaLog;
-class RendererFactory;
+class Renderer;
 class VideoDecoder;
-class VideoFrame;
-class VideoRendererSink;
-struct CdmHostFilePath;
+
+// Map of mojo VideoDecoder implementations to the vector of configs that they
+// (probably) support.
+using SupportedVideoDecoderConfigMap =
+    base::flat_map<VideoDecoderImplementation,
+                   std::vector<SupportedVideoDecoderConfig>>;
 
 class MEDIA_MOJO_EXPORT MojoMediaClient {
  public:
-  // Similar to VideoFrame::ReleaseMailboxCB for now.
-  using ReleaseMailboxCB = base::OnceCallback<void(const gpu::SyncToken&)>;
-
-  using OutputWithReleaseMailboxCB =
-      base::Callback<void(ReleaseMailboxCB, const scoped_refptr<VideoFrame>&)>;
-
   // Called before the host application is scheduled to quit.
   // The application message loop is still valid at this point, so all clean
   // up tasks requiring the message loop must be completed before returning.
@@ -59,39 +59,42 @@ class MEDIA_MOJO_EXPORT MojoMediaClient {
 
   // Called exactly once before any other method. |connector| can be used by
   // |this| to connect to other services. It is guaranteed to outlive |this|.
-  virtual void Initialize(
-      service_manager::Connector* connector,
-      service_manager::ServiceContextRefFactory* context_ref_factory);
-
-  // Called by the MediaService to ensure the process is sandboxed. It could be
-  // a no-op if the process is already sandboxed.
-  virtual void EnsureSandboxed();
+  virtual void Initialize(service_manager::Connector* connector);
 
   virtual std::unique_ptr<AudioDecoder> CreateAudioDecoder(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
-  // TODO(sandersd): |output_cb| should not be required.
-  // See https://crbug.com/733828.
+  virtual SupportedVideoDecoderConfigMap GetSupportedVideoDecoderConfigs();
+
   virtual std::unique_ptr<VideoDecoder> CreateVideoDecoder(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       MediaLog* media_log,
       mojom::CommandBufferIdPtr command_buffer_id,
-      OutputWithReleaseMailboxCB output_cb,
-      RequestOverlayInfoCB request_overlay_info_cb);
+      VideoDecoderImplementation implementation,
+      RequestOverlayInfoCB request_overlay_info_cb,
+      const gfx::ColorSpace& target_color_space);
 
-  // Returns the output sink used for rendering audio on |audio_device_id|.
-  // May be null if the RendererFactory doesn't need an audio sink.
-  virtual scoped_refptr<AudioRendererSink> CreateAudioRendererSink(
+  // Returns the Renderer to be used by MojoRendererService.
+  // TODO(hubbe): Find out whether we should pass in |target_color_space| here.
+  // TODO(guohuideng): Merge this function into CreateCastRenderer.
+  virtual std::unique_ptr<Renderer> CreateRenderer(
+      service_manager::mojom::InterfaceProvider* host_interfaces,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      MediaLog* media_log,
       const std::string& audio_device_id);
 
-  // Returns the output sink used for rendering video.
-  // May be null if the RendererFactory doesn't need a video sink.
-  virtual std::unique_ptr<VideoRendererSink> CreateVideoRendererSink(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
-
-  // Returns the RendererFactory to be used by MojoRendererService.
-  virtual std::unique_ptr<RendererFactory> CreateRendererFactory(
-      MediaLog* media_log);
+#if BUILDFLAG(ENABLE_CAST_RENDERER)
+  // Used on Chromecast only.
+  // When CastRenderer is created to play video content, an |overlay_plane_id|
+  // is needed to indicate which |overlay_factory| this CastRenderer will be
+  // associtated with.
+  // Chromecast also uses CreateRenderer to create "audio only" renderers.
+  virtual std::unique_ptr<Renderer> CreateCastRenderer(
+      service_manager::mojom::InterfaceProvider* host_interfaces,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      MediaLog* media_log,
+      const base::UnguessableToken& overlay_plane_id);
+#endif  // BUILDFLAG(ENABLE_CAST_RENDERER)
 
   // Returns the CdmFactory to be used by MojoCdmService. |host_interfaces| can
   // be used to request interfaces provided remotely by the host. It may be a
@@ -99,11 +102,11 @@ class MEDIA_MOJO_EXPORT MojoMediaClient {
   virtual std::unique_ptr<CdmFactory> CreateCdmFactory(
       service_manager::mojom::InterfaceProvider* host_interfaces);
 
-#if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
-  // Gets a list of CDM host file paths and put them in |cdm_host_file_paths|.
-  virtual void AddCdmHostFilePaths(
-      std::vector<CdmHostFilePath>* cdm_host_file_paths);
-#endif  // BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  // Creates a CdmProxy that proxies part of CDM functionalities to a different
+  // entity, e.g. hardware CDM modules.
+  virtual std::unique_ptr<CdmProxy> CreateCdmProxy(const base::Token& cdm_guid);
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
  protected:
   MojoMediaClient();

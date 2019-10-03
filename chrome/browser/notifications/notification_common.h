@@ -9,23 +9,20 @@
 #include "chrome/browser/notifications/notification_handler.h"
 #include "url/gurl.h"
 
-namespace content {
-class BrowserContext;
-}  // namespace content
-
 class GURL;
 class Profile;
 
 // Shared functionality for both in page and persistent notification
 class NotificationCommon {
  public:
-  // Things as user can do to a notification.
-  // TODO(peter): Prefix these options with OPERATION_.
+  // Things as user can do to a notification. Keep in sync with the
+  // NotificationOperation enumeration in notification_response_builder_mac.h.
   enum Operation {
-    CLICK = 0,
-    CLOSE = 1,
-    SETTINGS = 2,
-    OPERATION_MAX = SETTINGS
+    OPERATION_CLICK = 0,
+    OPERATION_CLOSE = 1,
+    OPERATION_DISABLE_PERMISSION = 2,
+    OPERATION_SETTINGS = 3,
+    OPERATION_MAX = OPERATION_SETTINGS
   };
 
   // A struct that contains extra data about a notification specific to one of
@@ -37,10 +34,7 @@ class NotificationCommon {
   };
 
   // Open the Notification settings screen when clicking the right button.
-  // TODO(miguelg) have it take a Profile instead once NotificationObjectProxy
-  // is updated.
-  static void OpenNotificationSettings(
-      content::BrowserContext* browser_context);
+  static void OpenNotificationSettings(Profile* profile, const GURL& origin);
 };
 
 // Metadata for PERSISTENT notifications.

@@ -6,13 +6,16 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "net/base/load_flags.h"
+#include "net/base/net_errors.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
 
 namespace {
@@ -75,54 +78,89 @@ void AttestationCAClient::SendCertificateRequest(
            request, on_response);
 }
 
-void AttestationCAClient::OnURLFetchComplete(const net::URLFetcher* source) {
-  FetcherCallbackMap::iterator iter = pending_requests_.find(source);
-  if (iter == pending_requests_.end()) {
-    LOG(WARNING) << "Callback from unknown source.";
-    return;
+void AttestationCAClient::OnURLLoadComplete(
+    std::list<std::unique_ptr<network::SimpleURLLoader>>::iterator it,
+    const DataCallback& callback,
+    std::unique_ptr<std::string> response_body) {
+  // Move the loader out of the active loaders list.
+  std::unique_ptr<network::SimpleURLLoader> url_loader = std::move(*it);
+  url_loaders_.erase(it);
+
+  DCHECK(url_loader);
+
+  if (url_loader->ResponseInfo() && url_loader->ResponseInfo()->headers) {
+    int response_code = url_loader->ResponseInfo()->headers->response_code();
+
+    if (response_code < 200 || response_code > 299) {
+      LOG(ERROR) << "Attestation CA sent an HTTP error response: "
+                 << response_code;
+      callback.Run(false, "");
+      return;
+    }
   }
 
-  DataCallback callback = iter->second;
-  pending_requests_.erase(iter);
-  std::unique_ptr<const net::URLFetcher> scoped_source(source);
-
-  if (source->GetStatus().status() != net::URLRequestStatus::SUCCESS) {
-    LOG(ERROR) << "Attestation CA request failed, status: "
-               << source->GetStatus().status() << ", error: "
-               << source->GetStatus().error();
+  if (!response_body) {
+    int net_error = url_loader->NetError();
+    LOG(ERROR) << "Attestation CA request failed, error: "
+               << net::ErrorToString(net_error);
     callback.Run(false, "");
     return;
   }
-
-  if (source->GetResponseCode() != net::HTTP_OK) {
-    LOG(ERROR) << "Attestation CA sent an error response: "
-               << source->GetResponseCode();
-    callback.Run(false, "");
-    return;
-  }
-
-  std::string response;
-  bool result = source->GetResponseAsString(&response);
-  DCHECK(result) << "Invalid fetcher setting.";
 
   // Run the callback last because it may delete |this|.
-  callback.Run(true, response);
+  callback.Run(true, *response_body);
 }
 
 void AttestationCAClient::FetchURL(const std::string& url,
                                    const std::string& request,
                                    const DataCallback& on_response) {
-  // The first argument allows the use of TestURLFetcherFactory in tests.
-  net::URLFetcher* fetcher =
-      net::URLFetcher::Create(0, GURL(url), net::URLFetcher::POST, this)
-          .release();
-  fetcher->SetRequestContext(g_browser_process->system_request_context());
-  fetcher->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                        net::LOAD_DO_NOT_SAVE_COOKIES |
-                        net::LOAD_DISABLE_CACHE);
-  fetcher->SetUploadData(kMimeContentType, request);
-  pending_requests_[fetcher] = on_response;
-  fetcher->Start();
+  const net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("attestation_ca_client", R"(
+        semantics {
+          sender: "Attestation CA client"
+          description:
+            "Sends requests to the Attestation CA as part of the remote "
+            "attestation feature, such as enrolling for remote attestation or "
+            "to obtain an attestation certificate."
+          trigger:
+            "Device enrollment, content protection or get an attestation "
+            "certificate for a hardware-protected key."
+          data:
+            "The data from AttestationCertificateRequest or from "
+            "AttestationEnrollmentRequest message from "
+            "cryptohome/attestation.proto. Some of the important data being "
+            "encrypted endorsement certificate, attestation identity public "
+            "key, PCR0 and PCR1 TPM values."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "The device setting DeviceAttestationEnabled can disable the "
+            "attestation requests and AttestationForContentProtectionEnabled "
+            "can disable the attestation for content protection. But they "
+            "cannot be controlled by a policy or through settings."
+          policy_exception_justification: "Not implemented."
+        })");
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = GURL(url);
+  resource_request->method = "POST";
+  resource_request->load_flags = net::LOAD_DO_NOT_SEND_COOKIES |
+                                 net::LOAD_DO_NOT_SAVE_COOKIES |
+                                 net::LOAD_DISABLE_CACHE;
+
+  auto url_loader = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation);
+  url_loader->AttachStringForUpload(request, kMimeContentType);
+
+  auto* raw_url_loader = url_loader.get();
+  url_loaders_.push_back(std::move(url_loader));
+
+  raw_url_loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      g_browser_process->shared_url_loader_factory().get(),
+      base::BindOnce(&AttestationCAClient::OnURLLoadComplete,
+                     base::Unretained(this), std::move(--url_loaders_.end()),
+                     on_response));
 }
 
 PrivacyCAType AttestationCAClient::GetType() {

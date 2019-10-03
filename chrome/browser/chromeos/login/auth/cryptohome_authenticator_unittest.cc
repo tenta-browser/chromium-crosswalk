@@ -9,13 +9,13 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chromeos/login/auth/chrome_cryptohome_authenticator.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
@@ -23,26 +23,25 @@
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_test_helper.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/cryptohome/homedir_methods.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "chromeos/dbus/cros_disks_client.h"
+#include "chromeos/dbus/cryptohome/account_identifier_operators.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_cryptohome_client.h"
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/mock_auth_status_consumer.h"
-#include "chromeos/login/auth/mock_url_fetchers.h"
 #include "chromeos/login/auth/test_attempt_state.h"
 #include "chromeos/login/auth/user_context.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "components/ownership/mock_owner_key_util.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -50,7 +49,6 @@
 #include "crypto/nss_key_util.h"
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_test_nss_chromeos_user.h"
-#include "google_apis/gaia/mock_url_fetcher_factory.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/url_request_status.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -118,12 +116,12 @@ const uint8_t kOwnerPublicKey[] = {
 
 std::vector<uint8_t> GetOwnerPublicKey() {
   return std::vector<uint8_t>(kOwnerPublicKey,
-                              kOwnerPublicKey + arraysize(kOwnerPublicKey));
+                              kOwnerPublicKey + base::size(kOwnerPublicKey));
 }
 
 bool CreateOwnerKeyInSlot(PK11SlotInfo* slot) {
   const std::vector<uint8_t> key(
-      kOwnerPrivateKey, kOwnerPrivateKey + arraysize(kOwnerPrivateKey));
+      kOwnerPrivateKey, kOwnerPrivateKey + base::size(kOwnerPrivateKey));
   return crypto::ImportNSSKeyFromPrivateKeyInfo(
              slot, key, true /* permanent */) != nullptr;
 }
@@ -134,7 +132,7 @@ class TestCryptohomeClient : public ::chromeos::FakeCryptohomeClient {
   TestCryptohomeClient() = default;
   ~TestCryptohomeClient() override = default;
 
-  void set_expected_id(const cryptohome::Identification& id) {
+  void set_expected_id(const cryptohome::AccountIdentifier& id) {
     expected_id_ = id;
   }
 
@@ -146,7 +144,23 @@ class TestCryptohomeClient : public ::chromeos::FakeCryptohomeClient {
     is_create_attempt_expected_ = expected;
   }
 
-  void MountEx(const cryptohome::Identification& cryptohome_id,
+  void set_migrate_key_should_succeed(bool should_succeed) {
+    migrate_key_should_succeed_ = should_succeed;
+  }
+
+  void set_mount_guest_should_succeed(bool should_succeed) {
+    mount_guest_should_succeed_ = should_succeed;
+  }
+
+  void set_remove_ex_should_succeed(bool should_succeed) {
+    remove_ex_should_succeed_ = should_succeed;
+  }
+
+  void set_unmount_ex_should_succeed(bool should_succeed) {
+    unmount_ex_should_succeed_ = should_succeed;
+  }
+
+  void MountEx(const cryptohome::AccountIdentifier& cryptohome_id,
                const cryptohome::AuthorizationRequest& auth,
                const cryptohome::MountRequest& request,
                DBusMethodCallback<cryptohome::BaseReply> callback) override {
@@ -168,10 +182,73 @@ class TestCryptohomeClient : public ::chromeos::FakeCryptohomeClient {
         FROM_HERE, base::BindOnce(std::move(callback), reply));
   }
 
+  void CheckKeyEx(const cryptohome::AccountIdentifier& cryptohome_id,
+                  const cryptohome::AuthorizationRequest& auth,
+                  const cryptohome::CheckKeyRequest& request,
+                  DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    EXPECT_EQ(expected_id_, cryptohome_id);
+    EXPECT_EQ(expected_authorization_secret_, auth.key().secret());
+    cryptohome::BaseReply reply;
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
+  void MigrateKeyEx(
+      const cryptohome::AccountIdentifier& account,
+      const cryptohome::AuthorizationRequest& auth_request,
+      const cryptohome::MigrateKeyRequest& migrate_request,
+      DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    EXPECT_EQ(expected_id_.account_id(), account.account_id());
+
+    cryptohome::BaseReply reply;
+    if (!migrate_key_should_succeed_)
+      reply.set_error(cryptohome::CRYPTOHOME_ERROR_MIGRATE_KEY_FAILED);
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
+  void MountGuestEx(
+      const cryptohome::MountGuestRequest& request,
+      DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    cryptohome::BaseReply reply;
+    if (!mount_guest_should_succeed_)
+      reply.set_error(cryptohome::CRYPTOHOME_ERROR_MOUNT_FATAL);
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
+  // Calls RemoveEx method.  |callback| is called after the method call
+  // succeeds.
+  void RemoveEx(const cryptohome::AccountIdentifier& account,
+                DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    cryptohome::BaseReply reply;
+    if (!remove_ex_should_succeed_)
+      reply.set_error(cryptohome::CRYPTOHOME_ERROR_REMOVE_FAILED);
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
+  void UnmountEx(const cryptohome::UnmountRequest& account,
+                 DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    cryptohome::BaseReply reply;
+    if (!unmount_ex_should_succeed_)
+      reply.set_error(cryptohome::CRYPTOHOME_ERROR_REMOVE_FAILED);
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
  private:
-  cryptohome::Identification expected_id_;
+  cryptohome::AccountIdentifier expected_id_;
   std::string expected_authorization_secret_;
   bool is_create_attempt_expected_ = false;
+  bool migrate_key_should_succeed_ = false;
+  bool mount_guest_should_succeed_ = false;
+  bool remove_ex_should_succeed_ = false;
+  bool unmount_ex_should_succeed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TestCryptohomeClient);
 };
@@ -181,10 +258,12 @@ class TestCryptohomeClient : public ::chromeos::FakeCryptohomeClient {
 class CryptohomeAuthenticatorTest : public testing::Test {
  public:
   CryptohomeAuthenticatorTest()
-      : user_context_(AccountId::FromUserEmail("me@nowhere.org")),
+      : user_context_(user_manager::USER_TYPE_REGULAR,
+                      AccountId::FromUserEmail("me@nowhere.org")),
         user_manager_(new chromeos::FakeChromeUserManager()),
         user_manager_enabler_(base::WrapUnique(user_manager_)),
         mock_caller_(NULL),
+        consumer_(run_loop_.QuitClosure()),
         owner_key_util_(new ownership::MockOwnerKeyUtil()) {
     // Testing profile must be initialized after user_manager_ +
     // user_manager_enabler_, because it will create another UserManager
@@ -192,7 +271,9 @@ class CryptohomeAuthenticatorTest : public testing::Test {
     profile_.reset(new TestingProfile);
     OwnerSettingsServiceChromeOSFactory::GetInstance()
         ->SetOwnerKeyUtilForTesting(owner_key_util_);
-    user_context_.SetKey(Key("fakepass"));
+    Key key("fakepass");
+    key.SetLabel(kCryptohomeGAIAKeyLabel);
+    user_context_.SetKey(key);
     user_context_.SetUserIDHash("me_nowhere_com_hash");
     const user_manager::User* user =
         user_manager_->AddUser(user_context_.GetAccountId());
@@ -217,8 +298,6 @@ class CryptohomeAuthenticatorTest : public testing::Test {
     cryptohome::HomedirMethods::Initialize();
 
     fake_cryptohome_client_ = new TestCryptohomeClient;
-    chromeos::DBusThreadManager::GetSetterForTesting()->SetCryptohomeClient(
-        std::unique_ptr<CryptohomeClient>(fake_cryptohome_client_));
 
     SystemSaltGetter::Initialize();
 
@@ -229,7 +308,7 @@ class CryptohomeAuthenticatorTest : public testing::Test {
   // Tears down the test fixture.
   void TearDown() override {
     SystemSaltGetter::Shutdown();
-    DBusThreadManager::Shutdown();
+    CryptohomeClient::Shutdown();
 
     cryptohome::AsyncMethodCaller::Shutdown();
     mock_caller_ = NULL;
@@ -255,53 +334,56 @@ class CryptohomeAuthenticatorTest : public testing::Test {
   // wasn't supposed to happen.
   void FailOnLoginFailure() {
     ON_CALL(consumer_, OnAuthFailure(_))
-        .WillByDefault(Invoke(MockAuthStatusConsumer::OnFailQuitAndFail));
+        .WillByDefault(
+            Invoke(&consumer_, &MockAuthStatusConsumer::OnFailQuitAndFail));
   }
 
   // Allow test to fail and exit gracefully, even if OnAuthSuccess()
   // wasn't supposed to happen.
   void FailOnLoginSuccess() {
     ON_CALL(consumer_, OnAuthSuccess(_))
-        .WillByDefault(Invoke(MockAuthStatusConsumer::OnSuccessQuitAndFail));
+        .WillByDefault(
+            Invoke(&consumer_, &MockAuthStatusConsumer::OnSuccessQuitAndFail));
   }
 
   // Allow test to fail and exit gracefully, even if
   // OnOffTheRecordAuthSuccess() wasn't supposed to happen.
   void FailOnGuestLoginSuccess() {
     ON_CALL(consumer_, OnOffTheRecordAuthSuccess())
-        .WillByDefault(
-            Invoke(MockAuthStatusConsumer::OnGuestSuccessQuitAndFail));
+        .WillByDefault(Invoke(
+            &consumer_, &MockAuthStatusConsumer::OnGuestSuccessQuitAndFail));
   }
 
   void ExpectLoginFailure(const AuthFailure& failure) {
     EXPECT_CALL(consumer_, OnAuthFailure(failure))
-        .WillOnce(Invoke(MockAuthStatusConsumer::OnFailQuit))
+        .WillOnce(Invoke(&consumer_, &MockAuthStatusConsumer::OnFailQuit))
         .RetiresOnSaturation();
   }
 
   void ExpectLoginSuccess(const UserContext& user_context) {
     EXPECT_CALL(consumer_, OnAuthSuccess(user_context))
-        .WillOnce(Invoke(MockAuthStatusConsumer::OnSuccessQuit))
+        .WillOnce(Invoke(&consumer_, &MockAuthStatusConsumer::OnSuccessQuit))
         .RetiresOnSaturation();
   }
 
   void ExpectGuestLoginSuccess() {
     EXPECT_CALL(consumer_, OnOffTheRecordAuthSuccess())
-        .WillOnce(Invoke(MockAuthStatusConsumer::OnGuestSuccessQuit))
+        .WillOnce(
+            Invoke(&consumer_, &MockAuthStatusConsumer::OnGuestSuccessQuit))
         .RetiresOnSaturation();
   }
 
   void ExpectPasswordChange() {
     EXPECT_CALL(consumer_, OnPasswordChangeDetected())
-        .WillOnce(Invoke(MockAuthStatusConsumer::OnMigrateQuit))
+        .WillOnce(Invoke(&consumer_, &MockAuthStatusConsumer::OnMigrateQuit))
         .RetiresOnSaturation();
   }
 
   void ExpectGetKeyDataExCall(std::unique_ptr<int64_t> key_type,
                               std::unique_ptr<std::string> salt) {
-    cryptohome::KeyDefinition key_definition(std::string() /* secret */,
-                                             kCryptohomeGAIAKeyLabel,
-                                             cryptohome::PRIV_DEFAULT);
+    auto key_definition = cryptohome::KeyDefinition::CreateForPassword(
+        std::string() /* secret */, kCryptohomeGAIAKeyLabel,
+        cryptohome::PRIV_DEFAULT);
     key_definition.revision = 1;
     if (key_type) {
       key_definition.provider_data.push_back(
@@ -316,9 +398,10 @@ class CryptohomeAuthenticatorTest : public testing::Test {
 
     // Add the key to the fake.
     cryptohome::AddKeyRequest request;
-    KeyDefinitionToKey(key_definition, request.mutable_key());
+    cryptohome::KeyDefinitionToKey(key_definition, request.mutable_key());
     fake_cryptohome_client_->AddKeyEx(
-        cryptohome::Identification(user_context_.GetAccountId()),
+        cryptohome::CreateAccountIdentifierFromAccountId(
+            user_context_.GetAccountId()),
         cryptohome::AuthorizationRequest(), request,
         base::BindOnce([](base::Optional<cryptohome::BaseReply> reply) {
           EXPECT_TRUE(reply.has_value());
@@ -328,11 +411,31 @@ class CryptohomeAuthenticatorTest : public testing::Test {
 
   void ExpectMountExCall(bool expect_create_attempt) {
     fake_cryptohome_client_->set_expected_id(
-        cryptohome::Identification(user_context_.GetAccountId()));
+        cryptohome::CreateAccountIdentifierFromAccountId(
+            user_context_.GetAccountId()));
     fake_cryptohome_client_->set_expected_authorization_secret(
         transformed_key_.GetSecret());
     fake_cryptohome_client_->set_is_create_attempt_expected(
         expect_create_attempt);
+  }
+
+  void ExpectCheckKeyExCall() {
+    fake_cryptohome_client_->set_expected_id(
+        cryptohome::CreateAccountIdentifierFromAccountId(
+            user_context_.GetAccountId()));
+    fake_cryptohome_client_->set_expected_authorization_secret(
+        transformed_key_.GetSecret());
+  }
+
+  void ExpectMigrateKeyExCall(bool should_succeed) {
+    fake_cryptohome_client_->set_expected_id(
+        cryptohome::CreateAccountIdentifierFromAccountId(
+            user_context_.GetAccountId()));
+    fake_cryptohome_client_->set_migrate_key_should_succeed(should_succeed);
+  }
+
+  void ExpectMountGuestExCall(bool should_succeed) {
+    fake_cryptohome_client_->set_mount_guest_should_succeed(should_succeed);
   }
 
   void RunResolve(CryptohomeAuthenticator* auth) {
@@ -361,16 +464,15 @@ class CryptohomeAuthenticatorTest : public testing::Test {
   UserContext user_context_with_transformed_key_;
   Key transformed_key_;
 
-  ScopedDeviceSettingsTestHelper device_settings_test_helper_;
-  ScopedTestCrosSettings test_cros_settings_;
-
-  chromeos::FakeChromeUserManager* user_manager_;
+  ScopedCrosSettingsTestHelper cros_settings_test_helper_;
+  FakeChromeUserManager* user_manager_;
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
   user_manager::ScopedUserManager user_manager_enabler_;
 
   cryptohome::MockAsyncMethodCaller* mock_caller_;
 
+  base::RunLoop run_loop_;
   MockAuthStatusConsumer consumer_;
 
   scoped_refptr<CryptohomeAuthenticator> auth_;
@@ -405,7 +507,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveNothingDone) {
 TEST_F(CryptohomeAuthenticatorTest, ResolvePossiblePwChangeToFailedMount) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
 
   // When there is no online attempt and online results, POSSIBLE_PW_CHANGE
   EXPECT_EQ(CryptohomeAuthenticator::FAILED_MOUNT,
@@ -416,7 +518,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveNeedOldPw) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because of unmatched key; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
 
   EXPECT_EQ(CryptohomeAuthenticator::NEED_OLD_PW,
@@ -429,7 +531,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededDirectFailedMount) {
   // This is a high level test to verify the proper transitioning in this mode
   // only. It is not testing that we properly verify that the user is an owner
   // or that we really are in "safe-mode".
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(true, false);
 
   EXPECT_EQ(CryptohomeAuthenticator::OWNER_REQUIRED,
@@ -441,7 +543,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededMount) {
   // and succeeded but we are in safe mode and the current user is not owner.
   // This test will check that the "safe-mode" policy is not set and will let
   // the mount finish successfully.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   EXPECT_EQ(CryptohomeAuthenticator::OFFLINE_LOGIN,
             SetAndResolveState(auth_.get(), state_.release()));
@@ -464,10 +566,10 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededFailedMount) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and succeeded but we are in safe mode and the current user is not owner.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   ScopedCrosSettingsTestHelper settings_helper(false);
-  settings_helper.ReplaceProvider(kPolicyMissingMitigationMode);
+  settings_helper.ReplaceDeviceSettingsProviderWithStub();
   settings_helper.SetBoolean(kPolicyMissingMitigationMode, true);
 
   // Initialize login state for this test to verify the login state is changed
@@ -483,7 +585,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededFailedMount) {
   content::RunAllTasksUntilIdle();
 
   state_.reset(new TestAttemptState(user_context_, false));
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
 
   // The owner key util should not have found the owner key, so login should
   // not be allowed.
@@ -492,7 +594,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededFailedMount) {
   EXPECT_TRUE(LoginState::Get()->IsInSafeMode());
 
   // Unset global objects used by this test.
-  fake_cryptohome_client_->set_unmount_result(true);
+  fake_cryptohome_client_->set_unmount_ex_should_succeed(true);
   LoginState::Shutdown();
 }
 
@@ -514,10 +616,10 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededSuccess) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and succeeded but we are in safe mode and the current user is not owner.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   ScopedCrosSettingsTestHelper settings_helper(false);
-  settings_helper.ReplaceProvider(kPolicyMissingMitigationMode);
+  settings_helper.ReplaceDeviceSettingsProviderWithStub();
   settings_helper.SetBoolean(kPolicyMissingMitigationMode, true);
 
   // Initialize login state for this test to verify the login state is changed
@@ -533,7 +635,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededSuccess) {
   content::RunAllTasksUntilIdle();
 
   state_.reset(new TestAttemptState(user_context_, false));
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
 
   // The owner key util should find the owner key, so login should succeed.
   EXPECT_EQ(CryptohomeAuthenticator::OFFLINE_LOGIN,
@@ -541,7 +643,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededSuccess) {
   EXPECT_TRUE(LoginState::Get()->IsInSafeMode());
 
   // Unset global objects used by this test.
-  fake_cryptohome_client_->set_unmount_result(true);
+  fake_cryptohome_client_->set_unmount_ex_should_succeed(true);
   LoginState::Shutdown();
 }
 
@@ -551,7 +653,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveFailedMount) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and failed.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_FATAL);
   SetAttemptState(auth_.get(), state_.release());
 
   RunResolve(auth_.get());
@@ -560,27 +662,19 @@ TEST_F(CryptohomeAuthenticatorTest, DriveFailedMount) {
 TEST_F(CryptohomeAuthenticatorTest, DriveGuestLogin) {
   ExpectGuestLoginSuccess();
   FailOnLoginFailure();
-
-  // Set up mock async method caller to respond as though a tmpfs mount
-  // attempt has occurred and succeeded.
-  mock_caller_->SetUp(true, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(*mock_caller_, AsyncMountGuest(_)).Times(1).RetiresOnSaturation();
+  ExpectMountGuestExCall(true /*should_succeeed*/);
 
   auth_->LoginOffTheRecord();
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveGuestLoginButFail) {
   FailOnGuestLoginSuccess();
   ExpectLoginFailure(AuthFailure(AuthFailure::COULD_NOT_MOUNT_TMPFS));
-
-  // Set up mock async method caller to respond as though a tmpfs mount
-  // attempt has occurred and failed.
-  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(*mock_caller_, AsyncMountGuest(_)).Times(1).RetiresOnSaturation();
+  ExpectMountGuestExCall(false /*should_succeed*/);
 
   auth_->LoginOffTheRecord();
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveDataResync) {
@@ -590,51 +684,39 @@ TEST_F(CryptohomeAuthenticatorTest, DriveDataResync) {
   ExpectLoginSuccess(expected_user_context);
   FailOnLoginFailure();
 
-  // Set up mock async method caller to respond successfully to a cryptohome
-  // remove attempt.
-  mock_caller_->SetUp(true, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncRemove(cryptohome::Identification(user_context_.GetAccountId()), _))
-      .Times(1)
-      .RetiresOnSaturation();
-
   // Set up mock homedir methods to respond successfully to a cryptohome create
   // attempt.
   ExpectGetKeyDataExCall(std::unique_ptr<int64_t>(),
                          std::unique_ptr<std::string>());
   ExpectMountExCall(true /* expect_create_attempt */);
+  fake_cryptohome_client_->set_remove_ex_should_succeed(
+      true /* should_succeed */);
 
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
   auth_->ResyncEncryptedData();
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveResyncFail) {
   FailOnLoginSuccess();
   ExpectLoginFailure(AuthFailure(AuthFailure::DATA_REMOVAL_FAILED));
 
-  // Set up mock async method caller to fail a cryptohome remove attempt.
-  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncRemove(cryptohome::Identification(user_context_.GetAccountId()), _))
-      .Times(1)
-      .RetiresOnSaturation();
+  fake_cryptohome_client_->set_remove_ex_should_succeed(
+      false /* should_succeed */);
 
   SetAttemptState(auth_.get(), state_.release());
 
   auth_->ResyncEncryptedData();
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveRequestOldPassword) {
   FailOnLoginSuccess();
   ExpectPasswordChange();
 
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -648,66 +730,50 @@ TEST_F(CryptohomeAuthenticatorTest, DriveDataRecover) {
   ExpectLoginSuccess(expected_user_context);
   FailOnLoginFailure();
 
-  // Set up mock async method caller to respond successfully to a key migration.
-  mock_caller_->SetUp(true, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncMigrateKey(cryptohome::Identification(user_context_.GetAccountId()),
-                      _, transformed_key_.GetSecret(), _))
-      .Times(1)
-      .RetiresOnSaturation();
-
   // Set up mock homedir methods to respond successfully to a cryptohome mount
   // attempt.
   ExpectGetKeyDataExCall(std::unique_ptr<int64_t>(),
                          std::unique_ptr<std::string>());
   ExpectMountExCall(false /* expect_create_attempt */);
+  ExpectMigrateKeyExCall(true /*should_succeed*/);
 
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
   auth_->RecoverEncryptedData(std::string());
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveDataRecoverButFail) {
   FailOnLoginSuccess();
   ExpectPasswordChange();
-
-  // Set up mock async method caller to fail a key migration attempt,
-  // asserting that the wrong password was used.
-  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncMigrateKey(cryptohome::Identification(user_context_.GetAccountId()),
-                      _, transformed_key_.GetSecret(), _))
-      .Times(1)
-      .RetiresOnSaturation();
+  ExpectMigrateKeyExCall(false /*should_succeed*/);
 
   SetAttemptState(auth_.get(), state_.release());
 
   auth_->RecoverEncryptedData(std::string());
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
-TEST_F(CryptohomeAuthenticatorTest, ResolveNoMountToFailedMount) {
+TEST_F(CryptohomeAuthenticatorTest, ResolveOfflineNoMount) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
 
-  // When there is no online attempt and online results, NO_MOUNT will be
-  // resolved to FAILED_MOUNT.
-  EXPECT_EQ(CryptohomeAuthenticator::FAILED_MOUNT,
+  // When there is no online attempt and online results, the missing mount will
+  // be resolved to OFFLINE_NO_MOUNT.
+  EXPECT_EQ(CryptohomeAuthenticator::OFFLINE_NO_MOUNT,
             SetAndResolveState(auth_.get(), state_.release()));
+
+  ExpectLoginFailure(AuthFailure(AuthFailure::MISSING_CRYPTOHOME));
+  RunResolve(auth_.get());
 }
 
 TEST_F(CryptohomeAuthenticatorTest, ResolveCreateNew) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
 
   EXPECT_EQ(CryptohomeAuthenticator::CREATE_NEW,
@@ -730,8 +796,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveCreateForNewUser) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -744,7 +809,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveOfflineLogin) {
 
   // Set up state as though a cryptohome mount attempt has occurred and
   // succeeded.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetAttemptState(auth_.get(), state_.release());
 
   RunResolve(auth_.get());
@@ -756,7 +821,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveOnlineLogin) {
 
   // Set up state as though a cryptohome mount attempt has occurred and
   // succeeded.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -767,18 +832,12 @@ TEST_F(CryptohomeAuthenticatorTest, DriveUnlock) {
   ExpectLoginSuccess(user_context_);
   FailOnLoginFailure();
 
-  // Set up mock async method caller to respond successfully to a cryptohome
+  // Set up fake cryptohome client to respond successfully to a cryptohome
   // key-check attempt.
-  mock_caller_->SetUp(true, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncCheckKey(cryptohome::Identification(user_context_.GetAccountId()), _,
-                    _))
-      .Times(1)
-      .RetiresOnSaturation();
+  ExpectCheckKeyExCall();
 
   auth_->AuthenticateToUnlock(user_context_);
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, DriveLoginWithPreHashedPassword) {
@@ -794,12 +853,12 @@ TEST_F(CryptohomeAuthenticatorTest, DriveLoginWithPreHashedPassword) {
   // pre-hashed key was used to create the cryptohome and allow a successful
   // mount when this pre-hashed key is used.
 
-  ExpectGetKeyDataExCall(base::MakeUnique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
-                         base::MakeUnique<std::string>(kSalt));
+  ExpectGetKeyDataExCall(std::make_unique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
+                         std::make_unique<std::string>(kSalt));
   ExpectMountExCall(false /* expect_create_attempt */);
 
   auth_->AuthenticateToLogin(NULL, user_context_);
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 TEST_F(CryptohomeAuthenticatorTest, FailLoginWithMissingSalt) {
@@ -811,11 +870,11 @@ TEST_F(CryptohomeAuthenticatorTest, FailLoginWithMissingSalt) {
   // Set up mock homedir methods to respond with key metadata indicating that a
   // pre-hashed key was used to create the cryptohome but without the required
   // salt.
-  ExpectGetKeyDataExCall(base::MakeUnique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
+  ExpectGetKeyDataExCall(std::make_unique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
                          std::unique_ptr<std::string>());
 
   auth_->AuthenticateToLogin(NULL, user_context_);
-  base::RunLoop().Run();
+  run_loop_.Run();
 }
 
 }  // namespace chromeos

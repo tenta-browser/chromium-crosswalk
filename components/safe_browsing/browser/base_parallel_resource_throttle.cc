@@ -10,11 +10,11 @@
 #include "components/safe_browsing/browser/browser_url_loader_throttle.h"
 #include "components/safe_browsing/browser/url_checker_delegate.h"
 #include "content/public/browser/resource_request_info.h"
-#include "content/public/common/resource_request.h"
-#include "content/public/common/resource_response.h"
 #include "net/http/http_request_headers.h"
 #include "net/log/net_log_with_source.h"
 #include "net/url_request/url_request.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/resource_response.h"
 
 namespace safe_browsing {
 
@@ -32,7 +32,8 @@ class BaseParallelResourceThrottle::URLLoaderThrottleHolder
   uint32_t inside_delegate_calls() const { return inside_delegate_calls_; }
 
   // content::URLLoaderThrottle::Delegate implementation:
-  void CancelWithError(int error_code) override {
+  void CancelWithError(int error_code,
+                       base::StringPiece custom_reason) override {
     if (!owner_)
       return;
 
@@ -78,10 +79,14 @@ BaseParallelResourceThrottle::BaseParallelResourceThrottle(
     content::ResourceType resource_type,
     scoped_refptr<UrlCheckerDelegate> url_checker_delegate)
     : request_(request), resource_type_(resource_type) {
-  const content::ResourceRequestInfo* info =
+  content::ResourceRequestInfo* info =
       content::ResourceRequestInfo::ForRequest(request_);
-  auto throttle = BrowserURLLoaderThrottle::MaybeCreate(
-      std::move(url_checker_delegate), info->GetWebContentsGetterForRequest());
+  auto throttle = BrowserURLLoaderThrottle::Create(
+      base::BindOnce([](scoped_refptr<UrlCheckerDelegate> delegate,
+                        content::ResourceContext*) { return delegate; },
+                     url_checker_delegate),
+      info->GetWebContentsGetterForRequest(), info->GetFrameTreeNodeId(),
+      info->GetContext());
   url_loader_throttle_holder_ =
       std::make_unique<URLLoaderThrottleHolder>(this, std::move(throttle));
 }
@@ -107,7 +112,7 @@ void BaseParallelResourceThrottle::WillStartRequest(bool* defer) {
     return;
   }
 
-  content::ResourceRequest resource_request;
+  network::ResourceRequest resource_request;
 
   net::HttpRequestHeaders full_headers;
   resource_request.headers = request_->GetFullRequestHeaders(&full_headers)
@@ -115,16 +120,16 @@ void BaseParallelResourceThrottle::WillStartRequest(bool* defer) {
                                  : request_->extra_request_headers();
 
   resource_request.load_flags = request_->load_flags();
-  resource_request.resource_type = resource_type_;
+  resource_request.resource_type = static_cast<int>(resource_type_);
 
-  const content::ResourceRequestInfo* info =
+  content::ResourceRequestInfo* info =
       content::ResourceRequestInfo::ForRequest(request_);
   resource_request.has_user_gesture = info && info->HasUserGesture();
 
   resource_request.url = request_->url();
   resource_request.method = request_->method();
 
-  url_loader_throttle_holder_->throttle()->WillStartRequest(resource_request,
+  url_loader_throttle_holder_->throttle()->WillStartRequest(&resource_request,
                                                             defer);
   DCHECK(!*defer);
   throttle_in_band_ = false;
@@ -139,8 +144,16 @@ void BaseParallelResourceThrottle::WillRedirectRequest(
     return;
   }
 
-  url_loader_throttle_holder_->throttle()->WillRedirectRequest(redirect_info,
-                                                               defer);
+  // The safe browsing URLLoaderThrottle doesn't use the |resource_head|,
+  // |to_be_modified_headers|, |modified_headers| or |new_url| parameters, so
+  // pass in an empty struct to avoid changing ResourceThrottle signature.
+  network::ResourceResponseHead resource_head;
+  std::vector<std::string> to_be_removed_headers;
+  net::HttpRequestHeaders modified_headers;
+  net::RedirectInfo redirect_info_copy = redirect_info;
+  url_loader_throttle_holder_->throttle()->WillRedirectRequest(
+      &redirect_info_copy, resource_head, defer, &to_be_removed_headers,
+      &modified_headers);
   DCHECK(!*defer);
   throttle_in_band_ = false;
 }
@@ -152,13 +165,14 @@ void BaseParallelResourceThrottle::WillProcessResponse(bool* defer) {
     return;
   }
 
+  network::ResourceResponseHead response_head;
   url_loader_throttle_holder_->throttle()->WillProcessResponse(
-      GURL(), content::ResourceResponseHead(), defer);
+      GURL(), &response_head, defer);
   if (!*defer)
     throttle_in_band_ = false;
 }
 
-const char* BaseParallelResourceThrottle::GetNameForLogging() const {
+const char* BaseParallelResourceThrottle::GetNameForLogging() {
   return "BaseParallelResourceThrottle";
 }
 

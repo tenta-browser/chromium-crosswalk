@@ -22,6 +22,12 @@ struct ImeTextSpan;
 
 namespace content {
 
+namespace mojom {
+
+class FrameInputHandler;
+
+}  // namespace mojom
+
 class RenderFrameHost;
 class RenderWidgetHostImpl;
 class RenderWidgetHostViewAndroid;
@@ -105,6 +111,8 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
   }
 
   void UpdateState(const TextInputState& state);
+  void UpdateAfterViewSizeChanged();
+  void UpdateOnTouchDown();
 
   void AdvanceFocusInForm(JNIEnv*,
                           const base::android::JavaParamRef<jobject>&,
@@ -113,6 +121,7 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
  private:
   RenderWidgetHostImpl* GetFocusedWidget();
   RenderFrameHost* GetFocusedFrame();
+  mojom::FrameInputHandler* GetFocusedFrameInputHandler();
   std::vector<ui::ImeTextSpan> GetImeTextSpansFromJava(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,

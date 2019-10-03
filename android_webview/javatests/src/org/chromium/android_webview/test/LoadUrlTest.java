@@ -8,6 +8,7 @@ import static org.chromium.android_webview.test.AwActivityTestRule.WAIT_TIMEOUT_
 
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
+import android.util.Base64;
 import android.util.Pair;
 
 import org.json.JSONArray;
@@ -24,7 +25,7 @@ import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.HistoryUtils;
+import org.chromium.content_public.browser.test.util.HistoryUtils;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.UnsupportedEncodingException;
@@ -78,8 +79,9 @@ public class LoadUrlTest {
     @Feature({"AndroidWebView"})
     public void testDataUrlBase64() throws Throwable {
         final String expectedTitle = "dataUrlTestBase64";
-        final String data = "PGh0bWw+PGhlYWQ+PHRpdGxlPmRhdGFVcmxUZXN0QmFzZTY0PC90aXRsZT48"
-                + "L2hlYWQ+PC9odG1sPg==";
+        final String unencodedData =
+                "<html><head><title>" + expectedTitle + "</title></head><body>foo</body></html>";
+        final String data = Base64.encodeToString(unencodedData.getBytes(), Base64.NO_PADDING);
 
         final TestAwContentsClient contentsClient = new TestAwContentsClient();
         final AwTestContainerView testContainerView =
@@ -88,6 +90,31 @@ public class LoadUrlTest {
         mActivityTestRule.loadDataSync(
                 awContents, contentsClient.getOnPageFinishedHelper(), data, "text/html", true);
         Assert.assertEquals(expectedTitle, mActivityTestRule.getTitleOnUiThread(awContents));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testDataUrlBase64WithTrickyCharacters() throws Throwable {
+        // We want all of these characters to be treated literally (e.g. "%3f" should be "%3f")
+        final String expectedTextContent =
+                "This text\nhas tricky characters: %3f!#$&'()*+,\\/:;=?@[]";
+        final String unencodedData =
+                "<html><body><pre>" + expectedTextContent + "</pre></body></html>";
+        final String data = Base64.encodeToString(unencodedData.getBytes(), Base64.NO_PADDING);
+
+        final TestAwContentsClient contentsClient = new TestAwContentsClient();
+        final AwTestContainerView testContainerView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
+        final AwContents awContents = testContainerView.getAwContents();
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        mActivityTestRule.loadDataSync(
+                awContents, contentsClient.getOnPageFinishedHelper(), data, "text/html", true);
+        String textContent =
+                mActivityTestRule.getJavaScriptResultBodyTextContent(awContents, contentsClient);
+        // The JavaScript result escapes special characters - we need to unescape them.
+        textContent = textContent.replace("\\n", "\n").replace("\\\\", "\\");
+        Assert.assertEquals(expectedTextContent, textContent);
     }
 
     @Test
@@ -181,7 +208,7 @@ public class LoadUrlTest {
         final AwTestContainerView testContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         final AwContents awContents = testContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         String[] extraHeaders = {
                 "X-ExtraHeaders1", "extra-header-data1", "x-extraHeaders2", "EXTRA-HEADER-DATA2"};
@@ -212,7 +239,7 @@ public class LoadUrlTest {
                 mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         final AwContents awContents = testContainerView.getAwContents();
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         final String url = mTestServer.getURL("/echoheader?user-agent");
         String[] extraHeaders = {"user-agent", "Borewicz 07 & Bond 007"};
@@ -234,7 +261,7 @@ public class LoadUrlTest {
         final AwTestContainerView testContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         final AwContents awContents = testContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         String[] extraHeaders = {
                 "X-ExtraHeaders1", "extra-header-data1", "x-extraHeaders2", "EXTRA-HEADER-DATA2"};
         final String url =
@@ -258,7 +285,7 @@ public class LoadUrlTest {
         final String echoRedirectedUrlHeader = "echo header";
         final String echoInitialUrlHeader = "data content";
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         String[] extraHeaders = {
                 "X-ExtraHeaders1", "extra-header-data1", "x-extraHeaders2", "EXTRA-HEADER-DATA2"};
@@ -289,7 +316,7 @@ public class LoadUrlTest {
         final AwTestContainerView testContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         final AwContents awContents = testContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         String[] extraHeaders = {
                 "X-ExtraHeaders1", "extra-header-data1", "x-extraHeaders2", "EXTRA-HEADER-DATA2"};
@@ -304,8 +331,12 @@ public class LoadUrlTest {
         validateHeadersValue(awContents, contentsClient, extraHeaders, true);
 
         int currentCallCount = contentsClient.getOnPageFinishedHelper().getCallCount();
-        JSUtils.clickOnLinkUsingJs(InstrumentationRegistry.getInstrumentation(), awContents,
-                contentsClient.getOnEvaluateJavaScriptResultHelper(), "click");
+
+        // Using a user gesture for the redirect since the history intervention will not allow to
+        // go back to a page that does a redirect without any user interaction since the page
+        // loaded.
+        JSUtils.clickNodeWithUserGesture(testContainerView.getWebContents(), "click");
+
         contentsClient.getOnPageFinishedHelper().waitForCallback(
                 currentCallCount, 1, WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         // No extra headers for the page navigated via clicking.
@@ -338,7 +369,7 @@ public class LoadUrlTest {
         final AwTestContainerView testContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         final AwContents awContents = testContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         contentsClient.setOnReceivedTitleCallback(
                 () -> awContents.loadUrl("javascript:testProperty=42;void(0);"));

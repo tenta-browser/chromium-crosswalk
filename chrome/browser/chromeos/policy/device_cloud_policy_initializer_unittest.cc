@@ -5,17 +5,16 @@
 #include "chrome/browser/chromeos/policy/device_cloud_policy_initializer.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/enrollment_config.h"
 #include "chrome/browser/chromeos/policy/server_backed_device_state.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/attestation/mock_attestation_flow.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/system/fake_statistics_provider.h"
 #include "chromeos/system/statistics_provider.h"
+#include "chromeos/tpm/stub_install_attributes.h"
 #include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -47,11 +46,11 @@ class DeviceCloudPolicyInitializerTest
             nullptr,
             nullptr,
             nullptr,
-            base::MakeUnique<chromeos::attestation::MockAttestationFlow>(),
+            std::make_unique<chromeos::attestation::MockAttestationFlow>(),
             &statistics_provider_) {
     RegisterLocalState(local_state_.registry());
     statistics_provider_.SetMachineStatistic(
-        chromeos::system::kSerialNumberKey, "fake-serial");
+        chromeos::system::kSerialNumberKeyForTest, "fake-serial");
     statistics_provider_.SetMachineStatistic(
         chromeos::system::kHardwareClassKey, "fake-hardware");
   }
@@ -107,7 +106,7 @@ TEST_P(DeviceCloudPolicyInitializerTest,
 
   // Server-backed state: advertised enrollment.
   base::DictionaryValue state_dict;
-  state_dict.SetString(kDeviceStateRestoreMode,
+  state_dict.SetString(kDeviceStateMode,
                        kDeviceStateRestoreModeReEnrollmentRequested);
   state_dict.SetString(kDeviceStateManagementDomain, "example.com");
   local_state_.Set(prefs::kServerBackedDeviceState, state_dict);
@@ -138,7 +137,7 @@ TEST_P(DeviceCloudPolicyInitializerTest,
   EXPECT_EQ(GetParam().auth_mechanism, config.auth_mechanism);
 
   // Server-backed state: forced enrollment.
-  state_dict.SetString(kDeviceStateRestoreMode,
+  state_dict.SetString(kDeviceStateMode,
                        kDeviceStateRestoreModeReEnrollmentEnforced);
   local_state_.Set(prefs::kServerBackedDeviceState, state_dict);
   config = device_cloud_policy_initializer_.GetPrescribedEnrollmentConfig();
@@ -185,7 +184,7 @@ TEST_P(DeviceCloudPolicyInitializerTest,
   EXPECT_EQ(GetParam().auth_mechanism_after_oobe, config.auth_mechanism);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ZeroTouchFlag,
     DeviceCloudPolicyInitializerTest,
     ::testing::Values(

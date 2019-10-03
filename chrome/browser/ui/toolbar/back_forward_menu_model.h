@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_UI_TOOLBAR_BACK_FORWARD_MENU_MODEL_H_
 #define CHROME_BROWSER_UI_TOOLBAR_BACK_FORWARD_MENU_MODEL_H_
 
-#include <set>
 #include <string>
 
+#include "base/containers/flat_set.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -42,10 +42,7 @@ class BackForwardMenuModel : public ui::MenuModel {
  public:
   // These are IDs used to identify individual UI elements within the
   // browser window using View::GetViewByID.
-  enum ModelType {
-    FORWARD_MENU = 1,
-    BACKWARD_MENU = 2
-  };
+  enum class ModelType { kForward = 1, kBackward = 2 };
 
   BackForwardMenuModel(Browser* browser, ModelType model_type);
   ~BackForwardMenuModel() override;
@@ -69,21 +66,12 @@ class BackForwardMenuModel : public ui::MenuModel {
   ui::ButtonMenuItemModel* GetButtonMenuItemAt(int index) const override;
   bool IsEnabledAt(int index) const override;
   MenuModel* GetSubmenuModelAt(int index) const override;
-  void HighlightChangedTo(int index) override;
   void ActivatedAt(int index) override;
   void ActivatedAt(int index, int event_flags) override;
   void MenuWillShow() override;
 
   // Is the item at |index| a separator?
   bool IsSeparator(int index) const;
-
-  // Set the delegate for triggering OnIconChanged.
-  void SetMenuModelDelegate(
-      ui::MenuModelDelegate* menu_model_delegate) override;
-  ui::MenuModelDelegate* GetMenuModelDelegate() const override;
-
- protected:
-  ui::MenuModelDelegate* menu_model_delegate() { return menu_model_delegate_; }
 
  private:
   friend class BackFwdMenuModelTest;
@@ -92,6 +80,8 @@ class BackForwardMenuModel : public ui::MenuModel {
   FRIEND_TEST_ALL_PREFIXES(BackFwdMenuModelTest, ChapterStops);
   FRIEND_TEST_ALL_PREFIXES(BackFwdMenuModelTest, EscapeLabel);
   FRIEND_TEST_ALL_PREFIXES(BackFwdMenuModelTest, FaviconLoadTest);
+  FRIEND_TEST_ALL_PREFIXES(ChromeNavigationBrowserTest,
+                           NoUserActivationSetSkipOnBackForward);
 
   // Requests a favicon from the FaviconService. Called by GetIconAt if the
   // NavigationEntry has an invalid favicon.
@@ -190,22 +180,19 @@ class BackForwardMenuModel : public ui::MenuModel {
   Browser* const browser_;
 
   // The unit tests will provide their own WebContents to use.
-  content::WebContents* test_web_contents_;
+  content::WebContents* test_web_contents_ = nullptr;
 
   // Represents whether this is the delegate for the forward button or the
   // back button.
-  ModelType model_type_;
+  const ModelType model_type_;
 
   // Keeps track of which favicons have already been requested from the history
   // to prevent duplicate requests, identified by
   // NavigationEntry->GetUniqueID().
-  std::set<int> requested_favicons_;
+  base::flat_set<int> requested_favicons_;
 
   // Used for loading favicons.
   base::CancelableTaskTracker cancelable_task_tracker_;
-
-  // Used for receiving notifications when an icon is changed.
-  ui::MenuModelDelegate* menu_model_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(BackForwardMenuModel);
 };

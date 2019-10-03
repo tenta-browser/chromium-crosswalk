@@ -8,14 +8,13 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #import "ios/chrome/browser/payments/payment_request_unittest_base.h"
 #import "ios/chrome/browser/ui/autofill/cells/status_item.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_detail_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_footer_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller_test.h"
 #import "ios/chrome/browser/ui/payments/cells/autofill_profile_item.h"
@@ -123,14 +122,19 @@
 class PaymentRequestViewControllerTest : public CollectionViewControllerTest,
                                          public PaymentRequestUnitTestBase {
  protected:
+  // CollectionViewControllerTest:
   void SetUp() override {
     CollectionViewControllerTest::SetUp();
-    PaymentRequestUnitTestBase::SetUp();
+    DoSetUp();
 
     mediator_ = [[TestPaymentRequestMediator alloc] init];
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // CollectionViewControllerTest:
+  void TearDown() override {
+    DoTearDown();
+    CollectionViewControllerTest::TearDown();
+  }
 
   CollectionViewController* InstantiateController() override {
     PaymentRequestViewController* viewController =

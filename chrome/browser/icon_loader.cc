@@ -7,8 +7,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -18,7 +18,7 @@ using content::BrowserThread;
 IconLoader* IconLoader::Create(const base::FilePath& file_path,
                                IconSize size,
                                IconLoadedCallback callback) {
-  return new IconLoader(file_path, size, callback);
+  return new IconLoader(file_path, size, std::move(callback));
 }
 
 void IconLoader::Start() {
@@ -36,7 +36,7 @@ IconLoader::IconLoader(const base::FilePath& file_path,
 #if !defined(OS_ANDROID)
       icon_size_(size),
 #endif  // defined(OS_ANDROID)
-      callback_(callback) {
+      callback_(std::move(callback)) {
 }
 
 IconLoader::~IconLoader() {}

@@ -15,6 +15,7 @@ class WebContents;
 
 namespace gfx {
 class Image;
+class ImageSkia;
 }
 
 namespace ui {
@@ -80,6 +81,9 @@ class RenderViewContextMenuProxy {
  public:
   // Add a menu item to a context menu.
   virtual void AddMenuItem(int command_id, const base::string16& title) = 0;
+  virtual void AddMenuItemWithIcon(int command_id,
+                                   const base::string16& title,
+                                   const gfx::ImageSkia& image) = 0;
   virtual void AddCheckItem(int command_id, const base::string16& title) = 0;
   virtual void AddSeparator() = 0;
 
@@ -87,6 +91,10 @@ class RenderViewContextMenuProxy {
   virtual void AddSubMenu(int command_id,
                           const base::string16& label,
                           ui::MenuModel* model) = 0;
+  virtual void AddSubMenuWithStringIdAndIcon(int command_id,
+                                             int message_id,
+                                             ui::MenuModel* model,
+                                             const gfx::ImageSkia& image) = 0;
 
   // Update the status and text of the specified context-menu item.
   virtual void UpdateMenuItem(int command_id,
@@ -97,8 +105,17 @@ class RenderViewContextMenuProxy {
   // Update the icon of the specified context-menu item.
   virtual void UpdateMenuIcon(int command_id, const gfx::Image& image) = 0;
 
+  // Remove the specified context-menu item.
+  virtual void RemoveMenuItem(int command_id) = 0;
+
+  // Removes separators so that any adjacent duplicates are reduced to only 1.
+  virtual void RemoveAdjacentSeparators() = 0;
+
   // Add spell check service item to the context menu.
   virtual void AddSpellCheckServiceItem(bool is_checked) = 0;
+
+  // Add accessibility labels service item to the context menu.
+  virtual void AddAccessibilityLabelsServiceItem(bool is_checked) = 0;
 
   // Retrieve the given associated objects with a context menu.
   virtual content::RenderViewHost* GetRenderViewHost() const = 0;

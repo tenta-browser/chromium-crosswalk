@@ -4,37 +4,10 @@
 
 #include "content/browser/devtools/forwarding_agent_host.h"
 
-#include "base/bind.h"
 #include "content/browser/devtools/devtools_session.h"
-#include "content/browser/devtools/protocol/inspector_handler.h"
-#include "content/public/browser/devtools_external_agent_proxy.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
 
 namespace content {
-
-class ForwardingAgentHost::SessionProxy : public DevToolsExternalAgentProxy {
- public:
-  SessionProxy(ForwardingAgentHost* agent_host, DevToolsSession* session)
-      : agent_host_(agent_host), session_(session) {
-    agent_host_->delegate_->Attach(this);
-  }
-
-  ~SessionProxy() override { agent_host_->delegate_->Detach(this); }
-
- private:
-  void DispatchOnClientHost(const std::string& message) override {
-    session_->SendMessageToClient(message);
-  }
-
-  void ConnectionClosed() override {
-    agent_host_->ForceDetachSession(session_);
-  }
-
-  ForwardingAgentHost* agent_host_;
-  DevToolsSession* session_;
-
-  DISALLOW_COPY_AND_ASSIGN(SessionProxy);
-};
 
 ForwardingAgentHost::ForwardingAgentHost(
     const std::string& id,
@@ -47,23 +20,12 @@ ForwardingAgentHost::ForwardingAgentHost(
 ForwardingAgentHost::~ForwardingAgentHost() {
 }
 
-void ForwardingAgentHost::AttachSession(DevToolsSession* session) {
-  session_proxies_[session->session_id()].reset(
-      new SessionProxy(this, session));
-}
-
-void ForwardingAgentHost::DetachSession(int session_id) {
-  session_proxies_.erase(session_id);
-}
-
-bool ForwardingAgentHost::DispatchProtocolMessage(
-    DevToolsSession* session,
-    const std::string& message) {
-  auto it = session_proxies_.find(session->session_id());
-  if (it != session_proxies_.end())
-    delegate_->SendMessageToBackend(it->second.get(), message);
+bool ForwardingAgentHost::AttachSession(DevToolsSession* session) {
+  session->TurnIntoExternalProxy(delegate_.get());
   return true;
 }
+
+void ForwardingAgentHost::DetachSession(DevToolsSession* session) {}
 
 std::string ForwardingAgentHost::GetType() {
   return delegate_->GetType();

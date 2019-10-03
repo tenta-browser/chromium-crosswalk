@@ -25,6 +25,7 @@ typedef int GLint;
 namespace gpu {
 
 class CommandBufferServiceBase;
+class DecoderClient;
 
 // This class is a helper base class for implementing the common parts of the
 // o3d/gl2 command buffer decoder.
@@ -65,8 +66,8 @@ class GPU_EXPORT CommonDecoder {
       return size_;
     }
 
-    // Gets a pointer to a section the bucket. Returns NULL if offset or size is
-    // out of range.
+    // Gets a pointer to a section the bucket. Returns nullptr if offset or size
+    // is out of range.
     void* GetData(size_t offset, size_t size) const;
 
     template <typename T>
@@ -99,8 +100,10 @@ class GPU_EXPORT CommonDecoder {
 
    private:
     bool OffsetSizeValid(size_t offset, size_t size) const {
-      size_t temp = offset + size;
-      return temp <= size_ && temp >= offset;
+      size_t end = 0;
+      if (!base::CheckAdd<size_t>(offset, size).AssignIfValid(&end))
+        return false;
+      return end <= size_;
     }
 
     size_t size_;
@@ -109,12 +112,15 @@ class GPU_EXPORT CommonDecoder {
     DISALLOW_COPY_AND_ASSIGN(Bucket);
   };
 
-  explicit CommonDecoder(CommandBufferServiceBase* command_buffer_service);
+  explicit CommonDecoder(DecoderClient* client,
+                         CommandBufferServiceBase* command_buffer_service);
   ~CommonDecoder();
 
   CommandBufferServiceBase* command_buffer_service() const {
     return command_buffer_service_;
   }
+
+  DecoderClient* client() const { return client_; }
 
   // Sets the maximum size for buckets.
   void set_max_bucket_size(size_t max_bucket_size) {
@@ -124,7 +130,7 @@ class GPU_EXPORT CommonDecoder {
   // Creates a bucket. If the bucket already exists returns that bucket.
   Bucket* CreateBucket(uint32_t bucket_id);
 
-  // Gets a bucket. Returns NULL if the bucket does not exist.
+  // Gets a bucket. Returns nullptr if the bucket does not exist.
   Bucket* GetBucket(uint32_t bucket_id) const;
 
   // Gets the address of shared memory data, given a shared memory ID and an
@@ -135,7 +141,7 @@ class GPU_EXPORT CommonDecoder {
   //   offset: the offset of the data in the shared memory buffer.
   //   size: the size of the data.
   // Returns:
-  //   NULL if shm_id isn't a valid shared memory buffer ID or if the size
+  //   nullptr if shm_id isn't a valid shared memory buffer ID or if the size
   //   check fails. Return a pointer to the data otherwise.
   void* GetAddressAndCheckSize(unsigned int shm_id,
                                unsigned int offset,
@@ -183,6 +189,10 @@ class GPU_EXPORT CommonDecoder {
   // Gets an name for a common command.
   const char* GetCommonCommandName(cmd::CommandId command_id) const;
 
+  // Exit the command processing loop to allow context preemption and GPU
+  // watchdog checks in CommandExecutor().
+  virtual void ExitCommandProcessingEarly() {}
+
  private:
   // Generate a member function prototype for each command in an automated and
   // typesafe way.
@@ -195,6 +205,7 @@ class GPU_EXPORT CommonDecoder {
   #undef COMMON_COMMAND_BUFFER_CMD_OP
 
   CommandBufferServiceBase* command_buffer_service_;
+  DecoderClient* client_;
   size_t max_bucket_size_;
 
   typedef std::map<uint32_t, std::unique_ptr<Bucket>> BucketMap;
@@ -220,4 +231,3 @@ class GPU_EXPORT CommonDecoder {
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_COMMON_DECODER_H_
-

@@ -14,7 +14,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "components/url_matcher/url_matcher.h"
@@ -23,7 +22,6 @@
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_action.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
-#include "extensions/browser/info_map.h"
 #include "extensions/common/extension_id.h"
 
 namespace content {
@@ -35,10 +33,9 @@ struct EventResponseDelta;
 }
 
 namespace extensions {
+class PermissionHelper;
 
-typedef linked_ptr<extension_web_request_api_helpers::EventResponseDelta>
-    LinkedPtrEventResponseDelta;
-typedef DeclarativeRule<WebRequestCondition, WebRequestAction> WebRequestRule;
+using WebRequestRule = DeclarativeRule<WebRequestCondition, WebRequestAction>;
 
 // The WebRequestRulesRegistry is responsible for managing
 // the internal representation of rules for the Declarative Web Request API.
@@ -83,15 +80,15 @@ class WebRequestRulesRegistry : public RulesRegistry {
 
   // Returns which modifications should be executed on the network request
   // according to the rules registered in this registry.
-  std::list<LinkedPtrEventResponseDelta> CreateDeltas(
-      const InfoMap* extension_info_map,
+  std::list<extension_web_request_api_helpers::EventResponseDelta> CreateDeltas(
+      PermissionHelper* permission_helper,
       const WebRequestData& request_data,
       bool crosses_incognito);
 
   // Implementation of RulesRegistry:
   std::string AddRulesImpl(
       const std::string& extension_id,
-      const std::vector<linked_ptr<api::events::Rule>>& rules) override;
+      const std::vector<const api::events::Rule*>& rules) override;
   std::string RemoveRulesImpl(
       const std::string& extension_id,
       const std::vector<std::string>& rule_identifiers) override;
@@ -108,11 +105,6 @@ class WebRequestRulesRegistry : public RulesRegistry {
       const std::string& extension_id) const;
   virtual void ClearCacheOnNavigation();
 
-  void SetExtensionInfoMapForTesting(
-      scoped_refptr<InfoMap> extension_info_map) {
-    extension_info_map_ = extension_info_map;
-  }
-
   const std::set<const WebRequestRule*>&
   rules_with_untriggered_conditions_for_test() const {
     return rules_with_untriggered_conditions_;
@@ -123,12 +115,12 @@ class WebRequestRulesRegistry : public RulesRegistry {
   FRIEND_TEST_ALL_PREFIXES(WebRequestRulesRegistrySimpleTest,
                            HostPermissionsChecker);
 
-  typedef std::map<url_matcher::URLMatcherConditionSet::ID,
-                   const WebRequestRule*> RuleTriggers;
-  typedef std::map<WebRequestRule::RuleId, linked_ptr<const WebRequestRule>>
-      RulesMap;
-  typedef std::set<url_matcher::URLMatcherConditionSet::ID> URLMatches;
-  typedef std::set<const WebRequestRule*> RuleSet;
+  using RuleTriggers =
+      std::map<url_matcher::URLMatcherConditionSet::ID, const WebRequestRule*>;
+  using RulesMap =
+      std::map<WebRequestRule::RuleId, std::unique_ptr<const WebRequestRule>>;
+  using URLMatches = std::set<url_matcher::URLMatcherConditionSet::ID>;
+  using RuleSet = std::set<const WebRequestRule*>;
 
   // This bundles all consistency checkers. Returns true in case of consistency
   // and MUST set |error| otherwise.
@@ -180,7 +172,6 @@ class WebRequestRulesRegistry : public RulesRegistry {
   url_matcher::URLMatcher url_matcher_;
 
   content::BrowserContext* browser_context_;
-  scoped_refptr<InfoMap> extension_info_map_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRequestRulesRegistry);
 };

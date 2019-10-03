@@ -8,10 +8,13 @@
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
+#include "base/compiler_specific.h"
+
 @class CRWJSInjectionManager;
 @class CRWJSInjectionReceiver;
 
 namespace web {
+namespace test {
 
 // These functions synchronously execute JavaScript and return result as id.
 // id will be backed up by different classes depending on resulting JS type:
@@ -35,6 +38,20 @@ id ExecuteJavaScript(WKWebView* web_view,
 // Fails if there was an error during script execution.
 id ExecuteJavaScript(WKWebView* web_view, NSString* script);
 
+// Synchronously loads |html| into |web_view|. Returns true is successful or
+// false if the |web_view| never finishes loading.
+bool LoadHtml(WKWebView* web_view,
+              NSString* html,
+              NSURL* base_url) WARN_UNUSED_RESULT;
+
+// Waits until custom javascript is injected into __gCrWeb.
+bool WaitForInjectedScripts(WKWebView* web_view) WARN_UNUSED_RESULT;
+
+// Returns an autoreleased string containing the JavaScript loaded from a
+// bundled resource file with the given name (excluding extension).
+NSString* GetPageScript(NSString* script_file_name);
+
+}  // namespace test
 }  // namespace web
 
 #endif  // IOS_WEB_PUBLIC_TEST_JS_TEST_UTIL_H_

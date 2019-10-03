@@ -4,12 +4,13 @@
 
 #include "services/preferences/public/cpp/persistent_pref_store_client.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/values.h"
 #include "components/prefs/pref_notifier_impl.h"
@@ -18,7 +19,7 @@
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/preferences/public/cpp/dictionary_value_update.h"
 #include "services/preferences/public/cpp/scoped_pref_update.h"
-#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/preferences/public/mojom/preferences.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace prefs {
@@ -26,8 +27,6 @@ namespace {
 
 constexpr char kDictionaryKey[] = "path.to.key";
 constexpr char kUninitializedDictionaryKey[] = "path.to.an.uninitialized.dict";
-
-void DoNothingWithReadError(::PersistentPrefStore::PrefReadError read_error) {}
 
 class PersistentPrefStoreClientTest : public testing::Test,
                                       public mojom::PersistentPrefStore {
@@ -43,19 +42,20 @@ class PersistentPrefStoreClientTest : public testing::Test,
             mojom::PersistentPrefStoreConnection::New(
                 mojom::PrefStoreConnection::New(
                     mojom::PrefStoreObserverRequest(),
-                    std::make_unique<base::DictionaryValue>(), true),
+                    base::Value(base::Value::Type::DICTIONARY), true),
                 std::move(store_proxy_info),
                 ::PersistentPrefStore::PREF_READ_ERROR_NONE, false));
     auto pref_registry = base::MakeRefCounted<PrefRegistrySimple>();
     pref_registry->RegisterDictionaryPref(kDictionaryKey);
     pref_registry->RegisterDictionaryPref(kUninitializedDictionaryKey);
-    PrefNotifierImpl* pref_notifier = new PrefNotifierImpl;
+    auto pref_notifier = std::make_unique<PrefNotifierImpl>();
+    auto pref_value_store = std::make_unique<PrefValueStore>(
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        pref_notifier.get());
     pref_service_ = std::make_unique<PrefService>(
-        pref_notifier,
-        new PrefValueStore(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                           nullptr, pref_notifier),
+        std::move(pref_notifier), std::move(pref_value_store),
         persistent_pref_store_client.get(), pref_registry.get(),
-        base::Bind(&DoNothingWithReadError), false);
+        base::DoNothing(), false);
   }
 
   void TearDown() override {
@@ -102,7 +102,7 @@ class PersistentPrefStoreClientTest : public testing::Test,
   void ClearMutableValues() override {}
   void OnStoreDeletionFromDisk() override {}
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   std::unique_ptr<PrefService> pref_service_;
 

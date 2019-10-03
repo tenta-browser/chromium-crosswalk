@@ -33,12 +33,6 @@ void FakeNetworkDeviceHandler::RegisterCellularNetwork(
     const base::Closure& callback,
     const network_handler::ErrorCallback& error_callback) {}
 
-void FakeNetworkDeviceHandler::SetCarrier(
-    const std::string& device_path,
-    const std::string& carrier,
-    const base::Closure& callback,
-    const network_handler::ErrorCallback& error_callback) {}
-
 void FakeNetworkDeviceHandler::RequirePin(
     const std::string& device_path,
     bool require_pin,
@@ -84,8 +78,18 @@ void FakeNetworkDeviceHandler::AddWifiWakeOnPacketConnection(
     const base::Closure& callback,
     const network_handler::ErrorCallback& error_callback) {}
 
+void FakeNetworkDeviceHandler::AddWifiWakeOnPacketOfTypes(
+    const std::vector<std::string>& types,
+    const base::Closure& callback,
+    const network_handler::ErrorCallback& error_callback) {}
+
 void FakeNetworkDeviceHandler::RemoveWifiWakeOnPacketConnection(
     const net::IPEndPoint& ip_endpoint,
+    const base::Closure& callback,
+    const network_handler::ErrorCallback& error_callback) {}
+
+void FakeNetworkDeviceHandler::RemoveWifiWakeOnPacketOfTypes(
+    const std::vector<std::string>& types,
     const base::Closure& callback,
     const network_handler::ErrorCallback& error_callback) {}
 

@@ -6,6 +6,7 @@
 #define COMPONENTS_PAYMENTS_CORE_TEST_PAYMENT_MANIFEST_DOWNLOADER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -16,9 +17,9 @@ class GURL;
 template <class T>
 class scoped_refptr;
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace network {
+class SharedURLLoaderFactory;
+}
 
 namespace payments {
 
@@ -45,19 +46,15 @@ namespace payments {
 //   // Actual URL downloaded is https://127.0.0.1:9090/webpay.
 //   downloader.DownloadPaymentMethodManifest(
 //       "https://bobpay.com/webpay", callback);
-class TestDownloader : public PaymentMethodManifestDownloaderInterface {
+class TestDownloader : public PaymentManifestDownloader {
  public:
   explicit TestDownloader(
-      const scoped_refptr<net::URLRequestContextGetter>& context);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
   ~TestDownloader() override;
 
-  // PaymentMethodManifestDownloaderInterface implementation.
-  void DownloadPaymentMethodManifest(
-      const GURL& url,
-      PaymentManifestDownloadCallback callback) override;
-
   // Modifies the downloader to replace all instances of |prefix| with
-  // |test_server_url| when downloading the payment method manifest.
+  // |test_server_url| when downloading payment method manifests and web app
+  // manifests.
   //
   // For example, if AddTestServerURL("https://", "https://127.0.0.1:7070") is
   // called, then all calls to DownloadPaymentMethodManifest(some_url, callback)
@@ -90,9 +87,18 @@ class TestDownloader : public PaymentMethodManifestDownloaderInterface {
   // AddTestServerURL("x");AddTestServerURL("xy"); is not.
   void AddTestServerURL(const std::string& prefix, const GURL& test_server_url);
 
+  // PaymentManifestDownloader:
+  //
+  // The reverse operation as AddTestServerURL: converts |url| back to a test
+  // server URL so it can be fetched as a normal resource outside of this class.
+  GURL FindTestServerURL(const GURL& url) const override;
+
  private:
-  // The actual downloader.
-  PaymentManifestDownloader impl_;
+  // PaymentManifestDownloader implementation.
+  void InitiateDownload(const GURL& url,
+                        const std::string& method,
+                        int allowed_number_of_redirects,
+                        PaymentManifestDownloadCallback callback) override;
 
   // The mapping from the URL prefix to the URL of the test server to be used.
   // Example 1:

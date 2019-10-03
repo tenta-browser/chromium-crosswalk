@@ -10,7 +10,7 @@
 #include "base/i18n/icu_string_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
-#include "jni/UsbMidiDeviceAndroid_jni.h"
+#include "media/midi/midi_jni_headers/UsbMidiDeviceAndroid_jni.h"
 #include "media/midi/usb_midi_descriptor_parser.h"
 
 using base::android::JavaParamRef;
@@ -79,8 +79,7 @@ void UsbMidiDeviceAndroid::GetDescriptorsInternal() {
   base::android::ScopedJavaLocalRef<jbyteArray> descriptors =
       Java_UsbMidiDeviceAndroid_getDescriptors(env, raw_device_);
 
-  base::android::JavaByteArrayToByteVector(env, descriptors.obj(),
-                                           &descriptors_);
+  base::android::JavaByteArrayToByteVector(env, descriptors, &descriptors_);
 }
 
 void UsbMidiDeviceAndroid::InitDeviceInfo() {
@@ -113,7 +112,7 @@ std::vector<uint8_t> UsbMidiDeviceAndroid::GetStringDescriptor(int index) {
       Java_UsbMidiDeviceAndroid_getStringDescriptor(env, raw_device_, index);
 
   std::vector<uint8_t> ret;
-  base::android::JavaByteArrayToByteVector(env, descriptors.obj(), &ret);
+  base::android::JavaByteArrayToByteVector(env, descriptors, &ret);
   return ret;
 }
 

@@ -13,7 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data_base.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "url/gurl.h"
 
 class Profile;
@@ -27,8 +27,10 @@ namespace gfx {
 class Image;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
+}
 }
 
 namespace chromeos {
@@ -90,14 +92,18 @@ class KioskAppData : public KioskAppDataBase,
   void OnIconLoadSuccess(const gfx::ImageSkia& icon) override;
   void OnIconLoadFailure() override;
 
+  // Tests do not always fake app data download.
+  // This allows to ignore download errors.
+  static void SetIgnoreKioskAppDataLoadFailuresForTesting(bool value);
+
  private:
   class CrxLoader;
   class WebstoreDataParser;
 
   void SetStatus(Status status);
 
-  // Returns URLRequestContextGetter to use for fetching web store data.
-  net::URLRequestContextGetter* GetRequestContextGetter();
+  // Returns URLLoaderFactory to use for fetching web store data.
+  network::mojom::URLLoaderFactory* GetURLLoaderFactory();
 
   // Loads the locally cached data. Return false if there is none.
   bool LoadFromCache();

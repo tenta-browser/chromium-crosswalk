@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/file_system_provider/scoped_file_opener.h"
 
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/file_system_provider/abort_callback.h"
 
@@ -17,18 +18,16 @@ using OpenFileCallback = ProvidedFileSystemInterface::OpenFileCallback;
 class ScopedFileOpener::Runner
     : public base::RefCounted<ScopedFileOpener::Runner> {
  public:
-  Runner(ProvidedFileSystemInterface* file_system,
-         const base::FilePath& file_path,
-         OpenFileMode mode,
-         const OpenFileCallback& callback)
-      : file_system_(file_system->GetWeakPtr()),
-        open_callback_(callback),
-        aborting_requested_(false),
-        open_completed_(false),
-        file_handle_(0) {
-    abort_callback_ = file_system_->OpenFile(
+  static scoped_refptr<Runner> Create(ProvidedFileSystemInterface* file_system,
+                                      const base::FilePath& file_path,
+                                      OpenFileMode mode,
+                                      OpenFileCallback callback) {
+    auto runner =
+        base::WrapRefCounted(new Runner(file_system, std::move(callback)));
+    runner->abort_callback_ = file_system->OpenFile(
         file_path, mode,
-        base::Bind(&ScopedFileOpener::Runner::OnOpenFileCompleted, this));
+        base::Bind(&ScopedFileOpener::Runner::OnOpenFileCompleted, runner));
+    return runner;
   }
 
   // Aborts pending open operation, or closes a file if it's already opened.
@@ -58,6 +57,13 @@ class ScopedFileOpener::Runner
 
  private:
   friend class base::RefCounted<ScopedFileOpener::Runner>;
+
+  Runner(ProvidedFileSystemInterface* file_system, OpenFileCallback callback)
+      : file_system_(file_system->GetWeakPtr()),
+        open_callback_(std::move(callback)),
+        aborting_requested_(false),
+        open_completed_(false),
+        file_handle_(0) {}
 
   ~Runner() {}
 
@@ -112,9 +118,7 @@ class ScopedFileOpener::Runner
     if (open_callback_.is_null())
       return;
 
-    OpenFileCallback open_callback = open_callback_;
-    open_callback_ = OpenFileCallback();
-    open_callback.Run(file_handle, result);
+    std::move(open_callback_).Run(file_handle, result);
   }
 
   base::WeakPtr<ProvidedFileSystemInterface> file_system_;
@@ -128,8 +132,9 @@ class ScopedFileOpener::Runner
 ScopedFileOpener::ScopedFileOpener(ProvidedFileSystemInterface* file_system,
                                    const base::FilePath& file_path,
                                    OpenFileMode mode,
-                                   const OpenFileCallback& callback)
-    : runner_(new Runner(file_system, file_path, mode, callback)) {}
+                                   OpenFileCallback callback)
+    : runner_(
+          Runner::Create(file_system, file_path, mode, std::move(callback))) {}
 
 ScopedFileOpener::~ScopedFileOpener() {
   runner_->AbortOrClose();

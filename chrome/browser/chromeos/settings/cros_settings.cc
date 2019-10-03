@@ -9,25 +9,32 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/settings/device_settings_provider.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
-#include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
-#include "chrome/browser/chromeos/settings/system_settings_provider.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "chromeos/settings/system_settings_provider.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
 namespace chromeos {
 
 static CrosSettings* g_cros_settings = nullptr;
 
+// Calling SetForTesting sets this flag. This flag means that the production
+// code which calls Initialize and Shutdown will have no effect - the test
+// install attributes will remain in place until ShutdownForTesting is called.
+bool g_using_cros_settings_for_testing = false;
+
 // static
-void CrosSettings::Initialize() {
+void CrosSettings::Initialize(PrefService* local_state) {
+  // Don't reinitialize if a specific instance has already been set for test.
+  if (g_using_cros_settings_for_testing)
+    return;
+
   CHECK(!g_cros_settings);
-  g_cros_settings = new CrosSettings(DeviceSettingsService::Get());
+  g_cros_settings = new CrosSettings(DeviceSettingsService::Get(), local_state);
 }
 
 // static
@@ -37,6 +44,9 @@ bool CrosSettings::IsInitialized() {
 
 // static
 void CrosSettings::Shutdown() {
+  if (g_using_cros_settings_for_testing)
+    return;
+
   DCHECK(g_cros_settings);
   delete g_cros_settings;
   g_cros_settings = nullptr;
@@ -49,37 +59,47 @@ CrosSettings* CrosSettings::Get() {
 }
 
 // static
-bool CrosSettings::IsWhitelisted(const std::string& username,
-                                 bool* wildcard_match) {
+void CrosSettings::SetForTesting(CrosSettings* test_instance) {
+  DCHECK(!g_cros_settings);
+  DCHECK(!g_using_cros_settings_for_testing);
+  g_cros_settings = test_instance;
+  g_using_cros_settings_for_testing = true;
+}
+
+// static
+void CrosSettings::ShutdownForTesting() {
+  DCHECK(g_using_cros_settings_for_testing);
+  // Don't delete the test instance, we are not the owner.
+  g_cros_settings = nullptr;
+  g_using_cros_settings_for_testing = false;
+}
+
+bool CrosSettings::IsUserWhitelisted(const std::string& username,
+                                     bool* wildcard_match) const {
   // Skip whitelist check for tests.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kOobeSkipPostLogin)) {
+  if (chromeos::switches::ShouldSkipOobePostLogin()) {
     return true;
   }
 
-  CrosSettings* cros_settings = CrosSettings::Get();
   bool allow_new_user = false;
-  cros_settings->GetBoolean(kAccountsPrefAllowNewUser, &allow_new_user);
+  GetBoolean(kAccountsPrefAllowNewUser, &allow_new_user);
   if (allow_new_user)
     return true;
-  return cros_settings->FindEmailInList(kAccountsPrefUsers, username,
-                                        wildcard_match);
+  return FindEmailInList(kAccountsPrefUsers, username, wildcard_match);
 }
 
-CrosSettings::CrosSettings(DeviceSettingsService* device_settings_service) {
+CrosSettings::CrosSettings() = default;
+
+CrosSettings::CrosSettings(DeviceSettingsService* device_settings_service,
+                           PrefService* local_state) {
   CrosSettingsProvider::NotifyObserversCallback notify_cb(
       base::Bind(&CrosSettings::FireObservers,
                  // This is safe since |this| is never deleted.
                  base::Unretained(this)));
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kStubCrosSettings)) {
-    AddSettingsProvider(base::MakeUnique<StubCrosSettingsProvider>(notify_cb));
-  } else {
-    AddSettingsProvider(base::MakeUnique<DeviceSettingsProvider>(
-        notify_cb, device_settings_service));
-  }
-  // System settings are not mocked currently.
-  AddSettingsProvider(base::MakeUnique<SystemSettingsProvider>(notify_cb));
+
+  AddSettingsProvider(std::make_unique<DeviceSettingsProvider>(
+      notify_cb, device_settings_service, local_state));
+  AddSettingsProvider(std::make_unique<SystemSettingsProvider>(notify_cb));
 }
 
 CrosSettings::~CrosSettings() {
@@ -89,14 +109,6 @@ CrosSettings::~CrosSettings() {
 bool CrosSettings::IsCrosSettings(const std::string& path) {
   return base::StartsWith(path, kCrosSettingsPrefix,
                           base::CompareCase::SENSITIVE);
-}
-
-void CrosSettings::Set(const std::string& path, const base::Value& in_value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CrosSettingsProvider* provider;
-  provider = GetProvider(path);
-  if (provider)
-    provider->Set(path, in_value);
 }
 
 const base::Value* CrosSettings::GetPref(const std::string& path) const {
@@ -118,52 +130,6 @@ CrosSettingsProvider::TrustedStatus CrosSettings::PrepareTrustedValues(
       return status;
   }
   return CrosSettingsProvider::TRUSTED;
-}
-
-void CrosSettings::SetBoolean(const std::string& path, bool in_value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::Value value(in_value);
-  Set(path, value);
-}
-
-void CrosSettings::SetInteger(const std::string& path, int in_value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::Value value(in_value);
-  Set(path, value);
-}
-
-void CrosSettings::SetDouble(const std::string& path, double in_value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::Value value(in_value);
-  Set(path, value);
-}
-
-void CrosSettings::SetString(const std::string& path,
-                             const std::string& in_value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::Value value(in_value);
-  Set(path, value);
-}
-
-void CrosSettings::AppendToList(const std::string& path,
-                                const base::Value* value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const base::Value* old_value = GetPref(path);
-  std::unique_ptr<base::Value> new_value(old_value ? old_value->DeepCopy()
-                                                   : new base::ListValue());
-  static_cast<base::ListValue*>(new_value.get())
-      ->Append(value->CreateDeepCopy());
-  Set(path, *new_value);
-}
-
-void CrosSettings::RemoveFromList(const std::string& path,
-                                  const base::Value* value) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const base::Value* old_value = GetPref(path);
-  std::unique_ptr<base::Value> new_value(old_value ? old_value->DeepCopy()
-                                                   : new base::ListValue());
-  static_cast<base::ListValue*>(new_value.get())->Remove(*value, nullptr);
-  Set(path, *new_value);
 }
 
 bool CrosSettings::GetBoolean(const std::string& path,
@@ -225,6 +191,21 @@ bool CrosSettings::FindEmailInList(const std::string& path,
                                    const std::string& email,
                                    bool* wildcard_match) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  const base::ListValue* list;
+  if (!GetList(path, &list)) {
+    if (wildcard_match)
+      *wildcard_match = false;
+    return false;
+  }
+
+  return FindEmailInList(list, email, wildcard_match);
+}
+
+// static
+bool CrosSettings::FindEmailInList(const base::ListValue* list,
+                                   const std::string& email,
+                                   bool* wildcard_match) {
   std::string canonicalized_email(
       gaia::CanonicalizeEmail(gaia::SanitizeEmail(email)));
   std::string wildcard_email;
@@ -236,10 +217,6 @@ bool CrosSettings::FindEmailInList(const std::string& path,
 
   if (wildcard_match)
     *wildcard_match = false;
-
-  const base::ListValue* list;
-  if (!GetList(path, &list))
-    return false;
 
   bool found_wildcard_match = false;
   for (base::ListValue::const_iterator entry(list->begin());
@@ -320,7 +297,7 @@ CrosSettings::AddSettingsObserver(const std::string& path,
   auto observer_iterator = settings_observers_.find(path);
   if (observer_iterator == settings_observers_.end()) {
     settings_observers_[path] =
-        base::MakeUnique<base::CallbackList<void(void)>>();
+        std::make_unique<base::CallbackList<void(void)>>();
     registry = settings_observers_[path].get();
   } else {
     registry = observer_iterator->second.get();
@@ -347,8 +324,8 @@ void CrosSettings::FireObservers(const std::string& path) {
   observer_iterator->second->Notify();
 }
 
-ScopedTestCrosSettings::ScopedTestCrosSettings() {
-  CrosSettings::Initialize();
+ScopedTestCrosSettings::ScopedTestCrosSettings(PrefService* local_state) {
+  CrosSettings::Initialize(local_state);
 }
 
 ScopedTestCrosSettings::~ScopedTestCrosSettings() {

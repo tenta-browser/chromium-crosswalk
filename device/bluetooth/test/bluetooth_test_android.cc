@@ -19,7 +19,7 @@
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor_android.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service_android.h"
 #include "device/bluetooth/test/test_bluetooth_adapter_observer.h"
-#include "jni/Fakes_jni.h"
+#include "device/bluetooth_test_jni_headers/Fakes_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -42,9 +42,14 @@ void BluetoothTestAndroid::SetUp() {
 }
 
 void BluetoothTestAndroid::TearDown() {
-  BluetoothAdapter::DeviceList devices = adapter_->GetDevices();
-  for (auto* device : devices) {
-    DeleteDevice(device);
+  // Unit tests are able to reset the adapter themselves (e.g.
+  // BluetoothTest::TogglePowerFakeAdapter_DestroyWithPending), so this check is
+  // necessary.
+  if (adapter_) {
+    BluetoothAdapter::DeviceList devices = adapter_->GetDevices();
+    for (auto* device : devices) {
+      DeleteDevice(device);
+    }
   }
   EXPECT_EQ(0, gatt_open_connections_);
 
@@ -66,7 +71,7 @@ void BluetoothTestAndroid::PostTaskFromJava(
   // running the Runnable.
   runnable_ref.Reset(env, runnable);
   scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&RunJavaRunnable, runnable_ref));
+      FROM_HERE, base::BindOnce(&RunJavaRunnable, runnable_ref));
 }
 
 bool BluetoothTestAndroid::PlatformSupportsLowEnergy() {
@@ -541,7 +546,11 @@ void BluetoothTestAndroid::OnFakeAdapterStateChanged(
     JNIEnv* env,
     const JavaParamRef<jobject>& caller,
     const bool powered) {
-  adapter_->NotifyAdapterPoweredChanged(powered);
+  // Delegate to the real implementation if the adapter is still alive.
+  if (adapter_) {
+    static_cast<BluetoothAdapterAndroid*>(adapter_.get())
+        ->OnAdapterStateChanged(env, caller, powered);
+  }
 }
 
 }  // namespace device

@@ -13,6 +13,11 @@
 #include "build/build_config.h"
 #include "content/child/blink_platform_impl.h"
 
+#if defined(OS_LINUX)
+#include "components/services/font/public/cpp/font_loader.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
+#endif
+
 namespace content {
 
 class PpapiBlinkPlatformImpl : public BlinkPlatformImpl {
@@ -24,38 +29,20 @@ class PpapiBlinkPlatformImpl : public BlinkPlatformImpl {
   void Shutdown();
 
   // BlinkPlatformImpl methods:
-  blink::WebThread* CurrentThread() override;
-  blink::WebClipboard* Clipboard() override;
-  blink::WebFileUtilities* GetFileUtilities() override;
   blink::WebSandboxSupport* GetSandboxSupport() override;
-  virtual bool sandboxEnabled();
-  unsigned long long VisitedLinkHash(const char* canonicalURL,
-                                     size_t length) override;
-  bool IsLinkVisited(unsigned long long linkHash) override;
-  virtual void setCookies(const blink::WebURL& url,
-                          const blink::WebURL& site_for_cookies,
-                          const blink::WebString& value);
-  virtual blink::WebString cookies(const blink::WebURL& url,
-                                   const blink::WebURL& site_for_cookies);
+  uint64_t VisitedLinkHash(const char* canonical_url, size_t length) override;
+  bool IsLinkVisited(uint64_t link_hash) override;
   blink::WebString DefaultLocale() override;
   blink::WebThemeEngine* ThemeEngine() override;
-  void GetPluginList(bool refresh,
-                     const blink::WebSecurityOrigin& mainFrameOrigin,
-                     blink::WebPluginListBuilder*) override;
   blink::WebData GetDataResource(const char* name) override;
-  std::unique_ptr<blink::WebStorageNamespace> CreateLocalStorageNamespace()
-      override;
-  virtual void dispatchStorageEvent(const blink::WebString& key,
-      const blink::WebString& oldValue, const blink::WebString& newValue,
-      const blink::WebString& origin, const blink::WebURL& url,
-      bool isLocalStorage);
-  int DatabaseDeleteFile(const blink::WebString& vfs_file_name,
-                         bool sync_dir) override;
 
  private:
-#if !defined(OS_ANDROID) && !defined(OS_WIN)
-  class SandboxSupport;
-  std::unique_ptr<SandboxSupport> sandbox_support_;
+#if defined(OS_LINUX) || defined(OS_MACOSX)
+  std::unique_ptr<blink::WebSandboxSupport> sandbox_support_;
+#endif
+
+#if defined(OS_LINUX)
+  sk_sp<font_service::FontLoader> font_loader_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(PpapiBlinkPlatformImpl);

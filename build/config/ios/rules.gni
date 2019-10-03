@@ -7,6 +7,11 @@ import("//build/config/mac/base_rules.gni")
 import("//build/config/mac/symbols.gni")
 import("//build/toolchain/toolchain.gni")
 
+# Constants corresponding to the bundle type identifier for XCTest and XCUITest
+# targets.
+_ios_xcode_xctest_bundle_id = "com.apple.product-type.bundle.unit-test"
+_ios_xcode_xcuitest_bundle_id = "com.apple.product-type.bundle.ui-testing"
+
 # Invokes lipo on multiple arch-specific binaries to create a fat binary.
 #
 # Arguments
@@ -79,20 +84,13 @@ template("lipo_binary") {
       deps += [ "$_arch_binary_target($_toolchain)" ]
     }
 
-    args = []
-    if (!use_system_xcode) {
-      args += [
-        "--developer_dir",
-        hermetic_xcode_path,
-      ]
-    }
-    args += [
-              "xcrun",
-              "lipo",
-              "-create",
-              "-output",
-              rebase_path("$target_out_dir/$_output_name", root_build_dir),
-            ] + rebase_path(inputs, root_build_dir)
+    args = [
+             "xcrun",
+             "lipo",
+             "-create",
+             "-output",
+             rebase_path("$target_out_dir/$_output_name", root_build_dir),
+           ] + rebase_path(inputs, root_build_dir)
 
     if (enable_dsyms) {
       _dsyms_output_dir = "$root_out_dir/$_output_name.dSYM"
@@ -210,8 +208,8 @@ template("create_signed_bundle") {
 
   if (defined(invoker.xcode_test_application_name)) {
     assert(
-        invoker.product_type == "com.apple.product-type.bundle.unit-test" ||
-            invoker.product_type == "com.apple.product-type.bundle.ui-testing",
+        invoker.product_type == _ios_xcode_xctest_bundle_id ||
+            invoker.product_type == _ios_xcode_xcuitest_bundle_id,
         "xcode_test_application_name can be only defined for Xcode unit or ui test target.")
   }
 
@@ -285,7 +283,6 @@ template("create_signed_bundle") {
                              "public_deps",
                              "testonly",
                              "visibility",
-                             "xcode_extra_attributes",
                              "xcode_test_application_name",
                            ])
 
@@ -293,10 +290,18 @@ template("create_signed_bundle") {
     bundle_contents_dir = bundle_root_dir
     bundle_resources_dir = bundle_contents_dir
     bundle_executable_dir = bundle_contents_dir
-    bundle_plugins_dir = "$bundle_contents_dir/PlugIns"
 
     if (!defined(public_deps)) {
       public_deps = []
+    }
+
+    xcode_extra_attributes = {
+      IPHONEOS_DEPLOYMENT_TARGET = ios_deployment_target
+
+      # If invoker has defined extra attributes, they override the defaults.
+      if (defined(invoker.xcode_extra_attributes)) {
+        forward_variables_from(invoker.xcode_extra_attributes, "*")
+      }
     }
 
     if (defined(invoker.bundle_binary_target)) {
@@ -339,14 +344,7 @@ template("create_signed_bundle") {
       }
     }
 
-    code_signing_args = []
-    if (!use_system_xcode) {
-      code_signing_args += [
-        "--developer_dir",
-        hermetic_xcode_path,
-      ]
-    }
-    code_signing_args += [
+    code_signing_args = [
       "code-sign-bundle",
       "-t=" + ios_sdk_name,
       "-i=" + ios_code_signing_identity,
@@ -537,24 +535,28 @@ template("ios_app_bundle") {
       assert(defined(_variant.bundle_deps),
              "bundle_deps must be defined for all $target_name variants")
 
-      _variants += [ {
-            name = _variant.name
-            bundle_deps = _variant.bundle_deps
-            target_name = "${_target_name}_variants_${_variant.name}"
-            bundle_gen_dir = "$root_out_dir/variants/${_variant.name}"
-          } ]
+      _variants += [
+        {
+          name = _variant.name
+          bundle_deps = _variant.bundle_deps
+          target_name = "${_target_name}_variants_${_variant.name}"
+          bundle_gen_dir = "$root_out_dir/variants/${_variant.name}"
+        },
+      ]
     }
   } else {
     # If no variants are passed to the template, use a fake variant with
     # no name to avoid duplicating code. As no variant can have an empty
     # name except this fake variant, it is possible to know if a variant
     # is fake or not.
-    _variants = [ {
-          name = ""
-          bundle_deps = []
-          target_name = _target_name
-          bundle_gen_dir = root_out_dir
-        } ]
+    _variants = [
+      {
+        name = ""
+        bundle_deps = []
+        target_name = _target_name
+        bundle_gen_dir = root_out_dir
+      },
+    ]
   }
 
   _default_variant = _variants[0]
@@ -752,18 +754,11 @@ template("ios_app_bundle") {
           _generate_entitlements_output,
         ]
 
-        args = []
-        if (!use_system_xcode) {
-          args += [
-            "--developer_dir",
-            hermetic_xcode_path,
-          ]
-        }
-        args += [
-                  "generate-entitlements",
-                  "-e=" + rebase_path(_entitlements_path, root_build_dir),
-                  "-p=" + rebase_path(_info_plist_path, root_build_dir),
-                ] + rebase_path(outputs, root_build_dir)
+        args = [
+                 "generate-entitlements",
+                 "-e=" + rebase_path(_entitlements_path, root_build_dir),
+                 "-p=" + rebase_path(_info_plist_path, root_build_dir),
+               ] + rebase_path(outputs, root_build_dir)
       }
     }
 
@@ -952,6 +947,51 @@ template("ios_appex_bundle") {
 
 set_defaults("ios_appex_bundle") {
   configs = default_executable_configs
+}
+
+# Template to compile .xib and .storyboard files.
+#
+# Arguments
+#
+#     sources:
+#         list of string, sources to compile
+#
+#     ibtool_flags:
+#         (optional) list of string, additional flags to pass to the ibtool
+template("compile_ib_files") {
+  action_foreach(target_name) {
+    forward_variables_from(invoker,
+                           [
+                             "testonly",
+                             "visibility",
+                           ])
+    assert(defined(invoker.sources),
+           "sources must be specified for $target_name")
+    assert(defined(invoker.output_extension),
+           "output_extension must be specified for $target_name")
+
+    ibtool_flags = []
+    if (defined(invoker.ibtool_flags)) {
+      ibtool_flags = invoker.ibtool_flags
+    }
+
+    _output_extension = invoker.output_extension
+
+    script = "//build/config/ios/compile_ib_files.py"
+    sources = invoker.sources
+    outputs = [
+      "$target_gen_dir/$target_name/{{source_name_part}}.$_output_extension",
+    ]
+    args = [
+      "--input",
+      "{{source}}",
+      "--output",
+      rebase_path(
+          "$target_gen_dir/$target_name/{{source_name_part}}.$_output_extension",
+          root_build_dir),
+    ]
+    args += ibtool_flags
+  }
 }
 
 # Compile a xib or storyboard file and add it to a bundle_data so that it is
@@ -1270,7 +1310,9 @@ template("ios_framework_bundle") {
       deps = []
     }
     deps += [ ":$_arch_shared_library_source" ]
-
+    if (_has_public_headers) {
+      deps += [ ":$_framework_headers_target($default_toolchain)" ]
+    }
     if (!defined(ldflags)) {
       ldflags = []
     }
@@ -1384,19 +1426,35 @@ template("ios_framework_bundle") {
 
       _copy_public_headers_target = _target_name + "_copy_public_headers"
       copy(_copy_public_headers_target) {
+        forward_variables_from(invoker,
+                               [
+                                 "testonly",
+                                 "deps",
+                               ])
         visibility = [ ":$_framework_headers_target" ]
         sources = _public_headers
         outputs = [
           "$_framework_root/Headers/{{source_file_part}}",
         ]
+
+        # Do not use forward_variables_from for "public_deps" as
+        # we do not want to forward those dependencies.
+        if (defined(invoker.public_deps)) {
+          if (!defined(deps)) {
+            deps = []
+          }
+          deps += invoker.public_deps
+        }
       }
 
       group(_framework_headers_target) {
         forward_variables_from(invoker, [ "testonly" ])
         deps = [
           ":$_compile_headers_map_target",
-          ":$_copy_public_headers_target",
           ":$_create_module_map_target",
+        ]
+        public_deps = [
+          ":$_copy_public_headers_target",
         ]
       }
     }
@@ -1552,8 +1610,8 @@ template("ios_xctest_bundle") {
   assert(defined(invoker.deps), "deps must be defined for $target_name")
   assert(defined(invoker.product_type),
          "product_type must be defined for $target_name")
-  assert(invoker.product_type == "com.apple.product-type.bundle.unit-test" ||
-             invoker.product_type == "com.apple.product-type.bundle.ui-testing",
+  assert(invoker.product_type == _ios_xcode_xctest_bundle_id ||
+             invoker.product_type == _ios_xcode_xcuitest_bundle_id,
          "product_type defined for $target_name is invalid.")
   assert(defined(invoker.host_target),
          "host_target must be defined for $target_name")
@@ -1626,12 +1684,23 @@ template("ios_xctest_bundle") {
       info_plist = "//build/config/ios/Module-Info.plist"
       executable_name = _output_name
 
+      if (defined(invoker.xctest_bundle_principal_class)) {
+        _principal_class = invoker.xctest_bundle_principal_class
+      } else {
+        # Fall back to a reasonable default value.
+        _principal_class = "NSObject"
+      }
+      extra_substitutions =
+          [ "XCTEST_BUNDLE_PRINCIPAL_CLASS=${_principal_class}" ]
+
       if (ios_automatically_manage_certs) {
         # Use a fixed bundle identifier for EarlGrey tests when using Xcode to
         # manage the certificates as the number of free certs is limited.
-        extra_substitutions = [ "MODULE_BUNDLE_ID=gtest.${ios_generic_test_bundle_id_suffix}-module" ]
+        extra_substitutions += [
+          "MODULE_BUNDLE_ID=gtest.${ios_generic_test_bundle_id_suffix}-module",
+        ]
       } else {
-        extra_substitutions = [ "MODULE_BUNDLE_ID=gtest.$_output_name" ]
+        extra_substitutions += [ "MODULE_BUNDLE_ID=gtest.$_output_name" ]
       }
     }
 
@@ -1688,8 +1757,17 @@ template("ios_xctest_bundle") {
 
         # For XCUITest, Xcode requires specifying the host application name via
         # the TEST_TARGET_NAME attribute.
-        if (invoker.product_type == "com.apple.product-type.bundle.ui-testing") {
+        if (invoker.product_type == _ios_xcode_xcuitest_bundle_id) {
           TEST_TARGET_NAME = invoker.xcode_test_application_name
+        }
+
+        # For XCTest, Xcode requires specifying the host application path via
+        # both BUNDLE_LOADER and TEST_HOST attributes.
+        if (invoker.product_type == _ios_xcode_xctest_bundle_id) {
+          BUNDLE_LOADER = "\$(TEST_HOST)"
+          TEST_HOST =
+              "\$(BUILT_PRODUCTS_DIR)/${invoker.xcode_test_application_name}" +
+              ".app/${invoker.xcode_test_application_name}"
         }
       }
 
@@ -1711,7 +1789,7 @@ template("ios_xctest_bundle") {
         "$root_out_dir/$_output_name.xctest",
       ]
       outputs = [
-        "{{bundle_plugins_dir}}/$_output_name.xctest",
+        "{{bundle_contents_dir}}/PlugIns/$_output_name.xctest",
       ]
     }
   }
@@ -1749,7 +1827,7 @@ template("ios_xctest_test") {
 
   ios_xctest_bundle(_xctest_target) {
     output_name = _xctest_output
-    product_type = "com.apple.product-type.bundle.unit-test"
+    product_type = _ios_xcode_xctest_bundle_id
     host_target = _host_target
     xcode_test_application_name = _host_output
 
@@ -1778,12 +1856,14 @@ template("ios_xctest_test") {
       }
     }
 
-    # Xcode needs those two framework installed in the application (and signed)
-    # for the XCTest to run, so install them using extra_system_frameworks.
+    # Xcode needs the following frameworks installed in the application (and
+    # signed) for the XCTest to run, so install them using
+    # extra_system_frameworks.
     _ios_platform_library = "$ios_sdk_platform_path/Developer/Library"
     extra_system_frameworks = [
       "$_ios_platform_library/Frameworks/XCTest.framework",
-      "$_ios_platform_library/PrivateFrameworks/IDEBundleInjection.framework",
+      "$ios_sdk_platform_path/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework",
+      "$ios_sdk_platform_path/Developer/usr/lib/libXCTestBundleInject.dylib",
     ]
 
     _xctest_bundle = _xctest_target + "_bundle"
@@ -1933,7 +2013,11 @@ template("ios_xcuitest_test_runner_bundle") {
       "$ios_sdk_platform_path/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework",
     ]
 
-    bundle_deps = [
+    bundle_deps = []
+    if (defined(invoker.bundle_deps)) {
+      bundle_deps += invoker.bundle_deps
+    }
+    bundle_deps += [
       ":$_info_plist_bundle",
       ":$_pkginfo_bundle",
       ":$_xctest_bundle",
@@ -1976,9 +2060,13 @@ template("ios_xcuitest_test") {
 
   _xcuitest_module_output = _xcuitest_target
   ios_xctest_bundle(_xcuitest_module_target) {
-    forward_variables_from(invoker, [ "xcode_test_application_name" ])
+    forward_variables_from(invoker,
+                           [
+                             "xcode_test_application_name",
+                             "xctest_bundle_principal_class",
+                           ])
 
-    product_type = "com.apple.product-type.bundle.ui-testing"
+    product_type = _ios_xcode_xcuitest_bundle_id
     host_target = _xcuitest_runner_target
     output_name = _xcuitest_module_output
 
@@ -1989,6 +2077,7 @@ template("ios_xcuitest_test") {
   ios_xcuitest_test_runner_bundle(_xcuitest_runner_target) {
     output_name = _xcuitest_runner_output
     xctest_bundle = _xcuitest_module_target + "_bundle"
+    forward_variables_from(invoker, [ "bundle_deps" ])
   }
 }
 

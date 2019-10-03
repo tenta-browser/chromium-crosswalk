@@ -6,7 +6,9 @@
 #define UI_GFX_COLOR_UTILS_H_
 
 #include <string>
+#include <tuple>
 
+#include "base/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/gfx_export.h"
 
@@ -21,20 +23,27 @@ struct HSL {
   double l;
 };
 
+// The blend alpha and resulting color when blending to achieve a desired
+// contrast raio.
+struct BlendResult {
+  SkAlpha alpha;
+  SkColor color;
+};
+
 // The minimum contrast between text and background that is still readable.
 // This value is taken from w3c accessibility guidelines.
-const double kMinimumReadableContrastRatio = 4.5f;
+constexpr float kMinimumReadableContrastRatio = 4.5f;
 
 // Determines the contrast ratio of two colors or two relative luminance values
 // (as computed by RelativeLuminance()), calculated according to
 // http://www.w3.org/TR/WCAG20/#contrast-ratiodef .
-GFX_EXPORT double GetContrastRatio(SkColor color_a, SkColor color_b);
-GFX_EXPORT double GetContrastRatio(double luminance_a, double luminance_b);
+GFX_EXPORT float GetContrastRatio(SkColor color_a, SkColor color_b);
+GFX_EXPORT float GetContrastRatio(float luminance_a, float luminance_b);
 
 // The relative luminance of |color|, that is, the weighted sum of the
 // linearized RGB components, normalized to 0..1, per BT.709.  See
 // http://www.w3.org/TR/WCAG20/#relativeluminancedef .
-GFX_EXPORT double GetRelativeLuminance(SkColor color);
+GFX_EXPORT float GetRelativeLuminance(SkColor color);
 
 // The luma of |color|, that is, the weighted sum of the gamma-compressed R'G'B'
 // components, per BT.601, a.k.a. the Y' in Y'UV.  See
@@ -63,6 +72,10 @@ GFX_EXPORT bool IsWithinHSLRange(const HSL& hsl,
 // and lightness which are outside of the valid range [0, 1] to -1.  -1 is a
 // special value which indicates 'no change'.
 GFX_EXPORT void MakeHSLShiftValid(HSL* hsl);
+
+// Returns whether pasing |hsl| to HSLShift() would have any effect.  Assumes
+// |hsl| is a valid shift (as defined by MakeHSLShiftValid()).
+GFX_EXPORT bool IsHSLShiftMeaningful(const HSL& hsl);
 
 // HSL-Shift an SkColor. The shift values are in the range of 0-1, with the
 // option to specify -1 for 'no change'. The shift values are defined as:
@@ -93,37 +106,49 @@ GFX_EXPORT double CalculateBoringScore(const SkBitmap& bitmap);
 // |alpha| == 0) to |foreground| (for |alpha| == 255). The alpha channels of
 // the supplied colors are also taken into account, so the returned color may
 // be partially transparent.
-GFX_EXPORT SkColor AlphaBlend(SkColor foreground, SkColor background,
+GFX_EXPORT SkColor AlphaBlend(SkColor foreground,
+                              SkColor background,
                               SkAlpha alpha);
+
+// As above, but with alpha specified as 0..1.
+GFX_EXPORT SkColor AlphaBlend(SkColor foreground,
+                              SkColor background,
+                              float alpha);
 
 // Returns the color that results from painting |foreground| on top of
 // |background|.
 GFX_EXPORT SkColor GetResultingPaintColor(SkColor foreground,
                                           SkColor background);
 
-// Returns true if the luma of |color| is closer to black than white.
+// Returns true if |color| contrasts more with white than the darkest color.
 GFX_EXPORT bool IsDark(SkColor color);
 
-// Makes a dark color lighter or a light color darker by blending |color| with
-// white or black depending on its current luma.  |alpha| controls the amount of
-// white or black that will be alpha-blended into |color|.
-GFX_EXPORT SkColor BlendTowardOppositeLuma(SkColor color, SkAlpha alpha);
+// Returns whichever of white or the darkest available color contrasts more with
+// |color|.
+GFX_EXPORT SkColor GetColorWithMaxContrast(SkColor color);
 
-// Given a foreground and background color, try to return a foreground color
-// that is "readable" over the background color by luma-inverting the foreground
-// color and then using PickContrastingColor() to pick the one with greater
-// contrast.  During this process, alpha values will be ignored; the returned
-// color will have the same alpha as |foreground|.
-//
-// NOTE: This won't do anything but waste time if the supplied foreground color
-// has a luma value close to the midpoint (0.5 in the HSL representation).
-GFX_EXPORT SkColor GetReadableColor(SkColor foreground, SkColor background);
+// Blends towards the color with max contrast by |alpha|. The alpha of
+// the original color is preserved.
+GFX_EXPORT SkColor BlendTowardMaxContrast(SkColor color, SkAlpha alpha);
 
 // Returns whichever of |foreground1| or |foreground2| has higher contrast with
 // |background|.
 GFX_EXPORT SkColor PickContrastingColor(SkColor foreground1,
                                         SkColor foreground2,
                                         SkColor background);
+
+// Alpha-blends |default_foreground| toward either |high_contrast_foreground|
+// (if specified) or the color with max contrast with |background| until either
+// the result has a contrast ratio against |background| of at least
+// |contrast_ratio| or the blend can go no further.  Returns the blended color
+// and the alpha used to achieve that blend.  If |default_foreground| already
+// has sufficient contrast, returns an alpha of 0 and color of
+// |default_foreground|.
+GFX_EXPORT BlendResult BlendForMinContrast(
+    SkColor default_foreground,
+    SkColor background,
+    base::Optional<SkColor> high_contrast_foreground = base::nullopt,
+    float contrast_ratio = kMinimumReadableContrastRatio);
 
 // Invert a color.
 GFX_EXPORT SkColor InvertColor(SkColor color);
@@ -145,6 +170,13 @@ GFX_EXPORT std::string SkColorToRgbaString(SkColor color);
 
 // Creates an rgb string for an SkColor. For example: '255,0,255'.
 GFX_EXPORT std::string SkColorToRgbString(SkColor color);
+
+// Sets the darkest available color to |color|.  Returns the previous darkest
+// color.
+GFX_EXPORT SkColor SetDarkestColorForTesting(SkColor color);
+
+// Returns the luminance of the darkest, midpoint, and lightest colors.
+GFX_EXPORT std::tuple<float, float, float> GetLuminancesForTesting();
 
 }  // namespace color_utils
 

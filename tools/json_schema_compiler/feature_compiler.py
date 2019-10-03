@@ -8,6 +8,7 @@ from datetime import datetime
 from functools import partial
 import os
 import re
+import sys
 
 from code import Code
 import json_parse
@@ -25,18 +26,10 @@ HEADER_FILE_TEMPLATE = """
 #ifndef %(header_guard)s
 #define %(header_guard)s
 
-#include "extensions/common/features/feature_provider.h"
-
 namespace extensions {
+class FeatureProvider;
 
-class %(provider_class)s : public FeatureProvider {
- public:
-  %(provider_class)s();
-  ~%(provider_class)s() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(%(provider_class)s);
-};
+void %(method_name)s(FeatureProvider* provider);
 
 }  // namespace extensions
 
@@ -56,25 +49,26 @@ CC_FILE_BEGIN = """
 #include "%(header_file_path)s"
 
 #include "extensions/common/features/complex_feature.h"
+#include "extensions/common/features/feature_provider.h"
 #include "extensions/common/features/manifest_feature.h"
 #include "extensions/common/features/permission_feature.h"
 
 namespace extensions {
 
+void %(method_name)s(FeatureProvider* provider) {
 """
 
 # The end of the .cc file for the generated FeatureProvider.
 CC_FILE_END = """
-%(provider_class)s::~%(provider_class)s() {}
+}
 
 }  // namespace extensions
 """
 
-# Returns true if the list 'l' does not contain any strings that look like
-# extension ids.
-def ListDoesNotContainPlainExtensionIds(l):
-  # For now, let's just say anything 32 characters in length is an id.
-  return len(filter(lambda s: len(s) == 32, l)) == 0
+# Returns true if the list 'l' only contains strings that are a hex-encoded SHA1
+# hashes.
+def ListContainsOnlySha1Hashes(l):
+  return len(list(filter(lambda s: not re.match("^[A-F0-9]{40}$", s), l))) == 0
 
 # A "grammar" for what is and isn't allowed in the features.json files. This
 # grammar has to list all possible keys and the requirements for each. The
@@ -84,7 +78,7 @@ def ListDoesNotContainPlainExtensionIds(l):
 #     allowed_type_2: optional_properties,
 #   }
 # |allowed_types| are the types of values that can be used for a given key. The
-# possible values are list, unicode, bool, and int.
+# possible values are list, str, bool, and int.
 # |optional_properties| provide more restrictions on the given type. The options
 # are:
 #   'subtype': Only applicable for lists. If provided, this enforces that each
@@ -102,6 +96,8 @@ def ListDoesNotContainPlainExtensionIds(l):
 #                assign the list of Feature::BLESSED_EXTENSION_CONTEXT,
 #                Feature::BLESSED_WEB_PAGE_CONTEXT et al for contexts. If not
 #                specified, defaults to false.
+#   'allow_empty': Only applicable for lists. Whether an empty list is a valid
+#                  value. If omitted, empty lists are prohibited.
 #   'validators': A list of (function, str) pairs with a function to run on the
 #                 value for a feature. Validators allow for more flexible or
 #                 one-off style validation than just what's in the grammar (such
@@ -119,20 +115,20 @@ def ListDoesNotContainPlainExtensionIds(l):
 FEATURE_GRAMMAR = (
   {
     'alias': {
-      unicode: {},
+      str: {},
       'shared': True
     },
     'blacklist': {
       list: {
-        'subtype': unicode,
+        'subtype': str,
         'validators': [
-          (ListDoesNotContainPlainExtensionIds,
+          (ListContainsOnlySha1Hashes,
            'list should only have hex-encoded SHA1 hashes of extension ids')
         ]
       }
     },
     'channel': {
-      unicode: {
+      str: {
         'enum_map': {
           'trunk': 'version_info::Channel::UNKNOWN',
           'canary': 'version_info::Channel::CANARY',
@@ -143,7 +139,7 @@ FEATURE_GRAMMAR = (
       }
     },
     'command_line_switch': {
-      unicode: {}
+      str: {}
     },
     'component_extensions_auto_granted': {
       bool: {}
@@ -154,7 +150,6 @@ FEATURE_GRAMMAR = (
           'blessed_extension': 'Feature::BLESSED_EXTENSION_CONTEXT',
           'blessed_web_page': 'Feature::BLESSED_WEB_PAGE_CONTEXT',
           'content_script': 'Feature::CONTENT_SCRIPT_CONTEXT',
-          'extension_service_worker': 'Feature::SERVICE_WORKER_CONTEXT',
           'lock_screen_extension': 'Feature::LOCK_SCREEN_EXTENSION_CONTEXT',
           'web_page': 'Feature::WEB_PAGE_CONTEXT',
           'webui': 'Feature::WEBUI_CONTEXT',
@@ -167,7 +162,15 @@ FEATURE_GRAMMAR = (
       bool: {'values': [True]}
     },
     'dependencies': {
-      list: {'subtype': unicode}
+      list: {
+        # We allow an empty list of dependencies for child features that want
+        # to override their parents' dependency set.
+        'allow_empty': True,
+        'subtype': str
+      }
+    },
+    'disallow_for_service_workers': {
+      bool: {}
     },
     'extension_types': {
       list: {
@@ -178,12 +181,13 @@ FEATURE_GRAMMAR = (
           'platform_app': 'Manifest::TYPE_PLATFORM_APP',
           'shared_module': 'Manifest::TYPE_SHARED_MODULE',
           'theme': 'Manifest::TYPE_THEME',
+          'login_screen_extension': 'Manifest::TYPE_LOGIN_SCREEN_EXTENSION',
         },
         'allow_all': True
       },
     },
     'location': {
-      unicode: {
+      str: {
         'enum_map': {
           'component': 'SimpleFeature::COMPONENT_LOCATION',
           'external_component': 'SimpleFeature::EXTERNAL_COMPONENT_LOCATION',
@@ -195,13 +199,13 @@ FEATURE_GRAMMAR = (
       bool: {'values': [True]}
     },
     'matches': {
-      list: {'subtype': unicode}
+      list: {'subtype': str}
     },
     'max_manifest_version': {
-      int: {'values': [1]}
+      int: {'values': [1, 2]}
     },
     'min_manifest_version': {
-      int: {'values': [2]}
+      int: {'values': [2, 3]}
     },
     'noparent': {
       bool: {'values': [True]}
@@ -226,14 +230,14 @@ FEATURE_GRAMMAR = (
       }
     },
     'source': {
-      unicode: {},
+      str: {},
       'shared': True
     },
     'whitelist': {
       list: {
-        'subtype': unicode,
+        'subtype': str,
         'validators': [
-          (ListDoesNotContainPlainExtensionIds,
+          (ListContainsOnlySha1Hashes,
            'list should only have hex-encoded SHA1 hashes of extension ids')
         ]
       }
@@ -354,18 +358,21 @@ IGNORED_KEYS = ['default_parent']
 # can be disabled for testing.
 ENABLE_ASSERTIONS = True
 
-# JSON parsing returns all strings of characters as unicode types. For testing,
-# we can enable converting all string types to unicode to avoid writing u''
-# everywhere.
-STRINGS_TO_UNICODE = False
-
 def GetCodeForFeatureValues(feature_values):
   """ Gets the Code object for setting feature values for this object. """
   c = Code()
   for key in sorted(feature_values.keys()):
     if key in IGNORED_KEYS:
       continue;
-    c.Append('feature->set_%s(%s);' % (key, feature_values[key]))
+
+    # TODO(devlin): Remove this hack as part of 842387.
+    set_key = key
+    if key == "whitelist":
+      set_key = "allowlist"
+    elif key == "blacklist":
+      set_key = "blocklist"
+
+    c.Append('feature->set_%s(%s);' % (set_key, feature_values[key]))
   return c
 
 class Feature(object):
@@ -380,15 +387,14 @@ class Feature(object):
     self.shared_values = {}
 
   def _GetType(self, value):
-    """Returns the type of the given value. This can be different than type() if
-    STRINGS_TO_UNICODE is enabled.
+    """Returns the type of the given value.
     """
-    t = type(value)
-    if not STRINGS_TO_UNICODE:
-      return t
-    if t is str:
-      return unicode
-    return t
+    # For Py3 compatibility we use str in the grammar and treat unicode as str
+    # in Py2.
+    if sys.version_info.major == 2 and type(value) is unicode:
+      return str
+
+    return type(value)
 
   def AddError(self, error):
     """Adds an error to the feature. If ENABLE_ASSERTIONS is active, this will
@@ -436,7 +442,7 @@ class Feature(object):
     if enum_map:
       return enum_map[value]
 
-    if t in [str, unicode]:
+    if t is str:
       return '"%s"' % str(value)
     if t is int:
       return str(value)
@@ -458,6 +464,7 @@ class Feature(object):
 
     is_all = False
     if v == 'all' and list in grammar and 'allow_all' in grammar[list]:
+      assert grammar[list]['allow_all'], '`allow_all` only supports `True`.'
       v = []
       is_all = True
 
@@ -470,6 +477,14 @@ class Feature(object):
       self._AddKeyError(key, 'Illegal value: "%s"' % v)
       return
 
+    if value_type is list and not is_all and len(v) == 0:
+      if 'allow_empty' in grammar[list]:
+        assert grammar[list]['allow_empty'], \
+               '`allow_empty` only supports `True`.'
+      else:
+        self._AddKeyError(key, 'List must specify at least one element.')
+        return
+
     expected = grammar[value_type]
     expected_values = None
     enum_map = None
@@ -477,7 +492,7 @@ class Feature(object):
       expected_values = expected['values']
     elif 'enum_map' in expected:
       enum_map = expected['enum_map']
-      expected_values = enum_map.keys()
+      expected_values = list(enum_map)
 
     if is_all:
       v = copy.deepcopy(expected_values)
@@ -535,7 +550,7 @@ class Feature(object):
     for key in parsed_json.keys():
       if key not in FEATURE_GRAMMAR:
         self._AddKeyError(key, 'Unrecognized key')
-    for key, key_grammar in FEATURE_GRAMMAR.iteritems():
+    for key, key_grammar in FEATURE_GRAMMAR.items():
       self._ParseKey(key, parsed_json, shared_values, key_grammar)
 
   def Validate(self, feature_type, shared_values):
@@ -618,12 +633,12 @@ class FeatureCompiler(object):
   """A compiler to load, parse, and generate C++ code for a number of
   features.json files."""
   def __init__(self, chrome_root, source_files, feature_type,
-               provider_class, out_root, out_base_filename):
+               method_name, out_root, out_base_filename):
     # See __main__'s ArgumentParser for documentation on these properties.
     self._chrome_root = chrome_root
     self._source_files = source_files
     self._feature_type = feature_type
-    self._provider_class = provider_class
+    self._method_name = method_name
     self._out_root = out_root
     self._out_base_filename = out_base_filename
 
@@ -746,39 +761,45 @@ class FeatureCompiler(object):
     """Returns the Code object for the body of the .cc file, which handles the
     initialization of all features."""
     c = Code()
-    c.Append('%s::%s() {' % (self._provider_class, self._provider_class))
     c.Sblock()
     for k in sorted(self._features.keys()):
       c.Sblock('{')
       feature = self._features[k]
       c.Concat(feature.GetCode(self._feature_type))
-      c.Append('AddFeature("%s", feature);' % k)
+      c.Append('provider->AddFeature("%s", feature);' % k)
       c.Eblock('}')
-    c.Eblock('}')
+    c.Eblock()
     return c
 
   def Write(self):
     """Writes the output."""
-    header_file_path = self._out_base_filename + '.h'
-    cc_file_path = self._out_base_filename + '.cc'
+    header_file = self._out_base_filename + '.h'
+    cc_file = self._out_base_filename + '.cc'
+
+    include_file_root = self._out_root
+    GEN_DIR_PREFIX = 'gen/'
+    if include_file_root.startswith(GEN_DIR_PREFIX):
+      include_file_root = include_file_root[len(GEN_DIR_PREFIX):]
+    header_file_path = '%s/%s' % (include_file_root, header_file)
+    cc_file_path = '%s/%s' % (include_file_root, cc_file)
     substitutions = ({
         'header_file_path': header_file_path,
         'header_guard': (header_file_path.replace('/', '_').
                              replace('.', '_').upper()),
-        'provider_class': self._provider_class,
+        'method_name': self._method_name,
         'source_files': str(self._source_files),
         'year': str(datetime.now().year)
     })
     if not os.path.exists(self._out_root):
       os.makedirs(self._out_root)
     # Write the .h file.
-    with open(os.path.join(self._out_root, header_file_path), 'w') as f:
+    with open(os.path.join(self._out_root, header_file), 'w') as f:
       header_file = Code()
       header_file.Append(HEADER_FILE_TEMPLATE)
       header_file.Substitute(substitutions)
       f.write(header_file.Render().strip())
     # Write the .cc file.
-    with open(os.path.join(self._out_root, cc_file_path), 'w') as f:
+    with open(os.path.join(self._out_root, cc_file), 'w') as f:
       cc_file = Code()
       cc_file.Append(CC_FILE_BEGIN)
       cc_file.Substitute(substitutions)
@@ -797,8 +818,8 @@ if __name__ == '__main__':
       'feature_type', type=str,
       help='The name of the class to use in feature generation ' +
                '(e.g. APIFeature, PermissionFeature)')
-  parser.add_argument('provider_class', type=str,
-                      help='The name of the class for the feature provider')
+  parser.add_argument('method_name', type=str,
+                      help='The name of the method to populate the provider')
   parser.add_argument('out_root', type=str,
                       help='The root directory to generate the C++ files into')
   parser.add_argument(
@@ -810,7 +831,7 @@ if __name__ == '__main__':
   if args.feature_type not in FEATURE_TYPES:
     raise NameError('Unknown feature type: %s' % args.feature_type)
   c = FeatureCompiler(args.chrome_root, args.source_files, args.feature_type,
-                      args.provider_class, args.out_root,
+                      args.method_name, args.out_root,
                       args.out_base_filename)
   c.Load()
   c.Compile()

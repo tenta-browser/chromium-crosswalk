@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 suite('cr-toggle', function() {
-  var toggle;
+  let toggle;
 
   setup(function() {
     PolymerTest.clearBody();
@@ -20,7 +20,7 @@ suite('cr-toggle', function() {
     assertTrue(toggle.hasAttribute('checked'));
     assertEquals('true', toggle.getAttribute('aria-pressed'));
     // Asserting that the toggle button has actually moved.
-    assertTrue(getComputedStyle(toggle.$.button).transform.includes('matrix'));
+    assertTrue(getComputedStyle(toggle.$.knob).transform.includes('matrix'));
   }
 
   function assertNotChecked() {
@@ -28,7 +28,7 @@ suite('cr-toggle', function() {
     assertEquals(null, toggle.getAttribute('checked'));
     assertEquals('false', toggle.getAttribute('aria-pressed'));
     // Asserting that the toggle button has not moved.
-    assertEquals('none', getComputedStyle(toggle.$.button).transform);
+    assertEquals('none', getComputedStyle(toggle.$.knob).transform);
   }
 
   function assertDisabled() {
@@ -45,13 +45,16 @@ suite('cr-toggle', function() {
     assertEquals('false', toggle.getAttribute('aria-disabled'));
   }
 
-  /** @param {string} keyName The name of the key to trigger. */
-  function triggerKeyPressEvent(keyName) {
+  /**
+   * @param {string} keyName The name of the key to trigger.
+   * @param {string} keyCode The event keyCode and code to trigger.
+   */
+  function triggerKeyPressEvent(keyName, keyCode) {
     // Note: MockInteractions incorrectly populates |keyCode| and |code| with
-    // the same value. Since the prod code only cares about |code| being 'Enter'
-    // or 'Space', passing a string as a 2nd param, instead of a number.
+    // the same value. The intention of passing a string here is only to set
+    // |code|, since |keyCode| is not used its value doesn't matter.
     MockInteractions.keyEventOn(
-        toggle, 'keypress', keyName, undefined, keyName);
+        toggle, 'keypress', keyCode, undefined, keyName);
   }
 
   /**
@@ -62,23 +65,24 @@ suite('cr-toggle', function() {
    *     moveDirection is non-zero.
    */
   function triggerPointerDownMoveUpTapSequence(moveDirection, diff) {
-    if (window.getComputedStyle(toggle)['pointer-events'] === 'none')
+    if (window.getComputedStyle(toggle)['pointer-events'] === 'none') {
       return;
+    }
 
     // Simulate events in the same order they are fired by the browser.
     // Need to provide a valid |pointerId| for setPointerCapture() to not throw
     // an error.
-    var xStart = 100;
-    toggle.dispatchEvent(new PointerEvent(
-        'pointerdown', {pointerId: 1, clientX: xStart}));
-    var xEnd = xStart;
+    const xStart = 100;
+    toggle.dispatchEvent(
+        new PointerEvent('pointerdown', {pointerId: 1, clientX: xStart}));
+    let xEnd = xStart;
     if (moveDirection) {
       xEnd = moveDirection > 0 ? xStart + diff : xStart - diff;
-      toggle.dispatchEvent(new PointerEvent(
-          'pointermove', {pointerId: 1, clientX: xEnd}));
+      toggle.dispatchEvent(
+          new PointerEvent('pointermove', {pointerId: 1, clientX: xEnd}));
     }
-    toggle.dispatchEvent(new PointerEvent(
-        'pointerup', {pointerId: 1, clientX: xEnd}));
+    toggle.dispatchEvent(
+        new PointerEvent('pointerup', {pointerId: 1, clientX: xEnd}));
     MockInteractions.tap(toggle);
   }
 
@@ -101,71 +105,87 @@ suite('cr-toggle', function() {
   // Test that the control is toggled when the user taps on it (no movement
   // between pointerdown and pointerup).
   test('ToggleByPointerTap', function() {
-    var whenChanged = test_util.eventToPromise('change', toggle);
+    let whenChanged = test_util.eventToPromise('change', toggle);
     triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
-    return whenChanged.then(function() {
-      assertChecked();
-      whenChanged = test_util.eventToPromise('change', toggle);
-      triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
-      return whenChanged;
-    }).then(function() {
-      assertNotChecked();
-    });
+    return whenChanged
+        .then(function() {
+          assertChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
+          triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
+          return whenChanged;
+        })
+        .then(function() {
+          assertNotChecked();
+        });
   });
 
   // Test that the control is toggled if the user moves the pointer by a
   // MOVE_THRESHOLD_PX pixels accidentally (shaky hands) in any direction.
   test('ToggleByShakyPointerTap', function() {
-    var whenChanged = test_util.eventToPromise('change', toggle);
+    let whenChanged = test_util.eventToPromise('change', toggle);
     triggerPointerDownMoveUpTapSequence(
         1 /* right */, toggle.MOVE_THRESHOLD_PX - 1);
-    return whenChanged.then(function() {
-      assertChecked();
-      whenChanged = test_util.eventToPromise('change', toggle);
-      triggerPointerDownMoveUpTapSequence(
-          1 /* right */, toggle.MOVE_THRESHOLD_PX - 1);
-      return whenChanged;
-    }).then(function() {
-      assertNotChecked();
-    });
+    return whenChanged
+        .then(function() {
+          assertChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
+          triggerPointerDownMoveUpTapSequence(
+              1 /* right */, toggle.MOVE_THRESHOLD_PX - 1);
+          return whenChanged;
+        })
+        .then(function() {
+          assertNotChecked();
+        });
   });
 
   // Test that the control is toggled when the user moves the pointer while
   // holding down.
   test('ToggleByPointerMove', function() {
-    var whenChanged = test_util.eventToPromise('change', toggle);
+    let whenChanged = test_util.eventToPromise('change', toggle);
     triggerPointerDownMoveUpTapSequence(
         1 /* right */, toggle.MOVE_THRESHOLD_PX);
-    return whenChanged.then(function() {
-      assertChecked();
-      whenChanged = test_util.eventToPromise('change', toggle);
-      triggerPointerDownMoveUpTapSequence(
-          -1 /* left */, toggle.MOVE_THRESHOLD_PX);
-      return whenChanged;
-    }).then(function() {
-      assertNotChecked();
-      whenChanged = test_util.eventToPromise('change', toggle);
+    return whenChanged
+        .then(function() {
+          assertChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
+          triggerPointerDownMoveUpTapSequence(
+              -1 /* left */, toggle.MOVE_THRESHOLD_PX);
+          return whenChanged;
+        })
+        .then(function() {
+          assertNotChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
 
-      // Test simple tapping after having dragged.
-      triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
-      return whenChanged;
-    }).then(function() {
-      assertChecked();
-    });
+          // Test simple tapping after having dragged.
+          triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
+          return whenChanged;
+        })
+        .then(function() {
+          assertChecked();
+        });
   });
 
   // Test that the control is toggled when the user presses the 'Enter' or
   // 'Space' key.
   test('ToggleByKey', function() {
-    var whenChanged = test_util.eventToPromise('change', toggle);
-    triggerKeyPressEvent('Enter');
-    return whenChanged.then(function() {
-      assertChecked();
-      whenChanged = test_util.eventToPromise('change', toggle);
-      triggerKeyPressEvent('Space');
-    }).then(function() {
-      assertNotChecked();
-    });
+    let whenChanged = test_util.eventToPromise('change', toggle);
+    triggerKeyPressEvent('Enter', 'Enter');
+    return whenChanged
+        .then(function() {
+          assertChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
+          triggerKeyPressEvent(' ', 'Space');
+          return whenChanged;
+        })
+        .then(function() {
+          assertNotChecked();
+          whenChanged = test_util.eventToPromise('change', toggle);
+          triggerKeyPressEvent('Enter', 'NumpadEnter');
+          return whenChanged;
+        })
+        .then(function() {
+          assertChecked();
+        });
   });
 
   // Test that the control is not affected by user interaction when disabled.
@@ -180,6 +200,22 @@ suite('cr-toggle', function() {
 
     toggle.disabled = false;
     triggerPointerDownMoveUpTapSequence(0 /* no pointermove */);
+    assertChecked();
+  });
+
+  // Test that the control works as expected when the click() method is called.
+  test('ToggleWhenWithClick', function() {
+    assertNotDisabled();
+    assertNotChecked();
+
+    // State should change because control is enabled.
+    toggle.click();
+    assertChecked();
+
+    // State should *not* change because control is disabled.
+    toggle.disabled = true;
+    assertDisabled();
+    toggle.click();
     assertChecked();
   });
 });

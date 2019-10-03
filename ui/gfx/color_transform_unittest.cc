@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+#include <vector>
+
 #include "base/logging.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/skia/src/sksl/SkSLCompiler.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_transform.h"
 #include "ui/gfx/icc_profile.h"
@@ -11,6 +15,9 @@
 #include "ui/gfx/transform.h"
 
 namespace gfx {
+
+// Allowed error in most test.
+const float kEpsilon = 1.5f / 255.f;
 
 // Internal functions, exposted for testing.
 GFX_EXPORT Transform GetTransferMatrix(ColorSpace::MatrixID id);
@@ -23,7 +30,7 @@ ColorSpace::PrimaryID all_primaries[] = {
     ColorSpace::PrimaryID::SMPTEST431_2, ColorSpace::PrimaryID::SMPTEST432_1,
 };
 
-ColorSpace::TransferID all_transfers[] = {
+ColorSpace::TransferID simple_transfers[] = {
     ColorSpace::TransferID::BT709,
     ColorSpace::TransferID::GAMMA22,
     ColorSpace::TransferID::GAMMA28,
@@ -40,9 +47,12 @@ ColorSpace::TransferID all_transfers[] = {
     ColorSpace::TransferID::SMPTEST2084,
     ColorSpace::TransferID::ARIB_STD_B67,
     ColorSpace::TransferID::IEC61966_2_1_HDR,
-    // This one is weird as the non-linear numbers are not between 0 and 1.
-    // TODO(hubbe): Test this separately.
-    //  ColorSpace::TransferID::SMPTEST428_1,
+};
+
+// This one is weird as the non-linear numbers are not between 0 and 1.
+ColorSpace::TransferID noninvertible_transfers[] = {
+    ColorSpace::TransferID::SMPTEST428_1,
+    ColorSpace::TransferID::SMPTEST2084_NON_HDR,
 };
 
 ColorSpace::TransferID extended_transfers[] = {
@@ -75,6 +85,35 @@ TEST(SimpleColorSpace, BT709toSRGB) {
   ColorSpace sRGB = ColorSpace::CreateSRGB();
   std::unique_ptr<ColorTransform> t(ColorTransform::NewColorTransform(
       bt709, sRGB, ColorTransform::Intent::INTENT_ABSOLUTE));
+
+  ColorTransform::TriStim tmp(16.0f / 255.0f, 0.5f, 0.5f);
+  t->Transform(&tmp, 1);
+  EXPECT_NEAR(tmp.x(), 0.0f, 0.001f);
+  EXPECT_NEAR(tmp.y(), 0.0f, 0.001f);
+  EXPECT_NEAR(tmp.z(), 0.0f, 0.001f);
+
+  tmp = ColorTransform::TriStim(235.0f / 255.0f, 0.5f, 0.5f);
+  t->Transform(&tmp, 1);
+  EXPECT_NEAR(tmp.x(), 1.0f, 0.001f);
+  EXPECT_NEAR(tmp.y(), 1.0f, 0.001f);
+  EXPECT_NEAR(tmp.z(), 1.0f, 0.001f);
+
+  // Test a blue color
+  tmp = ColorTransform::TriStim(128.0f / 255.0f, 240.0f / 255.0f, 0.5f);
+  t->Transform(&tmp, 1);
+  EXPECT_GT(tmp.z(), tmp.x());
+  EXPECT_GT(tmp.z(), tmp.y());
+}
+
+TEST(SimpleColorSpace, BT2020CLtoBT2020RGB) {
+  ColorSpace bt2020cl(
+      ColorSpace::PrimaryID::BT2020, ColorSpace::TransferID::BT2020_10,
+      ColorSpace::MatrixID::BT2020_CL, ColorSpace::RangeID::LIMITED);
+  ColorSpace bt2020rgb(ColorSpace::PrimaryID::BT2020,
+                       ColorSpace::TransferID::BT2020_10,
+                       ColorSpace::MatrixID::RGB, ColorSpace::RangeID::FULL);
+  std::unique_ptr<ColorTransform> t(ColorTransform::NewColorTransform(
+      bt2020cl, bt2020rgb, ColorTransform::Intent::INTENT_ABSOLUTE));
 
   ColorTransform::TriStim tmp(16.0f / 255.0f, 0.5f, 0.5f);
   t->Transform(&tmp, 1);
@@ -227,21 +266,21 @@ TEST(SimpleColorSpace, ICCProfileOnlyXYZ) {
   ColorTransform::TriStim expected_transformed_value(
       0.34090986847877502f, 0.42633286118507385f, 0.3408740758895874f);
 
-  // One step should be needed, namely, the SkColorSpaceXform.
+  // Two steps should be needed, transfer fn and matrix.
   std::unique_ptr<ColorTransform> icc_to_xyzd50(
       ColorTransform::NewColorTransform(
           icc_space, xyzd50, ColorTransform::Intent::INTENT_ABSOLUTE));
-  EXPECT_EQ(icc_to_xyzd50->NumberOfStepsForTesting(), 1u);
+  EXPECT_EQ(icc_to_xyzd50->NumberOfStepsForTesting(), 2u);
   icc_to_xyzd50->Transform(&transformed_value, 1);
   EXPECT_NEAR(transformed_value.x(), expected_transformed_value.x(), kEpsilon);
   EXPECT_NEAR(transformed_value.y(), expected_transformed_value.y(), kEpsilon);
   EXPECT_NEAR(transformed_value.z(), expected_transformed_value.z(), kEpsilon);
 
-  // One step should be needed, namely, the SkColorSpaceXform.
+  // Two steps should be needed, matrix and transfer fn.
   std::unique_ptr<ColorTransform> xyzd50_to_icc(
       ColorTransform::NewColorTransform(
           xyzd50, icc_space, ColorTransform::Intent::INTENT_ABSOLUTE));
-  EXPECT_EQ(xyzd50_to_icc->NumberOfStepsForTesting(), 1u);
+  EXPECT_EQ(xyzd50_to_icc->NumberOfStepsForTesting(), 2u);
   xyzd50_to_icc->Transform(&transformed_value, 1);
   EXPECT_NEAR(input_value.x(), transformed_value.x(), kEpsilon);
   EXPECT_NEAR(input_value.y(), transformed_value.y(), kEpsilon);
@@ -249,11 +288,10 @@ TEST(SimpleColorSpace, ICCProfileOnlyXYZ) {
 }
 
 TEST(SimpleColorSpace, ICCProfileOnlyColorSpin) {
-  const float kEpsilon = 2.5f / 255.f;
+  const float kEpsilon = 3.0f / 255.f;
   ICCProfile icc_profile = ICCProfileForTestingNoAnalyticTrFn();
   ColorSpace icc_space = icc_profile.GetColorSpace();
-  ColorSpace colorspin =
-      ICCProfileForTestingColorSpin().GetParametricColorSpace();
+  ColorSpace colorspin = ICCProfileForTestingColorSpin().GetColorSpace();
 
   ColorTransform::TriStim input_value(0.25f, 0.5f, 0.75f);
   ColorTransform::TriStim transformed_value = input_value;
@@ -286,10 +324,6 @@ TEST(SimpleColorSpace, GetColorSpace) {
   ICCProfile srgb_icc = ICCProfileForTestingSRGB();
   ColorSpace sRGB = srgb_icc.GetColorSpace();
   ColorSpace sRGB2 = sRGB;
-  const float kEpsilon = 1.5f / 255.f;
-
-  // Prevent sRGB2 from using a cached ICC profile.
-  sRGB2.icc_profile_id_ = 0;
 
   std::unique_ptr<ColorTransform> t(ColorTransform::NewColorTransform(
       sRGB, sRGB2, ColorTransform::Intent::INTENT_ABSOLUTE));
@@ -317,6 +351,19 @@ TEST(SimpleColorSpace, GetColorSpace) {
   EXPECT_NEAR(tmp.x(), 0.0f, kEpsilon);
   EXPECT_NEAR(tmp.y(), 0.0f, kEpsilon);
   EXPECT_NEAR(tmp.z(), 1.0f, kEpsilon);
+}
+
+TEST(SimpleColorSpace, Scale) {
+  ColorSpace srgb = ColorSpace::CreateSRGB();
+  ColorSpace srgb_scaled = srgb.GetScaledColorSpace(2.0f);
+  std::unique_ptr<ColorTransform> t(ColorTransform::NewColorTransform(
+      srgb, srgb_scaled, ColorTransform::Intent::INTENT_PERCEPTUAL));
+
+  ColorTransform::TriStim tmp(1.0f, 1.0f, 1.0f);
+  t->Transform(&tmp, 1);
+  EXPECT_NEAR(tmp.x(), 0.735356983052449f, kEpsilon);
+  EXPECT_NEAR(tmp.y(), 0.735356983052449f, kEpsilon);
+  EXPECT_NEAR(tmp.z(), 0.735356983052449f, kEpsilon);
 }
 
 TEST(SimpleColorSpace, ToUndefined) {
@@ -377,55 +424,32 @@ TEST(SimpleColorSpace, DefaultToSRGB) {
   EXPECT_EQ(t2->NumberOfStepsForTesting(), 0u);
 }
 
-// This tests to make sure that we don't emit the "if" or "pow" parts of a
+// This tests to make sure that we don't emit "pow" parts of a
 // transfer function unless necessary.
 TEST(SimpleColorSpace, ShaderSourceTrFnOptimizations) {
-  SkMatrix44 primaries;
+  skcms_Matrix3x3 primaries;
   gfx::ColorSpace::CreateSRGB().GetPrimaryMatrix(&primaries);
 
-  SkColorSpaceTransferFn fn_no_pow_no_if = {
+  skcms_TransferFunction fn_no_pow = {
       1.f, 2.f, 0.f, 1.f, 0.f, 0.f, 0.f,
   };
-  SkColorSpaceTransferFn fn_no_pow_yes_if = {
-      1.f, 2.f, 0.f, 1.f, 0.5f, 0.f, 0.f,
-  };
-  SkColorSpaceTransferFn fn_yes_pow_no_if = {
+  skcms_TransferFunction fn_yes_pow = {
       2.f, 2.f, 0.f, 1.f, 0.f, 0.f, 0.f,
   };
-  SkColorSpaceTransferFn fn_yes_pow_yes_if = {
-      2.f, 2.f, 0.f, 1.f, 0.5f, 0.f, 0.f,
-  };
-
   gfx::ColorSpace src;
   gfx::ColorSpace dst = gfx::ColorSpace::CreateXYZD50();
   std::string shader_string;
 
-  src = gfx::ColorSpace::CreateCustom(primaries, fn_no_pow_no_if);
+  src = gfx::ColorSpace::CreateCustom(primaries, fn_no_pow);
   shader_string = ColorTransform::NewColorTransform(
                       src, dst, ColorTransform::Intent::INTENT_PERCEPTUAL)
                       ->GetShaderSource();
-  EXPECT_EQ(shader_string.find("if ("), std::string::npos);
   EXPECT_EQ(shader_string.find("pow("), std::string::npos);
 
-  src = gfx::ColorSpace::CreateCustom(primaries, fn_no_pow_yes_if);
+  src = gfx::ColorSpace::CreateCustom(primaries, fn_yes_pow);
   shader_string = ColorTransform::NewColorTransform(
                       src, dst, ColorTransform::Intent::INTENT_PERCEPTUAL)
                       ->GetShaderSource();
-  EXPECT_NE(shader_string.find("if ("), std::string::npos);
-  EXPECT_EQ(shader_string.find("pow("), std::string::npos);
-
-  src = gfx::ColorSpace::CreateCustom(primaries, fn_yes_pow_no_if);
-  shader_string = ColorTransform::NewColorTransform(
-                      src, dst, ColorTransform::Intent::INTENT_PERCEPTUAL)
-                      ->GetShaderSource();
-  EXPECT_EQ(shader_string.find("if ("), std::string::npos);
-  EXPECT_NE(shader_string.find("pow("), std::string::npos);
-
-  src = gfx::ColorSpace::CreateCustom(primaries, fn_yes_pow_yes_if);
-  shader_string = ColorTransform::NewColorTransform(
-                      src, dst, ColorTransform::Intent::INTENT_PERCEPTUAL)
-                      ->GetShaderSource();
-  EXPECT_NE(shader_string.find("if ("), std::string::npos);
   EXPECT_NE(shader_string.find("pow("), std::string::npos);
 }
 
@@ -433,12 +457,7 @@ TEST(SimpleColorSpace, ShaderSourceTrFnOptimizations) {
 // to make reviewing shader code simpler by giving an example of the resulting
 // shader source. This should be updated whenever shader generation is updated.
 // This test produces slightly different results on Android.
-#if defined(OS_ANDROID)
-#define MAYBE_SampleShaderSource DISABLED_SampleShaderSource
-#else
-#define MAYBE_SampleShaderSource SampleShaderSource
-#endif
-TEST(SimpleColorSpace, MAYBE_SampleShaderSource) {
+TEST(SimpleColorSpace, SampleShaderSource) {
   ColorSpace bt709 = ColorSpace::CreateREC709();
   ColorSpace output(ColorSpace::PrimaryID::BT2020,
                     ColorSpace::TransferID::GAMMA28);
@@ -449,11 +468,17 @@ TEST(SimpleColorSpace, MAYBE_SampleShaderSource) {
   std::string expected =
       "float TransferFn1(float v) {\n"
       "  if (v < 4.04499359e-02)\n"
-      "    return 7.73993805e-02 * v;\n"
-      "  return pow(9.47867334e-01 * v + 5.21326549e-02, 2.40000010e+00);\n"
+      "    v = 7.73993805e-02 * v;\n"
+      "  else\n"
+      "    v = pow(9.47867334e-01 * v + 5.21326549e-02, 2.40000010e+00);\n"
+      "  return v;\n"
       "}\n"
       "float TransferFn3(float v) {\n"
-      "  return pow(v, 3.57142866e-01);\n"
+      "  if (v < 0.00000000e+00)\n"
+      "    v = 0.00000000e+00 * v;\n"
+      "  else\n"
+      "    v = pow(v, 3.57142866e-01);\n"
+      "  return v;\n"
       "}\n"
       "vec3 DoColorConversion(vec3 color) {\n"
       "  color = mat3(1.16438353e+00, 1.16438353e+00, 1.16438353e+00,\n"
@@ -464,9 +489,9 @@ TEST(SimpleColorSpace, MAYBE_SampleShaderSource) {
       "  color.r = TransferFn1(color.r);\n"
       "  color.g = TransferFn1(color.g);\n"
       "  color.b = TransferFn1(color.b);\n"
-      "  color = mat3(6.27403915e-01, 6.90973178e-02, 1.63914412e-02,\n"
-      "               3.29283148e-01, 9.19540286e-01, 8.80132914e-02,\n"
-      "               4.33131084e-02, 1.13623003e-02, 8.95595253e-01) "
+      "  color = mat3(6.27404153e-01, 6.90974146e-02, 1.63914431e-02,\n"
+      "               3.29283088e-01, 9.19540644e-01, 8.80132765e-02,\n"
+      "               4.33131084e-02, 1.13623096e-02, 8.95595253e-01) "
       "* color;\n"
       "  color.r = TransferFn3(color.r);\n"
       "  color.g = TransferFn3(color.g);\n"
@@ -474,6 +499,34 @@ TEST(SimpleColorSpace, MAYBE_SampleShaderSource) {
       "  return color;\n"
       "}\n";
   EXPECT_EQ(source, expected);
+}
+
+// Checks that the generated SkSL fragment shaders can be parsed by
+// SkSL::Compiler.
+TEST(SimpleColorSpace, CanParseSkShaderSource) {
+  std::vector<ColorSpace> common_color_spaces = {
+      ColorSpace::CreateSRGB(),         ColorSpace::CreateDisplayP3D65(),
+      ColorSpace::CreateExtendedSRGB(), ColorSpace::CreateSCRGBLinear(),
+      ColorSpace::CreateJpeg(),         ColorSpace::CreateREC601(),
+      ColorSpace::CreateREC709()};
+  for (const auto& src : common_color_spaces) {
+    for (const auto& dst : common_color_spaces) {
+      auto transform = ColorTransform::NewColorTransform(
+          src, dst, ColorTransform::Intent::INTENT_PERCEPTUAL);
+      if (!transform->CanGetShaderSource())
+        continue;
+
+      std::string source = "void main(inout half4 color) {" +
+                           transform->GetSkShaderSource() + "}";
+      SkSL::Program::Settings settings;
+      SkSL::Compiler compiler;
+      auto program = compiler.convertProgram(
+          SkSL::Program::kPipelineStage_Kind,
+          SkSL::String(source.c_str(), source.length()), settings);
+      EXPECT_NE(nullptr, program.get());
+      EXPECT_EQ(0, compiler.errorCount()) << compiler.errorText();
+    }
+  }
 }
 
 class TransferTest : public testing::TestWithParam<ColorSpace::TransferID> {};
@@ -494,7 +547,7 @@ TEST_P(TransferTest, basicTest) {
       space_linear, space_with_transfer,
       ColorTransform::Intent::INTENT_ABSOLUTE));
 
-  // The transforms will ahve 1 or 0 steps (0 for linear).
+  // The transforms will have 1 or 0 steps (0 for linear).
   size_t expected_steps = 1u;
   if (GetParam() == ColorSpace::TransferID::LINEAR)
     expected_steps = 0u;
@@ -509,9 +562,39 @@ TEST_P(TransferTest, basicTest) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(ColorSpace,
-                        TransferTest,
-                        testing::ValuesIn(all_transfers));
+INSTANTIATE_TEST_SUITE_P(ColorSpace,
+                         TransferTest,
+                         testing::ValuesIn(simple_transfers));
+
+class NonInvertibleTransferTest
+    : public testing::TestWithParam<ColorSpace::TransferID> {};
+
+TEST_P(NonInvertibleTransferTest, basicTest) {
+  gfx::ColorSpace space_with_transfer(ColorSpace::PrimaryID::BT709, GetParam(),
+                                      ColorSpace::MatrixID::RGB,
+                                      ColorSpace::RangeID::FULL);
+  gfx::ColorSpace space_linear(
+      ColorSpace::PrimaryID::BT709, ColorSpace::TransferID::LINEAR,
+      ColorSpace::MatrixID::RGB, ColorSpace::RangeID::FULL);
+
+  std::unique_ptr<ColorTransform> to_linear(ColorTransform::NewColorTransform(
+      space_with_transfer, space_linear,
+      ColorTransform::Intent::INTENT_ABSOLUTE));
+
+  std::unique_ptr<ColorTransform> from_linear(ColorTransform::NewColorTransform(
+      space_linear, space_with_transfer,
+      ColorTransform::Intent::INTENT_ABSOLUTE));
+
+  // These transforms should not crash when created or applied.
+  float x = 0.5;
+  ColorTransform::TriStim tristim(x, x, x);
+  to_linear->Transform(&tristim, 1);
+  from_linear->Transform(&tristim, 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(ColorSpace,
+                         NonInvertibleTransferTest,
+                         testing::ValuesIn(noninvertible_transfers));
 
 class ExtendedTransferTest
     : public testing::TestWithParam<ColorSpace::TransferID> {};
@@ -540,25 +623,25 @@ TEST_P(ExtendedTransferTest, extendedTest) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(ColorSpace,
-                        ExtendedTransferTest,
-                        testing::ValuesIn(extended_transfers));
+INSTANTIATE_TEST_SUITE_P(ColorSpace,
+                         ExtendedTransferTest,
+                         testing::ValuesIn(extended_transfers));
 
-typedef std::tr1::tuple<ColorSpace::PrimaryID,
-                        ColorSpace::TransferID,
-                        ColorSpace::MatrixID,
-                        ColorSpace::RangeID,
-                        ColorTransform::Intent>
+typedef std::tuple<ColorSpace::PrimaryID,
+                   ColorSpace::TransferID,
+                   ColorSpace::MatrixID,
+                   ColorSpace::RangeID,
+                   ColorTransform::Intent>
     ColorSpaceTestData;
 
 class ColorSpaceTest : public testing::TestWithParam<ColorSpaceTestData> {
  public:
   ColorSpaceTest()
-      : color_space_(std::tr1::get<0>(GetParam()),
-                     std::tr1::get<1>(GetParam()),
-                     std::tr1::get<2>(GetParam()),
-                     std::tr1::get<3>(GetParam())),
-        intent_(std::tr1::get<4>(GetParam())) {}
+      : color_space_(std::get<0>(GetParam()),
+                     std::get<1>(GetParam()),
+                     std::get<2>(GetParam()),
+                     std::get<3>(GetParam())),
+        intent_(std::get<4>(GetParam())) {}
 
  protected:
   ColorSpace color_space_;
@@ -588,25 +671,25 @@ TEST_P(ColorSpaceTest, toXYZandBack) {
   EXPECT_NEAR(tristim.z(), 0.6f, 0.001f);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     A,
     ColorSpaceTest,
     testing::Combine(testing::ValuesIn(all_primaries),
-                     testing::ValuesIn(all_transfers),
+                     testing::ValuesIn(simple_transfers),
                      testing::Values(ColorSpace::MatrixID::BT709),
                      testing::Values(ColorSpace::RangeID::LIMITED),
                      testing::ValuesIn(intents)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     B,
     ColorSpaceTest,
     testing::Combine(testing::Values(ColorSpace::PrimaryID::BT709),
-                     testing::ValuesIn(all_transfers),
+                     testing::ValuesIn(simple_transfers),
                      testing::ValuesIn(all_matrices),
                      testing::ValuesIn(all_ranges),
                      testing::ValuesIn(intents)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     C,
     ColorSpaceTest,
     testing::Combine(testing::ValuesIn(all_primaries),
@@ -614,4 +697,4 @@ INSTANTIATE_TEST_CASE_P(
                      testing::ValuesIn(all_matrices),
                      testing::ValuesIn(all_ranges),
                      testing::ValuesIn(intents)));
-}  // namespace
+}  // namespace gfx

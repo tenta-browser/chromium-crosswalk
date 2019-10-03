@@ -2,18 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/browser/ui/webui/signin/user_manager_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
@@ -22,7 +24,6 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/signin/core/browser/profile_management_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -33,17 +34,19 @@ using ::testing::_;
 
 class MockLoginUIService : public LoginUIService {
  public:
-  MockLoginUIService() : LoginUIService(nullptr) {}
+  explicit MockLoginUIService(content::BrowserContext* context)
+      : LoginUIService(static_cast<Profile*>(context)) {}
   ~MockLoginUIService() override {}
   MOCK_METHOD3(DisplayLoginResult,
                void(Browser* browser,
                     const base::string16& error_message,
                     const base::string16& email));
+  MOCK_METHOD0(SetProfileBlockingErrorMessage, void(void));
 };
 
 std::unique_ptr<KeyedService> CreateLoginUIService(
     content::BrowserContext* context) {
-  return std::make_unique<MockLoginUIService>();
+  return std::make_unique<MockLoginUIService>(context);
 }
 
 class UserManagerUIBrowserTest : public InProcessBrowserTest,
@@ -82,7 +85,9 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIBrowserTest, PageLoads) {
   EXPECT_EQ(num_pods, static_cast<int>(profile_manager->GetNumberOfProfiles()));
 }
 
-IN_PROC_BROWSER_TEST_F(UserManagerUIBrowserTest, PageRedirectsToAboutChrome) {
+// https://crbug.com/945795
+IN_PROC_BROWSER_TEST_F(UserManagerUIBrowserTest,
+                       DISABLED_PageRedirectsToAboutChrome) {
   std::string user_manager_url = chrome::kChromeUIMdUserManagerUrl;
   user_manager_url += profiles::kUserManagerSelectProfileAboutChrome;
 
@@ -140,6 +145,7 @@ class UserManagerUIAuthenticatedUserBrowserTest
 
 IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest, Reauth) {
   Init();
+  signin_util::SetForceSigninForTesting(true);
   entry_->SetLocalAuthCredentials("1mock_credentials");
 
   LaunchAuthenticatedUser("email@mock.com");
@@ -161,11 +167,10 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,
   entry_->SetSupervisedUserId("supervised_user_id");
   MockLoginUIService* service = static_cast<MockLoginUIService*>(
       LoginUIServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile_, CreateLoginUIService));
+          profile_, base::BindRepeating(&CreateLoginUIService)));
   EXPECT_CALL(*service, DisplayLoginResult(_, _, _));
 
   LaunchAuthenticatedUser("");
-
   histogram_tester_.ExpectUniqueSample(
       kAuthenticatedLaunchUserEventMetricsName,
       AuthenticatedLaunchUserEvent::SUPERVISED_PROFILE_BLOCKED_WARNING, 1);
@@ -179,8 +184,8 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,
   entry_->SetActiveTimeToNow();
   MockLoginUIService* service = static_cast<MockLoginUIService*>(
       LoginUIServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile_, CreateLoginUIService));
-  EXPECT_CALL(*service, DisplayLoginResult(_, _, _));
+          profile_, base::BindRepeating(&CreateLoginUIService)));
+  EXPECT_CALL(*service, SetProfileBlockingErrorMessage());
 
   LaunchAuthenticatedUser("");
 
@@ -193,6 +198,7 @@ IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,
 IN_PROC_BROWSER_TEST_F(UserManagerUIAuthenticatedUserBrowserTest,
                        ForcedPrimarySignin) {
   Init();
+  signin_util::SetForceSigninForTesting(true);
 
   LaunchAuthenticatedUser("");
 

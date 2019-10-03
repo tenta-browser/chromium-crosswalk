@@ -5,6 +5,8 @@
 #include "content/renderer/p2p/ipc_network_manager.h"
 
 #include <string>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
@@ -17,7 +19,7 @@
 #include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
-#include "third_party/webrtc/rtc_base/socketaddress.h"
+#include "third_party/webrtc/rtc_base/socket_address.h"
 
 namespace content {
 
@@ -43,11 +45,11 @@ rtc::AdapterType ConvertConnectionTypeToAdapterType(
 
 }  // namespace
 
-IpcNetworkManager::IpcNetworkManager(NetworkListManager* network_list_manager)
+IpcNetworkManager::IpcNetworkManager(
+    NetworkListManager* network_list_manager,
+    std::unique_ptr<webrtc::MdnsResponderInterface> mdns_responder)
     : network_list_manager_(network_list_manager),
-      start_count_(0),
-      network_list_received_(false),
-      weak_factory_(this) {
+      mdns_responder_(std::move(mdns_responder)) {
   network_list_manager_->AddNetworkListObserver(this);
 }
 
@@ -93,17 +95,23 @@ void IpcNetworkManager::OnNetworkListChanged(
   // rtc::Network uses these prefix_length to compare network
   // interfaces discovered.
   std::vector<rtc::Network*> networks;
-  for (net::NetworkInterfaceList::const_iterator it = list.begin();
-       it != list.end(); it++) {
+  for (auto it = list.begin(); it != list.end(); it++) {
     rtc::IPAddress ip_address =
         jingle_glue::NetIPAddressToRtcIPAddress(it->address);
     DCHECK(!ip_address.IsNil());
 
     rtc::IPAddress prefix = rtc::TruncateIP(ip_address, it->prefix_length);
-    std::unique_ptr<rtc::Network> network(
-        new rtc::Network(it->name, it->name, prefix, it->prefix_length,
-                         ConvertConnectionTypeToAdapterType(it->type)));
+    rtc::AdapterType adapter_type =
+        ConvertConnectionTypeToAdapterType(it->type);
+    // If the adapter type is unknown, try to guess it using WebRTC's string
+    // matching rules.
+    if (adapter_type == rtc::ADAPTER_TYPE_UNKNOWN) {
+      adapter_type = rtc::GetAdapterTypeFromName(it->name.c_str());
+    }
+    std::unique_ptr<rtc::Network> network(new rtc::Network(
+        it->name, it->name, prefix, it->prefix_length, adapter_type));
     network->set_default_local_address_provider(this);
+    network->set_mdns_responder_provider(this);
 
     rtc::InterfaceAddress iface_addr;
     if (it->address.IsIPv4()) {
@@ -147,6 +155,7 @@ void IpcNetworkManager::OnNetworkListChanged(
     rtc::Network* network_v4 = new rtc::Network(
         name_v4, name_v4, ip_address_v4, 32, rtc::ADAPTER_TYPE_UNKNOWN);
     network_v4->set_default_local_address_provider(this);
+    network_v4->set_mdns_responder_provider(this);
     network_v4->AddIP(ip_address_v4);
     networks.push_back(network_v4);
 
@@ -161,6 +170,7 @@ void IpcNetworkManager::OnNetworkListChanged(
       rtc::Network* network_v6 = new rtc::Network(
           name_v6, name_v6, ip_address_v6, 64, rtc::ADAPTER_TYPE_UNKNOWN);
       network_v6->set_default_local_address_provider(this);
+      network_v6->set_mdns_responder_provider(this);
       network_v6->AddIP(ip_address_v6);
       networks.push_back(network_v6);
     }
@@ -177,6 +187,10 @@ void IpcNetworkManager::OnNetworkListChanged(
                            stats.ipv4_network_count);
   UMA_HISTOGRAM_COUNTS_100("WebRTC.PeerConnection.IPv6Interfaces",
                            stats.ipv6_network_count);
+}
+
+webrtc::MdnsResponderInterface* IpcNetworkManager::GetMdnsResponder() const {
+  return mdns_responder_.get();
 }
 
 void IpcNetworkManager::SendNetworksChangedSignal() {

@@ -23,18 +23,18 @@ namespace examples {
 
 namespace {
 
-class DialogExample : public DialogDelegateView {
+class WidgetDialogExample : public DialogDelegateView {
  public:
-  DialogExample();
-  ~DialogExample() override;
+  WidgetDialogExample();
+  ~WidgetDialogExample() override;
   base::string16 GetWindowTitle() const override;
-  View* CreateExtraView() override;
-  View* CreateFootnoteView() override;
+  std::unique_ptr<View> CreateExtraView() override;
+  std::unique_ptr<View> CreateFootnoteView() override;
 };
 
-class ModalDialogExample : public DialogExample {
+class ModalDialogExample : public WidgetDialogExample {
  public:
-  ModalDialogExample() {}
+  ModalDialogExample() = default;
 
   // WidgetDelegate:
   ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_WINDOW; }
@@ -43,25 +43,27 @@ class ModalDialogExample : public DialogExample {
   DISALLOW_COPY_AND_ASSIGN(ModalDialogExample);
 };
 
-DialogExample::DialogExample() {
+WidgetDialogExample::WidgetDialogExample() {
   SetBackground(CreateSolidBackground(SK_ColorGRAY));
-  SetLayoutManager(new BoxLayout(BoxLayout::kVertical, gfx::Insets(10), 10));
+  SetLayoutManager(std::make_unique<BoxLayout>(
+      BoxLayout::Orientation::kVertical, gfx::Insets(10), 10));
   AddChildView(new Label(ASCIIToUTF16("Dialog contents label!")));
 }
 
-DialogExample::~DialogExample() {}
+WidgetDialogExample::~WidgetDialogExample() = default;
 
-base::string16 DialogExample::GetWindowTitle() const {
+base::string16 WidgetDialogExample::GetWindowTitle() const {
   return ASCIIToUTF16("Dialog Widget Example");
 }
 
-View* DialogExample::CreateExtraView() {
-  return MdTextButton::CreateSecondaryUiButton(nullptr,
-                                               ASCIIToUTF16("Extra button!"));
+std::unique_ptr<View> WidgetDialogExample::CreateExtraView() {
+  auto view = MdTextButton::CreateSecondaryUiButton(
+      nullptr, ASCIIToUTF16("Extra button!"));
+  return view;
 }
 
-View* DialogExample::CreateFootnoteView() {
-  return new Label(ASCIIToUTF16("Footnote label!"));
+std::unique_ptr<View> WidgetDialogExample::CreateFootnoteView() {
+  return std::make_unique<Label>(ASCIIToUTF16("Footnote label!"));
 }
 
 }  // namespace
@@ -69,12 +71,11 @@ View* DialogExample::CreateFootnoteView() {
 WidgetExample::WidgetExample() : ExampleBase("Widget") {
 }
 
-WidgetExample::~WidgetExample() {
-}
+WidgetExample::~WidgetExample() = default;
 
 void WidgetExample::CreateExampleView(View* container) {
-  container->SetLayoutManager(
-      new BoxLayout(BoxLayout::kHorizontal, gfx::Insets(), 10));
+  container->SetLayoutManager(std::make_unique<BoxLayout>(
+      BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
   BuildButton(container, "Popup widget", POPUP);
   BuildButton(container, "Dialog widget", DIALOG);
   BuildButton(container, "Modal Dialog", MODAL_DIALOG);
@@ -106,7 +107,8 @@ void WidgetExample::ShowWidget(View* sender, Widget::InitParams params) {
   // If the Widget has no contents by default, add a view with a 'Close' button.
   if (!widget->GetContentsView()) {
     View* contents = new View();
-    contents->SetLayoutManager(new BoxLayout(BoxLayout::kHorizontal));
+    contents->SetLayoutManager(
+        std::make_unique<BoxLayout>(BoxLayout::Orientation::kHorizontal));
     contents->SetBackground(CreateSolidBackground(SK_ColorGRAY));
     BuildButton(contents, "Close", CLOSE_WIDGET);
     widget->SetContentsView(contents);
@@ -121,13 +123,15 @@ void WidgetExample::ButtonPressed(Button* sender, const ui::Event& event) {
       ShowWidget(sender, Widget::InitParams(Widget::InitParams::TYPE_POPUP));
       break;
     case DIALOG: {
-      DialogDelegate::CreateDialogWidget(new DialogExample(), NULL,
-          sender->GetWidget()->GetNativeView())->Show();
+      DialogDelegate::CreateDialogWidget(new WidgetDialogExample(), nullptr,
+                                         sender->GetWidget()->GetNativeView())
+          ->Show();
       break;
     }
     case MODAL_DIALOG: {
-      DialogDelegate::CreateDialogWidget(new ModalDialogExample(), NULL,
-          sender->GetWidget()->GetNativeView())->Show();
+      DialogDelegate::CreateDialogWidget(new ModalDialogExample(), nullptr,
+                                         sender->GetWidget()->GetNativeView())
+          ->Show();
       break;
     }
     case CHILD:

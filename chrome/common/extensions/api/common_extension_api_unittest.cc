@@ -13,10 +13,9 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
@@ -91,7 +90,7 @@ TEST(ExtensionAPITest, Creation) {
     { &empty_instance, false }
   };
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     EXPECT_EQ(test_data[i].expect_populated,
               test_data[i].api->GetSchema("bookmarks.create") != nullptr);
   }
@@ -109,7 +108,7 @@ TEST(ExtensionAPITest, SplitDependencyName) {
                    {"foo:bar", "foo", "bar"},
                    {"foo:bar.baz", "foo", "bar.baz"}};
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     std::string feature_type;
     std::string feature_name;
     ExtensionAPI::SplitDependencyName(
@@ -193,9 +192,10 @@ TEST(ExtensionAPITest, APIFeatures) {
         GURL() }
   };
 
-  UnittestFeatureProvider api_feature_provider;
+  FeatureProvider api_feature_provider;
+  AddUnittestAPIFeatures(&api_feature_provider);
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     TestExtensionAPI api;
     api.RegisterDependencyProvider("api", &api_feature_provider);
     for (auto* key : kTestFeatures)
@@ -216,7 +216,8 @@ TEST(ExtensionAPITest, APIFeatures) {
 }
 
 TEST(ExtensionAPITest, APIFeaturesAlias) {
-  UnittestFeatureProvider api_feature_provider;
+  FeatureProvider api_feature_provider;
+  AddUnittestAPIFeatures(&api_feature_provider);
 
   TestExtensionAPI api;
   api.RegisterDependencyProvider("api", &api_feature_provider);
@@ -316,9 +317,10 @@ TEST(ExtensionAPITest, IsAnyFeatureAvailableToContext) {
       {"test7", false, Feature::WEB_PAGE_CONTEXT, nullptr,
        GURL("http://bar.com")}};
 
-  UnittestFeatureProvider api_feature_provider;
+  FeatureProvider api_feature_provider;
+  AddUnittestAPIFeatures(&api_feature_provider);
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     TestExtensionAPI api;
     api.RegisterDependencyProvider("api", &api_feature_provider);
     for (auto* key : kTestFeatures)
@@ -376,7 +378,8 @@ TEST(ExtensionAPITest, SessionTypeFeature) {
        {"test6.foo", true, FeatureSessionType::REGULAR},
        {"test6.foo", true, FeatureSessionType::UNKNOWN}});
 
-  UnittestFeatureProvider api_feature_provider;
+  FeatureProvider api_feature_provider;
+  AddUnittestAPIFeatures(&api_feature_provider);
 
   for (const auto& test : kTestData) {
     TestExtensionAPI api;
@@ -426,8 +429,7 @@ scoped_refptr<Extension> CreateExtensionWithPermissions(
   manifest.SetInteger("manifest_version", 2);
   {
     std::unique_ptr<base::ListValue> permissions_list(new base::ListValue());
-    for (std::set<std::string>::const_iterator i = permissions.begin();
-        i != permissions.end(); ++i) {
+    for (auto i = permissions.begin(); i != permissions.end(); ++i) {
       permissions_list->AppendString(*i);
     }
     manifest.Set("permissions", std::move(permissions_list));
@@ -511,7 +513,7 @@ scoped_refptr<Extension> CreateHostedApp() {
   base::DictionaryValue values;
   values.SetString(manifest_keys::kName, "test");
   values.SetString(manifest_keys::kVersion, "0.1");
-  values.Set(manifest_keys::kWebURLs, base::MakeUnique<base::ListValue>());
+  values.Set(manifest_keys::kWebURLs, std::make_unique<base::ListValue>());
   values.SetString(manifest_keys::kLaunchWebURL,
                    "http://www.example.com");
   std::string error;
@@ -530,17 +532,16 @@ scoped_refptr<Extension> CreatePackagedAppWithPermissions(
   values.SetString(manifest_keys::kPlatformAppBackground,
       "http://www.example.com");
 
-  auto app = base::MakeUnique<base::DictionaryValue>();
-  auto background = base::MakeUnique<base::DictionaryValue>();
-  auto scripts = base::MakeUnique<base::ListValue>();
+  auto app = std::make_unique<base::DictionaryValue>();
+  auto background = std::make_unique<base::DictionaryValue>();
+  auto scripts = std::make_unique<base::ListValue>();
   scripts->AppendString("test.js");
   background->Set("scripts", std::move(scripts));
   app->Set("background", std::move(background));
   values.Set(manifest_keys::kApp, std::move(app));
   {
-    auto permissions_list = base::MakeUnique<base::ListValue>();
-    for (std::set<std::string>::const_iterator i = permissions.begin();
-        i != permissions.end(); ++i) {
+    auto permissions_list = std::make_unique<base::ListValue>();
+    for (auto i = permissions.begin(); i != permissions.end(); ++i) {
       permissions_list->AppendString(*i);
     }
     values.Set("permissions", std::move(permissions_list));
@@ -738,7 +739,7 @@ TEST(ExtensionAPITest, GetAPINameFromFullName) {
 
   std::unique_ptr<ExtensionAPI> api(
       ExtensionAPI::CreateWithDefaultConfiguration());
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     std::string child_name;
     std::string api_name = api->GetAPINameFromFullName(test_data[i].input,
                                                        &child_name);
@@ -762,11 +763,11 @@ TEST(ExtensionAPITest, DefaultConfigurationFeatures) {
     // TODO(aa): More stuff to test over time.
   } test_data[] = {{browser_action}, {browser_action_set_title}};
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     const SimpleFeature* feature = test_data[i].feature;
     ASSERT_TRUE(feature) << i;
 
-    EXPECT_TRUE(feature->whitelist().empty());
+    EXPECT_TRUE(feature->allowlist().empty());
     EXPECT_TRUE(feature->extension_types().empty());
 
     EXPECT_FALSE(feature->location());
@@ -871,51 +872,51 @@ TEST(ExtensionAPITest, NoPermissions) {
     const char* permission_name;
     bool expect_success;
   } kTests[] = {
-    // Test default module/package permission.
-    { "extension",      true },
-    { "i18n",           true },
-    { "permissions",    true },
-    { "runtime",        true },
-    { "test",           true },
-    // These require manifest keys.
-    { "browserAction",  false },
-    { "pageAction",     false },
-    { "pageActions",    false },
-    // Some negative tests.
-    { "bookmarks",      false },
-    { "cookies",        false },
-    { "history",        false },
-    // Make sure we find the module name after stripping '.'
-    { "runtime.abcd.onStartup",  true },
-    // Test Tabs/Windows functions.
-    { "tabs.create",      true },
-    { "tabs.duplicate",   true },
-    { "tabs.onRemoved",   true },
-    { "tabs.remove",      true },
-    { "tabs.update",      true },
-    { "tabs.getSelected", true },
-    { "tabs.onUpdated",   true },
-    { "windows.get",      true },
-    { "windows.create",   true },
-    { "windows.remove",   true },
-    { "windows.update",   true },
-    // Test some whitelisted functions. These require no permissions.
-    { "app.getDetails",           true },
-    { "app.getIsInstalled",       true },
-    { "app.installState",         true },
-    { "app.runningState",         true },
-    { "management.getPermissionWarningsByManifest", true },
-    { "management.uninstallSelf", true },
-    // But other functions in those modules do.
-    { "management.getPermissionWarningsById", false },
-    { "runtime.connectNative", false },
+      // Test default module/package permission.
+      {"extension", true},
+      {"i18n", true},
+      {"permissions", true},
+      {"runtime", true},
+      {"test", true},
+      // These require manifest keys.
+      {"browserAction", false},
+      {"pageAction", false},
+      {"pageActions", false},
+      // Some negative tests.
+      {"bookmarks", false},
+      {"cookies", false},
+      {"history", false},
+      // Make sure we find the module name after stripping '.'
+      {"runtime.abcd.onStartup", true},
+      // Test Tabs/Windows functions.
+      {"tabs.create", true},
+      {"tabs.duplicate", true},
+      {"tabs.onRemoved", true},
+      {"tabs.remove", true},
+      {"tabs.update", true},
+      {"tabs.getSelected", true},
+      {"tabs.onUpdated", true},
+      {"windows.get", true},
+      {"windows.create", true},
+      {"windows.remove", true},
+      {"windows.update", true},
+      // Test some allowlisted functions. These require no permissions.
+      {"app.getDetails", true},
+      {"app.getIsInstalled", true},
+      {"app.installState", true},
+      {"app.runningState", true},
+      {"management.getPermissionWarningsByManifest", true},
+      {"management.uninstallSelf", true},
+      // But other functions in those modules do.
+      {"management.getPermissionWarningsById", false},
+      {"runtime.connectNative", false},
   };
 
   std::unique_ptr<ExtensionAPI> extension_api(
       ExtensionAPI::CreateWithDefaultConfiguration());
-  scoped_refptr<Extension> extension = ExtensionBuilder("Test").Build();
+  scoped_refptr<const Extension> extension = ExtensionBuilder("Test").Build();
 
-  for (size_t i = 0; i < arraysize(kTests); ++i) {
+  for (size_t i = 0; i < base::size(kTests); ++i) {
     EXPECT_EQ(kTests[i].expect_success,
               extension_api
                   ->IsAvailable(kTests[i].permission_name, extension.get(),
@@ -932,7 +933,7 @@ TEST(ExtensionAPITest, ManifestKeys) {
   std::unique_ptr<ExtensionAPI> extension_api(
       ExtensionAPI::CreateWithDefaultConfiguration());
 
-  scoped_refptr<Extension> extension =
+  scoped_refptr<const Extension> extension =
       ExtensionBuilder("Test")
           .SetAction(ExtensionBuilder::ActionType::BROWSER_ACTION)
           .Build();

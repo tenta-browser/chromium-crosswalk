@@ -31,13 +31,7 @@ namespace {
 
 typedef int (*StartFun)(const app_mode::ChromeAppModeInfo*);
 
-// The name of the entry point in the Framework. This name is dynamically
-// queried at shim launch to allow the shim to connect and run.
-// The function is versioned in case we need to obsolete and rebuild the shim
-// before it loads, e.g. see https://crbug.com/561205.
-const char kStartFunName[] = "ChromeAppModeStart_v4";
-
-int LoadFrameworkAndStart(app_mode::ChromeAppModeInfo* info) {
+int LoadFrameworkAndStart(int argc, char** argv) {
   using base::SysNSStringToUTF8;
   using base::SysNSStringToUTF16;
   using base::mac::CFToNSCast;
@@ -101,68 +95,83 @@ int LoadFrameworkAndStart(app_mode::ChromeAppModeInfo* info) {
 
   // ** 3: Read information from the Chrome bundle.
   base::FilePath executable_path;
-  base::FilePath version_path;
-  base::FilePath framework_shlib_path;
-  if (!app_mode::GetChromeBundleInfo(cr_bundle_path,
-                                     cr_version_str.value(),
-                                     &executable_path,
-                                     &version_path,
-                                     &framework_shlib_path)) {
+  base::FilePath framework_path;
+  base::FilePath framework_dylib_path;
+  if (!app_mode::GetChromeBundleInfo(cr_bundle_path, cr_version_str.value(),
+                                     &executable_path, &framework_path,
+                                     &framework_dylib_path)) {
     LOG(FATAL) << "Couldn't ready Chrome bundle info";
   }
   base::FilePath app_mode_bundle_path =
       base::mac::NSStringToFilePath([app_bundle bundlePath]);
 
-  // ** 4: Fill in ChromeAppModeInfo.
-  info->chrome_outer_bundle_path = cr_bundle_path;
-  info->chrome_versioned_path = version_path;
-  info->app_mode_bundle_path = app_mode_bundle_path;
-
+  // ** 4: Read information from the Info.plist.
   // Read information about the this app shortcut from the Info.plist.
   // Don't check for null-ness on optional items.
   NSDictionary* info_plist = [app_bundle infoDictionary];
   CHECK(info_plist) << "couldn't get loader Info.plist";
 
-  info->app_mode_id = SysNSStringToUTF8(
+  const std::string app_mode_id = SysNSStringToUTF8(
       [info_plist objectForKey:app_mode::kCrAppModeShortcutIDKey]);
-  CHECK(info->app_mode_id.size()) << "couldn't get app shortcut ID";
+  CHECK(app_mode_id.size()) << "couldn't get app shortcut ID";
 
-  info->app_mode_name = SysNSStringToUTF16(
+  const std::string app_mode_name = SysNSStringToUTF8(
       [info_plist objectForKey:app_mode::kCrAppModeShortcutNameKey]);
-
-  info->app_mode_url = SysNSStringToUTF8(
+  const std::string app_mode_url = SysNSStringToUTF8(
       [info_plist objectForKey:app_mode::kCrAppModeShortcutURLKey]);
 
-  info->user_data_dir = base::mac::NSStringToFilePath(
+  base::FilePath plist_user_data_dir = base::mac::NSStringToFilePath(
       [info_plist objectForKey:app_mode::kCrAppModeUserDataDirKey]);
 
-  info->profile_dir = base::mac::NSStringToFilePath(
+  base::FilePath profile_dir = base::mac::NSStringToFilePath(
       [info_plist objectForKey:app_mode::kCrAppModeProfileDirKey]);
 
   // ** 5: Open the framework.
   StartFun ChromeAppModeStart = NULL;
-  void* cr_dylib = dlopen(framework_shlib_path.value().c_str(), RTLD_LAZY);
+  void* cr_dylib = dlopen(framework_dylib_path.value().c_str(), RTLD_LAZY);
   if (cr_dylib) {
     // Find the entry point.
-    ChromeAppModeStart = (StartFun)dlsym(cr_dylib, kStartFunName);
+    ChromeAppModeStart =
+        (StartFun)dlsym(cr_dylib, APP_SHIM_ENTRY_POINT_NAME_STRING);
     if (!ChromeAppModeStart)
       LOG(ERROR) << "Couldn't get entry point: " << dlerror();
   } else {
     LOG(ERROR) << "Couldn't load framework: " << dlerror();
   }
 
-  if (ChromeAppModeStart)
-    return ChromeAppModeStart(info);
+  // ** 6: Fill in ChromeAppModeInfo and call into Chrome's framework.
+  if (ChromeAppModeStart) {
+    // Ensure that the strings pointed to by |info| outlive |info|.
+    const std::string framework_path_utf8 = framework_path.AsUTF8Unsafe();
+    const std::string cr_bundle_path_utf8 = cr_bundle_path.AsUTF8Unsafe();
+    const std::string app_mode_bundle_path_utf8 =
+        app_mode_bundle_path.AsUTF8Unsafe();
+    const std::string plist_user_data_dir_utf8 =
+        plist_user_data_dir.AsUTF8Unsafe();
+    const std::string profile_dir_utf8 = profile_dir.AsUTF8Unsafe();
+    app_mode::ChromeAppModeInfo info;
+    info.argc = argc;
+    info.argv = argv;
+    info.chrome_framework_path = framework_path_utf8.c_str();
+    info.chrome_outer_bundle_path = cr_bundle_path_utf8.c_str();
+    info.app_mode_bundle_path = app_mode_bundle_path_utf8.c_str();
+    info.app_mode_id = app_mode_id.c_str();
+    info.app_mode_name = app_mode_name.c_str();
+    info.app_mode_url = app_mode_url.c_str();
+    info.user_data_dir = plist_user_data_dir_utf8.c_str();
+    info.profile_dir = profile_dir_utf8.c_str();
+    return ChromeAppModeStart(&info);
+  }
 
   LOG(ERROR) << "Loading Chrome failed, launching Chrome with command line";
   base::CommandLine command_line(executable_path);
   // The user_data_dir from the plist is actually the app data dir.
   command_line.AppendSwitchPath(
       switches::kUserDataDir,
-      info->user_data_dir.DirName().DirName().DirName());
+      plist_user_data_dir.DirName().DirName().DirName());
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           app_mode::kLaunchedByChromeProcessId) ||
-      info->app_mode_id == app_mode::kAppListModeId) {
+      app_mode_id == app_mode::kAppListModeId) {
     // Pass --app-shim-error to have Chrome rebuild this shim.
     // If Chrome has rebuilt this shim once already, then rebuilding doesn't fix
     // the problem, so don't try again.
@@ -177,9 +186,8 @@ int LoadFrameworkAndStart(app_mode::ChromeAppModeInfo* info) {
     // error will occur and be handled above. This approach allows the app to be
     // started without blocking on fixing the shim and guarantees that the
     // profile is loaded when Chrome receives --app-shim-error.
-    command_line.AppendSwitchPath(switches::kProfileDirectory,
-                                  info->profile_dir);
-    command_line.AppendSwitchASCII(switches::kAppId, info->app_mode_id);
+    command_line.AppendSwitchPath(switches::kProfileDirectory, profile_dir);
+    command_line.AppendSwitchASCII(switches::kAppId, app_mode_id);
   }
   // Launch the executable directly since base::mac::OpenApplicationWithPath
   // doesn't pass command line arguments if the application is already running.
@@ -197,15 +205,8 @@ int LoadFrameworkAndStart(app_mode::ChromeAppModeInfo* info) {
 __attribute__((visibility("default")))
 int main(int argc, char** argv) {
   base::CommandLine::Init(argc, argv);
-  app_mode::ChromeAppModeInfo info;
-
-  // Hard coded info parameters.
-  info.major_version = app_mode::kCurrentChromeAppModeInfoMajorVersion;
-  info.minor_version = app_mode::kCurrentChromeAppModeInfoMinorVersion;
-  info.argc = argc;
-  info.argv = argv;
 
   // Exit instead of returning to avoid the the removal of |main()| from stack
   // backtraces under tail call optimization.
-  exit(LoadFrameworkAndStart(&info));
+  exit(LoadFrameworkAndStart(argc, argv));
 }

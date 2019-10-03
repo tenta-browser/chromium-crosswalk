@@ -51,7 +51,7 @@ remoting.ClientPluginImpl = function(container, capabilities) {
   /** @private {Array<string>} */
   this.capabilities_ = capabilities;
 
-  /** @private {remoting.ClientPlugin.ConnectionEventHandler} */
+  /** @private {remoting.ClientSession} */
   this.connectionEventHandler_ = null;
 
   /** @private {?function(string, number, number)} */
@@ -114,8 +114,6 @@ remoting.ClientPluginImpl = function(container, capabilities) {
 remoting.ClientPluginImpl.createPluginElement_ = function() {
   var plugin =
       /** @type {HTMLEmbedElement} */ (document.createElement('embed'));
-  plugin.src = 'remoting_client_pnacl.nmf';
-  plugin.type = 'application/x-pnacl';
   plugin.width = '0';
   plugin.height = '0';
   plugin.tabIndex = 0;  // Required, otherwise focus() doesn't work.
@@ -265,6 +263,9 @@ remoting.ClientPluginImpl.prototype.handleMessageMethod_ = function(message) {
     } else if (message.method == 'onFirstFrameReceived') {
       handler.onFirstFrameReceived();
 
+    } else if (message.method == 'networkInfo') {
+      handler.getLogger().setNetworkInterfaceCount(
+          base.getNumberAttr(message.data, 'interfaceCount'));
     }
   }
 
@@ -456,16 +457,6 @@ remoting.ClientPluginImpl.prototype.connectWithExperiments_ = function(
 
   this.plugin_.postMessage(JSON.stringify(
       { method: 'delegateLargeCursors', data: {} }));
-
-  // Enable stuck modifier detection for Linux, but not for the public app.
-  // TODO(jamiewalch): Revert this once crbug.com/787523 is fixed.
-  this.plugin_.postMessage(JSON.stringify({
-    method: 'enableStuckModifierKeyDetection',
-    data: {
-      'enable': remoting.platformIsLinux() &&
-          chrome.runtime.id != 'gbchcmhmhahfdphkhkmpfmihenigjmpp'
-    }
-  }));
 
   this.credentials_ = credentialsProvider;
   this.useAsyncPinDialog_();

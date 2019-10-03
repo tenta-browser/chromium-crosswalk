@@ -6,27 +6,45 @@
 #define CC_PAINT_PAINT_CANVAS_H_
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "cc/paint/node_id.h"
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_image.h"
-#include "cc/paint/paint_text_blob.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkTextBlob.h"
+
+namespace printing {
+class MetafileSkia;
+}  // namespace printing
 
 namespace cc {
-
+class SkottieWrapper;
 class PaintFlags;
 class PaintOpBuffer;
 
 using PaintRecord = PaintOpBuffer;
 
+// PaintCanvas is the cc/paint wrapper of SkCanvas.  It has a more restricted
+// interface than SkCanvas (trimmed back to only what Chrome uses).  Its reason
+// for existence is so that it can do custom serialization logic into a
+// PaintOpBuffer which (unlike SkPicture) is mutable, handles image replacement,
+// and can be serialized in custom ways (such as using the transfer cache).
+//
+// PaintCanvas is usually implemented by either:
+// (1) SkiaPaintCanvas, which is backed by an SkCanvas, usually for rasterizing.
+// (2) RecordPaintCanvas, which records paint commands into a PaintOpBuffer.
+//
+// SkiaPaintCanvas allows callers to go from PaintCanvas to SkCanvas (or
+// PaintRecord to SkPicture), but this is a one way trip.  There is no way to go
+// from SkCanvas to PaintCanvas or from SkPicture back into PaintRecord.
 class CC_PAINT_EXPORT PaintCanvas {
  public:
-  PaintCanvas() {}
-  virtual ~PaintCanvas() {}
+  PaintCanvas() = default;
+  PaintCanvas(const PaintCanvas&) = delete;
+  virtual ~PaintCanvas() = default;
 
-  virtual SkMetaData& getMetaData() = 0;
+  PaintCanvas& operator=(const PaintCanvas&) = delete;
 
   // TODO(enne): this only appears to mostly be used to determine if this is
   // recording or not, so could be simplified or removed.
@@ -42,9 +60,7 @@ class CC_PAINT_EXPORT PaintCanvas {
 
   virtual int save() = 0;
   virtual int saveLayer(const SkRect* bounds, const PaintFlags* flags) = 0;
-  virtual int saveLayerAlpha(const SkRect* bounds,
-                             uint8_t alpha,
-                             bool preserve_lcd_text_requests) = 0;
+  virtual int saveLayerAlpha(const SkRect* bounds, uint8_t alpha) = 0;
 
   virtual void restore() = 0;
   virtual int getSaveCount() const = 0;
@@ -132,17 +148,23 @@ class CC_PAINT_EXPORT PaintCanvas {
                              const SkRect& dst,
                              const PaintFlags* flags,
                              SrcRectConstraint constraint) = 0;
-  virtual void drawBitmap(const SkBitmap& bitmap,
-                          SkScalar left,
-                          SkScalar top,
-                          const PaintFlags* flags) = 0;
-  void drawBitmap(const SkBitmap& bitmap, SkScalar left, SkScalar top) {
-    drawBitmap(bitmap, left, top, nullptr);
-  }
 
-  virtual void drawTextBlob(scoped_refptr<PaintTextBlob> blob,
+  // Draws the frame of the |skottie| animation specified by the normalized time
+  // t [0->first frame..1->last frame] at the destination bounds given by |dst|
+  // onto the canvas.
+  virtual void drawSkottie(scoped_refptr<SkottieWrapper> skottie,
+                           const SkRect& dst,
+                           float t) = 0;
+
+  virtual void drawTextBlob(sk_sp<SkTextBlob> blob,
                             SkScalar x,
                             SkScalar y,
+                            const PaintFlags& flags) = 0;
+
+  virtual void drawTextBlob(sk_sp<SkTextBlob> blob,
+                            SkScalar x,
+                            SkScalar y,
+                            NodeId node_id,
                             const PaintFlags& flags) = 0;
 
   // Unlike SkCanvas::drawPicture, this only plays back the PaintRecord and does
@@ -153,6 +175,7 @@ class CC_PAINT_EXPORT PaintCanvas {
   virtual bool isClipRect() const = 0;
   virtual const SkMatrix& getTotalMatrix() const = 0;
 
+  // Used for printing
   enum class AnnotationType {
     URL,
     NAMED_DESTINATION,
@@ -161,9 +184,16 @@ class CC_PAINT_EXPORT PaintCanvas {
   virtual void Annotate(AnnotationType type,
                         const SkRect& rect,
                         sk_sp<SkData> data) = 0;
+  printing::MetafileSkia* GetPrintingMetafile() const { return metafile_; }
+  void SetPrintingMetafile(printing::MetafileSkia* metafile) {
+    metafile_ = metafile;
+  }
+
+  // Subclasses can override to handle custom data.
+  virtual void recordCustomData(uint32_t id) {}
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(PaintCanvas);
+  printing::MetafileSkia* metafile_ = nullptr;
 };
 
 class CC_PAINT_EXPORT PaintCanvasAutoRestore {

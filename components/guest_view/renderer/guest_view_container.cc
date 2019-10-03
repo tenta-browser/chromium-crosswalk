@@ -4,9 +4,9 @@
 
 #include "components/guest_view/renderer/guest_view_container.h"
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "components/guest_view/common/guest_view_messages.h"
 #include "components/guest_view/renderer/guest_view_request.h"
@@ -56,8 +56,7 @@ GuestViewContainer::GuestViewContainer(content::RenderFrame* render_frame)
       render_frame_(render_frame),
       in_destruction_(false),
       destruction_isolate_(nullptr),
-      element_resize_isolate_(nullptr),
-      weak_ptr_factory_(this) {
+      element_resize_isolate_(nullptr) {
   render_frame_lifetime_observer_.reset(
       new RenderFrameLifetimeObserver(this, render_frame_));
 }
@@ -103,7 +102,7 @@ void GuestViewContainer::Destroy(bool embedder_frame_destroyed) {
     g_guest_view_container_map.Get().erase(element_instance_id());
 
   if (!embedder_frame_destroyed) {
-    if (pending_response_.get())
+    if (pending_response_)
       pending_response_->ExecuteCallbackIfAvailable(0 /* argc */, nullptr);
 
     while (pending_requests_.size() > 0) {
@@ -155,7 +154,7 @@ void GuestViewContainer::PerformPendingRequest() {
 
 void GuestViewContainer::HandlePendingResponseCallback(
     const IPC::Message& message) {
-  CHECK(pending_response_.get());
+  CHECK(pending_response_);
   std::unique_ptr<GuestViewRequest> pending_response =
       std::move(pending_response_);
   pending_response->HandleResponse(message);
@@ -181,7 +180,8 @@ void GuestViewContainer::RunDestructionCallback(bool embedder_frame_destroyed) {
     v8::MicrotasksScope microtasks(
         destruction_isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
-    callback->Call(context->Global(), 0 /* argc */, nullptr);
+    callback->Call(context, context->Global(), 0 /* argc */, nullptr)
+        .FromMaybe(v8::Local<v8::Value>());
   }
 }
 
@@ -213,7 +213,7 @@ bool GuestViewContainer::OnMessageReceived(const IPC::Message& message) {
 
 void GuestViewContainer::Ready() {
   ready_ = true;
-  CHECK(!pending_response_.get());
+  CHECK(!pending_response_);
   PerformPendingRequest();
 
   // Give the derived type an opportunity to perform some actions when the
@@ -246,10 +246,10 @@ void GuestViewContainer::DidResizeElement(const gfx::Size& new_size) {
   if (element_resize_callback_.IsEmpty())
     return;
 
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&GuestViewContainer::CallElementResizeCallback,
-                 weak_ptr_factory_.GetWeakPtr(), new_size));
+  render_frame_->GetTaskRunner(blink::TaskType::kInternalDefault)
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&GuestViewContainer::CallElementResizeCallback,
+                                weak_ptr_factory_.GetWeakPtr(), new_size));
 }
 
 void GuestViewContainer::CallElementResizeCallback(
@@ -270,7 +270,8 @@ void GuestViewContainer::CallElementResizeCallback(
   v8::MicrotasksScope microtasks(
       element_resize_isolate_, v8::MicrotasksScope::kDoNotRunMicrotasks);
 
-  callback->Call(context->Global(), argc, argv);
+  callback->Call(context, context->Global(), argc, argv)
+      .FromMaybe(v8::Local<v8::Value>());
 }
 
 base::WeakPtr<content::BrowserPluginDelegate> GuestViewContainer::GetWeakPtr() {

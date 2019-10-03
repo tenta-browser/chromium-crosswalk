@@ -86,6 +86,13 @@ Polymer({
    * @private
    */
   onChangePermissionControl_: function() {
+    if (this.category === undefined ||
+        this.controlParams_.value === undefined ||
+        this.subControlParams_.value === undefined) {
+      // Do nothing unless all dependencies are defined.
+      return;
+    }
+
     // Don't override user settings with enforced settings.
     if (this.controlParams_.enforcement ==
         chrome.settingsPrivate.Enforcement.ENFORCED) {
@@ -97,6 +104,8 @@ Polymer({
       case settings.ContentSettingsTypes.IMAGES:
       case settings.ContentSettingsTypes.JAVASCRIPT:
       case settings.ContentSettingsTypes.SOUND:
+      case settings.ContentSettingsTypes.SENSORS:
+      case settings.ContentSettingsTypes.PAYMENT_HANDLER:
       case settings.ContentSettingsTypes.POPUPS:
       case settings.ContentSettingsTypes.PROTOCOL_HANDLERS:
 
@@ -114,6 +123,9 @@ Polymer({
       case settings.ContentSettingsTypes.NOTIFICATIONS:
       case settings.ContentSettingsTypes.UNSANDBOXED_PLUGINS:
       case settings.ContentSettingsTypes.MIDI_DEVICES:
+      case settings.ContentSettingsTypes.USB_DEVICES:
+      case settings.ContentSettingsTypes.SERIAL_PORTS:
+      case settings.ContentSettingsTypes.BLUETOOTH_SCANNING:
         // "Ask" vs "Blocked".
         this.browserProxy.setDefaultValueForContentType(
             this.category,
@@ -123,7 +135,7 @@ Polymer({
       case settings.ContentSettingsTypes.COOKIES:
         // This category is tri-state: "Allow", "Block", "Keep data until
         // browser quits".
-        var value = settings.ContentSetting.BLOCK;
+        let value = settings.ContentSetting.BLOCK;
         if (this.categoryEnabled) {
           value = this.subControlParams_.value ?
               settings.ContentSetting.SESSION_ONLY :
@@ -156,7 +168,7 @@ Polymer({
     }
     this.priorDefaultContentSetting_ = update;
 
-    var basePref = {
+    const basePref = {
       'key': 'controlParams',
       'type': chrome.settingsPrivate.PrefType.BOOLEAN,
     };
@@ -169,13 +181,14 @@ Polymer({
           chrome.settingsPrivate.ControlledBy.USER_POLICY;
     }
 
-    var prefValue = this.computeIsSettingEnabled(update.setting);
+    const prefValue = this.computeIsSettingEnabled(update.setting);
     // The controlParams_ must be replaced (rather than just value changes) so
     // that observers will be notified of the change.
     this.controlParams_ = /** @type {chrome.settingsPrivate.PrefObject} */ (
         Object.assign({'value': prefValue}, basePref));
 
-    var subPrefValue = this.category == settings.ContentSettingsTypes.COOKIES &&
+    const subPrefValue =
+        this.category == settings.ContentSettingsTypes.COOKIES &&
         update.setting == settings.ContentSetting.SESSION_ONLY;
     // The subControlParams_ must be replaced (rather than just value changes)
     // so that observers will be notified of the change.
@@ -192,7 +205,7 @@ Polymer({
         .then(defaultValue => {
           this.updateControlParams_(defaultValue);
 
-          var categoryEnabled =
+          const categoryEnabled =
               this.computeIsSettingEnabled(defaultValue.setting);
           this.optionLabel_ =
               categoryEnabled ? this.toggleOnLabel : this.toggleOffLabel;

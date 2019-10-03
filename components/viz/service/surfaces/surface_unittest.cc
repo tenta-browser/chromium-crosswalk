@@ -3,13 +3,13 @@
 // found in the LICENSE file.
 
 #include "components/viz/service/surfaces/surface.h"
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "cc/test/scheduler_test_common.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
-#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
+#include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
-#include "components/viz/service/surfaces/surface_dependency_tracker.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
@@ -25,80 +25,55 @@ constexpr bool kIsRoot = true;
 constexpr bool kNeedsSyncPoints = true;
 
 TEST(SurfaceTest, PresentationCallback) {
-  const gfx::Size kSurfaceSize(300, 300);
+  constexpr gfx::Size kSurfaceSize(300, 300);
+  constexpr gfx::Rect kDamageRect(0, 0);
   const LocalSurfaceId local_surface_id(6, base::UnguessableToken::Create());
 
-  FrameSinkManagerImpl frame_sink_manager;
+  ServerSharedBitmapManager shared_bitmap_manager;
+  FrameSinkManagerImpl frame_sink_manager(&shared_bitmap_manager);
   MockCompositorFrameSinkClient client;
-  auto support = CompositorFrameSinkSupport::Create(
+  auto support = std::make_unique<CompositorFrameSinkSupport>(
       &client, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot,
       kNeedsSyncPoints);
+  uint32_t frame_token = 0;
   {
-    CompositorFrame frame = test::MakeCompositorFrame(kSurfaceSize);
-    frame.metadata.presentation_token = 1;
+    CompositorFrame frame =
+        CompositorFrameBuilder()
+            .AddRenderPass(gfx::Rect(kSurfaceSize), kDamageRect)
+            .Build();
+    frame_token = frame.metadata.frame_token;
+    ASSERT_NE(frame_token, 0u);
     EXPECT_CALL(client, DidReceiveCompositorFrameAck(testing::_)).Times(1);
     support->SubmitCompositorFrame(local_surface_id, std::move(frame));
+    testing::Mock::VerifyAndClearExpectations(&client);
   }
 
   {
     // Replaces previous frame. The previous frame with token 1 will be
     // discarded.
-    CompositorFrame frame = test::MakeCompositorFrame(kSurfaceSize);
-    frame.metadata.presentation_token = 2;
-    EXPECT_CALL(client, DidDiscardCompositorFrame(1)).Times(1);
+    CompositorFrame frame =
+        CompositorFrameBuilder()
+            .AddRenderPass(gfx::Rect(kSurfaceSize), kDamageRect)
+            .Build();
     EXPECT_CALL(client, DidReceiveCompositorFrameAck(testing::_)).Times(1);
     support->SubmitCompositorFrame(local_surface_id, std::move(frame));
+    ASSERT_EQ(1u, support->timing_details().size());
+    EXPECT_EQ(frame_token, support->timing_details().begin()->first);
+    testing::Mock::VerifyAndClearExpectations(&client);
   }
-
-  {
-    // Submits a frame with token 3 and different size. This frame with token 3
-    // will be discarded immediately.
-    CompositorFrame frame = test::MakeCompositorFrame(gfx::Size(400, 400));
-    frame.metadata.presentation_token = 3;
-    EXPECT_CALL(client, DidDiscardCompositorFrame(3)).Times(1);
-    support->SubmitCompositorFrame(local_surface_id, std::move(frame));
-  }
-
-  {
-    // Submits a frame with token 4 and different scale factor, this frame with
-    // token 4 will be discarded immediately.
-    CompositorFrame frame = test::MakeCompositorFrame(kSurfaceSize);
-    frame.metadata.device_scale_factor = 2;
-    frame.metadata.presentation_token = 4;
-    EXPECT_CALL(client, DidDiscardCompositorFrame(4)).Times(1);
-    support->SubmitCompositorFrame(local_surface_id, std::move(frame));
-  }
-
-  // The frame with token 2 will be discarded when the surface is destroyed.
-  EXPECT_CALL(client, DidDiscardCompositorFrame(2)).Times(1);
-  support->EvictCurrentSurface();
-  frame_sink_manager.surface_manager()->GarbageCollectSurfaces();
-}
-
-TEST(SurfaceTest, SurfaceLifetime) {
-  FrameSinkManagerImpl frame_sink_manager(
-      SurfaceManager::LifetimeType::SEQUENCES);
-  SurfaceManager* surface_manager = frame_sink_manager.surface_manager();
-  auto support = CompositorFrameSinkSupport::Create(
-      nullptr, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot,
-      kNeedsSyncPoints);
-
-  LocalSurfaceId local_surface_id(6, base::UnguessableToken::Create());
-  SurfaceId surface_id(kArbitraryFrameSinkId, local_surface_id);
-  support->SubmitCompositorFrame(local_surface_id, test::MakeCompositorFrame());
-  EXPECT_TRUE(surface_manager->GetSurfaceForId(surface_id));
-  support->EvictCurrentSurface();
-  frame_sink_manager.surface_manager()->GarbageCollectSurfaces();
-
-  EXPECT_EQ(nullptr, surface_manager->GetSurfaceForId(surface_id));
 }
 
 TEST(SurfaceTest, SurfaceIds) {
   for (size_t i = 0; i < 3; ++i) {
-    LocalSurfaceIdAllocator allocator;
-    LocalSurfaceId id1 = allocator.GenerateId();
-    LocalSurfaceId id2 = allocator.GenerateId();
+    ParentLocalSurfaceIdAllocator allocator;
+    allocator.GenerateId();
+    LocalSurfaceIdAllocation id1 =
+        allocator.GetCurrentLocalSurfaceIdAllocation();
+    allocator.GenerateId();
+    LocalSurfaceIdAllocation id2 =
+        allocator.GetCurrentLocalSurfaceIdAllocation();
     EXPECT_NE(id1, id2);
+    EXPECT_NE(id1.local_surface_id(), id2.local_surface_id());
   }
 }
 
@@ -110,29 +85,33 @@ void TestCopyResultCallback(bool* called,
 // Test that CopyOutputRequests can outlive the current frame and be
 // aggregated on the next frame.
 TEST(SurfaceTest, CopyRequestLifetime) {
-  FrameSinkManagerImpl frame_sink_manager;
+  ServerSharedBitmapManager shared_bitmap_manager;
+  FrameSinkManagerImpl frame_sink_manager(&shared_bitmap_manager);
   SurfaceManager* surface_manager = frame_sink_manager.surface_manager();
-  auto support = CompositorFrameSinkSupport::Create(
+  auto support = std::make_unique<CompositorFrameSinkSupport>(
       nullptr, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot,
       kNeedsSyncPoints);
 
   LocalSurfaceId local_surface_id(6, base::UnguessableToken::Create());
   SurfaceId surface_id(kArbitraryFrameSinkId, local_surface_id);
-  CompositorFrame frame = test::MakeCompositorFrame();
+  CompositorFrame frame = MakeDefaultCompositorFrame();
   support->SubmitCompositorFrame(local_surface_id, std::move(frame));
   Surface* surface = surface_manager->GetSurfaceForId(surface_id);
   ASSERT_TRUE(!!surface);
 
   bool copy_called = false;
-  support->RequestCopyOfSurface(std::make_unique<CopyOutputRequest>(
-      CopyOutputRequest::ResultFormat::RGBA_BITMAP,
-      base::BindOnce(&TestCopyResultCallback, &copy_called)));
+  support->RequestCopyOfOutput(
+      local_surface_id,
+      std::make_unique<CopyOutputRequest>(
+          CopyOutputRequest::ResultFormat::RGBA_BITMAP,
+          base::BindOnce(&TestCopyResultCallback, &copy_called)));
+  surface->TakeCopyOutputRequestsFromClient();
   EXPECT_TRUE(surface_manager->GetSurfaceForId(surface_id));
   EXPECT_FALSE(copy_called);
 
   int max_frame = 3, start_id = 200;
   for (int i = 0; i < max_frame; ++i) {
-    CompositorFrame frame = test::MakeEmptyCompositorFrame();
+    CompositorFrame frame = CompositorFrameBuilder().Build();
     frame.render_pass_list.push_back(RenderPass::Create());
     frame.render_pass_list.back()->id = i * 3 + start_id;
     frame.render_pass_list.push_back(RenderPass::Create());
@@ -160,8 +139,6 @@ TEST(SurfaceTest, CopyRequestLifetime) {
   EXPECT_FALSE(copy_called);
   copy_requests.clear();  // Deleted requests will auto-send an empty result.
   EXPECT_TRUE(copy_called);
-
-  support->EvictCurrentSurface();
 }
 
 }  // namespace

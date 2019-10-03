@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.preferences.datareduction;
 
+import static org.chromium.third_party.android.datausagechart.ChartDataUsageView.MAXIMUM_DAYS_IN_CHART;
+import static org.chromium.third_party.android.datausagechart.ChartDataUsageView.MINIMUM_DAYS_IN_CHART;
+
 import android.content.Context;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.annotation.UiThreadTest;
@@ -22,12 +25,8 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
-
-import java.util.HashMap;
-import java.util.Map;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 
 /**
  * Unit test suite for DataReductionStatsPreference.
@@ -52,6 +51,7 @@ public class DataReductionStatsPreferenceTest {
 
     private static class TestDataReductionProxySettings extends DataReductionProxySettings {
         private long mLastUpdateInMillis;
+        private long[] mReceivedNetworkStatsHistory;
 
         /**
          * Returns the time that the data reduction statistics were last updated.
@@ -69,6 +69,16 @@ public class DataReductionStatsPreferenceTest {
         public void setDataReductionLastUpdateTime(long lastUpdateInMillis) {
             mLastUpdateInMillis = lastUpdateInMillis;
         }
+
+        @Override
+        public long[] getReceivedNetworkStatsHistory() {
+            if (mReceivedNetworkStatsHistory == null) return new long[0];
+            return mReceivedNetworkStatsHistory;
+        }
+
+        public void setReceivedNetworkStatsHistory(long[] receivedNetworkStatsHistory) {
+            mReceivedNetworkStatsHistory = receivedNetworkStatsHistory;
+        }
     }
 
     @Before
@@ -80,28 +90,6 @@ public class DataReductionStatsPreferenceTest {
         ContextUtils.initApplicationContextForTests(mContext);
         mSettings = new TestDataReductionProxySettings();
         DataReductionProxySettings.setInstanceForTesting(mSettings);
-
-        Map<String, Boolean> features = new HashMap<>();
-        features.put(ChromeFeatureList.DATA_REDUCTION_SITE_BREAKDOWN, true);
-        ChromeFeatureList.setTestFeatures(features);
-    }
-
-    /**
-     * Tests that the site breakdown pref isn't initialized if the feature isn't enabled.
-     */
-    @Test
-    @SmallTest
-    @UiThreadTest
-    @Feature({"DataReduction"})
-    public void testDontInitializeSiteBreakdownPref() throws Throwable {
-        // Disable the feature
-        Map<String, Boolean> features = new HashMap<>();
-        features.put(ChromeFeatureList.DATA_REDUCTION_SITE_BREAKDOWN, false);
-        ChromeFeatureList.setTestFeatures(features);
-
-        DataReductionStatsPreference.initializeDataReductionSiteBreakdownPref();
-        Assert.assertFalse(ContextUtils.getAppSharedPreferences().contains(
-                PREF_DATA_REDUCTION_SITE_BREAKDOWN_ALLOWED_DATE));
     }
 
     /**
@@ -178,5 +166,128 @@ public class DataReductionStatsPreferenceTest {
         Assert.assertTrue(ContextUtils.getAppSharedPreferences().getLong(
                                   PREF_DATA_REDUCTION_SITE_BREAKDOWN_ALLOWED_DATE, -1)
                 <= afterTime);
+    }
+
+    /**
+     * Tests the timespan of the usage graph when Data Saver was enabled today.
+     */
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"DataReduction"})
+    public void testUpdateReductionStatisticsEnabledToday() throws Throwable {
+        DataReductionStatsPreference pref = new DataReductionStatsPreference(mContext, null);
+        long now = System.currentTimeMillis();
+        long lastUpdateTime = now - DateUtils.DAY_IN_MILLIS;
+        long dataSaverEnableTime = now - DateUtils.HOUR_IN_MILLIS;
+        mSettings.setDataReductionLastUpdateTime(lastUpdateTime);
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(DataReductionProxySettings.DATA_REDUCTION_FIRST_ENABLED_TIME,
+                        dataSaverEnableTime)
+                .apply();
+        pref.updateReductionStatistics(now);
+
+        Assert.assertEquals(MINIMUM_DAYS_IN_CHART, pref.getNumDaysInChart());
+    }
+
+    /**
+     * Tests the timespan of the usage graph when Data Saver was enabled yesterday.
+     */
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"DataReduction"})
+    public void testUpdateReductionStatisticsEnabledYesterday() throws Throwable {
+        DataReductionStatsPreference pref = new DataReductionStatsPreference(mContext, null);
+        long now = System.currentTimeMillis();
+        long lastUpdateTime = now - DateUtils.DAY_IN_MILLIS;
+        long dataSaverEnableTime = now - DateUtils.DAY_IN_MILLIS;
+        mSettings.setDataReductionLastUpdateTime(lastUpdateTime);
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(DataReductionProxySettings.DATA_REDUCTION_FIRST_ENABLED_TIME,
+                        dataSaverEnableTime)
+                .apply();
+        pref.updateReductionStatistics(now);
+
+        Assert.assertEquals(MINIMUM_DAYS_IN_CHART, pref.getNumDaysInChart());
+    }
+
+    /**
+     * Tests the timespan of the usage graph when Data Saver was enabled 31 days ago.
+     */
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"DataReduction"})
+    public void testUpdateReductionStatisticsEnabled31DaysAgo() throws Throwable {
+        DataReductionStatsPreference pref = new DataReductionStatsPreference(mContext, null);
+        long now = System.currentTimeMillis();
+        long lastUpdateTime = now - DateUtils.DAY_IN_MILLIS;
+        long dataSaverEnableTime = now - 31 * DateUtils.DAY_IN_MILLIS;
+        mSettings.setDataReductionLastUpdateTime(lastUpdateTime);
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(DataReductionProxySettings.DATA_REDUCTION_FIRST_ENABLED_TIME,
+                        dataSaverEnableTime)
+                .apply();
+        pref.updateReductionStatistics(now);
+
+        Assert.assertEquals(MAXIMUM_DAYS_IN_CHART, pref.getNumDaysInChart());
+    }
+
+    /**
+     * Tests the timespan of the usage graph when the stats have not been
+     * updated recently.
+     */
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"DataReduction"})
+    public void testUpdateReductionStatisticsStatsNotUpdatedRecently() throws Throwable {
+        DataReductionStatsPreference pref = new DataReductionStatsPreference(mContext, null);
+        long now = System.currentTimeMillis();
+        long lastUpdateTime = now - 7 * DateUtils.DAY_IN_MILLIS;
+        int numDaysDataSaverEnabled = 10;
+        long dataSaverEnableTime = now - numDaysDataSaverEnabled * DateUtils.DAY_IN_MILLIS;
+        mSettings.setDataReductionLastUpdateTime(lastUpdateTime);
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(DataReductionProxySettings.DATA_REDUCTION_FIRST_ENABLED_TIME,
+                        dataSaverEnableTime)
+                .apply();
+        pref.updateReductionStatistics(now);
+
+        Assert.assertEquals(numDaysDataSaverEnabled + 1, pref.getNumDaysInChart());
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"DataReduction"})
+    public void testShouldShowRealDataWhenEnoughDataIsUsed() throws Throwable {
+        DataReductionStatsPreference pref = new DataReductionStatsPreference(mContext, null);
+        long now = System.currentTimeMillis();
+        long lastUpdateTime = now - DateUtils.DAY_IN_MILLIS;
+        long dataSaverEnableTime = now - DateUtils.HOUR_IN_MILLIS;
+        mSettings.setDataReductionLastUpdateTime(lastUpdateTime);
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(DataReductionProxySettings.DATA_REDUCTION_FIRST_ENABLED_TIME,
+                        dataSaverEnableTime)
+                .apply();
+
+        // User has only used 50KB so far.
+        mSettings.setReceivedNetworkStatsHistory(new long[] {50 * 1024});
+        pref.updateReductionStatistics(now);
+
+        Assert.assertFalse(pref.shouldShowRealData());
+
+        // User has now used 100KB.
+        mSettings.setReceivedNetworkStatsHistory(new long[] {100 * 1024});
+        pref.updateReductionStatistics(now);
+
+        Assert.assertTrue(pref.shouldShowRealData());
     }
 }

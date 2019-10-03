@@ -11,25 +11,25 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/permissions/permission_request.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/url_formatter/elide_url.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/web_contents.h"
-#include "storage/common/quota/quota_types.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/android_theme_resources.h"
 #else
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "components/vector_icons/vector_icons.h"
 #endif
 
@@ -55,6 +55,7 @@ class QuotaPermissionRequest : public PermissionRequest {
   // PermissionRequest:
   IconId GetIconId() const override;
 #if defined(OS_ANDROID)
+  base::string16 GetTitleText() const override;
   base::string16 GetMessageText() const override;
 #endif
   base::string16 GetMessageTextFragment() const override;
@@ -92,17 +93,21 @@ PermissionRequest::IconId QuotaPermissionRequest::GetIconId() const {
 #if defined(OS_ANDROID)
   return IDR_ANDROID_INFOBAR_FOLDER;
 #else
-  return kFolderIcon;
+  return vector_icons::kFolderIcon;
 #endif
 }
 
 #if defined(OS_ANDROID)
+base::string16 QuotaPermissionRequest::GetTitleText() const {
+  return l10n_util::GetStringUTF16(IDS_REQUEST_QUOTA_PERMISSION_TITLE);
+}
+
 base::string16 QuotaPermissionRequest::GetMessageText() const {
   // If the site requested larger quota than this threshold, show a different
   // message to the user.
   return l10n_util::GetStringFUTF16(
-      (is_large_quota_request_ ? IDS_REQUEST_LARGE_QUOTA_INFOBAR_QUESTION
-                               : IDS_REQUEST_QUOTA_INFOBAR_QUESTION),
+      (is_large_quota_request_ ? IDS_REQUEST_LARGE_QUOTA_INFOBAR_TEXT
+                               : IDS_REQUEST_QUOTA_INFOBAR_TEXT),
       url_formatter::FormatUrlForSecurityDisplay(origin_url_));
 }
 #endif
@@ -158,7 +163,7 @@ void ChromeQuotaPermissionContext::RequestQuotaPermission(
     const content::StorageQuotaParams& params,
     int render_process_id,
     const PermissionCallback& callback) {
-  if (params.storage_type != storage::kStorageTypePersistent) {
+  if (params.storage_type != blink::mojom::StorageType::kPersistent) {
     // For now we only support requesting quota with this interface
     // for Persistent storage type.
     callback.Run(QUOTA_PERMISSION_RESPONSE_DISALLOW);
@@ -166,8 +171,8 @@ void ChromeQuotaPermissionContext::RequestQuotaPermission(
   }
 
   if (!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(&ChromeQuotaPermissionContext::RequestQuotaPermission,
                        this, params, render_process_id, callback));
     return;
@@ -179,16 +184,6 @@ void ChromeQuotaPermissionContext::RequestQuotaPermission(
     // The tab may have gone away or the request may not be from a tab.
     LOG(WARNING) << "Attempt to request quota tabless renderer: "
                  << render_process_id << "," << params.render_frame_id;
-    DispatchCallbackOnIOThread(callback, QUOTA_PERMISSION_RESPONSE_CANCELLED);
-    return;
-  }
-
-  if (vr::VrTabHelper::IsInVr(web_contents)) {
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kQuotaPermission);
-
-    // Permission request UI cannot currently be rendered binocularly in VR
-    // mode, so we suppress the UI and return cancelled to inform the caller
-    // that the request will not progress. crbug.com/736568
     DispatchCallbackOnIOThread(callback, QUOTA_PERMISSION_RESPONSE_CANCELLED);
     return;
   }
@@ -215,8 +210,8 @@ void ChromeQuotaPermissionContext::DispatchCallbackOnIOThread(
   DCHECK_EQ(false, callback.is_null());
 
   if (!content::BrowserThread::CurrentlyOn(content::BrowserThread::IO)) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(
             &ChromeQuotaPermissionContext::DispatchCallbackOnIOThread, this,
             callback, response));

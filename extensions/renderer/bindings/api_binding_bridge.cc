@@ -4,8 +4,10 @@
 
 #include "extensions/renderer/bindings/api_binding_bridge.h"
 
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "extensions/renderer/bindings/api_binding_hooks.h"
+#include "extensions/renderer/bindings/api_binding_util.h"
 #include "extensions/renderer/bindings/js_runner.h"
 #include "gin/converter.h"
 #include "gin/object_template_builder.h"
@@ -61,6 +63,9 @@ void APIBindingBridge::RegisterCustomHook(v8::Isolate* isolate,
   // The object and arguments here are meant to match those passed to the hook
   // functions in binding.js.
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  if (!binding::IsContextValidOrThrowError(context))
+    return;  // Context has been invalidated.
+
   v8::Local<v8::Object> hook_object = v8::Object::New(isolate);
   v8::Local<v8::Object> wrapper;
   if (!GetWrapper(isolate).ToLocal(&wrapper))
@@ -97,7 +102,13 @@ void APIBindingBridge::RegisterCustomHook(v8::Isolate* isolate,
   v8::Local<v8::String> context_type =
       gin::StringToSymbol(isolate, context_type_);
   v8::Local<v8::Value> args[] = {hook_object, extension_id, context_type};
-  JSRunner::Get(context)->RunJSFunction(function, context, arraysize(args),
+
+  // TODO(devlin): The context should still be valid at this point - nothing
+  // above should be able to invalidate it. But let's make extra sure.
+  // This CHECK is helping to track down https://crbug.com/819968, and should be
+  // removed when that's fixed.
+  CHECK(binding::IsContextValid(context));
+  JSRunner::Get(context)->RunJSFunction(function, context, base::size(args),
                                         args);
 }
 

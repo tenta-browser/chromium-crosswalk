@@ -15,11 +15,11 @@
             ]
 {% endif %}
 {% if variables.java_excludes is defined %}
-            java.filter.exclude(
+            java.filter.exclude([
 {% for path in variables.java_excludes %}
                 "{{ path }}",
 {% endfor %}
-            )
+            ])
 {% endif %}
 {% if variables.jni_libs is defined %}
             jniLibs.srcDirs = [
@@ -48,12 +48,25 @@ apply plugin: "com.android.application"
 
 android {
     compileSdkVersion "{{ compile_sdk_version }}"
-    buildToolsVersion "{{ build_tools_version }}"
+
+    defaultConfig {
+        vectorDrawables.useSupportLibrary = true
+        minSdkVersion 19
+        targetSdkVersion {{ target_sdk_version }}
+    }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+{% if native is defined %}
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+        }
+    }
+{% endif %}
 
     sourceSets {
 {% for name in ['main', 'test', 'androidTest', 'debug', 'release'] %}
@@ -70,11 +83,11 @@ android {
 
 {{ expand_sourceset(main, 'main') }}
 {{ expand_sourceset(test, 'test') }}
-{{ expand_sourceset(android_test, 'androidTest') }}
-    }
-
-    defaultConfig {
-        vectorDrawables.useSupportLibrary = true
+{% if android_test is defined %}
+{% for t in android_test %}
+{{ expand_sourceset(t, 'androidTest') }}
+{% endfor %}
+{% endif %}
     }
 }
 
@@ -98,9 +111,4 @@ afterEvaluate {
     tasksToDisable.each { Task task ->
       task.enabled = false
     }
-{% if bootclasspath is defined %}
-    tasks.withType(JavaCompile) {
-      options.bootClasspath = "{{ bootclasspath }}"
-    }
-{% endif %}
 }

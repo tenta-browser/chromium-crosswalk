@@ -7,26 +7,28 @@
 #include <string>
 #include <vector>
 
-#include "base/files/file_enumerator.h"
+#include "base/bind.h"
+#include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "net/base/test_completion_callback.h"
 #include "net/log/net_log_entry.h"
 #include "net/log/net_log_event_type.h"
-#include "net/log/net_log_parameters_callback.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_source_type.h"
 #include "net/log/net_log_util.h"
+#include "net/log/net_log_values.h"
+#include "net/test/test_with_scoped_task_environment.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_test_util.h"
@@ -53,18 +55,13 @@ void AddEntries(FileNetLogObserver* logger,
                 size_t entry_size) {
   // Get base size of event.
   const int kDummyId = 0;
-  std::string message = "";
-  NetLogParametersCallback callback =
-      NetLog::StringCallback("message", &message);
   NetLogSource source(NetLogSourceType::HTTP2_SESSION, kDummyId);
-  NetLogEntryData base_entry_data(NetLogEventType::PAC_JAVASCRIPT_ERROR, source,
-                                  NetLogEventPhase::BEGIN,
-                                  base::TimeTicks::Now(), &callback);
-  NetLogEntry base_entry(&base_entry_data,
-                         NetLogCaptureMode::IncludeSocketBytes());
-  std::unique_ptr<base::Value> value(base_entry.ToValue());
+  NetLogEntry base_entry(NetLogEventType::PAC_JAVASCRIPT_ERROR, source,
+                         NetLogEventPhase::BEGIN, base::TimeTicks::Now(),
+                         NetLogParamsWithString("message", ""));
+  base::Value value = base_entry.ToValue();
   std::string json;
-  base::JSONWriter::Write(*value, &json);
+  base::JSONWriter::Write(value, &json);
   size_t base_entry_size = json.size();
 
   // The maximum value of base::TimeTicks::Now() will be the maximum value of
@@ -86,12 +83,11 @@ void AddEntries(FileNetLogObserver* logger,
 
     // String size accounts for the number of digits in id so that all events
     // are the same size.
-    message = std::string(entry_size - base_entry_size - id.size() + 1, 'x');
-    callback = NetLog::StringCallback("message", &message);
-    NetLogEntryData entry_data(NetLogEventType::PAC_JAVASCRIPT_ERROR, source,
-                               NetLogEventPhase::BEGIN, base::TimeTicks::Now(),
-                               &callback);
-    NetLogEntry entry(&entry_data, NetLogCaptureMode::IncludeSocketBytes());
+    std::string message =
+        std::string(entry_size - base_entry_size - id.size() + 1, 'x');
+    NetLogEntry entry(NetLogEventType::PAC_JAVASCRIPT_ERROR, source,
+                      NetLogEventPhase::BEGIN, base::TimeTicks::Now(),
+                      NetLogParamsWithString("message", message));
     logger->OnAddEntry(entry);
   }
 }
@@ -104,7 +100,7 @@ struct ParsedNetLog {
 
   // Initializes the ParsedNetLog by parsing a JSON file.
   // Owner for the Value tree.
-  std::unique_ptr<base::Value> container;
+  base::Value container;
 
   // A dictionary for the entire netlog.
   const base::DictionaryValue* root = nullptr;
@@ -126,12 +122,13 @@ struct ParsedNetLog {
   }
 
   base::JSONReader reader;
-  container = reader.ReadToValue(input);
-  if (!container) {
+  base::Optional<base::Value> container_optional = reader.Read(input);
+  if (!container_optional) {
     return ::testing::AssertionFailure() << reader.GetErrorMessage();
   }
+  container = std::move(*container_optional);
 
-  if (!container->GetAsDictionary(&root)) {
+  if (!container.GetAsDictionary(&root)) {
     return ::testing::AssertionFailure() << "Not a dictionary";
   }
 
@@ -225,11 +222,18 @@ void ExpectDictionaryContainsProperty(const base::DictionaryValue* dict,
 
 // Used for tests that are common to both bounded and unbounded modes of the
 // the FileNetLogObserver. The param is true if bounded mode is used.
-class FileNetLogObserverTest : public ::testing::TestWithParam<bool> {
+class FileNetLogObserverTest : public ::testing::TestWithParam<bool>,
+                               public WithScopedTaskEnvironment {
  public:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     log_path_ = temp_dir_.GetPath().AppendASCII("net-log.json");
+  }
+
+  void TearDown() override {
+    logger_.reset();
+    // FileNetLogObserver destructor might post to message loop.
+    RunUntilIdle();
   }
 
   bool IsBounded() const { return GetParam(); }
@@ -243,14 +247,36 @@ class FileNetLogObserverTest : public ::testing::TestWithParam<bool> {
           FileNetLogObserver::CreateUnbounded(log_path_, std::move(constants));
     }
 
-    logger_->StartObserving(&net_log_, NetLogCaptureMode::Default());
+    logger_->StartObserving(&net_log_, NetLogCaptureMode::kDefault);
+  }
+
+  void CreateAndStartObservingPreExisting(
+      std::unique_ptr<base::Value> constants) {
+    ASSERT_TRUE(scratch_dir_.CreateUniqueTempDir());
+
+    base::File file(log_path_,
+                    base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+    EXPECT_TRUE(file.IsValid());
+    // Stick in some nonsense to make sure the file gets cleared properly
+    file.Write(0, "not json", 8);
+
+    if (IsBounded()) {
+      logger_ = FileNetLogObserver::CreateBoundedPreExisting(
+          scratch_dir_.GetPath(), std::move(file), kLargeFileSize,
+          std::move(constants));
+    } else {
+      logger_ = FileNetLogObserver::CreateUnboundedPreExisting(
+          std::move(file), std::move(constants));
+    }
+
+    logger_->StartObserving(&net_log_, NetLogCaptureMode::kDefault);
   }
 
   bool LogFileExists() {
     // The log files are written by a sequenced task runner. Drain all the
     // scheduled tasks to ensure that the file writing ones have run before
     // checking if they exist.
-    base::TaskScheduler::GetInstance()->FlushForTesting();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
     return base::PathExists(log_path_);
   }
 
@@ -258,23 +284,31 @@ class FileNetLogObserverTest : public ::testing::TestWithParam<bool> {
   NetLog net_log_;
   std::unique_ptr<FileNetLogObserver> logger_;
   base::ScopedTempDir temp_dir_;
+  base::ScopedTempDir scratch_dir_;  // used for bounded + preexisting
   base::FilePath log_path_;
 };
 
 // Used for tests that are exclusive to the bounded mode of FileNetLogObserver.
-class FileNetLogObserverBoundedTest : public ::testing::Test {
+class FileNetLogObserverBoundedTest : public ::testing::Test,
+                                      public WithScopedTaskEnvironment {
  public:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     log_path_ = temp_dir_.GetPath().AppendASCII("net-log.json");
   }
 
+  void TearDown() override {
+    logger_.reset();
+    // FileNetLogObserver destructor might post to message loop.
+    RunUntilIdle();
+  }
+
   void CreateAndStartObserving(std::unique_ptr<base::Value> constants,
-                               int total_file_size,
+                               uint64_t total_file_size,
                                int num_files) {
     logger_ = FileNetLogObserver::CreateBoundedForTests(
         log_path_, total_file_size, num_files, std::move(constants));
-    logger_->StartObserving(&net_log_, NetLogCaptureMode::Default());
+    logger_->StartObserving(&net_log_, NetLogCaptureMode::kDefault);
   }
 
   // Returns the path for an internally directory created for bounded logs (this
@@ -307,9 +341,9 @@ class FileNetLogObserverBoundedTest : public ::testing::Test {
 };
 
 // Instantiates each FileNetLogObserverTest to use bounded and unbounded modes.
-INSTANTIATE_TEST_CASE_P(,
-                        FileNetLogObserverTest,
-                        ::testing::Values(true, false));
+INSTANTIATE_TEST_SUITE_P(,
+                         FileNetLogObserverTest,
+                         ::testing::Values(true, false));
 
 // Tests deleting a FileNetLogObserver without first calling StopObserving().
 TEST_P(FileNetLogObserverTest, ObserverDestroyedWithoutStopObserving) {
@@ -326,6 +360,34 @@ TEST_P(FileNetLogObserverTest, ObserverDestroyedWithoutStopObserving) {
   // When the logger is re-set without having called StopObserving(), the
   // partially written log files are deleted.
   ASSERT_FALSE(LogFileExists());
+}
+
+// Same but with pre-existing file.
+TEST_P(FileNetLogObserverTest,
+       ObserverDestroyedWithoutStopObservingPreExisting) {
+  CreateAndStartObservingPreExisting(nullptr);
+
+  // Send dummy event
+  AddEntries(logger_.get(), 1, kDummyEventSize);
+
+  // The log files should have been started.
+  ASSERT_TRUE(LogFileExists());
+
+  // Should also have the scratch dir, if bounded. (Can be checked since
+  // LogFileExists flushed the thread pool).
+  if (IsBounded()) {
+    ASSERT_TRUE(base::PathExists(scratch_dir_.GetPath()));
+  }
+
+  logger_.reset();
+
+  // Unlike in the non-preexisting case, the output file isn't deleted here,
+  // since the process running the observer likely won't have the sandbox
+  // permission to do so.
+  ASSERT_TRUE(LogFileExists());
+  if (IsBounded()) {
+    ASSERT_FALSE(base::PathExists(scratch_dir_.GetPath()));
+  }
 }
 
 // Tests calling StopObserving() with a null closure.
@@ -402,6 +464,45 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEvent) {
   ASSERT_EQ(1u, log->events->GetSize());
 }
 
+TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithOneEventPreExisting) {
+  TestClosure closure;
+
+  CreateAndStartObservingPreExisting(nullptr);
+
+  // Send dummy event.
+  AddEntries(logger_.get(), 1, kDummyEventSize);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  std::unique_ptr<ParsedNetLog> log = ReadNetLogFromDisk(log_path_);
+  ASSERT_TRUE(log);
+  ASSERT_EQ(1u, log->events->GetSize());
+}
+
+TEST_P(FileNetLogObserverTest, PreExistingFileBroken) {
+  // Test that pre-existing output file not being successfully open is
+  // tolerated.
+  ASSERT_TRUE(scratch_dir_.CreateUniqueTempDir());
+  base::File file;
+  EXPECT_FALSE(file.IsValid());
+  if (IsBounded())
+    logger_ = FileNetLogObserver::CreateBoundedPreExisting(
+        scratch_dir_.GetPath(), std::move(file), kLargeFileSize, nullptr);
+  else
+    logger_ = FileNetLogObserver::CreateUnboundedPreExisting(std::move(file),
+                                                             nullptr);
+  logger_->StartObserving(&net_log_, NetLogCaptureMode::kDefault);
+
+  // Send dummy event.
+  AddEntries(logger_.get(), 1, kDummyEventSize);
+  TestClosure closure;
+  logger_->StopObserving(nullptr, closure.closure());
+  closure.WaitForResult();
+}
+
 TEST_P(FileNetLogObserverTest, CustomConstants) {
   TestClosure closure;
 
@@ -457,6 +558,13 @@ TEST_P(FileNetLogObserverTest, GeneratesValidJSONWithPolledData) {
 TEST_P(FileNetLogObserverTest, AddEventsFromMultipleThreads) {
   const size_t kNumThreads = 10;
   std::vector<std::unique_ptr<base::Thread>> threads(kNumThreads);
+
+#if defined(OS_FUCHSIA)
+  // TODO(https://crbug.com/959245): Diagnosting logging to determine where
+  // this test sometimes hangs.
+  LOG(ERROR) << "Create and start threads.";
+#endif
+
   // Start all the threads. Waiting for them to start is to hopefuly improve
   // the odds of hitting interesting races once events start being added.
   for (size_t i = 0; i < threads.size(); ++i) {
@@ -466,30 +574,54 @@ TEST_P(FileNetLogObserverTest, AddEventsFromMultipleThreads) {
     threads[i]->WaitUntilThreadStarted();
   }
 
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Create and start observing.";
+#endif
+
   CreateAndStartObserving(nullptr);
 
   const size_t kNumEventsAddedPerThread = 200;
 
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Posting tasks.";
+#endif
+
   // Add events in parallel from all the threads.
   for (size_t i = 0; i < kNumThreads; ++i) {
     threads[i]->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AddEntries, base::Unretained(logger_.get()),
-                              kNumEventsAddedPerThread, kDummyEventSize));
+        FROM_HERE, base::BindOnce(&AddEntries, base::Unretained(logger_.get()),
+                                  kNumEventsAddedPerThread, kDummyEventSize));
   }
+
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Joining all threads.";
+#endif
 
   // Join all the threads.
   threads.clear();
+
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Stop observing.";
+#endif
 
   // Stop observing.
   TestClosure closure;
   logger_->StopObserving(nullptr, closure.closure());
   closure.WaitForResult();
 
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Read log from disk and verify.";
+#endif
+
   // Verify the written log.
   std::unique_ptr<ParsedNetLog> log = ReadNetLogFromDisk(log_path_);
   ASSERT_TRUE(log);
   // Check that the expected number of events were written to disk.
   EXPECT_EQ(kNumEventsAddedPerThread * kNumThreads, log->events->GetSize());
+
+#if defined(OS_FUCHSIA)
+  LOG(ERROR) << "Teardown.";
+#endif
 }
 
 // Sends enough events to the observer to completely fill one file, but not
@@ -802,6 +934,65 @@ TEST_F(FileNetLogObserverBoundedTest, BlockEventsFile0) {
   ASSERT_EQ(0u, log->events->GetSize());
 }
 
+// Make sure that when using bounded mode with a pre-existing output file,
+// a separate in-progress directory can be specified.
+TEST_F(FileNetLogObserverBoundedTest, PreExistingUsesSpecifiedDir) {
+  base::ScopedTempDir scratch_dir;
+  ASSERT_TRUE(scratch_dir.CreateUniqueTempDir());
+
+  base::File file(log_path_, base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+  ASSERT_TRUE(file.IsValid());
+
+  // Stick in some nonsense to make sure the file gets cleared properly
+  file.Write(0, "not json", 8);
+
+  logger_ = FileNetLogObserver::CreateBoundedPreExisting(
+      scratch_dir.GetPath(), std::move(file), kLargeFileSize, nullptr);
+  logger_->StartObserving(&net_log_, NetLogCaptureMode::kDefault);
+
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  EXPECT_TRUE(base::PathExists(log_path_));
+  EXPECT_TRUE(
+      base::PathExists(scratch_dir.GetPath().AppendASCII("constants.json")));
+  EXPECT_FALSE(base::PathExists(GetInprogressDirectory()));
+
+  TestClosure closure;
+  logger_->StopObserving(nullptr, closure.closure());
+  closure.WaitForResult();
+
+  // Now the scratch dir should be gone, too.
+  EXPECT_FALSE(base::PathExists(scratch_dir.GetPath()));
+  EXPECT_FALSE(base::PathExists(GetInprogressDirectory()));
+}
+
+// Creates a bounded log with a very large total size and verifies that events
+// are not dropped. This is a regression test for https://crbug.com/959929 in
+// which the WriteQueue size was calculated by the possibly overflowed
+// expression |total_file_size * 2|.
+TEST_F(FileNetLogObserverBoundedTest, LargeWriteQueueSize) {
+  TestClosure closure;
+
+  // This is a large value such that multiplying it by 2 will overflow to a much
+  // smaller value (5).
+  uint64_t total_file_size = 0x8000000000000005;
+
+  CreateAndStartObserving(nullptr, total_file_size, kTotalNumFiles);
+
+  // Send 3 dummy events. This isn't a lot of data, however if WriteQueue was
+  // initialized using the overflowed value of |total_file_size * 2| (which is
+  // 5), then the effective limit would prevent any events from being written.
+  AddEntries(logger_.get(), 3, kDummyEventSize);
+
+  logger_->StopObserving(nullptr, closure.closure());
+
+  closure.WaitForResult();
+
+  // Verify the written log.
+  std::unique_ptr<ParsedNetLog> log = ReadNetLogFromDisk(log_path_);
+  ASSERT_TRUE(log);
+  ASSERT_EQ(3u, log->events->GetSize());
+}
+
 void AddEntriesViaNetLog(NetLog* net_log, int num_entries) {
   for (int i = 0; i < num_entries; i++) {
     net_log->AddGlobalEntry(NetLogEventType::PAC_JAVASCRIPT_ERROR);
@@ -827,8 +1018,9 @@ TEST_P(FileNetLogObserverTest, AddEventsFromMultipleThreadsWithStopObserving) {
   // Add events in parallel from all the threads.
   for (size_t i = 0; i < kNumThreads; ++i) {
     threads[i]->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AddEntriesViaNetLog, base::Unretained(&net_log_),
-                              kNumEventsAddedPerThread));
+        FROM_HERE,
+        base::BindOnce(&AddEntriesViaNetLog, base::Unretained(&net_log_),
+                       kNumEventsAddedPerThread));
   }
 
   // Stop observing.
@@ -862,8 +1054,9 @@ TEST_P(FileNetLogObserverTest,
   // Add events in parallel from all the threads.
   for (size_t i = 0; i < kNumThreads; ++i) {
     threads[i]->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AddEntriesViaNetLog, base::Unretained(&net_log_),
-                              kNumEventsAddedPerThread));
+        FROM_HERE,
+        base::BindOnce(&AddEntriesViaNetLog, base::Unretained(&net_log_),
+                       kNumEventsAddedPerThread));
   }
 
   // Destroy logger.

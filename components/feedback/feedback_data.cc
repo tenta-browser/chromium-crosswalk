@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "components/feedback/feedback_util.h"
 #include "components/feedback/proto/extension.pb.h"
@@ -39,7 +39,9 @@ FeedbackData::FeedbackData(feedback::FeedbackUploader* uploader)
       context_(nullptr),
       trace_id_(0),
       pending_op_count_(1),
-      report_sent_(false) {
+      report_sent_(false),
+      from_assistant_(false),
+      assistant_debug_info_allowed_(false) {
   CHECK(uploader_);
 }
 
@@ -51,8 +53,7 @@ void FeedbackData::OnFeedbackPageDataComplete() {
   SendReport();
 }
 
-void FeedbackData::SetAndCompressSystemInfo(
-    std::unique_ptr<FeedbackData::SystemLogsMap> sys_info) {
+void FeedbackData::CompressSystemInfo() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (trace_id_ != 0) {
@@ -67,45 +68,38 @@ void FeedbackData::SetAndCompressSystemInfo(
     }
   }
 
-  if (sys_info) {
-    ++pending_op_count_;
-    AddLogs(std::move(sys_info));
-    base::PostTaskWithTraitsAndReply(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-        base::Bind(&FeedbackData::CompressLogs, this),
-        base::Bind(&FeedbackData::OnCompressComplete, this));
-  }
-}
-
-void FeedbackData::SetAndCompressHistograms(
-    std::unique_ptr<std::string> histograms) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  if (!histograms)
-    return;
   ++pending_op_count_;
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&FeedbackData::CompressFile, this,
-                 base::FilePath(kHistogramsFilename), kHistogramsAttachmentName,
-                 base::Passed(&histograms)),
-      base::Bind(&FeedbackData::OnCompressComplete, this));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&FeedbackData::CompressLogs, this),
+      base::BindOnce(&FeedbackData::OnCompressComplete, this));
 }
 
-void FeedbackData::AttachAndCompressFileData(
-    std::unique_ptr<std::string> attached_filedata) {
+void FeedbackData::SetAndCompressHistograms(std::string histograms) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!attached_filedata || attached_filedata->empty())
+  ++pending_op_count_;
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&FeedbackData::CompressFile, this,
+                     base::FilePath(kHistogramsFilename),
+                     kHistogramsAttachmentName, std::move(histograms)),
+      base::BindOnce(&FeedbackData::OnCompressComplete, this));
+}
+
+void FeedbackData::AttachAndCompressFileData(std::string attached_filedata) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (attached_filedata.empty())
     return;
   ++pending_op_count_;
   base::FilePath attached_file =
                   base::FilePath::FromUTF8Unsafe(attached_filename_);
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&FeedbackData::CompressFile, this, attached_file,
-                 std::string(), base::Passed(&attached_filedata)),
-      base::Bind(&FeedbackData::OnCompressComplete, this));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&FeedbackData::CompressFile, this, attached_file,
+                     std::string(), std::move(attached_filedata)),
+      base::BindOnce(&FeedbackData::OnCompressComplete, this));
 }
 
 void FeedbackData::OnGetTraceData(
@@ -116,10 +110,7 @@ void FeedbackData::OnGetTraceData(
   if (manager)
     manager->DiscardTraceData(trace_id);
 
-  std::unique_ptr<std::string> data(new std::string);
-  data->swap(trace_data->data());
-
-  AddFile(kTraceFilename, std::move(data));
+  AddFile(kTraceFilename, std::move(trace_data->data()));
 
   set_category_tag(kPerformanceCategoryTag);
   --pending_op_count_;
@@ -143,9 +134,9 @@ void FeedbackData::SendReport() {
     report_sent_ = true;
     userfeedback::ExtensionSubmit feedback_data;
     PrepareReport(&feedback_data);
-    std::string post_body;
-    feedback_data.SerializeToString(&post_body);
-    uploader_->QueueReport(post_body);
+    auto post_body = std::make_unique<std::string>();
+    feedback_data.SerializeToString(post_body.get());
+    uploader_->QueueReport(std::move(post_body));
   }
 }
 

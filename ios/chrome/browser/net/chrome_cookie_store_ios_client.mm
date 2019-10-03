@@ -4,7 +4,9 @@
 
 #include "ios/chrome/browser/net/chrome_cookie_store_ios_client.h"
 
-#include "ios/web/public/web_thread.h"
+#include "base/task/post_task.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -14,5 +16,5 @@ ChromeCookieStoreIOSClient::ChromeCookieStoreIOSClient() {}
 
 scoped_refptr<base::SequencedTaskRunner>
 ChromeCookieStoreIOSClient::GetTaskRunner() const {
-  return web::WebThread::GetTaskRunnerForThread(web::WebThread::IO);
+  return base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::IO});
 }

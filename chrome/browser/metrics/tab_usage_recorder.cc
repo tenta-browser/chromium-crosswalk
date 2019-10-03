@@ -10,8 +10,6 @@
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/common/page_importance_signals.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(metrics::TabUsageRecorder::WebContentsData);
-
 namespace metrics {
 
 namespace {
@@ -46,8 +44,12 @@ class TabUsageRecorder::WebContentsData
 
   base::TimeTicks last_inactive_time_;
 
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+
   DISALLOW_COPY_AND_ASSIGN(WebContentsData);
 };
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(TabUsageRecorder::WebContentsData)
 
 TabUsageRecorder::WebContentsData::~WebContentsData() = default;
 
@@ -103,12 +105,16 @@ void TabUsageRecorder::OnTabReactivated(content::WebContents* contents) {
   GetWebContentsData(contents)->RecordTabReactivation();
 }
 
-void TabUsageRecorder::TabInsertedAt(TabStripModel* tab_strip_model,
-                                     content::WebContents* contents,
-                                     int index,
-                                     bool foreground) {
+void TabUsageRecorder::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (change.type() != TabStripModelChange::kInserted)
+    return;
+
   // Set the initial pin state.
-  TabPinnedStateChanged(tab_strip_model, contents, index);
+  for (const auto& contents : change.GetInsert()->contents)
+    TabPinnedStateChanged(tab_strip_model, contents.contents, contents.index);
 }
 
 void TabUsageRecorder::TabPinnedStateChanged(TabStripModel* tab_strip_model,

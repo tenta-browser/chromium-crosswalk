@@ -12,6 +12,7 @@
 
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/media_shmem_export.h"
 
 namespace media {
@@ -55,6 +56,12 @@ class MEDIA_SHMEM_EXPORT AudioBus {
                                               void* data);
   static std::unique_ptr<AudioBus> WrapMemory(const AudioParameters& params,
                                               void* data);
+  static std::unique_ptr<const AudioBus> WrapReadOnlyMemory(int channels,
+                                                            int frames,
+                                                            const void* data);
+  static std::unique_ptr<const AudioBus> WrapReadOnlyMemory(
+      const AudioParameters& params,
+      const void* data);
 
   // Based on the given number of channels and frames, calculates the minimum
   // required size in bytes of a contiguous block of memory to be passed to
@@ -140,17 +147,12 @@ class MEDIA_SHMEM_EXPORT AudioBus {
       int num_frames_to_read,
       typename TargetSampleTypeTraits::ValueType* dest_buffer) const;
 
-  // DEPRECATED (https://crbug.com/580391)
-  // Please use the version templated with TargetSampleTypeTraits instead.
-  // TODO(chfremer): Remove (https://crbug.com/619623)
-  void ToInterleavedPartial(int start_frame,
-                            int frames,
-                            int bytes_per_sample,
-                            void* dest) const;
-
   // Helper method for copying channel data from one AudioBus to another.  Both
   // AudioBus object must have the same frames() and channels().
   void CopyTo(AudioBus* dest) const;
+
+  // Similar to above, but clips values to [-1, 1] during the copy process.
+  void CopyAndClipTo(AudioBus* dest) const;
 
   // Helper method to copy frames from one AudioBus to another. Both AudioBus
   // objects must have the same number of channels(). |source_start_frame| is

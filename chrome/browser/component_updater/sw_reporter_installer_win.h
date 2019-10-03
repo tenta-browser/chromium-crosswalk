@@ -12,8 +12,9 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "chrome/browser/safe_browsing/chrome_cleaner/reporter_runner_win.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/sw_reporter_invocation_win.h"
 #include "components/component_updater/component_installer.h"
+#include "components/component_updater/component_updater_service.h"
 
 class PrefRegistrySimple;
 
@@ -31,12 +32,6 @@ namespace component_updater {
 
 class ComponentUpdateService;
 
-// Expose the feature name so it can be referenced in tests.
-// TODO(crbug.com/786964): This feature will continue to exist as part of a
-// permanent variations study to control which version of the reporter gets
-// downloaded. Rename it to something that makes sense long-term.
-constexpr char kComponentTagFeatureName[] = "ExperimentalSwReporterEngine";
-
 constexpr char kSwReporterComponentId[] = "gkmgaooipdjhmangpemjhigmamcehddo";
 
 // These MUST match the values for SoftwareReporterExperimentError in
@@ -49,17 +44,12 @@ enum SoftwareReporterExperimentError {
 };
 
 // Callback for running the software reporter after it is downloaded.
-using SwReporterRunner = base::Callback<void(
-    safe_browsing::SwReporterInvocationType invocation_type,
+using OnComponentReadyCallback = base::Callback<void(
     safe_browsing::SwReporterInvocationSequence&& invocations)>;
 
 class SwReporterInstallerPolicy : public ComponentInstallerPolicy {
  public:
-  // Note: |on_sequence_done| will be invoked on the UI thread.
-  SwReporterInstallerPolicy(
-      const SwReporterRunner& reporter_runner,
-      safe_browsing::SwReporterInvocationType invocation_type,
-      safe_browsing::OnReporterSequenceDone on_sequence_done);
+  explicit SwReporterInstallerPolicy(const OnComponentReadyCallback& callback);
   ~SwReporterInstallerPolicy() override;
 
   // ComponentInstallerPolicy implementation.
@@ -83,30 +73,42 @@ class SwReporterInstallerPolicy : public ComponentInstallerPolicy {
  private:
   friend class SwReporterInstallerTest;
 
-  SwReporterRunner reporter_runner_;
-
-  const safe_browsing::SwReporterInvocationType invocation_type_;
-
-  // The action to be called on the first time the invocation sequence
-  // runs.
-  safe_browsing::OnReporterSequenceDone on_sequence_done_;
+  OnComponentReadyCallback on_component_ready_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(SwReporterInstallerPolicy);
 };
 
-// Installs the SwReporter component and runs the reporter once it's available.
-// Once ready, this may trigger either a periodic or a user-initiated run of
-// the reporter, depending on |invocation_type|. Once the last invocation
-// finishes, |on_sequence_done| is called with a boolean variable indicating if
-// the run succeeded.
-void RegisterSwReporterComponentWithParams(
-    safe_browsing::SwReporterInvocationType invocation_type,
-    safe_browsing::OnReporterSequenceDone on_sequence_done,
-    ComponentUpdateService* cus);
+// Forces an update of the reporter component.
+// Note: this can have adverse effects on the component updater subsystem and
+// should only be created as a result of direct user action.
+// For example, if this is created repeatedly, it might result in too many
+// unexpected requests to the component updater service and cause system
+// instability.
+class SwReporterOnDemandFetcher : public ServiceObserver {
+ public:
+  SwReporterOnDemandFetcher(ComponentUpdateService* cus,
+                            base::OnceClosure on_error_callback);
+  ~SwReporterOnDemandFetcher() override;
+
+  // ServiceObserver implementation.
+  void OnEvent(Events event, const std::string& id) override;
+
+ private:
+  // Will outlive this object.
+  ComponentUpdateService* cus_;
+  base::OnceClosure on_error_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(SwReporterOnDemandFetcher);
+};
 
 // Call once during startup to make the component update service aware of the
 // SwReporter. Once ready, this may trigger a periodic run of the reporter.
 void RegisterSwReporterComponent(ComponentUpdateService* cus);
+
+// Allow tests to register a function to be called when the registration
+// of the reporter component is done.
+void SetRegisterSwReporterComponentCallbackForTesting(
+    base::OnceClosure registration_cb);
 
 // Register local state preferences related to the SwReporter.
 void RegisterPrefsForSwReporter(PrefRegistrySimple* registry);
@@ -114,6 +116,9 @@ void RegisterPrefsForSwReporter(PrefRegistrySimple* registry);
 // Register profile preferences related to the SwReporter.
 void RegisterProfilePrefsForSwReporter(
     user_prefs::PrefRegistrySyncable* registry);
+
+// Checks if we have information from the Cleaner and records UMA statistics.
+void ReportUMAForLastCleanerRun();
 
 }  // namespace component_updater
 

@@ -15,7 +15,9 @@
 #include "content/public/browser/web_contents.h"
 #include "ipc/ipc_message_macros.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/interfaces/wake_lock_context.mojom.h"
+#include "services/device/public/mojom/wake_lock_context.mojom.h"
+#include "services/media_session/public/cpp/media_position.h"
+#include "third_party/blink/public/platform/web_fullscreen_video_status.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace content {
@@ -40,18 +42,41 @@ void CheckFullscreenDetectionEnabled(WebContents* web_contents) {
 #endif  // defined(OS_ANDROID)
 }
 
+// Returns true if |player_id| exists in |player_map|.
+bool MediaPlayerEntryExists(
+    const MediaPlayerId& player_id,
+    const MediaWebContentsObserver::ActiveMediaPlayerMap& player_map) {
+  const auto& players = player_map.find(player_id.render_frame_host);
+  if (players == player_map.end())
+    return false;
+
+  return players->second.find(player_id.delegate_id) != players->second.end();
+}
+
+#if defined(OS_ANDROID)
+static void SuspendAllMediaPlayersInRenderFrame(
+    RenderFrameHost* render_frame_host) {
+  render_frame_host->Send(new MediaPlayerDelegateMsg_SuspendAllMediaPlayers(
+      render_frame_host->GetRoutingID()));
+}
+#endif  // defined(OS_ANDROID)
+
 }  // anonymous namespace
 
 MediaWebContentsObserver::MediaWebContentsObserver(WebContents* web_contents)
     : WebContentsObserver(web_contents),
-      has_audio_wake_lock_for_testing_(false),
-      has_video_wake_lock_for_testing_(false),
+      audible_metrics_(GetAudibleMetrics()),
       session_controllers_manager_(this) {}
 
 MediaWebContentsObserver::~MediaWebContentsObserver() = default;
 
 void MediaWebContentsObserver::WebContentsDestroyed() {
-  GetAudibleMetrics()->UpdateAudibleWebContentsState(web_contents(), false);
+  AudioStreamMonitor* audio_stream_monitor =
+      web_contents_impl()->audio_stream_monitor();
+
+  audible_metrics_->WebContentsDestroyed(
+      web_contents(), audio_stream_monitor->WasRecentlyAudible() &&
+                          !web_contents()->IsAudioMuted());
 }
 
 void MediaWebContentsObserver::RenderFrameDeleted(
@@ -59,8 +84,11 @@ void MediaWebContentsObserver::RenderFrameDeleted(
   ClearWakeLocks(render_frame_host);
   session_controllers_manager_.RenderFrameDeleted(render_frame_host);
 
-  if (fullscreen_player_ && fullscreen_player_->first == render_frame_host)
+  if (fullscreen_player_ &&
+      fullscreen_player_->render_frame_host == render_frame_host) {
+    picture_in_picture_allowed_in_fullscreen_.reset();
     fullscreen_player_.reset();
+  }
 }
 
 void MediaWebContentsObserver::MaybeUpdateAudibleState() {
@@ -72,8 +100,9 @@ void MediaWebContentsObserver::MaybeUpdateAudibleState() {
   else
     CancelAudioLock();
 
-  GetAudibleMetrics()->UpdateAudibleWebContentsState(
-      web_contents(), audio_stream_monitor->IsCurrentlyAudible());
+  audible_metrics_->UpdateAudibleWebContentsState(
+      web_contents(), audio_stream_monitor->IsCurrentlyAudible() &&
+                          !web_contents()->IsAudioMuted());
 }
 
 bool MediaWebContentsObserver::HasActiveEffectivelyFullscreenVideo() const {
@@ -82,16 +111,17 @@ bool MediaWebContentsObserver::HasActiveEffectivelyFullscreenVideo() const {
     return false;
 
   // Check that the player is active.
-  const auto& players = active_video_players_.find(fullscreen_player_->first);
-  if (players == active_video_players_.end())
-    return false;
-  if (players->second.find(fullscreen_player_->second) == players->second.end())
-    return false;
-
-  return true;
+  return MediaPlayerEntryExists(*fullscreen_player_, active_video_players_);
 }
 
-const base::Optional<WebContentsObserver::MediaPlayerId>&
+bool MediaWebContentsObserver::IsPictureInPictureAllowedForFullscreenVideo()
+    const {
+  DCHECK(picture_in_picture_allowed_in_fullscreen_.has_value());
+
+  return *picture_in_picture_allowed_in_fullscreen_;
+}
+
+const base::Optional<MediaPlayerId>&
 MediaWebContentsObserver::GetFullscreenVideoMediaPlayerId() const {
   CheckFullscreenDetectionEnabled(web_contents_impl());
   return fullscreen_player_;
@@ -110,6 +140,8 @@ bool MediaWebContentsObserver::OnMessageReceived(
                         OnMediaPlaying)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateHostMsg_OnMutedStatusChanged,
                         OnMediaMutedStatusChanged)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateHostMsg_OnMediaPositionStateChanged,
+                        OnMediaPositionStateChanged);
     IPC_MESSAGE_HANDLER(
         MediaPlayerDelegateHostMsg_OnMediaEffectivelyFullscreenChanged,
         OnMediaEffectivelyFullscreenChanged)
@@ -120,19 +152,8 @@ bool MediaWebContentsObserver::OnMessageReceived(
   return handled;
 }
 
-void MediaWebContentsObserver::WasShown() {
-  // Restore wake lock if there are active video players running.
-  if (!active_video_players_.empty())
-    LockVideo();
-}
-
-void MediaWebContentsObserver::WasHidden() {
-  // If there are entities capturing screenshots or video (e.g., mirroring),
-  // don't release the wake lock.
-  if (!web_contents()->GetCapturerCount()) {
-    GetVideoWakeLock()->CancelWakeLock();
-    has_video_wake_lock_for_testing_ = false;
-  }
+void MediaWebContentsObserver::DidUpdateAudioMutingState(bool muted) {
+  session_controllers_manager_.WebContentsMutedStateChanged(muted);
 }
 
 void MediaWebContentsObserver::RequestPersistentVideo(bool value) {
@@ -141,10 +162,18 @@ void MediaWebContentsObserver::RequestPersistentVideo(bool value) {
 
   // The message is sent to the renderer even though the video is already the
   // fullscreen element itself. It will eventually be handled by Blink.
-  RenderFrameHost* target_frame = fullscreen_player_->first;
-  int delegate_id = fullscreen_player_->second;
-  target_frame->Send(new MediaPlayerDelegateMsg_BecamePersistentVideo(
-      target_frame->GetRoutingID(), delegate_id, value));
+  fullscreen_player_->render_frame_host->Send(
+      new MediaPlayerDelegateMsg_BecamePersistentVideo(
+          fullscreen_player_->render_frame_host->GetRoutingID(),
+          fullscreen_player_->delegate_id, value));
+}
+
+bool MediaWebContentsObserver::IsPlayerActive(
+    const MediaPlayerId& player_id) const {
+  if (MediaPlayerEntryExists(player_id, active_video_players_))
+    return true;
+
+  return MediaPlayerEntryExists(player_id, active_audio_players_);
 }
 
 void MediaWebContentsObserver::OnMediaDestroyed(
@@ -161,7 +190,6 @@ void MediaWebContentsObserver::OnMediaPaused(RenderFrameHost* render_frame_host,
       RemoveMediaPlayerEntry(player_id, &active_audio_players_);
   const bool removed_video =
       RemoveMediaPlayerEntry(player_id, &active_video_players_);
-  MaybeCancelVideoLock();
 
   if (removed_audio || removed_video) {
     // Notify observers the player has been "paused".
@@ -186,9 +214,9 @@ void MediaWebContentsObserver::OnMediaPlaying(
     bool has_audio,
     bool is_remote,
     media::MediaContentType media_content_type) {
-  // Ignore the videos playing remotely and don't hold the wake lock for the
-  // screen. TODO(dalecurtis): Is this correct? It means observers will not
-  // receive play and pause messages.
+  // TODO(mlamouri): this used to be done to avoid video wake lock. However, it
+  // was doing much more. Removing will be done in a follow-up CL to avoid
+  // regressions to be pinpoint to the wake lock refactor.
   if (is_remote)
     return;
 
@@ -196,13 +224,8 @@ void MediaWebContentsObserver::OnMediaPlaying(
   if (has_audio)
     AddMediaPlayerEntry(id, &active_audio_players_);
 
-  if (has_video) {
+  if (has_video)
     AddMediaPlayerEntry(id, &active_video_players_);
-
-    // If we're not hidden and have just created a player, create a wakelock.
-    if (!web_contents_impl()->IsHidden())
-      LockVideo();
-  }
 
   if (!session_controllers_manager_.RequestPlay(
           id, has_audio, is_remote, media_content_type)) {
@@ -210,7 +233,6 @@ void MediaWebContentsObserver::OnMediaPlaying(
   }
 
   // Notify observers of the new player.
-  DCHECK(has_audio || has_video);
   web_contents_impl()->MediaStartedPlaying(
       WebContentsObserver::MediaPlayerInfo(has_video, has_audio), id);
 }
@@ -218,17 +240,31 @@ void MediaWebContentsObserver::OnMediaPlaying(
 void MediaWebContentsObserver::OnMediaEffectivelyFullscreenChanged(
     RenderFrameHost* render_frame_host,
     int delegate_id,
-    bool is_fullscreen) {
+    blink::WebFullscreenVideoStatus fullscreen_status) {
   const MediaPlayerId id(render_frame_host, delegate_id);
 
-  if (is_fullscreen) {
-    fullscreen_player_ = id;
-  } else {
-    if (!fullscreen_player_ || *fullscreen_player_ != id)
-      return;
+  switch (fullscreen_status) {
+    case blink::WebFullscreenVideoStatus::kFullscreenAndPictureInPictureEnabled:
+      fullscreen_player_ = id;
+      picture_in_picture_allowed_in_fullscreen_ = true;
+      break;
+    case blink::WebFullscreenVideoStatus::
+        kFullscreenAndPictureInPictureDisabled:
+      fullscreen_player_ = id;
+      picture_in_picture_allowed_in_fullscreen_ = false;
+      break;
+    case blink::WebFullscreenVideoStatus::kNotEffectivelyFullscreen:
+      if (!fullscreen_player_ || *fullscreen_player_ != id)
+        return;
 
-    fullscreen_player_.reset();
+      picture_in_picture_allowed_in_fullscreen_.reset();
+      fullscreen_player_.reset();
+      break;
   }
+
+  bool is_fullscreen =
+      (fullscreen_status !=
+       blink::WebFullscreenVideoStatus::kNotEffectivelyFullscreen);
   web_contents_impl()->MediaEffectivelyFullscreenChanged(is_fullscreen);
 }
 
@@ -253,8 +289,6 @@ void MediaWebContentsObserver::ClearWakeLocks(
   std::set_union(video_players.begin(), video_players.end(),
                  audio_players.begin(), audio_players.end(),
                  std::inserter(removed_players, removed_players.end()));
-
-  MaybeCancelVideoLock();
 
   // Notify all observers the player has been "paused".
   for (const auto& id : removed_players) {
@@ -284,23 +318,6 @@ device::mojom::WakeLock* MediaWebContentsObserver::GetAudioWakeLock() {
   return audio_wake_lock_.get();
 }
 
-device::mojom::WakeLock* MediaWebContentsObserver::GetVideoWakeLock() {
-  // Here is a lazy binding, and will not reconnect after connection error.
-  if (!video_wake_lock_) {
-    device::mojom::WakeLockRequest request =
-        mojo::MakeRequest(&video_wake_lock_);
-    device::mojom::WakeLockContext* wake_lock_context =
-        web_contents()->GetWakeLockContext();
-    if (wake_lock_context) {
-      wake_lock_context->GetWakeLock(
-          device::mojom::WakeLockType::kPreventDisplaySleep,
-          device::mojom::WakeLockReason::kVideoPlayback, "Playing video",
-          std::move(request));
-    }
-  }
-  return video_wake_lock_.get();
-}
-
 void MediaWebContentsObserver::LockAudio() {
   GetAudioWakeLock()->RequestWakeLock();
   has_audio_wake_lock_for_testing_ = true;
@@ -311,23 +328,6 @@ void MediaWebContentsObserver::CancelAudioLock() {
   has_audio_wake_lock_for_testing_ = false;
 }
 
-void MediaWebContentsObserver::LockVideo() {
-  DCHECK(!active_video_players_.empty());
-  GetVideoWakeLock()->RequestWakeLock();
-  has_video_wake_lock_for_testing_ = true;
-}
-
-void MediaWebContentsObserver::CancelVideoLock() {
-  GetVideoWakeLock()->CancelWakeLock();
-  has_video_wake_lock_for_testing_ = false;
-}
-
-void MediaWebContentsObserver::MaybeCancelVideoLock() {
-  // If there are no more video players, cancel the video wake lock.
-  if (active_video_players_.empty())
-    CancelVideoLock();
-}
-
 void MediaWebContentsObserver::OnMediaMutedStatusChanged(
     RenderFrameHost* render_frame_host,
     int delegate_id,
@@ -336,21 +336,29 @@ void MediaWebContentsObserver::OnMediaMutedStatusChanged(
   web_contents_impl()->MediaMutedStatusChanged(id, muted);
 }
 
+void MediaWebContentsObserver::OnMediaPositionStateChanged(
+    RenderFrameHost* render_frame_host,
+    int delegate_id,
+    const media_session::MediaPosition& position) {
+  const MediaPlayerId id(render_frame_host, delegate_id);
+  session_controllers_manager_.OnMediaPositionStateChanged(id, position);
+}
+
 void MediaWebContentsObserver::AddMediaPlayerEntry(
     const MediaPlayerId& id,
     ActiveMediaPlayerMap* player_map) {
-  (*player_map)[id.first].insert(id.second);
+  (*player_map)[id.render_frame_host].insert(id.delegate_id);
 }
 
 bool MediaWebContentsObserver::RemoveMediaPlayerEntry(
     const MediaPlayerId& id,
     ActiveMediaPlayerMap* player_map) {
-  auto it = player_map->find(id.first);
+  auto it = player_map->find(id.render_frame_host);
   if (it == player_map->end())
     return false;
 
   // Remove the player.
-  bool did_remove = it->second.erase(id.second) == 1;
+  bool did_remove = it->second.erase(id.delegate_id) == 1;
   if (!did_remove)
     return false;
 
@@ -378,5 +386,12 @@ void MediaWebContentsObserver::RemoveAllMediaPlayerEntries(
 WebContentsImpl* MediaWebContentsObserver::web_contents_impl() const {
   return static_cast<WebContentsImpl*>(web_contents());
 }
+
+#if defined(OS_ANDROID)
+void MediaWebContentsObserver::SuspendAllMediaPlayers() {
+  web_contents()->ForEachFrame(
+      base::BindRepeating(&SuspendAllMediaPlayersInRenderFrame));
+}
+#endif  // defined(OS_ANDROID)
 
 }  // namespace content

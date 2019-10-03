@@ -9,7 +9,6 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "build/build_config.h"
@@ -20,7 +19,7 @@
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "services/preferences/public/cpp/persistent_pref_store_client.h"
-#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/preferences/public/mojom/preferences.mojom.h"
 #include "services/preferences/tracked/pref_hash_filter.h"
 #include "services/preferences/tracked/tracked_persistent_pref_store_factory.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -93,7 +92,7 @@ PersistentPrefStore* ProfilePrefStoreManager::CreateProfilePrefStore(
     prefs::mojom::TrackedPreferenceValidationDelegatePtr validation_delegate) {
   if (!kPlatformSupportsPreferenceTracking) {
     return new JsonPrefStore(profile_path_.Append(chrome::kPreferencesFilename),
-                             io_task_runner, nullptr);
+                             nullptr, io_task_runner);
   }
   return CreateTrackedPersistentPrefStore(
       CreateTrackedPrefStoreConfiguration(
@@ -131,7 +130,6 @@ bool ProfilePrefStoreManager::InitializePrefsFromMasterPrefs(
   // won't have kicked in yet on the main thread.
   bool success = serializer.Serialize(*master_prefs);
 
-  UMA_HISTOGRAM_BOOLEAN("Settings.InitializedFromMasterPrefs", success);
   return success;
 }
 

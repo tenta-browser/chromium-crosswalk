@@ -10,12 +10,12 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
+#include "base/optional.h"
+#include "chromeos/dbus/cryptohome/rpc.pb.h"
 #include "chromeos/login/auth/extended_authenticator.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
-
-class AccountId;
 
 namespace chromeos {
 
@@ -23,10 +23,13 @@ class AuthStatusConsumer;
 class UserContext;
 
 // Implements ExtendedAuthenticator.
-class CHROMEOS_EXPORT ExtendedAuthenticatorImpl : public ExtendedAuthenticator {
+class COMPONENT_EXPORT(CHROMEOS_LOGIN_AUTH) ExtendedAuthenticatorImpl
+    : public ExtendedAuthenticator {
  public:
-  explicit ExtendedAuthenticatorImpl(NewAuthStatusConsumer* consumer);
-  explicit ExtendedAuthenticatorImpl(AuthStatusConsumer* consumer);
+  static scoped_refptr<ExtendedAuthenticatorImpl> Create(
+      NewAuthStatusConsumer* consumer);
+  static scoped_refptr<ExtendedAuthenticatorImpl> Create(
+      AuthStatusConsumer* consumer);
 
   // ExtendedAuthenticator:
   void SetConsumer(AuthStatusConsumer* consumer) override;
@@ -34,9 +37,6 @@ class CHROMEOS_EXPORT ExtendedAuthenticatorImpl : public ExtendedAuthenticator {
                            const ResultCallback& success_callback) override;
   void AuthenticateToCheck(const UserContext& context,
                            const base::Closure& success_callback) override;
-  void CreateMount(const AccountId& account_id,
-                   const std::vector<cryptohome::KeyDefinition>& keys,
-                   const ResultCallback& success_callback) override;
   void AddKey(const UserContext& context,
               const cryptohome::KeyDefinition& key,
               bool clobber_if_exists,
@@ -52,6 +52,8 @@ class CHROMEOS_EXPORT ExtendedAuthenticatorImpl : public ExtendedAuthenticator {
                             const ContextCallback& callback) override;
 
  private:
+  explicit ExtendedAuthenticatorImpl(NewAuthStatusConsumer* consumer);
+  explicit ExtendedAuthenticatorImpl(AuthStatusConsumer* consumer);
   ~ExtendedAuthenticatorImpl() override;
 
   // Callback for system salt getter.
@@ -78,9 +80,7 @@ class CHROMEOS_EXPORT ExtendedAuthenticatorImpl : public ExtendedAuthenticator {
   void OnMountComplete(const std::string& time_marker,
                        const UserContext& context,
                        const ResultCallback& success_callback,
-                       bool success,
-                       cryptohome::MountError return_code,
-                       const std::string& mount_hash);
+                       base::Optional<cryptohome::BaseReply> reply);
   void OnOperationComplete(const std::string& time_marker,
                            const UserContext& context,
                            const base::Closure& success_callback,

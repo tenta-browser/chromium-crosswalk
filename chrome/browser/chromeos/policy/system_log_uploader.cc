@@ -11,20 +11,28 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
+#include "base/files/scoped_file.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/syslog_logging.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/upload_job_impl.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service_factory.h"
+#include "chrome/browser/policy/policy_conversions.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "components/feedback/anonymizer_tool.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/user_manager/user_manager.h"
 #include "net/http/http_request_headers.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/zlib/google/zip.h"
 
 namespace policy {
 
@@ -39,6 +47,10 @@ constexpr char kSystemLogUploadUrlTail[] = "/upload";
 // The cutoff point (in bytes) after which log contents are ignored.
 const size_t kLogCutoffSize = 50 * 1024 * 1024;  // 50 MiB.
 
+// Pseudo-location of policy dump file. Policy is uploaded from memory,
+// there is no actual file on disk.
+constexpr char kPolicyDumpFileLocation[] = "/var/log/policy_dump.json";
+
 // The file names of the system logs to upload.
 // Note: do not add anything to this list without checking for PII in the file.
 const char* const kSystemLogFileNames[] = {
@@ -48,6 +60,44 @@ const char* const kSystemLogFileNames[] = {
     "/var/log/messages",      "/var/log/messages.1",
     "/var/log/net.log",       "/var/log/net.1.log",
     "/var/log/ui/ui.LATEST",  "/var/log/update_engine.log"};
+
+std::string ZipFiles(
+    std::unique_ptr<SystemLogUploader::SystemLogs> system_logs) {
+  base::ScopedTempDir temp_dir;
+  base::FilePath zip_file;
+  std::string compressed_logs;
+  auto zipped_logs = std::make_unique<SystemLogUploader::SystemLogs>();
+
+  if (!temp_dir.CreateUniqueTempDir())
+    return compressed_logs;
+
+  for (const auto& syslog_entry : *system_logs) {
+    base::FilePath file_name = base::FilePath(syslog_entry.first).BaseName();
+    base::FilePath file_path(temp_dir.GetPath().Append(file_name));
+    if (!base::WriteFile(file_path, syslog_entry.second.c_str(),
+                         syslog_entry.second.size())) {
+      PLOG(ERROR) << "Can't write log file: " << file_path.value();
+      continue;
+    }
+  }
+  system_logs.reset();
+
+  if (!base::CreateTemporaryFile(&zip_file)) {
+    PLOG(ERROR) << "Failed to create file to store zipped logs";
+    return compressed_logs;
+  }
+  if (!zip::Zip(/*src_dir=*/temp_dir.GetPath(), /*dest_file=*/zip_file,
+                /*include_hidden_files=*/false)) {
+    SYSLOG(ERROR) << "Failed to zip system logs";
+    return compressed_logs;
+  }
+  if (!base::ReadFileToString(zip_file, &compressed_logs)) {
+    PLOG(ERROR) << "Failed to read zipped system logs";
+    return compressed_logs;
+  }
+  base::DeleteFile(zip_file, false);
+  return compressed_logs;
+}
 
 std::string ReadAndAnonymizeLogFile(feedback::AnonymizerTool* anonymizer,
                                     const base::FilePath& file_path) {
@@ -71,7 +121,8 @@ std::string ReadAndAnonymizeLogFile(feedback::AnonymizerTool* anonymizer,
 // as pairs (file name, data) and returns. Called on blocking thread.
 std::unique_ptr<SystemLogUploader::SystemLogs> ReadFiles() {
   auto system_logs = std::make_unique<SystemLogUploader::SystemLogs>();
-  feedback::AnonymizerTool anonymizer;
+  feedback::AnonymizerTool anonymizer(
+      extension_misc::kBuiltInFirstPartyExtensionIds);
   for (const char* file_path : kSystemLogFileNames) {
     if (!base::PathExists(base::FilePath(file_path)))
       continue;
@@ -91,11 +142,15 @@ class SystemLogDelegate : public SystemLogUploader::Delegate {
   ~SystemLogDelegate() override;
 
   // SystemLogUploader::Delegate:
-  void LoadSystemLogs(const LogUploadCallback& upload_callback) override;
+  std::string GetPolicyAsJSON() override;
+  void LoadSystemLogs(LogUploadCallback upload_callback) override;
 
   std::unique_ptr<UploadJob> CreateUploadJob(
       const GURL& upload_url,
       UploadJob::Delegate* delegate) override;
+
+  void ZipSystemLogs(std::unique_ptr<SystemLogUploader::SystemLogs> system_logs,
+                     ZippedLogUploadCallback upload_callback) override;
 
  private:
   // TaskRunner used for scheduling upload the upload task.
@@ -110,13 +165,25 @@ SystemLogDelegate::SystemLogDelegate(
 
 SystemLogDelegate::~SystemLogDelegate() {}
 
-void SystemLogDelegate::LoadSystemLogs(
-    const LogUploadCallback& upload_callback) {
+std::string SystemLogDelegate::GetPolicyAsJSON() {
+  bool include_user_policies = false;
+  if (user_manager::UserManager::IsInitialized()) {
+    if (user_manager::UserManager::Get()->GetPrimaryUser()) {
+      include_user_policies =
+          user_manager::UserManager::Get()->GetPrimaryUser()->IsAffiliated();
+    }
+  }
+  return policy::GetAllPolicyValuesAsJSON(
+      ProfileManager::GetActiveUserProfile(), include_user_policies,
+      true /* with_device_data */, true /* is_pretty_print */);
+}
+
+void SystemLogDelegate::LoadSystemLogs(LogUploadCallback upload_callback) {
   // Run ReadFiles() in the thread that interacts with the file system and
   // return system logs to |upload_callback| on the current thread.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&ReadFiles), upload_callback);
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&ReadFiles), std::move(upload_callback));
 }
 
 std::unique_ptr<UploadJob> SystemLogDelegate::CreateUploadJob(
@@ -125,17 +192,46 @@ std::unique_ptr<UploadJob> SystemLogDelegate::CreateUploadJob(
   chromeos::DeviceOAuth2TokenService* device_oauth2_token_service =
       chromeos::DeviceOAuth2TokenServiceFactory::Get();
 
-  scoped_refptr<net::URLRequestContextGetter> system_request_context =
-      g_browser_process->system_request_context();
   std::string robot_account_id =
       device_oauth2_token_service->GetRobotAccountId();
 
   SYSLOG(INFO) << "Creating upload job for system log";
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("policy_system_logs", R"(
+        semantics {
+          sender: "Chrome OS system log uploader"
+          description:
+              "Admins can ask that their devices regularly upload their system "
+              "logs."
+          trigger: "After reboot and every 12 hours."
+          data: "Non-user specific, anonymized system logs from /var/log/."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled in settings."
+          chrome_policy {
+            LogUploadEnabled {
+                LogUploadEnabled: false
+            }
+          }
+        }
+      )");
   return std::make_unique<UploadJobImpl>(
-      upload_url, robot_account_id, device_oauth2_token_service,
-      system_request_context, delegate,
+      upload_url, robot_account_id,
+      device_oauth2_token_service->GetAccessTokenManager(),
+      g_browser_process->shared_url_loader_factory(), delegate,
       std::make_unique<UploadJobImpl::RandomMimeBoundaryGenerator>(),
-      task_runner_);
+      traffic_annotation, task_runner_);
+}
+
+void SystemLogDelegate::ZipSystemLogs(
+    std::unique_ptr<SystemLogUploader::SystemLogs> system_logs,
+    ZippedLogUploadCallback upload_callback) {
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&ZipFiles, std::move(system_logs)),
+      std::move(upload_callback));
 }
 
 // Returns the system log upload frequency.
@@ -182,6 +278,19 @@ const char* const SystemLogUploader::kContentTypePlainText = "text/plain";
 
 // Template string constant for populating the name field.
 const char* const SystemLogUploader::kNameFieldTemplate = "file%d";
+
+// String constant signalling that the data segment contains zipped log files.
+const char* const SystemLogUploader::kFileTypeZippedLogFile = "zipped_log_file";
+
+// String constant for zipped logs name.
+const char* const SystemLogUploader::kZippedLogsName = "logs";
+
+// Name used for file containing zip archive of the logs.
+const char* const SystemLogUploader::kZippedLogsFileName = "logs.zip";
+
+// String constant signalling that the segment contains a binary file.
+const char* const SystemLogUploader::kContentTypeOctetStream =
+    "application/octet-stream";
 
 SystemLogUploader::SystemLogUploader(
     std::unique_ptr<Delegate> syslog_delegate,
@@ -294,7 +403,7 @@ void SystemLogUploader::UploadSystemLogs(
   for (const auto& syslog_entry : *system_logs) {
     std::map<std::string, std::string> header_fields;
     std::unique_ptr<std::string> data =
-        base::MakeUnique<std::string>(syslog_entry.second);
+        std::make_unique<std::string>(syslog_entry.second);
     header_fields.insert(std::make_pair(kFileTypeHeaderName, kFileTypeLogFile));
     header_fields.insert(std::make_pair(net::HttpRequestHeaders::kContentType,
                                         kContentTypePlainText));
@@ -306,21 +415,69 @@ void SystemLogUploader::UploadSystemLogs(
   upload_job_->Start();
 }
 
+void SystemLogUploader::UploadZippedSystemLogs(std::string zipped_system_logs) {
+  // Must be called on the main thread.
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(!upload_job_);
+
+  if (zipped_system_logs.empty()) {
+    SYSLOG(ERROR) << "No zipped log to upload";
+    return;
+  }
+
+  SYSLOG(INFO) << "Uploading zipped system logs.";
+
+  GURL upload_url(GetUploadUrl());
+  DCHECK(upload_url.is_valid());
+  upload_job_ = syslog_delegate_->CreateUploadJob(upload_url, this);
+
+  // Start a system log upload.
+  std::map<std::string, std::string> header_fields;
+  std::unique_ptr<std::string> data =
+      std::make_unique<std::string>(zipped_system_logs);
+  header_fields.insert(
+      std::make_pair(kFileTypeHeaderName, kFileTypeZippedLogFile));
+  header_fields.insert(std::make_pair(net::HttpRequestHeaders::kContentType,
+                                      kContentTypeOctetStream));
+  upload_job_->AddDataSegment(kZippedLogsName, kZippedLogsFileName,
+                              header_fields, std::move(data));
+  upload_job_->Start();
+}
+
 void SystemLogUploader::StartLogUpload() {
   // Must be called on the main thread.
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (upload_enabled_) {
-    SYSLOG(INFO) << "Starting system log upload.";
+    SYSLOG(INFO) << "Reading system logs for upload.";
     log_upload_in_progress_ = true;
-    syslog_delegate_->LoadSystemLogs(base::Bind(
-        &SystemLogUploader::UploadSystemLogs, weak_factory_.GetWeakPtr()));
+    syslog_delegate_->LoadSystemLogs(base::BindOnce(
+        &SystemLogUploader::OnSystemLogsLoaded, weak_factory_.GetWeakPtr()));
   } else {
     // If upload is disabled, schedule the next attempt after 12h.
     SYSLOG(INFO) << "System log upload is disabled, rescheduling.";
     retry_count_ = 0;
     last_upload_attempt_ = base::Time::NowFromSystemTime();
     ScheduleNextSystemLogUpload(upload_frequency_);
+  }
+}
+
+void SystemLogUploader::OnSystemLogsLoaded(
+    std::unique_ptr<SystemLogs> system_logs) {
+  // Must be called on the main thread.
+  DCHECK(thread_checker_.CalledOnValidThread());
+  system_logs->push_back(std::make_pair(kPolicyDumpFileLocation,
+                                        syslog_delegate_->GetPolicyAsJSON()));
+
+  if (base::FeatureList::IsEnabled(features::kUploadZippedSystemLogs)) {
+    SYSLOG(INFO) << "Starting zipped system log upload.";
+    syslog_delegate_->ZipSystemLogs(
+        std::move(system_logs),
+        base::BindOnce(&SystemLogUploader::UploadZippedSystemLogs,
+                       weak_factory_.GetWeakPtr()));
+  } else {
+    SYSLOG(INFO) << "Starting system log upload.";
+    UploadSystemLogs(std::move(system_logs));
   }
 }
 

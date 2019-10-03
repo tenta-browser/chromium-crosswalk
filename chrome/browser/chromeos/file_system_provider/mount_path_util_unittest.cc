@@ -11,6 +11,7 @@
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_extension_provider.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_provided_file_system.h"
+#include "chrome/browser/chromeos/file_system_provider/icon_set.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_interface.h"
 #include "chrome/browser/chromeos/file_system_provider/service.h"
 #include "chrome/browser/chromeos/file_system_provider/service_factory.h"
@@ -54,8 +55,7 @@ storage::FileSystemURL CreateFileSystemURL(
   DCHECK(file_path.IsAbsolute());
   base::FilePath relative_path(file_path.value().substr(1));
   return mount_points->CreateCrackedFileSystemURL(
-      GURL(origin),
-      storage::kFileSystemTypeExternal,
+      url::Origin::Create(GURL(origin)), storage::kFileSystemTypeExternal,
       base::FilePath(mount_path.BaseName().Append(relative_path)));
 }
 
@@ -77,8 +77,8 @@ class FileSystemProviderMountPathUtilTest : public testing::Test {
     user_manager_->AddUser(
         AccountId::FromUserEmail(profile_->GetProfileUserName()));
     file_system_provider_service_ = Service::Get(profile_);
-    file_system_provider_service_->SetExtensionProviderForTesting(
-        std::make_unique<FakeExtensionProvider>());
+    file_system_provider_service_->RegisterProvider(
+        FakeExtensionProvider::Create(kExtensionId));
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -178,7 +178,8 @@ TEST_F(FileSystemProviderMountPathUtilTest, Parser_WrongUrl) {
   const ProvidedFileSystemInfo file_system_info(
       kProviderId, MountOptions(kFileSystemId, kDisplayName),
       GetMountPath(profile_, kProviderId, kFileSystemId),
-      false /* configurable */, true /* watchable */, extensions::SOURCE_FILE);
+      false /* configurable */, true /* watchable */, extensions::SOURCE_FILE,
+      IconSet());
 
   const base::FilePath kFilePath = base::FilePath(FILE_PATH_LITERAL("/hello"));
   const storage::FileSystemURL url =
@@ -210,15 +211,13 @@ TEST_F(FileSystemProviderMountPathUtilTest, Parser_IsolatedURL) {
   // Create an isolated URL for the original one.
   storage::IsolatedContext* const isolated_context =
       storage::IsolatedContext::GetInstance();
-  const std::string isolated_file_system_id =
+  const storage::IsolatedContext::ScopedFSHandle isolated_file_system =
       isolated_context->RegisterFileSystemForPath(
-          storage::kFileSystemTypeProvided,
-          url.filesystem_id(),
-          url.path(),
+          storage::kFileSystemTypeProvided, url.filesystem_id(), url.path(),
           NULL);
 
   const base::FilePath isolated_virtual_path =
-      isolated_context->CreateVirtualRootPath(isolated_file_system_id)
+      isolated_context->CreateVirtualRootPath(isolated_file_system.id())
           .Append(kFilePath.BaseName().value());
 
   const storage::FileSystemURL isolated_url =

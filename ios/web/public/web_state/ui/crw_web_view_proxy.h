@@ -20,18 +20,25 @@
 // The web view's frame rectangle.
 @property(readonly, assign) CGRect frame;
 
-// Adds a top padding to content view. Implementations of this protocol can
+// Adds an offset to the scrollable content's frame.
+@property(nonatomic, assign) CGPoint contentOffset;
+
+// Adds an inset to the content view. Implementations of this protocol can
 // implement this method using UIScrollView.contentInset (where applicable) or
 // via resizing a subview's frame. Changing this property may impact performance
 // if implementation resizes its subview. Can be used as a workaround for
 // WKWebView bug, where UIScrollView.content inset does not work
 // (rdar://23584409). TODO(crbug.com/569349) remove this property once radar is
 // fixed.
-@property(nonatomic, assign) CGFloat topContentPadding;
+@property(nonatomic, assign) UIEdgeInsets contentInset;
 
 // Gives the embedder access to the web view's UIScrollView in a limited and
 // controlled manner.
 @property(nonatomic, readonly) CRWWebViewScrollViewProxy* scrollViewProxy;
+
+// A Boolean value indicating whether horizontal swipe gestures will trigger
+// back-forward list navigations.
+@property(nonatomic) BOOL allowsBackForwardNavigationGestures;
 
 // Returns the webview's gesture recognizers.
 @property(nonatomic, readonly) NSArray* gestureRecognizers;
@@ -43,9 +50,9 @@
 - (void)removeGestureRecognizer:(UIGestureRecognizer*)gestureRecognizer;
 
 // Whether or not the content view should use the content inset when setting
-// |topContentPadding|. Implementations may or may not respect the setting
-// of this property.
-@property(nonatomic, assign) BOOL shouldUseInsetForTopPadding;
+// |contentInset|. Implementations may or may not respect the setting of this
+// property.
+@property(nonatomic, assign) BOOL shouldUseViewContentInset;
 
 // Register the given insets for the given caller.
 - (void)registerInsets:(UIEdgeInsets)insets forCaller:(id)caller;
@@ -57,13 +64,11 @@
 - (void)addSubview:(UIView*)view;
 
 // Returns YES if it makes sense to search for text right now.
+// TODO(crbug.com/949651): Remove once JSFindInPageManager is removed.
 - (BOOL)hasSearchableTextContent;
 
 // Returns the currently visible keyboard accessory, or nil.
 - (UIView*)keyboardAccessory;
-
-// Returns the currently visible keyboard input assistant item, or nil.
-- (UITextInputAssistantItem*)inputAssistantItem;
 
 // Wrapper around the becomeFirstResponder method of the webview.
 - (BOOL)becomeFirstResponder;

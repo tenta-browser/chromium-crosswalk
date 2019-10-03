@@ -3,17 +3,21 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/test/base/ui_test_utils.h"
+#include "services/device/public/cpp/test/scoped_geolocation_overrider.h"
 
-class GeolocationApiTest : public ExtensionApiTest {
+class GeolocationApiTest : public extensions::ExtensionApiTest {
  public:
   GeolocationApiTest() {
   }
 
   // InProcessBrowserTest
   void SetUpOnMainThread() override {
-    ui_test_utils::OverrideGeolocation(0, 0);
+    geolocation_overrider_ =
+        std::make_unique<device::ScopedGeolocationOverrider>(0, 0);
   }
+
+ private:
+  std::unique_ptr<device::ScopedGeolocationOverrider> geolocation_overrider_;
 };
 
 // http://crbug.com/68287

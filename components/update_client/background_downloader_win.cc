@@ -4,8 +4,6 @@
 
 #include "components/update_client/background_downloader_win.h"
 
-#include <atlbase.h>
-#include <atlcom.h>
 #include <objbase.h>
 #include <winerror.h>
 
@@ -19,7 +17,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -27,8 +24,9 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "base/win/atl.h"
 #include "base/win/scoped_co_mem.h"
 #include "components/update_client/task_traits.h"
 #include "components/update_client/update_client_errors.h"
@@ -142,7 +140,7 @@ const int kMaxQueuedJobs = 10;
 
 // Retrieves the singleton instance of GIT for this process.
 HRESULT GetGit(ComPtr<IGlobalInterfaceTable>* git) {
-  return ::CoCreateInstance(CLSID_StdGlobalInterfaceTable, NULL,
+  return ::CoCreateInstance(CLSID_StdGlobalInterfaceTable, nullptr,
                             CLSCTX_INPROC_SERVER,
                             IID_PPV_ARGS(git->GetAddressOf()));
 }
@@ -191,7 +189,7 @@ HRESULT GetFilesInJob(const ComPtr<IBackgroundCopyJob>& job,
 
   for (ULONG i = 0; i != num_files; ++i) {
     ComPtr<IBackgroundCopyFile> file;
-    if (enum_files->Next(1, file.GetAddressOf(), NULL) == S_OK && file.Get())
+    if (enum_files->Next(1, file.GetAddressOf(), nullptr) == S_OK && file.Get())
       files->push_back(file);
   }
 
@@ -317,7 +315,7 @@ HRESULT FindBitsJobIf(Predicate pred,
   // the job description matches the component updater jobs.
   for (ULONG i = 0; i != job_count; ++i) {
     ComPtr<IBackgroundCopyJob> current_job;
-    if (enum_jobs->Next(1, current_job.GetAddressOf(), NULL) == S_OK &&
+    if (enum_jobs->Next(1, current_job.GetAddressOf(), nullptr) == S_OK &&
         pred(current_job)) {
       base::string16 job_name;
       hr = GetJobDisplayName(current_job, &job_name);
@@ -385,7 +383,7 @@ void CleanupJob(const ComPtr<IBackgroundCopyJob>& job) {
   std::vector<base::FilePath> paths;
   for (const auto& file : files) {
     base::string16 local_name;
-    HRESULT hr = GetJobFileProperties(file, &local_name, NULL, NULL);
+    HRESULT hr = GetJobFileProperties(file, &local_name, nullptr, nullptr);
     if (SUCCEEDED(hr))
       paths.push_back(base::FilePath(local_name));
   }
@@ -443,6 +441,8 @@ void BackgroundDownloader::BeginDownload(const GURL& url) {
     EndDownload(hr);
     return;
   }
+
+  VLOG(1) << "Starting BITS download for: " << url.spec();
 
   ResetInterfacePointers();
   main_task_runner()->PostTask(FROM_HERE,
@@ -582,8 +582,6 @@ void BackgroundDownloader::EndDownload(HRESULT error) {
   result.error = error_to_report;
   if (!result.error)
     result.response = response_;
-  result.downloaded_bytes = downloaded_bytes;
-  result.total_bytes = total_bytes;
   main_task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&BackgroundDownloader::OnDownloadComplete,
                                 base::Unretained(this), is_handled, result,
@@ -664,19 +662,9 @@ bool BackgroundDownloader::OnStateTransferring() {
   // data and it is making progress.
   job_stuck_begin_time_ = base::TimeTicks::Now();
 
-  int64_t downloaded_bytes = -1;
-  int64_t total_bytes = -1;
-  HRESULT hr = GetJobByteCount(job_, &downloaded_bytes, &total_bytes);
-  if (FAILED(hr))
-    return false;
-
-  Result result;
-  result.downloaded_bytes = downloaded_bytes;
-  result.total_bytes = total_bytes;
-
   main_task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&BackgroundDownloader::OnDownloadProgress,
-                                base::Unretained(this), result));
+                                base::Unretained(this)));
   return false;
 }
 
@@ -720,9 +708,11 @@ HRESULT BackgroundDownloader::QueueBitsJob(const GURL& url,
 HRESULT BackgroundDownloader::CreateOrOpenJob(const GURL& url,
                                               ComPtr<IBackgroundCopyJob>* job) {
   std::vector<ComPtr<IBackgroundCopyJob>> jobs;
-  HRESULT hr =
-      FindBitsJobIf(std::bind2nd(std::ptr_fun(JobFileUrlEqualPredicate), url),
-                    bits_manager_, &jobs);
+  HRESULT hr = FindBitsJobIf(
+      [&url](ComPtr<IBackgroundCopyJob> job) {
+        return JobFileUrlEqualPredicate(job, url);
+      },
+      bits_manager_, &jobs);
   if (SUCCEEDED(hr) && !jobs.empty()) {
     *job = jobs.front();
     return S_FALSE;
@@ -803,7 +793,7 @@ HRESULT BackgroundDownloader::CompleteJob() {
 
   base::string16 local_name;
   BG_FILE_PROGRESS progress = {0};
-  hr = GetJobFileProperties(files.front(), &local_name, NULL, &progress);
+  hr = GetJobFileProperties(files.front(), &local_name, nullptr, &progress);
   if (FAILED(hr))
     return hr;
 
@@ -900,9 +890,11 @@ void BackgroundDownloader::CleanupStaleJobs() {
   last_sweep = current_time;
 
   std::vector<ComPtr<IBackgroundCopyJob>> jobs;
-  FindBitsJobIf(std::bind2nd(std::ptr_fun(JobCreationOlderThanDaysPredicate),
-                             kPurgeStaleJobsAfterDays),
-                bits_manager_, &jobs);
+  FindBitsJobIf(
+      [](ComPtr<IBackgroundCopyJob> job) {
+        return JobCreationOlderThanDaysPredicate(job, kPurgeStaleJobsAfterDays);
+      },
+      bits_manager_, &jobs);
 
   for (const auto& job : jobs)
     CleanupJob(job);

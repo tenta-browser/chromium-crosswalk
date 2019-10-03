@@ -6,20 +6,21 @@
 
 #include <stddef.h>
 #include <utility>
+
+#include "chrome/browser/android/android_theme_resources.h"
+#include "chrome/browser/android/feature_utilities.h"
 #include "chrome/browser/content_settings/chrome_content_settings_utils.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/infobars/core/infobar.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
-
 
 // static
 void PopupBlockedInfoBarDelegate::Create(content::WebContents* web_contents,
@@ -59,11 +60,11 @@ PopupBlockedInfoBarDelegate::~PopupBlockedInfoBarDelegate() {
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 PopupBlockedInfoBarDelegate::GetIdentifier() const {
-  return POPUP_BLOCKED_INFOBAR_DELEGATE;
+  return POPUP_BLOCKED_INFOBAR_DELEGATE_MOBILE;
 }
 
 int PopupBlockedInfoBarDelegate::GetIconId() const {
-  return IDR_BLOCKED_POPUPS;
+  return IDR_ANDROID_INFOBAR_BLOCKED_POPUPS;
 }
 
 PopupBlockedInfoBarDelegate*
@@ -92,12 +93,25 @@ int PopupBlockedInfoBarDelegate::GetButtons() const {
   if (!can_show_popups_)
     return 0;
 
-  return BUTTON_OK;
+  int buttons = BUTTON_OK;
+  if (chrome::android::IsNoTouchModeEnabled())
+    buttons |= BUTTON_CANCEL;
+
+  return buttons;
 }
 
 base::string16 PopupBlockedInfoBarDelegate::GetButtonLabel(
     InfoBarButton button) const {
-  return l10n_util::GetStringUTF16(IDS_POPUPS_BLOCKED_INFOBAR_BUTTON_SHOW);
+  switch (button) {
+    case BUTTON_OK:
+      return l10n_util::GetStringUTF16(IDS_POPUPS_BLOCKED_INFOBAR_BUTTON_SHOW);
+    case BUTTON_CANCEL:
+      return l10n_util::GetStringUTF16(IDS_PERMISSION_DENY);
+    default:
+      NOTREACHED();
+      break;
+  }
+  return base::string16();
 }
 
 bool PopupBlockedInfoBarDelegate::Accept() {

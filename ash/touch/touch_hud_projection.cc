@@ -5,15 +5,12 @@
 #include "ash/touch/touch_hud_projection.h"
 
 #include "ash/root_window_controller.h"
-#include "ash/shell.h"
-#include "ash/touch_hud/touch_hud_renderer.h"
-#include "ui/events/event.h"
-#include "ui/views/widget/widget.h"
+#include "ash/touch/touch_hud_renderer.h"
 
 namespace ash {
 
 TouchHudProjection::TouchHudProjection(aura::Window* initial_root)
-    : TouchObserverHUD(initial_root, "TouchHud"),
+    : TouchObserverHud(initial_root, "TouchHud"),
       touch_hud_renderer_(new TouchHudRenderer(widget())) {}
 
 TouchHudProjection::~TouchHudProjection() = default;
@@ -33,7 +30,7 @@ void TouchHudProjection::SetHudForRootWindowController(
 
 void TouchHudProjection::UnsetHudForRootWindowController(
     RootWindowController* controller) {
-  controller->set_touch_hud_projection(NULL);
+  controller->set_touch_hud_projection(nullptr);
 }
 
 }  // namespace ash

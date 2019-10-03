@@ -5,11 +5,13 @@
 #include "remoting/protocol/client_video_dispatcher.h"
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "remoting/base/buffered_socket_writer.h"
 #include "remoting/base/constants.h"
 #include "remoting/proto/video.pb.h"
@@ -32,7 +34,7 @@ class ClientVideoDispatcherTest : public testing::Test,
 
   // VideoStub interface.
   void ProcessVideoPacket(std::unique_ptr<VideoPacket> video_packet,
-                          const base::Closure& done) override;
+                          base::OnceClosure done) override;
 
   // ChannelDispatcherBase::EventHandler interface.
   void OnChannelInitialized(ChannelDispatcherBase* channel_dispatcher) override;
@@ -44,7 +46,7 @@ class ClientVideoDispatcherTest : public testing::Test,
   void OnMessageReceived(std::unique_ptr<CompoundBuffer> buffer);
   void OnReadError(int error);
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   // Set to true in OnChannelInitialized().
   bool initialized_ = false;
@@ -61,7 +63,7 @@ class ClientVideoDispatcherTest : public testing::Test,
   BufferedSocketWriter writer_;
 
   std::vector<std::unique_ptr<VideoPacket>> video_packets_;
-  std::vector<base::Closure> packet_done_callbacks_;
+  std::vector<base::OnceClosure> packet_done_callbacks_;
 
   std::vector<std::unique_ptr<VideoAck>> ack_messages_;
 };
@@ -89,9 +91,9 @@ ClientVideoDispatcherTest::ClientVideoDispatcherTest()
 
 void ClientVideoDispatcherTest::ProcessVideoPacket(
     std::unique_ptr<VideoPacket> video_packet,
-    const base::Closure& done) {
+    base::OnceClosure done) {
   video_packets_.push_back(std::move(video_packet));
-  packet_done_callbacks_.push_back(done);
+  packet_done_callbacks_.push_back(std::move(done));
 }
 
 void ClientVideoDispatcherTest::OnChannelInitialized(
@@ -128,11 +130,12 @@ TEST_F(ClientVideoDispatcherTest, WithoutAcks) {
   packet.set_data(std::string());
 
   // Send a VideoPacket and verify that the client receives it.
-  writer_.Write(SerializeAndFrameMessage(packet), base::Closure());
+  writer_.Write(SerializeAndFrameMessage(packet), base::Closure(),
+                TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, video_packets_.size());
 
-  packet_done_callbacks_.front().Run();
+  std::move(packet_done_callbacks_.front()).Run();
   base::RunLoop().RunUntilIdle();
 
   // Ack should never be sent for the packet without frame_id.
@@ -148,7 +151,8 @@ TEST_F(ClientVideoDispatcherTest, WithAcks) {
   packet.set_frame_id(kTestFrameId);
 
   // Send a VideoPacket and verify that the client receives it.
-  writer_.Write(SerializeAndFrameMessage(packet), base::Closure());
+  writer_.Write(SerializeAndFrameMessage(packet), base::Closure(),
+                TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, video_packets_.size());
 
@@ -157,7 +161,7 @@ TEST_F(ClientVideoDispatcherTest, WithAcks) {
   base::RunLoop().RunUntilIdle();
 
   // Fake completion of video packet decoding, to trigger the Ack.
-  packet_done_callbacks_.front().Run();
+  std::move(packet_done_callbacks_.front()).Run();
   base::RunLoop().RunUntilIdle();
 
   // Verify that the Ack message has been received.
@@ -184,7 +188,8 @@ TEST_F(ClientVideoDispatcherTest, VideoLayout) {
       .WillOnce(testing::SaveArg<0>(&layout));
 
   // Send a VideoPacket and verify that the client receives it.
-  writer_.Write(SerializeAndFrameMessage(packet), base::Closure());
+  writer_.Write(SerializeAndFrameMessage(packet), base::Closure(),
+                TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
 
   ASSERT_EQ(1, layout.video_track_size());
@@ -205,19 +210,21 @@ TEST_F(ClientVideoDispatcherTest, AcksOrder) {
   packet.set_frame_id(kTestFrameId);
 
   // Send two VideoPackets.
-  writer_.Write(SerializeAndFrameMessage(packet), base::Closure());
+  writer_.Write(SerializeAndFrameMessage(packet), base::Closure(),
+                TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
 
   packet.set_frame_id(kTestFrameId + 1);
-  writer_.Write(SerializeAndFrameMessage(packet), base::Closure());
+  writer_.Write(SerializeAndFrameMessage(packet), base::Closure(),
+                TRAFFIC_ANNOTATION_FOR_TESTS);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(2U, video_packets_.size());
   EXPECT_TRUE(ack_messages_.empty());
 
   // Call completion callbacks in revers order.
-  packet_done_callbacks_[1].Run();
-  packet_done_callbacks_[0].Run();
+  std::move(packet_done_callbacks_[1]).Run();
+  std::move(packet_done_callbacks_[0]).Run();
 
   base::RunLoop().RunUntilIdle();
 

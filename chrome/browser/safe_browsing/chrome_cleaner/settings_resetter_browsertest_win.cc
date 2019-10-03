@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
@@ -51,7 +52,7 @@ Profile* CreateProfile() {
   profile_manager->CreateProfileAsync(
       profile_manager->GenerateNextProfileDirectoryPath(),
       base::Bind(&CreateProfileCallback, &profile, run_loop.QuitClosure()),
-      base::string16(), std::string(), std::string());
+      base::string16(), std::string());
   run_loop.Run();
   return profile;
 }
@@ -97,7 +98,7 @@ class SettingsResetterTestDelegate
 
   void FetchDefaultSettings(
       DefaultSettingsFetcher::SettingsCallback callback) override {
-    callback.Run(base::MakeUnique<BrandcodedDefaultSettings>());
+    callback.Run(std::make_unique<BrandcodedDefaultSettings>());
   }
 
   // Returns a MockProfileResetter that requires Reset() be called.
@@ -105,7 +106,7 @@ class SettingsResetterTestDelegate
       Profile* profile) override {
     ++(*num_resets_);
     auto mock_profile_resetter =
-        base::MakeUnique<StrictMock<MockProfileResetter>>(profile);
+        std::make_unique<StrictMock<MockProfileResetter>>(profile);
     EXPECT_CALL(*mock_profile_resetter, MockReset(_, _, _));
     return std::move(mock_profile_resetter);
   }
@@ -184,7 +185,7 @@ IN_PROC_BROWSER_TEST_P(ChromeCleanerResetTaggedProfilesTest, Run) {
   profile3->GetPrefs()->SetBoolean(prefs::kChromeCleanerResetPending, true);
 
   int num_resets = 0;
-  auto delegate = base::MakeUnique<SettingsResetterTestDelegate>(&num_resets);
+  auto delegate = std::make_unique<SettingsResetterTestDelegate>(&num_resets);
 
   PostCleanupSettingsResetter resetter;
   base::RunLoop run_loop_for_reset;
@@ -202,12 +203,13 @@ IN_PROC_BROWSER_TEST_P(ChromeCleanerResetTaggedProfilesTest, Run) {
   EXPECT_EQ(!reset_expected, ProfileIsTagged(profile3));
 }
 
-INSTANTIATE_TEST_CASE_P(Default,
-                        ChromeCleanerResetTaggedProfilesTest,
-                        testing::Values(CleanupCompletionState::kNotAvailable,
-                                        CleanupCompletionState::kNotCompleted,
-                                        CleanupCompletionState::kCompleted,
-                                        CleanupCompletionState::kInvalidValue));
+INSTANTIATE_TEST_SUITE_P(
+    Default,
+    ChromeCleanerResetTaggedProfilesTest,
+    testing::Values(CleanupCompletionState::kNotAvailable,
+                    CleanupCompletionState::kNotCompleted,
+                    CleanupCompletionState::kCompleted,
+                    CleanupCompletionState::kInvalidValue));
 
 }  // namespace
 }  // namespace safe_browsing

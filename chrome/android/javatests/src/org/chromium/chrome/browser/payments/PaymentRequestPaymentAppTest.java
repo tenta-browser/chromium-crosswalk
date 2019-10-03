@@ -12,31 +12,33 @@ import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.NO_INS
 
 import android.support.test.filters.MediumTest;
 
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.payments.PaymentRequestTestCommon.TestPay;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.payments.PaymentRequestTestRule.TestPay;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * A payment integration test for a merchant that requests payment via Bob Pay.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestPaymentAppTest {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_bobpay_test.html");
@@ -45,11 +47,10 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoSupportedPaymentMethods()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testNoSupportedPaymentMethods() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"show() rejected", "The payment method", "not supported"});
+                new String[] {"show() rejected", "Payment method not supported"});
     }
 
     /**
@@ -59,12 +60,11 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoInstrumentsInFastBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testNoInstrumentsInFastBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(NO_INSTRUMENTS, IMMEDIATE_RESPONSE);
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"show() rejected", "The payment method", "not supported"});
+                new String[] {"show() rejected", "Payment method not supported"});
     }
 
     /**
@@ -74,12 +74,11 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoInstrumentsInSlowBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testNoInstrumentsInSlowBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(NO_INSTRUMENTS, DELAYED_RESPONSE);
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"show() rejected", "The payment method", "not supported"});
+                new String[] {"show() rejected", "Payment method not supported"});
     }
 
     /**
@@ -90,19 +89,19 @@ public class PaymentRequestPaymentAppTest {
     @MediumTest
     @Feature({"Payments"})
     public void testPaymentWithInstrumentsAppResponseAfterDismissShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         final TestPay app = new TestPay("https://bobpay.com", HAVE_INSTRUMENTS, IMMEDIATE_RESPONSE);
         PaymentAppFactory.getInstance().addAdditionalFactory(
-                (webContents, methodNames, callback) -> {
+                (webContents, methodNames, mayCrawlUnused, callback) -> {
                     callback.onPaymentAppCreated(app);
                     callback.onAllPaymentAppsCreated();
                 });
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        ThreadUtils.runOnUiThreadBlocking(() -> app.respond());
+        TestThreadUtils.runOnUiThreadBlocking(() -> app.respond());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"show() rejected", "Request cancelled"});
+                new String[] {"show() rejected", "User closed the Payment Request UI."});
     }
 
     /**
@@ -110,19 +109,20 @@ public class PaymentRequestPaymentAppTest {
      */
     @Test
     @MediumTest
+    @FlakyTest(message = "https://crbug.com/769851")
     @Feature({"Payments"})
     public void testPaymentAppNoInstrumentsResponseAfterDismissShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         final TestPay app = new TestPay("https://bobpay.com", NO_INSTRUMENTS, IMMEDIATE_RESPONSE);
         PaymentAppFactory.getInstance().addAdditionalFactory(
-                (webContents, methodNames, callback) -> {
+                (webContents, methodNames, mayCrawlUnused, callback) -> {
                     callback.onPaymentAppCreated(app);
                     callback.onAllPaymentAppsCreated();
                 });
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
-        ThreadUtils.runOnUiThreadBlocking(() -> app.respond());
+        TestThreadUtils.runOnUiThreadBlocking(() -> app.respond());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"show() rejected", "The payment method", "not supported"});
+                new String[] {"show() rejected", "Payment method not supported"});
     }
 
     /**
@@ -132,8 +132,7 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPayViaFastBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPayViaFastBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(HAVE_INSTRUMENTS, IMMEDIATE_RESPONSE);
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
@@ -149,8 +148,7 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPayViaSlowBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPayViaSlowBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(HAVE_INSTRUMENTS, DELAYED_RESPONSE);
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
@@ -166,8 +164,7 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPayViaDelayedFastBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPayViaDelayedFastBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(
                 "https://bobpay.com", HAVE_INSTRUMENTS, IMMEDIATE_RESPONSE, DELAYED_CREATION);
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
@@ -184,8 +181,7 @@ public class PaymentRequestPaymentAppTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPayViaDelayedSlowBobPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPayViaDelayedSlowBobPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(
                 "https://bobpay.com", HAVE_INSTRUMENTS, DELAYED_RESPONSE, DELAYED_CREATION);
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());

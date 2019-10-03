@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.externalnav;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
+import android.os.Build;
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -30,8 +31,7 @@ import java.util.List;
  * Instrumentation tests for {@link ExternalNavigationHandler}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ExternalNavigationDelegateImplTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -95,6 +95,30 @@ public class ExternalNavigationDelegateImplTest {
 
     @Test
     @SmallTest
+    public void testIsPackageSpecializedHandler_WithAuthority_Wildcard_Host() {
+        String packageName = "";
+        ResolveInfo info = new ResolveInfo();
+        info.filter = new IntentFilter();
+        info.filter.addDataAuthority("*", null);
+        List<ResolveInfo> resolveInfos = makeResolveInfos(info);
+        Assert.assertEquals(0,
+                ExternalNavigationDelegateImpl
+                        .getSpecializedHandlersWithFilter(resolveInfos, packageName)
+                        .size());
+
+        ResolveInfo infoWildcardSubDomain = new ResolveInfo();
+        infoWildcardSubDomain.filter = new IntentFilter();
+        infoWildcardSubDomain.filter.addDataAuthority("http://*.google.com", "80");
+        List<ResolveInfo> resolveInfosWildcardSubDomain = makeResolveInfos(infoWildcardSubDomain);
+        Assert.assertEquals(1,
+                ExternalNavigationDelegateImpl
+                        .getSpecializedHandlersWithFilter(
+                                resolveInfosWildcardSubDomain, packageName)
+                        .size());
+    }
+
+    @Test
+    @SmallTest
     public void testIsPackageSpecializedHandler_WithTargetPackage_Matching() {
         String packageName = "com.android.chrome";
         ResolveInfo info = new ResolveInfo();
@@ -133,7 +157,13 @@ public class ExternalNavigationDelegateImplTest {
         info.filter = new IntentFilter();
         info.filter.addDataPath("somepath", 2);
         info.activityInfo = new ActivityInfo();
-        info.activityInfo.name = InstantAppsHandler.EPHEMERAL_INSTALLER_CLASS;
+
+        // See InstantAppsHandler.isInstantAppResolveInfo
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            info.isInstantAppAvailable = true;
+        } else {
+            info.activityInfo.name = InstantAppsHandler.EPHEMERAL_INSTALLER_CLASS;
+        }
         info.activityInfo.packageName = "com.google.android.gms";
         List<ResolveInfo> resolveInfos = makeResolveInfos(info);
         // Ephemeral resolver is not counted as a specialized handler.

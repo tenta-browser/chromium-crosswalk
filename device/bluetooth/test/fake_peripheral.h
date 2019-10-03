@@ -18,6 +18,8 @@ namespace bluetooth {
 
 // Implements device::BluetoothDevice. Meant to be used by FakeCentral
 // to keep track of the peripheral's state and attributes.
+//
+// Not intended for direct use by clients.  See README.md.
 class FakePeripheral : public device::BluetoothDevice {
  public:
   FakePeripheral(FakeCentral* fake_central, const std::string& address);
@@ -57,6 +59,9 @@ class FakePeripheral : public device::BluetoothDevice {
   // Returns the service's Id.
   std::string AddFakeService(const device::BluetoothUUID& service_uuid);
 
+  // Remove a fake service with |identifier| from this peripheral.
+  bool RemoveFakeService(const std::string& identifier);
+
   // BluetoothDevice overrides:
   uint32_t GetBluetoothClass() const override;
 #if defined(OS_CHROMEOS) || defined(OS_LINUX)
@@ -76,7 +81,6 @@ class FakePeripheral : public device::BluetoothDevice {
   bool IsGattConnected() const override;
   bool IsConnectable() const override;
   bool IsConnecting() const override;
-  UUIDSet GetUUIDs() const override;
   bool ExpectingPinCode() const override;
   bool ExpectingPasskey() const override;
   bool ExpectingConfirmation() const override;
@@ -108,6 +112,12 @@ class FakePeripheral : public device::BluetoothDevice {
       const GattConnectionCallback& callback,
       const ConnectErrorCallback& error_callback) override;
   bool IsGattServicesDiscoveryComplete() const override;
+#if defined(OS_CHROMEOS)
+  void ExecuteWrite(const base::Closure& callback,
+                    const ExecuteWriteErrorCallback& error_callback) override;
+  void AbortWrite(const base::Closure& callback,
+                  const AbortWriteErrorCallback& error_callback) override;
+#endif
 
  protected:
   void CreateGattConnectionImpl() override;
@@ -119,7 +129,6 @@ class FakePeripheral : public device::BluetoothDevice {
 
   const std::string address_;
   base::Optional<std::string> name_;
-  UUIDSet service_uuids_;
   // True when the system has connected to the device outside of the Bluetooth
   // interface e.g. the user connected to the device through system settings.
   bool system_connected_;

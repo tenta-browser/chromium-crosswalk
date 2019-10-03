@@ -13,6 +13,7 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.CollectionUtil;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
@@ -29,6 +30,7 @@ import java.util.Set;
 @RunWith(BaseJUnit4ClassRunner.class)
 @RetryOnFailure
 public class InvalidationPreferencesTest {
+
     @Test
     @SmallTest
     @Feature({"Sync"})
@@ -57,9 +59,9 @@ public class InvalidationPreferencesTest {
         // Write mix of valid and invalid types to disk to test that preferences are not
         // interpreting the data. Invalid types should never be written to disk in practice.
         Set<String> syncTypes = CollectionUtil.newHashSet("BOOKMARK", "INVALID");
-        Set<ObjectId> objectIds =
-                CollectionUtil.newHashSet(ObjectId.newInstance(1, "obj1".getBytes()),
-                        ObjectId.newInstance(2, "obj2".getBytes()));
+        Set<ObjectId> objectIds = CollectionUtil.newHashSet(
+                ObjectId.newInstance(1, ApiCompatibilityUtils.getBytesUtf8("obj1")),
+                ObjectId.newInstance(2, ApiCompatibilityUtils.getBytesUtf8("obj2")));
         Account account = new Account("test@example.com", "bogus");
         byte[] internalClientState = new byte[] {100, 101, 102};
         invPreferences.setSyncTypes(editContext, syncTypes);

@@ -28,8 +28,7 @@
 		<key>CFBundlePrimaryIcon</key>
 		<dict>
 			<key>CFBundleIconFiles</key>
-			<array>
-			</array>
+			<array/>
 			<key>UIPrerenderedIcon</key>
 			<true/>
 		</dict>
@@ -39,8 +38,7 @@
 		<key>CFBundlePrimaryIcon</key>
 		<dict>
 			<key>CFBundleIconFiles</key>
-			<array>
-			</array>
+			<array/>
 			<key>UIPrerenderedIcon</key>
 			<true/>
 		</dict>
@@ -74,6 +72,8 @@
 	<string>0.0.0</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -82,10 +82,10 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>${CHROMIUM_HANDOFF_ID}</string>
+		<string>SearchInChromeIntent</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>fetch</string>
 		<string>audio</string>
 	</array>
 	<key>UIApplicationShortcutItems</key>
@@ -127,8 +127,14 @@
 	<true/>
 	<key>UIRequiresPersistentWiFi</key>
 	<true/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
 	<key>UIStatusBarStyle</key>
 	<string>UIStatusBarStyleLightContent</string>
+	<key>UIStatusBarHidden</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
@@ -168,6 +174,10 @@
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>googledrive</string>
+	</array>
 	<key>SSOAuthURLScheme</key>
 	<string>${SSOAUTH_URL_SCHEME}</string>
 	<key>KSChannelChromeScheme</key>
@@ -184,5 +194,7 @@
 	<string>IDS_IOS_PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>IDS_IOS_BLUETOOTH_USAGE_DESCRIPTION</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>IDS_IOS_FACE_ID_USAGE_DESCRIPTION</string>
 </dict>
 </plist>

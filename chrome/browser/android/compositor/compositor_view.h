@@ -15,12 +15,13 @@
 #include "cc/resources/ui_resource_client.h"
 #include "content/public/browser/android/compositor_client.h"
 #include "content/public/browser/browser_child_process_observer.h"
+#include "content/public/browser/gpu_feature_checker.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 namespace cc {
 class Layer;
 class SolidColorLayer;
-}
+}  // namespace cc
 
 namespace content {
 class Compositor;
@@ -30,7 +31,7 @@ namespace ui {
 class WindowAndroid;
 class ResourceManager;
 class UIResourceProvider;
-}
+}  // namespace ui
 
 namespace android {
 
@@ -67,6 +68,7 @@ class CompositorView : public content::CompositorClient,
                       jint format,
                       jint width,
                       jint height,
+                      bool can_be_used_with_surface_control,
                       const base::android::JavaParamRef<jobject>& surface);
   void OnPhysicalBackingSizeChanged(
       JNIEnv* env,
@@ -81,23 +83,34 @@ class CompositorView : public content::CompositorClient,
   void SetSceneLayer(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& object,
                      const base::android::JavaParamRef<jobject>& jscene_layer);
+  void SetCompositorWindow(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& object,
+      const base::android::JavaParamRef<jobject>& window_android);
+  void CacheBackBufferForCurrentSurface(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& object);
+  void EvictCachedBackBuffer(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& object);
 
   // CompositorClient implementation:
+  void RecreateSurface() override;
   void UpdateLayerTreeHost() override;
   void DidSwapFrame(int pending_frames) override;
-  void DidSwapBuffers() override;
+  void DidSwapBuffers(const gfx::Size& swap_size) override;
   ui::UIResourceProvider* GetUIResourceProvider();
 
  private:
   ~CompositorView() override;
 
   // content::BrowserChildProcessObserver implementation:
-  void BrowserChildProcessHostDisconnected(
-      const content::ChildProcessData& data) override;
-  void BrowserChildProcessCrashed(const content::ChildProcessData& data,
-                                  int exit_code) override;
+  void BrowserChildProcessKilled(
+      const content::ChildProcessData& data,
+      const content::ChildProcessTerminationInfo& info) override;
 
   void SetBackground(bool visible, SkColor color);
+  void OnSurfaceControlFeatureStatusUpdate(bool available);
 
   base::android::ScopedJavaGlobalRef<jobject> obj_;
   std::unique_ptr<content::Compositor> compositor_;

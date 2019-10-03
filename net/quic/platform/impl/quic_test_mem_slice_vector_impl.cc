@@ -4,7 +4,7 @@
 
 #include "net/quic/platform/impl/quic_test_mem_slice_vector_impl.h"
 
-namespace net {
+namespace quic {
 namespace test {
 
 TestIOBuffer::~TestIOBuffer() {
@@ -14,11 +14,25 @@ TestIOBuffer::~TestIOBuffer() {
 QuicTestMemSliceVectorImpl::~QuicTestMemSliceVectorImpl() {}
 
 QuicTestMemSliceVectorImpl::QuicTestMemSliceVectorImpl(
-    std::vector<std::pair<char*, int>> buffers) {
+    std::vector<std::pair<char*, size_t>> buffers) {
   for (auto& buffer : buffers) {
-    buffers_.push_back(new TestIOBuffer(buffer.first));
+    buffers_.push_back(base::MakeRefCounted<TestIOBuffer>(buffer.first));
     lengths_.push_back(buffer.second);
   }
+}
+
+QuicTestMemSliceVectorImpl::QuicTestMemSliceVectorImpl(
+    QuicTestMemSliceVectorImpl&& other) {
+  *this = std::move(other);
+}
+
+QuicTestMemSliceVectorImpl& QuicTestMemSliceVectorImpl::operator=(
+    QuicTestMemSliceVectorImpl&& other) {
+  if (this != &other) {
+    buffers_ = std::move(other.buffers_);
+    lengths_ = std::move(other.lengths_);
+  }
+  return *this;
 }
 
 QuicMemSliceSpanImpl QuicTestMemSliceVectorImpl::span() {
@@ -27,4 +41,4 @@ QuicMemSliceSpanImpl QuicTestMemSliceVectorImpl::span() {
 }
 
 }  // namespace test
-}  // namespace net
+}  // namespace quic

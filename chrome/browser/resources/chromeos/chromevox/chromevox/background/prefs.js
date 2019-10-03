@@ -9,11 +9,13 @@
  */
 
 goog.provide('cvox.ChromeVoxPrefs');
+goog.provide('cvox.RichTextSpeechStyle');
 
+goog.require('ConsoleTts');
+goog.require('EventStreamLogger');
 goog.require('cvox.ChromeVox');
 goog.require('cvox.ExtensionBridge');
 goog.require('cvox.KeyMap');
-
 
 /**
  * This object has default values of preferences and contains the common
@@ -60,6 +62,8 @@ cvox.ChromeVoxPrefs = function() {
  */
 cvox.ChromeVoxPrefs.DEFAULT_PREFS = {
   'active': true,
+  'announceDownloadNotifications': true,
+  'announceRichTextAttributes': true,
   'audioStrategy': 'audioNormal',
   'autoRead': false,
   'brailleCaptions': false,
@@ -72,20 +76,79 @@ cvox.ChromeVoxPrefs.DEFAULT_PREFS = {
   // should just store in local storage.
   'currentKeyMap': cvox.KeyMap.DEFAULT_KEYMAP,
   'cvoxKey': '',
+  'enableBrailleLogging': false,
+  'enableEarconLogging': false,
+  'enableSpeechLogging': false,
   'earcons': true,
+  'enableEventStreamLogging': false,
   'focusFollowsMouse': false,
   'granularity': undefined,
+  'languageSwitching': false,
   'position': '{}',
   'siteSpecificEnhancements': true,
   'siteSpecificScriptBase':
       'https://ssl.gstatic.com/accessibility/javascript/ext/',
   'siteSpecificScriptLoader':
       'https://ssl.gstatic.com/accessibility/javascript/ext/loader.js',
+  'speakTextUnderMouse': false,
   'sticky': false,
   'typingEcho': 0,
   'useIBeamCursor': cvox.ChromeVox.isMac,
   'useClassic': false,
   'useVerboseMode': true,
+
+  // eventStreamFilters
+  'activedescendantchanged': true,
+  'alert': true,
+  'ariaAttributeChanged': true,
+  'autocorrectionOccured': true,
+  'blur': true,
+  'checkedStateChanged': true,
+  'childrenChanged': true,
+  'clicked': true,
+  'documentSelectionChanged': true,
+  'documentTitleChanged': true,
+  'expandedChanged': true,
+  'focus': true,
+  'focusContext': true,
+  'imageFrameUpdated': true,
+  'hide': true,
+  'hitTestResult': true,
+  'hover': true,
+  'invalidStatusChanged': true,
+  'layoutComplete': true,
+  'liveRegionCreated': true,
+  'liveRegionChanged': true,
+  'loadComplete': true,
+  'locationChanged': true,
+  'mediaStartedPlaying': true,
+  'mediaStoppedPlaying': true,
+  'menuEnd': true,
+  'menuListItemSelected': true,
+  'menuListValueChanged': true,
+  'menuPopupEnd': true,
+  'menuPopupStart': true,
+  'menuStart': true,
+  'mouseCanceled': true,
+  'mouseDragged': true,
+  'mouseMoved': true,
+  'mousePressed': true,
+  'mouseReleased': true,
+  'rowCollapsed': true,
+  'rowCountChanged': true,
+  'rowExpanded': true,
+  'scrollPositionChanged': true,
+  'scrolledToAnchor': true,
+  'selectedChildrenChanged': true,
+  'selection': true,
+  'selectionAdd': true,
+  'selectionRemove': true,
+  'show': true,
+  'stateChanged': true,
+  'textChanged': true,
+  'textSelectionChanged': true,
+  'treeChanged': true,
+  'valueChanged': true
 };
 
 
@@ -105,6 +168,15 @@ cvox.ChromeVoxPrefs.prototype.init = function(pullFromLocalStorage) {
       localStorage[pref] = cvox.ChromeVoxPrefs.DEFAULT_PREFS[pref];
     }
   }
+  // Since language switching is currently an experimental feature, ensure that
+  // it is off if the feature flag is absent.
+  chrome.commandLinePrivate.hasSwitch(
+      'enable-experimental-accessibility-chromevox-language-switching',
+      function(enabled) {
+        if (!enabled) {
+          localStorage['languageSwitching'] = false;
+        }
+      });
 };
 
 /**
@@ -226,6 +298,27 @@ cvox.ChromeVoxPrefs.prototype.setPref = function(key, value) {
     localStorage[key] = value;
     this.sendPrefsToAllTabs(true, false);
   }
+};
+
+/** @enum {string} */
+cvox.ChromeVoxPrefs.loggingPrefs = {
+  SPEECH: 'enableSpeechLogging',
+  BRAILLE: 'enableBrailleLogging',
+  EARCON: 'enableEarconLogging',
+  EVENT: 'enableEventStreamLogging',
+};
+
+/**
+ * Set the value of a pref of logging options.
+ * @param {cvox.ChromeVoxPrefs.loggingPrefs} key The pref key.
+ * @param {boolean} value The new value of the pref.
+ */
+cvox.ChromeVoxPrefs.prototype.setLoggingPrefs = function(key, value) {
+  localStorage[key] = value;
+  if (key == 'enableSpeechLogging')
+    ConsoleTts.getInstance().setEnabled(value);
+  else if (key == 'enableEventStreamLogging')
+    EventStreamLogger.instance.notifyEventStreamFilterChangedAll(value);
 };
 
 /**

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/sessions/core/sessions_export.h"
@@ -24,18 +25,13 @@ class Pickle;
 class PickleIterator;
 }
 
-namespace sync_pb {
-class TabNavigation;
-}
-
 namespace sessions {
 
 class SerializedNavigationEntryTestHelper;
 
 // SerializedNavigationEntry is a "freeze-dried" version of NavigationEntry.  It
 // contains the data needed to restore a NavigationEntry during session restore
-// and tab restore, and it can also be pickled and unpickled.  It is also
-// convertible to a sync protocol buffer for session syncing.
+// and tab restore, and it can also be pickled and unpickled.
 //
 // Default copy constructor and assignment operator welcome.
 class SESSIONS_EXPORT SerializedNavigationEntry {
@@ -63,42 +59,37 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
   SerializedNavigationEntry& operator=(const SerializedNavigationEntry& other);
   SerializedNavigationEntry& operator=(SerializedNavigationEntry&& other);
 
-  // Construct a SerializedNavigationEntry for a particular index from a sync
-  // protocol buffer.  Note that the sync protocol buffer doesn't contain all
-  // SerializedNavigationEntry fields.  Also, the timestamp of the returned
-  // SerializedNavigationEntry is nulled out, as we assume that the protocol
-  // buffer is from a foreign session.
-  static SerializedNavigationEntry FromSyncData(
-      int index,
-      const sync_pb::TabNavigation& sync_data);
-
   // Note that not all SerializedNavigationEntry fields are preserved.
   // |max_size| is the max number of bytes to write.
   void WriteToPickle(int max_size, base::Pickle* pickle) const;
   bool ReadFromPickle(base::PickleIterator* iterator);
-
-  // Convert this navigation into its sync protocol buffer equivalent.  Note
-  // that the protocol buffer doesn't contain all SerializedNavigationEntry
-  // fields.
-  sync_pb::TabNavigation ToSyncData() const;
 
   // The index in the NavigationController. This SerializedNavigationEntry is
   // valid only when the index is non-negative.
   int index() const { return index_; }
   void set_index(int index) { index_ = index; }
 
-  // Accessors for some fields taken from NavigationEntry.
   int unique_id() const { return unique_id_; }
+  void set_unique_id(int unique_id) { unique_id_ = unique_id; }
   const base::string16& title() const { return title_; }
+  void set_title(const base::string16& title) { title_ = title; }
   const GURL& favicon_url() const { return favicon_url_; }
+  void set_favicon_url(const GURL& favicon_url) { favicon_url_ = favicon_url; }
   int http_status_code() const { return http_status_code_; }
+  void set_http_status_code(int http_status_code) {
+    http_status_code_ = http_status_code;
+  }
   ui::PageTransition transition_type() const {
     return transition_type_;
+  }
+  void set_transition_type(ui::PageTransition transition_type) {
+    transition_type_ = transition_type;
   }
   bool has_post_data() const { return has_post_data_; }
   int64_t post_id() const { return post_id_; }
   bool is_overriding_user_agent() const { return is_overriding_user_agent_; }
   base::Time timestamp() const { return timestamp_; }
+  void set_timestamp(base::Time timestamp) { timestamp_ = timestamp; }
 
   BlockedState blocked_state() const { return blocked_state_; }
   void set_blocked_state(BlockedState blocked_state) {
@@ -142,8 +133,50 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
   }
   const std::vector<GURL>& redirect_chain() const { return redirect_chain_; }
 
+  // This class is analogous to content::ReplacedNavigationEntryData.
+  // When a history entry is replaced (e.g. history.replaceState()), this
+  // contains some information about the entry prior to being replaced. Even if
+  // an entry is replaced multiple times, it represents data prior to the
+  // *first* replace.
+  struct ReplacedNavigationEntryData {
+    size_t EstimateMemoryUsage() const;
+
+    GURL first_committed_url;
+    base::Time first_timestamp;
+    ui::PageTransition first_transition_type;
+  };
+  const base::Optional<ReplacedNavigationEntryData>& replaced_entry_data()
+      const {
+    return replaced_entry_data_;
+  }
+  void set_replaced_entry_data(
+      const base::Optional<ReplacedNavigationEntryData>& replaced_entry_data) {
+    replaced_entry_data_ = replaced_entry_data;
+  }
+
+  bool is_restored() const { return is_restored_; }
+  void set_is_restored(bool is_restored) { is_restored_ = is_restored; }
+
   const std::map<std::string, std::string>& extended_info_map() const {
     return extended_info_map_;
+  }
+
+  int64_t task_id() const { return task_id_; }
+  void set_task_id(int64_t task_id) { task_id_ = task_id; }
+
+  int64_t parent_task_id() const { return parent_task_id_; }
+  void set_parent_task_id(int64_t parent_task_id) {
+    parent_task_id_ = parent_task_id;
+  }
+
+  int64_t root_task_id() const { return root_task_id_; }
+  void set_root_task_id(int64_t root_task_id) { root_task_id_ = root_task_id; }
+
+  const std::vector<int64_t>& children_task_ids() const {
+    return children_task_ids_;
+  }
+  void set_children_task_ids(std::vector<int64_t> children_task_ids) {
+    children_task_ids_ = children_task_ids;
   }
 
   size_t EstimateMemoryUsage() const;
@@ -176,6 +209,8 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
   int http_status_code_ = 0;
   bool is_restored_ = false;          // Not persisted.
   std::vector<GURL> redirect_chain_;  // Not persisted.
+  base::Optional<ReplacedNavigationEntryData>
+      replaced_entry_data_;  // Not persisted.
 
   // Additional information.
   BlockedState blocked_state_ = STATE_INVALID;
@@ -185,6 +220,13 @@ class SESSIONS_EXPORT SerializedNavigationEntry {
   // Provides storage for arbitrary key/value pairs used by features. This
   // data is not synced.
   std::map<std::string, std::string> extended_info_map_;
+
+  // These fields are stored in the 'SupportsUserData' fields of a
+  // NavigationEntry (see SetUserData() and GetUserData() in navigation_entry.h
+  int64_t task_id_ = -1;
+  int64_t parent_task_id_ = -1;
+  int64_t root_task_id_ = -1;
+  std::vector<int64_t> children_task_ids_;
 };
 
 }  // namespace sessions

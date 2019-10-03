@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.os.Handler;
+import android.support.v7.content.res.AppCompatResources;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.GestureDetector;
@@ -23,6 +24,7 @@ import android.view.ViewGroup;
 import android.widget.AbsListView;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -33,10 +35,9 @@ import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabFavicon;
 import org.chromium.chrome.browser.tab.TabObserver;
-import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.chrome.browser.widget.TintedImageButton;
-import org.chromium.chrome.browser.widget.TintedImageView;
+import org.chromium.chrome.browser.util.ColorUtils;
 
 /**
  * A widget that shows a single row of the {@link AccessibilityTabModelListView} list.
@@ -59,8 +60,10 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
     private final float mFlingCommitDistance;
     private final int mDefaultLevel;
     private final int mIncognitoLevel;
-    private final ColorStateList mDarkIconColor;
-    private final ColorStateList mLightIconColor;
+    private final ColorStateList mDefaultIconColor;
+    private final ColorStateList mIncognitoIconColor;
+    private final ColorStateList mDefaultCloseIconColor;
+    private final ColorStateList mIncognitoCloseIconColor;
 
     // Keeps track of how a tab was closed
     //  < 0 : swiped to the left.
@@ -73,7 +76,7 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
     private TextView mTitleView;
     private TextView mDescriptionView;
     private ImageView mFaviconView;
-    private TintedImageButton mCloseButton;
+    private ImageButton mCloseButton;
 
     // The children on the undo view.
     private LinearLayout mUndoContents;
@@ -214,10 +217,13 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
 
         mDefaultHeight =
                 context.getResources().getDimensionPixelOffset(R.dimen.accessibility_tab_height);
-        mDarkIconColor =
-                ApiCompatibilityUtils.getColorStateList(getResources(), R.color.dark_mode_tint);
-        mLightIconColor =
-                ApiCompatibilityUtils.getColorStateList(getResources(), R.color.light_mode_tint);
+        mDefaultIconColor = ColorUtils.getIconTint(context, false);
+        mIncognitoIconColor =
+                AppCompatResources.getColorStateList(context, R.color.default_icon_color_dark);
+        mDefaultCloseIconColor =
+                AppCompatResources.getColorStateList(context, R.color.default_icon_color_secondary);
+        mIncognitoCloseIconColor =
+                AppCompatResources.getColorStateList(context, R.color.white_alpha_70);
         mDefaultLevel = getResources().getInteger(R.integer.list_item_level_default);
         mIncognitoLevel = getResources().getInteger(R.integer.list_item_level_incognito);
 
@@ -229,27 +235,15 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
     @Override
     public void onFinishInflate() {
         super.onFinishInflate();
-        if (FeatureUtilities.isChromeHomeEnabled()) {
-            mTabContents = findViewById(R.id.tab_contents_modern);
-            mTitleView = mTabContents.findViewById(R.id.title);
-            mDescriptionView = mTabContents.findViewById(R.id.description);
-            mFaviconView = mTabContents.findViewById(R.id.icon_view);
-            mCloseButton = mTabContents.findViewById(R.id.close_btn_modern);
-            mFaviconView.setBackgroundResource(R.drawable.list_item_icon_modern_bg);
-        } else {
-            mTabContents = (LinearLayout) findViewById(R.id.tab_contents);
-            mTitleView = (TextView) findViewById(R.id.tab_title);
-            mFaviconView = (ImageView) findViewById(R.id.tab_favicon);
-            mCloseButton = (TintedImageButton) findViewById(R.id.close_btn);
-        }
-        mTabContents.setVisibility(View.VISIBLE);
+        mTabContents = findViewById(R.id.tab_contents_modern);
+        mTitleView = mTabContents.findViewById(R.id.title);
+        mDescriptionView = mTabContents.findViewById(R.id.description);
+        mFaviconView = mTabContents.findViewById(R.id.icon_view);
+        mCloseButton = mTabContents.findViewById(R.id.close_btn_modern);
+        mFaviconView.setBackgroundResource(R.drawable.list_item_icon_modern_bg);
 
         mUndoContents = (LinearLayout) findViewById(R.id.undo_contents);
         mUndoButton = (Button) findViewById(R.id.undo_button);
-        if (FeatureUtilities.isChromeHomeEnabled()) {
-            findViewById(R.id.undo_start_space).setVisibility(View.VISIBLE);
-            ApiCompatibilityUtils.setTextAppearance(mUndoButton, R.style.BlueButtonText2);
-        }
 
         setClickable(true);
         setFocusable(true);
@@ -318,43 +312,41 @@ public class AccessibilityTabModelListItem extends FrameLayout implements OnClic
                     getContext().getString(R.string.accessibility_tabstrip_btn_close_tab, title));
         }
 
-        if (FeatureUtilities.isChromeHomeEnabled()) {
-            if (mTab.isIncognito()) {
-                setBackgroundResource(R.color.incognito_primary_color);
-                mFaviconView.getBackground().setLevel(mIncognitoLevel);
-                ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.WhiteDenseListText1);
-                ApiCompatibilityUtils.setTextAppearance(
-                        mDescriptionView, R.style.WhiteDenseListText2);
-                mCloseButton.setTint(mLightIconColor);
-            } else {
-                setBackgroundResource(R.color.modern_primary_color);
-                mFaviconView.getBackground().setLevel(mDefaultLevel);
-                ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.BlackDenseListText1);
-                ApiCompatibilityUtils.setTextAppearance(
-                        mDescriptionView, R.style.BlackDenseListText2);
-                mCloseButton.setTint(mDarkIconColor);
-            }
+        if (mTab.isIncognito()) {
+            setBackgroundResource(R.color.incognito_modern_primary_color);
+            mFaviconView.getBackground().setLevel(mIncognitoLevel);
+            ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_WhiteTitle1);
+            ApiCompatibilityUtils.setTextAppearance(
+                    mDescriptionView, R.style.TextAppearance_WhiteBody);
+            ApiCompatibilityUtils.setImageTintList(mCloseButton, mIncognitoCloseIconColor);
+        } else {
+            setBackgroundResource(R.color.modern_primary_color);
+            mFaviconView.getBackground().setLevel(mDefaultLevel);
+            ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_BlackTitle1);
+            ApiCompatibilityUtils.setTextAppearance(
+                    mDescriptionView, R.style.TextAppearance_BlackBody);
+            ApiCompatibilityUtils.setImageTintList(mCloseButton, mDefaultCloseIconColor);
+        }
 
-            if (TextUtils.isEmpty(url)) {
-                mDescriptionView.setVisibility(View.GONE);
-            } else {
-                mDescriptionView.setText(url);
-                mDescriptionView.setVisibility(View.VISIBLE);
-            }
+        if (TextUtils.isEmpty(url)) {
+            mDescriptionView.setVisibility(View.GONE);
+        } else {
+            mDescriptionView.setText(url);
+            mDescriptionView.setVisibility(View.VISIBLE);
         }
     }
 
     private void updateFavicon() {
         if (mTab != null) {
-            Bitmap bitmap = mTab.getFavicon();
+            Bitmap bitmap = TabFavicon.getBitmap(mTab);
             if (bitmap != null) {
+                // Don't tint favicon bitmaps.
+                ApiCompatibilityUtils.setImageTintList(mFaviconView, null);
                 mFaviconView.setImageBitmap(bitmap);
             } else {
-                mFaviconView.setImageResource(R.drawable.globe_incognito_favicon);
-            }
-
-            if (FeatureUtilities.isChromeHomeEnabled()) {
-                ((TintedImageView) mFaviconView).setTint(bitmap != null ? null : mDarkIconColor);
+                mFaviconView.setImageResource(R.drawable.ic_globe_24dp);
+                ApiCompatibilityUtils.setImageTintList(
+                        mFaviconView, mTab.isIncognito() ? mIncognitoIconColor : mDefaultIconColor);
             }
         }
     }

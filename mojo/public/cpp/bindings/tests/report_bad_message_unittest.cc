@@ -5,11 +5,12 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "base/test/bind_test_util.h"
+#include "mojo/core/embedder/embedder.h"
 #include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/tests/bindings_test_base.h"
 #include "mojo/public/interfaces/bindings/tests/test_bad_messages.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,11 +21,11 @@ namespace {
 
 class TestBadMessagesImpl : public TestBadMessages {
  public:
-  TestBadMessagesImpl() : binding_(this) {}
-  ~TestBadMessagesImpl() override {}
+  TestBadMessagesImpl() = default;
+  ~TestBadMessagesImpl() override = default;
 
-  void BindImpl(TestBadMessagesRequest request) {
-    binding_.Bind(std::move(request));
+  void Bind(PendingReceiver<TestBadMessages> receiver) {
+    receiver_.Bind(std::move(receiver));
   }
 
   ReportBadMessageCallback& bad_message_callback() {
@@ -33,82 +34,80 @@ class TestBadMessagesImpl : public TestBadMessages {
 
  private:
   // TestBadMessages:
-  void RejectEventually(const RejectEventuallyCallback& callback) override {
+  void RejectEventually(RejectEventuallyCallback callback) override {
     bad_message_callback_ = GetBadMessageCallback();
-    callback.Run();
+    std::move(callback).Run();
   }
 
-  void RequestResponse(const RequestResponseCallback& callback) override {
-    callback.Run();
+  void RequestResponse(RequestResponseCallback callback) override {
+    std::move(callback).Run();
   }
 
-  void RejectSync(const RejectSyncCallback& callback) override {
-    callback.Run();
+  void RejectSync(RejectSyncCallback callback) override {
+    std::move(callback).Run();
     ReportBadMessage("go away");
   }
 
-  void RequestResponseSync(
-      const RequestResponseSyncCallback& callback) override {
-    callback.Run();
+  void RequestResponseSync(RequestResponseSyncCallback callback) override {
+    std::move(callback).Run();
   }
 
   ReportBadMessageCallback bad_message_callback_;
-  mojo::Binding<TestBadMessages> binding_;
+  mojo::Receiver<TestBadMessages> receiver_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestBadMessagesImpl);
 };
 
 class ReportBadMessageTest : public BindingsTestBase {
  public:
-  ReportBadMessageTest() {}
+  ReportBadMessageTest() = default;
 
   void SetUp() override {
-    mojo::edk::SetDefaultProcessErrorCallback(
-        base::Bind(&ReportBadMessageTest::OnProcessError,
-                   base::Unretained(this)));
+    mojo::core::SetDefaultProcessErrorCallback(base::Bind(
+        &ReportBadMessageTest::OnProcessError, base::Unretained(this)));
 
-    impl_.BindImpl(MakeRequest(&proxy_));
+    impl_.Bind(remote_.BindNewPipeAndPassReceiver());
   }
 
   void TearDown() override {
-    mojo::edk::SetDefaultProcessErrorCallback(
-        mojo::edk::ProcessErrorCallback());
+    mojo::core::SetDefaultProcessErrorCallback(
+        mojo::core::ProcessErrorCallback());
   }
 
-  TestBadMessages* proxy() { return proxy_.get(); }
+  TestBadMessages* remote() { return remote_.get(); }
 
   TestBadMessagesImpl* impl() { return &impl_; }
 
-  void SetErrorHandler(const base::Closure& handler) {
-    error_handler_ = handler;
+  void SetErrorHandler(base::OnceClosure handler) {
+    error_handler_ = std::move(handler);
   }
 
  private:
   void OnProcessError(const std::string& error) {
-    if (!error_handler_.is_null())
-      error_handler_.Run();
+    if (error_handler_)
+      std::move(error_handler_).Run();
   }
 
-  TestBadMessagesPtr proxy_;
+  Remote<TestBadMessages> remote_;
   TestBadMessagesImpl impl_;
-  base::Closure error_handler_;
+  base::OnceClosure error_handler_;
 };
 
 TEST_P(ReportBadMessageTest, Request) {
   // Verify that basic immediate error reporting works.
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
-  EXPECT_TRUE(proxy()->RejectSync());
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
+  EXPECT_TRUE(remote()->RejectSync());
   EXPECT_TRUE(error);
 }
 
 TEST_P(ReportBadMessageTest, RequestAsync) {
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
 
   // This should capture a bad message reporting callback in the impl.
   base::RunLoop loop;
-  proxy()->RejectEventually(loop.QuitClosure());
+  remote()->RejectEventually(loop.QuitClosure());
   loop.Run();
 
   EXPECT_FALSE(error);
@@ -121,17 +120,15 @@ TEST_P(ReportBadMessageTest, RequestAsync) {
 
 TEST_P(ReportBadMessageTest, Response) {
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
 
   base::RunLoop loop;
-  proxy()->RequestResponse(
-      base::Bind([] (const base::Closure& quit) {
-        // Report a bad message inside the response callback. This should
-        // trigger the error handler.
-        ReportBadMessage("no way!");
-        quit.Run();
-      },
-      loop.QuitClosure()));
+  remote()->RequestResponse(base::BindLambdaForTesting([&] {
+    // Report a bad message inside the response callback. This should
+    // trigger the error handler.
+    ReportBadMessage("no way!");
+    loop.Quit();
+  }));
   loop.Run();
 
   EXPECT_TRUE(error);
@@ -139,18 +136,15 @@ TEST_P(ReportBadMessageTest, Response) {
 
 TEST_P(ReportBadMessageTest, ResponseAsync) {
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
 
   ReportBadMessageCallback bad_message_callback;
   base::RunLoop loop;
-  proxy()->RequestResponse(
-      base::Bind([] (const base::Closure& quit,
-                     ReportBadMessageCallback* callback) {
-        // Capture the bad message callback inside the response callback.
-        *callback = GetBadMessageCallback();
-        quit.Run();
-      },
-      loop.QuitClosure(), &bad_message_callback));
+  remote()->RequestResponse(base::BindLambdaForTesting([&] {
+    // Capture the bad message callback inside the response callback.
+    bad_message_callback = GetBadMessageCallback();
+    loop.Quit();
+  }));
   loop.Run();
 
   EXPECT_FALSE(error);
@@ -164,10 +158,10 @@ TEST_P(ReportBadMessageTest, ResponseAsync) {
 
 TEST_P(ReportBadMessageTest, ResponseSync) {
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
 
   SyncMessageResponseContext context;
-  proxy()->RequestResponseSync();
+  remote()->RequestResponseSync();
 
   EXPECT_FALSE(error);
   context.ReportBadMessage("i don't like this response");
@@ -176,12 +170,12 @@ TEST_P(ReportBadMessageTest, ResponseSync) {
 
 TEST_P(ReportBadMessageTest, ResponseSyncDeferred) {
   bool error = false;
-  SetErrorHandler(base::Bind([] (bool* flag) { *flag = true; }, &error));
+  SetErrorHandler(base::BindLambdaForTesting([&] { error = true; }));
 
   ReportBadMessageCallback bad_message_callback;
   {
     SyncMessageResponseContext context;
-    proxy()->RequestResponseSync();
+    remote()->RequestResponseSync();
     bad_message_callback = context.GetBadMessageCallback();
   }
 
@@ -190,7 +184,7 @@ TEST_P(ReportBadMessageTest, ResponseSyncDeferred) {
   EXPECT_TRUE(error);
 }
 
-INSTANTIATE_MOJO_BINDINGS_TEST_CASE_P(ReportBadMessageTest);
+INSTANTIATE_MOJO_BINDINGS_TEST_SUITE_P(ReportBadMessageTest);
 
 }  // namespace
 }  // namespace test

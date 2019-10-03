@@ -11,11 +11,19 @@
 #include <string>
 #include <vector>
 
+#include "base/sync_socket.h"
+
+#ifdef WIN32
+// base/sync_socket.h will define MemoryBarrier (a Win32 macro) that
+// would clash with MemoryBarrier in base/atomicops.h if someone uses
+// that together with this header.
+#undef MemoryBarrier
+#endif  // WIN32
+
 #include "base/files/file_path.h"
 #include "base/memory/shared_memory.h"
 #include "base/process/process.h"
 #include "base/strings/string16.h"
-#include "base/sync_socket.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
@@ -42,13 +50,11 @@
 #include "ppapi/c/pp_size.h"
 #include "ppapi/c/pp_time.h"
 #include "ppapi/c/ppb_audio_config.h"
-#include "ppapi/c/ppb_compositor_layer.h"
 #include "ppapi/c/ppb_image_data.h"
 #include "ppapi/c/ppb_tcp_socket.h"
 #include "ppapi/c/ppb_text_input_controller.h"
 #include "ppapi/c/ppb_udp_socket.h"
 #include "ppapi/c/ppb_video_encoder.h"
-#include "ppapi/c/private/pp_content_decryptor.h"
 #include "ppapi/c/private/pp_private_font_charset.h"
 #include "ppapi/c/private/pp_video_capture_format.h"
 #include "ppapi/c/private/ppb_flash.h"
@@ -67,7 +73,6 @@
 #include "ppapi/proxy/serialized_handle.h"
 #include "ppapi/proxy/serialized_structs.h"
 #include "ppapi/proxy/serialized_var.h"
-#include "ppapi/shared_impl/compositor_layer_data.h"
 #include "ppapi/shared_impl/dir_contents.h"
 #include "ppapi/shared_impl/file_growth.h"
 #include "ppapi/shared_impl/file_path.h"
@@ -94,12 +99,7 @@
 IPC_ENUM_TRAITS_MAX_VALUE(ppapi::TCPSocketVersion,
                           ppapi::TCP_SOCKET_VERSION_1_1_OR_ABOVE)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_AudioSampleRate, PP_AUDIOSAMPLERATE_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_BlendMode, PP_BLENDMODE_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmExceptionCode, PP_CDMEXCEPTIONCODE_MAX)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmKeyStatus, PP_CDMKEYSTATUS_MAX)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmMessageType, PP_CDMMESSAGETYPE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_DeviceType_Dev, PP_DEVICETYPE_DEV_MAX)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_DecryptorStreamType, PP_DECRYPTORSTREAMTYPE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileSystemType, PP_FILESYSTEMTYPE_ISOLATED)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileType, PP_FILETYPE_OTHER)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_Flash_BrowserOperations_Permission,
@@ -109,9 +109,7 @@ IPC_ENUM_TRAITS_MAX_VALUE(PP_Flash_BrowserOperations_SettingType,
 IPC_ENUM_TRAITS_MIN_MAX_VALUE(PP_FlashSetting,
                               PP_FLASHSETTING_FIRST,
                               PP_FLASHSETTING_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_HdcpVersion, PP_HDCPVERSION_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_ImageDataFormat, PP_IMAGEDATAFORMAT_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_InitDataType, PP_INITDATATYPE_MAX)
 IPC_ENUM_TRAITS_MIN_MAX_VALUE(PP_InputEvent_MouseButton,
                               PP_INPUTEVENT_MOUSEBUTTON_FIRST,
                               PP_INPUTEVENT_MOUSEBUTTON_LAST)
@@ -130,7 +128,6 @@ IPC_ENUM_TRAITS(PP_PrintOutputFormat_Dev)  // Bitmask.
 IPC_ENUM_TRAITS_MAX_VALUE(PP_PrintScalingOption_Dev, PP_PRINTSCALINGOPTION_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_PrivateDuplexMode_Dev, PP_PRIVATEDUPLEXMODE_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_PrivateFontCharset, PP_PRIVATEFONTCHARSET_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_SessionType, PP_SESSIONTYPE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_TCPSocket_Option,
                           PP_TCPSOCKET_OPTION_RECV_BUFFER_SIZE)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_TextInput_Type, PP_TEXTINPUT_TYPE_LAST)
@@ -238,10 +235,19 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintPresetOptions_Dev)
   IPC_STRUCT_TRAITS_MEMBER(uniform_page_size)
 IPC_STRUCT_TRAITS_END()
 
+IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintSettings_Dev)
+  IPC_STRUCT_TRAITS_MEMBER(pages_per_sheet)
+  IPC_STRUCT_TRAITS_MEMBER(scale_factor)
+IPC_STRUCT_TRAITS_END()
+
 IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityViewportInfo)
   IPC_STRUCT_TRAITS_MEMBER(zoom)
   IPC_STRUCT_TRAITS_MEMBER(scroll)
   IPC_STRUCT_TRAITS_MEMBER(offset)
+  IPC_STRUCT_TRAITS_MEMBER(selection_start_page_index)
+  IPC_STRUCT_TRAITS_MEMBER(selection_start_char_index)
+  IPC_STRUCT_TRAITS_MEMBER(selection_end_page_index)
+  IPC_STRUCT_TRAITS_MEMBER(selection_end_char_index)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityDocInfo)
@@ -302,42 +308,6 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(ppapi::FileGrowth)
   IPC_STRUCT_TRAITS_MEMBER(max_written_offset)
   IPC_STRUCT_TRAITS_MEMBER(append_mode_write_amount)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData)
-  IPC_STRUCT_TRAITS_MEMBER(common)
-  IPC_STRUCT_TRAITS_MEMBER(color)
-  IPC_STRUCT_TRAITS_MEMBER(texture)
-  IPC_STRUCT_TRAITS_MEMBER(image)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::LayerCommon)
-  IPC_STRUCT_TRAITS_MEMBER(size)
-  IPC_STRUCT_TRAITS_MEMBER(clip_rect)
-  IPC_STRUCT_TRAITS_MEMBER(transform)
-  IPC_STRUCT_TRAITS_MEMBER(blend_mode)
-  IPC_STRUCT_TRAITS_MEMBER(opacity)
-  IPC_STRUCT_TRAITS_MEMBER(resource_id)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::ColorLayer)
-  IPC_STRUCT_TRAITS_MEMBER(red)
-  IPC_STRUCT_TRAITS_MEMBER(green)
-  IPC_STRUCT_TRAITS_MEMBER(blue)
-  IPC_STRUCT_TRAITS_MEMBER(alpha)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::ImageLayer)
-  IPC_STRUCT_TRAITS_MEMBER(resource)
-  IPC_STRUCT_TRAITS_MEMBER(source_rect)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::TextureLayer)
-  IPC_STRUCT_TRAITS_MEMBER(mailbox)
-  IPC_STRUCT_TRAITS_MEMBER(sync_token)
-  IPC_STRUCT_TRAITS_MEMBER(target)
-  IPC_STRUCT_TRAITS_MEMBER(source_rect)
-  IPC_STRUCT_TRAITS_MEMBER(premult_alpha)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ppapi::DeviceRefData)
@@ -447,7 +417,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::URLRequestInfoData)
   IPC_STRUCT_TRAITS_MEMBER(url)
   IPC_STRUCT_TRAITS_MEMBER(method)
   IPC_STRUCT_TRAITS_MEMBER(headers)
-  IPC_STRUCT_TRAITS_MEMBER(stream_to_file)
   IPC_STRUCT_TRAITS_MEMBER(follow_redirects)
   IPC_STRUCT_TRAITS_MEMBER(record_download_progress)
   IPC_STRUCT_TRAITS_MEMBER(record_upload_progress)
@@ -479,7 +448,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::URLResponseInfoData)
   IPC_STRUCT_TRAITS_MEMBER(status_code)
   IPC_STRUCT_TRAITS_MEMBER(status_text)
   IPC_STRUCT_TRAITS_MEMBER(redirect_url)
-  IPC_STRUCT_TRAITS_MEMBER(body_as_file_ref)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::SerializedNetworkInfo)
@@ -524,10 +492,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::PPB_AudioEncodeParameters)
   IPC_STRUCT_TRAITS_MEMBER(output_profile)
   IPC_STRUCT_TRAITS_MEMBER(initial_bitrate)
   IPC_STRUCT_TRAITS_MEMBER(acceleration)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::Transform)
-  IPC_STRUCT_TRAITS_MEMBER(matrix)
 IPC_STRUCT_TRAITS_END()
 
 #if !defined(OS_NACL) && !defined(NACL_WIN64)
@@ -821,9 +785,25 @@ IPC_MESSAGE_ROUTED3(PpapiMsg_PPPPdf_SetSelectionBounds,
 IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanEditText,
                            PP_Instance /* instance */,
                            PP_Bool /* result */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_HasEditableText,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
 IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_ReplaceSelection,
                     PP_Instance /* instance */,
                     std::string /* text */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanUndo,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanRedo,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
+IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Undo, PP_Instance /* instance */)
+IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Redo, PP_Instance /* instance */)
+IPC_SYNC_MESSAGE_ROUTED3_1(PpapiMsg_PPPPdf_PrintBegin,
+                           PP_Instance /* instance */,
+                           PP_PrintSettings_Dev /* print_settings */,
+                           PP_PdfPrintSettings_Dev /* pdf_print_settings */,
+                           int32_t /* result */)
 
 // Find
 IPC_MESSAGE_ROUTED2(PpapiPluginMsg_PPPFind_StartFind,
@@ -854,7 +834,7 @@ IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPrinting_QuerySupportedFormats,
                            uint32_t /* result */)
 IPC_SYNC_MESSAGE_ROUTED2_1(PpapiMsg_PPPPrinting_Begin,
                            PP_Instance /* instance */,
-                           std::string /* settings_string */,
+                           PP_PrintSettings_Dev /* settings */,
                            int32_t /* result */)
 IPC_SYNC_MESSAGE_ROUTED2_1(PpapiMsg_PPPPrinting_PrintPages,
                            PP_Instance /* instance */,
@@ -878,74 +858,6 @@ IPC_MESSAGE_ROUTED3(
     ppapi::HostResource /* broker */,
     IPC::PlatformFileForTransit /* handle */,
     int32_t /* result */)
-
-// PPP_ContentDecryptor_Dev
-IPC_MESSAGE_ROUTED5(PpapiMsg_PPPContentDecryptor_Initialize,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    ppapi::proxy::SerializedVar /* key_system, String */,
-                    PP_Bool /* allow_distinctive_identifier */,
-                    PP_Bool /* allow_persistent_state */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_SetServerCertificate,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    std::vector<uint8_t> /* certificate */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_GetStatusForPolicy,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    PP_HdcpVersion /* min_hdcp_version */)
-IPC_MESSAGE_ROUTED5(
-    PpapiMsg_PPPContentDecryptor_CreateSessionAndGenerateRequest,
-    PP_Instance /* instance */,
-    uint32_t /* promise_id */,
-    PP_SessionType /* session_type */,
-    PP_InitDataType /* init_data_type */,
-    ppapi::proxy::SerializedVar /* init_data, ArrayBuffer */)
-IPC_MESSAGE_ROUTED4(PpapiMsg_PPPContentDecryptor_LoadSession,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    PP_SessionType /* session_type */,
-                    ppapi::proxy::SerializedVar /* session_id, String */)
-IPC_MESSAGE_ROUTED4(PpapiMsg_PPPContentDecryptor_UpdateSession,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    ppapi::proxy::SerializedVar /* session_id, String */,
-                    ppapi::proxy::SerializedVar /* response, ArrayBuffer */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_CloseSession,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    std::string /* session_id */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_RemoveSession,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    std::string /* session_id */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_Decrypt,
-                    PP_Instance /* instance */,
-                    ppapi::proxy::PPPDecryptor_Buffer /* buffer */,
-                    std::string /* serialized_block_info */)
-IPC_MESSAGE_ROUTED3(
-    PpapiMsg_PPPContentDecryptor_InitializeAudioDecoder,
-    PP_Instance /* instance */,
-    std::string /* serialized_decoder_config */,
-    ppapi::proxy::PPPDecryptor_Buffer /* extra_data_buffer */)
-IPC_MESSAGE_ROUTED3(
-    PpapiMsg_PPPContentDecryptor_InitializeVideoDecoder,
-    PP_Instance /* instance */,
-    std::string /* serialized_decoder_config */,
-    ppapi::proxy::PPPDecryptor_Buffer /* extra_data_buffer. */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_DeinitializeDecoder,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    uint32_t /* request_id */)
-IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_ResetDecoder,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    uint32_t /* request_id */)
-IPC_MESSAGE_ROUTED4(PpapiMsg_PPPContentDecryptor_DecryptAndDecode,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    ppapi::proxy::PPPDecryptor_Buffer /* buffer */,
-                    std::string /* serialized_block_info */)
 
 // PPP_Instance_Private.
 IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPInstancePrivate_GetInstanceObject,
@@ -1088,15 +1000,14 @@ IPC_MESSAGE_ROUTED1(PpapiHostMsg_PPBCore_ReleaseResource,
                     ppapi::HostResource)
 
 // PPB_Graphics3D.
-IPC_SYNC_MESSAGE_ROUTED3_4(
-    PpapiHostMsg_PPBGraphics3D_Create,
-    PP_Instance /* instance */,
-    ppapi::HostResource /* share_context */,
-    gpu::gles2::ContextCreationAttribHelper /* attrib_helper */,
-    ppapi::HostResource /* result */,
-    gpu::Capabilities /* capabilities */,
-    ppapi::proxy::SerializedHandle /* shared_state */,
-    gpu::CommandBufferId /* command_buffer_id */)
+IPC_SYNC_MESSAGE_ROUTED3_4(PpapiHostMsg_PPBGraphics3D_Create,
+                           PP_Instance /* instance */,
+                           ppapi::HostResource /* share_context */,
+                           gpu::ContextCreationAttribs /* attrib_helper */,
+                           ppapi::HostResource /* result */,
+                           gpu::Capabilities /* capabilities */,
+                           ppapi::proxy::SerializedHandle /* shared_state */,
+                           gpu::CommandBufferId /* command_buffer_id */)
 IPC_SYNC_MESSAGE_ROUTED2_0(PpapiHostMsg_PPBGraphics3D_SetGetBuffer,
                            ppapi::HostResource /* context */,
                            int32_t /* transfer_buffer_id */)
@@ -1146,7 +1057,7 @@ IPC_SYNC_MESSAGE_ROUTED4_3(PpapiHostMsg_PPBImageData_CreatePlatform,
                            PP_Bool /* init_to_zero */,
                            ppapi::HostResource /* result_resource */,
                            PP_ImageDataDesc /* image_data_desc */,
-                           ppapi::proxy::ImageHandle /* result */)
+                           ppapi::proxy::SerializedHandle /* result */)
 IPC_SYNC_MESSAGE_ROUTED4_3(PpapiHostMsg_PPBImageData_CreateSimple,
                            PP_Instance /* instance */,
                            int32_t /* format */,
@@ -1320,73 +1231,6 @@ IPC_SYNC_MESSAGE_ROUTED2_2(
     ppapi::HostResource /* result_resource */,
     ppapi::proxy::SerializedHandle /* result_shm_handle */)
 
-// PPB_ContentDecryptor_Dev messages handled in PPB_Instance_Proxy.
-IPC_MESSAGE_ROUTED2(PpapiHostMsg_PPBInstance_PromiseResolved,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_PromiseResolvedWithKeyStatus,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    PP_CdmKeyStatus /* key_status */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_PromiseResolvedWithSession,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    ppapi::proxy::SerializedVar /* session_id, String */)
-IPC_MESSAGE_ROUTED5(PpapiHostMsg_PPBInstance_PromiseRejected,
-                    PP_Instance /* instance */,
-                    uint32_t /* promise_id */,
-                    PP_CdmExceptionCode /* exception_code */,
-                    int32_t /* system_code */,
-                    ppapi::proxy::SerializedVar /* error_description, String */)
-IPC_MESSAGE_ROUTED5(PpapiHostMsg_PPBInstance_SessionMessage,
-                    PP_Instance /* instance */,
-                    ppapi::proxy::SerializedVar /* session_id, String */,
-                    PP_CdmMessageType /* message_type */,
-                    ppapi::proxy::SerializedVar /* message, ArrayBuffer */,
-                    ppapi::proxy::SerializedVar /* destination_url, String */)
-IPC_MESSAGE_ROUTED4(PpapiHostMsg_PPBInstance_SessionKeysChange,
-                    PP_Instance /* instance */,
-                    std::string /* session_id */,
-                    PP_Bool /* has_additional_usable_key */,
-                    std::vector<PP_KeyInformation> /* key_information */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_SessionExpirationChange,
-                    PP_Instance /* instance */,
-                    std::string /* session_id */,
-                    PP_Time /* new_expiry_time */)
-IPC_MESSAGE_ROUTED2(PpapiHostMsg_PPBInstance_SessionClosed,
-                    PP_Instance /* instance */,
-                    ppapi::proxy::SerializedVar /* session_id, String */)
-IPC_MESSAGE_ROUTED5(PpapiHostMsg_PPBInstance_LegacySessionError,
-                    PP_Instance /* instance */,
-                    ppapi::proxy::SerializedVar /* session_id, String */,
-                    PP_CdmExceptionCode /* exception_code */,
-                    int32_t /* system_code */,
-                    ppapi::proxy::SerializedVar /* error_description, String */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_DeliverBlock,
-                    PP_Instance /* instance */,
-                    PP_Resource /* decrypted_block, PPB_Buffer_Dev */,
-                    std::string /* serialized_block_info */)
-IPC_MESSAGE_ROUTED4(PpapiHostMsg_PPBInstance_DecoderInitializeDone,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    uint32_t /* request_id */,
-                    PP_Bool /* success */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_DecoderDeinitializeDone,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    uint32_t /* request_id */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_DecoderResetDone,
-                    PP_Instance /* instance */,
-                    PP_DecryptorStreamType /* decoder_type */,
-                    uint32_t /* request_id */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_DeliverFrame,
-                    PP_Instance /* instance */,
-                    PP_Resource /* decrypted_frame, PPB_Buffer_Dev */,
-                    std::string /* serialized_block_info */)
-IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_DeliverSamples,
-                    PP_Instance /* instance */,
-                    PP_Resource /* audio_frames, PPB_Buffer_Dev */,
-                    std::string /* serialized_block_info */)
 #endif  // !defined(OS_NACL) && !defined(NACL_WIN64)
 
 // PPB_Testing.
@@ -1592,17 +1436,6 @@ IPC_MESSAGE_CONTROL3(PpapiHostMsg_UMA_HistogramEnumeration,
                      int32_t /* boundary_value */)
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_UMA_IsCrashReportingEnabled)
 IPC_MESSAGE_CONTROL0(PpapiPluginMsg_UMA_IsCrashReportingEnabledReply)
-
-// Compositor
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_Compositor_Create)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_Compositor_CommitLayers,
-                     std::vector<ppapi::CompositorLayerData> /* layers */,
-                     bool /* reset */)
-IPC_MESSAGE_CONTROL0(PpapiPluginMsg_Compositor_CommitLayersReply)
-IPC_MESSAGE_CONTROL3(PpapiPluginMsg_Compositor_ReleaseResource,
-                     int32_t /* id */,
-                     gpu::SyncToken /* sync_token */,
-                     bool /* is_lost */)
 
 // File chooser.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_FileChooser_Create)
@@ -1874,19 +1707,6 @@ IPC_MESSAGE_CONTROL2(PpapiPluginMsg_HostResolver_ResolveReply,
                      std::string /* canonical_name */,
                      std::vector<PP_NetAddress_Private> /* net_address_list */)
 
-// Platform Verification -------------------------------------------------------
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_PlatformVerification_Create)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_PlatformVerification_ChallengePlatform,
-                     std::string /* service_id  */,
-                     std::vector<uint8_t> /* challenge */)
-IPC_MESSAGE_CONTROL3(PpapiHostMsg_PlatformVerification_ChallengePlatformReply,
-                     std::vector<uint8_t> /* signed_data */,
-                     std::vector<uint8_t> /* signed_data_signature */,
-                     std::string /* platform_key_certificate */)
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_PlatformVerification_GetStorageId)
-IPC_MESSAGE_CONTROL1(PpapiHostMsg_PlatformVerification_GetStorageIdReply,
-                     std::vector<uint8_t> /* storage_id */)
-
 // Printing.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_Printing_Create)
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_Printing_GetDefaultPrintSettings)
@@ -2057,30 +1877,6 @@ IPC_SYNC_MESSAGE_CONTROL2_2(PpapiHostMsg_SharedMemory_CreateSharedMemory,
                             int /* host_handle_id */,
                             ppapi::proxy::SerializedHandle /* plugin_handle */)
 
-// MediaStream -----------------------------------------------------------------
-
-// VideoDestination Private.
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoDestination_Create)
-IPC_MESSAGE_CONTROL1(PpapiHostMsg_VideoDestination_Open,
-                     std::string /* stream_url */)
-IPC_MESSAGE_CONTROL0(PpapiPluginMsg_VideoDestination_OpenReply)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_VideoDestination_PutFrame,
-                     ppapi::HostResource /* image_data */,
-                     PP_TimeTicks /* timestamp */)
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoDestination_Close)
-
-// VideoSource Private.
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoSource_Create)
-IPC_MESSAGE_CONTROL1(PpapiHostMsg_VideoSource_Open,
-                     std::string /* stream_url */)
-IPC_MESSAGE_CONTROL0(PpapiPluginMsg_VideoSource_OpenReply)
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoSource_GetFrame)
-IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoSource_GetFrameReply,
-                     ppapi::HostResource /* resource_id */,
-                     PP_ImageDataDesc /* image_data_desc */,
-                     PP_TimeTicks /* timestamp */)
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoSource_Close)
-
 // VpnProvider ----------------------------------------------------------------
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_VpnProvider_Create)
 
@@ -2188,17 +1984,6 @@ IPC_MESSAGE_CONTROL4(PpapiPluginMsg_WebSocket_ClosedReply,
                      uint16_t /* code */,
                      std::string /* reason */)
 
-// OutputProtection -----------------------------------------------------------
-
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_OutputProtection_Create)
-IPC_MESSAGE_CONTROL1(PpapiHostMsg_OutputProtection_EnableProtection,
-                     uint32_t /* desired_method_mask */)
-IPC_MESSAGE_CONTROL0(PpapiPluginMsg_OutputProtection_EnableProtectionReply)
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_OutputProtection_QueryStatus)
-IPC_MESSAGE_CONTROL2(PpapiPluginMsg_OutputProtection_QueryStatusReply,
-                     uint32_t /* link_mask */,
-                     uint32_t /* protection_mask */)
-
 // VideoDecoder ------------------------------------------------------
 
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoDecoder_Create)
@@ -2220,14 +2005,14 @@ IPC_MESSAGE_CONTROL3(PpapiHostMsg_VideoDecoder_Decode,
                      int32_t /* decode_id */)
 IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoDecoder_DecodeReply,
                      uint32_t /* shm_id */)
-IPC_MESSAGE_CONTROL4(PpapiPluginMsg_VideoDecoder_RequestTextures,
+IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoDecoder_RequestTextures,
                      uint32_t /* num_textures */,
                      PP_Size /* size */,
-                     uint32_t /* texture_target */,
-                     std::vector<gpu::Mailbox> /* mailboxes*/)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_VideoDecoder_AssignTextures,
+                     uint32_t /* texture_target */)
+IPC_MESSAGE_CONTROL3(PpapiHostMsg_VideoDecoder_AssignTextures,
                      PP_Size /* size */,
-                     std::vector<uint32_t> /* texture_ids */)
+                     std::vector<uint32_t> /* texture_ids */,
+                     std::vector<gpu::Mailbox> /* mailboxes */)
 IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoDecoder_PictureReady,
                      int32_t /* decode_id */,
                      uint32_t /* texture_id */,
@@ -2535,6 +2320,27 @@ IPC_MESSAGE_CONTROL0(PpapiHostMsg_PDF_HasUnsupportedFeature)
 // Notifies the renderer to print the current PDF.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_PDF_Print)
 
+// Notifies the renderer to display an alert dialog.
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_PDF_ShowAlertDialog,
+                     std::string /* message */)
+// Reply from the renderer that the alert has been acknowledged.
+IPC_MESSAGE_CONTROL0(PpapiPluginMsg_PDF_ShowAlertDialogReply)
+
+// Notifies the renderer to display a confirmation dialog.
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_PDF_ShowConfirmDialog,
+                     std::string /* message */)
+// Reply from the renderer with the results of the confirm dialog.
+IPC_MESSAGE_CONTROL1(PpapiPluginMsg_PDF_ShowConfirmDialogReply,
+                     bool /* bool result */)
+
+// Notifies the renderer to display a prompt dialog.
+IPC_MESSAGE_CONTROL2(PpapiHostMsg_PDF_ShowPromptDialog,
+                     std::string /* message */,
+                     std::string /* default answer */)
+// Reply from the renderer with the results of the prompt dialog.
+IPC_MESSAGE_CONTROL1(PpapiPluginMsg_PDF_ShowPromptDialogReply,
+                     std::string /* str_result */)
+
 // Notifies the renderer to save the current PDF.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_PDF_SaveAs)
 
@@ -2570,8 +2376,10 @@ IPC_MESSAGE_CONTROL4(PpapiHostMsg_PDF_SelectionChanged,
                      PP_FloatPoint /* right */,
                      int32_t /* right_height */)
 
-// Notify that the plugin has scrolled.
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_PDF_DidScroll)
+// Lets the renderer know that the PDF plugin can handle save commands
+// internally. i.e. It will provide the data to save and trigger the download
+// dialog.
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_PDF_SetPluginCanSave, bool /* can_save */)
 
 // VideoCapture ----------------------------------------------------------------
 

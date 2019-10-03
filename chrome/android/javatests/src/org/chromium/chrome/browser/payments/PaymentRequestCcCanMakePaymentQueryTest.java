@@ -19,10 +19,11 @@ import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -30,10 +31,8 @@ import java.util.concurrent.TimeoutException;
  * user has a valid  credit card without a billing address on file.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        "enable-features=PaymentRequestHasEnrolledInstrument"})
 public class PaymentRequestCcCanMakePaymentQueryTest implements MainActivityStartCallback {
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
@@ -45,8 +44,7 @@ public class PaymentRequestCcCanMakePaymentQueryTest implements MainActivityStar
     }
 
     @Override
-    public void onMainActivityStarted() throws InterruptedException, ExecutionException,
-            TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         // The user has a valid credit card without a billing address on file. This is sufficient
         // for canMakePayment() to return true.
         new AutofillTestHelper().setCreditCard(new CreditCard("", "https://example.com", true, true,
@@ -57,13 +55,12 @@ public class PaymentRequestCcCanMakePaymentQueryTest implements MainActivityStar
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testCanMakePayment()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testCanMakePayment() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(
                 mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
         mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
 
-        // Repeating a query does not count against the quota.
+        // canMakePayment() is not throttled at all.
         mPaymentRequestTestRule.clickNodeAndWait(
                 "buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
         mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
@@ -72,15 +69,66 @@ public class PaymentRequestCcCanMakePaymentQueryTest implements MainActivityStar
                 "buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
         mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
 
-        // Different queries are throttled for a period of time.
         mPaymentRequestTestRule.clickNodeAndWait(
                 "other-buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
-        mPaymentRequestTestRule.expectResultContains(
-                new String[] {"Not allowed to check whether can make payment"});
+        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
 
-        // Repeating the same query again does not count against the quota.
+        // hasEnrolledInstrument() is throttled, but repeating the same query does not count against
+        // quota.
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-visa",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
+
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-visa",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
+
+        // Different hasEnrolledInstrument() queries are throttled.
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-mastercard",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"Exceeded query quota for hasEnrolledInstrument"});
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testCanMakePaymentDisabled() throws InterruptedException, TimeoutException {
+        TestThreadUtils.runOnUiThreadBlocking((Runnable) () -> {
+            PrefServiceBridge.getInstance().setBoolean(Pref.CAN_MAKE_PAYMENT_ENABLED, false);
+        });
+
+        mPaymentRequestTestRule.openPageAndClickBuyAndWait(
+                mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        // canMakePayment() is not throttled at all.
         mPaymentRequestTestRule.clickNodeAndWait(
                 "buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        mPaymentRequestTestRule.clickNodeAndWait(
+                "buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        mPaymentRequestTestRule.clickNodeAndWait(
+                "other-buy", mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        // hasEnrolledInstrument() is throttled, but repeating the same query does not count against
+        // quota.
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-visa",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-visa",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
+
+        // Different hasEnrolledInstrument() queries are throttled.
+        mPaymentRequestTestRule.clickNodeAndWait("has-enrolled-instrument-mastercard",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"Exceeded query quota for hasEnrolledInstrument"});
     }
 }

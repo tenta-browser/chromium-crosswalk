@@ -1,111 +1,131 @@
 # Mojo
-This document is a subset of the [Mojo documentation](/mojo).
 
 [TOC]
 
 ## Getting Started With Mojo
 
-To get started using Mojo in applications which already support it (such as
-Chrome), the fastest path forward will be to look at the bindings documentation
-for your language of choice ([**C++**](#C_Bindings),
-[**JavaScript**](#JavaScript-Bindings), or [**Java**](#Java-Bindings)) as well
-as the documentation for the
-[**Mojom IDL and bindings generator**](/mojo/public/tools/bindings).
+To get started using Mojo in Chromium, the fastest path forward will likely be
+to read the Mojo sections of the
+[Intro to Mojo &amp; Services](/docs/mojo_and_services.md) guide.
 
-If you're looking for information on creating and/or connecting to services, see
-the top-level [Services documentation](/services).
+For more detailed reference material on the most commonly used features of Mojo,
+head directly to the [bindings](#Bindings-APIs) documentation for your language
+of choice or the more general
+[mojom Interface Definition Language (IDL)](/mojo/public/tools/bindings/README.md)
+documentation.
 
-For specific details regarding the conversion of old things to new things, check
-out [Converting Legacy Chrome IPC To Mojo](/ipc).
+If you're looking for information on creating and/or connecting to services,
+you're in the wrong place! Mojo does not deal with services, it only facilitates
+interface definition, message passing, and other lower-level IPC primitives.
+Instead, you should take a look at some of the other available
+[Mojo &amp; Services](/docs/README.md#Mojo-Services) documentation.
 
 ## System Overview
 
-Mojo is a layered collection of runtime libraries providing a platform-agnostic
+Mojo is a collection of runtime libraries providing a platform-agnostic
 abstraction of common IPC primitives, a message IDL format, and a bindings
 library with code generation for multiple target languages to facilitate
 convenient message passing across arbitrary inter- and intra-process boundaries.
 
-The documentation here is segmented according to the different isolated layers
-and libraries comprising the system. The basic hierarchy of features is as
-follows:
+The documentation here is segmented according to the different libraries
+comprising Mojo. Mojo is divided into cleanly-separated layers with the basic
+hierarchy of subcomponents as follows:
 
-![Mojo Library Layering: EDK on bottom, different language bindings on top, public system support APIs in the middle](https://docs.google.com/drawings/d/1RwhzKblXUZw-zhy_KDVobAYprYSqxZzopXTUsbwzDPw/pub?w=570&h=324)
+![Mojo Library Layering: Core on bottom, language bindings on top, public system support APIs in the middle](/docs/images/mojo_stack.png)
 
-## Embedder Development Kit (EDK)
-Every process to be interconnected via Mojo IPC is called a **Mojo embedder**
-and needs to embed the
-[**Embedder Development Kit (EDK)**](/mojo/edk/embedder) library. The EDK
-exposes the means for an embedder to physically connect one process to another
-using any supported native IPC primitive (*e.g.,* a UNIX domain socket or
-Windows named pipe) on the host platform.
+## Mojo Core
+In order to use any of the more interesting high-level support libraries like
+the System APIs or Bindings APIs, a process must first initialize Mojo Core.
+This is a one-time initialization which remains active for the remainder of the
+process's lifetime. There are two ways to initialize Mojo Core: via the Embedder
+API, or through a dynamically linked library.
 
-Details regarding where and how an application process actually embeds and
-configures the EDK are generaly hidden from the rest of the application code,
-and applications instead use the public System and Bindings APIs to get things
-done within processes that embed Mojo.
+### Embedding
+Many processes to be interconnected via Mojo are **embedders**, meaning that
+they statically link against the `//mojo/core/embedder` target and initialize
+Mojo support within each process by calling `mojo::core::Init()`. See
+[**Mojo Core Embedder API**](/mojo/core/embedder/README.md) for more details.
+
+This is a reasonable option when you can guarantee that all interconnected
+process binaries are linking against precisely the same revision of Mojo Core.
+This includes Chromium itself as well as any developer tools and test
+executables built within the tree.
+
+To support other scenarios, use dynamic linking.
+
+### Dynamic Linking
+On some platforms, it's also possible for applications to rely on a
+dynamically-linked Mojo Core library (`libmojo_core.so` or `mojo_core.dll`)
+instead of statically linking against Mojo Core.
+
+In order to take advantage of this mechanism, the library's binary must be
+present in either:
+
+  - The working directory of the application
+  - A directory named by the `MOJO_CORE_LIBRARY_PATH` environment variable
+  - A directory named explicitly by the application at runtime
+
+Instead of calling `mojo::core::Init()` as embedders do, an application using
+dynamic Mojo Core instead calls `MojoInitialize()` from the C System API. This
+call will attempt to locate (see above) and load the Mojo Core library to
+support subsequent Mojo API usage within the process.
+
+Note that the Mojo Core shared library presents a **stable C ABI** designed with
+both forward- and backward-compatibility in mind. Thus old applications will
+work with new versions of the shared library, and new applications can work
+with old versions of the shared library (modulo any dependency on newer
+features, whose absence can be gracefully detected at runtime).
 
 ## C System API
-Once the EDK is initialized within a process, the public
-[**C System API**](/mojo/public/c/system) is usable on any thread for the
-remainder of the process's lifetime. This is a lightweight API with a relatively
-small (and eventually stable) ABI. Typically this API is not used directly, but
-it is the foundation upon which all remaining upper layers are built. It exposes
-the fundamental capabilities to create and interact with various types of Mojo
-handles including **message pipes**, **data pipes**, and **shared buffers**.
+Once Mojo is initialized within a process, the public
+[**C System API**](/mojo/public/c/system/README.md) is usable on any thread for
+the remainder of the process's lifetime. This encapsulates Mojo Core's stable
+ABI and comprises the total public API surface of the Mojo Core library.
 
-## High-Level System APIs
+The C System library's only dependency (apart from the system libc and e.g.
+pthreads) is Mojo Core itself. As such, it's possible build a fully-featured
+multiprocess system using only Mojo Core and its exposed C API. It exposes the
+fundamental cross-platform capabilities to create and manipulate Mojo primitives
+like **message pipes**, **data pipes**, and **shared buffers**, as well as APIs
+to help bootstrap connections among processes.
 
+Despite this, it's rare for applications to use the C API directly. Instead this
+API acts as a stable foundation upon which several higher-level and more
+ergonomic Mojo libraries are built.
+
+## Platform Support API
+Mojo provides a small collection of abstractions around platform-specific IPC
+primitives to facilitate bootstrapping Mojo IPC between two processes. See the
+[Platform API](/mojo/public/cpp/platform/README.md) documentation for details.
+
+## Higher-Level System APIs
 There is a relatively small, higher-level system API for each supported
 language, built upon the low-level C API. Like the C API, direct usage of these
 system APIs is rare compared to the bindings APIs, but it is sometimes desirable
 or necessary.
 
-### C++
-The [**C++ System API**](/mojo/public/cpp/system) provides a layer of
-C++ helper classes and functions to make safe System API usage easier:
-strongly-typed handle scopers, synchronous waiting operations, system handle
-wrapping and unwrapping helpers, common handle operations, and utilities for
-more easily watching handle state changes.
+These APIs provide wrappers around low-level [system API](#C-System-API)
+concepts, presenting interfaces that are more idiomatic for the target language:
 
-### JavaScript
-The [**JavaScript System API**](/third_party/WebKit/Source/core/mojo) exposes
-the Mojo primitives to JavaScript, covering all basic functionality of the
-low-level C API.
+- [**C++ System API**](/mojo/public/cpp/system/README.md)
+- [**JavaScript System API**](/third_party/blink/renderer/core/mojo/README.md)
+- [**Java System API**](/mojo/public/java/system/README.md)
 
-### Java
-The [**Java System API**](/mojo/public/java/system) provides helper classes for
-working with Mojo primitives, covering all basic functionality of the low-level
-C API.
+## Bindings APIs
+The [**mojom Interface Definition Language (IDL)**](/mojo/public/tools/bindings/README.md)
+is used to generate interface bindings for various languages to send and receive
+mojom interface messages using Mojo message pipes. The generated code is
+supported by a language-specific bindings API:
 
-## High-Level Bindings APIs
-Typically developers do not use raw message pipe I/O directly, but instead
-define some set of interfaces which are used to generate code that resembles
-an idiomatic method-calling interface in the target language of choice. This is
-the bindings layer.
+- [**C++ Bindings API**](/mojo/public/cpp/bindings/README.md)
+- [**JavaScript Bindings API**](/mojo/public/js/README.md)
+- [**Java Bindings API**](/mojo/public/java/bindings/README.md)
 
-### Mojom IDL and Bindings Generator
-Interfaces are defined using the [**Mojom IDL**](/mojo/public/tools/bindings),
-which can be fed to the [**bindings generator**](/mojo/public/tools/bindings) to
-generate code in various supported languages. Generated code manages
-serialization and deserialization of messages between interface clients and
-implementations, simplifying the code -- and ultimately hiding the message pipe
--- on either side of an interface connection.
-
-### C++ Bindings
-By far the most commonly used API defined by Mojo, the
-[**C++ Bindings API**](/mojo/public/cpp/bindings) exposes a robust set of
-features for interacting with message pipes via generated C++ bindings code,
-including support for sets of related bindings endpoints, associated interfaces,
-nested sync IPC, versioning, bad-message reporting, arbitrary message filter
-injection, and convenient test facilities.
-
-### JavaScript Bindings
-The [**JavaScript Bindings API**](/mojo/public/js) provides helper classes
-for working with JavaScript code emitted by the bindings generator.
-
-### Java Bindings
-The [**Java Bindings API**](/mojo/public/java/bindings) provides helper classes
-for working with Java code emitted by the bindings generator.
+Note that the C++ bindings see the broadest usage in Chromium and are thus
+naturally the most feature-rich, including support for things like
+[associated interfaces](/mojo/public/cpp/bindings/README.md#Associated-Interfaces),
+[synchronous calls](/mojo/public/cpp/bindings/README.md#Synchronous-Calls), and
+[type-mapping](/mojo/public/cpp/bindings/README.md#Type-Mapping).
 
 ## FAQ
 
@@ -130,7 +150,9 @@ Compared to the old IPC in Chrome, making a Mojo call is about 1/3 faster and us
 
 ### Can I use in-process message pipes?
 Yes, and message pipe usage is identical regardless of whether the pipe actually
-crosses a process boundary -- in fact this detail is intentionally obscured.
+crosses a process boundary -- in fact the location of the other end of a pipe is
+intentionally obscured, in part for the sake of efficiency, and in part to
+discourage tight coupling of application logic to such details.
 
 Message pipes which don't cross a process boundary are efficient: sent messages
 are never copied, and a write on one end will synchronously modify the message

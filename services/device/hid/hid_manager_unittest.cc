@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -12,8 +13,8 @@
 #include "services/device/hid/hid_manager_impl.h"
 #include "services/device/hid/mock_hid_connection.h"
 #include "services/device/hid/mock_hid_service.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/hid.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/hid.mojom.h"
 
 namespace device {
 
@@ -244,7 +245,7 @@ TEST_F(HidManagerTest, TestHidConnectionInterface) {
   {
     base::RunLoop run_loop;
     hid_manager_->Connect(
-        device0->device_guid(),
+        device0->device_guid(), /*connection_client=*/nullptr,
         base::BindOnce(&OnConnect, run_loop.QuitClosure(), client.get()));
     run_loop.Run();
   }

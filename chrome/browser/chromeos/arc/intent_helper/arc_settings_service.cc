@@ -7,46 +7,62 @@
 #include <string>
 
 #include "ash/public/cpp/ash_pref_names.h"
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/json/json_writer.h"
 #include "base/memory/singleton.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/arc/arc_session_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
+#include "chrome/browser/chromeos/settings/stats_reporting_controller.h"
 #include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_features.h"
+#include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/proxy/proxy_config_service_impl.h"
-#include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/timezone_settings.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_prefs.h"
+#include "components/arc/arc_util.h"
 #include "components/arc/common/backup_settings.mojom.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "components/arc/intent_helper/font_size_util.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/onc/onc_pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/proxy_config/proxy_config_dictionary.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
-#include "net/proxy/proxy_config.h"
+#include "content/public/common/page_zoom.h"
+#include "net/proxy_resolution/proxy_bypass_rules.h"
+#include "net/proxy_resolution/proxy_config.h"
 
-using ::chromeos::CrosSettings;
 using ::chromeos::system::TimezoneSettings;
 
 namespace {
+
+constexpr char kSetFontScaleAction[] =
+    "org.chromium.arc.intent_helper.SET_FONT_SCALE";
+constexpr char kSetPageZoomAction[] =
+    "org.chromium.arc.intent_helper.SET_PAGE_ZOOM";
+
+constexpr char kArcProxyBypassListDelimeter[] = ",";
 
 bool GetHttpProxyServer(const ProxyConfigDictionary* proxy_config_dict,
                         std::string* host,
@@ -59,10 +75,10 @@ bool GetHttpProxyServer(const ProxyConfigDictionary* proxy_config_dict,
   proxy_rules.ParseFromString(proxy_rules_string);
 
   const net::ProxyList* proxy_list = nullptr;
-  if (proxy_rules.type == net::ProxyConfig::ProxyRules::TYPE_SINGLE_PROXY) {
+  if (proxy_rules.type == net::ProxyConfig::ProxyRules::Type::PROXY_LIST) {
     proxy_list = &proxy_rules.single_proxies;
   } else if (proxy_rules.type ==
-             net::ProxyConfig::ProxyRules::TYPE_PROXY_PER_SCHEME) {
+             net::ProxyConfig::ProxyRules::Type::PROXY_LIST_PER_SCHEME) {
     proxy_list = proxy_rules.MapUrlSchemeToProxyList(url::kHttpScheme);
   }
   if (!proxy_list || proxy_list->IsEmpty())
@@ -104,11 +120,10 @@ class ArcSettingsServiceFactory
 // about and sends the new values to Android to keep the state in sync.
 class ArcSettingsServiceImpl
     : public chromeos::system::TimezoneSettings::Observer,
-      public ArcSessionManager::Observer,
       public ConnectionObserver<mojom::AppInstance>,
       public chromeos::NetworkStateHandlerObserver {
  public:
-  ArcSettingsServiceImpl(content::BrowserContext* context,
+  ArcSettingsServiceImpl(Profile* profile,
                          ArcBridgeService* arc_bridge_service);
   ~ArcSettingsServiceImpl() override;
 
@@ -119,16 +134,15 @@ class ArcSettingsServiceImpl
   // TimezoneSettings::Observer:
   void TimezoneChanged(const icu::TimeZone& timezone) override;
 
-  // ArcSessionManager::Observer:
-  void OnArcInitialStart() override;
-
   // NetworkStateHandlerObserver:
   void DefaultNetworkChanged(const chromeos::NetworkState* network) override;
 
+  // Retrieves Chrome's state for the settings that need to be synced on the
+  // initial Android boot and send it to Android. Called by ArcSettingsService.
+  void SyncInitialSettings() const;
+
  private:
-  PrefService* GetPrefs() const {
-    return Profile::FromBrowserContext(context_)->GetPrefs();
-  }
+  PrefService* GetPrefs() const { return profile_->GetPrefs(); }
 
   // Returns whether kProxy pref proxy config is applied.
   bool IsPrefProxyConfigApplied() const;
@@ -139,20 +153,12 @@ class ArcSettingsServiceImpl
   // Stops listening for Chrome settings changes.
   void StopObservingSettingsChanges();
 
-  // Retrieves Chrome's state for the settings that need to be synced on the
-  // initial Android boot and send it to Android.
-  void SyncInitialSettings() const;
   // Retrieves Chrome's state for the settings that need to be synced on each
   // Android boot and send it to Android.
   void SyncBootTimeSettings() const;
   // Retrieves Chrome's state for the settings that need to be synced on each
   // Android boot after AppInstance is ready and send it to Android.
-  // TODO(crbug.com/762553): Sync settings at proper time.
   void SyncAppTimeSettings();
-  // Determine whether a particular setting needs to be synced to Android.
-  // Keep these lines ordered lexicographically.
-  bool ShouldSyncBackupEnabled() const;
-  bool ShouldSyncLocationServiceEnabled() const;
   // Send particular settings to Android.
   // Keep these lines ordered lexicographically.
   void SyncAccessibilityLargeMouseCursorEnabled() const;
@@ -160,17 +166,23 @@ class ArcSettingsServiceImpl
   void SyncBackupEnabled() const;
   void SyncFocusHighlightEnabled() const;
   void SyncFontSize() const;
+  void SyncPageZoom() const;
   void SyncLocale() const;
   void SyncLocationServiceEnabled() const;
   void SyncProxySettings() const;
-  void SyncReportingConsent() const;
+  void SyncReportingConsent(bool initial_sync) const;
   void SyncSelectToSpeakEnabled() const;
-  void SyncSmsConnectEnabled() const;
   void SyncSpokenFeedbackEnabled() const;
   void SyncSwitchAccessEnabled() const;
   void SyncTimeZone() const;
   void SyncTimeZoneByGeolocation() const;
   void SyncUse24HourClock() const;
+
+  // Resets Android's font scale to the default value.
+  void ResetFontScaleToDefault() const;
+
+  // Resets Android's display density to the default value.
+  void ResetPageZoomToDefault() const;
 
   // Registers to listen to a particular perf.
   void AddPrefToObserve(const std::string& pref_name);
@@ -197,30 +209,33 @@ class ArcSettingsServiceImpl
   // ConnectionObserver<mojom::AppInstance>:
   void OnConnectionReady() override;
 
-  content::BrowserContext* const context_;
+  Profile* const profile_;
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   // Manages pref observation registration.
   PrefChangeRegistrar registrar_;
 
-  std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
+  std::unique_ptr<chromeos::StatsReportingController::ObserverSubscription>
       reporting_consent_subscription_;
 
-  base::WeakPtrFactory<ArcSettingsServiceImpl> weak_factory_;
+  // Subscription for preference change of default zoom level. Subscription
+  // automatically unregisters a callback when it's destructed.
+  std::unique_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
+      default_zoom_level_subscription_;
+
+  // Name of the default network. Used to keep track of whether the default
+  // network has changed.
+  std::string default_network_name_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcSettingsServiceImpl);
 };
 
 ArcSettingsServiceImpl::ArcSettingsServiceImpl(
-    content::BrowserContext* context,
+    Profile* profile,
     ArcBridgeService* arc_bridge_service)
-    : context_(context),
-      arc_bridge_service_(arc_bridge_service),
-      weak_factory_(this) {
+    : profile_(profile), arc_bridge_service_(arc_bridge_service) {
   StartObservingSettingsChanges();
   SyncBootTimeSettings();
-  DCHECK(ArcSessionManager::Get());
-  ArcSessionManager::Get()->AddObserver(this);
 
   // Note: if App connection is already established, OnConnectionReady()
   // is synchronously called, so that initial sync is done in the method.
@@ -231,10 +246,6 @@ ArcSettingsServiceImpl::~ArcSettingsServiceImpl() {
   StopObservingSettingsChanges();
 
   arc_bridge_service_->app()->RemoveObserver(this);
-
-  ArcSessionManager* arc_session_manager = ArcSessionManager::Get();
-  if (arc_session_manager)
-    arc_session_manager->RemoveObserver(this);
 }
 
 void ArcSettingsServiceImpl::OnPrefChanged(const std::string& pref_name) const {
@@ -261,14 +272,8 @@ void ArcSettingsServiceImpl::OnPrefChanged(const std::string& pref_name) const {
     SyncSwitchAccessEnabled();
   } else if (pref_name == ash::prefs::kAccessibilityVirtualKeyboardEnabled) {
     SyncAccessibilityVirtualKeyboardEnabled();
-  } else if (pref_name == prefs::kArcBackupRestoreEnabled) {
-    if (ShouldSyncBackupEnabled())
-      SyncBackupEnabled();
-  } else if (pref_name == prefs::kArcLocationServiceEnabled) {
-    if (ShouldSyncLocationServiceEnabled())
-      SyncLocationServiceEnabled();
-  } else if (pref_name == ::prefs::kApplicationLocale ||
-             pref_name == ::prefs::kLanguagePreferredLanguages) {
+  } else if (pref_name == ::language::prefs::kApplicationLocale ||
+             pref_name == ::language::prefs::kPreferredLanguages) {
     SyncLocale();
   } else if (pref_name == ::prefs::kUse24HourClock) {
     SyncUse24HourClock();
@@ -278,8 +283,6 @@ void ArcSettingsServiceImpl::OnPrefChanged(const std::string& pref_name) const {
              pref_name == ::prefs::kWebKitDefaultFontSize ||
              pref_name == ::prefs::kWebKitMinimumFontSize) {
     SyncFontSize();
-  } else if (pref_name == prefs::kSmsConnectEnabled) {
-    SyncSmsConnectEnabled();
   } else if (pref_name == proxy_config::prefs::kProxy) {
     SyncProxySettings();
   } else {
@@ -291,21 +294,26 @@ void ArcSettingsServiceImpl::TimezoneChanged(const icu::TimeZone& timezone) {
   SyncTimeZone();
 }
 
-void ArcSettingsServiceImpl::OnArcInitialStart() {
-  SyncInitialSettings();
-}
-
 void ArcSettingsServiceImpl::DefaultNetworkChanged(
     const chromeos::NetworkState* network) {
   // kProxy pref has more priority than the default network update.
   // If a default network is changed to the network with ONC policy with proxy
   // settings, it should be translated here.
-  if (network && !IsPrefProxyConfigApplied())
-    SyncProxySettings();
+  if (!network || IsPrefProxyConfigApplied())
+    return;
+
+  // This function is called when the default network changes or when any of its
+  // properties change. Only trigger a proxy settings sync to ARC when the
+  // default network changes.
+  if (default_network_name_ == network->name())
+    return;
+  default_network_name_ = network->name();
+
+  SyncProxySettings();
 }
 
 bool ArcSettingsServiceImpl::IsPrefProxyConfigApplied() const {
-  net::ProxyConfig config;
+  net::ProxyConfigWithAnnotation config;
   return PrefProxyConfigTrackerImpl::PrefPrecedes(
       PrefProxyConfigTrackerImpl::ReadPrefConfig(GetPrefs(), &config));
 }
@@ -320,9 +328,6 @@ void ArcSettingsServiceImpl::StartObservingSettingsChanges() {
   AddPrefToObserve(ash::prefs::kAccessibilitySpokenFeedbackEnabled);
   AddPrefToObserve(ash::prefs::kAccessibilitySwitchAccessEnabled);
   AddPrefToObserve(ash::prefs::kAccessibilityVirtualKeyboardEnabled);
-  AddPrefToObserve(prefs::kArcBackupRestoreEnabled);
-  AddPrefToObserve(prefs::kArcLocationServiceEnabled);
-  AddPrefToObserve(prefs::kSmsConnectEnabled);
   AddPrefToObserve(::prefs::kResolveTimezoneByGeolocationMethod);
   AddPrefToObserve(::prefs::kUse24HourClock);
   AddPrefToObserve(::prefs::kWebKitDefaultFixedFontSize);
@@ -332,10 +337,22 @@ void ArcSettingsServiceImpl::StartObservingSettingsChanges() {
   AddPrefToObserve(onc::prefs::kDeviceOpenNetworkConfiguration);
   AddPrefToObserve(onc::prefs::kOpenNetworkConfiguration);
 
-  reporting_consent_subscription_ = CrosSettings::Get()->AddSettingsObserver(
-      chromeos::kStatsReportingPref,
-      base::Bind(&ArcSettingsServiceImpl::SyncReportingConsent,
-                 base::Unretained(this)));
+  // Note that some preferences, such as kArcBackupRestoreEnabled and
+  // kArcLocationServiceEnabled, are not dynamically updated after initial
+  // ARC setup and therefore are not observed here.
+
+  reporting_consent_subscription_ =
+      chromeos::StatsReportingController::Get()->AddObserver(
+          base::Bind(&ArcSettingsServiceImpl::SyncReportingConsent,
+                     base::Unretained(this), /*initial_sync=*/false));
+
+  // It's safe to use base::Unretained. This is unregistered when
+  // default_zoom_level_subscription_ is destructed which is stored as
+  // unique_ptr in member of this class.
+  default_zoom_level_subscription_ =
+      profile_->GetZoomLevelPrefs()->RegisterDefaultZoomLevelCallback(
+          base::BindRepeating(&ArcSettingsServiceImpl::SyncPageZoom,
+                              base::Unretained(this)));
 
   TimezoneSettings::GetInstance()->AddObserver(this);
 
@@ -356,6 +373,7 @@ void ArcSettingsServiceImpl::SyncInitialSettings() const {
   // Keep these lines ordered lexicographically.
   SyncBackupEnabled();
   SyncLocationServiceEnabled();
+  SyncReportingConsent(/*initial_sync=*/true);
 }
 
 void ArcSettingsServiceImpl::SyncBootTimeSettings() const {
@@ -363,49 +381,43 @@ void ArcSettingsServiceImpl::SyncBootTimeSettings() const {
   SyncAccessibilityLargeMouseCursorEnabled();
   SyncAccessibilityVirtualKeyboardEnabled();
   SyncFocusHighlightEnabled();
-  SyncFontSize();
   SyncProxySettings();
-  SyncReportingConsent();
+  SyncReportingConsent(/*initial_sync=*/false);
   SyncSelectToSpeakEnabled();
-  SyncSmsConnectEnabled();
   SyncSpokenFeedbackEnabled();
   SyncSwitchAccessEnabled();
   SyncTimeZone();
   SyncTimeZoneByGeolocation();
   SyncUse24HourClock();
 
-  if (ShouldSyncBackupEnabled())
-    SyncBackupEnabled();
-  if (ShouldSyncLocationServiceEnabled())
-    SyncLocationServiceEnabled();
+  // SplitSettings decouples browser font size and page zoom from Android's
+  // font size and display scale. Reset the values to default in case the user
+  // had a custom value. https://crbug.com/955071
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings)) {
+    ResetFontScaleToDefault();
+    ResetPageZoomToDefault();
+  } else {
+    SyncFontSize();
+    SyncPageZoom();
+  }
 }
 
 void ArcSettingsServiceImpl::SyncAppTimeSettings() {
-  SyncLocale();
-
   // Applying system locales change on ARC will cause restarting other services
   // and applications on ARC and doing such change in early phase may lead to
-  // ARC OptIn failure.  So that observing preferred languages change should be
-  // deferred at least until |mojom::AppInstance| is ready. But it's not ideal
-  // (b/6773449, b/65385376).
-  AddPrefToObserve(::prefs::kApplicationLocale);
-  AddPrefToObserve(::prefs::kLanguagePreferredLanguages);
-}
-
-bool ArcSettingsServiceImpl::ShouldSyncBackupEnabled() const {
-  // Always sync the managed setting. Also sync when the pref is unset, which
-  // normally happens once after the pref changes from the managed state to
-  // unmanaged.
-  return GetPrefs()->IsManagedPreference(prefs::kArcBackupRestoreEnabled) ||
-         !GetPrefs()->HasPrefPath(prefs::kArcBackupRestoreEnabled);
-}
-
-bool ArcSettingsServiceImpl::ShouldSyncLocationServiceEnabled() const {
-  // Always sync the managed setting. Also sync when the pref is unset, which
-  // normally happens once after the pref changes from the managed state to
-  // unmanaged.
-  return GetPrefs()->IsManagedPreference(prefs::kArcLocationServiceEnabled) ||
-         !GetPrefs()->HasPrefPath(prefs::kArcLocationServiceEnabled);
+  // ARC OptIn failure b/65385376. So that observing preferred languages change
+  // should be deferred at least until |mojom::AppInstance| is ready.
+  // Note that locale and preferred languages are passed to Android container on
+  // boot time and current sync is redundant in most cases. However there is
+  // race when preferred languages may be changed during the ARC booting.
+  // Tracking and applying this information is complex task thar requires
+  // syncronization ARC session start, ArcSettingsService and
+  // ArcSettingsServiceImpl creation/destroying. Android framework has ability
+  // to supress reduntant calls so having this little overhead simplifies common
+  // implementation.
+  SyncLocale();
+  AddPrefToObserve(::language::prefs::kApplicationLocale);
+  AddPrefToObserve(::language::prefs::kPreferredLanguages);
 }
 
 void ArcSettingsServiceImpl::SyncAccessibilityLargeMouseCursorEnabled() const {
@@ -431,24 +443,6 @@ void ArcSettingsServiceImpl::SyncBackupEnabled() const {
     DCHECK(value->is_bool());
     backup_settings->SetBackupEnabled(value->GetBool(),
                                       !pref->IsUserModifiable());
-  } else {
-    // TODO(crbug.com/783567): Remove this code path after we made sure we
-    // rolled the ARC image that implements backup_settings.
-    //
-    // Fallback to use intent broadcast, if the new method is not available.
-    SendBoolPrefSettingsBroadcast(
-        prefs::kArcBackupRestoreEnabled,
-        "org.chromium.arc.intent_helper.SET_BACKUP_ENABLED");
-  }
-
-  if (GetPrefs()->IsManagedPreference(prefs::kArcBackupRestoreEnabled)) {
-    // Unset the user pref so that if the pref becomes unmanaged at some point,
-    // this change will be synced.
-    GetPrefs()->ClearPref(prefs::kArcBackupRestoreEnabled);
-  } else if (!GetPrefs()->HasPrefPath(prefs::kArcBackupRestoreEnabled)) {
-    // Set the pref value in order to prevent the subsequent syncing. The
-    // "false" value is a safe default from the legal/privacy perspective.
-    GetPrefs()->SetBoolean(prefs::kArcBackupRestoreEnabled, false);
   }
 }
 
@@ -459,6 +453,11 @@ void ArcSettingsServiceImpl::SyncFocusHighlightEnabled() const {
 }
 
 void ArcSettingsServiceImpl::SyncFontSize() const {
+  // When OS settings are split from browser, don't use the browser's font size
+  // to change ARC++ font scale.
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings))
+    return;
+
   int default_size = GetIntegerPref(::prefs::kWebKitDefaultFontSize);
   int default_fixed_size = GetIntegerPref(::prefs::kWebKitDefaultFixedFontSize);
   int minimum_size = GetIntegerPref(::prefs::kWebKitMinimumFontSize);
@@ -468,30 +467,38 @@ void ArcSettingsServiceImpl::SyncFontSize() const {
 
   base::DictionaryValue extras;
   extras.SetDouble("scale", android_scale);
-  SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_FONT_SCALE",
-                        extras);
+  SendSettingsBroadcast(kSetFontScaleAction, extras);
+}
+
+void ArcSettingsServiceImpl::SyncPageZoom() const {
+  // When OS settings are split from browser, don't use the browser's page zoom
+  // to set ARC++ application density.
+  if (base::FeatureList::IsEnabled(chromeos::features::kSplitSettings))
+    return;
+
+  double zoom_level = profile_->GetZoomLevelPrefs()->GetDefaultZoomLevelPref();
+  double zoom_factor = content::ZoomLevelToZoomFactor(zoom_level);
+
+  base::DictionaryValue extras;
+  extras.SetDouble("zoomFactor", zoom_factor);
+  SendSettingsBroadcast(kSetPageZoomAction, extras);
 }
 
 void ArcSettingsServiceImpl::SyncLocale() const {
-  const PrefService::Preference* pref =
-      registrar_.prefs()->FindPreference(::prefs::kApplicationLocale);
-  DCHECK(pref);
+  if (IsArcLocaleSyncDisabled()) {
+    VLOG(1) << "Locale sync is disabled.";
+    return;
+  }
+
   std::string locale;
-  bool value_exists = pref->GetValue()->GetAsString(&locale);
-  DCHECK(value_exists);
+  std::string preferred_languages;
   base::DictionaryValue extras;
   // Chrome OS locale may contain only the language part (e.g. fr) but country
   // code (e.g. fr_FR).  Since Android expects locale to contain country code,
-  // ARC will derive a likely locale with country code from such.
+  // ARC will derive a likely locale with country code from such
+  GetLocaleAndPreferredLanguages(profile_, &locale, &preferred_languages);
   extras.SetString("locale", locale);
-  const std::string preferredLanguages =
-      registrar_.prefs()->GetString(::prefs::kLanguagePreferredLanguages);
-  // |preferredLanguages| consists of comma separated locale strings. It may be
-  // empty or contain empty items, but those are ignored on ARC.  If an item
-  // has no country code, it is derived in ARC.  In such a case, it may
-  // conflict with another item in the list, then these will be dedupped (the
-  // first one is taken) in ARC.
-  extras.SetString("preferredLanguages", preferredLanguages);
+  extras.SetString("preferredLanguages", preferred_languages);
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_LOCALE", extras);
 }
 
@@ -499,15 +506,6 @@ void ArcSettingsServiceImpl::SyncLocationServiceEnabled() const {
   SendBoolPrefSettingsBroadcast(
       prefs::kArcLocationServiceEnabled,
       "org.chromium.arc.intent_helper.SET_LOCATION_SERVICE_ENABLED");
-  if (GetPrefs()->IsManagedPreference(prefs::kArcLocationServiceEnabled)) {
-    // Unset the user pref so that if the pref becomes unmanaged at some point,
-    // this change will be synced.
-    GetPrefs()->ClearPref(prefs::kArcLocationServiceEnabled);
-  } else if (!GetPrefs()->HasPrefPath(prefs::kArcLocationServiceEnabled)) {
-    // Set the pref value in order to prevent the subsequent syncing. The
-    // "false" value is a safe default from the legal/privacy perspective.
-    GetPrefs()->SetBoolean(prefs::kArcLocationServiceEnabled, false);
-  }
 }
 
 void ArcSettingsServiceImpl::SyncProxySettings() const {
@@ -555,6 +553,14 @@ void ArcSettingsServiceImpl::SyncProxySettings() const {
       std::string bypass_list;
       if (proxy_config_dict->GetBypassList(&bypass_list) &&
           !bypass_list.empty()) {
+        // Chrome uses semicolon [;] as delimiter for the proxy bypass list
+        // while ARC expects comma [,] delimiter.  Using the wrong delimiter
+        // causes loss of network connectivity for many apps in ARC.
+        auto bypassed_hosts = base::SplitStringPiece(
+            bypass_list, net::ProxyBypassRules::kBypassListDelimeter,
+            base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+        bypass_list =
+            base::JoinString(bypassed_hosts, kArcProxyBypassListDelimeter);
         extras.SetString("bypassList", bypass_list);
       }
       break;
@@ -567,9 +573,22 @@ void ArcSettingsServiceImpl::SyncProxySettings() const {
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_PROXY", extras);
 }
 
-void ArcSettingsServiceImpl::SyncReportingConsent() const {
-  bool consent = false;
-  CrosSettings::Get()->GetBoolean(chromeos::kStatsReportingPref, &consent);
+void ArcSettingsServiceImpl::SyncReportingConsent(bool initial_sync) const {
+  bool consent = IsArcStatsReportingEnabled();
+  if (consent && !initial_sync && policy_util::IsAccountManaged(profile_)) {
+    // Don't enable reporting for managed users who might not have seen the
+    // reporting notice during ARC setup.
+    return;
+  }
+  if (consent && initial_sync &&
+      profile_->GetPrefs()->GetBoolean(prefs::kArcSkippedReportingNotice)) {
+    // Explicitly leave reporting off for users who did not get a reporting
+    // notice during setup, but otherwise would have reporting on due to the
+    // result of |IsArcStatsReportingEnabled()| during setup. Typically this is
+    // due to the fact that ArcSessionManager was able to skip the setup UI for
+    // managed users.
+    consent = false;
+  }
   base::DictionaryValue extras;
   extras.SetBoolean("reportingConsent", consent);
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_REPORTING_CONSENT",
@@ -580,22 +599,6 @@ void ArcSettingsServiceImpl::SyncSelectToSpeakEnabled() const {
   SendBoolPrefSettingsBroadcast(
       ash::prefs::kAccessibilitySelectToSpeakEnabled,
       "org.chromium.arc.intent_helper.SET_SELECT_TO_SPEAK_ENABLED");
-}
-
-void ArcSettingsServiceImpl::SyncSmsConnectEnabled() const {
-  // Only sync the preferences value if the feature flag is enabled, otherwise
-  // sync a 'false' value.
-  std::string action =
-      std::string("org.chromium.arc.intent_helper.SET_SMS_CONNECT_ENABLED");
-  if (!base::FeatureList::IsEnabled(features::kMultidevice)) {
-    const PrefService::Preference* pref =
-        registrar_.prefs()->FindPreference(prefs::kSmsConnectEnabled);
-    DCHECK(pref);
-    SendBoolValueSettingsBroadcast(false, pref->IsManaged(), action);
-    return;
-  }
-
-  SendBoolPrefSettingsBroadcast(prefs::kSmsConnectEnabled, action);
 }
 
 void ArcSettingsServiceImpl::SyncSpokenFeedbackEnabled() const {
@@ -649,6 +652,18 @@ void ArcSettingsServiceImpl::SyncUse24HourClock() const {
   extras.SetBoolean("use24HourClock", use24HourClock);
   SendSettingsBroadcast("org.chromium.arc.intent_helper.SET_USE_24_HOUR_CLOCK",
                         extras);
+}
+
+void ArcSettingsServiceImpl::ResetFontScaleToDefault() const {
+  base::DictionaryValue extras;
+  extras.SetDouble("scale", kAndroidFontScaleNormal);
+  SendSettingsBroadcast(kSetFontScaleAction, extras);
+}
+
+void ArcSettingsServiceImpl::ResetPageZoomToDefault() const {
+  base::DictionaryValue extras;
+  extras.SetDouble("zoomFactor", 1.0);
+  SendSettingsBroadcast(kSetPageZoomAction, extras);
 }
 
 void ArcSettingsServiceImpl::AddPrefToObserve(const std::string& pref_name) {
@@ -730,21 +745,55 @@ ArcSettingsService* ArcSettingsService::GetForBrowserContext(
 
 ArcSettingsService::ArcSettingsService(content::BrowserContext* context,
                                        ArcBridgeService* bridge_service)
-    : context_(context), arc_bridge_service_(bridge_service) {
+    : profile_(Profile::FromBrowserContext(context)),
+      arc_bridge_service_(bridge_service) {
   arc_bridge_service_->intent_helper()->AddObserver(this);
+  ArcSessionManager::Get()->AddObserver(this);
+
+  if (!IsArcPlayStoreEnabledForProfile(profile_))
+    SetInitialSettingsPending(false);
 }
 
 ArcSettingsService::~ArcSettingsService() {
+  ArcSessionManager::Get()->RemoveObserver(this);
   arc_bridge_service_->intent_helper()->RemoveObserver(this);
 }
 
 void ArcSettingsService::OnConnectionReady() {
   impl_ =
-      std::make_unique<ArcSettingsServiceImpl>(context_, arc_bridge_service_);
+      std::make_unique<ArcSettingsServiceImpl>(profile_, arc_bridge_service_);
+  if (!IsInitialSettingsPending())
+    return;
+  impl_->SyncInitialSettings();
+  SetInitialSettingsPending(false);
 }
 
 void ArcSettingsService::OnConnectionClosed() {
   impl_.reset();
+}
+
+void ArcSettingsService::OnArcPlayStoreEnabledChanged(bool enabled) {
+  if (!enabled)
+    SetInitialSettingsPending(false);
+}
+
+void ArcSettingsService::OnArcInitialStart() {
+  DCHECK(!IsInitialSettingsPending());
+
+  if (!impl_) {
+    SetInitialSettingsPending(true);
+    return;
+  }
+
+  impl_->SyncInitialSettings();
+}
+
+void ArcSettingsService::SetInitialSettingsPending(bool pending) {
+  profile_->GetPrefs()->SetBoolean(prefs::kArcInitialSettingsPending, pending);
+}
+
+bool ArcSettingsService::IsInitialSettingsPending() const {
+  return profile_->GetPrefs()->GetBoolean(prefs::kArcInitialSettingsPending);
 }
 
 }  // namespace arc

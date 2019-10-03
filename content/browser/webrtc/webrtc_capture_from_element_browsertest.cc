@@ -7,14 +7,15 @@
 #include "build/build_config.h"
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
-#include "media/mojo/features.h"
+#include "media/mojo/buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #endif
 
 #if BUILDFLAG(ENABLE_MOJO_RENDERER)
@@ -62,15 +63,14 @@ class WebRtcCaptureFromElementBrowserTest
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     WebRtcContentBrowserTestBase::SetUpCommandLine(command_line);
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kEnableBlinkFeatures, "MediaCaptureFromVideo");
 
     // Allow <video>/<audio>.play() when not initiated by user gesture.
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kIgnoreAutoplayRestrictionsForTests);
+    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
     // Allow experimental canvas features.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableExperimentalCanvasFeatures);
+        switches::kEnableExperimentalWebPlatformFeatures);
     // Allow window.internals for simulating context loss.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kExposeInternalsForTesting);
@@ -107,16 +107,18 @@ IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
   MakeTypicalCall("testCanvasCapture(drawWebGL);", kCanvasCaptureTestHtmlFile);
 }
 
-#if defined(OS_LINUX)
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames \
-  DISABLED_VerifyCanvasCaptureOffscreenCanvasCommitFrames
+#if defined(OS_WIN)
+// https://crbug.com/869723
+// Flaky on Windows 10 with Viz (i.e. in viz_content_browsertests).
+#define MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames \
+  DISABLED_VerifyCanvasCaptureOffscreenCanvasFrames
 #else
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames \
-  VerifyCanvasCaptureOffscreenCanvasCommitFrames
+#define MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames \
+  VerifyCanvasCaptureOffscreenCanvasFrames
 #endif
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       MAYBE_VerifyCanvasCaptureOffscreenCanvasCommitFrames) {
-  MakeTypicalCall("testCanvasCapture(drawOffscreenCanvasCommit);",
+                       MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames) {
+  MakeTypicalCall("testCanvasCapture(drawOffscreenCanvas);",
                   kCanvasCaptureTestHtmlFile);
 }
 
@@ -138,28 +140,28 @@ IN_PROC_BROWSER_TEST_P(WebRtcCaptureFromElementBrowserTest,
   }
 #endif
 
-  MakeTypicalCall(
-      base::StringPrintf("testCaptureFromMediaElement(\"%s\", %d, %d, %d);",
-                         GetParam().filename.c_str(),
-                         GetParam().has_video,
-                         GetParam().has_audio,
-                         GetParam().use_audio_tag),
-      kVideoAudioHtmlFile);
+  MakeTypicalCall(JsReplace("testCaptureFromMediaElement($1, $2, $3, $4)",
+                            GetParam().filename, GetParam().has_video,
+                            GetParam().has_audio, GetParam().use_audio_tag),
+                  kVideoAudioHtmlFile);
 }
 
+// https://crbug.com/986020.
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       CaptureFromCanvas2DHandlesContextLoss) {
+                       DISABLED_CaptureFromCanvas2DHandlesContextLoss) {
   MakeTypicalCall("testCanvas2DContextLoss(true);",
                   kCanvasCaptureColorTestHtmlFile);
 }
 
+// Not supported on android https://crbug.com/898286.
+// Not supported on accelerated canvases https://crbug.com/954142.
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       CaptureFromOpaqueCanvas2DHandlesContextLoss) {
+                       DISABLED_CaptureFromOpaqueCanvas2DHandlesContextLoss) {
   MakeTypicalCall("testCanvas2DContextLoss(false);",
                   kCanvasCaptureColorTestHtmlFile);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        WebRtcCaptureFromElementBrowserTest,
-                        testing::ValuesIn(kFileAndTypeParameters));
+INSTANTIATE_TEST_SUITE_P(,
+                         WebRtcCaptureFromElementBrowserTest,
+                         testing::ValuesIn(kFileAndTypeParameters));
 }  // namespace content

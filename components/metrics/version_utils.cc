@@ -8,6 +8,10 @@
 #include "build/build_config.h"
 #include "components/version_info/version_info.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
+
 namespace metrics {
 
 std::string GetVersionString() {
@@ -15,7 +19,13 @@ std::string GetVersionString() {
 #if defined(ARCH_CPU_64_BITS)
   version += "-64";
 #endif  // defined(ARCH_CPU_64_BITS)
-  if (!version_info::IsOfficialBuild())
+
+#if defined(GOOGLE_CHROME_BUILD)
+  bool is_chrome_branded = true;
+#else
+  bool is_chrome_branded = false;
+#endif
+  if (!is_chrome_branded || !version_info::IsOfficialBuild())
     version.append("-devel");
   return version;
 }
@@ -35,6 +45,13 @@ SystemProfileProto::Channel AsProtobufChannel(version_info::Channel channel) {
   }
   NOTREACHED();
   return SystemProfileProto::CHANNEL_UNKNOWN;
+}
+
+std::string GetAppPackageName() {
+#if defined(OS_ANDROID)
+  return base::android::BuildInfo::GetInstance()->package_name();
+#endif
+  return std::string();
 }
 
 }  // namespace metrics

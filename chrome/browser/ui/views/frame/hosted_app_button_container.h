@@ -8,83 +8,180 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "base/time/time.h"
+#include "base/timer/timer.h"
+#include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
+#include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
+#include "chrome/browser/ui/views/toolbar/browser_actions_container.h"
+#include "ui/gfx/color_palette.h"
+#include "ui/views/accessible_pane_view.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
 #include "ui/views/view.h"
+#include "ui/views/widget/widget_observer.h"
 
-class AppMenu;
-class HostedAppMenuModel;
+namespace {
+class HostedAppNonClientFrameViewAshTest;
+}
+
+class AppMenuButton;
 class BrowserView;
+class HostedAppOriginText;
+class HostedAppMenuButton;
+
+namespace views {
+class Widget;
+}
 
 // A container for hosted app buttons in the title bar.
-class HostedAppButtonContainer : public views::View,
-                                 public ContentSettingImageView::Delegate {
+class HostedAppButtonContainer : public views::AccessiblePaneView,
+                                 public BrowserActionsContainer::Delegate,
+                                 public ContentSettingImageView::Delegate,
+                                 public ImmersiveModeController::Observer,
+                                 public PageActionIconView::Delegate,
+                                 public ToolbarButtonProvider,
+                                 public views::WidgetObserver {
  public:
-  // |active_icon_color| and |inactive_icon_color| indicate the colors to use
+  static const char kViewClassName[];
+
+  // Timing parameters for the origin fade animation.
+  // These control how long it takes for the origin text and menu button
+  // highlight to fade in, pause then fade out.
+  static constexpr base::TimeDelta kOriginFadeInDuration =
+      base::TimeDelta::FromMilliseconds(800);
+  static constexpr base::TimeDelta kOriginPauseDuration =
+      base::TimeDelta::FromMilliseconds(2500);
+  static constexpr base::TimeDelta kOriginFadeOutDuration =
+      base::TimeDelta::FromMilliseconds(800);
+
+  // The total duration of the origin fade animation.
+  static base::TimeDelta OriginTotalDuration();
+
+  // |active_color| and |inactive_color| indicate the colors to use
   // for button icons when the window is focused and blurred respectively.
-  HostedAppButtonContainer(BrowserView* browser_view,
-                           SkColor active_icon_color,
-                           SkColor inactive_icon_color);
+  HostedAppButtonContainer(views::Widget* widget,
+                           BrowserView* browser_view,
+                           SkColor active_color,
+                           SkColor inactive_color,
+                           base::Optional<int> right_margin = base::nullopt);
   ~HostedAppButtonContainer() override;
 
-  // Updates the visibility of each content setting view.
-  void RefreshContentSettingViews();
+  void UpdateStatusIconsVisibility();
+
+  void UpdateCaptionColors();
 
   // Sets the container to paints its buttons the active/inactive color.
   void SetPaintAsActive(bool active);
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(HostedAppNonClientFrameViewAshTest, HostedAppFrame);
+  // Sets own bounds to be right aligned and vertically centered in the given
+  // space, returns a new trailing_x value.
+  int LayoutInContainer(int leading_x,
+                        int trailing_x,
+                        int y,
+                        int available_height);
 
-  // The 'app menu' button for the hosted app.
-  class AppMenuButton : public views::MenuButton,
-                        public views::MenuButtonListener {
-   public:
-    explicit AppMenuButton(BrowserView* browser_view);
-    ~AppMenuButton() override;
+  SkColor active_color_for_testing() const { return active_color_; }
 
-    // Sets the color of the menu button icon.
-    void SetIconColor(SkColor color);
+  // views::AccessiblePaneView:
+  const char* GetClassName() const override;
 
-    // views::MenuButtonListener:
-    void OnMenuButtonClicked(views::MenuButton* source,
-                             const gfx::Point& point,
-                             const ui::Event* event) override;
+  // BrowserActionsContainer::Delegate:
+  views::LabelButton* GetOverflowReferenceView() override;
+  base::Optional<int> GetMaxBrowserActionsWidth() const override;
+  bool CanShowIconInToolbar() const override;
+  std::unique_ptr<ToolbarActionsBar> CreateToolbarActionsBar(
+      ToolbarActionsBarDelegate* delegate,
+      Browser* browser,
+      ToolbarActionsBar* main_bar) const override;
 
-    AppMenu* menu() { return menu_.get(); }
-
-   private:
-    // The containing browser view.
-    BrowserView* browser_view_;
-
-    // App model and menu.
-    // Note that the menu should be destroyed before the model it uses, so the
-    // menu should be listed later.
-    std::unique_ptr<HostedAppMenuModel> menu_model_;
-    std::unique_ptr<AppMenu> menu_;
-
-    DISALLOW_COPY_AND_ASSIGN(AppMenuButton);
-  };
-
-  // ContentSettingsImageView::Delegate:
+  // ContentSettingImageView::Delegate:
+  SkColor GetContentSettingInkDropColor() const override;
   content::WebContents* GetContentSettingWebContents() override;
   ContentSettingBubbleModelDelegate* GetContentSettingBubbleModelDelegate()
       override;
+  void OnContentSettingImageBubbleShown(
+      ContentSettingImageModel::ImageType type) const override;
 
-  // views::View:
+  // ImmersiveModeController::Observer:
+  void OnImmersiveRevealStarted() override;
+
+  // PageActionIconView::Delegate:
+  SkColor GetPageActionInkDropColor() const override;
+  content::WebContents* GetWebContentsForPageActionIconView() override;
+
+  // ToolbarButtonProvider:
+  BrowserActionsContainer* GetBrowserActionsContainer() override;
+  OmniboxPageActionIconContainerView* GetOmniboxPageActionIconContainerView()
+      override;
+  AppMenuButton* GetAppMenuButton() override;
+  gfx::Rect GetFindBarBoundingBox(int contents_height) const override;
+  void FocusToolbar() override;
+  views::AccessiblePaneView* GetAsAccessiblePaneView() override;
+  views::View* GetAnchorView() override;
+
+  // views::WidgetObserver:
+  void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
+
+ protected:
+  // views::AccessiblePaneView:
+  gfx::Size CalculatePreferredSize() const override;
+  void ChildPreferredSizeChanged(views::View* child) override;
   void ChildVisibilityChanged(views::View* child) override;
+
+ private:
+  friend class HostedAppNonClientFrameViewAshTest;
+  friend class HostedAppGlassBrowserFrameViewTest;
+  friend class ImmersiveModeControllerAshHostedAppBrowserTest;
+  friend class HostedAppAshInteractiveUITest;
+
+  // Duration to wait before starting the opening animation.
+  static constexpr base::TimeDelta kTitlebarAnimationDelay =
+      base::TimeDelta::FromMilliseconds(750);
+
+  // Methods for coordinate the titlebar animation (origin text slide, menu
+  // highlight and icon fade in).
+  bool ShouldAnimate() const;
+  void StartTitlebarAnimation();
+  void FadeInContentSettingIcons();
+  static void DisableAnimationForTesting();
+
+  class ContentSettingsContainer;
+
+  views::View* GetContentSettingContainerForTesting();
+
+  const std::vector<ContentSettingImageView*>&
+  GetContentSettingViewsForTesting() const;
+
+  SkColor GetCaptionColor() const;
+  void UpdateChildrenColor();
+
+  // Whether we're waiting for the widget to become visible.
+  bool pending_widget_visibility_ = true;
+
+  ScopedObserver<views::Widget, views::WidgetObserver> scoped_widget_observer_;
+
+  // Timers for synchronising their respective parts of the titlebar animation.
+  base::OneShotTimer animation_start_delay_;
+  base::OneShotTimer icon_fade_in_delay_;
 
   // The containing browser view.
   BrowserView* browser_view_;
 
-  // Button colors.
-  const SkColor active_icon_color_;
-  const SkColor inactive_icon_color_;
+  // Button and text colors.
+  bool paint_as_active_ = true;
+  SkColor active_color_;
+  SkColor inactive_color_;
 
   // Owned by the views hierarchy.
-  AppMenuButton* app_menu_button_;
-  std::vector<ContentSettingImageView*> content_setting_views_;
+  HostedAppOriginText* hosted_app_origin_text_ = nullptr;
+  ContentSettingsContainer* content_settings_container_ = nullptr;
+  OmniboxPageActionIconContainerView* omnibox_page_action_icon_container_view_ =
+      nullptr;
+  BrowserActionsContainer* browser_actions_container_ = nullptr;
+  HostedAppMenuButton* app_menu_button_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(HostedAppButtonContainer);
 };

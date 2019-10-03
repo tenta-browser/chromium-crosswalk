@@ -10,12 +10,12 @@
 
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_test_util.h"
@@ -23,20 +23,23 @@
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
+#include "extensions/browser/api/web_request/permission_helper.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
-#include "extensions/browser/info_map.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
-#include "net/base/request_priority.h"
+#include "extensions/common/extensions_client.h"
 #include "net/http/http_response_headers.h"
-#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "net/url_request/url_request.h"
-#include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace helpers = extension_web_request_api_helpers;
+namespace keys = extensions::declarative_webrequest_constants;
 
 using base::DictionaryValue;
 using base::ListValue;
 using extension_test_util::LoadManifestUnchecked;
+using helpers::EventResponseDeltas;
 using testing::HasSubstr;
 
 namespace extensions {
@@ -46,14 +49,13 @@ namespace {
 const char kUnknownActionType[] = "unknownType";
 
 std::unique_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
-  std::unique_ptr<base::Value> parsed_value(base::test::ParseJson(json));
+  std::unique_ptr<base::Value> parsed_value(
+      base::test::ParseJsonDeprecated(json));
   const base::ListValue* parsed_list;
   CHECK(parsed_value->GetAsList(&parsed_list));
 
   WebRequestActionSet::Values actions;
-  for (base::ListValue::const_iterator it = parsed_list->begin();
-       it != parsed_list->end();
-       ++it) {
+  for (auto it = parsed_list->begin(); it != parsed_list->end(); ++it) {
     const base::DictionaryValue* dict;
     CHECK(it->GetAsDictionary(&dict));
     actions.push_back(dict->CreateDeepCopy());
@@ -72,13 +74,7 @@ std::unique_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
 
 }  // namespace
 
-namespace keys = declarative_webrequest_constants;
-
-class WebRequestActionWithThreadsTest : public testing::Test {
- public:
-  WebRequestActionWithThreadsTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {}
-
+class WebRequestActionWithThreadsTest : public ExtensionServiceTestBase {
  protected:
   void SetUp() override;
 
@@ -96,21 +92,15 @@ class WebRequestActionWithThreadsTest : public testing::Test {
   // executable for http://clients1.google.com.
   void CheckActionNeedsAllUrls(const char* action, RequestStage stage);
 
- private:
-  content::TestBrowserThreadBundle thread_bundle_;
-
- protected:
-  net::TestURLRequestContext context_;
-
   // An extension with *.com host permissions and the DWR permission.
   scoped_refptr<Extension> extension_;
   // An extension with host permissions for all URLs and the DWR permission.
   scoped_refptr<Extension> extension_all_urls_;
-  scoped_refptr<InfoMap> extension_info_map_;
 };
 
 void WebRequestActionWithThreadsTest::SetUp() {
-  testing::Test::SetUp();
+  ExtensionServiceTestBase::SetUp();
+  InitializeEmptyExtensionService();
 
   std::string error;
   extension_ = LoadManifestUnchecked("permissions",
@@ -128,17 +118,8 @@ void WebRequestActionWithThreadsTest::SetUp() {
                             "ext_id_2",
                             &error);
   ASSERT_TRUE(extension_all_urls_.get()) << error;
-  extension_info_map_ = new InfoMap;
-  ASSERT_TRUE(extension_info_map_.get());
-  extension_info_map_->AddExtension(
-      extension_.get(),
-      base::Time::Now(),
-      false /*incognito_enabled*/,
-      false /*notifications_disabled*/);
-  extension_info_map_->AddExtension(extension_all_urls_.get(),
-                                    base::Time::Now(),
-                                    false /*incognito_enabled*/,
-                                    false /*notifications_disabled*/);
+  ExtensionRegistry::Get(browser_context())->AddEnabled(extension_);
+  ExtensionRegistry::Get(browser_context())->AddEnabled(extension_all_urls_);
 }
 
 bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
@@ -146,21 +127,22 @@ bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
     const std::string& extension_id,
     const WebRequestActionSet* action_set,
     RequestStage stage) {
-  std::unique_ptr<net::URLRequest> regular_request(
-      context_.CreateRequest(GURL(url_string), net::DEFAULT_PRIORITY, NULL,
-                             TRAFFIC_ANNOTATION_FOR_TESTS));
-  std::list<LinkedPtrEventResponseDelta> deltas;
+  const int kRendererId = 2;
+  EventResponseDeltas deltas;
   scoped_refptr<net::HttpResponseHeaders> headers(
       new net::HttpResponseHeaders(""));
-  WebRequestData request_data(regular_request.get(), stage, nullptr,
-                              headers.get());
+  WebRequestInfoInitParams params;
+  params.url = GURL(url_string);
+  WebRequestInfoInitParams request_params(std::move(params));
+  request_params.render_process_id = kRendererId;
+  WebRequestInfo request_info(std::move(request_params));
+  WebRequestData request_data(&request_info, stage, headers.get());
   std::set<std::string> ignored_tags;
-  WebRequestAction::ApplyInfo apply_info = { extension_info_map_.get(),
-                                             request_data,
-                                             false /*crosses_incognito*/,
-                                             &deltas, &ignored_tags };
+  WebRequestAction::ApplyInfo apply_info = {
+      PermissionHelper::Get(browser_context()), request_data,
+      false /*crosses_incognito*/, &deltas, &ignored_tags};
   action_set->Apply(extension_id, base::Time(), &apply_info);
-  return (1u == deltas.size() || 0u < ignored_tags.size());
+  return (1u == deltas.size() || !ignored_tags.empty());
 }
 
 void WebRequestActionWithThreadsTest::CheckActionNeedsAllUrls(
@@ -177,12 +159,13 @@ void WebRequestActionWithThreadsTest::CheckActionNeedsAllUrls(
   EXPECT_TRUE(ActionWorksOnRequest(
       "http://test.com", extension_all_urls_->id(), action_set.get(), stage));
 
+  const std::string& webstore_url =
+      ExtensionsClient::Get()->GetWebstoreBaseURL().spec();
   // The protected URLs should not be touched at all.
-  EXPECT_FALSE(ActionWorksOnRequest(
-      "http://clients1.google.com", extension_->id(), action_set.get(), stage));
-  EXPECT_FALSE(ActionWorksOnRequest("http://clients1.google.com",
-                                    extension_all_urls_->id(),
-                                    action_set.get(),
+  EXPECT_FALSE(ActionWorksOnRequest(webstore_url.c_str(), extension_->id(),
+                                    action_set.get(), stage));
+  EXPECT_FALSE(ActionWorksOnRequest(webstore_url.c_str(),
+                                    extension_all_urls_->id(), action_set.get(),
                                     stage));
 }
 
@@ -359,13 +342,12 @@ TEST_F(WebRequestActionWithThreadsTest, PermissionsToSendMessageToExtension) {
                                    ON_BEFORE_REQUEST));
 
   // The protected URLs should not be touched at all.
-  EXPECT_FALSE(ActionWorksOnRequest("http://clients1.google.com",
-                                    extension_->id(),
-                                    action_set.get(),
-                                    ON_BEFORE_REQUEST));
-  EXPECT_FALSE(ActionWorksOnRequest("http://clients1.google.com",
-                                    extension_all_urls_->id(),
-                                    action_set.get(),
+  const std::string& webstore_url =
+      ExtensionsClient::Get()->GetWebstoreBaseURL().spec();
+  EXPECT_FALSE(ActionWorksOnRequest(webstore_url.c_str(), extension_->id(),
+                                    action_set.get(), ON_BEFORE_REQUEST));
+  EXPECT_FALSE(ActionWorksOnRequest(webstore_url.c_str(),
+                                    extension_all_urls_->id(), action_set.get(),
                                     ON_BEFORE_REQUEST));
 }
 
@@ -585,12 +567,10 @@ TEST(WebRequestActionTest, GetName) {
     "declarativeWebRequest.IgnoreRules",
   };
   std::unique_ptr<WebRequestActionSet> action_set(CreateSetOfActions(kActions));
-  ASSERT_EQ(arraysize(kExpectedNames), action_set->actions().size());
+  ASSERT_EQ(base::size(kExpectedNames), action_set->actions().size());
   size_t index = 0;
-  for (WebRequestActionSet::Actions::const_iterator it =
-           action_set->actions().begin();
-       it != action_set->actions().end();
-       ++it) {
+  for (auto it = action_set->actions().cbegin();
+       it != action_set->actions().cend(); ++it) {
     EXPECT_EQ(kExpectedNames[index], (*it)->GetName());
     ++index;
   }

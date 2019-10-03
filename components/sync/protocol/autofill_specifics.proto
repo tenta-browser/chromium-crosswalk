@@ -4,8 +4,8 @@
 //
 // Sync protocol datatype extension for autofill.
 
-// Update proto_value_conversions{.h,.cc,_unittest.cc} if you change
-// any fields in this file.
+// If you change or add any fields in this file, update proto_visitors.h and
+// potentially proto_enum_conversions.{h, cc}.
 
 syntax = "proto2";
 
@@ -56,6 +56,10 @@ message AutofillProfileSpecifics {
   // the Autofill address. For more info please refer to autofill_profile.h.
   optional int64 validity_state_bitfield = 24;
 
+  // Denotes whether the validity_state_bitfield is updated according to the
+  // changes in the autofill profile values.
+  optional bool is_client_validity_states_updated = 25;
+
   // Deprecated.
   optional string label = 1 [deprecated = true];
   optional string phone_fax_whole_number = 14 [deprecated = true];
@@ -77,6 +81,20 @@ message AutofillSpecifics {
   // Obsolete credit card fields.
   // optional bytes deprecated_encrypted_credit_card = 5;
   // optional AutofillCreditCardSpecifics deprecated_credit_card = 6;
+}
+
+message CloudTokenData {
+  // Last 4-5 digits of the Cloud Primary Account Number (CPAN).
+  optional string suffix = 1;
+
+  // CPAN Month number 1-12.
+  optional int32 exp_month = 2;
+
+  // CPAN Four-digit year (e.g. 2017).
+  optional int32 exp_year = 3;
+
+  // URL of the card art to be displayed for CPAN.
+  optional string art_fife_url = 4;
 }
 
 message WalletMaskedCreditCard {
@@ -132,6 +150,9 @@ message WalletMaskedCreditCard {
 
   // Issuing Bank name which is internationalized (e.g. "Chase", "工商银行")
   optional string bank_name = 10;
+
+  // This field will be set if a cloud token is available for the instrument.
+  optional CloudTokenData cloud_token_data = 11;
 }
 
 // Different than an AutofillProfile because this represents some known address
@@ -175,11 +196,18 @@ message WalletPostalAddress {
   optional string phone_number = 13;
 }
 
+// Contains information about a Payments Customer.
+message PaymentsCustomerData {
+  // The billable customer ID associated with the account.
+  optional string id = 1;
+}
+
 message AutofillWalletSpecifics {
   enum WalletInfoType {
     UNKNOWN = 0;
     MASKED_CREDIT_CARD = 1;
     POSTAL_ADDRESS = 2;
+    CUSTOMER_DATA = 3;
   }
 
   optional WalletInfoType type = 1;
@@ -190,6 +218,9 @@ message AutofillWalletSpecifics {
 
   // This field exists if and only if the "type" field equals to ADDRESS.
   optional WalletPostalAddress address = 3;
+
+  // This field exists if and only if the "type" field equals to CUSTOMER_DATA.
+  optional PaymentsCustomerData customer_data = 4;
 }
 
 // Wallet card and address usage information that can be synced.

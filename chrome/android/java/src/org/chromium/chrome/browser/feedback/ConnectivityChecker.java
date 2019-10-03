@@ -4,14 +4,15 @@
 
 package org.chromium.chrome.browser.feedback;
 
-import android.os.AsyncTask;
-
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -53,7 +54,7 @@ public final class ConnectivityChecker {
     }
 
     private static void postResult(final ConnectivityCheckerCallback callback, final int result) {
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 callback.onResult(result);
@@ -96,9 +97,9 @@ public final class ConnectivityChecker {
             postResult(callback, ConnectivityCheckResult.ERROR);
             return;
         }
-        new AsyncTask<String, Void, Integer>() {
+        new AsyncTask<Integer>() {
             @Override
-            protected Integer doInBackground(String... strings) {
+            protected Integer doInBackground() {
                 try {
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                     conn.setInstanceFollowRedirects(false);
@@ -128,7 +129,8 @@ public final class ConnectivityChecker {
             protected void onPostExecute(Integer result) {
                 callback.onResult(result);
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        }
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /**

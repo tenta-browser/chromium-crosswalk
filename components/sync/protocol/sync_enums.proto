@@ -4,8 +4,8 @@
 //
 // Sync protocol for communication between sync client and server.
 
-// Update proto_value_conversions{.h,.cc,_unittest.cc} if you change
-// any fields in this file.
+// If you change or add any enums in this file, update
+// proto_enum_conversions.{h, cc}.
 
 syntax = "proto2";
 
@@ -110,17 +110,16 @@ message SyncEnums {
 
   enum Action {
     UPGRADE_CLIENT = 0;              // Upgrade the client to latest version.
-    CLEAR_USER_DATA_AND_RESYNC = 1;  // Clear user data from dashboard and
-                                     // setup sync again.
-    ENABLE_SYNC_ON_ACCOUNT = 2;      // The administrator needs to enable sync
-                                     // on the account.
-    STOP_AND_RESTART_SYNC = 3;       // Stop sync and set up sync again.
-    DISABLE_SYNC_ON_CLIENT = 4;      // Wipe the client of all sync data and
-                                     // stop syncing.
+    DEPRECATED_CLEAR_USER_DATA_AND_RESYNC = 1;
+    DEPRECATED_ENABLE_SYNC_ON_ACCOUNT = 2;
+    DEPRECATED_STOP_AND_RESTART_SYNC = 3;
+    DEPRECATED_DISABLE_SYNC_ON_CLIENT = 4;
     UNKNOWN_ACTION = 5;              // This is the default.
   }
 
+  // Please keep in sync with chrome/android/java/.../ForeignSessionHelper.java
   enum DeviceType {
+    TYPE_UNSET = 0;
     TYPE_WIN = 1;
     TYPE_MAC = 2;
     TYPE_LINUX = 3;

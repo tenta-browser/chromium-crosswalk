@@ -4,11 +4,13 @@
 
 #include "ui/ozone/platform/cast/client_native_pixmap_factory_cast.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/client_native_pixmap.h"
 #include "ui/gfx/client_native_pixmap_factory.h"
+#include "ui/gfx/native_pixmap_handle.h"
 
 namespace ui {
 namespace {
@@ -26,7 +28,7 @@ class ClientNativePixmapCast : public gfx::ClientNativePixmap {
   void* GetMemoryAddress(size_t plane) const override {
     NOTREACHED();
     return nullptr;
-  };
+  }
   void Unmap() override { NOTREACHED(); }
   int GetStride(size_t plane) const override {
     NOTREACHED();
@@ -37,15 +39,10 @@ class ClientNativePixmapCast : public gfx::ClientNativePixmap {
 class ClientNativePixmapFactoryCast : public gfx::ClientNativePixmapFactory {
  public:
   // ClientNativePixmapFactoryCast implementation:
-  bool IsConfigurationSupported(gfx::BufferFormat format,
-                                gfx::BufferUsage usage) const override {
-    return format == gfx::BufferFormat::RGBA_8888 &&
-           usage == gfx::BufferUsage::SCANOUT;
-  }
-
   std::unique_ptr<gfx::ClientNativePixmap> ImportFromHandle(
-      const gfx::NativePixmapHandle& handle,
+      gfx::NativePixmapHandle handle,
       const gfx::Size& size,
+      gfx::BufferFormat format,
       gfx::BufferUsage usage) override {
     return std::make_unique<ClientNativePixmapCast>();
   }

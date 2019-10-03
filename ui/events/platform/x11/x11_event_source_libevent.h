@@ -20,25 +20,25 @@ namespace ui {
 // X11 currently.
 class EVENTS_EXPORT XEventDispatcher {
  public:
+  // Sends XEvent to XEventDispatcher for handling. Returns true if the XEvent
+  // was dispatched, otherwise false. After the first XEventDispatcher returns
+  // true XEvent dispatching stops.
+  virtual bool DispatchXEvent(XEvent* xevent) = 0;
+
   // XEventDispatchers can be used to test if they are able to process next
   // translated event sent by a PlatformEventSource. If so, they must make a
   // promise internally to process next event sent by PlatformEventSource.
-  virtual void CheckCanDispatchNextPlatformEvent(XEvent* xev) = 0;
+  virtual void CheckCanDispatchNextPlatformEvent(XEvent* xev);
 
   // Tells that an event has been dispatched and an event handling promise must
   // be removed.
-  virtual void PlatformEventDispatchFinished() = 0;
+  virtual void PlatformEventDispatchFinished();
 
   // Returns PlatformEventDispatcher if this XEventDispatcher is associated with
   // a PlatformEventDispatcher as well. Used to explicitly add a
   // PlatformEventDispatcher during a call from an XEventDispatcher to
   // AddXEventDispatcher.
-  virtual PlatformEventDispatcher* GetPlatformEventDispatcher() = 0;
-
-  // Sends XEvent to XEventDispatcher for handling. Returns true if the XEvent
-  // was dispatched, otherwise false. After the first XEventDispatcher returns
-  // true XEvent dispatching stops.
-  virtual bool DispatchXEvent(XEvent* xevent) = 0;
+  virtual PlatformEventDispatcher* GetPlatformEventDispatcher();
 
  protected:
   virtual ~XEventDispatcher() {}
@@ -51,7 +51,7 @@ class EVENTS_EXPORT XEventDispatcher {
 class EVENTS_EXPORT X11EventSourceLibevent
     : public X11EventSourceDelegate,
       public PlatformEventSource,
-      public base::MessagePumpLibevent::Watcher {
+      public base::MessagePumpLibevent::FdWatcher {
  public:
   explicit X11EventSourceLibevent(XDisplay* display);
   ~X11EventSourceLibevent() override;
@@ -94,16 +94,16 @@ class EVENTS_EXPORT X11EventSourceLibevent
   void StopCurrentEventStream() override;
   void OnDispatcherListChanged() override;
 
-  // base::MessagePumpLibevent::Watcher:
+  // base::MessagePumpLibevent::FdWatcher:
   void OnFileCanReadWithoutBlocking(int fd) override;
   void OnFileCanWriteWithoutBlocking(int fd) override;
 
   X11EventSource event_source_;
 
   // Keep track of all XEventDispatcher to send XEvents directly to.
-  base::ObserverList<XEventDispatcher> dispatchers_xevent_;
+  base::ObserverList<XEventDispatcher>::Unchecked dispatchers_xevent_;
 
-  base::MessagePumpLibevent::FileDescriptorWatcher watcher_controller_;
+  base::MessagePumpLibevent::FdWatchController watcher_controller_;
   bool initialized_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(X11EventSourceLibevent);

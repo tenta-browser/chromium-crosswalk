@@ -4,9 +4,11 @@
 
 #include "components/password_manager/core/browser/password_store_default.h"
 
+#include <iterator>
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "components/password_manager/core/browser/password_store_change.h"
@@ -25,18 +27,22 @@ PasswordStoreDefault::~PasswordStoreDefault() {
 
 void PasswordStoreDefault::ShutdownOnUIThread() {
   PasswordStore::ShutdownOnUIThread();
-  ScheduleTask(base::Bind(&PasswordStoreDefault::ResetLoginDB, this));
+  ScheduleTask(base::BindOnce(&PasswordStoreDefault::ResetLoginDB, this));
 }
 
-void PasswordStoreDefault::InitOnBackgroundSequence(
+bool PasswordStoreDefault::InitOnBackgroundSequence(
     const syncer::SyncableService::StartSyncFlare& flare) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
   DCHECK(login_db_);
+  bool success = true;
   if (!login_db_->Init()) {
     login_db_.reset();
+    // The initialization should be continued, because PasswordSyncableService
+    // has to be initialized even if database initialization failed.
+    success = false;
     LOG(ERROR) << "Could not create/open login database.";
   }
-  PasswordStore::InitOnBackgroundSequence(flare);
+  return PasswordStore::InitOnBackgroundSequence(flare) && success;
 }
 
 void PasswordStoreDefault::ReportMetricsImpl(
@@ -49,45 +55,58 @@ void PasswordStoreDefault::ReportMetricsImpl(
 }
 
 PasswordStoreChangeList PasswordStoreDefault::AddLoginImpl(
-    const PasswordForm& form) {
+    const PasswordForm& form,
+    AddLoginError* error) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
-  if (!login_db_)
+  if (!login_db_) {
+    if (error) {
+      *error = AddLoginError::kDbNotAvailable;
+    }
     return PasswordStoreChangeList();
-  return login_db_->AddLogin(form);
+  }
+  return login_db_->AddLogin(form, error);
 }
 
 PasswordStoreChangeList PasswordStoreDefault::UpdateLoginImpl(
-    const PasswordForm& form) {
+    const PasswordForm& form,
+    UpdateLoginError* error) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
-  if (!login_db_)
+  if (!login_db_) {
+    if (error) {
+      *error = UpdateLoginError::kDbNotAvailable;
+    }
     return PasswordStoreChangeList();
-  return login_db_->UpdateLogin(form);
+  }
+  return login_db_->UpdateLogin(form, error);
 }
 
 PasswordStoreChangeList PasswordStoreDefault::RemoveLoginImpl(
     const PasswordForm& form) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
   PasswordStoreChangeList changes;
-  if (login_db_ && login_db_->RemoveLogin(form))
-    changes.push_back(PasswordStoreChange(PasswordStoreChange::REMOVE, form));
-  return changes;
+  if (login_db_ && login_db_->RemoveLogin(form, &changes)) {
+    return changes;
+  }
+  return PasswordStoreChangeList();
 }
 
 PasswordStoreChangeList PasswordStoreDefault::RemoveLoginsByURLAndTimeImpl(
     const base::Callback<bool(const GURL&)>& url_filter,
     base::Time delete_begin,
     base::Time delete_end) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
+  PrimaryKeyToFormMap key_to_form_map;
   PasswordStoreChangeList changes;
-  if (login_db_ &&
-      login_db_->GetLoginsCreatedBetween(delete_begin, delete_end, &forms)) {
-    for (const auto& form : forms) {
-      if (url_filter.Run(form->origin) && login_db_->RemoveLogin(*form))
-        changes.push_back(
-            PasswordStoreChange(PasswordStoreChange::REMOVE, *form));
+  if (login_db_ && login_db_->GetLoginsCreatedBetween(delete_begin, delete_end,
+                                                      &key_to_form_map)) {
+    for (const auto& pair : key_to_form_map) {
+      PasswordForm* form = pair.second.get();
+      PasswordStoreChangeList remove_changes;
+      if (url_filter.Run(form->origin) &&
+          login_db_->RemoveLogin(*form, &remove_changes)) {
+        std::move(remove_changes.begin(), remove_changes.end(),
+                  std::back_inserter(changes));
+      }
     }
-    if (!changes.empty())
-      LogStatsForBulkDeletion(changes.size());
   }
   return changes;
 }
@@ -95,50 +114,25 @@ PasswordStoreChangeList PasswordStoreDefault::RemoveLoginsByURLAndTimeImpl(
 PasswordStoreChangeList PasswordStoreDefault::RemoveLoginsCreatedBetweenImpl(
     base::Time delete_begin,
     base::Time delete_end) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
   PasswordStoreChangeList changes;
-  if (login_db_ &&
-      login_db_->GetLoginsCreatedBetween(delete_begin, delete_end, &forms)) {
-    if (login_db_->RemoveLoginsCreatedBetween(delete_begin, delete_end)) {
-      for (const auto& form : forms) {
-        changes.push_back(
-            PasswordStoreChange(PasswordStoreChange::REMOVE, *form));
-      }
-      LogStatsForBulkDeletion(changes.size());
-    }
-  }
-  return changes;
-}
-
-PasswordStoreChangeList PasswordStoreDefault::RemoveLoginsSyncedBetweenImpl(
-    base::Time delete_begin,
-    base::Time delete_end) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
-  PasswordStoreChangeList changes;
-  if (login_db_ &&
-      login_db_->GetLoginsSyncedBetween(delete_begin, delete_end, &forms)) {
-    if (login_db_->RemoveLoginsSyncedBetween(delete_begin, delete_end)) {
-      for (const auto& form : forms) {
-        changes.push_back(
-            PasswordStoreChange(PasswordStoreChange::REMOVE, *form));
-      }
-      LogStatsForBulkDeletionDuringRollback(changes.size());
-    }
+  if (!login_db_ || !login_db_->RemoveLoginsCreatedBetween(
+                        delete_begin, delete_end, &changes)) {
+    return PasswordStoreChangeList();
   }
   return changes;
 }
 
 PasswordStoreChangeList PasswordStoreDefault::DisableAutoSignInForOriginsImpl(
     const base::Callback<bool(const GURL&)>& origin_filter) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
+  PrimaryKeyToFormMap key_to_form_map;
   PasswordStoreChangeList changes;
-  if (!login_db_ || !login_db_->GetAutoSignInLogins(&forms))
+  if (!login_db_ || !login_db_->GetAutoSignInLogins(&key_to_form_map))
     return changes;
 
   std::set<GURL> origins_to_update;
-  for (const auto& form : forms) {
-    if (origin_filter.Run(form->origin))
-      origins_to_update.insert(form->origin);
+  for (const auto& pair : key_to_form_map) {
+    if (origin_filter.Run(pair.second->origin))
+      origins_to_update.insert(pair.second->origin);
   }
 
   std::set<GURL> origins_updated;
@@ -147,10 +141,10 @@ PasswordStoreChangeList PasswordStoreDefault::DisableAutoSignInForOriginsImpl(
       origins_updated.insert(origin);
   }
 
-  for (const auto& form : forms) {
-    if (origins_updated.count(form->origin)) {
-      changes.push_back(
-          PasswordStoreChange(PasswordStoreChange::UPDATE, *form));
+  for (const auto& pair : key_to_form_map) {
+    if (origins_updated.count(pair.second->origin)) {
+      changes.emplace_back(PasswordStoreChange::UPDATE, *pair.second,
+                           /*primary_key=*/pair.first);
     }
   }
 
@@ -174,16 +168,6 @@ PasswordStoreDefault::FillMatchingLogins(const FormDigest& form) {
   return matched_forms;
 }
 
-std::vector<std::unique_ptr<PasswordForm>>
-PasswordStoreDefault::FillLoginsForSameOrganizationName(
-    const std::string& signon_realm) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
-  if (login_db_ &&
-      !login_db_->GetLoginsForSameOrganizationName(signon_realm, &forms))
-    return std::vector<std::unique_ptr<PasswordForm>>();
-  return forms;
-}
-
 bool PasswordStoreDefault::FillAutofillableLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
@@ -194,6 +178,13 @@ bool PasswordStoreDefault::FillBlacklistLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
   return login_db_ && login_db_->GetBlacklistLogins(forms);
+}
+
+DatabaseCleanupResult PasswordStoreDefault::DeleteUndecryptableLogins() {
+  DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
+  if (!login_db_)
+    return DatabaseCleanupResult::kDatabaseUnavailable;
+  return login_db_->DeleteUndecryptableLogins();
 }
 
 void PasswordStoreDefault::AddSiteStatsImpl(const InteractionsStats& stats) {
@@ -221,9 +212,55 @@ std::vector<InteractionsStats> PasswordStoreDefault::GetSiteStatsImpl(
                    : std::vector<InteractionsStats>();
 }
 
+bool PasswordStoreDefault::BeginTransaction() {
+  if (login_db_)
+    return login_db_->BeginTransaction();
+  return false;
+}
+
+void PasswordStoreDefault::RollbackTransaction() {
+  if (login_db_)
+    login_db_->RollbackTransaction();
+}
+
+bool PasswordStoreDefault::CommitTransaction() {
+  if (login_db_)
+    return login_db_->CommitTransaction();
+  return false;
+}
+
+FormRetrievalResult PasswordStoreDefault::ReadAllLogins(
+    PrimaryKeyToFormMap* key_to_form_map) {
+  DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
+  if (!login_db_)
+    return FormRetrievalResult::kDbError;
+  return login_db_->GetAllLogins(key_to_form_map);
+}
+
+PasswordStoreChangeList PasswordStoreDefault::RemoveLoginByPrimaryKeySync(
+    int primary_key) {
+  DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
+  PasswordStoreChangeList changes;
+  if (login_db_ && login_db_->RemoveLoginByPrimaryKey(primary_key, &changes)) {
+    return changes;
+  }
+  return PasswordStoreChangeList();
+}
+
+PasswordStoreSync::MetadataStore* PasswordStoreDefault::GetMetadataStore() {
+  return login_db_.get();
+}
+
 void PasswordStoreDefault::ResetLoginDB() {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
   login_db_.reset();
 }
+
+#if defined(USE_X11)
+void PasswordStoreDefault::SetLoginDB(std::unique_ptr<LoginDatabase> login_db) {
+  DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
+  login_db_ = std::move(login_db);
+}
+#endif  // defined(USE_X11)
 
 }  // namespace password_manager

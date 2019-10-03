@@ -14,7 +14,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
@@ -24,12 +23,12 @@ import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.TimeoutException;
 
@@ -37,10 +36,7 @@ import java.util.concurrent.TimeoutException;
  * Tests undo and it's interactions with the UI.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class UndoIntegrationTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -84,17 +80,13 @@ public class UndoIntegrationTest {
         final Tab tab = TabModelUtils.getCurrentTab(model);
 
         // Clock on the link that will trigger a delayed window popup.
-        DOMUtils.clickNode(tab.getContentViewCore(), "link");
+        DOMUtils.clickNode(tab.getWebContents(), "link");
 
         // Attempt to close the tab, which will delay closing until the undo timeout goes away.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                TabModelUtils.closeTabById(model, tab.getId(), true);
-                Assert.assertTrue("Tab was not marked as closing", tab.isClosing());
-                Assert.assertTrue(
-                        "Tab is not actually closing", model.isClosurePending(tab.getId()));
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            TabModelUtils.closeTabById(model, tab.getId(), true);
+            Assert.assertTrue("Tab was not marked as closing", tab.isClosing());
+            Assert.assertTrue("Tab is not actually closing", model.isClosurePending(tab.getId()));
         });
 
         // Give the model a chance to process the undo and close the tab.

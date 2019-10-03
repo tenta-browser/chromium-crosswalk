@@ -9,124 +9,136 @@
 
 #include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
 #include "content/browser/appcache/appcache_quota_client.h"
 #include "content/browser/appcache/mock_appcache_service.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/net_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
 
+using blink::mojom::StorageType;
+
 // Declared to shorten the line lengths.
-static const storage::StorageType kTemp = storage::kStorageTypeTemporary;
-static const storage::StorageType kPerm = storage::kStorageTypePersistent;
+static const StorageType kTemp = StorageType::kTemporary;
+static const StorageType kPerm = StorageType::kPersistent;
 
 // Base class for our test fixtures.
 class AppCacheQuotaClientTest : public testing::Test {
  public:
-  const GURL kOriginA;
-  const GURL kOriginB;
-  const GURL kOriginOther;
+  const url::Origin kOriginA;
+  const url::Origin kOriginB;
+  const url::Origin kOriginOther;
 
   AppCacheQuotaClientTest()
-      : kOriginA("http://host"),
-        kOriginB("http://host:8000"),
-        kOriginOther("http://other"),
+      : kOriginA(url::Origin::Create(GURL("http://host"))),
+        kOriginB(url::Origin::Create(GURL("http://host:8000"))),
+        kOriginOther(url::Origin::Create(GURL("http://other"))),
         usage_(0),
-        delete_status_(storage::kQuotaStatusUnknown),
+        delete_status_(blink::mojom::QuotaStatusCode::kUnknown),
         num_get_origin_usage_completions_(0),
         num_get_origins_completions_(0),
-        num_delete_origins_completions_(0),
-        weak_factory_(this) {}
+        num_delete_origins_completions_(0) {}
 
-  int64_t GetOriginUsage(storage::QuotaClient* client,
-                         const GURL& origin,
-                         storage::StorageType type) {
+  int64_t GetOriginUsage(base::WeakPtr<storage::QuotaClient> client,
+                         const url::Origin& origin,
+                         StorageType type) {
     usage_ = -1;
-    AsyncGetOriginUsage(client, origin, type);
+    AsyncGetOriginUsage(std::move(client), origin, type);
     base::RunLoop().RunUntilIdle();
     return usage_;
   }
 
-  const std::set<GURL>& GetOriginsForType(storage::QuotaClient* client,
-                                          storage::StorageType type) {
+  const std::set<url::Origin>& GetOriginsForType(
+      base::WeakPtr<storage::QuotaClient> client,
+      StorageType type) {
     origins_.clear();
-    AsyncGetOriginsForType(client, type);
+    AsyncGetOriginsForType(std::move(client), type);
     base::RunLoop().RunUntilIdle();
     return origins_;
   }
 
-  const std::set<GURL>& GetOriginsForHost(storage::QuotaClient* client,
-                                          storage::StorageType type,
-                                          const std::string& host) {
+  const std::set<url::Origin>& GetOriginsForHost(
+      base::WeakPtr<storage::QuotaClient> client,
+      StorageType type,
+      const std::string& host) {
     origins_.clear();
-    AsyncGetOriginsForHost(client, type, host);
+    AsyncGetOriginsForHost(std::move(client), type, host);
     base::RunLoop().RunUntilIdle();
     return origins_;
   }
 
-  storage::QuotaStatusCode DeleteOriginData(storage::QuotaClient* client,
-                                            storage::StorageType type,
-                                            const GURL& origin) {
-    delete_status_ = storage::kQuotaStatusUnknown;
-    AsyncDeleteOriginData(client, type, origin);
+  blink::mojom::QuotaStatusCode DeleteOriginData(
+      base::WeakPtr<storage::QuotaClient> client,
+      StorageType type,
+      const url::Origin& origin) {
+    delete_status_ = blink::mojom::QuotaStatusCode::kUnknown;
+    AsyncDeleteOriginData(std::move(client), type, origin);
     base::RunLoop().RunUntilIdle();
     return delete_status_;
   }
 
-  void AsyncGetOriginUsage(storage::QuotaClient* client,
-                           const GURL& origin,
-                           storage::StorageType type) {
+  void AsyncGetOriginUsage(base::WeakPtr<storage::QuotaClient> client,
+                           const url::Origin& origin,
+                           StorageType type) {
+    CHECK(client);
     client->GetOriginUsage(
         origin, type,
-        base::Bind(&AppCacheQuotaClientTest::OnGetOriginUsageComplete,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&AppCacheQuotaClientTest::OnGetOriginUsageComplete,
+                       weak_factory_.GetWeakPtr()));
   }
 
-  void AsyncGetOriginsForType(storage::QuotaClient* client,
-                              storage::StorageType type) {
+  void AsyncGetOriginsForType(base::WeakPtr<storage::QuotaClient> client,
+                              StorageType type) {
+    CHECK(client);
     client->GetOriginsForType(
-        type,
-        base::Bind(&AppCacheQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
+        type, base::BindOnce(&AppCacheQuotaClientTest::OnGetOriginsComplete,
+                             weak_factory_.GetWeakPtr()));
   }
 
-  void AsyncGetOriginsForHost(storage::QuotaClient* client,
-                              storage::StorageType type,
+  void AsyncGetOriginsForHost(base::WeakPtr<storage::QuotaClient> client,
+                              StorageType type,
                               const std::string& host) {
+    CHECK(client);
     client->GetOriginsForHost(
         type, host,
-        base::Bind(&AppCacheQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&AppCacheQuotaClientTest::OnGetOriginsComplete,
+                       weak_factory_.GetWeakPtr()));
   }
 
-  void AsyncDeleteOriginData(storage::QuotaClient* client,
-                             storage::StorageType type,
-                             const GURL& origin) {
+  void AsyncDeleteOriginData(base::WeakPtr<storage::QuotaClient> client,
+                             StorageType type,
+                             const url::Origin& origin) {
+    CHECK(client);
     client->DeleteOriginData(
         origin, type,
-        base::Bind(&AppCacheQuotaClientTest::OnDeleteOriginDataComplete,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&AppCacheQuotaClientTest::OnDeleteOriginDataComplete,
+                       weak_factory_.GetWeakPtr()));
   }
 
-  void SetUsageMapEntry(const GURL& origin, int64_t usage) {
+  void SetUsageMapEntry(const url::Origin& origin, int64_t usage) {
     mock_service_.storage()->usage_map_[origin] = usage;
   }
 
-  AppCacheQuotaClient* CreateClient() {
-    return new AppCacheQuotaClient(&mock_service_);
+  base::WeakPtr<AppCacheQuotaClient> CreateClient() {
+    // The bare operator new is used here because AppCacheQuotaClient deletes
+    // itself when the QuotaManager goes out of scope.
+    return (new AppCacheQuotaClient(mock_service_.AsWeakPtr()))->AsWeakPtr();
   }
 
-  void Call_NotifyAppCacheReady(AppCacheQuotaClient* client) {
-    client->NotifyAppCacheReady();
+  void Call_NotifyAppCacheReady(base::WeakPtr<AppCacheQuotaClient> client) {
+    if (client)
+      client->NotifyAppCacheReady();
   }
 
-  void Call_NotifyAppCacheDestroyed(AppCacheQuotaClient* client) {
-    client->NotifyAppCacheDestroyed();
+  void Call_NotifyAppCacheDestroyed(base::WeakPtr<AppCacheQuotaClient> client) {
+    if (client)
+      client->NotifyAppCacheDestroyed();
   }
 
-  void Call_OnQuotaManagerDestroyed(AppCacheQuotaClient* client) {
-    client->OnQuotaManagerDestroyed();
+  void Call_OnQuotaManagerDestroyed(base::WeakPtr<AppCacheQuotaClient> client) {
+    if (client)
+      client->OnQuotaManagerDestroyed();
   }
 
  protected:
@@ -135,37 +147,37 @@ class AppCacheQuotaClientTest : public testing::Test {
     usage_ = usage;
   }
 
-  void OnGetOriginsComplete(const std::set<GURL>& origins) {
+  void OnGetOriginsComplete(const std::set<url::Origin>& origins) {
     ++num_get_origins_completions_;
     origins_ = origins;
   }
 
-  void OnDeleteOriginDataComplete(storage::QuotaStatusCode status) {
+  void OnDeleteOriginDataComplete(blink::mojom::QuotaStatusCode status) {
     ++num_delete_origins_completions_;
     delete_status_ = status;
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  TestBrowserThreadBundle thread_bundle_;
   int64_t usage_;
-  std::set<GURL> origins_;
-  storage::QuotaStatusCode delete_status_;
+  std::set<url::Origin> origins_;
+  blink::mojom::QuotaStatusCode delete_status_;
   int num_get_origin_usage_completions_;
   int num_get_origins_completions_;
   int num_delete_origins_completions_;
   MockAppCacheService mock_service_;
-  base::WeakPtrFactory<AppCacheQuotaClientTest> weak_factory_;
+  base::WeakPtrFactory<AppCacheQuotaClientTest> weak_factory_{this};
 };
 
 
 TEST_F(AppCacheQuotaClientTest, BasicCreateDestroy) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
   Call_OnQuotaManagerDestroyed(client);
   Call_NotifyAppCacheDestroyed(client);
 }
 
 TEST_F(AppCacheQuotaClientTest, EmptyService) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   EXPECT_EQ(0, GetOriginUsage(client, kOriginA, kTemp));
@@ -174,15 +186,17 @@ TEST_F(AppCacheQuotaClientTest, EmptyService) {
   EXPECT_TRUE(GetOriginsForType(client, kPerm).empty());
   EXPECT_TRUE(GetOriginsForHost(client, kTemp, kOriginA.host()).empty());
   EXPECT_TRUE(GetOriginsForHost(client, kPerm, kOriginA.host()).empty());
-  EXPECT_EQ(storage::kQuotaStatusOk, DeleteOriginData(client, kTemp, kOriginA));
-  EXPECT_EQ(storage::kQuotaStatusOk, DeleteOriginData(client, kPerm, kOriginA));
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
+            DeleteOriginData(client, kTemp, kOriginA));
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
+            DeleteOriginData(client, kPerm, kOriginA));
 
   Call_NotifyAppCacheDestroyed(client);
   Call_OnQuotaManagerDestroyed(client);
 }
 
 TEST_F(AppCacheQuotaClientTest, NoService) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
   Call_NotifyAppCacheDestroyed(client);
 
@@ -192,16 +206,16 @@ TEST_F(AppCacheQuotaClientTest, NoService) {
   EXPECT_TRUE(GetOriginsForType(client, kPerm).empty());
   EXPECT_TRUE(GetOriginsForHost(client, kTemp, kOriginA.host()).empty());
   EXPECT_TRUE(GetOriginsForHost(client, kPerm, kOriginA.host()).empty());
-  EXPECT_EQ(storage::kQuotaErrorAbort,
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort,
             DeleteOriginData(client, kTemp, kOriginA));
-  EXPECT_EQ(storage::kQuotaErrorAbort,
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort,
             DeleteOriginData(client, kPerm, kOriginA));
 
   Call_OnQuotaManagerDestroyed(client);
 }
 
 TEST_F(AppCacheQuotaClientTest, GetOriginUsage) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   SetUsageMapEntry(kOriginA, 1000);
@@ -213,13 +227,14 @@ TEST_F(AppCacheQuotaClientTest, GetOriginUsage) {
 }
 
 TEST_F(AppCacheQuotaClientTest, GetOriginsForHost) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   EXPECT_EQ(kOriginA.host(), kOriginB.host());
   EXPECT_NE(kOriginA.host(), kOriginOther.host());
 
-  std::set<GURL> origins = GetOriginsForHost(client, kTemp, kOriginA.host());
+  std::set<url::Origin> origins =
+      GetOriginsForHost(client, kTemp, kOriginA.host());
   EXPECT_TRUE(origins.empty());
 
   SetUsageMapEntry(kOriginA, 1000);
@@ -243,7 +258,7 @@ TEST_F(AppCacheQuotaClientTest, GetOriginsForHost) {
 }
 
 TEST_F(AppCacheQuotaClientTest, GetOriginsForType) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   EXPECT_TRUE(GetOriginsForType(client, kTemp).empty());
@@ -252,7 +267,7 @@ TEST_F(AppCacheQuotaClientTest, GetOriginsForType) {
   SetUsageMapEntry(kOriginA, 1000);
   SetUsageMapEntry(kOriginB, 10);
 
-  std::set<GURL> origins = GetOriginsForType(client, kTemp);
+  std::set<url::Origin> origins = GetOriginsForType(client, kTemp);
   EXPECT_EQ(2ul, origins.size());
   EXPECT_TRUE(origins.find(kOriginA) != origins.end());
   EXPECT_TRUE(origins.find(kOriginB) != origins.end());
@@ -264,20 +279,22 @@ TEST_F(AppCacheQuotaClientTest, GetOriginsForType) {
 }
 
 TEST_F(AppCacheQuotaClientTest, DeleteOriginData) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   // Perm deletions are short circuited in the Client and
   // should not reach the AppCacheServiceImpl.
-  EXPECT_EQ(storage::kQuotaStatusOk, DeleteOriginData(client, kPerm, kOriginA));
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
+            DeleteOriginData(client, kPerm, kOriginA));
   EXPECT_EQ(0, mock_service_.delete_called_count());
 
-  EXPECT_EQ(storage::kQuotaStatusOk, DeleteOriginData(client, kTemp, kOriginA));
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
+            DeleteOriginData(client, kTemp, kOriginA));
   EXPECT_EQ(1, mock_service_.delete_called_count());
 
   mock_service_.set_mock_delete_appcaches_for_origin_result(
       net::ERR_ABORTED);
-  EXPECT_EQ(storage::kQuotaErrorAbort,
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort,
             DeleteOriginData(client, kTemp, kOriginA));
   EXPECT_EQ(2, mock_service_.delete_called_count());
 
@@ -286,7 +303,7 @@ TEST_F(AppCacheQuotaClientTest, DeleteOriginData) {
 }
 
 TEST_F(AppCacheQuotaClientTest, PendingRequests) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
 
   SetUsageMapEntry(kOriginA, 1000);
   SetUsageMapEntry(kOriginB, 10);
@@ -313,11 +330,10 @@ TEST_F(AppCacheQuotaClientTest, PendingRequests) {
 
   // Pending requests should get serviced when the appcache is ready.
   Call_NotifyAppCacheReady(client);
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(2, num_get_origin_usage_completions_);
   EXPECT_EQ(4, num_get_origins_completions_);
-  EXPECT_EQ(0, num_delete_origins_completions_);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(3, num_delete_origins_completions_);  // deletes are really async
+  EXPECT_EQ(3, num_delete_origins_completions_);
 
   // They should be serviced in order requested.
   EXPECT_EQ(10, usage_);
@@ -329,7 +345,7 @@ TEST_F(AppCacheQuotaClientTest, PendingRequests) {
 }
 
 TEST_F(AppCacheQuotaClientTest, DestroyServiceWithPending) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
 
   SetUsageMapEntry(kOriginA, 1000);
   SetUsageMapEntry(kOriginB, 10);
@@ -359,13 +375,13 @@ TEST_F(AppCacheQuotaClientTest, DestroyServiceWithPending) {
   EXPECT_EQ(3, num_delete_origins_completions_);
   EXPECT_EQ(0, usage_);
   EXPECT_TRUE(origins_.empty());
-  EXPECT_EQ(storage::kQuotaErrorAbort, delete_status_);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort, delete_status_);
 
   Call_OnQuotaManagerDestroyed(client);
 }
 
 TEST_F(AppCacheQuotaClientTest, DestroyQuotaManagerWithPending) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
 
   SetUsageMapEntry(kOriginA, 1000);
   SetUsageMapEntry(kOriginB, 10);
@@ -400,7 +416,7 @@ TEST_F(AppCacheQuotaClientTest, DestroyQuotaManagerWithPending) {
 }
 
 TEST_F(AppCacheQuotaClientTest, DestroyWithDeleteInProgress) {
-  AppCacheQuotaClient* client = CreateClient();
+  base::WeakPtr<AppCacheQuotaClient> client = CreateClient();
   Call_NotifyAppCacheReady(client);
 
   // Start an async delete.
@@ -412,13 +428,13 @@ TEST_F(AppCacheQuotaClientTest, DestroyWithDeleteInProgress) {
 
   // Should have been aborted.
   EXPECT_EQ(1, num_delete_origins_completions_);
-  EXPECT_EQ(storage::kQuotaErrorAbort, delete_status_);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort, delete_status_);
 
   // A real completion callback from the service should
   // be dropped if it comes in after NotifyAppCacheDestroyed.
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, num_delete_origins_completions_);
-  EXPECT_EQ(storage::kQuotaErrorAbort, delete_status_);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kErrorAbort, delete_status_);
 
   Call_OnQuotaManagerDestroyed(client);
 }

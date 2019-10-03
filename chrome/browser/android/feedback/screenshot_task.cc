@@ -7,7 +7,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
-#include "jni/ScreenshotTask_jni.h"
+#include "chrome/android/chrome_jni_headers/ScreenshotTask_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/android/window_android.h"
 #include "ui/gfx/geometry/rect.h"
@@ -39,13 +39,12 @@ void JNI_ScreenshotTask_SnapshotCallback(
 
 void JNI_ScreenshotTask_GrabWindowSnapshotAsync(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jcallback,
-    jlong native_window_android,
+    const JavaParamRef<jobject>& jwindow_android,
     jint window_width,
     jint window_height) {
-  WindowAndroid* window_android = reinterpret_cast<WindowAndroid*>(
-      native_window_android);
+  ui::WindowAndroid* window_android =
+      ui::WindowAndroid::FromJavaWindowAndroid(jwindow_android);
   gfx::Rect window_bounds(window_width, window_height);
   ui::GrabWindowSnapshotAsyncPNG(
       window_android, window_bounds,

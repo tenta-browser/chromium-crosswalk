@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -8,6 +7,8 @@ time.  Since many of them never get used, we use lazy_re to compile
 them on demand the first time they are used, thus speeding up startup
 time in some cases.
 '''
+
+from __future__ import print_function
 
 import re
 

@@ -10,11 +10,17 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
+#include "base/time/time.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_store_change.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
@@ -26,88 +32,82 @@ using password_manager::PasswordStoreChangeList;
 using password_manager::PasswordStoreDefault;
 
 namespace {
-
-bool AddLoginToBackend(
-    const std::unique_ptr<PasswordStoreX::NativeBackend>& backend,
-    const PasswordForm& form,
-    PasswordStoreChangeList* changes) {
-  *changes = backend->AddLogin(form);
-  return (!changes->empty() &&
-          changes->back().type() == PasswordStoreChange::ADD);
-}
-
-bool RemoveLoginsByURLAndTimeFromBackend(
-    PasswordStoreX::NativeBackend* backend,
-    const base::Callback<bool(const GURL&)>& url_filter,
-    base::Time delete_begin,
-    base::Time delete_end,
-    PasswordStoreChangeList* changes) {
-  std::vector<std::unique_ptr<PasswordForm>> forms;
-  if (!backend->GetAllLogins(&forms))
-    return false;
-
-  for (const auto& form : forms) {
-    if (url_filter.Run(form->origin) && form->date_created >= delete_begin &&
-        (delete_end.is_null() || form->date_created < delete_end) &&
-        !backend->RemoveLogin(*form, changes))
-      return false;
+// Returns the password_manager::metrics_util::LinuxBackendMigrationStatus
+// equivalent for |step|.
+password_manager::metrics_util::LinuxBackendMigrationStatus StepForMetrics(
+    PasswordStoreX::MigrationToLoginDBStep step) {
+  using password_manager::metrics_util::LinuxBackendMigrationStatus;
+  switch (step) {
+    case PasswordStoreX::NOT_ATTEMPTED:
+      return LinuxBackendMigrationStatus::kNotAttempted;
+    case PasswordStoreX::DEPRECATED_FAILED:
+      return LinuxBackendMigrationStatus::kDeprecatedFailed;
+    case PasswordStoreX::COPIED_ALL:
+      return LinuxBackendMigrationStatus::kCopiedAll;
+    case PasswordStoreX::LOGIN_DB_REPLACED:
+      return LinuxBackendMigrationStatus::kLoginDBReplaced;
+    case PasswordStoreX::STARTED:
+      return LinuxBackendMigrationStatus::kStarted;
+    case PasswordStoreX::POSTPONED:
+      return LinuxBackendMigrationStatus::kPostponed;
+    case PasswordStoreX::DEPRECATED_FAILED_CREATE_ENCRYPTED:
+      return LinuxBackendMigrationStatus::kDeprecatedFailedCreatedEncrypted;
+    case PasswordStoreX::FAILED_ACCESS_NATIVE:
+      return LinuxBackendMigrationStatus::kFailedAccessNative;
+    case PasswordStoreX::FAILED_REPLACE:
+      return LinuxBackendMigrationStatus::kFailedReplace;
+    case PasswordStoreX::FAILED_INIT_ENCRYPTED:
+      return LinuxBackendMigrationStatus::kFailedInitEncrypted;
+    case PasswordStoreX::FAILED_RECREATE_ENCRYPTED:
+      return LinuxBackendMigrationStatus::kFailedRecreateEncrypted;
+    case PasswordStoreX::FAILED_WRITE_TO_ENCRYPTED:
+      return LinuxBackendMigrationStatus::kFailedWriteToEncrypted;
   }
-
-  return true;
+  NOTREACHED();
+  return LinuxBackendMigrationStatus::kNotAttempted;
 }
 
 }  // namespace
 
 PasswordStoreX::PasswordStoreX(
     std::unique_ptr<password_manager::LoginDatabase> login_db,
-    std::unique_ptr<NativeBackend> backend)
-    : PasswordStoreDefault(std::move(login_db)),
-      backend_(std::move(backend)),
-      migration_checked_(false),
-      allow_fallback_(false) {}
+    PrefService* prefs)
+    : PasswordStoreDefault(std::move(login_db)), migration_checked_(false) {
+  migration_step_pref_.Init(password_manager::prefs::kMigrationToLoginDBStep,
+                            prefs);
+  migration_to_login_db_step_ =
+      static_cast<MigrationToLoginDBStep>(migration_step_pref_.GetValue());
+
+  base::UmaHistogramEnumeration(
+      "PasswordManager.LinuxBackendMigration.Adoption",
+      StepForMetrics(migration_to_login_db_step_));
+}
 
 PasswordStoreX::~PasswordStoreX() {}
 
 scoped_refptr<base::SequencedTaskRunner>
 PasswordStoreX::CreateBackgroundTaskRunner() const {
-  scoped_refptr<base::SequencedTaskRunner> result =
-      backend_ ? backend_->GetBackgroundTaskRunner() : nullptr;
-  return result ? result : PasswordStoreDefault::CreateBackgroundTaskRunner();
+  return PasswordStoreDefault::CreateBackgroundTaskRunner();
 }
 
-PasswordStoreChangeList PasswordStoreX::AddLoginImpl(const PasswordForm& form) {
+PasswordStoreChangeList PasswordStoreX::AddLoginImpl(
+    const PasswordForm& form,
+    password_manager::AddLoginError* error) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() && AddLoginToBackend(backend_, form, &changes)) {
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::AddLoginImpl(form);
-  }
-  return changes;
+  return PasswordStoreDefault::AddLoginImpl(form, error);
 }
 
 PasswordStoreChangeList PasswordStoreX::UpdateLoginImpl(
-    const PasswordForm& form) {
+    const PasswordForm& form,
+    password_manager::UpdateLoginError* error) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() && backend_->UpdateLogin(form, &changes)) {
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::UpdateLoginImpl(form);
-  }
-  return changes;
+  return PasswordStoreDefault::UpdateLoginImpl(form, error);
 }
 
 PasswordStoreChangeList PasswordStoreX::RemoveLoginImpl(
     const PasswordForm& form) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() && backend_->RemoveLogin(form, &changes)) {
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::RemoveLoginImpl(form);
-  }
-  return changes;
+  return PasswordStoreDefault::RemoveLoginImpl(form);
 }
 
 PasswordStoreChangeList PasswordStoreX::RemoveLoginsByURLAndTimeImpl(
@@ -115,208 +115,113 @@ PasswordStoreChangeList PasswordStoreX::RemoveLoginsByURLAndTimeImpl(
     base::Time delete_begin,
     base::Time delete_end) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-
-  if (use_native_backend() &&
-      RemoveLoginsByURLAndTimeFromBackend(backend_.get(), url_filter,
-                                          delete_begin, delete_end, &changes)) {
-    LogStatsForBulkDeletion(changes.size());
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::RemoveLoginsByURLAndTimeImpl(
-        url_filter, delete_begin, delete_end);
-  }
-
-  return changes;
+  return PasswordStoreDefault::RemoveLoginsByURLAndTimeImpl(
+      url_filter, delete_begin, delete_end);
 }
 
 PasswordStoreChangeList PasswordStoreX::RemoveLoginsCreatedBetweenImpl(
     base::Time delete_begin,
     base::Time delete_end) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() &&
-      backend_->RemoveLoginsCreatedBetween(
-          delete_begin, delete_end, &changes)) {
-    LogStatsForBulkDeletion(changes.size());
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::RemoveLoginsCreatedBetweenImpl(delete_begin,
-                                                                   delete_end);
-  }
-  return changes;
-}
-
-PasswordStoreChangeList PasswordStoreX::RemoveLoginsSyncedBetweenImpl(
-    base::Time delete_begin,
-    base::Time delete_end) {
-  CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() &&
-      backend_->RemoveLoginsSyncedBetween(delete_begin, delete_end, &changes)) {
-    LogStatsForBulkDeletionDuringRollback(changes.size());
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes = PasswordStoreDefault::RemoveLoginsSyncedBetweenImpl(delete_begin,
-                                                                  delete_end);
-  }
-  return changes;
+  return PasswordStoreDefault::RemoveLoginsCreatedBetweenImpl(delete_begin,
+                                                              delete_end);
 }
 
 PasswordStoreChangeList PasswordStoreX::DisableAutoSignInForOriginsImpl(
     const base::Callback<bool(const GURL&)>& origin_filter) {
   CheckMigration();
-  PasswordStoreChangeList changes;
-  if (use_native_backend() &&
-      backend_->DisableAutoSignInForOrigins(origin_filter, &changes)) {
-    allow_fallback_ = false;
-  } else if (allow_default_store()) {
-    changes =
-        PasswordStoreDefault::DisableAutoSignInForOriginsImpl(origin_filter);
-  }
-  return changes;
+  return PasswordStoreDefault::DisableAutoSignInForOriginsImpl(origin_filter);
 }
-
-namespace {
-
-// Sorts |list| by origin, like the ORDER BY clause in login_database.cc.
-void SortLoginsByOrigin(std::vector<std::unique_ptr<PasswordForm>>* list) {
-  std::sort(list->begin(), list->end(),
-            [](const std::unique_ptr<PasswordForm>& a,
-               const std::unique_ptr<PasswordForm>& b) {
-              return a->origin < b->origin;
-            });
-}
-
-}  // anonymous namespace
 
 std::vector<std::unique_ptr<PasswordForm>> PasswordStoreX::FillMatchingLogins(
     const FormDigest& form) {
   CheckMigration();
-  std::vector<std::unique_ptr<PasswordForm>> matched_forms;
-  if (use_native_backend() && backend_->GetLogins(form, &matched_forms)) {
-    SortLoginsByOrigin(&matched_forms);
-    // The native backend may succeed and return no data even while locked, if
-    // the query did not match anything stored. So we continue to allow fallback
-    // until we perform a write operation, or until a read returns actual data.
-    if (!matched_forms.empty())
-      allow_fallback_ = false;
-    return matched_forms;
-  }
-  if (allow_default_store())
-    return PasswordStoreDefault::FillMatchingLogins(form);
-  return std::vector<std::unique_ptr<PasswordForm>>();
-}
-
-std::vector<std::unique_ptr<PasswordForm>>
-PasswordStoreX::FillLoginsForSameOrganizationName(
-    const std::string& signon_realm) {
-  // Not available on X.
-  return std::vector<std::unique_ptr<PasswordForm>>();
+  return PasswordStoreDefault::FillMatchingLogins(form);
 }
 
 bool PasswordStoreX::FillAutofillableLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   CheckMigration();
-  if (use_native_backend() && backend_->GetAutofillableLogins(forms)) {
-    SortLoginsByOrigin(forms);
-    // See GetLoginsImpl() for why we disallow fallback conditionally here.
-    if (!forms->empty())
-      allow_fallback_ = false;
-    return true;
-  }
-  if (allow_default_store())
-    return PasswordStoreDefault::FillAutofillableLogins(forms);
-  return false;
+  return PasswordStoreDefault::FillAutofillableLogins(forms);
 }
 
 bool PasswordStoreX::FillBlacklistLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   CheckMigration();
-  if (use_native_backend() && backend_->GetBlacklistLogins(forms)) {
-    // See GetLoginsImpl() for why we disallow fallback conditionally here.
-    SortLoginsByOrigin(forms);
-    if (!forms->empty())
-      allow_fallback_ = false;
-    return true;
-  }
-  if (allow_default_store())
-    return PasswordStoreDefault::FillBlacklistLogins(forms);
-  return false;
+  return PasswordStoreDefault::FillBlacklistLogins(forms);
 }
 
 void PasswordStoreX::CheckMigration() {
   DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
-  if (migration_checked_ || !backend_.get())
+
+  if (migration_checked_)
     return;
   migration_checked_ = true;
-  ssize_t migrated = MigrateLogins();
-  if (migrated > 0) {
-    VLOG(1) << "Migrated " << migrated << " passwords to native store.";
-  } else if (migrated == 0) {
-    // As long as we are able to migrate some passwords, we know the native
-    // store is working. But if there is nothing to migrate, the "migration"
-    // can succeed even when the native store would fail. In this case we
-    // allow a later fallback to the default store. Once any later operation
-    // succeeds on the native store, we will no longer allow fallback.
-    allow_fallback_ = true;
+
+  if (migration_to_login_db_step_ == LOGIN_DB_REPLACED) {
+    return;
+  }
+
+  if (!login_db()) {
+    LOG(ERROR) << "Could not start the migration into the encrypted "
+                  "LoginDatabase because the database failed to initialise.";
+    return;
+  }
+
+  // If the db is empty, there are no records to migrate, and we then can call
+  // it a completed migration.
+  if (login_db()->IsEmpty()) {
+    UpdateMigrationToLoginDBStep(LOGIN_DB_REPLACED);
   } else {
-    LOG(WARNING) << "Native password store migration failed! " <<
-                 "Falling back on default (unencrypted) store.";
-    backend_.reset();
+    // The migration hasn't completed yes. The records in the database aren't
+    // encrypted, so we must disable the encryption.
+    // TODO(crbug/950267): Handle users who have unencrypted entries in the
+    // database.
+    login_db()->disable_encryption();
+    UpdateMigrationToLoginDBStep(POSTPONED);
   }
+
+  base::UmaHistogramEnumeration(
+      "PasswordManager.LinuxBackendMigration.AttemptResult",
+      StepForMetrics(migration_to_login_db_step_));
 }
 
-bool PasswordStoreX::allow_default_store() {
-  if (allow_fallback_) {
-    LOG(WARNING) << "Native password store failed! " <<
-                 "Falling back on default (unencrypted) store.";
-    backend_.reset();
-    // Don't warn again. We'll use the default store because backend_ is NULL.
-    allow_fallback_ = false;
-  }
-  return !backend_.get();
+void PasswordStoreX::UpdateMigrationToLoginDBStep(MigrationToLoginDBStep step) {
+  migration_to_login_db_step_ = step;
+  main_task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(&PasswordStoreX::UpdateMigrationPref,
+                                weak_ptr_factory_.GetWeakPtr(),
+                                migration_to_login_db_step_));
 }
 
-ssize_t PasswordStoreX::MigrateLogins() {
-  DCHECK(backend_.get());
-  std::vector<std::unique_ptr<PasswordForm>> forms;
-  std::vector<std::unique_ptr<PasswordForm>> blacklist_forms;
-  bool ok = PasswordStoreDefault::FillAutofillableLogins(&forms) &&
-            PasswordStoreDefault::FillBlacklistLogins(&blacklist_forms);
-  const size_t autofillable_forms_count = forms.size();
-  forms.resize(autofillable_forms_count + blacklist_forms.size());
-  std::move(blacklist_forms.begin(), blacklist_forms.end(),
-            forms.begin() + autofillable_forms_count);
-  if (ok) {
-    // We add all the passwords (and blacklist entries) to the native backend
-    // before attempting to remove any from the login database, to make sure we
-    // don't somehow end up with some of the passwords in one store and some in
-    // another. We'll always have at least one intact store this way.
-    for (size_t i = 0; i < forms.size(); ++i) {
-      PasswordStoreChangeList changes;
-      if (!AddLoginToBackend(backend_, *forms[i], &changes)) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) {
-      for (size_t i = 0; i < forms.size(); ++i) {
-        // If even one of these calls to RemoveLoginImpl() succeeds, then we
-        // should prefer the native backend to the now-incomplete login
-        // database. Thus we want to return a success status even in the case
-        // where some fail. The only real problem with this is that we might
-        // leave passwords in the login database and never come back to clean
-        // them out if any of these calls do fail.
-        PasswordStoreDefault::RemoveLoginImpl(*forms[i]);
-      }
-      // Finally, delete the database file itself. We remove the passwords from
-      // it before deleting the file just in case there is some problem deleting
-      // the file (e.g. directory is not writable, but file is), which would
-      // otherwise cause passwords to re-migrate next (or maybe every) time.
-      DeleteAndRecreateDatabaseFile();
-    }
-  }
-  ssize_t result = ok ? forms.size() : -1;
-  return result;
+void PasswordStoreX::UpdateMigrationPref(MigrationToLoginDBStep step) {
+  migration_step_pref_.SetValue(step);
+}
+
+void PasswordStoreX::ShutdownOnUIThread() {
+  migration_step_pref_.Destroy();
+  // Invalidate the weak pointer to preempt any posted tasks in
+  // UpdateMigrationToLoginDBStep() because they cannot use the
+  // |migration_step_pref_| anymore. Both ShutdownOnUIThread() and
+  // UpdateMigrationToLoginDBStep() are only executed on the UI thread.
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  PasswordStoreDefault::ShutdownOnUIThread();
+}
+
+password_manager::FormRetrievalResult PasswordStoreX::ReadAllLogins(
+    password_manager::PrimaryKeyToFormMap* key_to_form_map) {
+  CheckMigration();
+  return PasswordStoreDefault::ReadAllLogins(key_to_form_map);
+}
+
+PasswordStoreChangeList PasswordStoreX::RemoveLoginByPrimaryKeySync(
+    int primary_key) {
+  CheckMigration();
+  return PasswordStoreDefault::RemoveLoginByPrimaryKeySync(primary_key);
+}
+
+password_manager::PasswordStoreSync::MetadataStore*
+PasswordStoreX::GetMetadataStore() {
+  CheckMigration();
+  return PasswordStoreDefault::GetMetadataStore();
 }

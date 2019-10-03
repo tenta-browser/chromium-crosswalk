@@ -17,22 +17,6 @@ class X509Certificate;
 // Interface for verifying Signed Certificate Timestamps over a certificate.
 class NET_EXPORT CTVerifier {
  public:
-  class NET_EXPORT Observer {
-   public:
-    // Called for each Signed Certificate Timestamp from a known log that vas
-    // verified successfully (i.e. the signature verifies). |sct| is the
-    // Signed Certificate Timestamp, |cert| is the certificate it applies to.
-    // The certificate is needed to calculate the hash of the log entry,
-    // necessary for checking inclusion in the log.
-    // Note: The observer (whose implementation is expected to exist outside
-    // net/) may store the observed |cert| and |sct|.
-    virtual void OnSCTVerified(X509Certificate* cert,
-                               const ct::SignedCertificateTimestamp* sct) = 0;
-
-   protected:
-    virtual ~Observer() {}
-  };
-
   virtual ~CTVerifier() {}
 
   // Verifies SCTs embedded in the certificate itself, SCTs embedded in a
@@ -45,17 +29,15 @@ class NET_EXPORT CTVerifier {
   // TLS extension was negotiated, |sct_list_from_tls_extension| should be an
   // empty string. |output_scts| will be cleared and filled with the SCTs
   // present, if any, along with their verification results.
-  virtual void Verify(X509Certificate* cert,
+  // The |hostname| (or IP address literal) of the server that presented |cert|
+  // must be provided so that inclusion checks for |cert| are able to avoid
+  // leaking information about which servers have been visited.
+  virtual void Verify(base::StringPiece hostname,
+                      X509Certificate* cert,
                       base::StringPiece stapled_ocsp_response,
                       base::StringPiece sct_list_from_tls_extension,
                       SignedCertificateTimestampAndStatusList* output_scts,
                       const NetLogWithSource& net_log) = 0;
-
-  // Registers |observer| to receive notifications of validated SCTs. Does not
-  // take ownership of the observer as the observer may be performing
-  // URLRequests which have to be cancelled before this object is destroyed.
-  // Setting |observer| to nullptr has the effect of stopping all notifications.
-  virtual void SetObserver(Observer* observer) = 0;
 };
 
 }  // namespace net

@@ -13,6 +13,7 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/rand_util.h"
 #include "base/time/time.h"
 #include "jingle/glue/utils.h"
 #include "net/base/io_buffer.h"
@@ -21,9 +22,9 @@
 #include "net/log/net_log_source.h"
 #include "net/socket/udp_server_socket.h"
 #include "remoting/protocol/socket_util.h"
-#include "third_party/webrtc/media/base/rtputils.h"
-#include "third_party/webrtc/rtc_base/asyncpacketsocket.h"
-#include "third_party/webrtc/rtc_base/nethelpers.h"
+#include "third_party/webrtc/media/base/rtp_utils.h"
+#include "third_party/webrtc/rtc_base/async_packet_socket.h"
+#include "third_party/webrtc/rtc_base/net_helpers.h"
 #include "third_party/webrtc/rtc_base/socket.h"
 
 namespace remoting {
@@ -39,6 +40,20 @@ const int kReceiveBufferSize = 65536;
 // Pepper's UDP API can handle it. This maximum should never be
 // reached under normal conditions.
 const int kMaxSendBufferSize = 256 * 1024;
+
+// Creates a UDP socket and make it listen at |local_address| and |port|.
+// Returns nullptr if the socket fails to listen.
+std::unique_ptr<net::UDPServerSocket> CreateUdpSocketAndListen(
+    const net::IPAddress& local_address,
+    uint16_t port) {
+  auto socket =
+      std::make_unique<net::UDPServerSocket>(nullptr, net::NetLogSource());
+  int result = socket->Listen(net::IPEndPoint(local_address, port));
+  if (result != net::OK) {
+    socket.reset();
+  }
+  return socket;
+}
 
 class UdpPacketSocket : public rtc::AsyncPacketSocket {
  public:
@@ -110,7 +125,7 @@ UdpPacketSocket::PendingPacket::PendingPacket(const void* buffer,
                                               int buffer_size,
                                               const net::IPEndPoint& address,
                                               const rtc::PacketOptions& options)
-    : data(new net::IOBufferWithSize(buffer_size)),
+    : data(base::MakeRefCounted<net::IOBufferWithSize>(buffer_size)),
       address(address),
       retried(false),
       options(options) {
@@ -131,20 +146,31 @@ UdpPacketSocket::~UdpPacketSocket() {
 bool UdpPacketSocket::Init(const rtc::SocketAddress& local_address,
                            uint16_t min_port,
                            uint16_t max_port) {
+  DCHECK_LE(min_port, max_port);
   net::IPEndPoint local_endpoint;
   if (!jingle_glue::SocketAddressToIPEndPoint(
           local_address, &local_endpoint)) {
     return false;
   }
 
-  for (uint32_t port = min_port; port <= max_port; ++port) {
-    socket_.reset(new net::UDPServerSocket(nullptr, net::NetLogSource()));
-    int result = socket_->Listen(
-        net::IPEndPoint(local_endpoint.address(), static_cast<uint16_t>(port)));
-    if (result == net::OK) {
-      break;
-    } else {
-      socket_.reset();
+  if (min_port == 0 && max_port == 0) {
+    // Just listen to any port that is available.
+    socket_ = CreateUdpSocketAndListen(local_endpoint.address(), 0u);
+  } else {
+    // Randomly pick a port to start trying with so that we will less likely
+    // pick the same port for relay. TURN server doesn't allow allocating relay
+    // session from the same port until the old session is timed out.
+    uint32_t port_count = max_port - min_port + 1;
+    uint32_t starting_offset = base::RandGenerator(port_count);
+    for (uint32_t i = 0; i < port_count; i++) {
+      uint16_t port = static_cast<uint16_t>(
+          min_port + ((starting_offset + i) % port_count));
+      DCHECK_LE(min_port, port);
+      DCHECK_LE(port, max_port);
+      socket_ = CreateUdpSocketAndListen(local_endpoint.address(), port);
+      if (socket_) {
+        break;
+      }
     }
   }
 
@@ -329,9 +355,7 @@ void UdpPacketSocket::OnSendCompleted(int result) {
   // socket.
   send_queue_size_ -= send_queue_.front().data->size();
   SignalSentPacket(this, rtc::SentPacket(send_queue_.front().options.packet_id,
-                                         (base::TimeTicks::Now() -
-                                          base::TimeTicks::UnixEpoch())
-                                             .InMilliseconds()));
+                                         rtc::TimeMillis()));
   send_queue_.pop_front();
   DoSend();
 }
@@ -339,7 +363,7 @@ void UdpPacketSocket::OnSendCompleted(int result) {
 void UdpPacketSocket::DoRead() {
   int result = 0;
   while (result >= 0) {
-    receive_buffer_ = new net::IOBuffer(kReceiveBufferSize);
+    receive_buffer_ = base::MakeRefCounted<net::IOBuffer>(kReceiveBufferSize);
     result = socket_->RecvFrom(
         receive_buffer_.get(),
         kReceiveBufferSize,
@@ -369,7 +393,7 @@ void UdpPacketSocket::HandleReadResult(int result) {
       return;
     }
     SignalReadPacket(this, receive_buffer_->data(), result, address,
-                     rtc::CreatePacketTime(0));
+                     rtc::TimeMicros());
   } else {
     LOG(ERROR) << "Received error when reading from UDP socket: " << result;
   }

@@ -4,62 +4,49 @@
 
 #include "ui/gfx/platform_font_win.h"
 
-#include <windows.h>
 #include <dwrite.h>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <wchar.h>
+#include <windows.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <utility>
 
+#include "base/containers/flat_map.h"
 #include "base/debug/alias.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/no_destructor.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/scoped_hdc.h"
 #include "base/win/scoped_select_object.h"
-#include "base/win/win_util.h"
+#include "base/win/win_client_metrics.h"
 #include "third_party/skia/include/core/SkFontLCDConfig.h"
+#include "third_party/skia/include/core/SkFontMetrics.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_render_params.h"
+#include "ui/gfx/platform_font_skia.h"
+#include "ui/gfx/system_fonts_win.h"
+#include "ui/gfx/win/direct_write.h"
 #include "ui/gfx/win/scoped_set_map_mode.h"
 
 namespace {
 
-// Returns the minimum font size, using the minimum size callback, if set.
-int GetMinimumFontSize() {
-  int min_font_size = 0;
-  if (gfx::PlatformFontWin::get_minimum_font_size_callback)
-    min_font_size = gfx::PlatformFontWin::get_minimum_font_size_callback();
-  return min_font_size;
-}
-
-// Returns either minimum font allowed for a current locale or
-// lf_height + size_delta value.
-int AdjustFontSize(int lf_height, int size_delta) {
-  if (lf_height < 0) {
-    lf_height -= size_delta;
-  } else {
-    lf_height += size_delta;
-  }
-  const int min_font_size = GetMinimumFontSize();
-  // Make sure lf_height is not smaller than allowed min font size for current
-  // locale.
-  if (abs(lf_height) < min_font_size) {
-    return lf_height < 0 ? -min_font_size : min_font_size;
-  } else {
-    return lf_height;
-  }
-}
+// Enable the use of PlatformFontSkia instead of PlatformFontWin.
+const base::Feature kPlatformFontSkiaOnWindows{
+    "PlatformFontSkiaOnWindows", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Sets style properties on |font_info| based on |font_style|.
 void SetLogFontStyle(int font_style, LOGFONT* font_info) {
@@ -80,6 +67,8 @@ gfx::Font::Weight ToGfxFontWeight(int weight) {
 HRESULT FindDirectWriteFontForLOGFONT(IDWriteFactory* factory,
                                       LOGFONT* font_info,
                                       IDWriteFont** dwrite_font) {
+  TRACE_EVENT0("fonts", "gfx::FindDirectWriteFontForLOGFONT");
+
   Microsoft::WRL::ComPtr<IDWriteGdiInterop> gdi_interop;
   HRESULT hr = factory->GetGdiInterop(gdi_interop.GetAddressOf());
   if (FAILED(hr)) {
@@ -93,10 +82,8 @@ HRESULT FindDirectWriteFontForLOGFONT(IDWriteFactory* factory,
 
   Microsoft::WRL::ComPtr<IDWriteFontCollection> font_collection;
   hr = factory->GetSystemFontCollection(font_collection.GetAddressOf());
-  if (FAILED(hr)) {
-    CHECK(false);
+  if (FAILED(hr))
     return hr;
-  }
 
   // We try to find a matching font by triggering DirectWrite to substitute the
   // font passed in with a matching font (FontSubstitutes registry key)
@@ -115,7 +102,7 @@ HRESULT FindDirectWriteFontForLOGFONT(IDWriteFactory* factory,
   if (SUCCEEDED(hr)) {
     hr = font_collection->GetFontFromFontFace(font_face.Get(), dwrite_font);
     if (SUCCEEDED(hr)) {
-      wcscpy_s(font_info->lfFaceName, arraysize(font_info->lfFaceName),
+      wcscpy_s(font_info->lfFaceName, base::size(font_info->lfFaceName),
                converted_font.lfFaceName);
     }
   }
@@ -132,6 +119,8 @@ HRESULT GetMatchingDirectWriteFont(LOGFONT* font_info,
                                    bool italic,
                                    IDWriteFactory* factory,
                                    IDWriteFont** dwrite_font) {
+  TRACE_EVENT0("fonts", "gfx::GetMatchingDirectWriteFont");
+
   // First try the GDI compat route to get a matching DirectWrite font.
   // If that succeeds then we are good. If that fails then try and find a
   // match from the DirectWrite font collection.
@@ -144,7 +133,7 @@ HRESULT GetMatchingDirectWriteFont(LOGFONT* font_info,
   Microsoft::WRL::ComPtr<IDWriteFontCollection> font_collection;
   hr = factory->GetSystemFontCollection(font_collection.GetAddressOf());
   if (FAILED(hr)) {
-    CHECK(false);
+    // On some old windows, the call to GetSystemFontCollection may fail.
     return hr;
   }
 
@@ -178,12 +167,12 @@ HRESULT GetMatchingDirectWriteFont(LOGFONT* font_info,
     }
 
     if (wcsncmp(font_info->lfFaceName, metrics.lfMessageFont.lfFaceName,
-                arraysize(font_info->lfFaceName))) {
+                base::size(font_info->lfFaceName))) {
       // First try the GDI compat route to get a matching DirectWrite font. If
       // that succeeds we are good. If not find a matching font from the font
       // collection.
-      wcscpy_s(font_info->lfFaceName, arraysize(font_info->lfFaceName),
-                metrics.lfMessageFont.lfFaceName);
+      wcscpy_s(font_info->lfFaceName, base::size(font_info->lfFaceName),
+               metrics.lfMessageFont.lfFaceName);
       hr = FindDirectWriteFontForLOGFONT(factory, font_info, dwrite_font);
       if (SUCCEEDED(hr))
         return hr;
@@ -242,7 +231,7 @@ HRESULT GetMatchingDirectWriteFont(LOGFONT* font_info,
 
   base::string16 font_name;
   gfx::GetFamilyNameFromDirectWriteFont(*dwrite_font, &font_name);
-  wcscpy_s(font_info->lfFaceName, arraysize(font_info->lfFaceName),
+  wcscpy_s(font_info->lfFaceName, base::size(font_info->lfFaceName),
            font_name.c_str());
   return hr;
 }
@@ -253,14 +242,6 @@ namespace gfx {
 
 // static
 PlatformFontWin::HFontRef* PlatformFontWin::base_font_ref_;
-
-// static
-PlatformFontWin::AdjustFontCallback
-    PlatformFontWin::adjust_font_callback = nullptr;
-PlatformFontWin::GetMinimumFontSizeCallback
-    PlatformFontWin::get_minimum_font_size_callback = NULL;
-
-IDWriteFactory* PlatformFontWin::direct_write_factory_ = nullptr;
 
 // TODO(ananta)
 // Remove the CHECKs in this function once this stabilizes on the field.
@@ -280,7 +261,7 @@ HRESULT GetFamilyNameFromDirectWriteFont(IDWriteFont* dwrite_font,
   // Add support for retrieving the family for the current locale.
   wchar_t family_name_for_locale[MAX_PATH] = {0};
   hr = family_names->GetString(0, family_name_for_locale,
-                               arraysize(family_name_for_locale));
+                               base::size(family_name_for_locale));
   if (FAILED(hr))
     CHECK(false);
 
@@ -292,10 +273,6 @@ HRESULT GetFamilyNameFromDirectWriteFont(IDWriteFont* dwrite_font,
 // PlatformFontWin, public
 
 PlatformFontWin::PlatformFontWin() : font_ref_(GetBaseFontRef()) {
-}
-
-PlatformFontWin::PlatformFontWin(NativeFont native_font) {
-  InitWithCopyOfHFONT(native_font);
 }
 
 PlatformFontWin::PlatformFontWin(const std::string& font_name,
@@ -312,7 +289,7 @@ Font PlatformFontWin::DeriveFont(int size_delta,
   LOGFONT font_info;
   GetObject(GetNativeFont(), sizeof(LOGFONT), &font_info);
   const int requested_font_size = font_ref_->requested_font_size();
-  font_info.lfHeight = AdjustFontSize(-requested_font_size, size_delta);
+  font_info.lfHeight = win::AdjustFontSize(-requested_font_size, size_delta);
   font_info.lfWeight = static_cast<LONG>(weight);
   SetLogFontStyle(style, &font_info);
 
@@ -365,7 +342,7 @@ std::string PlatformFontWin::GetLocalizedFontName() const {
   // locale, GetTextFace() returns the localized name.
   base::win::ScopedSelectObject font(memory_dc.Get(), font_ref_->hfont());
   wchar_t localized_font_name[LF_FACESIZE];
-  int length = GetTextFace(memory_dc.Get(), arraysize(localized_font_name),
+  int length = GetTextFace(memory_dc.Get(), base::size(localized_font_name),
                            &localized_font_name[0]);
   if (length <= 0)
     return GetFontName();
@@ -377,47 +354,13 @@ int PlatformFontWin::GetFontSize() const {
 }
 
 const FontRenderParams& PlatformFontWin::GetFontRenderParams() {
-  CR_DEFINE_STATIC_LOCAL(const FontRenderParams, params,
-      (gfx::GetFontRenderParams(FontRenderParamsQuery(), NULL)));
-  return params;
+  static const base::NoDestructor<FontRenderParams> params(
+      gfx::GetFontRenderParams(FontRenderParamsQuery(), nullptr));
+  return *params;
 }
 
 NativeFont PlatformFontWin::GetNativeFont() const {
   return font_ref_->hfont();
-}
-
-// static
-void PlatformFontWin::SetDirectWriteFactory(IDWriteFactory* factory) {
-  // We grab a reference on the DirectWrite factory. This reference is
-  // leaked, which is ok because skia leaks it as well.
-  factory->AddRef();
-  direct_write_factory_ = factory;
-}
-
-// static
-bool PlatformFontWin::IsDirectWriteEnabled() {
-  return direct_write_factory_ != nullptr;
-}
-
-// static
-void PlatformFontWin::GetTextMetricsForFont(HDC hdc,
-                                            HFONT font,
-                                            TEXTMETRIC* text_metrics) {
-  base::win::ScopedSelectObject scoped_font(hdc, font);
-  GetTextMetrics(hdc, text_metrics);
-}
-
-// static
-int PlatformFontWin::GetFontSize(const LOGFONT& font_info) {
-  if (font_info.lfHeight < 0)
-    return -font_info.lfHeight;
-
-  base::win::ScopedGetDC screen_dc(NULL);
-  base::win::ScopedGDIObject<HFONT> font(CreateFontIndirect(&font_info));
-
-  TEXTMETRIC font_metrics = {0};
-  PlatformFontWin::GetTextMetricsForFont(screen_dc, font.get(), &font_metrics);
-  return font_metrics.tmAscent;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -443,25 +386,27 @@ void PlatformFontWin::InitWithFontNameAndSize(const std::string& font_name,
 }
 
 // static
-PlatformFontWin::HFontRef* PlatformFontWin::GetBaseFontRef() {
-  if (base_font_ref_ == NULL) {
-    NONCLIENTMETRICS_XP metrics;
-    base::win::GetNonClientMetrics(&metrics);
+void PlatformFontWin::GetTextMetricsForFont(HDC hdc,
+                                            HFONT font,
+                                            TEXTMETRIC* text_metrics) {
+  base::win::ScopedSelectObject scoped_font(hdc, font);
+  GetTextMetrics(hdc, text_metrics);
+}
 
-    if (adjust_font_callback)
-      adjust_font_callback(&metrics.lfMessageFont);
-    metrics.lfMessageFont.lfHeight =
-        AdjustFontSize(metrics.lfMessageFont.lfHeight, 0);
-    HFONT font = CreateFontIndirect(&metrics.lfMessageFont);
-    DLOG_ASSERT(font);
-    base_font_ref_ = PlatformFontWin::CreateHFontRef(font);
-    // base_font_ref_ is global, up the ref count so it's never deleted.
-    base_font_ref_->AddRef();
+// static
+PlatformFontWin::HFontRef* PlatformFontWin::GetBaseFontRef() {
+  if (base_font_ref_ == nullptr) {
+    // We'll delegate to our SystemFonts instance to give us the default
+    // message font.
+    PlatformFontWin* message_font = static_cast<PlatformFontWin*>(
+        win::GetSystemFont(win::SystemFont::kMessage).platform_font());
+    base_font_ref_ = message_font->font_ref_.get();
   }
   return base_font_ref_;
 }
 
 PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRef(HFONT font) {
+  TRACE_EVENT0("fonts", "PlatformFont::CreateHFontRef");
   TEXTMETRIC font_metrics;
 
   {
@@ -470,15 +415,14 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRef(HFONT font) {
     GetTextMetricsForFont(screen_dc, font, &font_metrics);
   }
 
-  if (IsDirectWriteEnabled())
-    return CreateHFontRefFromSkia(font, font_metrics);
-
-  return CreateHFontRefFromGDI(font, font_metrics);
+  return CreateHFontRefFromSkia(font, font_metrics);
 }
 
 PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromGDI(
     HFONT font,
     const TEXTMETRIC& font_metrics) {
+  TRACE_EVENT0("fonts", "PlatformFontWin::CreateHFontRefFromGDI");
+
   const int height = std::max<int>(1, font_metrics.tmHeight);
   const int baseline = std::max<int>(1, font_metrics.tmAscent);
   const int cap_height =
@@ -501,6 +445,8 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromGDI(
 PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromSkia(
     HFONT gdi_font,
     const TEXTMETRIC& font_metrics) {
+  TRACE_EVENT0("fonts", "PlatformFontWin::CreateHFontRefFromSkia");
+
   LOGFONT font_info = {0};
   GetObject(gdi_font, sizeof(LOGFONT), &font_info);
 
@@ -530,10 +476,11 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromSkia(
   // DirectWrite to calculate the cap height.
   Microsoft::WRL::ComPtr<IDWriteFont> dwrite_font;
   HRESULT hr = GetMatchingDirectWriteFont(
-      &font_info, italic, direct_write_factory_, dwrite_font.GetAddressOf());
+      &font_info, italic, win::GetDirectWriteFactory(), &dwrite_font);
   if (FAILED(hr)) {
-    CHECK(false);
-    return nullptr;
+    // If we are not able to find a font using Direct Write, fallback to
+    // the old GDI font.
+    return CreateHFontRefFromGDI(gdi_font, font_metrics);
   }
 
   DWRITE_FONT_METRICS dwrite_font_metrics = {0};
@@ -556,21 +503,20 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromSkia(
       FontRenderParams::SubpixelRenderingToSkiaLCDOrientation(
           font_params.subpixel_rendering));
 
-  SkPaint paint;
-  paint.setAntiAlias(font_params.antialiasing);
-  paint.setTypeface(std::move(skia_face));
-  paint.setTextSize(-font_info.lfHeight);
-  SkPaint::FontMetrics skia_metrics;
-  paint.getFontMetrics(&skia_metrics);
+  SkFont font(std::move(skia_face), -font_info.lfHeight);
+  font.setEdging(font_params.antialiasing ? SkFont::Edging::kAntiAlias
+                                          : SkFont::Edging::kAlias);
+  SkFontMetrics skia_metrics;
+  font.getMetrics(&skia_metrics);
 
   // The calculations below are similar to those in the CreateHFontRef
   // function. The height, baseline and cap height are rounded up to ensure
   // that they match up closely with GDI.
   const int height = std::ceil(skia_metrics.fDescent - skia_metrics.fAscent);
   const int baseline = std::max<int>(1, std::ceil(-skia_metrics.fAscent));
-  const int cap_height = std::ceil(paint.getTextSize() *
-      static_cast<double>(dwrite_font_metrics.capHeight) /
-          dwrite_font_metrics.designUnitsPerEm);
+  const int cap_height = std::ceil(
+      font.getSize() * static_cast<double>(dwrite_font_metrics.capHeight) /
+      dwrite_font_metrics.designUnitsPerEm);
 
   // The metrics retrieved from skia don't have the average character width. In
   // any case if we get the average character width from skia then use that or
@@ -596,7 +542,16 @@ PlatformFontWin::HFontRef* PlatformFontWin::CreateHFontRefFromSkia(
                       ToGfxFontWeight(font_info.lfWeight), style);
 }
 
+// static
+Font PlatformFontWin::HFontToFont(HFONT hfont) {
+  return Font(new PlatformFontWin(CreateHFontRef(hfont)));
+}
+
 PlatformFontWin::PlatformFontWin(HFontRef* hfont_ref) : font_ref_(hfont_ref) {
+}
+
+PlatformFontWin::PlatformFontWin(NativeFont native_font) {
+  InitWithCopyOfHFONT(native_font);
 }
 
 PlatformFontWin::~PlatformFontWin() {
@@ -676,17 +631,17 @@ PlatformFontWin::HFontRef::~HFontRef() {
 
 // static
 PlatformFont* PlatformFont::CreateDefault() {
+  if (base::FeatureList::IsEnabled(kPlatformFontSkiaOnWindows))
+    return new PlatformFontSkia;
   return new PlatformFontWin;
-}
-
-// static
-PlatformFont* PlatformFont::CreateFromNativeFont(NativeFont native_font) {
-  return new PlatformFontWin(native_font);
 }
 
 // static
 PlatformFont* PlatformFont::CreateFromNameAndSize(const std::string& font_name,
                                                   int font_size) {
+  TRACE_EVENT0("fonts", "PlatformFont::CreateFromNameAndSize");
+  if (base::FeatureList::IsEnabled(kPlatformFontSkiaOnWindows))
+    return new PlatformFontSkia(font_name, font_size);
   return new PlatformFontWin(font_name, font_size);
 }
 

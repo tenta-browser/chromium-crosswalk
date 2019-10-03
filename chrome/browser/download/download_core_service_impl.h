@@ -11,7 +11,11 @@
 #include "base/macros.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/download/download_shelf_controller.h"
+#endif
 
 class ChromeDownloadManagerDelegate;
 class DownloadHistory;
@@ -66,6 +70,10 @@ class DownloadCoreServiceImpl : public DownloadCoreService {
   // Note on destruction order: download_ui_ depends on download_history_ and
   // should be destroyed before the latter.
   std::unique_ptr<DownloadUIController> download_ui_;
+
+#if !defined(OS_ANDROID)
+  std::unique_ptr<DownloadShelfController> download_shelf_controller_;
+#endif
 
 // On Android, GET downloads are not handled by the DownloadManager.
 // Once we have extensions on android, we probably need the EventRouter

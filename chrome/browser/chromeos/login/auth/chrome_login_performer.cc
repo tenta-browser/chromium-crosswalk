@@ -19,7 +19,8 @@
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 
@@ -83,7 +84,8 @@ void ChromeLoginPerformer::DidRunTrustedCheck(const base::Closure& callback) {
 
 bool ChromeLoginPerformer::IsUserWhitelisted(const AccountId& account_id,
                                              bool* wildcard_match) {
-  return CrosSettings::IsWhitelisted(account_id.GetUserEmail(), wildcard_match);
+  return CrosSettings::Get()->IsUserWhitelisted(account_id.GetUserEmail(),
+                                                wildcard_match);
 }
 
 void ChromeLoginPerformer::RunOnlineWhitelistCheck(
@@ -99,11 +101,10 @@ void ChromeLoginPerformer::RunOnlineWhitelistCheck(
       !connector->IsNonEnterpriseUser(account_id.GetUserEmail())) {
     wildcard_login_checker_.reset(new policy::WildcardLoginChecker());
     if (refresh_token.empty()) {
-      wildcard_login_checker_->StartWithSigninContext(
-          GetSigninRequestContext(),
-          base::Bind(&ChromeLoginPerformer::OnlineWildcardLoginCheckCompleted,
-                     weak_factory_.GetWeakPtr(), success_callback,
-                     failure_callback));
+      NOTREACHED() << "Refresh token must be present.";
+      OnlineWildcardLoginCheckCompleted(
+          success_callback, failure_callback,
+          policy::WildcardLoginChecker::RESULT_FAILED);
     } else {
       wildcard_login_checker_->StartWithRefreshToken(
           refresh_token,
@@ -169,8 +170,9 @@ content::BrowserContext* ChromeLoginPerformer::GetSigninContext() {
   return ProfileHelper::GetSigninProfile();
 }
 
-net::URLRequestContextGetter* ChromeLoginPerformer::GetSigninRequestContext() {
-  return login::GetSigninContext();
+scoped_refptr<network::SharedURLLoaderFactory>
+ChromeLoginPerformer::GetSigninURLLoaderFactory() {
+  return login::GetSigninURLLoaderFactory();
 }
 
 void ChromeLoginPerformer::OnlineWildcardLoginCheckCompleted(

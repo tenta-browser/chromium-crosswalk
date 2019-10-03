@@ -4,53 +4,26 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 
-#include "base/logging.h"
-#include "base/macros.h"
+#include <numeric>
+
 #include "base/strings/string_number_conversions.h"
-#include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/search.h"
-#include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/simple_message_box.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/pref_names.h"
-#include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/bookmarks/browser/bookmark_node_data.h"
+#include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
-#include "components/prefs/pref_service.h"
-#include "components/search/search.h"
-#include "components/url_formatter/url_formatter.h"
-#include "components/user_prefs/user_prefs.h"
+#include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
-#include "extensions/features/features.h"
-#include "ui/base/dragdrop/drag_drop_types.h"
-#include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/api/commands/command_service.h"
-#include "extensions/browser/extension_registry.h"
-#include "extensions/common/extension_set.h"
-#endif
-
-#if defined(TOOLKIT_VIEWS)
-#include "ui/gfx/color_palette.h"
-#include "ui/gfx/paint_vector_icon.h"
-#endif
-
-#if defined(OS_WIN)
-#include "ui/base/material_design/material_design_controller.h"
-#include "ui/base/resource/resource_bundle.h"
-#endif
+#include "url/gurl.h"
 
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -81,9 +54,7 @@ std::vector<GURL> GetURLsToOpen(
     } else {
       // If the node is not a URL, it is a folder. We want to add those of its
       // children which are URLs.
-      for (int child_index = 0; child_index < node->child_count();
-           ++child_index) {
-        const BookmarkNode* child = node->GetChild(child_index);
+      for (const auto& child : node->children()) {
         if (child->is_url())
           AddUrlIfLegal(child->url());
       }
@@ -109,14 +80,13 @@ bool ShouldOpenAll(gfx::NativeWindow parent,
 
 // Returns the total number of descendants nodes.
 int ChildURLCountTotal(const BookmarkNode* node) {
-  int result = 0;
-  for (int i = 0; i < node->child_count(); ++i) {
-    const BookmarkNode* child = node->GetChild(i);
-    result++;
+  const auto count_children = [](int total, const auto& child) {
     if (child->is_folder())
-      result += ChildURLCountTotal(child);
-  }
-  return result;
+      total += ChildURLCountTotal(child.get());
+    return total + 1;
+  };
+  return std::accumulate(node->children().cbegin(), node->children().cend(), 0,
+                         count_children);
 }
 
 #if !defined(OS_ANDROID)
@@ -199,7 +169,7 @@ int OpenCount(gfx::NativeWindow parent,
 
 bool ConfirmDeleteBookmarkNode(const BookmarkNode* node,
                                gfx::NativeWindow window) {
-  DCHECK(node && node->is_folder() && !node->empty());
+  DCHECK(node && node->is_folder() && !node->children().empty());
   return ShowQuestionMessageBox(
              window, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
              l10n_util::GetPluralStringFUTF16(
@@ -215,7 +185,7 @@ void ShowBookmarkAllTabsDialog(Browser* browser) {
 
   const BookmarkNode* parent = GetParentForNewNodes(model);
   BookmarkEditor::EditDetails details =
-      BookmarkEditor::EditDetails::AddFolder(parent, parent->child_count());
+      BookmarkEditor::EditDetails::AddFolder(parent, parent->children().size());
   GetURLsForOpenTabs(browser, &(details.urls));
   DCHECK(!details.urls.empty());
 

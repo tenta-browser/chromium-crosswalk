@@ -9,11 +9,11 @@
 
 namespace {
 
-const char kHistogramNetworkBytes[] =
+const char kHistogramMediaPageLoadNetworkBytes[] =
     "PageLoad.Clients.MediaPageLoad.Experimental.Bytes.Network";
-const char kHistogramCacheBytes[] =
+const char kHistogramMediaPageLoadCacheBytes[] =
     "PageLoad.Clients.MediaPageLoad.Experimental.Bytes.Cache";
-const char kHistogramTotalBytes[] =
+const char kHistogramMediaPageLoadTotalBytes[] =
     "PageLoad.Clients.MediaPageLoad.Experimental.Bytes.Total";
 
 }  // namespace
@@ -23,13 +23,18 @@ MediaPageLoadMetricsObserver::MediaPageLoadMetricsObserver()
 
 MediaPageLoadMetricsObserver::~MediaPageLoadMetricsObserver() = default;
 
-void MediaPageLoadMetricsObserver::OnLoadedResource(
-    const page_load_metrics::ExtraRequestCompleteInfo&
-        extra_request_complete_info) {
-  if (extra_request_complete_info.was_cached) {
-    cache_bytes_ += extra_request_complete_info.raw_body_bytes;
-  } else {
-    network_bytes_ += extra_request_complete_info.raw_body_bytes;
+void MediaPageLoadMetricsObserver::OnResourceDataUseObserved(
+    content::RenderFrameHost* rfh,
+    const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+        resources) {
+  for (auto const& resource : resources) {
+    if (resource->is_complete) {
+      if (resource->cache_type ==
+          page_load_metrics::mojom::CacheType::kNotCached)
+        network_bytes_ += resource->encoded_body_length;
+      else
+        cache_bytes_ += resource->encoded_body_length;
+    }
   }
 }
 
@@ -57,7 +62,7 @@ void MediaPageLoadMetricsObserver::OnComplete(
 
 void MediaPageLoadMetricsObserver::MediaStartedPlaying(
     const content::WebContentsObserver::MediaPlayerInfo& video_type,
-    bool is_in_main_frame) {
+    content::RenderFrameHost* render_frame_host) {
   if (played_media_)
     return;
   // Track media (audio or video) in all frames of the page load.
@@ -66,7 +71,8 @@ void MediaPageLoadMetricsObserver::MediaStartedPlaying(
 
 void MediaPageLoadMetricsObserver::RecordByteHistograms() {
   DCHECK(played_media_);
-  PAGE_BYTES_HISTOGRAM(kHistogramNetworkBytes, network_bytes_);
-  PAGE_BYTES_HISTOGRAM(kHistogramCacheBytes, cache_bytes_);
-  PAGE_BYTES_HISTOGRAM(kHistogramTotalBytes, network_bytes_ + cache_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramMediaPageLoadNetworkBytes, network_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramMediaPageLoadCacheBytes, cache_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramMediaPageLoadTotalBytes,
+                       network_bytes_ + cache_bytes_);
 }

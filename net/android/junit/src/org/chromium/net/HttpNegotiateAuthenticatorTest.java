@@ -39,7 +39,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -58,11 +57,9 @@ import org.robolectric.shadows.ShadowApplication;
 import org.robolectric.shadows.multidex.ShadowMultiDex;
 
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.BaseChromiumApplication;
-import org.chromium.base.ContextUtils;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.net.HttpNegotiateAuthenticator.GetAccountsCallback;
 import org.chromium.net.HttpNegotiateAuthenticator.RequestData;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.io.IOException;
 import java.util.List;
@@ -70,8 +67,8 @@ import java.util.List;
 /**
  * Robolectric tests for HttpNegotiateAuthenticator
  */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE,
         shadows = {HttpNegotiateAuthenticatorTest.ExtendedShadowAccountManager.class,
                 ShadowMultiDex.class})
 public class HttpNegotiateAuthenticatorTest {
@@ -99,13 +96,6 @@ public class HttpNegotiateAuthenticatorTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
-        ApplicationStatus.initialize(RuntimeEnvironment.application);
-    }
-
-    @After
-    public void tearDown() {
-        ApplicationStatus.destroyForJUnitTests();
     }
 
     /**
@@ -237,7 +227,7 @@ public class HttpNegotiateAuthenticatorTest {
 
         // Send the intent to the receiver.
         BroadcastReceiver receiver = receivers.get(0);
-        receiver.onReceive(ShadowApplication.getInstance().getApplicationContext(), intent);
+        receiver.onReceive(RuntimeEnvironment.application.getApplicationContext(), intent);
 
         // Verify that the auth token is properly requested from the account manager.
         verify(sMockAccountManager)

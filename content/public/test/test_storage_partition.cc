@@ -4,6 +4,9 @@
 
 #include "content/public/test/test_storage_partition.h"
 
+#include "content/public/browser/native_file_system_entry_factory.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
+
 namespace content {
 
 TestStoragePartition::TestStoragePartition() {}
@@ -22,13 +25,38 @@ TestStoragePartition::GetMediaURLRequestContext() {
   return media_url_request_context_getter_;
 }
 
-mojom::NetworkContext* TestStoragePartition::GetNetworkContext() {
+network::mojom::NetworkContext* TestStoragePartition::GetNetworkContext() {
   return network_context_;
 }
 
-mojom::URLLoaderFactory*
+scoped_refptr<network::SharedURLLoaderFactory>
 TestStoragePartition::GetURLLoaderFactoryForBrowserProcess() {
-  return url_loader_factory_for_browser_process_;
+  return nullptr;
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+TestStoragePartition::GetURLLoaderFactoryForBrowserProcessWithCORBEnabled() {
+  return nullptr;
+}
+
+std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+TestStoragePartition::GetURLLoaderFactoryForBrowserProcessIOThread() {
+  return nullptr;
+}
+
+network::mojom::CookieManager*
+TestStoragePartition::GetCookieManagerForBrowserProcess() {
+  return cookie_manager_for_browser_process_;
+}
+
+void TestStoragePartition::CreateRestrictedCookieManager(
+    network::mojom::RestrictedCookieManagerRole role,
+    const url::Origin& origin,
+    bool is_service_worker,
+    int process_id,
+    int routing_id,
+    network::mojom::RestrictedCookieManagerRequest request) {
+  NOTREACHED();
 }
 
 storage::QuotaManager* TestStoragePartition::GetQuotaManager() {
@@ -37,6 +65,10 @@ storage::QuotaManager* TestStoragePartition::GetQuotaManager() {
 
 AppCacheService* TestStoragePartition::GetAppCacheService() {
   return app_cache_service_;
+}
+
+BackgroundSyncContext* TestStoragePartition::GetBackgroundSyncContext() {
+  return background_sync_context_;
 }
 
 storage::FileSystemContext* TestStoragePartition::GetFileSystemContext() {
@@ -55,17 +87,40 @@ IndexedDBContext* TestStoragePartition::GetIndexedDBContext() {
   return indexed_db_context_;
 }
 
+NativeFileSystemEntryFactory*
+TestStoragePartition::GetNativeFileSystemEntryFactory() {
+  return nullptr;
+}
+
 ServiceWorkerContext* TestStoragePartition::GetServiceWorkerContext() {
   return service_worker_context_;
+}
+
+SharedWorkerService* TestStoragePartition::GetSharedWorkerService() {
+  return shared_worker_service_;
 }
 
 CacheStorageContext* TestStoragePartition::GetCacheStorageContext() {
   return cache_storage_context_;
 }
 
+GeneratedCodeCacheContext*
+TestStoragePartition::GetGeneratedCodeCacheContext() {
+  return generated_code_cache_context_;
+}
+
 PlatformNotificationContext*
 TestStoragePartition::GetPlatformNotificationContext() {
-  return nullptr;
+  return platform_notification_context_;
+}
+
+DevToolsBackgroundServicesContext*
+TestStoragePartition::GetDevToolsBackgroundServicesContext() {
+  return devtools_background_services_context_;
+}
+
+ContentIndexContext* TestStoragePartition::GetContentIndexContext() {
+  return content_index_context_;
 }
 
 #if !defined(OS_ANDROID)
@@ -85,14 +140,12 @@ ZoomLevelDelegate* TestStoragePartition::GetZoomLevelDelegate() {
 void TestStoragePartition::ClearDataForOrigin(
     uint32_t remove_mask,
     uint32_t quota_storage_remove_mask,
-    const GURL& storage_origin,
-    net::URLRequestContextGetter* rq_context) {}
+    const GURL& storage_origin) {}
 
 void TestStoragePartition::ClearData(
     uint32_t remove_mask,
     uint32_t quota_storage_remove_mask,
     const GURL& storage_origin,
-    const OriginMatcherFunction& origin_matcher,
     const base::Time begin,
     const base::Time end,
     base::OnceClosure callback) {}
@@ -101,7 +154,8 @@ void TestStoragePartition::ClearData(
     uint32_t remove_mask,
     uint32_t quota_storage_remove_mask,
     const OriginMatcherFunction& origin_matcher,
-    const CookieMatcherFunction& cookie_matcher,
+    network::mojom::CookieDeletionFilterPtr cookie_deletion_filter,
+    bool perform_storage_cleanup,
     const base::Time begin,
     const base::Time end,
     base::OnceClosure callback) {}
@@ -112,11 +166,20 @@ void TestStoragePartition::ClearHttpAndMediaCaches(
     const base::Callback<bool(const GURL&)>& url_matcher,
     base::OnceClosure callback) {}
 
+void TestStoragePartition::ClearCodeCaches(
+    const base::Time begin,
+    const base::Time end,
+    const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+    base::OnceClosure callback) {}
+
 void TestStoragePartition::Flush() {}
+
+void TestStoragePartition::ResetURLLoaderFactories() {}
 
 void TestStoragePartition::ClearBluetoothAllowedDevicesMapForTesting() {}
 
-void TestStoragePartition::SetNetworkFactoryForTesting(
-    mojom::URLLoaderFactory* test_factory) {}
+void TestStoragePartition::FlushNetworkInterfaceForTesting() {}
+
+void TestStoragePartition::WaitForDeletionTasksForTesting() {}
 
 }  // namespace content

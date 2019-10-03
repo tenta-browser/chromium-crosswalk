@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.media.ui;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -22,16 +23,16 @@ import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowNotification;
 
-import org.chromium.base.BaseChromiumApplication;
-import org.chromium.content_public.common.MediaMetadata;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.R;
+import org.chromium.services.media_session.MediaMetadata;
 
 /**
  * JUnit tests for checking MediaNotificationManager presents correct notification to Android
  * NotificationManager.
  */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE,
         // Remove this after updating to a version of Robolectric that supports
         // notification channel creation. crbug.com/774315
         sdk = Build.VERSION_CODES.N_MR1, shadows = MediaNotificationTestShadowResources.class)
@@ -48,11 +49,20 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
 
         ShadowNotification shadowNotification = Shadows.shadowOf(notification);
 
-        assertEquals("title", shadowNotification.getContentTitle());
-        assertEquals("artist - album", shadowNotification.getContentText());
-        if (hasNApis()) {
-            assertEquals("https://example.com/",
-                    notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+        if (info.isPrivate) {
+            assertNotEquals("title", shadowNotification.getContentTitle());
+            assertNotEquals("artist - album", shadowNotification.getContentText());
+            if (hasNApis()) {
+                assertNull(notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+            }
+        } else {
+            assertEquals("title", shadowNotification.getContentTitle());
+            assertEquals("artist - album", shadowNotification.getContentText());
+
+            if (hasNApis()) {
+                assertEquals("https://example.com/",
+                        notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+            }
         }
     }
 
@@ -68,8 +78,13 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
 
         ShadowNotification shadowNotification = Shadows.shadowOf(notification);
 
-        assertEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
-        assertEquals(info.origin, shadowNotification.getContentText());
+        if (info.isPrivate) {
+            assertNotEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
+            assertNotNull(shadowNotification.getContentText());
+        } else {
+            assertEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
+            assertEquals(info.origin, shadowNotification.getContentText());
+        }
         if (hasNApis()) {
             assertEquals(null, notification.extras.getString(Notification.EXTRA_SUB_TEXT));
         }
@@ -87,10 +102,20 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
 
         ShadowNotification shadowNotification = Shadows.shadowOf(notification);
 
-        assertEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
-        assertEquals("", shadowNotification.getContentText());
-        if (hasNApis()) {
-            assertEquals(info.origin, notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+        if (info.isPrivate) {
+            assertNotEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
+            assertNull(shadowNotification.getContentText());
+            if (hasNApis()) {
+                assertNotEquals(
+                        info.origin, notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+            }
+        } else {
+            assertEquals(info.metadata.getTitle(), shadowNotification.getContentTitle());
+            assertEquals("", shadowNotification.getContentText());
+            if (hasNApis()) {
+                assertEquals(
+                        info.origin, notification.extras.getString(Notification.EXTRA_SUB_TEXT));
+            }
         }
     }
 
@@ -103,7 +128,11 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
         Notification notification = updateNotificationBuilderAndBuild(info);
 
         if (hasNApis()) {
-            assertTrue(largeIcon.sameAs(iconToBitmap(notification.getLargeIcon())));
+            if (info.isPrivate) {
+                assertNull(notification.getLargeIcon());
+            } else {
+                assertTrue(largeIcon.sameAs(iconToBitmap(notification.getLargeIcon())));
+            }
         }
     }
 
@@ -127,7 +156,10 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
 
         mMediaNotificationInfoBuilder.setNotificationLargeIcon(null);
 
-        MediaNotificationInfo info = mMediaNotificationInfoBuilder.build();
+        MediaNotificationInfo info =
+                mMediaNotificationInfoBuilder
+                        .setDefaultNotificationLargeIcon(R.drawable.audio_playing_square)
+                        .build();
         Notification notification = updateNotificationBuilderAndBuild(info);
 
         assertNotNull(getManager().mDefaultNotificationLargeIcon);
@@ -168,7 +200,6 @@ public class MediaNotificationManagerNotificationTest extends MediaNotificationM
             assertTrue((notification.flags & Notification.FLAG_LOCAL_ONLY) != 0);
             assertEquals(NOTIFICATION_GROUP_NAME, notification.getGroup());
             assertTrue(notification.isGroupSummary());
-            assertNull(notification.deleteIntent);
             assertNotNull(notification.contentIntent);
             assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility);
         }

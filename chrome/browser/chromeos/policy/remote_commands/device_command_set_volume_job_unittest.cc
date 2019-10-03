@@ -6,13 +6,13 @@
 
 #include <memory>
 
-#include "ash/test/ash_test_base.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/values.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -57,7 +57,7 @@ std::unique_ptr<RemoteCommandJob> CreateSetVolumeJob(
 
 }  // namespace
 
-class DeviceCommandSetVolumeTest : public ash::AshTestBase {
+class DeviceCommandSetVolumeTest : public ChromeAshTestBase {
  protected:
   DeviceCommandSetVolumeTest();
 
@@ -74,7 +74,7 @@ class DeviceCommandSetVolumeTest : public ash::AshTestBase {
 DeviceCommandSetVolumeTest::DeviceCommandSetVolumeTest() {}
 
 void DeviceCommandSetVolumeTest::SetUp() {
-  ash::AshTestBase::SetUp();
+  ChromeAshTestBase::SetUp();
   test_start_time_ = base::TimeTicks::Now();
 }
 
@@ -95,17 +95,18 @@ TEST_F(DeviceCommandSetVolumeTest, NonMuted) {
   auto job = CreateSetVolumeJob(test_start_time_, kVolume);
   EXPECT_TRUE(
       job->Run(base::TimeTicks::Now(),
-               base::Bind(&VerifyResults, base::Unretained(&run_loop_),
-                          base::Unretained(job.get()), kVolume, false)));
+               base::BindOnce(&VerifyResults, base::Unretained(&run_loop_),
+                              base::Unretained(job.get()), kVolume, false)));
   run_loop_.Run();
 }
 
 TEST_F(DeviceCommandSetVolumeTest, Muted) {
   const int kVolume = 0;
   auto job = CreateSetVolumeJob(test_start_time_, kVolume);
-  EXPECT_TRUE(job->Run(base::TimeTicks::Now(),
-                       base::Bind(&VerifyResults, base::Unretained(&run_loop_),
-                                  base::Unretained(job.get()), kVolume, true)));
+  EXPECT_TRUE(
+      job->Run(base::TimeTicks::Now(),
+               base::BindOnce(&VerifyResults, base::Unretained(&run_loop_),
+                              base::Unretained(job.get()), kVolume, true)));
   run_loop_.Run();
 }
 

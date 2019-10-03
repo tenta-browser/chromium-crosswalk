@@ -8,14 +8,15 @@
 #include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
+#include "base/token.h"
 #include "base/values.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_service_manager_listener.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "content/public/test/test_utils.h"
 #include "services/data_decoder/public/cpp/safe_xml_parser.h"
-#include "services/data_decoder/public/interfaces/constants.mojom.h"
-#include "services/data_decoder/public/interfaces/xml_parser.mojom.h"
+#include "services/data_decoder/public/mojom/constants.mojom.h"
+#include "services/data_decoder/public/mojom/xml_parser.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace {
@@ -48,19 +49,18 @@ class SafeXmlParserTest : public InProcessBrowserTest {
   // If |expected_json| is empty, the XML parsing is expected to fail.
   void TestParse(base::StringPiece xml,
                  const std::string& expected_json,
-                 const std::string& batch_id = std::string()) {
+                 const base::Token& batch_id = base::Token{}) {
     SCOPED_TRACE(xml);
 
     base::RunLoop run_loop;
     std::unique_ptr<base::Value> expected_value;
     if (!expected_json.empty()) {
-      expected_value = base::JSONReader::Read(expected_json);
+      expected_value = base::JSONReader::ReadDeprecated(expected_json);
       DCHECK(expected_value) << "Bad test, incorrect JSON: " << expected_json;
     }
 
     data_decoder::ParseXml(
-        content::ServiceManagerConnection::GetForProcess()->GetConnector(),
-        xml.as_string(),
+        content::GetSystemConnector(), xml.as_string(),
         base::BindOnce(&SafeXmlParserTest::XmlParsingDone,
                        base::Unretained(this), run_loop.QuitClosure(),
                        std::move(expected_value)),
@@ -73,7 +73,7 @@ class SafeXmlParserTest : public InProcessBrowserTest {
                       std::unique_ptr<base::Value> expected_value,
                       std::unique_ptr<base::Value> actual_value,
                       const base::Optional<std::string>& error) {
-    base::ScopedClosureRunner(std::move(quit_loop_closure));
+    base::ScopedClosureRunner runner(std::move(quit_loop_closure));
     if (!expected_value) {
       EXPECT_FALSE(actual_value);
       EXPECT_TRUE(error);
@@ -100,7 +100,13 @@ IN_PROC_BROWSER_TEST_F(SafeXmlParserTest, Parse) {
 }
 
 // Tests that a new service is created for each SafeXmlParser::Parse() call.
-IN_PROC_BROWSER_TEST_F(SafeXmlParserTest, Isolation) {
+// Flaky on ChromeOS. See https://crbug.com/979606
+#if defined(OS_CHROMEOS)
+#define MAYBE_Isolation DISABLED_Isolation
+#else
+#define MAYBE_Isolation Isolation
+#endif
+IN_PROC_BROWSER_TEST_F(SafeXmlParserTest, MAYBE_Isolation) {
   constexpr size_t kParseCount = 5;
   for (size_t i = 0; i < kParseCount; i++)
     TestParse(kTestXml, kTestJson);
@@ -110,8 +116,8 @@ IN_PROC_BROWSER_TEST_F(SafeXmlParserTest, Isolation) {
 
 // Tests that using a batch ID allows service reuse.
 IN_PROC_BROWSER_TEST_F(SafeXmlParserTest, IsolationWithBatchId) {
-  constexpr char kBatchId1[] = "batch1";
-  constexpr char kBatchId2[] = "batch2";
+  constexpr base::Token kBatchId1{0, 1};
+  constexpr base::Token kBatchId2{0, 2};
   for (int i = 0; i < 5; i++) {
     TestParse(kTestXml, kTestJson, kBatchId1);
     TestParse(kTestXml, kTestJson, kBatchId2);

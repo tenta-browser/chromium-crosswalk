@@ -4,11 +4,12 @@
 
 package org.chromium.net;
 
+import android.Manifest;
 import android.annotation.TargetApi;
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
@@ -18,17 +19,23 @@ import android.net.TrafficStats;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Build.VERSION_CODES;
 import android.os.ParcelFileDescriptor;
-import android.security.KeyChain;
+import android.os.Process;
 import android.security.NetworkSecurityPolicy;
-import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.CalledByNativeUnchecked;
+import org.chromium.base.annotations.MainDex;
+import org.chromium.base.compat.ApiHelperForM;
+import org.chromium.base.compat.ApiHelperForP;
+import org.chromium.base.metrics.RecordHistogram;
 
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -41,46 +48,65 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketImpl;
 import java.net.URLConnection;
+import java.net.UnknownHostException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * This class implements net utilities required by the net component.
  */
+@MainDex
 class AndroidNetworkLibrary {
-
     private static final String TAG = "AndroidNetworkLibrary";
 
-    /**
-     * Stores the key pair through the CertInstaller activity.
-     * @param publicKey The public key bytes as DER-encoded SubjectPublicKeyInfo (X.509)
-     * @param privateKey The private key as DER-encoded PrivateKeyInfo (PKCS#8).
-     * @return: true on success, false on failure.
-     *
-     * Note that failure means that the function could not launch the CertInstaller
-     * activity. Whether the keys are valid or properly installed will be indicated
-     * by the CertInstaller UI itself.
-     */
-    @CalledByNative
-    public static boolean storeKeyPair(byte[] publicKey, byte[] privateKey) {
-        // TODO(digit): Use KeyChain official extra values to pass the public and private
-        // keys when they're available. The "KEY" and "PKEY" hard-coded constants were taken
-        // from the platform sources, since there are no official KeyChain.EXTRA_XXX definitions
-        // for them. b/5859651
+    // Cached value indicating if app has ACCESS_NETWORK_STATE permission.
+    private static Boolean sHaveAccessNetworkState;
+    // Cached value indicating if app has ACCESS_WIFI_STATE permission.
+    private static Boolean sHaveAccessWifiState;
+
+    // Set of public DNS servers supporting DNS-over-HTTPS.
+    private static final Set<InetAddress> sAutoDohServers = new HashSet<>();
+    // Set of public DNS-over-TLS servers supporting DNS-over-HTTPS.
+    private static final Set<String> sAutoDohDotServers = new HashSet<>();
+
+    static {
         try {
-            Intent intent = KeyChain.createInstallIntent();
-            intent.putExtra("PKEY", privateKey);
-            intent.putExtra("KEY", publicKey);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ContextUtils.getApplicationContext().startActivity(intent);
-            return true;
-        } catch (ActivityNotFoundException e) {
-            Log.w(TAG, "could not store key pair: " + e);
+            // Populate set of public DNS servers supporting DNS-over-HTTPS.
+
+            // Google Public DNS
+            sAutoDohServers.add(InetAddress.getByName("8.8.8.8"));
+            sAutoDohServers.add(InetAddress.getByName("8.8.4.4"));
+            sAutoDohServers.add(InetAddress.getByName("2001:4860:4860::8888"));
+            sAutoDohServers.add(InetAddress.getByName("2001:4860:4860::8844"));
+            // Cloudflare DNS
+            sAutoDohServers.add(InetAddress.getByName("1.1.1.1"));
+            sAutoDohServers.add(InetAddress.getByName("1.0.0.1"));
+            sAutoDohServers.add(InetAddress.getByName("2606:4700:4700::1111"));
+            sAutoDohServers.add(InetAddress.getByName("2606:4700:4700::1001"));
+            // Quad9 DNS
+            sAutoDohServers.add(InetAddress.getByName("9.9.9.9"));
+            sAutoDohServers.add(InetAddress.getByName("149.112.112.112"));
+            sAutoDohServers.add(InetAddress.getByName("2620:fe::fe"));
+            sAutoDohServers.add(InetAddress.getByName("2620:fe::9"));
+        } catch (UnknownHostException e) {
+            throw new RuntimeException("Failed to parse IP addresses", e);
         }
-        return false;
+
+        // Populate set of public DNS-over-TLS servers supporting DNS-over-HTTPS.
+
+        // Google Public DNS
+        sAutoDohDotServers.add("dns.google");
+        // Cloudflare DNS
+        sAutoDohDotServers.add("1dot1dot1dot1.cloudflare-dns.com");
+        sAutoDohDotServers.add("cloudflare-dns.com");
+        // Quad9 DNS
+        sAutoDohDotServers.add("dns.quad9.net");
     }
 
     /**
@@ -168,11 +194,7 @@ class AndroidNetworkLibrary {
      */
     @CalledByNative
     private static String getNetworkCountryIso() {
-        TelephonyManager telephonyManager =
-                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
-                        Context.TELEPHONY_SERVICE);
-        if (telephonyManager == null) return "";
-        return telephonyManager.getNetworkCountryIso();
+        return AndroidTelephonyManagerBridge.getInstance().getNetworkCountryIso();
     }
 
     /**
@@ -181,11 +203,7 @@ class AndroidNetworkLibrary {
      */
     @CalledByNative
     private static String getNetworkOperator() {
-        TelephonyManager telephonyManager =
-                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
-                        Context.TELEPHONY_SERVICE);
-        if (telephonyManager == null) return "";
-        return telephonyManager.getNetworkOperator();
+        return AndroidTelephonyManagerBridge.getInstance().getNetworkOperator();
     }
 
     /**
@@ -194,11 +212,7 @@ class AndroidNetworkLibrary {
      */
     @CalledByNative
     private static String getSimOperator() {
-        TelephonyManager telephonyManager =
-                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
-                        Context.TELEPHONY_SERVICE);
-        if (telephonyManager == null) return "";
-        return telephonyManager.getSimOperator();
+        return AndroidTelephonyManagerBridge.getInstance().getSimOperator();
     }
 
     /**
@@ -233,7 +247,7 @@ class AndroidNetworkLibrary {
                         Context.CONNECTIVITY_SERVICE);
         if (connectivityManager == null) return false;
 
-        Network network = connectivityManager.getActiveNetwork();
+        Network network = ApiHelperForM.getActiveNetwork(connectivityManager);
         if (network == null) return false;
 
         NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(network);
@@ -242,23 +256,73 @@ class AndroidNetworkLibrary {
     }
 
     /**
-     * Gets the SSID of the currently associated WiFi access point if there is one. Otherwise,
-     * returns empty string.
+     * Gets the SSID of the currently associated WiFi access point if there is one, and it is
+     * available. SSID may not be available if the app does not have permissions to access it. On
+     * Android M+, the app accessing SSID needs to have ACCESS_COARSE_LOCATION or
+     * ACCESS_FINE_LOCATION. If there is no WiFi access point or its SSID is unavailable, an empty
+     * string is returned.
      */
     @CalledByNative
     public static String getWifiSSID() {
-        final Intent intent = ContextUtils.getApplicationContext().registerReceiver(
-                null, new IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION));
-        if (intent != null) {
-            final WifiInfo wifiInfo = intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
-            if (wifiInfo != null) {
-                final String ssid = wifiInfo.getSSID();
-                if (ssid != null) {
-                    return ssid;
-                }
+        WifiInfo wifiInfo = null;
+        // On Android P and above, the WifiInfo cannot be obtained through broadcast.
+        if (haveAccessWifiState()) {
+            WifiManager wifiManager =
+                    (WifiManager) ContextUtils.getApplicationContext().getSystemService(
+                            Context.WIFI_SERVICE);
+            wifiInfo = wifiManager.getConnectionInfo();
+        } else {
+            final Intent intent = ContextUtils.getApplicationContext().registerReceiver(
+                    null, new IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION));
+            if (intent != null) {
+                wifiInfo = intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
+            }
+        }
+
+        if (wifiInfo != null) {
+            final String ssid = wifiInfo.getSSID();
+            // On Android M+, the platform APIs may return "<unknown ssid>" as the SSID if the
+            // app does not have sufficient permissions. In that case, return an empty string.
+            if (ssid != null && !ssid.equals("<unknown ssid>")) {
+                return ssid;
             }
         }
         return "";
+    }
+
+    /**
+     * Gets the signal strength from the currently associated WiFi access point if there is one, and
+     * it is available. Signal strength may not be available if the app does not have permissions to
+     * access it.
+     * @return -1 if value is unavailable, otherwise, a value between 0 and {@code countBuckets-1}
+     *         (both inclusive).
+     */
+    @CalledByNative
+    public static int getWifiSignalLevel(int countBuckets) {
+        Intent intent = null;
+        try {
+            intent = ContextUtils.getApplicationContext().registerReceiver(
+                    null, new IntentFilter(WifiManager.RSSI_CHANGED_ACTION));
+        } catch (IllegalArgumentException e) {
+            // Some devices unexpectedly throw IllegalArgumentException when registering
+            // the broadcast receiver. See https://crbug.com/984179.
+            return -1;
+        }
+        if (intent == null) {
+            return -1;
+        }
+
+        final int rssi = intent.getIntExtra(WifiManager.EXTRA_NEW_RSSI, Integer.MIN_VALUE);
+        if (rssi == Integer.MIN_VALUE) {
+            return -1;
+        }
+
+        final int signalLevel = WifiManager.calculateSignalLevel(rssi, countBuckets);
+        if (signalLevel < 0 || signalLevel >= countBuckets) {
+            return -1;
+        }
+
+        return signalLevel;
     }
 
     public static class NetworkSecurityPolicyProxy {
@@ -305,16 +369,68 @@ class AndroidNetworkLibrary {
         }
     }
 
+    /**
+     * @returns result of linkProperties.isPrivateDnsActive().
+     */
+    static boolean isPrivateDnsActive(LinkProperties linkProperties) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && linkProperties != null) {
+            return ApiHelperForP.isPrivateDnsActive(linkProperties);
+        }
+        return false;
+    }
+
+    /**
+     * @returns result of linkProperties.getPrivateDnsServerName().
+     */
+    private static String getPrivateDnsServerName(LinkProperties linkProperties) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && linkProperties != null) {
+            return ApiHelperForP.getPrivateDnsServerName(linkProperties);
+        }
+        return null;
+    }
+
+    private static boolean haveAccessNetworkState() {
+        // This could be racy if called on multiple threads, but races will
+        // end in the same result so it's not a problem.
+        if (sHaveAccessNetworkState == null) {
+            sHaveAccessNetworkState = Boolean.valueOf(
+                    ApiCompatibilityUtils.checkPermission(ContextUtils.getApplicationContext(),
+                            Manifest.permission.ACCESS_NETWORK_STATE, Process.myPid(),
+                            Process.myUid())
+                    == PackageManager.PERMISSION_GRANTED);
+        }
+        return sHaveAccessNetworkState;
+    }
+
+    private static boolean haveAccessWifiState() {
+        // This could be racy if called on multiple threads, but races will
+        // end in the same result so it's not a problem.
+        if (sHaveAccessWifiState == null) {
+            sHaveAccessWifiState = Boolean.valueOf(
+                    ApiCompatibilityUtils.checkPermission(ContextUtils.getApplicationContext(),
+                            Manifest.permission.ACCESS_WIFI_STATE, Process.myPid(), Process.myUid())
+                    == PackageManager.PERMISSION_GRANTED);
+        }
+        return sHaveAccessWifiState;
+    }
+
+    /**
+     * Returns list of IP addresses of DNS servers.
+     * If private DNS is active, then returns a 1x1 array.
+     */
     @TargetApi(Build.VERSION_CODES.M)
     @CalledByNative
     private static byte[][] getDnsServers() {
+        if (!haveAccessNetworkState()) {
+            return new byte[0][0];
+        }
         ConnectivityManager connectivityManager =
                 (ConnectivityManager) ContextUtils.getApplicationContext().getSystemService(
                         Context.CONNECTIVITY_SERVICE);
         if (connectivityManager == null) {
             return new byte[0][0];
         }
-        Network network = connectivityManager.getActiveNetwork();
+        Network network = ApiHelperForM.getActiveNetwork(connectivityManager);
         if (network == null) {
             return new byte[0][0];
         }
@@ -323,6 +439,27 @@ class AndroidNetworkLibrary {
             return new byte[0][0];
         }
         List<InetAddress> dnsServersList = linkProperties.getDnsServers();
+        // Determine if any DNS servers could be auto-upgraded to DNS-over-HTTPS.
+        boolean autoDoh = false;
+        for (InetAddress dnsServer : dnsServersList) {
+            if (sAutoDohServers.contains(dnsServer)) {
+                autoDoh = true;
+                break;
+            }
+        }
+        if (isPrivateDnsActive(linkProperties)) {
+            String privateDnsServerName = getPrivateDnsServerName(linkProperties);
+            // If user explicitly selected a DNS-over-TLS server...
+            if (privateDnsServerName != null) {
+                // ...their DNS-over-HTTPS support depends on the DNS-over-TLS server name.
+                autoDoh = sAutoDohDotServers.contains(privateDnsServerName.toLowerCase(Locale.US));
+            }
+            RecordHistogram.recordBooleanHistogram(
+                    "Net.DNS.Android.DotExplicit", privateDnsServerName != null);
+            RecordHistogram.recordBooleanHistogram("Net.DNS.Android.AutoDohPrivate", autoDoh);
+            return new byte[1][1];
+        }
+        RecordHistogram.recordBooleanHistogram("Net.DNS.Android.AutoDohPublic", autoDoh);
         byte[][] dnsServers = new byte[dnsServersList.size()][];
         for (int i = 0; i < dnsServersList.size(); i++) {
             dnsServers[i] = dnsServersList.get(i).getAddress();
@@ -330,117 +467,132 @@ class AndroidNetworkLibrary {
         return dnsServers;
     }
 
-    /** Socket that exists only to provide a file descriptor when queried. */
-    private static class SocketFd extends Socket {
-        /** SocketImpl that exists only to provide a file descriptor when queried. */
-        private static class SocketImplFd extends SocketImpl {
-            private final ParcelFileDescriptor mPfd;
+    /**
+     * Class to wrap FileDescriptor.setInt$() which is hidden and so must be accessed via
+     * reflection.
+     */
+    private static class SetFileDescriptor {
+        // Reference to FileDescriptor.setInt$(int fd).
+        private static final Method sFileDescriptorSetInt;
 
+        // Get reference to FileDescriptor.setInt$(int fd) via reflection.
+        static {
+            try {
+                sFileDescriptorSetInt = FileDescriptor.class.getMethod("setInt$", Integer.TYPE);
+            } catch (NoSuchMethodException | SecurityException e) {
+                throw new RuntimeException("Unable to get FileDescriptor.setInt$", e);
+            }
+        }
+
+        /** Creates a FileDescriptor and calls FileDescriptor.setInt$(int fd) on it. */
+        public static FileDescriptor createWithFd(int fd) {
+            try {
+                FileDescriptor fileDescriptor = new FileDescriptor();
+                sFileDescriptorSetInt.invoke(fileDescriptor, fd);
+                return fileDescriptor;
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException("FileDescriptor.setInt$() failed", e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException("FileDescriptor.setInt$() failed", e);
+            }
+        }
+    }
+
+    /**
+     * This class provides an implementation of {@link java.net.Socket} that serves only as a
+     * conduit to pass a file descriptor integer to {@link android.net.TrafficStats#tagSocket}
+     * when called by {@link #tagSocket}. This class does not take ownership of the file descriptor,
+     * so calling {@link #close} will not actually close the file descriptor.
+     */
+    private static class SocketFd extends Socket {
+        /**
+         * This class provides an implementation of {@link java.net.SocketImpl} that serves only as
+         * a conduit to pass a file descriptor integer to {@link android.net.TrafficStats#tagSocket}
+         * when called by {@link #tagSocket}. This class does not take ownership of the file
+         * descriptor, so calling {@link #close} will not actually close the file descriptor.
+         */
+        private static class SocketImplFd extends SocketImpl {
             /**
-             * Create a {@link SocketImpl} that sets {@code fd} as the underlying file descriptor.
-             * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+             * Create a {@link java.net.SocketImpl} that sets {@code fd} as the underlying file
+             * descriptor. Does not take ownership of the file descriptor, so calling {@link #close}
+             * will not actually close the file descriptor.
              */
-            SocketImplFd(int fd) {
-                mPfd = ParcelFileDescriptor.adoptFd(fd);
-                this.fd = mPfd.getFileDescriptor();
+            SocketImplFd(FileDescriptor fd) {
+                this.fd = fd;
             }
 
+            @Override
             protected void accept(SocketImpl s) {
                 throw new RuntimeException("accept not implemented");
             }
+            @Override
             protected int available() {
                 throw new RuntimeException("accept not implemented");
             }
+            @Override
             protected void bind(InetAddress host, int port) {
                 throw new RuntimeException("accept not implemented");
             }
-            protected void close() {
-                // Detach from |fd| to avoid leak detection false positives without closing |fd|.
-                mPfd.detachFd();
-            }
+            @Override
+            protected void close() {}
+            @Override
             protected void connect(InetAddress address, int port) {
                 throw new RuntimeException("connect not implemented");
             }
+            @Override
             protected void connect(SocketAddress address, int timeout) {
                 throw new RuntimeException("connect not implemented");
             }
+            @Override
             protected void connect(String host, int port) {
                 throw new RuntimeException("connect not implemented");
             }
-            protected void create(boolean stream) {
-                throw new RuntimeException("create not implemented");
-            }
+            @Override
+            protected void create(boolean stream) {}
+            @Override
             protected InputStream getInputStream() {
                 throw new RuntimeException("getInputStream not implemented");
             }
+            @Override
             protected OutputStream getOutputStream() {
                 throw new RuntimeException("getOutputStream not implemented");
             }
+            @Override
             protected void listen(int backlog) {
                 throw new RuntimeException("listen not implemented");
             }
+            @Override
             protected void sendUrgentData(int data) {
                 throw new RuntimeException("sendUrgentData not implemented");
             }
+            @Override
             public Object getOption(int optID) {
                 throw new RuntimeException("getOption not implemented");
             }
+            @Override
             public void setOption(int optID, Object value) {
                 throw new RuntimeException("setOption not implemented");
             }
         }
 
         /**
-         * Creates a {@link Socket} that sets {@code fd} as the underlying file descriptor.
-         * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+         * Create a {@link java.net.Socket} that sets {@code fd} as the underlying file
+         * descriptor. Does not take ownership of the file descriptor, so calling {@link #close}
+         * will not actually close the file descriptor.
          */
-        SocketFd(int fd) throws IOException {
+        SocketFd(FileDescriptor fd) throws IOException {
             super(new SocketImplFd(fd));
         }
     }
 
     /**
-     * Class to wrap TrafficStats.setThreadStatsUid(int uid) and TrafficStats.clearThreadStatsUid()
-     * which are hidden and so must be accessed via reflection.
-     */
-    private static class ThreadStatsUid {
-        // Reference to TrafficStats.setThreadStatsUid(int uid).
-        private static final Method sSetThreadStatsUid;
-        // Reference to TrafficStats.clearThreadStatsUid().
-        private static final Method sClearThreadStatsUid;
-
-        // Get reference to TrafficStats.setThreadStatsUid(int uid) and
-        // TrafficStats.clearThreadStatsUid() via reflection.
-        static {
-            try {
-                sSetThreadStatsUid =
-                        TrafficStats.class.getMethod("setThreadStatsUid", Integer.TYPE);
-                sClearThreadStatsUid = TrafficStats.class.getMethod("clearThreadStatsUid");
-            } catch (NoSuchMethodException | SecurityException e) {
-                throw new RuntimeException("Unable to get TrafficStats methods", e);
-            }
-        }
-
-        /** Calls TrafficStats.setThreadStatsUid(uid) */
-        public static void set(int uid) throws IllegalAccessException, InvocationTargetException {
-            sSetThreadStatsUid.invoke(null, uid); // Pass null for "this" as it's a static method.
-        }
-
-        /** Calls TrafficStats.clearThreadStatsUid() */
-        public static void clear() throws IllegalAccessException, InvocationTargetException {
-            sClearThreadStatsUid.invoke(null); // Pass null for "this" as it's a static method.
-        }
-    }
-
-    /**
-     * Tag socket referenced by {@code fd} with {@code tag} for UID {@code uid}.
+     * Tag socket referenced by {@code ifd} with {@code tag} for UID {@code uid}.
      *
      * Assumes thread UID tag isn't set upon entry, and ensures thread UID tag isn't set upon exit.
      * Unfortunately there is no TrafficStatis.getThreadStatsUid().
      */
     @CalledByNative
-    private static void tagSocket(int fd, int uid, int tag)
-            throws IOException, IllegalAccessException, InvocationTargetException {
+    private static void tagSocket(int ifd, int uid, int tag) throws IOException {
         // Set thread tags.
         int oldTag = TrafficStats.getThreadStatsTag();
         if (tag != oldTag) {
@@ -451,9 +603,32 @@ class AndroidNetworkLibrary {
         }
 
         // Apply thread tags to socket.
-        SocketFd s = new SocketFd(fd);
+
+        // First, convert integer file descriptor (ifd) to FileDescriptor.
+        final ParcelFileDescriptor pfd;
+        final FileDescriptor fd;
+        // The only supported way to generate a FileDescriptor from an integer file
+        // descriptor is via ParcelFileDescriptor.adoptFd(). Unfortunately prior to Android
+        // Marshmallow ParcelFileDescriptor.detachFd() didn't actually detach from the
+        // FileDescriptor, so use reflection to set {@code fd} into the FileDescriptor for
+        // versions prior to Marshmallow. Here's the fix that went into Marshmallow:
+        // https://android.googlesource.com/platform/frameworks/base/+/b30ad6f
+        if (Build.VERSION.SDK_INT < VERSION_CODES.M) {
+            pfd = null;
+            fd = SetFileDescriptor.createWithFd(ifd);
+        } else {
+            pfd = ParcelFileDescriptor.adoptFd(ifd);
+            fd = pfd.getFileDescriptor();
+        }
+        // Second, convert FileDescriptor to Socket.
+        Socket s = new SocketFd(fd);
+        // Third, tag the Socket.
         TrafficStats.tagSocket(s);
-        s.close(); // No-op, just to avoid leak detection false positives.
+        s.close(); // No-op but always good to close() Closeables.
+        // Have ParcelFileDescriptor relinquish ownership of the file descriptor.
+        if (pfd != null) {
+            pfd.detachFd();
+        }
 
         // Restore prior thread tags.
         if (tag != oldTag) {

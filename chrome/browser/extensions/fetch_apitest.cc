@@ -5,13 +5,13 @@
 #include "base/files/file_path.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/test_extension_dir.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/extension.h"
+#include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -63,7 +63,7 @@ class ExtensionFetchTest : public ExtensionApiTest {
   // Opens a tab, puts it in the foreground, navigates it to |url| then returns
   // its WebContents.
   content::WebContents* CreateAndNavigateTab(const GURL& url) {
-    chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_LINK);
+    NavigateParams params(browser(), url, ui::PAGE_TRANSITION_LINK);
     params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
     ui_test_utils::NavigateToURL(&params);
     return browser()->tab_strip_model()->GetActiveWebContents();
@@ -162,6 +162,37 @@ IN_PROC_BROWSER_TEST_F(ExtensionFetchTest,
       GetFetchScript(GetQuotedURL(extension->GetResourceURL("text"))),
       &fetch_result));
   EXPECT_EQ("text content", fetch_result);
+}
+
+// Calling fetch() from a http(s) service worker context to a
+// chrome-extensions:// URL since the loading path in a service worker is
+// different from pages.
+// This is a regression test for https://crbug.com/901443.
+IN_PROC_BROWSER_TEST_F(
+    ExtensionFetchTest,
+    HostCanFetchWebAccessibleExtensionResource_FetchFromServiceWorker) {
+  TestExtensionDir dir;
+  dir.WriteManifestWithSingleQuotes(
+      "{"
+      "'background': {'scripts': ['bg.js']},"
+      "'manifest_version': 2,"
+      "'name': 'HostCanFetchWebAccessibleExtensionResource_"
+      "FetchFromServiceWorker',"
+      "'version': '1',"
+      "'web_accessible_resources': ['text']"
+      "}");
+  const Extension* extension = WriteFilesAndLoadTestExtension(&dir);
+  ASSERT_TRUE(extension);
+
+  content::WebContents* tab =
+      CreateAndNavigateTab(embedded_test_server()->GetURL(
+          "/workers/fetch_from_service_worker.html"));
+  EXPECT_EQ("ready", content::EvalJs(tab, "setup();"));
+  EXPECT_EQ("text content",
+            content::EvalJs(
+                tab, base::StringPrintf(
+                         "fetch_from_service_worker('%s');",
+                         extension->GetResourceURL("text").spec().c_str())));
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionFetchTest,

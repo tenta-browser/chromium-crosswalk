@@ -26,8 +26,9 @@
 #include "base/threading/thread_checker.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "net/base/cache_type.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/load_states.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
@@ -40,6 +41,10 @@ namespace base {
 namespace trace_event {
 class ProcessMemoryDump;
 }
+
+namespace android {
+class ApplicationStatusListener;
+}  // namespace android
 }  // namespace base
 
 namespace disk_cache {
@@ -51,9 +56,7 @@ namespace net {
 
 class HttpNetworkSession;
 class HttpResponseInfo;
-class IOBuffer;
 class NetLog;
-class ViewCacheHelper;
 struct HttpRequestInfo;
 
 class NET_EXPORT HttpCache : public HttpTransactionFactory {
@@ -80,7 +83,12 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
     // |callback| because the object can be deleted from within the callback.
     virtual int CreateBackend(NetLog* net_log,
                               std::unique_ptr<disk_cache::Backend>* backend,
-                              const CompletionCallback& callback) = 0;
+                              CompletionOnceCallback callback) = 0;
+
+#if defined(OS_ANDROID)
+    virtual void SetAppStatusListener(
+        base::android::ApplicationStatusListener* app_status_listener) {}
+#endif
   };
 
   // A default backend factory for the common use cases.
@@ -100,13 +108,53 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
     // BackendFactory implementation.
     int CreateBackend(NetLog* net_log,
                       std::unique_ptr<disk_cache::Backend>* backend,
-                      const CompletionCallback& callback) override;
+                      CompletionOnceCallback callback) override;
+
+#if defined(OS_ANDROID)
+    void SetAppStatusListener(
+        base::android::ApplicationStatusListener* app_status_listener) override;
+#endif
 
    private:
     CacheType type_;
     BackendType backend_type_;
     const base::FilePath path_;
     int max_bytes_;
+#if defined(OS_ANDROID)
+    base::android::ApplicationStatusListener* app_status_listener_ = nullptr;
+#endif
+  };
+
+  // Whether a transaction can join parallel writing or not is a function of the
+  // transaction as well as the current writers (if present). This enum
+  // captures that decision as well as when a Writers object is first created.
+  // This is also used to log metrics so should be consistent with the values in
+  // enums.xml and should only be appended to.
+  enum ParallelWritingPattern {
+    // Used as the default value till the transaction is in initial headers
+    // phase.
+    PARALLEL_WRITING_NONE,
+    // The transaction creates a writers object. This is only logged for
+    // transactions that did not fail to join existing writers earlier.
+    PARALLEL_WRITING_CREATE,
+    // The transaction joins existing writers.
+    PARALLEL_WRITING_JOIN,
+    // The transaction cannot join existing writers since either itself or
+    // existing writers instance is serving a range request.
+    PARALLEL_WRITING_NOT_JOIN_RANGE,
+    // The transaction cannot join existing writers since either itself or
+    // existing writers instance is serving a non GET request.
+    PARALLEL_WRITING_NOT_JOIN_METHOD_NOT_GET,
+    // The transaction cannot join existing writers since it does not have cache
+    // write privileges.
+    PARALLEL_WRITING_NOT_JOIN_READ_ONLY,
+    // Writers does not exist and the transaction does not need to create one
+    // since it is going to read from the cache.
+    PARALLEL_WRITING_NONE_CACHE_READ,
+    // Unable to join since the entry is too big for cache backend to handle.
+    PARALLEL_WRITING_NOT_JOIN_TOO_BIG_FOR_CACHE,
+    // On adding a value here, make sure to add in enums.xml as well.
+    PARALLEL_WRITING_MAX
   };
 
   // The number of minutes after a resource is prefetched that it can be used
@@ -144,7 +192,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // |callback| will be notified when the operation completes. The pointer that
   // receives the |backend| must remain valid until the operation completes.
   int GetBackend(disk_cache::Backend** backend,
-                 const CompletionCallback& callback);
+                 CompletionOnceCallback callback);
 
   // Returns the current backend (can be NULL).
   disk_cache::Backend* GetCurrentBackend() const;
@@ -154,26 +202,13 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
                                 HttpResponseInfo* response_info,
                                 bool* response_truncated);
 
-  // Writes |buf_len| bytes of metadata stored in |buf| to the cache entry
-  // referenced by |url|, as long as the entry's |expected_response_time| has
-  // not changed. This method returns without blocking, and the operation will
-  // be performed asynchronously without any completion notification.
-  // Takes ownership of |buf|.
-  void WriteMetadata(const GURL& url,
-                     RequestPriority priority,
-                     base::Time expected_response_time,
-                     IOBuffer* buf,
-                     int buf_len);
-
   // Get/Set the cache's mode.
   void set_mode(Mode value) { mode_ = value; }
   Mode mode() { return mode_; }
 
   // Get/Set the cache's clock. These are public only for testing.
-  void SetClockForTesting(std::unique_ptr<base::Clock> clock) {
-    clock_ = std::move(clock);
-  }
-  base::Clock* clock() const { return clock_.get(); }
+  void SetClockForTesting(base::Clock* clock) { clock_ = clock; }
+  base::Clock* clock() const { return clock_; }
 
   // Close currently active sockets so that fresh page loads will not use any
   // recycled connections.  For sockets currently in use, they may not close
@@ -184,8 +219,10 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   void CloseIdleConnections();
 
   // Called whenever an external cache in the system reuses the resource
-  // referred to by |url| and |http_method|.
-  void OnExternalCacheHit(const GURL& url, const std::string& http_method);
+  // referred to by |url| and |http_method| and |network_isolation_key|.
+  void OnExternalCacheHit(const GURL& url,
+                          const std::string& http_method,
+                          const NetworkIsolationKey& network_isolation_key);
 
   // Causes all transactions created after this point to simulate lock timeout
   // and effectively bypass the cache lock whenever there is lock contention.
@@ -206,7 +243,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
 
   // HttpTransactionFactory implementation:
   int CreateTransaction(RequestPriority priority,
-                        std::unique_ptr<HttpTransaction>* trans) override;
+                        std::unique_ptr<HttpTransaction>* transaction) override;
   HttpCache* GetCache() override;
   HttpNetworkSession* GetSession() override;
 
@@ -225,20 +262,40 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   void DumpMemoryStats(base::trace_event::ProcessMemoryDump* pmd,
                        const std::string& parent_absolute_name) const;
 
+  // Get the URL from the entry's cache key. If double-keying is not enabled,
+  // this will be the key itself.
+  static std::string GetResourceURLFromHttpCacheKey(const std::string& key);
+
+  // Function to generate cache key for testing.
+  std::string GenerateCacheKeyForTest(const HttpRequestInfo* request);
+
  private:
   // Types --------------------------------------------------------------------
+
+  // The type of operation represented by a work item.
+  enum WorkItemOperation {
+    WI_CREATE_BACKEND,
+    WI_OPEN_OR_CREATE_ENTRY,
+    WI_OPEN_ENTRY,
+    WI_CREATE_ENTRY,
+    WI_DOOM_ENTRY
+  };
 
   // Disk cache entry data indices.
   enum {
     kResponseInfoIndex = 0,
     kResponseContentIndex,
+    // Only currently used in DoTruncateCachedMetadata().
+    // TODO(mmenke): Remove this in and DoTruncateCachedMetadata() in M79, after
+    // most metadata entries in the cache have been removed. Without
+    // DoTruncateCachedMetadata(), the metadata will be removed when a cache
+    // entry is destroyed, but some conditionalized updates will keep it around.
     kMetadataIndex,
 
     // Must remain at the end of the enum.
     kNumCacheEntryDataIndices
   };
 
-  class MetadataWriter;
   class QuicServerInfoFactoryAdaptor;
   class Transaction;
   class WorkItem;
@@ -248,11 +305,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   friend class TestHttpCacheTransaction;
   friend class TestHttpCache;
   friend class Transaction;
-  friend class ViewCacheHelper;
   struct PendingOp;  // Info for an entry under construction.
 
   // To help with testing.
   friend class MockHttpCache;
+  friend class HttpCacheIOCallbackTest;
 
   using TransactionList = std::list<Transaction*>;
   using TransactionSet = std::unordered_set<Transaction*>;
@@ -281,7 +338,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // (once the data is written to the cache by writers)
 
   struct NET_EXPORT_PRIVATE ActiveEntry {
-    explicit ActiveEntry(disk_cache::Entry* entry);
+    ActiveEntry(disk_cache::Entry* entry, bool opened_in);
     ~ActiveEntry();
     size_t EstimateMemoryUsage() const;
 
@@ -295,6 +352,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
     bool TransactionInReaders(Transaction* transaction) const;
 
     disk_cache::Entry* disk_entry = nullptr;
+
+    // Indicates if the disk_entry was opened or not (i.e.: created).
+    // It is set to true when a transaction is added to an entry so that other,
+    // queued, transactions do not mistake it for a newly created entry.
+    bool opened = false;
 
     // Transactions waiting to be added to entry.
     TransactionList add_to_entry_queue;
@@ -330,17 +392,24 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
 
   // Methods ------------------------------------------------------------------
 
+  // Creates a WorkItem and sets it as the |pending_op|'s writer, or adds it to
+  // the queue if a writer already exists.
+  net::Error CreateAndSetWorkItem(ActiveEntry** entry,
+                                  Transaction* transaction,
+                                  WorkItemOperation operation,
+                                  PendingOp* pending_op);
+
   // Creates the |backend| object and notifies the |callback| when the operation
   // completes. Returns an error code.
   int CreateBackend(disk_cache::Backend** backend,
-                    const CompletionCallback& callback);
+                    CompletionOnceCallback callback);
 
   // Makes sure that the backend creation is complete before allowing the
-  // provided transaction to use the object. Returns an error code.  |trans|
-  // will be notified via its IO callback if this method returns ERR_IO_PENDING.
-  // The transaction is free to use the backend directly at any time after
-  // receiving the notification.
-  int GetBackendForTransaction(Transaction* trans);
+  // provided transaction to use the object. Returns an error code.
+  // |transaction| will be notified via its IO callback if this method returns
+  // ERR_IO_PENDING. The transaction is free to use the backend directly at any
+  // time after receiving the notification.
+  int GetBackendForTransaction(Transaction* transaction);
 
   // Generates the cache key for this request.
   std::string GenerateCacheKey(const HttpRequestInfo*);
@@ -349,20 +418,22 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // entries.
   void DoomActiveEntry(const std::string& key);
 
-  // Dooms the entry selected by |key|. |trans| will be notified via its IO
-  // callback if this method returns ERR_IO_PENDING. The entry can be
-  // currently in use or not. If entry is in use and the invoking transaction
-  // is associated with this entry and this entry is already doomed, this API
+  // Dooms the entry selected by |key|. |transaction| will be notified via its
+  // IO callback if this method returns ERR_IO_PENDING. The entry can be
+  // currently in use or not. If entry is in use and the invoking transaction is
+  // associated with this entry and this entry is already doomed, this API
   // should not be invoked.
-  int DoomEntry(const std::string& key, Transaction* trans);
+  int DoomEntry(const std::string& key, Transaction* transaction);
 
-  // Dooms the entry selected by |key|. |trans| will be notified via its IO
-  // callback if this method returns ERR_IO_PENDING. The entry should not
-  // be currently in use.
-  int AsyncDoomEntry(const std::string& key, Transaction* trans);
+  // Dooms the entry selected by |key|. |transaction| will be notified via its
+  // IO callback if this method returns ERR_IO_PENDING. The entry should not be
+  // currently in use.
+  int AsyncDoomEntry(const std::string& key, Transaction* transaction);
 
-  // Dooms the entry associated with a GET for a given |url|.
-  void DoomMainEntryForUrl(const GURL& url);
+  // Dooms the entry associated with a GET for a given url and network
+  // isolation key.
+  void DoomMainEntryForUrl(const GURL& url,
+                           const NetworkIsolationKey& isolation_key);
 
   // Closes a previously doomed entry.
   void FinalizeDoomedEntry(ActiveEntry* entry);
@@ -372,7 +443,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
 
   // Creates a new ActiveEntry and starts tracking it. |disk_entry| is the disk
   // cache entry.
-  ActiveEntry* ActivateEntry(disk_cache::Entry* disk_entry);
+  ActiveEntry* ActivateEntry(disk_cache::Entry* disk_entry, bool opened);
 
   // Deletes an ActiveEntry.
   void DeactivateEntry(ActiveEntry* entry);
@@ -387,19 +458,30 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // Deletes a PendingOp.
   void DeletePendingOp(PendingOp* pending_op);
 
+  // Opens the disk cache entry associated with |key|, creating the entry if it
+  // does not already exist, returning an ActiveEntry in |*entry|. |transaction|
+  // will be notified via its IO callback if this method returns ERR_IO_PENDING.
+  // This should not be called if there already is an active entry associated
+  // with |key|, e.g. you should call FindActiveEntry first.
+  int OpenOrCreateEntry(const std::string& key,
+                        ActiveEntry** entry,
+                        Transaction* transaction);
+
   // Opens the disk cache entry associated with |key|, returning an ActiveEntry
-  // in |*entry|. |trans| will be notified via its IO callback if this method
-  // returns ERR_IO_PENDING. This should not be called if there already is
-  // an active entry associated with |key|, e.g. you should call FindActiveEntry
-  // first.
-  int OpenEntry(const std::string& key, ActiveEntry** entry,
-                Transaction* trans);
+  // in |*entry|. |transaction| will be notified via its IO callback if this
+  // method returns ERR_IO_PENDING. This should not be called if there already
+  // is an active entry associated with |key|, e.g. you should call
+  // FindActiveEntry first.
+  int OpenEntry(const std::string& key,
+                ActiveEntry** entry,
+                Transaction* transaction);
 
   // Creates the disk cache entry associated with |key|, returning an
-  // ActiveEntry in |*entry|. |trans| will be notified via its IO callback if
-  // this method returns ERR_IO_PENDING.
-  int CreateEntry(const std::string& key, ActiveEntry** entry,
-                  Transaction* trans);
+  // ActiveEntry in |*entry|. |transaction| will be notified via its IO callback
+  // if this method returns ERR_IO_PENDING.
+  int CreateEntry(const std::string& key,
+                  ActiveEntry** entry,
+                  Transaction* transaction);
 
   // Destroys an ActiveEntry (active or doomed). Should only be called if
   // entry->SafeToDestroy() returns true.
@@ -435,7 +517,7 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
 
   // Invoked when current transactions in writers have completed writing to the
   // cache. It may be successful completion of the response or failure as given
-  // by |success|.
+  // by |success|. Must delete the writers object.
   // |entry| is the owner of writers.
   // |should_keep_entry| indicates if the entry should be doomed/destroyed.
   // Virtual so that it can be extended in tests.
@@ -477,10 +559,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // already.
   void ProcessAddToEntryQueue(ActiveEntry* entry);
 
-  // Returns true if the transaction can join other transactions for writing to
-  // the cache simultaneously. It is only supported for GET requests and
-  // non-range requests.
-  bool CanTransactionJoinExistingWriters(Transaction* transaction);
+  // Returns if the transaction can join other transactions for writing to
+  // the cache simultaneously. It is only supported for non-Read only,
+  // GET requests which are not range requests.
+  ParallelWritingPattern CanTransactionJoinExistingWriters(
+      Transaction* transaction);
 
   // Invoked when a transaction that has already completed the response headers
   // phase can resume reading/writing the response body. It will invoke the IO
@@ -489,7 +572,9 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   void ProcessDoneHeadersQueue(ActiveEntry* entry);
 
   // Adds a transaction to writers.
-  void AddTransactionToWriters(ActiveEntry* entry, Transaction* transaction);
+  void AddTransactionToWriters(ActiveEntry* entry,
+                               Transaction* transaction,
+                               ParallelWritingPattern parallel_writing_pattern);
 
   // Returns true if this transaction can write headers to the entry.
   bool CanTransactionWriteResponseHeaders(ActiveEntry* entry,
@@ -501,19 +586,20 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   bool IsWritingInProgress(ActiveEntry* entry) const;
 
   // Returns the LoadState of the provided pending transaction.
-  LoadState GetLoadStateForPendingTransaction(const Transaction* trans);
+  LoadState GetLoadStateForPendingTransaction(const Transaction* transaction);
 
-  // Removes the transaction |trans|, from the pending list of an entry
+  // Removes the transaction |transaction|, from the pending list of an entry
   // (PendingOp, active or doomed entry).
-  void RemovePendingTransaction(Transaction* trans);
+  void RemovePendingTransaction(Transaction* transaction);
 
-  // Removes the transaction |trans|, from the pending list of |entry|.
+  // Removes the transaction |transaction|, from the pending list of |entry|.
   bool RemovePendingTransactionFromEntry(ActiveEntry* entry,
-                                         Transaction* trans);
+                                         Transaction* transaction);
 
-  // Removes the transaction |trans|, from the pending list of |pending_op|.
+  // Removes the transaction |transaction|, from the pending list of
+  // |pending_op|.
   bool RemovePendingTransactionFromPendingOp(PendingOp* pending_op,
-                                             Transaction* trans);
+                                             Transaction* transaction);
 
   // Events (called via PostTask) ---------------------------------------------
 
@@ -524,18 +610,22 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   // Processes BackendCallback notifications.
   void OnIOComplete(int result, PendingOp* entry);
 
-  // Helper to conditionally delete |pending_op| if the HttpCache object it
-  // is meant for has been deleted.
-  //
-  // TODO(ajwong): The PendingOp lifetime management is very tricky.  It might
-  // be possible to simplify it using either base::Owned() or base::Passed()
-  // with the callback.
+  // Helper to conditionally delete |pending_op| if HttpCache has been deleted.
+  // This is necessary because |pending_op| owns a disk_cache::Backend that has
+  // been passed in to CreateCacheBackend(), therefore must live until callback
+  // is called.
   static void OnPendingOpComplete(const base::WeakPtr<HttpCache>& cache,
                                   PendingOp* pending_op,
                                   int result);
 
   // Processes the backend creation notification.
   void OnBackendCreated(int result, PendingOp* pending_op);
+
+  // Constants ----------------------------------------------------------------
+
+  // Used when generating and accessing keys if cache is split.
+  static const char kDoubleKeyPrefix[];
+  static const char kDoubleKeySeparator[];
 
   // Variables ----------------------------------------------------------------
 
@@ -566,11 +656,11 @@ class NET_EXPORT HttpCache : public HttpTransactionFactory {
   std::unique_ptr<PlaybackCacheMap> playback_cache_map_;
 
   // A clock that can be swapped out for testing.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   THREAD_CHECKER(thread_checker_);
 
-  base::WeakPtrFactory<HttpCache> weak_factory_;
+  base::WeakPtrFactory<HttpCache> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HttpCache);
 };

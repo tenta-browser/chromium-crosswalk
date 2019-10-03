@@ -13,7 +13,7 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/process_type.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 using content::RenderProcessHost;
 using content::BrowserThread;
@@ -25,8 +25,7 @@ using content::ChildProcessData;
 
 namespace task_manager {
 
-RenderProcessHostTaskProvider::RenderProcessHostTaskProvider()
-    : weak_ptr_factory_(this) {
+RenderProcessHostTaskProvider::RenderProcessHostTaskProvider() {
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
                  content::NotificationService::AllBrowserContextsAndSources());
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CLOSED,
@@ -53,7 +52,7 @@ void RenderProcessHostTaskProvider::StartUpdating() {
   for (RenderProcessHost::iterator it(RenderProcessHost::AllHostsIterator());
        !it.IsAtEnd(); it.Advance()) {
     RenderProcessHost* host = it.GetCurrentValue();
-    if (host->GetHandle()) {
+    if (host->GetProcess().IsValid()) {
       CreateTask(host->GetID());
     } else {
       // If the host isn't ready do nothing and we will learn of its creation
@@ -82,9 +81,9 @@ void RenderProcessHostTaskProvider::CreateTask(
   // TODO(cburn): plumb out something from RPH so the title can be set here.
   // Create the task and notify the observer.
   ChildProcessData data(content::PROCESS_TYPE_RENDERER);
-  data.handle = host->GetHandle();
+  data.SetProcess(host->GetProcess().Duplicate());
   data.id = host->GetID();
-  task.reset(new ChildProcessTask(data));
+  task = std::make_unique<ChildProcessTask>(data);
   NotifyObserverTaskAdded(task.get());
 }
 

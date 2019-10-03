@@ -4,8 +4,9 @@
 
 #include "chrome/browser/geolocation/geolocation_permission_context_extensions.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/permissions/permission_request_id.h"
@@ -25,9 +26,10 @@ namespace {
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 void CallbackContentSettingWrapper(
-    const base::Callback<void(ContentSetting)>& callback,
+    base::OnceCallback<void(ContentSetting)> callback,
     bool allowed) {
-  callback.Run(allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
+  std::move(callback).Run(allowed ? CONTENT_SETTING_ALLOW
+                                  : CONTENT_SETTING_BLOCK);
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -51,7 +53,7 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
     int bridge_id,
     const GURL& requesting_frame,
     bool user_gesture,
-    const base::Callback<void(ContentSetting)>& callback,
+    base::OnceCallback<void(ContentSetting)>* callback,
     bool* permission_set,
     bool* new_permission) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -62,7 +64,7 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
   if (web_view_permission_helper) {
     web_view_permission_helper->RequestGeolocationPermission(
         bridge_id, requesting_frame, user_gesture,
-        base::Bind(&CallbackContentSettingWrapper, callback));
+        base::BindOnce(&CallbackContentSettingWrapper, std::move(*callback)));
     *permission_set = false;
     *new_permission = false;
     return true;
@@ -86,8 +88,9 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
     }
   }
 
-  if (extensions::GetViewType(web_contents) !=
-      extensions::VIEW_TYPE_TAB_CONTENTS) {
+  extensions::ViewType view_type = extensions::GetViewType(web_contents);
+  if (view_type != extensions::VIEW_TYPE_TAB_CONTENTS &&
+      view_type != extensions::VIEW_TYPE_INVALID) {
     // The tab may have gone away, or the request may not be from a tab at all.
     // TODO(mpcomplete): the request could be from a background page or
     // extension popup (web_contents will have a different ViewType). But why do
@@ -97,22 +100,6 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
                  << " (can't prompt user without a visible tab)";
     *permission_set = true;
     *new_permission = false;
-    return true;
-  }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-  return false;
-}
-
-bool GeolocationPermissionContextExtensions::CancelPermissionRequest(
-    content::WebContents* web_contents,
-    int bridge_id) {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  extensions::WebViewPermissionHelper* web_view_permission_helper =
-      web_contents ?
-      extensions::WebViewPermissionHelper::FromWebContents(web_contents)
-      : NULL;
-  if (web_view_permission_helper) {
-    web_view_permission_helper->CancelGeolocationPermissionRequest(bridge_id);
     return true;
   }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)

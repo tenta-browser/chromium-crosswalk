@@ -4,9 +4,11 @@
 
 #include "chrome/browser/page_load_metrics/observers/protocol_page_load_metrics_observer.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 #include "chrome/browser/page_load_metrics/page_load_tracker.h"
+#include "chrome/browser/page_load_metrics/protocol_util.h"
 #include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
 
 class ProtocolPageLoadMetricsObserverTest
@@ -14,7 +16,7 @@ class ProtocolPageLoadMetricsObserverTest
  protected:
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
     std::unique_ptr<ProtocolPageLoadMetricsObserver> observer =
-        base::MakeUnique<ProtocolPageLoadMetricsObserver>();
+        std::make_unique<ProtocolPageLoadMetricsObserver>();
     observer_ = observer.get();
     tracker->AddObserver(std::move(observer));
   }
@@ -42,7 +44,8 @@ class ProtocolPageLoadMetricsObserverTest
 
     // Force the ConnectionInfo that the observer received from the
     // NavigationHandle.
-    observer_->connection_info_ = connection_info;
+    observer_->protocol_ =
+        page_load_metrics::GetNetworkProtocol(connection_info);
 
     page_load_metrics::mojom::PageLoadTiming timing;
     InitializeTestPageLoadTiming(&timing);

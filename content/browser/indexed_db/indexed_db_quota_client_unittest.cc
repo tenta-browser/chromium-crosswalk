@@ -12,10 +12,11 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/bind_test_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "content/browser/browser_thread_impl.h"
+#include "base/time/default_clock.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_quota_client.h"
 #include "content/public/browser/storage_partition.h"
@@ -25,26 +26,27 @@
 #include "storage/browser/test/mock_quota_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using blink::mojom::StorageType;
+
 // Declared to shorten the line lengths.
-static const storage::StorageType kTemp = storage::kStorageTypeTemporary;
-static const storage::StorageType kPerm = storage::kStorageTypePersistent;
-static const storage::StorageType kSync = storage::kStorageTypeSyncable;
+static const StorageType kTemp = StorageType::kTemporary;
+static const StorageType kPerm = StorageType::kPersistent;
+static const StorageType kSync = StorageType::kSyncable;
 
 namespace content {
 
 // Base class for our test fixtures.
 class IndexedDBQuotaClientTest : public testing::Test {
  public:
-  const GURL kOriginA;
-  const GURL kOriginB;
-  const GURL kOriginOther;
+  const url::Origin kOriginA;
+  const url::Origin kOriginB;
+  const url::Origin kOriginOther;
 
   IndexedDBQuotaClientTest()
-      : kOriginA("http://host"),
-        kOriginB("http://host:8000"),
-        kOriginOther("http://other"),
-        usage_(0),
-        weak_factory_(this) {
+      : kOriginA(url::Origin::Create(GURL("http://host"))),
+        kOriginB(url::Origin::Create(GURL("http://host:8000"))),
+        kOriginOther(url::Origin::Create(GURL("http://other"))),
+        usage_(0) {
     browser_context_.reset(new TestBrowserContext());
 
     scoped_refptr<storage::QuotaManager> quota_manager =
@@ -54,7 +56,8 @@ class IndexedDBQuotaClientTest : public testing::Test {
 
     idb_context_ = new IndexedDBContextImpl(
         browser_context_->GetPath(),
-        browser_context_->GetSpecialStoragePolicy(), quota_manager->proxy());
+        browser_context_->GetSpecialStoragePolicy(), quota_manager->proxy(),
+        base::DefaultClock::GetInstance());
     base::RunLoop().RunUntilIdle();
     setup_temp_dir();
   }
@@ -75,52 +78,61 @@ class IndexedDBQuotaClientTest : public testing::Test {
   }
 
   int64_t GetOriginUsage(storage::QuotaClient* client,
-                         const GURL& origin,
-                         storage::StorageType type) {
+                         const url::Origin& origin,
+                         StorageType type) {
     usage_ = -1;
-    client->GetOriginUsage(
-        origin,
-        type,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginUsageComplete,
-                   weak_factory_.GetWeakPtr()));
-    RunAllTasksUntilIdle();
+    base::RunLoop loop;
+    client->GetOriginUsage(origin, type,
+                           base::BindLambdaForTesting([&](int64_t usage) {
+                             usage_ = usage;
+                             loop.Quit();
+                           }));
+    loop.Run();
     EXPECT_GT(usage_, -1);
     return usage_;
   }
 
-  const std::set<GURL>& GetOriginsForType(storage::QuotaClient* client,
-                                          storage::StorageType type) {
+  const std::set<url::Origin>& GetOriginsForType(storage::QuotaClient* client,
+                                                 StorageType type) {
     origins_.clear();
+    base::RunLoop loop;
     client->GetOriginsForType(
         type,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
-    RunAllTasksUntilIdle();
+        base::BindLambdaForTesting([&](const std::set<url::Origin>& origins) {
+          origins_ = origins;
+          loop.Quit();
+        }));
+    loop.Run();
     return origins_;
   }
 
-  const std::set<GURL>& GetOriginsForHost(storage::QuotaClient* client,
-                                          storage::StorageType type,
-                                          const std::string& host) {
+  const std::set<url::Origin>& GetOriginsForHost(storage::QuotaClient* client,
+                                                 StorageType type,
+                                                 const std::string& host) {
     origins_.clear();
+    base::RunLoop loop;
     client->GetOriginsForHost(
-        type,
-        host,
-        base::Bind(&IndexedDBQuotaClientTest::OnGetOriginsComplete,
-                   weak_factory_.GetWeakPtr()));
-    RunAllTasksUntilIdle();
+        type, host,
+        base::BindLambdaForTesting([&](const std::set<url::Origin>& origins) {
+          origins_ = origins;
+          loop.Quit();
+        }));
+    loop.Run();
     return origins_;
   }
 
-  storage::QuotaStatusCode DeleteOrigin(storage::QuotaClient* client,
-                                        const GURL& origin_url,
-                                        storage::StorageType type) {
-    delete_status_ = storage::kQuotaStatusUnknown;
+  blink::mojom::QuotaStatusCode DeleteOrigin(storage::QuotaClient* client,
+                                             const url::Origin& origin,
+                                             StorageType type) {
+    delete_status_ = blink::mojom::QuotaStatusCode::kUnknown;
+    base::RunLoop loop;
     client->DeleteOriginData(
-        origin_url, type,
-        base::Bind(&IndexedDBQuotaClientTest::OnDeleteOriginComplete,
-                   weak_factory_.GetWeakPtr()));
-    RunAllTasksUntilIdle();
+        origin, type,
+        base::BindLambdaForTesting([&](blink::mojom::QuotaStatusCode code) {
+          delete_status_ = code;
+          loop.Quit();
+        }));
+    loop.Run();
     return delete_status_;
   }
 
@@ -131,7 +143,7 @@ class IndexedDBQuotaClientTest : public testing::Test {
     ASSERT_EQ(size, base::WriteFile(path, junk.c_str(), size));
   }
 
-  void AddFakeIndexedDB(const GURL& origin, int size) {
+  void AddFakeIndexedDB(const url::Origin& origin, int size) {
     base::FilePath file_path_origin =
         idb_context()->GetFilePathForTesting(origin);
     if (!base::CreateDirectory(file_path_origin)) {
@@ -144,24 +156,14 @@ class IndexedDBQuotaClientTest : public testing::Test {
   }
 
  private:
-  void OnGetOriginUsageComplete(int64_t usage) { usage_ = usage; }
-
-  void OnGetOriginsComplete(const std::set<GURL>& origins) {
-    origins_ = origins;
-  }
-
-  void OnDeleteOriginComplete(storage::QuotaStatusCode code) {
-    delete_status_ = code;
-  }
-
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
   int64_t usage_;
-  std::set<GURL> origins_;
+  std::set<url::Origin> origins_;
   scoped_refptr<IndexedDBContextImpl> idb_context_;
   std::unique_ptr<TestBrowserContext> browser_context_;
-  storage::QuotaStatusCode delete_status_;
-  base::WeakPtrFactory<IndexedDBQuotaClientTest> weak_factory_;
+  blink::mojom::QuotaStatusCode delete_status_;
+  base::WeakPtrFactory<IndexedDBQuotaClientTest> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBQuotaClientTest);
 };
@@ -189,7 +191,8 @@ TEST_F(IndexedDBQuotaClientTest, GetOriginsForHost) {
   EXPECT_EQ(kOriginA.host(), kOriginB.host());
   EXPECT_NE(kOriginA.host(), kOriginOther.host());
 
-  std::set<GURL> origins = GetOriginsForHost(&client, kTemp, kOriginA.host());
+  std::set<url::Origin> origins =
+      GetOriginsForHost(&client, kTemp, kOriginA.host());
   EXPECT_TRUE(origins.empty());
 
   AddFakeIndexedDB(kOriginA, 1000);
@@ -214,7 +217,7 @@ TEST_F(IndexedDBQuotaClientTest, GetOriginsForType) {
   EXPECT_TRUE(GetOriginsForType(&client, kPerm).empty());
 
   AddFakeIndexedDB(kOriginA, 1000);
-  std::set<GURL> origins = GetOriginsForType(&client, kTemp);
+  std::set<url::Origin> origins = GetOriginsForType(&client, kTemp);
   EXPECT_EQ(origins.size(), 1ul);
   EXPECT_TRUE(origins.find(kOriginA) != origins.end());
 
@@ -229,19 +232,19 @@ TEST_F(IndexedDBQuotaClientTest, DeleteOrigin) {
   EXPECT_EQ(1000, GetOriginUsage(&client, kOriginA, kTemp));
   EXPECT_EQ(50, GetOriginUsage(&client, kOriginB, kTemp));
 
-  storage::QuotaStatusCode delete_status =
+  blink::mojom::QuotaStatusCode delete_status =
       DeleteOrigin(&client, kOriginA, kTemp);
-  EXPECT_EQ(storage::kQuotaStatusOk, delete_status);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk, delete_status);
   EXPECT_EQ(0, GetOriginUsage(&client, kOriginA, kTemp));
   EXPECT_EQ(50, GetOriginUsage(&client, kOriginB, kTemp));
 
   // IndexedDB only supports temporary storage; requests to delete other types
   // are no-ops, but should not fail.
   delete_status = DeleteOrigin(&client, kOriginA, kPerm);
-  EXPECT_EQ(storage::kQuotaStatusOk, delete_status);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk, delete_status);
 
   delete_status = DeleteOrigin(&client, kOriginA, kSync);
-  EXPECT_EQ(storage::kQuotaStatusOk, delete_status);
+  EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk, delete_status);
 }
 
 }  // namespace content

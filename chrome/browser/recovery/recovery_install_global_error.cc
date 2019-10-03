@@ -4,6 +4,7 @@
 
 #include "chrome/browser/recovery/recovery_install_global_error.h"
 
+#include "base/bind.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
@@ -11,10 +12,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
-#include "chrome/browser/upgrade_detector.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -32,10 +34,8 @@ RecoveryInstallGlobalError::RecoveryInstallGlobalError(Profile* profile)
     elevation_needed_ =
         pref->GetBoolean(prefs::kRecoveryComponentNeedsElevation);
   }
-  if (elevation_needed_) {
-    GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged(
-        this);
-  }
+  if (elevation_needed_)
+    GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged();
 
   pref_registrar_.Init(pref);
   pref_registrar_.Add(
@@ -155,5 +155,5 @@ void RecoveryInstallGlobalError::OnElevationRequirementChanged() {
   if (elevation_needed_)
     has_shown_bubble_view_ = false;
 
-  GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged(this);
+  GlobalErrorServiceFactory::GetForProfile(profile_)->NotifyErrorsChanged();
 }

@@ -10,8 +10,9 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "components/history/core/browser/history_types.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/init_status.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
@@ -62,9 +63,8 @@ class ThumbnailDatabase {
   // unused space in the file. It can be VERY SLOW.
   void Vacuum();
 
-  // Try to trim the cache memory used by the database.  If |aggressively| is
-  // true try to trim all unused cache, otherwise trim by half.
-  void TrimMemory(bool aggressively);
+  // Release all non-essential memory associated with this database connection.
+  void TrimMemory();
 
   // Get all on-demand favicon bitmaps that have been last requested prior to
   // |threshold|.
@@ -136,6 +136,11 @@ class ThumbnailDatabase {
   // of the bitmaps for |icon_id| to be out of date.
   bool SetFaviconOutOfDate(favicon_base::FaviconID icon_id);
 
+  // Retrieves the newest |last_updated| time across all bitmaps for |icon_id|.
+  // Returns true if successful and if there is at least one bitmap.
+  bool GetFaviconLastUpdatedTime(favicon_base::FaviconID icon_id,
+                                 base::Time* last_updated);
+
   // Mark all bitmaps of type ON_DEMAND at |icon_url| as requested at |time|.
   // This postpones their automatic eviction from the database. Not all calls
   // end up in a write into the DB:
@@ -196,6 +201,16 @@ class ThumbnailDatabase {
   // mapping_data is not NULL.
   bool GetIconMappingsForPageURL(const GURL& page_url,
                                  std::vector<IconMapping>* mapping_data);
+
+  // Given |url|, returns the |page_url| page mapped to an icon with
+  // |required_icon_types|, where |page_url| has host = url.host(). This allows
+  // for icons to be retrieved when a full URL is not available. For example,
+  // |url| = http://www.google.com would match
+  // |page_url| = https://www.google.com/search. The returned optional will be
+  // empty if no such |page_url| exists.
+  base::Optional<GURL> FindFirstPageURLForHost(
+      const GURL& url,
+      const favicon_base::IconTypeSet& required_icon_types);
 
   // Adds a mapping between the given page_url and icon_id.
   // Returns the new mapping id if the adding succeeds, otherwise 0 is returned.
@@ -268,7 +283,7 @@ class ThumbnailDatabase {
   // it is created.
   // |db| is the database to open.
   // |db_name| is a path to the database file.
-  sql::InitStatus OpenDatabase(sql::Connection* db,
+  sql::InitStatus OpenDatabase(sql::Database* db,
                                const base::FilePath& db_name);
 
   // Helper function to implement internals of Init().  This allows
@@ -291,7 +306,7 @@ class ThumbnailDatabase {
   // Returns true if the |favicons| database is missing a column.
   bool IsFaviconDBStructureIncorrect();
 
-  sql::Connection db_;
+  sql::Database db_;
   sql::MetaTable meta_table_;
 
   HistoryBackendClient* backend_client_;

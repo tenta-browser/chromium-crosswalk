@@ -176,7 +176,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       value->AppendString("udp-send-to::8888");
       ASSERT_TRUE(permission->FromValue(value.get(), NULL, NULL));
     }
-    api_perm_set1_.insert(permission.release());
+    api_perm_set1_.insert(std::move(permission));
 
     api_perm_set2_.insert(APIPermission::kHistory);
 
@@ -193,7 +193,7 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
     AddPattern(&shost_perm_set2_, "http://somesite.com/*");
     AddPattern(&shost_perm_set2_, "http://example.com/*");
 
-    APIPermissionSet expected_apis = api_perm_set1_;
+    APIPermissionSet expected_apis = api_perm_set1_.Clone();
 
     AddPattern(&ehost_permissions_, "http://*.google.com/*");
     AddPattern(&ehost_permissions_, "http://example.com/*");
@@ -204,10 +204,6 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
     AddPattern(&shost_permissions_, "http://somesite.com/*");
     AddPattern(&shost_permissions_, "http://example.com/*");
 
-    APIPermissionSet empty_set;
-    ManifestPermissionSet empty_manifest_permissions;
-    URLPatternSet empty_extent;
-
     // Make sure both granted api and host permissions start empty.
     EXPECT_TRUE(prefs()->GetGrantedPermissions(extension_id_)->IsEmpty());
 
@@ -215,8 +211,8 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       // Add part of the api permissions.
       prefs()->AddGrantedPermissions(
           extension_id_,
-          PermissionSet(api_perm_set1_, empty_manifest_permissions,
-                        empty_extent, empty_extent));
+          PermissionSet(api_perm_set1_.Clone(), ManifestPermissionSet(),
+                        URLPatternSet(), URLPatternSet()));
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_TRUE(granted_permissions.get());
@@ -228,8 +224,9 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
     {
       // Add part of the explicit host permissions.
       prefs()->AddGrantedPermissions(
-          extension_id_, PermissionSet(empty_set, empty_manifest_permissions,
-                                       ehost_perm_set1_, empty_extent));
+          extension_id_,
+          PermissionSet(APIPermissionSet(), ManifestPermissionSet(),
+                        ehost_perm_set1_.Clone(), URLPatternSet()));
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
@@ -241,8 +238,9 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
     {
       // Add part of the scriptable host permissions.
       prefs()->AddGrantedPermissions(
-          extension_id_, PermissionSet(empty_set, empty_manifest_permissions,
-                                       empty_extent, shost_perm_set1_));
+          extension_id_,
+          PermissionSet(APIPermissionSet(), ManifestPermissionSet(),
+                        URLPatternSet(), shost_perm_set1_.Clone()));
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
@@ -260,8 +258,8 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       APIPermissionSet::Union(expected_apis, api_perm_set2_, &api_permissions_);
       prefs()->AddGrantedPermissions(
           extension_id_,
-          PermissionSet(api_perm_set2_, empty_manifest_permissions,
-                        ehost_perm_set2_, shost_perm_set2_));
+          PermissionSet(api_perm_set2_.Clone(), ManifestPermissionSet(),
+                        ehost_perm_set2_.Clone(), shost_perm_set2_.Clone()));
 
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
@@ -309,24 +307,25 @@ class ExtensionPrefsActivePermissions : public ExtensionPrefsTest {
   void Initialize() override {
     extension_id_ = prefs_.AddExtensionAndReturnId("test");
 
-    APIPermissionSet api_perms;
-    api_perms.insert(APIPermission::kTab);
-    api_perms.insert(APIPermission::kBookmark);
-    api_perms.insert(APIPermission::kHistory);
+    {
+      APIPermissionSet api_perms;
+      api_perms.insert(APIPermission::kTab);
+      api_perms.insert(APIPermission::kBookmark);
+      api_perms.insert(APIPermission::kHistory);
 
-    ManifestPermissionSet empty_manifest_permissions;
+      URLPatternSet ehosts;
+      AddPattern(&ehosts, "http://*.google.com/*");
+      AddPattern(&ehosts, "http://example.com/*");
+      AddPattern(&ehosts, "chrome://favicon/*");
 
-    URLPatternSet ehosts;
-    AddPattern(&ehosts, "http://*.google.com/*");
-    AddPattern(&ehosts, "http://example.com/*");
-    AddPattern(&ehosts, "chrome://favicon/*");
+      URLPatternSet shosts;
+      AddPattern(&shosts, "https://*.google.com/*");
+      AddPattern(&shosts, "http://reddit.com/r/test/*");
 
-    URLPatternSet shosts;
-    AddPattern(&shosts, "https://*.google.com/*");
-    AddPattern(&shosts, "http://reddit.com/r/test/*");
-
-    active_perms_.reset(new PermissionSet(api_perms, empty_manifest_permissions,
-                                          ehosts, shosts));
+      active_perms_.reset(
+          new PermissionSet(std::move(api_perms), ManifestPermissionSet(),
+                            std::move(ehosts), std::move(shosts)));
+    }
 
     // Make sure the active permissions start empty.
     std::unique_ptr<const PermissionSet> active =
@@ -339,6 +338,12 @@ class ExtensionPrefsActivePermissions : public ExtensionPrefsTest {
     EXPECT_EQ(active_perms_->apis(), active->apis());
     EXPECT_EQ(active_perms_->explicit_hosts(), active->explicit_hosts());
     EXPECT_EQ(active_perms_->scriptable_hosts(), active->scriptable_hosts());
+    EXPECT_EQ(*active_perms_, *active);
+
+    // Reset the active permissions.
+    active_perms_ = std::make_unique<PermissionSet>();
+    prefs()->SetActivePermissions(extension_id_, *active_perms_);
+    active = prefs()->GetActivePermissions(extension_id_);
     EXPECT_EQ(*active_perms_, *active);
   }
 
@@ -380,7 +385,7 @@ class ExtensionPrefsAcknowledgment : public ExtensionPrefsTest {
 
     // Install some extensions.
     for (int i = 0; i < 5; i++) {
-      std::string name = "test" + base::IntToString(i);
+      std::string name = "test" + base::NumberToString(i);
       extensions_.push_back(prefs_.AddExtension(name));
     }
     EXPECT_EQ(NULL,
@@ -443,9 +448,11 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
   void SetIdleInfo(const std::string& id, int num) {
     base::DictionaryValue manifest;
     manifest.SetString(manifest_keys::kName, "test");
-    manifest.SetString(manifest_keys::kVersion, "1." + base::IntToString(num));
+    manifest.SetString(manifest_keys::kVersion,
+                       "1." + base::NumberToString(num));
+    manifest.SetInteger(manifest_keys::kManifestVersion, 2);
     base::FilePath path =
-        prefs_.extensions_dir().AppendASCII(base::IntToString(num));
+        prefs_.extensions_dir().AppendASCII(base::NumberToString(num));
     std::string errors;
     scoped_refptr<Extension> extension = Extension::Create(
         path, Manifest::INTERNAL, manifest, Extension::NO_FLAGS, id, &errors);
@@ -466,8 +473,8 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
     ASSERT_TRUE(info);
     std::string version;
     ASSERT_TRUE(info->extension_manifest->GetString("version", &version));
-    ASSERT_EQ("1." + base::IntToString(num), version);
-    ASSERT_EQ(base::IntToString(num),
+    ASSERT_EQ("1." + base::NumberToString(num), version);
+    ASSERT_EQ(base::NumberToString(num),
               info->extension_path.BaseName().MaybeAsASCII());
   }
 
@@ -481,7 +488,7 @@ class ExtensionPrefsDelayedInstallInfo : public ExtensionPrefsTest {
   }
 
   void Initialize() override {
-    PathService::Get(chrome::DIR_TEST_DATA, &basedir_);
+    base::PathService::Get(chrome::DIR_TEST_DATA, &basedir_);
     now_ = Time::Now();
     id1_ = prefs_.AddExtensionAndReturnId("1");
     id2_ = prefs_.AddExtensionAndReturnId("2");
@@ -556,6 +563,7 @@ class ExtensionPrefsFinishDelayedInstallInfo : public ExtensionPrefsTest {
     base::DictionaryValue dictionary;
     dictionary.SetString(manifest_keys::kName, "test");
     dictionary.SetString(manifest_keys::kVersion, "0.1");
+    dictionary.SetInteger(manifest_keys::kManifestVersion, 2);
     dictionary.SetString(manifest_keys::kBackgroundPage, "background.html");
     scoped_refptr<Extension> extension =
         prefs_.AddExtensionWithManifest(dictionary, Manifest::INTERNAL);
@@ -566,6 +574,7 @@ class ExtensionPrefsFinishDelayedInstallInfo : public ExtensionPrefsTest {
     base::DictionaryValue manifest;
     manifest.SetString(manifest_keys::kName, "test");
     manifest.SetString(manifest_keys::kVersion, "0.2");
+    manifest.SetInteger(manifest_keys::kManifestVersion, 2);
     std::unique_ptr<base::ListValue> scripts(new base::ListValue);
     scripts->AppendString("test.js");
     manifest.Set(manifest_keys::kBackgroundScripts, std::move(scripts));
@@ -665,6 +674,7 @@ class ExtensionPrefsFlags : public ExtensionPrefsTest {
       base::DictionaryValue dictionary;
       dictionary.SetString(manifest_keys::kName, "from_webstore");
       dictionary.SetString(manifest_keys::kVersion, "0.1");
+      dictionary.SetInteger(manifest_keys::kManifestVersion, 2);
       webstore_extension_ = prefs_.AddExtensionWithManifestAndFlags(
           dictionary, Manifest::INTERNAL, Extension::FROM_WEBSTORE);
     }
@@ -673,6 +683,7 @@ class ExtensionPrefsFlags : public ExtensionPrefsTest {
       base::DictionaryValue dictionary;
       dictionary.SetString(manifest_keys::kName, "from_bookmark");
       dictionary.SetString(manifest_keys::kVersion, "0.1");
+      dictionary.SetInteger(manifest_keys::kManifestVersion, 2);
       bookmark_extension_ = prefs_.AddExtensionWithManifestAndFlags(
           dictionary, Manifest::INTERNAL, Extension::FROM_BOOKMARK);
     }
@@ -681,6 +692,7 @@ class ExtensionPrefsFlags : public ExtensionPrefsTest {
       base::DictionaryValue dictionary;
       dictionary.SetString(manifest_keys::kName, "was_installed_by_default");
       dictionary.SetString(manifest_keys::kVersion, "0.1");
+      dictionary.SetInteger(manifest_keys::kManifestVersion, 2);
       default_extension_ = prefs_.AddExtensionWithManifestAndFlags(
           dictionary,
           Manifest::INTERNAL,
@@ -691,6 +703,7 @@ class ExtensionPrefsFlags : public ExtensionPrefsTest {
       base::DictionaryValue dictionary;
       dictionary.SetString(manifest_keys::kName, "was_installed_by_oem");
       dictionary.SetString(manifest_keys::kVersion, "0.1");
+      dictionary.SetInteger(manifest_keys::kManifestVersion, 2);
       oem_extension_ = prefs_.AddExtensionWithManifestAndFlags(
           dictionary, Manifest::INTERNAL, Extension::WAS_INSTALLED_BY_OEM);
     }
@@ -721,6 +734,7 @@ PrefsPrepopulatedTestBase::PrefsPrepopulatedTestBase()
   std::string error;
 
   simple_dict.SetString(manifest_keys::kVersion, "1.0.0.0");
+  simple_dict.SetInteger(manifest_keys::kManifestVersion, 2);
   simple_dict.SetString(manifest_keys::kName, "unused");
 
   extension1_ = Extension::Create(
@@ -747,6 +761,10 @@ PrefsPrepopulatedTestBase::PrefsPrepopulatedTestBase()
       simple_dict,
       Extension::NO_FLAGS,
       &error);
+
+  internal_extension_ = Extension::Create(
+      prefs_.temp_dir().AppendASCII("internal extension"), Manifest::INTERNAL,
+      simple_dict, Extension::NO_FLAGS, &error);
 
   for (size_t i = 0; i < kNumInstalledExtensions; ++i)
     installed_[i] = false;
@@ -919,11 +937,7 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
   void Initialize() override {
     // Adding a component extension.
     component_extension_ =
-        ExtensionBuilder()
-            .SetManifest(DictionaryBuilder()
-                             .Set(manifest_keys::kName, "a")
-                             .Set(manifest_keys::kVersion, "0.1")
-                             .Build())
+        ExtensionBuilder("a")
             .SetLocation(Manifest::COMPONENT)
             .SetPath(prefs_.extensions_dir().AppendASCII("a"))
             .Build();
@@ -931,11 +945,7 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
 
     // Adding a non component extension.
     no_component_extension_ =
-        ExtensionBuilder()
-            .SetManifest(DictionaryBuilder()
-                             .Set(manifest_keys::kName, "b")
-                             .Set(manifest_keys::kVersion, "0.1")
-                             .Build())
+        ExtensionBuilder("b")
             .SetLocation(Manifest::INTERNAL)
             .SetPath(prefs_.extensions_dir().AppendASCII("b"))
             .Build();
@@ -946,13 +956,12 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
     api_perms.insert(APIPermission::kBookmark);
     api_perms.insert(APIPermission::kHistory);
 
-    ManifestPermissionSet empty_manifest_permissions;
-
-    URLPatternSet ehosts, shosts;
+    URLPatternSet shosts;
     AddPattern(&shosts, "chrome://print/*");
 
-    active_perms_.reset(new PermissionSet(api_perms, empty_manifest_permissions,
-                                          ehosts, shosts));
+    active_perms_.reset(new PermissionSet(std::move(api_perms),
+                                          ManifestPermissionSet(),
+                                          URLPatternSet(), std::move(shosts)));
     // Set the active permissions.
     prefs()->SetActivePermissions(component_extension_->id(), *active_perms_);
     prefs()->SetActivePermissions(no_component_extension_->id(),
@@ -983,14 +992,145 @@ class ExtensionPrefsComponentExtension : public ExtensionPrefsTest {
     EXPECT_FALSE(prefs()->ReadPrefAsURLPatternSet(no_component_extension_->id(),
                                                   pref_key, &scriptable_hosts,
                                                   valid_schemes));
+
+    // Both extensions should be registered with the ExtensionPrefValueMap.
+    // See https://crbug.com/454513.
+    EXPECT_TRUE(prefs_.extension_pref_value_map()->CanExtensionControlPref(
+        component_extension_->id(), "a_pref", false));
+    EXPECT_TRUE(prefs_.extension_pref_value_map()->CanExtensionControlPref(
+        no_component_extension_->id(), "a_pref", false));
   }
 
  private:
   std::unique_ptr<const PermissionSet> active_perms_;
-  scoped_refptr<Extension> component_extension_;
-  scoped_refptr<Extension> no_component_extension_;
+  scoped_refptr<const Extension> component_extension_;
+  scoped_refptr<const Extension> no_component_extension_;
 };
 TEST_F(ExtensionPrefsComponentExtension, ExtensionPrefsComponentExtension) {
 }
+
+// Tests reading and writing runtime granted permissions.
+class ExtensionPrefsRuntimeGrantedPermissions : public ExtensionPrefsTest {
+ public:
+  ExtensionPrefsRuntimeGrantedPermissions() = default;
+  ~ExtensionPrefsRuntimeGrantedPermissions() override {}
+
+  void Initialize() override {
+    extension_a_ = prefs_.AddExtension("a");
+    extension_b_ = prefs_.AddExtension("b");
+
+    // By default, runtime-granted permissions are empty.
+    EXPECT_TRUE(
+        prefs()->GetRuntimeGrantedPermissions(extension_a_->id())->IsEmpty());
+    EXPECT_TRUE(
+        prefs()->GetRuntimeGrantedPermissions(extension_b_->id())->IsEmpty());
+
+    URLPattern example_com(URLPattern::SCHEME_ALL, "https://example.com/*");
+    URLPattern chromium_org(URLPattern::SCHEME_ALL, "https://chromium.org/*");
+
+    {
+      // Add two hosts to the runtime granted permissions. Verify they were
+      // correctly added.
+      URLPatternSet added_urls({example_com, chromium_org});
+      PermissionSet added_permissions(APIPermissionSet(),
+                                      ManifestPermissionSet(),
+                                      std::move(added_urls), URLPatternSet());
+      prefs()->AddRuntimeGrantedPermissions(extension_a_->id(),
+                                            added_permissions);
+
+      std::unique_ptr<const PermissionSet> retrieved_permissions =
+          prefs()->GetRuntimeGrantedPermissions(extension_a_->id());
+      ASSERT_TRUE(retrieved_permissions);
+      EXPECT_EQ(added_permissions, *retrieved_permissions);
+    }
+
+    {
+      // Remove one of the hosts. The only remaining host should be
+      // example.com
+      URLPatternSet removed_urls({chromium_org});
+      PermissionSet removed_permissions(
+          APIPermissionSet(), ManifestPermissionSet(), std::move(removed_urls),
+          URLPatternSet());
+      prefs()->RemoveRuntimeGrantedPermissions(extension_a_->id(),
+                                               removed_permissions);
+
+      URLPatternSet remaining_urls({example_com});
+      PermissionSet remaining_permissions(
+          APIPermissionSet(), ManifestPermissionSet(),
+          std::move(remaining_urls), URLPatternSet());
+      std::unique_ptr<const PermissionSet> retrieved_permissions =
+          prefs()->GetRuntimeGrantedPermissions(extension_a_->id());
+      ASSERT_TRUE(retrieved_permissions);
+      EXPECT_EQ(remaining_permissions, *retrieved_permissions);
+    }
+
+    // The second extension should still have no runtime-granted permissions.
+    EXPECT_TRUE(
+        prefs()->GetRuntimeGrantedPermissions(extension_b_->id())->IsEmpty());
+  }
+
+  void Verify() override {
+    {
+      // The first extension should still have example.com as the granted
+      // permission.
+      URLPattern example_com(URLPattern::SCHEME_ALL, "https://example.com/*");
+      URLPatternSet remaining_urls({example_com});
+      PermissionSet remaining_permissions(
+          APIPermissionSet(), ManifestPermissionSet(),
+          std::move(remaining_urls), URLPatternSet());
+      std::unique_ptr<const PermissionSet> retrieved_permissions =
+          prefs()->GetRuntimeGrantedPermissions(extension_a_->id());
+      ASSERT_TRUE(retrieved_permissions);
+      EXPECT_EQ(remaining_permissions, *retrieved_permissions);
+    }
+
+    EXPECT_TRUE(
+        prefs()->GetRuntimeGrantedPermissions(extension_b_->id())->IsEmpty());
+  }
+
+ private:
+  scoped_refptr<const Extension> extension_a_;
+  scoped_refptr<const Extension> extension_b_;
+
+  DISALLOW_COPY_AND_ASSIGN(ExtensionPrefsRuntimeGrantedPermissions);
+};
+TEST_F(ExtensionPrefsRuntimeGrantedPermissions,
+       ExtensionPrefsRuntimeGrantedPermissions) {}
+
+// Tests the removal of obsolete keys from extension pref entries.
+class ExtensionPrefsObsoletePrefRemoval : public ExtensionPrefsTest {
+ public:
+  ExtensionPrefsObsoletePrefRemoval() = default;
+  ~ExtensionPrefsObsoletePrefRemoval() override = default;
+
+  void Initialize() override {
+    extension_ = prefs_.AddExtension("a");
+    constexpr char kTestValue[] = "test_value";
+    prefs()->UpdateExtensionPref(extension_->id(),
+                                 ExtensionPrefs::kFakeObsoletePrefForTesting,
+                                 std::make_unique<base::Value>(kTestValue));
+    std::string str_value;
+    EXPECT_TRUE(prefs()->ReadPrefAsString(
+        extension_->id(), ExtensionPrefs::kFakeObsoletePrefForTesting,
+        &str_value));
+    EXPECT_EQ(kTestValue, str_value);
+
+    prefs()->MigrateObsoleteExtensionPrefs();
+  }
+
+  void Verify() override {
+    std::string str_value;
+    EXPECT_FALSE(prefs()->ReadPrefAsString(
+        extension_->id(), ExtensionPrefs::kFakeObsoletePrefForTesting,
+        &str_value));
+  }
+
+ private:
+  scoped_refptr<const Extension> extension_;
+
+  DISALLOW_COPY_AND_ASSIGN(ExtensionPrefsObsoletePrefRemoval);
+};
+
+TEST_F(ExtensionPrefsObsoletePrefRemoval, ExtensionPrefsObsoletePrefRemoval) {}
 
 }  // namespace extensions

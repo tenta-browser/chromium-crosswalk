@@ -14,6 +14,7 @@
 #include "storage/browser/fileapi/file_system_operation_runner.h"
 #include "storage/browser/fileapi/file_system_url.h"
 #include "storage/browser/fileapi/file_system_usage_cache.h"
+#include "storage/browser/fileapi/obfuscated_file_util.h"
 #include "storage/browser/fileapi/sandbox_file_system_backend.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
@@ -31,19 +32,17 @@ namespace content {
 SandboxFileSystemTestHelper::SandboxFileSystemTestHelper(
     const GURL& origin,
     storage::FileSystemType type)
-    : origin_(origin), type_(type), file_util_(NULL) {
-}
+    : origin_(origin), type_(type), file_util_(nullptr) {}
 
 SandboxFileSystemTestHelper::SandboxFileSystemTestHelper()
     : origin_(GURL("http://foo.com")),
       type_(storage::kFileSystemTypeTemporary),
-      file_util_(NULL) {
-}
+      file_util_(nullptr) {}
 
 SandboxFileSystemTestHelper::~SandboxFileSystemTestHelper() = default;
 
 void SandboxFileSystemTestHelper::SetUp(const base::FilePath& base_dir) {
-  SetUp(base_dir, NULL);
+  SetUp(base_dir, nullptr);
 }
 
 void SandboxFileSystemTestHelper::SetUp(
@@ -63,7 +62,7 @@ void SandboxFileSystemTestHelper::SetUp(
 }
 
 void SandboxFileSystemTestHelper::TearDown() {
-  file_system_context_ = NULL;
+  file_system_context_ = nullptr;
   base::RunLoop().RunUntilIdle();
 }
 
@@ -104,14 +103,17 @@ int64_t SandboxFileSystemTestHelper::GetCachedOriginUsage() const {
 
 int64_t SandboxFileSystemTestHelper::ComputeCurrentOriginUsage() {
   usage_cache()->CloseCacheFiles();
-  int64_t size = base::ComputeDirectorySize(GetOriginRootPath());
-  if (base::PathExists(GetUsageCachePath()))
+
+  int64_t size =
+      file_util_delegate()->ComputeDirectorySize(GetOriginRootPath());
+  if (file_util_delegate()->PathExists(GetUsageCachePath()))
     size -= storage::FileSystemUsageCache::kUsageFileSize;
+
   return size;
 }
 
 int64_t SandboxFileSystemTestHelper::ComputeCurrentDirectoryDatabaseUsage() {
-  return base::ComputeDirectorySize(
+  return file_util_delegate()->ComputeDirectorySize(
       GetOriginRootPath().AppendASCII("Paths"));
 }
 
@@ -132,17 +134,24 @@ SandboxFileSystemTestHelper::NewOperationContext() {
 void SandboxFileSystemTestHelper::AddFileChangeObserver(
     storage::FileChangeObserver* observer) {
   file_system_context_->sandbox_delegate()->AddFileChangeObserver(
-      type_, observer, NULL);
+      type_, observer, nullptr);
 }
 
 void SandboxFileSystemTestHelper::AddFileUpdateObserver(
     storage::FileUpdateObserver* observer) {
   file_system_context_->sandbox_delegate()->AddFileUpdateObserver(
-      type_, observer, NULL);
+      type_, observer, nullptr);
 }
 
 storage::FileSystemUsageCache* SandboxFileSystemTestHelper::usage_cache() {
   return file_system_context()->sandbox_delegate()->usage_cache();
+}
+
+storage::ObfuscatedFileUtilDelegate*
+SandboxFileSystemTestHelper::file_util_delegate() {
+  return file_system_context_->sandbox_delegate()
+      ->obfuscated_file_util()
+      ->delegate();
 }
 
 void SandboxFileSystemTestHelper::SetUpFileSystem() {
@@ -156,7 +165,6 @@ void SandboxFileSystemTestHelper::SetUpFileSystem() {
   file_system_context_->sandbox_delegate()->
       GetBaseDirectoryForOriginAndType(origin_, type_, true /* create */);
 
-  // Initialize the usage cache file.
   base::FilePath usage_cache_path = GetUsageCachePath();
   if (!usage_cache_path.empty())
     usage_cache()->UpdateUsage(usage_cache_path, 0);

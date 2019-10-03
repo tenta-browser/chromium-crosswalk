@@ -10,28 +10,27 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "base/sequence_checker.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/image_decoder.h"
-#include "components/signin/core/browser/account_info.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "google_apis/gaia/oauth2_token_service.h"
-#include "net/url_request/url_fetcher_delegate.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "url/gurl.h"
+
+namespace signin {
+class AccessTokenFetcher;
+struct AccessTokenInfo;
+}  // namespace signin
 
 class ProfileDownloaderDelegate;
 
-namespace net {
-class URLFetcher;
-}  // namespace net
-
 // Downloads user profile information. The profile picture is decoded in a
 // sandboxed process.
-class ProfileDownloader : public net::URLFetcherDelegate,
-                          public ImageDecoder::ImageRequest,
-                          public OAuth2TokenService::Observer,
-                          public OAuth2TokenService::Consumer,
-                          public AccountTrackerService::Observer {
+class ProfileDownloader : public ImageDecoder::ImageRequest,
+                          public signin::IdentityManager::Observer {
  public:
   enum PictureStatus {
     PICTURE_SUCCESS,
@@ -84,30 +83,25 @@ class ProfileDownloader : public net::URLFetcherDelegate,
   friend class ProfileDownloaderTest;
   FRIEND_TEST_ALL_PREFIXES(ProfileDownloaderTest, AccountInfoReady);
   FRIEND_TEST_ALL_PREFIXES(ProfileDownloaderTest, AccountInfoNotReady);
-  FRIEND_TEST_ALL_PREFIXES(ProfileDownloaderTest, DefaultURL);
+  FRIEND_TEST_ALL_PREFIXES(ProfileDownloaderTest,
+                           AccountInfoNoPictureDoesNotCrash);
+  FRIEND_TEST_ALL_PREFIXES(ProfileDownloaderTest,
+                           AccountInfoInvalidPictureURLDoesNotCrash);
 
   void FetchImageData();
 
-  // Overriden from net::URLFetcherDelegate:
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void OnURLLoaderComplete(std::unique_ptr<std::string> response_body);
 
-  // Overriden from ImageDecoder::ImageRequest:
+  // Overridden from ImageDecoder::ImageRequest:
   void OnImageDecoded(const SkBitmap& decoded_image) override;
   void OnDecodeImageFailed() override;
 
-  // Overriden from OAuth2TokenService::Observer:
-  void OnRefreshTokenAvailable(const std::string& account_id) override;
+  // Overridden from signin::IdentityManager::Observer:
+  void OnExtendedAccountInfoUpdated(const AccountInfo& info) override;
 
-  // Overriden from OAuth2TokenService::Consumer:
-  void OnGetTokenSuccess(const OAuth2TokenService::Request* request,
-                         const std::string& access_token,
-                         const base::Time& expiration_time) override;
-  void OnGetTokenFailure(const OAuth2TokenService::Request* request,
-                         const GoogleServiceAuthError& error) override;
-
-
-  // Implementation of AccountTrackerService::Observer.
-  void OnAccountUpdated(const AccountInfo& info) override;
+  // Callback for AccessTokenFetcher.
+  void OnAccessTokenFetchComplete(GoogleServiceAuthError error,
+                                  signin::AccessTokenInfo access_token_info);
 
   // Issues the first request to get user profile image.
   void StartFetchingImage();
@@ -119,15 +113,19 @@ class ProfileDownloader : public net::URLFetcherDelegate,
   // can be downloaded.
   void StartFetchingOAuth2AccessToken();
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
   ProfileDownloaderDelegate* delegate_;
   std::string account_id_;
   std::string auth_token_;
-  std::unique_ptr<net::URLFetcher> profile_image_fetcher_;
-  std::unique_ptr<OAuth2TokenService::Request> oauth2_access_token_request_;
+  std::unique_ptr<network::SimpleURLLoader> simple_loader_;
+  std::unique_ptr<signin::AccessTokenFetcher> oauth2_access_token_fetcher_;
   AccountInfo account_info_;
   SkBitmap profile_picture_;
   PictureStatus picture_status_;
-  AccountTrackerService* account_tracker_service_;
+  signin::IdentityManager* identity_manager_;
+  ScopedObserver<signin::IdentityManager, signin::IdentityManager::Observer>
+      identity_manager_observer_;
   bool waiting_for_account_info_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileDownloader);

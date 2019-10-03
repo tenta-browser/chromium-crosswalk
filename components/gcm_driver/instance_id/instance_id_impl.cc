@@ -13,7 +13,8 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/gcm_driver/gcm_driver.h"
@@ -58,7 +59,7 @@ std::unique_ptr<InstanceID> InstanceID::CreateInternal(
 
 InstanceIDImpl::InstanceIDImpl(const std::string& app_id,
                                gcm::GCMDriver* gcm_driver)
-    : InstanceID(app_id, gcm_driver), weak_ptr_factory_(this) {
+    : InstanceID(app_id, gcm_driver) {
   Handler()->GetInstanceIDData(
       app_id, base::Bind(&InstanceIDImpl::GetInstanceIDDataCompleted,
                          weak_ptr_factory_.GetWeakPtr()));
@@ -78,8 +79,8 @@ void InstanceIDImpl::DoGetID(const GetIDCallback& callback) {
 }
 
 void InstanceIDImpl::GetCreationTime(const GetCreationTimeCallback& callback) {
-  RunWhenReady(base::Bind(&InstanceIDImpl::DoGetCreationTime,
-                          weak_ptr_factory_.GetWeakPtr(), callback));
+  RunWhenReady(base::BindOnce(&InstanceIDImpl::DoGetCreationTime,
+                              weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
 void InstanceIDImpl::DoGetCreationTime(
@@ -87,29 +88,32 @@ void InstanceIDImpl::DoGetCreationTime(
   callback.Run(creation_time_);
 }
 
-void InstanceIDImpl::GetToken(
-    const std::string& authorized_entity,
-    const std::string& scope,
-    const std::map<std::string, std::string>& options,
-    const GetTokenCallback& callback) {
+void InstanceIDImpl::GetToken(const std::string& authorized_entity,
+                              const std::string& scope,
+                              const std::map<std::string, std::string>& options,
+                              bool is_lazy,
+                              GetTokenCallback callback) {
   DCHECK(!authorized_entity.empty());
   DCHECK(!scope.empty());
 
-  RunWhenReady(base::Bind(&InstanceIDImpl::DoGetToken,
-                          weak_ptr_factory_.GetWeakPtr(), authorized_entity,
-                          scope, options, callback));
+  UMA_HISTOGRAM_COUNTS_100("InstanceID.GetToken.OptionsCount", options.size());
+
+  RunWhenReady(base::BindOnce(&InstanceIDImpl::DoGetToken,
+                              weak_ptr_factory_.GetWeakPtr(), authorized_entity,
+                              scope, options, std::move(callback)));
 }
 
 void InstanceIDImpl::DoGetToken(
     const std::string& authorized_entity,
     const std::string& scope,
     const std::map<std::string, std::string>& options,
-    const GetTokenCallback& callback) {
+    GetTokenCallback callback) {
   EnsureIDGenerated();
 
-  Handler()->GetToken(app_id(), authorized_entity, scope, options,
-                      base::Bind(&InstanceIDImpl::OnGetTokenCompleted,
-                                 weak_ptr_factory_.GetWeakPtr(), callback));
+  Handler()->GetToken(
+      app_id(), authorized_entity, scope, options,
+      base::BindOnce(&InstanceIDImpl::OnGetTokenCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void InstanceIDImpl::ValidateToken(const std::string& authorized_entity,
@@ -120,9 +124,9 @@ void InstanceIDImpl::ValidateToken(const std::string& authorized_entity,
   DCHECK(!scope.empty());
   DCHECK(!token.empty());
 
-  RunWhenReady(base::Bind(&InstanceIDImpl::DoValidateToken,
-                          weak_ptr_factory_.GetWeakPtr(), authorized_entity,
-                          scope, token, callback));
+  RunWhenReady(base::BindOnce(&InstanceIDImpl::DoValidateToken,
+                              weak_ptr_factory_.GetWeakPtr(), authorized_entity,
+                              scope, token, callback));
 }
 
 void InstanceIDImpl::DoValidateToken(const std::string& authorized_entity,
@@ -139,45 +143,47 @@ void InstanceIDImpl::DoValidateToken(const std::string& authorized_entity,
 
 void InstanceIDImpl::DeleteTokenImpl(const std::string& authorized_entity,
                                      const std::string& scope,
-                                     const DeleteTokenCallback& callback) {
+                                     DeleteTokenCallback callback) {
   DCHECK(!authorized_entity.empty());
   DCHECK(!scope.empty());
 
-  RunWhenReady(base::Bind(&InstanceIDImpl::DoDeleteToken,
-                          weak_ptr_factory_.GetWeakPtr(), authorized_entity,
-                          scope, callback));
+  RunWhenReady(base::BindOnce(&InstanceIDImpl::DoDeleteToken,
+                              weak_ptr_factory_.GetWeakPtr(), authorized_entity,
+                              scope, std::move(callback)));
 }
 
-void InstanceIDImpl::DoDeleteToken(
-    const std::string& authorized_entity,
-    const std::string& scope,
-    const DeleteTokenCallback& callback) {
+void InstanceIDImpl::DoDeleteToken(const std::string& authorized_entity,
+                                   const std::string& scope,
+                                   DeleteTokenCallback callback) {
   // Nothing to delete if the ID has not been generated.
   if (id_.empty()) {
-    callback.Run(InstanceID::INVALID_PARAMETER);
+    std::move(callback).Run(InstanceID::INVALID_PARAMETER);
     return;
   }
 
-  Handler()->DeleteToken(app_id(), authorized_entity, scope,
-                        base::Bind(&InstanceIDImpl::OnDeleteTokenCompleted,
-                                   weak_ptr_factory_.GetWeakPtr(), callback));
+  Handler()->DeleteToken(
+      app_id(), authorized_entity, scope,
+      base::BindOnce(&InstanceIDImpl::OnDeleteTokenCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void InstanceIDImpl::DeleteIDImpl(const DeleteIDCallback& callback) {
-  RunWhenReady(base::Bind(&InstanceIDImpl::DoDeleteID,
-                          weak_ptr_factory_.GetWeakPtr(), callback));
+void InstanceIDImpl::DeleteIDImpl(DeleteIDCallback callback) {
+  RunWhenReady(base::BindOnce(&InstanceIDImpl::DoDeleteID,
+                              weak_ptr_factory_.GetWeakPtr(),
+                              std::move(callback)));
 }
 
-void InstanceIDImpl::DoDeleteID(const DeleteIDCallback& callback) {
+void InstanceIDImpl::DoDeleteID(DeleteIDCallback callback) {
   // Nothing to do if ID has not been generated.
   if (id_.empty()) {
-    callback.Run(InstanceID::SUCCESS);
+    std::move(callback).Run(InstanceID::SUCCESS);
     return;
   }
 
   Handler()->DeleteAllTokensForApp(
-      app_id(), base::Bind(&InstanceIDImpl::OnDeleteIDCompleted,
-                           weak_ptr_factory_.GetWeakPtr(), callback));
+      app_id(),
+      base::BindOnce(&InstanceIDImpl::OnDeleteIDCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 
   Handler()->RemoveInstanceIDData(app_id());
 
@@ -185,22 +191,20 @@ void InstanceIDImpl::DoDeleteID(const DeleteIDCallback& callback) {
   creation_time_ = base::Time();
 }
 
-void InstanceIDImpl::OnGetTokenCompleted(const GetTokenCallback& callback,
+void InstanceIDImpl::OnGetTokenCompleted(GetTokenCallback callback,
                                          const std::string& token,
                                          gcm::GCMClient::Result result) {
-  callback.Run(token, GCMClientResultToInstanceIDResult(result));
+  std::move(callback).Run(token, GCMClientResultToInstanceIDResult(result));
 }
 
-void InstanceIDImpl::OnDeleteTokenCompleted(
-    const DeleteTokenCallback& callback,
-    gcm::GCMClient::Result result) {
-  callback.Run(GCMClientResultToInstanceIDResult(result));
+void InstanceIDImpl::OnDeleteTokenCompleted(DeleteTokenCallback callback,
+                                            gcm::GCMClient::Result result) {
+  std::move(callback).Run(GCMClientResultToInstanceIDResult(result));
 }
 
-void InstanceIDImpl::OnDeleteIDCompleted(
-    const DeleteIDCallback& callback,
-    gcm::GCMClient::Result result) {
-  callback.Run(GCMClientResultToInstanceIDResult(result));
+void InstanceIDImpl::OnDeleteIDCompleted(DeleteIDCallback callback,
+                                         gcm::GCMClient::Result result) {
+  std::move(callback).Run(GCMClientResultToInstanceIDResult(result));
 }
 
 void InstanceIDImpl::GetInstanceIDDataCompleted(
@@ -247,13 +251,13 @@ void InstanceIDImpl::EnsureIDGenerated() {
       &id_);
   std::replace(id_.begin(), id_.end(), '+', '-');
   std::replace(id_.begin(), id_.end(), '/', '_');
-  id_.erase(std::remove(id_.begin(), id_.end(), '='), id_.end());
+  base::Erase(id_, '=');
 
   creation_time_ = base::Time::Now();
 
   // Save to the persistent store.
   Handler()->AddInstanceIDData(
-      app_id(), id_, base::Int64ToString(creation_time_.ToInternalValue()));
+      app_id(), id_, base::NumberToString(creation_time_.ToInternalValue()));
 }
 
 gcm::InstanceIDHandler* InstanceIDImpl::Handler() {
@@ -263,11 +267,11 @@ gcm::InstanceIDHandler* InstanceIDImpl::Handler() {
   return handler;
 }
 
-void InstanceIDImpl::RunWhenReady(base::Closure task) {
+void InstanceIDImpl::RunWhenReady(base::OnceClosure task) {
   if (!delayed_task_controller_.CanRunTaskWithoutDelay())
-    delayed_task_controller_.AddTask(task);
+    delayed_task_controller_.AddTask(std::move(task));
   else
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(task));
 }
 
 }  // namespace instance_id

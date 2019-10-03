@@ -5,7 +5,7 @@
 #include "chrome/browser/net/prediction_options.h"
 
 #include "base/logging.h"
-#include "chrome/browser/profiles/profile_io_data.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
@@ -23,12 +23,13 @@ NetworkPredictionStatus CanPrefetchAndPrerender(
   switch (network_prediction_options) {
     case NETWORK_PREDICTION_ALWAYS:
     case NETWORK_PREDICTION_WIFI_ONLY:
-      if (net::NetworkChangeNotifier::IsConnectionCellular(
-                 net::NetworkChangeNotifier::GetConnectionType())) {
-        return NetworkPredictionStatus::DISABLED_DUE_TO_NETWORK;
-      } else {
+      if (base::FeatureList::IsEnabled(
+              features::kPredictivePrefetchingAllowedOnAllConnectionTypes) ||
+          !net::NetworkChangeNotifier::IsConnectionCellular(
+              net::NetworkChangeNotifier::GetConnectionType())) {
         return NetworkPredictionStatus::ENABLED;
       }
+      return NetworkPredictionStatus::DISABLED_DUE_TO_NETWORK;
     default:
       DCHECK_EQ(NETWORK_PREDICTION_NEVER, network_prediction_options);
       return NetworkPredictionStatus::DISABLED_ALWAYS;
@@ -51,26 +52,11 @@ void RegisterPredictionOptionsProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
-NetworkPredictionStatus CanPrefetchAndPrerenderIO(
-    ProfileIOData* profile_io_data) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  DCHECK(profile_io_data);
-  return CanPrefetchAndPrerender(
-      profile_io_data->network_prediction_options()->GetValue());
-}
-
 NetworkPredictionStatus CanPrefetchAndPrerenderUI(PrefService* prefs) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(prefs);
   return CanPrefetchAndPrerender(
       prefs->GetInteger(prefs::kNetworkPredictionOptions));
-}
-
-bool CanPreresolveAndPreconnectIO(ProfileIOData* profile_io_data) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  DCHECK(profile_io_data);
-  return CanPreresolveAndPreconnect(
-      profile_io_data->network_prediction_options()->GetValue());
 }
 
 bool CanPreresolveAndPreconnectUI(PrefService* prefs) {

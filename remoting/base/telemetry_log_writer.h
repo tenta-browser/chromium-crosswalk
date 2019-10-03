@@ -11,10 +11,15 @@
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
+#include "base/timer/timer.h"
 #include "base/values.h"
+#include "net/base/backoff_entry.h"
 #include "remoting/base/chromoting_event.h"
 #include "remoting/base/chromoting_event_log_writer.h"
+#include "remoting/base/grpc_support/grpc_authenticated_executor.h"
+#include "remoting/base/oauth_token_getter.h"
 #include "remoting/base/url_request.h"
+#include "remoting/proto/remoting/v1/telemetry_service.grpc.pb.h"
 
 namespace remoting {
 
@@ -23,38 +28,30 @@ namespace remoting {
 // Logs to be sent will be queued and sent when it is available. Logs failed
 // to send will be retried for a few times and dropped if they still can't be
 // sent.
+// The log writer should be used entirely on one thread after it is created,
+// unless otherwise noted.
 class TelemetryLogWriter : public ChromotingEventLogWriter {
  public:
-  TelemetryLogWriter(const std::string& telemetry_base_url,
-                     std::unique_ptr<UrlRequestFactory> request_factory);
+  TelemetryLogWriter(std::unique_ptr<OAuthTokenGetter> token_getter);
 
-  // "Authorization:Bearer {TOKEN}" will be added if auth_token is not empty.
-  // After this function is called, the log writer will try to send out pending
-  // logs if the list is not empty.
-  void SetAuthToken(const std::string& auth_token) override;
-
-  // The closure will be called when the request fails with unauthorized error
-  // code. The closure should call SetAuthToken to set the token.
-  // If the closure is not set, the log writer will try to resend the logs
-  // immediately.
-  void SetAuthClosure(const base::Closure& closure) override;
+  ~TelemetryLogWriter() override;
 
   // Push the log entry to the pending list and send out all the pending logs.
   void Log(const ChromotingEvent& entry) override;
 
-  ~TelemetryLogWriter() override;
-
  private:
   void SendPendingEntries();
-  void PostJsonToServer(const std::string& json);
-  void OnSendLogResult(const remoting::UrlRequest::Result& result);
+  void DoSend(apis::v1::CreateEventRequest request);
+  void OnSendLogResult(const grpc::Status& status,
+                       const apis::v1::CreateEventResponse& response);
 
-  base::ThreadChecker thread_checker_;
-  std::string telemetry_base_url_;
-  std::unique_ptr<UrlRequestFactory> request_factory_;
-  std::string auth_token_;
-  base::Closure auth_closure_;
-  std::unique_ptr<UrlRequest> request_;
+  THREAD_CHECKER(thread_checker_);
+
+  std::unique_ptr<OAuthTokenGetter> token_getter_;
+  std::unique_ptr<apis::v1::RemotingTelemetryService::Stub> stub_;
+  GrpcAuthenticatedExecutor executor_;
+  net::BackoffEntry backoff_;
+  base::OneShotTimer backoff_timer_;
 
   // Entries to be sent.
   base::circular_deque<ChromotingEvent> pending_entries_;

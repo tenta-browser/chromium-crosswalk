@@ -6,8 +6,11 @@
 #define UI_BASE_CURSOR_CURSOR_H_
 
 #include "build/build_config.h"
-#include "ui/base/cursor/cursor_type.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/cursor/cursor_size.h"
+#include "ui/base/cursor/types/cursor_types.h"
 #include "ui/base/ui_base_export.h"
+#include "ui/gfx/geometry/point.h"
 
 #if defined(OS_WIN)
 typedef struct HINSTANCE__* HINSTANCE;
@@ -45,40 +48,46 @@ class UI_BASE_EXPORT Cursor {
 
   CursorType native_type() const { return native_type_; }
   PlatformCursor platform() const { return platform_cursor_; }
-  float device_scale_factor() const {
-    return device_scale_factor_;
+  float device_scale_factor() const { return device_scale_factor_; }
+  void set_device_scale_factor(float scale) { device_scale_factor_ = scale; }
+
+  SkBitmap GetBitmap() const;
+  void set_custom_bitmap(const SkBitmap& bitmap) { custom_bitmap_ = bitmap; }
+
+  gfx::Point GetHotspot() const;
+  void set_custom_hotspot(const gfx::Point& hotspot) {
+    custom_hotspot_ = hotspot;
   }
-  void set_device_scale_factor(float device_scale_factor) {
-    device_scale_factor_ = device_scale_factor;
-  }
+
+  // Note: custom cursor comparison may perform expensive pixel equality checks!
+  bool operator==(const Cursor& cursor) const;
+  bool operator!=(const Cursor& cursor) const { return !(*this == cursor); }
 
   bool operator==(CursorType type) const { return native_type_ == type; }
-  bool operator==(const Cursor& cursor) const {
-    return native_type_ == cursor.native_type_ &&
-           platform_cursor_ == cursor.platform_cursor_ &&
-           device_scale_factor_ == cursor.device_scale_factor_;
-  }
   bool operator!=(CursorType type) const { return native_type_ != type; }
-  bool operator!=(const Cursor& cursor) const {
-    return native_type_ != cursor.native_type_ ||
-           platform_cursor_ != cursor.platform_cursor_ ||
-           device_scale_factor_ != cursor.device_scale_factor_;
-  }
 
-  void operator=(const Cursor& cursor) {
-    Assign(cursor);
-  }
+  void operator=(const Cursor& cursor);
 
  private:
-  void Assign(const Cursor& cursor);
+#if defined(USE_AURA)
+  SkBitmap GetDefaultBitmap() const;
+  gfx::Point GetDefaultHotspot() const;
+#endif
 
-  // See definitions above.
-  CursorType native_type_;
+  // The basic cursor type.
+  CursorType native_type_ = CursorType::kNull;
 
-  PlatformCursor platform_cursor_;
+  // The native platform cursor.
+  PlatformCursor platform_cursor_ = 0;
 
   // The device scale factor for the cursor.
-  float device_scale_factor_;
+  float device_scale_factor_ = 0.0f;
+
+  // The hotspot for the cursor. This is only used for the custom cursor type.
+  gfx::Point custom_hotspot_;
+
+  // The bitmap for the cursor. This is only used for the custom cursor type.
+  SkBitmap custom_bitmap_;
 };
 
 }  // namespace ui

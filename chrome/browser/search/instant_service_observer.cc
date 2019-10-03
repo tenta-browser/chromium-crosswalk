@@ -7,6 +7,5 @@
 void InstantServiceObserver::ThemeInfoChanged(const ThemeBackgroundInfo&) {
 }
 
-void InstantServiceObserver::MostVisitedItemsChanged(
-    const std::vector<InstantMostVisitedItem>&) {
-}
+void InstantServiceObserver::MostVisitedInfoChanged(
+    const InstantMostVisitedInfo&) {}

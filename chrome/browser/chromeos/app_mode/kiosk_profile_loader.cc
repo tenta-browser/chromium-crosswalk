@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/app_mode/kiosk_profile_loader.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -11,21 +12,20 @@
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/sys_info.h"
 #include "base/syslog_logging.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/auth/chrome_login_performer.h"
 #include "chrome/browser/chromeos/login/demo_mode/demo_app_launcher.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/cryptohome/async_method_caller.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/login/auth/auth_status_consumer.h"
 #include "chromeos/login/auth/user_context.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -71,10 +71,8 @@ class KioskProfileLoader::CryptohomedChecker
   ~CryptohomedChecker() {}
 
   void StartCheck() {
-    DBusThreadManager::Get()
-        ->GetCryptohomeClient()
-        ->WaitForServiceToBeAvailable(base::Bind(
-            &CryptohomedChecker::OnServiceAvailibityChecked, AsWeakPtr()));
+    CryptohomeClient::Get()->WaitForServiceToBeAvailable(base::Bind(
+        &CryptohomedChecker::OnServiceAvailibityChecked, AsWeakPtr()));
   }
 
  private:
@@ -99,7 +97,7 @@ class KioskProfileLoader::CryptohomedChecker
       return;
     }
 
-    DBusThreadManager::Get()->GetCryptohomeClient()->IsMounted(
+    CryptohomeClient::Get()->IsMounted(
         base::Bind(&CryptohomedChecker::OnCryptohomeIsMounted, AsWeakPtr()));
   }
 
@@ -109,14 +107,13 @@ class KioskProfileLoader::CryptohomedChecker
       return;
     }
 
-    if (!is_mounted.value())
-      SYSLOG(ERROR) << "Cryptohome is mounted before launching kiosk app.";
-
     // Proceed only when cryptohome is not mounded or running on dev box.
-    if (!is_mounted.value() || !base::SysInfo::IsRunningOnChromeOS())
+    if (!is_mounted.value() || !base::SysInfo::IsRunningOnChromeOS()) {
       ReportCheckResult(KioskAppLaunchError::NONE);
-    else
+    } else {
+      SYSLOG(ERROR) << "Cryptohome is mounted before launching kiosk app.";
       ReportCheckResult(KioskAppLaunchError::ALREADY_MOUNTED);
+    }
   }
 
   void ReportCheckResult(KioskAppLaunchError::Error error) {

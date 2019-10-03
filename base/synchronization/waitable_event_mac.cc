@@ -14,6 +14,7 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
 #include "base/mac/scoped_dispatch_object.h"
+#include "base/optional.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_restrictions.h"
@@ -111,16 +112,15 @@ bool WaitableEvent::TimedWait(const TimeDelta& wait_delta) {
 }
 
 bool WaitableEvent::TimedWaitUntil(const TimeTicks& end_time) {
-  internal::AssertBaseSyncPrimitivesAllowed();
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  // Record the event that this thread is blocking upon (for hang diagnosis).
-  debug::ScopedEventWaitActivity event_activity(this);
-
-  TimeDelta wait_time = end_time - TimeTicks::Now();
-  if (wait_time < TimeDelta()) {
-    // A negative delta would be treated by the system as indefinite, but
-    // it needs to be treated as a poll instead.
-    wait_time = TimeDelta();
+  // Record the event that this thread is blocking upon (for hang diagnosis) and
+  // consider blocked for scheduling purposes. Ignore this for non-blocking
+  // WaitableEvents.
+  Optional<debug::ScopedEventWaitActivity> event_activity;
+  Optional<internal::ScopedBlockingCallWithBaseSyncPrimitives>
+      scoped_blocking_call;
+  if (waiting_is_blocking_) {
+    event_activity.emplace(this);
+    scoped_blocking_call.emplace(BlockingType::MAY_BLOCK);
   }
 
   mach_msg_empty_rcv_t msg{};
@@ -128,11 +128,8 @@ bool WaitableEvent::TimedWaitUntil(const TimeTicks& end_time) {
 
   mach_msg_option_t options = MACH_RCV_MSG;
 
-  mach_msg_timeout_t timeout = 0;
-  if (!end_time.is_max()) {
-    options |= MACH_RCV_TIMEOUT;
-    timeout = wait_time.InMillisecondsRoundedUp();
-  }
+  if (!end_time.is_max())
+    options |= MACH_RCV_TIMEOUT | MACH_RCV_INTERRUPT;
 
   mach_msg_size_t rcv_size = sizeof(msg);
   if (policy_ == ResetPolicy::MANUAL) {
@@ -142,8 +139,22 @@ bool WaitableEvent::TimedWaitUntil(const TimeTicks& end_time) {
     rcv_size = 0;
   }
 
-  kern_return_t kr = mach_msg(&msg.header, options, 0, rcv_size,
-                              receive_right_->Name(), timeout, MACH_PORT_NULL);
+  kern_return_t kr;
+  mach_msg_timeout_t timeout = MACH_MSG_TIMEOUT_NONE;
+  do {
+    if (!end_time.is_max()) {
+      timeout = std::max<int64_t>(
+          0, (end_time - TimeTicks::Now()).InMillisecondsRoundedUp());
+    }
+    kr = mach_msg(&msg.header, options, 0, rcv_size, receive_right_->Name(),
+                  timeout, MACH_PORT_NULL);
+    // If the thread is interrupted during mach_msg(), the system call
+    // will be restarted. However, the libsyscall wrapper does not adjust
+    // the timeout by the amount of time already waited.
+    // Using MACH_RCV_INTERRUPT will instead return from mach_msg(),
+    // so that the call can be retried with an adjusted timeout.
+  } while (kr == MACH_RCV_INTERRUPTED);
+
   if (kr == KERN_SUCCESS) {
     return true;
   } else if (rcv_size == 0 && kr == MACH_RCV_TOO_LARGE) {
@@ -166,9 +177,9 @@ bool WaitableEvent::UseSlowWatchList(ResetPolicy policy) {
 
 // static
 size_t WaitableEvent::WaitMany(WaitableEvent** raw_waitables, size_t count) {
-  internal::AssertBaseSyncPrimitivesAllowed();
   DCHECK(count) << "Cannot wait on no events";
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  internal::ScopedBlockingCallWithBaseSyncPrimitives scoped_blocking_call(
+      BlockingType::MAY_BLOCK);
   // Record an event (the first) that this thread is blocking upon.
   debug::ScopedEventWaitActivity event_activity(raw_waitables[0]);
 

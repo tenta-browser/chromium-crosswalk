@@ -7,12 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 
 namespace chromeos {
@@ -22,7 +23,8 @@ namespace chromeos {
 // forward read requests to Chrome. From the reading process's perspective, the
 // file descriptor behaves like a regular file descriptor (unlike a pipe, it
 // supports seek), while actually there is no real file associated with it.
-class CHROMEOS_EXPORT VirtualFileProviderClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) VirtualFileProviderClient
+    : public DBusClient {
  public:
   using OpenFileCallback =
       base::OnceCallback<void(const std::string& id, base::ScopedFD fd)>;
@@ -32,7 +34,7 @@ class CHROMEOS_EXPORT VirtualFileProviderClient : public DBusClient {
 
   // Factory function, creates a new instance and returns ownership.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static VirtualFileProviderClient* Create();
+  static std::unique_ptr<VirtualFileProviderClient> Create();
 
   // Creates a new file descriptor and returns it with a unique ID.
   // |size| will be used to perform boundary check when FD is seeked.

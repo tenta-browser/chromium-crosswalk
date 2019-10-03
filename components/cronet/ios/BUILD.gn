@@ -2,12 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/buildflag_header.gni")
+import("//build/config/c++/c++.gni")
 import("//build/config/ios/rules.gni")
 import("//build/config/mac/symbols.gni")
 import("//build/mac/tweak_info_plist.gni")
-import("//build/util/process_version.gni")
-import("//build/util/version.gni")
+import("//build/util/lastchange.gni")
+import("//components/cronet/native/include/headers.gni")
 import("//components/grpc_support/include/headers.gni")
 import("//testing/test.gni")
 import("//url/features.gni")
@@ -17,18 +17,6 @@ assert(!is_component_build, "Cronet requires static library build.")
 group("cronet_consumer_group") {
   deps = [
     "//components/cronet/ios/cronet_consumer",
-  ]
-}
-
-process_version("cronet_version_header") {
-  template_file = "//components/cronet/version.h.in"
-  sources = [
-    "//chrome/VERSION",
-  ]
-  output = "$target_gen_dir/version.h"
-  extra_args = [
-    "-e",
-    "VERSION_FULL=\"%s.%s.%s.%s\" % (MAJOR,MINOR,BUILD,PATCH)",
   ]
 }
 
@@ -50,41 +38,36 @@ config("cronet_static_config") {
 }
 
 _cronet_deps = [
-  ":cronet_version_header",
   ":generate_accept_languages",
   "//base:base",
+  "//components/cronet:cronet_buildflags",
+  "//components/cronet:cronet_common",
+  "//components/cronet:cronet_version_header",
+  "//components/cronet/native:cronet_native_impl",
   "//components/grpc_support",
-  "//components/metrics:metrics",
-  "//third_party/metrics_proto",
   "//components/prefs:prefs",
-  "//ios/net:net",
+  "//ios/net",
+  "//ios/net:network_protocol",
   "//ios/web/public:user_agent",
-  "//ios/web/public/global_state",
+  "//ios/web/public/init:global_state",
+  "//ios/web/init:global_state",
   "//net",
   "//url",
 ]
 
 _cronet_sources = [
-  "../cronet_prefs_manager.cc",
-  "../cronet_prefs_manager.h",
-  "../histogram_manager.cc",
-  "../histogram_manager.h",
-  "../host_cache_persistence_manager.cc",
-  "../host_cache_persistence_manager.h",
-  "../stale_host_resolver.cc",
-  "../stale_host_resolver.h",
-  "../url_request_context_config.cc",
-  "../url_request_context_config.h",
   "Cronet.h",
   "Cronet.mm",
   "cronet_environment.h",
   "cronet_environment.mm",
+  "cronet_global_state_ios.mm",
   "cronet_metrics.h",
   "cronet_metrics.mm",
 ]
 
 _cronet_public_headers = [ "Cronet.h" ]
 _cronet_public_headers += grpc_public_headers
+_cronet_public_headers += cronet_native_public_headers
 
 source_set("cronet_sources") {
   deps = _cronet_deps
@@ -103,7 +86,8 @@ source_set("cronet_sources") {
 source_set("cronet_sources_with_global_state") {
   deps = [
     "//base",
-    "//ios/web/public/global_state",
+    "//ios/web/init:global_state",
+    "//ios/web/public/init:global_state",
   ]
 
   public_deps = [
@@ -133,7 +117,7 @@ ios_framework_bundle("cronet_framework") {
   libs = [ "UIKit.Framework" ]
 
   public_deps = [
-    "//components/grpc_support",
+    "//components/grpc_support:headers",
   ]
 
   public_headers = _cronet_public_headers
@@ -148,25 +132,24 @@ ios_framework_bundle("cronet_framework") {
   public_configs = [ ":cronet_include_config" ]
 }
 
-test("cronet_unittests") {
+test("cronet_unittests_ios") {
   testonly = true
 
   sources = [
-    "//components/cronet/histogram_manager_unittest.cc",
-    "//components/cronet/run_all_unittests.cc",
-    "//components/cronet/stale_host_resolver_unittest.cc",
-    "//components/cronet/url_request_context_config_unittest.cc",
+    "../run_all_unittests.cc",
   ]
 
   deps = [
     ":cronet_sources_with_global_state",
     "//base",
     "//base/test:test_support",
-    "//components/cronet/ios/test:cronet_test",
-    "//components/metrics",
+    "//components/cronet:cronet_common_unittests",
+    "//components/cronet/native:cronet_native_unittests",
     "//net",
     "//testing/gtest",
   ]
+
+  bundle_deps = [ "//components/cronet/ios/test:cronet_test" ]
 }
 
 action("generate_accept_languages") {
@@ -184,12 +167,12 @@ action("generate_accept_languages") {
 static_library("cronet_static") {
   visibility = [ ":*" ]
   deps = _cronet_deps
-  deps += [ ":cronet_sources_with_global_state" ]
-  sources = _cronet_sources
+  sources = _cronet_sources + [ "ios_global_state_configuration.cc" ]
   public_configs = [ ":cronet_include_config" ]
   public_deps = [
     "//components/grpc_support",
   ]
+
   configs += [ "//build/config/compiler:enable_arc" ]
 }
 
@@ -197,9 +180,20 @@ static_library("cronet_static") {
 static_library("cronet_deps_complete") {
   visibility = [ ":*" ]
   complete_static_lib = true
+  configs -= [ "//build/config/compiler:thin_archive" ]
   deps = [
     ":cronet_static",
   ]
+
+  if (use_custom_libcxx) {
+    deps += [
+      # Add shared_library_deps to include custom libc++ into dependencies.
+      # They are by default only added to executable(), loadable_module(), and
+      # shared_library() targets, but cronet_static_complete library needs it as well to
+      # avoid linking with different versions of libc++.
+      "//build/config:shared_library_deps",
+    ]
+  }
 }
 
 # A static library which contains cronet and all dependendencies hidden inside.
@@ -227,12 +221,8 @@ action("cronet_static_complete") {
     "--current_cpu",
     current_cpu,
   ]
-
-  if (!use_system_xcode) {
-    args += [
-      "--developer_dir",
-      hermetic_xcode_path,
-    ]
+  if (use_custom_libcxx) {
+    args += [ "--use_custom_libcxx" ]
   }
 
   public_configs = [ ":cronet_static_config" ]
@@ -287,7 +277,6 @@ template("ios_static_framework") {
     bundle_contents_dir = bundle_root_dir
     bundle_executable_dir = bundle_contents_dir
     bundle_resources_dir = bundle_contents_dir
-    bundle_plugins_dir = bundle_contents_dir
     deps = [
       ":$_framework_binary_target",
       ":$_framework_headers_target",
@@ -312,7 +301,7 @@ if (additional_toolchains == [] || current_toolchain == default_toolchain) {
 
     script = "//tools/licenses.py"
     inputs = [
-      "//build/util/LASTCHANGE",
+      lastchange_file,
     ]
     outputs = [
       _license_path,
@@ -324,6 +313,8 @@ if (additional_toolchains == [] || current_toolchain == default_toolchain) {
       "//components/cronet/ios:cronet_framework",
       "--gn-out-dir",
       ".",
+      "--target-os",
+      "ios",
     ]
   }
 
@@ -388,7 +379,7 @@ if (additional_toolchains == [] || current_toolchain == default_toolchain) {
     }
   }
 
-  group("cronet_package") {
+  group("cronet_package_ios") {
     deps = [
       ":cronet_dsym_archive",
       ":cronet_package_copy",

@@ -8,15 +8,16 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller_delegate.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
-#include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
@@ -28,6 +29,7 @@
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "net/cert/cert_verify_proc.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
@@ -105,15 +107,10 @@ const BehaviorTestCase kBehaviorTestCases[] = {
     },
 };
 
-// Weak ptr to PolicyCertVerifier - object is freed in test destructor once
-// we've ensured the profile has been shut down.
-policy::PolicyCertVerifier* g_policy_cert_verifier_for_factory = NULL;
-
 std::unique_ptr<KeyedService> TestPolicyCertServiceFactory(
     content::BrowserContext* context) {
   return policy::PolicyCertService::CreateForTesting(
-      kUsers[0], g_policy_cert_verifier_for_factory,
-      user_manager::UserManager::Get());
+      kUsers[0], user_manager::UserManager::Get());
 }
 
 }  // namespace
@@ -126,7 +123,7 @@ class MultiProfileUserControllerTest
       : fake_user_manager_(new FakeChromeUserManager),
         user_manager_enabler_(base::WrapUnique(fake_user_manager_)),
         user_not_allowed_count_(0) {
-    for (size_t i = 0; i < arraysize(kUsers); ++i) {
+    for (size_t i = 0; i < base::size(kUsers); ++i) {
       test_users_.push_back(AccountId::FromUserEmail(kUsers[i]));
     }
   }
@@ -157,13 +154,10 @@ class MultiProfileUserControllerTest
   }
 
   void TearDown() override {
-    // Clear our cached pointer to the PolicyCertVerifier.
-    g_policy_cert_verifier_for_factory = NULL;
-
-    // We must ensure that the PolicyCertVerifier outlives the
-    // PolicyCertService so shutdown the profile here. Additionally, we need
+    // We must ensure that the network::CertVerifierWithTrustAnchors outlives
+    // the PolicyCertService so shutdown the profile here. Additionally, we need
     // to run the message loop between freeing the PolicyCertService and
-    // freeing the PolicyCertVerifier (see
+    // freeing the network::CertVerifierWithTrustAnchors (see
     // PolicyCertService::OnTrustAnchorsChanged() which is called from
     // PolicyCertService::Shutdown()).
     controller_.reset();
@@ -212,7 +206,6 @@ class MultiProfileUserControllerTest
   TestingProfile* profile(int index) { return user_profiles_[index]; }
 
   content::TestBrowserThreadBundle threads_;
-  std::unique_ptr<policy::PolicyCertVerifier> cert_verifier_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
   FakeChromeUserManager* fake_user_manager_;  // Not owned
   user_manager::ScopedUserManager user_manager_enabler_;
@@ -236,7 +229,7 @@ TEST_F(MultiProfileUserControllerTest, AllAllowedBeforeLogin) {
       MultiProfileUserController::kBehaviorPrimaryOnly,
       MultiProfileUserController::kBehaviorNotAllowed,
   };
-  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+  for (size_t i = 0; i < base::size(kTestCases); ++i) {
     SetCachedBehavior(0, kTestCases[i]);
     MultiProfileUserController::UserAllowedInSessionReason reason;
     EXPECT_TRUE(controller()->IsUserAllowedInSession(
@@ -267,7 +260,7 @@ TEST_F(MultiProfileUserControllerTest, CachedBehaviorUpdate) {
       MultiProfileUserController::kBehaviorNotAllowed,
       MultiProfileUserController::kBehaviorUnrestricted,
   };
-  for (size_t i = 0; i < arraysize(kTestCases); ++i) {
+  for (size_t i = 0; i < base::size(kTestCases); ++i) {
     SetPrefBehavior(0, kTestCases[i]);
     EXPECT_EQ(kTestCases[i], GetCachedBehavior(0));
   }
@@ -299,7 +292,7 @@ TEST_F(MultiProfileUserControllerTest, CompromisedCacheFixedOnLogin) {
 TEST_F(MultiProfileUserControllerTest, IsSecondaryAllowed) {
   LoginUser(0);
 
-  for (size_t i = 0; i < arraysize(kBehaviorTestCases); ++i) {
+  for (size_t i = 0; i < base::size(kBehaviorTestCases); ++i) {
     SetPrefBehavior(0, kBehaviorTestCases[i].primary);
     SetCachedBehavior(1, kBehaviorTestCases[i].secondary);
     EXPECT_EQ(kBehaviorTestCases[i].expected_primary_policy,
@@ -318,7 +311,7 @@ TEST_F(MultiProfileUserControllerTest, PrimaryBehaviorChange) {
   LoginUser(0);
   LoginUser(1);
 
-  for (size_t i = 0; i < arraysize(kBehaviorTestCases); ++i) {
+  for (size_t i = 0; i < base::size(kBehaviorTestCases); ++i) {
     SetPrefBehavior(0, MultiProfileUserController::kBehaviorUnrestricted);
     SetPrefBehavior(1, MultiProfileUserController::kBehaviorUnrestricted);
     ResetCounts();
@@ -385,11 +378,9 @@ TEST_F(MultiProfileUserControllerTest,
       test_users_[0].GetUserEmail());
   LoginUser(0);
 
-  cert_verifier_.reset(new policy::PolicyCertVerifier(base::Closure()));
-  g_policy_cert_verifier_for_factory = cert_verifier_.get();
   ASSERT_TRUE(
       policy::PolicyCertServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile(0), TestPolicyCertServiceFactory));
+          profile(0), base::BindRepeating(&TestPolicyCertServiceFactory)));
 
   MultiProfileUserController::UserAllowedInSessionReason reason;
   EXPECT_FALSE(controller()->IsUserAllowedInSession(
@@ -421,11 +412,9 @@ TEST_F(MultiProfileUserControllerTest,
   // changed back to enabled.
   SetPrefBehavior(0, MultiProfileUserController::kBehaviorUnrestricted);
 
-  cert_verifier_.reset(new policy::PolicyCertVerifier(base::Closure()));
-  g_policy_cert_verifier_for_factory = cert_verifier_.get();
   ASSERT_TRUE(
       policy::PolicyCertServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile(0), TestPolicyCertServiceFactory));
+          profile(0), base::BindRepeating(&TestPolicyCertServiceFactory)));
   policy::PolicyCertService* service =
       policy::PolicyCertServiceFactory::GetForProfile(profile(0));
   ASSERT_TRUE(service);
@@ -441,7 +430,9 @@ TEST_F(MultiProfileUserControllerTest,
   net::CertificateList certificates;
   certificates.push_back(
       net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem"));
-  service->OnTrustAnchorsChanged(certificates);
+  service->OnPolicyProvidedCertsChanged(
+      certificates /* all_server_and_authority_certs */,
+      certificates /* trust_anchors */);
   EXPECT_TRUE(service->has_policy_certificates());
   EXPECT_FALSE(controller()->IsUserAllowedInSession(
       test_users_[1].GetUserEmail(), &reason));

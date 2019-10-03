@@ -4,6 +4,7 @@
 
 #include "extensions/browser/extension_web_contents_observer.h"
 
+#include "base/logging.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -18,6 +19,7 @@
 #include "extensions/browser/mojo/interface_registration.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/renderer_startup_helper.h"
+#include "extensions/browser/url_loader_factory_manager.h"
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -34,14 +36,31 @@ ExtensionWebContentsObserver* ExtensionWebContentsObserver::GetForWebContents(
       web_contents);
 }
 
+void ExtensionWebContentsObserver::Initialize() {
+  if (initialized_)
+    return;
+
+  initialized_ = true;
+  for (content::RenderFrameHost* rfh : web_contents()->GetAllFrames()) {
+    // We only initialize the frame if the renderer counterpart is live;
+    // otherwise we wait for the RenderFrameCreated notification.
+    if (!rfh->IsRenderFrameLive())
+      continue;
+
+    // Initialize the FrameData for this frame here since we didn't receive the
+    // RenderFrameCreated notification for it.
+    ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(rfh);
+
+    InitializeRenderFrame(rfh);
+  }
+}
+
 ExtensionWebContentsObserver::ExtensionWebContentsObserver(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       browser_context_(web_contents->GetBrowserContext()),
-      dispatcher_(browser_context_) {
-  web_contents->ForEachFrame(
-      base::Bind(&ExtensionWebContentsObserver::InitializeFrameHelper,
-                 base::Unretained(this)));
+      dispatcher_(browser_context_),
+      initialized_(false) {
   dispatcher_.set_delegate(this);
 }
 
@@ -50,6 +69,7 @@ ExtensionWebContentsObserver::~ExtensionWebContentsObserver() {
 
 void ExtensionWebContentsObserver::InitializeRenderFrame(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized_);
   DCHECK(render_frame_host);
   DCHECK(render_frame_host->IsRenderFrameLive());
 
@@ -64,11 +84,12 @@ void ExtensionWebContentsObserver::InitializeRenderFrame(
     return;
 
   // |render_frame_host->GetProcess()| is an extension process. Grant permission
-  // to commit pages from chrome-extension:// origins.
+  // to request pages from the extension's origin.
   content::ChildProcessSecurityPolicy* security_policy =
       content::ChildProcessSecurityPolicy::GetInstance();
   int process_id = render_frame_host->GetProcess()->GetID();
-  security_policy->GrantScheme(process_id, extensions::kExtensionScheme);
+  security_policy->GrantRequestOrigin(
+      process_id, url::Origin::Create(frame_extension->url()));
 
   // Notify the render frame of the view type.
   render_frame_host->Send(new ExtensionMsg_NotifyRenderViewType(
@@ -83,11 +104,20 @@ void ExtensionWebContentsObserver::InitializeRenderFrame(
 
 content::WebContents* ExtensionWebContentsObserver::GetAssociatedWebContents()
     const {
+  DCHECK(initialized_);
   return web_contents();
 }
 
 void ExtensionWebContentsObserver::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized_);
+  // Optimization: Look up the extension API frame ID to force the mapping to be
+  // cached. This minimizes the number of IO->UI->IO thread hops when the ID is
+  // looked up again on the IO thread for the webRequest API.
+  ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(render_frame_host);
+
+  InitializeRenderFrame(render_frame_host);
+
   const Extension* extension = GetExtensionFromFrame(render_frame_host, false);
   if (!extension)
     return;
@@ -105,7 +135,7 @@ void ExtensionWebContentsObserver::RenderFrameCreated(
       type == Manifest::TYPE_LEGACY_PACKAGED_APP) {
     ExtensionPrefs* prefs = ExtensionPrefs::Get(browser_context_);
     if (prefs->AllowFileAccess(extension->id())) {
-      content::ChildProcessSecurityPolicy::GetInstance()->GrantScheme(
+      content::ChildProcessSecurityPolicy::GetInstance()->GrantRequestScheme(
           render_frame_host->GetProcess()->GetID(), url::kFileScheme);
     }
   }
@@ -120,24 +150,47 @@ void ExtensionWebContentsObserver::RenderFrameCreated(
   // isolation is turned on.
   RendererStartupHelperFactory::GetForBrowserContext(browser_context_)
       ->ActivateExtensionInProcess(*extension, render_frame_host->GetProcess());
-
-  InitializeRenderFrame(render_frame_host);
-
-  // Optimization: Look up the extension API frame ID to force the mapping to be
-  // cached. This minimizes the number of IO->UI->IO thread hops when the ID is
-  // looked up again on the IO thread for the webRequest API.
-  ExtensionApiFrameIdMap::Get()->CacheFrameData(render_frame_host);
 }
 
 void ExtensionWebContentsObserver::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized_);
   ProcessManager::Get(browser_context_)
       ->UnregisterRenderFrameHost(render_frame_host);
-  ExtensionApiFrameIdMap::Get()->RemoveFrameData(render_frame_host);
+  ExtensionApiFrameIdMap::Get()->OnRenderFrameDeleted(render_frame_host);
+}
+
+void ExtensionWebContentsObserver::RenderFrameHostChanged(
+    content::RenderFrameHost* old_host,
+    content::RenderFrameHost* new_host) {
+  // TODO(karandeepb): The |new_host| here may correspond to a RenderFrameHost
+  // we haven't seen yet, which means it might also need some other
+  // initialization. See crbug.com/817205.
+  if (new_host->IsRenderFrameLive()) {
+    ExtensionApiFrameIdMap::Get()->InitializeRenderFrameData(new_host);
+  }
+}
+
+void ExtensionWebContentsObserver::ReadyToCommitNavigation(
+    content::NavigationHandle* navigation_handle) {
+  URLLoaderFactoryManager::ReadyToCommitNavigation(navigation_handle);
+
+  if (navigation_handle->IsInMainFrame() &&
+      !navigation_handle->IsSameDocument()) {
+    ExtensionApiFrameIdMap::Get()->OnMainFrameReadyToCommitNavigation(
+        navigation_handle);
+  }
 }
 
 void ExtensionWebContentsObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
+  DCHECK(initialized_);
+  if (navigation_handle->IsInMainFrame() &&
+      !navigation_handle->IsSameDocument()) {
+    ExtensionApiFrameIdMap::Get()->OnMainFrameDidFinishNavigation(
+        navigation_handle);
+  }
+
   if (!navigation_handle->HasCommitted())
     return;
 
@@ -145,6 +198,8 @@ void ExtensionWebContentsObserver::DidFinishNavigation(
 
   content::RenderFrameHost* render_frame_host =
       navigation_handle->GetRenderFrameHost();
+  DCHECK(render_frame_host);
+
   const Extension* frame_extension =
       GetExtensionFromFrame(render_frame_host, true);
   if (pm->IsRenderFrameHostRegistered(render_frame_host)) {
@@ -160,12 +215,33 @@ void ExtensionWebContentsObserver::OnInterfaceRequestFromFrame(
     content::RenderFrameHost* render_frame_host,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle* interface_pipe) {
+  DCHECK(initialized_);
   registry_.TryBindInterface(interface_name, interface_pipe, render_frame_host);
+}
+
+void ExtensionWebContentsObserver::MediaPictureInPictureChanged(
+    bool is_picture_in_picture) {
+  DCHECK(initialized_);
+  if (GetViewType(web_contents()) == VIEW_TYPE_EXTENSION_BACKGROUND_PAGE) {
+    ProcessManager* const process_manager =
+        ProcessManager::Get(browser_context_);
+    const Extension* const extension =
+        process_manager->GetExtensionForWebContents(web_contents());
+    if (extension == nullptr)
+      return;
+    if (is_picture_in_picture)
+      process_manager->IncrementLazyKeepaliveCount(extension, Activity::MEDIA,
+                                                   Activity::kPictureInPicture);
+    else
+      process_manager->DecrementLazyKeepaliveCount(extension, Activity::MEDIA,
+                                                   Activity::kPictureInPicture);
+  }
 }
 
 bool ExtensionWebContentsObserver::OnMessageReceived(
     const IPC::Message& message,
     content::RenderFrameHost* render_frame_host) {
+  DCHECK(initialized_);
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(
       ExtensionWebContentsObserver, message, render_frame_host)
@@ -176,29 +252,34 @@ bool ExtensionWebContentsObserver::OnMessageReceived(
 }
 
 void ExtensionWebContentsObserver::PepperInstanceCreated() {
+  DCHECK(initialized_);
   if (GetViewType(web_contents()) == VIEW_TYPE_EXTENSION_BACKGROUND_PAGE) {
     ProcessManager* const process_manager =
         ProcessManager::Get(browser_context_);
     const Extension* const extension =
         process_manager->GetExtensionForWebContents(web_contents());
     if (extension)
-      process_manager->IncrementLazyKeepaliveCount(extension);
+      process_manager->IncrementLazyKeepaliveCount(
+          extension, Activity::PEPPER_API, std::string());
   }
 }
 
 void ExtensionWebContentsObserver::PepperInstanceDeleted() {
+  DCHECK(initialized_);
   if (GetViewType(web_contents()) == VIEW_TYPE_EXTENSION_BACKGROUND_PAGE) {
     ProcessManager* const process_manager =
         ProcessManager::Get(browser_context_);
     const Extension* const extension =
         process_manager->GetExtensionForWebContents(web_contents());
     if (extension)
-      process_manager->DecrementLazyKeepaliveCount(extension);
+      process_manager->DecrementLazyKeepaliveCount(
+          extension, Activity::PEPPER_API, std::string());
   }
 }
 
 std::string ExtensionWebContentsObserver::GetExtensionIdFromFrame(
     content::RenderFrameHost* render_frame_host) const {
+  DCHECK(initialized_);
   const GURL& site = render_frame_host->GetSiteInstance()->GetSiteURL();
   if (!site.SchemeIs(kExtensionScheme))
     return std::string();
@@ -209,6 +290,7 @@ std::string ExtensionWebContentsObserver::GetExtensionIdFromFrame(
 const Extension* ExtensionWebContentsObserver::GetExtensionFromFrame(
     content::RenderFrameHost* render_frame_host,
     bool verify_url) const {
+  DCHECK(initialized_);
   std::string extension_id = GetExtensionIdFromFrame(render_frame_host);
   if (extension_id.empty())
     return nullptr;
@@ -225,11 +307,10 @@ const Extension* ExtensionWebContentsObserver::GetExtensionFromFrame(
     const url::Origin& origin(render_frame_host->GetLastCommittedOrigin());
     // Without site isolation, this check is needed to eliminate non-extension
     // schemes. With site isolation, this is still needed to exclude sandboxed
-    // extension frames with a unique origin.
+    // extension frames with an opaque origin.
     const GURL site_url(render_frame_host->GetSiteInstance()->GetSiteURL());
-    if (origin.unique() ||
-        site_url != content::SiteInstance::GetSiteForURL(browser_context,
-                                                         origin.GetURL()))
+    if (origin.opaque() || site_url != content::SiteInstance::GetSiteForURL(
+                                           browser_context, origin.GetURL()))
       return nullptr;
   }
 
@@ -239,19 +320,9 @@ const Extension* ExtensionWebContentsObserver::GetExtensionFromFrame(
 void ExtensionWebContentsObserver::OnRequest(
     content::RenderFrameHost* render_frame_host,
     const ExtensionHostMsg_Request_Params& params) {
+  DCHECK(initialized_);
   dispatcher_.Dispatch(params, render_frame_host,
                        render_frame_host->GetProcess()->GetID());
-}
-
-void ExtensionWebContentsObserver::InitializeFrameHelper(
-    content::RenderFrameHost* render_frame_host) {
-  // Since this is called for all existing RenderFrameHosts during the
-  // ExtensionWebContentsObserver's creation, it's possible that not all hosts
-  // are ready.
-  // We only initialize the frame if the renderer counterpart is live; otherwise
-  // we wait for the RenderFrameCreated notification.
-  if (render_frame_host->IsRenderFrameLive())
-    InitializeRenderFrame(render_frame_host);
 }
 
 }  // namespace extensions

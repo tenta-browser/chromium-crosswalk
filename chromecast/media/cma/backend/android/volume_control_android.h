@@ -15,22 +15,25 @@
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "chromecast/media/cma/backend/android/audio_sink_manager.h"
+#include "chromecast/media/cma/backend/android/volume_cache.h"
 
 namespace chromecast {
 namespace media {
 
-class VolumeControlAndroid {
+class VolumeControlAndroid : SystemVolumeTableAccessApi {
  public:
   VolumeControlAndroid();
-  ~VolumeControlAndroid();
+  ~VolumeControlAndroid() override;
 
   void AddVolumeObserver(VolumeObserver* observer);
   void RemoveVolumeObserver(VolumeObserver* observer);
   float GetVolume(AudioContentType type);
-  void SetVolume(AudioContentType type, float level);
+  void SetVolume(VolumeChangeSource source, AudioContentType type, float level);
   bool IsMuted(AudioContentType type);
-  void SetMuted(AudioContentType type, bool muted);
+  void SetMuted(VolumeChangeSource source, AudioContentType type, bool muted);
   void SetOutputLimit(AudioContentType type, float limit);
+  float VolumeToDbFSCached(AudioContentType type, float volume);
+  float DbFSToVolumeCached(AudioContentType type, float db);
 
   // Called from java to signal a change volume.
   void OnVolumeChange(JNIEnv* env,
@@ -43,14 +46,34 @@ class VolumeControlAndroid {
                     jint type,
                     jboolean muted);
 
+  // SystemVolumeTableAccessApi implementation.
+  int GetMaxVolumeIndex(AudioContentType type) override;
+  float VolumeToDbFS(AudioContentType type, float volume) override;
+
  private:
   void InitializeOnThread();
-  void SetVolumeOnThread(AudioContentType type, float level, bool from_android);
-  void SetMutedOnThread(AudioContentType type, bool muted, bool from_android);
+  void SetVolumeOnThread(VolumeChangeSource source,
+                         AudioContentType type,
+                         float level,
+                         bool from_android);
+  void SetMutedOnThread(VolumeChangeSource source,
+                        AudioContentType type,
+                        bool muted,
+                        bool from_android);
   void ReportVolumeChangeOnThread(AudioContentType type, float level);
   void ReportMuteChangeOnThread(AudioContentType type, bool muted);
 
+  // For the user of the VolumeControl, all volume values are in the volume
+  // table domain of kMedia (MUSIC). For volume types other than media,
+  // VolumeControl converts them internally into their proper volume table
+  // domains.
+  float MapIntoDifferentVolumeTableDomain(AudioContentType from_type,
+                                          AudioContentType to_type,
+                                          float level);
+
   base::android::ScopedJavaGlobalRef<jobject> j_volume_control_;
+
+  std::map<AudioContentType, std::unique_ptr<VolumeCache>> volume_cache_;
 
   base::Lock volume_lock_;
   std::map<AudioContentType, float> volumes_;

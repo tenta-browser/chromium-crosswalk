@@ -4,11 +4,12 @@
 
 #include "chrome/browser/media/router/discovery/discovery_network_monitor_metric_observer.h"
 
-#include "base/test/simple_test_tick_clock.h"
-#include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
-#include "base/timer/mock_timer.h"
-#include "net/base/mock_network_change_notifier.h"
+#include <memory>
+
+#include "base/test/scoped_task_environment.h"
+#include "content/public/browser/network_service_instance.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -57,51 +58,38 @@ class MockMetrics : public DiscoveryNetworkMonitorMetrics {
                void(DiscoveryNetworkMonitorConnectionType));
 };
 
-class MockNetworkChangeNotifier : public net::NetworkChangeNotifier {
- public:
-  ConnectionType GetCurrentConnectionType() const override {
-    return connection_type_;
-  }
-
-  void SetConnectionType(ConnectionType connection_type) {
-    connection_type_ = connection_type;
-  }
-
- private:
-  ConnectionType connection_type_;
-};
-
 class DiscoveryNetworkMonitorMetricObserverTest : public ::testing::Test {
  public:
   DiscoveryNetworkMonitorMetricObserverTest()
-      : mock_network_change_notifier_(
-            base::MakeUnique<MockNetworkChangeNotifier>()),
-        task_runner_(new base::TestMockTimeTaskRunner()),
-        task_runner_handle_(task_runner_),
-        mock_clock_(task_runner_->GetMockTickClock()),
-        start_ticks_(mock_clock_->NowTicks()),
-        metrics_(base::MakeUnique<MockMetrics>()),
+      : thread_bundle_(
+            base::test::ScopedTaskEnvironment::TimeSource::MOCK_TIME),
+        start_ticks_(thread_bundle_.NowTicks()),
+        metrics_(std::make_unique<MockMetrics>()),
         mock_metrics_(metrics_.get()),
-        metric_observer_(task_runner_->GetMockTickClock(),
-                         std::move(metrics_)) {}
+        metric_observer_(thread_bundle_.GetMockTickClock(),
+                         std::move(metrics_)) {
+    SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
+  }
 
  protected:
+  void SetConnectionType(network::mojom::ConnectionType connection_type) {
+    network::TestNetworkConnectionTracker::GetInstance()->SetConnectionType(
+        connection_type);
+  }
+
+  content::TestBrowserThreadBundle thread_bundle_;
   base::TimeDelta time_advance_ = base::TimeDelta::FromMilliseconds(10);
-  std::unique_ptr<MockNetworkChangeNotifier> mock_network_change_notifier_;
-  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
-  std::unique_ptr<base::TickClock> mock_clock_;
   const base::TimeTicks start_ticks_;
   std::unique_ptr<MockMetrics> metrics_;
   MockMetrics* mock_metrics_;
+
   DiscoveryNetworkMonitorMetricObserver metric_observer_;
 };
 
 }  // namespace
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest, RecordsFirstGoodNetworkWifi) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_WIFI);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_WIFI);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -111,8 +99,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest, RecordsFirstGoodNetworkWifi) {
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkEthernet) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -122,8 +109,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkUnknownWifi) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_WIFI);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_WIFI);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -135,8 +121,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkUnknownEthernet) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -148,8 +133,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkUnknownOther) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_4G);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_4G);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -161,8 +145,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkUnknown) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_UNKNOWN);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_UNKNOWN);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(
       *mock_metrics_,
@@ -173,8 +156,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        RecordsFirstGoodNetworkDisconnected) {
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(*mock_metrics_,
               RecordConnectionType(
@@ -182,8 +164,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 }
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
@@ -192,46 +173,39 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   metric_observer_.OnNetworksChanged("network1");
 
   EXPECT_CALL(*mock_metrics_, RecordConnectionType(_)).Times(0);
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_));
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
   metric_observer_.OnNetworksChanged("network2");
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 }
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
        DoesntRecordEphemeralDisconnectedStateWhenFirst) {
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(_)).Times(0);
   EXPECT_CALL(*mock_metrics_, RecordConnectionType(_)).Times(0);
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
   metric_observer_.OnNetworksChanged("network2");
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 }
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
@@ -240,19 +214,16 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   metric_observer_.OnNetworksChanged("network1");
 
-  task_runner_->FastForwardBy(time_advance_);
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  thread_bundle_.FastForwardBy(time_advance_);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  task_runner_->FastForwardBy(time_advance_);
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  thread_bundle_.FastForwardBy(time_advance_);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_CALL(*mock_metrics_,
               RecordTimeBetweenNetworkChangeEvents(
                   (start_ticks_ + time_advance_ * 2) - start_ticks_));
@@ -261,8 +232,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
   metric_observer_.OnNetworksChanged("network2");
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 }
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
@@ -271,17 +241,15 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   metric_observer_.OnNetworksChanged("network1");
 
-  task_runner_->FastForwardBy(time_advance_);
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  thread_bundle_.FastForwardBy(time_advance_);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  task_runner_->FastForwardBy(time_advance_);
+  thread_bundle_.FastForwardBy(time_advance_);
   EXPECT_CALL(*mock_metrics_,
               RecordTimeBetweenNetworkChangeEvents(
                   (start_ticks_ + time_advance_) - start_ticks_));
@@ -289,8 +257,7 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
               RecordConnectionType(
                   DiscoveryNetworkMonitorConnectionType::kDisconnected));
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 }
 
 TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
@@ -299,18 +266,16 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   metric_observer_.OnNetworksChanged("network1");
 
-  task_runner_->FastForwardBy(time_advance_);
-  const auto disconnect_ticks = mock_clock_->NowTicks();
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_NONE);
+  thread_bundle_.FastForwardBy(time_advance_);
+  const auto disconnect_ticks = thread_bundle_.NowTicks();
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
   metric_observer_.OnNetworksChanged(
       DiscoveryNetworkMonitor::kNetworkIdDisconnected);
 
-  task_runner_->FastForwardBy(time_advance_);
+  thread_bundle_.FastForwardBy(time_advance_);
   EXPECT_CALL(*mock_metrics_,
               RecordTimeBetweenNetworkChangeEvents(
                   (start_ticks_ + time_advance_) - start_ticks_));
@@ -318,18 +283,16 @@ TEST_F(DiscoveryNetworkMonitorMetricObserverTest,
               RecordConnectionType(
                   DiscoveryNetworkMonitorConnectionType::kDisconnected));
 
-  task_runner_->FastForwardUntilNoTasksRemain();
-  task_runner_->RunUntilIdle();
+  thread_bundle_.FastForwardUntilNoTasksRemain();
 
-  task_runner_->FastForwardBy(time_advance_);
-  const auto second_ethernet_ticks = mock_clock_->NowTicks();
+  thread_bundle_.FastForwardBy(time_advance_);
+  const auto second_ethernet_ticks = thread_bundle_.NowTicks();
   EXPECT_CALL(*mock_metrics_, RecordTimeBetweenNetworkChangeEvents(
                                   second_ethernet_ticks - disconnect_ticks));
   EXPECT_CALL(
       *mock_metrics_,
       RecordConnectionType(DiscoveryNetworkMonitorConnectionType::kEthernet));
-  mock_network_change_notifier_->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   metric_observer_.OnNetworksChanged("network1");
 }
 

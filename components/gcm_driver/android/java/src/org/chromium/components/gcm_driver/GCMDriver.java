@@ -4,13 +4,17 @@
 
 package org.chromium.components.gcm_driver;
 
-import android.os.AsyncTask;
+import android.os.SystemClock;
 
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 
 import java.io.IOException;
 
@@ -48,6 +52,10 @@ public class GCMDriver {
             throw new IllegalStateException("Already instantiated");
         }
         sInstance = new GCMDriver(nativeGCMDriverAndroid);
+        // TODO(crbug.com/946486): This has been in added in M75 to migrate the
+        // way we store if there are persisted messages. It should be removed in
+        // M77.
+        LazySubscriptionsManager.migrateHasPersistedMessagesPref();
         return sInstance;
     }
 
@@ -63,10 +71,32 @@ public class GCMDriver {
     }
 
     @CalledByNative
+    private void replayPersistedMessages(final String appId) {
+        if (!LazySubscriptionsManager.hasPersistedMessagesForSubscription(appId)) {
+            return;
+        }
+
+        long time = SystemClock.elapsedRealtime();
+        GCMMessage[] messages = LazySubscriptionsManager.readMessages(appId);
+        for (GCMMessage message : messages) {
+            dispatchMessage(message);
+        }
+        LazySubscriptionsManager.deletePersistedMessagesForSubscriptionId(appId);
+
+        long duration = SystemClock.elapsedRealtime() - time;
+        // Call RecordHistogram.recordTimesHistogram() on a background thread to avoid
+        // expensive JNI calls in the critical path.
+        PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
+            RecordHistogram.recordTimesHistogram(
+                    "PushMessaging.TimeToReadPersistedMessages", duration);
+        });
+    }
+
+    @CalledByNative
     private void register(final String appId, final String senderId) {
-        new AsyncTask<Void, Void, String>() {
+        new AsyncTask<String>() {
             @Override
-            protected String doInBackground(Void... voids) {
+            protected String doInBackground() {
                 try {
                     String subtype = appId;
                     String registrationId = mSubscriber.subscribe(senderId, subtype, null);
@@ -81,14 +111,14 @@ public class GCMDriver {
                 nativeOnRegisterFinished(mNativeGCMDriverAndroid, appId, registrationId,
                                          !registrationId.isEmpty());
             }
-        }.execute();
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     @CalledByNative
     private void unregister(final String appId, final String senderId) {
-        new AsyncTask<Void, Void, Boolean>() {
+        new AsyncTask<Boolean>() {
             @Override
-            protected Boolean doInBackground(Void... voids) {
+            protected Boolean doInBackground() {
                 try {
                     String subtype = appId;
                     mSubscriber.unsubscribe(senderId, subtype, null);
@@ -103,7 +133,8 @@ public class GCMDriver {
             protected void onPostExecute(Boolean success) {
                 nativeOnUnregisterFinished(mNativeGCMDriverAndroid, appId, success);
             }
-        }.execute();
+        }
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     // The caller of this function is responsible for ensuring the browser process is initialized.
@@ -115,8 +146,8 @@ public class GCMDriver {
         }
 
         sInstance.nativeOnMessageReceived(sInstance.mNativeGCMDriverAndroid, message.getAppId(),
-                message.getSenderId(), message.getCollapseKey(), message.getRawData(),
-                message.getDataKeysAndValuesArray());
+                message.getSenderId(), message.getMessageId(), message.getCollapseKey(),
+                message.getRawData(), message.getDataKeysAndValuesArray());
     }
 
     @VisibleForTesting
@@ -131,5 +162,6 @@ public class GCMDriver {
     private native void nativeOnUnregisterFinished(long nativeGCMDriverAndroid, String appId,
             boolean success);
     private native void nativeOnMessageReceived(long nativeGCMDriverAndroid, String appId,
-            String senderId, String collapseKey, byte[] rawData, String[] dataKeysAndValues);
+            String senderId, String messageId, String collapseKey, byte[] rawData,
+            String[] dataKeysAndValues);
 }

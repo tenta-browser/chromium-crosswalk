@@ -10,7 +10,6 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/app_mode/fake_cws.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
@@ -23,13 +22,10 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/dbus/session_manager/fake_session_manager_client.h"
 #include "components/ownership/mock_owner_key_util.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_service.h"
 #include "extensions/common/value_builder.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/dns/mock_host_resolver.h"
@@ -40,34 +36,7 @@ namespace chromeos {
 
 namespace {
 
-const char kTestKioskApp[] = "ggbflgnkafappblpkiflbgpmkfdpnhhe";
-
-// Used to listen for app termination notification.
-class TerminationObserver : public content::NotificationObserver {
- public:
-  TerminationObserver() {
-    registrar_.Add(this, chrome::NOTIFICATION_APP_TERMINATING,
-                   content::NotificationService::AllSources());
-  }
-  ~TerminationObserver() override = default;
-
-  // Whether app has been terminated - i.e. whether app termination notification
-  // has been observed.
-  bool terminated() const { return notification_seen_; }
-
- private:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override {
-    ASSERT_EQ(chrome::NOTIFICATION_APP_TERMINATING, type);
-    notification_seen_ = true;
-  }
-
-  bool notification_seen_ = false;
-  content::NotificationRegistrar registrar_;
-
-  DISALLOW_COPY_AND_ASSIGN(TerminationObserver);
-};
+const char kTestKioskApp[] = "ggaeimfdpnmlhdhpcikgoblffmkckdmn";
 
 }  // namespace
 
@@ -89,25 +58,31 @@ class KioskCrashRestoreTest : public InProcessBrowserTest {
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    OverrideDevicePolicy();
+    // Override device policy.
+    OwnerSettingsServiceChromeOSFactory::GetInstance()
+        ->SetOwnerKeyUtilForTesting(owner_key_util_);
+    owner_key_util_->SetPublicKeyFromPrivateKey(
+        *device_policy_.GetSigningKey());
+
+    // SessionManagerClient will be destroyed in ChromeBrowserMain.
+    chromeos::SessionManagerClient::InitializeFakeInMemory();
+    chromeos::FakeSessionManagerClient::Get()->set_device_policy(
+        device_policy_.GetBlob());
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     const AccountId account_id = AccountId::FromUserEmail(GetTestAppUserId());
-    const cryptohome::Identification cryptohome_id(account_id);
+    const cryptohome::AccountIdentifier cryptohome_id =
+        cryptohome::CreateAccountIdentifierFromAccountId(account_id);
 
-    command_line->AppendSwitchASCII(switches::kLoginUser, cryptohome_id.id());
+    command_line->AppendSwitchASCII(switches::kLoginUser,
+                                    cryptohome_id.account_id());
     command_line->AppendSwitchASCII(
         switches::kLoginProfile,
         CryptohomeClient::GetStubSanitizedUsername(cryptohome_id));
 
     fake_cws_->Init(embedded_test_server());
     fake_cws_->SetUpdateCrx(test_app_id_, test_app_id_ + ".crx", "1.0.0");
-  }
-
-  void PreRunTestOnMainThread() override {
-    termination_observer_.reset(new TerminationObserver());
-    InProcessBrowserTest::PreRunTestOnMainThread();
   }
 
   void SetUpOnMainThread() override {
@@ -123,9 +98,6 @@ class KioskCrashRestoreTest : public InProcessBrowserTest {
   }
 
   const std::string& test_app_id() const { return test_app_id_; }
-
- protected:
-  std::unique_ptr<TerminationObserver> termination_observer_;
 
  private:
   void SetUpExistingKioskApp() {
@@ -158,30 +130,16 @@ class KioskCrashRestoreTest : public InProcessBrowserTest {
             .ToJSON();
 
     base::FilePath local_state_file;
-    CHECK(PathService::Get(chrome::DIR_USER_DATA, &local_state_file));
+    CHECK(base::PathService::Get(chrome::DIR_USER_DATA, &local_state_file));
     local_state_file = local_state_file.Append(chrome::kLocalStateFilename);
     base::WriteFile(local_state_file, local_state_json.data(),
                     local_state_json.size());
-  }
-
-  void OverrideDevicePolicy() {
-    OwnerSettingsServiceChromeOSFactory::GetInstance()
-        ->SetOwnerKeyUtilForTesting(owner_key_util_);
-    owner_key_util_->SetPublicKeyFromPrivateKey(
-        *device_policy_.GetSigningKey());
-
-    session_manager_client_ = new FakeSessionManagerClient;
-    session_manager_client_->set_device_policy(device_policy_.GetBlob());
-
-    DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
-        std::unique_ptr<SessionManagerClient>(session_manager_client_));
   }
 
   std::string test_app_id_ = kTestKioskApp;
 
   policy::DevicePolicyBuilder device_policy_;
   scoped_refptr<ownership::MockOwnerKeyUtil> owner_key_util_;
-  FakeSessionManagerClient* session_manager_client_;
   std::unique_ptr<FakeCWS> fake_cws_;
 
   DISALLOW_COPY_AND_ASSIGN(KioskCrashRestoreTest);
@@ -191,7 +149,6 @@ IN_PROC_BROWSER_TEST_F(KioskCrashRestoreTest, AppNotInstalled) {
   // If app is not installed when restoring from crash, the kiosk launch is
   // expected to fail, as in that case the crash occured during the app
   // initialization - before the app was actually launched.
-  EXPECT_TRUE(termination_observer_->terminated());
   EXPECT_EQ(KioskAppLaunchError::UNABLE_TO_LAUNCH, KioskAppLaunchError::Get());
 }
 

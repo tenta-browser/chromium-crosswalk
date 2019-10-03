@@ -4,9 +4,7 @@
 
 package org.chromium.chromoting.jni;
 
-import android.annotation.SuppressLint;
-import android.content.Context;
-
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -23,19 +21,16 @@ import org.chromium.chromoting.base.OAuthTokenFetcher.Error;
 @JNINamespace("remoting")
 public class JniOAuthTokenGetter {
     private static final String TAG = "Chromoting";
-    private static final String TOKEN_SCOPE = "oauth2:https://www.googleapis.com/auth/chromoting";
+    // Note: Any scope requested here must also be requested in Chromoting.java. (I.e., this must be
+    // a subset of Chromoting.java's TOKEN_SCOPE.) This is because the context passed to
+    // OAuthTokenFetcher below is not an activity, and thus it will not be possible to show a
+    // consent page requesting new scopes.
+    private static final String TOKEN_SCOPE = "oauth2:https://www.googleapis.com/auth/chromoting "
+            + "https://www.googleapis.com/auth/chromoting.directory "
+            + "https://www.googleapis.com/auth/tachyon";
 
-    @SuppressLint("StaticFieldLeak")
-    private static Context sContext;
     private static String sAccount;
     private static String sLatestToken;
-
-    public static void setContext(Context context) {
-        Preconditions.notNull(context);
-        // Always store the application context so that we don't leak the activity context by
-        // accident.
-        sContext = context.getApplicationContext();
-    }
 
     public static void setAccount(String account) {
         Preconditions.notNull(account);
@@ -44,36 +39,38 @@ public class JniOAuthTokenGetter {
 
     @CalledByNative
     private static void fetchAuthToken(long callbackPtr) {
-        Preconditions.notNull(sContext);
+        Preconditions.notNull(ContextUtils.getApplicationContext());
         Preconditions.notNull(sAccount);
-        new OAuthTokenFetcher(sContext, sAccount, TOKEN_SCOPE, new Callback() {
-            @Override
-            public void onTokenFetched(String token) {
-                sLatestToken = token;
-                nativeResolveOAuthTokenCallback(
-                        callbackPtr, OAuthTokenStatus.SUCCESS, sAccount, token);
-            }
+        new OAuthTokenFetcher(ContextUtils.getApplicationContext(), sAccount, TOKEN_SCOPE,
+                new Callback() {
+                    @Override
+                    public void onTokenFetched(String token) {
+                        sLatestToken = token;
+                        nativeResolveOAuthTokenCallback(
+                                callbackPtr, OAuthTokenStatus.SUCCESS, sAccount, token);
+                    }
 
-            @Override
-            public void onError(Error error) {
-                Log.e(TAG, "Failed to fetch token. Error: ", error);
-                int status;
-                switch (error) {
-                    case NETWORK:
-                        status = OAuthTokenStatus.NETWORK_ERROR;
-                        break;
-                    case UI:
-                    case UNEXPECTED:
-                    case INTERRUPTED:
-                        status = OAuthTokenStatus.AUTH_ERROR;
-                        break;
-                    default:
-                        assert false : "Unreached";
-                        status = -1;
-                }
-                nativeResolveOAuthTokenCallback(callbackPtr, status, null, null);
-            }
-        }).fetch();
+                    @Override
+                    public void onError(@Error int error) {
+                        Log.e(TAG, "Failed to fetch token. Error: ", error);
+                        int status;
+                        switch (error) {
+                            case Error.NETWORK:
+                                status = OAuthTokenStatus.NETWORK_ERROR;
+                                break;
+                            case Error.UI:
+                            case Error.UNEXPECTED:
+                            case Error.INTERRUPTED:
+                                status = OAuthTokenStatus.AUTH_ERROR;
+                                break;
+                            default:
+                                assert false : "Unreached";
+                                status = -1;
+                        }
+                        nativeResolveOAuthTokenCallback(callbackPtr, status, null, null);
+                    }
+                })
+                .fetch();
     }
 
     @CalledByNative
@@ -81,19 +78,21 @@ public class JniOAuthTokenGetter {
         if (sLatestToken == null || sLatestToken.isEmpty()) {
             return;
         }
-        Preconditions.notNull(sContext);
+        Preconditions.notNull(ContextUtils.getApplicationContext());
         Preconditions.notNull(sAccount);
-        new OAuthTokenFetcher(sContext, sAccount, TOKEN_SCOPE, new Callback() {
-            @Override
-            public void onTokenFetched(String token) {
-                sLatestToken = token;
-            }
+        new OAuthTokenFetcher(ContextUtils.getApplicationContext(), sAccount, TOKEN_SCOPE,
+                new Callback() {
+                    @Override
+                    public void onTokenFetched(String token) {
+                        sLatestToken = token;
+                    }
 
-            @Override
-            public void onError(Error error) {
-                Log.e(TAG, "Failed to clear token. Error: ", error);
-            }
-        }).clearAndFetch(sLatestToken);
+                    @Override
+                    public void onError(@Error int error) {
+                        Log.e(TAG, "Failed to clear token. Error: ", error);
+                    }
+                })
+                .clearAndFetch(sLatestToken);
     }
 
     private static native void nativeResolveOAuthTokenCallback(

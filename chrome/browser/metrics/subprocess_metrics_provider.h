@@ -72,10 +72,10 @@ class SubprocessMetricsProvider
       const content::ChildProcessData& data) override;
   void BrowserChildProcessCrashed(
       const content::ChildProcessData& data,
-      int exit_code) override;
+      const content::ChildProcessTerminationInfo& info) override;
   void BrowserChildProcessKilled(
       const content::ChildProcessData& data,
-      int exit_code) override;
+      const content::ChildProcessTerminationInfo& info) override;
 
   // content::NotificationObserver:
   void Observe(int type,
@@ -84,9 +84,9 @@ class SubprocessMetricsProvider
 
   // content::RenderProcessHostObserver:
   void RenderProcessReady(content::RenderProcessHost* host) override;
-  void RenderProcessExited(content::RenderProcessHost* host,
-                           base::TerminationStatus status,
-                           int exit_code) override;
+  void RenderProcessExited(
+      content::RenderProcessHost* host,
+      const content::ChildProcessTerminationInfo& info) override;
   void RenderProcessHostDestroyed(content::RenderProcessHost* host) override;
 
   // Gets a histogram allocator from a subprocess. This must be called on
@@ -94,7 +94,7 @@ class SubprocessMetricsProvider
   static std::unique_ptr<base::PersistentHistogramAllocator>
   GetSubprocessHistogramAllocatorOnIOThread(int id);
 
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
   // Object for registing notification requests.
   content::NotificationRegistrar registrar_;
@@ -108,7 +108,7 @@ class SubprocessMetricsProvider
   ScopedObserver<content::RenderProcessHost, SubprocessMetricsProvider>
       scoped_observer_;
 
-  base::WeakPtrFactory<SubprocessMetricsProvider> weak_ptr_factory_;
+  base::WeakPtrFactory<SubprocessMetricsProvider> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SubprocessMetricsProvider);
 };

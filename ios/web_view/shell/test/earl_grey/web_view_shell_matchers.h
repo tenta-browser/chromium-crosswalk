@@ -5,9 +5,13 @@
 #ifndef IOS_WEB_VIEW_SHELL_TEST_EARL_GREY_WEB_VIEW_SHELL_MATCHERS_H_
 #define IOS_WEB_VIEW_SHELL_TEST_EARL_GREY_WEB_VIEW_SHELL_MATCHERS_H_
 
+#import <Foundation/Foundation.h>
+
 #import <string>
 
-#import <EarlGrey/EarlGrey.h>
+@protocol GREYMatcher;
+
+NS_ASSUME_NONNULL_BEGIN
 
 namespace ios_web_view {
 
@@ -24,5 +28,7 @@ id<GREYMatcher> ForwardButton();
 id<GREYMatcher> AddressField();
 
 }  // namespace ios_web_view
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_SHELL_TEST_EARL_GREY_WEB_VIEW_SHELL_MATCHERS_H_

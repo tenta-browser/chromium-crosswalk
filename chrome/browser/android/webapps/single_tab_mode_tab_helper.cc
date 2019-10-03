@@ -4,8 +4,6 @@
 
 #include "chrome/browser/android/webapps/single_tab_mode_tab_helper.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SingleTabModeTabHelper);
-
 SingleTabModeTabHelper::SingleTabModeTabHelper(
     content::WebContents* web_contents) {}
 
@@ -14,3 +12,5 @@ SingleTabModeTabHelper::~SingleTabModeTabHelper() {}
 void SingleTabModeTabHelper::PermanentlyBlockAllNewWindows() {
   block_all_new_windows_ = true;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SingleTabModeTabHelper)

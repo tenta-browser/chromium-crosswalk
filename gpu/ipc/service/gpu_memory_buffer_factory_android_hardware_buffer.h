@@ -5,8 +5,13 @@
 #ifndef GPU_IPC_SERVICE_GPU_MEMORY_BUFFER_FACTORY_ANDROID_HARDWARE_BUFFER_H_
 #define GPU_IPC_SERVICE_GPU_MEMORY_BUFFER_FACTORY_ANDROID_HARDWARE_BUFFER_H_
 
+#include <memory>
+#include <utility>
+
+#include "base/containers/flat_map.h"
+#include "base/synchronization/lock.h"
 #include "gpu/command_buffer/service/image_factory.h"
-#include "gpu/gpu_export.h"
+#include "gpu/ipc/service/gpu_ipc_service_export.h"
 #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 
 namespace gl {
@@ -14,8 +19,9 @@ class GLImage;
 }
 
 namespace gpu {
+class GpuMemoryBufferImplAndroidHardwareBuffer;
 
-class GPU_EXPORT GpuMemoryBufferFactoryAndroidHardwareBuffer
+class GPU_IPC_SERVICE_EXPORT GpuMemoryBufferFactoryAndroidHardwareBuffer
     : public GpuMemoryBufferFactory,
       public ImageFactory {
  public:
@@ -35,21 +41,24 @@ class GPU_EXPORT GpuMemoryBufferFactoryAndroidHardwareBuffer
   ImageFactory* AsImageFactory() override;
 
   // Overridden from ImageFactory:
+  // TODO(khushalsagar): Add support for anonymous images.
   scoped_refptr<gl::GLImage> CreateImageForGpuMemoryBuffer(
-      const gfx::GpuMemoryBufferHandle& handle,
+      gfx::GpuMemoryBufferHandle handle,
       const gfx::Size& size,
       gfx::BufferFormat format,
-      unsigned internalformat,
       int client_id,
       SurfaceHandle surface_handle) override;
-  scoped_refptr<gl::GLImage> CreateAnonymousImage(
-      const gfx::Size& size,
-      gfx::BufferFormat format,
-      gfx::BufferUsage usage,
-      unsigned internalformat) override;
   unsigned RequiredTextureType() override;
 
  private:
+  using BufferMapKey = std::pair<gfx::GpuMemoryBufferId, int>;
+  using BufferMap =
+      base::flat_map<BufferMapKey,
+                     std::unique_ptr<GpuMemoryBufferImplAndroidHardwareBuffer>>;
+
+  base::Lock lock_;
+  BufferMap buffer_map_ GUARDED_BY(lock_);
+
   DISALLOW_COPY_AND_ASSIGN(GpuMemoryBufferFactoryAndroidHardwareBuffer);
 };
 

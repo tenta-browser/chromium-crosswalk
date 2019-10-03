@@ -147,6 +147,7 @@ class SpellcheckCustomDictionary : public SpellcheckDictionary,
   void Load() override;
 
   // Overridden from syncer::SyncableService:
+  void WaitUntilReadyToSync(base::OnceClosure done) override;
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
@@ -208,7 +209,7 @@ class SpellcheckCustomDictionary : public SpellcheckDictionary,
   base::FilePath custom_dictionary_path_;
 
   // Observers for dictionary load and content changes.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   // Used to send local changes to the sync infrastructure.
   std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
@@ -219,11 +220,13 @@ class SpellcheckCustomDictionary : public SpellcheckDictionary,
   // True if the dictionary has been loaded. Otherwise false.
   bool is_loaded_;
 
+  base::OnceClosure wait_until_ready_to_sync_cb_;
+
   // A post-startup task to fix the invalid custom dictionary file.
-  base::CancelableClosure fix_invalid_file_;
+  base::CancelableOnceClosure fix_invalid_file_;
 
   // Used to create weak pointers for an instance of this class.
-  base::WeakPtrFactory<SpellcheckCustomDictionary> weak_ptr_factory_;
+  base::WeakPtrFactory<SpellcheckCustomDictionary> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SpellcheckCustomDictionary);
 };

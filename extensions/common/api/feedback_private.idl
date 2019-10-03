@@ -25,13 +25,12 @@ namespace feedbackPrivate {
     // page is disabled for this flow.
     login,
 
-    // Flow where a prompt to download the Chrome Cleanup Tool is displayed
-    // prior to showing the feedback form.
-    showSrtPrompt,
-
     // Flow when the feedback is requested from the sad tab ("Aw, Snap!") page
     // when the renderer crashes.
-    sadTabCrash
+    sadTabCrash,
+
+    // Flow for internal Google users.
+    googleInternal
   };
 
   dictionary FeedbackInfo {
@@ -43,6 +42,10 @@ namespace feedbackPrivate {
 
     // The feedback text describing the user issue.
     DOMString description;
+
+    // The placeholder text that will be shown in the description field when
+    // it's empty.
+    DOMString? descriptionPlaceholder;
 
     // The e-mail of the user that initiated this feedback.
     DOMString? email;
@@ -66,7 +69,7 @@ namespace feedbackPrivate {
     SystemInformation[]? systemInformation;
 
     // True if we have permission to add histograms to this feedback report.
-    boolean sendHistograms;
+    boolean? sendHistograms;
 
     // Optional feedback UI flow. Default is the regular user flow.
     FeedbackFlow? flow;
@@ -78,22 +81,26 @@ namespace feedbackPrivate {
 
     // Whether to use the system-provided window frame or custom frame controls.
     boolean? useSystemWindowFrame;
+
+    // Whether or not to send bluetooth logs with this report.
+    boolean? sendBluetoothLogs;
+
+    // Whether or not to send Assistant feedback to Assistant server.
+    boolean? assistantDebugInfoAllowed;
+
+    // Whether or not triggered from Assistant.
+    boolean? fromAssistant;
+
+    // Whether or not to include bluetooth logs.
+    boolean? includeBluetoothLogs;
   };
 
   // Status of the sending of a feedback report.
   enum Status {success, delayed};
 
-  // Result of presenting the user with a prompt to download SRT.
-  enum SrtPromptResult {
-    // User clicked the "Learn More" button.
-    accepted,
-
-    // User declined the prompt and proceeded to the feedback page.
-    declined,
-
-    // User closed the window altogether.
-    closed
-  };
+  // The type of the landing page shown to the user when the feedback report is
+  // successfully sent, if one should be shown.
+  enum LandingPageType {normal, techstop, noLandingPage};
 
   // Allowed log sources on Chrome OS.
   enum LogSource {
@@ -175,7 +182,7 @@ namespace feedbackPrivate {
   callback GetUserEmailCallback = void(DOMString email);
   callback GetSystemInformationCallback =
       void(SystemInformation[] systemInformation);
-  callback SendFeedbackCallback = void(Status status);
+  callback SendFeedbackCallback = void(Status status, LandingPageType type);
   callback GetStringsCallback = void(object result);
   callback ReadLogSourceCallback = void (ReadLogSourceResult result);
 
@@ -194,10 +201,6 @@ namespace feedbackPrivate {
     // strings as a dictionary mapping from string identifier to the
     // translated string to use in the feedback app UI.
     static void getStrings(FeedbackFlow flow, GetStringsCallback callback);
-
-    // Logs whether the user accepted a prompt to try the Software Removal
-    // Tool.
-    static void logSrtPromptResult(SrtPromptResult result);
 
     // Reads from a log source indicated by <code>source</code>.
     // <p>If <code>incremental</code> is false:
@@ -226,6 +229,11 @@ namespace feedbackPrivate {
     // </ul>
     static void readLogSource(ReadLogSourceParams params,
                               ReadLogSourceCallback callback);
+
+    // Invoked when the extension is complete during sending feedback from the
+    // login page. This is then used to know we can unload the feedback
+    // extension from the login profile.
+    static void loginFeedbackComplete();
   };
 
   interface Events {

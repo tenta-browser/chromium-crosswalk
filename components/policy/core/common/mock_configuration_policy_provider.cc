@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "components/policy/core/common/policy_bundle.h"
 
@@ -22,11 +22,22 @@ MockConfigurationPolicyProvider::~MockConfigurationPolicyProvider() {}
 
 void MockConfigurationPolicyProvider::UpdateChromePolicy(
     const PolicyMap& policy) {
-  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
+  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
   bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
       .CopyFrom(policy);
   UpdatePolicy(std::move(bundle));
-  if (base::MessageLoop::current())
+  if (base::MessageLoopCurrent::IsSet())
+    base::RunLoop().RunUntilIdle();
+}
+
+void MockConfigurationPolicyProvider::UpdateExtensionPolicy(
+    const PolicyMap& policy,
+    const std::string& extension_id) {
+  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
+  bundle->Get(PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, extension_id))
+      .CopyFrom(policy);
+  UpdatePolicy(std::move(bundle));
+  if (base::MessageLoopCurrent::IsSet())
     base::RunLoop().RunUntilIdle();
 }
 
@@ -36,7 +47,7 @@ void MockConfigurationPolicyProvider::SetAutoRefresh() {
 }
 
 void MockConfigurationPolicyProvider::RefreshWithSamePolicies() {
-  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle);
+  std::unique_ptr<PolicyBundle> bundle = std::make_unique<PolicyBundle>();
   bundle->CopyFrom(policies());
   UpdatePolicy(std::move(bundle));
 }

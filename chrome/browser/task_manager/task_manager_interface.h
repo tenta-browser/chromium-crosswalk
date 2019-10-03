@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/memory_coordinator_client.h"
 #include "base/observer_list.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
@@ -20,7 +19,8 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/task_manager/providers/task.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
+#include "components/sessions/core/session_id.h"
+#include "third_party/blink/public/platform/web_cache.h"
 #include "ui/gfx/image/image_skia.h"
 
 class PrefRegistrySimple;
@@ -28,10 +28,6 @@ class PrefRegistrySimple;
 namespace content {
 class WebContents;
 }  // namespace content
-
-namespace net {
-class URLRequest;
-}  // namespace net
 
 namespace task_manager {
 
@@ -49,16 +45,6 @@ class TaskManagerInterface {
   // Gets the existing instance of the task manager if any, otherwise it will
   // create it first. Must be called on the UI thread.
   static TaskManagerInterface* GetTaskManager();
-
-  // This notification will be received on the IO thread from
-  // ChromeNetworkDelegate to update the task manager with read network usage.
-  static void OnRawBytesRead(const net::URLRequest& request,
-                             int64_t bytes_read);
-
-  // This notification will be received on the IO thread from
-  // ChromeNetworkDelegate to update the task manager with sent network usage.
-  static void OnRawBytesSent(const net::URLRequest& request,
-                             int64_t bytes_sent);
 
   void AddObserver(TaskManagerObserver* observer);
   void RemoveObserver(TaskManagerObserver* observer);
@@ -87,13 +73,10 @@ class TaskManagerInterface {
   // Only implemented in Windows now.
   virtual base::TimeDelta GetCpuTime(TaskId task_id) const = 0;
 
-  // Returns the current footprint/physical/private/shared memory usage of the
-  // task with |task_id| in bytes. A value of -1 means no valid value is
-  // currently available.
+  // Returns the current memory footprint/swapped memory of the task with
+  // |task_id| in bytes. A value of -1 means no valid value is currently
+  // available.
   virtual int64_t GetMemoryFootprintUsage(TaskId task_id) const = 0;
-  virtual int64_t GetPhysicalMemoryUsage(TaskId task_id) const = 0;
-  virtual int64_t GetPrivateMemoryUsage(TaskId task_id) const = 0;
-  virtual int64_t GetSharedMemoryUsage(TaskId task_id) const = 0;
   virtual int64_t GetSwappedMemoryUsage(TaskId task_id) const = 0;
 
   // Returns the GPU memory usage of the task with |task_id| in bytes. A value
@@ -102,9 +85,6 @@ class TaskManagerInterface {
   // inflated because it is counting other processes' resources.
   virtual int64_t GetGpuMemoryUsage(TaskId task_id,
                                     bool* has_duplicates) const = 0;
-
-  // Returns the memory state of the task with |task_id|.
-  virtual base::MemoryState GetMemoryState(TaskId task_id) const = 0;
 
   // Returns the number of average idle CPU wakeups per second since the last
   // refresh cycle. A value of -1 means no valid value is currently available.
@@ -162,7 +142,7 @@ class TaskManagerInterface {
 
   // Gets the unique ID of the tab if the task with |task_id| represents a
   // WebContents of a tab. Returns -1 otherwise.
-  virtual int GetTabId(TaskId task_id) const = 0;
+  virtual SessionID GetTabId(TaskId task_id) const = 0;
 
   // Returns the unique ID of the BrowserChildProcessHost/RenderProcessHost on
   // which the task with |task_id| is running. It is not the PID nor the handle
@@ -240,6 +220,9 @@ class TaskManagerInterface {
   // the Task with |task_id| is running.
   virtual size_t GetNumberOfTasksOnSameProcess(TaskId task_id) const = 0;
 
+  // Returns true if the task is running inside a VM.
+  virtual bool IsRunningInVM(TaskId task_id) const = 0;
+
   // Returns the TaskId associated with the main task for |web_contents|.
   // Returns -1 if |web_contents| is nullptr or does not currently have an
   // associated Task.
@@ -277,7 +260,7 @@ class TaskManagerInterface {
 
   int64_t enabled_resources_flags() const { return enabled_resources_flags_; }
 
-  void set_timer_for_testing(std::unique_ptr<base::Timer> timer) {
+  void set_timer_for_testing(std::unique_ptr<base::RepeatingTimer> timer) {
     refresh_timer_ = std::move(timer);
   }
 
@@ -299,10 +282,10 @@ class TaskManagerInterface {
   void ScheduleRefresh(base::TimeDelta refresh_time);
 
   // The list of observers.
-  base::ObserverList<TaskManagerObserver> observers_;
+  base::ObserverList<TaskManagerObserver>::Unchecked observers_;
 
   // The timer that will be used to schedule the successive refreshes.
-  std::unique_ptr<base::Timer> refresh_timer_;
+  std::unique_ptr<base::RepeatingTimer> refresh_timer_;
 
   // The flags containing the enabled resources types calculations.
   int64_t enabled_resources_flags_;

@@ -13,12 +13,12 @@ import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLog;
 
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 
 import java.util.List;
 
 /** Unit tests for {@link Log}. */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class LogTest {
     /** Tests that the computed call origin is the correct one. */
@@ -27,10 +27,10 @@ public class LogTest {
         Log.d("Foo", "Bar");
 
         List<ShadowLog.LogItem> logs = ShadowLog.getLogs();
-        assertEquals("Only one log should be written", 1, logs.size());
 
-        assertTrue("The origin of the log message (" + logs.get(0).msg + ") looks wrong.",
-                logs.get(0).msg.matches("\\[LogTest.java:\\d+\\].*"));
+        assertTrue("The origin of the log message (" + logs.get(logs.size() - 1).msg
+                        + ") looks wrong.",
+                logs.get(logs.size() - 1).msg.matches("\\[LogTest.java:\\d+\\].*"));
     }
 
     @Test

@@ -8,6 +8,7 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "ui/aura/client/aura_constants.h"
+#include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/rect.h"
@@ -45,13 +46,12 @@ Window* CreateTestWindowWithDelegateAndType(WindowDelegate* delegate,
                                             const gfx::Rect& bounds,
                                             Window* parent,
                                             bool show_on_creation) {
-  Window* window = new Window(delegate);
+  Window* window = new Window(delegate, type);
   window->set_id(id);
-  window->SetType(type);
   window->Init(ui::LAYER_TEXTURED);
-  window->SetProperty(aura::client::kResizeBehaviorKey,
-                      ui::mojom::kResizeBehaviorCanResize |
-                          ui::mojom::kResizeBehaviorCanMaximize);
+  window->SetProperty(
+      client::kResizeBehaviorKey,
+      client::kResizeBehaviorCanResize | client::kResizeBehaviorCanMaximize);
   window->SetBounds(bounds);
   if (show_on_creation)
     window->Show();
@@ -82,11 +82,11 @@ bool LayerIsAbove(Window* upper, Window* lower) {
 
 std::string ChildWindowIDsAsString(aura::Window* parent) {
   std::string result;
-  for (Window::Windows::const_iterator i = parent->children().begin();
-       i != parent->children().end(); ++i) {
+  for (auto i = parent->children().begin(); i != parent->children().end();
+       ++i) {
     if (!result.empty())
       result += " ";
-    result += base::IntToString((*i)->id());
+    result += base::NumberToString((*i)->id());
   }
   return result;
 }

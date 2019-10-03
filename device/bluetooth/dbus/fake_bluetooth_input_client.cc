@@ -6,6 +6,7 @@
 
 #include <map>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "dbus/bus.h"
@@ -30,7 +31,7 @@ void FakeBluetoothInputClient::Properties::Get(
     dbus::PropertyBase* property,
     dbus::PropertySet::GetCallback callback) {
   VLOG(1) << "Get " << property->name();
-  callback.Run(false);
+  std::move(callback).Run(false);
 }
 
 void FakeBluetoothInputClient::Properties::GetAll() {
@@ -41,14 +42,16 @@ void FakeBluetoothInputClient::Properties::Set(
     dbus::PropertyBase* property,
     dbus::PropertySet::SetCallback callback) {
   VLOG(1) << "Set " << property->name();
-  callback.Run(false);
+  std::move(callback).Run(false);
 }
 
 FakeBluetoothInputClient::FakeBluetoothInputClient() = default;
 
 FakeBluetoothInputClient::~FakeBluetoothInputClient() = default;
 
-void FakeBluetoothInputClient::Init(dbus::Bus* bus) {}
+void FakeBluetoothInputClient::Init(dbus::Bus* bus,
+                                    const std::string& bluetooth_service_name) {
+}
 
 void FakeBluetoothInputClient::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);

@@ -4,9 +4,11 @@
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
@@ -26,10 +28,15 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/test/extension_test_message_listener.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
+#endif
+
 namespace keys = extension_management_api_constants;
-namespace util = extension_function_test_utils;
+namespace test_utils = extension_function_test_utils;
 
 namespace extensions {
 
@@ -75,6 +82,52 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest, LaunchApp) {
   ASSERT_TRUE(listener1.WaitUntilSatisfied());
   ASSERT_TRUE(listener2.WaitUntilSatisfied());
 }
+
+#if defined(OS_CHROMEOS)
+
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
+                       NoDemoModeAppLaunchSourceReported) {
+  EXPECT_FALSE(chromeos::DemoSession::IsDeviceInDemoMode());
+
+  base::HistogramTester histogram_tester;
+  // Should see 0 apps launched from the API in the histogram at first.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+
+  ExtensionTestMessageListener app_launched_listener("app_launched", false);
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("management/packaged_app")));
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("management/launch_app")));
+  ASSERT_TRUE(app_launched_listener.WaitUntilSatisfied());
+
+  // Should still see 0 apps launched from the API in the histogram.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
+                       DemoModeAppLaunchSourceReported) {
+  chromeos::DemoSession::SetDemoConfigForTesting(
+      chromeos::DemoSession::DemoModeConfig::kOnline);
+  EXPECT_TRUE(chromeos::DemoSession::IsDeviceInDemoMode());
+
+  base::HistogramTester histogram_tester;
+  // Should see 0 apps launched from the Launcher in the histogram at first.
+  histogram_tester.ExpectTotalCount("DemoMode.AppLaunchSource", 0);
+
+  ExtensionTestMessageListener app_launched_listener("app_launched", false);
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("management/packaged_app")));
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("management/launch_app")));
+  ASSERT_TRUE(app_launched_listener.WaitUntilSatisfied());
+
+  // Should see 1 app launched from the highlights app  in the histogram.
+  histogram_tester.ExpectUniqueSample(
+      "DemoMode.AppLaunchSource",
+      chromeos::DemoSession::AppLaunchSource::kExtensionApi, 1);
+}
+
+#endif
 
 IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
                        LaunchAppFromBackground) {
@@ -126,19 +179,17 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
       new ManagementCreateAppShortcutFunction());
   create_shortcut_function->set_user_gesture(true);
   ManagementCreateAppShortcutFunction::SetAutoConfirmForTest(true);
-  util::RunFunctionAndReturnSingleResult(
+  test_utils::RunFunctionAndReturnSingleResult(
       create_shortcut_function.get(),
-      base::StringPrintf("[\"%s\"]", app_id.c_str()),
-      browser());
+      base::StringPrintf("[\"%s\"]", app_id.c_str()), browser());
 
   create_shortcut_function = new ManagementCreateAppShortcutFunction();
   create_shortcut_function->set_user_gesture(true);
   ManagementCreateAppShortcutFunction::SetAutoConfirmForTest(false);
   EXPECT_TRUE(base::MatchPattern(
-      util::RunFunctionAndReturnError(
+      test_utils::RunFunctionAndReturnError(
           create_shortcut_function.get(),
-          base::StringPrintf("[\"%s\"]", app_id.c_str()),
-          browser()),
+          base::StringPrintf("[\"%s\"]", app_id.c_str()), browser()),
       keys::kCreateShortcutCanceledError));
 }
 
@@ -156,7 +207,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
   scoped_refptr<ManagementGetAllFunction> function =
       new ManagementGetAllFunction();
   std::unique_ptr<base::Value> result(
-      util::RunFunctionAndReturnSingleResult(function.get(), "[]", browser()));
+      test_utils::RunFunctionAndReturnSingleResult(function.get(), "[]",
+                                                   browser()));
   base::ListValue* list;
   ASSERT_TRUE(result->GetAsList(&list));
   EXPECT_EQ(1U, list->GetSize());
@@ -165,8 +217,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiBrowserTest,
   ASSERT_TRUE(CrashEnabledExtension(extension->id()));
 
   function = new ManagementGetAllFunction();
-  result.reset(util::RunFunctionAndReturnSingleResult(
-      function.get(), "[]", browser()));
+  result.reset(test_utils::RunFunctionAndReturnSingleResult(function.get(),
+                                                            "[]", browser()));
   ASSERT_TRUE(result->GetAsList(&list));
   EXPECT_EQ(1U, list->GetSize());
 }
@@ -206,20 +258,21 @@ class ExtensionManagementApiEscalationTest :
                     ->DidExtensionEscalatePermissions(kId));
   }
 
-  void SetEnabled(bool enabled, bool user_gesture,
-                  const std::string& expected_error) {
+  void SetEnabled(bool enabled,
+                  bool user_gesture,
+                  const std::string& expected_error,
+                  scoped_refptr<const Extension> extension) {
     scoped_refptr<ManagementSetEnabledFunction> function(
         new ManagementSetEnabledFunction);
+    function->set_extension(extension);
     const char* const enabled_string = enabled ? "true" : "false";
     if (user_gesture)
       function->set_user_gesture(true);
     function->SetRenderFrameHost(browser()->tab_strip_model()->
         GetActiveWebContents()->GetMainFrame());
-    bool response = util::RunFunction(
-        function.get(),
-        base::StringPrintf("[\"%s\", %s]", kId, enabled_string),
-        browser(),
-        util::NONE);
+    bool response = test_utils::RunFunction(
+        function.get(), base::StringPrintf("[\"%s\", %s]", kId, enabled_string),
+        browser(), api_test_utils::NONE);
     if (expected_error.empty()) {
       EXPECT_EQ(true, response);
     } else {
@@ -240,8 +293,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
                        DisabledReason) {
   scoped_refptr<ManagementGetFunction> function =
       new ManagementGetFunction();
-  std::unique_ptr<base::Value> result(util::RunFunctionAndReturnSingleResult(
-      function.get(), base::StringPrintf("[\"%s\"]", kId), browser()));
+  std::unique_ptr<base::Value> result(
+      test_utils::RunFunctionAndReturnSingleResult(
+          function.get(), base::StringPrintf("[\"%s\"]", kId), browser()));
   ASSERT_TRUE(result.get() != NULL);
   ASSERT_TRUE(result->is_dict());
   base::DictionaryValue* dict =
@@ -253,14 +307,18 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
 
 IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
                        SetEnabled) {
+  scoped_refptr<const Extension> source_extension =
+      ExtensionBuilder("test").Build();
+
   // Expect an error about no gesture.
-  SetEnabled(true, false, keys::kGestureNeededForEscalationError);
+  SetEnabled(true, false, keys::kGestureNeededForEscalationError,
+             source_extension);
 
   {
     // Expect an error that user cancelled the dialog.
     ScopedTestDialogAutoConfirm auto_confirm(
         ScopedTestDialogAutoConfirm::CANCEL);
-    SetEnabled(true, true, keys::kUserDidNotReEnableError);
+    SetEnabled(true, true, keys::kUserDidNotReEnableError, source_extension);
   }
 
   {
@@ -273,7 +331,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
         content::NotificationService::AllSources());
     ScopedTestDialogAutoConfirm auto_confirm(
         ScopedTestDialogAutoConfirm::ACCEPT);
-    SetEnabled(true, true, std::string());
+    SetEnabled(true, true, std::string(), source_extension);
     observer.Wait();
   }
 
@@ -283,8 +341,14 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementApiEscalationTest,
     ScopedTestDialogAutoConfirm auto_confirm(
         ScopedTestDialogAutoConfirm::ACCEPT);
     ASSERT_TRUE(CrashEnabledExtension(kId));
-    SetEnabled(false, true, std::string());
-    SetEnabled(true, true, std::string());
+    // Register the target extension with extension service.
+    scoped_refptr<const Extension> target_extension =
+        ExtensionBuilder("TargetExtension").SetID(kId).Build();
+    ExtensionService* const service =
+        ExtensionSystem::Get(browser()->profile())->extension_service();
+    service->AddExtension(target_extension.get());
+    SetEnabled(false, true, std::string(), source_extension);
+    SetEnabled(true, true, std::string(), source_extension);
     const Extension* extension = ExtensionSystem::Get(browser()->profile())
                                      ->extension_service()
                                      ->GetExtensionById(kId, false);

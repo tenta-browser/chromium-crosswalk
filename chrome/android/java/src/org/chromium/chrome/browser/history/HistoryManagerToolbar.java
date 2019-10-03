@@ -28,6 +28,10 @@ public class HistoryManagerToolbar extends SelectableListToolbar<HistoryItem> {
         super(context, attrs);
         inflateMenu(R.menu.history_manager_menu);
 
+        getMenu()
+                .findItem(R.id.selection_mode_open_in_incognito)
+                .setTitle(R.string.contextmenu_open_in_incognito_tab);
+
         updateMenuItemVisibility();
     }
 
@@ -76,8 +80,8 @@ public class HistoryManagerToolbar extends SelectableListToolbar<HistoryItem> {
     }
 
     @Override
-    protected void onDataChanged(int numItems) {
-        super.onDataChanged(numItems);
+    public void setSearchEnabled(boolean searchEnabled) {
+        super.setSearchEnabled(searchEnabled);
         updateInfoMenuItem(
                 mManager.shouldShowInfoButton(), mManager.shouldShowInfoHeaderIfAvailable());
     }

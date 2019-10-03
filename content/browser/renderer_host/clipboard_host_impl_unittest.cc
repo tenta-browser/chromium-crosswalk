@@ -6,112 +6,88 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
-#include "base/memory/ref_counted.h"
-#include "base/process/process_handle.h"
+#include "base/bind_helpers.h"
+#include "base/callback_helpers.h"
 #include "base/run_loop.h"
-#include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "base/strings/string16.h"
+#include "base/test/bind_test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "mojo/public/cpp/system/platform_handle.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/base/test/test_clipboard.h"
-#include "ui/gfx/geometry/size.h"
+#include "ui/base/clipboard/test/test_clipboard.h"
+#include "ui/gfx/skia_util.h"
 
 namespace content {
 
 class ClipboardHostImplTest : public ::testing::Test {
  protected:
   ClipboardHostImplTest()
-      : host_(new ClipboardHostImpl(nullptr)),
-        clipboard_(ui::TestClipboard::CreateForCurrentThread()) {}
+      : clipboard_(ui::TestClipboard::CreateForCurrentThread()) {
+    ClipboardHostImpl::Create(mojo::MakeRequest(&ptr_));
+  }
 
   ~ClipboardHostImplTest() override {
     ui::Clipboard::DestroyClipboardForCurrentThread();
   }
 
-  void CallWriteImage(const gfx::Size& size,
-                      mojo::ScopedSharedBufferHandle shared_memory,
-                      size_t shared_memory_size) {
-    host_->WriteImage(
-        ui::CLIPBOARD_TYPE_COPY_PASTE, size,
-        shared_memory->Clone(mojo::SharedBufferHandle::AccessMode::READ_ONLY));
-  }
+  blink::mojom::ClipboardHostPtr& mojo_clipboard() { return ptr_; }
 
-  void CallCommitWrite() {
-    host_->CommitWrite(ui::CLIPBOARD_TYPE_COPY_PASTE);
-    base::RunLoop().RunUntilIdle();
-  }
-
-  ui::Clipboard* clipboard() { return clipboard_; }
+  ui::Clipboard* system_clipboard() { return clipboard_; }
 
  private:
   const TestBrowserThreadBundle thread_bundle_;
-  const std::unique_ptr<ClipboardHostImpl> host_;
+  blink::mojom::ClipboardHostPtr ptr_;
   ui::Clipboard* const clipboard_;
 };
 
 // Test that it actually works.
 TEST_F(ClipboardHostImplTest, SimpleImage) {
-  static const uint32_t bitmap_data[] = {
-      0x33333333, 0xdddddddd, 0xeeeeeeee, 0x00000000, 0x88888888, 0x66666666,
-      0x55555555, 0xbbbbbbbb, 0x44444444, 0xaaaaaaaa, 0x99999999, 0x77777777,
-      0xffffffff, 0x11111111, 0x22222222, 0xcccccccc,
-  };
-
-  mojo::ScopedSharedBufferHandle shared_memory =
-      mojo::SharedBufferHandle::Create(sizeof(bitmap_data));
-  mojo::ScopedSharedBufferMapping mapping =
-      shared_memory->Map(sizeof(bitmap_data));
-
-  memcpy(mapping.get(), bitmap_data, sizeof(bitmap_data));
-
-  CallWriteImage(gfx::Size(4, 4), std::move(shared_memory),
-                 sizeof(bitmap_data));
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(3, 2);
+  bitmap.eraseARGB(255, 0, 255, 0);
+  mojo_clipboard()->WriteImage(bitmap);
   uint64_t sequence_number =
-      clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE);
-  CallCommitWrite();
+      system_clipboard()->GetSequenceNumber(ui::ClipboardType::kCopyPaste);
+  mojo_clipboard()->CommitWrite();
+  base::RunLoop().RunUntilIdle();
 
-  EXPECT_NE(sequence_number,
-            clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  EXPECT_FALSE(clipboard()->IsFormatAvailable(
-      ui::Clipboard::GetPlainTextFormatType(), ui::CLIPBOARD_TYPE_COPY_PASTE));
-  EXPECT_TRUE(clipboard()->IsFormatAvailable(
-      ui::Clipboard::GetBitmapFormatType(), ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_NE(sequence_number, system_clipboard()->GetSequenceNumber(
+                                 ui::ClipboardType::kCopyPaste));
+  EXPECT_FALSE(system_clipboard()->IsFormatAvailable(
+      ui::ClipboardFormatType::GetPlainTextType(),
+      ui::ClipboardType::kCopyPaste));
+  EXPECT_TRUE(system_clipboard()->IsFormatAvailable(
+      ui::ClipboardFormatType::GetBitmapType(), ui::ClipboardType::kCopyPaste));
 
-  SkBitmap actual = clipboard()->ReadImage(ui::CLIPBOARD_TYPE_COPY_PASTE);
-  EXPECT_EQ(sizeof(bitmap_data), actual.computeByteSize());
-  EXPECT_EQ(0,
-            memcmp(bitmap_data, actual.getAddr32(0, 0), sizeof(bitmap_data)));
+  SkBitmap actual =
+      system_clipboard()->ReadImage(ui::ClipboardType::kCopyPaste);
+  EXPECT_TRUE(gfx::BitmapsAreEqual(bitmap, actual));
 }
 
-// Test with a size that would overflow a naive 32-bit row bytes calculation.
-TEST_F(ClipboardHostImplTest, ImageSizeOverflows32BitRowBytes) {
-  mojo::ScopedSharedBufferHandle shared_memory =
-      mojo::SharedBufferHandle::Create(0x20000000);
+TEST_F(ClipboardHostImplTest, ReentrancyInSyncCall) {
+  // Due to the nature of this test, it's somewhat racy. On some platforms
+  // (currently Linux), reading the clipboard requires running a nested message
+  // loop. During that time, it's possible to send a bad message that causes the
+  // message pipe to be closed. Make sure ClipboardHostImpl doesn't UaF |this|
+  // after exiting the nested message loop.
 
-  mojo::ScopedSharedBufferMapping mapping = shared_memory->Map(0x20000000);
+  // ReadText() is a sync method, so normally, one wouldn't call this method
+  // directly. These are not normal times though...
+  mojo_clipboard()->ReadText(ui::ClipboardType::kCopyPaste, base::DoNothing());
 
-  CallWriteImage(gfx::Size(0x20000000, 1), std::move(shared_memory),
-                 0x20000000);
-  uint64_t sequence_number =
-      clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE);
-  CallCommitWrite();
+  // Now purposely write a raw message which (hopefully) won't deserialize to
+  // anything valid. The receiver side should still be in the midst of
+  // dispatching ReadText() when Mojo attempts to deserialize this message,
+  // which should cause a validation failure that signals a connection error.
+  base::RunLoop run_loop;
+  mojo::WriteMessageRaw(mojo_clipboard().internal_state()->handle(), "moo", 3,
+                        nullptr, 0, MOJO_WRITE_MESSAGE_FLAG_NONE);
+  mojo_clipboard().set_connection_error_handler(run_loop.QuitClosure());
+  run_loop.Run();
 
-  EXPECT_EQ(sequence_number,
-            clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE));
-}
-
-TEST_F(ClipboardHostImplTest, InvalidSharedMemoryHandle) {
-  mojo::ScopedSharedBufferHandle shared_memory;
-  CallWriteImage(gfx::Size(5, 5), std::move(shared_memory), 0);
-  uint64_t sequence_number =
-      clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE);
-  CallCommitWrite();
-
-  EXPECT_EQ(sequence_number,
-            clipboard()->GetSequenceNumber(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_TRUE(mojo_clipboard().encountered_error());
 }
 
 }  // namespace content

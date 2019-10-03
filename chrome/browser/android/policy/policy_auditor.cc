@@ -2,22 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/android/chrome_jni_headers/PolicyAuditor_jni.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/PolicyAuditor_jni.h"
 #include "net/cert/cert_status_flags.h"
 
 using base::android::JavaParamRef;
 
 int JNI_PolicyAuditor_GetCertificateFailure(
     JNIEnv* env,
-    const JavaParamRef<jclass>& obj,
     const JavaParamRef<jobject>& java_web_contents) {
   // This function is similar to
-  // ToolbarModelImpl::GetSecurityLevelForWebContents, but has a custom mapping
-  // for policy auditing
+  // LocationBarModelImpl::GetSecurityLevelForWebContents, but has a custom
+  // mapping for policy auditing.
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.policy
   // GENERATED_JAVA_PREFIX_TO_STRIP: CERTIFICATE_FAIL_
   enum CertificateFailure {

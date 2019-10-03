@@ -9,13 +9,18 @@
 #include <utility>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/process/process_handle.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
+#include "chrome/browser/resource_coordinator/test_lifecycle_unit.h"
 #include "chrome/browser/resource_coordinator/time.h"
 #include "chromeos/dbus/fake_debug_daemon_client.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace resource_coordinator {
+namespace {
 
 class TabManagerDelegateTest : public testing::Test {
  public:
@@ -26,9 +31,9 @@ class TabManagerDelegateTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
 };
 
-namespace {
 constexpr bool kIsFocused = true;
 constexpr bool kNotFocused = false;
+
 }  // namespace
 
 TEST_F(TabManagerDelegateTest, CandidatesSorted) {
@@ -36,62 +41,46 @@ TEST_F(TabManagerDelegateTest, CandidatesSorted) {
   arc_processes.emplace_back(1, 10, "focused", arc::mojom::ProcessState::TOP,
                              kIsFocused, 100);
   arc_processes.emplace_back(2, 20, "visible1", arc::mojom::ProcessState::TOP,
-                             kNotFocused, 200);
+                             kNotFocused, 6000);
   arc_processes.emplace_back(
-      3, 30, "service", arc::mojom::ProcessState::SERVICE, kNotFocused, 500);
+      3, 30, "service", arc::mojom::ProcessState::SERVICE, kNotFocused, 2001);
   arc_processes.emplace_back(4, 40, "visible2", arc::mojom::ProcessState::TOP,
-                             kNotFocused, 150);
+                             kNotFocused, 5001);
 
-  TabStats tab1, tab2, tab3, tab4, tab5;
-  tab1.id = 100;
-  tab1.is_pinned = true;
-
-  tab2.id = 200;
-  tab2.is_internal_page = true;
-
-  tab3.id = 300;
-  tab3.is_pinned = true;
-  tab3.is_media = true;
-
-  tab4.id = 400;
-  tab4.is_media = true;
-
-  tab5.id = 500;
-  tab5.is_app = true;
-  TabStatsList tab_list = {tab1, tab2, tab3, tab4, tab5};
+  TestLifecycleUnit focused_lifecycle_unit(base::TimeTicks::Max());
+  TestLifecycleUnit protected_lifecycle_unit(
+      base::TimeTicks() + base::TimeDelta::FromSeconds(5), 0, false);
+  TestLifecycleUnit non_focused_lifecycle_unit(base::TimeTicks() +
+                                               base::TimeDelta::FromSeconds(1));
+  TestLifecycleUnit other_non_focused_lifecycle_unit(
+      base::TimeTicks() + base::TimeDelta::FromSeconds(2));
+  LifecycleUnitVector lifecycle_units{
+      &focused_lifecycle_unit, &protected_lifecycle_unit,
+      &non_focused_lifecycle_unit, &other_non_focused_lifecycle_unit};
 
   std::vector<TabManagerDelegate::Candidate> candidates;
 
-  candidates = TabManagerDelegate::GetSortedCandidates(tab_list, arc_processes);
-  ASSERT_EQ(9U, candidates.size());
+  TabManagerDelegate::OptionalArcProcessList opt_arc_processes(
+      std::move(arc_processes));
+  candidates = TabManagerDelegate::GetSortedCandidates(lifecycle_units,
+                                                       opt_arc_processes);
+  ASSERT_EQ(8U, candidates.size());
 
+  // focused LifecycleUnit
+  EXPECT_EQ(candidates[0].lifecycle_unit(), &focused_lifecycle_unit);
   // focused app.
-  ASSERT_TRUE(candidates[0].app());
-  EXPECT_EQ("focused", candidates[0].app()->process_name());
+  EXPECT_EQ("focused", candidates[1].app()->process_name());
   // visible app 1, last_activity_time larger than visible app 2.
-  ASSERT_TRUE(candidates[1].app());
-  EXPECT_EQ("visible1", candidates[1].app()->process_name());
+  EXPECT_EQ("visible1", candidates[2].app()->process_name());
   // visible app 2, last_activity_time less than visible app 1.
-  ASSERT_TRUE(candidates[2].app());
-  EXPECT_EQ("visible2", candidates[2].app()->process_name());
+  EXPECT_EQ("visible2", candidates[3].app()->process_name());
+  EXPECT_EQ(candidates[4].lifecycle_unit(), &protected_lifecycle_unit);
   // background service.
-  ASSERT_TRUE(candidates[3].app());
-  EXPECT_EQ("service", candidates[3].app()->process_name());
-  // pinned and media.
-  ASSERT_TRUE(candidates[4].tab());
-  EXPECT_EQ(300, candidates[4].tab()->id);
-  // media.
-  ASSERT_TRUE(candidates[5].tab());
-  EXPECT_EQ(400, candidates[5].tab()->id);
-  // pinned.
-  ASSERT_TRUE(candidates[6].tab());
-  EXPECT_EQ(100, candidates[6].tab()->id);
-  // chrome app.
-  ASSERT_TRUE(candidates[7].tab());
-  EXPECT_EQ(500, candidates[7].tab()->id);
-  // internal page.
-  ASSERT_TRUE(candidates[8].tab());
-  EXPECT_EQ(200, candidates[8].tab()->id);
+  EXPECT_EQ("service", candidates[5].app()->process_name());
+  // protected LifecycleUnit
+  // non-focused LifecycleUnits, sorted by last focused time.
+  EXPECT_EQ(candidates[6].lifecycle_unit(), &other_non_focused_lifecycle_unit);
+  EXPECT_EQ(candidates[7].lifecycle_unit(), &non_focused_lifecycle_unit);
 }
 
 // Occasionally, Chrome sees both FOCUSED_TAB and FOCUSED_APP at the same time.
@@ -100,21 +89,82 @@ TEST_F(TabManagerDelegateTest, CandidatesSortedWithFocusedAppAndTab) {
   std::vector<arc::ArcProcess> arc_processes;
   arc_processes.emplace_back(1, 10, "focused", arc::mojom::ProcessState::TOP,
                              kIsFocused, 100);
-  TabStats tab1;
-  tab1.id = 100;
-  tab1.is_pinned = true;
-  tab1.is_in_active_window = true;
-  tab1.is_active = true;
-  const TabStatsList tab_list = {tab1};
 
+  TestLifecycleUnit focused_lifecycle_unit(base::TimeTicks::Max());
+  LifecycleUnitVector lifecycle_units{&focused_lifecycle_unit};
+
+  TabManagerDelegate::OptionalArcProcessList opt_arc_processes(
+      std::move(arc_processes));
   const std::vector<TabManagerDelegate::Candidate> candidates =
-      TabManagerDelegate::GetSortedCandidates(tab_list, arc_processes);
+      TabManagerDelegate::GetSortedCandidates(lifecycle_units,
+                                              opt_arc_processes);
   ASSERT_EQ(2U, candidates.size());
   // FOCUSED_TAB should be the first one.
-  ASSERT_TRUE(candidates[0].tab());
-  EXPECT_EQ(100, candidates[0].tab()->id);
-  ASSERT_TRUE(candidates[1].app());
+  EXPECT_EQ(&focused_lifecycle_unit, candidates[0].lifecycle_unit());
   EXPECT_EQ("focused", candidates[1].app()->process_name());
+}
+
+// Test to make sure old process types are active when TabRanker experiment
+// is turned on.
+TEST_F(TabManagerDelegateTest, SortLifecycleUnitWithTabRanker) {
+  std::vector<arc::ArcProcess> arc_processes;
+  arc_processes.emplace_back(1, 10, "focused", arc::mojom::ProcessState::TOP,
+                             kIsFocused, 99);
+  arc_processes.emplace_back(2, 20, "visible1", arc::mojom::ProcessState::TOP,
+                             kNotFocused, 89);
+  arc_processes.emplace_back(
+      3, 30, "service", arc::mojom::ProcessState::SERVICE, kNotFocused, 95);
+
+  TestLifecycleUnit tab1(
+      base::TimeTicks() + base::TimeDelta::FromMilliseconds(100), 4);
+  TestLifecycleUnit tab2(
+      base::TimeTicks() + base::TimeDelta::FromMilliseconds(90), 5, false);
+  TestLifecycleUnit tab3(
+      base::TimeTicks() + base::TimeDelta::FromMilliseconds(80), 6);
+  LifecycleUnitVector lifecycle_units{&tab1, &tab2, &tab3};
+
+  TabManagerDelegate::OptionalArcProcessList opt_arc_processes(
+      std::move(arc_processes));
+  std::vector<TabManagerDelegate::Candidate> candidates;
+  candidates = TabManagerDelegate::GetSortedCandidates(lifecycle_units,
+                                                       opt_arc_processes);
+  // Verify the original order.
+  ASSERT_EQ(6U, candidates.size());
+
+  EXPECT_EQ("focused", candidates[0].app()->process_name());
+  EXPECT_EQ(ProcessType::FOCUSED_APP, candidates[0].process_type());
+
+  EXPECT_EQ(&tab2, candidates[1].lifecycle_unit());
+  EXPECT_EQ(ProcessType::PROTECTED_BACKGROUND, candidates[1].process_type());
+
+  EXPECT_EQ("visible1", candidates[2].app()->process_name());
+  EXPECT_EQ(ProcessType::PROTECTED_BACKGROUND, candidates[2].process_type());
+
+  EXPECT_EQ(&tab1, candidates[3].lifecycle_unit());
+  EXPECT_EQ(ProcessType::BACKGROUND, candidates[3].process_type());
+
+  EXPECT_EQ("service", candidates[4].app()->process_name());
+  EXPECT_EQ(ProcessType::BACKGROUND, candidates[4].process_type());
+
+  EXPECT_EQ(&tab3, candidates[5].lifecycle_unit());
+  EXPECT_EQ(ProcessType::BACKGROUND, candidates[5].process_type());
+
+  auto oldest_first = [](LifecycleUnitVector* lifecycle_units) {
+    std::sort(lifecycle_units->begin(), lifecycle_units->end(),
+              [](LifecycleUnit* a, LifecycleUnit* b) {
+                return a->GetLastFocusedTime() < b->GetLastFocusedTime();
+              });
+  };
+
+  // Verify the re-ranked order.
+  TabManagerDelegate::SortLifecycleUnitWithTabRanker(
+      &candidates, base::BindOnce(oldest_first));
+  EXPECT_EQ("focused", candidates[0].app()->process_name());
+  EXPECT_EQ(&tab2, candidates[1].lifecycle_unit());
+  EXPECT_EQ("visible1", candidates[2].app()->process_name());
+  EXPECT_EQ(&tab3, candidates[3].lifecycle_unit());
+  EXPECT_EQ("service", candidates[4].app()->process_name());
+  EXPECT_EQ(&tab1, candidates[5].lifecycle_unit());
 }
 
 class MockTabManagerDelegate : public TabManagerDelegate {
@@ -131,7 +181,7 @@ class MockTabManagerDelegate : public TabManagerDelegate {
   std::vector<int> GetKilledArcProcesses() { return killed_arc_processes_; }
 
   // unit test.
-  std::vector<int64_t> GetKilledTabs() { return killed_tabs_; }
+  LifecycleUnitVector GetKilledTabs() { return killed_tabs_; }
 
   // unit test.
   void Clear() {
@@ -144,6 +194,10 @@ class MockTabManagerDelegate : public TabManagerDelegate {
       bool always_return_true_from_is_recently_killed) {
     always_return_true_from_is_recently_killed_ =
         always_return_true_from_is_recently_killed;
+  }
+
+  void AddLifecycleUnit(LifecycleUnit* lifecycle_unit) {
+    lifecycle_units_.push_back(lifecycle_unit);
   }
 
   bool IsRecentlyKilledArcProcess(const std::string& process_name,
@@ -159,19 +213,23 @@ class MockTabManagerDelegate : public TabManagerDelegate {
     return true;
   }
 
-  bool KillTab(const TabStats& tab_stats, DiscardReason reason) override {
-    killed_tabs_.push_back(tab_stats.id);
+  bool KillTab(LifecycleUnit* lifecycle_unit,
+               ::mojom::LifecycleUnitDiscardReason reason) override {
+    killed_tabs_.push_back(lifecycle_unit);
     return true;
   }
+
+  LifecycleUnitVector GetLifecycleUnits() override { return lifecycle_units_; }
 
   chromeos::DebugDaemonClient* GetDebugDaemonClient() override {
     return &debugd_client_;
   }
 
  private:
+  LifecycleUnitVector lifecycle_units_;
   chromeos::FakeDebugDaemonClient debugd_client_;
   std::vector<int> killed_arc_processes_;
-  std::vector<int64_t> killed_tabs_;
+  LifecycleUnitVector killed_tabs_;
   bool always_return_true_from_is_recently_killed_;
 };
 
@@ -220,38 +278,35 @@ TEST_F(TabManagerDelegateTest, SetOomScoreAdj) {
                              arc::mojom::ProcessState::PERSISTENT_UI,
                              kNotFocused, 700);
 
-  TabStats tab1, tab2, tab3, tab4, tab5;
-  tab1.is_pinned = true;
-  tab1.renderer_handle = 11;
-
-  tab2.is_internal_page = true;
-  tab2.renderer_handle = 11;
-
-  tab3.is_pinned = true;
-  tab3.is_media = true;
-  tab3.renderer_handle = 12;
-
-  tab4.is_media = true;
-  tab4.renderer_handle = 12;
-
-  tab5.is_app = true;
-  tab5.renderer_handle = 12;
-  TabStatsList tab_list = {tab1, tab2, tab3, tab4, tab5};
+  TestLifecycleUnit tab1(base::TimeTicks() + base::TimeDelta::FromSeconds(3),
+                         11);
+  tab_manager_delegate.AddLifecycleUnit(&tab1);
+  TestLifecycleUnit tab2(base::TimeTicks() + base::TimeDelta::FromSeconds(1),
+                         11);
+  tab_manager_delegate.AddLifecycleUnit(&tab2);
+  TestLifecycleUnit tab3(base::TimeTicks() + base::TimeDelta::FromSeconds(5),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab3);
+  TestLifecycleUnit tab4(base::TimeTicks() + base::TimeDelta::FromSeconds(4),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab4);
+  TestLifecycleUnit tab5(base::TimeTicks() + base::TimeDelta::FromSeconds(2),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab5);
 
   // Sorted order (by GetSortedCandidates):
   // app "focused"       pid: 10
-  // app "persistent"    pid: 50
-  // app "persistent_ui" pid: 60
   // app "visible1"      pid: 20
   // app "visible2"      pid: 40
-  // app "service"       pid: 30
   // tab3                pid: 12
   // tab4                pid: 12
   // tab1                pid: 11
   // tab5                pid: 12
   // tab2                pid: 11
-  tab_manager_delegate.AdjustOomPrioritiesImpl(tab_list,
-                                               std::move(arc_processes));
+  // app "persistent"    pid: 50
+  // app "persistent_ui" pid: 60
+  // app "service"       pid: 30
+  tab_manager_delegate.AdjustOomPrioritiesImpl(std::move(arc_processes));
   auto& oom_score_map = tab_manager_delegate.oom_score_map_;
 
   // 6 PIDs for apps + 2 PIDs for tabs.
@@ -260,18 +315,18 @@ TEST_F(TabManagerDelegateTest, SetOomScoreAdj) {
   // Non-killable part. AdjustOomPrioritiesImpl() does make a focused app/tab
   // kernel-killable, but does not do that for PERSISTENT and PERSISTENT_UI
   // apps.
-  EXPECT_EQ(TabManagerDelegate::kLowestOomScore, oom_score_map[50]);
-  EXPECT_EQ(TabManagerDelegate::kLowestOomScore, oom_score_map[60]);
+  EXPECT_EQ(TabManagerDelegate::kPersistentArcAppOomScore, oom_score_map[50]);
+  EXPECT_EQ(TabManagerDelegate::kPersistentArcAppOomScore, oom_score_map[60]);
 
   // Higher priority part.
   EXPECT_EQ(300, oom_score_map[10]);
-  EXPECT_EQ(388, oom_score_map[20]);
-  EXPECT_EQ(475, oom_score_map[40]);
-  EXPECT_EQ(563, oom_score_map[30]);
+  EXPECT_EQ(417, oom_score_map[20]);
+  EXPECT_EQ(533, oom_score_map[40]);
 
   // Lower priority part.
   EXPECT_EQ(650, oom_score_map[12]);
-  EXPECT_EQ(720, oom_score_map[11]);
+  EXPECT_EQ(708, oom_score_map[11]);
+  EXPECT_EQ(767, oom_score_map[30]);
 }
 
 TEST_F(TabManagerDelegateTest, IsRecentlyKilledArcProcess) {
@@ -337,9 +392,10 @@ TEST_F(TabManagerDelegateTest, DoNotKillRecentlyKilledArcProcesses) {
 
   memory_stat->SetTargetMemoryToFreeKB(250000);
   memory_stat->SetProcessPss(30, 10000);
-  TabStatsList tab_list;
-  tab_manager_delegate.LowMemoryKillImpl(DiscardReason::kUrgent, tab_list,
-                                         arc_processes);
+  tab_manager_delegate.LowMemoryKillImpl(
+      base::TimeTicks::Now(), ::mojom::LifecycleUnitDiscardReason::URGENT,
+      TabManager::TabDiscardDoneCB(base::DoNothing()),
+      std::move(arc_processes));
 
   auto killed_arc_processes = tab_manager_delegate.GetKilledArcProcesses();
   EXPECT_EQ(0U, killed_arc_processes.size());
@@ -369,80 +425,82 @@ TEST_F(TabManagerDelegateTest, KillMultipleProcesses) {
                              arc::mojom::ProcessState::PERSISTENT, kNotFocused,
                              400);
 
-  TabStats tab1, tab2, tab3, tab4, tab5;
-  tab1.is_pinned = true;
-  tab1.renderer_handle = 11;
-  tab1.id = 1;
-
-  tab2.is_internal_page = true;
-  tab2.renderer_handle = 11;
-  tab2.id = 2;
-
-  tab3.is_pinned = true;
-  tab3.is_media = true;
-  tab3.renderer_handle = 12;
-  tab3.id = 3;
-
-  tab4.is_media = true;
-  tab4.renderer_handle = 12;
-  tab4.id = 4;
-
-  tab5.is_app = true;
-  tab5.renderer_handle = 12;
-  tab5.id = 5;
-  TabStatsList tab_list = {tab1, tab2, tab3, tab4, tab5};
+  TestLifecycleUnit tab1(base::TimeTicks() + base::TimeDelta::FromSeconds(3),
+                         11);
+  tab_manager_delegate.AddLifecycleUnit(&tab1);
+  TestLifecycleUnit tab2(base::TimeTicks() + base::TimeDelta::FromSeconds(1),
+                         11);
+  tab_manager_delegate.AddLifecycleUnit(&tab2);
+  TestLifecycleUnit tab3(base::TimeTicks() + base::TimeDelta::FromSeconds(5),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab3);
+  TestLifecycleUnit tab4(base::TimeTicks() + base::TimeDelta::FromSeconds(4),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab4);
+  TestLifecycleUnit tab5(base::TimeTicks() + base::TimeDelta::FromSeconds(2),
+                         12);
+  tab_manager_delegate.AddLifecycleUnit(&tab5);
 
   // Sorted order (by GetSortedCandidates):
   // app "focused"     pid: 10  nspid 1
-  // app "persistent"  pid: 60  nspid 6
+  // app "not-visible" pid: 50  nspid 5
   // app "visible1"    pid: 20  nspid 2
   // app "visible2"    pid: 40  nspid 4
-  // app "not-visible" pid: 50  nspid 5
-  // app "service"     pid: 30  nspid 3
   // tab3              pid: 12  id 3
   // tab4              pid: 12  id 4
   // tab1              pid: 11  id 1
   // tab5              pid: 12  id 5
   // tab2              pid: 11  id 2
+  // app "service"     pid: 30  nspid 3
+  // app "persistent"  pid: 60  nspid 6
   memory_stat->SetTargetMemoryToFreeKB(250000);
+
+  // TODO(wvk) For now the estimation of freed memory for tabs is 0, but we
+  // probably want to fix it later by implementing
+  // TestLifecycleUnit::GetEstimatedMemoryFreedOnDiscardKB.
   // Entities to be killed.
-  memory_stat->SetProcessPss(11, 50000);
-  memory_stat->SetProcessPss(12, 30000);
-  memory_stat->SetProcessPss(30, 10000);
-  memory_stat->SetProcessPss(50, 60000);
-  // Should not be used.
-  memory_stat->SetProcessPss(60, 500000);
-  memory_stat->SetProcessPss(40, 50000);
   memory_stat->SetProcessPss(20, 30000);
+  memory_stat->SetProcessPss(30, 10000);
+  memory_stat->SetProcessPss(40, 50000);
+  memory_stat->SetProcessPss(50, 60000);
+  // Should not be killed.
+  memory_stat->SetProcessPss(60, 500000);
   memory_stat->SetProcessPss(10, 100000);
 
-  tab_manager_delegate.LowMemoryKillImpl(DiscardReason::kProactive, tab_list,
-                                         arc_processes);
+  tab_manager_delegate.LowMemoryKillImpl(
+      base::TimeTicks::Now(), ::mojom::LifecycleUnitDiscardReason::PROACTIVE,
+      TabManager::TabDiscardDoneCB(base::DoNothing()),
+      std::move(arc_processes));
 
   auto killed_arc_processes = tab_manager_delegate.GetKilledArcProcesses();
   auto killed_tabs = tab_manager_delegate.GetKilledTabs();
 
-  // Killed apps and their nspid.
-  ASSERT_EQ(2U, killed_arc_processes.size());
+  // Killed apps and their nspid. All of the apps (except the focused app
+  // and the app marked as persistent) should have been killed.
+  ASSERT_EQ(4U, killed_arc_processes.size());
   EXPECT_EQ(3, killed_arc_processes[0]);
-  EXPECT_EQ(5, killed_arc_processes[1]);
+  EXPECT_EQ(4, killed_arc_processes[1]);
+  EXPECT_EQ(2, killed_arc_processes[2]);
+  EXPECT_EQ(5, killed_arc_processes[3]);
   // Killed tabs and their content id.
   // Note that process with pid 11 is counted twice and pid 12 is counted 3
   // times. But so far I don't have a good way to estimate the memory freed
   // if multiple tabs share one process.
   ASSERT_EQ(5U, killed_tabs.size());
-  EXPECT_EQ(2, killed_tabs[0]);
-  EXPECT_EQ(5, killed_tabs[1]);
-  EXPECT_EQ(1, killed_tabs[2]);
-  EXPECT_EQ(4, killed_tabs[3]);
-  EXPECT_EQ(3, killed_tabs[4]);
+  EXPECT_EQ(&tab2, killed_tabs[0]);
+  EXPECT_EQ(&tab5, killed_tabs[1]);
+  EXPECT_EQ(&tab1, killed_tabs[2]);
+  EXPECT_EQ(&tab4, killed_tabs[3]);
+  EXPECT_EQ(&tab3, killed_tabs[4]);
 
   // Check that killed apps are in the map.
   const TabManagerDelegate::KilledArcProcessesMap& processes_map =
       tab_manager_delegate.recently_killed_arc_processes_;
-  EXPECT_EQ(2U, processes_map.size());
+  EXPECT_EQ(4U, processes_map.size());
   EXPECT_EQ(1U, processes_map.count("service"));
   EXPECT_EQ(1U, processes_map.count("not-visible"));
+  EXPECT_EQ(1U, processes_map.count("visible1"));
+  EXPECT_EQ(1U, processes_map.count("visible2"));
 }
 
 }  // namespace resource_coordinator

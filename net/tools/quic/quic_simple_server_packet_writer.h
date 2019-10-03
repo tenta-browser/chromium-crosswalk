@@ -10,55 +10,56 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "net/quic/core/quic_connection.h"
-#include "net/quic/core/quic_packet_writer.h"
-#include "net/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_connection.h"
+#include "net/third_party/quiche/src/quic/core/quic_packet_writer.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 
-namespace net {
-
+namespace quic {
 class QuicDispatcher;
+}  // namespace quic
+namespace net {
 class UDPServerSocket;
+}  // namespace net
+namespace quic {
 struct WriteResult;
-
+}  // namespace quic
+namespace net {
 
 // Chrome specific packet writer which uses a UDPServerSocket for writing
 // data.
-class QuicSimpleServerPacketWriter : public QuicPacketWriter {
+class QuicSimpleServerPacketWriter : public quic::QuicPacketWriter {
  public:
-  typedef base::Callback<void(WriteResult)> WriteCallback;
+  typedef base::Callback<void(quic::WriteResult)> WriteCallback;
 
   QuicSimpleServerPacketWriter(UDPServerSocket* socket,
-                               QuicDispatcher* dispatcher);
+                               quic::QuicDispatcher* dispatcher);
   ~QuicSimpleServerPacketWriter() override;
 
-  // Wraps WritePacket, and ensures that |callback| is run on successful write.
-  WriteResult WritePacketWithCallback(const char* buffer,
-                                      size_t buf_len,
-                                      const QuicIpAddress& self_address,
-                                      const QuicSocketAddress& peer_address,
-                                      PerPacketOptions* options,
-                                      WriteCallback callback);
-
-  WriteResult WritePacket(const char* buffer,
-                          size_t buf_len,
-                          const QuicIpAddress& self_address,
-                          const QuicSocketAddress& peer_address,
-                          PerPacketOptions* options) override;
+  quic::WriteResult WritePacket(const char* buffer,
+                                size_t buf_len,
+                                const quic::QuicIpAddress& self_address,
+                                const quic::QuicSocketAddress& peer_address,
+                                quic::PerPacketOptions* options) override;
 
   void OnWriteComplete(int rv);
 
-  // QuicPacketWriter implementation:
-  bool IsWriteBlockedDataBuffered() const override;
+  // quic::QuicPacketWriter implementation:
   bool IsWriteBlocked() const override;
   void SetWritable() override;
-  QuicByteCount GetMaxPacketSize(
-      const QuicSocketAddress& peer_address) const override;
+  quic::QuicByteCount GetMaxPacketSize(
+      const quic::QuicSocketAddress& peer_address) const override;
+  bool SupportsReleaseTime() const override;
+  bool IsBatchMode() const override;
+  char* GetNextWriteLocation(
+      const quic::QuicIpAddress& self_address,
+      const quic::QuicSocketAddress& peer_address) override;
+  quic::WriteResult Flush() override;
 
  private:
   UDPServerSocket* socket_;
 
   // To be notified after every successful asynchronous write.
-  QuicDispatcher* dispatcher_;
+  quic::QuicDispatcher* dispatcher_;
 
   // To call once the write completes.
   WriteCallback callback_;
@@ -66,7 +67,7 @@ class QuicSimpleServerPacketWriter : public QuicPacketWriter {
   // Whether a write is currently in flight.
   bool write_blocked_;
 
-  base::WeakPtrFactory<QuicSimpleServerPacketWriter> weak_factory_;
+  base::WeakPtrFactory<QuicSimpleServerPacketWriter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(QuicSimpleServerPacketWriter);
 };

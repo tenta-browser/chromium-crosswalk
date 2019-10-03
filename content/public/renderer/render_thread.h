@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <memory>
 
 #include "base/callback.h"
 #include "base/memory/shared_memory.h"
@@ -15,6 +16,7 @@
 #include "content/common/content_export.h"
 #include "content/public/child/child_thread.h"
 #include "ipc/ipc_channel_proxy.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 class GURL;
 
@@ -23,8 +25,10 @@ class WaitableEvent;
 }
 
 namespace blink {
+struct UserAgentMetadata;
+
 namespace scheduler {
-enum class RendererProcessType;
+enum class WebRendererProcessType;
 }
 }  // namespace blink
 
@@ -38,10 +42,6 @@ namespace v8 {
 class Extension;
 }
 
-namespace viz {
-class SharedBitmapManager;
-}
-
 namespace content {
 
 class RenderThreadObserver;
@@ -52,6 +52,9 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   // Returns the one render thread for this process.  Note that this can only
   // be accessed when running on the render thread itself.
   static RenderThread* Get();
+
+  // Returns true if the current thread is the main thread.
+  static bool IsMainThread();
 
   RenderThread();
   ~RenderThread() override;
@@ -78,29 +81,20 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   virtual void SetResourceDispatcherDelegate(
       ResourceDispatcherDelegate* delegate) = 0;
 
+  // DEPRECATED: Use mojo::Create*SharedMemoryRegion (see
+  // mojo/public/cpp/base/shared_memory_utils.h) instead.
+  //
   // Asks the host to create a block of shared memory for the renderer.
   // The shared memory allocated by the host is returned back.
   virtual std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
       size_t buffer_size) = 0;
 
-  virtual viz::SharedBitmapManager* GetSharedBitmapManager() = 0;
-
   // Registers the given V8 extension with WebKit.
-  virtual void RegisterExtension(v8::Extension* extension) = 0;
-
-  // Schedule a call to IdleHandler with the given initial delay.
-  virtual void ScheduleIdleHandler(int64_t initial_delay_ms) = 0;
-
-  // A task we invoke periodically to assist with idle cleanup.
-  virtual void IdleHandler() = 0;
-
-  // Get/Set the delay for how often the idle handler is called.
-  virtual int64_t GetIdleNotificationDelayInMs() const = 0;
-  virtual void SetIdleNotificationDelayInMs(
-      int64_t idle_notification_delay_in_ms) = 0;
+  virtual void RegisterExtension(std::unique_ptr<v8::Extension> extension) = 0;
 
   // Post task to all worker threads. Returns number of workers.
-  virtual int PostTaskToAllWebWorkers(const base::Closure& closure) = 0;
+  virtual int PostTaskToAllWebWorkers(
+      const base::RepeatingClosure& closure) = 0;
 
   // Resolve the proxy servers to use for a given url. On success true is
   // returned and |proxy_list| is set to a PAC string containing a list of
@@ -113,9 +107,17 @@ class CONTENT_EXPORT RenderThread : virtual public ChildThread {
   // Retrieve the process ID of the browser process.
   virtual int32_t GetClientId() = 0;
 
+  // Get the online status of the browser - false when there is no network
+  // access.
+  virtual bool IsOnline() = 0;
+
   // Set the renderer process type.
   virtual void SetRendererProcessType(
-      blink::scheduler::RendererProcessType type) = 0;
+      blink::scheduler::WebRendererProcessType type) = 0;
+
+  // Returns the user-agent string.
+  virtual blink::WebString GetUserAgent() = 0;
+  virtual const blink::UserAgentMetadata& GetUserAgentMetadata() = 0;
 };
 
 }  // namespace content

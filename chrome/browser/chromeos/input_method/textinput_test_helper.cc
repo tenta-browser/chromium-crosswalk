@@ -3,47 +3,46 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/chromeos/input_method/textinput_test_helper.h"
-#include "ash/shell.h"
-#include "base/message_loop/message_loop.h"
+
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/platform_thread.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/base/ime/input_method_factory.h"
+#include "ui/base/ime/init/input_method_factory.h"
 
 namespace chromeos {
-namespace {
-ui::MockInputMethod* GetInputMethod() {
-  ui::MockInputMethod* input_method = static_cast<ui::MockInputMethod*>(
-      ash::Shell::GetPrimaryRootWindow()->GetHost()->GetInputMethod());
-  CHECK(input_method);
-  return input_method;
-}
-}  // namespace
 
 void TextInputTestBase::SetUpInProcessBrowserTestFixture() {
   ui::SetUpInputMethodFactoryForTesting();
 }
 
-TextInputTestHelper::TextInputTestHelper()
-  : waiting_type_(NO_WAIT),
-    selection_range_(gfx::Range::InvalidRange()),
-    focus_state_(false),
-    latest_text_input_type_(ui::TEXT_INPUT_TYPE_NONE) {
-  GetInputMethod()->AddObserver(this);
+ui::InputMethod* TextInputTestBase::GetInputMethod() const {
+  return browser()->window()->GetNativeWindow()->GetHost()->GetInputMethod();
+}
+
+TextInputTestHelper::TextInputTestHelper(ui::InputMethod* input_method)
+    : waiting_type_(NO_WAIT),
+      selection_range_(gfx::Range::InvalidRange()),
+      focus_state_(false),
+      latest_text_input_type_(ui::TEXT_INPUT_TYPE_NONE),
+      input_method_(input_method) {
+  input_method_->AddObserver(this);
 }
 
 TextInputTestHelper::~TextInputTestHelper() {
-  GetInputMethod()->RemoveObserver(this);
+  input_method_->RemoveObserver(this);
 }
 
 base::string16 TextInputTestHelper::GetSurroundingText() const {
@@ -71,11 +70,10 @@ ui::TextInputType TextInputTestHelper::GetTextInputType() const {
 }
 
 ui::TextInputClient* TextInputTestHelper::GetTextInputClient() const {
-  return GetInputMethod()->GetTextInputClient();
+  return input_method_->GetTextInputClient();
 }
 
-void TextInputTestHelper::OnShowImeIfNeeded() {
-}
+void TextInputTestHelper::OnShowVirtualKeyboardIfEnabled() {}
 
 void TextInputTestHelper::OnInputMethodDestroyed(
     const ui::InputMethod* input_method) {
@@ -100,7 +98,7 @@ void TextInputTestHelper::OnCaretBoundsChanged(
     if (!GetTextInputClient()->GetTextRange(&text_range) ||
         !GetTextInputClient()->GetTextFromRange(text_range,
                                                 &surrounding_text_) ||
-        !GetTextInputClient()->GetSelectionRange(&selection_range_))
+        !GetTextInputClient()->GetEditableSelectionRange(&selection_range_))
       return;
   }
   if (waiting_type_ == WAIT_ON_CARET_BOUNDS_CHANGED)
@@ -160,6 +158,13 @@ void TextInputTestHelper::WaitForSurroundingTextChanged(
   waiting_type_ = NO_WAIT;
 }
 
+void TextInputTestHelper::WaitForPassageOfTimeMillis(const int milliseconds) {
+  CHECK_EQ(NO_WAIT, waiting_type_);
+  waiting_type_ = WAIT_ON_PASSAGE_OF_TIME;
+  base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(milliseconds));
+  waiting_type_ = NO_WAIT;
+}
+
 // static
 bool TextInputTestHelper::ConvertRectFromString(const std::string& str,
                                                 gfx::Rect* rect) {
@@ -194,9 +199,9 @@ bool TextInputTestHelper::ClickElement(const std::string& id,
   if (!ConvertRectFromString(coordinate, &rect))
     return false;
 
-  blink::WebMouseEvent mouse_event(blink::WebInputEvent::kMouseDown,
-                                   blink::WebInputEvent::kNoModifiers,
-                                   blink::WebInputEvent::kTimeStampForTesting);
+  blink::WebMouseEvent mouse_event(
+      blink::WebInputEvent::kMouseDown, blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::GetStaticTimeStampForTests());
   mouse_event.button = blink::WebMouseEvent::Button::kLeft;
   mouse_event.SetPositionInWidget(rect.CenterPoint().x(),
                                   rect.CenterPoint().y());

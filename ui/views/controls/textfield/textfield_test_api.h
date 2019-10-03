@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_TEXTFIELD_TEXTFIELD_TEST_API_H_
 #define UI_VIEWS_CONTROLS_TEXTFIELD_TEXTFIELD_TEST_API_H_
 
+#include "base/i18n/rtl.h"
 #include "base/macros.h"
 #include "ui/views/controls/textfield/textfield.h"
 
@@ -48,7 +49,10 @@ class TextfieldTestApi {
   gfx::Rect GetCursorViewRect() { return textfield_->cursor_view_.bounds(); }
   void SetCursorViewRect(gfx::Rect bounds);
 
-  bool IsCursorVisible() const { return textfield_->cursor_view_.visible(); }
+  bool IsCursorVisible() const { return textfield_->cursor_view_.GetVisible(); }
+
+  bool IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection direction) const;
 
  private:
   Textfield* textfield_;

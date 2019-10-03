@@ -7,13 +7,14 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
 #include "base/test/test_switches.h"
 #include "google_apis/google_api_keys.h"
+#include "mojo/core/embedder/embedder.h"
 #include "net/base/escape.h"
 #include "remoting/test/chromoting_test_driver_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -149,8 +150,8 @@ void PrintJsonFileInfo() {
 
 int main(int argc, char* argv[]) {
   base::TestSuite test_suite(argc, argv);
-  base::MessageLoopForIO message_loop;
   base::FeatureList::InitializeInstance(std::string(), std::string());
+  base::SingleThreadTaskExecutor io_task_executor(base::MessagePump::Type::IO);
 
   if (!base::CommandLine::InitializedForCurrentProcess()) {
     if (!base::CommandLine::Init(argc, argv)) {
@@ -164,6 +165,8 @@ int main(int argc, char* argv[]) {
 
   // Do not retry if tests fails.
   command_line->AppendSwitchASCII(switches::kTestLauncherRetryLimit, "0");
+  command_line->AppendSwitchASCII(
+      switches::kIsolatedScriptTestLauncherRetryLimit, "0");
 
   // Different tests may require access to the same host if run in parallel.
   // To avoid shared resource contention, tests will be run one at a time.
@@ -188,7 +191,10 @@ int main(int argc, char* argv[]) {
 #endif
   }
 
-  base::TaskScheduler::CreateAndStartWithDefaultParams("ChromotingTestDriver");
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
+      "ChromotingTestDriver");
+
+  mojo::core::Init();
 
   // Update the logging verbosity level if user specified one.
   std::string verbosity_level(

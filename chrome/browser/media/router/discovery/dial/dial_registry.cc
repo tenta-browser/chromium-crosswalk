@@ -7,21 +7,22 @@
 #include <memory>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/media/router/discovery/dial/dial_device_data.h"
 #include "chrome/browser/media/router/discovery/dial/dial_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/network_service_instance.h"
 
 using base::Time;
 using base::TimeDelta;
 using content::BrowserThread;
-using net::NetworkChangeNotifier;
 
 namespace {
 
@@ -46,12 +47,14 @@ DialRegistry::DialRegistry()
       refresh_interval_delta_(TimeDelta::FromSeconds(kDialRefreshIntervalSecs)),
       expiration_delta_(TimeDelta::FromSeconds(kDialExpirationSecs)),
       max_devices_(kDialMaxDevices),
-      clock_(new base::DefaultClock()) {
+      clock_(base::DefaultClock::GetInstance()) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK_GT(max_devices_, 0U);
-  // This is a leaky singleton, so there's no code to remove |this| as an
-  // observer.
-  NetworkChangeNotifier::AddNetworkChangeObserver(this);
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&content::GetNetworkConnectionTracker),
+      base::BindOnce(&DialRegistry::SetNetworkConnectionTracker,
+                     base::Unretained(this)));
 }
 
 // This is a leaky singleton and the dtor won't be called.
@@ -64,6 +67,14 @@ DialRegistry* DialRegistry::GetInstance() {
                          base::LeakySingletonTraits<DialRegistry>>::get();
 }
 
+void DialRegistry::SetNetworkConnectionTracker(
+    network::NetworkConnectionTracker* tracker) {
+  network_connection_tracker_ = tracker;
+  network_connection_tracker_->AddLeakyNetworkConnectionObserver(this);
+  // If there are no observers yet, it won't actually start.
+  StartPeriodicDiscovery();
+}
+
 void DialRegistry::SetNetLog(net::NetLog* net_log) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!net_log_)
@@ -71,7 +82,7 @@ void DialRegistry::SetNetLog(net::NetLog* net_log) {
 }
 
 std::unique_ptr<DialService> DialRegistry::CreateDialService() {
-  return base::MakeUnique<DialServiceImpl>(net_log_);
+  return std::make_unique<DialServiceImpl>(net_log_);
 }
 
 void DialRegistry::ClearDialService() {
@@ -119,15 +130,15 @@ GURL DialRegistry::GetDeviceDescriptionURL(const std::string& label) const {
 
 void DialRegistry::AddDeviceForTest(const DialDeviceData& device_data) {
   std::unique_ptr<DialDeviceData> test_data =
-      base::MakeUnique<DialDeviceData>(device_data);
+      std::make_unique<DialDeviceData>(device_data);
   device_by_label_map_.insert(
       std::make_pair(device_data.label(), test_data.get()));
   device_by_id_map_.insert(
       std::make_pair(device_data.device_id(), std::move(test_data)));
 }
 
-void DialRegistry::SetClockForTest(std::unique_ptr<base::Clock> clock) {
-  clock_ = std::move(clock);
+void DialRegistry::SetClockForTest(base::Clock* clock) {
+  clock_ = clock;
 }
 
 bool DialRegistry::ReadyToDiscover() {
@@ -135,12 +146,21 @@ bool DialRegistry::ReadyToDiscover() {
     OnDialError(DIAL_NO_LISTENERS);
     return false;
   }
-  if (NetworkChangeNotifier::IsOffline()) {
+  network::mojom::ConnectionType type;
+  if (!network_connection_tracker_ ||
+      !network_connection_tracker_->GetConnectionType(
+          &type, base::BindOnce(&DialRegistry::OnConnectionChanged,
+                                base::Unretained(this)))) {
+    // If the ConnectionType is unknown, return false. We'll try to start
+    // discovery again when we receive the OnConnectionChanged callback.
+    OnDialError(DIAL_UNKNOWN);
+    return false;
+  }
+  if (type == network::mojom::ConnectionType::CONNECTION_NONE) {
     OnDialError(DIAL_NETWORK_DISCONNECTED);
     return false;
   }
-  if (NetworkChangeNotifier::IsConnectionCellular(
-          NetworkChangeNotifier::GetConnectionType())) {
+  if (network::NetworkConnectionTracker::IsConnectionCellular(type)) {
     OnDialError(DIAL_CELLULAR_NETWORK);
     return false;
   }
@@ -203,7 +223,7 @@ void DialRegistry::StopPeriodicDiscovery() {
 bool DialRegistry::PruneExpiredDevices() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   bool pruned_device = false;
-  DeviceByLabelMap::iterator it = device_by_label_map_.begin();
+  auto it = device_by_label_map_.begin();
   while (it != device_by_label_map_.end()) {
     auto* device = it->second;
     if (IsDeviceExpired(*device)) {
@@ -272,7 +292,7 @@ void DialRegistry::SendEvent() {
 
 std::string DialRegistry::NextLabel() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return base::IntToString(++label_count_);
+  return base::NumberToString(++label_count_);
 }
 
 void DialRegistry::OnDiscoveryRequest(DialService* service) {
@@ -287,13 +307,12 @@ void DialRegistry::OnDeviceDiscovered(DialService* service,
   // Adds |device| to our list of devices or updates an existing device, unless
   // |device| is a duplicate. Returns true if the list was modified and
   // increments the list generation.
-  auto device_data = base::MakeUnique<DialDeviceData>(device);
+  auto device_data = std::make_unique<DialDeviceData>(device);
   DCHECK(!device_data->device_id().empty());
   DCHECK(device_data->label().empty());
 
   bool did_modify_list = false;
-  DeviceByIdMap::iterator lookup_result =
-      device_by_id_map_.find(device_data->device_id());
+  auto lookup_result = device_by_id_map_.find(device_data->device_id());
 
   if (lookup_result != device_by_id_map_.end()) {
     VLOG(2) << "Found device " << device_data->device_id() << ", merging";
@@ -351,10 +370,9 @@ void DialRegistry::OnError(DialService* service,
   }
 }
 
-void DialRegistry::OnNetworkChanged(
-    NetworkChangeNotifier::ConnectionType type) {
+void DialRegistry::OnConnectionChanged(network::mojom::ConnectionType type) {
   switch (type) {
-    case NetworkChangeNotifier::CONNECTION_NONE:
+    case network::mojom::ConnectionType::CONNECTION_NONE:
       if (dial_) {
         VLOG(2) << "Lost connection, shutting down discovery and clearing"
                 << " list.";
@@ -368,13 +386,13 @@ void DialRegistry::OnNetworkChanged(
         MaybeSendEvent();
       }
       break;
-    case NetworkChangeNotifier::CONNECTION_2G:
-    case NetworkChangeNotifier::CONNECTION_3G:
-    case NetworkChangeNotifier::CONNECTION_4G:
-    case NetworkChangeNotifier::CONNECTION_ETHERNET:
-    case NetworkChangeNotifier::CONNECTION_WIFI:
-    case NetworkChangeNotifier::CONNECTION_UNKNOWN:
-    case NetworkChangeNotifier::CONNECTION_BLUETOOTH:
+    case network::mojom::ConnectionType::CONNECTION_2G:
+    case network::mojom::ConnectionType::CONNECTION_3G:
+    case network::mojom::ConnectionType::CONNECTION_4G:
+    case network::mojom::ConnectionType::CONNECTION_ETHERNET:
+    case network::mojom::ConnectionType::CONNECTION_WIFI:
+    case network::mojom::ConnectionType::CONNECTION_UNKNOWN:
+    case network::mojom::ConnectionType::CONNECTION_BLUETOOTH:
       if (!dial_) {
         VLOG(2) << "Connection detected, restarting discovery.";
         StartPeriodicDiscovery();

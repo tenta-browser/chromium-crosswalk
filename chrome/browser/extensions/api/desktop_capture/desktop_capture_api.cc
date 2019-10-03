@@ -9,7 +9,6 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
-#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
@@ -19,11 +18,14 @@ namespace extensions {
 
 namespace {
 
-const char kNoTabIdError[] = "targetTab doesn't have id field set.";
-const char kNoUrlError[] = "targetTab doesn't have URL field set.";
-const char kInvalidOriginError[] = "targetTab.url is not a valid URL.";
-const char kInvalidTabIdError[] = "Invalid tab specified.";
-const char kTabUrlNotSecure[] =
+const char kDesktopCaptureApiNoTabIdError[] =
+    "targetTab doesn't have id field set.";
+const char kDesktopCaptureApiNoUrlError[] =
+    "targetTab doesn't have URL field set.";
+const char kDesktopCaptureApiInvalidOriginError[] =
+    "targetTab.url is not a valid URL.";
+const char kDesktopCaptureApiInvalidTabIdError[] = "Invalid tab specified.";
+const char kDesktopCaptureApiTabUrlNotSecure[] =
     "URL scheme for the specified tab is not secure.";
 }  // namespace
 
@@ -39,8 +41,8 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunAsync() {
   EXTENSION_FUNCTION_VALIDATE(args_->GetSize() > 0);
 
   EXTENSION_FUNCTION_VALIDATE(args_->GetInteger(0, &request_id_));
-  DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(
-      render_frame_host()->GetProcess()->GetID(), request_id_, this);
+  DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(source_process_id(),
+                                                            request_id_, this);
 
   args_->Remove(0, NULL);
 
@@ -55,20 +57,20 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunAsync() {
   GURL origin;
   if (params->target_tab) {
     if (!params->target_tab->url) {
-      error_ = kNoUrlError;
+      error_ = kDesktopCaptureApiNoUrlError;
       return false;
     }
     origin = GURL(*(params->target_tab->url)).GetOrigin();
 
     if (!origin.is_valid()) {
-      error_ = kInvalidOriginError;
+      error_ = kDesktopCaptureApiInvalidOriginError;
       return false;
     }
 
     if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kAllowHttpScreenCapture) &&
+            ::switches::kAllowHttpScreenCapture) &&
         !content::IsOriginSecure(origin)) {
-      error_ = kTabUrlNotSecure;
+      error_ = kDesktopCaptureApiTabUrlNotSecure;
       return false;
     }
     target_name = base::UTF8ToUTF16(content::IsOriginSecure(origin) ?
@@ -76,13 +78,13 @@ bool DesktopCaptureChooseDesktopMediaFunction::RunAsync() {
 
     if (!params->target_tab->id ||
         *params->target_tab->id == api::tabs::TAB_ID_NONE) {
-      error_ = kNoTabIdError;
+      error_ = kDesktopCaptureApiNoTabIdError;
       return false;
     }
 
     if (!ExtensionTabUtil::GetTabById(*(params->target_tab->id), GetProfile(),
                                       true, NULL, NULL, &web_contents, NULL)) {
-      error_ = kInvalidTabIdError;
+      error_ = kDesktopCaptureApiInvalidTabIdError;
       return false;
     }
     DCHECK(web_contents);

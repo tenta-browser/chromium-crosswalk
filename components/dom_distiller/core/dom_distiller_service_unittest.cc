@@ -8,10 +8,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/distilled_page_prefs.h"
 #include "components/dom_distiller/core/dom_distiller_model.h"
@@ -25,9 +24,9 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using leveldb_proto::test::FakeDB;
+using testing::_;
 using testing::Invoke;
 using testing::Return;
-using testing::_;
 
 namespace dom_distiller {
 namespace test {
@@ -36,7 +35,7 @@ namespace {
 
 class FakeViewRequestDelegate : public ViewRequestDelegate {
  public:
-  virtual ~FakeViewRequestDelegate() {}
+  ~FakeViewRequestDelegate() override {}
   MOCK_METHOD1(OnArticleReady, void(const DistilledArticleProto* proto));
   MOCK_METHOD1(OnArticleUpdated,
                void(ArticleDistillationUpdate article_update));
@@ -45,7 +44,7 @@ class FakeViewRequestDelegate : public ViewRequestDelegate {
 class MockDistillerObserver : public DomDistillerObserver {
  public:
   MOCK_METHOD1(ArticleEntriesUpdated, void(const std::vector<ArticleUpdate>&));
-  virtual ~MockDistillerObserver() {}
+  ~MockDistillerObserver() override {}
 };
 
 class MockArticleAvailableCallback {
@@ -82,11 +81,9 @@ std::unique_ptr<DistilledArticleProto> CreateDefaultArticle() {
 class DomDistillerServiceTest : public testing::Test {
  public:
   void SetUp() override {
-    main_loop_.reset(new base::MessageLoop());
     FakeDB<ArticleEntry>* fake_db = new FakeDB<ArticleEntry>(&db_model_);
     FakeDB<ArticleEntry>::EntryMap store_model;
-    store_ =
-        test::util::CreateStoreWithFakeDB(fake_db, store_model);
+    store_ = test::util::CreateStoreWithFakeDB(fake_db, store_model);
     distiller_factory_ = new MockDistillerFactory();
     distiller_page_factory_ = new MockDistillerPageFactory();
     service_.reset(new DomDistillerService(
@@ -94,7 +91,7 @@ class DomDistillerServiceTest : public testing::Test {
         std::unique_ptr<DistillerFactory>(distiller_factory_),
         std::unique_ptr<DistillerPageFactory>(distiller_page_factory_),
         std::unique_ptr<DistilledPagePrefs>()));
-    fake_db->InitCallback(true);
+    fake_db->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
     fake_db->LoadCallback(true);
   }
 
@@ -106,12 +103,12 @@ class DomDistillerServiceTest : public testing::Test {
   }
 
  protected:
+  base::test::ScopedTaskEnvironment task_environment_;
   // store is owned by service_.
   DomDistillerStoreInterface* store_;
   MockDistillerFactory* distiller_factory_;
   MockDistillerPageFactory* distiller_page_factory_;
   std::unique_ptr<DomDistillerService> service_;
-  std::unique_ptr<base::MessageLoop> main_loop_;
   FakeDB<ArticleEntry>::EntryMap db_model_;
 };
 
@@ -412,7 +409,7 @@ TEST_F(DomDistillerServiceTest, TestMultiplePageArticle) {
   std::string base_url("http://www.example.com/p");
   GURL pages_url[kPageCount];
   for (int page_num = 0; page_num < kPageCount; ++page_num) {
-    pages_url[page_num] = GURL(base_url + base::IntToString(page_num));
+    pages_url[page_num] = GURL(base_url + base::NumberToString(page_num));
   }
 
   MockArticleAvailableCallback article_cb;
@@ -531,7 +528,7 @@ TEST_F(DomDistillerServiceTest, TestGetUrlForMultiPageEntry) {
   std::string base_url("http://www.example.com/p");
   GURL pages_url[kPageCount];
   for (int page_num = 0; page_num < kPageCount; ++page_num) {
-    pages_url[page_num] = GURL(base_url + base::IntToString(page_num));
+    pages_url[page_num] = GURL(base_url + base::NumberToString(page_num));
   }
 
   MockArticleAvailableCallback article_cb;

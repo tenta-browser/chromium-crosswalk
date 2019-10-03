@@ -13,10 +13,49 @@ for the rules we're checking against here.
 # TODO(dbeam): Real CSS parser? https://github.com/danbeam/css-py/tree/css3
 
 class CSSChecker(object):
+  DISABLE_PREFIX = 'csschecker-disable'
+  DISABLE_FORMAT = DISABLE_PREFIX + '(-[a-z]+)+ [a-z-]+(-[a-z-]+)*'
+  DISABLE_LINE = DISABLE_PREFIX + '-line'
+
   def __init__(self, input_api, output_api, file_filter=None):
     self.input_api = input_api
     self.output_api = output_api
     self.file_filter = file_filter
+
+  def RemoveAtBlocks(self, s):
+    re = self.input_api.re
+
+    def _remove_comments(s):
+      return re.sub(r'/\*.*\*/', '', s)
+
+    lines = s.splitlines()
+    i = 0
+    while i < len(lines):
+      line = _remove_comments(lines[i]).strip()
+      if (len(line) > 0 and line[0] == '@' and
+          not line[1:].startswith(("apply", "page")) and
+          line[-1] == '{' and not re.match("\d+x\b", line[1:])):
+        j = i
+        open_brackets = 1
+        while open_brackets > 0:
+          j += 1
+          inner_line = _remove_comments(lines[j]).strip()
+          if not inner_line:
+            continue
+          if inner_line[-1] == '{':
+            open_brackets += 1
+          elif inner_line[-1] == '}':
+            # Ignore single line keyframes (from { height: 0; }).
+            if not re.match(r'\s*(from|to|\d+%)\s*{', inner_line):
+              open_brackets -= 1
+          elif len(inner_line) > 1 and inner_line[-2:] == '};':
+            # End of mixin. TODO(dbeam): worth detecting ": {" start?
+            open_brackets -= 1
+        del lines[j]  # Later index first, as indices shift with deletion.
+        del lines[i]
+      else:
+        i += 1
+    return '\n'.join(lines)
 
   def RunChecks(self):
     # We use this a lot, so make a nick name variable.
@@ -28,27 +67,12 @@ class CSSChecker(object):
     def _is_gray(s):
       return s[0] == s[1] == s[2] if len(s) == 3 else s[0:2] == s[2:4] == s[4:6]
 
-    def _remove_all(s):
-      s = _remove_grit(s)  # Must be done first.
-      s = _remove_ats(s)
-      s = _remove_comments(s)
-      s = _remove_mixins_and_valid_vars(s)
-      s = _remove_template_expressions(s)
-      return s
-
     def _extract_inline_style(s):
       return '\n'.join(re.findall(r'<style\b[^>]*>([^<]*)<\/style>', s))
 
-    def _remove_ats(s):
-      return re.sub(r"""
-          @(?!apply)(?!\d+x\b)    # @at-keyword, not (apply|2x)
-          \w+[^'"]*?{             # selector junk {
-          (.*{.*?})+              # inner { curly } blocks, rules, and selector
-          .*?}                    # stuff up to the first end curly }
-          """, r'\1', s, flags=re.DOTALL | re.VERBOSE)
-
-    def _remove_comments(s):
-      return re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
+    def _remove_comments_except_for_disables(s):
+      return re.sub(r'/\*(?! %s \*/$).*?\*/' % self.DISABLE_FORMAT, '', s,
+                    flags=re.DOTALL | re.MULTILINE)
 
     def _remove_grit(s):
       return re.sub(r"""
@@ -62,6 +86,11 @@ class CSSChecker(object):
       valid_vars = r'--(?!' + mixin_shim_reg + r')[\w-]+:\s*'
       mixin_or_value = r'({.*?}|[^;}]+);?\s*'
       return re.sub(valid_vars + mixin_or_value, '', s, flags=re.DOTALL)
+
+    def _remove_disable(content, lstrip=False):
+      prefix_reg = ('\s*' if lstrip else '')
+      disable_reg = '/\* %s \*/' % self.DISABLE_FORMAT
+      return re.sub(prefix_reg + disable_reg, '', content, re.MULTILINE)
 
     def _remove_template_expressions(s):
       return re.sub(r'\$i18n(Raw)?{[^}]*}', '', s, flags=re.DOTALL)
@@ -79,8 +108,9 @@ class CSSChecker(object):
     def alphabetize_props(contents):
       errors = []
       # TODO(dbeam): make this smart enough to detect issues in mixins.
+      strip_rule = lambda t: _remove_disable(t).strip()
       for rule in re.finditer(r'{(.*?)}', contents, re.DOTALL):
-        semis = map(lambda t: t.strip(), rule.group(1).split(';'))[:-1]
+        semis = map(strip_rule, rule.group(1).split(';'))[:-1]
         rules = filter(lambda r: ': ' in r, semis)
         props = map(lambda r: r[0:r.find(':')], rules)
         if props != sorted(props):
@@ -176,6 +206,7 @@ class CSSChecker(object):
       return re.search('url\s*\(\s*["\']', line, re.IGNORECASE)
 
     def one_rule_per_line(line):
+      line = _remove_disable(line)
       one_rule_reg = re.compile(r"""
           [\w-](?<!data):  # a rule: but no data URIs
           (?!//)[^;]+;     # value; ignoring colons in protocols:// and };
@@ -280,15 +311,55 @@ class CSSChecker(object):
       h = hex_reg.search(line).group(1)
       return ' (replace with #%s)' % (h[0] + h[2] + h[4])
 
-    webkit_before_or_after_reg = re.compile(r'-webkit-(\w+-)(after|before):')
+    prefixed_logical_axis_reg = re.compile(r"""
+        -webkit-(min-|max-|)logical-(height|width):
+        """, re.VERBOSE)
 
-    def suggest_top_or_bottom(line):
-      prop, pos = webkit_before_or_after_reg.search(line).groups()
-      top_or_bottom = 'top' if pos == 'before' else 'bottom'
-      return ' (replace with %s)' % (prop + top_or_bottom)
+    def suggest_unprefixed_logical_axis(line):
+      prefix, prop = prefixed_logical_axis_reg.search(line).groups()
+      block_or_inline = 'block' if prop == 'height' else 'inline'
+      return ' (replace with %s)' % (prefix + block_or_inline + '-size')
 
-    def webkit_before_or_after(line):
-      return webkit_before_or_after_reg.search(line)
+    def prefixed_logical_axis(line):
+      return prefixed_logical_axis_reg.search(line)
+
+    prefixed_logical_side_reg = re.compile(r"""
+        -webkit-(margin|padding|border)-(before|after|start|end)
+        (?!-collapse)(-\w+|):
+        """, re.VERBOSE)
+
+    def suggest_unprefixed_logical_side(line):
+      prop, pos, suffix = prefixed_logical_side_reg.search(line).groups()
+      if pos == 'before' or pos == 'after':
+        block_or_inline = 'block'
+      else:
+        block_or_inline = 'inline'
+      if pos == 'start' or pos == 'before':
+        start_or_end = 'start'
+      else:
+        start_or_end = 'end'
+      return ' (replace with %s)' % (
+        prop + '-' + block_or_inline + '-' + start_or_end + suffix)
+
+    def prefixed_logical_side(line):
+      return prefixed_logical_side_reg.search(line)
+
+    _LEFT_RIGHT_REG = '(?:(border|margin|padding)-|(text-align): )' \
+                      '(left|right)' \
+                      '(?:(-[a-z-^:]+):)?(?!.*/\* %s left-right \*/)' % \
+                      self.DISABLE_LINE
+
+    def start_end_instead_of_left_right(line):
+      return re.search(_LEFT_RIGHT_REG, line, re.IGNORECASE)
+
+    def suggest_start_end_from_left_right(line):
+      groups = re.search(_LEFT_RIGHT_REG, line, re.IGNORECASE).groups()
+      prop_start, text_align, left_right, prop_end = groups
+      start_end = {'left': 'start', 'right': 'end'}[left_right]
+      if text_align:
+        return ' (replace with text-align: %s)' % start_end
+      prop = '%s-inline-%s%s' % (prop_start, start_end, prop_end or '')
+      return ' (replace with %s)' % prop
 
     def zero_width_lengths(contents):
       hsl_reg = re.compile(r"""
@@ -370,9 +441,20 @@ class CSSChecker(object):
           'test': rgb_if_not_gray,
           'after': suggest_rgb_from_hex,
         },
-        { 'desc': 'Use *-top/bottom instead of -webkit-*-before/after.',
-          'test': webkit_before_or_after,
-          'after': suggest_top_or_bottom,
+        { 'desc': 'Unprefix logical axis property.',
+          'test': prefixed_logical_axis,
+          'after': suggest_unprefixed_logical_axis,
+        },
+        { 'desc': 'Unprefix logical side property.',
+          'test': prefixed_logical_side,
+          'after': suggest_unprefixed_logical_side,
+        },
+        {
+          'desc': 'Use -start/end instead of -left/right ' \
+                  '(https://goo.gl/gQYY7z, add /* %s left-right */ to ' \
+                  'suppress)' % self.DISABLE_LINE,
+          'test': start_end_instead_of_left_right,
+          'after': suggest_start_end_from_left_right,
         },
         { 'desc': 'Use "0" for zero-width lengths (i.e. 0px -> 0)',
           'test': zero_width_lengths,
@@ -391,13 +473,25 @@ class CSSChecker(object):
       if not is_html and not path.endswith('.css'):
         continue
 
+      file_contents = '\n'.join(f.NewContents())
+
       # Remove all /*comments*/, @at-keywords, and grit <if|include> tags; we're
       # not using a real parser. TODO(dbeam): Check alpha in <if> blocks.
-      file_contents = _remove_all('\n'.join(f.NewContents()))
 
-      # Handle CSS files and HTML files with inline styles.
+      file_contents = _remove_grit(file_contents)  # Must be done first.
+
       if is_html:
-        file_contents = _extract_inline_style(file_contents)
+        # The <style> extraction regex can't handle <if> nor /* <tag> */.
+        prepped_html = _remove_comments_except_for_disables(file_contents)
+        file_contents = _extract_inline_style(prepped_html)
+
+      file_contents = self.RemoveAtBlocks(file_contents)
+
+      if not is_html:
+        file_contents = _remove_comments_except_for_disables(file_contents)
+
+      file_contents = _remove_mixins_and_valid_vars(file_contents)
+      file_contents = _remove_template_expressions(file_contents)
 
       files.append((path, file_contents))
 
@@ -418,7 +512,7 @@ class CSSChecker(object):
           lines = f[1].splitlines()
           for lnum, line in enumerate(lines):
             if check['test'](line):
-              error = '    ' + line.strip()
+              error = '    ' + _remove_disable(line, lstrip=True).strip()
               if 'after' in check:
                 error += check['after'](line)
               check_errors.append(error)

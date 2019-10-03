@@ -7,9 +7,9 @@
 
 #include "base/memory/ref_counted.h"
 #include "net/base/io_buffer.h"
-#include "net/quic/platform/api/quic_export.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_export.h"
 
-namespace net {
+namespace quic {
 
 class QuicBufferAllocator;
 
@@ -22,7 +22,7 @@ class QUIC_EXPORT_PRIVATE QuicMemSliceImpl {
   // |length|.
   QuicMemSliceImpl(QuicBufferAllocator* allocator, size_t length);
 
-  QuicMemSliceImpl(scoped_refptr<IOBuffer> io_buffer, size_t length);
+  QuicMemSliceImpl(scoped_refptr<net::IOBuffer> io_buffer, size_t length);
 
   QuicMemSliceImpl(const QuicMemSliceImpl& other) = delete;
   QuicMemSliceImpl& operator=(const QuicMemSliceImpl& other) = delete;
@@ -34,6 +34,10 @@ class QUIC_EXPORT_PRIVATE QuicMemSliceImpl {
 
   ~QuicMemSliceImpl();
 
+  // Release the underlying reference. Further access the memory will result in
+  // undefined behavior.
+  void Reset();
+
   // Returns a char pointer to underlying data buffer.
   const char* data() const;
   // Returns the length of underlying data buffer.
@@ -41,12 +45,16 @@ class QUIC_EXPORT_PRIVATE QuicMemSliceImpl {
 
   bool empty() const { return length_ == 0; }
 
+  scoped_refptr<net::IOBuffer>* impl() { return &io_buffer_; }
+
+  size_t* impl_length() { return &length_; }
+
  private:
-  scoped_refptr<IOBuffer> io_buffer_;
+  scoped_refptr<net::IOBuffer> io_buffer_;
   // Length of io_buffer_.
   size_t length_;
 };
 
-}  // namespace net
+}  // namespace quic
 
 #endif  // NET_QUIC_PLATFORM_IMPL_QUIC_MEM_SLICE_IMPL_H_

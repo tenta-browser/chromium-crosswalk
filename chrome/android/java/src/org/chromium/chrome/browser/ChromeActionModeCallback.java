@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser;
 
-import android.content.Context;
 import android.text.TextUtils;
 import android.view.ActionMode;
 import android.view.Menu;
@@ -17,27 +16,33 @@ import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.omnibox.geo.GeolocationHeader;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.content.R;
 import org.chromium.content_public.browser.ActionModeCallbackHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.SelectionPopupController;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.PageTransition;
 
 /**
  * A class that handles selection action mode for an associated {@link Tab}.
  */
 public class ChromeActionModeCallback implements ActionMode.Callback {
-    private final Context mContext;
     private final Tab mTab;
     private final ActionModeCallbackHelper mHelper;
 
-    public ChromeActionModeCallback(Context context, Tab tab, ActionModeCallbackHelper helper) {
-        mContext = context;
+    public ChromeActionModeCallback(Tab tab, WebContents webContents) {
         mTab = tab;
-        mHelper = helper;
+        mHelper = getActionModeCallbackHelper(webContents);
+    }
+
+    @VisibleForTesting
+    protected ActionModeCallbackHelper getActionModeCallbackHelper(WebContents webContents) {
+        return SelectionPopupController.fromWebContents(webContents).getActionModeCallbackHelper();
     }
 
     @Override
@@ -97,7 +102,7 @@ public class ChromeActionModeCallback implements ActionMode.Callback {
      */
     @VisibleForTesting
     protected LoadUrlParams generateUrlParamsForSearch(String query) {
-        String url = TemplateUrlService.getInstance().getUrlForSearchQuery(query);
+        String url = TemplateUrlServiceFactory.get().getUrlForSearchQuery(query);
         String headers = GeolocationHeader.getGeoHeader(url, mTab);
 
         LoadUrlParams loadUrlParams = new LoadUrlParams(url);
@@ -108,7 +113,8 @@ public class ChromeActionModeCallback implements ActionMode.Callback {
 
     private void search(String searchText) {
         RecordUserAction.record("MobileActionMode.WebSearch");
-        if (mTab.getTabModelSelector() == null) return;
+        TabModelSelector selector = TabModelSelector.from(mTab);
+        if (selector == null) return;
 
         String query = ActionModeCallbackHelper.sanitizeQuery(
                 searchText, ActionModeCallbackHelper.MAX_SEARCH_QUERY_LENGTH);
@@ -116,7 +122,7 @@ public class ChromeActionModeCallback implements ActionMode.Callback {
 
         TrackerFactory.getTrackerForProfile(mTab.getProfile())
                 .notifyEvent(EventConstants.WEB_SEARCH_PERFORMED);
-        mTab.getTabModelSelector().openNewTab(generateUrlParamsForSearch(query),
+        selector.openNewTab(generateUrlParamsForSearch(query),
                 TabLaunchType.FROM_LONGPRESS_FOREGROUND, mTab, mTab.isIncognito());
     }
 }

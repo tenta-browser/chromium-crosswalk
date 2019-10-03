@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
-#include "components/browsing_data/core/pref_names.h"
 #include "ios/chrome/browser/browsing_data/cache_counter.h"
+#include "base/bind.h"
+#include "base/task/post_task.h"
+#include "components/browsing_data/core/pref_names.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/web_thread.h"
-#include "net/base/completion_callback.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/http/http_cache.h"
@@ -21,7 +24,7 @@ class IOThreadCacheCounter {
  public:
   IOThreadCacheCounter(
       const scoped_refptr<net::URLRequestContextGetter>& context_getter,
-      const net::CompletionCallback& result_callback)
+      const net::Int64CompletionRepeatingCallback& result_callback)
       : next_step_(STEP_GET_BACKEND),
         context_getter_(context_getter),
         result_callback_(result_callback),
@@ -29,9 +32,10 @@ class IOThreadCacheCounter {
         backend_(nullptr) {}
 
   void Count() {
-    web::WebThread::PostTask(web::WebThread::IO, FROM_HERE,
-                             base::Bind(&IOThreadCacheCounter::CountInternal,
-                                        base::Unretained(this), net::OK));
+    base::PostTaskWithTraits(
+        FROM_HERE, {web::WebThread::IO},
+        base::BindRepeating(&IOThreadCacheCounter::CountInternal,
+                            base::Unretained(this), net::OK));
   }
 
  private:
@@ -39,13 +43,12 @@ class IOThreadCacheCounter {
     STEP_GET_BACKEND,  // Get the disk_cache::Backend instance.
     STEP_COUNT,        // Run CalculateSizeOfAllEntries() on it.
     STEP_CALLBACK,     // Respond on the UI thread.
-    STEP_DONE          // Calculation completed.
   };
 
-  void CountInternal(int rv) {
+  void CountInternal(int64_t rv) {
     DCHECK_CURRENTLY_ON(web::WebThread::IO);
 
-    while (rv != net::ERR_IO_PENDING && next_step_ != STEP_DONE) {
+    while (rv != net::ERR_IO_PENDING) {
       // In case of an error, skip to the last step.
       if (rv < 0)
         next_step_ = STEP_CALLBACK;
@@ -61,8 +64,11 @@ class IOThreadCacheCounter {
                                            ->GetCache();
 
           rv = http_cache->GetBackend(
-              &backend_, base::Bind(&IOThreadCacheCounter::CountInternal,
-                                    base::Unretained(this)));
+              &backend_, base::BindRepeating(
+                             [](IOThreadCacheCounter* self, int rv) {
+                               self->CountInternal(static_cast<int64_t>(rv));
+                             },
+                             base::Unretained(this)));
           break;
         }
 
@@ -70,25 +76,23 @@ class IOThreadCacheCounter {
           next_step_ = STEP_CALLBACK;
 
           DCHECK(backend_);
-          rv = backend_->CalculateSizeOfAllEntries(base::Bind(
+          rv = backend_->CalculateSizeOfAllEntries(base::BindRepeating(
               &IOThreadCacheCounter::CountInternal, base::Unretained(this)));
           break;
         }
 
         case STEP_CALLBACK: {
-          next_step_ = STEP_DONE;
           result_ = rv;
 
-          web::WebThread::PostTask(
-              web::WebThread::UI, FROM_HERE,
-              base::Bind(&IOThreadCacheCounter::OnCountingFinished,
-                         base::Unretained(this)));
+          base::PostTaskWithTraits(
+              FROM_HERE, {web::WebThread::UI},
+              base::BindOnce(&IOThreadCacheCounter::OnCountingFinished,
+                             base::Unretained(this)));
 
-          break;
-        }
-
-        case STEP_DONE: {
-          NOTREACHED();
+          // Return instead of break.
+          // The task above deletes this object; app would crash if this object
+          // is deleted before reentrance of the loop.
+          return;
         }
       }
     }
@@ -102,36 +106,36 @@ class IOThreadCacheCounter {
 
   Step next_step_;
   scoped_refptr<net::URLRequestContextGetter> context_getter_;
-  net::CompletionCallback result_callback_;
-  int result_;
+  net::Int64CompletionRepeatingCallback result_callback_;
+  int64_t result_;
   disk_cache::Backend* backend_;
 };
 
 }  // namespace
 
-CacheCounter::CacheCounter(web::BrowserState* browser_state)
+CacheCounter::CacheCounter(ios::ChromeBrowserState* browser_state)
     : browser_state_(browser_state), weak_ptr_factory_(this) {}
 
-CacheCounter::~CacheCounter() {}
+CacheCounter::~CacheCounter() = default;
 
 const char* CacheCounter::GetPrefName() const {
   return browsing_data::prefs::kDeleteCache;
 }
 
 void CacheCounter::Count() {
-  // TODO(msramek): disk_cache::Backend currently does not implement counting
-  // for subsets of cache, only for the entire cache. Thus, we ignore the time
-  // period setting and always request counting for the unbounded time interval.
-  // It is up to the UI to interpret the results for finite time intervals as
-  // upper estimates.
+  // disk_cache::Backend currently does not implement counting for subsets of
+  // cache, only for the entire cache. Thus, ignore the time period setting and
+  // always request counting for the unbounded time interval. It is up to the
+  // UI to interpret the results for finite time intervals as upper estimates.
   // IOThreadCacheCounter deletes itself when done.
-  (new IOThreadCacheCounter(browser_state_->GetRequestContext(),
-                            base::Bind(&CacheCounter::OnCacheSizeCalculated,
-                                       weak_ptr_factory_.GetWeakPtr())))
+  (new IOThreadCacheCounter(
+       browser_state_->GetRequestContext(),
+       base::BindRepeating(&CacheCounter::OnCacheSizeCalculated,
+                           weak_ptr_factory_.GetWeakPtr())))
       ->Count();
 }
 
-void CacheCounter::OnCacheSizeCalculated(int result_bytes) {
+void CacheCounter::OnCacheSizeCalculated(int64_t result_bytes) {
   // A value less than 0 means a net error code.
   if (result_bytes < 0)
     return;

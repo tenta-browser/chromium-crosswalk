@@ -37,6 +37,7 @@ const char kCustomTraceConfigString[] =
     "}"
     "],"
     "\"excluded_categories\":[\"excluded\",\"exc_pattern*\"],"
+    "\"histogram_names\":[\"uma1\",\"uma2\"],"
     "\"included_categories\":["
     "\"included\","
     "\"inc_pattern*\","
@@ -56,11 +57,12 @@ const char kCustomTraceConfigString[] =
     "{"
     "\"min_time_between_dumps_ms\":1000,"
     "\"mode\":\"detailed\","
-    "\"type\":\"peak_memory_usage\""
+    "\"type\":\"periodic_interval\""
     "}"
     "]"
     "},"
-    "\"record_mode\":\"record-continuously\""
+    "\"record_mode\":\"record-continuously\","
+    "\"trace_buffer_size_in_events\":100"
     "}";
 
 void CheckDefaultTraceConfigBehavior(const TraceConfig& tc) {
@@ -78,6 +80,21 @@ void CheckDefaultTraceConfigBehavior(const TraceConfig& tc) {
   EXPECT_TRUE(tc.IsCategoryGroupEnabled("Category1,disabled-by-default-cc"));
   EXPECT_FALSE(tc.IsCategoryGroupEnabled(
       "disabled-by-default-cc,disabled-by-default-cc2"));
+}
+
+// Returns an string in which word1 and word2 are swapped. word1 and word2 must
+// be non-overlapping substrings of the input string and word1 must be before
+// word2.
+std::string SwapWords(const std::string& in_str,
+                      const std::string& word1,
+                      const std::string& word2) {
+  size_t pos1 = in_str.find(word1);
+  size_t len1 = word1.size();
+  size_t pos2 = in_str.find(word2);
+  size_t len2 = word2.size();
+  return in_str.substr(0, pos1) + word2 +
+         in_str.substr(pos1 + len1, pos2 - pos1 - len1) + word1 +
+         in_str.substr(pos2 + len2);
 }
 
 }  // namespace
@@ -324,30 +341,28 @@ TEST(TraceConfigTest, TraceConfigFromDict) {
   EXPECT_FALSE(tc.IsArgumentFilterEnabled());
   EXPECT_STREQ("", tc.ToCategoryFilterString().c_str());
 
-  std::unique_ptr<Value> default_value(
-      JSONReader::Read(kDefaultTraceConfigString));
-  DCHECK(default_value);
-  const DictionaryValue* default_dict = nullptr;
-  bool is_dict = default_value->GetAsDictionary(&default_dict);
-  DCHECK(is_dict);
-  TraceConfig default_tc(*default_dict);
+  Optional<Value> default_value = JSONReader::Read(kDefaultTraceConfigString);
+  ASSERT_TRUE(default_value);
+  ASSERT_TRUE(default_value->is_dict());
+  TraceConfig default_tc(*default_value);
   EXPECT_STREQ(kDefaultTraceConfigString, default_tc.ToString().c_str());
   EXPECT_EQ(RECORD_UNTIL_FULL, default_tc.GetTraceRecordMode());
   EXPECT_FALSE(default_tc.IsSystraceEnabled());
   EXPECT_FALSE(default_tc.IsArgumentFilterEnabled());
   EXPECT_STREQ("", default_tc.ToCategoryFilterString().c_str());
 
-  std::unique_ptr<Value> custom_value(
-      JSONReader::Read(kCustomTraceConfigString));
-  DCHECK(custom_value);
-  const DictionaryValue* custom_dict = nullptr;
-  is_dict = custom_value->GetAsDictionary(&custom_dict);
-  DCHECK(is_dict);
-  TraceConfig custom_tc(*custom_dict);
-  EXPECT_STREQ(kCustomTraceConfigString, custom_tc.ToString().c_str());
+  Optional<Value> custom_value = JSONReader::Read(kCustomTraceConfigString);
+  ASSERT_TRUE(custom_value);
+  ASSERT_TRUE(custom_value->is_dict());
+  TraceConfig custom_tc(*custom_value);
+  std::string custom_tc_str = custom_tc.ToString();
+  EXPECT_TRUE(custom_tc_str == kCustomTraceConfigString ||
+              custom_tc_str ==
+                  SwapWords(kCustomTraceConfigString, "uma1", "uma2"));
   EXPECT_EQ(RECORD_CONTINUOUSLY, custom_tc.GetTraceRecordMode());
   EXPECT_TRUE(custom_tc.IsSystraceEnabled());
   EXPECT_TRUE(custom_tc.IsArgumentFilterEnabled());
+  EXPECT_EQ(100u, custom_tc.GetTraceBufferSizeInEvents());
   EXPECT_STREQ(
       "included,inc_pattern*,"
       "disabled-by-default-cc,disabled-by-default-memory-infra,"
@@ -418,10 +433,10 @@ TEST(TraceConfigTest, TraceConfigFromValidString) {
   EXPECT_EQ(1u, event_filter.category_filter().excluded_categories().size());
   EXPECT_STREQ("unfiltered_cat",
                event_filter.category_filter().excluded_categories()[0].c_str());
-  EXPECT_TRUE(event_filter.filter_args());
+  EXPECT_FALSE(event_filter.filter_args().is_none());
 
   std::string json_out;
-  base::JSONWriter::Write(*event_filter.filter_args(), &json_out);
+  base::JSONWriter::Write(event_filter.filter_args(), &json_out);
   EXPECT_STREQ(json_out.c_str(),
                "{\"event_name_whitelist\":[\"a snake\",\"a dog\"]}");
   std::unordered_set<std::string> filter_values;
@@ -634,16 +649,6 @@ TEST(TraceConfigTest, TraceConfigFromMemoryConfigString) {
   EXPECT_EQ(1u, tc3.memory_dump_config().triggers[0].min_time_between_dumps_ms);
   EXPECT_EQ(MemoryDumpLevelOfDetail::BACKGROUND,
             tc3.memory_dump_config().triggers[0].level_of_detail);
-
-  std::string tc_str4 =
-      TraceConfigMemoryTestUtil::GetTraceConfig_PeakDetectionTrigger(
-          1 /*heavy_period */);
-  TraceConfig tc4(tc_str4);
-  EXPECT_EQ(tc_str4, tc4.ToString());
-  ASSERT_EQ(1u, tc4.memory_dump_config().triggers.size());
-  EXPECT_EQ(1u, tc4.memory_dump_config().triggers[0].min_time_between_dumps_ms);
-  EXPECT_EQ(MemoryDumpLevelOfDetail::DETAILED,
-            tc4.memory_dump_config().triggers[0].level_of_detail);
 }
 
 TEST(TraceConfigTest, EmptyMemoryDumpConfigTest) {
@@ -653,8 +658,8 @@ TEST(TraceConfigTest, EmptyMemoryDumpConfigTest) {
             tc.ToString());
   EXPECT_EQ(0u, tc.memory_dump_config().triggers.size());
   EXPECT_EQ(
-      TraceConfig::MemoryDumpConfig::HeapProfiler ::
-          kDefaultBreakdownThresholdBytes,
+      static_cast<uint32_t>(TraceConfig::MemoryDumpConfig::HeapProfiler::
+                                kDefaultBreakdownThresholdBytes),
       tc.memory_dump_config().heap_profiler_options.breakdown_threshold_bytes);
 }
 
@@ -664,8 +669,8 @@ TEST(TraceConfigTest, LegacyStringToMemoryDumpConfig) {
   EXPECT_NE(std::string::npos, tc.ToString().find("memory_dump_config"));
   EXPECT_EQ(0u, tc.memory_dump_config().triggers.size());
   EXPECT_EQ(
-      TraceConfig::MemoryDumpConfig::HeapProfiler ::
-          kDefaultBreakdownThresholdBytes,
+      static_cast<uint32_t>(TraceConfig::MemoryDumpConfig::HeapProfiler::
+                                kDefaultBreakdownThresholdBytes),
       tc.memory_dump_config().heap_profiler_options.breakdown_threshold_bytes);
 }
 

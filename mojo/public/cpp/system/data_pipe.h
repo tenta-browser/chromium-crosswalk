@@ -32,21 +32,27 @@ class DataPipeProducerHandle : public Handle {
   MojoResult WriteData(const void* elements,
                        uint32_t* num_bytes,
                        MojoWriteDataFlags flags) const {
-    return MojoWriteData(value(), elements, num_bytes, flags);
+    MojoWriteDataOptions options;
+    options.struct_size = sizeof(options);
+    options.flags = flags;
+    return MojoWriteData(value(), elements, num_bytes, &options);
   }
 
   // Begins a two-phase write to a data pipe. See |MojoBeginWriteData()| for
   // complete documentation.
   MojoResult BeginWriteData(void** buffer,
                             uint32_t* buffer_num_bytes,
-                            MojoWriteDataFlags flags) const {
-    return MojoBeginWriteData(value(), buffer, buffer_num_bytes, flags);
+                            MojoBeginWriteDataFlags flags) const {
+    MojoBeginWriteDataOptions options;
+    options.struct_size = sizeof(options);
+    options.flags = flags;
+    return MojoBeginWriteData(value(), &options, buffer, buffer_num_bytes);
   }
 
   // Completes a two-phase write to a data pipe. See |MojoEndWriteData()| for
   // complete documentation.
   MojoResult EndWriteData(uint32_t num_bytes_written) const {
-    return MojoEndWriteData(value(), num_bytes_written);
+    return MojoEndWriteData(value(), num_bytes_written, nullptr);
   }
 
   // Copying and assignment allowed.
@@ -71,21 +77,27 @@ class DataPipeConsumerHandle : public Handle {
   MojoResult ReadData(void* elements,
                       uint32_t* num_bytes,
                       MojoReadDataFlags flags) const {
-    return MojoReadData(value(), elements, num_bytes, flags);
+    MojoReadDataOptions options;
+    options.struct_size = sizeof(options);
+    options.flags = flags;
+    return MojoReadData(value(), &options, elements, num_bytes);
   }
 
   // Begins a two-phase read from a data pipe. See |MojoBeginReadData()| for
   // complete documentation.
   MojoResult BeginReadData(const void** buffer,
                            uint32_t* buffer_num_bytes,
-                           MojoReadDataFlags flags) const {
-    return MojoBeginReadData(value(), buffer, buffer_num_bytes, flags);
+                           MojoBeginReadDataFlags flags) const {
+    MojoBeginReadDataOptions options;
+    options.struct_size = sizeof(options);
+    options.flags = flags;
+    return MojoBeginReadData(value(), &options, buffer, buffer_num_bytes);
   }
 
   // Completes a two-phase read from a data pipe. See |MojoEndReadData()| for
   // complete documentation.
   MojoResult EndReadData(uint32_t num_bytes_read) const {
-    return MojoEndReadData(value(), num_bytes_read);
+    return MojoEndReadData(value(), num_bytes_read, nullptr);
   }
 
   // Copying and assignment allowed.
@@ -119,11 +131,13 @@ inline MojoResult CreateDataPipe(
   return rv;
 }
 
+// DEPRECATED: use |CreateDataPipe| instead.
+//
+// This class is not safe to use in production code as there is no way for it to
+// report failure while creating the pipe and it will CHECK in case of failures.
+//
 // A wrapper class that automatically creates a data pipe and owns both handles.
-// TODO(vtl): Make an even more friendly version? (Maybe templatized for a
-// particular type instead of some "element"? Maybe functions that take
-// vectors?)
-class DataPipe {
+class MOJO_CPP_SYSTEM_EXPORT DataPipe {
  public:
   DataPipe();
   explicit DataPipe(uint32_t capacity_num_bytes);
@@ -133,36 +147,6 @@ class DataPipe {
   ScopedDataPipeProducerHandle producer_handle;
   ScopedDataPipeConsumerHandle consumer_handle;
 };
-
-inline DataPipe::DataPipe() {
-  MojoResult result =
-      CreateDataPipe(nullptr, &producer_handle, &consumer_handle);
-  ALLOW_UNUSED_LOCAL(result);
-  DCHECK_EQ(MOJO_RESULT_OK, result);
-}
-
-inline DataPipe::DataPipe(uint32_t capacity_num_bytes) {
-  MojoCreateDataPipeOptions options;
-  options.struct_size = sizeof(MojoCreateDataPipeOptions);
-  options.flags = MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE;
-  options.element_num_bytes = 1;
-  options.capacity_num_bytes = capacity_num_bytes;
-  mojo::DataPipe data_pipe(options);
-  MojoResult result =
-      CreateDataPipe(&options, &producer_handle, &consumer_handle);
-  ALLOW_UNUSED_LOCAL(result);
-  DCHECK_EQ(MOJO_RESULT_OK, result);
-}
-
-inline DataPipe::DataPipe(const MojoCreateDataPipeOptions& options) {
-  MojoResult result =
-      CreateDataPipe(&options, &producer_handle, &consumer_handle);
-  ALLOW_UNUSED_LOCAL(result);
-  DCHECK_EQ(MOJO_RESULT_OK, result);
-}
-
-inline DataPipe::~DataPipe() {
-}
 
 }  // namespace mojo
 

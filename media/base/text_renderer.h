@@ -88,7 +88,7 @@ class MEDIA_EXPORT TextRenderer {
   // a read from the stream completes.
   void BufferReady(DemuxerStream* text_stream,
                    DemuxerStream::Status status,
-                   const scoped_refptr<DecoderBuffer>& input);
+                   scoped_refptr<DecoderBuffer> input);
 
   // Dispatches the decoded cue delivered on the demuxer's |text_stream|.
   void CueReady(DemuxerStream* text_stream,
@@ -132,7 +132,7 @@ class MEDIA_EXPORT TextRenderer {
   PendingEosSet pending_eos_set_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<TextRenderer> weak_factory_;
+  base::WeakPtrFactory<TextRenderer> weak_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(TextRenderer);
 };

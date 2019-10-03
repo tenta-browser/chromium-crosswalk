@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "components/viz/common/quads/compositor_frame.h"
+#include "services/viz/public/cpp/compositing/compositor_frame_metadata_struct_traits.h"
+#include "services/viz/public/cpp/compositing/render_pass_struct_traits.h"
 #include "services/viz/public/cpp/compositing/transferable_resource_struct_traits.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame.mojom-shared.h"
 
@@ -26,6 +28,8 @@ struct StructTraits<viz::mojom::CompositorFrameDataView, viz::CompositorFrame> {
   }
 
   static const viz::RenderPassList& passes(const viz::CompositorFrame& input) {
+    DCHECK(!input.render_pass_list.empty());
+    DCHECK(!input.render_pass_list.back()->output_rect.size().IsEmpty());
     return input.render_pass_list;
   }
 

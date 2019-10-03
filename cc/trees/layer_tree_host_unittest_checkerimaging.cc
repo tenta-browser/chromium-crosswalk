@@ -7,18 +7,46 @@
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/layer_tree_test.h"
 #include "cc/test/skia_common.h"
+#include "cc/test/test_layer_tree_frame_sink.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
-#include "components/viz/test/test_layer_tree_frame_sink.h"
 
 namespace cc {
 namespace {
+const char kRenderingEvent[] = "Compositor.Rendering";
+const char kCheckerboardImagesMetric[] = "CheckerboardedImagesCount";
 
 class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
  public:
-  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+  LayerTreeHostCheckerImagingTest() : url_(GURL("https://example.com")),
+                                      ukm_source_id_(123) {}
+
+  void BeginTest() override {
+    layer_tree_host()->SetSourceURL(ukm_source_id_, url_);
+    PostSetNeedsCommitToMainThread();
+  }
   void AfterTest() override {}
+
+  void VerifyUkmAndEndTest(LayerTreeHostImpl* impl) {
+    auto* recorder = static_cast<ukm::TestUkmRecorder*>(
+        impl->ukm_manager()->recorder_for_testing());
+    // Tie the source id to the URL. In production, this is already done in
+    // Document, and the source id is passed down to cc.
+    recorder->UpdateSourceURL(ukm_source_id_, url_);
+
+    // Change the source to ensure any accumulated metrics are flushed.
+    impl->ukm_manager()->SetSourceId(200);
+    recorder->UpdateSourceURL(200, GURL("chrome://test2"));
+
+    const auto& entries = recorder->GetEntriesByName(kRenderingEvent);
+    ASSERT_EQ(1u, entries.size());
+    auto* entry = entries[0];
+    recorder->ExpectEntrySourceHasUrl(entry, url_);
+    recorder->ExpectEntryMetric(entry, kCheckerboardImagesMetric, 1);
+    EndTest();
+  }
 
   void InitializeSettings(LayerTreeSettings* settings) override {
     settings->enable_checker_imaging = true;
@@ -38,6 +66,9 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
     content_layer_client_.set_fill_with_nonsolid_color(true);
     PaintImage checkerable_image =
         CreateDiscardablePaintImage(gfx::Size(450, 450));
+    checkerable_image = PaintImageBuilder::WithCopy(checkerable_image)
+                            .set_decoding_mode(PaintImage::DecodingMode::kAsync)
+                            .TakePaintImage();
     content_layer_client_.add_draw_image(checkerable_image, gfx::Point(0, 0),
                                          PaintFlags());
 
@@ -50,6 +81,10 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
  private:
   // Accessed only on the main thread.
   FakeContentLayerClient content_layer_client_;
+  GURL url_;
+
+  // Accessed on the impl thread.
+  const ukm::SourceId ukm_source_id_;
 };
 
 class LayerTreeHostCheckerImagingTestMergeWithMainFrame
@@ -118,7 +153,7 @@ class LayerTreeHostCheckerImagingTestMergeWithMainFrame
         expected_update_rect.Union(gfx::Rect(600, 0, 50, 500));
         EXPECT_EQ(sync_layer_impl->update_rect(), expected_update_rect);
 
-        EndTest();
+        VerifyUkmAndEndTest(host_impl);
       } break;
       default:
         NOTREACHED();
@@ -182,8 +217,9 @@ class LayerTreeHostCheckerImagingTestImplSideTree
 
   void DidActivateTreeOnThread(LayerTreeHostImpl* host_impl) override {
     num_of_activations_++;
-    if (num_of_activations_ == 2)
-      EndTest();
+    if (num_of_activations_ == 2) {
+      VerifyUkmAndEndTest(host_impl);
+    }
   }
 
   void AfterTest() override {

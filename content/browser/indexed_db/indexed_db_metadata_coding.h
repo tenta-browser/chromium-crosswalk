@@ -12,15 +12,20 @@
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "content/common/indexed_db/indexed_db_key_path.h"
+#include "content/common/content_export.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 
-namespace content {
-class LevelDBDatabase;
-class LevelDBTransaction;
+namespace blink {
 struct IndexedDBDatabaseMetadata;
-struct IndexedDBObjectStoreMetadata;
 struct IndexedDBIndexMetadata;
+struct IndexedDBObjectStoreMetadata;
+}  // namespace blink
+
+namespace content {
+class TransactionalLevelDBDatabase;
+class TransactionalLevelDBTransaction;
 
 // Creation, reading, and modification operations for IndexedDB metadata. All
 // methods that write data to disk use the given |transaction| for writing (and
@@ -35,34 +40,51 @@ class CONTENT_EXPORT IndexedDBMetadataCoding {
 
   // Reads the list of database names for the given origin.
   virtual leveldb::Status ReadDatabaseNames(
-      LevelDBDatabase* db,
+      TransactionalLevelDBDatabase* db,
       const std::string& origin_identifier,
       std::vector<base::string16>* names);
+  virtual leveldb::Status ReadDatabaseNames(
+      TransactionalLevelDBTransaction* transaction,
+      const std::string& origin_identifier,
+      std::vector<base::string16>* names);
+
+  // Reads in the list of database names and versions for the given origin.
+  virtual leveldb::Status ReadDatabaseNamesAndVersions(
+      TransactionalLevelDBDatabase* db,
+      const std::string& origin_identifier,
+      std::vector<blink::mojom::IDBNameAndVersionPtr>* names_and_versions);
 
   // Reads in metadata for the database and all object stores & indices.
   // Note: the database name is not populated in |metadata|.
   virtual leveldb::Status ReadMetadataForDatabaseName(
-      LevelDBDatabase* db,
+      TransactionalLevelDBDatabase* db,
       const std::string& origin_identifier,
       const base::string16& name,
-      IndexedDBDatabaseMetadata* metadata,
+      blink::IndexedDBDatabaseMetadata* metadata,
+      bool* found);
+  virtual leveldb::Status ReadMetadataForDatabaseName(
+      TransactionalLevelDBTransaction* transaction,
+      const std::string& origin_identifier,
+      const base::string16& name,
+      blink::IndexedDBDatabaseMetadata* metadata,
       bool* found);
 
   // Creates a new database metadata entry and writes it to disk.
-  virtual leveldb::Status CreateDatabase(LevelDBDatabase* database,
-                                         const std::string& origin_identifier,
-                                         const base::string16& name,
-                                         int64_t version,
-                                         IndexedDBDatabaseMetadata* metadata);
+  virtual leveldb::Status CreateDatabase(
+      TransactionalLevelDBDatabase* database,
+      const std::string& origin_identifier,
+      const base::string16& name,
+      int64_t version,
+      blink::IndexedDBDatabaseMetadata* metadata);
 
   // Changes the database version to |version|.
-  virtual void SetDatabaseVersion(LevelDBTransaction* transaction,
+  virtual void SetDatabaseVersion(TransactionalLevelDBTransaction* transaction,
                                   int64_t row_id,
                                   int64_t version,
-                                  IndexedDBDatabaseMetadata* metadata);
+                                  blink::IndexedDBDatabaseMetadata* metadata);
 
   // Reads only the database id, if found.
-  virtual leveldb::Status FindDatabaseId(LevelDBDatabase* db,
+  virtual leveldb::Status FindDatabaseId(TransactionalLevelDBDatabase* db,
                                          const std::string& origin_identifier,
                                          const base::string16& name,
                                          int64_t* id,
@@ -70,53 +92,56 @@ class CONTENT_EXPORT IndexedDBMetadataCoding {
 
   // Creates a new object store metadata entry and writes it to the transaction.
   virtual leveldb::Status CreateObjectStore(
-      LevelDBTransaction* transaction,
+      TransactionalLevelDBTransaction* transaction,
       int64_t database_id,
       int64_t object_store_id,
       base::string16 name,
-      IndexedDBKeyPath key_path,
+      blink::IndexedDBKeyPath key_path,
       bool auto_increment,
-      IndexedDBObjectStoreMetadata* metadata);
+      blink::IndexedDBObjectStoreMetadata* metadata);
 
   // Deletes the given object store metadata on the transaction (but not any
   // data entries or blobs in the object store).
   virtual leveldb::Status DeleteObjectStore(
-      LevelDBTransaction* transaction,
+      TransactionalLevelDBTransaction* transaction,
       int64_t database_id,
-      const IndexedDBObjectStoreMetadata& object_store);
+      const blink::IndexedDBObjectStoreMetadata& object_store);
 
   // Renames the given object store and writes it to the transaction.
   virtual leveldb::Status RenameObjectStore(
-      LevelDBTransaction* transaction,
+      TransactionalLevelDBTransaction* transaction,
       int64_t database_id,
       base::string16 new_name,
       base::string16* old_name,
-      IndexedDBObjectStoreMetadata* metadata);
+      blink::IndexedDBObjectStoreMetadata* metadata);
 
   // Creates a new index metadata and writes it to the transaction.
-  virtual leveldb::Status CreateIndex(LevelDBTransaction* transaction,
-                                      int64_t database_id,
-                                      int64_t object_store_id,
-                                      int64_t index_id,
-                                      base::string16 name,
-                                      IndexedDBKeyPath key_path,
-                                      bool is_unique,
-                                      bool is_multi_entry,
-                                      IndexedDBIndexMetadata* metadata);
+  virtual leveldb::Status CreateIndex(
+      TransactionalLevelDBTransaction* transaction,
+      int64_t database_id,
+      int64_t object_store_id,
+      int64_t index_id,
+      base::string16 name,
+      blink::IndexedDBKeyPath key_path,
+      bool is_unique,
+      bool is_multi_entry,
+      blink::IndexedDBIndexMetadata* metadata);
 
   // Deletes the index metadata on the transaction (but not any index entries).
-  virtual leveldb::Status DeleteIndex(LevelDBTransaction* transaction,
-                                      int64_t database_id,
-                                      int64_t object_store_id,
-                                      const IndexedDBIndexMetadata& metadata);
+  virtual leveldb::Status DeleteIndex(
+      TransactionalLevelDBTransaction* transaction,
+      int64_t database_id,
+      int64_t object_store_id,
+      const blink::IndexedDBIndexMetadata& metadata);
 
   // Renames the given index and writes it to the transaction.
-  virtual leveldb::Status RenameIndex(LevelDBTransaction* transaction,
-                                      int64_t database_id,
-                                      int64_t object_store_id,
-                                      base::string16 new_name,
-                                      base::string16* old_name,
-                                      IndexedDBIndexMetadata* metadata);
+  virtual leveldb::Status RenameIndex(
+      TransactionalLevelDBTransaction* transaction,
+      int64_t database_id,
+      int64_t object_store_id,
+      base::string16 new_name,
+      base::string16* old_name,
+      blink::IndexedDBIndexMetadata* metadata);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(IndexedDBMetadataCoding);

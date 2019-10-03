@@ -6,10 +6,10 @@
 
 #include "base/at_exit.h"
 #include "base/debug/crash_logging.h"
+#include "base/strings/sys_string_conversions.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "ios/chrome/app/startup/ios_chrome_main.h"
 #include "ios/chrome/browser/crash_report/breakpad_helper.h"
-#include "ios/chrome/browser/crash_report/crash_keys.h"
 #include "ios/chrome/common/channel_info.h"
 #include "ios/testing/perf/startupLoggers.h"
 
@@ -24,9 +24,8 @@ NSString* const kUIApplicationDelegateInfoKey = @"UIApplicationDelegate";
 void StartCrashController() {
   @autoreleasepool {
     std::string channel_string = GetChannelString();
-
-    RegisterChromeIOSCrashKeys();
-    base::debug::SetCrashKeyValue(crash_keys::kChannel, channel_string);
+    breakpad_helper::AddReportParameter(
+        @"channel", base::SysUTF8ToNSString(channel_string), false);
     breakpad_helper::Start(channel_string);
   }
 }
@@ -40,6 +39,18 @@ void SetTextDirectionIfPseudoRTLEnabled() {
         @"NSForceRightToLeftWritingDirection" : @"YES"
       };
       [standard_defaults registerDefaults:pseudoDict];
+    }
+  }
+}
+
+void SetUILanguageIfLanguageIsSelected() {
+  @autoreleasepool {
+    NSUserDefaults* standard_defaults = [NSUserDefaults standardUserDefaults];
+    NSString* language = [standard_defaults valueForKey:@"UILanguageOverride"];
+    if (!language || [language length] == 0) {
+      [standard_defaults removeObjectForKey:@"AppleLanguages"];
+    } else {
+      [standard_defaults setObject:@[ language ] forKey:@"AppleLanguages"];
     }
   }
 }
@@ -64,6 +75,9 @@ int main(int argc, char* argv[]) {
 
   // Set NSUserDefaults keys to force pseudo-RTL if needed.
   SetTextDirectionIfPseudoRTLEnabled();
+
+  // Set NSUserDefaults keys to force the UI language if needed.
+  SetUILanguageIfLanguageIsSelected();
 
   // Create this here since it's needed to start the crash handler.
   base::AtExitManager at_exit;

@@ -5,17 +5,19 @@
 #include <utility>
 
 #include "base/at_exit.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "chrome/browser/vr/base_graphics_delegate.h"
 #include "chrome/browser/vr/testapp/gl_renderer.h"
 #include "chrome/browser/vr/testapp/vr_test_context.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/display/types/native_display_delegate.h"
 #include "ui/display/types/native_display_observer.h"
@@ -31,6 +33,7 @@
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/platform_window_delegate.h"
+#include "ui/platform_window/platform_window_init_properties.h"
 
 // This file is a shameless rip-off of ui/ozone's demo application. Ozone lets
 // us spin up a window and collect input without dealing with Linux platform
@@ -44,8 +47,7 @@ class RendererFactory {
   ~RendererFactory();
 
   bool Initialize();
-  std::unique_ptr<vr::GlRenderer> CreateRenderer(gfx::AcceleratedWidget widget,
-                                                 vr::VrTestContext* vr);
+  std::unique_ptr<vr::GlRenderer> CreateRenderer(gfx::AcceleratedWidget widget);
 
  private:
   // Helper for applications that do GL on main thread.
@@ -99,10 +101,11 @@ class AppWindow : public ui::PlatformWindowDelegate {
             const gfx::Rect& bounds)
       : window_manager_(window_manager),
         renderer_factory_(renderer_factory),
-        vr_(base::MakeUnique<vr::VrTestContext>()),
         weak_ptr_factory_(this) {
+    ui::PlatformWindowInitProperties properties;
+    properties.bounds = gfx::Rect(1024, 768);
     platform_window_ = ui::OzonePlatform::GetInstance()->CreatePlatformWindow(
-        this, {1024, 768});
+        this, std::move(properties));
     platform_window_->Show();
 
     // Supply an empty cursor to override and hide the default system pointer.
@@ -121,23 +124,24 @@ class AppWindow : public ui::PlatformWindowDelegate {
   void Start() {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&AppWindow::StartOnGpu, weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&AppWindow::StartOnGpu, weak_ptr_factory_.GetWeakPtr()));
   }
 
   void Quit() { window_manager_->Quit(); }
 
   // PlatformWindowDelegate:
   void OnBoundsChanged(const gfx::Rect& new_bounds) override {
-    vr_->set_window_size(new_bounds.size());
+    vr_context_->set_window_size(new_bounds.size());
   }
   void OnDamageRect(const gfx::Rect& damaged_region) override {}
-  void DispatchEvent(ui::Event* event) override { vr_->HandleInput(event); }
+  void DispatchEvent(ui::Event* event) override {
+    vr_context_->HandleInput(event);
+  }
   void OnCloseRequest() override { Quit(); }
   void OnClosed() override {}
   void OnWindowStateChanged(ui::PlatformWindowState new_state) override {}
   void OnLostCapture() override {}
-  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget,
-                                    float device_pixel_ratio) override {
+  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) override {
     DCHECK_NE(widget, gfx::kNullAcceleratedWidget);
     widget_ = widget;
   }
@@ -148,15 +152,15 @@ class AppWindow : public ui::PlatformWindowDelegate {
   // Since we pretend to have a GPU process, we should also pretend to
   // initialize the GPU resources via a posted task.
   void StartOnGpu() {
-    renderer_ =
-        renderer_factory_->CreateRenderer(GetAcceleratedWidget(), vr_.get());
-    renderer_->Initialize();
+    renderer_ = renderer_factory_->CreateRenderer(GetAcceleratedWidget());
+    vr_context_ = std::make_unique<vr::VrTestContext>(renderer_.get());
+    renderer_->set_vr_context(vr_context_.get());
   }
 
   WindowManager* window_manager_;      // Not owned.
   RendererFactory* renderer_factory_;  // Not owned.
 
-  std::unique_ptr<vr::VrTestContext> vr_;
+  std::unique_ptr<vr::VrTestContext> vr_context_;
   std::unique_ptr<vr::GlRenderer> renderer_;
 
   // Window-related state.
@@ -185,14 +189,15 @@ bool RendererFactory::Initialize() {
 }
 
 std::unique_ptr<vr::GlRenderer> RendererFactory::CreateRenderer(
-    gfx::AcceleratedWidget widget,
-    vr::VrTestContext* vr) {
+    gfx::AcceleratedWidget widget) {
   scoped_refptr<gl::GLSurface> surface = gl::init::CreateViewGLSurface(widget);
   if (!surface) {
     LOG(FATAL) << "Failed to create GL surface";
     return nullptr;
   }
-  return base::MakeUnique<vr::GlRenderer>(surface, vr);
+  auto renderer = std::make_unique<vr::GlRenderer>();
+  CHECK(renderer->Initialize(surface));
+  return renderer;
 }
 
 WindowManager::WindowManager(const base::Closure& quit_closure)
@@ -226,8 +231,8 @@ void WindowManager::OnConfigurationChanged() {
   }
 
   is_configuring_ = true;
-  delegate_->GetDisplays(
-      base::Bind(&WindowManager::OnDisplaysAquired, base::Unretained(this)));
+  delegate_->GetDisplays(base::BindRepeating(&WindowManager::OnDisplaysAquired,
+                                             base::Unretained(this)));
 }
 
 void WindowManager::OnDisplaySnapshotsInvalidated() {}
@@ -246,8 +251,9 @@ void WindowManager::OnDisplaysAquired(
 
     delegate_->Configure(
         *display, display->native_mode(), origin,
-        base::Bind(&WindowManager::OnDisplayConfigured, base::Unretained(this),
-                   gfx::Rect(origin, display->native_mode()->size())));
+        base::BindRepeating(&WindowManager::OnDisplayConfigured,
+                            base::Unretained(this),
+                            gfx::Rect(origin, display->native_mode()->size())));
     origin.Offset(display->native_mode()->size().width(), 0);
   }
   is_configuring_ = false;
@@ -255,8 +261,8 @@ void WindowManager::OnDisplaysAquired(
   if (should_configure_) {
     should_configure_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&WindowManager::OnConfigurationChanged,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&WindowManager::OnConfigurationChanged,
+                                  base::Unretained(this)));
   }
 }
 
@@ -278,16 +284,18 @@ int main(int argc, char** argv) {
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kUseGL, gl::kGLImplementationEGLName);
 
-  // Build UI thread message loop. This is used by platform
+  // Build UI thread task executor. This is used by platform
   // implementations for event polling & running background tasks.
-  base::MessageLoopForUI message_loop;
-  base::TaskScheduler::CreateAndStartWithDefaultParams("VrUiViewer");
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("VrUiViewer");
 
   ui::OzonePlatform::InitParams params;
   params.single_process = true;
   ui::OzonePlatform::InitializeForUI(params);
   ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()
       ->SetCurrentLayoutByName("us");
+  ui::MaterialDesignController::Initialize();
 
   base::RunLoop run_loop;
 

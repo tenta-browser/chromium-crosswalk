@@ -1,191 +1,176 @@
-
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
 #include "chrome/browser/sync/test/integration/autofill_helper.h"
-#include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
-using autofill::AutofillKey;
+namespace {
+
 using autofill::AutofillTable;
 using autofill::AutofillProfile;
 using autofill::AutofillType;
 using autofill::CreditCard;
 using autofill::PersonalDataManager;
-using autofill_helper::AddKeys;
 using autofill_helper::AddProfile;
 using autofill_helper::CreateAutofillProfile;
 using autofill_helper::CreateUniqueAutofillProfile;
 using autofill_helper::GetAllAutoFillProfiles;
-using autofill_helper::GetAllKeys;
 using autofill_helper::GetPersonalDataManager;
 using autofill_helper::GetProfileCount;
-using autofill_helper::KeysMatch;
 using autofill_helper::ProfilesMatch;
 using autofill_helper::PROFILE_FRASIER;
 using autofill_helper::PROFILE_HOMER;
 using autofill_helper::PROFILE_MARION;
 using autofill_helper::PROFILE_NULL;
-using autofill_helper::RemoveKey;
 using autofill_helper::RemoveProfile;
 using autofill_helper::SetCreditCards;
 using autofill_helper::UpdateProfile;
-using bookmarks_helper::AddFolder;
-using bookmarks_helper::AddURL;
-using bookmarks_helper::IndexedURL;
-using bookmarks_helper::IndexedURLTitle;
 
-class TwoClientAutofillSyncTest : public SyncTest {
- public:
-  TwoClientAutofillSyncTest() : SyncTest(TWO_CLIENT) {}
-  ~TwoClientAutofillSyncTest() override {}
-
-  bool TestUsesSelfNotifications() override { return false; }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TwoClientAutofillSyncTest);
+// Copied from data_type_debug_info_emitter.cc.
+enum ModelTypeEntityChange {
+  LOCAL_DELETION = 0,
+  LOCAL_CREATION = 1,
+  LOCAL_UPDATE = 2,
+  REMOTE_DELETION = 3,
+  REMOTE_NON_INITIAL_UPDATE = 4,
+  REMOTE_INITIAL_UPDATE = 5,
+  MODEL_TYPE_ENTITY_CHANGE_COUNT = 6
 };
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, WebDataServiceSanity) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+class TwoClientAutofillProfileSyncTest : public SyncTest {
+ public:
+  TwoClientAutofillProfileSyncTest() : SyncTest(TWO_CLIENT) {}
+  ~TwoClientAutofillProfileSyncTest() override {}
 
-  // Client0 adds a key.
-  std::set<AutofillKey> keys;
-  keys.insert(AutofillKey("name0", "value0"));
-  AddKeys(0, keys);
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllKeys(0).size());
+  // Tests that check Sync.ModelTypeEntityChange* histograms require
+  // self-notifications. The reason is that every commit will eventually trigger
+  // an incoming update on the same client, and without self-notifications we
+  // have no good way to reliably trigger these updates.
+  bool TestUsesSelfNotifications() override { return true; }
 
-  // Client1 adds a key.
-  keys.clear();
-  keys.insert(AutofillKey("name1", "value1-0"));
-  AddKeys(1, keys);
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(2U, GetAllKeys(0).size());
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TwoClientAutofillProfileSyncTest);
+};
 
-  // Client0 adds a key with the same name.
-  keys.clear();
-  keys.insert(AutofillKey("name1", "value1-1"));
-  AddKeys(0, keys);
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(3U, GetAllKeys(0).size());
-
-  // Client1 removes a key.
-  RemoveKey(1, AutofillKey("name1", "value1-0"));
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(2U, GetAllKeys(0).size());
-
-  // Client0 removes the rest.
-  RemoveKey(0, AutofillKey("name0", "value0"));
-  RemoveKey(0, AutofillKey("name1", "value1-1"));
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(0U, GetAllKeys(0).size());
-}
-
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, AddUnicodeProfile) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
-
-  std::set<AutofillKey> keys;
-  keys.insert(AutofillKey(base::WideToUTF16(L"Sigur R\u00F3s"),
-                          base::WideToUTF16(L"\u00C1g\u00E6tis byrjun")));
-  AddKeys(0, keys);
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-}
-
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest,
-                       AddDuplicateNamesToSameProfile) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
-
-  std::set<AutofillKey> keys;
-  keys.insert(AutofillKey("name0", "value0-0"));
-  keys.insert(AutofillKey("name0", "value0-1"));
-  keys.insert(AutofillKey("name1", "value1"));
-  AddKeys(0, keys);
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(2U, GetAllKeys(0).size());
-}
-
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest,
-                       AddDuplicateNamesToDifferentProfiles) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
-
-  std::set<AutofillKey> keys0;
-  keys0.insert(AutofillKey("name0", "value0-0"));
-  keys0.insert(AutofillKey("name1", "value1"));
-  AddKeys(0, keys0);
-
-  std::set<AutofillKey> keys1;
-  keys1.insert(AutofillKey("name0", "value0-1"));
-  keys1.insert(AutofillKey("name2", "value2"));
-  keys1.insert(AutofillKey("name3", "value3"));
-  AddKeys(1, keys1);
-
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillKeysChecker(0, 1).Wait());
-  ASSERT_EQ(5U, GetAllKeys(0).size());
-}
-
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest,
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
                        PersonalDataManagerSanity) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
+
+  base::HistogramTester histograms;
 
   // Client0 adds a profile.
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
   // Client1 adds a profile.
   AddProfile(1, CreateAutofillProfile(PROFILE_MARION));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(2U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(2U, GetAllAutoFillProfiles(0).size());
 
   // Client0 adds the same profile.
   AddProfile(0, CreateAutofillProfile(PROFILE_MARION));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(2U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(2U, GetAllAutoFillProfiles(0).size());
 
   // Client1 removes a profile.
   RemoveProfile(1, GetAllAutoFillProfiles(1)[0]->guid());
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
   // Client0 updates a profile.
   UpdateProfile(0,
                 GetAllAutoFillProfiles(0)[0]->guid(),
                 AutofillType(autofill::NAME_FIRST),
                 base::ASCIIToUTF16("Bart"));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
   // Client1 removes remaining profile.
   RemoveProfile(1, GetAllAutoFillProfiles(1)[0]->guid());
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(0U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(0U, GetAllAutoFillProfiles(0).size());
+
+  // Client1 adds a final new profile.
+  AddProfile(1, CreateAutofillProfile(PROFILE_FRASIER));
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  // Each of the clients deletes one profile.
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 2);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, AddDuplicateProfiles) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       SyncHistogramsInitialSync) {
+  ASSERT_TRUE(SetupClients());
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
   ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  AddProfile(1, CreateAutofillProfile(PROFILE_MARION));
+  ASSERT_EQ(1U, GetAllAutoFillProfiles(1).size());
+
+  base::HistogramTester histograms;
+
+  // Commit sequentially to make sure there is no race condition.
+  SetupSyncOneClientAfterAnother();
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  ASSERT_EQ(2U, GetAllAutoFillProfiles(0).size());
+
+  // The order of events is roughly: First client (whichever that happens to be)
+  // connects to the server, commits its entity, and gets no initial updates
+  // because nothing was on the server yet. Then the second client connects,
+  // commits its entity, and receives the first client's entity as an initial
+  // update. Then the first client receives the second's entity as a non-initial
+  // update. And finally, at some point, each client receives its own entity
+  // back as a non-initial update, for a total of 1 initial and 3 non-initial
+  // updates.
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_CREATION, 2);
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               REMOTE_INITIAL_UPDATE, 1);
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               REMOTE_NON_INITIAL_UPDATE, 3);
+  histograms.ExpectTotalCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                              6);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, SameProfileWithConflict) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, AddDuplicateProfiles) {
+  ASSERT_TRUE(SetupClients());
+  // TODO(crbug.com/904390): Once the investigation is over, remove the
+  // histogram checks for zero LOCAL_DELETIONS here and in all further tests.
+  base::HistogramTester histograms;
+
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       SameProfileWithConflict) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
 
   AutofillProfile profile0 = CreateAutofillProfile(PROFILE_HOMER);
   AutofillProfile profile1 = CreateAutofillProfile(PROFILE_HOMER);
@@ -194,102 +179,367 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, SameProfileWithConflict) {
 
   AddProfile(0, profile0);
   AddProfile(1, profile1);
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, AddEmptyProfile) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Flaky on all platform. See crbug.com/971666
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       AddDuplicateProfiles_OneIsVerified) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
+
+  // Create two identical profiles where one of them is verified, additionally.
+  AutofillProfile profile0 = autofill::test::GetFullProfile();
+  AutofillProfile profile1 =
+      autofill::test::GetVerifiedProfile();  // I.e. Full + Verified.
+  std::string verified_origin = profile1.origin();
+
+  AddProfile(0, profile0);
+  AddProfile(1, profile1);
+  // Commit sequentially to make sure there is no race condition.
+  SetupSyncOneClientAfterAnother();
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(0)[0]->origin());
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(1)[0]->origin());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    TwoClientAutofillProfileSyncTest,
+    AddDuplicateProfiles_OneIsVerified_NonverifiedComesLater) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
+
+  AutofillProfile profile0 = autofill::test::GetFullProfile();
+  AutofillProfile profile1 =
+      autofill::test::GetVerifiedProfile();  // I.e. Full + Verified.
+  std::string verified_origin = profile1.origin();
+
+  // We start by having the verified profile.
+  AddProfile(1, profile1);
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(0)[0]->origin());
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(1)[0]->origin());
+
+  // Add the same (but non-verified) profile on the other client, afterwards.
+  AddProfile(0, profile0);
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  // The profiles should de-duplicate via sync on both other client, the
+  // verified one should win.
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(0)[0]->origin());
+  EXPECT_EQ(verified_origin, GetAllAutoFillProfiles(1)[0]->origin());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+// Tests that a null profile does not get synced across clients.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, AddEmptyProfile) {
+  ASSERT_TRUE(SetupSync());
 
   AddProfile(0, CreateAutofillProfile(PROFILE_NULL));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(0U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(0U, GetAllAutoFillProfiles(0).size());
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, AddProfile) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Tests that adding a profile on one client results in it being added on the
+// other client when sync is running.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, AddProfile) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  // Wait for the sync to happen.
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  // Make sure that both clients have one profile.
+  EXPECT_EQ(1U, GetProfileCount(0));
+  EXPECT_EQ(1U, GetProfileCount(1));
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, AddMultipleProfiles) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Tests that adding a profile on one client results in it being added on the
+// other client when sync gets started.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       AddProfile_BeforeSyncStart) {
+  ASSERT_TRUE(SetupClients()) << "SetupClients() failed";
+  base::HistogramTester histograms;
+
+  // Add the new autofill profile before starting sync.
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  ASSERT_TRUE(SetupSync());
+
+  // Wait for the sync to happen.
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  // Make sure that both clients have one profile.
+  EXPECT_EQ(1U, GetProfileCount(0));
+  EXPECT_EQ(1U, GetProfileCount(1));
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+// Tests that adding the same profile on the two clients before sync is started
+// results in each client only having one profile after sync is started
+// Flaky on all platform, crbug.com/971644.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       DISABLED_ClientsAddSameProfile) {
+  ASSERT_TRUE(SetupClients()) << "SetupClients() failed";
+  base::HistogramTester histograms;
+
+  // Add the same profile in the two clients.
+  AddProfile(0, CreateUniqueAutofillProfile());
+  AddProfile(1, CreateUniqueAutofillProfile());
+
+  // Make sure the GUIDs are different.
+  ASSERT_NE(GetAllAutoFillProfiles(0)[0]->guid(),
+            GetAllAutoFillProfiles(1)[0]->guid());
+
+  // Commit sequentially to make sure there is no race condition.
+  SetupSyncOneClientAfterAnother();
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  // Make sure that both clients have one profile.
+  EXPECT_EQ(1U, GetProfileCount(0));
+  EXPECT_EQ(1U, GetProfileCount(1));
+
+  // Make sure that they have the same GUID.
+  EXPECT_EQ(GetAllAutoFillProfiles(0)[0]->guid(),
+            GetAllAutoFillProfiles(1)[0]->guid());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+// Tests that adding multiple profiles to one client results in all of them
+// being added to the other client.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       AddMultipleProfilesOnOneClient) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
   AddProfile(0, CreateAutofillProfile(PROFILE_MARION));
   AddProfile(0, CreateAutofillProfile(PROFILE_FRASIER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(3U, GetAllAutoFillProfiles(0).size());
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(3U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, DeleteProfile) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-
-  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
-
-  RemoveProfile(1, GetAllAutoFillProfiles(1)[0]->guid());
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(0U, GetAllAutoFillProfiles(0).size());
-}
-
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, MergeProfiles) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
+// Tests that adding multiple profiles to two client results both clients having
+// all profiles.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       AddMultipleProfilesOnTwoClients) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
   AddProfile(1, CreateAutofillProfile(PROFILE_MARION));
   AddProfile(1, CreateAutofillProfile(PROFILE_FRASIER));
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(3U, GetAllAutoFillProfiles(0).size());
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(3U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, UpdateFields) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Tests that deleting a profile on one client results in it being deleted on
+// the other client.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, DeleteProfile) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
+
+  // Setup the test by making the 2 clients have the same profile.
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  // Remove the profile from one client.
+  RemoveProfile(1, GetAllAutoFillProfiles(1)[0]->guid());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  // Make sure both clients don't have any profiles.
+  EXPECT_EQ(0U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 1);
+}
+
+// Tests that modifying a profile while syncing results in the other client
+// getting the updated profile.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, UpdateFields) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
-  UpdateProfile(0,
-                GetAllAutoFillProfiles(0)[0]->guid(),
+  // Modify the profile on one client.
+  std::string new_name = "Lisa";
+  std::string new_email = "grrrl@TV.com";
+  UpdateProfile(0, GetAllAutoFillProfiles(0)[0]->guid(),
                 AutofillType(autofill::NAME_FIRST),
-                base::ASCIIToUTF16("Lisa"));
-  UpdateProfile(0,
-                GetAllAutoFillProfiles(0)[0]->guid(),
+                base::ASCIIToUTF16(new_name));
+  UpdateProfile(0, GetAllAutoFillProfiles(0)[0]->guid(),
                 AutofillType(autofill::EMAIL_ADDRESS),
-                base::ASCIIToUTF16("grrrl@TV.com"));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+                base::ASCIIToUTF16(new_email));
+
+  // Make sure the change is propagated to the other client.
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_EQ(new_name,
+            base::UTF16ToUTF8(GetAllAutoFillProfiles(1)[0]->GetRawInfo(
+                autofill::NAME_FIRST)));
+  EXPECT_EQ(new_email,
+            base::UTF16ToUTF8(GetAllAutoFillProfiles(1)[0]->GetRawInfo(
+                autofill::EMAIL_ADDRESS)));
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, ConflictingFields) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Tests that modifying a profile at the same time one two clients while
+// syncing results in the both client having the same profile (doesn't matter
+// which one).
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       UpdateConflictingFields) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
+  // Make the two clients have the same profile.
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
+  // Update the same field differently on the two clients at the same time.
   UpdateProfile(0,
                 GetAllAutoFillProfiles(0)[0]->guid(),
                 AutofillType(autofill::NAME_FIRST),
                 base::ASCIIToUTF16("Lisa"));
-  UpdateProfile(1,
-                GetAllAutoFillProfiles(1)[0]->guid(),
-                AutofillType(autofill::NAME_FIRST),
-                base::ASCIIToUTF16("Bart"));
+  UpdateProfile(1, GetAllAutoFillProfiles(1)[0]->guid(),
+                AutofillType(autofill::NAME_FIRST), base::ASCIIToUTF16("Bart"));
 
   // Don't care which write wins the conflict, only that the two clients agree.
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, MaxLength) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+// Tests that modifying a profile at the same time one two clients while
+// syncing results in the both client having the same profile (doesn't matter
+// which one).
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       UpdateConflictingFieldsDuringInitialMerge) {
+  ASSERT_TRUE(SetupClients());
+  base::HistogramTester histograms;
+
+  // Make the two clients have the same profile.
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  AddProfile(1, CreateAutofillProfile(PROFILE_HOMER));
+
+  // Update the same field differently on the two clients at the same time.
+  UpdateProfile(0, GetAllAutoFillProfiles(0)[0]->guid(),
+                AutofillType(autofill::NAME_FIRST), base::ASCIIToUTF16("Lisa"));
+  UpdateProfile(1, GetAllAutoFillProfiles(1)[0]->guid(),
+                AutofillType(autofill::NAME_FIRST), base::ASCIIToUTF16("Bart"));
+
+  // Start sync.
+  ASSERT_TRUE(SetupSync());
+
+  // Don't care which write wins the conflict, only that the two clients agree.
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
+}
+
+// Tests that modifying a profile at the same time on two clients while
+// syncing results in both client having the same profile (doesn't matter which
+// one).
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, DeleteAndUpdate) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
+
+  // Make the two clients have the same profile.
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  RemoveProfile(0, GetAllAutoFillProfiles(0)[0]->guid());
+  UpdateProfile(1, GetAllAutoFillProfiles(1)[0]->guid(),
+                AutofillType(autofill::NAME_FIRST), base::ASCIIToUTF16("Bart"));
+
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  // The exact result is non-deterministic without a strong consistency model
+  // server-side, but both clients should converge (either update or delete).
+  EXPECT_EQ(GetAllAutoFillProfiles(0).size(), GetAllAutoFillProfiles(1).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 1);
+}
+
+// Tests that modifying a profile at the same time on two clients while
+// syncing results in a conflict where the update wins. This only works with
+// a server that supports a strong consistency model and is hence capable of
+// detecting conflicts server-side.
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       DeleteAndUpdateWithStrongConsistency) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
+  GetFakeServer()->EnableStrongConsistencyWithConflictDetectionModel();
+
+  // Make the two clients have the same profile.
+  AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
+  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+
+  RemoveProfile(0, GetAllAutoFillProfiles(0)[0]->guid());
+  UpdateProfile(1, GetAllAutoFillProfiles(1)[0]->guid(),
+                AutofillType(autofill::NAME_FIRST), base::ASCIIToUTF16("Bart"));
+
+  // One of the two clients (the second one committing) will be requested by the
+  // server to resolve the conflict and recommit. The conflict resolution should
+  // be undeletion wins, which can mean local wins or remote wins, depending on
+  // which client is involved.
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(1).size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, MaxLength) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
   ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
@@ -309,11 +559,15 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, MaxLength) {
                 AutofillType(autofill::ADDRESS_HOME_LINE1),
                 max_length_string);
 
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, ExceedsMaxLength) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, ExceedsMaxLength) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
   ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
@@ -338,13 +592,17 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, ExceedsMaxLength) {
                 AutofillType(autofill::ADDRESS_HOME_LINE1),
                 exceeds_max_length_string);
 
-  ASSERT_TRUE(BookmarksMatchChecker().Wait());
+  ASSERT_TRUE(AwaitQuiescence());
   EXPECT_FALSE(ProfilesMatch(0, 1));
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
 // Test credit cards don't sync.
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, NoCreditCardSync) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, NoCreditCardSync) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   CreditCard card;
   card.SetRawInfo(autofill::CREDIT_CARD_NUMBER,
@@ -358,16 +616,20 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest, NoCreditCardSync) {
   // profile to sync between both clients, it should give the credit card enough
   // time to sync. We cannot directly wait/block for the credit card to sync
   // because we're expecting it to not sync.
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
-  ASSERT_EQ(1U, GetAllAutoFillProfiles(0).size());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_EQ(1U, GetAllAutoFillProfiles(0).size());
 
   PersonalDataManager* pdm = GetPersonalDataManager(1);
-  ASSERT_EQ(0U, pdm->GetCreditCards().size());
+  EXPECT_EQ(0U, pdm->GetCreditCards().size());
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest,
-    E2E_ONLY(TwoClientsAddAutofillProfiles)) {
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
+                       E2E_ONLY(TwoClientsAddAutofillProfiles)) {
+  ASSERT_TRUE(SetupSync());
+  base::HistogramTester histograms;
 
   // All profiles should sync same autofill profiles.
   ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait())
@@ -376,16 +638,21 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillSyncTest,
   // For clean profiles, the autofill profiles count should be zero. We are not
   // enforcing this, we only check that the final count is equal to initial
   // count plus new autofill profiles count.
-  int init_autofill_profiles_count = GetProfileCount(0);
+  size_t init_autofill_profiles_count = GetProfileCount(0);
 
   // Add a new autofill profile to the first client.
   AddProfile(0, CreateUniqueAutofillProfile());
 
-  ASSERT_TRUE(AutofillProfileChecker(0, 1).Wait());
+  EXPECT_TRUE(AutofillProfileChecker(0, 1).Wait());
 
   // Check that the total number of autofill profiles is as expected
   for (int i = 0; i < num_clients(); ++i) {
-    ASSERT_EQ(GetProfileCount(i), init_autofill_profiles_count + 1) <<
-        "Total autofill profile count is wrong.";
+    EXPECT_EQ(GetProfileCount(i), init_autofill_profiles_count + 1U)
+        << "Total autofill profile count is wrong.";
   }
+
+  histograms.ExpectBucketCount("Sync.ModelTypeEntityChange3.AUTOFILL_PROFILE",
+                               LOCAL_DELETION, 0);
 }
+
+}  // namespace

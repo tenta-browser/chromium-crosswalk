@@ -8,7 +8,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -17,7 +16,6 @@
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/test_resource_handler.h"
 #include "content/public/browser/resource_request_info.h"
-#include "content/public/common/resource_response.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -25,6 +23,7 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/resource_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -62,13 +61,13 @@ class DetachableResourceHandlerTest
                                         nullptr,
                                         TRAFFIC_ANNOTATION_FOR_TESTS)) {
     ResourceRequestInfo::AllocateForTesting(request_.get(),
-                                            RESOURCE_TYPE_MAIN_FRAME,
-                                            nullptr,       // context
-                                            0,             // render_process_id
-                                            0,             // render_view_id
-                                            0,             // render_frame_id
-                                            true,          // is_main_frame
-                                            true,          // allow_download
+                                            ResourceType::kMainFrame,
+                                            nullptr,  // context
+                                            0,        // render_process_id
+                                            0,        // render_view_id
+                                            0,        // render_frame_id
+                                            true,     // is_main_frame
+                                            ResourceInterceptPolicy::kAllowAll,
                                             true,          // is_async
                                             PREVIEWS_OFF,  // previews_state
                                             nullptr);      // navigation_ui_data
@@ -157,7 +156,8 @@ TEST_P(DetachableResourceHandlerTest, Sync) {
   MaybeSyncDetachAtPhase(DetachPhase::REQUEST_REDIRECTED);
   ASSERT_EQ(MockResourceLoader::Status::IDLE,
             mock_loader_->OnRequestRedirected(
-                net::RedirectInfo(), base::MakeRefCounted<ResourceResponse>()));
+                net::RedirectInfo(),
+                base::MakeRefCounted<network::ResourceResponse>()));
   if (!WasDetachedBy(DetachPhase::REQUEST_REDIRECTED)) {
     EXPECT_EQ(1, test_handler_->on_request_redirected_called());
     EXPECT_EQ(0, test_handler_->on_response_started_called());
@@ -166,7 +166,7 @@ TEST_P(DetachableResourceHandlerTest, Sync) {
   MaybeSyncDetachAtPhase(DetachPhase::ON_RESPONSE_STARTED);
   ASSERT_EQ(MockResourceLoader::Status::IDLE,
             mock_loader_->OnResponseStarted(
-                base::MakeRefCounted<ResourceResponse>()));
+                base::MakeRefCounted<network::ResourceResponse>()));
   if (!WasDetachedBy(DetachPhase::ON_RESPONSE_STARTED)) {
     EXPECT_EQ(1, test_handler_->on_request_redirected_called());
     EXPECT_EQ(1, test_handler_->on_response_started_called());
@@ -257,15 +257,16 @@ TEST_P(DetachableResourceHandlerTest, Async) {
   }
   MaybeAsyncDetachAt(DetachPhase::ON_WILL_START);
 
-  mock_loader_->OnRequestRedirected(net::RedirectInfo(),
-                                    base::MakeRefCounted<ResourceResponse>());
+  mock_loader_->OnRequestRedirected(
+      net::RedirectInfo(), base::MakeRefCounted<network::ResourceResponse>());
   if (test_handler_) {
     EXPECT_EQ(1, test_handler_->on_request_redirected_called());
     EXPECT_EQ(0, test_handler_->on_response_started_called());
   }
   MaybeAsyncDetachAt(DetachPhase::REQUEST_REDIRECTED);
 
-  mock_loader_->OnResponseStarted(base::MakeRefCounted<ResourceResponse>());
+  mock_loader_->OnResponseStarted(
+      base::MakeRefCounted<network::ResourceResponse>());
   if (test_handler_) {
     EXPECT_EQ(1, test_handler_->on_request_redirected_called());
     EXPECT_EQ(1, test_handler_->on_response_started_called());
@@ -336,19 +337,19 @@ TEST_P(DetachableResourceHandlerTest, Async) {
   MaybeAsyncDetachAt(DetachPhase::ON_RESPONSE_COMPLETED);
 }
 
-INSTANTIATE_TEST_CASE_P(/* No prefix needed*/,
-                        DetachableResourceHandlerTest,
-                        testing::Values(DetachPhase::DETACHED_FROM_CREATION,
-                                        DetachPhase::ON_WILL_START,
-                                        DetachPhase::REQUEST_REDIRECTED,
-                                        DetachPhase::ON_RESPONSE_STARTED,
-                                        DetachPhase::FIRST_ON_WILL_READ,
-                                        DetachPhase::FIRST_ON_READ_COMPLETED,
-                                        DetachPhase::SECOND_ON_WILL_READ,
-                                        DetachPhase::SECOND_ON_READ_COMPLETED,
-                                        DetachPhase::ON_READ_EOF,
-                                        DetachPhase::ON_RESPONSE_COMPLETED,
-                                        DetachPhase::NEVER_DETACH));
+INSTANTIATE_TEST_SUITE_P(/* No prefix needed*/,
+                         DetachableResourceHandlerTest,
+                         testing::Values(DetachPhase::DETACHED_FROM_CREATION,
+                                         DetachPhase::ON_WILL_START,
+                                         DetachPhase::REQUEST_REDIRECTED,
+                                         DetachPhase::ON_RESPONSE_STARTED,
+                                         DetachPhase::FIRST_ON_WILL_READ,
+                                         DetachPhase::FIRST_ON_READ_COMPLETED,
+                                         DetachPhase::SECOND_ON_WILL_READ,
+                                         DetachPhase::SECOND_ON_READ_COMPLETED,
+                                         DetachPhase::ON_READ_EOF,
+                                         DetachPhase::ON_RESPONSE_COMPLETED,
+                                         DetachPhase::NEVER_DETACH));
 
 }  // namespace
 

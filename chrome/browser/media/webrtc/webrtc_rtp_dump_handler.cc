@@ -6,15 +6,15 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/media/webrtc/webrtc_rtp_dump_writer.h"
-#include "content/public/browser/browser_thread.h"
-
-using content::BrowserThread;
 
 namespace {
 
@@ -30,12 +30,10 @@ void FireGenericDoneCallback(
     const WebRtcRtpDumpHandler::GenericDoneCallback& callback,
     bool success,
     const std::string& error_message) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!callback.is_null());
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(callback, success, error_message));
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(callback, success, error_message));
 }
 
 bool DumpTypeContainsIncoming(RtpDumpType type) {
@@ -51,9 +49,7 @@ bool DumpTypeContainsOutgoing(RtpDumpType type) {
 WebRtcRtpDumpHandler::WebRtcRtpDumpHandler(const base::FilePath& dump_dir)
     : dump_dir_(dump_dir),
       incoming_state_(STATE_NONE),
-      outgoing_state_(STATE_NONE),
-      weak_ptr_factory_(this) {
-}
+      outgoing_state_(STATE_NONE) {}
 
 WebRtcRtpDumpHandler::~WebRtcRtpDumpHandler() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(main_sequence_);
@@ -66,14 +62,14 @@ WebRtcRtpDumpHandler::~WebRtcRtpDumpHandler() {
 
   if (incoming_state_ != STATE_NONE && !incoming_dump_path_.empty()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                        incoming_dump_path_, false));
   }
 
   if (outgoing_state_ != STATE_NONE && !outgoing_dump_path_.empty()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                        outgoing_dump_path_, false));
   }
@@ -94,7 +90,7 @@ bool WebRtcRtpDumpHandler::StartDump(RtpDumpType type,
   if ((DumpTypeContainsIncoming(type) && incoming_state_ != STATE_NONE) ||
       (DumpTypeContainsOutgoing(type) && outgoing_state_ != STATE_NONE)) {
     *error_message =
-        "RTP dump already started for type " + base::IntToString(type);
+        "RTP dump already started for type " + base::NumberToString(type);
     return false;
   }
 
@@ -147,10 +143,9 @@ void WebRtcRtpDumpHandler::StopDump(RtpDumpType type,
       (DumpTypeContainsOutgoing(type) && outgoing_state_ != STATE_STARTED)) {
     if (!callback.is_null()) {
       FireGenericDoneCallback(
-          callback,
-          false,
+          callback, false,
           "RTP dump not started or already stopped for type " +
-              base::IntToString(type));
+              base::NumberToString(type));
     }
     return;
   }
@@ -236,7 +231,7 @@ void WebRtcRtpDumpHandler::StopOngoingDumps(const base::Closure& callback) {
   // to complete and then check the states again.
   if (incoming_state_ == STATE_STOPPING || outgoing_state_ == STATE_STOPPING) {
     dump_writer_->background_task_runner()->PostTaskAndReply(
-        FROM_HERE, base::BindOnce(&base::DoNothing),
+        FROM_HERE, base::DoNothing(),
         base::BindOnce(&WebRtcRtpDumpHandler::StopOngoingDumps,
                        weak_ptr_factory_.GetWeakPtr(), callback));
     return;
@@ -298,7 +293,7 @@ void WebRtcRtpDumpHandler::OnDumpEnded(const base::Closure& callback,
 
     if (!incoming_success) {
       base::PostTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                          incoming_dump_path_, false));
 
@@ -314,7 +309,7 @@ void WebRtcRtpDumpHandler::OnDumpEnded(const base::Closure& callback,
 
     if (!outgoing_success) {
       base::PostTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
           base::BindOnce(base::IgnoreResult(&base::DeleteFile),
                          outgoing_dump_path_, false));
 

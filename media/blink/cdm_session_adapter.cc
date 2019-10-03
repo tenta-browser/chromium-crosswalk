@@ -4,11 +4,11 @@
 
 #include "media/blink/cdm_session_adapter.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
@@ -20,6 +20,7 @@
 #include "media/base/key_systems.h"
 #include "media/blink/webcontentdecryptionmodule_impl.h"
 #include "media/blink/webcontentdecryptionmodulesession_impl.h"
+#include "media/cdm/cdm_context_ref_impl.h"
 #include "url/origin.h"
 
 namespace media {
@@ -31,8 +32,7 @@ const char kCreateCdmUMAName[] = "CreateCdm";
 const char kTimeToCreateCdmUMAName[] = "CreateCdmTime";
 }  // namespace
 
-CdmSessionAdapter::CdmSessionAdapter()
-    : trace_id_(0), weak_ptr_factory_(this) {}
+CdmSessionAdapter::CdmSessionAdapter() : trace_id_(0) {}
 
 CdmSessionAdapter::~CdmSessionAdapter() = default;
 
@@ -61,7 +61,7 @@ void CdmSessionAdapter::CreateCdm(
       base::Bind(&CdmSessionAdapter::OnSessionClosed, weak_this),
       base::Bind(&CdmSessionAdapter::OnSessionKeysChange, weak_this),
       base::Bind(&CdmSessionAdapter::OnSessionExpirationUpdate, weak_this),
-      base::Bind(&CdmSessionAdapter::OnCdmCreated, this, key_system,
+      base::Bind(&CdmSessionAdapter::OnCdmCreated, this, key_system, cdm_config,
                  start_time));
 }
 
@@ -79,14 +79,14 @@ void CdmSessionAdapter::GetStatusForPolicy(
 
 std::unique_ptr<WebContentDecryptionModuleSessionImpl>
 CdmSessionAdapter::CreateSession() {
-  return base::MakeUnique<WebContentDecryptionModuleSessionImpl>(this);
+  return std::make_unique<WebContentDecryptionModuleSessionImpl>(this);
 }
 
 bool CdmSessionAdapter::RegisterSession(
     const std::string& session_id,
     base::WeakPtr<WebContentDecryptionModuleSessionImpl> session) {
   // If this session ID is already registered, don't register it again.
-  if (base::ContainsKey(sessions_, session_id))
+  if (base::Contains(sessions_, session_id))
     return false;
 
   sessions_[session_id] = session;
@@ -94,7 +94,7 @@ bool CdmSessionAdapter::RegisterSession(
 }
 
 void CdmSessionAdapter::UnregisterSession(const std::string& session_id) {
-  DCHECK(base::ContainsKey(sessions_, session_id));
+  DCHECK(base::Contains(sessions_, session_id));
   sessions_.erase(session_id);
 }
 
@@ -137,8 +137,15 @@ void CdmSessionAdapter::RemoveSession(
   cdm_->RemoveSession(session_id, std::move(promise));
 }
 
-scoped_refptr<ContentDecryptionModule> CdmSessionAdapter::GetCdm() {
-  return cdm_;
+std::unique_ptr<CdmContextRef> CdmSessionAdapter::GetCdmContextRef() {
+  DVLOG(2) << __func__;
+
+  if (!cdm_->GetCdmContext()) {
+    NOTREACHED() << "All CDMs should support CdmContext.";
+    return nullptr;
+  }
+
+  return std::make_unique<CdmContextRefImpl>(cdm_);
 }
 
 const std::string& CdmSessionAdapter::GetKeySystem() const {
@@ -150,8 +157,14 @@ const std::string& CdmSessionAdapter::GetKeySystemUMAPrefix() const {
   return key_system_uma_prefix_;
 }
 
+const CdmConfig& CdmSessionAdapter::GetCdmConfig() const {
+  DCHECK(cdm_);
+  return cdm_config_;
+}
+
 void CdmSessionAdapter::OnCdmCreated(
     const std::string& key_system,
+    const CdmConfig& cdm_config,
     base::TimeTicks start_time,
     const scoped_refptr<ContentDecryptionModule>& cdm,
     const std::string& error_message) {
@@ -182,6 +195,8 @@ void CdmSessionAdapter::OnCdmCreated(
   // Only report time for successful CDM creation.
   base::UmaHistogramTimes(key_system_uma_prefix_ + kTimeToCreateCdmUMAName,
                           base::TimeTicks::Now() - start_time);
+
+  cdm_config_ = cdm_config;
 
   cdm_ = cdm;
 
@@ -250,7 +265,7 @@ WebContentDecryptionModuleSessionImpl* CdmSessionAdapter::GetSession(
   // Since session objects may get garbage collected, it is possible that there
   // are events coming back from the CDM and the session has been unregistered.
   // We can not tell if the CDM is firing events at sessions that never existed.
-  SessionMap::iterator session = sessions_.find(session_id);
+  auto session = sessions_.find(session_id);
   return (session != sessions_.end()) ? session->second.get() : NULL;
 }
 

@@ -14,8 +14,11 @@
 //
 //   - It can use an arbitrary search path.
 //
-//   - It can load a library at a memory fixed address, or from a fixed
-//     file offset (both must be page-aligned).
+//   - It can load a library at a memory fixed address.
+//
+//   - It can load libraries from zip archives (as long as they are
+//     page aligned and uncompressed). Even when running on pre-Android M
+//     systems.
 //
 //   - It can share the RELRO section between two libraries
 //     loaded at the same address in two distinct processes.
@@ -70,7 +73,6 @@ typedef enum {
 typedef struct crazy_context_t crazy_context_t;
 
 // Create a new context object.
-// Note that this calls crazy_context_reset_search_paths().
 crazy_context_t* crazy_context_create(void) _CRAZY_PUBLIC;
 
 // Return current error string, or NULL if there was no error.
@@ -80,47 +82,37 @@ const char* crazy_context_get_error(crazy_context_t* context) _CRAZY_PUBLIC;
 void crazy_context_clear_error(crazy_context_t* context) _CRAZY_PUBLIC;
 
 // Set the explicit load address in a context object. Value 0 means
-// the address is randomized.
+// the address is randomized. NOTE: This will achieve a best-effort load,
+// if the address range is reserved, the library will still be loaded at
+// a different address. Use crazy_context_set_reserved_map() if you want
+// to ensure that the library can only be loaded at a fixed address.
 void crazy_context_set_load_address(crazy_context_t* context,
                                     size_t load_address) _CRAZY_PUBLIC;
 
 // Return the current load address in a context.
 size_t crazy_context_get_load_address(crazy_context_t* context) _CRAZY_PUBLIC;
 
-// Set the explicit file offset in a context object. The value should
-// always page-aligned, or the load will fail.
-// Note you can not use the same file with multiple offsets. See crbug/388223.
-void crazy_context_set_file_offset(crazy_context_t* context,
-                                   size_t file_offset) _CRAZY_PUBLIC;
+// Set the explicit library file descriptor in a context object. Values >= 0
+// will be used during the next crazy_library_open() call to read the library
+// file, instead of opening it using its path.
+void crazy_context_set_library_fd(crazy_context_t* context,
+                                  int fd) _CRAZY_PUBLIC;
 
-// Return the current file offset in a context object.
-size_t crazy_context_get_file_offset(crazy_context_t* context);
+// Return the current library file descriptor in a context.
+int crazy_context_get_library_fd(crazy_context_t* context) _CRAZY_PUBLIC;
 
-// Add one or more paths to the list of library search paths held
-// by a given context. |path| is a string using a column (:) as a
-// list separator. As with the PATH variable, an empty list item
-// is equivalent to '.', the current directory.
-// This can fail if too many paths are added to the context.
-//
-// NOTE: Calling this function appends new paths to the search list,
-// but all paths added with this function will be searched before
-// the ones listed in LD_LIBRARY_PATH.
-crazy_status_t crazy_context_add_search_path(
-    crazy_context_t* context,
-    const char* file_path) _CRAZY_PUBLIC;
+// Set an explicit reserved memory mapping to be used on the next library
+// load. |reserved_address| is the page-aligned reserved address,
+// |reserved_size| is the page-aligned reserved size, and if |load_fallback|
+// is true, then the linker will try to load the library at a different
+// address if it fails to load its segments at the reserved address range.
+void crazy_context_set_reserved_map(crazy_context_t* context,
+                                    uintptr_t reserved_address,
+                                    size_t reserved_size,
+                                    bool load_fallback) _CRAZY_PUBLIC;
 
-// Find the ELF binary that contains |address|, and add its directory
-// path to the context's list of search directories. This is useful to
-// load libraries in the same directory than the current program itself.
-crazy_status_t crazy_context_add_search_path_for_address(
-    crazy_context_t* context,
-    void* address) _CRAZY_PUBLIC;
-
-// Reset the search paths to the value of the LD_LIBRARY_PATH
-// environment variable. This essentially removes any paths
-// that were added with crazy_context_add_search_path() or
-// crazy_context_add_search_path_for_address().
-void crazy_context_reset_search_paths(crazy_context_t* context) _CRAZY_PUBLIC;
+// Destroy a given context object.
+void crazy_context_destroy(crazy_context_t* context) _CRAZY_PUBLIC;
 
 // Record the value of |java_vm| inside of |context|. If this is not NULL,
 // which is the default, then after loading any library, the crazy linker
@@ -131,87 +123,32 @@ void crazy_context_reset_search_paths(crazy_context_t* context) _CRAZY_PUBLIC;
 //
 // The |java_vm| field is also saved in the crazy_library_t object, and
 // used at unload time to call JNI_OnUnload() if it exists.
-void crazy_context_set_java_vm(crazy_context_t* context,
-                               void* java_vm,
-                               int minimum_jni_version);
+void crazy_set_java_vm(void* java_vm, int minimum_jni_version);
 
 // Retrieves the last values set with crazy_context_set_java_vm().
 // A value of NUMM in |*java_vm| means the feature is disabled.
-void crazy_context_get_java_vm(crazy_context_t* context,
-                               void** java_vm,
-                               int* minimum_jni_version);
+void crazy_get_java_vm(void** java_vm, int* minimum_jni_version);
 
-// Destroy a given context object.
-void crazy_context_destroy(crazy_context_t* context) _CRAZY_PUBLIC;
-
-// Some operations performed by the crazy linker might conflict with the
-// system linker if they are used concurrently in different threads
-// (e.g. modifying the list of shared libraries seen by GDB). To work
-// around this, the crazy linker provides a way to delay these conflicting
-// operations for a later time.
+// Add one or more paths to the global list of library search paths. |path| is a
+// string using a column (:) as a list separator. As with the PATH variable,
+// an empty list item is equivalent to '.', the current directory.
+// This can fail if too many paths are added to the context.
 //
-// This works by wrapping each of these operations in a small data structure
-// (crazy_callback_t), which can later be passed to crazy_callback_run()
-// to execute it.
-//
-// The user must provide a function to record these callbacks during
-// library loading, by calling crazy_linker_set_callback_poster().
-//
-// Once all libraries are loaded, the callbacks can be later called either
-// in a different thread, or when it is safe to assume the system linker
-// cannot be running in parallel.
+// NOTE: Calling this function appends new paths to the global search list,
+// but all paths added with this function will be searched before
+// the ones listed in LD_LIBRARY_PATH.
+crazy_status_t crazy_add_search_path(const char* file_path) _CRAZY_PUBLIC;
 
-// Callback handler.
-typedef void (*crazy_callback_handler_t)(void* opaque);
+// Find the ELF binary that contains |address|, and add its directory
+// path to the global list of search directories. This is useful to
+// load libraries in the same directory as the current program itself.
+crazy_status_t crazy_add_search_path_for_address(void* address) _CRAZY_PUBLIC;
 
-// A small structure used to model a callback provided by the crazy linker.
-// Use crazy_callback_run() to run the callback.
-typedef struct {
-  crazy_callback_handler_t handler;
-  void* opaque;
-} crazy_callback_t;
-
-// Function to call to enable a callback into the crazy linker when delayed
-// operations are enabled (see crazy_context_set_callback_poster). A call
-// to crazy_callback_poster_t returns true if the callback was successfully
-// set up and will occur later, false if callback could not be set up (and
-// so will never occur).
-typedef bool (*crazy_callback_poster_t)(
-    crazy_callback_t* callback, void* poster_opaque);
-
-// Enable delayed operation, by passing the address of a
-// |crazy_callback_poster_t| function, that will be called during library
-// loading to let the user record callbacks for delayed operations.
-// Callers must copy the |crazy_callback_t| passed to |poster|.
-//
-// Note: If client code calls this function to supply a callback poster,
-// it must guarantee to invoke any callback requested through the poster.
-// The call will be (typically) on another thread, but may instead be
-// immediate from the poster. However, the callback must be invoked,
-// otherwise if it is a blocking callback the crazy linker will deadlock
-// waiting for it.
-//
-// |poster_opaque| is an opaque value for client code use, passed back
-// on each call to |poster|.
-// |poster| can be NULL to disable the feature.
-void crazy_context_set_callback_poster(crazy_context_t* context,
-                                       crazy_callback_poster_t poster,
-                                       void* poster_opaque);
-
-// Return the address of the function that the crazy linker can use to
-// request callbacks, and the |poster_opaque| passed back on each call
-// to |poster|. |poster| is NULL if the feature is disabled.
-void crazy_context_get_callback_poster(crazy_context_t* context,
-                                       crazy_callback_poster_t* poster,
-                                       void** poster_opaque);
-
-// Run a given |callback| in the current thread. Must only be called once
-// per callback.
-void crazy_callback_run(crazy_callback_t* callback);
-
-// Pass the platform's SDK build version to the crazy linker. The value is
-// from android.os.Build.VERSION.SDK_INT.
-void crazy_set_sdk_build_version(int sdk_build_version);
+// Reset the search paths to the value of the LD_LIBRARY_PATH
+// environment variable. This essentially removes any paths
+// that were added with crazy_add_search_path() or
+// crazy_context_add_search_path_for_address().
+void crazy_reset_search_paths(void) _CRAZY_PUBLIC;
 
 // Opaque handle to a library as seen/loaded by the crazy linker.
 typedef struct crazy_library_t crazy_library_t;
@@ -236,20 +173,6 @@ typedef struct crazy_library_t crazy_library_t;
 crazy_status_t crazy_library_open(crazy_library_t** library,
                                   const char* lib_name,
                                   crazy_context_t* context) _CRAZY_PUBLIC;
-
-// Try to open or load a library with the crazy linker. The
-// library is in a zip file with the name |zipfile_name|. Within the zip
-// file the library must be uncompressed and page aligned. |zipfile_name|
-// should be an absolute path name and |lib_name| should be a relative
-// pathname. The library in the zip file is expected to have the name
-// lib/<abi_tag>/crazy.<lib_name> where abi_tag is the abi directory matching
-// the ABI for which the crazy linker was compiled. Note this does not support
-// opening multiple libraries in the same zipfile, see crbug/388223.
-crazy_status_t crazy_library_open_in_zip_file(crazy_library_t** library,
-                                              const char* zipfile_name,
-                                              const char* lib_name,
-                                              crazy_context_t* context)
-    _CRAZY_PUBLIC;
 
 // A structure used to hold information about a given library.
 // |load_address| is the library's actual (page-aligned) load address.

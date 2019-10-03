@@ -8,21 +8,17 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 
 class ReadingListDownloadService;
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}
 
 namespace ios {
 class ChromeBrowserState;
 }
 
-// Singleton that owns the ReadingListDownloadService and associates it with
-// ios::ChromeBrowserState.
+// Singleton that creates the ReadingListDownloadService and associates that
+// service with ios::ChromeBrowserState.
 class ReadingListDownloadServiceFactory
     : public BrowserStateKeyedServiceFactory {
  public:
@@ -31,7 +27,7 @@ class ReadingListDownloadServiceFactory
   static ReadingListDownloadServiceFactory* GetInstance();
 
  private:
-  friend struct base::DefaultSingletonTraits<ReadingListDownloadServiceFactory>;
+  friend class base::NoDestructor<ReadingListDownloadServiceFactory>;
 
   ReadingListDownloadServiceFactory();
   ~ReadingListDownloadServiceFactory() override;

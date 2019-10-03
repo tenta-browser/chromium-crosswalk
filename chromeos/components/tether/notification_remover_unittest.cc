@@ -4,15 +4,17 @@
 
 #include "chromeos/components/tether/notification_remover.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/test/scoped_task_environment.h"
+#include "chromeos/components/multidevice/remote_device_ref.h"
+#include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/tether/fake_active_host.h"
 #include "chromeos/components/tether/fake_host_scan_cache.h"
 #include "chromeos/components/tether/fake_notification_presenter.h"
 #include "chromeos/components/tether/host_scan_test_util.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/network/network_state_test.h"
-#include "components/cryptauth/remote_device.h"
+#include "chromeos/network/network_state_test_helper.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
 namespace chromeos {
@@ -23,36 +25,28 @@ namespace {
 const int kTestSignalStrength = 100;
 }  // namespace
 
-class NotificationRemoverTest : public NetworkStateTest {
+class NotificationRemoverTest : public testing::Test {
  protected:
   NotificationRemoverTest()
-      : NetworkStateTest(),
-        test_entries_(host_scan_test_util::CreateTestEntries()) {}
+      : test_entries_(host_scan_test_util::CreateTestEntries()) {}
 
   void SetUp() override {
-    DBusThreadManager::Initialize();
-    NetworkStateTest::SetUp();
+    notification_presenter_ = std::make_unique<FakeNotificationPresenter>();
+    host_scan_cache_ = std::make_unique<FakeHostScanCache>();
+    active_host_ = std::make_unique<FakeActiveHost>();
 
-    notification_presenter_ = base::MakeUnique<FakeNotificationPresenter>();
-    host_scan_cache_ = base::MakeUnique<FakeHostScanCache>();
-    active_host_ = base::MakeUnique<FakeActiveHost>();
-
-    notification_remover_ = base::MakeUnique<NotificationRemover>(
-        network_state_handler(), notification_presenter_.get(),
+    notification_remover_ = std::make_unique<NotificationRemover>(
+        helper_.network_state_handler(), notification_presenter_.get(),
         host_scan_cache_.get(), active_host_.get());
   }
 
   void TearDown() override {
     notification_remover_.reset();
-
-    NetworkStateTest::TearDown();
-    DBusThreadManager::Shutdown();
   }
 
   void NotifyPotentialHotspotNearby() {
-    cryptauth::RemoteDevice remote_device;
     notification_presenter_->NotifyPotentialHotspotNearby(
-        remote_device, 100 /* signal_strength */);
+        multidevice::CreateRemoteDeviceRefForTest(), 100 /* signal_strength */);
   }
 
   void SetAndRemoveHostScanResult() {
@@ -72,10 +66,11 @@ class NotificationRemoverTest : public NetworkStateTest {
        << "  \"State\": \"" << shill::kStateConfiguration << "\""
        << "}";
 
-    ConfigureService(ss.str());
+    helper_.ConfigureService(ss.str());
   }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
+  NetworkStateTestHelper helper_{true /* use_default_devices_and_services */};
 
   const std::unordered_map<std::string, HostScanCacheEntry> test_entries_;
 

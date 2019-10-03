@@ -19,10 +19,6 @@
 #include "components/safe_browsing/db/database_manager.h"
 #include "url/gurl.h"
 
-namespace net {
-class URLRequestContextGetter;
-}
-
 namespace safe_browsing {
 
 struct V4ProtocolConfig;
@@ -41,7 +37,6 @@ class RemoteSafeBrowsingDatabaseManager : public SafeBrowsingDatabaseManager {
 
   void CancelCheck(Client* client) override;
   bool CanCheckResourceType(content::ResourceType resource_type) const override;
-  bool CanCheckSubresourceFilter() const override;
   bool CanCheckUrl(const GURL& url) const override;
   bool ChecksAreAlwaysAsync() const override;
   bool CheckBrowseUrl(const GURL& url,
@@ -53,15 +48,19 @@ class RemoteSafeBrowsingDatabaseManager : public SafeBrowsingDatabaseManager {
                          Client* client) override;
   AsyncMatch CheckCsdWhitelistUrl(const GURL& url, Client* client) override;
   bool CheckResourceUrl(const GURL& url, Client* client) override;
+  AsyncMatch CheckUrlForHighConfidenceAllowlist(const GURL& url,
+                                                Client* client) override;
   bool CheckUrlForSubresourceFilter(const GURL& url, Client* client) override;
   bool MatchDownloadWhitelistString(const std::string& str) override;
   bool MatchDownloadWhitelistUrl(const GURL& url) override;
   bool MatchMalwareIP(const std::string& ip_address) override;
+  std::string GetSafetyNetId() const override;
   safe_browsing::ThreatSource GetThreatSource() const override;
   bool IsDownloadProtectionEnabled() const override;
   bool IsSupported() const override;
-  void StartOnIOThread(net::URLRequestContextGetter* request_context_getter,
-                       const V4ProtocolConfig& config) override;
+  void StartOnIOThread(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      const V4ProtocolConfig& config) override;
   void StopOnIOThread(bool shutdown) override;
 
   //

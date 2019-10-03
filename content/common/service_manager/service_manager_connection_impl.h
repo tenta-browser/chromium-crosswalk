@@ -15,7 +15,7 @@
 #include "content/public/common/service_manager_connection.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/service_manager/public/cpp/identity.h"
-#include "services/service_manager/public/interfaces/service.mojom.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace service_manager {
 class Connector;
@@ -36,16 +36,19 @@ class CONTENT_EXPORT ServiceManagerConnectionImpl
 
   // ServiceManagerConnection:
   void Start() override;
+  void Stop() override;
   service_manager::Connector* GetConnector() override;
   void SetConnectionLostClosure(const base::Closure& closure) override;
   int AddConnectionFilter(std::unique_ptr<ConnectionFilter> filter) override;
   void RemoveConnectionFilter(int filter_id) override;
-  void AddEmbeddedService(
-      const std::string& name,
-      const service_manager::EmbeddedServiceInfo& info) override;
   void AddServiceRequestHandler(
       const std::string& name,
       const ServiceRequestHandler& handler) override;
+  void AddServiceRequestHandlerWithCallback(
+      const std::string& name,
+      const ServiceRequestHandlerWithCallback& handler) override;
+  void SetDefaultServiceRequestHandler(
+      const DefaultServiceRequestHandler& handler) override;
 
   void OnConnectionLost();
   void GetInterface(service_manager::mojom::InterfaceProvider* provider,
@@ -57,7 +60,7 @@ class CONTENT_EXPORT ServiceManagerConnectionImpl
 
   base::Closure connection_lost_handler_;
 
-  base::WeakPtrFactory<ServiceManagerConnectionImpl> weak_factory_;
+  base::WeakPtrFactory<ServiceManagerConnectionImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceManagerConnectionImpl);
 };

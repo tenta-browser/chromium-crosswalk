@@ -6,6 +6,10 @@
 
 #include <utility>
 
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/cpp/window_state_type.h"
+#include "chrome/browser/chromeos/arc/pip/arc_pip_bridge.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
@@ -13,10 +17,11 @@
 #include "ui/base/base_window.h"
 
 ArcAppWindowLauncherItemController::ArcAppWindowLauncherItemController(
-    const std::string& arc_app_id)
-    : AppWindowLauncherItemController(ash::ShelfID(arc_app_id)) {}
+    const ash::ShelfID shelf_id)
+    : AppWindowLauncherItemController(shelf_id) {}
 
-ArcAppWindowLauncherItemController::~ArcAppWindowLauncherItemController() {}
+ArcAppWindowLauncherItemController::~ArcAppWindowLauncherItemController() =
+    default;
 
 void ArcAppWindowLauncherItemController::AddTaskId(int task_id) {
   task_ids_.insert(task_id);
@@ -36,6 +41,22 @@ void ArcAppWindowLauncherItemController::ItemSelected(
     ash::ShelfLaunchSource source,
     ItemSelectedCallback callback) {
   if (window_count()) {
+    // Tapping the shelf icon of an app that's showing PIP means expanding PIP.
+    // Even if the app contains multiple windows, we just expand PIP without
+    // showing the menu on the shelf icon.
+    for (ui::BaseWindow* window : windows()) {
+      aura::Window* native_window = window->GetNativeWindow();
+      if (native_window->GetProperty(ash::kWindowStateTypeKey) ==
+          ash::WindowStateType::kPip) {
+        Profile* profile = ChromeLauncherController::instance()->profile();
+        arc::ArcPipBridge* pip_bridge =
+            arc::ArcPipBridge::GetForBrowserContext(profile);
+        // ClosePip() actually expands PIP.
+        pip_bridge->ClosePip();
+        std::move(callback).Run(ash::SHELF_ACTION_NONE, {});
+        return;
+      }
+    }
     AppWindowLauncherItemController::ItemSelected(std::move(event), display_id,
                                                   source, std::move(callback));
     return;
@@ -43,38 +64,9 @@ void ArcAppWindowLauncherItemController::ItemSelected(
 
   if (task_ids_.empty()) {
     NOTREACHED();
-    std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_NONE, {});
     return;
   }
   arc::SetTaskActive(*task_ids_.begin());
-  std::move(callback).Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, base::nullopt);
-}
-
-ash::MenuItemList ArcAppWindowLauncherItemController::GetAppMenuItems(
-    int event_flags) {
-  ash::MenuItemList items;
-  base::string16 app_title = LauncherControllerHelper::GetAppTitle(
-      ChromeLauncherController::instance()->profile(), app_id());
-  for (auto it = windows().begin(); it != windows().end(); ++it) {
-    // TODO(khmel): resolve correct icon here.
-    size_t i = std::distance(windows().begin(), it);
-    aura::Window* window = (*it)->GetNativeWindow();
-    ash::mojom::MenuItemPtr item = ash::mojom::MenuItem::New();
-    item->command_id = base::checked_cast<uint32_t>(i);
-    item->label = (window && !window->GetTitle().empty()) ? window->GetTitle()
-                                                          : app_title;
-    items.push_back(std::move(item));
-  }
-
-  return items;
-}
-
-void ArcAppWindowLauncherItemController::ExecuteCommand(bool from_context_menu,
-                                                        int64_t command_id,
-                                                        int32_t event_flags,
-                                                        int64_t display_id) {
-  if (from_context_menu && ExecuteContextMenuCommand(command_id, event_flags))
-    return;
-
-  ActivateIndexedApp(command_id);
+  std::move(callback).Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, {});
 }

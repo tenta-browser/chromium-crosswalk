@@ -19,6 +19,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/android/chrome_jni_headers/DevToolsServer_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -38,7 +39,6 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
-#include "jni/DevToolsServer_jni.h"
 #include "net/base/net_errors.h"
 #include "net/socket/unix_domain_server_socket_posix.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -61,8 +61,6 @@ namespace {
 // and the new format.
 const char kDevToolsChannelNameFormat[] = "%s_devtools_remote";
 
-const char kFrontEndURL[] =
-    "http://chrome-devtools-frontend.appspot.com/serve_rev/%s/inspector.html";
 const char kTetheringSocketName[] = "chrome_devtools_tethering_%d_%d";
 
 const int kBackLog = 10;
@@ -155,7 +153,6 @@ void DevToolsServer::Start(bool allow_debug_permission) {
       new UnixDomainServerSocketFactory(socket_name_, auth_callback));
   DevToolsAgentHost::StartRemoteDebuggingServer(
       std::move(factory),
-      base::StringPrintf(kFrontEndURL, content::GetWebKitRevision().c_str()),
       base::FilePath(), base::FilePath());
   is_started_ = true;
 }

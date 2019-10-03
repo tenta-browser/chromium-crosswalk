@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <chrome/browser/extensions/chrome_extension_test_notification_observer.h>
+#include "base/bind.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -11,6 +12,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
@@ -80,6 +82,10 @@ bool ChromeExtensionTestNotificationObserver::
 }
 
 bool ChromeExtensionTestNotificationObserver::WaitForExtensionViewsToLoad() {
+  // Some views might not be created yet. This call may become insufficient if
+  // e.g. implementation of ExtensionHostQueue changes.
+  base::RunLoop().RunUntilIdle();
+
   ProcessManager* manager = ProcessManager::Get(GetBrowserContext());
   NotificationSet notification_set;
   notification_set.Add(content::NOTIFICATION_WEB_CONTENTS_DESTROYED);
@@ -115,8 +121,10 @@ bool ChromeExtensionTestNotificationObserver::WaitForExtensionNotIdle(
   return true;
 }
 
-void ChromeExtensionTestNotificationObserver::OnPageActionsUpdated(
-    content::WebContents* web_contents) {
+void ChromeExtensionTestNotificationObserver::OnExtensionActionUpdated(
+    ExtensionAction* extension_action,
+    content::WebContents* web_contents,
+    content::BrowserContext* browser_context) {
   MaybeQuit();
 }
 

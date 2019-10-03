@@ -20,6 +20,7 @@ class PrefRegistrySyncable;
 }  // namespace user_prefs
 
 class GURL;
+@class MDCSnackbarMessage;
 
 // Mediator for the bookmarks.
 @interface BookmarkMediator : NSObject
@@ -31,7 +32,7 @@ class GURL;
 // Registers the feature preferences.
 + (void)registerBrowserStatePrefs:(user_prefs::PrefRegistrySyncable*)registry;
 
-// Accesses the default folder for new bookmarks. The default folder is Mobile
+// Accesses the default folder for bookmarks. The default folder is Mobile
 // Bookmarks.
 + (const bookmarks::BookmarkNode*)folderForNewBookmarksInBrowserState:
     (ios::ChromeBrowserState*)browserState;
@@ -39,10 +40,11 @@ class GURL;
                   inBrowserState:(ios::ChromeBrowserState*)browserState;
 
 // Adds a bookmark with a |title| and a |URL| and display a snackbar with an
-// |editAction|.
-- (void)addBookmarkWithTitle:(NSString*)title
-                         URL:(const GURL&)URL
-                  editAction:(void (^)())editAction;
+// |editAction|. Returns a message to be displayed after the Bookmark has been
+// added.
+- (MDCSnackbarMessage*)addBookmarkWithTitle:(NSString*)title
+                                        URL:(const GURL&)URL
+                                 editAction:(void (^)())editAction;
 
 @end
 

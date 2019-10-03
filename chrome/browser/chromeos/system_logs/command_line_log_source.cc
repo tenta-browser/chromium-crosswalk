@@ -15,8 +15,8 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/process/launch.h"
-#include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -60,9 +60,6 @@ void ExecuteCommandLines(system_logs::SystemLogsResponse* response) {
   command = base::CommandLine((base::FilePath("/usr/bin/printenv")));
   commands.emplace_back("env", command);
 
-  command = base::CommandLine(base::FilePath("/usr/bin/modetest"));
-  commands.emplace_back("modetest", command);
-
   // Get a list of file sizes for the whole system (excluding the names of the
   // files in the Downloads directory for privay reasons).
   if (base::SysInfo::IsRunningOnChromeOS()) {
@@ -72,7 +69,7 @@ void ExecuteCommandLines(system_logs::SystemLogsResponse* response) {
     command.AppendArg("-c");
     command.AppendArg(
         "/usr/bin/du -h --max-depth=5 /home/ /mnt/stateful_partition/ | "
-        "grep -v -e Downloads");
+        "grep -v -e Downloads -e IndexedDB -e databases");
     commands.emplace_back("system_files", command);
   }
 
@@ -98,16 +95,16 @@ CommandLineLogSource::CommandLineLogSource() : SystemLogsSource("CommandLine") {
 CommandLineLogSource::~CommandLineLogSource() {
 }
 
-void CommandLineLogSource::Fetch(const SysLogsSourceCallback& callback) {
+void CommandLineLogSource::Fetch(SysLogsSourceCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback.is_null());
 
   auto response = std::make_unique<SystemLogsResponse>();
   SystemLogsResponse* response_ptr = response.get();
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&ExecuteCommandLines, response_ptr),
-      base::BindOnce(callback, std::move(response)));
+      base::BindOnce(std::move(callback), std::move(response)));
 }
 
 }  // namespace system_logs

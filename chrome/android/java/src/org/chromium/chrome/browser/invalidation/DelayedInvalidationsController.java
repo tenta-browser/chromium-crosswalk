@@ -6,16 +6,16 @@ package org.chromium.chrome.browser.invalidation;
 
 import android.accounts.Account;
 import android.content.ContentResolver;
-import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
 import android.os.Bundle;
+import android.support.v4.util.ObjectsCompat;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.components.invalidation.PendingInvalidation;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.sync.AndroidSyncSettings;
@@ -53,7 +53,7 @@ public class DelayedInvalidationsController {
      * Notify any invalidations that were delayed while Chromium was backgrounded.
      * @return whether there were any invalidations pending to be notified.
      */
-    public boolean notifyPendingInvalidations(final Context context) {
+    public boolean notifyPendingInvalidations() {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         String accountName = prefs.getString(DELAYED_ACCOUNT_NAME, null);
         if (accountName == null) {
@@ -62,8 +62,8 @@ public class DelayedInvalidationsController {
         } else {
             Log.d(TAG, "Handling pending invalidations.");
             Account account = AccountManagerFacade.createAccountFromName(accountName);
-            List<Bundle> bundles = popPendingInvalidations(context);
-            notifyInvalidationsOnBackgroundThread(context, account, bundles);
+            List<Bundle> bundles = popPendingInvalidations();
+            notifyInvalidationsOnBackgroundThread(account, bundles);
             return true;
         }
     }
@@ -73,25 +73,20 @@ public class DelayedInvalidationsController {
      * IO operations.
      */
     @VisibleForTesting
-    void notifyInvalidationsOnBackgroundThread(
-            final Context context, final Account account, final List<Bundle> bundles) {
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... unused) {
-                String contractAuthority = AndroidSyncSettings.getContractAuthority(context);
-                for (Bundle bundle : bundles) {
-                    ContentResolver.requestSync(account, contractAuthority, bundle);
-                }
-                return null;
+    void notifyInvalidationsOnBackgroundThread(final Account account, final List<Bundle> bundles) {
+        PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
+            String contractAuthority = AndroidSyncSettings.get().getContractAuthority();
+            for (Bundle bundle : bundles) {
+                ContentResolver.requestSync(account, contractAuthority, bundle);
             }
-        }.execute();
+        });
     }
 
     /**
      * Stores preferences to indicate that an invalidation has arrived, but dropped on the floor.
      */
     @VisibleForTesting
-    void addPendingInvalidation(Context context, String account, PendingInvalidation invalidation) {
+    void addPendingInvalidation(String account, PendingInvalidation invalidation) {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         String oldAccount = prefs.getString(DELAYED_ACCOUNT_NAME, null);
         // Make sure to construct a new set so it can be modified safely. See crbug.com/568369.
@@ -134,8 +129,7 @@ public class DelayedInvalidationsController {
             PendingInvalidation invalidation =
                     PendingInvalidation.decodeToPendingInvalidation(encodedInvalidation);
             if (invalidation == null) return false;
-            if (ApiCompatibilityUtils.objectEquals(
-                        invalidation.mObjectId, newInvalidation.mObjectId)
+            if (ObjectsCompat.equals(invalidation.mObjectId, newInvalidation.mObjectId)
                     && invalidation.mObjectSource == newInvalidation.mObjectSource) {
                 if (invalidation.mVersion >= newInvalidation.mVersion) return true;
                 iter.remove();
@@ -145,11 +139,11 @@ public class DelayedInvalidationsController {
         return true;
     }
 
-    private List<Bundle> popPendingInvalidations(final Context context) {
+    private List<Bundle> popPendingInvalidations() {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         assert prefs.contains(DELAYED_ACCOUNT_NAME);
         Set<String> savedInvalidations = prefs.getStringSet(DELAYED_INVALIDATIONS, null);
-        clearPendingInvalidations(context);
+        clearPendingInvalidations();
         // Absence of specific invalidations indicates invalidate all types.
         if (savedInvalidations == null) return Arrays.asList(new Bundle());
 
@@ -169,7 +163,7 @@ public class DelayedInvalidationsController {
      * If there are any pending invalidations, they will be cleared.
      */
     @VisibleForTesting
-    public void clearPendingInvalidations(Context context) {
+    public void clearPendingInvalidations() {
         SharedPreferences.Editor editor =
                 ContextUtils.getAppSharedPreferences().edit();
         editor.putString(DELAYED_ACCOUNT_NAME, null);

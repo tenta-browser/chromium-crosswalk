@@ -17,6 +17,7 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
+import org.chromium.chrome.browser.bookmarks.BookmarkManager.ItemsAdapter;
 import org.chromium.chrome.browser.signin.PersonalizedSigninPromoView;
 import org.chromium.components.bookmarks.BookmarkId;
 
@@ -25,23 +26,23 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 
+// TODO(crbug.com/160194): This class will be deleted after bookmark reordering launches.
 /**
  * BaseAdapter for {@link RecyclerView}. It manages bookmarks to list there.
  */
-class BookmarkItemsAdapter
-        extends RecyclerView.Adapter<RecyclerView.ViewHolder> implements BookmarkUIObserver {
+class BookmarkItemsAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder>
+        implements BookmarkUIObserver, ItemsAdapter {
     /**
-     * Specifies the view types that the bookmark manager screen can contain.
+     * Specifies the view types that the bookmark delegate screen can contain.
      */
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({ViewType.PERSONALIZED_SIGNIN_PROMO, ViewType.GENERIC_SIGNIN_PROMO, ViewType.SYNC_PROMO,
-            ViewType.FOLDER, ViewType.BOOKMARK})
+    @IntDef({ViewType.PERSONALIZED_SIGNIN_PROMO, ViewType.SYNC_PROMO, ViewType.FOLDER,
+            ViewType.BOOKMARK})
     private @interface ViewType {
         int PERSONALIZED_SIGNIN_PROMO = 0;
-        int GENERIC_SIGNIN_PROMO = 1;
-        int SYNC_PROMO = 2;
-        int FOLDER = 3;
-        int BOOKMARK = 4;
+        int SYNC_PROMO = 1;
+        int FOLDER = 2;
+        int BOOKMARK = 3;
     }
 
     private static final int MAXIMUM_NUMBER_OF_SEARCH_RESULTS = 500;
@@ -158,7 +159,9 @@ class BookmarkItemsAdapter
 
     /**
      * Set folders and bookmarks to show.
+     *
      * @param folders This can be null if there is no folders to show.
+     * @param bookmarks The list of bookmarks to show.
      */
     private void setBookmarks(List<BookmarkId> folders, List<BookmarkId> bookmarks) {
         if (folders == null) folders = new ArrayList<BookmarkId>();
@@ -196,7 +199,9 @@ class BookmarkItemsAdapter
         if (section == mPromoHeaderSection) {
             assert section.size() == 1 : "Only one element is supported in promo header section!";
             return mPromoHeaderSection.get(0);
-        } else if (section == mFolderSection) {
+        }
+
+        if (section == mFolderSection) {
             return ViewType.FOLDER;
         } else if (section == mBookmarkSection) {
             return ViewType.BOOKMARK;
@@ -213,19 +218,17 @@ class BookmarkItemsAdapter
         switch (viewType) {
             case ViewType.PERSONALIZED_SIGNIN_PROMO:
                 return mPromoHeaderManager.createPersonalizedSigninPromoHolder(parent);
-            case ViewType.GENERIC_SIGNIN_PROMO:
-                return mPromoHeaderManager.createGenericSigninPromoHolder(parent);
             case ViewType.SYNC_PROMO:
                 return mPromoHeaderManager.createSyncPromoHolder(parent);
             case ViewType.FOLDER:
                 BookmarkFolderRow folder = (BookmarkFolderRow) LayoutInflater.from(
                         parent.getContext()).inflate(R.layout.bookmark_folder_row, parent, false);
-                folder.onBookmarkDelegateInitialized(mDelegate);
+                folder.onDelegateInitialized(mDelegate);
                 return new ItemViewHolder(folder);
             case ViewType.BOOKMARK:
                 BookmarkItemRow item = (BookmarkItemRow) LayoutInflater.from(
                         parent.getContext()).inflate(R.layout.bookmark_item_row, parent, false);
-                item.onBookmarkDelegateInitialized(mDelegate);
+                item.onDelegateInitialized(mDelegate);
                 return new ItemViewHolder(item);
             default:
                 assert false;
@@ -240,7 +243,6 @@ class BookmarkItemsAdapter
                 PersonalizedSigninPromoView view = (PersonalizedSigninPromoView) holder.itemView;
                 mPromoHeaderManager.setupPersonalizedSigninPromo(view);
                 break;
-            case ViewType.GENERIC_SIGNIN_PROMO:
             case ViewType.SYNC_PROMO:
                 break;
             case ViewType.FOLDER:
@@ -269,6 +271,7 @@ class BookmarkItemsAdapter
      * Sets the delegate to use to handle UI actions related to this adapter.
      * @param delegate A {@link BookmarkDelegate} instance to handle all backend interaction.
      */
+    @Override
     public void onBookmarkDelegateInitialized(BookmarkDelegate delegate) {
         mDelegate = delegate;
         mDelegate.addUIObserver(this);
@@ -295,6 +298,7 @@ class BookmarkItemsAdapter
 
         mPromoHeaderManager = new BookmarkPromoHeader(mContext, promoHeaderChangeAction);
         populateTopLevelFoldersList();
+        notifyDataSetChanged();
     }
 
     // BookmarkUIObserver implementations.
@@ -316,6 +320,7 @@ class BookmarkItemsAdapter
         if (folder.equals(mDelegate.getModel().getRootFolderId())) {
             setBookmarks(mTopLevelFolders, new ArrayList<BookmarkId>());
         } else {
+            // Get folders and bookmarks separately.
             setBookmarks(mDelegate.getModel().getChildIDs(folder, true, false),
                     mDelegate.getModel().getChildIDs(folder, false, true));
         }
@@ -332,6 +337,7 @@ class BookmarkItemsAdapter
     /**
      * Refresh the list of bookmarks within the currently visible folder.
      */
+    @Override
     public void refresh() {
         if (mCurrentFolder == null) return;
         onFolderStateSet(mCurrentFolder);
@@ -341,11 +347,32 @@ class BookmarkItemsAdapter
      * Synchronously searches for the given query.
      * @param query The query text to search for.
      */
-    void search(String query) {
+    @Override
+    public void search(String query) {
         mSearchText = query.toString().trim();
         List<BookmarkId> results =
                 mDelegate.getModel().searchBookmarks(mSearchText, MAXIMUM_NUMBER_OF_SEARCH_RESULTS);
         setBookmarks(null, results);
+    }
+
+    @Override
+    public void moveUpOne(BookmarkId bookmarkId) {
+        throw new RuntimeException("Cannot reorder bookmarks when bookmark reordering flag is off");
+    }
+
+    @Override
+    public void moveDownOne(BookmarkId bookmarkId) {
+        throw new RuntimeException("Cannot reorder bookmarks when bookmark reordering flag is off");
+    }
+
+    @Override
+    public void moveToTop(BookmarkId bookmarkId) {
+        throw new RuntimeException("Cannot reorder bookmarks when bookmark reordering flag is off");
+    }
+
+    @Override
+    public void moveToBottom(BookmarkId bookmarkId) {
+        throw new RuntimeException("Cannot reorder bookmarks when bookmark reordering flag is off");
     }
 
     private static class ItemViewHolder extends RecyclerView.ViewHolder {
@@ -376,9 +403,6 @@ class BookmarkItemsAdapter
                 return;
             case BookmarkPromoHeader.PromoState.PROMO_SIGNIN_PERSONALIZED:
                 mPromoHeaderSection.add(ViewType.PERSONALIZED_SIGNIN_PROMO);
-                return;
-            case BookmarkPromoHeader.PromoState.PROMO_SIGNIN_GENERIC:
-                mPromoHeaderSection.add(ViewType.GENERIC_SIGNIN_PROMO);
                 return;
             case BookmarkPromoHeader.PromoState.PROMO_SYNC:
                 mPromoHeaderSection.add(ViewType.SYNC_PROMO);

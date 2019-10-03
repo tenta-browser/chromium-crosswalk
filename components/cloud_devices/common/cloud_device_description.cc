@@ -9,73 +9,63 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/cloud_devices/common/cloud_device_description_consts.h"
 
 namespace cloud_devices {
 
-CloudDeviceDescription::CloudDeviceDescription() {
-  Reset();
+CloudDeviceDescription::CloudDeviceDescription()
+    : root_(base::Value(base::Value::Type::DICTIONARY)) {
+  root_.SetKey(json::kVersion, base::Value(json::kVersion10));
 }
 
-CloudDeviceDescription::~CloudDeviceDescription() {
-}
-
-void CloudDeviceDescription::Reset() {
-  root_.reset(new base::DictionaryValue);
-  root_->SetString(json::kVersion, json::kVersion10);
-}
-
-bool CloudDeviceDescription::InitFromDictionary(
-    std::unique_ptr<base::DictionaryValue> root) {
-  if (!root)
-    return false;
-  Reset();
-  root_ = std::move(root);
-  std::string version;
-  root_->GetString(json::kVersion, &version);
-  return version == json::kVersion10;
-}
+CloudDeviceDescription::~CloudDeviceDescription() = default;
 
 bool CloudDeviceDescription::InitFromString(const std::string& json) {
-  std::unique_ptr<base::Value> parsed = base::JSONReader::Read(json);
-  base::DictionaryValue* description = nullptr;
-  if (!parsed || !parsed->GetAsDictionary(&description))
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(json);
+  if (!value)
     return false;
-  ignore_result(parsed.release());
-  return InitFromDictionary(base::WrapUnique(description));
+
+  return InitFromValue(base::Value::FromUniquePtrValue(std::move(value)));
+}
+
+bool CloudDeviceDescription::InitFromValue(base::Value ticket) {
+  if (!ticket.is_dict())
+    return false;
+  root_ = std::move(ticket);
+  return IsValidTicket(root_);
+}
+
+// static
+bool CloudDeviceDescription::IsValidTicket(const base::Value& ticket) {
+  if (!ticket.is_dict())
+    return false;
+
+  const base::Value* version = ticket.FindKey(json::kVersion);
+  return version && version->GetString() == json::kVersion10;
 }
 
 std::string CloudDeviceDescription::ToString() const {
   std::string json;
   base::JSONWriter::WriteWithOptions(
-      *root_, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json);
+      root_, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json);
   return json;
 }
 
-const base::DictionaryValue* CloudDeviceDescription::GetItem(
-    const std::string& path) const {
-  const base::DictionaryValue* value = nullptr;
-  root_->GetDictionary(path, &value);
-  return value;
+base::Value CloudDeviceDescription::ToValue() && {
+  return std::move(root_);
 }
 
-base::DictionaryValue* CloudDeviceDescription::CreateItem(
-    const std::string& path) {
-  return root_->SetDictionary(path, base::MakeUnique<base::DictionaryValue>());
+const base::Value* CloudDeviceDescription::GetItem(
+    const std::vector<base::StringPiece>& path,
+    base::Value::Type type) const {
+  return root_.FindPathOfType(path, type);
 }
 
-const base::ListValue* CloudDeviceDescription::GetListItem(
-    const std::string& path) const {
-  const base::ListValue* value = nullptr;
-  root_->GetList(path, &value);
-  return value;
-}
-
-base::ListValue* CloudDeviceDescription::CreateListItem(
-    const std::string& path) {
-  return root_->SetList(path, base::MakeUnique<base::ListValue>());
+base::Value* CloudDeviceDescription::CreateItem(
+    const std::vector<base::StringPiece>& path,
+    base::Value::Type type) {
+  return root_.SetPath(path, base::Value(type));
 }
 
 }  // namespace cloud_devices

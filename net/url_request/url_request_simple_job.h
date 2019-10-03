@@ -12,7 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
 #include "net/url_request/url_range_request_job.h"
 
@@ -51,14 +51,14 @@ class NET_EXPORT URLRequestSimpleJob : public URLRangeRequestJob {
   virtual int GetData(std::string* mime_type,
                       std::string* charset,
                       std::string* data,
-                      const CompletionCallback& callback) const;
+                      CompletionOnceCallback callback) const;
 
   // Similar to GetData(), except |*data| can share ownership of the bytes
   // instead of copying them into a std::string.
   virtual int GetRefCountedData(std::string* mime_type,
                                 std::string* charset,
                                 scoped_refptr<base::RefCountedMemory>* data,
-                                const CompletionCallback& callback) const;
+                                CompletionOnceCallback callback) const;
 
   void StartAsync();
 
@@ -70,7 +70,7 @@ class NET_EXPORT URLRequestSimpleJob : public URLRangeRequestJob {
   std::string charset_;
   scoped_refptr<base::RefCountedMemory> data_;
   int64_t next_data_offset_;
-  base::WeakPtrFactory<URLRequestSimpleJob> weak_factory_;
+  base::WeakPtrFactory<URLRequestSimpleJob> weak_factory_{this};
 };
 
 }  // namespace net

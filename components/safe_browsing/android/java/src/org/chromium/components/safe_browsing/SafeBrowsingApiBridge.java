@@ -4,7 +4,6 @@
 
 package org.chromium.components.safe_browsing;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -16,7 +15,8 @@ import java.lang.reflect.InvocationTargetException;
  */
 @JNINamespace("safe_browsing")
 public final class SafeBrowsingApiBridge {
-    private static final String TAG = "ApiBridge";
+    private static final String TAG = "SBApiBridge";
+    private static final boolean DEBUG = false;
 
     private static Class<? extends SafeBrowsingApiHandler> sHandler;
 
@@ -47,15 +47,23 @@ public final class SafeBrowsingApiBridge {
             Log.e(TAG, "Failed to init handler: " + e.getMessage());
             return null;
         }
-        boolean initSuccesssful = handler.init(
-                ContextUtils.getApplicationContext(), new SafeBrowsingApiHandler.Observer() {
+        boolean initSuccesssful =
+                handler.init(new SafeBrowsingApiHandler.Observer() {
                     @Override
                     public void onUrlCheckDone(
                             long callbackId, int resultStatus, String metadata, long checkDelta) {
                         nativeOnUrlCheckDone(callbackId, resultStatus, metadata, checkDelta);
                     }
-                });
+                }, nativeAreLocalBlacklistsEnabled());
         return initSuccesssful ? handler : null;
+    }
+
+    /**
+     * Get the SafetyNet ID of the device.
+     */
+    @CalledByNative
+    private static String getSafetyNetId(SafeBrowsingApiHandler handler) {
+        return handler.getSafetyNetId();
     }
 
     /**
@@ -64,10 +72,16 @@ public final class SafeBrowsingApiBridge {
     @CalledByNative
     private static void startUriLookup(
             SafeBrowsingApiHandler handler, long callbackId, String uri, int[] threatsOfInterest) {
+        if (DEBUG) {
+            Log.i(TAG, "Starting request: %s", uri);
+        }
         handler.startUriLookup(callbackId, uri, threatsOfInterest);
-        Log.d(TAG, "Done starting request");
+        if (DEBUG) {
+            Log.i(TAG, "Done starting request: %s", uri);
+        }
     }
 
+    private static native boolean nativeAreLocalBlacklistsEnabled();
     private static native void nativeOnUrlCheckDone(
             long callbackId, int resultStatus, String metadata, long checkDelta);
 }

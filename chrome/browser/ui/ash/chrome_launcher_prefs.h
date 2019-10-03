@@ -8,23 +8,33 @@
 #include <vector>
 
 #include "ash/public/cpp/shelf_types.h"
+#include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 class LauncherControllerHelper;
-class PrefRegistrySimple;
 class PrefService;
 class Profile;
 
-// Path within the dictionary entries in the prefs::kPinnedLauncherApps list
+namespace user_prefs {
+class PrefRegistrySyncable;
+}  // namespace user_prefs
+
+// Key for the dictionary entries in the prefs::kPinnedLauncherApps list
 // specifying the extension ID of the app to be pinned by that entry.
-extern const char kPinnedAppsPrefAppIDPath[];
+extern const char kPinnedAppsPrefAppIDKey[];
 
 extern const char kPinnedAppsPrefPinnedByPolicy[];
+
+// To enable finch experiment with number of default apps on the shelf.
+// See |kEnableExtendedShelfLayoutParam| in .cc file.
+extern const base::Feature kEnableExtendedShelfLayout;
 
 // Value used as a placeholder in the list of pinned applications.
 // This is NOT a valid extension identifier so pre-M31 versions ignore it.
 extern const char kPinnedAppsPlaceholder[];
 
-void RegisterChromeLauncherUserPrefs(PrefRegistrySimple* registry);
+void RegisterChromeLauncherUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry);
 
 // Init a local pref from a synced pref, if the local pref has no user setting.
 // This is used to init shelf alignment and auto-hide on the first user sync.
@@ -35,9 +45,9 @@ void RegisterChromeLauncherUserPrefs(PrefRegistrySimple* registry);
 // shelf prefs across devices after the very start of the user's first session.
 void InitLocalPref(PrefService* prefs, const char* local, const char* synced);
 
-// Get the list of pinned apps from preferences.
-std::vector<ash::ShelfID> GetPinnedAppsFromPrefs(
-    const PrefService* prefs,
+// Gets the ordered list of pinned apps that exist on device from the app sync
+// service.
+std::vector<ash::ShelfID> GetPinnedAppsFromSync(
     LauncherControllerHelper* helper);
 
 // Removes information about pin position from sync model for the app.

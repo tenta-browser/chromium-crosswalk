@@ -6,8 +6,6 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/android/view_android.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(ViewAndroidHelper);
-
 ViewAndroidHelper::ViewAndroidHelper(content::WebContents* web_contents)
     : view_android_(nullptr) {
 }
@@ -22,3 +20,5 @@ void ViewAndroidHelper::SetViewAndroid(ui::ViewAndroid* view_android) {
 ui::ViewAndroid* ViewAndroidHelper::GetViewAndroid() {
   return view_android_;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ViewAndroidHelper)

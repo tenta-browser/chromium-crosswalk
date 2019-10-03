@@ -17,15 +17,17 @@ class BrowserView;
 // possible.
 class TestWithBrowserView : public BrowserWithTestWindowTest {
  public:
-  TestWithBrowserView();
-  TestWithBrowserView(Browser::Type browser_type, bool hosted_app);
+  template <typename... Args>
+  TestWithBrowserView(Args... args) : BrowserWithTestWindowTest(args...) {}
+
   ~TestWithBrowserView() override;
 
   // BrowserWithTestWindowTest overrides:
   void SetUp() override;
   void TearDown() override;
   TestingProfile* CreateProfile() override;
-  BrowserWindow* CreateBrowserWindow() override;
+  std::unique_ptr<BrowserWindow> CreateBrowserWindow() override;
+  TestingProfile::TestingFactories GetTestingFactories() override;
 
   BrowserView* browser_view() { return browser_view_; }
 

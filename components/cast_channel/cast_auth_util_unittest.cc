@@ -74,7 +74,8 @@ TEST_F(CastAuthUtilTest, VerifySuccess) {
       auth_response, signed_data, cast_certificate::CRLPolicy::CRL_OPTIONAL,
       nullptr, nullptr, now);
   EXPECT_TRUE(result.success());
-  EXPECT_EQ(AuthResult::POLICY_NONE, result.channel_policies);
+  EXPECT_EQ(static_cast<unsigned>(AuthResult::POLICY_NONE),
+            result.channel_policies);
 }
 
 TEST_F(CastAuthUtilTest, VerifyBadCA) {
@@ -173,7 +174,7 @@ TEST_F(CastAuthUtilTest, VerifySenderNonceMissing) {
   scoped_feature_list.InitAndEnableFeature(
       base::Feature{"CastNonceEnforced", base::FEATURE_DISABLED_BY_DEFAULT});
   AuthContext context = AuthContext::Create();
-  std::string received_nonce = "";
+  std::string received_nonce;
   EXPECT_FALSE(context.nonce().empty());
   AuthResult result = context.VerifySenderNonce(received_nonce);
   EXPECT_FALSE(result.success());
@@ -329,7 +330,7 @@ bool RunTest(const cast_certificate::DeviceCertTest& test_case) {
           cast_trust_store.get(), crl_trust_store.get());
       EXPECT_EQ(result.error_type, AuthResult::ERROR_SIGNED_BLOBS_MISMATCH);
       return result.error_type == AuthResult::ERROR_SIGNED_BLOBS_MISMATCH;
-    case UNSPECIFIED:
+    case cast_certificate::UNSPECIFIED:
       return false;
   }
   return false;

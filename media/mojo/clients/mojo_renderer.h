@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/time/default_tick_clock.h"
 #include "base/unguessable_token.h"
 #include "media/base/demuxer_stream.h"
@@ -60,30 +61,22 @@ class MojoRenderer : public Renderer, public mojom::RendererClient {
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
 
-  using ReceiveSurfaceRequestTokenCB =
-      base::Callback<void(const base::UnguessableToken&)>;
-
-  // Asks |remote_renderer_| to register a request in the browser's
-  // ScopedSurfaceRequestManager, and returns the request's token.
-  void InitiateScopedSurfaceRequest(
-      const ReceiveSurfaceRequestTokenCB& receive_request_token_cb);
-
  private:
   // mojom::RendererClient implementation, dispatched on the
   // |task_runner_|.
   void OnTimeUpdate(base::TimeDelta time,
                     base::TimeDelta max_time,
                     base::TimeTicks capture_time) override;
-  void OnBufferingStateChange(BufferingState state) override;
+  void OnBufferingStateChange(BufferingState state,
+                              BufferingStateChangeReason reason) override;
   void OnEnded() override;
   void OnError() override;
   void OnAudioConfigChange(const AudioDecoderConfig& config) override;
   void OnVideoConfigChange(const VideoDecoderConfig& config) override;
   void OnVideoNaturalSizeChange(const gfx::Size& size) override;
   void OnVideoOpacityChange(bool opaque) override;
-  void OnWaitingForDecryptionKey() override;
+  void OnWaiting(WaitingReason reason) override;
   void OnStatisticsUpdate(const PipelineStatistics& stats) override;
-  void OnDurationChange(base::TimeDelta duration) override;
 
   // Binds |remote_renderer_| to the mojo message pipe. Can be called multiple
   // times. If an error occurs during connection, OnConnectionError will be
@@ -158,8 +151,9 @@ class MojoRenderer : public Renderer, public mojom::RendererClient {
 
   // Lock used to serialize access for |time_interpolator_|.
   mutable base::Lock lock_;
-  base::DefaultTickClock media_clock_;
   media::TimeDeltaInterpolator media_time_interpolator_;
+
+  base::Optional<PipelineStatistics> pending_stats_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoRenderer);
 };

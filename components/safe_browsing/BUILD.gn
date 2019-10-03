@@ -16,23 +16,36 @@ proto_library("webui_proto") {
   ]
 }
 
+proto_library("realtimeapi_proto") {
+  sources = [
+    "proto/realtimeapi.proto",
+  ]
+
+  deps = [
+    ":csd_proto",
+  ]
+}
+
+proto_library("webprotect_proto") {
+  sources = [
+    "proto/webprotect.proto",
+  ]
+}
+
 source_set("safe_browsing") {
   sources = [
     "base_blocking_page.cc",
     "base_blocking_page.h",
-    "base_resource_throttle.cc",
-    "base_resource_throttle.h",
     "base_ui_manager.cc",
     "base_ui_manager.h",
-    "net_event_logger.cc",
-    "net_event_logger.h",
   ]
   public_deps = [
     "//components/security_interstitials/content:security_interstitial_page",
   ]
   deps = [
-    ":base_ping_manager",
     ":features",
+    ":ping_manager",
+    ":verdict_cache_manager",
     "//base:base",
     "//base:i18n",
     "//components/safe_browsing/common:common",
@@ -46,10 +59,10 @@ source_set("safe_browsing") {
   ]
 }
 
-static_library("base_ping_manager") {
+static_library("ping_manager") {
   sources = [
-    "base_ping_manager.cc",
-    "base_ping_manager.h",
+    "ping_manager.cc",
+    "ping_manager.h",
   ]
 
   public_deps = [
@@ -58,7 +71,6 @@ static_library("base_ping_manager") {
 
   deps = [
     "//base:base",
-    "//components/data_use_measurement/core:core",
     "//components/safe_browsing/db:hit_report",
     "//components/safe_browsing/db:util",
     "//content/public/browser:browser",
@@ -66,15 +78,16 @@ static_library("base_ping_manager") {
   ]
 }
 
-source_set("base_ping_manager_unittest") {
+source_set("ping_manager_unittest") {
   testonly = true
   sources = [
-    "base_ping_manager_unittest.cc",
+    "ping_manager_unittest.cc",
   ]
 
   deps = [
-    ":base_ping_manager",
+    ":ping_manager",
     "//base:base",
+    "//components/safe_browsing/db:v4_test_util",
     "//net:net",
     "//net:test_support",
     "//testing/gtest",
@@ -89,5 +102,52 @@ static_library("features") {
 
   deps = [
     "//base:base",
+  ]
+}
+
+source_set("public") {
+  sources = [
+    "safe_browsing_service_interface.cc",
+    "safe_browsing_service_interface.h",
+  ]
+
+  deps = [
+    "//base:base",
+    "//content/public/browser",
+  ]
+}
+
+source_set("verdict_cache_manager") {
+  sources = [
+    "verdict_cache_manager.cc",
+    "verdict_cache_manager.h",
+  ]
+
+  deps = [
+    ":csd_proto",
+    "//base",
+    "//components/content_settings/core/browser",
+    "//components/history/core/browser",
+    "//components/password_manager/core/browser:browser",
+    "//components/safe_browsing/db:v4_protocol_manager_util",
+    "//content/public/browser",
+    "//url",
+  ]
+}
+
+source_set("verdict_cache_manager_unittest") {
+  testonly = true
+  sources = [
+    "verdict_cache_manager_unittest.cc",
+  ]
+
+  deps = [
+    ":csd_proto",
+    ":verdict_cache_manager",
+    "//base",
+    "//components/content_settings/core/browser",
+    "//components/sync_preferences:test_support",
+    "//content/test:test_support",
+    "//testing/gtest",
   ]
 }

@@ -4,10 +4,11 @@
 
 #include "storage/browser/fileapi/external_mount_points.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "storage/browser/fileapi/file_system_url.h"
 
 namespace {
@@ -104,7 +105,7 @@ bool ExternalMountPoints::RegisterFileSystem(
     return false;
 
   instance_map_[mount_name] =
-      base::MakeUnique<Instance>(type, path, mount_option);
+      std::make_unique<Instance>(type, path, mount_option);
   if (!path.empty() && IsOverlappingMountPathForbidden(type))
     path_to_name_map_.insert(std::make_pair(path, mount_name));
   return true;
@@ -159,8 +160,7 @@ bool ExternalMountPoints::CrackVirtualPath(
   if (components.size() < 1)
     return false;
 
-  std::vector<base::FilePath::StringType>::iterator component_iter =
-      components.begin();
+  auto component_iter = components.begin();
   std::string maybe_mount_name =
       base::FilePath(*component_iter++).AsUTF8Unsafe();
 
@@ -193,7 +193,7 @@ FileSystemURL ExternalMountPoints::CrackURL(const GURL& url) const {
 }
 
 FileSystemURL ExternalMountPoints::CreateCrackedFileSystemURL(
-    const GURL& origin,
+    const url::Origin& origin,
     FileSystemType type,
     const base::FilePath& path) const {
   return CrackFileSystemURL(FileSystemURL(origin, type, path));
@@ -236,8 +236,7 @@ FileSystemURL ExternalMountPoints::CreateExternalFileSystemURL(
     const std::string& mount_name,
     const base::FilePath& path) const {
   return CreateCrackedFileSystemURL(
-      origin,
-      storage::kFileSystemTypeExternal,
+      url::Origin::Create(origin), storage::kFileSystemTypeExternal,
       // Avoid using FilePath::Append as path may be an absolute path.
       base::FilePath(CreateVirtualRootPath(mount_name).value() +
                      base::FilePath::kSeparators[0] + path.value()));
@@ -329,8 +328,7 @@ bool ExternalMountPoints::ValidateNewMountPoint(const std::string& mount_name,
       }
     }
 
-    std::map<base::FilePath, std::string>::iterator potential_child =
-        path_to_name_map_.upper_bound(path);
+    auto potential_child = path_to_name_map_.upper_bound(path);
     if (potential_child != path_to_name_map_.end()) {
       if (potential_child->first == path ||
           path.IsParent(potential_child->first)) {

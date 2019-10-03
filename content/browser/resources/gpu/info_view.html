@@ -5,12 +5,7 @@ found in the LICENSE file.
 -->
 <tabpanel id="info-view">
   <div>
-    <span>
-      <i>
-        Note: To properly save this page, select the "Webpage, Complete" option
-        in the Save File dialog.
-      </i>
-    </span>
+    <input type="button" id="copy-to-clipboard" value="Copy Report to Clipboard">
   </div>
   <div>
     <h3>Graphics Feature Status</h3>
@@ -27,6 +22,12 @@ found in the LICENSE file.
   <div class='problems-div'>
     <h3>Problems Detected</h3>
     <ul class="problems-list">
+    </ul>
+  </div>
+
+  <div class='angle-features-div'>
+    <h3>ANGLE Features</h3>
+    <ul class="angle-features-list">
     </ul>
   </div>
 
@@ -64,6 +65,29 @@ found in the LICENSE file.
     <h3>Diagnostics</h3>
     <div class="diagnostics-loading">... loading ...</div>
     <div id="diagnostics-table">None</div>
+  </div>
+
+  <div class='basic-info-for-hardware-gpu-div'>
+    <h3>Driver Information for Hardware GPU</h3>
+    <div id="basic-info-for-hardware-gpu"></div>
+  </div>
+
+  <div class='feature-status-for-hardware-gpu-div'>
+    <h3>Graphics Feature Status for Hardware GPU</h3>
+    <ul class="feature-status-for-hardware-gpu-list">
+    </ul>
+  </div>
+
+  <div class='workarounds-for-hardware-gpu-div'>
+    <h3>Driver Bug Workarounds for Hardware GPU</h3>
+    <ul class="workarounds-for-hardware-gpu-list">
+    </ul>
+  </div>
+
+  <div class='problems-for-hardware-gpu-div'>
+    <h3>Problems Detected for Hardware GPU</h3>
+    <ul class="problems-for-hardware-gpu-list">
+    </ul>
   </div>
 
   <div id="log-messages" jsdisplay="values.length">

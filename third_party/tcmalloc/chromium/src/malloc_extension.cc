@@ -1,4 +1,5 @@
-// Copyright (c) 2012, Google Inc.
+// -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*-
+// Copyright (c) 2005, Google Inc.
 // All rights reserved.
 // 
 // Redistribution and use in source and binary forms, with or without
@@ -41,6 +42,7 @@
 #else
 #include <sys/types.h>
 #endif
+#include <atomic>
 #include <string>
 #include "base/dynamic_annotations.h"
 #include "base/sysinfo.h"    // for FillProcSelfMaps
@@ -50,12 +52,7 @@
 #include "gperftools/malloc_extension.h"
 #include "gperftools/malloc_extension_c.h"
 #include "maybe_threads.h"
-
-#ifdef USE_TCMALLOC
-// Note that malloc_extension can be used without tcmalloc if gperftools'
-// heap-profiler is enabled without the tcmalloc memory allocator.
-#include "thread_cache.h"
-#endif
+#include "base/googleinit.h"
 
 using STL_NAMESPACE::string;
 using STL_NAMESPACE::vector;
@@ -197,44 +194,38 @@ void MallocExtension::GetFreeListSizes(
   v->clear();
 }
 
-// The current malloc extension object.
-
-static pthread_once_t module_init = PTHREAD_ONCE_INIT;
-static MallocExtension* current_instance = NULL;
-
-static void InitModule() {
-  current_instance = new MallocExtension;
-#ifndef NO_HEAP_CHECK
-  HeapLeakChecker::IgnoreObject(current_instance);
-#endif
+size_t MallocExtension::GetThreadCacheSize() {
+  return 0;
 }
 
-MallocExtension* MallocExtension::instance() {
-  perftools_pthread_once(&module_init, InitModule);
-  return current_instance;
+void MallocExtension::MarkThreadTemporarilyIdle() {
+  // Default implementation does nothing
+}
+
+// The current malloc extension object.
+
+std::atomic<MallocExtension*> MallocExtension::current_instance_;
+
+// static
+MallocExtension* MallocExtension::InitModule() {
+  MallocExtension* instance = new MallocExtension;
+#ifndef NO_HEAP_CHECK
+  HeapLeakChecker::IgnoreObject(instance);
+#endif
+  current_instance_.store(instance, std::memory_order_release);
+  return instance;
 }
 
 void MallocExtension::Register(MallocExtension* implementation) {
-  perftools_pthread_once(&module_init, InitModule);
+  InitModuleOnce();
   // When running under valgrind, our custom malloc is replaced with
   // valgrind's one and malloc extensions will not work.  (Note:
   // callers should be responsible for checking that they are the
   // malloc that is really being run, before calling Register.  This
   // is just here as an extra sanity check.)
   if (!RunningOnValgrind()) {
-    current_instance = implementation;
+    current_instance_.store(implementation, std::memory_order_release);
   }
-}
-
-unsigned int MallocExtension::GetBytesAllocatedOnCurrentThread() {
-  // This function is added in Chromium for profiling.
-#ifdef USE_TCMALLOC
-  // Note that malloc_extension can be used without tcmalloc if gperftools'
-  // heap-profiler is enabled without the tcmalloc memory allocator.
-  return tcmalloc::ThreadCache::GetBytesAllocatedOnCurrentThread();
-#else
-  return 0;
-#endif
 }
 
 // -----------------------------------------------------------------------
@@ -380,6 +371,8 @@ C_SHIM(ReleaseFreeMemory, void, (void), ());
 C_SHIM(ReleaseToSystem, void, (size_t num_bytes), (num_bytes));
 C_SHIM(GetEstimatedAllocatedSize, size_t, (size_t size), (size));
 C_SHIM(GetAllocatedSize, size_t, (const void* p), (p));
+C_SHIM(GetThreadCacheSize, size_t, (void), ());
+C_SHIM(MarkThreadTemporarilyIdle, void, (void), ());
 
 // Can't use the shim here because of the need to translate the enums.
 extern "C"

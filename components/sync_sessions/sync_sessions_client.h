@@ -8,12 +8,9 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "components/sync/model/model_type_store.h"
 
 class GURL;
-
-namespace bookmarks {
-class BookmarkModel;
-}
 
 namespace favicon {
 class FaviconService;
@@ -26,6 +23,7 @@ class HistoryService;
 namespace sync_sessions {
 
 class LocalSessionEventRouter;
+class SessionSyncPrefs;
 class SyncedWindowDelegatesGetter;
 
 // Interface for clients of a sync sessions datatype. Should be used as a getter
@@ -36,9 +34,10 @@ class SyncSessionsClient {
   virtual ~SyncSessionsClient();
 
   // Getters for services that sessions depends on.
-  virtual bookmarks::BookmarkModel* GetBookmarkModel() = 0;
   virtual favicon::FaviconService* GetFaviconService() = 0;
   virtual history::HistoryService* GetHistoryService() = 0;
+  virtual SessionSyncPrefs* GetSessionSyncPrefs() = 0;
+  virtual syncer::RepeatingModelTypeStoreFactory GetStoreFactory() = 0;
 
   // Checks if the given url is considered interesting enough to sync. Most urls
   // are considered interesting. Examples of ones that are not are invalid urls,
@@ -53,9 +52,6 @@ class SyncSessionsClient {
   // Returns a LocalSessionEventRouter instance that is customized for the
   // embedder's context.
   virtual LocalSessionEventRouter* GetLocalSessionEventRouter() = 0;
-
-  // TODO(zea): add getters for the history and favicon services for the favicon
-  // cache to consume once it's componentized.
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SyncSessionsClient);

@@ -4,43 +4,44 @@
 
 #include "chromecast/browser/url_request_context_factory.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chromecast/base/cast_features.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/browser/cast_browser_process.h"
 #include "chromecast/browser/cast_http_user_agent_settings.h"
 #include "chromecast/browser/cast_network_delegate.h"
+#include "chromecast/chromecast_buildflags.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
 #include "content/public/common/url_constants.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_policy_status.h"
-#include "net/cert/do_nothing_ct_verifier.h"
-#include "net/cert_net/nss_ocsp.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/host_resolver.h"
+#include "net/dns/host_resolver_manager.h"
 #include "net/http/http_auth_handler_factory.h"
 #include "net/http/http_network_layer.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/http/http_stream_factory.h"
-#include "net/proxy/proxy_service.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/ssl/default_channel_id_store.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/ssl/ssl_config_service_defaults.h"
 #include "net/url_request/data_protocol_handler.h"
 #include "net/url_request/file_protocol_handler.h"
 #include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_intercepting_job_factory.h"
 #include "net/url_request/url_request_job_factory_impl.h"
@@ -51,20 +52,6 @@ namespace shell {
 namespace {
 
 const char kCookieStoreFile[] = "Cookies";
-
-// A CTPolicyEnforcer that accepts all certificates.
-class IgnoresCTPolicyEnforcer : public net::CTPolicyEnforcer {
- public:
-  IgnoresCTPolicyEnforcer() = default;
-  ~IgnoresCTPolicyEnforcer() override = default;
-
-  net::ct::CTPolicyCompliance CheckCompliance(
-      net::X509Certificate* cert,
-      const net::SCTList& verified_scts,
-      const net::NetLogWithSource& net_log) override {
-    return net::ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
-  }
-};
 
 bool IgnoreCertificateErrors() {
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
@@ -92,10 +79,6 @@ class URLRequestContextFactory::URLRequestContextGetter
         request_context_.reset(factory_->CreateMediaRequestContext());
       } else {
         request_context_.reset(factory_->CreateSystemRequestContext());
-#if defined(USE_NSS_CERTS)
-        // Set request context used by NSS for Crl requests.
-        net::SetURLRequestContextForNSSHttpIO(request_context_.get());
-#endif  // defined(USE_NSS_CERTS)
       }
     }
     return request_context_.get();
@@ -103,8 +86,8 @@ class URLRequestContextFactory::URLRequestContextGetter
 
   scoped_refptr<base::SingleThreadTaskRunner>
       GetNetworkTaskRunner() const override {
-    return content::BrowserThread::GetTaskRunnerForThread(
-        content::BrowserThread::IO);
+    return base::CreateSingleThreadTaskRunnerWithTraits(
+        {content::BrowserThread::IO});
   }
 
  private:
@@ -144,8 +127,8 @@ class URLRequestContextFactory::MainURLRequestContextGetter
 
   scoped_refptr<base::SingleThreadTaskRunner>
       GetNetworkTaskRunner() const override {
-    return content::BrowserThread::GetTaskRunnerForThread(
-        content::BrowserThread::IO);
+    return base::CreateSingleThreadTaskRunnerWithTraits(
+        {content::BrowserThread::IO});
   }
 
  private:
@@ -181,11 +164,10 @@ void URLRequestContextFactory::InitializeOnUIThread(net::NetLog* net_log) {
   // Proxy config service should be initialized in UI thread, since
   // ProxyConfigServiceDelegate on Android expects UI thread.
   pref_proxy_config_tracker_impl_ =
-      base::WrapUnique<PrefProxyConfigTrackerImpl>(
-          new PrefProxyConfigTrackerImpl(
-              CastBrowserProcess::GetInstance()->pref_service(),
-              content::BrowserThread::GetTaskRunnerForThread(
-                  content::BrowserThread::IO)));
+      std::make_unique<PrefProxyConfigTrackerImpl>(
+          CastBrowserProcess::GetInstance()->pref_service(),
+          base::CreateSingleThreadTaskRunnerWithTraits(
+              {content::BrowserThread::IO}));
 
   proxy_config_service_ =
       pref_proxy_config_tracker_impl_->CreateTrackingProxyConfigService(
@@ -229,35 +211,38 @@ void URLRequestContextFactory::InitializeSystemContextDependencies() {
   if (system_dependencies_initialized_)
     return;
 
-  host_resolver_ = net::HostResolver::CreateDefaultResolver(NULL);
-  cert_verifier_ = net::CertVerifier::CreateDefault();
-  ssl_config_service_ = new net::SSLConfigServiceDefaults;
+  host_resolver_manager_ = std::make_unique<net::HostResolverManager>(
+      net::HostResolver::ManagerOptions(), nullptr);
+  cert_verifier_ =
+      net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr);
+  ssl_config_service_.reset(new net::SSLConfigServiceDefaults);
   transport_security_state_.reset(new net::TransportSecurityState());
-  // Certificate transparency is current disabled for Chromecast.
-  cert_transparency_verifier_.reset(new net::DoNothingCTVerifier());
-  ct_policy_enforcer_.reset(new IgnoresCTPolicyEnforcer());
+  cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
+  ct_policy_enforcer_.reset(new net::DefaultCTPolicyEnforcer());
 
-  http_auth_handler_factory_ =
-      net::HttpAuthHandlerFactory::CreateDefault(host_resolver_.get());
+  http_auth_handler_factory_ = net::HttpAuthHandlerFactory::CreateDefault();
 
   // Use in-memory HttpServerProperties. Disk-based can improve performance
   // but benefit seems small (only helps 1st request to a server).
   http_server_properties_.reset(new net::HttpServerPropertiesImpl);
 
   DCHECK(proxy_config_service_);
-  proxy_service_ = net::ProxyService::CreateUsingSystemProxyResolver(
-      std::move(proxy_config_service_), NULL);
+  proxy_resolution_service_ =
+      net::ProxyResolutionService::CreateUsingSystemProxyResolver(
+          std::move(proxy_config_service_), nullptr);
+
+  system_host_resolver_ =
+      net::HostResolver::CreateResolver(host_resolver_manager_.get());
+
   system_dependencies_initialized_ = true;
 }
 
 void URLRequestContextFactory::InitializeMainContextDependencies(
-    net::HttpTransactionFactory* transaction_factory,
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) {
   if (main_dependencies_initialized_)
     return;
 
-  main_transaction_factory_.reset(transaction_factory);
   std::unique_ptr<net::URLRequestJobFactoryImpl> job_factory(
       new net::URLRequestJobFactoryImpl());
   // Keep ProtocolHandlers added in sync with
@@ -266,21 +251,21 @@ void URLRequestContextFactory::InitializeMainContextDependencies(
   for (content::ProtocolHandlerMap::iterator it = protocol_handlers->begin();
        it != protocol_handlers->end();
        ++it) {
-    set_protocol = job_factory->SetProtocolHandler(
-        it->first, base::WrapUnique(it->second.release()));
+    set_protocol =
+        job_factory->SetProtocolHandler(it->first, std::move(it->second));
     DCHECK(set_protocol);
   }
   set_protocol = job_factory->SetProtocolHandler(
-      url::kDataScheme, base::WrapUnique(new net::DataProtocolHandler));
+      url::kDataScheme, std::make_unique<net::DataProtocolHandler>());
   DCHECK(set_protocol);
 
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableLocalFileAccesses)) {
     set_protocol = job_factory->SetProtocolHandler(
         url::kFileScheme,
-        base::MakeUnique<net::FileProtocolHandler>(
+        std::make_unique<net::FileProtocolHandler>(
             base::CreateTaskRunnerWithTraits(
-                {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                  base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})));
     DCHECK(set_protocol);
   }
@@ -297,79 +282,77 @@ void URLRequestContextFactory::InitializeMainContextDependencies(
 
   main_job_factory_ = std::move(top_job_factory);
 
+  main_host_resolver_ =
+      net::HostResolver::CreateResolver(host_resolver_manager_.get());
+
   main_dependencies_initialized_ = true;
 }
 
-void URLRequestContextFactory::InitializeMediaContextDependencies(
-    net::HttpTransactionFactory* transaction_factory) {
+void URLRequestContextFactory::InitializeMediaContextDependencies() {
   if (media_dependencies_initialized_)
     return;
 
-  media_transaction_factory_.reset(transaction_factory);
+  media_host_resolver_ =
+      net::HostResolver::CreateResolver(host_resolver_manager_.get());
   media_dependencies_initialized_ = true;
 }
 
 void URLRequestContextFactory::PopulateNetworkSessionParams(
     bool ignore_certificate_errors,
-    net::HttpNetworkSession::Params* session_params,
-    net::HttpNetworkSession::Context* session_context) {
+    net::HttpNetworkSession::Params* session_params) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  session_context->host_resolver = host_resolver_.get();
-  session_context->cert_verifier = cert_verifier_.get();
-  session_context->channel_id_service = channel_id_service_.get();
-  session_context->ssl_config_service = ssl_config_service_.get();
-  session_context->transport_security_state = transport_security_state_.get();
-  session_context->cert_transparency_verifier =
-      cert_transparency_verifier_.get();
-  session_context->ct_policy_enforcer = ct_policy_enforcer_.get();
-  session_context->http_auth_handler_factory = http_auth_handler_factory_.get();
-  session_context->http_server_properties = http_server_properties_.get();
-  session_context->proxy_service = proxy_service_.get();
 
   session_params->ignore_certificate_errors = ignore_certificate_errors;
 
   // Enable QUIC if instructed by DCS. This remains constant for the lifetime of
   // the process.
-  session_params->enable_quic = base::FeatureList::IsEnabled(kEnableQuic);
+  session_params->enable_quic = chromecast::IsFeatureEnabled(kEnableQuic);
   LOG(INFO) << "Set HttpNetworkSessionParams.enable_quic = "
             << session_params->enable_quic;
+
+  // Disable idle sockets close on memory pressure, if instructed by DCS. On
+  // memory constrained devices:
+  // 1. if idle sockets are closed when memory pressure happens, cast_shell will
+  // close and re-open lots of connections to server.
+  // 2. if idle sockets are kept alive when memory pressure happens, this may
+  // cause JS engine gc frequently, leading to JS suspending.
+  session_params->disable_idle_sockets_close_on_memory_pressure =
+      chromecast::IsFeatureEnabled(kDisableIdleSocketsCloseOnMemoryPressure);
+  LOG(INFO) << "Set HttpNetworkSessionParams."
+            << "disable_idle_sockets_close_on_memory_pressure = "
+            << session_params->disable_idle_sockets_close_on_memory_pressure;
+}
+
+std::unique_ptr<net::HttpNetworkSession>
+URLRequestContextFactory::CreateNetworkSession(
+    const net::URLRequestContext* context) {
+  net::HttpNetworkSession::Params session_params;
+  net::HttpNetworkSession::Context session_context;
+  PopulateNetworkSessionParams(IgnoreCertificateErrors(), &session_params);
+  net::URLRequestContextBuilder::SetHttpNetworkSessionComponents(
+      context, &session_context);
+  return std::make_unique<net::HttpNetworkSession>(session_params,
+                                                   session_context);
 }
 
 net::URLRequestContext* URLRequestContextFactory::CreateSystemRequestContext() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   InitializeSystemContextDependencies();
-  net::HttpNetworkSession::Params session_params;
-  net::HttpNetworkSession::Context session_context;
-  PopulateNetworkSessionParams(IgnoreCertificateErrors(), &session_params,
-                               &session_context);
-  system_transaction_factory_.reset(new net::HttpNetworkLayer(
-      new net::HttpNetworkSession(session_params, session_context)));
   system_job_factory_.reset(new net::URLRequestJobFactoryImpl());
   system_cookie_store_ =
-      content::CreateCookieStore(content::CookieStoreConfig());
+      content::CreateCookieStore(content::CookieStoreConfig(), net_log_);
 
   net::URLRequestContext* system_context = new net::URLRequestContext();
-  system_context->set_host_resolver(host_resolver_.get());
-  system_context->set_channel_id_service(channel_id_service_.get());
-  system_context->set_cert_verifier(cert_verifier_.get());
-  system_context->set_cert_transparency_verifier(
-      cert_transparency_verifier_.get());
-  system_context->set_ct_policy_enforcer(ct_policy_enforcer_.get());
-  system_context->set_proxy_service(proxy_service_.get());
-  system_context->set_ssl_config_service(ssl_config_service_.get());
-  system_context->set_transport_security_state(
-      transport_security_state_.get());
-  system_context->set_http_auth_handler_factory(
-      http_auth_handler_factory_.get());
-  system_context->set_http_server_properties(http_server_properties_.get());
+  ConfigureURLRequestContext(system_context, system_job_factory_,
+                             system_cookie_store_, system_network_delegate_,
+                             system_host_resolver_);
+
+  system_network_session_ = CreateNetworkSession(system_context);
+  system_transaction_factory_ =
+      std::make_unique<net::HttpNetworkLayer>(system_network_session_.get());
   system_context->set_http_transaction_factory(
       system_transaction_factory_.get());
-  system_context->set_http_user_agent_settings(
-      http_user_agent_settings_.get());
-  system_context->set_job_factory(system_job_factory_.get());
-  system_context->set_cookie_store(system_cookie_store_.get());
-  system_context->set_network_delegate(system_network_delegate_.get());
-  system_context->set_net_log(net_log_);
+
   return system_context;
 }
 
@@ -377,19 +360,21 @@ net::URLRequestContext* URLRequestContextFactory::CreateMediaRequestContext() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   DCHECK(main_getter_.get())
       << "Getting MediaRequestContext before MainRequestContext";
-  net::URLRequestContext* main_context = main_getter_->GetURLRequestContext();
 
-  // Set non caching backend.
-  net::HttpNetworkSession* main_session =
-      main_transaction_factory_->GetSession();
-  InitializeMediaContextDependencies(
-      new net::HttpNetworkLayer(main_session));
+  InitializeMediaContextDependencies();
 
+  // Reuse main context dependencies except HostResolver and
+  // HttpTransactionFactory.
   net::URLRequestContext* media_context = new net::URLRequestContext();
-  media_context->CopyFrom(main_context);
-  media_context->set_http_transaction_factory(
-      media_transaction_factory_.get());
-  media_context->set_net_log(net_log_);
+  ConfigureURLRequestContext(media_context, main_job_factory_,
+                             main_cookie_store_, app_network_delegate_,
+                             media_host_resolver_);
+
+  media_network_session_ = CreateNetworkSession(media_context);
+  media_transaction_factory_ =
+      std::make_unique<net::HttpNetworkLayer>(media_network_session_.get());
+  media_context->set_http_transaction_factory(media_transaction_factory_.get());
+
   return media_context;
 }
 
@@ -399,44 +384,50 @@ net::URLRequestContext* URLRequestContextFactory::CreateMainRequestContext(
     content::URLRequestInterceptorScopedVector request_interceptors) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   InitializeSystemContextDependencies();
-
-  net::HttpNetworkSession::Params session_params;
-  net::HttpNetworkSession::Context session_context;
-  PopulateNetworkSessionParams(IgnoreCertificateErrors(), &session_params,
-                               &session_context);
   InitializeMainContextDependencies(
-      new net::HttpNetworkLayer(
-          new net::HttpNetworkSession(session_params, session_context)),
       protocol_handlers, std::move(request_interceptors));
 
-  content::CookieStoreConfig cookie_config(
-      cookie_path, content::CookieStoreConfig::PERSISTANT_SESSION_COOKIES,
-      nullptr);
-  main_cookie_store_ = content::CreateCookieStore(cookie_config);
+  content::CookieStoreConfig cookie_config(cookie_path, false, true, nullptr);
+  main_cookie_store_ = content::CreateCookieStore(cookie_config, net_log_);
 
   net::URLRequestContext* main_context = new net::URLRequestContext();
-  main_context->set_host_resolver(host_resolver_.get());
-  main_context->set_channel_id_service(channel_id_service_.get());
-  main_context->set_cert_verifier(cert_verifier_.get());
-  main_context->set_cert_transparency_verifier(
-      cert_transparency_verifier_.get());
-  main_context->set_ct_policy_enforcer(ct_policy_enforcer_.get());
-  main_context->set_proxy_service(proxy_service_.get());
-  main_context->set_ssl_config_service(ssl_config_service_.get());
-  main_context->set_transport_security_state(transport_security_state_.get());
-  main_context->set_http_auth_handler_factory(
-      http_auth_handler_factory_.get());
-  main_context->set_http_server_properties(http_server_properties_.get());
-  main_context->set_cookie_store(main_cookie_store_.get());
-  main_context->set_http_user_agent_settings(
-      http_user_agent_settings_.get());
+  ConfigureURLRequestContext(main_context, main_job_factory_,
+                             main_cookie_store_, app_network_delegate_,
+                             main_host_resolver_);
 
-  main_context->set_http_transaction_factory(
-      main_transaction_factory_.get());
-  main_context->set_job_factory(main_job_factory_.get());
-  main_context->set_network_delegate(app_network_delegate_.get());
-  main_context->set_net_log(net_log_);
+  main_network_session_ = CreateNetworkSession(main_context);
+  main_transaction_factory_ =
+      std::make_unique<net::HttpNetworkLayer>(main_network_session_.get());
+  main_context->set_http_transaction_factory(main_transaction_factory_.get());
+
   return main_context;
+}
+
+void URLRequestContextFactory::ConfigureURLRequestContext(
+    net::URLRequestContext* context,
+    const std::unique_ptr<net::URLRequestJobFactory>& job_factory,
+    const std::unique_ptr<net::CookieStore>& cookie_store,
+    const std::unique_ptr<CastNetworkDelegate>& network_delegate,
+    const std::unique_ptr<net::HostResolver>& host_resolver) {
+  // common settings
+  context->set_cert_verifier(cert_verifier_.get());
+  context->set_cert_transparency_verifier(cert_transparency_verifier_.get());
+  context->set_ct_policy_enforcer(ct_policy_enforcer_.get());
+  context->set_proxy_resolution_service(proxy_resolution_service_.get());
+  context->set_ssl_config_service(ssl_config_service_.get());
+  context->set_transport_security_state(transport_security_state_.get());
+  context->set_http_auth_handler_factory(http_auth_handler_factory_.get());
+  context->set_http_server_properties(http_server_properties_.get());
+  context->set_http_user_agent_settings(http_user_agent_settings_.get());
+  context->set_net_log(net_log_);
+
+  // settings from the caller
+  context->set_job_factory(job_factory.get());
+  context->set_cookie_store(cookie_store.get());
+  context->set_network_delegate(network_delegate.get());
+  context->set_host_resolver(host_resolver.get());
+
+  host_resolver->SetRequestContext(context);
 }
 
 void URLRequestContextFactory::InitializeNetworkDelegates() {

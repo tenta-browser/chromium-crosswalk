@@ -16,10 +16,10 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -31,6 +31,7 @@
 #include "ui/events/ozone/evdev/touch_filter/touch_filter.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/events/platform/platform_event_source.h"
+#include "ui/events/test/scoped_event_test_tick_clock.h"
 
 namespace ui {
 
@@ -108,8 +109,8 @@ class MockTouchEventConverterEvdev : public TouchEventConverterEvdev {
   }
 
   void Reinitialize() override {}
-
   FalseTouchFinder* false_touch_finder() { return false_touch_finder_.get(); }
+  InProgressTouchEvdev& event(int slot) { return events_[slot]; }
 
  private:
   int read_pipe_;
@@ -121,7 +122,8 @@ class MockTouchEventConverterEvdev : public TouchEventConverterEvdev {
 class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
  public:
   MockDeviceEventDispatcherEvdev(
-      const base::Callback<void(const GenericEventParams& params)>& callback)
+      const base::RepeatingCallback<void(const GenericEventParams& params)>&
+          callback)
       : callback_(callback) {}
   ~MockDeviceEventDispatcherEvdev() override {}
 
@@ -157,6 +159,8 @@ class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
       const std::vector<InputDevice>& devices) override {}
   void DispatchTouchpadDevicesUpdated(
       const std::vector<InputDevice>& devices) override {}
+  void DispatchUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices) override {}
   void DispatchDeviceListsComplete() override {}
   void DispatchStylusStateChanged(StylusState stylus_state) override {}
 
@@ -164,10 +168,10 @@ class MockDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
   void DispatchGamepadEvent(const GamepadEvent& event) override {}
 
   void DispatchGamepadDevicesUpdated(
-      const std::vector<InputDevice>& devices) override {}
+      const std::vector<GamepadDevice>& devices) override {}
 
  private:
-  base::Callback<void(const GenericEventParams& params)> callback_;
+  base::RepeatingCallback<void(const GenericEventParams& params)> callback_;
 };
 
 MockTouchEventConverterEvdev::MockTouchEventConverterEvdev(
@@ -228,20 +232,27 @@ class TouchEventConverterEvdevTest : public testing::Test {
     // loop.
     EventDeviceInfo devinfo;
     dispatcher_.reset(new ui::MockDeviceEventDispatcherEvdev(
-        base::Bind(&TouchEventConverterEvdevTest::DispatchCallback,
-                   base::Unretained(this))));
+        base::BindRepeating(&TouchEventConverterEvdevTest::DispatchCallback,
+                            base::Unretained(this))));
     device_.reset(new ui::MockTouchEventConverterEvdev(
         std::move(events_in), base::FilePath(kTestDevicePath), devinfo,
         dispatcher_.get()));
     device_->Initialize(devinfo);
     loop_ = new base::MessageLoopForUI;
 
+    test_clock_.reset(new ui::test::ScopedEventTestTickClock());
     ui::DeviceDataManager::CreateInstance();
   }
 
   void TearDown() override {
     device_.reset();
     delete loop_;
+  }
+
+  void UpdateTime(struct input_event* queue, long count, timeval time) const {
+    for (int i = 0; i < count; ++i) {
+      queue[i].time = time;
+    }
   }
 
   ui::MockTouchEventConverterEvdev* device() { return device_.get(); }
@@ -269,10 +280,18 @@ class TouchEventConverterEvdevTest : public testing::Test {
 
   void DestroyDevice() { device_.reset(); }
 
+  void SetTestNowTime(timeval time) {
+    base::TimeTicks ticks = base::TimeTicks() +
+                            base::TimeDelta::FromSeconds(time.tv_sec) +
+                            base::TimeDelta::FromMicroseconds(time.tv_usec);
+    test_clock_->SetNowTicks(ticks);
+  }
+
  private:
   base::MessageLoop* loop_;
   std::unique_ptr<ui::MockTouchEventConverterEvdev> device_;
   std::unique_ptr<ui::MockDeviceEventDispatcherEvdev> dispatcher_;
+  std::unique_ptr<ui::test::ScopedEventTestTickClock> test_clock_;
 
   base::ScopedFD events_out_;
 
@@ -329,9 +348,12 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test time to ensure above timestamps are strictly in the past.
+  SetTestNowTime(time);
+
   // Press.
   dev->ConfigureReadMock(mock_kernel_queue_press,
-                         arraysize(mock_kernel_queue_press), 0);
+                         base::size(mock_kernel_queue_press), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
   ui::TouchEventParams event = dispatched_touch_event(0);
@@ -347,7 +369,7 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
 
   // Move.
   dev->ConfigureReadMock(mock_kernel_queue_move,
-                         arraysize(mock_kernel_queue_move), 0);
+                         base::size(mock_kernel_queue_move), 0);
   dev->ReadNow();
   EXPECT_EQ(2u, size());
   event = dispatched_touch_event(1);
@@ -363,7 +385,7 @@ TEST_F(TouchEventConverterEvdevTest, TouchMove) {
 
   // Release.
   dev->ConfigureReadMock(mock_kernel_queue_release,
-                         arraysize(mock_kernel_queue_release), 0);
+                         base::size(mock_kernel_queue_release), 0);
   dev->ReadNow();
   EXPECT_EQ(3u, size());
   event = dispatched_touch_event(2);
@@ -569,7 +591,7 @@ TEST_F(TouchEventConverterEvdevTest, ShouldResumeExistingContactsOnStart) {
   };
 
   dev->ConfigureReadMock(mock_kernel_queue_empty_report,
-                         arraysize(mock_kernel_queue_empty_report), 0);
+                         base::size(mock_kernel_queue_empty_report), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
 
@@ -602,8 +624,11 @@ TEST_F(TouchEventConverterEvdevTest, ShouldReleaseContactsOnStop) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
   dev->ConfigureReadMock(mock_kernel_queue_press,
-                         arraysize(mock_kernel_queue_press), 0);
+                         base::size(mock_kernel_queue_press), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
 
@@ -641,11 +666,14 @@ TEST_F(TouchEventConverterEvdevTest, ShouldRemoveContactsWhenDisabled) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
   // Initialize the device.
   dev->Initialize(devinfo);
 
   dev->ConfigureReadMock(mock_kernel_queue_press,
-                         arraysize(mock_kernel_queue_press), 0);
+                         base::size(mock_kernel_queue_press), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
 
@@ -677,7 +705,7 @@ TEST_F(TouchEventConverterEvdevTest, ShouldRemoveContactsWhenDisabled) {
 
   // Send updates to touch (touch is cancelled, should not come back)
   dev->ConfigureReadMock(mock_kernel_queue_press,
-                         arraysize(mock_kernel_queue_press), 0);
+                         base::size(mock_kernel_queue_press), 0);
   dev->ReadNow();
   EXPECT_EQ(2u, size());
 }
@@ -746,11 +774,14 @@ TEST_F(TouchEventConverterEvdevTest, PalmShouldCancelTouch) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
   // Initialize the device.
   dev->Initialize(devinfo);
 
   dev->ConfigureReadMock(mock_kernel_queue_max_major,
-                         arraysize(mock_kernel_queue_max_major), 0);
+                         base::size(mock_kernel_queue_max_major), 0);
   dev->ReadNow();
   EXPECT_EQ(4u, size());
 
@@ -777,7 +808,7 @@ TEST_F(TouchEventConverterEvdevTest, PalmShouldCancelTouch) {
   EXPECT_EQ(1, ev1_4.slot);
 
   dev->ConfigureReadMock(mock_kernel_queue_tool_palm,
-                         arraysize(mock_kernel_queue_tool_palm), 0);
+                         base::size(mock_kernel_queue_tool_palm), 0);
   dev->ReadNow();
   EXPECT_EQ(8u, size());
 
@@ -904,11 +935,14 @@ TEST_F(TouchEventConverterEvdevTest, TrackingIdShouldNotResetCancelByPalm) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
   // Initialize the device.
   dev->Initialize(devinfo);
 
   dev->ConfigureReadMock(mock_kernel_queue_max_major,
-                         arraysize(mock_kernel_queue_max_major), 0);
+                         base::size(mock_kernel_queue_max_major), 0);
   dev->ReadNow();
   EXPECT_EQ(4u, size());
 
@@ -935,12 +969,13 @@ TEST_F(TouchEventConverterEvdevTest, TrackingIdShouldNotResetCancelByPalm) {
   EXPECT_EQ(1, ev1_4.slot);
 
   dev->ConfigureReadMock(mock_kernel_new_touch_without_new_major,
-                         arraysize(mock_kernel_new_touch_without_new_major), 0);
+                         base::size(mock_kernel_new_touch_without_new_major),
+                         0);
   dev->ReadNow();
   EXPECT_EQ(4u, size());
 
   dev->ConfigureReadMock(mock_kernel_queue_tool_palm,
-                         arraysize(mock_kernel_queue_tool_palm), 0);
+                         base::size(mock_kernel_queue_tool_palm), 0);
   dev->ReadNow();
   EXPECT_EQ(8u, size());
 
@@ -1003,9 +1038,12 @@ TEST_F(TouchEventConverterEvdevTest, ShouldUseLeftButtonIfNoTouchButton) {
       {time, EV_SYN, SYN_REPORT, 0},
   };
 
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
   // Press.
   dev->ConfigureReadMock(mock_kernel_queue_press,
-                         arraysize(mock_kernel_queue_press), 0);
+                         base::size(mock_kernel_queue_press), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
   ui::TouchEventParams event = dispatched_touch_event(0);
@@ -1019,7 +1057,7 @@ TEST_F(TouchEventConverterEvdevTest, ShouldUseLeftButtonIfNoTouchButton) {
 
   // Move.
   dev->ConfigureReadMock(mock_kernel_queue_move,
-                         arraysize(mock_kernel_queue_move), 0);
+                         base::size(mock_kernel_queue_move), 0);
   dev->ReadNow();
   EXPECT_EQ(2u, size());
   event = dispatched_touch_event(1);
@@ -1033,7 +1071,7 @@ TEST_F(TouchEventConverterEvdevTest, ShouldUseLeftButtonIfNoTouchButton) {
 
   // Release.
   dev->ConfigureReadMock(mock_kernel_queue_release,
-                         arraysize(mock_kernel_queue_release), 0);
+                         base::size(mock_kernel_queue_release), 0);
   dev->ReadNow();
   EXPECT_EQ(3u, size());
   event = dispatched_touch_event(2);
@@ -1075,7 +1113,7 @@ TEST_F(TouchEventConverterEvdevTest,
   };
 
   // Check that two events are generated.
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
 
   const unsigned int kExpectedEventCount = 2;
@@ -1116,7 +1154,7 @@ TEST_F(TouchEventConverterEvdevTest, CheckSlotLimit) {
   };
 
   // Check that one 1 event is generated
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
 }
@@ -1172,12 +1210,12 @@ class TouchEventConverterEvdevTouchNoiseTest
   ~TouchEventConverterEvdevTouchNoiseTest() override {}
 
   // Makes the FalseTouchFinder use |filter| and only |filter| to filter out
-  // touch noise. Also removes the edge touch filter.
+  // touch noise. Also removes any delay filters.
   void SetTouchNoiseFilter(std::unique_ptr<TouchFilter> filter) {
     FalseTouchFinder* finder = device()->false_touch_finder();
     finder->noise_filters_.clear();
     finder->noise_filters_.push_back(std::move(filter));
-    finder->edge_touch_filter_.reset();
+    finder->delay_filters_.clear();
   }
 
   // Returns the first of FalseTouchFinder's filters.
@@ -1222,14 +1260,14 @@ TEST_F(TouchEventConverterEvdevTouchNoiseTest, TouchNoiseFiltering) {
   MockTouchEventConverterEvdev* dev = device();
   SetTouchNoiseFilter(std::unique_ptr<TouchFilter>(
       new EventTypeTouchNoiseFilter(ET_TOUCH_PRESSED)));
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   ASSERT_EQ(0u, size());
 
   ClearDispatchedEvents();
   SetTouchNoiseFilter(std::unique_ptr<TouchFilter>(
       new EventTypeTouchNoiseFilter(ET_TOUCH_MOVED)));
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   ASSERT_EQ(2u, size());
   TouchEventParams event0 = dispatched_touch_event(0);
@@ -1241,7 +1279,7 @@ TEST_F(TouchEventConverterEvdevTouchNoiseTest, TouchNoiseFiltering) {
   ClearDispatchedEvents();
   SetTouchNoiseFilter(std::unique_ptr<TouchFilter>(
       new EventTypeTouchNoiseFilter(ET_TOUCH_RELEASED)));
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   ASSERT_EQ(3u, size());
   event0 = dispatched_touch_event(0);
@@ -1280,7 +1318,7 @@ TEST_F(TouchEventConverterEvdevTouchNoiseTest,
   MockTouchEventConverterEvdev* dev = device();
   SetTouchNoiseFilter(std::unique_ptr<TouchFilter>(
       new EventTypeTouchNoiseFilter(ET_TOUCH_PRESSED)));
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   ASSERT_EQ(0u, size());
 
@@ -1314,7 +1352,7 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusTouchAndRelease) {
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
   };
 
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(2u, size());
 
@@ -1364,7 +1402,7 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusMotion) {
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
   };
 
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(4u, size());
 
@@ -1433,7 +1471,7 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButtonWhileHovering) {
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
   };
 
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(2u, size());
 
@@ -1482,7 +1520,7 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButton) {
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
   };
 
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(4u, size());
 
@@ -1511,6 +1549,276 @@ TEST_F(TouchEventConverterEvdevTest, ActiveStylusBarrelButton) {
             up_event.pointer_details.pointer_type);
 }
 
+TEST_F(TouchEventConverterEvdevTest, HeldEventNotSent) {
+  EventDeviceInfo devinfo;
+  EXPECT_TRUE(CapabilitiesToDeviceInfo(kEveTouchScreen, &devinfo));
+  device()->Initialize(devinfo);
+  timeval time = {1507226211, 483601};
+  // Note we manually set held to true.
+  struct input_event mock_kernel_queue[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, 461},
+      {time, EV_ABS, ABS_MT_POSITION_X, 1795},
+      {time, EV_ABS, ABS_MT_POSITION_Y, 5559},
+      {time, EV_ABS, ABS_MT_TOUCH_MAJOR, 14},
+      {time, EV_ABS, ABS_MT_TOUCH_MINOR, 14},
+      {time, EV_ABS, ABS_MT_PRESSURE, 217},
+      {time, EV_KEY, BTN_TOUCH, 1},
+      {time, EV_ABS, ABS_X, 1795},
+      {time, EV_ABS, ABS_Y, 5559},
+      {time, EV_ABS, ABS_PRESSURE, 217},
+      {time, EV_MSC, MSC_TIMESTAMP, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+  // We send 3 events, all moving around. We expect them all to be held!
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_FALSE(device()->event(0).held);
+    device()->event(0).held = true;
+    time.tv_usec = i * 8000;
+    UpdateTime(mock_kernel_queue, base::size(mock_kernel_queue), time);
+    // We move the item slightly to the right every time.
+    mock_kernel_queue[1].value = 1795 + i;
+    SetTestNowTime(time);
+    device()->ConfigureReadMock(mock_kernel_queue,
+                                base::size(mock_kernel_queue), 0);
+    device()->ReadNow();
+  }
+  SetTestNowTime(time);
+
+  EXPECT_EQ(0u, size());
+  EXPECT_FALSE(device()->event(0).held);
+
+  // Now send an event which is not held.
+  time.tv_usec += 8000;
+  UpdateTime(mock_kernel_queue, base::size(mock_kernel_queue), time);
+  SetTestNowTime(time);
+  // We move the item slightly to the right every time.
+  mock_kernel_queue[1].value = 1798;
+  device()->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue),
+                              0);
+  device()->ReadNow();
+  EXPECT_EQ(4u, size());
+  const base::TimeTicks base_ticks =
+      base::TimeTicks() + base::TimeDelta::FromSeconds(time.tv_sec);
+
+  for (unsigned i = 0; i < size(); ++i) {
+    ui::TouchEventParams event = dispatched_touch_event(i);
+    EXPECT_EQ(1795 + i, event.location.x());
+    EXPECT_EQ(base::TimeDelta::FromMicroseconds(8000 * i),
+              (event.timestamp - base_ticks));
+  }
+}
+
+TEST_F(TouchEventConverterEvdevTest, HeldThenEnd) {
+  EventDeviceInfo devinfo;
+  EXPECT_TRUE(CapabilitiesToDeviceInfo(kEveTouchScreen, &devinfo));
+  device()->Initialize(devinfo);
+  timeval time = {1507226211, 483601};
+  // Note we manually set held to true.
+  struct input_event mock_kernel_queue[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, 461},
+      {time, EV_ABS, ABS_MT_POSITION_X, 1795},
+      {time, EV_ABS, ABS_MT_POSITION_Y, 5559},
+      {time, EV_ABS, ABS_MT_TOUCH_MAJOR, 14},
+      {time, EV_ABS, ABS_MT_TOUCH_MINOR, 14},
+      {time, EV_ABS, ABS_MT_PRESSURE, 217},
+      {time, EV_KEY, BTN_TOUCH, 1},
+      {time, EV_ABS, ABS_X, 1795},
+      {time, EV_ABS, ABS_Y, 5559},
+      {time, EV_ABS, ABS_PRESSURE, 217},
+      {time, EV_MSC, MSC_TIMESTAMP, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+  // We send 3 events, all moving around. We expect them all to be held!
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_FALSE(device()->event(0).held);
+    device()->event(0).held = true;
+    time.tv_usec += 8000;
+    UpdateTime(mock_kernel_queue, base::size(mock_kernel_queue), time);
+    // We move the item slightly to the right every time.
+    mock_kernel_queue[1].value = 1795 + i;
+    device()->ConfigureReadMock(mock_kernel_queue,
+                                base::size(mock_kernel_queue), 0);
+    device()->ReadNow();
+  }
+  SetTestNowTime(time);
+
+  EXPECT_EQ(0u, size());
+  EXPECT_FALSE(device()->event(0).held);
+  time.tv_usec += 8000;
+  struct input_event mock_kernel_queue_release[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, -1},
+      {time, EV_KEY, BTN_TOUCH, 0},
+      {time, EV_ABS, ABS_PRESSURE, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+
+  // Set test time to ensure above timestamps are strictly in the past.
+  SetTestNowTime(time);
+
+  // Press.
+  device()->ConfigureReadMock(mock_kernel_queue_release,
+                              base::size(mock_kernel_queue_release), 0);
+  device()->ReadNow();
+  EXPECT_EQ(4u, size());
+  EXPECT_EQ(ui::ET_TOUCH_RELEASED, dispatched_touch_event(3).type);
+}
+
+TEST_F(TouchEventConverterEvdevTest, SentHeldThenPalm) {
+  EventDeviceInfo devinfo;
+  EXPECT_TRUE(CapabilitiesToDeviceInfo(kEveTouchScreen, &devinfo));
+  device()->Initialize(devinfo);
+  timeval time = {1507226211, 0};
+  // Note we manually set held to true.
+  struct input_event mock_kernel_queue[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, 461},
+      {time, EV_ABS, ABS_MT_POSITION_X, 1795},
+      {time, EV_ABS, ABS_MT_POSITION_Y, 5559},
+      {time, EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER},
+      {time, EV_ABS, ABS_MT_TOUCH_MAJOR, 14},
+      {time, EV_ABS, ABS_MT_TOUCH_MINOR, 14},
+      {time, EV_ABS, ABS_MT_PRESSURE, 217},
+      {time, EV_KEY, BTN_TOUCH, 1},
+      {time, EV_ABS, ABS_X, 1795},
+      {time, EV_ABS, ABS_Y, 5559},
+      {time, EV_ABS, ABS_PRESSURE, 217},
+      {time, EV_MSC, MSC_TIMESTAMP, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+
+  // We send 10 events.
+  // The first 3 are finger.
+  // The next 5 are finger, but held.
+  // The rest are palm.
+  // The rest, after, magically turn into finger...
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_FALSE(device()->event(0).held);
+    if (i >= 3 && i < 8) {
+      device()->event(0).held = true;
+    } else if (i >= 8) {
+      // Set it as a palm.
+      mock_kernel_queue[3].value = MT_TOOL_PALM;
+    } else {
+      mock_kernel_queue[3].value = MT_TOOL_FINGER;
+    }
+    time.tv_usec = i * 8000;
+    SetTestNowTime(time);
+    UpdateTime(mock_kernel_queue, base::size(mock_kernel_queue), time);
+    // We move the item slightly to the right every time.
+    mock_kernel_queue[1].value = 1795 + i;
+    device()->ConfigureReadMock(mock_kernel_queue,
+                                base::size(mock_kernel_queue), 0);
+    device()->ReadNow();
+  }
+  SetTestNowTime(time);
+
+  // We expect the first 3 items to have been emitted, and then a cancel.
+  EXPECT_EQ(4u, size());
+  const base::TimeTicks base_ticks =
+      base::TimeTicks() + base::TimeDelta::FromSeconds(time.tv_sec);
+  for (unsigned i = 0; i < size(); ++i) {
+    ui::TouchEventParams event = dispatched_touch_event(i);
+    EventType expected_touch_type;
+    if (i == 0) {
+      expected_touch_type = EventType::ET_TOUCH_PRESSED;
+    } else if (i < size() - 1) {
+      expected_touch_type = EventType::ET_TOUCH_MOVED;
+    } else {
+      expected_touch_type = EventType::ET_TOUCH_CANCELLED;
+    }
+
+    EXPECT_EQ(expected_touch_type, event.type);
+    if (i != size() - 1) {
+      EXPECT_EQ(1795 + i, event.location.x());
+      EXPECT_EQ(base::TimeDelta::FromMicroseconds(8000 * i),
+                (event.timestamp - base_ticks));
+    }
+  }
+}
+
+TEST_F(TouchEventConverterEvdevTest, HeldThenPalm) {
+  EventDeviceInfo devinfo;
+  EXPECT_TRUE(CapabilitiesToDeviceInfo(kEveTouchScreen, &devinfo));
+  device()->Initialize(devinfo);
+  timeval time = {1507226211, 0};
+  // Note we manually set held to true.
+  struct input_event mock_kernel_queue[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, 461},
+      {time, EV_ABS, ABS_MT_POSITION_X, 1795},
+      {time, EV_ABS, ABS_MT_POSITION_Y, 5559},
+      {time, EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER},
+      {time, EV_ABS, ABS_MT_TOUCH_MAJOR, 14},
+      {time, EV_ABS, ABS_MT_TOUCH_MINOR, 14},
+      {time, EV_ABS, ABS_MT_PRESSURE, 217},
+      {time, EV_KEY, BTN_TOUCH, 1},
+      {time, EV_ABS, ABS_X, 1795},
+      {time, EV_ABS, ABS_Y, 5559},
+      {time, EV_ABS, ABS_PRESSURE, 217},
+      {time, EV_MSC, MSC_TIMESTAMP, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+  // We send 20 events.
+  // The first 4 are finger, but held.
+  // The 5th is a palm.
+  // The rest, after, magically turn into finger...
+  for (int i = 0; i < 6; ++i) {
+    EXPECT_FALSE(device()->event(0).held);
+    if (i < 4) {
+      device()->event(0).held = true;
+    } else if (i == 4) {
+      // Set it as a palm.
+      EXPECT_EQ(MT_TOOL_FINGER, mock_kernel_queue[3].value);
+      mock_kernel_queue[3].value = MT_TOOL_PALM;
+    } else {
+      mock_kernel_queue[3].value = MT_TOOL_FINGER;
+    }
+    time.tv_usec += 8000;
+    UpdateTime(mock_kernel_queue, base::size(mock_kernel_queue), time);
+    // We move the item slightly to the right every time.
+    mock_kernel_queue[1].value = 1795 + i;
+    device()->ConfigureReadMock(mock_kernel_queue,
+                                base::size(mock_kernel_queue), 0);
+    device()->ReadNow();
+  }
+  SetTestNowTime(time);
+
+  EXPECT_EQ(0u, size());
+  EXPECT_FALSE(device()->event(0).held);
+}
+
+TEST_F(TouchEventConverterEvdevTest, ScalePressure) {
+  EventDeviceInfo devinfo;
+  EXPECT_TRUE(CapabilitiesToDeviceInfo(kEveTouchScreen, &devinfo));
+  device()->Initialize(devinfo);
+  timeval time;
+  time = {1507226211, 483601};
+  // Fake a broken input: note the pressure.
+  struct input_event mock_kernel_queue[] = {
+      {time, EV_ABS, ABS_MT_TRACKING_ID, 461},
+      {time, EV_ABS, ABS_MT_POSITION_X, 1795},
+      {time, EV_ABS, ABS_MT_POSITION_Y, 5559},
+      {time, EV_ABS, ABS_MT_PRESSURE,
+       devinfo.GetAbsMaximum(ABS_MT_PRESSURE) * 2},
+      {time, EV_ABS, ABS_MT_TOUCH_MAJOR, 14},
+      {time, EV_ABS, ABS_MT_TOUCH_MINOR, 14},
+      {time, EV_KEY, BTN_TOUCH, 1},
+      {time, EV_ABS, ABS_X, 1795},
+      {time, EV_ABS, ABS_Y, 5559},
+      {time, EV_ABS, ABS_PRESSURE, 217},
+      {time, EV_MSC, MSC_TIMESTAMP, 0},
+      {time, EV_SYN, SYN_REPORT, 0},
+  };
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
+
+  // Finger pressed with major/minor reported.
+  device()->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue),
+                              0);
+  device()->ReadNow();
+  EXPECT_EQ(1u, size());
+  ui::TouchEventParams event = dispatched_touch_event(0);
+  EXPECT_FLOAT_EQ(1.0, event.pointer_details.force);
+}
+
 // crbug.com/771374
 TEST_F(TouchEventConverterEvdevTest, FingerSizeWithResolution) {
   ui::MockTouchEventConverterEvdev* dev = device();
@@ -1536,9 +1844,11 @@ TEST_F(TouchEventConverterEvdevTest, FingerSizeWithResolution) {
       {time, EV_MSC, MSC_TIMESTAMP, 0},
       {time, EV_SYN, SYN_REPORT, 0},
   };
+  // Set test now time to ensure above timestamps are in the past.
+  SetTestNowTime(time);
 
   // Finger pressed with major/minor reported.
-  dev->ConfigureReadMock(mock_kernel_queue, arraysize(mock_kernel_queue), 0);
+  dev->ConfigureReadMock(mock_kernel_queue, base::size(mock_kernel_queue), 0);
   dev->ReadNow();
   EXPECT_EQ(1u, size());
   ui::TouchEventParams event = dispatched_touch_event(0);
@@ -1547,9 +1857,10 @@ TEST_F(TouchEventConverterEvdevTest, FingerSizeWithResolution) {
   EXPECT_EQ(1795, event.location.x());
   EXPECT_EQ(5559, event.location.y());
   EXPECT_EQ(0, event.slot);
+  EXPECT_FLOAT_EQ(217.0 / devinfo.GetAbsMaximum(ABS_MT_PRESSURE),
+                  event.pointer_details.force);
   EXPECT_EQ(EventPointerType::POINTER_TYPE_TOUCH,
             event.pointer_details.pointer_type);
   EXPECT_FLOAT_EQ(280.f, event.pointer_details.radius_x);
-  EXPECT_FLOAT_EQ(0.8509804f, event.pointer_details.force);
 }
 }  // namespace ui

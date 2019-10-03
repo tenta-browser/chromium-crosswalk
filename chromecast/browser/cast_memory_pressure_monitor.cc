@@ -44,7 +44,13 @@ int GetSystemReservedKb() {
 }  // namespace
 
 CastMemoryPressureMonitor::CastMemoryPressureMonitor()
-    : current_level_(base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE),
+    : critical_memory_fraction_(
+          GetSwitchValueDouble(switches::kCastMemoryPressureCriticalFraction,
+                               kCriticalMemoryFraction)),
+      moderate_memory_fraction_(
+          GetSwitchValueDouble(switches::kCastMemoryPressureModerateFraction,
+                               kModerateMemoryFraction)),
+      current_level_(base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE),
       system_reserved_kb_(GetSystemReservedKb()),
       dispatch_callback_(
           base::Bind(&base::MemoryPressureListener::NotifyMemoryPressure)),
@@ -55,7 +61,7 @@ CastMemoryPressureMonitor::CastMemoryPressureMonitor()
 CastMemoryPressureMonitor::~CastMemoryPressureMonitor() {}
 
 CastMemoryPressureMonitor::MemoryPressureLevel
-CastMemoryPressureMonitor::GetCurrentPressureLevel() {
+CastMemoryPressureMonitor::GetCurrentPressureLevel() const {
   return current_level_;
 }
 
@@ -70,9 +76,9 @@ void CastMemoryPressureMonitor::PollPressureLevel() {
     // Preferred memory pressure heuristic:
     // 1. Use /proc/meminfo's MemAvailable if possible, fall back to estimate
     // of free + buffers + cached otherwise.
-    const int total_available =
-        (info.available != 0) ? info.available
-        : (info.free + info.buffers + info.cached);
+    const int total_available = (info.available != 0)
+                                    ? info.available
+                                    : (info.free + info.buffers + info.cached);
 
     // 2. Allow some memory to be 'reserved' on command line.
     const int available = total_available - system_reserved_kb_;
@@ -80,9 +86,9 @@ void CastMemoryPressureMonitor::PollPressureLevel() {
     DCHECK_GT(total, 0);
     const float ratio = available / static_cast<float>(total);
 
-    if (ratio < kCriticalMemoryFraction)
+    if (ratio < critical_memory_fraction_)
       level = base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL;
-    else if (ratio < kModerateMemoryFraction)
+    else if (ratio < moderate_memory_fraction_)
       level = base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE;
   } else {
     // Backup method purely using 'free' memory.  It may generate more
@@ -97,19 +103,18 @@ void CastMemoryPressureMonitor::PollPressureLevel() {
 
   UMA_HISTOGRAM_PERCENTAGE("Platform.MeminfoMemFree",
                            (info.free * 100.0) / info.total);
-  UMA_HISTOGRAM_CUSTOM_COUNTS("Platform.Cast.MeminfoMemFreeDerived",
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Platform.Cast.MeminfoMemFreeDerived2",
                               (info.free + info.buffers + info.cached) / 1024,
-                              1, 500, 100);
+                              1, 2000, 100);
   if (info.available != 0) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS(
-        "Platform.Cast.MeminfoMemAvailable",
-        info.available / 1024,
-        1, 500, 100);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("Platform.Cast.MeminfoMemAvailable2",
+                                info.available / 1024, 1, 2000, 100);
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&CastMemoryPressureMonitor::PollPressureLevel,
-                            weak_ptr_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&CastMemoryPressureMonitor::PollPressureLevel,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(kPollingIntervalMS));
 }
 

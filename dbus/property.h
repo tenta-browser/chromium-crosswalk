@@ -9,7 +9,6 @@
 
 #include <map>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -251,7 +250,7 @@ class CHROME_DBUS_EXPORT PropertySet {
   // Callback for Get() method, |success| indicates whether or not the
   // value could be retrived, if true the new value can be obtained by
   // calling value() on the property.
-  typedef base::Callback<void(bool success)> GetCallback;
+  using GetCallback = base::OnceCallback<void(bool success)>;
 
   // Requests an updated value from the remote object for |property|
   // incurring a round-trip. |callback| will be called when the new
@@ -275,7 +274,7 @@ class CHROME_DBUS_EXPORT PropertySet {
 
   // Callback for Set() method, |success| indicates whether or not the
   // new property value was accepted by the remote object.
-  typedef base::Callback<void(bool success)> SetCallback;
+  using SetCallback = base::OnceCallback<void(bool success)>;
 
   // Requests that the remote object for |property| change the property to
   // its new value. |callback| will be called to indicate the success or
@@ -388,7 +387,7 @@ class CHROME_DBUS_EXPORT Property : public PropertyBase {
   // round-trip. |callback| will be called when the new value is available.
   // This may not be implemented by some interfaces.
   virtual void Get(dbus::PropertySet::GetCallback callback) {
-    property_set()->Get(this, callback);
+    property_set()->Get(this, std::move(callback));
   }
 
   // The synchronous version of Get().
@@ -403,7 +402,7 @@ class CHROME_DBUS_EXPORT Property : public PropertyBase {
   // remote object.
   virtual void Set(const T& value, dbus::PropertySet::SetCallback callback) {
     set_value_ = value;
-    property_set()->Set(this, callback);
+    property_set()->Set(this, std::move(callback));
   }
 
   // The synchronous version of Set().
@@ -441,6 +440,10 @@ class CHROME_DBUS_EXPORT Property : public PropertyBase {
   // Method used by test and stub implementations to directly set the
   // |set_value_| of a property.
   void ReplaceSetValueForTesting(const T& value) { set_value_ = value; }
+
+  // Method used by test and stub implementations to retrieve the |set_value|
+  // of a property.
+  const T& GetSetValueForTesting() const { return set_value_; }
 
  private:
   // Current cached value of the property.
@@ -613,25 +616,25 @@ extern template class CHROME_DBUS_EXPORT
 
 template <>
 CHROME_DBUS_EXPORT bool
-Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
-    PopValueFromReader(MessageReader* reader);
+Property<std::map<std::string, std::vector<uint8_t>>>::PopValueFromReader(
+    MessageReader* reader);
 template <>
 CHROME_DBUS_EXPORT void
-Property<std::unordered_map<std::string, std::vector<uint8_t>>>::
-    AppendSetValueToWriter(MessageWriter* writer);
+Property<std::map<std::string, std::vector<uint8_t>>>::AppendSetValueToWriter(
+    MessageWriter* writer);
 extern template class CHROME_DBUS_EXPORT
-    Property<std::unordered_map<std::string, std::vector<uint8_t>>>;
+    Property<std::map<std::string, std::vector<uint8_t>>>;
 
 template <>
 CHROME_DBUS_EXPORT bool
-Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
-    PopValueFromReader(MessageReader* reader);
+Property<std::map<uint16_t, std::vector<uint8_t>>>::PopValueFromReader(
+    MessageReader* reader);
 template <>
 CHROME_DBUS_EXPORT void
-Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>::
-    AppendSetValueToWriter(MessageWriter* writer);
+Property<std::map<uint16_t, std::vector<uint8_t>>>::AppendSetValueToWriter(
+    MessageWriter* writer);
 extern template class CHROME_DBUS_EXPORT
-    Property<std::unordered_map<uint16_t, std::vector<uint8_t>>>;
+    Property<std::map<uint16_t, std::vector<uint8_t>>>;
 
 #pragma GCC diagnostic pop
 

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "content/common/content_export.h"
 #include "ui/accessibility/ax_position.h"
 #include "ui/accessibility/ax_tree_id_registry.h"
 
@@ -17,9 +18,9 @@ namespace content {
 
 class BrowserAccessibility;
 
-using AXTreeID = ui::AXTreeIDRegistry::AXTreeID;
+using AXTreeID = ui::AXTreeID;
 
-class BrowserAccessibilityPosition
+class CONTENT_EXPORT BrowserAccessibilityPosition
     : public ui::AXPosition<BrowserAccessibilityPosition,
                             BrowserAccessibility> {
  public:
@@ -28,7 +29,10 @@ class BrowserAccessibilityPosition
 
   AXPositionInstance Clone() const override;
 
-  base::string16 GetInnerText() const override;
+  bool IsInLineBreak() const override;
+  bool IsInTextObject() const override;
+  bool IsInWhiteSpace() const override;
+  base::string16 GetText() const override;
 
  protected:
   BrowserAccessibilityPosition(const BrowserAccessibilityPosition& other) =
@@ -38,12 +42,15 @@ class BrowserAccessibilityPosition
                    int32_t* child_id) const override;
   int AnchorChildCount() const override;
   int AnchorIndexInParent() const override;
+  base::stack<BrowserAccessibility*> GetAncestorAnchors() const override;
   void AnchorParent(AXTreeID* tree_id, int32_t* parent_id) const override;
   BrowserAccessibility* GetNodeInTree(AXTreeID tree_id,
                                       int32_t node_id) const override;
-  int MaxTextOffset() const override;
   int MaxTextOffsetInParent() const override;
-  bool IsInWhiteSpace() const override;
+
+  bool IsInLineBreakingObject() const override;
+  ax::mojom::Role GetRole() const override;
+  ui::AXNodeTextStyles GetTextStyles() const override;
   std::vector<int32_t> GetWordStartOffsets() const override;
   std::vector<int32_t> GetWordEndOffsets() const override;
   int32_t GetNextOnLineID(int32_t node_id) const override;

@@ -4,6 +4,8 @@
 
 #include "content/browser/webrtc/webrtc_internals_message_handler.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "content/browser/webrtc/webrtc_internals.h"
 #include "content/common/media/peer_connection_tracker_messages.h"
 #include "content/public/browser/browser_thread.h"
@@ -21,6 +23,7 @@ WebRTCInternalsMessageHandler::WebRTCInternalsMessageHandler()
 WebRTCInternalsMessageHandler::WebRTCInternalsMessageHandler(
     WebRTCInternals* webrtc_internals)
     : webrtc_internals_(webrtc_internals) {
+  DCHECK(webrtc_internals);
   webrtc_internals_->AddObserver(this);
 }
 
@@ -29,35 +32,43 @@ WebRTCInternalsMessageHandler::~WebRTCInternalsMessageHandler() {
 }
 
 void WebRTCInternalsMessageHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback("getAllStats",
-      base::Bind(&WebRTCInternalsMessageHandler::OnGetAllStats,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getStandardStats",
+      base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetStandardStats,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getLegacyStats",
+      base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetLegacyStats,
+                          base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback("enableAudioDebugRecordings",
-      base::Bind(
+  web_ui()->RegisterMessageCallback(
+      "enableAudioDebugRecordings",
+      base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled,
-          base::Unretained(this),
-          true));
+          base::Unretained(this), true));
 
-  web_ui()->RegisterMessageCallback("disableAudioDebugRecordings",
-      base::Bind(
+  web_ui()->RegisterMessageCallback(
+      "disableAudioDebugRecordings",
+      base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled,
-          base::Unretained(this),
-          false));
+          base::Unretained(this), false));
 
   web_ui()->RegisterMessageCallback(
       "enableEventLogRecordings",
-      base::Bind(&WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
-                 base::Unretained(this), true));
+      base::BindRepeating(
+          &WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
+          base::Unretained(this), true));
 
   web_ui()->RegisterMessageCallback(
       "disableEventLogRecordings",
-      base::Bind(&WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
-                 base::Unretained(this), false));
+      base::BindRepeating(
+          &WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
+          base::Unretained(this), false));
 
-  web_ui()->RegisterMessageCallback("finishedDOMLoad",
-      base::Bind(&WebRTCInternalsMessageHandler::OnDOMLoadDone,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "finishedDOMLoad",
+      base::BindRepeating(&WebRTCInternalsMessageHandler::OnDOMLoadDone,
+                          base::Unretained(this)));
 }
 
 RenderFrameHost* WebRTCInternalsMessageHandler::GetWebRTCInternalsHost() const {
@@ -77,12 +88,21 @@ RenderFrameHost* WebRTCInternalsMessageHandler::GetWebRTCInternalsHost() const {
   return host;
 }
 
-void WebRTCInternalsMessageHandler::OnGetAllStats(
+void WebRTCInternalsMessageHandler::OnGetStandardStats(
+    const base::ListValue* /* unused_list */) {
+  for (RenderProcessHost::iterator i(
+           content::RenderProcessHost::AllHostsIterator());
+       !i.IsAtEnd(); i.Advance()) {
+    i.GetCurrentValue()->Send(new PeerConnectionTracker_GetStandardStats());
+  }
+}
+
+void WebRTCInternalsMessageHandler::OnGetLegacyStats(
     const base::ListValue* /* unused_list */) {
   for (RenderProcessHost::iterator i(
        content::RenderProcessHost::AllHostsIterator());
        !i.IsAtEnd(); i.Advance()) {
-    i.GetCurrentValue()->Send(new PeerConnectionTracker_GetAllStats());
+    i.GetCurrentValue()->Send(new PeerConnectionTracker_GetLegacyStats());
   }
 }
 
@@ -98,10 +118,16 @@ void WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled(
 void WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled(
     bool enable,
     const base::ListValue* /* unused_list */) {
+  if (!webrtc_internals_->CanToggleEventLogRecordings()) {
+    LOG(WARNING) << "Cannot toggle WebRTC event logging.";
+    return;
+  }
+
   if (enable) {
-    webrtc_internals_->EnableEventLogRecordings(web_ui()->GetWebContents());
+    webrtc_internals_->EnableLocalEventLogRecordings(
+        web_ui()->GetWebContents());
   } else {
-    webrtc_internals_->DisableEventLogRecordings();
+    webrtc_internals_->DisableLocalEventLogRecordings();
   }
 }
 
@@ -114,6 +140,10 @@ void WebRTCInternalsMessageHandler::OnDOMLoadDone(
 
   if (webrtc_internals_->IsEventLogRecordingsEnabled())
     ExecuteJavascriptCommand("setEventLogRecordingsEnabled", nullptr);
+
+  const base::Value can_toggle(
+      webrtc_internals_->CanToggleEventLogRecordings());
+  ExecuteJavascriptCommand("setEventLogRecordingsToggleability", &can_toggle);
 }
 
 void WebRTCInternalsMessageHandler::OnUpdate(const char* command,
@@ -121,6 +151,8 @@ void WebRTCInternalsMessageHandler::OnUpdate(const char* command,
   ExecuteJavascriptCommand(command, args);
 }
 
+// TODO(eladalon): Make this function accept a vector of base::Values.
+// https://crbug.com/817384
 void WebRTCInternalsMessageHandler::ExecuteJavascriptCommand(
     const char* command,
     const base::Value* args) {
@@ -135,7 +167,7 @@ void WebRTCInternalsMessageHandler::ExecuteJavascriptCommand(
     args_vector.push_back(args);
 
   base::string16 script = WebUI::GetJavascriptCall(command, args_vector);
-  host->ExecuteJavaScript(script);
+  host->ExecuteJavaScript(script, base::NullCallback());
 }
 
 }  // namespace content

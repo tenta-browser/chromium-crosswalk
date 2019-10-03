@@ -4,17 +4,21 @@
 
 #include "chrome/browser/chromeos/arc/voice_interaction/voice_interaction_controller_client.h"
 
+#include <string>
 #include <utility>
 
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/public/interfaces/constants.mojom.h"
+#include "ash/public/cpp/voice_interaction_controller.h"
 #include "base/bind.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/assistant/assistant_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_util.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -26,13 +30,13 @@ namespace arc {
 namespace {
 
 // Weak pointer.  This class is owned by ChromeBrowserMainPartsChromeos.
-VoiceInteractionControllerClient* g_instance = nullptr;
+VoiceInteractionControllerClient*
+    g_voice_interaction_controller_client_instance = nullptr;
 
 }  // namespace
 
 VoiceInteractionControllerClient::VoiceInteractionControllerClient() {
-  DCHECK(!g_instance);
-  ConnectToVoiceInteractionController();
+  DCHECK(!g_voice_interaction_controller_client_instance);
 
   notification_registrar_.Add(this,
                               chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
@@ -42,71 +46,90 @@ VoiceInteractionControllerClient::VoiceInteractionControllerClient() {
   notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                               content::NotificationService::AllSources());
 
-  g_instance = this;
+  arc::ArcSessionManager::Get()->AddObserver(this);
+  g_voice_interaction_controller_client_instance = this;
+
+  if (chromeos::switches::IsAssistantEnabled()) {
+    voice_interaction_state_ = ash::mojom::VoiceInteractionState::NOT_READY;
+  }
 }
 
 VoiceInteractionControllerClient::~VoiceInteractionControllerClient() {
-  DCHECK_EQ(g_instance, this);
-  g_instance = nullptr;
+  DCHECK_EQ(g_voice_interaction_controller_client_instance, this);
+  g_voice_interaction_controller_client_instance = nullptr;
+  arc::ArcSessionManager::Get()->RemoveObserver(this);
+}
+
+void VoiceInteractionControllerClient::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void VoiceInteractionControllerClient::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 // static
 VoiceInteractionControllerClient* VoiceInteractionControllerClient::Get() {
-  return g_instance;
+  return g_voice_interaction_controller_client_instance;
 }
 
 void VoiceInteractionControllerClient::NotifyStatusChanged(
     ash::mojom::VoiceInteractionState state) {
-  voice_interaction_controller_->NotifyStatusChanged(state);
+  voice_interaction_state_ = state;
+  ash::VoiceInteractionController::Get()->NotifyStatusChanged(state);
+  for (auto& observer : observers_)
+    observer.OnStateChanged(state);
 }
 
-void VoiceInteractionControllerClient::SetControllerForTesting(
-    ash::mojom::VoiceInteractionControllerPtr controller) {
-  voice_interaction_controller_ = std::move(controller);
-}
-
-void VoiceInteractionControllerClient::FlushMojoForTesting() {
-  voice_interaction_controller_.FlushForTesting();
+void VoiceInteractionControllerClient::NotifyLockedFullScreenStateChanged(
+    bool enabled) {
+  ash::VoiceInteractionController::Get()->NotifyLockedFullScreenStateChanged(
+      enabled);
 }
 
 void VoiceInteractionControllerClient::NotifySettingsEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
   bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionEnabled);
-  voice_interaction_controller_->NotifySettingsEnabled(enabled);
+  ash::VoiceInteractionController::Get()->NotifySettingsEnabled(enabled);
 }
 
 void VoiceInteractionControllerClient::NotifyContextEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
   bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionContextEnabled);
-  voice_interaction_controller_->NotifyContextEnabled(enabled);
+  ash::VoiceInteractionController::Get()->NotifyContextEnabled(enabled);
 }
 
-void VoiceInteractionControllerClient::NotifySetupCompleted() {
+void VoiceInteractionControllerClient::NotifyHotwordEnabled() {
   DCHECK(profile_);
   PrefService* prefs = profile_->GetPrefs();
-  bool completed =
-      prefs->GetBoolean(prefs::kArcVoiceInteractionValuePropAccepted);
-  voice_interaction_controller_->NotifySetupCompleted(completed);
+  bool enabled = prefs->GetBoolean(prefs::kVoiceInteractionHotwordEnabled);
+  ash::VoiceInteractionController::Get()->NotifyHotwordEnabled(enabled);
 }
 
 void VoiceInteractionControllerClient::NotifyFeatureAllowed() {
   DCHECK(profile_);
   ash::mojom::AssistantAllowedState state =
-      IsAssistantAllowedForProfile(profile_);
-  voice_interaction_controller_->NotifyFeatureAllowed(state);
+      assistant::IsAssistantAllowedForProfile(profile_);
+  ash::VoiceInteractionController::Get()->NotifyFeatureAllowed(state);
+}
+
+void VoiceInteractionControllerClient::NotifyLocaleChanged() {
+  DCHECK(profile_);
+
+  NotifyFeatureAllowed();
+
+  std::string out_locale =
+      profile_->GetPrefs()->GetString(language::prefs::kApplicationLocale);
+
+  ash::VoiceInteractionController::Get()->NotifyLocaleChanged(out_locale);
 }
 
 void VoiceInteractionControllerClient::ActiveUserChanged(
     const user_manager::User* active_user) {
   if (active_user && active_user->is_profile_created())
     SetProfile(ProfileManager::GetActiveUserProfile());
-}
-
-void VoiceInteractionControllerClient::OnArcPlayStoreEnabledChanged(
-    bool enabled) {
-  NotifyFeatureAllowed();
 }
 
 void VoiceInteractionControllerClient::SetProfile(Profile* profile) {
@@ -126,10 +149,11 @@ void VoiceInteractionControllerClient::SetProfile(Profile* profile) {
   PrefService* prefs = profile->GetPrefs();
   pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
   pref_change_registrar_->Init(prefs);
+
   pref_change_registrar_->Add(
-      prefs::kArcVoiceInteractionValuePropAccepted,
+      language::prefs::kApplicationLocale,
       base::BindRepeating(
-          &VoiceInteractionControllerClient::NotifySetupCompleted,
+          &VoiceInteractionControllerClient::NotifyLocaleChanged,
           base::Unretained(this)));
   pref_change_registrar_->Add(
       prefs::kVoiceInteractionEnabled,
@@ -141,11 +165,17 @@ void VoiceInteractionControllerClient::SetProfile(Profile* profile) {
       base::BindRepeating(
           &VoiceInteractionControllerClient::NotifyContextEnabled,
           base::Unretained(this)));
+  pref_change_registrar_->Add(
+      prefs::kVoiceInteractionHotwordEnabled,
+      base::BindRepeating(
+          &VoiceInteractionControllerClient::NotifyHotwordEnabled,
+          base::Unretained(this)));
 
-  NotifySetupCompleted();
   NotifySettingsEnabled();
   NotifyContextEnabled();
-  NotifyFeatureAllowed();
+  NotifyLocaleChanged();
+  NotifyHotwordEnabled();
+  OnArcPlayStoreEnabledChanged(IsArcPlayStoreEnabledForProfile(profile_));
 }
 
 void VoiceInteractionControllerClient::Observe(
@@ -173,13 +203,10 @@ void VoiceInteractionControllerClient::Observe(
   }
 }
 
-void VoiceInteractionControllerClient::ConnectToVoiceInteractionController() {
-  content::ServiceManagerConnection* connection =
-      content::ServiceManagerConnection::GetForProcess();
-  // Tests may bind to their own VoiceInteractionController later.
-  if (connection)
-    connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
-                                              &voice_interaction_controller_);
+void VoiceInteractionControllerClient::OnArcPlayStoreEnabledChanged(
+    bool enabled) {
+  ash::VoiceInteractionController::Get()->NotifyArcPlayStoreEnabledChanged(
+      enabled);
 }
 
 }  // namespace arc

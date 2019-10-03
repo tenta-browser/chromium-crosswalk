@@ -8,7 +8,7 @@
 #include <libevdev/libevdev.h>
 #include <linux/input.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/timer/timer.h"
 #include "ui/events/base_event_utils.h"
@@ -211,6 +211,14 @@ void GestureInterpreterLibevdevCros::OnLibEvdevCrosEvent(Evdev* evdev,
     hwstate.buttons_down |= GESTURES_BUTTON_FORWARD;
   }
 
+  // Check if this event has an MSC_TIMESTAMP field
+  if (EvdevBitIsSet(evdev->info.msc_bitmask, MSC_TIMESTAMP)) {
+    hwstate.msc_timestamp = static_cast<stime_t>(Event_Get_Timestamp(evdev)) /
+                            base::Time::kMicrosecondsPerSecond;
+  } else {
+    hwstate.msc_timestamp = 0.0;
+  }
+
   GestureInterpreterPushHardwareState(interpreter_, &hwstate);
 }
 
@@ -245,6 +253,13 @@ void GestureInterpreterLibevdevCros::OnGestureReady(const Gesture* gesture) {
       break;
     case kGestureTypeSwipeLift:
       OnGestureSwipeLift(gesture, &gesture->details.swipe_lift);
+      break;
+    case kGestureTypeFourFingerSwipe:
+      OnGestureFourFingerSwipe(gesture, &gesture->details.four_finger_swipe);
+      break;
+    case kGestureTypeFourFingerSwipeLift:
+      OnGestureFourFingerSwipeLift(gesture,
+                                   &gesture->details.four_finger_swipe_lift);
       break;
     case kGestureTypePinch:
       OnGesturePinch(gesture, &gesture->details.pinch);
@@ -380,6 +395,40 @@ void GestureInterpreterLibevdevCros::OnGestureSwipeLift(
       kGestureScrollFingerCount, StimeToTimeTicks(gesture->end_time)));
 }
 
+void GestureInterpreterLibevdevCros::OnGestureFourFingerSwipe(
+    const Gesture* gesture,
+    const GestureFourFingerSwipe* swipe) {
+  DVLOG(3) << base::StringPrintf("Gesture Four Finger Swipe: (%f, %f) [%f, %f]",
+                                 swipe->dx, swipe->dy, swipe->ordinal_dx,
+                                 swipe->ordinal_dy);
+
+  if (!cursor_)
+    return;  // No cursor!
+
+  dispatcher_->DispatchScrollEvent(ScrollEventParams(
+      id_, ET_SCROLL, cursor_->GetLocation(),
+      gfx::Vector2dF(swipe->dx, swipe->dy),
+      gfx::Vector2dF(swipe->ordinal_dx, swipe->ordinal_dy),
+      /*finger_count=*/4, StimeToTimeTicks(gesture->end_time)));
+}
+
+void GestureInterpreterLibevdevCros::OnGestureFourFingerSwipeLift(
+    const Gesture* gesture,
+    const GestureFourFingerSwipeLift* swipe) {
+  DVLOG(3) << base::StringPrintf("Gesture Four Finger Swipe Lift");
+
+  if (!cursor_)
+    return;  // No cursor!
+
+  // Turn a swipe lift into a fling start.
+  // TODO(spang): Figure out why and put it in this comment.
+
+  dispatcher_->DispatchScrollEvent(ScrollEventParams(
+      id_, ET_SCROLL_FLING_START, cursor_->GetLocation(),
+      /*delta=*/gfx::Vector2dF(), /*ordinal_delta=*/gfx::Vector2dF(),
+      /*finger_count=*/4, StimeToTimeTicks(gesture->end_time)));
+}
+
 void GestureInterpreterLibevdevCros::OnGesturePinch(const Gesture* gesture,
                                                     const GesturePinch* pinch) {
   DVLOG(3) << base::StringPrintf("Gesture Pinch: dz=%f [%f] zoom_state=%u",
@@ -454,7 +503,7 @@ void GestureInterpreterLibevdevCros::DispatchChangedKeys(
   unsigned long key_state_diff[EVDEV_BITS_TO_LONGS(KEY_CNT)];
 
   // Find changed keys.
-  for (unsigned long i = 0; i < arraysize(key_state_diff); ++i)
+  for (unsigned long i = 0; i < base::size(key_state_diff); ++i)
     key_state_diff[i] = new_key_state[i] ^ prev_key_state_[i];
 
   // Dispatch events for changed keys.

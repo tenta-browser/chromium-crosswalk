@@ -15,7 +15,7 @@ cr.define('cr.FirstRun', function() {
     // Name of step.
     name_: null,
 
-    // Button leading to next tutorial step.
+    // Button leading to next tutorial step. For testing.
     nextButton_: null,
 
     // Default control for this step.
@@ -26,15 +26,19 @@ cr.define('cr.FirstRun', function() {
       var controlsContainer = this.getElementsByClassName('controls')[0];
       if (!controlsContainer)
         throw Error('Controls not found.');
-      this.nextButton_ =
-          controlsContainer.getElementsByClassName('next-button')[0];
-      if (!this.nextButton_)
+
+      var nextButtons = controlsContainer.getElementsByClassName('next-button');
+      if (nextButtons.length <= 0)
         throw Error('Next button not found.');
-      this.nextButton_.addEventListener(
-          'click', (function(e) {
-                     chrome.send('nextButtonClicked', [this.getName()]);
-                     e.stopPropagation();
-                   }).bind(this));
+      this.nextButton_ = nextButtons[0];
+      Array.prototype.forEach.call(nextButtons, function(nextButton) {
+        nextButton.addEventListener(
+            'click', (function(e) {
+                       chrome.send('nextButtonClicked', [this.getName()]);
+                       e.stopPropagation();
+                     }).bind(this));
+      }.bind(this));
+
       this.defaultControl_ = controlsContainer.children[0];
     },
 
@@ -97,11 +101,11 @@ cr.define('cr.FirstRun', function() {
     },
 
     /**
-     * Updates UI when voice interaction is enabled by the device.
+     * Updates UI when Google Assistant is enabled.
      */
-    setVoiceInteractionEnabled: function() {
+    setAssistantEnabled: function() {
       if (this.name_ == 'app-list')
-        $('voice-interaction-text').hidden = false;
+        $('google-assistant-text').hidden = false;
     },
   };
 
@@ -251,9 +255,9 @@ cr.define('cr.FirstRun', function() {
     },
   };
 
-  var HelpStep = cr.ui.define('div');
+  var TrayStep = cr.ui.define('div');
 
-  HelpStep.prototype = {
+  TrayStep.prototype = {
     __proto__: Bubble.prototype,
 
     decorate: function() {
@@ -267,8 +271,8 @@ cr.define('cr.FirstRun', function() {
   };
 
   var DecorateStep = function(el) {
-    if (el.id == 'help')
-      HelpStep.decorate(el);
+    if (el.id == 'tray')
+      TrayStep.decorate(el);
     else if (el.classList.contains('bubble'))
       Bubble.decorate(el);
     else

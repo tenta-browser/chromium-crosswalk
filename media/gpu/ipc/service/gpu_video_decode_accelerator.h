@@ -18,7 +18,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/config/gpu_info.h"
-#include "gpu/ipc/service/gpu_command_buffer_stub.h"
+#include "gpu/ipc/service/command_buffer_stub.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 #include "media/base/android_overlay_mojo_factory.h"
@@ -37,14 +37,14 @@ class GpuVideoDecodeAccelerator
     : public IPC::Listener,
       public IPC::Sender,
       public VideoDecodeAccelerator::Client,
-      public gpu::GpuCommandBufferStub::DestructionObserver {
+      public gpu::CommandBufferStub::DestructionObserver {
  public:
   // Each of the arguments to the constructor must outlive this object.
   // |stub->decoder()| will be made current around any operation that touches
   // the underlying VDA so that it can make GL calls safely.
   GpuVideoDecodeAccelerator(
       int32_t host_route_id,
-      gpu::GpuCommandBufferStub* stub,
+      gpu::CommandBufferStub* stub,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const AndroidOverlayMojoFactoryCB& factory);
 
@@ -72,15 +72,15 @@ class GpuVideoDecodeAccelerator
   void NotifyResetDone() override;
   void NotifyError(VideoDecodeAccelerator::Error error) override;
 
-  // GpuCommandBufferStub::DestructionObserver implementation.
-  void OnWillDestroyStub() override;
+  // CommandBufferStub::DestructionObserver implementation.
+  void OnWillDestroyStub(bool have_context) override;
 
   // Function to delegate sending to actual sender.
   bool Send(IPC::Message* message) override;
 
   // Initialize VDAs from the set of VDAs supported for current platform until
   // one of them succeeds for given |config|. Send the |init_done_msg| when
-  // done. filter_ is passed to gpu::GpuCommandBufferStub channel only if the
+  // done. filter_ is passed to gpu::CommandBufferStub channel only if the
   // chosen VDA can decode on IO thread.
   bool Initialize(const VideoDecodeAccelerator::Config& config);
 
@@ -91,7 +91,7 @@ class GpuVideoDecodeAccelerator
   ~GpuVideoDecodeAccelerator() override;
 
   // Handlers for IPC messages.
-  void OnDecode(const BitstreamBuffer& bitstream_buffer);
+  void OnDecode(BitstreamBuffer bitstream_buffer);
   void OnAssignPictureBuffers(
       const std::vector<int32_t>& buffer_ids,
       const std::vector<PictureBuffer::TextureIds>& texture_ids);
@@ -110,10 +110,10 @@ class GpuVideoDecodeAccelerator
   // Route ID to communicate with the host.
   const int32_t host_route_id_;
 
-  // Unowned pointer to the underlying gpu::GpuCommandBufferStub.  |this| is
+  // Unowned pointer to the underlying gpu::CommandBufferStub.  |this| is
   // registered as a DestuctionObserver of |stub_| and will self-delete when
   // |stub_| is destroyed.
-  gpu::GpuCommandBufferStub* const stub_;
+  gpu::CommandBufferStub* const stub_;
 
   // The underlying VideoDecodeAccelerator.
   std::unique_ptr<VideoDecodeAccelerator> video_decode_accelerator_;
@@ -127,8 +127,11 @@ class GpuVideoDecodeAccelerator
   // Callback to bind a GLImage to a given texture id and target.
   BindGLImageCallback bind_image_cb_;
 
-  // Callback to return a WeakPtr to GLES2Decoder.
-  GetGLES2DecoderCallback get_gles2_decoder_cb_;
+  // Callback to return a ContextGroup*.
+  GetContextGroupCallback get_context_group_cb_;
+
+  // Callback to return a DecoderContext*.
+  CreateAbstractTextureCallback create_abstract_texture_cb_;
 
   // The texture dimensions as requested by ProvidePictureBuffers().
   gfx::Size texture_dimensions_;
@@ -160,7 +163,7 @@ class GpuVideoDecodeAccelerator
   AndroidOverlayMojoFactoryCB overlay_factory_cb_;
 
   // Weak pointers will be invalidated on IO thread.
-  base::WeakPtrFactory<Client> weak_factory_for_io_;
+  base::WeakPtrFactory<Client> weak_factory_for_io_{this};
 
   // Protects |uncleared_textures_| when DCHECK is on. This is for debugging
   // only. We don't want to hold a lock on IO thread. When DCHECK is off,

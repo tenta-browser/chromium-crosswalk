@@ -33,7 +33,7 @@ class FakeSafeBrowsingUIManager
 
   void DisplayBlockingPage(const UnsafeResource& resource) override {
     resource.callback_thread->PostTask(
-        FROM_HERE, base::Bind(resource.callback, true /* proceed */));
+        FROM_HERE, base::BindOnce(resource.callback, true /* proceed */));
   }
 
  private:
@@ -56,7 +56,7 @@ class InsertingDatabaseFactory : public safe_browsing::TestV4DatabaseFactory {
       std::unique_ptr<safe_browsing::StoreMap> store_map) override {
     const base::FilePath base_store_path(FILE_PATH_LITERAL("UrlDb.store"));
     for (const auto& id : lists_to_insert_) {
-      if (!base::ContainsKey(*store_map, id)) {
+      if (!base::Contains(*store_map, id)) {
         const base::FilePath store_path =
             base_store_path.InsertBeforeExtensionASCII(base::StringPrintf(
                 " (%d)", base::GetUniquePathNumber(
@@ -91,9 +91,10 @@ TestSafeBrowsingDatabaseHelper::TestSafeBrowsingDatabaseHelper(
         v4_get_hash_factory,
     std::vector<safe_browsing::ListIdentifier> lists_to_insert)
     : v4_get_hash_factory_(v4_get_hash_factory.get()) {
-  sb_factory_ = std::make_unique<safe_browsing::TestSafeBrowsingServiceFactory>(
-      safe_browsing::V4FeatureList::V4UsageStatus::V4_ONLY);
+  sb_factory_ =
+      std::make_unique<safe_browsing::TestSafeBrowsingServiceFactory>();
   sb_factory_->SetTestUIManager(new FakeSafeBrowsingUIManager());
+  sb_factory_->UseV4LocalDatabaseManager();
   safe_browsing::SafeBrowsingService::RegisterFactory(sb_factory_.get());
 
   auto store_factory = std::make_unique<safe_browsing::TestV4StoreFactory>();
@@ -137,11 +138,12 @@ void TestSafeBrowsingDatabaseHelper::AddFullHashToDbAndFullHashCache(
 void TestSafeBrowsingDatabaseHelper::LocallyMarkPrefixAsBad(
     const GURL& url,
     const safe_browsing::ListIdentifier& list_id) {
-  safe_browsing::FullHash full_hash = safe_browsing::GetFullHash(url);
+  safe_browsing::FullHash full_hash =
+      safe_browsing::V4ProtocolManagerUtil::GetFullHash(url);
   v4_db_factory_->MarkPrefixAsBad(list_id, full_hash);
 }
 
 bool TestSafeBrowsingDatabaseHelper::HasListSynced(
     const safe_browsing::ListIdentifier& list_id) {
-  return base::ContainsValue(v4_db_factory_->lists(), list_id);
+  return base::Contains(v4_db_factory_->lists(), list_id);
 }

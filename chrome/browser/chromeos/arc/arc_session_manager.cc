@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -11,38 +12,47 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_split.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "chrome/browser/chromeos/arc/arc_auth_notification.h"
 #include "chrome/browser/chromeos/arc/arc_migration_guide_notification.h"
 #include "chrome/browser/chromeos/arc/arc_optin_uma.h"
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
-#include "chrome/browser/chromeos/arc/auth/arc_auth_context.h"
 #include "chrome/browser/chromeos/arc/auth/arc_auth_service.h"
 #include "chrome/browser/chromeos/arc/optin/arc_terms_of_service_default_negotiator.h"
 #include "chrome/browser/chromeos/arc/optin/arc_terms_of_service_oobe_negotiator.h"
 #include "chrome/browser/chromeos/arc/policy/arc_android_management_checker.h"
-#include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_resources.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_launcher.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/app_list/arc/arc_fast_app_reinstall_starter.h"
 #include "chrome/browser/ui/app_list/arc/arc_pai_starter.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/session_manager_client.h"
-#include "components/arc/arc_data_remover.h"
-#include "components/arc/arc_instance_mode.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
+#include "components/account_id/account_id.h"
+#include "components/arc/arc_features.h"
 #include "components/arc/arc_prefs.h"
-#include "components/arc/arc_session_runner.h"
 #include "components/arc/arc_util.h"
+#include "components/arc/metrics/arc_metrics_constants.h"
+#include "components/arc/metrics/arc_metrics_service.h"
+#include "components/arc/metrics/stability_metrics_manager.h"
+#include "components/arc/session/arc_data_remover.h"
+#include "components/arc/session/arc_instance_mode.h"
+#include "components/arc/session/arc_session_runner.h"
+#include "components/arc/session/arc_supervision_transition.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/core/session_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/display/types/display_constants.h"
 
@@ -50,15 +60,17 @@ namespace arc {
 
 namespace {
 
-// Weak pointer.  This class is owned by ArcServiceManager.
+// Weak pointer.  This class is owned by ArcServiceLauncher.
 ArcSessionManager* g_arc_session_manager = nullptr;
 
-// Skip creating UI in unit tests
-bool g_disable_ui_for_testing = false;
+// Allows the session manager to skip creating UI in unit tests.
+bool g_ui_enabled = true;
 
-// The Android management check is disabled by default, it's used only for
-// testing.
-bool g_enable_check_android_management_for_testing = false;
+// Allows the session manager to create ArcTermsOfServiceOobeNegotiator in
+// tests, even when the tests are set to skip creating UI.
+bool g_enable_arc_terms_of_service_oobe_negotiator_in_tests = false;
+
+base::Optional<bool> g_enable_check_android_management_in_tests;
 
 // Maximum amount of time we'll wait for ARC to finish booting up. Once this
 // timeout expires, keep ARC running in case the user wants to file feedback,
@@ -74,6 +86,63 @@ void MaybeUpdateOptInCancelUMA(const ArcSupportHost* support_host) {
   }
 
   UpdateOptInCancelUMA(OptInCancelReason::USER_CANCEL);
+}
+
+// Returns true if launching the Play Store on OptIn succeeded is needed.
+// Launch Play Store app, except for the following cases:
+// * When Opt-in verification is disabled (for tests);
+// * In case ARC is enabled from OOBE.
+// * In ARC Kiosk mode, because the only one UI in kiosk mode must be the
+//   kiosk app and device is not needed for opt-in;
+// * In Public Session mode, because Play Store will be hidden from users
+//   and only apps configured by policy should be installed.
+// * When ARC is managed, and user does not go through OOBE opt-in,
+//   because the whole OptIn flow should happen as seamless as possible for
+//   the user.
+// For Active Directory users we always show a page notifying them that they
+// have to authenticate with their identity provider (through SAML) to make
+// it less weird that a browser window pops up.
+// Some tests require the Play Store to be shown and forces this using chromeos
+// switch kArcForceShowPlayStoreApp.
+bool ShouldLaunchPlayStoreApp(Profile* profile,
+                              bool oobe_or_assistant_wizard_start) {
+  if (!IsPlayStoreAvailable())
+    return false;
+
+  if (oobe_or_assistant_wizard_start)
+    return false;
+
+  if (ShouldShowOptInForTesting())
+    return true;
+
+  if (IsRobotOrOfflineDemoAccountMode())
+    return false;
+
+  if (IsArcOptInVerificationDisabled())
+    return false;
+
+  if (ShouldStartArcSilentlyForManagedProfile(profile))
+    return false;
+
+  return true;
+}
+
+void ResetStabilityMetrics() {
+  // TODO(shaochuan): Make this an event observable by StabilityMetricsManager
+  // and eliminate this null check.
+  auto* stability_metrics_manager = StabilityMetricsManager::Get();
+  if (!stability_metrics_manager)
+    return;
+  stability_metrics_manager->ResetMetrics();
+}
+
+void SetArcEnabledStateMetric(bool enabled) {
+  // TODO(shaochuan): Make this an event observable by StabilityMetricsManager
+  // and eliminate this null check.
+  auto* stability_metrics_manager = StabilityMetricsManager::Get();
+  if (!stability_metrics_manager)
+    return;
+  stability_metrics_manager->SetArcEnabledState(enabled);
 }
 
 }  // namespace
@@ -143,10 +212,16 @@ ArcSessionManager::ArcSessionManager(
   DCHECK(!g_arc_session_manager);
   g_arc_session_manager = this;
   arc_session_runner_->AddObserver(this);
+  if (chromeos::SessionManagerClient::Get())
+    chromeos::SessionManagerClient::Get()->AddObserver(this);
+  ResetStabilityMetrics();
 }
 
 ArcSessionManager::~ArcSessionManager() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  if (chromeos::SessionManagerClient::Get())
+    chromeos::SessionManagerClient::Get()->RemoveObserver(this);
 
   Shutdown();
   arc_session_runner_->RemoveObserver(this);
@@ -162,13 +237,19 @@ ArcSessionManager* ArcSessionManager::Get() {
 }
 
 // static
-void ArcSessionManager::DisableUIForTesting() {
-  g_disable_ui_for_testing = true;
+void ArcSessionManager::SetUiEnabledForTesting(bool enable) {
+  g_ui_enabled = enable;
 }
 
 // static
-void ArcSessionManager::EnableCheckAndroidManagementForTesting() {
-  g_enable_check_android_management_for_testing = true;
+void ArcSessionManager::SetArcTermsOfServiceOobeNegotiatorEnabledForTesting(
+    bool enable) {
+  g_enable_arc_terms_of_service_oobe_negotiator_in_tests = enable;
+}
+
+// static
+void ArcSessionManager::EnableCheckAndroidManagementForTesting(bool enable) {
+  g_enable_check_android_management_in_tests = enable;
 }
 
 void ArcSessionManager::OnSessionStopped(ArcStopReason reason,
@@ -237,8 +318,13 @@ void ArcSessionManager::OnProvisioningFinished(ProvisioningResult result) {
     scoped_opt_in_tracker_->TrackError();
 
   if (result == ProvisioningResult::CHROME_SERVER_COMMUNICATION_ERROR) {
-    if (IsArcKioskMode()) {
+    // TODO(poromov): Consider ARC PublicSession offline mode.
+    // Currently ARC session will be exited below, while the main user session
+    // will be kept alive without Android apps.
+    if (IsRobotOrOfflineDemoAccountMode())
       VLOG(1) << "Robot account auth code fetching error";
+    if (IsArcKioskMode()) {
+      VLOG(1) << "Exiting kiosk session due to provisioning failure";
       // Log out the user. All the cleanup will be done in Shutdown() method.
       // The callback is not called because auth code is empty.
       attempt_user_exit_callback_.Run();
@@ -252,10 +338,8 @@ void ArcSessionManager::OnProvisioningFinished(ProvisioningResult result) {
     arc_sign_in_timer_.Stop();
 
     UpdateProvisioningTiming(base::Time::Now() - sign_in_start_time_,
-                             provisioning_successful,
-                             policy_util::IsAccountManaged(profile_));
-    UpdateProvisioningResultUMA(result,
-                                policy_util::IsAccountManaged(profile_));
+                             provisioning_successful, profile_);
+    UpdateProvisioningResultUMA(result, profile_);
     if (!provisioning_successful)
       UpdateOptInCancelUMA(OptInCancelReason::CLOUD_PROVISION_FLOW_FAIL);
   }
@@ -269,31 +353,25 @@ void ArcSessionManager::OnProvisioningFinished(ProvisioningResult result) {
       scoped_opt_in_tracker_.reset();
     }
 
-    if (profile_->GetPrefs()->GetBoolean(prefs::kArcSignedIn))
+    PrefService* const prefs = profile_->GetPrefs();
+
+    if (prefs->GetBoolean(prefs::kArcSignedIn))
       return;
 
-    profile_->GetPrefs()->SetBoolean(prefs::kArcSignedIn, true);
+    prefs->SetBoolean(prefs::kArcSignedIn, true);
 
-    // Launch Play Store app, except for the following cases:
-    // * When Opt-in verification is disabled (for tests);
-    // * In case ARC is enabled from OOBE.
-    // * In ARC Kiosk mode, because the only one UI in kiosk mode must be the
-    //   kiosk app and device is not needed for opt-in;
-    // * When ARC is managed and all OptIn preferences are managed/unused, too,
-    //   because the whole OptIn flow should happen as seamless as possible for
-    //   the user.
-    const bool suppress_play_store_app =
-        !IsPlayStoreAvailable() || IsArcOptInVerificationDisabled() ||
-        IsArcKioskMode() || oobe_start_ ||
-        (IsArcPlayStoreEnabledPreferenceManagedForProfile(profile_) &&
-         AreArcAllOptInPreferencesIgnorableForProfile(profile_));
-    if (!suppress_play_store_app) {
+    if (ShouldLaunchPlayStoreApp(
+            profile_,
+            prefs->GetBoolean(prefs::kArcProvisioningInitiatedFromOobe))) {
       playstore_launcher_ = std::make_unique<ArcAppLauncher>(
           profile_, kPlayStoreAppId,
           GetLaunchIntent(kPlayStorePackage, kPlayStoreActivity,
                           {kInitialStartParam}),
-          false /* deferred_launch_allowed */, display::kInvalidDisplayId);
+          false /* deferred_launch_allowed */, display::kInvalidDisplayId,
+          arc::UserInteractionType::NOT_USER_INITIATED);
     }
+
+    prefs->ClearPref(prefs::kArcProvisioningInitiatedFromOobe);
 
     for (auto& observer : observer_list_)
       observer.OnArcInitialStart();
@@ -372,9 +450,12 @@ bool ArcSessionManager::IsAllowed() const {
 
 void ArcSessionManager::SetProfile(Profile* profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(!profile || !profile_);
-  DCHECK(!profile || IsArcAllowedForProfile(profile));
+  DCHECK(!profile_);
+  DCHECK(IsArcAllowedForProfile(profile));
   profile_ = profile;
+  // RequestEnable() requires |profile_| set, therefore shouldn't have been
+  // called at this point.
+  SetArcEnabledStateMetric(false);
 }
 
 void ArcSessionManager::Initialize() {
@@ -383,6 +464,10 @@ void ArcSessionManager::Initialize() {
 
   DCHECK_EQ(state_, State::NOT_INITIALIZED);
   state_ = State::STOPPED;
+
+  const std::string user_id_hash(
+      chromeos::ProfileHelper::GetUserIdHashFromProfile(profile_));
+  arc_session_runner_->SetUserIdHashForProfile(user_id_hash);
 
   // Create the support host at initialization. Note that, practically,
   // ARC support Chrome app is rarely used (only opt-in and re-auth flow).
@@ -393,8 +478,8 @@ void ArcSessionManager::Initialize() {
   // be the kiosk app. In case of error the UI will be useless as well, because
   // in typical use case there will be no one nearby the kiosk device, who can
   // do some action to solve the problem be means of UI.
-  if (!g_disable_ui_for_testing && !IsArcOptInVerificationDisabled() &&
-      !IsArcKioskMode()) {
+  if (g_ui_enabled && !IsArcOptInVerificationDisabled() &&
+      !IsRobotOrOfflineDemoAccountMode()) {
     DCHECK(!support_host_);
     support_host_ = std::make_unique<ArcSupportHost>(profile_);
     support_host_->SetErrorDelegate(this);
@@ -403,12 +488,20 @@ void ArcSessionManager::Initialize() {
       profile_->GetPrefs(),
       cryptohome::Identification(
           multi_user_util::GetAccountIdFromProfile(profile_)));
+  data_remover_->set_user_id_hash_for_profile(user_id_hash);
 
-  context_ = std::make_unique<ArcAuthContext>(profile_);
-
-  if (!g_disable_ui_for_testing ||
-      g_enable_check_android_management_for_testing) {
+  if (g_enable_check_android_management_in_tests.value_or(g_ui_enabled))
     ArcAndroidManagementChecker::StartClient();
+
+  // Request removing data if enabled for a regular->child transition.
+  if (GetSupervisionTransition(profile_) ==
+          ArcSupervisionTransition::REGULAR_TO_CHILD &&
+      base::FeatureList::IsEnabled(
+          kCleanArcDataOnRegularToChildTransitionFeature)) {
+    LOG(WARNING) << "User transited from regular to child, deleting ARC data";
+    // Since method below starts removal procedure automatically, return.
+    RequestArcDataRemoval();
+    return;
   }
 
   // Chrome may be shut down before completing ARC data removal.
@@ -426,8 +519,8 @@ void ArcSessionManager::Shutdown() {
     support_host_->Close();
     support_host_.reset();
   }
-  context_.reset();
   pai_starter_.reset();
+  fast_app_reinstall_starter_.reset();
   profile_ = nullptr;
   state_ = State::NOT_INITIALIZED;
   if (scoped_opt_in_tracker_) {
@@ -536,13 +629,6 @@ void ArcSessionManager::CancelAuthCode() {
   SetArcPlayStoreEnabledForProfile(profile_, false);
 }
 
-void ArcSessionManager::RecordArcState() {
-  // Only record Enabled state if ARC is allowed in the first place, so we do
-  // not split the ARC population by devices that cannot run ARC.
-  if (IsAllowed())
-    UpdateEnabledStateUMA(enable_requested_);
-}
-
 void ArcSessionManager::RequestEnable() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(profile_);
@@ -552,6 +638,7 @@ void ArcSessionManager::RequestEnable() {
     return;
   }
   enable_requested_ = true;
+  SetArcEnabledStateMetric(true);
 
   VLOG(1) << "ARC opt-in. Starting ARC session.";
 
@@ -580,33 +667,49 @@ bool ArcSessionManager::RequestEnableImpl() {
     return false;
   }
 
-  oobe_start_ = IsArcOobeOptInActive();
-
   PrefService* const prefs = profile_->GetPrefs();
+
+  // |prefs::kArcProvisioningInitiatedFromOobe| is used to remember
+  // |IsArcOobeOptInActive| or |IsArcOptInWizardForAssistantActive| state when
+  // ARC start request was made initially. |IsArcOobeOptInActive| or
+  // |IsArcOptInWizardForAssistantActive| will be changed by the time when
+  // decision to auto-launch the Play Store would be made.
+  // |IsArcOobeOptInActive| and |IsArcOptInWizardForAssistantActive| are not
+  // preserved on Chrome restart also and in last case
+  // |prefs::kArcProvisioningInitiatedFromOobe| is used to remember the state of
+  // the initial request.
+  // |prefs::kArcProvisioningInitiatedFromOobe| is reset when provisioning is
+  // done or ARC is opted out.
+  if (IsArcOobeOptInActive())
+    prefs->SetBoolean(prefs::kArcProvisioningInitiatedFromOobe, true);
 
   // If it is marked that sign in has been successfully done or if Play Store is
   // not available, then directly start ARC with skipping Play Store ToS.
   // For Kiosk mode, skip ToS because it is very likely that near the device
   // there will be no one who is eligible to accept them.
-  // If opt-in verification is disabled, skip negotiation, too. This is for
-  // testing purpose.
+  // In Public Session mode ARC should be started silently without user
+  // interaction. If opt-in verification is disabled, skip negotiation, too.
+  // This is for testing purpose.
   const bool start_arc_directly =
-      prefs->GetBoolean(prefs::kArcSignedIn) || !arc::IsPlayStoreAvailable() ||
-      IsArcKioskMode() || IsArcOptInVerificationDisabled();
+      prefs->GetBoolean(prefs::kArcSignedIn) || ShouldArcAlwaysStart() ||
+      IsRobotOrOfflineDemoAccountMode() || IsArcOptInVerificationDisabled();
 
   // When ARC is blocked because of filesystem compatibility, do not proceed
   // to starting ARC nor follow further state transitions.
   if (IsArcBlockedDueToIncompatibleFileSystem(profile_)) {
     // If the next step was the ToS negotiation, show a notification instead.
     // Otherwise, be silent now. Users are notified when clicking ARC app icons.
-    if (!start_arc_directly && !g_disable_ui_for_testing)
+    if (!start_arc_directly && g_ui_enabled)
       arc::ShowArcMigrationGuideNotification(profile_);
     return false;
   }
 
-  if (!pai_starter_ && IsPlayStoreAvailable()) {
-    pai_starter_ =
-        ArcPaiStarter::CreateIfNeeded(profile_, profile_->GetPrefs());
+  if (!pai_starter_ && IsPlayStoreAvailable())
+    pai_starter_ = ArcPaiStarter::CreateIfNeeded(profile_);
+
+  if (!fast_app_reinstall_starter_ && IsPlayStoreAvailable()) {
+    fast_app_reinstall_starter_ = ArcFastAppReinstallStarter::CreateIfNeeded(
+        profile_, profile_->GetPrefs());
   }
 
   if (start_arc_directly) {
@@ -642,23 +745,25 @@ void ArcSessionManager::RequestDisable() {
     return;
   }
 
-  oobe_start_ = false;
+  VLOG(1) << "Disabling ARC.";
+
   directly_started_ = false;
   enable_requested_ = false;
+  SetArcEnabledStateMetric(false);
   scoped_opt_in_tracker_.reset();
   pai_starter_.reset();
+  fast_app_reinstall_starter_.reset();
 
   // Reset any pending request to re-enable ARC.
   reenable_arc_ = false;
   StopArc();
-  VLOG(1) << "ARC opt-out. Removing user data.";
-  RequestArcDataRemoval();
 }
 
 void ArcSessionManager::RequestArcDataRemoval() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(profile_);
   DCHECK(data_remover_);
+  VLOG(1) << "Removing user ARC data.";
 
   // TODO(hidehiko): DCHECK the previous state. This is called for four cases;
   // 1) Supporting managed user initial disabled case (Please see also
@@ -674,6 +779,9 @@ void ArcSessionManager::RequestArcDataRemoval() {
   // TODO(hidehiko): Think a way to get rid of 1), too.
 
   data_remover_->Schedule();
+  profile_->GetPrefs()->SetInteger(
+      prefs::kArcSupervisionTransition,
+      static_cast<int>(ArcSupervisionTransition::NO_TRANSITION));
   // To support 1) case above, maybe start data removal.
   if (state_ == State::STOPPED)
     MaybeStartArcDataRemoval();
@@ -683,9 +791,9 @@ void ArcSessionManager::MaybeStartTermsOfServiceNegotiation() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(profile_);
   DCHECK(!terms_of_service_negotiator_);
-  // In Kiosk-mode, Terms of Service negotiation should be skipped.
-  // See also RequestEnableImpl().
-  DCHECK(!IsArcKioskMode());
+  // In Kiosk and Public Session mode, Terms of Service negotiation should be
+  // skipped. See also RequestEnableImpl().
+  DCHECK(!IsRobotOrOfflineDemoAccountMode());
   // If opt-in verification is disabled, Terms of Service negotiation should
   // be skipped, too. See also RequestEnableImpl().
   DCHECK(!IsArcOptInVerificationDisabled());
@@ -702,7 +810,14 @@ void ArcSessionManager::MaybeStartTermsOfServiceNegotiation() {
     scoped_opt_in_tracker_ = std::make_unique<ScopedOptInFlowTracker>();
   }
 
-  if (!IsArcTermsOfServiceNegotiationNeeded()) {
+  if (!IsArcTermsOfServiceNegotiationNeeded(profile_)) {
+    if (IsArcStatsReportingEnabled() &&
+        !profile_->GetPrefs()->GetBoolean(prefs::kArcTermsAccepted)) {
+      // Don't enable stats reporting for users who are not shown the reporting
+      // notice during ARC setup.
+      profile_->GetPrefs()->SetBoolean(prefs::kArcSkippedReportingNotice, true);
+    }
+
     // Moves to next state, Android management check, immediately, as if
     // Terms of Service negotiation is done successfully.
     StartAndroidManagementCheck();
@@ -710,9 +825,12 @@ void ArcSessionManager::MaybeStartTermsOfServiceNegotiation() {
   }
 
   if (IsArcOobeOptInActive()) {
-    VLOG(1) << "Use OOBE negotiator.";
-    terms_of_service_negotiator_ =
-        std::make_unique<ArcTermsOfServiceOobeNegotiator>();
+    if (g_enable_arc_terms_of_service_oobe_negotiator_in_tests ||
+        g_ui_enabled) {
+      VLOG(1) << "Use OOBE negotiator.";
+      terms_of_service_negotiator_ =
+          std::make_unique<ArcTermsOfServiceOobeNegotiator>();
+    }
   } else if (support_host_) {
     VLOG(1) << "Use default negotiator.";
     terms_of_service_negotiator_ =
@@ -721,16 +839,24 @@ void ArcSessionManager::MaybeStartTermsOfServiceNegotiation() {
   }
 
   if (!terms_of_service_negotiator_) {
-    // The only case reached here is when g_disable_ui_for_testing is set
-    // so ARC support host is not created in SetProfile(), for testing purpose.
-    DCHECK(g_disable_ui_for_testing)
-        << "Negotiator is not created on production.";
+    // The only case reached here is when g_ui_enabled is false so
+    // 1. ARC support host is not created in SetProfile(), and
+    // 2. ArcTermsOfServiceOobeNegotiator is not created with OOBE test setup
+    // unless test explicitly called
+    // SetArcTermsOfServiceOobeNegotiatorEnabledForTesting(true).
+    if (IsArcOobeOptInActive()) {
+      DCHECK(!g_enable_arc_terms_of_service_oobe_negotiator_in_tests &&
+             !g_ui_enabled)
+          << "OOBE negotiator is not created on production.";
+    } else {
+      DCHECK(!g_ui_enabled) << "Negotiator is not created on production.";
+    }
     return;
   }
 
   // Start the mini-container here to save time starting the container if the
   // user decides to opt-in.
-  arc_session_runner_->RequestStart(ArcInstanceMode::MINI_INSTANCE);
+  arc_session_runner_->RequestStartMiniInstance();
 
   terms_of_service_negotiator_->StartNegotiation(
       base::Bind(&ArcSessionManager::OnTermsOfServiceNegotiated,
@@ -740,10 +866,11 @@ void ArcSessionManager::MaybeStartTermsOfServiceNegotiation() {
 void ArcSessionManager::OnTermsOfServiceNegotiated(bool accepted) {
   DCHECK_EQ(state_, State::NEGOTIATING_TERMS_OF_SERVICE);
   DCHECK(profile_);
-  DCHECK(terms_of_service_negotiator_ || g_disable_ui_for_testing);
+  DCHECK(terms_of_service_negotiator_ || !g_ui_enabled);
   terms_of_service_negotiator_.reset();
 
   if (!accepted) {
+    VLOG(1) << "Terms of services declined";
     // User does not accept the Terms of Service. Disable Google Play Store.
     MaybeUpdateOptInCancelUMA(support_host_.get());
     SetArcPlayStoreEnabledForProfile(profile_, false);
@@ -751,41 +878,24 @@ void ArcSessionManager::OnTermsOfServiceNegotiated(bool accepted) {
   }
 
   // Terms were accepted.
+  VLOG(1) << "Terms of services accepted";
   profile_->GetPrefs()->SetBoolean(prefs::kArcTermsAccepted, true);
   StartAndroidManagementCheck();
 }
 
-bool ArcSessionManager::IsArcTermsOfServiceNegotiationNeeded() const {
-  DCHECK(profile_);
-
-  // Skip to show UI asking users to set up ARC OptIn preferences, if all of
-  // them are managed by the admin policy. Note that the ToS agreement is anyway
-  // not shown in the case of the managed ARC.
-  if (IsArcPlayStoreEnabledPreferenceManagedForProfile(profile_) &&
-      AreArcAllOptInPreferencesIgnorableForProfile(profile_)) {
-    VLOG(1) << "All opt-in preferences are under managed. "
-            << "Skip ARC Terms of Service negotiation.";
-    return false;
-  }
-
-  // If it is marked that the Terms of service is accepted already,
-  // just skip the negotiation with user, and start Android management
-  // check directly.
-  // This happens, e.g., when a user accepted the Terms of service on Opt-in
-  // flow, but logged out before ARC sign in procedure was done. Then, logs
-  // in again.
-  if (profile_->GetPrefs()->GetBoolean(prefs::kArcTermsAccepted)) {
-    VLOG(1) << "The user already accepts ARC Terms of Service.";
-    return false;
-  }
-
-  return true;
-}
-
 void ArcSessionManager::StartAndroidManagementCheck() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // State::STOPPED appears here in following scenario.
+  // Initial provisioning finished with state
+  // ProvisioningResult::ArcStop or
+  // ProvisioningResult::CHROME_SERVER_COMMUNICATION_ERROR.
+  // At this moment |prefs::kArcTermsAccepted| is set to true, once user
+  // confirmed ToS prior to provisioning flow. Once user presses "Try Again"
+  // button, OnRetryClicked calls this immediately.
   DCHECK(state_ == State::NEGOTIATING_TERMS_OF_SERVICE ||
-         state_ == State::CHECKING_ANDROID_MANAGEMENT)
+         state_ == State::CHECKING_ANDROID_MANAGEMENT ||
+         state_ == State::STOPPED)
       << state_;
   state_ = State::CHECKING_ANDROID_MANAGEMENT;
 
@@ -801,12 +911,11 @@ void ArcSessionManager::StartAndroidManagementCheck() {
   for (auto& observer : observer_list_)
     observer.OnArcOptInManagementCheckStarted();
 
-  if (g_disable_ui_for_testing)
+  if (!g_ui_enabled)
     return;
 
   android_management_checker_ = std::make_unique<ArcAndroidManagementChecker>(
-      profile_, context_->token_service(), context_->account_id(),
-      false /* retry_on_error */);
+      profile_, false /* retry_on_error */);
   android_management_checker_->StartCheck(
       base::Bind(&ArcSessionManager::OnAndroidManagementChecked,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -851,17 +960,16 @@ void ArcSessionManager::StartBackgroundAndroidManagementCheck() {
   DCHECK(!android_management_checker_);
 
   // Skip Android management check for testing.
-  // We also skip if Android management check for Kiosk mode,
-  // because there are no managed human users for Kiosk exist.
-  if (IsArcOptInVerificationDisabled() || IsArcKioskMode() ||
-      (g_disable_ui_for_testing &&
-       !g_enable_check_android_management_for_testing)) {
+  // We also skip if Android management check for Kiosk and Public Session mode,
+  // because there are no managed human users for them exist.
+  if (IsArcOptInVerificationDisabled() || IsRobotOrOfflineDemoAccountMode() ||
+      (!g_ui_enabled &&
+       !g_enable_check_android_management_in_tests.value_or(false))) {
     return;
   }
 
   android_management_checker_ = std::make_unique<ArcAndroidManagementChecker>(
-      profile_, context_->token_service(), context_->account_id(),
-      true /* retry_on_error */);
+      profile_, true /* retry_on_error */);
   android_management_checker_->StartCheck(
       base::Bind(&ArcSessionManager::OnBackgroundAndroidManagementChecked,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -897,9 +1005,41 @@ void ArcSessionManager::StartArc() {
   // ARC must be started only if no pending data removal request exists.
   DCHECK(!profile_->GetPrefs()->GetBoolean(prefs::kArcDataRemoveRequested));
 
+  for (auto& observer : observer_list_)
+    observer.OnArcStarted();
+
   arc_start_time_ = base::Time::Now();
   provisioning_reported_ = false;
-  arc_session_runner_->RequestStart(ArcInstanceMode::FULL_INSTANCE);
+
+  std::string locale;
+  std::string preferred_languages;
+  if (IsArcLocaleSyncDisabled()) {
+    // Use fixed locale and preferred languages for auto-tests.
+    locale = "en-US";
+    preferred_languages = "en-US,en";
+    VLOG(1) << "Locale and preferred languages are fixed to " << locale << ","
+            << preferred_languages << ".";
+  } else {
+    GetLocaleAndPreferredLanguages(profile_, &locale, &preferred_languages);
+  }
+
+  ArcSession::UpgradeParams params;
+
+  const chromeos::DemoSession* demo_session = chromeos::DemoSession::Get();
+  params.is_demo_session = demo_session && demo_session->started();
+  if (params.is_demo_session) {
+    DCHECK(demo_session->resources()->loaded());
+    params.demo_session_apps_path =
+        demo_session->resources()->GetDemoAppsPath();
+  }
+
+  params.supervision_transition = GetSupervisionTransition(profile_);
+  params.locale = locale;
+  // Empty |preferred_languages| is converted to empty array.
+  params.preferred_languages = base::SplitString(
+      preferred_languages, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+
+  arc_session_runner_->RequestUpgrade(std::move(params));
 }
 
 void ArcSessionManager::StopArc() {
@@ -910,7 +1050,11 @@ void ArcSessionManager::StopArc() {
     profile_->GetPrefs()->SetBoolean(prefs::kArcSignedIn, false);
     profile_->GetPrefs()->SetBoolean(prefs::kArcPaiStarted, false);
     profile_->GetPrefs()->SetBoolean(prefs::kArcTermsAccepted, false);
+    profile_->GetPrefs()->SetBoolean(prefs::kArcFastAppReinstallStarted, false);
+    profile_->GetPrefs()->SetBoolean(prefs::kArcProvisioningInitiatedFromOobe,
+                                     false);
   }
+
   ShutdownSession();
   if (support_host_)
     support_host_->Close();
@@ -956,7 +1100,7 @@ void ArcSessionManager::MaybeReenableArc() {
   DCHECK_EQ(state_, State::STOPPED);
 
   if (!reenable_arc_) {
-    // Reenabling is not triggered. Do nothing.
+    // Re-enabling is not triggered. Do nothing.
     return;
   }
   DCHECK(enable_requested_);
@@ -973,32 +1117,39 @@ void ArcSessionManager::OnWindowClosed() {
 }
 
 void ArcSessionManager::OnRetryClicked() {
-  DCHECK(support_host_);
-  DCHECK_EQ(support_host_->ui_page(), ArcSupportHost::UIPage::ERROR);
+  DCHECK(!g_ui_enabled || support_host_);
+  DCHECK(!g_ui_enabled ||
+         support_host_->ui_page() == ArcSupportHost::UIPage::ERROR);
   DCHECK(!terms_of_service_negotiator_);
-  DCHECK(!support_host_->HasAuthDelegate());
+  DCHECK(!g_ui_enabled || !support_host_->HasAuthDelegate());
 
   UpdateOptInActionUMA(OptInActionType::RETRY);
 
-  if (!profile_->GetPrefs()->GetBoolean(prefs::kArcTermsAccepted)) {
-    // This can currently happen when an error page is shown when re-opt-in
-    // right after opt-out (this is a bug as it should not show an error).  When
-    // the user click the retry button on this error page, we may start terms of
-    // service negotiation instead of recreating the instance.
-    // TODO(hidehiko): consider removing this case after fixing the bug.
-    MaybeStartTermsOfServiceNegotiation();
-  } else if (state_ == State::ACTIVE) {
+  if (state_ == State::ACTIVE) {
     // ERROR_WITH_FEEDBACK is set in OnSignInFailed(). In the case, stopping
     // ARC was postponed to contain its internal state into the report.
     // Here, on retry, stop it, then restart.
-    support_host_->ShowArcLoading();
-    ShutdownSession();
+    if (support_host_)
+      support_host_->ShowArcLoading();
+    // In unit tests ShutdownSession may be executed inline and OnSessionStopped
+    // is called before |reenable_arc_| is set.
     reenable_arc_ = true;
+    ShutdownSession();
   } else {
-    // Otherwise, we restart ARC. Note: this is the first boot case.
-    // For second or later boot, either ERROR_WITH_FEEDBACK case or ACTIVE
-    // case must hit.
-    StartAndroidManagementCheck();
+    // Otherwise, we start ARC once it is stopped now. Usually ARC container is
+    // left active after provisioning failure but in case
+    // ProvisioningResult::ARC_STOPPED and
+    // ProvisioningResult::CHROME_SERVER_COMMUNICATION_ERROR failures container
+    // is stopped.
+    // At this point ToS is already accepted and
+    // IsArcTermsOfServiceNegotiationNeeded returns true or ToS needs not to be
+    // shown at all. However there is an exception when this does not happen in
+    // case an error page is shown when re-opt-in right after opt-out (this is a
+    // bug as it should not show an error). When the user click the retry
+    // button on this error page, we may start ToS negotiation instead of
+    // recreating the instance.
+    // TODO(hidehiko): consider removing this case after fixing the bug.
+    MaybeStartTermsOfServiceNegotiation();
   }
 }
 
@@ -1016,6 +1167,10 @@ void ArcSessionManager::SetArcSessionRunnerForTesting(
   arc_session_runner_->AddObserver(this);
 }
 
+ArcSessionRunner* ArcSessionManager::GetArcSessionRunnerForTesting() {
+  return arc_session_runner_.get();
+}
+
 void ArcSessionManager::SetAttemptUserExitCallbackForTesting(
     const base::Closure& callback) {
   DCHECK(!callback.is_null());
@@ -1029,6 +1184,16 @@ void ArcSessionManager::ShowArcSupportHostError(
     support_host_->ShowError(error, should_show_send_feedback);
   for (auto& observer : observer_list_)
     observer.OnArcErrorShowRequested(error);
+}
+
+void ArcSessionManager::EmitLoginPromptVisibleCalled() {
+  // Since 'login-prompt-visible' Upstart signal starts all Upstart jobs the
+  // instance may depend on such as cras, EmitLoginPromptVisibleCalled() is the
+  // safe place to start a mini instance.
+  if (!IsArcAvailable())
+    return;
+
+  arc_session_runner_->RequestStartMiniInstance();
 }
 
 std::ostream& operator<<(std::ostream& os,

@@ -20,7 +20,7 @@ namespace network_session_configurator {
 // trials and command line.
 
 // Parse serialized QUIC versions string.
-net::QuicTransportVersionVector ParseQuicVersions(
+quic::ParsedQuicVersionVector ParseQuicVersions(
     const std::string& quic_versions);
 
 // Configure |params| based on field trials and command line,
@@ -32,8 +32,7 @@ void ParseCommandLineAndFieldTrials(const base::CommandLine& command_line,
 
 // Returns the URLRequestContextBuilder::HttpCacheParams::Type that the disk
 // cache should use.
-net::URLRequestContextBuilder::HttpCacheParams::Type ChooseCacheType(
-    const base::CommandLine& command_line);
+net::URLRequestContextBuilder::HttpCacheParams::Type ChooseCacheType();
 
 }  // namespace network_session_configurator
 

@@ -10,13 +10,32 @@
 
 namespace device {
 
+// For a connected gamepad, specify the type of bus through which it is
+// connected. This allows for specialized mappings depending on how the device
+// is connected. For instance, a gamepad may require different mappers for USB
+// and Bluetooth.
+enum GamepadBusType {
+  GAMEPAD_BUS_UNKNOWN,
+  GAMEPAD_BUS_USB,
+  GAMEPAD_BUS_BLUETOOTH
+};
+
 typedef void (*GamepadStandardMappingFunction)(const Gamepad& original,
                                                Gamepad* mapped);
 
+// Returns the most suitable mapping function for a particular gamepad.
+// |vendor_id| and |product_id| are the USB or Bluetooth vendor and product IDs
+// reported by the device. |hid_specification_version| is the binary-coded
+// decimal representation of the version of the HID specification that the
+// device is compliant with (bcdHID). |version_number| is the firmware version
+// number reported by the device (bcdDevice). |bus_type| is the transport
+// used to connect to this device, or GAMEPAD_BUS_UNKNOWN if unknown.
 GamepadStandardMappingFunction GetGamepadStandardMappingFunction(
-    const base::StringPiece& vendor_id,
-    const base::StringPiece& product_id,
-    const base::StringPiece& version_number);
+    const uint16_t vendor_id,
+    const uint16_t product_id,
+    const uint16_t hid_specification_version,
+    const uint16_t version_number,
+    GamepadBusType bus_type);
 
 // This defines our canonical mapping order for gamepad-like devices. If these
 // items cannot all be satisfied, it is a case-by-case judgement as to whether
@@ -59,9 +78,6 @@ enum CanonicalAxisIndex {
   AXIS_INDEX_COUNT
 };
 
-// Matches XInput's trigger deadzone
-const float kDefaultButtonPressedThreshold = 30.f / 255.f;
-
 // Common mapping functions
 GamepadButton AxisToButton(float input);
 GamepadButton AxisNegativeAsButton(float input);
@@ -69,6 +85,7 @@ GamepadButton AxisPositiveAsButton(float input);
 GamepadButton ButtonFromButtonAndAxis(GamepadButton button, float axis);
 GamepadButton NullButton();
 void DpadFromAxis(Gamepad* mapped, float dir);
+float RenormalizeAndClampAxis(float value, float min, float max);
 
 }  // namespace device
 

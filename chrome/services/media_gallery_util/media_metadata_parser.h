@@ -11,8 +11,8 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "chrome/common/extensions/api/media_galleries.h"
 #include "chrome/common/media_galleries/metadata_types.h"
+#include "chrome/services/media_gallery_util/public/mojom/media_parser.mojom.h"
 
 namespace base {
 class Thread;
@@ -22,17 +22,14 @@ namespace media {
 class DataSource;
 }
 
-namespace chrome {
-
 // This class takes a MIME type and data source and parses its metadata. It
 // handles audio, video, and images. It delegates its operations to FFMPEG.
 // This class lives and operates on the utility thread of the utility process
 // so we sandbox potentially dangerous operations on user-provided data.
 class MediaMetadataParser {
  public:
-  typedef extensions::api::media_galleries::MediaMetadata MediaMetadata;
   typedef base::Callback<void(
-      const MediaMetadata& metadata,
+      chrome::mojom::MediaMetadataPtr metadata,
       const std::vector<metadata::AttachedImage>& attached_images)>
       MetadataCallback;
 
@@ -61,7 +58,5 @@ class MediaMetadataParser {
 
   DISALLOW_COPY_AND_ASSIGN(MediaMetadataParser);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_SERVICES_MEDIA_GALLERY_UTIL_MEDIA_METADATA_PARSER_H_

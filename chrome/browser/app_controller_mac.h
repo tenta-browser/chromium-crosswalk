@@ -80,12 +80,8 @@ class ScopedKeepAlive;
   // Outlets for the close tab/window menu items so that we can adjust the
   // commmand-key equivalent depending on the kind of window and how many
   // tabs it has.
-  IBOutlet NSMenuItem* closeTabMenuItem_;
-  IBOutlet NSMenuItem* closeWindowMenuItem_;
-
-  // Outlet for the help menu so we can bless it so Cocoa adds the search item
-  // to it.
-  IBOutlet NSMenu* helpMenu_;
+  NSMenuItem* closeTabMenuItem_;
+  NSMenuItem* closeWindowMenuItem_;
 
   // If we are expecting a workspace change in response to a reopen
   // event, the time we got the event. A null time otherwise.
@@ -114,6 +110,10 @@ class ScopedKeepAlive;
 @property(readonly, nonatomic) BOOL startupComplete;
 @property(readonly, nonatomic) Profile* lastProfile;
 
+// This method is called very early in application startup after the main menu
+// has been created.
+- (void)mainMenuCreated;
+
 - (void)didEndMainMessageLoop;
 
 // Try to close all browser windows, and if that succeeds then quit.
@@ -122,6 +122,10 @@ class ScopedKeepAlive;
 // Stop trying to terminate the application. That is, prevent the final browser
 // window closure from causing the application to quit.
 - (void)stopTryingToTerminateApplication:(NSApplication*)app;
+
+// Run the quit confirmation panel and return whether or not to continue
+// quitting.
+- (BOOL)runConfirmQuitPanel;
 
 // Indicate that the system is powering off or logging out.
 - (void)willPowerOff:(NSNotification*)inNotification;
@@ -169,6 +173,13 @@ class ScopedKeepAlive;
 // the original profile and never incognito.
 - (void)windowChangedToProfile:(Profile*)profile;
 
+// Certain NSMenuItems [Close Tab and Close Window] have different
+// keyEquivalents depending on context. This must be invoked in two locations:
+//   * In menuNeedsUpdate:, which is called prior to showing the NSMenu.
+//   * In CommandDispatcher, which independently searches for a matching
+//     keyEquivalent.
+- (void)updateMenuItemKeyEquivalents;
+
 @end
 
 #endif  // __OBJC__
@@ -181,6 +192,14 @@ namespace app_controller_mac {
 // SessionService::Observe() to get around windows/linux and mac having
 // different models of application lifetime.
 bool IsOpeningNewWindow();
+
+// Create a guest profile if one is needed. Afterwards, even if the profile
+// already existed, notify the AppController of the profile in use.
+void CreateGuestProfileIfNeeded();
+
+// Called when Enterprise startup dialog is close and repost
+// applicationDidFinished notification.
+void EnterpriseStartupDialogClosed();
 
 }  // namespace app_controller_mac
 

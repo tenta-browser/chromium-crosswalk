@@ -7,15 +7,16 @@ package org.chromium.content.browser.input;
 import android.annotation.TargetApi;
 import android.graphics.Matrix;
 import android.os.Build;
+import android.support.annotation.Nullable;
 import android.view.View;
 import android.view.inputmethod.CursorAnchorInfo;
 
 import org.chromium.base.VisibleForTesting;
+import org.chromium.content_public.browser.InputMethodManagerWrapper;
 
 import java.util.Arrays;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
 /**
  * A state machine interface which receives Chromium internal events to determines when to call
@@ -100,8 +101,7 @@ final class CursorAnchorInfoController {
     }
 
     @VisibleForTesting
-    public void setInputMethodManagerWrapperForTest(
-            InputMethodManagerWrapper inputMethodManagerWrapper) {
+    public void setInputMethodManagerWrapper(InputMethodManagerWrapper inputMethodManagerWrapper) {
         mInputMethodManagerWrapper = inputMethodManagerWrapper;
     }
 

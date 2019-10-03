@@ -4,6 +4,7 @@
 
 #include "components/content_settings/core/browser/content_settings_default_provider.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -65,20 +66,25 @@ class DefaultRuleIterator : public RuleIterator {
  public:
   explicit DefaultRuleIterator(const base::Value* value) {
     if (value)
-      value_.reset(value->DeepCopy());
+      value_ = value->Clone();
+    else
+      is_done_ = true;
   }
 
-  bool HasNext() const override { return !!value_; }
+  bool HasNext() const override { return !is_done_; }
 
   Rule Next() override {
     DCHECK(HasNext());
+    is_done_ = true;
     return Rule(ContentSettingsPattern::Wildcard(),
-                ContentSettingsPattern::Wildcard(),
-                value_.release());
+                ContentSettingsPattern::Wildcard(), std::move(value_));
   }
 
  private:
-  std::unique_ptr<base::Value> value_;
+  bool is_done_ = false;
+  base::Value value_;
+
+  DISALLOW_COPY_AND_ASSIGN(DefaultRuleIterator);
 };
 
 }  // namespace
@@ -197,6 +203,10 @@ DefaultProvider::DefaultProvider(PrefService* prefs, bool incognito)
                             IntToContentSetting(prefs_->GetInteger(
                                 GetPrefName(CONTENT_SETTINGS_TYPE_SOUND))),
                             CONTENT_SETTING_NUM_SETTINGS);
+  UMA_HISTOGRAM_ENUMERATION("ContentSettings.DefaultUsbGuardSetting",
+                            IntToContentSetting(prefs_->GetInteger(
+                                GetPrefName(CONTENT_SETTINGS_TYPE_USB_GUARD))),
+                            CONTENT_SETTING_NUM_SETTINGS);
 #endif
   pref_change_registrar_.Init(prefs_);
   PrefChangeRegistrar::NamedChangeCallback callback = base::Bind(
@@ -215,7 +225,7 @@ bool DefaultProvider::SetWebsiteSetting(
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
-    base::Value* in_value) {
+    std::unique_ptr<base::Value>&& in_value) {
   DCHECK(CalledOnValidThread());
   DCHECK(prefs_);
 
@@ -227,7 +237,7 @@ bool DefaultProvider::SetWebsiteSetting(
 
   // Put |in_value| in a scoped pointer to ensure that it gets cleaned up
   // properly if we don't pass on the ownership.
-  std::unique_ptr<base::Value> value(in_value);
+  std::unique_ptr<base::Value> value(std::move(in_value));
 
   // The default settings may not be directly modified for OTR sessions.
   // Instead, they are synced to the main profile's setting.
@@ -272,7 +282,7 @@ std::unique_ptr<RuleIterator> DefaultProvider::GetRuleIterator(
     NOTREACHED();
     return nullptr;
   }
-  return base::MakeUnique<DefaultRuleIterator>(it->second.get());
+  return std::make_unique<DefaultRuleIterator>(it->second.get());
 }
 
 void DefaultProvider::ClearAllContentSettingsRules(

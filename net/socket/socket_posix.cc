@@ -9,9 +9,11 @@
 #include <sys/socket.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -20,6 +22,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/trace_constants.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 #if defined(OS_FUCHSIA)
 #include <poll.h>
@@ -88,7 +91,7 @@ int SocketPosix::Open(int address_family) {
       SOCK_STREAM,
       address_family == AF_UNIX ? 0 : IPPROTO_TCP);
   if (socket_fd_ < 0) {
-    PLOG(ERROR) << "CreatePlatformSocket() returned an error, errno=" << errno;
+    PLOG(ERROR) << "CreatePlatformSocket() failed";
     return MapSystemError(errno);
   }
 
@@ -139,7 +142,7 @@ int SocketPosix::Bind(const SockaddrStorage& address) {
 
   int rv = bind(socket_fd_, address.addr, address.addr_len);
   if (rv < 0) {
-    PLOG(ERROR) << "bind() returned an error, errno=" << errno;
+    PLOG(ERROR) << "bind() failed";
     return MapSystemError(errno);
   }
 
@@ -153,7 +156,7 @@ int SocketPosix::Listen(int backlog) {
 
   int rv = listen(socket_fd_, backlog);
   if (rv < 0) {
-    PLOG(ERROR) << "listen() returned an error, errno=" << errno;
+    PLOG(ERROR) << "listen() failed";
     return MapSystemError(errno);
   }
 
@@ -161,7 +164,7 @@ int SocketPosix::Listen(int backlog) {
 }
 
 int SocketPosix::Accept(std::unique_ptr<SocketPosix>* socket,
-                        const CompletionCallback& callback) {
+                        CompletionOnceCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(accept_callback_.is_null());
@@ -172,20 +175,20 @@ int SocketPosix::Accept(std::unique_ptr<SocketPosix>* socket,
   if (rv != ERR_IO_PENDING)
     return rv;
 
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_READ,
+  if (!base::MessageLoopCurrentForIO::Get()->WatchFileDescriptor(
+          socket_fd_, true, base::MessagePumpForIO::WATCH_READ,
           &accept_socket_watcher_, this)) {
-    PLOG(ERROR) << "WatchFileDescriptor failed on accept, errno " << errno;
+    PLOG(ERROR) << "WatchFileDescriptor failed on accept";
     return MapSystemError(errno);
   }
 
   accept_socket_ = socket;
-  accept_callback_ = callback;
+  accept_callback_ = std::move(callback);
   return ERR_IO_PENDING;
 }
 
 int SocketPosix::Connect(const SockaddrStorage& address,
-                         const CompletionCallback& callback) {
+                         CompletionOnceCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(!waiting_connect_);
@@ -197,10 +200,10 @@ int SocketPosix::Connect(const SockaddrStorage& address,
   if (rv != ERR_IO_PENDING)
     return rv;
 
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_WRITE,
+  if (!base::MessageLoopCurrentForIO::Get()->WatchFileDescriptor(
+          socket_fd_, true, base::MessagePumpForIO::WATCH_WRITE,
           &write_socket_watcher_, this)) {
-    PLOG(ERROR) << "WatchFileDescriptor failed on connect, errno " << errno;
+    PLOG(ERROR) << "WatchFileDescriptor failed on connect";
     return MapSystemError(errno);
   }
 
@@ -223,7 +226,7 @@ int SocketPosix::Connect(const SockaddrStorage& address,
     return rv;
   }
 
-  write_callback_ = callback;
+  write_callback_ = std::move(callback);
   waiting_connect_ = true;
   return ERR_IO_PENDING;
 }
@@ -246,14 +249,15 @@ bool SocketPosix::IsConnected() const {
   return true;
 
 #else   // OS_FUCHSIA
+  // TODO(crbug.com/887587): Remove once MSG_PEEK is implemented on Fuchsia.
   // Fuchsia currently doesn't support MSG_PEEK flag in recv(), so the code
-  // above doesn't work on Fuchsia. IsConnected() must return true if the
-  // connection is alive or if it was terminated but there is still data pending
-  // in the incoming buffer.
-  //   1. Check if the connection is alive using poll(POLLRDHUP).
-  //   2. If closed, then use ioctl(FIONREAD) to check if there is data to be
-  //   read.
-  // TODO(bug 738275): Remove once MSG_PEEK is implemented on Fuchsia.
+  // above doesn't work on Fuchsia.
+
+  // If there is no peer address then this socket was never connected.
+  if (!HasPeerAddress())
+    return false;
+
+  // Use poll(POLLRDHUP) to check whether the socket is disconnected.
   struct pollfd pollfd;
   pollfd.fd = socket_fd_;
   pollfd.events = POLLRDHUP;
@@ -261,12 +265,14 @@ bool SocketPosix::IsConnected() const {
   const int poll_result = HANDLE_EINTR(poll(&pollfd, 1, 0));
 
   if (poll_result == 1) {
+    // The socket is disconnected, so check whether it has data to read.
     int bytes_available;
     int ioctl_result =
         HANDLE_EINTR(ioctl(socket_fd_, FIONREAD, &bytes_available));
     return ioctl_result == 0 && bytes_available > 0;
   }
 
+  // The socket is still connected, or poll() reported an error.
   return poll_result == 0;
 #endif  // OS_FUCHSIA
 }
@@ -288,14 +294,18 @@ bool SocketPosix::IsConnectedAndIdle() const {
     return false;
 
   return true;
-
 #else   // OS_FUCHSIA
+  // TODO(crbug.com/887587): Remove once MSG_PEEK is implemented.
   // Fuchsia currently doesn't support MSG_PEEK flag in recv(), so the code
-  // above doesn't work on Fuchsia. Use poll(POLLIN) to check state of the
-  // socket. POLLIN is signaled if the socket is readable or if it was closed by
-  // the peer, i.e. the socket is connected and idle if and only if POLLIN is
-  // not signaled.
-  // TODO(bug 738275): Remove once MSG_PEEK is implemented.
+  // above doesn't work on Fuchsia.
+
+  // If there is no peer address then this socket was never connected.
+  if (!HasPeerAddress())
+    return false;
+
+  // Use poll(POLLIN) to check state of the socket. POLLIN is signaled if the
+  // socket is readable or if it was closed by the peer, i.e. the socket is
+  // connected and idle if and only if POLLIN is not signaled.
   struct pollfd pollfd;
   pollfd.fd = socket_fd_;
   pollfd.events = POLLIN;
@@ -307,7 +317,7 @@ bool SocketPosix::IsConnectedAndIdle() const {
 
 int SocketPosix::Read(IOBuffer* buf,
                       int buf_len,
-                      const CompletionCallback& callback) {
+                      CompletionOnceCallback callback) {
   // Use base::Unretained() is safe here because OnFileCanReadWithoutBlocking()
   // won't be called if |this| is gone.
   int rv =
@@ -316,14 +326,14 @@ int SocketPosix::Read(IOBuffer* buf,
   if (rv == ERR_IO_PENDING) {
     read_buf_ = buf;
     read_buf_len_ = buf_len;
-    read_callback_ = callback;
+    read_callback_ = std::move(callback);
   }
   return rv;
 }
 
 int SocketPosix::ReadIfReady(IOBuffer* buf,
                              int buf_len,
-                             const CompletionCallback& callback) {
+                             CompletionOnceCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(!waiting_connect_);
@@ -335,20 +345,32 @@ int SocketPosix::ReadIfReady(IOBuffer* buf,
   if (rv != ERR_IO_PENDING)
     return rv;
 
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_READ,
+  if (!base::MessageLoopCurrentForIO::Get()->WatchFileDescriptor(
+          socket_fd_, true, base::MessagePumpForIO::WATCH_READ,
           &read_socket_watcher_, this)) {
-    PLOG(ERROR) << "WatchFileDescriptor failed on read, errno " << errno;
+    PLOG(ERROR) << "WatchFileDescriptor failed on read";
     return MapSystemError(errno);
   }
 
-  read_if_ready_callback_ = callback;
+  read_if_ready_callback_ = std::move(callback);
   return ERR_IO_PENDING;
 }
 
-int SocketPosix::Write(IOBuffer* buf,
-                       int buf_len,
-                       const CompletionCallback& callback) {
+int SocketPosix::CancelReadIfReady() {
+  DCHECK(read_if_ready_callback_);
+
+  bool ok = read_socket_watcher_.StopWatchingFileDescriptor();
+  DCHECK(ok);
+
+  read_if_ready_callback_.Reset();
+  return net::OK;
+}
+
+int SocketPosix::Write(
+    IOBuffer* buf,
+    int buf_len,
+    CompletionOnceCallback callback,
+    const NetworkTrafficAnnotationTag& /* traffic_annotation */) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(!waiting_connect_);
@@ -359,13 +381,13 @@ int SocketPosix::Write(IOBuffer* buf,
 
   int rv = DoWrite(buf, buf_len);
   if (rv == ERR_IO_PENDING)
-    rv = WaitForWrite(buf, buf_len, callback);
+    rv = WaitForWrite(buf, buf_len, std::move(callback));
   return rv;
 }
 
 int SocketPosix::WaitForWrite(IOBuffer* buf,
                               int buf_len,
-                              const CompletionCallback& callback) {
+                              CompletionOnceCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(write_callback_.is_null());
@@ -373,16 +395,16 @@ int SocketPosix::WaitForWrite(IOBuffer* buf,
   DCHECK(!callback.is_null());
   DCHECK_LT(0, buf_len);
 
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_WRITE,
+  if (!base::MessageLoopCurrentForIO::Get()->WatchFileDescriptor(
+          socket_fd_, true, base::MessagePumpForIO::WATCH_WRITE,
           &write_socket_watcher_, this)) {
-    PLOG(ERROR) << "WatchFileDescriptor failed on write, errno " << errno;
+    PLOG(ERROR) << "WatchFileDescriptor failed on write";
     return MapSystemError(errno);
   }
 
   write_buf_ = buf;
   write_buf_len_ = buf_len;
-  write_callback_ = callback;
+  write_callback_ = std::move(callback);
   return ERR_IO_PENDING;
 }
 
@@ -431,7 +453,7 @@ void SocketPosix::Close() {
 
   if (socket_fd_ != kInvalidSocket) {
     if (IGNORE_EINTR(close(socket_fd_)) < 0)
-      PLOG(ERROR) << "close() returned an error, errno=" << errno;
+      PLOG(ERROR) << "close() failed";
     socket_fd_ = kInvalidSocket;
   }
 }
@@ -441,7 +463,7 @@ void SocketPosix::DetachFromThread() {
 }
 
 void SocketPosix::OnFileCanReadWithoutBlocking(int fd) {
-  TRACE_EVENT0(kNetTracingCategory,
+  TRACE_EVENT0(NetTracingCategory(),
                "SocketPosix::OnFileCanReadWithoutBlocking");
   if (!accept_callback_.is_null()) {
     AcceptCompleted();
@@ -486,7 +508,7 @@ void SocketPosix::AcceptCompleted() {
   bool ok = accept_socket_watcher_.StopWatchingFileDescriptor();
   DCHECK(ok);
   accept_socket_ = NULL;
-  base::ResetAndReturn(&accept_callback_).Run(rv);
+  std::move(accept_callback_).Run(rv);
 }
 
 int SocketPosix::DoConnect() {
@@ -513,7 +535,7 @@ void SocketPosix::ConnectCompleted() {
   bool ok = write_socket_watcher_.StopWatchingFileDescriptor();
   DCHECK(ok);
   waiting_connect_ = false;
-  base::ResetAndReturn(&write_callback_).Run(rv);
+  std::move(write_callback_).Run(rv);
 }
 
 int SocketPosix::DoRead(IOBuffer* buf, int buf_len) {
@@ -535,7 +557,7 @@ void SocketPosix::RetryRead(int rv) {
   }
   read_buf_ = nullptr;
   read_buf_len_ = 0;
-  base::ResetAndReturn(&read_callback_).Run(rv);
+  std::move(read_callback_).Run(rv);
 }
 
 void SocketPosix::ReadCompleted() {
@@ -543,7 +565,7 @@ void SocketPosix::ReadCompleted() {
 
   bool ok = read_socket_watcher_.StopWatchingFileDescriptor();
   DCHECK(ok);
-  base::ResetAndReturn(&read_if_ready_callback_).Run(OK);
+  std::move(read_if_ready_callback_).Run(OK);
 }
 
 int SocketPosix::DoWrite(IOBuffer* buf, int buf_len) {
@@ -568,7 +590,7 @@ void SocketPosix::WriteCompleted() {
   DCHECK(ok);
   write_buf_ = NULL;
   write_buf_len_ = 0;
-  base::ResetAndReturn(&write_callback_).Run(rv);
+  std::move(write_callback_).Run(rv);
 }
 
 void SocketPosix::StopWatchingAndCleanUp() {

@@ -7,33 +7,47 @@
 
 #include <string>
 
+#include "base/callback.h"
 #include "base/macros.h"
-#include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen_view_observer.h"
 #include "chrome/browser/chromeos/login/screens/base_screen.h"
+#include "chrome/browser/ui/webui/chromeos/login/arc_terms_of_service_screen_handler.h"
+
+class Profile;
 
 namespace chromeos {
 
 class ArcTermsOfServiceScreenView;
-class BaseScreenDelegate;
 
 class ArcTermsOfServiceScreen : public BaseScreen,
                                 public ArcTermsOfServiceScreenViewObserver {
  public:
-  ArcTermsOfServiceScreen(BaseScreenDelegate* base_screen_delegate,
-                          ArcTermsOfServiceScreenView* view);
+  enum class Result { ACCEPTED, SKIPPED, BACK };
+
+  // Launches the ARC settings page if the user requested to review them after
+  // completing OOBE.
+  static void MaybeLaunchArcSettings(Profile* profile);
+
+  using ScreenExitCallback = base::RepeatingCallback<void(Result result)>;
+  ArcTermsOfServiceScreen(ArcTermsOfServiceScreenView* view,
+                          const ScreenExitCallback& exit_callback);
   ~ArcTermsOfServiceScreen() override;
 
   // BaseScreen:
   void Show() override;
   void Hide() override;
+  void OnUserAction(const std::string& action_id) override;
 
   // ArcTermsOfServiceScreenViewObserver:
   void OnSkip() override;
-  void OnAccept() override;
+  void OnAccept(bool review_arc_settings) override;
   void OnViewDestroyed(ArcTermsOfServiceScreenView* view) override;
+
+ protected:
+  ScreenExitCallback* exit_callback() { return &exit_callback_; }
 
  private:
   ArcTermsOfServiceScreenView* view_;
+  ScreenExitCallback exit_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcTermsOfServiceScreen);
 };

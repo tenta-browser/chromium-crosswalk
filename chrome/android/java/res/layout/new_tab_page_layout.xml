@@ -4,7 +4,8 @@
      found in the LICENSE file. -->
 <org.chromium.chrome.browser.ntp.NewTabPageLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:chrome="http://schemas.android.com/apk/res-auto"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/ntp_content"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,26 +15,6 @@
     android:paddingTop="@dimen/toolbar_height_no_shadow"
     android:visibility="gone" >
 
-    <!-- Top spacer. Note: the top spacer must have layout_weight="1" and the middle and bottom
-         spacers must have layout_weight="0". The NewTabPageLayout will redistribute the extra space
-         between them. -->
-    <View
-        android:id="@+id/ntp_top_spacer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:visibility="invisible" />
-
-    <!-- Spacer above the search provider logo that can be used to distribute extra space in order
-         to push part of Most Visited below the fold, suggesting that the page can be scrolled. This
-         is only used when there is not enough space to show the peeking card. -->
-    <View
-        android:id="@+id/search_provider_logo_spacer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="0"
-        android:visibility="gone" />
-
     <!-- Search provider logo -->
     <org.chromium.chrome.browser.ntp.LogoView
         android:id="@+id/search_provider_logo"
@@ -41,21 +22,12 @@
         android:layout_height="@dimen/ntp_logo_height"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:layout_marginTop="26dp"
+        android:layout_marginTop="@dimen/ntp_logo_margin_top"
         android:layout_marginBottom="23dp" />
 
-    <!-- Spacer above the search box that can be used to distribute extra space in order to push
-         part of Most Visited below the fold, suggesting that the page can be scrolled. This
-         is only used when there is not enough space to show the peeking card. -->
-    <View
-        android:id="@+id/search_box_spacer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="0"
-        android:visibility="gone" />
-
     <!-- Search box -->
-    <LinearLayout
+    <view
+        class="org.chromium.chrome.browser.ntp.NewTabPageLayout$SearchBoxContainerView"
         android:id="@+id/search_box"
         android:layout_width="match_parent"
         android:layout_height="@dimen/ntp_search_box_height"
@@ -64,63 +36,39 @@
         android:layout_marginTop="0dp"
         android:layout_marginBottom="1dp"
         android:gravity="center_vertical"
-        android:background="@drawable/card_single"
+        android:addStatesFromChildren="true"
+        android:background="@drawable/ntp_search_box"
         android:orientation="horizontal"
-        android:paddingStart="2dp"
-        android:paddingEnd="2dp"
-        android:paddingTop="3dp"
-        android:paddingBottom="3dp" >
+        android:paddingStart="@dimen/location_bar_lateral_padding" >
+        <!-- TODO(crbug.com/900912): Fix and remove lint ignore -->
         <EditText
+            tools:ignore="Autofill,LabelFor"
+            style="@style/TextAppearance.NewTabPageSearchBoxText"
             android:id="@+id/search_box_text"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
             android:layout_weight="1"
             android:background="@null"
-            android:drawableStart="@drawable/googleg"
-            android:drawablePadding="@dimen/ntp_search_box_logo_padding"
             android:ellipsize="end"
             android:focusableInTouchMode="false"
+            android:focusable="false"
             android:gravity="center_vertical"
             android:inputType="text"
-            android:singleLine="true"
-            android:textSize="@dimen/location_bar_url_text_size"
-            android:textColorHint="@color/ntp_search_box_hint" />
-        <org.chromium.chrome.browser.widget.TintedImageView
+            android:singleLine="true" />
+        <!-- Padding start is applied so that microphone icon appears in the same location as it
+             does in the main url bar. The microphone button in the url bar is
+             48dp wide with 4dp start padding. -->
+        <org.chromium.ui.widget.ChromeImageView
             android:id="@+id/voice_search_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_marginEnd="12dp"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:paddingStart="4dp"
             android:contentDescription="@string/accessibility_toolbar_btn_mic"
-            android:src="@drawable/btn_mic" />
-    </LinearLayout>
-
-    <!-- Chrome Home promo -->
-    <LinearLayout
-        android:id="@+id/chrome_home_promo_container"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:gravity="center_vertical"
-        android:visibility="gone">
-        <org.chromium.chrome.browser.widget.TintedImageView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
-            android:layout_marginStart="8dp"
-            android:src="@drawable/ic_new_releases_black_24dp" />
-        <org.chromium.ui.widget.TextViewWithClickableSpans
-            android:id="@+id/chrome_home_promo_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:textAppearance="@style/BlackHint2"
-            chrome:leading="20sp" />
-    </LinearLayout>
+            android:src="@drawable/btn_mic"
+            android:scaleType="centerInside"
+            app:tint="@color/standard_mode_tint" />
+    </view>
 
     <!-- Middle spacer -->
     <View
@@ -132,6 +80,14 @@
 
     <!-- Insertion point of the SiteSectionView, see NewTabPageLayout#insertSiteSection() -->
 
+    <ViewStub
+        android:id="@+id/explore_sites_stub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inflatedId="@+id/explore_sites"
+        android:layout_marginBottom="16dp"
+        android:layout="@layout/explore_sites_section" />
+
     <!-- Site suggestion tile grid placeholder -->
     <ViewStub
         android:id="@+id/tile_grid_placeholder_stub"
@@ -140,14 +96,6 @@
         android:layout_weight="1"
         android:inflatedId="@+id/tile_grid_placeholder"
         android:layout="@layout/new_tab_page_tile_grid_placeholder" />
-
-    <!-- Bottom spacer -->
-    <View
-        android:id="@+id/ntp_bottom_spacer"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="0"
-        android:visibility="invisible" />
 
     <!-- Spacer for when there is no search provider logo. -->
     <View

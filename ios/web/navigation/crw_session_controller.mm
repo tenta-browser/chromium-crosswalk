@@ -7,23 +7,24 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
-#import "base/mac/scoped_nsobject.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "ios/web/common/features.h"
 #include "ios/web/history_state_util.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #include "ios/web/navigation/time_smoother.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/browser_url_rewriter.h"
-#include "ios/web/public/referrer.h"
-#include "ios/web/public/ssl_status.h"
+#include "ios/web/public/navigation/browser_url_rewriter.h"
+#include "ios/web/public/navigation/referrer.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/web_client.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -161,9 +162,9 @@ initiationType:(web::NavigationInitiationType)initiationType;
   // navigations in order to prevent URL spoof attacks.
   web::NavigationItemImpl* pendingItem = self.pendingItem;
   if (pendingItem) {
-    bool isUserInitiated = pendingItem->NavigationInitiationType() ==
-                           web::NavigationInitiationType::USER_INITIATED;
-    bool safeToShowPending = isUserInitiated && _pendingItemIndex == -1;
+    bool isBrowserInitiated = pendingItem->NavigationInitiationType() ==
+                              web::NavigationInitiationType::BROWSER_INITIATED;
+    bool safeToShowPending = isBrowserInitiated && _pendingItemIndex == -1;
 
     if (safeToShowPending)
       return pendingItem;
@@ -172,8 +173,12 @@ initiationType:(web::NavigationInitiationType)initiationType;
 }
 
 - (web::NavigationItemImpl*)pendingItem {
-  if (self.pendingItemIndex == -1)
+  if (self.pendingItemIndex == -1) {
+    if (!_pendingItem) {
+      return [self.delegate pendingItemForSessionController:self];
+    }
     return _pendingItem.get();
+  }
   return self.items[self.pendingItemIndex].get();
 }
 
@@ -285,6 +290,14 @@ initiationType:(web::NavigationInitiationType)initiationType;
          _navigationManager->GetBrowserState() == _browserState);
 }
 
+- (std::unique_ptr<web::NavigationItemImpl>)releasePendingItem {
+  return std::move(_pendingItem);
+}
+
+- (void)setPendingItem:(std::unique_ptr<web::NavigationItemImpl>)item {
+  _pendingItem = std::move(item);
+}
+
 - (void)addPendingItem:(const GURL&)url
                    referrer:(const web::Referrer&)ref
                  transition:(ui::PageTransition)trans
@@ -366,7 +379,6 @@ initiationType:(web::NavigationInitiationType)initiationType;
 }
 
 - (void)clearForwardItems {
-  DCHECK_EQ(self.pendingItemIndex, -1);
   [self discardTransientItem];
 
   NSInteger forwardItemStartIndex = _lastCommittedItemIndex + 1;
@@ -396,8 +408,10 @@ initiationType:(web::NavigationInitiationType)initiationType;
     NSInteger newItemIndex = self.pendingItemIndex;
     if (newItemIndex == -1) {
       [self clearForwardItems];
-      // Add the new item at the end.
-      _items.push_back(std::move(_pendingItem));
+      if (_pendingItem) {
+        // Add the new item at the end.
+        _items.push_back(std::move(_pendingItem));
+      }
       newItemIndex = self.items.size() - 1;
     }
     _previousItemIndex = _lastCommittedItemIndex;
@@ -406,14 +420,30 @@ initiationType:(web::NavigationInitiationType)initiationType;
     DCHECK(!_pendingItem);
   }
 
-  web::NavigationItem* item = self.currentItem;
   // Update the navigation timestamp now that it's actually happened.
-  if (item)
+  web::NavigationItem* item = self.lastCommittedItem;
+  if (item) {
     item->SetTimestamp(_timeSmoother.GetSmoothedTime(base::Time::Now()));
+    if (_navigationManager)
+      _navigationManager->OnNavigationItemCommitted();
+  }
 
-  if (_navigationManager && item)
-    _navigationManager->OnNavigationItemCommitted();
   DCHECK_EQ(self.pendingItemIndex, -1);
+}
+
+- (void)commitPendingItem:(std::unique_ptr<web::NavigationItemImpl>)item {
+  if (!item)
+    return;
+
+  // Once an item is committed it's not renderer-initiated any more. (Matches
+  // the implementation in NavigationController.)
+  item->ResetForCommit();
+  item->SetTimestamp(_timeSmoother.GetSmoothedTime(base::Time::Now()));
+
+  [self clearForwardItems];
+  _items.push_back(std::move(item));
+  _previousItemIndex = _lastCommittedItemIndex;
+  self.lastCommittedItemIndex = self.items.size() - 1;
 }
 
 - (void)addTransientItemWithURL:(const GURL&)URL {
@@ -421,7 +451,7 @@ initiationType:(web::NavigationInitiationType)initiationType;
       [self itemWithURL:URL
                 referrer:web::Referrer()
               transition:ui::PAGE_TRANSITION_CLIENT_REDIRECT
-          initiationType:web::NavigationInitiationType::USER_INITIATED];
+          initiationType:web::NavigationInitiationType::BROWSER_INITIATED];
   _transientItem->SetTimestamp(
       _timeSmoother.GetSmoothedTime(base::Time::Now()));
 }
@@ -442,7 +472,7 @@ initiationType:(web::NavigationInitiationType)initiationType;
       [self itemWithURL:URL
                 referrer:referrer
               transition:transition
-          initiationType:web::NavigationInitiationType::USER_INITIATED];
+          initiationType:web::NavigationInitiationType::BROWSER_INITIATED];
   pushedItem->SetUserAgentType(lastCommittedItem->GetUserAgentType());
   pushedItem->SetSerializedStateObject(stateObject);
   pushedItem->SetIsCreatedFromPushState(true);
@@ -495,7 +525,7 @@ initiationType:(web::NavigationInitiationType)initiationType;
                                                 2);
   for (size_t index = 0; index <= sourceLastCommittedItemIndex; ++index) {
     mergedItems[index] =
-        base::MakeUnique<web::NavigationItemImpl>(*sourceItems[index]);
+        std::make_unique<web::NavigationItemImpl>(*sourceItems[index]);
   }
   mergedItems.back() = std::move(_items[self.lastCommittedItemIndex]);
 
@@ -555,6 +585,10 @@ initiationType:(web::NavigationInitiationType)initiationType;
                                     andItem:(web::NavigationItem*)secondItem {
   if (!firstItem || !secondItem || firstItem == secondItem)
     return NO;
+
+  if (firstItem->GetURL().GetOrigin() != secondItem->GetURL().GetOrigin())
+    return NO;
+
   int firstIndex = [self indexOfItem:firstItem];
   int secondIndex = [self indexOfItem:secondItem];
   if (firstIndex == -1 || secondIndex == -1)

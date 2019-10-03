@@ -7,14 +7,16 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/task/post_task.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_version.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/console_message_level.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_object.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "content/public/browser/console_message.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -29,20 +31,20 @@ bool IsStoppedAndRedundant(const ServiceWorkerVersionInfo& version_info) {
 
 ServiceWorkerContextWatcher::ServiceWorkerContextWatcher(
     scoped_refptr<ServiceWorkerContextWrapper> context,
-    const WorkerRegistrationUpdatedCallback& registration_callback,
-    const WorkerVersionUpdatedCallback& version_callback,
-    const WorkerErrorReportedCallback& error_callback)
+    WorkerRegistrationUpdatedCallback registration_callback,
+    WorkerVersionUpdatedCallback version_callback,
+    WorkerErrorReportedCallback error_callback)
     : context_(context),
-      registration_callback_(registration_callback),
-      version_callback_(version_callback),
-      error_callback_(error_callback) {
+      registration_callback_(std::move(registration_callback)),
+      version_callback_(std::move(version_callback)),
+      error_callback_(std::move(error_callback)) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
 void ServiceWorkerContextWatcher::Start() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(
           &ServiceWorkerContextWatcher::GetStoredRegistrationsOnIOThread,
           this));
@@ -51,8 +53,8 @@ void ServiceWorkerContextWatcher::Start() {
 void ServiceWorkerContextWatcher::Stop() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   stop_called_ = true;
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&ServiceWorkerContextWatcher::StopOnIOThread, this));
 }
 
@@ -60,12 +62,12 @@ void ServiceWorkerContextWatcher::GetStoredRegistrationsOnIOThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (is_stopped_)
     return;
-  context_->GetAllRegistrations(base::Bind(
+  context_->GetAllRegistrations(base::BindOnce(
       &ServiceWorkerContextWatcher::OnStoredRegistrationsOnIOThread, this));
 }
 
 void ServiceWorkerContextWatcher::OnStoredRegistrationsOnIOThread(
-    ServiceWorkerStatusCode status,
+    blink::ServiceWorkerStatusCode status,
     const std::vector<ServiceWorkerRegistrationInfo>& stored_registrations) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (is_stopped_)
@@ -100,13 +102,13 @@ void ServiceWorkerContextWatcher::OnStoredRegistrationsOnIOThread(
       ++version_it;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerRegistrationUpdatedCallback,
           this, std::move(registrations)));
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerVersionUpdatedCallback, this,
           std::move(versions)));
@@ -147,7 +149,7 @@ void ServiceWorkerContextWatcher::StoreVersionInfo(
 
 void ServiceWorkerContextWatcher::SendRegistrationInfo(
     int64_t registration_id,
-    const GURL& pattern,
+    const GURL& scope,
     ServiceWorkerRegistrationInfo::DeleteFlag delete_flag) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   std::unique_ptr<std::vector<ServiceWorkerRegistrationInfo>> registrations =
@@ -158,10 +160,10 @@ void ServiceWorkerContextWatcher::SendRegistrationInfo(
     registrations->push_back(registration->GetInfo());
   } else {
     registrations->push_back(
-        ServiceWorkerRegistrationInfo(pattern, registration_id, delete_flag));
+        ServiceWorkerRegistrationInfo(scope, registration_id, delete_flag));
   }
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerRegistrationUpdatedCallback,
           this, std::move(registrations)));
@@ -173,8 +175,8 @@ void ServiceWorkerContextWatcher::SendVersionInfo(
   std::unique_ptr<std::vector<ServiceWorkerVersionInfo>> versions =
       std::make_unique<std::vector<ServiceWorkerVersionInfo>>();
   versions->push_back(version_info);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerVersionUpdatedCallback, this,
           std::move(versions)));
@@ -207,9 +209,9 @@ void ServiceWorkerContextWatcher::RunWorkerErrorReportedCallback(
 }
 
 void ServiceWorkerContextWatcher::OnNewLiveRegistration(int64_t registration_id,
-                                                        const GURL& pattern) {
+                                                        const GURL& scope) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  SendRegistrationInfo(registration_id, pattern,
+  SendRegistrationInfo(registration_id, scope,
                        ServiceWorkerRegistrationInfo::IS_NOT_DELETED);
 }
 
@@ -249,6 +251,7 @@ void ServiceWorkerContextWatcher::OnRunningStateChanged(
 
 void ServiceWorkerContextWatcher::OnVersionStateChanged(
     int64_t version_id,
+    const GURL& scope,
     content::ServiceWorkerVersion::Status status) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
@@ -298,16 +301,14 @@ void ServiceWorkerContextWatcher::OnMainScriptHttpResponseInfoSet(
 }
 
 void ServiceWorkerContextWatcher::OnErrorReported(int64_t version_id,
-                                                  int process_id,
-                                                  int thread_id,
                                                   const ErrorInfo& info) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   int64_t registration_id = blink::mojom::kInvalidServiceWorkerRegistrationId;
   auto it = version_info_map_.find(version_id);
   if (it != version_info_map_.end())
     registration_id = it->second->registration_id;
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerErrorReportedCallback, this,
           registration_id, version_id, std::make_unique<ErrorInfo>(info)));
@@ -315,19 +316,17 @@ void ServiceWorkerContextWatcher::OnErrorReported(int64_t version_id,
 
 void ServiceWorkerContextWatcher::OnReportConsoleMessage(
     int64_t version_id,
-    int process_id,
-    int thread_id,
     const ConsoleMessage& message) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (message.message_level != CONSOLE_MESSAGE_LEVEL_ERROR)
+  if (message.message_level != blink::mojom::ConsoleMessageLevel::kError)
     return;
   int64_t registration_id = blink::mojom::kInvalidServiceWorkerRegistrationId;
   auto it = version_info_map_.find(version_id);
   if (it != version_info_map_.end())
     registration_id = it->second->registration_id;
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &ServiceWorkerContextWatcher::RunWorkerErrorReportedCallback, this,
           registration_id, version_id,
@@ -337,22 +336,20 @@ void ServiceWorkerContextWatcher::OnReportConsoleMessage(
 
 void ServiceWorkerContextWatcher::OnControlleeAdded(
     int64_t version_id,
+    const GURL& scope,
     const std::string& uuid,
-    int process_id,
-    int route_id,
-    const base::Callback<WebContents*(void)>& web_contents_getter,
-    blink::mojom::ServiceWorkerProviderType type) {
+    const ServiceWorkerClientInfo& info) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
   if (it == version_info_map_.end())
     return;
   ServiceWorkerVersionInfo* version = it->second.get();
-  version->clients[uuid] = ServiceWorkerVersionInfo::ClientInfo(
-      process_id, route_id, web_contents_getter, type);
+  version->clients[uuid] = info;
   SendVersionInfo(*version);
 }
 
 void ServiceWorkerContextWatcher::OnControlleeRemoved(int64_t version_id,
+                                                      const GURL& scope,
                                                       const std::string& uuid) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto it = version_info_map_.find(version_id);
@@ -363,17 +360,18 @@ void ServiceWorkerContextWatcher::OnControlleeRemoved(int64_t version_id,
   SendVersionInfo(*version);
 }
 
-void ServiceWorkerContextWatcher::OnRegistrationStored(int64_t registration_id,
-                                                       const GURL& pattern) {
+void ServiceWorkerContextWatcher::OnRegistrationCompleted(
+    int64_t registration_id,
+    const GURL& scope) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  SendRegistrationInfo(registration_id, pattern,
+  SendRegistrationInfo(registration_id, scope,
                        ServiceWorkerRegistrationInfo::IS_NOT_DELETED);
 }
 
 void ServiceWorkerContextWatcher::OnRegistrationDeleted(int64_t registration_id,
-                                                        const GURL& pattern) {
+                                                        const GURL& scope) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  SendRegistrationInfo(registration_id, pattern,
+  SendRegistrationInfo(registration_id, scope,
                        ServiceWorkerRegistrationInfo::IS_DELETED);
 }
 

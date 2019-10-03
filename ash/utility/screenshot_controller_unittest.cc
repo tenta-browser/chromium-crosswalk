@@ -13,6 +13,7 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/test_screenshot_delegate.h"
 #include "ash/wm/window_util.h"
+#include "base/run_loop.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/cursor/cursor.h"
@@ -85,7 +86,7 @@ TEST_F(PartialScreenshotControllerTest, BasicMouse) {
             GetScreenshotDelegate()->last_rect());
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -137,7 +138,7 @@ TEST_F(PartialScreenshotControllerTest, JustClick) {
   generator.ClickLeftButton();
   EXPECT_EQ(0, test_delegate->handle_take_partial_screenshot_count());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -146,7 +147,7 @@ TEST_F(PartialScreenshotControllerTest, BasicTouch) {
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow());
 
-  generator.set_current_location(gfx::Point(100, 100));
+  generator.set_current_screen_location(gfx::Point(100, 100));
   generator.PressTouch();
   EXPECT_EQ(0, test_delegate->handle_take_partial_screenshot_count());
   EXPECT_EQ(gfx::Point(100, 100), GetStartPosition());
@@ -159,7 +160,7 @@ TEST_F(PartialScreenshotControllerTest, BasicTouch) {
             GetScreenshotDelegate()->last_rect());
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -174,7 +175,7 @@ TEST_F(PartialScreenshotControllerTest,
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow());
 
   generator.EnterPenPointerMode();
-  generator.set_current_location(gfx::Point(100, 100));
+  generator.set_current_screen_location(gfx::Point(100, 100));
   generator.PressTouch();
   EXPECT_EQ(0, test_delegate->handle_take_partial_screenshot_count());
   EXPECT_EQ(gfx::Point(100, 100), GetStartPosition());
@@ -188,7 +189,7 @@ TEST_F(PartialScreenshotControllerTest,
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());
   EXPECT_FALSE(screenshot_controller()->pen_events_only());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -200,7 +201,7 @@ TEST_F(PartialScreenshotControllerTest,
   screenshot_controller()->set_pen_events_only(true);
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow());
-  generator.set_current_location(gfx::Point(100, 100));
+  generator.set_current_screen_location(gfx::Point(100, 100));
 
   // Verify touch is ignored.
   generator.PressTouch();
@@ -217,14 +218,14 @@ TEST_F(PartialScreenshotControllerTest,
   // Verify pointer enter/exit is ignored.
   generator.EnterPenPointerMode();
   generator.SendMouseEnter();
-  generator.set_current_location(gfx::Point(100, 100));
+  generator.set_current_screen_location(gfx::Point(100, 100));
   generator.SendMouseExit();
   generator.ExitPenPointerMode();
   EXPECT_EQ(0, test_delegate->handle_take_partial_screenshot_count());
   EXPECT_EQ(gfx::Point(0, 0), GetStartPosition());
 
   Cancel();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -233,18 +234,18 @@ TEST_F(PartialScreenshotControllerTest, TwoFingerTouch) {
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow());
 
-  generator.set_current_location(gfx::Point(100, 100));
+  generator.set_current_screen_location(gfx::Point(100, 100));
   generator.PressTouch();
   EXPECT_EQ(0, test_delegate->handle_take_partial_screenshot_count());
   EXPECT_EQ(gfx::Point(100, 100), GetStartPosition());
 
-  generator.set_current_location(gfx::Point(200, 200));
+  generator.set_current_screen_location(gfx::Point(200, 200));
   generator.PressTouchId(1);
   EXPECT_EQ(gfx::Rect(100, 100, 100, 100),
             GetScreenshotDelegate()->last_rect());
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
@@ -271,8 +272,8 @@ TEST_F(PartialScreenshotControllerTest, MouseWarpTest) {
 TEST_F(PartialScreenshotControllerTest, CursorVisibilityTest) {
   aura::client::CursorClient* client = Shell::Get()->cursor_manager();
 
-  GetEventGenerator().PressKey(ui::VKEY_A, 0);
-  GetEventGenerator().ReleaseKey(ui::VKEY_A, 0);
+  GetEventGenerator()->PressKey(ui::VKEY_A, 0);
+  GetEventGenerator()->ReleaseKey(ui::VKEY_A, 0);
 
   EXPECT_FALSE(client->IsCursorVisible());
 
@@ -281,7 +282,7 @@ TEST_F(PartialScreenshotControllerTest, CursorVisibilityTest) {
   EXPECT_TRUE(client->IsCursorVisible());
 
   // Platform's Cursor should be hidden while dragging.
-  GetEventGenerator().PressLeftButton();
+  GetEventGenerator()->PressLeftButton();
   EXPECT_TRUE(IsActive());
   EXPECT_FALSE(client->IsCursorVisible());
 
@@ -323,23 +324,23 @@ TEST_F(PartialScreenshotControllerTest, LargeCursor) {
 
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());
   EXPECT_EQ(gfx::Rect(1, 1, 5, 5), GetScreenshotDelegate()->last_rect());
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 
 TEST_F(WindowScreenshotControllerTest, KeyboardOperation) {
-  ui::test::EventGenerator& generator(GetEventGenerator());
+  ui::test::EventGenerator* generator = GetEventGenerator();
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
 
   StartWindowScreenshotSession();
-  generator.PressKey(ui::VKEY_ESCAPE, 0);
-  generator.ReleaseKey(ui::VKEY_ESCAPE, 0);
+  generator->PressKey(ui::VKEY_ESCAPE, 0);
+  generator->ReleaseKey(ui::VKEY_ESCAPE, 0);
   EXPECT_FALSE(IsActive());
   EXPECT_FALSE(test_delegate->GetSelectedWindowAndReset());
 
   StartWindowScreenshotSession();
-  generator.PressKey(ui::VKEY_RETURN, 0);
-  generator.ReleaseKey(ui::VKEY_RETURN, 0);
+  generator->PressKey(ui::VKEY_RETURN, 0);
+  generator->ReleaseKey(ui::VKEY_RETURN, 0);
   EXPECT_FALSE(IsActive());
   EXPECT_FALSE(test_delegate->GetSelectedWindowAndReset());
 
@@ -347,14 +348,14 @@ TEST_F(WindowScreenshotControllerTest, KeyboardOperation) {
       CreateSelectableWindow(gfx::Rect(5, 5, 20, 20)));
   wm::ActivateWindow(window1.get());
   StartWindowScreenshotSession();
-  generator.PressKey(ui::VKEY_ESCAPE, 0);
-  generator.ReleaseKey(ui::VKEY_ESCAPE, 0);
+  generator->PressKey(ui::VKEY_ESCAPE, 0);
+  generator->ReleaseKey(ui::VKEY_ESCAPE, 0);
   EXPECT_FALSE(IsActive());
   EXPECT_FALSE(test_delegate->GetSelectedWindowAndReset());
 
   StartWindowScreenshotSession();
-  generator.PressKey(ui::VKEY_RETURN, 0);
-  generator.ReleaseKey(ui::VKEY_RETURN, 0);
+  generator->PressKey(ui::VKEY_RETURN, 0);
+  generator->ReleaseKey(ui::VKEY_RETURN, 0);
   EXPECT_FALSE(IsActive());
   EXPECT_EQ(window1.get(), test_delegate->GetSelectedWindowAndReset());
   // Make sure it's properly reset.
@@ -362,11 +363,11 @@ TEST_F(WindowScreenshotControllerTest, KeyboardOperation) {
 }
 
 TEST_F(WindowScreenshotControllerTest, MouseOperation) {
-  ui::test::EventGenerator& generator(GetEventGenerator());
+  ui::test::EventGenerator* generator = GetEventGenerator();
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
   StartWindowScreenshotSession();
   EXPECT_TRUE(IsActive());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_FALSE(IsActive());
   EXPECT_FALSE(test_delegate->GetSelectedWindowAndReset());
 
@@ -377,13 +378,13 @@ TEST_F(WindowScreenshotControllerTest, MouseOperation) {
   wm::ActivateWindow(window1.get());
   StartWindowScreenshotSession();
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.MoveMouseTo(150, 150);
+  generator->MoveMouseTo(150, 150);
   EXPECT_EQ(window2.get(), GetCurrentSelectedWindow());
-  generator.MoveMouseTo(400, 0);
+  generator->MoveMouseTo(400, 0);
   EXPECT_FALSE(GetCurrentSelectedWindow());
-  generator.MoveMouseTo(10, 10);
+  generator->MoveMouseTo(10, 10);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_EQ(window1.get(), test_delegate->GetSelectedWindowAndReset());
 
   // Window selection should work even with Capture.
@@ -391,29 +392,29 @@ TEST_F(WindowScreenshotControllerTest, MouseOperation) {
   wm::ActivateWindow(window2.get());
   StartWindowScreenshotSession();
   EXPECT_EQ(window2.get(), GetCurrentSelectedWindow());
-  generator.MoveMouseTo(10, 10);
+  generator->MoveMouseTo(10, 10);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.MoveMouseTo(400, 0);
+  generator->MoveMouseTo(400, 0);
   EXPECT_FALSE(GetCurrentSelectedWindow());
-  generator.MoveMouseTo(10, 10);
+  generator->MoveMouseTo(10, 10);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_EQ(window1.get(), test_delegate->GetSelectedWindowAndReset());
 
   // Remove window.
   StartWindowScreenshotSession();
-  generator.MoveMouseTo(10, 10);
+  generator->MoveMouseTo(10, 10);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
   window1.reset();
   EXPECT_FALSE(GetCurrentSelectedWindow());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_FALSE(test_delegate->GetSelectedWindowAndReset());
 }
 
 TEST_F(WindowScreenshotControllerTest, MultiDisplays) {
   UpdateDisplay("400x400,500x500");
 
-  ui::test::EventGenerator& generator(GetEventGenerator());
+  ui::test::EventGenerator* generator = GetEventGenerator();
   TestScreenshotDelegate* test_delegate = GetScreenshotDelegate();
 
   std::unique_ptr<aura::Window> window1(
@@ -423,19 +424,19 @@ TEST_F(WindowScreenshotControllerTest, MultiDisplays) {
   EXPECT_NE(window1.get()->GetRootWindow(), window2.get()->GetRootWindow());
 
   StartWindowScreenshotSession();
-  generator.MoveMouseTo(150, 150);
+  generator->MoveMouseTo(150, 150);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.MoveMouseTo(650, 250);
+  generator->MoveMouseTo(650, 250);
   EXPECT_EQ(window2.get(), GetCurrentSelectedWindow());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_EQ(window2.get(), test_delegate->GetSelectedWindowAndReset());
 
   window2->SetCapture();
   wm::ActivateWindow(window2.get());
   StartWindowScreenshotSession();
-  generator.MoveMouseTo(150, 150);
+  generator->MoveMouseTo(150, 150);
   EXPECT_EQ(window1.get(), GetCurrentSelectedWindow());
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_EQ(window1.get(), test_delegate->GetSelectedWindowAndReset());
 }
 
@@ -443,25 +444,25 @@ TEST_F(ScreenshotControllerTest, MultipleDisplays) {
   StartPartialScreenshotSession();
   EXPECT_TRUE(IsActive());
   UpdateDisplay("400x400,500x500");
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 
   StartPartialScreenshotSession();
   EXPECT_TRUE(IsActive());
   UpdateDisplay("400x400");
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 
   StartWindowScreenshotSession();
   EXPECT_TRUE(IsActive());
   UpdateDisplay("400x400,500x500");
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 
   StartWindowScreenshotSession();
   EXPECT_TRUE(IsActive());
   UpdateDisplay("400x400");
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsActive());
 }
 

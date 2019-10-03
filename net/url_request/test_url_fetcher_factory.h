@@ -20,9 +20,10 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "net/base/ip_endpoint.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_status_code.h"
-#include "net/proxy/proxy_server.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_fetcher_factory.h"
 #include "net/url_request/url_request_status.h"
@@ -111,6 +112,7 @@ class TestURLFetcher : public URLFetcher {
                            bool is_last_chunk) override;
   void SetLoadFlags(int load_flags) override;
   int GetLoadFlags() const override;
+  void SetAllowCredentials(bool allow_credentials) override {}
   void SetReferrer(const std::string& referrer) override;
   void SetReferrerPolicy(URLRequest::ReferrerPolicy referrer_policy) override;
   void SetExtraRequestHeaders(
@@ -136,9 +138,8 @@ class TestURLFetcher : public URLFetcher {
   void SaveResponseWithWriter(
       std::unique_ptr<URLFetcherResponseWriter> response_writer) override;
   HttpResponseHeaders* GetResponseHeaders() const override;
-  HostPortPair GetSocketAddress() const override;
+  IPEndPoint GetSocketAddress() const override;
   const ProxyServer& ProxyServerUsed() const override;
-  bool WasFetchedViaProxy() const override;
   bool WasCached() const override;
   // Only valid when the response was set via SetResponseString().
   int64_t GetReceivedResponseContentLength() const override;
@@ -233,7 +234,6 @@ class TestURLFetcher : public URLFetcher {
   base::FilePath fake_response_file_path_;
   bool write_response_file_;
   ProxyServer fake_proxy_server_;
-  bool fake_was_fetched_via_proxy_;
   bool fake_was_cached_;
   int64_t fake_response_bytes_;
   scoped_refptr<HttpResponseHeaders> fake_response_headers_;
@@ -326,7 +326,7 @@ class FakeURLFetcher : public TestURLFetcher {
   void RunDelegate();
 
   int64_t response_bytes_;
-  base::WeakPtrFactory<FakeURLFetcher> weak_factory_;
+  base::WeakPtrFactory<FakeURLFetcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeURLFetcher);
 };

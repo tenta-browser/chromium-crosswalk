@@ -27,7 +27,6 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
@@ -37,6 +36,7 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/global_descriptors.h"
 #include "base/process/memory.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
@@ -45,6 +45,8 @@
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "content/public/common/content_descriptors.h"
+#include "content/public/common/content_switches.h"
+#include "services/service_manager/embedder/switches.h"
 #include "third_party/breakpad/breakpad/src/client/linux/crash_generation/crash_generation_client.h"
 #include "third_party/breakpad/breakpad/src/client/linux/handler/exception_handler.h"
 #include "third_party/breakpad/breakpad/src/client/linux/minidump_writer/directory_reader.h"
@@ -56,6 +58,7 @@
 #include <sys/stat.h>
 
 #include "base/android/build_info.h"
+#include "base/android/java_exception_reporter.h"
 #include "base/android/path_utils.h"
 #include "base/debug/leak_annotations.h"
 #endif
@@ -87,7 +90,16 @@ namespace breakpad {
 
 namespace {
 
-#if !defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
+// An optional UNIX timestamp passed to us from session_manager. If set,
+// session_manager thinks we are in a possible crash-loop and will log the user
+// out if we crash again before the indicated time. We don't actually do much
+// with this value, just pass it along to crash_reporter. This should really
+// be a time_t, but it's basically an opaque value (we don't anything with it
+// except pass it along) and we don't have functions to deal with time_t's well,
+// while we do have functions to deal with uint64_t's.
+uint64_t g_crash_loop_before_time = 0;
+#else
 const char kUploadURL[] = "https://clients2.google.com/cr/report";
 #endif
 
@@ -110,6 +122,21 @@ uint32_t g_dumps_suppressed = 0;
 char* g_process_type = nullptr;
 ExceptionHandler* g_microdump = nullptr;
 int g_signal_code_pipe_fd = -1;
+char* g_java_exception_info = nullptr;
+
+void SetJavaExceptionInfo(const char* exception) {
+  if (g_java_exception_info) {
+    // The old exception should be cleared before setting a new one.
+    DCHECK(!exception);
+    free(g_java_exception_info);
+  }
+
+  if (exception) {
+    g_java_exception_info = strndup(exception, 5 * 4096);
+  } else {
+    g_java_exception_info = nullptr;
+  }
+}
 
 class MicrodumpInfo {
  public:
@@ -247,7 +274,7 @@ void SetChannelFromCommandLine(const base::CommandLine& command_line) {
   if (!GetEnableCrashReporterSwitchParts(command_line, &switch_parts))
     return;
 
-  base::debug::SetCrashKeyValue(crash_keys::kChannel, switch_parts[1]);
+  SetChannelCrashKey(switch_parts[1]);
 }
 #endif
 
@@ -557,7 +584,7 @@ void CrashReporterWriter::AddFileContents(const char* filename_msg,
 
 #if defined(OS_ANDROID)
 // Writes the "package" field, which is in the format:
-// $PACKAGE_NAME v$VERSION_CODE ($VERSION_NAME)
+// $FIREBASE_APP_ID v$VERSION_CODE ($VERSION_NAME)
 void WriteAndroidPackage(MimeWriter& writer,
                          base::android::BuildInfo* android_build_info) {
   // The actual size limits on packageId and versionName are quite generous.
@@ -566,7 +593,7 @@ void WriteAndroidPackage(MimeWriter& writer,
   char buf[kMaxSize];
 
   // Not using sprintf to ensure no heap allocations.
-  my_strlcpy(buf, android_build_info->package_name(), kMaxSize);
+  my_strlcpy(buf, android_build_info->firebase_app_id(), kMaxSize);
   my_strlcat(buf, " v", kMaxSize);
   my_strlcat(buf, android_build_info->package_version_code(), kMaxSize);
   my_strlcat(buf, " (", kMaxSize);
@@ -623,7 +650,8 @@ bool FinalizeCrashDoneAndroid(bool is_browser_process) {
   AndroidLogWriteHorizontalRule();
 
   if (!is_browser_process &&
-      android_build_info->sdk_int() >= 18 &&
+      android_build_info->sdk_int() >=
+          base::android::SDK_VERSION_JELLY_BEAN_MR2 &&
       my_strcmp(android_build_info->build_type(), "eng") != 0 &&
       my_strcmp(android_build_info->build_type(), "userdebug") != 0) {
     // On JB MR2 and later, the system crash handler displays a dialog. For
@@ -776,7 +804,7 @@ void EnableCrashDumping(bool unattended) {
   g_is_crash_reporter_enabled = true;
 
   base::FilePath tmp_path("/tmp");
-  PathService::Get(base::DIR_TEMP, &tmp_path);
+  base::PathService::Get(base::DIR_TEMP, &tmp_path);
 
   base::FilePath dumps_path(tmp_path);
   if (GetCrashReporterClient()->GetCrashDumpLocation(&dumps_path)) {
@@ -992,8 +1020,7 @@ class NonBrowserCrashHandler : public google_breakpad::CrashGenerationClient {
  public:
   NonBrowserCrashHandler()
       : server_fd_(base::GlobalDescriptors::GetInstance()->Get(
-            kCrashDumpSignal)) {
-  }
+            service_manager::kCrashDumpSignal)) {}
 
   ~NonBrowserCrashHandler() override {}
 
@@ -1107,34 +1134,44 @@ bool IsInWhiteList(const base::StringPiece& key) {
   return false;
 }
 
-void SetCrashKeyValue(const base::StringPiece& key,
-                      const base::StringPiece& value) {
-  if (!g_use_crash_key_white_list || IsInWhiteList(key)) {
-    crash_reporter::internal::GetCrashKeyStorage()->SetKeyValue(key.data(),
-                                                                value.data());
-  }
-}
-
-void ClearCrashKey(const base::StringPiece& key) {
-  crash_reporter::internal::GetCrashKeyStorage()->RemoveKey(key.data());
-}
-
 // GetCrashReporterClient() cannot call any Set methods until after
 // InitCrashKeys().
 void InitCrashKeys() {
   crash_reporter::InitializeCrashKeys();
-  GetCrashReporterClient()->RegisterCrashKeys();
   g_use_crash_key_white_list =
       GetCrashReporterClient()->UseCrashKeysWhiteList();
   g_crash_key_white_list = GetCrashReporterClient()->GetCrashKeyWhiteList();
-  base::debug::SetCrashKeyReportingFunctions(&SetCrashKeyValue, &ClearCrashKey);
+}
+
+void SetCrashLoopBeforeTime(const std::string& process_type,
+                            const base::CommandLine& parsed_command_line) {
+#if defined(OS_CHROMEOS)
+  if (!ShouldPassCrashLoopBefore(process_type)) {
+    return;
+  }
+
+  std::string crash_loop_before =
+      parsed_command_line.GetSwitchValueASCII(switches::kCrashLoopBefore);
+  if (crash_loop_before.empty()) {
+    return;
+  }
+
+  if (!base::StringToUint64(crash_loop_before, &g_crash_loop_before_time)) {
+    LOG(WARNING) << "Could not convert --crash-loop-before="
+                 << crash_loop_before << " to integer";
+    g_crash_loop_before_time = 0;
+  }
+#endif  // defined(OS_CHROMEOS)
 }
 
 // Miscellaneous initialization functions to call after Breakpad has been
 // enabled.
-void PostEnableBreakpadInitialization() {
+void PostEnableBreakpadInitialization(
+    const std::string& process_type,
+    const base::CommandLine& parsed_command_line) {
   SetProcessStartTime();
   g_pid = getpid();
+  SetCrashLoopBeforeTime(process_type, parsed_command_line);
 
   base::debug::SetDumpWithoutCrashingFunction(&DumpProcess);
 #if defined(ADDRESS_SANITIZER)
@@ -1264,13 +1301,20 @@ void ExecUploadProcessOrTerminate(const BreakpadInfo& info,
   my_strlcat(exe_flag, kExeBuf, buf_len);
   my_strlcat(exe_flag, exe_buf, buf_len);
 
+  char* crash_loop_before_flag = nullptr;
+  if (g_crash_loop_before_time != 0) {
+    crash_loop_before_flag = StringFromPrefixAndUint(
+        "--crash_loop_before=", g_crash_loop_before_time, allocator);
+  }
+
   const char* args[] = {
-    kCrashReporterBinary,
-    chrome_flag,
-    pid_flag,
-    uid_flag,
-    exe_flag,
-    nullptr,
+      kCrashReporterBinary,
+      chrome_flag,
+      pid_flag,
+      uid_flag,
+      exe_flag,
+      crash_loop_before_flag,  // Leave last, might be nullptr.
+      nullptr,
   };
   static const char msg[] = "Cannot upload crash dump: cannot exec "
                             "/sbin/crash_reporter\n";
@@ -1508,7 +1552,7 @@ const char* GetCrashingProcessName(const BreakpadInfo& info,
   // Either way too long, or a read error.
   return "chrome-crash-unknown-process";
 }
-#endif
+#endif  // defined(OS_CHROMEOS)
 
 // Attempts to close all open file descriptors other than stdin, stdout and
 // stderr (0, 1, and 2).
@@ -1539,7 +1583,7 @@ void HandleCrashDump(const BreakpadInfo& info) {
   google_breakpad::PageAllocator allocator;
   const char* exe_buf = nullptr;
 
-  if (GetCrashReporterClient()->HandleCrashDump(info.filename)) {
+  if (GetCrashReporterClient()->HandleCrashDump(info.filename, info.pid)) {
     return;
   }
 
@@ -1721,7 +1765,10 @@ void HandleCrashDump(const BreakpadInfo& info) {
     static const char abi_name[] = "abi_name";
     static const char model[] = "model";
     static const char brand[] = "brand";
+    static const char board[] = "board";
     static const char exception_info[] = "exception_info";
+    static const char custom_themes[] = "custom_themes";
+    static const char resources_version[] = "resources_version";
 
     base::android::BuildInfo* android_build_info =
         base::android::BuildInfo::GetInstance();
@@ -1737,6 +1784,8 @@ void HandleCrashDump(const BreakpadInfo& info) {
     writer.AddBoundary();
     writer.AddPairString(brand, android_build_info->brand());
     writer.AddBoundary();
+    writer.AddPairString(board, android_build_info->board());
+    writer.AddBoundary();
     writer.AddPairString(gms_core_version,
         android_build_info->gms_version_code());
     writer.AddBoundary();
@@ -1745,11 +1794,18 @@ void HandleCrashDump(const BreakpadInfo& info) {
     writer.AddBoundary();
     writer.AddPairString(abi_name, android_build_info->abi_name());
     writer.AddBoundary();
-    WriteAndroidPackage(writer, android_build_info);
+    writer.AddPairString(custom_themes, android_build_info->custom_themes());
     writer.AddBoundary();
-    if (android_build_info->java_exception_info() != nullptr) {
-      writer.AddPairString(exception_info,
-                           android_build_info->java_exception_info());
+    writer.AddPairString(resources_version,
+                         android_build_info->resources_version());
+    writer.AddBoundary();
+    // Don't write the field if no Firebase ID is set.
+    if (android_build_info->firebase_app_id()[0] != '\0') {
+      WriteAndroidPackage(writer, android_build_info);
+      writer.AddBoundary();
+    }
+    if (g_java_exception_info != nullptr) {
+      writer.AddPairString(exception_info, g_java_exception_info);
       writer.AddBoundary();
     }
 #endif
@@ -1943,12 +1999,9 @@ void InitCrashReporter(const std::string& process_type,
 #else
 void InitCrashReporter(const std::string& process_type) {
 #endif  // defined(OS_ANDROID)
-  // The maximum lengths specified by breakpad include the trailing NULL, so the
-  // actual length of the chunk is one less.
-  static_assert(crash_keys::kChunkMaxLength == 63, "kChunkMaxLength mismatch");
-  static_assert(crash_keys::kSmallSize <= crash_keys::kChunkMaxLength,
-                "crash key chunk size too small");
 #if defined(OS_ANDROID)
+  base::android::SetJavaExceptionCallback(SetJavaExceptionInfo);
+
   // This will guarantee that the BuildInfo has been initialized and subsequent
   // calls will not require memory allocation.
   base::android::BuildInfo::GetInstance();
@@ -2014,7 +2067,12 @@ void InitCrashReporter(const std::string& process_type) {
 #endif  // #if defined(OS_ANDROID)
   }
 
-  PostEnableBreakpadInitialization();
+  PostEnableBreakpadInitialization(process_type, parsed_command_line);
+}
+
+void SetChannelCrashKey(const std::string& channel) {
+  static crash_reporter::CrashKeyString<16> channel_key("channel");
+  channel_key.Set(channel);
 }
 
 #if defined(OS_ANDROID)
@@ -2030,6 +2088,8 @@ void InitNonBrowserCrashReporterForAndroid(
     const SanitizationInfo& sanitization_info) {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
+
+  base::android::SetJavaExceptionCallback(SetJavaExceptionInfo);
 
   // Handler registration is LIFO. Install the microdump handler first, such
   // that if conventional minidump crash reporting is enabled below, it takes
@@ -2101,11 +2161,26 @@ void SuppressDumpGeneration() {
 }
 #endif  // OS_ANDROID
 
+#if defined(OS_CHROMEOS)
+bool ShouldPassCrashLoopBefore(const std::string& process_type) {
+  if (process_type == ::switches::kRendererProcess ||
+      process_type == ::switches::kUtilityProcess ||
+      process_type == ::switches::kPpapiPluginProcess ||
+      process_type == service_manager::switches::kZygoteProcess) {
+    // These process types never cause a log-out, even if they crash. So the
+    // normal crash handling process should work fine; we shouldn't need to
+    // invoke the special crash-loop mode.
+    return false;
+  }
+  return true;
+}
+#endif  // defined(OS_CHROMEOS)
+
 bool IsCrashReporterEnabled() {
   return g_is_crash_reporter_enabled;
 }
 
-void SetFirstChanceExceptionHandler(bool (*handler)(int, void*, void*)) {
+void SetFirstChanceExceptionHandler(bool (*handler)(int, siginfo_t*, void*)) {
   google_breakpad::SetFirstChanceExceptionHandler(handler);
 }
 

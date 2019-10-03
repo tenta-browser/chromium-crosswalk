@@ -11,6 +11,9 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 
+import org.chromium.base.ActivityState;
+import org.chromium.base.ApplicationStatus;
+import org.chromium.base.ApplicationStatus.ActivityStateListener;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.infobar.InfoBar;
@@ -24,13 +27,13 @@ import org.chromium.chrome.browser.util.AccessibilityUtil;
  * When action button is clicked, this manager will call {@link SnackbarController#onAction(Object)}
  * in corresponding listener, and show the next entry. Otherwise if no action is taken by user
  * during {@link #DEFAULT_SNACKBAR_DURATION_MS} milliseconds, it will call
- * {@link SnackbarController#onDismissNoAction(Object)}.
+ * {@link SnackbarController#onDismissNoAction(Object)}. Note, snackbars of
+ * {@link Snackbar#TYPE_PERSISTENT} do not get automatically dismissed after a timeout.
  */
-public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBarContainerObserver {
+public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBarContainerObserver,
+                                        ActivityStateListener {
     /**
-     * Interface that shows the ability to provide a snackbar manager. Activities implementing this
-     * interface must call {@link SnackbarManager#onStart()} and {@link SnackbarManager#onStop()} in
-     * corresponding lifecycle events.
+     * Interface that shows the ability to provide a snackbar manager.
      */
     public interface SnackbarManageable {
         /**
@@ -51,14 +54,14 @@ public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBa
         default void onAction(Object actionData) { }
 
         /**
-         * Called when the snackbar is dismissed by tiemout or UI enviroment change.
+         * Called when the snackbar is dismissed by timeout or UI environment change.
          * @param actionData Data object associated with the dismissed snackbar entry.
          */
         default void onDismissNoAction(Object actionData) { }
     }
 
-    private static final int DEFAULT_SNACKBAR_DURATION_MS = 3000;
-    private static final int ACCESSIBILITY_MODE_SNACKBAR_DURATION_MS = 6000;
+    public static final int DEFAULT_SNACKBAR_DURATION_MS = 3000;
+    private static final int ACCESSIBILITY_MODE_SNACKBAR_DURATION_MS = 10000;
 
     // Used instead of the constant so tests can override the value.
     private static int sSnackbarDurationMs = DEFAULT_SNACKBAR_DURATION_MS;
@@ -89,19 +92,35 @@ public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBa
         mActivity = activity;
         mUIThreadHandler = new Handler();
         mSnackbarParentView = snackbarParentView;
+
+        ApplicationStatus.registerStateListenerForActivity(this, mActivity);
+        if (ApplicationStatus.getStateForActivity(mActivity) == ActivityState.STARTED
+                || ApplicationStatus.getStateForActivity(mActivity) == ActivityState.RESUMED) {
+            onStart();
+        }
+    }
+
+    @Override
+    public void onActivityStateChange(Activity activity, @ActivityState int newState) {
+        assert activity == mActivity;
+        if (newState == ActivityState.STARTED) {
+            onStart();
+        } else if (newState == ActivityState.STOPPED) {
+            onStop();
+        }
     }
 
     /**
      * Notifies the snackbar manager that the activity is running in foreground now.
      */
-    public void onStart() {
+    private void onStart() {
         mActivityInForeground = true;
     }
 
     /**
      * Notifies the snackbar manager that the activity has been pushed to background.
      */
-    public void onStop() {
+    private void onStop() {
         mSnackbars.clear();
         updateView();
         mActivityInForeground = false;
@@ -113,7 +132,7 @@ public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBa
      */
     public void showSnackbar(Snackbar snackbar) {
         if (!mActivityInForeground || mIsDisabledForTesting) return;
-        RecordHistogram.recordSparseSlowlyHistogram("Snackbar.Shown", snackbar.getIdentifier());
+        RecordHistogram.recordSparseHistogram("Snackbar.Shown", snackbar.getIdentifier());
 
         mSnackbars.add(snackbar);
         updateView();
@@ -221,9 +240,11 @@ public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBa
             }
 
             if (viewChanged) {
-                int durationMs = getDuration(currentSnackbar);
                 mUIThreadHandler.removeCallbacks(mHideRunnable);
-                mUIThreadHandler.postDelayed(mHideRunnable, durationMs);
+                if (!currentSnackbar.isTypePersistent()) {
+                    int durationMs = getDuration(currentSnackbar);
+                    mUIThreadHandler.postDelayed(mHideRunnable, durationMs);
+                }
                 mView.announceforAccessibility();
             }
         }
@@ -232,15 +253,19 @@ public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBa
 
     private int getDuration(Snackbar snackbar) {
         int durationMs = snackbar.getDuration();
-        if (durationMs == 0) {
-            durationMs = AccessibilityUtil.isAccessibilityEnabled()
-                    ? sAccessibilitySnackbarDurationMs : sSnackbarDurationMs;
+        if (durationMs == 0) durationMs = sSnackbarDurationMs;
+
+        if (AccessibilityUtil.isAccessibilityEnabled()) {
+            durationMs *= 2;
+            if (durationMs < sAccessibilitySnackbarDurationMs)
+                durationMs = sAccessibilitySnackbarDurationMs;
         }
+
         return durationMs;
     }
 
     /**
-     * Disables the snackbar manager. This is only intented for testing purposes.
+     * Disables the snackbar manager. This is only intended for testing purposes.
      */
     @VisibleForTesting
     public void disableForTesting() {

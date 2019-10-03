@@ -13,12 +13,11 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 
 using content::RenderFrameHost;
-using content::RenderWidgetHost;
+using content::RenderProcessHost;
 using content::SiteInstance;
 using content::WebContents;
 
@@ -55,7 +54,7 @@ class WebContentsEntry : public content::WebContentsObserver {
                               RenderFrameHost* new_host) override;
   void RenderFrameCreated(RenderFrameHost*) override;
   void WebContentsDestroyed() override;
-  void OnRendererUnresponsive(RenderWidgetHost* render_widget_host) override;
+  void OnRendererUnresponsive(RenderProcessHost* render_process_host) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   void TitleWasSet(content::NavigationEntry* entry) override;
@@ -71,6 +70,10 @@ class WebContentsEntry : public content::WebContentsObserver {
   // Clears the task that corresponds to the given |render_frame_host| and
   // notifies the provider's observer of the tasks removal.
   void ClearTaskForFrame(RenderFrameHost* render_frame_host);
+
+  // Same as |ClearTaskForFrame|, but for every descendant of
+  // |ancestor|.
+  void ClearTasksForDescendantsOf(RenderFrameHost* ancestor);
 
   // Calls |on_task| for each task managed by this WebContentsEntry.
   void ForEachTask(const base::Callback<void(RendererTask*)>& on_task);
@@ -94,7 +97,7 @@ class WebContentsEntry : public content::WebContentsObserver {
   // States whether we did record a main frame for this entry.
   SiteInstance* main_frame_site_instance_;
 
-  base::WeakPtrFactory<WebContentsEntry> weak_factory_;
+  base::WeakPtrFactory<WebContentsEntry> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsEntry);
 };
@@ -105,8 +108,7 @@ WebContentsEntry::WebContentsEntry(content::WebContents* web_contents,
                                    WebContentsTaskProvider* provider)
     : WebContentsObserver(web_contents),
       provider_(provider),
-      main_frame_site_instance_(nullptr),
-      weak_factory_(this) {}
+      main_frame_site_instance_(nullptr) {}
 
 WebContentsEntry::~WebContentsEntry() {
   ClearAllTasks(false);
@@ -114,8 +116,8 @@ WebContentsEntry::~WebContentsEntry() {
 
 void WebContentsEntry::CreateAllTasks() {
   DCHECK(web_contents()->GetMainFrame());
-  web_contents()->ForEachFrame(base::Bind(&WebContentsEntry::CreateTaskForFrame,
-                                          base::Unretained(this)));
+  web_contents()->ForEachFrame(base::BindRepeating(
+      &WebContentsEntry::CreateTaskForFrame, base::Unretained(this)));
 }
 
 void WebContentsEntry::ClearAllTasks(bool notify_observer) {
@@ -165,7 +167,13 @@ void WebContentsEntry::RenderFrameDeleted(RenderFrameHost* render_frame_host) {
 void WebContentsEntry::RenderFrameHostChanged(RenderFrameHost* old_host,
                                               RenderFrameHost* new_host) {
   DCHECK(new_host->IsCurrent());
+
+  // The navigating frame and its subframes are now pending deletion. Stop
+  // tracking them immediately rather than when they are destroyed. The order of
+  // deletion is important. The children must be removed first.
+  ClearTasksForDescendantsOf(old_host);
   ClearTaskForFrame(old_host);
+
   CreateTaskForFrame(new_host);
 }
 
@@ -196,7 +204,7 @@ void WebContentsEntry::RenderFrameReady(int render_process_id,
 
   const base::ProcessId determine_pid_from_handle = base::kNullProcessId;
   provider_->UpdateTaskProcessInfoAndNotifyObserver(
-      task, render_frame_host->GetProcess()->GetHandle(),
+      task, render_frame_host->GetProcess()->GetProcess().Handle(),
       determine_pid_from_handle);
 }
 
@@ -206,12 +214,11 @@ void WebContentsEntry::WebContentsDestroyed() {
 }
 
 void WebContentsEntry::OnRendererUnresponsive(
-    RenderWidgetHost* render_widget_host) {
-  // Find the first RenderFrameHost matching the RenderWidgetHost.
+    RenderProcessHost* render_process_host) {
+  // Find the first RenderFrameHost matching the RenderProcessHost.
   RendererTask* task = nullptr;
   for (const auto& pair : tasks_by_frames_) {
-    if (pair.first->GetView() == render_widget_host->GetView()) {
-      DCHECK_EQ(pair.first->GetProcess(), render_widget_host->GetProcess());
+    if (pair.first->GetProcess() == render_process_host) {
       task = pair.second;
       break;
     }
@@ -358,6 +365,20 @@ void WebContentsEntry::ClearTaskForFrame(RenderFrameHost* render_frame_host) {
 
   // Whenever we have a task, we should have a main frame site instance.
   DCHECK(tasks_by_frames_.empty() == (main_frame_site_instance_ == nullptr));
+}
+
+void WebContentsEntry::ClearTasksForDescendantsOf(RenderFrameHost* ancestor) {
+  // 1) Collect descendants.
+  std::vector<RenderFrameHost*> descendants;
+  for (auto it : tasks_by_frames_) {
+    RenderFrameHost* frame = it.first;
+    if (frame->IsDescendantOf(ancestor))
+      descendants.push_back(frame);
+  }
+
+  // 2) Delete them.
+  for (RenderFrameHost* rfh : descendants)
+    ClearTaskForFrame(rfh);
 }
 
 void WebContentsEntry::ForEachTask(

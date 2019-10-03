@@ -12,10 +12,10 @@
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/weak_handle.h"
 #include "components/sync/engine/engine_components_factory.h"
+#include "components/sync/engine/fake_model_type_connector.h"
 #include "components/sync/engine/net/http_post_provider_factory.h"
 #include "components/sync/syncable/directory.h"
 
@@ -65,28 +65,26 @@ int FakeSyncManager::GetInvalidationCount() const {
 void FakeSyncManager::WaitForSyncThread() {
   // Post a task to |sync_task_runner_| and block until it runs.
   base::RunLoop run_loop;
-  if (!sync_task_runner_->PostTaskAndReply(
-          FROM_HERE, base::Bind(&base::DoNothing), run_loop.QuitClosure())) {
+  if (!sync_task_runner_->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                           run_loop.QuitClosure())) {
     NOTREACHED();
   }
   run_loop.Run();
 }
 
 void FakeSyncManager::Init(InitArgs* args) {
-  sync_task_runner_ = base::ThreadTaskRunnerHandle::Get();
+  sync_task_runner_ = base::SequencedTaskRunnerHandle::Get();
   PurgePartiallySyncedTypes();
 
   test_user_share_.SetUp();
   UserShare* share = test_user_share_.user_share();
-  for (ModelTypeSet::Iterator it = initial_sync_ended_types_.First(); it.Good();
-       it.Inc()) {
-    TestUserShare::CreateRoot(it.Get(), share);
+  for (ModelType type : initial_sync_ended_types_) {
+    TestUserShare::CreateRoot(type, share);
   }
 
   for (auto& observer : observers_) {
-    observer.OnInitializationComplete(WeakHandle<JsBackend>(),
-                                      WeakHandle<DataTypeDebugInfoListener>(),
-                                      true, initial_sync_ended_types_);
+    observer.OnInitializationComplete(
+        WeakHandle<JsBackend>(), WeakHandle<DataTypeDebugInfoListener>(), true);
   }
 }
 
@@ -103,10 +101,9 @@ ModelTypeSet FakeSyncManager::GetTypesWithEmptyProgressMarkerToken(
 
 void FakeSyncManager::PurgePartiallySyncedTypes() {
   ModelTypeSet partial_types;
-  for (ModelTypeSet::Iterator i = progress_marker_types_.First(); i.Good();
-       i.Inc()) {
-    if (!initial_sync_ended_types_.Has(i.Get()))
-      partial_types.Put(i.Get());
+  for (ModelType type : progress_marker_types_) {
+    if (!initial_sync_ended_types_.Has(type))
+      partial_types.Put(type);
   }
   progress_marker_types_.RemoveAll(partial_types);
   purged_types_.PutAll(partial_types);
@@ -133,6 +130,10 @@ void FakeSyncManager::UpdateCredentials(const SyncCredentials& credentials) {
   NOTIMPLEMENTED();
 }
 
+void FakeSyncManager::InvalidateCredentials() {
+  NOTIMPLEMENTED();
+}
+
 void FakeSyncManager::StartSyncingNormally(base::Time last_poll_time) {
   // Do nothing.
 }
@@ -141,11 +142,10 @@ void FakeSyncManager::StartConfiguration() {
   // Do nothing.
 }
 
-void FakeSyncManager::ConfigureSyncer(
-    ConfigureReason reason,
-    ModelTypeSet to_download,
-    const base::Closure& ready_task,
-    const base::Closure& retry_task) {
+void FakeSyncManager::ConfigureSyncer(ConfigureReason reason,
+                                      ModelTypeSet to_download,
+                                      SyncFeatureState sync_feature_state,
+                                      const base::Closure& ready_task) {
   last_configure_reason_ = reason;
   ModelTypeSet success_types = to_download;
   success_types.RemoveAll(configure_fail_types_);
@@ -155,10 +155,10 @@ void FakeSyncManager::ConfigureSyncer(
 
   // Update our fake directory by clearing and fake-downloading as necessary.
   UserShare* share = GetUserShare();
-  for (ModelTypeSet::Iterator it = success_types.First(); it.Good(); it.Inc()) {
+  for (ModelType type : success_types) {
     // We must be careful to not create the same root node twice.
-    if (!initial_sync_ended_types_.Has(it.Get())) {
-      TestUserShare::CreateRoot(it.Get(), share);
+    if (!initial_sync_ended_types_.Has(type)) {
+      TestUserShare::CreateRoot(type, share);
     }
   }
 
@@ -188,7 +188,7 @@ void FakeSyncManager::SaveChanges() {
   // Do nothing.
 }
 
-void FakeSyncManager::ShutdownOnSyncThread(ShutdownReason reason) {
+void FakeSyncManager::ShutdownOnSyncThread() {
   DCHECK(sync_task_runner_->RunsTasksInCurrentSequence());
   test_user_share_.TearDown();
 }
@@ -206,15 +206,21 @@ FakeSyncManager::GetModelTypeConnectorProxy() {
   return std::make_unique<FakeModelTypeConnector>();
 }
 
-const std::string FakeSyncManager::cache_guid() {
+std::string FakeSyncManager::cache_guid() {
   return test_user_share_.user_share()->directory->cache_guid();
 }
 
-bool FakeSyncManager::ReceivedExperiment(Experiments* experiments) {
-  return false;
+std::string FakeSyncManager::birthday() {
+  NOTIMPLEMENTED();
+  return std::string();
 }
 
-bool FakeSyncManager::HasUnsyncedItems() {
+std::string FakeSyncManager::bag_of_chips() {
+  NOTIMPLEMENTED();
+  return std::string();
+}
+
+bool FakeSyncManager::HasUnsyncedItemsForTest() {
   NOTIMPLEMENTED();
   return false;
 }
@@ -259,14 +265,14 @@ void FakeSyncManager::SetInvalidatorEnabled(bool invalidator_enabled) {
   // Do nothing.
 }
 
-void FakeSyncManager::ClearServerData(const base::Closure& callback) {
-  callback.Run();
-}
-
 void FakeSyncManager::OnCookieJarChanged(bool account_mismatch,
                                          bool empty_jar) {}
 
 void FakeSyncManager::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
+  NOTIMPLEMENTED();
+}
+
+void FakeSyncManager::UpdateInvalidationClientId(const std::string&) {
   NOTIMPLEMENTED();
 }
 

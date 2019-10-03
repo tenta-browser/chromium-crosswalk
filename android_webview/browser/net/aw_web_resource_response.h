@@ -31,7 +31,8 @@ class AwWebResourceResponse {
   AwWebResourceResponse(const base::android::JavaRef<jobject>& obj);
   ~AwWebResourceResponse();
 
-  std::unique_ptr<InputStream> GetInputStream(JNIEnv* env) const;
+  bool HasInputStream(JNIEnv* env) const;
+  std::unique_ptr<InputStream> GetInputStream(JNIEnv* env);
   bool GetMimeType(JNIEnv* env, std::string* mime_type) const;
   bool GetCharset(JNIEnv* env, std::string* charset) const;
   bool GetStatusInfo(JNIEnv* env,
@@ -45,6 +46,8 @@ class AwWebResourceResponse {
   AwWebResourceResponse();
 
   base::android::ScopedJavaGlobalRef<jobject> java_object_;
+
+  bool input_stream_transferred_;
 
   DISALLOW_COPY_AND_ASSIGN(AwWebResourceResponse);
 };

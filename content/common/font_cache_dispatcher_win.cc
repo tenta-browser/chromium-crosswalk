@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/common/font_cache_dispatcher_win.h"
+#include "content/public/common/font_cache_dispatcher_win.h"
 
 #include <map>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
+#include "base/thread_annotations.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/bind_source_info.h"
 
@@ -41,11 +45,7 @@ class FontCache {
 
     base::string16 font_name = font.lfFaceName;
     int ref_count_inc = 1;
-    FontNameVector::iterator it =
-        std::find(dispatcher_font_map_[dispatcher].begin(),
-                  dispatcher_font_map_[dispatcher].end(),
-                  font_name);
-    if (it == dispatcher_font_map_[dispatcher].end()) {
+    if (!base::Contains(dispatcher_font_map_[dispatcher], font_name)) {
       // Requested font is new to cache.
       dispatcher_font_map_[dispatcher].push_back(font_name);
     } else {
@@ -123,14 +123,14 @@ class FontCache {
   FontCache() {
   }
 
-  std::map<base::string16, CacheElement> cache_;
-  DispatcherToFontNames dispatcher_font_map_;
+  std::map<base::string16, CacheElement> cache_ GUARDED_BY(mutex_);
+  DispatcherToFontNames dispatcher_font_map_ GUARDED_BY(mutex_);
   base::Lock mutex_;
 
   DISALLOW_COPY_AND_ASSIGN(FontCache);
 };
 
-}
+}  // namespace
 
 FontCacheDispatcher::FontCacheDispatcher() {}
 
@@ -145,7 +145,8 @@ void FontCacheDispatcher::Create(
                           std::move(request));
 }
 
-void FontCacheDispatcher::PreCacheFont(const LOGFONT& font) {
+void FontCacheDispatcher::PreCacheFont(const LOGFONT& log_font,
+                                       PreCacheFontCallback callback) {
   // If a child process is running in a sandbox, GetTextMetrics()
   // can sometimes fail. If a font has not been loaded
   // previously, GetTextMetrics() will try to load the font
@@ -159,7 +160,10 @@ void FontCacheDispatcher::PreCacheFont(const LOGFONT& font) {
   // need to load that file, hence no permission issues there.  Therefore,
   // when a font is asked to be cached, we always recreates the font object
   // to avoid the case that an in-cache font is swapped out by GDI.
-  FontCache::GetInstance()->PreCacheFont(font, this);
+  FontCache::GetInstance()->PreCacheFont(log_font, this);
+
+  // Run |callback| to indicate this synchronous handler finished.
+  std::move(callback).Run();
 }
 
 void FontCacheDispatcher::ReleaseCachedFonts() {

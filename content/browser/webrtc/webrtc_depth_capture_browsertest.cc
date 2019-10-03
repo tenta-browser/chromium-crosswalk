@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
@@ -17,10 +18,6 @@ namespace {
 
 static const char kGetDepthStreamAndCallCreateImageBitmap[] =
     "getDepthStreamAndCallCreateImageBitmap";
-static const char kGetDepthStreamAndCameraCalibration[] =
-    "getDepthStreamAndCameraCalibration";
-static const char kGetBothStreamsAndCheckForFeaturesPresence[] =
-    "getBothStreamsAndCheckForFeaturesPresence";
 static const char kGetStreamsByVideoKind[] = "getStreamsByVideoKind";
 static const char kGetStreamsByVideoKindNoDepth[] =
     "getStreamsByVideoKindNoDepth";
@@ -34,12 +31,10 @@ void RemoveSwitchFromCommandLine(base::CommandLine* command_line,
 #else
       switch_value;
 #endif
-  argv.erase(std::remove_if(
-                 argv.begin(), argv.end(),
-                 [switch_string](const base::CommandLine::StringType& value) {
-                   return value.find(switch_string) != std::string::npos;
-                 }),
-             argv.end());
+  base::EraseIf(argv,
+                [switch_string](const base::CommandLine::StringType& value) {
+                  return value.find(switch_string) != std::string::npos;
+                });
   command_line->InitFromArgv(argv);
 }
 
@@ -47,7 +42,7 @@ void RemoveSwitchFromCommandLine(base::CommandLine* command_line,
 
 namespace content {
 
-template <int device_count>
+template <int device_count, bool enable_video_kind>
 class WebRtcDepthCaptureBrowserTest : public WebRtcContentBrowserTestBase {
  public:
   WebRtcDepthCaptureBrowserTest() {
@@ -67,15 +62,26 @@ class WebRtcDepthCaptureBrowserTest : public WebRtcContentBrowserTestBase {
     command_line->AppendSwitchASCII(
         fake_device_switch,
         base::StringPrintf("device-count=%d", device_count));
+    if (enable_video_kind) {
+      command_line->AppendSwitchASCII("--enable-blink-features",
+                                      "MediaCaptureDepthVideoKind");
+    }
     WebRtcContentBrowserTestBase::SetUpCommandLine(command_line);
   }
 };
 
+// Command lines must be configured in SetUpCommandLine, before the test is
+// multi-threaded, so any variations must be embedded in the test fixture.
+
 // Test using two video capture devices - a color and a 16-bit depth device.
-using WebRtcTwoDeviceDepthCaptureBrowserTest = WebRtcDepthCaptureBrowserTest<2>;
+using WebRtcTwoDeviceDepthCaptureBrowserTest =
+    WebRtcDepthCaptureBrowserTest<2, false>;
+using WebRtcTwoDeviceDepthCaptureVideoKindBrowserTest =
+    WebRtcDepthCaptureBrowserTest<2, true>;
 
 // Test using only a color device.
-using WebRtcOneDeviceDepthCaptureBrowserTest = WebRtcDepthCaptureBrowserTest<1>;
+using WebRtcOneDeviceDepthCaptureVideoKindBrowserTest =
+    WebRtcDepthCaptureBrowserTest<1, true>;
 
 IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
                        GetDepthStreamAndCallCreateImageBitmap) {
@@ -89,53 +95,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
       "%s({video: true});", kGetDepthStreamAndCallCreateImageBitmap));
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
-                       GetDepthStreamAndCameraCalibration) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaCaptureDepth");
-
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(
-      embedded_test_server()->GetURL("/media/getusermedia-depth-capture.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kGetDepthStreamAndCameraCalibration));
-}
-
-#if defined(OS_ANDROID)
-// Flaky on android: https://crbug.com/734558
-#define MAYBE_GetBothStreamsAndCheckForFeaturesPresence \
-  DISABLED_GetBothStreamsAndCheckForFeaturesPresence
-#else
-#define MAYBE_GetBothStreamsAndCheckForFeaturesPresence \
-  GetBothStreamsAndCheckForFeaturesPresence
-#endif
-
-IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
-                       MAYBE_GetBothStreamsAndCheckForFeaturesPresence) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaCaptureDepth");
-
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(
-      embedded_test_server()->GetURL("/media/getusermedia-depth-capture.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kGetBothStreamsAndCheckForFeaturesPresence));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
+IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureVideoKindBrowserTest,
                        GetStreamsByVideoKind) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaCaptureDepthVideoKind");
-
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(
@@ -146,12 +107,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
       base::StringPrintf("%s({video: true});", kGetStreamsByVideoKind));
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcOneDeviceDepthCaptureBrowserTest,
+IN_PROC_BROWSER_TEST_F(WebRtcOneDeviceDepthCaptureVideoKindBrowserTest,
                        GetStreamsByVideoKindNoDepth) {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaCaptureDepthVideoKind");
-
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(

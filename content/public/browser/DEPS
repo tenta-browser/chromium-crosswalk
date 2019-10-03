@@ -1,16 +1,23 @@
 include_rules = [
-  "+content/common/input/input_handler.mojom.h",
+  # components/download are needed for providing the download feature.
+  # TODO(qinmin): move it to services/download when download becomes a service.
+  "+components/download/public/common",
   "+components/viz/common",
-  "+device/geolocation/public/cpp",
-  "+device/screen_orientation/public/interfaces",
-  "+services/device/public/interfaces",
+  "+components/viz/host",
+  "+device/fido",
+  "+services/device/public",
+  "+services/media_session/public",
+  "+services/metrics/public/cpp",
+  "+services/network/public/cpp",
   "+services/service_manager/sandbox",
-  "+services/resource_coordinator/public",
+  "+services/video_capture/public/mojom",
+  "+services/viz/public/interfaces",
 ]
 
 specific_include_rules = {
   ".*\.cc": [
     "+content/browser",
+    "+content/common/content_constants_internal.h",
     "-content/browser/loader",
 
     # TODO: content/browser/loader is being separated out of content, and this
@@ -22,5 +29,9 @@ specific_include_rules = {
     # desktop_capture.h creates a DesktopCaptureOptions to share between
     # content/browser and chrome/browser.
     "+third_party/webrtc/modules/desktop_capture/desktop_capture_options.h",
+  ],
+
+  ".*unittest\.cc": [
+    "+services/network/network_service.h",
   ],
 }

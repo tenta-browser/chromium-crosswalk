@@ -8,37 +8,39 @@
 
 cr.define('sidebar', function() {
   /** @typedef {{pageName: string, text: string}} */
-  var SidebarItem;
+  let SidebarItem;
 
-  /** @const {!cr.ui.pageManager.PageManager}*/
-  var PageManager = cr.ui.pageManager.PageManager;
+  /** @const {!Object}*/
+  const PageManager = cr.ui.pageManager.PageManager;
 
   /**
    * A side menu that lists the currently navigable pages.
    * @constructor
    * @param {!Element} sidebarDiv The div corresponding to the sidebar.
-   * @extends {PageManager.Observer}
+   * @extends {cr.ui.pageManager.PageManager.Observer}
    */
   function Sidebar(sidebarDiv) {
     /** @private {!Element} */
     this.sidebarDiv_ = sidebarDiv;
     /** @private {!Element} */
-    this.sidebarContent_ = this.sidebarDiv_.querySelector('.sidebar-content');
+    this.sidebarContent_ =
+        assert(this.sidebarDiv_.querySelector('.sidebar-content'));
     /** @private {!Element} */
-    this.sidebarList_ = this.sidebarContent_.querySelector('ul');
+    this.sidebarList_ = assert(this.sidebarContent_.querySelector('ul'));
 
     this.sidebarList_.querySelectorAll('li button').forEach(function(item) {
       item.addEventListener('click', this.onItemClick_.bind(this));
     }, this);
 
     /** @private {!Element} */
-    this.overlayDiv_ = this.sidebarDiv_.querySelector('.overlay');
+    this.overlayDiv_ = assert(this.sidebarDiv_.querySelector('.overlay'));
     this.overlayDiv_.addEventListener('click', this.close.bind(this));
 
     window.matchMedia('screen and (max-width: 600px)')
         .addListener(function(query) {
-          if (!query.matches)
+          if (!query.matches) {
             this.close();
+          }
         }.bind(this));
   }
 
@@ -50,10 +52,10 @@ cr.define('sidebar', function() {
      * @param {!SidebarItem} item
      */
     addItem: function(item) {
-      var sidebarItem = document.createElement('li');
+      const sidebarItem = document.createElement('li');
       sidebarItem.dataset.pageName = item.pageName.toLowerCase();
 
-      var button = document.createElement('button');
+      const button = document.createElement('button');
       button.classList.add('custom-appearance');
       button.textContent = item.text;
       button.addEventListener('click', this.onItemClick_.bind(this));
@@ -86,7 +88,7 @@ cr.define('sidebar', function() {
      */
     removeItem: function(pageName) {
       pageName = pageName.toLowerCase();
-      var query = 'li[data-page-name="' + pageName + '"]';
+      const query = 'li[data-page-name="' + pageName + '"]';
       this.sidebarList_.removeChild(this.sidebarList_.querySelector(query));
     },
 

@@ -14,7 +14,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -22,10 +21,10 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.browser.WebappTestPage;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ScreenOrientationValues;
 import org.chromium.net.test.EmbeddedTestServerRule;
 import org.chromium.webapk.lib.client.WebApkVersion;
@@ -38,7 +37,6 @@ import java.util.Map;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
         ChromeSwitches.CHECK_FOR_WEB_MANIFEST_UPDATE_ON_STARTUP})
 public class WebApkUpdateManagerTest {
     @Rule
@@ -72,7 +70,7 @@ public class WebApkUpdateManagerTest {
      */
     private static class TestWebApkUpdateManager extends WebApkUpdateManager {
         private CallbackHelper mWaiter;
-        private boolean mNeedsUpdate = false;
+        private boolean mNeedsUpdate;
 
         public TestWebApkUpdateManager(CallbackHelper waiter, WebappDataStorage storage) {
             super(storage);
@@ -152,17 +150,19 @@ public class WebApkUpdateManagerTest {
         WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(WEBAPK_ID);
         final TestWebApkUpdateManager updateManager = new TestWebApkUpdateManager(waiter, storage);
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                WebApkInfo info = WebApkInfo.create(WEBAPK_ID, "", creationData.scope, null, null,
-                        creationData.name, creationData.shortName, creationData.displayMode,
-                        creationData.orientation, 0, creationData.themeColor,
-                        creationData.backgroundColor, "", WebApkVersion.CURRENT_SHELL_APK_VERSION,
-                        creationData.manifestUrl, creationData.startUrl,
-                        creationData.iconUrlToMurmur2HashMap, false /* forceNavigation */);
-                updateManager.updateIfNeeded(mTab, info);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            WebApkInfo info = WebApkInfo.create(
+                    WEBAPK_ID, "", creationData.scope, null, null, null, creationData.name,
+                    creationData.shortName, creationData.displayMode, creationData.orientation, 0,
+                    creationData.themeColor, creationData.backgroundColor, 0, false, "",
+                    WebApkVersion.REQUEST_UPDATE_FOR_SHELL_APK_VERSION, creationData.manifestUrl,
+                    creationData.startUrl, WebApkInfo.WebApkDistributor.BROWSER,
+                    creationData.iconUrlToMurmur2HashMap, null, null /*shareTargetActivityName*/,
+                    false /* forceNavigation */, false /* isSplashProvidedByWebApk */,
+                    null /* shareData */
+
+            );
+            updateManager.updateIfNeeded(mTab, info);
         });
         waiter.waitForCallback(0);
 
@@ -184,7 +184,7 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl = mTestServerRule.getServer().getURL(
                 "/chrome/test/data/banners/manifest_%74est_page.html");
 
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEBAPK_MANIFEST_URL);
         Assert.assertFalse(checkUpdateNeeded(creationData));
     }
@@ -201,8 +201,21 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl = mTestServerRule.getServer().getURL(
                 "/chrome/test/data/banners/manifest_%62est_page.html");
 
-        WebappTestPage.navigateToPageWithServiceWorkerAndManifest(
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
                 mTestServerRule.getServer(), mTab, WEBAPK_MANIFEST_URL);
         Assert.assertTrue(checkUpdateNeeded(creationData));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"WebApk"})
+    public void testNoUpdateForPagesWithoutWST() throws Exception {
+        CreationData creationData = defaultCreationData();
+        creationData.startUrl = mTestServerRule.getServer().getURL(
+                "/chrome/test/data/banners/manifest_test_page.html");
+
+        WebappTestPage.navigateToServiceWorkerPageWithManifest(
+                mTestServerRule.getServer(), mTab, WEBAPK_MANIFEST_URL);
+        Assert.assertFalse(checkUpdateNeeded(creationData));
     }
 }

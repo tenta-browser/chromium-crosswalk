@@ -15,18 +15,19 @@ class InvertBubbleViewBrowserTest : public DialogBrowserTest {
   InvertBubbleViewBrowserTest() {}
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override {
-    chrome::ShowInvertBubbleView(browser(), &anchor_);
+  void ShowUi(const std::string& name) override {
+    // Bubble dialogs' bounds may exceed the display's work area.
+    // https://crbug.com/893292.
+    set_should_verify_dialog_bounds(false);
+    ShowInvertBubbleView(browser(), nullptr);
   }
 
  private:
-  views::View anchor_;
-
   DISALLOW_COPY_AND_ASSIGN(InvertBubbleViewBrowserTest);
 };
 
 // Invokes a bubble that asks the user if they want to install a high contrast
-// Chrome theme. See test_browser_dialog.h.
-IN_PROC_BROWSER_TEST_F(InvertBubbleViewBrowserTest, InvokeDialog_default) {
-  RunDialog();
+// Chrome theme.
+IN_PROC_BROWSER_TEST_F(InvertBubbleViewBrowserTest, InvokeUi_default) {
+  ShowAndVerifyUi();
 }

@@ -6,11 +6,13 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -19,15 +21,40 @@ namespace {
 
 const char kShortcutNameKey[] = "shortcut_name";
 const char kActiveTimeKey[] = "active_time";
-const char kUserNameKey[] = "user_name";
-const char kAvatarIconKey[] = "avatar_icon";
 const char kAuthCredentialsKey[] = "local_auth_credentials";
 const char kPasswordTokenKey[] = "gaia_password_token";
-const char kBackgroundAppsKey[] = "background_apps";
-const char kProfileIsEphemeral[] = "is_ephemeral";
 const char kIsAuthErrorKey[] = "is_auth_error";
+const char kMetricsBucketIndex[] = "metrics_bucket_index";
+
+// Local state pref to keep track of the next available profile bucket.
+const char kNextMetricsBucketIndex[] = "profile.metrics.next_bucket_index";
+
+// Returns the next available metrics bucket index and increases the index
+// counter. I.e. two consecutive calls will return two consecutive numbers.
+int NextAvailableMetricsBucketIndex() {
+  PrefService* local_prefs = g_browser_process->local_state();
+  int next_index = local_prefs->GetInteger(kNextMetricsBucketIndex);
+  DCHECK_GT(next_index, 0);
+
+  local_prefs->SetInteger(kNextMetricsBucketIndex, next_index + 1);
+
+  return next_index;
+}
 
 }  // namespace
+
+const char ProfileAttributesEntry::kAvatarIconKey[] = "avatar_icon";
+const char ProfileAttributesEntry::kBackgroundAppsKey[] = "background_apps";
+const char ProfileAttributesEntry::kProfileIsEphemeral[] = "is_ephemeral";
+const char ProfileAttributesEntry::kUserNameKey[] = "user_name";
+
+// static
+void ProfileAttributesEntry::RegisterLocalStatePrefs(
+    PrefRegistrySimple* registry) {
+  // Bucket 0 is reserved for the guest profile, so start new bucket indices
+  // at 1.
+  registry->RegisterIntegerPref(kNextMetricsBucketIndex, 1);
+}
 
 ProfileAttributesEntry::ProfileAttributesEntry()
     : profile_info_cache_(nullptr),
@@ -53,8 +80,19 @@ void ProfileAttributesEntry::Initialize(ProfileInfoCache* cache,
   storage_key_ = profile_path_.BaseName().MaybeAsASCII();
 
   is_force_signin_enabled_ = signin_util::IsForceSigninEnabled();
-  if (!IsAuthenticated() && is_force_signin_enabled_)
-    is_force_signin_profile_locked_ = true;
+  if (is_force_signin_enabled_) {
+    if (!IsAuthenticated())
+      is_force_signin_profile_locked_ = true;
+#if defined(OS_MACOSX) || defined(OS_LINUX) || defined(OS_WIN)
+  } else if (IsSigninRequired()) {
+    // Profiles that require signin in the absence of an enterprise policy are
+    // left-overs from legacy supervised users. Just unlock them, so users can
+    // keep using them.
+    SetLocalAuthCredentials(std::string());
+    SetAuthInfo(std::string(), base::string16());
+    SetIsSigninRequired(false);
+#endif
+  }
 }
 
 base::string16 ProfileAttributesEntry::GetName() const {
@@ -200,6 +238,15 @@ size_t ProfileAttributesEntry::GetAvatarIconIndex() const {
   return icon_index;
 }
 
+size_t ProfileAttributesEntry::GetMetricsBucketIndex() {
+  int bucket_index = GetInteger(kMetricsBucketIndex);
+  if (bucket_index == -1) {
+    bucket_index = NextAvailableMetricsBucketIndex();
+    SetInteger(kMetricsBucketIndex, bucket_index);
+  }
+  return bucket_index;
+}
+
 void ProfileAttributesEntry::SetName(const base::string16& name) {
   profile_info_cache_->SetNameOfProfileAtIndex(profile_index(), name);
 }
@@ -245,7 +292,7 @@ void ProfileAttributesEntry::SetGAIAGivenName(const base::string16& name) {
   profile_info_cache_->SetGAIAGivenNameOfProfileAtIndex(profile_index(), name);
 }
 
-void ProfileAttributesEntry::SetGAIAPicture(const gfx::Image* image) {
+void ProfileAttributesEntry::SetGAIAPicture(gfx::Image image) {
   profile_info_cache_->SetGAIAPictureOfProfileAtIndex(profile_index(), image);
 }
 
@@ -292,13 +339,24 @@ void ProfileAttributesEntry::SetAvatarIconIndex(size_t icon_index) {
     // switch to generic avatar
     icon_index = 0;
   }
-  SetString(kAvatarIconKey, profiles::GetDefaultAvatarIconUrl(icon_index));
+  std::string default_avatar_icon_url =
+      profiles::GetDefaultAvatarIconUrl(icon_index);
+  if (default_avatar_icon_url == GetString(kAvatarIconKey)) {
+    // On Windows, Taskbar and Desktop icons are refreshed every time
+    // |OnProfileAvatarChanged| notification is fired.
+    // As the current avatar icon is already set to |default_avatar_icon_url|,
+    // it is important to avoid firing |OnProfileAvatarChanged| in this case.
+    // See http://crbug.com/900374
+    return;
+  }
+
+  SetString(kAvatarIconKey, default_avatar_icon_url);
 
   base::FilePath profile_path = GetPath();
-
-  if (!profile_info_cache_->GetDisableAvatarDownloadForTesting())
+  if (!profile_info_cache_->GetDisableAvatarDownloadForTesting()) {
     profile_info_cache_->DownloadHighResAvatarIfNeeded(icon_index,
                                                        profile_path);
+  }
 
   profile_info_cache_->NotifyOnProfileAvatarChanged(profile_path);
 }
@@ -378,6 +436,13 @@ bool ProfileAttributesEntry::GetBool(const char* key) const {
   return value && value->is_bool() && value->GetBool();
 }
 
+int ProfileAttributesEntry::GetInteger(const char* key) const {
+  const base::Value* value = GetValue(key);
+  if (!value || !value->is_int())
+    return -1;
+  return value->GetInt();
+}
+
 // Type checking. Only IsDouble is implemented because others do not have
 // callsites.
 bool ProfileAttributesEntry::IsDouble(const char* key) const {
@@ -438,6 +503,21 @@ bool ProfileAttributesEntry::SetBool(const char* key, bool value) {
   if (old_data) {
     const base::Value* old_value = old_data->FindKey(key);
     if (old_value && old_value->is_bool() && old_value->GetBool() == value)
+      return false;
+  }
+
+  base::Value new_data = old_data ? GetEntryData()->Clone()
+                                  : base::Value(base::Value::Type::DICTIONARY);
+  new_data.SetKey(key, base::Value(value));
+  SetEntryData(std::move(new_data));
+  return true;
+}
+
+bool ProfileAttributesEntry::SetInteger(const char* key, int value) {
+  const base::Value* old_data = GetEntryData();
+  if (old_data) {
+    const base::Value* old_value = old_data->FindKey(key);
+    if (old_value && old_value->is_int() && old_value->GetInt() == value)
       return false;
   }
 

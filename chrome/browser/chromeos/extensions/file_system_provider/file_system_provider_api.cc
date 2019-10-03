@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
@@ -186,25 +187,27 @@ ExtensionFunction::ResponseAction FileSystemProviderGetAllFunction::Run() {
       Service::Get(Profile::FromBrowserContext(browser_context()));
   DCHECK(service);
 
+  ProviderId provider_id = ProviderId::CreateFromExtensionId(extension_id());
   const std::vector<ProvidedFileSystemInfo> file_systems =
-      service->GetProvidedFileSystemInfoList();
+      service->GetProvidedFileSystemInfoList(provider_id);
+
   std::vector<FileSystemInfo> items;
 
-  ProviderId provider_id = ProviderId::CreateFromExtensionId(extension_id());
   for (const auto& file_system_info : file_systems) {
-    if (file_system_info.provider_id() == provider_id) {
-      FileSystemInfo item;
+    FileSystemInfo item;
 
-      chromeos::file_system_provider::ProvidedFileSystemInterface* const
-          file_system =
-              service->GetProvidedFileSystem(file_system_info.provider_id(),
-                                             file_system_info.file_system_id());
-      DCHECK(file_system);
+    chromeos::file_system_provider::ProvidedFileSystemInterface* const
+        file_system = service->GetProvidedFileSystem(
+            file_system_info.provider_id(), file_system_info.file_system_id());
 
-      FillFileSystemInfo(file_system_info, *file_system->GetWatchers(),
-                         file_system->GetOpenedFiles(), &item);
-      items.push_back(std::move(item));
-    }
+    DCHECK(file_system);
+
+    FillFileSystemInfo(
+        file_system_info,
+        file_system_info.watchable() ? *file_system->GetWatchers() : Watchers(),
+        file_system->GetOpenedFiles(), &item);
+
+    items.push_back(std::move(item));
   }
 
   return RespondNow(
@@ -233,8 +236,10 @@ ExtensionFunction::ResponseAction FileSystemProviderGetFunction::Run() {
 
   FileSystemInfo file_system_info;
   FillFileSystemInfo(file_system->GetFileSystemInfo(),
-                     *file_system->GetWatchers(), file_system->GetOpenedFiles(),
-                     &file_system_info);
+                     file_system->GetFileSystemInfo().watchable()
+                         ? *file_system->GetWatchers()
+                         : Watchers(),
+                     file_system->GetOpenedFiles(), &file_system_info);
   return RespondNow(ArgumentList(
       api::file_system_provider::Get::Results::Create(file_system_info)));
 }

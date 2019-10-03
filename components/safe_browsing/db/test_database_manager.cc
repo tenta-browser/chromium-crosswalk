@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace safe_browsing {
 
@@ -23,13 +23,9 @@ bool TestSafeBrowsingDatabaseManager::CanCheckResourceType(
   return false;
 }
 
-bool TestSafeBrowsingDatabaseManager::CanCheckSubresourceFilter() const {
-  return false;
-}
-
 bool TestSafeBrowsingDatabaseManager::CanCheckUrl(const GURL& url) const {
   NOTIMPLEMENTED();
-  return false;
+  return (url != GURL("about:blank"));
 }
 
 bool TestSafeBrowsingDatabaseManager::ChecksAreAlwaysAsync() const {
@@ -63,6 +59,13 @@ bool TestSafeBrowsingDatabaseManager::CheckResourceUrl(const GURL& url,
                                                        Client* client) {
   NOTIMPLEMENTED();
   return true;
+}
+
+AsyncMatch TestSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
+    const GURL& url,
+    Client* client) {
+  NOTIMPLEMENTED();
+  return AsyncMatch::NO_MATCH;
 }
 
 bool TestSafeBrowsingDatabaseManager::CheckUrlForSubresourceFilter(
@@ -114,9 +117,9 @@ bool TestSafeBrowsingDatabaseManager::IsSupported() const {
 }
 
 void TestSafeBrowsingDatabaseManager::StartOnIOThread(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const V4ProtocolConfig& config) {
-  SafeBrowsingDatabaseManager::StartOnIOThread(request_context_getter, config);
+  SafeBrowsingDatabaseManager::StartOnIOThread(url_loader_factory, config);
   enabled_ = true;
 }
 

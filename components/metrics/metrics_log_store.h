@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "components/metrics/log_store.h"
 #include "components/metrics/metrics_log.h"
-#include "components/metrics/persisted_logs.h"
+#include "components/metrics/unsent_log_store.h"
 
 class PrefService;
 class PrefRegistrySimple;
@@ -19,14 +19,17 @@ namespace metrics {
 
 // A LogStore implementation for storing UMA logs.
 // This implementation keeps track of two types of logs, initial and ongoing,
-// each stored in PersistedLogs.  It prioritizes staging initial logs over
+// each stored in UnsentLogStore. It prioritizes staging initial logs over
 // ongoing logs.
 class MetricsLogStore : public LogStore {
  public:
   // Constructs a MetricsLogStore that persists data into |local_state|.
   // If max_log_size is non-zero, it will not persist ongoing logs larger than
-  // |max_ongoing_log_size| bytes.
-  MetricsLogStore(PrefService* local_state, size_t max_ongoing_log_size);
+  // |max_ongoing_log_size| bytes. |signing_key| is used to generate a signature
+  // of a log, which will be uploaded to validate data integrity.
+  MetricsLogStore(PrefService* local_state,
+                  size_t max_ongoing_log_size,
+                  const std::string& signing_key);
   ~MetricsLogStore();
 
   // Registers local state prefs used by this class.
@@ -40,6 +43,7 @@ class MetricsLogStore : public LogStore {
   bool has_staged_log() const override;
   const std::string& staged_log() const override;
   const std::string& staged_log_hash() const override;
+  const std::string& staged_log_signature() const override;
   void StageNextLog() override;
   void DiscardStagedLog() override;
   void PersistUnsentLogs() const override;
@@ -55,9 +59,9 @@ class MetricsLogStore : public LogStore {
 
   // Logs stored with the INITIAL_STABILITY_LOG type that haven't been sent yet.
   // These logs will be staged first when staging new logs.
-  PersistedLogs initial_log_queue_;
+  UnsentLogStore initial_log_queue_;
   // Logs stored with the ONGOING_LOG type that haven't been sent yet.
-  PersistedLogs ongoing_log_queue_;
+  UnsentLogStore ongoing_log_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(MetricsLogStore);
 };

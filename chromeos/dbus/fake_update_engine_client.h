@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "base/containers/queue.h"
 #include "chromeos/dbus/update_engine_client.h"
 
@@ -16,7 +17,8 @@ namespace chromeos {
 // use set_update_engine_client_status() to set a fake last Status and
 // GetLastStatus() returns the fake with no modification. Other methods do
 // nothing.
-class FakeUpdateEngineClient : public UpdateEngineClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeUpdateEngineClient
+    : public UpdateEngineClient {
  public:
   FakeUpdateEngineClient();
   ~FakeUpdateEngineClient() override;
@@ -35,7 +37,7 @@ class FakeUpdateEngineClient : public UpdateEngineClient {
                   bool is_powerwash_allowed) override;
   void GetChannel(bool get_current_channel,
                   const GetChannelCallback& callback) override;
-  void GetEolStatus(const GetEolStatusCallback& callback) override;
+  void GetEolStatus(GetEolStatusCallback callback) override;
   void SetUpdateOverCellularPermission(bool allowed,
                                        const base::Closure& callback) override;
   void SetUpdateOverCellularOneTimePermission(
@@ -85,7 +87,7 @@ class FakeUpdateEngineClient : public UpdateEngineClient {
   int can_rollback_call_count() const { return can_rollback_call_count_; }
 
  private:
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
   base::queue<UpdateEngineClient::Status> status_queue_;
   UpdateEngineClient::Status default_status_;
   UpdateEngineClient::UpdateCheckResult update_check_result_;

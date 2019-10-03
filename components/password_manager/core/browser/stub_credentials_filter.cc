@@ -10,22 +10,27 @@ StubCredentialsFilter::StubCredentialsFilter() = default;
 
 StubCredentialsFilter::~StubCredentialsFilter() = default;
 
-std::vector<std::unique_ptr<autofill::PasswordForm>>
-StubCredentialsFilter::FilterResults(
-    std::vector<std::unique_ptr<autofill::PasswordForm>> results) const {
-  FilterResultsPtr(&results);
-  return results;
-}
-
 bool StubCredentialsFilter::ShouldSave(
     const autofill::PasswordForm& form) const {
   return true;
 }
 
-void StubCredentialsFilter::ReportFormLoginSuccess(
-    const PasswordFormManager& form_manager) const {}
+bool StubCredentialsFilter::ShouldSaveGaiaPasswordHash(
+    const autofill::PasswordForm& form) const {
+  return false;
+}
 
-void StubCredentialsFilter::FilterResultsPtr(
-    std::vector<std::unique_ptr<autofill::PasswordForm>>* results) const {}
+bool StubCredentialsFilter::ShouldSaveEnterprisePasswordHash(
+    const autofill::PasswordForm& form) const {
+  return false;
+}
+
+void StubCredentialsFilter::ReportFormLoginSuccess(
+    const PasswordFormManagerInterface& form_manager) const {}
+
+bool StubCredentialsFilter::IsSyncAccountEmail(
+    const std::string& username) const {
+  return false;
+}
 
 }  // namespace password_manager

@@ -6,17 +6,19 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pepper_permission_util.h"
 #include "content/public/browser/browser_ppapi_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/render_view_host.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/host_message_context.h"
@@ -67,7 +69,7 @@ PepperIsolatedFileSystemMessageFilter::PepperIsolatedFileSystemMessageFilter(
       profile_directory_(profile_directory),
       document_url_(document_url),
       ppapi_host_(ppapi_host) {
-  for (size_t i = 0; i < arraysize(kPredefinedAllowedCrxFsOrigins); ++i)
+  for (size_t i = 0; i < base::size(kPredefinedAllowedCrxFsOrigins); ++i)
     allowed_crxfs_origins_.insert(kPredefinedAllowedCrxFsOrigins[i]);
 }
 
@@ -79,8 +81,8 @@ PepperIsolatedFileSystemMessageFilter::OverrideTaskRunnerForMessage(
     const IPC::Message& msg) {
   // In order to reach ExtensionSystem, we need to get ProfileManager first.
   // ProfileManager lives in UI thread, so we need to do this in UI thread.
-  return content::BrowserThread::GetTaskRunnerForThread(
-      content::BrowserThread::UI);
+  return base::CreateSingleThreadTaskRunnerWithTraits(
+      {content::BrowserThread::UI});
 }
 
 int32_t PepperIsolatedFileSystemMessageFilter::OnResourceMessageReceived(
@@ -100,14 +102,14 @@ Profile* PepperIsolatedFileSystemMessageFilter::GetProfile() {
   return profile_manager->GetProfile(profile_directory_);
 }
 
-std::string PepperIsolatedFileSystemMessageFilter::CreateCrxFileSystem(
-    Profile* profile) {
+storage::IsolatedContext::ScopedFSHandle
+PepperIsolatedFileSystemMessageFilter::CreateCrxFileSystem(Profile* profile) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   const extensions::Extension* extension =
       extensions::ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(
           document_url_.host());
   if (!extension)
-    return std::string();
+    return storage::IsolatedContext::ScopedFSHandle();
 
   // First level directory for isolated filesystem to lookup.
   std::string kFirstLevelDirectory("crxfs");
@@ -117,7 +119,7 @@ std::string PepperIsolatedFileSystemMessageFilter::CreateCrxFileSystem(
       extension->path(),
       &kFirstLevelDirectory);
 #else
-  return std::string();
+  return storage::IsolatedContext::ScopedFSHandle();
 #endif
 }
 
@@ -158,8 +160,9 @@ int32_t PepperIsolatedFileSystemMessageFilter::OpenCrxFileSystem(
   // TODO(raymes): When we remove FileSystem from the renderer, we should create
   // a pending PepperFileSystemBrowserHost here with the fsid and send the
   // pending host ID back to the plugin.
-  const std::string fsid = CreateCrxFileSystem(profile);
-  if (fsid.empty()) {
+  const storage::IsolatedContext::ScopedFSHandle fs =
+      CreateCrxFileSystem(profile);
+  if (!fs.is_valid()) {
     context->reply_msg =
         PpapiPluginMsg_IsolatedFileSystem_BrowserOpenReply(std::string());
     return PP_ERROR_NOTSUPPORTED;
@@ -168,9 +171,10 @@ int32_t PepperIsolatedFileSystemMessageFilter::OpenCrxFileSystem(
   // Grant readonly access of isolated filesystem to renderer process.
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
-  policy->GrantReadFileSystem(render_process_id_, fsid);
+  policy->GrantReadFileSystem(render_process_id_, fs.id());
 
-  context->reply_msg = PpapiPluginMsg_IsolatedFileSystem_BrowserOpenReply(fsid);
+  context->reply_msg =
+      PpapiPluginMsg_IsolatedFileSystem_BrowserOpenReply(fs.id());
   return PP_OK;
 #else
   return PP_ERROR_NOTSUPPORTED;

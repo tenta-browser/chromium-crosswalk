@@ -9,13 +9,12 @@
 #include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
-#include "base/debug/crash_logging.h"
-#include "base/debug/stack_trace.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_local.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_implementation.h"
@@ -39,7 +38,7 @@ base::subtle::Atomic32 GLContext::total_gl_contexts_ = 0;
 // static
 bool GLContext::switchable_gpus_supported_ = false;
 // static
-GpuPreference GLContext::forced_gpu_preference_ = GpuPreferenceNone;
+GpuPreference GLContext::forced_gpu_preference_ = GpuPreference::kDefault;
 
 GLContext::ScopedReleaseCurrent::ScopedReleaseCurrent() : canceled_(false) {}
 
@@ -90,21 +89,21 @@ void GLContext::SetSwitchableGPUsSupported() {
 
 // static
 void GLContext::SetForcedGpuPreference(GpuPreference gpu_preference) {
-  DCHECK_EQ(GpuPreferenceNone, forced_gpu_preference_);
+  DCHECK_EQ(GpuPreference::kDefault, forced_gpu_preference_);
   forced_gpu_preference_ = gpu_preference;
 }
 
 // static
 GpuPreference GLContext::AdjustGpuPreference(GpuPreference gpu_preference) {
   switch (forced_gpu_preference_) {
-    case GpuPreferenceNone:
+    case GpuPreference::kDefault:
       return gpu_preference;
-    case PreferIntegratedGpu:
-    case PreferDiscreteGpu:
+    case GpuPreference::kLowPower:
+    case GpuPreference::kHighPerformance:
       return forced_gpu_preference_;
     default:
       NOTREACHED();
-      return GpuPreferenceNone;
+      return GpuPreference::kDefault;
   }
 }
 
@@ -189,8 +188,22 @@ void GLContext::ForceReleaseVirtuallyCurrent() {
   NOTREACHED();
 }
 
+void GLContext::DirtyVirtualContextState() {
+  current_virtual_context_ = nullptr;
+}
+
+#if defined(OS_MACOSX)
+uint64_t GLContext::BackpressureFenceCreate() {
+  return 0;
+}
+
+void GLContext::BackpressureFenceWait(uint64_t fence) {}
+
+void GLContext::FlushForDriverCrashWorkaround() {}
+#endif
+
 bool GLContext::HasExtension(const char* name) {
-  return gl::HasExtension(GetExtensions(), name);
+  return gfx::HasExtension(GetExtensions(), name);
 }
 
 const GLVersionInfo* GLContext::GetVersionInfo() {
@@ -214,9 +227,9 @@ bool GLContext::LosesAllContextsOnContextLost() {
     case kGLImplementationDesktopGL:
       return false;
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
     case kGLImplementationSwiftShaderGL:
       return true;
-    case kGLImplementationOSMesaGL:
     case kGLImplementationAppleGL:
       return false;
     case kGLImplementationMockGL:
@@ -236,10 +249,6 @@ GLContext* GLContext::GetRealCurrent() {
   return current_real_context_.Pointer()->Get();
 }
 
-GLContext* GLContext::GetRealCurrentForDebugging() {
-  return GetRealCurrent();
-}
-
 std::unique_ptr<gl::GLVersionInfo> GLContext::GenerateGLVersionInfo() {
   return std::make_unique<GLVersionInfo>(
       GetGLVersion().c_str(), GetGLRenderer().c_str(), GetExtensions());
@@ -252,12 +261,8 @@ void GLContext::SetCurrent(GLSurface* surface) {
   // TODO(sievers): Remove this, but needs all gpu_unittest classes
   // to create and make current a context.
   if (!surface && GetGLImplementation() != kGLImplementationMockGL &&
-      GetGLImplementation() != kGLImplementationStubGL) {
-    // TODO(sunnyps): Remove after fixing crbug.com/724999.
-    base::debug::SetCrashKeyToStackTrace("gl-context-set-current-stack-trace",
-                                         base::debug::StackTrace());
+      GetGLImplementation() != kGLImplementationStubGL)
     SetCurrentGL(nullptr);
-  }
 }
 
 void GLContext::SetGLWorkarounds(const GLWorkarounds& workarounds) {
@@ -279,26 +284,14 @@ void GLContext::SetGLStateRestorer(GLStateRestorer* state_restorer) {
   state_restorer_ = base::WrapUnique(state_restorer);
 }
 
-void GLContext::SetSwapInterval(int interval) {
-  if (swap_interval_ == interval)
-    return;
-  swap_interval_ = interval;
-  OnSetSwapInterval(force_swap_interval_zero_ ? 0 : swap_interval_);
-}
-
-void GLContext::ForceSwapIntervalZero(bool force) {
-  if (force_swap_interval_zero_ == force)
-    return;
-  force_swap_interval_zero_ = force;
-  OnSetSwapInterval(force_swap_interval_zero_ ? 0 : swap_interval_);
-}
-
-bool GLContext::WasAllocatedUsingRobustnessExtension() {
-  return false;
+GLenum GLContext::CheckStickyGraphicsResetStatus() {
+  DCHECK(IsCurrent(nullptr));
+  return GL_NO_ERROR;
 }
 
 void GLContext::InitializeDynamicBindings() {
   DCHECK(IsCurrent(nullptr));
+  BindGLApi();
   DCHECK(static_bindings_initialized_);
   if (!dynamic_bindings_initialized_) {
     if (real_gl_api_) {
@@ -392,7 +385,7 @@ scoped_refptr<GPUTimingClient> GLContextReal::CreateGPUTimingClient() {
   return gpu_timing_->CreateGPUTimingClient();
 }
 
-const ExtensionSet& GLContextReal::GetExtensions() {
+const gfx::ExtensionSet& GLContextReal::GetExtensions() {
   DCHECK(IsCurrent(nullptr));
   if (!extensions_initialized_) {
     SetExtensionsFromString(GetGLExtensionsFromCurrentContext(gl_api()));
@@ -420,7 +413,7 @@ scoped_refptr<GLContext> InitializeGLContext(scoped_refptr<GLContext> context,
 
 void GLContextReal::SetExtensionsFromString(std::string extensions) {
   extensions_string_ = std::move(extensions);
-  extensions_ = MakeExtensionSet(extensions_string_);
+  extensions_ = gfx::MakeExtensionSet(extensions_string_);
   extensions_initialized_ = true;
 }
 

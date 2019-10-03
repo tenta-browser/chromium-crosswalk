@@ -11,7 +11,6 @@
 #endif
 #include "base/environment.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -29,7 +28,7 @@ namespace safe_browsing {
 namespace {
 
 bool IsKnownList(const std::string& name) {
-  for (size_t i = 0; i < arraysize(kAllLists); ++i) {
+  for (size_t i = 0; i < base::size(kAllLists); ++i) {
     if (!strcmp(kAllLists[i], name.c_str())) {
       return true;
     }
@@ -56,6 +55,32 @@ bool ThreatMetadata::operator==(const ThreatMetadata& other) const {
 
 bool ThreatMetadata::operator!=(const ThreatMetadata& other) const {
   return !operator==(other);
+}
+
+std::unique_ptr<base::trace_event::TracedValue> ThreatMetadata::ToTracedValue()
+    const {
+  auto value = std::make_unique<base::trace_event::TracedValue>();
+
+  value->SetInteger("threat_pattern_type",
+                    static_cast<int>(threat_pattern_type));
+
+  value->BeginArray("api_permissions");
+  for (const std::string& permission : api_permissions) {
+    value->AppendString(permission);
+  }
+  value->EndArray();
+
+  value->BeginDictionary("subresource_filter_match");
+  for (const auto& it : subresource_filter_match) {
+    value->BeginArray("match_metadata");
+    value->AppendInteger(static_cast<int>(it.first));
+    value->AppendInteger(static_cast<int>(it.second));
+    value->EndArray();
+  }
+  value->EndDictionary();
+
+  value->SetString("popuplation_id", population_id);
+  return value;
 }
 
 // SBCachedFullHashResult ------------------------------------------------------
@@ -173,7 +198,7 @@ void UrlToFullHashes(const GURL& url,
                      std::vector<SBFullHash>* full_hashes) {
   // Include this function in traces because it's not cheap so it should be
   // called sparingly.
-  TRACE_EVENT2("loader", "safe_browsing::UrlToFullHashes", "url", url.spec(),
+  TRACE_EVENT2("loading", "safe_browsing::UrlToFullHashes", "url", url.spec(),
                "include_whitelist_hashes", include_whitelist_hashes);
   std::string canon_host;
   std::string canon_path;

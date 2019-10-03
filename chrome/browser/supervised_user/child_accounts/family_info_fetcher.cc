@@ -6,23 +6,28 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/supervised_user/child_accounts/kids_management_api.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "chrome/browser/supervised_user/supervised_user_constants.h"
+#include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
 
 const char kGetFamilyProfileApiPath[] = "families/mine?alt=json";
 const char kGetFamilyMembersApiPath[] = "families/mine/members?alt=json";
 const char kScope[] = "https://www.googleapis.com/auth/kid.family.readonly";
-const char kAuthorizationHeaderFormat[] = "Authorization: Bearer %s";
-const int kNumRetries = 1;
+const int kNumFamilyInfoFetcherRetries = 1;
 
 const char kIdFamily[] = "family";
 const char kIdFamilyId[] = "familyId";
@@ -78,22 +83,15 @@ FamilyInfoFetcher::FamilyMember::~FamilyMember() {
 
 FamilyInfoFetcher::FamilyInfoFetcher(
     Consumer* consumer,
-    const std::string& account_id,
-    OAuth2TokenService* token_service,
-    net::URLRequestContextGetter* request_context)
-    : OAuth2TokenService::Consumer("family_info_fetcher"),
-      consumer_(consumer),
-      account_id_(account_id),
-      token_service_(token_service),
-      request_context_(request_context),
-      access_token_expired_(false) {
-}
+    signin::IdentityManager* identity_manager,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+    : consumer_(consumer),
+      primary_account_id_(identity_manager->GetPrimaryAccountId()),
+      identity_manager_(identity_manager),
+      url_loader_factory_(std::move(url_loader_factory)),
+      access_token_expired_(false) {}
 
-FamilyInfoFetcher::~FamilyInfoFetcher() {
-  // Ensures O2TS observation is cleared when FamilyInfoFetcher is destructed
-  // before refresh token is available.
-  token_service_->RemoveObserver(this);
-}
+FamilyInfoFetcher::~FamilyInfoFetcher() {}
 
 // static
 std::string FamilyInfoFetcher::RoleToString(FamilyMemberRole role) {
@@ -104,7 +102,7 @@ std::string FamilyInfoFetcher::RoleToString(FamilyMemberRole role) {
 bool FamilyInfoFetcher::StringToRole(
     const std::string& str,
     FamilyInfoFetcher::FamilyMemberRole* role) {
-  for (size_t i = 0; i < arraysize(kFamilyMemberRoleStrings); i++) {
+  for (size_t i = 0; i < base::size(kFamilyMemberRoleStrings); i++) {
     if (str == kFamilyMemberRoleStrings[i]) {
       *role = FamilyMemberRole(i);
       return true;
@@ -115,59 +113,37 @@ bool FamilyInfoFetcher::StringToRole(
 
 void FamilyInfoFetcher::StartGetFamilyProfile() {
   request_path_ = kGetFamilyProfileApiPath;
-  StartFetching();
+  StartFetchingAccessToken();
 }
 
 void FamilyInfoFetcher::StartGetFamilyMembers() {
   request_path_ = kGetFamilyMembersApiPath;
-  StartFetching();
-}
-
-void FamilyInfoFetcher::StartFetching() {
-  if (token_service_->RefreshTokenIsAvailable(account_id_)) {
-    StartFetchingAccessToken();
-  } else {
-    // Wait until we get a refresh token.
-    token_service_->AddObserver(this);
-  }
-}
-
-void FamilyInfoFetcher::StartFetchingAccessToken() {
-  OAuth2TokenService::ScopeSet scopes;
-  scopes.insert(kScope);
-  access_token_request_ =
-      token_service_->StartRequest(account_id_, scopes, this);
-}
-
-void FamilyInfoFetcher::OnRefreshTokenAvailable(
-    const std::string& account_id) {
-  // Wait until we get a refresh token for the requested account.
-  if (account_id != account_id_)
-    return;
-
-  token_service_->RemoveObserver(this);
-
   StartFetchingAccessToken();
 }
 
-void FamilyInfoFetcher::OnRefreshTokensLoaded() {
-  token_service_->RemoveObserver(this);
-
-  // The PO2TS has loaded all tokens, but we didn't get one for the account we
-  // want. We probably won't get one any time soon, so report an error.
-  DLOG(WARNING) << "Did not get a refresh token for account " << account_id_;
-  consumer_->OnFailure(TOKEN_ERROR);
+void FamilyInfoFetcher::StartFetchingAccessToken() {
+  OAuth2AccessTokenManager::ScopeSet scopes{kScope};
+  access_token_fetcher_ =
+      std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
+          "family_info_fetcher", identity_manager_, scopes,
+          base::BindOnce(&FamilyInfoFetcher::OnAccessTokenFetchComplete,
+                         base::Unretained(this)),
+          signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable);
 }
 
-void FamilyInfoFetcher::OnGetTokenSuccess(
-    const OAuth2TokenService::Request* request,
-    const std::string& access_token,
-    const base::Time& expiration_time) {
-  DCHECK_EQ(access_token_request_.get(), request);
-  access_token_ = access_token;
+void FamilyInfoFetcher::OnAccessTokenFetchComplete(
+    GoogleServiceAuthError error,
+    signin::AccessTokenInfo access_token_info) {
+  access_token_fetcher_.reset();
+  if (error.state() != GoogleServiceAuthError::NONE) {
+    DLOG(WARNING) << "Failed to get an access token: " << error.ToString();
+    consumer_->OnFailure(TOKEN_ERROR);
+    return;
+  }
+  access_token_ = access_token_info.token;
 
   GURL url = kids_management_api::GetURL(request_path_);
-  const int id = 0;
+
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("family_info", R"(
         semantics {
@@ -195,47 +171,55 @@ void FamilyInfoFetcher::OnGetTokenSuccess(
             }
           }
         })");
-  url_fetcher_ = net::URLFetcher::Create(id, url, net::URLFetcher::GET, this,
-                                         traffic_annotation);
 
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      url_fetcher_.get(),
-      data_use_measurement::DataUseUserData::SUPERVISED_USER);
-  url_fetcher_->SetRequestContext(request_context_);
-  url_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                             net::LOAD_DO_NOT_SAVE_COOKIES);
-  url_fetcher_->SetAutomaticallyRetryOnNetworkChanges(kNumRetries);
-  url_fetcher_->AddExtraRequestHeader(
-      base::StringPrintf(kAuthorizationHeaderFormat, access_token.c_str()));
-
-  url_fetcher_->Start();
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = url;
+  resource_request->load_flags =
+      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->headers.SetHeader(
+      net::HttpRequestHeaders::kAuthorization,
+      base::StringPrintf(supervised_users::kAuthorizationHeaderFormat,
+                         access_token_.c_str()));
+  simple_url_loader_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation);
+  simple_url_loader_->SetRetryOptions(
+      kNumFamilyInfoFetcherRetries,
+      network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
+  // TODO re-add data use measurement once SimpleURLLoader supports it
+  // data_use_measurement::DataUseUserData::SUPERVISED_USER
+  simple_url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&FamilyInfoFetcher::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 }
 
-void FamilyInfoFetcher::OnGetTokenFailure(
-  const OAuth2TokenService::Request* request,
-  const GoogleServiceAuthError& error) {
-  DCHECK_EQ(access_token_request_.get(), request);
-  DLOG(WARNING) << "Failed to get an access token: " << error.ToString();
-  consumer_->OnFailure(TOKEN_ERROR);
-}
-
-void FamilyInfoFetcher::OnURLFetchComplete(
-    const net::URLFetcher* source) {
-  const net::URLRequestStatus& status = source->GetStatus();
-  if (!status.is_success()) {
-    DLOG(WARNING) << "URLRequestStatus error " << status.error();
-    consumer_->OnFailure(NETWORK_ERROR);
-    return;
+void FamilyInfoFetcher::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  int response_code = -1;
+  if (simple_url_loader_->ResponseInfo() &&
+      simple_url_loader_->ResponseInfo()->headers) {
+    response_code =
+        simple_url_loader_->ResponseInfo()->headers->response_code();
   }
+  std::string body;
+  if (response_body)
+    body = std::move(*response_body);
+  OnSimpleLoaderCompleteInternal(simple_url_loader_->NetError(), response_code,
+                                 body);
+}
 
-  int response_code = source->GetResponseCode();
+void FamilyInfoFetcher::OnSimpleLoaderCompleteInternal(
+    int net_error,
+    int response_code,
+    const std::string& response_body) {
   if (response_code == net::HTTP_UNAUTHORIZED && !access_token_expired_) {
     DVLOG(1) << "Access token expired, retrying";
     access_token_expired_ = true;
-    OAuth2TokenService::ScopeSet scopes;
+    OAuth2AccessTokenManager::ScopeSet scopes;
     scopes.insert(kScope);
-    token_service_->InvalidateAccessToken(account_id_, scopes, access_token_);
-    StartFetching();
+    identity_manager_->RemoveAccessTokenFromCache(primary_account_id_, scopes,
+                                                  access_token_);
+    StartFetchingAccessToken();
     return;
   }
 
@@ -245,8 +229,11 @@ void FamilyInfoFetcher::OnURLFetchComplete(
     return;
   }
 
-  std::string response_body;
-  source->GetResponseAsString(&response_body);
+  if (net_error != net::OK) {
+    DLOG(WARNING) << "NetError " << net_error;
+    consumer_->OnFailure(NETWORK_ERROR);
+    return;
+  }
 
   if (request_path_ == kGetFamilyProfileApiPath) {
     FamilyProfileFetched(response_body);
@@ -260,9 +247,7 @@ void FamilyInfoFetcher::OnURLFetchComplete(
 // static
 bool FamilyInfoFetcher::ParseMembers(const base::ListValue* list,
                                      std::vector<FamilyMember>* members) {
-  for (base::ListValue::const_iterator it = list->begin();
-       it != list->end();
-       it++) {
+  for (auto it = list->begin(); it != list->end(); ++it) {
     FamilyMember member;
     const base::DictionaryValue* dict = NULL;
     if (!it->GetAsDictionary(&dict) || !ParseMember(dict, &member)) {
@@ -301,7 +286,8 @@ void FamilyInfoFetcher::ParseProfile(const base::DictionaryValue* dict,
 }
 
 void FamilyInfoFetcher::FamilyProfileFetched(const std::string& response) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(response);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(response);
   const base::DictionaryValue* dict = NULL;
   if (!value || !value->GetAsDictionary(&dict)) {
     consumer_->OnFailure(SERVICE_ERROR);
@@ -331,7 +317,8 @@ void FamilyInfoFetcher::FamilyProfileFetched(const std::string& response) {
 }
 
 void FamilyInfoFetcher::FamilyMembersFetched(const std::string& response) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(response);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(response);
   const base::DictionaryValue* dict = NULL;
   if (!value || !value->GetAsDictionary(&dict)) {
     consumer_->OnFailure(SERVICE_ERROR);

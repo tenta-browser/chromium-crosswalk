@@ -37,7 +37,13 @@ function waitForExpectedColorsAndEndTest(stream) {
   // Elements from this array are removed as each color is observed.  When it
   // becomes empty, the test succeeds.
   var remainingColors = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
-  var colorDeviation = 10;
+
+  // Note: The range of acceptable colors is quite large because there's no way
+  // to know whether software compositing is being used for screen capture; and,
+  // if software compositing is being used, there is no color space management
+  // and color values can be off by a lot. That said, color accuracy is being
+  // tested by a suite of content_browsertests.
+  var colorDeviation = 50;
 
   function onMatchedNextColor(idx) {
     chrome.test.assertTrue(idx < remainingColors.length);

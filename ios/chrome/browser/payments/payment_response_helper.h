@@ -11,7 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/payments/core/payment_instrument.h"
 #include "components/payments/core/payment_response.h"
 #include "components/payments/core/web_payment_request.h"
@@ -48,7 +48,7 @@ class PaymentResponseHelper
   void OnInstrumentDetailsReady(
       const std::string& method_name,
       const std::string& stringified_details) override;
-  void OnInstrumentDetailsError() override;
+  void OnInstrumentDetailsError(const std::string& error_message) override;
 
  private:
   // Called when the AddressNormalizationManager is done, whether any autofill

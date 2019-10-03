@@ -6,8 +6,11 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "storage/common/fileapi/file_system_types.h"
 #include "storage/common/fileapi/file_system_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -49,7 +52,7 @@ TEST(FileSystemURLTest, ParsePersistent) {
   FileSystemURL url = CreateFileSystemURL(
      "filesystem:http://chromium.org/persistent/directory/file");
   ASSERT_TRUE(url.is_valid());
-  EXPECT_EQ("http://chromium.org/", url.origin().spec());
+  EXPECT_EQ("http://chromium.org/", url.origin().GetURL().spec());
   EXPECT_EQ(kFileSystemTypePersistent, url.type());
   EXPECT_EQ(FPL("file"), VirtualPath::BaseName(url.path()).value());
   EXPECT_EQ(FPL("directory"), url.path().DirName().value());
@@ -59,7 +62,7 @@ TEST(FileSystemURLTest, ParseTemporary) {
   FileSystemURL url = CreateFileSystemURL(
       "filesystem:http://chromium.org/temporary/directory/file");
   ASSERT_TRUE(url.is_valid());
-  EXPECT_EQ("http://chromium.org/", url.origin().spec());
+  EXPECT_EQ("http://chromium.org/", url.origin().GetURL().spec());
   EXPECT_EQ(kFileSystemTypeTemporary, url.type());
   EXPECT_EQ(FPL("file"), VirtualPath::BaseName(url.path()).value());
   EXPECT_EQ(FPL("directory"), url.path().DirName().value());
@@ -69,7 +72,7 @@ TEST(FileSystemURLTest, EnsureFilePathIsRelative) {
   FileSystemURL url = CreateFileSystemURL(
       "filesystem:http://chromium.org/temporary/////directory/file");
   ASSERT_TRUE(url.is_valid());
-  EXPECT_EQ("http://chromium.org/", url.origin().spec());
+  EXPECT_EQ("http://chromium.org/", url.origin().GetURL().spec());
   EXPECT_EQ(kFileSystemTypeTemporary, url.type());
   EXPECT_EQ(FPL("file"), VirtualPath::BaseName(url.path()).value());
   EXPECT_EQ(FPL("directory"), url.path().DirName().value());
@@ -116,8 +119,8 @@ TEST(FileSystemURLTest, CompareURLs) {
   };
 
   FileSystemURL::Comparator compare;
-  for (size_t i = 0; i < arraysize(urls); ++i) {
-    for (size_t j = 0; j < arraysize(urls); ++j) {
+  for (size_t i = 0; i < base::size(urls); ++i) {
+    for (size_t j = 0; j < base::size(urls); ++j) {
       SCOPED_TRACE(testing::Message() << i << " < " << j);
       EXPECT_EQ(urls[i] < urls[j],
                 compare(FileSystemURL::CreateForTest(urls[i]),
@@ -179,11 +182,8 @@ TEST(FileSystemURLTest, ToGURL) {
     "filesystem:http://chromium.org/test/plus%2B/space%20/colon%3A",
   };
 
-  for (size_t i = 0; i < arraysize(kTestURL); ++i) {
-    EXPECT_EQ(
-        kTestURL[i],
-        FileSystemURL::CreateForTest(GURL(kTestURL[i])).ToGURL().spec());
-  }
+  for (const char* url : kTestURL)
+    EXPECT_EQ(url, FileSystemURL::CreateForTest(GURL(url)).ToGURL().spec());
 }
 
 TEST(FileSystemURLTest, DebugString) {
@@ -191,7 +191,7 @@ TEST(FileSystemURLTest, DebugString) {
   const base::FilePath kPath(FPL("dir/file"));
 
   const FileSystemURL kURL1 = FileSystemURL::CreateForTest(
-      kOrigin, kFileSystemTypeTemporary, kPath);
+      url::Origin::Create(kOrigin), kFileSystemTypeTemporary, kPath);
   EXPECT_EQ("filesystem:http://example.com/temporary/" +
             NormalizedUTF8Path(kPath),
             kURL1.DebugString());
@@ -199,19 +199,19 @@ TEST(FileSystemURLTest, DebugString) {
 
 TEST(FileSystemURLTest, IsInSameFileSystem) {
   FileSystemURL url_foo_temp_a = FileSystemURL::CreateForTest(
-      GURL("http://foo"), kFileSystemTypeTemporary,
+      url::Origin::Create(GURL("http://foo")), kFileSystemTypeTemporary,
       base::FilePath::FromUTF8Unsafe("a"));
   FileSystemURL url_foo_temp_b = FileSystemURL::CreateForTest(
-      GURL("http://foo"), kFileSystemTypeTemporary,
+      url::Origin::Create(GURL("http://foo")), kFileSystemTypeTemporary,
       base::FilePath::FromUTF8Unsafe("b"));
   FileSystemURL url_foo_perm_a = FileSystemURL::CreateForTest(
-      GURL("http://foo"), kFileSystemTypePersistent,
+      url::Origin::Create(GURL("http://foo")), kFileSystemTypePersistent,
       base::FilePath::FromUTF8Unsafe("a"));
   FileSystemURL url_bar_temp_a = FileSystemURL::CreateForTest(
-      GURL("http://bar"), kFileSystemTypeTemporary,
+      url::Origin::Create(GURL("http://bar")), kFileSystemTypeTemporary,
       base::FilePath::FromUTF8Unsafe("a"));
   FileSystemURL url_bar_perm_a = FileSystemURL::CreateForTest(
-      GURL("http://bar"), kFileSystemTypePersistent,
+      url::Origin::Create(GURL("http://bar")), kFileSystemTypePersistent,
       base::FilePath::FromUTF8Unsafe("a"));
 
   EXPECT_TRUE(url_foo_temp_a.IsInSameFileSystem(url_foo_temp_a));
@@ -219,6 +219,31 @@ TEST(FileSystemURLTest, IsInSameFileSystem) {
   EXPECT_FALSE(url_foo_temp_a.IsInSameFileSystem(url_foo_perm_a));
   EXPECT_FALSE(url_foo_temp_a.IsInSameFileSystem(url_bar_temp_a));
   EXPECT_FALSE(url_foo_temp_a.IsInSameFileSystem(url_bar_perm_a));
+}
+
+TEST(FileSystemURLTest, ValidAfterMoves) {
+  // Move constructor.
+  {
+    FileSystemURL original = FileSystemURL::CreateForTest(
+        url::Origin::Create(GURL("http://foo")), kFileSystemTypeTemporary,
+        base::FilePath::FromUTF8Unsafe("a"));
+    EXPECT_TRUE(original.is_valid());
+    FileSystemURL new_url(std::move(original));
+    EXPECT_TRUE(new_url.is_valid());
+    EXPECT_TRUE(original.is_valid());
+  }
+
+  // Move operator.
+  {
+    FileSystemURL original = FileSystemURL::CreateForTest(
+        url::Origin::Create(GURL("http://foo")), kFileSystemTypeTemporary,
+        base::FilePath::FromUTF8Unsafe("a"));
+    EXPECT_TRUE(original.is_valid());
+    FileSystemURL new_url;
+    new_url = std::move(std::move(original));
+    EXPECT_TRUE(new_url.is_valid());
+    EXPECT_TRUE(original.is_valid());
+  }
 }
 
 }  // namespace content

@@ -1,4 +1,9 @@
+# Chrome settings:
 twellington@chromium.org
-finnur@chromium.org
+bsazonov@chromium.org
 
-# COMPONENT: UI>Settings
+# Site settings:
+finnur@chromium.org
+hkamila@chromium.org
+
+# COMPONENT: UI>Browser>Mobile>Settings

@@ -14,6 +14,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -28,19 +29,17 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 class Profile;
 
 namespace base {
 class DictionaryValue;
 class ListValue;
-class SimpleTestTickClock;
 class TickClock;
 }
 
-namespace chrome {
 struct NavigateParams;
-}
 
 namespace chrome_browser_net {
 enum class NetworkPredictionStatus;
@@ -82,13 +81,8 @@ class PrerenderManager : public content::NotificationObserver,
                          public MediaCaptureDevicesDispatcher::Observer {
  public:
   enum PrerenderManagerMode {
-    // WARNING: Legacy code, not for use. Disables prerendering and avoids
-    // creating an instance of PrerenderManager. This mode overrides forced
-    // prerenders which breaks the assumptions of the CustomTabActivityTest.
-    PRERENDER_MODE_DISABLED,
-
-    // Enables all types of prerendering for any origin.
-    PRERENDER_MODE_ENABLED,
+    // Deprecated: Enables all types of prerendering for any origin.
+    DEPRECATED_PRERENDER_MODE_ENABLED,
 
     // For each request to prerender performs a NoStatePrefetch for the same URL
     // instead.
@@ -127,6 +121,7 @@ class PrerenderManager : public content::NotificationObserver,
       const GURL& url,
       uint32_t rel_types,
       const content::Referrer& referrer,
+      const url::Origin& initiator_origin,
       const gfx::Size& size);
 
   // Adds a prerender for |url| if valid. As the prerender request is coming
@@ -134,8 +129,18 @@ class PrerenderManager : public content::NotificationObserver,
   // child or route id, or a referrer. This method uses sensible values for
   // those. The |session_storage_namespace| matches the namespace of the active
   // tab at the time the prerender is generated from the omnibox. Returns a
-  // PrerenderHandle or NULL.
+  // PrerenderHandle or NULL. If the prerender fails, the prerender manager may
+  // fallback and initiate a preconnect to |url|.
   std::unique_ptr<PrerenderHandle> AddPrerenderFromOmnibox(
+      const GURL& url,
+      content::SessionStorageNamespace* session_storage_namespace,
+      const gfx::Size& size);
+
+  // Adds a prerender for the prefetch url from NavigationPredictor on
+  // page load, if NoStatePrefetch and prefetch_after_preconnect are true.
+  // Uses the NavigationPredictor's browser context and the default
+  // SessionStorageNamespace. Returns a PrerenderHandle or NULL.
+  std::unique_ptr<PrerenderHandle> AddPrerenderFromNavigationPredictor(
       const GURL& url,
       content::SessionStorageNamespace* session_storage_namespace,
       const gfx::Size& size);
@@ -157,30 +162,40 @@ class PrerenderManager : public content::NotificationObserver,
   // Cancels all active prerenders.
   void CancelAllPrerenders();
 
+  // Wraps input and output parameters to MaybeUsePrerenderedPage.
+  struct Params {
+    Params(NavigateParams* params,
+           content::WebContents* contents_being_navigated);
+    Params(bool uses_post,
+           const std::string& extra_headers,
+           bool should_replace_current_entry,
+           content::WebContents* contents_being_navigated);
+
+    // Input parameters.
+    const bool uses_post;
+    const std::string extra_headers;
+    const bool should_replace_current_entry;
+    content::WebContents* const contents_being_navigated;
+
+    // Output parameters.
+    content::WebContents* replaced_contents = nullptr;
+  };
+
   // If |url| matches a valid prerendered page and |params| are compatible, try
-  // to swap it and merge browsing histories. Returns |true| and updates
-  // |params->target_contents| if a prerendered page is swapped in, |false|
-  // otherwise.
-  bool MaybeUsePrerenderedPage(const GURL& url,
-                               chrome::NavigateParams* params);
+  // to swap it and merge browsing histories.
+  //
+  // Returns true if a prerendered page is swapped in. When this happens, the
+  // PrerenderManager has already swapped out |contents_being_navigated| with
+  // |replaced_contents| in the WebContents container [e.g. TabStripModel on
+  // desktop].
+  //
+  // Returns false if nothing is swapped.
+  bool MaybeUsePrerenderedPage(const GURL& url, Params* params);
 
   // Moves a PrerenderContents to the pending delete list from the list of
   // active prerenders when prerendering should be cancelled.
   virtual void MoveEntryToPendingDelete(PrerenderContents* entry,
                                         FinalStatus final_status);
-
-  // Called when a NoStatePrefetch request has received a response (including
-  // redirects). May be called several times per resource, in case of redirects.
-  void RecordPrefetchResponseReceived(Origin origin,
-                                      bool is_main_resource,
-                                      bool is_redirect,
-                                      bool is_no_store);
-
-  // Called when a NoStatePrefetch resource has been loaded. This is called only
-  // once per resource, when all redirects have been resolved.
-  void RecordPrefetchRedirectCount(Origin origin,
-                                   bool is_main_resource,
-                                   int redirect_count);
 
   // Called to record the time to First Contentful Paint for all pages that were
   // not prerendered.
@@ -200,23 +215,8 @@ class PrerenderManager : public content::NotificationObserver,
                                          bool was_hidden,
                                          base::TimeDelta time);
 
-  // Records the perceived first contentful paint time for a prerendered page.
-  // The actual load may have started prior to navigation due to prerender
-  // hints. The FCP ticks is in absolute time; this has the disadvantage that
-  // the histogram will mix browser and renderer ticks, but there seems to be no
-  // way around that.
-  void RecordPrerenderFirstContentfulPaint(const GURL& url,
-                                           content::WebContents* web_contents,
-                                           bool is_no_store,
-                                           bool was_hidden,
-                                           base::TimeTicks ticks);
-
-  static PrerenderManagerMode GetMode(Origin origin);
-  static void SetMode(PrerenderManagerMode mode);
-  static void SetOmniboxMode(PrerenderManagerMode mode);
-  static bool IsAnyPrerenderingPossible();
-  static bool IsNoStatePrefetch(Origin origin);
-  static bool IsSimpleLoadExperiment(Origin origin);
+  static PrerenderManagerMode GetMode() { return mode_; }
+  static void SetMode(PrerenderManagerMode mode) { mode_ = mode; }
 
   // Query the list of current prerender pages to see if the given web contents
   // is prerendering a page. The optional parameter |origin| is an output
@@ -258,13 +258,6 @@ class PrerenderManager : public content::NotificationObserver,
 
   // Checks whether |url| has been recently navigated to.
   bool HasRecentlyBeenNavigatedTo(Origin origin, const GURL& url);
-
-  // Returns true iff the scheme of the URL given is valid for prerendering.
-  static bool DoesURLHaveValidScheme(const GURL& url);
-
-  // Returns true iff the scheme of the subresource URL given is valid for
-  // prerendering.
-  static bool DoesSubresourceURLHaveValidScheme(const GURL& url);
 
   // Returns a Value object containing the active pages being prerendered, and
   // a history of pages which were prerendered.
@@ -308,8 +301,7 @@ class PrerenderManager : public content::NotificationObserver,
   // testing.
   base::Time GetCurrentTime() const;
   base::TimeTicks GetCurrentTimeTicks() const;
-  void SetTickClockForTesting(
-      std::unique_ptr<base::SimpleTestTickClock> tick_clock);
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
 
   void DisablePageLoadMetricsObserverForTesting() {
     page_load_metric_observer_disabled_ = true;
@@ -341,10 +333,26 @@ class PrerenderManager : public content::NotificationObserver,
   // content::RenderProcessHostObserver implementation.
   void RenderProcessHostDestroyed(content::RenderProcessHost* host) override;
 
+  // Cleans up the expired prefetches and then returns true if |url| was
+  // no-state prefetched recently. If so, |prefetch_age|, |final_status| and
+  // |origin| are set based on the no-state prefetch information if they are
+  // non-null.
+  bool GetPrefetchInformation(const GURL& url,
+                              base::TimeDelta* prefetch_age,
+                              FinalStatus* final_status,
+                              Origin* origin);
+
   void SetPrerenderContentsFactoryForTest(
       PrerenderContents::Factory* prerender_contents_factory);
 
   base::WeakPtr<PrerenderManager> AsWeakPtr();
+
+  // Clears the list of recently prefetched URLs. Allows, for example, to reuse
+  // the same URL in tests, without running into FINAL_STATUS_DUPLICATE.
+  void ClearPrefetchInformationForTesting();
+
+  // Returns true iff the |url| is found in the list of recent prefetches.
+  bool HasRecentlyPrefetchedUrlForTesting(const GURL& url);
 
  protected:
   class PrerenderData : public base::SupportsWeakPtr<PrerenderData> {
@@ -444,10 +452,11 @@ class PrerenderManager : public content::NotificationObserver,
   // prerender was added. If |bounds| is empty, then
   // PrerenderContents::StartPrerendering will instead use a default from
   // PrerenderConfig. Returns a PrerenderHandle or NULL.
-  std::unique_ptr<PrerenderHandle> AddPrerender(
+  std::unique_ptr<PrerenderHandle> AddPrerenderWithPreconnectFallback(
       Origin origin,
       const GURL& url,
       const content::Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       const gfx::Rect& bounds,
       content::SessionStorageNamespace* session_storage_namespace);
 
@@ -472,10 +481,13 @@ class PrerenderManager : public content::NotificationObserver,
 
   void DeleteOldEntries();
 
+  void DeleteToDeletePrerenders();
+
   // Virtual so unit tests can override this.
   virtual std::unique_ptr<PrerenderContents> CreatePrerenderContents(
       const GURL& url,
       const content::Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       Origin origin);
 
   // Insures the |active_prerenders_| are sorted by increasing expiry time. Call
@@ -487,7 +499,7 @@ class PrerenderManager : public content::NotificationObserver,
   // |url| and |session_storage_namespace|.
   PrerenderData* FindPrerenderData(
       const GURL& url,
-      const content::SessionStorageNamespace* session_storage_namespace);
+      content::SessionStorageNamespace* session_storage_namespace);
 
   // Given the |prerender_contents|, find the iterator in |active_prerenders_|
   // correponding to the given prerender.
@@ -501,11 +513,9 @@ class PrerenderManager : public content::NotificationObserver,
   // so cannot immediately be deleted.
   void DeleteOldWebContents();
 
-  // Get information associated with a possible prefetch of |url|.
-  // |origin| may be null, in which case the origin is not returned.
-  void GetPrefetchInformation(const GURL& url,
-                              base::TimeDelta* prefetch_age,
-                              Origin* origin);
+  // Called when PrerenderContents gets destroyed. Attaches the |final_status|
+  // to the most recent prefetch matching the |url|.
+  void SetPrefetchFinalStatusForUrl(const GURL& url, FinalStatus final_status);
 
   // Called when a prefetch has been used. Prefetches avoid cache revalidation
   // only once.
@@ -532,20 +542,23 @@ class PrerenderManager : public content::NotificationObserver,
   void DestroyAllContents(FinalStatus final_status);
 
   // Records the final status a prerender in the case that a PrerenderContents
-  // was never created, and also adds a PrerenderHistory entry.
-  void RecordFinalStatusWithoutCreatingPrerenderContents(
-      const GURL& url, Origin origin, FinalStatus final_status) const;
-
+  // was never created, adds a PrerenderHistory entry, and may also initiate a
+  // preconnect to |url|.
+  void SkipPrerenderContentsAndMaybePreconnect(const GURL& url,
+                                               Origin origin,
+                                               FinalStatus final_status) const;
 
   // Swaps a prerender |prerender_data| for |url| into the tab, replacing
   // |web_contents|.  Returns the new WebContents that was swapped in, or NULL
   // if a swap-in was not possible.  If |should_replace_current_entry| is true,
   // the current history entry in |web_contents| is replaced.
-  std::unique_ptr<content::WebContents> SwapInternal(
-      const GURL& url,
-      content::WebContents* web_contents,
-      PrerenderData* prerender_data,
-      bool should_replace_current_entry);
+  content::WebContents* SwapInternal(const GURL& url,
+                                     content::WebContents* web_contents,
+                                     PrerenderData* prerender_data,
+                                     bool should_replace_current_entry);
+
+  // May initiate a preconnect to |url_arg| based on |origin|.
+  void MaybePreconnect(Origin origin, const GURL& url_arg) const;
 
   // The configuration.
   Config config_;
@@ -569,7 +582,6 @@ class PrerenderManager : public content::NotificationObserver,
   std::unique_ptr<PrerenderContents::Factory> prerender_contents_factory_;
 
   static PrerenderManagerMode mode_;
-  static PrerenderManagerMode omnibox_mode_;
 
   // RepeatingTimer to perform periodic cleanups of pending prerendered
   // pages.
@@ -578,7 +590,7 @@ class PrerenderManager : public content::NotificationObserver,
   // Track time of last prerender to limit prerender spam.
   base::TimeTicks last_prerender_start_time_;
 
-  std::vector<content::WebContents*> old_web_contents_list_;
+  std::vector<std::unique_ptr<content::WebContents>> old_web_contents_list_;
 
   std::vector<std::unique_ptr<OnCloseWebContentsDeleter>>
       on_close_web_contents_deleters_;
@@ -600,13 +612,13 @@ class PrerenderManager : public content::NotificationObserver,
   using PrerenderProcessSet = std::set<content::RenderProcessHost*>;
   PrerenderProcessSet prerender_process_hosts_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   bool page_load_metric_observer_disabled_;
 
   std::vector<std::unique_ptr<PrerenderManagerObserver>> observers_;
 
-  base::WeakPtrFactory<PrerenderManager> weak_factory_;
+  base::WeakPtrFactory<PrerenderManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderManager);
 };

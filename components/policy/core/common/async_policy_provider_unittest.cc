@@ -6,11 +6,11 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/policy/core/common/async_policy_loader.h"
 #include "components/policy/core/common/external_data_fetcher.h"
@@ -34,7 +34,7 @@ void SetPolicy(PolicyBundle* bundle,
                const std::string& value) {
   bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
       .Set(name, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-           POLICY_SOURCE_PLATFORM, base::MakeUnique<base::Value>(value),
+           POLICY_SOURCE_PLATFORM, std::make_unique<base::Value>(value),
            nullptr);
 }
 
@@ -84,7 +84,7 @@ class AsyncPolicyProviderTest : public testing::Test {
   void SetUp() override;
   void TearDown() override;
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   SchemaRegistry schema_registry_;
   PolicyBundle initial_bundle_;
   MockPolicyLoader* loader_;
@@ -100,7 +100,7 @@ AsyncPolicyProviderTest::~AsyncPolicyProviderTest() {}
 
 void AsyncPolicyProviderTest::SetUp() {
   SetPolicy(&initial_bundle_, "policy", "initial");
-  loader_ = new MockPolicyLoader(loop_.task_runner());
+  loader_ = new MockPolicyLoader(base::ThreadTaskRunnerHandle::Get());
   EXPECT_CALL(*loader_, LastModificationTime())
       .WillRepeatedly(Return(base::Time()));
   EXPECT_CALL(*loader_, InitOnBackgroundThread()).Times(1);

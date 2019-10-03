@@ -8,8 +8,22 @@
 namespace language {
 namespace prefs {
 
-// TODO(martis): Add accept language preference here.
+extern const char kAcceptLanguages[];
+
+#if defined(OS_CHROMEOS)
+extern const char kPreferredLanguages[];
+extern const char kPreferredLanguagesSyncable[];
+#endif
+
 extern const char kUserLanguageProfile[];
+
+// The application locale.
+// DO NOT USE this locale directly: use language::ConvertToActualUILocale()
+// after reading it to get the system locale. This pref stores the locale that
+// the user selected, if applicable.
+extern const char kApplicationLocale[];
+
+extern const char kFluentLanguages[];
 
 }  // namespace prefs
 }  // namespace language

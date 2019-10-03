@@ -8,12 +8,11 @@
 
 #include <cstdlib>
 
-#include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/values_test_util.h"
-#include "components/sync/base/attachment_id_proto.h"
 #include "components/sync/base/mock_unrecoverable_error_handler.h"
 #include "components/sync/syncable/syncable_proto_util.h"
 #include "components/sync/syncable/syncable_util.h"
@@ -64,7 +63,7 @@ SyncableDirectoryTest::~SyncableDirectoryTest() {}
 
 void SyncableDirectoryTest::SetUp() {
   ASSERT_TRUE(connection_.OpenInMemory());
-  ASSERT_EQ(OPENED, ReopenDirectory());
+  ASSERT_EQ(OPENED_NEW, ReopenDirectory());
 }
 
 void SyncableDirectoryTest::TearDown() {
@@ -74,7 +73,7 @@ void SyncableDirectoryTest::TearDown() {
 }
 
 DirOpenResult SyncableDirectoryTest::ReopenDirectory() {
-  // Use a TestDirectoryBackingStore and sql::Connection so we can have test
+  // Use a TestDirectoryBackingStore and sql::Database so we can have test
   // data persist across Directory object lifetimes while getting the
   // performance benefits of not writing to disk.
   dir_ = std::make_unique<Directory>(
@@ -84,8 +83,10 @@ DirOpenResult SyncableDirectoryTest::ReopenDirectory() {
   DirOpenResult open_result =
       dir_->Open(kDirectoryName, &delegate_, NullTransactionObserver());
 
-  if (open_result != OPENED) {
+  if (open_result != OPENED_NEW && open_result != OPENED_EXISTING) {
     dir_.reset();
+  } else {
+    dir_->set_cache_guid(dir_->legacy_cache_guid());
   }
 
   return open_result;
@@ -107,20 +108,10 @@ void SyncableDirectoryTest::CreateEntry(const ModelType& model_type,
 void SyncableDirectoryTest::CreateEntry(const ModelType& model_type,
                                         const std::string& entryname,
                                         const Id& id) {
-  CreateEntryWithAttachmentMetadata(model_type, entryname, id,
-                                    sync_pb::AttachmentMetadata());
-}
-
-void SyncableDirectoryTest::CreateEntryWithAttachmentMetadata(
-    const ModelType& model_type,
-    const std::string& entryname,
-    const Id& id,
-    const sync_pb::AttachmentMetadata& attachment_metadata) {
   WriteTransaction wtrans(FROM_HERE, UNITTEST, dir_.get());
   MutableEntry me(&wtrans, CREATE, model_type, wtrans.root_id(), entryname);
   ASSERT_TRUE(me.good());
   me.PutId(id);
-  me.PutAttachmentMetadata(attachment_metadata);
   me.PutIsUnsynced(true);
 }
 
@@ -158,8 +149,7 @@ void SyncableDirectoryTest::CheckPurgeEntriesWithTypeInSucceeded(
     EXPECT_EQ(4U, all_set.size());
     if (before_reload)
       EXPECT_EQ(6U, dir_->kernel()->metahandles_to_purge.size());
-    for (MetahandleSet::iterator iter = all_set.begin(); iter != all_set.end();
-         ++iter) {
+    for (auto iter = all_set.begin(); iter != all_set.end(); ++iter) {
       Entry e(&trans, GET_BY_HANDLE, *iter);
       const ModelType local_type = e.GetModelType();
       const ModelType server_type = e.GetServerModelType();
@@ -172,16 +162,15 @@ void SyncableDirectoryTest::CheckPurgeEntriesWithTypeInSucceeded(
     }
   }
 
-  for (ModelTypeSet::Iterator it = types_to_purge.First(); it.Good();
-       it.Inc()) {
-    EXPECT_FALSE(dir_->InitialSyncEndedForType(it.Get()));
+  for (ModelType type : types_to_purge) {
+    EXPECT_FALSE(dir_->InitialSyncEndedForType(type));
     sync_pb::DataTypeProgressMarker progress;
-    dir_->GetDownloadProgress(it.Get(), &progress);
+    dir_->GetDownloadProgress(type, &progress);
     EXPECT_EQ("", progress.token());
 
     ReadTransaction trans(FROM_HERE, dir_.get());
     sync_pb::DataTypeContext context;
-    dir_->GetDataTypeContext(&trans, it.Get(), &context);
+    dir_->GetDataTypeContext(&trans, type, &context);
     EXPECT_TRUE(context.SerializeAsString().empty());
   }
   EXPECT_FALSE(types_to_purge.Has(BOOKMARKS));
@@ -466,7 +455,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       item3.PutIsUnsynced(true);
       handle3 = item3.GetMetahandle();
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {  // Test adding and saving delete journals.
@@ -505,7 +494,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       ReadTransaction trans(FROM_HERE, dir().get());
       EXPECT_EQ(0u, delete_journal->GetDeleteJournalSize(&trans));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -536,7 +525,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       EXPECT_EQ(1u, delete_journal->delete_journals_to_purge_.size());
       EXPECT_TRUE(delete_journal->delete_journals_to_purge_.count(handle2));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -561,7 +550,7 @@ TEST_F(SyncableDirectoryTest, ManageDeleteJournals) {
       EXPECT_EQ(1u, delete_journal->delete_journals_to_purge_.size());
       EXPECT_TRUE(delete_journal->delete_journals_to_purge_.count(handle1));
     }
-    ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+    ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
   }
 
   {
@@ -628,7 +617,7 @@ TEST_F(SyncableDirectoryTest, TestPurgeDeletedEntriesOnReload) {
         item.PutIsUnappliedUpdate(true);
     }
   }
-  ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+  ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   // Expect items 0 and 5 to be purged according to
   // DirectoryBackingStore::SafeToPurgeOnLoading:
@@ -1019,9 +1008,7 @@ TEST_F(SyncableDirectoryTest, TestCaseChangeRename) {
 TEST_F(SyncableDirectoryTest, GetModelType) {
   TestIdFactory id_factory;
   ModelTypeSet protocol_types = ProtocolTypes();
-  for (ModelTypeSet::Iterator iter = protocol_types.First(); iter.Good();
-       iter.Inc()) {
-    ModelType datatype = iter.Get();
+  for (ModelType datatype : protocol_types) {
     SCOPED_TRACE(testing::Message("Testing model type ") << datatype);
     switch (datatype) {
       case UNSPECIFIED:
@@ -1142,7 +1129,7 @@ TEST_F(SyncableDirectoryTest, ChangeEntryIDAndUpdateChildren_ParentAndChild) {
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 }
 
 // A test that roughly mimics the directory interaction that occurs when a
@@ -1184,7 +1171,7 @@ TEST_F(SyncableDirectoryTest, ChangeEntryIDAndUpdateChildren_ImplicitParent) {
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   // Verify that child's PARENT_ID hasn't been updated.
   {
@@ -1242,7 +1229,7 @@ TEST_F(SyncableDirectoryTest,
   }
 
   // Final check for validity.
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 }
 
 // Ask the directory to generate a unique ID.  Close and re-open the database
@@ -1319,7 +1306,7 @@ TEST_F(SyncableDirectoryTest, OldClientLeftUnsyncedDeletedLocalItem) {
     zombie.PutIsUnsynced(true);
   }
 
-  ASSERT_EQ(OPENED, SimulateSaveAndReloadDir());
+  ASSERT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   {
     ReadTransaction trans(FROM_HERE, dir().get());
@@ -1343,7 +1330,7 @@ TEST_F(SyncableDirectoryTest, PositionWithNullSurvivesSaveAndReload) {
   TestIdFactory id_factory;
   Id null_child_id;
   const char null_cstr[] = "\0null\0test";
-  std::string null_str(null_cstr, arraysize(null_cstr) - 1);
+  std::string null_str(null_cstr, base::size(null_cstr) - 1);
   // Pad up to the minimum length with 0x7f characters, then add a string that
   // contains a few nulls to the end.  This is slightly wrong, since the suffix
   // part of a UniquePosition shouldn't contain nulls, but it's good enough for
@@ -1368,7 +1355,7 @@ TEST_F(SyncableDirectoryTest, PositionWithNullSurvivesSaveAndReload) {
     null_child_id = child.GetId();
   }
 
-  EXPECT_EQ(OPENED, SimulateSaveAndReloadDir());
+  EXPECT_EQ(OPENED_EXISTING, SimulateSaveAndReloadDir());
 
   {
     ReadTransaction trans(FROM_HERE, dir().get());
@@ -1447,8 +1434,7 @@ TEST_F(SyncableDirectoryTest, General) {
     dir()->GetChildHandlesById(&rtrans, rtrans.root_id(), &child_handles);
     EXPECT_EQ(1u, child_handles.size());
 
-    for (Directory::Metahandles::iterator i = child_handles.begin();
-         i != child_handles.end(); ++i) {
+    for (auto i = child_handles.begin(); i != child_handles.end(); ++i) {
       EXPECT_EQ(*i, written_metahandle);
     }
   }
@@ -1705,198 +1691,6 @@ TEST_F(SyncableDirectoryTest, StressTransactions) {
   }
 }
 
-// Verify that Directory is notifed when a MutableEntry's AttachmentMetadata
-// changes.
-TEST_F(SyncableDirectoryTest, MutableEntry_PutAttachmentMetadata) {
-  sync_pb::AttachmentMetadata attachment_metadata;
-  sync_pb::AttachmentMetadataRecord* record = attachment_metadata.add_record();
-  sync_pb::AttachmentIdProto attachment_id_proto =
-      CreateAttachmentIdProto(0, 0);
-  *record->mutable_id() = attachment_id_proto;
-  ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-  {
-    WriteTransaction trans(FROM_HERE, UNITTEST, dir().get());
-
-    // Create an entry with attachment metadata and see that the attachment id
-    // is not linked.
-    MutableEntry entry(&trans, CREATE, PREFERENCES, trans.root_id(),
-                       "some entry");
-    entry.PutId(TestIdFactory::FromNumber(-1));
-    entry.PutIsUnsynced(true);
-
-    Directory::Metahandles metahandles;
-    ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-    dir()->GetMetahandlesByAttachmentId(&trans, attachment_id_proto,
-                                        &metahandles);
-    ASSERT_TRUE(metahandles.empty());
-
-    // Now add the attachment metadata and see that Directory believes it is
-    // linked.
-    entry.PutAttachmentMetadata(attachment_metadata);
-    ASSERT_TRUE(dir()->IsAttachmentLinked(attachment_id_proto));
-    dir()->GetMetahandlesByAttachmentId(&trans, attachment_id_proto,
-                                        &metahandles);
-    ASSERT_FALSE(metahandles.empty());
-    ASSERT_EQ(metahandles[0], entry.GetMetahandle());
-
-    // Clear out the attachment metadata and see that it's no longer linked.
-    sync_pb::AttachmentMetadata empty_attachment_metadata;
-    entry.PutAttachmentMetadata(empty_attachment_metadata);
-    ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-    dir()->GetMetahandlesByAttachmentId(&trans, attachment_id_proto,
-                                        &metahandles);
-    ASSERT_TRUE(metahandles.empty());
-  }
-  ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-}
-
-// Verify that UpdateAttachmentId updates attachment_id and is_on_server flag.
-TEST_F(SyncableDirectoryTest, MutableEntry_UpdateAttachmentId) {
-  sync_pb::AttachmentMetadata attachment_metadata;
-  sync_pb::AttachmentMetadataRecord* r1 = attachment_metadata.add_record();
-  sync_pb::AttachmentMetadataRecord* r2 = attachment_metadata.add_record();
-  *r1->mutable_id() = CreateAttachmentIdProto(0, 0);
-  *r2->mutable_id() = CreateAttachmentIdProto(0, 0);
-  sync_pb::AttachmentIdProto attachment_id_proto = r1->id();
-
-  WriteTransaction trans(FROM_HERE, UNITTEST, dir().get());
-
-  MutableEntry entry(&trans, CREATE, PREFERENCES, trans.root_id(),
-                     "some entry");
-  entry.PutId(TestIdFactory::FromNumber(-1));
-  entry.PutAttachmentMetadata(attachment_metadata);
-
-  {
-    const sync_pb::AttachmentMetadata& entry_metadata =
-        entry.GetAttachmentMetadata();
-    ASSERT_EQ(2, entry_metadata.record_size());
-    ASSERT_FALSE(entry_metadata.record(0).is_on_server());
-    ASSERT_FALSE(entry_metadata.record(1).is_on_server());
-    ASSERT_FALSE(entry.GetIsUnsynced());
-  }
-
-  entry.MarkAttachmentAsOnServer(attachment_id_proto);
-
-  {
-    // Re-get entry_metadata because it is immutable in the directory and
-    // entry_metadata reference has been made invalid by
-    // MarkAttachmentAsOnServer call above.
-    const sync_pb::AttachmentMetadata& entry_metadata =
-        entry.GetAttachmentMetadata();
-    ASSERT_TRUE(entry_metadata.record(0).is_on_server());
-    ASSERT_FALSE(entry_metadata.record(1).is_on_server());
-    ASSERT_TRUE(entry.GetIsUnsynced());
-  }
-}
-
-// Verify that deleted entries with attachments will retain the attachments.
-TEST_F(SyncableDirectoryTest, Directory_DeleteDoesNotUnlinkAttachments) {
-  sync_pb::AttachmentMetadata attachment_metadata;
-  sync_pb::AttachmentMetadataRecord* record = attachment_metadata.add_record();
-  sync_pb::AttachmentIdProto attachment_id_proto =
-      CreateAttachmentIdProto(0, 0);
-  *record->mutable_id() = attachment_id_proto;
-  ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-  const Id id = TestIdFactory::FromNumber(-1);
-
-  // Create an entry with attachment metadata and see that the attachment id
-  // is linked.
-  CreateEntryWithAttachmentMetadata(PREFERENCES, "some entry", id,
-                                    attachment_metadata);
-  ASSERT_TRUE(dir()->IsAttachmentLinked(attachment_id_proto));
-
-  // Delete the entry and see that it's still linked because the entry hasn't
-  // yet been purged.
-  DeleteEntry(id);
-  ASSERT_TRUE(dir()->IsAttachmentLinked(attachment_id_proto));
-
-  // Reload the Directory, purging the deleted entry, and see that the
-  // attachment is no longer linked.
-  SimulateSaveAndReloadDir();
-  ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-}
-
-// Verify that a given attachment can be referenced by multiple entries and that
-// any one of the references is sufficient to ensure it remains linked.
-TEST_F(SyncableDirectoryTest, Directory_LastReferenceUnlinksAttachments) {
-  // Create one attachment.
-  sync_pb::AttachmentMetadata attachment_metadata;
-  sync_pb::AttachmentMetadataRecord* record = attachment_metadata.add_record();
-  sync_pb::AttachmentIdProto attachment_id_proto =
-      CreateAttachmentIdProto(0, 0);
-  *record->mutable_id() = attachment_id_proto;
-
-  // Create two entries, each referencing the attachment.
-  const Id id1 = TestIdFactory::FromNumber(-1);
-  const Id id2 = TestIdFactory::FromNumber(-2);
-  CreateEntryWithAttachmentMetadata(PREFERENCES, "some entry", id1,
-                                    attachment_metadata);
-  CreateEntryWithAttachmentMetadata(PREFERENCES, "some other entry", id2,
-                                    attachment_metadata);
-
-  // See that the attachment is considered linked.
-  ASSERT_TRUE(dir()->IsAttachmentLinked(attachment_id_proto));
-
-  // Delete the first entry, reload the Directory, see that the attachment is
-  // still linked.
-  DeleteEntry(id1);
-  SimulateSaveAndReloadDir();
-  ASSERT_TRUE(dir()->IsAttachmentLinked(attachment_id_proto));
-
-  // Delete the second entry, reload the Directory, see that the attachment is
-  // no loner linked.
-  DeleteEntry(id2);
-  SimulateSaveAndReloadDir();
-  ASSERT_FALSE(dir()->IsAttachmentLinked(attachment_id_proto));
-}
-
-TEST_F(SyncableDirectoryTest, Directory_GetAttachmentIdsToUpload) {
-  // Create one attachment, referenced by two entries.
-  AttachmentId attachment_id = AttachmentId::Create(0, 0);
-  sync_pb::AttachmentIdProto attachment_id_proto = attachment_id.GetProto();
-  sync_pb::AttachmentMetadata attachment_metadata;
-  sync_pb::AttachmentMetadataRecord* record = attachment_metadata.add_record();
-  *record->mutable_id() = attachment_id_proto;
-  const Id id1 = TestIdFactory::FromNumber(-1);
-  const Id id2 = TestIdFactory::FromNumber(-2);
-  CreateEntryWithAttachmentMetadata(PREFERENCES, "some entry", id1,
-                                    attachment_metadata);
-  CreateEntryWithAttachmentMetadata(PREFERENCES, "some other entry", id2,
-                                    attachment_metadata);
-
-  // See that Directory reports that this attachment is not on the server.
-  AttachmentIdList ids;
-  {
-    ReadTransaction trans(FROM_HERE, dir().get());
-    dir()->GetAttachmentIdsToUpload(&trans, PREFERENCES, &ids);
-  }
-  ASSERT_EQ(1U, ids.size());
-  ASSERT_EQ(attachment_id, *ids.begin());
-
-  // Call again, but this time with a ModelType for which there are no entries.
-  // See that Directory correctly reports that there are none.
-  {
-    ReadTransaction trans(FROM_HERE, dir().get());
-    dir()->GetAttachmentIdsToUpload(&trans, PASSWORDS, &ids);
-  }
-  ASSERT_TRUE(ids.empty());
-
-  // Now, mark the attachment as "on the server" via entry_1.
-  {
-    WriteTransaction trans(FROM_HERE, UNITTEST, dir().get());
-    MutableEntry entry_1(&trans, GET_BY_ID, id1);
-    entry_1.MarkAttachmentAsOnServer(attachment_id_proto);
-  }
-
-  // See that Directory no longer reports that this attachment is not on the
-  // server.
-  {
-    ReadTransaction trans(FROM_HERE, dir().get());
-    dir()->GetAttachmentIdsToUpload(&trans, PREFERENCES, &ids);
-  }
-  ASSERT_TRUE(ids.empty());
-}
-
 // Verify that the directory accepts entries with unset parent ID.
 TEST_F(SyncableDirectoryTest, MutableEntry_ImplicitParentId) {
   TestIdFactory id_factory;
@@ -2034,11 +1828,14 @@ TEST_F(SyncableDirectoryTest, SaveChangesSnapshot_HasUnsavedMetahandleChanges) {
 TEST_F(SyncableDirectoryTest, CatastrophicError) {
   MockUnrecoverableErrorHandler unrecoverable_error_handler;
   Directory dir(
-      std::make_unique<InMemoryDirectoryBackingStore>("catastrophic_error"),
-      MakeWeakHandle(unrecoverable_error_handler.GetWeakPtr()), base::Closure(),
-      nullptr, nullptr);
-  ASSERT_EQ(OPENED, dir.Open(kDirectoryName, directory_change_delegate(),
-                             NullTransactionObserver()));
+      std::make_unique<InMemoryDirectoryBackingStore>(
+          "catastrophic_error", base::BindRepeating([]() -> std::string {
+            return "test_cache_guid";
+          })),
+      MakeWeakHandle(unrecoverable_error_handler.GetWeakPtr()),
+      base::RepeatingClosure(), nullptr, nullptr);
+  ASSERT_EQ(OPENED_NEW, dir.Open(kDirectoryName, directory_change_delegate(),
+                                 NullTransactionObserver()));
   ASSERT_EQ(0, unrecoverable_error_handler.invocation_count());
 
   // Fire off two catastrophic errors. Call it twice to ensure Directory is

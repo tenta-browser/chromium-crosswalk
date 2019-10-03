@@ -4,114 +4,70 @@
 
 #include "ui/aura/test/event_generator_delegate_aura.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/run_loop.h"
 #include "ui/aura/client/screen_position_client.h"
-#include "ui/aura/env.h"
-#include "ui/aura/test/env_test_helper.h"
-#include "ui/aura/test/mus/window_tree_client_private.h"
-#include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/test/default_event_generator_delegate.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/input_method.h"
+#include "ui/events/event_source.h"
 
 namespace aura {
 namespace test {
 namespace {
 
-class DefaultEventGeneratorDelegate : public EventGeneratorDelegateAura {
- public:
-  static DefaultEventGeneratorDelegate* GetInstance() {
-    return base::Singleton<DefaultEventGeneratorDelegate>::get();
-  }
-
-  // EventGeneratorDelegate:
-  void SetContext(ui::test::EventGenerator* owner,
-                  gfx::NativeWindow root_window,
-                  gfx::NativeWindow window) override {
-    root_window_ = root_window;
-  }
-
-  // EventGeneratorDelegateAura:
-  WindowTreeHost* GetHostAt(const gfx::Point& point) const override {
-    return root_window_->GetHost();
-  }
-
-  client::ScreenPositionClient* GetScreenPositionClient(
-      const aura::Window* window) const override {
-    return NULL;
-  }
-
- private:
-  friend struct base::DefaultSingletonTraits<DefaultEventGeneratorDelegate>;
-
-  DefaultEventGeneratorDelegate() : root_window_(NULL) {
-    DCHECK(!ui::test::EventGenerator::default_delegate);
-    ui::test::EventGenerator::default_delegate = this;
-  }
-
-  ~DefaultEventGeneratorDelegate() override {
-    DCHECK_EQ(this, ui::test::EventGenerator::default_delegate);
-    ui::test::EventGenerator::default_delegate = NULL;
-  }
-
-  Window* root_window_;
-
-  DISALLOW_COPY_AND_ASSIGN(DefaultEventGeneratorDelegate);
-};
-
 const Window* WindowFromTarget(const ui::EventTarget* event_target) {
   return static_cast<const Window*>(event_target);
+}
+Window* WindowFromTarget(ui::EventTarget* event_target) {
+  return static_cast<Window*>(event_target);
 }
 
 }  // namespace
 
-void InitializeAuraEventGeneratorDelegate() {
-  if (!ui::test::EventGenerator::default_delegate) {
-    DefaultEventGeneratorDelegate::GetInstance();
-  }
+// static
+std::unique_ptr<ui::test::EventGeneratorDelegate>
+EventGeneratorDelegateAura::Create(ui::test::EventGenerator* owner,
+                                   gfx::NativeWindow root_window,
+                                   gfx::NativeWindow window) {
+  // Tests should not create event generators for a "root window" that's not
+  // actually the root window.
+  if (root_window)
+    DCHECK_EQ(root_window, root_window->GetRootWindow());
+
+  return std::make_unique<DefaultEventGeneratorDelegate>(root_window);
 }
 
-EventGeneratorDelegateAura::EventGeneratorDelegateAura() {
-}
+EventGeneratorDelegateAura::EventGeneratorDelegateAura() = default;
 
-EventGeneratorDelegateAura::~EventGeneratorDelegateAura() {
-}
+EventGeneratorDelegateAura::~EventGeneratorDelegateAura() = default;
 
-ui::EventTarget* EventGeneratorDelegateAura::GetTargetAt(
-    const gfx::Point& location) {
-  // TODO(andresantoso): Add support for EventGenerator::targeting_application()
-  // if needed for Ash.
-  return GetHostAt(location)->window();
+client::ScreenPositionClient*
+EventGeneratorDelegateAura::GetScreenPositionClient(
+    const Window* window) const {
+  return client::GetScreenPositionClient(window->GetRootWindow());
 }
 
 ui::EventSource* EventGeneratorDelegateAura::GetEventSource(
     ui::EventTarget* target) {
-  return static_cast<Window*>(target)->GetHost()->GetEventSource();
+  return WindowFromTarget(target)->GetHost()->GetEventSource();
 }
 
 gfx::Point EventGeneratorDelegateAura::CenterOfTarget(
     const ui::EventTarget* target) const {
-  gfx::Point center =
-      gfx::Rect(WindowFromTarget(target)->bounds().size()).CenterPoint();
-  ConvertPointFromTarget(target, &center);
-  return center;
+  return CenterOfWindow(WindowFromTarget(target));
 }
 
 gfx::Point EventGeneratorDelegateAura::CenterOfWindow(
     gfx::NativeWindow window) const {
-  return CenterOfTarget(window);
+  return CenterOfWindow(static_cast<const Window*>(window));
 }
 
 void EventGeneratorDelegateAura::ConvertPointFromTarget(
     const ui::EventTarget* event_target,
     gfx::Point* point) const {
-  DCHECK(point);
-  const Window* target = WindowFromTarget(event_target);
-  aura::client::ScreenPositionClient* client = GetScreenPositionClient(target);
-  if (client)
-    client->ConvertPointToScreen(target, point);
-  else
-    aura::Window::ConvertPointToTarget(target, target->GetRootWindow(), point);
+  ConvertPointFromWindow(WindowFromTarget(event_target), point);
 }
 
 void EventGeneratorDelegateAura::ConvertPointToTarget(
@@ -126,6 +82,12 @@ void EventGeneratorDelegateAura::ConvertPointToTarget(
     aura::Window::ConvertPointToTarget(target->GetRootWindow(), target, point);
 }
 
+void EventGeneratorDelegateAura::ConvertPointFromWindow(
+    gfx::NativeWindow window,
+    gfx::Point* point) const {
+  return ConvertPointFromWindow(static_cast<const Window*>(window), point);
+}
+
 void EventGeneratorDelegateAura::ConvertPointFromHost(
     const ui::EventTarget* hosted_target,
     gfx::Point* point) const {
@@ -136,24 +98,26 @@ void EventGeneratorDelegateAura::ConvertPointFromHost(
 ui::EventDispatchDetails EventGeneratorDelegateAura::DispatchKeyEventToIME(
     ui::EventTarget* target,
     ui::KeyEvent* event) {
-  Window* window = static_cast<Window*>(target);
+  Window* const window = WindowFromTarget(target);
   return window->GetHost()->GetInputMethod()->DispatchKeyEvent(event);
 }
 
-void EventGeneratorDelegateAura::DispatchEventToPointerWatchers(
-    ui::EventTarget* target,
-    const ui::PointerEvent& event) {
-  // In non-mus aura PointerWatchers are handled by system-wide EventHandlers,
-  // for example ash::Shell and ash::PointerWatcherAdapter.
-  if (!Env::GetInstance()->HasWindowTreeClient())
-    return;
+gfx::Point EventGeneratorDelegateAura::CenterOfWindow(
+    const Window* window) const {
+  gfx::Point center = gfx::Rect(window->bounds().size()).CenterPoint();
+  ConvertPointFromWindow(window, &center);
+  return center;
+}
 
-  // Route the event through WindowTreeClient as in production mus. Does nothing
-  // if there are no PointerWatchers installed.
-  Window* window = static_cast<Window*>(target);
-  WindowTreeClient* window_tree_client = EnvTestHelper().GetWindowTreeClient();
-  WindowTreeClientPrivate(window_tree_client)
-      .CallOnPointerEventObserved(window, ui::Event::Clone(event));
+void EventGeneratorDelegateAura::ConvertPointFromWindow(
+    const Window* window,
+    gfx::Point* point) const {
+  DCHECK(point);
+  aura::client::ScreenPositionClient* client = GetScreenPositionClient(window);
+  if (client)
+    client->ConvertPointToScreen(window, point);
+  else
+    aura::Window::ConvertPointToTarget(window, window->GetRootWindow(), point);
 }
 
 }  // namespace test

@@ -54,8 +54,9 @@ var DumpCreator = (function() {
         '<p class=audio-diagnostic-dumps-info>It is recommended to choose a' +
         ' new base filename each time the feature is enabled to avoid ending' +
         ' up with partially overwritten or unusable audio files.</p>' +
-        '<p><label><input type=checkbox>' +
-        'Enable diagnostic packet and event recording</label></p>' +
+        '<p><label><input type=checkbox disabled=true>' +
+        'Enable diagnostic packet and event recording' +
+        '<label name="placeholder_for_warning"/></label></p>' +
         '<p class=audio-diagnostic-dumps-info>A diagnostic packet and event' +
         ' recording can be used for analyzing various issues related to' +
         ' thread starvation, jitter buffers or bandwidth estimation. Two' +
@@ -71,8 +72,8 @@ var DumpCreator = (function() {
         ' multiple log files to be created. When enabling, a filename for the' +
         ' recording can be entered. The entered filename is used as a' +
         ' base, to which the following suffixes will be appended.</p>' +
-        ' <p>&lt;base filename&gt;.&lt;render process ID&gt;' +
-        '.&lt;recording ID&gt;</p>' +
+        ' <p>&lt;base filename&gt;_&lt;date&gt;_&lt;timestamp&gt;_&lt;render ' +
+        'process ID&gt;_&lt;recording ID&gt;</p>' +
         '<p class=audio-diagnostic-dumps-info>If a file with the same name' +
         ' already exists, it will be overwritten. No more than 5 logfiles ' +
         ' will be created, and each of them is limited to 60MB of storage. ' +
@@ -108,20 +109,32 @@ var DumpCreator = (function() {
       this.root_.getElementsByTagName('input')[1].checked = false;
     },
 
+    // Mark the event log recording checkbox as mutable/immutable.
+    setEventLogRecordingsCheckboxMutability: function(mutable) {
+      // TODO(eladalon): Remove reliance on number and order of elements.
+      // https://crbug.com/817391
+      this.root_.getElementsByTagName('input')[1].disabled = !mutable;
+      if (!mutable) {
+        var label = this.root_.getElementsByTagName('label')[2];
+        label.style = 'color:red;';
+        label.textContent =
+            ' WebRTC event logging\'s state was set by a command line flag.';
+      }
+    },
+
     /**
      * Downloads the PeerConnection updates and stats data as a file.
      *
      * @private
      */
     onDownloadData_: function() {
-      var dump_object =
-      {
+      var dump_object = {
         'getUserMedia': userMediaRequests,
         'PeerConnections': peerConnectionDataStore,
         'UserAgent': navigator.userAgent,
       };
-      var textBlob = new Blob([JSON.stringify(dump_object, null, ' ')],
-                              {type: 'octet/stream'});
+      var textBlob = new Blob(
+          [JSON.stringify(dump_object, null, ' ')], {type: 'octet/stream'});
       var URL = window.URL.createObjectURL(textBlob);
 
       var anchor = this.root_.getElementsByTagName('a')[0];

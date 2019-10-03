@@ -20,13 +20,11 @@ LazyDomDistillerService::LazyDomDistillerService(
     Profile* profile,
     const DomDistillerServiceFactory* service_factory)
     : profile_(profile), service_factory_(service_factory) {
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_PROFILE_DESTROYED,
+  registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                  content::Source<Profile>(profile));
 }
 
-LazyDomDistillerService::~LazyDomDistillerService() {
-}
+LazyDomDistillerService::~LazyDomDistillerService() {}
 
 // This will create an object and schedule work the first time it's called
 // and just return an existing object after that.
@@ -41,10 +39,6 @@ void LazyDomDistillerService::Observe(
   DCHECK_EQ(chrome::NOTIFICATION_PROFILE_DESTROYED, type);
   DCHECK_EQ(profile_, content::Source<Profile>(source).ptr());
   delete this;
-}
-
-syncer::SyncableService* LazyDomDistillerService::GetSyncableService() const {
-  return instance()->GetSyncableService();
 }
 
 bool LazyDomDistillerService::HasEntry(const std::string& entry_id) {

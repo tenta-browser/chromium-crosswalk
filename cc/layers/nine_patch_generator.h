@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "cc/cc_export.h"
 #include "cc/resources/ui_resource_client.h"
 #include "ui/gfx/geometry/rect.h"

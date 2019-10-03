@@ -20,8 +20,8 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/extensions/api/sync_file_system/extension_sync_event_observer.h"
-#include "chrome/browser/extensions/api/sync_file_system/sync_file_system_api_helpers.h"
+#include "chrome/browser/apps/platform_apps/api/sync_file_system/extension_sync_event_observer.h"
+#include "chrome/browser/apps/platform_apps/api/sync_file_system/sync_file_system_api_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_service.h"
@@ -34,6 +34,7 @@
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/extension_prefs.h"
@@ -104,8 +105,8 @@ void DidHandleLoadEvent(
 }
 
 std::string SyncFileStatusToString(SyncFileStatus sync_file_status) {
-  return extensions::api::sync_file_system::ToString(
-      extensions::SyncFileStatusToExtensionEnum(sync_file_status));
+  return chrome_apps::api::sync_file_system::ToString(
+      chrome_apps::api::SyncFileStatusToExtensionEnum(sync_file_status));
 }
 
 // Gets called repeatedly until every SyncFileStatus has been mapped.
@@ -149,12 +150,11 @@ LocalChangeProcessor* GetLocalChangeProcessorAdapter(
 class LocalSyncRunner : public SyncProcessRunner,
                         public LocalFileSyncService::Observer {
  public:
-  LocalSyncRunner(const std::string& name,
-                  SyncFileSystemService* sync_service)
-      : SyncProcessRunner(name, sync_service,
-                          nullptr,  /* timer_helper */
-                          1  /* max_parallel_task */),
-        factory_(this) {}
+  LocalSyncRunner(const std::string& name, SyncFileSystemService* sync_service)
+      : SyncProcessRunner(name,
+                          sync_service,
+                          nullptr, /* timer_helper */
+                          1 /* max_parallel_task */) {}
 
   void StartSync(const SyncStatusCallback& callback) override {
     GetSyncService()->local_service_->ProcessLocalChange(
@@ -184,7 +184,7 @@ class LocalSyncRunner : public SyncProcessRunner,
     callback.Run(status);
   }
 
-  base::WeakPtrFactory<LocalSyncRunner> factory_;
+  base::WeakPtrFactory<LocalSyncRunner> factory_{this};
   DISALLOW_COPY_AND_ASSIGN(LocalSyncRunner);
 };
 
@@ -195,12 +195,12 @@ class RemoteSyncRunner : public SyncProcessRunner,
   RemoteSyncRunner(const std::string& name,
                    SyncFileSystemService* sync_service,
                    RemoteFileSyncService* remote_service)
-      : SyncProcessRunner(name, sync_service,
-                          nullptr,  /* timer_helper */
-                          1  /* max_parallel_task */),
+      : SyncProcessRunner(name,
+                          sync_service,
+                          nullptr, /* timer_helper */
+                          1 /* max_parallel_task */),
         remote_service_(remote_service),
-        last_state_(REMOTE_SERVICE_OK),
-        factory_(this) {}
+        last_state_(REMOTE_SERVICE_OK) {}
 
   void StartSync(const SyncStatusCallback& callback) override {
     remote_service_->ProcessRemoteChange(
@@ -249,7 +249,7 @@ class RemoteSyncRunner : public SyncProcessRunner,
 
   RemoteFileSyncService* remote_service_;
   RemoteServiceState last_state_;
-  base::WeakPtrFactory<RemoteSyncRunner> factory_;
+  base::WeakPtrFactory<RemoteSyncRunner> factory_{this};
   DISALLOW_COPY_AND_ASSIGN(RemoteSyncRunner);
 };
 
@@ -268,7 +268,7 @@ void SyncFileSystemService::Shutdown() {
   remote_service_.reset();
 
   syncer::SyncService* profile_sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (profile_sync_service)
     profile_sync_service->RemoveObserver(this);
 
@@ -458,8 +458,8 @@ void SyncFileSystemService::Initialize(
   local_service_ = std::move(local_service);
   remote_service_ = std::move(remote_service);
 
-  auto local_syncer = base::MakeUnique<LocalSyncRunner>(kLocalSyncName, this);
-  auto remote_syncer = base::MakeUnique<RemoteSyncRunner>(
+  auto local_syncer = std::make_unique<LocalSyncRunner>(kLocalSyncName, this);
+  auto remote_syncer = std::make_unique<RemoteSyncRunner>(
       kRemoteSyncName, this, remote_service_.get());
 
   local_service_->AddChangeObserver(local_syncer.get());
@@ -474,7 +474,7 @@ void SyncFileSystemService::Initialize(
   remote_sync_runners_.push_back(std::move(remote_syncer));
 
   syncer::SyncService* profile_sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (profile_sync_service) {
     UpdateSyncEnabledStatus(profile_sync_service);
     profile_sync_service->AddObserver(this);
@@ -741,7 +741,7 @@ void SyncFileSystemService::OnFileStatusChanged(
 
 void SyncFileSystemService::UpdateSyncEnabledStatus(
     syncer::SyncService* profile_sync_service) {
-  if (!profile_sync_service->IsFirstSetupComplete())
+  if (!profile_sync_service->GetUserSettings()->IsFirstSetupComplete())
     return;
   bool old_sync_enabled = sync_enabled_;
   sync_enabled_ = profile_sync_service->GetActiveDataTypes().Has(

@@ -7,13 +7,14 @@
 
 namespace tests_hook {
 
+// Returns true if app group access should be disabled as tests don't have the
+// required entitlements.
+// This is used by internal code.
+bool DisableAppGroupAccess();
+
 // Returns true if ContentSuggestions should be disabled to allow other tests to
 // run unimpeded.
 bool DisableContentSuggestions();
-
-// Returns true if contextual search should be disabled to allow other tests
-// to run unimpeded.
-bool DisableContextualSearch();
 
 // Returns true if the first_run path should be disabled to allow other tests to
 // run unimpeded.

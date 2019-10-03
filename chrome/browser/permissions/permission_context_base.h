@@ -16,7 +16,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom.h"
 
 class GURL;
 class PermissionRequestID;
@@ -27,7 +27,7 @@ class RenderFrameHost;
 class WebContents;
 }
 
-using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
+using BrowserPermissionCallback = base::OnceCallback<void(ContentSetting)>;
 
 // This base class contains common operations for granting permissions.
 // It offers the following functionality:
@@ -53,9 +53,10 @@ using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
 
 class PermissionContextBase : public KeyedService {
  public:
-  PermissionContextBase(Profile* profile,
-                        ContentSettingsType content_settings_type,
-                        blink::FeaturePolicyFeature feature_policy_feature);
+  PermissionContextBase(
+      Profile* profile,
+      ContentSettingsType content_settings_type,
+      blink::mojom::FeaturePolicyFeature feature_policy_feature);
   ~PermissionContextBase() override;
 
   // A field trial used to enable the global permissions kill switch.
@@ -74,13 +75,11 @@ class PermissionContextBase : public KeyedService {
                                  const PermissionRequestID& id,
                                  const GURL& requesting_frame,
                                  bool user_gesture,
-                                 const BrowserPermissionCallback& callback);
+                                 BrowserPermissionCallback callback);
 
   // Returns whether the permission has been granted, denied etc.
   // |render_frame_host| may be nullptr if the call is coming from a context
   // other than a specific frame.
-  // TODO(meredithl): Ensure that the result accurately reflects whether the
-  // origin is blacklisted for this permission.
   PermissionResult GetPermissionStatus(
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
@@ -97,11 +96,6 @@ class PermissionContextBase : public KeyedService {
   // Resets the permission to its default value.
   virtual void ResetPermission(const GURL& requesting_origin,
                                const GURL& embedding_origin);
-
-  // Withdraw an existing permission request, no op if the permission request
-  // was already cancelled by some other means.
-  virtual void CancelPermissionRequest(content::WebContents* web_contents,
-                                       const PermissionRequestID& id);
 
   // Whether the kill switch has been enabled for this permission.
   // public for permissions that do not use RequestPermission, like
@@ -121,14 +115,14 @@ class PermissionContextBase : public KeyedService {
                                 const GURL& requesting_origin,
                                 const GURL& embedding_origin,
                                 bool user_gesture,
-                                const BrowserPermissionCallback& callback);
+                                BrowserPermissionCallback callback);
 
   // Updates stored content setting if persist is set, updates tab indicators
   // and runs the callback to finish the request.
   virtual void NotifyPermissionSet(const PermissionRequestID& id,
                                    const GURL& requesting_origin,
                                    const GURL& embedding_origin,
-                                   const BrowserPermissionCallback& callback,
+                                   BrowserPermissionCallback callback,
                                    bool persist,
                                    ContentSetting content_setting);
 
@@ -163,24 +157,12 @@ class PermissionContextBase : public KeyedService {
   // Called when a request is no longer used so it can be cleaned up.
   void CleanUpRequest(const PermissionRequestID& id);
 
-  // Called when the requesting origin and permission have been checked by Safe
-  // Browsing. |permission_blocked| determines whether to auto-block the
-  // permission request without prompting the user for a decision.
-  void ContinueRequestPermission(content::WebContents* web_contents,
-                                 const PermissionRequestID& id,
-                                 const GURL& requesting_origin,
-                                 const GURL& embedding_origin,
-                                 bool user_gesture,
-                                 const BrowserPermissionCallback& callback,
-                                 bool permission_blocked);
-
   // This is the callback for PermissionRequestImpl and is called once the user
   // allows/blocks/dismisses a permission prompt.
   void PermissionDecided(const PermissionRequestID& id,
                          const GURL& requesting_origin,
                          const GURL& embedding_origin,
-                         bool user_gesture,
-                         const BrowserPermissionCallback& callback,
+                         BrowserPermissionCallback callback,
                          ContentSetting content_setting);
 
   // Called when the user has made a permission decision. This is a hook for
@@ -193,13 +175,13 @@ class PermissionContextBase : public KeyedService {
 
   Profile* profile_;
   const ContentSettingsType content_settings_type_;
-  const blink::FeaturePolicyFeature feature_policy_feature_;
+  const blink::mojom::FeaturePolicyFeature feature_policy_feature_;
   std::unordered_map<std::string, std::unique_ptr<PermissionRequest>>
       pending_requests_;
 
   // Must be the last member, to ensure that it will be
   // destroyed first, which will invalidate weak pointers
-  base::WeakPtrFactory<PermissionContextBase> weak_factory_;
+  base::WeakPtrFactory<PermissionContextBase> weak_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_PERMISSIONS_PERMISSION_CONTEXT_BASE_H_

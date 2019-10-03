@@ -17,6 +17,7 @@ static_library("common") {
     "//components/subresource_filter/core/common",
     "//content/public/common",
     "//ipc",
+    "//services/network/public/cpp",
     "//url",
   ]
 }
@@ -29,8 +30,12 @@ source_set("unit_tests") {
   deps = [
     ":common",
     "//base",
+    "//base/test:test_support",
     "//components/subresource_filter/core/common",
     "//components/subresource_filter/core/common:test_support",
+    "//content/test:test_support",
+    "//net:test_support",
+    "//services/network:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]

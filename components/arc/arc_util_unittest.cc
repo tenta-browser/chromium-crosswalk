@@ -8,11 +8,12 @@
 #include <string>
 
 #include "ash/public/cpp/app_types.h"
+#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
@@ -154,6 +155,14 @@ TEST_F(ArcUtilTest, IsArcAvailable_OfficiallySupported) {
   EXPECT_TRUE(IsArcKioskAvailable());
 }
 
+TEST_F(ArcUtilTest, IsArcVmEnablede) {
+  EXPECT_FALSE(IsArcVmEnabled());
+
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  command_line->InitFromArgv({"", "--enable-arcvm"});
+  EXPECT_TRUE(IsArcVmEnabled());
+}
+
 // TODO(hidehiko): Add test for IsArcKioskMode().
 // It depends on UserManager, but a utility to inject fake instance is
 // available only in chrome/. To use it in components/, refactoring is needed.
@@ -194,10 +203,10 @@ TEST_F(ArcUtilTest, IsArcAllowedForUser) {
   } const kTestCases[] = {
       {user_manager::USER_TYPE_REGULAR, true},
       {user_manager::USER_TYPE_GUEST, false},
-      {user_manager::USER_TYPE_PUBLIC_ACCOUNT, false},
+      {user_manager::USER_TYPE_PUBLIC_ACCOUNT, true},
       {user_manager::USER_TYPE_SUPERVISED, false},
       {user_manager::USER_TYPE_KIOSK_APP, false},
-      {user_manager::USER_TYPE_CHILD, false},
+      {user_manager::USER_TYPE_CHILD, true},
       {user_manager::USER_TYPE_ARC_KIOSK_APP, true},
       {user_manager::USER_TYPE_ACTIVE_DIRECTORY, true},
   };
@@ -218,15 +227,27 @@ TEST_F(ArcUtilTest, IsArcAllowedForUser) {
   ASSERT_TRUE(fake_user_manager->IsUserCryptohomeDataEphemeral(
       ephemeral_user->GetAccountId()));
 
-  // Ephemeral user is not allowed for ARC.
-  EXPECT_FALSE(IsArcAllowedForUser(ephemeral_user));
+  // Ephemeral user is also allowed for ARC.
+  EXPECT_TRUE(IsArcAllowedForUser(ephemeral_user));
+}
+
+TEST_F(ArcUtilTest, IsArcAllowedForChildUserWithExperiment) {
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  command_line->InitFromArgv(
+      {"", "--enable-features=ArcAvailableForChildAccount"});
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitFromCommandLine(
+      command_line->GetSwitchValueASCII(switches::kEnableFeatures),
+      command_line->GetSwitchValueASCII(switches::kDisableFeatures));
+  const FakeUser user(user_manager::USER_TYPE_CHILD);
+  EXPECT_TRUE(IsArcAllowedForUser(&user));
 }
 
 TEST_F(ArcUtilTest, ArcStartModeDefault) {
   auto* command_line = base::CommandLine::ForCurrentProcess();
   command_line->InitFromArgv({"", "--arc-availability=installed"});
   EXPECT_FALSE(ShouldArcAlwaysStart());
-  EXPECT_TRUE(IsPlayStoreAvailable());
+  EXPECT_FALSE(ShouldArcAlwaysStartWithNoPlayStore());
 }
 
 TEST_F(ArcUtilTest, ArcStartModeWithoutPlayStore) {
@@ -235,7 +256,22 @@ TEST_F(ArcUtilTest, ArcStartModeWithoutPlayStore) {
       {"", "--arc-availability=installed",
        "--arc-start-mode=always-start-with-no-play-store"});
   EXPECT_TRUE(ShouldArcAlwaysStart());
-  EXPECT_FALSE(IsPlayStoreAvailable());
+  EXPECT_TRUE(ShouldArcAlwaysStartWithNoPlayStore());
+}
+
+TEST_F(ArcUtilTest, ScaleFactorToDensity) {
+  // Test all standard scale factors
+  EXPECT_EQ(160, GetLcdDensityForDeviceScaleFactor(1.0f));
+  EXPECT_EQ(160, GetLcdDensityForDeviceScaleFactor(1.25f));
+  EXPECT_EQ(213, GetLcdDensityForDeviceScaleFactor(1.6f));
+  EXPECT_EQ(240, GetLcdDensityForDeviceScaleFactor(2.0f));
+  EXPECT_EQ(280, GetLcdDensityForDeviceScaleFactor(2.25f));
+
+  // Bad scale factors shouldn't blow up.
+  EXPECT_EQ(160, GetLcdDensityForDeviceScaleFactor(0.5f));
+  EXPECT_EQ(160, GetLcdDensityForDeviceScaleFactor(-0.1f));
+  EXPECT_EQ(180, GetLcdDensityForDeviceScaleFactor(1.5f));
+  EXPECT_EQ(1200, GetLcdDensityForDeviceScaleFactor(10.f));
 }
 
 }  // namespace

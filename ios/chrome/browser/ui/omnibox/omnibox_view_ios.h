@@ -8,31 +8,25 @@
 #import <UIKit/UIKit.h>
 
 #include <memory>
-#include "base/mac/scoped_nsobject.h"
+#include "components/omnibox/browser/location_bar_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
-#include "components/toolbar/toolbar_model.h"
-#include "ios/chrome/browser/ui/omnibox/omnibox_popup_provider.h"
-#import "ios/chrome/browser/ui/omnibox/omnibox_popup_view_suggestions_delegate.h"
+#import "ios/chrome/browser/ui/omnibox/omnibox_left_image_consumer.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
+#include "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_provider.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_suggestions_delegate.h"
 
-struct AutocompleteMatch;
 class AutocompleteResult;
-@class AutocompleteTextFieldDelegate;
 class GURL;
+class WebOmniboxEditController;
+struct AutocompleteMatch;
+@class AutocompleteTextFieldDelegate;
 @class OmniboxTextFieldIOS;
 @class OmniboxTextFieldPasteDelegate;
-class WebOmniboxEditController;
+@protocol OmniboxFocuser;
 
 namespace ios {
 class ChromeBrowserState;
 }
-
-// Allows setting left images.
-class LeftImageProvider {
- public:
-  // Sets the left image.
-  virtual void SetLeftImage(int imageId) = 0;
-};
 
 // iOS implementation of OmniBoxView.  Wraps a UITextField and
 // interfaces with the rest of the autocomplete system.
@@ -42,13 +36,14 @@ class OmniboxViewIOS : public OmniboxView,
   // Retains |field|.
   OmniboxViewIOS(OmniboxTextFieldIOS* field,
                  WebOmniboxEditController* controller,
-                 LeftImageProvider* left_image_provider,
-                 ios::ChromeBrowserState* browser_state);
+                 id<OmniboxLeftImageConsumer> left_image_consumer,
+                 ios::ChromeBrowserState* browser_state,
+                 id<OmniboxFocuser> omnibox_focuser);
   ~OmniboxViewIOS() override;
 
   void SetPopupProvider(OmniboxPopupProvider* provider) {
     popup_provider_ = provider;
-  };
+  }
 
   // Returns a color representing |security_level|, adjusted based on whether
   // the browser is in Incognito mode.
@@ -61,7 +56,8 @@ class OmniboxViewIOS : public OmniboxView,
                  WindowOpenDisposition disposition,
                  const GURL& alternate_nav_url,
                  const base::string16& pasted_text,
-                 size_t selected_line) override;
+                 size_t selected_line,
+                 base::TimeTicks match_selection_timestamp) override;
   base::string16 GetText() const override;
   void SetWindowTextAndCaretPos(const base::string16& text,
                                 size_t caret_pos,
@@ -85,24 +81,22 @@ class OmniboxViewIOS : public OmniboxView,
   void Update() override {}
   void EnterKeywordModeForDefaultSearchProvider() override {}
   bool IsSelectAll() const override;
-  bool DeleteAtEndPressed() override;
   void GetSelectionBounds(base::string16::size_type* start,
                           base::string16::size_type* end) const override;
   void SelectAll(bool reversed) override {}
   void SetFocus() override {}
   void ApplyCaretVisibility() override {}
   void OnInlineAutocompleteTextCleared() override {}
-  void OnRevertTemporaryText() override {}
+  void OnRevertTemporaryText(const base::string16& display_text,
+                             const AutocompleteMatch& match) override {}
   gfx::NativeView GetNativeView() const override;
   gfx::NativeView GetRelativeWindowForPopup() const override;
-  int GetTextWidth() const override;
-  int GetWidth() const override;
 
   // AutocompleteTextFieldDelegate methods
   void OnDidBeginEditing();
   bool OnWillChange(NSRange range, NSString* new_text);
   void OnDidChange(bool processing_user_input);
-  void OnDidEndEditing();
+  void OnWillEndEditing();
   void OnAccept();
   void OnClear();
   bool OnCopy();
@@ -111,7 +105,10 @@ class OmniboxViewIOS : public OmniboxView,
 
   // OmniboxPopupViewSuggestionsDelegate methods
 
-  void OnTopmostSuggestionImageChanged(int imageId) override;
+  void OnTopmostSuggestionImageChanged(
+      AutocompleteMatchType::Type match_type,
+      base::Optional<SuggestionAnswer::AnswerType> answer_type,
+      GURL favicon_url) override;
   void OnResultsChanged(const AutocompleteResult& result) override;
   void OnPopupDidScroll() override;
   void OnSelectedMatchForAppending(const base::string16& str) override;
@@ -126,15 +123,15 @@ class OmniboxViewIOS : public OmniboxView,
   // Updates this edit view to show the proper text, highlight and images.
   void UpdateAppearance();
 
+  // Updates the appearance of popup to have proper text alignment.
+  void UpdatePopupAppearance();
+
   // Clears the text from the omnibox.
   void ClearText();
 
-  // Set first result image.
-  void SetLeftImage(const int imageId);
-
   // Hide keyboard and call OnDidEndEditing.  This dismisses the keyboard and
   // also finalizes the editing state of the omnibox.
-  void HideKeyboardAndEndEditing();
+  void EndEditing();
 
   // Hide keyboard only.  Used when omnibox popups grab focus but editing isn't
   // complete.
@@ -158,12 +155,12 @@ class OmniboxViewIOS : public OmniboxView,
   void EmphasizeURLComponents() override;
 
  private:
+  void SetEmphasis(bool emphasize, const gfx::Range& range) override {}
+  void UpdateSchemeStyle(const gfx::Range& scheme_range) override {}
+
   // Calculates text attributes according to |display_text| and
   // returns them in an autoreleased object.
   NSAttributedString* ApplyTextAttributes(const base::string16& text);
-
-  void SetEmphasis(bool emphasize, const gfx::Range& range) override;
-  void UpdateSchemeStyle(const gfx::Range& scheme_range) override;
 
   // Removes the query refinement chip from the omnibox.
   void RemoveQueryRefinementChip();
@@ -178,13 +175,17 @@ class OmniboxViewIOS : public OmniboxView,
 
   ios::ChromeBrowserState* browser_state_;
 
-  base::scoped_nsobject<OmniboxTextFieldIOS> field_;
-  base::scoped_nsobject<OmniboxTextFieldPasteDelegate> paste_delegate_;
+  OmniboxTextFieldIOS* field_;
+
+  OmniboxTextFieldPasteDelegate* paste_delegate_;
   WebOmniboxEditController* controller_;  // weak, owns us
-  LeftImageProvider* left_image_provider_;  // weak
+  __weak id<OmniboxLeftImageConsumer> left_image_consumer_;
+  // Focuser, used to transition the location bar to focused/defocused state as
+  // necessary.
+  __weak id<OmniboxFocuser> omnibox_focuser_;
 
   State state_before_change_;
-  base::scoped_nsobject<NSString> marked_text_before_change_;
+  NSString* marked_text_before_change_;
   NSRange current_selection_;
   NSRange old_selection_;
 
@@ -199,13 +200,18 @@ class OmniboxViewIOS : public OmniboxView,
   BOOL use_strikethrough_workaround_;
 
   // Bridges delegate method calls from |field_| to C++ land.
-  base::scoped_nsobject<AutocompleteTextFieldDelegate> field_delegate_;
+  AutocompleteTextFieldDelegate* field_delegate_;
 
   // Temporary pointer to the attributed display string, stored as color and
   // other emphasis attributes are applied by the superclass.
   NSMutableAttributedString* attributing_display_string_;
 
   OmniboxPopupProvider* popup_provider_;  // weak
+
+  // A flag that is set whenever any input or copy/paste event happened in the
+  // omnibox while it was focused. Used to count event "user focuses the omnibox
+  // to view the complete URL and immediately defocuses it".
+  BOOL omnibox_interacted_while_focused_;
 };
 
 #endif  // IOS_CHROME_BROWSER_UI_OMNIBOX_OMNIBOX_VIEW_IOS_H_

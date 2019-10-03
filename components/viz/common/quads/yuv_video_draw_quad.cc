@@ -5,7 +5,7 @@
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 
 #include "base/logging.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 
@@ -33,8 +33,8 @@ void YUVVideoDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                               float offset,
                               float multiplier,
                               uint32_t bits_per_channel) {
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::YUV_VIDEO_CONTENT, rect,
-                   visible_rect, needs_blending);
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kYuvVideoContent,
+                   rect, visible_rect, needs_blending);
   this->ya_tex_coord_rect = ya_tex_coord_rect;
   this->uv_tex_coord_rect = uv_tex_coord_rect;
   this->ya_tex_size = ya_tex_size;
@@ -66,9 +66,9 @@ void YUVVideoDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                               float offset,
                               float multiplier,
                               uint32_t bits_per_channel,
-                              bool require_overlay) {
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::YUV_VIDEO_CONTENT, rect,
-                   visible_rect, needs_blending);
+                              gfx::ProtectedVideoType protected_video_type) {
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::Material::kYuvVideoContent,
+                   rect, visible_rect, needs_blending);
   this->ya_tex_coord_rect = ya_tex_coord_rect;
   this->uv_tex_coord_rect = uv_tex_coord_rect;
   this->ya_tex_size = ya_tex_size;
@@ -82,11 +82,11 @@ void YUVVideoDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
   this->resource_offset = offset;
   this->resource_multiplier = multiplier;
   this->bits_per_channel = bits_per_channel;
-  this->require_overlay = require_overlay;
+  this->protected_video_type = protected_video_type;
 }
 
 const YUVVideoDrawQuad* YUVVideoDrawQuad::MaterialCast(const DrawQuad* quad) {
-  DCHECK(quad->material == DrawQuad::YUV_VIDEO_CONTENT);
+  DCHECK(quad->material == DrawQuad::Material::kYuvVideoContent);
   return static_cast<const YUVVideoDrawQuad*>(quad);
 }
 
@@ -104,7 +104,8 @@ void YUVVideoDrawQuad::ExtendValue(
                     resources.ids[kVPlaneResourceIdIndex]);
   value->SetInteger("a_plane_resource_id",
                     resources.ids[kAPlaneResourceIdIndex]);
-  value->SetBoolean("require_overlay", require_overlay);
+  value->SetInteger("protected_video_type",
+                    static_cast<int>(protected_video_type));
 }
 
 }  // namespace viz

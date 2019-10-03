@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/extensions/window_controller_list.h"
 #include "chrome/browser/profiles/profile.h"
@@ -43,7 +43,7 @@ RequestManager::~RequestManager() {
   while (it != requests_.end()) {
     const int request_id = it->first;
     ++it;
-    RejectRequest(request_id, base::MakeUnique<RequestValue>(),
+    RejectRequest(request_id, std::make_unique<RequestValue>(),
                   base::File::FILE_ERROR_ABORT);
   }
 
@@ -66,7 +66,7 @@ int RequestManager::CreateRequest(RequestType type,
                            "type",
                            type);
 
-  std::unique_ptr<Request> request = base::MakeUnique<Request>();
+  std::unique_ptr<Request> request = std::make_unique<Request>();
   request->handler = std::move(handler);
   requests_[request_id] = std::move(request);
   ResetTimer(request_id);
@@ -166,7 +166,7 @@ void RequestManager::OnRequestTimeout(int request_id) {
     observer.OnRequestTimeouted(request_id);
 
   if (!notification_manager_) {
-    RejectRequest(request_id, base::MakeUnique<RequestValue>(),
+    RejectRequest(request_id, std::make_unique<RequestValue>(),
                   base::File::FILE_ERROR_ABORT);
     return;
   }
@@ -193,7 +193,7 @@ void RequestManager::OnUnresponsiveNotificationResult(
     return;
   }
 
-  RejectRequest(request_id, base::MakeUnique<RequestValue>(),
+  RejectRequest(request_id, std::make_unique<RequestValue>(),
                 base::File::FILE_ERROR_ABORT);
 }
 
@@ -231,8 +231,7 @@ bool RequestManager::IsInteractingWithUser() const {
     const TabStripModel* const tabs = browser->tab_strip_model();
     DCHECK(tabs);
     for (int i = 0; i < tabs->count(); ++i) {
-      const content::WebContents* const web_contents =
-          tabs->GetWebContentsAt(i);
+      content::WebContents* const web_contents = tabs->GetWebContentsAt(i);
       const GURL& url = web_contents->GetURL();
       if (url.SchemeIs(extensions::kExtensionScheme) &&
           url.host_piece() == provider_id_) {

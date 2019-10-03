@@ -4,15 +4,14 @@
 
 package org.chromium.chrome.browser.payments;
 
-import android.content.DialogInterface;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.FlakyTest;
@@ -24,10 +23,11 @@ import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
 import org.chromium.chrome.browser.payments.ui.PaymentRequestSection;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -35,18 +35,18 @@ import java.util.concurrent.TimeoutException;
  * and user that has a single address stored in autofill settings.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestDynamicShippingSingleAddressTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_dynamic_shipping_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         // The user has a shipping address on disk.
         String billingAddressId = helper.setProfile(new AutofillProfile("", "https://example.com",
@@ -61,8 +61,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testAddressNotSelected()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testAddressNotSelected() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         Assert.assertEquals(PaymentRequestSection.EDIT_BUTTON_CHOOSE,
                 mPaymentRequestTestRule.getShippingAddressSectionButtonState());
@@ -72,8 +71,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testSelectValidAddressAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testSelectValidAddressAndPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
         // of the Shipping Address).
@@ -87,18 +85,17 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(new String[] {"Jon Doe", "4111111111111111",
-                "12", "2050", "visa", "123", "Google", "340 Main St", "CA", "Los Angeles", "90291",
-                "+16502530000", "US", "en", "californiaShippingOption"});
+                "12", "2050", "basic-card", "123", "Google", "340 Main St", "CA", "Los Angeles",
+                "90291", "+16502530000", "US", "en", "californiaShippingOption"});
     }
 
     /** Expand the shipping address section, select an address, edit it and click "Pay." */
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testSelectValidAddressEditItAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testSelectValidAddressEditItAndPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
         // of the Shipping Address).
@@ -113,7 +110,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         mPaymentRequestTestRule.setTextInEditorAndWait(
                 new String[] {"Jane Doe"}, mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.expectShippingAddressRowIsSelected(0);
 
         mPaymentRequestTestRule.clickAndWait(
@@ -121,10 +118,10 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(new String[] {"Jane Doe", "4111111111111111",
-                "12", "2050", "visa", "123", "Google", "340 Main St", "CA", "Los Angeles", "90291",
-                "+16502530000", "US", "en", "californiaShippingOption"});
+                "12", "2050", "basic-card", "123", "Google", "340 Main St", "CA", "Los Angeles",
+                "90291", "+16502530000", "US", "en", "californiaShippingOption"});
     }
 
     /** Expand the shipping address section, select address, edit but cancel editing, and "Pay". */
@@ -132,7 +129,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @MediumTest
     @Feature({"Payments"})
     public void testSelectValidAddressEditItAndCancelAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
         // of the Shipping Address).
@@ -156,18 +153,17 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(new String[] {"Jon Doe", "4111111111111111",
-                "12", "2050", "visa", "123", "Google", "340 Main St", "CA", "Los Angeles", "90291",
-                "+16502530000", "US", "en", "californiaShippingOption"});
+                "12", "2050", "basic-card", "123", "Google", "340 Main St", "CA", "Los Angeles",
+                "90291", "+16502530000", "US", "en", "californiaShippingOption"});
     }
 
     /** Attempt to add an invalid address and cancel the transaction. */
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testAddInvalidAddressAndCancel()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testAddInvalidAddressAndCancel() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         // Check that there is a selected payment method (makes sure we are not ready to pay because
         // of the Shipping Address).
@@ -177,13 +173,14 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_add_option_button, mPaymentRequestTestRule.getReadyToEdit());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getEditorValidationError());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getEditorValidationError());
         mPaymentRequestTestRule.clickInEditorAndWait(
                 R.id.payments_edit_cancel_button, mPaymentRequestTestRule.getReadyForInput());
 
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /**
@@ -194,8 +191,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @Test
     @FlakyTest(message = "crbug.com/626289")
     @Feature({"Payments"})
-    public void testAddAddressAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testAddAddressAndPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -206,13 +202,13 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
                         "94043", "650-253-0000"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getReadyForUnmaskInput());
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(new String[] {"Bob", "Google",
                 "1600 Amphitheatre Pkwy", "Mountain View", "CA", "94043", "+16502530000"});
     }
@@ -222,14 +218,14 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @MediumTest
     @Feature({"Payments"})
     public void testQuickAddAddressAndCloseShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
 
         // Quickly press "add address" and then [X].
         int callCount = mPaymentRequestTestRule.getReadyToEdit().getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mPaymentRequestTestRule.getPaymentRequestUI()
                     .getShippingAddressSectionForTest()
                     .findViewById(R.id.payments_add_option_button)
@@ -245,7 +241,8 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
                 R.id.payments_edit_cancel_button, mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /** Quickly pressing [X] and then "add address" should not crash. */
@@ -253,14 +250,14 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @MediumTest
     @Feature({"Payments"})
     public void testQuickCloseAndAddAddressShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
 
         // Quickly press [X] and then "add address."
         int callCount = mPaymentRequestTestRule.getDismissed().getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mPaymentRequestTestRule.getPaymentRequestUI()
                     .getDialogForTest()
                     .findViewById(R.id.close_button)
@@ -272,7 +269,8 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         });
         mPaymentRequestTestRule.getDismissed().waitForCallback(callCount);
 
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /** Quickly pressing "add address" and then "cancel" should not crash. */
@@ -280,14 +278,14 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @MediumTest
     @Feature({"Payments"})
     public void testQuickAddAddressAndCancelShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
 
         // Quickly press "add address" and then "cancel."
         int callCount = mPaymentRequestTestRule.getReadyToEdit().getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mPaymentRequestTestRule.getPaymentRequestUI()
                     .getShippingAddressSectionForTest()
                     .findViewById(R.id.payments_add_option_button)
@@ -303,7 +301,8 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
                 R.id.payments_edit_cancel_button, mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 
     /** Quickly pressing on "cancel" and then "add address" should not crash. */
@@ -311,14 +310,14 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
     @MediumTest
     @Feature({"Payments"})
     public void testQuickCancelAndAddAddressShouldNotCrash()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
 
         // Quickly press on "cancel" and then "add address."
         int callCount = mPaymentRequestTestRule.getDismissed().getCallCount();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mPaymentRequestTestRule.getPaymentRequestUI()
                     .getDialogForTest()
                     .findViewById(R.id.button_secondary)
@@ -330,6 +329,7 @@ public class PaymentRequestDynamicShippingSingleAddressTest implements MainActiv
         });
         mPaymentRequestTestRule.getDismissed().waitForCallback(callCount);
 
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
     }
 }

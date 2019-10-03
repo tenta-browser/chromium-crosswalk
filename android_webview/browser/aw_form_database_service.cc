@@ -4,10 +4,11 @@
 
 #include "android_webview/browser/aw_form_database_service.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
@@ -80,10 +81,11 @@ bool AwFormDatabaseService::HasFormData() {
   using awds = autofill::AutofillWebDataService;
   base::PostTask(
       FROM_HERE,
-      base::Bind(base::IgnoreResult(&awds::GetCountOfValuesContainedBetween),
-                 autofill_data_, base::Time(), base::Time::Max(), this));
+      base::BindOnce(
+          base::IgnoreResult(&awds::GetCountOfValuesContainedBetween),
+          autofill_data_, base::Time(), base::Time::Max(), this));
   {
-    base::ThreadRestrictions::ScopedAllowWait wait;
+    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
     has_form_data_completion_.Wait();
   }
   return has_form_data_result_;

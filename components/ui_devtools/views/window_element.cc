@@ -4,8 +4,11 @@
 
 #include "components/ui_devtools/views/window_element.h"
 
-#include "components/ui_devtools/views/ui_element_delegate.h"
+#include "components/ui_devtools/Protocol.h"
+#include "components/ui_devtools/ui_element_delegate.h"
+#include "components/ui_devtools/views/element_utility.h"
 #include "ui/aura/window.h"
+#include "ui/wm/core/window_util.h"
 
 namespace ui_devtools {
 namespace {
@@ -46,8 +49,7 @@ void WindowElement::OnWindowHierarchyChanging(
 void WindowElement::OnWindowHierarchyChanged(
     const aura::WindowObserver::HierarchyChangeParams& params) {
   if (window_ == params.new_parent && params.receiver == params.new_parent) {
-    AddChild(new WindowElement(params.target, delegate(), this),
-             children().empty() ? nullptr : children().back());
+    AddChild(new WindowElement(params.target, delegate(), this));
   }
 }
 
@@ -64,9 +66,41 @@ void WindowElement::OnWindowBoundsChanged(aura::Window* window,
   delegate()->OnUIElementBoundsChanged(this);
 }
 
-std::vector<std::pair<std::string, std::string>>
-WindowElement::GetCustomAttributes() const {
-  return {};
+std::vector<UIElement::ClassProperties>
+WindowElement::GetCustomPropertiesForMatchedStyle() const {
+  std::vector<UIElement::ClassProperties> ret;
+  std::vector<UIElement::UIProperty> cur_properties;
+
+  ui::Layer* layer = window_->layer();
+  if (layer) {
+    AppendLayerPropertiesMatchedStyle(layer, &cur_properties);
+    ret.emplace_back("Layer", cur_properties);
+    cur_properties.clear();
+  }
+
+  gfx::Rect bounds;
+  GetBounds(&bounds);
+  cur_properties.emplace_back("x", base::NumberToString(bounds.x()));
+  cur_properties.emplace_back("y", base::NumberToString(bounds.y()));
+  cur_properties.emplace_back("width", base::NumberToString(bounds.width()));
+  cur_properties.emplace_back("height", base::NumberToString(bounds.height()));
+
+  std::string state_str =
+      aura::Window::OcclusionStateToString(window_->occlusion_state());
+  // change OcclusionState::UNKNOWN to UNKNOWN
+  state_str = state_str.substr(state_str.find("::") + 2);
+  cur_properties.emplace_back("occlusion-state", state_str);
+  cur_properties.emplace_back("surface",
+                              window_->GetSurfaceId().is_valid()
+                                  ? window_->GetSurfaceId().ToString()
+                                  : "none");
+  cur_properties.emplace_back("capture",
+                              window_->HasCapture() ? "true" : "false");
+  cur_properties.emplace_back(
+      "is-activatable", wm::CanActivateWindow(window_) ? "true" : "false");
+
+  ret.emplace_back("Window", cur_properties);
+  return ret;
 }
 
 void WindowElement::GetBounds(gfx::Rect* bounds) const {
@@ -88,15 +122,37 @@ void WindowElement::SetVisible(bool visible) {
     window_->Hide();
 }
 
-std::pair<aura::Window*, gfx::Rect> WindowElement::GetNodeWindowAndBounds()
-    const {
-  return std::make_pair(window_, window_->GetBoundsInScreen());
+std::vector<std::string> WindowElement::GetAttributes() const {
+  return {"name", window_->GetName(), "active",
+          ::wm::IsActiveWindow(window_) ? "true" : "false"};
+}
+
+std::pair<gfx::NativeWindow, gfx::Rect>
+WindowElement::GetNodeWindowAndScreenBounds() const {
+  return std::make_pair(static_cast<aura::Window*>(window_),
+                        window_->GetBoundsInScreen());
 }
 
 // static
 aura::Window* WindowElement::From(const UIElement* element) {
   DCHECK_EQ(UIElementType::WINDOW, element->type());
   return static_cast<const WindowElement*>(element)->window_;
+}
+
+template <>
+int UIElement::FindUIElementIdForBackendElement<aura::Window>(
+    aura::Window* element) const {
+  if (type_ == UIElementType::WINDOW &&
+      UIElement::GetBackingElement<aura::Window, WindowElement>(this) ==
+          element) {
+    return node_id_;
+  }
+  for (auto* child : children_) {
+    int ui_element_id = child->FindUIElementIdForBackendElement(element);
+    if (ui_element_id)
+      return ui_element_id;
+  }
+  return 0;
 }
 
 }  // namespace ui_devtools

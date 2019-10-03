@@ -11,25 +11,21 @@
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "ui/views/layout/layout_provider.h"
 
-namespace ui {
-class InputDeviceClient;
-}
-
 namespace views {
 class ViewsDelegate;
 }
 
-#if defined(USE_AURA)
 namespace ui_devtools {
 class UiDevToolsServer;
 }
-namespace views {
-class MusClient;
-}
+
+#if defined(USE_AURA)
 namespace wm {
 class WMState;
 }
 #endif
+
+class RelaunchNotificationController;
 
 class ChromeBrowserMainExtraPartsViews : public ChromeBrowserMainExtraParts {
  public:
@@ -40,26 +36,22 @@ class ChromeBrowserMainExtraPartsViews : public ChromeBrowserMainExtraParts {
   void ToolkitInitialized() override;
   void PreCreateThreads() override;
   void PreProfileInit() override;
-  void ServiceManagerConnectionStarted(
-      content::ServiceManagerConnection* connection) override;
+  void PostBrowserStart() override;
+  void PostMainMessageLoopRun() override;
 
  private:
   std::unique_ptr<views::ViewsDelegate> views_delegate_;
   std::unique_ptr<views::LayoutProvider> layout_provider_;
 
-#if defined(USE_AURA)
   // Only used when running in --enable-ui-devtools.
   std::unique_ptr<ui_devtools::UiDevToolsServer> devtools_server_;
-
-  // Not created when running in ash::Config::MUS.
+#if defined(USE_AURA)
   std::unique_ptr<wm::WMState> wm_state_;
-
-  // Only used when running in ash::Config::MASH.
-  std::unique_ptr<views::MusClient> mus_client_;
-
-  // Subscribes to updates about input-devices.
-  std::unique_ptr<ui::InputDeviceClient> input_device_client_;
 #endif
+
+  // Manages the relaunch notification prompts.
+  std::unique_ptr<RelaunchNotificationController>
+      relaunch_notification_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainExtraPartsViews);
 };

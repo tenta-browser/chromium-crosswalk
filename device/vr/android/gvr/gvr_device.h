@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef DEVICE_VR_ANDROID_GVR_DEVICE_H
-#define DEVICE_VR_ANDROID_GVR_DEVICE_H
+#ifndef DEVICE_VR_ANDROID_GVR_GVR_DEVICE_H_
+#define DEVICE_VR_ANDROID_GVR_GVR_DEVICE_H_
 
 #include <jni.h>
 
@@ -17,26 +17,24 @@
 namespace device {
 
 class GvrDelegateProvider;
-class VRDisplayImpl;
 
-// TODO(mthiesse, crbug.com/769373): Remove DEVICE_VR_EXPORT.
-class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase {
+class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase,
+                                   public mojom::XRSessionController {
  public:
-  static std::unique_ptr<GvrDevice> Create();
+  GvrDevice();
   ~GvrDevice() override;
 
   // VRDeviceBase
-  void RequestPresent(
-      VRDisplayImpl* display,
-      mojom::VRSubmitFrameClientPtr submit_client,
-      mojom::VRPresentationProviderRequest request,
-      mojom::VRDisplayHost::RequestPresentCallback callback) override;
-  void ExitPresent() override;
+  void RequestSession(
+      mojom::XRRuntimeSessionOptionsPtr options,
+      mojom::XRRuntime::RequestSessionCallback callback) override;
   void PauseTracking() override;
   void ResumeTracking() override;
+  void EnsureInitialized(EnsureInitializedCallback callback) override;
 
-  void OnDIPScaleChanged(JNIEnv* env,
-                         const base::android::JavaRef<jobject>& obj);
+  void OnDisplayConfigurationChanged(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& obj);
 
   void Activate(mojom::VRDisplayEventReason reason,
                 base::Callback<void(bool)> on_handled);
@@ -44,19 +42,30 @@ class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase {
  private:
   // VRDeviceBase
   void OnListeningForActivate(bool listening) override;
-  void OnMagicWindowPoseRequest(
-      mojom::VRMagicWindowProvider::GetPoseCallback callback) override;
 
-  void OnRequestPresentResult(
-      mojom::VRDisplayHost::RequestPresentCallback callback,
-      VRDisplayImpl* display,
-      bool result);
+  void OnStartPresentResult(mojom::XRSessionPtr session);
 
-  GvrDevice();
+  // XRSessionController
+  void SetFrameDataRestricted(bool restricted) override;
+
+  void OnPresentingControllerMojoConnectionError();
+  void StopPresenting();
   GvrDelegateProvider* GetGvrDelegateProvider();
+
+  void Init(base::OnceCallback<void(bool)> on_finished);
+  void CreateNonPresentingContext();
+  void OnInitRequestSessionFinished(
+      mojom::XRRuntimeSessionOptionsPtr options,
+      bool success);
 
   base::android::ScopedJavaGlobalRef<jobject> non_presenting_context_;
   std::unique_ptr<gvr::GvrApi> gvr_api_;
+
+  bool paused_ = true;
+
+  mojo::Binding<mojom::XRSessionController> exclusive_controller_binding_;
+
+  mojom::XRRuntime::RequestSessionCallback pending_request_session_callback_;
 
   base::WeakPtrFactory<GvrDevice> weak_ptr_factory_;
 
@@ -65,4 +74,4 @@ class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase {
 
 }  // namespace device
 
-#endif  // DEVICE_VR_ANDROID_GVR_DEVICE_H
+#endif  // DEVICE_VR_ANDROID_GVR_GVR_DEVICE_H_

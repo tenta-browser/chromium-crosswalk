@@ -5,12 +5,12 @@
 #include "components/drive/chromeos/search_metadata.h"
 
 #include <algorithm>
+#include <map>
 #include <queue>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/i18n/string_search.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -86,9 +86,11 @@ class HiddenEntryClassifier {
   HiddenEntryClassifier(ResourceMetadata* metadata,
                         const std::string& mydrive_local_id)
       : metadata_(metadata) {
-    // Only things under My Drive and drive/other are not hidden.
+    // Only things under My Drive, drive/other and drive/team_drives are not
+    // hidden.
     is_hiding_child_[mydrive_local_id] = false;
     is_hiding_child_[util::kDriveOtherDirLocalId] = false;
+    is_hiding_child_[util::kDriveTeamDrivesDirLocalId] = false;
 
     // Everything else is hidden, including the directories mentioned above
     // themselves.
@@ -172,7 +174,7 @@ FileError MaybeAddEntryToResult(
   if (result_candidates->size() == at_most_num_matches)
     result_candidates->pop();
   result_candidates->push(
-      base::MakeUnique<ResultCandidate>(it->GetID(), entry, highlighted));
+      std::make_unique<ResultCandidate>(it->GetID(), entry, highlighted));
   return FILE_ERROR_OK;
 }
 
@@ -196,7 +198,7 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
       queries;
   for (const auto& keyword : keywords) {
     queries.push_back(
-        base::MakeUnique<
+        std::make_unique<
             base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
             keyword));
   }
@@ -246,13 +248,13 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
 
 // Runs the SearchMetadataCallback and updates the histogram.
 void RunSearchMetadataCallback(
-    const SearchMetadataCallback& callback,
+    SearchMetadataCallback callback,
     const base::TimeTicks& start_time,
     std::unique_ptr<MetadataSearchResultVector> results,
     FileError error) {
   if (error != FILE_ERROR_OK)
     results.reset();
-  callback.Run(error, std::move(results));
+  std::move(callback).Run(error, std::move(results));
 
   UMA_HISTOGRAM_TIMES("Drive.SearchMetadataTime",
                       base::TimeTicks::Now() - start_time);
@@ -283,8 +285,8 @@ void SearchMetadata(
     const SearchMetadataPredicate& predicate,
     size_t at_most_num_matches,
     MetadataSearchOrder order,
-    const SearchMetadataCallback& callback) {
-  DCHECK(!callback.is_null());
+    SearchMetadataCallback callback) {
+  DCHECK(callback);
 
   const base::TimeTicks start_time = base::TimeTicks::Now();
 
@@ -293,10 +295,10 @@ void SearchMetadata(
   MetadataSearchResultVector* results_ptr = results.get();
   base::PostTaskAndReplyWithResult(
       blocking_task_runner.get(), FROM_HERE,
-      base::Bind(&SearchMetadataOnBlockingPool, resource_metadata, query,
-                 predicate, at_most_num_matches, order, results_ptr),
-      base::Bind(&RunSearchMetadataCallback, callback, start_time,
-                 base::Passed(&results)));
+      base::BindOnce(&SearchMetadataOnBlockingPool, resource_metadata, query,
+                     predicate, at_most_num_matches, order, results_ptr),
+      base::BindOnce(&RunSearchMetadataCallback, std::move(callback),
+                     start_time, std::move(results)));
 }
 
 bool MatchesType(int options, const ResourceEntry& entry) {

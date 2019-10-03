@@ -10,43 +10,9 @@
 // To do so, we override logAllRequests=false from framework.js.
 logAllRequests = true;
 
-// The URL that fakedevtools.html requests upon completion. This is used to
-// detect when the DevTools resource has finished loading, because the requested
-// front-end resources should not be visible in the webRequest API.
+// The URL that fakedevtools.html requests upon completion.
 function getCompletionURL() {
-  // We do not care about the exact events, so use a non-existing extension
-  // resource because it produces only two events: onBeforeRequest and
-  // onErrorOccurred.
   return getURL('does_not_exist.html');
-}
-
-// The expected events when fakedevtools.html requests to |getCompletionURL()|.
-function expectCompletionEvents() {
-  // These events are expected to occur. If that does not happen, check whether
-  // fakedevtools.html was actually loaded via the chrome-devtools:-URL.
-  expect(
-      [
-        {
-          label: 'onBeforeRequest',
-          event: 'onBeforeRequest',
-          details: {
-            type: 'image',
-            url: getURL('does_not_exist.html'),
-            frameUrl: 'unknown frame URL',
-          },
-        },
-        {
-          label: 'onErrorOccurred',
-          event: 'onErrorOccurred',
-          details: {
-            type: 'image',
-            url: getURL('does_not_exist.html'),
-            fromCache: false,
-            error: 'net::ERR_FILE_NOT_FOUND',
-          }
-        },
-      ],
-      [['onBeforeRequest', 'onErrorOccurred']]);
 }
 
 function expectNormalTabNavigationEvents(url) {
@@ -222,6 +188,35 @@ function expectMockedTabNavigationEvents(url) {
           }
         },
         {
+          label: 'onBeforeSendHeaders-1',
+          event: 'onBeforeSendHeaders',
+          details: {
+            type: 'main_frame',
+            url,
+            initiator: getServerDomain(initiators.BROWSER_INITIATED)
+          }
+        },
+        {
+          label: 'onSendHeaders-1',
+          event: 'onSendHeaders',
+          details: {
+            type: 'main_frame',
+            url,
+            initiator: getServerDomain(initiators.BROWSER_INITIATED)
+          }
+        },
+        {
+          label: 'onHeadersReceived-1',
+          event: 'onHeadersReceived',
+          details: {
+            type: 'main_frame',
+            url,
+            statusCode: 200,
+            statusLine: 'HTTP/1.0 200 OK',
+            initiator: getServerDomain(initiators.BROWSER_INITIATED)
+          }
+        },
+        {
           label: 'onResponseStarted-1',
           event: 'onResponseStarted',
           details: {
@@ -258,6 +253,35 @@ function expectMockedTabNavigationEvents(url) {
           }
         },
         {
+          label: 'onBeforeSendHeaders-2',
+          event: 'onBeforeSendHeaders',
+          details: {
+            type: 'script',
+            url: scriptUrl,
+            initiator: frontendOrigin
+          }
+        },
+        {
+          label: 'onSendHeaders-2',
+          event: 'onSendHeaders',
+          details: {
+            type: 'script',
+            url: scriptUrl,
+            initiator: frontendOrigin
+          }
+        },
+        {
+          label: 'onHeadersReceived-2',
+          event: 'onHeadersReceived',
+          details: {
+            type: 'script',
+            url: scriptUrl,
+            statusCode: 200,
+            statusLine: 'HTTP/1.0 200 OK',
+            initiator: frontendOrigin
+          }
+        },
+        {
           label: 'onResponseStarted-2',
           event: 'onResponseStarted',
           details: {
@@ -288,38 +312,84 @@ function expectMockedTabNavigationEvents(url) {
       ]]);
 }
 
+var requestsIntercepted = [];
+var onBeforeRequest = function(details) {
+  // Ignore favicon requests.
+  if (details.url.match(/\/favicon.ico$/))
+    return;
+
+  requestsIntercepted.push(details.url);
+};
+
+function addRequestListener() {
+  chrome.webRequest.onBeforeRequest.addListener(
+      onBeforeRequest, {urls: ['*://*/*']}, []);
+};
+
+function removeRequestListener() {
+  chrome.webRequest.onBeforeRequest.removeListener(onBeforeRequest);
+};
+
+function verifyInterceptedRequests(expectedRequests) {
+  chrome.test.assertEq(
+      expectedRequests, requestsIntercepted,
+      'Expected: ' + JSON.stringify(expectedRequests) +
+          ' Actual: ' + JSON.stringify(requestsIntercepted));
+  requestsIntercepted = [];
+};
+
 runTests([
-  // Tests that chrome-devtools://devtools/custom/ is hidden from webRequest.
+  // Tests that devtools://devtools/custom/ is hidden from webRequest.
   function testDevToolsCustomFrontendRequest() {
-    expectCompletionEvents();
+    // The extension shouldn't be able to observe the requests for the devtools
+    // resources. It should also not be able to intercept the request to the
+    // completion url, since it doesn't have access to the initiator
+    // devtools://devtools/.
+    var expectedRequests = [];
+
+    addRequestListener();
+
     // DevToolsFrontendInWebRequestApuTest has set the kCustomDevtoolsFrontend
     // switch to the customfrontend/ subdirectory, so we do not include the path
     // name in the URL again.
     navigateAndWait(
-        'chrome-devtools://devtools/custom/fakedevtools.html#' +
-        getCompletionURL());
+        'devtools://devtools/custom/fakedevtools.html#' +
+            getCompletionURL(),
+        chrome.test.callbackPass(() => {
+          verifyInterceptedRequests(expectedRequests);
+          removeRequestListener();
+        }));
   },
 
   // Tests that the custom front-end URL is visible in non-DevTools requests.
   function testNonDevToolsCustomFrontendRequest() {
-    // The URL that would be loaded by chrome-devtools://devtools/custom/...
+    // The URL that would be loaded by devtools://devtools/custom/...
     var customFrontendUrl = getServerURL(
         'devtoolsfrontend/fakedevtools.html', 'customfrontend.example.com');
     expectNormalTabNavigationEvents(customFrontendUrl);
     navigateAndWait(customFrontendUrl);
   },
 
-  // Tests that chrome-devtools://devtools/remote/ is hidden from webRequest.
+  // Tests that devtools://devtools/remote/ is hidden from webRequest.
   function testDevToolsRemoteFrontendRequest() {
-    expectCompletionEvents();
+    // The extension shouldn't be able to observe the requests for the devtools
+    // resources. It should also not be able to intercept the request to the
+    // completion url, since it doesn't have access to the initiator
+    // devtools://devtools/.
+    var expectedRequests = [];
+    addRequestListener();
     navigateAndWait(
-        'chrome-devtools://devtools/remote/devtoolsfrontend/fakedevtools.html' +
-        '#' + getCompletionURL());
+        'devtools://devtools/remote/devtoolsfrontend/fakedevtools.html' +
+            '#' + getCompletionURL(),
+        chrome.test.callbackPass(() => {
+          verifyInterceptedRequests(expectedRequests);
+          removeRequestListener();
+        }));
   },
 
   // Tests that the custom front-end URL is visible in non-DevTools requests.
   function testNonDevToolsRemoteFrontendRequest() {
-    // The URL that would be loaded by chrome-devtools://devtools/remote/...
+    // The URL that would be loaded by devtools://devtools/remote/...
     var remoteFrontendUrl = 'https://chrome-devtools-frontend.appspot.com/' +
         'devtoolsfrontend/fakedevtools.html';
     expectMockedTabNavigationEvents(remoteFrontendUrl);

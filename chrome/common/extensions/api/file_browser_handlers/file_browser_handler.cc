@@ -147,18 +147,19 @@ std::unique_ptr<FileBrowserHandler> LoadFileBrowserHandler(
 
   std::string handler_id;
   // Read the file action |id| (mandatory).
-  if (!file_browser_handler->HasKey(keys::kPageActionId) ||
-      !file_browser_handler->GetString(keys::kPageActionId, &handler_id)) {
-    *error = base::ASCIIToUTF16(errors::kInvalidPageActionId);
+  if (!file_browser_handler->HasKey(keys::kFileBrowserHandlerId) ||
+      !file_browser_handler->GetString(keys::kFileBrowserHandlerId,
+                                       &handler_id)) {
+    *error = base::ASCIIToUTF16(errors::kInvalidFileBrowserHandlerId);
     return nullptr;
   }
   result->set_id(handler_id);
 
   // Read the page action title from |default_title| (mandatory).
   std::string title;
-  if (!file_browser_handler->HasKey(keys::kPageActionDefaultTitle) ||
-      !file_browser_handler->GetString(keys::kPageActionDefaultTitle, &title)) {
-    *error = base::ASCIIToUTF16(errors::kInvalidPageActionDefaultTitle);
+  if (!file_browser_handler->HasKey(keys::kActionDefaultTitle) ||
+      !file_browser_handler->GetString(keys::kActionDefaultTitle, &title)) {
+    *error = base::ASCIIToUTF16(errors::kInvalidActionDefaultTitle);
     return nullptr;
   }
   result->set_title(title);
@@ -177,7 +178,7 @@ std::unique_ptr<FileBrowserHandler> LoadFileBrowserHandler(
       if (!access_list_value->GetString(i, &access) ||
           result->AddFileAccessPermission(access)) {
         *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
-            errors::kInvalidFileAccessValue, base::IntToString(i));
+            errors::kInvalidFileAccessValue, base::NumberToString(i));
         return nullptr;
       }
     }
@@ -200,7 +201,7 @@ std::unique_ptr<FileBrowserHandler> LoadFileBrowserHandler(
       std::string filter;
       if (!file_filters->GetString(i, &filter)) {
         *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
-            errors::kInvalidFileFilterValue, base::IntToString(i));
+            errors::kInvalidFileFilterValue, base::NumberToString(i));
         return nullptr;
       }
       filter = base::ToLowerASCII(filter);
@@ -214,7 +215,7 @@ std::unique_ptr<FileBrowserHandler> LoadFileBrowserHandler(
       // wildcards in URLPattern, so transform to what will match correctly.
       filter.replace(0, 11, "chrome-extension://*/");
       URLPattern pattern(URLPattern::SCHEME_EXTENSION);
-      if (pattern.Parse(filter) != URLPattern::PARSE_SUCCESS) {
+      if (pattern.Parse(filter) != URLPattern::ParseResult::kSuccess) {
         *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
             errors::kInvalidURLPatternError, filter);
         return nullptr;
@@ -234,11 +235,11 @@ std::unique_ptr<FileBrowserHandler> LoadFileBrowserHandler(
 
   std::string default_icon;
   // Read the file browser action |default_icon| (optional).
-  if (file_browser_handler->HasKey(keys::kPageActionDefaultIcon)) {
-    if (!file_browser_handler->GetString(
-            keys::kPageActionDefaultIcon, &default_icon) ||
+  if (file_browser_handler->HasKey(keys::kActionDefaultIcon)) {
+    if (!file_browser_handler->GetString(keys::kActionDefaultIcon,
+                                         &default_icon) ||
         default_icon.empty()) {
-      *error = base::ASCIIToUTF16(errors::kInvalidPageActionIconPath);
+      *error = base::ASCIIToUTF16(errors::kInvalidActionDefaultIcon);
       return nullptr;
     }
     result->set_icon_path(default_icon);
@@ -303,6 +304,7 @@ bool FileBrowserHandlerParser::Parse(extensions::Extension* extension,
   return true;
 }
 
-const std::vector<std::string> FileBrowserHandlerParser::Keys() const {
-  return SingleKey(keys::kFileBrowserHandlers);
+base::span<const char* const> FileBrowserHandlerParser::Keys() const {
+  static constexpr const char* kKeys[] = {keys::kFileBrowserHandlers};
+  return kKeys;
 }

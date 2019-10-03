@@ -9,22 +9,27 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "ui/views/controls/link_listener.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/window/dialog_delegate.h"
 
 class ConfirmBubbleModel;
 
-// A dialog (with the standard Title/(x)/[OK]/[Cancel] UI elements), as well as
-// a message Label and optional Link. The dialog ultimately appears like this:
+namespace views {
+class ImageButton;
+class Label;
+}  // namespace views
+
+// A dialog (with the standard Title/[OK]/[Cancel] UI elements), as well as
+// a message Label and help (?) button. The dialog ultimately appears like this:
 //   +------------------------+
-//   | Title              (x) |
+//   | Title                  |
 //   | Label                  |
-//   | Link     [OK] [Cancel] |
+//   | (?)      [OK] [Cancel] |
 //   +------------------------+
 //
 // TODO(msw): Remove this class or merge it with DialogDelegateView.
 class ConfirmBubbleViews : public views::DialogDelegateView,
-                           public views::LinkListener {
+                           public views::ButtonListener {
  public:
   explicit ConfirmBubbleViews(std::unique_ptr<ConfirmBubbleModel> model);
 
@@ -34,22 +39,28 @@ class ConfirmBubbleViews : public views::DialogDelegateView,
   // views::DialogDelegate implementation.
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
-  views::View* CreateExtraView() override;
+  std::unique_ptr<views::View> CreateExtraView() override;
   bool Cancel() override;
   bool Accept() override;
 
   // views::WidgetDelegate implementation.
   ui::ModalType GetModalType() const override;
   base::string16 GetWindowTitle() const override;
+  bool ShouldShowCloseButton() const override;
 
-  // views::LinkListener implementation.
-  void LinkClicked(views::Link* source, int event_flags) override;
+  // views::ButtonListener implementation.
+  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
+
+  // views::View implementation.
+  void ViewHierarchyChanged(
+      const views::ViewHierarchyChangedDetails& details) override;
 
  private:
   // The model to customize this bubble view.
   std::unique_ptr<ConfirmBubbleModel> model_;
 
-  views::Link* link_;
+  views::Label* label_;
+  views::ImageButton* help_button_;
 
   DISALLOW_COPY_AND_ASSIGN(ConfirmBubbleViews);
 };

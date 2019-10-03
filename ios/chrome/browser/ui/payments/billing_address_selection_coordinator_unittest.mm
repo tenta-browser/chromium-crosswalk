@@ -5,12 +5,12 @@
 #import "ios/chrome/browser/ui/payments/billing_address_selection_coordinator.h"
 
 #include "base/mac/foundation_util.h"
-#include "base/test/ios/wait_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#import "base/test/ios/wait_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/test_region_data_loader.h"
+#include "components/autofill/core/browser/geo/test_region_data_loader.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #import "ios/chrome/browser/payments/payment_request_unittest_base.h"
 #import "ios/chrome/browser/ui/payments/payment_request_selector_view_controller.h"
@@ -26,8 +26,10 @@ class PaymentRequestBillingAddressSelectionCoordinatorTest
     : public PaymentRequestUnitTestBase,
       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     // Add testing profiles to the database. Make the less frequently used one
     // incomplete.
@@ -56,7 +58,11 @@ class PaymentRequestBillingAddressSelectionCoordinatorTest
     [coordinator_ setPaymentRequest:payment_request()];
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 
   UINavigationController* GetNavigationController() {
     return navigation_controller_;

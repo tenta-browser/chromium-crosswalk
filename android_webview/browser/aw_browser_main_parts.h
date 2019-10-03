@@ -7,18 +7,16 @@
 
 #include <memory>
 
-#include "android_webview/browser/aw_field_trial_creator.h"
+#include "android_webview/browser/aw_browser_process.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/task/single_thread_task_executor.h"
 #include "content/public/browser/browser_main_parts.h"
-
-namespace base {
-class MessageLoop;
-}
 
 namespace android_webview {
 
 class AwContentBrowserClient;
+class AwBrowserProcess;
 
 class AwBrowserMainParts : public content::BrowserMainParts {
  public:
@@ -26,21 +24,19 @@ class AwBrowserMainParts : public content::BrowserMainParts {
   ~AwBrowserMainParts() override;
 
   // Overriding methods from content::BrowserMainParts.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   int PreCreateThreads() override;
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
+  void PostCreateThreads() override;
 
  private:
-  // Android specific UI MessageLoop.
-  std::unique_ptr<base::MessageLoop> main_message_loop_;
+  // Android specific UI SingleThreadTaskExecutor.
+  std::unique_ptr<base::SingleThreadTaskExecutor> main_task_executor_;
 
   AwContentBrowserClient* browser_client_;
 
-  // Responsible for creating a feature list from the seed. This object must
-  // exist for the lifetime of the process as it contains the FieldTrialList
-  // that can be queried for the state of experiments.
-  AwFieldTrialCreator aw_field_trial_creator_;
+  std::unique_ptr<AwBrowserProcess> browser_process_;
 
   DISALLOW_COPY_AND_ASSIGN(AwBrowserMainParts);
 };

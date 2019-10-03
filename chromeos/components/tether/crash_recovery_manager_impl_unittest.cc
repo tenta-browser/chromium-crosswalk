@@ -8,16 +8,14 @@
 #include <sstream>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/scoped_task_environment.h"
+#include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/fake_active_host.h"
 #include "chromeos/components/tether/fake_host_scan_cache.h"
 #include "chromeos/components/tether/host_scan_cache_entry.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/network_state_test.h"
-#include "components/cryptauth/remote_device_test_util.h"
+#include "chromeos/network/network_state_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
@@ -44,35 +42,30 @@ std::string CreateConfigurationJsonString(bool is_connected) {
 
 }  // namespace
 
-class CrashRecoveryManagerImplTest : public NetworkStateTest {
+class CrashRecoveryManagerImplTest : public testing::Test {
  protected:
   CrashRecoveryManagerImplTest()
-      : test_device_(cryptauth::GenerateTestRemoteDevices(1u)[0]) {}
+      : test_device_(multidevice::CreateRemoteDeviceRefListForTest(1u)[0]) {}
   ~CrashRecoveryManagerImplTest() override = default;
 
   void SetUp() override {
-    DBusThreadManager::Initialize();
-    NetworkStateTest::SetUp();
-    network_state_handler()->SetTetherTechnologyState(
+    helper_.network_state_handler()->SetTetherTechnologyState(
         NetworkStateHandler::TECHNOLOGY_ENABLED);
 
     is_restoration_finished_ = false;
 
-    fake_active_host_ = base::MakeUnique<FakeActiveHost>();
-    fake_host_scan_cache_ = base::MakeUnique<FakeHostScanCache>();
+    fake_active_host_ = std::make_unique<FakeActiveHost>();
+    fake_host_scan_cache_ = std::make_unique<FakeHostScanCache>();
 
-    crash_recovery_manager_ = base::MakeUnique<CrashRecoveryManagerImpl>(
-        network_state_handler(), fake_active_host_.get(),
+    crash_recovery_manager_ = CrashRecoveryManagerImpl::Factory::NewInstance(
+        helper_.network_state_handler(), fake_active_host_.get(),
         fake_host_scan_cache_.get());
 
     device_id_tether_network_guid_map_ =
-        base::MakeUnique<DeviceIdTetherNetworkGuidMap>();
+        std::make_unique<DeviceIdTetherNetworkGuidMap>();
   }
 
   void TearDown() override {
-    ShutdownNetworkState();
-    NetworkStateTest::TearDown();
-    DBusThreadManager::Shutdown();
   }
 
   std::string GetTetherNetworkGuid() {
@@ -96,14 +89,14 @@ class CrashRecoveryManagerImplTest : public NetworkStateTest {
              .SetSetupRequired(false)
              .Build());
 
-    network_state_handler()->AddTetherNetworkState(
+    helper_.network_state_handler()->AddTetherNetworkState(
         GetTetherNetworkGuid(), "deviceName", "carrier",
         100 /* battery_percentage */, 100 /* signal_strength */,
         false /* has_connected_to_host */);
   }
 
   void AddWifiNetwork(bool is_connected) {
-    ConfigureService(CreateConfigurationJsonString(is_connected));
+    helper_.ConfigureService(CreateConfigurationJsonString(is_connected));
   }
 
   void StartRestoration() {
@@ -120,8 +113,9 @@ class CrashRecoveryManagerImplTest : public NetworkStateTest {
               fake_active_host_->GetActiveHostStatus());
   }
 
-  const base::test::ScopedTaskEnvironment scoped_task_environment_;
-  const cryptauth::RemoteDevice test_device_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  NetworkStateTestHelper helper_{true /* use_default_devices_and_services */};
+  const multidevice::RemoteDeviceRef test_device_;
 
   std::unique_ptr<FakeActiveHost> fake_active_host_;
   std::unique_ptr<FakeHostScanCache> fake_host_scan_cache_;
@@ -132,7 +126,7 @@ class CrashRecoveryManagerImplTest : public NetworkStateTest {
 
   bool is_restoration_finished_;
 
-  std::unique_ptr<CrashRecoveryManagerImpl> crash_recovery_manager_;
+  std::unique_ptr<CrashRecoveryManager> crash_recovery_manager_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CrashRecoveryManagerImplTest);

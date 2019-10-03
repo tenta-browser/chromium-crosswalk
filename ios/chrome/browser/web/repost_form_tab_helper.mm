@@ -10,8 +10,6 @@
 #error "This file requires ARC support."
 #endif
 
-DEFINE_WEB_STATE_USER_DATA_KEY(RepostFormTabHelper);
-
 RepostFormTabHelper::RepostFormTabHelper(
     web::WebState* web_state,
     id<RepostFormTabHelperDelegate> delegate)
@@ -43,16 +41,16 @@ void RepostFormTabHelper::DismissReportFormDialog() {
 
 void RepostFormTabHelper::PresentDialog(
     CGPoint location,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   DCHECK(!is_presenting_dialog_);
   is_presenting_dialog_ = true;
-  base::Callback<void(bool)> local_callback(callback);
+  __block base::OnceCallback<void(bool)> block_callback = std::move(callback);
   [delegate_ repostFormTabHelper:this
       presentRepostFormDialogForWebState:web_state_
                            dialogAtPoint:location
                        completionHandler:^(BOOL should_continue) {
                          is_presenting_dialog_ = false;
-                         local_callback.Run(should_continue);
+                         std::move(block_callback).Run(should_continue);
                        }];
 }
 
@@ -69,3 +67,5 @@ void RepostFormTabHelper::WebStateDestroyed(web::WebState* web_state) {
   web_state_->RemoveObserver(this);
   web_state_ = nullptr;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(RepostFormTabHelper)

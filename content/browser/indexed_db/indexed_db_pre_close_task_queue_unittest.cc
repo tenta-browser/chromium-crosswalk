@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -14,9 +15,11 @@
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "base/timer/timer.h"
-#include "content/common/indexed_db/indexed_db_metadata.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
+
+using blink::IndexedDBDatabaseMetadata;
 
 namespace content {
 
@@ -38,7 +41,7 @@ ACTION_P2(RunClosureThenReturn, closure, ret) {
 class MockPreCloseTask : public PreCloseTask {
  public:
   MockPreCloseTask() {}
-  ~MockPreCloseTask() {}
+  ~MockPreCloseTask() override {}
 
   MOCK_METHOD1(SetMetadata,
                void(std::vector<IndexedDBDatabaseMetadata> const* metadata));
@@ -80,7 +83,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, NoTasks) {
   bool done_called = false;
   bool metadata_called = false;
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   IndexedDBPreCloseTaskQueue queue(
       std::list<std::unique_ptr<PreCloseTask>>(),
       base::BindOnce(&SetBoolValue, &done_called, true), kTestMaxRunTime,
@@ -104,7 +107,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, TaskOneRound) {
   EXPECT_CALL(*task,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task));
   IndexedDBPreCloseTaskQueue queue(
@@ -134,7 +137,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, TaskTwoRounds) {
   EXPECT_CALL(*task,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task));
   IndexedDBPreCloseTaskQueue queue(
@@ -178,7 +181,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, TwoTasks) {
   EXPECT_CALL(*task1,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task1));
   tasks.push_back(base::WrapUnique(task2));
@@ -227,7 +230,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, StopForNewConnectionBeforeStart) {
   EXPECT_CALL(*task1,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task1));
   tasks.push_back(base::WrapUnique(task2));
@@ -260,7 +263,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, StopForNewConnectionAfterRound) {
   EXPECT_CALL(*task,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task));
   IndexedDBPreCloseTaskQueue queue(
@@ -301,7 +304,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, StopForNewConnectionAfterTaskCompletes) {
   EXPECT_CALL(*task1,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task1));
   tasks.push_back(base::WrapUnique(task2));
@@ -345,7 +348,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, StopForTimout) {
   EXPECT_CALL(*task1,
               SetMetadata(testing::Pointee(testing::ContainerEq(metadata_))));
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task1));
   tasks.push_back(base::WrapUnique(task2));
@@ -387,7 +390,7 @@ TEST_F(IndexedDBPreCloseTaskQueueTest, MetadataError) {
   MockPreCloseTask* task1 = new testing::StrictMock<MockPreCloseTask>();
   MockPreCloseTask* task2 = new testing::StrictMock<MockPreCloseTask>();
 
-  base::MockTimer* fake_timer = new base::MockTimer(true, false);
+  base::MockOneShotTimer* fake_timer = new base::MockOneShotTimer;
   std::list<std::unique_ptr<PreCloseTask>> tasks;
   tasks.push_back(base::WrapUnique(task1));
   tasks.push_back(base::WrapUnique(task2));

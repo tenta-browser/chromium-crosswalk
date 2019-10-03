@@ -1,31 +1,22 @@
-/*
- *  Copyright 2004 The WebRTC Project Authors. All rights reserved.
- *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree. An additional intellectual property rights grant can be found
- *  in the file PATENTS.  All contributing project authors may
- *  be found in the AUTHORS file in the root of the source tree.
- */
+// Copyright 2017 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
-#ifndef RTC_BASE_EVENT_H_
-#define RTC_BASE_EVENT_H_
+#ifndef THIRD_PARTY_WEBRTC_OVERRIDES_RTC_BASE_EVENT_H_
+#define THIRD_PARTY_WEBRTC_OVERRIDES_RTC_BASE_EVENT_H_
 
-#include "third_party/webrtc/rtc_base/constructormagic.h"
-#if defined(WEBRTC_WIN)
-#include "third_party/webrtc/rtc_base/win32.h"  // NOLINT: system header.
-#elif defined(WEBRTC_POSIX)
-#include <pthread.h>
-#else
-#error "Must define either WEBRTC_WIN or WEBRTC_POSIX."
-#endif
+#include "base/macros.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/threading/thread_restrictions.h"
 
 namespace rtc {
 
+// Overrides WebRTC's internal event implementation to use Chromium's.
 class Event {
  public:
   static const int kForever = -1;
 
+  Event();
   Event(bool manual_reset, bool initially_signaled);
   ~Event();
 
@@ -33,22 +24,24 @@ class Event {
   void Reset();
 
   // Wait for the event to become signaled, for the specified number of
-  // |milliseconds|.  To wait indefinetly, pass kForever.
-  bool Wait(int milliseconds);
+  // milliseconds.  To wait indefinetly, pass kForever.
+  bool Wait(int give_up_after_ms);
+  bool Wait(int give_up_after_ms, int /*warn_after_ms*/) {
+    return Wait(give_up_after_ms);
+  }
 
  private:
-#if defined(WEBRTC_WIN)
-  HANDLE event_handle_;
-#elif defined(WEBRTC_POSIX)
-  pthread_mutex_t event_mutex_;
-  pthread_cond_t event_cond_;
-  const bool is_manual_reset_;
-  bool event_status_;
-#endif
-
-  RTC_DISALLOW_IMPLICIT_CONSTRUCTORS(Event);
+  base::WaitableEvent event_;
+  DISALLOW_COPY_AND_ASSIGN(Event);
 };
+
+// Pull ScopedAllowBaseSyncPrimitives(ForTesting) into the rtc namespace.
+// Managing what types in WebRTC are allowed to use
+// ScopedAllowBaseSyncPrimitives, is done via thread_restrictions.h.
+using ScopedAllowBaseSyncPrimitives = base::ScopedAllowBaseSyncPrimitives;
+using ScopedAllowBaseSyncPrimitivesForTesting =
+    base::ScopedAllowBaseSyncPrimitivesForTesting;
 
 }  // namespace rtc
 
-#endif  // RTC_BASE_EVENT_H_
+#endif  // THIRD_PARTY_WEBRTC_OVERRIDES_RTC_BASE_EVENT_H_

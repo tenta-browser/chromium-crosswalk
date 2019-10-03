@@ -15,15 +15,17 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.util.BookmarkTestUtil;
+import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.components.bookmarks.BookmarkId;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -47,23 +49,17 @@ public class BookmarkBridgeTest {
 
     @Before
     public void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Profile profile = Profile.getLastUsedProfile();
-                mBookmarkBridge = new BookmarkBridge(profile);
-                mBookmarkBridge.loadEmptyPartnerBookmarkShimForTesting();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Profile profile = Profile.getLastUsedProfile();
+            mBookmarkBridge = new BookmarkBridge(profile);
+            mBookmarkBridge.loadEmptyPartnerBookmarkShimForTesting();
         });
 
         BookmarkTestUtil.waitForBookmarkModelLoaded();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mMobileNode = mBookmarkBridge.getMobileFolderId();
-                mDesktopNode = mBookmarkBridge.getDesktopFolderId();
-                mOtherNode = mBookmarkBridge.getOtherFolderId();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mMobileNode = mBookmarkBridge.getMobileFolderId();
+            mDesktopNode = mBookmarkBridge.getDesktopFolderId();
+            mOtherNode = mBookmarkBridge.getOtherFolderId();
         });
     }
 
@@ -231,5 +227,43 @@ public class BookmarkBridgeTest {
         Assert.assertEquals(idToDepth.size(), 0);
         folderList.clear();
         depthList.clear();
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Bookmark"})
+    @Features.EnableFeatures(ChromeFeatureList.REORDER_BOOKMARKS)
+    public void testReorderBookmarks() {
+        mBookmarkBridge.addFolder(mMobileNode, 0, "a"); // ID 5
+        mBookmarkBridge.addFolder(mMobileNode, 0, "b"); // ID 6
+        mBookmarkBridge.addBookmark(mMobileNode, 0, "a", "http://a.com"); // ID 7
+        mBookmarkBridge.addBookmark(mMobileNode, 0, "b", "http://b.com"); // ID 8
+
+        long[] startingIdsArray = new long[] {8, 7, 6, 5, 0};
+        Assert.assertArrayEquals(
+                startingIdsArray, getIdArray(mBookmarkBridge.getChildIDs(mMobileNode, true, true)));
+
+        long[] reorderedIdsArray = new long[] {7, 6, 8, 5};
+        mBookmarkBridge.reorderBookmarks(mMobileNode, reorderedIdsArray);
+
+        long[] endingIdsArray = new long[] {7, 6, 8, 5, 0};
+        Assert.assertArrayEquals(
+                endingIdsArray, getIdArray(mBookmarkBridge.getChildIDs(mMobileNode, true, true)));
+    }
+
+    /**
+     * Given a list of BookmarkIds, returns an array full of the (long) ID numbers.
+     *
+     * @param bIds The BookmarkIds of interest.
+     * @return An array containing the (long) ID numbers.
+     */
+    private long[] getIdArray(List<BookmarkId> bIds) {
+        // Get the new order for the IDs.
+        long[] newOrder = new long[bIds.size()];
+        for (int i = 0; i <= bIds.size() - 1; i++) {
+            newOrder[i] = bIds.get(i).getId();
+        }
+        return newOrder;
     }
 }

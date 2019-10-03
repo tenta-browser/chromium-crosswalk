@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -27,16 +28,18 @@ namespace content {
 class PluginPrivateFileSystemBackendTest;
 }
 
-namespace storage {
-class SpecialStoragePolicy;
+namespace leveldb {
+class Env;
 }
 
 namespace storage {
 
 class ObfuscatedFileUtil;
+class ObfuscatedFileUtilMemoryDelegate;
+class SpecialStoragePolicy;
 class WatcherManager;
 
-class STORAGE_EXPORT PluginPrivateFileSystemBackend
+class COMPONENT_EXPORT(STORAGE_BROWSER) PluginPrivateFileSystemBackend
     : public FileSystemBackend,
       public FileSystemQuotaUtil {
  public:
@@ -47,7 +50,8 @@ class STORAGE_EXPORT PluginPrivateFileSystemBackend
       base::SequencedTaskRunner* file_task_runner,
       const base::FilePath& profile_path,
       storage::SpecialStoragePolicy* special_storage_policy,
-      const FileSystemOptions& file_system_options);
+      const FileSystemOptions& file_system_options,
+      leveldb::Env* env_override);
   ~PluginPrivateFileSystemBackend() override;
 
   // This must be used to open 'private' filesystem instead of regular
@@ -105,6 +109,9 @@ class STORAGE_EXPORT PluginPrivateFileSystemBackend
       storage::QuotaManagerProxy* proxy,
       const GURL& origin_url,
       FileSystemType type) override;
+  void PerformStorageCleanupOnFileTaskRunner(FileSystemContext* context,
+                                             storage::QuotaManagerProxy* proxy,
+                                             FileSystemType type) override;
   void GetOriginsForTypeOnFileTaskRunner(FileSystemType type,
                                          std::set<GURL>* origins) override;
   void GetOriginsForHostOnFileTaskRunner(FileSystemType type,
@@ -125,6 +132,8 @@ class STORAGE_EXPORT PluginPrivateFileSystemBackend
                                         const GURL& origin_url,
                                         int64_t* total_size,
                                         base::Time* last_modified_time);
+
+  ObfuscatedFileUtilMemoryDelegate* obfuscated_file_util_memory_delegate();
 
  private:
   friend class content::PluginPrivateFileSystemBackendTest;

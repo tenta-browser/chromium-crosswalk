@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 
+#include "base/metrics/field_trial.h"
 #include "base/win/windows_version.h"
 #include "components/variations/variations_params_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,9 +23,9 @@ class SRTDownloadURLTest : public ::testing::Test {
   }
 
   void CreateDownloadFeature(const std::string& download_group_name) {
-    constexpr char kFeatureName[] = "DownloadCleanupToolByBitness";
+    constexpr char kFeatureName[] = "ChromeCleanupDistribution";
     std::map<std::string, std::string> params;
-    params["download_group"] = download_group_name;
+    params["cleaner_download_group"] = download_group_name;
     variations_.SetVariationParamsWithFeatureAssociations(
         "A trial name", params, {kFeatureName});
   }
@@ -35,20 +36,22 @@ class SRTDownloadURLTest : public ::testing::Test {
 
 TEST_F(SRTDownloadURLTest, Stable) {
   CreatePromptTrial("On");
-  EXPECT_EQ("/dl/softwareremovaltool/win/chrome_cleanup_tool.exe",
-            GetSRTDownloadURL().path());
-}
-
-TEST_F(SRTDownloadURLTest, Canary) {
-  CreatePromptTrial("SRTCanary");
-  EXPECT_EQ("/dl/softwareremovaltool/win/c/chrome_cleanup_tool.exe",
-            GetSRTDownloadURL().path());
+  std::string expected_path;
+  if (base::win::OSInfo::GetArchitecture() ==
+      base::win::OSInfo::X86_ARCHITECTURE) {
+    expected_path =
+        "/dl/softwareremovaltool/win/x86/stable/chrome_cleanup_tool.exe";
+  } else {
+    expected_path =
+        "/dl/softwareremovaltool/win/x64/stable/chrome_cleanup_tool.exe";
+  }
+  EXPECT_EQ(expected_path, GetSRTDownloadURL().path());
 }
 
 TEST_F(SRTDownloadURLTest, Experiment) {
   CreateDownloadFeature("experiment");
   std::string expected_path;
-  if (base::win::OSInfo::GetInstance()->architecture() ==
+  if (base::win::OSInfo::GetArchitecture() ==
       base::win::OSInfo::X86_ARCHITECTURE) {
     expected_path =
         "/dl/softwareremovaltool/win/x86/experiment/chrome_cleanup_tool.exe";
@@ -60,8 +63,16 @@ TEST_F(SRTDownloadURLTest, Experiment) {
 }
 
 TEST_F(SRTDownloadURLTest, DefaultsToStable) {
-  EXPECT_EQ("/dl/softwareremovaltool/win/chrome_cleanup_tool.exe",
-            GetSRTDownloadURL().path());
+  std::string expected_path;
+  if (base::win::OSInfo::GetArchitecture() ==
+      base::win::OSInfo::X86_ARCHITECTURE) {
+    expected_path =
+        "/dl/softwareremovaltool/win/x86/stable/chrome_cleanup_tool.exe";
+  } else {
+    expected_path =
+        "/dl/softwareremovaltool/win/x64/stable/chrome_cleanup_tool.exe";
+  }
+  EXPECT_EQ(expected_path, GetSRTDownloadURL().path());
 }
 
 }  // namespace safe_browsing

@@ -3,29 +3,31 @@
 // found in the LICENSE file.
 
 suite('sync-page-test', function() {
-  /** @type {SyncPageElement} */ var testElement;
+  /** @type {SyncPageElement} */ let syncPage;
 
   setup(function() {
     PolymerTest.clearBody();
 
-    testElement = document.createElement('settings-sync-page');
-    document.body.appendChild(testElement);
+    settings.navigateTo(settings.routes.SYNC);
+    syncPage = document.createElement('settings-sync-page');
+    document.body.appendChild(syncPage);
   });
 
-  test('autofocus correctly after container is shown', function() {
-    cr.webUIListenerCallback('sync-prefs-changed', {passphraseRequired: true});
+  test('autofocus passphrase input', function() {
+    syncPage.unifiedConsentEnabled = true;
     Polymer.dom.flush();
 
-    var input = testElement.$$('#existingPassphraseInput');
+    cr.webUIListenerCallback('sync-prefs-changed', {passphraseRequired: false});
+    Polymer.dom.flush();
+    // Passphrase input is not available when no passphrase is required.
+    assertFalse(!!syncPage.$$('#existingPassphraseInput'));
 
-    var focused = false;
-    input.addEventListener('focus', function() {
-      focused = true;
-    });
-
-    // Simulate event normally fired by main_page_behavior after subpage
-    // animation ends.
-    testElement.fire('show-container');
-    assertTrue(focused);
+    cr.webUIListenerCallback('sync-prefs-changed', {passphraseRequired: true});
+    Polymer.dom.flush();
+    // Passphrase input is available and focused when a passphrase is required.
+    assertTrue(!!syncPage.$$('#existingPassphraseInput'));
+    assertEquals(
+        syncPage.$$('#existingPassphraseInput').inputElement,
+        syncPage.$$('#existingPassphraseInput').shadowRoot.activeElement);
   });
 });

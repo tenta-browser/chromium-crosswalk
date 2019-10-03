@@ -139,7 +139,9 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   void GetResponseInfo(HttpResponseInfo* info) override;
   void GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const override;
   int64_t GetTotalReceivedBytes() const override;
-  bool IsRedirectResponse(GURL* location, int* http_status_code) override;
+  bool IsRedirectResponse(GURL* location,
+                          int* http_status_code,
+                          bool* insecure_scheme_was_upgraded) override;
 
  protected:
   // Override to specify whether the next read done from this job will
@@ -198,7 +200,7 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
 
   bool async_reads_;
 
-  base::WeakPtrFactory<URLRequestTestJob> weak_factory_;
+  base::WeakPtrFactory<URLRequestTestJob> weak_factory_{this};
 };
 
 }  // namespace net

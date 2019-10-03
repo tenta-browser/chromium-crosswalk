@@ -11,7 +11,8 @@ import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
-import android.preference.Preference;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceViewHolder;
 import android.text.format.Formatter;
 import android.view.View;
 import android.widget.TextView;
@@ -19,14 +20,17 @@ import android.widget.TextView;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.favicon.FaviconHelper;
 import org.chromium.chrome.browser.favicon.FaviconHelper.FaviconImageCallback;
+import org.chromium.chrome.browser.preferences.ChromeImageViewPreferenceCompat;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.widget.RoundedIconGenerator;
 
 /**
  * A preference that displays a website's favicon and URL and, optionally, the amount of local
- * storage used by the site.
+ * storage used by the site. This preference can also display an additional icon on the right side
+ * of the preference. See {@link ChromeImageViewPreferenceCompat} for more details on how this icon
+ * can be used.
  */
-class WebsitePreference extends Preference implements FaviconImageCallback {
+class WebsitePreference extends ChromeImageViewPreferenceCompat implements FaviconImageCallback {
     private final Website mSite;
     private final SiteSettingsCategory mCategory;
 
@@ -39,9 +43,11 @@ class WebsitePreference extends Preference implements FaviconImageCallback {
     private boolean mFaviconFetched;
 
     // Metrics for favicon processing.
-    private static final int FAVICON_CORNER_RADIUS_DP = 2;
+    // Sets the favicon corner radius to 12.5% of favicon size (2dp for a 16dp favicon)
+    private static final float FAVICON_CORNER_RADIUS_FRACTION = 0.125f;
     private static final int FAVICON_PADDING_DP = 4;
-    private static final int FAVICON_TEXT_SIZE_DP = 10;
+    // Sets the favicon text size to 62.5% of favicon size (10dp for a 16dp favicon)
+    private static final float FAVICON_TEXT_SIZE_FRACTION = 0.625f;
     private static final int FAVICON_BACKGROUND_COLOR = 0xff969696;
 
     private int mFaviconSizePx;
@@ -87,9 +93,11 @@ class WebsitePreference extends Preference implements FaviconImageCallback {
             // Invalid favicon, produce a generic one.
             float density = resources.getDisplayMetrics().density;
             int faviconSizeDp = Math.round(mFaviconSizePx / density);
-            RoundedIconGenerator faviconGenerator = new RoundedIconGenerator(resources,
-                    faviconSizeDp, faviconSizeDp, FAVICON_CORNER_RADIUS_DP,
-                    FAVICON_BACKGROUND_COLOR, FAVICON_TEXT_SIZE_DP);
+            RoundedIconGenerator faviconGenerator =
+                    new RoundedIconGenerator(resources, faviconSizeDp, faviconSizeDp,
+                            Math.round(FAVICON_CORNER_RADIUS_FRACTION * faviconSizeDp),
+                            FAVICON_BACKGROUND_COLOR,
+                            Math.round(FAVICON_TEXT_SIZE_FRACTION * faviconSizeDp));
             image = faviconGenerator.generateIconForUrl(faviconUrl());
         }
 
@@ -124,7 +132,7 @@ class WebsitePreference extends Preference implements FaviconImageCallback {
             return super.compareTo(preference);
         }
         WebsitePreference other = (WebsitePreference) preference;
-        if (mCategory.showStorageSites()) {
+        if (mCategory.showSites(SiteSettingsCategory.Type.USE_STORAGE)) {
             return mSite.compareByStorageTo(other.mSite);
         }
 
@@ -132,12 +140,12 @@ class WebsitePreference extends Preference implements FaviconImageCallback {
     }
 
     @Override
-    protected void onBindView(View view) {
-        super.onBindView(view);
+    public void onBindViewHolder(PreferenceViewHolder holder) {
+        super.onBindViewHolder(holder);
 
-        TextView usageText = (TextView) view.findViewById(R.id.usage_text);
+        TextView usageText = (TextView) holder.findViewById(R.id.usage_text);
         usageText.setVisibility(View.GONE);
-        if (mCategory.showStorageSites()) {
+        if (mCategory.showSites(SiteSettingsCategory.Type.USE_STORAGE)) {
             long totalUsage = mSite.getTotalUsage();
             if (totalUsage > 0) {
                 usageText.setText(Formatter.formatShortFileSize(getContext(), totalUsage));
@@ -158,7 +166,7 @@ class WebsitePreference extends Preference implements FaviconImageCallback {
 
         float density = getContext().getResources().getDisplayMetrics().density;
         int iconPadding = Math.round(FAVICON_PADDING_DP * density);
-        View iconView = view.findViewById(android.R.id.icon);
+        View iconView = holder.findViewById(android.R.id.icon);
         iconView.setPadding(iconPadding, iconPadding, iconPadding, iconPadding);
     }
 }

@@ -19,12 +19,12 @@ GamepadHapticsManager::~GamepadHapticsManager() = default;
 // static
 void GamepadHapticsManager::Create(
     mojom::GamepadHapticsManagerRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<GamepadHapticsManager>(),
+  mojo::MakeStrongBinding(std::make_unique<GamepadHapticsManager>(),
                           std::move(request));
 }
 
 void GamepadHapticsManager::PlayVibrationEffectOnce(
-    int pad_index,
+    uint32_t pad_index,
     mojom::GamepadHapticEffectType type,
     mojom::GamepadEffectParametersPtr params,
     PlayVibrationEffectOnceCallback callback) {
@@ -33,7 +33,7 @@ void GamepadHapticsManager::PlayVibrationEffectOnce(
 }
 
 void GamepadHapticsManager::ResetVibrationActuator(
-    int pad_index,
+    uint32_t pad_index,
     ResetVibrationActuatorCallback callback) {
   GamepadService::GetInstance()->ResetVibrationActuator(pad_index,
                                                         std::move(callback));

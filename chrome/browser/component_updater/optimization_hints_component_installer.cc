@@ -9,15 +9,15 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/common/pref_names.h"
 #include "components/component_updater/component_updater_paths.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
 #include "components/optimization_guide/optimization_guide_constants.h"
+#include "components/optimization_guide/optimization_guide_features.h"
 #include "components/optimization_guide/optimization_guide_service.h"
 #include "components/prefs/pref_service.h"
-#include "components/previews/core/previews_features.h"
 
 using component_updater::ComponentUpdateService;
 
@@ -25,8 +25,10 @@ namespace component_updater {
 
 namespace {
 
+const char kDisableInstallerUpdate[] = "optimization-guide-disable-installer";
+
 // The extension id is: lmelglejhemejginpboagddgdfbepgmp
-const uint8_t kPublicKeySHA256[32] = {
+const uint8_t kOptimizationHintsPublicKeySHA256[32] = {
     0xbc, 0x4b, 0x6b, 0x49, 0x74, 0xc4, 0x96, 0x8d, 0xf1, 0xe0, 0x63,
     0x36, 0x35, 0x14, 0xf6, 0xcf, 0x86, 0x92, 0xe6, 0x06, 0x03, 0x76,
     0x70, 0xaf, 0x8b, 0xd4, 0x47, 0x2c, 0x42, 0x59, 0x38, 0xef};
@@ -88,11 +90,13 @@ void OptimizationHintsComponentInstallerPolicy::ComponentReady(
   }
   optimization_guide::OptimizationGuideService* optimization_guide_service =
       g_browser_process->optimization_guide_service();
-  if (optimization_guide_service) {
-    optimization_guide::ComponentInfo component_info(
+  if (optimization_guide_service &&
+      !base::CommandLine::ForCurrentProcess()->HasSwitch(
+          kDisableInstallerUpdate)) {
+    optimization_guide::HintsComponentInfo info(
         version,
         install_dir.Append(optimization_guide::kUnindexedHintsFileName));
-    optimization_guide_service->ProcessHints(component_info);
+    optimization_guide_service->MaybeUpdateHintsComponent(info);
   }
 }
 
@@ -113,7 +117,8 @@ void OptimizationHintsComponentInstallerPolicy::GetHash(
   if (!hash) {
     return;
   }
-  hash->assign(std::begin(kPublicKeySHA256), std::end(kPublicKeySHA256));
+  hash->assign(std::begin(kOptimizationHintsPublicKeySHA256),
+               std::end(kOptimizationHintsPublicKeySHA256));
 }
 
 std::string OptimizationHintsComponentInstallerPolicy::GetName() const {
@@ -132,10 +137,12 @@ OptimizationHintsComponentInstallerPolicy::GetMimeTypes() const {
 
 void RegisterOptimizationHintsComponent(ComponentUpdateService* cus,
                                         PrefService* profile_prefs) {
-  if (!base::FeatureList::IsEnabled(previews::features::kOptimizationHints)) {
+  if (!optimization_guide::features::IsOptimizationHintsEnabled()) {
     return;
   }
-  if (!profile_prefs || !profile_prefs->GetBoolean(prefs::kDataSaverEnabled)) {
+
+  if (!data_reduction_proxy::DataReductionProxySettings::
+          IsDataSaverEnabledByUser(profile_prefs)) {
     return;
   }
   auto installer = base::MakeRefCounted<ComponentInstaller>(

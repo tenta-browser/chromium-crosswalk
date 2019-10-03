@@ -17,11 +17,11 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_path_override.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/common/chrome_constants.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -44,7 +44,7 @@ class MockEnvironment : public base::Environment {
   }
 
   bool GetVar(base::StringPiece variable_name, std::string* result) override {
-    if (base::ContainsKey(variables_, variable_name.as_string())) {
+    if (base::Contains(variables_, variable_name.as_string())) {
       *result = variables_[variable_name.as_string()];
       return true;
     }
@@ -183,109 +183,6 @@ TEST(ShellIntegrationTest, GetDataSearchLocations) {
   }
 }
 
-TEST(ShellIntegrationTest, GetExistingShortcutLocations) {
-  base::FilePath kProfilePath("Profile 1");
-  const char kExtensionId[] = "test_extension";
-  const char kTemplateFilename[] = "chrome-test_extension-Profile_1.desktop";
-  base::FilePath kTemplateFilepath(kTemplateFilename);
-  const char kNoDisplayDesktopFile[] = "[Desktop Entry]\nNoDisplay=true";
-
-  content::TestBrowserThreadBundle test_browser_thread_bundle;
-
-  // No existing shortcuts.
-  {
-    MockEnvironment env;
-    web_app::ShortcutLocations result =
-        GetExistingShortcutLocations(&env, kProfilePath, kExtensionId);
-    EXPECT_FALSE(result.on_desktop);
-    EXPECT_EQ(web_app::APP_MENU_LOCATION_NONE,
-              result.applications_menu_location);
-
-    EXPECT_FALSE(result.in_quick_launch_bar);
-  }
-
-  // Shortcut on desktop.
-  {
-    base::ScopedTempDir temp_dir;
-    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    base::FilePath desktop_path = temp_dir.GetPath();
-
-    MockEnvironment env;
-    ASSERT_TRUE(base::CreateDirectory(desktop_path));
-    ASSERT_TRUE(WriteEmptyFile(desktop_path.Append(kTemplateFilename)));
-    web_app::ShortcutLocations result = GetExistingShortcutLocations(
-        &env, kProfilePath, kExtensionId, desktop_path);
-    EXPECT_TRUE(result.on_desktop);
-    EXPECT_EQ(web_app::APP_MENU_LOCATION_NONE,
-              result.applications_menu_location);
-
-    EXPECT_FALSE(result.in_quick_launch_bar);
-  }
-
-  // Shortcut in applications directory.
-  {
-    base::ScopedTempDir temp_dir;
-    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    base::FilePath apps_path = temp_dir.GetPath().Append("applications");
-
-    MockEnvironment env;
-    env.Set("XDG_DATA_HOME", temp_dir.GetPath().value());
-    ASSERT_TRUE(base::CreateDirectory(apps_path));
-    ASSERT_TRUE(WriteEmptyFile(apps_path.Append(kTemplateFilename)));
-    web_app::ShortcutLocations result =
-        GetExistingShortcutLocations(&env, kProfilePath, kExtensionId);
-    EXPECT_FALSE(result.on_desktop);
-    EXPECT_EQ(web_app::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS,
-              result.applications_menu_location);
-
-    EXPECT_FALSE(result.in_quick_launch_bar);
-  }
-
-  // Shortcut in applications directory with NoDisplay=true.
-  {
-    base::ScopedTempDir temp_dir;
-    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-    base::FilePath apps_path = temp_dir.GetPath().Append("applications");
-
-    MockEnvironment env;
-    env.Set("XDG_DATA_HOME", temp_dir.GetPath().value());
-    ASSERT_TRUE(base::CreateDirectory(apps_path));
-    ASSERT_TRUE(WriteString(apps_path.Append(kTemplateFilename),
-                            kNoDisplayDesktopFile));
-    web_app::ShortcutLocations result =
-        GetExistingShortcutLocations(&env, kProfilePath, kExtensionId);
-    // Doesn't count as being in applications menu.
-    EXPECT_FALSE(result.on_desktop);
-    EXPECT_EQ(web_app::APP_MENU_LOCATION_HIDDEN,
-              result.applications_menu_location);
-    EXPECT_FALSE(result.in_quick_launch_bar);
-  }
-
-  // Shortcut on desktop and in applications directory.
-  {
-    base::ScopedTempDir temp_dir1;
-    ASSERT_TRUE(temp_dir1.CreateUniqueTempDir());
-    base::FilePath desktop_path = temp_dir1.GetPath();
-
-    base::ScopedTempDir temp_dir2;
-    ASSERT_TRUE(temp_dir2.CreateUniqueTempDir());
-    base::FilePath apps_path = temp_dir2.GetPath().Append("applications");
-
-    MockEnvironment env;
-    ASSERT_TRUE(base::CreateDirectory(desktop_path));
-    ASSERT_TRUE(WriteEmptyFile(desktop_path.Append(kTemplateFilename)));
-    env.Set("XDG_DATA_HOME", temp_dir2.GetPath().value());
-    ASSERT_TRUE(base::CreateDirectory(apps_path));
-    ASSERT_TRUE(WriteEmptyFile(apps_path.Append(kTemplateFilename)));
-    web_app::ShortcutLocations result = GetExistingShortcutLocations(
-        &env, kProfilePath, kExtensionId, desktop_path);
-    EXPECT_TRUE(result.on_desktop);
-    EXPECT_EQ(web_app::APP_MENU_LOCATION_SUBDIR_CHROMEAPPS,
-              result.applications_menu_location);
-    EXPECT_FALSE(result.in_quick_launch_bar);
-  }
-}
-
 TEST(ShellIntegrationTest, GetExistingShortcutContents) {
   const char kTemplateFilename[] = "shortcut-test.desktop";
   base::FilePath kTemplateFilepath(kTemplateFilename);
@@ -380,13 +277,6 @@ TEST(ShellIntegrationTest, GetExistingShortcutContents) {
   }
 }
 
-TEST(ShellIntegrationTest, GetExtensionShortcutFilename) {
-  base::FilePath kProfilePath("a/b/c/Profile Name?");
-  const char kExtensionId[] = "extensionid";
-  EXPECT_EQ(base::FilePath("chrome-extensionid-Profile_Name_.desktop"),
-            GetExtensionShortcutFilename(kProfilePath, kExtensionId));
-}
-
 TEST(ShellIntegrationTest, GetExistingProfileShortcutFilenames) {
   base::FilePath kProfilePath("a/b/c/Profile Name?");
   const char kApp1Filename[] = "chrome-extension1-Profile_Name_.desktop";
@@ -424,7 +314,7 @@ TEST(ShellIntegrationTest, GetWebShortcutFilename) {
     { "http___foo_.desktop", "http://foo/bar/././../baz/././../" },
     { "http___.._.desktop", "http://../../../../" },
   };
-  for (size_t i = 0; i < arraysize(test_cases); i++) {
+  for (size_t i = 0; i < base::size(test_cases); i++) {
     EXPECT_EQ(std::string(chrome::kBrowserProcessExecutableName) + "-" +
               test_cases[i].path,
               GetWebShortcutFilename(GURL(test_cases[i].url)).value()) <<
@@ -563,7 +453,7 @@ TEST(ShellIntegrationTest, GetDesktopFileContents) {
     },
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); i++) {
+  for (size_t i = 0; i < base::size(test_cases); i++) {
     SCOPED_TRACE(i);
     EXPECT_EQ(
         test_cases[i].expected_output,
@@ -638,7 +528,7 @@ TEST(ShellIntegrationTest, GetDirectoryFileContents) {
     },
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); i++) {
+  for (size_t i = 0; i < base::size(test_cases); i++) {
     SCOPED_TRACE(i);
     EXPECT_EQ(test_cases[i].expected_output,
               GetDirectoryFileContents(base::ASCIIToUTF16(test_cases[i].title),

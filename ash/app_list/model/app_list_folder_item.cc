@@ -11,21 +11,18 @@
 
 namespace app_list {
 
-AppListFolderItem::AppListFolderItem(const std::string& id,
-                                     FolderType folder_type)
+AppListFolderItem::AppListFolderItem(const std::string& id)
     : AppListItem(id),
-      folder_type_(folder_type),
+      folder_type_(id == ash::kOemFolderId ? FOLDER_TYPE_OEM
+                                           : FOLDER_TYPE_NORMAL),
       item_list_(new AppListItemList),
       folder_image_(item_list_.get()) {
   folder_image_.AddObserver(this);
+  set_is_folder(true);
 }
 
 AppListFolderItem::~AppListFolderItem() {
   folder_image_.RemoveObserver(this);
-}
-
-const gfx::ImageSkia& AppListFolderItem::GetTopIcon(size_t item_index) {
-  return folder_image_.GetTopIcon(item_index);
 }
 
 gfx::Rect AppListFolderItem::GetTargetIconRectInFolderForItem(
@@ -35,20 +32,11 @@ gfx::Rect AppListFolderItem::GetTargetIconRectInFolderForItem(
                                                         folder_icon_bounds);
 }
 
-void AppListFolderItem::Activate(int event_flags) {
-  // Folder handling is implemented by the View, so do nothing.
-}
-
 // static
 const char AppListFolderItem::kItemType[] = "FolderItem";
 
 const char* AppListFolderItem::GetItemType() const {
   return AppListFolderItem::kItemType;
-}
-
-ui::MenuModel* AppListFolderItem::GetContextMenuModel() {
-  // TODO(stevenjb/jennyz): Implement.
-  return NULL;
 }
 
 AppListItem* AppListFolderItem::FindChildItem(const std::string& id) {
@@ -59,19 +47,16 @@ size_t AppListFolderItem::ChildItemCount() const {
   return item_list_->item_count();
 }
 
-bool AppListFolderItem::CompareForTest(const AppListItem* other) const {
-  if (!AppListItem::CompareForTest(other))
-    return false;
-  const AppListFolderItem* other_folder =
-      static_cast<const AppListFolderItem*>(other);
-  if (other_folder->item_list()->item_count() != item_list_->item_count())
-    return false;
-  for (size_t i = 0; i < item_list_->item_count(); ++i) {
-    if (!item_list()->item_at(i)->CompareForTest(
-            other_folder->item_list()->item_at(i)))
-      return false;
-  }
-  return true;
+bool AppListFolderItem::IsPersistent() const {
+  return GetMetadata()->is_persistent;
+}
+
+void AppListFolderItem::SetIsPersistent(bool is_persistent) {
+  metadata()->is_persistent = is_persistent;
+}
+
+bool AppListFolderItem::ShouldAutoRemove() const {
+  return ChildItemCount() <= (IsPersistent() ? 0u : 1u);
 }
 
 std::string AppListFolderItem::GenerateId() {
@@ -80,6 +65,10 @@ std::string AppListFolderItem::GenerateId() {
 
 void AppListFolderItem::OnFolderImageUpdated() {
   SetIcon(folder_image_.icon());
+}
+
+void AppListFolderItem::NotifyOfDraggedItem(AppListItem* dragged_item) {
+  folder_image_.UpdateDraggedItem(dragged_item);
 }
 
 }  // namespace app_list

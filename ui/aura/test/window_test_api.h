@@ -6,11 +6,9 @@
 #define UI_AURA_TEST_WINDOW_TEST_API_H_
 
 #include "base/macros.h"
+#include "ui/aura/window.h"
 
 namespace aura {
-
-class Window;
-
 namespace test {
 
 class WindowTestApi {
@@ -20,6 +18,10 @@ class WindowTestApi {
   bool OwnsLayer() const;
 
   bool ContainsMouse() const;
+
+  void DisableFrameSinkRegistration();
+
+  void SetOcclusionState(aura::Window::OcclusionState state);
 
  private:
   Window* window_;

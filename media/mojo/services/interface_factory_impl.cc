@@ -4,14 +4,18 @@
 
 #include "media/mojo/services/interface_factory_impl.h"
 
+#include <memory>
+#include "base/bind.h"
+#include "base/guid.h"
+
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "media/base/media_log.h"
+#include "media/mojo/interfaces/renderer_extensions.mojom.h"
+#include "media/mojo/services/mojo_decryptor_service.h"
 #include "media/mojo/services/mojo_media_client.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
+#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 
 #if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
 #include "media/mojo/services/mojo_audio_decoder_service.h"
@@ -23,9 +27,7 @@
 
 #if BUILDFLAG(ENABLE_MOJO_RENDERER)
 #include "base/bind_helpers.h"
-#include "media/base/audio_renderer_sink.h"
-#include "media/base/renderer_factory.h"
-#include "media/base/video_renderer_sink.h"
+#include "media/base/renderer.h"
 #include "media/mojo/services/mojo_renderer_service.h"
 #endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
 
@@ -34,63 +36,26 @@
 #include "media/mojo/services/mojo_cdm_service.h"
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+#include "media/mojo/services/mojo_cdm_proxy_service.h"
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
 namespace media {
-
-namespace {
-
-constexpr base::TimeDelta kServiceContextRefReleaseDelay =
-    base::TimeDelta::FromSeconds(5);
-
-void DeleteServiceContextRef(service_manager::ServiceContextRef* ref) {
-  delete ref;
-}
-
-}  // namespace
-
-// Helper class to help delay the release of service_manager::ServiceContextRef
-// by |kServiceContextRefReleaseDelay|, which will ultimately delay MediaService
-// destruction by the same delay as well. This helps reduce service connection
-// time in cases like navigation.
-class DelayedReleaseServiceContextRef {
- public:
-  explicit DelayedReleaseServiceContextRef(
-      std::unique_ptr<service_manager::ServiceContextRef> ref)
-      : ref_(std::move(ref)),
-        task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
-
-  ~DelayedReleaseServiceContextRef() {
-    service_manager::ServiceContextRef* ref_ptr = ref_.release();
-    if (!task_runner_->PostNonNestableDelayedTask(
-            FROM_HERE, base::BindOnce(&DeleteServiceContextRef, ref_ptr),
-            kServiceContextRefReleaseDelay)) {
-      DeleteServiceContextRef(ref_ptr);
-    }
-  }
-
- private:
-  std::unique_ptr<service_manager::ServiceContextRef> ref_;
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(DelayedReleaseServiceContextRef);
-};
 
 InterfaceFactoryImpl::InterfaceFactoryImpl(
     service_manager::mojom::InterfaceProviderPtr interfaces,
-    MediaLog* media_log,
-    std::unique_ptr<service_manager::ServiceContextRef> connection_ref,
+    std::unique_ptr<service_manager::ServiceKeepaliveRef> keepalive_ref,
     MojoMediaClient* mojo_media_client)
     :
-#if BUILDFLAG(ENABLE_MOJO_RENDERER)
-      media_log_(media_log),
-#endif
 #if BUILDFLAG(ENABLE_MOJO_CDM)
       interfaces_(std::move(interfaces)),
 #endif
-      connection_ref_(std::make_unique<DelayedReleaseServiceContextRef>(
-          std::move(connection_ref))),
+      keepalive_ref_(std::move(keepalive_ref)),
       mojo_media_client_(mojo_media_client) {
   DVLOG(1) << __func__;
   DCHECK(mojo_media_client_);
+
+  SetBindingConnectionErrorHandler();
 }
 
 InterfaceFactoryImpl::~InterfaceFactoryImpl() {
@@ -101,6 +66,7 @@ InterfaceFactoryImpl::~InterfaceFactoryImpl() {
 
 void InterfaceFactoryImpl::CreateAudioDecoder(
     mojo::InterfaceRequest<mojom::AudioDecoder> request) {
+  DVLOG(2) << __func__;
 #if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
   scoped_refptr<base::SingleThreadTaskRunner> task_runner(
       base::ThreadTaskRunnerHandle::Get());
@@ -108,12 +74,12 @@ void InterfaceFactoryImpl::CreateAudioDecoder(
   std::unique_ptr<AudioDecoder> audio_decoder =
       mojo_media_client_->CreateAudioDecoder(task_runner);
   if (!audio_decoder) {
-    LOG(ERROR) << "AudioDecoder creation failed.";
+    DLOG(ERROR) << "AudioDecoder creation failed.";
     return;
   }
 
   audio_decoder_bindings_.AddBinding(
-      base::MakeUnique<MojoAudioDecoderService>(&cdm_service_context_,
+      std::make_unique<MojoAudioDecoderService>(&cdm_service_context_,
                                                 std::move(audio_decoder)),
       std::move(request));
 #endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
@@ -121,41 +87,31 @@ void InterfaceFactoryImpl::CreateAudioDecoder(
 
 void InterfaceFactoryImpl::CreateVideoDecoder(
     mojom::VideoDecoderRequest request) {
+  DVLOG(2) << __func__;
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
   video_decoder_bindings_.AddBinding(
-      base::MakeUnique<MojoVideoDecoderService>(mojo_media_client_,
+      std::make_unique<MojoVideoDecoderService>(mojo_media_client_,
                                                 &cdm_service_context_),
       std::move(request));
 #endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 }
 
-void InterfaceFactoryImpl::CreateRenderer(
+void InterfaceFactoryImpl::CreateDefaultRenderer(
     const std::string& audio_device_id,
     mojo::InterfaceRequest<mojom::Renderer> request) {
+  DVLOG(2) << __func__;
 #if BUILDFLAG(ENABLE_MOJO_RENDERER)
-  RendererFactory* renderer_factory = GetRendererFactory();
-  if (!renderer_factory)
-    return;
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner(
-      base::ThreadTaskRunnerHandle::Get());
-  auto audio_sink =
-      mojo_media_client_->CreateAudioRendererSink(audio_device_id);
-  auto video_sink = mojo_media_client_->CreateVideoRendererSink(task_runner);
-  // TODO(hubbe): Find out if gfx::ColorSpace() is correct for the
-  // target_color_space.
-  auto renderer = renderer_factory->CreateRenderer(
-      task_runner, task_runner, audio_sink.get(), video_sink.get(),
-      RequestOverlayInfoCB(), gfx::ColorSpace());
+  auto renderer = mojo_media_client_->CreateRenderer(
+      interfaces_.get(), base::ThreadTaskRunnerHandle::Get(), &media_log_,
+      audio_device_id);
   if (!renderer) {
-    LOG(ERROR) << "Renderer creation failed.";
+    DLOG(ERROR) << "Renderer creation failed.";
     return;
   }
 
   std::unique_ptr<MojoRendererService> mojo_renderer_service =
-      base::MakeUnique<MojoRendererService>(
-          &cdm_service_context_, std::move(audio_sink), std::move(video_sink),
-          std::move(renderer), MojoRendererService::InitiateSurfaceRequestCB());
+      std::make_unique<MojoRendererService>(&cdm_service_context_,
+                                            std::move(renderer));
 
   MojoRendererService* mojo_renderer_service_ptr = mojo_renderer_service.get();
 
@@ -171,29 +127,176 @@ void InterfaceFactoryImpl::CreateRenderer(
 #endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
 }
 
+#if BUILDFLAG(ENABLE_CAST_RENDERER)
+void InterfaceFactoryImpl::CreateCastRenderer(
+    const base::UnguessableToken& overlay_plane_id,
+    media::mojom::RendererRequest request) {
+  DVLOG(2) << __func__;
+#if BUILDFLAG(ENABLE_MOJO_RENDERER)
+  auto renderer = mojo_media_client_->CreateCastRenderer(
+      interfaces_.get(), base::ThreadTaskRunnerHandle::Get(), &media_log_,
+      overlay_plane_id);
+  if (!renderer) {
+    DLOG(ERROR) << "Renderer creation failed.";
+    return;
+  }
+
+  std::unique_ptr<MojoRendererService> mojo_renderer_service =
+      std::make_unique<MojoRendererService>(&cdm_service_context_,
+                                            std::move(renderer));
+
+  MojoRendererService* mojo_renderer_service_ptr = mojo_renderer_service.get();
+
+  mojo::BindingId binding_id = renderer_bindings_.AddBinding(
+      std::move(mojo_renderer_service), std::move(request));
+
+  // base::Unretained() is safe because the callback will be fired by
+  // |mojo_renderer_service|, which is owned by |renderer_bindings_|.
+  mojo_renderer_service_ptr->set_bad_message_cb(base::BindRepeating(
+      base::IgnoreResult(
+          &mojo::StrongBindingSet<mojom::Renderer>::RemoveBinding),
+      base::Unretained(&renderer_bindings_), binding_id));
+#endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
+}
+#endif
+
+#if defined(OS_ANDROID)
+void InterfaceFactoryImpl::CreateMediaPlayerRenderer(
+    mojom::MediaPlayerRendererClientExtensionPtr client_extension_ptr,
+    mojom::RendererRequest request,
+    mojom::MediaPlayerRendererExtensionRequest renderer_extension_request) {
+  NOTREACHED();
+}
+
+void InterfaceFactoryImpl::CreateFlingingRenderer(
+    const std::string& audio_device_id,
+    mojom::FlingingRendererClientExtensionPtr client_extension,
+    mojo::InterfaceRequest<mojom::Renderer> request) {
+  NOTREACHED();
+}
+#endif  // defined(OS_ANDROID)
+
 void InterfaceFactoryImpl::CreateCdm(
     const std::string& /* key_system */,
     mojo::InterfaceRequest<mojom::ContentDecryptionModule> request) {
+  DVLOG(2) << __func__;
 #if BUILDFLAG(ENABLE_MOJO_CDM)
   CdmFactory* cdm_factory = GetCdmFactory();
   if (!cdm_factory)
     return;
 
   cdm_bindings_.AddBinding(
-      base::MakeUnique<MojoCdmService>(&cdm_service_context_, cdm_factory),
+      std::make_unique<MojoCdmService>(cdm_factory, &cdm_service_context_),
       std::move(request));
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 }
 
-#if BUILDFLAG(ENABLE_MOJO_RENDERER)
-RendererFactory* InterfaceFactoryImpl::GetRendererFactory() {
-  if (!renderer_factory_) {
-    renderer_factory_ = mojo_media_client_->CreateRendererFactory(media_log_);
-    LOG_IF(ERROR, !renderer_factory_) << "RendererFactory not available.";
+void InterfaceFactoryImpl::CreateDecryptor(int cdm_id,
+                                           mojom::DecryptorRequest request) {
+  DVLOG(2) << __func__;
+  auto mojo_decryptor_service =
+      MojoDecryptorService::Create(cdm_id, &cdm_service_context_);
+  if (!mojo_decryptor_service) {
+    DLOG(ERROR) << "MojoDecryptorService creation failed.";
+    return;
   }
-  return renderer_factory_.get();
+
+  decryptor_bindings_.AddBinding(std::move(mojo_decryptor_service),
+                                 std::move(request));
 }
+
+void InterfaceFactoryImpl::CreateCdmProxy(const base::Token& cdm_guid,
+                                          mojom::CdmProxyRequest request) {
+  DVLOG(2) << __func__;
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  auto cdm_proxy = mojo_media_client_->CreateCdmProxy(cdm_guid);
+  if (!cdm_proxy) {
+    DLOG(ERROR) << "CdmProxy creation failed.";
+    return;
+  }
+
+  cdm_proxy_bindings_.AddBinding(
+      std::make_unique<MojoCdmProxyService>(std::move(cdm_proxy),
+                                            &cdm_service_context_),
+      std::move(request));
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+}
+
+void InterfaceFactoryImpl::OnDestroyPending(base::OnceClosure destroy_cb) {
+  DVLOG(1) << __func__;
+  destroy_cb_ = std::move(destroy_cb);
+  if (IsEmpty())
+    std::move(destroy_cb_).Run();
+  // else the callback will be called when IsEmpty() becomes true.
+}
+
+bool InterfaceFactoryImpl::IsEmpty() {
+#if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+  if (!audio_decoder_bindings_.empty())
+    return false;
+#endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+
+#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+  if (!video_decoder_bindings_.empty())
+    return false;
+#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+
+#if BUILDFLAG(ENABLE_MOJO_RENDERER)
+  if (!renderer_bindings_.empty())
+    return false;
 #endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
+
+#if BUILDFLAG(ENABLE_MOJO_CDM)
+  if (!cdm_bindings_.empty())
+    return false;
+#endif  // BUILDFLAG(ENABLE_MOJO_CDM)
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  if (!cdm_proxy_bindings_.empty())
+    return false;
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+  if (!decryptor_bindings_.empty())
+    return false;
+
+  return true;
+}
+
+void InterfaceFactoryImpl::SetBindingConnectionErrorHandler() {
+  // base::Unretained is safe because all bindings are owned by |this|. If
+  // |this| is destructed, the bindings will be destructed as well and the
+  // connection error handler should never be called.
+  auto connection_error_cb = base::BindRepeating(
+      &InterfaceFactoryImpl::OnBindingConnectionError, base::Unretained(this));
+
+#if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+  audio_decoder_bindings_.set_connection_error_handler(connection_error_cb);
+#endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
+
+#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+  video_decoder_bindings_.set_connection_error_handler(connection_error_cb);
+#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
+
+#if BUILDFLAG(ENABLE_MOJO_RENDERER)
+  renderer_bindings_.set_connection_error_handler(connection_error_cb);
+#endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
+
+#if BUILDFLAG(ENABLE_MOJO_CDM)
+  cdm_bindings_.set_connection_error_handler(connection_error_cb);
+#endif  // BUILDFLAG(ENABLE_MOJO_CDM)
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  cdm_proxy_bindings_.set_connection_error_handler(connection_error_cb);
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+  decryptor_bindings_.set_connection_error_handler(connection_error_cb);
+}
+
+void InterfaceFactoryImpl::OnBindingConnectionError() {
+  DVLOG(2) << __func__;
+  if (destroy_cb_ && IsEmpty())
+    std::move(destroy_cb_).Run();
+}
 
 #if BUILDFLAG(ENABLE_MOJO_CDM)
 CdmFactory* InterfaceFactoryImpl::GetCdmFactory() {

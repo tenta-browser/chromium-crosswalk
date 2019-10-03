@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-static_library("browser") {
+import("//build/config/jumbo.gni")
+
+jumbo_static_library("browser") {
   sources = [
     "bad_message.cc",
     "bad_message.h",
@@ -12,14 +14,18 @@ static_library("browser") {
     "content_password_manager_driver.h",
     "content_password_manager_driver_factory.cc",
     "content_password_manager_driver_factory.h",
-    "password_manager_internals_service_factory.cc",
-    "password_manager_internals_service_factory.h",
+    "form_submission_tracker_util.cc",
+    "form_submission_tracker_util.h",
+    "password_manager_log_router_factory.cc",
+    "password_manager_log_router_factory.h",
+    "password_requirements_service_factory.cc",
+    "password_requirements_service_factory.h",
   ]
 
   public_deps = [
     "//base",
     "//components/autofill/content/browser",
-    "//components/autofill/content/common:mojo_interfaces",
+    "//components/autofill/content/common/mojom",
     "//components/autofill/core/common",
     "//components/keyed_service/content",
     "//components/password_manager/core/browser",
@@ -27,7 +33,7 @@ static_library("browser") {
     "//components/prefs",
     "//content/public/browser",
     "//content/public/common",
-    "//mojo/common:common_base",
+    "//mojo/public/cpp/system",
     "//net",
   ]
 }
@@ -36,6 +42,8 @@ source_set("unit_tests") {
   testonly = true
   sources = [
     "content_password_manager_driver_unittest.cc",
+    "form_submission_tracker_util_unittest.cc",
+    "password_manager_log_router_factory_unittest.cc",
   ]
   deps = [
     ":browser",

@@ -7,9 +7,9 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_forward.h"
 #include "base/run_loop.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/app_data_migrator.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
@@ -133,11 +133,11 @@ void OpenFileSystems(storage::FileSystemContext* fs_context,
                      GURL extension_url) {
   fs_context->OpenFileSystem(extension_url, storage::kFileSystemTypeTemporary,
                              storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-                             base::Bind(&DidOpenFileSystem));
+                             base::BindOnce(&DidOpenFileSystem));
 
   fs_context->OpenFileSystem(extension_url, storage::kFileSystemTypePersistent,
                              storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-                             base::Bind(&DidOpenFileSystem));
+                             base::BindOnce(&DidOpenFileSystem));
   content::RunAllTasksUntilIdle();
 }
 
@@ -145,8 +145,7 @@ void GenerateTestFiles(content::MockBlobURLRequestContext* url_request_context,
                        const Extension* ext,
                        storage::FileSystemContext* fs_context,
                        Profile* profile) {
-  profile->GetExtensionSpecialStoragePolicy()->GrantRightsForExtension(ext,
-                                                                       profile);
+  profile->GetExtensionSpecialStoragePolicy()->GrantRightsForExtension(ext);
 
   base::FilePath path(FILE_PATH_LITERAL("test.txt"));
   GURL extension_url =
@@ -171,18 +170,16 @@ void GenerateTestFiles(content::MockBlobURLRequestContext* url_request_context,
                                              base::Bind(&DidCreate));
   content::RunAllTasksUntilIdle();
 
-  fs_context->operation_runner()->Write(url_request_context, fs_temp_url,
-                                        blob1.GetBlobDataHandle(), 0,
-                                        base::Bind(&DidWrite));
+  fs_context->operation_runner()->Write(fs_temp_url, blob1.GetBlobDataHandle(),
+                                        0, base::BindRepeating(&DidWrite));
   content::RunAllTasksUntilIdle();
-  fs_context->operation_runner()->Write(url_request_context, fs_persistent_url,
+  fs_context->operation_runner()->Write(fs_persistent_url,
                                         blob1.GetBlobDataHandle(), 0,
-                                        base::Bind(&DidWrite));
+                                        base::BindRepeating(&DidWrite));
   content::RunAllTasksUntilIdle();
 }
 
-void VerifyFileContents(base::File file,
-                        const base::Closure& on_close_callback) {
+void VerifyFileContents(base::File file, base::OnceClosure on_close_callback) {
   ASSERT_EQ(14, file.GetLength());
   std::unique_ptr<char[]> buffer(new char[15]);
 
@@ -195,7 +192,7 @@ void VerifyFileContents(base::File file,
 
   file.Close();
   if (!on_close_callback.is_null())
-    on_close_callback.Run();
+    std::move(on_close_callback).Run();
   base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 

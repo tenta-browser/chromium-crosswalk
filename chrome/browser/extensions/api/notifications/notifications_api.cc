@@ -6,12 +6,12 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/callback.h"
 #include "base/guid.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,7 +27,6 @@
 #include "chrome/browser/notifications/notification_handler.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
-#include "chrome/browser/notifications/web_notification_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/notifications/notification_style.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
@@ -49,10 +48,10 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
-#include "ui/message_center/notifier_id.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 #include "url/gurl.h"
 
 using message_center::NotifierId;
@@ -152,7 +151,7 @@ bool NotificationBitmapToGfxImage(
     return false;
 
   // Ensure we have rgba data.
-  std::vector<char>* rgba_data = notification_bitmap.data.get();
+  std::vector<uint8_t>* rgba_data = notification_bitmap.data.get();
   if (!rgba_data)
     return false;
 
@@ -172,7 +171,7 @@ bool NotificationBitmapToGfxImage(
     return false;
 
   uint32_t* pixels = bitmap.getAddr32(0, 0);
-  const char* c_rgba_data = rgba_data->data();
+  const uint8_t* c_rgba_data = rgba_data->data();
 
   for (size_t t = 0; t < rgba_area; ++t) {
     // |c_rgba_data| is RGBA, pixels is ARGB.
@@ -287,6 +286,9 @@ bool NotificationsApiFunction::CreateNotification(
   if (options->event_time.get())
     optional_fields.timestamp = base::Time::FromJsTime(*options->event_time);
 
+  if (options->silent)
+    optional_fields.silent = *options->silent;
+
   if (options->buttons.get()) {
     // Currently we allow up to 2 buttons.
     size_t number_of_buttons = options->buttons->size();
@@ -330,7 +332,7 @@ bool NotificationsApiFunction::CreateNotification(
   }
 
   // We should have list items if and only if the type is a multiple type.
-  bool has_list_items = options->items.get() && options->items->size() > 0;
+  bool has_list_items = options->items.get() && !options->items->empty();
   if (has_list_items != (type == message_center::NOTIFICATION_TYPE_MULTIPLE)) {
     SetError(kExtraListItemsProvided);
     return false;
@@ -353,14 +355,13 @@ bool NotificationsApiFunction::CreateNotification(
   if (has_list_items) {
     using api::notifications::NotificationItem;
     for (const NotificationItem& api_item : *options->items) {
-      optional_fields.items.push_back(message_center::NotificationItem(
-          base::UTF8ToUTF16(api_item.title),
-          base::UTF8ToUTF16(api_item.message)));
+      optional_fields.items.push_back({base::UTF8ToUTF16(api_item.title),
+                                       base::UTF8ToUTF16(api_item.message)});
     }
   }
 
-  if (options->is_clickable.get())
-    optional_fields.clickable = *options->is_clickable;
+  optional_fields.settings_button_handler =
+      message_center::SettingsButtonHandler::INLINE;
 
   // TODO(crbug.com/772004): Remove the manual limitation in favor of an IDL
   // annotation once supported.
@@ -374,12 +375,9 @@ bool NotificationsApiFunction::CreateNotification(
   message_center::Notification notification(
       type, notification_id, title, message, icon,
       base::UTF8ToUTF16(extension_->name()), extension_->url(),
-      message_center::NotifierId(message_center::NotifierId::APPLICATION,
+      message_center::NotifierId(message_center::NotifierType::APPLICATION,
                                  extension_->id()),
-      optional_fields,
-      new WebNotificationDelegate(NotificationHandler::Type::EXTENSION,
-                                  GetProfile(), notification_id,
-                                  extension_->url()));
+      optional_fields, nullptr /* delegate */);
 
   // Apply the "requireInteraction" flag. The value defaults to false.
   notification.set_never_timeout(options->require_interaction &&
@@ -448,6 +446,9 @@ bool NotificationsApiFunction::UpdateNotification(
   if (options->event_time)
     notification->set_timestamp(base::Time::FromJsTime(*options->event_time));
 
+  if (options->silent)
+    notification->set_silent(*options->silent);
+
   if (options->buttons) {
     // Currently we allow up to 2 buttons.
     size_t number_of_buttons = options->buttons->size();
@@ -504,7 +505,7 @@ bool NotificationsApiFunction::UpdateNotification(
     notification->set_progress(progress);
   }
 
-  if (options->items.get() && options->items->size() > 0) {
+  if (options->items.get() && !options->items->empty()) {
     // We should have list items if and only if the type is a multiple type.
     if (notification->type() != message_center::NOTIFICATION_TYPE_MULTIPLE) {
       SetError(kExtraListItemsProvided);
@@ -514,16 +515,11 @@ bool NotificationsApiFunction::UpdateNotification(
     std::vector<message_center::NotificationItem> items;
     using api::notifications::NotificationItem;
     for (const NotificationItem& api_item : *options->items) {
-      items.push_back(message_center::NotificationItem(
-          base::UTF8ToUTF16(api_item.title),
-          base::UTF8ToUTF16(api_item.message)));
+      items.push_back({base::UTF8ToUTF16(api_item.title),
+                       base::UTF8ToUTF16(api_item.message)});
     }
     notification->set_items(items);
   }
-
-  // Then override if it's already set.
-  if (options->is_clickable.get())
-    notification->set_clickable(*options->is_clickable);
 
   // It's safe to follow the regular path for adding a new notification as it's
   // already been verified that there is a notification that can be updated.
@@ -536,9 +532,8 @@ bool NotificationsApiFunction::AreExtensionNotificationsAllowed() const {
   NotifierStateTracker* notifier_state_tracker =
       NotifierStateTrackerFactory::GetForProfile(GetProfile());
 
-  return notifier_state_tracker->IsNotifierEnabled(
-      message_center::NotifierId(message_center::NotifierId::APPLICATION,
-                                 extension_->id()));
+  return notifier_state_tracker->IsNotifierEnabled(message_center::NotifierId(
+      message_center::NotifierType::APPLICATION, extension_->id()));
 }
 
 bool NotificationsApiFunction::IsNotificationsApiEnabled() const {
@@ -606,12 +601,7 @@ bool NotificationsCreateFunction::RunNotificationsApi() {
       notification_id = base::RandBytesAsString(16);
   }
 
-  SetResult(base::MakeUnique<base::Value>(notification_id));
-
-  // TODO(crbug.com/749402): Cap the length of notification Ids to a certain
-  // limit if the histogram indicates that this is safe to do.
-  UMA_HISTOGRAM_COUNTS_1000("Notifications.ExtensionNotificationIdLength",
-                            notification_id.size());
+  SetResult(std::make_unique<base::Value>(notification_id));
 
   // TODO(dewittj): Add more human-readable error strings if this fails.
   if (!CreateNotification(notification_id, &params_->options))
@@ -639,7 +629,7 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
           CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
   if (!matched_notification) {
-    SetResult(base::MakeUnique<base::Value>(false));
+    SetResult(std::make_unique<base::Value>(false));
     SendResponse(true);
     return true;
   }
@@ -653,7 +643,7 @@ bool NotificationsUpdateFunction::RunNotificationsApi() {
   // TODO(dewittj): Add more human-readable error strings if this fails.
   bool could_update_notification = UpdateNotification(
       params_->notification_id, &params_->options, &notification);
-  SetResult(base::MakeUnique<base::Value>(could_update_notification));
+  SetResult(std::make_unique<base::Value>(could_update_notification));
   if (!could_update_notification)
     return false;
 
@@ -676,7 +666,7 @@ bool NotificationsClearFunction::RunNotificationsApi() {
   bool cancel_result = GetDisplayHelper()->Close(
       CreateScopedIdentifier(extension_->id(), params_->notification_id));
 
-  SetResult(base::MakeUnique<base::Value>(cancel_result));
+  SetResult(std::make_unique<base::Value>(cancel_result));
   SendResponse(true);
 
   return true;
@@ -692,8 +682,8 @@ bool NotificationsGetAllFunction::RunNotificationsApi() {
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
 
-  for (std::set<std::string>::iterator iter = notification_ids.begin();
-       iter != notification_ids.end(); iter++) {
+  for (auto iter = notification_ids.begin(); iter != notification_ids.end();
+       iter++) {
     result->SetKey(StripScopeFromIdentifier(extension_->id(), *iter),
                    base::Value(true));
   }
@@ -721,7 +711,7 @@ bool NotificationsGetPermissionLevelFunction::RunNotificationsApi() {
           : api::notifications::PERMISSION_LEVEL_DENIED;
 
   SetResult(
-      base::MakeUnique<base::Value>(api::notifications::ToString(result)));
+      std::make_unique<base::Value>(api::notifications::ToString(result)));
   SendResponse(true);
 
   return true;

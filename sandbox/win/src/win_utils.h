@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "sandbox/win/src/nt_internals.h"
 
@@ -17,10 +18,10 @@ namespace sandbox {
 
 // Prefix for path used by NT calls.
 const wchar_t kNTPrefix[] = L"\\??\\";
-const size_t kNTPrefixLen = arraysize(kNTPrefix) - 1;
+const size_t kNTPrefixLen = base::size(kNTPrefix) - 1;
 
 const wchar_t kNTDevicePrefix[] = L"\\Device\\";
-const size_t kNTDevicePrefixLen = arraysize(kNTDevicePrefix) - 1;
+const size_t kNTDevicePrefixLen = base::size(kNTDevicePrefix) - 1;
 
 // Automatically acquires and releases a lock when the object is
 // is destroyed.
@@ -117,6 +118,17 @@ bool WriteProtectedChildMemory(HANDLE child_process,
                                void* address,
                                const void* buffer,
                                size_t length);
+
+// Allocates |buffer_bytes| in child (PAGE_READWRITE) and copies data
+// from |local_buffer| in this process into |child|. |remote_buffer|
+// contains the address in the chile.  If a zero byte copy is
+// requested |true| is returned and no allocation or copying is
+// attempted.  Returns false if allocation or copying fails. If
+// copying fails, the allocation will be reversed.
+bool CopyToChildMemory(HANDLE child,
+                       const void* local_buffer,
+                       size_t buffer_bytes,
+                       void** remote_buffer);
 
 // Returns true if the provided path points to a pipe.
 bool IsPipe(const base::string16& path);

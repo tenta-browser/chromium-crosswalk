@@ -1,5 +1,6 @@
 <html>
 <head>
+  <script type="text/javascript" src="webrtc_codec_utils.js"></script>
   <script type="text/javascript" src="webrtc_test_utilities.js"></script>
   <script type="text/javascript" src="webrtc_test_common.js"></script>
   <script type="text/javascript">
@@ -192,7 +193,7 @@
       var videoElement = document.createElement('video');
 
       // No crash for this operation.
-      videoElement.src = URL.createObjectURL(newStream);
+      videoElement.srcObject = newStream;
       detectVideoPlaying('remote-view-2')
           .then(reportTestSuccess);
     })
@@ -222,9 +223,8 @@
     setOfferSdpTransform(removeVideoCodec);
 
     setOnLocalDescriptionError(function(error) {
-      var expectedMsg = 'Failed to set local offer sdp:' +
-          ' Session error code: ERROR_CONTENT. Session error description:' +
-          ' Failed to set local video description recv parameters..';
+      var expectedMsg = 'Failed to set local offer sdp: Failed to set local' +
+          ' video description recv parameters.';
       assertEquals(expectedMsg, error.message);
       reportTestSuccess();
     });
@@ -238,10 +238,10 @@
     createConnections(null);
     setOfferSdpTransform(removeCrypto);
     setOnLocalDescriptionError(function(error) {
-      var expectedMsg = 'Failed to set local offer sdp:' +
-          ' Called with SDP without DTLS fingerprint.';
-
-      assertEquals(expectedMsg, error.message);
+      // Note: Per spec, error should be 'IllegalModificationError'
+      // https://crbug.com/823036
+      var expectedError = 'OperationError';
+      assertEquals(expectedError, error.name);
       reportTestSuccess();
     });
     navigator.mediaDevices.getUserMedia({audio: true, video: true})
@@ -508,7 +508,7 @@
   }
 
   function createConnection(constraints, remoteView) {
-    var pc = new RTCPeerConnection(null, constraints);
+    var pc = new RTCPeerConnection({sdpSemantics:'plan-b'}, constraints);
     pc.onaddstream = function(event) {
       onRemoteStream(event, remoteView);
     }
@@ -516,8 +516,7 @@
   }
 
   function displayAndRemember(localStream) {
-    var localStreamUrl = URL.createObjectURL(localStream);
-    $('local-view').src = localStreamUrl;
+    $('local-view').srcObject = localStream;
 
     gLocalStream = localStream;
   }
@@ -655,9 +654,8 @@
           e.stream.id + ' was received.');
     }
     gRemoteStreams[target] = e.stream;
-    var remoteStreamUrl = URL.createObjectURL(e.stream);
     var remoteVideo = $(target);
-    remoteVideo.src = remoteStreamUrl;
+    remoteVideo.srcObject = e.stream;
   }
 
   // Check that applyConstraints() fails on remote tracks because there is
@@ -685,10 +683,8 @@
   }
 
   // Makes a call between pc1 and pc2 and check that the remote video tracks
-  // do not report (incorrect) values for width or height.
-  // TODO(guidou): Make remote tracks able to report correct values.
-  // http://crbug.com/772400
-  function testGetSettingsWhenRemoteDimensionsUnknown() {
+  // report values for width and height, but not for frame rate.
+  function testGetSettingsReportsValuesForRemoteTracks() {
     createConnections(null);
     navigator.mediaDevices.getUserMedia({audio: true, video: true})
       .then(addStreamToBothConnectionsAndNegotiate)
@@ -697,18 +693,31 @@
     detectVideoPlaying('remote-view-1').then(() => {
       var settings1 = gFirstConnection.getRemoteStreams()[0].getVideoTracks()[0]
           .getSettings();
-      assertTrue(settings1.width === undefined);
-      assertTrue(settings1.height === undefined);
-      assertTrue(settings1.frameRate === undefined);
+      assertTrue(settings1.width != undefined);
+      assertTrue(settings1.height != undefined);
+      assertTrue(settings1.frameRate != undefined);
       detectVideoPlaying('remote-view-2').then(() => {
         var settings2 = gSecondConnection.getRemoteStreams()[0]
             .getVideoTracks()[0].getSettings();
-        assertTrue(settings2.width === undefined);
-        assertTrue(settings2.height === undefined);
-        assertTrue(settings2.frameRate === undefined);
+        assertTrue(settings2.width != undefined);
+        assertTrue(settings2.height != undefined);
+        assertTrue(settings2.frameRate != undefined);
         reportTestSuccess();
       });
     });
+  }
+
+  function CanSetupH264VideoCallOnSupportedDevice() {
+    createConnections(null);
+    setOfferSdpTransform(maybePreferH264SendCodec);
+    navigator.mediaDevices.getUserMedia({audio: true, video: true})
+        .then(addStreamToBothConnectionsAndNegotiate)
+        .catch(failTest);
+
+    Promise.all([
+      detectVideoPlaying('remote-view-1'),
+      detectVideoPlaying('remote-view-1')
+    ]).then(reportTestSuccess);
   }
 
   </script>

@@ -7,8 +7,13 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
 #include "ui/message_center/message_center.h"
+#include "ui/message_center/message_center_observer.h"
 #include "ui/message_center/message_center_types.h"
 
 namespace message_center {
@@ -27,8 +32,9 @@ class FakeMessageCenter : public MessageCenter {
   size_t NotificationCount() const override;
   bool HasPopupNotifications() const override;
   bool IsQuietMode() const override;
-  message_center::Notification* FindVisibleNotificationById(
-      const std::string& id) override;
+  Notification* FindVisibleNotificationById(const std::string& id) override;
+  NotificationList::Notifications FindNotificationsByAppId(
+      const std::string& app_id) override;
   const NotificationList::Notifications& GetVisibleNotifications() override;
   NotificationList::PopupNotifications GetPopupNotifications() override;
   void AddNotification(std::unique_ptr<Notification> notification) override;
@@ -45,9 +51,6 @@ class FakeMessageCenter : public MessageCenter {
   void SetNotificationImage(const std::string& notification_id,
                             const gfx::Image& image) override;
 
-  void SetNotificationButtonIcon(const std::string& notification_id,
-                                 int button_index,
-                                 const gfx::Image& image) override;
   void ClickOnNotification(const std::string& id) override;
   void ClickOnNotificationButton(const std::string& id,
                                  int button_index) override;
@@ -55,6 +58,7 @@ class FakeMessageCenter : public MessageCenter {
                                           int button_index,
                                           const base::string16& reply) override;
   void ClickOnSettingsButton(const std::string& id) override;
+  void DisableNotification(const std::string& id) override;
   void MarkSinglePopupAsShown(const std::string& id,
                               bool mark_notification_as_read) override;
   void DisplayedNotification(const std::string& id,
@@ -63,16 +67,26 @@ class FakeMessageCenter : public MessageCenter {
   void EnterQuietModeWithExpire(const base::TimeDelta& expires_in) override;
   void SetVisibility(Visibility visible) override;
   bool IsMessageCenterVisible() const override;
+  void SetHasMessageCenterView(bool has_message_center_view) override;
+  bool HasMessageCenterView() const override;
   void RestartPopupTimers() override;
   void PausePopupTimers() override;
-  const base::string16& GetProductOSName() const override;
-  void SetProductOSName(const base::string16& product_os_name) override;
+  const base::string16& GetSystemNotificationAppName() const override;
+  void SetSystemNotificationAppName(const base::string16& name) override;
 
  protected:
   void DisableTimersForTest() override;
+  const base::ObserverList<MessageCenterObserver>::Unchecked& observer_list()
+      const {
+    return observers_;
+  }
 
  private:
-  const NotificationList::Notifications empty_notifications_;
+  base::ObserverList<MessageCenterObserver>::Unchecked observers_;
+  NotificationList notifications_;
+  NotificationList::Notifications visible_notifications_;
+  std::vector<NotificationBlocker*> blockers_;
+  bool has_message_center_view_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageCenter);
 };

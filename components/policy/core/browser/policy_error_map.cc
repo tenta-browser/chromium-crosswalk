@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -97,7 +96,7 @@ class ListItemPendingError : public SimplePendingError {
 
   base::string16 GetMessage() const override {
     return l10n_util::GetStringFUTF16(IDS_POLICY_LIST_ENTRY_ERROR,
-                                      base::IntToString16(index_),
+                                      base::NumberToString16(index_),
                                       SimplePendingError::GetMessage());
   }
 
@@ -142,20 +141,20 @@ bool PolicyErrorMap::IsReady() const {
 
 void PolicyErrorMap::AddError(const std::string& policy, int message_id) {
   AddError(
-      base::MakeUnique<SimplePendingError>(policy, message_id, std::string()));
+      std::make_unique<SimplePendingError>(policy, message_id, std::string()));
 }
 
 void PolicyErrorMap::AddError(const std::string& policy,
                               const std::string& subkey,
                               int message_id) {
-  AddError(base::MakeUnique<DictSubkeyPendingError>(policy, subkey, message_id,
+  AddError(std::make_unique<DictSubkeyPendingError>(policy, subkey, message_id,
                                                     std::string()));
 }
 
 void PolicyErrorMap::AddError(const std::string& policy,
                               int index,
                               int message_id) {
-  AddError(base::MakeUnique<ListItemPendingError>(policy, index, message_id,
+  AddError(std::make_unique<ListItemPendingError>(policy, index, message_id,
                                                   std::string()));
 }
 
@@ -163,14 +162,14 @@ void PolicyErrorMap::AddError(const std::string& policy,
                               int message_id,
                               const std::string& replacement) {
   AddError(
-      base::MakeUnique<SimplePendingError>(policy, message_id, replacement));
+      std::make_unique<SimplePendingError>(policy, message_id, replacement));
 }
 
 void PolicyErrorMap::AddError(const std::string& policy,
                               const std::string& subkey,
                               int message_id,
                               const std::string& replacement) {
-  AddError(base::MakeUnique<DictSubkeyPendingError>(policy, subkey, message_id,
+  AddError(std::make_unique<DictSubkeyPendingError>(policy, subkey, message_id,
                                                     replacement));
 }
 
@@ -178,14 +177,14 @@ void PolicyErrorMap::AddError(const std::string& policy,
                               int index,
                               int message_id,
                               const std::string& replacement) {
-  AddError(base::MakeUnique<ListItemPendingError>(policy, index, message_id,
+  AddError(std::make_unique<ListItemPendingError>(policy, index, message_id,
                                                   replacement));
 }
 
 void PolicyErrorMap::AddError(const std::string& policy,
                               const std::string& error_path,
                               const std::string& message) {
-  AddError(base::MakeUnique<SchemaValidatingPendingError>(policy, error_path,
+  AddError(std::make_unique<SchemaValidatingPendingError>(policy, error_path,
                                                           message));
 }
 
@@ -193,14 +192,15 @@ base::string16 PolicyErrorMap::GetErrors(const std::string& policy) {
   CheckReadyAndConvert();
   std::pair<const_iterator, const_iterator> range = map_.equal_range(policy);
   std::vector<base::StringPiece16> list;
-  for (const_iterator it = range.first; it != range.second; ++it)
+  for (auto it = range.first; it != range.second; ++it)
     list.push_back(it->second);
   return base::JoinString(list, base::ASCIIToUTF16("\n"));
 }
 
-bool PolicyErrorMap::empty() {
-  CheckReadyAndConvert();
-  return map_.empty();
+bool PolicyErrorMap::empty() const {
+  // This doesn't call CheckReadyAndConvert() to allow code to destroy empty
+  // PolicyErrorMaps rather than having to wait for ResourceBundle to be ready.
+  return pending_.empty() && map_.empty();
 }
 
 size_t PolicyErrorMap::size() {
@@ -221,6 +221,19 @@ PolicyErrorMap::const_iterator PolicyErrorMap::end() {
 void PolicyErrorMap::Clear() {
   CheckReadyAndConvert();
   map_.clear();
+  debug_infos_.clear();
+}
+
+void PolicyErrorMap::SetDebugInfo(const std::string& policy,
+                                  const std::string& debug_infos) {
+  debug_infos_[policy] = debug_infos;
+}
+
+const std::string PolicyErrorMap::GetDebugInfo(const std::string& policy) {
+  auto it = debug_infos_.find(policy);
+  if (it != debug_infos_.end())
+    return it->second;
+  return std::string();
 }
 
 void PolicyErrorMap::AddError(std::unique_ptr<PendingError> error) {

@@ -6,33 +6,50 @@
 
 """Runs Android's lint tool."""
 
+from __future__ import print_function
 
 import argparse
 import os
 import re
+import shutil
 import sys
 import traceback
 from xml.dom import minidom
+from xml.etree import ElementTree
 
 from util import build_utils
+from util import manifest_utils
 
 _LINT_MD_URL = 'https://chromium.googlesource.com/chromium/src/+/master/build/android/docs/lint.md' # pylint: disable=line-too-long
-_SRC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                         '..', '..', '..'))
 
 
-def _OnStaleMd5(lint_path, config_path, processed_config_path,
-                manifest_path, result_path, product_dir, sources, jar_path,
-                cache_dir, android_sdk_version, srcjars, resource_sources,
-                disable=None, classpath=None, can_fail_build=False,
+def _OnStaleMd5(lint_path,
+                config_path,
+                processed_config_path,
+                manifest_path,
+                result_path,
+                product_dir,
+                sources,
+                jar_path,
+                cache_dir,
+                android_sdk_version,
+                srcjars,
+                min_sdk_version,
+                manifest_package,
+                resource_sources,
+                disable=None,
+                classpath=None,
+                can_fail_build=False,
+                include_unexpected=False,
                 silent=False):
+
   def _RebasePath(path):
     """Returns relative path to top-level src dir.
 
     Args:
       path: A path relative to cwd.
     """
-    ret = os.path.relpath(os.path.abspath(path), _SRC_ROOT)
+    ret = os.path.relpath(os.path.abspath(path), build_utils.DIR_SOURCE_ROOT)
     # If it's outside of src/, just use abspath.
     if ret.startswith('..'):
       ret = os.path.abspath(path)
@@ -63,7 +80,7 @@ def _OnStaleMd5(lint_path, config_path, processed_config_path,
     dom = minidom.parse(result_path)
     issues = dom.getElementsByTagName('issue')
     if not silent:
-      print >> sys.stderr
+      print(file=sys.stderr)
       for issue in issues:
         issue_id = issue.attributes['id'].value
         message = issue.attributes['message'].value
@@ -75,11 +92,11 @@ def _OnStaleMd5(lint_path, config_path, processed_config_path,
         else:
           # Issues in class files don't have a line number.
           error = '%s %s: %s [warning]' % (path, message, issue_id)
-        print >> sys.stderr, error.encode('utf-8')
+        print(error.encode('utf-8'), file=sys.stderr)
         for attr in ['errorLine1', 'errorLine2']:
           error_line = issue.getAttribute(attr)
           if error_line:
-            print >> sys.stderr, error_line.encode('utf-8')
+            print(error_line.encode('utf-8'), file=sys.stderr)
     return len(issues)
 
   with build_utils.TempDir() as temp_dir:
@@ -168,14 +185,33 @@ def _OnStaleMd5(lint_path, config_path, processed_config_path,
       # classpath is necessary for most source-level checks.
       with open(os.path.join(project_dir, 'project.properties'), 'w') \
           as propfile:
-        print >> propfile, 'target=android-{}'.format(android_sdk_version)
+        print('target=android-{}'.format(android_sdk_version), file=propfile)
 
     # Put the manifest in a temporary directory in order to avoid lint detecting
     # sibling res/ and src/ directories (which should be pass explicitly if they
     # are to be included).
-    if manifest_path:
-      os.symlink(os.path.abspath(manifest_path),
-                 os.path.join(project_dir, 'AndroidManifest.xml'))
+    if not manifest_path:
+      manifest_path = os.path.join(
+          build_utils.DIR_SOURCE_ROOT, 'build', 'android',
+          'AndroidManifest.xml')
+    lint_manifest_path = os.path.join(project_dir, 'AndroidManifest.xml')
+    shutil.copyfile(os.path.abspath(manifest_path), lint_manifest_path)
+
+    # Check that minSdkVersion and package is correct and add it to the manifest
+    # in case it does not exist.
+    doc, manifest, _ = manifest_utils.ParseManifest(lint_manifest_path)
+    manifest_utils.AssertUsesSdk(manifest, min_sdk_version)
+    manifest_utils.AssertPackage(manifest, manifest_package)
+    uses_sdk = manifest.find('./uses-sdk')
+    if uses_sdk is None:
+      uses_sdk = ElementTree.Element('uses-sdk')
+      manifest.insert(0, uses_sdk)
+    uses_sdk.set('{%s}minSdkVersion' % manifest_utils.ANDROID_NAMESPACE,
+                 min_sdk_version)
+    if manifest_package:
+      manifest.set('package', manifest_package)
+    manifest_utils.SaveManifest(doc, lint_manifest_path)
+
     cmd.append(project_dir)
 
     if os.path.exists(result_path):
@@ -191,9 +227,18 @@ def _OnStaleMd5(lint_path, config_path, processed_config_path,
       # We drop all lines that contain _JAVA_OPTIONS from the output
       stderr_filter = lambda l: re.sub(r'.*_JAVA_OPTIONS.*\n?', '', l)
 
+    def fail_func(returncode, stderr):
+      if returncode != 0:
+        return True
+      if (include_unexpected and
+          'Unexpected failure during lint analysis' in stderr):
+        return True
+      return False
+
     try:
-      build_utils.CheckOutput(cmd, cwd=_SRC_ROOT, env=env or None,
-                              stderr_filter=stderr_filter)
+      build_utils.CheckOutput(cmd, cwd=build_utils.DIR_SOURCE_ROOT,
+                              env=env or None, stderr_filter=stderr_filter,
+                              fail_func=fail_func)
     except build_utils.CalledProcessError:
       # There is a problem with lint usage
       if not os.path.exists(result_path):
@@ -212,37 +257,37 @@ def _OnStaleMd5(lint_path, config_path, processed_config_path,
         num_issues = _ParseAndShowResultFile()
       except Exception: # pylint: disable=broad-except
         if not silent:
-          print 'Lint created unparseable xml file...'
-          print 'File contents:'
+          print('Lint created unparseable xml file...')
+          print('File contents:')
           with open(result_path) as f:
-            print f.read()
-        if not can_fail_build:
+            print(f.read())
+          if can_fail_build:
+            traceback.print_exc()
+        if can_fail_build:
+          raise
+        else:
           return
 
-      if can_fail_build and not silent:
-        traceback.print_exc()
-
-      # There are actual lint issues
-      try:
-        num_issues = _ParseAndShowResultFile()
-      except Exception: # pylint: disable=broad-except
-        if not silent:
-          print 'Lint created unparseable xml file...'
-          print 'File contents:'
-          with open(result_path) as f:
-            print f.read()
-        raise
-
       _ProcessResultFile()
-      msg = ('\nLint found %d new issues.\n'
-             ' - For full explanation, please refer to %s\n'
-             ' - For more information about lint and how to fix lint issues,'
-             ' please refer to %s\n' %
-             (num_issues, _RebasePath(result_path), _LINT_MD_URL))
+      if num_issues == 0 and include_unexpected:
+        msg = 'Please refer to output above for unexpected lint failures.\n'
+      else:
+        msg = ('\nLint found %d new issues.\n'
+               ' - For full explanation, please refer to %s\n'
+               ' - For more information about lint and how to fix lint issues,'
+               ' please refer to %s\n' %
+               (num_issues, _RebasePath(result_path), _LINT_MD_URL))
       if not silent:
-        print >> sys.stderr, msg
+        print(msg, file=sys.stderr)
       if can_fail_build:
         raise Exception('Lint failed.')
+
+
+def _FindInDirectories(directories, filename_filter):
+  all_files = []
+  for directory in directories:
+    all_files.extend(build_utils.FindInDirectory(directory, filename_filter))
+  return all_files
 
 
 def main():
@@ -263,12 +308,12 @@ def main():
   parser.add_argument('--android-sdk-version',
                       help='Version (API level) of the Android SDK used for '
                            'building.')
-  parser.add_argument('--create-cache', action='store_true',
-                      help='Mark the lint cache file as an output rather than '
-                      'an input.')
   parser.add_argument('--can-fail-build', action='store_true',
                       help='If set, script will exit with nonzero exit status'
                            ' if lint errors are present')
+  parser.add_argument('--include-unexpected-failures', action='store_true',
+                      help='If set, script will exit with nonzero exit status'
+                           ' if lint itself crashes with unexpected failures.')
   parser.add_argument('--config-path',
                       help='Path to lint suppressions file.')
   parser.add_argument('--disable',
@@ -293,17 +338,21 @@ def main():
                       help='If set, script will not log anything.')
   parser.add_argument('--src-dirs',
                       help='Directories containing java files.')
-  parser.add_argument('--stamp',
-                      help='Path to touch on success.')
   parser.add_argument('--srcjars',
                       help='GN list of included srcjars.')
+  parser.add_argument(
+      '--min-sdk-version',
+      required=True,
+      help='Minimal SDK version to lint against.')
+  parser.add_argument(
+      '--manifest-package', help='Package name of the AndroidManifest.xml.')
 
   args = parser.parse_args(build_utils.ExpandFileArgs(sys.argv[1:]))
 
   sources = []
   if args.src_dirs:
     src_dirs = build_utils.ParseGnList(args.src_dirs)
-    sources = build_utils.FindInDirectories(src_dirs, '*.java')
+    sources = _FindInDirectories(src_dirs, '*.java')
   elif args.java_sources_file:
     sources.extend(build_utils.ReadSourcesList(args.java_sources_file))
 
@@ -345,6 +394,7 @@ def main():
 
   input_strings = [
     args.can_fail_build,
+    args.include_unexpected_failures,
     args.silent,
   ]
   if args.android_sdk_version:
@@ -357,7 +407,7 @@ def main():
     disable = build_utils.ParseGnList(args.disable)
     input_strings.extend(disable)
 
-  output_paths = [ args.result_path ]
+  output_paths = [args.result_path, args.processed_config_path]
 
   build_utils.CallAndWriteDepfileIfStale(
       lambda: _OnStaleMd5(args.lint_path,
@@ -369,16 +419,20 @@ def main():
                           args.cache_dir,
                           args.android_sdk_version,
                           args.srcjars,
+                          args.min_sdk_version,
+                          args.manifest_package,
                           resource_sources,
                           disable=disable,
                           classpath=classpath,
                           can_fail_build=args.can_fail_build,
+                          include_unexpected=args.include_unexpected_failures,
                           silent=args.silent),
       args,
       input_paths=input_paths,
       input_strings=input_strings,
       output_paths=output_paths,
-      depfile_deps=classpath)
+      depfile_deps=classpath,
+      add_pydeps=False)
 
 
 if __name__ == '__main__':

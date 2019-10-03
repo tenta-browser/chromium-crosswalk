@@ -26,7 +26,7 @@ Polymer({
   },
 
   listeners: {
-    'tap': 'onHostTap_',
+    'click': 'onHostTap_',
   },
 
   observers: [
@@ -44,7 +44,7 @@ Polymer({
    */
   onAriaLabelSet_: function() {
     if (this.hasAttribute('aria-label')) {
-      let ariaLabel = this.ariaLabel;
+      const ariaLabel = this.ariaLabel;
       this.removeAttribute('aria-label');
       this.ariaLabel = ariaLabel;
     }
@@ -60,7 +60,7 @@ Polymer({
 
   /** @private */
   onDisableOrPrefChange_: function() {
-    if (this.controlDisabled_()) {
+    if (this.controlDisabled()) {
       this.removeAttribute('actionable');
     } else {
       this.setAttribute('actionable', '');
@@ -68,20 +68,14 @@ Polymer({
   },
 
   /**
-   * Handles non cr-toggle button taps (cr-toggle handles its own tap events
+   * Handles non cr-toggle button clicks (cr-toggle handles its own click events
    * which don't bubble).
    * @param {!Event} e
    * @private
    */
   onHostTap_: function(e) {
     e.stopPropagation();
-    if (this.controlDisabled_())
-      return;
-
-    // Ignore this |tap| event, if the interaction sequence
-    // (pointerdown+pointerup) began within the cr-toggle itself.
-    if (/** @type {!CrToggleElement} */ (this.$.control)
-            .shouldIgnoreHostTap(e)) {
+    if (this.controlDisabled()) {
       return;
     }
 
@@ -91,11 +85,11 @@ Polymer({
   },
 
   /**
-   * @param {!CustomEvent} e
+   * @param {!CustomEvent<boolean>} e
    * @private
    */
   onChange_: function(e) {
-    this.checked = /** @type {boolean} */ (e.detail);
+    this.checked = e.detail;
     this.notifyChangedByUserInteraction();
   },
 });

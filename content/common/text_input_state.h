@@ -5,9 +5,9 @@
 #ifndef CONTENT_COMMON_TEXT_INPUT_STATE_H_
 #define CONTENT_COMMON_TEXT_INPUT_STATE_H_
 
-#include <string>
-
+#include "base/strings/string16.h"
 #include "content/common/content_export.h"
+#include "ui/base/ime/text_input_action.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
 
@@ -26,11 +26,14 @@ struct CONTENT_EXPORT TextInputState {
   // The mode of input field.
   ui::TextInputMode mode;
 
+  // The action of the input field.
+  ui::TextInputAction action;
+
   // The flags of input field (autocorrect, autocomplete, etc.)
   int flags;
 
   // The value of input field.
-  std::string value;
+  base::string16 value;
 
   // The cursor position of the current selection start, or the caret position
   // if nothing is selected.

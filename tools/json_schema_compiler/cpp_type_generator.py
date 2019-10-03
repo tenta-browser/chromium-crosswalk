@@ -112,7 +112,7 @@ class CppTypeGenerator(object):
       item_cpp_type = self.GetCppType(type_.item_type, is_in_container=True)
       cpp_type = 'std::vector<%s>' % item_cpp_type
     elif type_.property_type == PropertyType.BINARY:
-      cpp_type = 'std::vector<char>'
+      cpp_type = 'std::vector<uint8_t>'
     else:
       raise NotImplementedError('Cannot get type of %s' % type_.property_type)
 
@@ -139,7 +139,7 @@ class CppTypeGenerator(object):
     """Returns the forward declarations for self._default_namespace.
     """
     c = Code()
-    for namespace, deps in self._NamespaceTypeDependencies().iteritems():
+    for namespace, deps in self._NamespaceTypeDependencies().items():
       filtered_deps = [
         dep for dep in deps
         # Add more ways to forward declare things as necessary.
@@ -253,11 +253,15 @@ class CppTypeGenerator(object):
     if prop.value is not None:
       cpp_type = self.GetCppType(prop.type_)
       cpp_value = prop.value
+      cpp_name = prop.name
+
       if cpp_type == 'std::string':
-        cpp_value = '"%s"' % cpp_type
+        cpp_value = '"%s"' % cpp_value
+        cpp_type = 'char'
+        cpp_name = '%s[]' % cpp_name
       c.Append(line % {
         "type": cpp_type,
-        "name": prop.name,
+        "name": cpp_name,
         "value": cpp_value
       })
     else:

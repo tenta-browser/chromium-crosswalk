@@ -10,14 +10,14 @@
 #include <string>
 
 #include "base/format_macros.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_response.h"
 
 using blink::WebString;
 using blink::WebURLResponse;
@@ -35,13 +35,13 @@ struct GRFUTestCase {
 // Create a new WebURLResponse object.
 static WebURLResponse CreateResponse(const GRFUTestCase& test) {
   WebURLResponse response;
-  response.SetHTTPVersion(test.version);
-  response.SetHTTPStatusCode(test.status_code);
+  response.SetHttpVersion(test.version);
+  response.SetHttpStatusCode(test.status_code);
   for (const std::string& line :
        base::SplitString(test.headers, "\n", base::KEEP_WHITESPACE,
                          base::SPLIT_WANT_NONEMPTY)) {
     size_t colon = line.find(": ");
-    response.AddHTTPHeaderField(WebString::FromUTF8(line.substr(0, colon)),
+    response.AddHttpHeaderField(WebString::FromUTF8(line.substr(0, colon)),
                                 WebString::FromUTF8(line.substr(colon + 2)));
   }
   return response;
@@ -73,7 +73,7 @@ TEST(CacheUtilTest, GetReasonsForUncacheability) {
       {WebURLResponse::kHTTPVersion_1_1, 200,
        "cache-control: no-cache\ncache-control: no-store", kNoCache | kNoStore},
   };
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (size_t i = 0; i < base::size(tests); ++i) {
     SCOPED_TRACE(base::StringPrintf("case: %" PRIuS
                                     ", version: %d, code: %d, headers: %s",
                                     i, tests[i].version, tests[i].status_code,

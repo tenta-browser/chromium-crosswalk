@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "components/update_client/update_query_params_delegate.h"
 #include "components/version_info/version_info.h"
@@ -54,6 +55,8 @@ const char kArch[] =
     "mips64el";
 #elif defined(__mips__)
     "mipsel";
+#elif defined(__powerpc64__)
+    "ppc64";
 #else
 #error "unknown arch"
 #endif
@@ -73,7 +76,8 @@ UpdateQueryParamsDelegate* g_delegate = nullptr;
 // static
 std::string UpdateQueryParams::Get(ProdId prod) {
   return base::StringPrintf(
-      "os=%s&arch=%s&nacl_arch=%s&prod=%s%s&acceptformat=crx2,crx3", kOs, kArch,
+      "os=%s&arch=%s&os_arch=%s&nacl_arch=%s&prod=%s%s&acceptformat=crx2,crx3",
+      kOs, kArch, base::SysInfo().OperatingSystemArchitecture().c_str(),
       GetNaclArch(), GetProdIdString(prod),
       g_delegate ? g_delegate->GetExtraParams().c_str() : "");
 }
@@ -125,6 +129,8 @@ const char* UpdateQueryParams::GetNaclArch() {
   return "mips32";
 #elif defined(ARCH_CPU_MIPS64EL)
   return "mips64";
+#elif defined(ARCH_CPU_PPC64)
+  return "ppc64";
 #else
 // NOTE: when adding new values here, please remember to update the
 // comment in the .h file about possible return values from this function.

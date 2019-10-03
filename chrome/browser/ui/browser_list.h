@@ -22,9 +22,7 @@ namespace base {
 class FilePath;
 }
 
-namespace chrome {
 class BrowserListObserver;
-}
 
 // Maintains a list of Browser objects.
 class BrowserList {
@@ -38,8 +36,6 @@ class BrowserList {
   // Returns the last active browser for this list.
   Browser* GetLastActive() const;
 
-  // Browsers are added to the list before they have constructed windows,
-  // so the |window()| member function may return NULL.
   const_iterator begin() const { return browsers_.begin(); }
   const_iterator end() const { return browsers_.end(); }
 
@@ -75,8 +71,8 @@ class BrowserList {
   // Adds and removes |observer| from the observer list for all desktops.
   // Observers are responsible for making sure the notifying browser is relevant
   // to them (e.g., on the specific desktop they care about if any).
-  static void AddObserver(chrome::BrowserListObserver* observer);
-  static void RemoveObserver(chrome::BrowserListObserver* observer);
+  static void AddObserver(BrowserListObserver* observer);
+  static void RemoveObserver(BrowserListObserver* observer);
 
   // Moves all the browsers that show on workspace |new_workspace| to the end of
   // the browser list (i.e. the browsers that were "activated" most recently).
@@ -112,13 +108,26 @@ class BrowserList {
                                           const CloseCallback& on_close_aborted,
                                           bool skip_beforeunload);
 
+  // Similarly to CloseAllBrowsersWithProfile, but DCHECK's that profile is
+  // Off-the-Record and doesn't close browsers with the original profile.
+  static void CloseAllBrowsersWithIncognitoProfile(
+      Profile* profile,
+      const CloseCallback& on_close_success,
+      const CloseCallback& on_close_aborted,
+      bool skip_beforeunload);
+
   // Returns true if at least one incognito session is active across all
   // desktops.
   static bool IsIncognitoSessionActive();
 
-  // Returns true if at least one incognito session is active for |profile|
-  // across all desktops.
-  static bool IsIncognitoSessionActiveForProfile(Profile* profile);
+  // Returns the number of active incognito sessions for |profile| across all
+  // desktops. Note that this function does not count devtools windows opened
+  // for incognito windows.
+  static int GetIncognitoSessionsActiveForProfile(Profile* profile);
+
+  // Returns true if the incognito session for |profile| is in use in any window
+  // across all desktops. This function considers devtools windows as well.
+  static bool IsIncognitoSessionInUse(Profile* profile);
 
  private:
   BrowserList();
@@ -166,7 +175,7 @@ class BrowserList {
   // A list of observers which will be notified of every browser addition and
   // removal across all BrowserLists.
   static base::LazyInstance<
-      base::ObserverList<chrome::BrowserListObserver>>::Leaky observers_;
+      base::ObserverList<BrowserListObserver>::Unchecked>::Leaky observers_;
 
   static BrowserList* instance_;
 

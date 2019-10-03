@@ -7,15 +7,18 @@
 #include <utility>
 #include <vector>
 
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
+#include "base/containers/flat_map.h"
 #include "base/run_loop.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "base/test/scoped_task_environment.h"
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
 #include "mojo/public/cpp/bindings/lib/fixed_buffer.h"
 #include "mojo/public/cpp/bindings/lib/serialization.h"
 #include "mojo/public/cpp/bindings/lib/validation_context.h"
 #include "mojo/public/cpp/bindings/lib/validation_errors.h"
 #include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "mojo/public/interfaces/bindings/tests/test_structs.mojom.h"
 #include "mojo/public/interfaces/bindings/tests/test_unions.mojom.h"
@@ -703,7 +706,7 @@ TEST(UnionTest, PodUnionInMap) {
 TEST(UnionTest, PodUnionInMapSerialization) {
   using MojomType = MapDataView<StringDataView, PodUnionDataView>;
 
-  std::unordered_map<std::string, PodUnionPtr> map;
+  base::flat_map<std::string, PodUnionPtr> map;
   map.insert(std::make_pair("one", PodUnion::New()));
   map.insert(std::make_pair("two", PodUnion::New()));
 
@@ -723,7 +726,7 @@ TEST(UnionTest, PodUnionInMapSerialization) {
                                        &validate_params, &context);
   EXPECT_EQ(120U, message.payload_buffer()->cursor() - payload_start);
 
-  std::unordered_map<std::string, PodUnionPtr> map2;
+  base::flat_map<std::string, PodUnionPtr> map2;
   mojo::internal::Deserialize<MojomType>(writer.data(), &map2, &context);
 
   EXPECT_EQ(8, map2["one"]->get_f_int8());
@@ -733,7 +736,7 @@ TEST(UnionTest, PodUnionInMapSerialization) {
 TEST(UnionTest, PodUnionInMapSerializationWithNull) {
   using MojomType = MapDataView<StringDataView, PodUnionDataView>;
 
-  std::unordered_map<std::string, PodUnionPtr> map;
+  base::flat_map<std::string, PodUnionPtr> map;
   map.insert(std::make_pair("one", PodUnion::New()));
   map.insert(std::make_pair("two", nullptr));
 
@@ -752,7 +755,7 @@ TEST(UnionTest, PodUnionInMapSerializationWithNull) {
                                        &validate_params, &context);
   EXPECT_EQ(120U, message.payload_buffer()->cursor() - payload_start);
 
-  std::unordered_map<std::string, PodUnionPtr> map2;
+  base::flat_map<std::string, PodUnionPtr> map2;
   mojo::internal::Deserialize<MojomType>(writer.data(), &map2, &context);
 
   EXPECT_EQ(8, map2["one"]->get_f_int8());
@@ -893,7 +896,7 @@ TEST(UnionTest, ArrayInUnionValidation) {
 }
 
 TEST(UnionTest, MapInUnionGetterSetter) {
-  std::unordered_map<std::string, int8_t> map;
+  base::flat_map<std::string, int8_t> map;
   map.insert({"one", 1});
   map.insert({"two", 2});
 
@@ -905,7 +908,7 @@ TEST(UnionTest, MapInUnionGetterSetter) {
 }
 
 TEST(UnionTest, MapInUnionSerialization) {
-  std::unordered_map<std::string, int8_t> map;
+  base::flat_map<std::string, int8_t> map;
   map.insert({"one", 1});
   map.insert({"two", 2});
 
@@ -926,7 +929,7 @@ TEST(UnionTest, MapInUnionSerialization) {
 }
 
 TEST(UnionTest, MapInUnionValidation) {
-  std::unordered_map<std::string, int8_t> map;
+  base::flat_map<std::string, int8_t> map;
   map.insert({"one", 1});
   map.insert({"two", 2});
 
@@ -1125,63 +1128,64 @@ TEST(UnionTest, HandleInUnionValidationNull) {
 
 class SmallCacheImpl : public SmallCache {
  public:
-  explicit SmallCacheImpl(const base::Closure& closure)
-      : int_value_(0), closure_(closure) {}
-  ~SmallCacheImpl() override {}
+  explicit SmallCacheImpl(base::OnceClosure closure)
+      : int_value_(0), closure_(std::move(closure)) {}
+  ~SmallCacheImpl() override = default;
+
   int64_t int_value() const { return int_value_; }
 
  private:
   void SetIntValue(int64_t int_value) override {
     int_value_ = int_value;
-    closure_.Run();
+    std::move(closure_).Run();
   }
-  void GetIntValue(const GetIntValueCallback& callback) override {
-    callback.Run(int_value_);
+  void GetIntValue(GetIntValueCallback callback) override {
+    std::move(callback).Run(int_value_);
   }
 
   int64_t int_value_;
-  base::Closure closure_;
+  base::OnceClosure closure_;
 };
 
 TEST(UnionTest, InterfaceInUnion) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   SmallCacheImpl impl(run_loop.QuitClosure());
-  SmallCachePtr ptr;
-  Binding<SmallCache> bindings(&impl, MakeRequest(&ptr));
+  Remote<SmallCache> remote;
+  Receiver<SmallCache> receiver(&impl, remote.BindNewPipeAndPassReceiver());
 
   HandleUnionPtr handle(HandleUnion::New());
-  handle->set_f_small_cache(ptr.PassInterface());
+  handle->set_f_small_cache(remote.Unbind());
 
-  ptr.Bind(std::move(handle->get_f_small_cache()));
-  ptr->SetIntValue(10);
+  remote.Bind(std::move(handle->get_f_small_cache()));
+  remote->SetIntValue(10);
   run_loop.Run();
   EXPECT_EQ(10, impl.int_value());
 }
 
 TEST(UnionTest, InterfaceInUnionFactoryFunction) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   SmallCacheImpl impl(run_loop.QuitClosure());
-  SmallCachePtr ptr;
-  Binding<SmallCache> bindings(&impl, MakeRequest(&ptr));
+  Remote<SmallCache> remote;
+  Receiver<SmallCache> receiver(&impl, remote.BindNewPipeAndPassReceiver());
 
-  HandleUnionPtr handle = HandleUnion::NewFSmallCache(ptr.PassInterface());
-  ptr.Bind(std::move(handle->get_f_small_cache()));
-  ptr->SetIntValue(10);
+  HandleUnionPtr handle = HandleUnion::NewFSmallCache(remote.Unbind());
+  remote.Bind(std::move(handle->get_f_small_cache()));
+  remote->SetIntValue(10);
   run_loop.Run();
   EXPECT_EQ(10, impl.int_value());
 }
 
 TEST(UnionTest, InterfaceInUnionSerialization) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   SmallCacheImpl impl(run_loop.QuitClosure());
-  SmallCachePtr ptr;
-  Binding<SmallCache> bindings(&impl, MakeRequest(&ptr));
+  Remote<SmallCache> remote;
+  Receiver<SmallCache> receiver(&impl, remote.BindNewPipeAndPassReceiver());
 
   HandleUnionPtr handle(HandleUnion::New());
-  handle->set_f_small_cache(ptr.PassInterface());
+  handle->set_f_small_cache(remote.Unbind());
 
   mojo::Message message;
   mojo::internal::SerializationContext context;
@@ -1193,37 +1197,35 @@ TEST(UnionTest, InterfaceInUnionSerialization) {
   HandleUnionPtr handle2(HandleUnion::New());
   mojo::internal::Deserialize<HandleUnionDataView>(data, &handle2, &context);
 
-  ptr.Bind(std::move(handle2->get_f_small_cache()));
-  ptr->SetIntValue(10);
+  remote.Bind(std::move(handle2->get_f_small_cache()));
+  remote->SetIntValue(10);
   run_loop.Run();
   EXPECT_EQ(10, impl.int_value());
 }
 
 class UnionInterfaceImpl : public UnionInterface {
  public:
-  UnionInterfaceImpl() {}
-  ~UnionInterfaceImpl() override {}
+  UnionInterfaceImpl() = default;
+  ~UnionInterfaceImpl() override = default;
 
  private:
-  void Echo(PodUnionPtr in, const EchoCallback& callback) override {
-    callback.Run(std::move(in));
+  void Echo(PodUnionPtr in, EchoCallback callback) override {
+    std::move(callback).Run(std::move(in));
   }
 };
 
-void ExpectInt16(int16_t value, PodUnionPtr out) {
-  EXPECT_EQ(value, out->get_f_int16());
-}
-
 TEST(UnionTest, UnionInInterface) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   UnionInterfaceImpl impl;
-  UnionInterfacePtr ptr;
-  Binding<UnionInterface> bindings(&impl, MakeRequest(&ptr));
+  Remote<UnionInterface> remote;
+  Receiver<UnionInterface> receiver(&impl, remote.BindNewPipeAndPassReceiver());
 
   PodUnionPtr pod(PodUnion::New());
   pod->set_f_int16(16);
 
-  ptr->Echo(std::move(pod), base::Bind(&ExpectInt16, 16));
+  remote->Echo(std::move(pod), base::BindOnce([](PodUnionPtr out) {
+                 EXPECT_EQ(16, out->get_f_int16());
+               }));
   base::RunLoop().RunUntilIdle();
 }
 

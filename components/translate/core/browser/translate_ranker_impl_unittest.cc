@@ -6,22 +6,23 @@
 
 #include <initializer_list>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/assist_ranker/proto/ranker_model.pb.h"
 #include "components/assist_ranker/proto/translate_ranker_model.pb.h"
 #include "components/assist_ranker/ranker_model.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "components/ukm/ukm_source.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/translate_event.pb.h"
 #include "third_party/metrics_proto/ukm/source.pb.h"
@@ -37,6 +38,8 @@ using translate::TranslateRankerFeatures;
 using translate::TranslateRankerImpl;
 
 constexpr uint32_t kModelVersion = 1234;
+ukm::SourceId kUkmSourceId0 = 123;
+ukm::SourceId kUkmSourceId1 = 567;
 
 class TranslateRankerImplTest : public ::testing::Test {
  protected:
@@ -96,7 +99,7 @@ void TranslateRankerImplTest::InitFeatures(
 
 std::unique_ptr<TranslateRankerImpl> TranslateRankerImplTest::GetRankerForTest(
     float threshold) {
-  auto model = base::MakeUnique<assist_ranker::RankerModel>();
+  auto model = std::make_unique<assist_ranker::RankerModel>();
   model->mutable_proto()->mutable_translate()->set_version(kModelVersion);
   auto* details = model->mutable_proto()
                       ->mutable_translate()
@@ -123,7 +126,7 @@ std::unique_ptr<TranslateRankerImpl> TranslateRankerImplTest::GetRankerForTest(
   country_weight["ca"] = 0.08f;
   country_weight["cn"] = 0.09f;
 
-  auto impl = base::MakeUnique<TranslateRankerImpl>(base::FilePath(), GURL(),
+  auto impl = std::make_unique<TranslateRankerImpl>(base::FilePath(), GURL(),
                                                     GetTestUkmRecorder());
   impl->OnModelAvailable(std::move(model));
   base::RunLoop().RunUntilIdle();
@@ -322,7 +325,7 @@ TEST_F(TranslateRankerImplTest, ShouldOfferTranslation_OverrideAndEnforcement) {
 
 TEST_F(TranslateRankerImplTest, ShouldOfferTranslation_NoModel) {
   auto ranker =
-      base::MakeUnique<TranslateRankerImpl>(base::FilePath(), GURL(), nullptr);
+      std::make_unique<TranslateRankerImpl>(base::FilePath(), GURL(), nullptr);
   InitFeatures({kTranslateRankerAutoBlacklistOverride,
                 kTranslateRankerPreviousLanguageMatchesOverride,
                 kTranslateRankerQuery, kTranslateRankerEnforcement},
@@ -341,16 +344,13 @@ TEST_F(TranslateRankerImplTest, RecordAndFlushEvents) {
   ranker->EnableLogging(true);
   std::vector<metrics::TranslateEventProto> flushed_events;
 
-  GURL url0("https://www.google.com");
-  GURL url1("https://www.gmail.com");
-
   // Check that flushing an empty cache will return an empty vector.
   ranker->FlushTranslateEvents(&flushed_events);
   EXPECT_EQ(0U, flushed_events.size());
 
-  ranker->RecordTranslateEvent(0, url0, &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
-  ranker->RecordTranslateEvent(2, url1, &translate_event3_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, ukm::kInvalidSourceId, &translate_event2_);
+  ranker->RecordTranslateEvent(2, kUkmSourceId1, &translate_event3_);
 
   // Capture the data and verify that it is as expected.
   ranker->FlushTranslateEvents(&flushed_events);
@@ -372,18 +372,16 @@ TEST_F(TranslateRankerImplTest, RecordAndFlushEvents) {
   const auto& entries = GetTestUkmRecorder()->GetEntriesByName(
       ukm::builders::Translate::kEntryName);
   EXPECT_EQ(2u, entries.size());
-  bool has_url0 = false;
-  bool has_url1 = false;
+  bool has_kUkmSourceId0 = false;
+  bool has_kUkmSourceId1 = false;
   for (const auto* entry : entries) {
-    const ukm::UkmSource* source =
-        GetTestUkmRecorder()->GetSourceForSourceId(entry->source_id);
-    if (source && source->url() == url0)
-      has_url0 = true;
-    else if (source && source->url() == url1)
-      has_url1 = true;
+    if (entry->source_id == kUkmSourceId0)
+      has_kUkmSourceId0 = true;
+    if (entry->source_id == kUkmSourceId1)
+      has_kUkmSourceId1 = true;
   }
-  EXPECT_TRUE(has_url0);
-  EXPECT_TRUE(has_url1);
+  EXPECT_TRUE(has_kUkmSourceId0);
+  EXPECT_TRUE(has_kUkmSourceId1);
 }
 
 TEST_F(TranslateRankerImplTest, EnableLogging) {
@@ -392,16 +390,16 @@ TEST_F(TranslateRankerImplTest, EnableLogging) {
   std::vector<metrics::TranslateEventProto> flushed_events;
 
   // Logging is disabled by default. No events will be cached.
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
 
   ranker->FlushTranslateEvents(&flushed_events);
   EXPECT_EQ(0U, flushed_events.size());
 
   // Once we enable logging, events will be cached.
   ranker->EnableLogging(true);
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
 
   ranker->FlushTranslateEvents(&flushed_events);
   EXPECT_EQ(2U, flushed_events.size());
@@ -409,8 +407,8 @@ TEST_F(TranslateRankerImplTest, EnableLogging) {
 
   // Turning logging back off, caching is disabled once again.
   ranker->EnableLogging(false);
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
 
   // Logging is disabled, so no events should be cached.
   ranker->FlushTranslateEvents(&flushed_events);
@@ -422,15 +420,15 @@ TEST_F(TranslateRankerImplTest, EnableLoggingClearsCache) {
       GetRankerForTest(0.0f);
   std::vector<metrics::TranslateEventProto> flushed_events;
   // Logging is disabled by default. No events will be cached.
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
   // Making sure that cache is still empty once logging is turned on.
   ranker->EnableLogging(true);
   ranker->FlushTranslateEvents(&flushed_events);
   EXPECT_EQ(0U, flushed_events.size());
 
   // These events will be cached.
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
   // Cache will not be cleared if the logging state does not change.
   ranker->EnableLogging(true);
   ranker->FlushTranslateEvents(&flushed_events);
@@ -442,8 +440,8 @@ TEST_F(TranslateRankerImplTest, EnableLoggingClearsCache) {
 
   // Filling cache again.
   ranker->EnableLogging(true);
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
   // Switching logging off will clear the cache.
   ranker->EnableLogging(false);
   ranker->FlushTranslateEvents(&flushed_events);
@@ -451,8 +449,8 @@ TEST_F(TranslateRankerImplTest, EnableLoggingClearsCache) {
 
   // Filling cache again.
   ranker->EnableLogging(true);
-  ranker->RecordTranslateEvent(0, GURL(), &translate_event1_);
-  ranker->RecordTranslateEvent(1, GURL(), &translate_event2_);
+  ranker->RecordTranslateEvent(0, kUkmSourceId0, &translate_event1_);
+  ranker->RecordTranslateEvent(1, kUkmSourceId0, &translate_event2_);
   // Switching logging off and on again will clear the cache.
   ranker->EnableLogging(false);
   ranker->EnableLogging(true);
@@ -469,8 +467,8 @@ TEST_F(TranslateRankerImplTest, ShouldOverrideDecision_OverrideDisabled) {
   const int kEventType = 12;
   metrics::TranslateEventProto translate_event = CreateDefaultTranslateEvent();
 
-  EXPECT_FALSE(
-      ranker->ShouldOverrideDecision(kEventType, GURL(), &translate_event));
+  EXPECT_FALSE(ranker->ShouldOverrideDecision(kEventType, kUkmSourceId0,
+                                              &translate_event));
 
   std::vector<metrics::TranslateEventProto> flushed_events;
   ranker->FlushTranslateEvents(&flushed_events);
@@ -495,10 +493,10 @@ TEST_F(TranslateRankerImplTest,
   EXPECT_TRUE(
       GetRankerForTest(0.99f)->ShouldOfferTranslation(&translate_event));
   EXPECT_TRUE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST, GURL(),
-      &translate_event));
+      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST,
+      kUkmSourceId0, &translate_event));
   EXPECT_FALSE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, GURL(),
+      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, kUkmSourceId0,
       &translate_event));
 
   std::vector<metrics::TranslateEventProto> flushed_events;
@@ -530,11 +528,11 @@ TEST_F(TranslateRankerImplTest,
   EXPECT_TRUE(
       GetRankerForTest(0.99f)->ShouldOfferTranslation(&translate_event));
   EXPECT_TRUE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, GURL(),
+      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, kUkmSourceId0,
       &translate_event));
   EXPECT_FALSE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST, GURL(),
-      &translate_event));
+      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST,
+      kUkmSourceId0, &translate_event));
 
   std::vector<metrics::TranslateEventProto> flushed_events;
   ranker->FlushTranslateEvents(&flushed_events);
@@ -562,11 +560,11 @@ TEST_F(TranslateRankerImplTest, ShouldOverrideDecision_BothOverridesEnabled) {
   EXPECT_TRUE(
       GetRankerForTest(0.99f)->ShouldOfferTranslation(&translate_event));
   EXPECT_TRUE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, GURL(),
+      metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE, kUkmSourceId0,
       &translate_event));
   EXPECT_TRUE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST, GURL(),
-      &translate_event));
+      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST,
+      kUkmSourceId0, &translate_event));
 
   std::vector<metrics::TranslateEventProto> flushed_events;
   ranker->FlushTranslateEvents(&flushed_events);
@@ -602,11 +600,11 @@ TEST_F(TranslateRankerImplTest,
       GetRankerForTest(0.99f)->ShouldOfferTranslation(&translate_event));
 
   EXPECT_TRUE(ranker->ShouldOverrideDecision(
-      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST, GURL(),
-      &translate_event));
+      metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST,
+      kUkmSourceId0, &translate_event));
   ranker->RecordTranslateEvent(
-      metrics::TranslateEventProto::USER_NEVER_TRANSLATE_LANGUAGE, GURL(),
-      &translate_event);
+      metrics::TranslateEventProto::USER_NEVER_TRANSLATE_LANGUAGE,
+      kUkmSourceId0, &translate_event);
   std::vector<metrics::TranslateEventProto> flushed_events;
   ranker->FlushTranslateEvents(&flushed_events);
 

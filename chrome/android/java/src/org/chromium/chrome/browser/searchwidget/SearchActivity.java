@@ -5,7 +5,9 @@
 package org.chromium.chrome.browser.searchwidget;
 
 import android.app.Activity;
+import android.app.SearchManager;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.support.v4.app.ActivityOptionsCompat;
 import android.text.TextUtils;
@@ -21,30 +23,42 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.WebContentsFactory;
 import org.chromium.chrome.browser.WindowDelegate;
+import org.chromium.chrome.browser.contextmenu.ContextMenuPopulator;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
+import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler;
 import org.chromium.chrome.browser.init.AsyncInitializationActivity;
+import org.chromium.chrome.browser.init.SingleWindowKeyboardVisibilityDelegate;
 import org.chromium.chrome.browser.locale.LocaleManager;
-import org.chromium.chrome.browser.omnibox.AutocompleteController;
+import org.chromium.chrome.browser.modaldialog.AppModalPresenter;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarManageable;
+import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
-import org.chromium.chrome.browser.tab.TabIdManager;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.ContentUrlConstants;
+import org.chromium.ui.base.ActivityKeyboardVisibilityDelegate;
 import org.chromium.ui.base.ActivityWindowAndroid;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 
 /** Queries the user's default search engine and shows autocomplete suggestions. */
 public class SearchActivity extends AsyncInitializationActivity
         implements SnackbarManageable, SearchActivityLocationBarLayout.Delegate {
+    // Shared with other org.chromium.chrome.browser.searchwidget classes.
+    protected static final String TAG = "searchwidget";
+
     /** Notified about events happening inside a SearchActivity. */
     public static class SearchActivityDelegate {
         /**
-         * Called when {@link SearchActivity#setContentView} is deciding whether to continue loading
-         * the native library immediately.
+         * Called when {@link SearchActivity#triggerLayoutInflation} is deciding whether to continue
+         * loading the native library immediately.
          * @return Whether or not native initialization should proceed immediately.
          */
         boolean shouldDelayNativeInitialization() {
@@ -71,7 +85,6 @@ public class SearchActivity extends AsyncInitializationActivity
         }
     }
 
-    private static final String TAG = "searchwidget";
     private static final Object DELEGATE_LOCK = new Object();
 
     /** Notified about events happening for the SearchActivity. */
@@ -111,13 +124,24 @@ public class SearchActivity extends AsyncInitializationActivity
 
     @Override
     protected ActivityWindowAndroid createWindowAndroid() {
-        return new ActivityWindowAndroid(this);
+        return new ActivityWindowAndroid(this) {
+            @Override
+            protected ActivityKeyboardVisibilityDelegate createKeyboardVisibilityDelegate() {
+                return new SingleWindowKeyboardVisibilityDelegate(getActivity());
+            }
+        };
     }
 
     @Override
-    protected void setContentView() {
+    protected ModalDialogManager createModalDialogManager() {
+        return new ModalDialogManager(
+                new AppModalPresenter(this), ModalDialogManager.ModalDialogType.APP);
+    }
+
+    @Override
+    protected void triggerLayoutInflation() {
         mSnackbarManager = new SnackbarManager(this, null);
-        mSearchBoxDataProvider = new SearchBoxDataProvider();
+        mSearchBoxDataProvider = new SearchBoxDataProvider(getResources());
 
         mContentView = createContentView();
         setContentView(mContentView);
@@ -127,11 +151,10 @@ public class SearchActivity extends AsyncInitializationActivity
                 R.id.search_location_bar);
         mSearchBox.setDelegate(this);
         mSearchBox.setToolbarDataProvider(mSearchBoxDataProvider);
-        mSearchBox.initializeControls(new WindowDelegate(getWindow()), getWindowAndroid());
+        mSearchBox.initializeControls(new WindowDelegate(getWindow()), getWindowAndroid(), null);
 
         // Kick off everything needed for the user to type into the box.
         beginQuery();
-        mSearchBox.showCachedZeroSuggestResultsIfAvailable();
 
         // Kick off loading of the native library.
         if (!getActivityDelegate().shouldDelayNativeInitialization()) {
@@ -142,18 +165,62 @@ public class SearchActivity extends AsyncInitializationActivity
                 }
             });
         }
+        onInitialLayoutInflationComplete();
     }
 
     @Override
     public void finishNativeInitialization() {
         super.finishNativeInitialization();
 
-        mTab = new Tab(TabIdManager.getInstance().generateValidId(Tab.INVALID_TAB_ID),
-                Tab.INVALID_TAB_ID, false, getWindowAndroid(), TabLaunchType.FROM_EXTERNAL_APP,
-                null, null);
-        mTab.initialize(WebContentsFactory.createWebContents(false, false), null,
-                new TabDelegateFactory(), false, false);
-        mTab.loadUrl(new LoadUrlParams("about:blank"));
+        mTab = new TabBuilder()
+                       .setWindow(getWindowAndroid())
+                       .setLaunchType(TabLaunchType.FROM_EXTERNAL_APP)
+                       .build();
+        TabDelegateFactory factory = new TabDelegateFactory() {
+            @Override
+            public TabWebContentsDelegateAndroid createWebContentsDelegate(Tab tab) {
+                return new TabWebContentsDelegateAndroid(tab) {
+                    @Override
+                    protected boolean shouldResumeRequestsForCreatedWindow() {
+                        return false;
+                    }
+
+                    @Override
+                    protected boolean addNewContents(WebContents sourceWebContents,
+                            WebContents webContents, int disposition, Rect initialPosition,
+                            boolean userGesture) {
+                        return false;
+                    }
+
+                    @Override
+                    protected void setOverlayMode(boolean useOverlayMode) {}
+                };
+            }
+
+            @Override
+            public ExternalNavigationHandler createExternalNavigationHandler(Tab tab) {
+                return null;
+            }
+
+            @Override
+            public ContextMenuPopulator createContextMenuPopulator(Tab tab) {
+                return null;
+            }
+
+            @Override
+            public boolean canShowAppBanners() {
+                return false;
+            }
+
+            @Override
+            public BrowserControlsVisibilityDelegate createBrowserControlsVisibilityDelegate(
+                    Tab tab) {
+                return null;
+            }
+        };
+        mTab.initialize(
+                WebContentsFactory.createWebContents(false, false), factory, false, null, false);
+        mTab.loadUrl(new LoadUrlParams(ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL));
 
         mSearchBoxDataProvider.onNativeLibraryReady(mTab);
         mSearchBox.onNativeLibraryReady();
@@ -162,7 +229,7 @@ public class SearchActivity extends AsyncInitializationActivity
         final Callback<Boolean> onSearchEngineFinalizedCallback = new Callback<Boolean>() {
             @Override
             public void onResult(Boolean result) {
-                if (isActivityDestroyed()) return;
+                if (isActivityFinishingOrDestroyed()) return;
 
                 if (result == null || !result.booleanValue()) {
                     Log.e(TAG, "User failed to select a default search engine.");
@@ -188,7 +255,9 @@ public class SearchActivity extends AsyncInitializationActivity
         mIsActivityUsable = true;
         if (mQueuedUrl != null) loadUrl(mQueuedUrl);
 
-        AutocompleteController.nativePrefetchZeroSuggestResults();
+        // TODO(tedchoc): Warmup triggers the CustomTab layout to be inflated, but this widget
+        //                will navigate to Tabbed mode.  Investigate whether this can inflate
+        //                the tabbed mode layout in the background instead of CCTs.
         CustomTabsConnection.getInstance().warmup(0);
         mSearchBox.onDeferredStartup(isVoiceSearchIntent());
         RecordUserAction.record("SearchWidget.WidgetSelected");
@@ -218,8 +287,12 @@ public class SearchActivity extends AsyncInitializationActivity
                 getIntent(), SearchWidgetProvider.EXTRA_START_VOICE_SEARCH, false);
     }
 
+    private String getOptionalIntentQuery() {
+        return IntentUtils.safeGetStringExtra(getIntent(), SearchManager.QUERY);
+    }
+
     private void beginQuery() {
-        mSearchBox.beginQuery(isVoiceSearchIntent());
+        mSearchBox.beginQuery(isVoiceSearchIntent(), getOptionalIntentQuery());
     }
 
     @Override

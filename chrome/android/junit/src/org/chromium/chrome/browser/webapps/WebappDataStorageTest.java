@@ -13,21 +13,19 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.task.test.BackgroundShadowAsyncTask;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.testing.local.BackgroundShadowAsyncTask;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.concurrent.TimeUnit;
 
@@ -35,7 +33,7 @@ import java.util.concurrent.TimeUnit;
  * Tests the WebappDataStorage class by ensuring that it persists data to
  * SharedPreferences as expected.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE, shadows = {BackgroundShadowAsyncTask.class})
 public class WebappDataStorageTest {
     @Rule
@@ -60,7 +58,6 @@ public class WebappDataStorageTest {
 
     @Before
     public void setUp() throws Exception {
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
         mSharedPreferences = ContextUtils.getApplicationContext().getSharedPreferences(
                 WebappDataStorage.SHARED_PREFS_FILE_PREFIX + "test", Context.MODE_PRIVATE);
 
@@ -68,11 +65,6 @@ public class WebappDataStorageTest {
         mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED, 0).apply();
 
         mCallbackCalled = false;
-    }
-
-    @After
-    public void tearDown() {
-        mSharedPreferences.edit().clear().apply();
     }
 
     @Test
@@ -89,7 +81,6 @@ public class WebappDataStorageTest {
         assertEquals("orientation", WebappDataStorage.KEY_ORIENTATION);
         assertEquals("theme_color", WebappDataStorage.KEY_THEME_COLOR);
         assertEquals("background_color", WebappDataStorage.KEY_BACKGROUND_COLOR);
-        assertEquals("splash_screen_url", WebappDataStorage.KEY_SPLASH_SCREEN_URL);
         assertEquals("source", WebappDataStorage.KEY_SOURCE);
         assertEquals("action", WebappDataStorage.KEY_ACTION);
         assertEquals("is_icon_generated", WebappDataStorage.KEY_IS_ICON_GENERATED);
@@ -101,7 +92,7 @@ public class WebappDataStorageTest {
     public void testLastUsedRetrieval() throws Exception {
         long lastUsed = 100;
         mSharedPreferences.edit().putLong(WebappDataStorage.KEY_LAST_USED, lastUsed).apply();
-        assertEquals(lastUsed, new WebappDataStorage("test").getLastUsedTime());
+        assertEquals(lastUsed, new WebappDataStorage("test").getLastUsedTimeMs());
     }
 
     @Test
@@ -218,11 +209,11 @@ public class WebappDataStorageTest {
         final int orientation = 1;
         final long themeColor = 2;
         final long backgroundColor = 3;
-        final String splashScreenUrl = "splashy";
         final boolean isIconGenerated = false;
+        final boolean isIconAdaptive = false;
         Intent shortcutIntent = ShortcutHelper.createWebappShortcutIntent(id, action, url, scope,
                 name, shortName, encodedIcon, ShortcutHelper.WEBAPP_SHORTCUT_VERSION, displayMode,
-                orientation, themeColor, backgroundColor, splashScreenUrl, isIconGenerated);
+                orientation, themeColor, backgroundColor, isIconGenerated, isIconAdaptive);
 
         WebappDataStorage storage = WebappDataStorage.open("test");
         storage.updateFromShortcutIntent(shortcutIntent);
@@ -240,10 +231,10 @@ public class WebappDataStorageTest {
         assertEquals(themeColor, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
         assertEquals(backgroundColor,
                 mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
-        assertEquals(splashScreenUrl,
-                mSharedPreferences.getString(WebappDataStorage.KEY_SPLASH_SCREEN_URL, null));
         assertEquals(isIconGenerated,
                 mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
+        assertEquals(isIconAdaptive,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_ADAPTIVE, true));
 
         // Wipe out the data and ensure that it is all gone.
         mSharedPreferences.edit()
@@ -257,8 +248,8 @@ public class WebappDataStorageTest {
                 .remove(WebappDataStorage.KEY_ORIENTATION)
                 .remove(WebappDataStorage.KEY_THEME_COLOR)
                 .remove(WebappDataStorage.KEY_BACKGROUND_COLOR)
-                .remove(WebappDataStorage.KEY_SPLASH_SCREEN_URL)
                 .remove(WebappDataStorage.KEY_IS_ICON_GENERATED)
+                .remove(WebappDataStorage.KEY_IS_ICON_ADAPTIVE)
                 .apply();
 
         assertEquals(null, mSharedPreferences.getString(WebappDataStorage.KEY_ACTION, null));
@@ -271,10 +262,10 @@ public class WebappDataStorageTest {
         assertEquals(0, mSharedPreferences.getInt(WebappDataStorage.KEY_ORIENTATION, 0));
         assertEquals(0, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
         assertEquals(0, mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
-        assertEquals(
-                null, mSharedPreferences.getString(WebappDataStorage.KEY_SPLASH_SCREEN_URL, null));
         assertEquals(true,
                 mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
+        assertEquals(true,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_ADAPTIVE, true));
 
         // Update again from the intent and ensure that the data is restored.
         storage.updateFromShortcutIntent(shortcutIntent);
@@ -292,68 +283,15 @@ public class WebappDataStorageTest {
         assertEquals(themeColor, mSharedPreferences.getLong(WebappDataStorage.KEY_THEME_COLOR, 0));
         assertEquals(backgroundColor,
                 mSharedPreferences.getLong(WebappDataStorage.KEY_BACKGROUND_COLOR, 0));
-        assertEquals(splashScreenUrl,
-                mSharedPreferences.getString(WebappDataStorage.KEY_SPLASH_SCREEN_URL, null));
         assertEquals(isIconGenerated,
+                mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
+        assertEquals(isIconAdaptive,
                 mSharedPreferences.getBoolean(WebappDataStorage.KEY_IS_ICON_GENERATED, true));
     }
 
     /**
-     * Test that if the WebAPK update failed (e.g. because the WebAPK server is not reachable) that
-     * the is-update-needed check is retried after less time than if the WebAPK update had
-     * succeeded. The is-update-needed check is the first step in retrying to update the WebAPK.
-     */
-    @Test
-    public void testCheckUpdateMoreFrequentlyIfUpdateFails() {
-        assertTrue(WebappDataStorage.UPDATE_INTERVAL > WebappDataStorage.RETRY_UPDATE_DURATION);
-
-        WebappDataStorage storage = getStorage();
-
-        storage.updateTimeOfLastWebApkUpdateRequestCompletion();
-        storage.updateDidLastWebApkUpdateRequestSucceed(true);
-
-        assertFalse(storage.shouldCheckForUpdate());
-        mClockRule.advance(WebappDataStorage.RETRY_UPDATE_DURATION);
-        assertFalse(storage.shouldCheckForUpdate());
-
-        // Advance all of the time stamps.
-        storage.updateTimeOfLastCheckForUpdatedWebManifest();
-        storage.updateTimeOfLastWebApkUpdateRequestCompletion();
-        storage.updateDidLastWebApkUpdateRequestSucceed(false);
-
-        assertFalse(storage.shouldCheckForUpdate());
-        mClockRule.advance(WebappDataStorage.RETRY_UPDATE_DURATION);
-        assertTrue(storage.shouldCheckForUpdate());
-
-        // Verifies that {@link WebappDataStorage#shouldCheckForUpdate()} returns true because the
-        // previous update failed, no matter whether we want to check update less frequently.
-        storage.setRelaxedUpdates(true);
-        assertTrue(storage.shouldCheckForUpdate());
-    }
-
-    /**
-     * Test that if there was no previous WebAPK update attempt that the is-update-needed check is
-     * done after the usual delay (as opposed to the shorter delay if the previous WebAPK update
-     * failed.)
-     */
-    @Test
-    public void testRegularCheckIntervalIfNoPriorWebApkUpdate() {
-        assertTrue(WebappDataStorage.UPDATE_INTERVAL > WebappDataStorage.RETRY_UPDATE_DURATION);
-
-        WebappDataStorage storage = getStorage();
-
-        assertFalse(storage.shouldCheckForUpdate());
-        mClockRule.advance(WebappDataStorage.RETRY_UPDATE_DURATION);
-        assertFalse(storage.shouldCheckForUpdate());
-        mClockRule.advance(
-                WebappDataStorage.UPDATE_INTERVAL - WebappDataStorage.RETRY_UPDATE_DURATION);
-        assertTrue(storage.shouldCheckForUpdate());
-    }
-
-    /**
-     * Test that if there was no previous WebAPK update attempt and the relax-update flag is set to
-     * true, the is-update-needed check is done after the relaxed update interval (as opposed to the
-     * usual delay.)
+     * Test that if the relax-update flag is set to true, the is-update-needed check is done after
+     * the relaxed update interval (instead of the usual delay).
      */
     @Test
     public void testRelaxedUpdates() {
@@ -361,12 +299,33 @@ public class WebappDataStorageTest {
 
         WebappDataStorage storage = getStorage();
 
+        storage.updateTimeOfLastCheckForUpdatedWebManifest();
         storage.setRelaxedUpdates(true);
 
         mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
         assertFalse(storage.shouldCheckForUpdate());
         mClockRule.advance(
                 WebappDataStorage.RELAXED_UPDATE_INTERVAL - WebappDataStorage.UPDATE_INTERVAL);
+        assertTrue(storage.shouldCheckForUpdate());
+
+        storage.updateTimeOfLastCheckForUpdatedWebManifest();
+        storage.setRelaxedUpdates(false);
+        mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
+        assertTrue(storage.shouldCheckForUpdate());
+    }
+
+    /**
+     * Test that if there was no previous WebAPK update attempt that the is-update-needed check is
+     * done after the usual delay (instead of the longer relaxed-update delay).
+     */
+    @Test
+    public void testRegularCheckIntervalIfNoPriorWebApkUpdate() {
+        assertTrue(WebappDataStorage.RELAXED_UPDATE_INTERVAL > WebappDataStorage.UPDATE_INTERVAL);
+
+        WebappDataStorage storage = getStorage();
+
+        assertFalse(storage.shouldCheckForUpdate());
+        mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
         assertTrue(storage.shouldCheckForUpdate());
     }
 

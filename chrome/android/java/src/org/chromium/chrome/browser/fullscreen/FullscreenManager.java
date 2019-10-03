@@ -10,6 +10,9 @@ import android.view.Window;
 
 import org.chromium.chrome.browser.fullscreen.FullscreenHtmlApiHandler.FullscreenHtmlApiDelegate;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBrowserControlsState;
+import org.chromium.content_public.browser.GestureListenerManager;
+import org.chromium.content_public.browser.WebContents;
 
 /**
  * Manages the basic fullscreen functionality required by a Tab.
@@ -46,14 +49,24 @@ public abstract class FullscreenManager {
     }
 
     /**
-     * @return The height of the top controls in pixels.
+     * @return The height of the top controls in pixels in px.
      */
     public abstract int getTopControlsHeight();
 
     /**
-     * @return Whether or not the browser controls are attached to the bottom of the screen.
+     * @return The offset of the controls from the top of the screen.
      */
-    public abstract boolean areBrowserControlsAtBottom();
+    public abstract int getTopControlOffset();
+
+    /**
+     * @return The height of the bottom controls in pixels in px.
+     */
+    public abstract int getBottomControlsHeight();
+
+    /**
+     * @return The offset of the controls from the bottom of the screen.
+     */
+    public abstract int getBottomControlOffset();
 
     /**
      * @return The ratio that the browser controls are off screen; this will be a number [0,1]
@@ -62,9 +75,9 @@ public abstract class FullscreenManager {
     public abstract float getBrowserControlHiddenRatio();
 
     /**
-     * @return The offset of the content from the top of the screen.
+     * @return The offset of the content from the top of the screen in px.
      */
-    public abstract float getContentOffset();
+    public abstract int getContentOffset();
 
     /**
      * Tells the fullscreen manager a ContentVideoView is created below the contents.
@@ -90,13 +103,12 @@ public abstract class FullscreenManager {
     /**
      * Updates the positions of the browser controls and content based on the desired position of
      * the current tab.
-     *
-     * @param topControlsOffset The Y offset of the top controls.
-     * @param bottomControlsOffset The Y offset of the bottom controls.
-     * @param topContentOffset The Y offset for the content.
+     * @param topControlsOffset The Y offset of the top controls in px.
+     * @param bottomControlsOffset The Y offset of the bottom controls in px.
+     * @param topContentOffset The Y offset for the content in px.
      */
-    public abstract void setPositionsForTab(float topControlsOffset, float bottomControlsOffset,
-            float topContentOffset);
+    public abstract void setPositionsForTab(
+            int topControlsOffset, int bottomControlsOffset, int topContentOffset);
 
     /**
      * Updates the current ContentView's children and any popups with the correct offsets based on
@@ -110,13 +122,7 @@ public abstract class FullscreenManager {
     public void setTab(@Nullable Tab tab) {
         if (mTab == tab) return;
 
-        // Remove the fullscreen manager from the old tab before setting the new tab.
-        if (mTab != null) mTab.setFullscreenManager(null);
-
         mTab = tab;
-
-        // Initialize the new tab with the correct fullscreen manager reference.
-        if (mTab != null) mTab.setFullscreenManager(this);
     }
 
     /**
@@ -127,17 +133,35 @@ public abstract class FullscreenManager {
     }
 
     /**
-     * Enters or exits persistent fullscreen mode.  In this mode, the browser controls will be
+     * Enters persistent fullscreen mode.  In this mode, the browser controls will be
      * permanently hidden until this mode is exited.
-     *
-     * @param enabled Whether to enable persistent fullscreen mode.
      */
-    public void setPersistentFullscreenMode(boolean enabled) {
-        mHtmlApiHandler.setPersistentFullscreenMode(enabled);
+    protected void enterPersistentFullscreenMode(FullscreenOptions options) {
+        mHtmlApiHandler.enterPersistentFullscreenMode(options);
+        TabBrowserControlsState.updateEnabledState(getTab());
+        updateMultiTouchZoomSupport(false);
+    }
 
+    /**
+     * Exits persistent fullscreen mode.  In this mode, the browser controls will be
+     * permanently hidden until this mode is exited.
+     */
+    public void exitPersistentFullscreenMode() {
+        mHtmlApiHandler.exitPersistentFullscreenMode();
+        TabBrowserControlsState.updateEnabledState(getTab());
+        updateMultiTouchZoomSupport(true);
+    }
+
+    /**
+     * @see GestureListenerManager#updateMultiTouchZoomSupport(boolean).
+     */
+    protected void updateMultiTouchZoomSupport(boolean enable) {
         Tab tab = getTab();
-        if (tab != null) {
-            tab.updateFullscreenEnabledState();
+        if (tab == null || tab.isHidden()) return;
+        WebContents webContents = tab.getWebContents();
+        if (webContents != null) {
+            GestureListenerManager manager = GestureListenerManager.fromWebContents(webContents);
+            if (manager != null) manager.updateMultiTouchZoomSupport(enable);
         }
     }
 
@@ -170,4 +194,11 @@ public abstract class FullscreenManager {
      * Called when scrolling state of the ContentView changed.
      */
     public void onContentViewScrollingStateChanged(boolean scrolling) {}
+
+    /**
+     * Destroys the FullscreenManager
+     */
+    public void destroy() {
+        setTab(null);
+    }
 }

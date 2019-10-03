@@ -18,6 +18,7 @@ namespace policy {
 
 class PolicyBundle;
 
+// Maps component id (e.g. extension id) to schema.
 typedef std::map<std::string, Schema> ComponentMap;
 typedef std::map<PolicyDomain, ComponentMap> DomainMap;
 
@@ -38,7 +39,8 @@ class POLICY_EXPORT SchemaMap : public base::RefCountedThreadSafe<SchemaMap> {
   const Schema* GetSchema(const PolicyNamespace& ns) const;
 
   // Removes all the policies in |bundle| that don't match the known schemas.
-  // Unknown components are also dropped.
+  // Unknown components are also dropped. Unknown fields in component policies
+  // are removed.
   void FilterBundle(PolicyBundle* bundle) const;
 
   // Returns true if this map contains at least one component of a domain other

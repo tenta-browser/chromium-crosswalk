@@ -9,12 +9,11 @@
 #include <list>
 #include <memory>
 #include <sstream>
+#include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "base/strings/stringprintf.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkColorSpaceXform.h"
+#include "third_party/skia/include/third_party/skcms/skcms.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/icc_profile.h"
 #include "ui/gfx/skia_color_space_util.h"
@@ -102,7 +101,8 @@ float FromLinear(ColorSpace::TransferID id, float v) {
       float c1 = 3424.0f / 4096.0f;
       float c2 = (2413.0f / 4096.0f) * 32.0f;
       float c3 = (2392.0f / 4096.0f) * 32.0f;
-      return pow((c1 + c2 * pow(v, m1)) / (1.0f + c3 * pow(v, m1)), m2);
+      float p = powf(v, m1);
+      return powf((c1 + c2 * p) / (1.0f + c3 * p), m2);
     }
 
     // Spec: http://www.arib.or.jp/english/html/overview/doc/2-STD-B67v1_0.pdf
@@ -117,7 +117,7 @@ float FromLinear(ColorSpace::TransferID id, float v) {
     }
 
     default:
-      // Handled by SkColorSpaceTransferFn.
+      // Handled by skcms_TransferFunction.
       break;
   }
   NOTREACHED();
@@ -169,8 +169,8 @@ float ToLinear(ColorSpace::TransferID id, float v) {
       float c1 = 3424.0f / 4096.0f;
       float c2 = (2413.0f / 4096.0f) * 32.0f;
       float c3 = (2392.0f / 4096.0f) * 32.0f;
-      v = pow(max(pow(v, 1.0f / m2) - c1, 0.0f) / (c2 - c3 * pow(v, 1.0f / m2)),
-              1.0f / m1);
+      float p = pow(v, 1.0f / m2);
+      v = powf(max(p - c1, 0.0f) / (c2 - c3 * p), 1.0f / m1);
       // This matches the scRGB definition that 1.0 means 80 nits.
       // TODO(hubbe): It would be *nice* if 1.0 meant more than that, but
       // that might be difficult to do right now.
@@ -194,7 +194,7 @@ float ToLinear(ColorSpace::TransferID id, float v) {
     }
 
     default:
-      // Handled by SkColorSpaceTransferFn.
+      // Handled by skcms_TransferFunction.
       break;
   }
   NOTREACHED();
@@ -227,7 +227,6 @@ class ColorTransformFromLinear;
 class ColorTransformToBT2020CL;
 class ColorTransformFromBT2020CL;
 class ColorTransformNull;
-class SkiaColorTransform;
 
 class ColorTransformStep {
  public:
@@ -239,7 +238,6 @@ class ColorTransformStep {
   virtual ColorTransformSkTransferFn* GetSkTransferFn() { return nullptr; }
   virtual ColorTransformMatrix* GetMatrix() { return nullptr; }
   virtual ColorTransformNull* GetNull() { return nullptr; }
-  virtual SkiaColorTransform* GetSkia() { return nullptr; }
 
   // Join methods, returns true if the |next| transform was successfully
   // assimilated into |this|.
@@ -259,6 +257,9 @@ class ColorTransformStep {
                                   size_t step_index) const {
     NOTREACHED();
   }
+  virtual void AppendSkShaderSource(std::stringstream* src) const {
+    NOTREACHED();
+  }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ColorTransformStep);
@@ -271,15 +272,17 @@ class ColorTransformInternal : public ColorTransform {
                          Intent intent);
   ~ColorTransformInternal() override;
 
-  gfx::ColorSpace GetSrcColorSpace() const override { return src_; };
-  gfx::ColorSpace GetDstColorSpace() const override { return dst_; };
+  gfx::ColorSpace GetSrcColorSpace() const override { return src_; }
+  gfx::ColorSpace GetDstColorSpace() const override { return dst_; }
 
   void Transform(TriStim* colors, size_t num) const override {
-    for (const auto& step : steps_)
+    for (const auto& step : steps_) {
       step->Transform(colors, num);
+    }
   }
   bool CanGetShaderSource() const override;
   std::string GetShaderSource() const override;
+  std::string GetSkShaderSource() const override;
   bool IsIdentity() const override { return steps_.empty(); }
   size_t NumberOfStepsForTesting() const override { return steps_.size(); }
 
@@ -288,10 +291,6 @@ class ColorTransformInternal : public ColorTransform {
                                              const ColorSpace& dst,
                                              ColorTransform::Intent intent);
   void Simplify();
-
-  // Retrieve the SkColorSpace for the ICC profile from which |color_space| was
-  // created, only if that is a more precise than the parametric representation.
-  sk_sp<SkColorSpace> GetSkColorSpaceIfNecessary(const ColorSpace& color_space);
 
   std::list<std::unique_ptr<ColorTransformStep>> steps_;
   gfx::ColorSpace src_;
@@ -307,6 +306,7 @@ class ColorTransformNull : public ColorTransformStep {
   void AppendShaderSource(std::stringstream* hdr,
                           std::stringstream* src,
                           size_t step_index) const override {}
+  void AppendSkShaderSource(std::stringstream* src) const override {}
 };
 
 class ColorTransformMatrix : public ColorTransformStep {
@@ -357,6 +357,28 @@ class ColorTransformMatrix : public ColorTransformStep {
     }
   }
 
+  void AppendSkShaderSource(std::stringstream* src) const override {
+    const SkMatrix44& m = matrix_.matrix();
+    *src << "  color = half4x4(";
+    *src << m.get(0, 0) << ", " << m.get(1, 0) << ", " << m.get(2, 0) << ", 0,";
+    *src << endl;
+    *src << "               ";
+    *src << m.get(0, 1) << ", " << m.get(1, 1) << ", " << m.get(2, 1) << ", 0,";
+    *src << endl;
+    *src << "               ";
+    *src << m.get(0, 2) << ", " << m.get(1, 2) << ", " << m.get(2, 2) << ", 0,";
+    *src << endl;
+    *src << "0, 0, 0, 1)";
+    *src << " * color;" << endl;
+
+    // Only print the translational component if it isn't the identity.
+    if (m.get(0, 3) != 0.f || m.get(1, 3) != 0.f || m.get(2, 3) != 0.f) {
+      *src << "  color += half4(";
+      *src << m.get(0, 3) << ", " << m.get(1, 3) << ", " << m.get(2, 3);
+      *src << ", 0);" << endl;
+    }
+  }
+
  private:
   class Transform matrix_;
 };
@@ -385,7 +407,8 @@ class ColorTransformPerChannelTransferFn : public ColorTransformStep {
                           std::stringstream* src,
                           size_t step_index) const override {
     *hdr << "float TransferFn" << step_index << "(float v) {" << endl;
-    AppendTransferShaderSource(hdr);
+    AppendTransferShaderSource(hdr, true /* is_glsl */);
+    *hdr << "  return v;" << endl;
     *hdr << "}" << endl;
     if (extended_) {
       *src << "  color.r = sign(color.r) * TransferFn" << step_index
@@ -401,10 +424,33 @@ class ColorTransformPerChannelTransferFn : public ColorTransformStep {
     }
   }
 
+  void AppendSkShaderSource(std::stringstream* src) const override {
+    if (extended_) {
+      *src << "{  half v = abs(color.r);" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.r = sign(color.r) * v; }" << endl;
+      *src << "{  half v = abs(color.g);" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.g = sign(color.g) * v; }" << endl;
+      *src << "{  half v = abs(color.b);" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.b = sign(color.b) * v; }" << endl;
+    } else {
+      *src << "{  half v = color.r;" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.r = v; }" << endl;
+      *src << "{  half v = color.g;" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.g = v; }" << endl;
+      *src << "{  half v = color.b;" << endl;
+      AppendTransferShaderSource(src, false /* is_glsl */);
+      *src << "  color.b = v; }" << endl;
+    }
+  }
+
   virtual float Evaluate(float x) const = 0;
-  // Populate the body of a shader function that takes a float v and returns
-  // Evaluate(v).
-  virtual void AppendTransferShaderSource(std::stringstream* src) const = 0;
+  virtual void AppendTransferShaderSource(std::stringstream* src,
+                                          bool is_glsl) const = 0;
 
  protected:
   // True if the transfer function is extended to be defined for all real
@@ -414,7 +460,7 @@ class ColorTransformPerChannelTransferFn : public ColorTransformStep {
 
 class ColorTransformSkTransferFn : public ColorTransformPerChannelTransferFn {
  public:
-  explicit ColorTransformSkTransferFn(const SkColorSpaceTransferFn& fn,
+  explicit ColorTransformSkTransferFn(const skcms_TransferFunction& fn,
                                       bool extended)
       : ColorTransformPerChannelTransferFn(extended), fn_(fn) {}
   // ColorTransformStep implementation.
@@ -426,13 +472,13 @@ class ColorTransformSkTransferFn : public ColorTransformPerChannelTransferFn {
     if (!extended_ && !next->extended_ &&
         SkTransferFnsApproximatelyCancel(fn_, next->fn_)) {
       // Set to be the identity.
-      fn_.fA = 1;
-      fn_.fB = 0;
-      fn_.fC = 1;
-      fn_.fD = 0;
-      fn_.fE = 0;
-      fn_.fF = 0;
-      fn_.fG = 1;
+      fn_.a = 1;
+      fn_.b = 0;
+      fn_.c = 1;
+      fn_.d = 0;
+      fn_.e = 0;
+      fn_.f = 0;
+      fn_.g = 1;
       return true;
     }
     return false;
@@ -443,48 +489,43 @@ class ColorTransformSkTransferFn : public ColorTransformPerChannelTransferFn {
   // ColorTransformPerChannelTransferFn implementation:
   float Evaluate(float v) const override {
     // Note that the sign-extension is performed by the caller.
-    if (v < 0.f)
-      return 0.f;
     return SkTransferFnEvalUnclamped(fn_, v);
   }
-  void AppendTransferShaderSource(std::stringstream* result) const override {
+  void AppendTransferShaderSource(std::stringstream* result,
+                                  bool is_glsl) const override {
     const float kEpsilon = 1.f / 1024.f;
 
     // Construct the linear segment
     //   linear = C * x + F
     // Elide operations that will be close to the identity.
     std::string linear = "v";
-    if (std::abs(fn_.fC - 1.f) > kEpsilon)
-      linear = Str(fn_.fC) + " * " + linear;
-    if (std::abs(fn_.fF) > kEpsilon)
-      linear = linear + " + " + Str(fn_.fF);
+    if (std::abs(fn_.c - 1.f) > kEpsilon)
+      linear = Str(fn_.c) + " * " + linear;
+    if (std::abs(fn_.f) > kEpsilon)
+      linear = linear + " + " + Str(fn_.f);
 
     // Construct the nonlinear segment.
     //   nonlinear = pow(A * x + B, G) + E
     // Elide operations (especially the pow) that will be close to the
     // identity.
     std::string nonlinear = "v";
-    if (std::abs(fn_.fA - 1.f) > kEpsilon)
-      nonlinear = Str(fn_.fA) + " * " + nonlinear;
-    if (std::abs(fn_.fB) > kEpsilon)
-      nonlinear = nonlinear + " + " + Str(fn_.fB);
-    if (std::abs(fn_.fG - 1.f) > kEpsilon)
-      nonlinear = "pow(" + nonlinear + ", " + Str(fn_.fG) + ")";
-    if (std::abs(fn_.fE) > kEpsilon)
-      nonlinear = nonlinear + " + " + Str(fn_.fE);
+    if (std::abs(fn_.a - 1.f) > kEpsilon)
+      nonlinear = Str(fn_.a) + " * " + nonlinear;
+    if (std::abs(fn_.b) > kEpsilon)
+      nonlinear = nonlinear + " + " + Str(fn_.b);
+    if (std::abs(fn_.g - 1.f) > kEpsilon)
+      nonlinear = "pow(" + nonlinear + ", " + Str(fn_.g) + ")";
+    if (std::abs(fn_.e) > kEpsilon)
+      nonlinear = nonlinear + " + " + Str(fn_.e);
 
-    // Add both parts, skipping the if clause if possible.
-    if (fn_.fD > kEpsilon) {
-      *result << "  if (v < " << Str(fn_.fD) << ")" << endl;
-      *result << "    return " << linear << ";" << endl;
-      *result << "  return " << nonlinear << ";" << endl;
-    } else {
-      *result << "  return " << nonlinear << ";" << endl;
-    }
+    *result << "  if (v < " << Str(fn_.d) << ")" << endl;
+    *result << "    v = " << linear << ";" << endl;
+    *result << "  else" << endl;
+    *result << "    v = " << nonlinear << ";" << endl;
   }
 
  private:
-  SkColorSpaceTransferFn fn_;
+  skcms_TransferFunction fn_;
 };
 
 class ColorTransformFromLinear : public ColorTransformPerChannelTransferFn {
@@ -498,57 +539,65 @@ class ColorTransformFromLinear : public ColorTransformPerChannelTransferFn {
 
   // ColorTransformPerChannelTransferFn implementation:
   float Evaluate(float v) const override { return FromLinear(transfer_, v); }
-  void AppendTransferShaderSource(std::stringstream* src) const override {
+  void AppendTransferShaderSource(std::stringstream* src,
+                                  bool is_glsl) const override {
+    std::string scalar_type = is_glsl ? "float" : "half";
     // This is a string-ized copy-paste from FromLinear.
     switch (transfer_) {
       case ColorSpace::TransferID::LOG:
         *src << "  if (v < 0.01)\n"
-                "    return 0.0;\n"
-                "  return 1.0 + log(v) / log(10.0) / 2.0;\n";
+                "    v = 0.0;\n"
+                "  else\n"
+                "    v =  1.0 + log(v) / log(10.0) / 2.0;\n";
         return;
       case ColorSpace::TransferID::LOG_SQRT:
         *src << "  if (v < sqrt(10.0) / 1000.0)\n"
-                "    return 0.0;\n"
-                "  return 1.0 + log(v) / log(10.0) / 2.5;\n";
+                "    v = 0.0;\n"
+                "  else\n"
+                "    v = 1.0 + log(v) / log(10.0) / 2.5;\n";
         return;
       case ColorSpace::TransferID::IEC61966_2_4:
-        *src << "  float a = 1.099296826809442;\n"
-                "  float b = 0.018053968510807;\n"
-                "  if (v < -b)\n"
-                "    return -a * pow(-v, 0.45) + (a - 1.0);\n"
+        *src << "  " << scalar_type << " a = 1.099296826809442;\n"
+             << "  " << scalar_type << " b = 0.018053968510807;\n"
+             << "  if (v < -b)\n"
+                "    v = -a * pow(-v, 0.45) + (a - 1.0);\n"
                 "  else if (v <= b)\n"
-                "    return 4.5 * v;\n"
-                "  return a * pow(v, 0.45) - (a - 1.0);\n";
+                "    v = 4.5 * v;\n"
+                "  else\n"
+                "    v = a * pow(v, 0.45) - (a - 1.0);\n";
         return;
       case ColorSpace::TransferID::BT1361_ECG:
-        *src << "  float a = 1.099;\n"
-                "  float b = 0.018;\n"
-                "  float l = 0.0045;\n"
-                "  if (v < -l)\n"
-                "    return -(a * pow(-4.0 * v, 0.45) + (a - 1.0)) / 4.0;\n"
+        *src << "  " << scalar_type << " a = 1.099;\n"
+             << "  " << scalar_type << " b = 0.018;\n"
+             << "  " << scalar_type << " l = 0.0045;\n"
+             << "  if (v < -l)\n"
+                "    v = -(a * pow(-4.0 * v, 0.45) + (a - 1.0)) / 4.0;\n"
                 "  else if (v <= b)\n"
-                "    return 4.5 * v;\n"
-                "  return a * pow(v, 0.45) - (a - 1.0);\n";
+                "    v = 4.5 * v;\n"
+                "  else\n"
+                "    v = a * pow(v, 0.45) - (a - 1.0);\n";
         return;
       case ColorSpace::TransferID::SMPTEST2084:
         *src << "  v *= 80.0 / 10000.0;\n"
                 "  v = max(0.0, v);\n"
-                "  float m1 = (2610.0 / 4096.0) / 4.0;\n"
-                "  float m2 = (2523.0 / 4096.0) * 128.0;\n"
-                "  float c1 = 3424.0 / 4096.0;\n"
-                "  float c2 = (2413.0 / 4096.0) * 32.0;\n"
-                "  float c3 = (2392.0 / 4096.0) * 32.0;\n"
-                "  return pow((c1 + c2 * pow(v, m1)) / \n"
-                "                 (1.0 + c3 * pow(v, m1)), m2);\n";
+             << "  " << scalar_type << " m1 = (2610.0 / 4096.0) / 4.0;\n"
+             << "  " << scalar_type << " m2 = (2523.0 / 4096.0) * 128.0;\n"
+             << "  " << scalar_type << " c1 = 3424.0 / 4096.0;\n"
+             << "  " << scalar_type << " c2 = (2413.0 / 4096.0) * 32.0;\n"
+             << "  " << scalar_type
+             << " c3 = (2392.0 / 4096.0) * 32.0;\n"
+                "  v =  pow((c1 + c2 * pow(v, m1)) / \n"
+                "           (1.0 + c3 * pow(v, m1)), m2);\n";
         return;
       case ColorSpace::TransferID::ARIB_STD_B67:
-        *src << "  const float a = 0.17883277;\n"
-                "  const float b = 0.28466892;\n"
-                "  const float c = 0.55991073;\n"
-                "  v = max(0.0, v);\n"
+        *src << "  " << scalar_type << " a = 0.17883277;\n"
+             << "  " << scalar_type << " b = 0.28466892;\n"
+             << "  " << scalar_type << " c = 0.55991073;\n"
+             << "  v = max(0.0, v);\n"
                 "  if (v <= 1.0)\n"
-                "    return 0.5 * sqrt(v);\n"
-                "  return a * log(v - b) + c;\n";
+                "    v = 0.5 * sqrt(v);\n"
+                "  else\n"
+                "    v = a * log(v - b) + c;\n";
         return;
       default:
         break;
@@ -581,63 +630,79 @@ class ColorTransformToLinear : public ColorTransformPerChannelTransferFn {
 
   // ColorTransformPerChannelTransferFn implementation:
   float Evaluate(float v) const override { return ToLinear(transfer_, v); }
-  void AppendTransferShaderSource(std::stringstream* src) const override {
-    // This is a string-ized copy-paste from ToLinear.
+
+  // This is a string-ized copy-paste from ToLinear.
+  void AppendTransferShaderSource(std::stringstream* src,
+                                  bool is_glsl) const override {
+    std::string scalar_type = is_glsl ? "float" : "half";
     switch (transfer_) {
       case ColorSpace::TransferID::LOG:
         *src << "  if (v < 0.0)\n"
-                "    return 0.0;\n"
-                "  return pow(10.0, (v - 1.0) * 2.0);\n";
+                "    v = 0.0;\n"
+                "  else\n"
+                "    v = pow(10.0, (v - 1.0) * 2.0);\n";
         return;
       case ColorSpace::TransferID::LOG_SQRT:
         *src << "  if (v < 0.0)\n"
-                "    return 0.0;\n"
-                "  return pow(10.0, (v - 1.0) * 2.5);\n";
+                "    v = 0.0;\n"
+                "  else\n"
+                "    v = pow(10.0, (v - 1.0) * 2.5);\n";
         return;
       case ColorSpace::TransferID::IEC61966_2_4:
-        *src << "  float a = 1.099296826809442;\n"
-                "  float from_linear_neg_a = -1.047844;\n"
-                "  float from_linear_b = 0.081243;\n"
-                "  if (v < from_linear_neg_a)\n"
-                "    return -pow((a - 1.0 - v) / a, 1.0 / 0.45);\n"
+        *src << "  " << scalar_type << " a = 1.099296826809442;\n"
+             << "  " << scalar_type << " from_linear_neg_a = -1.047844;\n"
+             << "  " << scalar_type << " from_linear_b = 0.081243;\n"
+             << "  if (v < from_linear_neg_a)\n"
+                "    v = -pow((a - 1.0 - v) / a, 1.0 / 0.45);\n"
                 "  else if (v <= from_linear_b)\n"
-                "    return v / 4.5;\n"
-                "  return pow((v + a - 1.0) / a, 1.0 / 0.45);\n";
+                "    v = v / 4.5;\n"
+                "  else\n"
+                "    v = pow((v + a - 1.0) / a, 1.0 / 0.45);\n";
         return;
       case ColorSpace::TransferID::BT1361_ECG:
-        *src << "  float a = 1.099;\n"
-                "  float from_linear_neg_l = -0.020250;\n"
-                "  float from_linear_b = 0.081000;\n"
-                "  if (v < from_linear_neg_l)\n"
-                "    return -pow((1.0 - a - v * 4.0) / a, 1.0 / 0.45) / 4.0;\n"
+        *src << "  " << scalar_type << " a = 1.099;\n"
+             << "  " << scalar_type << " from_linear_neg_l = -0.020250;\n"
+             << "  " << scalar_type << " from_linear_b = 0.081000;\n"
+             << "  if (v < from_linear_neg_l)\n"
+                "    v = -pow((1.0 - a - v * 4.0) / a, 1.0 / 0.45) / 4.0;\n"
                 "  else if (v <= from_linear_b)\n"
-                "    return v / 4.5;\n"
-                "  return pow((v + a - 1.0) / a, 1.0 / 0.45);\n";
+                "    v = v / 4.5;\n"
+                "  else\n"
+                "    v = pow((v + a - 1.0) / a, 1.0 / 0.45);\n";
         return;
       case ColorSpace::TransferID::SMPTEST2084:
         *src << "  v = max(0.0, v);\n"
-                "  float m1 = (2610.0 / 4096.0) / 4.0;\n"
-                "  float m2 = (2523.0 / 4096.0) * 128.0;\n"
-                "  float c1 = 3424.0 / 4096.0;\n"
-                "  float c2 = (2413.0 / 4096.0) * 32.0;\n"
-                "  float c3 = (2392.0 / 4096.0) * 32.0;\n"
-                "  v = pow(max(pow(v, 1.0 / m2) - c1, 0.0) /\n"
-                "              (c2 - c3 * pow(v, 1.0 / m2)), 1.0 / m1);\n"
-                "  v *= 10000.0 / 80.0;\n"
-                "  return v;\n";
+             << "  " << scalar_type << " m1 = (2610.0 / 4096.0) / 4.0;\n"
+             << "  " << scalar_type << " m2 = (2523.0 / 4096.0) * 128.0;\n"
+             << "  " << scalar_type << " c1 = 3424.0 / 4096.0;\n"
+             << "  " << scalar_type << " c2 = (2413.0 / 4096.0) * 32.0;\n"
+             << "  " << scalar_type << " c3 = (2392.0 / 4096.0) * 32.0;\n";
+        if (is_glsl) {
+          *src << "  #ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+                  "  highp float v2 = v;\n"
+                  "  #else\n"
+                  "  float v2 = v;\n"
+                  "  #endif\n";
+        } else {
+          *src << "  float v2 = v\n";
+        }
+        *src << "  v2 = pow(max(pow(v2, 1.0 / m2) - c1, 0.0) /\n"
+                "              (c2 - c3 * pow(v2, 1.0 / m2)), 1.0 / m1);\n"
+                "  v = v2 * 10000.0 / 80.0;\n";
         return;
       case ColorSpace::TransferID::SMPTEST2084_NON_HDR:
         *src << "  v = max(0.0, v);\n"
-                "  return min(2.3 * pow(v, 2.8), v / 5.0 + 0.8);\n";
+                "  v = min(2.3 * pow(v, 2.8), v / 5.0 + 0.8);\n";
         return;
       case ColorSpace::TransferID::ARIB_STD_B67:
         *src << "  v = max(0.0, v);\n"
-                "  float a = 0.17883277;\n"
-                "  float b = 0.28466892;\n"
-                "  float c = 0.55991073;\n"
-                "  if (v <= 0.5)\n"
-                "    return (v * 2.0) * (v * 2.0);\n"
-                "  return exp((v - c) / a) + b;\n";
+             << "  " << scalar_type << " a = 0.17883277;\n"
+             << "  " << scalar_type << " b = 0.28466892;\n"
+             << "  " << scalar_type << " c = 0.55991073;\n"
+             << "  if (v <= 0.5)\n"
+                "    v = (v * 2.0) * (v * 2.0);\n"
+                "  else\n"
+                "    v = exp((v - c) / a) + b;\n";
         return;
       default:
         break;
@@ -655,17 +720,17 @@ class ColorTransformSMPTEST2048NonHdrToLinear : public ColorTransformStep {
   static float Luma(const ColorTransform::TriStim& c) {
     return c.x() * 0.2627f + c.y() * 0.6780f + c.z() * 0.0593f;
   }
-  static ColorTransform::TriStim ClipToWhite(ColorTransform::TriStim& c) {
-    float maximum = max(max(c.x(), c.y()), c.z());
+  static ColorTransform::TriStim ClipToWhite(ColorTransform::TriStim* c) {
+    float maximum = max(max(c->x(), c->y()), c->z());
     if (maximum > 1.0f) {
-      float l = Luma(c);
-      c.Scale(1.0f / maximum);
+      float l = Luma(*c);
+      c->Scale(1.0f / maximum);
       ColorTransform::TriStim white(1.0f, 1.0f, 1.0f);
       white.Scale((1.0f - 1.0f / maximum) * l / Luma(white));
       ColorTransform::TriStim black(0.0f, 0.0f, 0.0f);
-      c += white - black;
+      *c += white - black;
     }
-    return c;
+    return *c;
   }
   void Transform(ColorTransform::TriStim* colors, size_t num) const override {
     for (size_t i = 0; i < num; i++) {
@@ -679,7 +744,7 @@ class ColorTransformSMPTEST2048NonHdrToLinear : public ColorTransformStep {
             ToLinear(ColorSpace::TransferID::SMPTEST2084, colors[i].y()),
             ToLinear(ColorSpace::TransferID::SMPTEST2084, colors[i].z()));
         smpte2084.Scale(Luma(ret) / Luma(smpte2084));
-        ret = ClipToWhite(smpte2084);
+        ret = ClipToWhite(&smpte2084);
       }
       colors[i] = ret;
     }
@@ -728,7 +793,7 @@ class ColorTransformToBT2020CL : public ColorTransformStep {
       } else {
         V = R_Y / (2.0 * 0.4969);
       }
-      RYB[i] = ColorTransform::TriStim(RYB[i].y(), U, V);
+      RYB[i] = ColorTransform::TriStim(RYB[i].y(), U + 0.5, V + 0.5);
     }
   }
 
@@ -756,11 +821,11 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
       return;
     for (size_t i = 0; i < num; i++) {
       float Y = YUV[i].x();
-      float U = YUV[i].y();
-      float V = YUV[i].z();
+      float U = YUV[i].y() - 0.5;
+      float V = YUV[i].z() - 0.5;
       float B_Y, R_Y;
       if (U <= 0) {
-        B_Y = Y * (-2.0 * -0.9702);
+        B_Y = U * (-2.0 * -0.9702);
       } else {
         B_Y = U * (2.0 * 0.7910);
       }
@@ -770,7 +835,7 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
         R_Y = V * (2.0 * 0.4969);
       }
       // Return an RYB value, later steps will fix it.
-      YUV[i] = ColorTransform::TriStim(R_Y + Y, YUV[i].x(), B_Y + Y);
+      YUV[i] = ColorTransform::TriStim(R_Y + Y, Y, B_Y + Y);
     }
   }
   bool CanAppendShaderSource() override { return true; }
@@ -780,12 +845,12 @@ class ColorTransformFromBT2020CL : public ColorTransformStep {
     *hdr << "vec3 BT2020_YUV_to_RYB_Step" << step_index << "(vec3 color) {"
          << endl;
     *hdr << "  float Y = color.x;" << endl;
-    *hdr << "  float U = color.y;" << endl;
-    *hdr << "  float V = color.z;" << endl;
+    *hdr << "  float U = color.y - 0.5;" << endl;
+    *hdr << "  float V = color.z - 0.5;" << endl;
     *hdr << "  float B_Y = 0.0;" << endl;
     *hdr << "  float R_Y = 0.0;" << endl;
     *hdr << "  if (U <= 0.0) {" << endl;
-    *hdr << "    B_Y = Y * (-2.0 * -0.9702);" << endl;
+    *hdr << "    B_Y = U * (-2.0 * -0.9702);" << endl;
     *hdr << "  } else {" << endl;
     *hdr << "    B_Y = U * (2.0 * 0.7910);" << endl;
     *hdr << "  }" << endl;
@@ -838,8 +903,13 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
   steps_.push_back(
       std::make_unique<ColorTransformMatrix>(GetRangeAdjustMatrix(src)));
 
-  steps_.push_back(
-      std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
+  if (src.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
+    // BT2020 CL is a special case.
+    steps_.push_back(std::make_unique<ColorTransformFromBT2020CL>());
+  } else {
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
+  }
 
   // If the target color space is not defined, just apply the adjust and
   // tranfer matrices. This path is used by YUV to RGB color conversion
@@ -847,7 +917,7 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
   if (!dst.IsValid())
     return;
 
-  SkColorSpaceTransferFn src_to_linear_fn;
+  skcms_TransferFunction src_to_linear_fn;
   if (src.GetTransferFunction(&src_to_linear_fn)) {
     steps_.push_back(std::make_unique<ColorTransformSkTransferFn>(
         src_to_linear_fn, src.HasExtendedSkTransferFn()));
@@ -860,7 +930,8 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
 
   if (src.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
     // BT2020 CL is a special case.
-    steps_.push_back(std::make_unique<ColorTransformFromBT2020CL>());
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(Invert(GetTransferMatrix(src))));
   }
   steps_.push_back(
       std::make_unique<ColorTransformMatrix>(GetPrimaryTransform(src)));
@@ -869,10 +940,11 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
       std::make_unique<ColorTransformMatrix>(Invert(GetPrimaryTransform(dst))));
   if (dst.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
     // BT2020 CL is a special case.
-    steps_.push_back(std::make_unique<ColorTransformToBT2020CL>());
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
   }
 
-  SkColorSpaceTransferFn dst_from_linear_fn;
+  skcms_TransferFunction dst_from_linear_fn;
   if (dst.GetInverseTransferFunction(&dst_from_linear_fn)) {
     steps_.push_back(std::make_unique<ColorTransformSkTransferFn>(
         dst_from_linear_fn, dst.HasExtendedSkTransferFn()));
@@ -880,84 +952,15 @@ void ColorTransformInternal::AppendColorSpaceToColorSpaceTransform(
     steps_.push_back(std::make_unique<ColorTransformFromLinear>(dst.transfer_));
   }
 
-  steps_.push_back(
-      std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
+  if (dst.matrix_ == ColorSpace::MatrixID::BT2020_CL) {
+    steps_.push_back(std::make_unique<ColorTransformToBT2020CL>());
+  } else {
+    steps_.push_back(
+        std::make_unique<ColorTransformMatrix>(GetTransferMatrix(dst)));
+  }
 
   steps_.push_back(std::make_unique<ColorTransformMatrix>(
       Invert(GetRangeAdjustMatrix(dst))));
-}
-
-class SkiaColorTransform : public ColorTransformStep {
- public:
-  // Takes ownership of the profiles
-  SkiaColorTransform(sk_sp<SkColorSpace> src, sk_sp<SkColorSpace> dst)
-      : src_(src), dst_(dst) {}
-  ~SkiaColorTransform() override {
-    src_ = nullptr;
-    dst_ = nullptr;
-  }
-  SkiaColorTransform* GetSkia() override { return this; }
-  bool Join(ColorTransformStep* next_untyped) override {
-    SkiaColorTransform* next = next_untyped->GetSkia();
-    if (!next)
-      return false;
-    if (SkColorSpace::Equals(dst_.get(), next->src_.get())) {
-      dst_ = next->dst_;
-      return true;
-    }
-    return false;
-  }
-  bool IsNull() override {
-    if (SkColorSpace::Equals(src_.get(), dst_.get()))
-      return true;
-    return false;
-  }
-  void Transform(ColorTransform::TriStim* colors, size_t num) const override {
-    // Transform to SkColors.
-    std::vector<uint8_t> sk_colors(4 * num);
-    for (size_t i = 0; i < num; ++i) {
-      float rgb[3] = {colors[i].x(), colors[i].y(), colors[i].z()};
-      for (size_t c = 0; c < 3; ++c) {
-        int value_int = static_cast<int>(255.f * rgb[c] + 0.5f);
-        value_int = min(value_int, 255);
-        value_int = max(value_int, 0);
-        sk_colors[4 * i + c] = value_int;
-      }
-      sk_colors[4 * i + 3] = 255;
-    }
-
-    // Perform the transform.
-    std::unique_ptr<SkColorSpaceXform> xform =
-        SkColorSpaceXform::New(src_.get(), dst_.get());
-    DCHECK(xform);
-    if (!xform)
-      return;
-    std::vector<uint8_t> sk_colors_transformed(4 * num);
-    bool xform_apply_result = xform->apply(
-        SkColorSpaceXform::kRGBA_8888_ColorFormat, sk_colors_transformed.data(),
-        SkColorSpaceXform::kRGBA_8888_ColorFormat, sk_colors.data(), num,
-        kOpaque_SkAlphaType);
-    DCHECK(xform_apply_result);
-    sk_colors = sk_colors_transformed;
-
-    // Convert back to TriStim.
-    for (size_t i = 0; i < num; ++i) {
-      colors[i].set_x(sk_colors[4 * i + 0] / 255.f);
-      colors[i].set_y(sk_colors[4 * i + 1] / 255.f);
-      colors[i].set_z(sk_colors[4 * i + 2] / 255.f);
-    }
-  }
-
- private:
-  sk_sp<SkColorSpace> src_;
-  sk_sp<SkColorSpace> dst_;
-};
-
-sk_sp<SkColorSpace> ColorTransformInternal::GetSkColorSpaceIfNecessary(
-    const ColorSpace& color_space) {
-  if (!color_space.icc_profile_id_)
-    return nullptr;
-  return ICCProfile::GetSkColorSpaceFromId(color_space.icc_profile_id_);
 }
 
 ColorTransformInternal::ColorTransformInternal(const ColorSpace& src,
@@ -969,35 +972,12 @@ ColorTransformInternal::ColorTransformInternal(const ColorSpace& src,
   if (!src_.IsValid())
     return;
 
-  // If the target color space is not defined, just apply the adjust and
-  // tranfer matrices. This path is used by YUV to RGB color conversion
-  // when full color conversion is not enabled.
-  sk_sp<SkColorSpace> src_sk_color_space;
-  sk_sp<SkColorSpace> dst_sk_color_space;
-
-  bool has_src_profile = false;
-  bool has_dst_profile = false;
-  if (dst.IsValid()) {
-    src_sk_color_space = GetSkColorSpaceIfNecessary(src_);
-    dst_sk_color_space = GetSkColorSpaceIfNecessary(dst_);
+  // SMPTEST2084_NON_HDR is not a valid destination.
+  if (dst.transfer_ == ColorSpace::TransferID::SMPTEST2084_NON_HDR) {
+    DLOG(ERROR) << "Invalid dst transfer function, returning identity.";
+    return;
   }
-  has_src_profile = !!src_sk_color_space;
-  has_dst_profile = !!dst_sk_color_space;
-
-  if (has_src_profile) {
-    steps_.push_back(std::make_unique<SkiaColorTransform>(
-        std::move(src_sk_color_space),
-        ColorSpace::CreateXYZD50().ToSkColorSpace()));
-  }
-  AppendColorSpaceToColorSpaceTransform(
-      has_src_profile ? ColorSpace::CreateXYZD50() : src_,
-      has_dst_profile ? ColorSpace::CreateXYZD50() : dst_, intent);
-  if (has_dst_profile) {
-    steps_.push_back(std::make_unique<SkiaColorTransform>(
-        ColorSpace::CreateXYZD50().ToSkColorSpace(),
-        std::move(dst_sk_color_space)));
-  }
-
+  AppendColorSpaceToColorSpaceTransform(src_, dst_, intent);
   if (intent != Intent::TEST_NO_OPT)
     Simplify();
 }
@@ -1014,6 +994,14 @@ std::string ColorTransformInternal::GetShaderSource() const {
   src << "  return color;" << endl;
   src << "}" << endl;
   return hdr.str() + src.str();
+}
+
+std::string ColorTransformInternal::GetSkShaderSource() const {
+  std::stringstream src;
+  InitStringStream(&src);
+  for (const auto& step : steps_)
+    step->AppendSkShaderSource(&src);
+  return src.str();
 }
 
 bool ColorTransformInternal::CanGetShaderSource() const {

@@ -16,13 +16,17 @@
 
 #include <utility>
 
+#include "util/file/file_io.h"
+#include "util/linux/proc_task_reader.h"
+
 namespace crashpad {
 
 DirectPtraceConnection::DirectPtraceConnection()
     : PtraceConnection(),
       attachments_(),
+      memory_(),
       pid_(-1),
-      ptracer_(),
+      ptracer_(/* can_log= */ true),
       initialized_() {}
 
 DirectPtraceConnection::~DirectPtraceConnection() {}
@@ -34,6 +38,10 @@ bool DirectPtraceConnection::Initialize(pid_t pid) {
     return false;
   }
   pid_ = pid;
+
+  if (!memory_.Initialize(pid)) {
+    return false;
+  }
 
   INITIALIZATION_STATE_SET_VALID(initialized_);
   return true;
@@ -61,6 +69,22 @@ bool DirectPtraceConnection::Is64Bit() {
 bool DirectPtraceConnection::GetThreadInfo(pid_t tid, ThreadInfo* info) {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
   return ptracer_.GetThreadInfo(tid, info);
+}
+
+bool DirectPtraceConnection::ReadFileContents(const base::FilePath& path,
+                                              std::string* contents) {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+  return LoggingReadEntireFile(path, contents);
+}
+
+ProcessMemory* DirectPtraceConnection::Memory() {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+  return &memory_;
+}
+
+bool DirectPtraceConnection::Threads(std::vector<pid_t>* threads) {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+  return ReadThreadIDs(pid_, threads);
 }
 
 }  // namespace crashpad

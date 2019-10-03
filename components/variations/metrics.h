@@ -24,6 +24,7 @@ enum class FirstRunSeedImportResult {
 
 // The result of attempting to load a variations seed on startup.
 // Note: UMA histogram enum - don't re-order or remove entries.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.variations
 enum class LoadSeedResult {
   SUCCESS,
   EMPTY,
@@ -32,6 +33,9 @@ enum class LoadSeedResult {
   CORRUPT_BASE64,
   CORRUPT_PROTOBUF,
   CORRUPT_GZIP,
+  LOAD_TIMED_OUT,
+  LOAD_INTERRUPTED,
+  LOAD_OTHER_FAILURE,
   ENUM_SIZE
 };
 
@@ -43,16 +47,21 @@ enum class StoreSeedResult {
   FAILED_PARSE,
   FAILED_SIGNATURE,
   FAILED_GZIP,
-  // DELTA_COUNT is not so much a result of the seed store, but rather counting
-  // the number of delta-compressed seeds the SeedStore() function saw. Kept in
-  // the same histogram for convenience of comparing against the other values.
-  DELTA_COUNT,
+  DELTA_COUNT_OBSOLETE,
   FAILED_DELTA_READ_SEED,
   FAILED_DELTA_APPLY,
   FAILED_DELTA_STORE,
   FAILED_UNGZIP,
   FAILED_EMPTY_GZIP_CONTENTS,
   FAILED_UNSUPPORTED_SEED_FORMAT,
+  // The following are not so much a result of the seed store, but rather
+  // counting the types of seeds the SeedStore() function saw. Kept in the same
+  // histogram for efficiency and convenience of comparing against the other
+  // values.
+  GZIP_DELTA_COUNT,
+  NON_GZIP_DELTA_COUNT,
+  GZIP_FULL_COUNT,
+  NON_GZIP_FULL_COUNT,
   ENUM_SIZE
 };
 
@@ -83,8 +92,12 @@ enum class VerifySignatureResult {
 void RecordFirstRunSeedImportResult(FirstRunSeedImportResult result);
 #endif  // OS_ANDROID
 
-// Records the result of attempting to load a variations seed on startup.
+// Records the result of attempting to load the latest variations seed on
+// startup.
 void RecordLoadSeedResult(LoadSeedResult state);
+
+// Records the result of attempting to load the safe variations seed on startup.
+void RecordLoadSafeSeedResult(LoadSeedResult state);
 
 // Records the result of attempting to store a variations seed received from the
 // server.

@@ -12,23 +12,26 @@
 #include <string>
 #include <vector>
 
-#include "base/memory/linked_ptr.h"
-#include "components/gcm_driver/common/gcm_messages.h"
+#include "base/memory/scoped_refptr.h"
+#include "components/gcm_driver/common/gcm_message.h"
 #include "components/gcm_driver/gcm_activity.h"
 #include "components/gcm_driver/registration_info.h"
-
-template <class T> class scoped_refptr;
+#include "services/network/public/mojom/proxy_resolving_socket.mojom-forward.h"
 
 namespace base {
 class FilePath;
+class RetainingOneShotTimer;
 class SequencedTaskRunner;
-class Timer;
-}
+}  // namespace base
 
 namespace net {
 class IPEndPoint;
-class URLRequestContextGetter;
-}
+}  // namespace net
+
+namespace network {
+class NetworkConnectionTracker;
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace gcm {
 
@@ -82,7 +85,7 @@ class GCMClient {
     PLATFORM_CROS,
     PLATFORM_IOS,
     PLATFORM_ANDROID,
-    PLATFORM_UNKNOWN
+    PLATFORM_UNSPECIFIED
   };
 
   enum ChromeChannel {
@@ -129,6 +132,7 @@ class GCMClient {
     base::Time last_checkin;
     base::Time next_checkin;
     uint64_t android_id;
+    uint64_t android_secret;
     std::vector<std::string> registered_app_ids;
     int send_queue_size;
     int resend_queue_size;
@@ -153,7 +157,7 @@ class GCMClient {
     // |registration_id|: non-empty if the registration completed successfully.
     // |result|: the type of the error if an error occured, success otherwise.
     virtual void OnRegisterFinished(
-        const linked_ptr<RegistrationInfo>& registration_info,
+        scoped_refptr<RegistrationInfo> registration_info,
         const std::string& registration_id,
         Result result) = 0;
 
@@ -162,7 +166,7 @@ class GCMClient {
     //                      registration.
     // |result|: result of the unregistration.
     virtual void OnUnregisterFinished(
-        const linked_ptr<RegistrationInfo>& registration_info,
+        scoped_refptr<RegistrationInfo> registration_info,
         GCMClient::Result result) = 0;
 
     // Called when the message is scheduled to send successfully or an error
@@ -226,20 +230,29 @@ class GCMClient {
   virtual ~GCMClient();
 
   // Begins initialization of the GCM Client. This will not trigger a
-  // connection.
+  // connection. Must be called on |io_task_runner|.
   // |chrome_build_info|: chrome info, i.e., version, channel and etc.
   // |store_path|: path to the GCM store.
   // |blocking_task_runner|: for running blocking file tasks.
-  // |url_request_context_getter|: for url requests. The GCMClient must be
-  //     deleted before the Getter's underlying URLRequestContext.
+  // |io_task_runner|: for running IO tasks. When provided, it could be a
+  //     wrapper on top of base::ThreadTaskRunnerHandle::Get() to provide power
+  //     management featueres so that a delayed task posted to it can wake the
+  //     system up from sleep to perform the task.
+  // |get_socket_factory_callback|: a callback that can accept a request for a
+  //     network::mojom::ProxyResolvingSocketFactoryPtr. It needs to be safe to
+  //     run on any thread.
   // |delegate|: the delegate whose methods will be called asynchronously in
   //     response to events and messages.
   virtual void Initialize(
       const ChromeBuildInfo& chrome_build_info,
       const base::FilePath& store_path,
       const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
-      const scoped_refptr<net::URLRequestContextGetter>&
-          url_request_context_getter,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+      base::RepeatingCallback<
+          void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+          get_socket_factory_callback,
+      const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
+      network::NetworkConnectionTracker* network_connection_tracker_,
       std::unique_ptr<Encryptor> encryptor,
       Delegate* delegate) = 0;
 
@@ -258,14 +271,13 @@ class GCMClient {
   //                      registration. For GCM, it will contain app id and
   //                      sender IDs. For InstanceID, it will contain app_id,
   //                      authorized entity and scope.
-  virtual void Register(
-      const linked_ptr<RegistrationInfo>& registration_info) = 0;
+  virtual void Register(scoped_refptr<RegistrationInfo> registration_info) = 0;
 
   // Checks that the provided |registration_id| (aka token for Instance ID
   // registrations) matches the stored registration info. Also checks sender IDs
   // match for GCM registrations.
   virtual bool ValidateRegistration(
-      const linked_ptr<RegistrationInfo>& registration_info,
+      scoped_refptr<RegistrationInfo> registration_info,
       const std::string& registration_id) = 0;
 
   // Unregisters from the server to stop accessing the provided service.
@@ -276,7 +288,7 @@ class GCMClient {
   //                      IDs can be ingored). For InstanceID, it will contain
   //                      app id, authorized entity and scope.
   virtual void Unregister(
-      const linked_ptr<RegistrationInfo>& registration_info) = 0;
+      scoped_refptr<RegistrationInfo> registration_info) = 0;
 
   // Sends a message to a given receiver. Delegate::OnSendFinished will be
   // called asynchronously upon completion.
@@ -317,7 +329,8 @@ class GCMClient {
   virtual void SetLastTokenFetchTime(const base::Time& time) = 0;
 
   // Updates the timer used by the HeartbeatManager for sending heartbeats.
-  virtual void UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) = 0;
+  virtual void UpdateHeartbeatTimer(
+      std::unique_ptr<base::RetainingOneShotTimer> timer) = 0;
 
   // Adds the Instance ID data for a specific app to the persistent store.
   virtual void AddInstanceIDData(const std::string& app_id,

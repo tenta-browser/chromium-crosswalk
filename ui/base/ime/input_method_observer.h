@@ -5,14 +5,14 @@
 #ifndef UI_BASE_IME_INPUT_METHOD_OBSERVER_H_
 #define UI_BASE_IME_INPUT_METHOD_OBSERVER_H_
 
-#include "ui/base/ime/ui_base_ime_export.h"
+#include "base/component_export.h"
 
 namespace ui {
 
 class InputMethod;
 class TextInputClient;
 
-class UI_BASE_IME_EXPORT InputMethodObserver {
+class COMPONENT_EXPORT(UI_BASE_IME) InputMethodObserver {
  public:
   virtual ~InputMethodObserver() {}
 
@@ -37,7 +37,7 @@ class UI_BASE_IME_EXPORT InputMethodObserver {
 
   // Called when a user gesture should trigger showing the virtual keyboard
   // or alternate input view (e.g. handwriting palette). Used in ChromeOS.
-  virtual void OnShowImeIfNeeded() = 0;
+  virtual void OnShowVirtualKeyboardIfEnabled() = 0;
 };
 
 }  // namespace ui

@@ -8,14 +8,15 @@
 #include <set>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "cc/input/overscroll_behavior.h"
+#include "cc/input/scroll_snap_data.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/layer_sticky_position_constraint.h"
 #include "cc/paint/filter_operations.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/gfx/geometry/point3_f.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace viz {
@@ -47,13 +48,17 @@ struct CC_EXPORT LayerImplTestProperties {
   int sorting_context_id;
   float opacity;
   FilterOperations filters;
-  FilterOperations background_filters;
+  FilterOperations backdrop_filters;
+  base::Optional<gfx::RRectF> backdrop_filter_bounds;
+  ElementId backdrop_mask_element_id;
+  float backdrop_filter_quality;
   gfx::PointF filters_origin;
   SkBlendMode blend_mode;
   LayerPositionConstraint position_constraint;
   LayerStickyPositionConstraint sticky_position_constraint;
   gfx::Point3F transform_origin;
   gfx::Transform transform;
+  gfx::PointF position;
   LayerImpl* scroll_parent;
   LayerImpl* clip_parent;
   std::unique_ptr<std::set<LayerImpl*>> clip_children;
@@ -61,9 +66,12 @@ struct CC_EXPORT LayerImplTestProperties {
   LayerImplList children;
   LayerImpl* mask_layer;
   LayerImpl* parent;
+  uint32_t main_thread_scrolling_reasons = 0;
   bool user_scrollable_horizontal = true;
   bool user_scrollable_vertical = true;
   OverscrollBehavior overscroll_behavior;
+  base::Optional<SnapContainerData> snap_container_data;
+  gfx::RRectF rounded_corner_bounds;
 };
 
 }  // namespace cc

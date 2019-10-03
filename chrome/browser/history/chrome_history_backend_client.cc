@@ -4,10 +4,11 @@
 
 #include "chrome/browser/history/chrome_history_backend_client.h"
 
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/common/channel_info.h"
-#include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/history_bookmark_model.h"
+#include "components/bookmarks/browser/model_loader.h"
+#include "components/bookmarks/browser/url_and_title.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "url/gurl.h"
@@ -27,50 +28,41 @@ const base::FilePath::CharType kAndroidCacheFilename[] =
 #endif
 
 ChromeHistoryBackendClient::ChromeHistoryBackendClient(
-    bookmarks::BookmarkModel* bookmark_model)
-    : bookmark_model_(bookmark_model) {
-}
+    bookmarks::ModelLoader* model_loader)
+    : model_loader_(model_loader) {}
 
 ChromeHistoryBackendClient::~ChromeHistoryBackendClient() {
 }
 
-bool ChromeHistoryBackendClient::IsBookmarked(const GURL& url) {
-  if (!bookmark_model_)
+bool ChromeHistoryBackendClient::IsPinnedURL(const GURL& url) {
+  if (!model_loader_)
     return false;
 
   // HistoryBackendClient is used to determine if an URL is bookmarked. The data
   // is loaded on a separate thread and may not be done when this method is
   // called, therefore blocks until the bookmarks have finished loading.
-  bookmark_model_->BlockTillLoaded();
-  return bookmark_model_->IsBookmarked(url);
+  model_loader_->BlockTillLoaded();
+  return model_loader_->history_bookmark_model()->IsBookmarked(url);
 }
 
-void ChromeHistoryBackendClient::GetBookmarks(
-    std::vector<history::URLAndTitle>* bookmarks) {
-  if (!bookmark_model_)
-    return;
+std::vector<history::URLAndTitle> ChromeHistoryBackendClient::GetPinnedURLs() {
+  std::vector<history::URLAndTitle> result;
+  if (!model_loader_)
+    return result;
 
   // HistoryBackendClient is used to determine the set of bookmarked URLs. The
   // data is loaded on a separate thread and may not be done when this method is
   // called, therefore blocks until the bookmarks have finished loading.
-  std::vector<bookmarks::BookmarkModel::URLAndTitle> url_and_titles;
-  bookmark_model_->BlockTillLoaded();
-  bookmark_model_->GetBookmarks(&url_and_titles);
+  std::vector<bookmarks::UrlAndTitle> url_and_titles;
+  model_loader_->BlockTillLoaded();
+  model_loader_->history_bookmark_model()->GetBookmarks(&url_and_titles);
 
-  bookmarks->reserve(bookmarks->size() + url_and_titles.size());
+  result.reserve(url_and_titles.size());
   for (const auto& url_and_title : url_and_titles) {
-    history::URLAndTitle value = { url_and_title.url, url_and_title.title };
-    bookmarks->push_back(value);
+    result.push_back(
+        history::URLAndTitle{url_and_title.url, url_and_title.title});
   }
-}
-
-bool ChromeHistoryBackendClient::ShouldReportDatabaseError() {
-  // TODO(shess): For now, don't report on beta or stable so as not to
-  // overwhelm the crash server.  Once the big fish are fried,
-  // consider reporting at a reduced rate on the bigger channels.
-  version_info::Channel channel = chrome::GetChannel();
-  return channel != version_info::Channel::STABLE &&
-         channel != version_info::Channel::BETA;
+  return result;
 }
 
 bool ChromeHistoryBackendClient::IsWebSafe(const GURL& url) {
@@ -88,7 +80,7 @@ void ChromeHistoryBackendClient::OnHistoryBackendInitialized(
   if (thumbnail_database) {
     history_backend->SetUserData(
         history::AndroidProviderBackend::GetUserDataKey(),
-        base::MakeUnique<history::AndroidProviderBackend>(
+        std::make_unique<history::AndroidProviderBackend>(
             history_dir.Append(kAndroidCacheFilename), history_database,
             thumbnail_database, this, history_backend));
   }
@@ -97,6 +89,6 @@ void ChromeHistoryBackendClient::OnHistoryBackendInitialized(
 void ChromeHistoryBackendClient::OnHistoryBackendDestroyed(
     history::HistoryBackend* history_backend,
     const base::FilePath& history_dir) {
-  sql::Connection::Delete(history_dir.Append(kAndroidCacheFilename));
+  sql::Database::Delete(history_dir.Append(kAndroidCacheFilename));
 }
 #endif  // defined(OS_ANDROID)

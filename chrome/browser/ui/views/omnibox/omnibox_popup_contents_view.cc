@@ -4,56 +4,133 @@
 
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_contents_view.h"
 
-#include <algorithm>
+#include <memory>
+#include <numeric>
 
-#include "base/feature_list.h"
-#include "base/lazy_instance.h"
-#include "base/macros.h"
+#include "base/bind.h"
+#include "base/optional.h"
 #include "build/build_config.h"
-#include "chrome/browser/search/search.h"
-#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
+#include "chrome/browser/ui/views/omnibox/rounded_omnibox_results_frame.h"
 #include "chrome/browser/ui/views/theme_copying_widget.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
-#include "components/omnibox/browser/omnibox_view.h"
-#include "third_party/skia/include/core/SkDrawLooper.h"
-#include "ui/base/theme_provider.h"
-#include "ui/compositor/clip_recorder.h"
-#include "ui/compositor/paint_recorder.h"
-#include "ui/gfx/canvas.h"
-#include "ui/gfx/geometry/safe_integer_conversions.h"
+#include "components/omnibox/common/omnibox_features.h"
+#include "ui/accessibility/ax_node_data.h"
+#include "ui/compositor/closure_animation_observer.h"
+#include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/image/image_skia_operations.h"
-#include "ui/gfx/path.h"
-#include "ui/gfx/shadow_value.h"
-#include "ui/views/bubble/bubble_border.h"
-#include "ui/views/controls/image_view.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/window/non_client_view.h"
-
-namespace {
-
-// Cache the shadow images so that potentially expensive shadow drawing isn't
-// repeated.
-base::LazyInstance<gfx::ImageSkia>::DestructorAtExit g_top_shadow =
-    LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<gfx::ImageSkia>::DestructorAtExit g_bottom_shadow =
-    LAZY_INSTANCE_INITIALIZER;
-
-const int kPopupVerticalPadding = 4;
-
-}  // namespace
 
 class OmniboxPopupContentsView::AutocompletePopupWidget
     : public ThemeCopyingWidget,
       public base::SupportsWeakPtr<AutocompletePopupWidget> {
  public:
+  // TODO(tapted): Remove |role_model| when the omnibox is completely decoupled
+  // from NativeTheme.
   explicit AutocompletePopupWidget(views::Widget* role_model)
       : ThemeCopyingWidget(role_model) {}
   ~AutocompletePopupWidget() override {}
 
+  void InitOmniboxPopup(views::Widget* parent_widget, const gfx::Rect& bounds) {
+    views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+#if defined(OS_WIN)
+    // On Windows use the software compositor to ensure that we don't block
+    // the UI thread during command buffer creation. We can revert this change
+    // once http://crbug.com/125248 is fixed.
+    params.force_software_compositing = true;
+#endif
+    params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
+    params.parent = parent_widget->GetNativeView();
+    params.bounds = bounds;
+    params.context = parent_widget->GetNativeWindow();
+
+    RoundedOmniboxResultsFrame::OnBeforeWidgetInit(&params, this);
+
+    Init(params);
+  }
+
+  void SetPopupContentsView(OmniboxPopupContentsView* contents) {
+    SetContentsView(
+        new RoundedOmniboxResultsFrame(contents, contents->location_bar_view_));
+  }
+
+  void SetTargetBounds(const gfx::Rect& bounds) {
+    SetBounds(bounds);
+  }
+
+  void ShowAnimated() {
+    // Set the initial opacity to 0 and ease into fully opaque.
+    GetLayer()->SetOpacity(0.0);
+    ShowInactive();
+
+    auto scoped_settings = GetScopedAnimationSettings();
+    GetLayer()->SetOpacity(1.0);
+  }
+
+  void CloseAnimated() {
+    // If the opening or shrinking animations still running, abort them, as the
+    // popup is closing. This is an edge case for superhumanly fast users.
+    GetLayer()->GetAnimator()->AbortAllAnimations();
+
+    auto scoped_settings = GetScopedAnimationSettings();
+    GetLayer()->SetOpacity(0.0);
+    is_animating_closed_ = true;
+
+    // Destroy the popup when done. The observer deletes itself on completion.
+    scoped_settings->AddObserver(new ui::ClosureAnimationObserver(
+        base::BindOnce(&AutocompletePopupWidget::Close, AsWeakPtr())));
+  }
+
+  void OnNativeWidgetDestroying() override {
+    // End all our animations immediately, as our closing animation may trigger
+    // a Close call which will be invalid once the native widget is gone.
+    GetLayer()->GetAnimator()->AbortAllAnimations();
+
+    ThemeCopyingWidget::OnNativeWidgetDestroying();
+  }
+
+  void OnMouseEvent(ui::MouseEvent* event) override {
+    // Ignore mouse events if the popup is closed or animating closed.
+    if (IsClosed() || is_animating_closed_) {
+      if (event->cancelable())
+        event->SetHandled();
+      return;
+    }
+
+    ThemeCopyingWidget::OnMouseEvent(event);
+  }
+
+  void OnGestureEvent(ui::GestureEvent* event) override {
+    // Ignore gesture events if the popup is closed or animating closed.
+    // However, just like the base class, we do not capture the event, so
+    // multiple widgets may get tap events at the same time.
+    if (IsClosed() || is_animating_closed_)
+      return;
+
+    ThemeCopyingWidget::OnGestureEvent(event);
+  }
+
  private:
+  std::unique_ptr<ui::ScopedLayerAnimationSettings>
+  GetScopedAnimationSettings() {
+    auto settings = std::make_unique<ui::ScopedLayerAnimationSettings>(
+        GetLayer()->GetAnimator());
+
+    settings->SetTweenType(gfx::Tween::Type::FAST_OUT_SLOW_IN);
+
+    constexpr base::TimeDelta kPopupOpacityAnimationDuration =
+        base::TimeDelta::FromMilliseconds(82);
+    settings->SetTransitionDuration(kPopupOpacityAnimationDuration);
+
+    return settings;
+  }
+
+  // True if the popup is in the process of closing via animation.
+  bool is_animating_closed_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(AutocompletePopupWidget);
 };
 
@@ -61,52 +138,19 @@ class OmniboxPopupContentsView::AutocompletePopupWidget
 // OmniboxPopupContentsView, public:
 
 OmniboxPopupContentsView::OmniboxPopupContentsView(
-    const gfx::FontList& font_list,
-    OmniboxView* omnibox_view,
+    OmniboxViewViews* omnibox_view,
     OmniboxEditModel* edit_model,
     LocationBarView* location_bar_view)
     : model_(new OmniboxPopupModel(this, edit_model)),
       omnibox_view_(omnibox_view),
-      location_bar_view_(location_bar_view),
-      font_list_(font_list),
-      size_animation_(this),
-      start_margin_(0),
-      end_margin_(0) {
+      location_bar_view_(location_bar_view) {
   // The contents is owned by the LocationBarView.
   set_owned_by_client();
 
-  bool narrow_popup =
-      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
-
-  if (g_top_shadow.Get().isNull() && !narrow_popup) {
-    std::vector<gfx::ShadowValue> shadows;
-    // Blur by 1dp. See comment below about blur accounting.
-    shadows.emplace_back(gfx::Vector2d(), 2, SK_ColorBLACK);
-    g_top_shadow.Get() =
-        gfx::ImageSkiaOperations::CreateHorizontalShadow(shadows, false);
-  }
-  if (g_bottom_shadow.Get().isNull() && !narrow_popup) {
-    const int kSmallShadowBlur = 3;
-    const int kLargeShadowBlur = 8;
-    const int kLargeShadowYOffset = 3;
-
-    std::vector<gfx::ShadowValue> shadows;
-    // gfx::ShadowValue counts blur pixels both inside and outside the shape,
-    // whereas these blur values only describe the outside portion, hence they
-    // must be doubled.
-    shadows.emplace_back(gfx::Vector2d(), 2 * kSmallShadowBlur,
-                         SK_ColorBLACK);
-    shadows.emplace_back(gfx::Vector2d(0, kLargeShadowYOffset),
-                         2 * kLargeShadowBlur, SK_ColorBLACK);
-
-    g_bottom_shadow.Get() =
-        gfx::ImageSkiaOperations::CreateHorizontalShadow(shadows, true);
-  }
-
   for (size_t i = 0; i < AutocompleteResult::GetMaxMatches(); ++i) {
-    OmniboxResultView* result_view = new OmniboxResultView(this, i, font_list_);
+    OmniboxResultView* result_view = new OmniboxResultView(this, i);
     result_view->SetVisible(false);
-    AddChildViewAt(result_view, static_cast<int>(i));
+    AddChildView(result_view);
   }
 }
 
@@ -116,34 +160,36 @@ OmniboxPopupContentsView::~OmniboxPopupContentsView() {
   // which case there's nothing we need to do.
 }
 
-gfx::Rect OmniboxPopupContentsView::GetPopupBounds() const {
-  if (!size_animation_.is_animating())
-    return target_bounds_;
-
-  gfx::Rect current_frame_bounds = start_bounds_;
-  int total_height_delta = target_bounds_.height() - start_bounds_.height();
-  // Round |current_height_delta| instead of truncating so we won't leave single
-  // white pixels at the bottom of the popup as long when animating very small
-  // height differences.
-  int current_height_delta = static_cast<int>(
-      size_animation_.GetCurrentValue() * total_height_delta - 0.5);
-  current_frame_bounds.set_height(
-      current_frame_bounds.height() + current_height_delta);
-  return current_frame_bounds;
-}
-
-void OmniboxPopupContentsView::OpenMatch(size_t index,
-                                         WindowOpenDisposition disposition) {
+void OmniboxPopupContentsView::OpenMatch(
+    size_t index,
+    WindowOpenDisposition disposition,
+    base::TimeTicks match_selection_timestamp) {
   DCHECK(HasMatchAt(index));
 
   omnibox_view_->OpenMatch(model_->result().match_at(index), disposition,
-                           GURL(), base::string16(), index);
+                           GURL(), base::string16(), index,
+                           match_selection_timestamp);
+}
+
+void OmniboxPopupContentsView::OpenMatch(
+    WindowOpenDisposition disposition,
+    base::TimeTicks match_selection_timestamp) {
+  size_t index = model_->selected_line();
+  omnibox_view_->OpenMatch(model_->result().match_at(index), disposition,
+                           GURL(), base::string16(), index,
+                           match_selection_timestamp);
 }
 
 gfx::Image OmniboxPopupContentsView::GetMatchIcon(
     const AutocompleteMatch& match,
     SkColor vector_icon_color) const {
   return model_->GetMatchIcon(match, vector_icon_color);
+}
+
+OmniboxTint OmniboxPopupContentsView::CalculateTint() const {
+  // Use LIGHT in tests.
+  return location_bar_view_ ? location_bar_view_->CalculateTint()
+                            : OmniboxTint::LIGHT;
 }
 
 void OmniboxPopupContentsView::SetSelectedLine(size_t index) {
@@ -154,6 +200,23 @@ void OmniboxPopupContentsView::SetSelectedLine(size_t index) {
 
 bool OmniboxPopupContentsView::IsSelectedIndex(size_t index) const {
   return index == model_->selected_line();
+}
+
+bool OmniboxPopupContentsView::IsButtonSelected() const {
+  return model_->selected_line_state() == OmniboxPopupModel::BUTTON_FOCUSED;
+}
+
+void OmniboxPopupContentsView::UnselectButton() {
+  model_->SetSelectedLineState(OmniboxPopupModel::NORMAL);
+}
+
+void OmniboxPopupContentsView::ProvideButtonFocusHint(size_t line) {
+  OmniboxResultView* result = result_view_at(line);
+  result->ProvideButtonFocusHint();
+}
+
+bool OmniboxPopupContentsView::InExplicitExperimentalKeywordMode() {
+  return model_->edit_model()->InExplicitExperimentalKeywordMode();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -183,13 +246,8 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     // No matches or the IME is showing a popup window which may overlap
     // the omnibox popup window.  Close any existing popup.
     if (popup_) {
-      size_animation_.Stop();
-
-      // NOTE: Do NOT use CloseNow() here, as we may be deep in a callstack
-      // triggered by the popup receiving a message (e.g. LBUTTONUP), and
-      // destroying the popup would cause us to read garbage when we unwind back
-      // to that level.
-      popup_->Close();  // This will eventually delete the popup.
+      NotifyAccessibilityEvent(ax::mojom::Event::kExpandedChanged, true);
+      popup_->CloseAnimated();  // This will eventually delete the popup.
       popup_.reset();
     }
     return;
@@ -206,105 +264,53 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     const AutocompleteMatch& match = GetMatchAtIndex(i);
     view->SetMatch(match);
     view->SetVisible(true);
-    if (match.answer && !model_->answer_bitmap().isNull()) {
-      view->SetAnswerImage(
-          gfx::ImageSkia::CreateFrom1xBitmap(model_->answer_bitmap()));
+    const SkBitmap* bitmap = model_->RichSuggestionBitmapAt(i);
+    if (bitmap != nullptr) {
+      view->SetRichSuggestionImage(gfx::ImageSkia::CreateFrom1xBitmap(*bitmap));
     }
   }
 
-  for (size_t i = result_size; i < AutocompleteResult::GetMaxMatches(); ++i)
-    child_at(i)->SetVisible(false);
+  for (auto i = children().begin() + result_size; i != children().end(); ++i)
+    (*i)->SetVisible(false);
 
-  int top_edge_overlap = 0;
-  bool narrow_popup =
-      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
-  if (!narrow_popup) {
-    // We want the popup to appear to overlay the bottom of the toolbar. So we
-    // shift the popup to completely cover the client edge, and then draw an
-    // additional semitransparent shadow above that.
-    top_edge_overlap = g_top_shadow.Get().height() +
-                       views::NonClientFrameView::kClientEdgeThickness;
+  gfx::Rect new_target_bounds = GetTargetBounds();
+
+  if (popup_) {
+    popup_->SetTargetBounds(new_target_bounds);
+    Layout();
+    return;
   }
 
-  gfx::Point top_left_screen_coord;
-  int width;
-  location_bar_view_->GetOmniboxPopupPositioningInfo(
-      &top_left_screen_coord, &width, &start_margin_,
-      &end_margin_, top_edge_overlap);
-  gfx::Rect new_target_bounds(top_left_screen_coord,
-                              gfx::Size(width, CalculatePopupHeight()));
+  views::Widget* popup_parent = location_bar_view_->GetWidget();
 
-  if (narrow_popup) {
-    SkColor background_color = GetNativeTheme()->GetSystemColor(
-        ui::NativeTheme::kColorId_ResultsTableNormalBackground);
-    auto border = base::MakeUnique<views::BubbleBorder>(
-        views::BubbleBorder::NONE, views::BubbleBorder::SMALL_SHADOW,
-        background_color);
+  // If the popup is currently closed, we need to create it.
+  popup_ = (new AutocompletePopupWidget(popup_parent))->AsWeakPtr();
+  popup_->InitOmniboxPopup(popup_parent, new_target_bounds);
+  // Third-party software such as DigitalPersona identity verification can hook
+  // the underlying window creation methods and use SendMessage to synchronously
+  // change focus/activation, resulting in the popup being destroyed by the time
+  // control returns here.  Bail out in this case to avoid a nullptr
+  // dereference.
+  if (!popup_)
+    return;
 
-    // Outdent the popup to factor in the shadow size.
-    int border_thickness = border->GetBorderThickness();
-    new_target_bounds.Inset(-border_thickness, -border_thickness,
-                            -border_thickness, -border_thickness);
+  popup_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
+  popup_->SetPopupContentsView(this);
+  popup_->StackAbove(omnibox_view_->GetRelativeWindowForPopup());
+  // For some IMEs GetRelativeWindowForPopup triggers the omnibox to lose focus,
+  // thereby closing (and destroying) the popup. TODO(sky): this won't be needed
+  // once we close the omnibox on input window showing.
+  if (!popup_)
+    return;
 
-    SetBackground(base::MakeUnique<views::BubbleBackground>(border.get()));
-    SetBorder(std::move(border));
+  popup_->ShowAnimated();
+
+  // Popup is now expanded and first item will be selected.
+  NotifyAccessibilityEvent(ax::mojom::Event::kExpandedChanged, true);
+  if (result_view_at(0)) {
+    result_view_at(0)->NotifyAccessibilityEvent(ax::mojom::Event::kSelection,
+                                                true);
   }
-
-  // If we're animating and our target height changes, reset the animation.
-  // NOTE: If we just reset blindly on _every_ update, then when the user types
-  // rapidly we could get "stuck" trying repeatedly to animate shrinking by the
-  // last few pixels to get to one visible result.
-  if (new_target_bounds.height() != target_bounds_.height())
-    size_animation_.Reset();
-  target_bounds_ = new_target_bounds;
-
-  if (!popup_) {
-    views::Widget* popup_parent = location_bar_view_->GetWidget();
-
-    // If the popup is currently closed, we need to create it.
-    popup_ = (new AutocompletePopupWidget(popup_parent))->AsWeakPtr();
-
-    views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
-#if defined(OS_WIN)
-    // On Windows use the software compositor to ensure that we don't block
-    // the UI thread blocking issue during command buffer creation. We can
-    // revert this change once http://crbug.com/125248 is fixed.
-    params.force_software_compositing = true;
-#endif
-    params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
-    params.parent = popup_parent->GetNativeView();
-    params.bounds = GetPopupBounds();
-    params.context = popup_parent->GetNativeWindow();
-    popup_->Init(params);
-    // Third-party software such as DigitalPersona identity verification can
-    // hook the underlying window creation methods and use SendMessage to
-    // synchronously change focus/activation, resulting in the popup being
-    // destroyed by the time control returns here.  Bail out in this case to
-    // avoid a NULL dereference.
-    if (!popup_)
-      return;
-    popup_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
-    popup_->SetContentsView(this);
-    popup_->StackAbove(omnibox_view_->GetRelativeWindowForPopup());
-    if (!popup_) {
-      // For some IMEs GetRelativeWindowForPopup triggers the omnibox to lose
-      // focus, thereby closing (and destroying) the popup.
-      // TODO(sky): this won't be needed once we close the omnibox on input
-      // window showing.
-      return;
-    }
-    popup_->ShowInactive();
-  } else {
-    // Animate the popup shrinking, but don't animate growing larger since that
-    // would make the popup feel less responsive.
-    start_bounds_ = GetWidget()->GetWindowBoundsInScreen();
-    if (target_bounds_.height() < start_bounds_.height())
-      size_animation_.Show();
-    else
-      start_bounds_ = target_bounds_;
-    popup_->SetBounds(GetPopupBounds());
-  }
-
   Layout();
 }
 
@@ -312,26 +318,8 @@ void OmniboxPopupContentsView::OnMatchIconUpdated(size_t match_index) {
   result_view_at(match_index)->OnMatchIconUpdated();
 }
 
-gfx::Rect OmniboxPopupContentsView::GetTargetBounds() {
-  return target_bounds_;
-}
-
-void OmniboxPopupContentsView::PaintUpdatesNow() {
-  // TODO(beng): remove this from the interface.
-}
-
 void OmniboxPopupContentsView::OnDragCanceled() {
   SetMouseHandler(nullptr);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// OmniboxPopupContentsView, AnimationDelegate implementation:
-
-void OmniboxPopupContentsView::AnimationProgressed(
-    const gfx::Animation* animation) {
-  // We should only be running the animation when the popup is already visible.
-  DCHECK(popup_);
-  popup_->SetBounds(GetPopupBounds());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -344,11 +332,6 @@ void OmniboxPopupContentsView::Layout() {
   // We need to manually schedule a paint here since we are a layered window and
   // won't implicitly require painting until we ask for one.
   SchedulePaint();
-}
-
-views::View* OmniboxPopupContentsView::GetTooltipHandlerForPoint(
-    const gfx::Point& point) {
-  return nullptr;
 }
 
 bool OmniboxPopupContentsView::OnMouseDragged(const ui::MouseEvent& event) {
@@ -369,19 +352,26 @@ bool OmniboxPopupContentsView::OnMouseDragged(const ui::MouseEvent& event) {
 }
 
 void OmniboxPopupContentsView::OnGestureEvent(ui::GestureEvent* event) {
-  const size_t event_location_index = GetIndexForPoint(event->location());
-  if (!HasMatchAt(event_location_index))
+  const size_t index = GetIndexForPoint(event->location());
+  if (!HasMatchAt(index))
     return;
 
   switch (event->type()) {
     case ui::ET_GESTURE_TAP_DOWN:
     case ui::ET_GESTURE_SCROLL_BEGIN:
     case ui::ET_GESTURE_SCROLL_UPDATE:
-      SetSelectedLine(event_location_index);
+      SetSelectedLine(index);
       break;
     case ui::ET_GESTURE_TAP:
     case ui::ET_GESTURE_SCROLL_END:
-      OpenMatch(event_location_index, WindowOpenDisposition::CURRENT_TAB);
+      if (!(OmniboxFieldTrial::IsTabSwitchLogicReversed() &&
+            model_->result().match_at(index).ShouldShowTabMatch())) {
+        OpenMatch(index, WindowOpenDisposition::CURRENT_TAB,
+                  event->time_stamp());
+      } else {
+        OpenMatch(index, WindowOpenDisposition::SWITCH_TO_TAB,
+                  event->time_stamp());
+      }
       break;
     default:
       return;
@@ -392,29 +382,44 @@ void OmniboxPopupContentsView::OnGestureEvent(ui::GestureEvent* event) {
 ////////////////////////////////////////////////////////////////////////////////
 // OmniboxPopupContentsView, private:
 
-int OmniboxPopupContentsView::CalculatePopupHeight() {
-  DCHECK_GE(static_cast<size_t>(child_count()), model_->result().size());
-  int popup_height = 0;
-  for (size_t i = 0; i < model_->result().size(); ++i)
-    popup_height += child_at(i)->GetPreferredSize().height();
-
+gfx::Rect OmniboxPopupContentsView::GetTargetBounds() {
+  DCHECK_GE(children().size(), model_->result().size());
+  int popup_height = std::accumulate(
+      children().cbegin(), children().cbegin() + model_->result().size(), 0,
+      [](int height, const auto* v) {
+        return height + v->GetPreferredSize().height();
+      });
   // Add enough space on the top and bottom so it looks like there is the same
   // amount of space between the text and the popup border as there is in the
   // interior between each row of text.
-  return popup_height + kPopupVerticalPadding * 2 +
-         g_top_shadow.Get().height() + g_bottom_shadow.Get().height();
+  popup_height += RoundedOmniboxResultsFrame::GetNonResultSectionHeight();
+
+  base::Optional<int> vertical_margin_override =
+      OmniboxFieldTrial::GetSuggestionVerticalMarginFieldTrialOverride();
+  if (vertical_margin_override) {
+    // If the vertical margin experiment uses a very small value (like a value
+    // similar to pre-Refresh), we need to pad up the popup height at the
+    // bottom (just like pre-Refresh) to prevent it from looking very bad.
+    if (vertical_margin_override.value() < 4)
+      popup_height += 4;
+  }
+
+  // The rounded popup is always offset the same amount from the omnibox.
+  gfx::Rect content_rect = location_bar_view_->GetBoundsInScreen();
+  content_rect.Inset(
+      -RoundedOmniboxResultsFrame::GetLocationBarAlignmentInsets());
+  content_rect.set_height(popup_height);
+
+  // Finally, expand the widget to accomodate the custom-drawn shadows.
+  content_rect.Inset(-RoundedOmniboxResultsFrame::GetShadowInsets());
+  return content_rect;
 }
 
 void OmniboxPopupContentsView::LayoutChildren() {
   gfx::Rect contents_rect = GetContentsBounds();
-  contents_rect.Inset(gfx::Insets(kPopupVerticalPadding, 0));
-  contents_rect.Inset(start_margin_, g_top_shadow.Get().height(), end_margin_,
-                      0);
-
   int top = contents_rect.y();
-  for (size_t i = 0; i < AutocompleteResult::GetMaxMatches(); ++i) {
-    View* v = child_at(i);
-    if (v->visible()) {
+  for (View* v : children()) {
+    if (v->GetVisible()) {
       v->SetBounds(contents_rect.x(), top, contents_rect.width(),
                    v->GetPreferredSize().height());
       top = v->bounds().bottom();
@@ -435,20 +440,38 @@ size_t OmniboxPopupContentsView::GetIndexForPoint(const gfx::Point& point) {
   if (!HitTestPoint(point))
     return OmniboxPopupModel::kNoMatch;
 
-  int nb_match = model_->result().size();
-  DCHECK(nb_match <= child_count());
-  for (int i = 0; i < nb_match; ++i) {
-    views::View* child = child_at(i);
+  size_t nb_match = model_->result().size();
+  DCHECK_LE(nb_match, children().size());
+  for (size_t i = 0; i < nb_match; ++i) {
+    views::View* child = children()[i];
     gfx::Point point_in_child_coords(point);
     View::ConvertPointToTarget(this, child, &point_in_child_coords);
-    if (child->visible() && child->HitTestPoint(point_in_child_coords))
+    if (child->GetVisible() && child->HitTestPoint(point_in_child_coords))
       return i;
   }
   return OmniboxPopupModel::kNoMatch;
 }
 
 OmniboxResultView* OmniboxPopupContentsView::result_view_at(size_t i) {
-  return static_cast<OmniboxResultView*>(child_at(static_cast<int>(i)));
+  return static_cast<OmniboxResultView*>(children()[i]);
+}
+
+void OmniboxPopupContentsView::GetAccessibleNodeData(
+    ui::AXNodeData* node_data) {
+  node_data->role = ax::mojom::Role::kListBox;
+  if (IsOpen()) {
+    node_data->AddState(ax::mojom::State::kExpanded);
+  } else {
+    node_data->AddState(ax::mojom::State::kCollapsed);
+    node_data->AddState(ax::mojom::State::kInvisible);
+  }
+
+  if (omnibox_view_) {
+    int32_t omnibox_view_id =
+        omnibox_view_->GetViewAccessibility().GetUniqueId().Get();
+    node_data->AddIntAttribute(ax::mojom::IntAttribute::kPopupForId,
+                               omnibox_view_id);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -456,41 +479,4 @@ OmniboxResultView* OmniboxPopupContentsView::result_view_at(size_t i) {
 
 const char* OmniboxPopupContentsView::GetClassName() const {
   return "OmniboxPopupContentsView";
-}
-
-void OmniboxPopupContentsView::OnPaint(gfx::Canvas* canvas) {
-  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown)) {
-    View::OnPaint(canvas);
-    return;
-  }
-
-  canvas->TileImageInt(g_top_shadow.Get(), 0, 0, width(),
-                       g_top_shadow.Get().height());
-  canvas->TileImageInt(g_bottom_shadow.Get(), 0,
-                       height() - g_bottom_shadow.Get().height(), width(),
-                       g_bottom_shadow.Get().height());
-}
-
-void OmniboxPopupContentsView::PaintChildren(
-    const views::PaintInfo& paint_info) {
-  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown)) {
-    View::PaintChildren(paint_info);
-    return;
-  }
-
-  gfx::Rect contents_bounds = GetContentsBounds();
-  contents_bounds.Inset(0, g_top_shadow.Get().height(), 0,
-                        g_bottom_shadow.Get().height());
-
-  ui::ClipRecorder clip_recorder(paint_info.context());
-  clip_recorder.ClipRect(gfx::ScaleToRoundedRect(
-      contents_bounds, paint_info.paint_recording_scale_x(),
-      paint_info.paint_recording_scale_y()));
-  {
-    ui::PaintRecorder recorder(paint_info.context(), size());
-    SkColor background_color = result_view_at(0)->GetColor(
-        OmniboxResultView::NORMAL, OmniboxResultView::BACKGROUND);
-    recorder.canvas()->DrawColor(background_color);
-  }
-  View::PaintChildren(paint_info);
 }

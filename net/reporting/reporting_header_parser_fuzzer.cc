@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
+#include "base/json/json_reader.h"
+#include "base/time/default_clock.h"
+#include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "net/reporting/reporting_cache.h"
-#include "net/reporting/reporting_client.h"
 #include "net/reporting/reporting_header_parser.h"
 #include "net/reporting/reporting_policy.pb.h"
 #include "net/reporting/reporting_test_util.h"
@@ -22,13 +28,21 @@ const GURL kUrl_ = GURL("https://origin/path");
 
 namespace net_reporting_header_parser_fuzzer {
 
-void FuzzReportingHeaderParser(const std::string& data,
-                              const net::ReportingPolicy& policy) {
-  net::TestReportingContext context(policy);
-  net::ReportingHeaderParser::ParseHeader(&context, kUrl_, data.c_str());
-  std::vector<const net::ReportingClient*> clients;
-  context.cache()->GetClients(&clients);
-  if (clients.empty()) {
+void FuzzReportingHeaderParser(const std::string& data_json,
+                               const net::ReportingPolicy& policy) {
+  net::TestReportingContext context(base::DefaultClock::GetInstance(),
+                                    base::DefaultTickClock::GetInstance(),
+                                    policy);
+  // Emulate what ReportingService::OnHeader does before calling
+  // ReportingHeaderParser::ParseHeader.
+  std::unique_ptr<base::Value> data_value =
+      base::JSONReader::ReadDeprecated("[" + data_json + "]");
+  if (!data_value)
+    return;
+
+  net::ReportingHeaderParser::ParseHeader(&context, kUrl_,
+                                          std::move(data_value));
+  if (context.cache()->GetEndpointCount() == 0) {
     return;
   }
 }
@@ -37,7 +51,7 @@ void InitializeReportingPolicy(
     net::ReportingPolicy& policy,
     const net_reporting_policy_proto::ReportingPolicy& policy_data) {
   policy.max_report_count = policy_data.max_report_count();
-  policy.max_client_count = policy_data.max_client_count();
+  policy.max_endpoint_count = policy_data.max_endpoint_count();
   policy.delivery_interval =
       base::TimeDelta::FromMicroseconds(policy_data.delivery_interval_us());
   policy.persistence_interval =
@@ -51,10 +65,16 @@ void InitializeReportingPolicy(
   policy.max_report_age =
       base::TimeDelta::FromMicroseconds(policy_data.max_report_age_us());
   policy.max_report_attempts = policy_data.max_report_attempts();
-  policy.clear_reports_on_network_changes =
-      policy_data.clear_reports_on_network_changes();
-  policy.clear_clients_on_network_changes =
-      policy_data.clear_clients_on_network_changes();
+  policy.persist_reports_across_network_changes =
+      policy_data.persist_reports_across_network_changes();
+  policy.persist_clients_across_network_changes =
+      policy_data.persist_clients_across_network_changes();
+  if (policy_data.has_max_endpoints_per_origin())
+    policy.max_endpoints_per_origin = policy_data.max_endpoints_per_origin();
+  if (policy_data.has_max_group_staleness_us()) {
+    policy.max_group_staleness =
+        base::TimeDelta::FromMicroseconds(policy_data.max_report_age_us());
+  }
 }
 
 DEFINE_BINARY_PROTO_FUZZER(

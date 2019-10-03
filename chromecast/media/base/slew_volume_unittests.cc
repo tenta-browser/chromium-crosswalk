@@ -5,11 +5,11 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chromecast/media/base/slew_volume.h"
 #include "media/base/audio_bus.h"
 #include "media/base/vector_math.h"
@@ -36,7 +36,8 @@ std::unique_ptr<::media::AudioBus> GetSineData(size_t frames, float frequency) {
     sine[i * 2 + 1] = cos(static_cast<float>(i + 1) * frequency * 2 * M_PI) *
                       std::numeric_limits<int32_t>::max();
   }
-  data->FromInterleaved(sine.data(), frames, kBytesPerSample);
+  data->FromInterleaved<::media::SignedInt32SampleTypeTraits>(sine.data(),
+                                                              frames);
   return data;
 }
 
@@ -84,7 +85,7 @@ class SlewVolumeBaseTest : public ::testing::Test {
   ~SlewVolumeBaseTest() override = default;
 
   void SetUp() override {
-    slew_volume_ = base::MakeUnique<SlewVolume>();
+    slew_volume_ = std::make_unique<SlewVolume>();
     slew_volume_->Interrupted();
     MakeData(kNumFrames);
   }
@@ -439,10 +440,10 @@ TEST_P(SlewVolumeDynamicTest, FMACRampUpByParts) {
   CheckSlewMAC(start, end);
 }
 
-INSTANTIATE_TEST_CASE_P(SingleBufferSlew,
-                        SlewVolumeDynamicTest,
-                        ::testing::Combine(::testing::Values(44100, 48000),
-                                           ::testing::Values(0, 15, 100)));
+INSTANTIATE_TEST_SUITE_P(SingleBufferSlew,
+                         SlewVolumeDynamicTest,
+                         ::testing::Combine(::testing::Values(44100, 48000),
+                                            ::testing::Values(0, 15, 100)));
 
 class SlewVolumeInterleavedTest : public SlewVolumeDynamicTest {
  protected:
@@ -450,7 +451,7 @@ class SlewVolumeInterleavedTest : public SlewVolumeDynamicTest {
   ~SlewVolumeInterleavedTest() override = default;
 
   void SetUp() override {
-    slew_volume_ = base::MakeUnique<SlewVolume>();
+    slew_volume_ = std::make_unique<SlewVolume>();
     slew_volume_->Interrupted();
 
     channels_ = std::get<0>(GetParam());
@@ -529,10 +530,10 @@ TEST_P(SlewVolumeInterleavedTest, FMULRampUp) {
   CheckSlewMUL(start, end);
 }
 
-INSTANTIATE_TEST_CASE_P(Interleaved,
-                        SlewVolumeInterleavedTest,
-                        ::testing::Combine(::testing::Values(2, 4),
-                                           ::testing::Values(0)));
+INSTANTIATE_TEST_SUITE_P(Interleaved,
+                         SlewVolumeInterleavedTest,
+                         ::testing::Combine(::testing::Values(2, 4),
+                                            ::testing::Values(0)));
 
 }  // namespace media
 }  // namespace chromecast

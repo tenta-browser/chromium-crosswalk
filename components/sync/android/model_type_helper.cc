@@ -6,8 +6,8 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "components/sync/android/jni_headers/ModelTypeHelper_jni.h"
 #include "components/sync/base/model_type.h"
-#include "jni/ModelTypeHelper_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -17,7 +17,6 @@ namespace syncer {
 static ScopedJavaLocalRef<jstring>
 JNI_ModelTypeHelper_ModelTypeToNotificationType(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     jint model_type_int) {
   std::string model_type_string;
   ModelType model_type = static_cast<ModelType>(model_type_int);

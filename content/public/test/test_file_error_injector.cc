@@ -7,16 +7,20 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "content/browser/download/download_file_factory.h"
-#include "content/browser/download/download_file_impl.h"
-#include "content/browser/download/download_interrupt_reasons_impl.h"
+#include "base/task/post_task.h"
+#include "components/download/public/common/download_file_factory.h"
+#include "components/download/public/common/download_file_impl.h"
+#include "components/download/public/common/download_interrupt_reasons_utils.h"
+#include "components/download/public/common/download_task_runner.h"
 #include "content/browser/download/download_manager_impl.h"
-#include "content/browser/download/download_task_runner.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -29,30 +33,33 @@ class ByteStreamReader;
 namespace {
 
 // A class that performs file operations and injects errors.
-class DownloadFileWithError: public DownloadFileImpl {
+class DownloadFileWithError : public download::DownloadFileImpl {
  public:
-  DownloadFileWithError(std::unique_ptr<DownloadSaveInfo> save_info,
-                        const base::FilePath& default_download_directory,
-                        std::unique_ptr<DownloadManager::InputStream> stream,
-                        uint32_t download_id,
-                        base::WeakPtr<DownloadDestinationObserver> observer,
-                        const TestFileErrorInjector::FileErrorInfo& error_info,
-                        const base::Closure& ctor_callback,
-                        const base::Closure& dtor_callback);
+  DownloadFileWithError(
+      std::unique_ptr<download::DownloadSaveInfo> save_info,
+      const base::FilePath& default_download_directory,
+      std::unique_ptr<download::InputStream> stream,
+      uint32_t download_id,
+      base::WeakPtr<download::DownloadDestinationObserver> observer,
+      const TestFileErrorInjector::FileErrorInfo& error_info,
+      const base::Closure& ctor_callback,
+      const base::Closure& dtor_callback);
 
   ~DownloadFileWithError() override;
 
-  void Initialize(const InitializeCallback& initialize_callback,
+  void Initialize(InitializeCallback initialize_callback,
                   const CancelRequestCallback& cancel_request_callback,
-                  const DownloadItem::ReceivedSlices& received_slices,
+                  const download::DownloadItem::ReceivedSlices& received_slices,
                   bool is_parallelizable) override;
 
   // DownloadFile interface.
-  DownloadInterruptReason WriteDataToFile(int64_t offset,
-                                          const char* data,
-                                          size_t data_len) override;
+  download::DownloadInterruptReason ValidateAndWriteDataToFile(
+      int64_t offset,
+      const char* data,
+      size_t bytes_to_validate,
+      size_t bytes_to_write) override;
 
-  DownloadInterruptReason HandleStreamCompletionStatus(
+  download::DownloadInterruptReason HandleStreamCompletionStatus(
       SourceStream* source_stream) override;
 
   void RenameAndUniquify(const base::FilePath& full_path,
@@ -61,13 +68,14 @@ class DownloadFileWithError: public DownloadFileImpl {
                          const std::string& client_guid,
                          const GURL& source_url,
                          const GURL& referrer_url,
+                         std::unique_ptr<service_manager::Connector> connector,
                          const RenameCompletionCallback& callback) override;
 
  private:
   // Error generating helper.
-  DownloadInterruptReason ShouldReturnError(
+  download::DownloadInterruptReason ShouldReturnError(
       TestFileErrorInjector::FileOperationCode code,
-      DownloadInterruptReason original_error);
+      download::DownloadInterruptReason original_error);
 
   // Determine whether to overwrite an operation with the given code
   // with a substitute error; if returns true, |*original_error| is
@@ -75,9 +83,8 @@ class DownloadFileWithError: public DownloadFileImpl {
   // NOTE: This routine changes state; specifically, it increases the
   // operations counts for the specified code.  It should only be called
   // once per operation.
-  bool OverwriteError(
-    TestFileErrorInjector::FileOperationCode code,
-    DownloadInterruptReason* output_error);
+  bool OverwriteError(TestFileErrorInjector::FileOperationCode code,
+                      download::DownloadInterruptReason* output_error);
 
   // Our injected error.  Only one per file.
   TestFileErrorInjector::FileErrorInfo error_info_;
@@ -90,96 +97,103 @@ class DownloadFileWithError: public DownloadFileImpl {
 };
 
 static void InitializeErrorCallback(
-    const DownloadFile::InitializeCallback original_callback,
-    DownloadInterruptReason overwrite_error,
-    DownloadInterruptReason original_error) {
-  original_callback.Run(overwrite_error);
+    download::DownloadFile::InitializeCallback original_callback,
+    download::DownloadInterruptReason overwrite_error,
+    download::DownloadInterruptReason original_error,
+    int64_t bytes_wasted) {
+  std::move(original_callback).Run(overwrite_error, bytes_wasted);
 }
 
 static void RenameErrorCallback(
-    const DownloadFile::RenameCompletionCallback original_callback,
-    DownloadInterruptReason overwrite_error,
-    DownloadInterruptReason original_error,
+    const download::DownloadFile::RenameCompletionCallback original_callback,
+    download::DownloadInterruptReason overwrite_error,
+    download::DownloadInterruptReason original_error,
     const base::FilePath& path_result) {
   original_callback.Run(
       overwrite_error,
-      overwrite_error == DOWNLOAD_INTERRUPT_REASON_NONE ?
-      path_result : base::FilePath());
+      overwrite_error == download::DOWNLOAD_INTERRUPT_REASON_NONE
+          ? path_result
+          : base::FilePath());
 }
 
 DownloadFileWithError::DownloadFileWithError(
-    std::unique_ptr<DownloadSaveInfo> save_info,
+    std::unique_ptr<download::DownloadSaveInfo> save_info,
     const base::FilePath& default_download_directory,
-    std::unique_ptr<DownloadManager::InputStream> stream,
+    std::unique_ptr<download::InputStream> stream,
     uint32_t download_id,
-    base::WeakPtr<DownloadDestinationObserver> observer,
+    base::WeakPtr<download::DownloadDestinationObserver> observer,
     const TestFileErrorInjector::FileErrorInfo& error_info,
     const base::Closure& ctor_callback,
     const base::Closure& dtor_callback)
-    : DownloadFileImpl(std::move(save_info),
-                       default_download_directory,
-                       std::move(stream),
-                       download_id,
-                       observer),
+    : download::DownloadFileImpl(std::move(save_info),
+                                 default_download_directory,
+                                 std::move(stream),
+                                 download_id,
+                                 observer),
       error_info_(error_info),
       destruction_callback_(dtor_callback) {
   // DownloadFiles are created on the UI thread and are destroyed on the
   // download task runner. Schedule the ConstructionCallback on the
-  // download task runner, so that if a DownloadItem schedules a
+  // download task runner, so that if a download::DownloadItem schedules a
   // DownloadFile to be destroyed and creates another one (as happens during
   // download resumption), then the DestructionCallback for the old DownloadFile
   // is run before the ConstructionCallback for the next DownloadFile.
-  GetDownloadTaskRunner()->PostTask(FROM_HERE, ctor_callback);
+  download::GetDownloadTaskRunner()->PostTask(FROM_HERE, ctor_callback);
 }
 
 DownloadFileWithError::~DownloadFileWithError() {
-  DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
+  DCHECK(download::GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
   destruction_callback_.Run();
 }
 
 void DownloadFileWithError::Initialize(
-    const InitializeCallback& initialize_callback,
+    InitializeCallback initialize_callback,
     const CancelRequestCallback& cancel_request_callback,
-    const DownloadItem::ReceivedSlices& received_slices,
+    const download::DownloadItem::ReceivedSlices& received_slices,
     bool is_parallelizable) {
-  DownloadInterruptReason error_to_return = DOWNLOAD_INTERRUPT_REASON_NONE;
-  InitializeCallback callback_to_use = initialize_callback;
+  download::DownloadInterruptReason error_to_return =
+      download::DOWNLOAD_INTERRUPT_REASON_NONE;
+  InitializeCallback callback_to_use = std::move(initialize_callback);
 
   // Replace callback if the error needs to be overwritten.
   if (OverwriteError(
           TestFileErrorInjector::FILE_OPERATION_INITIALIZE,
           &error_to_return)) {
-    if (DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
+    if (download::DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
       // Don't execute a, probably successful, Initialize; just
       // return the error.
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
-          base::BindOnce(initialize_callback, error_to_return));
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
+          base::BindOnce(std::move(callback_to_use), error_to_return, 0));
       return;
     }
 
     // Otherwise, just wrap the return.
-    callback_to_use = base::Bind(&InitializeErrorCallback, initialize_callback,
-                                 error_to_return);
+    callback_to_use = base::BindRepeating(
+        &InitializeErrorCallback, std::move(callback_to_use), error_to_return);
   }
 
-  DownloadFileImpl::Initialize(callback_to_use, cancel_request_callback,
-                               received_slices, is_parallelizable);
+  download::DownloadFileImpl::Initialize(std::move(callback_to_use),
+                                         cancel_request_callback,
+                                         received_slices, is_parallelizable);
 }
 
-DownloadInterruptReason DownloadFileWithError::WriteDataToFile(
-    int64_t offset,
-    const char* data,
-    size_t data_len) {
+download::DownloadInterruptReason
+DownloadFileWithError::ValidateAndWriteDataToFile(int64_t offset,
+                                                  const char* data,
+                                                  size_t bytes_to_validate,
+                                                  size_t bytes_to_write) {
   return ShouldReturnError(
       TestFileErrorInjector::FILE_OPERATION_WRITE,
-      DownloadFileImpl::WriteDataToFile(offset, data, data_len));
+      download::DownloadFileImpl::ValidateAndWriteDataToFile(
+          offset, data, bytes_to_validate, bytes_to_write));
 }
 
-DownloadInterruptReason DownloadFileWithError::HandleStreamCompletionStatus(
+download::DownloadInterruptReason
+DownloadFileWithError::HandleStreamCompletionStatus(
     SourceStream* source_stream) {
-  DownloadInterruptReason origin_error =
-      DownloadFileImpl::HandleStreamCompletionStatus(source_stream);
+  download::DownloadInterruptReason origin_error =
+      download::DownloadFileImpl::HandleStreamCompletionStatus(source_stream);
 
   if (error_info_.code ==
           TestFileErrorInjector::FILE_OPERATION_STREAM_COMPLETE &&
@@ -194,18 +208,19 @@ DownloadInterruptReason DownloadFileWithError::HandleStreamCompletionStatus(
 void DownloadFileWithError::RenameAndUniquify(
     const base::FilePath& full_path,
     const RenameCompletionCallback& callback) {
-  DownloadInterruptReason error_to_return = DOWNLOAD_INTERRUPT_REASON_NONE;
+  download::DownloadInterruptReason error_to_return =
+      download::DOWNLOAD_INTERRUPT_REASON_NONE;
   RenameCompletionCallback callback_to_use = callback;
 
   // Replace callback if the error needs to be overwritten.
   if (OverwriteError(
           TestFileErrorInjector::FILE_OPERATION_RENAME_UNIQUIFY,
           &error_to_return)) {
-    if (DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
+    if (download::DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
       // Don't execute a, probably successful, RenameAndUniquify; just
       // return the error.
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::BindOnce(callback, error_to_return, base::FilePath()));
       return;
     }
@@ -215,7 +230,8 @@ void DownloadFileWithError::RenameAndUniquify(
                                  error_to_return);
   }
 
-  DownloadFileImpl::RenameAndUniquify(full_path, callback_to_use);
+  download::DownloadFileImpl::RenameAndUniquify(full_path,
+                                                std::move(callback_to_use));
 }
 
 void DownloadFileWithError::RenameAndAnnotate(
@@ -223,19 +239,21 @@ void DownloadFileWithError::RenameAndAnnotate(
     const std::string& client_guid,
     const GURL& source_url,
     const GURL& referrer_url,
+    std::unique_ptr<service_manager::Connector> connector,
     const RenameCompletionCallback& callback) {
-  DownloadInterruptReason error_to_return = DOWNLOAD_INTERRUPT_REASON_NONE;
+  download::DownloadInterruptReason error_to_return =
+      download::DOWNLOAD_INTERRUPT_REASON_NONE;
   RenameCompletionCallback callback_to_use = callback;
 
   // Replace callback if the error needs to be overwritten.
   if (OverwriteError(
           TestFileErrorInjector::FILE_OPERATION_RENAME_ANNOTATE,
           &error_to_return)) {
-    if (DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
+    if (download::DOWNLOAD_INTERRUPT_REASON_NONE != error_to_return) {
       // Don't execute a, probably successful, RenameAndAnnotate; just
       // return the error.
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::BindOnce(callback, error_to_return, base::FilePath()));
       return;
     }
@@ -245,13 +263,14 @@ void DownloadFileWithError::RenameAndAnnotate(
                                  error_to_return);
   }
 
-  DownloadFileImpl::RenameAndAnnotate(
-      full_path, client_guid, source_url, referrer_url, callback_to_use);
+  download::DownloadFileImpl::RenameAndAnnotate(
+      full_path, client_guid, source_url, referrer_url, nullptr,
+      std::move(callback_to_use));
 }
 
 bool DownloadFileWithError::OverwriteError(
     TestFileErrorInjector::FileOperationCode code,
-    DownloadInterruptReason* output_error) {
+    download::DownloadInterruptReason* output_error) {
   int counter = operation_counter_[code]++;
 
   if (code != error_info_.code)
@@ -264,10 +283,10 @@ bool DownloadFileWithError::OverwriteError(
   return true;
 }
 
-DownloadInterruptReason DownloadFileWithError::ShouldReturnError(
+download::DownloadInterruptReason DownloadFileWithError::ShouldReturnError(
     TestFileErrorInjector::FileOperationCode code,
-    DownloadInterruptReason original_error) {
-  DownloadInterruptReason output_error = original_error;
+    download::DownloadInterruptReason original_error) {
+  download::DownloadInterruptReason output_error = original_error;
   OverwriteError(code, &output_error);
   return output_error;
 }
@@ -275,19 +294,19 @@ DownloadInterruptReason DownloadFileWithError::ShouldReturnError(
 }  // namespace
 
 // A factory for constructing DownloadFiles that inject errors.
-class DownloadFileWithErrorFactory : public DownloadFileFactory {
+class DownloadFileWithErrorFactory : public download::DownloadFileFactory {
  public:
   DownloadFileWithErrorFactory(const base::Closure& ctor_callback,
                                 const base::Closure& dtor_callback);
   ~DownloadFileWithErrorFactory() override;
 
   // DownloadFileFactory interface.
-  DownloadFile* CreateFile(
-      std::unique_ptr<DownloadSaveInfo> save_info,
+  download::DownloadFile* CreateFile(
+      std::unique_ptr<download::DownloadSaveInfo> save_info,
       const base::FilePath& default_download_directory,
-      std::unique_ptr<DownloadManager::InputStream> stream,
+      std::unique_ptr<download::InputStream> stream,
       uint32_t download_id,
-      base::WeakPtr<DownloadDestinationObserver> observer) override;
+      base::WeakPtr<download::DownloadDestinationObserver> observer) override;
 
   bool SetError(TestFileErrorInjector::FileErrorInfo error);
 
@@ -308,12 +327,12 @@ DownloadFileWithErrorFactory::DownloadFileWithErrorFactory(
 
 DownloadFileWithErrorFactory::~DownloadFileWithErrorFactory() {}
 
-DownloadFile* DownloadFileWithErrorFactory::CreateFile(
-    std::unique_ptr<DownloadSaveInfo> save_info,
+download::DownloadFile* DownloadFileWithErrorFactory::CreateFile(
+    std::unique_ptr<download::DownloadSaveInfo> save_info,
     const base::FilePath& default_download_directory,
-    std::unique_ptr<DownloadManager::InputStream> stream,
+    std::unique_ptr<download::InputStream> stream,
     uint32_t download_id,
-    base::WeakPtr<DownloadDestinationObserver> observer) {
+    base::WeakPtr<download::DownloadDestinationObserver> observer) {
   return new DownloadFileWithError(
       std::move(save_info), default_download_directory, std::move(stream),
       download_id, observer, injected_error_, construction_callback_,
@@ -329,28 +348,18 @@ bool DownloadFileWithErrorFactory::SetError(
 TestFileErrorInjector::FileErrorInfo::FileErrorInfo()
     : FileErrorInfo(FILE_OPERATION_INITIALIZE,
                     -1,
-                    DOWNLOAD_INTERRUPT_REASON_NONE) {}
+                    download::DOWNLOAD_INTERRUPT_REASON_NONE) {}
 
 TestFileErrorInjector::FileErrorInfo::FileErrorInfo(
     FileOperationCode code,
     int operation_instance,
-    DownloadInterruptReason error)
+    download::DownloadInterruptReason error)
     : code(code), operation_instance(operation_instance), error(error) {}
 
 TestFileErrorInjector::TestFileErrorInjector(DownloadManager* download_manager)
     :  // This code is only used for browser_tests, so a
       // DownloadManager is always a DownloadManagerImpl.
       download_manager_(static_cast<DownloadManagerImpl*>(download_manager)) {
-  // Record the value of the pointer, for later validation.
-  created_factory_ = new DownloadFileWithErrorFactory(
-      base::Bind(&TestFileErrorInjector::RecordDownloadFileConstruction, this),
-      base::Bind(&TestFileErrorInjector::RecordDownloadFileDestruction, this));
-
-  // We will transfer ownership of the factory to the download manager.
-  std::unique_ptr<DownloadFileFactory> download_file_factory(created_factory_);
-
-  download_manager_->SetDownloadFileFactoryForTesting(
-      std::move(download_file_factory));
 }
 
 TestFileErrorInjector::~TestFileErrorInjector() {
@@ -361,14 +370,14 @@ void TestFileErrorInjector::ClearError() {
   // An error with an index of -1, which will never be reached.
   static const TestFileErrorInjector::FileErrorInfo kNoOpErrorInfo = {
       TestFileErrorInjector::FILE_OPERATION_INITIALIZE, -1,
-      DOWNLOAD_INTERRUPT_REASON_NONE};
+      download::DOWNLOAD_INTERRUPT_REASON_NONE};
   InjectError(kNoOpErrorInfo);
 }
 
 bool TestFileErrorInjector::InjectError(const FileErrorInfo& error_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   ClearTotalFileCount();
-  DCHECK_EQ(static_cast<DownloadFileFactory*>(created_factory_),
+  DCHECK_EQ(static_cast<download::DownloadFileFactory*>(created_factory_),
             download_manager_->GetDownloadFileFactoryForTesting());
   created_factory_->SetError(error_info);
   return true;
@@ -400,14 +409,14 @@ void TestFileErrorInjector::DestroyingDownloadFile() {
 }
 
 void TestFileErrorInjector::RecordDownloadFileConstruction() {
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&TestFileErrorInjector::DownloadFileCreated, this));
 }
 
 void TestFileErrorInjector::RecordDownloadFileDestruction() {
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&TestFileErrorInjector::DestroyingDownloadFile, this));
 }
 
@@ -420,6 +429,20 @@ scoped_refptr<TestFileErrorInjector> TestFileErrorInjector::Create(
 
   scoped_refptr<TestFileErrorInjector> single_injector(
       new TestFileErrorInjector(download_manager));
+  // Record the value of the pointer, for later validation.
+  single_injector->created_factory_ = new DownloadFileWithErrorFactory(
+      base::BindRepeating(
+          &TestFileErrorInjector::RecordDownloadFileConstruction,
+          single_injector),
+      base::BindRepeating(&TestFileErrorInjector::RecordDownloadFileDestruction,
+                          single_injector));
+
+  // We will transfer ownership of the factory to the download manager.
+  std::unique_ptr<download::DownloadFileFactory> download_file_factory(
+      single_injector->created_factory_);
+
+  single_injector->download_manager_->SetDownloadFileFactoryForTesting(
+      std::move(download_file_factory));
 
   return single_injector;
 }

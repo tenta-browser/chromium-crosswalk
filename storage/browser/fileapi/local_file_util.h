@@ -10,10 +10,10 @@
 #include <memory>
 
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
-#include "storage/browser/storage_browser_export.h"
 
 namespace base {
 class Time;
@@ -25,7 +25,7 @@ class FileSystemOperationContext;
 class FileSystemURL;
 
 // An instance of this class is created and owned by *FileSystemBackend.
-class STORAGE_EXPORT LocalFileUtil
+class COMPONENT_EXPORT(STORAGE_BROWSER) LocalFileUtil
     : public FileSystemFileUtil {
  public:
   LocalFileUtil();
@@ -45,9 +45,13 @@ class STORAGE_EXPORT LocalFileUtil
                                 const FileSystemURL& url,
                                 base::File::Info* file_info,
                                 base::FilePath* platform_file) override;
+
+  // |this| must remain valid through the lifetime of the created enumerator.
   std::unique_ptr<AbstractFileEnumerator> CreateFileEnumerator(
       FileSystemOperationContext* context,
-      const FileSystemURL& root_url) override;
+      const FileSystemURL& root_url,
+      bool recursive) override;
+
   base::File::Error GetLocalFilePath(FileSystemOperationContext* context,
                                      const FileSystemURL& file_system_url,
                                      base::FilePath* local_file_path) override;
@@ -77,7 +81,16 @@ class STORAGE_EXPORT LocalFileUtil
       base::File::Info* file_info,
       base::FilePath* platform_path) override;
 
+ protected:
+  // Whether this item should not be accessed. For security reasons by default
+  // symlinks are not exposed through |this|. If the derived implementation
+  // can ensure safety of symlinks in some other way, it can lift this
+  // restriction by overriding this method.
+  virtual bool IsHiddenItem(const base::FilePath& local_file_path) const;
+
  private:
+  class LocalFileEnumerator;
+
   DISALLOW_COPY_AND_ASSIGN(LocalFileUtil);
 };
 

@@ -17,6 +17,7 @@
 class GURL;
 
 namespace content {
+class RenderFrameHost;
 class RenderViewHost;
 class WebContents;
 class WebUI;
@@ -26,7 +27,6 @@ struct OpenURLParams;
 }
 
 namespace gfx {
-class Rect;
 class Size;
 }
 
@@ -41,6 +41,9 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
 
   // Returns the title of the dialog.
   virtual base::string16 GetDialogTitle() const = 0;
+
+  // Returns the title to be read with screen readers.
+  virtual base::string16 GetAccessibleDialogTitle() const;
 
   // Returns the dialog's name identifier. Used to identify this dialog for
   // state restoration.
@@ -88,6 +91,15 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   virtual void OnDialogShown(content::WebUI* webui,
                              content::RenderViewHost* render_view_host) {}
 
+  // A callback to notify the delegate that the window is requesting to be
+  // closed.  If this returns true, the dialog is closed, otherwise the
+  // dialog remains open. Default implementation returns true.
+  virtual bool OnDialogCloseRequested();
+
+  // A callback to notify the delegate that the dialog is about to close due to
+  // the user pressing the ESC key.
+  virtual void OnDialogClosingFromKeyEvent() {}
+
   // A callback to notify the delegate that the dialog closed.
   // IMPORTANT: Implementations should delete |this| here (unless they've
   // arranged for the delegate to be deleted in some other way, e.g. by
@@ -98,9 +110,9 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // response to a "dialogClose" message from WebUI.
   virtual void OnDialogCloseFromWebUI(const std::string& json_retval);
 
-  // A callback to notify the delegate that the contents have gone
-  // away. Only relevant if your dialog hosts code that calls
-  // windows.close() and you've allowed that.  If the output parameter
+  // A callback to notify the delegate that the contents are requesting
+  // to be closed.  This could be in response to a number of events
+  // that are handled by the WebContents.  If the output parameter
   // is set to true, then the dialog is closed.  The default is false.
   // |out_close_dialog| is never NULL.
   virtual void OnCloseContents(content::WebContents* source,
@@ -114,7 +126,8 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // customized menu.
   // Returns true iff you do NOT want the standard context menu to be
   // shown (because you want to handle it yourself).
-  virtual bool HandleContextMenu(const content::ContextMenuParams& params);
+  virtual bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                                 const content::ContextMenuParams& params);
 
   // A callback to allow the delegate to open a new URL inside |source|.
   // On return |out_new_contents| should contain the WebContents the URL
@@ -122,17 +135,6 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   virtual bool HandleOpenURLFromTab(content::WebContents* source,
                                     const content::OpenURLParams& params,
                                     content::WebContents** out_new_contents);
-
-  // A callback to create a new tab with |new_contents|. |source| is the
-  // WebContent where the operation originated. |disposition| controls how the
-  // new tab should be opened. |initial_rect| is the position and size of the
-  // window if a new window is created. |user_gesture| is true if the operation
-  // was started by a user gesture. Return false to use the default handler.
-  virtual bool HandleAddNewContents(content::WebContents* source,
-                                    content::WebContents* new_contents,
-                                    WindowOpenDisposition disposition,
-                                    const gfx::Rect& initial_rect,
-                                    bool user_gesture);
 
   // A callback to control whether a WebContents will be created. Returns
   // false to disallow the creation. Return true to use the default handler.

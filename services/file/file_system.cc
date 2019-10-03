@@ -4,16 +4,19 @@
 
 #include "services/file/file_system.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/filesystem/directory_impl.h"
-#include "components/filesystem/lock_table.h"
-#include "components/filesystem/public/interfaces/types.mojom.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "components/services/filesystem/directory_impl.h"
+#include "components/services/filesystem/lock_table.h"
+#include "components/services/filesystem/public/mojom/types.mojom.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 namespace file {
 
@@ -23,20 +26,22 @@ FileSystem::FileSystem(const base::FilePath& base_user_dir,
   base::CreateDirectory(path_);
 }
 
-FileSystem::~FileSystem() {}
+FileSystem::~FileSystem() = default;
 
-void FileSystem::GetDirectory(filesystem::mojom::DirectoryRequest request,
-                              GetDirectoryCallback callback) {
-  mojo::MakeStrongBinding(
+void FileSystem::GetDirectory(
+    mojo::PendingReceiver<filesystem::mojom::Directory> receiver,
+    GetDirectoryCallback callback) {
+  mojo::MakeSelfOwnedReceiver(
       std::make_unique<filesystem::DirectoryImpl>(
           path_, scoped_refptr<filesystem::SharedTempDir>(), lock_table_),
-      std::move(request));
+      std::move(receiver));
   std::move(callback).Run();
 }
 
-void FileSystem::GetSubDirectory(const std::string& sub_directory_path,
-                                 filesystem::mojom::DirectoryRequest request,
-                                 GetSubDirectoryCallback callback) {
+void FileSystem::GetSubDirectory(
+    const std::string& sub_directory_path,
+    mojo::PendingReceiver<filesystem::mojom::Directory> receiver,
+    GetSubDirectoryCallback callback) {
   // Ensure that we've made |subdirectory| recursively under our user dir.
   base::FilePath subdir = path_.Append(
 #if defined(OS_WIN)
@@ -46,15 +51,15 @@ void FileSystem::GetSubDirectory(const std::string& sub_directory_path,
 #endif
   base::File::Error error;
   if (!base::CreateDirectoryAndGetError(subdir, &error)) {
-    std::move(callback).Run(static_cast<filesystem::mojom::FileError>(error));
+    std::move(callback).Run(error);
     return;
   }
 
-  mojo::MakeStrongBinding(
+  mojo::MakeSelfOwnedReceiver(
       std::make_unique<filesystem::DirectoryImpl>(
           subdir, scoped_refptr<filesystem::SharedTempDir>(), lock_table_),
-      std::move(request));
-  std::move(callback).Run(filesystem::mojom::FileError::OK);
+      std::move(receiver));
+  std::move(callback).Run(base::File::Error::FILE_OK);
 }
 
 }  // namespace file

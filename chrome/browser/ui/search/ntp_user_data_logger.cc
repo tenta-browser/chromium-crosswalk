@@ -10,35 +10,20 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/after_startup_task_utils.h"
-#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/instant_service.h"
+#include "chrome/browser/search/instant_service_factory.h"
+#include "chrome/browser/search/ntp_features.h"
 #include "chrome/browser/search/search.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/search/search_urls.h"
+#include "chrome/browser/ui/search/ntp_user_data_types.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/ntp_tiles/metrics.h"
-#include "components/sync_sessions/sessions_sync_manager.h"
-#include "components/sync_sessions/sync_sessions_metrics.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 
 namespace {
-
-void RecordSyncSessionMetrics(content::WebContents* contents) {
-  if (!contents)
-    return;
-  browser_sync::ProfileSyncService* sync =
-      ProfileSyncServiceFactory::GetForProfile(
-          Profile::FromBrowserContext(contents->GetBrowserContext()));
-  if (!sync)
-    return;
-  sync_sessions::SessionsSyncManager* sessions =
-      static_cast<sync_sessions::SessionsSyncManager*>(
-          sync->GetSessionsSyncableService());
-  sync_sessions::SyncSessionsMetrics::RecordYoungestForeignTabAgeOnNTP(
-      sessions);
-}
 
 // This enum must match the numbering for NewTabPageVoiceAction in enums.xml.
 // Do not reorder or remove items, only add new items before VOICE_ACTION_MAX.
@@ -132,6 +117,221 @@ VoiceError LoggingEventToVoiceError(NTPLoggingEventType event) {
   }
 }
 
+// Logs BackgroundCustomization availability on the NTP.
+void LogBackgroundCustomizationAvailability(
+    BackgroundCustomization availability) {
+  UMA_HISTOGRAM_ENUMERATION("NewTabPage.CustomizationAvailability.Backgrounds",
+                            availability);
+}
+
+// Logs ShortcutCustomization availability on the NTP.
+void LogShortcutCustomizationAvailability(ShortcutCustomization availability) {
+  UMA_HISTOGRAM_ENUMERATION("NewTabPage.CustomizationAvailability.Shortcuts",
+                            availability);
+}
+
+// Logs CustomizedShortcutSettings on the NTP.
+void LogCustomizedShortcutSettings(std::pair<bool, bool> settings) {
+  bool using_most_visited = settings.first;
+  bool is_visible = settings.second;
+
+  CustomizedShortcutSettings setting;
+  if (is_visible && using_most_visited) {
+    setting =
+        CustomizedShortcutSettings::CUSTOMIZED_SHORTCUT_SETTINGS_MOST_VISITED;
+  } else if (is_visible && !using_most_visited) {
+    setting =
+        CustomizedShortcutSettings::CUSTOMIZED_SHORTCUT_SETTINGS_CUSTOM_LINKS;
+  } else {
+    setting = CustomizedShortcutSettings::CUSTOMIZED_SHORTCUT_SETTINGS_HIDDEN;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("NewTabPage.CustomizedShortcuts", setting);
+}
+
+// Converts |NTPLoggingEventType| to a |CustomizedFeature|.
+CustomizedFeature LoggingEventToCustomizedFeature(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_BACKGROUND_CUSTOMIZED:
+      return CustomizedFeature::CUSTOMIZED_FEATURE_BACKGROUND;
+    case NTP_SHORTCUT_CUSTOMIZED:
+      return CustomizedFeature::CUSTOMIZED_FEATURE_SHORTCUT;
+    default:
+      break;
+  }
+
+  NOTREACHED();
+  return CustomizedFeature::CUSTOMIZED_FEATURE_BACKGROUND;
+}
+
+// Converts |NTPLoggingEventType| to a |CustomizeAction|.
+CustomizeAction LoggingEventToCustomizeAction(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZE_CHROME_BACKGROUNDS_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_CHROME_BACKGROUNDS;
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_LOCAL_IMAGE;
+    case NTP_CUSTOMIZE_RESTORE_BACKGROUND_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_RESTORE_BACKGROUND;
+    case NTP_CUSTOMIZE_ATTRIBUTION_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_ATTRIBUTION;
+    case NTP_CUSTOMIZE_ADD_SHORTCUT_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_ADD_SHORTCUT;
+    case NTP_CUSTOMIZE_EDIT_SHORTCUT_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_EDIT_SHORTCUT;
+    case NTP_CUSTOMIZE_RESTORE_SHORTCUTS_CLICKED:
+      return CustomizeAction::CUSTOMIZE_ACTION_RESTORE_SHORTCUT;
+    default:
+      break;
+  }
+
+  NOTREACHED();
+  return CustomizeAction::CUSTOMIZE_ACTION_CHROME_BACKGROUNDS;
+}
+
+// Converts |NTPLoggingEventType| to a |CustomizeChromeBackgroundAction|.
+CustomizeChromeBackgroundAction LoggingEventToCustomizeChromeBackgroundAction(
+    NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_SELECT_COLLECTION:
+      return CustomizeChromeBackgroundAction::
+          CUSTOMIZE_CHROME_BACKGROUND_ACTION_SELECT_COLLECTION;
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_SELECT_IMAGE:
+      return CustomizeChromeBackgroundAction::
+          CUSTOMIZE_CHROME_BACKGROUND_ACTION_SELECT_IMAGE;
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_CANCEL:
+      return CustomizeChromeBackgroundAction::
+          CUSTOMIZE_CHROME_BACKGROUND_ACTION_CANCEL;
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_DONE:
+      return CustomizeChromeBackgroundAction::
+          CUSTOMIZE_CHROME_BACKGROUND_ACTION_DONE;
+    default:
+      break;
+  }
+
+  NOTREACHED();
+  return CustomizeChromeBackgroundAction::
+      CUSTOMIZE_CHROME_BACKGROUND_ACTION_SELECT_COLLECTION;
+}
+
+// Converts |NTPLoggingEventType| to a |CustomizeLocalImageBackgroundAction|.
+CustomizeLocalImageBackgroundAction
+LoggingEventToCustomizeLocalImageBackgroundAction(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_CANCEL:
+      return CustomizeLocalImageBackgroundAction::
+          CUSTOMIZE_LOCAL_IMAGE_BACKGROUND_ACTION_CANCEL;
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_DONE:
+      return CustomizeLocalImageBackgroundAction::
+          CUSTOMIZE_LOCAL_IMAGE_BACKGROUND_ACTION_DONE;
+    default:
+      break;
+  }
+
+  NOTREACHED();
+  return CustomizeLocalImageBackgroundAction::
+      CUSTOMIZE_LOCAL_IMAGE_BACKGROUND_ACTION_CANCEL;
+}
+
+// Converts |NTPLoggingEventType| to a |CustomizeShortcutAction|.
+CustomizeShortcutAction LoggingEventToCustomizeShortcutAction(
+    NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZE_SHORTCUT_ADD:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_ADD;
+    case NTP_CUSTOMIZE_SHORTCUT_UPDATE:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_UPDATE;
+    case NTP_CUSTOMIZE_SHORTCUT_REMOVE:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_REMOVE;
+    case NTP_CUSTOMIZE_SHORTCUT_CANCEL:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_CANCEL;
+    case NTP_CUSTOMIZE_SHORTCUT_DONE:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_DONE;
+    case NTP_CUSTOMIZE_SHORTCUT_UNDO:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_UNDO;
+    case NTP_CUSTOMIZE_SHORTCUT_RESTORE_ALL:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_RESTORE_ALL;
+    case NTP_CUSTOMIZE_SHORTCUT_TOGGLE_TYPE:
+      return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_TOGGLE_TYPE;
+    case NTP_CUSTOMIZE_SHORTCUT_TOGGLE_VISIBILITY:
+      return CustomizeShortcutAction::
+          CUSTOMIZE_SHORTCUT_ACTION_TOGGLE_VISIBILITY;
+    default:
+      break;
+  }
+
+  NOTREACHED();
+  return CustomizeShortcutAction::CUSTOMIZE_SHORTCUT_ACTION_REMOVE;
+}
+
+// Converts a richer picker background related |NTPLoggingEventType|
+// to the corresponding UserAction string.
+const char* LoggingEventToBackgroundUserActionName(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_BACKGROUND_UPLOAD_FROM_DEVICE:
+      return "NTPRicherPicker.Backgrounds.UploadClicked";
+    case NTP_BACKGROUND_OPEN_COLLECTION:
+      return "NTPRicherPicker.Backgrounds.CollectionClicked";
+    case NTP_BACKGROUND_SELECT_IMAGE:
+      return "NTPRicherPicker.Backgrounds.BackgroundSelected";
+    case NTP_BACKGROUND_DESELECT_IMAGE:
+      return "NTPRicherPicker.Backgrounds.BackgroundDeselected";
+    case NTP_BACKGROUND_IMAGE_SET:
+      return "NTPRicherPicker.Backgrounds.BackgroundSet";
+    case NTP_BACKGROUND_BACK_CLICK:
+      return "NTPRicherPicker.Backgrounds.BackClicked";
+    case NTP_BACKGROUND_DEFAULT_SELECTED:
+      return "NTPRicherPicker.Backgrounds.DefaultSelected";
+    case NTP_BACKGROUND_DEFAULT_DESELECTED:
+      return "NTPRicherPicker.Backgrounds.DefaultDeselected";
+    case NTP_BACKGROUND_UPLOAD_CANCEL:
+      return "NTPRicherPicker.Backgrounds.UploadCanceled";
+    case NTP_BACKGROUND_UPLOAD_DONE:
+      return "NTPRicherPicker.Backgrounds.UploadConfirmed";
+    case NTP_BACKGROUND_IMAGE_RESET:
+      return "NTPRicherPicker.Backgrounds.BackgroundReset";
+    case NTP_BACKGROUND_REFRESH_TOGGLE_CLICKED:
+      return "NTPRicherPicker.Backgrounds.RefreshToggleClicked";
+    case NTP_BACKGROUND_DAILY_REFRESH_ENABLED:
+      return "NTPRicherPicker.Backgrounds.DailyRefreshEnabled";
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
+// Converts a richer picker menu |NTPLoggingEventType| to the corresponding
+// UserAction string.
+const char* LoggingEventToMenuUserActionName(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZATION_MENU_OPENED:
+      return "NTPRicherPicker.Opened";
+    case NTP_CUSTOMIZATION_MENU_CANCEL:
+      return "NTPRicherPicker.CancelClicked";
+    case NTP_CUSTOMIZATION_MENU_DONE:
+      return "NTPRicherPicker.DoneClicked";
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
+// Converts a richer picker shortcut related |NTPLoggingEventType| to the
+// corresponding UserAction string.
+const char* LoggingEventToShortcutUserActionName(NTPLoggingEventType event) {
+  switch (event) {
+    case NTP_CUSTOMIZE_SHORTCUT_CUSTOM_LINKS_CLICKED:
+      return "NTPRicherPicker.Shortcuts.CustomLinksClicked";
+    case NTP_CUSTOMIZE_SHORTCUT_MOST_VISITED_CLICKED:
+      return "NTPRicherPicker.Shortcuts.MostVisitedClicked";
+    case NTP_CUSTOMIZE_SHORTCUT_VISIBILITY_TOGGLE_CLICKED:
+      return "NTPRicherPicker.Shortcuts.VisibilityToggleClicked";
+    default:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
 // This enum must match the numbering for NewTabPageLogoShown in enums.xml.
 // Do not reorder or remove items, and only add new items before
 // LOGO_IMPRESSION_TYPE_MAX.
@@ -176,8 +376,6 @@ LogoClickType LoggingEventToLogoClick(NTPLoggingEventType event) {
 
 }  // namespace
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(NTPUserDataLogger);
-
 // Helper macro to log a load time to UMA. There's no good reason why we don't
 // use one of the standard UMA_HISTORAM_*_TIMES macros, but all their ranges are
 // different, and it's not worth changing all the existing histograms.
@@ -207,25 +405,31 @@ NTPUserDataLogger* NTPUserDataLogger::GetOrCreateFromWebContents(
   // detecting when the user leaves or returns to the NTP. In particular, if the
   // Google URL changes (e.g. google.com -> google.de), then we fall back to the
   // local NTP.
-  const content::NavigationEntry* entry =
-      content->GetController().GetVisibleEntry();
+  content::NavigationEntry* entry = content->GetController().GetVisibleEntry();
   if (entry && (logger->ntp_url_ != entry->GetURL())) {
     DVLOG(1) << "NTP URL changed from \"" << logger->ntp_url_ << "\" to \""
              << entry->GetURL() << "\"";
     logger->ntp_url_ = entry->GetURL();
   }
 
+  logger->profile_ = Profile::FromBrowserContext(content->GetBrowserContext());
   return logger;
 }
 
 void NTPUserDataLogger::LogEvent(NTPLoggingEventType event,
                                  base::TimeDelta time) {
+  if (event == NTP_ALL_TILES_LOADED) {
+    EmitNtpStatistics(time);
+  }
+
+  // All other events can only be logged by the Google NTP
+  if (!DefaultSearchProviderIsGoogle()) {
+    return;
+  }
+
   switch (event) {
-    case NTP_ALL_TILES_RECEIVED:
-      tiles_received_time_ = time;
-      break;
     case NTP_ALL_TILES_LOADED:
-      EmitNtpStatistics(time);
+      // permitted above for non-Google search providers
       break;
     case NTP_VOICE_ACTION_ACTIVATE_FAKEBOX:
     case NTP_VOICE_ACTION_ACTIVATE_KEYBOARD:
@@ -274,12 +478,104 @@ void NTPUserDataLogger::LogEvent(NTPLoggingEventType event,
     case NTP_ONE_GOOGLE_BAR_SHOWN:
       UMA_HISTOGRAM_LOAD_TIME("NewTabPage.OneGoogleBar.ShownTime", time);
       break;
+    case NTP_BACKGROUND_CUSTOMIZED:
+    case NTP_SHORTCUT_CUSTOMIZED:
+      UMA_HISTOGRAM_ENUMERATION("NewTabPage.Customized",
+                                LoggingEventToCustomizedFeature(event));
+      break;
+    case NTP_CUSTOMIZE_CHROME_BACKGROUNDS_CLICKED:
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_CLICKED:
+    case NTP_CUSTOMIZE_RESTORE_BACKGROUND_CLICKED:
+    case NTP_CUSTOMIZE_ATTRIBUTION_CLICKED:
+    case NTP_CUSTOMIZE_ADD_SHORTCUT_CLICKED:
+    case NTP_CUSTOMIZE_EDIT_SHORTCUT_CLICKED:
+    case NTP_CUSTOMIZE_RESTORE_SHORTCUTS_CLICKED:
+      UMA_HISTOGRAM_ENUMERATION("NewTabPage.CustomizeAction",
+                                LoggingEventToCustomizeAction(event));
+      break;
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_SELECT_COLLECTION:
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_SELECT_IMAGE:
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_CANCEL:
+    case NTP_CUSTOMIZE_CHROME_BACKGROUND_DONE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "NewTabPage.CustomizeChromeBackgroundAction",
+          LoggingEventToCustomizeChromeBackgroundAction(event));
+      break;
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_CANCEL:
+    case NTP_CUSTOMIZE_LOCAL_IMAGE_DONE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "NewTabPage.CustomizeLocalImageBackgroundAction",
+          LoggingEventToCustomizeLocalImageBackgroundAction(event));
+      break;
+    case NTP_CUSTOMIZE_SHORTCUT_ADD:
+    case NTP_CUSTOMIZE_SHORTCUT_UPDATE:
+    case NTP_CUSTOMIZE_SHORTCUT_REMOVE:
+    case NTP_CUSTOMIZE_SHORTCUT_CANCEL:
+    case NTP_CUSTOMIZE_SHORTCUT_DONE:
+    case NTP_CUSTOMIZE_SHORTCUT_UNDO:
+    case NTP_CUSTOMIZE_SHORTCUT_RESTORE_ALL:
+    case NTP_CUSTOMIZE_SHORTCUT_TOGGLE_TYPE:
+    case NTP_CUSTOMIZE_SHORTCUT_TOGGLE_VISIBILITY:
+      UMA_HISTOGRAM_ENUMERATION("NewTabPage.CustomizeShortcutAction",
+                                LoggingEventToCustomizeShortcutAction(event));
+      break;
+    case NTP_MIDDLE_SLOT_PROMO_SHOWN:
+      UMA_HISTOGRAM_LOAD_TIME("NewTabPage.Promos.ShownTime", time);
+      break;
+    case NTP_MIDDLE_SLOT_PROMO_LINK_CLICKED:
+      UMA_HISTOGRAM_EXACT_LINEAR("NewTabPage.Promos.LinkClicked", 1, 1);
+      break;
+    case NTP_BACKGROUND_UPLOAD_FROM_DEVICE:
+    case NTP_BACKGROUND_OPEN_COLLECTION:
+    case NTP_BACKGROUND_SELECT_IMAGE:
+    case NTP_BACKGROUND_DESELECT_IMAGE:
+    case NTP_BACKGROUND_IMAGE_SET:
+    case NTP_BACKGROUND_BACK_CLICK:
+    case NTP_BACKGROUND_DEFAULT_SELECTED:
+    case NTP_BACKGROUND_DEFAULT_DESELECTED:
+    case NTP_BACKGROUND_UPLOAD_CANCEL:
+    case NTP_BACKGROUND_UPLOAD_DONE:
+    case NTP_BACKGROUND_IMAGE_RESET:
+    case NTP_BACKGROUND_REFRESH_TOGGLE_CLICKED:
+    case NTP_BACKGROUND_DAILY_REFRESH_ENABLED:
+      RecordAction(LoggingEventToBackgroundUserActionName(event));
+      break;
+    case NTP_CUSTOMIZATION_MENU_OPENED:
+    case NTP_CUSTOMIZATION_MENU_CANCEL:
+    case NTP_CUSTOMIZATION_MENU_DONE:
+      RecordAction(LoggingEventToMenuUserActionName(event));
+      break;
+    case NTP_CUSTOMIZE_SHORTCUT_CUSTOM_LINKS_CLICKED:
+    case NTP_CUSTOMIZE_SHORTCUT_MOST_VISITED_CLICKED:
+    case NTP_CUSTOMIZE_SHORTCUT_VISIBILITY_TOGGLE_CLICKED:
+      RecordAction(LoggingEventToShortcutUserActionName(event));
+      break;
+  }
+}
+
+void NTPUserDataLogger::LogSuggestionEventWithValue(
+    NTPSuggestionsLoggingEventType event,
+    int data,
+    base::TimeDelta time) {
+  // Only logged on the Google NTP.
+  if (!DefaultSearchProviderIsGoogle()) {
+    return;
+  }
+
+  switch (event) {
+    case NTPSuggestionsLoggingEventType::kShownCount:
+      UMA_HISTOGRAM_COUNTS_100("NewTabPage.SearchSuggestions.ShownCount", data);
+      break;
+    case NTPSuggestionsLoggingEventType::kIndexClicked:
+      UMA_HISTOGRAM_COUNTS_100("NewTabPage.SearchSuggestions.IndexClicked",
+                               data);
+      break;
   }
 }
 
 void NTPUserDataLogger::LogMostVisitedImpression(
     const ntp_tiles::NTPTileImpression& impression) {
-  if ((impression.index >= kNumMostVisited) ||
+  if ((impression.index >= ntp_tiles::kMaxNumTiles) ||
       logged_impressions_[impression.index].has_value()) {
     return;
   }
@@ -300,11 +596,6 @@ NTPUserDataLogger::NTPUserDataLogger(content::WebContents* contents)
       has_emitted_(false),
       should_record_doodle_load_time_(true),
       during_startup_(!AfterStartupTaskUtils::IsBrowserStartupComplete()) {
-  // We record metrics about session data here because when this class typically
-  // emits metrics it is too late. This session data would theoretically have
-  // been used to populate the page, and we want to learn about its state when
-  // the NTP is being generated.
-  RecordSyncSessionMetrics(contents);
 }
 
 // content::WebContentsObserver override
@@ -320,16 +611,31 @@ void NTPUserDataLogger::NavigatedFromURLToURL(const GURL& from,
   if (from.is_valid() && to.is_valid() && (to == ntp_url_)) {
     DVLOG(1) << "Returning to New Tab Page";
     logged_impressions_.fill(base::nullopt);
-    tiles_received_time_ = base::TimeDelta();
     has_emitted_ = false;
     should_record_doodle_load_time_ = true;
   }
 }
 
 bool NTPUserDataLogger::DefaultSearchProviderIsGoogle() const {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  return search::DefaultSearchProviderIsGoogle(profile);
+  return search::DefaultSearchProviderIsGoogle(profile_);
+}
+
+bool NTPUserDataLogger::CustomBackgroundIsConfigured() const {
+  InstantService* instant_service =
+      InstantServiceFactory::GetForProfile(profile_);
+  return instant_service->IsCustomBackgroundSet();
+}
+
+bool NTPUserDataLogger::AreShortcutsCustomized() const {
+  InstantService* instant_service =
+      InstantServiceFactory::GetForProfile(profile_);
+  return instant_service->AreShortcutsCustomized();
+}
+
+std::pair<bool, bool> NTPUserDataLogger::GetCurrentShortcutSettings() const {
+  InstantService* instant_service =
+      InstantServiceFactory::GetForProfile(profile_);
+  return instant_service->GetCurrentShortcutSettings();
 }
 
 void NTPUserDataLogger::EmitNtpStatistics(base::TimeDelta load_time) {
@@ -359,17 +665,12 @@ void NTPUserDataLogger::EmitNtpStatistics(base::TimeDelta load_time) {
   DVLOG(1) << "Emitting NTP load time: " << load_time << ", "
            << "number of tiles: " << tiles_count;
 
-  UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime", tiles_received_time_);
   UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime", load_time);
 
   // Split between ML (aka SuggestionsService) and MV (aka TopSites).
   if (has_server_side_suggestions) {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.MostLikely",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.MostLikely", load_time);
   } else {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.MostVisited",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.MostVisited", load_time);
   }
 
@@ -380,18 +681,10 @@ void NTPUserDataLogger::EmitNtpStatistics(base::TimeDelta load_time) {
 
   // Split between Web and Local.
   if (ntp_url_.SchemeIsHTTPOrHTTPS()) {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.Web",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.Web", load_time);
-    // Further split between Google and non-Google.
-    if (is_google) {
-      UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.Web.Google", load_time);
-    } else {
-      UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.Web.Other", load_time);
-    }
+    // Only third-party NTPs can be loaded from the web.
+    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.Web.Other", load_time);
   } else {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.LocalNTP",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.LocalNTP", load_time);
     // Further split between Google and non-Google.
     if (is_google) {
@@ -403,13 +696,37 @@ void NTPUserDataLogger::EmitNtpStatistics(base::TimeDelta load_time) {
 
   // Split between Startup and non-startup.
   if (during_startup_) {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.Startup",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.Startup", load_time);
   } else {
-    UMA_HISTOGRAM_LOAD_TIME("NewTabPage.TilesReceivedTime.NewTab",
-                            tiles_received_time_);
     UMA_HISTOGRAM_LOAD_TIME("NewTabPage.LoadTime.NewTab", load_time);
+  }
+
+  if (!is_google) {
+    // TODO(crbug.com/869931): This is only emitted upon search engine change.
+    LogBackgroundCustomizationAvailability(
+        BackgroundCustomization::
+            BACKGROUND_CUSTOMIZATION_UNAVAILABLE_SEARCH_PROVIDER);
+    LogShortcutCustomizationAvailability(
+        ShortcutCustomization::
+            SHORTCUT_CUSTOMIZATION_UNAVAILABLE_SEARCH_PROVIDER);
+  } else {
+    LogBackgroundCustomizationAvailability(
+        BackgroundCustomization::BACKGROUND_CUSTOMIZATION_AVAILABLE);
+    LogShortcutCustomizationAvailability(
+        ShortcutCustomization::SHORTCUT_CUSTOMIZATION_AVAILABLE);
+    LogCustomizedShortcutSettings(GetCurrentShortcutSettings());
+
+    if (AreShortcutsCustomized()) {
+      UMA_HISTOGRAM_ENUMERATION(
+          "NewTabPage.Customized",
+          LoggingEventToCustomizedFeature(NTP_SHORTCUT_CUSTOMIZED));
+    }
+
+    if (CustomBackgroundIsConfigured()) {
+      UMA_HISTOGRAM_ENUMERATION(
+          "NewTabPage.Customized",
+          LoggingEventToCustomizedFeature(NTP_BACKGROUND_CUSTOMIZED));
+    }
   }
 
   has_emitted_ = true;
@@ -436,3 +753,12 @@ void NTPUserDataLogger::RecordDoodleImpression(base::TimeDelta time,
     should_record_doodle_load_time_ = false;
   }
 }
+
+void NTPUserDataLogger::RecordAction(const char* action) {
+  if (!action || !DefaultSearchProviderIsGoogle())
+    return;
+
+  base::RecordAction(base::UserMetricsAction(action));
+}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(NTPUserDataLogger)

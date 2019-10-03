@@ -3,12 +3,13 @@
 // found in the LICENSE file.
 
 #include <stddef.h>
+#include <memory>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/bookmark_app_helper.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_sync_data.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/launch_util.h"
@@ -18,8 +19,12 @@
 #include "chrome/browser/sync/test/integration/sync_app_helper.h"
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
+#include "chrome/browser/web_applications/components/install_manager.h"
+#include "chrome/browser/web_applications/components/web_app_provider_base.h"
+#include "chrome/browser/web_applications/extensions/bookmark_app_util.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/app_theme_color_info.h"
+#include "chrome/common/web_application_info.h"
 #include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
@@ -49,21 +54,16 @@ extensions::ExtensionRegistry* GetExtensionRegistry(Profile* profile) {
   return extensions::ExtensionRegistry::Get(profile);
 }
 
-ExtensionService* GetExtensionService(Profile* profile) {
-  return extensions::ExtensionSystem::Get(profile)->extension_service();
-}
-
 }  // namespace
 
 class TwoClientAppsSyncTest : public SyncTest {
  public:
-  TwoClientAppsSyncTest() : SyncTest(TWO_CLIENT) {
-    DisableVerifier();
-  }
+  TwoClientAppsSyncTest() : SyncTest(TWO_CLIENT) { DisableVerifier(); }
 
   ~TwoClientAppsSyncTest() override {}
 
-  bool TestUsesSelfNotifications() override { return false; }
+  // Needed for AwaitQuiescence().
+  bool TestUsesSelfNotifications() override { return true; }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TwoClientAppsSyncTest);
@@ -90,8 +90,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, E2E_ENABLED(StartWithSameApps)) {
 // Install some apps on both clients, some on only one client, some on only the
 // other, and sync.  Both clients should end up with all apps, and the app and
 // page ordinals should be identical.
-// Disabled, see http://crbug.com/434438 for details.
-IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, DISABLED_StartWithDifferentApps) {
+IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, StartWithDifferentApps) {
   ASSERT_TRUE(SetupClients());
 
   int i = 0;
@@ -308,6 +307,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, E2E_ENABLED(UpdateCWSOrdinals)) {
 // have the same launch type values for the CWS.
 IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, E2E_ENABLED(UpdateLaunchType)) {
   ASSERT_TRUE(SetupSync());
+  // Wait until sync settles before we override the apps below.
+  ASSERT_TRUE(AwaitQuiescence());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
   // Change the launch type to window.
@@ -334,6 +335,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, E2E_ENABLED(UpdateLaunchType)) {
 
 IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, UnexpectedLaunchType) {
   ASSERT_TRUE(SetupSync());
+  // Wait until sync settles before we override the apps below.
+  ASSERT_TRUE(AwaitQuiescence());
   ASSERT_TRUE(AllProfilesHaveSameApps());
 
   extensions::SetLaunchType(GetProfile(1), extensions::kWebStoreAppId,
@@ -361,7 +364,6 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, UnexpectedLaunchType) {
       original_data.disable_reasons(),
       original_data.incognito_enabled(),
       original_data.remote_install(),
-      original_data.all_urls_enabled(),
       original_data.installed_by_custodian(),
       original_data.app_launch_ordinal(),
       original_data.page_ordinal(),
@@ -379,18 +381,23 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppBasic) {
   size_t num_extensions =
       GetExtensionRegistry(GetProfile(0))->enabled_extensions().size();
 
-  WebApplicationInfo web_app_info;
-  web_app_info.app_url = GURL("http://www.chromium.org/path");
-  web_app_info.scope = GURL("http://www.chromium.org/");
-  web_app_info.title = base::UTF8ToUTF16("Test name");
-  web_app_info.description = base::UTF8ToUTF16("Test description");
+  auto web_app_info = std::make_unique<WebApplicationInfo>();
+  web_app_info->app_url = GURL("http://www.chromium.org/path");
+  web_app_info->scope = GURL("http://www.chromium.org/");
+  web_app_info->title = base::UTF8ToUTF16("Test name");
+  web_app_info->description = base::UTF8ToUTF16("Test description");
   ++num_extensions;
   {
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
-    extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+
+    auto* provider =
+        web_app::WebAppProviderBase::GetProviderBase(GetProfile(0));
+    DCHECK(provider);
+    provider->install_manager().InstallWebAppForTesting(std::move(web_app_info),
+                                                        base::DoNothing());
+
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -399,7 +406,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppBasic) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
 }
@@ -411,16 +418,21 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppMinimal) {
   size_t num_extensions =
       GetExtensionRegistry(GetProfile(0))->enabled_extensions().size();
 
-  WebApplicationInfo web_app_info;
-  web_app_info.app_url = GURL("http://www.chromium.org/");
-  web_app_info.title = base::UTF8ToUTF16("Test name");
+  auto web_app_info = std::make_unique<WebApplicationInfo>();
+  web_app_info->app_url = GURL("http://www.chromium.org/");
+  web_app_info->title = base::UTF8ToUTF16("Test name");
   ++num_extensions;
   {
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
-    extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+
+    auto* provider =
+        web_app::WebAppProviderBase::GetProviderBase(GetProfile(0));
+    DCHECK(provider);
+    provider->install_manager().InstallWebAppForTesting(std::move(web_app_info),
+                                                        base::DoNothing());
+
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -429,7 +441,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppMinimal) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
 }
@@ -452,17 +464,23 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppThemeColor) {
   size_t num_extensions =
       GetExtensionRegistry(GetProfile(0))->enabled_extensions().size();
 
-  WebApplicationInfo web_app_info;
-  web_app_info.app_url = GURL("http://www.chromium.org/");
-  web_app_info.title = base::UTF8ToUTF16("Test name");
-  web_app_info.theme_color = SK_ColorBLUE;
+  const GURL app_url("http://www.chromium.org/");
+  auto web_app_info = std::make_unique<WebApplicationInfo>();
+  web_app_info->app_url = app_url;
+  web_app_info->title = base::UTF8ToUTF16("Test name");
+  web_app_info->theme_color = SK_ColorBLUE;
   ++num_extensions;
   {
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
         content::NotificationService::AllSources());
-    extensions::CreateOrUpdateBookmarkApp(GetExtensionService(GetProfile(0)),
-                                          &web_app_info);
+
+    auto* provider =
+        web_app::WebAppProviderBase::GetProviderBase(GetProfile(0));
+    DCHECK(provider);
+    provider->install_manager().InstallWebAppForTesting(std::move(web_app_info),
+                                                        base::DoNothing());
+
     windowed_observer.Wait();
     EXPECT_EQ(num_extensions,
               GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
@@ -471,13 +489,68 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, BookmarkAppThemeColor) {
     // Wait for the synced app to install.
     content::WindowedNotificationObserver windowed_observer(
         extensions::NOTIFICATION_CRX_INSTALLER_DONE,
-        base::Bind(&AllProfilesHaveSameApps));
+        base::BindRepeating(&AllProfilesHaveSameApps));
     windowed_observer.Wait();
   }
-  auto* extension = GetAppByLaunchURL(web_app_info.app_url, GetProfile(1));
+  auto* extension = GetAppByLaunchURL(app_url, GetProfile(1));
   base::Optional<SkColor> theme_color =
       extensions::AppThemeColorInfo::GetThemeColor(extension);
   EXPECT_EQ(SK_ColorBLUE, theme_color.value());
+}
+
+IN_PROC_BROWSER_TEST_F(TwoClientAppsSyncTest, IsLocallyInstalled) {
+  ASSERT_TRUE(SetupSync());
+  ASSERT_TRUE(AllProfilesHaveSameApps());
+
+  size_t num_extensions =
+      GetExtensionRegistry(GetProfile(0))->enabled_extensions().size();
+
+  const GURL app_url("http://www.chromium.org/");
+  auto web_app_info = std::make_unique<WebApplicationInfo>();
+  web_app_info->app_url = app_url;
+  web_app_info->title = base::UTF8ToUTF16("Test name");
+  web_app_info->theme_color = SK_ColorBLUE;
+  ++num_extensions;
+  {
+    content::WindowedNotificationObserver windowed_observer(
+        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        content::NotificationService::AllSources());
+
+    auto* provider =
+        web_app::WebAppProviderBase::GetProviderBase(GetProfile(0));
+    DCHECK(provider);
+    provider->install_manager().InstallWebAppForTesting(std::move(web_app_info),
+                                                        base::DoNothing());
+
+    windowed_observer.Wait();
+    EXPECT_EQ(num_extensions,
+              GetExtensionRegistry(GetProfile(0))->enabled_extensions().size());
+  }
+  {
+    // Wait for the synced app to install.
+    content::WindowedNotificationObserver windowed_observer(
+        extensions::NOTIFICATION_CRX_INSTALLER_DONE,
+        base::BindRepeating(&AllProfilesHaveSameApps));
+    windowed_observer.Wait();
+
+    // The is_locally_installed pref is set in a post install task which
+    // completes asynchronously after the CRX_INSTALLER_DONE notification is
+    // sent. This test needs to wait for this to complete before checking the
+    // is_locally_installed_pref, so it waits until all tasks are complete.
+    //
+    // Other tests do not need to do this, as all the fields they check are set
+    // before the CRX_INSTALLER_DONE notification is sent.
+    //
+    // Note this cannot replace the CRX_INSTALLER_DONE notification observer as
+    // it would not wait for the sync stuff to happen.
+    content::RunAllTasksUntilIdle();
+  }
+  auto* extension = GetAppByLaunchURL(app_url, GetProfile(1));
+#if defined(OS_CHROMEOS)
+  EXPECT_TRUE(BookmarkAppIsLocallyInstalled(GetProfile(1), extension));
+#else
+  EXPECT_FALSE(BookmarkAppIsLocallyInstalled(GetProfile(1), extension));
+#endif
 }
 // TODO(akalin): Add tests exercising:
 //   - Offline installation/uninstallation behavior

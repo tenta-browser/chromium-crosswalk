@@ -27,6 +27,9 @@ class TtsEngineExtensionObserver
   // as loaded immediately if |update| is set to true.
   bool SawExtensionLoad(const std::string& extension_id, bool update);
 
+  // Gets the currently loaded TTS extension ids.
+  const std::set<std::string> GetTtsExtensions();
+
   // Implementation of KeyedService.
   void Shutdown() override;
 

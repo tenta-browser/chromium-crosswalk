@@ -4,11 +4,14 @@
 
 package org.chromium.chrome.browser.historyreport;
 
+import static org.chromium.base.ThreadUtils.assertOnBackgroundThread;
+
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.io.PrintWriter;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,16 +29,13 @@ public class HistoryReportJniBridge implements SearchJniBridge {
 
     @Override
     public boolean init(DataChangeObserver observer) {
+        // This is called in the deferred task, so we couldn't assertOnBackgroundThread();
         assert mDataChangeObserver == null || mDataChangeObserver == observer;
         if (observer == null) return false;
         if (mNativeHistoryReportJniBridge != 0) return true;
         mDataChangeObserver = observer;
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mNativeHistoryReportJniBridge = nativeInit();
-            }
-        });
+        PostTask.runSynchronously(UiThreadTaskTraits.DEFAULT,
+                () -> { mNativeHistoryReportJniBridge = nativeInit(); });
         if (mNativeHistoryReportJniBridge == 0) {
             Log.w(TAG, "JNI bridge initialization unsuccessful.");
             return false;
@@ -58,6 +58,7 @@ public class HistoryReportJniBridge implements SearchJniBridge {
 
     @Override
     public DeltaFileEntry[] query(long lastSeqNo, int limit) {
+        assertOnBackgroundThread();
         if (!isInitialized()) {
             Log.w(TAG, "query when JNI bridge not initialized");
             return new DeltaFileEntry[0];
@@ -69,6 +70,7 @@ public class HistoryReportJniBridge implements SearchJniBridge {
 
     @Override
     public long trimDeltaFile(long seqNoLowerBound) {
+        assertOnBackgroundThread();
         if (!isInitialized()) {
             Log.w(TAG, "trimDeltaFile when JNI bridge not initialized");
             return -1;
@@ -79,6 +81,7 @@ public class HistoryReportJniBridge implements SearchJniBridge {
 
     @Override
     public UsageReport[] getUsageReportsBatch(int batchSize) {
+        assertOnBackgroundThread();
         if (!isInitialized()) {
             Log.w(TAG, "getUsageReportsBatch when JNI bridge not initialized");
             return new UsageReport[0];
@@ -89,6 +92,7 @@ public class HistoryReportJniBridge implements SearchJniBridge {
 
     @Override
     public void removeUsageReports(UsageReport[] reports) {
+        assertOnBackgroundThread();
         if (!isInitialized()) {
             Log.w(TAG, "removeUsageReports when JNI bridge not initialized");
             return;
@@ -101,8 +105,22 @@ public class HistoryReportJniBridge implements SearchJniBridge {
     }
 
     @Override
+    public void clearUsageReports() {
+        assertOnBackgroundThread();
+        if (!isInitialized()) {
+            Log.w(TAG, "clearUsageReports when JNI bridge not initialized");
+            return;
+        }
+        nativeClearUsageReports(mNativeHistoryReportJniBridge);
+    }
+
+    @Override
     public boolean addHistoricVisitsToUsageReportsBuffer() {
-        if (!isInitialized()) return false;
+        assertOnBackgroundThread();
+        if (!isInitialized()) {
+            Log.w(TAG, "addHistoricVisitsToUsageReportsBuffer when JNI bridge not initialized");
+            return false;
+        }
         return nativeAddHistoricVisitsToUsageReportsBuffer(mNativeHistoryReportJniBridge);
     }
 
@@ -171,6 +189,7 @@ public class HistoryReportJniBridge implements SearchJniBridge {
             int batchSize);
     private native void nativeRemoveUsageReports(long nativeHistoryReportJniBridge,
             String[] reportIds);
+    private native void nativeClearUsageReports(long nativeHistoryReportJniBridge);
     private native boolean nativeAddHistoricVisitsToUsageReportsBuffer(
             long nativeHistoryReportJniBridge);
     private native String nativeDump(long nativeHistoryReportJniBridge);

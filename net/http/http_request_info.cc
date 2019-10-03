@@ -7,11 +7,10 @@
 namespace net {
 
 HttpRequestInfo::HttpRequestInfo()
-    : upload_data_stream(NULL),
+    : upload_data_stream(nullptr),
       load_flags(0),
-      motivation(NORMAL_MOTIVATION),
-      privacy_mode(PRIVACY_MODE_DISABLED) {
-}
+      privacy_mode(PRIVACY_MODE_DISABLED),
+      reporting_upload_depth(0) {}
 
 HttpRequestInfo::HttpRequestInfo(const HttpRequestInfo& other) = default;
 

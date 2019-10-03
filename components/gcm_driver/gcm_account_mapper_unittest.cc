@@ -57,10 +57,8 @@ void VerifyMappings(const GCMAccountMapper::AccountMappings& expected_mappings,
                     const std::string& verification_info) {
   EXPECT_EQ(expected_mappings.size(), actual_mappings.size())
       << "Verification Info: " << verification_info;
-  GCMAccountMapper::AccountMappings::const_iterator expected_iter =
-      expected_mappings.begin();
-  GCMAccountMapper::AccountMappings::const_iterator actual_iter =
-      actual_mappings.begin();
+  auto expected_iter = expected_mappings.begin();
+  auto actual_iter = actual_mappings.begin();
   for (; expected_iter != expected_mappings.end() &&
              actual_iter != actual_mappings.end();
        ++expected_iter, ++actual_iter) {
@@ -258,7 +256,7 @@ class GCMAccountMapperTest : public testing::Test {
 
   CustomFakeGCMDriver& gcm_driver() { return gcm_driver_; }
 
-  base::SimpleTestClock* clock() { return clock_; }
+  base::SimpleTestClock* clock() { return &clock_; }
   const std::string& last_received_app_id() const {
     return last_received_app_id_;
   }
@@ -269,7 +267,7 @@ class GCMAccountMapperTest : public testing::Test {
  private:
   CustomFakeGCMDriver gcm_driver_;
   std::unique_ptr<GCMAccountMapper> account_mapper_;
-  base::SimpleTestClock* clock_;
+  base::SimpleTestClock clock_;
   std::string last_received_app_id_;
   IncomingMessage last_received_message_;
 };
@@ -286,9 +284,7 @@ void GCMAccountMapperTest::Restart() {
     account_mapper_->ShutdownHandler();
   gcm_driver_.RemoveAppHandler(kGCMAccountMapperAppId);
   account_mapper_.reset(new GCMAccountMapper(&gcm_driver_));
-  std::unique_ptr<base::SimpleTestClock> clock(new base::SimpleTestClock);
-  clock_ = clock.get();
-  account_mapper_->SetClockForTesting(std::move(clock));
+  account_mapper_->SetClockForTesting(&clock_);
 }
 
 void GCMAccountMapperTest::Initialize(
@@ -950,8 +946,7 @@ TEST_F(GCMAccountMapperTest, DispatchMessageSentToGaiaID) {
 
   EXPECT_EQ(kTestAppId, last_received_app_id());
   EXPECT_EQ(1UL, last_received_message().data.size());
-  MessageData::const_iterator it =
-      last_received_message().data.find(kTestDataKey);
+  auto it = last_received_message().data.find(kTestDataKey);
   EXPECT_TRUE(it != last_received_message().data.end());
   EXPECT_EQ(kTestDataValue, it->second);
   EXPECT_EQ(kTestCollapseKey, last_received_message().collapse_key);

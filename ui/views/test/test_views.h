@@ -109,10 +109,23 @@ class EventCountView : public View {
   void RecordEvent(ui::Event* event);
 
   std::map<ui::EventType, int> event_count_;
-  int last_flags_;
-  HandleMode handle_mode_;
+  int last_flags_ = 0;
+  HandleMode handle_mode_ = PROPAGATE_EVENTS;
 
   DISALLOW_COPY_AND_ASSIGN(EventCountView);
+};
+
+// A view which reacts to PreferredSizeChanged() from its children and calls
+// Layout().
+class ResizeAwareParentView : public View {
+ public:
+  ResizeAwareParentView();
+
+  // Overridden from View:
+  void ChildPreferredSizeChanged(View* child) override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ResizeAwareParentView);
 };
 
 }  // namespace views

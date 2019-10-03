@@ -4,13 +4,14 @@
 
 #include "ios/chrome/browser/payments/ios_payment_instrument_finder.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ios/chrome/browser/payments/ios_payment_instrument.h"
-#include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -24,8 +25,8 @@ namespace payments {
 class TestIOSPaymentInstrumentFinder final : public IOSPaymentInstrumentFinder {
  public:
   TestIOSPaymentInstrumentFinder(
-      net::TestURLRequestContextGetter* context_getter)
-      : IOSPaymentInstrumentFinder(context_getter, nil) {}
+      scoped_refptr<network::SharedURLLoaderFactory> test_url_loader_factory)
+      : IOSPaymentInstrumentFinder(test_url_loader_factory, nil) {}
 
   std::vector<GURL> FilterUnsupportedURLPaymentMethods(
       const std::vector<GURL>& queried_url_payment_method_identifiers)
@@ -41,11 +42,12 @@ class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
   PaymentRequestIOSPaymentInstrumentFinderTest()
       : scoped_task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::IO),
-        context_getter_(new net::TestURLRequestContextGetter(
-            base::ThreadTaskRunnerHandle::Get())),
+        shared_factory_(
+            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+                &test_url_loader_factory_)),
         ios_payment_instrument_finder_(
-            base::MakeUnique<TestIOSPaymentInstrumentFinder>(
-                context_getter_.get())) {}
+            std::make_unique<TestIOSPaymentInstrumentFinder>(shared_factory_)) {
+  }
 
   ~PaymentRequestIOSPaymentInstrumentFinderTest() override {}
 
@@ -138,8 +140,10 @@ class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
         &PaymentRequestIOSPaymentInstrumentFinderTest::InstrumentsFoundCallback,
         base::Unretained(this));
     ios_payment_instrument_finder_->num_instruments_to_find_ = 1;
+    GURL web_app_manifest_url("https://bobpay.xyz/bob/manifest.json");
     ios_payment_instrument_finder_->OnWebAppManifestDownloaded(
-        method, GURL("https://bobpay.xyz/bob/manifest.json"), content);
+        method, web_app_manifest_url, web_app_manifest_url, content,
+        /*error_message=*/"");
   }
 
   void RunLoop() {
@@ -147,10 +151,15 @@ class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
     run_loop_->Run();
   }
 
+  network::TestURLLoaderFactory* test_url_loader_factory() {
+    return &test_url_loader_factory_;
+  }
+
  private:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
+  scoped_refptr<network::SharedURLLoaderFactory> shared_factory_;
 
-  scoped_refptr<net::TestURLRequestContextGetter> context_getter_;
   std::unique_ptr<TestIOSPaymentInstrumentFinder>
       ios_payment_instrument_finder_;
 
@@ -222,9 +231,8 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        DefaultApplicationsShouldHaveAbsoluteUrl) {
-  ExpectUnableToParsePaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"app.json\"]}");
+  ExpectUnableToParsePaymentMethodManifest("{\"default_applications\": ["
+                                           "\"app.json\"]}");
 }
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
@@ -237,23 +245,21 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        WellFormedPaymentMethodManifestWithApps) {
-  ExpectParsedPaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"https://bobpay.com/app.json\","
-      "\"https://alicepay.com/app.json\"]}",
-      {GURL("https://bobpay.com/app.json"),
-       GURL("https://alicepay.com/app.json")});
+  ExpectParsedPaymentMethodManifest("{\"default_applications\": ["
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://alicepay.com/app.json\"]}",
+                                    {GURL("https://bobpay.com/app.json"),
+                                     GURL("https://alicepay.com/app.json")});
 }
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        WellFormedPaymentMethodManifestWithDuplicateApps) {
-  ExpectParsedPaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"https://bobpay.com/app.json\","
-      "\"https://bobpay.com/app.json\","
-      "\"https://alicepay.com/app.json\"]}",
-      {GURL("https://bobpay.com/app.json"),
-       GURL("https://alicepay.com/app.json")});
+  ExpectParsedPaymentMethodManifest("{\"default_applications\": ["
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://alicepay.com/app.json\"]}",
+                                    {GURL("https://bobpay.com/app.json"),
+                                     GURL("https://alicepay.com/app.json")});
 }
 
 // Web app manifest parsing:
@@ -601,6 +607,13 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 // returned instruments is empty.
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        ManyInvalidMethodsSuppliedNoInstruments) {
+  test_url_loader_factory()->AddResponse("https://fake-host-name/bobpay",
+                                         std::string(), net::HTTP_NOT_FOUND);
+  test_url_loader_factory()->AddResponse("https://fake-host-name/alicepay",
+                                         std::string(), net::HTTP_NOT_FOUND);
+  test_url_loader_factory()->AddResponse("https://fake-host-name/sampay",
+                                         std::string(), net::HTTP_NOT_FOUND);
+
   std::vector<GURL> url_methods;
   url_methods.push_back(GURL("https://fake-host-name/bobpay"));
   url_methods.push_back(GURL("https://fake-host-name/alicepay"));
@@ -618,6 +631,9 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 // to the caller.
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        OneValidMethodSuppliedOneInstrument) {
+  test_url_loader_factory()->AddResponse(
+      "https://bobpay.xyz/bob/images/homescreen32.png", /* content = */ "",
+      net::HTTP_NOT_FOUND);
   FindInstrumentsWithWebAppManifest(
       GURL("https://emerald-eon.appspot.com/bobpay"),
       "{"

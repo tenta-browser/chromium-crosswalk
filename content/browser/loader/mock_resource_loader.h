@@ -25,8 +25,11 @@ struct RedirectInfo;
 class URLRequestStatus;
 }
 
-namespace content {
+namespace network {
 struct ResourceResponse;
+}
+
+namespace content {
 
 // Class that takes the place of the ResourceLoader for tests. It simplifies
 // testing ResourceHandlers by managing callbacks and performing basic sanity
@@ -57,8 +60,8 @@ class MockResourceLoader : public ResourceHandler::Delegate {
   // current status of the ResourceLoader.
   Status OnWillStart(const GURL& url);
   Status OnRequestRedirected(const net::RedirectInfo& redirect_info,
-                             scoped_refptr<ResourceResponse> response);
-  Status OnResponseStarted(scoped_refptr<ResourceResponse> response);
+                             scoped_refptr<network::ResourceResponse> response);
+  Status OnResponseStarted(scoped_refptr<network::ResourceResponse> response);
   Status OnWillRead();
   Status OnReadCompleted(base::StringPiece bytes);
   Status OnResponseCompleted(const net::URLRequestStatus& status);
@@ -109,7 +112,7 @@ class MockResourceLoader : public ResourceHandler::Delegate {
 
   std::unique_ptr<base::RunLoop> canceled_or_idle_run_loop_;
 
-  base::WeakPtrFactory<MockResourceLoader> weak_factory_;
+  base::WeakPtrFactory<MockResourceLoader> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MockResourceLoader);
 };

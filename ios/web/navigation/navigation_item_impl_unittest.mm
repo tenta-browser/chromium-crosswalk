@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ios/web/navigation/wk_navigation_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -52,13 +53,17 @@ TEST_F(NavigationItemTest, Dummy) {
 // Tests that the debug description is as expected.
 TEST_F(NavigationItemTest, Description) {
   item_->SetTitle(base::UTF8ToUTF16("Title"));
-  EXPECT_NSEQ(@"url:http://init.test/ originalurl:http://init.test/ referrer:  "
-              @"title:Title transition:2 displayState:{ scrollOffset:(nan, "
-              @"nan), zoomScaleRange:(nan, nan), zoomScale:nan } "
-              @"userAgentType:MOBILE is_create_from_push_state: false "
-              @"has_state_been_replaced: false is_created_from_hash_change: "
-              @"false navigation_initiation_type: 0",
-              item_->GetDescription());
+  NSString* description = item_->GetDescription();
+  EXPECT_TRUE([description containsString:@"url:http://init.test/"]);
+  EXPECT_TRUE([description containsString:@"originalurl:http://init.test/"]);
+  EXPECT_TRUE([description containsString:@"title:Title"]);
+  EXPECT_TRUE([description containsString:@"transition:2"]);
+  EXPECT_TRUE([description containsString:@"userAgentType:MOBILE"]);
+  EXPECT_TRUE([description containsString:@"is_create_from_push_state: false"]);
+  EXPECT_TRUE([description containsString:@"has_state_been_replaced: false"]);
+  EXPECT_TRUE(
+      [description containsString:@"is_created_from_hash_change: false"]);
+  EXPECT_TRUE([description containsString:@"navigation_initiation_type: 0"]);
 }
 #endif
 
@@ -90,6 +95,9 @@ TEST_F(NavigationItemTest, Copy) {
   EXPECT_NSEQ([postData0 dataUsingEncoding:NSUTF8StringEncoding],
               copy.GetPostData());
   EXPECT_NSEQ(state0, copy.GetSerializedStateObject());
+
+  // Ensure that HTTP headers are still mutable after the copying.
+  copy.AddHttpRequestHeaders(@{});
 }
 
 // Tests whether |NavigationItem::AddHttpRequestHeaders()| adds the passed
@@ -165,6 +173,40 @@ TEST_F(NavigationItemTest, GetDisplayTitleForURL) {
 
   title = NavigationItemImpl::GetDisplayTitleForURL(GURL("file://foo/1.gz"));
   EXPECT_EQ("1.gz", base::UTF16ToUTF8(title));
+}
+
+// Tests NavigationItemImpl::GetTitleForDisplay method
+TEST_F(NavigationItemTest, GetTitleForDisplay) {
+  item_->SetURL(GURL("file://foo/test.pdf"));
+  item_->SetVirtualURL(GURL("testappspecific://foo/"));
+  EXPECT_EQ("test.pdf", base::UTF16ToUTF8(item_->GetTitleForDisplay()));
+
+  item_->SetURL(GURL("testappspecific://foo/test.pdf"));
+  item_->SetVirtualURL(GURL("testappspecific://foo/test.pdf"));
+  EXPECT_EQ("testappspecific://foo/test.pdf",
+            base::UTF16ToUTF8(item_->GetTitleForDisplay()));
+}
+
+// Tests that SetURL correctly updates user agent type.
+TEST_F(NavigationItemTest, UpdateUserAgentType) {
+  ASSERT_EQ(UserAgentType::MOBILE, item_->GetUserAgentType());
+
+  // about:blank resets User Agent to NONE.
+  GURL no_user_agent_url(url::kAboutBlankURL);
+  ASSERT_FALSE(wk_navigation_util::URLNeedsUserAgentType(no_user_agent_url));
+  item_->SetURL(no_user_agent_url);
+  EXPECT_EQ(UserAgentType::NONE, item_->GetUserAgentType());
+
+  // Regular HTTP URL resets User Agent to MOBILE.
+  GURL user_agent_url(kItemURLString);
+  ASSERT_TRUE(wk_navigation_util::URLNeedsUserAgentType(user_agent_url));
+  item_->SetURL(user_agent_url);
+  EXPECT_EQ(UserAgentType::MOBILE, item_->GetUserAgentType());
+
+  // Regular HTTP URL does not reset DESKTOP User Agent to MOBILE.
+  item_->SetUserAgentType(UserAgentType::DESKTOP);
+  item_->SetURL(user_agent_url);
+  EXPECT_EQ(UserAgentType::DESKTOP, item_->GetUserAgentType());
 }
 
 }  // namespace

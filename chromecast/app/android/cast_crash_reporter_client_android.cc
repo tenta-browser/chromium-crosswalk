@@ -8,10 +8,10 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "chromecast/base/cast_sys_info_android.h"
 #include "chromecast/base/chromecast_config_android.h"
 #include "chromecast/base/version.h"
 #include "chromecast/common/global_descriptors.h"
-#include "chromecast/crash/cast_crash_keys.h"
 #include "content/public/common/content_switches.h"
 
 namespace chromecast {
@@ -25,14 +25,17 @@ CastCrashReporterClientAndroid::~CastCrashReporterClientAndroid() {
 }
 
 void CastCrashReporterClientAndroid::GetProductNameAndVersion(
-    const char** product_name,
-    const char** version) {
+    std::string* product_name,
+    std::string* version,
+    std::string* channel) {
   *product_name = "media_shell";
   *version = PRODUCT_VERSION
 #if CAST_IS_DEBUG_BUILD()
       ".debug"
 #endif
       "." CAST_BUILD_REVISION;
+  CastSysInfoAndroid sys_info;
+  *channel = sys_info.GetSystemReleaseChannel();
 }
 
 base::FilePath CastCrashReporterClientAndroid::GetReporterLogFilename() {
@@ -40,11 +43,11 @@ base::FilePath CastCrashReporterClientAndroid::GetReporterLogFilename() {
 }
 
 // static
-bool CastCrashReporterClientAndroid::GetCrashDumpLocation(
+bool CastCrashReporterClientAndroid::GetCrashReportsLocation(
     const std::string& process_type,
     base::FilePath* crash_dir) {
   base::FilePath crash_dir_local;
-  if (!PathService::Get(base::DIR_ANDROID_APP_DATA, &crash_dir_local)) {
+  if (!base::PathService::Get(base::DIR_ANDROID_APP_DATA, &crash_dir_local)) {
     return false;
   }
   crash_dir_local = crash_dir_local.Append("crashes");
@@ -65,12 +68,13 @@ bool CastCrashReporterClientAndroid::GetCrashDumpLocation(
 
 bool CastCrashReporterClientAndroid::GetCrashDumpLocation(
     base::FilePath* crash_dir) {
-  return CastCrashReporterClientAndroid::GetCrashDumpLocation(process_type_,
-                                                              crash_dir);
-}
+  base::FilePath app_data;
+  if (!base::PathService::Get(base::DIR_ANDROID_APP_DATA, &app_data)) {
+    return false;
+  }
 
-size_t CastCrashReporterClientAndroid::RegisterCrashKeys() {
-  return crash_keys::RegisterCastCrashKeys();
+  *crash_dir = app_data.Append("Crashpad");
+  return true;
 }
 
 bool CastCrashReporterClientAndroid::GetCollectStatsConsent() {

@@ -4,12 +4,12 @@
 
 package org.chromium.components.gcm_driver.instance_id;
 
-import android.os.AsyncTask;
 import android.os.Bundle;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.components.gcm_driver.LazySubscriptionsManager;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
@@ -95,19 +95,27 @@ public class InstanceIDBridge {
         }.execute();
     }
 
-    /** Async wrapper for {@link InstanceID#getToken(String, String, Bundle)}. */
+    /** Async wrapper for {@link InstanceID#getToken(String, String, Bundle)}.
+     * |isLazy| isn't part of the InstanceID.getToken() call and not sent to the
+     * FCM server. It's used to mark the subscription as lazy such that incoming
+     * messages are deferred until there are visible activities.*/
     @CalledByNative
     private void getToken(final int requestId, final String authorizedEntity, final String scope,
-            String[] extrasStrings) {
+            String[] extrasStrings, boolean isLazy) {
         final Bundle extras = new Bundle();
         assert extrasStrings.length % 2 == 0;
         for (int i = 0; i < extrasStrings.length; i += 2) {
             extras.putString(extrasStrings[i], extrasStrings[i + 1]);
         }
+
         new BridgeAsyncTask<String>() {
             @Override
             protected String doBackgroundWork() {
                 try {
+                    LazySubscriptionsManager.storeLazinessInformation(
+                            LazySubscriptionsManager.buildSubscriptionUniqueId(
+                                    mSubtype, authorizedEntity),
+                            isLazy);
                     return mInstanceID.getToken(authorizedEntity, scope, extras);
                 } catch (IOException ex) {
                     return "";
@@ -129,6 +137,12 @@ public class InstanceIDBridge {
             protected Boolean doBackgroundWork() {
                 try {
                     mInstanceID.deleteToken(authorizedEntity, scope);
+                    String subscriptionId = LazySubscriptionsManager.buildSubscriptionUniqueId(
+                            mSubtype, authorizedEntity);
+                    if (LazySubscriptionsManager.isSubscriptionLazy(subscriptionId)) {
+                        LazySubscriptionsManager.deletePersistedMessagesForSubscriptionId(
+                                subscriptionId);
+                    }
                     return true;
                 } catch (IOException ex) {
                     return false;
@@ -187,14 +201,13 @@ public class InstanceIDBridge {
         protected abstract void sendResultToNative(Result result);
 
         public void execute() {
-            AsyncTask<Void, Void, Result> task = new AsyncTask<Void, Void, Result>() {
+            AsyncTask<Result> task = new AsyncTask<Result>() {
                 @Override
                 @SuppressWarnings("NoSynchronizedThisCheck") // Only used/accessible by native.
-                protected Result doInBackground(Void... params) {
+                protected Result doInBackground() {
                     synchronized (InstanceIDBridge.this) {
                         if (mInstanceID == null) {
-                            mInstanceID = InstanceIDWithSubtype.getInstance(
-                                    ContextUtils.getApplicationContext(), mSubtype);
+                            mInstanceID = InstanceIDWithSubtype.getInstance(mSubtype);
                         }
                     }
                     return doBackgroundWork();

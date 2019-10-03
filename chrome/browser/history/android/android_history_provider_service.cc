@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/android/android_provider_backend.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -263,6 +264,7 @@ AndroidHistoryProviderService::QueryHistoryAndBookmarks(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&QueryHistoryAndBookmarksAdapter, projections, selection,
                      selection_args, sort_order),
@@ -284,6 +286,7 @@ AndroidHistoryProviderService::UpdateHistoryAndBookmarks(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(base::Bind(&UpdateHistoryAndBookmarksAdapter,
                                            row, selection, selection_args),
                                 callback),
@@ -303,6 +306,7 @@ AndroidHistoryProviderService::DeleteHistoryAndBookmarks(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(base::Bind(&DeleteHistoryAndBookmarksAdapter,
                                            selection, selection_args),
                                 callback),
@@ -321,6 +325,7 @@ AndroidHistoryProviderService::InsertHistoryAndBookmark(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&InsertHistoryAndBookmarkAdapter, values), callback),
       tracker);
@@ -339,6 +344,7 @@ AndroidHistoryProviderService::DeleteHistory(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&DeleteHistoryAdapter, selection, selection_args),
           callback),
@@ -359,6 +365,7 @@ AndroidHistoryProviderService::MoveStatement(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(base::Bind(&MoveStatementAdapter, statement,
                                            current_pos, destination),
                                 callback),
@@ -375,7 +382,7 @@ void AndroidHistoryProviderService::CloseStatement(
   }
   std::unique_ptr<CloseStatementTask> task(new CloseStatementTask(statement));
   base::CancelableTaskTracker* tracker = task->tracker();
-  hs->ScheduleDBTask(std::move(task), tracker);
+  hs->ScheduleDBTask(FROM_HERE, std::move(task), tracker);
 }
 
 base::CancelableTaskTracker::TaskId
@@ -390,6 +397,7 @@ AndroidHistoryProviderService::InsertSearchTerm(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(base::Bind(&InsertSearchTermAdapter, row),
                                 callback),
       tracker);
@@ -409,6 +417,7 @@ AndroidHistoryProviderService::UpdateSearchTerms(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&UpdateSearchTermsAdapter, row, selection, selection_args),
           callback),
@@ -428,6 +437,7 @@ AndroidHistoryProviderService::DeleteSearchTerms(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&DeleteSearchTermsAdapter, selection, selection_args),
           callback),
@@ -449,6 +459,7 @@ AndroidHistoryProviderService::QuerySearchTerms(
     return base::CancelableTaskTracker::kBadTaskId;
   }
   return hs->ScheduleDBTask(
+      FROM_HERE,
       CreateAndroidProviderTask(
           base::Bind(&QuerySearchTermsAdapter, projections, selection,
                      selection_args, sort_order),
@@ -459,10 +470,11 @@ AndroidHistoryProviderService::QuerySearchTerms(
 base::CancelableTaskTracker::TaskId
 AndroidHistoryProviderService::GetLargestRawFaviconForID(
     favicon_base::FaviconID favicon_id,
-    const favicon_base::FaviconRawBitmapCallback& callback,
+    favicon_base::FaviconRawBitmapCallback callback,
     base::CancelableTaskTracker* tracker) {
   favicon::FaviconService* fs = FaviconServiceFactory::GetForProfile(
       profile_, ServiceAccessType::EXPLICIT_ACCESS);
   DCHECK(fs);
-  return fs->GetLargestRawFaviconForID(favicon_id, callback, tracker);
+  return fs->GetLargestRawFaviconForID(favicon_id, std::move(callback),
+                                       tracker);
 }

@@ -7,11 +7,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/no_destructor.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
@@ -30,12 +30,14 @@ struct CurrentAppNameWithLock {
   std::string app_name;
 };
 
-base::LazyInstance<CurrentAppNameWithLock>::DestructorAtExit g_current_app =
-    LAZY_INSTANCE_INITIALIZER;
+CurrentAppNameWithLock& GetCurrentApp() {
+  static base::NoDestructor<CurrentAppNameWithLock> current_app;
+  return *current_app;
+}
 
 std::string GetAppName() {
-  base::AutoLock lock(g_current_app.Get().lock);
-  const std::string& app_name = g_current_app.Get().app_name;
+  base::AutoLock lock(GetCurrentApp().lock);
+  const std::string& app_name = GetCurrentApp().app_name;
   return app_name.empty() ? kAppNameErrorNoApp : app_name;
 }
 
@@ -140,7 +142,6 @@ void PreregisterHistogram(const char* name,
                           int32_t flags) {
   base::StringPiece name_piece(name);
 
-  DCHECK(base::StatisticsRecorder::IsActive());
   DCHECK(base::Histogram::InspectConstructionArguments(
       name_piece, &minimum, &maximum, &bucket_count));
   DCHECK(!base::StatisticsRecorder::FindHistogram(name_piece))
@@ -167,8 +168,7 @@ void PreregisterHistogram(const char* name,
 } // namespace
 
 void PreregisterAllGroupedHistograms() {
-  base::StatisticsRecorder::Initialize();
-  for (size_t i = 0; i < arraysize(kHistogramsToGroup); ++i) {
+  for (size_t i = 0; i < base::size(kHistogramsToGroup); ++i) {
     PreregisterHistogram(
         kHistogramsToGroup[i].name,
         kHistogramsToGroup[i].minimum,
@@ -179,8 +179,8 @@ void PreregisterAllGroupedHistograms() {
 }
 
 void TagAppStartForGroupedHistograms(const std::string& app_name) {
-  base::AutoLock lock(g_current_app.Get().lock);
-  g_current_app.Get().app_name = app_name;
+  base::AutoLock lock(GetCurrentApp().lock);
+  GetCurrentApp().app_name = app_name;
 }
 
 } // namespace metrics

@@ -5,7 +5,9 @@
 #include "content/public/common/content_client.h"
 
 #include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/common/origin_util.h"
 #include "content/public/common/user_agent.h"
@@ -69,32 +71,32 @@ bool ContentClient::CanSendWhileSwappedOut(const IPC::Message* message) {
   return false;
 }
 
-std::string ContentClient::GetProduct() const {
-  return std::string();
-}
-
-std::string ContentClient::GetUserAgent() const {
-  return std::string();
-}
-
-base::string16 ContentClient::GetLocalizedString(int message_id) const {
+base::string16 ContentClient::GetLocalizedString(int message_id) {
   return base::string16();
 }
 
-base::StringPiece ContentClient::GetDataResource(
-    int resource_id,
-    ui::ScaleFactor scale_factor) const {
+base::string16 ContentClient::GetLocalizedString(
+    int message_id,
+    const base::string16& replacement) {
+  return base::string16();
+}
+
+base::StringPiece ContentClient::GetDataResource(int resource_id,
+                                                 ui::ScaleFactor scale_factor) {
   return base::StringPiece();
 }
 
-base::RefCountedMemory* ContentClient::GetDataResourceBytes(
-    int resource_id) const {
+base::RefCountedMemory* ContentClient::GetDataResourceBytes(int resource_id) {
   return nullptr;
 }
 
-gfx::Image& ContentClient::GetNativeImageNamed(int resource_id) const {
-  CR_DEFINE_STATIC_LOCAL(gfx::Image, kEmptyImage, ());
-  return kEmptyImage;
+bool ContentClient::IsDataResourceGzipped(int resource_id) {
+  return false;
+}
+
+gfx::Image& ContentClient::GetNativeImageNamed(int resource_id) {
+  static base::NoDestructor<gfx::Image> kEmptyImage;
+  return *kEmptyImage;
 }
 
 std::string ContentClient::GetProcessTypeNameInEnglish(int type) {
@@ -102,16 +104,16 @@ std::string ContentClient::GetProcessTypeNameInEnglish(int type) {
   return std::string();
 }
 
-bool ContentClient::IsSupplementarySiteIsolationModeEnabled() {
-  return false;
+base::DictionaryValue ContentClient::GetNetLogConstants() {
+  return base::DictionaryValue();
 }
 
-OriginTrialPolicy* ContentClient::GetOriginTrialPolicy() {
+blink::OriginTrialPolicy* ContentClient::GetOriginTrialPolicy() {
   return nullptr;
 }
 
 bool ContentClient::AllowScriptExtensionForServiceWorker(
-    const GURL& script_url) {
+    const url::Origin& script_origin) {
   return false;
 }
 
@@ -125,7 +127,8 @@ media::MediaDrmBridgeClient* ContentClient::GetMediaDrmBridgeClient() {
 }
 #endif  // OS_ANDROID
 
-void ContentClient::OnServiceManagerConnected(
-    ServiceManagerConnection* connection) {}
+void ContentClient::BindChildProcessInterface(
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* receiving_handle) {}
 
 }  // namespace content

@@ -8,11 +8,14 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/component_updater/pnacl_component_installer.h"
+#include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/nacl_host/nacl_infobar_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -22,8 +25,9 @@
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/logging_chrome.h"
 #include "chrome/common/pepper_permission_util.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -51,7 +55,7 @@ NaClBrowserDelegateImpl::NaClBrowserDelegateImpl(
     ProfileManager* profile_manager)
     : profile_manager_(profile_manager), inverse_debug_patterns_(false) {
   DCHECK(profile_manager_);
-  for (size_t i = 0; i < arraysize(kAllowedNonSfiOrigins); ++i) {
+  for (size_t i = 0; i < base::size(kAllowedNonSfiOrigins); ++i) {
     allowed_nonsfi_origins_.insert(kAllowedNonSfiOrigins[i]);
   }
 }
@@ -61,10 +65,9 @@ NaClBrowserDelegateImpl::~NaClBrowserDelegateImpl() {
 
 void NaClBrowserDelegateImpl::ShowMissingArchInfobar(int render_process_id,
                                                      int render_view_id) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&NaClInfoBarDelegate::Create, render_process_id,
-                     render_view_id));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                           base::BindOnce(&CreateInfoBarOnUiThread,
+                                          render_process_id, render_view_id));
 }
 
 bool NaClBrowserDelegateImpl::DialogsAreSuppressed() {
@@ -73,22 +76,22 @@ bool NaClBrowserDelegateImpl::DialogsAreSuppressed() {
 
 bool NaClBrowserDelegateImpl::GetCacheDirectory(base::FilePath* cache_dir) {
   base::FilePath user_data_dir;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
     return false;
   chrome::GetUserCacheDirectory(user_data_dir, cache_dir);
   return true;
 }
 
 bool NaClBrowserDelegateImpl::GetPluginDirectory(base::FilePath* plugin_dir) {
-  return PathService::Get(chrome::DIR_INTERNAL_PLUGINS, plugin_dir);
+  return base::PathService::Get(chrome::DIR_INTERNAL_PLUGINS, plugin_dir);
 }
 
 bool NaClBrowserDelegateImpl::GetPnaclDirectory(base::FilePath* pnacl_dir) {
-  return PathService::Get(chrome::DIR_PNACL_COMPONENT, pnacl_dir);
+  return base::PathService::Get(chrome::DIR_PNACL_COMPONENT, pnacl_dir);
 }
 
 bool NaClBrowserDelegateImpl::GetUserDirectory(base::FilePath* user_dir) {
-  return PathService::Get(chrome::DIR_USER_DATA, user_dir);
+  return base::PathService::Get(chrome::DIR_USER_DATA, user_dir);
 }
 
 std::string NaClBrowserDelegateImpl::GetVersionString() const {
@@ -124,7 +127,7 @@ void NaClBrowserDelegateImpl::SetDebugPatterns(
     // since they can be dangerous in the context of chrome extension
     // permissions, but they are okay here, for NaCl GDB avoidance.
     URLPattern pattern(URLPattern::SCHEME_ALL);
-    if (pattern.Parse(pattern_str) == URLPattern::PARSE_SUCCESS) {
+    if (pattern.Parse(pattern_str) == URLPattern::ParseResult::kSuccess) {
       // If URL pattern has scheme equal to *, Parse method resets valid
       // schemes mask to http and https only, so we need to reset it after
       // Parse to re-include chrome-extension and chrome schema.
@@ -143,8 +146,8 @@ bool NaClBrowserDelegateImpl::URLMatchesDebugPatterns(
     return true;
   }
   bool matches = false;
-  for (std::vector<URLPattern>::iterator iter = debug_patterns_.begin();
-       iter != debug_patterns_.end(); ++iter) {
+  for (auto iter = debug_patterns_.begin(); iter != debug_patterns_.end();
+       ++iter) {
     if (iter->MatchesURL(manifest_url)) {
       matches = true;
       break;
@@ -188,6 +191,23 @@ bool NaClBrowserDelegateImpl::IsNonSfiModeAllowed(
 #else
   return false;
 #endif
+}
+
+// static
+void NaClBrowserDelegateImpl::CreateInfoBarOnUiThread(int render_process_id,
+                                                      int render_view_id) {
+  content::RenderViewHost* rvh =
+      content::RenderViewHost::FromID(render_process_id, render_view_id);
+  if (!rvh)
+    return;
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderViewHost(rvh);
+  if (!web_contents)
+    return;
+  InfoBarService* infobar_service =
+      InfoBarService::FromWebContents(web_contents);
+  if (infobar_service)
+    NaClInfoBarDelegate::Create(infobar_service);
 }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)

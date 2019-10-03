@@ -27,10 +27,12 @@ class MEDIA_EXPORT ClocklessAudioSink : public AudioRendererSink {
                   RenderCallback* callback) override;
   void Start() override;
   void Stop() override;
+  void Flush() override;
   void Pause() override;
   void Play() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  void GetOutputDeviceInfoAsync(OutputDeviceInfoCB info_cb) override;
   bool IsOptimizedForHardwareParameters() override;
   bool CurrentThreadIsRenderingThread() override;
 

@@ -7,13 +7,15 @@
 #include "base/bind.h"
 #include "base/feature_list.h"
 #include "build/build_config.h"
+#include "chrome/browser/image_fetcher/image_decoder_impl.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/suggestions/image_decoder_impl.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/search_provider_logos/logo_service.h"
 #include "components/search_provider_logos/logo_service_impl.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "content/public/browser/storage_partition.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/feature_utilities.h"
@@ -28,11 +30,7 @@ constexpr base::FilePath::CharType kCachedLogoDirectory[] =
     FILE_PATH_LITERAL("Search Logos");
 
 bool UseGrayLogo() {
-#if defined(OS_ANDROID)
-  return !chrome::android::GetIsChromeHomeEnabled();
-#else
   return false;
-#endif
 }
 
 }  // namespace
@@ -52,6 +50,7 @@ LogoServiceFactory::LogoServiceFactory()
     : BrowserContextKeyedServiceFactory(
           "LogoService",
           BrowserContextDependencyManager::GetInstance()) {
+  DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(TemplateURLServiceFactory::GetInstance());
 }
 
@@ -61,9 +60,12 @@ KeyedService* LogoServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = static_cast<Profile*>(context);
   DCHECK(!profile->IsOffTheRecord());
-  return new LogoServiceImpl(profile->GetPath().Append(kCachedLogoDirectory),
-                             TemplateURLServiceFactory::GetForProfile(profile),
-                             base::MakeUnique<suggestions::ImageDecoderImpl>(),
-                             profile->GetRequestContext(),
-                             base::BindRepeating(&UseGrayLogo));
+  return new LogoServiceImpl(
+      profile->GetPath().Append(kCachedLogoDirectory),
+      IdentityManagerFactory::GetForProfile(profile),
+      TemplateURLServiceFactory::GetForProfile(profile),
+      std::make_unique<ImageDecoderImpl>(),
+      content::BrowserContext::GetDefaultStoragePartition(profile)
+          ->GetURLLoaderFactoryForBrowserProcess(),
+      base::BindRepeating(&UseGrayLogo));
 }

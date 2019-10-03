@@ -16,13 +16,11 @@
 
 #include "base/callback.h"
 #include "base/containers/circular_deque.h"
-#include "base/containers/hash_tables.h"
 #include "base/files/file_util.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/values.h"
 #include "components/sync/base/weak_handle.h"
-#include "components/sync/model/attachments/attachment_id.h"
 #include "components/sync/syncable/dir_open_result.h"
 #include "components/sync/syncable/entry.h"
 #include "components/sync/syncable/entry_kernel.h"
@@ -73,9 +71,6 @@ class Directory {
       std::unordered_map<int64_t, std::unique_ptr<EntryKernel>>;
   using IdsMap = std::unordered_map<std::string, EntryKernel*>;
   using TagsMap = std::unordered_map<std::string, EntryKernel*>;
-  using AttachmentIdUniqueId = std::string;
-  using IndexByAttachmentId =
-      std::unordered_map<AttachmentIdUniqueId, MetahandleSet>;
 
   static const base::FilePath::CharType kSyncDatabaseFilename[];
 
@@ -104,30 +99,33 @@ class Directory {
     size_t EstimateMemoryUsage() const;
 
     // Last sync timestamp fetched from the server.
-    sync_pb::DataTypeProgressMarker download_progress[MODEL_TYPE_COUNT];
+    sync_pb::DataTypeProgressMarker download_progress[ModelType::NUM_ENTRIES];
     // Sync-side transaction version per data type. Monotonically incremented
     // when updating native model. A copy is also saved in native model.
     // Later out-of-sync models can be detected and fixed by comparing
     // transaction versions of sync model and native model.
     // TODO(hatiaol): implement detection and fixing of out-of-sync models.
     //                Bug 154858.
-    int64_t transaction_version[MODEL_TYPE_COUNT];
+    int64_t transaction_version[ModelType::NUM_ENTRIES];
     // The store birthday we were given by the server. Contents are opaque to
-    // the client.
-    std::string store_birthday;
+    // the client. As of M76, this is no longer an authoritative value.
+    std::string legacy_store_birthday;
     // The serialized bag of chips we were given by the server. Contents are
     // opaque to the client. This is the serialization of a message of type
-    // ChipBag defined in sync.proto. It can contains null characters.
-    std::string bag_of_chips;
+    // ChipBag defined in sync.proto. It can contains null characters. As of
+    // M76, this is no longer an authoritative value.
+    std::string legacy_bag_of_chips;
     // The per-datatype context.
-    sync_pb::DataTypeContext datatype_context[MODEL_TYPE_COUNT];
+    sync_pb::DataTypeContext datatype_context[ModelType::NUM_ENTRIES];
   };
 
   // What the Directory needs on initialization to create itself and its Kernel.
   // Filled by DirectoryBackingStore::Load.
   struct KernelLoadInfo {
     PersistedKernelInfo kernel_info;
-    std::string cache_guid;  // Created on first initialization, never changes.
+    // Created on first initialization, never changes. As of M76, this is no
+    // longer an authoritative value.
+    std::string legacy_cache_guid;
     int64_t max_metahandle;  // Computed (using sql MAX aggregate) on init.
     KernelLoadInfo() : max_metahandle(0) {}
   };
@@ -200,20 +198,9 @@ class Directory {
     // within parent.  Protected by the ScopedKernelLock.
     ParentChildIndex parent_child_index;
 
-    // This index keeps track of which metahandles refer to a given attachment.
-    // Think of it as the inverse of EntryKernel's AttachmentMetadata Records.
-    //
-    // Because entries can be undeleted (e.g. PutIsDel(false)), entries should
-    // not removed from the index until they are actually deleted from memory.
-    //
-    // All access should go through IsAttachmentLinked,
-    // RemoveFromAttachmentIndex, AddToAttachmentIndex, and
-    // UpdateAttachmentIndex methods to avoid iterator invalidation errors.
-    IndexByAttachmentId index_by_attachment_id;
-
     // 3 in-memory indices on bits used extremely frequently by the syncer.
     // |unapplied_update_metahandles| is keyed by the server model type.
-    MetahandleSet unapplied_update_metahandles[MODEL_TYPE_COUNT];
+    MetahandleSet unapplied_update_metahandles[ModelType::NUM_ENTRIES];
     MetahandleSet unsynced_metahandles;
     // Contains metahandles that are most likely dirty (though not
     // necessarily).  Dirtyness is confirmed in TakeSnapshotForSaveChanges().
@@ -233,8 +220,9 @@ class Directory {
     PersistedKernelInfo persisted_info;
 
     // A unique identifier for this account's cache db, used to generate
-    // unique server IDs. No need to lock, only written at init time.
-    const std::string cache_guid;
+    // unique server IDs. No need to lock, only written at init time. As of M76,
+    // this is no longer an authoritative value.
+    std::string legacy_cache_guid;
 
     // It doesn't make sense for two threads to run SaveChanges at the same
     // time; this mutex protects that activity.
@@ -280,8 +268,6 @@ class Directory {
   // to indicate the continuation state of the next GetUpdates operation.
   void GetDownloadProgress(ModelType type,
                            sync_pb::DataTypeProgressMarker* value_out) const;
-  void GetDownloadProgressAsString(ModelType type,
-                                   std::string* value_out) const;
   void SetDownloadProgress(ModelType type,
                            const sync_pb::DataTypeProgressMarker& value);
   bool HasEmptyDownloadProgress(ModelType type) const;
@@ -295,6 +281,9 @@ class Directory {
   // Estimates memory usage of entries and corresponding indices of type
   // |model_type|.
   size_t EstimateMemoryUsageByType(ModelType model_type);
+
+  // Get the count of entries of type |model_type|.
+  size_t CountEntriesByType(ModelType model_type) const;
 
   // Gets/Increments transaction version of a model type. Must be called when
   // holding kernel mutex.
@@ -320,19 +309,25 @@ class Directory {
   // This applies only to types with implicitly created root folders.
   void MarkInitialSyncEndedForType(BaseWriteTransaction* trans, ModelType type);
 
-  // (Account) Store birthday is opaque to the client, so we keep it in the
-  // format it is in the proto buffer in case we switch to a binary birthday
-  // later.
-  std::string store_birthday() const;
-  void set_store_birthday(const std::string& store_birthday);
+  // Legacy store birthday, exposed for UMA purposes and migration from
+  // directory to prefs.
+  std::string legacy_store_birthday() const;
+  void set_legacy_store_birthday(const std::string& store_birthday);
 
   // (Account) Bag of chip is an opaque state used by the server to track the
   // client.
-  std::string bag_of_chips() const;
-  void set_bag_of_chips(const std::string& bag_of_chips);
+  void set_legacy_bag_of_chips(const std::string& bag_of_chips);
 
-  // Unique to each account / client pair.
-  std::string cache_guid() const;
+  // Authoritative cache GUID: unique to each account / client pair.
+  // TODO(crbug.com/923285): Move authoritative cache GUID elsewhere, since its
+  // lifetime here is now complex and can be easily confused with the legacy
+  // cache GUID.
+  const std::string& cache_guid() const;
+  void set_cache_guid(const std::string& cache_guid);
+
+  // Legacy cache GUID (non-authoritative) as historically persisted on disk,
+  // exposed for UMA purposes and migration from directory to prefs.
+  std::string legacy_cache_guid() const;
 
   // Returns a pointer to our Nigori node handler.
   NigoriHandler* GetNigoriHandler();
@@ -477,41 +472,14 @@ class Directory {
   // WARNING! This can be slow, as it iterates over all entries for a type.
   bool ResetVersionsForType(BaseWriteTransaction* trans, ModelType type);
 
-  // Returns true iff the attachment identified by |attachment_id_proto| is
-  // linked to an entry.
-  //
-  // An attachment linked to a deleted entry is still considered linked if the
-  // entry hasn't yet been purged.
-  bool IsAttachmentLinked(
-      const sync_pb::AttachmentIdProto& attachment_id_proto) const;
-
-  // Given attachment id return metahandles to all entries that reference this
-  // attachment.
-  void GetMetahandlesByAttachmentId(
-      BaseTransaction* trans,
-      const sync_pb::AttachmentIdProto& attachment_id_proto,
-      Metahandles* result);
-
   // Change entry to not dirty. Used in special case when we don't want to
   // persist modified entry on disk. e.g. SyncBackupManager uses this to
   // preserve sync preferences in DB on disk.
   void UnmarkDirtyEntry(WriteTransaction* trans, Entry* entry);
 
-  // Clears |ids| and fills it with the ids of attachments that need to be
-  // uploaded to the sync server.
-  void GetAttachmentIdsToUpload(BaseTransaction* trans,
-                                ModelType type,
-                                AttachmentIdList* ids);
-
   // For new entry creation only.
   bool InsertEntry(BaseWriteTransaction* trans,
                    std::unique_ptr<EntryKernel> entry);
-
-  // Update the attachment index for |metahandle| removing it from the index
-  // under |old_metadata| entries and add it under |new_metadata| entries.
-  void UpdateAttachmentIndex(const int64_t metahandle,
-                             const sync_pb::AttachmentMetadata& old_metadata,
-                             const sync_pb::AttachmentMetadata& new_metadata);
 
   virtual EntryKernel* GetEntryById(const Id& id);
   virtual EntryKernel* GetEntryByClientTag(const std::string& tag);
@@ -564,18 +532,6 @@ class Directory {
                    BaseWriteTransaction* trans,
                    std::unique_ptr<EntryKernel> entry);
 
-  // Remove each of |metahandle|'s attachment ids from index_by_attachment_id.
-  void RemoveFromAttachmentIndex(
-      const ScopedKernelLock& lock,
-      const int64_t metahandle,
-      const sync_pb::AttachmentMetadata& attachment_metadata);
-
-  // Add each of |metahandle|'s attachment ids to the index_by_attachment_id.
-  void AddToAttachmentIndex(
-      const ScopedKernelLock& lock,
-      const int64_t metahandle,
-      const sync_pb::AttachmentMetadata& attachment_metadata);
-
   void ClearDirtyMetahandles(const ScopedKernelLock& lock);
 
   DirOpenResult OpenImpl(
@@ -610,9 +566,14 @@ class Directory {
   // Used by CheckTreeInvariants.
   void GetAllMetaHandles(BaseTransaction* trans, MetahandleSet* result);
 
+  // Checks whether |entry| is safe to purge.
+  bool SafeToPurgeFromMemory(const EntryKernel& entry) const;
+
   // Used by VacuumAfterSaveChanges.
-  bool SafeToPurgeFromMemory(WriteTransaction* trans,
-                             const EntryKernel* const entry) const;
+  bool SafeToPurgeFromMemoryForTransaction(
+      WriteTransaction* trans,
+      const EntryKernel* const entry) const;
+
   // A helper used by GetTotalNodeCount.
   void GetChildSetForKernel(
       BaseTransaction*,
@@ -652,6 +613,8 @@ class Directory {
   // error on it.
   bool unrecoverable_error_set(const BaseTransaction* trans) const;
 
+  std::string cache_guid_;
+
   std::unique_ptr<Kernel> kernel_;
 
   std::unique_ptr<DirectoryBackingStore> store_;
@@ -670,7 +633,7 @@ class Directory {
   // are deleted in native models as well.
   std::unique_ptr<DeleteJournal> delete_journal_;
 
-  base::WeakPtrFactory<Directory> weak_ptr_factory_;
+  base::WeakPtrFactory<Directory> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Directory);
 };

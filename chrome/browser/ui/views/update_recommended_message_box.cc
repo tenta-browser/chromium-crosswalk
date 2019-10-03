@@ -7,6 +7,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/strings/grit/components_strings.h"
@@ -16,7 +17,11 @@
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "chrome/browser/first_run/upgrade_util_mac.h"
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -33,10 +38,10 @@ void UpdateRecommendedMessageBox::Show(gfx::NativeWindow parent_window) {
 // UpdateRecommendedMessageBox, private:
 
 UpdateRecommendedMessageBox::UpdateRecommendedMessageBox() {
-  const int kDialogWidth = 400;
   views::MessageBoxView::InitParams params(
       l10n_util::GetStringUTF16(IDS_UPDATE_RECOMMENDED));
-  params.message_width = kDialogWidth;
+  params.message_width = ChromeLayoutProvider::Get()->GetDistanceMetric(
+      ChromeDistanceMetric::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH);
   // Also deleted when the window closes.
   message_box_view_ = new views::MessageBoxView(params);
   chrome::RecordDialogCreation(chrome::DialogIdentifier::UPDATE_RECOMMENDED);
@@ -46,6 +51,11 @@ UpdateRecommendedMessageBox::~UpdateRecommendedMessageBox() {
 }
 
 bool UpdateRecommendedMessageBox::Accept() {
+#if defined(OS_MACOSX)
+  if (!upgrade_util::ShouldContinueToRelaunchForUpgrade())
+    return false;  // Leave the dialog up for the user to return to.
+#endif             // OS_MACOSX
+
   chrome::AttemptRelaunch();
   return true;
 }
@@ -62,6 +72,10 @@ bool UpdateRecommendedMessageBox::ShouldShowWindowTitle() const {
 #else
   return true;
 #endif
+}
+
+bool UpdateRecommendedMessageBox::ShouldShowCloseButton() const {
+  return false;
 }
 
 base::string16 UpdateRecommendedMessageBox::GetWindowTitle() const {

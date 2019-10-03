@@ -4,10 +4,14 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
-#include "extensions/browser/api/dns/host_resolver_wrapper.h"
-#include "extensions/browser/api/dns/mock_host_resolver_creator.h"
+#include "content/public/browser/system_connector.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/common/service_names.mojom.h"
+#include "content/public/test/network_service_test_helper.h"
 #include "extensions/browser/api/sockets_tcp/sockets_tcp_api.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/common/extension.h"
@@ -16,47 +20,33 @@
 #include "extensions/shell/test/shell_test.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
+#include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 
-const std::string kHostname = "127.0.0.1";
+const char kHostname[] = "www.foo.com";
 
 class SocketsTcpApiTest : public ShellApiTest {
  public:
-  SocketsTcpApiTest()
-      : resolver_event_(base::WaitableEvent::ResetPolicy::MANUAL,
-                        base::WaitableEvent::InitialState::NOT_SIGNALED),
-        resolver_creator_(new MockHostResolverCreator()) {}
+  SocketsTcpApiTest() {
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kUseMockCertVerifierForTesting);
+  }
 
   void SetUpOnMainThread() override {
     ShellApiTest::SetUpOnMainThread();
-
-    HostResolverWrapper::GetInstance()->SetHostResolverForTesting(
-        resolver_creator_->CreateMockHostResolver());
+    host_resolver()->AddRule(kHostname, "127.0.0.1");
   }
-
-  void TearDownOnMainThread() override {
-    HostResolverWrapper::GetInstance()->SetHostResolverForTesting(NULL);
-    resolver_creator_->DeleteMockHostResolver();
-
-    ShellApiTest::TearDownOnMainThread();
-  }
-
- private:
-  base::WaitableEvent resolver_event_;
-
-  // The MockHostResolver asserts that it's used on the same thread on which
-  // it's created, which is actually a stronger rule than its real counterpart.
-  // But that's fine; it's good practice.
-  scoped_refptr<MockHostResolverCreator> resolver_creator_;
 };
 
 IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketsTcpCreateGood) {
   scoped_refptr<api::SocketsTcpCreateFunction> socket_create_function(
       new api::SocketsTcpCreateFunction());
-  scoped_refptr<Extension> empty_extension = ExtensionBuilder("Test").Build();
+  scoped_refptr<const Extension> empty_extension =
+      ExtensionBuilder("Test").Build();
 
   socket_create_function->set_extension(empty_extension.get());
   socket_create_function->set_has_callback(true);
@@ -85,7 +75,7 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
   ASSERT_TRUE(port > 0);
 
   // Test that connect() is properly resolving hostnames.
-  host_port_pair.set_host("lOcAlHoSt");
+  host_port_pair.set_host(kHostname);
 
   ResultCatcher catcher;
   catcher.RestrictToBrowserContext(browser_context());
@@ -101,6 +91,15 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
 }
 
 IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtensionTLS) {
+  network::mojom::NetworkServiceTestPtr network_service_test;
+  // Because the network service runs in a utility process, the cert of the
+  // SpawnedTestServer won't be recognized, so inject mock cert verifier through
+  // the test helper interface.
+  content::GetSystemConnector()->BindInterface(
+      content::mojom::kNetworkServiceName, &network_service_test);
+  mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+  network_service_test->MockCertVerifierSetDefaultResult(net::OK);
+
   std::unique_ptr<net::SpawnedTestServer> test_https_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_HTTPS, net::BaseTestServer::SSLOptions(),

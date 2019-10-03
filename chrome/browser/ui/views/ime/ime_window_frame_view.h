@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_IME_IME_WINDOW_FRAME_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_IME_IME_WINDOW_FRAME_VIEW_H_
 
-#include "chrome/browser/ui/ime/ime_window.h"
+#include "chrome/browser/ui/input_method/ime_window.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/window/non_client_view.h"
 
@@ -34,12 +34,24 @@ class ImeWindowFrameView : public views::NonClientFrameView,
   void UpdateIcon();
 
  private:
+  static constexpr int kButtonSize = 24;
+  static constexpr int kImeBorderThickness = 1;
+  static constexpr int kTitleIconSize = 16;
+  static constexpr int kTitlebarHeight = 32;
+  static constexpr int kTitlebarLeftPadding = 8;
+  static constexpr int kTitlebarRightPadding = 6;
+
+  // Colors used to draw border, titlebar background and title text.
+  static constexpr SkColor kImeBackgroundColor =
+      SkColorSetRGB(0xec, 0xef, 0xf1);
+  static constexpr SkColor kBorderColor = SkColorSetRGB(0xda, 0xdf, 0xe1);
+
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
   gfx::Rect GetWindowBoundsForClientBounds(
       const gfx::Rect& client_bounds) const override;
   int NonClientHitTest(const gfx::Point& point) override;
-  void GetWindowMask(const gfx::Size& size, gfx::Path* window_mask) override;
+  void GetWindowMask(const gfx::Size& size, SkPath* window_mask) override;
   void ResetWindowControls() override;
   void UpdateWindowIcon() override;
   void UpdateWindowTitle() override;

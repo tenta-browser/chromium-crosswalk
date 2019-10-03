@@ -9,9 +9,11 @@
 
 #include "base/logging.h"
 #include "components/viz/common/quads/render_pass.h"
+#include "services/viz/public/cpp/compositing/copy_output_request_struct_traits.h"
 #include "services/viz/public/cpp/compositing/quads_struct_traits.h"
 #include "services/viz/public/interfaces/compositing/render_pass.mojom-shared.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
+#include "ui/gfx/mojo/rrect_f_struct_traits.h"
 #include "ui/gfx/mojo/transform_struct_traits.h"
 
 namespace mojo {
@@ -44,9 +46,14 @@ struct StructTraits<viz::mojom::RenderPassDataView,
     return input->filters;
   }
 
-  static const cc::FilterOperations& background_filters(
+  static const cc::FilterOperations& backdrop_filters(
       const std::unique_ptr<viz::RenderPass>& input) {
-    return input->background_filters;
+    return input->backdrop_filters;
+  }
+
+  static base::Optional<gfx::RRectF> backdrop_filter_bounds(
+      const std::unique_ptr<viz::RenderPass>& input) {
+    return input->backdrop_filter_bounds;
   }
 
   static const gfx::ColorSpace& color_space(
@@ -70,6 +77,11 @@ struct StructTraits<viz::mojom::RenderPassDataView,
 
   static bool generate_mipmap(const std::unique_ptr<viz::RenderPass>& input) {
     return input->generate_mipmap;
+  }
+
+  static const std::vector<std::unique_ptr<viz::CopyOutputRequest>>&
+  copy_requests(const std::unique_ptr<viz::RenderPass>& input) {
+    return input->copy_requests;
   }
 
   static const viz::QuadList& quad_list(

@@ -5,18 +5,18 @@
 #include "storage/browser/blob/blob_memory_controller.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_item.h"
 #include "storage/browser/blob/shareable_blob_data_item.h"
-#include "storage/common/data_element.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace storage {
@@ -54,7 +54,7 @@ class BlobMemoryControllerTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     base::ThreadRestrictions::SetIOAllowed(false);
-  };
+  }
 
   void TearDown() override {
     files_created_.clear();
@@ -77,9 +77,9 @@ class BlobMemoryControllerTest : public testing::Test {
   std::vector<scoped_refptr<ShareableBlobDataItem>> CreateSharedDataItems(
       const BlobDataBuilder& builder) {
     std::vector<scoped_refptr<ShareableBlobDataItem>> result;
-    for (size_t i = 0; i < builder.items_.size(); ++i) {
+    for (const auto& item : builder.items()) {
       result.push_back(base::MakeRefCounted<ShareableBlobDataItem>(
-          builder.items_[i], ShareableBlobDataItem::QUOTA_NEEDED));
+          item->item(), ShareableBlobDataItem::QUOTA_NEEDED));
     }
     return result;
   }
@@ -126,19 +126,19 @@ class BlobMemoryControllerTest : public testing::Test {
   void SaveMemoryRequest(bool success) { memory_quota_result_ = success; }
 
   BlobMemoryController::FileQuotaRequestCallback GetFileCreationCallback() {
-    return base::Bind(&BlobMemoryControllerTest::SaveFileCreationInfo,
-                      base::Unretained(this));
+    return base::BindOnce(&BlobMemoryControllerTest::SaveFileCreationInfo,
+                          base::Unretained(this));
   }
 
   BlobMemoryController::MemoryQuotaRequestCallback GetMemoryRequestCallback() {
-    return base::Bind(&BlobMemoryControllerTest::SaveMemoryRequest,
-                      base::Unretained(this));
+    return base::BindOnce(&BlobMemoryControllerTest::SaveMemoryRequest,
+                          base::Unretained(this));
   }
 
   BlobMemoryController::MemoryQuotaRequestCallback
   GetMemoryRequestCallbackToOutput(bool* output) {
-    return base::Bind(&BlobMemoryControllerTest::SaveMemoryRequestToOutput,
-                      base::Unretained(this), output);
+    return base::BindOnce(&BlobMemoryControllerTest::SaveMemoryRequestToOutput,
+                          base::Unretained(this), output);
   }
 
   void RunFileThreadTasks() {
@@ -165,7 +165,7 @@ class BlobMemoryControllerTest : public testing::Test {
 
   scoped_refptr<TestSimpleTaskRunner> file_runner_ = new TestSimpleTaskRunner();
 
-  base::MessageLoop fake_io_message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(BlobMemoryControllerTest, Strategy) {
@@ -287,7 +287,8 @@ TEST_F(BlobMemoryControllerTest, PageToDisk) {
 
   // Add memory item that is the memory quota.
   BlobDataBuilder builder(kId);
-  builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
+  BlobDataBuilder::FutureData future_data =
+      builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> items =
       CreateSharedDataItems(builder);
@@ -320,8 +321,8 @@ TEST_F(BlobMemoryControllerTest, PageToDisk) {
   EXPECT_FALSE(file_runner_->HasPendingTask());
 
   // Add our original item as populated so it's paged to disk.
-  items[0]->item()->data_element_ptr()->SetToBytes(
-      kData, kTestBlobStorageMaxBlobMemorySize);
+  future_data.Populate(
+      base::make_span(kData, kTestBlobStorageMaxBlobMemorySize));
   items[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
   controller.NotifyMemoryItemsUsed(items);
 
@@ -331,7 +332,7 @@ TEST_F(BlobMemoryControllerTest, PageToDisk) {
   // items2 are successfuly allocated.
   EXPECT_EQ(nullptr, task);
   EXPECT_EQ(ItemState::QUOTA_GRANTED, items2[0]->state());
-  EXPECT_EQ(DataElement::TYPE_FILE, items[0]->item()->type());
+  EXPECT_EQ(BlobDataItem::Type::kFile, items[0]->item()->type());
   EXPECT_EQ(kTestBlobStorageMinFileSizeBytes + 1, controller.memory_usage());
   EXPECT_EQ(kTestBlobStorageMaxBlobMemorySize, controller.disk_usage());
 
@@ -373,7 +374,8 @@ TEST_F(BlobMemoryControllerTest, CancelMemoryRequest) {
 
   // Add memory item that is the memory quota.
   BlobDataBuilder builder(kId);
-  builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
+  BlobDataBuilder::FutureData future_data =
+      builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> items =
       CreateSharedDataItems(builder);
@@ -395,8 +397,8 @@ TEST_F(BlobMemoryControllerTest, CancelMemoryRequest) {
   EXPECT_EQ(0u, controller.disk_usage());
 
   // Add our original item as populated so we start paging to disk.
-  items[0]->item()->data_element_ptr()->SetToBytes(
-      kData, kTestBlobStorageMaxBlobMemorySize);
+  future_data.Populate(
+      base::make_span(kData, kTestBlobStorageMaxBlobMemorySize));
   items[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
   controller.NotifyMemoryItemsUsed(items);
 
@@ -408,7 +410,7 @@ TEST_F(BlobMemoryControllerTest, CancelMemoryRequest) {
   RunFileThreadTasks();
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(ItemState::QUOTA_REQUESTED, items2[0]->state());
-  EXPECT_EQ(DataElement::TYPE_FILE, items[0]->item()->type());
+  EXPECT_EQ(BlobDataItem::Type::kFile, items[0]->item()->type());
   EXPECT_EQ(0u, controller.memory_usage());
   EXPECT_EQ(kTestBlobStorageMaxBlobMemorySize, controller.disk_usage());
 
@@ -432,11 +434,13 @@ TEST_F(BlobMemoryControllerTest, FileRequest) {
   std::memset(kData, 'e', kBlobSize);
 
   // Add item that is the file quota.
-  BlobDataBuilder builder(kId);
-  builder.AppendFutureFile(0, kBlobSize, 0);
+  auto builder = std::make_unique<BlobDataBuilder>(kId);
+  BlobDataBuilder::FutureFile future_file =
+      builder->AppendFutureFile(0, kBlobSize, 0);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> items =
-      CreateSharedDataItems(builder);
+      CreateSharedDataItems(*builder);
+  builder.reset();
 
   file_quota_result_ = false;
   base::WeakPtr<QuotaAllocationTask> task =
@@ -458,17 +462,14 @@ TEST_F(BlobMemoryControllerTest, FileRequest) {
 
   // Do the work to populate the file.
   EXPECT_EQ(1u, files_created_.size());
-  EXPECT_TRUE(
-      builder.PopulateFutureFile(0, std::move(files_created_[0].file_reference),
-                                 files_created_[0].last_modified));
+  EXPECT_TRUE(future_file.Populate(std::move(files_created_[0].file_reference),
+                                   files_created_[0].last_modified));
   base::ThreadRestrictions::SetIOAllowed(true);
   files_created_.clear();
   base::ThreadRestrictions::SetIOAllowed(false);
-  EXPECT_EQ(DataElement::TYPE_FILE, items[0]->item()->type());
-  EXPECT_FALSE(
-      BlobDataBuilder::IsFutureFileItem(items[0]->item()->data_element()));
+  EXPECT_EQ(BlobDataItem::Type::kFile, items[0]->item()->type());
+  EXPECT_FALSE(items[0]->item()->IsFutureFileItem());
 
-  builder.Clear();
   items.clear();
   // Run cleanup tasks from the ShareableFileReferences.
   base::RunLoop().RunUntilIdle();
@@ -536,9 +537,9 @@ TEST_F(BlobMemoryControllerTest, MultipleFilesPaged) {
   // then add the last item to trigger the paging.
 
   BlobDataBuilder builder1(kId1);
-  builder1.AppendFutureData(kSize1);
+  BlobDataBuilder::FutureData future_data1 = builder1.AppendFutureData(kSize1);
   BlobDataBuilder builder2(kId2);
-  builder2.AppendFutureData(kSize2);
+  BlobDataBuilder::FutureData future_data2 = builder2.AppendFutureData(kSize2);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> items1 =
       CreateSharedDataItems(builder1);
@@ -571,9 +572,9 @@ TEST_F(BlobMemoryControllerTest, MultipleFilesPaged) {
   EXPECT_FALSE(file_runner_->HasPendingTask());
 
   // Add our original item as populated so it's paged to disk.
-  items1[0]->item()->data_element_ptr()->SetToBytes(kData1, kSize1);
+  future_data1.Populate(base::make_span(kData1, kSize1));
   items1[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
-  items2[0]->item()->data_element_ptr()->SetToBytes(kData2, kSize2);
+  future_data2.Populate(base::make_span(kData2, kSize2));
   items2[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> both_items = {items1[0],
@@ -586,8 +587,8 @@ TEST_F(BlobMemoryControllerTest, MultipleFilesPaged) {
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(memory_quota_result_);
   EXPECT_EQ(ItemState::QUOTA_GRANTED, items3[0]->state());
-  EXPECT_EQ(DataElement::TYPE_FILE, items1[0]->item()->type());
-  EXPECT_EQ(DataElement::TYPE_FILE, items2[0]->item()->type());
+  EXPECT_EQ(BlobDataItem::Type::kFile, items1[0]->item()->type());
+  EXPECT_EQ(BlobDataItem::Type::kFile, items2[0]->item()->type());
   EXPECT_NE(items1[0]->item()->path(), items2[0]->item()->path());
   EXPECT_EQ(kSize3, controller.memory_usage());
   EXPECT_EQ(kSize1 + kSize2, controller.disk_usage());
@@ -801,7 +802,8 @@ TEST_F(BlobMemoryControllerTest, DisableDiskWithFileAndMemoryPending) {
 
   // Add first memory item to fill up some memory quota.
   BlobDataBuilder builder(kFirstMemoryId);
-  builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
+  BlobDataBuilder::FutureData future_data =
+      builder.AppendFutureData(kTestBlobStorageMaxBlobMemorySize);
 
   std::vector<scoped_refptr<ShareableBlobDataItem>> items =
       CreateSharedDataItems(builder);
@@ -822,8 +824,7 @@ TEST_F(BlobMemoryControllerTest, DisableDiskWithFileAndMemoryPending) {
   EXPECT_EQ(0u, controller.disk_usage());
 
   // Add our original item as populated so we start paging it to disk.
-  items[0]->item()->data_element_ptr()->SetToBytes(kDataMemoryData,
-                                                   kFirstMemorySize);
+  future_data.Populate(base::make_span(kDataMemoryData, kFirstMemorySize));
   items[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
   controller.NotifyMemoryItemsUsed(items);
 
@@ -1167,6 +1168,17 @@ TEST_F(BlobMemoryControllerTest, OnMemoryPressure) {
   EXPECT_EQ(1u, controller.memory_usage());
   EXPECT_EQ(size_to_load - 1, controller.disk_usage());
   return;
+}
+
+TEST_F(BlobMemoryControllerTest, LowMemoryDevice) {
+  BlobMemoryController controller(temp_dir_.GetPath(), nullptr);
+  // Make 1% of physical memory size just less than min_page_file_size
+  controller.set_amount_of_physical_memory_for_testing(
+      controller.limits().min_page_file_size * 99);
+  base::RunLoop loop;
+  controller.CallWhenStorageLimitsAreKnown(loop.QuitClosure());
+  loop.Run();
+  EXPECT_TRUE(controller.limits().IsValid());
 }
 
 }  // namespace storage

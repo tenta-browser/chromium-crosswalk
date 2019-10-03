@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -19,7 +20,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_client.h"
@@ -73,9 +73,9 @@ constexpr char kImeOptionIsNotSupported[] =
 constexpr char kImeWindowUnsupportedPlatform[] =
     "The \"ime\" option can only be used on ChromeOS.";
 #else
-constexpr char kImeWindowMustBeImeWindowOrPanel[] =
-    "IME extensions must create ime window ( with \"ime: true\" and "
-    "\"frame: 'none'\") or panel window (with \"type: panel\").";
+constexpr char kImeWindowMustBeImeWindow[] =
+    "IME extensions must create an IME window ( with \"ime: true\" and "
+    "\"frame: 'none'\"). Panels are no longer supported for IME extensions.";
 #endif
 constexpr char kShowInShelfWindowKeyNotSet[] =
     "The \"showInShelf\" option requires the \"id\" option to be set.";
@@ -175,10 +175,10 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
       create_params.window_key = *options->id;
 
       if (options->singleton && *options->singleton == false) {
-        WriteToConsole(
-          content::CONSOLE_MESSAGE_LEVEL_WARNING,
-          "The 'singleton' option in chrome.apps.window.create() is deprecated!"
-          " Change your code to no longer rely on this.");
+        WriteToConsole(blink::mojom::ConsoleMessageLevel::kWarning,
+                       "The 'singleton' option in chrome.apps.window.create() "
+                       "is deprecated!"
+                       " Change your code to no longer rely on this.");
       }
 
       if (!options->singleton || *options->singleton) {
@@ -190,8 +190,7 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
           content::RenderFrameHost* existing_frame =
               existing_window->web_contents()->GetMainFrame();
           int frame_id = MSG_ROUTING_NONE;
-          if (render_frame_host()->GetProcess()->GetID() ==
-              existing_frame->GetProcess()->GetID()) {
+          if (source_process_id() == existing_frame->GetProcess()->GetID()) {
             frame_id = existing_frame->GetRoutingID();
           }
 
@@ -207,7 +206,17 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
           result->SetInteger("frameId", frame_id);
           existing_window->GetSerializedState(result.get());
           result->SetBoolean("existingWindow", true);
-          return RespondNow(OneArgument(std::move(result)));
+          // We should not return the window until that window is properly
+          // initialized. Hence, adding a callback for window first navigation
+          // completion.
+          if (existing_window->DidFinishFirstNavigation()) 
+            return RespondNow(OneArgument(std::move(result)));
+          
+          existing_window->AddOnDidFinishFirstNavigationCallback(
+            base::BindOnce(&AppWindowCreateFunction::
+                           OnAppWindowFinishedFirstNavigationOrClosed,
+                           this, OneArgument(std::move(result))));
+          return RespondLater();
         }
       }
     }
@@ -217,13 +226,8 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
       return RespondNow(Error(error));
 
     if (options->type == app_window::WINDOW_TYPE_PANEL) {
-#if defined(OS_CHROMEOS)
-      // Panels for v2 apps are only supported on Chrome OS.
-      create_params.window_type = AppWindow::WINDOW_TYPE_PANEL;
-#else
-      WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_WARNING,
-                     "Panels are not supported on this platform");
-#endif
+      WriteToConsole(blink::mojom::ConsoleMessageLevel::kWarning,
+                     "Panels are no longer supported.");
     }
 
     if (!GetFrameOptions(*options, &create_params, &error))
@@ -244,15 +248,13 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
           Error(app_window_constants::kImeWindowUnsupportedPlatform));
 #else
       // IME extensions must create ime window (with "ime: true" and
-      // "frame: none") or panel window (with "type: panel").
+      // "frame: none").
       if (options->ime.get() && *options->ime.get() &&
           create_params.frame == AppWindow::FRAME_NONE) {
         create_params.is_ime_window = true;
-      } else if (options->type == app_window::WINDOW_TYPE_PANEL) {
-        create_params.window_type = AppWindow::WINDOW_TYPE_PANEL;
       } else {
         return RespondNow(
-            Error(app_window_constants::kImeWindowMustBeImeWindowOrPanel));
+            Error(app_window_constants::kImeWindowMustBeImeWindow));
       }
 #endif  // OS_CHROMEOS
     } else {
@@ -281,8 +283,8 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
         "0F585FB1D0FDFBEBCE1FEB5E9DFFB6DA476B8C9B"
       };
       if (AppWindowClient::Get()->IsCurrentChannelOlderThanDev() &&
-          !SimpleFeature::IsIdInArray(
-              extension_id(), kWhitelist, arraysize(kWhitelist))) {
+          !SimpleFeature::IsIdInArray(extension_id(), kWhitelist,
+                                      base::size(kWhitelist))) {
         return RespondNow(
             Error(app_window_constants::kAlphaEnabledWrongChannel));
       }
@@ -347,21 +349,19 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
       }
     }
 
-    if (options->type != app_window::WINDOW_TYPE_PANEL) {
-      switch (options->state) {
-        case app_window::STATE_NONE:
-        case app_window::STATE_NORMAL:
-          break;
-        case app_window::STATE_FULLSCREEN:
-          create_params.state = ui::SHOW_STATE_FULLSCREEN;
-          break;
-        case app_window::STATE_MAXIMIZED:
-          create_params.state = ui::SHOW_STATE_MAXIMIZED;
-          break;
-        case app_window::STATE_MINIMIZED:
-          create_params.state = ui::SHOW_STATE_MINIMIZED;
-          break;
-      }
+    switch (options->state) {
+      case app_window::STATE_NONE:
+      case app_window::STATE_NORMAL:
+        break;
+      case app_window::STATE_FULLSCREEN:
+        create_params.state = ui::SHOW_STATE_FULLSCREEN;
+        break;
+      case app_window::STATE_MAXIMIZED:
+        create_params.state = ui::SHOW_STATE_MAXIMIZED;
+        break;
+      case app_window::STATE_MINIMIZED:
+        create_params.state = ui::SHOW_STATE_MINIMIZED;
+        break;
     }
   }
 
@@ -383,8 +383,7 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
     create_params.show_on_lock_screen = true;
   }
 
-  create_params.creator_process_id =
-      render_frame_host()->GetProcess()->GetID();
+  create_params.creator_process_id = source_process_id();
 
   AppWindow* app_window = nullptr;
   if (action_type == api::app_runtime::ACTION_TYPE_NONE) {
@@ -431,26 +430,21 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
     return did_respond() ? AlreadyResponded() : RespondLater();
   }
 
-  // PlzNavigate: delay sending the response until the newly created window has
-  // been told to navigate, and blink has been correctly initialized in the
-  // renderer.
-  if (content::IsBrowserSideNavigationEnabled()) {
-    // SetOnFirstCommitOrWindowClosedCallback() will respond asynchronously.
-    app_window->SetOnFirstCommitOrWindowClosedCallback(
-        base::Bind(&AppWindowCreateFunction::
-                       OnAppWindowReadyToCommitFirstNavigationOrClosed,
-                   this, base::Passed(&result_arg)));
-    return RespondLater();
-  }
-  return RespondNow(std::move(result_arg));
+  // Delay sending the response until the newly created window has finished its
+  // navigation or was closed during that process.
+  // AddOnDidFinishFirstNavigationCallback() will respond asynchrously.
+  app_window->AddOnDidFinishFirstNavigationCallback(base::BindOnce(
+      &AppWindowCreateFunction::OnAppWindowFinishedFirstNavigationOrClosed,
+      this, std::move(result_arg)));
+  return RespondLater();
 }
 
-void AppWindowCreateFunction::OnAppWindowReadyToCommitFirstNavigationOrClosed(
+void AppWindowCreateFunction::OnAppWindowFinishedFirstNavigationOrClosed(
     ResponseValue result_arg,
-    bool ready_to_commit) {
+    bool did_finish) {
   DCHECK(!did_respond());
 
-  if (!ready_to_commit) {
+  if (!did_finish) {
     Respond(Error(app_window_constants::kPrematureWindowClose));
     return;
   }

@@ -68,7 +68,7 @@ class OmniboxController : public AutocompleteControllerDelegate {
 
  private:
   // Stores the bitmap in the OmniboxPopupModel.
-  void SetAnswerBitmap(const SkBitmap& bitmap);
+  void SetRichSuggestionBitmap(int result_index, const SkBitmap& bitmap);
 
   // Weak, it owns us.
   // TODO(beaudoin): Consider defining a delegate to ease unit testing.
@@ -86,7 +86,7 @@ class OmniboxController : public AutocompleteControllerDelegate {
   // some time to extract these fields and use a tighter structure here.
   AutocompleteMatch current_match_;
 
-  base::WeakPtrFactory<OmniboxController> weak_ptr_factory_;
+  base::WeakPtrFactory<OmniboxController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxController);
 };

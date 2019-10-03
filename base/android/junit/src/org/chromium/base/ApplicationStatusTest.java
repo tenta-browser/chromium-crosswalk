@@ -14,7 +14,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
@@ -23,11 +22,11 @@ import org.robolectric.annotation.Implements;
 import org.robolectric.shadows.ShadowActivity;
 import org.robolectric.shadows.multidex.ShadowMultiDex;
 
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 
 /** Unit tests for {@link ApplicationStatus}. */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE,
         shadows = {ApplicationStatusTest.TrackingShadowActivity.class, ShadowMultiDex.class})
 public class ApplicationStatusTest {
     /** Shadow that tracks calls to onWindowFocusChanged and dispatchKeyEvent. */
@@ -51,8 +50,6 @@ public class ApplicationStatusTest {
 
     @Test
     public void testWindowsFocusChanged() throws Exception {
-        ApplicationStatus.initialize(RuntimeEnvironment.application);
-
         ApplicationStatus.WindowFocusChangedListener mock =
                 mock(ApplicationStatus.WindowFocusChangedListener.class);
         ApplicationStatus.registerWindowFocusChangedListener(mock);

@@ -14,13 +14,21 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "components/sync_bookmarks/bookmark_sync_service.h"
 #include "ios/chrome/browser/favicon/favicon_service_factory.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
 
-BookmarkClientImpl::BookmarkClientImpl(ios::ChromeBrowserState* browser_state)
-    : browser_state_(browser_state) {}
+BookmarkClientImpl::BookmarkClientImpl(
+    ios::ChromeBrowserState* browser_state,
+    sync_bookmarks::BookmarkSyncService* bookmark_sync_service)
+    : browser_state_(browser_state),
+      bookmark_sync_service_(bookmark_sync_service) {}
 
 BookmarkClientImpl::~BookmarkClientImpl() {}
+
+void BookmarkClientImpl::Init(bookmarks::BookmarkModel* model) {
+  model_ = model;
+}
 
 bool BookmarkClientImpl::PreferTouchIcon() {
   return true;
@@ -30,12 +38,12 @@ base::CancelableTaskTracker::TaskId
 BookmarkClientImpl::GetFaviconImageForPageURL(
     const GURL& page_url,
     favicon_base::IconType type,
-    const favicon_base::FaviconImageCallback& callback,
+    favicon_base::FaviconImageCallback callback,
     base::CancelableTaskTracker* tracker) {
   return favicon::GetFaviconImageForPageURL(
       ios::FaviconServiceFactory::GetForBrowserState(
           browser_state_, ServiceAccessType::EXPLICIT_ACCESS),
-      page_url, type, callback, tracker);
+      page_url, type, std::move(callback), tracker);
 }
 
 bool BookmarkClientImpl::SupportsTypedCountForUrls() {
@@ -72,8 +80,9 @@ void BookmarkClientImpl::RecordAction(const base::UserMetricsAction& action) {
   base::RecordAction(action);
 }
 
-bookmarks::LoadExtraCallback BookmarkClientImpl::GetLoadExtraNodesCallback() {
-  return bookmarks::LoadExtraCallback();
+bookmarks::LoadManagedNodeCallback
+BookmarkClientImpl::GetLoadManagedNodeCallback() {
+  return bookmarks::LoadManagedNodeCallback();
 }
 
 bool BookmarkClientImpl::CanSetPermanentNodeTitle(
@@ -88,4 +97,15 @@ bool BookmarkClientImpl::CanSyncNode(const bookmarks::BookmarkNode* node) {
 bool BookmarkClientImpl::CanBeEditedByUser(
     const bookmarks::BookmarkNode* node) {
   return true;
+}
+
+std::string BookmarkClientImpl::EncodeBookmarkSyncMetadata() {
+  return bookmark_sync_service_->EncodeBookmarkSyncMetadata();
+}
+
+void BookmarkClientImpl::DecodeBookmarkSyncMetadata(
+    const std::string& metadata_str,
+    const base::RepeatingClosure& schedule_save_closure) {
+  bookmark_sync_service_->DecodeBookmarkSyncMetadata(
+      metadata_str, schedule_save_closure, model_);
 }

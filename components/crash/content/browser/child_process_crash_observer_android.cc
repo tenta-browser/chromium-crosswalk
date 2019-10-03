@@ -4,52 +4,45 @@
 
 #include "components/crash/content/browser/child_process_crash_observer_android.h"
 
-#include <utility>
-
+#include "base/android/jni_android.h"
 #include "base/bind.h"
-#include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "components/crash/content/app/breakpad_linux.h"
-#include "components/crash/content/browser/crash_dump_manager_android.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "base/threading/scoped_blocking_call.h"
+#include "components/crash/android/jni_headers/ChildProcessCrashObserver_jni.h"
+#include "components/crash/content/browser/crash_metrics_reporter_android.h"
 
-namespace breakpad {
+namespace crash_reporter {
 
-ChildProcessCrashObserver::ChildProcessCrashObserver(
-    const base::FilePath crash_dump_dir,
-    int descriptor_id)
-    : crash_dump_dir_(crash_dump_dir), descriptor_id_(descriptor_id) {}
-
-ChildProcessCrashObserver::~ChildProcessCrashObserver() {}
-
-void ChildProcessCrashObserver::OnChildStart(
-    int process_host_id,
-    content::PosixFileDescriptorInfo* mappings) {
-  if (!breakpad::IsCrashReporterEnabled())
-    return;
-
-  base::ScopedFD file(
-      CrashDumpManager::GetInstance()->CreateMinidumpFileForChild(
-          process_host_id));
-  if (file.is_valid())
-    mappings->Transfer(descriptor_id_, std::move(file));
+ChildProcessCrashObserver::ChildProcessCrashObserver() {
+  task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
 }
+
+ChildProcessCrashObserver::~ChildProcessCrashObserver() = default;
 
 void ChildProcessCrashObserver::OnChildExit(
-    int process_host_id,
-    base::ProcessHandle pid,
-    content::ProcessType process_type,
-    base::TerminationStatus termination_status,
-    base::android::ApplicationState app_state) {
-  // This might be called twice for a given child process, with a
-  // NOTIFICATION_RENDERER_PROCESS_TERMINATED and then with
-  // NOTIFICATION_RENDERER_PROCESS_CLOSED.
-
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&CrashDumpManager::ProcessMinidumpFileFromChild,
-                 base::Unretained(CrashDumpManager::GetInstance()),
-                 crash_dump_dir_, process_host_id, process_type,
-                 termination_status, app_state));
+    const ChildExitObserver::TerminationInfo& info) {
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&ChildProcessCrashObserver::OnChildExitImpl,
+                                base::Unretained(this), info));
 }
 
-}  // namespace breakpad
+void ChildProcessCrashObserver::OnChildExitImpl(
+    const ChildExitObserver::TerminationInfo& info) {
+  crash_reporter::CrashMetricsReporter::GetInstance()->ChildProcessExited(info);
+
+  if (!info.is_crashed()) {
+    return;
+  }
+
+  base::ScopedBlockingCall sbc(FROM_HERE, base::BlockingType::WILL_BLOCK);
+
+  // Hop over to Java to attempt to attach the logcat to the crash. This may
+  // fail, which is ok -- if it does, the crash will still be uploaded on the
+  // next browser start.
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_ChildProcessCrashObserver_childCrashed(env, info.pid);
+}
+
+}  // namespace crash_reporter

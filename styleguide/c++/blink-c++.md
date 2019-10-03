@@ -8,71 +8,51 @@ differs from Google style.
 
 [TOC]
 
-## Use references for all non-null pointer arguments
-Pointer arguments that can never be null should be passed as a reference, even
-if this results in a mutable reference argument.
+## May use mutable reference arguments
 
-> Note: Even though Google style prohibits mutable reference arguments, Blink
-style explicitly permits their use.
+Mutable reference arguments are permitted in Blink, in contrast to Google style.
 
-**Good:**
+> Note: This rule is under [discussion](https://groups.google.com/a/chromium.org/d/msg/blink-dev/O7R4YwyPIHc/mJyEyJs-EAAJ).
+
+**OK:**
 ```c++
-// Passed by mutable reference since |frame| is assumed to be non-null.
+// May be passed by mutable reference since |frame| is assumed to be non-null.
 FrameLoader::FrameLoader(LocalFrame& frame)
     : frame_(&frame),
       progress_tracker_(ProgressTracker::Create(frame)) {
   // ...
 }
-
-// Optional arguments should still be passed by pointer.
-void LocalFrame::SetDOMWindow(LocalDOMWindow* dom_window) {
-  if (dom_window)
-    GetScriptController().ClearWindowProxy();
-
-  if (this->DomWindow())
-    this->DomWindow()->Reset();
-  dom_window_ = dom_window;
-}
 ```
 
-**Bad:**
-```c++
-// Since the constructor assumes that |frame| is never null, it should be
-// passed as a mutable reference.
-FrameLoader::FrameLoader(LocalFrame* frame)
-    : frame_(frame),
-      progress_tracker_(ProgressTracker::Create(frame)) {
-  DCHECK(frame_);
-  // ...
-}
-```
+## Prefer WTF types over STL and base types
 
-## Use Filename_h as the header include guard
-
-Header include guards in Blink should match the filename exactly, replacing the
-“.” with a “\_”.
+See [Blink readme](../../third_party/blink/renderer/README.md#Type-dependencies)
+for more details on Blink directories and their type usage.
 
 **Good:**
 ```c++
-// third_party/WebKit/Source/core/html/HTMLDocument.h
-#ifndef HTMLDocument_h
-#define HTMLDocument_h
-
-// ...
-
-#endif  // HTMLDocument_h
+  String title;
+  Vector<KURL> urls;
+  HashMap<int, Deque<RefPtr<SecurityOrigin>>> origins;
 ```
 
 **Bad:**
 ```c++
-// third_party/WebKit/Source/core/html/HTMLDocument.h
-#ifndef THIRD_PARTY_WEBKIT_SOURCE_CORE_HTML_HTMLDOCUMENT_H_
-#define THIRD_PARTY_WEBKIT_SOURCE_CORE_HTML_HTMLDOCUMENT_H_
-
-// ...
-
-#endif  // THIRD_PARTY_WEBKIT_SOURCE_CORE_HTML_HTMLDOCUMENT_H_
+  std::string title;
+  std::vector<GURL> urls;
+  std::unordered_map<int, std::deque<url::Origin>> origins;
 ```
+
+When interacting with WTF types, use `wtf_size_t` instead of `size_t`.
+
+## Do not use `new` and `delete`
+
+Object lifetime should not be managed using raw `new` and `delete`. Prefer to
+allocate objects instead using `std::make_unique`, `base::MakeRefCounted` or
+`blink::MakeGarbageCollected`, depending on the type, and manage their lifetime
+using appropriate smart pointers and handles (`std::unique_ptr`, `scoped_refptr`
+and strong Blink GC references, respectively). See [How Blink Works](https://docs.google.com/document/d/1aitSOucL0VHZa9Z2vbRJSyAIsAz24kX8LFByQ5xQnUg/edit#heading=h.ekwf97my4bgf)
+for more information.
 
 ## Naming
 
@@ -174,26 +154,29 @@ class RootInlineBox {
 }
 ```
 
-### Leave obvious parameter names out of function declarations
-Leave obvious parameter names out of function declarations. A good rule of
+### May leave obvious parameter names out of function declarations
+[Google C++ Style Guide] allows us to leave parameter names out only if
+the parameter is not used. In Blink, you may leave obvious parameter
+names out of function declarations for historical reason. A good rule of
 thumb is if the parameter type name contains the parameter name (without
 trailing numbers or pluralization), then the parameter name isn’t needed.
-
-`bool`, string, and numerical arguments should usually be named unless the
-meaning is apparent from the function name.
 
 **Good:**
 ```c++
 class Node {
  public:
-  Node(TreeScope*, ConstructionType);
+  Node(TreeScope* tree_scope, ConstructionType construction_type);
+  // You may leave them out like:
+  // Node(TreeScope*, ConstructionType);
 
   // The function name makes the meaning of the parameters clear.
   void SetActive(bool);
   void SetDragged(bool);
   void SetHovered(bool);
 
-  // ...
+  // Parameters are not obvious.
+  DispatchEventResult DispatchDOMActivateEvent(int detail,
+                                               Event& underlying_event);
 };
 ```
 
@@ -201,28 +184,65 @@ class Node {
 ```c++
 class Node {
  public:
-  // Parameter names simply repeat the parameter types.
-  Node(TreeScope* tree_scope, ConstructionType construction_type);
-
-  // Parameter names are redundant with function names.
-  void SetActive(bool is_active);
-  void SetDragged(bool is_dragged);
-  void SetHovered(bool is_hovered);
-
   // ...
+
+  // Parameters are not obvious.
+  DispatchEventResult DispatchDOMActivateEvent(int, Event&);
 };
 ```
 
-## Prefer enums to bools for function parameters
+## Prefer enums or StrongAliases to bare bools for function parameters
 Prefer enums to bools for function parameters if callers are likely to be
 passing constants, since named constants are easier to read at the call site.
-An exception to this rule is a setter function, where the name of the function
-already makes clear what the boolean is.
+Alternatively, you can use base::util::StrongAlias<Tag, bool>. An exception to
+this rule is a setter function, where the name of the function already makes
+clear what the boolean is.
 
 **Good:**
 ```c++
+class FrameLoader {
+public:
+  enum class CloseType {
+    kNotForReload,
+    kForReload,
+  };
+
+  bool ShouldClose(CloseType) {
+    if (type == CloseType::kForReload) {
+      ...
+    } else {
+      DCHECK_EQ(type, CloseType::kNotForReload);
+      ...
+    }
+  }
+};
+
 // An named enum value makes it clear what the parameter is for.
-if (frame_->Loader().ShouldClose(CloseType::kNotForReload)) {
+if (frame_->Loader().ShouldClose(FrameLoader::CloseType::kNotForReload)) {
+  // No need to use enums for boolean setters, since the meaning is clear.
+  frame_->SetIsClosing(true);
+
+  // ...
+```
+
+**Good:**
+```c++
+class FrameLoader {
+public:
+  using ForReload = base::util::StrongAlias<class ForReloadTag, bool>;
+
+  bool ShouldClose(ForReload) {
+    // A StrongAlias<_, bool> can be tested like a bool.
+    if (for_reload) {
+      ...
+    } else {
+      ...
+    }
+  }
+};
+
+// Using a StrongAlias makes it clear what the parameter is for.
+if (frame_->Loader().ShouldClose(FrameLoader::ForReload(false))) {
   // No need to use enums for boolean setters, since the meaning is clear.
   frame_->SetIsClosing(true);
 
@@ -231,6 +251,17 @@ if (frame_->Loader().ShouldClose(CloseType::kNotForReload)) {
 
 **Bad:**
 ```c++
+class FrameLoader {
+public:
+  bool ShouldClose(bool for_reload) {
+    if (for_reload) {
+      ...
+    } else {
+      ...
+    }
+  }
+};
+
 // Not obvious what false means here.
 if (frame_->Loader().ShouldClose(false)) {
   frame_->SetIsClosing(ClosingState::kTrue);

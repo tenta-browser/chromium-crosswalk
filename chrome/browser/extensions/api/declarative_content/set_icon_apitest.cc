@@ -5,11 +5,12 @@
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/extensions/test_extension_dir.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/test/extension_test_message_listener.h"
+#include "extensions/test/test_extension_dir.h"
 #include "ui/gfx/image/image.h"
 
 namespace extensions {
@@ -74,10 +75,13 @@ IN_PROC_BROWSER_TEST_F(SetIconAPITest, Overview) {
   ExtensionTestMessageListener ready("ready", false);
   const Extension* extension = LoadExtension(ext_dir_.UnpackedPath());
   ASSERT_TRUE(extension);
-  const ExtensionAction* page_action =
-      ExtensionActionManager::Get(browser()->profile())->
-      GetPageAction(*extension);
-  ASSERT_TRUE(page_action);
+  // Wait for declarative rules to be set up.
+  content::BrowserContext::GetDefaultStoragePartition(profile())
+      ->FlushNetworkInterfaceForTesting();
+  const ExtensionAction* action =
+      ExtensionActionManager::Get(browser()->profile())
+          ->GetExtensionAction(*extension);
+  ASSERT_TRUE(action);
 
   ASSERT_TRUE(ready.WaitUntilSatisfied());
   content::WebContents* const tab =
@@ -85,13 +89,13 @@ IN_PROC_BROWSER_TEST_F(SetIconAPITest, Overview) {
   const int tab_id = ExtensionTabUtil::GetTabId(tab);
 
   // There should be no declarative icon until we navigate to a matched page.
-  EXPECT_TRUE(page_action->GetDeclarativeIcon(tab_id).IsEmpty());
+  EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
   NavigateInRenderer(tab, GURL("http://test1/"));
-  EXPECT_FALSE(page_action->GetDeclarativeIcon(tab_id).IsEmpty());
+  EXPECT_FALSE(action->GetDeclarativeIcon(tab_id).IsEmpty());
 
   // Navigating to an unmatched page should reset the icon.
   NavigateInRenderer(tab, GURL("http://test2/"));
-  EXPECT_TRUE(page_action->GetDeclarativeIcon(tab_id).IsEmpty());
+  EXPECT_TRUE(action->GetDeclarativeIcon(tab_id).IsEmpty());
 }
 }  // namespace
 }  // namespace extensions

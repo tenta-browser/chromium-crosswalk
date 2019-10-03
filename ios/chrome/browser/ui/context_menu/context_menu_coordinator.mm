@@ -6,11 +6,10 @@
 
 #import <UIKit/UIKit.h>
 
-#import "base/mac/scoped_nsobject.h"
+#include "base/logging.h"
 #import "ios/chrome/browser/ui/alert_coordinator/action_sheet_coordinator.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/strings/grit/ui_strings.h"
-#import "ios/web/public/web_state/context_menu_params.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -18,24 +17,24 @@
 
 @interface ContextMenuCoordinator () {
   // Coordinator handling the alert.
-  base::scoped_nsobject<ActionSheetCoordinator> _alertCoordinator;
+  ActionSheetCoordinator* _alertCoordinator;
 }
 @end
 
 @implementation ContextMenuCoordinator
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                    params:
-                                        (const web::ContextMenuParams&)params {
-  self = [super initWithBaseViewController:viewController];
+                                     title:(NSString*)title
+                                    inView:(UIView*)view
+                                atLocation:(CGPoint)location {
+  self = [super initWithBaseViewController:viewController browserState:nullptr];
   if (self) {
-    CGRect rect = CGRectMake(params.location.x, params.location.y, 1.0, 1.0);
-    _alertCoordinator.reset([[ActionSheetCoordinator alloc]
+    _alertCoordinator = [[ActionSheetCoordinator alloc]
         initWithBaseViewController:viewController
-                             title:params.menu_title
+                             title:title
                            message:nil
-                              rect:rect
-                              view:params.view]);
+                              rect:CGRectMake(location.x, location.y, 1.0, 1.0)
+                              view:view];
   }
   return self;
 }

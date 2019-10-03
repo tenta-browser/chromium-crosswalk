@@ -19,7 +19,7 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
 
 using content::WebContents;
 
@@ -34,7 +34,8 @@ class RegisterProtocolHandlerBrowserTest : public InProcessBrowserTest {
     params.unfiltered_link_url = url;
     WebContents* web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();
-    params.page_url = web_contents->GetController().GetActiveEntry()->GetURL();
+    params.page_url =
+        web_contents->GetController().GetLastCommittedEntry()->GetURL();
 #if defined(OS_MACOSX)
     params.writing_direction_default = 0;
     params.writing_direction_left_to_right = 0;
@@ -119,6 +120,14 @@ IN_PROC_BROWSER_TEST_F(RegisterProtocolHandlerBrowserTest, CustomHandler) {
   AddProtocolHandler("foo", handler_url);
 
   ui_test_utils::NavigateToURL(browser(), GURL("foo:test"));
+
+  ASSERT_EQ(handler_url,
+            browser()->tab_strip_model()->GetActiveWebContents()->GetURL());
+
+  // Also check redirects.
+  GURL redirect_url =
+      embedded_test_server()->GetURL("/server-redirect?foo:test");
+  ui_test_utils::NavigateToURL(browser(), redirect_url);
 
   ASSERT_EQ(handler_url,
             browser()->tab_strip_model()->GetActiveWebContents()->GetURL());

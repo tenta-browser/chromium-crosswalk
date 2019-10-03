@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/environment.h"
-#include "base/memory/ptr_util.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/username.h"
 #include "remoting/protocol/channel_authenticator.h"
@@ -29,9 +28,9 @@ class PamAuthorizer : public protocol::Authenticator {
   State state() const override;
   bool started() const override;
   RejectionReason rejection_reason() const override;
-  void ProcessMessage(const buzz::XmlElement* message,
+  void ProcessMessage(const jingle_xmpp::XmlElement* message,
                       const base::Closure& resume_callback) override;
-  std::unique_ptr<buzz::XmlElement> GetNextMessage() override;
+  std::unique_ptr<jingle_xmpp::XmlElement> GetNextMessage() override;
   const std::string& GetAuthKey() const override;
   std::unique_ptr<protocol::ChannelAuthenticator> CreateChannelAuthenticator()
       const override;
@@ -79,7 +78,7 @@ PamAuthorizer::rejection_reason() const {
   }
 }
 
-void PamAuthorizer::ProcessMessage(const buzz::XmlElement* message,
+void PamAuthorizer::ProcessMessage(const jingle_xmpp::XmlElement* message,
                                    const base::Closure& resume_callback) {
   // |underlying_| is owned, so Unretained() is safe here.
   underlying_->ProcessMessage(message, base::Bind(
@@ -92,8 +91,8 @@ void PamAuthorizer::OnMessageProcessed(const base::Closure& resume_callback) {
   resume_callback.Run();
 }
 
-std::unique_ptr<buzz::XmlElement> PamAuthorizer::GetNextMessage() {
-  std::unique_ptr<buzz::XmlElement> result(underlying_->GetNextMessage());
+std::unique_ptr<jingle_xmpp::XmlElement> PamAuthorizer::GetNextMessage() {
+  std::unique_ptr<jingle_xmpp::XmlElement> result(underlying_->GetNextMessage());
   MaybeCheckLocalLogin();
   return result;
 }
@@ -173,7 +172,7 @@ PamAuthorizationFactory::CreateAuthenticator(const std::string& local_jid,
                                              const std::string& remote_jid) {
   std::unique_ptr<protocol::Authenticator> authenticator(
       underlying_->CreateAuthenticator(local_jid, remote_jid));
-  return base::MakeUnique<PamAuthorizer>(std::move(authenticator));
+  return std::make_unique<PamAuthorizer>(std::move(authenticator));
 }
 
 }  // namespace remoting

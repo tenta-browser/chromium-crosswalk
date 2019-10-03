@@ -6,126 +6,66 @@
 
 #import <EarlGrey/EarlGrey.h>
 
-#include "base/strings/sys_string_conversions.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/earl_grey/chrome_matchers.h"
-#import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
+#import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils_app_interface.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-using chrome_test_util::PrimarySignInButton;
-using chrome_test_util::SecondarySignInButton;
+#if defined(CHROME_EARL_GREY_2)
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(SigninEarlGreyUtilsAppInterface)
+#endif  // defined(CHROME_EARL_GREY_2)
 
-@implementation SigninEarlGreyUtils
+@implementation SigninEarlGreyUtilsImpl
 
-+ (void)checkSigninPromoVisibleWithMode:(SigninPromoViewMode)mode {
-  [self checkSigninPromoVisibleWithMode:mode closeButton:YES];
-}
-
-+ (void)checkSigninPromoVisibleWithMode:(SigninPromoViewMode)mode
-                            closeButton:(BOOL)closeButton {
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(
-                                   grey_accessibilityID(kSigninPromoViewId),
-                                   grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_notNil()];
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(PrimarySignInButton(),
-                                          grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_notNil()];
-  switch (mode) {
-    case SigninPromoViewModeColdState:
-      [[EarlGrey
-          selectElementWithMatcher:grey_allOf(SecondarySignInButton(),
-                                              grey_sufficientlyVisible(), nil)]
-          assertWithMatcher:grey_nil()];
-      break;
-    case SigninPromoViewModeWarmState:
-      [[EarlGrey
-          selectElementWithMatcher:grey_allOf(SecondarySignInButton(),
-                                              grey_sufficientlyVisible(), nil)]
-          assertWithMatcher:grey_notNil()];
-      break;
-  }
-  if (closeButton) {
-    [[EarlGrey
-        selectElementWithMatcher:grey_allOf(grey_accessibilityID(
-                                                kSigninPromoCloseButtonId),
-                                            grey_sufficientlyVisible(), nil)]
-        assertWithMatcher:grey_notNil()];
-  }
-}
-
-+ (void)checkSigninPromoNotVisible {
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(
-                                   grey_accessibilityID(kSigninPromoViewId),
-                                   grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_nil()];
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(PrimarySignInButton(),
-                                          grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_nil()];
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(SecondarySignInButton(),
-                                          grey_sufficientlyVisible(), nil)]
-      assertWithMatcher:grey_nil()];
-}
-
-+ (ChromeIdentity*)fakeIdentity1 {
+- (ChromeIdentity*)fakeIdentity1 {
   return [FakeChromeIdentity identityWithEmail:@"foo1@gmail.com"
                                         gaiaID:@"foo1ID"
                                           name:@"Fake Foo 1"];
 }
 
-+ (ChromeIdentity*)fakeIdentity2 {
+- (ChromeIdentity*)fakeIdentity2 {
   return [FakeChromeIdentity identityWithEmail:@"foo2@gmail.com"
                                         gaiaID:@"foo2ID"
                                           name:@"Fake Foo 2"];
 }
 
-+ (ChromeIdentity*)fakeManagedIdentity {
+- (ChromeIdentity*)fakeManagedIdentity {
   return [FakeChromeIdentity identityWithEmail:@"foo@managed.com"
                                         gaiaID:@"fooManagedID"
-                                          name:@"Fake Managed"];
+                                          name:@"Fake Managed"
+                                  hostedDomain:@"managed.com"];
 }
 
-+ (void)assertSignedInWithIdentity:(ChromeIdentity*)identity {
-  GREYAssertNotNil(identity, @"Need to give an identity");
+- (void)checkSignedInWithIdentity:(ChromeIdentity*)identity {
+  BOOL identityIsNonNil = identity != nil;
+  EG_TEST_HELPER_ASSERT_TRUE(identityIsNonNil, @"Need to give an identity");
+
+  // Required to avoid any problem since the following test is not dependant
+  // to UI, and the previous action has to be totally finished before going
+  // through the assert.
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
+  NSString* primaryAccountGaiaID =
+      [SignInEarlGreyUtilsAppInterface primaryAccountGaiaID];
+
+  NSString* errorStr = [NSString
+      stringWithFormat:@"Unexpected Gaia ID of the signed in user [expected = "
+                       @"\"%@\", actual = \"%@\"]",
+                       identity.gaiaID, primaryAccountGaiaID];
+  EG_TEST_HELPER_ASSERT_TRUE(
+      [identity.gaiaID isEqualToString:primaryAccountGaiaID], errorStr);
+}
+
+- (void)checkSignedOut {
   // Required to avoid any problem since the following test is not dependant to
   // UI, and the previous action has to be totally finished before going through
   // the assert.
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
-  ios::ChromeBrowserState* browser_state =
-      chrome_test_util::GetOriginalBrowserState();
-  AccountInfo info =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state)
-          ->GetAuthenticatedAccountInfo();
-
-  GREYAssertEqual(base::SysNSStringToUTF8(identity.gaiaID), info.gaia,
-                  @"Unexpected Gaia ID of the signed in user [expected = "
-                  @"\"%@\", actual = \"%s\"]",
-                  identity.gaiaID, info.gaia.c_str());
-}
-
-+ (void)assertSignedOut {
-  // Required to avoid any problem since the following test is not dependant to
-  // UI, and the previous action has to be totally finished before going through
-  // the assert.
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-
-  ios::ChromeBrowserState* browser_state =
-      chrome_test_util::GetOriginalBrowserState();
-  GREYAssertFalse(ios::SigninManagerFactory::GetForBrowserState(browser_state)
-                      ->IsAuthenticated(),
-                  @"Unexpected signed in user");
+  EG_TEST_HELPER_ASSERT_TRUE([SignInEarlGreyUtilsAppInterface isSignedOut],
+                             @"Unexpected signed in user");
 }
 
 @end

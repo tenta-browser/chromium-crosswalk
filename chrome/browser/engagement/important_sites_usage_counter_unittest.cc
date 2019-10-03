@@ -4,13 +4,16 @@
 
 #include "chrome/browser/engagement/important_sites_usage_counter.h"
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/task/post_task.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/test/base/testing_profile.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -31,15 +34,19 @@ class ImportantSitesUsageCounterTest : public testing::Test {
     run_loop_.reset(new base::RunLoop());
   }
 
-  void TearDown() override { content::RunAllTasksUntilIdle(); }
+  void TearDown() override {
+    // Release the quota manager and wait for the database to be closed.
+    quota_manager_.reset();
+    content::RunAllTasksUntilIdle();
+  }
 
   TestingProfile* profile() { return &profile_; }
 
   QuotaManager* CreateQuotaManager() {
     quota_manager_ = new QuotaManager(
         false, temp_dir_.GetPath(),
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get(), nullptr,
-        storage::GetQuotaSettingsFunc());
+        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}).get(),
+        nullptr, storage::GetQuotaSettingsFunc());
     return quota_manager_.get();
   }
 
@@ -99,10 +106,10 @@ TEST_F(ImportantSitesUsageCounterTest, PopulateUsage) {
   important_sites.push_back(i2);
 
   const std::vector<content::MockOriginData> origins = {
-      {"http://example.com/", storage::kStorageTypeTemporary, 1},
-      {"https://example.com/", storage::kStorageTypeTemporary, 2},
-      {"https://maps.example.com/", storage::kStorageTypeTemporary, 4},
-      {"http://google.com/", storage::kStorageTypePersistent, 8},
+      {"http://example.com/", blink::mojom::StorageType::kTemporary, 1},
+      {"https://example.com/", blink::mojom::StorageType::kTemporary, 2},
+      {"https://maps.example.com/", blink::mojom::StorageType::kTemporary, 4},
+      {"http://google.com/", blink::mojom::StorageType::kPersistent, 8},
   };
 
   QuotaManager* quota_manager = CreateQuotaManager();
@@ -119,8 +126,8 @@ TEST_F(ImportantSitesUsageCounterTest, PopulateUsage) {
 
   ImportantSitesUsageCounter::GetUsage(
       important_sites, quota_manager, dom_storage_context,
-      base::Bind(&ImportantSitesUsageCounterTest::FetchCompleted,
-                 base::Unretained(this)));
+      base::BindOnce(&ImportantSitesUsageCounterTest::FetchCompleted,
+                     base::Unretained(this)));
   WaitForResult();
 
   EXPECT_EQ(important_sites.size(), domain_info().size());

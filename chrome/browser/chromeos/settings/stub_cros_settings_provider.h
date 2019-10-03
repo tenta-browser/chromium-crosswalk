@@ -6,7 +6,9 @@
 #define CHROME_BROWSER_CHROMEOS_SETTINGS_STUB_CROS_SETTINGS_PROVIDER_H_
 
 #include <string>
+#include <vector>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "chromeos/settings/cros_settings_provider.h"
 #include "components/prefs/pref_value_map.h"
@@ -28,10 +30,19 @@ class StubCrosSettingsProvider : public CrosSettingsProvider {
   void SetTrustedStatus(TrustedStatus status);
   void SetCurrentUserIsOwner(bool owner);
 
- private:
-  // CrosSettingsProvider implementation:
-  void DoSet(const std::string& path, const base::Value& value) override;
+  bool current_user_is_owner() const { return current_user_is_owner_; }
 
+  // Sets in-memory setting at |path| to value |in_value|.
+  void Set(const std::string& path, const base::Value& in_value);
+
+  // Convenience forms of Set(). These methods will replace any existing value
+  // at that |path|, even if it has a different type.
+  void SetBoolean(const std::string& path, bool in_value);
+  void SetInteger(const std::string& path, int in_value);
+  void SetDouble(const std::string& path, double in_value);
+  void SetString(const std::string& path, const std::string& in_value);
+
+ private:
   // Initializes settings to their defaults.
   void SetDefaults();
 
@@ -45,6 +56,9 @@ class StubCrosSettingsProvider : public CrosSettingsProvider {
   bool current_user_is_owner_ = true;
 
   TrustedStatus trusted_status_ = CrosSettingsProvider::TRUSTED;
+
+  // Pending callbacks to invoke when switching away from TEMPORARILY_UNTRUSTED.
+  std::vector<base::Closure> callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(StubCrosSettingsProvider);
 };

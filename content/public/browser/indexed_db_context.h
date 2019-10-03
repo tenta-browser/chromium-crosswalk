@@ -13,39 +13,47 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/indexed_db_info.h"
 
 namespace base {
 class SequencedTaskRunner;
 }
 
+namespace url {
+class Origin;
+}
+
 namespace content {
+
+struct StorageUsageInfo;
 
 // Represents the per-BrowserContext IndexedDB data.
 // Call these methods only via the exposed TaskRunner.
+// Refcounted because this class is used throughout the codebase on different
+// threads.
 class IndexedDBContext : public base::RefCountedThreadSafe<IndexedDBContext> {
  public:
   // Only call the below methods by posting to this TaskRunner.
-  virtual base::SequencedTaskRunner* TaskRunner() const = 0;
+  virtual base::SequencedTaskRunner* TaskRunner() = 0;
 
   // Methods used in response to QuotaManager requests.
-  virtual std::vector<IndexedDBInfo> GetAllOriginsInfo() = 0;
-  virtual int64_t GetOriginDiskUsage(const GURL& origin_url) = 0;
+  virtual std::vector<StorageUsageInfo> GetAllOriginsInfo() = 0;
 
   // Deletes all indexed db files for the given origin.
-  virtual void DeleteForOrigin(const GURL& origin_url) = 0;
+  virtual void DeleteForOrigin(const url::Origin& origin) = 0;
 
   // Copies the indexed db files from this context to another. The
   // indexed db directory in the destination context needs to be empty.
-  virtual void CopyOriginData(const GURL& origin_url,
+  virtual void CopyOriginData(const url::Origin& origin,
                               IndexedDBContext* dest_context) = 0;
 
   // Get the file name of the local storage file for the given origin.
-  virtual base::FilePath GetFilePathForTesting(
-      const GURL& origin_url) const = 0;
+  virtual base::FilePath GetFilePathForTesting(const url::Origin& origin) = 0;
 
   // Forget the origins/sizes read from disk.
   virtual void ResetCachesForTesting() = 0;
+
+  // Disables the exit-time deletion of session-only data.
+  virtual void SetForceKeepSessionState() = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<IndexedDBContext>;

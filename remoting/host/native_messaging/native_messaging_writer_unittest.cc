@@ -48,12 +48,12 @@ TEST_F(NativeMessagingWriterTest, GoodMessage) {
   int read = read_file_.ReadAtCurrentPos(reinterpret_cast<char*>(&length), 4);
   EXPECT_EQ(4, read);
   std::string content(length, '\0');
-  read = read_file_.ReadAtCurrentPos(base::string_as_array(&content), length);
+  read = read_file_.ReadAtCurrentPos(base::data(content), length);
   EXPECT_EQ(static_cast<int>(length), read);
 
   // |content| should now contain serialized |message|.
   std::unique_ptr<base::Value> written_message =
-      base::JSONReader::Read(content);
+      base::JSONReader::ReadDeprecated(content);
   EXPECT_TRUE(message.Equals(written_message.get()));
 
   // Nothing more should have been written. Close the write-end of the pipe,
@@ -80,13 +80,13 @@ TEST_F(NativeMessagingWriterTest, SecondMessage) {
     read = read_file_.ReadAtCurrentPos(reinterpret_cast<char*>(&length), 4);
     EXPECT_EQ(4, read) << "i = " << i;
     content.resize(length);
-    read = read_file_.ReadAtCurrentPos(base::string_as_array(&content), length);
+    read = read_file_.ReadAtCurrentPos(base::data(content), length);
     EXPECT_EQ(static_cast<int>(length), read) << "i = " << i;
   }
 
   // |content| should now contain serialized |message2|.
   std::unique_ptr<base::Value> written_message2 =
-      base::JSONReader::Read(content);
+      base::JSONReader::ReadDeprecated(content);
   EXPECT_TRUE(message2.Equals(written_message2.get()));
 }
 

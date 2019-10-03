@@ -100,7 +100,7 @@ TEST_F(ClipboardAuraTest, WriteToClipboard) {
 
   std::string clipboard_data;
   ui::Clipboard* aura_clipboard = ui::Clipboard::GetForCurrentThread();
-  aura_clipboard->ReadAsciiText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_data);
+  aura_clipboard->ReadAsciiText(ui::ClipboardType::kCopyPaste, &clipboard_data);
 
   EXPECT_EQ(clipboard_data, "Test data.")
       << "InjectClipboardEvent should write to aura clipboard";
@@ -111,7 +111,7 @@ TEST_F(ClipboardAuraTest, MonitorClipboardChanges) {
 
   {
     // |clipboard_writer| will write to the clipboard when it goes out of scope.
-    ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+    ui::ScopedClipboardWriter clipboard_writer(ui::ClipboardType::kCopyPaste);
     clipboard_writer.WriteText(base::UTF8ToUTF16("Test data."));
   }
 
@@ -121,9 +121,10 @@ TEST_F(ClipboardAuraTest, MonitorClipboardChanges) {
 
   base::RunLoop run_loop;
   message_loop_.task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(&ClipboardAuraTest_MonitorClipboardChanges_Test::
-                                StopAndResetClipboard,
-                            base::Unretained(this)),
+      FROM_HERE,
+      base::BindOnce(&ClipboardAuraTest_MonitorClipboardChanges_Test::
+                         StopAndResetClipboard,
+                     base::Unretained(this)),
       TestTimeouts::tiny_timeout());
   message_loop_.task_runner()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());

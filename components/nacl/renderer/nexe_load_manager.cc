@@ -9,6 +9,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/shared_memory_mapping.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
@@ -35,9 +36,9 @@
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/shared_impl/var_tracker.h"
 #include "ppapi/thunk/enter.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "v8/include/v8.h"
 
 namespace nacl {
@@ -54,9 +55,6 @@ const char* const kSrcManifestAttribute = "src";
 // MIME type because the "src" attribute is used to supply us with the resource
 // of that MIME type that we're supposed to display.
 const char* const kNaClManifestAttribute = "nacl";
-// Define an argument name to enable 'dev' interfaces. To make sure it doesn't
-// collide with any user-defined HTML attribute, make the first character '@'.
-const char* const kDevAttribute = "@dev";
 
 const char* const kNaClMIMEType = "application/x-nacl";
 const char* const kPNaClMIMEType = "application/x-pnacl";
@@ -73,7 +71,7 @@ static int GetRoutingID(PP_Instance instance) {
 
 std::string LookupAttribute(const std::map<std::string, std::string>& args,
                             const std::string& key) {
-  std::map<std::string, std::string>::const_iterator it = args.find(key);
+  auto it = args.find(key);
   if (it != args.end())
     return it->second;
   return std::string();
@@ -89,8 +87,7 @@ NexeLoadManager::NexeLoadManager(PP_Instance pp_instance)
       exit_status_(-1),
       nexe_size_(0),
       plugin_instance_(content::PepperPluginInstance::Get(pp_instance)),
-      nonsfi_(false),
-      weak_factory_(this) {
+      nonsfi_(false) {
   set_exit_status(-1);
   SetLastError("");
   HistogramEnumerateOsArch(GetSandboxArch());
@@ -104,8 +101,6 @@ NexeLoadManager::~NexeLoadManager() {
     base::TimeDelta uptime = base::Time::Now() - ready_time_;
     HistogramTimeLarge("NaCl.ModuleUptime.Normal", uptime.InMilliseconds());
   }
-  if (base::SharedMemory::IsHandleValid(crash_info_shmem_handle_))
-    base::SharedMemory::CloseHandle(crash_info_shmem_handle_);
 }
 
 void NexeLoadManager::NexeFileDidOpen(int32_t pp_error,
@@ -263,20 +258,15 @@ void NexeLoadManager::NexeDidCrash() {
   // invocation will just be a no-op, since the entire crash log will
   // have been received and we'll just get an EOF indication.
 
-  base::SharedMemory shmem(crash_info_shmem_handle_, true);
-  if (shmem.Map(kNaClCrashInfoShmemSize)) {
-    uint32_t crash_log_length;
-    // We cast the length value to volatile here to prevent the compiler from
-    // reordering instructions in a way that could introduce a TOCTTOU race.
-    crash_log_length = *(static_cast<volatile uint32_t*>(shmem.memory()));
-    crash_log_length = std::min<uint32_t>(crash_log_length,
-                                          kNaClCrashInfoMaxLogSize);
-
-    std::unique_ptr<char[]> crash_log_data(new char[kNaClCrashInfoShmemSize]);
-    memcpy(crash_log_data.get(),
-           static_cast<char*>(shmem.memory()) + sizeof(uint32_t),
-           crash_log_length);
-    std::string crash_log(crash_log_data.get(), crash_log_length);
+  base::ReadOnlySharedMemoryMapping shmem_mapping =
+      crash_info_shmem_region_.MapAt(0, kNaClCrashInfoShmemSize);
+  if (shmem_mapping.IsValid()) {
+    base::BufferIterator<const uint8_t> buffer =
+        shmem_mapping.GetMemoryAsBufferIterator<uint8_t>();
+    const uint32_t* crash_log_length = buffer.Object<uint32_t>();
+    base::span<const uint8_t> data = buffer.Span<uint8_t>(
+        std::min<uint32_t>(*crash_log_length, kNaClCrashInfoMaxLogSize));
+    std::string crash_log(data.begin(), data.end());
     CopyCrashLogToJsConsole(crash_log);
   }
 }
@@ -413,12 +403,6 @@ void NexeLoadManager::CloseTrustedPluginChannel() {
 
 bool NexeLoadManager::IsPNaCl() const {
   return mime_type_ == kPNaClMIMEType;
-}
-
-bool NexeLoadManager::DevInterfacesEnabled() const {
-  // Look for the developer attribute; if it's present, enable 'dev'
-  // interfaces.
-  return args_.find(kDevAttribute) != args_.end();
 }
 
 void NexeLoadManager::ReportDeadNexe() {

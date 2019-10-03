@@ -3,6 +3,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import print_function
+
 import json
 import os
 import subprocess
@@ -54,7 +56,7 @@ def SetConfigPath(options):
   # Compute the library path name based on the architecture.
   arch = options.arch
   if sysroot and not arch:
-    print "You must specify an architecture via -a if using a sysroot."
+    print("You must specify an architecture via -a if using a sysroot.")
     sys.exit(1)
 
   libdir = sysroot + '/usr/' + options.system_libdir + '/pkgconfig'
@@ -108,7 +110,7 @@ def main():
   # success. This allows us to "kind of emulate" a Linux build from other
   # platforms.
   if "linux" not in sys.platform:
-    print "[[],[],[],[],[]]"
+    print("[[],[],[],[],[]]")
     return 0
 
   parser = OptionParser()
@@ -124,6 +126,8 @@ def main():
                     dest='atleast_version', type='string')
   parser.add_option('--libdir', action='store_true', dest='libdir')
   parser.add_option('--dridriverdir', action='store_true', dest='dridriverdir')
+  parser.add_option('--version-as-components', action='store_true',
+                    dest='version_as_components')
   (options, args) = parser.parse_args()
 
   # Make a list of regular expressions to strip out.
@@ -146,10 +150,21 @@ def main():
     if not subprocess.call([options.pkg_config,
                             "--atleast-version=" + options.atleast_version] +
                             args):
-      print "true"
+      print("true")
     else:
-      print "false"
+      print("false")
     return 0
+
+  if options.version_as_components:
+    cmd = [options.pkg_config, "--modversion"] + args
+    try:
+      version_string = subprocess.check_output(cmd)
+    except:
+      sys.stderr.write('Error from pkg-config.\n')
+      return 1
+    print(json.dumps(list(map(int, version_string.strip().split(".")))))
+    return 0
+
 
   if options.libdir:
     cmd = [options.pkg_config, "--variable=libdir"] + args
@@ -158,7 +173,7 @@ def main():
     try:
       libdir = subprocess.check_output(cmd)
     except:
-      print "Error from pkg-config."
+      print("Error from pkg-config.")
       return 1
     sys.stdout.write(libdir.strip())
     return 0
@@ -170,7 +185,7 @@ def main():
     try:
       dridriverdir = subprocess.check_output(cmd)
     except:
-      print "Error from pkg-config."
+      print("Error from pkg-config.")
       return 1
     sys.stdout.write(dridriverdir.strip())
     return
@@ -199,7 +214,6 @@ def main():
   cflags = []
   libs = []
   lib_dirs = []
-  ldflags = []
 
   for flag in all_flags[:]:
     if len(flag) == 0 or MatchesAnyRegexp(flag, strip_out):
@@ -212,7 +226,9 @@ def main():
     elif flag[:2] == '-I':
       includes.append(RewritePath(flag[2:], prefix, sysroot))
     elif flag[:3] == '-Wl':
-      ldflags.append(flag)
+      # Don't allow libraries to control ld flags.  These should be specified
+      # only in build files.
+      pass
     elif flag == '-pthread':
       # Many libs specify "-pthread" which we don't need since we always include
       # this anyway. Removing it here prevents a bunch of duplicate inclusions
@@ -224,7 +240,7 @@ def main():
   # Output a GN array, the first one is the cflags, the second are the libs. The
   # JSON formatter prints GN compatible lists when everything is a list of
   # strings.
-  print json.dumps([includes, cflags, libs, lib_dirs, ldflags])
+  print(json.dumps([includes, cflags, libs, lib_dirs]))
   return 0
 
 

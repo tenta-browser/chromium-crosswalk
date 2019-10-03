@@ -19,7 +19,7 @@ SpellcheckLanguage::~SpellcheckLanguage() {
 }
 
 void SpellcheckLanguage::Init(base::File file, const std::string& language) {
-  DCHECK(platform_spelling_engine_.get());
+  DCHECK(platform_spelling_engine_);
   platform_spelling_engine_->Init(std::move(file));
 
   character_attributes_.SetDefaultLanguage(language);
@@ -28,22 +28,22 @@ void SpellcheckLanguage::Init(base::File file, const std::string& language) {
 }
 
 bool SpellcheckLanguage::InitializeIfNeeded() {
-  DCHECK(platform_spelling_engine_.get());
+  DCHECK(platform_spelling_engine_);
   return platform_spelling_engine_->InitializeIfNeeded();
 }
 
 SpellcheckLanguage::SpellcheckWordResult SpellcheckLanguage::SpellCheckWord(
     const base::char16* text_begin,
-    int position_in_text,
-    int text_length,
+    size_t position_in_text,
+    size_t text_length,
     int tag,
-    int* skip_or_misspelling_start,
-    int* skip_or_misspelling_len,
+    size_t* skip_or_misspelling_start,
+    size_t* skip_or_misspelling_len,
     std::vector<base::string16>* optional_suggestions) {
-  int remaining_text_len = text_length - position_in_text;
-  DCHECK(remaining_text_len >= 0);
+  DCHECK_GE(text_length, position_in_text);
   DCHECK(skip_or_misspelling_start && skip_or_misspelling_len)
       << "Out vars must be given.";
+  size_t remaining_text_len = text_length - position_in_text;
 
   // Do nothing if we need to delay initialization. (Rather than blocking,
   // report the word as correctly spelled.)
@@ -51,8 +51,7 @@ SpellcheckLanguage::SpellcheckWordResult SpellcheckLanguage::SpellCheckWord(
     return IS_CORRECT;
 
   // Do nothing if spell checking is disabled.
-  if (!platform_spelling_engine_.get() ||
-      !platform_spelling_engine_->IsEnabled())
+  if (!platform_spelling_engine_ || !platform_spelling_engine_->IsEnabled())
     return IS_CORRECT;
 
   *skip_or_misspelling_start = 0;
@@ -61,8 +60,8 @@ SpellcheckLanguage::SpellcheckWordResult SpellcheckLanguage::SpellCheckWord(
     return IS_CORRECT;  // No input means always spelled correctly.
 
   base::string16 word;
-  int word_start;
-  int word_length;
+  size_t word_start;
+  size_t word_length;
   if (!text_iterator_.IsInitialized() &&
       !text_iterator_.Initialize(&character_attributes_, true)) {
       // We failed to initialize text_iterator_, return as spelled correctly.
@@ -71,7 +70,7 @@ SpellcheckLanguage::SpellcheckWordResult SpellcheckLanguage::SpellCheckWord(
   }
 
   text_iterator_.SetText(text_begin + position_in_text, remaining_text_len);
-  DCHECK(platform_spelling_engine_.get());
+  DCHECK(platform_spelling_engine_);
   for (SpellcheckWordIterator::WordIteratorStatus status =
            text_iterator_.GetNextWord(&word, &word_start, &word_length);
        status != SpellcheckWordIterator::IS_END_OF_TEXT;
@@ -127,10 +126,10 @@ bool SpellcheckLanguage::IsValidContraction(const base::string16& contraction,
   contraction_iterator_.SetText(contraction.c_str(), contraction.length());
 
   base::string16 word;
-  int word_start;
-  int word_length;
+  size_t word_start;
+  size_t word_length;
 
-  DCHECK(platform_spelling_engine_.get());
+  DCHECK(platform_spelling_engine_);
   for (SpellcheckWordIterator::WordIteratorStatus status =
            contraction_iterator_.GetNextWord(&word, &word_start, &word_length);
        status != SpellcheckWordIterator::IS_END_OF_TEXT;
@@ -146,6 +145,6 @@ bool SpellcheckLanguage::IsValidContraction(const base::string16& contraction,
 }
 
 bool SpellcheckLanguage::IsEnabled() {
-  DCHECK(platform_spelling_engine_.get());
+  DCHECK(platform_spelling_engine_);
   return platform_spelling_engine_->IsEnabled();
 }

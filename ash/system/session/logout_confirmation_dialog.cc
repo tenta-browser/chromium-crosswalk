@@ -25,9 +25,11 @@
 namespace ash {
 namespace {
 
-const int kCountdownUpdateIntervalMs = 1000;  // 1 second.
+constexpr int kDefaultWidth = 448;  // Default width of the dialog.
 
-const int kHalfSecondInMs = 500;  // Half a second.
+constexpr int kCountdownUpdateIntervalMs = 1000;  // 1 second.
+
+constexpr int kHalfSecondInMs = 500;  // Half a second.
 
 }  // namespace
 
@@ -35,7 +37,7 @@ LogoutConfirmationDialog::LogoutConfirmationDialog(
     LogoutConfirmationController* controller,
     base::TimeTicks logout_time)
     : controller_(controller), logout_time_(logout_time) {
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   SetBorder(views::CreateEmptyBorder(
       views::LayoutProvider::Get()->GetDialogInsetsForContentType(
           views::TEXT, views::TEXT)));
@@ -79,6 +81,13 @@ bool LogoutConfirmationDialog::Accept() {
   return true;
 }
 
+base::string16 LogoutConfirmationDialog::GetDialogButtonLabel(
+    ui::DialogButton button) const {
+  if (button == ui::DIALOG_BUTTON_OK)
+    return l10n_util::GetStringUTF16(IDS_ASH_LOGOUT_CONFIRMATION_BUTTON);
+  return views::DialogDelegateView::GetDialogButtonLabel(button);
+}
+
 ui::ModalType LogoutConfirmationDialog::GetModalType() const {
   return ui::MODAL_TYPE_SYSTEM;
 }
@@ -87,17 +96,24 @@ base::string16 LogoutConfirmationDialog::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_ASH_LOGOUT_CONFIRMATION_TITLE);
 }
 
-base::string16 LogoutConfirmationDialog::GetDialogButtonLabel(
-    ui::DialogButton button) const {
-  if (button == ui::DIALOG_BUTTON_OK)
-    return l10n_util::GetStringUTF16(IDS_ASH_LOGOUT_CONFIRMATION_BUTTON);
-  return views::DialogDelegateView::GetDialogButtonLabel(button);
+bool LogoutConfirmationDialog::ShouldShowCloseButton() const {
+  return false;
 }
 
 void LogoutConfirmationDialog::WindowClosing() {
   update_timer_.Stop();
   if (controller_)
     controller_->OnDialogClosed();
+}
+
+gfx::Size LogoutConfirmationDialog::CalculatePreferredSize() const {
+  return gfx::Size(
+      kDefaultWidth,
+      GetLayoutManager()->GetPreferredHeightForWidth(this, kDefaultWidth));
+}
+
+const char* LogoutConfirmationDialog::GetClassName() const {
+  return "LogoutConfirmationDialog";
 }
 
 void LogoutConfirmationDialog::UpdateLabel() {

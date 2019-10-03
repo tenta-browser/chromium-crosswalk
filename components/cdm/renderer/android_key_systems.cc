@@ -9,13 +9,14 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "components/cdm/renderer/widevine_key_system_properties.h"
 #include "content/public/renderer/render_thread.h"
 #include "media/base/eme_constants.h"
 #include "media/base/media_switches.h"
-#include "media/media_features.h"
-
-#include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
+#include "media/media_buildflags.h"
+#if BUILDFLAG(ENABLE_WIDEVINE)
+#include "components/cdm/renderer/widevine_key_system_properties.h"
+#include "third_party/widevine/cdm/widevine_cdm_common.h"
+#endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
 using media::EmeConfigRule;
 using media::EmeFeatureSupport;
@@ -23,7 +24,9 @@ using media::EmeInitDataType;
 using media::EmeSessionTypeSupport;
 using media::KeySystemProperties;
 using media::SupportedCodecs;
+#if BUILDFLAG(ENABLE_WIDEVINE)
 using Robustness = cdm::WidevineKeySystemProperties::Robustness;
+#endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
 namespace cdm {
 
@@ -48,17 +51,20 @@ class AndroidPlatformKeySystemProperties : public KeySystemProperties {
       case EmeInitDataType::WEBM:
         return (supported_codecs_ & media::EME_CODEC_WEBM_ALL) != 0;
       case EmeInitDataType::CENC:
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
         return (supported_codecs_ & media::EME_CODEC_MP4_ALL) != 0;
-#else
-        return false;
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
       case EmeInitDataType::KEYIDS:
       case EmeInitDataType::UNKNOWN:
         return false;
     }
     NOTREACHED();
     return false;
+  }
+
+  EmeConfigRule GetEncryptionSchemeConfigRule(
+      media::EncryptionMode encryption_scheme) const override {
+    return encryption_scheme == media::EncryptionMode::kCenc
+               ? EmeConfigRule::SUPPORTED
+               : EmeConfigRule::NOT_SUPPORTED;
   }
 
   SupportedCodecs GetSupportedCodecs() const override {
@@ -75,7 +81,7 @@ class AndroidPlatformKeySystemProperties : public KeySystemProperties {
   EmeSessionTypeSupport GetPersistentLicenseSessionSupport() const override {
     return EmeSessionTypeSupport::NOT_SUPPORTED;
   }
-  EmeSessionTypeSupport GetPersistentReleaseMessageSessionSupport()
+  EmeSessionTypeSupport GetPersistentUsageRecordSessionSupport()
       const override {
     return EmeSessionTypeSupport::NOT_SUPPORTED;
   }
@@ -110,10 +116,17 @@ SupportedKeySystemResponse QueryKeySystemSupport(
   return response;
 }
 
+#if BUILDFLAG(ENABLE_WIDEVINE)
 void AddAndroidWidevine(
     std::vector<std::unique_ptr<KeySystemProperties>>* concrete_key_systems) {
-  SupportedKeySystemResponse response = QueryKeySystemSupport(
-      kWidevineKeySystem);
+  // TODO(crbug.com/853336): Use media.mojom.KeySystemSupport instead of
+  // separate IPC.
+  auto response = QueryKeySystemSupport(kWidevineKeySystem);
+
+  auto codecs = response.non_secure_codecs;
+
+  // On Android, ".secure" codecs are all hardware secure codecs.
+  auto hw_secure_codecs = response.secure_codecs;
 
   // Since we do not control the implementation of the MediaDrm API on Android,
   // we assume that it can and will make use of persistence no matter whether
@@ -124,26 +137,39 @@ void AddAndroidWidevine(
           ? EmeSessionTypeSupport::SUPPORTED_WITH_IDENTIFIER
           : EmeSessionTypeSupport::NOT_SUPPORTED;
 
-  if (response.non_secure_codecs != media::EME_CODEC_NONE) {
+  if (codecs != media::EME_CODEC_NONE) {
     DVLOG(3) << __func__ << " Widevine supported.";
+
+    base::flat_set<media::EncryptionMode> encryption_schemes = {
+        media::EncryptionMode::kCenc};
+    if (response.is_cbcs_encryption_supported) {
+      encryption_schemes.insert(media::EncryptionMode::kCbcs);
+    }
+
     concrete_key_systems->emplace_back(new WidevineKeySystemProperties(
-        response.non_secure_codecs,            // Regular codecs.
-        response.secure_codecs,                // Hardware-secure codecs.
-        Robustness::HW_SECURE_CRYPTO,          // Max audio robustness.
-        Robustness::HW_SECURE_ALL,             // Max video robustness.
-        persistent_license_support,            // persistent-license.
+        codecs,                        // Regular codecs.
+        encryption_schemes,            // Encryption schemes.
+        hw_secure_codecs,              // Hardware secure codecs.
+        encryption_schemes,            // Hardware secure encryption schemes.
+        Robustness::HW_SECURE_CRYPTO,  // Max audio robustness.
+        Robustness::HW_SECURE_ALL,     // Max video robustness.
+        persistent_license_support,    // persistent-license.
         EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent-release-message.
         EmeFeatureSupport::ALWAYS_ENABLED,     // Persistent state.
         EmeFeatureSupport::ALWAYS_ENABLED));   // Distinctive identifier.
   } else {
-    // It doesn't make sense to support secure codecs but not regular codecs.
+    // It doesn't make sense to support hw secure codecs but not regular codecs.
     DVLOG(3) << __func__ << " Widevine NOT supported.";
-    DCHECK(response.secure_codecs == media::EME_CODEC_NONE);
+    DCHECK(hw_secure_codecs == media::EME_CODEC_NONE);
   }
 }
+#endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
 void AddAndroidPlatformKeySystems(
     std::vector<std::unique_ptr<KeySystemProperties>>* concrete_key_systems) {
+  // TODO(crbug.com/853336): Update media.mojom.KeySystemSupport to handle this
+  // case and use it instead.
+
   std::vector<std::string> key_system_names;
   content::RenderThread::Get()->Send(
       new ChromeViewHostMsg_GetPlatformKeySystemNames(&key_system_names));

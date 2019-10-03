@@ -7,6 +7,7 @@
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "net/cert/internal/cert_error_params.h"
 #include "net/cert/internal/cert_issuer_source_static.h"
 #include "net/cert/internal/common_cert_errors.h"
@@ -30,6 +31,7 @@ namespace net {
 namespace {
 
 using ::testing::_;
+using ::testing::ElementsAre;
 using ::testing::Invoke;
 using ::testing::NiceMock;
 using ::testing::Return;
@@ -117,7 +119,9 @@ class AsyncCertIssuerSourceStatic : public CertIssuerSource {
 
 class PathBuilderMultiRootTest : public ::testing::Test {
  public:
-  PathBuilderMultiRootTest() : delegate_(1024) {}
+  PathBuilderMultiRootTest()
+      : delegate_(1024,
+                  SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1) {}
 
   void SetUp() override {
     ASSERT_TRUE(ReadTestCert("multi-root-A-by-B.pem", &a_by_b_));
@@ -166,16 +170,11 @@ TEST_F(PathBuilderMultiRootTest, TargetHasNameAndSpkiOfTrustAnchor) {
 
   path_builder.Run();
 
-  ASSERT_FALSE(result.HasValidPath());
-
-  // TODO(eroman): This probably should have succeeded and found the path below.
-  // It fails right now because path building stops on trust anchors (and the
-  // end entity is added as a trust anchor).
-  //
-  // const auto& path = result.GetBestValidPath()->path;
-  // ASSERT_EQ(2U, path.certs.size());
-  // EXPECT_EQ(a_by_b_, path.certs[0]);
-  // EXPECT_EQ(b_by_f_, path.certs[1]);
+  ASSERT_TRUE(result.HasValidPath());
+  const auto& path = *result.GetBestValidPath();
+  ASSERT_EQ(2U, path.certs.size());
+  EXPECT_EQ(a_by_b_, path.certs[0]);
+  EXPECT_EQ(b_by_f_, path.certs[1]);
 }
 
 // If the target cert is has the same name and key as a trust anchor, however
@@ -251,16 +250,14 @@ TEST_F(PathBuilderMultiRootTest, TargetIsSelfSignedTrustAnchor) {
 
   path_builder.Run();
 
-  ASSERT_FALSE(result.HasValidPath());
+  ASSERT_TRUE(result.HasValidPath());
 
-  // TODO(eroman): This test currently fails because path building stops
-  // searching once it identifies a certificate as a trust anchor. In this case
-  // the target is a trust anchor, however could be verified using the
-  // self-signedness (or even the cert itself).
-  // const auto& path = result.GetBestValidPath()->path;
-  // ASSERT_EQ(2U, path.certs.size());
-  // EXPECT_EQ(e_by_e_, path.certs[0]);
-  // EXPECT_EQ(e_by_e_, path.certs[1]);
+  // Verifying a trusted leaf certificate is not permitted, however this
+  // certificate is self-signed, and can chain to itself.
+  const auto& path = *result.GetBestValidPath();
+  ASSERT_EQ(2U, path.certs.size());
+  EXPECT_EQ(e_by_e_, path.certs[0]);
+  EXPECT_EQ(e_by_e_, path.certs[1]);
 }
 
 // If the target cert is directly issued by a trust anchor, it should verify
@@ -454,9 +451,99 @@ TEST_F(PathBuilderMultiRootTest, TestCertIssuerOrdering) {
   }
 }
 
+TEST_F(PathBuilderMultiRootTest, TestIterationLimit) {
+  // D(D) is the trust root.
+  TrustStoreInMemory trust_store;
+  trust_store.AddTrustAnchor(d_by_d_);
+
+  // Certs B(C) and C(D) are supplied.
+  CertIssuerSourceStatic sync_certs;
+  sync_certs.AddCert(b_by_c_);
+  sync_certs.AddCert(c_by_d_);
+
+  for (const bool insufficient_limit : {true, false}) {
+    SCOPED_TRACE(insufficient_limit);
+
+    CertPathBuilder::Result result;
+    CertPathBuilder path_builder(
+        a_by_b_, &trust_store, &delegate_, time_, KeyPurpose::ANY_EKU,
+        initial_explicit_policy_, user_initial_policy_set_,
+        initial_policy_mapping_inhibit_, initial_any_policy_inhibit_, &result);
+    path_builder.AddCertIssuerSource(&sync_certs);
+
+    if (insufficient_limit) {
+      // A limit of one is insufficient to build a path in this case. Therefore
+      // building is expected to fail in this case.
+      path_builder.SetIterationLimit(1);
+    } else {
+      // The other tests in this file exercise the case that |SetIterationLimit|
+      // isn't called. Therefore set a sufficient limit for the path to be
+      // found.
+      path_builder.SetIterationLimit(5);
+    }
+
+    base::HistogramTester histogram_tester;
+    path_builder.Run();
+
+    EXPECT_EQ(!insufficient_limit, result.HasValidPath());
+    EXPECT_EQ(insufficient_limit, result.exceeded_iteration_limit);
+
+    if (insufficient_limit) {
+      EXPECT_THAT(histogram_tester.GetAllSamples(
+                      "Net.CertVerifier.PathBuilderIterationCount"),
+                  ElementsAre(base::Bucket(/*sample=*/2, /*count=*/1)));
+    } else {
+      EXPECT_THAT(histogram_tester.GetAllSamples(
+                      "Net.CertVerifier.PathBuilderIterationCount"),
+                  ElementsAre(base::Bucket(/*sample=*/3, /*count=*/1)));
+    }
+  }
+}
+
+TEST_F(PathBuilderMultiRootTest, TestTrivialDeadline) {
+  // C(D) is the trust root.
+  TrustStoreInMemory trust_store;
+  trust_store.AddTrustAnchor(c_by_d_);
+
+  // Cert B(C) is supplied.
+  CertIssuerSourceStatic sync_certs;
+  sync_certs.AddCert(b_by_c_);
+
+  for (const bool insufficient_limit : {true, false}) {
+    SCOPED_TRACE(insufficient_limit);
+
+    CertPathBuilder::Result result;
+    CertPathBuilder path_builder(
+        a_by_b_, &trust_store, &delegate_, time_, KeyPurpose::ANY_EKU,
+        initial_explicit_policy_, user_initial_policy_set_,
+        initial_policy_mapping_inhibit_, initial_any_policy_inhibit_, &result);
+    path_builder.AddCertIssuerSource(&sync_certs);
+
+    if (insufficient_limit) {
+      // Set a deadline one millisecond in the past. Path building should fail
+      // since the deadline is already past.
+      path_builder.SetDeadline(base::TimeTicks::Now() -
+                               base::TimeDelta::FromMilliseconds(1));
+    } else {
+      // The other tests in this file exercise the case that |SetDeadline|
+      // isn't called. Therefore set a sufficient limit for the path to be
+      // found.
+      path_builder.SetDeadline(base::TimeTicks::Now() +
+                               base::TimeDelta::FromDays(1));
+    }
+
+    path_builder.Run();
+
+    EXPECT_EQ(!insufficient_limit, result.HasValidPath());
+    EXPECT_EQ(insufficient_limit, result.exceeded_deadline);
+  }
+}
+
 class PathBuilderKeyRolloverTest : public ::testing::Test {
  public:
-  PathBuilderKeyRolloverTest() : delegate_(1024) {}
+  PathBuilderKeyRolloverTest()
+      : delegate_(1024,
+                  SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1) {}
 
   void SetUp() override {
     ParsedCertificateList path;
@@ -1189,7 +1276,8 @@ class PathBuilderSimpleChainTest : public ::testing::Test {
     CertIssuerSourceStatic intermediates;
     intermediates.AddCert(test_.chain[1]);
 
-    SimplePathBuilderDelegate default_delegate(1024);
+    SimplePathBuilderDelegate default_delegate(
+        1024, SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1);
     CertPathBuilderDelegate* delegate =
         optional_delegate ? optional_delegate : &default_delegate;
 
@@ -1301,7 +1389,10 @@ class PathBuilderCheckPathAfterVerificationTest
 
 class CertPathBuilderDelegateBase : public SimplePathBuilderDelegate {
  public:
-  CertPathBuilderDelegateBase() : SimplePathBuilderDelegate(1024) {}
+  CertPathBuilderDelegateBase()
+      : SimplePathBuilderDelegate(
+            1024,
+            SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1) {}
   void CheckPathAfterVerification(CertPathBuilderResultPath* path) override {
     ADD_FAILURE() << "Tests must override this";
   }

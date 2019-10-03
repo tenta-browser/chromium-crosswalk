@@ -25,8 +25,8 @@ Polymer({
       computed: 'getIndicatorTypeForPref_(pref.controlledBy, pref.enforcement)',
     },
 
-    /** @override */
-    indicatorTooltip: {
+    /** @private */
+    indicatorTooltip_: {
       type: String,
       computed: 'getIndicatorTooltipForPref_(indicatorType, pref.*)',
     },
@@ -46,8 +46,9 @@ Polymer({
    *     and |enforcement|.
    */
   getIndicatorTypeForPref_: function(controlledBy, enforcement) {
-    if (enforcement == chrome.settingsPrivate.Enforcement.RECOMMENDED)
+    if (enforcement == chrome.settingsPrivate.Enforcement.RECOMMENDED) {
       return CrPolicyIndicatorType.RECOMMENDED;
+    }
     if (enforcement == chrome.settingsPrivate.Enforcement.ENFORCED) {
       switch (controlledBy) {
         case chrome.settingsPrivate.ControlledBy.EXTENSION:
@@ -60,6 +61,10 @@ Polymer({
           return CrPolicyIndicatorType.USER_POLICY;
         case chrome.settingsPrivate.ControlledBy.DEVICE_POLICY:
           return CrPolicyIndicatorType.DEVICE_POLICY;
+        case chrome.settingsPrivate.ControlledBy.PARENT:
+          return CrPolicyIndicatorType.PARENT;
+        case chrome.settingsPrivate.ControlledBy.CHILD_RESTRICTION:
+          return CrPolicyIndicatorType.CHILD_RESTRICTION;
       }
     }
     return CrPolicyIndicatorType.NONE;
@@ -71,8 +76,17 @@ Polymer({
    * @private
    */
   getIndicatorTooltipForPref_: function(indicatorType) {
-    var matches = this.pref && this.pref.value == this.pref.recommendedValue;
+    if (!this.pref) {
+      return '';
+    }
+
+    const matches = this.pref && this.pref.value == this.pref.recommendedValue;
     return this.getIndicatorTooltip(
         indicatorType, this.pref.controlledByName || '', matches);
+  },
+
+  /** @return {!Element} */
+  getFocusableElement: function() {
+    return this.$$('cr-tooltip-icon').getFocusableElement();
   },
 });

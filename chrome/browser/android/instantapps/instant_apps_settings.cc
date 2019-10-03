@@ -6,16 +6,39 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/android/chrome_jni_headers/InstantAppsSettings_jni.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/installable/installable_logging.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/InstantAppsSettings_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
 using base::android::ConvertJavaStringToUTF8;
+
+namespace {
+
+// This histogram is used to record UMA, please do not rearrange,
+// append entries only before AIA_COUNT.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.instantapps
+// GENERATED_JAVA_PREFIX_TO_STRIP: AIA_
+enum class AiaBannerReason {
+  AIA_SHOULD_SHOW,
+  AIA_ALREADY_INSTALLED,
+  AIA_RECENTLY_BLOCKED,
+  AIA_RECENTLY_IGNORED,
+  AIA_IN_DOMAIN_NAVIGATION,
+  AIA_COUNT
+};
+
+void RecordShouldShowBannerMetric(AiaBannerReason reason) {
+  UMA_HISTOGRAM_ENUMERATION("Android.InstantApps.ShouldShowBanner", reason,
+                            AiaBannerReason::AIA_COUNT);
+}
+
+}  // namespace
 
 void InstantAppsSettings::RecordInfoBarShowEvent(
     content::WebContents* web_contents,
@@ -41,7 +64,6 @@ void InstantAppsSettings::RecordInfoBarDismissEvent(
 
 static void JNI_InstantAppsSettings_SetInstantAppDefault(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jweb_contents,
     const JavaParamRef<jstring>& jurl) {
   content::WebContents* web_contents =
@@ -60,7 +82,6 @@ static void JNI_InstantAppsSettings_SetInstantAppDefault(
 
 static jboolean JNI_InstantAppsSettings_GetInstantAppDefault(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jweb_contents,
     const JavaParamRef<jstring>& jurl) {
   content::WebContents* web_contents =
@@ -80,7 +101,6 @@ static jboolean JNI_InstantAppsSettings_GetInstantAppDefault(
 
 static jboolean JNI_InstantAppsSettings_ShouldShowBanner(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jweb_contents,
     const JavaParamRef<jstring>& jurl) {
   content::WebContents* web_contents =
@@ -91,9 +111,22 @@ static jboolean JNI_InstantAppsSettings_ShouldShowBanner(
   const std::string& key = AppBannerSettingsHelper::kInstantAppsKey;
   base::Time now = base::Time::Now();
 
-  return !AppBannerSettingsHelper::HasBeenInstalled(web_contents, url, key) &&
-         !AppBannerSettingsHelper::WasBannerRecentlyBlocked(web_contents, url,
-                                                            key, now) &&
-         !AppBannerSettingsHelper::WasBannerRecentlyIgnored(web_contents, url,
-                                                            key, now);
+  if (AppBannerSettingsHelper::HasBeenInstalled(web_contents, url, key)) {
+    RecordShouldShowBannerMetric(AiaBannerReason::AIA_ALREADY_INSTALLED);
+    return false;
+  }
+
+  if (AppBannerSettingsHelper::WasBannerRecentlyBlocked(web_contents, url, key,
+                                                        now)) {
+    RecordShouldShowBannerMetric(AiaBannerReason::AIA_RECENTLY_BLOCKED);
+    return false;
+  }
+
+  if (AppBannerSettingsHelper::WasBannerRecentlyIgnored(web_contents, url, key,
+                                                        now)) {
+    RecordShouldShowBannerMetric(AiaBannerReason::AIA_RECENTLY_IGNORED);
+    return false;
+  }
+
+  return true;
 }

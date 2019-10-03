@@ -35,7 +35,7 @@ class SESSIONS_EXPORT IOSLiveTab : public LiveTab,
   sessions::SerializedNavigationEntry GetEntryAtIndex(int index) override;
   sessions::SerializedNavigationEntry GetPendingEntry() override;
   int GetEntryCount() override;
-  const std::string& GetUserAgentOverride() const override;
+  const std::string& GetUserAgentOverride() override;
 
   web::WebState* web_state() { return web_state_; }
   const web::WebState* web_state() const { return web_state_; }
@@ -52,7 +52,7 @@ class SESSIONS_EXPORT IOSLiveTab : public LiveTab,
   web::WebState* web_state_;
 
   // Needed to return an empty string in GetUserAgentOverride().
-  static std::string user_agent_override_;
+  std::string user_agent_override_;
 
   DISALLOW_COPY_AND_ASSIGN(IOSLiveTab);
 };

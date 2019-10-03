@@ -16,7 +16,6 @@
 #include "base/synchronization/lock.h"
 #include "chrome/test/chromedriver/net/sync_websocket.h"
 #include "chrome/test/chromedriver/net/websocket.h"
-#include "net/base/completion_callback.h"
 
 namespace base {
 class WaitableEvent;
@@ -33,6 +32,7 @@ class SyncWebSocketImpl : public SyncWebSocket {
   explicit SyncWebSocketImpl(net::URLRequestContextGetter* context_getter);
   ~SyncWebSocketImpl() override;
 
+  void SetId(const std::string& socket_id) override {}
   // Overridden from SyncWebSocket:
   bool IsConnected() override;
   bool Connect(const GURL& url) override;
@@ -76,6 +76,7 @@ class SyncWebSocketImpl : public SyncWebSocket {
     void SendOnIO(const std::string& message,
                   bool* result,
                   base::WaitableEvent* event);
+    void CloseOnIO(base::WaitableEvent* event);
 
     // OnDestruct is meant to ensure deletion on the IO thread.
     void OnDestruct() const;

@@ -24,6 +24,14 @@
 namespace media {
 namespace mp4 {
 
+enum DisplayMatrixSize {
+  kDisplayMatrixWidth = 3,
+  kDisplayMatrixHeight = 3,
+  kDisplayMatrixDimension = kDisplayMatrixHeight * kDisplayMatrixWidth
+};
+
+using DisplayMatrix = int32_t[kDisplayMatrixDimension];
+
 class BoxReader;
 
 struct MEDIA_EXPORT Box {
@@ -51,7 +59,7 @@ class MEDIA_EXPORT BufferReader {
            count <= buf_size_ - pos_;
   }
 
-  // Read a value from the stream, perfoming endian correction, and advance the
+  // Read a value from the stream, performing endian correction, and advance the
   // stream pointer.
   bool Read1(uint8_t* v) WARN_UNUSED_RESULT;
   bool Read2(uint16_t* v) WARN_UNUSED_RESULT;
@@ -144,6 +152,10 @@ class MEDIA_EXPORT BoxReader : public BufferReader {
   // Read one child if available. Returns false on error, true on successful
   // read or on child absent.
   bool MaybeReadChild(Box* child) WARN_UNUSED_RESULT;
+
+  // ISO-BMFF streams files use a 3x3 matrix consisting of 6 16.16 fixed point
+  // decimals and 3 2.30 fixed point decimals.
+  bool ReadDisplayMatrix(DisplayMatrix matrix);
 
   // Read at least one child. False means error or no such child present.
   template<typename T> bool ReadChildren(

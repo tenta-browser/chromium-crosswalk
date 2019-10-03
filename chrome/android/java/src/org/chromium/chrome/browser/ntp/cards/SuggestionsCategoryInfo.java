@@ -4,16 +4,14 @@
 
 package org.chromium.chrome.browser.ntp.cards;
 
-import org.chromium.base.Log;
-import org.chromium.chrome.browser.ntp.ContextMenuManager;
-import org.chromium.chrome.browser.ntp.ContextMenuManager.ContextMenuItemId;
+import android.support.annotation.Nullable;
+
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
+import org.chromium.chrome.browser.native_page.ContextMenuManager.ContextMenuItemId;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
 import org.chromium.chrome.browser.ntp.snippets.ContentSuggestionsCardLayout;
 import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
 import org.chromium.chrome.browser.suggestions.ContentSuggestionsAdditionalAction;
-import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegate;
-
-import javax.annotation.Nullable;
 
 /**
  * Contains meta information about a Category. Equivalent of the CategoryInfo class in
@@ -110,39 +108,9 @@ public class SuggestionsCategoryInfo {
      */
     @Nullable
     public Boolean isContextMenuItemSupported(@ContextMenuItemId int menuItemId) {
-        if (menuItemId == ContextMenuManager.ID_REMOVE) return null;
+        if (menuItemId == ContextMenuManager.ContextMenuItemId.REMOVE) return null;
 
-        if (mCategory == KnownCategories.RECENT_TABS) return false;
-
-        if (mCategory == KnownCategories.DOWNLOADS) {
-            if (menuItemId == ContextMenuManager.ID_OPEN_IN_INCOGNITO_TAB) return false;
-            if (menuItemId == ContextMenuManager.ID_SAVE_FOR_OFFLINE) return false;
-        }
         return true;
-    }
-
-    /**
-     * Performs the View All action for the provided category, navigating navigating to the view
-     * showing all the content.
-     */
-    public void performViewAllAction(SuggestionsNavigationDelegate navigationDelegate) {
-        switch (mCategory) {
-            case KnownCategories.BOOKMARKS:
-                navigationDelegate.navigateToBookmarks();
-                break;
-            case KnownCategories.DOWNLOADS:
-                navigationDelegate.navigateToDownloadManager();
-                break;
-            case KnownCategories.FOREIGN_TABS:
-                navigationDelegate.navigateToRecentTabs();
-                break;
-            case KnownCategories.PHYSICAL_WEB_PAGES:
-            case KnownCategories.RECENT_TABS:
-            case KnownCategories.ARTICLES:
-            default:
-                Log.wtf(TAG, "'Empty State' action called for unsupported category: %d", mCategory);
-                break;
-        }
     }
 
     /**

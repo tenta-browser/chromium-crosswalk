@@ -11,10 +11,13 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
+#include "components/viz/common/gpu/context_lost_observer.h"
 #include "components/viz/common/gpu/context_provider.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "components/viz/common/gpu/raster_context_provider.h"
+#include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -30,11 +33,13 @@ class GrContextForGLES2Interface;
 
 namespace ui {
 
-class InProcessContextProvider : public viz::ContextProvider {
+class InProcessContextProvider
+    : public base::RefCountedThreadSafe<InProcessContextProvider>,
+      public viz::ContextProvider,
+      public viz::RasterContextProvider {
  public:
   static scoped_refptr<InProcessContextProvider> Create(
-      const gpu::gles2::ContextCreationAttribHelper& attribs,
-      InProcessContextProvider* shared_context,
+      const gpu::ContextCreationAttribs& attribs,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       gpu::ImageFactory* image_factory,
       gpu::SurfaceHandle window,
@@ -45,18 +50,20 @@ class InProcessContextProvider : public viz::ContextProvider {
   static scoped_refptr<InProcessContextProvider> CreateOffscreen(
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       gpu::ImageFactory* image_factory,
-      InProcessContextProvider* shared_context,
       bool support_locking);
 
-  // cc::ContextProvider implementation.
+  // viz::ContextProvider / viz::RasterContextProvider implementation.
+  void AddRef() const override;
+  void Release() const override;
   gpu::ContextResult BindToCurrentThread() override;
   const gpu::Capabilities& ContextCapabilities() const override;
   const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override;
   gpu::gles2::GLES2Interface* ContextGL() override;
+  gpu::raster::RasterInterface* RasterInterface() override;
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
+  gpu::SharedImageInterface* SharedImageInterface() override;
   viz::ContextCacheController* CacheController() override;
-  void InvalidateGrContext(uint32_t state) override;
   base::Lock* GetLock() override;
   void AddObserver(viz::ContextLostObserver* obs) override;
   void RemoveObserver(viz::ContextLostObserver* obs) override;
@@ -65,10 +72,14 @@ class InProcessContextProvider : public viz::ContextProvider {
   // on the default framebuffer.
   uint32_t GetCopyTextureInternalFormat();
 
+  // Calls OnContextLost() on all observers. This doesn't modify the context.
+  void SendOnContextLost();
+
  private:
+  friend class base::RefCountedThreadSafe<InProcessContextProvider>;
+
   InProcessContextProvider(
-      const gpu::gles2::ContextCreationAttribHelper& attribs,
-      InProcessContextProvider* shared_context,
+      const gpu::ContextCreationAttribs& attribs,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       gpu::ImageFactory* image_factory,
       gpu::SurfaceHandle window,
@@ -91,20 +102,22 @@ class InProcessContextProvider : public viz::ContextProvider {
 
   std::unique_ptr<gpu::GLInProcessContext> context_;
   std::unique_ptr<skia_bindings::GrContextForGLES2Interface> gr_context_;
+  std::unique_ptr<gpu::raster::RasterInterface> raster_context_;
   std::unique_ptr<viz::ContextCacheController> cache_controller_;
 
   const bool support_locking_ ALLOW_UNUSED_TYPE;
   bool bind_tried_ = false;
   gpu::ContextResult bind_result_;
 
-  gpu::gles2::ContextCreationAttribHelper attribs_;
-  InProcessContextProvider* shared_context_;
+  gpu::ContextCreationAttribs attribs_;
   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
   gpu::ImageFactory* image_factory_;
   gpu::SurfaceHandle window_;
   std::string debug_name_;
 
   base::Lock context_lock_;
+
+  base::ObserverList<viz::ContextLostObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(InProcessContextProvider);
 };

@@ -6,13 +6,11 @@
 
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/test/gtest_util.h"
 #include "cc/test/test_skcanvas.h"
 #include "chrome/browser/vr/elements/ui_texture.h"
 #include "chrome/browser/vr/test/animation_utils.h"
 #include "chrome/browser/vr/test/constants.h"
-#include "chrome/browser/vr/test/fake_ui_element_renderer.h"
 #include "chrome/browser/vr/ui_scene.h"
 
 namespace vr {
@@ -38,23 +36,20 @@ class TestSpinner : public Spinner {
 
 void CheckArc(UiTexture* texture, float start_angle, float sweep_angle) {
   cc::MockCanvas canvas;
-  // This is the clearing of the canvas.
-  EXPECT_CALL(canvas, OnDrawPaintWithColor(0));
   EXPECT_CALL(canvas, onDrawArc(_, testing::FloatNear(start_angle, kArcEpsilon),
                                 testing::FloatNear(sweep_angle, kArcEpsilon),
                                 false, _));
-  texture->DrawAndLayout(&canvas,
-                         texture->GetPreferredTextureSize(kMaximumWidth));
+  texture->Draw(&canvas, gfx::Size(kMaximumWidth, kMaximumWidth));
 }
 
 TEST(Spinner, Animation) {
   UiScene scene;
-  auto spinner_element = base::MakeUnique<TestSpinner>(kMaximumWidth);
-  spinner_element->SetInitializedForTesting();
+  scene.RunFirstFrameForTest();
+  auto spinner_element = std::make_unique<TestSpinner>(kMaximumWidth);
   UiTexture* texture = spinner_element->GetTexture();
   scene.AddUiElement(kRoot, std::move(spinner_element));
   base::TimeTicks start_time = MsToTicks(1);
-  scene.OnBeginFrame(start_time, kForwardVector);
+  scene.OnBeginFrame(start_time, kStartHeadPose);
 
   struct TestCase {
     float start_angle;
@@ -73,7 +68,7 @@ TEST(Spinner, Animation) {
   };
 
   for (const auto& test_case : test_cases) {
-    scene.OnBeginFrame(MsToTicks(1) + test_case.delta, kForwardVector);
+    scene.OnBeginFrame(MsToTicks(1) + test_case.delta, kStartHeadPose);
     CheckArc(texture, test_case.start_angle, test_case.sweep_angle);
   }
 }

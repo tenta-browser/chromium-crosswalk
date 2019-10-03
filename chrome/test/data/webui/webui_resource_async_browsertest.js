@@ -6,9 +6,6 @@
  * @fileoverview Framework for running async JS tests for cr.js utility methods.
  */
 
-/** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../';
-
 /** @const {string} Name of the chrome.send() message to be used in tests. */
 var CHROME_SEND_NAME = 'echoMessage';
 
@@ -33,10 +30,10 @@ WebUIResourceAsyncTest.prototype = {
 
   /** @override */
   extraLibraries: [
-    ROOT_PATH + 'third_party/mocha/mocha.js',
-    ROOT_PATH + 'chrome/test/data/webui/mocha_adapter.js',
-    ROOT_PATH + 'ui/webui/resources/js/promise_resolver.js',
-    ROOT_PATH + 'ui/webui/resources/js/cr.js',
+    '//third_party/mocha/mocha.js',
+    '//chrome/test/data/webui/mocha_adapter.js',
+    '//ui/webui/resources/js/promise_resolver.js',
+    '//ui/webui/resources/js/cr.js',
   ],
 };
 
@@ -65,12 +62,14 @@ TEST_F('WebUIResourceAsyncTest', 'SendWithPromise', function() {
             null, [callbackId, !rejectPromises].concat(args.slice(1)));
       });
     });
-    teardown(function() { rejectPromises = false; });
+    teardown(function() {
+      rejectPromises = false;
+    });
 
     test('sendWithPromise_ResponseObject', function() {
       var expectedResponse = {'foo': 'bar'};
-      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse).then(
-          function(response) {
+      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse)
+          .then(function(response) {
             assertEquals(
                 JSON.stringify(expectedResponse), JSON.stringify(response));
           });
@@ -78,8 +77,8 @@ TEST_F('WebUIResourceAsyncTest', 'SendWithPromise', function() {
 
     test('sendWithPromise_ResponseArray', function() {
       var expectedResponse = ['foo', 'bar'];
-      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse).then(
-          function(response) {
+      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse)
+          .then(function(response) {
             assertEquals(
                 JSON.stringify(expectedResponse), JSON.stringify(response));
           });
@@ -87,8 +86,8 @@ TEST_F('WebUIResourceAsyncTest', 'SendWithPromise', function() {
 
     test('sendWithPromise_ResponsePrimitive', function() {
       var expectedResponse = 1234;
-      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse).then(
-          function(response) {
+      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse)
+          .then(function(response) {
             assertEquals(expectedResponse, response);
           });
     });
@@ -102,13 +101,14 @@ TEST_F('WebUIResourceAsyncTest', 'SendWithPromise', function() {
     test('sendWithPromise_Reject', function() {
       rejectPromises = true;
       var expectedResponse = 1234;
-      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse).then(
-          function() {
-            assertNotReached('should have rejected promise');
-          },
-          function(error) {
-            assertEquals(expectedResponse, error);
-          });
+      return cr.sendWithPromise(CHROME_SEND_NAME, expectedResponse)
+          .then(
+              function() {
+                assertNotReached('should have rejected promise');
+              },
+              function(error) {
+                assertEquals(expectedResponse, error);
+              });
     });
   });
 
@@ -126,10 +126,12 @@ TEST_F('WebUIResourceAsyncTest', 'WebUIListeners', function() {
     var EVENT_NAME = 'my-foo-event';
 
     teardown(function() {
-      if (listener1)
+      if (listener1) {
         cr.removeWebUIListener(listener1);
-      if (listener2)
+      }
+      if (listener2) {
         cr.removeWebUIListener(listener2);
+      }
     });
 
     test('removeWebUIListener', function() {
@@ -156,8 +158,9 @@ TEST_F('WebUIResourceAsyncTest', 'WebUIListeners', function() {
           assertEquals(expectedObject, o);
           resolve();
         });
-        cr.webUIListenerCallback(EVENT_NAME, expectedString, expectedNumber,
-            expectedArray, expectedObject);
+        cr.webUIListenerCallback(
+            EVENT_NAME, expectedString, expectedNumber, expectedArray,
+            expectedObject);
       });
     });
 

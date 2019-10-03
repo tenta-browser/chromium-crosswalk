@@ -16,18 +16,19 @@ class Size;
 namespace content {
 class RenderWidgetHostView;
 
-// Returns scale factor of the display nearest to |view|.
-// Returns 1.0f if the platform does not support DIP.
-CONTENT_EXPORT float GetScaleFactorForView(const RenderWidgetHostView* view);
+// This is the same as view->GetDeviceScaleFactor(), but will return a best
+// guess when |view| is nullptr.
+CONTENT_EXPORT float GetScaleFactorForView(RenderWidgetHostView* view);
 
 // Utility functions that convert point/size/rect between DIP and pixel
 // coordinate system.
 CONTENT_EXPORT gfx::Point ConvertViewPointToDIP(
-    const RenderWidgetHostView* view, const gfx::Point& point_in_pixel);
-CONTENT_EXPORT gfx::Size ConvertViewSizeToPixel(
-    const RenderWidgetHostView* view, const gfx::Size& size_in_dip);
-CONTENT_EXPORT gfx::Rect ConvertViewRectToPixel(
-    const RenderWidgetHostView* view, const gfx::Rect& rect_in_dip);
+    RenderWidgetHostView* view,
+    const gfx::Point& point_in_pixel);
+CONTENT_EXPORT gfx::Size ConvertViewSizeToPixel(RenderWidgetHostView* view,
+                                                const gfx::Size& size_in_dip);
+CONTENT_EXPORT gfx::Rect ConvertViewRectToPixel(RenderWidgetHostView* view,
+                                                const gfx::Rect& rect_in_dip);
 
 }  // namespace content
 

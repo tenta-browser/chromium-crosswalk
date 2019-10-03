@@ -55,14 +55,6 @@ void RegisterVariationIds(const Study_Experiment& experiment,
                                     experiment.name(),
                                     variation_id);
   }
-  if (experiment.has_chrome_sync_experiment_id()) {
-    const VariationID variation_id =
-        static_cast<VariationID>(experiment.chrome_sync_experiment_id());
-    AssociateGoogleVariationIDForce(CHROME_SYNC_SERVICE,
-                                    trial_name,
-                                    experiment.name(),
-                                    variation_id);
-  }
 }
 
 // Executes |callback| on every override defined by |experiment|.
@@ -86,12 +78,12 @@ void ForceExperimentState(
     base::FieldTrial* trial) {
   RegisterExperimentParams(study, experiment);
   RegisterVariationIds(experiment, study.name());
-  if (study.activation_type() == Study_ActivationType_ACTIVATION_AUTO) {
+  if (study.activation_type() == Study_ActivationType_ACTIVATE_ON_STARTUP) {
     // This call must happen after all params have been registered for the
     // trial. Otherwise, since we look up params by trial and group name, the
     // params won't be registered under the correct key.
     trial->group();
-    // UI Strings can only be overridden from ACTIVATION_AUTO experiments.
+    // UI Strings can only be overridden from ACTIVATE_ON_STARTUP experiments.
     ApplyUIStringOverrides(experiment, override_callback);
   }
 }
@@ -127,21 +119,13 @@ void RegisterFeatureOverrides(const ProcessedStudy& processed_study,
         base::FeatureList::OVERRIDE_DISABLE_FEATURE, trial);
   }
 
-  // Check if this study enables/disables a single feature and uses explicit
-  // activation (i.e. the trial should be activated when queried). If so, ensure
-  // that groups that don't explicitly enable/disable that feature are still
-  // associated with it (i.e. so "Default" group gets reported).
-  //
-  // Note: This checks for ACTIVATION_EXPLICIT, since there is no reason to
-  // have this association with ACTIVATION_AUTO (where the trial starts active),
-  // as well as allowing flexibility to disable this behavior in the future from
-  // the server by introducing a new activation type.
-  if (!processed_study.single_feature_name().empty() &&
-      study.activation_type() == Study_ActivationType_ACTIVATION_EXPLICIT &&
-      !experiment.has_feature_association()) {
-    feature_list->RegisterFieldTrialOverride(
-        processed_study.single_feature_name(),
-        base::FeatureList::OVERRIDE_USE_DEFAULT, trial);
+  // Associate features for groups that do not specify them manually (e.g.
+  // "Default" group), so that such groups are reported.
+  if (!experiment.has_feature_association()) {
+    for (const auto& feature_name : processed_study.associated_features()) {
+      feature_list->RegisterFieldTrialOverride(
+          feature_name, base::FeatureList::OVERRIDE_USE_DEFAULT, trial);
+    }
   }
 }
 
@@ -182,6 +166,7 @@ void VariationsSeedProcessor::CreateTrialsFromSeed(
     base::FeatureList* feature_list) {
   std::vector<ProcessedStudy> filtered_studies;
   FilterAndValidateStudies(seed, client_state, &filtered_studies);
+  SetSeedVersion(seed.version());
 
   for (const ProcessedStudy& study : filtered_studies) {
     CreateTrialFromStudy(study, override_callback, low_entropy_provider,
@@ -268,8 +253,7 @@ void VariationsSeedProcessor::CreateTrialFromStudy(
   scoped_refptr<base::FieldTrial> trial(
       base::FieldTrialList::FactoryGetFieldTrialWithRandomizationSeed(
           study.name(), processed_study.total_probability(),
-          processed_study.GetDefaultExperimentName(),
-          base::FieldTrialList::kNoExpirationYear, 1, 1, randomization_type,
+          processed_study.GetDefaultExperimentName(), randomization_type,
           randomization_seed, nullptr,
           ShouldStudyUseLowEntropy(study) ? low_entropy_provider : nullptr));
 
@@ -306,7 +290,7 @@ void VariationsSeedProcessor::CreateTrialFromStudy(
   if (enables_or_disables_features)
     RegisterFeatureOverrides(processed_study, trial.get(), feature_list);
 
-  if (study.activation_type() == Study_ActivationType_ACTIVATION_AUTO) {
+  if (study.activation_type() == Study_ActivationType_ACTIVATE_ON_STARTUP) {
     // This call must happen after all params have been registered for the
     // trial. Otherwise, since we look up params by trial and group name, the
     // params won't be registered under the correct key.
@@ -317,7 +301,7 @@ void VariationsSeedProcessor::CreateTrialFromStudy(
     if (!has_overrides)
       return;
 
-    // UI Strings can only be overridden from ACTIVATION_AUTO experiments.
+    // UI Strings can only be overridden from ACTIVATE_ON_STARTUP experiments.
     int experiment_index = processed_study.GetExperimentIndexByName(group_name);
     // If the chosen experiment was not found in the study, simply return.
     // Although not normally expected, but could happen in exception cases, see

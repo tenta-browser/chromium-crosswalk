@@ -10,6 +10,12 @@
 #include "base/android/scoped_java_ref.h"
 #include "content/browser/media/session/audio_focus_delegate.h"
 
+namespace media_session {
+namespace mojom {
+enum class AudioFocusType;
+}  // namespace mojom
+}  // namespace media_session
+
 namespace content {
 
 // AudioFocusDelegateAndroid handles the audio focus at a system level on
@@ -21,9 +27,11 @@ class AudioFocusDelegateAndroid : public AudioFocusDelegate {
 
   void Initialize();
 
-  bool RequestAudioFocus(
-      AudioFocusManager::AudioFocusType audio_focus_type) override;
+  AudioFocusResult RequestAudioFocus(
+      media_session::mojom::AudioFocusType audio_focus_type) override;
   void AbandonAudioFocus() override;
+  base::Optional<media_session::mojom::AudioFocusType> GetCurrentFocusType()
+      const override;
 
   // Called when the Android system requests the MediaSession to be suspended.
   // Called by Java through JNI.
@@ -46,11 +54,14 @@ class AudioFocusDelegateAndroid : public AudioFocusDelegate {
   void RecordSessionDuck(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
 
+  // This is not used by this delegate.
+  void MediaSessionInfoChanged(
+      media_session::mojom::MediaSessionInfoPtr) override {}
+
  private:
   // Weak pointer because |this| is owned by |media_session_|.
   MediaSessionImpl* media_session_;
   base::android::ScopedJavaGlobalRef<jobject> j_media_session_delegate_;
-
   DISALLOW_COPY_AND_ASSIGN(AudioFocusDelegateAndroid);
 };
 

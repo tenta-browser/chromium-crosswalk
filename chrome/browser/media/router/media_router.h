@@ -13,15 +13,19 @@
 #include "base/callback.h"
 #include "base/callback_list.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/cast_remoting_connector.h"
 #include "chrome/browser/media/router/route_message_observer.h"
-#include "chrome/common/media_router/discovery/media_sink_internal.h"
 #include "chrome/common/media_router/media_route.h"
 #include "chrome/common/media_router/media_sink.h"
 #include "chrome/common/media_router/media_source.h"
+#include "chrome/common/media_router/mojo/media_router.mojom.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/presentation_service_delegate.h"
+#include "media/base/flinging_controller.h"
+#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 
 namespace content {
 class WebContents;
@@ -44,9 +48,11 @@ class MediaRouteController;
 
 // Type of callback used in |CreateRoute()|, |JoinRoute()|, and
 // |ConnectRouteByRouteId()|. Callback is invoked when the route request either
-// succeeded or failed.
+// succeeded or failed.  |connection| is set depending on whether the MRP
+// chooses to setup the PresentationConnections itself.
 using MediaRouteResponseCallback =
-    base::OnceCallback<void(const RouteRequestResult& result)>;
+    base::OnceCallback<void(mojom::RoutePresentationConnectionPtr connection,
+                            const RouteRequestResult& result)>;
 
 // Type of callback used for |SearchSinks()| to return the sink ID of the
 // newly-found sink. The sink ID will be the empty string if no sink was found.
@@ -66,8 +72,6 @@ using PresentationConnectionStateSubscription = base::CallbackList<void(
 // TODO(imcheng): Reduce number of parameters by putting them into structs.
 class MediaRouter : public KeyedService {
  public:
-  using SendRouteMessageCallback = base::OnceCallback<void(bool sent)>;
-
   ~MediaRouter() override = default;
 
   // Creates a media route from |source_id| to |sink_id|.
@@ -87,7 +91,7 @@ class MediaRouter : public KeyedService {
                            const MediaSink::Id& sink_id,
                            const url::Origin& origin,
                            content::WebContents* web_contents,
-                           std::vector<MediaRouteResponseCallback> callbacks,
+                           MediaRouteResponseCallback callback,
                            base::TimeDelta timeout,
                            bool incognito) = 0;
 
@@ -104,14 +108,13 @@ class MediaRouter : public KeyedService {
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
   // If |incognito| is true, the request was made by an incognito profile.
-  virtual void ConnectRouteByRouteId(
-      const MediaSource::Id& source_id,
-      const MediaRoute::Id& route_id,
-      const url::Origin& origin,
-      content::WebContents* web_contents,
-      std::vector<MediaRouteResponseCallback> callbacks,
-      base::TimeDelta timeout,
-      bool incognito) = 0;
+  virtual void ConnectRouteByRouteId(const MediaSource::Id& source_id,
+                                     const MediaRoute::Id& route_id,
+                                     const url::Origin& origin,
+                                     content::WebContents* web_contents,
+                                     MediaRouteResponseCallback callback,
+                                     base::TimeDelta timeout,
+                                     bool incognito) = 0;
 
   // Joins an existing route identified by |presentation_id|.
   // |source|: The source to route to the existing route.
@@ -128,7 +131,7 @@ class MediaRouter : public KeyedService {
                          const std::string& presentation_id,
                          const url::Origin& origin,
                          content::WebContents* web_contents,
-                         std::vector<MediaRouteResponseCallback> callbacks,
+                         MediaRouteResponseCallback callback,
                          base::TimeDelta timeout,
                          bool incognito) = 0;
 
@@ -141,15 +144,13 @@ class MediaRouter : public KeyedService {
 
   // Posts |message| to a MediaSink connected via MediaRoute with |route_id|.
   virtual void SendRouteMessage(const MediaRoute::Id& route_id,
-                                const std::string& message,
-                                SendRouteMessageCallback callback) = 0;
+                                const std::string& message) = 0;
 
   // Sends |data| to a MediaSink connected via MediaRoute with |route_id|.
   // This is called for Blob / ArrayBuffer / ArrayBufferView types.
   virtual void SendRouteBinaryMessage(
       const MediaRoute::Id& route_id,
-      std::unique_ptr<std::vector<uint8_t>> data,
-      SendRouteMessageCallback callback) = 0;
+      std::unique_ptr<std::vector<uint8_t>> data) = 0;
 
   // Returns the IssueManager owned by the MediaRouter. Guaranteed to be
   // non-null.
@@ -188,6 +189,12 @@ class MediaRouter : public KeyedService {
   // there is a change to the media routes, subclass MediaRoutesObserver.
   virtual std::vector<MediaRoute> GetCurrentRoutes() const = 0;
 
+  // Returns a controller that sends commands to media within a route, and
+  // propagates MediaStatus changes.
+  // Returns a nullptr if no controller can be be found from |route_id|.
+  virtual std::unique_ptr<media::FlingingController> GetFlingingController(
+      const MediaRoute::Id& route_id) = 0;
+
 #if !defined(OS_ANDROID)
   // Returns a controller for sending media commands to a route. Returns a
   // nullptr if no MediaRoute exists for the given |route_id|.
@@ -199,9 +206,13 @@ class MediaRouter : public KeyedService {
   // given |tab_id|, only one CastRemotingConnector can be registered. The
   // registered CastRemotingConnector should be removed before it is destroyed.
   virtual void RegisterRemotingSource(
-      int32_t tab_id,
+      SessionID tab_id,
       CastRemotingConnector* remoting_source) = 0;
-  virtual void UnregisterRemotingSource(int32_t tab_id) = 0;
+  virtual void UnregisterRemotingSource(SessionID tab_id) = 0;
+
+  // Returns media router state as a JSON string represented by base::Vaule.
+  // Used by media-router-internals page.
+  virtual base::Value GetState() const = 0;
 
  private:
   friend class IssuesObserver;

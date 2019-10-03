@@ -19,7 +19,13 @@ Polymer({
     /** @private {!AndroidAppsInfo|undefined} */
     androidAppsInfo: {
       type: Object,
-      observer: 'onAndroidAppsInfoUpdate_',
+    },
+
+    /** @private */
+    playStoreEnabled_: {
+      type: Boolean,
+      computed: 'computePlayStoreEnabled_(androidAppsInfo)',
+      observer: 'onPlayStoreEnabledChanged_'
     },
 
     /** @private */
@@ -33,20 +39,20 @@ Polymer({
     }
   },
 
-  /** @private {?settings.AndroidAppsBrowserProxy} */
-  browserProxy_: null,
-
-  /** @override */
-  created: function() {
-    this.browserProxy_ = settings.AndroidAppsBrowserProxyImpl.getInstance();
+  /** @private */
+  onPlayStoreEnabledChanged_: function(enabled) {
+    if (!enabled &&
+        settings.getCurrentRoute() == settings.routes.ANDROID_APPS_DETAILS) {
+      settings.navigateToPreviousRoute();
+    }
   },
 
   /**
+   * @return {boolean}
    * @private
    */
-  onAndroidAppsInfoUpdate_: function() {
-    if (!this.androidAppsInfo.playStoreEnabled)
-      settings.navigateToPreviousRoute();
+  computePlayStoreEnabled_: function() {
+    return this.androidAppsInfo.playStoreEnabled;
   },
 
   /**
@@ -88,6 +94,17 @@ Polymer({
 
   /** @private */
   onConfirmDisableDialogClose_: function() {
-    cr.ui.focusWithoutInk(assert(this.$$('#remove button')));
+    cr.ui.focusWithoutInk(assert(this.$$('#remove')));
+  },
+
+  /**
+   * @param {!MouseEvent} event
+   * @private
+   */
+  onManageAndroidAppsTap_: function(event) {
+    // |event.detail| is the click count. Keyboard events will have 0 clicks.
+    const isKeyboardAction = event.detail == 0;
+    settings.AndroidAppsBrowserProxyImpl.getInstance().showAndroidAppsSettings(
+        isKeyboardAction);
   },
 });

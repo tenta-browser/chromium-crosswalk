@@ -12,6 +12,7 @@
 
 #include "content/common/content_export.h"
 #include "net/cert/cert_status_flags.h"
+#include "net/cert/ct_policy_status.h"
 #include "net/cert/sct_status_flags.h"
 #include "net/cert/x509_certificate.h"
 
@@ -73,14 +74,17 @@ struct CONTENT_EXPORT SSLStatus {
   // |certificate|. This field is not necessarily populated, e.g. for responses
   // served from disk cache.
   net::HashValueVector public_key_hashes;
-  int security_bits;
   uint16_t key_exchange_group;
+  uint16_t peer_signature_algorithm;
   int connection_status;
   // A combination of the ContentStatusFlags above. Flags are cleared when a
   // navigation commits.
   int content_status;
   // True if PKP was bypassed due to a local trust anchor.
   bool pkp_bypassed;
+  // Whether the page's main resource complied with the Certificate Transparency
+  // policy.
+  net::ct::CTPolicyCompliance ct_policy_compliance;
   // Embedder-specific data attached to the SSLStatus is cloned when an
   // |SSLStatus| is assigned or copy-constructed, and is cleared when a
   // navigation commits.

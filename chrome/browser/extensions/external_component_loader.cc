@@ -4,21 +4,19 @@
 
 #include "chrome/browser/extensions/external_component_loader.h"
 
-#include "base/command_line.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/component_extensions_whitelist/whitelist.h"
 #include "chrome/browser/media/router/media_router_feature.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/features.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_switches.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 namespace extensions {
@@ -37,10 +35,9 @@ void ExternalComponentLoader::StartLoading() {
 
 #if defined(OS_CHROMEOS)
   {
-    base::CommandLine* const command_line =
-        base::CommandLine::ForCurrentProcess();
-    if (!command_line->HasSwitch(chromeos::switches::kDisableNewZIPUnpacker))
-      AddExternalExtension(extension_misc::kZIPUnpackerExtensionId,
+    // Only load the Assessment Assistant if the current session is managed.
+    if (profile_->GetProfilePolicyConnector()->IsManaged())
+      AddExternalExtension(extension_misc::kAssessmentAssistantExtensionId,
                            prefs.get());
   }
 #endif

@@ -11,14 +11,10 @@
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "ios/chrome/browser/ios_chrome_field_trials.h"
-#include "ios/web/public/app/web_main_parts.h"
+#include "ios/web/public/init/web_main_parts.h"
 
 class ApplicationContextImpl;
 class PrefService;
-
-namespace ios {
-class FieldTrialSynchronizer;
-}
 
 class IOSChromeMainParts : public web::WebMainParts {
  public:
@@ -53,9 +49,6 @@ class IOSChromeMainParts : public web::WebMainParts {
   std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   PrefService* local_state_;
-
-  // Initialized in SetupMetricsAndFieldTrials.
-  std::unique_ptr<ios::FieldTrialSynchronizer> field_trial_synchronizer_;
 
   IOSChromeFieldTrials ios_field_trials_;
 

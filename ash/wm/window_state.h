@@ -8,41 +8,32 @@
 #include <memory>
 
 #include "ash/ash_export.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
+#include "ash/display/persistent_window_info.h"
 #include "ash/wm/drag_details.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/compositor/layer_owner.h"
+#include "ui/display/display.h"
+#include "ui/gfx/animation/tween.h"
 
 namespace gfx {
 class Rect;
 }
 
 namespace ash {
+class ClientControlledState;
 class LockWindowState;
 class TabletModeWindowState;
-
-namespace mojom {
 enum class WindowPinType;
-}
-
-namespace wm {
 class WindowState;
 class WindowStateDelegate;
 class WindowStateObserver;
+enum class WindowStateType;
 class WMEvent;
-class ClientControlledState;
-
-// Returns the WindowState for the active window, null if there is no active
-// window.
-ASH_EXPORT WindowState* GetActiveWindowState();
-
-// Returns the WindowState for |window|. Creates WindowState if it doesn't
-// exist. The returned value is owned by |window| (you should not delete it).
-ASH_EXPORT WindowState* GetWindowState(aura::Window* window);
-ASH_EXPORT const WindowState* GetWindowState(const aura::Window* window);
 
 // WindowState manages and defines ash specific window state and
 // behavior. Ash specific per-window state (such as ones that controls
@@ -51,25 +42,34 @@ ASH_EXPORT const WindowState* GetWindowState(const aura::Window* window);
 // of defining separate functions (like |MaximizeWindow(aura::Window*
 // window)|) or using aura Window property.
 // The WindowState gets created when first accessed by
-// |wm::GetWindowState|, and deleted when the window is deleted.
+// |WindowState::Get()|, and deleted when the window is deleted.
 // Prefer using this class instead of passing aura::Window* around in
 // ash code as this is often what you need to interact with, and
 // accessing the window using |window()| is cheap.
 class ASH_EXPORT WindowState : public aura::WindowObserver {
  public:
+  // The default duration for an animation between two sets of bounds.
+  static constexpr base::TimeDelta kBoundsChangeSlideDuration =
+      base::TimeDelta::FromMilliseconds(120);
+
   // A subclass of State class represents one of the window's states
   // that corresponds to WindowStateType in Ash environment, e.g.
   // maximized, minimized or side snapped, as subclass.
   // Each subclass defines its own behavior and transition for each WMEvent.
   class State {
    public:
+    // Animation type of updating window bounds for entering current state.
+    // "IMMEDIATE" means update bounds directly without animation. "STEP_END"
+    // means update bounds at the end of the animation.
+    enum EnterAnimationType { DEFAULT, IMMEDIATE, STEP_END };
+
     State() {}
     virtual ~State() {}
 
     // Update WindowState based on |event|.
     virtual void OnWMEvent(WindowState* window_state, const WMEvent* event) = 0;
 
-    virtual mojom::WindowStateType GetType() const = 0;
+    virtual WindowStateType GetType() const = 0;
 
     // Gets called when the state object became active and the managed window
     // needs to be adjusted to the State's requirement.
@@ -84,11 +84,32 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
     // Note: This only gets called when the state object gets changed.
     virtual void DetachState(WindowState* window_state) = 0;
 
+    // Called when the window is being destroyed.
+    virtual void OnWindowDestroying(WindowState* window_state) {}
+
+    EnterAnimationType enter_animation_type() const {
+      return enter_animation_type_;
+    }
+    void set_enter_animation_type(EnterAnimationType type) {
+      enter_animation_type_ = type;
+    }
+
    private:
+    EnterAnimationType enter_animation_type_ = DEFAULT;
+
     DISALLOW_COPY_AND_ASSIGN(State);
   };
 
-  // Call GetWindowState() to instantiate this class.
+  // Returns the WindowState for |window|. Creates WindowState if it doesn't
+  // exist. The returned value is owned by |window| (you should not delete it).
+  static WindowState* Get(aura::Window* window);
+  static const WindowState* Get(const aura::Window* window);
+
+  // Returns the WindowState for the active window, null if there is no active
+  // window.
+  static WindowState* ForActiveWindow();
+
+  // Call WindowState::Get() to instantiate this class.
   ~WindowState() override;
 
   aura::Window* window() { return window_; }
@@ -100,7 +121,7 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // Returns the window's current ash state type.
   // Refer to WindowStateType definition in wm_types.h as for why Ash
   // has its own state type.
-  mojom::WindowStateType GetStateType() const;
+  WindowStateType GetStateType() const;
 
   // Predicates to check window state.
   bool IsMinimized() const;
@@ -109,13 +130,14 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   bool IsSnapped() const;
   bool IsPinned() const;
   bool IsTrustedPinned() const;
+  bool IsPip() const;
 
-  // True if the window's state type is WindowStateType::MAXIMIZED,
-  // WindowStateType::FULLSCREEN or WindowStateType::PINNED.
+  // True if the window's state type is WindowStateType::kMaximized,
+  // WindowStateType::kFullscreen or WindowStateType::kPinned.
   bool IsMaximizedOrFullscreenOrPinned() const;
 
-  // True if the window's state type is WindowStateType::NORMAL or
-  // WindowStateType::DEFAULT.
+  // True if the window's state type is WindowStateType::kNormal or
+  // WindowStateType::kDefault.
   bool IsNormalStateType() const;
 
   bool IsNormalOrSnapped() const;
@@ -149,12 +171,12 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // TODO(oshima): Change to use RESTORE event.
   void Restore();
 
-  // Caches, then disables always on top state and then stacks |window_| below
-  // |window_on_top| if a |window_| is currently in always on top state.
-  void DisableAlwaysOnTop(aura::Window* window_on_top);
+  // Caches, then disables z-ordering state and then stacks |window_| below
+  // |window_on_top| if |window_| currently has a special z-order.
+  void DisableZOrdering(aura::Window* window_on_top);
 
-  // Restores always on top state that a window might have cached.
-  void RestoreAlwaysOnTop();
+  // Restores the z-ordering state that a window might have cached.
+  void RestoreZOrdering();
 
   // Invoked when a WMevent occurs, which drives the internal
   // state machine.
@@ -192,6 +214,12 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // by this object and the returned object will be owned by the caller.
   std::unique_ptr<State> SetStateObject(std::unique_ptr<State> new_state);
 
+  // Updates |snapped_width_ratio_| based on |event|.
+  void UpdateSnappedWidthRatio(const WMEvent* event);
+  base::Optional<float> snapped_width_ratio() const {
+    return snapped_width_ratio_;
+  }
+
   // True if the window should be unminimized to the restore bounds, as
   // opposed to the window's current bounds. |unminimized_to_restore_bounds_| is
   // reset to the default value after the window is unminimized.
@@ -219,28 +247,27 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
     autohide_shelf_when_maximized_or_fullscreen_ = value;
   }
 
-  // If the minimum visibility is true, ash will try to keep a
-  // minimum amount of the window is always visible on the work area
-  // when shown.
-  // TODO(oshima): Consolidate this and GetWindowPositionManaged
-  // into single parameter to control the window placement.
-  bool minimum_visibility() const { return minimum_visibility_; }
-  void set_minimum_visibility(bool minimum_visibility) {
-    minimum_visibility_ = minimum_visibility;
-  }
-
-  // Specifies if the window can be dragged by the user via the caption or not.
-  bool can_be_dragged() const { return can_be_dragged_; }
-  void set_can_be_dragged(bool can_be_dragged) {
-    can_be_dragged_ = can_be_dragged;
-  }
-
   // Gets/Sets the bounds of the window before it was moved by the auto window
   // management. As long as it was not auto-managed, it will return NULL.
-  const gfx::Rect* pre_auto_manage_window_bounds() const {
-    return pre_auto_manage_window_bounds_.get();
+  const base::Optional<gfx::Rect> pre_auto_manage_window_bounds() {
+    return pre_auto_manage_window_bounds_;
   }
   void SetPreAutoManageWindowBounds(const gfx::Rect& bounds);
+
+  // Gets/Sets the property that is used on window added to workspace event.
+  const base::Optional<gfx::Rect> pre_added_to_workspace_window_bounds() {
+    return pre_added_to_workspace_window_bounds_;
+  }
+  void SetPreAddedToWorkspaceWindowBounds(const gfx::Rect& bounds);
+
+  // Gets/Sets the persistent window info that is used on restoring persistent
+  // window bounds in multi-displays scenario.
+  const base::Optional<PersistentWindowInfo> persistent_window_info() {
+    return persistent_window_info_;
+  }
+  void SetPersistentWindowInfo(
+      const PersistentWindowInfo& persistent_window_info);
+  void ResetPersistentWindowInfo();
 
   // Layout related properties
 
@@ -259,13 +286,6 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   bool bounds_changed_by_user() const { return bounds_changed_by_user_; }
   void set_bounds_changed_by_user(bool bounds_changed_by_user);
 
-  // True if the window is ignored by the shelf layout manager for
-  // purposes of darkening the shelf.
-  bool ignored_by_shelf() const { return ignored_by_shelf_; }
-  void set_ignored_by_shelf(bool ignored_by_shelf) {
-    ignored_by_shelf_ = ignored_by_shelf;
-  }
-
   // True if the window should be offered a chance to consume special system
   // keys such as brightness, volume, etc. that are usually handled by the
   // shell.
@@ -277,7 +297,6 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // the top portion of the window through a touch / mouse gesture. It might
   // also allow the shelf to be shown in some situations.
   bool IsInImmersiveFullscreen() const;
-  void SetInImmersiveFullscreen(bool enabled);
 
   // True if the window should not adjust the window's bounds when
   // virtual keyboard bounds changes.
@@ -309,9 +328,23 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // Sets the currently stored restore bounds and clears the restore bounds.
   void SetAndClearRestoreBounds();
 
+  // Notifies that the drag operation has been started.
+  void OnDragStarted(int window_component);
+
+  // Notifies that the drag operation has been either completed or reverted.
+  // |location| is the last position of the pointer device used to drag.
+  void OnCompleteDrag(const gfx::Point& location);
+  void OnRevertDrag(const gfx::Point& location);
+
+  // Notifies that the window lost the activation.
+  void OnActivationLost();
+
   // Returns a pointer to DragDetails during drag operations.
   const DragDetails* drag_details() const { return drag_details_.get(); }
   DragDetails* drag_details() { return drag_details_.get(); }
+
+  // Returns the Display that this WindowState is on.
+  display::Display GetDisplay();
 
   class TestApi {
    public:
@@ -321,33 +354,38 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   };
 
  private:
+  friend class BaseState;
+  friend class ClientControlledState;
   friend class DefaultState;
-  friend class ash::wm::ClientControlledState;
-  friend class ash::LockWindowState;
-  friend class ash::TabletModeWindowState;
-  friend WindowState* GetWindowState(aura::Window*);
+  friend class LockWindowState;
+  friend class TabletModeWindowState;
   FRIEND_TEST_ALL_PREFIXES(WindowAnimationsTest, CrossFadeToBounds);
   FRIEND_TEST_ALL_PREFIXES(WindowAnimationsTest,
                            CrossFadeToBoundsFromTransform);
+  FRIEND_TEST_ALL_PREFIXES(WindowStateTest, PipWindowMaskRecreated);
+  FRIEND_TEST_ALL_PREFIXES(WindowStateTest, PipWindowHasMaskLayer);
 
   explicit WindowState(aura::Window* window);
 
   WindowStateDelegate* delegate() { return delegate_.get(); }
 
-  // Returns the window's current always_on_top state.
-  bool GetAlwaysOnTop() const;
+  bool HasMaximumWidthOrHeight() const;
+
+  // Returns the window's current z-ordering state.
+  ui::ZOrderLevel GetZOrdering() const;
 
   // Returns the window's current show state.
   ui::WindowShowState GetShowState() const;
 
   // Return the window's current pin type.
-  ash::mojom::WindowPinType GetPinType() const;
+  ash::WindowPinType GetPinType() const;
 
   // Sets the window's bounds in screen coordinates.
   void SetBoundsInScreen(const gfx::Rect& bounds_in_screen);
 
   // Adjusts the |bounds| so that they are flush with the edge of the
-  // workspace if the window represented by |window_state| is side snapped.
+  // workspace if the window represented by |window_state| is side snapped. It
+  // is called for workspace events.
   void AdjustSnappedBounds(gfx::Rect* bounds);
 
   // Updates the window properties(show state, pin type) according to the
@@ -355,8 +393,8 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   // Note that this does not update the window bounds.
   void UpdateWindowPropertiesFromStateType();
 
-  void NotifyPreStateTypeChange(mojom::WindowStateType old_window_state_type);
-  void NotifyPostStateTypeChange(mojom::WindowStateType old_window_state_type);
+  void NotifyPreStateTypeChange(WindowStateType old_window_state_type);
+  void NotifyPostStateTypeChange(WindowStateType old_window_state_type);
 
   // Sets |bounds| as is and ensure the layer is aligned with pixel boundary.
   void SetBoundsDirect(const gfx::Rect& bounds);
@@ -366,24 +404,41 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   void SetBoundsConstrained(const gfx::Rect& bounds);
 
   // Sets the wndow's |bounds| and transitions to the new bounds with
-  // a scale animation.
-  void SetBoundsDirectAnimated(const gfx::Rect& bounds);
+  // a scale animation, with duration specified by |duration|.
+  void SetBoundsDirectAnimated(
+      const gfx::Rect& bounds,
+      base::TimeDelta duration = kBoundsChangeSlideDuration,
+      gfx::Tween::Type animation_type = gfx::Tween::LINEAR);
 
   // Sets the window's |bounds| and transition to the new bounds with
   // a cross fade animation.
   void SetBoundsDirectCrossFade(const gfx::Rect& bounds);
 
+  // Called before the state change and update PIP related state, such as next
+  // window animation type, upon state change.
+  void OnPrePipStateChange(WindowStateType old_window_state_type);
+
+  // Called after the state change and update PIP related state, such as next
+  // window animation type, upon state change.
+  void OnPostPipStateChange(WindowStateType old_window_state_type);
+
+  // Update the PIP bounds if necessary. This may need to happen when the
+  // display work area changes, or if system ui regions like the virtual
+  // keyboard position changes.
+  void UpdatePipBounds();
+
   // aura::WindowObserver:
   void OnWindowPropertyChanged(aura::Window* window,
                                const void* key,
                                intptr_t old) override;
+  void OnWindowAddedToRootWindow(aura::Window* window) override;
+  void OnWindowDestroying(aura::Window* window) override;
 
   // The owner of this window settings.
   aura::Window* window_;
   std::unique_ptr<WindowStateDelegate> delegate_;
 
   bool bounds_changed_by_user_;
-  bool ignored_by_shelf_;
   bool can_consume_system_keys_;
   std::unique_ptr<DragDetails> drag_details_;
 
@@ -391,17 +446,29 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   bool ignore_keyboard_bounds_change_ = false;
   bool hide_shelf_when_fullscreen_;
   bool autohide_shelf_when_maximized_or_fullscreen_;
-  bool minimum_visibility_;
-  bool can_be_dragged_;
-  bool cached_always_on_top_;
+  ui::ZOrderLevel cached_z_order_;
   bool allow_set_bounds_direct_ = false;
+
+  // A property to save the ratio between snapped window width and display
+  // workarea width. It is used to update snapped window width on
+  // AdjustSnappedBounds() when handling workspace events.
+  base::Optional<float> snapped_width_ratio_;
 
   // A property to remember the window position which was set before the
   // auto window position manager changed the window bounds, so that it can get
   // restored when only this one window gets shown.
-  std::unique_ptr<gfx::Rect> pre_auto_manage_window_bounds_;
+  base::Optional<gfx::Rect> pre_auto_manage_window_bounds_;
 
-  base::ObserverList<WindowStateObserver> observer_list_;
+  // A property which resets when bounds is changed by user and sets when it is
+  // nullptr, and window is removing from a workspace.
+  base::Optional<gfx::Rect> pre_added_to_workspace_window_bounds_;
+
+  // A property to remember the persistent window info used in multi-displays
+  // scenario to attempt to restore windows to their original bounds when
+  // displays are restored to their previous states.
+  base::Optional<PersistentWindowInfo> persistent_window_info_;
+
+  base::ObserverList<WindowStateObserver>::Unchecked observer_list_;
 
   // True to ignore a property change event to avoid reentrance in
   // UpdateWindowStateType()
@@ -412,7 +479,6 @@ class ASH_EXPORT WindowState : public aura::WindowObserver {
   DISALLOW_COPY_AND_ASSIGN(WindowState);
 };
 
-}  // namespace wm
 }  // namespace ash
 
 #endif  // ASH_WM_WINDOW_STATE_H_

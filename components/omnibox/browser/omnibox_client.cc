@@ -33,14 +33,6 @@ gfx::Image OmniboxClient::GetFavicon() const {
   return gfx::Image();
 }
 
-bool OmniboxClient::IsInstantNTP() const {
-  return false;
-}
-
-bool OmniboxClient::IsSearchResultsPage() const {
-  return false;
-}
-
 bool OmniboxClient::IsLoading() const {
   return false;
 }
@@ -49,15 +41,15 @@ bool OmniboxClient::IsPasteAndGoEnabled() const {
   return false;
 }
 
-bool OmniboxClient::IsNewTabPage(const GURL& url) const {
-  return false;
-}
-
-bool OmniboxClient::IsHomePage(const GURL& url) const {
-  return false;
+bool OmniboxClient::IsDefaultSearchProviderEnabled() const {
+  return true;
 }
 
 bookmarks::BookmarkModel* OmniboxClient::GetBookmarkModel() {
+  return nullptr;
+}
+
+OmniboxControllerEmitter* OmniboxClient::GetOmniboxControllerEmitter() {
   return nullptr;
 }
 
@@ -74,10 +66,36 @@ gfx::Image OmniboxClient::GetIconIfExtensionMatch(
   return gfx::Image();
 }
 
+gfx::Image OmniboxClient::GetSizedIcon(const gfx::VectorIcon& vector_icon_type,
+                                       SkColor vector_icon_color) const {
+  return gfx::Image();
+}
+
+gfx::Image OmniboxClient::GetSizedIcon(const gfx::Image& icon) const {
+  return gfx::Image();
+}
+
 bool OmniboxClient::ProcessExtensionKeyword(
     const TemplateURL* template_url,
     const AutocompleteMatch& match,
     WindowOpenDisposition disposition,
     OmniboxNavigationObserver* observer) {
   return false;
+}
+
+gfx::Image OmniboxClient::GetFaviconForPageUrl(
+    const GURL& page_url,
+    FaviconFetchedCallback on_favicon_fetched) {
+  return gfx::Image();
+}
+
+gfx::Image OmniboxClient::GetFaviconForDefaultSearchProvider(
+    FaviconFetchedCallback on_favicon_fetched) {
+  return gfx::Image();
+}
+
+gfx::Image OmniboxClient::GetFaviconForKeywordSearchProvider(
+    const TemplateURL* template_url,
+    FaviconFetchedCallback on_favicon_fetched) {
+  return gfx::Image();
 }

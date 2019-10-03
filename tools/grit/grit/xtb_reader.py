@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +5,7 @@
 '''Fast and efficient parser for XTB files.
 '''
 
+from __future__ import print_function
 
 import sys
 import xml.sax
@@ -138,4 +138,3 @@ def Parse(xtb_file, callback_function, defs=None, debug=False,
   xml.sax.parse(xtb_file, handler)
   assert handler.language != ''
   return handler.language
-

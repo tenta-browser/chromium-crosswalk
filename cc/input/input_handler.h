@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
 #include "cc/input/event_listener_properties.h"
@@ -16,7 +15,10 @@
 #include "cc/input/scroll_state.h"
 #include "cc/input/scrollbar.h"
 #include "cc/input/touch_action.h"
+#include "cc/paint/element_id.h"
 #include "cc/trees/swap_promise_monitor.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "ui/events/types/scroll_types.h"
 
 namespace gfx {
 class Point;
@@ -32,6 +34,26 @@ class LatencyInfo;
 namespace cc {
 
 class ScrollElasticityHelper;
+
+enum PointerResultType { kUnhandled = 0, kScrollbarScroll };
+
+struct CC_EXPORT InputHandlerPointerResult {
+  InputHandlerPointerResult();
+  // Tells what type of processing occurred in the input handler as a result of
+  // the pointer event.
+  PointerResultType type;
+
+  // Tells what scroll_units should be used.
+  ui::input_types::ScrollGranularity scroll_units;
+
+  // If the input handler processed the event as a scrollbar scroll, it will
+  // return a gfx::ScrollOffset that produces the necessary scroll. However,
+  // it is still the client's responsibility to generate the gesture scrolls
+  // instead of the input handler performing it as a part of handling the
+  // pointer event (due to the latency attribution that happens at the
+  // InputHandlerProxy level).
+  gfx::ScrollOffset scroll_offset;
+};
 
 struct CC_EXPORT InputHandlerScrollResult {
   InputHandlerScrollResult();
@@ -49,15 +71,22 @@ struct CC_EXPORT InputHandlerScrollResult {
   // How the browser should handle the overscroll navigation based on the css
   // property scroll-boundary-behavior.
   OverscrollBehavior overscroll_behavior;
+  // The current offset of the currently scrolling node. It is in DIP or
+  // physical pixels depending on the use-zoom-for-dsf flag. If the currently
+  // scrolling node is the viewport, this would be the sum of the scroll offsets
+  // of the inner and outer node, representing the visual scroll offset.
+  gfx::Vector2dF current_visual_offset;
 };
 
 class CC_EXPORT InputHandlerClient {
  public:
-  virtual ~InputHandlerClient() {}
+  InputHandlerClient(const InputHandlerClient&) = delete;
+  virtual ~InputHandlerClient() = default;
+
+  InputHandlerClient& operator=(const InputHandlerClient&) = delete;
 
   virtual void WillShutdown() = 0;
   virtual void Animate(base::TimeTicks time) = 0;
-  virtual void MainThreadHasStoppedFlinging() = 0;
   virtual void ReconcileElasticOverscrollAndRootScroll() = 0;
   virtual void UpdateRootLayerStateForSynchronousInputHandler(
       const gfx::ScrollOffset& total_scroll_offset,
@@ -66,13 +95,11 @@ class CC_EXPORT InputHandlerClient {
       float page_scale_factor,
       float min_page_scale_factor,
       float max_page_scale_factor) = 0;
-  virtual void DeliverInputForBeginFrame() = 0;
+  virtual void DeliverInputForBeginFrame(const viz::BeginFrameArgs& args) = 0;
+  virtual void DeliverInputForHighLatencyMode() = 0;
 
  protected:
-  InputHandlerClient() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(InputHandlerClient);
+  InputHandlerClient() = default;
 };
 
 // The InputHandler is a way for the embedders to interact with the impl thread
@@ -91,6 +118,9 @@ class CC_EXPORT InputHandler {
     LAST_SCROLL_STATUS = SCROLL_UNKNOWN
   };
 
+  InputHandler(const InputHandler&) = delete;
+  InputHandler& operator=(const InputHandler&) = delete;
+
   struct ScrollStatus {
     ScrollStatus()
         : thread(SCROLL_ON_IMPL_THREAD),
@@ -108,7 +138,9 @@ class CC_EXPORT InputHandler {
   enum ScrollInputType {
     TOUCHSCREEN,
     WHEEL,
-    NON_BUBBLING_GESTURE
+    AUTOSCROLL,
+    SCROLLBAR,
+    SCROLL_INPUT_UNKNOWN
   };
 
   enum class TouchStartOrMoveEventListenerType {
@@ -120,8 +152,7 @@ class CC_EXPORT InputHandler {
   // Binds a client to this handler to receive notifications. Only one client
   // can be bound to an InputHandler. The client must live at least until the
   // handler calls WillShutdown() on the client.
-  virtual void BindToClient(InputHandlerClient* client,
-                            bool wheel_scroll_latching_enabled) = 0;
+  virtual void BindToClient(InputHandlerClient* client) = 0;
 
   // Selects a layer to be scrolled using the |scroll_state| start position.
   // Returns SCROLL_STARTED if the layer at the coordinates can be scrolled,
@@ -160,27 +191,27 @@ class CC_EXPORT InputHandler {
   // ScrollBegin() returned SCROLL_STARTED.
   virtual InputHandlerScrollResult ScrollBy(ScrollState* scroll_state) = 0;
 
-  // Returns SCROLL_STARTED if a layer was actively being scrolled,
-  // SCROLL_IGNORED if not.
-  virtual ScrollStatus FlingScrollBegin() = 0;
-
-  virtual void MouseMoveAt(const gfx::Point& mouse_position) = 0;
-  virtual void MouseDown() = 0;
-  virtual void MouseUp() = 0;
+  virtual InputHandlerPointerResult MouseMoveAt(
+      const gfx::Point& mouse_position) = 0;
+  virtual InputHandlerPointerResult MouseDown(
+      const gfx::PointF& mouse_position) = 0;
+  virtual InputHandlerPointerResult MouseUp(
+      const gfx::PointF& mouse_position) = 0;
   virtual void MouseLeave() = 0;
 
   // Stop scrolling the selected layer. Should only be called if ScrollBegin()
-  // returned SCROLL_STARTED.
-  virtual void ScrollEnd(ScrollState* scroll_state) = 0;
+  // returned SCROLL_STARTED. Snap to a snap position if |should_snap| is true.
+  virtual void ScrollEnd(ScrollState* scroll_state, bool should_snap) = 0;
 
   // Requests a callback to UpdateRootLayerStateForSynchronousInputHandler()
   // giving the current root scroll and page scale information.
   virtual void RequestUpdateForSynchronousInputHandler() = 0;
 
   // Called when the root scroll offset has been changed in the synchronous
-  // input handler by the application (outside of input event handling).
+  // input handler by the application (outside of input event handling). Offset
+  // is expected in "content/page coordinates".
   virtual void SetSynchronousInputHandlerRootScrollOffset(
-      const gfx::ScrollOffset& root_offset) = 0;
+      const gfx::ScrollOffset& root_content_offset) = 0;
 
   virtual void PinchGestureBegin() = 0;
   virtual void PinchGestureUpdate(float magnify_delta,
@@ -194,11 +225,16 @@ class CC_EXPORT InputHandler {
   virtual bool IsCurrentlyScrollingViewport() const = 0;
 
   // Whether the layer under |viewport_point| is the currently scrolling layer.
-  virtual bool IsCurrentlyScrollingLayerAt(const gfx::Point& viewport_point,
-                                           ScrollInputType type) const = 0;
+  virtual bool IsCurrentlyScrollingLayerAt(
+      const gfx::Point& viewport_point) const = 0;
 
   virtual EventListenerProperties GetEventListenerProperties(
       EventListenerClass event_class) const = 0;
+
+  // Returns true if |viewport_point| hits a wheel event handler region that
+  // could block scrolling.
+  virtual bool HasBlockingWheelEventHandlerAt(
+      const gfx::Point& viewport_point) const = 0;
 
   // It returns the type of a touch start or move event listener at
   // |viewport_point|. Whether the page should be given the opportunity to
@@ -224,19 +260,27 @@ class CC_EXPORT InputHandler {
   virtual ScrollElasticityHelper* CreateScrollElasticityHelper() = 0;
 
   // Called by the single-threaded UI Compositor to get or set the scroll offset
-  // on the impl side. Retruns false if |layer_id| isn't in the active tree.
-  virtual bool GetScrollOffsetForLayer(int layer_id,
+  // on the impl side. Returns false if |element_id| isn't in the active tree.
+  virtual bool GetScrollOffsetForLayer(ElementId element_id,
                                        gfx::ScrollOffset* offset) = 0;
-  virtual bool ScrollLayerTo(int layer_id, const gfx::ScrollOffset& offset) = 0;
+  virtual bool ScrollLayerTo(ElementId element_id,
+                             const gfx::ScrollOffset& offset) = 0;
 
   virtual bool ScrollingShouldSwitchtoMainThread() = 0;
 
- protected:
-  InputHandler() {}
-  virtual ~InputHandler() {}
+  // Sets the initial and target offset for scroll snapping for the currently
+  // scrolling node and the given natural displacement.
+  // |natural_displacement_in_viewport| is the estimated total scrolling for
+  // the active scroll sequence.
+  // Returns false if their is no position to snap to.
+  virtual bool GetSnapFlingInfo(
+      const gfx::Vector2dF& natural_displacement_in_viewport,
+      gfx::Vector2dF* initial_offset,
+      gfx::Vector2dF* target_offset) const = 0;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(InputHandler);
+ protected:
+  InputHandler() = default;
+  virtual ~InputHandler() = default;
 };
 
 }  // namespace cc

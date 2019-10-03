@@ -11,20 +11,21 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/services/printing/public/mojom/pdf_to_emf_converter.mojom.h"
 #include "content/public/common/child_process_host_delegate.h"
 #include "ipc/ipc_platform_file.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "services/service_manager/public/interfaces/service.mojom.h"
+#include "mojo/public/cpp/system/invitation.h"
+#include "services/service_manager/public/cpp/identity.h"
 
 namespace base {
 class CommandLine;
-class File;
 class FilePath;
 class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace content {
 class ChildProcessHost;
+class ServiceManagerConnection;
 }
 
 namespace printing {
@@ -34,9 +35,15 @@ struct PrinterCapsAndDefaults;
 struct PrinterSemanticCapsAndDefaults;
 }  // namespace printing
 
+namespace service_manager {
+class ServiceManager;
+}
+
 // Acts as the service-side host to a utility child process. A
 // utility process is a short-lived sandboxed process that is created to run
 // a specific task.
+// This class is expected to delete itself IFF one of its Start methods has been
+// called.
 class ServiceUtilityProcessHost : public content::ChildProcessHostDelegate {
  public:
   // Consumers of ServiceUtilityProcessHost must implement this interface to
@@ -77,9 +84,10 @@ class ServiceUtilityProcessHost : public content::ChildProcessHostDelegate {
     friend class base::RefCountedThreadSafe<Client>;
     friend class ServiceUtilityProcessHost;
 
-    // Invoked when a metafile file is ready.
-    // Returns true if metafile successfully loaded from |file|.
-    bool MetafileAvailable(float scale_factor, base::File file);
+    // Invoked when a metafile is ready.
+    // Returns true if metafile successfully loaded from |emf_region|.
+    bool MetafileAvailable(float scale_factor,
+                           base::ReadOnlySharedMemoryRegion emf_region);
 
     DISALLOW_COPY_AND_ASSIGN(Client);
   };
@@ -116,25 +124,31 @@ class ServiceUtilityProcessHost : public content::ChildProcessHostDelegate {
   // ChildProcessHostDelegate implementation:
   void OnChildDisconnected() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  const base::Process& GetProcess() const override;
+  const base::Process& GetProcess() override;
   void BindInterface(const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe) override;
 
  private:
   // Starts a process.  Returns true iff it succeeded.
-  bool StartProcess(bool no_sandbox);
+  bool StartProcess(bool sandbox);
 
   // Launch the child process synchronously.
-  bool Launch(base::CommandLine* cmd_line, bool no_sandbox);
+  bool Launch(base::CommandLine* cmd_line, bool sandbox);
 
   base::ProcessHandle handle() const { return process_.Handle(); }
 
   void OnMetafileSpooled(bool success);
   void OnPDFToEmfFinished(bool success);
 
-  // Messages handlers:
-  void OnRenderPDFPagesToMetafilesPageCount(int page_count);
-  void OnRenderPDFPagesToMetafilesPageDone(bool success, float scale_factor);
+  // PdfToEmfState callbacks:
+  void OnRenderPDFPagesToMetafilesPageCount(
+      printing::mojom::PdfToEmfConverterPtr converter,
+      uint32_t page_count);
+  void OnRenderPDFPagesToMetafilesPageDone(
+      base::ReadOnlySharedMemoryRegion emf_region,
+      float scale_factor);
+
+  // IPC Messages handlers:
   void OnGetPrinterCapsAndDefaultsSucceeded(
       const std::string& printer_name,
       const printing::PrinterCapsAndDefaults& caps_and_defaults);
@@ -151,12 +165,15 @@ class ServiceUtilityProcessHost : public content::ChildProcessHostDelegate {
   scoped_refptr<Client> client_;
   scoped_refptr<base::SingleThreadTaskRunner> client_task_runner_;
   bool waiting_for_reply_;
-  mojo::edk::OutgoingBrokerClientInvitation broker_client_invitation_;
+  mojo::OutgoingInvitation mojo_invitation_;
 
   class PdfToEmfState;
   std::unique_ptr<PdfToEmfState> pdf_to_emf_state_;
 
-  service_manager::mojom::ServicePtr utility_process_connection_;
+  std::unique_ptr<service_manager::ServiceManager> service_manager_;
+  std::unique_ptr<content::ServiceManagerConnection>
+      service_manager_connection_;
+  service_manager::Identity utility_service_instance_identity_;
 
   base::WeakPtrFactory<ServiceUtilityProcessHost> weak_ptr_factory_;
 

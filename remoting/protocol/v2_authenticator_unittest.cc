@@ -5,6 +5,7 @@
 #include "remoting/protocol/v2_authenticator.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "net/base/net_errors.h"
@@ -66,8 +67,9 @@ TEST_F(V2AuthenticatorTest, SuccessfulAuth) {
   StreamConnectionTester tester(host_socket_.get(), client_socket_.get(),
                                 kMessageSize, kMessages);
 
-  tester.Start();
-  base::RunLoop().Run();
+  base::RunLoop run_loop;
+  tester.Start(run_loop.QuitClosure());
+  run_loop.Run();
   tester.CheckResults();
 }
 
@@ -83,11 +85,11 @@ TEST_F(V2AuthenticatorTest, InvalidSecret) {
   reinterpret_cast<V2Authenticator*>(client_.get())->state_ =
       Authenticator::MESSAGE_READY;
 
-  std::unique_ptr<buzz::XmlElement> message(client_->GetNextMessage());
+  std::unique_ptr<jingle_xmpp::XmlElement> message(client_->GetNextMessage());
   ASSERT_TRUE(message.get());
 
   ASSERT_EQ(Authenticator::WAITING_MESSAGE, client_->state());
-  host_->ProcessMessage(message.get(), base::Bind(&base::DoNothing));
+  host_->ProcessMessage(message.get(), base::DoNothing());
   // This assumes that V2Authenticator::ProcessMessage runs synchronously.
   ASSERT_EQ(Authenticator::REJECTED, host_->state());
 }

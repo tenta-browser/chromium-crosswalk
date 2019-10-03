@@ -185,7 +185,7 @@ InputInjectorMac::Core::Core(
 void InputInjectorMac::Core::InjectClipboardEvent(const ClipboardEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectClipboardEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectClipboardEvent, this, event));
     return;
   }
 
@@ -346,7 +346,7 @@ void InputInjectorMac::Core::Start(
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&Core::Start, this, base::Passed(&client_clipboard)));
+        base::BindOnce(&Core::Start, this, std::move(client_clipboard)));
     return;
   }
 
@@ -355,7 +355,7 @@ void InputInjectorMac::Core::Start(
 
 void InputInjectorMac::Core::Stop() {
   if (!task_runner_->BelongsToCurrentThread()) {
-    task_runner_->PostTask(FROM_HERE, base::Bind(&Core::Stop, this));
+    task_runner_->PostTask(FROM_HERE, base::BindOnce(&Core::Stop, this));
     return;
   }
 
@@ -397,8 +397,7 @@ InputInjectorMac::Core::~Core() {}
 // static
 std::unique_ptr<InputInjector> InputInjector::Create(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* chromeos_system_input_injector_factory) {
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
   return base::WrapUnique(new InputInjectorMac(main_task_runner));
 }
 

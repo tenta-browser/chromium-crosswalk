@@ -8,7 +8,6 @@
 // <security.h> needs this.
 #define SECURITY_WIN32 1
 #include <security.h>  // For GetUserNameEx()
-#include <shlwapi.h>   // For PathIsUNC()
 #include <stddef.h>
 
 #include <memory>
@@ -19,12 +18,12 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/enterprise_util.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
@@ -36,9 +35,9 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "base/win/shlwapi.h"  // For PathIsUNC()
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
-#include "components/json_schema/json_schema_constants.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_load_status.h"
 #include "components/policy/core/common/policy_map.h"
@@ -47,8 +46,6 @@
 #include "components/policy/core/common/registry_dict.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/policy_constants.h"
-
-namespace schema = json_schema_constants;
 
 namespace policy {
 
@@ -67,11 +64,22 @@ const char kBlockedExtensionPrefix[] = "[BLOCKED]";
 // List of policies that are considered only if the user is part of a AD domain.
 // Please document any new additions in policy_templates.json!
 const char* kInsecurePolicies[] = {
-    key::kMetricsReportingEnabled, key::kDefaultSearchProviderEnabled,
-    key::kHomepageIsNewTabPage,    key::kHomepageLocation,
-    key::kNewTabPageLocation,      key::kRestoreOnStartup,
-    key::kRestoreOnStartupURLs,    key::kSafeBrowsingForTrustedSourcesEnabled,
-    key::kCloudPolicyOverridesMachinePolicy};
+    key::kChromeCleanupEnabled,
+    key::kChromeCleanupReportingEnabled,
+    key::kCommandLineFlagSecurityWarningsEnabled,
+    key::kDefaultSearchProviderEnabled,
+    key::kHomepageIsNewTabPage,
+    key::kHomepageLocation,
+    key::kMetricsReportingEnabled,
+    key::kNewTabPageLocation,
+    key::kPasswordProtectionChangePasswordURL,
+    key::kPasswordProtectionLoginURLs,
+    key::kRestoreOnStartup,
+    key::kRestoreOnStartupURLs,
+    key::kSafeBrowsingForTrustedSourcesEnabled,
+    key::kSafeBrowsingEnabled,
+    key::kSafeBrowsingWhitelistDomains,
+};
 
 // The list of possible errors that can occur while collecting information about
 // the current enterprise environment.
@@ -89,7 +97,11 @@ enum DomainCheckErrors {
 // Encapculates logic to determine if enterprise policies should be honored.
 // This is used in various places below.
 bool ShouldHonorPolicies() {
-  return base::win::IsEnterpriseManaged();
+  bool is_enterprise_version =
+      base::win::OSInfo::GetInstance()->version_type() != base::win::SUITE_HOME;
+  return base::win::IsEnrolledToDomain() ||
+         (base::win::IsDeviceRegisteredWithManagement() &&
+          is_enterprise_version);
 }
 
 // Verifies that untrusted policies contain only safe values. Modifies the
@@ -130,25 +142,22 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
 
       const PolicyDetails* details =
           GetChromePolicyDetails(key::kExtensionInstallForcelist);
-      UMA_HISTOGRAM_SPARSE_SLOWLY("EnterpriseCheck.InvalidPolicies",
-                                  details->id);
+      base::UmaHistogramSparse("EnterpriseCheck.InvalidPolicies", details->id);
     }
   }
 
-  for (size_t i = 0; i < arraysize(kInsecurePolicies); ++i) {
+  for (size_t i = 0; i < base::size(kInsecurePolicies); ++i) {
     if (policy->Get(kInsecurePolicies[i])) {
-      // TODO(pastarmovj): Surface this issue in the about:policy page.
-      policy->Erase(kInsecurePolicies[i]);
+      policy->GetMutable(kInsecurePolicies[i])->SetBlocked();
       invalid_policies++;
       const PolicyDetails* details =
           GetChromePolicyDetails(kInsecurePolicies[i]);
-      UMA_HISTOGRAM_SPARSE_SLOWLY("EnterpriseCheck.InvalidPolicies",
-                                  details->id);
+      base::UmaHistogramSparse("EnterpriseCheck.InvalidPolicies", details->id);
     }
   }
 
-  UMA_HISTOGRAM_COUNTS("EnterpriseCheck.InvalidPoliciesDetected",
-                       invalid_policies);
+  UMA_HISTOGRAM_COUNTS_1M("EnterpriseCheck.InvalidPoliciesDetected",
+                          invalid_policies);
 }
 
 // Parses |gpo_dict| according to |schema| and writes the resulting policy
@@ -206,7 +215,7 @@ bool IsDomainJoined() {
   bool got_function_addresses = false;
   // Use an absolute path to load the DLL to avoid DLL preloading attacks.
   base::FilePath path;
-  if (PathService::Get(base::DIR_SYSTEM, &path)) {
+  if (base::PathService::Get(base::DIR_SYSTEM, &path)) {
     HINSTANCE net_api_library = ::LoadLibraryEx(
         path.Append(FILE_PATH_LITERAL("netapi32.dll")).value().c_str(), nullptr,
         LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -256,7 +265,7 @@ void CollectEnterpriseUMAs() {
   base::UmaHistogramBoolean("EnterpriseCheck.IsManaged",
                             base::win::IsDeviceRegisteredWithManagement());
   base::UmaHistogramBoolean("EnterpriseCheck.IsEnterpriseUser",
-                            base::win::IsEnterpriseManaged());
+                            base::IsMachineExternallyManaged());
 
   base::string16 machine_name;
   if (GetName(base::Bind(&::GetComputerNameEx, ::ComputerNameDnsHostname),
@@ -357,7 +366,7 @@ std::unique_ptr<PolicyBundle> PolicyLoaderWin::Load() {
   std::unique_ptr<PolicyBundle> bundle(new PolicyBundle());
   PolicyMap* chrome_policy =
       &bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()));
-  for (size_t i = 0; i < arraysize(kScopes); ++i) {
+  for (size_t i = 0; i < base::size(kScopes); ++i) {
     PolicyScope scope = kScopes[i].scope;
     PolicyLoadStatusUmaReporter status;
     RegistryDict gpo_dict;
@@ -415,7 +424,7 @@ void PolicyLoaderWin::Load3rdPartyPolicy(const RegistryDict* gpo_dict,
       {POLICY_LEVEL_RECOMMENDED, kKeyRecommended},
   };
 
-  for (size_t i = 0; i < arraysize(k3rdPartyDomains); i++) {
+  for (size_t i = 0; i < base::size(k3rdPartyDomains); i++) {
     const char* name = k3rdPartyDomains[i].name;
     const PolicyDomain domain = k3rdPartyDomains[i].domain;
     const RegistryDict* domain_dict = gpo_dict->GetKey(name);
@@ -435,7 +444,7 @@ void PolicyLoaderWin::Load3rdPartyPolicy(const RegistryDict* gpo_dict,
       Schema schema = *schema_from_map;
 
       // Parse policy.
-      for (size_t j = 0; j < arraysize(kLevels); j++) {
+      for (size_t j = 0; j < base::size(kLevels); j++) {
         const RegistryDict* policy_dict =
             component->second->GetKey(kLevels[j].path);
         if (!policy_dict)

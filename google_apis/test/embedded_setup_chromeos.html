@@ -29,8 +29,6 @@ gaia.chromeOSLogin.registerHtml5Listener = function() {
           gaia.chromeOSLogin.initialized_ = true;
           goFirstPage();
         }
-        // Repeat clearOldAttempts as soon as we got parent.
-        gaia.chromeOSLogin.clearOldAttempts();
     }
   };
   window.addEventListener('message', onMessage);
@@ -39,14 +37,6 @@ gaia.chromeOSLogin.registerHtml5Listener = function() {
       type: 'gaia_saml_api',
       call: {method: 'initialize', requestedVersion: 1}}, '/');
 }
-
-gaia.chromeOSLogin.clearOldAttempts = function() {
-  var msg = {
-    'method': 'clearOldAttempts'
-  };
-  gaia.chromeOSLogin.parent_webview_.postMessage(msg,
-      gaia.chromeOSLogin.parent_webview_url_);
-};
 
 gaia.chromeOSLogin.attemptLogin = function(email, password) {
   var msg = {
@@ -65,6 +55,25 @@ gaia.chromeOSLogin.attemptLogin = function(email, password) {
               passwordBytes: password,
               keyType: 'KEY_TYPE_PASSWORD_PLAIN'}
       }, '/');
+  var services = document.getElementById("services").value;
+  if (services) {
+    services = JSON.parse(services);
+    if (!services)
+      services = "Failed to parse test services JSON.";
+  } else if (email.endsWith('@corp.example.com') ||
+             email.endsWith('@example.test')) {
+    // SAML tests.
+    services = [];
+  } else {
+    services = "Services are not set for testing.";
+  }
+
+  msg = {
+    'method': 'userInfo',
+    'services': services,
+  };
+  gaia.chromeOSLogin.parent_webview_.postMessage(msg,
+      gaia.chromeOSLogin.parent_webview_url_);
 };
 
 gaia.chromeOSLogin.backButton = function(show) {
@@ -123,6 +132,45 @@ function onLoad() {
   gaia.chromeOSLogin.registerHtml5Listener();
 }
 
+function sendSetPrimaryActionLabel(label) {
+  gaia.chromeOSLogin.parent_webview_.postMessage({
+      method: 'setPrimaryActionLabel',
+      value: label
+    },
+    gaia.chromeOSLogin.parent_webview_url_);
+}
+
+function sendSetPrimaryActionEnabled(enabled) {
+  gaia.chromeOSLogin.parent_webview_.postMessage({
+      method: 'setPrimaryActionEnabled',
+      value: enabled
+    },
+    gaia.chromeOSLogin.parent_webview_url_);
+}
+
+function sendSetSecondaryActionLabel(label) {
+  gaia.chromeOSLogin.parent_webview_.postMessage({
+      method: 'setSecondaryActionLabel',
+      value: label
+    },
+    gaia.chromeOSLogin.parent_webview_url_);
+}
+
+function sendSetSecondaryActionEnabled(enabled) {
+  gaia.chromeOSLogin.parent_webview_.postMessage({
+      method: 'setSecondaryActionEnabled',
+      value: enabled
+    },
+    gaia.chromeOSLogin.parent_webview_url_);
+}
+
+function sendSetAllActionsEnabled(enabled) {
+  gaia.chromeOSLogin.parent_webview_.postMessage({
+      method: 'setAllActionsEnabled',
+      value: enabled
+    },
+    gaia.chromeOSLogin.parent_webview_url_);
+}
 </script>
 </head>
 <body onload='onLoad();'>
@@ -134,6 +182,7 @@ function onLoad() {
   <div id="page2" hidden>
     Password
     <input id="password" name="password" type="password" spellcheck="false" autocomplete="off" formnovalidate="">
+    <input id="services" name="services" type="text" spellcheck="false" autocomplete="off" formnovalidate="">
   </div><br>
   <div id='nextButton' onclick='goNext();'>Next</div>
 </body>

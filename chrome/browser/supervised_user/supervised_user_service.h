@@ -20,17 +20,14 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "chrome/browser/net/file_downloader.h"
-#include "chrome/browser/supervised_user/experimental/safe_search_url_reporter.h"
 #include "chrome/browser/supervised_user/experimental/supervised_user_blacklist.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
 #include "chrome/browser/supervised_user/supervised_users.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "components/sync/driver/sync_service_observer.h"
 #include "components/sync/driver/sync_type_preference_provider.h"
-#include "extensions/features/features.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_registry_observer.h"
@@ -38,10 +35,8 @@
 #endif
 
 class Browser;
-class GoogleServiceAuthError;
 class PermissionRequestCreator;
 class Profile;
-class SupervisedUserRegistrationUtility;
 class SupervisedUserServiceObserver;
 class SupervisedUserSettingsService;
 class SupervisedUserSiteList;
@@ -53,16 +48,8 @@ class FilePath;
 class Version;
 }
 
-namespace content {
-class WebContents;
-}
-
 namespace extensions {
 class ExtensionRegistry;
-}
-
-namespace syncer {
-class SyncSetupInProgressHandle;
 }
 
 namespace user_prefs {
@@ -79,14 +66,11 @@ class SupervisedUserService : public KeyedService,
 #endif
                               public syncer::SyncTypePreferenceProvider,
 #if !defined(OS_ANDROID)
-                              public syncer::SyncServiceObserver,
-                              public chrome::BrowserListObserver,
+                              public BrowserListObserver,
 #endif
                               public SupervisedUserURLFilter::Observer {
  public:
-  using NavigationBlockedCallback = base::Callback<void(content::WebContents*)>;
-  using AuthErrorCallback = base::Callback<void(const GoogleServiceAuthError&)>;
-  using SuccessCallback = base::Callback<void(bool)>;
+  using SuccessCallback = base::OnceCallback<void(bool)>;
 
   class Delegate {
    public:
@@ -117,21 +101,25 @@ class SupervisedUserService : public KeyedService,
     return whitelists_;
   }
 
+  // Returns true if the preference value is pre-defined and is controlled by
+  // neither the supervised user nor the supervised user's custodians.
+  bool IsRestrictedCrosSettingForChildUser(const std::string& name) const;
+
+  // Returns the value of the restricted preference.
+  const base::Value* GetRestrictedCrosSettingValueForChildUser(
+      const std::string& name) const;
+
   // Whether the user can request to get access to blocked URLs or to new
   // extensions.
   bool AccessRequestsEnabled();
 
   // Adds an access request for the given URL.
-  void AddURLAccessRequest(const GURL& url, const SuccessCallback& callback);
-
-  // Reports |url| to the SafeSearch API, because the user thinks this is an
-  // inappropriate URL.
-  void ReportURL(const GURL& url, const SuccessCallback& callback);
+  void AddURLAccessRequest(const GURL& url, SuccessCallback callback);
 
   // Adds an install request for the given WebStore item (App/Extension).
   void AddExtensionInstallRequest(const std::string& extension_id,
                                   const base::Version& version,
-                                  const SuccessCallback& callback);
+                                  SuccessCallback callback);
 
   // Same as above, but without a callback, just logging errors on failure.
   void AddExtensionInstallRequest(const std::string& extension_id,
@@ -140,7 +128,7 @@ class SupervisedUserService : public KeyedService,
   // Adds an update request for the given WebStore item (App/Extension).
   void AddExtensionUpdateRequest(const std::string& extension_id,
                                  const base::Version& version,
-                                 const SuccessCallback& callback);
+                                 SuccessCallback callback);
 
   // Same as above, but without a callback, just logging errors on failure.
   void AddExtensionUpdateRequest(const std::string& extension_id,
@@ -154,6 +142,9 @@ class SupervisedUserService : public KeyedService,
   // Returns the email address of the custodian.
   std::string GetCustodianEmailAddress() const;
 
+  // Returns the obfuscated GAIA id of the custodian.
+  std::string GetCustodianObfuscatedGaiaId() const;
+
   // Returns the name of the custodian, or the email address if the name is
   // empty.
   std::string GetCustodianName() const;
@@ -162,8 +153,12 @@ class SupervisedUserService : public KeyedService,
   // if there is no second custodian.
   std::string GetSecondCustodianEmailAddress() const;
 
+  // Returns the obfuscated GAIA id of the second custodian or the empty
+  // string if there is no second custodian.
+  std::string GetSecondCustodianObfuscatedGaiaId() const;
+
   // Returns the name of the second custodian, or the email address if the name
-  // is empty, or the empty string is there is no second custodian.
+  // is empty, or the empty string if there is no second custodian.
   std::string GetSecondCustodianName() const;
 
   // Returns a message saying that extensions can only be modified by the
@@ -174,21 +169,7 @@ class SupervisedUserService : public KeyedService,
   // Initializes this profile for syncing, using the provided |refresh_token| to
   // mint access tokens for Sync.
   void InitSync(const std::string& refresh_token);
-
-  // Convenience method that registers this supervised user using
-  // |registration_utility| and initializes sync with the returned token.
-  // The |callback| will be called when registration is complete,
-  // whether it succeeded or not -- unless registration was cancelled manually,
-  // in which case the callback will be ignored.
-  void RegisterAndInitSync(
-      SupervisedUserRegistrationUtility* registration_utility,
-      Profile* custodian_profile,
-      const std::string& supervised_user_id,
-      const AuthErrorCallback& callback);
 #endif
-
-  void AddNavigationBlockedCallback(const NavigationBlockedCallback& callback);
-  void DidBlockNavigation(content::WebContents* web_contents);
 
   void AddObserver(SupervisedUserServiceObserver* observer);
   void RemoveObserver(SupervisedUserServiceObserver* observer);
@@ -196,35 +177,33 @@ class SupervisedUserService : public KeyedService,
   void AddPermissionRequestCreator(
       std::unique_ptr<PermissionRequestCreator> creator);
 
-  void SetSafeSearchURLReporter(
-      std::unique_ptr<SafeSearchURLReporter> reporter);
-
-  // Returns true if the syncer::SESSIONS type should be included in Sync.
-  // Public for testing.
-  bool IncludesSyncSessionsType() const;
-
   // ProfileKeyedService override:
   void Shutdown() override;
 
   // SyncTypePreferenceProvider implementation:
-  syncer::ModelTypeSet GetPreferredDataTypes() const override;
+  syncer::UserSelectableTypeSet GetForcedTypes() const override;
+  bool IsEncryptEverythingAllowed() const override;
 
 #if !defined(OS_ANDROID)
-  // syncer::SyncServiceObserver implementation:
-  void OnStateChanged(syncer::SyncService* sync) override;
-
-  // chrome::BrowserListObserver implementation:
+  // BrowserListObserver implementation:
   void OnBrowserSetLastActive(Browser* browser) override;
 #endif  // !defined(OS_ANDROID)
 
   // SupervisedUserURLFilter::Observer implementation:
   void OnSiteListUpdated() override;
 
+#if !defined(OS_ANDROID)
+  bool signout_required_after_supervision_enabled() {
+    return signout_required_after_supervision_enabled_;
+  }
+  void set_signout_required_after_supervision_enabled() {
+    signout_required_after_supervision_enabled_ = true;
+  }
+#endif  // !defined(OS_ANDROID)
+
  private:
   friend class SupervisedUserServiceExtensionTestBase;
   friend class SupervisedUserServiceFactory;
-  FRIEND_TEST_ALL_PREFIXES(SingleClientSupervisedUserSettingsSyncTest, Sanity);
-  FRIEND_TEST_ALL_PREFIXES(SupervisedUserServiceTest, ClearOmitOnRegistration);
   FRIEND_TEST_ALL_PREFIXES(
       SupervisedUserServiceExtensionTest,
       ExtensionManagementPolicyProviderWithoutSUInitiatedInstalls);
@@ -233,27 +212,13 @@ class SupervisedUserService : public KeyedService,
       ExtensionManagementPolicyProviderWithSUInitiatedInstalls);
 
   using CreatePermissionRequestCallback =
-      base::Callback<void(PermissionRequestCreator*, const SuccessCallback&)>;
+      base::RepeatingCallback<void(PermissionRequestCreator*, SuccessCallback)>;
 
   // Use |SupervisedUserServiceFactory::GetForProfile(..)| to get
   // an instance of this service.
   explicit SupervisedUserService(Profile* profile);
 
   void SetActive(bool active);
-
-#if !defined(OS_ANDROID)
-  void OnCustodianProfileDownloaded(const base::string16& full_name);
-
-  void OnSupervisedUserRegistered(const AuthErrorCallback& callback,
-                                  Profile* custodian_profile,
-                                  const GoogleServiceAuthError& auth_error,
-                                  const std::string& token);
-
-  void SetupSync();
-  void StartSetupSync();
-  void FinishSetupSyncWhenReady();
-  void FinishSetupSync();
-#endif
 
   bool ProfileIsSupervised() const;
 
@@ -311,11 +276,11 @@ class SupervisedUserService : public KeyedService,
   size_t FindEnabledPermissionRequestCreator(size_t start);
   void AddPermissionRequestInternal(
       const CreatePermissionRequestCallback& create_request,
-      const SuccessCallback& callback,
+      SuccessCallback callback,
       size_t index);
   void OnPermissionRequestIssued(
       const CreatePermissionRequestCallback& create_request,
-      const SuccessCallback& callback,
+      SuccessCallback callback,
       size_t index,
       bool success);
 
@@ -356,19 +321,6 @@ class SupervisedUserService : public KeyedService,
   // corresponding preference is changed.
   void UpdateManualURLs();
 
-  // Returns the human readable name of the supervised user.
-  std::string GetSupervisedUserName() const;
-
-  // Subscribes to the SupervisedUserPrefStore, refreshes
-  // |includes_sync_sessions_type_| and triggers reconfiguring the
-  // ProfileSyncService.
-  void OnForceSessionSyncChanged();
-
-  // The option a custodian sets to either record or prevent recording the
-  // supervised user's history. Set by |FetchNewSessionSyncState()| and
-  // defaults to true.
-  bool includes_sync_sessions_type_;
-
   // Owns us via the KeyedService mechanism.
   Profile* profile_;
 
@@ -378,11 +330,7 @@ class SupervisedUserService : public KeyedService,
 
   PrefChangeRegistrar pref_change_registrar_;
 
-  // True iff we're waiting for the Sync service to be initialized.
-  bool waiting_for_sync_initialization_;
   bool is_profile_active_;
-
-  std::vector<NavigationBlockedCallback> navigation_blocked_callbacks_;
 
   // True only when |Init()| method has been called.
   bool did_init_;
@@ -395,6 +343,9 @@ class SupervisedUserService : public KeyedService,
   // Stores a map from extension_id -> approved version by the custodian.
   // It is only relevant for SU-initiated installs.
   std::map<std::string, base::Version> approved_extensions_map_;
+
+  // Stores the restricted preference values for child users.
+  std::map<std::string, base::Value> child_user_restricted_cros_settings_;
 
   enum class BlacklistLoadState {
     NOT_LOADED,
@@ -412,21 +363,19 @@ class SupervisedUserService : public KeyedService,
   // Used to create permission requests.
   std::vector<std::unique_ptr<PermissionRequestCreator>> permissions_creators_;
 
-  // Used to report inappropriate URLs to SafeSarch API.
-  std::unique_ptr<SafeSearchURLReporter> url_reporter_;
-
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
       registry_observer_;
 #endif
 
-  base::ObserverList<SupervisedUserServiceObserver> observer_list_;
+  base::ObserverList<SupervisedUserServiceObserver>::Unchecked observer_list_;
 
-  // Prevents Sync from running until configuration is complete.
-  std::unique_ptr<syncer::SyncSetupInProgressHandle> sync_blocker_;
+#if !defined(OS_ANDROID)
+  bool signout_required_after_supervision_enabled_ = false;
+#endif
 
-  base::WeakPtrFactory<SupervisedUserService> weak_ptr_factory_;
+  base::WeakPtrFactory<SupervisedUserService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserService);
 };

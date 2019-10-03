@@ -9,7 +9,10 @@
 
 #import "cwv_export.h"
 
-// Preferences for user settings.
+NS_ASSUME_NONNULL_BEGIN
+
+// Preferences for user settings. The preferences are stored on the local
+// storage.
 CWV_EXPORT
 @interface CWVPreferences : NSObject
 
@@ -18,11 +21,6 @@ CWV_EXPORT
 // has no effect if this instance is from an incognito CWVWebViewConfiguration.
 @property(nonatomic, assign, getter=isTranslationEnabled)
     BOOL translationEnabled;
-
-// Whether or not autofill as a feature is turned on. Defaults to |YES|.
-// If enabled, contents of submitted forms may be saved and offered as a
-// suggestion in either the same or similar forms.
-@property(nonatomic, assign, getter=isAutofillEnabled) BOOL autofillEnabled;
 
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -33,5 +31,7 @@ CWV_EXPORT
 - (void)resetTranslationSettings;
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_PUBLIC_CWV_PREFERENCES_H_

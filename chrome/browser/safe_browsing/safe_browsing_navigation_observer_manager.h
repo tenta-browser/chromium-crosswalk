@@ -8,7 +8,10 @@
 #include "base/containers/circular_deque.h"
 #include "base/feature_list.h"
 #include "base/supports_user_data.h"
+#include "base/timer/timer.h"
+#include "components/safe_browsing/browser/referrer_chain_provider.h"
 #include "components/safe_browsing/proto/csd.pb.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/protobuf/src/google/protobuf/repeated_field.h"
 #include "url/gurl.h"
@@ -21,15 +24,18 @@ class SafeBrowsingNavigationObserver;
 struct NavigationEvent;
 struct ResolvedIPAddress;
 
-typedef google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
-    ReferrerChain;
-
 // User data stored in DownloadItem for referrer chain information.
 class ReferrerChainData : public base::SupportsUserData::Data {
  public:
-  explicit ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain);
+  ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain,
+                    size_t referrer_chain_length,
+                    size_t recent_navigation_to_collect);
   ~ReferrerChainData() override;
   ReferrerChain* GetReferrerChain();
+  size_t referrer_chain_length() { return referrer_chain_length_; }
+  size_t recent_navigations_to_collect() {
+    return recent_navigations_to_collect_;
+  }
 
   // Unique user data key used to get and set referrer chain data in
   // DownloadItem.
@@ -37,6 +43,13 @@ class ReferrerChainData : public base::SupportsUserData::Data {
 
  private:
   std::unique_ptr<ReferrerChain> referrer_chain_;
+  // This is the actual referrer chain length before appending recent navigation
+  // events;
+  size_t referrer_chain_length_;
+  // |recent_navigations_to_collect_| is controlled by finch parameter. If the
+  // user is incognito mode or hasn't enabled extended reporting, this value is
+  // always 0.
+  size_t recent_navigations_to_collect_;
 };
 
 // Struct that manages insertion, cleanup, and lookup of NavigationEvent
@@ -53,7 +66,7 @@ struct NavigationEventList {
   // |target_main_frame_url| are the same.
   // If |target_url| is empty, we use its main frame url (a.k.a.
   // |target_main_frame_url|) to search for navigation events.
-  // If |target_tab_id| is not available (-1), we look for all tabs for the most
+  // If |target_tab_id| is invalid, we look for all tabs for the most
   // recent navigation to |target_url| or |target_main_frame_url|.
   // For some cases, the most recent navigation to |target_url| may not be
   // relevant.
@@ -68,14 +81,16 @@ struct NavigationEventList {
   // referrer of about::blank in Window C since this navigation is more recent.
   // However, it does not prevent us to attribute url1 in Window A as the cause
   // of all these navigations.
-  NavigationEvent* FindNavigationEvent(const GURL& target_url,
+  NavigationEvent* FindNavigationEvent(const base::Time& last_event_timestamp,
+                                       const GURL& target_url,
                                        const GURL& target_main_frame_url,
-                                       int target_tab_id);
+                                       SessionID target_tab_id);
 
-  // Finds the most recent retargeting NavigationEvent that satisfies
-  // |target_url|, and |target_tab_id|.
-  NavigationEvent* FindRetargetingNavigationEvent(const GURL& target_url,
-                                                  int target_tab_id);
+  // Finds the most recent retargeting NavigationEvent that satisfies the
+  // |target_tab_id|.
+  NavigationEvent* FindRetargetingNavigationEvent(
+      const base::Time& last_event_timestamp,
+      SessionID target_tab_id);
 
   void RecordNavigationEvent(std::unique_ptr<NavigationEvent> nav_event);
 
@@ -88,6 +103,11 @@ struct NavigationEventList {
     return navigation_events_[index].get();
   }
 
+  const base::circular_deque<std::unique_ptr<NavigationEvent>>&
+  navigation_events() {
+    return navigation_events_;
+  }
+
  private:
   base::circular_deque<std::unique_ptr<NavigationEvent>> navigation_events_;
   const std::size_t size_limit_;
@@ -97,20 +117,9 @@ struct NavigationEventList {
 // cleaning up stale navigation events, and identifying landing page/landing
 // referrer for a specific Safe Browsing event.
 class SafeBrowsingNavigationObserverManager
-    : public base::RefCountedThreadSafe<SafeBrowsingNavigationObserverManager> {
+    : public base::RefCountedThreadSafe<SafeBrowsingNavigationObserverManager>,
+      public ReferrerChainProvider {
  public:
-  // For UMA histogram counting. Do NOT change order.
-  enum AttributionResult {
-    SUCCESS = 1,                   // Identified referrer chain is not empty.
-    SUCCESS_LANDING_PAGE = 2,      // Successfully identified landing page.
-    SUCCESS_LANDING_REFERRER = 3,  // Successfully identified landing referrer.
-    INVALID_URL = 4,
-    NAVIGATION_EVENT_NOT_FOUND = 5,
-
-    // Always at the end.
-    ATTRIBUTION_FAILURE_TYPE_MAX
-  };
-
   // Helper function to check if user gesture is older than
   // kUserGestureTTLInSecond.
   static bool IsUserGestureExpired(const base::Time& timestamp);
@@ -157,9 +166,9 @@ class SafeBrowsingNavigationObserverManager
   // |out_referrer_chain|.
   AttributionResult IdentifyReferrerChainByEventURL(
       const GURL& event_url,
-      int event_tab_id,  // -1 if tab id is unknown or not available
+      SessionID event_tab_id,  // Invalid if tab id is unknown or not available.
       int user_gesture_count_limit,
-      ReferrerChain* out_referrer_chain);
+      ReferrerChain* out_referrer_chain) override;
 
   // Based on the |web_contents| associated with an event, traces back the
   // observed NavigationEvents in |navigation_event_list_| to identify the
@@ -170,7 +179,7 @@ class SafeBrowsingNavigationObserverManager
   AttributionResult IdentifyReferrerChainByWebContents(
       content::WebContents* web_contents,
       int user_gesture_count_limit,
-      ReferrerChain* out_referrer_chain);
+      ReferrerChain* out_referrer_chain) override;
 
   // Based on the |initiating_frame_url| and its associated |tab_id|, traces
   // back the observed NavigationEvents in navigation_event_list_ to identify
@@ -183,19 +192,30 @@ class SafeBrowsingNavigationObserverManager
   AttributionResult IdentifyReferrerChainByHostingPage(
       const GURL& initiating_frame_url,
       const GURL& initiating_main_frame_url,
-      int tab_id,
+      SessionID tab_id,
       bool has_user_gesture,
       int user_gesture_count_limit,
       ReferrerChain* out_referrer_chain);
 
-  // Record the creation of a new WebContents by |source_web_contents|. This is
+  // Records the creation of a new WebContents by |source_web_contents|. This is
   // used to detect cross-frame and cross-tab navigations.
   void RecordNewWebContents(content::WebContents* source_web_contents,
                             int source_render_process_id,
                             int source_render_frame_id,
-                            GURL target_url,
+                            const GURL& target_url,
+                            ui::PageTransition page_transition,
                             content::WebContents* target_web_contents,
-                            bool not_yet_in_tabstrip);
+                            bool renderer_initiated);
+
+  // Based on user state, attribution result and finch parameter, calculates the
+  // number of recent navigations we want to append to the referrer chain.
+  static size_t CountOfRecentNavigationsToAppend(const Profile& profile,
+                                                 AttributionResult result);
+
+  // Appends |recent_navigation_count| number of recent navigation events to
+  // referrer chain in reverse chronological order.
+  void AppendRecentNavigations(size_t recent_navigation_count,
+                               ReferrerChain* out_referrer_chain);
 
  private:
   friend class base::RefCountedThreadSafe<

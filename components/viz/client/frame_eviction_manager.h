@@ -11,9 +11,9 @@
 #include <map>
 
 #include "base/macros.h"
-#include "base/memory/memory_coordinator_client.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/singleton.h"
+#include "base/optional.h"
 #include "components/viz/client/viz_client_export.h"
 
 namespace viz {
@@ -30,9 +30,18 @@ class FrameEvictionManagerClient {
 // between a small set of tabs faster. The limit is a soft limit, because
 // clients can lock their frame to prevent it from being discarded, e.g. if the
 // tab is visible, or while capturing a screenshot.
-class VIZ_CLIENT_EXPORT FrameEvictionManager
-    : public base::MemoryCoordinatorClient {
+class VIZ_CLIENT_EXPORT FrameEvictionManager {
  public:
+  // Pauses frame eviction within its scope.
+  class VIZ_CLIENT_EXPORT ScopedPause {
+   public:
+    ScopedPause();
+    ~ScopedPause();
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(ScopedPause);
+  };
+
   static FrameEvictionManager* GetInstance();
 
   void AddFrame(FrameEvictionManagerClient*, bool locked);
@@ -52,18 +61,22 @@ class VIZ_CLIENT_EXPORT FrameEvictionManager
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
- private:
-  FrameEvictionManager();
-  ~FrameEvictionManager() override;
+  // Purges all unlocked frames, allowing us to reclaim resources.
+  void PurgeAllUnlockedFrames();
 
-  // base::MemoryCoordinatorClient implementation:
-  void OnPurgeMemory() override;
+ private:
+  friend struct base::DefaultSingletonTraits<FrameEvictionManager>;
+
+  FrameEvictionManager();
+  ~FrameEvictionManager();
 
   void CullUnlockedFrames(size_t saved_frame_limit);
 
   void PurgeMemory(int percentage);
 
-  friend struct base::DefaultSingletonTraits<FrameEvictionManager>;
+  // Pauses/unpauses frame eviction.
+  void Pause();
+  void Unpause();
 
   // Listens for system under pressure notifications and adjusts number of
   // cached frames accordingly.
@@ -72,6 +85,12 @@ class VIZ_CLIENT_EXPORT FrameEvictionManager
   std::map<FrameEvictionManagerClient*, size_t> locked_frames_;
   std::list<FrameEvictionManagerClient*> unlocked_frames_;
   size_t max_number_of_saved_frames_;
+
+  // Counter of the outstanding pauses.
+  int pause_count_ = 0;
+
+  // Argument of the last CullUnlockedFrames call while paused.
+  base::Optional<size_t> pending_unlocked_frame_limit_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameEvictionManager);
 };

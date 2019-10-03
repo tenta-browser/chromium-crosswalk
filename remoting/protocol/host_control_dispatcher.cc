@@ -52,6 +52,14 @@ void HostControlDispatcher::SetVideoLayout(const VideoLayout& layout) {
 void HostControlDispatcher::InjectClipboardEvent(const ClipboardEvent& event) {
   ControlMessage message;
   message.mutable_clipboard_event()->CopyFrom(event);
+  std::size_t message_size = message.ByteSizeLong();
+  if (message_size > max_message_size_) {
+    // Better to drop the event than drop the connection, which can happen if
+    // the browser receives a message larger than it can handle.
+    LOG(WARNING) << "Clipboard message dropped because message size "
+                 << message_size << " is larger than " << max_message_size_;
+    return;
+  }
   message_pipe()->Send(&message, base::Closure());
 }
 
@@ -72,13 +80,13 @@ void HostControlDispatcher::OnIncomingMessage(
   if (!message)
     return;
 
-  // TODO(sergeyu): Move message valudation from the message handlers here.
+  // TODO(sergeyu): Move message validation from the message handlers here.
   if (message->has_clipboard_event()) {
     clipboard_stub_->InjectClipboardEvent(message->clipboard_event());
   } else if (message->has_client_resolution()) {
     const ClientResolution& resolution = message->client_resolution();
-    if (!resolution.has_dips_width() || !resolution.has_dips_height() ||
-        resolution.dips_width() <= 0 || resolution.dips_height() <= 0) {
+    if ((resolution.has_dips_width() && resolution.dips_width() <= 0) ||
+        (resolution.has_dips_height() && resolution.dips_height() <= 0)) {
       LOG(ERROR) << "Received invalid ClientResolution message.";
       return;
     }
@@ -93,6 +101,8 @@ void HostControlDispatcher::OnIncomingMessage(
     host_stub_->RequestPairing(message->pairing_request());
   } else if (message->has_extension_message()) {
     host_stub_->DeliverClientMessage(message->extension_message());
+  } else if (message->has_select_display()) {
+    host_stub_->SelectDesktopDisplay(message->select_display());
   } else {
     LOG(WARNING) << "Unknown control message received.";
   }

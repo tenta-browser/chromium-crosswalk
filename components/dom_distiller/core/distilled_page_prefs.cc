@@ -17,20 +17,18 @@
 namespace dom_distiller {
 
 DistilledPagePrefs::DistilledPagePrefs(PrefService* pref_service)
-    : pref_service_(pref_service), weak_ptr_factory_(this) {
-}
+    : pref_service_(pref_service) {}
 
-DistilledPagePrefs::~DistilledPagePrefs() {
-}
+DistilledPagePrefs::~DistilledPagePrefs() {}
 
 // static
 void DistilledPagePrefs::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(
-      prefs::kTheme, DistilledPagePrefs::LIGHT,
+      prefs::kTheme, DistilledPagePrefs::THEME_LIGHT,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterIntegerPref(
-      prefs::kFont, DistilledPagePrefs::SANS_SERIF,
+      prefs::kFont, DistilledPagePrefs::FONT_FAMILY_SANS_SERIF,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterDoublePref(prefs::kFontScale, 1.0);
   registry->RegisterBooleanPref(
@@ -42,17 +40,19 @@ void DistilledPagePrefs::SetFontFamily(
     DistilledPagePrefs::FontFamily new_font_family) {
   pref_service_->SetInteger(prefs::kFont, new_font_family);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DistilledPagePrefs::NotifyOnChangeFontFamily,
-                            weak_ptr_factory_.GetWeakPtr(), new_font_family));
+      FROM_HERE,
+      base::BindOnce(&DistilledPagePrefs::NotifyOnChangeFontFamily,
+                     weak_ptr_factory_.GetWeakPtr(), new_font_family));
 }
 
 DistilledPagePrefs::FontFamily DistilledPagePrefs::GetFontFamily() {
   int font_family = pref_service_->GetInteger(prefs::kFont);
-  if (font_family < 0 || font_family >= DistilledPagePrefs::FONT_FAMILY_COUNT) {
+  if (font_family < 0 ||
+      font_family >= DistilledPagePrefs::FONT_FAMILY_NUM_ENTRIES) {
     // Persisted data was incorrect, trying to clean it up by storing the
     // default.
-    SetFontFamily(DistilledPagePrefs::SANS_SERIF);
-    return DistilledPagePrefs::SANS_SERIF;
+    SetFontFamily(DistilledPagePrefs::FONT_FAMILY_SANS_SERIF);
+    return DistilledPagePrefs::FONT_FAMILY_SANS_SERIF;
   }
   return static_cast<FontFamily>(font_family);
 }
@@ -60,17 +60,17 @@ DistilledPagePrefs::FontFamily DistilledPagePrefs::GetFontFamily() {
 void DistilledPagePrefs::SetTheme(DistilledPagePrefs::Theme new_theme) {
   pref_service_->SetInteger(prefs::kTheme, new_theme);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DistilledPagePrefs::NotifyOnChangeTheme,
-                            weak_ptr_factory_.GetWeakPtr(), new_theme));
+      FROM_HERE, base::BindOnce(&DistilledPagePrefs::NotifyOnChangeTheme,
+                                weak_ptr_factory_.GetWeakPtr(), new_theme));
 }
 
 DistilledPagePrefs::Theme DistilledPagePrefs::GetTheme() {
   int theme = pref_service_->GetInteger(prefs::kTheme);
-  if (theme < 0 || theme >= DistilledPagePrefs::THEME_COUNT) {
+  if (theme < 0 || theme >= DistilledPagePrefs::THEME_NUM_ENTRIES) {
     // Persisted data was incorrect, trying to clean it up by storing the
     // default.
-    SetTheme(DistilledPagePrefs::LIGHT);
-    return DistilledPagePrefs::LIGHT;
+    SetTheme(DistilledPagePrefs::THEME_LIGHT);
+    return DistilledPagePrefs::THEME_LIGHT;
   }
   return static_cast<Theme>(theme);
 }
@@ -78,10 +78,8 @@ DistilledPagePrefs::Theme DistilledPagePrefs::GetTheme() {
 void DistilledPagePrefs::SetFontScaling(float scaling) {
   pref_service_->SetDouble(prefs::kFontScale, scaling);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&DistilledPagePrefs::NotifyOnChangeFontScaling,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 scaling));
+      FROM_HERE, base::BindOnce(&DistilledPagePrefs::NotifyOnChangeFontScaling,
+                                weak_ptr_factory_.GetWeakPtr(), scaling));
 }
 
 float DistilledPagePrefs::GetFontScaling() {
@@ -115,8 +113,7 @@ void DistilledPagePrefs::NotifyOnChangeTheme(
     observer.OnChangeTheme(new_theme);
 }
 
-void DistilledPagePrefs::NotifyOnChangeFontScaling(
-    float scaling) {
+void DistilledPagePrefs::NotifyOnChangeFontScaling(float scaling) {
   for (Observer& observer : observers_)
     observer.OnChangeFontScaling(scaling);
 }

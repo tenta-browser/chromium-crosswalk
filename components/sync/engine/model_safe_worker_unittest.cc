@@ -20,10 +20,10 @@ namespace syncer {
 namespace {
 
 syncer::WorkCallback ClosureToWorkCallback(base::Closure work) {
-  return base::Bind(
+  return base::BindOnce(
       [](base::Closure work) {
         work.Run();
-        return syncer::SYNCER_OK;
+        return syncer::SyncerError(syncer::SyncerError::SYNCER_OK);
       },
       std::move(work));
 }
@@ -65,12 +65,12 @@ class ModelSafeWorkerTest : public ::testing::Test {
 
   void DoWorkAndWaitUntilDoneOnSyncThread(base::Closure work) {
     sync_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(base::IgnoreResult(&ModelSafeWorker::DoWorkAndWaitUntilDone),
-                   worker_, base::Passed(ClosureToWorkCallback(work))));
+        FROM_HERE, base::BindOnce(base::IgnoreResult(
+                                      &ModelSafeWorker::DoWorkAndWaitUntilDone),
+                                  worker_, ClosureToWorkCallback(work)));
     sync_thread_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&base::AtomicFlag::Set,
-                              base::Unretained(&sync_thread_unblocked_)));
+        FROM_HERE, base::BindOnce(&base::AtomicFlag::Set,
+                                  base::Unretained(&sync_thread_unblocked_)));
   }
 
   base::AtomicFlag sync_thread_unblocked_;

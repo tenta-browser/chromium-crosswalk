@@ -4,12 +4,16 @@
 
 #include "components/favicon/content/content_favicon_driver.h"
 
+#include <set>
+
+#include "base/bind.h"
+#include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
-#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/pattern.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -25,15 +29,17 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/favicon/core/favicon_handler.h"
 #include "components/favicon/core/favicon_service.h"
-#include "components/favicon/core/features.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/resource_dispatcher_host.h"
-#include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/test/browser_test_utils.h"
+#include "content/public/test/url_loader_interceptor.h"
 #include "net/base/load_flags.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/url_request/url_request.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/features.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "url/url_constants.h"
 
@@ -41,47 +47,41 @@ namespace {
 
 using testing::ElementsAre;
 
-// Tracks whether the URL passed to the constructor is requested and whether
-// the request bypasses the cache.
-class TestResourceDispatcherHostDelegate
-    : public content::ResourceDispatcherHostDelegate {
+// Tracks which URLs are loaded and whether the requests bypass the cache.
+class TestURLLoaderInterceptor {
  public:
-  explicit TestResourceDispatcherHostDelegate(const GURL& url)
-      : url_(url), was_requested_(false), bypassed_cache_(false) {}
-  ~TestResourceDispatcherHostDelegate() override {}
+  TestURLLoaderInterceptor()
+      : interceptor_(
+            base::BindRepeating(&TestURLLoaderInterceptor::InterceptURLRequest,
+                                base::Unretained(this))) {}
+
+  bool was_loaded(const GURL& url) const {
+    return intercepted_urls_.find(url) != intercepted_urls_.end();
+  }
+
+  bool did_bypass_cache(const GURL& url) const {
+    return bypass_cache_urls_.find(url) != bypass_cache_urls_.end();
+  }
 
   void Reset() {
-    was_requested_ = false;
-    bypassed_cache_ = false;
-  }
-
-  // Resturns whether |url_| was requested.
-  bool was_requested() const { return was_requested_; }
-
-  // Returns whether any of the requests bypassed the HTTP cache.
-  bool bypassed_cache() const { return bypassed_cache_; }
-
- private:
-  // content::ResourceDispatcherHostDelegate:
-  void RequestBeginning(net::URLRequest* request,
-                        content::ResourceContext* resource_context,
-                        content::AppCacheService* appcache_service,
-                        content::ResourceType resource_type,
-                        std::vector<std::unique_ptr<content::ResourceThrottle>>*
-                            throttles) override {
-    if (request->url() == url_) {
-      was_requested_ = true;
-      if (request->load_flags() & net::LOAD_BYPASS_CACHE)
-        bypassed_cache_ = true;
-    }
+    intercepted_urls_.clear();
+    bypass_cache_urls_.clear();
   }
 
  private:
-  GURL url_;
-  bool was_requested_;
-  bool bypassed_cache_;
+  bool InterceptURLRequest(
+      content::URLLoaderInterceptor::RequestParams* params) {
+    intercepted_urls_.insert(params->url_request.url);
+    if (params->url_request.load_flags & net::LOAD_BYPASS_CACHE)
+      bypass_cache_urls_.insert(params->url_request.url);
+    return false;
+  }
 
-  DISALLOW_COPY_AND_ASSIGN(TestResourceDispatcherHostDelegate);
+  std::set<GURL> intercepted_urls_;
+  std::set<GURL> bypass_cache_urls_;
+  content::URLLoaderInterceptor interceptor_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestURLLoaderInterceptor);
 };
 
 // Waits for the following the finish:
@@ -93,7 +93,7 @@ class TestResourceDispatcherHostDelegate
 class PendingTaskWaiter : public content::WebContentsObserver {
  public:
   explicit PendingTaskWaiter(content::WebContents* web_contents)
-      : WebContentsObserver(web_contents), weak_factory_(this) {}
+      : WebContentsObserver(web_contents) {}
   ~PendingTaskWaiter() override {}
 
   void AlsoRequireUrl(const GURL& url) { required_url_ = url; }
@@ -155,7 +155,7 @@ class PendingTaskWaiter : public content::WebContentsObserver {
   base::Closure quit_closure_;
   GURL required_url_;
   base::Optional<base::string16> required_title_;
-  base::WeakPtrFactory<PendingTaskWaiter> weak_factory_;
+  base::WeakPtrFactory<PendingTaskWaiter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PendingTaskWaiter);
 };
@@ -201,6 +201,14 @@ class ContentFaviconDriverTest : public InProcessBrowserTest {
  public:
   ContentFaviconDriverTest() {}
   ~ContentFaviconDriverTest() override {}
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
+  }
 
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
@@ -249,10 +257,7 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadBypassingCache) {
   GURL url = embedded_test_server()->GetURL("/favicon/page_with_favicon.html");
   GURL icon_url = embedded_test_server()->GetURL("/favicon/icon.png");
 
-  std::unique_ptr<TestResourceDispatcherHostDelegate> delegate(
-      new TestResourceDispatcherHostDelegate(icon_url));
-  content::ResourceDispatcherHost::Get()->SetDelegate(delegate.get());
-
+  TestURLLoaderInterceptor url_loader_interceptor;
   // Initial visit in order to populate the cache.
   {
     PendingTaskWaiter waiter(web_contents());
@@ -261,9 +266,9 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadBypassingCache) {
         ui_test_utils::BROWSER_TEST_NONE);
     waiter.Wait();
   }
-  ASSERT_TRUE(delegate->was_requested());
-  EXPECT_FALSE(delegate->bypassed_cache());
-  delegate->Reset();
+  ASSERT_TRUE(url_loader_interceptor.was_loaded(icon_url));
+  EXPECT_FALSE(url_loader_interceptor.did_bypass_cache(icon_url));
+  url_loader_interceptor.Reset();
 
   ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
 
@@ -276,8 +281,8 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadBypassingCache) {
         ui_test_utils::BROWSER_TEST_NONE);
     waiter.Wait();
   }
-  EXPECT_FALSE(delegate->bypassed_cache());
-  delegate->Reset();
+  EXPECT_FALSE(url_loader_interceptor.did_bypass_cache(icon_url));
+  url_loader_interceptor.Reset();
 
   // A reload ignoring the cache should refetch the favicon from the website.
   {
@@ -285,8 +290,8 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadBypassingCache) {
     chrome::ExecuteCommand(browser(), IDC_RELOAD_BYPASSING_CACHE);
     waiter.Wait();
   }
-  ASSERT_TRUE(delegate->was_requested());
-  EXPECT_TRUE(delegate->bypassed_cache());
+  ASSERT_TRUE(url_loader_interceptor.was_loaded(icon_url));
+  EXPECT_TRUE(url_loader_interceptor.did_bypass_cache(icon_url));
 }
 
 // Test that favicon mappings are removed if the page initially lists a favicon
@@ -305,6 +310,25 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
   waiter.Wait();
 
   EXPECT_EQ(
+      nullptr,
+      GetFaviconForPageURL(url, favicon_base::IconType::kFavicon).bitmap_data);
+}
+
+// Test that favicon changes via Javascript affecting a specific type (touch
+// icons) do not influence the rest of the types (favicons).
+IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ChangeTouchIconViaJavascript) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = embedded_test_server()->GetURL(
+      "/favicon/page_change_touch_icon_via_js.html");
+
+  PendingTaskWaiter waiter(web_contents());
+  waiter.AlsoRequireTitle(base::ASCIIToUTF16("OK"));
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), url, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_NONE);
+  waiter.Wait();
+
+  EXPECT_NE(
       nullptr,
       GetFaviconForPageURL(url, favicon_base::IconType::kFavicon).bitmap_data);
 }
@@ -381,9 +405,7 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, LoadIconFromWebManifest) {
   GURL url = embedded_test_server()->GetURL("/favicon/page_with_manifest.html");
   GURL icon_url = embedded_test_server()->GetURL("/favicon/icon.png");
 
-  std::unique_ptr<TestResourceDispatcherHostDelegate> delegate(
-      new TestResourceDispatcherHostDelegate(icon_url));
-  content::ResourceDispatcherHost::Get()->SetDelegate(delegate.get());
+  TestURLLoaderInterceptor url_loader_interceptor;
 
   PendingTaskWaiter waiter(web_contents());
   ui_test_utils::NavigateToURLWithDisposition(
@@ -392,54 +414,13 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, LoadIconFromWebManifest) {
   waiter.Wait();
 
 #if defined(OS_ANDROID)
-  EXPECT_TRUE(delegate->was_requested());
+  EXPECT_TRUE(url_loader_interceptor.was_loaded(icon_url));
   EXPECT_NE(nullptr,
             GetFaviconForPageURL(url, favicon_base::IconType::kWebManifestIcon)
                 .bitmap_data);
 #else
-  EXPECT_FALSE(delegate->was_requested());
+  EXPECT_FALSE(url_loader_interceptor.was_loaded(icon_url));
 #endif
-}
-
-// Test that loading a page that contains a Web Manifest without icons and a
-// regular favicon in the HTML reports the icon. The regular icon is initially
-// cached in the Favicon database.
-IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
-                       LoadRegularIconDespiteWebManifestWithoutIcons) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  GURL url = embedded_test_server()->GetURL(
-      "/favicon/page_with_manifest_without_icons.html");
-  GURL icon_url = embedded_test_server()->GetURL("/favicon/icon.png");
-
-  // Initial visit with the feature disabled, to populate the cache.
-  {
-    base::test::ScopedFeatureList override_features;
-    override_features.InitAndDisableFeature(favicon::kFaviconsFromWebManifest);
-
-    PendingTaskWaiter waiter(web_contents());
-    ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, WindowOpenDisposition::CURRENT_TAB,
-        ui_test_utils::BROWSER_TEST_NONE);
-    waiter.Wait();
-  }
-  ASSERT_NE(
-      nullptr,
-      GetFaviconForPageURL(url, favicon_base::IconType::kFavicon).bitmap_data);
-
-  ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
-
-  // Visit the page again now that the feature is enabled (default).
-  {
-    PendingTaskWaiter waiter(web_contents());
-    ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, WindowOpenDisposition::CURRENT_TAB,
-        ui_test_utils::BROWSER_TEST_NONE);
-    waiter.Wait();
-  }
-
-  EXPECT_NE(
-      nullptr,
-      GetFaviconForPageURL(url, favicon_base::IconType::kFavicon).bitmap_data);
 }
 
 // Test that a page which uses a meta refresh tag to redirect gets associated
@@ -548,31 +529,6 @@ IN_PROC_BROWSER_TEST_F(
                                             url_with_meta_refresh_tag.spec());
   GURL landing_url =
       embedded_test_server()->GetURL("/favicon/page_with_favicon.html");
-
-  PendingTaskWaiter waiter(web_contents());
-  waiter.AlsoRequireUrl(landing_url);
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, WindowOpenDisposition::CURRENT_TAB,
-      ui_test_utils::BROWSER_TEST_NONE);
-  waiter.Wait();
-
-  EXPECT_NE(
-      nullptr,
-      GetFaviconForPageURL(url, favicon_base::IconType::kFavicon).bitmap_data);
-  EXPECT_NE(nullptr,
-            GetFaviconForPageURL(landing_url, favicon_base::IconType::kFavicon)
-                .bitmap_data);
-}
-
-// Test that a page which uses JavaScript to override document.location.hash
-// gets associated favicons.
-IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
-                       AssociateIconWithInitialPageDespiteHashOverride) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  GURL url =
-      embedded_test_server()->GetURL("/favicon/page_with_hash_override.html");
-  GURL landing_url = embedded_test_server()->GetURL(
-      "/favicon/page_with_hash_override.html#foo");
 
   PendingTaskWaiter waiter(web_contents());
   waiter.AlsoRequireUrl(landing_url);
@@ -721,9 +677,6 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
 #if defined(OS_ANDROID)
 IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
                        LoadIconFromWebManifestDespitePushState) {
-  base::test::ScopedFeatureList override_features;
-  override_features.InitAndEnableFeature(favicon::kFaviconsFromWebManifest);
-
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url =
       embedded_test_server()->GetURL("/favicon/pushstate_with_manifest.html");
@@ -743,3 +696,73 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest,
                 .bitmap_data);
 }
 #endif
+
+class ContentFaviconDriverTestWithAutoupgradesDisabled
+    : public ContentFaviconDriverTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ContentFaviconDriverTest::SetUpCommandLine(command_line);
+    feature_list.InitAndDisableFeature(
+        blink::features::kMixedContentAutoupgrade);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list;
+};
+
+// Checks that a favicon loaded over HTTP is blocked on a secure page.
+IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTestWithAutoupgradesDisabled,
+                       MixedContentInsecureFaviconBlocked) {
+  net::EmbeddedTestServer ssl_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  ssl_server.AddDefaultHandlers(GetChromeTestDataDir());
+  ASSERT_TRUE(ssl_server.Start());
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  const GURL favicon_url =
+      embedded_test_server()->GetURL("example.test", "/favicon/icon.png");
+  const GURL favicon_page = ssl_server.GetURL(
+      "example.test",
+      "/favicon/page_with_favicon_by_url.html?url=" + favicon_url.spec());
+
+  // Observe the message for a blocked favicon.
+  content::ConsoleObserverDelegate console_observer(web_contents(),
+                                                    "*icon.png*");
+  web_contents()->SetDelegate(&console_observer);
+
+  // Observe if the favicon URL is requested.
+  TestURLLoaderInterceptor url_interceptor;
+
+  PendingTaskWaiter waiter(web_contents());
+  ui_test_utils::NavigateToURL(browser(), favicon_page);
+  console_observer.Wait();
+  waiter.Wait();
+
+  EXPECT_TRUE(
+      base::MatchPattern(console_observer.message(), "*insecure favicon*"));
+  EXPECT_TRUE(base::MatchPattern(console_observer.message(),
+                                 "*request has been blocked*"));
+  EXPECT_FALSE(url_interceptor.was_loaded(favicon_url));
+}
+
+// Checks that a favicon loaded over HTTPS is allowed on a secure page.
+IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTestWithAutoupgradesDisabled,
+                       MixedContentSecureFaviconAllowed) {
+  net::EmbeddedTestServer ssl_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  ssl_server.AddDefaultHandlers(GetChromeTestDataDir());
+  ASSERT_TRUE(ssl_server.Start());
+
+  const GURL favicon_url =
+      ssl_server.GetURL("example.test", "/favicon/icon.png");
+  const GURL favicon_page = ssl_server.GetURL(
+      "example.test",
+      "/favicon/page_with_favicon_by_url.html?url=" + favicon_url.spec());
+
+  // Observe if the favicon URL is requested.
+  TestURLLoaderInterceptor url_interceptor;
+
+  PendingTaskWaiter waiter(web_contents());
+  ui_test_utils::NavigateToURL(browser(), favicon_page);
+  waiter.Wait();
+
+  EXPECT_TRUE(url_interceptor.was_loaded(favicon_url));
+}

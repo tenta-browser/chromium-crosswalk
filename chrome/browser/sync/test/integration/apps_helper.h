@@ -48,8 +48,12 @@ std::string InstallAppForAllProfiles(int index);
 // previously installed.
 void UninstallApp(Profile* profile, int index);
 
-// Installs all pending synced apps for |profile|.
+// Installs all pending synced apps for |profile|, including waiting for the
+// App Service to settle.
 void InstallAppsPendingForSync(Profile* profile);
+
+// Waits for the App Service state for |profile| to settle.
+void WaitForAppService(Profile* profile);
 
 // Enables the app for the given index on |profile|.
 void EnableApp(Profile* profile, int index);
@@ -121,7 +125,7 @@ class AppsMatchChecker : public StatusChangeChecker,
   void OnExtensionLoaded(content::BrowserContext* context,
                          const extensions::Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* context,
-                           const extensions::Extension* extenion,
+                           const extensions::Extension* extension,
                            extensions::UnloadedExtensionReason reason) override;
   void OnExtensionInstalled(content::BrowserContext* browser_context,
                             const extensions::Extension* extension,

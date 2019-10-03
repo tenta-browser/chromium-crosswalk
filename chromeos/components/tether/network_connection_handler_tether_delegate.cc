@@ -4,12 +4,13 @@
 
 #include "chromeos/components/tether/network_connection_handler_tether_delegate.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/stl_util.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/tether_connector.h"
 #include "chromeos/components/tether/tether_disconnector.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -73,7 +74,9 @@ void NetworkConnectionHandlerTetherDelegate::DisconnectFromNetwork(
       base::Bind(&NetworkConnectionHandlerTetherDelegate::OnRequestSuccess,
                  weak_ptr_factory_.GetWeakPtr(), request_num),
       base::Bind(&NetworkConnectionHandlerTetherDelegate::OnRequestError,
-                 weak_ptr_factory_.GetWeakPtr(), request_num));
+                 weak_ptr_factory_.GetWeakPtr(), request_num),
+      TetherSessionCompletionLogger::SessionCompletionReason::
+          USER_DISCONNECTED);
 }
 
 void NetworkConnectionHandlerTetherDelegate::ConnectToNetwork(
@@ -93,12 +96,12 @@ void NetworkConnectionHandlerTetherDelegate::ConnectToNetwork(
     std::string previous_host_guid = active_host_->GetTetherNetworkGuid();
     DCHECK(!previous_host_guid.empty());
 
-    PA_LOG(INFO) << "Connection requested to GUID " << tether_network_guid
-                 << ", but there is already an active connection. "
-                 << "Disconnecting from network with GUID "
-                 << previous_host_guid << ".";
+    PA_LOG(VERBOSE) << "Connection requested to GUID " << tether_network_guid
+                    << ", but there is already an active connection. "
+                    << "Disconnecting from network with GUID "
+                    << previous_host_guid << ".";
     DisconnectFromNetwork(
-        previous_host_guid, base::Bind(&base::DoNothing),
+        previous_host_guid, base::DoNothing(),
         base::Bind(&OnFailedDisconnectionFromPreviousHost, previous_host_guid));
   }
 
@@ -114,7 +117,7 @@ void NetworkConnectionHandlerTetherDelegate::ConnectToNetwork(
 }
 
 void NetworkConnectionHandlerTetherDelegate::OnRequestSuccess(int request_num) {
-  DCHECK(base::ContainsKey(request_num_to_callbacks_map_, request_num));
+  DCHECK(base::Contains(request_num_to_callbacks_map_, request_num));
   request_num_to_callbacks_map_.at(request_num).success_callback.Run();
   request_num_to_callbacks_map_.erase(request_num);
 }
@@ -122,7 +125,7 @@ void NetworkConnectionHandlerTetherDelegate::OnRequestSuccess(int request_num) {
 void NetworkConnectionHandlerTetherDelegate::OnRequestError(
     int request_num,
     const std::string& error_name) {
-  DCHECK(base::ContainsKey(request_num_to_callbacks_map_, request_num));
+  DCHECK(base::Contains(request_num_to_callbacks_map_, request_num));
   request_num_to_callbacks_map_.at(request_num).error_callback.Run(error_name);
   request_num_to_callbacks_map_.erase(request_num);
 }

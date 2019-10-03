@@ -38,7 +38,13 @@ PaymentDetails& PaymentDetails::operator=(const PaymentDetails& other) {
     total = std::make_unique<PaymentItem>(*other.total);
   else
     total.reset(nullptr);
-  display_items = std::vector<PaymentItem>(other.display_items);
+
+  display_items.clear();
+  display_items.reserve(other.display_items.size());
+  for (const auto& item : other.display_items) {
+    display_items.push_back(item);
+  }
+
   shipping_options = std::vector<PaymentShippingOption>(other.shipping_options);
   modifiers = std::vector<PaymentDetailsModifier>(other.modifiers);
   return *this;
@@ -130,7 +136,7 @@ bool PaymentDetails::FromDictionaryValue(const base::DictionaryValue& value,
           const base::DictionaryValue* additional_display_item_dict = nullptr;
           PaymentItem additional_display_item;
           if (!additional_display_items_list->GetDictionary(
-                  i, &additional_display_item_dict) ||
+                  j, &additional_display_item_dict) ||
               !additional_display_item.FromDictionaryValue(
                   *additional_display_item_dict)) {
             return false;

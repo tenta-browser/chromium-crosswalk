@@ -14,9 +14,6 @@
 #include "components/history/core/browser/web_history_service.h"
 #include "url/gurl.h"
 
-class OAuth2TokenService;
-class SigninManagerBase;
-
 namespace history {
 
 // A fake WebHistoryService for testing.
@@ -32,10 +29,7 @@ namespace history {
 // TODO(msramek): This class might need its own set of tests.
 class FakeWebHistoryService : public WebHistoryService {
  public:
-  FakeWebHistoryService(
-      OAuth2TokenService* token_service,
-      SigninManagerBase* signin_manager,
-      const scoped_refptr<net::URLRequestContextGetter>& request_context);
+  FakeWebHistoryService();
   ~FakeWebHistoryService() override;
 
   // Sets up the behavior of the fake response returned when calling
@@ -44,7 +38,9 @@ class FakeWebHistoryService : public WebHistoryService {
   void SetupFakeResponse(bool emulate_success, int emulate_response_code);
 
   // Adds a fake visit.
-  void AddSyncedVisit(std::string url, base::Time timestamp);
+  void AddSyncedVisit(const std::string& url,
+                      base::Time timestamp,
+                      const std::string& icon_url = std::string(""));
 
   // Clears all fake visits.
   void ClearSyncedVisits();
@@ -58,7 +54,14 @@ class FakeWebHistoryService : public WebHistoryService {
   void SetOtherFormsOfBrowsingHistoryPresent(bool present);
 
  protected:
-  typedef std::pair<std::string, base::Time> Visit;
+  struct Visit {
+    Visit(const std::string& url,
+          base::Time timestamp,
+          const std::string& icon_url);
+    std::string url;
+    base::Time timestamp;
+    std::string icon_url;
+  };
 
   // Returns up to |count| results from |visits_| between |begin| and |end.
   // Results are sorted from most recent to least recent, prioritizing more

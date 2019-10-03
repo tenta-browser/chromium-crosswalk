@@ -20,9 +20,11 @@
 
 namespace content {
 
+class BrowserContext;
 class RenderFrameHostImpl;
 class ServiceWorkerContextWatcher;
 class ServiceWorkerContextWrapper;
+class StoragePartitionImpl;
 
 namespace protocol {
 
@@ -33,7 +35,7 @@ class ServiceWorkerHandler : public DevToolsDomainHandler,
   ~ServiceWorkerHandler() override;
 
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderer(RenderProcessHost* process_host,
+  void SetRenderer(int process_host_id,
                    RenderFrameHostImpl* frame_host) override;
 
   Response Enable() override;
@@ -54,6 +56,7 @@ class ServiceWorkerHandler : public DevToolsDomainHandler,
                              const std::string& registration_id,
                              const std::string& tag,
                              bool last_chance) override;
+  // TODO(crbug.com/961238): Add DispatchPeriodicSyncEvent().
 
  private:
   void OnWorkerRegistrationUpdated(
@@ -71,9 +74,10 @@ class ServiceWorkerHandler : public DevToolsDomainHandler,
   std::unique_ptr<ServiceWorker::Frontend> frontend_;
   bool enabled_;
   scoped_refptr<ServiceWorkerContextWatcher> context_watcher_;
-  RenderProcessHost* process_;
+  BrowserContext* browser_context_;
+  StoragePartitionImpl* storage_partition_;
 
-  base::WeakPtrFactory<ServiceWorkerHandler> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerHandler);
 };

@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "components/prefs/pref_registry.h"
 #include "components/prefs/pref_value_store.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
@@ -18,7 +18,6 @@
 #include "services/preferences/scoped_pref_connection_builder.h"
 #include "services/preferences/shared_pref_registry.h"
 #include "services/service_manager/public/cpp/bind_source_info.h"
-#include "services/service_manager/public/cpp/service_context.h"
 
 namespace prefs {
 
@@ -45,7 +44,7 @@ class PrefStoreManagerImpl::ConnectorConnection
       if (owner_->incognito_persistent_pref_store_underlay_->initialized()) {
         connection->ProvideIncognitoPersistentPrefStoreUnderlay(
             owner_->incognito_persistent_pref_store_underlay_.get(),
-            owner_->overlay_pref_names_);
+            owner_->persistent_perf_names_);
       } else {
         owner_->pending_persistent_incognito_connections_.push_back(connection);
       }
@@ -59,6 +58,7 @@ class PrefStoreManagerImpl::ConnectorConnection
 };
 
 PrefStoreManagerImpl::PrefStoreManagerImpl(
+    service_manager::mojom::ServiceRequest request,
     PrefStore* managed_prefs,
     PrefStore* supervised_user_prefs,
     PrefStore* extension_prefs,
@@ -67,10 +67,10 @@ PrefStoreManagerImpl::PrefStoreManagerImpl(
     PersistentPrefStore* incognito_user_prefs_underlay,
     PrefStore* recommended_prefs,
     PrefRegistry* pref_registry,
-    std::vector<const char*> overlay_pref_names)
-    : shared_pref_registry_(std::make_unique<SharedPrefRegistry>(
-          base::WrapRefCounted(pref_registry))),
-      weak_factory_(this) {
+    std::vector<const char*> persistent_perf_names)
+    : service_binding_(this, std::move(request)),
+      shared_pref_registry_(std::make_unique<SharedPrefRegistry>(
+          base::WrapRefCounted(pref_registry))) {
   // This store is done in-process so it's already "registered":
   registry_.AddInterface<prefs::mojom::PrefStoreConnector>(
       base::Bind(&PrefStoreManagerImpl::BindPrefStoreConnectorRequest,
@@ -86,9 +86,9 @@ PrefStoreManagerImpl::PrefStoreManagerImpl(
             base::BindOnce(
                 &PrefStoreManagerImpl::OnIncognitoPersistentPrefStoreReady,
                 base::Unretained(this)));
-    overlay_pref_names_ = std::move(overlay_pref_names);
+    persistent_perf_names_ = std::move(persistent_perf_names);
   } else {
-    DCHECK(overlay_pref_names.empty());
+    DCHECK(persistent_perf_names.empty());
   }
   RegisterPrefStore(PrefValueStore::MANAGED_STORE, managed_prefs);
   RegisterPrefStore(PrefValueStore::SUPERVISED_USER_STORE,
@@ -113,8 +113,6 @@ void PrefStoreManagerImpl::BindPrefStoreConnectorRequest(
       std::move(request));
 }
 
-void PrefStoreManagerImpl::OnStart() {}
-
 void PrefStoreManagerImpl::OnBindInterface(
     const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
@@ -134,7 +132,8 @@ void PrefStoreManagerImpl::OnIncognitoPersistentPrefStoreReady() {
   DVLOG(1) << "Incognito PersistentPrefStore ready";
   for (const auto& connection : pending_persistent_connections_)
     connection->ProvideIncognitoPersistentPrefStoreUnderlay(
-        incognito_persistent_pref_store_underlay_.get(), overlay_pref_names_);
+        incognito_persistent_pref_store_underlay_.get(),
+        persistent_perf_names_);
   pending_persistent_incognito_connections_.clear();
 }
 
@@ -150,7 +149,7 @@ void PrefStoreManagerImpl::RegisterPrefStore(PrefValueStore::PrefStoreType type,
 void PrefStoreManagerImpl::ShutDown() {
   read_only_pref_stores_.clear();
   persistent_pref_store_.reset();
-  context()->QuitNow();
+  Terminate();
 }
 
 }  // namespace prefs

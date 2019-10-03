@@ -14,14 +14,13 @@ VoiceSearchController::VoiceSearchController() {}
 
 VoiceSearchController::~VoiceSearchController() {}
 
-void VoiceSearchController::SetDelegate(
-    id<VoiceSearchControllerDelegate> delegate) {}
+void VoiceSearchController::SetDispatcher(id<LoadQueryCommands> dispatcher) {}
 
 void VoiceSearchController::PrepareToAppear() {}
 
 void VoiceSearchController::StartRecognition(
     UIViewController* presenting_view_controller,
-    Tab* current_tab) {}
+    web::WebState* current_web_state) {}
 
 bool VoiceSearchController::IsTextToSpeechEnabled() {
   return false;

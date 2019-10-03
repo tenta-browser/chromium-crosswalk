@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "content/browser/renderer_host/input/input_disposition_handler.h"
+#include "content/browser/renderer_host/input/input_router.h"
 
 namespace content {
 
@@ -21,13 +22,10 @@ class MockInputDispositionHandler : public InputDispositionHandler {
   MockInputDispositionHandler();
   ~MockInputDispositionHandler() override;
 
+  InputRouter::KeyboardEventCallback CreateKeyboardEventCallback();
+  InputRouter::MouseEventCallback CreateMouseEventCallback();
+
   // InputDispositionHandler
-  void OnKeyboardEventAck(const NativeWebKeyboardEventWithLatencyInfo& event,
-                          InputEventAckSource ack_source,
-                          InputEventAckState ack_result) override;
-  void OnMouseEventAck(const MouseEventWithLatencyInfo& event,
-                       InputEventAckSource ack_source,
-                       InputEventAckState ack_result) override;
   void OnWheelEventAck(const MouseWheelEventWithLatencyInfo& event,
                        InputEventAckSource ack_source,
                        InputEventAckState ack_result) override;
@@ -37,7 +35,6 @@ class MockInputDispositionHandler : public InputDispositionHandler {
   void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
                          InputEventAckSource ack_source,
                          InputEventAckState ack_result) override;
-  void OnUnexpectedEventAck(UnexpectedEventAckType type) override;
 
   size_t GetAndResetAckCount();
 
@@ -55,9 +52,6 @@ class MockInputDispositionHandler : public InputDispositionHandler {
     touch_followup_event_ = std::move(event);
   }
 
-  bool unexpected_event_ack_called() const {
-    return unexpected_event_ack_called_;
-  }
   InputEventAckState ack_state() const { return ack_state_; }
 
   InputEventAckState acked_wheel_event_state() const {
@@ -83,10 +77,16 @@ class MockInputDispositionHandler : public InputDispositionHandler {
   void RecordAckCalled(blink::WebInputEvent::Type eventType,
                        InputEventAckState ack_result);
 
+  void OnKeyboardEventAck(const NativeWebKeyboardEventWithLatencyInfo& event,
+                          InputEventAckSource ack_source,
+                          InputEventAckState ack_result);
+  void OnMouseEventAck(const MouseEventWithLatencyInfo& event,
+                       InputEventAckSource ack_source,
+                       InputEventAckState ack_result);
+
   InputRouter* input_router_;
 
   size_t ack_count_;
-  bool unexpected_event_ack_called_;
   blink::WebInputEvent::Type ack_event_type_;
   InputEventAckState ack_state_;
   InputEventAckState acked_wheel_event_state_;

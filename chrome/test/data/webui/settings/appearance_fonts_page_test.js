@@ -35,10 +35,10 @@ class TestFontsBrowserProxy extends TestBrowserProxy {
   }
 }
 
-var fontsPage = null;
+let fontsPage = null;
 
 /** @type {?TestFontsBrowserProxy} */
-var fontsBrowserProxy = null;
+let fontsBrowserProxy = null;
 
 suite('AppearanceFontHandler', function() {
   setup(function() {
@@ -51,7 +51,9 @@ suite('AppearanceFontHandler', function() {
     document.body.appendChild(fontsPage);
   });
 
-  teardown(function() { fontsPage.remove(); });
+  teardown(function() {
+    fontsPage.remove();
+  });
 
   test('fetchFontsData', function() {
     return fontsBrowserProxy.whenCalled('fetchFontsData');
@@ -60,9 +62,18 @@ suite('AppearanceFontHandler', function() {
   test('openAdvancedFontSettings', function() {
     cr.webUIListenerCallback('advanced-font-settings-installed', [true]);
     Polymer.dom.flush();
-    var button = fontsPage.$$('#advancedButton');
+    const button = fontsPage.$$('#advancedButton');
     assert(!!button);
-    MockInteractions.tap(button);
+    button.click();
     return fontsBrowserProxy.whenCalled('openAdvancedFontSettings');
+  });
+
+  test('minimum font size sample', async () => {
+    fontsPage.prefs = {webkit: {webprefs: {minimum_font_size: {value: 0}}}};
+    assertTrue(fontsPage.$.minimumSizeSample.hidden);
+    fontsPage.set('prefs.webkit.webprefs.minimum_font_size.value', 6);
+    assertFalse(fontsPage.$.minimumSizeSample.hidden);
+    fontsPage.set('prefs.webkit.webprefs.minimum_font_size.value', 0);
+    assertTrue(fontsPage.$.minimumSizeSample.hidden);
   });
 });

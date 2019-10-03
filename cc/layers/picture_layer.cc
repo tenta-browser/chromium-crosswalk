@@ -5,6 +5,8 @@
 #include "cc/layers/picture_layer.h"
 
 #include "base/auto_reset.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer_impl.h"
@@ -40,8 +42,7 @@ PictureLayer::PictureLayer(ContentLayerClient* client,
   recording_source_ = std::move(source);
 }
 
-PictureLayer::~PictureLayer() {
-}
+PictureLayer::~PictureLayer() = default;
 
 std::unique_ptr<LayerImpl> PictureLayer::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
@@ -49,8 +50,12 @@ std::unique_ptr<LayerImpl> PictureLayer::CreateLayerImpl(
 }
 
 void PictureLayer::PushPropertiesTo(LayerImpl* base_layer) {
+  // TODO(enne): http://crbug.com/918126 debugging
+  CHECK(this);
+
   Layer::PushPropertiesTo(base_layer);
-  TRACE_EVENT0("cc", "PictureLayer::PushPropertiesTo");
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
+               "PictureLayer::PushPropertiesTo");
   PictureLayerImpl* layer_impl = static_cast<PictureLayerImpl*>(base_layer);
   layer_impl->SetLayerMaskType(mask_type());
   DropRecordingSourceContentIfInvalid();
@@ -60,8 +65,24 @@ void PictureLayer::PushPropertiesTo(LayerImpl* base_layer) {
       ShouldUseTransformedRasterization());
   layer_impl->set_gpu_raster_max_texture_size(
       layer_tree_host()->device_viewport_size());
+
+  // TODO(enne): http://crbug.com/918126 debugging
+  CHECK(this);
+  if (!recording_source_) {
+    bool valid_host = layer_tree_host();
+    bool has_parent = parent();
+    bool parent_has_host = parent() && parent()->layer_tree_host();
+
+    auto str = base::StringPrintf("vh: %d, hp: %d, phh: %d", valid_host,
+                                  has_parent, parent_has_host);
+    static auto* crash_key = base::debug::AllocateCrashKeyString(
+        "issue918126", base::debug::CrashKeySize::Size32);
+    base::debug::SetCrashKeyString(crash_key, str);
+    base::debug::DumpWithoutCrashing();
+  }
+
   layer_impl->UpdateRasterSource(recording_source_->CreateRasterSource(),
-                                 &last_updated_invalidation_, nullptr);
+                                 &last_updated_invalidation_, nullptr, nullptr);
   DCHECK(last_updated_invalidation_.IsEmpty());
 }
 
@@ -70,10 +91,6 @@ void PictureLayer::SetLayerTreeHost(LayerTreeHost* host) {
 
   if (!host)
     return;
-
-  if (!host->GetSettings().enable_mask_tiling &&
-      mask_type_ == LayerMaskType::MULTI_TEXTURE_MASK)
-    mask_type_ = LayerMaskType::SINGLE_TEXTURE_MASK;
 
   if (!recording_source_)
     recording_source_.reset(new RecordingSource);
@@ -103,8 +120,8 @@ bool PictureLayer::Update() {
       !contents_opaque() &&
       !picture_layer_inputs_.client->FillsBoundsCompletely());
 
-  TRACE_EVENT1("cc", "PictureLayer::Update", "source_frame_number",
-               layer_tree_host()->SourceFrameNumber());
+  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("cc.debug"), "PictureLayer::Update",
+               "source_frame_number", layer_tree_host()->SourceFrameNumber());
   devtools_instrumentation::ScopedLayerTreeTask update_layer(
       devtools_instrumentation::kUpdateLayer, id(), layer_tree_host()->GetId());
 
@@ -133,6 +150,7 @@ bool PictureLayer::Update() {
         layer_tree_host()->recording_scale_factor());
 
     SetNeedsPushProperties();
+    paint_count_++;
   } else {
     // If this invalidation did not affect the recording source, then it can be
     // cleared as an optimization.
@@ -143,11 +161,6 @@ bool PictureLayer::Update() {
 }
 
 void PictureLayer::SetLayerMaskType(LayerMaskType mask_type) {
-  // We do not allow converting SINGLE_TEXTURE_MASK to MULTI_TEXTURE_MASK in
-  // order to avoid rerastering when a mask's transform is being animated.
-  if (mask_type_ == LayerMaskType::SINGLE_TEXTURE_MASK &&
-      mask_type == LayerMaskType::MULTI_TEXTURE_MASK)
-    return;
   mask_type_ = mask_type;
 }
 
@@ -224,6 +237,32 @@ bool PictureLayer::HasDrawableContent() const {
 
 void PictureLayer::RunMicroBenchmark(MicroBenchmark* benchmark) {
   benchmark->RunOnLayer(this);
+}
+
+void PictureLayer::CaptureContent(const gfx::Rect& rect,
+                                  std::vector<NodeId>* content) {
+  if (!DrawsContent())
+    return;
+
+  const DisplayItemList* display_item_list = GetDisplayItemList();
+  if (!display_item_list)
+    return;
+
+  // We could run into this situation as CaptureContent could start at any time.
+  if (transform_tree_index() == TransformTree::kInvalidNodeId)
+    return;
+
+  gfx::Transform inverse_screen_space_transform;
+  if (!ScreenSpaceTransform().GetInverse(&inverse_screen_space_transform))
+    return;
+  gfx::Rect transformed = MathUtil::ProjectEnclosingClippedRect(
+      inverse_screen_space_transform, rect);
+
+  transformed.Intersect(gfx::Rect(bounds()));
+  if (transformed.IsEmpty())
+    return;
+
+  display_item_list->CaptureContent(transformed, content);
 }
 
 void PictureLayer::DropRecordingSourceContentIfInvalid() {

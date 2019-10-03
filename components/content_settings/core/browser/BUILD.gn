@@ -3,14 +3,17 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//ppapi/features/features.gni")
+import("//build/config/jumbo.gni")
+import("//ppapi/buildflags/buildflags.gni")
 
-static_library("browser") {
+jumbo_static_library("browser") {
   sources = [
     "content_settings_default_provider.cc",
     "content_settings_default_provider.h",
     "content_settings_details.cc",
     "content_settings_details.h",
+    "content_settings_ephemeral_provider.cc",
+    "content_settings_ephemeral_provider.h",
     "content_settings_global_value_map.cc",
     "content_settings_global_value_map.h",
     "content_settings_info.cc",
@@ -53,11 +56,26 @@ static_library("browser") {
     "//components/pref_registry:pref_registry",
     "//components/prefs",
     "//components/url_formatter",
-    "//extensions/features",
+    "//extensions/buildflags",
     "//net",
     "//services/preferences/public/cpp",
     "//url",
   ]
+
+  if (is_android) {
+    deps += [ "//media" ]
+  }
+
+  if (!is_ios) {
+    sources += [
+      "cookie_settings_policy_handler.cc",
+      "cookie_settings_policy_handler.h",
+    ]
+    deps += [
+      "//components/policy:generated",
+      "//components/policy/core/browser",
+    ]
+  }
 
   configs += [
     "//build/config/compiler:no_size_t_to_int_warning",
@@ -65,9 +83,11 @@ static_library("browser") {
   ]
 }
 
-source_set("unit_tests") {
+jumbo_source_set("unit_tests") {
   testonly = true
   sources = [
+    "content_settings_ephemeral_provider_unittest.cc",
+    "content_settings_pref_unittest.cc",
     "content_settings_registry_unittest.cc",
     "content_settings_rule_unittest.cc",
     "content_settings_utils_unittest.cc",
@@ -87,9 +107,21 @@ source_set("unit_tests") {
     "//components/content_settings/core/test:test_support",
     "//components/pref_registry:pref_registry",
     "//components/prefs",
+    "//components/prefs:test_support",
     "//components/sync_preferences:test_support",
-    "//extensions/features",
+    "//extensions/buildflags",
+    "//ppapi/buildflags:buildflags",
+    "//testing/gmock",
     "//testing/gtest",
     "//url",
   ]
+
+  if (!is_ios) {
+    sources += [ "cookie_settings_policy_handler_unittest.cc" ]
+
+    deps += [
+      "//components/policy:generated",
+      "//components/policy/core/browser:test_support",
+    ]
+  }
 }

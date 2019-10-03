@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/invalidation/public/invalidation_util.h"
 #include "google/cacheinvalidation/include/invalidation-client.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -54,7 +54,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   ~FakeInvalidationClient() override {}
 
   void LoseRegistration(const invalidation::ObjectId& oid) {
-    EXPECT_TRUE(base::ContainsKey(registered_ids_, oid));
+    EXPECT_TRUE(base::Contains(registered_ids_, oid));
     registered_ids_.erase(oid);
   }
 
@@ -69,7 +69,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   void Acknowledge(const invalidation::AckHandle& handle) override {}
 
   void Register(const invalidation::ObjectId& oid) override {
-    EXPECT_FALSE(base::ContainsKey(registered_ids_, oid));
+    EXPECT_FALSE(base::Contains(registered_ids_, oid));
     registered_ids_.insert(oid);
   }
 
@@ -78,7 +78,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   }
 
   void Unregister(const invalidation::ObjectId& oid) override {
-    EXPECT_TRUE(base::ContainsKey(registered_ids_, oid));
+    EXPECT_TRUE(base::Contains(registered_ids_, oid));
     registered_ids_.erase(oid);
   }
 
@@ -120,9 +120,8 @@ void ExpectPendingRegistrations(
     double expected_delay_seconds,
     const RegistrationManager::PendingRegistrationMap& pending_registrations) {
   ObjectIdSet pending_ids;
-  for (RegistrationManager::PendingRegistrationMap::const_iterator it =
-           pending_registrations.begin(); it != pending_registrations.end();
-       ++it) {
+  for (auto it = pending_registrations.begin();
+       it != pending_registrations.end(); ++it) {
     SCOPED_TRACE(ObjectIdToString(it->first));
     pending_ids.insert(it->first);
     base::TimeDelta offset =
@@ -154,16 +153,14 @@ class RegistrationManagerTest : public testing::Test {
   ~RegistrationManagerTest() override {}
 
   void LoseRegistrations(const ObjectIdSet& oids) {
-    for (ObjectIdSet::const_iterator it = oids.begin(); it != oids.end();
-         ++it) {
+    for (auto it = oids.begin(); it != oids.end(); ++it) {
       fake_invalidation_client_.LoseRegistration(*it);
       fake_registration_manager_.MarkRegistrationLost(*it);
     }
   }
 
   void DisableIds(const ObjectIdSet& oids) {
-    for (ObjectIdSet::const_iterator it = oids.begin(); it != oids.end();
-         ++it) {
+    for (auto it = oids.begin(); it != oids.end(); ++it) {
       fake_invalidation_client_.LoseRegistration(*it);
       fake_registration_manager_.DisableId(*it);
     }
@@ -226,7 +223,7 @@ class RegistrationManagerTest : public testing::Test {
 
  private:
   // Needed by timers in RegistrationManager.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(RegistrationManagerTest);
 };

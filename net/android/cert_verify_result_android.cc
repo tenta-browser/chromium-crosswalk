@@ -6,7 +6,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
-#include "jni/AndroidCertVerifyResult_jni.h"
+#include "net/net_jni_headers/AndroidCertVerifyResult_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaArrayOfByteArrayToStringVector;
@@ -30,8 +30,7 @@ void ExtractCertVerifyResult(const JavaRef<jobject>& result,
 
   ScopedJavaLocalRef<jobjectArray> chain_byte_array =
       Java_AndroidCertVerifyResult_getCertificateChainEncoded(env, result);
-  JavaArrayOfByteArrayToStringVector(
-      env, chain_byte_array.obj(), verified_chain);
+  JavaArrayOfByteArrayToStringVector(env, chain_byte_array, verified_chain);
 }
 
 }  // namespace android

@@ -9,11 +9,13 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/ntp_tiles/tile_source.h"
 #include "components/ntp_tiles/tile_title_source.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
 // ID used by Instant code to refer to objects (e.g. Autocomplete results, Most
@@ -41,21 +43,6 @@ enum ThemeBackgroundImageTiling {
   THEME_BKGRND_IMAGE_LAST = THEME_BKGRND_IMAGE_REPEAT,
 };
 
-// The RGBA color components for the text and links of the theme.
-struct RGBAColor {
-  RGBAColor();
-  ~RGBAColor();
-
-  bool operator==(const RGBAColor& rhs) const;
-
-  // The color in RGBA format where the R, G, B and A values
-  // are between 0 and 255 inclusive and always valid.
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
-  uint8_t a;
-};
-
 // Theme background settings for the NTP.
 struct ThemeBackgroundInfo {
   ThemeBackgroundInfo();
@@ -66,23 +53,32 @@ struct ThemeBackgroundInfo {
   // True if the default theme is selected.
   bool using_default_theme;
 
-  // The theme background color in RGBA format always valid.
-  RGBAColor background_color;
+  // True if dark mode is enabled.
+  bool using_dark_mode;
 
-  // The theme text color in RGBA format.
-  RGBAColor text_color;
+  // Url of the custom background selected by the user.
+  GURL custom_background_url;
 
-  // The theme link color in RGBA format.
-  RGBAColor link_color;
+  // First attribution string for custom background.
+  std::string custom_background_attribution_line_1;
 
-  // The theme text color light in RGBA format.
-  RGBAColor text_color_light;
+  // Second attribution string for custom background.
+  std::string custom_background_attribution_line_2;
 
-  // The theme color for the header in RGBA format.
-  RGBAColor header_color;
+  // Url to learn more info about the custom background.
+  GURL custom_background_attribution_action_url;
 
-  // The theme color for the section border in RGBA format.
-  RGBAColor section_border_color;
+  // Id of the collection being used for "daily refresh".
+  std::string collection_id;
+
+  // The theme background color. Always valid.
+  SkColor background_color;
+
+  // The theme text color.
+  SkColor text_color;
+
+  // The theme text color light.
+  SkColor text_color_light;
 
   // The theme id for the theme background image.
   // Value is only valid if there's a custom theme background image.
@@ -99,16 +95,33 @@ struct ThemeBackgroundInfo {
   // The theme background image tiling is only valid if |theme_id| is valid.
   ThemeBackgroundImageTiling image_tiling;
 
-  // The theme background image height.
-  // Value is only valid if |theme_id| is valid.
-  uint16_t image_height;
-
   // True if theme has attribution logo.
   // Value is only valid if |theme_id| is valid.
   bool has_attribution;
 
   // True if theme has an alternate logo.
   bool logo_alternate;
+
+  // True if theme has NTP image.
+  bool has_theme_image;
+
+  // The theme name.
+  std::string theme_name;
+
+  // The color id for Chrome Colors. It is -1 if Chrome Colors is not set, 0
+  // when Chrome Colors is set but not from predefined color list, and > 0 if
+  // Chrome Colors is set from predefined color list.
+  int color_id;
+
+  // The dark color for Chrome Colors. Valid only if Chrome Colors is set.
+  SkColor color_dark;
+
+  // The light color for Chrome Colors. Valid only if Chrome Colors is set.
+  SkColor color_light;
+
+  // The picked custom color for Chrome Colors. Valid only if Chrome Colors is
+  // set.
+  SkColor color_picked;
 };
 
 struct InstantMostVisitedItem {
@@ -123,9 +136,6 @@ struct InstantMostVisitedItem {
   // is used as the title.
   base::string16 title;
 
-  // The external URL of the thumbnail associated with this page.
-  GURL thumbnail;
-
   // The external URL of the favicon associated with this page.
   GURL favicon;
 
@@ -138,6 +148,26 @@ struct InstantMostVisitedItem {
   // The timestamp representing when the tile data (e.g. URL) was generated
   // originally, regardless of the impression timestamp.
   base::Time data_generation_time;
+};
+
+struct InstantMostVisitedInfo {
+  InstantMostVisitedInfo();
+  InstantMostVisitedInfo(const InstantMostVisitedInfo& other);
+  ~InstantMostVisitedInfo();
+
+  std::vector<InstantMostVisitedItem> items;
+
+  // True if the source of the |items| is custom links (i.e.
+  // ntp_tiles::TileSource::CUSTOM_LINKS). Required since the source cannot be
+  // checked if |items| is empty.
+  bool items_are_custom_links;
+
+  // True if Most Visited functionality is enabled instead of customizable
+  // shortcuts.
+  bool use_most_visited;
+
+  // True if the items are visible and not hidden by the user.
+  bool is_visible;
 };
 
 // An InstantMostVisitedItem along with its assigned restricted ID.

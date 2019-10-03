@@ -33,19 +33,19 @@ void LoginPromptBrowserTestObserver::Observe(
 }
 
 void LoginPromptBrowserTestObserver::AddHandler(LoginHandler* handler) {
-  std::list<LoginHandler*>::iterator i =
-      std::find(handlers_.begin(), handlers_.end(), handler);
-  // Cannot use ASSERT_EQ, because gTest on Android confuses iterators with
-  // containers.
-  ASSERT_TRUE(i == handlers_.end());
+  ASSERT_FALSE(base::Contains(handlers_, handler));
   handlers_.push_back(handler);
 }
 
 void LoginPromptBrowserTestObserver::RemoveHandler(LoginHandler* handler) {
-  std::list<LoginHandler*>::iterator i =
-      std::find(handlers_.begin(), handlers_.end(), handler);
+  auto i = std::find(handlers_.begin(), handlers_.end(), handler);
   // Cannot use ASSERT_NE, because gTest on Android confuses iterators with
   // containers.
+  //
+  // TODO(davidben): NOTIFICATION_AUTH_SUPPLIED and NOTIFICATION_AUTH_CANCELLED
+  // are not quite guaranteed to come after NOTIFICATION_AUTH_NEEDED. Either
+  // remove this assumption from the test class or fix things so this assumption
+  // holds.
   ASSERT_TRUE(i != handlers_.end());
   handlers_.erase(i);
 }
@@ -55,6 +55,10 @@ void LoginPromptBrowserTestObserver::Register(
   registrar_.Add(this, chrome::NOTIFICATION_AUTH_NEEDED, source);
   registrar_.Add(this, chrome::NOTIFICATION_AUTH_SUPPLIED, source);
   registrar_.Add(this, chrome::NOTIFICATION_AUTH_CANCELLED, source);
+}
+
+void LoginPromptBrowserTestObserver::UnregisterAll() {
+  registrar_.RemoveAll();
 }
 
 WindowedLoadStopObserver::WindowedLoadStopObserver(

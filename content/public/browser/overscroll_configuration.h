@@ -5,28 +5,54 @@
 #ifndef CONTENT_PUBLIC_BROWSER_OVERSCROLL_CONFIGURATION_H_
 #define CONTENT_PUBLIC_BROWSER_OVERSCROLL_CONFIGURATION_H_
 
+#include "base/macros.h"
+#include "base/time/time.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
-// Sets and retrieves various overscroll related configuration values.
-enum class OverscrollConfig {
-  // Threshold to complete touchpad overscroll, in terms of the percentage of
-  // the display size.
-  THRESHOLD_COMPLETE_TOUCHPAD,
+class CONTENT_EXPORT OverscrollConfig {
+ public:
+  // Determines pull-to-refresh mode according to --pull-to-refresh flag.
+  enum class PullToRefreshMode {
+    // Pull-to-refresh is disabled.
+    kDisabled,
 
-  // Threshold to complete touchscreen overscroll, in terms of the percentage of
-  // the display size.
-  THRESHOLD_COMPLETE_TOUCHSCREEN,
+    // Pull-to-refresh is enabled for both touchscreen and touchpad.
+    kEnabled,
 
-  // Threshold to start touchpad overscroll, in DIPs.
-  THRESHOLD_START_TOUCHPAD,
+    // Pull-to-refresh is enabled only for touchscreen.
+    kEnabledTouchschreen,
+  };
 
-  // Threshold to start touchscreen overscroll, in DIPs.
-  THRESHOLD_START_TOUCHSCREEN,
+  // These are percentages of the display size.
+  static const float kCompleteTouchpadThresholdPercent;
+  static const float kCompleteTouchscreenThresholdPercent;
+
+  static const float kStartTouchpadThresholdDips;
+  static const float kStartTouchscreenThresholdDips;
+
+  static PullToRefreshMode GetPullToRefreshMode();
+
+  static bool TouchpadOverscrollHistoryNavigationEnabled();
+
+  static base::TimeDelta MaxInertialEventsBeforeOverscrollCancellation();
+
+ private:
+  friend class ScopedPullToRefreshMode;
+  friend class OverscrollControllerTest;
+
+  // Helper functions used by |ScopedPullToRefreshMode| to set and reset mode in
+  // tests.
+  static void SetPullToRefreshMode(PullToRefreshMode mode);
+  static void ResetPullToRefreshMode();
+
+  // Helper functions to reset TouchpadOverscrollHistoryNavigationEnabled in
+  // tests.
+  static void ResetTouchpadOverscrollHistoryNavigationEnabled();
+
+  DISALLOW_IMPLICIT_CONSTRUCTORS(OverscrollConfig);
 };
-
-CONTENT_EXPORT float GetOverscrollConfig(OverscrollConfig config);
 
 }  // namespace content
 

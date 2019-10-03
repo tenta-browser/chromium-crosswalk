@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_DEVTOOLS_DEVTOOLS_EMBEDDER_MESSAGE_DISPATCHER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -20,7 +21,7 @@ class Value;
 
 /**
  * Dispatcher for messages sent from the DevTools frontend running in an
- * isolated renderer (on chrome-devtools://) to the embedder in the browser.
+ * isolated renderer (on devtools://) to the embedder in the browser.
  *
  * The messages are sent via InspectorFrontendHost.sendMessageToEmbedder method.
  */
@@ -41,6 +42,7 @@ class DevToolsEmbedderMessageDispatcher {
     virtual void SetIsDocked(const DispatchCallback& callback,
                              bool is_docked) = 0;
     virtual void OpenInNewTab(const std::string& url) = 0;
+    virtual void ShowItemInFolder(const std::string& file_system_path) = 0;
     virtual void SaveToFile(const std::string& url,
                             const std::string& content,
                             bool save_as) = 0;
@@ -52,7 +54,8 @@ class DevToolsEmbedderMessageDispatcher {
     virtual void UpgradeDraggedFileSystemPermissions(
         const std::string& file_system_url) = 0;
     virtual void IndexPath(int index_request_id,
-                           const std::string& file_system_path) = 0;
+                           const std::string& file_system_path,
+                           const std::string& excluded_folders) = 0;
     virtual void StopIndexing(int index_request_id) = 0;
     virtual void LoadNetworkResource(const DispatchCallback& callback,
                                      const std::string& url,
@@ -89,11 +92,16 @@ class DevToolsEmbedderMessageDispatcher {
     virtual void RecordEnumeratedHistogram(const std::string& name,
                                            int sample,
                                            int boundary_value) = 0;
+    virtual void RecordPerformanceHistogram(const std::string& name,
+                                            double duration) = 0;
+    virtual void RecordUserMetricsAction(const std::string& name) = 0;
     virtual void SendJsonRequest(const DispatchCallback& callback,
                                  const std::string& browser_id,
                                  const std::string& url) = 0;
     virtual void Reattach(const DispatchCallback& callback) = 0;
     virtual void ReadyForTest() = 0;
+    virtual void ConnectionReady() = 0;
+    virtual void SetOpenNewWindowForPopups(bool value) = 0;
     virtual void RegisterExtensionsAPI(const std::string& origin,
                                        const std::string& script) = 0;
   };
@@ -105,8 +113,8 @@ class DevToolsEmbedderMessageDispatcher {
                         const std::string& method,
                         const base::ListValue* params) = 0;
 
-  static DevToolsEmbedderMessageDispatcher* CreateForDevToolsFrontend(
-      Delegate* delegate);
+  static std::unique_ptr<DevToolsEmbedderMessageDispatcher>
+  CreateForDevToolsFrontend(Delegate* delegate);
 };
 
 #endif  // CHROME_BROWSER_DEVTOOLS_DEVTOOLS_EMBEDDER_MESSAGE_DISPATCHER_H_

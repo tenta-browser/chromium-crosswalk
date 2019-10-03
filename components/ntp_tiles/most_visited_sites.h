@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/callback_list.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
@@ -24,6 +25,7 @@
 #include "base/strings/string16.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/top_sites_observer.h"
+#include "components/ntp_tiles/custom_links_manager.h"
 #include "components/ntp_tiles/ntp_tile.h"
 #include "components/ntp_tiles/popular_sites.h"
 #include "components/ntp_tiles/section_type.h"
@@ -81,7 +83,7 @@ class MostVisitedSitesSupervisor {
   virtual bool IsChildProfile() = 0;
 };
 
-// Tracks the list of most visited sites and their thumbnails.
+// Tracks the list of most visited sites.
 class MostVisitedSites : public history::TopSitesObserver,
                          public MostVisitedSitesSupervisor::Observer {
  public:
@@ -97,29 +99,37 @@ class MostVisitedSites : public history::TopSitesObserver,
     virtual ~Observer() {}
   };
 
-  // This interface delegates the retrieval of the home page to the
+  // This interface delegates the retrieval of the homepage to the
   // platform-specific implementation.
-  class HomePageClient {
+  class HomepageClient {
    public:
     using TitleCallback =
         base::OnceCallback<void(const base::Optional<base::string16>& title)>;
 
-    virtual ~HomePageClient() = default;
-    virtual bool IsHomePageEnabled() const = 0;
-    virtual bool IsNewTabPageUsedAsHomePage() const = 0;
-    virtual GURL GetHomePageUrl() const = 0;
-    virtual void QueryHomePageTitle(TitleCallback title_callback) = 0;
+    virtual ~HomepageClient() = default;
+    virtual bool IsHomepageTileEnabled() const = 0;
+    virtual GURL GetHomepageUrl() const = 0;
+    // TODO(https://crbug.com/862753): Extract this to another interface.
+    virtual void QueryHomepageTitle(TitleCallback title_callback) = 0;
+  };
+
+  class ExploreSitesClient {
+   public:
+    virtual ~ExploreSitesClient() = default;
+    virtual GURL GetExploreSitesUrl() const = 0;
+    virtual base::string16 GetExploreSitesTitle() const = 0;
   };
 
   // Construct a MostVisitedSites instance.
   //
   // |prefs| and |suggestions| are required and may not be null. |top_sites|,
-  // |popular_sites|, |supervisor| and |home_page_client| are optional and if
-  // null, the associated features will be disabled.
+  // |popular_sites|, |custom_links|, |supervisor| and |homepage_client| are
+  //  optional and if null, the associated features will be disabled.
   MostVisitedSites(PrefService* prefs,
                    scoped_refptr<history::TopSites> top_sites,
                    suggestions::SuggestionsService* suggestions,
                    std::unique_ptr<PopularSites> popular_sites,
+                   std::unique_ptr<CustomLinksManager> custom_links,
                    std::unique_ptr<IconCacher> icon_cacher,
                    std::unique_ptr<MostVisitedSitesSupervisor> supervisor);
 
@@ -143,17 +153,65 @@ class MostVisitedSites : public history::TopSitesObserver,
   // must not be null.
   void SetMostVisitedURLsObserver(Observer* observer, size_t num_sites);
 
-  // Sets the client that provides platform-specific home page preferences.
-  // When used to replace an existing client, the new client will first be used
-  // during the construction of a new tile set.
-  void SetHomePageClient(std::unique_ptr<HomePageClient> client);
+  // Sets the client that provides platform-specific homepage preferences.
+  // When used to replace an existing client, the new client will first be
+  // used during the construction of a new tile set.
+  // |client| must not be null and outlive this object.
+  void SetHomepageClient(std::unique_ptr<HomepageClient> client);
+
+  // Sets the client that provides the Explore Sites tile. Can be null if no
+  // such tile is desirable.
+  void SetExploreSitesClient(std::unique_ptr<ExploreSitesClient> client);
 
   // Requests an asynchronous refresh of the suggestions. Notifies the observer
   // if the request resulted in the set of tiles changing.
   void Refresh();
 
-  // Forces a rebuild of the current tiles to update the pinned home page.
-  void OnHomePageStateChanged();
+  // Forces a rebuild of the current tiles.
+  void RefreshTiles();
+
+  // Initializes custom links, which "freezes" the current MV tiles and converts
+  // them to custom links. Once custom links is initialized, MostVisitedSites
+  // will return only custom links. If the Most Visited tiles have not been
+  // loaded yet, does nothing. Custom links must be enabled.
+  void InitializeCustomLinks();
+  // Uninitializes custom links and reverts back to regular MV tiles. The
+  // current custom links will be deleted. Custom links must be enabled.
+  void UninitializeCustomLinks();
+  // Returns true if custom links has been initialized and not disabled, false
+  // otherwise.
+  bool IsCustomLinksInitialized();
+  // Enables or disables custom links, but does not (un)initialize them. Called
+  // when a third-party NTP is being used, or when the user switches between
+  // custom links and Most Visited sites.
+  void EnableCustomLinks(bool enable);
+  // Adds a custom link. If the number of current links is maxed, returns false
+  // and does nothing. Will initialize custom links if they have not been
+  // initialized yet, unless the action fails. Custom links must be enabled.
+  bool AddCustomLink(const GURL& url, const base::string16& title);
+  // Updates the URL and/or title of the custom link specified by |url|. If
+  // |url| does not exist or |new_url| already exists in the custom link list,
+  // returns false and does nothing. Will initialize custom links if they have
+  // not been initialized yet, unless the action fails. Custom links must be
+  // enabled.
+  bool UpdateCustomLink(const GURL& url,
+                        const GURL& new_url,
+                        const base::string16& new_title);
+  // Moves the custom link specified by |url| to the index |new_pos|. If |url|
+  // does not exist, or |new_pos| is invalid, returns false and does nothing.
+  // Will initialize custom links if they have not been initialized yet, unless
+  // the action fails. Custom links must be enabled.
+  bool ReorderCustomLink(const GURL& url, size_t new_pos);
+  // Deletes the custom link with the specified |url|. If |url| does not exist
+  // in the custom link list, returns false and does nothing. Will initialize
+  // custom links if they have not been initialized yet, unless the action
+  // fails. Custom links must be enabled.
+  bool DeleteCustomLink(const GURL& url);
+  // Restores the previous state of custom links before the last action that
+  // modified them. If there was no action, does nothing. If this is undoing the
+  // first action after initialization, uninitializes the links. Custom links
+  // must be enabled.
+  void UndoCustomLinkAction();
 
   void AddOrRemoveBlacklistedUrl(const GURL& url, bool add_url);
   void ClearBlacklistedUrls();
@@ -167,7 +225,8 @@ class MostVisitedSites : public history::TopSitesObserver,
   // public method for ease of testing.
   static NTPTilesVector MergeTiles(NTPTilesVector personal_tiles,
                                    NTPTilesVector whitelist_tiles,
-                                   NTPTilesVector popular_tiles);
+                                   NTPTilesVector popular_tiles,
+                                   base::Optional<NTPTile> explore_tile);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(MostVisitedSitesTest,
@@ -227,14 +286,25 @@ class MostVisitedSites : public history::TopSitesObserver,
       const std::set<std::string>& hosts_to_skip,
       size_t num_max_tiles);
 
-  // Initiates a query for the home page tile if needed and calls
+  // Callback for when an update is reported by CustomLinksManager.
+  void OnCustomLinksChanged();
+
+  // Creates tiles for |links| up to |max_num_sites_|. |links| will never exceed
+  // a certain maximum.
+  void BuildCustomLinks(const std::vector<CustomLinksManager::Link>& links);
+
+  // Initiates a query for the homepage tile if needed and calls
   // |SaveTilesAndNotify| in the end.
   void InitiateNotificationForNewTiles(NTPTilesVector new_tiles);
 
   // Takes the personal tiles, creates and merges in whitelist and popular tiles
-  // if appropriate, and saves the new tiles. Notifies the observer if the tiles
-  // were actually changed.
-  void SaveTilesAndNotify(NTPTilesVector personal_tiles);
+  // if appropriate. Calls |SaveTilesAndNotify| at the end.
+  void MergeMostVisitedTiles(NTPTilesVector personal_tiles);
+
+  // Saves the new tiles and notifies the observer if the tiles were actually
+  // changed.
+  void SaveTilesAndNotify(NTPTilesVector new_tiles,
+                          std::map<SectionType, NTPTilesVector> sections);
 
   void OnPopularSitesDownloaded(bool success);
 
@@ -246,16 +316,20 @@ class MostVisitedSites : public history::TopSitesObserver,
                                std::set<std::string>* hosts,
                                size_t* total_tile_count) const;
 
-  // Adds the home page as first tile to |tiles| and returns them as new vector.
+  // Adds the homepage as first tile to |tiles| and returns them as new vector.
   // Drops existing tiles with the same host as the home page and tiles that
   // would exceed the maximum.
   NTPTilesVector InsertHomeTile(NTPTilesVector tiles,
                                 const base::string16& title) const;
 
-  void OnHomePageTitleDetermined(NTPTilesVector tiles,
+  // Creates a tile for the Explore Sites page, if enabled. The tile is added to
+  // the front of the list.
+  base::Optional<NTPTile> CreateExploreSitesTile();
+
+  void OnHomepageTitleDetermined(NTPTilesVector tiles,
                                  const base::Optional<base::string16>& title);
 
-  // Returns true if there is a valid home page that can be pinned as tile.
+  // Returns true if there is a valid homepage that can be pinned as tile.
   bool ShouldAddHomeTile() const;
 
   // history::TopSitesObserver implementation.
@@ -267,14 +341,23 @@ class MostVisitedSites : public history::TopSitesObserver,
   scoped_refptr<history::TopSites> top_sites_;
   suggestions::SuggestionsService* suggestions_service_;
   std::unique_ptr<PopularSites> const popular_sites_;
+  std::unique_ptr<CustomLinksManager> const custom_links_;
   std::unique_ptr<IconCacher> const icon_cacher_;
   std::unique_ptr<MostVisitedSitesSupervisor> supervisor_;
-  std::unique_ptr<HomePageClient> home_page_client_;
+  std::unique_ptr<HomepageClient> homepage_client_;
+  std::unique_ptr<ExploreSitesClient> explore_sites_client_;
 
   Observer* observer_;
 
   // The maximum number of most visited sites to return.
-  size_t num_sites_;
+  size_t max_num_sites_;
+
+  // False if custom links is disabled and Most Visited sites should be returned
+  // instead.
+  bool custom_links_enabled_ = true;
+  // Number of actions after custom link initialization. Set to -1 and not
+  // incremented if custom links was not initialized during this session.
+  int custom_links_action_count_ = -1;
 
   std::unique_ptr<
       suggestions::SuggestionsService::ResponseCallbackList::Subscription>
@@ -282,6 +365,9 @@ class MostVisitedSites : public history::TopSitesObserver,
 
   ScopedObserver<history::TopSites, history::TopSitesObserver>
       top_sites_observer_;
+
+  std::unique_ptr<base::CallbackList<void()>::Subscription>
+      custom_links_subscription_;
 
   // The main source of personal tiles - either TOP_SITES or SUGGESTIONS_SEVICE.
   TileSource mv_source_;
@@ -293,7 +379,7 @@ class MostVisitedSites : public history::TopSitesObserver,
 
   // For callbacks may be run after destruction, used exclusively for TopSites
   // (since it's used to detect whether there's a query in flight).
-  base::WeakPtrFactory<MostVisitedSites> top_sites_weak_ptr_factory_;
+  base::WeakPtrFactory<MostVisitedSites> top_sites_weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MostVisitedSites);
 };

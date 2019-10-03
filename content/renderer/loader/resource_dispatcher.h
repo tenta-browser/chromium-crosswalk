@@ -12,57 +12,59 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/containers/circular_deque.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/public/common/previews_state.h"
+#include "content/public/common/resource_load_info.mojom.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/url_loader.mojom.h"
 #include "content/public/common/url_loader_throttle.h"
-#include "ipc/ipc_listener.h"
-#include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/system/data_pipe.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
+#include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
+#include "third_party/blink/public/platform/web_url_request.h"
 #include "url/gurl.h"
-#include "url/origin.h"
+
+namespace base {
+class WaitableEvent;
+}
 
 namespace net {
 struct RedirectInfo;
 }
 
 namespace network {
+struct ResourceRequest;
+struct ResourceResponseHead;
 struct URLLoaderCompletionStatus;
+namespace mojom {
+class URLLoaderFactory;
+}
 }
 
 namespace content {
+struct NavigationResponseOverrideParameters;
 class RequestPeer;
 class ResourceDispatcherDelegate;
-class ResourceSchedulingFilter;
-struct ResourceResponseInfo;
-struct ResourceRequest;
-struct ResourceResponseHead;
-class SharedMemoryReceivedDataFactory;
-struct SiteIsolationResponseMetaData;
 struct SyncLoadResponse;
 class ThrottlingURLLoader;
 class URLLoaderClientImpl;
 
-namespace mojom {
-class URLLoaderFactory;
-}  // namespace mojom
-
 // This class serves as a communication interface to the ResourceDispatcherHost
 // in the browser process. It can be used from any child process.
 // Virtual methods are for tests.
-class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
+class CONTENT_EXPORT ResourceDispatcher {
  public:
   // Generates ids for requests initiated by child processes unique to the
   // particular process, counted up from 0 (browser initiated requests count
@@ -73,13 +75,8 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   // CORS preflight requests.
   static int MakeRequestID();
 
-  ResourceDispatcher(
-      IPC::Sender* sender,
-      scoped_refptr<base::SingleThreadTaskRunner> thread_task_runner);
-  ~ResourceDispatcher() override;
-
-  // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
+  ResourceDispatcher();
+  virtual ~ResourceDispatcher();
 
   // Call this method to load the resource synchronously (i.e., in one shot).
   // This is an alternative to the StartAsync method. Be warned that this method
@@ -91,46 +88,52 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   //
   // |routing_id| is used to associated the bridge with a frame's network
   // context.
+  // |timeout| is used to abort the sync request on timeouts. TimeDelta::Max()
+  // is interpreted as no-timeout.
+  // If |download_to_blob_registry| is not null, it is used to redirect the
+  // download to a blob.
   virtual void StartSync(
-      std::unique_ptr<ResourceRequest> request,
+      std::unique_ptr<network::ResourceRequest> request,
       int routing_id,
-      const url::Origin& frame_origin,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       SyncLoadResponse* response,
-      blink::WebURLRequest::LoadingIPCType ipc_type,
-      mojom::URLLoaderFactory* url_loader_factory,
-      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
+      base::TimeDelta timeout,
+      blink::mojom::BlobRegistryPtrInfo download_to_blob_registry,
+      std::unique_ptr<RequestPeer> peer);
 
   // Call this method to initiate the request. If this method succeeds, then
   // the peer's methods will be called asynchronously to report various events.
-  // Returns the request id. |url_loader_factory| must be non-null if and only
-  // if |ipc_type| is LoadingIPCType::Mojo.
+  // Returns the request id. |url_loader_factory| must be non-null.
   //
   // |routing_id| is used to associated the bridge with a frame's network
   // context.
   //
-  // You can pass an optional argument |loading_task_runner| to specify task
-  // queue to execute loading tasks on.
+  // You need to pass a non-null |loading_task_runner| to specify task queue to
+  // execute loading tasks on.
   virtual int StartAsync(
-      std::unique_ptr<ResourceRequest> request,
+      std::unique_ptr<network::ResourceRequest> request,
       int routing_id,
       scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
-      const url::Origin& frame_origin,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       bool is_sync,
       std::unique_ptr<RequestPeer> peer,
-      blink::WebURLRequest::LoadingIPCType ipc_type,
-      mojom::URLLoaderFactory* url_loader_factory,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
-      mojo::ScopedDataPipeConsumerHandle consumer_handle);
+      std::unique_ptr<NavigationResponseOverrideParameters>
+          response_override_params);
 
   // Removes a request from the |pending_requests_| list, returning true if the
   // request was found and removed.
-  bool RemovePendingRequest(int request_id);
+  virtual bool RemovePendingRequest(
+      int request_id,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Cancels a request in the |pending_requests_| list.  The request will be
   // removed from the dispatcher as well.
-  virtual void Cancel(int request_id);
+  virtual void Cancel(int request_id,
+                      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Toggles the is_deferred attribute for the specified request.
   virtual void SetDefersLoading(int request_id, bool value);
@@ -140,30 +143,11 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
                          net::RequestPriority new_priority,
                          int intra_priority_value);
 
-  void set_message_sender(IPC::Sender* sender) {
-    DCHECK(sender);
-    DCHECK(pending_requests_.empty());
-    message_sender_ = sender;
-  }
-
   // This does not take ownership of the delegate. It is expected that the
   // delegate have a longer lifetime than the ResourceDispatcher.
   void set_delegate(ResourceDispatcherDelegate* delegate) {
     delegate_ = delegate;
   }
-
-  // Remembers IO thread timestamp for next resource message.
-  void set_io_timestamp(base::TimeTicks io_timestamp) {
-    io_timestamp_ = io_timestamp;
-  }
-
-  void SetThreadTaskRunner(
-      scoped_refptr<base::SingleThreadTaskRunner> thread_task_runner) {
-    thread_task_runner_ = thread_task_runner;
-  }
-
-  void SetResourceSchedulingFilter(
-      scoped_refptr<ResourceSchedulingFilter> resource_scheduling_filter);
 
   base::WeakPtr<ResourceDispatcher> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
@@ -171,47 +155,56 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
 
   void OnTransferSizeUpdated(int request_id, int32_t transfer_size_diff);
 
+  // This is used only when |this| is created for a worker thread.
+  // Sets |terminate_sync_load_event_| which will be signaled from the main
+  // thread when the worker thread is being terminated so that the sync requests
+  // requested on the worker thread can be aborted.
+  void set_terminate_sync_load_event(
+      base::WaitableEvent* terminate_sync_load_event) {
+    terminate_sync_load_event_ = terminate_sync_load_event;
+  }
+
  private:
   friend class URLLoaderClientImpl;
   friend class URLResponseBodyConsumer;
   friend class ResourceDispatcherTest;
 
-  using MessageQueue = base::circular_deque<IPC::Message*>;
   struct PendingRequestInfo {
     PendingRequestInfo(std::unique_ptr<RequestPeer> peer,
                        ResourceType resource_type,
                        int render_frame_id,
-                       const url::Origin& frame_origin,
                        const GURL& request_url,
-                       const std::string& method,
-                       const GURL& referrer,
-                       bool download_to_file);
+                       std::unique_ptr<NavigationResponseOverrideParameters>
+                           response_override_params);
 
     ~PendingRequestInfo();
 
     std::unique_ptr<RequestPeer> peer;
     ResourceType resource_type;
     int render_frame_id;
-    MessageQueue deferred_message_queue;
     bool is_deferred = false;
     // Original requested url.
     GURL url;
-    // The security origin of the frame that initiates this request.
-    url::Origin frame_origin;
     // The url, method and referrer of the latest response even in case of
     // redirection.
     GURL response_url;
-    std::string response_method;
-    GURL response_referrer;
-    bool download_to_file;
-    std::unique_ptr<IPC::Message> pending_redirect_message;
-    base::TimeTicks request_start;
-    base::TimeTicks response_start;
-    base::TimeTicks completion_time;
-    linked_ptr<base::SharedMemory> buffer;
-    scoped_refptr<SharedMemoryReceivedDataFactory> received_data_factory;
-    std::unique_ptr<SiteIsolationResponseMetaData> site_isolation_metadata;
-    int buffer_size;
+    bool has_pending_redirect = false;
+    base::TimeTicks local_request_start;
+    base::TimeTicks local_response_start;
+    base::TimeTicks remote_request_start;
+    net::LoadTimingInfo load_timing_info;
+    std::unique_ptr<NavigationResponseOverrideParameters>
+        navigation_response_override;
+    bool should_follow_redirect = true;
+    bool redirect_requires_loader_restart = false;
+    // Network error code the request completed with, or net::ERR_IO_PENDING if
+    // it's not completed. Used both to distinguish completion from
+    // cancellation, and to log histograms.
+    int net_error = net::ERR_IO_PENDING;
+    PreviewsState previews_state = PreviewsTypes::PREVIEWS_UNSPECIFIED;
+
+    // These stats will be sent to the browser process.
+    mojom::ResourceLoadInfoPtr resource_load_info;
 
     // For mojo loading.
     std::unique_ptr<ThrottlingURLLoader> url_loader;
@@ -228,75 +221,33 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
 
   // Message response handlers, called by the message handler for this process.
   void OnUploadProgress(int request_id, int64_t position, int64_t size);
-  void OnReceivedResponse(int request_id, const ResourceResponseHead&);
-  void OnReceivedCachedMetadata(int request_id,
-                                const std::vector<uint8_t>& data);
-  void OnReceivedRedirect(int request_id,
-                          const net::RedirectInfo& redirect_info,
-                          const ResourceResponseHead& response_head);
-  void OnSetDataBuffer(int request_id,
-                       base::SharedMemoryHandle shm_handle,
-                       int shm_size);
-  void OnReceivedData(int request_id,
-                      int data_offset,
-                      int data_length,
-                      int encoded_data_length);
-  void OnDownloadedData(int request_id, int data_len, int encoded_data_length);
+  void OnReceivedResponse(int request_id, const network::ResourceResponseHead&);
+  void OnReceivedCachedMetadata(int request_id, base::span<const uint8_t> data);
+  void OnReceivedRedirect(
+      int request_id,
+      const net::RedirectInfo& redirect_info,
+      const network::ResourceResponseHead& response_head,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  void OnStartLoadingResponseBody(int request_id,
+                                  mojo::ScopedDataPipeConsumerHandle body);
   void OnRequestComplete(int request_id,
                          const network::URLLoaderCompletionStatus& status);
 
-  // Dispatch the message to one of the message response handlers.
-  void DispatchMessage(const IPC::Message& message);
-
-  // Dispatch any deferred messages for the given request, provided it is not
-  // again in the deferred state. This method may mutate |pending_requests_|.
-  void FlushDeferredMessages(int request_id);
-
-  void ToResourceResponseInfo(const PendingRequestInfo& request_info,
-                              const ResourceResponseHead& browser_info,
-                              ResourceResponseInfo* renderer_info) const;
-
-  base::TimeTicks ToRendererCompletionTime(
+  void ToResourceResponseHead(
       const PendingRequestInfo& request_info,
-      const base::TimeTicks& browser_completion_time) const;
+      const network::ResourceResponseHead& browser_info,
+      network::ResourceResponseHead* renderer_info) const;
 
-  // Returns timestamp provided by IO thread. If no timestamp is supplied,
-  // then current time is returned. Saved timestamp is reset, so following
-  // invocations will return current time until set_io_timestamp is called.
-  base::TimeTicks ConsumeIOTimestamp();
-
-  void ContinueForNavigation(
-      int request_id,
-      mojo::ScopedDataPipeConsumerHandle consumer_handle);
-
-  // Returns true if the message passed in is a resource related message.
-  static bool IsResourceDispatcherMessage(const IPC::Message& message);
-
-  // ViewHostMsg_Resource_DataReceived is not POD, it has a shared memory
-  // handle in it that we should cleanup it up nicely. This method accepts any
-  // message and determine whether the message is
-  // ViewHostMsg_Resource_DataReceived and clean up the shared memory handle.
-  static void ReleaseResourcesInDataMessage(const IPC::Message& message);
-
-  // Iterate through a message queue and clean up the messages by calling
-  // ReleaseResourcesInDataMessage and removing them from the queue. Intended
-  // for use on deferred message queues that are no longer needed.
-  static void ReleaseResourcesInMessageQueue(MessageQueue* queue);
-
-  IPC::Sender* message_sender_;
+  void ContinueForNavigation(int request_id);
 
   // All pending requests issued to the host
   PendingRequestMap pending_requests_;
 
   ResourceDispatcherDelegate* delegate_;
 
-  // IO thread timestamp for ongoing IPC message.
-  base::TimeTicks io_timestamp_;
+  base::WaitableEvent* terminate_sync_load_event_ = nullptr;
 
-  scoped_refptr<base::SingleThreadTaskRunner> thread_task_runner_;
-  scoped_refptr<ResourceSchedulingFilter> resource_scheduling_filter_;
-
-  base::WeakPtrFactory<ResourceDispatcher> weak_factory_;
+  base::WeakPtrFactory<ResourceDispatcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ResourceDispatcher);
 };

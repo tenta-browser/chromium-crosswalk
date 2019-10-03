@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/ownership/owner_settings_service.h"
@@ -67,6 +67,8 @@ class OwnerSettingsServiceChromeOS : public ownership::OwnerSettingsService,
   bool HasPendingChanges() const;
 
   // ownership::OwnerSettingsService implementation:
+  bool IsOwner() override;
+  void IsOwnerAsync(const IsOwnerCallback& callback) override;
   bool HandlesSetting(const std::string& setting) override;
   bool Set(const std::string& setting, const base::Value& value) override;
   bool AppendToList(const std::string& setting,

@@ -5,7 +5,7 @@
 #include "components/viz/common/quads/shared_quad_state.h"
 
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "components/viz/common/traced_value.h"
@@ -22,14 +22,14 @@ SharedQuadState::SharedQuadState()
 SharedQuadState::SharedQuadState(const SharedQuadState& other) = default;
 
 SharedQuadState::~SharedQuadState() {
-  TRACE_EVENT_OBJECT_DELETED_WITH_ID(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), "viz::SharedQuadState",
-      this);
+  TRACE_EVENT_OBJECT_DELETED_WITH_ID(TRACE_DISABLED_BY_DEFAULT("viz.quads"),
+                                     "viz::SharedQuadState", this);
 }
 
 void SharedQuadState::SetAll(const gfx::Transform& quad_to_target_transform,
                              const gfx::Rect& quad_layer_rect,
                              const gfx::Rect& visible_quad_layer_rect,
+                             const gfx::RRectF& rounded_corner_bounds,
                              const gfx::Rect& clip_rect,
                              bool is_clipped,
                              bool are_contents_opaque,
@@ -39,6 +39,7 @@ void SharedQuadState::SetAll(const gfx::Transform& quad_to_target_transform,
   this->quad_to_target_transform = quad_to_target_transform;
   this->quad_layer_rect = quad_layer_rect;
   this->visible_quad_layer_rect = visible_quad_layer_rect;
+  this->rounded_corner_bounds = rounded_corner_bounds;
   this->clip_rect = clip_rect;
   this->is_clipped = is_clipped;
   this->are_contents_opaque = are_contents_opaque;
@@ -52,6 +53,8 @@ void SharedQuadState::AsValueInto(base::trace_event::TracedValue* value) const {
   cc::MathUtil::AddToTracedValue("layer_content_rect", quad_layer_rect, value);
   cc::MathUtil::AddToTracedValue("layer_visible_content_rect",
                                  visible_quad_layer_rect, value);
+  cc::MathUtil::AddToTracedValue("rounded_corner_bounds", rounded_corner_bounds,
+                                 value);
 
   value->SetBoolean("is_clipped", is_clipped);
   cc::MathUtil::AddToTracedValue("clip_rect", clip_rect, value);
@@ -60,8 +63,8 @@ void SharedQuadState::AsValueInto(base::trace_event::TracedValue* value) const {
   value->SetDouble("opacity", opacity);
   value->SetString("blend_mode", SkBlendMode_Name(blend_mode));
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), value,
-      "viz::SharedQuadState", this);
+      TRACE_DISABLED_BY_DEFAULT("viz.quads"), value, "viz::SharedQuadState",
+      this);
 }
 
 }  // namespace viz

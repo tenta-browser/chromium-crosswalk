@@ -48,6 +48,8 @@ _POLYMER_PATH = os.path.join(
 _VULCANIZE_BASE_ARGS = [
   # These files are already combined and minified.
   '--exclude', 'chrome://resources/html/polymer.html',
+  '--exclude', 'chrome://resources/polymer/v1_0/html-imports/' +
+      'html-imports.min.js',
   '--exclude', 'chrome://resources/polymer/v1_0/polymer/polymer.html',
   '--exclude', 'chrome://resources/polymer/v1_0/polymer/polymer-micro.html',
   '--exclude', 'chrome://resources/polymer/v1_0/polymer/polymer-mini.html',
@@ -83,7 +85,7 @@ _VULCANIZE_REDIRECT_ARGS = list(itertools.chain.from_iterable(map(
 def _undo_mapping(mappings, url):
   for (redirect_url, file_path) in mappings:
     if url.startswith(redirect_url):
-      return url.replace(redirect_url, file_path + os.sep)
+      return url.replace(redirect_url, file_path + os.sep, 1)
   # TODO(dbeam): can we make this stricter?
   return url
 
@@ -193,6 +195,28 @@ def _optimize(in_folder, args):
                    '--html', crisper_html_out_paths[index],
                    '--js', os.path.join(tmp_out_dir, js_out_file)])
 
+      if args.replace_for_html_imports_polyfill == js_out_file:
+        # Replace the output file with a loader script, to wait until HTML
+        # imports are ready before loading.
+        with open(crisper_html_out_paths[index], 'r') as f:
+          output = f.read()
+          output = output.replace(js_out_file + '"',
+                                  'chrome://resources/js/crisper_loader.js"' + \
+                                  ' data-script-name="' + js_out_file + '"')
+
+          # Preload the final script, even though it will not be evaluated
+          # until after crisper_loader.js executes.
+          output = output.replace('<head>',
+                                  '<head><link rel="preload" href="' + \
+                                        js_out_file + '" as="script">')
+          f.close()
+
+        # Open file again with 'w' such that the previous contents are
+        # overwritten.
+        with open(crisper_html_out_paths[index], 'w') as f:
+          f.write(output)
+          f.close()
+
       # Pass the JS file through Uglify and write the output to its final
       # destination.
       node.RunNode([node_modules.PathToUglify(),
@@ -202,11 +226,12 @@ def _optimize(in_folder, args):
 
     # Run polymer-css-build and write the output HTML files to their final
     # destination.
-    pcb_html_out_paths = [
+    html_out_paths = [
         os.path.join(out_path, f) for f in args.html_out_files]
     node.RunNode([node_modules.PathToPolymerCssBuild()] +
+                 ['--polymer-version', '2'] +
                  ['--no-inline-includes', '-f'] +
-                 crisper_html_out_paths + ['-o'] + pcb_html_out_paths)
+                 crisper_html_out_paths + ['-o'] + html_out_paths)
   finally:
     shutil.rmtree(tmp_out_dir)
   return manifest_out_path
@@ -223,6 +248,7 @@ def main(argv):
   parser.add_argument('--insert_in_head')
   parser.add_argument('--js_out_files', nargs='*', required=True)
   parser.add_argument('--out_folder', required=True)
+  parser.add_argument('--replace-for-html-imports-polyfill')
   args = parser.parse_args(argv)
 
   # NOTE(dbeam): on Windows, GN can send dirs/like/this. When joined, you might

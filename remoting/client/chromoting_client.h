@@ -72,6 +72,9 @@ class ChromotingClient : public SignalStrategy::Listener,
              const std::string& host_jid,
              const std::string& capabilities);
 
+  // Closes the client and notifies the host of the closure.
+  void Close();
+
   protocol::ConnectionToHost::State connection_state() const {
     return connection_->state();
   }
@@ -105,7 +108,7 @@ class ChromotingClient : public SignalStrategy::Listener,
  private:
   // SignalStrategy::StatusObserver interface.
   void OnSignalStrategyStateChange(SignalStrategy::State state) override;
-  bool OnSignalStrategyIncomingStanza(const buzz::XmlElement* stanza) override;
+  bool OnSignalStrategyIncomingStanza(const jingle_xmpp::XmlElement* stanza) override;
 
   // Starts connection once |signal_strategy_| is connected.
   void StartConnection();

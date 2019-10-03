@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 
-#include "base/memory/ptr_util.h"
 #include "ui/events/ozone/device/device_manager.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
@@ -79,6 +78,10 @@ class TestDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
       const std::vector<InputDevice>& devices) override {
     event_factory_evdev_->DispatchTouchpadDevicesUpdated(devices);
   }
+  void DispatchUncategorizedDevicesUpdated(
+      const std::vector<InputDevice>& devices) override {
+    event_factory_evdev_->DispatchUncategorizedDevicesUpdated(devices);
+  }
   void DispatchDeviceListsComplete() override {
     event_factory_evdev_->DispatchDeviceListsComplete();
   }
@@ -91,7 +94,7 @@ class TestDeviceEventDispatcherEvdev : public DeviceEventDispatcherEvdev {
   }
 
   void DispatchGamepadDevicesUpdated(
-      const std::vector<InputDevice>& devices) override {
+      const std::vector<GamepadDevice>& devices) override {
     event_factory_evdev_->DispatchGamepadDevicesUpdated(devices);
   }
 
@@ -110,8 +113,7 @@ class TestEventFactoryEvdev : public EventFactoryEvdev {
   ~TestEventFactoryEvdev() override {}
 
  private:
-  uint32_t DispatchEvent(PlatformEvent platform_event) override {
-    Event* event = static_cast<Event*>(platform_event);
+  uint32_t DispatchEvent(PlatformEvent event) override {
     callback_.Run(event);
     return POST_DISPATCH_NONE;
   }

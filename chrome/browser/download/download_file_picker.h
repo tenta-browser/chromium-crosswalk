@@ -14,7 +14,7 @@ namespace base {
 class FilePath;
 }
 
-namespace content {
+namespace download {
 class DownloadItem;
 }
 
@@ -34,12 +34,12 @@ class DownloadFilePicker : public ui::SelectFileDialog::Listener {
   // Display a file picker dialog for |item|. The |suggested_path| will be used
   // as the initial path displayed to the user. |callback| will always be
   // invoked even if |item| is destroyed prior to the file picker completing.
-  static void ShowFilePicker(content::DownloadItem* item,
+  static void ShowFilePicker(download::DownloadItem* item,
                              const base::FilePath& suggested_path,
                              const ConfirmationCallback& callback);
 
  private:
-  DownloadFilePicker(content::DownloadItem* item,
+  DownloadFilePicker(download::DownloadItem* item,
                      const base::FilePath& suggested_path,
                      const ConfirmationCallback& callback);
   ~DownloadFilePicker() override;
@@ -62,10 +62,6 @@ class DownloadFilePicker : public ui::SelectFileDialog::Listener {
 
   // For managing select file dialogs.
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
-
-  // True if UMA regarding on the result of the file selection should be
-  // recorded.
-  bool should_record_file_picker_result_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadFilePicker);
 };

@@ -26,6 +26,7 @@ namespace media {
 // the completion callback as the series progresses.
 class MEDIA_EXPORT SerialRunner {
  public:
+  // TODO(dalecurtis): Change SerialRunner to use OnceCallback.
   typedef base::Callback<void(const base::Closure&)> BoundClosure;
   typedef base::Callback<void(const PipelineStatusCB&)> BoundPipelineStatusCB;
 
@@ -79,7 +80,7 @@ class MEDIA_EXPORT SerialRunner {
   PipelineStatusCB done_cb_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<SerialRunner> weak_factory_;
+  base::WeakPtrFactory<SerialRunner> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SerialRunner);
 };

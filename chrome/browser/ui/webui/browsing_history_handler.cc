@@ -13,7 +13,6 @@
 #include "base/i18n/rtl.h"
 #include "base/i18n/time_formatting.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/default_clock.h"
@@ -24,24 +23,27 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/history_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sync/device_info_sync_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/favicon/core/fallback_url_util.h"
 #include "components/favicon/core/large_icon_service.h"
+#include "components/favicon_base/favicon_url_parser.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/query_parser/snippet.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/sync/device_info/device_info.h"
-#include "components/sync/device_info/device_info_tracker.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/sync_device_info/device_info.h"
+#include "components/sync_device_info/device_info_sync_service.h"
+#include "components/sync_device_info/device_info_tracker.h"
 #include "components/url_formatter/url_formatter.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui.h"
@@ -59,7 +61,6 @@ using bookmarks::BookmarkModel;
 using history::BrowsingHistoryService;
 using history::HistoryService;
 using history::WebHistoryService;
-using syncer::SyncService;
 
 namespace {
 
@@ -70,18 +71,17 @@ static const char kDeviceTypeTablet[] = "tablet";
 
 // Gets the name and type of a device for the given sync client ID.
 // |name| and |type| are out parameters.
-void GetDeviceNameAndType(const browser_sync::ProfileSyncService* sync_service,
+void GetDeviceNameAndType(const syncer::DeviceInfoTracker* tracker,
                           const std::string& client_id,
                           std::string* name,
                           std::string* type) {
   // DeviceInfoTracker must be syncing in order for remote history entries to
   // be available.
-  DCHECK(sync_service);
-  DCHECK(sync_service->GetDeviceInfoTracker());
-  DCHECK(sync_service->GetDeviceInfoTracker()->IsSyncing());
+  DCHECK(tracker);
+  DCHECK(tracker->IsSyncing());
 
   std::unique_ptr<syncer::DeviceInfo> device_info =
-      sync_service->GetDeviceInfoTracker()->GetDeviceInfo(client_id);
+      tracker->GetDeviceInfo(client_id);
   if (device_info.get()) {
     *name = device_info->client_name();
     switch (device_info->device_type()) {
@@ -133,12 +133,28 @@ void SetHistoryEntryUrlAndTitle(
   result->SetString("title", title_to_set);
 }
 
+// Helper function to check if entry is present in user remote data (server-side
+// history).
+bool IsEntryInRemoteUserData(
+    const BrowsingHistoryService::HistoryEntry& entry) {
+  switch (entry.entry_type) {
+    case BrowsingHistoryService::HistoryEntry::EntryType::EMPTY_ENTRY:
+    case BrowsingHistoryService::HistoryEntry::EntryType::LOCAL_ENTRY:
+      return false;
+    case BrowsingHistoryService::HistoryEntry::EntryType::REMOTE_ENTRY:
+    case BrowsingHistoryService::HistoryEntry::EntryType::COMBINED_ENTRY:
+      return true;
+  }
+  NOTREACHED();
+  return false;
+}
+
 // Converts |entry| to a DictionaryValue to be owned by the caller.
 std::unique_ptr<base::DictionaryValue> HistoryEntryToValue(
     const BrowsingHistoryService::HistoryEntry& entry,
     BookmarkModel* bookmark_model,
-    SupervisedUserService* supervised_user_service,
-    const browser_sync::ProfileSyncService* sync_service,
+    Profile* profile,
+    const syncer::DeviceInfoTracker* tracker,
     base::Clock* clock) {
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   SetHistoryEntryUrlAndTitle(entry, result.get());
@@ -202,12 +218,16 @@ std::unique_ptr<base::DictionaryValue> HistoryEntryToValue(
   std::string device_name;
   std::string device_type;
   if (!entry.client_id.empty())
-    GetDeviceNameAndType(sync_service, entry.client_id, &device_name,
-                         &device_type);
+    GetDeviceNameAndType(tracker, entry.client_id, &device_name, &device_type);
   result->SetString("deviceName", device_name);
   result->SetString("deviceType", device_type);
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+  SupervisedUserService* supervised_user_service = nullptr;
+  if (profile->IsSupervised()) {
+    supervised_user_service =
+        SupervisedUserServiceFactory::GetForProfile(profile);
+  }
   if (supervised_user_service) {
     const SupervisedUserURLFilter* url_filter =
         supervised_user_service->GetURLFilter();
@@ -224,6 +244,7 @@ std::unique_ptr<base::DictionaryValue> HistoryEntryToValue(
   result->SetBoolean("starred", bookmark_model->IsBookmarked(entry.url));
   result->SetInteger("hostFilteringBehavior", host_filtering_behavior);
   result->SetBoolean("blockedVisit", is_blocked_visit);
+  result->SetBoolean("isUrlInRemoteUserData", IsEntryInRemoteUserData(entry));
 
   return result;
 }
@@ -231,7 +252,8 @@ std::unique_ptr<base::DictionaryValue> HistoryEntryToValue(
 }  // namespace
 
 BrowsingHistoryHandler::BrowsingHistoryHandler()
-    : clock_(new base::DefaultClock()), browsing_history_service_(nullptr) {}
+    : clock_(base::DefaultClock::GetInstance()),
+      browsing_history_service_(nullptr) {}
 
 BrowsingHistoryHandler::~BrowsingHistoryHandler() {}
 
@@ -239,30 +261,37 @@ void BrowsingHistoryHandler::RegisterMessages() {
   Profile* profile = GetProfile();
   HistoryService* local_history = HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::EXPLICIT_ACCESS);
-  SyncService* sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile);
-  browsing_history_service_ = base::MakeUnique<BrowsingHistoryService>(
+  syncer::SyncService* sync_service =
+      ProfileSyncServiceFactory::GetForProfile(profile);
+  browsing_history_service_ = std::make_unique<BrowsingHistoryService>(
       this, local_history, sync_service);
 
   // Create our favicon data source.
-  content::URLDataSource::Add(profile, new FaviconSource(profile));
+  content::URLDataSource::Add(
+      profile, std::make_unique<FaviconSource>(
+                   profile, chrome::FaviconUrlFormat::kFavicon2));
 
-  web_ui()->RegisterMessageCallback("queryHistory",
-      base::Bind(&BrowsingHistoryHandler::HandleQueryHistory,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "queryHistory",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleQueryHistory,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "queryHistoryContinuation",
-      base::Bind(&BrowsingHistoryHandler::HandleQueryHistoryContinuation,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeVisits",
-      base::Bind(&BrowsingHistoryHandler::HandleRemoveVisits,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("clearBrowsingData",
-      base::Bind(&BrowsingHistoryHandler::HandleClearBrowsingData,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeBookmark",
-      base::Bind(&BrowsingHistoryHandler::HandleRemoveBookmark,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &BrowsingHistoryHandler::HandleQueryHistoryContinuation,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "removeVisits",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleRemoveVisits,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "clearBrowsingData",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleClearBrowsingData,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "removeBookmark",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleRemoveBookmark,
+                          base::Unretained(this)));
 }
 
 void BrowsingHistoryHandler::HandleQueryHistory(const base::ListValue* args) {
@@ -294,8 +323,7 @@ void BrowsingHistoryHandler::HandleQueryHistoryContinuation(
 void BrowsingHistoryHandler::HandleRemoveVisits(const base::ListValue* args) {
   std::vector<BrowsingHistoryService::HistoryEntry> items_to_remove;
   items_to_remove.reserve(args->GetSize());
-  for (base::ListValue::const_iterator it = args->begin();
-       it != args->end(); ++it) {
+  for (auto it = args->begin(); it != args->end(); ++it) {
     const base::DictionaryValue* deletion = NULL;
     base::string16 url;
     const base::ListValue* timestamps = NULL;
@@ -311,7 +339,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const base::ListValue* args) {
     entry.url = GURL(url);
 
     double timestamp;
-    for (base::ListValue::const_iterator ts_iterator = timestamps->begin();
+    for (auto ts_iterator = timestamps->begin();
          ts_iterator != timestamps->end(); ++ts_iterator) {
       if (!ts_iterator->GetAsDouble(&timestamp)) {
         NOTREACHED() << "Unable to extract visit timestamp.";
@@ -352,21 +380,17 @@ void BrowsingHistoryHandler::OnQueryComplete(
   Profile* profile = Profile::FromWebUI(web_ui());
   BookmarkModel* bookmark_model =
       BookmarkModelFactory::GetForBrowserContext(profile);
-  SupervisedUserService* supervised_user_service = NULL;
-#if defined(ENABLE_SUPERVISED_USERS)
-  if (profile->IsSupervised())
-    supervised_user_service =
-        SupervisedUserServiceFactory::GetForProfile(profile);
-#endif
-  browser_sync::ProfileSyncService* sync_service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile);
+
+  const syncer::DeviceInfoTracker* tracker =
+      DeviceInfoSyncServiceFactory::GetForProfile(profile)
+          ->GetDeviceInfoTracker();
 
   // Convert the result vector into a ListValue.
+  DCHECK(tracker);
   base::ListValue results_value;
   for (const BrowsingHistoryService::HistoryEntry& entry : results) {
     std::unique_ptr<base::Value> value(
-        HistoryEntryToValue(entry, bookmark_model, supervised_user_service,
-                            sync_service, clock_.get()));
+        HistoryEntryToValue(entry, bookmark_model, profile, tracker, clock_));
     results_value.Append(std::move(value));
   }
 

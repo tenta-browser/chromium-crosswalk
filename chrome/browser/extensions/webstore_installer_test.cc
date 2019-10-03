@@ -2,15 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/webstore_installer_test.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/tab_helper.h"
-#include "chrome/browser/extensions/webstore_inline_installer.h"
-#include "chrome/browser/extensions/webstore_inline_installer_factory.h"
-#include "chrome/browser/extensions/webstore_installer_test.h"
 #include "chrome/browser/extensions/webstore_standalone_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -33,8 +32,6 @@
 using content::WebContents;
 using extensions::Extension;
 using extensions::TabHelper;
-using extensions::WebstoreInlineInstaller;
-using extensions::WebstoreInlineInstallerFactory;
 using extensions::WebstoreStandaloneInstaller;
 
 using net::test_server::HttpRequest;
@@ -55,7 +52,7 @@ WebstoreInstallerTest::WebstoreInstallerTest(
 WebstoreInstallerTest::~WebstoreInstallerTest() {}
 
 void WebstoreInstallerTest::SetUpCommandLine(base::CommandLine* command_line) {
-  ExtensionBrowserTest::SetUpCommandLine(command_line);
+  extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
 
   embedded_test_server()->RegisterRequestMonitor(base::Bind(
       &WebstoreInstallerTest::ProcessServerRequest, base::Unretained(this)));
@@ -80,11 +77,7 @@ void WebstoreInstallerTest::SetUpCommandLine(base::CommandLine* command_line) {
 }
 
 void WebstoreInstallerTest::SetUpOnMainThread() {
-  ExtensionBrowserTest::SetUpOnMainThread();
-  ASSERT_TRUE(download_directory_.CreateUniqueTempDir());
-  DownloadPrefs* download_prefs = DownloadPrefs::FromBrowserContext(
-      browser()->profile());
-  download_prefs->SetDownloadPath(download_directory_.GetPath());
+  extensions::ExtensionBrowserTest::SetUpOnMainThread();
 
   host_resolver()->AddRule(webstore_domain_, "127.0.0.1");
   host_resolver()->AddRule(verified_domain_, "127.0.0.1");

@@ -10,6 +10,7 @@
 #include <set>
 
 #include "base/compiler_specific.h"
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -40,7 +41,7 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
   bool IsRunning() const override;
   void Release() override;
   void RunMenuAt(Widget* parent,
-                 MenuButton* button,
+                 MenuButtonController* button_controller,
                  const gfx::Rect& bounds,
                  MenuAnchorPosition anchor,
                  int32_t run_types) override;
@@ -59,7 +60,7 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
   ~MenuRunnerImpl() override;
 
   // Returns true if mnemonics should be shown in the menu.
-  bool ShouldShowMnemonics(MenuButton* button);
+  bool ShouldShowMnemonics(int32_t run_types);
 
   // The menu. We own this. We don't use scoped_ptr as the destructor is
   // protected and we're a friend.
@@ -93,7 +94,7 @@ class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
   base::TimeTicks closing_event_time_;
 
   // Used to detect deletion of |this| when notifying delegate of success.
-  base::WeakPtrFactory<MenuRunnerImpl> weak_factory_;
+  base::WeakPtrFactory<MenuRunnerImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MenuRunnerImpl);
 };

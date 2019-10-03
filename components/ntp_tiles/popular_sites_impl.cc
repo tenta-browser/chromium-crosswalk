@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <map>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -18,10 +19,8 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
-#include "components/google/core/browser/google_util.h"
-#include "components/ntp_tiles/constants.h"
-#include "components/ntp_tiles/field_trial.h"
+#include "components/google/core/common/google_util.h"
+#include "components/ntp_tiles/features.h"
 #include "components/ntp_tiles/pref_names.h"
 #include "components/ntp_tiles/switches.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -33,6 +32,9 @@
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 #if defined(OS_ANDROID) || defined(OS_IOS)
 #include "base/json/json_reader.h"
@@ -44,7 +46,6 @@
 #include "components/ntp_tiles/country_code_ios.h"
 #endif
 
-using net::URLFetcher;
 using variations::VariationsService;
 
 namespace ntp_tiles {
@@ -124,8 +125,6 @@ PopularSites::SitesVector ParseSiteList(const base::ListValue& list) {
       continue;
     std::string favicon_url;
     item->GetString("favicon_url", &favicon_url);
-    std::string thumbnail_url;
-    item->GetString("thumbnail_url", &thumbnail_url);
     std::string large_icon_url;
     item->GetString("large_icon_url", &large_icon_url);
 
@@ -140,7 +139,7 @@ PopularSites::SitesVector ParseSiteList(const base::ListValue& list) {
     }
 
     sites.emplace_back(title, GURL(url), GURL(favicon_url),
-                       GURL(large_icon_url), GURL(thumbnail_url), title_source);
+                       GURL(large_icon_url), title_source);
     item->GetInteger("default_icon_resource",
                      &sites.back().default_icon_resource);
     item->GetBoolean("baked_in", &sites.back().baked_in);
@@ -172,9 +171,10 @@ std::map<SectionType, PopularSites::SitesVector> ParseVersion6OrAbove(
                    << "invalid ID (" << section << ")";
       continue;
     }
+    // Non-personalized site exploration tiles are no longer supported, so
+    // ignore all other section types.
     SectionType section_type = static_cast<SectionType>(section);
-    if (section_type == SectionType::UNKNOWN) {
-      LOG(WARNING) << "Dropped an unknown section in SitesExploration list.";
+    if (section_type != SectionType::PERSONALIZED) {
       continue;
     }
     const base::ListValue* sites_list;
@@ -182,12 +182,6 @@ std::map<SectionType, PopularSites::SitesVector> ParseVersion6OrAbove(
       continue;
     }
     sections[section_type] = ParseSiteList(*sites_list);
-  }
-  if (!base::FeatureList::IsEnabled(kSiteExplorationUiFeature)) {
-    // New versions of popular sites that should act like old versions will
-    // mimic having only the personalized list.
-    return {std::make_pair(SectionType::PERSONALIZED,
-                           std::move(sections[SectionType::PERSONALIZED]))};
   }
   return sections;
 }
@@ -214,15 +208,15 @@ void SetDefaultResourceForSite(int index,
 #endif
 
 // Creates the list of popular sites based on a snapshot available for mobile.
-std::unique_ptr<base::ListValue> DefaultPopularSites() {
+base::Value DefaultPopularSites() {
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-  return base::MakeUnique<base::ListValue>();
+  return base::Value(base::Value::Type::LIST);
 #else
   if (!base::FeatureList::IsEnabled(kPopularSitesBakedInContentFeature)) {
-    return base::MakeUnique<base::ListValue>();
+    return base::Value(base::Value::Type::LIST);
   }
   std::unique_ptr<base::ListValue> sites =
-      base::ListValue::From(base::JSONReader::Read(
+      base::ListValue::From(base::JSONReader::ReadDeprecated(
           ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
               IDR_DEFAULT_POPULAR_SITES_JSON)));
   DCHECK(sites);
@@ -240,7 +234,7 @@ std::unique_ptr<base::ListValue> DefaultPopularSites() {
     SetDefaultResourceForSite(index++, icon_resource, sites.get());
   }
 #endif  // GOOGLE_CHROME_BUILD
-  return sites;
+  return base::Value::FromUniquePtrValue(std::move(sites));
 #endif  // OS_ANDROID || OS_IOS
 }
 
@@ -250,13 +244,11 @@ PopularSites::Site::Site(const base::string16& title,
                          const GURL& url,
                          const GURL& favicon_url,
                          const GURL& large_icon_url,
-                         const GURL& thumbnail_url,
                          TileTitleSource title_source)
     : title(title),
       url(url),
       favicon_url(favicon_url),
       large_icon_url(large_icon_url),
-      thumbnail_url(thumbnail_url),
       title_source(title_source),
       baked_in(false),
       default_icon_resource(-1) {}
@@ -269,18 +261,17 @@ PopularSitesImpl::PopularSitesImpl(
     PrefService* prefs,
     const TemplateURLService* template_url_service,
     VariationsService* variations_service,
-    net::URLRequestContextGetter* download_context,
-    ParseJSONCallback parse_json)
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    const ParseJSONCallback& parse_json)
     : prefs_(prefs),
       template_url_service_(template_url_service),
       variations_(variations_service),
-      download_context_(download_context),
-      parse_json_(std::move(parse_json)),
+      url_loader_factory_(std::move(url_loader_factory)),
+      parse_json_(parse_json),
       is_fallback_(false),
       sections_(
           ParseSites(*prefs->GetList(prefs::kPopularSitesJsonPref),
-                     prefs_->GetInteger(prefs::kPopularSitesVersionPref))),
-      weak_ptr_factory_(this) {}
+                     prefs_->GetInteger(prefs::kPopularSitesVersionPref))) {}
 
 PopularSitesImpl::~PopularSitesImpl() {}
 
@@ -450,39 +441,38 @@ void PopularSitesImpl::FetchPopularSites() {
           policy_exception_justification:
             "Not implemented, considered not useful."
         })");
-  fetcher_ = URLFetcher::Create(pending_url_, URLFetcher::GET, this,
-                                traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      fetcher_.get(), data_use_measurement::DataUseUserData::NTP_TILES);
-  fetcher_->SetRequestContext(download_context_);
-  fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                         net::LOAD_DO_NOT_SAVE_COOKIES);
-  fetcher_->SetAutomaticallyRetryOnNetworkChanges(1);
-  fetcher_->Start();
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = pending_url_;
+  resource_request->allow_credentials = false;
+  simple_url_loader_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation);
+  simple_url_loader_->SetRetryOptions(
+      1, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
+  simple_url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&PopularSitesImpl::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 }
 
-void PopularSitesImpl::OnURLFetchComplete(const net::URLFetcher* source) {
-  DCHECK_EQ(fetcher_.get(), source);
-  std::unique_ptr<net::URLFetcher> free_fetcher = std::move(fetcher_);
+void PopularSitesImpl::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  simple_url_loader_.reset();
 
-  std::string json_string;
-  if (!(source->GetStatus().is_success() &&
-        source->GetResponseCode() == net::HTTP_OK &&
-        source->GetResponseAsString(&json_string))) {
+  if (!response_body) {
     OnDownloadFailed();
     return;
   }
 
-  parse_json_.Run(json_string,
-                  base::Bind(&PopularSitesImpl::OnJsonParsed,
-                             weak_ptr_factory_.GetWeakPtr()),
-                  base::Bind(&PopularSitesImpl::OnJsonParseFailed,
-                             weak_ptr_factory_.GetWeakPtr()));
+  parse_json_.Run(*response_body,
+                  base::BindOnce(&PopularSitesImpl::OnJsonParsed,
+                                 weak_ptr_factory_.GetWeakPtr()),
+                  base::BindOnce(&PopularSitesImpl::OnJsonParseFailed,
+                                 weak_ptr_factory_.GetWeakPtr()));
 }
 
-void PopularSitesImpl::OnJsonParsed(std::unique_ptr<base::Value> json) {
+void PopularSitesImpl::OnJsonParsed(base::Value json) {
   std::unique_ptr<base::ListValue> list =
-      base::ListValue::From(std::move(json));
+      base::ListValue::From(base::Value::ToUniquePtrValue(std::move(json)));
   if (!list) {
     DLOG(WARNING) << "JSON is not a list";
     OnDownloadFailed();

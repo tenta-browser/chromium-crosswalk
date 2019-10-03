@@ -6,9 +6,11 @@ package org.chromium.chrome.browser.payments.ui;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
+import android.support.annotation.ColorInt;
+import android.support.annotation.Nullable;
+import android.support.v4.view.MarginLayoutParamsCompat;
 import android.support.v4.view.animation.LinearOutSlowInInterpolator;
 import android.support.v7.widget.GridLayout;
 import android.text.SpannableStringBuilder;
@@ -36,12 +38,12 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.widget.DualControlLayout;
 import org.chromium.chrome.browser.widget.TintedDrawable;
+import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.ui.HorizontalListDividerDrawable;
 import org.chromium.ui.UiUtils;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import javax.annotation.Nullable;
 
 /**
  * Represents a single section in the {@link PaymentRequestUI} that flips between multiple states.
@@ -80,15 +82,15 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
          * Called when the user selects a radio button option from an {@link OptionSection}.
          *
          * @param section Section that was changed.
-         * @param option  {@link PaymentOption} that was selected.
+         * @param option  {@link EditableOption} that was selected.
          */
-        void onPaymentOptionChanged(PaymentRequestSection section, PaymentOption option);
+        void onEditableOptionChanged(PaymentRequestSection section, EditableOption option);
 
-        /** Called when the user clicks the edit icon of the selected PaymentOption. */
-        void onEditPaymentOption(PaymentRequestSection section, PaymentOption option);
+        /** Called when the user clicks the edit icon of the selected EditableOption. */
+        void onEditEditableOption(PaymentRequestSection section, EditableOption option);
 
-        /** Called when the user requests adding a new PaymentOption to a given section. */
-        void onAddPaymentOption(PaymentRequestSection section);
+        /** Called when the user requests adding a new EditableOption to a given section. */
+        void onAddEditableOption(PaymentRequestSection section);
 
         /** Checks whether or not the text should be formatted with a bold label. */
         boolean isBoldLabelNeeded(PaymentRequestSection section);
@@ -116,16 +118,16 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     public static final int EDIT_BUTTON_ADD = 2;
 
     /** Normal mode: White background, displays the item assuming the user accepts it as is. */
-    static final int DISPLAY_MODE_NORMAL = 3;
+    public static final int DISPLAY_MODE_NORMAL = 3;
 
     /** Editable mode: White background, displays the item with an edit chevron. */
-    static final int DISPLAY_MODE_EXPANDABLE = 4;
+    public static final int DISPLAY_MODE_EXPANDABLE = 4;
 
     /** Focused mode: Gray background, more padding, no edit chevron. */
-    static final int DISPLAY_MODE_FOCUSED = 5;
+    public static final int DISPLAY_MODE_FOCUSED = 5;
 
     /** Checking mode: Gray background, spinner overlay hides everything except the title. */
-    static final int DISPLAY_MODE_CHECKING = 6;
+    public static final int DISPLAY_MODE_CHECKING = 6;
 
     protected final SectionDelegate mDelegate;
     protected final int mLargeSpacing;
@@ -135,6 +137,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     protected int mDisplayMode = DISPLAY_MODE_NORMAL;
 
     private final int mVerticalSpacing;
+    private final @ColorInt int mUnfocusedBackgroundColor;
     private final int mFocusedBackgroundColor;
     private final LinearLayout mMainSection;
     private final ImageView mLogoView;
@@ -163,10 +166,12 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         setGravity(Gravity.CENTER_VERTICAL);
 
         // Set the styling of the view.
+        mUnfocusedBackgroundColor =
+                ApiCompatibilityUtils.getColor(getResources(), R.color.payment_request_bg);
         mFocusedBackgroundColor = ApiCompatibilityUtils.getColor(
                 getResources(), R.color.payments_section_edit_background);
         mLargeSpacing =
-                getResources().getDimensionPixelSize(R.dimen.payments_section_large_spacing);
+                getResources().getDimensionPixelSize(R.dimen.editor_dialog_section_large_spacing);
         mVerticalSpacing =
                 getResources().getDimensionPixelSize(R.dimen.payments_section_vertical_spacing);
         setPadding(mLargeSpacing, mVerticalSpacing, mLargeSpacing, mVerticalSpacing);
@@ -223,7 +228,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         // Handle clicking on "ADD" or "CHOOSE".
         if (v == mEditButtonView) {
             if (getEditButtonState() == EDIT_BUTTON_ADD) {
-                mDelegate.onAddPaymentOption(this);
+                mDelegate.onAddEditableOption(this);
             } else {
                 mDelegate.onSectionClicked(this);
             }
@@ -266,6 +271,25 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         mSummaryRightTextView.setText(rightText);
         mSummaryRightTextView.setVisibility(TextUtils.isEmpty(rightText) ? GONE : VISIBLE);
         updateControlLayout();
+    }
+
+    /**
+     * Changes the appearance of the title.
+     *
+     * @param resId @see android.widget.TextView#setTextAppearance(int id).
+     */
+    protected void setTitleAppearance(int resId) {
+        ApiCompatibilityUtils.setTextAppearance(mTitleView, resId);
+    }
+
+    /**
+     * Changes the appearance of the summary.
+     *
+     * @param resId @see android.widget.TextView#setTextAppearance(int id).
+     */
+    protected void setSummaryAppearance(int leftResId, int rightResId) {
+        ApiCompatibilityUtils.setTextAppearance(mSummaryLeftTextView, leftResId);
+        ApiCompatibilityUtils.setTextAppearance(mSummaryRightTextView, rightResId);
     }
 
     /**
@@ -341,8 +365,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         // The title is always displayed for the row at the top of the main section.
         mTitleView = new TextView(getContext());
         mTitleView.setText(sectionName);
-        ApiCompatibilityUtils.setTextAppearance(
-                mTitleView, R.style.PaymentsUiSectionHeader);
+        ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_BlueLink2);
         mainSectionLayout.addView(
                 mTitleView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
@@ -350,12 +373,12 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         mSummaryLeftTextView = new TextView(getContext());
         mSummaryLeftTextView.setId(R.id.payments_left_summary_label);
         ApiCompatibilityUtils.setTextAppearance(
-                mSummaryLeftTextView, R.style.PaymentsUiSectionDefaultText);
+                mSummaryLeftTextView, R.style.TextAppearance_BlackTitle1);
 
         mSummaryRightTextView = new TextView(getContext());
         ApiCompatibilityUtils.setTextAppearance(
-                mSummaryRightTextView, R.style.PaymentsUiSectionDefaultText);
-        ApiCompatibilityUtils.setTextAlignment(mSummaryRightTextView, TEXT_ALIGNMENT_TEXT_END);
+                mSummaryRightTextView, R.style.TextAppearance_BlackTitle1);
+        mSummaryRightTextView.setTextAlignment(TEXT_ALIGNMENT_TEXT_END);
 
         // The main TextView sucks up all the available space.
         LinearLayout.LayoutParams leftLayoutParams = new LinearLayout.LayoutParams(
@@ -364,10 +387,9 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
         LinearLayout.LayoutParams rightLayoutParams = new LinearLayout.LayoutParams(
                 LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        ApiCompatibilityUtils.setMarginStart(
-                rightLayoutParams,
+        MarginLayoutParamsCompat.setMarginStart(rightLayoutParams,
                 getContext().getResources().getDimensionPixelSize(
-                        R.dimen.payments_section_small_spacing));
+                        R.dimen.editor_dialog_section_small_spacing));
 
         // The summary section displays up to two TextViews side by side.
         mSummaryLayout = new LinearLayout(getContext());
@@ -384,13 +406,13 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     private static ImageView createAndAddLogoView(ViewGroup parent, int startMargin) {
         ImageView view = new ImageView(parent.getContext());
         view.setMaxWidth(parent.getContext().getResources().getDimensionPixelSize(
-                R.dimen.payments_section_logo_width));
+                R.dimen.editable_option_section_logo_width));
         view.setAdjustViewBounds(true);
 
         // The logo has a pre-defined height and width.
         LayoutParams params =
                 new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        ApiCompatibilityUtils.setMarginStart(params, startMargin);
+        MarginLayoutParamsCompat.setMarginStart(params, startMargin);
         parent.addView(view, params);
         return view;
     }
@@ -403,15 +425,14 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
         LayoutParams params =
                 new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        ApiCompatibilityUtils.setMarginStart(params, mLargeSpacing);
+        MarginLayoutParamsCompat.setMarginStart(params, mLargeSpacing);
         parent.addView(view, params);
         return view;
     }
 
     private ImageView createAndAddChevron(ViewGroup parent) {
-        Resources resources = parent.getResources();
-        TintedDrawable chevron = TintedDrawable.constructTintedDrawable(
-                resources, R.drawable.ic_expanded, R.color.payments_section_chevron);
+        TintedDrawable chevron = TintedDrawable.constructTintedDrawable(parent.getContext(),
+                R.drawable.ic_expand_more_black_24dp, R.color.payments_section_chevron);
 
         ImageView view = new ImageView(parent.getContext());
         view.setImageDrawable(chevron);
@@ -419,7 +440,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         // Wrap whatever image is passed in.
         LayoutParams params =
                 new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        ApiCompatibilityUtils.setMarginStart(params, mLargeSpacing);
+        MarginLayoutParamsCompat.setMarginStart(params, mLargeSpacing);
         parent.addView(view, params);
         return view;
     }
@@ -437,7 +458,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
         boolean isExpanded =
                 mDisplayMode == DISPLAY_MODE_FOCUSED || mDisplayMode == DISPLAY_MODE_CHECKING;
-        setBackgroundColor(isExpanded ? mFocusedBackgroundColor : Color.WHITE);
+        setBackgroundColor(isExpanded ? mFocusedBackgroundColor : mUnfocusedBackgroundColor);
 
         // Update whether the logo is displayed.
         if (mLogoView != null) {
@@ -516,6 +537,8 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
          */
         private TextView mUpdatedView;
 
+        private final List<TextView> mLineItemAmountsForTest = new ArrayList<>();
+
         /** The runnable used to fade out the mUpdatedView. */
         private Runnable mFadeOutRunnable = new Runnable() {
             @Override
@@ -580,18 +603,18 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             // Create the view and set the text appearance and layout parameters.
             mUpdatedView = new TextView(context);
             ApiCompatibilityUtils.setTextAppearance(
-                    mUpdatedView, R.style.PaymentsUiSectionDefaultText);
+                    mUpdatedView, R.style.TextAppearance_BlackTitle1);
             LinearLayout.LayoutParams updatedLayoutParams = new LinearLayout.LayoutParams(
                     LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-            ApiCompatibilityUtils.setTextAlignment(mUpdatedView, TEXT_ALIGNMENT_TEXT_END);
+            mUpdatedView.setTextAlignment(TEXT_ALIGNMENT_TEXT_END);
             mUpdatedView.setTextColor(ApiCompatibilityUtils.getColor(
-                    context.getResources(), R.color.google_green_700));
-            ApiCompatibilityUtils.setMarginStart(updatedLayoutParams,
+                    context.getResources(), R.color.google_green_600));
+            MarginLayoutParamsCompat.setMarginStart(updatedLayoutParams,
                     context.getResources().getDimensionPixelSize(
-                            R.dimen.payments_section_small_spacing));
-            ApiCompatibilityUtils.setMarginEnd(
-                    updatedLayoutParams, context.getResources().getDimensionPixelSize(
-                                                 R.dimen.payments_section_small_spacing));
+                            R.dimen.editor_dialog_section_small_spacing));
+            MarginLayoutParamsCompat.setMarginEnd(updatedLayoutParams,
+                    context.getResources().getDimensionPixelSize(
+                            R.dimen.editor_dialog_section_small_spacing));
 
             // Set the view to initially be invisible.
             mUpdatedView.setVisibility(View.INVISIBLE);
@@ -619,6 +642,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             setSummaryText(cart.getTotal().getLabel(), totalPrice);
 
             mBreakdownLayout.removeAllViews();
+            mLineItemAmountsForTest.clear();
             if (cart.getContents() == null) return;
 
             int maximumDescriptionWidthPx =
@@ -631,9 +655,10 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 LineItem item = cart.getContents().get(i);
 
                 TextView description = new TextView(context);
-                ApiCompatibilityUtils.setTextAppearance(description, item.getIsPending()
-                                ? R.style.PaymentsUiSectionPendingTextEndAligned
-                                : R.style.PaymentsUiSectionDescriptiveTextEndAligned);
+                ApiCompatibilityUtils.setTextAppearance(description,
+                        item.getIsPending()
+                            ? R.style.TextAppearance_PaymentsUiSectionPendingTextEndAligned
+                            : R.style.TextAppearance_PaymentsUiSectionDescriptiveTextEndAligned);
                 description.setText(item.getLabel());
                 description.setEllipsize(TruncateAt.END);
                 description.setMaxLines(2);
@@ -642,10 +667,12 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 }
 
                 TextView amount = new TextView(context);
-                ApiCompatibilityUtils.setTextAppearance(amount, item.getIsPending()
-                                ? R.style.PaymentsUiSectionPendingTextEndAligned
-                                : R.style.PaymentsUiSectionDescriptiveTextEndAligned);
+                ApiCompatibilityUtils.setTextAppearance(amount,
+                        item.getIsPending()
+                            ? R.style.TextAppearance_PaymentsUiSectionPendingTextEndAligned
+                            : R.style.TextAppearance_PaymentsUiSectionDescriptiveTextEndAligned);
                 amount.setText(createValueString(item.getCurrency(), item.getPrice(), false));
+                mLineItemAmountsForTest.add(amount);
 
                 // Each item is represented by a row in the GridLayout.
                 GridLayout.LayoutParams descriptionParams = new GridLayout.LayoutParams(
@@ -654,7 +681,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 GridLayout.LayoutParams amountParams = new GridLayout.LayoutParams(
                         GridLayout.spec(i, 1, GridLayout.END),
                         GridLayout.spec(1, 1, GridLayout.END));
-                ApiCompatibilityUtils.setMarginStart(amountParams,
+                MarginLayoutParamsCompat.setMarginStart(amountParams,
                         context.getResources().getDimensionPixelSize(
                                 R.dimen.payments_section_descriptive_item_spacing));
 
@@ -747,6 +774,21 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             mBreakdownLayout.setVisibility(mDisplayMode == DISPLAY_MODE_FOCUSED ? VISIBLE : GONE);
             super.updateControlLayout();
         }
+
+        /**
+         * Returns the line item amount at the specified |index|. Returns null if there is no amount
+         * at that index.
+         */
+        @VisibleForTesting
+        public TextView getLineItemAmountForTest(int index) {
+            return mLineItemAmountsForTest.get(index);
+        }
+
+        /** @return The number of line items. */
+        @VisibleForTesting
+        public int getNumberOfLineItemsForTest() {
+            return mLineItemAmountsForTest.size();
+        }
     }
 
     /**
@@ -810,14 +852,15 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             private static final int OPTION_ROW_TYPE_WARNING = 3;
 
             private final int mRowType;
-            @Nullable private final PaymentOption mOption;
+            @Nullable
+            private final EditableOption mOption;
             private final View mButton;
             private final TextView mLabel;
             private final View mOptionIcon;
             private final View mEditIcon;
 
             public OptionRow(GridLayout parent, int rowIndex, int rowType,
-                    @Nullable PaymentOption item, boolean isSelected) {
+                    @Nullable EditableOption item, boolean isSelected) {
                 assert item != null || rowType != OPTION_ROW_TYPE_OPTION;
                 boolean optionIconExists = item != null && item.getDrawableIcon() != null;
                 boolean editIconExists = item != null && item.isEditable() && isSelected;
@@ -838,7 +881,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 ((RadioButton) mButton).setChecked(isChecked);
                 if (isChecked) {
                     updateSelectedItem(mOption);
-                    mDelegate.onPaymentOptionChanged(OptionSection.this, mOption);
+                    mDelegate.onEditableOptionChanged(OptionSection.this, mOption);
                 }
             }
 
@@ -876,7 +919,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 View view;
 
                 if (mRowType == OPTION_ROW_TYPE_OPTION) {
-                    // Show a radio button indicating whether the PaymentOption is selected.
+                    // Show a radio button indicating whether the EditableOption is selected.
                     RadioButton button = new RadioButton(context);
                     button.setChecked(isSelected && isEnabled);
                     button.setEnabled(isEnabled);
@@ -890,11 +933,11 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                         drawableTint = R.color.error_text_color;
                     } else {
                         drawableId = R.drawable.plus;
-                        drawableTint = R.color.light_active_color;
+                        drawableTint = R.color.default_icon_color_blue;
                     }
 
                     TintedDrawable tintedDrawable = TintedDrawable.constructTintedDrawable(
-                            context.getResources(), drawableId, drawableTint);
+                            context, drawableId, drawableTint);
                     ImageButton button = new ImageButton(context);
                     button.setBackground(null);
                     button.setImageDrawable(tintedDrawable);
@@ -907,7 +950,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                         GridLayout.spec(rowIndex, 1, GridLayout.CENTER),
                         GridLayout.spec(0, 1, GridLayout.CENTER));
                 buttonParams.topMargin = mVerticalMargin;
-                ApiCompatibilityUtils.setMarginEnd(buttonParams, mLargeSpacing);
+                MarginLayoutParamsCompat.setMarginEnd(buttonParams, mLargeSpacing);
                 parent.addView(view, buttonParams);
 
                 view.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -932,10 +975,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
                 TextView labelView = new TextView(context);
                 if (mRowType == OPTION_ROW_TYPE_OPTION) {
-                    // Show the string representing the PaymentOption.
-                    ApiCompatibilityUtils.setTextAppearance(labelView, isEnabled
-                            ? R.style.PaymentsUiSectionDefaultText
-                            : R.style.PaymentsUiSectionDisabledText);
+                    // Show the string representing the EditableOption.
                     labelView.setText(convertOptionToString(mOption, false, /* excludeMainLabel */
                             mDelegate.isBoldLabelNeeded(OptionSection.this),
                             false /* singleLine */));
@@ -946,7 +986,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                             R.dimen.payments_section_add_button_height);
 
                     ApiCompatibilityUtils.setTextAppearance(
-                            labelView, R.style.PaymentsUiSectionAddButtonLabel);
+                            labelView, R.style.TextAppearance_EditorDialogSectionAddButton);
                     labelView.setMinimumHeight(buttonHeight);
                     labelView.setGravity(Gravity.CENTER_VERTICAL);
                     labelView.setTypeface(UiUtils.createRobotoMediumTypeface());
@@ -956,12 +996,14 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                     columnSpan = 4;
 
                     ApiCompatibilityUtils.setTextAppearance(
-                            labelView, R.style.PaymentsUiSectionDescriptiveText);
+                            labelView, R.style.TextAppearance_BlackBody);
+                    labelView.setId(R.id.payments_description_label);
                 } else if (mRowType == OPTION_ROW_TYPE_WARNING) {
                     // Warnings use three columns.
                     columnSpan = 3;
                     ApiCompatibilityUtils.setTextAppearance(
-                            labelView, R.style.PaymentsUiSectionWarningText);
+                            labelView, R.style.TextAppearance_PaymentsUiSectionWarningText);
+                    labelView.setId(R.id.payments_warning_label);
                 }
 
                 // The label spans two columns if no option or edit icon, or spans three columns if
@@ -977,7 +1019,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                     // end margin) when edit icon exits in that row, like below:
                     // ---Label---------------------[label margin]|---option icon---|
                     // ---Label---[label margin]|---option icon---|----edit icon----|
-                    ApiCompatibilityUtils.setMarginEnd(labelParams, mLargeSpacing);
+                    MarginLayoutParamsCompat.setMarginEnd(labelParams, mLargeSpacing);
                 }
                 parent.addView(labelView, labelParams);
 
@@ -1034,7 +1076,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         /** Top and bottom margins for each item. */
         private final int mVerticalMargin;
 
-        /** All the possible PaymentOptions in Layout form, then one row for adding new options. */
+        /** All the possible EditableOptions in Layout form, then one row for adding new options. */
         private final ArrayList<OptionRow> mOptionRows = new ArrayList<>();
 
         /** Width that the editable option icon takes. */
@@ -1067,7 +1109,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
          */
         private boolean mSplitSummaryInDisplayModeNormal;
 
-        /** Indicates whether the summary is set to R.style.PaymentsUiSectionDescriptiveText. */
+        /** Indicates whether the summary is set to descriptive or title text style. */
         private boolean mSummaryInDescriptiveText;
 
         private FocusChangedObserver mFocusChangedObserver;
@@ -1082,9 +1124,9 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         public OptionSection(Context context, String sectionName, SectionDelegate delegate) {
             super(context, sectionName, delegate);
             mVerticalMargin = context.getResources().getDimensionPixelSize(
-                    R.dimen.payments_section_small_spacing);
+                    R.dimen.editor_dialog_section_small_spacing);
             mEditableOptionIconMaxWidth = context.getResources().getDimensionPixelSize(
-                    R.dimen.payments_section_logo_width);
+                    R.dimen.editable_option_section_logo_width);
             mNonEditableOptionIconMaxWidth =
                     context.getResources().getDimensionPixelSize(R.dimen.payments_favicon_size);
             setSummaryText(null, null);
@@ -1106,13 +1148,13 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 boolean clickedSelect = row.mButton == v || row.mLabel == v || row.mOptionIcon == v;
                 // Handle click on the "ADD THING" button.
                 if (row.mOption == null && clickedSelect) {
-                    mDelegate.onAddPaymentOption(this);
+                    mDelegate.onAddEditableOption(this);
                     return;
                 }
 
                 // Handle click on the edit icon.
                 if (row.mOption != null && row.mEditIcon == v) {
-                    mDelegate.onEditPaymentOption(this, row.mOption);
+                    mDelegate.onEditEditableOption(this, row.mOption);
                     return;
                 }
             }
@@ -1194,7 +1236,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         /** Updates the View to account for the new {@link SectionInformation} being passed in. */
         public void update(SectionInformation information) {
             mSectionInformation = information;
-            PaymentOption selectedItem = information.getSelectedItem();
+            EditableOption selectedItem = information.getSelectedItem();
             updateSelectedItem(selectedItem);
             updateOptionList(information, selectedItem);
             updateControlLayout();
@@ -1259,17 +1301,18 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             if (mSectionInformation == null) return EDIT_BUTTON_GONE;
 
             if (mSectionInformation.getSize() == 0 && mCanAddItems) {
-                // There aren't any PaymentOptions.  Ask the user to add a new one.
+                // There aren't any EditableOptions.  Ask the user to add a new one.
                 return EDIT_BUTTON_ADD;
             } else if (mSectionInformation.getSelectedItem() == null) {
-                // The user hasn't selected any available PaymentOptions.  Ask the user to pick one.
+                // The user hasn't selected any available EditableOptions.  Ask the user to pick
+                // one.
                 return EDIT_BUTTON_CHOOSE;
             } else {
                 return EDIT_BUTTON_GONE;
             }
         }
 
-        private void updateSelectedItem(PaymentOption selectedItem) {
+        private void updateSelectedItem(EditableOption selectedItem) {
             // Only left TextView in the summary section is used in this section.
             // Summary is displayed in multiple lines by default unless:
             // 1. nothing is selected or
@@ -1291,21 +1334,20 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
             if (selectedItem == null) {
                 setLogoDrawable(null);
-                // Section summary should be displayed as R.style.PaymentsUiSectionDescriptiveText.
+                // Section summary should be displayed as descriptive text style.
                 if (!mSummaryInDescriptiveText) {
                     ApiCompatibilityUtils.setTextAppearance(
-                            getSummaryLeftTextView(), R.style.PaymentsUiSectionDescriptiveText);
+                            getSummaryLeftTextView(), R.style.TextAppearance_BlackBody);
                     mSummaryInDescriptiveText = true;
                 }
                 SectionUiUtils.showSectionSummaryInTextViewInSingeLine(
                         getContext(), mSectionInformation, getSummaryLeftTextView());
             } else {
                 setLogoDrawable(selectedItem.getDrawableIcon());
-                // Selected item summary should be displayed as
-                // R.style.PaymentsUiSectionDefaultText.
+                // Selected item summary should be displayed as R.style.TextAppearance_BlackTitle1.
                 if (mSummaryInDescriptiveText) {
                     ApiCompatibilityUtils.setTextAppearance(
-                            getSummaryLeftTextView(), R.style.PaymentsUiSectionDefaultText);
+                            getSummaryLeftTextView(), R.style.TextAppearance_BlackTitle1);
                     mSummaryInDescriptiveText = false;
                 }
                 // Split summary in DISPLAY_MODE_NORMAL if caller specified. The first part is
@@ -1327,7 +1369,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             updateControlLayout();
         }
 
-        private void updateOptionList(SectionInformation information, PaymentOption selectedItem) {
+        private void updateOptionList(SectionInformation information, EditableOption selectedItem) {
             mOptionLayout.removeAllViews();
             mOptionRows.clear();
             mLabelsForTest.clear();
@@ -1351,7 +1393,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 int currentRow = mOptionRows.size();
                 if (firstOptionIndex == INVALID_OPTION_INDEX) firstOptionIndex = currentRow;
 
-                PaymentOption item = information.getItem(i);
+                EditableOption item = information.getItem(i);
                 OptionRow currentOptionRow = new OptionRow(mOptionLayout, currentRow,
                         OptionRow.OPTION_ROW_TYPE_OPTION, item, item == selectedItem);
                 mOptionRows.add(currentOptionRow);
@@ -1376,7 +1418,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             }
         }
 
-        private CharSequence convertOptionToString(PaymentOption item, boolean excludeMainLabel,
+        private CharSequence convertOptionToString(EditableOption item, boolean excludeMainLabel,
                 boolean useBoldLabel, boolean singleLine) {
             SpannableStringBuilder builder = new SpannableStringBuilder();
             if (!excludeMainLabel) {
@@ -1400,12 +1442,17 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 builder.append(item.getTertiaryLabel());
             }
 
+            if (!TextUtils.isEmpty(item.getPromoMessage())) {
+                if (builder.length() > 0) builder.append(labelSeparator);
+                builder.append(item.getPromoMessage());
+            }
+
             if (!item.isComplete() && !TextUtils.isEmpty(item.getEditMessage())) {
                 if (builder.length() > 0) builder.append(labelSeparator);
                 String editMessage = item.getEditMessage();
                 builder.append(editMessage);
                 Object foregroundSpanner = new ForegroundColorSpan(ApiCompatibilityUtils.getColor(
-                        getContext().getResources(), R.color.google_blue_700));
+                        getContext().getResources(), R.color.default_text_color_link));
                 Object sizeSpanner = new AbsoluteSizeSpan(14, true);
                 int startIndex = builder.length() - editMessage.length();
                 builder.setSpan(foregroundSpanner, startIndex, builder.length(), 0);
@@ -1467,23 +1514,23 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         public SectionSeparator(ViewGroup parent, int index) {
             super(parent.getContext());
             Resources resources = parent.getContext().getResources();
-            setBackgroundColor(ApiCompatibilityUtils.getColor(
-                    resources, R.color.payments_section_separator));
+            setBackground(HorizontalListDividerDrawable.create(getContext()));
             LinearLayout.LayoutParams params =
                     new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,
                             resources.getDimensionPixelSize(R.dimen.separator_height));
 
-            int margin = resources.getDimensionPixelSize(R.dimen.payments_section_large_spacing);
-            ApiCompatibilityUtils.setMarginStart(params, margin);
-            ApiCompatibilityUtils.setMarginEnd(params, margin);
+            int margin =
+                    resources.getDimensionPixelSize(R.dimen.editor_dialog_section_large_spacing);
+            MarginLayoutParamsCompat.setMarginStart(params, margin);
+            MarginLayoutParamsCompat.setMarginEnd(params, margin);
             parent.addView(this, index, params);
         }
 
         /** Expand the separator to be the full width of the dialog. */
         public void expand() {
             LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) getLayoutParams();
-            ApiCompatibilityUtils.setMarginStart(params, 0);
-            ApiCompatibilityUtils.setMarginEnd(params, 0);
+            MarginLayoutParamsCompat.setMarginStart(params, 0);
+            MarginLayoutParamsCompat.setMarginEnd(params, 0);
         }
     }
 }

@@ -34,6 +34,13 @@ extern const char kGestureNeededForGenerateAppForLinkError[];
 extern const char kInvalidURLError[];
 extern const char kEmptyTitleError[];
 extern const char kGenerateAppForLinkInstallError[];
+extern const char kNotAllowedInKioskError[];
+extern const char kCannotChangePrimaryKioskAppError[];
+extern const char kInstallReplacementWebAppAlreadyInstalledError[];
+extern const char kInstallReplacementWebAppInvalidWebAppError[];
+extern const char kInstallReplacementWebAppInvalidContextError[];
+extern const char kInstallReplacementWebAppNotFromWebstoreError[];
+extern const char kGestureNeededForInstallReplacementWebAppError[];
 
 }  // namespace extension_management_api_constants
 

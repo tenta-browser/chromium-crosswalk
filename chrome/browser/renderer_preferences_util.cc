@@ -10,19 +10,17 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/web_contents.h"
-#include "content/public/common/renderer_preferences.h"
+#include "content/public/browser/renderer_preferences_util.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
-#include "media/media_features.h"
-#include "third_party/WebKit/public/public_features.h"
+#include "media/media_buildflags.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
+#include "third_party/blink/public/public_buildflags.h"
 #include "third_party/skia/include/core/SkColor.h"
-
-#if defined(OS_LINUX) || defined(OS_ANDROID)
-#include "ui/gfx/font_render_params.h"
-#endif
 
 #if defined(TOOLKIT_VIEWS)
 #include "ui/views/controls/textfield/textfield.h"
@@ -38,7 +36,6 @@
 #include "ui/views/linux_ui/linux_ui.h"
 #endif
 
-#if BUILDFLAG(ENABLE_WEBRTC)
 namespace {
 
 // Parses a string |range| with a port range in the form "<min>-<max>".
@@ -78,21 +75,19 @@ void ParsePortRange(const std::string& range,
 }
 
 }  // namespace
-#endif
 
 namespace renderer_preferences_util {
 
-void UpdateFromSystemSettings(content::RendererPreferences* prefs,
-                              Profile* profile,
-                              content::WebContents* web_contents) {
+void UpdateFromSystemSettings(blink::mojom::RendererPreferences* prefs,
+                              Profile* profile) {
   const PrefService* pref_service = profile->GetPrefs();
-  prefs->accept_languages = pref_service->GetString(prefs::kAcceptLanguages);
+  prefs->accept_languages =
+      pref_service->GetString(language::prefs::kAcceptLanguages);
   prefs->enable_referrers = pref_service->GetBoolean(prefs::kEnableReferrers);
   prefs->enable_do_not_track =
       pref_service->GetBoolean(prefs::kEnableDoNotTrack);
   prefs->enable_encrypted_media =
       pref_service->GetBoolean(prefs::kEnableEncryptedMedia);
-#if BUILDFLAG(ENABLE_WEBRTC)
   prefs->webrtc_ip_handling_policy = std::string();
   // Handling the backward compatibility of previous boolean verions of policy
   // controls.
@@ -113,9 +108,8 @@ void UpdateFromSystemSettings(content::RendererPreferences* prefs,
       pref_service->GetString(prefs::kWebRTCUDPPortRange);
   ParsePortRange(webrtc_udp_port_range, &prefs->webrtc_udp_min_port,
                  &prefs->webrtc_udp_max_port);
-#endif
 
-#if BUILDFLAG(USE_DEFAULT_RENDER_THEME)
+#if defined(USE_AURA)
   prefs->focus_ring_color = SkColorSetRGB(0x4D, 0x90, 0xFE);
 #if defined(OS_CHROMEOS)
   // This color is 0x544d90fe modulated with 0xffffff.
@@ -141,9 +135,6 @@ void UpdateFromSystemSettings(content::RendererPreferences* prefs,
   if (linux_ui) {
     if (ThemeServiceFactory::GetForProfile(profile)->UsingSystemTheme()) {
       prefs->focus_ring_color = linux_ui->GetFocusRingColor();
-      prefs->thumb_active_color = linux_ui->GetThumbActiveColor();
-      prefs->thumb_inactive_color = linux_ui->GetThumbInactiveColor();
-      prefs->track_color = linux_ui->GetTrackColor();
       prefs->active_selection_bg_color = linux_ui->GetActiveSelectionBgColor();
       prefs->active_selection_fg_color = linux_ui->GetActiveSelectionFgColor();
       prefs->inactive_selection_bg_color =
@@ -159,20 +150,19 @@ void UpdateFromSystemSettings(content::RendererPreferences* prefs,
 #endif
 
 #if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_WIN)
-  CR_DEFINE_STATIC_LOCAL(const gfx::FontRenderParams, params,
-      (gfx::GetFontRenderParams(gfx::FontRenderParamsQuery(), NULL)));
-  prefs->should_antialias_text = params.antialiasing;
-  prefs->use_subpixel_positioning = params.subpixel_positioning;
-  prefs->hinting = params.hinting;
-  prefs->use_autohinter = params.autohinter;
-  prefs->use_bitmaps = params.use_bitmaps;
-  prefs->subpixel_rendering = params.subpixel_rendering;
+  content::UpdateFontRendererPreferencesFromSystemSettings(prefs);
 #endif
 
 #if !defined(OS_MACOSX)
   prefs->plugin_fullscreen_allowed =
       pref_service->GetBoolean(prefs::kFullscreenAllowed);
 #endif
+
+  PrefService* local_state = g_browser_process->local_state();
+  if (local_state) {
+    prefs->allow_cross_origin_auth_prompt =
+        local_state->GetBoolean(prefs::kAllowCrossOriginAuthPrompt);
+  }
 }
 
 }  // namespace renderer_preferences_util

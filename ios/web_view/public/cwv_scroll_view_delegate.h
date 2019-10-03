@@ -7,7 +7,7 @@
 
 #import <CoreGraphics/CoreGraphics.h>
 
-#import "cwv_export.h"
+NS_ASSUME_NONNULL_BEGIN
 
 @class CWVScrollView;
 
@@ -16,7 +16,6 @@
 // These methods are forwarded from the internal UIScrollViewDelegate. Please
 // see the <UIKit/UIScrollViewDelegate.h> documentation for details about the
 // following methods.
-CWV_EXPORT
 @protocol CWVScrollViewDelegate<NSObject>
 @optional
 - (void)scrollViewWillBeginDragging:(CWVScrollView*)scrollView;
@@ -25,11 +24,14 @@ CWV_EXPORT
               targetContentOffset:(inout CGPoint*)targetContentOffset;
 - (void)scrollViewDidScroll:(CWVScrollView*)scrollView;
 - (void)scrollViewDidEndDecelerating:(CWVScrollView*)scrollView;
+- (BOOL)scrollViewShouldScrollToTop:(CWVScrollView*)scrollView;
 
 // The equivalent in UIScrollViewDelegate also takes a parameter (UIView*)view,
 // but CWVScrollViewDelegate doesn't expose it for flexibility of future
 // implementation.
 - (void)scrollViewWillBeginZooming:(CWVScrollView*)webViewScrollViewProxy;
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_PUBLIC_CWV_SCROLL_VIEW_DELEGATE_H_

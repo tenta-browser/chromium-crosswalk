@@ -11,13 +11,13 @@
 #include <tuple>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/debug/crash_logging.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
-#include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/native_library.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,37 +27,40 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
 #include "build/build_config.h"
+#include "chrome/common/channel_info.h"
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/crash_keys.h"
 #include "chrome/common/pepper_flash.h"
-#include "chrome/common/profiling/profiling_client.h"
-#include "chrome/common/secure_origin_whitelist.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/common_resources.h"
+#include "components/crash/core/common/crash_key.h"
 #include "components/dom_distiller/core/url_constants.h"
-#include "components/version_info/version_info.h"
+#include "components/net_log/chrome_net_log.h"
+#include "components/services/heap_profiling/public/cpp/profiling_client.h"
 #include "content/public/common/cdm_info.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "content/public/common/user_agent.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
-#include "extensions/features/features.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_util.h"
+#include "media/base/decrypt_config.h"
 #include "media/base/media_switches.h"
-#include "media/media_features.h"
+#include "media/base/video_codecs.h"
+#include "media/media_buildflags.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/http/http_util.h"
-#include "pdf/features.h"
-#include "ppapi/features/features.h"
+#include "pdf/buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "third_party/widevine/cdm/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/url_constants.h"
-#include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
 
 #if defined(OS_LINUX)
 #include <fcntl.h>
@@ -78,10 +81,6 @@
 #include "components/nacl/common/nacl_process_type.h"
 #endif
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "extensions/common/features/feature_util.h"
-#endif
-
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/common/pepper_plugin_info.h"
 #include "flapper_version.h"  // nogncheck  In SHARED_INTERMEDIATE_DIR.
@@ -90,9 +89,16 @@
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
 #include "media/cdm/cdm_paths.h"  // nogncheck
-#if defined(WIDEVINE_CDM_AVAILABLE) && !defined(WIDEVINE_CDM_IS_COMPONENT)
-#define WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT
-#include "chrome/common/widevine_cdm_constants.h"
+// Registers Widevine CDM if Widevine is enabled, the Widevine CDM is
+// bundled and not a component. When the Widevine CDM is a component, it is
+// registered in widevine_cdm_component_installer.cc.
+#if BUILDFLAG(BUNDLE_WIDEVINE_CDM) && !BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
+#define REGISTER_BUNDLED_WIDEVINE_CDM
+#include "third_party/widevine/cdm/widevine_cdm_common.h"  // nogncheck
+// TODO(crbug.com/663554): Needed for WIDEVINE_CDM_VERSION_STRING. Support
+// component updated CDM on all desktop platforms and remove this.
+// This file is In SHARED_INTERMEDIATE_DIR.
+#include "widevine_cdm_version.h"  // nogncheck
 #endif
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
@@ -112,65 +118,19 @@ const char kPDFPluginExtension[] = "pdf";
 const char kPDFPluginDescription[] = "Portable Document Format";
 const char kPDFPluginOutOfProcessMimeType[] =
     "application/x-google-chrome-pdf";
-const uint32_t kPDFPluginPermissions =
-    ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
-#endif  // BUILDFLAG(ENABLE_PDF)
+const uint32_t kPDFPluginPermissions = ppapi::PERMISSION_PDF |
+                                       ppapi::PERMISSION_DEV;
 
 content::PepperPluginInfo::GetInterfaceFunc g_pdf_get_interface;
 content::PepperPluginInfo::PPP_InitializeModuleFunc g_pdf_initialize_module;
 content::PepperPluginInfo::PPP_ShutdownModuleFunc g_pdf_shutdown_module;
+#endif  // BUILDFLAG(ENABLE_PDF)
 
 #if BUILDFLAG(ENABLE_NACL)
 content::PepperPluginInfo::GetInterfaceFunc g_nacl_get_interface;
 content::PepperPluginInfo::PPP_InitializeModuleFunc g_nacl_initialize_module;
 content::PepperPluginInfo::PPP_ShutdownModuleFunc g_nacl_shutdown_module;
 #endif
-
-#if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
-bool IsWidevineAvailable(base::FilePath* adapter_path,
-                         base::FilePath* cdm_path,
-                         std::vector<std::string>* codecs_supported,
-                         bool* is_persistent_license_supported) {
-  static enum {
-    NOT_CHECKED,
-    FOUND,
-    NOT_FOUND,
-  } widevine_cdm_file_check = NOT_CHECKED;
-  // TODO(jrummell): We should add a new path for DIR_WIDEVINE_CDM and use that
-  // to locate the CDM and the CDM adapter.
-  if (PathService::Get(chrome::FILE_WIDEVINE_CDM_ADAPTER, adapter_path)) {
-    *cdm_path = adapter_path->DirName().AppendASCII(
-        base::GetNativeLibraryName(kWidevineCdmLibraryName));
-    if (widevine_cdm_file_check == NOT_CHECKED) {
-      widevine_cdm_file_check =
-          (base::PathExists(*adapter_path) && base::PathExists(*cdm_path))
-              ? FOUND
-              : NOT_FOUND;
-    }
-    if (widevine_cdm_file_check == FOUND) {
-      // Add the supported codecs as if they came from the component manifest.
-      // This list must match the CDM that is being bundled with Chrome.
-      codecs_supported->push_back(kCdmSupportedCodecVp8);
-      codecs_supported->push_back(kCdmSupportedCodecVp9);
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-      codecs_supported->push_back(kCdmSupportedCodecAvc1);
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
-
-// TODO(crbug.com/767941): Push persistent-license support info here once
-// we check in a new CDM that supports it on Linux.
-#if defined(OS_CHROMEOS)
-      *is_persistent_license_supported = true;
-#else
-      *is_persistent_license_supported = false;
-#endif  // defined(OS_CHROMEOS)
-
-      return true;
-    }
-  }
-
-  return false;
-}
-#endif  // defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
 
 // Appends the known built-in plugins to the given vector. Some built-in
 // plugins are "internal" which means they are compiled into the Chrome binary,
@@ -184,8 +144,7 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   pdf_info.is_out_of_process = true;
   pdf_info.name = ChromeContentClient::kPDFInternalPluginName;
   pdf_info.description = kPDFPluginDescription;
-  pdf_info.path = base::FilePath::FromUTF8Unsafe(
-      ChromeContentClient::kPDFPluginPath);
+  pdf_info.path = base::FilePath(ChromeContentClient::kPDFPluginPath);
   content::WebPluginMimeType pdf_mime_type(
       kPDFPluginOutOfProcessMimeType,
       kPDFPluginExtension,
@@ -203,69 +162,25 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   // enabled by default for the non-portable case.  This allows apps installed
   // from the Chrome Web Store to use NaCl even if the command line switch
   // isn't set.  For other uses of NaCl we check for the command line switch.
-  base::FilePath path;
-  if (PathService::Get(chrome::FILE_NACL_PLUGIN, &path)) {
-    content::PepperPluginInfo nacl;
-    // The nacl plugin is now built into the Chromium binary.
-    nacl.is_internal = true;
-    nacl.path = path;
-    nacl.name = nacl::kNaClPluginName;
-    content::WebPluginMimeType nacl_mime_type(nacl::kNaClPluginMimeType,
-                                              nacl::kNaClPluginExtension,
-                                              nacl::kNaClPluginDescription);
-    nacl.mime_types.push_back(nacl_mime_type);
-    content::WebPluginMimeType pnacl_mime_type(nacl::kPnaclPluginMimeType,
-                                               nacl::kPnaclPluginExtension,
-                                               nacl::kPnaclPluginDescription);
-    nacl.mime_types.push_back(pnacl_mime_type);
-    nacl.internal_entry_points.get_interface = g_nacl_get_interface;
-    nacl.internal_entry_points.initialize_module = g_nacl_initialize_module;
-    nacl.internal_entry_points.shutdown_module = g_nacl_shutdown_module;
-    nacl.permissions = ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
-    plugins->push_back(nacl);
-  }
+  content::PepperPluginInfo nacl;
+  // The nacl plugin is now built into the Chromium binary.
+  nacl.is_internal = true;
+  nacl.path = base::FilePath(ChromeContentClient::kNaClPluginFileName);
+  nacl.name = nacl::kNaClPluginName;
+  content::WebPluginMimeType nacl_mime_type(nacl::kNaClPluginMimeType,
+                                            nacl::kNaClPluginExtension,
+                                            nacl::kNaClPluginDescription);
+  nacl.mime_types.push_back(nacl_mime_type);
+  content::WebPluginMimeType pnacl_mime_type(nacl::kPnaclPluginMimeType,
+                                             nacl::kPnaclPluginExtension,
+                                             nacl::kPnaclPluginDescription);
+  nacl.mime_types.push_back(pnacl_mime_type);
+  nacl.internal_entry_points.get_interface = g_nacl_get_interface;
+  nacl.internal_entry_points.initialize_module = g_nacl_initialize_module;
+  nacl.internal_entry_points.shutdown_module = g_nacl_shutdown_module;
+  nacl.permissions = ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_DEV;
+  plugins->push_back(nacl);
 #endif  // BUILDFLAG(ENABLE_NACL)
-
-#if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
-  base::FilePath adapter_path;
-  base::FilePath cdm_path;
-  std::vector<std::string> codecs_supported;
-  bool is_persistent_license_supported;
-  if (IsWidevineAvailable(&adapter_path, &cdm_path, &codecs_supported,
-                          &is_persistent_license_supported)) {
-    content::PepperPluginInfo info;
-    info.is_out_of_process = true;
-    info.path = adapter_path;
-    info.name = kWidevineCdmDisplayName;
-    info.description =
-        base::StringPrintf("%s (version: " WIDEVINE_CDM_VERSION_STRING ")",
-                           kWidevineCdmDescription);
-    info.version = WIDEVINE_CDM_VERSION_STRING;
-    info.permissions = kWidevineCdmPluginPermissions;
-
-    content::WebPluginMimeType mime_type(kWidevineCdmPluginMimeType,
-                                         kWidevineCdmPluginExtension,
-                                         kWidevineCdmPluginMimeTypeDescription);
-
-    // Put codec support string in additional param.
-    mime_type.additional_params.emplace_back(
-        base::ASCIIToUTF16(kCdmSupportedCodecsParamName),
-        base::ASCIIToUTF16(base::JoinString(
-            codecs_supported,
-            std::string(1, kCdmSupportedCodecsValueDelimiter))));
-
-    // Put persistent license support string in additional param.
-    mime_type.additional_params.emplace_back(
-        base::ASCIIToUTF16(kCdmPersistentLicenseSupportedParamName),
-        base::ASCIIToUTF16(is_persistent_license_supported
-                               ? kCdmFeatureSupported
-                               : kCdmFeatureNotSupported));
-
-    info.mime_types.push_back(mime_type);
-
-    plugins->push_back(info);
-  }
-#endif  // defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
 }
 
 // Creates a PepperPluginInfo for the specified plugin.
@@ -343,8 +258,9 @@ bool TryCreatePepperFlashInfo(const base::FilePath& flash_filename,
   if (!base::ReadFileToString(manifest_path, &manifest_data))
     return false;
 
-  std::unique_ptr<base::DictionaryValue> manifest = base::DictionaryValue::From(
-      base::JSONReader::Read(manifest_data, base::JSON_ALLOW_TRAILING_COMMAS));
+  std::unique_ptr<base::DictionaryValue> manifest =
+      base::DictionaryValue::From(base::JSONReader::ReadDeprecated(
+          manifest_data, base::JSON_ALLOW_TRAILING_COMMAS));
   if (!manifest)
     return false;
 
@@ -416,36 +332,65 @@ bool GetSystemPepperFlash(content::PepperPluginInfo* plugin) {
     return false;
 
   base::FilePath flash_filename;
-  if (!PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN,
-                        &flash_filename))
+  if (!base::PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN,
+                              &flash_filename))
     return false;
 
   return TryCreatePepperFlashInfo(flash_filename, plugin);
 }
 #endif  //  BUILDFLAG(ENABLE_PLUGINS)
 
-std::string GetProduct() {
-  return version_info::GetProductNameAndVersionForUserAgent();
-}
+#if defined(REGISTER_BUNDLED_WIDEVINE_CDM)
+bool IsWidevineAvailable(base::FilePath* cdm_path,
+                         content::CdmCapability* capability) {
+  static enum {
+    NOT_CHECKED,
+    FOUND,
+    NOT_FOUND,
+  } widevine_cdm_file_check = NOT_CHECKED;
 
-}  // namespace
+  if (base::PathService::Get(chrome::FILE_WIDEVINE_CDM, cdm_path)) {
+    if (widevine_cdm_file_check == NOT_CHECKED)
+      widevine_cdm_file_check = base::PathExists(*cdm_path) ? FOUND : NOT_FOUND;
 
-std::string GetUserAgent() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kUserAgent)) {
-    std::string ua = command_line->GetSwitchValueASCII(switches::kUserAgent);
-    if (net::HttpUtil::IsValidHeaderValue(ua))
-      return ua;
-    LOG(WARNING) << "Ignored invalid value for flag --" << switches::kUserAgent;
+    if (widevine_cdm_file_check == FOUND) {
+      // Add the supported codecs as if they came from the component manifest.
+      // This list must match the CDM that is being bundled with Chrome.
+      capability->video_codecs.push_back(media::VideoCodec::kCodecVP8);
+      capability->video_codecs.push_back(media::VideoCodec::kCodecVP9);
+      // TODO(crbug.com/899403): Update this and tests after Widevine CDM
+      // supports VP9 profile 2.
+      capability->supports_vp9_profile2 = false;
+      // TODO(crbug.com/953504): Update this and tests after Widevine CDM
+      // supports AV1.
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+      capability->video_codecs.push_back(media::VideoCodec::kCodecH264);
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+
+      // Add the supported encryption schemes as if they came from the
+      // component manifest. This list must match the CDM that is being
+      // bundled with Chrome.
+      capability->encryption_schemes.insert(media::EncryptionMode::kCenc);
+      capability->encryption_schemes.insert(media::EncryptionMode::kCbcs);
+
+      // Temporary session is always supported.
+      capability->session_types.insert(media::CdmSessionType::kTemporary);
+#if defined(OS_CHROMEOS)
+      // TODO(crbug.com/767941): Push persistent-license support info here once
+      // we check in a new CDM that supports it on Linux.
+      capability->session_types.insert(
+          media::CdmSessionType::kPersistentLicense);
+#endif  // defined(OS_CHROMEOS)
+
+      return true;
+    }
   }
 
-  std::string product = GetProduct();
-#if defined(OS_ANDROID)
-  if (command_line->HasSwitch(switches::kUseMobileUserAgent))
-    product += " Mobile";
-#endif
-  return content::BuildUserAgentFromProduct(product);
+  return false;
 }
+#endif  // defined(REGISTER_BUNDLED_WIDEVINE_CDM)
+
+}  // namespace
 
 ChromeContentClient::ChromeContentClient() {
 }
@@ -464,7 +409,7 @@ void ChromeContentClient::SetNaClEntryFunctions(
 }
 #endif
 
-#if BUILDFLAG(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS) && BUILDFLAG(ENABLE_PDF)
 void ChromeContentClient::SetPDFEntryFunctions(
     content::PepperPluginInfo::GetInterfaceFunc get_interface,
     content::PepperPluginInfo::PPP_InitializeModuleFunc initialize_module,
@@ -475,9 +420,14 @@ void ChromeContentClient::SetPDFEntryFunctions(
 }
 #endif
 
-void ChromeContentClient::SetActiveURL(const GURL& url) {
-  base::debug::SetCrashKeyValue(crash_keys::kActiveURL,
-                                url.possibly_invalid_spec());
+void ChromeContentClient::SetActiveURL(const GURL& url,
+                                       std::string top_origin) {
+  static crash_reporter::CrashKeyString<1024> active_url("url-chunk");
+  active_url.Set(url.possibly_invalid_spec());
+
+  // Use a large enough size for Origin::GetDebugString.
+  static crash_reporter::CrashKeyString<128> top_origin_key("top-origin");
+  top_origin_key.Set(top_origin);
 }
 
 void ChromeContentClient::SetGpuInfo(const gpu::GPUInfo& gpu_info) {
@@ -526,17 +476,17 @@ void ChromeContentClient::AddPepperPlugins(
   if (!sandbox::Credentials::HasFileSystemAccess())
     return;
 
-  auto component_flash = base::MakeUnique<content::PepperPluginInfo>();
+  auto component_flash = std::make_unique<content::PepperPluginInfo>();
   if (!disable_bundled_flash &&
       GetComponentUpdatedPepperFlash(component_flash.get()))
     flash_versions.push_back(std::move(component_flash));
 #endif  // defined(OS_LINUX)
 
-  auto command_line_flash = base::MakeUnique<content::PepperPluginInfo>();
+  auto command_line_flash = std::make_unique<content::PepperPluginInfo>();
   if (GetCommandLinePepperFlash(command_line_flash.get()))
     flash_versions.push_back(std::move(command_line_flash));
 
-  auto system_flash = base::MakeUnique<content::PepperPluginInfo>();
+  auto system_flash = std::make_unique<content::PepperPluginInfo>();
   if (GetSystemPepperFlash(system_flash.get()))
     flash_versions.push_back(std::move(system_flash));
 
@@ -551,9 +501,9 @@ void ChromeContentClient::AddPepperPlugins(
     // nothing that guarantees the component update will give us the
     // FLAPPER_VERSION_STRING version of Flash, but using this version seems
     // better than any other hardcoded alternative.
-    plugins->push_back(CreatePepperFlashInfo(
-        base::FilePath::FromUTF8Unsafe(ChromeContentClient::kNotPresent),
-        FLAPPER_VERSION_STRING, false));
+    plugins->push_back(
+        CreatePepperFlashInfo(base::FilePath(ChromeContentClient::kNotPresent),
+                              FLAPPER_VERSION_STRING, false));
 #endif  // defined(GOOGLE_CHROME_BUILD) && defined(FLAPPER_AVAILABLE)
   }
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
@@ -563,35 +513,26 @@ void ChromeContentClient::AddContentDecryptionModules(
     std::vector<content::CdmInfo>* cdms,
     std::vector<media::CdmHostFilePath>* cdm_host_file_paths) {
   if (cdms) {
-// TODO(jrummell): Need to have a better flag to indicate systems Widevine
-// is available on. For now we continue to use ENABLE_LIBRARY_CDMS so that
-// we can experiment between pepper and mojo.
-#if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
-    base::FilePath adapter_path;
+#if defined(REGISTER_BUNDLED_WIDEVINE_CDM)
     base::FilePath cdm_path;
-    std::vector<std::string> codecs_supported;
-    bool is_persistent_license_supported;
-    if (IsWidevineAvailable(&adapter_path, &cdm_path, &codecs_supported,
-                            &is_persistent_license_supported)) {
-      // CdmInfo needs |path| to be the actual Widevine library,
-      // not the adapter, so adjust as necessary. It will be in the
-      // same directory as the installed adapter.
-      // TODO(xhwang): Pass |is_persistent_license_supported| to CdmInfo.
+    content::CdmCapability capability;
+    if (IsWidevineAvailable(&cdm_path, &capability)) {
       const base::Version version(WIDEVINE_CDM_VERSION_STRING);
       DCHECK(version.IsValid());
+
       cdms->push_back(
           content::CdmInfo(kWidevineCdmDisplayName, kWidevineCdmGuid, version,
-                           cdm_path, kWidevineCdmFileSystemId, codecs_supported,
-                           kWidevineKeySystem, false));
+                           cdm_path, kWidevineCdmFileSystemId,
+                           std::move(capability), kWidevineKeySystem, false));
     }
-#endif  // defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
+#endif  // defined(REGISTER_BUNDLED_WIDEVINE_CDM)
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
     // Register Clear Key CDM if specified in command line.
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     base::FilePath clear_key_cdm_path =
         command_line->GetSwitchValuePath(switches::kClearKeyCdmPathForTesting);
-    if (!clear_key_cdm_path.empty()) {
+    if (!clear_key_cdm_path.empty() && base::PathExists(clear_key_cdm_path)) {
       // TODO(crbug.com/764480): Remove these after we have a central place for
       // External Clear Key (ECK) related information.
       // Normal External Clear Key key system.
@@ -600,6 +541,14 @@ void ChromeContentClient::AddContentDecryptionModules(
       const char kExternalClearKeyDifferentGuidTestKeySystem[] =
           "org.chromium.externalclearkey.differentguid";
 
+      // Supported codecs are hard-coded in ExternalClearKeyProperties.
+      content::CdmCapability capability(
+          {}, {media::EncryptionMode::kCenc, media::EncryptionMode::kCbcs},
+          {media::CdmSessionType::kTemporary,
+           media::CdmSessionType::kPersistentLicense,
+           media::CdmSessionType::kPersistentUsageRecord},
+          {});
+
       // Register kExternalClearKeyDifferentGuidTestKeySystem first separately.
       // Otherwise, it'll be treated as a sub-key-system of normal
       // kExternalClearKeyKeySystem. See MultipleCdmTypes test in
@@ -607,15 +556,14 @@ void ChromeContentClient::AddContentDecryptionModules(
       cdms->push_back(content::CdmInfo(
           media::kClearKeyCdmDisplayName, media::kClearKeyCdmDifferentGuid,
           base::Version("0.1.0.0"), clear_key_cdm_path,
-          media::kClearKeyCdmFileSystemId, {},
+          media::kClearKeyCdmFileSystemId, capability,
           kExternalClearKeyDifferentGuidTestKeySystem, false));
 
-      // Supported codecs are hard-coded in ExternalClearKeyProperties.
       cdms->push_back(
           content::CdmInfo(media::kClearKeyCdmDisplayName,
                            media::kClearKeyCdmGuid, base::Version("0.1.0.0"),
                            clear_key_cdm_path, media::kClearKeyCdmFileSystemId,
-                           {}, kExternalClearKeyKeySystem, true));
+                           capability, kExternalClearKeyKeySystem, true));
     }
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
   }
@@ -626,6 +574,23 @@ void ChromeContentClient::AddContentDecryptionModules(
 #endif
 }
 
+// New schemes by which content can be retrieved should almost certainly be
+// marked as "standard" schemes, even if they're internal, chrome-only schemes.
+// "Standard" here just means that its URLs behave like 'normal' URL do.
+//   - Standard schemes get canonicalized like "new-scheme://hostname/[path]"
+//   - Whereas "new-scheme:hostname" is a valid nonstandard URL.
+//   - Thus, hostnames can't be extracted from non-standard schemes.
+//   - The presence of hostnames enables the same-origin policy. Resources like
+//     "new-scheme://foo/" are kept separate from "new-scheme://bar/". For
+//     a nonstandard scheme, every resource loaded from that scheme could
+//     have access to every other resource.
+//   - The same-origin policy is very important if webpages can be
+//     loaded via the scheme. Try to organize the URL space of any new scheme
+//     such that hostnames provide meaningful compartmentalization of
+//     privileges.
+//
+// Example standard schemes: https://, chrome-extension://, chrome://, file://
+// Example nonstandard schemes: mailto:, data:, javascript:, about:
 static const char* const kChromeStandardURLSchemes[] = {
     extensions::kExtensionScheme,
     chrome::kChromeNativeScheme,
@@ -656,8 +621,6 @@ void ChromeContentClient::AddAdditionalSchemes(Schemes* schemes) {
   // with them by third parties.
   schemes->secure_schemes.push_back(extensions::kExtensionScheme);
 
-  schemes->secure_origins = secure_origin_whitelist::GetWhitelist();
-
   // chrome-native: is a scheme used for placeholder navigations that allow
   // UIs to be drawn with platform native widgets instead of HTML.  These pages
   // should be treated as empty documents that can commit synchronously.
@@ -666,8 +629,7 @@ void ChromeContentClient::AddAdditionalSchemes(Schemes* schemes) {
   schemes->secure_schemes.push_back(chrome::kChromeNativeScheme);
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  if (extensions::feature_util::ExtensionServiceWorkersEnabled())
-    schemes->service_worker_schemes.push_back(extensions::kExtensionScheme);
+  schemes->service_worker_schemes.push_back(extensions::kExtensionScheme);
 
   // As far as Blink is concerned, they should be allowed to receive CORS
   // requests. At the Extensions layer, requests will actually be blocked unless
@@ -687,34 +649,46 @@ void ChromeContentClient::AddAdditionalSchemes(Schemes* schemes) {
 #endif
 }
 
-std::string ChromeContentClient::GetProduct() const {
-  return ::GetProduct();
-}
-
-std::string ChromeContentClient::GetUserAgent() const {
-  return ::GetUserAgent();
-}
-
-base::string16 ChromeContentClient::GetLocalizedString(int message_id) const {
+base::string16 ChromeContentClient::GetLocalizedString(int message_id) {
   return l10n_util::GetStringUTF16(message_id);
+}
+
+base::string16 ChromeContentClient::GetLocalizedString(
+    int message_id,
+    const base::string16& replacement) {
+  return l10n_util::GetStringFUTF16(message_id, replacement);
 }
 
 base::StringPiece ChromeContentClient::GetDataResource(
     int resource_id,
-    ui::ScaleFactor scale_factor) const {
+    ui::ScaleFactor scale_factor) {
   return ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
       resource_id, scale_factor);
 }
 
 base::RefCountedMemory* ChromeContentClient::GetDataResourceBytes(
-    int resource_id) const {
+    int resource_id) {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
       resource_id);
 }
 
-gfx::Image& ChromeContentClient::GetNativeImageNamed(int resource_id) const {
+bool ChromeContentClient::IsDataResourceGzipped(int resource_id) {
+  return ui::ResourceBundle::GetSharedInstance().IsGzipped(resource_id);
+}
+
+gfx::Image& ChromeContentClient::GetNativeImageNamed(int resource_id) {
   return ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
       resource_id);
+}
+
+base::DictionaryValue ChromeContentClient::GetNetLogConstants() {
+  auto platform_dict = net_log::GetPlatformConstantsForNetLog(
+      base::CommandLine::ForCurrentProcess()->GetCommandLineString(),
+      chrome::GetChannelName());
+  if (platform_dict)
+    return std::move(*platform_dict);
+  else
+    return base::DictionaryValue();
 }
 
 std::string ChromeContentClient::GetProcessTypeNameInEnglish(int type) {
@@ -732,29 +706,21 @@ std::string ChromeContentClient::GetProcessTypeNameInEnglish(int type) {
 }
 
 bool ChromeContentClient::AllowScriptExtensionForServiceWorker(
-    const GURL& script_url) {
+    const url::Origin& script_origin) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  return script_url.SchemeIs(extensions::kExtensionScheme);
+  return script_origin.scheme() == extensions::kExtensionScheme;
 #else
   return false;
 #endif
 }
 
-bool ChromeContentClient::IsSupplementarySiteIsolationModeEnabled() {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  return true;
-#else
-  return false;
-#endif
-}
-
-content::OriginTrialPolicy* ChromeContentClient::GetOriginTrialPolicy() {
+blink::OriginTrialPolicy* ChromeContentClient::GetOriginTrialPolicy() {
   // Prevent initialization race (see crbug.com/721144). There may be a
   // race when the policy is needed for worker startup (which happens on a
   // separate worker thread).
   base::AutoLock auto_lock(origin_trial_policy_lock_);
   if (!origin_trial_policy_)
-    origin_trial_policy_ = base::MakeUnique<ChromeOriginTrialPolicy>();
+    origin_trial_policy_ = std::make_unique<ChromeOriginTrialPolicy>();
   return origin_trial_policy_.get();
 }
 
@@ -764,9 +730,13 @@ media::MediaDrmBridgeClient* ChromeContentClient::GetMediaDrmBridgeClient() {
 }
 #endif  // OS_ANDROID
 
-void ChromeContentClient::OnServiceManagerConnected(
-    content::ServiceManagerConnection* connection) {
-  static base::LazyInstance<profiling::ProfilingClient>::Leaky
-      profiling_client = LAZY_INSTANCE_INITIALIZER;
-  profiling_client.Get().OnServiceManagerConnected(connection);
+void ChromeContentClient::BindChildProcessInterface(
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* receiving_handle) {
+  static base::NoDestructor<heap_profiling::ProfilingClient> profiling_client;
+  if (interface_name == heap_profiling::ProfilingClient::Name_) {
+    profiling_client->BindToInterface(
+        mojo::PendingReceiver<heap_profiling::mojom::ProfilingClient>(
+            std::move(*receiving_handle)));
+  }
 }

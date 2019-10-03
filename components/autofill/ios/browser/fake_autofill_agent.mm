@@ -4,8 +4,10 @@
 
 #import "components/autofill/ios/browser/fake_autofill_agent.h"
 
-#import "base/mac/bind_objc_block.h"
-#include "ios/web/public/web_thread.h"
+#include "base/bind.h"
+#include "base/task/post_task.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -32,8 +34,11 @@
 
 - (void)addSuggestion:(FormSuggestion*)suggestion
           forFormName:(NSString*)formName
-            fieldName:(NSString*)fieldName {
-  NSString* key = [self keyForFormName:formName fieldName:fieldName];
+      fieldIdentifier:(NSString*)fieldIdentifier
+              frameID:(NSString*)frameID {
+  NSString* key = [self keyForFormName:formName
+                       fieldIdentifier:fieldIdentifier
+                               frameID:frameID];
   NSMutableArray* suggestions = _suggestionsByFormAndFieldName[key];
   if (!suggestions) {
     suggestions = [NSMutableArray array];
@@ -43,49 +48,63 @@
 }
 
 - (FormSuggestion*)selectedSuggestionForFormName:(NSString*)formName
-                                       fieldName:(NSString*)fieldName {
-  NSString* key = [self keyForFormName:formName fieldName:fieldName];
+                                 fieldIdentifier:(NSString*)fieldIdentifier
+                                         frameID:(NSString*)frameID {
+  NSString* key = [self keyForFormName:formName
+                       fieldIdentifier:fieldIdentifier
+                               frameID:frameID];
   return _selectedSuggestionByFormAndFieldName[key];
 }
 
 #pragma mark - FormSuggestionProvider
 
 - (void)checkIfSuggestionsAvailableForForm:(NSString*)formName
-                                     field:(NSString*)fieldName
+                           fieldIdentifier:(NSString*)fieldIdentifier
                                  fieldType:(NSString*)fieldType
                                       type:(NSString*)type
                                 typedValue:(NSString*)typedValue
+                                   frameID:(NSString*)frameID
+                               isMainFrame:(BOOL)isMainFrame
+                            hasUserGesture:(BOOL)hasUserGesture
                                   webState:(web::WebState*)webState
                          completionHandler:
                              (SuggestionsAvailableCompletion)completion {
-  web::WebThread::PostTask(
-      web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
-        NSString* key = [self keyForFormName:formName fieldName:fieldName];
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
+        NSString* key = [self keyForFormName:formName
+                             fieldIdentifier:fieldIdentifier
+                                     frameID:frameID];
         completion([_suggestionsByFormAndFieldName[key] count] ? YES : NO);
       }));
 }
 
 - (void)retrieveSuggestionsForForm:(NSString*)formName
-                             field:(NSString*)fieldName
+                   fieldIdentifier:(NSString*)fieldIdentifier
                          fieldType:(NSString*)fieldType
                               type:(NSString*)type
                         typedValue:(NSString*)typedValue
+                           frameID:(NSString*)frameID
                           webState:(web::WebState*)webState
                  completionHandler:(SuggestionsReadyCompletion)completion {
-  web::WebThread::PostTask(
-      web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
-        NSString* key = [self keyForFormName:formName fieldName:fieldName];
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
+        NSString* key = [self keyForFormName:formName
+                             fieldIdentifier:fieldIdentifier
+                                     frameID:frameID];
         completion(_suggestionsByFormAndFieldName[key], self);
       }));
 }
 
 - (void)didSelectSuggestion:(FormSuggestion*)suggestion
-                   forField:(NSString*)fieldName
                        form:(NSString*)formName
+            fieldIdentifier:(NSString*)fieldIdentifier
+                    frameID:(NSString*)frameID
           completionHandler:(SuggestionHandledCompletion)completion {
-  web::WebThread::PostTask(
-      web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
-        NSString* key = [self keyForFormName:formName fieldName:fieldName];
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
+        NSString* key = [self keyForFormName:formName
+                             fieldIdentifier:fieldIdentifier
+                                     frameID:frameID];
         _selectedSuggestionByFormAndFieldName[key] = suggestion;
         completion();
       }));
@@ -93,9 +112,12 @@
 
 #pragma mark - Private Methods
 
-- (NSString*)keyForFormName:(NSString*)formName fieldName:(NSString*)fieldName {
+- (NSString*)keyForFormName:(NSString*)formName
+            fieldIdentifier:(NSString*)fieldIdentifier
+                    frameID:(NSString*)frameID {
   // Uniqueness ensured because spaces are not allowed in html name attributes.
-  return [NSString stringWithFormat:@"%@ %@", formName, fieldName];
+  return [NSString
+      stringWithFormat:@"%@ %@ %@", formName, fieldIdentifier, frameID];
 }
 
 @end

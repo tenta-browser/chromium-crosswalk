@@ -56,10 +56,6 @@ IGNORED_EXTENSIONS = (
 EXECUTABLE_PATHS = (
   'chrome/test/data/app_shim/app_shim_32_bit.app/contents/'
       'macos/app_mode_loader',
-  'chrome/test/data/extensions/uitest/plugins/plugin.plugin/contents/'
-      'macos/testnetscapeplugin',
-  'chrome/test/data/extensions/uitest/plugins_private/plugin.plugin/contents/'
-      'macos/testnetscapeplugin',
 )
 
 # These files must not have the executable bit set. This is mainly a performance
@@ -147,10 +143,6 @@ NON_EXECUTABLE_PATHS = (
   'build/android/tests/symbolize/libb.so',
   'chrome/installer/mac/sign_app.sh.in',
   'chrome/installer/mac/sign_versioned_dir.sh.in',
-  'chrome/test/data/extensions/uitest/plugins/plugin32.so',
-  'chrome/test/data/extensions/uitest/plugins/plugin64.so',
-  'chrome/test/data/extensions/uitest/plugins_private/plugin32.so',
-  'chrome/test/data/extensions/uitest/plugins_private/plugin64.so',
   'courgette/testdata/elf-32-1',
   'courgette/testdata/elf-32-2',
   'courgette/testdata/elf-64',
@@ -181,23 +173,14 @@ IGNORED_PATHS = (
   'native_client_sdk/src/build_tools/sdk_tools/third_party/fancy_urllib/'
       '__init__.py',
   'out/',
+  'third_party/blink/web_tests/external/wpt/tools/third_party/',
   # TODO(maruel): Fix these.
   'third_party/devscripts/licensecheck.pl.vanilla',
-  'third_party/hyphen/',
-  'third_party/lcov-1.9/contrib/galaxy/conglomerate_functions.pl',
-  'third_party/lcov-1.9/contrib/galaxy/gen_makefile.sh',
-  'third_party/lcov/contrib/galaxy/conglomerate_functions.pl',
-  'third_party/lcov/contrib/galaxy/gen_makefile.sh',
   'third_party/libxml/linux/xml2-config',
-  'third_party/libxml/src/ltmain.sh',
-  'third_party/mesa/',
   'third_party/protobuf/',
   'third_party/sqlite/',
-  'third_party/talloc/script/mksyms.sh',
   'third_party/tcmalloc/',
   'third_party/tlslite/setup.py',
-  # TODO(nednguyen): Remove this when telemetry is moved to catapult
-  'tools/telemetry/third_party/',
 )
 
 #### USER EDITABLE SECTION ENDS HERE ####
@@ -325,7 +308,8 @@ def check_file(root_path, rel_path):
 
 
 def check_files(root, files):
-  gen = (check_file(root, f) for f in files if not is_ignored(f))
+  gen = (check_file(root, f) for f in files
+         if not is_ignored(f) and not os.path.isdir(f))
   return filter(None, gen)
 
 

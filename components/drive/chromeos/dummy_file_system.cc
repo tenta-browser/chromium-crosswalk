@@ -3,15 +3,16 @@
 // found in the LICENSE file.
 
 #include "components/drive/chromeos/dummy_file_system.h"
+#include "base/bind_helpers.h"
 
 namespace drive {
 
 base::Closure DummyFileSystem::GetFileContent(
-      const base::FilePath& file_path,
-      const GetFileContentInitializedCallback& initialized_callback,
-      const google_apis::GetContentCallback& get_content_callback,
-      const FileOperationCallback& completion_callback) {
-  return base::Bind(&base::DoNothing);
+    const base::FilePath& file_path,
+    GetFileContentInitializedCallback initialized_callback,
+    const google_apis::GetContentCallback& get_content_callback,
+    const FileOperationCallback& completion_callback) {
+  return base::DoNothing();
 }
 
 }  // namespace drive

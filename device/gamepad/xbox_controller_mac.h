@@ -16,21 +16,23 @@
 #include "base/mac/scoped_ioplugininterface.h"
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
-#include "device/gamepad/public/interfaces/gamepad.mojom.h"
+#include "device/gamepad/abstract_haptic_gamepad.h"
+#include "device/gamepad/public/mojom/gamepad.mojom.h"
 
 struct IOUSBDeviceStruct320;
 struct IOUSBInterfaceStruct300;
 
 namespace device {
 
-class XboxControllerMac {
+class XboxControllerMac : public AbstractHapticGamepad {
  public:
-  static const int kVendorMicrosoft = 0x045e;
-  static const int kProductXbox360Controller = 0x028e;
-  static const int kProductXboxOneController2013 = 0x02d1;
-  static const int kProductXboxOneController2015 = 0x02dd;
-  static const int kProductXboxOneEliteController = 0x02e3;
-  static const int kProductXboxOneSController = 0x02ea;
+  static const uint16_t kVendorMicrosoft = 0x045e;
+  static const uint16_t kProductXbox360Controller = 0x028e;
+  static const uint16_t kProductXboxOneController2013 = 0x02d1;
+  static const uint16_t kProductXboxOneController2015 = 0x02dd;
+  static const uint16_t kProductXboxOneEliteController = 0x02e3;
+  static const uint16_t kProductXboxOneSController = 0x02ea;
+  static const uint16_t kProductXboxAdaptiveController = 0x0b0a;
 
   enum ControllerType {
     UNKNOWN_CONTROLLER,
@@ -38,7 +40,8 @@ class XboxControllerMac {
     XBOX_ONE_CONTROLLER_2013,
     XBOX_ONE_CONTROLLER_2015,
     XBOX_ONE_ELITE_CONTROLLER,
-    XBOX_ONE_S_CONTROLLER
+    XBOX_ONE_S_CONTROLLER,
+    XBOX_ADAPTIVE_CONTROLLER,
   };
 
   enum LEDPattern {
@@ -77,6 +80,12 @@ class XboxControllerMac {
     LED_NUM_PATTERNS
   };
 
+  enum OpenDeviceResult {
+    OPEN_SUCCEEDED = 0,
+    OPEN_FAILED,
+    OPEN_FAILED_EXCLUSIVE_ACCESS
+  };
+
   struct Data {
     bool buttons[15];
     float triggers[2];
@@ -93,33 +102,28 @@ class XboxControllerMac {
   };
 
   explicit XboxControllerMac(Delegate* delegate);
-  virtual ~XboxControllerMac();
+  ~XboxControllerMac() override;
 
-  bool OpenDevice(io_service_t service);
+  OpenDeviceResult OpenDevice(io_service_t service);
 
   void SetLEDPattern(LEDPattern pattern);
 
-  void PlayEffect(
-      mojom::GamepadHapticEffectType type,
-      mojom::GamepadEffectParametersPtr params,
-      mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback);
-
-  void ResetVibration(
-      mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback);
+  // AbstractHapticGamepad implementation.
+  void DoShutdown() override;
+  double GetMaxEffectDurationMillis() override;
+  void SetVibration(double strong_magnitude, double weak_magnitude) override;
 
   UInt32 location_id() { return location_id_; }
-  int GetVendorId() const;
-  int GetProductId() const;
+  uint16_t GetVendorId() const;
+  uint16_t GetProductId() const;
   ControllerType GetControllerType() const;
   std::string GetControllerTypeString() const;
   std::string GetIdString() const;
+  bool SupportsVibration() const;
 
  private:
   static void WriteComplete(void* context, IOReturn result, void* arg0);
   static void GotData(void* context, IOReturn result, void* arg0);
-  static void DoRunCallback(
-      mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback,
-      mojom::GamepadHapticsResult result);
 
   void ProcessXbox360Packet(size_t length);
   void ProcessXboxOnePacket(size_t length);
@@ -127,23 +131,10 @@ class XboxControllerMac {
 
   void IOError();
 
-  void PlayDualRumbleEffect(int sequence_id,
-                            double duration,
-                            double start_delay,
-                            double strong_magnitude,
-                            double weak_magnitude);
-  void StartVibration(int sequence_id,
-                      double duration,
-                      double strong_magnitude,
-                      double weak_magnitude);
-  void StopVibration(int sequence_id);
-  void SetVibration(double strong_magnitude, double weak_magnitude);
-
-  void RunCallbackOnMojoThread(mojom::GamepadHapticsResult result);
-
   void WriteXbox360Rumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
   void WriteXboxOneInit();
   void WriteXboxOneRumble(uint8_t strong_magnitude, uint8_t weak_magnitude);
+  void WriteXboxOneAckGuide(uint8_t sequence_number);
 
   // Handle for the USB device. IOUSBDeviceStruct320 is the latest version of
   // the device API that is supported on Mac OS 10.6.
@@ -153,8 +144,8 @@ class XboxControllerMac {
   // The other interfaces (for the ChatPad and headset) are ignored.
   base::mac::ScopedIOPluginInterface<IOUSBInterfaceStruct300> interface_;
 
-  bool device_is_open_;
-  bool interface_is_open_;
+  bool device_is_open_ = false;
+  bool interface_is_open_ = false;
 
   base::ScopedCFTypeRef<CFRunLoopSourceRef> source_;
 
@@ -164,27 +155,22 @@ class XboxControllerMac {
   // aren't correctly framed. The 360 controller frames its packets with a 2
   // byte header (type, total length) so we can reframe the packet data
   // ourselves.
-  uint16_t read_buffer_size_;
+  uint16_t read_buffer_size_ = 0;
   std::unique_ptr<uint8_t[]> read_buffer_;
 
   // The pattern that the LEDs on the device are currently displaying, or
   // LED_NUM_PATTERNS if unknown.
-  LEDPattern led_pattern_;
+  LEDPattern led_pattern_ = LED_NUM_PATTERNS;
 
-  UInt32 location_id_;
+  UInt32 location_id_ = 0;
 
-  Delegate* delegate_;
+  Delegate* delegate_ = nullptr;
 
-  ControllerType controller_type_;
-  int read_endpoint_;
-  int control_endpoint_;
+  ControllerType controller_type_ = UNKNOWN_CONTROLLER;
+  int read_endpoint_ = 0;
+  int control_endpoint_ = 0;
 
-  uint8_t counter_;
-
-  int sequence_id_;
-  scoped_refptr<base::SequencedTaskRunner> playing_effect_task_runner_;
-  mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback
-      playing_effect_callback_;
+  uint8_t counter_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(XboxControllerMac);
 };

@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/prefs/chrome_command_line_pref_store.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -61,13 +61,13 @@ class ChromePrefServiceWebKitPrefs : public ChromeRenderViewHostTestHarness {
     sync_preferences::TestingPrefServiceSyncable* pref_services =
         profile()->GetTestingPrefService();
     pref_services->SetUserPref(prefs::kDefaultCharset,
-                               base::MakeUnique<base::Value>("utf8"));
+                               std::make_unique<base::Value>("utf8"));
     pref_services->SetUserPref(prefs::kWebKitDefaultFontSize,
-                               base::MakeUnique<base::Value>(20));
+                               std::make_unique<base::Value>(20));
     pref_services->SetUserPref(prefs::kWebKitTextAreasAreResizable,
-                               base::MakeUnique<base::Value>(false));
+                               std::make_unique<base::Value>(false));
     pref_services->SetUserPref("webkit.webprefs.foo",
-                               base::MakeUnique<base::Value>("bar"));
+                               std::make_unique<base::Value>("bar"));
   }
 };
 
@@ -75,7 +75,7 @@ class ChromePrefServiceWebKitPrefs : public ChromeRenderViewHostTestHarness {
 // to a WebPreferences object.
 TEST_F(ChromePrefServiceWebKitPrefs, PrefsCopied) {
   WebPreferences webkit_prefs =
-      RenderViewHostTester::For(rvh())->TestComputeWebkitPrefs();
+      RenderViewHostTester::For(rvh())->TestComputeWebPreferences();
 
   // These values have been overridden by the profile preferences.
   EXPECT_EQ("UTF-8", webkit_prefs.default_encoding);
@@ -99,4 +99,11 @@ TEST_F(ChromePrefServiceWebKitPrefs, PrefsCopied) {
   EXPECT_EQ(base::ASCIIToUTF16(kDefaultFont),
             webkit_prefs.standard_font_family_map[prefs::kWebKitCommonScript]);
   EXPECT_TRUE(webkit_prefs.javascript_enabled);
+
+#if defined(OS_ANDROID)
+  // Touch event enabled only on Android.
+  EXPECT_TRUE(webkit_prefs.touch_event_feature_detection_enabled);
+#else
+  EXPECT_FALSE(webkit_prefs.touch_event_feature_detection_enabled);
+#endif
 }

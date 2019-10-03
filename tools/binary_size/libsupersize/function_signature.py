@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Logic for parsing a C/C++ function signature."""
+"""Logic for parsing a function signatures."""
 
 
 def _FindParameterListParen(name):
@@ -77,9 +77,11 @@ def _FindReturnValueSpace(name, paren_idx):
     space_idx = paren_idx - 6
   while True:
     space_idx = _FindLastCharOutsideOfBrackets(name, ' ', space_idx)
-    # Special case: "operator new", and "operator<< <template>".
+    # Special cases: "operator new", "operator< <templ>", "operator<< <tmpl>".
+    # No space is added for operator>><tmpl>.
     if -1 == space_idx or (
         -1 == name.find('operator', space_idx - 8, space_idx) and
+        -1 == name.find('operator<', space_idx - 9, space_idx) and
         -1 == name.find('operator<<', space_idx - 10, space_idx)):
       break
     space_idx -= 8
@@ -93,13 +95,10 @@ def _StripTemplateArgs(name):
     if last_right_idx == -1:
       return name
     left_idx = _FindLastCharOutsideOfBrackets(name, '<', last_right_idx + 1)
-    if left_idx == -1:
-      return name
-    # Special case: std::operator<< <
-    if left_idx > 0 and name[left_idx - 1] == ' ':
-      left_idx -= 1
-    name = name[:left_idx] + name[last_right_idx + 1:]
-    last_right_idx = left_idx
+    if left_idx != -1:
+      # Leave in empty <>s to denote that it's a template.
+      name = name[:left_idx + 1] + name[last_right_idx:]
+      last_right_idx = left_idx
 
 
 def _NormalizeTopLevelGccLambda(name, left_paren_idx):
@@ -119,6 +118,50 @@ def _NormalizeTopLevelClangLambda(name, left_paren_idx):
   number = name[dollar_idx + 2:colon_idx]
   return '{}$lambda#{}{}'.format(
       name[:dollar_idx], number, name[left_paren_idx:])
+
+
+def ParseJava(full_name):
+  """Breaks java full_name into parts.
+
+  See unit tests for example signatures.
+
+  Returns:
+    A tuple of (full_name, template_name, name), where:
+      * full_name = "class_with_package#member(args): type"
+      * template_name = "class_with_package#member"
+      * name = "class_without_package#member
+  """
+  hash_idx = full_name.find('#')
+  if hash_idx != -1:
+    # Parse an already parsed full_name.
+    # Format: Class#symbol: type
+    full_class_name = full_name[:hash_idx]
+    colon_idx = full_name.find(':')
+    if colon_idx == -1:
+      member = full_name[hash_idx + 1:]
+      member_type = ''
+    else:
+      member = full_name[hash_idx + 1:colon_idx]
+      member_type = full_name[colon_idx:]
+  else:
+    parts = full_name.split(' ')
+    full_class_name = parts[0]
+    member = parts[-1] if len(parts) > 1 else None
+    member_type = '' if len(parts) < 3 else ': ' + parts[1]
+
+  short_class_name = full_class_name.split('.')[-1]
+
+  if member is None:
+    return full_name, full_name, short_class_name
+
+  full_name = '{}#{}{}'.format(full_class_name, member, member_type)
+  paren_idx = member.find('(')
+  if paren_idx != -1:
+    member = member[:paren_idx]
+
+  name = '{}#{}'.format(short_class_name, member)
+  template_name = '{}#{}'.format(full_class_name, member)
+  return full_name, template_name, name
 
 
 def Parse(name):

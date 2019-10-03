@@ -8,7 +8,6 @@
 #include "ash/ash_export.h"
 #include "ash/login_status.h"
 #include "ash/public/cpp/shelf_types.h"
-#include "ash/shelf/shelf_background_animator_observer.h"
 #include "base/macros.h"
 #include "ui/views/widget/widget.h"
 
@@ -20,25 +19,28 @@ namespace ash {
 class ImeMenuTray;
 class LogoutButtonTray;
 class OverviewButtonTray;
+class DictationButtonTray;
 class PaletteTray;
+class SelectToSpeakTray;
 class Shelf;
 class StatusAreaWidgetDelegate;
-class SystemTray;
+class UnifiedSystemTray;
+class TrayBackgroundView;
 class VirtualKeyboardTray;
-class WebNotificationTray;
 
-class ASH_EXPORT StatusAreaWidget : public views::Widget,
-                                    public ShelfBackgroundAnimatorObserver {
+// Widget showing the system tray, notification tray, and other tray views in
+// the bottom-right of the screen. Exists separately from ShelfView/ShelfWidget
+// so that it can be shown in cases where the rest of the shelf is hidden (e.g.
+// on secondary monitors at the login screen).
+class ASH_EXPORT StatusAreaWidget : public views::Widget {
  public:
   StatusAreaWidget(aura::Window* status_container, Shelf* shelf);
   ~StatusAreaWidget() override;
 
-  // Creates the SystemTray, WebNotificationTray and LogoutButtonTray.
-  void CreateTrayViews();
-
-  // Destroys the system tray and web notification tray. Called before
-  // tearing down the windows to avoid shutdown ordering issues.
-  void Shutdown();
+  // Creates the child tray views, initializes them, and shows the widget. Not
+  // part of the constructor because some child views call back into this object
+  // during construction.
+  void Initialize();
 
   // Update the alignment of the widget and tray views.
   void UpdateAfterShelfAlignmentChange();
@@ -48,18 +50,32 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget,
   // notification tray.
   void UpdateAfterLoginStatusChange(LoginStatus login_status);
 
+  // Sets system tray visibility. Shows or hides widget if needed.
+  void SetSystemTrayVisibility(bool visible);
+
+  // Get the tray button that the system tray bubble and the notification center
+  // bubble will be anchored. Usually |unified_system_tray_|, but when the
+  // overview button is visible (i.e. tablet mode is enabled), it returns
+  // |overview_button_tray_|.
+  TrayBackgroundView* GetSystemTrayAnchor() const;
+
   StatusAreaWidgetDelegate* status_area_widget_delegate() {
     return status_area_widget_delegate_;
   }
-  SystemTray* system_tray() { return system_tray_; }
-  WebNotificationTray* web_notification_tray() {
-    return web_notification_tray_;
+  UnifiedSystemTray* unified_system_tray() {
+    return unified_system_tray_.get();
   }
-  OverviewButtonTray* overview_button_tray() { return overview_button_tray_; }
-
-  PaletteTray* palette_tray() { return palette_tray_; }
-
-  ImeMenuTray* ime_menu_tray() { return ime_menu_tray_; }
+  DictationButtonTray* dictation_button_tray() {
+    return dictation_button_tray_.get();
+  }
+  OverviewButtonTray* overview_button_tray() {
+    return overview_button_tray_.get();
+  }
+  PaletteTray* palette_tray() { return palette_tray_.get(); }
+  ImeMenuTray* ime_menu_tray() { return ime_menu_tray_.get(); }
+  SelectToSpeakTray* select_to_speak_tray() {
+    return select_to_speak_tray_.get();
+  }
 
   Shelf* shelf() { return shelf_; }
 
@@ -79,38 +95,35 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget,
 
   // Overridden from views::Widget:
   const ui::NativeTheme* GetNativeTheme() const override;
-  void OnNativeWidgetActivationChanged(bool active) override;
+  bool OnNativeWidgetActivationChanged(bool active) override;
 
-  // ShelfBackgroundAnimatorObserver:
-  void UpdateShelfItemBackground(SkColor color) override;
-
+  // TODO(jamescook): Introduce a test API instead of these methods.
   LogoutButtonTray* logout_button_tray_for_testing() {
-    return logout_button_tray_;
+    return logout_button_tray_.get();
   }
-
   VirtualKeyboardTray* virtual_keyboard_tray_for_testing() {
-    return virtual_keyboard_tray_;
+    return virtual_keyboard_tray_.get();
   }
 
  private:
-  void AddSystemTray();
-  void AddWebNotificationTray();
-  void AddLogoutButtonTray();
-  void AddPaletteTray();
-  void AddVirtualKeyboardTray();
-  void AddImeMenuTray();
-  void AddOverviewButtonTray();
+  friend class StatusAreaWidgetTestApi;
 
-  // Weak pointers to View classes that are parented to StatusAreaWidget:
+  // views::Widget:
+  void OnMouseEvent(ui::MouseEvent* event) override;
+  void OnGestureEvent(ui::GestureEvent* event) override;
+
   StatusAreaWidgetDelegate* status_area_widget_delegate_;
-  OverviewButtonTray* overview_button_tray_;
-  SystemTray* system_tray_;
-  WebNotificationTray* web_notification_tray_;
-  LogoutButtonTray* logout_button_tray_;
-  PaletteTray* palette_tray_;
-  VirtualKeyboardTray* virtual_keyboard_tray_;
-  ImeMenuTray* ime_menu_tray_;
-  LoginStatus login_status_;
+
+  std::unique_ptr<OverviewButtonTray> overview_button_tray_;
+  std::unique_ptr<DictationButtonTray> dictation_button_tray_;
+  std::unique_ptr<UnifiedSystemTray> unified_system_tray_;
+  std::unique_ptr<LogoutButtonTray> logout_button_tray_;
+  std::unique_ptr<PaletteTray> palette_tray_;
+  std::unique_ptr<VirtualKeyboardTray> virtual_keyboard_tray_;
+  std::unique_ptr<ImeMenuTray> ime_menu_tray_;
+  std::unique_ptr<SelectToSpeakTray> select_to_speak_tray_;
+
+  LoginStatus login_status_ = LoginStatus::NOT_LOGGED_IN;
 
   Shelf* shelf_;
 

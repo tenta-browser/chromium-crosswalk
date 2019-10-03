@@ -12,15 +12,13 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.widget.EditText;
 import android.widget.TextView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.SynchronousInitializationActivity;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkModelObserver;
-import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.chrome.browser.widget.EmptyAlertEditText;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.components.bookmarks.BookmarkId;
 
@@ -44,7 +42,7 @@ public class BookmarkAddEditFolderActivity extends SynchronousInitializationActi
     private BookmarkId mParentId;
     private BookmarkModel mModel;
     private TextView mParentTextView;
-    private EmptyAlertEditText mFolderTitle;
+    private BookmarkTextInputLayout mFolderTitle;
 
     // Add mode member variable
     private List<BookmarkId> mBookmarksToMove;
@@ -135,8 +133,8 @@ public class BookmarkAddEditFolderActivity extends SynchronousInitializationActi
         }
         setContentView(R.layout.bookmark_add_edit_folder_activity);
 
-        mParentTextView = (TextView) findViewById(R.id.parent_folder);
-        mFolderTitle = (EmptyAlertEditText) findViewById(R.id.folder_title);
+        mParentTextView = findViewById(R.id.parent_folder);
+        mFolderTitle = findViewById(R.id.folder_title);
 
         mParentTextView.setOnClickListener(this);
 
@@ -152,19 +150,19 @@ public class BookmarkAddEditFolderActivity extends SynchronousInitializationActi
             getSupportActionBar().setTitle(R.string.edit_folder);
             BookmarkItem bookmarkItem = mModel.getBookmarkById(mFolderId);
             updateParent(bookmarkItem.getParentId());
-            mFolderTitle.setText(bookmarkItem.getTitle());
-            mFolderTitle.setSelection(mFolderTitle.getText().length());
+            final EditText editText = mFolderTitle.getEditText();
+            editText.setText(bookmarkItem.getTitle());
+            editText.setSelection(editText.getText().length());
             mParentTextView.setEnabled(bookmarkItem.isMovable());
         }
 
         mParentTextView.setText(mModel.getBookmarkTitle(mParentId));
 
-        if (!FeatureUtilities.isChromeHomeEnabled()) {
-            findViewById(R.id.shadow).setVisibility(View.VISIBLE);
-            toolbar.setTitleTextAppearance(toolbar.getContext(), R.style.BlackHeadline2);
-            toolbar.setBackgroundColor(
-                    ApiCompatibilityUtils.getColor(getResources(), R.color.modern_primary_color));
-        }
+        View shadow = findViewById(R.id.shadow);
+        View scrollView = findViewById(R.id.scroll_view);
+        scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
+            shadow.setVisibility(scrollView.getScrollY() > 0 ? View.VISIBLE : View.GONE);
+        });
     }
 
     @Override
@@ -182,14 +180,16 @@ public class BookmarkAddEditFolderActivity extends SynchronousInitializationActi
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         if (mIsAddMode) {
-            mSaveButton = menu.add(R.string.save)
-                    .setIcon(R.drawable.bookmark_check_gray)
-                    .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            mSaveButton =
+                    menu.add(R.string.save)
+                            .setIcon(TintedDrawable.constructTintedDrawable(this,
+                                    R.drawable.bookmark_check_gray, R.color.default_icon_color))
+                            .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         } else {
             mDeleteButton = menu.add(R.string.bookmark_action_bar_delete)
-                    .setIcon(TintedDrawable.constructTintedDrawable(
-                            getResources(), R.drawable.btn_trash))
-                    .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+                                    .setIcon(TintedDrawable.constructTintedDrawable(
+                                            this, R.drawable.ic_delete_white_24dp))
+                                    .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         }
 
         return super.onCreateOptionsMenu(menu);

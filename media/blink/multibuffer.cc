@@ -110,7 +110,7 @@ bool MultiBuffer::GlobalLRU::Pruneable() const {
 void MultiBuffer::GlobalLRU::SchedulePrune() {
   if (Pruneable() && !background_pruning_pending_) {
     task_runner_->PostDelayedTask(
-        FROM_HERE, base::Bind(&MultiBuffer::GlobalLRU::PruneTask, this),
+        FROM_HERE, base::BindOnce(&MultiBuffer::GlobalLRU::PruneTask, this),
         base::TimeDelta::FromSeconds(kBlockPruneInterval));
     background_pruning_pending_ = true;
   }
@@ -213,7 +213,7 @@ void MultiBuffer::AddReader(const BlockId& pos, Reader* reader) {
   }
   if (!provider) {
     DCHECK(writer_index_.find(pos) == writer_index_.end());
-    writer_index_[pos] = CreateWriter(pos);
+    writer_index_[pos] = CreateWriter(pos, is_client_audio_element_);
     provider = writer_index_[pos].get();
   }
   provider->SetDeferred(false);

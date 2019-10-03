@@ -12,9 +12,9 @@
 #include "ios/chrome/browser/reading_list/reading_list_download_service_factory.h"
 #import "ios/chrome/browser/ui/static_content/static_html_view_controller.h"
 #include "ios/web/public/browser_state.h"
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/reload_type.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/navigation/reload_type.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -41,11 +41,9 @@
   BOOL _restored;
 }
 
-- (instancetype)initWithLoader:(id<UrlLoader>)loader
-                  browserState:(web::BrowserState*)browserState
-                      webState:(web::WebState*)webState
-                           URL:(const GURL&)URL {
-  DCHECK(loader);
+- (instancetype)initWithBrowserState:(web::BrowserState*)browserState
+                            webState:(web::WebState*)webState
+                                 URL:(const GURL&)URL {
   DCHECK(browserState);
   DCHECK(URL.is_valid());
 
@@ -66,9 +64,7 @@
   _entryURL = reading_list::EntryURLForOfflineURL(URL);
   _virtualURL = reading_list::VirtualURLForOfflineURL(URL);
 
-  return [super initWithLoader:loader
-      staticHTMLViewController:HTMLViewController
-                           URL:URL];
+  return [super initWithStaticHTMLViewController:HTMLViewController URL:URL];
 }
 
 - (void)willBeDismissed {
@@ -81,7 +77,7 @@
   [super close];
 }
 
-- (GURL)virtualURL {
+- (const GURL&)virtualURL {
   return _virtualURL;
 }
 

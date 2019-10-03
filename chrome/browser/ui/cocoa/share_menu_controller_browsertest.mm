@@ -7,7 +7,7 @@
 #import "base/mac/scoped_nsobject.h"
 #import "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -20,6 +20,7 @@
 #include "net/base/mac/url_conversions.h"
 #include "testing/gtest_mac.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#include "ui/events/test/cocoa_test_event_utils.h"
 
 // Mock sharing service for sensing shared items.
 @interface MockSharingService : NSSharingService
@@ -60,7 +61,7 @@ class ShareMenuControllerTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     base::FilePath test_data_dir;
-    PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
+    base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
     embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
     ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -105,9 +106,6 @@ IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, PopulatesMenu) {
   // This cancels out, so only decrement if the "More..." item
   // isn't showing.
   NSInteger expected_count = [sharing_services_for_url count];
-  if (![ShareMenuController shouldShowMoreItem]) {
-    --expected_count;
-  }
   EXPECT_EQ([menu numberOfItems], expected_count);
 
   NSSharingService* reading_list_service = [NSSharingService
@@ -130,9 +128,6 @@ IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, PopulatesMenu) {
 }
 
 IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, AddsMoreButton) {
-  if (![ShareMenuController shouldShowMoreItem]) {
-    return;
-  }
   base::scoped_nsobject<NSMenu> menu([[NSMenu alloc] initWithTitle:@"Share"]);
   [controller_ menuNeedsUpdate:menu];
 
@@ -171,7 +166,7 @@ IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, SharingDelegate) {
                    MakeMockSharingService();
 
                NSWindow* browser_window =
-                   browser()->window()->GetNativeWindow();
+                   browser()->window()->GetNativeWindow().GetNativeNSWindow();
                EXPECT_NSNE([controller_ sharingService:mockService
                                sourceFrameOnScreenForShareItem:url],
                            NSZeroRect);
@@ -212,4 +207,34 @@ IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, Histograms) {
                     error:[NSError errorWithDomain:@"" code:0 userInfo:nil]];
   tester.ExpectTotalCount(histogram_name, 3);
   tester.ExpectBucketCount(histogram_name, false, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(ShareMenuControllerTest, MenuHasKeyEquivalent) {
+  // If this method isn't implemented, |menuNeedsUpdate:| is called any time
+  // *any* hotkey is used
+  ASSERT_TRUE([controller_ respondsToSelector:@selector
+                           (menuHasKeyEquivalent:forEvent:target:action:)]);
+
+  // Ensure that calling |menuHasKeyEquivalent:...| the first time populates the
+  // menu.
+  base::scoped_nsobject<NSMenu> menu([[NSMenu alloc] initWithTitle:@"Share"]);
+  EXPECT_EQ([menu numberOfItems], 0);
+  NSEvent* event = cocoa_test_event_utils::KeyEventWithKeyCode(
+      'i', 'i', NSKeyDown, NSCommandKeyMask | NSShiftKeyMask);
+  id ignored_target;
+  SEL ignored_action;
+  EXPECT_FALSE([controller_ menuHasKeyEquivalent:menu
+                                        forEvent:event
+                                          target:&ignored_target
+                                          action:&ignored_action]);
+  EXPECT_GT([menu numberOfItems], 0);
+
+  NSMenuItem* item = [menu itemAtIndex:0];
+  // |menuHasKeyEquivalent:....| shouldn't populate the menu after the first
+  // time.
+  [controller_ menuHasKeyEquivalent:menu
+                           forEvent:event
+                             target:&ignored_target
+                             action:&ignored_action];
+  EXPECT_EQ(item, [menu itemAtIndex:0]);  // Pointer equality intended.
 }

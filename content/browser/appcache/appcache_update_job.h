@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -26,15 +27,19 @@
 #include "content/browser/appcache/appcache_storage.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/content_export.h"
-#include "net/base/completion_callback.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
+#include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 FORWARD_DECLARE_TEST(AppCacheGroupTest, QueueUpdate);
 class AppCacheGroupTest;
+
+namespace appcache_update_job_unittest {
 class AppCacheUpdateJobTest;
+}
+
 class HostNotifier;
 
 // Application cache Update algorithm and state.
@@ -59,19 +64,12 @@ class CONTENT_EXPORT AppCacheUpdateJob
 
  private:
   friend class content::AppCacheGroupTest;
-  friend class content::AppCacheUpdateJobTest;
+  friend class content::appcache_update_job_unittest::AppCacheUpdateJobTest;
 
   class URLFetcher;
   class UpdateRequestBase;
   class UpdateURLLoaderRequest;
   class UpdateURLRequest;
-
-  // Master entries have multiple hosts, for example, the same page is opened
-  // in different tabs.
-  typedef std::vector<AppCacheHost*> PendingHosts;
-  typedef std::map<GURL, PendingHosts> PendingMasters;
-  typedef std::map<GURL, URLFetcher*> PendingUrlFetches;
-  typedef std::map<int64_t, GURL> LoadingResponses;
 
   static const int kRerunDelayMs = 1000;
 
@@ -109,11 +107,16 @@ class CONTENT_EXPORT AppCacheUpdateJob
     ~UrlToFetch();
 
     GURL url;
+
+    // If true, we attempted fetching the URL from storage. The fetch failed,
+    // because this instance indicates the URL still needs to be fetched.
     bool storage_checked;
+    // Cached entry with a matching URL. The entry is expired or uncacheable,
+    // but it can serve as the basis for a conditional HTTP request.
     scoped_refptr<AppCacheResponseInfo> existing_response_info;
   };
 
-  AppCacheResponseWriter* CreateResponseWriter();
+  std::unique_ptr<AppCacheResponseWriter> CreateResponseWriter();
 
   // Methods for AppCacheStorage::Delegate.
   void OnResponseInfoLoaded(AppCacheResponseInfo* response_info,
@@ -133,28 +136,37 @@ class CONTENT_EXPORT AppCacheUpdateJob
   // Methods for AppCacheServiceImpl::Observer.
   void OnServiceReinitialized(AppCacheStorageReference* old_storage) override;
 
-  void HandleCacheFailure(const AppCacheErrorDetails& details,
+  void HandleCacheFailure(const blink::mojom::AppCacheErrorDetails& details,
                           ResultType result,
                           const GURL& failed_resource_url);
 
-  void FetchManifest(bool is_first_fetch);
-  void HandleManifestFetchCompleted(URLFetcher* fetcher, int net_error);
+  // Retrieves the cache's manifest.
+  //
+  // Called when a page referencing this job's manifest is loaded. This can
+  // result in a new cache getting created, or in an existing cache receiving a
+  // new master entry.
+  void FetchManifest();
+  void HandleManifestFetchCompleted(URLFetcher* url_fetcher, int net_error);
   void ContinueHandleManifestFetchCompleted(bool changed);
 
-  void HandleUrlFetchCompleted(URLFetcher* fetcher, int net_error);
-  void HandleMasterEntryFetchCompleted(URLFetcher* fetcher, int net_error);
+  void HandleResourceFetchCompleted(URLFetcher* url_fetcher, int net_error);
+  void HandleNewMasterEntryFetchCompleted(URLFetcher* url_fetcher,
+                                          int net_error);
 
-  void HandleManifestRefetchCompleted(URLFetcher* fetcher, int net_error);
+  void RefetchManifest();
+  void HandleManifestRefetchCompleted(URLFetcher* url_fetcher, int net_error);
+
   void OnManifestInfoWriteComplete(int result);
   void OnManifestDataWriteComplete(int result);
 
   void StoreGroupAndCache();
 
-  void NotifySingleHost(AppCacheHost* host, AppCacheEventID event_id);
-  void NotifyAllAssociatedHosts(AppCacheEventID event_id);
+  void NotifySingleHost(AppCacheHost* host,
+                        blink::mojom::AppCacheEventID event_id);
+  void NotifyAllAssociatedHosts(blink::mojom::AppCacheEventID event_id);
   void NotifyAllProgress(const GURL& url);
   void NotifyAllFinalProgress();
-  void NotifyAllError(const AppCacheErrorDetails& detals);
+  void NotifyAllError(const blink::mojom::AppCacheErrorDetails& detals);
   void LogConsoleMessageToAll(const std::string& message);
   void AddAllAssociatedHostsToNotifier(HostNotifier* notifier);
 
@@ -182,7 +194,8 @@ class CONTENT_EXPORT AppCacheUpdateJob
   void AddMasterEntryToFetchList(AppCacheHost* host, const GURL& url,
                                  bool is_new);
   void FetchMasterEntries();
-  void CancelAllMasterEntryFetches(const AppCacheErrorDetails& details);
+  void CancelAllMasterEntryFetches(
+      const blink::mojom::AppCacheErrorDetails& details);
 
   // Asynchronously loads the entry from the newest complete cache if the
   // HTTP caching semantics allow.
@@ -206,7 +219,6 @@ class CONTENT_EXPORT AppCacheUpdateJob
   void DiscardInprogressCache();
   void DiscardDuplicateResponses();
 
-  void LogHistogramStats(ResultType result, const GURL& failed_resource_url);
   void MadeProgress() { last_progress_time_ = base::Time::Now(); }
 
   // Deletes this object after letting the stack unwind.
@@ -232,7 +244,10 @@ class CONTENT_EXPORT AppCacheUpdateJob
   base::Time last_progress_time_;
   bool doing_full_update_check_;
 
-  PendingMasters pending_master_entries_;
+  // Master entries have multiple hosts, for example, the same page is opened
+  // in different tabs.
+  std::map<GURL, std::vector<AppCacheHost*>> pending_master_entries_;
+
   size_t master_entries_completed_;
   std::set<GURL> failed_master_entries_;
 
@@ -242,24 +257,24 @@ class CONTENT_EXPORT AppCacheUpdateJob
   // are listed in the manifest may be fetched as a regular URL instead of
   // as a separate master entry fetch to optimize against duplicate fetches.
   std::set<GURL> master_entries_to_fetch_;
-  PendingUrlFetches master_entry_fetches_;
+  std::map<GURL, std::unique_ptr<URLFetcher>> master_entry_fetches_;
 
   // URLs of files to fetch along with their flags.
-  AppCache::EntryMap url_file_list_;
+  std::map<GURL, AppCacheEntry> url_file_list_;
   size_t url_fetches_completed_;
 
-  // Helper container to track which urls have not been fetched yet. URLs are
-  // removed when the fetch is initiated. Flag indicates whether an attempt
-  // to load the URL from storage has already been tried and failed.
+  // URLs that have not been fetched yet.
+  //
+  // URLs are removed from this set right as they are about to be fetched.
   base::circular_deque<UrlToFetch> urls_to_fetch_;
 
   // Helper container to track which urls are being loaded from response
   // storage.
-  LoadingResponses loading_responses_;
+  std::map<int64_t, GURL> loading_responses_;
 
   // Keep track of pending URL requests so we can cancel them if necessary.
-  URLFetcher* manifest_fetcher_;
-  PendingUrlFetches pending_url_fetches_;
+  std::unique_ptr<URLFetcher> manifest_fetcher_;
+  std::map<GURL, std::unique_ptr<URLFetcher>> pending_url_fetches_;
 
   // Temporary storage of manifest response data for parsing and comparison.
   std::string manifest_data_;
@@ -289,7 +304,7 @@ class CONTENT_EXPORT AppCacheUpdateJob
   StoredState stored_state_;
 
   AppCacheStorage* storage_;
-  base::WeakPtrFactory<AppCacheUpdateJob> weak_factory_;
+  base::WeakPtrFactory<AppCacheUpdateJob> weak_factory_{this};
 
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheGroupTest, QueueUpdate);
 

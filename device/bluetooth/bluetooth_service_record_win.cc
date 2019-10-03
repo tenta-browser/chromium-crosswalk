@@ -4,12 +4,14 @@
 
 #include "device/bluetooth/bluetooth_service_record_win.h"
 
+#include <math.h>
+
 #include <string>
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "device/bluetooth/bluetooth_init_win.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace {
 

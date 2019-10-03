@@ -4,7 +4,7 @@
 
 #include "components/viz/common/quads/picture_draw_quad.h"
 
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "components/viz/common/resources/platform_color.h"
@@ -28,14 +28,15 @@ void PictureDrawQuad::SetNew(
     ResourceFormat texture_format,
     const gfx::Rect& content_rect,
     float contents_scale,
+    ImageAnimationMap image_animation_map,
     scoped_refptr<cc::DisplayItemList> display_item_list) {
-  ContentDrawQuadBase::SetNew(
-      shared_quad_state, DrawQuad::PICTURE_CONTENT, rect, visible_rect,
-      needs_blending, tex_coord_rect, texture_size,
-      !PlatformColor::SameComponentOrder(texture_format), nearest_neighbor,
-      false);
+  ContentDrawQuadBase::SetNew(shared_quad_state,
+                              DrawQuad::Material::kPictureContent, rect,
+                              visible_rect, needs_blending, tex_coord_rect,
+                              texture_size, false, nearest_neighbor, false);
   this->content_rect = content_rect;
   this->contents_scale = contents_scale;
+  this->image_animation_map = std::move(image_animation_map);
   this->display_item_list = std::move(display_item_list);
   this->texture_format = texture_format;
 }
@@ -51,20 +52,21 @@ void PictureDrawQuad::SetAll(
     ResourceFormat texture_format,
     const gfx::Rect& content_rect,
     float contents_scale,
+    ImageAnimationMap image_animation_map,
     scoped_refptr<cc::DisplayItemList> display_item_list) {
-  ContentDrawQuadBase::SetAll(
-      shared_quad_state, DrawQuad::PICTURE_CONTENT, rect, visible_rect,
-      needs_blending, tex_coord_rect, texture_size,
-      !PlatformColor::SameComponentOrder(texture_format), nearest_neighbor,
-      false);
+  ContentDrawQuadBase::SetAll(shared_quad_state,
+                              DrawQuad::Material::kPictureContent, rect,
+                              visible_rect, needs_blending, tex_coord_rect,
+                              texture_size, false, nearest_neighbor, false);
   this->content_rect = content_rect;
   this->contents_scale = contents_scale;
+  this->image_animation_map = std::move(image_animation_map);
   this->display_item_list = std::move(display_item_list);
   this->texture_format = texture_format;
 }
 
 const PictureDrawQuad* PictureDrawQuad::MaterialCast(const DrawQuad* quad) {
-  DCHECK(quad->material == DrawQuad::PICTURE_CONTENT);
+  DCHECK(quad->material == DrawQuad::Material::kPictureContent);
   return static_cast<const PictureDrawQuad*>(quad);
 }
 

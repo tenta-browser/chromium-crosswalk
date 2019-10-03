@@ -14,27 +14,31 @@
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/i18n/rtl.h"
-#include "base/macros.h"
 #include "base/pickle.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/aura/window.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
+#include "ui/base/emoji/emoji_panel_helper.h"
+#include "ui/base/ime/constants.h"
+#include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method_base.h"
 #include "ui/base/ime/input_method_delegate.h"
-#include "ui/base/ime/input_method_factory.h"
 #include "ui/base/ime/text_edit_commands.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/base/ui_base_switches_util.h"
 #include "ui/events/event.h"
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/keyboard_layout.h"
@@ -49,6 +53,7 @@
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_utils.h"
 #include "url/gurl.h"
 
 #if defined(OS_WIN)
@@ -59,12 +64,13 @@
 #include "ui/base/ime/linux/text_edit_key_bindings_delegate_auralinux.h"
 #endif
 
-#if defined(USE_X11)
-#include "ui/events/event_utils.h"
+#if defined(OS_CHROMEOS)
+#include "ui/aura/window.h"
+#include "ui/wm/core/ime_util_chromeos.h"
 #endif
 
-#if defined(OS_CHROMEOS)
-#include "ui/wm/core/ime_util_chromeos.h"
+#if defined(OS_MACOSX)
+#include "ui/base/cocoa/secure_password_input.h"
 #endif
 
 using base::ASCIIToUTF16;
@@ -83,14 +89,12 @@ class MockInputMethod : public ui::InputMethodBase {
   ~MockInputMethod() override;
 
   // Overridden from InputMethod:
-  bool OnUntranslatedIMEMessage(const base::NativeEvent& event,
-                                NativeEventResult* result) override;
   ui::EventDispatchDetails DispatchKeyEvent(ui::KeyEvent* key) override;
   void OnTextInputTypeChanged(const ui::TextInputClient* client) override;
   void OnCaretBoundsChanged(const ui::TextInputClient* client) override {}
   void CancelComposition(const ui::TextInputClient* client) override;
   bool IsCandidatePopupOpen() const override;
-  void ShowImeIfNeeded() override {}
+  void ShowVirtualKeyboardIfEnabled() override {}
 
   bool untranslated_ime_message_called() const {
     return untranslated_ime_message_called_;
@@ -128,28 +132,16 @@ class MockInputMethod : public ui::InputMethodBase {
 
   // Record call state of corresponding methods. They will be set to false
   // automatically before dispatching a key event.
-  bool untranslated_ime_message_called_;
-  bool text_input_type_changed_;
-  bool cancel_composition_called_;
+  bool untranslated_ime_message_called_ = false;
+  bool text_input_type_changed_ = false;
+  bool cancel_composition_called_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(MockInputMethod);
 };
 
-MockInputMethod::MockInputMethod()
-    : untranslated_ime_message_called_(false),
-      text_input_type_changed_(false),
-      cancel_composition_called_(false) {
-}
+MockInputMethod::MockInputMethod() : ui::InputMethodBase(nullptr) {}
 
-MockInputMethod::~MockInputMethod() {
-}
-
-bool MockInputMethod::OnUntranslatedIMEMessage(const base::NativeEvent& event,
-                                               NativeEventResult* result) {
-  if (result)
-    *result = NativeEventResult();
-  return false;
-}
+MockInputMethod::~MockInputMethod() = default;
 
 ui::EventDispatchDetails MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
 // On Mac, emulate InputMethodMac behavior for character events. Composition
@@ -286,6 +278,15 @@ class TestTextfield : public views::Textfield {
     event_flags_ = 0;
   }
 
+  void OnAccessibilityEvent(ax::mojom::Event event_type) override {
+    if (event_type == ax::mojom::Event::kTextSelectionChanged)
+      ++accessibility_selection_fired_count_;
+  }
+
+  int GetAccessibilitySelectionFiredCount() {
+    return accessibility_selection_fired_count_;
+  }
+
  private:
   // views::View override:
   void OnKeyEvent(ui::KeyEvent* event) override {
@@ -310,6 +311,7 @@ class TestTextfield : public views::Textfield {
   bool key_handled_ = false;
   bool key_received_ = false;
   int event_flags_ = 0;
+  int accessibility_selection_fired_count_ = 0;
 
   base::WeakPtrFactory<TestTextfield> weak_ptr_factory_{this};
 
@@ -389,14 +391,7 @@ namespace views {
 
 class TextfieldTest : public ViewsTestBase, public TextfieldController {
  public:
-  TextfieldTest()
-      : widget_(NULL),
-        textfield_(NULL),
-        model_(NULL),
-        input_method_(NULL),
-        on_before_user_action_(0),
-        on_after_user_action_(0),
-        copied_to_clipboard_(ui::CLIPBOARD_TYPE_LAST) {
+  TextfieldTest() {
     input_method_ = new MockInputMethod();
     ui::SetUpInputMethodForTesting(input_method_);
   }
@@ -411,9 +406,17 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     ViewsTestBase::TearDown();
   }
 
+  void SetUp() override {
+    // OS clipboard is a global resource, which causes flakiness when unit tests
+    // run in parallel. So, use a per-instance test clipboard.
+    ui::Clipboard::SetClipboardForCurrentThread(
+        std::make_unique<ui::TestClipboard>());
+    ViewsTestBase::SetUp();
+  }
+
   ui::ClipboardType GetAndResetCopiedToClipboard() {
     ui::ClipboardType clipboard_type = copied_to_clipboard_;
-    copied_to_clipboard_ = ui::CLIPBOARD_TYPE_LAST;
+    copied_to_clipboard_ = ui::ClipboardType::kMaxValue;
     return clipboard_type;
   }
 
@@ -461,13 +464,13 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     widget_->SetContentsView(container);
     container->AddChildView(textfield_);
     textfield_->SetBoundsRect(params.bounds);
-    textfield_->set_id(1);
-    test_api_.reset(new TextfieldTestApi(textfield_));
+    textfield_->SetID(1);
+    test_api_ = std::make_unique<TextfieldTestApi>(textfield_);
 
     for (int i = 1; i < count; i++) {
       Textfield* textfield = new Textfield();
       container->AddChildView(textfield);
-      textfield->set_id(i + 1);
+      textfield->SetID(i + 1);
     }
 
     model_ = test_api_->model();
@@ -480,8 +483,8 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     widget_->Show();
     textfield_->RequestFocus();
 
-    event_generator_.reset(
-        new ui::test::EventGenerator(widget_->GetNativeWindow()));
+    event_generator_ =
+        std::make_unique<ui::test::EventGenerator>(GetRootWindow(widget_));
     event_generator_->set_target(ui::test::EventGenerator::Target::WINDOW);
   }
   ui::MenuModel* GetContextMenuModel() {
@@ -543,9 +546,13 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     SendKeyEvent(key_code, false, false);
   }
 
-  void SendKeyEvent(base::char16 ch) { SendKeyEvent(ch, ui::EF_NONE); }
+  void SendKeyEvent(base::char16 ch) { SendKeyEvent(ch, ui::EF_NONE, false); }
 
   void SendKeyEvent(base::char16 ch, int flags) {
+    SendKeyEvent(ch, flags, false);
+  }
+
+  void SendKeyEvent(base::char16 ch, int flags, bool from_vk) {
     if (ch < 0x80) {
       ui::KeyboardCode code =
           ch == ' ' ? ui::VKEY_SPACE :
@@ -556,7 +563,13 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
       // keyboard. So they are dispatched directly to the input method. But on
       // Mac, key events don't pass through InputMethod. Hence they are
       // dispatched regularly.
-      ui::KeyEvent event(ch, ui::VKEY_UNKNOWN, flags);
+      ui::KeyEvent event(ch, ui::VKEY_UNKNOWN, ui::DomCode::NONE, flags);
+      if (from_vk) {
+        ui::Event::Properties properties;
+        properties[ui::kPropertyFromVK] =
+            std::vector<uint8_t>(ui::kPropertyFromVKSize);
+        event.SetProperties(properties);
+      }
 #if defined(OS_MACOSX)
       event_generator_->Dispatch(&event);
 #else
@@ -564,6 +577,15 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
 #endif
     }
   }
+
+  // Send a key to trigger MockInputMethod::DispatchKeyEvent(). Note the
+  // specific VKEY isn't used (MockInputMethod will mock a ui::VKEY_PROCESSKEY
+  // whenever it has a test composition). However, on Mac, it can't be a letter
+  // (e.g. VKEY_A) since all native character events on Mac are unicode events
+  // and don't have a meaningful ui::KeyEvent that would trigger
+  // DispatchKeyEvent(). It also can't be VKEY_ENTER, since those key events may
+  // need to be suppressed when interacting with real system IME.
+  void DispatchMockInputMethodKeyEvent() { SendKeyEvent(ui::VKEY_INSERT); }
 
   // Sends a platform-specific move (and select) to the logical start of line.
   // Eg. this should move (and select) to the right end of line for RTL text.
@@ -688,21 +710,39 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     const bool is_all_selected = !text.empty() &&
         textfield_->GetSelectedRange().length() == text.length();
 
-    EXPECT_EQ(can_undo, menu->IsEnabledAt(0 /* UNDO */));
-    EXPECT_TRUE(menu->IsEnabledAt(1 /* Separator */));
-    EXPECT_EQ(textfield_has_selection, menu->IsEnabledAt(2 /* CUT */));
-    EXPECT_EQ(textfield_has_selection, menu->IsEnabledAt(3 /* COPY */));
-    EXPECT_NE(GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE).empty(),
-              menu->IsEnabledAt(4 /* PASTE */));
-    EXPECT_EQ(textfield_has_selection, menu->IsEnabledAt(5 /* DELETE */));
-    EXPECT_TRUE(menu->IsEnabledAt(6 /* Separator */));
-    EXPECT_EQ(!is_all_selected, menu->IsEnabledAt(7 /* SELECT ALL */));
+    int menu_index = 0;
+
+#if defined(OS_MACOSX)
+    if (textfield_has_selection) {
+      EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* Look Up "Selection" */));
+      EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* Separator */));
+    }
+#endif
+
+    if (ui::IsEmojiPanelSupported()) {
+      EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* EMOJI */));
+      EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* Separator */));
+    }
+
+    EXPECT_EQ(can_undo, menu->IsEnabledAt(menu_index++ /* UNDO */));
+    EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* Separator */));
+    EXPECT_EQ(textfield_has_selection,
+              menu->IsEnabledAt(menu_index++ /* CUT */));
+    EXPECT_EQ(textfield_has_selection,
+              menu->IsEnabledAt(menu_index++ /* COPY */));
+    EXPECT_NE(GetClipboardText(ui::ClipboardType::kCopyPaste).empty(),
+              menu->IsEnabledAt(menu_index++ /* PASTE */));
+    EXPECT_EQ(textfield_has_selection,
+              menu->IsEnabledAt(menu_index++ /* DELETE */));
+    EXPECT_TRUE(menu->IsEnabledAt(menu_index++ /* Separator */));
+    EXPECT_EQ(!is_all_selected,
+              menu->IsEnabledAt(menu_index++ /* SELECT ALL */));
   }
 
-  void PressMouseButton(ui::EventFlags mouse_button_flags, int extra_flags) {
+  void PressMouseButton(ui::EventFlags mouse_button_flags) {
     ui::MouseEvent press(ui::ET_MOUSE_PRESSED, mouse_position_, mouse_position_,
                          ui::EventTimeForNow(), mouse_button_flags,
-                         mouse_button_flags | extra_flags);
+                         mouse_button_flags);
     textfield_->OnMousePressed(press);
   }
 
@@ -713,21 +753,21 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
     textfield_->OnMouseReleased(release);
   }
 
-  void PressLeftMouseButton(int extra_flags = 0) {
-    PressMouseButton(ui::EF_LEFT_MOUSE_BUTTON, extra_flags);
+  void PressLeftMouseButton() {
+    PressMouseButton(ui::EF_LEFT_MOUSE_BUTTON);
   }
 
   void ReleaseLeftMouseButton() {
     ReleaseMouseButton(ui::EF_LEFT_MOUSE_BUTTON);
   }
 
-  void ClickLeftMouseButton(int extra_flags = 0) {
-    PressLeftMouseButton(extra_flags);
+  void ClickLeftMouseButton() {
+    PressLeftMouseButton();
     ReleaseLeftMouseButton();
   }
 
   void ClickRightMouseButton() {
-    PressMouseButton(ui::EF_RIGHT_MOUSE_BUTTON, 0);
+    PressMouseButton(ui::EF_RIGHT_MOUSE_BUTTON);
     ReleaseMouseButton(ui::EF_RIGHT_MOUSE_BUTTON);
   }
 
@@ -743,27 +783,27 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
   void MoveMouseTo(const gfx::Point& where) { mouse_position_ = where; }
 
   // We need widget to populate wrapper class.
-  Widget* widget_;
+  Widget* widget_ = nullptr;
 
-  TestTextfield* textfield_;
+  TestTextfield* textfield_ = nullptr;
   std::unique_ptr<TextfieldTestApi> test_api_;
-  TextfieldModel* model_;
+  TextfieldModel* model_ = nullptr;
 
   // The string from Controller::ContentsChanged callback.
   base::string16 last_contents_;
 
   // For testing input method related behaviors.
-  MockInputMethod* input_method_;
+  MockInputMethod* input_method_ = nullptr;
 
   // Indicates how many times OnBeforeUserAction() is called.
-  int on_before_user_action_;
+  int on_before_user_action_ = 0;
 
   // Indicates how many times OnAfterUserAction() is called.
-  int on_after_user_action_;
+  int on_after_user_action_ = 0;
 
   // Position of the mouse for synthetic mouse events.
   gfx::Point mouse_position_;
-  ui::ClipboardType copied_to_clipboard_;
+  ui::ClipboardType copied_to_clipboard_ = ui::ClipboardType::kMaxValue;
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
 
  private:
@@ -890,7 +930,13 @@ TEST_F(TextfieldTest, ControlAndSelectTest) {
 
   // Test word select.
   SendWordEvent(ui::VKEY_RIGHT, true);
+#if defined(OS_WIN)  // Windows breaks on word starts and includes spaces.
+  EXPECT_STR_EQ("one ", textfield_->GetSelectedText());
+  SendWordEvent(ui::VKEY_RIGHT, true);
+  EXPECT_STR_EQ("one two ", textfield_->GetSelectedText());
+#else  // Non-Windows breaks on word ends and does NOT include spaces.
   EXPECT_STR_EQ("one two", textfield_->GetSelectedText());
+#endif
   SendWordEvent(ui::VKEY_RIGHT, true);
   EXPECT_STR_EQ("one two three", textfield_->GetSelectedText());
   SendWordEvent(ui::VKEY_LEFT, true);
@@ -923,11 +969,15 @@ TEST_F(TextfieldTest, WordSelection) {
   textfield_->SetText(ASCIIToUTF16("12 34567 89"));
 
   // Place the cursor after "5".
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
   // Select word towards right.
   SendWordEvent(ui::VKEY_RIGHT, true);
+#if defined(OS_WIN)  // Select word right includes space/punctuation.
+  EXPECT_STR_EQ("67 ", textfield_->GetSelectedText());
+#else  // Non-Win: select word right does NOT include space/punctuation.
   EXPECT_STR_EQ("67", textfield_->GetSelectedText());
+#endif
   SendWordEvent(ui::VKEY_RIGHT, true);
   EXPECT_STR_EQ("67 89", textfield_->GetSelectedText());
 
@@ -962,7 +1012,7 @@ TEST_F(TextfieldTest, LineSelection) {
   textfield_->SetText(ASCIIToUTF16("12 34567 89"));
 
   // Place the cursor after "5".
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
   // Select line towards right.
   SendEndEvent(true);
@@ -991,7 +1041,7 @@ TEST_F(TextfieldTest, LineSelection) {
 TEST_F(TextfieldTest, MoveUpDownAndModifySelection) {
   InitTextfield();
   textfield_->SetText(ASCIIToUTF16("12 34567 89"));
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
   // Up/Down keys won't be handled except on Mac where they map to move
   // commands.
@@ -1015,29 +1065,20 @@ TEST_F(TextfieldTest, MoveUpDownAndModifySelection) {
 #endif
   textfield_->clear();
 
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
-  // Shift+[Up/Down] on Mac should execute the command
-  // MOVE_[UP/DOWN]_AND_MODIFY_SELECTION. On other platforms, textfield won't
-  // handle these events.
+  // Shift+[Up/Down] should select the text to the beginning and end of the
+  // line, respectively.
   SendKeyEvent(ui::VKEY_UP, true /* shift */, false /* command */);
   EXPECT_TRUE(textfield_->key_received());
-#if defined(OS_MACOSX)
   EXPECT_TRUE(textfield_->key_handled());
   EXPECT_EQ(gfx::Range(6, 0), textfield_->GetSelectedRange());
-#else
-  EXPECT_FALSE(textfield_->key_handled());
-#endif
   textfield_->clear();
 
   SendKeyEvent(ui::VKEY_DOWN, true /* shift */, false /* command */);
   EXPECT_TRUE(textfield_->key_received());
-#if defined(OS_MACOSX)
   EXPECT_TRUE(textfield_->key_handled());
   EXPECT_EQ(gfx::Range(6, 11), textfield_->GetSelectedRange());
-#else
-  EXPECT_FALSE(textfield_->key_handled());
-#endif
   textfield_->clear();
 }
 
@@ -1048,7 +1089,7 @@ TEST_F(TextfieldTest, MovePageUpDownAndModifySelection) {
 // enabled on Mac.
 #if defined(OS_MACOSX)
   textfield_->SetText(ASCIIToUTF16("12 34567 89"));
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
   EXPECT_TRUE(
       textfield_->IsTextEditCommandEnabled(ui::TextEditCommand::MOVE_PAGE_UP));
@@ -1065,7 +1106,7 @@ TEST_F(TextfieldTest, MovePageUpDownAndModifySelection) {
   test_api_->ExecuteTextEditCommand(ui::TextEditCommand::MOVE_PAGE_DOWN);
   EXPECT_EQ(gfx::Range(11), textfield_->GetSelectedRange());
 
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
   test_api_->ExecuteTextEditCommand(
       ui::TextEditCommand::MOVE_PAGE_UP_AND_MODIFY_SELECTION);
   EXPECT_EQ(gfx::Range(6, 0), textfield_->GetSelectedRange());
@@ -1088,7 +1129,7 @@ TEST_F(TextfieldTest, MovePageUpDownAndModifySelection) {
 TEST_F(TextfieldTest, MoveParagraphForwardBackwardAndModifySelection) {
   InitTextfield();
   textfield_->SetText(ASCIIToUTF16("12 34567 89"));
-  textfield_->SetSelectionRange(gfx::Range(6));
+  textfield_->SetEditableSelectionRange(gfx::Range(6));
 
   test_api_->ExecuteTextEditCommand(
       ui::TextEditCommand::MOVE_PARAGRAPH_FORWARD_AND_MODIFY_SELECTION);
@@ -1126,10 +1167,10 @@ TEST_F(TextfieldTest, InsertionDeletionTest) {
 
   // Test the delete and backspace keys.
   textfield_->SelectRange(gfx::Range(5));
-  for (int i = 0; i < 3; i++)
+  for (size_t i = 0; i < 3; i++)
     SendKeyEvent(ui::VKEY_BACK);
   EXPECT_STR_EQ("abfghij", textfield_->text());
-  for (int i = 0; i < 3; i++)
+  for (size_t i = 0; i < 3; i++)
     SendKeyEvent(ui::VKEY_DELETE);
   EXPECT_STR_EQ("abij", textfield_->text());
 
@@ -1161,8 +1202,11 @@ TEST_F(TextfieldTest, InsertionDeletionTest) {
   shift = false;
   SendHomeEvent(shift);
   SendWordEvent(ui::VKEY_DELETE, shift);
+#if defined(OS_WIN)  // Delete word incldes space/punctuation.
+  EXPECT_STR_EQ("two three four", textfield_->text());
+#else  // Non-Windows: delete word does NOT include space/punctuation.
   EXPECT_STR_EQ(" two three four", textfield_->text());
-
+#endif
   // Delete to a line break on Linux and ChromeOS, to a word break on Windows
   // and Mac.
   SendWordEvent(ui::VKEY_RIGHT, shift);
@@ -1170,6 +1214,8 @@ TEST_F(TextfieldTest, InsertionDeletionTest) {
   SendWordEvent(ui::VKEY_DELETE, shift);
 #if defined(OS_LINUX)
   EXPECT_STR_EQ(" two", textfield_->text());
+#elif defined(OS_WIN)
+  EXPECT_STR_EQ("two four", textfield_->text());
 #else
   EXPECT_STR_EQ(" two four", textfield_->text());
 #endif
@@ -1190,7 +1236,7 @@ TEST_F(TextfieldTest, DeletionWithSelection) {
   InitTextfield();
   // [Ctrl] ([Alt] on Mac) + [Delete]/[Backspace] should delete the active
   // selection, regardless of [Shift].
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing cases[%" PRIuS "]", i));
     textfield_->SetText(ASCIIToUTF16("one two three"));
     textfield_->SelectRange(gfx::Range(2, 6));
@@ -1202,11 +1248,33 @@ TEST_F(TextfieldTest, DeletionWithSelection) {
   }
 }
 
+// Test deletions not covered by other tests with key events.
+TEST_F(TextfieldTest, DeletionWithEditCommands) {
+  struct {
+    ui::TextEditCommand command;
+    const char* expected;
+  } cases[] = {
+      {ui::TextEditCommand::DELETE_TO_BEGINNING_OF_LINE, "two three"},
+      {ui::TextEditCommand::DELETE_TO_BEGINNING_OF_PARAGRAPH, "two three"},
+      {ui::TextEditCommand::DELETE_TO_END_OF_LINE, "one "},
+      {ui::TextEditCommand::DELETE_TO_END_OF_PARAGRAPH, "one "},
+  };
+
+  InitTextfield();
+  for (size_t i = 0; i < base::size(cases); ++i) {
+    SCOPED_TRACE(base::StringPrintf("Testing cases[%" PRIuS "]", i));
+    textfield_->SetText(ASCIIToUTF16("one two three"));
+    textfield_->SelectRange(gfx::Range(4));
+    test_api_->ExecuteTextEditCommand(cases[i].command);
+    EXPECT_STR_EQ(cases[i].expected, textfield_->text());
+  }
+}
+
 TEST_F(TextfieldTest, PasswordTest) {
   InitTextfield();
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   EXPECT_EQ(ui::TEXT_INPUT_TYPE_PASSWORD, textfield_->GetTextInputType());
-  EXPECT_TRUE(textfield_->enabled());
+  EXPECT_TRUE(textfield_->GetEnabled());
   EXPECT_TRUE(textfield_->IsFocusable());
 
   last_contents_.clear();
@@ -1215,7 +1283,7 @@ TEST_F(TextfieldTest, PasswordTest) {
   EXPECT_STR_EQ("password", textfield_->text());
   EXPECT_TRUE(last_contents_.empty());
   model_->SelectAll(false);
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "foo");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "foo");
 
   // Cut and copy should be disabled.
   EXPECT_FALSE(textfield_->IsCommandIdEnabled(IDS_APP_CUT));
@@ -1225,7 +1293,7 @@ TEST_F(TextfieldTest, PasswordTest) {
   textfield_->ExecuteCommand(IDS_APP_COPY, 0);
   SendKeyEvent(ui::VKEY_C, false, true);
   SendAlternateCopy();
-  EXPECT_STR_EQ("foo", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("foo", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("password", textfield_->text());
   // [Shift]+[Delete] should just delete without copying text to the clipboard.
   textfield_->SelectAll(false);
@@ -1236,7 +1304,7 @@ TEST_F(TextfieldTest, PasswordTest) {
   textfield_->ExecuteCommand(IDS_APP_PASTE, 0);
   SendKeyEvent(ui::VKEY_V, false, true);
   SendAlternatePaste();
-  EXPECT_STR_EQ("foo", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("foo", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("foofoofoo", textfield_->text());
 }
 
@@ -1248,8 +1316,15 @@ TEST_F(TextfieldTest, TextInputType_InsertionTest) {
   EXPECT_EQ(ui::TEXT_INPUT_TYPE_PASSWORD, textfield_->GetTextInputType());
 
   SendKeyEvent(ui::VKEY_A);
-  SendKeyEvent(kHebrewLetterSamekh);
+  EXPECT_EQ(-1, textfield_->GetPasswordCharRevealIndex());
+  SendKeyEvent(kHebrewLetterSamekh, ui::EF_NONE, true /* from_vk */);
+#if !defined(OS_MACOSX)
+  // Don't verifies the password character reveal on MacOS, because on MacOS,
+  // the text insertion is not done through TextInputClient::InsertChar().
+  EXPECT_EQ(1, textfield_->GetPasswordCharRevealIndex());
+#endif
   SendKeyEvent(ui::VKEY_B);
+  EXPECT_EQ(-1, textfield_->GetPasswordCharRevealIndex());
 
   EXPECT_EQ(WideToUTF16(L"a\x05E1"
                         L"b"),
@@ -1338,8 +1413,8 @@ TEST_F(TextfieldTest, OnKeyPressBinding) {
   // Install a TextEditKeyBindingsDelegateAuraLinux that does nothing.
   class TestDelegate : public ui::TextEditKeyBindingsDelegateAuraLinux {
    public:
-    TestDelegate() {}
-    ~TestDelegate() override {}
+    TestDelegate() = default;
+    ~TestDelegate() override = default;
 
     bool MatchEvent(
         const ui::Event& event,
@@ -1373,7 +1448,7 @@ TEST_F(TextfieldTest, OnKeyPressBinding) {
   textfield_->clear();
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  ui::SetTextEditKeyBindingsDelegate(NULL);
+  ui::SetTextEditKeyBindingsDelegate(nullptr);
 #endif
 }
 
@@ -1393,6 +1468,20 @@ TEST_F(TextfieldTest, CursorMovement) {
   EXPECT_STR_EQ("one two thre ", textfield_->text());
   EXPECT_STR_EQ("one two thre ", last_contents_);
 
+#if defined(OS_WIN)  // Move right by word includes space/punctuation.
+  // Ctrl+Right should move the cursor to the end of the last word.
+  SendWordEvent(ui::VKEY_RIGHT, shift);
+  SendKeyEvent(ui::VKEY_E);
+  EXPECT_STR_EQ("one two thre e", textfield_->text());
+  EXPECT_STR_EQ("one two thre e", last_contents_);
+
+  // Ctrl+Right again should not move the cursor, because
+  // it is aleady at the end.
+  SendWordEvent(ui::VKEY_RIGHT, shift);
+  SendKeyEvent(ui::VKEY_BACK);
+  EXPECT_STR_EQ("one two thre ", textfield_->text());
+  EXPECT_STR_EQ("one two thre ", last_contents_);
+#else  // Non-Windows: move right by word does NOT include space/punctuation.
   // Ctrl+Right should move the cursor to the end of the last word.
   SendWordEvent(ui::VKEY_RIGHT, shift);
   SendKeyEvent(ui::VKEY_E);
@@ -1404,7 +1493,7 @@ TEST_F(TextfieldTest, CursorMovement) {
   SendKeyEvent(ui::VKEY_BACK);
   EXPECT_STR_EQ("one two three", textfield_->text());
   EXPECT_STR_EQ("one two three", last_contents_);
-
+#endif
   // Test with leading whitespace.
   textfield_->SetText(ASCIIToUTF16(" ne two"));
 
@@ -1414,6 +1503,9 @@ TEST_F(TextfieldTest, CursorMovement) {
   // Ctrl+Right, then Ctrl+Left should move the cursor to the beginning of the
   // first word.
   SendWordEvent(ui::VKEY_RIGHT, shift);
+#if defined(OS_WIN)  // Windows breaks on word start, move further to pass "ne".
+  SendWordEvent(ui::VKEY_RIGHT, shift);
+#endif
   SendWordEvent(ui::VKEY_LEFT, shift);
   SendKeyEvent(ui::VKEY_O);
   EXPECT_STR_EQ(" one two", textfield_->text());
@@ -1432,61 +1524,62 @@ TEST_F(TextfieldTest, FocusTraversalTest) {
   InitTextfields(3);
   textfield_->RequestFocus();
 
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
   widget_->GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   widget_->GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
   // Cycle back to the first textfield.
   widget_->GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
 
   widget_->GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
   widget_->GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   widget_->GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
   // Cycle back to the last textfield.
   widget_->GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
 
   // Request focus should still work.
   textfield_->RequestFocus();
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
 
   // Test if clicking on textfield view sets the focus.
   widget_->GetFocusManager()->AdvanceFocus(true);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
   MoveMouseTo(gfx::Point(0, GetCursorYForTesting()));
   ClickLeftMouseButton();
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
 
   // Tab/Shift+Tab should also cycle focus, not insert a tab character.
   SendKeyEvent(ui::VKEY_TAB, false, false);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   SendKeyEvent(ui::VKEY_TAB, false, false);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
   // Cycle back to the first textfield.
   SendKeyEvent(ui::VKEY_TAB, false, false);
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
 
   SendKeyEvent(ui::VKEY_TAB, true, false);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
   SendKeyEvent(ui::VKEY_TAB, true, false);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   SendKeyEvent(ui::VKEY_TAB, true, false);
-  EXPECT_EQ(1, GetFocusedView()->id());
+  EXPECT_EQ(1, GetFocusedView()->GetID());
   // Cycle back to the last textfield.
   SendKeyEvent(ui::VKEY_TAB, true, false);
-  EXPECT_EQ(3, GetFocusedView()->id());
+  EXPECT_EQ(3, GetFocusedView()->GetID());
 }
 
 TEST_F(TextfieldTest, ContextMenuDisplayTest) {
   InitTextfield();
+
   EXPECT_TRUE(textfield_->context_menu_controller());
   textfield_->SetText(ASCIIToUTF16("hello world"));
-  ui::Clipboard::GetForCurrentThread()->Clear(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  ui::Clipboard::GetForCurrentThread()->Clear(ui::ClipboardType::kCopyPaste);
   textfield_->ClearEditHistory();
   EXPECT_TRUE(GetContextMenuModel());
   VerifyTextfieldContextMenuContents(false, false, GetContextMenuModel());
@@ -1501,7 +1594,7 @@ TEST_F(TextfieldTest, ContextMenuDisplayTest) {
   VerifyTextfieldContextMenuContents(true, true, GetContextMenuModel());
 
   // Exercise the "paste enabled?" check in the verifier.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "Test");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "Test");
   VerifyTextfieldContextMenuContents(true, true, GetContextMenuModel());
 }
 
@@ -1513,7 +1606,7 @@ TEST_F(TextfieldTest, DoubleAndTripleClickTest) {
   MoveMouseTo(gfx::Point(0, GetCursorYForTesting()));
   ClickLeftMouseButton();
   EXPECT_TRUE(textfield_->GetSelectedText().empty());
-  ClickLeftMouseButton(ui::EF_IS_DOUBLE_CLICK);
+  ClickLeftMouseButton();
   EXPECT_STR_EQ("hello", textfield_->GetSelectedText());
 
   // Test for triple click.
@@ -1631,7 +1724,7 @@ TEST_F(TextfieldTest, DragAndDrop_AcceptDrop) {
   base::string16 string(ASCIIToUTF16("string "));
   data.SetString(string);
   int formats = 0;
-  std::set<ui::Clipboard::FormatType> format_types;
+  std::set<ui::ClipboardFormatType> format_types;
 
   // Ensure that disabled textfields do not accept drops.
   textfield_->SetEnabled(false);
@@ -1654,7 +1747,7 @@ TEST_F(TextfieldTest, DragAndDrop_AcceptDrop) {
   EXPECT_EQ(ui::OSExchangeData::STRING, formats);
   EXPECT_TRUE(format_types.empty());
   EXPECT_TRUE(textfield_->CanDrop(data));
-  gfx::Point drop_point(GetCursorPositionX(6), 0);
+  gfx::PointF drop_point(GetCursorPositionX(6), 0);
   ui::DropTargetEvent drop(data, drop_point, drop_point,
       ui::DragDropTypes::DRAG_COPY | ui::DragDropTypes::DRAG_MOVE);
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY | ui::DragDropTypes::DRAG_MOVE,
@@ -1665,11 +1758,11 @@ TEST_F(TextfieldTest, DragAndDrop_AcceptDrop) {
   // Ensure that textfields do not accept non-OSExchangeData::STRING types.
   ui::OSExchangeData bad_data;
   bad_data.SetFilename(base::FilePath(FILE_PATH_LITERAL("x")));
-  ui::Clipboard::FormatType fmt = ui::Clipboard::GetBitmapFormatType();
+  ui::ClipboardFormatType fmt = ui::ClipboardFormatType::GetBitmapType();
   bad_data.SetPickledData(fmt, base::Pickle());
   bad_data.SetFileContents(base::FilePath(L"x"), "x");
   bad_data.SetHtml(base::string16(ASCIIToUTF16("x")), GURL("x.org"));
-  ui::OSExchangeData::DownloadFileInfo download(base::FilePath(), NULL);
+  ui::OSExchangeData::DownloadFileInfo download(base::FilePath(), nullptr);
   bad_data.SetDownloadFileInfo(download);
   EXPECT_FALSE(textfield_->CanDrop(bad_data));
 }
@@ -1685,36 +1778,36 @@ TEST_F(TextfieldTest, DragAndDrop_InitiateDrag) {
   const gfx::Range kStringRange(6, 12);
   textfield_->SelectRange(kStringRange);
   const gfx::Point kStringPoint(GetCursorPositionX(9), GetCursorYForTesting());
-  textfield_->WriteDragDataForView(NULL, kStringPoint, &data);
+  textfield_->WriteDragDataForView(nullptr, kStringPoint, &data);
   EXPECT_TRUE(data.GetString(&string));
   EXPECT_EQ(textfield_->GetSelectedText(), string);
 
   // Ensure that disabled textfields do not support drag operations.
   textfield_->SetEnabled(false);
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE,
-            textfield_->GetDragOperationsForView(NULL, kStringPoint));
+            textfield_->GetDragOperationsForView(nullptr, kStringPoint));
   textfield_->SetEnabled(true);
   // Ensure that textfields without selections do not support drag operations.
   textfield_->ClearSelection();
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE,
-            textfield_->GetDragOperationsForView(NULL, kStringPoint));
+            textfield_->GetDragOperationsForView(nullptr, kStringPoint));
   textfield_->SelectRange(kStringRange);
   // Ensure that password textfields do not support drag operations.
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE,
-            textfield_->GetDragOperationsForView(NULL, kStringPoint));
+            textfield_->GetDragOperationsForView(nullptr, kStringPoint));
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_TEXT);
   MoveMouseTo(kStringPoint);
   PressLeftMouseButton();
   // Ensure that textfields only initiate drag operations inside the selection.
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE,
-            textfield_->GetDragOperationsForView(NULL, gfx::Point()));
-  EXPECT_FALSE(textfield_->CanStartDragForView(NULL, gfx::Point(),
-                                               gfx::Point()));
+            textfield_->GetDragOperationsForView(nullptr, gfx::Point()));
+  EXPECT_FALSE(
+      textfield_->CanStartDragForView(nullptr, gfx::Point(), gfx::Point()));
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY,
-            textfield_->GetDragOperationsForView(NULL, kStringPoint));
-  EXPECT_TRUE(textfield_->CanStartDragForView(NULL, kStringPoint,
-                                              gfx::Point()));
+            textfield_->GetDragOperationsForView(nullptr, kStringPoint));
+  EXPECT_TRUE(
+      textfield_->CanStartDragForView(nullptr, kStringPoint, gfx::Point()));
   // Ensure that textfields support local moves.
   EXPECT_EQ(ui::DragDropTypes::DRAG_MOVE | ui::DragDropTypes::DRAG_COPY,
       textfield_->GetDragOperationsForView(textfield_, kStringPoint));
@@ -1729,7 +1822,7 @@ TEST_F(TextfieldTest, DragAndDrop_ToTheRight) {
   ui::OSExchangeData data;
   int formats = 0;
   int operations = 0;
-  std::set<ui::Clipboard::FormatType> format_types;
+  std::set<ui::ClipboardFormatType> format_types;
 
   // Start dragging "ello".
   textfield_->SelectRange(gfx::Range(1, 5));
@@ -1748,7 +1841,7 @@ TEST_F(TextfieldTest, DragAndDrop_ToTheRight) {
   EXPECT_TRUE(format_types.empty());
 
   // Drop "ello" after "w".
-  const gfx::Point kDropPoint(GetCursorPositionX(7), cursor_y);
+  const gfx::PointF kDropPoint(GetCursorPositionX(7), cursor_y);
   EXPECT_TRUE(textfield_->CanDrop(data));
   ui::DropTargetEvent drop_a(data, kDropPoint, kDropPoint, operations);
   EXPECT_EQ(ui::DragDropTypes::DRAG_MOVE, textfield_->OnDragUpdated(drop_a));
@@ -1780,7 +1873,7 @@ TEST_F(TextfieldTest, DragAndDrop_ToTheLeft) {
   ui::OSExchangeData data;
   int formats = 0;
   int operations = 0;
-  std::set<ui::Clipboard::FormatType> format_types;
+  std::set<ui::ClipboardFormatType> format_types;
 
   // Start dragging " worl".
   textfield_->SelectRange(gfx::Range(5, 10));
@@ -1800,7 +1893,7 @@ TEST_F(TextfieldTest, DragAndDrop_ToTheLeft) {
 
   // Drop " worl" after "h".
   EXPECT_TRUE(textfield_->CanDrop(data));
-  gfx::Point drop_point(GetCursorPositionX(1), cursor_y);
+  gfx::PointF drop_point(GetCursorPositionX(1), cursor_y);
   ui::DropTargetEvent drop_a(data, drop_point, drop_point, operations);
   EXPECT_EQ(ui::DragDropTypes::DRAG_MOVE, textfield_->OnDragUpdated(drop_a));
   EXPECT_EQ(ui::DragDropTypes::DRAG_MOVE, textfield_->OnPerformDrop(drop_a));
@@ -1836,7 +1929,7 @@ TEST_F(TextfieldTest, DragAndDrop_Canceled) {
   textfield_->WriteDragDataForView(nullptr, point, &data);
   EXPECT_TRUE(textfield_->CanDrop(data));
   // Drag the text over somewhere valid, outside the current selection.
-  gfx::Point drop_point(GetCursorPositionX(2), cursor_y);
+  gfx::PointF drop_point(GetCursorPositionX(2), cursor_y);
   ui::DropTargetEvent drop(data, drop_point, drop_point,
                            ui::DragDropTypes::DRAG_MOVE);
   EXPECT_EQ(ui::DragDropTypes::DRAG_MOVE, textfield_->OnDragUpdated(drop));
@@ -1851,7 +1944,7 @@ TEST_F(TextfieldTest, ReadOnlyTest) {
   InitTextfield();
   textfield_->SetText(ASCIIToUTF16("read only"));
   textfield_->SetReadOnly(true);
-  EXPECT_TRUE(textfield_->enabled());
+  EXPECT_TRUE(textfield_->GetEnabled());
   EXPECT_TRUE(textfield_->IsFocusable());
 
   bool shift = false;
@@ -1872,12 +1965,12 @@ TEST_F(TextfieldTest, ReadOnlyTest) {
   EXPECT_STR_EQ("read only", textfield_->GetSelectedText());
 
   // Cut should be disabled.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "Test");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "Test");
   EXPECT_FALSE(textfield_->IsCommandIdEnabled(IDS_APP_CUT));
   textfield_->ExecuteCommand(IDS_APP_CUT, 0);
   SendKeyEvent(ui::VKEY_X, false, true);
   SendAlternateCut();
-  EXPECT_STR_EQ("Test", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("Test", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("read only", textfield_->text());
 
   // Paste should be disabled.
@@ -1888,16 +1981,16 @@ TEST_F(TextfieldTest, ReadOnlyTest) {
   EXPECT_STR_EQ("read only", textfield_->text());
 
   // Copy should work normally.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "Test");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "Test");
   EXPECT_TRUE(textfield_->IsCommandIdEnabled(IDS_APP_COPY));
   textfield_->ExecuteCommand(IDS_APP_COPY, 0);
-  EXPECT_STR_EQ("read only", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "Test");
+  EXPECT_STR_EQ("read only", GetClipboardText(ui::ClipboardType::kCopyPaste));
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "Test");
   SendKeyEvent(ui::VKEY_C, false, true);
-  EXPECT_STR_EQ("read only", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "Test");
+  EXPECT_STR_EQ("read only", GetClipboardText(ui::ClipboardType::kCopyPaste));
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "Test");
   SendAlternateCopy();
-  EXPECT_STR_EQ("read only", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("read only", GetClipboardText(ui::ClipboardType::kCopyPaste));
 
   // SetText should work even in read only mode.
   textfield_->SetText(ASCIIToUTF16(" four five six "));
@@ -1927,8 +2020,8 @@ TEST_F(TextfieldTest, TextInputClientTest) {
   EXPECT_EQ(0U, range.start());
   EXPECT_EQ(10U, range.end());
 
-  EXPECT_TRUE(client->SetSelectionRange(gfx::Range(1, 4)));
-  EXPECT_TRUE(client->GetSelectionRange(&range));
+  EXPECT_TRUE(client->SetEditableSelectionRange(gfx::Range(1, 4)));
+  EXPECT_TRUE(client->GetEditableSelectionRange(&range));
   EXPECT_EQ(gfx::Range(1, 4), range);
 
   base::string16 substring;
@@ -1946,14 +2039,7 @@ TEST_F(TextfieldTest, TextInputClientTest) {
   textfield_->clear();
 
   on_before_user_action_ = on_after_user_action_ = 0;
-
-  // Send a key to trigger MockInputMethod::DispatchKeyEvent(). Note the
-  // specific VKEY isn't used (MockInputMethod will mock a ui::VKEY_PROCESSKEY
-  // whenever it has a test composition). However, on Mac, it can't be a letter
-  // (e.g. VKEY_A) since all native character events on Mac are unicode events
-  // and don't have a meaningful ui::KeyEvent that would trigger
-  // DispatchKeyEvent().
-  SendKeyEvent(ui::VKEY_RETURN);
+  DispatchMockInputMethodKeyEvent();
 
   EXPECT_TRUE(textfield_->key_received());
   EXPECT_FALSE(textfield_->key_handled());
@@ -1967,7 +2053,7 @@ TEST_F(TextfieldTest, TextInputClientTest) {
   input_method_->SetResultTextForNextKey(UTF8ToUTF16("123"));
   on_before_user_action_ = on_after_user_action_ = 0;
   textfield_->clear();
-  SendKeyEvent(ui::VKEY_RETURN);
+  DispatchMockInputMethodKeyEvent();
   EXPECT_TRUE(textfield_->key_received());
   EXPECT_FALSE(textfield_->key_handled());
   EXPECT_FALSE(client->HasCompositionText());
@@ -1979,7 +2065,7 @@ TEST_F(TextfieldTest, TextInputClientTest) {
   input_method_->Clear();
   input_method_->SetCompositionTextForNextKey(composition);
   textfield_->clear();
-  SendKeyEvent(ui::VKEY_RETURN);
+  DispatchMockInputMethodKeyEvent();
   EXPECT_TRUE(client->HasCompositionText());
   EXPECT_STR_EQ("0123321456789", textfield_->text());
 
@@ -1997,7 +2083,7 @@ TEST_F(TextfieldTest, TextInputClientTest) {
 
   textfield_->clear();
   textfield_->SetText(ASCIIToUTF16("0123456789"));
-  EXPECT_TRUE(client->SetSelectionRange(gfx::Range(5, 5)));
+  EXPECT_TRUE(client->SetEditableSelectionRange(gfx::Range(5, 5)));
   client->ExtendSelectionAndDelete(4, 2);
   EXPECT_STR_EQ("0789", textfield_->text());
 
@@ -2186,7 +2272,7 @@ TEST_F(TextfieldTest, Yank) {
 
   // Move focus to next textfield.
   widget_->GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   Textfield* textfield2 = static_cast<Textfield*>(GetFocusedView());
   EXPECT_TRUE(textfield2->text().empty());
 
@@ -2213,76 +2299,75 @@ TEST_F(TextfieldTest, Yank) {
 
 TEST_F(TextfieldTest, CutCopyPaste) {
   InitTextfield();
-
   // Ensure IDS_APP_CUT cuts.
   textfield_->SetText(ASCIIToUTF16("123"));
   textfield_->SelectAll(false);
   EXPECT_TRUE(textfield_->IsCommandIdEnabled(IDS_APP_CUT));
   textfield_->ExecuteCommand(IDS_APP_CUT, 0);
-  EXPECT_STR_EQ("123", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("123", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Ensure [Ctrl]+[x] cuts and [Ctrl]+[Alt][x] does nothing.
   textfield_->SetText(ASCIIToUTF16("456"));
   textfield_->SelectAll(false);
   SendKeyEvent(ui::VKEY_X, true, false, true, false);
-  EXPECT_STR_EQ("123", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("123", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("456", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
   SendKeyEvent(ui::VKEY_X, false, true);
-  EXPECT_STR_EQ("456", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("456", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Ensure [Shift]+[Delete] cuts.
   textfield_->SetText(ASCIIToUTF16("123"));
   textfield_->SelectAll(false);
   SendAlternateCut();
-  EXPECT_STR_EQ("123", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("123", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Reset clipboard text.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "");
 
   // Ensure [Shift]+[Delete] is a no-op in case there is no selection.
   textfield_->SetText(ASCIIToUTF16("123"));
   textfield_->SelectRange(gfx::Range(0));
   SendAlternateCut();
-  EXPECT_STR_EQ("", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("123", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 
   // Ensure IDS_APP_COPY copies.
   textfield_->SetText(ASCIIToUTF16("789"));
   textfield_->SelectAll(false);
   EXPECT_TRUE(textfield_->IsCommandIdEnabled(IDS_APP_COPY));
   textfield_->ExecuteCommand(IDS_APP_COPY, 0);
-  EXPECT_STR_EQ("789", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("789", GetClipboardText(ui::ClipboardType::kCopyPaste));
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Ensure [Ctrl]+[c] copies and [Ctrl]+[Alt][c] does nothing.
   textfield_->SetText(ASCIIToUTF16("012"));
   textfield_->SelectAll(false);
   SendKeyEvent(ui::VKEY_C, true, false, true, false);
-  EXPECT_STR_EQ("789", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("789", GetClipboardText(ui::ClipboardType::kCopyPaste));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
   SendKeyEvent(ui::VKEY_C, false, true);
-  EXPECT_STR_EQ("012", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("012", GetClipboardText(ui::ClipboardType::kCopyPaste));
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Ensure [Ctrl]+[Insert] copies.
   textfield_->SetText(ASCIIToUTF16("345"));
   textfield_->SelectAll(false);
   SendAlternateCopy();
-  EXPECT_STR_EQ("345", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("345", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("345", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_COPY_PASTE, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kCopyPaste, GetAndResetCopiedToClipboard());
 
   // Ensure IDS_APP_PASTE, [Ctrl]+[V], and [Shift]+[Insert] pastes;
   // also ensure that [Ctrl]+[Alt]+[V] does nothing.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "abc");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "abc");
   textfield_->SetText(base::string16());
   EXPECT_TRUE(textfield_->IsCommandIdEnabled(IDS_APP_PASTE));
   textfield_->ExecuteCommand(IDS_APP_PASTE, 0);
@@ -2297,9 +2382,9 @@ TEST_F(TextfieldTest, CutCopyPaste) {
   // Ensure [Ctrl]+[Shift]+[Insert] is a no-op.
   textfield_->SelectAll(false);
   SendKeyEvent(ui::VKEY_INSERT, true, true);
-  EXPECT_STR_EQ("abc", GetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE));
+  EXPECT_STR_EQ("abc", GetClipboardText(ui::ClipboardType::kCopyPaste));
   EXPECT_STR_EQ("abcabcabc", textfield_->text());
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 }
 
 TEST_F(TextfieldTest, CutCopyPasteWithEditCommand) {
@@ -2520,7 +2605,7 @@ TEST_F(TextfieldTest, HitInsideTextAreaTest) {
   size_t cursor_pos_expected[] = {0, 1, 1, 2, 4, 3, 3, 2};
 
   int index = 0;
-  for (int i = 0; i < static_cast<int>(cursor_bounds.size() - 1); ++i) {
+  for (size_t i = 0; i < cursor_bounds.size() - 1; ++i) {
     int half_width = (cursor_bounds[i + 1].x() - cursor_bounds[i].x()) / 2;
     MouseClick(cursor_bounds[i], half_width / 2);
     EXPECT_EQ(cursor_pos_expected[index++], textfield_->GetCursorPosition());
@@ -2529,7 +2614,7 @@ TEST_F(TextfieldTest, HitInsideTextAreaTest) {
     // for the test to run if using sleep().
     NonClientMouseClick();
 
-    MouseClick(cursor_bounds[i + 1], - (half_width / 2));
+    MouseClick(cursor_bounds[i + 1], -(half_width / 2));
     EXPECT_EQ(cursor_pos_expected[index++], textfield_->GetCursorPosition());
 
     NonClientMouseClick();
@@ -2610,7 +2695,7 @@ TEST_F(TextfieldTest, OverflowTest) {
   InitTextfield();
 
   base::string16 str;
-  for (int i = 0; i < 500; ++i)
+  for (size_t i = 0; i < 500; ++i)
     SendKeyEvent('a');
   SendKeyEvent(kHebrewLetterSamekh);
   EXPECT_TRUE(GetDisplayRect().Contains(GetCursorBounds()));
@@ -2623,7 +2708,7 @@ TEST_F(TextfieldTest, OverflowTest) {
   SendKeyEvent(ui::VKEY_A, false, true);
   SendKeyEvent(ui::VKEY_DELETE);
 
-  for (int i = 0; i < 500; ++i)
+  for (size_t i = 0; i < 500; ++i)
     SendKeyEvent(kHebrewLetterSamekh);
   SendKeyEvent('a');
   EXPECT_TRUE(GetDisplayRect().Contains(GetCursorBounds()));
@@ -2639,7 +2724,7 @@ TEST_F(TextfieldTest, OverflowInRTLTest) {
   InitTextfield();
 
   base::string16 str;
-  for (int i = 0; i < 500; ++i)
+  for (size_t i = 0; i < 500; ++i)
     SendKeyEvent('a');
   SendKeyEvent(kHebrewLetterSamekh);
   EXPECT_TRUE(GetDisplayRect().Contains(GetCursorBounds()));
@@ -2651,7 +2736,7 @@ TEST_F(TextfieldTest, OverflowInRTLTest) {
   SendKeyEvent(ui::VKEY_A, false, true);
   SendKeyEvent(ui::VKEY_DELETE);
 
-  for (int i = 0; i < 500; ++i)
+  for (size_t i = 0; i < 500; ++i)
     SendKeyEvent(kHebrewLetterSamekh);
   SendKeyEvent('a');
   EXPECT_TRUE(GetDisplayRect().Contains(GetCursorBounds()));
@@ -2710,7 +2795,7 @@ TEST_F(TextfieldTest, GetCompositionCharacterBounds_ComplexText) {
     // U+0020 SPACE
     0x0020,
   };
-  const size_t kUtf16CharsCount = arraysize(kUtf16Chars);
+  const size_t kUtf16CharsCount = base::size(kUtf16Chars);
 
   ui::CompositionText composition;
   composition.text.assign(kUtf16Chars, kUtf16Chars + kUtf16CharsCount);
@@ -2778,13 +2863,13 @@ TEST_F(TextfieldTest, SelectionClipboard) {
                          ui::EF_LEFT_MOUSE_BUTTON);
   textfield_->OnMouseReleased(release);
   EXPECT_EQ(gfx::Range(1, 3), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("12", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
+  EXPECT_STR_EQ("12", GetClipboardText(ui::ClipboardType::kSelection));
 
   // Select-all should update the selection clipboard.
   SendKeyEvent(ui::VKEY_A, false, true);
   EXPECT_EQ(gfx::Range(0, 4), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("0123", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("0123", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
 
   // Shift-click selection modifications should update the clipboard.
   NonClientMouseClick();
@@ -2801,25 +2886,25 @@ TEST_F(TextfieldTest, SelectionClipboard) {
                            ui::EF_LEFT_MOUSE_BUTTON);
   textfield_->OnMouseReleased(release_2);
   EXPECT_EQ(gfx::Range(0, 2), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("01", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("01", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
 
   // Shift-Left/Right should update the selection clipboard.
   SendKeyEvent(ui::VKEY_RIGHT, true, false);
-  EXPECT_STR_EQ("012", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("012", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
   SendKeyEvent(ui::VKEY_LEFT, true, false);
-  EXPECT_STR_EQ("01", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("01", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
   SendKeyEvent(ui::VKEY_RIGHT, true, true);
-  EXPECT_STR_EQ("0123", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("0123", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
 
   // Moving the cursor without a selection should not change the clipboard.
   SendKeyEvent(ui::VKEY_LEFT, false, false);
   EXPECT_EQ(gfx::Range(0, 0), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("0123", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("0123", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 
   // Middle clicking should paste at the mouse (not cursor) location.
   // The cursor should be placed at the end of the pasted text.
@@ -2829,7 +2914,7 @@ TEST_F(TextfieldTest, SelectionClipboard) {
   textfield_->OnMousePressed(middle);
   EXPECT_STR_EQ("01230123", textfield_->text());
   EXPECT_EQ(gfx::Range(8, 8), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("0123", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
+  EXPECT_STR_EQ("0123", GetClipboardText(ui::ClipboardType::kSelection));
 
   // Middle clicking on an unfocused textfield should focus it and paste.
   textfield_->GetFocusManager()->ClearFocus();
@@ -2838,27 +2923,27 @@ TEST_F(TextfieldTest, SelectionClipboard) {
   EXPECT_TRUE(textfield_->HasFocus());
   EXPECT_STR_EQ("012301230123", textfield_->text());
   EXPECT_EQ(gfx::Range(8, 8), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("0123", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
+  EXPECT_STR_EQ("0123", GetClipboardText(ui::ClipboardType::kSelection));
 
   // Middle clicking with an empty selection clipboard should still focus.
-  SetClipboardText(ui::CLIPBOARD_TYPE_SELECTION, std::string());
+  SetClipboardText(ui::ClipboardType::kSelection, std::string());
   textfield_->GetFocusManager()->ClearFocus();
   EXPECT_FALSE(textfield_->HasFocus());
   textfield_->OnMousePressed(middle);
   EXPECT_TRUE(textfield_->HasFocus());
   EXPECT_STR_EQ("012301230123", textfield_->text());
   EXPECT_EQ(gfx::Range(4, 4), textfield_->GetSelectedRange());
-  EXPECT_TRUE(GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION).empty());
+  EXPECT_TRUE(GetClipboardText(ui::ClipboardType::kSelection).empty());
 
   // Middle clicking in the selection should insert the selection clipboard
   // contents into the middle of the selection, and move the cursor to the end
   // of the pasted content.
-  SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "foo");
+  SetClipboardText(ui::ClipboardType::kCopyPaste, "foo");
   textfield_->SelectRange(gfx::Range(2, 6));
   textfield_->OnMousePressed(middle);
   EXPECT_STR_EQ("0123foo01230123", textfield_->text());
   EXPECT_EQ(gfx::Range(7, 7), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("foo", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
+  EXPECT_STR_EQ("foo", GetClipboardText(ui::ClipboardType::kSelection));
 
   // Double and triple clicking should update the clipboard contents.
   textfield_->SetText(ASCIIToUTF16("ab cd ef"));
@@ -2878,25 +2963,25 @@ TEST_F(TextfieldTest, SelectionClipboard) {
   textfield_->OnMousePressed(double_click);
   textfield_->OnMouseReleased(release_word);
   EXPECT_EQ(gfx::Range(3, 5), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("cd", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("cd", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
   textfield_->OnMousePressed(press_word);
   textfield_->OnMouseReleased(release_word);
   EXPECT_EQ(gfx::Range(0, 8), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("ab cd ef", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("ab cd ef", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
 
   // Selecting a range of text without any user interaction should not change
   // the clipboard content.
   textfield_->SelectRange(gfx::Range(0, 3));
   EXPECT_STR_EQ("ab ", textfield_->GetSelectedText());
-  EXPECT_STR_EQ("ab cd ef", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("ab cd ef", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 
-  SetClipboardText(ui::CLIPBOARD_TYPE_SELECTION, "other");
+  SetClipboardText(ui::ClipboardType::kSelection, "other");
   textfield_->SelectAll(false);
-  EXPECT_STR_EQ("other", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("other", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 }
 
 // Verify that the selection clipboard is not updated for selections on a
@@ -2909,12 +2994,12 @@ TEST_F(TextfieldTest, SelectionClipboard_Password) {
   // textfield.
   SendKeyEvent(ui::VKEY_A, false, true);
   EXPECT_EQ(gfx::Range(0, 4), textfield_->GetSelectedRange());
-  EXPECT_STR_EQ("abcd", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_SELECTION, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("abcd", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kSelection, GetAndResetCopiedToClipboard());
 
   // Move focus to the next textfield.
   widget_->GetFocusManager()->AdvanceFocus(false);
-  EXPECT_EQ(2, GetFocusedView()->id());
+  EXPECT_EQ(2, GetFocusedView()->GetID());
   Textfield* textfield2 = static_cast<Textfield*>(GetFocusedView());
 
   // Select-all should not modify the selection clipboard for a password
@@ -2923,20 +3008,20 @@ TEST_F(TextfieldTest, SelectionClipboard_Password) {
   textfield2->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   SendKeyEvent(ui::VKEY_A, false, true);
   EXPECT_EQ(gfx::Range(0, 4), textfield2->GetSelectedRange());
-  EXPECT_STR_EQ("abcd", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("abcd", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 
   // Shift-Left/Right should not modify the selection clipboard for a password
   // textfield.
   SendKeyEvent(ui::VKEY_LEFT, true, false);
   EXPECT_EQ(gfx::Range(0, 3), textfield2->GetSelectedRange());
-  EXPECT_STR_EQ("abcd", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("abcd", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 
   SendKeyEvent(ui::VKEY_RIGHT, true, false);
   EXPECT_EQ(gfx::Range(0, 4), textfield2->GetSelectedRange());
-  EXPECT_STR_EQ("abcd", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
-  EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
+  EXPECT_STR_EQ("abcd", GetClipboardText(ui::ClipboardType::kSelection));
+  EXPECT_EQ(ui::ClipboardType::kMaxValue, GetAndResetCopiedToClipboard());
 }
 #endif
 
@@ -2959,8 +3044,8 @@ TEST_F(TextfieldTest, TestLongPressInitiatesDragDrop) {
       kStringPoint.y(),
       ui::GestureEventDetails(ui::ET_GESTURE_LONG_PRESS));
   textfield_->OnGestureEvent(&long_press);
-  EXPECT_TRUE(textfield_->CanStartDragForView(NULL, kStringPoint,
-                                              kStringPoint));
+  EXPECT_TRUE(
+      textfield_->CanStartDragForView(nullptr, kStringPoint, kStringPoint));
 }
 
 TEST_F(TextfieldTest, GetTextfieldBaseline_FontFallbackTest) {
@@ -3008,7 +3093,7 @@ TEST_F(TextfieldTest, CursorBlinkRestartsOnInsertOrReplace) {
 TEST_F(TextfieldTest, VirtualKeyboardFocusEnsureCaretNotInRect) {
   InitTextfield();
 
-  aura::Window* root_window = widget_->GetNativeView()->GetRootWindow();
+  aura::Window* root_window = GetRootWindow(widget_);
   int keyboard_height = 200;
   gfx::Rect root_bounds = root_window->bounds();
   gfx::Rect orig_widget_bounds = gfx::Rect(0, 300, 400, 200);
@@ -3065,7 +3150,6 @@ class TextfieldTouchSelectionTest : public TextfieldTest {
         point.x(), point.y(), ui::GestureEventDetails(ui::ET_GESTURE_END));
     textfield_->OnGestureEvent(&end);
   }
-
 };
 
 // Touch selection and dragging currently only works for chromeos.
@@ -3143,7 +3227,7 @@ TEST_F(TextfieldTouchSelectionTest, TouchSelectionInUnfocusableTextfield) {
 }
 
 // No touch on desktop Mac. Tracked in http://crbug.com/445520.
-#if defined(OS_MACOSX) && !defined(USE_AURA)
+#if defined(OS_MACOSX)
 #define MAYBE_TapOnSelection DISABLED_TapOnSelection
 #else
 #define MAYBE_TapOnSelection TapOnSelection
@@ -3160,23 +3244,23 @@ TEST_F(TextfieldTouchSelectionTest, MAYBE_TapOnSelection) {
 
   // Select range |sel_range| and check if touch selection handles are not
   // present and correct range is selected.
-  textfield_->SetSelectionRange(sel_range);
+  textfield_->SetEditableSelectionRange(sel_range);
   gfx::Range range;
-  textfield_->GetSelectionRange(&range);
+  textfield_->GetEditableSelectionRange(&range);
   EXPECT_FALSE(test_api_->touch_selection_controller());
   EXPECT_EQ(sel_range, range);
 
   // Tap on selection and check if touch selectoin handles are shown, but
   // selection range is not modified.
   Tap(tap_point);
-  textfield_->GetSelectionRange(&range);
+  textfield_->GetEditableSelectionRange(&range);
   EXPECT_TRUE(test_api_->touch_selection_controller());
   EXPECT_EQ(sel_range, range);
 
   // Tap again on selection and check if touch selection handles are still
   // present and selection is changed to a cursor at tap location.
   Tap(tap_point);
-  textfield_->GetSelectionRange(&range);
+  textfield_->GetEditableSelectionRange(&range);
   EXPECT_TRUE(test_api_->touch_selection_controller());
   EXPECT_EQ(tap_range, range);
 }
@@ -3187,18 +3271,18 @@ TEST_F(TextfieldTest, AccessiblePasswordTest) {
 
   ui::AXNodeData node_data_regular;
   textfield_->GetAccessibleNodeData(&node_data_regular);
-  EXPECT_EQ(ui::AX_ROLE_TEXT_FIELD, node_data_regular.role);
-  EXPECT_EQ(ASCIIToUTF16("password"),
-            node_data_regular.GetString16Attribute(ui::AX_ATTR_VALUE));
-  EXPECT_FALSE(node_data_regular.HasState(ui::AX_STATE_PROTECTED));
+  EXPECT_EQ(ax::mojom::Role::kTextField, node_data_regular.role);
+  EXPECT_EQ(ASCIIToUTF16("password"), node_data_regular.GetString16Attribute(
+                                          ax::mojom::StringAttribute::kValue));
+  EXPECT_FALSE(node_data_regular.HasState(ax::mojom::State::kProtected));
 
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   ui::AXNodeData node_data_protected;
   textfield_->GetAccessibleNodeData(&node_data_protected);
-  EXPECT_EQ(ui::AX_ROLE_TEXT_FIELD, node_data_protected.role);
-  EXPECT_EQ(UTF8ToUTF16("••••••••"),
-            node_data_protected.GetString16Attribute(ui::AX_ATTR_VALUE));
-  EXPECT_TRUE(node_data_protected.HasState(ui::AX_STATE_PROTECTED));
+  EXPECT_EQ(ax::mojom::Role::kTextField, node_data_protected.role);
+  EXPECT_EQ(UTF8ToUTF16("••••••••"), node_data_protected.GetString16Attribute(
+                                         ax::mojom::StringAttribute::kValue));
+  EXPECT_TRUE(node_data_protected.HasState(ax::mojom::State::kProtected));
 }
 
 // Verify that cursor visibility is controlled by SetCursorEnabled.
@@ -3301,8 +3385,8 @@ TEST_F(TextfieldTest, TextfieldInitialization) {
   container->AddChildView(new_textfield);
 
   new_textfield->SetBoundsRect(params.bounds);
-  new_textfield->set_id(1);
-  test_api_.reset(new TextfieldTestApi(new_textfield));
+  new_textfield->SetID(1);
+  test_api_ = std::make_unique<TextfieldTestApi>(new_textfield);
   widget->Show();
   EXPECT_FALSE(new_textfield->HasFocus());
   EXPECT_FALSE(test_api_->IsCursorVisible());
@@ -3371,6 +3455,325 @@ TEST_F(TextfieldTest, SendingDeletePreservesShiftFlag) {
   // deleteForward:, but the shift modifier should propagate.
   SendKeyPress(ui::VKEY_DELETE, ui::EF_SHIFT_DOWN);
   EXPECT_EQ(ui::EF_SHIFT_DOWN, textfield_->event_flags());
+}
+
+TEST_F(TextfieldTest, EmojiItem_EmptyField) {
+  InitTextfield();
+  EXPECT_TRUE(textfield_->context_menu_controller());
+
+  // A normal empty field may show the Emoji option (if supported).
+  ui::MenuModel* context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  // Not all OS/versions support the emoji menu.
+  EXPECT_EQ(ui::IsEmojiPanelSupported(),
+            context_menu->GetLabelAt(0) ==
+                l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_EMOJI));
+}
+
+TEST_F(TextfieldTest, EmojiItem_ReadonlyField) {
+  InitTextfield();
+  EXPECT_TRUE(textfield_->context_menu_controller());
+
+  textfield_->SetReadOnly(true);
+  // In no case is the emoji option showing on a read-only field.
+  ui::MenuModel* context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  EXPECT_NE(context_menu->GetLabelAt(0),
+            l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_EMOJI));
+}
+
+TEST_F(TextfieldTest, EmojiItem_FieldWithText) {
+  InitTextfield();
+  EXPECT_TRUE(textfield_->context_menu_controller());
+
+#if defined(OS_MACOSX)
+  // On Mac, when there is text, the "Look up" item (+ separator) takes the top
+  // position, and emoji comes after.
+  constexpr int kExpectedEmojiIndex = 2;
+#else
+  constexpr int kExpectedEmojiIndex = 0;
+#endif
+
+  // A field with text may still show the Emoji option (if supported).
+  textfield_->SetText(base::ASCIIToUTF16("some text"));
+  textfield_->SelectAll(false);
+  ui::MenuModel* context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  // Not all OS/versions support the emoji menu.
+  EXPECT_EQ(ui::IsEmojiPanelSupported(),
+            context_menu->GetLabelAt(kExpectedEmojiIndex) ==
+                l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_EMOJI));
+}
+
+#if defined(OS_MACOSX)
+// Tests to see if the BiDi submenu items are updated correctly when the
+// textfield's text direction is changed.
+TEST_F(TextfieldTest, TextServicesContextMenuTextDirectionTest) {
+  InitTextfield();
+  EXPECT_TRUE(textfield_->context_menu_controller());
+
+  EXPECT_TRUE(GetContextMenuModel());
+
+  textfield_->ChangeTextDirectionAndLayoutAlignment(
+      base::i18n::TextDirection::LEFT_TO_RIGHT);
+  test_api_->UpdateContextMenu();
+
+  EXPECT_FALSE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::UNKNOWN_DIRECTION));
+  EXPECT_TRUE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::LEFT_TO_RIGHT));
+  EXPECT_FALSE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::RIGHT_TO_LEFT));
+
+  textfield_->ChangeTextDirectionAndLayoutAlignment(
+      base::i18n::TextDirection::RIGHT_TO_LEFT);
+  test_api_->UpdateContextMenu();
+
+  EXPECT_FALSE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::UNKNOWN_DIRECTION));
+  EXPECT_FALSE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::LEFT_TO_RIGHT));
+  EXPECT_TRUE(test_api_->IsTextDirectionCheckedInContextMenu(
+      base::i18n::TextDirection::RIGHT_TO_LEFT));
+}
+
+// Tests to see if the look up item is updated when the textfield's selected
+// text has changed.
+TEST_F(TextfieldTest, LookUpItemUpdate) {
+  InitTextfield();
+  EXPECT_TRUE(textfield_->context_menu_controller());
+
+  const base::string16 kTextOne = ASCIIToUTF16("crake");
+  textfield_->SetText(kTextOne);
+  textfield_->SelectAll(false);
+
+  ui::MenuModel* context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  EXPECT_EQ(context_menu->GetLabelAt(0),
+            l10n_util::GetStringFUTF16(IDS_CONTENT_CONTEXT_LOOK_UP, kTextOne));
+
+#if !defined(OS_MACOSX)
+  // Mac context menus don't behave this way: it's not possible to update the
+  // text while the menu is still "open", but also the selection can't change
+  // while the menu is open (because the user can't interact with the rest of
+  // the app).
+  const base::string16 kTextTwo = ASCIIToUTF16("rail");
+  textfield_->SetText(kTextTwo);
+  textfield_->SelectAll(false);
+
+  context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  EXPECT_EQ(context_menu->GetLabelAt(0),
+            l10n_util::GetStringFUTF16(IDS_CONTENT_CONTEXT_LOOK_UP, kTextTwo));
+#endif
+}
+
+// Tests to see if the look up item is hidden for password fields.
+TEST_F(TextfieldTest, LookUpPassword) {
+  InitTextfield();
+  textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
+
+  const base::string16 kText = ASCIIToUTF16("Willie Wagtail");
+
+  textfield_->SetText(kText);
+  textfield_->SelectAll(false);
+
+  ui::MenuModel* context_menu = GetContextMenuModel();
+  EXPECT_TRUE(context_menu);
+  EXPECT_GT(context_menu->GetItemCount(), 0);
+  EXPECT_NE(context_menu->GetCommandIdAt(0), IDS_CONTENT_CONTEXT_LOOK_UP);
+  EXPECT_NE(context_menu->GetLabelAt(0),
+            l10n_util::GetStringFUTF16(IDS_CONTENT_CONTEXT_LOOK_UP, kText));
+}
+
+TEST_F(TextfieldTest, SecurePasswordInput) {
+  InitTextfield();
+  ASSERT_FALSE(ui::ScopedPasswordInputEnabler::IsPasswordInputEnabled());
+
+  // Shouldn't enable secure input if it's not a password textfield.
+  textfield_->OnFocus();
+  EXPECT_FALSE(ui::ScopedPasswordInputEnabler::IsPasswordInputEnabled());
+
+  textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
+
+  // Single matched calls immediately update IsPasswordInputEnabled().
+  textfield_->OnFocus();
+  EXPECT_TRUE(ui::ScopedPasswordInputEnabler::IsPasswordInputEnabled());
+
+  textfield_->OnBlur();
+  EXPECT_FALSE(ui::ScopedPasswordInputEnabler::IsPasswordInputEnabled());
+}
+#endif  // defined(OS_MACOSX)
+
+TEST_F(TextfieldTest, AccessibilitySelectionEvents) {
+  const std::string& kText = "abcdef";
+  InitTextfield();
+  textfield_->SetText(ASCIIToUTF16(kText));
+  EXPECT_TRUE(textfield_->HasFocus());
+  int previous_selection_fired_count =
+      textfield_->GetAccessibilitySelectionFiredCount();
+  textfield_->SelectAll(false);
+  EXPECT_LT(previous_selection_fired_count,
+            textfield_->GetAccessibilitySelectionFiredCount());
+  previous_selection_fired_count =
+      textfield_->GetAccessibilitySelectionFiredCount();
+
+  // No selection event when textfield blurred, even though text is
+  // deselected.
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_FALSE(textfield_->HasFocus());
+  textfield_->ClearSelection();
+  EXPECT_FALSE(textfield_->HasSelection());
+  // Has not changed.
+  EXPECT_EQ(previous_selection_fired_count,
+            textfield_->GetAccessibilitySelectionFiredCount());
+}
+
+TEST_F(TextfieldTest, FocusReasonMouse) {
+  InitTextfield();
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_NONE,
+            textfield_->GetFocusReason());
+
+  const auto& bounds = textfield_->bounds();
+  MouseClick(bounds, 10);
+
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_MOUSE,
+            textfield_->GetFocusReason());
+}
+
+TEST_F(TextfieldTest, FocusReasonTouchTap) {
+  InitTextfield();
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_NONE,
+            textfield_->GetFocusReason());
+
+  ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP_DOWN);
+  tap_details.set_primary_pointer_type(
+      ui::EventPointerType::POINTER_TYPE_TOUCH);
+  GestureEventForTest tap(GetCursorPositionX(0), 0, tap_details);
+  textfield_->OnGestureEvent(&tap);
+
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_TOUCH,
+            textfield_->GetFocusReason());
+}
+
+TEST_F(TextfieldTest, FocusReasonPenTap) {
+  InitTextfield();
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_NONE,
+            textfield_->GetFocusReason());
+
+  ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP_DOWN);
+  tap_details.set_primary_pointer_type(ui::EventPointerType::POINTER_TYPE_PEN);
+  GestureEventForTest tap(GetCursorPositionX(0), 0, tap_details);
+  textfield_->OnGestureEvent(&tap);
+
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_PEN,
+            textfield_->GetFocusReason());
+}
+
+TEST_F(TextfieldTest, FocusReasonMultipleEvents) {
+  InitTextfield();
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_NONE,
+            textfield_->GetFocusReason());
+
+  // Pen tap, followed by a touch tap
+  {
+    ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP_DOWN);
+    tap_details.set_primary_pointer_type(
+        ui::EventPointerType::POINTER_TYPE_PEN);
+    GestureEventForTest tap(GetCursorPositionX(0), 0, tap_details);
+    textfield_->OnGestureEvent(&tap);
+  }
+
+  {
+    ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP_DOWN);
+    tap_details.set_primary_pointer_type(
+        ui::EventPointerType::POINTER_TYPE_TOUCH);
+    GestureEventForTest tap(GetCursorPositionX(0), 0, tap_details);
+    textfield_->OnGestureEvent(&tap);
+  }
+
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_PEN,
+            textfield_->GetFocusReason());
+}
+
+TEST_F(TextfieldTest, FocusReasonFocusBlurFocus) {
+  InitTextfield();
+  widget_->GetFocusManager()->ClearFocus();
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_NONE,
+            textfield_->GetFocusReason());
+
+  // Pen tap, blur, then programmatic focus.
+  ui::GestureEventDetails tap_details(ui::ET_GESTURE_TAP_DOWN);
+  tap_details.set_primary_pointer_type(ui::EventPointerType::POINTER_TYPE_PEN);
+  GestureEventForTest tap(GetCursorPositionX(0), 0, tap_details);
+  textfield_->OnGestureEvent(&tap);
+
+  widget_->GetFocusManager()->ClearFocus();
+
+  textfield_->RequestFocus();
+
+  EXPECT_EQ(ui::TextInputClient::FOCUS_REASON_OTHER,
+            textfield_->GetFocusReason());
+}
+
+TEST_F(TextfieldTest, ChangeTextDirectionAndLayoutAlignmentTest) {
+  InitTextfield();
+
+  textfield_->ChangeTextDirectionAndLayoutAlignment(
+      base::i18n::TextDirection::RIGHT_TO_LEFT);
+  EXPECT_EQ(textfield_->GetTextDirection(),
+            base::i18n::TextDirection::RIGHT_TO_LEFT);
+  EXPECT_EQ(textfield_->GetHorizontalAlignment(),
+            gfx::HorizontalAlignment::ALIGN_RIGHT);
+
+  textfield_->ChangeTextDirectionAndLayoutAlignment(
+      base::i18n::TextDirection::RIGHT_TO_LEFT);
+  const base::string16& text = test_api_->GetRenderText()->GetDisplayText();
+  base::i18n::TextDirection text_direction =
+      base::i18n::GetFirstStrongCharacterDirection(text);
+  EXPECT_EQ(textfield_->GetTextDirection(), text_direction);
+  EXPECT_EQ(textfield_->GetHorizontalAlignment(),
+            gfx::HorizontalAlignment::ALIGN_RIGHT);
+
+  textfield_->ChangeTextDirectionAndLayoutAlignment(
+      base::i18n::TextDirection::LEFT_TO_RIGHT);
+  EXPECT_EQ(textfield_->GetTextDirection(),
+            base::i18n::TextDirection::LEFT_TO_RIGHT);
+  EXPECT_EQ(textfield_->GetHorizontalAlignment(),
+            gfx::HorizontalAlignment::ALIGN_LEFT);
+}
+
+TEST_F(TextfieldTest, TextChangedCallbackTest) {
+  InitTextfield();
+
+  bool text_changed = false;
+  auto subscription = textfield_->AddTextChangedCallback(base::BindRepeating(
+      [](bool* text_changed) { *text_changed = true; }, &text_changed));
+
+  textfield_->SetText(ASCIIToUTF16("abc"));
+  EXPECT_TRUE(text_changed);
+
+  text_changed = false;
+  textfield_->AppendText(ASCIIToUTF16("def"));
+  EXPECT_TRUE(text_changed);
+
+  // Undo should still cause callback.
+  text_changed = false;
+  SendKeyEvent(ui::VKEY_Z, false, true);
+  EXPECT_TRUE(text_changed);
+
+  text_changed = false;
+  SendKeyEvent(ui::VKEY_BACK);
+  EXPECT_TRUE(text_changed);
 }
 
 }  // namespace views

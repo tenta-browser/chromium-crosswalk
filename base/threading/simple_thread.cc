@@ -11,12 +11,11 @@
 
 namespace base {
 
-SimpleThread::SimpleThread(const std::string& name_prefix)
-    : SimpleThread(name_prefix, Options()) {}
+SimpleThread::SimpleThread(const std::string& name)
+    : SimpleThread(name, Options()) {}
 
-SimpleThread::SimpleThread(const std::string& name_prefix,
-                           const Options& options)
-    : name_prefix_(name_prefix),
+SimpleThread::SimpleThread(const std::string& name, const Options& options)
+    : name_(name),
       options_(options),
       event_(WaitableEvent::ResetPolicy::MANUAL,
              WaitableEvent::InitialState::NOT_SIGNALED) {}
@@ -28,55 +27,62 @@ SimpleThread::~SimpleThread() {
 }
 
 void SimpleThread::Start() {
-  DCHECK(!HasBeenStarted()) << "Tried to Start a thread multiple times.";
+  StartAsync();
+  ScopedAllowBaseSyncPrimitives allow_wait;
+  event_.Wait();  // Wait for the thread to complete initialization.
+}
+
+void SimpleThread::Join() {
+  DCHECK(options_.joinable) << "A non-joinable thread can't be joined.";
+  DCHECK(HasStartBeenAttempted()) << "Tried to Join a never-started thread.";
+  DCHECK(!HasBeenJoined()) << "Tried to Join a thread multiple times.";
+  BeforeJoin();
+  PlatformThread::Join(thread_);
+  thread_ = PlatformThreadHandle();
+  joined_ = true;
+}
+
+void SimpleThread::StartAsync() {
+  DCHECK(!HasStartBeenAttempted()) << "Tried to Start a thread multiple times.";
+  start_called_ = true;
+  BeforeStart();
   bool success =
       options_.joinable
           ? PlatformThread::CreateWithPriority(options_.stack_size, this,
                                                &thread_, options_.priority)
           : PlatformThread::CreateNonJoinableWithPriority(
                 options_.stack_size, this, options_.priority);
-  DCHECK(success);
-  ThreadRestrictions::ScopedAllowWait allow_wait;
-  event_.Wait();  // Wait for the thread to complete initialization.
+  CHECK(success);
 }
 
-void SimpleThread::Join() {
-  DCHECK(options_.joinable) << "A non-joinable thread can't be joined.";
-  DCHECK(HasBeenStarted()) << "Tried to Join a never-started thread.";
-  DCHECK(!HasBeenJoined()) << "Tried to Join a thread multiple times.";
-  PlatformThread::Join(thread_);
-  thread_ = PlatformThreadHandle();
-  joined_ = true;
+PlatformThreadId SimpleThread::tid() {
+  DCHECK(HasBeenStarted());
+  return tid_;
 }
 
 bool SimpleThread::HasBeenStarted() {
-  ThreadRestrictions::ScopedAllowWait allow_wait;
   return event_.IsSignaled();
 }
 
 void SimpleThread::ThreadMain() {
   tid_ = PlatformThread::CurrentId();
-  // Construct our full name of the form "name_prefix_/TID".
-  std::string name(name_prefix_);
-  name.push_back('/');
-  name.append(IntToString(tid_));
-  PlatformThread::SetName(name);
+  PlatformThread::SetName(name_);
 
   // We've initialized our new thread, signal that we're done to Start().
   event_.Signal();
 
+  BeforeRun();
   Run();
 }
 
 DelegateSimpleThread::DelegateSimpleThread(Delegate* delegate,
-                                           const std::string& name_prefix)
-    : DelegateSimpleThread(delegate, name_prefix, Options()) {}
+                                           const std::string& name)
+    : DelegateSimpleThread(delegate, name, Options()) {}
 
 DelegateSimpleThread::DelegateSimpleThread(Delegate* delegate,
-                                           const std::string& name_prefix,
+                                           const std::string& name,
                                            const Options& options)
-    : SimpleThread(name_prefix, options),
-      delegate_(delegate) {
+    : SimpleThread(name, options), delegate_(delegate) {
   DCHECK(delegate_);
 }
 
@@ -109,7 +115,10 @@ DelegateSimpleThreadPool::~DelegateSimpleThreadPool() {
 void DelegateSimpleThreadPool::Start() {
   DCHECK(threads_.empty()) << "Start() called with outstanding threads.";
   for (int i = 0; i < num_threads_; ++i) {
-    DelegateSimpleThread* thread = new DelegateSimpleThread(this, name_prefix_);
+    std::string name(name_prefix_);
+    name.push_back('/');
+    name.append(NumberToString(i));
+    DelegateSimpleThread* thread = new DelegateSimpleThread(this, name);
     thread->Start();
     threads_.push_back(thread);
   }

@@ -125,14 +125,19 @@ class MEDIA_EXPORT AudioRendererImpl
     kPlaying
   };
 
+  // Called after hardware device information is available.
+  void OnDeviceInfoReceived(DemuxerStream* stream,
+                            CdmContext* cdm_context,
+                            OutputDeviceInfo output_device_info);
+
   // Callback from the audio decoder delivering decoded audio samples.
-  void DecodedAudioReady(AudioBufferStream::Status status,
-                         const scoped_refptr<AudioBuffer>& buffer);
+  void DecodedAudioReady(AudioDecoderStream::Status status,
+                         scoped_refptr<AudioBuffer> buffer);
 
   // Handles buffers that come out of decoder (MSE: after passing through
   // |buffer_converter_|).
   // Returns true if more buffers are needed.
-  bool HandleDecodedBuffer_Locked(const scoped_refptr<AudioBuffer>& buffer);
+  bool HandleDecodedBuffer_Locked(scoped_refptr<AudioBuffer> buffer);
 
   // Helper functions for DecodeStatus values passed to
   // DecodedAudioReady().
@@ -177,20 +182,23 @@ class MEDIA_EXPORT AudioRendererImpl
 
   // Returns true if the data in the buffer is all before |start_timestamp_|.
   // This can only return true while in the kPlaying state.
-  bool IsBeforeStartTime(const scoped_refptr<AudioBuffer>& buffer);
+  bool IsBeforeStartTime(const AudioBuffer& buffer);
 
-  // Called upon AudioBufferStream initialization, or failure thereof (indicated
-  // by the value of |success|).
-  void OnAudioBufferStreamInitialized(bool succes);
+  // Called upon AudioDecoderStream initialization, or failure thereof
+  // (indicated by the value of |success|).
+  void OnAudioDecoderStreamInitialized(bool succes);
+
+  void FinishInitialization(PipelineStatus status);
+  void FinishFlush();
 
   // Callback functions to be called on |client_|.
   void OnPlaybackError(PipelineStatus error);
   void OnPlaybackEnded();
   void OnStatisticsUpdate(const PipelineStatistics& stats);
   void OnBufferingStateChange(BufferingState state);
-  void OnWaitingForDecryptionKey();
+  void OnWaiting(WaitingReason reason);
 
-  // Generally called by the AudioBufferStream when a config change occurs. May
+  // Generally called by the AudioDecoderStream when a config change occurs. May
   // also be called internally with an empty config to reset config-based state.
   // Will notify RenderClient when called with a valid config.
   void OnConfigChange(const AudioDecoderConfig& config);
@@ -226,12 +234,15 @@ class MEDIA_EXPORT AudioRendererImpl
   // may deadlock between |task_runner_| and the audio callback thread.
   scoped_refptr<media::AudioRendererSink> sink_;
 
-  std::unique_ptr<AudioBufferStream> audio_buffer_stream_;
+  std::unique_ptr<AudioDecoderStream> audio_decoder_stream_;
 
   MediaLog* media_log_;
 
   // Cached copy of audio params that the renderer is initialized with.
   AudioParameters audio_parameters_;
+
+  // Passed in during Initialize().
+  DemuxerStream* demuxer_stream_;
 
   RendererClient* client_;
 
@@ -242,7 +253,7 @@ class MEDIA_EXPORT AudioRendererImpl
   base::Closure flush_cb_;
 
   // Overridable tick clock for testing.
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Memory usage of |algorithm_| recorded during the last
   // HandleDecodedBuffer_Locked() call.
@@ -329,7 +340,7 @@ class MEDIA_EXPORT AudioRendererImpl
   // End variables which must be accessed under |lock_|. ----------------------
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<AudioRendererImpl> weak_factory_;
+  base::WeakPtrFactory<AudioRendererImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererImpl);
 };

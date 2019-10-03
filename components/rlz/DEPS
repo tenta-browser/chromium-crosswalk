@@ -1,8 +1,10 @@
 include_rules = [
+  "+chromeos/system",
   "+components/google",
   "+net",
   "+rlz",
   "+ui/base",
+  "+services/network/public",
 
   # rlz is used on iOS.
   "-content",

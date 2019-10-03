@@ -14,8 +14,8 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "components/offline_pages/core/offline_page_archiver.h"
-#include "content/public/common/page_type.h"
 
 namespace base {
 class FilePath;
@@ -41,44 +41,40 @@ namespace offline_pages {
 //     // Callback is of type OfflinePageModel::SavePageCallback.
 //     model->SavePage(url, std::move(archiver), callback);
 //   }
+//
+// TODO(https://crbug.com/849424): turn this into a singleton.
 class OfflinePageMHTMLArchiver : public OfflinePageArchiver {
  public:
-
-  explicit OfflinePageMHTMLArchiver(content::WebContents* web_contents);
+  OfflinePageMHTMLArchiver();
   ~OfflinePageMHTMLArchiver() override;
 
   // OfflinePageArchiver implementation:
   void CreateArchive(const base::FilePath& archives_dir,
                      const CreateArchiveParams& create_archive_params,
-                     const CreateArchiveCallback& callback) override;
+                     content::WebContents* web_contents,
+                     CreateArchiveCallback callback) override;
 
  protected:
-  // Allows to overload the archiver for testing.
-  OfflinePageMHTMLArchiver();
-
   // Try to generate MHTML.
   // Might be overridden for testing purpose.
   virtual void GenerateMHTML(const base::FilePath& archives_dir,
+                             content::WebContents* web_contents,
                              const CreateArchiveParams& create_archive_params);
 
   // Callback for Generating MHTML.
   void OnGenerateMHTMLDone(const GURL& url,
                            const base::FilePath& file_path,
                            const base::string16& title,
+                           const std::string& name_space,
+                           base::Time mhtml_start_time,
                            int64_t file_size);
   void OnComputeDigestDone(const GURL& url,
                            const base::FilePath& file_path,
                            const base::string16& title,
+                           const std::string& name_space,
+                           base::Time digest_start_time,
                            int64_t file_size,
                            const std::string& digest);
-
-  // Checks whether the page to be saved has security error when loaded over
-  // HTTPS. Saving a page will fail if that is the case. HTTP connections are
-  // not affected.
-  virtual bool HasConnectionSecurityError();
-
-  // Returns the page type of the page being saved.
-  virtual content::PageType GetPageType();
 
   // Reports failure to create archive a page to the client that requested it.
   void ReportFailure(ArchiverResult result);
@@ -86,9 +82,6 @@ class OfflinePageMHTMLArchiver : public OfflinePageArchiver {
  private:
   void DeleteFileAndReportFailure(const base::FilePath& file_path,
                                   ArchiverResult result);
-
-  // Contents of the web page to be serialized. Not owned.
-  content::WebContents* web_contents_;
 
   CreateArchiveCallback callback_;
 

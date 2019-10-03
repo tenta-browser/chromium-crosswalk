@@ -15,7 +15,8 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -92,10 +93,10 @@ class WriteCallbacksObserver {
 void WriteCallbacksObserver::ObserveNextWriteCallbacks(
     ImportantFileWriter* writer) {
   writer->RegisterOnNextWriteCallbacks(
-      base::Bind(&WriteCallbacksObserver::OnBeforeWrite,
-                 base::Unretained(this)),
-      base::Bind(&WriteCallbacksObserver::OnAfterWrite,
-                 base::Unretained(this)));
+      base::BindOnce(&WriteCallbacksObserver::OnBeforeWrite,
+                     base::Unretained(this)),
+      base::BindOnce(&WriteCallbacksObserver::OnAfterWrite,
+                     base::Unretained(this)));
 }
 
 WriteCallbackObservationState
@@ -123,7 +124,7 @@ class ImportantFileWriterTest : public testing::Test {
  protected:
   WriteCallbacksObserver write_callback_observer_;
   FilePath file_;
-  MessageLoop loop_;
+  test::ScopedTaskEnvironment scoped_task_environment_;
 
  private:
   ScopedTempDir temp_dir_;
@@ -230,7 +231,7 @@ TEST_F(ImportantFileWriterTest, CallbackRunsOnWriterThread) {
 
 TEST_F(ImportantFileWriterTest, ScheduleWrite) {
   constexpr TimeDelta kCommitInterval = TimeDelta::FromSeconds(12345);
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get(),
                              kCommitInterval);
   writer.SetTimerForTesting(&timer);
@@ -249,7 +250,7 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite) {
 }
 
 TEST_F(ImportantFileWriterTest, DoScheduledWrite) {
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
@@ -264,7 +265,7 @@ TEST_F(ImportantFileWriterTest, DoScheduledWrite) {
 }
 
 TEST_F(ImportantFileWriterTest, BatchingWrites) {
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   writer.SetTimerForTesting(&timer);
   DataSerializer foo("foo"), bar("bar"), baz("baz");
@@ -279,7 +280,7 @@ TEST_F(ImportantFileWriterTest, BatchingWrites) {
 }
 
 TEST_F(ImportantFileWriterTest, ScheduleWrite_FailToSerialize) {
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
@@ -294,7 +295,7 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite_FailToSerialize) {
 }
 
 TEST_F(ImportantFileWriterTest, ScheduleWrite_WriteNow) {
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());
@@ -311,7 +312,7 @@ TEST_F(ImportantFileWriterTest, ScheduleWrite_WriteNow) {
 }
 
 TEST_F(ImportantFileWriterTest, DoScheduledWrite_FailToSerialize) {
-  MockTimer timer(true, false);
+  MockOneShotTimer timer;
   ImportantFileWriter writer(file_, ThreadTaskRunnerHandle::Get());
   writer.SetTimerForTesting(&timer);
   EXPECT_FALSE(writer.HasPendingWrite());

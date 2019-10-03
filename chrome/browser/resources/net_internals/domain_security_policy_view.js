@@ -7,19 +7,16 @@
  * security policies. These policies include:
  * - HSTS: HTTPS Strict Transport Security. A way for sites to elect to always
  *   use HTTPS. See http://dev.chromium.org/sts
- * - PKP: Public Key Pinning. A way for sites to pin themselves to particular
- *   public key fingerprints that must appear in their certificate chains. See
- *   https://tools.ietf.org/html/rfc7469
  * - Expect-CT. A way for sites to elect to always require valid Certificate
  *   Transparency information to be present. See
  *   https://tools.ietf.org/html/draft-ietf-httpbis-expect-ct-01
  */
 
-var DomainSecurityPolicyView = (function() {
+const DomainSecurityPolicyView = (function() {
   'use strict';
 
   // We inherit from DivView.
-  var superClass = DivView;
+  const superClass = DivView;
 
   /**
    * @constructor
@@ -31,14 +28,11 @@ var DomainSecurityPolicyView = (function() {
     superClass.call(this, DomainSecurityPolicyView.MAIN_BOX_ID);
 
     this.deleteInput_ = $(DomainSecurityPolicyView.DELETE_INPUT_ID);
-    this.addStsPkpInput_ = $(DomainSecurityPolicyView.ADD_HSTS_PKP_INPUT_ID);
+    this.addStsInput_ = $(DomainSecurityPolicyView.ADD_HSTS_INPUT_ID);
     this.addStsCheck_ = $(DomainSecurityPolicyView.ADD_STS_CHECK_ID);
-    this.addPkpCheck_ = $(DomainSecurityPolicyView.ADD_PKP_CHECK_ID);
-    this.addPins_ = $(DomainSecurityPolicyView.ADD_PINS_ID);
-    this.queryStsPkpInput_ =
-        $(DomainSecurityPolicyView.QUERY_HSTS_PKP_INPUT_ID);
-    this.queryStsPkpOutputDiv_ =
-        $(DomainSecurityPolicyView.QUERY_HSTS_PKP_OUTPUT_DIV_ID);
+    this.queryStsInput_ = $(DomainSecurityPolicyView.QUERY_HSTS_INPUT_ID);
+    this.queryStsOutputDiv_ =
+        $(DomainSecurityPolicyView.QUERY_HSTS_OUTPUT_DIV_ID);
     this.addExpectCTInput_ = $(DomainSecurityPolicyView.ADD_EXPECT_CT_INPUT_ID);
     this.addExpectCTReportUriInput_ =
         $(DomainSecurityPolicyView.ADD_EXPECT_CT_REPORT_URI_INPUT_ID);
@@ -53,15 +47,14 @@ var DomainSecurityPolicyView = (function() {
     this.testExpectCTOutputDiv_ =
         $(DomainSecurityPolicyView.TEST_REPORT_EXPECT_CT_OUTPUT_DIV_ID);
 
-    var form = $(DomainSecurityPolicyView.DELETE_FORM_ID);
+    let form = $(DomainSecurityPolicyView.DELETE_FORM_ID);
     form.addEventListener('submit', this.onSubmitDelete_.bind(this), false);
 
-    form = $(DomainSecurityPolicyView.ADD_HSTS_PKP_FORM_ID);
-    form.addEventListener('submit', this.onSubmitHSTSPKPAdd_.bind(this), false);
+    form = $(DomainSecurityPolicyView.ADD_HSTS_FORM_ID);
+    form.addEventListener('submit', this.onSubmitHSTSAdd_.bind(this), false);
 
-    form = $(DomainSecurityPolicyView.QUERY_HSTS_PKP_FORM_ID);
-    form.addEventListener(
-        'submit', this.onSubmitHSTSPKPQuery_.bind(this), false);
+    form = $(DomainSecurityPolicyView.QUERY_HSTS_FORM_ID);
+    form.addEventListener('submit', this.onSubmitHSTSQuery_.bind(this), false);
 
     form = $(DomainSecurityPolicyView.ADD_EXPECT_CT_FORM_ID);
     form.addEventListener(
@@ -95,18 +88,16 @@ var DomainSecurityPolicyView = (function() {
       'domain-security-policy-view-delete-form';
   DomainSecurityPolicyView.DELETE_SUBMIT_ID =
       'domain-security-policy-view-delete-submit';
-  // HSTS/PKP form elements
-  DomainSecurityPolicyView.ADD_HSTS_PKP_INPUT_ID = 'hsts-view-add-input';
+  // HSTS form elements
+  DomainSecurityPolicyView.ADD_HSTS_INPUT_ID = 'hsts-view-add-input';
   DomainSecurityPolicyView.ADD_STS_CHECK_ID = 'hsts-view-check-sts-input';
-  DomainSecurityPolicyView.ADD_PKP_CHECK_ID = 'hsts-view-check-pkp-input';
   DomainSecurityPolicyView.ADD_PINS_ID = 'hsts-view-add-pins';
-  DomainSecurityPolicyView.ADD_HSTS_PKP_FORM_ID = 'hsts-view-add-form';
-  DomainSecurityPolicyView.ADD_HSTS_PKP_SUBMIT_ID = 'hsts-view-add-submit';
-  DomainSecurityPolicyView.QUERY_HSTS_PKP_INPUT_ID = 'hsts-view-query-input';
-  DomainSecurityPolicyView.QUERY_HSTS_PKP_OUTPUT_DIV_ID =
-      'hsts-view-query-output';
-  DomainSecurityPolicyView.QUERY_HSTS_PKP_FORM_ID = 'hsts-view-query-form';
-  DomainSecurityPolicyView.QUERY_HSTS_PKP_SUBMIT_ID = 'hsts-view-query-submit';
+  DomainSecurityPolicyView.ADD_HSTS_FORM_ID = 'hsts-view-add-form';
+  DomainSecurityPolicyView.ADD_HSTS_SUBMIT_ID = 'hsts-view-add-submit';
+  DomainSecurityPolicyView.QUERY_HSTS_INPUT_ID = 'hsts-view-query-input';
+  DomainSecurityPolicyView.QUERY_HSTS_OUTPUT_DIV_ID = 'hsts-view-query-output';
+  DomainSecurityPolicyView.QUERY_HSTS_FORM_ID = 'hsts-view-query-form';
+  DomainSecurityPolicyView.QUERY_HSTS_SUBMIT_ID = 'hsts-view-query-submit';
   // Expect-CT form elements
   DomainSecurityPolicyView.ADD_EXPECT_CT_INPUT_ID = 'expect-ct-view-add-input';
   DomainSecurityPolicyView.ADD_EXPECT_CT_REPORT_URI_INPUT_ID =
@@ -139,16 +130,12 @@ var DomainSecurityPolicyView = (function() {
     // Inherit the superclass's methods.
     __proto__: superClass.prototype,
 
-    onSubmitHSTSPKPAdd_: function(event) {
-      g_browser.sendHSTSAdd(
-          this.addStsPkpInput_.value, this.addStsCheck_.checked,
-          this.addPkpCheck_.checked, this.addPins_.value);
-      g_browser.sendHSTSQuery(this.addStsPkpInput_.value);
-      this.queryStsPkpInput_.value = this.addStsPkpInput_.value;
+    onSubmitHSTSAdd_: function(event) {
+      g_browser.sendHSTSAdd(this.addStsInput_.value, this.addStsCheck_.checked);
+      g_browser.sendHSTSQuery(this.addStsInput_.value);
+      this.queryStsInput_.value = this.addStsInput_.value;
       this.addStsCheck_.checked = false;
-      this.addPkpCheck_.checked = false;
-      this.addStsPkpInput_.value = '';
-      this.addPins_.value = '';
+      this.addStsInput_.value = '';
       event.preventDefault();
     },
 
@@ -158,33 +145,33 @@ var DomainSecurityPolicyView = (function() {
       event.preventDefault();
     },
 
-    onSubmitHSTSPKPQuery_: function(event) {
-      g_browser.sendHSTSQuery(this.queryStsPkpInput_.value);
+    onSubmitHSTSQuery_: function(event) {
+      g_browser.sendHSTSQuery(this.queryStsInput_.value);
       event.preventDefault();
     },
 
     onHSTSQueryResult: function(result) {
       if (result.error != undefined) {
-        this.queryStsPkpOutputDiv_.innerHTML = '';
-        var s = addNode(this.queryStsPkpOutputDiv_, 'span');
+        this.queryStsOutputDiv_.innerHTML = '';
+        const s = addNode(this.queryStsOutputDiv_, 'span');
         s.textContent = result.error;
         s.style.color = '#e00';
-        yellowFade(this.queryStsPkpOutputDiv_);
+        yellowFade(this.queryStsOutputDiv_);
         return;
       }
 
       if (result.result == false) {
-        this.queryStsPkpOutputDiv_.innerHTML = '<b>Not found</b>';
-        yellowFade(this.queryStsPkpOutputDiv_);
+        this.queryStsOutputDiv_.innerHTML = '<b>Not found</b>';
+        yellowFade(this.queryStsOutputDiv_);
         return;
       }
 
-      this.queryStsPkpOutputDiv_.innerHTML = '';
+      this.queryStsOutputDiv_.innerHTML = '';
 
-      var s = addNode(this.queryStsPkpOutputDiv_, 'span');
+      const s = addNode(this.queryStsOutputDiv_, 'span');
       s.innerHTML = '<b>Found:</b><br/>';
 
-      var keys = [
+      const keys = [
         'static_sts_domain',
         'static_upgrade_mode',
         'static_sts_include_subdomains',
@@ -198,50 +185,44 @@ var DomainSecurityPolicyView = (function() {
         'dynamic_sts_include_subdomains',
         'dynamic_sts_observed',
         'dynamic_sts_expiry',
-        'dynamic_pkp_domain',
-        'dynamic_pkp_include_subdomains',
-        'dynamic_pkp_observed',
-        'dynamic_pkp_expiry',
-        'dynamic_spki_hashes',
       ];
 
-      var kStaticHashKeys =
+      const kStaticHashKeys =
           ['public_key_hashes', 'preloaded_spki_hashes', 'static_spki_hashes'];
 
-      var staticHashes = [];
-      for (var i = 0; i < kStaticHashKeys.length; ++i) {
-        var staticHashValue = result[kStaticHashKeys[i]];
-        if (staticHashValue != undefined && staticHashValue != '')
+      const staticHashes = [];
+      for (let i = 0; i < kStaticHashKeys.length; ++i) {
+        const staticHashValue = result[kStaticHashKeys[i]];
+        if (staticHashValue != undefined && staticHashValue != '') {
           staticHashes.push(staticHashValue);
+        }
       }
 
-      for (var i = 0; i < keys.length; ++i) {
-        var key = keys[i];
-        var value = result[key];
-        addTextNode(this.queryStsPkpOutputDiv_, ' ' + key + ': ');
+      for (let i = 0; i < keys.length; ++i) {
+        const key = keys[i];
+        const value = result[key];
+        addTextNode(this.queryStsOutputDiv_, ' ' + key + ': ');
 
         // If there are no static_hashes, do not make it seem like there is a
         // static PKP policy in place.
         if (staticHashes.length == 0 && key.startsWith('static_pkp_')) {
-          addNode(this.queryStsPkpOutputDiv_, 'br');
+          addNode(this.queryStsOutputDiv_, 'br');
           continue;
         }
 
         if (key === 'static_spki_hashes') {
           addNodeWithText(
-              this.queryStsPkpOutputDiv_, 'tt', staticHashes.join(','));
+              this.queryStsOutputDiv_, 'tt', staticHashes.join(','));
         } else if (key.indexOf('_upgrade_mode') >= 0) {
-          addNodeWithText(
-              this.queryStsPkpOutputDiv_, 'tt', modeToString(value));
+          addNodeWithText(this.queryStsOutputDiv_, 'tt', modeToString(value));
         } else {
           addNodeWithText(
-              this.queryStsPkpOutputDiv_, 'tt',
-              value == undefined ? '' : value);
+              this.queryStsOutputDiv_, 'tt', value == undefined ? '' : value);
         }
-        addNode(this.queryStsPkpOutputDiv_, 'br');
+        addNode(this.queryStsOutputDiv_, 'br');
       }
 
-      yellowFade(this.queryStsPkpOutputDiv_);
+      yellowFade(this.queryStsOutputDiv_);
     },
 
     onSubmitExpectCTAdd_: function(event) {
@@ -264,7 +245,7 @@ var DomainSecurityPolicyView = (function() {
     onExpectCTQueryResult: function(result) {
       if (result.error != undefined) {
         this.queryExpectCTOutputDiv_.innerHTML = '';
-        var s = addNode(this.queryExpectCTOutputDiv_, 'span');
+        const s = addNode(this.queryExpectCTOutputDiv_, 'span');
         s.textContent = result.error;
         s.style.color = '#e00';
         yellowFade(this.queryExpectCTOutputDiv_);
@@ -279,10 +260,10 @@ var DomainSecurityPolicyView = (function() {
 
       this.queryExpectCTOutputDiv_.innerHTML = '';
 
-      var s = addNode(this.queryExpectCTOutputDiv_, 'span');
+      const s = addNode(this.queryExpectCTOutputDiv_, 'span');
       s.innerHTML = '<b>Found:</b><br/>';
 
-      var keys = [
+      const keys = [
         'dynamic_expect_ct_domain',
         'dynamic_expect_ct_observed',
         'dynamic_expect_ct_expiry',
@@ -290,9 +271,9 @@ var DomainSecurityPolicyView = (function() {
         'dynamic_expect_ct_report_uri',
       ];
 
-      for (var i in keys) {
-        var key = keys[i];
-        var value = result[key];
+      for (const i in keys) {
+        const key = keys[i];
+        const value = result[key];
         addTextNode(this.queryExpectCTOutputDiv_, ' ' + key + ': ');
         addNodeWithText(
             this.queryExpectCTOutputDiv_, 'tt',

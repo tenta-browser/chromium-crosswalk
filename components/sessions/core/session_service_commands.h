@@ -11,7 +11,9 @@
 
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/token.h"
 #include "components/sessions/core/base_session_service.h"
 #include "components/sessions/core/session_types.h"
 #include "components/sessions/core/sessions_export.h"
@@ -36,14 +38,17 @@ SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(
 SESSIONS_EXPORT std::unique_ptr<SessionCommand>
 CreateSetTabIndexInWindowCommand(const SessionID& tab_id, int new_index);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateTabClosedCommand(
-    SessionID::id_type tab_id);
+    SessionID tab_id);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateWindowClosedCommand(
-    SessionID::id_type tab_id);
+    SessionID tab_id);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand>
 CreateSetSelectedNavigationIndexCommand(const SessionID& tab_id, int index);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateSetWindowTypeCommand(
     const SessionID& window_id,
     SessionWindow::WindowType type);
+SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateTabGroupCommand(
+    const SessionID& tab_id,
+    base::Optional<base::Token> group);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreatePinnedStateCommand(
     const SessionID& tab_id,
     bool is_pinned);
@@ -54,11 +59,9 @@ CreateSessionStorageAssociatedCommand(
 SESSIONS_EXPORT std::unique_ptr<SessionCommand> CreateSetActiveWindowCommand(
     const SessionID& window_id);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand>
-CreateTabNavigationPathPrunedFromBackCommand(const SessionID& tab_id,
-                                             int count);
-SESSIONS_EXPORT std::unique_ptr<SessionCommand>
-CreateTabNavigationPathPrunedFromFrontCommand(const SessionID& tab_id,
-                                              int count);
+CreateTabNavigationPathPrunedCommand(const SessionID& tab_id,
+                                     int index,
+                                     int count);
 SESSIONS_EXPORT std::unique_ptr<SessionCommand>
 CreateUpdateTabNavigationCommand(
     const SessionID& tab_id,
@@ -98,7 +101,7 @@ SESSIONS_EXPORT bool IsClosingCommand(SessionCommand* command);
 SESSIONS_EXPORT void RestoreSessionFromCommands(
     const std::vector<std::unique_ptr<SessionCommand>>& commands,
     std::vector<std::unique_ptr<SessionWindow>>* valid_windows,
-    SessionID::id_type* active_window_id);
+    SessionID* active_window_id);
 
 }  // namespace sessions
 

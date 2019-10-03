@@ -43,35 +43,36 @@ InputDeviceFactoryEvdevProxy::~InputDeviceFactoryEvdevProxy() {
 
 void InputDeviceFactoryEvdevProxy::AddInputDevice(int id,
                                                   const base::FilePath& path) {
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&InputDeviceFactoryEvdev::AddInputDevice,
-                                    input_device_factory_, id, path));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&InputDeviceFactoryEvdev::AddInputDevice,
+                                input_device_factory_, id, path));
 }
 
 void InputDeviceFactoryEvdevProxy::RemoveInputDevice(
     const base::FilePath& path) {
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&InputDeviceFactoryEvdev::RemoveInputDevice,
-                                    input_device_factory_, path));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&InputDeviceFactoryEvdev::RemoveInputDevice,
+                                input_device_factory_, path));
 }
 
 void InputDeviceFactoryEvdevProxy::OnStartupScanComplete() {
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&InputDeviceFactoryEvdev::OnStartupScanComplete,
-                            input_device_factory_));
+      FROM_HERE, base::BindOnce(&InputDeviceFactoryEvdev::OnStartupScanComplete,
+                                input_device_factory_));
 }
 
 void InputDeviceFactoryEvdevProxy::SetCapsLockLed(bool enabled) {
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&InputDeviceFactoryEvdev::SetCapsLockLed,
-                                    input_device_factory_, enabled));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&InputDeviceFactoryEvdev::SetCapsLockLed,
+                                input_device_factory_, enabled));
 }
 
 void InputDeviceFactoryEvdevProxy::UpdateInputDeviceSettings(
     const InputDeviceSettingsEvdev& settings) {
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&InputDeviceFactoryEvdev::UpdateInputDeviceSettings,
-                            input_device_factory_, settings));
+      FROM_HERE,
+      base::BindOnce(&InputDeviceFactoryEvdev::UpdateInputDeviceSettings,
+                     input_device_factory_, settings));
 }
 
 void InputDeviceFactoryEvdevProxy::GetTouchDeviceStatus(
@@ -95,6 +96,14 @@ void InputDeviceFactoryEvdevProxy::GetTouchEventLog(
                      base::BindOnce(&ForwardGetTouchEventLogReply,
                                     base::ThreadTaskRunnerHandle::Get(),
                                     std::move(reply))));
+}
+
+void InputDeviceFactoryEvdevProxy::GetGesturePropertiesService(
+    ozone::mojom::GesturePropertiesServiceRequest request) {
+  task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&InputDeviceFactoryEvdev::GetGesturePropertiesService,
+                     input_device_factory_, std::move(request)));
 }
 
 }  // namespace ui

@@ -30,6 +30,7 @@ class FakeDemuxerStream : public DemuxerStream {
 
   // DemuxerStream implementation.
   void Read(const ReadCB& read_cb) override;
+  bool IsReadPending() const override;
   AudioDecoderConfig audio_decoder_config() override;
   VideoDecoderConfig video_decoder_config() override;
   Type type() const override;
@@ -68,6 +69,8 @@ class FakeDemuxerStream : public DemuxerStream {
 
   // Sets further read requests to return EOS buffers.
   void SeekToEndOfStream();
+
+  base::TimeDelta duration() const { return duration_; }
 
  private:
   void UpdateVideoDecoderConfig();
@@ -113,7 +116,6 @@ class FakeMediaResource : public MediaResource {
 
   // MediaResource implementation.
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
 
  private:
   FakeDemuxerStream fake_video_stream_;

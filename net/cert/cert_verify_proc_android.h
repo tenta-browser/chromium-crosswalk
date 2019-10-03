@@ -11,14 +11,15 @@
 
 namespace net {
 
+class CertNetFetcher;
+
 // Performs certificate verification on Android by calling the platform
 // TrustManager through JNI.
 class NET_EXPORT CertVerifyProcAndroid : public CertVerifyProc {
  public:
-  CertVerifyProcAndroid();
+  explicit CertVerifyProcAndroid(scoped_refptr<CertNetFetcher> net_fetcher);
 
   bool SupportsAdditionalTrustAnchors() const override;
-  bool SupportsOCSPStapling() const override;
 
  protected:
   ~CertVerifyProcAndroid() override;
@@ -27,10 +28,13 @@ class NET_EXPORT CertVerifyProcAndroid : public CertVerifyProc {
   int VerifyInternal(X509Certificate* cert,
                      const std::string& hostname,
                      const std::string& ocsp_response,
+                     const std::string& sct_list,
                      int flags,
                      CRLSet* crl_set,
                      const CertificateList& additional_trust_anchors,
                      CertVerifyResult* verify_result) override;
+
+  scoped_refptr<CertNetFetcher> cert_net_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(CertVerifyProcAndroid);
 };

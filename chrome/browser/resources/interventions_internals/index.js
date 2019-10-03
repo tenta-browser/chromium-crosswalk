@@ -3,11 +3,25 @@
 // found in the LICENSE file.
 
 /** The columns that are used to find rows that contain the keyword. */
-const KEY_COLUMNS = ['log-type', 'log-description', 'log-url'];
 const ENABLE_BLACKLIST_BUTTON = 'Enable Blacklist';
 const IGNORE_BLACKLIST_BUTTON = 'Ignore Blacklist';
 const IGNORE_BLACKLIST_MESSAGE = 'Blacklist decisions are ignored.';
 const URL_THRESHOLD = 40;  // Maximum URL length
+
+window.logTableMap = {};
+
+/**
+ * Helper method to pad number, used for time format.
+ * @param {number} value The original number.
+ * @param {number} length The desired number length.
+ */
+function getPaddedValue(value, length) {
+  let result = '' + value;
+  while (result.length < length) {
+    result = '0' + result;
+  }
+  return result;
+}
 
 /**
  * Convert milliseconds to human readable date/time format.
@@ -16,16 +30,180 @@ const URL_THRESHOLD = 40;  // Maximum URL length
  * @return The converted string format.
  */
 function getTimeFormat(time) {
-  let date = new Date(time);
-  let options = {
+  const date = new Date(time);
+  const options = {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   };
 
-  let dateString = date.toLocaleDateString('en-US', options);
-  return dateString + ' ' + date.getHours() + ':' + date.getMinutes() + ':' +
-      date.getSeconds() + '.' + date.getMilliseconds();
+  const dateString = date.toLocaleDateString('en-US', options);
+  const hour = getPaddedValue(date.getHours(), 2);
+  const min = getPaddedValue(date.getMinutes(), 2);
+  const sec = getPaddedValue(date.getSeconds(), 2);
+  const millisec = getPaddedValue(date.getMilliseconds(), 3);
+  return dateString + ' ' + hour + ':' + min + ':' + sec + '.' + millisec;
+}
+
+/**
+ * Append a button to |element|, so that when the button is clicked, the
+ * detailed logs table associated with |pageId| will be shown/hidden.
+ * @param {!HTMLElement} element The element that the button will be added to.
+ * @param {number} pageId Used to locate the ID of the logs table row.
+ */
+function addMoreDetailsButton(element, pageId) {
+  const moreDetailsButton = document.createElement('button');
+  moreDetailsButton.setAttribute('class', 'more-details-button');
+  element.appendChild(moreDetailsButton);
+
+  const icon = document.createElement('i');
+  icon.setAttribute('class', 'arrow down');
+  moreDetailsButton.appendChild(icon);
+
+  moreDetailsButton.addEventListener('click', () => {
+    const expansionRow = $('expansion-row-' + pageId);
+    expansionRow.className = (expansionRow.className.includes('hide')) ?
+        expansionRow.className.replace('hide', 'show') :
+        expansionRow.className.replace('show', 'hide');
+
+    icon.className = (icon.className.includes('down')) ?
+        icon.className.replace('down', 'up') :
+        icon.className.replace('up', 'down');
+  });
+}
+
+/**
+ * Helper method to move a row to the top of a html table, below the header
+ * row.
+ * @param {!HTMLElement} row The row to move.
+ * @param {!HTMLElement} table The table to move.
+ */
+function pushRowToTopOfLogsTable(row, table) {
+  const newRow = table.insertRow(1);
+  newRow.className = row.className;
+  newRow.id = row.id;
+  newRow.innerHTML = row.innerHTML;
+  row.remove();
+}
+
+/**
+ * Helper method to move a group of messages to the top of the Logs Table,
+ * including the expansion row corresponding to the |pageId|.
+ *
+ * @param {number} pageId The key of |logTableMap| of the moving row.
+ */
+function pushMessagesToTopOfLogsTable(pageId) {
+  const logsTable = $('message-logs-table');
+  const currentMessageRow = window.logTableMap[pageId];
+
+  // Moving empty row.
+  const emptyRow = logsTable.rows[currentMessageRow.rowIndex + 2];
+  pushRowToTopOfLogsTable(emptyRow, logsTable);
+
+  // Moving expansion row.
+  const expansionRow = logsTable.rows[currentMessageRow.rowIndex + 1];
+  pushRowToTopOfLogsTable(expansionRow, logsTable);
+
+  // Moving the original row.
+  pushRowToTopOfLogsTable(currentMessageRow, logsTable);
+  window.logTableMap[pageId] = logsTable.rows[1];
+}
+
+/**
+ * Helper method to expand or collapse all logs in the message-logs-table.
+ *
+ * @param {boolean} expanding True for expand all log messages, and false to
+ * collapse all log messages.
+ */
+function logExpansionHelper(expanding) {
+  const rows = $('message-logs-table').rows;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].className.includes('expansion-row')) {
+      rows[i].className = expanding ?
+          rows[i].className.replace('hide', 'show') :
+          rows[i].className.replace('show', 'hide');
+      const arrowButton = rows[i - 1].querySelector('.arrow');
+      if (arrowButton) {
+        arrowButton.className = expanding ? 'arrow up' : 'arrow down';
+      }
+    }
+  }
+}
+
+/**
+ * Update the |pageId| log message group. Copy the main row that contains the
+ * most updated log message of the group to the expansion row, and update the
+ * current main row with new info.
+ *
+ * @param {number!} time Millisecond since Unix Epoch representation of time.
+ * @param {string!} type The message event type.
+ * @param {string!} description The event message description.
+ * @param {string} url The URL associated with the event.
+ */
+function updateTableRowByPageId(time, type, description, url, pageId) {
+  assert(pageId > 0);
+  assert(window.logTableMap[pageId]);
+  pushMessagesToTopOfLogsTable(pageId);
+
+  const currentRow = window.logTableMap[pageId];
+  const expansionRow = $('expansion-row-' + pageId);
+  const newRow =
+      expansionRow.querySelector('.expansion-logs-table').insertRow(0);
+  newRow.setAttribute('class', 'expand-log-message');
+
+  // Copying data from previous row, to the first row of the expansion table.
+  currentRow.querySelectorAll('td').forEach((column) => {
+    const cell = column.cloneNode(true);
+    const expandButton = cell.querySelector('.more-details-button');
+    if (expandButton) {
+      expandButton.remove();
+    }
+    newRow.appendChild(cell);
+  });
+
+  // Update current row with new data.
+  currentRow.querySelector('.log-time').textContent = getTimeFormat(time);
+  currentRow.querySelector('.log-type').textContent = type;
+  const descriptionTd = currentRow.querySelector('.log-description');
+  descriptionTd.textContent = description;
+  addMoreDetailsButton(descriptionTd, pageId);
+
+  let urlTd = currentRow.querySelector('.log-url');
+  if (urlTd) {
+    urlTd.remove();
+    if (url.length > 0) {
+      urlTd = createUrlElement(url);
+      urlTd.setAttribute('class', 'log-url');
+      currentRow.appendChild(urlTd);
+    }
+  }
+}
+
+/**
+ * Create an new row for expansion table below the |mainRow|.
+ *
+ * @param {!HTMLElement} mainRow The row with the most updated log event of the
+ * group.
+ * @param {number} pageId The ID associated with the group event.
+ */
+function createExpansionRow(mainRow, pageId) {
+  const logsTable = $('message-logs-table');
+  const expansionRow = logsTable.insertRow(mainRow.rowIndex + 1);
+  expansionRow.setAttribute('class', 'expansion-row hide');
+  expansionRow.setAttribute('id', 'expansion-row-' + pageId);
+  window.logTableMap[pageId] = mainRow;
+
+  const tdNode = document.createElement('td');
+  tdNode.setAttribute('colspan', '4');
+  expansionRow.appendChild(tdNode);
+
+  const expansionTable = document.createElement('table');
+  expansionTable.setAttribute('class', 'expansion-logs-table');
+  tdNode.appendChild(expansionTable);
+
+  // Insert row so that the table even/odd coloring remains the same.
+  const hiddenRow = logsTable.insertRow(expansionRow.rowIndex + 1);
+  hiddenRow.setAttribute('class', 'hide');
 }
 
 /**
@@ -36,28 +214,39 @@ function getTimeFormat(time) {
  * @param {string!} description The event message description.
  * @param {string} url The URL associated with the event.
  */
-function insertMessageRowToMessageLogTable(time, type, description, url) {
-  let tableRow =
+function insertMessageRowToMessageLogTable(
+    time, type, description, url, pageId) {
+  assert(pageId >= 0);
+  if (pageId > 0 && window.logTableMap[pageId]) {
+    updateTableRowByPageId(time, type, description, url, pageId);
+    return;
+  }
+
+  const tableRow =
       $('message-logs-table').insertRow(1);  // Index 0 belongs to header row.
   tableRow.setAttribute('class', 'log-message');
 
-  let timeTd = document.createElement('td');
+  if (pageId > 0) {  // If the new message will be grouped.
+    createExpansionRow(tableRow, pageId);
+  }
+
+  const timeTd = document.createElement('td');
   timeTd.textContent = getTimeFormat(time);
   timeTd.setAttribute('class', 'log-time');
   tableRow.appendChild(timeTd);
 
-  let typeTd = document.createElement('td');
+  const typeTd = document.createElement('td');
   typeTd.setAttribute('class', 'log-type');
   typeTd.textContent = type;
   tableRow.appendChild(typeTd);
 
-  let descriptionTd = document.createElement('td');
+  const descriptionTd = document.createElement('td');
   descriptionTd.setAttribute('class', 'log-description');
   descriptionTd.textContent = description;
   tableRow.appendChild(descriptionTd);
 
   if (url.length > 0) {
-    let urlTd = createUrlElement(url);
+    const urlTd = createUrlElement(url);
     urlTd.setAttribute('class', 'log-url');
     tableRow.appendChild(urlTd);
   }
@@ -67,8 +256,9 @@ function insertMessageRowToMessageLogTable(time, type, description, url) {
  * Switch the selected tab to 'selected-tab' class.
  */
 function setSelectedTab() {
-  let selected = document.querySelector('input[type=radio][name=tabs]:checked');
-  let selectedTab = document.querySelector('#' + selected.value);
+  const selected =
+      document.querySelector('input[type=radio][name=tabs]:checked');
+  const selectedTab = document.querySelector('#' + selected.value);
 
   selectedTab.className =
       selectedTab.className.replace('hidden-tab', 'selected-tab');
@@ -81,8 +271,8 @@ function setSelectedTab() {
  * selected element to 'selected-tab' class.
  */
 function changeTab() {
-  let lastSelected = document.querySelector('.selected-tab');
-  let lastTab = document.querySelector('.active-tab');
+  const lastSelected = document.querySelector('.selected-tab');
+  const lastTab = document.querySelector('.active-tab');
   lastSelected.className =
       lastSelected.className.replace('selected-tab', 'hidden-tab');
   lastTab.className = lastTab.className.replace('active-tab', 'inactive-tab');
@@ -91,16 +281,33 @@ function changeTab() {
 }
 
 /**
+ * Helper function to check if all keywords, case insensitive, are in the given
+ * text.
+ *
+ * @param {Array<string>} keywords The collection of keywords.
+ * @param {string} text The given text to search.
+ * @return True iff all keywords present in the given text.
+ */
+function checkTextContainsKeywords(keywords, text) {
+  for (let i = 0; i < keywords.length; i++) {
+    if (!text.toUpperCase().includes(keywords[i].toUpperCase())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Initialize the navigation bar, and setup OnChange listeners for the tabs.
  */
 function setupTabControl() {
   // Initialize on change listeners.
-  let tabs = document.querySelectorAll('input[type=radio][name=tabs]');
+  const tabs = document.querySelectorAll('input[type=radio][name=tabs]');
   tabs.forEach((tab) => {
     tab.addEventListener('change', changeTab);
   });
 
-  let tabContents = document.querySelectorAll('.tab-content');
+  const tabContents = document.querySelectorAll('.tab-content');
   tabContents.forEach((tab) => {
     tab.className += ' hidden-tab';
   });
@@ -116,17 +323,46 @@ function setupTabControl() {
  */
 function setupLogSearch() {
   $('log-search-bar').addEventListener('keyup', () => {
-    let keyword = $('log-search-bar').value.toUpperCase();
-    let rows = document.querySelectorAll('.log-message');
+    const keys = $('log-search-bar').value.split(' ');
+    const rows = $('message-logs-table').rows;
+    logExpansionHelper(true /* expanding */);
 
-    rows.forEach((row) => {
-      let found = KEY_COLUMNS.some((column) => {
-        return (row.querySelector('.' + column)
-                    .textContent.toUpperCase()
-                    .includes(keyword));
-      });
-      row.style.display = found ? '' : 'none';
-    });
+    for (let i = 1; i < rows.length; i++) {
+      // Check the main row.
+      rows[i].style.display =
+          checkTextContainsKeywords(keys, rows[i].textContent) ? '' : 'none';
+
+      // Check expandable rows.
+      const subtable = rows[i].querySelector('.expansion-logs-table');
+      if (subtable) {
+        for (let j = 0; j < subtable.rows.length; j++) {
+          subtable.rows[j].style.display =
+              checkTextContainsKeywords(keys, subtable.rows[j].textContent) ?
+              '' :
+              'none';
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Initialize the button to expand all logs data, and collapse all logs.
+ */
+function setupExpandLogs() {
+  // Expand all button.
+  $('expand-log-button').addEventListener('click', () => {
+    logExpansionHelper(true /* expanding */);
+    $('collapse-log-button').style.display = '';
+    $('expand-log-button').style.display = 'none';
+  });
+
+  // Collapse all button.
+  $('collapse-log-button').style.display = 'none';
+  $('collapse-log-button').addEventListener('click', () => {
+    logExpansionHelper(false /* expanding */);
+    $('collapse-log-button').style.display = 'none';
+    $('expand-log-button').style.display = '';
   });
 }
 
@@ -134,7 +370,7 @@ function setupLogSearch() {
  * Create and add a copy to clipboard button to a given node.
  *
  * @param {string} text The text that will be copied to the clipboard.
- * @param {element!} node The node that will have the button appended to.
+ * @param {Element} node The node that will have the button appended to.
  */
 function appendCopyToClipBoardButton(text, node) {
   if (!document.queryCommandSupported ||
@@ -142,12 +378,12 @@ function appendCopyToClipBoardButton(text, node) {
     // Don't add copy to clipboard button if not supported.
     return;
   }
-  let copyButton = document.createElement('div');
+  const copyButton = document.createElement('div');
   copyButton.setAttribute('class', 'copy-to-clipboard-button');
   copyButton.textContent = 'Copy';
 
   copyButton.addEventListener('click', () => {
-    var textarea = document.createElement('textarea');
+    const textarea = document.createElement('textarea');
     textarea.textContent = text;
     document.body.appendChild(textarea);
     textarea.select();
@@ -175,16 +411,16 @@ function appendCopyToClipBoardButton(text, node) {
  * or the shorten URL with a tooltip element at the end of the string.
  */
 function createUrlElement(url) {
-  let urlCell = document.createElement('div');
+  const urlCell = document.createElement('div');
   urlCell.setAttribute('class', 'log-url-value');
-  let urlTd = document.createElement('td');
+  const urlTd = document.createElement('td');
   urlTd.appendChild(urlCell);
 
   if (url.length <= URL_THRESHOLD) {
     urlCell.textContent = url;
   } else {
     urlCell.textContent = url.substring(0, URL_THRESHOLD - 3) + '...';
-    let tooltip = document.createElement('span');
+    const tooltip = document.createElement('span');
     tooltip.setAttribute('class', 'url-tooltip');
     tooltip.textContent = url;
     urlTd.appendChild(tooltip);
@@ -199,7 +435,7 @@ function createUrlElement(url) {
  * Helper function to remove all log message from log-messages-table.
  */
 function removeAllLogMessagesRows() {
-  let logsTable = $('message-logs-table');
+  const logsTable = $('message-logs-table');
   for (let row = logsTable.rows.length - 1; row > 0; row--) {
     logsTable.deleteRow(row);
   }
@@ -213,10 +449,12 @@ function setupLogClear() {
   $('clear-log-button').addEventListener('click', removeAllLogMessagesRows);
 }
 
-/** @constructor */
-let InterventionsInternalPageImpl = function(request) {
-  this.binding_ =
-      new mojo.Binding(mojom.InterventionsInternalsPage, this, request);
+/**
+ * @constructor
+ * @implements {mojom.InterventionsInternalsPageInterface}
+ */
+const InterventionsInternalPageImpl = function() {
+  this.receiver_ = new mojom.InterventionsInternalsPageReceiver(this);
 };
 
 InterventionsInternalPageImpl.prototype = {
@@ -224,12 +462,12 @@ InterventionsInternalPageImpl.prototype = {
    * Post a new log message to the web page.
    *
    * @override
-   * @param {!MessageLog} log The new log message recorded by
+   * @param {!mojom.MessageLog} log The new log message recorded by
    * PreviewsLogger.
    */
   logNewMessage: function(log) {
     insertMessageRowToMessageLogTable(
-        log.time, log.type, log.description, log.url.url);
+        log.time, log.type, log.description, log.url.url, log.pageId);
   },
 
   /**
@@ -241,15 +479,15 @@ InterventionsInternalPageImpl.prototype = {
    * since Unix epoch.
    */
   onBlacklistedHost: function(host, time) {
-    let row = document.createElement('tr');
+    const row = document.createElement('tr');
     row.setAttribute('class', 'blacklisted-host-row');
 
-    let hostTd = document.createElement('td');
+    const hostTd = document.createElement('td');
     hostTd.setAttribute('class', 'host-blacklisted');
     hostTd.textContent = host;
     row.appendChild(hostTd);
 
-    let timeTd = document.createElement('td');
+    const timeTd = document.createElement('td');
     timeTd.setAttribute('class', 'host-blacklisted-time');
     timeTd.textContent = getTimeFormat(time);
     row.appendChild(timeTd);
@@ -266,7 +504,7 @@ InterventionsInternalPageImpl.prototype = {
    * Unix epoch.
    */
   onUserBlacklistedStatusChange: function(blacklisted) {
-    let userBlacklistedStatus = $('user-blacklisted-status-value');
+    const userBlacklistedStatus = $('user-blacklisted-status-value');
     userBlacklistedStatus.textContent =
         (blacklisted ? 'Blacklisted' : 'Not blacklisted');
   },
@@ -279,17 +517,21 @@ InterventionsInternalPageImpl.prototype = {
    * epoch.
    */
   onBlacklistCleared: function(time) {
-    let blacklistClearedStatus = $('blacklist-last-cleared-time');
+    const blacklistClearedStatus = $('blacklist-last-cleared-time');
     blacklistClearedStatus.textContent = getTimeFormat(time);
 
     // Remove hosts from table.
-    let blacklistedHostsTable = $('blacklisted-hosts-table');
+    const blacklistedHostsTable = $('blacklisted-hosts-table');
     for (let row = blacklistedHostsTable.rows.length - 1; row > 0; row--) {
       blacklistedHostsTable.deleteRow(row);
     }
 
     // Remove log message from logs table.
     removeAllLogMessagesRows();
+
+    // Log event message.
+    insertMessageRowToMessageLogTable(
+        time, 'Blacklist', 'Blacklist Cleared', '' /* URL */, 0 /* pageId */);
   },
 
   /**
@@ -300,7 +542,7 @@ InterventionsInternalPageImpl.prototype = {
    * decisions is blacklisted or not.
    */
   onIgnoreBlacklistDecisionStatusChanged: function(ignored) {
-    let ignoreButton = $('ignore-blacklist-button');
+    const ignoreButton = $('ignore-blacklist-button');
     ignoreButton.textContent =
         ignored ? ENABLE_BLACKLIST_BUTTON : IGNORE_BLACKLIST_BUTTON;
 
@@ -315,31 +557,41 @@ InterventionsInternalPageImpl.prototype = {
    *
    * @override
    * @param {string} type The string representation of estimated ECT.
+   * @param {string} maxInterventionType The string representation of the
+   * session's maximum ECT threshold for interventions.
    */
-  onEffectiveConnectionTypeChanged: function(type) {
+  updateEffectiveConnectionType: function(type, maxInterventionType) {
     // Change the current ECT.
-    let ectType = $('nqe-type');
+    const ectType = $('nqe-type');
     ectType.textContent = type;
 
-    let now = getTimeFormat(Date.now());
+    // Set the session maximum ECT for interventions.
+    const maxInterventionEctType = $('max-intervention-type');
+    maxInterventionEctType.textContent = maxInterventionType;
+
+    const now = getTimeFormat(Date.now());
 
     // Log ECT changed event to ECT change log.
-    let nqeRow =
+    const nqeRow =
         $('nqe-logs-table').insertRow(1);  // Index 0 belongs to header row.
 
-    let timeCol = document.createElement('td');
+    const timeCol = document.createElement('td');
     timeCol.textContent = now;
     timeCol.setAttribute('class', 'nqe-time-column');
     nqeRow.appendChild((timeCol));
 
-    let nqeCol = document.createElement('td');
+    const nqeCol = document.createElement('td');
     nqeCol.setAttribute('class', 'nqe-value-column');
     nqeCol.textContent = type;
     nqeRow.appendChild(nqeCol);
+  },
 
-    // Insert ECT changed message to message-logs-table.
-    insertMessageRowToMessageLogTable(
-        now, 'ECT Changed', 'Effective Connection Type changed to ' + type, '');
+  /**
+   * Returns a remote interface to the receiver.
+   */
+  bindNewPipeAndPassRemote: function() {
+    const helper = this.receiver_.$;
+    return helper.bindNewPipeAndPassRemote();
   },
 };
 
@@ -351,48 +603,32 @@ cr.define('interventions_internals', () => {
     getPreviewsEnabled();
     getPreviewsFlagsDetails();
 
-    let ignoreButton = $('ignore-blacklist-button');
+    const ignoreButton = $('ignore-blacklist-button');
     ignoreButton.addEventListener('click', () => {
       // Whether the blacklist is currently ignored.
-      let ignored = (ignoreButton.textContent == ENABLE_BLACKLIST_BUTTON);
+      const ignored = (ignoreButton.textContent == ENABLE_BLACKLIST_BUTTON);
       // Try to reverse the ignore status.
       pageHandler.setIgnorePreviewsBlacklistDecision(!ignored);
     });
   }
 
   /**
-   * Sort keys by the value of each value by its description attribute of a
-   * |mapObject|.
-   *
-   * @param mapObject {!Map<string, Object} A map where all values have a
-   * description attribute.
-   * @return A list of keys sorted by their descriptions.
-   */
-  function getSortedKeysByDescription(mapObject) {
-    let sortedKeys = Array.from(mapObject.keys());
-    sortedKeys.sort((a, b) => {
-      return mapObject.get(a).description > mapObject.get(b).description;
-    });
-    return sortedKeys;
-  }
-
-  /**
-   * Retrieves the statuses of previews (i.e. Offline, LoFi, AMP Redirection),
+   * Retrieves the statuses of previews (i.e. Offline, Lite Pages, etc),
    * and posts them on chrome://intervention-internals.
    */
   function getPreviewsEnabled() {
     pageHandler.getPreviewsEnabled()
         .then((response) => {
-          let statuses = $('previews-enabled-status');
+          const statuses = $('previews-enabled-status');
 
-          getSortedKeysByDescription(response.statuses).forEach((key) => {
-            let value = response.statuses.get(key);
+          response.statuses.forEach((value) => {
             let message = value.description + ': ';
+            const key = value.htmlId;
             message += value.enabled ? 'Enabled' : 'Disabled';
 
             assert(!$(key), 'Component ' + key + ' already existed!');
 
-            let node = document.createElement('div');
+            const node = document.createElement('div');
             node.setAttribute('class', 'previews-status-value');
             node.setAttribute('id', key);
             node.textContent = message;
@@ -407,27 +643,27 @@ cr.define('interventions_internals', () => {
   function getPreviewsFlagsDetails() {
     pageHandler.getPreviewsFlagsDetails()
         .then((response) => {
-          let flags = $('previews-flags-table');
+          const flags = $('previews-flags-table');
 
-          getSortedKeysByDescription(response.flags).forEach((key) => {
-            let value = response.flags.get(key);
+          response.flags.forEach((flag) => {
+            const key = flag.htmlId;
             assert(!$(key), 'Component ' + key + ' already existed!');
 
-            let flagDescription = document.createElement('a');
+            const flagDescription = document.createElement('a');
             flagDescription.setAttribute('class', 'previews-flag-description');
             flagDescription.setAttribute('id', key + 'Description');
-            flagDescription.setAttribute('href', value.link);
-            flagDescription.textContent = value.description;
+            flagDescription.setAttribute('href', flag.link);
+            flagDescription.textContent = flag.description;
 
-            let flagNameTd = document.createElement('td');
+            const flagNameTd = document.createElement('td');
             flagNameTd.appendChild(flagDescription);
 
-            let flagValueTd = document.createElement('td');
+            const flagValueTd = document.createElement('td');
             flagValueTd.setAttribute('class', 'previews-flag-value');
             flagValueTd.setAttribute('id', key + 'Value');
-            flagValueTd.textContent = value.value;
+            flagValueTd.textContent = flag.value;
 
-            let node = document.createElement('tr');
+            const node = document.createElement('tr');
             node.setAttribute('class', 'previews-flag-container');
             node.appendChild(flagNameTd);
             node.appendChild(flagValueTd);
@@ -452,6 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupTabControl();
   setupLogSearch();
   setupLogClear();
+  setupExpandLogs();
   let pageHandler = null;
   let pageImpl = null;
 
@@ -459,15 +696,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.testPageHandler) {
       pageHandler = window.testPageHandler;
     } else {
-      pageHandler = new mojom.InterventionsInternalsPageHandlerPtr;
-      Mojo.bindInterface(
-          mojom.InterventionsInternalsPageHandler.name,
-          mojo.makeRequest(pageHandler).handle);
+      pageHandler = mojom.InterventionsInternalsPageHandler.getRemote();
 
       // Set up client side mojo interface.
-      let client = new mojom.InterventionsInternalsPagePtr;
-      pageImpl = new InterventionsInternalPageImpl(mojo.makeRequest(client));
-      pageHandler.setClientPage(client);
+      pageImpl = new InterventionsInternalPageImpl();
+      pageHandler.setClientPage(pageImpl.bindNewPipeAndPassRemote());
     }
 
     interventions_internals.init(pageHandler);

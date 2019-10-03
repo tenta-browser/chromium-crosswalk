@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/text_constants.h"
 
 namespace gfx {
 class Point;
@@ -43,11 +44,14 @@ class AutofillPopupViewDelegate {
   // out of the popup bounds.
   virtual void SelectionCleared() = 0;
 
+  // Returns true if any of the suggestions is selected.
+  virtual bool HasSelection() const = 0;
+
   // The actual bounds of the popup.
   virtual gfx::Rect popup_bounds() const = 0;
 
   // The view that the form field element sits in.
-  virtual gfx::NativeView container_view() = 0;
+  virtual gfx::NativeView container_view() const = 0;
 
   // The bounds of the form field element (screen coordinates).
   virtual const gfx::RectF& element_bounds() const = 0;
@@ -59,6 +63,10 @@ class AutofillPopupViewDelegate {
   virtual const std::vector<autofill::Suggestion> GetSuggestions() = 0;
 
 #if !defined(OS_ANDROID)
+  // Changes the typesetter used for eliding text. TODO(tapted): Remove this
+  // when autofill_popup_base_view_cocoa.mm is obsolete.
+  virtual void SetTypesetter(gfx::Typesetter typesetter) = 0;
+
   // Returns elided values and labels for the given |row|.
   virtual int GetElidedValueWidthForRow(int row) = 0;
   virtual int GetElidedLabelWidthForRow(int row) = 0;

@@ -8,14 +8,22 @@
 #include <memory>
 #include <utility>
 
+#include "android_webview/browser/input_stream.h"
 #include "android_webview/browser/net/aw_web_resource_request.h"
 #include "android_webview/browser/net/aw_web_resource_response.h"
 #include "android_webview/common/devtools_instrumentation.h"
+#include "android_webview/native_jni/AwContentsBackgroundThreadClient_jni.h"
+#include "android_webview/native_jni/AwContentsIoThreadClient_jni.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
+#include "base/bind.h"
+#include "base/containers/flat_set.h"
 #include "base/lazy_instance.h"
+#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -23,10 +31,9 @@
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "jni/AwContentsBackgroundThreadClient_jni.h"
-#include "jni/AwContentsIoThreadClient_jni.h"
 #include "net/base/data_url.h"
 #include "net/url_request/url_request.h"
+#include "services/network/public/cpp/resource_request.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -58,10 +65,16 @@ IoThreadClientData::IoThreadClientData() : pending_association(false) {}
 typedef map<pair<int, int>, IoThreadClientData>
     RenderFrameHostToIoThreadClientType;
 
+typedef pair<base::flat_set<RenderFrameHost*>, IoThreadClientData>
+    HostsAndClientDataPair;
+
 // When browser side navigation is enabled, RenderFrameIDs do not have
 // valid render process host and render frame ids for frame navigations.
-// We need to identify these by using Frame Tree Node ids.
-typedef map<int, IoThreadClientData> FrameTreeNodeToIoThreadClientType;
+// We need to identify these by using FrameTreeNodeIds. Furthermore, we need
+// to keep track of which RenderFrameHosts are associated with each
+// FrameTreeNodeId, so we know when the last RenderFrameHost is deleted (and
+// therefore the FrameTreeNodeId should be removed).
+typedef map<int, HostsAndClientDataPair> FrameTreeNodeToIoThreadClientType;
 
 static pair<int, int> GetRenderFrameHostIdPair(RenderFrameHost* rfh) {
   return pair<int, int>(rfh->GetProcess()->GetID(), rfh->GetRoutingID());
@@ -73,14 +86,19 @@ class RfhToIoThreadClientMap {
   static RfhToIoThreadClientMap* GetInstance();
   void Set(pair<int, int> rfh_id, const IoThreadClientData& client);
   bool Get(pair<int, int> rfh_id, IoThreadClientData* client);
-  void Erase(pair<int, int> rfh_id);
 
-  void Set(int frame_tree_node_id, const IoThreadClientData& client);
   bool Get(int frame_tree_node_id, IoThreadClientData* client);
-  void Erase(int frame_tree_node_id);
+
+  // Prefer to call these when RenderFrameHost* is available, because they
+  // update both maps at the same time.
+  void Set(RenderFrameHost* rfh, const IoThreadClientData& client);
+  void Erase(RenderFrameHost* rfh);
 
  private:
   base::Lock map_lock_;
+  // We maintain two maps simultaneously so that we can always get the correct
+  // IoThreadClientData, even when only HostIdPair or FrameTreeNodeId is
+  // available.
   RenderFrameHostToIoThreadClientType rfh_to_io_thread_client_;
   FrameTreeNodeToIoThreadClientType frame_tree_node_to_io_thread_client_;
 };
@@ -116,17 +134,6 @@ bool RfhToIoThreadClientMap::Get(pair<int, int> rfh_id,
   return true;
 }
 
-void RfhToIoThreadClientMap::Erase(pair<int, int> rfh_id) {
-  base::AutoLock lock(map_lock_);
-  rfh_to_io_thread_client_.erase(rfh_id);
-}
-
-void RfhToIoThreadClientMap::Set(int frame_tree_node_id,
-                                 const IoThreadClientData& client) {
-  base::AutoLock lock(map_lock_);
-  frame_tree_node_to_io_thread_client_[frame_tree_node_id] = client;
-}
-
 bool RfhToIoThreadClientMap::Get(int frame_tree_node_id,
                                  IoThreadClientData* client) {
   base::AutoLock lock(map_lock_);
@@ -135,13 +142,47 @@ bool RfhToIoThreadClientMap::Get(int frame_tree_node_id,
   if (iterator == frame_tree_node_to_io_thread_client_.end())
     return false;
 
-  *client = iterator->second;
+  *client = iterator->second.second;
   return true;
 }
 
-void RfhToIoThreadClientMap::Erase(int frame_tree_node_id) {
+void RfhToIoThreadClientMap::Set(RenderFrameHost* rfh,
+                                 const IoThreadClientData& client) {
+  int frame_tree_node_id = rfh->GetFrameTreeNodeId();
+  pair<int, int> rfh_id = GetRenderFrameHostIdPair(rfh);
   base::AutoLock lock(map_lock_);
-  frame_tree_node_to_io_thread_client_.erase(frame_tree_node_id);
+
+  // If this FrameTreeNodeId already has an associated IoThreadClientData, add
+  // this RenderFrameHost to the hosts set (it's harmless to overwrite the
+  // IoThreadClientData). Otherwise, operator[] creates a new map entry and we
+  // add this RenderFrameHost to the hosts set and insert |client| in the pair.
+  HostsAndClientDataPair& current_entry =
+      frame_tree_node_to_io_thread_client_[frame_tree_node_id];
+  current_entry.second = client;
+  current_entry.first.insert(rfh);
+
+  // Always add the entry to the HostIdPair map, since entries are 1:1 with
+  // RenderFrameHosts.
+  rfh_to_io_thread_client_[rfh_id] = client;
+}
+
+void RfhToIoThreadClientMap::Erase(RenderFrameHost* rfh) {
+  int frame_tree_node_id = rfh->GetFrameTreeNodeId();
+  pair<int, int> rfh_id = GetRenderFrameHostIdPair(rfh);
+  base::AutoLock lock(map_lock_);
+  HostsAndClientDataPair& current_entry =
+      frame_tree_node_to_io_thread_client_[frame_tree_node_id];
+  size_t num_erased = current_entry.first.erase(rfh);
+  DCHECK(num_erased == 1);
+  // Only remove this entry from the FrameTreeNodeId map if there are no more
+  // live RenderFrameHosts.
+  if (current_entry.first.empty()) {
+    frame_tree_node_to_io_thread_client_.erase(frame_tree_node_id);
+  }
+
+  // Always safe to remove the entry from the HostIdPair map, since entries are
+  // 1:1 with RenderFrameHosts.
+  rfh_to_io_thread_client_.erase(rfh_id);
 }
 
 // ClientMapEntryUpdater ------------------------------------------------------
@@ -175,15 +216,11 @@ void ClientMapEntryUpdater::RenderFrameCreated(RenderFrameHost* rfh) {
   IoThreadClientData client_data;
   client_data.io_thread_client = jdelegate_;
   client_data.pending_association = false;
-  RfhToIoThreadClientMap::GetInstance()->Set(GetRenderFrameHostIdPair(rfh),
-                                             client_data);
-  RfhToIoThreadClientMap::GetInstance()->Set(rfh->GetFrameTreeNodeId(),
-                                             client_data);
+  RfhToIoThreadClientMap::GetInstance()->Set(rfh, client_data);
 }
 
 void ClientMapEntryUpdater::RenderFrameDeleted(RenderFrameHost* rfh) {
-  RfhToIoThreadClientMap::GetInstance()->Erase(GetRenderFrameHostIdPair(rfh));
-  RfhToIoThreadClientMap::GetInstance()->Erase(rfh->GetFrameTreeNodeId());
+  RfhToIoThreadClientMap::GetInstance()->Erase(rfh);
 }
 
 void ClientMapEntryUpdater::WebContentsDestroyed() {
@@ -307,11 +344,78 @@ AwContentsIoThreadClient::CacheMode AwContentsIoThreadClient::GetCacheMode()
 }
 
 namespace {
+// Used to specify what kind of url was intercepted by the embedded
+// using shouldIntercepterRequest callback.
+// Note: these values are persisted in UMA logs, so they should never be
+// renumbered nor reused.
+enum class InterceptionType {
+  kNoIntercept,
+  kOther,
+  kHTTP,
+  kHTTPS,
+  kFILE,
+  kDATA,
+  // Magic constant used by the histogram macros.
+  kMaxValue = kDATA,
+};
+
+// Record UMA whether the request was intercepted and if so what kind of scheme.
+void RecordInterceptedScheme(bool response_is_null, const std::string& url) {
+  InterceptionType type = InterceptionType::kNoIntercept;
+  if (!response_is_null) {
+    GURL gurl(url);
+    if (gurl.SchemeIs(url::kHttpScheme)) {
+      type = InterceptionType::kHTTP;
+    } else if (gurl.SchemeIs(url::kHttpsScheme)) {
+      type = InterceptionType::kHTTPS;
+    } else if (gurl.SchemeIs(url::kFileScheme)) {
+      type = InterceptionType::kFILE;
+    } else if (gurl.SchemeIs(url::kDataScheme)) {
+      type = InterceptionType::kDATA;
+    } else {
+      type = InterceptionType::kOther;
+    }
+  }
+  UMA_HISTOGRAM_ENUMERATION(
+      "Android.WebView.ShouldInterceptRequest.InterceptionType", type);
+}
+
+// Record UMA for the custom response status code for the intercepted requests
+// where input stream is null. UMA is recorded only when the status codes and
+// reason phrases are actually valid.
+void RecordResponseStatusCode(JNIEnv* env, AwWebResourceResponse* response) {
+  DCHECK(response);
+  DCHECK(!response->HasInputStream(env));
+
+  int status_code;
+  std::string reason_phrase;
+  bool status_info_valid =
+      response->GetStatusInfo(env, &status_code, &reason_phrase);
+
+  if (!status_info_valid) {
+    // Status code is not necessary set properly in the response,
+    // e.g. Webview's WebResourceResponse(String, String, InputStream) [*]
+    // does not actually set the status code or the reason phrase. In this case
+    // we just record a zero status code.
+    // The other constructor (long version) or the #setStatusCodeAndReasonPhrase
+    // method does actually perform validity checks on status code and reason
+    // phrase arguments.
+    // [*]
+    // https://developer.android.com/reference/android/webkit/WebResourceResponse.html
+    status_code = 0;
+  }
+
+  base::UmaHistogramSparse(
+      "Android.WebView.ShouldInterceptRequest.NullInputStream."
+      "ResponseStatusCode",
+      status_code);
+}
 
 std::unique_ptr<AwWebResourceResponse> RunShouldInterceptRequest(
-    const AwWebResourceRequest& request,
+    AwWebResourceRequest request,
     JavaObjectWeakGlobalRef ref) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   JNIEnv* env = AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jobject> obj = ref.get(env);
@@ -329,8 +433,20 @@ std::unique_ptr<AwWebResourceResponse> RunShouldInterceptRequest(
           request.has_user_gesture, java_web_resource_request.jmethod,
           java_web_resource_request.jheader_names,
           java_web_resource_request.jheader_values);
-  return std::unique_ptr<AwWebResourceResponse>(
-      ret.is_null() ? nullptr : new AwWebResourceResponse(ret));
+
+  RecordInterceptedScheme(ret.is_null(), request.url);
+
+  if (ret.is_null())
+    return std::unique_ptr<AwWebResourceResponse>(nullptr);
+
+  AwWebResourceResponse* response = new AwWebResourceResponse(ret);
+  if (!response->HasInputStream(env)) {
+    // Only record UMA for cases where the input stream is null (see
+    // crbug.com/974273).
+    RecordResponseStatusCode(env, response);
+  }
+
+  return std::unique_ptr<AwWebResourceResponse>(response);
 }
 
 std::unique_ptr<AwWebResourceResponse> ReturnNull() {
@@ -340,11 +456,11 @@ std::unique_ptr<AwWebResourceResponse> ReturnNull() {
 }  // namespace
 
 void AwContentsIoThreadClient::ShouldInterceptRequestAsync(
-    const net::URLRequest* request,
-    const ShouldInterceptRequestResultCallback callback) {
+    AwWebResourceRequest request,
+    ShouldInterceptRequestResultCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  base::Callback<std::unique_ptr<AwWebResourceResponse>()> get_response =
-      base::Bind(&ReturnNull);
+  base::OnceCallback<std::unique_ptr<AwWebResourceResponse>()> get_response =
+      base::BindOnce(&ReturnNull);
   JNIEnv* env = AttachCurrentThread();
   if (bg_thread_client_object_.is_null() && !java_object_.is_null()) {
     bg_thread_client_object_.Reset(
@@ -352,26 +468,13 @@ void AwContentsIoThreadClient::ShouldInterceptRequestAsync(
                                                                 java_object_));
   }
   if (!bg_thread_client_object_.is_null()) {
-    // Skip ShouldInterceptRequest for request of a LoadDataWithBaseURL
-    // navigation. Note this is a short term hack so that PlznNavigate matches
-    // previous behavior. Logic specifically checks for an empty data URL,
-    // which through a quirk in content is what's sent up as the URL here.
-    // Long term, need to either remove the hack (with behavior change), or
-    // re-implement the same logic with changes in content rather than relying
-    // on a quirk of content behavior. crbug.com/769126
-    string mime_type;
-    string charset;
-    string data;
-    bool parse_result =
-        net::DataURL::Parse(request->url(), &mime_type, &charset, &data);
-    if (!parse_result || !data.empty()) {
-      get_response = base::Bind(
-          &RunShouldInterceptRequest, AwWebResourceRequest(*request),
-          JavaObjectWeakGlobalRef(env, bg_thread_client_object_.obj()));
-    }
+    get_response = base::BindOnce(
+        &RunShouldInterceptRequest, std::move(request),
+        JavaObjectWeakGlobalRef(env, bg_thread_client_object_.obj()));
   }
   base::PostTaskAndReplyWithResult(sequenced_task_runner_.get(), FROM_HERE,
-                                   get_response, callback);
+                                   std::move(get_response),
+                                   std::move(callback));
 }
 
 bool AwContentsIoThreadClient::ShouldBlockContentUrls() const {

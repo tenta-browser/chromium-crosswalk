@@ -9,12 +9,12 @@
 
 #include <memory>
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/strings/string16.h"
-#include "ios/web/public/favicon_status.h"
-#import "ios/web/public/navigation_item.h"
-#include "ios/web/public/referrer.h"
-#include "ios/web/public/ssl_status.h"
+#include "ios/web/navigation/error_retry_state_machine.h"
+#include "ios/web/public/favicon/favicon_status.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/referrer.h"
+#include "ios/web/public/security/ssl_status.h"
 #include "url/gurl.h"
 
 namespace web {
@@ -110,9 +110,19 @@ class NavigationItemImpl : public web::NavigationItem {
   // non-persisted state, as documented on the members below.
   void ResetForCommit();
 
+  // Returns the state machine that manages the displaying and retrying of load
+  // error for this item.
+  ErrorRetryStateMachine& error_retry_state_machine();
+
   // Returns the title string to be used for a page with |url| if that page
   // doesn't specify a title.
   static base::string16 GetDisplayTitleForURL(const GURL& url);
+
+  // Used only by WKBasedNavigationManager.  SetUntrusted() is only used for
+  // Visible or LastCommitted NavigationItems where the |url_| may be incorrect
+  // due to timining problems or bugs in WKWebView.
+  void SetUntrusted();
+  bool IsUntrusted();
 
 #ifndef NDEBUG
   // Returns a human-readable description of the state for debugging purposes.
@@ -136,22 +146,25 @@ class NavigationItemImpl : public web::NavigationItem {
   SSLStatus ssl_;
   base::Time timestamp_;
   UserAgentType user_agent_type_;
-  base::scoped_nsobject<NSMutableDictionary> http_request_headers_;
+  NSMutableDictionary* http_request_headers_;
 
-  base::scoped_nsobject<NSString> serialized_state_object_;
+  NSString* serialized_state_object_;
   bool is_created_from_push_state_;
   bool has_state_been_replaced_;
   bool is_created_from_hash_change_;
   bool should_skip_repost_form_confirmation_;
-  base::scoped_nsobject<NSData> post_data_;
+  NSData* post_data_;
+  ErrorRetryStateMachine error_retry_state_machine_;
 
   // The navigation initiation type of the item.  This decides whether the URL
   // should be displayed before the navigation commits.  It is cleared in
   // |ResetForCommit| and not persisted.
   web::NavigationInitiationType navigation_initiation_type_;
 
-  // Whether the navigation contains unsafe resources.
-  bool is_unsafe_;
+  // Used only by WKBasedNavigationManager.  |is_untrusted_| is only |true| for
+  // Visible or LastCommitted NavigationItems where the |url_| may be incorrect
+  // due to timining problems or bugs in WKWebView.
+  bool is_untrusted_;
 
   // This is a cached version of the result of GetTitleForDisplay. When the URL,
   // virtual URL, or title is set, this should be cleared to force a refresh.

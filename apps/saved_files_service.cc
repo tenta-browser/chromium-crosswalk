@@ -8,11 +8,11 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 
 #include "apps/saved_files_service_factory.h"
-#include "base/memory/ptr_util.h"
 #include "base/value_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
@@ -66,8 +66,8 @@ void AddSavedFileEntry(ExtensionPrefs* prefs,
   DCHECK(!file_entries->GetDictionaryWithoutPathExpansion(file_entry.id, NULL));
 
   std::unique_ptr<base::DictionaryValue> file_entry_dict =
-      base::MakeUnique<base::DictionaryValue>();
-  file_entry_dict->Set(kFileEntryPath, CreateFilePathValue(file_entry.path));
+      std::make_unique<base::DictionaryValue>();
+  file_entry_dict->SetKey(kFileEntryPath, CreateFilePathValue(file_entry.path));
   file_entry_dict->SetBoolean(kFileEntryIsDirectory, file_entry.is_directory);
   file_entry_dict->SetInteger(kFileEntrySequenceNumber,
                               file_entry.sequence_number);
@@ -298,7 +298,7 @@ void SavedFilesService::SavedFiles::RegisterFileEntry(
     return;
 
   registered_file_entries_[id] =
-      base::MakeUnique<SavedFileEntry>(id, file_path, is_directory, 0);
+      std::make_unique<SavedFileEntry>(id, file_path, is_directory, 0);
 }
 
 void SavedFilesService::SavedFiles::EnqueueFileEntry(const std::string& id) {
@@ -307,6 +307,18 @@ void SavedFilesService::SavedFiles::EnqueueFileEntry(const std::string& id) {
 
   SavedFileEntry* file_entry = it->second.get();
   int old_sequence_number = file_entry->sequence_number;
+
+#if defined(OS_CHROMEOS)
+  // crbug.com/983844 Convert path from legacy Download/ to MyFiles/Downloads/
+  // so entries saved before MyFiles don't fail. TODO(lucmult): Remove this
+  // after M-83.
+  const auto legacy_downloads = context_->GetPath().AppendASCII("Downloads");
+  auto to_myfiles =
+      context_->GetPath().AppendASCII("MyFiles").AppendASCII("Downloads");
+  if (legacy_downloads.AppendRelativePath(file_entry->path, &to_myfiles))
+    file_entry->path = to_myfiles;
+#endif
+
   if (!saved_file_lru_.empty()) {
     // Get the sequence number after the last file entry in the LRU.
     std::map<int, SavedFileEntry*>::reverse_iterator it =

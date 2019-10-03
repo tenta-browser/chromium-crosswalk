@@ -37,7 +37,6 @@ function EntryListWatcher(list) {
 /**
  * Obtains entry from ArrayDataModel's item.
  * @param {*} item Item in ArrayDataModel.
- * @protected
  * @return {!FileEntry}
  */
 EntryListWatcher.prototype.getEntry = function(item) {
@@ -76,8 +75,9 @@ EntryListWatcher.prototype.onSplice_ = function(event) {
   // 0: watcher exists in both sets.
   // 1: watcher does not exists in the old set, but exists in the new set.
   var reportError = function() {
-    if (chrome.runtime.lastError)
+    if (chrome.runtime.lastError) {
       console.error(chrome.runtime.lastError.name);
+    }
   };
   for (var url in diff) {
     switch (diff[url]) {
@@ -103,7 +103,7 @@ EntryListWatcher.prototype.onSplice_ = function(event) {
 };
 
 /**
- * @param {!FileWatchEvent} event
+ * @param {!chrome.fileManagerPrivate.FileWatchEvent} event
  * @private
  */
 EntryListWatcher.prototype.onDirectoryChanged_ = function(event) {
@@ -117,8 +117,9 @@ EntryListWatcher.prototype.onDirectoryChanged_ = function(event) {
     // Remove trailing '/' to prevent calling getMetadata in the case where the
     // event.entry and the entry are same.
     var entryURL = entry.toURL().replace(/\/$/, '');
-    if (entry.toURL().indexOf(url) !== 0)
+    if (entry.toURL().indexOf(url) !== 0) {
       continue;
+    }
     // Look for non-existing files by using getMetadata.
     // getMetadata returns NOT_FOUND error for non-existing files.
     promiseList.push(new Promise(entry.getMetadata.bind(entry)).catch(

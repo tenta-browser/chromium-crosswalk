@@ -24,8 +24,9 @@ namespace extensions {
 // it will retry reinstallation with backoff.
 class PolicyExtensionReinstaller {
  public:
-  using ReinstallCallback = base::Callback<void(const base::Closure& callback,
-                                                base::TimeDelta delay)>;
+  using ReinstallCallback =
+      base::RepeatingCallback<void(base::OnceClosure callback,
+                                   base::TimeDelta delay)>;
 
   explicit PolicyExtensionReinstaller(content::BrowserContext* context);
   ~PolicyExtensionReinstaller();
@@ -47,7 +48,7 @@ class PolicyExtensionReinstaller {
   // Whether or not there is a pending PostTask to Fire().
   bool scheduled_fire_pending_ = false;
 
-  base::WeakPtrFactory<PolicyExtensionReinstaller> weak_factory_;
+  base::WeakPtrFactory<PolicyExtensionReinstaller> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PolicyExtensionReinstaller);
 };

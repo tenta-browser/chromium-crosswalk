@@ -11,7 +11,7 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_data_sink.h"
 #import "ios/chrome/browser/ui/content_suggestions/identifier/content_suggestion_identifier.h"
 #import "ios/chrome/browser/ui/content_suggestions/identifier/content_suggestions_section_information.h"
-#import "ios/chrome/browser/ui/favicon/favicon_attributes.h"
+#import "ios/chrome/common/favicon/favicon_attributes.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/showcase/content_suggestions/sc_content_suggestions_item.h"
 #import "ios/showcase/content_suggestions/sc_content_suggestions_most_visited_item.h"
@@ -69,8 +69,8 @@ using CSCollectionViewItem = CollectionViewItem<SuggestedContent>;
 
 - (NSArray<ContentSuggestionsSectionInformation*>*)sectionsInfo {
   return @[
-    self.logoHeaderSection, self.mostVisitedSection, self.readingListSection,
-    self.articleSection, self.learnMoreSection
+    self.logoHeaderSection, self.mostVisitedSection, self.articleSection,
+    self.learnMoreSection
   ];
 }
 
@@ -138,6 +138,9 @@ using CSCollectionViewItem = CollectionViewItem<SuggestedContent>;
 
 - (UIView*)headerViewForWidth:(CGFloat)width {
   return nil;
+}
+
+- (void)toggleArticlesVisibility {
 }
 
 #pragma mark - Property

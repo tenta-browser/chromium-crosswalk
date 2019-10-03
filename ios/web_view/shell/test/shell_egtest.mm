@@ -8,7 +8,6 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "ios/web_view/shell/shell_view_controller.h"
 #import "ios/web_view/shell/test/earl_grey/web_view_shell_matchers.h"
@@ -68,7 +67,7 @@ void WaitForWebViewContainingText(NSString* text) {
 - (void)setUp {
   [super setUp];
 
-  _testServer = base::MakeUnique<net::EmbeddedTestServer>(
+  _testServer = std::make_unique<net::EmbeddedTestServer>(
       net::test_server::EmbeddedTestServer::TYPE_HTTP);
   _testServer->ServeFilesFromSourceDirectory(
       base::FilePath(FILE_PATH_LITERAL("ios/testing/data/http_server_files/")));
@@ -76,7 +75,6 @@ void WaitForWebViewContainingText(NSString* text) {
 }
 
 // Tests loading simple HTML page and verifies that page contains expected text.
-// TODO(crbug.com/733452): Enable this test.
 - (void)testLoadingURL {
   std::string URLSpec = _testServer->GetURL("/destination.html").spec();
 

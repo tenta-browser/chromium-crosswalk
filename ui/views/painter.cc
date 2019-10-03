@@ -5,7 +5,6 @@
 #include "ui/views/painter.h"
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_owner.h"
@@ -29,7 +28,12 @@ namespace {
 // of the background.
 class SolidRoundRectPainter : public Painter {
  public:
-  SolidRoundRectPainter(SkColor bg_color, SkColor stroke_color, float radius);
+  SolidRoundRectPainter(SkColor bg_color,
+                        SkColor stroke_color,
+                        float radius,
+                        const gfx::Insets& insets,
+                        SkBlendMode blend_mode,
+                        bool antialias);
   ~SolidRoundRectPainter() override;
 
   // Painter:
@@ -40,16 +44,27 @@ class SolidRoundRectPainter : public Painter {
   const SkColor bg_color_;
   const SkColor stroke_color_;
   const float radius_;
+  const gfx::Insets insets_;
+  const SkBlendMode blend_mode_;
+  const bool antialias_;
 
   DISALLOW_COPY_AND_ASSIGN(SolidRoundRectPainter);
 };
 
 SolidRoundRectPainter::SolidRoundRectPainter(SkColor bg_color,
                                              SkColor stroke_color,
-                                             float radius)
-    : bg_color_(bg_color), stroke_color_(stroke_color), radius_(radius) {}
+                                             float radius,
+                                             const gfx::Insets& insets,
+                                             SkBlendMode blend_mode,
+                                             bool antialias)
+    : bg_color_(bg_color),
+      stroke_color_(stroke_color),
+      radius_(radius),
+      insets_(insets),
+      blend_mode_(blend_mode),
+      antialias_(antialias) {}
 
-SolidRoundRectPainter::~SolidRoundRectPainter() {}
+SolidRoundRectPainter::~SolidRoundRectPainter() = default;
 
 gfx::Size SolidRoundRectPainter::GetMinimumSize() const {
   return gfx::Size();
@@ -59,54 +74,29 @@ void SolidRoundRectPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
   gfx::ScopedCanvas scoped_canvas(canvas);
   const float scale = canvas->UndoDeviceScaleFactor();
 
-  gfx::RectF border_rect_f(gfx::ScaleToEnclosingRect(gfx::Rect(size), scale));
-  const SkScalar scaled_corner_radius = SkFloatToScalar(radius_ * scale);
+  gfx::Rect inset_rect(size);
+  inset_rect.Inset(insets_);
+  gfx::RectF fill_rect(gfx::ScaleToEnclosingRect(inset_rect, scale));
+  gfx::RectF stroke_rect = fill_rect;
+  float scaled_radius = radius_ * scale;
 
   cc::PaintFlags flags;
-  flags.setAntiAlias(true);
+  flags.setBlendMode(blend_mode_);
+  if (antialias_)
+    flags.setAntiAlias(true);
   flags.setStyle(cc::PaintFlags::kFill_Style);
   flags.setColor(bg_color_);
-  canvas->DrawRoundRect(border_rect_f, scaled_corner_radius, flags);
+  canvas->DrawRoundRect(fill_rect, scaled_radius, flags);
 
-  border_rect_f.Inset(gfx::InsetsF(0.5f));
-  flags.setStyle(cc::PaintFlags::kStroke_Style);
-  flags.setStrokeWidth(1);
-  flags.setColor(stroke_color_);
-  canvas->DrawRoundRect(border_rect_f, scaled_corner_radius, flags);
-}
-
-// DashedFocusPainter ----------------------------------------------------------
-
-class DashedFocusPainter : public Painter {
- public:
-  explicit DashedFocusPainter(const gfx::Insets& insets);
-  ~DashedFocusPainter() override;
-
-  // Painter:
-  gfx::Size GetMinimumSize() const override;
-  void Paint(gfx::Canvas* canvas, const gfx::Size& size) override;
-
- private:
-  const gfx::Insets insets_;
-
-  DISALLOW_COPY_AND_ASSIGN(DashedFocusPainter);
-};
-
-DashedFocusPainter::DashedFocusPainter(const gfx::Insets& insets)
-    : insets_(insets) {
-}
-
-DashedFocusPainter::~DashedFocusPainter() {
-}
-
-gfx::Size DashedFocusPainter::GetMinimumSize() const {
-  return gfx::Size();
-}
-
-void DashedFocusPainter::Paint(gfx::Canvas* canvas, const gfx::Size& size) {
-  gfx::Rect rect(size);
-  rect.Inset(insets_);
-  canvas->DrawFocusRect(rect);
+  if (stroke_color_ != SK_ColorTRANSPARENT) {
+    constexpr float kStrokeWidth = 1.0f;
+    stroke_rect.Inset(gfx::InsetsF(kStrokeWidth / 2));
+    scaled_radius -= kStrokeWidth / 2;
+    flags.setStyle(cc::PaintFlags::kStroke_Style);
+    flags.setStrokeWidth(kStrokeWidth);
+    flags.setColor(stroke_color_);
+    canvas->DrawRoundRect(stroke_rect, scaled_radius, flags);
+  }
 }
 
 // SolidFocusPainter -----------------------------------------------------------
@@ -133,8 +123,7 @@ SolidFocusPainter::SolidFocusPainter(SkColor color,
                                      const gfx::InsetsF& insets)
     : color_(color), thickness_(thickness), insets_(insets) {}
 
-SolidFocusPainter::~SolidFocusPainter() {
-}
+SolidFocusPainter::~SolidFocusPainter() = default;
 
 gfx::Size SolidFocusPainter::GetMinimumSize() const {
   return gfx::Size();
@@ -179,8 +168,7 @@ ImagePainter::ImagePainter(const gfx::ImageSkia& image,
     : nine_painter_(new gfx::NineImagePainter(image, insets)) {
 }
 
-ImagePainter::~ImagePainter() {
-}
+ImagePainter::~ImagePainter() = default;
 
 gfx::Size ImagePainter::GetMinimumSize() const {
   return nine_painter_->GetMinimumSize();
@@ -212,7 +200,7 @@ PaintedLayer::PaintedLayer(std::unique_ptr<Painter> painter)
   layer()->set_delegate(this);
 }
 
-PaintedLayer::~PaintedLayer() {}
+PaintedLayer::~PaintedLayer() = default;
 
 void PaintedLayer::OnPaintLayer(const ui::PaintContext& context) {
   ui::PaintRecorder recorder(context, layer()->size());
@@ -227,11 +215,9 @@ void PaintedLayer::OnDeviceScaleFactorChanged(float old_device_scale_factor,
 
 // Painter --------------------------------------------------------------------
 
-Painter::Painter() {
-}
+Painter::Painter() = default;
 
-Painter::~Painter() {
-}
+Painter::~Painter() = default;
 
 // static
 void Painter::PaintPainterAt(gfx::Canvas* canvas,
@@ -254,19 +240,25 @@ void Painter::PaintFocusPainter(View* view,
 }
 
 // static
-std::unique_ptr<Painter> Painter::CreateSolidRoundRectPainter(SkColor color,
-                                                              float radius) {
-  return std::make_unique<SolidRoundRectPainter>(color, SK_ColorTRANSPARENT,
-                                                 radius);
+std::unique_ptr<Painter> Painter::CreateSolidRoundRectPainter(
+    SkColor color,
+    float radius,
+    const gfx::Insets& insets,
+    SkBlendMode blend_mode,
+    bool antialias) {
+  return std::make_unique<SolidRoundRectPainter>(
+      color, SK_ColorTRANSPARENT, radius, insets, blend_mode, antialias);
 }
 
 // static
 std::unique_ptr<Painter> Painter::CreateRoundRectWith1PxBorderPainter(
     SkColor bg_color,
     SkColor stroke_color,
-    float radius) {
-  return std::make_unique<SolidRoundRectPainter>(bg_color, stroke_color,
-                                                 radius);
+    float radius,
+    SkBlendMode blend_mode,
+    bool antialias) {
+  return std::make_unique<SolidRoundRectPainter>(
+      bg_color, stroke_color, radius, gfx::Insets(), blend_mode, antialias);
 }
 
 // static
@@ -280,17 +272,6 @@ std::unique_ptr<Painter> Painter::CreateImagePainter(
 std::unique_ptr<Painter> Painter::CreateImageGridPainter(
     const int image_ids[]) {
   return std::make_unique<ImagePainter>(image_ids);
-}
-
-// static
-std::unique_ptr<Painter> Painter::CreateDashedFocusPainter() {
-  return std::make_unique<DashedFocusPainter>(gfx::Insets());
-}
-
-// static
-std::unique_ptr<Painter> Painter::CreateDashedFocusPainterWithInsets(
-    const gfx::Insets& insets) {
-  return std::make_unique<DashedFocusPainter>(insets);
 }
 
 // static

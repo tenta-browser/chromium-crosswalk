@@ -9,10 +9,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/enterprise_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/mac/foundation_util.h"
-#include "base/mac/scoped_cftyperef.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
@@ -34,11 +35,10 @@ PolicyLoaderMac::PolicyLoaderMac(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::FilePath& managed_policy_path,
     MacPreferences* preferences)
-    : AsyncPolicyLoader(task_runner),
-      preferences_(preferences),
-      managed_policy_path_(managed_policy_path),
-      application_id_(kCFPreferencesCurrentApplication) {
-}
+    : PolicyLoaderMac(task_runner,
+                      managed_policy_path,
+                      preferences,
+                      kCFPreferencesCurrentApplication) {}
 
 PolicyLoaderMac::PolicyLoaderMac(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
@@ -48,7 +48,7 @@ PolicyLoaderMac::PolicyLoaderMac(
     : AsyncPolicyLoader(task_runner),
       preferences_(preferences),
       managed_policy_path_(managed_policy_path),
-      application_id_(application_id) {
+      application_id_(CFStringCreateCopy(kCFAllocatorDefault, application_id)) {
 }
 
 PolicyLoaderMac::~PolicyLoaderMac() {
@@ -60,6 +60,11 @@ void PolicyLoaderMac::InitOnBackgroundThread() {
         managed_policy_path_, false,
         base::Bind(&PolicyLoaderMac::OnFileUpdated, base::Unretained(this)));
   }
+
+  base::UmaHistogramBoolean("EnterpriseCheck.IsManaged",
+                            !managed_policy_path_.empty());
+  base::UmaHistogramBoolean("EnterpriseCheck.IsEnterpriseUser",
+                            base::IsMachineExternallyManaged());
 }
 
 std::unique_ptr<PolicyBundle> PolicyLoaderMac::Load() {
@@ -89,7 +94,7 @@ std::unique_ptr<PolicyBundle> PolicyLoaderMac::Load() {
     // TODO(joaodasilva): figure the policy scope.
     std::unique_ptr<base::Value> policy = PropertyToValue(value);
     if (policy) {
-      chrome_policy.Set(it.key(), level, POLICY_SCOPE_USER,
+      chrome_policy.Set(it.key(), level, POLICY_SCOPE_MACHINE,
                         POLICY_SOURCE_PLATFORM, std::move(policy), nullptr);
     } else {
       status.Add(POLICY_LOAD_STATUS_PARSE_ERROR);
@@ -183,7 +188,7 @@ void PolicyLoaderMac::LoadPolicyForComponent(
         forced ? POLICY_LEVEL_MANDATORY : POLICY_LEVEL_RECOMMENDED;
     std::unique_ptr<base::Value> policy_value = PropertyToValue(value);
     if (policy_value) {
-      policy->Set(it.key(), level, POLICY_SCOPE_USER, POLICY_SOURCE_PLATFORM,
+      policy->Set(it.key(), level, POLICY_SCOPE_MACHINE, POLICY_SOURCE_PLATFORM,
                   std::move(policy_value), nullptr);
     }
   }

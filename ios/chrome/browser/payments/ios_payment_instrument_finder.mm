@@ -12,13 +12,12 @@
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
+#include "components/payments/core/error_logger.h"
 #include "ios/chrome/browser/payments/ios_payment_instrument.h"
 #include "ios/chrome/browser/payments/payment_request.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -49,10 +48,10 @@ static const char kRelatedApplicationsUrl[] = "url";
 namespace payments {
 
 IOSPaymentInstrumentFinder::IOSPaymentInstrumentFinder(
-    net::URLRequestContextGetter* context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     id<PaymentRequestUIDelegate> payment_request_ui_delegate)
-    : downloader_(context_getter),
-      image_fetcher_(context_getter),
+    : downloader_(std::make_unique<ErrorLogger>(), url_loader_factory),
+      image_fetcher_(url_loader_factory),
       payment_request_ui_delegate_(payment_request_ui_delegate),
       num_instruments_to_find_(0),
       weak_factory_(this) {}
@@ -68,7 +67,7 @@ IOSPaymentInstrumentFinder::FilterUnsupportedURLPaymentMethods(
   for (const GURL& method : queried_url_payment_method_identifiers) {
     // Ensure that the payment method is recognized by looking for an
     // "app-name://" scheme to query for its presence.
-    if (!base::ContainsKey(enum_map, method.spec()))
+    if (!base::Contains(enum_map, method.spec()))
       continue;
 
     // If there is an app that can handle |scheme| on this device, this payment
@@ -126,7 +125,9 @@ IOSPaymentInstrumentFinder::CreateIOSPaymentInstrumentsForMethods(
 
 void IOSPaymentInstrumentFinder::OnPaymentManifestDownloaded(
     const GURL& method,
-    const std::string& content) {
+    const GURL& method_url_after_redirects,
+    const std::string& content,
+    const std::string& error_message) {
   // If |content| is empty then the download failed.
   if (content.empty()) {
     OnPaymentInstrumentProcessed();
@@ -163,38 +164,36 @@ bool IOSPaymentInstrumentFinder::GetWebAppManifestURLsFromPaymentManifest(
 
   std::set<GURL> web_app_manifest_urls;
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(input);
-  if (!value) {
+  base::Optional<base::Value> value = base::JSONReader::Read(input);
+  if (!value.has_value()) {
     LOG(ERROR) << "Payment method manifest must be in JSON format.";
     return false;
   }
 
-  std::unique_ptr<base::DictionaryValue> dict =
-      base::DictionaryValue::From(std::move(value));
-  if (!dict) {
+  if (!value.value().is_dict()) {
     LOG(ERROR) << "Payment method manifest must be a JSON dictionary.";
     return false;
   }
 
-  base::ListValue* list = nullptr;
-  if (!dict->GetList(kDefaultApplications, &list)) {
+  const base::Value* list = value.value().FindKeyOfType(
+      kDefaultApplications, base::Value::Type::LIST);
+  if (!list) {
     LOG(ERROR) << "\"" << kDefaultApplications << "\" must be a list.";
     return false;
   }
 
-  size_t apps_number = list->GetSize();
-  if (apps_number > kMaximumNumberOfWebAppManifests) {
+  const base::Value::ListStorage& apps = list->GetList();
+  if (apps.size() > kMaximumNumberOfWebAppManifests) {
     LOG(ERROR) << "\"" << kDefaultApplications << "\" must contain at most "
                << kMaximumNumberOfWebAppManifests << " entries.";
     return false;
   }
 
-  std::string item;
-  for (size_t i = 0; i < apps_number; ++i) {
-    if (!list->GetString(i, &item) || item.empty())
+  for (const base::Value& app : apps) {
+    if (!app.is_string() || app.GetString().empty())
       continue;
 
-    GURL url(item);
+    GURL url(app.GetString());
     if (!url.is_valid() || !url.SchemeIs(url::kHttpsScheme))
       continue;
 
@@ -213,7 +212,9 @@ bool IOSPaymentInstrumentFinder::GetWebAppManifestURLsFromPaymentManifest(
 void IOSPaymentInstrumentFinder::OnWebAppManifestDownloaded(
     const GURL& method,
     const GURL& web_app_manifest_url,
-    const std::string& content) {
+    const GURL& web_app_manifest_url_after_redirects,
+    const std::string& content,
+    const std::string& error_message) {
   // If |content| is empty then the download failed.
   if (content.empty()) {
     OnPaymentInstrumentProcessed();
@@ -239,55 +240,53 @@ bool IOSPaymentInstrumentFinder::GetPaymentAppDetailsFromWebAppManifest(
     std::string* out_app_name,
     GURL* out_app_icon_url,
     GURL* out_universal_link) {
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(input);
-  if (!value) {
+  base::Optional<base::Value> value = base::JSONReader::Read(input);
+  if (!value.has_value()) {
     LOG(ERROR) << "Web app manifest must be in JSON format.";
     return false;
   }
 
-  std::unique_ptr<base::DictionaryValue> dict =
-      base::DictionaryValue::From(std::move(value));
-  if (!dict) {
+  if (!value.value().is_dict()) {
     LOG(ERROR) << "Web app manifest must be a JSON dictionary.";
     return false;
   }
 
-  if (!dict->GetString(kShortName, out_app_name) || out_app_name->empty()) {
+  const std::string* short_name = value.value().FindStringKey(kShortName);
+  if (!short_name || short_name->empty()) {
     LOG(ERROR) << "\"" << kShortName << "\" must be a non-empty ASCII string.";
     return false;
   }
+  *out_app_name = *short_name;
 
-  base::ListValue* icons = nullptr;
-  if (!dict->GetList(kIcons, &icons)) {
+  const base::Value* list =
+      value.value().FindKeyOfType(kIcons, base::Value::Type::LIST);
+  if (!list) {
     LOG(ERROR) << "\"" << kIcons << "\" must be a list.";
     return false;
   }
 
-  size_t icons_size = icons->GetSize();
-  for (size_t i = 0; i < icons_size; ++i) {
-    base::DictionaryValue* icon = nullptr;
-    if (!icons->GetDictionary(i, &icon))
+  for (const base::Value& icon : list->GetList()) {
+    if (!icon.is_dict())
       continue;
 
-    std::string icon_sizes;
+    const std::string* icon_sizes = icon.FindStringKey(kIconsSizes);
     // TODO(crbug.com/752546): Determine acceptable sizes for payment app icon.
-    if (!icon->GetString(kIconsSizes, &icon_sizes) ||
-        icon_sizes != kIconSizes32)
+    if (!icon_sizes || *icon_sizes != kIconSizes32)
       continue;
 
-    std::string icon_string;
-    if (!icon->GetString(kIconsSource, &icon_string) || icon_string.empty())
+    const std::string* icon_string = icon.FindStringKey(kIconsSource);
+    if (!icon_string || icon_string->empty())
       continue;
 
     // The parsed value at "src" may be a relative path such that the base URL
     // is the path to the manifest. If so we check that here.
-    GURL complete_url = web_app_manifest_url.Resolve(icon_string);
+    GURL complete_url = web_app_manifest_url.Resolve(*icon_string);
     if (complete_url.is_valid() && complete_url.SchemeIs(url::kHttpsScheme)) {
       *out_app_icon_url = complete_url;
       break;
     }
 
-    GURL icon_url(icon_string);
+    GURL icon_url(*icon_string);
     if (icon_url.is_valid() && icon_url.SchemeIs(url::kHttpsScheme))
       *out_app_icon_url = icon_url;
   }
@@ -295,29 +294,26 @@ bool IOSPaymentInstrumentFinder::GetPaymentAppDetailsFromWebAppManifest(
   if (out_app_icon_url->is_empty())
     return false;
 
-  base::ListValue* apps = nullptr;
-  if (!dict->GetList(kRelatedApplications, &apps)) {
+  list = value.value().FindKeyOfType(kRelatedApplications,
+                                     base::Value::Type::LIST);
+  if (!list) {
     LOG(ERROR) << "\"" << kRelatedApplications << "\" must be a list.";
     return false;
   }
 
-  size_t related_applications_size = apps->GetSize();
-  for (size_t i = 0; i < related_applications_size; ++i) {
-    base::DictionaryValue* related_application = nullptr;
-    if (!apps->GetDictionary(i, &related_application))
+  for (const base::Value& app : list->GetList()) {
+    if (!app.is_dict())
       continue;
 
-    std::string platform;
-    if (!related_application->GetString(kPlatform, &platform) ||
-        platform != kPlatformItunes)
+    const std::string* platform = app.FindStringKey(kPlatform);
+    if (!platform || *platform != kPlatformItunes)
       continue;
 
-    std::string link;
-    if (!related_application->GetString(kRelatedApplicationsUrl, &link) ||
-        link.empty())
+    const std::string* link = app.FindStringKey(kRelatedApplicationsUrl);
+    if (!link || link->empty())
       continue;
 
-    GURL url(link);
+    GURL url(*link);
     if (!url.is_valid() || !url.SchemeIs(url::kHttpsScheme))
       continue;
 
@@ -337,12 +333,12 @@ void IOSPaymentInstrumentFinder::CreateIOSPaymentInstrument(
   std::string local_app_name(app_name);
   GURL local_universal_link(universal_link);
 
-  image_fetcher::IOSImageDataFetcherCallback callback =
+  image_fetcher::ImageDataFetcherBlock callback =
       ^(NSData* data, const image_fetcher::RequestMetadata& metadata) {
         if (data) {
           UIImage* icon =
               [UIImage imageWithData:data scale:[UIScreen mainScreen].scale];
-          instruments_found_.push_back(base::MakeUnique<IOSPaymentInstrument>(
+          instruments_found_.push_back(std::make_unique<IOSPaymentInstrument>(
               local_method_name.spec(), local_universal_link, local_app_name,
               icon, payment_request_ui_delegate_));
         }

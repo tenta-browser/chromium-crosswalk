@@ -7,19 +7,22 @@
 #include <utility>
 
 #include "base/base64url.h"
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/timer/timer.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/safe_browsing/db/safebrowsing.pb.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+
+#if !defined(FULL_SAFE_BROWSING)
+#include "base/system/sys_info.h"
+#endif
 
 using base::Time;
 using base::TimeDelta;
@@ -78,6 +81,15 @@ static const int kV4TimerStartIntervalSecMax = 300;
 // Maximum time, in seconds, to wait for a response to an update request.
 static const int kV4TimerUpdateWaitSecMax = 15 * 60;  // 15 minutes
 
+// The default number of entries, per threat type, in the safe browsing
+// database on low end (low RAM) devices. This value is also used as the default
+// for GMS Safe Browsing on low end devices.
+static const int kLowEndDefaultDBEntryCount = 1 << 10;
+
+// Malware threat DB coverage drops off too much below 4096 entries, so we use
+// this values instead of the default above.
+static const int kLowEndMalwareDBEntryCount = 1 << 12;
+
 ChromeClientInfo::SafeBrowsingReportingPopulation GetReportingLevelProtoValue(
     ExtendedReportingLevel reporting_level) {
   switch (reporting_level) {
@@ -100,14 +112,14 @@ class V4UpdateProtocolManagerFactoryImpl
   V4UpdateProtocolManagerFactoryImpl() {}
   ~V4UpdateProtocolManagerFactoryImpl() override {}
   std::unique_ptr<V4UpdateProtocolManager> CreateProtocolManager(
-      net::URLRequestContextGetter* request_context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       const V4ProtocolConfig& config,
       V4UpdateCallback update_callback,
       ExtendedReportingLevelCallback extended_reporting_level_callback)
       override {
-    return std::unique_ptr<V4UpdateProtocolManager>(new V4UpdateProtocolManager(
-        request_context_getter, config, update_callback,
-        extended_reporting_level_callback));
+    return std::unique_ptr<V4UpdateProtocolManager>(
+        new V4UpdateProtocolManager(url_loader_factory, config, update_callback,
+                                    extended_reporting_level_callback));
   }
 
  private:
@@ -121,14 +133,14 @@ V4UpdateProtocolManagerFactory* V4UpdateProtocolManager::factory_ = nullptr;
 
 // static
 std::unique_ptr<V4UpdateProtocolManager> V4UpdateProtocolManager::Create(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const V4ProtocolConfig& config,
     V4UpdateCallback update_callback,
     ExtendedReportingLevelCallback extended_reporting_level_callback) {
   if (!factory_) {
     factory_ = new V4UpdateProtocolManagerFactoryImpl();
   }
-  return factory_->CreateProtocolManager(request_context_getter, config,
+  return factory_->CreateProtocolManager(url_loader_factory, config,
                                          update_callback,
                                          extended_reporting_level_callback);
 }
@@ -139,7 +151,7 @@ void V4UpdateProtocolManager::ResetUpdateErrors() {
 }
 
 V4UpdateProtocolManager::V4UpdateProtocolManager(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const V4ProtocolConfig& config,
     V4UpdateCallback update_callback,
     ExtendedReportingLevelCallback extended_reporting_level_callback)
@@ -149,8 +161,7 @@ V4UpdateProtocolManager::V4UpdateProtocolManager(
           base::RandInt(kV4TimerStartIntervalSecMin,
                         kV4TimerStartIntervalSecMax))),
       config_(config),
-      request_context_getter_(request_context_getter),
-      url_fetcher_id_(0),
+      url_loader_factory_(url_loader_factory),
       update_callback_(update_callback),
       extended_reporting_level_callback_(extended_reporting_level_callback) {
   // Do not auto-schedule updates. Let the owner (V4LocalDatabaseManager) do it
@@ -244,6 +255,13 @@ std::string V4UpdateProtocolManager::GetBase64SerializedUpdateRequestProto() {
     list_update_request->mutable_constraints()->add_supported_compressions(RAW);
     list_update_request->mutable_constraints()->add_supported_compressions(
         RICE);
+
+#if !defined(FULL_SAFE_BROWSING)
+    if (base::SysInfo::IsLowEndDevice()) {
+      list_update_request->mutable_constraints()->set_max_database_entries(
+          GetLowEndDBEntryCount(list_update_request->threat_type()));
+    }
+#endif
   }
 
   if (!extended_reporting_level_callback_.is_null()) {
@@ -260,6 +278,15 @@ std::string V4UpdateProtocolManager::GetBase64SerializedUpdateRequestProto() {
   base::Base64UrlEncode(req_data, base::Base64UrlEncodePolicy::INCLUDE_PADDING,
                         &req_base64);
   return req_base64;
+}
+
+int V4UpdateProtocolManager::GetLowEndDBEntryCount(ThreatType threat_type) {
+  switch (threat_type) {
+    case ThreatType::MALWARE_THREAT:
+      return kLowEndMalwareDBEntryCount;
+    default:
+      return kLowEndDefaultDBEntryCount;
+  }
 }
 
 bool V4UpdateProtocolManager::ParseUpdateResponse(
@@ -308,18 +335,13 @@ void V4UpdateProtocolManager::IssueUpdateRequest() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // If an update request is already pending, record and return silently.
-  if (request_.get()) {
+  if (request_) {
     RecordUpdateResult(V4OperationResult::ALREADY_PENDING_ERROR);
     return;
   }
 
-  std::string req_base64 = GetBase64SerializedUpdateRequestProto();
-  GURL update_url;
-  net::HttpRequestHeaders headers;
-  GetUpdateUrlAndHeaders(req_base64, &update_url, &headers);
-
   net::NetworkTrafficAnnotationTag traffic_annotation =
-      net::DefineNetworkTrafficAnnotation("safe_browsing_g4_update", R"(
+      net::DefineNetworkTrafficAnnotation("safe_browsing_v4_update", R"(
         semantics {
           sender: "Safe Browsing"
           description:
@@ -346,18 +368,20 @@ void V4UpdateProtocolManager::IssueUpdateRequest() {
             }
           }
         })");
-  std::unique_ptr<net::URLFetcher> fetcher =
-      net::URLFetcher::Create(url_fetcher_id_++, update_url,
-                              net::URLFetcher::GET, this, traffic_annotation);
-  fetcher->SetExtraRequestHeaders(headers.ToString());
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      fetcher.get(), data_use_measurement::DataUseUserData::SAFE_BROWSING);
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  std::string req_base64 = GetBase64SerializedUpdateRequestProto();
+  GetUpdateUrlAndHeaders(req_base64, &resource_request->url,
+                         &resource_request->headers);
+  resource_request->load_flags = net::LOAD_DISABLE_CACHE;
+  std::unique_ptr<network::SimpleURLLoader> loader =
+      network::SimpleURLLoader::Create(std::move(resource_request),
+                                       traffic_annotation);
+  loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&V4UpdateProtocolManager::OnURLLoaderComplete,
+                     base::Unretained(this)));
 
-  request_ = std::move(fetcher);
-
-  request_->SetLoadFlags(net::LOAD_DISABLE_CACHE);
-  request_->SetRequestContext(request_context_getter_.get());
-  request_->Start();
+  request_ = std::move(loader);
 
   // Begin the update request timeout.
   timeout_timer_.Start(FROM_HERE,
@@ -371,38 +395,47 @@ void V4UpdateProtocolManager::HandleTimeout() {
   ScheduleNextUpdateWithBackoff(true);
 }
 
-// net::URLFetcherDelegate implementation ----------------------------------
-
 // SafeBrowsing request responses are handled here.
-void V4UpdateProtocolManager::OnURLFetchComplete(
-    const net::URLFetcher* source) {
+void V4UpdateProtocolManager::OnURLLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  int response_code = 0;
+  if (request_->ResponseInfo() && request_->ResponseInfo()->headers)
+    response_code = request_->ResponseInfo()->headers->response_code();
 
+  std::string data;
+  if (response_body)
+    data = *response_body;
+
+  OnURLLoaderCompleteInternal(request_->NetError(), response_code, data);
+}
+
+void V4UpdateProtocolManager::OnURLLoaderCompleteInternal(
+    int net_error,
+    int response_code,
+    const std::string& data) {
   timeout_timer_.Stop();
 
-  last_response_code_ = source->GetResponseCode();
-  net::URLRequestStatus status = source->GetStatus();
+  last_response_code_ = response_code;
   V4ProtocolManagerUtil::RecordHttpResponseOrErrorCode(
-      "SafeBrowsing.V4Update.Network.Result", status, last_response_code_);
+      "SafeBrowsing.V4Update.Network.Result", net_error, last_response_code_);
   RecordTimedOut(false);
 
   last_response_time_ = Time::Now();
 
   std::unique_ptr<ParsedServerResponse> parsed_server_response(
       new ParsedServerResponse);
-  if (status.is_success() && last_response_code_ == net::HTTP_OK) {
+  if (net_error == net::OK && last_response_code_ == net::HTTP_OK) {
     RecordUpdateResult(V4OperationResult::STATUS_200);
     ResetUpdateErrors();
-    std::string data;
-    source->GetResponseAsString(&data);
     if (!ParseUpdateResponse(data, parsed_server_response.get())) {
       parsed_server_response->clear();
       RecordUpdateResult(V4OperationResult::PARSE_ERROR);
     }
     request_.reset();
 
-    UMA_HISTOGRAM_COUNTS("SafeBrowsing.V4Update.ResponseSizeKB",
-                         data.size() / 1024);
+    UMA_HISTOGRAM_COUNTS_1M("SafeBrowsing.V4Update.ResponseSizeKB",
+                            data.size() / 1024);
 
     // The caller should update its state now, based on parsed_server_response.
     // The callback must call ScheduleNextUpdate() at the end to resume
@@ -410,10 +443,10 @@ void V4UpdateProtocolManager::OnURLFetchComplete(
     update_callback_.Run(std::move(parsed_server_response));
   } else {
     DVLOG(1) << "SafeBrowsing GetEncodedUpdates request for: "
-             << source->GetURL() << " failed with error: " << status.error()
+             << request_->GetFinalURL() << " failed with error: " << net_error
              << " and response code: " << last_response_code_;
 
-    if (status.status() == net::URLRequestStatus::FAILED) {
+    if (net_error != net::OK) {
       RecordUpdateResult(V4OperationResult::NETWORK_ERROR);
     } else {
       RecordUpdateResult(V4OperationResult::HTTP_ERROR);
@@ -439,8 +472,14 @@ void V4UpdateProtocolManager::CollectUpdateInfo(
   if (last_response_code_)
     update_info->set_network_status_code(last_response_code_);
 
-  if (last_response_time_.ToJavaTime())
+  if (last_response_time_.ToJavaTime()) {
     update_info->set_last_update_time_millis(last_response_time_.ToJavaTime());
+
+    // We should only find the next update if the last_response is valid.
+    base::Time next_update = last_response_time_ + next_update_interval_;
+    if (next_update.ToJavaTime())
+      update_info->set_next_update_time_millis(next_update.ToJavaTime());
+  }
 }
 
 }  // namespace safe_browsing

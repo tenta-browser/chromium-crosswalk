@@ -8,12 +8,14 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_store.h"
 
 namespace base {
-class MessageLoop;
 class Thread;
 }
 
@@ -26,6 +28,10 @@ class CookieCallback {
  public:
   // Waits until the callback is invoked.
   void WaitUntilDone();
+
+  // Returns whether the callback was invoked. Should only be used on the thread
+  // the callback runs on.
+  bool was_run() const;
 
  protected:
   // Constructs a callback that expects to be called in the given thread.
@@ -42,9 +48,12 @@ class CookieCallback {
   void CallbackEpilogue();
 
  private:
+  void ValidateThread() const;
+
   base::Thread* run_in_thread_;
-  base::MessageLoop* run_in_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> run_in_task_runner_;
   base::RunLoop loop_to_quit_;
+  bool was_run_;
 };
 
 // Callback implementations for the asynchronous CookieStore methods.
@@ -63,32 +72,29 @@ class ResultSavingCookieCallback : public CookieCallback {
     CallbackEpilogue();
   }
 
+  // Makes a callback that will invoke Run. Assumes that |this| will be kept
+  // alive till the time the callback is used.
+  base::OnceCallback<void(T)> MakeCallback() {
+    return base::BindOnce(&ResultSavingCookieCallback<T>::Run,
+                          base::Unretained(this));
+  }
+
   const T& result() { return result_; }
 
  private:
   T result_;
 };
 
-class StringResultCookieCallback : public CookieCallback {
- public:
-  StringResultCookieCallback();
-  explicit StringResultCookieCallback(base::Thread* run_in_thread);
-
-  void Run(const std::string& result) {
-    result_ = result;
-    CallbackEpilogue();
-  }
-
-  const std::string& result() { return result_; }
-
- private:
-  std::string result_;
-};
-
 class NoResultCookieCallback : public CookieCallback {
  public:
   NoResultCookieCallback();
   explicit NoResultCookieCallback(base::Thread* run_in_thread);
+
+  // Makes a callback that will invoke Run. Assumes that |this| will be kept
+  // alive till the time the callback is used.
+  base::OnceCallback<void()> MakeCallback() {
+    return base::BindOnce(&NoResultCookieCallback::Run, base::Unretained(this));
+  }
 
   void Run() {
     CallbackEpilogue();
@@ -102,12 +108,21 @@ class GetCookieListCallback : public CookieCallback {
 
   ~GetCookieListCallback();
 
-  void Run(const CookieList& cookies);
+  void Run(const CookieList& cookies, const CookieStatusList& excluded_cookies);
+
+  // Makes a callback that will invoke Run. Assumes that |this| will be kept
+  // alive till the time the callback is used.
+  base::OnceCallback<void(const CookieList&, const CookieStatusList&)>
+  MakeCallback() {
+    return base::BindOnce(&GetCookieListCallback::Run, base::Unretained(this));
+  }
 
   const CookieList& cookies() { return cookies_; }
+  const CookieStatusList& excluded_cookies() { return excluded_cookies_; }
 
  private:
   CookieList cookies_;
+  CookieStatusList excluded_cookies_;
 };
 
 }  // namespace net

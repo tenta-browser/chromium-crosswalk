@@ -19,12 +19,9 @@
 #include "base/threading/thread_checker.h"
 #include "url/gurl.h"
 
-
-namespace net {
-class URLRequestContextGetter;
-}
-
 namespace update_client {
+
+class NetworkFetcherFactory;
 
 // Defines a download interface for downloading components, with retrying on
 // fallback urls in case of errors. This class implements a chain of
@@ -57,20 +54,11 @@ class CrxDownloader {
 
   // Contains the progress or the outcome of the download.
   struct Result {
-    Result();
-
     // Download error: 0 indicates success.
-    int error;
+    int error = 0;
 
     // Path of the downloaded file if the download was successful.
     base::FilePath response;
-
-    // Number of bytes actually downloaded, not including the bytes downloaded
-    // as a result of falling back on urls.
-    int64_t downloaded_bytes;
-
-    // Number of bytes expected to be downloaded.
-    int64_t total_bytes;
   };
 
   // The callback fires only once, regardless of how many urls are tried, and
@@ -80,14 +68,14 @@ class CrxDownloader {
   // specific error codes and download metrics.
   using DownloadCallback = base::OnceCallback<void(const Result& result)>;
 
-  // The callback may fire 0 or many times during a download. Since this
+  // The callback may fire 0 or once during a download. Since this
   // class implements a chain of responsibility, the callback can fire for
-  // different urls and different downloaders. The number of actual downloaded
-  // bytes is not guaranteed to monotonically increment over time.
-  using ProgressCallback = base::Callback<void(const Result& result)>;
+  // different urls and different downloaders.
+  using ProgressCallback = base::RepeatingCallback<void()>;
 
   using Factory =
-      std::unique_ptr<CrxDownloader> (*)(bool, net::URLRequestContextGetter*);
+      std::unique_ptr<CrxDownloader> (*)(bool,
+                                         scoped_refptr<NetworkFetcherFactory>);
 
   // Factory method to create an instance of this class and build the
   // chain of responsibility. |is_background_download| specifies that a
@@ -96,7 +84,7 @@ class CrxDownloader {
   // code such as file IO operations.
   static std::unique_ptr<CrxDownloader> Create(
       bool is_background_download,
-      net::URLRequestContextGetter* context_getter);
+      scoped_refptr<NetworkFetcherFactory> network_fetcher_factory);
   virtual ~CrxDownloader();
 
   void set_progress_callback(const ProgressCallback& progress_callback);
@@ -131,7 +119,7 @@ class CrxDownloader {
                           const DownloadMetrics& download_metrics);
 
   // Calls the callback when progress is made.
-  void OnDownloadProgress(const Result& result);
+  void OnDownloadProgress();
 
   // Returns the url which is currently being downloaded from.
   GURL url() const;

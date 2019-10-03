@@ -10,7 +10,7 @@
 #include "base/callback_list.h"
 #include "base/i18n/time_formatting.h"
 #include "base/macros.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -75,7 +75,7 @@ class SystemClock : public chromeos::LoginState::Observer,
   std::unique_ptr<content::NotificationRegistrar> registrar_;
   std::unique_ptr<PrefChangeRegistrar> user_pref_registrar_;
 
-  base::ObserverList<SystemClockObserver> observer_list_;
+  base::ObserverList<SystemClockObserver>::Unchecked observer_list_;
 
   std::unique_ptr<CrosSettingsObserverSubscription> device_settings_observer_;
 

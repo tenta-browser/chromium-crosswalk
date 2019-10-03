@@ -5,26 +5,29 @@
 #include "net/base/network_change_notifier.h"
 
 #include <limits>
+#include <string>
 #include <unordered_set>
+#include <utility>
 
 #include "base/macros.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/no_destructor.h"
+#include "base/optional.h"
+#include "base/sequence_checker.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "net/base/network_change_notifier_factory.h"
 #include "net/base/network_interfaces.h"
 #include "net/base/url_util.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_config_service.h"
+#include "net/dns/system_dns_config_change_notifier.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
-
-#if defined(OS_ANDROID)
-#include "base/metrics/sparse_histogram.h"
-#include "base/strings/string_number_conversions.h"
-#include "net/android/network_library.h"
-#endif
 
 #if defined(OS_WIN)
 #include "net/base/network_change_notifier_win.h"
@@ -32,6 +35,10 @@
 #include "net/base/network_change_notifier_linux.h"
 #elif defined(OS_MACOSX)
 #include "net/base/network_change_notifier_mac.h"
+#elif defined(OS_CHROMEOS)
+#include "net/base/network_change_notifier_posix.h"
+#elif defined(OS_FUCHSIA)
+#include "net/base/network_change_notifier_fuchsia.h"
 #endif
 
 namespace net {
@@ -42,16 +49,62 @@ namespace {
 // in ways that would require us to place locks around access to this object.
 // (The prohibition on global non-POD objects makes it tricky to do such a thing
 // anyway.)
-NetworkChangeNotifier* g_network_change_notifier = NULL;
+NetworkChangeNotifier* g_network_change_notifier = nullptr;
 
 // Class factory singleton.
-NetworkChangeNotifierFactory* g_network_change_notifier_factory = NULL;
+NetworkChangeNotifierFactory* g_network_change_notifier_factory = nullptr;
 
 class MockNetworkChangeNotifier : public NetworkChangeNotifier {
  public:
+  MockNetworkChangeNotifier(
+      std::unique_ptr<SystemDnsConfigChangeNotifier> dns_config_notifier)
+      : NetworkChangeNotifier(NetworkChangeCalculatorParams(),
+                              dns_config_notifier.get()),
+        dns_config_notifier_(std::move(dns_config_notifier)) {}
+
+  ~MockNetworkChangeNotifier() override { StopSystemDnsConfigNotifier(); }
+
   ConnectionType GetCurrentConnectionType() const override {
     return CONNECTION_UNKNOWN;
   }
+
+ private:
+  std::unique_ptr<SystemDnsConfigChangeNotifier> dns_config_notifier_;
+};
+
+// NetworkState is thread safe.
+//
+// TODO(crbug.com/971411): Remove once HostResolverManager converted to directly
+// use SystemDnsConfigChangeNotifier.
+class NetworkState : public base::RefCountedThreadSafe<NetworkState> {
+ public:
+  NetworkState() = default;
+
+  void GetDnsConfig(DnsConfig* config) const {
+    base::AutoLock lock(lock_);
+    *config = dns_config_;
+  }
+
+  bool SetDnsConfig(const DnsConfig& dns_config) {
+    base::AutoLock lock(lock_);
+    dns_config_ = dns_config;
+    bool was_set = set_;
+    set_ = true;
+    return was_set;
+  }
+
+  void ClearDnsConfigForTesting() {
+    base::AutoLock lock(lock_);
+    set_ = false;
+  }
+
+ private:
+  friend class base::RefCountedThreadSafe<NetworkState>;
+  ~NetworkState() = default;
+
+  mutable base::Lock lock_;
+  DnsConfig dns_config_;
+  bool set_ = false;
 };
 
 }  // namespace
@@ -61,354 +114,6 @@ bool NetworkChangeNotifier::test_notifications_only_ = false;
 // static
 const NetworkChangeNotifier::NetworkHandle
     NetworkChangeNotifier::kInvalidNetworkHandle = -1;
-
-// The main observer class that records UMAs for network events.
-class NetworkChangeNotifier::HistogramWatcher : public ConnectionTypeObserver,
-                                                public IPAddressObserver,
-                                                public DNSObserver,
-                                                public NetworkChangeObserver {
- public:
-  HistogramWatcher()
-      : last_ip_address_change_(base::TimeTicks::Now()),
-        last_connection_change_(base::TimeTicks::Now()),
-        last_dns_change_(base::TimeTicks::Now()),
-        last_network_change_(base::TimeTicks::Now()),
-        last_connection_type_(CONNECTION_UNKNOWN),
-        offline_packets_received_(0),
-        bytes_read_since_last_connection_change_(0),
-        peak_kbps_since_last_connection_change_(0) {}
-
-  // Registers our three Observer implementations.  This is called from the
-  // network thread so that our Observer implementations are also called
-  // from the network thread.  This avoids multi-threaded race conditions
-  // because the only other interface, |NotifyDataReceived| is also
-  // only called from the network thread.
-  void Init() {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    DCHECK(g_network_change_notifier);
-    AddConnectionTypeObserver(this);
-    AddIPAddressObserver(this);
-    AddDNSObserver(this);
-    AddNetworkChangeObserver(this);
-  }
-
-  ~HistogramWatcher() override {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    DCHECK(g_network_change_notifier);
-    RemoveConnectionTypeObserver(this);
-    RemoveIPAddressObserver(this);
-    RemoveDNSObserver(this);
-    RemoveNetworkChangeObserver(this);
-  }
-
-  // IPAddressObserver implementation.
-  void OnIPAddressChanged() override {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    UMA_HISTOGRAM_MEDIUM_TIMES("NCN.IPAddressChange",
-                               SinceLast(&last_ip_address_change_));
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "NCN.ConnectionTypeChangeToIPAddressChange",
-        last_ip_address_change_ - last_connection_change_);
-  }
-
-  // ConnectionTypeObserver implementation.
-  void OnConnectionTypeChanged(ConnectionType type) override {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    base::TimeTicks now = base::TimeTicks::Now();
-    int32_t kilobytes_read = bytes_read_since_last_connection_change_ / 1000;
-    base::TimeDelta state_duration = SinceLast(&last_connection_change_);
-    if (bytes_read_since_last_connection_change_) {
-      switch (last_connection_type_) {
-        case CONNECTION_UNKNOWN:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOnUnknown",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOnUnknown",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_ETHERNET:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOnEthernet",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOnEthernet",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_WIFI:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOnWifi",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOnWifi",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_2G:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOn2G",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOn2G",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_3G:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOn3G",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOn3G",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_4G:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOn4G",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOn4G",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_NONE:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOnNone",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOnNone",
-                              fastest_RTT_since_last_connection_change_);
-          break;
-        case CONNECTION_BLUETOOTH:
-          UMA_HISTOGRAM_TIMES("NCN.CM.FirstReadOnBluetooth",
-                              first_byte_after_connection_change_);
-          UMA_HISTOGRAM_TIMES("NCN.CM.FastestRTTOnBluetooth",
-                              fastest_RTT_since_last_connection_change_);
-      }
-    }
-    if (peak_kbps_since_last_connection_change_) {
-      switch (last_connection_type_) {
-        case CONNECTION_UNKNOWN:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOnUnknown",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_ETHERNET:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOnEthernet",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_WIFI:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOnWifi",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_2G:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOn2G",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_3G:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOn3G",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_4G:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOn4G",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_NONE:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOnNone",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-        case CONNECTION_BLUETOOTH:
-          UMA_HISTOGRAM_COUNTS_1M("NCN.CM.PeakKbpsOnBluetooth",
-                                  peak_kbps_since_last_connection_change_);
-          break;
-      }
-    }
-    switch (last_connection_type_) {
-      case CONNECTION_UNKNOWN:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOnUnknown", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOnUnknown", kilobytes_read);
-        break;
-      case CONNECTION_ETHERNET:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOnEthernet", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOnEthernet",
-                                kilobytes_read);
-        break;
-      case CONNECTION_WIFI:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOnWifi", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOnWifi", kilobytes_read);
-        break;
-      case CONNECTION_2G:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOn2G", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOn2G", kilobytes_read);
-        break;
-      case CONNECTION_3G:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOn3G", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOn3G", kilobytes_read);
-        break;
-      case CONNECTION_4G:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOn4G", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOn4G", kilobytes_read);
-        break;
-      case CONNECTION_NONE:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOnNone", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOnNone", kilobytes_read);
-        break;
-      case CONNECTION_BLUETOOTH:
-        UMA_HISTOGRAM_LONG_TIMES("NCN.CM.TimeOnBluetooth", state_duration);
-        UMA_HISTOGRAM_COUNTS_1M("NCN.CM.KBTransferedOnBluetooth",
-                                kilobytes_read);
-        break;
-    }
-
-    if (type != CONNECTION_NONE) {
-      UMA_HISTOGRAM_MEDIUM_TIMES("NCN.OnlineChange", state_duration);
-
-      if (offline_packets_received_) {
-        if ((now - last_offline_packet_received_) <
-            base::TimeDelta::FromSeconds(5)) {
-          // We can compare this sum with the sum of NCN.OfflineDataRecv.
-          UMA_HISTOGRAM_COUNTS_10000(
-              "NCN.OfflineDataRecvAny5sBeforeOnline",
-              offline_packets_received_);
-        }
-
-        UMA_HISTOGRAM_MEDIUM_TIMES("NCN.OfflineDataRecvUntilOnline",
-                                   now - last_offline_packet_received_);
-      }
-    } else {
-      UMA_HISTOGRAM_MEDIUM_TIMES("NCN.OfflineChange", state_duration);
-    }
-
-    LogOperatorCodeHistogram(type);
-
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "NCN.IPAddressChangeToConnectionTypeChange",
-        now - last_ip_address_change_);
-
-    offline_packets_received_ = 0;
-    bytes_read_since_last_connection_change_ = 0;
-    peak_kbps_since_last_connection_change_ = 0;
-    last_connection_type_ = type;
-    polling_interval_ = base::TimeDelta::FromSeconds(1);
-  }
-
-  // DNSObserver implementation.
-  void OnDNSChanged() override {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    UMA_HISTOGRAM_MEDIUM_TIMES("NCN.DNSConfigChange",
-                               SinceLast(&last_dns_change_));
-  }
-
-  // NetworkChangeObserver implementation.
-  void OnNetworkChanged(ConnectionType type) override {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    if (type != CONNECTION_NONE) {
-      UMA_HISTOGRAM_MEDIUM_TIMES("NCN.NetworkOnlineChange",
-                                 SinceLast(&last_network_change_));
-    } else {
-      UMA_HISTOGRAM_MEDIUM_TIMES("NCN.NetworkOfflineChange",
-                                 SinceLast(&last_network_change_));
-    }
-  }
-
-  // Record histogram data whenever we receive a packet. Should only be called
-  // from the network thread.
-  void NotifyDataReceived(const URLRequest& request, int bytes_read) {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    if (IsLocalhost(request.url().host()) ||
-        !request.url().SchemeIsHTTPOrHTTPS()) {
-      return;
-    }
-
-    base::TimeTicks now = base::TimeTicks::Now();
-    base::TimeDelta request_duration = now - request.creation_time();
-    if (bytes_read_since_last_connection_change_ == 0) {
-      first_byte_after_connection_change_ = now - last_connection_change_;
-      fastest_RTT_since_last_connection_change_ = request_duration;
-    }
-    bytes_read_since_last_connection_change_ += bytes_read;
-    if (request_duration < fastest_RTT_since_last_connection_change_)
-      fastest_RTT_since_last_connection_change_ = request_duration;
-    // Ignore tiny transfers which will not produce accurate rates.
-    // Ignore zero duration transfers which might cause divide by zero.
-    if (bytes_read > 10000 &&
-        request_duration > base::TimeDelta::FromMilliseconds(1) &&
-        request.creation_time() > last_connection_change_) {
-      int32_t kbps = static_cast<int32_t>(bytes_read * 8 /
-                                          request_duration.InMilliseconds());
-      if (kbps > peak_kbps_since_last_connection_change_)
-        peak_kbps_since_last_connection_change_ = kbps;
-    }
-
-    if (last_connection_type_ != CONNECTION_NONE)
-      return;
-
-    UMA_HISTOGRAM_MEDIUM_TIMES("NCN.OfflineDataRecv",
-                               now - last_connection_change_);
-    offline_packets_received_++;
-    last_offline_packet_received_ = now;
-
-    if ((now - last_polled_connection_) > polling_interval_) {
-      polling_interval_ *= 2;
-      last_polled_connection_ = now;
-      last_polled_connection_type_ = GetConnectionType();
-    }
-    if (last_polled_connection_type_ == CONNECTION_NONE) {
-      UMA_HISTOGRAM_MEDIUM_TIMES("NCN.PollingOfflineDataRecv",
-                                 now - last_connection_change_);
-    }
-  }
-
- private:
-  static base::TimeDelta SinceLast(base::TimeTicks *last_time) {
-    base::TimeTicks current_time = base::TimeTicks::Now();
-    base::TimeDelta delta = current_time - *last_time;
-    *last_time = current_time;
-    return delta;
-  }
-
-  base::TimeTicks last_ip_address_change_;
-  base::TimeTicks last_connection_change_;
-  base::TimeTicks last_dns_change_;
-  base::TimeTicks last_network_change_;
-  base::TimeTicks last_offline_packet_received_;
-  base::TimeTicks last_polled_connection_;
-  // |polling_interval_| is initialized by |OnConnectionTypeChanged| on our
-  // first transition to offline and on subsequent transitions.  Once offline,
-  // |polling_interval_| doubles as offline data is received and we poll
-  // with |GetConnectionType| to verify the connection
-  // state.
-  base::TimeDelta polling_interval_;
-  // |last_connection_type_| is the last value passed to
-  // |OnConnectionTypeChanged|.
-  ConnectionType last_connection_type_;
-  // |last_polled_connection_type_| is last result from calling
-  // |GetConnectionType| in |NotifyDataReceived|.
-  ConnectionType last_polled_connection_type_;
-  // Count of how many times NotifyDataReceived() has been called while the
-  // NetworkChangeNotifier thought network connection was offline.
-  int32_t offline_packets_received_;
-  // Number of bytes of network data received since last connectivity change.
-  int32_t bytes_read_since_last_connection_change_;
-  // Fastest round-trip-time (RTT) since last connectivity change. RTT measured
-  // from URLRequest creation until first byte received.
-  base::TimeDelta fastest_RTT_since_last_connection_change_;
-  // Time between connectivity change and first network data byte received.
-  base::TimeDelta first_byte_after_connection_change_;
-  // Rough measurement of peak KB/s witnessed since last connectivity change.
-  // The accuracy is decreased by ignoring these factors:
-  // 1) Multiple URLRequests can occur concurrently.
-  // 2) NotifyDataReceived() may be called repeatedly for one URLRequest.
-  // 3) The transfer time includes at least one RTT while no bytes are read.
-  // Erring on the conservative side is hopefully offset by taking the maximum.
-  int32_t peak_kbps_since_last_connection_change_;
-
-  base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(HistogramWatcher);
-};
-
-// NetworkState is thread safe.
-class NetworkChangeNotifier::NetworkState {
- public:
-  NetworkState() = default;
-  ~NetworkState() = default;
-
-  void GetDnsConfig(DnsConfig* config) const {
-    base::AutoLock lock(lock_);
-    *config = dns_config_;
-  }
-
-  void SetDnsConfig(const DnsConfig& dns_config) {
-    base::AutoLock lock(lock_);
-    dns_config_ = dns_config;
-  }
-
- private:
-  mutable base::Lock lock_;
-  DnsConfig dns_config_;
-};
 
 NetworkChangeNotifier::NetworkChangeCalculatorParams::
     NetworkChangeCalculatorParams() = default;
@@ -433,7 +138,6 @@ class NetworkChangeNotifier::NetworkChangeCalculator
 
   ~NetworkChangeCalculator() override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    DCHECK(g_network_change_notifier);
     RemoveConnectionTypeObserver(this);
     RemoveIPAddressObserver(this);
   }
@@ -493,10 +197,60 @@ class NetworkChangeNotifier::NetworkChangeCalculator
   DISALLOW_COPY_AND_ASSIGN(NetworkChangeCalculator);
 };
 
+class NetworkChangeNotifier::SystemDnsConfigObserver
+    : public SystemDnsConfigChangeNotifier::Observer {
+ public:
+  virtual ~SystemDnsConfigObserver() = default;
+
+  void OnSystemDnsConfigChanged(base::Optional<DnsConfig> config) override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+    bool was_set = network_state_->SetDnsConfig(config.value_or(DnsConfig()));
+    DCHECK_EQ(initial_config_received_, was_set);
+
+    if (initial_config_received_) {
+      NotifyObserversOfDNSChange();
+    } else {
+      initial_config_received_ = true;
+      NotifyObserversOfInitialDNSConfigRead();
+    }
+  }
+
+  scoped_refptr<const NetworkState> network_state() { return network_state_; }
+
+  void ClearDnsConfigForTesting() {
+    initial_config_received_ = false;
+    network_state_->ClearDnsConfigForTesting();
+  }
+
+ private:
+  bool initial_config_received_ = false;
+
+  // TODO(crbug.com/971411): Remove once HostResolverManager converted to
+  // directly use SystemDnsConfigChangeNotifier.
+  scoped_refptr<NetworkState> network_state_ =
+      base::MakeRefCounted<NetworkState>();
+
+  SEQUENCE_CHECKER(sequence_checker_);
+};
+
+void NetworkChangeNotifier::ClearGlobalPointer() {
+  if (!cleared_global_pointer_) {
+    cleared_global_pointer_ = true;
+    DCHECK_EQ(this, g_network_change_notifier);
+    g_network_change_notifier = nullptr;
+  }
+}
+
 NetworkChangeNotifier::~NetworkChangeNotifier() {
   network_change_calculator_.reset();
-  DCHECK_EQ(this, g_network_change_notifier);
-  g_network_change_notifier = NULL;
+  ClearGlobalPointer();
+  StopSystemDnsConfigNotifier();
+}
+
+// static
+NetworkChangeNotifierFactory* NetworkChangeNotifier::GetFactory() {
+  return g_network_change_notifier_factory;
 }
 
 // static
@@ -507,28 +261,30 @@ void NetworkChangeNotifier::SetFactory(
 }
 
 // static
-NetworkChangeNotifier* NetworkChangeNotifier::Create() {
+std::unique_ptr<NetworkChangeNotifier> NetworkChangeNotifier::Create() {
   if (g_network_change_notifier_factory)
     return g_network_change_notifier_factory->CreateInstance();
 
 #if defined(OS_WIN)
-  NetworkChangeNotifierWin* network_change_notifier =
-      new NetworkChangeNotifierWin();
+  std::unique_ptr<NetworkChangeNotifierWin> network_change_notifier =
+      std::make_unique<NetworkChangeNotifierWin>();
   network_change_notifier->WatchForAddressChange();
   return network_change_notifier;
-#elif defined(OS_CHROMEOS) || defined(OS_ANDROID)
-  // ChromeOS and Android builds MUST use their own class factory.
-#if !defined(OS_CHROMEOS)
-  // TODO(oshima): ash_shell do not have access to chromeos'es
-  // notifier yet. Re-enable this when chromeos'es notifier moved to
-  // chromeos root directory. crbug.com/119298.
+#elif defined(OS_ANDROID)
+  // Android builds MUST use their own class factory.
   CHECK(false);
-#endif
   return NULL;
+#elif defined(OS_CHROMEOS)
+  return std::make_unique<NetworkChangeNotifierPosix>(CONNECTION_NONE,
+                                                      SUBTYPE_NONE);
 #elif defined(OS_LINUX)
-  return new NetworkChangeNotifierLinux(std::unordered_set<std::string>());
+  return std::make_unique<NetworkChangeNotifierLinux>(
+      std::unordered_set<std::string>());
 #elif defined(OS_MACOSX)
-  return new NetworkChangeNotifierMac();
+  return std::make_unique<NetworkChangeNotifierMac>();
+#elif defined(OS_FUCHSIA)
+  return std::make_unique<NetworkChangeNotifierFuchsia>(
+      0 /* required_features */);
 #else
   NOTIMPLEMENTED();
   return NULL;
@@ -688,7 +444,9 @@ void NetworkChangeNotifier::GetDnsConfig(DnsConfig* config) {
   if (!g_network_change_notifier) {
     *config = DnsConfig();
   } else {
-    g_network_change_notifier->network_state_->GetDnsConfig(config);
+    scoped_refptr<const NetworkState> network_state =
+        g_network_change_notifier->system_dns_config_observer_->network_state();
+    network_state->GetDnsConfig(config);
   }
 }
 
@@ -705,7 +463,7 @@ const char* NetworkChangeNotifier::ConnectionTypeToString(
     "CONNECTION_NONE",
     "CONNECTION_BLUETOOTH"
   };
-  static_assert(arraysize(kConnectionTypeNames) ==
+  static_assert(base::size(kConnectionTypeNames) ==
                     NetworkChangeNotifier::CONNECTION_LAST + 1,
                 "ConnectionType name count should match");
   if (type < CONNECTION_UNKNOWN || type > CONNECTION_LAST) {
@@ -713,55 +471,6 @@ const char* NetworkChangeNotifier::ConnectionTypeToString(
     return "CONNECTION_INVALID";
   }
   return kConnectionTypeNames[type];
-}
-
-// static
-void NetworkChangeNotifier::NotifyDataReceived(const URLRequest& request,
-                                               int bytes_read) {
-  if (!g_network_change_notifier ||
-      !g_network_change_notifier->histogram_watcher_) {
-    return;
-  }
-  g_network_change_notifier->histogram_watcher_->NotifyDataReceived(request,
-                                                                    bytes_read);
-}
-
-// static
-void NetworkChangeNotifier::InitHistogramWatcher() {
-  if (!g_network_change_notifier)
-    return;
-  g_network_change_notifier->histogram_watcher_.reset(new HistogramWatcher());
-  g_network_change_notifier->histogram_watcher_->Init();
-}
-
-// static
-void NetworkChangeNotifier::ShutdownHistogramWatcher() {
-  if (!g_network_change_notifier)
-    return;
-  g_network_change_notifier->histogram_watcher_.reset();
-}
-
-// static
-void NetworkChangeNotifier::FinalizingMetricsLogRecord() {
-  if (!g_network_change_notifier)
-    return;
-  g_network_change_notifier->OnFinalizingMetricsLogRecord();
-}
-
-// static
-void NetworkChangeNotifier::LogOperatorCodeHistogram(ConnectionType type) {
-#if defined(OS_ANDROID)
-  // On a connection type change to cellular, log the network operator MCC/MNC.
-  // Log zero in other cases.
-  unsigned mcc_mnc = 0;
-  if (NetworkChangeNotifier::IsConnectionCellular(type)) {
-    // Log zero if not perfectly converted.
-    if (!base::StringToUint(android::GetTelephonyNetworkOperator(), &mcc_mnc)) {
-      mcc_mnc = 0;
-    }
-  }
-  UMA_HISTOGRAM_SPARSE_SLOWLY("NCN.NetworkOperatorMCCMNC", mcc_mnc);
-#endif
 }
 
 #if defined(OS_LINUX)
@@ -819,13 +528,11 @@ NetworkChangeNotifier::ConnectionTypeFromInterfaceList(
       continue;
 #endif
 #if defined(OS_MACOSX)
-    // Ignore tunnel and airdrop interfaces.
-    if (base::StartsWith(interfaces[i].friendly_name, "utun",
-                         base::CompareCase::SENSITIVE) ||
-        base::StartsWith(interfaces[i].friendly_name, "awdl",
-                         base::CompareCase::SENSITIVE)) {
+    // Ignore link-local addresses as they aren't globally routable.
+    // Mac assigns these to disconnected interfaces like tunnel interfaces
+    // ("utun"), airdrop interfaces ("awdl"), and ethernet ports ("en").
+    if (interfaces[i].address.IsLinkLocal())
       continue;
-    }
 #endif
 
     // Remove VMware network interfaces as they're internal and should not be
@@ -845,96 +552,130 @@ NetworkChangeNotifier::ConnectionTypeFromInterfaceList(
 }
 
 // static
-NetworkChangeNotifier* NetworkChangeNotifier::CreateMock() {
-  return new MockNetworkChangeNotifier();
+std::unique_ptr<NetworkChangeNotifier> NetworkChangeNotifier::CreateMock() {
+  // Use an empty noop SystemDnsConfigChangeNotifier to disable actual system
+  // DNS configuration notifications.
+  return std::make_unique<MockNetworkChangeNotifier>(
+      std::make_unique<SystemDnsConfigChangeNotifier>(
+          nullptr /* task_runner */, nullptr /* dns_config_service */));
 }
 
+NetworkChangeNotifier::IPAddressObserver::IPAddressObserver() = default;
+NetworkChangeNotifier::IPAddressObserver::~IPAddressObserver() = default;
+
+NetworkChangeNotifier::ConnectionTypeObserver::ConnectionTypeObserver() =
+    default;
+NetworkChangeNotifier::ConnectionTypeObserver::~ConnectionTypeObserver() =
+    default;
+
+NetworkChangeNotifier::DNSObserver::DNSObserver() = default;
+NetworkChangeNotifier::DNSObserver::~DNSObserver() = default;
+
+NetworkChangeNotifier::NetworkChangeObserver::NetworkChangeObserver() = default;
+NetworkChangeNotifier::NetworkChangeObserver::~NetworkChangeObserver() =
+    default;
+
+NetworkChangeNotifier::MaxBandwidthObserver::MaxBandwidthObserver() = default;
+NetworkChangeNotifier::MaxBandwidthObserver::~MaxBandwidthObserver() = default;
+
+NetworkChangeNotifier::NetworkObserver::NetworkObserver() = default;
+NetworkChangeNotifier::NetworkObserver::~NetworkObserver() = default;
+
 void NetworkChangeNotifier::AddIPAddressObserver(IPAddressObserver* observer) {
-  if (g_network_change_notifier)
-    g_network_change_notifier->ip_address_observer_list_->AddObserver(observer);
+  if (g_network_change_notifier) {
+    observer->observer_list_ =
+        g_network_change_notifier->ip_address_observer_list_;
+    observer->observer_list_->AddObserver(observer);
+  }
 }
 
 void NetworkChangeNotifier::AddConnectionTypeObserver(
     ConnectionTypeObserver* observer) {
   if (g_network_change_notifier) {
-    g_network_change_notifier->connection_type_observer_list_->AddObserver(
-        observer);
+    observer->observer_list_ =
+        g_network_change_notifier->connection_type_observer_list_;
+    observer->observer_list_->AddObserver(observer);
   }
 }
 
 void NetworkChangeNotifier::AddDNSObserver(DNSObserver* observer) {
   if (g_network_change_notifier) {
-    g_network_change_notifier->resolver_state_observer_list_->AddObserver(
-        observer);
+    observer->observer_list_ =
+        g_network_change_notifier->resolver_state_observer_list_;
+    observer->observer_list_->AddObserver(observer);
   }
 }
 
 void NetworkChangeNotifier::AddNetworkChangeObserver(
     NetworkChangeObserver* observer) {
   if (g_network_change_notifier) {
-    g_network_change_notifier->network_change_observer_list_->AddObserver(
-        observer);
+    observer->observer_list_ =
+        g_network_change_notifier->network_change_observer_list_;
+    observer->observer_list_->AddObserver(observer);
   }
 }
 
 void NetworkChangeNotifier::AddMaxBandwidthObserver(
     MaxBandwidthObserver* observer) {
   if (g_network_change_notifier) {
-    g_network_change_notifier->max_bandwidth_observer_list_->AddObserver(
-        observer);
+    observer->observer_list_ =
+        g_network_change_notifier->max_bandwidth_observer_list_;
+    observer->observer_list_->AddObserver(observer);
   }
 }
 
 void NetworkChangeNotifier::AddNetworkObserver(NetworkObserver* observer) {
   DCHECK(AreNetworkHandlesSupported());
   if (g_network_change_notifier) {
-    g_network_change_notifier->network_observer_list_->AddObserver(observer);
+    observer->observer_list_ =
+        g_network_change_notifier->network_observer_list_;
+    observer->observer_list_->AddObserver(observer);
   }
 }
 
 void NetworkChangeNotifier::RemoveIPAddressObserver(
     IPAddressObserver* observer) {
-  if (g_network_change_notifier) {
-    g_network_change_notifier->ip_address_observer_list_->RemoveObserver(
-        observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
 void NetworkChangeNotifier::RemoveConnectionTypeObserver(
     ConnectionTypeObserver* observer) {
-  if (g_network_change_notifier) {
-    g_network_change_notifier->connection_type_observer_list_->RemoveObserver(
-        observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
 void NetworkChangeNotifier::RemoveDNSObserver(DNSObserver* observer) {
-  if (g_network_change_notifier) {
-    g_network_change_notifier->resolver_state_observer_list_->RemoveObserver(
-        observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
 void NetworkChangeNotifier::RemoveNetworkChangeObserver(
     NetworkChangeObserver* observer) {
-  if (g_network_change_notifier) {
-    g_network_change_notifier->network_change_observer_list_->RemoveObserver(
-        observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
 void NetworkChangeNotifier::RemoveMaxBandwidthObserver(
     MaxBandwidthObserver* observer) {
-  if (g_network_change_notifier) {
-    g_network_change_notifier->max_bandwidth_observer_list_->RemoveObserver(
-        observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
 void NetworkChangeNotifier::RemoveNetworkObserver(NetworkObserver* observer) {
-  DCHECK(AreNetworkHandlesSupported());
-  if (g_network_change_notifier) {
-    g_network_change_notifier->network_observer_list_->RemoveObserver(observer);
+  if (observer->observer_list_) {
+    observer->observer_list_->RemoveObserver(observer);
+    observer->observer_list_.reset();
   }
 }
 
@@ -988,7 +729,8 @@ void NetworkChangeNotifier::SetTestNotificationsOnly(bool test_only) {
 
 NetworkChangeNotifier::NetworkChangeNotifier(
     const NetworkChangeCalculatorParams& params
-    /*= NetworkChangeCalculatorParams()*/)
+    /*= NetworkChangeCalculatorParams()*/,
+    SystemDnsConfigChangeNotifier* system_dns_config_notifier /*= nullptr */)
     : ip_address_observer_list_(
           new base::ObserverListThreadSafe<IPAddressObserver>(
               base::ObserverListPolicy::EXISTING_ONLY)),
@@ -1006,11 +748,19 @@ NetworkChangeNotifier::NetworkChangeNotifier(
               base::ObserverListPolicy::EXISTING_ONLY)),
       network_observer_list_(new base::ObserverListThreadSafe<NetworkObserver>(
           base::ObserverListPolicy::EXISTING_ONLY)),
-      network_state_(new NetworkState()),
+      system_dns_config_notifier_(system_dns_config_notifier),
+      system_dns_config_observer_(std::make_unique<SystemDnsConfigObserver>()),
       network_change_calculator_(new NetworkChangeCalculator(params)) {
+  if (!system_dns_config_notifier_) {
+    static base::NoDestructor<SystemDnsConfigChangeNotifier> singleton{};
+    system_dns_config_notifier_ = singleton.get();
+  }
+
   DCHECK(!g_network_change_notifier);
   g_network_change_notifier = this;
   network_change_calculator_->Init();
+
+  system_dns_config_notifier_->AddObserver(system_dns_config_observer_.get());
 }
 
 #if defined(OS_LINUX)
@@ -1123,25 +873,29 @@ void NetworkChangeNotifier::NotifyObserversOfSpecificNetworkChange(
 }
 
 // static
-void NetworkChangeNotifier::SetDnsConfig(const DnsConfig& config) {
-  if (!g_network_change_notifier)
-    return;
-  g_network_change_notifier->network_state_->SetDnsConfig(config);
-  NotifyObserversOfDNSChange();
+void NetworkChangeNotifier::SetDnsConfigForTesting(const DnsConfig& config) {
+  if (g_network_change_notifier) {
+    g_network_change_notifier->system_dns_config_observer_
+        ->OnSystemDnsConfigChanged(config);
+  }
 }
 
 // static
-void NetworkChangeNotifier::SetInitialDnsConfig(const DnsConfig& config) {
+void NetworkChangeNotifier::ClearDnsConfigForTesting() {
   if (!g_network_change_notifier)
     return;
-#if DCHECK_IS_ON()
-  // Verify we've never received a valid DnsConfig previously.
-  DnsConfig old_config;
-  g_network_change_notifier->network_state_->GetDnsConfig(&old_config);
-  DCHECK(!old_config.IsValid());
-#endif
-  g_network_change_notifier->network_state_->SetDnsConfig(config);
-  NotifyObserversOfInitialDNSConfigRead();
+  g_network_change_notifier->system_dns_config_observer_
+      ->ClearDnsConfigForTesting();
+}
+
+void NetworkChangeNotifier::StopSystemDnsConfigNotifier() {
+  if (!system_dns_config_notifier_)
+    return;
+
+  system_dns_config_notifier_->RemoveObserver(
+      system_dns_config_observer_.get());
+  system_dns_config_observer_ = nullptr;
+  system_dns_config_notifier_ = nullptr;
 }
 
 void NetworkChangeNotifier::NotifyObserversOfIPAddressChangeImpl() {
@@ -1204,7 +958,7 @@ void NetworkChangeNotifier::NotifyObserversOfSpecificNetworkChangeImpl(
 NetworkChangeNotifier::DisableForTest::DisableForTest()
     : network_change_notifier_(g_network_change_notifier) {
   DCHECK(g_network_change_notifier);
-  g_network_change_notifier = NULL;
+  g_network_change_notifier = nullptr;
 }
 
 NetworkChangeNotifier::DisableForTest::~DisableForTest() {

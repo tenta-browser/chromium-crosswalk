@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chromecast/media/audio/cast_audio_manager.h"
 #include "chromecast/media/audio/cast_audio_output_stream.h"
@@ -14,7 +13,6 @@
 #include "media/base/channel_layout.h"
 
 namespace {
-const int kBitsPerSample = 16;
 const int kFramesPerBuffer = 1024;
 const int kSampleRate = 48000;
 }  // namespace
@@ -122,7 +120,7 @@ class CastAudioMixer::MixerProxyStream
       return;
     source_callback_ = source_callback;
     proxy_ =
-        base::MakeUnique<ResamplerProxy>(this, input_params_, output_params_);
+        std::make_unique<ResamplerProxy>(this, input_params_, output_params_);
     audio_mixer_->AddInput(proxy_.get());
   }
 
@@ -138,6 +136,9 @@ class CastAudioMixer::MixerProxyStream
     proxy_.reset();
     source_callback_ = nullptr;
   }
+
+  // There is nothing to flush since the proxy stream is removed during Stop().
+  void Flush() override {}
 
   void SetVolume(double volume) override {
     DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
@@ -185,8 +186,7 @@ CastAudioMixer::CastAudioMixer(CastAudioManager* audio_manager)
     : audio_manager_(audio_manager), error_(false), output_stream_(nullptr) {
   output_params_ = ::media::AudioParameters(
       ::media::AudioParameters::Format::AUDIO_PCM_LOW_LATENCY,
-      ::media::CHANNEL_LAYOUT_STEREO, kSampleRate, kBitsPerSample,
-      kFramesPerBuffer);
+      ::media::CHANNEL_LAYOUT_STEREO, kSampleRate, kFramesPerBuffer);
   mixer_.reset(
       new ::media::AudioConverter(output_params_, output_params_, false));
   DETACH_FROM_THREAD(audio_thread_checker_);
@@ -202,7 +202,7 @@ CastAudioMixer::~CastAudioMixer() {}
 
 bool CastAudioMixer::Register(MixerProxyStream* proxy_stream) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
-  DCHECK(!base::ContainsKey(proxy_streams_, proxy_stream));
+  DCHECK(!base::Contains(proxy_streams_, proxy_stream));
 
   // Do not allow opening new streams while in error state.
   if (error_)
@@ -227,7 +227,7 @@ bool CastAudioMixer::Register(MixerProxyStream* proxy_stream) {
 
 void CastAudioMixer::Unregister(MixerProxyStream* proxy_stream) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
-  DCHECK(base::ContainsKey(proxy_streams_, proxy_stream));
+  DCHECK(base::Contains(proxy_streams_, proxy_stream));
 
   proxy_streams_.erase(proxy_stream);
 

@@ -55,7 +55,7 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionHostBrowserTest,
                                                false);
   ASSERT_TRUE(embedded_test_server()->Start());
   std::unique_ptr<TestClientSideDetectionHost> csd_host =
-      base::MakeUnique<TestClientSideDetectionHost>(
+      std::make_unique<TestClientSideDetectionHost>(
           browser()->tab_strip_model()->GetActiveWebContents());
   GURL page_url(embedded_test_server()->GetURL("/safe_browsing/malware.html"));
   ui_test_utils::NavigateToURL(browser(), page_url);
@@ -66,12 +66,12 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionHostBrowserTest,
       browse_info->ips[embedded_test_server()->base_url().host()];
   IPUrlInfo expected_result_1(
       embedded_test_server()->GetURL("/safe_browsing/malware_image.png").spec(),
-      "GET", page_url.spec(), content::RESOURCE_TYPE_IMAGE);
+      "GET", page_url.spec(), content::ResourceType::kImage);
   IPUrlInfo expected_result_2(embedded_test_server()
                                   ->GetURL("/safe_browsing/malware_iframe.html")
                                   .spec(),
                               "GET", page_url.spec(),
-                              content::RESOURCE_TYPE_SUB_FRAME);
+                              content::ResourceType::kSubFrame);
   EXPECT_TRUE(FindExpectedIPUrlInfo(expected_result_1, ip_urls));
   EXPECT_TRUE(FindExpectedIPUrlInfo(expected_result_2, ip_urls));
 }

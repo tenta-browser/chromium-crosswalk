@@ -9,24 +9,25 @@
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/guid.h"
 #include "base/run_loop.h"
+#include "base/synchronization/waitable_event.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/web_data_service_factory.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "components/webdata/common/web_database.h"
 
 using autofill::AutofillChangeList;
@@ -58,6 +59,19 @@ class MockWebDataServiceObserver
                void(const AutofillChangeList& changes));
 };
 
+scoped_refptr<AutofillWebDataService> GetWebDataService(int index) {
+  return WebDataServiceFactory::GetAutofillWebDataForProfile(
+      test()->GetProfile(index), ServiceAccessType::EXPLICIT_ACCESS);
+}
+
+void WaitForCurrentTasksToComplete(base::SequencedTaskRunner* task_runner) {
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&base::WaitableEvent::Signal,
+                                                  base::Unretained(&event)));
+  event.Wait();
+}
+
 void RemoveKeyDontBlockForSync(int profile, const AutofillKey& key) {
   WaitableEvent done_event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                            base::WaitableEvent::InitialState::NOT_SIGNALED);
@@ -66,14 +80,13 @@ void RemoveKeyDontBlockForSync(int profile, const AutofillKey& key) {
   EXPECT_CALL(mock_observer, AutofillEntriesChanged(_))
       .WillOnce(SignalEvent(&done_event));
 
-  scoped_refptr<AutofillWebDataService> wds =
-      autofill_helper::GetWebDataService(profile);
+  scoped_refptr<AutofillWebDataService> wds = GetWebDataService(profile);
 
   void (AutofillWebDataService::*add_observer_func)(
       AutofillWebDataServiceObserverOnDBSequence*) =
       &AutofillWebDataService::AddObserver;
   wds->GetDBTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(add_observer_func, wds, &mock_observer));
+      FROM_HERE, base::BindOnce(add_observer_func, wds, &mock_observer));
 
   wds->RemoveFormValueForElementName(key.name(), key.value());
   done_event.Wait();
@@ -82,7 +95,7 @@ void RemoveKeyDontBlockForSync(int profile, const AutofillKey& key) {
       AutofillWebDataServiceObserverOnDBSequence*) =
       &AutofillWebDataService::RemoveObserver;
   wds->GetDBTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(remove_observer_func, wds, &mock_observer));
+      FROM_HERE, base::BindOnce(remove_observer_func, wds, &mock_observer));
 }
 
 void GetAllAutofillEntriesOnDBSequence(AutofillWebDataService* wds,
@@ -95,9 +108,9 @@ void GetAllAutofillEntriesOnDBSequence(AutofillWebDataService* wds,
 std::vector<AutofillEntry> GetAllAutofillEntries(AutofillWebDataService* wds) {
   std::vector<AutofillEntry> entries;
   wds->GetDBTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&GetAllAutofillEntriesOnDBSequence,
-                            base::Unretained(wds), &entries));
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+      FROM_HERE, base::BindOnce(&GetAllAutofillEntriesOnDBSequence,
+                                base::Unretained(wds), &entries));
+  WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
   return entries;
 }
 
@@ -135,7 +148,7 @@ bool ProfilesMatchImpl(
     autofill_profiles_a_map.erase(p->guid());
   }
 
-  if (autofill_profiles_a_map.size()) {
+  if (!autofill_profiles_a_map.empty()) {
     DVLOG(1) << "Entries present in Profile " << profile_a << " but not in "
              << profile_b << ".";
     return false;
@@ -146,6 +159,10 @@ bool ProfilesMatchImpl(
 }  // namespace
 
 namespace autofill_helper {
+
+ACTION_P(QuitMessageLoop, loop) {
+  loop->Quit();
+}
 
 AutofillProfile CreateAutofillProfile(ProfileType type) {
   AutofillProfile profile;
@@ -193,11 +210,6 @@ AutofillProfile CreateUniqueAutofillProfile() {
   return profile;
 }
 
-scoped_refptr<AutofillWebDataService> GetWebDataService(int index) {
-  return WebDataServiceFactory::GetAutofillWebDataForProfile(
-      test()->GetProfile(index), ServiceAccessType::EXPLICIT_ACCESS);
-}
-
 PersonalDataManager* GetPersonalDataManager(int index) {
   return autofill::PersonalDataManagerFactory::GetForProfile(
       test()->GetProfile(index));
@@ -224,22 +236,22 @@ void AddKeys(int profile, const std::set<AutofillKey>& keys) {
       AutofillWebDataServiceObserverOnDBSequence*) =
       &AutofillWebDataService::AddObserver;
   wds->GetDBTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(add_observer_func, wds, &mock_observer));
+      FROM_HERE, base::BindOnce(add_observer_func, wds, &mock_observer));
 
   wds->AddFormFields(form_fields);
   done_event.Wait();
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
 
   void (AutofillWebDataService::*remove_observer_func)(
       AutofillWebDataServiceObserverOnDBSequence*) =
       &AutofillWebDataService::RemoveObserver;
   wds->GetDBTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(remove_observer_func, wds, &mock_observer));
+      FROM_HERE, base::BindOnce(remove_observer_func, wds, &mock_observer));
 }
 
 void RemoveKey(int profile, const AutofillKey& key) {
   RemoveKeyDontBlockForSync(profile, key);
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  WaitForCurrentTasksToComplete(GetWebDataService(profile)->GetDBTaskRunner());
 }
 
 void RemoveKeys(int profile) {
@@ -247,7 +259,7 @@ void RemoveKeys(int profile) {
   for (const AutofillEntry& entry : keys) {
     RemoveKeyDontBlockForSync(profile, entry.key());
   }
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  WaitForCurrentTasksToComplete(GetWebDataService(profile)->GetDBTaskRunner());
 }
 
 std::set<AutofillEntry> GetAllKeys(int profile) {
@@ -261,7 +273,20 @@ bool KeysMatch(int profile_a, int profile_b) {
 }
 
 void SetProfiles(int profile, std::vector<AutofillProfile>* autofill_profiles) {
-  GetPersonalDataManager(profile)->SetProfiles(autofill_profiles);
+  PersonalDataLoadedObserverMock personal_data_observer;
+  PersonalDataManager* pdm = GetPersonalDataManager(profile);
+  base::RunLoop run_loop;
+
+  pdm->AddObserver(&personal_data_observer);
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
+      .WillRepeatedly(QuitMessageLoop(&run_loop));
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+      .Times(testing::AnyNumber());
+
+  pdm->SetProfiles(autofill_profiles);
+
+  run_loop.Run();
+  pdm->RemoveObserver(&personal_data_observer);
 }
 
 void SetCreditCards(int profile, std::vector<CreditCard>* credit_cards) {
@@ -302,8 +327,16 @@ void UpdateProfile(int profile,
 }
 
 std::vector<AutofillProfile*> GetAllAutoFillProfiles(int profile) {
+  PersonalDataLoadedObserverMock personal_data_observer;
+  base::RunLoop run_loop;
+
   PersonalDataManager* pdm = GetPersonalDataManager(profile);
+  pdm->AddObserver(&personal_data_observer);
+
   pdm->Refresh();
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
+      .WillOnce(QuitMessageLoop(&run_loop));
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged()).Times(1);
 
   // PersonalDataManager::GetProfiles() simply returns the current values that
   // have been last reported to the UI sequence. PersonalDataManager::Refresh()
@@ -319,16 +352,18 @@ std::vector<AutofillProfile*> GetAllAutoFillProfiles(int profile) {
   // data, but this shouldn't cause problems. While PersonalDataManager will
   // cancel outstanding queries, this is only instigated on the UI sequence,
   // which we are about to block, which means we are safe.
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  WaitForCurrentTasksToComplete(GetWebDataService(profile)->GetDBTaskRunner());
+  run_loop.Run();
+  pdm->RemoveObserver(&personal_data_observer);
 
   return pdm->GetProfiles();
 }
 
-int GetProfileCount(int profile) {
+size_t GetProfileCount(int profile) {
   return GetAllAutoFillProfiles(profile).size();
 }
 
-int GetKeyCount(int profile) {
+size_t GetKeyCount(int profile) {
   return GetAllKeys(profile).size();
 }
 
@@ -369,12 +404,38 @@ AutofillProfileChecker::~AutofillProfileChecker() {
 }
 
 bool AutofillProfileChecker::Wait() {
-  autofill_helper::GetPersonalDataManager(profile_a_)->Refresh();
-  autofill_helper::GetPersonalDataManager(profile_b_)->Refresh();
+  DLOG(WARNING) << "AutofillProfileChecker::Wait() started";
+  PersonalDataLoadedObserverMock personal_data_observer;
+  base::RunLoop run_loop_a;
+  base::RunLoop run_loop_b;
+  auto* pdm_a = autofill_helper::GetPersonalDataManager(profile_a_);
+  auto* pdm_b = autofill_helper::GetPersonalDataManager(profile_b_);
+  pdm_a->AddObserver(&personal_data_observer);
+  pdm_b->AddObserver(&personal_data_observer);
+
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+      .Times(testing::AnyNumber());
+
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
+      .WillRepeatedly(autofill_helper::QuitMessageLoop(&run_loop_a));
+  pdm_a->Refresh();
   // Similar to GetAllAutoFillProfiles() we need to make sure we are not reading
   // before any locally instigated async writes. This is run exactly one time
   // before the first IsExitConditionSatisfied() is called.
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  WaitForCurrentTasksToComplete(
+      GetWebDataService(profile_a_)->GetDBTaskRunner());
+  run_loop_a.Run();
+
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
+      .WillRepeatedly(autofill_helper::QuitMessageLoop(&run_loop_b));
+  pdm_b->Refresh();
+  WaitForCurrentTasksToComplete(
+      GetWebDataService(profile_b_)->GetDBTaskRunner());
+  run_loop_b.Run();
+
+  pdm_a->RemoveObserver(&personal_data_observer);
+  pdm_b->RemoveObserver(&personal_data_observer);
+  DLOG(WARNING) << "AutofillProfileChecker::Wait() completed";
   return StatusChangeChecker::Wait();
 }
 
@@ -394,3 +455,6 @@ std::string AutofillProfileChecker::GetDebugMessage() const {
 void AutofillProfileChecker::OnPersonalDataChanged() {
   CheckExitCondition();
 }
+
+PersonalDataLoadedObserverMock::PersonalDataLoadedObserverMock() {}
+PersonalDataLoadedObserverMock::~PersonalDataLoadedObserverMock() {}

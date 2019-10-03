@@ -10,7 +10,6 @@
 #include "base/auto_reset.h"
 #include "base/ios/block_types.h"
 #include "base/logging.h"
-#include "base/mac/bind_objc_block.h"
 #import "base/mac/foundation_util.h"
 
 #include "base/mac/scoped_cftyperef.h"
@@ -19,28 +18,28 @@
 #include "components/url_formatter/url_fixer.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_elevated_toolbar.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_extended_button.h"
+#import "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_folder_view_controller.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_mediator.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_model_bridge_observer.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_ui_constants.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_parent_folder_item.h"
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_text_field_item.h"
-#import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
-#import "ios/chrome/browser/ui/image_util.h"
+#import "ios/chrome/browser/ui/image_util/image_util.h"
 #import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
-#include "ios/chrome/browser/ui/rtl_geometry.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/browser/ui/table_view/cells/table_view_text_header_footer_item.h"
+#import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
+#include "ios/chrome/browser/ui/util/rtl_geometry.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/ui/text_field_styling.h"
-#import "ios/third_party/material_components_ios/src/components/Buttons/src/MDCFlatButton.h"
-#import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_components_ios/src/components/ShadowElevations/src/MaterialShadowElevations.h"
-#import "ios/third_party/material_components_ios/src/components/ShadowLayer/src/MaterialShadowLayer.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
@@ -71,7 +70,13 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeName = kItemTypeEnumZero,
   ItemTypeFolder,
   ItemTypeURL,
+  ItemTypeInvalidURLFooter,
 };
+
+// Estimated Table Row height.
+const CGFloat kEstimatedTableRowHeight = 50;
+// Estimated TableSection Footer height.
+const CGFloat kEstimatedTableSectionFooterHeight = 40;
 }  // namespace
 
 @interface BookmarkEditViewController ()<BookmarkFolderViewControllerDelegate,
@@ -103,6 +108,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 @property(nonatomic, assign) ios::ChromeBrowserState* browserState;
 
+// Dispatcher for sending commands.
+@property(nonatomic, readonly, weak) id<BrowserCommands> dispatcher;
+
 // Cancel button item in navigation bar.
 @property(nonatomic, strong) UIBarButtonItem* cancelItem;
 
@@ -113,6 +121,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 @property(nonatomic, strong) BookmarkTextFieldItem* nameItem;
 @property(nonatomic, strong) BookmarkParentFolderItem* folderItem;
 @property(nonatomic, strong) BookmarkTextFieldItem* URLItem;
+
+// YES if the URL item is displaying a valid URL.
+@property(nonatomic, assign) BOOL displayingValidURL;
 
 // Reports the changes to the delegate, that has the responsibility to save the
 // bookmark.
@@ -153,6 +164,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 @synthesize bookmark = _bookmark;
 @synthesize bookmarkModel = _bookmarkModel;
 @synthesize delegate = _delegate;
+@synthesize displayingValidURL = _displayingValidURL;
 @synthesize folder = _folder;
 @synthesize folderViewController = _folderViewController;
 @synthesize browserState = _browserState;
@@ -165,12 +177,12 @@ typedef NS_ENUM(NSInteger, ItemType) {
 #pragma mark - Lifecycle
 
 - (instancetype)initWithBookmark:(const BookmarkNode*)bookmark
-                    browserState:(ios::ChromeBrowserState*)browserState {
+                    browserState:(ios::ChromeBrowserState*)browserState
+                      dispatcher:(id<BrowserCommands>)dispatcher {
   DCHECK(bookmark);
   DCHECK(browserState);
-  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
-  self =
-      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
+  self = [super initWithTableViewStyle:UITableViewStylePlain
+                           appBarStyle:ChromeTableViewControllerStyleNoAppBar];
   if (self) {
     DCHECK(!bookmark->is_folder());
     DCHECK(!browserState->IsOffTheRecord());
@@ -185,6 +197,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
         new bookmarks::BookmarkModelBridge(self, _bookmarkModel));
 
     _browserState = browserState;
+    _dispatcher = dispatcher;
   }
   return self;
 }
@@ -197,17 +210,30 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (void)viewDidLoad {
   [super viewDidLoad];
-  self.collectionView.backgroundColor = [UIColor whiteColor];
-  self.view.accessibilityIdentifier = @"Single Bookmark Editor";
+  self.tableView.backgroundColor = self.styler.tableViewBackgroundColor;
+  self.tableView.estimatedRowHeight = kEstimatedTableRowHeight;
+  self.tableView.rowHeight = UITableViewAutomaticDimension;
+  self.tableView.sectionHeaderHeight = 0;
+  self.tableView.sectionFooterHeight = UITableViewAutomaticDimension;
+  self.tableView.estimatedSectionFooterHeight =
+      kEstimatedTableSectionFooterHeight;
+  self.view.accessibilityIdentifier = kBookmarkEditViewContainerIdentifier;
+
+  // Add a tableFooterView in order to disable separators at the bottom of the
+  // tableView.
+  self.tableView.tableFooterView = [[UIView alloc] init];
+  [self.tableView
+      setSeparatorInset:UIEdgeInsetsMake(0, kBookmarkCellHorizontalLeadingInset,
+                                         0, 0)];
 
   self.title = l10n_util::GetNSString(IDS_IOS_BOOKMARK_EDIT_SCREEN_TITLE);
 
   self.navigationItem.hidesBackButton = YES;
 
-  UIBarButtonItem* cancelItem =
-      [ChromeIcon templateBarButtonItemWithImage:[ChromeIcon closeIcon]
-                                          target:self
-                                          action:@selector(cancel)];
+  UIBarButtonItem* cancelItem = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                           target:self
+                           action:@selector(cancel)];
   cancelItem.accessibilityIdentifier = @"Cancel";
   self.navigationItem.leftBarButtonItem = cancelItem;
   self.cancelItem = cancelItem;
@@ -217,27 +243,45 @@ typedef NS_ENUM(NSInteger, ItemType) {
               style:UIBarButtonItemStylePlain
              target:self
              action:@selector(save)];
-  doneItem.accessibilityIdentifier = @"Done";
+  doneItem.accessibilityIdentifier =
+      kBookmarkEditNavigationBarDoneButtonIdentifier;
   self.navigationItem.rightBarButtonItem = doneItem;
   self.doneItem = doneItem;
 
-  BookmarksElevatedToolbar* buttonBar = [[BookmarksElevatedToolbar alloc] init];
-  MDCButton* deleteButton = [[MDCFlatButton alloc] init];
-  [deleteButton setTitle:l10n_util::GetNSString(IDS_IOS_BOOKMARK_DELETE)
-                forState:UIControlStateNormal];
-  [deleteButton addTarget:self
-                   action:@selector(deleteBookmark)
-         forControlEvents:UIControlEventTouchUpInside];
-  deleteButton.accessibilityIdentifier = @"Delete_action";
+  // Setup the bottom toolbar.
+  NSString* titleString = l10n_util::GetNSString(IDS_IOS_BOOKMARK_DELETE);
+  UIBarButtonItem* deleteButton =
+      [[UIBarButtonItem alloc] initWithTitle:titleString
+                                       style:UIBarButtonItemStylePlain
+                                      target:self
+                                      action:@selector(deleteBookmark)];
+  deleteButton.accessibilityIdentifier = kBookmarkEditDeleteButtonIdentifier;
+  UIBarButtonItem* spaceButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace
+                           target:nil
+                           action:nil];
 
-  [buttonBar setButton:deleteButton];
-  [self.view addSubview:buttonBar];
+  deleteButton.tintColor = [UIColor colorNamed:kDestructiveTintColor];
+  // Setting the image to nil will cause the default shadowImage to be used,
+  // we need to create a new one.
+  [self.navigationController.toolbar setShadowImage:[UIImage new]
+                                 forToolbarPosition:UIBarPositionAny];
+  [self setToolbarItems:@[ spaceButton, deleteButton, spaceButton ]
+               animated:NO];
 
-  // Constraint |buttonBar| to be in bottom
-  buttonBar.translatesAutoresizingMaskIntoConstraints = NO;
-  ApplyVisualConstraints(@[ @"H:|[buttonBar]|", @"V:[buttonBar]|" ],
-                         NSDictionaryOfVariableBindings(buttonBar));
   [self updateUIFromBookmark];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+  [super viewWillAppear:animated];
+  // Whevener this VC is displayed the bottom toolbar will be shown.
+  self.navigationController.toolbarHidden = NO;
+}
+
+#pragma mark - Presentation controller integration
+
+- (BOOL)shouldBeDismissedOnTouchOutside {
+  return NO;
 }
 
 #pragma mark - Accessibility
@@ -280,9 +324,10 @@ typedef NS_ENUM(NSInteger, ItemType) {
     [self.delegate bookmarkEditorWillCommitTitleOrUrlChange:self];
   }
 
-  bookmark_utils_ios::CreateOrUpdateBookmarkWithUndoToast(
-      self.bookmark, [self inputBookmarkName], url, self.folder,
-      self.bookmarkModel, self.browserState);
+  [self.dispatcher showSnackbarMessage:
+                       bookmark_utils_ios::CreateOrUpdateBookmarkWithUndoToast(
+                           self.bookmark, [self inputBookmarkName], url,
+                           self.folder, self.bookmarkModel, self.browserState)];
 }
 
 - (void)changeFolder:(const BookmarkNode*)folder {
@@ -308,15 +353,16 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (void)updateFolderLabel {
   NSIndexPath* indexPath =
-      [self.collectionViewModel indexPathForItemType:ItemTypeFolder
-                                   sectionIdentifier:SectionIdentifierInfo];
+      [self.tableViewModel indexPathForItemType:ItemTypeFolder
+                              sectionIdentifier:SectionIdentifierInfo];
   NSString* folderName = @"";
   if (self.bookmark) {
     folderName = bookmark_utils_ios::TitleForBookmarkNode(self.folder);
   }
 
   self.folderItem.title = folderName;
-  [self.collectionView reloadItemsAtIndexPaths:@[ indexPath ]];
+  [self.tableView reloadRowsAtIndexPaths:@[ indexPath ]
+                        withRowAnimation:UITableViewRowAnimationNone];
 }
 
 - (void)updateUIFromBookmark {
@@ -325,7 +371,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
     return;
 
   [self loadModel];
-  CollectionViewModel* model = self.collectionViewModel;
+  TableViewModel* model = self.tableViewModel;
 
   [model addSectionWithIdentifier:SectionIdentifierInfo];
 
@@ -349,6 +395,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
   self.URLItem.text = base::SysUTF8ToNSString(self.bookmark->url().spec());
   self.URLItem.delegate = self;
   [model addItem:self.URLItem toSectionWithIdentifier:SectionIdentifierInfo];
+
+  TableViewHeaderFooterItem* errorFooter =
+      [[TableViewHeaderFooterItem alloc] initWithType:ItemTypeInvalidURLFooter];
+  [model setFooter:errorFooter forSectionWithIdentifier:SectionIdentifierInfo];
+  self.displayingValidURL = YES;
 
   // Save button state.
   [self updateSaveButtonState];
@@ -376,8 +427,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
       // removes the current node.
       nodes.insert(self.bookmark);
     }
-    bookmark_utils_ios::DeleteBookmarksWithUndoToast(nodes, self.bookmarkModel,
-                                                     self.browserState);
+    [self.dispatcher
+        showSnackbarMessage:bookmark_utils_ios::DeleteBookmarksWithUndoToast(
+                                nodes, self.bookmarkModel, self.browserState)];
     self.bookmark = nil;
   }
   [self.delegate bookmarkEditorWantsDismissal:self];
@@ -395,10 +447,12 @@ typedef NS_ENUM(NSInteger, ItemType) {
                allowsNewFolders:YES
                     editedNodes:editedNodes
                    allowsCancel:NO
-                 selectedFolder:self.folder];
+                 selectedFolder:self.folder
+                     dispatcher:self.dispatcher];
   folderViewController.delegate = self;
   self.folderViewController = folderViewController;
-
+  self.folderViewController.navigationItem.largeTitleDisplayMode =
+      UINavigationItemLargeTitleDisplayModeNever;
   [self.navigationController pushViewController:self.folderViewController
                                        animated:YES];
 }
@@ -416,6 +470,28 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (void)textDidChangeForItem:(BookmarkTextFieldItem*)item {
   [self updateSaveButtonState];
+  if (self.displayingValidURL != [self inputURLIsValid]) {
+    self.displayingValidURL = [self inputURLIsValid];
+    UITableViewHeaderFooterView* footer = [self.tableView
+        footerViewForSection:[self.tableViewModel sectionForSectionIdentifier:
+                                                      SectionIdentifierInfo]];
+    NSString* footerText =
+        [self inputURLIsValid]
+            ? @""
+            : l10n_util::GetNSString(
+                  IDS_IOS_BOOKMARK_URL_FIELD_VALIDATION_FAILED);
+    [self.tableView beginUpdates];
+    footer.textLabel.text = footerText;
+    [self.tableView endUpdates];
+  }
+}
+
+- (void)textFieldDidBeginEditing:(UITextField*)textField {
+  textField.textColor = [BookmarkTextFieldCell textColorForEditing:YES];
+}
+
+- (void)textFieldDidEndEditing:(UITextField*)textField {
+  textField.textColor = [BookmarkTextFieldCell textColorForEditing:NO];
 }
 
 - (BOOL)textFieldShouldReturn:(UITextField*)textField {
@@ -434,46 +510,48 @@ typedef NS_ENUM(NSInteger, ItemType) {
   }
 }
 
-#pragma mark - UICollectionViewDataSource
+#pragma mark - UITableViewDataSource
 
-- (UICollectionViewCell*)collectionView:(UICollectionView*)collectionView
-                 cellForItemAtIndexPath:(NSIndexPath*)indexPath {
-  UICollectionViewCell* cell =
-      [super collectionView:collectionView cellForItemAtIndexPath:indexPath];
-  if ([self.collectionViewModel itemTypeForIndexPath:indexPath] ==
-      ItemTypeURL) {
-    BookmarkTextFieldCell* URLCell =
-        base::mac::ObjCCastStrict<BookmarkTextFieldCell>(cell);
-    URLCell.textField.textValidator = self;
+- (UITableViewCell*)tableView:(UITableView*)tableView
+        cellForRowAtIndexPath:(NSIndexPath*)indexPath {
+  DCHECK_EQ(tableView, self.tableView);
+  UITableViewCell* cell =
+      [super tableView:tableView cellForRowAtIndexPath:indexPath];
+  NSInteger type = [self.tableViewModel itemTypeForIndexPath:indexPath];
+  switch (type) {
+    case ItemTypeName:
+      cell.selectionStyle = UITableViewCellSelectionStyleNone;
+      break;
+    case ItemTypeURL:
+    case ItemTypeFolder:
+      break;
   }
   return cell;
 }
 
-#pragma mark - UICollectionViewDelegate
+#pragma mark - UITableViewDelegate
 
-- (void)collectionView:(UICollectionView*)collectionView
-    didSelectItemAtIndexPath:(NSIndexPath*)indexPath {
-  [super collectionView:collectionView didSelectItemAtIndexPath:indexPath];
-  if ([self.collectionViewModel itemTypeForIndexPath:indexPath] ==
-      ItemTypeFolder) {
+- (void)tableView:(UITableView*)tableView
+    didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
+  DCHECK_EQ(tableView, self.tableView);
+  if ([self.tableViewModel itemTypeForIndexPath:indexPath] == ItemTypeFolder)
     [self moveBookmark];
-  }
 }
 
-#pragma mark - MDCCollectionViewStylingDelegate
-
-- (CGFloat)collectionView:(UICollectionView*)collectionView
-    cellHeightAtIndexPath:(NSIndexPath*)indexPath {
-  switch ([self.collectionViewModel itemTypeForIndexPath:indexPath]) {
-    case ItemTypeName:
-    case ItemTypeURL:
-      return 88;
-    case ItemTypeFolder:
-      return 50;
-    default:
-      NOTREACHED();
-      return 0;
+- (UIView*)tableView:(UITableView*)tableView
+    viewForFooterInSection:(NSInteger)section {
+  UIView* footerView =
+      [super tableView:tableView viewForFooterInSection:section];
+  if (section ==
+      [self.tableViewModel sectionForSectionIdentifier:SectionIdentifierInfo]) {
+    UITableViewHeaderFooterView* headerFooterView =
+        base::mac::ObjCCastStrict<UITableViewHeaderFooterView>(footerView);
+    headerFooterView.textLabel.font =
+        [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    headerFooterView.textLabel.textColor =
+        [UIColor colorNamed:kDestructiveTintColor];
   }
+  return footerView;
 }
 
 #pragma mark - BookmarkFolderViewControllerDelegate

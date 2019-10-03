@@ -4,8 +4,12 @@
 
 #include "ui/ozone/platform/drm/gpu/proxy_helpers.h"
 
-#include "base/message_loop/message_loop.h"
+#include <memory>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -28,9 +32,9 @@ class ProxyHelpersTest : public testing::Test {
   void QuitFunction(int a) {
     EXPECT_TRUE(drm_checker_.CalledOnValidThread());
 
-    message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ProxyHelpersTest::QuitFunctionCallback,
-                              base::Unretained(this), 8));
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&ProxyHelpersTest::QuitFunctionCallback,
+                                  base::Unretained(this), 8));
   }
 
   // QuitFunctionCallback runs on the main thread.
@@ -38,7 +42,8 @@ class ProxyHelpersTest : public testing::Test {
     EXPECT_TRUE(main_checker_.CalledOnValidThread());
 
     auto quitter = run_loop_.QuitWhenIdleClosure();
-    message_loop_.task_runner()->PostTask(FROM_HERE, quitter);
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(FROM_HERE,
+                                                                 quitter);
   }
 
   void SetDrmChecker() { drm_checker_.DetachFromThread(); }
@@ -86,7 +91,7 @@ class ProxyHelpersTest : public testing::Test {
 
  protected:
   // Main thread message loop.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::RunLoop run_loop_;
 
   // Thread to simulate the drm thread in ozone viz process.
@@ -106,7 +111,7 @@ TEST_F(ProxyHelpersTest, PostTask) {
   // Binds the thread checker on the drm thread.
   drm_thread_->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&ProxyHelpersTest::SetDrmChecker, base::Unretained(this)));
+      base::BindOnce(&ProxyHelpersTest::SetDrmChecker, base::Unretained(this)));
 
   // Test passing a type by value.
   auto value_callback = base::BindOnce(&ProxyHelpersTest::ValueTypeCallback,
@@ -147,8 +152,8 @@ TEST_F(ProxyHelpersTest, PostTask) {
 
   // Shutdown the RunLoop.
   drm_thread_->task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&ProxyHelpersTest::QuitFunction, base::Unretained(this), 42));
+      FROM_HERE, base::BindOnce(&ProxyHelpersTest::QuitFunction,
+                                base::Unretained(this), 42));
 
   run_loop_.Run();
 

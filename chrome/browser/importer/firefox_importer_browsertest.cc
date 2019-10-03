@@ -7,7 +7,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -153,14 +152,14 @@ class FirefoxObserver : public ProfileWriter,
   void ImportItemEnded(importer::ImportItem item) override {}
   void ImportEnded() override {
     base::RunLoop::QuitCurrentWhenIdleDeprecated();
-    EXPECT_EQ(arraysize(kFirefoxBookmarks), bookmark_count_);
+    EXPECT_EQ(base::size(kFirefoxBookmarks), bookmark_count_);
     EXPECT_EQ(1U, history_count_);
-    EXPECT_EQ(arraysize(kFirefoxPasswords), password_count_);
+    EXPECT_EQ(base::size(kFirefoxPasswords), password_count_);
     // The following test case from |kFirefoxKeywords| won't be imported:
     //   "http://%x.example.{searchTerms}.com/"}.
     // Hence, value of |keyword_count_| should be lower than size of
     // |kFirefoxKeywords| by 1.
-    EXPECT_EQ(arraysize(kFirefoxKeywords) - 1, keyword_count_);
+    EXPECT_EQ(base::size(kFirefoxKeywords) - 1, keyword_count_);
   }
 
   bool BookmarkModelIsLoaded() const override {
@@ -199,7 +198,8 @@ class FirefoxObserver : public ProfileWriter,
 
   void AddBookmarks(const std::vector<ImportedBookmarkEntry>& bookmarks,
                     const base::string16& top_level_folder_name) override {
-    ASSERT_LE(bookmark_count_ + bookmarks.size(), arraysize(kFirefoxBookmarks));
+    ASSERT_LE(bookmark_count_ + bookmarks.size(),
+              base::size(kFirefoxBookmarks));
     // Importer should import the FF favorites the same as the list, in the same
     // order.
     for (size_t i = 0; i < bookmarks.size(); ++i) {
@@ -212,8 +212,8 @@ class FirefoxObserver : public ProfileWriter,
 
   void AddAutofillFormDataEntries(
       const std::vector<autofill::AutofillEntry>& autofill_entries) override {
-    EXPECT_EQ(arraysize(kFirefoxAutofillEntries), autofill_entries.size());
-    for (size_t i = 0; i < arraysize(kFirefoxAutofillEntries); ++i) {
+    EXPECT_EQ(base::size(kFirefoxAutofillEntries), autofill_entries.size());
+    for (size_t i = 0; i < base::size(kFirefoxAutofillEntries); ++i) {
       EXPECT_EQ(kFirefoxAutofillEntries[i].name,
                 base::UTF16ToUTF8(autofill_entries[i].key().name()));
       EXPECT_EQ(kFirefoxAutofillEntries[i].value,
@@ -286,11 +286,11 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
                                   importer::ImporterProgressObserver* observer,
                                   ProfileWriter* writer) {
     base::FilePath data_path;
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &data_path));
     data_path = data_path.AppendASCII(profile_dir);
     ASSERT_TRUE(base::CopyDirectory(data_path, profile_path_, true));
 
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &data_path));
     data_path = data_path.AppendASCII("firefox3_nss");
     ASSERT_TRUE(base::CopyDirectory(data_path, profile_path_, false));
 
@@ -305,7 +305,7 @@ class FirefoxProfileImporterBrowserTest : public InProcessBrowserTest {
     base::CreateDirectory(custom_search_engine_path);
 
     // Copy over search engines.
-    ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &data_path));
     data_path = data_path.AppendASCII("firefox_searchplugins");
     base::FilePath default_search_engine_source_path =
         data_path.AppendASCII("default");

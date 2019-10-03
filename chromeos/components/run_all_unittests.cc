@@ -5,10 +5,20 @@
 #include "base/bind.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
+#include "chromeos/chromeos_buildflags.h"
+#include "mojo/core/embedder/embedder.h"
+
+#if BUILDFLAG(IS_CROS_CHROME_SDK)
+#error This test target only builds with linux-chromeos, not cros chrome-sdk.\
+  See comment in build/config/chromeos/rules.gni.
+#endif
 
 int main(int argc, char** argv) {
+  // Some unit tests make Mojo calls.
+  mojo::core::Init();
+
   base::TestSuite test_suite(argc, argv);
   return base::LaunchUnitTests(
       argc, argv,
-      base::Bind(&base::TestSuite::Run, base::Unretained(&test_suite)));
+      base::BindOnce(&base::TestSuite::Run, base::Unretained(&test_suite)));
 }

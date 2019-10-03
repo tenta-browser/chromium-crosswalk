@@ -65,18 +65,18 @@ class ChildProcessTaskProvider
 
   // A map to track ChildProcessTasks by their handles.
   //
-  // This uses handles instead of pids because on windows (where pids and
-  // handles differ), BrowserChildProcessObserver gives us a handle instead of a
-  // pid.
-  std::map<base::ProcessHandle, std::unique_ptr<ChildProcessTask>>
-      tasks_by_handle_;
+  // This uses pids instead of handles because on windows (where pids and
+  // handles differ), there may be multiple different handles to the same
+  // process.
+  std::map<base::ProcessId, std::unique_ptr<ChildProcessTask>>
+      tasks_by_processid_;
 
   // A map to track ChildProcessTask's by their child process unique ids.
   base::flat_map<int, ChildProcessTask*> tasks_by_child_id_;
 
   // Always keep this the last member of this class to make sure it's the
   // first thing to be destructed.
-  base::WeakPtrFactory<ChildProcessTaskProvider> weak_ptr_factory_;
+  base::WeakPtrFactory<ChildProcessTaskProvider> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChildProcessTaskProvider);
 };

@@ -4,10 +4,17 @@
 
 #include "content/public/common/url_utils.h"
 
+#include <set>
+#include <string>
+
+#include "base/containers/flat_set.h"
+#include "base/logging.h"
+#include "base/no_destructor.h"
+#include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/common/url_schemes.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
+#include "url/gurl.h"
 #include "url/url_util.h"
 
 namespace content {
@@ -25,14 +32,11 @@ bool IsSavableURL(const GURL& url) {
   return false;
 }
 
-// PlzNavigate
 bool IsURLHandledByNetworkStack(const GURL& url) {
-  CHECK(IsBrowserSideNavigationEnabled());
-
   // Javascript URLs, srcdoc, schemes that don't load data should not send a
   // request to the network stack.
   if (url.SchemeIs(url::kJavaScriptScheme) || url.is_empty() ||
-      url == content::kAboutSrcDocURL) {
+      url.IsAboutSrcdoc()) {
     return false;
   }
 
@@ -80,7 +84,7 @@ bool IsRendererDebugURL(const GURL& url) {
     return true;
   }
 
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
   if (url == kChromeUICrashHeapOverflowURL ||
       url == kChromeUICrashHeapUnderflowURL ||
       url == kChromeUICrashUseAfterFreeURL) {
@@ -88,13 +92,45 @@ bool IsRendererDebugURL(const GURL& url) {
   }
 #endif
 
-#if defined(SYZYASAN)
+#if defined(OS_WIN)
+  if (url == kChromeUIHeapCorruptionCrashURL)
+    return true;
+#endif
+
+#if DCHECK_IS_ON()
+  if (url == kChromeUICrashDcheckURL)
+    return true;
+#endif
+
+#if defined(OS_WIN) && defined(ADDRESS_SANITIZER)
   if (url == kChromeUICrashCorruptHeapBlockURL ||
-      url == kChromeUICrashCorruptHeapURL || url == kChromeUICrashDcheckURL) {
+      url == kChromeUICrashCorruptHeapURL) {
     return true;
   }
 #endif
 
+  return false;
+}
+
+bool IsSafeRedirectTarget(const GURL& from_url, const GURL& to_url) {
+  static const base::NoDestructor<base::flat_set<base::StringPiece>>
+      kUnsafeSchemes(base::flat_set<base::StringPiece>({
+        url::kAboutScheme, url::kDataScheme, url::kFileScheme,
+            url::kFileSystemScheme, url::kBlobScheme,
+#if defined(OS_ANDROID)
+            url::kContentScheme,
+#endif
+      }));
+  if (HasWebUIScheme(to_url))
+    return false;
+  if (!kUnsafeSchemes->contains(to_url.scheme_piece()))
+    return true;
+  if (from_url.is_empty())
+    return false;
+  if (from_url.SchemeIsFile() && to_url.SchemeIsFile())
+    return true;
+  if (from_url.SchemeIsFileSystem() && to_url.SchemeIsFileSystem())
+    return true;
   return false;
 }
 

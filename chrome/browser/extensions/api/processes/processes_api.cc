@@ -11,17 +11,21 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "chrome/common/extensions/api/processes.h"
 #include "content/public/browser/browser_child_process_host.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -29,7 +33,7 @@
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/result_codes.h"
 #include "extensions/common/error_utils.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
+#include "third_party/blink/public/platform/web_cache.h"
 
 namespace extensions {
 
@@ -90,6 +94,9 @@ api::processes::ProcessType GetProcessType(
     case task_manager::Task::NACL:
       return api::processes::PROCESS_TYPE_NACL;
 
+    case task_manager::Task::SERVICE_WORKER:
+      return api::processes::PROCESS_TYPE_SERVICE_WORKER;
+
     case task_manager::Task::UTILITY:
       return api::processes::PROCESS_TYPE_UTILITY;
 
@@ -98,6 +105,7 @@ api::processes::ProcessType GetProcessType(
 
     case task_manager::Task::UNKNOWN:
     case task_manager::Task::ARC:
+    case task_manager::Task::CROSTINI:
     case task_manager::Task::SANDBOX_HELPER:
     case task_manager::Task::ZYGOTE:
       return api::processes::PROCESS_TYPE_OTHER;
@@ -130,9 +138,9 @@ void FillProcessData(
   for (const auto& task_id : tasks_on_process) {
     api::processes::TaskInfo task_info;
     task_info.title = base::UTF16ToUTF8(task_manager->GetTitle(task_id));
-    const int tab_id = task_manager->GetTabId(task_id);
-    if (tab_id != -1)
-      task_info.tab_id.reset(new int(tab_id));
+    const SessionID tab_id = task_manager->GetTabId(task_id);
+    if (tab_id.is_valid())
+      task_info.tab_id.reset(new int(tab_id.id()));
 
     out_process->tasks.push_back(std::move(task_info));
   }
@@ -276,16 +284,16 @@ void ProcessesEventRouter::OnTasksRefreshedWithBackgroundCalculations(
                     &process);
 
     if (has_on_updated_with_memory_listeners) {
-      // Append the private memory usage to the process data.
-      const int64_t private_memory =
-          observed_task_manager()->GetPrivateMemoryUsage(task_id);
-      process.private_memory.reset(new double(static_cast<double>(
-          private_memory)));
+      // Append the memory footprint to the process data.
+      const int64_t memory_footprint =
+          observed_task_manager()->GetMemoryFootprintUsage(task_id);
+      process.private_memory =
+          std::make_unique<double>(static_cast<double>(memory_footprint));
     }
 
     // Store each process indexed by the string version of its ChildProcessHost
     // ID.
-    processes_dictionary.Set(base::IntToString(child_process_host_id),
+    processes_dictionary.Set(base::NumberToString(child_process_host_id),
                              process.ToValue());
   }
 
@@ -372,11 +380,14 @@ void ProcessesEventRouter::UpdateRefreshTypesFlagsBasedOnListeners() {
     refresh_types |= GetRefreshTypesFlagOnlyEssentialData();
   }
 
+  const int64_t on_updated_types = GetRefreshTypesForProcessOptionalData();
   if (HasEventListeners(api::processes::OnUpdated::kEventName))
-    refresh_types |= GetRefreshTypesForProcessOptionalData();
+    refresh_types |= on_updated_types;
 
-  if (HasEventListeners(api::processes::OnUpdatedWithMemory::kEventName))
-    refresh_types |= task_manager::REFRESH_TYPE_MEMORY;
+  if (HasEventListeners(api::processes::OnUpdatedWithMemory::kEventName)) {
+    refresh_types |=
+        (on_updated_types | task_manager::REFRESH_TYPE_MEMORY_FOOTPRINT);
+  }
 
   SetRefreshTypesFlags(refresh_types);
 }
@@ -452,15 +463,11 @@ ExtensionFunction::ResponseAction ProcessesGetProcessIdForTabFunction::Run() {
   content::WebContents* contents = nullptr;
   int tab_index = -1;
   if (!ExtensionTabUtil::GetTabById(
-          tab_id,
-          Profile::FromBrowserContext(browser_context()),
-          include_incognito(),
-          nullptr,
-          nullptr,
-          &contents,
+          tab_id, Profile::FromBrowserContext(browser_context()),
+          include_incognito_information(), nullptr, nullptr, &contents,
           &tab_index)) {
-    return RespondNow(Error(tabs_constants::kTabNotFoundError,
-                            base::IntToString(tab_id)));
+    return RespondNow(
+        Error(tabs_constants::kTabNotFoundError, base::NumberToString(tab_id)));
   }
 
   // TODO(https://crbug.com/767563): chrome.processes.getProcessIdForTab API
@@ -485,27 +492,26 @@ ExtensionFunction::ResponseAction ProcessesTerminateFunction::Run() {
   child_process_host_id_ = params->process_id;
   if (child_process_host_id_ < 0) {
     return RespondNow(Error(errors::kInvalidArgument,
-                            base::IntToString(child_process_host_id_)));
+                            base::NumberToString(child_process_host_id_)));
   } else if (child_process_host_id_ == 0) {
     // Cannot kill the browser process.
     return RespondNow(Error(errors::kNotAllowedToTerminate,
-                            base::IntToString(child_process_host_id_)));
+                            base::NumberToString(child_process_host_id_)));
   }
 
   // Check if it's a renderer.
   auto* render_process_host =
       content::RenderProcessHost::FromID(child_process_host_id_);
   if (render_process_host)
-    return RespondNow(TerminateIfAllowed(render_process_host->GetHandle()));
+    return RespondNow(
+        TerminateIfAllowed(render_process_host->GetProcess().Handle()));
 
   // This could be a non-renderer child process like a plugin or a nacl
   // process. Try to get its handle from the BrowserChildProcessHost on the
   // IO thread.
-  content::BrowserThread::PostTaskAndReplyWithResult(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&ProcessesTerminateFunction::GetProcessHandleOnIO,
-                 this,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {content::BrowserThread::IO},
+      base::Bind(&ProcessesTerminateFunction::GetProcessHandleOnIO, this,
                  child_process_host_id_),
       base::Bind(&ProcessesTerminateFunction::OnProcessHandleOnUI, this));
 
@@ -519,7 +525,7 @@ base::ProcessHandle ProcessesTerminateFunction::GetProcessHandleOnIO(
 
   auto* host = content::BrowserChildProcessHost::FromID(child_process_host_id);
   if (host)
-    return host->GetData().handle;
+    return host->GetData().GetProcess().Handle();
 
   return base::kNullProcessHandle;
 }
@@ -535,25 +541,25 @@ ExtensionFunction::ResponseValue
 ProcessesTerminateFunction::TerminateIfAllowed(base::ProcessHandle handle) {
   if (handle == base::kNullProcessHandle) {
     return Error(errors::kProcessNotFound,
-                 base::IntToString(child_process_host_id_));
+                 base::NumberToString(child_process_host_id_));
   }
 
   if (handle == base::GetCurrentProcessHandle()) {
     // Cannot kill the browser process.
     return Error(errors::kNotAllowedToTerminate,
-                 base::IntToString(child_process_host_id_));
+                 base::NumberToString(child_process_host_id_));
   }
 
   base::Process process = base::Process::Open(base::GetProcId(handle));
   if (!process.IsValid()) {
     return Error(errors::kProcessNotFound,
-                 base::IntToString(child_process_host_id_));
+                 base::NumberToString(child_process_host_id_));
   }
 
   const bool did_terminate =
       process.Terminate(content::RESULT_CODE_KILLED, true /* wait */);
   if (did_terminate)
-    UMA_HISTOGRAM_COUNTS("ChildProcess.KilledByExtensionAPI", 1);
+    UMA_HISTOGRAM_COUNTS_1M("ChildProcess.KilledByExtensionAPI", 1);
 
   return ArgumentList(
       api::processes::Terminate::Results::Create(did_terminate));
@@ -580,7 +586,7 @@ ExtensionFunction::ResponseAction ProcessesGetProcessInfoFunction::Run() {
 
   include_memory_ = params->include_memory;
   if (include_memory_)
-    AddRefreshType(task_manager::REFRESH_TYPE_MEMORY);
+    AddRefreshType(task_manager::REFRESH_TYPE_MEMORY_FOOTPRINT);
 
   // Keep this object alive until the first of either OnTasksRefreshed() or
   // OnTasksRefreshedWithBackgroundCalculations() is received depending on
@@ -662,25 +668,25 @@ void ProcessesGetProcessInfoFunction::GatherDataAndRespond(
                     &process);
 
     if (include_memory_) {
-      // Append the private memory usage to the process data.
-      const int64_t private_memory =
-          observed_task_manager()->GetPrivateMemoryUsage(task_id);
-      process.private_memory.reset(new double(static_cast<double>(
-          private_memory)));
+      // Append the memory footprint to the process data.
+      const int64_t memory_footprint =
+          observed_task_manager()->GetMemoryFootprintUsage(task_id);
+      process.private_memory =
+          std::make_unique<double>(static_cast<double>(memory_footprint));
     }
 
     // Store each process indexed by the string version of its
     // ChildProcessHost ID.
     processes.additional_properties.Set(
-        base::IntToString(child_process_host_id),
-        process.ToValue());
+        base::NumberToString(child_process_host_id), process.ToValue());
   }
 
   // Report the invalid host ids sent in the arguments.
   for (const auto& host_id : process_host_ids_) {
-    WriteToConsole(content::CONSOLE_MESSAGE_LEVEL_ERROR,
-                   ErrorUtils::FormatErrorMessage(errors::kProcessNotFound,
-                                                  base::IntToString(host_id)));
+    WriteToConsole(
+        blink::mojom::ConsoleMessageLevel::kError,
+        ErrorUtils::FormatErrorMessage(errors::kProcessNotFound,
+                                       base::NumberToString(host_id)));
   }
 
   // Send the response.

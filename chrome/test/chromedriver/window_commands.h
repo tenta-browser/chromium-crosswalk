@@ -15,7 +15,7 @@
 namespace base {
 class DictionaryValue;
 class Value;
-}
+}  // namespace base
 
 struct Session;
 class Status;
@@ -26,7 +26,8 @@ typedef base::Callback<Status(Session* session,
                               WebView* web_view,
                               const base::DictionaryValue&,
                               std::unique_ptr<base::Value>*,
-                              Timeout*)> WindowCommand;
+                              Timeout*)>
+    WindowCommand;
 
 // Execute a Window Command on the target window.
 Status ExecuteWindowCommand(const WindowCommand& command,
@@ -54,6 +55,13 @@ Status ExecuteExecuteAsyncScript(Session* session,
                                  const base::DictionaryValue& params,
                                  std::unique_ptr<base::Value>* value,
                                  Timeout* timeout);
+
+// Creates a new window/tab.
+Status ExecuteNewWindow(Session* session,
+                        WebView* web_view,
+                        const base::DictionaryValue& params,
+                        std::unique_ptr<base::Value>* value,
+                        Timeout* timeout);
 
 // Changes the targeted frame for the given session.
 Status ExecuteSwitchToFrame(Session* session,
@@ -127,6 +135,20 @@ Status ExecuteRefresh(Session* session,
                       std::unique_ptr<base::Value>* value,
                       Timeout* timeout);
 
+// Freeze the current page.
+Status ExecuteFreeze(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout);
+
+// Resume the current page.
+Status ExecuteResume(Session* session,
+                     WebView* web_view,
+                     const base::DictionaryValue& params,
+                     std::unique_ptr<base::Value>* value,
+                     Timeout* timeout);
+
 // Move the mouse by an offset of the element if specified .
 Status ExecuteMouseMoveTo(Session* session,
                           WebView* web_view,
@@ -189,12 +211,6 @@ Status ExecuteTouchScroll(Session* session,
                           const base::DictionaryValue& params,
                           std::unique_ptr<base::Value>* value,
                           Timeout* timeout);
-
-Status ExecuteTouchPinch(Session* session,
-                         WebView* web_view,
-                         const base::DictionaryValue& params,
-                         std::unique_ptr<base::Value>* value,
-                         Timeout* timeout);
 
 Status ExecuteSendCommand(Session* session,
                           WebView* web_view,
@@ -348,7 +364,82 @@ Status ExecutePerformActions(Session* session,
                              std::unique_ptr<base::Value>* value,
                              Timeout* timeout);
 
-Status ProcessInputActionSequence(Session* session,
-                                  const base::DictionaryValue* action_sequence,
-                                  std::unique_ptr<base::ListValue>* result);
+Status ProcessInputActionSequence(
+    Session* session,
+    const base::DictionaryValue* action_sequence,
+    std::unique_ptr<base::DictionaryValue>* result);
+
+Status ExecuteReleaseActions(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout);
+
+Status ExecuteGetWindowRect(Session* session,
+                            WebView* web_view,
+                            const base::DictionaryValue& params,
+                            std::unique_ptr<base::Value>* value,
+                            Timeout* timeout);
+
+Status ExecuteSetWindowRect(Session* session,
+                            WebView* web_view,
+                            const base::DictionaryValue& params,
+                            std::unique_ptr<base::Value>* value,
+                            Timeout* timeout);
+
+Status ExecuteMaximizeWindow(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout);
+
+Status ExecuteMinimizeWindow(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout);
+
+Status ExecuteFullScreenWindow(Session* session,
+                               WebView* web_view,
+                               const base::DictionaryValue& params,
+                               std::unique_ptr<base::Value>* value,
+                               Timeout* timeout);
+
+// Sets the sink to be used when the web page invokes Presentation or Remote
+// Playback API. Uses the "sinkName" value in |params|.
+Status ExecuteSetSinkToUse(Session* session,
+                           WebView* web_view,
+                           const base::DictionaryValue& params,
+                           std::unique_ptr<base::Value>* value,
+                           Timeout* timeout);
+
+// Starts mirroring the tab to the sink specified by the "sinkName" value in
+// |params|.
+Status ExecuteStartTabMirroring(Session* session,
+                                WebView* web_view,
+                                const base::DictionaryValue& params,
+                                std::unique_ptr<base::Value>* value,
+                                Timeout* timeout);
+
+// Stops casting to the sink specified by the "sinkName" value in |params|.
+Status ExecuteStopCasting(Session* session,
+                          WebView* web_view,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value,
+                          Timeout* timeout);
+
+// Returns a list of Cast sinks that are available.
+Status ExecuteGetSinks(Session* session,
+                       WebView* web_view,
+                       const base::DictionaryValue& params,
+                       std::unique_ptr<base::Value>* value,
+                       Timeout* timeout);
+
+// Returns the outstanding issue in the Cast UI.
+Status ExecuteGetIssueMessage(Session* session,
+                              WebView* web_view,
+                              const base::DictionaryValue& params,
+                              std::unique_ptr<base::Value>* value,
+                              Timeout* timeout);
+
 #endif  // CHROME_TEST_CHROMEDRIVER_WINDOW_COMMANDS_H_

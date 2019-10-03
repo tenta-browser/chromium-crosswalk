@@ -4,12 +4,15 @@
 
 #include "components/safe_browsing/base_blocking_page.h"
 
+#include <memory>
+
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/features.h"
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
 #include "components/security_interstitials/core/metrics_helper.h"
 #include "components/security_interstitials/core/safe_browsing_loud_error_ui.h"
@@ -57,7 +60,7 @@ BaseBlockingPage::BaseBlockingPage(
       unsafe_resources_(unsafe_resources),
       proceeded_(false),
       threat_details_proceed_delay_ms_(kThreatDetailsProceedDelayMilliSeconds),
-      sb_error_ui_(base::MakeUnique<SafeBrowsingLoudErrorUI>(
+      sb_error_ui_(std::make_unique<SafeBrowsingLoudErrorUI>(
           unsafe_resources_[0].url,
           main_frame_url_,
           GetInterstitialReason(unsafe_resources_),
@@ -77,7 +80,7 @@ BaseBlockingPage::CreateDefaultDisplayOptions(
       false,                 // kSafeBrowsingExtendedReportingOptInAllowed
       false,                 // is_off_the_record
       false,                 // is_extended_reporting
-      false,                 // is_scout
+      false,                 // is_sber_policy_managed
       false,                 // kSafeBrowsingProceedAnywayDisabled
       false,                 // should_open_links_in_new_tab
       true,                  // always_show_back_to_safety
@@ -123,7 +126,7 @@ bool BaseBlockingPage::IsMainPageLoadBlocked(
 
 void BaseBlockingPage::OnProceed() {
   set_proceeded(true);
-  UpdateMetricsAfterSecurityInterstitial();
+  OnInterstitialClosing();
 
   // Send the threat details, if we opted to.
   FinishThreatDetails(
@@ -144,47 +147,22 @@ void BaseBlockingPage::SetThreatDetailsProceedDelayForTesting(int64_t delay) {
 }
 
 void BaseBlockingPage::OnDontProceed() {
+  // With committed interstitials we shouldn't hit this code.
+  DCHECK(
+      !base::FeatureList::IsEnabled(safe_browsing::kCommittedSBInterstitials));
+
   // We could have already called Proceed(), in which case we must not notify
   // the SafeBrowsingUIManager again, as the client has been deleted.
   if (proceeded_)
     return;
 
-  UpdateMetricsAfterSecurityInterstitial();
-  if (!sb_error_ui_->is_proceed_anyway_disabled()) {
-    controller()->metrics_helper()->RecordUserDecision(
-        security_interstitials::MetricsHelper::DONT_PROCEED);
-  }
+  OnInterstitialClosing();
 
   // Send the malware details, if we opted to.
   FinishThreatDetails(base::TimeDelta(), false /* did_proceed */,
                       controller()->metrics_helper()->NumVisits());  // No delay
 
-  ui_manager_->OnBlockingPageDone(unsafe_resources_, false /* proceed */,
-                                  web_contents(), main_frame_url_);
-
-  // The user does not want to proceed, clear the queued unsafe resources
-  // notifications we received while the interstitial was showing.
-  UnsafeResourceMap* unsafe_resource_map = GetUnsafeResourcesMap();
-  UnsafeResourceMap::iterator iter = unsafe_resource_map->find(web_contents());
-  if (iter != unsafe_resource_map->end() && !iter->second.empty()) {
-    ui_manager_->OnBlockingPageDone(iter->second, false, web_contents(),
-                                    main_frame_url_);
-    unsafe_resource_map->erase(iter);
-  }
-
-  // We don't remove the navigation entry if the tab is being destroyed as this
-  // would trigger a navigation that would cause trouble as the render view host
-  // for the tab has by then already been destroyed.  We also don't delete the
-  // current entry if it has been committed again, which is possible on a page
-  // that had a subresource warning.
-  const int last_committed_index =
-      web_contents()->GetController().GetLastCommittedEntryIndex();
-  if (navigation_entry_index_to_remove_ != -1 &&
-      navigation_entry_index_to_remove_ != last_committed_index &&
-      !web_contents()->IsBeingDestroyed()) {
-    CHECK(web_contents()->GetController().RemoveEntryAtIndex(
-        navigation_entry_index_to_remove_));
-  }
+  OnDontProceedDone();
 }
 
 void BaseBlockingPage::CommandReceived(
@@ -213,6 +191,10 @@ void BaseBlockingPage::PopulateInterstitialStrings(
   sb_error_ui_->PopulateStringsForHtml(load_time_data);
 }
 
+void BaseBlockingPage::OnInterstitialClosing() {
+  UpdateMetricsAfterSecurityInterstitial();
+}
+
 void BaseBlockingPage::FinishThreatDetails(const base::TimeDelta& delay,
                                            bool did_proceed,
                                            int num_visits) {}
@@ -233,6 +215,8 @@ std::string BaseBlockingPage::GetMetricPrefix(
       return primary_subresource ? "malware_subresource" : "malware";
     case BaseSafeBrowsingErrorUI::SB_REASON_HARMFUL:
       return primary_subresource ? "harmful_subresource" : "harmful";
+    case BaseSafeBrowsingErrorUI::SB_REASON_BILLING:
+      return primary_subresource ? "billing_subresource" : "billing";
     case BaseSafeBrowsingErrorUI::SB_REASON_PHISHING:
       ThreatPatternType threat_pattern_type =
           unsafe_resources[0].threat_metadata.threat_pattern_type;
@@ -281,14 +265,19 @@ security_interstitials::BaseSafeBrowsingErrorUI::SBInterstitialReason
 BaseBlockingPage::GetInterstitialReason(
     const UnsafeResourceList& unsafe_resources) {
   bool harmful = false;
-  for (UnsafeResourceList::const_iterator iter = unsafe_resources.begin();
-       iter != unsafe_resources.end(); ++iter) {
+  for (auto iter = unsafe_resources.begin(); iter != unsafe_resources.end();
+       ++iter) {
     const BaseUIManager::UnsafeResource& resource = *iter;
     safe_browsing::SBThreatType threat_type = resource.threat_type;
+    if (threat_type == SB_THREAT_TYPE_BILLING)
+      return BaseSafeBrowsingErrorUI::SB_REASON_BILLING;
+
     if (threat_type == SB_THREAT_TYPE_URL_MALWARE ||
         threat_type == SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE) {
       return BaseSafeBrowsingErrorUI::SB_REASON_MALWARE;
-    } else if (threat_type == SB_THREAT_TYPE_URL_UNWANTED) {
+    }
+
+    if (threat_type == SB_THREAT_TYPE_URL_UNWANTED) {
       harmful = true;
     } else {
       DCHECK(threat_type == SB_THREAT_TYPE_URL_PHISHING ||
@@ -312,6 +301,14 @@ const GURL BaseBlockingPage::main_frame_url() const {
 BaseBlockingPage::UnsafeResourceList
 BaseBlockingPage::unsafe_resources() const {
   return unsafe_resources_;
+}
+
+bool BaseBlockingPage::proceeded() const {
+  return proceeded_;
+}
+
+int64_t BaseBlockingPage::threat_details_proceed_delay() const {
+  return threat_details_proceed_delay_ms_;
 }
 
 BaseSafeBrowsingErrorUI* BaseBlockingPage::sb_error_ui() const {
@@ -346,11 +343,11 @@ BaseBlockingPage::CreateControllerClient(
       ui_manager->history_service(web_contents);
 
   std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper =
-      base::MakeUnique<security_interstitials::MetricsHelper>(
+      std::make_unique<security_interstitials::MetricsHelper>(
           unsafe_resources[0].url, GetReportingInfo(unsafe_resources),
           history_service);
 
-  return base::MakeUnique<SecurityInterstitialControllerClient>(
+  return std::make_unique<SecurityInterstitialControllerClient>(
       web_contents, std::move(metrics_helper), pref_service,
       ui_manager->app_locale(), ui_manager->default_safe_page());
 }
@@ -364,13 +361,48 @@ void BaseBlockingPage::set_sb_error_ui(
   sb_error_ui_ = std::move(sb_error_ui);
 }
 
+void BaseBlockingPage::OnDontProceedDone() {
+  if (!sb_error_ui_->is_proceed_anyway_disabled()) {
+    controller()->metrics_helper()->RecordUserDecision(
+        security_interstitials::MetricsHelper::DONT_PROCEED);
+  }
+
+  ui_manager_->OnBlockingPageDone(unsafe_resources_, false /* proceed */,
+                                  web_contents(), main_frame_url_);
+
+  // The user does not want to proceed, clear the queued unsafe resources
+  // notifications we received while the interstitial was showing.
+  UnsafeResourceMap* unsafe_resource_map = GetUnsafeResourcesMap();
+  auto iter = unsafe_resource_map->find(web_contents());
+  if (iter != unsafe_resource_map->end() && !iter->second.empty()) {
+    ui_manager_->OnBlockingPageDone(iter->second, false, web_contents(),
+                                    main_frame_url_);
+    unsafe_resource_map->erase(iter);
+  }
+
+  // We don't remove the navigation entry if the tab is being destroyed as this
+  // would trigger a navigation that would cause trouble as the render view host
+  // for the tab has by then already been destroyed.  We also don't delete the
+  // current entry if it has been committed again, which is possible on a page
+  // that had a subresource warning.
+  const int last_committed_index =
+      web_contents()->GetController().GetLastCommittedEntryIndex();
+  if (navigation_entry_index_to_remove_ != -1 &&
+      navigation_entry_index_to_remove_ != last_committed_index &&
+      !web_contents()->IsBeingDestroyed()) {
+    CHECK(web_contents()->GetController().RemoveEntryAtIndex(
+        navigation_entry_index_to_remove_));
+  }
+}
+
 // static
 bool BaseBlockingPage::ShouldReportThreatDetails(SBThreatType threat_type) {
-  return threat_type == SB_THREAT_TYPE_URL_PHISHING ||
-         threat_type == SB_THREAT_TYPE_URL_MALWARE ||
-         threat_type == SB_THREAT_TYPE_URL_UNWANTED ||
+  return threat_type == SB_THREAT_TYPE_BILLING ||
+         threat_type == SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE ||
          threat_type == SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING ||
-         threat_type == SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE;
+         threat_type == SB_THREAT_TYPE_URL_MALWARE ||
+         threat_type == SB_THREAT_TYPE_URL_PHISHING ||
+         threat_type == SB_THREAT_TYPE_URL_UNWANTED;
 }
 
 }  // namespace safe_browsing

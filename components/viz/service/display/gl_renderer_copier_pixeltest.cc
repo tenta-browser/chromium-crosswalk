@@ -16,13 +16,16 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "cc/test/pixel_test.h"
 #include "cc/test/pixel_test_utils.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
+#include "components/viz/common/frame_sinks/copy_output_util.h"
 #include "components/viz/service/display/gl_renderer.h"
 #include "components/viz/test/paths.h"
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
@@ -57,7 +60,7 @@ base::FilePath GetTestFilePath(const base::FilePath::CharType* basename) {
 class GLRendererCopierPixelTest
     : public cc::PixelTest,
       public testing::WithParamInterface<
-          std::tuple<GLenum, bool, CopyOutputResult::Format, bool>> {
+          std::tuple<GLenum, bool, CopyOutputResult::Format, bool, bool>> {
  public:
   void SetUp() override {
     SetUpGLWithoutRenderer(false /* flipped_output_surface */);
@@ -65,19 +68,15 @@ class GLRendererCopierPixelTest
     texture_deleter_ =
         std::make_unique<TextureDeleter>(base::ThreadTaskRunnerHandle::Get());
 
-    gl_ = context_provider()->ContextGL();
-    copier_ = std::make_unique<GLRendererCopier>(
-        context_provider(), texture_deleter_.get(),
-        base::BindRepeating([](const gfx::Rect& draw_rect) {
-          gfx::Rect window_rect = draw_rect;
-          window_rect.set_y(kSourceSize.height() - window_rect.bottom());
-          return window_rect;
-        }));
-
     source_gl_format_ = std::get<0>(GetParam());
     have_source_texture_ = std::get<1>(GetParam());
     result_format_ = std::get<2>(GetParam());
     scale_by_half_ = std::get<3>(GetParam());
+    flipped_source_ = std::get<4>(GetParam());
+
+    gl_ = context_provider()->ContextGL();
+    copier_ = std::make_unique<GLRendererCopier>(context_provider(),
+                                                 texture_deleter_.get());
 
     ASSERT_TRUE(cc::ReadPNGFile(
         GetTestFilePath(FILE_PATH_LITERAL("16_color_rects.png")),
@@ -94,10 +93,16 @@ class GLRendererCopierPixelTest
 
   GLRendererCopier* copier() { return copier_.get(); }
 
+  gfx::Rect DrawToWindowSpace(const gfx::Rect& draw_rect) {
+    gfx::Rect window_rect = draw_rect;
+    if (flipped_source_)
+      window_rect.set_y(kSourceSize.height() - window_rect.bottom());
+    return window_rect;
+  }
+
   // Creates a packed RGBA (bytes_per_pixel=4) or RGB (bytes_per_pixel=3) bitmap
   // in OpenGL byte/row order from the given SkBitmap.
-  std::unique_ptr<uint8_t[]> CreateGLPixelsFromSkBitmap(SkBitmap bitmap,
-                                                        int bytes_per_pixel) {
+  std::unique_ptr<uint8_t[]> CreateGLPixelsFromSkBitmap(SkBitmap bitmap) {
     // |bitmap| could be of any color type (and is usually BGRA). Convert it to
     // a RGBA bitmap in the GL byte order.
     SkBitmap rgba_bitmap;
@@ -111,12 +116,13 @@ class GLRendererCopierPixelTest
 
     // Copy the RGBA bitmap into a raw byte array, reversing the row order and
     // maybe stripping-out the alpha channel.
+    const int bytes_per_pixel = source_gl_format_ == GL_RGBA ? 4 : 3;
     std::unique_ptr<uint8_t[]> pixels(
         new uint8_t[rgba_bitmap.width() * rgba_bitmap.height() *
                     bytes_per_pixel]);
     for (int y = 0; y < rgba_bitmap.height(); ++y) {
       const uint8_t* src = static_cast<uint8_t*>(rgba_bitmap.getAddr(0, y));
-      const int flipped_y = rgba_bitmap.height() - y - 1;
+      const int flipped_y = flipped_source_ ? rgba_bitmap.height() - y - 1 : y;
       uint8_t* dest =
           pixels.get() + flipped_y * rgba_bitmap.width() * bytes_per_pixel;
       for (int x = 0; x < rgba_bitmap.width(); ++x) {
@@ -161,9 +167,7 @@ class GLRendererCopierPixelTest
     gl_->TexImage2D(GL_TEXTURE_2D, 0, source_gl_format_, kSourceSize.width(),
                     kSourceSize.height(), 0, source_gl_format_,
                     GL_UNSIGNED_BYTE,
-                    CreateGLPixelsFromSkBitmap(
-                        source_bitmap_, source_gl_format_ == GL_RGBA ? 4 : 3)
-                        .get());
+                    CreateGLPixelsFromSkBitmap(source_bitmap_).get());
     gl_->BindTexture(GL_TEXTURE_2D, 0);
     return source_texture_;
   }
@@ -198,8 +202,7 @@ class GLRendererCopierPixelTest
     // Bind the texture to a framebuffer from which to read the pixels.
     if (sync_token.HasData())
       gl_->WaitSyncTokenCHROMIUM(sync_token.GetConstData());
-    GLuint texture =
-        gl_->CreateAndConsumeTextureCHROMIUM(GL_TEXTURE_2D, mailbox.name);
+    GLuint texture = gl_->CreateAndConsumeTextureCHROMIUM(mailbox.name);
     GLuint framebuffer = 0;
     gl_->GenFramebuffers(1, &framebuffer);
     gl_->BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -220,6 +223,7 @@ class GLRendererCopierPixelTest
   bool have_source_texture_;
   CopyOutputResult::Format result_format_;
   bool scale_by_half_;
+  bool flipped_source_;
   SkBitmap source_bitmap_;
 
  private:
@@ -230,6 +234,15 @@ class GLRendererCopierPixelTest
   GLuint source_framebuffer_ = 0;
 };
 
+// On Android KitKat bots (but not newer ones), the left column of pixels in the
+// result is off-by-one in the red channel. Use the off-by-one camparator as a
+// workaround.
+#if defined(OS_ANDROID)
+#define PIXEL_COMPARATOR() cc::FuzzyPixelOffByOneComparator(false)
+#else
+#define PIXEL_COMPARATOR() cc::ExactPixelComparator(false)
+#endif
+
 TEST_P(GLRendererCopierPixelTest, ExecutesCopyRequest) {
   // Create and execute a CopyOutputRequest via the GLRendererCopier.
   std::unique_ptr<CopyOutputResult> result;
@@ -239,10 +252,10 @@ TEST_P(GLRendererCopierPixelTest, ExecutesCopyRequest) {
         result_format_,
         base::BindOnce(
             [](std::unique_ptr<CopyOutputResult>* result,
-               const base::Closure& quit_closure,
+               base::OnceClosure quit_closure,
                std::unique_ptr<CopyOutputResult> result_from_copier) {
               *result = std::move(result_from_copier);
-              quit_closure.Run();
+              std::move(quit_closure).Run();
             },
             &result, loop.QuitClosure()));
     if (scale_by_half_) {
@@ -254,9 +267,17 @@ TEST_P(GLRendererCopierPixelTest, ExecutesCopyRequest) {
     }
     const GLuint source_texture = CreateSourceTexture();
     CreateAndBindSourceFramebuffer(source_texture);
+
+    copy_output::RenderPassGeometry geometry;
+    // geometry.result_bounds not used by GLRendererCopier
+    geometry.sampling_bounds = DrawToWindowSpace(gfx::Rect(kSourceSize));
+    geometry.result_selection = request->result_selection();
+    geometry.readback_offset =
+        DrawToWindowSpace(geometry.result_selection).OffsetFromOrigin();
+
     copier()->CopyFromTextureOrFramebuffer(
-        std::move(request), gfx::Rect(kSourceSize), source_gl_format_,
-        have_source_texture_ ? source_texture : 0, kSourceSize,
+        std::move(request), geometry, source_gl_format_,
+        have_source_texture_ ? source_texture : 0, kSourceSize, flipped_source_,
         gfx::ColorSpace::CreateSRGB());
     loop.Run();
   }
@@ -282,17 +303,18 @@ TEST_P(GLRendererCopierPixelTest, ExecutesCopyRequest) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           cc::switches::kCCRebaselinePixeltests))
     EXPECT_TRUE(cc::WritePNGFile(actual, png_file_path, false));
-  if (!cc::MatchesPNGFile(actual, png_file_path,
-                          cc::ExactPixelComparator(false))) {
+  if (!cc::MatchesPNGFile(actual, png_file_path, PIXEL_COMPARATOR())) {
     LOG(ERROR) << "Entire source: " << cc::GetPNGDataUrl(source_bitmap_);
     ADD_FAILURE();
   }
 }
 
+#undef PIXEL_COMPARATOR
+
 // Instantiate parameter sets for all possible combinations of scenarios
 // GLRendererCopier will encounter, which will cause it to follow different
 // workflows.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,
     GLRendererCopierPixelTest,
     testing::Combine(
@@ -305,6 +327,8 @@ INSTANTIATE_TEST_CASE_P(
         testing::Values(CopyOutputResult::Format::RGBA_BITMAP,
                         CopyOutputResult::Format::RGBA_TEXTURE),
         // Result scaling: Scale by half?
+        testing::Values(false, true),
+        // Source content is vertically flipped?
         testing::Values(false, true)));
 
 }  // namespace viz

@@ -28,11 +28,11 @@ class _HeapProfilingStorySet(story.StorySet):
             os.path.join(_PAGE_SETS_DATA, 'system_health_%s.json' % platform),
         cloud_storage_bucket=story.PARTNER_BUCKET)
     self.AddStory(
-        loading_stories.LoadGoogleStory(self, take_memory_measurement=True))
+        loading_stories.LoadGoogleStory2018(self, take_memory_measurement=True))
     self.AddStory(
         loading_stories.LoadTwitterStory(self, take_memory_measurement=True))
     self.AddStory(
-        loading_stories.LoadCnnStory(self, take_memory_measurement=True))
+        loading_stories.LoadCnnStory2018(self, take_memory_measurement=True))
 
 
 class _HeapProfilingBenchmark(perf_benchmark.PerfBenchmark):
@@ -63,16 +63,13 @@ class _HeapProfilingBenchmark(perf_benchmark.PerfBenchmark):
     super(_HeapProfilingBenchmark, self).SetExtraBrowserOptions(options)
     args = []
     if self.PROFILING_MODE == 'pseudo':
-      args += ['--enable-heap-profiling']
+      args += [
+          '--memlog=all', '--memlog-stack-mode=pseudo', '--memlog-sampling']
     elif self.PROFILING_MODE == 'native':
-      args += ['--enable-heap-profiling=native']
+      args += [
+          '--memlog=all', '--memlog-stack-mode=native-with-thread-names',
+          '--memlog-sampling']
     options.AppendExtraBrowserArgs(args)
-
-  def GetExpectations(self):
-    class DefaultExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        pass  # No stories disabled.
-    return DefaultExpectations()
 
 
 class PseudoHeapProfilingDesktopBenchmark(_HeapProfilingBenchmark):

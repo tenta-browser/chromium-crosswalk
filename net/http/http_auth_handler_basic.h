@@ -5,8 +5,10 @@
 #ifndef NET_HTTP_HTTP_AUTH_HANDLER_BASIC_H_
 #define NET_HTTP_HTTP_AUTH_HANDLER_BASIC_H_
 
+#include <memory>
 #include <string>
 
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
@@ -28,20 +30,20 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerBasic : public HttpAuthHandler {
                           CreateReason reason,
                           int digest_nonce_count,
                           const NetLogWithSource& net_log,
+                          HostResolver* host_resolver,
                           std::unique_ptr<HttpAuthHandler>* handler) override;
   };
 
-  HttpAuth::AuthorizationResult HandleAnotherChallenge(
-      HttpAuthChallengeTokenizer* challenge) override;
-
- protected:
+ private:
+  // HttpAuthHandler
   bool Init(HttpAuthChallengeTokenizer* challenge,
             const SSLInfo& ssl_info) override;
-
   int GenerateAuthTokenImpl(const AuthCredentials* credentials,
                             const HttpRequestInfo* request,
-                            const CompletionCallback& callback,
+                            CompletionOnceCallback callback,
                             std::string* auth_token) override;
+  HttpAuth::AuthorizationResult HandleAnotherChallengeImpl(
+      HttpAuthChallengeTokenizer* challenge) override;
 
  private:
   ~HttpAuthHandlerBasic() override {}

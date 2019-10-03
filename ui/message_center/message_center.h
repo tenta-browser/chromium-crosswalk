@@ -24,7 +24,7 @@ class DownloadNotificationTestBase;
 // is shown, closed, or clicked on.
 //
 // MessageCenter is agnostic of profiles; it uses the string returned by
-// message_center::Notification::id() to uniquely identify a notification. It is
+// Notification::id() to uniquely identify a notification. It is
 // the caller's responsibility to formulate the id so that 2 different
 // notification should have different ids. For example, if the caller supports
 // multiple profiles, then caller should encode both profile characteristics and
@@ -39,6 +39,7 @@ namespace test {
 class MessagePopupCollectionTest;
 }
 
+class LockScreenController;
 class MessageCenterObserver;
 class MessageCenterImplTest;
 class NotificationBlocker;
@@ -52,8 +53,10 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
     NON_PINNED,
   };
 
-  // Creates the global message center object.
+  // Creates the global message center object with default LockScreenController.
   static void Initialize();
+  // Creates the global message center object with custom LockScreenController.
+  static void Initialize(std::unique_ptr<LockScreenController> controller);
 
   // Returns the global message center object. Returns null if Initialize is
   // not called.
@@ -73,8 +76,12 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
 
   // Find the notification with the corresponding id. Returns null if not
   // found. The returned instance is owned by the message center.
-  virtual message_center::Notification* FindVisibleNotificationById(
-      const std::string& id) = 0;
+  virtual Notification* FindVisibleNotificationById(const std::string& id) = 0;
+
+  // Find all notifications with the corresponding |app_id|. Returns an
+  // empty set if none are found.
+  virtual NotificationList::Notifications FindNotificationsByAppId(
+      const std::string& app_id) = 0;
 
   // Gets all notifications to be shown to the user in the message center.  Note
   // that queued changes due to the message center being open are not reflected
@@ -115,11 +122,6 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   virtual void SetNotificationImage(const std::string& notification_id,
                                     const gfx::Image& image) = 0;
 
-  // Sets the image for the icon of the specific action button.
-  virtual void SetNotificationButtonIcon(const std::string& notification_id,
-                                         int button_index,
-                                         const gfx::Image& image) = 0;
-
   // This should be called by UI classes when a notification is clicked to
   // trigger the notification's delegate callback and also update the message
   // center observers.
@@ -143,6 +145,11 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // to trigger the notification's delegate and update the message
   // center observers.
   virtual void ClickOnSettingsButton(const std::string& id) = 0;
+
+  // This should be called by UI classes when a user select from notification
+  // inline settings to disable notifications from the same origin of the
+  // notification.
+  virtual void DisableNotification(const std::string& id) = 0;
 
   // This should be called by UI classes after a visible notification popup
   // closes, indicating that the notification has been shown to the user.
@@ -171,6 +178,14 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // Allows querying the visibility of the center.
   virtual bool IsMessageCenterVisible() const = 0;
 
+  // Informs the MessageCenter whether there's a bubble anchored to a system
+  // tray which holds notifications. If false, only toasts are shown (e.g. on
+  // desktop Linux and Windows). When there's no message center view, updated
+  // notifications will be re-appear as toasts even if they've already been
+  // shown.
+  virtual void SetHasMessageCenterView(bool has_message_center_view) = 0;
+  virtual bool HasMessageCenterView() const = 0;
+
   // UI classes should call this when there is cause to leave popups visible for
   // longer than the default (for example, when the mouse hovers over a popup).
   virtual void PausePopupTimers() = 0;
@@ -179,10 +194,12 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // example, after the mouse leaves the popup.)
   virtual void RestartPopupTimers() = 0;
 
-  // "Chromium OS" or "Chrome OS" in the current locale.
-  // Return empty string if not on these platforms.
-  virtual const base::string16& GetProductOSName() const = 0;
-  virtual void SetProductOSName(const base::string16& product_os_name) = 0;
+  // The user-visible "app name" for system-generated notifications, which is
+  // used to identify the application that generated a notification. Only used
+  // for MD style notifications, which means that currently it's only set and
+  // used on Chrome OS. On Chrome OS, this is "Chrome OS".
+  virtual const base::string16& GetSystemNotificationAppName() const = 0;
+  virtual void SetSystemNotificationAppName(const base::string16& name) = 0;
 
  protected:
   friend class ::DownloadNotification;
@@ -192,7 +209,7 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   friend class MessageCenterImplTestWithoutChangeQueue;
   friend class UiControllerTest;
   friend class TrayViewControllerTest;
-  friend class test::MessagePopupCollectionTest;
+  friend class MessagePopupCollectionTest;
   virtual void DisableTimersForTest() = 0;
 
   MessageCenter();

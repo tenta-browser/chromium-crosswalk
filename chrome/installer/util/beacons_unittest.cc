@@ -7,7 +7,6 @@
 #include <memory>
 #include <tuple>
 
-#include "base/memory/ptr_util.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
@@ -148,12 +147,12 @@ TEST_P(BeaconTest, Location) {
 }
 
 // Run the tests for all combinations of beacon type, scope, and install level.
-INSTANTIATE_TEST_CASE_P(BeaconTest,
-                        BeaconTest,
-                        Combine(Values(BeaconType::FIRST, BeaconType::LAST),
-                                Values(BeaconScope::PER_USER,
-                                       BeaconScope::PER_INSTALL),
-                                Bool()));
+INSTANTIATE_TEST_SUITE_P(BeaconTest,
+                         BeaconTest,
+                         Combine(Values(BeaconType::FIRST, BeaconType::LAST),
+                                 Values(BeaconScope::PER_USER,
+                                        BeaconScope::PER_INSTALL),
+                                 Bool()));
 
 class DefaultBrowserBeaconTest
     : public ::testing::TestWithParam<
@@ -173,7 +172,7 @@ class DefaultBrowserBeaconTest
 
     // Configure InstallDetails for the test.
     scoped_install_details_ =
-        base::MakeUnique<install_static::ScopedInstallDetails>(system_install_,
+        std::make_unique<install_static::ScopedInstallDetails>(system_install_,
                                                                mode_index);
     // Override the registry so that tests can freely push state to it.
     ASSERT_NO_FATAL_FAILURE(
@@ -225,32 +224,32 @@ TEST_P(DefaultBrowserBeaconTest, All) {
 
 #if defined(GOOGLE_CHROME_BUILD)
 // Stable supports user and system levels.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Stable,
     DefaultBrowserBeaconTest,
     testing::Combine(testing::Values(install_static::STABLE_INDEX),
                      testing::Values("user", "system")));
 // Beta supports user and system levels.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Beta,
     DefaultBrowserBeaconTest,
     testing::Combine(testing::Values(install_static::BETA_INDEX),
                      testing::Values("user", "system")));
 // Dev supports user and system levels.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Dev,
     DefaultBrowserBeaconTest,
     testing::Combine(testing::Values(install_static::DEV_INDEX),
                      testing::Values("user", "system")));
 // Canary is only at user level.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Canary,
     DefaultBrowserBeaconTest,
     testing::Combine(testing::Values(install_static::CANARY_INDEX),
                      testing::Values("user")));
 #else   // GOOGLE_CHROME_BUILD
 // Chromium supports user and system levels.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Chromium,
     DefaultBrowserBeaconTest,
     testing::Combine(testing::Values(install_static::CHROMIUM_INDEX),

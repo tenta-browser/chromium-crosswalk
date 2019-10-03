@@ -5,10 +5,21 @@
 #ifndef MEDIA_CAPTURE_VIDEO_CHROMEOS_STREAM_BUFFER_MANAGER_H_
 #define MEDIA_CAPTURE_VIDEO_CHROMEOS_STREAM_BUFFER_MANAGER_H_
 
+#include <cstring>
+#include <initializer_list>
+#include <map>
+#include <memory>
+#include <queue>
+#include <set>
+#include <unordered_map>
+#include <vector>
+
 #include "base/containers/queue.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/single_thread_task_runner.h"
 #include "media/capture/video/chromeos/camera_device_delegate.h"
-#include "media/capture/video/chromeos/mojo/arc_camera3.mojom.h"
+#include "media/capture/video/chromeos/mojo/camera3.mojom.h"
 #include "media/capture/video_capture_types.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
@@ -16,110 +27,93 @@ namespace gfx {
 
 class GpuMemoryBuffer;
 
-}  // namespace base
+}  // namespace gfx
+
+namespace gpu {
+
+class GpuMemoryBufferSupport;
+
+}  // namespace gpu
 
 namespace media {
 
 class CameraBufferFactory;
 class CameraDeviceContext;
 
+struct BufferInfo;
+
 // StreamBufferManager is responsible for managing the buffers of the
 // stream.  StreamBufferManager allocates buffers according to the given
-// stream configuration, and circulates the buffers along with capture
-// requests and results between Chrome and the camera HAL process.
-class CAPTURE_EXPORT StreamBufferManager final
-    : public arc::mojom::Camera3CallbackOps {
+// stream configuration.
+class CAPTURE_EXPORT StreamBufferManager final {
  public:
-  StreamBufferManager(
-      arc::mojom::Camera3CallbackOpsRequest callback_ops_request,
-      std::unique_ptr<StreamCaptureInterface> capture_interface,
-      CameraDeviceContext* device_context,
-      std::unique_ptr<CameraBufferFactory> camera_buffer_factory,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner);
+  using Buffer = VideoCaptureDevice::Client::Buffer;
 
-  ~StreamBufferManager() final;
+  StreamBufferManager(
+      CameraDeviceContext* device_context,
+      bool video_capture_use_gmb,
+      std::unique_ptr<CameraBufferFactory> camera_buffer_factory);
+  ~StreamBufferManager();
+
+  void ReserveBuffer(StreamType stream_type);
+
+  gfx::GpuMemoryBuffer* GetGpuMemoryBufferById(StreamType stream_type,
+                                               uint64_t buffer_ipc_id);
+  base::Optional<Buffer> AcquireBufferForClientById(StreamType stream_type,
+                                                    uint64_t buffer_ipc_id);
+
+  VideoCaptureFormat GetStreamCaptureFormat(StreamType stream_type);
+
+  // Checks if all streams are available. For output stream, it is available if
+  // it has free buffers. For input stream, it is always available.
+  bool HasFreeBuffers(const std::set<StreamType>& stream_types);
+
+  // Checks if the target stream types have been configured or not.
+  bool HasStreamsConfigured(std::initializer_list<StreamType> stream_types);
 
   // Sets up the stream context and allocate buffers according to the
   // configuration specified in |stream|.
-  void SetUpStreamAndBuffers(VideoCaptureFormat capture_format,
-                             uint32_t partial_result_count,
-                             arc::mojom::Camera3StreamPtr stream);
+  void SetUpStreamsAndBuffers(
+      VideoCaptureFormat capture_format,
+      const cros::mojom::CameraMetadataPtr& static_metadata,
+      std::vector<cros::mojom::Camera3StreamPtr> streams);
 
-  // StartCapture is the entry point to starting the video capture.  The way
-  // the video capture loop works is:
-  //
-  //  (1) If there is a free buffer, RegisterBuffer registers the buffer with
-  //      the camera HAL.
-  //  (2) Once the free buffer is registered, ProcessCaptureRequest is called
-  //      to issue a capture request which will eventually fill the registered
-  //      buffer.  Goto (1) to register the remaining free buffers.
-  //  (3) The camera HAL returns the shutter time of a capture request through
-  //      Notify, and the filled buffer through ProcessCaptureResult.
-  //  (4) Once all the result metadata are collected,
-  //      SubmitCaptureResultIfComplete is called to deliver the filled buffer
-  //      to Chrome.  After the buffer is consumed by Chrome it is enqueued back
-  //      to the free buffer queue.  Goto (1) to start another capture loop.
-  void StartCapture(arc::mojom::CameraMetadataPtr settings);
+  cros::mojom::Camera3StreamPtr GetStreamConfiguration(StreamType stream_type);
 
-  // Stops the capture loop.  After StopCapture is called |callback_ops_| is
-  // unbound, so no new capture request or result will be processed.
-  void StopCapture();
+  // Requests buffer for specific stream type. If the |buffer_id| is provided,
+  // it will use |buffer_id| as buffer id rather than using id from free
+  // buffers.
+  base::Optional<BufferInfo> RequestBufferForCaptureRequest(
+      StreamType stream_type,
+      base::Optional<uint64_t> buffer_ipc_id);
+
+  // Releases buffer by marking it as free buffer.
+  void ReleaseBufferFromCaptureResult(StreamType stream_type,
+                                      uint64_t buffer_ipc_id);
+
+  gfx::Size GetBufferDimension(StreamType stream_type);
+
+  bool IsReprocessSupported();
 
  private:
-  friend class StreamBufferManagerTest;
+  friend class RequestManagerTest;
 
-  // Registers a free buffer, if any, to the camera HAL.
-  void RegisterBuffer();
-
-  // Calls ProcessCaptureRequest if the buffer specified by |buffer_id| is
-  // successfully registered.
-  void OnRegisteredBuffer(size_t buffer_id, int32_t result);
-
-  // The capture request contains the buffer handle specified by |buffer_id|.
-  void ProcessCaptureRequest(size_t buffer_id);
-  // Calls RegisterBuffer to attempt to register any remaining free buffers.
-  void OnProcessedCaptureRequest(int32_t result);
-
-  // Camera3CallbackOps implementations.
-
-  // ProcessCaptureResult receives the result metadata as well as the filled
-  // buffer from camera HAL.  The result metadata may be divided and delivered
-  // in several stages.  Before all the result metadata is received the
-  // partial results are kept in |partial_results_|.
-  void ProcessCaptureResult(arc::mojom::Camera3CaptureResultPtr result) final;
-
-  // Notify receives the shutter time of capture requests and various errors
-  // from camera HAL.  The shutter time is used as the timestamp in the video
-  // frame delivered to Chrome.
-  void Notify(arc::mojom::Camera3NotifyMsgPtr message) final;
-  void HandleNotifyError(uint32_t frame_number,
-                         uint64_t error_stream_id,
-                         arc::mojom::Camera3ErrorMsgCode error_code);
-
-  // Submits the captured buffer of frame |frame_number_| to Chrome if all the
-  // required metadata and the captured buffer are received.  After the buffer
-  // is submitted the function then enqueues the buffer to free buffer queue for
-  // the next capture request.
-  void SubmitCaptureResultIfComplete(uint32_t frame_number);
-  void SubmitCaptureResult(uint32_t frame_number);
-
-  mojo::Binding<arc::mojom::Camera3CallbackOps> callback_ops_;
-
-  std::unique_ptr<StreamCaptureInterface> capture_interface_;
-
-  CameraDeviceContext* device_context_;
-
-  std::unique_ptr<CameraBufferFactory> camera_buffer_factory_;
-
-  // Where all the Mojo IPC calls takes place.
-  const scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
-
-  // A flag indicating whether the capture loops is running.
-  bool capturing_;
-
-  // The frame number.  Increased by one for each capture request sent; reset
-  // to zero in AllocateAndStart.
-  uint32_t frame_number_;
+  // BufferPair holding up to two types of handles of a stream buffer.
+  struct BufferPair {
+    BufferPair(std::unique_ptr<gfx::GpuMemoryBuffer> gmb,
+               base::Optional<Buffer> vcd_buffer);
+    BufferPair(BufferPair&& other);
+    ~BufferPair();
+    // The GpuMemoryBuffer interface of the stream buffer.
+    //   - When the VCD runs SharedMemory-based VideoCapture buffer, |gmb| is
+    //     allocated by StreamBufferManager locally.
+    //   - When the VCD runs GpuMemoryBuffer-based VideoCapture buffer, |gmb| is
+    //     constructed from |vcd_buffer| below.
+    std::unique_ptr<gfx::GpuMemoryBuffer> gmb;
+    // The VCD buffer reserved from the VCD buffer pool.  This is only set when
+    // the VCD runs GpuMemoryBuffer-based VideoCapture buffer.
+    base::Optional<Buffer> vcd_buffer;
+  };
 
   struct StreamContext {
     StreamContext();
@@ -127,53 +121,36 @@ class CAPTURE_EXPORT StreamBufferManager final
     // The actual pixel format used in the capture request.
     VideoCaptureFormat capture_format;
     // The camera HAL stream.
-    arc::mojom::Camera3StreamPtr stream;
-    // The request settings used in the capture request of this stream.
-    arc::mojom::CameraMetadataPtr request_settings;
-    // The allocated buffers of this stream.
-    std::vector<std::unique_ptr<gfx::GpuMemoryBuffer>> buffers;
-    // The free buffers of this stream.  The queue stores indices into the
-    // |buffers| vector.
-    base::queue<size_t> free_buffers;
+    cros::mojom::Camera3StreamPtr stream;
+    // The dimension of the buffer layout.
+    gfx::Size buffer_dimension;
+    // The allocated buffer pairs.
+    std::map<int, BufferPair> buffers;
+    // The free buffers of this stream.  The queue stores keys into the
+    // |buffers| map.
+    std::queue<int> free_buffers;
   };
 
-  // The stream context of the preview stream.
-  std::unique_ptr<StreamContext> stream_context_;
+  static uint64_t GetBufferIpcId(StreamType stream_type, int key);
 
-  // CaptureResult is used to hold the partial capture results for each frame.
-  struct CaptureResult {
-    CaptureResult();
-    ~CaptureResult();
-    // |reference_time| and |timestamp| are derived from the shutter time of
-    // this frame.  They are be passed to |client_->OnIncomingCapturedData|
-    // along with the |buffers| when the captured frame is submitted.
-    base::TimeTicks reference_time;
-    base::TimeDelta timestamp;
-    // The result metadata.  Contains various information about the captured
-    // frame.
-    arc::mojom::CameraMetadataPtr metadata;
-    // The buffer handle that hold the captured data of this frame.
-    arc::mojom::Camera3StreamBufferPtr buffer;
-    // The set of the partial metadata received.  For each capture result, the
-    // total number of partial metadata should equal to
-    // |partial_result_count_|.
-    std::set<uint32_t> partial_metadata_received;
-  };
+  static int GetBufferKey(uint64_t buffer_ipc_id);
 
-  // The number of partial stages.  |partial_result_count_| is learned by
-  // querying |static_metadata_|.  In case the result count is absent in
-  // |static_metadata_|, it defaults to one which means all the result
-  // metadata and captured buffer of a frame are returned together in one
-  // shot.
-  uint32_t partial_result_count_;
+  void ReserveBufferFromFactory(StreamType stream_type);
+  void ReserveBufferFromPool(StreamType stream_type);
+  // Destroy current streams and unmap mapped buffers.
+  void DestroyCurrentStreamsAndBuffers();
 
-  // The shutter time of the first frame.  We derive the |timestamp| of a
-  // frame using the difference between the frame's shutter time and
-  // |first_frame_shutter_time_|.
-  base::TimeTicks first_frame_shutter_time_;
+  // The context for the set of active streams.
+  std::unordered_map<StreamType, std::unique_ptr<StreamContext>>
+      stream_context_;
 
-  // Stores the partial capture results of the current in-flight frames.
-  std::map<uint32_t, CaptureResult> partial_results_;
+  CameraDeviceContext* device_context_;
+
+  bool video_capture_use_gmb_;
+
+  std::unique_ptr<gpu::GpuMemoryBufferSupport> gmb_support_;
+
+  std::unique_ptr<CameraBufferFactory> camera_buffer_factory_;
 
   base::WeakPtrFactory<StreamBufferManager> weak_ptr_factory_;
 

@@ -7,18 +7,21 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/power/power_data_collector.h"
+#include "chrome/browser/chromeos/power/process_data_collector.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/localized_string.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
@@ -44,6 +47,8 @@ const char kRequestCpuFreqDataCallback[] = "requestCpuFreqData";
 const char kOnRequestCpuFreqDataFunction[] =
     "powerUI.showCpuFreqData";
 
+const char kRequestProcessUsageDataCallback[] = "requestProcessUsageData";
+
 class PowerMessageHandler : public content::WebUIMessageHandler {
  public:
   PowerMessageHandler();
@@ -56,6 +61,7 @@ class PowerMessageHandler : public content::WebUIMessageHandler {
   void OnGetBatteryChargeData(const base::ListValue* value);
   void OnGetCpuIdleData(const base::ListValue* value);
   void OnGetCpuFreqData(const base::ListValue* value);
+  void OnGetProcessUsageData(const base::ListValue* value);
   void GetJsStateOccupancyData(
       const std::vector<CpuDataCollector::StateOccupancySampleDeque>& data,
       const std::vector<std::string>& state_names,
@@ -72,16 +78,20 @@ PowerMessageHandler::~PowerMessageHandler() {
 void PowerMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       kRequestBatteryChargeDataCallback,
-      base::Bind(&PowerMessageHandler::OnGetBatteryChargeData,
-                 base::Unretained(this)));
+      base::BindRepeating(&PowerMessageHandler::OnGetBatteryChargeData,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kRequestCpuIdleDataCallback,
-      base::Bind(&PowerMessageHandler::OnGetCpuIdleData,
-                 base::Unretained(this)));
+      base::BindRepeating(&PowerMessageHandler::OnGetCpuIdleData,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kRequestCpuFreqDataCallback,
-      base::Bind(&PowerMessageHandler::OnGetCpuFreqData,
-                 base::Unretained(this)));
+      base::BindRepeating(&PowerMessageHandler::OnGetCpuFreqData,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kRequestProcessUsageDataCallback,
+      base::BindRepeating(&PowerMessageHandler::OnGetProcessUsageData,
+                          base::Unretained(this)));
 }
 
 void PowerMessageHandler::OnGetBatteryChargeData(const base::ListValue* value) {
@@ -143,6 +153,32 @@ void PowerMessageHandler::OnGetCpuFreqData(const base::ListValue* value) {
                                          js_freq_data, js_system_resumed_data);
 }
 
+void PowerMessageHandler::OnGetProcessUsageData(const base::ListValue* args) {
+  AllowJavascript();
+  CHECK_EQ(1U, args->GetSize());
+
+  const base::Value* callback_id;
+  CHECK(args->Get(0, &callback_id));
+
+  const std::vector<ProcessDataCollector::ProcessUsageData>& process_list =
+      ProcessDataCollector::Get()->GetProcessUsages();
+
+  base::ListValue js_process_usages;
+  for (const auto& process_info : process_list) {
+    std::unique_ptr<base::DictionaryValue> element =
+        std::make_unique<base::DictionaryValue>();
+    element->SetInteger("pid", process_info.process_data.pid);
+    element->SetString("name", process_info.process_data.name);
+    element->SetString("cmdline", process_info.process_data.cmdline);
+    element->SetInteger("type",
+                        static_cast<int>(process_info.process_data.type));
+    element->SetDouble("powerUsageFraction", process_info.power_usage_fraction);
+    js_process_usages.Append(std::move(element));
+  }
+
+  ResolveJavascriptCallback(*callback_id, js_process_usages);
+}
+
 void PowerMessageHandler::GetJsSystemResumedData(base::ListValue *data) {
   DCHECK(data);
 
@@ -190,48 +226,39 @@ void PowerMessageHandler::GetJsStateOccupancyData(
 }  // namespace
 
 PowerUI::PowerUI(content::WebUI* web_ui) : content::WebUIController(web_ui) {
-  web_ui->AddMessageHandler(base::MakeUnique<PowerMessageHandler>());
+  web_ui->AddMessageHandler(std::make_unique<PowerMessageHandler>());
 
   content::WebUIDataSource* html =
       content::WebUIDataSource::Create(chrome::kChromeUIPowerHost);
 
-  html->AddLocalizedString("titleText", IDS_ABOUT_POWER_TITLE);
-  html->AddLocalizedString("showButton", IDS_ABOUT_POWER_SHOW_BUTTON);
-  html->AddLocalizedString("hideButton", IDS_ABOUT_POWER_HIDE_BUTTON);
-  html->AddLocalizedString("reloadButton", IDS_ABOUT_POWER_RELOAD_BUTTON);
-  html->AddLocalizedString("notEnoughDataAvailableYet",
-                           IDS_ABOUT_POWER_NOT_ENOUGH_DATA);
-  html->AddLocalizedString("systemSuspended",
-                           IDS_ABOUT_POWER_SYSTEM_SUSPENDED);
-  html->AddLocalizedString("invalidData", IDS_ABOUT_POWER_INVALID);
-  html->AddLocalizedString("offlineText", IDS_ABOUT_POWER_OFFLINE);
-
-  html->AddLocalizedString("batteryChargeSectionTitle",
-                           IDS_ABOUT_POWER_BATTERY_CHARGE_SECTION_TITLE);
-  html->AddLocalizedString("batteryChargePercentageHeader",
-                           IDS_ABOUT_POWER_BATTERY_CHARGE_PERCENTAGE_HEADER);
-  html->AddLocalizedString("batteryDischargeRateHeader",
-                           IDS_ABOUT_POWER_BATTERY_DISCHARGE_RATE_HEADER);
-  html->AddLocalizedString("dischargeRateLegendText",
-                           IDS_ABOUT_POWER_DISCHARGE_RATE_LEGEND_TEXT);
-  html->AddLocalizedString("movingAverageLegendText",
-                           IDS_ABOUT_POWER_MOVING_AVERAGE_LEGEND_TEXT);
-  html->AddLocalizedString("binnedAverageLegendText",
-                           IDS_ABOUT_POWER_BINNED_AVERAGE_LEGEND_TEXT);
-  html->AddLocalizedString("averageOverText",
-                           IDS_ABOUT_POWER_AVERAGE_OVER_TEXT);
-  html->AddLocalizedString("samplesText",
-                           IDS_ABOUT_POWER_AVERAGE_SAMPLES_TEXT);
-
-  html->AddLocalizedString("cpuIdleSectionTitle",
-                           IDS_ABOUT_POWER_CPU_IDLE_SECTION_TITLE);
-  html->AddLocalizedString("idleStateOccupancyPercentageHeader",
-                           IDS_ABOUT_POWER_CPU_IDLE_STATE_OCCUPANCY_PERCENTAGE);
-
-  html->AddLocalizedString("cpuFreqSectionTitle",
-                           IDS_ABOUT_POWER_CPU_FREQ_SECTION_TITLE);
-  html->AddLocalizedString("frequencyStateOccupancyPercentageHeader",
-                           IDS_ABOUT_POWER_CPU_FREQ_STATE_OCCUPANCY_PERCENTAGE);
+  static constexpr LocalizedString kStrings[] = {
+      {"titleText", IDS_ABOUT_POWER_TITLE},
+      {"showButton", IDS_ABOUT_POWER_SHOW_BUTTON},
+      {"hideButton", IDS_ABOUT_POWER_HIDE_BUTTON},
+      {"reloadButton", IDS_ABOUT_POWER_RELOAD_BUTTON},
+      {"notEnoughDataAvailableYet", IDS_ABOUT_POWER_NOT_ENOUGH_DATA},
+      {"systemSuspended", IDS_ABOUT_POWER_SYSTEM_SUSPENDED},
+      {"invalidData", IDS_ABOUT_POWER_INVALID},
+      {"offlineText", IDS_ABOUT_POWER_OFFLINE},
+      {"batteryChargeSectionTitle",
+       IDS_ABOUT_POWER_BATTERY_CHARGE_SECTION_TITLE},
+      {"batteryChargePercentageHeader",
+       IDS_ABOUT_POWER_BATTERY_CHARGE_PERCENTAGE_HEADER},
+      {"batteryDischargeRateHeader",
+       IDS_ABOUT_POWER_BATTERY_DISCHARGE_RATE_HEADER},
+      {"dischargeRateLegendText", IDS_ABOUT_POWER_DISCHARGE_RATE_LEGEND_TEXT},
+      {"movingAverageLegendText", IDS_ABOUT_POWER_MOVING_AVERAGE_LEGEND_TEXT},
+      {"binnedAverageLegendText", IDS_ABOUT_POWER_BINNED_AVERAGE_LEGEND_TEXT},
+      {"averageOverText", IDS_ABOUT_POWER_AVERAGE_OVER_TEXT},
+      {"samplesText", IDS_ABOUT_POWER_AVERAGE_SAMPLES_TEXT},
+      {"cpuIdleSectionTitle", IDS_ABOUT_POWER_CPU_IDLE_SECTION_TITLE},
+      {"idleStateOccupancyPercentageHeader",
+       IDS_ABOUT_POWER_CPU_IDLE_STATE_OCCUPANCY_PERCENTAGE},
+      {"cpuFreqSectionTitle", IDS_ABOUT_POWER_CPU_FREQ_SECTION_TITLE},
+      {"frequencyStateOccupancyPercentageHeader",
+       IDS_ABOUT_POWER_CPU_FREQ_STATE_OCCUPANCY_PERCENTAGE},
+  };
+  AddLocalizedStringsBulk(html, kStrings, base::size(kStrings));
 
   html->SetJsonPath(kStringsJsFile);
 

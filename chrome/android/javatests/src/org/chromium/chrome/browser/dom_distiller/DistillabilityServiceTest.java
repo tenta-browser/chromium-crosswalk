@@ -23,11 +23,10 @@ import org.chromium.chrome.browser.infobar.InfoBar;
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.infobar.InfoBarContainer.InfoBarContainerObserver;
 import org.chromium.chrome.browser.infobar.ReaderModeInfoBar;
-import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
-import org.chromium.content.browser.test.util.TestWebContentsObserver;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnPageFinishedHelper;
+import org.chromium.content_public.browser.test.util.TestWebContentsObserver;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.test.util.UiRestriction;
 
@@ -37,9 +36,10 @@ import java.util.concurrent.TimeoutException;
  * Tests for making sure the distillability service is communicating correctly.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({"enable-dom-distiller", "reader-mode-heuristics=alwaystrue",
+@CommandLineFlags.Add({
+        "enable-dom-distiller", "reader-mode-heuristics=alwaystrue",
         ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+})
 public class DistillabilityServiceTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -65,8 +65,7 @@ public class DistillabilityServiceTest {
 
         final CallbackHelper readerShownCallbackHelper = new CallbackHelper();
 
-        Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        tab.getInfoBarContainer().addObserver(new InfoBarContainerObserver() {
+        mActivityTestRule.getInfoBarContainer().addObserver(new InfoBarContainerObserver() {
             @Override
             public void onAddInfoBar(InfoBarContainer container, InfoBar infoBar, boolean isFirst) {
                 if (infoBar instanceof ReaderModeInfoBar) readerShownCallbackHelper.notifyCalled();
@@ -84,13 +83,13 @@ public class DistillabilityServiceTest {
                     InfoBarContainer container, float shownRatio) {}
         });
 
-        TestWebContentsObserver observer = new TestWebContentsObserver(
-                mActivityTestRule.getActivity().getActivityTab().getWebContents());
+        TestWebContentsObserver observer =
+                new TestWebContentsObserver(mActivityTestRule.getWebContents());
         OnPageFinishedHelper finishHelper = observer.getOnPageFinishedHelper();
 
         // Navigate to a native page.
         int curCallCount = finishHelper.getCallCount();
-        mActivityTestRule.loadUrl("chrome://history");
+        mActivityTestRule.loadUrl("chrome://history/");
         finishHelper.waitForCallback(curCallCount, 1);
         Assert.assertEquals(0, readerShownCallbackHelper.getCallCount());
 

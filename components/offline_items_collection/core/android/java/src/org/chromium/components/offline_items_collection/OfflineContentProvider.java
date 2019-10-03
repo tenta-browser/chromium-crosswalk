@@ -4,6 +4,8 @@
 
 package org.chromium.components.offline_items_collection;
 
+import org.chromium.base.Callback;
+
 import java.util.ArrayList;
 
 /**
@@ -16,9 +18,6 @@ public interface OfflineContentProvider {
      * (components/offline_items_collection/core/offline_content_provider.h) class.
      */
     interface Observer {
-        /** See OfflineContentProvider::Observer::OnItemsAvailable(...). */
-        void onItemsAvailable();
-
         /** See OfflineContentProvider::Observer::OnItemsAdded(...). */
         void onItemsAdded(ArrayList<OfflineItem> items);
 
@@ -26,14 +25,11 @@ public interface OfflineContentProvider {
         void onItemRemoved(ContentId id);
 
         /** See OfflineContentProvider::Observer::OnItemUpdated(...). */
-        void onItemUpdated(OfflineItem item);
+        void onItemUpdated(OfflineItem item, UpdateDelta updateDelta);
     }
 
-    /** See OfflineContentProvider::AreItemsAvailable(). */
-    boolean areItemsAvailable();
-
     /** See OfflineContentProvider::OpenItem(...). */
-    void openItem(ContentId id);
+    void openItem(@LaunchLocation int location, ContentId id);
 
     /** See OfflineContentProvider::RemoveItem(...). */
     void removeItem(ContentId id);
@@ -48,13 +44,19 @@ public interface OfflineContentProvider {
     void resumeDownload(ContentId id, boolean hasUserGesture);
 
     /** See OfflineContentProvider::GetItemById(...). */
-    OfflineItem getItemById(ContentId id);
+    void getItemById(ContentId id, Callback<OfflineItem> callback);
 
     /** See OfflineContentProvider::GetAllItems(). */
-    ArrayList<OfflineItem> getAllItems();
+    void getAllItems(Callback<ArrayList<OfflineItem>> callback);
 
     /** See OfflineContentProvider::GetVisualsForItem(...). */
     void getVisualsForItem(ContentId id, VisualsCallback callback);
+
+    /** See OfflineContentProvider::GetShareInfoForItem(...). */
+    void getShareInfoForItem(ContentId id, ShareCallback callback);
+
+    /** See OfflineContentProvider::RenameItem(...). */
+    void renameItem(ContentId id, String name, Callback<Integer /*RenameResult*/> callback);
 
     /** See OfflineContentProvider::AddObserver(...). */
     void addObserver(Observer observer);

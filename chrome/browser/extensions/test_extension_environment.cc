@@ -8,10 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
-#include "base/macros.h"
-#include "base/run_loop.h"
 #include "base/values.h"
-#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -20,15 +17,14 @@
 #include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_prefs.h"
-#include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
 namespace extensions {
@@ -74,20 +70,19 @@ std::unique_ptr<base::DictionaryValue> MakePackagedAppManifest() {
 
 }  // namespace
 
+#if defined(OS_CHROMEOS)
 // Extra environment state required for ChromeOS.
 class TestExtensionEnvironment::ChromeOSEnv {
  public:
   ChromeOSEnv() {}
 
  private:
-#if defined(OS_CHROMEOS)
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeOSEnv);
 };
+#endif  // defined(OS_CHROMEOS)
 
 // static
 ExtensionService* TestExtensionEnvironment::CreateExtensionServiceForProfile(
@@ -98,24 +93,16 @@ ExtensionService* TestExtensionEnvironment::CreateExtensionServiceForProfile(
       base::CommandLine::ForCurrentProcess(), base::FilePath(), false);
 }
 
-TestExtensionEnvironment::TestExtensionEnvironment()
-    : thread_bundle_(new content::TestBrowserThreadBundle),
-      extension_service_(nullptr) {
-  Init();
-}
-
-TestExtensionEnvironment::TestExtensionEnvironment(
-    base::MessageLoopForUI* message_loop)
-    : extension_service_(nullptr) {
-  Init();
-}
-
-void TestExtensionEnvironment::Init() {
-  profile_.reset(new TestingProfile);
+TestExtensionEnvironment::TestExtensionEnvironment(Type type)
+    : thread_bundle_(type == Type::kWithTaskEnvironment
+                         ? std::make_unique<content::TestBrowserThreadBundle>()
+                         : nullptr),
 #if defined(OS_CHROMEOS)
-  if (!chromeos::DeviceSettingsService::IsInitialized())
-    chromeos_env_.reset(new ChromeOSEnv);
+      chromeos_env_(chromeos::DeviceSettingsService::IsInitialized()
+                        ? nullptr
+                        : std::make_unique<ChromeOSEnv>()),
 #endif
+      profile_(std::make_unique<TestingProfile>()) {
 }
 
 TestExtensionEnvironment::~TestExtensionEnvironment() {
@@ -143,7 +130,7 @@ const Extension* TestExtensionEnvironment::MakeExtension(
     const base::Value& manifest_extra) {
   std::unique_ptr<base::DictionaryValue> manifest =
       MakeExtensionManifest(manifest_extra);
-  scoped_refptr<Extension> result =
+  scoped_refptr<const Extension> result =
       ExtensionBuilder().SetManifest(std::move(manifest)).Build();
   GetExtensionService()->AddExtension(result.get());
   return result.get();
@@ -154,20 +141,21 @@ const Extension* TestExtensionEnvironment::MakeExtension(
     const std::string& id) {
   std::unique_ptr<base::DictionaryValue> manifest =
       MakeExtensionManifest(manifest_extra);
-  scoped_refptr<Extension> result =
+  scoped_refptr<const Extension> result =
       ExtensionBuilder().SetManifest(std::move(manifest)).SetID(id).Build();
   GetExtensionService()->AddExtension(result.get());
   return result.get();
 }
 
-scoped_refptr<Extension> TestExtensionEnvironment::MakePackagedApp(
+scoped_refptr<const Extension> TestExtensionEnvironment::MakePackagedApp(
     const std::string& id,
     bool install) {
-  scoped_refptr<Extension> result = ExtensionBuilder()
-                                        .SetManifest(MakePackagedAppManifest())
-                                        .AddFlags(Extension::FROM_WEBSTORE)
-                                        .SetID(id)
-                                        .Build();
+  scoped_refptr<const Extension> result =
+      ExtensionBuilder()
+          .SetManifest(MakePackagedAppManifest())
+          .AddFlags(Extension::FROM_WEBSTORE)
+          .SetID(id)
+          .Build();
   if (install)
     GetExtensionService()->AddExtension(result.get());
   return result;

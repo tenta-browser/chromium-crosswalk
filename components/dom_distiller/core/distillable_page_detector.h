@@ -19,7 +19,6 @@ namespace dom_distiller {
 // model.
 class DistillablePageDetector {
  public:
-  static const DistillablePageDetector* GetDefault();
   static const DistillablePageDetector* GetNewModel();
   static const DistillablePageDetector* GetLongPageModel();
   explicit DistillablePageDetector(std::unique_ptr<AdaBoostProto> proto);
@@ -31,12 +30,12 @@ class DistillablePageDetector {
 
   double Score(const std::vector<double>& features) const;
   double GetThreshold() const;
+
  private:
   std::unique_ptr<AdaBoostProto> proto_;
   double threshold_;
   DISALLOW_COPY_AND_ASSIGN(DistillablePageDetector);
 };
-
 
 }  // namespace dom_distiller
 

@@ -5,12 +5,13 @@
 #ifndef UI_VIEWS_CONTROLS_SCROLLBAR_COCOA_SCROLL_BAR_H_
 #define UI_VIEWS_CONTROLS_SCROLLBAR_COCOA_SCROLL_BAR_H_
 
-#include "base/macros.h"
 #import "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
+#include "base/timer/timer.h"
+#import "components/remote_cocoa/app_shim/views_scrollbar_bridge.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/animation/slide_animation.h"
-#import "ui/views/cocoa/views_scrollbar_bridge.h"
-#include "ui/views/controls/scrollbar/base_scroll_bar.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/views_export.h"
 
 namespace views {
@@ -18,11 +19,13 @@ namespace views {
 class CocoaScrollBarThumb;
 
 // The transparent scrollbar for Mac which overlays its contents.
-class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
+class VIEWS_EXPORT CocoaScrollBar : public ScrollBar,
                                     public ViewsScrollbarBridgeDelegate,
                                     public ui::ImplicitAnimationObserver,
                                     public gfx::AnimationDelegate {
  public:
+  METADATA_HEADER(CocoaScrollBar);
+
   explicit CocoaScrollBar(bool horizontal);
   ~CocoaScrollBar() override;
 
@@ -58,7 +61,7 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   bool IsScrollbarFullyHidden() const;
 
  protected:
-  // BaseScrollBar:
+  // ScrollBar:
   gfx::Rect GetTrackBounds() const override;
 
   // ScrollBar:
@@ -71,7 +74,7 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:
-  friend class BaseScrollBar;  // For BaseScrollBar::GetHideTimerForTest().
+  friend class ScrollBar;  // For ScrollBar::GetHideTimerForTesting().
 
   // Methods to change the visibility of the scrollbar.
   void ShowScrollbar();
@@ -98,7 +101,7 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   NSScrollerStyle scroller_style_;
 
   // Timer that will start the scrollbar's hiding animation when it reaches 0.
-  base::Timer hide_scrollbar_timer_;
+  base::RetainingOneShotTimer hide_scrollbar_timer_;
 
   // Slide animation that animates the thickness of an overlay scrollbar.
   // The animation expands the scrollbar as the showing animation and shrinks

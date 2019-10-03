@@ -21,18 +21,15 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
+#include "chrome/browser/ui/extensions/installation_error_infobar_delegate.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "components/infobars/core/confirm_infobar_delegate.h"
-#include "components/infobars/core/infobar.h"
-#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/common/extension.h"
-#include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/ui/extensions/extension_installed_notification.h"
@@ -59,75 +56,13 @@ Browser* FindOrCreateVisibleBrowser(Profile* profile) {
   return browser;
 }
 
-void ShowExtensionInstalledBubble(const extensions::Extension* extension,
-                                  Profile* profile,
-                                  const SkBitmap& icon) {
+void ShowExtensionInstalledBubble(
+    scoped_refptr<const extensions::Extension> extension,
+    Profile* profile,
+    const SkBitmap& icon) {
   Browser* browser = FindOrCreateVisibleBrowser(profile);
   if (browser)
     ExtensionInstalledBubble::ShowBubble(extension, browser, icon);
-}
-
-// Helper class to put up an infobar when installation fails.
-class ErrorInfoBarDelegate : public ConfirmInfoBarDelegate {
- public:
-  // Creates an error infobar and delegate and adds the infobar to
-  // |infobar_service|.
-  static void Create(InfoBarService* infobar_service,
-                     const extensions::CrxInstallError& error);
-
- private:
-  explicit ErrorInfoBarDelegate(const extensions::CrxInstallError& error);
-  ~ErrorInfoBarDelegate() override;
-
-  // ConfirmInfoBarDelegate:
-  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
-  base::string16 GetMessageText() const override;
-  int GetButtons() const override;
-  base::string16 GetLinkText() const override;
-  GURL GetLinkURL() const override;
-
-  extensions::CrxInstallError error_;
-
-  DISALLOW_COPY_AND_ASSIGN(ErrorInfoBarDelegate);
-};
-
-// static
-void ErrorInfoBarDelegate::Create(InfoBarService* infobar_service,
-                                  const extensions::CrxInstallError& error) {
-  infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      std::unique_ptr<ConfirmInfoBarDelegate>(
-          new ErrorInfoBarDelegate(error))));
-}
-
-ErrorInfoBarDelegate::ErrorInfoBarDelegate(
-    const extensions::CrxInstallError& error)
-    : ConfirmInfoBarDelegate(), error_(error) {
-}
-
-ErrorInfoBarDelegate::~ErrorInfoBarDelegate() {
-}
-
-infobars::InfoBarDelegate::InfoBarIdentifier
-ErrorInfoBarDelegate::GetIdentifier() const {
-  return INSTALLATION_ERROR_INFOBAR_DELEGATE;
-}
-
-base::string16 ErrorInfoBarDelegate::GetMessageText() const {
-  return error_.message();
-}
-
-int ErrorInfoBarDelegate::GetButtons() const {
-  return BUTTON_OK;
-}
-
-base::string16 ErrorInfoBarDelegate::GetLinkText() const {
-  return (error_.type() == extensions::CrxInstallError::ERROR_OFF_STORE)
-             ? l10n_util::GetStringUTF16(IDS_LEARN_MORE)
-             : base::string16();
-}
-
-GURL ErrorInfoBarDelegate::GetLinkURL() const {
-  return GURL("https://support.google.com/chrome_webstore/?p=crx_warning");
 }
 
 }  // namespace
@@ -140,9 +75,10 @@ ExtensionInstallUIDefault::ExtensionInstallUIDefault(
 
 ExtensionInstallUIDefault::~ExtensionInstallUIDefault() {}
 
-void ExtensionInstallUIDefault::OnInstallSuccess(const Extension* extension,
-                                                 const SkBitmap* icon) {
-  if (skip_post_install_ui_ || extension->is_theme())
+void ExtensionInstallUIDefault::OnInstallSuccess(
+    scoped_refptr<const extensions::Extension> extension,
+    const SkBitmap* icon) {
+  if (disable_ui_for_tests() || skip_post_install_ui_ || extension->is_theme())
     return;
 
   if (!profile_) {
@@ -168,7 +104,7 @@ void ExtensionInstallUIDefault::OnInstallSuccess(const Extension* extension,
     }
 
 #if defined(OS_CHROMEOS)
-    ExtensionInstalledNotification::Show(extension, current_profile);
+    ExtensionInstalledNotification::Show(extension.get(), current_profile);
 #else  // defined(OS_CHROMEOS)
     OpenAppInstalledUI(extension->id());
 #endif  // defined(OS_CHROMEOS)
@@ -181,7 +117,7 @@ void ExtensionInstallUIDefault::OnInstallSuccess(const Extension* extension,
 void ExtensionInstallUIDefault::OnInstallFailure(
     const extensions::CrxInstallError& error) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (disable_failure_ui_for_tests() || skip_post_install_ui_)
+  if (disable_ui_for_tests() || skip_post_install_ui_)
     return;
 
   Browser* browser = chrome::FindLastActiveWithProfile(profile_);
@@ -191,8 +127,8 @@ void ExtensionInstallUIDefault::OnInstallFailure(
       browser->tab_strip_model()->GetActiveWebContents();
   if (!web_contents)
     return;
-  ErrorInfoBarDelegate::Create(InfoBarService::FromWebContents(web_contents),
-                               error);
+  InstallationErrorInfoBarDelegate::Create(
+      InfoBarService::FromWebContents(web_contents), error);
 }
 
 void ExtensionInstallUIDefault::OpenAppInstalledUI(const std::string& app_id) {
@@ -204,13 +140,13 @@ void ExtensionInstallUIDefault::OpenAppInstalledUI(const std::string& app_id) {
   Profile* current_profile = profile_->GetOriginalProfile();
   Browser* browser = FindOrCreateVisibleBrowser(current_profile);
   if (browser) {
-    chrome::NavigateParams params(chrome::GetSingletonTabNavigateParams(
-        browser, GURL(chrome::kChromeUIAppsURL)));
-    chrome::Navigate(&params);
+    NavigateParams params(
+        GetSingletonTabNavigateParams(browser, GURL(chrome::kChromeUIAppsURL)));
+    Navigate(&params);
 
     content::NotificationService::current()->Notify(
         chrome::NOTIFICATION_APP_INSTALLED_TO_NTP,
-        content::Source<WebContents>(params.target_contents),
+        content::Source<WebContents>(params.navigated_or_inserted_contents),
         content::Details<const std::string>(&app_id));
   }
 #endif

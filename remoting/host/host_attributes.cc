@@ -10,15 +10,17 @@
 
 #include "base/atomicops.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #include "media/base/win/mf_initializer.h"
-#include "media/gpu/media_foundation_video_encode_accelerator_win.h"
+#include "media/gpu/windows/media_foundation_video_encode_accelerator_win.h"
+#include "remoting/host/win/evaluate_3d_display_mode.h"
 #include "remoting/host/win/evaluate_d3d.h"
 #endif
 
@@ -44,7 +46,7 @@ inline constexpr bool IsDebug() {
 inline constexpr bool IsChromeBranded() {
 #if defined(GOOGLE_CHROME_BUILD)
   return true;
-#elif defined(CHROMIUM_BUILD)
+#elif BUILDFLAG(CHROMIUM_BRANDING)
   return false;
 #else
   #error Only Chrome and Chromium brands are supported.
@@ -67,7 +69,7 @@ inline constexpr bool IsNonOfficialBuild() {
   return !IsOfficialBuild();
 }
 
-// By using arraysize() macro in base/macros.h, it's illegal to have empty
+// By using base::size() macro in base/macros.h, it's illegal to have empty
 // arrays.
 //
 // error: no matching function for call to 'ArraySizeHelper'
@@ -94,7 +96,7 @@ std::string GetHostAttributes() {
   // By using ranged for-loop, MSVC throws error C3316:
   // 'const remoting::StaticAttribute [0]':
   // an array of unknown size cannot be used in a range-based for statement.
-  for (size_t i = 0; i < arraysize(kAttributes); i++) {
+  for (size_t i = 0; i < base::size(kAttributes); i++) {
     const auto& attribute = kAttributes[i];
     DCHECK_EQ(std::string(attribute.name).find(kSeparator), std::string::npos);
     if (attribute.get_value_func()) {
@@ -103,16 +105,16 @@ std::string GetHostAttributes() {
   }
 #if defined(OS_WIN)
   {
-    GetD3DCapability(&result);
+    GetD3DCapabilities(&result);
 
     auto version = base::win::GetVersion();
-    if (version >= base::win::VERSION_WIN8) {
+    if (version >= base::win::Version::WIN8) {
       result.push_back("Win8+");
     }
-    if (version >= base::win::VERSION_WIN8_1) {
+    if (version >= base::win::Version::WIN8_1) {
       result.push_back("Win81+");
     }
-    if (version >= base::win::VERSION_WIN10) {
+    if (version >= base::win::Version::WIN10) {
       result.push_back("Win10+");
     }
   }

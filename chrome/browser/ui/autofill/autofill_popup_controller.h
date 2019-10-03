@@ -49,10 +49,8 @@ class AutofillPopupController : public AutofillPopupViewDelegate {
   // Removes the suggestion at the given index.
   virtual bool RemoveSuggestion(int index) = 0;
 
-  // Returns the background color ID of the row item according to its |index|,
-  // or default popup background otherwise.
-  virtual ui::NativeTheme::ColorId GetBackgroundColorIDForRow(
-      int index) const = 0;
+  // Change which line is currently selected by the user.
+  virtual void SetSelectedLine(base::Optional<int> selected_line) = 0;
 
   // Returns the index of the selected line. A line is "selected" when it is
   // hovered or has keyboard focus.

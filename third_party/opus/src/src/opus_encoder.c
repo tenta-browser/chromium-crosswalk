@@ -1661,11 +1661,20 @@ opus_int32 opus_encode_native(OpusEncoder *st, const opus_val16 *pcm, int frame_
     if (st->mode != MODE_CELT_ONLY)
     {
         opus_int32 total_bitRate, celt_rate;
+        opus_int activity;
 #ifdef FIXED_POINT
        const opus_int16 *pcm_silk;
 #else
        VARDECL(opus_int16, pcm_silk);
        ALLOC(pcm_silk, st->channels*frame_size, opus_int16);
+#endif
+
+        activity = VAD_NO_DECISION;
+#ifndef DISABLE_FLOAT_API
+        if( analysis_info.valid ) {
+            /* Inform SILK about the Opus VAD decision */
+            activity = ( analysis_info.activity_probability >= DTX_ACTIVITY_THRESHOLD );
+        }
 #endif
 
         /* Distribute bits between SILK and CELT */
@@ -1679,6 +1688,12 @@ opus_int32 opus_encode_native(OpusEncoder *st, const opus_val16 *pcm, int frame_
                /* Increasingly attenuate high band when it gets allocated fewer bits */
                celt_rate = total_bitRate - st->silk_mode.bitRate;
                HB_gain = Q15ONE - SHR32(celt_exp2(-celt_rate * QCONST16(1.f/1024, 10)), 1);
+#ifndef FIXED_POINT
+               /* Sanity check of high band gain */
+               if (celt_isnan(HB_gain)) {
+                   HB_gain = Q15ONE;
+               }
+#endif
             }
         } else {
             /* SILK gets all bits */
@@ -1813,7 +1828,7 @@ opus_int32 opus_encode_native(OpusEncoder *st, const opus_val16 *pcm, int frame_
             for (i=0;i<st->encoder_buffer*st->channels;i++)
                 pcm_silk[i] = FLOAT2INT16(st->delay_buffer[i]);
 #endif
-            silk_Encode( silk_enc, &st->silk_mode, pcm_silk, st->encoder_buffer, NULL, &zero, 1 );
+            silk_Encode( silk_enc, &st->silk_mode, pcm_silk, st->encoder_buffer, NULL, &zero, 1, activity );
         }
 
 #ifdef FIXED_POINT
@@ -1822,7 +1837,7 @@ opus_int32 opus_encode_native(OpusEncoder *st, const opus_val16 *pcm, int frame_
         for (i=0;i<frame_size*st->channels;i++)
             pcm_silk[i] = FLOAT2INT16(pcm_buf[total_buffer*st->channels + i]);
 #endif
-        ret = silk_Encode( silk_enc, &st->silk_mode, pcm_silk, frame_size, &enc, &nBytes, 0 );
+        ret = silk_Encode( silk_enc, &st->silk_mode, pcm_silk, frame_size, &enc, &nBytes, 0, activity );
         if( ret ) {
             /*fprintf (stderr, "SILK encode error: %d\n", ret);*/
             /* Handle error */
@@ -2699,6 +2714,33 @@ int opus_encoder_ctl(OpusEncoder *st, int request, ...)
             opus_val16 *value = va_arg(ap, opus_val16*);
             st->energy_masking = value;
             ret = celt_encoder_ctl(celt_enc, OPUS_SET_ENERGY_MASK(value));
+        }
+        break;
+        case OPUS_GET_IN_DTX_REQUEST:
+        {
+            opus_int32 *value = va_arg(ap, opus_int32*);
+            if (!value)
+            {
+                goto bad_arg;
+            }
+            if (st->silk_mode.useDTX && (st->prev_mode == MODE_SILK_ONLY || st->prev_mode == MODE_HYBRID)) {
+                /* DTX determined by Silk. */
+                int n;
+                void *silk_enc = (char*)st+st->silk_enc_offset;
+                *value = 1;
+                for (n=0;n<st->silk_mode.nChannelsInternal;n++) {
+                    *value = *value && ((silk_encoder*)silk_enc)->state_Fxx[n].sCmn.noSpeechCounter >= NB_SPEECH_FRAMES_BEFORE_DTX;
+                }
+            }
+#ifndef DISABLE_FLOAT_API
+            else if (st->use_dtx) {
+                /* DTX determined by Opus. */
+                *value = st->nb_no_activity_frames >= NB_SPEECH_FRAMES_BEFORE_DTX;
+            }
+#endif
+            else {
+                *value = 0;
+            }
         }
         break;
 

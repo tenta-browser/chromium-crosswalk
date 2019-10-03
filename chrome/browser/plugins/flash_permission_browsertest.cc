@@ -2,23 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permissions_browsertest.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/permission_bubble/mock_permission_prompt_factory.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/ppapi_test_utils.h"
 #include "content/public/test/test_utils.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "url/gurl.h"
 
 namespace {
@@ -62,14 +65,21 @@ class FlashPermissionBrowserTest : public PermissionsBrowserTest {
   }
 
   void SetUpOnMainThread() override {
-    // Set a high engagement threshhold so it doesn't interfere with testing the
-    // permission.
-    std::map<std::string, std::string> parameters;
-    parameters["engagement_threshold_for_flash"] = "100";
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kPreferHtmlOverPlugins, parameters);
-
     PermissionsBrowserTest::SetUpOnMainThread();
+
+    // This browser test verifies the Flash permission prompt behavior. The
+    // permission prompt only appears when Flash permission is set to DETECT.
+    HostContentSettingsMapFactory::GetForProfile(browser()->profile())
+        ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
+                                   CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
+  }
+
+  void TearDownOnMainThread() override {
+    HostContentSettingsMapFactory::GetForProfile(browser()->profile())
+        ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
+                                   CONTENT_SETTING_DEFAULT);
+
+    PermissionsBrowserTest::TearDownOnMainThread();
   }
 
   void TriggerPrompt() override {
@@ -138,7 +148,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, SucceedsInPopupWindow) {
   PermissionRequestManager* manager = PermissionRequestManager::FromWebContents(
       GetWebContents());
   auto popup_prompt_factory =
-      base::MakeUnique<MockPermissionPromptFactory>(manager);
+      std::make_unique<MockPermissionPromptFactory>(manager);
 
   EXPECT_EQ(0, popup_prompt_factory->TotalRequestCount());
   popup_prompt_factory->set_response_type(PermissionRequestManager::ACCEPT_ALL);
@@ -197,7 +207,8 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
 
   // Unlike the other tests, this JavaScript is called without a user gesture.
   GetWebContents()->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("triggerPromptWithMainFrameNavigation();"));
+      base::ASCIIToUTF16("triggerPromptWithMainFrameNavigation();"),
+      base::NullCallback());
 
   EXPECT_TRUE(reload_waiter.Wait());
 
@@ -207,7 +218,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, AllowFileURL) {
   base::FilePath test_path;
-  PathService::Get(chrome::DIR_TEST_DATA, &test_path);
+  base::PathService::Get(chrome::DIR_TEST_DATA, &test_path);
   ui_test_utils::NavigateToURL(
       browser(), GURL("file://" + test_path.AsUTF8Unsafe() + test_url()));
   CommonSucceedsIfAllowed();
@@ -222,7 +233,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, AllowFileURL) {
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, BlockFileURL) {
   base::FilePath test_path;
-  PathService::Get(chrome::DIR_TEST_DATA, &test_path);
+  base::PathService::Get(chrome::DIR_TEST_DATA, &test_path);
   ui_test_utils::NavigateToURL(
       browser(), GURL("file://" + test_path.AsUTF8Unsafe() + test_url()));
   CommonFailsIfBlocked();

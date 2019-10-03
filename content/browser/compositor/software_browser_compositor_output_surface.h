@@ -7,24 +7,18 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
 #include "content/common/content_export.h"
-
-namespace cc {
-class SoftwareOutputDevice;
-}
+#include "ui/latency/latency_tracker.h"
 
 namespace content {
 
 class CONTENT_EXPORT SoftwareBrowserCompositorOutputSurface
     : public BrowserCompositorOutputSurface {
  public:
-  SoftwareBrowserCompositorOutputSurface(
-      std::unique_ptr<viz::SoftwareOutputDevice> software_device,
-      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  explicit SoftwareBrowserCompositorOutputSurface(
+      std::unique_ptr<viz::SoftwareOutputDevice> software_device);
 
   ~SoftwareBrowserCompositorOutputSurface() override;
 
@@ -43,24 +37,30 @@ class CONTENT_EXPORT SoftwareBrowserCompositorOutputSurface
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
   gfx::BufferFormat GetOverlayBufferFormat() const override;
-  bool SurfaceIsSuspendForRecycle() const override;
   uint32_t GetFramebufferCopyTextureFormat() override;
-
- private:
-  // BrowserCompositorOutputSurface implementation.
-#if defined(OS_MACOSX)
-  void SetSurfaceSuspendedForRecycle(bool suspended) override;
+  unsigned UpdateGpuFence() override;
+#if defined(USE_X11)
+  void SetNeedsSwapSizeNotifications(
+      bool needs_swap_size_notifications) override;
 #endif
 
-  void SwapBuffersCallback(uint64_t swap_id);
+ private:
+  void SwapBuffersCallback(const std::vector<ui::LatencyInfo>& latency_info,
+                           const base::TimeTicks& swap_time,
+                           const gfx::Size& pixel_size);
   void UpdateVSyncCallback(const base::TimeTicks timebase,
                            const base::TimeDelta interval);
 
   viz::OutputSurfaceClient* client_ = nullptr;
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  uint64_t swap_id_ = 0;
   base::TimeDelta refresh_interval_;
-  base::WeakPtrFactory<SoftwareBrowserCompositorOutputSurface> weak_factory_;
+  ui::LatencyTracker latency_tracker_;
+
+#if defined(USE_X11)
+  bool needs_swap_size_notifications_ = false;
+#endif
+
+  base::WeakPtrFactory<SoftwareBrowserCompositorOutputSurface> weak_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(SoftwareBrowserCompositorOutputSurface);
 };

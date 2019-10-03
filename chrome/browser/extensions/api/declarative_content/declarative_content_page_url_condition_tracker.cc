@@ -17,7 +17,8 @@ namespace extensions {
 
 namespace {
 
-const char kInvalidTypeOfParameter[] = "Attribute '%s' has an invalid type";
+const char kPageUrlInvalidTypeOfParameter[] =
+    "Attribute '%s' has an invalid type";
 
 static url_matcher::URLMatcherConditionSet::ID g_next_id = 0;
 
@@ -40,7 +41,7 @@ DeclarativeContentPageUrlPredicate::Create(
   scoped_refptr<url_matcher::URLMatcherConditionSet> url_matcher_condition_set;
   const base::DictionaryValue* dict = nullptr;
   if (!value.GetAsDictionary(&dict)) {
-    *error = base::StringPrintf(kInvalidTypeOfParameter,
+    *error = base::StringPrintf(kPageUrlInvalidTypeOfParameter,
                                 declarative_content_constants::kPageUrl);
     return std::unique_ptr<DeclarativeContentPageUrlPredicate>();
   } else {
@@ -179,21 +180,19 @@ void DeclarativeContentPageUrlConditionTracker::StopTrackingPredicates(
 
 void DeclarativeContentPageUrlConditionTracker::TrackForWebContents(
     content::WebContents* contents) {
-  per_web_contents_tracker_[contents] =
-      make_linked_ptr(new PerWebContentsTracker(
-          contents,
-          &url_matcher_,
-          base::Bind(&Delegate::RequestEvaluation, base::Unretained(delegate_)),
-          base::Bind(&DeclarativeContentPageUrlConditionTracker::
+  per_web_contents_tracker_[contents] = std::make_unique<PerWebContentsTracker>(
+      contents, &url_matcher_,
+      base::Bind(&Delegate::RequestEvaluation, base::Unretained(delegate_)),
+      base::Bind(&DeclarativeContentPageUrlConditionTracker::
                      DeletePerWebContentsTracker,
-                     base::Unretained(this))));
+                 base::Unretained(this)));
   per_web_contents_tracker_[contents]->UpdateMatchesForCurrentUrl(true);
 }
 
 void DeclarativeContentPageUrlConditionTracker::OnWebContentsNavigation(
     content::WebContents* contents,
     content::NavigationHandle* navigation_handle) {
-  DCHECK(base::ContainsKey(per_web_contents_tracker_, contents));
+  DCHECK(base::Contains(per_web_contents_tracker_, contents));
   per_web_contents_tracker_[contents]->UpdateMatchesForCurrentUrl(true);
 }
 
@@ -207,8 +206,8 @@ bool DeclarativeContentPageUrlConditionTracker::EvaluatePredicate(
   DCHECK(loc != per_web_contents_tracker_.end());
   const std::set<url_matcher::URLMatcherConditionSet::ID>&
       web_contents_id_matches = loc->second->matches();
-  return base::ContainsKey(web_contents_id_matches,
-                           typed_predicate->url_matcher_condition_set()->id());
+  return base::Contains(web_contents_id_matches,
+                        typed_predicate->url_matcher_condition_set()->id());
 }
 
 bool DeclarativeContentPageUrlConditionTracker::IsEmpty() const {
@@ -217,7 +216,7 @@ bool DeclarativeContentPageUrlConditionTracker::IsEmpty() const {
 
 void DeclarativeContentPageUrlConditionTracker::DeletePerWebContentsTracker(
     content::WebContents* contents) {
-  DCHECK(base::ContainsKey(per_web_contents_tracker_, contents));
+  DCHECK(base::Contains(per_web_contents_tracker_, contents));
   per_web_contents_tracker_.erase(contents);
 }
 

@@ -18,10 +18,13 @@ const char kInvalidatorInvalidationState[] = "invalidator.invalidation_state";
 // yet.  Used to keep invalidation clients in sync in case of a restart.
 const char kInvalidatorSavedInvalidations[] = "invalidator.saved_invalidations";
 
-// Boolean indicating that TiclInvalidationService should use GCM channel.
-// False or lack of settings means XMPPPushClient channel.
-const char kInvalidationServiceUseGCMChannel[] =
-    "invalidation_service.use_gcm_channel";
+// The prefference for storing client ID for the invalidator.
+const char kFCMInvalidationClientIDCacheDeprecated[] =
+    "fcm.invalidation.client_id_cache";
+
+// The preference for storing client ID for the invalidator, keyed by sender ID.
+const char kInvalidationClientIDCache[] =
+    "invalidation.per_sender_client_id_cache";
 
 }  // namespace prefs
 }  // namespace invalidation

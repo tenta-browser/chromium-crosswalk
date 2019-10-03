@@ -6,16 +6,15 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "components/favicon/core/favicon_url.h"
 #include "components/favicon/ios/favicon_url_util.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/favicon_status.h"
-#include "ios/web/public/load_committed_details.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_manager.h"
-#include "ios/web/public/web_state/navigation_context.h"
+#include "ios/web/public/favicon/favicon_status.h"
+#include "ios/web/public/navigation/navigation_context.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
 #include "ios/web/public/web_state/web_state.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "skia/ext/skia_utils_ios.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
@@ -23,8 +22,6 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-DEFINE_WEB_STATE_USER_DATA_KEY(favicon::WebFaviconDriver);
 
 // Callback for the download of favicon.
 using ImageDownloadCallback =
@@ -37,16 +34,13 @@ using ImageDownloadCallback =
 namespace favicon {
 
 // static
-void WebFaviconDriver::CreateForWebState(
-    web::WebState* web_state,
-    FaviconService* favicon_service,
-    history::HistoryService* history_service) {
+void WebFaviconDriver::CreateForWebState(web::WebState* web_state,
+                                         FaviconService* favicon_service) {
   if (FromWebState(web_state))
     return;
 
-  web_state->SetUserData(UserDataKey(),
-                         base::WrapUnique(new WebFaviconDriver(
-                             web_state, favicon_service, history_service)));
+  web_state->SetUserData(UserDataKey(), base::WrapUnique(new WebFaviconDriver(
+                                            web_state, favicon_service)));
 }
 
 gfx::Image WebFaviconDriver::GetFavicon() const {
@@ -63,7 +57,7 @@ bool WebFaviconDriver::FaviconIsValid() const {
 
 GURL WebFaviconDriver::GetActiveURL() {
   web::NavigationItem* item =
-      web_state_->GetNavigationManager()->GetVisibleItem();
+      web_state_->GetNavigationManager()->GetLastCommittedItem();
   return item ? item->GetURL() : GURL();
 }
 
@@ -74,8 +68,9 @@ int WebFaviconDriver::DownloadImage(const GURL& url,
   int local_download_id = ++downloaded_image_count;
 
   GURL local_url(url);
+  __block ImageDownloadCallback local_callback = std::move(callback);
 
-  image_fetcher::IOSImageDataFetcherCallback local_callback =
+  image_fetcher::ImageDataFetcherBlock ios_callback =
       ^(NSData* data, const image_fetcher::RequestMetadata& metadata) {
         if (metadata.http_response_code ==
             image_fetcher::RequestMetadata::RESPONSE_CODE_INVALID)
@@ -89,10 +84,11 @@ int WebFaviconDriver::DownloadImage(const GURL& url,
             sizes.push_back(gfx::Size(frame.width(), frame.height()));
           }
         }
-        callback.Run(local_download_id, metadata.http_response_code, local_url,
-                     frames, sizes);
+        std::move(local_callback)
+            .Run(local_download_id, metadata.http_response_code, local_url,
+                 frames, sizes);
       };
-  image_fetcher_.FetchImageDataWebpDecoded(url, local_callback);
+  image_fetcher_.FetchImageDataWebpDecoded(url, ios_callback);
 
   return downloaded_image_count;
 }
@@ -125,6 +121,7 @@ void WebFaviconDriver::OnFaviconUpdated(
   web::FaviconStatus& favicon_status = item->GetFavicon();
   favicon_status.valid = true;
   favicon_status.image = image;
+  favicon_status.url = icon_url;
 
   NotifyFaviconUpdatedObservers(notification_icon_type, icon_url,
                                 icon_url_changed, image);
@@ -150,10 +147,9 @@ void WebFaviconDriver::OnFaviconDeleted(
 }
 
 WebFaviconDriver::WebFaviconDriver(web::WebState* web_state,
-                                   FaviconService* favicon_service,
-                                   history::HistoryService* history_service)
-    : FaviconDriverImpl(favicon_service, history_service),
-      image_fetcher_(web_state->GetBrowserState()->GetRequestContext()),
+                                   FaviconService* favicon_service)
+    : FaviconDriverImpl(favicon_service),
+      image_fetcher_(web_state->GetBrowserState()->GetSharedURLLoaderFactory()),
       web_state_(web_state) {
   web_state_->AddObserver(this);
 }
@@ -186,5 +182,7 @@ void WebFaviconDriver::WebStateDestroyed(web::WebState* web_state) {
   web_state_->RemoveObserver(this);
   web_state_ = nullptr;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(WebFaviconDriver)
 
 }  // namespace favicon

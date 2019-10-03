@@ -4,9 +4,11 @@
 
 #import "ios/web_view/shell/test/earl_grey/web_view_shell_matchers.h"
 
+#import <EarlGrey/EarlGrey.h>
+
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
-#import "ios/testing/wait_util.h"
+#import "base/test/ios/wait_util.h"
 #import "ios/web_view/shell/shell_view_controller.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -29,8 +31,8 @@ id<GREYMatcher> AddressFieldText(const std::string& text) {
         stringWithFormat:
             @"Address field text did not match. expected: %@, actual: %@",
             base::SysUTF8ToNSString(text), text_field.text];
-    bool success = testing::WaitUntilConditionOrTimeout(
-        testing::kWaitForUIElementTimeout, ^{
+    bool success = base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForUIElementTimeout, ^{
           return base::SysNSStringToUTF8(text_field.text) == text;
         });
     GREYAssert(success, error_message);

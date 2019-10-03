@@ -5,7 +5,6 @@
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
 
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
-#include "net/url_request/url_request_context_getter.h"
 
 namespace policy {
 
@@ -23,8 +22,7 @@ bool CloudExternalDataManager::MetadataEntry::operator!=(
   return url != other.url || hash != other.hash;
 }
 
-CloudExternalDataManager::CloudExternalDataManager()
-    : policy_store_(nullptr), weak_factory_(this) {}
+CloudExternalDataManager::CloudExternalDataManager() : policy_store_(nullptr) {}
 
 CloudExternalDataManager::~CloudExternalDataManager() {
 }

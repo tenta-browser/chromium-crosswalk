@@ -10,8 +10,8 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "dbus/bus.h"
@@ -68,6 +68,23 @@ bool ExportedObject::ExportMethodAndBlock(
   return true;
 }
 
+bool ExportedObject::UnexportMethodAndBlock(const std::string& interface_name,
+                                            const std::string& method_name) {
+  bus_->AssertOnDBusThread();
+
+  const std::string absolute_method_name =
+      GetAbsoluteMemberName(interface_name, method_name);
+  MethodTable::const_iterator iter = method_table_.find(absolute_method_name);
+  if (iter == method_table_.end()) {
+    LOG(ERROR) << absolute_method_name << " is not exported";
+    return false;
+  }
+
+  method_table_.erase(iter);
+
+  return true;
+}
+
 void ExportedObject::ExportMethod(const std::string& interface_name,
                                   const std::string& method_name,
                                   MethodCallCallback method_call_callback,
@@ -80,6 +97,18 @@ void ExportedObject::ExportMethod(const std::string& interface_name,
                                   method_name,
                                   method_call_callback,
                                   on_exported_calback);
+  bus_->GetDBusTaskRunner()->PostTask(FROM_HERE, task);
+}
+
+void ExportedObject::UnexportMethod(
+    const std::string& interface_name,
+    const std::string& method_name,
+    OnUnexportedCallback on_unexported_calback) {
+  bus_->AssertOnOriginThread();
+
+  base::Closure task =
+      base::Bind(&ExportedObject::UnexportMethodInternal, this, interface_name,
+                 method_name, on_unexported_calback);
   bus_->GetDBusTaskRunner()->PostTask(FROM_HERE, task);
 }
 
@@ -104,11 +133,8 @@ void ExportedObject::SendSignal(Signal* signal) {
     SendSignalInternal(start_time, signal_message);
   } else {
     bus_->GetDBusTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&ExportedObject::SendSignalInternal,
-                   this,
-                   start_time,
-                   signal_message));
+        FROM_HERE, base::BindOnce(&ExportedObject::SendSignalInternal, this,
+                                  start_time, signal_message));
   }
 }
 
@@ -132,13 +158,23 @@ void ExportedObject::ExportMethodInternal(
   const bool success = ExportMethodAndBlock(interface_name,
                                             method_name,
                                             method_call_callback);
-  bus_->GetOriginTaskRunner()->PostTask(FROM_HERE,
-                                        base::Bind(&ExportedObject::OnExported,
-                                                   this,
-                                                   on_exported_calback,
-                                                   interface_name,
-                                                   method_name,
-                                                   success));
+  bus_->GetOriginTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ExportedObject::OnExported, this, on_exported_calback,
+                     interface_name, method_name, success));
+}
+
+void ExportedObject::UnexportMethodInternal(
+    const std::string& interface_name,
+    const std::string& method_name,
+    OnUnexportedCallback on_unexported_calback) {
+  bus_->AssertOnDBusThread();
+
+  const bool success = UnexportMethodAndBlock(interface_name, method_name);
+  bus_->GetOriginTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ExportedObject::OnUnexported, this, on_unexported_calback,
+                     interface_name, method_name, success));
 }
 
 void ExportedObject::OnExported(OnExportedCallback on_exported_callback,
@@ -148,6 +184,15 @@ void ExportedObject::OnExported(OnExportedCallback on_exported_callback,
   bus_->AssertOnOriginThread();
 
   on_exported_callback.Run(interface_name, method_name, success);
+}
+
+void ExportedObject::OnUnexported(OnExportedCallback on_unexported_callback,
+                                  const std::string& interface_name,
+                                  const std::string& method_name,
+                                  bool success) {
+  bus_->AssertOnOriginThread();
+
+  on_unexported_callback.Run(interface_name, method_name, success);
 }
 
 void ExportedObject::SendSignalInternal(base::TimeTicks start_time,
@@ -191,7 +236,10 @@ DBusHandlerResult ExportedObject::HandleMessage(
     DBusConnection* connection,
     DBusMessage* raw_message) {
   bus_->AssertOnDBusThread();
-  DCHECK_EQ(DBUS_MESSAGE_TYPE_METHOD_CALL, dbus_message_get_type(raw_message));
+  // ExportedObject only handles method calls. Ignore other message types (e.g.
+  // signal).
+  if (dbus_message_get_type(raw_message) != DBUS_MESSAGE_TYPE_METHOD_CALL)
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
   // raw_message will be unrefed on exit of the function. Increment the
   // reference so we can use it in MethodCall.
@@ -220,12 +268,10 @@ DBusHandlerResult ExportedObject::HandleMessage(
   const base::TimeTicks start_time = base::TimeTicks::Now();
   if (bus_->HasDBusThread()) {
     // Post a task to run the method in the origin thread.
-    bus_->GetOriginTaskRunner()->PostTask(FROM_HERE,
-                                          base::Bind(&ExportedObject::RunMethod,
-                                                     this,
-                                                     iter->second,
-                                                     base::Passed(&method_call),
-                                                     start_time));
+    bus_->GetOriginTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&ExportedObject::RunMethod, this, iter->second,
+                       std::move(method_call), start_time));
   } else {
     // If the D-Bus thread is not used, just call the method directly.
     MethodCall* method = method_call.get();
@@ -259,12 +305,9 @@ void ExportedObject::SendResponse(base::TimeTicks start_time,
   DCHECK(method_call);
   if (bus_->HasDBusThread()) {
     bus_->GetDBusTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&ExportedObject::OnMethodCompleted,
-                   this,
-                   base::Passed(&method_call),
-                   base::Passed(&response),
-                   start_time));
+        FROM_HERE, base::BindOnce(&ExportedObject::OnMethodCompleted, this,
+                                  std::move(method_call), std::move(response),
+                                  start_time));
   } else {
     OnMethodCompleted(std::move(method_call), std::move(response), start_time);
   }
@@ -282,7 +325,7 @@ void ExportedObject::OnMethodCompleted(std::unique_ptr<MethodCall> method_call,
 
   // Check if the bus is still connected. If the method takes long to
   // complete, the bus may be shut down meanwhile.
-  if (!bus_->is_connected())
+  if (!bus_->IsConnected())
     return;
 
   if (!response) {

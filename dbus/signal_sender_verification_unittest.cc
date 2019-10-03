@@ -5,12 +5,11 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_samples.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
@@ -31,8 +30,6 @@ class SignalSenderVerificationTest : public testing::Test {
   }
 
   void SetUp() override {
-    base::StatisticsRecorder::Initialize();
-
     // Make the main thread not to allow IO.
     base::ThreadRestrictions::SetIOAllowed(false);
 
@@ -78,7 +75,7 @@ class SignalSenderVerificationTest : public testing::Test {
 
     // Start the test service.
     ASSERT_TRUE(test_service_->StartService());
-    ASSERT_TRUE(test_service_->WaitUntilServiceIsStarted());
+    test_service_->WaitUntilServiceIsStarted();
     ASSERT_TRUE(test_service_->HasDBusThread());
     ASSERT_TRUE(test_service_->has_ownership());
 
@@ -87,7 +84,7 @@ class SignalSenderVerificationTest : public testing::Test {
     options.service_name = test_service_->service_name();
     test_service2_.reset(new TestService(options));
     ASSERT_TRUE(test_service2_->StartService());
-    ASSERT_TRUE(test_service2_->WaitUntilServiceIsStarted());
+    test_service2_->WaitUntilServiceIsStarted();
     ASSERT_TRUE(test_service2_->HasDBusThread());
     ASSERT_FALSE(test_service2_->has_ownership());
 
@@ -117,11 +114,11 @@ class SignalSenderVerificationTest : public testing::Test {
 
   void OnOwnership(bool expected, bool success) {
     ASSERT_EQ(expected, success);
-    // PostTask to quit the MessageLoop as this is called from D-Bus thread.
-    message_loop_.task_runner()->PostTask(
+    // PostTask to quit the RunLoop as this is called from D-Bus thread.
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
         FROM_HERE,
-        base::Bind(&SignalSenderVerificationTest::OnOwnershipInternal,
-                   base::Unretained(this)));
+        base::BindOnce(&SignalSenderVerificationTest::OnOwnershipInternal,
+                       base::Unretained(this)));
   }
 
   void OnOwnershipInternal() {
@@ -169,7 +166,7 @@ class SignalSenderVerificationTest : public testing::Test {
     base::ThreadRestrictions::SetIOAllowed(false);
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
   std::unique_ptr<base::Thread> dbus_thread_;
   scoped_refptr<Bus> bus_;
@@ -208,7 +205,8 @@ TEST_F(SignalSenderVerificationTest, TestSignalRejected) {
   ASSERT_EQ("", test_signal_string_);
 }
 
-TEST_F(SignalSenderVerificationTest, TestOwnerChanged) {
+// Flaky. https://crbug.com/785555
+TEST_F(SignalSenderVerificationTest, DISABLED_TestOwnerChanged) {
   const char kMessage[] = "hello, world";
 
   // Send the test signal from the exported object.
@@ -256,7 +254,8 @@ TEST_F(SignalSenderVerificationTest, TestOwnerChanged) {
   ASSERT_EQ(kNewMessage, test_signal_string_);
 }
 
-TEST_F(SignalSenderVerificationTest, TestOwnerStealing) {
+// Flaky. https://crbug.com/785555
+TEST_F(SignalSenderVerificationTest, DISABLED_TestOwnerStealing) {
   // Release and acquire the name ownership.
   // latest_name_owner_ should be non empty as |test_service_| owns the name.
   ASSERT_FALSE(latest_name_owner_.empty());
@@ -276,7 +275,7 @@ TEST_F(SignalSenderVerificationTest, TestOwnerStealing) {
   options.service_name = test_service_->service_name();
   TestService stealable_test_service(options);
   ASSERT_TRUE(stealable_test_service.StartService());
-  ASSERT_TRUE(stealable_test_service.WaitUntilServiceIsStarted());
+  stealable_test_service.WaitUntilServiceIsStarted();
   ASSERT_TRUE(stealable_test_service.HasDBusThread());
   ASSERT_TRUE(stealable_test_service.has_ownership());
 

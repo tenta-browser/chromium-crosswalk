@@ -11,10 +11,14 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "chromeos/network/network_handler_callbacks.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/view.h"
+
+class Profile;
+class UserContext;
 
 namespace gfx {
 class Rect;
@@ -25,8 +29,11 @@ namespace content {
 class StoragePartition;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class NetworkContext;
+}
+class SharedURLLoaderFactory;
 }
 
 namespace chromeos {
@@ -68,9 +75,11 @@ class NetworkStateHelper {
   // mode. Note currently only unsecured Wifi network configuration can be
   // gotten since there is no way to get password for a secured Wifi newwork
   // in Cros for security reasons.
+  // TODO (alemate): Unused, remove.
   virtual void GetConnectedWifiNetwork(std::string* out_onc_spec);
 
   // Add and apply a network configuration. Used in shark/remora mode.
+  // TODO (alemate): Unused, remove.
   virtual void CreateAndConnectNetworkFromOnc(
       const std::string& onc_spec,
       const base::Closure& success_callback,
@@ -101,10 +110,21 @@ class NetworkStateHelper {
 // webui is torn down.
 content::StoragePartition* GetSigninPartition();
 
-// Returns the request context that contains sign-in cookies. For old iframe
-// based flow, the context of the sign-in profile is returned. For webview based
-// flow, the context of the sign-in webview storage partition is returned.
-net::URLRequestContextGetter* GetSigninContext();
+// Returns the network context for the sign-in webview. Note the function
+// returns nullptr if the sign-in partition is not available yet, or if sign-in
+// webui is torn down.
+network::mojom::NetworkContext* GetSigninNetworkContext();
+
+// Returns the URLLoaderFactory that contains sign-in cookies. For old iframe
+// based flow, the URLLoaderFactory of the sign-in profile is returned. For
+// webview basedflow, the URLLoaderFactory of the sign-in webview storage
+// partition is returned.
+scoped_refptr<network::SharedURLLoaderFactory> GetSigninURLLoaderFactory();
+
+// Saves sync password hash and salt to profile prefs. These will be used to
+// detect Gaia password reuses.
+void SaveSyncPasswordDataToProfile(const UserContext& user_context,
+                                   Profile* profile);
 
 }  // namespace login
 

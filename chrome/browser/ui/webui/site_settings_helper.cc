@@ -4,17 +4,24 @@
 
 #include "chrome/browser/ui/webui/site_settings_helper.h"
 
+#include <algorithm>
 #include <functional>
+#include <set>
 #include <string>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/hid/hid_chooser_context.h"
+#include "chrome/browser/hid/hid_chooser_context_factory.h"
 #include "chrome/browser/permissions/chooser_context_base.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_result.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/serial/serial_chooser_context.h"
+#include "chrome/browser/serial/serial_chooser_context_factory.h"
+#include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -31,13 +38,6 @@ namespace site_settings {
 
 constexpr char kAppName[] = "appName";
 constexpr char kAppId[] = "appId";
-constexpr char kObject[] = "object";
-constexpr char kObjectName[] = "objectName";
-
-ChooserContextBase* GetUsbChooserContext(Profile* profile) {
-  return reinterpret_cast<ChooserContextBase*>(
-      UsbChooserContextFactory::GetForProfile(profile));
-}
 
 namespace {
 
@@ -51,6 +51,11 @@ typedef std::map<GURL, SortedObjects> OneOriginObjects;
 // in OneOriginObjects share the given primary URL and source.
 typedef std::map<std::pair<GURL, std::string>, OneOriginObjects>
     AllOriginObjects;
+
+// Chooser data group names.
+const char kUsbChooserDataGroupType[] = "usb-devices-data";
+const char kSerialChooserDataGroupType[] = "serial-ports-data";
+const char kHidChooserDataGroupType[] = "hid-devices-data";
 
 const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     // The following ContentSettingsTypes have UI in Content Settings
@@ -70,16 +75,25 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, "ppapi-broker"},
     {CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, "multiple-automatic-downloads"},
     {CONTENT_SETTINGS_TYPE_MIDI_SYSEX, "midi-sysex"},
-    {CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER, "protectedContent"},
+    {CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER, "protected-content"},
     {CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, "background-sync"},
     {CONTENT_SETTINGS_TYPE_ADS, "ads"},
     {CONTENT_SETTINGS_TYPE_SOUND, "sound"},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, "clipboard"},
+    {CONTENT_SETTINGS_TYPE_SENSORS, "sensors"},
+    {CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER, "payment-handler"},
+    {CONTENT_SETTINGS_TYPE_USB_GUARD, "usb-devices"},
+    {CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, kUsbChooserDataGroupType},
+    {CONTENT_SETTINGS_TYPE_IDLE_DETECTION, "idle-detection"},
+    {CONTENT_SETTINGS_TYPE_SERIAL_GUARD, "serial-ports"},
+    {CONTENT_SETTINGS_TYPE_SERIAL_CHOOSER_DATA, kSerialChooserDataGroupType},
+    {CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING, "bluetooth-scanning"},
+    {CONTENT_SETTINGS_TYPE_HID_GUARD, "hid-devices"},
+    {CONTENT_SETTINGS_TYPE_HID_CHOOSER_DATA, kHidChooserDataGroupType},
 
     // Add new content settings here if a corresponding Javascript string
-    // representation for it is not required. Note some exceptions, such as
-    // USB_CHOOSER_DATA, do have UI in Content Settings but do not require a
-    // separate string.
+    // representation for it is not required. Note some exceptions do have UI in
+    // Content Settings but do not require a separate string.
     {CONTENT_SETTINGS_TYPE_DEFAULT, nullptr},
     {CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE, nullptr},
     {CONTENT_SETTINGS_TYPE_MIXEDSCRIPT, nullptr},
@@ -87,10 +101,8 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_APP_BANNER, nullptr},
     {CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT, nullptr},
     {CONTENT_SETTINGS_TYPE_DURABLE_STORAGE, nullptr},
-    {CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA, nullptr},
     {CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD, nullptr},
     {CONTENT_SETTINGS_TYPE_AUTOPLAY, nullptr},
-    {CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT, nullptr},
     {CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO, nullptr},
     {CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA, nullptr},
     {CONTENT_SETTINGS_TYPE_ADS_DATA, nullptr},
@@ -98,11 +110,17 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
     {CONTENT_SETTINGS_TYPE_PASSWORD_PROTECTION, nullptr},
     {CONTENT_SETTINGS_TYPE_MEDIA_ENGAGEMENT, nullptr},
     {CONTENT_SETTINGS_TYPE_CLIENT_HINTS, nullptr},
-    {CONTENT_SETTINGS_TYPE_SENSORS, nullptr},
     {CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS, nullptr},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE, nullptr},
+    {CONTENT_SETTINGS_TYPE_PLUGINS_DATA, nullptr},
+    {CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH, nullptr},
+    {CONTENT_SETTINGS_TYPE_INTENT_PICKER_DISPLAY, nullptr},
+    {CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC, nullptr},
+    {CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN, nullptr},
+    {CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM, nullptr},
+    {CONTENT_SETTINGS_TYPE_LEGACY_COOKIE_ACCESS, nullptr},
 };
-static_assert(arraysize(kContentSettingsTypeGroupNames) ==
+static_assert(base::size(kContentSettingsTypeGroupNames) ==
                   // ContentSettingsType starts at -1, so add 1 here.
                   static_cast<int>(CONTENT_SETTINGS_NUM_TYPES) + 1,
               "kContentSettingsTypeGroupNames should have "
@@ -114,7 +132,6 @@ struct SiteSettingSourceStringMapping {
 };
 
 const SiteSettingSourceStringMapping kSiteSettingSourceStringMapping[] = {
-    {SiteSettingSource::kAdsBlocked, "ads-blocked"},
     {SiteSettingSource::kAdsFilterBlacklist, "ads-filter-blacklist"},
     {SiteSettingSource::kDefault, "default"},
     {SiteSettingSource::kDrmDisabled, "drm-disabled"},
@@ -125,7 +142,7 @@ const SiteSettingSourceStringMapping kSiteSettingSourceStringMapping[] = {
     {SiteSettingSource::kPolicy, "policy"},
     {SiteSettingSource::kPreference, "preference"},
 };
-static_assert(arraysize(kSiteSettingSourceStringMapping) ==
+static_assert(base::size(kSiteSettingSourceStringMapping) ==
                   static_cast<int>(SiteSettingSource::kNumSources),
               "kSiteSettingSourceStringMapping should have "
               "SiteSettingSource::kNumSources elements");
@@ -138,12 +155,11 @@ static_assert(arraysize(kSiteSettingSourceStringMapping) ==
 //    4. Extensions.
 //    5. Activated for ads filtering (for Ads ContentSettingsType only).
 //    6. DRM disabled (for CrOS's Protected Content ContentSettingsType only).
-//    7. User-set ads blocked (for Ads ContentSettingsType only).
-//    8. User-set per-origin setting.
-//    9. Embargo.
-//   10. User-set patterns.
-//   11. User-set global default for a ContentSettingsType.
-//   12. Chrome's built-in default.
+//    7. User-set per-origin setting.
+//    8. Embargo.
+//    9. User-set patterns.
+//   10. User-set global default for a ContentSettingsType.
+//   11. Chrome's built-in default.
 SiteSettingSource CalculateSiteSettingSource(
     Profile* profile,
     const ContentSettingsType content_type,
@@ -166,7 +182,7 @@ SiteSettingSource CalculateSiteSettingSource(
 
   if (content_type == CONTENT_SETTINGS_TYPE_ADS &&
       base::FeatureList::IsEnabled(
-          subresource_filter::kSafeBrowsingSubresourceFilterExperimentalUI)) {
+          subresource_filter::kSafeBrowsingSubresourceFilter)) {
     HostContentSettingsMap* map =
         HostContentSettingsMapFactory::GetForProfile(profile);
     if (map->GetWebsiteSetting(origin, GURL(), CONTENT_SETTINGS_TYPE_ADS_DATA,
@@ -182,25 +198,19 @@ SiteSettingSource CalculateSiteSettingSource(
     return SiteSettingSource::kDrmDisabled;  // Source #6.
   }
 
-  if (content_type == CONTENT_SETTINGS_TYPE_ADS &&
-      result.content_setting == CONTENT_SETTING_BLOCK) {
-    return SiteSettingSource::kAdsBlocked;  // Source #7.
-  }
-
   DCHECK_NE(content_settings::SETTING_SOURCE_NONE, info.source);
   if (info.source == content_settings::SETTING_SOURCE_USER) {
-    if (result.source == PermissionStatusSource::SAFE_BROWSING_BLACKLIST ||
-        result.source == PermissionStatusSource::MULTIPLE_DISMISSALS ||
+    if (result.source == PermissionStatusSource::MULTIPLE_DISMISSALS ||
         result.source == PermissionStatusSource::MULTIPLE_IGNORES) {
-      return SiteSettingSource::kEmbargo;  // Source #9.
+      return SiteSettingSource::kEmbargo;  // Source #8.
     }
     if (info.primary_pattern == ContentSettingsPattern::Wildcard() &&
         info.secondary_pattern == ContentSettingsPattern::Wildcard()) {
-      return SiteSettingSource::kDefault;  // Source #11, #12.
+      return SiteSettingSource::kDefault;  // Source #10, #11.
     }
 
-    // Source #8, #10. When #8 is the source, |result.source| won't
-    // be set to any of the source #8 enum values, as PermissionManager is
+    // Source #7, #9. When #7 is the source, |result.source| won't
+    // be set to any of the source #7 enum values, as PermissionManager is
     // aware of the difference between these two sources internally. The
     // subtlety here should go away when PermissionManager can handle all
     // content settings and all possible sources.
@@ -211,10 +221,58 @@ SiteSettingSource CalculateSiteSettingSource(
   return SiteSettingSource::kPreference;
 }
 
+// Retrieves the source of a chooser exception as a string. This method uses the
+// CalculateSiteSettingSource method above to calculate the correct string to
+// use.
+std::string GetSourceStringForChooserException(
+    Profile* profile,
+    ContentSettingsType content_type,
+    content_settings::SettingSource source) {
+  // Prepare the parameters needed by CalculateSiteSettingSource
+  content_settings::SettingInfo info;
+  info.source = source;
+
+  // Chooser exceptions do not use a PermissionContextBase for their
+  // permissions.
+  PermissionResult permission_result(CONTENT_SETTING_DEFAULT,
+                                     PermissionStatusSource::UNSPECIFIED);
+
+  // The |origin| parameter is only used for |CONTENT_SETTINGS_TYPE_ADS| with
+  // the |kSafeBrowsingSubresourceFilter| feature flag enabled, so an empty GURL
+  // is used.
+  SiteSettingSource calculated_source = CalculateSiteSettingSource(
+      profile, content_type, /*origin=*/GURL::EmptyGURL(), info,
+      permission_result);
+  DCHECK(calculated_source == SiteSettingSource::kPolicy ||
+         calculated_source == SiteSettingSource::kPreference);
+  return SiteSettingSourceToString(calculated_source);
+}
+
+ChooserContextBase* GetUsbChooserContext(Profile* profile) {
+  return UsbChooserContextFactory::GetForProfile(profile);
+}
+
+ChooserContextBase* GetSerialChooserContext(Profile* profile) {
+  return SerialChooserContextFactory::GetForProfile(profile);
+}
+
+ChooserContextBase* GetHidChooserContext(Profile* profile) {
+  return HidChooserContextFactory::GetForProfile(profile);
+}
+
+const ChooserTypeNameEntry kChooserTypeGroupNames[] = {
+    {&GetUsbChooserContext, &UsbChooserContext::GetObjectName,
+     kUsbChooserDataGroupType},
+    {&GetSerialChooserContext, &SerialChooserContext::GetObjectName,
+     kSerialChooserDataGroupType},
+    {&GetHidChooserContext, &HidChooserContext::GetObjectName,
+     kHidChooserDataGroupType},
+};
+
 }  // namespace
 
 bool HasRegisteredGroupName(ContentSettingsType type) {
-  for (size_t i = 0; i < arraysize(kContentSettingsTypeGroupNames); ++i) {
+  for (size_t i = 0; i < base::size(kContentSettingsTypeGroupNames); ++i) {
     if (type == kContentSettingsTypeGroupNames[i].type &&
         kContentSettingsTypeGroupNames[i].name != nullptr) {
       return true;
@@ -224,7 +282,7 @@ bool HasRegisteredGroupName(ContentSettingsType type) {
 }
 
 ContentSettingsType ContentSettingsTypeFromGroupName(const std::string& name) {
-  for (size_t i = 0; i < arraysize(kContentSettingsTypeGroupNames); ++i) {
+  for (size_t i = 0; i < base::size(kContentSettingsTypeGroupNames); ++i) {
     if (name == kContentSettingsTypeGroupNames[i].name)
       return kContentSettingsTypeGroupNames[i].type;
   }
@@ -234,7 +292,7 @@ ContentSettingsType ContentSettingsTypeFromGroupName(const std::string& name) {
 }
 
 std::string ContentSettingsTypeToGroupName(ContentSettingsType type) {
-  for (size_t i = 0; i < arraysize(kContentSettingsTypeGroupNames); ++i) {
+  for (size_t i = 0; i < base::size(kContentSettingsTypeGroupNames); ++i) {
     if (type == kContentSettingsTypeGroupNames[i].type) {
       const char* name = kContentSettingsTypeGroupNames[i].name;
       if (name != nullptr)
@@ -282,7 +340,7 @@ std::unique_ptr<base::DictionaryValue> GetExceptionForPage(
     const ContentSetting& setting,
     const std::string& provider_name,
     bool incognito) {
-  auto exception = base::MakeUnique<base::DictionaryValue>();
+  auto exception = std::make_unique<base::DictionaryValue>();
   exception->SetString(kOrigin, pattern.ToString());
   exception->SetString(kDisplayName, display_name);
   exception->SetString(kEmbeddingOrigin,
@@ -321,7 +379,7 @@ std::string GetDisplayNameForGURL(
     const GURL& url,
     const extensions::ExtensionRegistry* extension_registry) {
   const url::Origin origin = url::Origin::Create(url);
-  if (origin.unique())
+  if (origin.opaque())
     return url.spec();
 
   std::string display_name =
@@ -359,8 +417,7 @@ void GetExceptionsFromHostContentSettingsMap(
   map->GetSettingsForOneType(type, std::string(), &entries);
   // Group settings by primary_pattern.
   AllPatternsSettings all_patterns_settings;
-  for (ContentSettingsForOneType::iterator i = entries.begin();
-       i != entries.end(); ++i) {
+  for (auto i = entries.begin(); i != entries.end(); ++i) {
     // Don't add default settings.
     if (i->primary_pattern == ContentSettingsPattern::Wildcard() &&
         i->secondary_pattern == ContentSettingsPattern::Wildcard() &&
@@ -372,7 +429,7 @@ void GetExceptionsFromHostContentSettingsMap(
     // Off-the-record HostContentSettingsMap contains incognito content settings
     // as well as normal content settings. Here, we use the incongnito settings
     // only.
-    if (map->is_incognito() && !i->incognito)
+    if (map->IsOffTheRecord() && !i->incognito)
       continue;
 
     if (filter && i->primary_pattern.ToString() != *filter)
@@ -391,7 +448,7 @@ void GetExceptionsFromHostContentSettingsMap(
   // the highest (see operator< in ContentSettingsPattern), so traverse it in
   // reverse to show the patterns with the highest precedence (the more specific
   // ones) on the top.
-  for (AllPatternsSettings::reverse_iterator i = all_patterns_settings.rbegin();
+  for (auto i = all_patterns_settings.rbegin();
        i != all_patterns_settings.rend(); ++i) {
     const ContentSettingsPattern& primary_pattern = i->first.first;
     const OnePatternSettings& one_settings = i->second;
@@ -401,8 +458,7 @@ void GetExceptionsFromHostContentSettingsMap(
     // The "parent" entry either has an identical primary and secondary pattern,
     // or has a wildcard secondary. The two cases are indistinguishable in the
     // UI.
-    OnePatternSettings::const_iterator parent =
-        one_settings.find(primary_pattern);
+    auto parent = one_settings.find(primary_pattern);
     if (parent == one_settings.end())
       parent = one_settings.find(ContentSettingsPattern::Wildcard());
 
@@ -420,8 +476,7 @@ void GetExceptionsFromHostContentSettingsMap(
                             parent_setting, source, incognito));
 
     // Add the "children" for any embedded settings.
-    for (OnePatternSettings::const_iterator j = one_settings.begin();
-         j != one_settings.end(); ++j) {
+    for (auto j = one_settings.begin(); j != one_settings.end(); ++j) {
       // Skip the non-embedded setting which we already added above.
       if (j == parent)
         continue;
@@ -553,120 +608,113 @@ const ChooserTypeNameEntry* ChooserTypeFromGroupName(const std::string& name) {
 }
 
 // Create a DictionaryValue* that will act as a data source for a single row
-// in a chooser permission exceptions table.
-std::unique_ptr<base::DictionaryValue> GetChooserExceptionForPage(
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
-    const std::string& provider_name,
-    bool incognito,
-    const std::string& name,
-    const base::DictionaryValue* object) {
-  std::unique_ptr<base::DictionaryValue> exception(new base::DictionaryValue());
+// in a chooser permission exceptions table. The chooser permission will contain
+// a list of site exceptions that correspond to the exception.
+base::Value CreateChooserExceptionObject(
+    const std::string& display_name,
+    const base::Value& object,
+    const std::string& chooser_type,
+    const ChooserExceptionDetails& chooser_exception_details) {
+  base::Value exception(base::Value::Type::DICTIONARY);
 
   std::string setting_string =
       content_settings::ContentSettingToString(CONTENT_SETTING_DEFAULT);
   DCHECK(!setting_string.empty());
 
-  exception->SetString(kSetting, setting_string);
-  exception->SetString(kOrigin, requesting_origin.spec());
-  exception->SetString(kDisplayName, requesting_origin.spec());
-  exception->SetString(kEmbeddingOrigin, embedding_origin.spec());
-  exception->SetString(kSource, provider_name);
-  exception->SetBoolean(kIncognito, incognito);
-  if (object) {
-    exception->SetString(kObjectName, name);
-    exception->Set(kObject, object->CreateDeepCopy());
+  exception.SetStringKey(kDisplayName, display_name);
+  exception.SetKey(kObject, object.Clone());
+  exception.SetStringKey(kChooserType, chooser_type);
+
+  // Order the sites by the provider precedence order.
+  std::vector<base::Value>
+      all_provider_sites[HostContentSettingsMap::NUM_PROVIDER_TYPES];
+  for (const auto& details : chooser_exception_details) {
+    const GURL& requesting_origin = details.first.first;
+    const std::string& source = details.first.second;
+
+    auto& this_provider_sites =
+        all_provider_sites[HostContentSettingsMap::GetProviderTypeFromSource(
+            source)];
+
+    for (const auto& embedding_origin_incognito_pair : details.second) {
+      const GURL& embedding_origin = embedding_origin_incognito_pair.first;
+      const bool incognito = embedding_origin_incognito_pair.second;
+      base::Value site(base::Value::Type::DICTIONARY);
+
+      site.SetStringKey(kOrigin, requesting_origin.spec());
+      site.SetStringKey(kDisplayName, requesting_origin.spec());
+      site.SetStringKey(kEmbeddingOrigin, embedding_origin.is_empty()
+                                              ? std::string()
+                                              : embedding_origin.spec());
+      site.SetStringKey(kSetting, setting_string);
+      site.SetStringKey(kSource, source);
+      site.SetBoolKey(kIncognito, incognito);
+      this_provider_sites.push_back(std::move(site));
+    }
   }
+
+  base::Value sites(base::Value::Type::LIST);
+  for (auto& one_provider_sites : all_provider_sites) {
+    for (auto& site : one_provider_sites) {
+      sites.GetList().push_back(std::move(site));
+    }
+  }
+
+  exception.SetKey(kSites, std::move(sites));
   return exception;
 }
 
-void GetChooserExceptionsFromProfile(Profile* profile,
-                                     bool incognito,
-                                     const ChooserTypeNameEntry& chooser_type,
-                                     base::ListValue* exceptions) {
-  if (incognito) {
-    if (!profile->HasOffTheRecordProfile())
-      return;
-    profile = profile->GetOffTheRecordProfile();
-  }
+base::Value GetChooserExceptionListFromProfile(
+    Profile* profile,
+    const ChooserTypeNameEntry& chooser_type) {
+  base::Value exceptions(base::Value::Type::LIST);
+  ContentSettingsType content_type =
+      ContentSettingsTypeFromGroupName(std::string(chooser_type.name));
 
   ChooserContextBase* chooser_context = chooser_type.get_context(profile);
   std::vector<std::unique_ptr<ChooserContextBase::Object>> objects =
       chooser_context->GetAllGrantedObjects();
-  AllOriginObjects all_origin_objects;
+
+  if (profile->HasOffTheRecordProfile()) {
+    Profile* incognito_profile = profile->GetOffTheRecordProfile();
+    ChooserContextBase* incognito_chooser_context =
+        chooser_type.get_context(incognito_profile);
+    std::vector<std::unique_ptr<ChooserContextBase::Object>> incognito_objects =
+        incognito_chooser_context->GetAllGrantedObjects();
+    objects.insert(objects.end(),
+                   std::make_move_iterator(incognito_objects.begin()),
+                   std::make_move_iterator(incognito_objects.end()));
+  }
+
+  AllChooserObjects all_chooser_objects;
   for (const auto& object : objects) {
-    std::string name;
-    bool found = object->object.GetString(chooser_type.ui_name_key, &name);
-    DCHECK(found);
-    // It is safe for this structure to hold references into |objects| because
-    // they are both destroyed at the end of this function.
-    all_origin_objects[make_pair(object->requesting_origin, object->source)]
-                      [object->embedding_origin]
-                          .insert(make_pair(name, &object->object));
+    std::string name = chooser_type.get_object_name(object->value);
+    auto& chooser_exception_details =
+        all_chooser_objects[std::make_pair(name, object->value.Clone())];
+
+    std::string source = GetSourceStringForChooserException(
+        profile, content_type, object->source);
+
+    const auto requesting_origin_source_pair =
+        std::make_pair(object->requesting_origin, source);
+    auto& embedding_origin_incognito_pair_set =
+        chooser_exception_details[requesting_origin_source_pair];
+
+    const auto embedding_origin_incognito_pair =
+        std::make_pair(object->embedding_origin, object->incognito);
+    embedding_origin_incognito_pair_set.insert(embedding_origin_incognito_pair);
   }
 
-  // Keep the exceptions sorted by provider so they will be displayed in
-  // precedence order.
-  std::vector<std::unique_ptr<base::DictionaryValue>>
-      all_provider_exceptions[HostContentSettingsMap::NUM_PROVIDER_TYPES];
-
-  for (const auto& all_origin_objects_entry : all_origin_objects) {
-    const GURL& requesting_origin = all_origin_objects_entry.first.first;
-    const std::string& source = all_origin_objects_entry.first.second;
-    const OneOriginObjects& one_origin_objects =
-        all_origin_objects_entry.second;
-
-    auto& this_provider_exceptions = all_provider_exceptions
-        [HostContentSettingsMap::GetProviderTypeFromSource(source)];
-
-    // Add entries for any non-embedded origins.
-    bool has_embedded_entries = false;
-    for (const auto& one_origin_objects_entry : one_origin_objects) {
-      const GURL& embedding_origin = one_origin_objects_entry.first;
-      const SortedObjects& sorted_objects = one_origin_objects_entry.second;
-
-      // Skip the embedded settings which will be added below.
-      if (requesting_origin != embedding_origin) {
-        has_embedded_entries = true;
-        continue;
-      }
-
-      for (const auto& sorted_objects_entry : sorted_objects) {
-        this_provider_exceptions.push_back(GetChooserExceptionForPage(
-            requesting_origin, embedding_origin, source, incognito,
-            sorted_objects_entry.first, sorted_objects_entry.second));
-      }
-    }
-
-    if (has_embedded_entries) {
-      // Add a "parent" entry that simply acts as a heading for all entries
-      // where |requesting_origin| has been embedded.
-      this_provider_exceptions.push_back(GetChooserExceptionForPage(
-          requesting_origin, requesting_origin, source, incognito,
-          std::string(), nullptr));
-
-      // Add the "children" for any embedded settings.
-      for (const auto& one_origin_objects_entry : one_origin_objects) {
-        const GURL& embedding_origin = one_origin_objects_entry.first;
-        const SortedObjects& sorted_objects = one_origin_objects_entry.second;
-
-        // Skip the non-embedded setting which we already added above.
-        if (requesting_origin == embedding_origin)
-          continue;
-
-        for (const auto& sorted_objects_entry : sorted_objects) {
-          this_provider_exceptions.push_back(GetChooserExceptionForPage(
-              requesting_origin, embedding_origin, source, incognito,
-              sorted_objects_entry.first, sorted_objects_entry.second));
-        }
-      }
-    }
+  for (const auto& all_chooser_objects_entry : all_chooser_objects) {
+    const std::string& name = all_chooser_objects_entry.first.first;
+    const base::Value& object = all_chooser_objects_entry.first.second;
+    const ChooserExceptionDetails& chooser_exception_details =
+        all_chooser_objects_entry.second;
+    exceptions.GetList().push_back(CreateChooserExceptionObject(
+        name, object, chooser_type.name, chooser_exception_details));
   }
 
-  for (auto& one_provider_exceptions : all_provider_exceptions) {
-    for (auto& exception : one_provider_exceptions)
-      exceptions->Append(std::move(exception));
-  }
+  return exceptions;
 }
 
 }  // namespace site_settings

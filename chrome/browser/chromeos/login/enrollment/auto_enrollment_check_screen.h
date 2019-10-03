@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -19,7 +20,6 @@
 
 namespace chromeos {
 
-class BaseScreenDelegate;
 class ErrorScreensHistogramHelper;
 class ScreenManager;
 
@@ -33,8 +33,9 @@ class AutoEnrollmentCheckScreen
       public BaseScreen,
       public NetworkPortalDetector::Observer {
  public:
-  AutoEnrollmentCheckScreen(BaseScreenDelegate* base_screen_delegate,
-                            AutoEnrollmentCheckScreenView* view);
+  AutoEnrollmentCheckScreen(AutoEnrollmentCheckScreenView* view,
+                            ErrorScreen* error_screen,
+                            const base::RepeatingClosure& exit_callback);
   ~AutoEnrollmentCheckScreen() override;
 
   static AutoEnrollmentCheckScreen* Get(ScreenManager* manager);
@@ -45,6 +46,10 @@ class AutoEnrollmentCheckScreen
   void set_auto_enrollment_controller(
       AutoEnrollmentController* auto_enrollment_controller) {
     auto_enrollment_controller_ = auto_enrollment_controller;
+  }
+
+  void set_exit_callback_for_testing(const base::RepeatingClosure& callback) {
+    exit_callback_ = callback;
   }
 
   // BaseScreen implementation:
@@ -59,6 +64,12 @@ class AutoEnrollmentCheckScreen
       const NetworkState* network,
       const NetworkPortalDetector::CaptivePortalState& state) override;
 
+ protected:
+  // Runs |exit_callback_| - used to prevent |exit_callback_| from running after
+  // |this| has been destroyed (by wrapping it with a callback bound to a weak
+  // ptr).
+  void RunExitCallback() { exit_callback_.Run(); }
+
  private:
   // Handles update notifications regarding the auto-enrollment check.
   void OnAutoEnrollmentCheckProgressed(policy::AutoEnrollmentState state);
@@ -71,13 +82,17 @@ class AutoEnrollmentCheckScreen
   bool UpdateCaptivePortalStatus(
       NetworkPortalDetector::CaptivePortalStatus new_captive_portal_status);
 
-  // Configures the UI to reflect |auto_enrollment_state|. Returns true if and
-  // only if a UI change has been made.
+  // Configures the UI to reflect |new_auto_enrollment_state|. Returns true if
+  // and only if a UI change has been made.
   bool UpdateAutoEnrollmentState(
-      policy::AutoEnrollmentState auto_enrollment_state);
+      policy::AutoEnrollmentState new_auto_enrollment_state);
 
   // Configures the error screen.
   void ShowErrorScreen(NetworkError::ErrorState error_state);
+
+  // Passed as a callback to the error screen when it's shown. Called when the
+  // error screen gets hidden.
+  void OnErrorScreenHidden();
 
   // Asynchronously signals completion. The owner might destroy |this| in
   // response, so no code should be run after the completion of a message loop
@@ -90,7 +105,15 @@ class AutoEnrollmentCheckScreen
   // The user requested a connection attempt to be performed.
   void OnConnectRequested();
 
+  // Returns true if an error response from the server should cause a network
+  // error screen to be displayed and block the wizard from continuing. If false
+  // is returned, an error response from the server is treated as "no enrollment
+  // necessary".
+  bool ShouldBlockOnServerError() const;
+
   AutoEnrollmentCheckScreenView* view_;
+  ErrorScreen* error_screen_;
+  base::RepeatingClosure exit_callback_;
   AutoEnrollmentController* auto_enrollment_controller_;
 
   std::unique_ptr<AutoEnrollmentController::ProgressCallbackList::Subscription>

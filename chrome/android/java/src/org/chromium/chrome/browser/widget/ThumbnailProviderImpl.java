@@ -5,35 +5,31 @@
 package org.chromium.chrome.browser.widget;
 
 import android.graphics.Bitmap;
-import android.os.Looper;
+import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.util.LruCache;
 import android.text.TextUtils;
-import android.util.Pair;
 
 import org.chromium.base.DiscardableReferencePool;
-import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
+import org.chromium.chrome.browser.util.BitmapCache;
+import org.chromium.chrome.browser.util.ConversionUtils;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
-import java.lang.ref.WeakReference;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.Locale;
 
 /**
  * Concrete implementation of {@link ThumbnailProvider}.
  *
- * Thumbnails are cached in memory and shared across all ThumbnailProviderImpls. There are two
- * levels of caches: One static cache for deduplication (or canonicalization) of bitmaps, and one
- * per-object cache for storing recently used bitmaps. The deduplication cache uses weak references
- * to allow bitmaps to be garbage-collected once they are no longer in use. As long as there is at
- * least one strong reference to a bitmap, it is not going to be GC'd and will therefore stay in the
- * cache. This ensures that there is never more than one (reachable) copy of a bitmap in memory.
- * The {@link RecentlyUsedCache} is limited in size and dropped under memory pressure, or when the
- * object is destroyed.
+ * Thumbnails are cached in {@link BitmapCache}. The cache key is a pair of the filepath and
+ * the height/width of the thumbnail. Value is the thumbnail.
  *
  * A queue of requests is maintained in FIFO order.
  *
@@ -41,74 +37,81 @@ import java.util.Map;
  *                    duplicating work to decode the same image for two different requests.
  */
 public class ThumbnailProviderImpl implements ThumbnailProvider, ThumbnailStorageDelegate {
-    /** 5 MB of thumbnails should be enough for everyone. */
-    private static final int MAX_CACHE_BYTES = 5 * 1024 * 1024;
-
-    /**
-     * Least-recently-used cache that falls back to the deduplication cache on misses.
-     * This propagates bitmaps that were only in the deduplication cache back into the LRU cache
-     * and also moves them to the front to ensure correct eviction order.
-     * Cache key is a pair of the filepath and the height/width of the thumbnail. Value is
-     * the thumbnail.
-     */
-    private static class RecentlyUsedCache extends LruCache<Pair<String, Integer>, Bitmap> {
-        private RecentlyUsedCache() {
-            super(MAX_CACHE_BYTES);
-        }
-
-        @Override
-        protected Bitmap create(Pair<String, Integer> key) {
-            WeakReference<Bitmap> cachedBitmap = sDeduplicationCache.get(key);
-            return cachedBitmap == null ? null : cachedBitmap.get();
-        }
-
-        @Override
-        protected int sizeOf(Pair<String, Integer> key, Bitmap thumbnail) {
-            return thumbnail.getByteCount();
-        }
+    @IntDef({ClientType.DOWNLOAD_HOME, ClientType.NTP_SUGGESTIONS})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ClientType {
+        int DOWNLOAD_HOME = 0;
+        int NTP_SUGGESTIONS = 1;
     }
 
-    /**
-     * Discardable reference to the {@link RecentlyUsedCache} that can be dropped under memory
-     * pressure.
-     */
-    private DiscardableReferencePool.DiscardableReference<RecentlyUsedCache> mBitmapCache;
+    /** Default in-memory thumbnail cache size. */
+    private static final int DEFAULT_MAX_CACHE_BYTES = 5 * ConversionUtils.BYTES_PER_MEGABYTE;
 
     /**
-     * The reference pool that contains the {@link #mBitmapCache}. Used to recreate a new cache
-     * after the old one has been dropped.
+     * Helper object to store in the LruCache when we don't really need a value but can't use null.
      */
-    private final DiscardableReferencePool mReferencePool;
+    private static final Object NO_BITMAP_PLACEHOLDER = new Object();
 
     /**
-     * Static cache used for deduplicating bitmaps. The key is a pair of file name and thumbnail
-     * size (as for the {@link #mBitmapCache}.
+     * An in-memory LRU cache used to cache bitmaps, mostly improve performance for scrolling, when
+     * the view is recycled and needs a new thumbnail.
      */
-    private static Map<Pair<String, Integer>, WeakReference<Bitmap>> sDeduplicationCache =
-            new HashMap<>();
+    private BitmapCache mBitmapCache;
+
+    /** The client type of the client using this provider. */
+    private final @ClientType int mClient;
+
+    /**
+     * Tracks a set of Content Ids where thumbnail generation or retrieval failed.  This should
+     * prevent making subsequent (potentially expensive) thumbnail generation requests when there
+     * would be no point.
+     */
+    private LruCache<String /* Content Id */, Object /* Placeholder */> mNoBitmapCache =
+            new LruCache<>(100);
 
     /** Queue of files to retrieve thumbnails for. */
     private final Deque<ThumbnailRequest> mRequestQueue = new ArrayDeque<>();
-
-    /** The native side pointer that is owned and destroyed by the Java class. */
-    private long mNativeThumbnailProvider;
 
     /** Request that is currently having its thumbnail retrieved. */
     private ThumbnailRequest mCurrentRequest;
 
     private ThumbnailDiskStorage mStorage;
 
-    public ThumbnailProviderImpl(DiscardableReferencePool referencePool) {
+    private int mCacheSizeMaxBytesUma;
+
+    /**
+     * Constructor to build the thumbnail provider with default thumbnail cache size.
+     * @param referencePool The application's reference pool.
+     * @param client The associated client type.
+     */
+    public ThumbnailProviderImpl(DiscardableReferencePool referencePool, @ClientType int client) {
+        this(referencePool, DEFAULT_MAX_CACHE_BYTES, client);
+    }
+
+    /**
+     * Constructor to build the thumbnail provider.
+     * @param referencePool The application's reference pool.
+     * @param bitmapCacheSizeByte The size in bytes of the in-memory LRU bitmap cache.
+     * @param client The associated client type.
+     */
+    public ThumbnailProviderImpl(DiscardableReferencePool referencePool, int bitmapCacheSizeByte,
+            @ClientType int client) {
         ThreadUtils.assertOnUiThread();
-        mReferencePool = referencePool;
-        mBitmapCache = referencePool.put(new RecentlyUsedCache());
+        mBitmapCache = new BitmapCache(referencePool, bitmapCacheSizeByte);
         mStorage = ThumbnailDiskStorage.create(this);
+        mClient = client;
     }
 
     @Override
     public void destroy() {
+        // Drop any references to any current requests.
+        mCurrentRequest = null;
+        mRequestQueue.clear();
+
         ThreadUtils.assertOnUiThread();
+        recordBitmapCacheSize();
         mStorage.destroy();
+        mBitmapCache.destroy();
     }
 
     /**
@@ -122,7 +125,12 @@ public class ThumbnailProviderImpl implements ThumbnailProvider, ThumbnailStorag
     public void getThumbnail(ThumbnailRequest request) {
         ThreadUtils.assertOnUiThread();
 
-        if (TextUtils.isEmpty(request.getFilePath()) || TextUtils.isEmpty(request.getContentId())) {
+        if (TextUtils.isEmpty(request.getContentId())) {
+            return;
+        }
+
+        if (mNoBitmapCache.get(request.getContentId()) != null) {
+            request.onThumbnailRetrieved(request.getContentId(), null);
             return;
         }
 
@@ -153,42 +161,35 @@ public class ThumbnailProviderImpl implements ThumbnailProvider, ThumbnailStorag
     }
 
     private void processQueue() {
-        ThreadUtils.postOnUiThread(this::processNextRequest);
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, this::processNextRequest);
     }
 
-    private RecentlyUsedCache getBitmapCache() {
-        RecentlyUsedCache bitmapCache = mBitmapCache.get();
-        if (bitmapCache == null) {
-            bitmapCache = new RecentlyUsedCache();
-            mBitmapCache = mReferencePool.put(bitmapCache);
-        }
-        return bitmapCache;
+    private String getKey(String contentId, int bitmapSizePx) {
+        return String.format(Locale.US, "id=%s, size=%d", contentId, bitmapSizePx);
     }
 
     private Bitmap getBitmapFromCache(String contentId, int bitmapSizePx) {
-        Bitmap cachedBitmap = getBitmapCache().get(Pair.create(contentId, bitmapSizePx));
+        String key = getKey(contentId, bitmapSizePx);
+        Bitmap cachedBitmap = mBitmapCache.getBitmap(key);
         assert cachedBitmap == null || !cachedBitmap.isRecycled();
+
+        RecordHistogram.recordBooleanHistogram(
+                "Android.ThumbnailProvider.CachedBitmap.Found." + getClientTypeUmaSuffix(mClient),
+                cachedBitmap != null);
         return cachedBitmap;
     }
 
     private void processNextRequest() {
         ThreadUtils.assertOnUiThread();
         if (mCurrentRequest != null) return;
-        if (mRequestQueue.isEmpty()) {
-            // If the request queue is empty, schedule compaction for when the main loop is idling.
-            Looper.myQueue().addIdleHandler(() -> {
-                compactDeduplicationCache();
-                return false;
-            });
-            return;
-        }
+        if (mRequestQueue.isEmpty()) return;
 
         mCurrentRequest = mRequestQueue.poll();
 
         Bitmap cachedBitmap =
                 getBitmapFromCache(mCurrentRequest.getContentId(), mCurrentRequest.getIconSize());
         if (cachedBitmap == null) {
-            mStorage.retrieveThumbnail(mCurrentRequest);
+            handleCacheMiss(mCurrentRequest);
         } else {
             // Send back the already-processed file.
             onThumbnailRetrieved(mCurrentRequest.getContentId(), cachedBitmap);
@@ -196,13 +197,36 @@ public class ThumbnailProviderImpl implements ThumbnailProvider, ThumbnailStorag
     }
 
     /**
+     * In the event of a cache miss from the in-memory cache, the thumbnail request is routed to one
+     * of the following :
+     * 1. May be the thumbnail request can directly provide the thumbnail.
+     * 2. Otherwise, the request is sent to {@link ThumbnailDiskStorage} which is a disk cache. If
+     * not found in disk cache, it would request the {@link ThumbnailGenerator} to generate a new
+     * thumbnail for the given file path.
+     * @param request Parameters that describe the thumbnail being retrieved
+     */
+    private void handleCacheMiss(ThumbnailProvider.ThumbnailRequest request) {
+        boolean providedByThumbnailRequest = request.getThumbnail(
+                bitmap -> onThumbnailRetrieved(request.getContentId(), bitmap));
+
+        if (!providedByThumbnailRequest) {
+            // Asynchronously process the file to make a thumbnail.
+            assert !TextUtils.isEmpty(request.getFilePath());
+            mStorage.retrieveThumbnail(request);
+        }
+    }
+
+    /**
      * Called when thumbnail is ready, retrieved from memory cache or by
-     * {@link ThumbnailDiskStorage}.
+     * {@link ThumbnailDiskStorage} or by {@link ThumbnailRequest#getThumbnail}.
      * @param contentId Content ID for the thumbnail retrieved.
      * @param bitmap The thumbnail retrieved.
      */
     @Override
     public void onThumbnailRetrieved(@NonNull String contentId, @Nullable Bitmap bitmap) {
+        // Early-out if we have no actual current request.
+        if (mCurrentRequest == null) return;
+
         if (bitmap != null) {
             // The bitmap returned here is retrieved from the native side. The image decoder there
             // scales down the image (if it is too big) so that one of its sides is smaller than or
@@ -214,29 +238,36 @@ public class ThumbnailProviderImpl implements ThumbnailProvider, ThumbnailStorag
             // We set the key pair to contain the required size (maximum dimension (pixel) of the
             // smaller side) instead of the minimal dimension of the thumbnail so that future
             // fetches of this thumbnail can recognise the key in the cache.
-            Pair<String, Integer> key = Pair.create(contentId, mCurrentRequest.getIconSize());
-            if (!SysUtils.isLowEndDevice()) {
-                getBitmapCache().put(key, bitmap);
-            }
-            sDeduplicationCache.put(key, new WeakReference<>(bitmap));
+            String key = getKey(contentId, mCurrentRequest.getIconSize());
+            mBitmapCache.putBitmap(key, bitmap);
+            mNoBitmapCache.remove(contentId);
             mCurrentRequest.onThumbnailRetrieved(contentId, bitmap);
+
+            mCacheSizeMaxBytesUma = Math.max(mCacheSizeMaxBytesUma, mBitmapCache.size());
+        } else {
+            mNoBitmapCache.put(contentId, NO_BITMAP_PLACEHOLDER);
+            mCurrentRequest.onThumbnailRetrieved(contentId, null);
         }
 
         mCurrentRequest = null;
         processQueue();
     }
 
-    /**
-     * Compacts the deduplication cache by removing all entries that have been cleared by the
-     * garbage collector.
-     */
-    private void compactDeduplicationCache() {
-        // Too many angle brackets for clang-format :-(
-        // clang-format off
-        for (Iterator<Map.Entry<Pair<String, Integer>, WeakReference<Bitmap>>> it =
-                sDeduplicationCache.entrySet().iterator(); it.hasNext();) {
-            // clang-format on
-            if (it.next().getValue().get() == null) it.remove();
+    private void recordBitmapCacheSize() {
+        RecordHistogram.recordMemoryKBHistogram(
+                "Android.ThumbnailProvider.BitmapCache.Size." + getClientTypeUmaSuffix(mClient),
+                mCacheSizeMaxBytesUma / ConversionUtils.BYTES_PER_KILOBYTE);
+    }
+
+    private static String getClientTypeUmaSuffix(@ClientType int clientType) {
+        switch (clientType) {
+            case ClientType.DOWNLOAD_HOME:
+                return "DownloadHome";
+            case ClientType.NTP_SUGGESTIONS:
+                return "NTPSnippets";
+            default:
+                assert false;
+                return "Other";
         }
     }
 }

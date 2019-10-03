@@ -23,21 +23,25 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/supports_user_data.h"
+#include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "components/safe_browsing/db/database_manager.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "components/sessions/core/session_id.h"
 #include "url/gurl.h"
 
 namespace content {
-class DownloadItem;
 class PageNavigator;
 }  // namespace content
 
-namespace net {
-class X509Certificate;
-}  // namespace net
+namespace download {
+class DownloadItem;
+}
+
+namespace network {
+class SharedURLLoaderFactory;
+}
 
 class Profile;
 
@@ -70,7 +74,7 @@ class DownloadProtectionService {
   // method must be called on the UI thread, and the callback will also be
   // invoked on the UI thread.  This method must be called once the download
   // is finished and written to disk.
-  virtual void CheckClientDownload(content::DownloadItem* item,
+  virtual void CheckClientDownload(download::DownloadItem* item,
                                    const CheckDownloadCallback& callback);
 
   // Checks whether any of the URLs in the redirect chain of the
@@ -78,12 +82,12 @@ class DownloadProtectionService {
   // delivered asynchronously via the given callback.  This method must be
   // called on the UI thread, and the callback will also be invoked on the UI
   // thread.  Pre-condition: !info.download_url_chain.empty().
-  virtual void CheckDownloadUrl(content::DownloadItem* item,
+  virtual void CheckDownloadUrl(download::DownloadItem* item,
                                 const CheckDownloadCallback& callback);
 
   // Returns true iff the download specified by |info| should be scanned by
   // CheckClientDownload() for malicious content.
-  virtual bool IsSupportedDownload(const content::DownloadItem& item,
+  virtual bool IsSupportedDownload(const download::DownloadItem& item,
                                    const base::FilePath& target_path) const;
 
   virtual void CheckPPAPIDownloadRequest(
@@ -98,7 +102,7 @@ class DownloadProtectionService {
   // Display more information to the user regarding the download specified by
   // |info|. This method is invoked when the user requests more information
   // about a download that was marked as malicious.
-  void ShowDetailsForDownload(const content::DownloadItem& item,
+  void ShowDetailsForDownload(const download::DownloadItem* item,
                               content::PageNavigator* navigator);
 
   // Enables or disables the service.  This is usually called by the
@@ -114,9 +118,12 @@ class DownloadProtectionService {
     return download_request_timeout_ms_;
   }
 
-  DownloadFeedbackService* feedback_service() {
-    return feedback_service_.get();
-  }
+  // Checks the user permissions, and submits the downloaded file if
+  // appropriate. Returns whether the submission was successful.
+  bool MaybeBeginFeedbackForDownload(
+      Profile* profile,
+      download::DownloadItem* download,
+      DownloadCommands::Command download_command);
 
   // Registers a callback that will be run when a ClientDownloadRequest has
   // been formed.
@@ -135,21 +142,21 @@ class DownloadProtectionService {
     return navigation_observer_manager_;
   }
 
-  static void SetDownloadPingToken(content::DownloadItem* item,
+  static void SetDownloadPingToken(download::DownloadItem* item,
                                    const std::string& token);
 
-  static std::string GetDownloadPingToken(const content::DownloadItem* item);
+  static std::string GetDownloadPingToken(const download::DownloadItem* item);
 
   // Sends dangerous download opened report when download is opened or
   // shown in folder, and if the following conditions are met:
   // (1) it is a dangerous download.
   // (2) user is NOT in incognito mode.
   // (3) user is opted-in for extended reporting.
-  void MaybeSendDangerousDownloadOpenedReport(const content::DownloadItem* item,
-                                              bool show_download_in_folder);
+  void MaybeSendDangerousDownloadOpenedReport(
+      const download::DownloadItem* item,
+      bool show_download_in_folder);
 
  private:
-  // todo(jialiul): Remove the need for non-test friending.
   friend class PPAPIDownloadRequest;
   friend class DownloadUrlSBClient;
   friend class DownloadProtectionServiceTest;
@@ -157,37 +164,15 @@ class DownloadProtectionService {
   friend class CheckClientDownloadRequest;
 
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadWhitelistedUrlWithoutSampling);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadWhitelistedUrlWithSampling);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadValidateRequest);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadSuccess);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadHTTPS);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadBlob);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadData);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadZip);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientDownloadFetchFailed);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            TestDownloadRequestTimeout);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           CheckClientCrxDownloadSuccess);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            PPAPIDownloadRequest_InvalidResponse);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            PPAPIDownloadRequest_Timeout);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            VerifyReferrerChainWithEmptyNavigationHistory);
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceFlagTest,
-                           CheckClientDownloadOverridenByFlag);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
-                           VerifyMaybeSendDangerousDownloadOpenedReport);
+                           VerifyReferrerChainLengthForExtendedReporting);
 
   static const void* const kDownloadPingTokenKey;
 
@@ -215,30 +200,24 @@ class DownloadProtectionService {
 
   void PPAPIDownloadCheckRequestFinished(PPAPIDownloadRequest* request);
 
-  // Given a certificate and its immediate issuer certificate, generates the
-  // list of strings that need to be checked against the download whitelist to
-  // determine whether the certificate is whitelisted.
-  static void GetCertificateWhitelistStrings(
-      const net::X509Certificate& certificate,
-      const net::X509Certificate& issuer,
-      std::vector<std::string>* whitelist_strings);
+  // Identify referrer chain info of a download. This function also records UMA
+  // stats of download attribution result.
+  std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
+      const download::DownloadItem& item);
 
-  // If kDownloadAttribution feature is enabled, identify referrer chain info of
-  // a download. This function also records UMA stats of download attribution
-  // result.
-  std::unique_ptr<ReferrerChain> IdentifyReferrerChain(
-      const content::DownloadItem& item);
-
-  // If kDownloadAttribution feature is enabled, identify referrer chain of the
-  // PPAPI download based on the frame URL where the download is initiated.
-  // Then add referrer chain info to ClientDownloadRequest proto. This function
-  // also records UMA stats of download attribution result.
+  // Identify referrer chain of the PPAPI download based on the frame URL where
+  // the download is initiated. Then add referrer chain info to
+  // ClientDownloadRequest proto. This function also records UMA stats of
+  // download attribution result.
   void AddReferrerChainToPPAPIClientDownloadRequest(
       const GURL& initiating_frame_url,
       const GURL& initiating_main_frame_url,
-      int tab_id,
+      SessionID tab_id,
       bool has_user_gesture,
       ClientDownloadRequest* out_request);
+
+  void OnDangerousDownloadOpened(const download::DownloadItem* item,
+                                 Profile* profile);
 
   SafeBrowsingService* sb_service_;
   // These pointers may be NULL if SafeBrowsing is disabled.
@@ -247,11 +226,13 @@ class DownloadProtectionService {
   scoped_refptr<SafeBrowsingNavigationObserverManager>
       navigation_observer_manager_;
 
-  // The context we use to issue network requests.
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+  // The loader factory we use to issue network requests.
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Set of pending server requests for DownloadManager mediated downloads.
-  std::set<scoped_refptr<CheckClientDownloadRequest>> download_requests_;
+  std::unordered_map<CheckClientDownloadRequest*,
+                     std::unique_ptr<CheckClientDownloadRequest>>
+      download_requests_;
 
   // Set of pending server requests for PPAPI mediated downloads. Using a map
   // because heterogeneous lookups aren't available yet in std::unordered_map.

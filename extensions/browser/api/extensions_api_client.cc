@@ -5,10 +5,9 @@
 #include "extensions/browser/api/extensions_api_client.h"
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "extensions/browser/api/device_permissions_prompt.h"
+#include "extensions/browser/api/system_display/display_info_provider.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
-#include "extensions/browser/api/web_request/web_request_event_router_delegate.h"
 #include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
@@ -45,9 +44,15 @@ bool ExtensionsAPIClient::ShouldHideResponseHeader(
 }
 
 bool ExtensionsAPIClient::ShouldHideBrowserNetworkRequest(
-    const GURL& url) const {
+    content::BrowserContext* context,
+    const WebRequestInfo& request) const {
   return false;
 }
+
+void ExtensionsAPIClient::NotifyWebRequestWithheld(
+    int render_process_id,
+    int render_frame_id,
+    const ExtensionId& extension_id) {}
 
 AppViewGuestDelegate* ExtensionsAPIClient::CreateAppViewGuestDelegate() const {
   return NULL;
@@ -82,11 +87,6 @@ WebViewPermissionHelperDelegate* ExtensionsAPIClient::
   return new WebViewPermissionHelperDelegate(web_view_permission_helper);
 }
 
-std::unique_ptr<WebRequestEventRouterDelegate>
-ExtensionsAPIClient::CreateWebRequestEventRouterDelegate() const {
-  return nullptr;
-}
-
 scoped_refptr<ContentRulesRegistry>
 ExtensionsAPIClient::CreateContentRulesRegistry(
     content::BrowserContext* browser_context,
@@ -108,6 +108,11 @@ ExtensionsAPIClient::CreateVirtualKeyboardDelegate(
 
 ManagementAPIDelegate* ExtensionsAPIClient::CreateManagementAPIDelegate()
     const {
+  return nullptr;
+}
+
+std::unique_ptr<DisplayInfoProvider>
+ExtensionsAPIClient::CreateDisplayInfoProvider() const {
   return nullptr;
 }
 
@@ -150,5 +155,15 @@ void ExtensionsAPIClient::SaveImageDataToClipboard(
     const base::Closure& success_callback,
     const base::Callback<void(const std::string&)>& error_callback) {}
 #endif
+
+AutomationInternalApiDelegate*
+ExtensionsAPIClient::GetAutomationInternalApiDelegate() {
+  return nullptr;
+}
+
+std::vector<KeyedServiceBaseFactory*>
+ExtensionsAPIClient::GetFactoryDependencies() {
+  return {};
+}
 
 }  // namespace extensions

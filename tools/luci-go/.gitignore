@@ -1,3 +1,7 @@
-/linux64/isolate
-/mac64/isolate
-/win64/isolate.exe
+/isolate
+/isolate.exe
+/isolated
+/isolated.exe
+/swarming
+/swarming.exe
+.versions

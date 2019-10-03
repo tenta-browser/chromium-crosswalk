@@ -6,8 +6,7 @@
 
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/nacl/common/features.h"
-#include "content/public/common/user_agent.h"
+#include "components/nacl/common/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/shell/common/version.h"  // Generated file.
 #include "ui/base/l10n/l10n_util.h"
@@ -17,10 +16,10 @@
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "components/nacl/common/nacl_constants.h"
-#include "components/nacl/renderer/plugin/ppapi_entrypoints.h"
-#include "content/public/common/pepper_plugin_info.h"
-#include "ppapi/shared_impl/ppapi_permissions.h"
+#include "components/nacl/common/nacl_constants.h"              // nogncheck
+#include "components/nacl/renderer/plugin/ppapi_entrypoints.h"  // nogncheck
+#include "content/public/common/pepper_plugin_info.h"           // nogncheck
+#include "ppapi/shared_impl/ppapi_permissions.h"                // nogncheck
 #endif
 
 namespace extensions {
@@ -30,7 +29,7 @@ namespace {
 bool GetNaClPluginPath(base::FilePath* path) {
   // On Posix, plugins live in the module directory.
   base::FilePath module;
-  if (!PathService::Get(base::DIR_MODULE, &module))
+  if (!base::PathService::Get(base::DIR_MODULE, &module))
     return false;
   *path = module.Append(nacl::kInternalNaClPluginFileName);
   return true;
@@ -83,30 +82,24 @@ void ShellContentClient::AddAdditionalSchemes(Schemes* schemes) {
   schemes->csp_bypassing_schemes.push_back(kExtensionScheme);
 }
 
-std::string ShellContentClient::GetUserAgent() const {
-  // Must contain a user agent string for version sniffing. For example,
-  // pluginless WebRTC Hangouts checks the Chrome version number.
-  return content::BuildUserAgentFromProduct("Chrome/" PRODUCT_VERSION);
-}
-
-base::string16 ShellContentClient::GetLocalizedString(int message_id) const {
+base::string16 ShellContentClient::GetLocalizedString(int message_id) {
   return l10n_util::GetStringUTF16(message_id);
 }
 
 base::StringPiece ShellContentClient::GetDataResource(
     int resource_id,
-    ui::ScaleFactor scale_factor) const {
+    ui::ScaleFactor scale_factor) {
   return ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
       resource_id, scale_factor);
 }
 
 base::RefCountedMemory* ShellContentClient::GetDataResourceBytes(
-    int resource_id) const {
+    int resource_id) {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
       resource_id);
 }
 
-gfx::Image& ShellContentClient::GetNativeImageNamed(int resource_id) const {
+gfx::Image& ShellContentClient::GetNativeImageNamed(int resource_id) {
   return ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
       resource_id);
 }

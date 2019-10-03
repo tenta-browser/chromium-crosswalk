@@ -12,7 +12,6 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "content/browser/bluetooth/bluetooth_blocklist.h"
-#include "content/common/bluetooth/web_bluetooth_device_id.h"
 
 using device::BluetoothUUID;
 
@@ -23,26 +22,34 @@ BluetoothAllowedDevices::BluetoothAllowedDevices(
     const BluetoothAllowedDevices& other) = default;
 BluetoothAllowedDevices::~BluetoothAllowedDevices() {}
 
-const WebBluetoothDeviceId& BluetoothAllowedDevices::AddDevice(
+const blink::WebBluetoothDeviceId& BluetoothAllowedDevices::AddDevice(
     const std::string& device_address,
     const blink::mojom::WebBluetoothRequestDeviceOptionsPtr& options) {
+  auto& device_id = AddDevice(device_address);
+  AddUnionOfServicesTo(options, &device_id_to_services_map_[device_id]);
+
+  // Currently, devices that are added with WebBluetoothRequestDeviceOptionsPtr
+  // |options| come from RequestDevice() and therefore have the ablity to be
+  // connected to.
+  device_id_to_connectable_map_[device_id] = true;
+
+  return device_id;
+}
+
+const blink::WebBluetoothDeviceId& BluetoothAllowedDevices::AddDevice(
+    const std::string& device_address) {
   DVLOG(1) << "Adding a device to Map of Allowed Devices.";
 
   auto id_iter = device_address_to_id_map_.find(device_address);
   if (id_iter != device_address_to_id_map_.end()) {
     DVLOG(1) << "Device already in map of allowed devices.";
-    const auto& device_id = id_iter->second;
-
-    AddUnionOfServicesTo(options, &device_id_to_services_map_[device_id]);
-
     return device_address_to_id_map_[device_address];
   }
-  const WebBluetoothDeviceId device_id = GenerateUniqueDeviceId();
+  const blink::WebBluetoothDeviceId device_id = GenerateUniqueDeviceId();
   DVLOG(1) << "Id generated for device: " << device_id;
 
   device_address_to_id_map_[device_address] = device_id;
   device_id_to_address_map_[device_id] = device_address;
-  AddUnionOfServicesTo(options, &device_id_to_services_map_[device_id]);
 
   CHECK(device_id_set_.insert(device_id).second);
 
@@ -50,23 +57,27 @@ const WebBluetoothDeviceId& BluetoothAllowedDevices::AddDevice(
 }
 
 void BluetoothAllowedDevices::RemoveDevice(const std::string& device_address) {
-  const WebBluetoothDeviceId* device_id_ptr = GetDeviceId(device_address);
+  const blink::WebBluetoothDeviceId* device_id_ptr =
+      GetDeviceId(device_address);
   DCHECK(device_id_ptr != nullptr);
 
   // We make a copy because we are going to remove the original value from its
   // map.
-  WebBluetoothDeviceId device_id = *device_id_ptr;
+  blink::WebBluetoothDeviceId device_id = *device_id_ptr;
 
   // 1. Remove from all three maps.
   CHECK(device_address_to_id_map_.erase(device_address));
   CHECK(device_id_to_address_map_.erase(device_id));
   CHECK(device_id_to_services_map_.erase(device_id));
 
+  // Not all devices are connectable.
+  device_id_to_connectable_map_.erase(device_id);
+
   // 2. Remove from set of ids.
   CHECK(device_id_set_.erase(device_id));
 }
 
-const WebBluetoothDeviceId* BluetoothAllowedDevices::GetDeviceId(
+const blink::WebBluetoothDeviceId* BluetoothAllowedDevices::GetDeviceId(
     const std::string& device_address) {
   auto id_iter = device_address_to_id_map_.find(device_address);
   if (id_iter == device_address_to_id_map_.end()) {
@@ -76,7 +87,7 @@ const WebBluetoothDeviceId* BluetoothAllowedDevices::GetDeviceId(
 }
 
 const std::string& BluetoothAllowedDevices::GetDeviceAddress(
-    const WebBluetoothDeviceId& device_id) {
+    const blink::WebBluetoothDeviceId& device_id) {
   auto id_iter = device_id_to_address_map_.find(device_id);
 
   return id_iter == device_id_to_address_map_.end() ? base::EmptyString()
@@ -84,7 +95,7 @@ const std::string& BluetoothAllowedDevices::GetDeviceAddress(
 }
 
 bool BluetoothAllowedDevices::IsAllowedToAccessAtLeastOneService(
-    const WebBluetoothDeviceId& device_id) const {
+    const blink::WebBluetoothDeviceId& device_id) const {
   auto id_iter = device_id_to_services_map_.find(device_id);
 
   return id_iter == device_id_to_services_map_.end() ? false
@@ -92,7 +103,7 @@ bool BluetoothAllowedDevices::IsAllowedToAccessAtLeastOneService(
 }
 
 bool BluetoothAllowedDevices::IsAllowedToAccessService(
-    const WebBluetoothDeviceId& device_id,
+    const blink::WebBluetoothDeviceId& device_id,
     const BluetoothUUID& service_uuid) const {
   if (BluetoothBlocklist::Get().IsExcluded(service_uuid)) {
     return false;
@@ -102,14 +113,22 @@ bool BluetoothAllowedDevices::IsAllowedToAccessService(
 
   return id_iter == device_id_to_services_map_.end()
              ? false
-             : base::ContainsKey(id_iter->second, service_uuid);
+             : base::Contains(id_iter->second, service_uuid);
 }
 
-WebBluetoothDeviceId BluetoothAllowedDevices::GenerateUniqueDeviceId() {
-  WebBluetoothDeviceId device_id = WebBluetoothDeviceId::Create();
-  while (base::ContainsKey(device_id_set_, device_id)) {
+bool BluetoothAllowedDevices::IsAllowedToGATTConnect(
+    const blink::WebBluetoothDeviceId& device_id) const {
+  auto id_iter = device_id_to_connectable_map_.find(device_id);
+  if (id_iter == device_id_to_connectable_map_.end())
+    return false;
+  return id_iter->second;
+}
+
+blink::WebBluetoothDeviceId BluetoothAllowedDevices::GenerateUniqueDeviceId() {
+  blink::WebBluetoothDeviceId device_id = blink::WebBluetoothDeviceId::Create();
+  while (base::Contains(device_id_set_, device_id)) {
     LOG(WARNING) << "Generated repeated id.";
-    device_id = WebBluetoothDeviceId::Create();
+    device_id = blink::WebBluetoothDeviceId::Create();
   }
   return device_id;
 }

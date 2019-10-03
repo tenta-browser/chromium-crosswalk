@@ -206,22 +206,10 @@ three) but you'll still need to use `--plugin-launcher` or another approach.
 
 ### Printing Chromium types
 
-gdb 7 lets us use Python to write pretty-printers for Chromium types. The
-directory `tools/gdb/` contains a Python gdb scripts useful for Chromium code.
-There are similar scripts [in WebKit](http://trac.webkit.org/wiki/GDB) (in fact,
-the Chromium script relies on using it with the WebKit one).
-
-To include these pretty-printers with your gdb, put the following into
-`~/.gdbinit`:
-
-```python
-python
-import sys
-sys.path.insert(0, "<path/to/chromium/src>/third_party/WebKit/Tools/gdb/")
-import webkit
-sys.path.insert(0, "<path/to/chromium/src>/tools/gdb/")
-import gdb_chrome
-```
+gdb 7 lets us use Python to write pretty-printers for Chromium types. See
+[gdbinit](https://chromium.googlesource.com/chromium/src/+/master/docs/gdbinit.md)
+to enable pretty-printing of Chromium types.  This will import Blink
+pretty-printers as well.
 
 Pretty printers for std types shouldn't be necessary in gdb 7, but they're
 provided here in case you're using an older gdb. Put the following into
@@ -273,6 +261,14 @@ You can improve GDB load time significantly at the cost of link time by
 splitting symbols from the object files. In GN, set `use_debug_fission=false` in
 your "gn args".
 
+### Source level debug with -fdebug-compilation-dir
+
+When `strip_absolute_paths_from_debug_symbols` is enabled (which is the
+default), gdb may not be able to find debug files, making source-level debugging
+impossible. See
+[gdbinit](https://chromium.googlesource.com/chromium/src/+/master/docs/gdbinit.md)
+to configure gdb to be able to find debug files.
+
 ## Core files
 
 `ulimit -c unlimited` should cause all Chrome processes (run from that shell) to
@@ -295,7 +291,7 @@ See [linux_minidump_to_core.md](linux_minidump_to_core.md)
 Many of our tests bring up windows on screen. This can be annoying (they steal
 your focus) and hard to debug (they receive extra events as you mouse over them).
 Instead, use `Xvfb` or `Xephyr` to run a nested X session to debug them, as
-outlined on [layout_tests_linux.md](layout_tests_linux.md).
+outlined on [testing/web_tests_linux.md](testing/web_tests_linux.md).
 
 ### Browser tests
 
@@ -312,10 +308,10 @@ browser process share the outermost process.
 
 To debug a renderer process in this case, use the tips above about renderers.
 
-### Layout tests
+### Web tests
 
-See [layout_tests_linux.md](layout_tests_linux.md) for some tips. In particular,
-note that it's possible to debug a layout test via `ssh`ing to a Linux box; you
+See [testing/web_tests_linux.md](testing/web_tests_linux.md) for some tips. In particular,
+note that it's possible to debug a web test via `ssh`ing to a Linux box; you
 don't need anything on screen if you use `Xvfb`.
 
 ### UI tests
@@ -441,21 +437,19 @@ Here's how to install the Arabic (ar) and Hebrew (he) language packs:
 
 Note that the `--lang` flag does **not** work properly for this.
 
-On non-Debian systems, you need the `gtk20.mo` files. (Please update these docs
+On non-Debian systems, you need the `gtk30.mo` files. (Please update these docs
 with the appropriate instructions if you know what they are.)
 
 ## Breakpad
 
-See the last section of [Linux Crash Dumping](linux_crash_dumping.md); you
-need to set a gyp variable and an environment variable for the crash dump tests
-to work.
+See the last section of [Linux Crash Dumping](linux_crash_dumping.md).
 
 ## Drag and Drop
 
 If you break in a debugger during a drag, Chrome will have grabbed your mouse
 and keyboard so you won't be able to interact with the debugger!  To work around
 this, run via `Xephyr`. Instructions for how to use `Xephyr` are on the
-[Running layout tests on Linux](layout_tests_linux.md) page.
+[Running web tests on Linux](testing/web_tests_linux.md) page.
 
 ## Tracking Down Bugs
 
@@ -511,7 +505,7 @@ Some strategies are:
 
 To test on various window managers, you can use a nested X server like `Xephyr`.
 Instructions for how to use `Xephyr` are on the
-[Running layout tests on Linux](layout_tests_linux.md) page.
+[Running web tests on Linux](web_tests_linux.md) page.
 
 If you need to test something with hardware accelerated compositing
 (e.g., compiz), you can use `Xgl` (`sudo apt-get install xserver-xgl`). E.g.:

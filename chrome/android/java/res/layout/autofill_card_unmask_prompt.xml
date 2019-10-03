@@ -5,7 +5,9 @@
      found in the LICENSE file.
 -->
 
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/autofill_card_unmask_prompt"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content">
@@ -21,8 +23,7 @@
         android:paddingTop="12dp"
         android:paddingBottom="15dp"
         android:gravity="start"
-        android:textSize="12sp"
-        android:textColor="@color/input_underline_error_color"
+        android:textAppearance="@style/TextAppearance.AutofillCardErrorMessage"
         android:background="#e0e0e0"
         android:visibility="gone" />
 
@@ -41,8 +42,7 @@
             android:layout_marginEnd="10dp"
             android:layout_marginBottom="8dp"
             android:layout_marginTop="16dp"
-            android:textSize="16sp"
-            android:textColor="@color/explanation_text_color"
+            android:textAppearance="@style/TextAppearance.AutofillCardInstructionsText"
             android:lineSpacingMultiplier="1.25"
             android:gravity="start" />
 
@@ -60,7 +60,9 @@
                 android:orientation="horizontal"
                 android:visibility="gone">
 
+              <!-- TODO(crbug.com/900912): Fix and remove lint ignore -->
               <EditText
+                  tools:ignore="Autofill"
                   android:id="@+id/expiration_month"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
@@ -70,14 +72,16 @@
                   android:gravity="center_horizontal"
                   android:imeOptions="actionNext"
                   android:inputType="number"
-                  android:hint="@string/card_unmask_month_hint" />
+                  android:hint="@string/autofill_expiration_date_month_hint" />
 
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="@string/autofill_card_unmask_expiration_date_separator" />
+                  android:text="@string/autofill_expiration_date_separator" />
 
+              <!-- TODO(crbug.com/900912): Fix and remove lint ignore -->
               <EditText
+                  tools:ignore="Autofill"
                   android:id="@+id/expiration_year"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
@@ -86,10 +90,12 @@
                   android:gravity="center_horizontal"
                   android:imeOptions="actionNext"
                   android:inputType="number"
-                  android:hint="@string/card_unmask_year_hint" />
+                  android:hint="@string/autofill_expiration_date_year_hint" />
             </LinearLayout>
 
+            <!-- TODO(crbug.com/900912): Fix and remove lint ignore -->
             <EditText
+                tools:ignore="Autofill"
                 android:id="@+id/card_unmask_input"
                 android:inputType="number"
                 android:layout_height="wrap_content"
@@ -97,6 +103,7 @@
                 android:layout_marginStart="16dp"
                 android:ems="5"
                 android:imeOptions="actionDone"
+                android:imeActionLabel="@string/autofill_save_card_prompt_confirm"
                 android:hint="@string/card_unmask_input_hint" />
 
             <ImageView
@@ -106,14 +113,14 @@
                 android:layout_gravity="center_vertical"
                 android:layout_marginStart="8dp"
                 android:layout_marginEnd="16dp"
-                android:contentDescription="@null" />
+                tools:ignore="ContentDescription" />
 
             <TextView
                 android:id="@+id/new_card_link"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:singleLine="true"
-                android:textColor="@color/light_active_color"
+                android:textAppearance="@style/TextAppearance.BlueLink2"
                 android:text="@string/autofill_card_unmask_new_card_link"
                 android:visibility="gone" />
         </LinearLayout>
@@ -125,8 +132,7 @@
             android:layout_marginStart="24dp"
             android:layout_marginEnd="24dp"
             android:gravity="start"
-            android:textSize="12sp"
-            android:textColor="@color/input_underline_error_color"
+            android:textAppearance="@style/TextAppearance.AutofillCardErrorMessage"
             android:visibility="gone" />
 
         <RelativeLayout
@@ -156,8 +162,7 @@
                 android:layout_centerVertical="true"
                 android:layout_marginStart="17dp"
                 android:layout_marginEnd="10dp"
-                android:textSize="14sp"
-                android:textColor="@color/explanation_text_color"
+                android:textAppearance="@style/TextAppearance.AutofillCardCheckBoxText"
                 android:text="@string/autofill_card_unmask_prompt_storage_checkbox" />
 
         </RelativeLayout>
@@ -191,13 +196,12 @@
             android:layout_marginTop="16dp"
             android:src="@drawable/verify_checkmark"
             android:visibility="gone"
-            android:contentDescription="@null" />
+            tools:ignore="ContentDescription" />
 
         <TextView
             android:id="@+id/verification_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="@color/light_active_color"
-            android:textSize="20sp" />
+            android:textAppearance="@style/TextAppearance.BlueTitle2" />
     </LinearLayout>
 </RelativeLayout>

@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/plugins/flash_temporary_permission_tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -51,7 +50,7 @@ FlashTemporaryPermissionTracker::~FlashTemporaryPermissionTracker() {}
 
 bool FlashTemporaryPermissionTracker::IsFlashEnabled(const GURL& url) {
   base::AutoLock lock(granted_origins_lock_);
-  return base::ContainsKey(granted_origins_, url.GetOrigin());
+  return base::Contains(granted_origins_, url.GetOrigin());
 }
 
 void FlashTemporaryPermissionTracker::FlashEnabledForWebContents(
@@ -61,7 +60,7 @@ void FlashTemporaryPermissionTracker::FlashEnabledForWebContents(
   {
     base::AutoLock lock(granted_origins_lock_);
     granted_origins_.insert(std::make_pair(
-        origin, base::MakeUnique<GrantObserver>(web_contents, origin, this)));
+        origin, std::make_unique<GrantObserver>(web_contents, origin, this)));
   }
   content::PluginService::GetInstance()->PurgePluginListCache(profile_, false);
 }

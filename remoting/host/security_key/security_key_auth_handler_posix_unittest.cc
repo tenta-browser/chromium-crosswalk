@@ -22,6 +22,7 @@
 #include "net/base/test_completion_callback.h"
 #include "net/socket/socket_posix.h"
 #include "net/socket/unix_domain_client_socket_posix.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "remoting/host/security_key/security_key_auth_handler.h"
 #include "remoting/host/security_key/security_key_socket.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -117,17 +118,17 @@ class SecurityKeyAuthHandlerPosixTest : public testing::Test {
 
   void WriteRequestData(net::UnixDomainClientSocket* client_socket) {
     int request_len = sizeof(kRequestData);
-    scoped_refptr<net::DrainableIOBuffer> request_buffer(
-        new net::DrainableIOBuffer(
-            new net::WrappedIOBuffer(
+    scoped_refptr<net::DrainableIOBuffer> request_buffer =
+        base::MakeRefCounted<net::DrainableIOBuffer>(
+            base::MakeRefCounted<net::WrappedIOBuffer>(
                 reinterpret_cast<const char*>(kRequestData)),
-            request_len));
+            request_len);
     net::TestCompletionCallback write_callback;
     int bytes_written = 0;
     while (bytes_written < request_len) {
-      int write_result = client_socket->Write(request_buffer.get(),
-                                              request_buffer->BytesRemaining(),
-                                              write_callback.callback());
+      int write_result = client_socket->Write(
+          request_buffer.get(), request_buffer->BytesRemaining(),
+          write_callback.callback(), TRAFFIC_ANNOTATION_FOR_TESTS);
       write_result = write_callback.GetResult(write_result);
       ASSERT_GT(write_result, 0);
       bytes_written += write_result;
@@ -146,9 +147,11 @@ class SecurityKeyAuthHandlerPosixTest : public testing::Test {
   }
 
   void WaitForData(net::UnixDomainClientSocket* socket, int request_len) {
-    scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(request_len));
-    scoped_refptr<net::DrainableIOBuffer> read_buffer(
-        new net::DrainableIOBuffer(buffer.get(), request_len));
+    scoped_refptr<net::IOBuffer> buffer =
+        base::MakeRefCounted<net::IOBuffer>(request_len);
+    scoped_refptr<net::DrainableIOBuffer> read_buffer =
+        base::MakeRefCounted<net::DrainableIOBuffer>(std::move(buffer),
+                                                     request_len);
     net::TestCompletionCallback read_callback;
     int bytes_read = 0;
     while (bytes_read < request_len) {
@@ -333,8 +336,9 @@ TEST_F(SecurityKeyAuthHandlerPosixTest, HandleTwoIndependentRequests) {
   // Disconnect and establish a new connection.
   client_socket.Disconnect();
 
-  rv = client_socket.Connect(connect_callback.callback());
-  ASSERT_EQ(net::OK, connect_callback.GetResult(rv));
+  net::TestCompletionCallback connect_callback2;
+  rv = client_socket.Connect(connect_callback2.callback());
+  ASSERT_EQ(net::OK, connect_callback2.GetResult(rv));
 
   // Repeat the request/response cycle.
   WriteRequestData(&client_socket);

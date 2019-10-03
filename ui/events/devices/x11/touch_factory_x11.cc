@@ -10,10 +10,9 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/devices/x11/device_data_manager_x11.h"
@@ -179,8 +178,12 @@ bool TouchFactory::ShouldProcessXI2Event(XEvent* xev) {
            (virtual_core_keyboard_device_ == xiev->deviceid);
   }
 
-  if (event->evtype != XI_ButtonPress &&
-      event->evtype != XI_ButtonRelease &&
+  // Don't automatically accept XI_Enter or XI_Leave. They should be checked
+  // against the pointer_device_lookup_ to prevent handling for slave devices.
+  // This happens for unknown reasons when using xtest.
+  // https://crbug.com/683434.
+  if (event->evtype != XI_ButtonPress && event->evtype != XI_ButtonRelease &&
+      event->evtype != XI_Enter && event->evtype != XI_Leave &&
       event->evtype != XI_Motion) {
     return true;
   }
@@ -309,8 +312,7 @@ void TouchFactory::SetTouchDeviceForTest(
     const std::vector<int>& devices) {
   touch_device_lookup_.reset();
   touch_device_list_.clear();
-  for (std::vector<int>::const_iterator iter = devices.begin();
-       iter != devices.end(); ++iter) {
+  for (auto iter = devices.begin(); iter != devices.end(); ++iter) {
     DCHECK(IsValidDevice(*iter));
     touch_device_lookup_[*iter] = true;
     touch_device_list_[*iter] = {true, EventPointerType::POINTER_TYPE_TOUCH};
@@ -321,8 +323,7 @@ void TouchFactory::SetTouchDeviceForTest(
 void TouchFactory::SetPointerDeviceForTest(
     const std::vector<int>& devices) {
   pointer_device_lookup_.reset();
-  for (std::vector<int>::const_iterator iter = devices.begin();
-       iter != devices.end(); ++iter) {
+  for (auto iter = devices.begin(); iter != devices.end(); ++iter) {
     pointer_device_lookup_[*iter] = true;
   }
 }

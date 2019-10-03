@@ -15,7 +15,7 @@
 #include "content/shell/browser/shell.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/url_util.h"
 
@@ -27,7 +27,12 @@ const char kClean[] = "CLEAN";
 #endif
 
 void MediaBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
-  command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
+  command_line->AppendSwitchASCII(
+      switches::kAutoplayPolicy,
+      switches::autoplay::kNoUserGestureRequiredPolicy);
+  // Disable fallback after decode error to avoid unexpected test pass on the
+  // fallback path.
+  scoped_feature_list_.InitAndDisableFeature(media::kFallbackAfterDecodeError);
 }
 
 void MediaBrowserTest::RunMediaTestPage(const std::string& html_page,
@@ -59,6 +64,11 @@ std::string MediaBrowserTest::RunTest(const GURL& gurl,
   NavigateToURL(shell(), gurl);
   base::string16 result = title_watcher.WaitAndGetTitle();
 
+  CleanupTest();
+  return base::UTF16ToASCII(result);
+}
+
+void MediaBrowserTest::CleanupTest() {
 #if defined(OS_ANDROID)
   // We only do this cleanup on Android, as a workaround for a test-only OOM
   // bug. See http://crbug.com/727542
@@ -70,8 +80,6 @@ std::string MediaBrowserTest::RunTest(const GURL& gurl,
   base::string16 cleaner_result = clean_title_watcher.WaitAndGetTitle();
   EXPECT_EQ(cleaner_result, cleaner_title);
 #endif
-
-  return base::UTF16ToASCII(result);
 }
 
 std::string MediaBrowserTest::EncodeErrorMessage(
@@ -127,9 +135,9 @@ class MediaTest : public testing::WithParamInterface<bool>,
 
   void RunVideoSizeTest(const char* media_file, int width, int height) {
     std::string expected;
-    expected += base::IntToString(width);
+    expected += base::NumberToString(width);
     expected += " ";
-    expected += base::IntToString(height);
+    expected += base::NumberToString(height);
     base::StringPairs query_params;
     query_params.emplace_back("video", media_file);
     RunMediaTestPage("player.html", query_params, expected, false);
@@ -151,11 +159,15 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWebm) {
   PlayVideo("bear.webm", GetParam());
 }
 
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearOpusWebm) {
+IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearOpusWebm) {
   PlayVideo("bear-opus.webm", GetParam());
 }
 
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearOpusOgg) {
+IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearOpusMp4) {
+  PlayVideo("bear-opus.mp4", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearOpusOgg) {
   PlayVideo("bear-opus.ogg", GetParam());
 }
 
@@ -174,11 +186,6 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBear12DepthVP9) {
 }
 #endif
 
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMp4) {
-  PlayVideo("bear.mp4", GetParam());
-}
-
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMp4Vp9) {
   PlayVideo("bear-320x240-v_frag-vp9.mp4", GetParam());
 }
@@ -191,26 +198,21 @@ IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearFlac192kHzMp4) {
   PlayAudio("bear-flac-192kHz.mp4", GetParam());
 }
 
-// Android devices usually only support baseline, main and high.
-#if !defined(OS_ANDROID)
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearHighBitDepthMp4) {
-  PlayVideo("bear-320x180-hi10p.mp4", GetParam());
-}
-#endif  // !defined(OS_ANDROID)
-
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearSilentMp4) {
-  PlayVideo("bear_silent.mp4", GetParam());
-}
-
-// While we support the big endian (be) PCM codecs on Chromium, Quicktime seems
-// to be the only creator of this format and only for .mov files.
-// TODO(dalecurtis/ihf): Find or create some .wav test cases for "be" format.
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMovPcmS16be) {
   PlayVideo("bear_pcm_s16be.mov", GetParam());
 }
 
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMovPcmS24be) {
   PlayVideo("bear_pcm_s24be.mov", GetParam());
+}
+
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMp4) {
+  PlayVideo("bear.mp4", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearSilentMp4) {
+  PlayVideo("bear_silent.mp4", GetParam());
 }
 
 IN_PROC_BROWSER_TEST_F(MediaTest, VideoBearRotated0) {
@@ -229,18 +231,21 @@ IN_PROC_BROWSER_TEST_F(MediaTest, VideoBearRotated270) {
   RunVideoSizeTest("bear_rotate_270.mp4", 720, 1280);
 }
 
+#if !defined(OS_ANDROID)
+// Android devices usually only support baseline, main and high.
+IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearHighBitDepthMp4) {
+  PlayVideo("bear-320x180-hi10p.mp4", GetParam());
+}
+
 // Android can't reliably load lots of videos on a page.
 // See http://crbug.com/749265
-#if !defined(OS_ANDROID)
 IN_PROC_BROWSER_TEST_F(MediaTest, LoadManyVideos) {
   base::StringPairs query_params;
   RunMediaTestPage("load_many_videos.html", query_params, media::kEnded, true);
 }
 #endif  // !defined(OS_ANDROID)
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 #if defined(OS_CHROMEOS)
-#if BUILDFLAG(USE_PROPRIETARY_CODECS)
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearAviMp3Mpeg4) {
   PlayVideo("bear_mpeg4_mp3.avi", GetParam());
 }
@@ -264,8 +269,8 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBear3gpAmrnbMpeg4) {
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavGsmms) {
   PlayAudio("bear_gsm_ms.wav", GetParam());
 }
-#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 #endif  // defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearFlac) {
   PlayAudio("bear.flac", GetParam());
@@ -275,7 +280,13 @@ IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearFlacOgg) {
   PlayVideo("bear-flac.ogg", GetParam());
 }
 
-IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearWavAlaw) {
+// Flaky on Linux. See https://crbug.com/979259
+#if defined(OS_LINUX)
+#define MAYBE_VideoBearWavAlaw DISABLED_VideoBearWavAlaw
+#else
+#define MAYBE_VideoBearWavAlaw VideoBearWavAlaw
+#endif
+IN_PROC_BROWSER_TEST_P(MediaTest, MAYBE_VideoBearWavAlaw) {
   PlayAudio("bear_alaw.wav", GetParam());
 }
 
@@ -323,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(MediaTest, Navigate) {
   EXPECT_FALSE(shell()->web_contents()->IsCrashed());
 }
 
-INSTANTIATE_TEST_CASE_P(File, MediaTest, ::testing::Values(false));
-INSTANTIATE_TEST_CASE_P(Http, MediaTest, ::testing::Values(true));
+INSTANTIATE_TEST_SUITE_P(File, MediaTest, ::testing::Values(false));
+INSTANTIATE_TEST_SUITE_P(Http, MediaTest, ::testing::Values(true));
 
 }  // namespace content

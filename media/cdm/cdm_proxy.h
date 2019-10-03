@@ -8,54 +8,54 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/memory/weak_ptr.h"
+#include "media/base/cdm_context.h"
 #include "media/base/media_export.h"
+
+namespace base {
+class Token;
+}
 
 namespace media {
 
-// Key information structure containing data necessary to decrypt/decode media.
-struct MEDIA_EXPORT KeyInfo {
-  KeyInfo();
-  ~KeyInfo();
-  // Crypto session for decryption.
-  uint32_t crypto_session_id = 0;
-  // ID of the key.
-  std::vector<uint8_t> key_id;
-  // Opaque key blob for decrypting or decoding.
-  std::vector<uint8_t> key_blob;
-  // Indicates whether this key/key_id is usable. The caller sets this to false
-  // to invalidate a key.
-  bool is_usable_key = true;
-};
-
-// A proxy for the CDM.
+// A class that proxies part of ContentDecryptionModule (CDM) functionalities to
+// a different entity, e.g. hardware CDM modules.
 // In general, the interpretation of the method and callback parameters are
 // protocol dependent. For enum parameters, values outside the enum range may
 // not work.
 class MEDIA_EXPORT CdmProxy {
  public:
   // Client of the proxy.
-  class Client {
+  class MEDIA_EXPORT Client {
    public:
-    Client() {}
-    virtual ~Client() {}
-    // Called when there is a hardware reset and all the hardware context is
-    // lost.
+    Client();
+    virtual ~Client();
+
+    // Called when there is a hardware reset. When hardware reset happens, all
+    // the hardware context is lost and all crypto sessions are destroyed. The
+    // CdmProxy returns to an uninitialized state and the caller must call
+    // Initialize() on the CdmProxy again to be able to continue using it.
     virtual void NotifyHardwareReset() = 0;
   };
 
   enum class Status {
     kOk,
     kFail,
+    kMaxValue = kFail,
   };
 
   enum class Protocol {
+    // No supported protocol. Used in failure cases.
+    kNone,
     // Method using Intel CSME.
-    kIntelConvergedSecurityAndManageabilityEngine,
+    kIntel,
     // There will be more values in the future e.g. kD3D11RsaHardware,
     // kD3D11RsaSoftware to use the D3D11 RSA method.
+    kMaxValue = kIntel,
   };
 
   enum class Function {
@@ -63,10 +63,21 @@ class MEDIA_EXPORT CdmProxy {
     // ID3D11VideoContext::NegotiateCryptoSessionKeyExchange.
     kIntelNegotiateCryptoSessionKeyExchange,
     // There will be more values in the future e.g. for D3D11 RSA method.
+    kMaxValue = kIntelNegotiateCryptoSessionKeyExchange,
   };
 
-  CdmProxy() {}
-  virtual ~CdmProxy() {}
+  enum class KeyType {
+    kDecryptOnly,
+    kDecryptAndDecode,
+    kMaxValue = kDecryptAndDecode,
+  };
+
+  CdmProxy();
+  virtual ~CdmProxy();
+
+  // Returns a weak pointer of the CdmContext associated with |this|.
+  // The weak pointer will be null if |this| is destroyed.
+  virtual base::WeakPtr<CdmContext> GetCdmContext() = 0;
 
   // Callback for Initialize(). If the proxy created a crypto session, then the
   // ID for the crypto session is |crypto_session_id|.
@@ -74,7 +85,10 @@ class MEDIA_EXPORT CdmProxy {
       void(Status status, Protocol protocol, uint32_t crypto_session_id)>;
 
   // Initializes the proxy. The status and the return values of the call is
-  // reported to |init_cb|.
+  // reported to |init_cb|. All other methods should only be called after the
+  // proxy is fully initialized. Otherwise they may fail.
+  // Note: The proxy also needs to be reinitialized after hardware reset. See
+  // Client::NotifyHardwareReset() for details.
   virtual void Initialize(Client* client, InitializeCB init_cb) = 0;
 
   // Callback for Process(). |output_data| is the output of processing.
@@ -93,7 +107,7 @@ class MEDIA_EXPORT CdmProxy {
                        ProcessCB process_cb) = 0;
 
   // Callback for CreateMediaCryptoSession().
-  // On suceess:
+  // On success:
   // |crypto_session_id| is the ID for the created crypto session.
   // |output_data| is extra value, if any.
   using CreateMediaCryptoSessionCB = base::OnceCallback<
@@ -108,12 +122,38 @@ class MEDIA_EXPORT CdmProxy {
       const std::vector<uint8_t>& input_data,
       CreateMediaCryptoSessionCB create_media_crypto_session_cb) = 0;
 
-  // Send multiple key information to the proxy.
-  virtual void SetKeyInfo(const std::vector<KeyInfo>& key_infos) = 0;
+  // Callback for SetKey().
+  using SetKeyCB = base::OnceCallback<void(Status status)>;
+
+  // Sets a key in the proxy.
+  // |crypto_session_id| is the crypto session for decryption.
+  // |key_id| is the ID of the key.
+  // |key_type| is the type of the key.
+  // |key_blob| is the opaque key blob for decrypting or decoding.
+  // The status of the call is reported to |set_key_cb|.
+  virtual void SetKey(uint32_t crypto_session_id,
+                      const std::vector<uint8_t>& key_id,
+                      KeyType key_type,
+                      const std::vector<uint8_t>& key_blob,
+                      SetKeyCB set_key_cb) = 0;
+
+  // Callback for RemoveKey().
+  using RemoveKeyCB = base::OnceCallback<void(Status status)>;
+
+  // Removes a key from the proxy.
+  // |crypto_session_id| is the crypto session for decryption.
+  // |key_id| is the ID of the key.
+  // The status of the call is reported to |remove_key_cb|.
+  virtual void RemoveKey(uint32_t crypto_session_id,
+                         const std::vector<uint8_t>& key_id,
+                         RemoveKeyCB remove_key_cb) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CdmProxy);
 };
+
+using CdmProxyFactoryCB = base::RepeatingCallback<std::unique_ptr<CdmProxy>(
+    const base::Token& cdm_guid)>;
 
 }  // namespace media
 

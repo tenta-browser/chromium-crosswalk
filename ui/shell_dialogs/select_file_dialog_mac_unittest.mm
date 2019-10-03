@@ -4,15 +4,19 @@
 
 #import "ui/shell_dialogs/select_file_dialog_mac.h"
 
-#include <vector>
-
+#include "base/files/file_util.h"
 #import "base/mac/foundation_util.h"
-#include "base/macros.h"
+#include "base/mac/mac_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
+#include "components/remote_cocoa/app_shim/select_file_dialog_bridge.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/shell_dialogs/select_file_policy.h"
 
 #define EXPECT_EQ_BOOL(a, b) \
   EXPECT_EQ(static_cast<bool>(a), static_cast<bool>(b))
@@ -89,28 +93,33 @@ class SelectFileDialogMacTest : public testing::Test,
                     void* params) override {}
 
  protected:
+  base::test::ScopedTaskEnvironment task_environment_;
+
   // Helper method to launch a dialog with the given |args|.
   void SelectFileWithParams(FileDialogArguments args) {
     dialog_->SelectFile(args.type, args.title, args.default_path,
                         args.file_types, args.file_type_index,
                         args.default_extension, args.owning_window,
                         args.params);
+    base::RunLoop().RunUntilIdle();
   }
 
   // Returns the number of panels currently active.
   size_t GetActivePanelCount() const {
-    return dialog_->dialog_data_map_.size();
+    return dialog_->dialog_data_list_.size();
   }
 
-  // Returns one of the created NSSavePanel. If multiple SelectFile calls were
-  // made on the same |dialog_| object, any of the created NSSavePanel will be
-  // returned.
+  // Returns the most recently created NSSavePanel.
   NSSavePanel* GetPanel() const {
     DCHECK_GE(GetActivePanelCount(), 1lu);
-    return dialog_->dialog_data_map_.begin()->first;
+    return remote_cocoa::SelectFileDialogBridge::
+        GetLastCreatedNativePanelForTesting();
   }
 
-  void ResetDialog() { dialog_ = new SelectFileDialogImpl(this, nullptr); }
+  void ResetDialog() {
+    dialog_ = new SelectFileDialogImpl(this, nullptr);
+    base::RunLoop().RunUntilIdle();
+  }
 
  private:
   scoped_refptr<SelectFileDialogImpl> dialog_;
@@ -305,9 +314,12 @@ TEST_F(SelectFileDialogMacTest, EmptyDescription) {
       GetExtensionDescriptionList(popup);
   EXPECT_EQ(3lu, extension_descriptions.size());
   // Verify that the correct system description is produced for known file types
-  // like pdf if no extension description is provided by the client.
-  EXPECT_EQ(base::ASCIIToUTF16("Portable Document Format (PDF)"),
-            extension_descriptions[0]);
+  // like pdf if no extension description is provided by the client. Search the
+  // string for "PDF" as the system may display:
+  // - Portable Document Format (PDF)
+  // - PDF document
+  EXPECT_NE(base::string16::npos,
+            extension_descriptions[0].find(base::ASCIIToUTF16("PDF")));
   EXPECT_EQ(base::ASCIIToUTF16("Image"), extension_descriptions[1]);
   // Verify the description for unknown file types if no extension description
   // is provided by the client.
@@ -366,8 +378,8 @@ TEST_F(SelectFileDialogMacTest, SelectionType) {
     std::string prompt;
   } test_cases[] = {
       {SelectFileDialog::SELECT_FOLDER, PICK_DIRS | CREATE_DIRS, "Select"},
-      {SelectFileDialog::SELECT_UPLOAD_FOLDER, PICK_DIRS | CREATE_DIRS,
-       "Upload"},
+      {SelectFileDialog::SELECT_UPLOAD_FOLDER, PICK_DIRS, "Upload"},
+      {SelectFileDialog::SELECT_EXISTING_FOLDER, PICK_DIRS, "Select"},
       {SelectFileDialog::SELECT_SAVEAS_FILE, HAS_ACCESSORY_VIEW | CREATE_DIRS,
        "Save"},
       {SelectFileDialog::SELECT_OPEN_FILE, HAS_ACCESSORY_VIEW | PICK_FILES,
@@ -376,7 +388,7 @@ TEST_F(SelectFileDialogMacTest, SelectionType) {
        HAS_ACCESSORY_VIEW | PICK_FILES | MULTIPLE_SELECTION, "Open"},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); i++) {
+  for (size_t i = 0; i < base::size(test_cases); i++) {
     SCOPED_TRACE(
         base::StringPrintf("i=%lu file_dialog_type=%d", i, test_cases[i].type));
     args.type = test_cases[i].type;
@@ -416,29 +428,36 @@ TEST_F(SelectFileDialogMacTest, DialogMessage) {
 
 // Verify that multiple file dialogs are corrected handled.
 TEST_F(SelectFileDialogMacTest, MultipleDialogs) {
+  // TODO(https://crbug.com/852536): Test fails on 10.10.
+  if (base::mac::IsOS10_10())
+    return;
+
   FileDialogArguments args(GetDefaultArguments());
   SelectFileWithParams(args);
+  NSSavePanel* panel1 = GetPanel();
   SelectFileWithParams(args);
+  NSSavePanel* panel2 = GetPanel();
   EXPECT_EQ(2lu, GetActivePanelCount());
 
   // Verify closing the panel decreases the panel count.
-  NSSavePanel* panel = GetPanel();
-  [panel cancel:panel];
+  [panel1 cancel:panel1];
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1lu, GetActivePanelCount());
 
-  panel = GetPanel();
-  [panel ok:panel];
+  [panel2 ok:panel2];
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0lu, GetActivePanelCount());
 }
 
 // Verify that the default_path argument is respected.
 TEST_F(SelectFileDialogMacTest, DefaultPath) {
-  const std::string fake_path = "/fake_directory/filename.txt";
   FileDialogArguments args(GetDefaultArguments());
-  args.default_path = base::FilePath(FILE_PATH_LITERAL(fake_path));
+  args.default_path = base::GetHomeDir().AppendASCII("test.txt");
 
   SelectFileWithParams(args);
   NSSavePanel* panel = GetPanel();
+
+  [panel setExtensionHidden:NO];
 
   EXPECT_EQ(args.default_path.DirName(),
             base::mac::NSStringToFilePath([[panel directoryURL] path]));
@@ -451,12 +470,14 @@ TEST_F(SelectFileDialogMacTest, DefaultPath) {
 TEST_F(SelectFileDialogMacTest, MultipleExtension) {
   const std::string fake_path_normal = "/fake_directory/filename.tar";
   const std::string fake_path_multiple = "/fake_directory/filename.tar.gz";
+  const std::string fake_path_long = "/fake_directory/example.com-123.json";
   FileDialogArguments args(GetDefaultArguments());
 
   args.default_path = base::FilePath(FILE_PATH_LITERAL(fake_path_normal));
   SelectFileWithParams(args);
   NSSavePanel* panel = GetPanel();
   EXPECT_TRUE([panel canSelectHiddenExtension]);
+  EXPECT_TRUE([panel isExtensionHidden]);
 
   ResetDialog();
   args.default_path = base::FilePath(FILE_PATH_LITERAL(fake_path_multiple));
@@ -464,6 +485,42 @@ TEST_F(SelectFileDialogMacTest, MultipleExtension) {
   panel = GetPanel();
   EXPECT_FALSE([panel canSelectHiddenExtension]);
   EXPECT_FALSE([panel isExtensionHidden]);
+
+  ResetDialog();
+  args.default_path = base::FilePath(FILE_PATH_LITERAL(fake_path_long));
+  SelectFileWithParams(args);
+  panel = GetPanel();
+  EXPECT_FALSE([panel canSelectHiddenExtension]);
+  EXPECT_FALSE([panel isExtensionHidden]);
+}
+
+// Test to ensure lifetime is sound if a reference to the panel outlives the
+// delegate.
+TEST_F(SelectFileDialogMacTest, Lifetime) {
+  base::scoped_nsobject<NSSavePanel> panel;
+  @autoreleasepool {
+    auto args = GetDefaultArguments();
+    // Set a type (Save dialogs do not have a delegate).
+    args.type = SelectFileDialog::SELECT_OPEN_MULTI_FILE;
+    SelectFileWithParams(args);
+    panel.reset([GetPanel() retain]);
+
+    EXPECT_TRUE([panel isVisible]);
+    EXPECT_NE(nil, [panel delegate]);
+
+    // Newer versions of AppKit may clear out weak delegate pointers when
+    // dealloc is called on the delegate. Put a ref into the autorelease pool to
+    // simulate what happens on older versions.
+    [[[panel delegate] retain] autorelease];
+
+    ResetDialog();
+
+    // The SelectFileDialogImpl destructor invokes [panel cancel]. That should
+    // close the panel, and run the completion handler.
+    EXPECT_EQ(nil, [panel delegate]);
+    EXPECT_FALSE([panel isVisible]);
+  }
+  EXPECT_EQ(nil, [panel delegate]);
 }
 
 }  // namespace test

@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "net/nqe/network_quality_estimator_params.h"
@@ -20,10 +21,28 @@ namespace net {
 namespace nqe {
 
 namespace internal {
+CanonicalStats::CanonicalStats() = default;
+
+CanonicalStats::CanonicalStats(std::map<int32_t, int32_t>& canonical_pcts,
+                               int32_t most_recent_val,
+                               size_t observation_count)
+    : canonical_pcts(canonical_pcts),
+      most_recent_val(most_recent_val),
+      observation_count(observation_count) {}
+
+CanonicalStats::CanonicalStats(const CanonicalStats& other)
+    : canonical_pcts(other.canonical_pcts),
+      most_recent_val(other.most_recent_val),
+      observation_count(other.observation_count) {}
+
+CanonicalStats::~CanonicalStats() = default;
+
+CanonicalStats& CanonicalStats::operator=(const CanonicalStats& other) =
+    default;
 
 ObservationBuffer::ObservationBuffer(
     const NetworkQualityEstimatorParams* params,
-    base::TickClock* tick_clock,
+    const base::TickClock* tick_clock,
     double weight_multiplier_per_second,
     double weight_multiplier_per_signal_level)
     : params_(params),
@@ -39,6 +58,15 @@ ObservationBuffer::ObservationBuffer(
   DCHECK(tick_clock_);
 }
 
+ObservationBuffer::ObservationBuffer(const ObservationBuffer& other)
+    : params_(other.params_),
+      weight_multiplier_per_second_(other.weight_multiplier_per_second_),
+      weight_multiplier_per_signal_level_(
+          other.weight_multiplier_per_signal_level_),
+      tick_clock_(other.tick_clock_) {
+  DCHECK(other.observations_.empty());
+}
+
 ObservationBuffer::~ObservationBuffer() = default;
 
 void ObservationBuffer::AddObservation(const Observation& observation) {
@@ -47,6 +75,10 @@ void ObservationBuffer::AddObservation(const Observation& observation) {
   // Observations must be in the non-decreasing order of the timestamps.
   DCHECK(observations_.empty() ||
          observation.timestamp() >= observations_.back().timestamp());
+
+  DCHECK(observation.signal_strength() == INT32_MIN ||
+         (observation.signal_strength() >= 0 &&
+          observation.signal_strength() <= 4));
 
   // Evict the oldest element if the buffer is already full.
   if (observations_.size() == params_->observation_buffer_size())
@@ -58,9 +90,12 @@ void ObservationBuffer::AddObservation(const Observation& observation) {
 
 base::Optional<int32_t> ObservationBuffer::GetPercentile(
     base::TimeTicks begin_timestamp,
-    const base::Optional<int32_t>& current_signal_strength,
+    int32_t current_signal_strength,
     int percentile,
     size_t* observations_count) const {
+  DCHECK(current_signal_strength == INT32_MIN ||
+         (current_signal_strength >= 0 && current_signal_strength <= 4));
+
   // Stores weighted observations in increasing order by value.
   std::vector<WeightedObservation> weighted_observations;
 
@@ -95,77 +130,77 @@ base::Optional<int32_t> ObservationBuffer::GetPercentile(
   return weighted_observations.at(weighted_observations.size() - 1).value;
 }
 
-void ObservationBuffer::GetPercentileForEachHostWithCounts(
-    base::TimeTicks begin_timestamp,
-    int percentile,
-    const base::Optional<std::set<IPHash>>& host_filter,
-    std::map<IPHash, int32_t>* host_keyed_percentiles,
-    std::map<IPHash, size_t>* host_keyed_counts) const {
+std::map<IPHash, CanonicalStats>
+ObservationBuffer::GetCanonicalStatsKeyedByHosts(
+    const base::TimeTicks& begin_timestamp,
+    const std::set<IPHash>& target_hosts) const {
   DCHECK_GE(Capacity(), Size());
-  DCHECK_LE(0, percentile);
-  DCHECK_GE(100, percentile);
 
-  host_keyed_percentiles->clear();
-  host_keyed_counts->clear();
+  // Computes for all hosts if |target_hosts| is empty. Otherwise, only
+  // updates map entries for hosts in |target_hosts| and ignores observations
+  // from other hosts.
+  bool filter_on_target_hosts = !(target_hosts.empty());
 
-  // Filter the observations based on timestamp, and the
-  // presence of a valid host tag. Split the observations into a map keyed by
-  // the remote host to make it easy to calculate percentiles for each host.
+  // Split observations into several subgroups keyed by their corresponding
+  // hosts. Skip observations without a host tag. Filter observations based
+  // on begin_timestamp. If |target_hosts| is not empty, filter obesrvations
+  // that do not belong to any host in the set.
   std::map<IPHash, std::vector<int32_t>> host_keyed_observations;
   for (const auto& observation : observations_) {
-    // Look at only those observations which have a |host|.
     if (!observation.host())
       continue;
-
-    IPHash host = observation.host().value();
-    if (host_filter && (host_filter->find(host) == host_filter->end()))
-      continue;
-
-    // Filter the observations recorded before |begin_timestamp|.
     if (observation.timestamp() < begin_timestamp)
       continue;
-
-    // Skip 0 values of RTT.
+    // Skip zero values. Transport RTTs can have zero values in the beginning
+    // of a connection. It happens because the implementation of TCP's
+    // Exponentially Weighted Moving Average (EWMA) starts from zero.
     if (observation.value() < 1)
       continue;
 
-    // Create the map entry if it did not already exist. Does nothing if
-    // |host| was seen before.
+    IPHash host = observation.host().value();
+    if (filter_on_target_hosts && target_hosts.find(host) == target_hosts.end())
+      continue;
+
+    // Create the map entry if it did not already exist.
     host_keyed_observations.emplace(host, std::vector<int32_t>());
     host_keyed_observations[host].push_back(observation.value());
   }
 
+  std::map<IPHash, CanonicalStats> host_keyed_stats;
   if (host_keyed_observations.empty())
-    return;
+    return host_keyed_stats;
 
-  // Calculate the percentile values for each host.
+  // Calculate the canonical percentile values for each host.
   for (auto& host_observations : host_keyed_observations) {
-    IPHash host = host_observations.first;
+    const IPHash& host = host_observations.first;
     auto& observations = host_observations.second;
-    std::sort(observations.begin(), observations.end());
+    host_keyed_stats.emplace(host, CanonicalStats());
     size_t count = observations.size();
-    DCHECK_GT(count, 0u);
-    (*host_keyed_counts)[host] = count;
-    int percentile_index = ((count - 1) * percentile) / 100;
-    (*host_keyed_percentiles)[host] = observations[percentile_index];
+
+    std::sort(observations.begin(), observations.end());
+    for (size_t i = 0; i < base::size(kCanonicalPercentiles); ++i) {
+      int pct_index = (count - 1) * kCanonicalPercentiles[i] / 100;
+      host_keyed_stats[host].canonical_pcts[kCanonicalPercentiles[i]] =
+          observations[pct_index];
+    }
+    host_keyed_stats[host].most_recent_val = observations.back();
+    host_keyed_stats[host].observation_count = count;
   }
+  return host_keyed_stats;
 }
 
 void ObservationBuffer::RemoveObservationsWithSource(
     bool deleted_observation_sources[NETWORK_QUALITY_OBSERVATION_SOURCE_MAX]) {
-  observations_.erase(
-      std::remove_if(
-          observations_.begin(), observations_.end(),
-          [deleted_observation_sources](const Observation& observation) {
-            return deleted_observation_sources[static_cast<size_t>(
-                observation.source())];
-          }),
-      observations_.end());
+  base::EraseIf(observations_,
+                [deleted_observation_sources](const Observation& observation) {
+                  return deleted_observation_sources[static_cast<size_t>(
+                      observation.source())];
+                });
 }
 
 void ObservationBuffer::ComputeWeightedObservations(
     const base::TimeTicks& begin_timestamp,
-    const base::Optional<int32_t>& current_signal_strength,
+    int32_t current_signal_strength,
     std::vector<WeightedObservation>* weighted_observations,
     double* total_weight) const {
   DCHECK_GE(Capacity(), Size());
@@ -183,10 +218,9 @@ void ObservationBuffer::ComputeWeightedObservations(
         pow(weight_multiplier_per_second_, time_since_sample_taken.InSeconds());
 
     double signal_strength_weight = 1.0;
-    if (current_signal_strength && observation.signal_strength()) {
+    if (current_signal_strength >= 0 && observation.signal_strength() >= 0) {
       int32_t signal_strength_weight_diff =
-          std::abs(current_signal_strength.value() -
-                   observation.signal_strength().value());
+          std::abs(current_signal_strength - observation.signal_strength());
       signal_strength_weight =
           pow(weight_multiplier_per_signal_level_, signal_strength_weight_diff);
     }

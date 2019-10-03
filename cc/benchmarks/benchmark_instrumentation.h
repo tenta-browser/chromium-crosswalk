@@ -5,7 +5,6 @@
 #ifndef CC_BENCHMARKS_BENCHMARK_INSTRUMENTATION_H_
 #define CC_BENCHMARKS_BENCHMARK_INSTRUMENTATION_H_
 
-#include "base/macros.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/cc_export.h"
 #include "cc/debug/rendering_stats.h"
@@ -18,7 +17,11 @@ namespace benchmark_instrumentation {
 // The benchmarks search for events and their arguments by name.
 
 namespace internal {
-const char kCategory[] = "cc,benchmark";
+constexpr const char* Category() {
+  // Declared as a constexpr function to have an external linkage and to be
+  // known at compile-time.
+  return "cc,benchmark";
+}
 const char kBeginFrameId[] = "begin_frame_id";
 }  // namespace internal
 
@@ -31,17 +34,18 @@ class ScopedBeginFrameTask {
  public:
   ScopedBeginFrameTask(const char* event_name, unsigned int begin_frame_id)
       : event_name_(event_name) {
-    TRACE_EVENT_BEGIN1(internal::kCategory, event_name_,
+    TRACE_EVENT_BEGIN1(internal::Category(), event_name_,
                        internal::kBeginFrameId, begin_frame_id);
   }
+  ScopedBeginFrameTask(const ScopedBeginFrameTask&) = delete;
   ~ScopedBeginFrameTask() {
-    TRACE_EVENT_END0(internal::kCategory, event_name_);
+    TRACE_EVENT_END0(internal::Category(), event_name_);
   }
+
+  ScopedBeginFrameTask& operator=(const ScopedBeginFrameTask&) = delete;
 
  private:
   const char* event_name_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedBeginFrameTask);
 };
 
 void IssueImplThreadRenderingStatsEvent(const RenderingStats& stats);

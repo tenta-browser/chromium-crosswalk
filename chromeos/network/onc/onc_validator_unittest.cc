@@ -28,20 +28,30 @@ class ONCValidatorTest : public ::testing::Test {
   // validation is stored, so that expectations can be checked afterwards using
   // one of the Expect* functions below.
   void Validate(bool strict,
-                std::unique_ptr<base::DictionaryValue> onc_object,
+                std::unique_ptr<base::Value> onc_object,
                 const OncValueSignature* signature,
                 bool managed_onc,
                 ::onc::ONCSource onc_source) {
     std::unique_ptr<Validator> validator;
     if (strict) {
       // Create a strict validator that complains about every error.
-      validator.reset(new Validator(true, true, true, managed_onc));
+      validator =
+          std::make_unique<Validator>(true,  // error_on_unknown_field
+                                      true,  // error_on_wrong_recommended
+                                      true,  // error_on_missing_field,
+                                      managed_onc,  // managed_onc
+                                      true);        // log_warnings
     } else {
       // Create a liberal validator that ignores or repairs non-critical errors.
-      validator.reset(new Validator(false, false, false, managed_onc));
+      validator =
+          std::make_unique<Validator>(false,  // error_on_unknown_field
+                                      false,  // error_on_wrong_recommended
+                                      false,  // error_on_missing_field,
+                                      managed_onc,  // managed_onc
+                                      true);        // log_warnings
     }
     validator->SetOncSource(onc_source);
-    original_object_ = std::move(onc_object);
+    original_object_ = base::DictionaryValue::From(std::move(onc_object));
     repaired_object_ = validator->ValidateAndRepairObject(signature,
                                                           *original_object_,
                                                           &validation_result_);
@@ -131,7 +141,7 @@ TEST_P(ONCValidatorValidTest, LiberalValidationValid) {
 // OncParams(string: Filename of a ONC file that is to be validated,
 //           OncValueSignature: signature of that ONC,
 //           bool: true if the ONC is managed).
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ONCValidatorValidTest,
     ONCValidatorValidTest,
     ::testing::Values(
@@ -252,13 +262,6 @@ RepairParams ExpectBothNotValid(const std::string& strict_repaired,
   return RepairParams(strict_repaired, liberal_repaired, false);
 }
 
-// |strict_repaired| is a string to identify the object that is expected as the
-// validation result. They may either be used
-// as filenames or as dictionary keys.
-RepairParams ExpectStrictNotValid(const std::string& strict_repaired) {
-  return RepairParams(strict_repaired, std::string(), true);
-}
-
 ::std::ostream& operator<<(::std::ostream& os, const RepairParams& rp) {
   if (rp.expect_liberal_valid) {
     os << "(" << rp.location_of_strict_repaired << ", liberal is valid)";
@@ -338,42 +341,58 @@ TEST_P(ONCValidatorTestRepairable, LiberalValidation) {
 //                      "invalid_settings_with_repairs.json". That nested
 //                      dictionary is the expected result from liberal
 //                      validation).
-//
-// If liberal valiation is expected to return VALID and strict validation is
-// expected to be not valid:
-//  ExpectStrictNotValid(string: A fieldname in the dictionary from the file
-//                        "invalid_settings_with_repairs.json". That nested
-//                        dictionary is the expected result from strict
-//                        validation).
 
-// Strict validator returns INVALID. Liberal validator returns VALID.
-INSTANTIATE_TEST_CASE_P(
-    StrictInvalidLiberalValid,
+// Strict validator returns INVALID. Liberal validator returns
+// VALID_WITH_WARNINGS (unrepaired).
+INSTANTIATE_TEST_SUITE_P(
+    StrictInvalidLiberalValidWithWarnings,
     ONCValidatorTestRepairable,
     ::testing::Values(
         std::make_pair(OncParams("network-missing-required",
                                  &kNetworkConfigurationSignature,
                                  false),
-                       ExpectStrictNotValid("")),
+                       ExpectBothNotValid("", "network-missing-required")),
         std::make_pair(OncParams("network-missing-required-type",
                                  &kNetworkConfigurationSignature,
                                  false),
-                       ExpectStrictNotValid("")),
+                       ExpectBothNotValid("", "network-missing-required-type")),
         std::make_pair(OncParams("managed-network-missing-required",
                                  &kNetworkConfigurationSignature,
                                  true),
-                       ExpectStrictNotValid("")),
+                       ExpectBothNotValid("",
+                                          "managed-network-missing-required")),
         std::make_pair(OncParams("openvpn-missing-verify-x509-name",
                                  &kNetworkConfigurationSignature,
                                  false),
-                       ExpectStrictNotValid("")),
-        std::make_pair(OncParams("third-party-vpn-missing-extension-id",
-                                 &kNetworkConfigurationSignature,
-                                 false),
-                       ExpectStrictNotValid(""))));
+                       ExpectBothNotValid("",
+                                          "openvpn-missing-verify-x509-name")),
+        std::make_pair(
+            OncParams("third-party-vpn-missing-extension-id",
+                      &kNetworkConfigurationSignature,
+                      false),
+            ExpectBothNotValid("", "third-party-vpn-missing-extension-id")),
+        std::make_pair(OncParams("tether-missing-battery-percentage",
+                                 &kNetworkWithStateSignature,
+                                 true),
+                       ExpectBothNotValid("",
+                                          "tether-missing-battery-percentage")),
+        std::make_pair(OncParams("tether-missing-carrier",
+                                 &kNetworkWithStateSignature,
+                                 true),
+                       ExpectBothNotValid("", "tether-missing-carrier")),
+        std::make_pair(
+            OncParams("tether-missing-has-connected-to-host",
+                      &kNetworkWithStateSignature,
+                      true),
+            ExpectBothNotValid("", "tether-missing-has-connected-to-host")),
+        std::make_pair(OncParams("tether-missing-signal-strength",
+                                 &kNetworkWithStateSignature,
+                                 true),
+                       ExpectBothNotValid("",
+                                          "tether-missing-signal-strength"))));
 
 // Strict validator returns INVALID. Liberal validator repairs.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictInvalidLiberalRepair,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -421,7 +440,7 @@ INSTANTIATE_TEST_CASE_P(
                                           "toplevel-with-repaired-networks"))));
 
 // Strict and liberal validator repair identically.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalRepairIdentically,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -468,7 +487,7 @@ INSTANTIATE_TEST_CASE_P(
                                           "wifi-ssid-and-hexssid-repaired"))));
 
 // Strict and liberal validator both repair, but with different results.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalRepairDifferently,
     ONCValidatorTestRepairable,
     ::testing::Values(std::make_pair(OncParams("toplevel-with-nested-warning",
@@ -478,7 +497,7 @@ INSTANTIATE_TEST_CASE_P(
                                                         "toplevel-repaired"))));
 
 // Strict and liberal validator return both INVALID.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalInvalid,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -544,27 +563,11 @@ INSTANTIATE_TEST_CASE_P(
                                  &kNetworkConfigurationSignature,
                                  false),
                        ExpectBothNotValid("", "")),
-        std::make_pair(OncParams("tether-missing-battery-percentage",
-                                 &kNetworkWithStateSignature,
-                                 true),
-                       ExpectBothNotValid("", "")),
         std::make_pair(OncParams("tether-negative-battery",
                                  &kNetworkWithStateSignature,
                                  true),
                        ExpectBothNotValid("", "")),
         std::make_pair(OncParams("tether-battery-over-100",
-                                 &kNetworkWithStateSignature,
-                                 true),
-                       ExpectBothNotValid("", "")),
-        std::make_pair(OncParams("tether-missing-carrier",
-                                 &kNetworkWithStateSignature,
-                                 true),
-                       ExpectBothNotValid("", "")),
-        std::make_pair(OncParams("tether-missing-has-connected-to-host",
-                                 &kNetworkWithStateSignature,
-                                 true),
-                       ExpectBothNotValid("", "")),
-        std::make_pair(OncParams("tether-missing-signal-strength",
                                  &kNetworkWithStateSignature,
                                  true),
                        ExpectBothNotValid("", "")),

@@ -15,6 +15,7 @@ import android.content.IntentFilter;
 import android.os.Build;
 import android.os.ParcelUuid;
 import android.test.mock.MockContext;
+import android.util.SparseArray;
 
 import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
@@ -26,6 +27,7 @@ import org.chromium.device.bluetooth.test.TestTxPower;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -140,10 +142,18 @@ class Fakes {
                     uuids.add(ParcelUuid.fromString("00001800-0000-1000-8000-00805f9b34fb"));
                     uuids.add(ParcelUuid.fromString("00001801-0000-1000-8000-00805f9b34fb"));
 
+                    HashMap<ParcelUuid, byte[]> serviceData = new HashMap<>();
+                    serviceData.put(ParcelUuid.fromString("0000180d-0000-1000-8000-00805f9b34fb"),
+                            new byte[] {1});
+
+                    SparseArray<byte[]> manufacturerData = new SparseArray<>();
+                    manufacturerData.put(0x00E0, new byte[] {0x01, 0x02, 0x03, 0x04});
+
                     mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                             new FakeScanResult(new FakeBluetoothDevice(this, "01:00:00:90:1E:BE",
                                                        "FakeBluetoothDevice"),
-                                    TestRSSI.LOWEST, uuids, TestTxPower.LOWEST));
+                                    "FakeBluetoothDevice", TestRSSI.LOWEST, uuids,
+                                    TestTxPower.LOWEST, serviceData, manufacturerData));
                     break;
                 }
                 case 2: {
@@ -151,10 +161,20 @@ class Fakes {
                     uuids.add(ParcelUuid.fromString("00001802-0000-1000-8000-00805f9b34fb"));
                     uuids.add(ParcelUuid.fromString("00001803-0000-1000-8000-00805f9b34fb"));
 
+                    HashMap<ParcelUuid, byte[]> serviceData = new HashMap<>();
+                    serviceData.put(ParcelUuid.fromString("0000180d-0000-1000-8000-00805f9b34fb"),
+                            new byte[] {});
+                    serviceData.put(ParcelUuid.fromString("00001802-0000-1000-8000-00805f9b34fb"),
+                            new byte[] {0, 2});
+
+                    SparseArray<byte[]> manufacturerData = new SparseArray<>();
+                    manufacturerData.put(0x00E0, new byte[] {});
+
                     mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                             new FakeScanResult(new FakeBluetoothDevice(this, "01:00:00:90:1E:BE",
                                                        "FakeBluetoothDevice"),
-                                    TestRSSI.LOWER, uuids, TestTxPower.LOWER));
+                                    "Local Device Name", TestRSSI.LOWER, uuids, TestTxPower.LOWER,
+                                    serviceData, manufacturerData));
                     break;
                 }
                 case 3: {
@@ -162,7 +182,8 @@ class Fakes {
                     mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                             new FakeScanResult(
                                     new FakeBluetoothDevice(this, "01:00:00:90:1E:BE", ""),
-                                    TestRSSI.LOW, uuids, NO_TX_POWER));
+                                    "Local Device Name", TestRSSI.LOW, uuids, NO_TX_POWER, null,
+                                    null));
 
                     break;
                 }
@@ -171,7 +192,8 @@ class Fakes {
                     mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                             new FakeScanResult(
                                     new FakeBluetoothDevice(this, "02:00:00:8B:74:63", ""),
-                                    TestRSSI.MEDIUM, uuids, NO_TX_POWER));
+                                    "Local Device Name", TestRSSI.MEDIUM, uuids, NO_TX_POWER, null,
+                                    null));
 
                     break;
                 }
@@ -180,7 +202,32 @@ class Fakes {
                     mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
                             new FakeScanResult(
                                     new FakeBluetoothDevice(this, "01:00:00:90:1E:BE", null),
-                                    TestRSSI.HIGH, uuids, NO_TX_POWER));
+                                    "Local Device Name", TestRSSI.HIGH, uuids, NO_TX_POWER, null,
+                                    null));
+                    break;
+                }
+                case 6: {
+                    ArrayList<ParcelUuid> uuids = null;
+                    mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
+                            new FakeScanResult(
+                                    new FakeBluetoothDevice(this, "02:00:00:8B:74:63", null),
+                                    "Local Device Name", TestRSSI.LOWEST, uuids, NO_TX_POWER, null,
+                                    null));
+                    break;
+                }
+                case 7: {
+                    ArrayList<ParcelUuid> uuids = new ArrayList<ParcelUuid>(2);
+                    uuids.add(ParcelUuid.fromString("f1d0fff3-deaa-ecee-b42f-c9ba7ed623bb"));
+
+                    HashMap<ParcelUuid, byte[]> serviceData = new HashMap<>();
+                    serviceData.put(ParcelUuid.fromString("f1d0fff3-deaa-ecee-b42f-c9ba7ed623bb"),
+                            new byte[] {0, 20});
+
+                    mFakeScanner.mScanCallback.onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES,
+                            new FakeScanResult(new FakeBluetoothDevice(
+                                                       this, "01:00:00:90:1E:BE", "U2F FakeDevice"),
+                                    "Local Device Name", TestRSSI.LOWEST, uuids, NO_TX_POWER,
+                                    serviceData, null));
                     break;
                 }
             }
@@ -198,15 +245,29 @@ class Fakes {
 
         @Override
         public boolean disable() {
-            mPowered = false;
-            nativeOnFakeAdapterStateChanged(mNativeBluetoothTestAndroid, false);
+            // android.bluetooth.BluetoothAdapter::disable() is an async call, so we simulate this
+            // by posting a task to the UI thread.
+            nativePostTaskFromJava(mNativeBluetoothTestAndroid, new Runnable() {
+                @Override
+                public void run() {
+                    mPowered = false;
+                    nativeOnFakeAdapterStateChanged(mNativeBluetoothTestAndroid, false);
+                }
+            });
             return true;
         }
 
         @Override
         public boolean enable() {
-            mPowered = true;
-            nativeOnFakeAdapterStateChanged(mNativeBluetoothTestAndroid, true);
+            // android.bluetooth.BluetoothAdapter::enable() is an async call, so we simulate this by
+            // posting a task to the UI thread.
+            nativePostTaskFromJava(mNativeBluetoothTestAndroid, new Runnable() {
+                @Override
+                public void run() {
+                    mPowered = true;
+                    nativeOnFakeAdapterStateChanged(mNativeBluetoothTestAndroid, true);
+                }
+            });
             return true;
         }
 
@@ -306,17 +367,24 @@ class Fakes {
      */
     static class FakeScanResult extends Wrappers.ScanResultWrapper {
         private final FakeBluetoothDevice mDevice;
+        private final String mLocalName;
         private final int mRssi;
         private final int mTxPower;
         private final ArrayList<ParcelUuid> mUuids;
+        private final Map<ParcelUuid, byte[]> mServiceData;
+        private final SparseArray<byte[]> mManufacturerData;
 
-        FakeScanResult(
-                FakeBluetoothDevice device, int rssi, ArrayList<ParcelUuid> uuids, int txPower) {
+        FakeScanResult(FakeBluetoothDevice device, String localName, int rssi,
+                ArrayList<ParcelUuid> uuids, int txPower, Map<ParcelUuid, byte[]> serviceData,
+                SparseArray<byte[]> manufacturerData) {
             super(null);
             mDevice = device;
+            mLocalName = localName;
             mRssi = rssi;
             mUuids = uuids;
             mTxPower = txPower;
+            mServiceData = serviceData;
+            mManufacturerData = manufacturerData;
         }
 
         @Override
@@ -337,6 +405,21 @@ class Fakes {
         @Override
         public int getScanRecord_getTxPowerLevel() {
             return mTxPower;
+        }
+
+        @Override
+        public Map<ParcelUuid, byte[]> getScanRecord_getServiceData() {
+            return mServiceData;
+        }
+
+        @Override
+        public SparseArray<byte[]> getScanRecord_getManufacturerSpecificData() {
+            return mManufacturerData;
+        }
+
+        @Override
+        public String getScanRecord_getDeviceName() {
+            return mLocalName;
         }
     }
 
@@ -394,6 +477,9 @@ class Fakes {
                 fakeDevice.mGatt.mServices.clear();
                 HashMap<String, Integer> uuidsToInstanceIdMap = new HashMap<String, Integer>();
                 for (String uuid : uuidsSpaceDelimited.split(" ")) {
+                    // String.split() can return empty strings. Ignore them.
+                    if (uuid.isEmpty())
+                        continue;
                     Integer previousId = uuidsToInstanceIdMap.get(uuid);
                     int instanceId = (previousId == null) ? 0 : previousId + 1;
                     uuidsToInstanceIdMap.put(uuid, instanceId);
@@ -448,11 +534,11 @@ class Fakes {
     static class FakeBluetoothGatt extends Wrappers.BluetoothGattWrapper {
         final FakeBluetoothDevice mDevice;
         final ArrayList<Wrappers.BluetoothGattServiceWrapper> mServices;
-        boolean mReadCharacteristicWillFailSynchronouslyOnce = false;
-        boolean mSetCharacteristicNotificationWillFailSynchronouslyOnce = false;
-        boolean mWriteCharacteristicWillFailSynchronouslyOnce = false;
-        boolean mReadDescriptorWillFailSynchronouslyOnce = false;
-        boolean mWriteDescriptorWillFailSynchronouslyOnce = false;
+        boolean mReadCharacteristicWillFailSynchronouslyOnce;
+        boolean mSetCharacteristicNotificationWillFailSynchronouslyOnce;
+        boolean mWriteCharacteristicWillFailSynchronouslyOnce;
+        boolean mReadDescriptorWillFailSynchronouslyOnce;
+        boolean mWriteDescriptorWillFailSynchronouslyOnce;
 
         public FakeBluetoothGatt(FakeBluetoothDevice device) {
             super(null, null);

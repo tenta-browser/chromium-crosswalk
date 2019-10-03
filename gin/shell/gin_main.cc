@@ -11,15 +11,16 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "gin/array_buffer.h"
 #include "gin/modules/console.h"
-#include "gin/modules/module_runner_delegate.h"
+#include "gin/object_template_builder.h"
 #include "gin/public/isolate_holder.h"
+#include "gin/shell_runner.h"
 #include "gin/try_catch.h"
 #include "gin/v8_initializer.h"
 
@@ -40,20 +41,20 @@ void Run(base::WeakPtr<Runner> runner, const base::FilePath& path) {
   runner->Run(Load(path), path.AsUTF8Unsafe());
 }
 
-std::vector<base::FilePath> GetModuleSearchPaths() {
-  std::vector<base::FilePath> module_base(1);
-  CHECK(base::GetCurrentDirectory(&module_base[0]));
-  return module_base;
-}
-
-class GinShellRunnerDelegate : public ModuleRunnerDelegate {
+class GinShellRunnerDelegate : public ShellRunnerDelegate {
  public:
-  GinShellRunnerDelegate() : ModuleRunnerDelegate(GetModuleSearchPaths()) {
-    AddBuiltinModule(Console::kModuleName, Console::GetModule);
+  GinShellRunnerDelegate() {}
+
+  v8::Local<v8::ObjectTemplate> GetGlobalTemplate(
+      ShellRunner* runner,
+      v8::Isolate* isolate) override {
+    v8::Local<v8::ObjectTemplate> templ =
+        ObjectTemplateBuilder(isolate).Build();
+    gin::Console::Register(isolate, templ);
+    return templ;
   }
 
   void UnhandledException(ShellRunner* runner, TryCatch& try_catch) override {
-    ModuleRunnerDelegate::UnhandledException(runner, try_catch);
     LOG(ERROR) << try_catch.GetStackTrace();
   }
 
@@ -73,17 +74,18 @@ int main(int argc, char** argv) {
   gin::V8Initializer::LoadV8Natives();
 #endif
 
-  base::MessageLoop message_loop;
-  base::TaskScheduler::CreateAndStartWithDefaultParams("gin");
+  base::SingleThreadTaskExecutor main_thread_task_executor;
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("gin");
 
   // Initialize the base::FeatureList since IsolateHolder can depend on it.
   base::FeatureList::SetInstance(base::WrapUnique(new base::FeatureList));
 
   {
     gin::IsolateHolder::Initialize(gin::IsolateHolder::kStrictMode,
-                                   gin::IsolateHolder::kStableV8Extras,
                                    gin::ArrayBufferAllocator::SharedInstance());
-    gin::IsolateHolder instance(base::ThreadTaskRunnerHandle::Get());
+    gin::IsolateHolder instance(
+        base::ThreadTaskRunnerHandle::Get(),
+        gin::IsolateHolder::IsolateType::kBlinkMainThread);
 
     gin::GinShellRunnerDelegate delegate;
     gin::ShellRunner runner(&delegate, instance.isolate());
@@ -101,16 +103,16 @@ int main(int argc, char** argv) {
          it != args.end(); ++it) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
+          base::BindOnce(gin::Run, runner.GetWeakPtr(), base::FilePath(*it)));
     }
 
     base::RunLoop().RunUntilIdle();
   }
 
-  // gin::IsolateHolder waits for tasks running in TaskScheduler in its
-  // destructor and thus must be destroyed before TaskScheduler starts skipping
+  // gin::IsolateHolder waits for tasks running in ThreadPool in its
+  // destructor and thus must be destroyed before ThreadPool starts skipping
   // CONTINUE_ON_SHUTDOWN tasks.
-  base::TaskScheduler::GetInstance()->Shutdown();
+  base::ThreadPoolInstance::Get()->Shutdown();
 
   return 0;
 }

@@ -19,8 +19,10 @@
 #endif
 
 const int32_t kPepperFlashPermissions =
-    ppapi::PERMISSION_DEV | ppapi::PERMISSION_PRIVATE |
-    ppapi::PERMISSION_BYPASS_USER_GESTURE | ppapi::PERMISSION_FLASH;
+    ppapi::PERMISSION_DEFAULT | ppapi::PERMISSION_DEV |
+    ppapi::PERMISSION_PRIVATE | ppapi::PERMISSION_BYPASS_USER_GESTURE |
+    ppapi::PERMISSION_FLASH;
+
 namespace {
 
 // File name of the Pepper Flash component manifest on different platforms.

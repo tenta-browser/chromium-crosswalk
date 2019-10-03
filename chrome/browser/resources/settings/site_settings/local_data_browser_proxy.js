@@ -14,7 +14,7 @@
  *   children: !Array<CookieDetails>,
  * }}
  */
-var CookieList;
+let CookieList;
 
 /**
  * @typedef {{
@@ -22,7 +22,7 @@ var CookieList;
  *   id: string,
  * }}
  */
-var LocalDataItem;
+let LocalDataItem;
 
 /**
  * TODO(dschuyler): add |filter| and |order|.
@@ -31,7 +31,16 @@ var LocalDataItem;
  *   total: number,
  * }}
  */
-var LocalDataList;
+let LocalDataList;
+
+/**
+ * Number of cookies attached to a given domain / eTLD+1.
+ * @typedef {{
+ *   etldPlus1: string,
+ *   numCookies: number,
+ * }}
+ */
+let EtldPlus1CookieNumber;
 
 cr.define('settings', function() {
   /** @interface */
@@ -67,6 +76,13 @@ cr.define('settings', function() {
      * @return {!Promise<!CookieList>}
      */
     getCookieDetails(site) {}
+
+    /**
+     * Gets the plural string for a given number of cookies.
+     * @param {number} numCookies The number of cookies.
+     * @return {!Promise<string>}
+     */
+    getNumCookiesString(numCookies) {}
 
     /**
      * Reloads all local data.
@@ -110,6 +126,11 @@ cr.define('settings', function() {
     /** @override */
     getCookieDetails(site) {
       return cr.sendWithPromise('localData.getCookieDetails', site);
+    }
+
+    /** @override */
+    getNumCookiesString(numCookies) {
+      return cr.sendWithPromise('localData.getNumCookiesString', numCookies);
     }
 
     /** @override */

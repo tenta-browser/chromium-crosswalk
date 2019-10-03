@@ -5,19 +5,24 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_INTERFACE_PTR_SET_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_INTERFACE_PTR_SET_H_
 
+#include <map>
 #include <utility>
-#include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/stl_util.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 
 namespace mojo {
+
+using InterfacePtrSetElementId = size_t;
+
 namespace internal {
 
-// TODO(blundell): This class should be rewritten to be structured
-// similarly to BindingSet if possible, with PtrSet owning its
+// TODO(https://crbug.com/965668): This class should be rewritten to be
+// structured similarly to BindingSet if possible, with PtrSet owning its
 // Elements and those Elements calling back into PtrSet on connection
 // error.
 template <typename Interface, template <typename> class Ptr>
@@ -26,36 +31,59 @@ class PtrSet {
   PtrSet() {}
   ~PtrSet() { CloseAll(); }
 
-  void AddPtr(Ptr<Interface> ptr) {
+  InterfacePtrSetElementId AddPtr(Ptr<Interface> ptr) {
+    InterfacePtrSetElementId id = next_ptr_id_++;
     auto weak_interface_ptr = new Element(std::move(ptr));
-    ptrs_.push_back(weak_interface_ptr->GetWeakPtr());
+    ptrs_.emplace(std::piecewise_construct, std::forward_as_tuple(id),
+                  std::forward_as_tuple(weak_interface_ptr->GetWeakPtr()));
     ClearNullPtrs();
+    return id;
   }
 
   template <typename FunctionType>
   void ForAllPtrs(FunctionType function) {
     for (const auto& it : ptrs_) {
-      if (it)
-        function(it->get());
+      if (it.second)
+        function(it.second->get());
     }
     ClearNullPtrs();
   }
 
   void CloseAll() {
     for (const auto& it : ptrs_) {
-      if (it)
-        it->Close();
+      if (it.second)
+        it.second->Close();
     }
     ptrs_.clear();
   }
 
   bool empty() const { return ptrs_.empty(); }
 
+  // Calls FlushForTesting on all Ptrs sequentially. Since each call is a
+  // blocking operation, may be very slow as the number of pointers increases.
   void FlushForTesting() {
     for (const auto& it : ptrs_) {
-      if (it)
-        it->FlushForTesting();
+      if (it.second)
+        it.second->FlushForTesting();
     }
+    ClearNullPtrs();
+  }
+
+  bool HasPtr(InterfacePtrSetElementId id) {
+    return ptrs_.find(id) != ptrs_.end();
+  }
+
+  Ptr<Interface> RemovePtr(InterfacePtrSetElementId id) {
+    auto it = ptrs_.find(id);
+    if (it == ptrs_.end())
+      return Ptr<Interface>();
+    Ptr<Interface> ptr;
+    if (it->second) {
+      ptr = it->second->Take();
+      delete it->second.get();
+    }
+    ptrs_.erase(it);
+    return ptr;
   }
 
  private:
@@ -78,6 +106,8 @@ class PtrSet {
 
     Interface* get() { return ptr_.get(); }
 
+    Ptr<Interface> Take() { return std::move(ptr_); }
+
     base::WeakPtr<Element> GetWeakPtr() {
       return weak_ptr_factory_.GetWeakPtr();
     }
@@ -94,14 +124,11 @@ class PtrSet {
   };
 
   void ClearNullPtrs() {
-    ptrs_.erase(std::remove_if(ptrs_.begin(), ptrs_.end(),
-                               [](const base::WeakPtr<Element>& p) {
-                                 return p.get() == nullptr;
-                               }),
-                ptrs_.end());
+    base::EraseIf(ptrs_, [](const auto& pair) { return !(pair.second); });
   }
 
-  std::vector<base::WeakPtr<Element>> ptrs_;
+  InterfacePtrSetElementId next_ptr_id_ = 0;
+  std::map<InterfacePtrSetElementId, base::WeakPtr<Element>> ptrs_;
 };
 
 }  // namespace internal

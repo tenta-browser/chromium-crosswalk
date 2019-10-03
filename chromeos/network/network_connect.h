@@ -7,9 +7,9 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "chromeos/chromeos_export.h"
 
 namespace base {
 class DictionaryValue;
@@ -22,9 +22,9 @@ class NetworkTypePattern;
 // NetworkConnect is a state machine designed to handle the complex UI flows
 // associated with connecting to a network (and related tasks). Any showing
 // of UI is handled by the NetworkConnect::Delegate implementation.
-class CHROMEOS_EXPORT NetworkConnect {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnect {
  public:
-  class CHROMEOS_EXPORT Delegate {
+  class COMPONENT_EXPORT(CHROMEOS_NETWORK) Delegate {
    public:
     // Shows UI to configure or activate the network specified by |network_id|,
     // which may include showing Payment or Portal UI when appropriate.
@@ -70,11 +70,6 @@ class CHROMEOS_EXPORT NetworkConnect {
 
   // Requests a network disconnection. Ignores any errors and notifications.
   virtual void DisconnectFromNetworkId(const std::string& network_id) = 0;
-
-  // Maybe show the configuration UI after a connect failure based on the
-  // network state and error name. Returns true if the UI is shown.
-  virtual bool MaybeShowConfigureUI(const std::string& network_id,
-                                    const std::string& connect_error) = 0;
 
   // Enables or disables a network technology. If |technology| refers to
   // cellular and the device cannot be enabled due to a SIM lock, this function

@@ -9,14 +9,18 @@ import android.support.annotation.ColorInt;
 import android.support.annotation.Nullable;
 
 import org.chromium.base.DiscardableReferencePool.DiscardableReference;
+import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder.PartialBindCallback;
 import org.chromium.chrome.browser.suggestions.OfflinableSuggestion;
+import org.chromium.ui.modelutil.PropertyObservable;
 
-import java.io.File;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * Represents the data for an article card on the NTP.
  */
-public class SnippetArticle implements OfflinableSuggestion {
+public class SnippetArticle
+        extends PropertyObservable<PartialBindCallback> implements OfflinableSuggestion {
     /** The category of this article. */
     public final int mCategory;
 
@@ -25,6 +29,9 @@ public class SnippetArticle implements OfflinableSuggestion {
 
     /** The title of this article. */
     public final String mTitle;
+
+    /** The snippet for this article. */
+    public final String mSnippet;
 
     /** The canonical publisher name (e.g., New York Times). */
     public final String mPublisher;
@@ -44,6 +51,9 @@ public class SnippetArticle implements OfflinableSuggestion {
      */
     public final long mFetchTimestampMilliseconds;
 
+    /** Whether the snippet has a thumbnail to display. **/
+    public final boolean mHasThumbnail;
+
     /** The flag that indicates whether this is a video suggestion. */
     public boolean mIsVideoSuggestion;
 
@@ -62,20 +72,13 @@ public class SnippetArticle implements OfflinableSuggestion {
     /** The thumbnail, fetched lazily when the RecyclerView wants to show the snippet. */
     private DiscardableReference<Drawable> mThumbnail;
 
+    /**
+     * The favicon of the publisher, fetched lazily when the RecyclerView wants to show the snippet.
+     */
+    private DiscardableReference<Drawable> mPublisherFavicon;
+
     /** The thumbnail dominant color. */
     private @ColorInt Integer mThumbnailDominantColor;
-
-    /** Whether the linked article represents an asset download. */
-    private boolean mIsAssetDownload;
-
-    /** The GUID of the asset download (only for asset download articles). */
-    private String mAssetDownloadGuid;
-
-    /** The path to the asset download (only for asset download articles). */
-    private File mAssetDownloadFile;
-
-    /** The mime type of the asset download (only for asset download articles). */
-    private String mAssetDownloadMimeType;
 
     /** The tab id of the corresponding tab (only for recent tab articles). */
     private int mRecentTabId;
@@ -87,15 +90,29 @@ public class SnippetArticle implements OfflinableSuggestion {
     private boolean mIsPrefetched;
 
     /**
-     * Creates a SnippetArticleListItem object that will hold the data.
+     * Creates a SnippetArticleListItem object that will hold the data. Default is to have a
+     * thumbnail and empty snippet.
      */
     @SuppressLint("SupportAnnotationUsage") // for ColorInt on an Integer rather than int or long
     public SnippetArticle(int category, String idWithinCategory, String title, String publisher,
             String url, long publishTimestamp, float score, long fetchTimestamp,
             boolean isVideoSuggestion, @ColorInt Integer thumbnailDominantColor) {
+        this(category, idWithinCategory, title, "", publisher, url, publishTimestamp, score,
+                fetchTimestamp, isVideoSuggestion, thumbnailDominantColor, true);
+    }
+
+    /**
+     * Creates a SnippetArticleListItem object that will hold the data.
+     */
+    @SuppressLint("SupportAnnotationUsage") // for ColorInt on an Integer rather than int or long
+    public SnippetArticle(int category, String idWithinCategory, String title, String snippet,
+            String publisher, String url, long publishTimestamp, float score, long fetchTimestamp,
+            boolean isVideoSuggestion, @ColorInt Integer thumbnailDominantColor,
+            boolean hasThumbnail) {
         mCategory = category;
         mIdWithinCategory = idWithinCategory;
         mTitle = title;
+        mSnippet = snippet;
         mPublisher = publisher;
         mUrl = url;
         mPublishTimestampMilliseconds = publishTimestamp;
@@ -103,6 +120,7 @@ public class SnippetArticle implements OfflinableSuggestion {
         mFetchTimestampMilliseconds = fetchTimestamp;
         mIsVideoSuggestion = isVideoSuggestion;
         mThumbnailDominantColor = thumbnailDominantColor;
+        mHasThumbnail = hasThumbnail;
     }
 
     @Override
@@ -139,6 +157,20 @@ public class SnippetArticle implements OfflinableSuggestion {
     }
 
     /**
+     * Returns the favicon of the publisher for this article, or {@code null} if it hasn't been
+     * fetched yet.
+     */
+    @Nullable
+    public Drawable getPublisherFavicon() {
+        return mPublisherFavicon == null ? null : mPublisherFavicon.get();
+    }
+
+    /** Sets he favicon of the publisher for this article. */
+    public void setPublisherFavicon(DiscardableReference<Drawable> favicon) {
+        mPublisherFavicon = favicon;
+    }
+
+    /**
      * Returns this article's thumbnail dominant color. Can return {@code null} if there is none.
      */
     @Nullable
@@ -152,99 +184,9 @@ public class SnippetArticle implements OfflinableSuggestion {
         return mCategory == KnownCategories.ARTICLES;
     }
 
-    /** @return whether a snippet is a contextual suggestion. */
-    public boolean isContextual() {
-        return mCategory == KnownCategories.CONTEXTUAL;
-    }
-
-    /** @return whether a snippet is either offline page or asset download. */
-    public boolean isDownload() {
-        return mCategory == KnownCategories.DOWNLOADS;
-    }
-
-    /** @return whether a snippet is asset download. */
-    public boolean isAssetDownload() {
-        return mIsAssetDownload;
-    }
-
-    /**
-     * @return the GUID of the asset download. May only be called if {@link #mIsAssetDownload} is
-     * {@code true} (which implies that this snippet belongs to the DOWNLOADS category).
-     */
-    public String getAssetDownloadGuid() {
-        assert isDownload();
-        assert mIsAssetDownload;
-        return mAssetDownloadGuid;
-    }
-
-    /**
-     * @return the asset download path. May only be called if {@link #mIsAssetDownload} is
-     * {@code true} (which implies that this snippet belongs to the DOWNLOADS category).
-     */
-    public File getAssetDownloadFile() {
-        assert isDownload();
-        assert mIsAssetDownload;
-        return mAssetDownloadFile;
-    }
-
-    /**
-     * @return the mime type of the asset download. May only be called if {@link #mIsAssetDownload}
-     * is {@code true} (which implies that this snippet belongs to the DOWNLOADS category).
-     */
-    public String getAssetDownloadMimeType() {
-        assert isDownload();
-        assert mIsAssetDownload;
-        return mAssetDownloadMimeType;
-    }
-
-    /**
-     * Marks the article suggestion as an asset download with the given path and mime type. May only
-     * be called if this snippet belongs to DOWNLOADS category.
-     */
-    public void setAssetDownloadData(String downloadGuid, String filePath, String mimeType) {
-        assert isDownload();
-        mIsAssetDownload = true;
-        mAssetDownloadGuid = downloadGuid;
-        mAssetDownloadFile = new File(filePath);
-        mAssetDownloadMimeType = mimeType;
-    }
-
-    /**
-     * Marks the article suggestion as an offline page download with the given id. May only
-     * be called if this snippet belongs to DOWNLOADS category.
-     */
-    public void setOfflinePageDownloadData(long offlinePageId) {
-        assert isDownload();
-        mIsAssetDownload = false;
-        setOfflinePageOfflineId(offlinePageId);
-    }
-
     @Override
     public boolean requiresExactOfflinePage() {
-        return isDownload() || isRecentTab();
-    }
-
-    public boolean isRecentTab() {
-        return mCategory == KnownCategories.RECENT_TABS;
-    }
-
-    /**
-     * @return the corresponding recent tab id. May only be called if this snippet is a recent tab
-     * article.
-     */
-    public int getRecentTabId() {
-        assert isRecentTab();
-        return mRecentTabId;
-    }
-
-    /**
-     * Sets tab id and offline page id for recent tab articles. May only be called if this snippet
-     * is a recent tab article.
-     */
-    public void setRecentTabData(int tabId, long offlinePageId) {
-        assert isRecentTab();
-        mRecentTabId = tabId;
-        setOfflinePageOfflineId(offlinePageId);
+        return false;
     }
 
     @Override
@@ -288,5 +230,15 @@ public class SnippetArticle implements OfflinableSuggestion {
 
     public int getPerSectionRank() {
         return mPerSectionRank;
+    }
+
+    @Override
+    public Collection<PartialBindCallback> getAllSetProperties() {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public Collection<PartialBindCallback> getAllProperties() {
+        return Collections.emptyList();
     }
 }

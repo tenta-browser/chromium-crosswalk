@@ -36,6 +36,7 @@ static_library("renderer") {
   deps = [
     "//base",
     "//components/nacl/common",
+    "//components/nacl/common:nacl_error_code",
     "//components/nacl/renderer/plugin:nacl_trusted_plugin",
     "//content/public/common",
     "//content/public/renderer",
@@ -44,7 +45,7 @@ static_library("renderer") {
     "//ppapi/c",
     "//ppapi/proxy:ipc",
     "//ppapi/shared_impl",
-    "//third_party/WebKit/public:blink",
+    "//third_party/blink/public:blink",
     "//v8",
   ]
 }

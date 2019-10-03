@@ -18,13 +18,18 @@
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/indexed_db_pre_close_task_queue.h"
 #include "content/common/content_export.h"
-#include "content/common/indexed_db/indexed_db_metadata.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
 
 namespace base {
 class TickClock;
 }
+
+namespace blink {
+struct IndexedDBDatabaseMetadata;
+struct IndexedDBIndexMetadata;
+struct IndexedDBObjectStoreMetadata;
+}  // namespace blink
 
 namespace leveldb {
 class DB;
@@ -33,6 +38,10 @@ class Iterator;
 
 namespace content {
 class IndexedDBBackingStore;
+
+namespace indexed_db_tombstone_sweeper_unittest {
+class IndexedDBTombstoneSweeperTest;
+}
 
 // Facilitates iterating a whole container with an abnormal starting position.
 // If the starting position is not 0, then the iteration will wrap to the
@@ -67,34 +76,28 @@ class WrappingIterator {
 class CONTENT_EXPORT IndexedDBTombstoneSweeper
     : public IndexedDBPreCloseTaskQueue::PreCloseTask {
  public:
-  enum class Mode {
-    // Gathers statistics and doesn't modify the database.
-    STATISTICS,
-    // Deletes the tombstones that are encountered.
-    DELETION
-  };
 
   // The |database| must outlive this instance.
-  IndexedDBTombstoneSweeper(Mode mode,
-                            int round_iterations,
+  IndexedDBTombstoneSweeper(int round_iterations,
                             int max_iterations,
                             leveldb::DB* database);
   ~IndexedDBTombstoneSweeper() override;
 
   void SetMetadata(
-      std::vector<IndexedDBDatabaseMetadata> const* metadata) override;
+      std::vector<blink::IndexedDBDatabaseMetadata> const* metadata) override;
 
   void Stop(IndexedDBPreCloseTaskQueue::StopReason reason) override;
 
   bool RunRound() override;
 
  private:
-  using DatabaseMetadataVector = std::vector<IndexedDBDatabaseMetadata>;
+  using DatabaseMetadataVector = std::vector<blink::IndexedDBDatabaseMetadata>;
   using ObjectStoreMetadataMap =
-      std::map<int64_t, IndexedDBObjectStoreMetadata>;
-  using IndexMetadataMap = std::map<int64_t, IndexedDBIndexMetadata>;
+      std::map<int64_t, blink::IndexedDBObjectStoreMetadata>;
+  using IndexMetadataMap = std::map<int64_t, blink::IndexedDBIndexMetadata>;
 
-  friend class IndexedDBTombstoneSweeperTest;
+  friend class indexed_db_tombstone_sweeper_unittest::
+      IndexedDBTombstoneSweeperTest;
 
   enum class Status { SWEEPING, DONE_REACHED_MAX, DONE_ERROR, DONE_COMPLETE };
 
@@ -135,7 +138,7 @@ class CONTENT_EXPORT IndexedDBTombstoneSweeper
     sweep_state_.start_index_seed = index_seed;
   }
 
-  void SetClockForTesting(base::TickClock* clock) {
+  void SetClockForTesting(const base::TickClock* clock) {
     clock_for_testing_ = clock;
   }
 
@@ -158,12 +161,11 @@ class CONTENT_EXPORT IndexedDBTombstoneSweeper
   // Returns true if sweeper can continue iterating.
   bool IterateIndex(int64_t database_id,
                     int64_t object_store_id,
-                    const IndexedDBIndexMetadata& index,
+                    const blink::IndexedDBIndexMetadata& index,
                     Status* sweep_status,
                     leveldb::Status* leveldb_status,
                     int* round_iterations);
 
-  const Mode mode_;
   int num_iterations_ = 0;
   const int max_round_iterations_;
   const int max_iterations_;
@@ -172,7 +174,7 @@ class CONTENT_EXPORT IndexedDBTombstoneSweeper
   int total_indices_ = 0;
 
   // Used to measure total time of the task.
-  base::TickClock* clock_for_testing_ = nullptr;
+  const base::TickClock* clock_for_testing_ = nullptr;
   base::Optional<base::TimeTicks> start_time_;
 
   leveldb::DB* database_ = nullptr;
@@ -180,13 +182,14 @@ class CONTENT_EXPORT IndexedDBTombstoneSweeper
   leveldb::WriteBatch round_deletion_batch_;
   base::TimeDelta total_deletion_time_;
 
-  std::vector<IndexedDBDatabaseMetadata> const* database_metadata_ = nullptr;
+  std::vector<blink::IndexedDBDatabaseMetadata> const* database_metadata_ =
+      nullptr;
   std::unique_ptr<leveldb::Iterator> iterator_;
 
   SweepState sweep_state_;
   SweepMetrics metrics_;
 
-  base::WeakPtrFactory<IndexedDBTombstoneSweeper> ptr_factory_;
+  base::WeakPtrFactory<IndexedDBTombstoneSweeper> ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(IndexedDBTombstoneSweeper);
 };
 

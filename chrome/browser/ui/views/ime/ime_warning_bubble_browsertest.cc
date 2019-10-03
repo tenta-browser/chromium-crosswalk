@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "chrome/browser/extensions/api/input_ime/input_ime_api_nonchromeos.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -10,7 +11,7 @@
 #include "chrome/browser/ui/views/ime/ime_warning_bubble_view.h"
 #include "ui/views/controls/button/checkbox.h"
 
-class ImeWarningBubbleTest : public ExtensionBrowserTest {
+class ImeWarningBubbleTest : public extensions::ExtensionBrowserTest {
  public:
   ImeWarningBubbleTest();
   ~ImeWarningBubbleTest() override {}
@@ -40,9 +41,8 @@ ImeWarningBubbleTest::ImeWarningBubbleTest()
 
 void ImeWarningBubbleTest::SetUpOnMainThread() {
   ToolbarActionsBar::disable_animations_for_testing_ = true;
-  ExtensionBrowserTest::SetUpOnMainThread();
-  extension_ = ExtensionBrowserTest::LoadExtension(
-      test_data_dir_.AppendASCII("input_ime"));
+  extensions::ExtensionBrowserTest::SetUpOnMainThread();
+  extension_ = LoadExtension(test_data_dir_.AppendASCII("input_ime"));
   callback_ =
       base::Bind(&ImeWarningBubbleTest::OnPermissionBubbleFinished,
                  base::Unretained(this));

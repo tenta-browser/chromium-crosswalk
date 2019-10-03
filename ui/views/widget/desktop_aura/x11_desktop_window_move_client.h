@@ -7,7 +7,6 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/x/x11.h"
 #include "ui/views/views_export.h"
@@ -43,11 +42,11 @@ class VIEWS_EXPORT X11DesktopWindowMoveClient
   void EndMoveLoop() override;
 
  private:
-  X11WholeScreenMoveLoop move_loop_;
+  X11WholeScreenMoveLoop move_loop_{this};
 
   // We need to keep track of this so we can actually move it when reacting to
   // mouse events.
-  aura::WindowTreeHost* host_;
+  aura::WindowTreeHost* host_ = nullptr;
 
   // Our cursor offset from the top left window origin when the drag
   // started. Used to calculate the window's new bounds relative to the current

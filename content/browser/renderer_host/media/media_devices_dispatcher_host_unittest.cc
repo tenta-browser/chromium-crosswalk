@@ -13,11 +13,10 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/browser/media/media_devices_permission_checker.h"
 #include "content/browser/renderer_host/media/in_process_video_capture_provider.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/media_stream_ui_proxy.h"
@@ -32,11 +31,12 @@
 #include "media/base/media_switches.h"
 #include "media/capture/video/fake_video_capture_device_factory.h"
 #include "media/capture/video/video_capture_system_impl.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/origin.h"
 
+using blink::mojom::MediaDeviceType;
 using testing::_;
 using testing::SaveArg;
 using testing::InvokeWithoutArgs;
@@ -52,9 +52,7 @@ const char kNormalVideoDeviceID[] = "/dev/video0";
 const char kNoFormatsVideoDeviceID[] = "/dev/video1";
 const char kZeroResolutionVideoDeviceID[] = "/dev/video2";
 const char* const kDefaultVideoDeviceID = kZeroResolutionVideoDeviceID;
-const char kUserDefaultAudioInputDeviceID[] = "fake_audio_input_2";
-const char kSystemDefaultAudioInputLabel[] = "Fake Audio Input 1";
-const char kSystemDefaultAudioOutputLabel[] = "Fake Audio Output 1";
+const char kDefaultAudioDeviceID[] = "fake_audio_input_2";
 
 const auto kIgnoreLogMessageCB = base::BindRepeating([](const std::string&) {});
 
@@ -62,24 +60,25 @@ void PhysicalDevicesEnumerated(base::Closure quit_closure,
                                MediaDeviceEnumeration* out,
                                const MediaDeviceEnumeration& enumeration) {
   *out = enumeration;
-  quit_closure.Run();
+  std::move(quit_closure).Run();
 }
 
 class MockMediaDevicesListener : public blink::mojom::MediaDevicesListener {
  public:
-  MockMediaDevicesListener() : binding_(this) {}
+  MockMediaDevicesListener() {}
 
-  MOCK_METHOD3(OnDevicesChanged,
-               void(MediaDeviceType, uint32_t, const MediaDeviceInfoArray&));
+  MOCK_METHOD2(OnDevicesChanged,
+               void(blink::MediaDeviceType,
+                    const blink::WebMediaDeviceInfoArray&));
 
   blink::mojom::MediaDevicesListenerPtr CreateInterfacePtrAndBind() {
     blink::mojom::MediaDevicesListenerPtr listener;
-    binding_.Bind(mojo::MakeRequest(&listener));
+    bindings_.AddBinding(this, mojo::MakeRequest(&listener));
     return listener;
   }
 
  private:
-  mojo::Binding<blink::mojom::MediaDevicesListener> binding_;
+  mojo::BindingSet<blink::mojom::MediaDevicesListener> bindings_;
 };
 
 }  // namespace
@@ -95,8 +94,7 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
         switches::kUseFakeDeviceForMediaStream,
         base::StringPrintf("video-input-default-id=%s, "
                            "audio-input-default-id=%s",
-                           kDefaultVideoDeviceID,
-                           kUserDefaultAudioInputDeviceID));
+                           kDefaultVideoDeviceID, kDefaultAudioDeviceID));
     audio_manager_ = std::make_unique<media::MockAudioManager>(
         std::make_unique<media::TestAudioThread>());
     audio_system_ =
@@ -117,9 +115,10 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
         std::move(video_capture_provider));
     host_ = std::make_unique<MediaDevicesDispatcherHost>(
         kProcessId, kRenderId, media_stream_manager_.get());
-    host_->set_salt_and_origin_callback_for_testing(
-        base::Bind(&MediaDevicesDispatcherHostTest::GetSaltAndOrigin,
-                   base::Unretained(this)));
+    media_stream_manager_->media_devices_manager()
+        ->set_salt_and_origin_callback_for_testing(base::BindRepeating(
+            &MediaDevicesDispatcherHostTest::GetSaltAndOrigin,
+            base::Unretained(this)));
   }
   ~MediaDevicesDispatcherHostTest() override { audio_manager_->Shutdown(); }
 
@@ -146,24 +145,29 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
 
     base::RunLoop run_loop;
     MediaDevicesManager::BoolDeviceTypes devices_to_enumerate;
-    devices_to_enumerate[MEDIA_DEVICE_TYPE_AUDIO_INPUT] = true;
-    devices_to_enumerate[MEDIA_DEVICE_TYPE_VIDEO_INPUT] = true;
-    devices_to_enumerate[MEDIA_DEVICE_TYPE_AUDIO_OUTPUT] = true;
+    devices_to_enumerate[blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT] = true;
+    devices_to_enumerate[blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT] = true;
+    devices_to_enumerate[blink::MEDIA_DEVICE_TYPE_AUDIO_OUTPUT] = true;
     media_stream_manager_->media_devices_manager()->EnumerateDevices(
         devices_to_enumerate,
-        base::Bind(&PhysicalDevicesEnumerated, run_loop.QuitClosure(),
-                   &physical_devices_));
+        base::BindOnce(&PhysicalDevicesEnumerated, run_loop.QuitClosure(),
+                       &physical_devices_));
     run_loop.Run();
 
-    ASSERT_GT(physical_devices_[MEDIA_DEVICE_TYPE_AUDIO_INPUT].size(), 0u);
-    ASSERT_GT(physical_devices_[MEDIA_DEVICE_TYPE_VIDEO_INPUT].size(), 0u);
-    ASSERT_GT(physical_devices_[MEDIA_DEVICE_TYPE_AUDIO_OUTPUT].size(), 0u);
+    ASSERT_GT(physical_devices_[blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT].size(),
+              0u);
+    ASSERT_GT(physical_devices_[blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT].size(),
+              0u);
+    ASSERT_GT(physical_devices_[blink::MEDIA_DEVICE_TYPE_AUDIO_OUTPUT].size(),
+              0u);
   }
 
-  MOCK_METHOD1(UniqueOriginCallback,
-               void(const std::vector<std::vector<MediaDeviceInfo>>&));
-  MOCK_METHOD1(ValidOriginCallback,
-               void(const std::vector<std::vector<MediaDeviceInfo>>&));
+  MOCK_METHOD1(
+      UniqueOriginCallback,
+      void(const std::vector<std::vector<blink::WebMediaDeviceInfo>>&));
+  MOCK_METHOD1(
+      ValidOriginCallback,
+      void(const std::vector<std::vector<blink::WebMediaDeviceInfo>>&));
   MOCK_METHOD0(MockVideoInputCapabilitiesCallback, void());
   MOCK_METHOD0(MockAudioInputCapabilitiesCallback, void());
   MOCK_METHOD0(MockAllVideoInputDeviceFormatsCallback, void());
@@ -202,7 +206,7 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
     EXPECT_EQ(kNumExpectedEntries, capabilities.size());
     std::string expected_first_device_id =
         GetHMACForMediaDeviceID(browser_context_->GetMediaDeviceIDSalt(),
-                                origin_, kUserDefaultAudioInputDeviceID);
+                                origin_, kDefaultAudioDeviceID);
     EXPECT_EQ(expected_first_device_id, capabilities[0]->device_id);
     for (const auto& capability : capabilities)
       EXPECT_TRUE(capability->parameters.IsValid());
@@ -235,7 +239,11 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
  protected:
   void DevicesEnumerated(
       const base::Closure& closure,
-      const std::vector<std::vector<MediaDeviceInfo>>& devices) {
+      const std::vector<std::vector<blink::WebMediaDeviceInfo>>& devices,
+      std::vector<blink::mojom::VideoInputDeviceCapabilitiesPtr>
+          video_input_capabilities,
+      std::vector<blink::mojom::AudioInputDeviceCapabilitiesPtr>
+          audio_input_capabilities) {
     enumerated_devices_ = devices;
     closure.Run();
   }
@@ -244,30 +252,35 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
                                         bool enumerate_video_input,
                                         bool enumerate_audio_output,
                                         bool permission_override_value = true) {
-    host_->SetPermissionChecker(std::make_unique<MediaDevicesPermissionChecker>(
-        permission_override_value));
+    media_stream_manager_->media_devices_manager()->SetPermissionChecker(
+        std::make_unique<MediaDevicesPermissionChecker>(
+            permission_override_value));
     base::RunLoop run_loop;
     host_->EnumerateDevices(
         enumerate_audio_input, enumerate_video_input, enumerate_audio_output,
+        false, false,
         base::BindOnce(&MediaDevicesDispatcherHostTest::DevicesEnumerated,
                        base::Unretained(this), run_loop.QuitClosure()));
     run_loop.Run();
 
     ASSERT_FALSE(enumerated_devices_.empty());
     if (enumerate_audio_input)
-      EXPECT_FALSE(enumerated_devices_[MEDIA_DEVICE_TYPE_AUDIO_INPUT].empty());
+      EXPECT_FALSE(
+          enumerated_devices_[blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT].empty());
     if (enumerate_video_input)
-      EXPECT_FALSE(enumerated_devices_[MEDIA_DEVICE_TYPE_VIDEO_INPUT].empty());
+      EXPECT_FALSE(
+          enumerated_devices_[blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT].empty());
     if (enumerate_audio_output)
-      EXPECT_FALSE(enumerated_devices_[MEDIA_DEVICE_TYPE_AUDIO_OUTPUT].empty());
+      EXPECT_FALSE(
+          enumerated_devices_[blink::MEDIA_DEVICE_TYPE_AUDIO_OUTPUT].empty());
 
     EXPECT_FALSE(DoesContainRawIds(enumerated_devices_));
     EXPECT_TRUE(DoesEveryDeviceMapToRawId(enumerated_devices_, origin_));
   }
 
   bool DoesContainRawIds(
-      const std::vector<std::vector<MediaDeviceInfo>>& enumeration) {
-    for (size_t i = 0; i < NUM_MEDIA_DEVICE_TYPES; ++i) {
+      const std::vector<std::vector<blink::WebMediaDeviceInfo>>& enumeration) {
+    for (size_t i = 0; i < blink::NUM_MEDIA_DEVICE_TYPES; ++i) {
       for (const auto& device_info : enumeration[i]) {
         for (const auto& raw_device_info : physical_devices_[i]) {
           // Skip default and communications audio devices, whose IDs are not
@@ -287,9 +300,9 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
   }
 
   bool DoesEveryDeviceMapToRawId(
-      const std::vector<std::vector<MediaDeviceInfo>>& enumeration,
+      const std::vector<std::vector<blink::WebMediaDeviceInfo>>& enumeration,
       const url::Origin& origin) {
-    for (size_t i = 0; i < NUM_MEDIA_DEVICE_TYPES; ++i) {
+    for (size_t i = 0; i < blink::NUM_MEDIA_DEVICE_TYPES; ++i) {
       for (const auto& device_info : enumeration[i]) {
         bool found_match = false;
         for (const auto& raw_device_info : physical_devices_[i]) {
@@ -308,15 +321,8 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
   }
 
   // Returns true if all devices have labels, false otherwise.
-  bool DoesContainLabels(
-      const MediaDeviceInfoArray& device_infos,
-      const std::string& system_default_label = std::string()) {
+  bool DoesContainLabels(const blink::WebMediaDeviceInfoArray& device_infos) {
     for (const auto& device_info : device_infos) {
-      if (media::AudioDeviceDescription::IsDefaultDevice(
-              device_info.device_id)) {
-        EXPECT_TRUE(base::EndsWith(device_info.label, system_default_label,
-                                   base::CompareCase::SENSITIVE));
-      }
       if (device_info.label.empty())
         return false;
     }
@@ -324,21 +330,18 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
   }
 
   // Returns true if all devices have labels, false otherwise.
-  bool DoesContainLabels(const std::vector<MediaDeviceInfoArray>& enumeration) {
-    for (int i = 0; i < NUM_MEDIA_DEVICE_TYPES; i++) {
-      std::string default_label;
-      if (i == MEDIA_DEVICE_TYPE_AUDIO_INPUT)
-        default_label = kSystemDefaultAudioInputLabel;
-      else if (i == MEDIA_DEVICE_TYPE_AUDIO_OUTPUT)
-        default_label = kSystemDefaultAudioOutputLabel;
-      if (!DoesContainLabels(enumeration[i], default_label))
+  bool DoesContainLabels(
+      const std::vector<blink::WebMediaDeviceInfoArray>& enumeration) {
+    for (const auto& device_infos : enumeration) {
+      if (!DoesContainLabels(device_infos))
         return false;
     }
     return true;
   }
 
   // Returns true if no devices have labels, false otherwise.
-  bool DoesNotContainLabels(const MediaDeviceInfoArray& device_infos) {
+  bool DoesNotContainLabels(
+      const blink::WebMediaDeviceInfoArray& device_infos) {
     for (const auto& device_info : device_infos) {
       if (!device_info.label.empty())
         return false;
@@ -348,7 +351,7 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
 
   // Returns true if no devices have labels, false otherwise.
   bool DoesNotContainLabels(
-      const std::vector<std::vector<MediaDeviceInfo>>& enumeration) {
+      const std::vector<std::vector<blink::WebMediaDeviceInfo>>& enumeration) {
     for (const auto& device_infos : enumeration) {
       if (!DoesNotContainLabels(device_infos))
         return false;
@@ -357,26 +360,26 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
   }
 
   void SubscribeAndWaitForResult(bool has_permission) {
-    host_->SetPermissionChecker(
+    media_stream_manager_->media_devices_manager()->SetPermissionChecker(
         std::make_unique<MediaDevicesPermissionChecker>(has_permission));
-    uint32_t subscription_id = 0u;
-    for (size_t i = 0; i < NUM_MEDIA_DEVICE_TYPES; ++i) {
-      MediaDeviceType type = static_cast<MediaDeviceType>(i);
-      host_->SubscribeDeviceChangeNotifications(type, subscription_id);
-      MockMediaDevicesListener device_change_listener;
-      host_->SetDeviceChangeListenerForTesting(
+    MockMediaDevicesListener device_change_listener;
+    for (size_t i = 0; i < blink::NUM_MEDIA_DEVICE_TYPES; ++i) {
+      blink::MediaDeviceType type = static_cast<blink::MediaDeviceType>(i);
+      host_->AddMediaDevicesListener(
+          type == blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT,
+          type == blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT,
+          type == blink::MEDIA_DEVICE_TYPE_AUDIO_OUTPUT,
           device_change_listener.CreateInterfacePtrAndBind());
-      MediaDeviceInfoArray changed_devices;
-      EXPECT_CALL(device_change_listener,
-                  OnDevicesChanged(type, subscription_id, testing::_))
-          .WillRepeatedly(SaveArg<2>(&changed_devices));
+      blink::WebMediaDeviceInfoArray changed_devices;
+      EXPECT_CALL(device_change_listener, OnDevicesChanged(type, _))
+          .WillRepeatedly(SaveArg<1>(&changed_devices));
 
       // Simulate device-change notification
-      MediaDeviceInfoArray updated_devices = {
-          {"fake_device_id", "fake_label", "fake_group"}};
-      host_->OnDevicesChanged(type, updated_devices);
+      media_stream_manager_->media_devices_manager()->OnDevicesChanged(
+          base::SystemMonitor::DEVTYPE_AUDIO);
+      media_stream_manager_->media_devices_manager()->OnDevicesChanged(
+          base::SystemMonitor::DEVTYPE_VIDEO_CAPTURE);
       base::RunLoop().RunUntilIdle();
-      host_->UnsubscribeDeviceChangeNotifications(type, subscription_id);
 
       if (has_permission)
         EXPECT_TRUE(DoesContainLabels(changed_devices));
@@ -385,9 +388,10 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
     }
   }
 
-  std::pair<std::string, url::Origin> GetSaltAndOrigin(int /* process_id */,
-                                                       int /* frame_id */) {
-    return std::make_pair(browser_context_->GetMediaDeviceIDSalt(), origin_);
+  MediaDeviceSaltAndOrigin GetSaltAndOrigin(int /* process_id */,
+                                            int /* frame_id */) {
+    return MediaDeviceSaltAndOrigin(browser_context_->GetMediaDeviceIDSalt(),
+                                    "fake_group_id_salt", origin_);
   }
 
   // The order of these members is important on teardown:
@@ -405,7 +409,7 @@ class MediaDevicesDispatcherHostTest : public testing::TestWithParam<GURL> {
   MediaDeviceEnumeration physical_devices_;
   url::Origin origin_;
 
-  std::vector<MediaDeviceInfoArray> enumerated_devices_;
+  std::vector<blink::WebMediaDeviceInfoArray> enumerated_devices_;
 };
 
 TEST_P(MediaDevicesDispatcherHostTest, EnumerateAudioInputDevices) {
@@ -532,7 +536,7 @@ TEST_P(MediaDevicesDispatcherHostTest, Salt) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        MediaDevicesDispatcherHostTest,
-                        testing::Values(GURL(), GURL("https://test.com")));
-};  // namespace content
+INSTANTIATE_TEST_SUITE_P(,
+                         MediaDevicesDispatcherHostTest,
+                         testing::Values(GURL(), GURL("https://test.com")));
+}  // namespace content

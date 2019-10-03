@@ -7,7 +7,9 @@
 #include <limits.h>
 #include <stdint.h>
 
-#include "base/macros.h"
+#include "base/pending_task.h"
+#include "base/stl_util.h"
+#include "base/task/common/task_annotator.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
@@ -46,14 +48,25 @@ typedef HANDLE MutexHandle;
 #include <mach/mach_time.h>
 #include <mach-o/dyld.h>
 
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 #if defined(OS_NACL)
 #include <sys/time.h>  // timespec doesn't seem to be in <time.h>
 #endif
 #include <time.h>
 #endif
 
-#if defined(OS_POSIX)
+#if defined(OS_FUCHSIA)
+#include <lib/syslog/global.h>
+#include <lib/syslog/logger.h>
+#include <zircon/process.h>
+#include <zircon/syscalls.h>
+#endif
+
+#if defined(OS_ANDROID)
+#include <android/log.h>
+#endif
+
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include <errno.h>
 #include <paths.h>
 #include <pthread.h>
@@ -83,9 +96,12 @@ typedef pthread_mutex_t* MutexHandle;
 #include "base/debug/alias.h"
 #include "base/debug/debugger.h"
 #include "base/debug/stack_trace.h"
-#include "base/lazy_instance.h"
+#include "base/debug/task_trace.h"
+#include "base/no_destructor.h"
+#include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -93,12 +109,13 @@ typedef pthread_mutex_t* MutexHandle;
 #include "base/synchronization/lock_impl.h"
 #include "base/threading/platform_thread.h"
 #include "base/vlog.h"
-#if defined(OS_POSIX)
-#include "base/posix/safe_strerror.h"
+
+#if defined(OS_WIN)
+#include "base/win/win_util.h"
 #endif
 
-#if defined(OS_ANDROID)
-#include <android/log.h>
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#include "base/posix/safe_strerror.h"
 #endif
 
 namespace logging {
@@ -109,7 +126,7 @@ VlogInfo* g_vlog_info = nullptr;
 VlogInfo* g_vlog_info_prev = nullptr;
 
 const char* const log_severity_names[] = {"INFO", "WARNING", "ERROR", "FATAL"};
-static_assert(LOG_NUM_SEVERITIES == arraysize(log_severity_names),
+static_assert(LOG_NUM_SEVERITIES == base::size(log_severity_names),
               "Incorrect number of log_severity_names");
 
 const char* log_severity_name(int severity) {
@@ -120,7 +137,9 @@ const char* log_severity_name(int severity) {
 
 int g_min_log_level = 0;
 
-LoggingDestination g_logging_destination = LOG_DEFAULT;
+// Specifies the process' logging sink(s), represented as a combination of
+// LoggingDestination values joined by bitwise OR.
+int g_logging_destination = LOG_DEFAULT;
 
 // For LOG_ERROR and above, always print to stderr.
 const int kAlwaysPrintErrorLevel = LOG_ERROR;
@@ -128,11 +147,7 @@ const int kAlwaysPrintErrorLevel = LOG_ERROR;
 // Which log file to use? This is initialized by InitLogging or
 // will be lazily initialized to the default value when it is
 // first needed.
-#if defined(OS_WIN)
-typedef std::wstring PathString;
-#else
-typedef std::string PathString;
-#endif
+using PathString = base::FilePath::StringType;
 PathString* g_log_file_name = nullptr;
 
 // This file is lazily opened and the handle may be nullptr
@@ -143,6 +158,7 @@ bool g_log_process_id = false;
 bool g_log_thread_id = false;
 bool g_log_timestamp = true;
 bool g_log_tickcount = false;
+const char* g_log_prefix = nullptr;
 
 // Should we pop up fatal debug messages in a dialog?
 bool show_error_dialogs = false;
@@ -150,8 +166,10 @@ bool show_error_dialogs = false;
 // An assert handler override specified by the client to be called instead of
 // the debug message dialog and process termination. Assert handlers are stored
 // in stack to allow overriding and restoring.
-base::LazyInstance<base::stack<LogAssertHandlerFunction>>::Leaky
-    log_assert_handler_stack = LAZY_INSTANCE_INITIALIZER;
+base::stack<LogAssertHandlerFunction>& GetLogAssertHandlerStack() {
+  static base::NoDestructor<base::stack<LogAssertHandlerFunction>> instance;
+  return *instance;
+}
 
 // A log message handler that gets notified of every log message we process.
 LogMessageHandlerFunction log_message_handler = nullptr;
@@ -161,6 +179,11 @@ LogMessageHandlerFunction log_message_handler = nullptr;
 int32_t CurrentProcessId() {
 #if defined(OS_WIN)
   return GetCurrentProcessId();
+#elif defined(OS_FUCHSIA)
+  zx_info_handle_basic_t basic = {};
+  zx_object_get_info(zx_process_self(), ZX_INFO_HANDLE_BASIC, &basic,
+                     sizeof(basic), nullptr, nullptr);
+  return basic.koid;
 #elif defined(OS_POSIX)
   return getpid();
 #endif
@@ -169,6 +192,9 @@ int32_t CurrentProcessId() {
 uint64_t TickCount() {
 #if defined(OS_WIN)
   return GetTickCount();
+#elif defined(OS_FUCHSIA)
+  return zx_clock_get_monotonic() /
+         static_cast<zx_time_t>(base::Time::kNanosecondsPerMicrosecond);
 #elif defined(OS_MACOSX)
   return mach_absolute_time();
 #elif defined(OS_NACL)
@@ -188,27 +214,29 @@ uint64_t TickCount() {
 
 void DeleteFilePath(const PathString& log_name) {
 #if defined(OS_WIN)
-  DeleteFile(log_name.c_str());
+  DeleteFile(base::as_wcstr(log_name));
 #elif defined(OS_NACL)
   // Do nothing; unlink() isn't supported on NaCl.
-#else
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   unlink(log_name.c_str());
+#else
+#error Unsupported platform
 #endif
 }
 
 PathString GetDefaultLogFile() {
 #if defined(OS_WIN)
   // On Windows we use the same path as the exe.
-  wchar_t module_name[MAX_PATH];
-  GetModuleFileName(nullptr, module_name, MAX_PATH);
+  base::char16 module_name[MAX_PATH];
+  GetModuleFileName(nullptr, base::as_writable_wcstr(module_name), MAX_PATH);
 
   PathString log_name = module_name;
   PathString::size_type last_backslash = log_name.rfind('\\', log_name.size());
   if (last_backslash != PathString::npos)
     log_name.erase(last_backslash + 1);
-  log_name += L"debug.log";
+  log_name += STRING16_LITERAL("debug.log");
   return log_name;
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   // On other platforms we just use the current directory.
   return PathString("debug.log");
 #endif
@@ -216,7 +244,7 @@ PathString GetDefaultLogFile() {
 
 // We don't need locks on Windows for atomically appending to files. The OS
 // provides this functionality.
-#if !defined(OS_WIN)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
 // This class acts as a wrapper for locking the logging files.
 // LoggingLock::Init() should be called from the main thread before any logging
 // is done. Then whenever logging, be sure to have a local LoggingLock
@@ -247,9 +275,7 @@ class LoggingLock {
  private:
   static void LockLogging() {
     if (lock_log_file == LOCK_LOG_FILE) {
-#if defined(OS_POSIX)
       pthread_mutex_lock(&log_mutex);
-#endif
     } else {
       // use the lock
       log_lock->Lock();
@@ -258,9 +284,7 @@ class LoggingLock {
 
   static void UnlockLogging() {
     if (lock_log_file == LOCK_LOG_FILE) {
-#if defined(OS_POSIX)
       pthread_mutex_unlock(&log_mutex);
-#endif
     } else {
       log_lock->Unlock();
     }
@@ -273,9 +297,7 @@ class LoggingLock {
 
   // When we don't use a lock, we are using a global mutex. We need to do this
   // because LockFileEx is not thread safe.
-#if defined(OS_POSIX)
   static pthread_mutex_t log_mutex;
-#endif
 
   static bool initialized;
   static LogLockingState lock_log_file;
@@ -288,11 +310,9 @@ base::internal::LockImpl* LoggingLock::log_lock = nullptr;
 // static
 LogLockingState LoggingLock::lock_log_file = LOCK_LOG_FILE;
 
-#if defined(OS_POSIX)
 pthread_mutex_t LoggingLock::log_mutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
-#endif  // OS_WIN
+#endif  // OS_POSIX || OS_FUCHSIA
 
 // Called by logging functions to ensure that |g_log_file| is initialized
 // and can be used for writing. Returns false if the file could not be
@@ -313,7 +333,7 @@ bool InitializeLogFileHandle() {
     // appended to across accesses from multiple threads.
     // https://msdn.microsoft.com/en-us/library/windows/desktop/aa364399(v=vs.85).aspx
     // https://msdn.microsoft.com/en-us/library/windows/desktop/aa363858(v=vs.85).aspx
-    g_log_file = CreateFile(g_log_file_name->c_str(), FILE_APPEND_DATA,
+    g_log_file = CreateFile(base::as_wcstr(*g_log_file_name), FILE_APPEND_DATA,
                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (g_log_file == INVALID_HANDLE_VALUE || g_log_file == nullptr) {
@@ -323,31 +343,34 @@ bool InitializeLogFileHandle() {
       // some consumers of base logging like chrome_elf, etc.
       // Please don't change the code below to use FilePath.
       // try the current directory
-      wchar_t system_buffer[MAX_PATH];
+      base::char16 system_buffer[MAX_PATH];
       system_buffer[0] = 0;
-      DWORD len = ::GetCurrentDirectory(arraysize(system_buffer),
-                                        system_buffer);
-      if (len == 0 || len > arraysize(system_buffer))
+      DWORD len = ::GetCurrentDirectory(base::size(system_buffer),
+                                        base::as_writable_wcstr(system_buffer));
+      if (len == 0 || len > base::size(system_buffer))
         return false;
 
       *g_log_file_name = system_buffer;
       // Append a trailing backslash if needed.
       if (g_log_file_name->back() != L'\\')
-        *g_log_file_name += L"\\";
-      *g_log_file_name += L"debug.log";
+        *g_log_file_name += STRING16_LITERAL("\\");
+      *g_log_file_name += STRING16_LITERAL("debug.log");
 
-      g_log_file = CreateFile(g_log_file_name->c_str(), FILE_APPEND_DATA,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+      g_log_file =
+          CreateFile(base::as_wcstr(*g_log_file_name), FILE_APPEND_DATA,
+                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                     FILE_ATTRIBUTE_NORMAL, nullptr);
       if (g_log_file == INVALID_HANDLE_VALUE || g_log_file == nullptr) {
         g_log_file = nullptr;
         return false;
       }
     }
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
     g_log_file = fopen(g_log_file_name->c_str(), "a");
     if (g_log_file == nullptr)
       return false;
+#else
+#error Unsupported platform
 #endif
   }
 
@@ -357,8 +380,10 @@ bool InitializeLogFileHandle() {
 void CloseFile(FileHandle log) {
 #if defined(OS_WIN)
   CloseHandle(log);
-#else
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   fclose(log);
+#else
+#error Unsupported platform
 #endif
 }
 
@@ -372,28 +397,23 @@ void CloseLogFileUnlocked() {
 
 }  // namespace
 
-#if DCHECK_IS_ON() && defined(SYZYASAN)
-// In DCHECK-enabled SyzyASAN builds, allow the meaning of LOG_DCHECK to be
+#if defined(DCHECK_IS_CONFIGURABLE)
+// In DCHECK-enabled Chrome builds, allow the meaning of LOG_DCHECK to be
 // determined at run-time. We default it to INFO, to avoid it triggering
 // crashes before the run-time has explicitly chosen the behaviour.
 BASE_EXPORT logging::LogSeverity LOG_DCHECK = LOG_INFO;
-#endif
+#endif  // defined(DCHECK_IS_CONFIGURABLE)
 
 // This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
 // an object of the correct type on the LHS of the unused part of the ternary
 // operator.
 std::ostream* g_swallow_stream;
 
-LoggingSettings::LoggingSettings()
-    : logging_dest(LOG_DEFAULT),
-      log_file(nullptr),
-      lock_log(LOCK_LOG_FILE),
-      delete_old(APPEND_TO_OLD_LOG_FILE) {}
-
 bool BaseInitLoggingImpl(const LoggingSettings& settings) {
 #if defined(OS_NACL)
-  // Can log only to the system debug log.
-  CHECK_EQ(settings.logging_dest & ~LOG_TO_SYSTEM_DEBUG_LOG, 0);
+  // Can log only to the system debug log and stderr.
+  CHECK_EQ(settings.logging_dest & ~(LOG_TO_SYSTEM_DEBUG_LOG | LOG_TO_STDERR),
+           0u);
 #endif
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   // Don't bother initializing |g_vlog_info| unless we use one of the
@@ -414,11 +434,25 @@ bool BaseInitLoggingImpl(const LoggingSettings& settings) {
 
   g_logging_destination = settings.logging_dest;
 
+#if defined(OS_FUCHSIA)
+  if (g_logging_destination & LOG_TO_SYSTEM_DEBUG_LOG) {
+    fx_logger_config_t config;
+    config.min_severity = FX_LOG_INFO;
+    config.console_fd = -1;
+    config.log_service_channel = ZX_HANDLE_INVALID;
+    std::string log_tag = command_line->GetProgram().BaseName().AsUTF8Unsafe();
+    const char* log_tag_data = log_tag.data();
+    config.tags = &log_tag_data;
+    config.num_tags = 1;
+    fx_log_init_with_config(&config);
+  }
+#endif
+
   // ignore file options unless logging to file is set.
   if ((g_logging_destination & LOG_TO_FILE) == 0)
     return true;
 
-#if !defined(OS_WIN)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
   LoggingLock::Init(settings.lock_log, settings.log_file);
   LoggingLock logging_lock;
 #endif
@@ -448,11 +482,21 @@ bool ShouldCreateLogMessage(int severity) {
   if (severity < g_min_log_level)
     return false;
 
-  // Return true here unless we know ~LogMessage won't do anything. Note that
-  // ~LogMessage writes to stderr if severity_ >= kAlwaysPrintErrorLevel, even
-  // when g_logging_destination is LOG_NONE.
+  // Return true here unless we know ~LogMessage won't do anything.
   return g_logging_destination != LOG_NONE || log_message_handler ||
          severity >= kAlwaysPrintErrorLevel;
+}
+
+// Returns true when LOG_TO_STDERR flag is set, or |severity| is high.
+// If |severity| is high then true will be returned when no log destinations are
+// set, or only LOG_TO_FILE is set, since that is useful for local development
+// and debugging.
+bool ShouldLogToStderr(int severity) {
+  if (g_logging_destination & LOG_TO_STDERR)
+    return true;
+  if (severity >= kAlwaysPrintErrorLevel)
+    return (g_logging_destination & ~LOG_TO_FILE) == LOG_NONE;
+  return false;
 }
 
 int GetVlogVerbosity() {
@@ -477,17 +521,23 @@ void SetLogItems(bool enable_process_id, bool enable_thread_id,
   g_log_tickcount = enable_tickcount;
 }
 
+void SetLogPrefix(const char* prefix) {
+  DCHECK(!prefix ||
+         base::ContainsOnlyChars(prefix, "abcdefghijklmnopqrstuvwxyz"));
+  g_log_prefix = prefix;
+}
+
 void SetShowErrorDialogs(bool enable_dialogs) {
   show_error_dialogs = enable_dialogs;
 }
 
 ScopedLogAssertHandler::ScopedLogAssertHandler(
     LogAssertHandlerFunction handler) {
-  log_assert_handler_stack.Get().push(std::move(handler));
+  GetLogAssertHandlerStack().push(std::move(handler));
 }
 
 ScopedLogAssertHandler::~ScopedLogAssertHandler() {
-  log_assert_handler_stack.Get().pop();
+  GetLogAssertHandlerStack().pop();
 }
 
 void SetLogMessageHandler(LogMessageHandlerFunction handler) {
@@ -528,23 +578,17 @@ void DisplayDebugMessageInDialog(const std::string& str) {
     return;
 
 #if defined(OS_WIN)
-  MessageBoxW(nullptr, base::UTF8ToUTF16(str).c_str(), L"Fatal error",
-              MB_OK | MB_ICONHAND | MB_TOPMOST);
-#else
   // We intentionally don't implement a dialog on other platforms.
   // You can just look at stderr.
+  if (base::win::IsUser32AndGdi32Available()) {
+    MessageBoxW(nullptr, base::as_wcstr(base::UTF8ToUTF16(str)), L"Fatal error",
+                MB_OK | MB_ICONHAND | MB_TOPMOST);
+  } else {
+    OutputDebugStringW(base::as_wcstr(base::UTF8ToUTF16(str)));
+  }
 #endif  // defined(OS_WIN)
 }
 #endif  // !defined(NDEBUG)
-
-#if defined(OS_WIN)
-LogMessage::SaveLastError::SaveLastError() : last_error_(::GetLastError()) {
-}
-
-LogMessage::SaveLastError::~SaveLastError() {
-  ::SetLastError(last_error_);
-}
-#endif  // defined(OS_WIN)
 
 LogMessage::LogMessage(const char* file, int line, LogSeverity severity)
     : severity_(severity), file_(file), line_(line) {
@@ -578,9 +622,20 @@ LogMessage::~LogMessage() {
     !defined(OS_AIX)
   if (severity_ == LOG_FATAL && !base::debug::BeingDebugged()) {
     // Include a stack trace on a fatal, unless a debugger is attached.
-    base::debug::StackTrace trace;
+    base::debug::StackTrace stack_trace;
     stream_ << std::endl;  // Newline to separate from log message.
-    trace.OutputToStream(&stream_);
+    stack_trace.OutputToStream(&stream_);
+    base::debug::TaskTrace task_trace;
+    if (!task_trace.empty())
+      task_trace.OutputToStream(&stream_);
+
+    // Include the IPC context, if any.
+    // TODO(chrisha): Integrate with symbolization once those tools exist!
+    const auto* task = base::TaskAnnotator::CurrentTaskForThread();
+    if (task && task->ipc_hash) {
+      stream_ << "IPC message handler context: "
+              << base::StringPrintf("0x%08X", task->ipc_hash) << std::endl;
+    }
   }
 #endif
   stream_ << std::endl;
@@ -678,7 +733,7 @@ LogMessage::~LogMessage() {
       // By default, messages are only readable by the admin group. Explicitly
       // make them readable by the user generating the messages.
       char euid_string[12];
-      snprintf(euid_string, arraysize(euid_string), "%d", geteuid());
+      snprintf(euid_string, base::size(euid_string), "%d", geteuid());
       asl_set(asl_message.get(), ASL_KEY_READ_UID, euid_string);
 
       // Map Chrome log severities to ASL log levels.
@@ -761,23 +816,55 @@ LogMessage::~LogMessage() {
         priority = ANDROID_LOG_FATAL;
         break;
     }
-    __android_log_write(priority, "chromium", str_newline.c_str());
+    const char kAndroidLogTag[] = "chromium";
+#if DCHECK_IS_ON()
+    // Split the output by new lines to prevent the Android system from
+    // truncating the log.
+    std::vector<std::string> lines = base::SplitString(
+        str_newline, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+    // str_newline has an extra newline appended to it (at the top of this
+    // function), so skip the last split element to avoid needlessly
+    // logging an empty string.
+    lines.pop_back();
+    for (const auto& line : lines)
+      __android_log_write(priority, kAndroidLogTag, line.c_str());
+#else
+    // The Android system may truncate the string if it's too long.
+    __android_log_write(priority, kAndroidLogTag, str_newline.c_str());
 #endif
-#ifdef ENABLE_STDERR_LOG
-    ignore_result(fwrite(str_newline.data(), str_newline.size(), 1, stderr));
-    fflush(stderr);
-#endif
-  } else if (severity_ >= kAlwaysPrintErrorLevel) {
-    // When we're only outputting to a log file, above a certain log level, we
-    // should still output to stderr so that we can better detect and diagnose
-    // problems with unit tests, especially on the buildbots.
-#ifdef ENABLE_STDERR_LOG
-    ignore_result(fwrite(str_newline.data(), str_newline.size(), 1, stderr));
-    fflush(stderr);
-#endif
+#elif defined(OS_FUCHSIA)
+    fx_log_severity_t severity = FX_LOG_INFO;
+    switch (severity_) {
+      case LOG_INFO:
+        severity = FX_LOG_INFO;
+        break;
+      case LOG_WARNING:
+        severity = FX_LOG_WARNING;
+        break;
+      case LOG_ERROR:
+        severity = FX_LOG_ERROR;
+        break;
+      case LOG_FATAL:
+        // Don't use FX_LOG_FATAL, otherwise fx_logger_log() will abort().
+        severity = FX_LOG_ERROR;
+        break;
+    }
+
+    fx_logger_t* logger = fx_log_get_logger();
+    if (logger) {
+      // Temporarily pop the trailing newline, since fx_logger will add one.
+      str_newline.pop_back();
+      fx_logger_log(logger, severity, nullptr, str_newline.c_str());
+      str_newline.push_back('\n');
+    }
+#endif  // OS_FUCHSIA
   }
 
-  // write to log file
+  if (ShouldLogToStderr(severity_)) {
+    ignore_result(fwrite(str_newline.data(), str_newline.size(), 1, stderr));
+    fflush(stderr);
+  }
+
   if ((g_logging_destination & LOG_TO_FILE) != 0) {
     // We can have multiple threads and/or processes, so try to prevent them
     // from clobbering each other's writes.
@@ -786,7 +873,7 @@ LogMessage::~LogMessage() {
     // to do this at the same time, there will be a race condition to create
     // the lock. This is why InitLogging should be called from the main
     // thread at the beginning of execution.
-#if !defined(OS_WIN)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
     LoggingLock::Init(LOCK_LOG_FILE, nullptr);
     LoggingLock logging_lock;
 #endif
@@ -798,10 +885,12 @@ LogMessage::~LogMessage() {
                 static_cast<DWORD>(str_newline.length()),
                 &num_written,
                 nullptr);
-#else
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
       ignore_result(fwrite(
           str_newline.data(), str_newline.size(), 1, g_log_file));
       fflush(g_log_file);
+#else
+#error Unsupported platform
 #endif
     }
   }
@@ -814,15 +903,21 @@ LogMessage::~LogMessage() {
       tracker->RecordLogMessage(str_newline);
 
     // Ensure the first characters of the string are on the stack so they
-    // are contained in minidumps for diagnostic purposes.
-    char str_stack[1024];
-    str_newline.copy(str_stack, arraysize(str_stack));
-    base::debug::Alias(str_stack);
+    // are contained in minidumps for diagnostic purposes. We place start
+    // and end marker values at either end, so we can scan captured stacks
+    // for the data easily.
+    struct {
+      uint32_t start_marker = 0xbedead01;
+      char data[1024];
+      uint32_t end_marker = 0x5050dead;
+    } str_stack;
+    base::strlcpy(str_stack.data, str_newline.data(),
+                  base::size(str_stack.data));
+    base::debug::Alias(&str_stack);
 
-    if (!(log_assert_handler_stack == nullptr) &&
-        !log_assert_handler_stack.Get().empty()) {
+    if (!GetLogAssertHandlerStack().empty()) {
       LogAssertHandlerFunction log_assert_handler =
-          log_assert_handler_stack.Get().top();
+          GetLogAssertHandlerStack().top();
 
       if (log_assert_handler) {
         log_assert_handler.Run(
@@ -845,7 +940,11 @@ LogMessage::~LogMessage() {
       }
 #endif
       // Crash the process to generate a dump.
+#if defined(OFFICIAL_BUILD) && defined(NDEBUG)
+      IMMEDIATE_CRASH();
+#else
       base::debug::BreakDebugger();
+#endif
     }
   }
 }
@@ -860,12 +959,28 @@ void LogMessage::Init(const char* file, int line) {
   // TODO(darin): It might be nice if the columns were fixed width.
 
   stream_ <<  '[';
+  if (g_log_prefix)
+    stream_ << g_log_prefix << ':';
   if (g_log_process_id)
     stream_ << CurrentProcessId() << ':';
   if (g_log_thread_id)
     stream_ << base::PlatformThread::CurrentId() << ':';
   if (g_log_timestamp) {
-#if defined(OS_POSIX)
+#if defined(OS_WIN)
+    SYSTEMTIME local_time;
+    GetLocalTime(&local_time);
+    stream_ << std::setfill('0')
+            << std::setw(2) << local_time.wMonth
+            << std::setw(2) << local_time.wDay
+            << '/'
+            << std::setw(2) << local_time.wHour
+            << std::setw(2) << local_time.wMinute
+            << std::setw(2) << local_time.wSecond
+            << '.'
+            << std::setw(3)
+            << local_time.wMilliseconds
+            << ':';
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
     timeval tv;
     gettimeofday(&tv, nullptr);
     time_t t = tv.tv_sec;
@@ -882,19 +997,8 @@ void LogMessage::Init(const char* file, int line) {
             << '.'
             << std::setw(6) << tv.tv_usec
             << ':';
-#elif defined(OS_WIN)
-    SYSTEMTIME local_time;
-    GetLocalTime(&local_time);
-    stream_ << std::setfill('0')
-            << std::setw(2) << local_time.wMonth
-            << std::setw(2) << local_time.wDay
-            << '/'
-            << std::setw(2) << local_time.wHour
-            << std::setw(2) << local_time.wMinute
-            << std::setw(2) << local_time.wSecond
-            << '.'
-            << std::setw(3) << local_time.wMilliseconds
-            << ':';
+#else
+#error Unsupported platform
 #endif
   }
   if (g_log_tickcount)
@@ -919,20 +1023,18 @@ typedef DWORD SystemErrorCode;
 SystemErrorCode GetLastSystemErrorCode() {
 #if defined(OS_WIN)
   return ::GetLastError();
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   return errno;
-#else
-#error Not implemented
 #endif
 }
 
-#if defined(OS_WIN)
 BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
+#if defined(OS_WIN)
   const int kErrorMessageBufferSize = 256;
   char msgbuf[kErrorMessageBufferSize];
   DWORD flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
   DWORD len = FormatMessageA(flags, nullptr, error_code, 0, msgbuf,
-                             arraysize(msgbuf), nullptr);
+                             base::size(msgbuf), nullptr);
   if (len) {
     // Messages returned by system end with line breaks.
     return base::CollapseWhitespaceASCII(msgbuf, true) +
@@ -940,15 +1042,11 @@ BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
   }
   return base::StringPrintf("Error (0x%lX) while retrieving error. (0x%lX)",
                             GetLastError(), error_code);
-}
-#elif defined(OS_POSIX)
-BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   return base::safe_strerror(error_code) +
          base::StringPrintf(" (%d)", error_code);
-}
-#else
-#error Not implemented
 #endif  // defined(OS_WIN)
+}
 
 
 #if defined(OS_WIN)
@@ -967,7 +1065,7 @@ Win32ErrorLogMessage::~Win32ErrorLogMessage() {
   DWORD last_error = err_;
   base::debug::Alias(&last_error);
 }
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 ErrnoLogMessage::ErrnoLogMessage(const char* file,
                                  int line,
                                  LogSeverity severity,
@@ -986,7 +1084,7 @@ ErrnoLogMessage::~ErrnoLogMessage() {
 #endif  // defined(OS_WIN)
 
 void CloseLogFile() {
-#if !defined(OS_WIN)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
   LoggingLock logging_lock;
 #endif
   CloseLogFileUnlocked();
@@ -1031,10 +1129,10 @@ bool IsLoggingToFileEnabled() {
   return g_logging_destination & LOG_TO_FILE;
 }
 
-std::wstring GetLogFileFullPath() {
+base::string16 GetLogFileFullPath() {
   if (g_log_file_name)
     return *g_log_file_name;
-  return std::wstring();
+  return base::string16();
 }
 #endif
 

@@ -15,8 +15,8 @@
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
 #include "crypto/openssl_util.h"
-#include "third_party/WebKit/public/platform/WebCryptoAlgorithmParams.h"
-#include "third_party/WebKit/public/platform/WebCryptoKeyAlgorithm.h"
+#include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
+#include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
 #include "third_party/boringssl/src/include/openssl/bn.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
 #include "third_party/boringssl/src/include/openssl/rsa.h"
@@ -554,6 +554,9 @@ Status RsaHashedAlgorithm::DeserializeKeyForClone(
     default:
       return Status::ErrorUnexpected();
   }
+
+  if (!status.IsSuccess())
+    return status;
 
   // There is some duplicated information in the serialized format used by
   // structured clone (since the KeyAlgorithm is serialized separately from the

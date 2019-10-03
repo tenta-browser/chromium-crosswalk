@@ -21,12 +21,12 @@
 
 using aura::Window;
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(::wm::TransientWindowManager*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(::wm::TransientWindowManager*)
 
 namespace wm {
 namespace {
 
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TransientWindowManager, kPropertyKey, NULL);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TransientWindowManager, kPropertyKey, NULL)
 
 }  // namespace
 
@@ -65,7 +65,7 @@ void TransientWindowManager::AddTransientChild(Window* child) {
   TransientWindowManager* child_manager = GetOrCreate(child);
   if (child_manager->transient_parent_)
     GetOrCreate(child_manager->transient_parent_)->RemoveTransientChild(child);
-  DCHECK(!base::ContainsValue(transient_children_, child));
+  DCHECK(!base::Contains(transient_children_, child));
   transient_children_.push_back(child);
   child_manager->transient_parent_ = window_;
 
@@ -84,7 +84,7 @@ void TransientWindowManager::AddTransientChild(Window* child) {
 }
 
 void TransientWindowManager::RemoveTransientChild(Window* child) {
-  Windows::iterator i =
+  auto i =
       std::find(transient_children_.begin(), transient_children_.end(), child);
   DCHECK(i != transient_children_.end());
   transient_children_.erase(i);
@@ -123,16 +123,18 @@ TransientWindowManager::TransientWindowManager(Window* window)
 }
 
 void TransientWindowManager::RestackTransientDescendants() {
+  if (pause_transient_descendants_restacking_)
+    return;
+
   Window* parent = window_->parent();
-  if (!parent || !parent->ShouldRestackTransientChildren())
+  if (!parent)
     return;
 
   // Stack any transient children that share the same parent to be in front of
   // |window_|. The existing stacking order is preserved by iterating backwards
   // and always stacking on top.
   Window::Windows children(parent->children());
-  for (Window::Windows::reverse_iterator it = children.rbegin();
-       it != children.rend(); ++it) {
+  for (auto it = children.rbegin(); it != children.rend(); ++it) {
     if ((*it) != window_ && HasTransientAncestor(*it, window_)) {
       TransientWindowManager* descendant_manager = GetOrCreate(*it);
       base::AutoReset<Window*> resetter(
@@ -143,14 +145,35 @@ void TransientWindowManager::RestackTransientDescendants() {
   }
 }
 
-void TransientWindowManager::OnWindowParentChanged(aura::Window* window,
-                                                   aura::Window* parent) {
-  DCHECK_EQ(window_, window);
-  // Stack |window| properly if it is transient child of a sibling.
-  Window* transient_parent = wm::GetTransientParent(window);
-  if (transient_parent && transient_parent->parent() == parent) {
+void TransientWindowManager::OnWindowHierarchyChanged(
+    const HierarchyChangeParams& params) {
+  if (params.target != window_)
+    return;
+
+  // [1] Move the direct transient children which used to be on the old parent
+  // of |window_| to the new parent.
+  bool should_restack = false;
+  aura::Window* new_parent = params.new_parent;
+  aura::Window* old_parent = params.old_parent;
+  if (new_parent) {
+    // Reparenting multiple sibling transient children will call back onto us
+    // (the transient parent) in [2] below, to restack all our descendants. We
+    // should pause restacking until we're done with all the reparenting.
+    base::AutoReset<bool> reset(&pause_transient_descendants_restacking_, true);
+    for (auto* transient_child : transient_children_) {
+      if (transient_child->parent() == old_parent) {
+        new_parent->AddChild(transient_child);
+        should_restack = true;
+      }
+    }
+  }
+  if (should_restack)
+    RestackTransientDescendants();
+
+  // [2] Stack |window_| properly if it is a transient child of a sibling.
+  if (transient_parent_ && transient_parent_->parent() == new_parent) {
     TransientWindowManager* transient_parent_manager =
-        GetOrCreate(transient_parent);
+        GetOrCreate(transient_parent_);
     transient_parent_manager->RestackTransientDescendants();
   }
 }
@@ -205,10 +228,8 @@ void TransientWindowManager::OnWindowStackingChanged(Window* window) {
   // Do nothing if we initiated the stacking change.
   const TransientWindowManager* transient_manager = GetIfExists(window);
   if (transient_manager && transient_manager->stacking_target_) {
-    Windows::const_iterator window_i = std::find(
-        window->parent()->children().begin(),
-        window->parent()->children().end(),
-        window);
+    auto window_i = std::find(window->parent()->children().begin(),
+                              window->parent()->children().end(), window);
     DCHECK(window_i != window->parent()->children().end());
     if (window_i != window->parent()->children().begin() &&
         (*(window_i - 1) == transient_manager->stacking_target_))

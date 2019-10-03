@@ -4,12 +4,15 @@
 
 #include "components/safe_browsing/browser/mojo_safe_browsing_impl.h"
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
+#include "base/supports_user_data.h"
 #include "components/safe_browsing/browser/safe_browsing_url_checker_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/resource_context.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/resource_type.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
@@ -54,12 +57,33 @@ class CheckUrlCallbackWrapper {
   Callback callback_;
 };
 
+// UserData object that owns MojoSafeBrowsingImpl. This is used rather than
+// having MojoSafeBrowsingImpl directly extend base::SupportsUserData::Data to
+// avoid naming conflicts between Data::Clone() and
+// mojom::SafeBrowsing::Clone().
+class SafeBrowserUserData : public base::SupportsUserData::Data {
+ public:
+  explicit SafeBrowserUserData(std::unique_ptr<MojoSafeBrowsingImpl> impl)
+      : impl_(std::move(impl)) {}
+  ~SafeBrowserUserData() override = default;
+
+ private:
+  std::unique_ptr<MojoSafeBrowsingImpl> impl_;
+
+  DISALLOW_COPY_AND_ASSIGN(SafeBrowserUserData);
+};
+
 }  // namespace
 
 MojoSafeBrowsingImpl::MojoSafeBrowsingImpl(
     scoped_refptr<UrlCheckerDelegate> delegate,
-    int render_process_id)
-    : delegate_(std::move(delegate)), render_process_id_(render_process_id) {
+    int render_process_id,
+    content::ResourceContext* resource_context)
+    : delegate_(std::move(delegate)),
+      render_process_id_(render_process_id),
+      resource_context_(resource_context) {
+  DCHECK(resource_context_);
+
   // It is safe to bind |this| as Unretained because |bindings_| is owned by
   // |this| and will not call this callback after it is destroyed.
   bindings_.set_connection_error_handler(base::Bind(
@@ -73,18 +97,26 @@ MojoSafeBrowsingImpl::~MojoSafeBrowsingImpl() {
 // static
 void MojoSafeBrowsingImpl::MaybeCreate(
     int render_process_id,
-    const base::Callback<UrlCheckerDelegate*()>& delegate_getter,
+    content::ResourceContext* resource_context,
+    const base::Callback<scoped_refptr<UrlCheckerDelegate>()>& delegate_getter,
     mojom::SafeBrowsingRequest request) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   scoped_refptr<UrlCheckerDelegate> delegate = delegate_getter.Run();
 
-  if (!delegate || !delegate->GetDatabaseManager()->IsSupported())
+  if (!resource_context || !delegate ||
+      !delegate->GetDatabaseManager()->IsSupported())
     return;
 
-  auto* impl = new MojoSafeBrowsingImpl(std::move(delegate), render_process_id);
+  std::unique_ptr<MojoSafeBrowsingImpl> impl(new MojoSafeBrowsingImpl(
+      std::move(delegate), render_process_id, resource_context));
   impl->Clone(std::move(request));
-  // |impl| will be freed when there are no more pipes bound to it.
+
+  MojoSafeBrowsingImpl* raw_impl = impl.get();
+  std::unique_ptr<SafeBrowserUserData> user_data =
+      std::make_unique<SafeBrowserUserData>(std::move(impl));
+  raw_impl->user_data_key_ = user_data.get();
+  resource_context->SetUserData(raw_impl->user_data_key_, std::move(user_data));
 }
 
 void MojoSafeBrowsingImpl::CreateCheckerAndCheck(
@@ -96,9 +128,26 @@ void MojoSafeBrowsingImpl::CreateCheckerAndCheck(
     int32_t load_flags,
     content::ResourceType resource_type,
     bool has_user_gesture,
+    bool originated_from_service_worker,
     CreateCheckerAndCheckCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  auto checker_impl = base::MakeUnique<SafeBrowsingUrlCheckerImpl>(
+
+  if (delegate_->ShouldSkipRequestCheck(resource_context_, url,
+                                        -1 /* frame_tree_node_id */,
+                                        render_process_id_, render_frame_id,
+                                        originated_from_service_worker)) {
+    // Ensure that we don't destroy an uncalled CreateCheckerAndCheckCallback
+    if (callback) {
+      std::move(callback).Run(nullptr, true /* proceed */,
+                              false /* showed_interstitial */);
+    }
+
+    // This will drop |request|. The result is that the renderer side will
+    // consider all URLs in the redirect chain of this request as safe.
+    return;
+  }
+
+  auto checker_impl = std::make_unique<SafeBrowsingUrlCheckerImpl>(
       headers, static_cast<int>(load_flags), resource_type, has_user_gesture,
       delegate_,
       base::Bind(&GetWebContentsFromID, render_process_id_,
@@ -117,8 +166,10 @@ void MojoSafeBrowsingImpl::Clone(mojom::SafeBrowsingRequest request) {
 }
 
 void MojoSafeBrowsingImpl::OnConnectionError() {
-  if (bindings_.empty())
-    delete this;
+  if (bindings_.empty()) {
+    resource_context_->RemoveUserData(user_data_key_);
+    // This object is destroyed.
+  }
 }
 
 }  // namespace safe_browsing

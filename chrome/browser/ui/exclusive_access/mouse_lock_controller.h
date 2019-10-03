@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_MOUSE_LOCK_CONTROLLER_H_
 #define CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_MOUSE_LOCK_CONTROLLER_H_
 
+#include <utility>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -58,9 +60,12 @@ class MouseLockController : public ExclusiveAccessControllerBase {
   // If set, |bubble_hide_callback_for_test_| will be called during
   // |OnBubbleHidden()|.
   void set_bubble_hide_callback_for_test_(
-      base::RepeatingCallback<void(ExclusiveAccessBubbleHideReason)>
-          callback_for_test) {
+      ExclusiveAccessBubbleHideCallbackForTest callback_for_test) {
     bubble_hide_callback_for_test_ = std::move(callback_for_test);
+  }
+
+  void set_lock_state_callback_for_test(base::OnceClosure callback) {
+    lock_state_callback_for_test_ = std::move(callback);
   }
 
  private:
@@ -71,8 +76,6 @@ class MouseLockController : public ExclusiveAccessControllerBase {
     // Mouse has been locked silently, with no notification to user.
     MOUSELOCK_LOCKED_SILENTLY
   };
-
-  void NotifyMouseLockChange();
 
   void ExitExclusiveAccessIfNecessary() override;
   void NotifyTabExclusiveAccessLost() override;
@@ -90,10 +93,12 @@ class MouseLockController : public ExclusiveAccessControllerBase {
       nullptr;
 
   bool fake_mouse_lock_for_test_;
-  base::RepeatingCallback<void(ExclusiveAccessBubbleHideReason)>
-      bubble_hide_callback_for_test_;
+  ExclusiveAccessBubbleHideCallbackForTest bubble_hide_callback_for_test_;
 
-  base::WeakPtrFactory<MouseLockController> weak_ptr_factory_;
+  // Called when the page requests (successfully or not) or loses mouse lock.
+  base::OnceClosure lock_state_callback_for_test_;
+
+  base::WeakPtrFactory<MouseLockController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MouseLockController);
 };

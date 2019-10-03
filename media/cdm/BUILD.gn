@@ -26,8 +26,25 @@ source_set("cdm") {
   ]
 
   sources = [
+    "aes_cbc_crypto.cc",
+    "aes_cbc_crypto.h",
     "aes_decryptor.cc",
     "aes_decryptor.h",
+    "cbcs_decryptor.cc",
+    "cbcs_decryptor.h",
+    "cdm_context_ref_impl.cc",
+    "cdm_context_ref_impl.h",
+    "cenc_decryptor.cc",
+    "cenc_decryptor.h",
+
+    # TODO(crbug.com/676224): Move this to |enable_library_cdms| block below
+    # when EnabledIf attribute is supported in mojom.
+    "cdm_proxy.cc",
+    "cdm_proxy.h",
+    "cdm_proxy_context.cc",
+    "cdm_proxy_context.h",
+    "cenc_utils.cc",
+    "cenc_utils.h",
     "default_cdm_factory.cc",
     "default_cdm_factory.h",
     "json_web_key.cc",
@@ -43,23 +60,18 @@ source_set("cdm") {
     "//crypto",
     "//media/base",
     "//media/formats",
+    "//third_party/boringssl",
     "//ui/gfx/geometry",
     "//url",
   ]
 
   configs += [ "//media:subcomponent_config" ]
 
-  if (proprietary_codecs) {
-    sources += [
-      "cenc_utils.cc",
-      "cenc_utils.h",
-    ]
-  }
-
   if (enable_library_cdms) {
     deps += [
       ":cdm_api",
       ":cdm_paths",
+      "//components/crash/core/common:crash_key",
     ]
     sources += [
       "cdm_adapter.cc",
@@ -70,14 +82,12 @@ source_set("cdm") {
       "cdm_allocator.h",
       "cdm_auxiliary_helper.cc",
       "cdm_auxiliary_helper.h",
-      "cdm_file_adapter.cc",
-      "cdm_file_adapter.h",
       "cdm_helpers.cc",
       "cdm_helpers.h",
       "cdm_module.cc",
       "cdm_module.h",
-      "cdm_proxy.cc",
-      "cdm_proxy.h",
+      "cdm_type_conversion.cc",
+      "cdm_type_conversion.h",
       "cdm_wrapper.h",
       "output_protection.h",
       "platform_verification.h",
@@ -92,39 +102,15 @@ source_set("cdm") {
         "cdm_host_files.cc",
         "cdm_host_files.h",
       ]
-      deps += [
-        # Needed for finding CDM path from CDM adapter path.
-        # TODO(xhwang): Remove this dependency when CDM adapter is deprecated.
-        # See http://crbug.com/403462
-        "//third_party/widevine/cdm:headers",
-      ]
     }
   }
-}
 
-config("cdm_manager_implementation") {
-  defines = [ "CDM_MANAGER_IMPLEMENTATION" ]
-}
-
-# cdm_manager must not be a source_set() because CdmManager exposes a static
-# singleton, shared by multiple component()s.
-#
-# TODO(xhwang): Remove this component once AVDA no longer depends on it.
-component("cdm_manager") {
-  visibility = [
-    "//media/gpu",
-    "//media/mojo/services",
-  ]
-  sources = [
-    "cdm_manager.cc",
-    "cdm_manager.h",
-    "cdm_manager_export.h",
-  ]
-  configs += [ ":cdm_manager_implementation" ]
-  deps = [
-    "//base",
-    "//media",
-  ]
+  if (is_fuchsia) {
+    sources += [
+      "fuchsia/fuchsia_cdm_factory.cc",
+      "fuchsia/fuchsia_cdm_factory.h",
+    ]
+  }
 }
 
 static_library("cdm_paths") {
@@ -140,15 +126,20 @@ static_library("cdm_paths") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "aes_cbc_crypto_unittest.cc",
     "aes_decryptor_unittest.cc",
+    "cbcs_decryptor_unittest.cc",
+    "cenc_decryptor_unittest.cc",
     "json_web_key_unittest.cc",
   ]
 
   deps = [
     "//base/test:test_support",
+    "//crypto",
     "//media:test_support",
     "//testing/gmock",
     "//testing/gtest",
+    "//third_party/boringssl",
     "//ui/gfx:test_support",
     "//url",
   ]
@@ -161,7 +152,6 @@ source_set("unit_tests") {
 
   data_deps = []
 
-  # If ExternalClearKey is built, we can test CdmAdapter.
   if (enable_library_cdms) {
     sources += [
       "cdm_adapter_unittest.cc",
@@ -175,11 +165,13 @@ source_set("unit_tests") {
       "simple_cdm_buffer.cc",
       "simple_cdm_buffer.h",
     ]
-    data_deps += [ "//media/cdm/ppapi:clearkeycdm" ]
+    data_deps += [ "//media/cdm/library_cdm/clear_key_cdm" ]
 
     deps += [
       ":cdm_api",
       ":cdm_paths",
+      "//media/cdm/library_cdm:cdm_host_proxy",
+      "//media/cdm/library_cdm:test_support",
     ]
   }
 

@@ -6,14 +6,16 @@
 #define CHROME_BROWSER_CHROMEOS_AUTHPOLICY_AUTH_POLICY_CREDENTIALS_MANAGER_H_
 
 #include <set>
+#include <string>
 
 #include "base/cancelable_callback.h"
 #include "base/memory/weak_ptr.h"
-#include "chromeos/dbus/authpolicy/active_directory_info.pb.h"
+#include "chrome/browser/chromeos/authpolicy/kerberos_files_handler.h"
+#include "chromeos/dbus/auth_policy/active_directory_info.pb.h"
 #include "chromeos/network/network_state_handler_observer.h"
+#include "components/account_id/account_id.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 class Profile;
@@ -50,6 +52,8 @@ class AuthPolicyCredentialsManager
   void NetworkConnectionStateChanged(
       const chromeos::NetworkState* network) override;
   void OnShuttingDown() override;
+
+  KerberosFilesHandler* GetKerberosFilesHandlerForTesting();
 
  private:
   friend class AuthPolicyCredentialsManagerTest;
@@ -103,6 +107,7 @@ class AuthPolicyCredentialsManager
   bool is_get_status_in_progress_ = false;
   bool rerun_get_status_on_error_ = false;
   bool is_observing_network_ = false;
+  KerberosFilesHandler kerberos_files_handler_;
 
   // Stores message ids of shown notifications. Each notification is shown at
   // most once.
@@ -121,18 +126,19 @@ class AuthPolicyCredentialsManagerFactory
  public:
   static AuthPolicyCredentialsManagerFactory* GetInstance();
 
-  // Returns nullptr in case profile is not Active Directory. Otherwise returns
-  // valid AuthPolicyCredentialsManager. Lifetime is managed by
-  // BrowserContextKeyedServiceFactory.
-  static KeyedService* BuildForProfileIfActiveDirectory(Profile* profile);
-
  private:
   friend struct base::DefaultSingletonTraits<
       AuthPolicyCredentialsManagerFactory>;
+  friend class AuthPolicyCredentialsManagerTest;
+  friend class ExistingUserControllerActiveDirectoryTest;
 
   AuthPolicyCredentialsManagerFactory();
   ~AuthPolicyCredentialsManagerFactory() override;
 
+  bool ServiceIsCreatedWithBrowserContext() const override;
+
+  // Returns nullptr in case profile is not Active Directory. Otherwise returns
+  // valid AuthPolicyCredentialsManager.
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* context) const override;
 

@@ -17,19 +17,20 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_base.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/win/registry.h"
 #include "components/browser_watcher/features.h"
 #include "components/browser_watcher/postmortem_report_collector.h"
 #include "components/browser_watcher/stability_paths.h"
-#include "components/browser_watcher/system_session_analyzer_win.h"
+#include "components/metrics/system_session_analyzer_win.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 
 namespace browser_watcher {
@@ -160,15 +161,15 @@ enum CollectionInitializationStatus {
 };
 
 void LogCollectionInitStatus(CollectionInitializationStatus status) {
-  UMA_HISTOGRAM_ENUMERATION("ActivityTracker.Collect.InitStatus", status,
-                            INIT_STATUS_MAX);
+  base::UmaHistogramEnumeration("ActivityTracker.Collect.InitStatus", status,
+                                INIT_STATUS_MAX);
 }
 
 // Returns a task runner appropriate for running background tasks that perform
 // file I/O.
 scoped_refptr<base::TaskRunner> CreateBackgroundTaskRunner() {
   return base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 }
 
@@ -260,8 +261,8 @@ void WatcherMetricsProviderWin::CollectPostmortemReportsImpl() {
 
   std::vector<base::FilePath> stability_files = GetStabilityFiles(
       stability_dir, GetStabilityFilePattern(), excluded_stability_files);
-  UMA_HISTOGRAM_COUNTS_100("ActivityTracker.Collect.StabilityFileCount",
-                           stability_files.size());
+  base::UmaHistogramCounts100("ActivityTracker.Collect.StabilityFileCount",
+                              stability_files.size());
 
   // If postmortem collection is disabled, delete the files.
   const bool should_collect = base::GetFieldTrialParamByFeatureAsBool(
@@ -285,7 +286,7 @@ void WatcherMetricsProviderWin::CollectPostmortemReportsImpl() {
   LogCollectionInitStatus(INIT_SUCCESS);
 
   const size_t kSystemSessionsToInspect = 5U;
-  SystemSessionAnalyzer analyzer(kSystemSessionsToInspect);
+  metrics::SystemSessionAnalyzer analyzer(kSystemSessionsToInspect);
 
   if (should_collect) {
     base::string16 product_name, version_number, channel_name;

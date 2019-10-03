@@ -22,9 +22,6 @@ class Time;
 }
 
 namespace sessions {
-
-class SerializedNavigationEntry;
-
 namespace test_data {
 
 extern const int kIndex;
@@ -50,6 +47,10 @@ extern const std::string kExtendedInfoKey1;
 extern const std::string kExtendedInfoKey2;
 extern const std::string kExtendedInfoValue1;
 extern const std::string kExtendedInfoValue2;
+extern const int64_t kParentTaskId;
+extern const int64_t kRootTaskId;
+extern const int64_t kTaskId;
+extern const std::vector<int64_t> kChildrenTaskIds;
 
 }  // namespace test_data
 
@@ -93,6 +94,10 @@ class SerializedNavigationEntryTestHelper {
 
   static void SetTimestamp(base::Time timestamp,
                            SerializedNavigationEntry* navigation);
+
+  static void SetReplacedEntryData(
+      const SerializedNavigationEntry::ReplacedNavigationEntryData& data,
+      SerializedNavigationEntry* navigation);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SerializedNavigationEntryTestHelper);

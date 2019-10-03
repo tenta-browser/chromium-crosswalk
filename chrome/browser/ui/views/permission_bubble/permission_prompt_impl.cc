@@ -15,9 +15,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row_observer.h"
 #include "chrome/grit/generated_resources.h"
@@ -28,7 +27,8 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_constants.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/native_theme/native_theme.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -38,18 +38,17 @@
 #include "chrome/common/chrome_features.h"
 #endif
 
+using bubble_anchor_util::AnchorConfiguration;
+
 namespace {
 
 // (Square) pixel size of icon.
-constexpr int kIconSize = 18;
+constexpr int kPermissionIconSize = 18;
 
-// The type of arrow to display on the permission bubble.
-constexpr views::BubbleBorder::Arrow kPermissionAnchorArrow =
-    views::BubbleBorder::TOP_LEFT;
-
-// Returns the view to anchor the permission bubble to. May be null.
-views::View* GetPermissionAnchorView(Browser* browser) {
-  return bubble_anchor_util::GetPageInfoAnchorView(browser);
+// Returns the view to anchor the permission bubble to (may be null) and the
+// arrow position of the bubble.
+AnchorConfiguration GetPermissionAnchorConfiguration(Browser* browser) {
+  return bubble_anchor_util::GetPageInfoAnchorConfiguration(browser);
 }
 
 // Returns the anchor rect to anchor the permission bubble to, as a fallback.
@@ -59,6 +58,23 @@ gfx::Rect GetPermissionAnchorRect(Browser* browser) {
 }
 
 }  // namespace
+
+// A custom view for the title label that will be ignored by screen readers
+// (since the PermissionsBubble handles the context).
+class PermissionsLabel : public views::Label {
+ public:
+  explicit PermissionsLabel(const base::string16& text)
+      : views::Label(text, views::style::CONTEXT_DIALOG_TITLE) {}
+  ~PermissionsLabel() override {}
+
+  // views::Label:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    node_data->role = ax::mojom::Role::kIgnored;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(PermissionsLabel);
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 // View implementation for the permissions bubble.
@@ -73,9 +89,7 @@ class PermissionsBubbleDialogDelegateView
 
   void CloseBubble();
 
-  // BubbleDialogDelegateView:
-  ui::AXRole GetAccessibleWindowRole() const override;
-  base::string16 GetAccessibleWindowTitle() const override;
+  // BubbleDialogDelegateView overrides.
   bool ShouldShowCloseButton() const override;
   base::string16 GetWindowTitle() const override;
   void OnWidgetDestroying(views::Widget* widget) override;
@@ -107,33 +121,25 @@ PermissionsBubbleDialogDelegateView::PermissionsBubbleDialogDelegateView(
   DCHECK(!requests.empty());
 
   set_close_on_deactivate(false);
-  set_arrow(kPermissionAnchorArrow);
-
-#if defined(OS_MACOSX)
-  // On Mac, the browser UI flips depending on a runtime feature. TODO(tapted):
-  // Change the default in views::PlatformStyle when features::kMacRTL launches,
-  // and remove the following.
-  if (base::FeatureList::IsEnabled(features::kMacRTL))
-    set_mirror_arrow_in_rtl(true);
-#endif
 
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, gfx::Insets(),
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
       provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
 
   for (size_t index = 0; index < requests.size(); index++) {
     views::View* label_container = new views::View();
     int indent =
         provider->GetDistanceMetric(DISTANCE_SUBSECTION_HORIZONTAL_INDENT);
-    label_container->SetLayoutManager(new views::BoxLayout(
-        views::BoxLayout::kHorizontal, gfx::Insets(0, indent),
+    label_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(0, indent),
         provider->GetDistanceMetric(views::DISTANCE_RELATED_LABEL_HORIZONTAL)));
     views::ImageView* icon = new views::ImageView();
     const gfx::VectorIcon& vector_id = requests[index]->GetIconId();
+    const SkColor icon_color = icon->GetNativeTheme()->GetSystemColor(
+        ui::NativeTheme::kColorId_DefaultIconColor);
     icon->SetImage(
-        gfx::CreateVectorIcon(vector_id, kIconSize, gfx::kChromeIconGrey));
-    icon->SetTooltipText(base::string16());  // Redundant with the text fragment
+        gfx::CreateVectorIcon(vector_id, kPermissionIconSize, icon_color));
     label_container->AddChildView(icon);
     views::Label* label =
         new views::Label(requests.at(index)->GetMessageTextFragment());
@@ -161,7 +167,10 @@ void PermissionsBubbleDialogDelegateView::AddedToWidget() {
     return;
 
   std::unique_ptr<views::Label> title =
-      views::BubbleFrameView::CreateDefaultTitleLabel(GetWindowTitle());
+      std::make_unique<PermissionsLabel>(GetWindowTitle());
+  title->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  title->SetCollapseWhenHidden(true);
+  title->SetMultiLine(true);
 
   // Elide from head in order to keep the most significant part of the origin
   // and avoid spoofing. Note that in English, GetWindowTitle() returns a string
@@ -176,17 +185,6 @@ void PermissionsBubbleDialogDelegateView::AddedToWidget() {
   // truncated from the least significant side. Explicitly disable multiline.
   title->SetMultiLine(false);
   GetBubbleFrameView()->SetTitleView(std::move(title));
-}
-
-ui::AXRole PermissionsBubbleDialogDelegateView::GetAccessibleWindowRole()
-    const {
-  return ui::AX_ROLE_ALERT_DIALOG;
-}
-
-base::string16 PermissionsBubbleDialogDelegateView::GetAccessibleWindowTitle()
-    const {
-  return l10n_util::GetStringFUTF16(IDS_PERMISSIONS_BUBBLE_ACCESSIBLE_TITLE,
-                                    name_or_origin_.name_or_origin);
 }
 
 bool PermissionsBubbleDialogDelegateView::ShouldShowCloseButton() const {
@@ -251,10 +249,13 @@ bool PermissionsBubbleDialogDelegateView::Close() {
 }
 
 void PermissionsBubbleDialogDelegateView::UpdateAnchor() {
-  views::View* anchor_view = GetPermissionAnchorView(owner_->browser());
-  SetAnchorView(anchor_view);
-  if (!anchor_view)
+  AnchorConfiguration configuration =
+      GetPermissionAnchorConfiguration(owner_->browser());
+  SetAnchorView(configuration.anchor_view);
+  SetHighlightedButton(configuration.highlighted_button);
+  if (!configuration.anchor_view)
     SetAnchorRect(GetPermissionAnchorRect(owner_->browser()));
+  SetArrow(configuration.bubble_arrow);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -268,10 +269,6 @@ PermissionPromptImpl::PermissionPromptImpl(Browser* browser, Delegate* delegate)
 PermissionPromptImpl::~PermissionPromptImpl() {
   if (bubble_delegate_)
     bubble_delegate_->CloseBubble();
-}
-
-bool PermissionPromptImpl::CanAcceptRequestUpdate() {
-  return !(bubble_delegate_ && bubble_delegate_->IsMouseHovered());
 }
 
 void PermissionPromptImpl::UpdateAnchorPosition() {
@@ -318,11 +315,6 @@ void PermissionPromptImpl::Show() {
   // Set |parent_window| because some valid anchors can become hidden.
   bubble_delegate_->set_parent_window(
       platform_util::GetViewForWindow(browser_->window()->GetNativeWindow()));
-
-  // Compensate for vertical padding in the anchor view's image. Note this is
-  // ignored whenever the anchor view is null.
-  bubble_delegate_->set_anchor_view_insets(gfx::Insets(
-      GetLayoutConstant(LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET), 0));
 
   views::Widget* widget =
       views::BubbleDialogDelegateView::CreateBubble(bubble_delegate_);

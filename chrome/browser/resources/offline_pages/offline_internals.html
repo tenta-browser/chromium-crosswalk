@@ -33,47 +33,38 @@
     <div>
       <button id="refresh-logs">Refresh Logs</button>
       <div>
-        Page Model Log: <span id="model-status"></span>
-        <button id="log-model-on">Enable</button>
-        <button id="log-model-off">Disable</button>
+        <input type="checkbox" id="model-checkbox">Page Model Log</input>
       </div>
       <div>
-        Request Queue Log: <span id="request-status"></span>
-        <button id="log-request-on">Enable</button>
-        <button id="log-request-off">Disable</button>
+        <input type="checkbox" id="request-checkbox">Request Queue Log</input>
       </div>
       <div>
-        Prefetching Log: <span id="prefetch-status"></span>
-        <button id="log-prefetch-on">Enable</button>
-        <button id="log-prefetch-off">Disable</button>
+        <input type="checkbox" id="prefetch-checkbox">Prefetching Log</input>
       </div>
       <ul id="logs"></ul>
     </div>
 
     <h2>Stored Pages</h2>
     <div>
-      <button id="delete-all-pages">Delete all</button>
       <button id="delete-selected-pages">Delete selected</button>
     </div>
     <table class="stored-pages-table">
       <thead>
         <tr>
-          <th>&nbsp;</th>
+          <th>#</th>
+          <th><input type="checkbox" id="toggle-all-stored"></th>
           <th>URL</th>
           <th>Namespace</th>
           <th>Size (Kb)</th>
-          <th>Expired</th>
-          <th>Request Origin</th>
         </tr>
       </thead>
       <tbody id="stored-pages"> </tbody>
     </table>
     <template id="stored-pages-table-row">
       <tr>
+        <td></td>
         <td><input type="checkbox" name="stored"></td>
         <td><a></a></td>
-        <td></td>
-        <td></td>
         <td></td>
         <td></td>
       </tr>
@@ -82,13 +73,12 @@
 
     <h2>Request Queue</h2>
     <div>
-      <button id="delete-all-requests">Delete all</button>
       <button id="delete-selected-requests">Delete selected</button>
     </div>
     <table class="request-queue-table">
       <thead>
         <tr>
-          <th>&nbsp;</th>
+          <th><input type="checkbox" id="toggle-all-requests"></th>
           <th>URL</th>
           <th>Created Timestamp</th>
           <th>Status</th>
@@ -129,13 +119,40 @@
       </div>
       <div>
         <input id="operation-name" type="text"
-            placeholder="operations/1234-5678">
+                                   placeholder="operations/1234-5678">
         <button id="get-operation">Get Operation</button>
       </div>
       <div>
         <input id="download-name" type="text" placeholder="us/page/1234-5678">
         <button id="download-archive">Download</button>
       </div>
+    </div>
+    <div>
+      <input type="checkbox" id="limitless-prefetching-checkbox">
+          Enable limitless prefetching
+      </input>
+    </div>
+    <div>
+      <form id="testing-header-form">
+        <fieldset id="testing-header-fieldset">
+          <legend>Testing header value:</legend>
+          <label>
+            <input type="radio" id="testing-header-default"
+                   name="testing-header" value="">
+            Default
+          </label>
+          <label>
+            <input type="radio" id="testing-header-enable" name="testing-header"
+                   value="ForceEnable">
+            Force enable
+          </label>
+          <label>
+            <input type="radio" id="testing-header-disable"
+                   name="testing-header" value="ForceDisable">
+            Force disable
+          </label>
+        </fieldset>
+      </form>
     </div>
     <div id="prefetch-actions-info" class="dump"></div>
   </body>

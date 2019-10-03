@@ -67,7 +67,7 @@ GURL GetMockUrl(const std::string& scheme,
   url.append("?data=");
   url.append(data);
   url.append("&repeat=");
-  url.append(base::IntToString(data_repeat_count));
+  url.append(base::NumberToString(data_repeat_count));
   if (request_client_certificate)
     url += "&requestcert=1";
   return GURL(url);
@@ -101,20 +101,24 @@ URLRequestMockDataJob::URLRequestMockDataJob(URLRequest* request,
                                              bool request_client_certificate)
     : URLRequestJob(request, network_delegate),
       data_offset_(0),
-      request_client_certificate_(request_client_certificate),
-      weak_factory_(this) {
+      request_client_certificate_(request_client_certificate) {
   DCHECK_GT(data_repeat_count, 0);
   for (int i = 0; i < data_repeat_count; ++i) {
     data_.append(data);
   }
 }
 
+void URLRequestMockDataJob::OverrideResponseHeaders(
+    const std::string& headers) {
+  headers_ = headers;
+}
+
 void URLRequestMockDataJob::Start() {
   // Start reading asynchronously so that all error reporting and data
   // callbacks happen as they would for network requests.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestMockDataJob::StartAsync,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestMockDataJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 URLRequestMockDataJob::~URLRequestMockDataJob() = default;
@@ -144,13 +148,17 @@ void URLRequestMockDataJob::GetResponseInfo(HttpResponseInfo* info) {
 void URLRequestMockDataJob::GetResponseInfoConst(HttpResponseInfo* info) const {
   // Send back mock headers.
   std::string raw_headers;
-  raw_headers.append(
-      "HTTP/1.1 200 OK\n"
-      "Content-type: text/plain\n");
-  raw_headers.append(base::StringPrintf("Content-Length: %1d\n",
-                                        static_cast<int>(data_.length())));
-  info->headers = new HttpResponseHeaders(HttpUtil::AssembleRawHeaders(
-      raw_headers.c_str(), static_cast<int>(raw_headers.length())));
+  if (headers_.has_value()) {
+    raw_headers = headers_.value();
+  } else {
+    raw_headers.append(
+        "HTTP/1.1 200 OK\n"
+        "Content-type: text/plain\n");
+    raw_headers.append(base::StringPrintf("Content-Length: %1d\n",
+                                          static_cast<int>(data_.length())));
+  }
+  info->headers = base::MakeRefCounted<HttpResponseHeaders>(
+      HttpUtil::AssembleRawHeaders(raw_headers));
 }
 
 void URLRequestMockDataJob::StartAsync() {
@@ -159,7 +167,7 @@ void URLRequestMockDataJob::StartAsync() {
 
   set_expected_content_size(data_.length());
   if (request_client_certificate_) {
-    scoped_refptr<SSLCertRequestInfo> request_all(new SSLCertRequestInfo());
+    auto request_all = base::MakeRefCounted<SSLCertRequestInfo>();
     NotifyCertificateRequested(request_all.get());
     return;
   }

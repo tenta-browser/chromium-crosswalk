@@ -15,10 +15,11 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/process/process_handle.h"
+#include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/win/scoped_handle.h"
@@ -26,12 +27,11 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_message.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/named_platform_channel_pair.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/platform_handle_utils.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/public/cpp/platform/named_platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel_server_endpoint.h"
+#include "mojo/public/cpp/platform/platform_handle.h"
+#include "mojo/public/cpp/system/invitation.h"
 #include "remoting/host/host_main.h"
 #include "remoting/host/ipc_constants.h"
 #include "remoting/host/switches.h"
@@ -111,8 +111,7 @@ class WtsSessionProcessDelegate::Core
   void OnProcessLaunchDetected(base::ProcessId pid);
 
   void ReportFatalError();
-  void ReportProcessLaunched(base::win::ScopedHandle worker_process,
-                             mojo::edk::ScopedPlatformHandle server_handle);
+  void ReportProcessLaunched(base::win::ScopedHandle worker_process);
 
   // The task runner all public methods of this class should be called on.
   scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner_;
@@ -149,7 +148,7 @@ class WtsSessionProcessDelegate::Core
 
   // If launching elevated, this holds the server handle after launch, until
   // the final process launches.
-  mojo::edk::ScopedPlatformHandle elevated_server_handle_;
+  mojo::PlatformChannelServerEndpoint elevated_server_endpoint_;
 
   // If launching elevated, this is the pid of the launcher process.
   base::ProcessId elevated_launcher_pid_ = base::kNullProcessId;
@@ -158,8 +157,7 @@ class WtsSessionProcessDelegate::Core
   base::ProcessId worker_process_pid_ = base::kNullProcessId;
 
   // The pending process connection for the process being launched.
-  std::unique_ptr<mojo::edk::OutgoingBrokerClientInvitation>
-      broker_client_invitation_;
+  mojo::OutgoingInvitation mojo_invitation_;
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
@@ -212,9 +210,9 @@ bool WtsSessionProcessDelegate::Core::Initialize(uint32_t session_id) {
     // the completion port represented by |io_task_runner|. The registration has
     // to be done on the I/O thread because
     // MessageLoopForIO::RegisterJobObject() can only be called via
-    // MessageLoopForIO::current().
+    // MessageLoopCurrentForIO::Get().
     io_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InitializeJob, this, base::Passed(&job)));
+        FROM_HERE, base::BindOnce(&Core::InitializeJob, this, std::move(job)));
   }
 
   // Create a session token for the launched process.
@@ -258,9 +256,9 @@ void WtsSessionProcessDelegate::Core::CloseChannel() {
   }
 
   channel_.reset();
-  elevated_server_handle_.reset();
+  elevated_server_endpoint_.reset();
   elevated_launcher_pid_ = base::kNullProcessId;
-  broker_client_invitation_.reset();
+  mojo_invitation_ = {};
 }
 
 void WtsSessionProcessDelegate::Core::KillProcess() {
@@ -303,7 +301,7 @@ void WtsSessionProcessDelegate::Core::OnIOCompleted(
   switch (bytes_transferred) {
     case JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: {
       caller_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&Core::OnActiveProcessZero, this));
+          FROM_HERE, base::BindOnce(&Core::OnActiveProcessZero, this));
       break;
     }
     case JOB_OBJECT_MSG_NEW_PROCESS: {
@@ -336,8 +334,8 @@ void WtsSessionProcessDelegate::Core::OnIOCompleted(
         }
 
         caller_task_runner_->PostTask(
-            FROM_HERE, base::Bind(&Core::OnProcessLaunchDetected, this,
-                                  worker_process_pid_));
+            FROM_HERE, base::BindOnce(&Core::OnProcessLaunchDetected, this,
+                                      worker_process_pid_));
       }
       break;
     }
@@ -391,30 +389,27 @@ void WtsSessionProcessDelegate::Core::DoLaunchProcess() {
                                   target_command_->GetProgram());
   }
 
-  std::string mojo_pipe_token = mojo::edk::GenerateRandomToken();
-  broker_client_invitation_ =
-      base::MakeUnique<mojo::edk::OutgoingBrokerClientInvitation>();
+  std::string mojo_pipe_token = base::NumberToString(base::RandUint64());
   std::unique_ptr<IPC::ChannelProxy> channel = IPC::ChannelProxy::Create(
-      broker_client_invitation_->AttachMessagePipe(mojo_pipe_token).release(),
+      mojo_invitation_.AttachMessagePipe(mojo_pipe_token).release(),
       IPC::Channel::MODE_SERVER, this, io_task_runner_,
       base::ThreadTaskRunnerHandle::Get());
   command_line.AppendSwitchASCII(kMojoPipeToken, mojo_pipe_token);
 
-  std::unique_ptr<mojo::edk::PlatformChannelPair> normal_mojo_channel;
-  std::unique_ptr<mojo::edk::NamedPlatformChannelPair> elevated_mojo_channel;
+  std::unique_ptr<mojo::PlatformChannel> normal_mojo_channel;
+  std::unique_ptr<mojo::NamedPlatformChannel> elevated_mojo_channel;
   base::HandlesToInheritVector handles_to_inherit;
   if (launch_elevated_) {
     // Pass the name of the IPC channel to use.
-    mojo::edk::NamedPlatformChannelPair::Options options;
+    mojo::NamedPlatformChannel::Options options;
     options.security_descriptor = base::UTF8ToUTF16(channel_security_);
     elevated_mojo_channel =
-        base::MakeUnique<mojo::edk::NamedPlatformChannelPair>(options);
-    elevated_mojo_channel->PrepareToPassClientHandleToChildProcess(
-        &command_line);
+        std::make_unique<mojo::NamedPlatformChannel>(options);
+    elevated_mojo_channel->PassServerNameOnCommandLine(&command_line);
   } else {
-    normal_mojo_channel = base::MakeUnique<mojo::edk::PlatformChannelPair>();
-    normal_mojo_channel->PrepareToPassClientHandleToChildProcess(
-        &command_line, &handles_to_inherit);
+    normal_mojo_channel = std::make_unique<mojo::PlatformChannel>();
+    normal_mojo_channel->PrepareToPassRemoteEndpoint(&handles_to_inherit,
+                                                     &command_line);
   }
 
   // Try to launch the process.
@@ -452,12 +447,14 @@ void WtsSessionProcessDelegate::Core::DoLaunchProcess() {
     // process launches the worker process. Reporting the launch waits until the
     // worker process launch is detected. Until then, store the values needed in
     // fields. See OnProcessLaunchDetected for their use.
-    elevated_server_handle_ = elevated_mojo_channel->PassServerHandle();
+    elevated_server_endpoint_ = elevated_mojo_channel->TakeServerEndpoint();
     elevated_launcher_pid_ = GetProcessId(worker_process.Get());
-    DCHECK(elevated_server_handle_.is_valid());
+    DCHECK(elevated_server_endpoint_.is_valid());
   } else {
-    ReportProcessLaunched(std::move(worker_process),
-                          normal_mojo_channel->PassServerHandle());
+    mojo::OutgoingInvitation::Send(std::move(mojo_invitation_),
+                                   worker_process.Get(),
+                                   normal_mojo_channel->TakeLocalEndpoint());
+    ReportProcessLaunched(std::move(worker_process));
   }
 }
 
@@ -467,8 +464,8 @@ void WtsSessionProcessDelegate::Core::DrainJobNotifications() {
   // DrainJobNotifications() is posted after the job object is destroyed, so
   // by this time all notifications from the job object have been processed
   // already. Let the main thread know that the queue has been drained.
-  caller_task_runner_->PostTask(FROM_HERE, base::Bind(
-      &Core::DrainJobNotificationsCompleted, this));
+  caller_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&Core::DrainJobNotificationsCompleted, this));
 }
 
 void WtsSessionProcessDelegate::Core::DrainJobNotificationsCompleted() {
@@ -479,8 +476,8 @@ void WtsSessionProcessDelegate::Core::DrainJobNotificationsCompleted() {
 
     // Drain the completion queue to make sure all job object notification have
     // been received.
-    io_task_runner_->PostTask(FROM_HERE, base::Bind(
-        &Core::DrainJobNotifications, this));
+    io_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Core::DrainJobNotifications, this));
   }
 }
 
@@ -488,14 +485,16 @@ void WtsSessionProcessDelegate::Core::InitializeJob(ScopedHandle job) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   // Register to receive job notifications via the I/O thread's completion port.
-  if (!base::MessageLoopForIO::current()->RegisterJobObject(job.Get(), this)) {
+  if (!base::MessageLoopCurrentForIO::Get()->RegisterJobObject(job.Get(),
+                                                               this)) {
     PLOG(ERROR) << "Failed to associate the job object with a completion port";
     return;
   }
 
   // Let the main thread know that initialization is complete.
-  caller_task_runner_->PostTask(FROM_HERE, base::Bind(
-      &Core::InitializeJobCompleted, this, base::Passed(&job)));
+  caller_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&Core::InitializeJobCompleted, this, std::move(job)));
 }
 
 void WtsSessionProcessDelegate::Core::InitializeJobCompleted(ScopedHandle job) {
@@ -524,7 +523,7 @@ void WtsSessionProcessDelegate::Core::OnProcessLaunchDetected(
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
   DCHECK_NE(pid, elevated_launcher_pid_);
 
-  if (!elevated_server_handle_.is_valid()) {
+  if (!elevated_server_endpoint_.is_valid()) {
     return;
   }
 
@@ -538,8 +537,10 @@ void WtsSessionProcessDelegate::Core::OnProcessLaunchDetected(
     return;
   }
   elevated_launcher_pid_ = base::kNullProcessId;
-  ReportProcessLaunched(std::move(worker_process),
-                        std::move(elevated_server_handle_));
+  mojo::OutgoingInvitation::Send(std::move(mojo_invitation_),
+                                 worker_process.Get(),
+                                 std::move(elevated_server_endpoint_));
+  ReportProcessLaunched(std::move(worker_process));
 }
 
 void WtsSessionProcessDelegate::Core::ReportFatalError() {
@@ -553,16 +554,10 @@ void WtsSessionProcessDelegate::Core::ReportFatalError() {
 }
 
 void WtsSessionProcessDelegate::Core::ReportProcessLaunched(
-    base::win::ScopedHandle worker_process,
-    mojo::edk::ScopedPlatformHandle server_handle) {
+    base::win::ScopedHandle worker_process) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
   DCHECK(!worker_process_.IsValid());
 
-  broker_client_invitation_->Send(
-      worker_process.Get(),
-      mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                  std::move(server_handle)));
-  broker_client_invitation_.reset();
   worker_process_ = std::move(worker_process);
 
   // Report a handle that can be used to wait for the worker process completion,

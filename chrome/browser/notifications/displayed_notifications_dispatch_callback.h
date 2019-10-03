@@ -6,13 +6,21 @@
 #define CHROME_BROWSER_NOTIFICATIONS_DISPLAYED_NOTIFICATIONS_DISPATCH_CALLBACK_H_
 
 #include <set>
+#include <string>
 
 #include "base/callback.h"
 
 // Callback used by the bridge and all the downstream classes that propagate
 // the callback to get displayed notifications.
+//
+// |supports_synchronization| will be true if the platform supports getting the
+// currently displayed notifications.
+//
+// If |supports_synchronization| is true, then |notification_ids| will contain
+// the ids of the currently displayed notifications, otherwise the value of
+// |notification_ids| should be ignored.
 using GetDisplayedNotificationsCallback =
-    base::Callback<void(std::unique_ptr<std::set<std::string>>,
-                        bool /* supports_synchronization */)>;
+    base::OnceCallback<void(std::set<std::string> notification_ids,
+                            bool supports_synchronization)>;
 
 #endif  // CHROME_BROWSER_NOTIFICATIONS_DISPLAYED_NOTIFICATIONS_DISPATCH_CALLBACK_H_

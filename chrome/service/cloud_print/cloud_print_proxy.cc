@@ -26,22 +26,22 @@
 
 namespace cloud_print {
 
-CloudPrintProxy::CloudPrintProxy()
-    : service_prefs_(NULL),
-      client_(NULL),
-      enabled_(false) {
-}
+CloudPrintProxy::CloudPrintProxy() = default;
 
 CloudPrintProxy::~CloudPrintProxy() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ShutdownBackend();
 }
 
-void CloudPrintProxy::Initialize(ServiceProcessPrefs* service_prefs,
-                                 Client* client) {
+void CloudPrintProxy::Initialize(
+    ServiceProcessPrefs* service_prefs,
+    Client* client,
+    network::NetworkConnectionTracker* network_connection_tracker) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(network_connection_tracker);
   service_prefs_ = service_prefs;
   client_ = client;
+  network_connection_tracker_ = network_connection_tracker;
 }
 
 void CloudPrintProxy::EnableForUser() {
@@ -73,11 +73,10 @@ void CloudPrintProxy::EnableForUser() {
   }
 }
 
-void CloudPrintProxy::EnableForUserWithRobot(
-    const std::string& robot_auth_code,
-    const std::string& robot_email,
-    const std::string& user_email,
-    const base::DictionaryValue& user_settings) {
+void CloudPrintProxy::EnableForUserWithRobot(const std::string& robot_auth_code,
+                                             const std::string& robot_email,
+                                             const std::string& user_email,
+                                             base::Value user_settings) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ShutdownBackend();
@@ -121,8 +120,9 @@ bool CloudPrintProxy::CreateBackend() {
   oauth_client_info.client_secret =
     google_apis::GetOAuth2ClientSecret(google_apis::CLIENT_CLOUD_PRINT);
   oauth_client_info.redirect_uri = "oob";
-  backend_.reset(new CloudPrintProxyBackend(
-      this, settings, oauth_client_info, enable_job_poll));
+  backend_ = std::make_unique<CloudPrintProxyBackend>(
+      this, settings, oauth_client_info, enable_job_poll,
+      network_connection_tracker_);
   return true;
 }
 

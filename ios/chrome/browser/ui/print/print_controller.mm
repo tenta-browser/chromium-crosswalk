@@ -5,24 +5,25 @@
 #import "ios/chrome/browser/ui/print/print_controller.h"
 
 #import <MobileCoreServices/UTType.h>
-#import <Webkit/Webkit.h>
+#import <WebKit/WebKit.h>
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
-#import "base/ios/ios_util.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/tabs/tab_title_util.h"
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/alert_coordinator/loading_alert_coordinator.h"
 #include "ios/chrome/grit/ios_strings.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_fetcher.h"
@@ -136,45 +137,6 @@ class PrintPDFFetcherDelegate : public URLFetcherDelegate {
       NSError* error) {
     if (error)
       DLOG(ERROR) << "Air printing error: " << error.description;
-
-    // When printing a NSData object given to the
-    // UIPrintInteractionController's |printingItem| object, a PDF file
-    // representing the NSData object is created in the app's tmp directory
-    // by the OS and never deleted. So, this workaround deletes PDF files in
-    // tmp now that printing is done. When iOS9 is deprecated, this can
-    // be removed since PDFs will no longer need to be downloaded to print,
-    // and |printingItem| will no longer be used.
-    if (!base::ios::IsRunningOnIOS10OrLater() && isPDF) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-          base::BindBlockArc(^{
-            NSFileManager* manager = [NSFileManager defaultManager];
-            NSString* tempDir = NSTemporaryDirectory();
-            NSError* tempDirError = nil;
-
-            // Iterate over files in tmp directory.
-            for (NSString* file in
-                 [manager contentsOfDirectoryAtPath:tempDir
-                                              error:&tempDirError]) {
-              // If the file is a PDF file, delete it.
-              if ([[file pathExtension] isEqualToString:@"pdf"]) {
-                NSError* deletionError = nil;
-                NSString* fullFilePath =
-                    [tempDir stringByAppendingPathComponent:file];
-                BOOL success = [manager removeItemAtPath:fullFilePath
-                                                   error:&deletionError];
-                if (!success) {
-                  DLOG(ERROR) << "AirPrint unable to remove tmp file:" << file
-                              << " error: " << deletionError.description;
-                }
-              }
-            }
-            if (tempDirError) {
-              DLOG(ERROR) << "AirPrint tmp dir access error:"
-                          << tempDirError.description;
-            }
-          }));
-    }
   };
   [printInteractionController presentAnimated:YES
                             completionHandler:completionHandler];
@@ -192,14 +154,7 @@ class PrintPDFFetcherDelegate : public URLFetcherDelegate {
   return self;
 }
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (void)printView:(UIView*)view
-         withTitle:(NSString*)title
-    viewController:(UIViewController*)viewController {
+- (void)printView:(UIView*)view withTitle:(NSString*)title {
   base::RecordAction(base::UserMetricsAction("MobilePrintMenuAirPrint"));
   UIPrintInteractionController* printInteractionController =
       [UIPrintInteractionController sharedPrintController];
@@ -207,47 +162,13 @@ class PrintPDFFetcherDelegate : public URLFetcherDelegate {
   printInfo.outputType = UIPrintInfoOutputGeneral;
   printInfo.jobName = title;
   printInteractionController.printInfo = printInfo;
-#if !defined(__IPHONE_10_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_10_0
-  printInteractionController.showsPageRange = YES;
-#endif
 
-  // Print Formatters do not work for PDFs in iOS9 WKWebView, but do in iOS10.
-  // Instead, download the PDF and (eventually) pass it to the
-  // UIPrintInteractionController. Remove this workaround and all associated PDF
-  // specific code when iOS9 is deprecated.
-  BOOL isPDFURL = NO;
-  if (!base::ios::IsRunningOnIOS10OrLater() &&
-      [view isMemberOfClass:[WKWebView class]]) {
-    WKWebView* webView = base::mac::ObjCCastStrict<WKWebView>(view);
-    NSURL* URL = webView.URL;
-    CFStringRef UTI = UTTypeCreatePreferredIdentifierForTag(
-        kUTTagClassFilenameExtension,
-        (__bridge CFStringRef)[[URL path] pathExtension], NULL);
-    if (UTI) {
-      CFStringRef MIMEType =
-          UTTypeCopyPreferredTagWithClass(UTI, kUTTagClassMIMEType);
-      if (MIMEType) {
-        isPDFURL =
-            [@(kPDFMimeType) isEqualToString:(__bridge NSString*)MIMEType];
-        if (isPDFURL) {
-          [self downloadPDFFileWithURL:net::GURLWithNSURL(URL)
-                        viewController:viewController];
-        }
-        CFRelease(MIMEType);
-      }
-      CFRelease(UTI);
-    }
-  }
-
-  if (!isPDFURL) {
-    UIPrintPageRenderer* renderer = [[UIPrintPageRenderer alloc] init];
-    [renderer addPrintFormatter:[view viewPrintFormatter]
-          startingAtPageAtIndex:0];
-    printInteractionController.printPageRenderer = renderer;
-    [PrintController
-        displayPrintInteractionController:printInteractionController
-                                   forPDF:NO];
-  }
+  UIPrintPageRenderer* renderer = [[UIPrintPageRenderer alloc] init];
+  [renderer addPrintFormatter:[view viewPrintFormatter]
+        startingAtPageAtIndex:0];
+  printInteractionController.printPageRenderer = renderer;
+  [PrintController displayPrintInteractionController:printInteractionController
+                                              forPDF:NO];
 }
 
 - (void)dismissAnimated:(BOOL)animated {
@@ -257,6 +178,13 @@ class PrintPDFFetcherDelegate : public URLFetcherDelegate {
   _PDFDownloadingErrorDialog = nil;
   [[UIPrintInteractionController sharedPrintController]
       dismissAnimated:animated];
+}
+
+#pragma mark - WebStatePrinter
+
+- (void)printWebState:(web::WebState*)webState {
+  [self printView:webState->GetView()
+        withTitle:tab_util::GetTabTitle(webState)];
 }
 
 #pragma mark - Private Methods
@@ -335,7 +263,7 @@ class PrintPDFFetcherDelegate : public URLFetcherDelegate {
 - (void)finishedDownloadingPDF:(UIViewController*)viewController {
   [self dismissPDFDownloadingDialog];
   DCHECK(_fetcher);
-  base::ScopedClosureRunner fetcherResetter(base::BindBlockArc(^{
+  base::ScopedClosureRunner fetcherResetter(base::BindOnce(^{
     _fetcher.reset();
   }));
   int responseCode = _fetcher->GetResponseCode();

@@ -5,12 +5,13 @@
 package org.chromium.chrome.browser.payments;
 
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.DECEMBER;
+import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.FIRST_BILLING_ADDRESS;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.NEXT_YEAR;
 
-import android.content.DialogInterface;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -24,21 +25,21 @@ import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * A payment integration test for biling addresses without a phone.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
 
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
@@ -48,14 +49,13 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
      * The index at which the option to add a billing address is located in the billing address
      * selection dropdown.
      */
-    private static final int ADD_BILLING_ADDRESS = 2;
+    private static final int ADD_BILLING_ADDRESS = 3;
 
     /** The index of the billing address dropdown in the card editor. */
     private static final int BILLING_ADDRESS_DROPDOWN_INDEX = 2;
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         String address_without_phone = helper.setProfile(new AutofillProfile("",
                 "https://example.com", true, "Jon NoPhone", "Google", "340 Main St", "CA",
@@ -75,15 +75,14 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testCanPayWithBillingNoPhone()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testCanPayWithBillingNoPhone() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getReadyForUnmaskInput());
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
         mPaymentRequestTestRule.expectResultContains(new String[] {"Jon NoPhone"});
     }
 
@@ -91,7 +90,7 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
     @MediumTest
     @Feature({"Payments"})
     public void testCanSelectBillingAddressWithoutPhone()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
 
         // Go edit the credit card.
@@ -108,18 +107,18 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
                         .equals("Jon NoPhone, 340 Main St, Los Angeles, CA 90291"));
 
         // Even though the current billing address is valid, the one with a phone number should be
-        // suggested first if the user wants to change it.
-        Assert.assertTrue(
-                mPaymentRequestTestRule
-                        .getSpinnerTextAtPositionInCardEditor(BILLING_ADDRESS_DROPDOWN_INDEX, 0)
-                        .equals("Rob Phone, 340 Main St, Los Angeles, CA 90291"));
+        // suggested first (right after the select hint) if the user wants to change it.
+        Assert.assertTrue(mPaymentRequestTestRule
+                                  .getSpinnerTextAtPositionInCardEditor(
+                                          BILLING_ADDRESS_DROPDOWN_INDEX, FIRST_BILLING_ADDRESS)
+                                  .equals("Rob Phone, 340 Main St, Los Angeles, CA 90291"));
     }
 
     @Test
     @MediumTest
     @Feature({"Payments"})
     public void testCantSelectShippingAddressWithoutPhone()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -142,7 +141,7 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
     @MediumTest
     @Feature({"Payments"})
     public void testCantAddNewBillingAddressWithoutPhone()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickInPaymentMethodAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -156,9 +155,8 @@ public class PaymentRequestBillingAddressWithoutPhoneTest implements MainActivit
         mPaymentRequestTestRule.setTextInEditorAndWait(
                 new String[] {"Seb Doe", "Google", "340 Main St", "Los Angeles", "CA", "90291", ""},
                 mPaymentRequestTestRule.getEditorTextUpdate());
-
         // Trying to add the address without a phone number should fail.
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getEditorValidationError());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getEditorValidationError());
     }
 }

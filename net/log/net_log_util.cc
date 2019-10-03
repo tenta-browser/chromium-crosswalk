@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,20 +26,24 @@
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties.h"
 #include "net/http/http_transaction_factory.h"
-#include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_entry.h"
 #include "net/log/net_log_event_type.h"
-#include "net/log/net_log_parameters_callback.h"
+#include "net/log/net_log_values.h"
 #include "net/log/net_log_with_source.h"
-#include "net/proxy/proxy_config.h"
-#include "net/proxy/proxy_retry_info.h"
-#include "net/proxy/proxy_service.h"
-#include "net/quic/core/quic_error_codes.h"
-#include "net/quic/core/quic_packets.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
+#include "net/proxy_resolution/proxy_retry_info.h"
 #include "net/socket/ssl_client_socket.h"
+#include "net/third_party/quiche/src/quic/core/quic_error_codes.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
+
+#if BUILDFLAG(ENABLE_REPORTING)
+#include "net/network_error_logging/network_error_logging_service.h"
+#include "net/reporting/reporting_service.h"
+#endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace net {
 
@@ -102,11 +105,11 @@ const char* NetInfoSourceToString(NetInfoSource source) {
 // Despite the name, can return an in memory "disk cache".
 disk_cache::Backend* GetDiskCacheBackend(URLRequestContext* context) {
   if (!context->http_transaction_factory())
-    return NULL;
+    return nullptr;
 
   HttpCache* http_cache = context->http_transaction_factory()->GetCache();
   if (!http_cache)
-    return NULL;
+    return nullptr;
 
   return http_cache->GetCurrentBackend();
 }
@@ -123,14 +126,6 @@ bool RequestCreatedBefore(const URLRequest* request1,
   return request1->identifier() < request2->identifier();
 }
 
-// Returns a Value representing the state of a pre-existing URLRequest when
-// net-internals was opened.
-std::unique_ptr<base::Value> GetRequestStateAsValue(
-    const net::URLRequest* request,
-    NetLogCaptureMode capture_mode) {
-  return request->GetStateAsValue();
-}
-
 }  // namespace
 
 std::unique_ptr<base::DictionaryValue> GetNetConstants() {
@@ -142,7 +137,7 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
 
   // Add a dictionary with information on the relationship between event type
   // enums and their symbolic names.
-  constants_dict->Set("logEventTypes", NetLog::GetEventTypesAsValue());
+  constants_dict->SetKey("logEventTypes", NetLog::GetEventTypesAsValue());
 
   // Add a dictionary with information about the relationship between CertStatus
   // flags and their symbolic names.
@@ -202,8 +197,9 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
   {
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (QuicErrorCode error = QUIC_NO_ERROR; error < QUIC_LAST_ERROR;
-         error = static_cast<QuicErrorCode>(error + 1)) {
+    for (quic::QuicErrorCode error = quic::QUIC_NO_ERROR;
+         error < quic::QUIC_LAST_ERROR;
+         error = static_cast<quic::QuicErrorCode>(error + 1)) {
       dict->SetInteger(QuicErrorCodeToString(error), static_cast<int>(error));
     }
 
@@ -215,9 +211,9 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
   {
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
 
-    for (QuicRstStreamErrorCode error = QUIC_STREAM_NO_ERROR;
-         error < QUIC_STREAM_LAST_ERROR;
-         error = static_cast<QuicRstStreamErrorCode>(error + 1)) {
+    for (quic::QuicRstStreamErrorCode error = quic::QUIC_STREAM_NO_ERROR;
+         error < quic::QUIC_STREAM_LAST_ERROR;
+         error = static_cast<quic::QuicRstStreamErrorCode>(error + 1)) {
       dict->SetInteger(QuicRstStreamErrorCodeToString(error),
                        static_cast<int>(error));
     }
@@ -239,7 +235,7 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
 
   // Information about the relationship between source type enums and
   // their symbolic names.
-  constants_dict->Set("logSourceType", NetLog::GetSourceTypesAsValue());
+  constants_dict->SetKey("logSourceType", NetLog::GetSourceTypesAsValue());
 
   // TODO(eroman): This is here for compatibility in loading new log files with
   // older builds of Chrome. Safe to remove this once M45 is on the stable
@@ -276,10 +272,8 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
         base::TimeTicks::Now() - base::TimeTicks();
     int64_t tick_to_unix_time_ms =
         (time_since_epoch - reference_time_ticks).InMilliseconds();
-
-    // Pass it as a string, since it may be too large to fit in an integer.
-    constants_dict->SetString("timeTickOffset",
-                              base::Int64ToString(tick_to_unix_time_ms));
+    constants_dict->SetKey("timeTickOffset",
+                           NetLogNumberValue(tick_to_unix_time_ms));
   }
 
   // TODO(eroman): Is this needed?
@@ -316,13 +310,17 @@ NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
   // TODO(mmenke):  The code for most of these sources should probably be moved
   // into the sources themselves.
   if (info_sources & NET_INFO_PROXY_SETTINGS) {
-    ProxyService* proxy_service = context->proxy_service();
+    ProxyResolutionService* proxy_resolution_service =
+        context->proxy_resolution_service();
 
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-    if (proxy_service->fetched_config().is_valid())
-      dict->Set("original", proxy_service->fetched_config().ToValue());
-    if (proxy_service->config().is_valid())
-      dict->Set("effective", proxy_service->config().ToValue());
+    if (proxy_resolution_service->fetched_config())
+      dict->SetKey(
+          "original",
+          proxy_resolution_service->fetched_config()->value().ToValue());
+    if (proxy_resolution_service->config())
+      dict->SetKey("effective",
+                   proxy_resolution_service->config()->value().ToValue());
 
     net_info_dict->Set(NetInfoSourceToString(NET_INFO_PROXY_SETTINGS),
                        std::move(dict));
@@ -330,12 +328,11 @@ NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
 
   if (info_sources & NET_INFO_BAD_PROXIES) {
     const ProxyRetryInfoMap& bad_proxies_map =
-        context->proxy_service()->proxy_retry_info();
+        context->proxy_resolution_service()->proxy_retry_info();
 
     auto list = std::make_unique<base::ListValue>();
 
-    for (ProxyRetryInfoMap::const_iterator it = bad_proxies_map.begin();
-         it != bad_proxies_map.end(); ++it) {
+    for (auto it = bad_proxies_map.begin(); it != bad_proxies_map.end(); ++it) {
       const std::string& proxy_uri = it->first;
       const ProxyRetryInfo& retry_info = it->second;
 
@@ -447,6 +444,34 @@ NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
                        std::move(info_dict));
   }
 
+  if (info_sources & NET_INFO_REPORTING) {
+#if BUILDFLAG(ENABLE_REPORTING)
+    ReportingService* reporting_service = context->reporting_service();
+    if (reporting_service) {
+      base::Value reporting_dict = reporting_service->StatusAsValue();
+      NetworkErrorLoggingService* network_error_logging_service =
+          context->network_error_logging_service();
+      if (network_error_logging_service) {
+        reporting_dict.SetKey("networkErrorLogging",
+                              network_error_logging_service->StatusAsValue());
+      }
+      net_info_dict->SetKey(NetInfoSourceToString(NET_INFO_REPORTING),
+                            std::move(reporting_dict));
+    } else {
+      base::Value reporting_dict(base::Value::Type::DICTIONARY);
+      reporting_dict.SetKey("reportingEnabled", base::Value(false));
+      net_info_dict->SetKey(NetInfoSourceToString(NET_INFO_REPORTING),
+                            std::move(reporting_dict));
+    }
+
+#else   // BUILDFLAG(ENABLE_REPORTING)
+    base::Value reporting_dict(base::Value::Type::DICTIONARY);
+    reporting_dict.SetKey("reportingEnabled", base::Value(false));
+    net_info_dict->SetKey(NetInfoSourceToString(NET_INFO_REPORTING),
+                          std::move(reporting_dict));
+#endif  // BUILDFLAG(ENABLE_REPORTING)
+  }
+
   return net_info_dict;
 }
 
@@ -460,7 +485,7 @@ NET_EXPORT void CreateNetLogEntriesForActiveObjects(
     context->AssertCalledOnValidThread();
     // Contexts should all be using the same NetLog.
     DCHECK_EQ((*contexts.begin())->net_log(), context->net_log());
-    for (auto* request : context->url_requests()) {
+    for (auto* request : *context->url_requests()) {
       requests.push_back(request);
     }
   }
@@ -470,15 +495,9 @@ NET_EXPORT void CreateNetLogEntriesForActiveObjects(
 
   // Create fake events.
   for (auto* request : requests) {
-    NetLogParametersCallback callback =
-        base::Bind(&GetRequestStateAsValue, base::Unretained(request));
-
-    // Note that passing the hardcoded NetLogCaptureMode::Default() below is
-    // fine, since GetRequestStateAsValue() ignores the capture mode.
-    NetLogEntryData entry_data(
-        NetLogEventType::REQUEST_ALIVE, request->net_log().source(),
-        NetLogEventPhase::BEGIN, request->creation_time(), &callback);
-    NetLogEntry entry(&entry_data, NetLogCaptureMode::Default());
+    NetLogEntry entry(NetLogEventType::REQUEST_ALIVE,
+                      request->net_log().source(), NetLogEventPhase::BEGIN,
+                      request->creation_time(), request->GetStateAsValue());
     observer->OnAddEntry(entry);
   }
 }

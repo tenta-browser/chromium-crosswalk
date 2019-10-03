@@ -4,31 +4,21 @@
 
 #include "ui/base/idle/idle.h"
 
-#include "base/bind.h"
+#include "ui/base/idle/idle_internal.h"
 
 namespace ui {
-namespace {
 
-void CalculateIdleStateCallback(int idle_threshold,
-                                IdleCallback notify,
-                                int idle_time) {
-  if (idle_time >= idle_threshold)
-    notify.Run(IDLE_STATE_IDLE);
-  else
-    notify.Run(IDLE_STATE_ACTIVE);
-}
+IdleState CalculateIdleState(int idle_threshold) {
+  if (IdleStateForTesting().has_value())
+    return IdleStateForTesting().value();
 
-}  // namespace
+  if (CheckIdleStateIsLocked())
+    return IDLE_STATE_LOCKED;
 
-void CalculateIdleState(int idle_threshold, IdleCallback notify) {
-  if (CheckIdleStateIsLocked()) {
-    notify.Run(IDLE_STATE_LOCKED);
-    return;
-  }
+  if (CalculateIdleTime() >= idle_threshold)
+    return IDLE_STATE_IDLE;
 
-  CalculateIdleTime(base::Bind(&CalculateIdleStateCallback,
-                               idle_threshold,
-                               notify));
+  return IDLE_STATE_ACTIVE;
 }
 
 }  // namespace ui

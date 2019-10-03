@@ -9,26 +9,26 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/compiler_specific.h"
 #include "base/memory/weak_ptr.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/model/attachments/attachment_store.h"
-#include "components/sync/model/sync_change_processor.h"
+#include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_data.h"
 #include "components/sync/model/sync_error.h"
 #include "components/sync/model/sync_merge_result.h"
 
 namespace syncer {
 
-class AttachmentService;
+class SyncChangeProcessor;
 class SyncErrorFactory;
 
 // TODO(zea): remove SupportsWeakPtr in favor of having all SyncableService
 // implementers provide a way of getting a weak pointer to themselves.
 // See crbug.com/100114.
-class SyncableService : public SyncChangeProcessor,
-                        public base::SupportsWeakPtr<SyncableService> {
+class SyncableService : public base::SupportsWeakPtr<SyncableService> {
  public:
+  SyncableService() = default;
+  virtual ~SyncableService() = default;
+
   // A StartSyncFlare is useful when your SyncableService has a need for sync
   // to start ASAP. This is typically for one of three reasons:
   // 1) Because a local change event has occurred but MergeDataAndStartSyncing
@@ -42,6 +42,11 @@ class SyncableService : public SyncChangeProcessor,
   // included so that the recieving end can track usage and timing statistics,
   // make pptimizations or tradeoffs by type, etc.
   using StartSyncFlare = base::Callback<void(ModelType)>;
+
+  // Allows the SyncableService to delay sync events (all below) until the model
+  // becomes ready to sync. Callers must ensure there is no previous ongoing
+  // wait (per datatype, if the SyncableService supports multiple).
+  virtual void WaitUntilReadyToSync(base::OnceClosure done) = 0;
 
   // Informs the service to begin syncing the specified synced datatype |type|.
   // The service should then merge |initial_sync_data| into it's local data,
@@ -66,33 +71,15 @@ class SyncableService : public SyncChangeProcessor,
   // Returns: A default SyncError (IsSet() == false) if no errors were
   //          encountered, and a filled SyncError (IsSet() == true)
   //          otherwise.
-  SyncError ProcessSyncChanges(const base::Location& from_here,
-                               const SyncChangeList& change_list) override = 0;
+  virtual SyncError ProcessSyncChanges(const base::Location& from_here,
+                                       const SyncChangeList& change_list) = 0;
 
-  // Returns AttachmentStore for use by sync when uploading or downloading
-  // attachments.
-  // GetAttachmentStoreForSync is called right before MergeDataAndStartSyncing.
-  // If at that time GetAttachmentStoreForSync returns null then datatype is
-  // considered not using attachments and all attempts to upload/download
-  // attachments will fail. Default implementation returns null. Datatype that
-  // uses sync attachments should create attachment store, implement
-  // GetAttachmentStoreForSync to return result of
-  // AttachmentStore::CreateAttachmentStoreForSync() from attachment store
-  // object.
-  virtual std::unique_ptr<AttachmentStoreForSync> GetAttachmentStoreForSync();
+  // TODO(crbug.com/870624): We don't seem to use this function anywhere, so
+  // we should simply remove it and simplify all implementations.
+  virtual SyncDataList GetAllSyncData(ModelType type) const = 0;
 
-  // Called by sync to provide AttachmentService to be used to download
-  // attachments.
-  // SetAttachmentService is called after GetAttachmentStore and right before
-  // MergeDataAndStartSyncing and only if GetAttachmentStore has returned a
-  // non-null store instance. Default implementation does nothing.
-  // Datatype that uses attachments must take ownerhip of the provided
-  // AttachmentService instance.
-  virtual void SetAttachmentService(
-      std::unique_ptr<AttachmentService> attachment_service);
-
- protected:
-  ~SyncableService() override;
+ private:
+  DISALLOW_COPY_AND_ASSIGN(SyncableService);
 };
 
 }  // namespace syncer

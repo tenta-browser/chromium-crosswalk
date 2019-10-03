@@ -13,7 +13,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeActivity;
@@ -25,8 +24,9 @@ import org.chromium.chrome.browser.webapps.TestFetchStorageCallback;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -41,8 +41,7 @@ import java.util.Map;
  * successful in its own unit tests. This test can do so.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class BrowsingDataRemoverIntegrationTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -100,23 +99,16 @@ public class BrowsingDataRemoverIntegrationTest {
         Assert.assertEquals(apps.keySet(), WebappRegistry.getRegisteredWebappIdsForTesting());
 
         // Clear cookies and site data excluding the registrable domain "google.com".
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                BrowsingDataBridge.getInstance().clearBrowsingDataExcludingDomains(
-                        new OnClearBrowsingDataListener() {
-                            @Override
-                            public void onBrowsingDataCleared() {
-                                mCallbackCalled = true;
-                            }
-                        },
-                        new int[]{ BrowsingDataType.COOKIES },
-                        TimePeriod.ALL_TIME,
-                        new String[]{ "google.com" },
-                        new int[] { 1 },
-                        new String[0],
-                        new int[0]);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            BrowsingDataBridge.getInstance().clearBrowsingDataExcludingDomains(
+                    new OnClearBrowsingDataListener() {
+                        @Override
+                        public void onBrowsingDataCleared() {
+                            mCallbackCalled = true;
+                        }
+                    },
+                    new int[] {BrowsingDataType.COOKIES}, TimePeriod.ALL_TIME,
+                    new String[] {"google.com"}, new int[] {1}, new String[0], new int[0]);
         });
         CriteriaHelper.pollUiThread(new CallbackCriteria());
 
@@ -125,19 +117,13 @@ public class BrowsingDataRemoverIntegrationTest {
                 WebappRegistry.getRegisteredWebappIdsForTesting());
 
         // Clear cookies and site data with no url filter.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                BrowsingDataBridge.getInstance().clearBrowsingData(
-                        new OnClearBrowsingDataListener() {
-                            @Override
-                            public void onBrowsingDataCleared() {
-                                mCallbackCalled = true;
-                            }
-                        },
-                        new int[]{ BrowsingDataType.COOKIES },
-                        TimePeriod.ALL_TIME);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            BrowsingDataBridge.getInstance().clearBrowsingData(new OnClearBrowsingDataListener() {
+                @Override
+                public void onBrowsingDataCleared() {
+                    mCallbackCalled = true;
+                }
+            }, new int[] {BrowsingDataType.COOKIES}, TimePeriod.ALL_TIME);
         });
         CriteriaHelper.pollUiThread(new CallbackCriteria());
 

@@ -38,7 +38,6 @@ class MockTranslateClient : public TranslateClient {
 
   MOCK_METHOD0(GetTranslateAcceptLanguages, TranslateAcceptLanguages*());
   MOCK_CONST_METHOD0(GetInfobarIconID, int());
-  MOCK_METHOD1(RecordTranslateEvent, void(const metrics::TranslateEventProto&));
 
 #if !defined(USE_AURA)
   MOCK_CONST_METHOD1(CreateInfoBarMock,
@@ -49,11 +48,8 @@ class MockTranslateClient : public TranslateClient {
   }
 #endif
 
-  MOCK_CONST_METHOD1(RecordLanguageDetectionEvent,
-                     void(const LanguageDetectionDetails&));
-
   MOCK_METHOD5(ShowTranslateUI,
-               void(translate::TranslateStep,
+               bool(translate::TranslateStep,
                     const std::string&,
                     const std::string&,
                     TranslateErrors::Type,

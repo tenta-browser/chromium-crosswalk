@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 
 namespace base {
 class DictionaryValue;
@@ -63,7 +64,7 @@ class GuestViewMessageFilter : public content::BrowserMessageFilter {
   content::BrowserContext* const browser_context_;
 
   // Weak pointers produced by this factory are bound to the IO thread.
-  base::WeakPtrFactory<GuestViewMessageFilter> weak_ptr_factory_;
+  base::WeakPtrFactory<GuestViewMessageFilter> weak_ptr_factory_{this};
 
  private:
   friend class content::BrowserThread;

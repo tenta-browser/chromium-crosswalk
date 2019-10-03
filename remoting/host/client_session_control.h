@@ -6,12 +6,17 @@
 #define REMOTING_HOST_CLIENT_SESSION_CONTROL_H_
 
 #include "remoting/protocol/errors.h"
+#include "ui/events/event.h"
 
 namespace webrtc {
 class DesktopVector;
 }  // namespace webrtc
 
 namespace remoting {
+
+namespace protocol {
+class VideoLayout;
+}  // namespace protocol
 
 // Allows the desktop environment to disconnect the client session and
 // to control the remote input handling (i.e. disable, enable, and pause
@@ -27,11 +32,16 @@ class ClientSessionControl {
   // scheduler components.
   virtual void DisconnectSession(protocol::ErrorCode error) = 0;
 
-  // Called when local mouse movement is detected.
-  virtual void OnLocalMouseMoved(const webrtc::DesktopVector& position) = 0;
+  // Called when local mouse or touch movement is detected.
+  virtual void OnLocalPointerMoved(const webrtc::DesktopVector& position,
+                                   ui::EventType type) = 0;
 
   // Disables or enables the remote input in the client session.
   virtual void SetDisableInputs(bool disable_inputs) = 0;
+
+  // Called when the host desktop displays are changed.
+  virtual void OnDesktopDisplayChanged(
+      std::unique_ptr<protocol::VideoLayout> layout) = 0;
 };
 
 }  // namespace remoting

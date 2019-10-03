@@ -6,12 +6,12 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -136,7 +136,7 @@ void ChromeContentRulesRegistry::MonitorWebContentsForRuleEvaluation(
 void ChromeContentRulesRegistry::DidFinishNavigation(
     content::WebContents* contents,
     content::NavigationHandle* navigation_handle) {
-  if (base::ContainsKey(active_rules_, contents)) {
+  if (base::Contains(active_rules_, contents)) {
     EvaluationScope evaluation_scope(this);
     for (const std::unique_ptr<ContentPredicateEvaluator>& evaluator :
          evaluators_)
@@ -180,7 +180,7 @@ ChromeContentRulesRegistry::CreateRule(
 
   // Note: |api_rule| may contain tags, but these are ignored.
 
-  return base::MakeUnique<ContentRule>(extension, std::move(conditions),
+  return std::make_unique<ContentRule>(extension, std::move(conditions),
                                        std::move(actions), *api_rule.priority);
 }
 
@@ -227,7 +227,7 @@ ChromeContentRulesRegistry::GetMatchingRules(content::WebContents* tab) const {
 
 std::string ChromeContentRulesRegistry::AddRulesImpl(
     const std::string& extension_id,
-    const std::vector<linked_ptr<api::events::Rule>>& api_rules) {
+    const std::vector<const api::events::Rule*>& api_rules) {
   EvaluationScope evaluation_scope(this);
   const Extension* extension = ExtensionRegistry::Get(browser_context())
       ->GetInstalledExtension(extension_id);
@@ -246,7 +246,7 @@ std::string ChromeContentRulesRegistry::AddRulesImpl(
         evaluator.get();
   }
 
-  for (const linked_ptr<api::events::Rule>& api_rule : api_rules) {
+  for (auto* api_rule : api_rules) {
     ExtensionIdRuleIdPair rule_id(extension_id, *api_rule->id);
     DCHECK(content_rules_.find(rule_id) == content_rules_.end());
 
@@ -280,7 +280,7 @@ std::string ChromeContentRulesRegistry::AddRulesImpl(
       }
     }
 
-    new_rules[rule_id] = make_linked_ptr(rule.release());
+    new_rules[rule_id] = std::move(rule);
   }
 
   // Notify the evaluators about their new predicates.
@@ -289,7 +289,8 @@ std::string ChromeContentRulesRegistry::AddRulesImpl(
     evaluator->TrackPredicates(new_predicates[evaluator.get()]);
 
   // Wohoo, everything worked fine.
-  content_rules_.insert(new_rules.begin(), new_rules.end());
+  content_rules_.insert(std::make_move_iterator(new_rules.begin()),
+                        std::make_move_iterator(new_rules.end()));
 
   // Request evaluation for all WebContents, under the assumption that a
   // non-empty condition has been added.
@@ -311,7 +312,7 @@ std::string ChromeContentRulesRegistry::RemoveRulesImpl(
   std::vector<const void*> predicate_groups_to_stop_tracking;
   for (const std::string& id : rule_identifiers) {
     // Skip unknown rules.
-    RulesMap::iterator content_rules_entry =
+    auto content_rules_entry =
         content_rules_.find(std::make_pair(extension_id, id));
     if (content_rules_entry == content_rules_.end())
       continue;
@@ -320,7 +321,7 @@ std::string ChromeContentRulesRegistry::RemoveRulesImpl(
 
     // Remove the ContentRule from active_rules_.
     for (auto& tab_rules_pair : active_rules_) {
-      if (base::ContainsKey(tab_rules_pair.second, rule)) {
+      if (base::Contains(tab_rules_pair.second, rule)) {
         ContentAction::ApplyInfo apply_info =
             {rule->extension, browser_context(), tab_rules_pair.first,
              rule->priority};
@@ -340,7 +341,7 @@ std::string ChromeContentRulesRegistry::RemoveRulesImpl(
     evaluator->StopTrackingPredicates(predicate_groups_to_stop_tracking);
 
   // Remove the rules.
-  for (RulesMap::iterator it : rules_to_erase)
+  for (auto it : rules_to_erase)
     content_rules_.erase(it);
 
   return std::string();
@@ -362,14 +363,14 @@ std::string ChromeContentRulesRegistry::RemoveAllRulesImpl(
 void ChromeContentRulesRegistry::EvaluateConditionsForTab(
     content::WebContents* tab) {
   std::set<const ContentRule*> matching_rules = GetMatchingRules(tab);
-  if (matching_rules.empty() && !base::ContainsKey(active_rules_, tab))
+  if (matching_rules.empty() && !base::Contains(active_rules_, tab))
     return;
 
   std::set<const ContentRule*>& prev_matching_rules = active_rules_[tab];
   for (const ContentRule* rule : matching_rules) {
     ContentAction::ApplyInfo apply_info =
         {rule->extension, browser_context(), tab, rule->priority};
-    if (!base::ContainsKey(prev_matching_rules, rule)) {
+    if (!base::Contains(prev_matching_rules, rule)) {
       for (const std::unique_ptr<const ContentAction>& action : rule->actions)
         action->Apply(apply_info);
     } else {
@@ -378,7 +379,7 @@ void ChromeContentRulesRegistry::EvaluateConditionsForTab(
     }
   }
   for (const ContentRule* rule : prev_matching_rules) {
-    if (!base::ContainsKey(matching_rules, rule)) {
+    if (!base::Contains(matching_rules, rule)) {
       ContentAction::ApplyInfo apply_info =
           {rule->extension, browser_context(), tab, rule->priority};
       for (const std::unique_ptr<const ContentAction>& action : rule->actions)

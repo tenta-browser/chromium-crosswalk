@@ -8,20 +8,16 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 
 class PrerenderService;
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 namespace ios {
 class ChromeBrowserState;
 }  // namespace ios
 
-// Singleton that owns the PrerenderService and associates with with
+// Singleton that creates the PrerenderService and associates that service with
 // ios::ChromeBrowserState.
 class PrerenderServiceFactory : public BrowserStateKeyedServiceFactory {
  public:
@@ -30,7 +26,7 @@ class PrerenderServiceFactory : public BrowserStateKeyedServiceFactory {
   static PrerenderServiceFactory* GetInstance();
 
  private:
-  friend struct base::DefaultSingletonTraits<PrerenderServiceFactory>;
+  friend class base::NoDestructor<PrerenderServiceFactory>;
 
   PrerenderServiceFactory();
   ~PrerenderServiceFactory() override;

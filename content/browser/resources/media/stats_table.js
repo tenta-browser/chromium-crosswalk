@@ -33,11 +33,23 @@ var StatsTable = (function(ssrcInfoManager) {
      *     the value.
      */
     addStatsReport: function(peerConnectionElement, report) {
+      if (report.type == 'codec') {
+        return;
+      }
       var statsTable = this.ensureStatsTable_(peerConnectionElement, report);
 
       if (report.stats) {
-        this.addStatsToTable_(statsTable,
-                              report.stats.timestamp, report.stats.values);
+        this.addStatsToTable_(
+            statsTable, report.stats.timestamp, report.stats.values);
+      }
+    },
+
+    clearStatsLists: function(peerConnectionElement) {
+      let containerId = peerConnectionElement.id + '-table-container';
+      let container = $(containerId);
+      if (container) {
+        peerConnectionElement.removeChild(container);
+        this.ensureStatsTableContainer_(peerConnectionElement);
       }
     },
 
@@ -76,7 +88,7 @@ var StatsTable = (function(ssrcInfoManager) {
      * @return {!Element} The stats table element.
      * @private
      */
-     ensureStatsTable_: function(peerConnectionElement, report) {
+    ensureStatsTable_: function(peerConnectionElement, report) {
       var tableId = peerConnectionElement.id + '-table-' + report.id;
       var table = $(tableId);
       if (!table) {
@@ -96,10 +108,10 @@ var StatsTable = (function(ssrcInfoManager) {
         table.innerHTML = '<tr><th colspan=2></th></tr>';
         table.rows[0].cells[0].textContent = 'Statistics ' + report.id;
         if (report.type == 'ssrc') {
-            table.insertRow(1);
-            table.rows[1].innerHTML = '<td colspan=2></td>';
-            this.ssrcInfoManager_.populateSsrcInfo(
-                table.rows[1].cells[0], GetSsrcFromReport(report));
+          table.insertRow(1);
+          table.rows[1].innerHTML = '<td colspan=2></td>';
+          this.ssrcInfoManager_.populateSsrcInfo(
+              table.rows[1].cells[0], GetSsrcFromReport(report));
         }
       }
       return table;
@@ -133,6 +145,7 @@ var StatsTable = (function(ssrcInfoManager) {
     updateStatsTableRow_: function(statsTable, rowName, value) {
       var trId = statsTable.id + '-' + rowName;
       var trElement = $(trId);
+      var activeConnectionClass = 'stats-table-active-connection';
       if (!trElement) {
         trElement = document.createElement('tr');
         trElement.id = trId;
@@ -142,8 +155,13 @@ var StatsTable = (function(ssrcInfoManager) {
       trElement.cells[1].textContent = value;
 
       // Highlights the table for the active connection.
-      if (rowName == 'googActiveConnection' && value == true)
-        statsTable.parentElement.classList.add('stats-table-active-connection');
+      if (rowName == 'googActiveConnection') {
+        if (value === true) {
+          statsTable.parentElement.classList.add(activeConnectionClass);
+        } else {
+          statsTable.parentElement.classList.remove(activeConnectionClass);
+        }
+      }
     }
   };
 

@@ -32,8 +32,7 @@ class PrefetchedPagesTrackerImpl
 
   // PrefetchedPagesTracker implementation
   bool IsInitialized() const override;
-  void AddInitializationCompletedCallback(
-      base::OnceCallback<void()> callback) override;
+  void Initialize(base::OnceCallback<void()> callback) override;
   bool PrefetchedOfflinePageExists(const GURL& url) const override;
 
   // OfflinePageModel::Observer implementation.
@@ -42,12 +41,11 @@ class PrefetchedPagesTrackerImpl
       offline_pages::OfflinePageModel* model,
       const offline_pages::OfflinePageItem& added_page) override;
   void OfflinePageDeleted(
-      const offline_pages::OfflinePageModel::DeletedPageInfo& page_info)
-      override;
+      const offline_pages::OfflinePageItem& deleted_page) override;
 
  private:
-  void Initialize(const std::vector<offline_pages::OfflinePageItem>&
-                      all_prefetched_offline_pages);
+  void OfflinePagesLoaded(const std::vector<offline_pages::OfflinePageItem>&
+                              all_prefetched_offline_pages);
   void AddOfflinePage(const offline_pages::OfflinePageItem& offline_page_item);
 
   bool initialized_;
@@ -62,7 +60,7 @@ class PrefetchedPagesTrackerImpl
 
   std::vector<base::OnceCallback<void()>> initialization_completed_callbacks_;
 
-  base::WeakPtrFactory<PrefetchedPagesTrackerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<PrefetchedPagesTrackerImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrefetchedPagesTrackerImpl);
 };

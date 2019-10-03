@@ -6,9 +6,9 @@
 
 #include <limits>
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/numerics/safe_math.h"
 #include "base/strings/string_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -43,10 +43,10 @@ class SyncCallback: public disk_cache::FileIOCallback {
   // discard, or when the NetLog is not set to log all events.
   SyncCallback(scoped_refptr<disk_cache::EntryImpl> entry,
                net::IOBuffer* buffer,
-               const net::CompletionCallback& callback,
+               net::CompletionOnceCallback callback,
                net::NetLogEventType end_event_type)
       : entry_(std::move(entry)),
-        callback_(callback),
+        callback_(std::move(callback)),
         buf_(buffer),
         start_(TimeTicks::Now()),
         end_event_type_(end_event_type) {
@@ -59,7 +59,7 @@ class SyncCallback: public disk_cache::FileIOCallback {
 
  private:
   scoped_refptr<disk_cache::EntryImpl> entry_;
-  net::CompletionCallback callback_;
+  net::CompletionOnceCallback callback_;
   scoped_refptr<net::IOBuffer> buf_;
   TimeTicks start_;
   const net::NetLogEventType end_event_type_;
@@ -71,20 +71,20 @@ void SyncCallback::OnFileIOComplete(int bytes_copied) {
   entry_->DecrementIoCount();
   if (!callback_.is_null()) {
     if (entry_->net_log().IsCapturing()) {
-      entry_->net_log().EndEvent(
-          end_event_type_,
-          disk_cache::CreateNetLogReadWriteCompleteCallback(bytes_copied));
+      disk_cache::NetLogReadWriteComplete(entry_->net_log(), end_event_type_,
+                                          net::NetLogEventPhase::END,
+                                          bytes_copied);
     }
     entry_->ReportIOTime(disk_cache::EntryImpl::kAsyncIO, start_);
-    buf_ = NULL;  // Release the buffer before invoking the callback.
-    callback_.Run(bytes_copied);
+    buf_ = nullptr;  // Release the buffer before invoking the callback.
+    std::move(callback_).Run(bytes_copied);
   }
   delete this;
 }
 
 void SyncCallback::Discard() {
   callback_.Reset();
-  buf_ = NULL;
+  buf_ = nullptr;
   OnFileIOComplete(0);
 }
 
@@ -131,7 +131,7 @@ class EntryImpl::UserBuffer {
   // Prepare this buffer for reuse.
   void Reset();
 
-  char* Data() { return buffer_.size() ? &buffer_[0] : NULL; }
+  char* Data() { return buffer_.size() ? &buffer_[0] : nullptr; }
   int Size() { return static_cast<int>(buffer_.size()); }
   int Start() { return offset_; }
   int End() { return offset_ + Size(); }
@@ -183,6 +183,12 @@ void EntryImpl::UserBuffer::Write(int offset, IOBuffer* buf, int len) {
   DCHECK_GE(offset, 0);
   DCHECK_GE(len, 0);
   DCHECK_GE(offset + len, 0);
+
+  // 0-length writes that don't extend can just be ignored here, and are safe
+  // even if they're are before offset_, as truncates are handled elsewhere.
+  if (len == 0 && offset < End())
+    return;
+
   DCHECK_GE(offset, offset_);
   DVLOG(3) << "Buffer write at " << offset << " current " << offset_;
 
@@ -303,8 +309,11 @@ bool EntryImpl::UserBuffer::GrowBuffer(int required, int limit) {
 // ------------------------------------------------------------------------
 
 EntryImpl::EntryImpl(BackendImpl* backend, Addr address, bool read_only)
-    : entry_(NULL, Addr(0)), node_(NULL, Addr(0)),
-      backend_(backend->GetWeakPtr()), doomed_(false), read_only_(read_only),
+    : entry_(nullptr, Addr(0)),
+      node_(nullptr, Addr(0)),
+      backend_(backend->GetWeakPtr()),
+      doomed_(false),
+      read_only_(read_only),
       dirty_(false) {
   entry_.LazyInit(backend->File(address), address);
   for (int i = 0; i < kNumStreams; i++) {
@@ -320,38 +329,45 @@ void EntryImpl::DoomImpl() {
   backend_->InternalDoomEntry(this);
 }
 
-int EntryImpl::ReadDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
-                            const CompletionCallback& callback) {
+int EntryImpl::ReadDataImpl(int index,
+                            int offset,
+                            IOBuffer* buf,
+                            int buf_len,
+                            CompletionOnceCallback callback) {
   if (net_log_.IsCapturing()) {
-    net_log_.BeginEvent(
-        net::NetLogEventType::ENTRY_READ_DATA,
-        CreateNetLogReadWriteDataCallback(index, offset, buf_len, false));
+    NetLogReadWriteData(net_log_, net::NetLogEventType::ENTRY_READ_DATA,
+                        net::NetLogEventPhase::BEGIN, index, offset, buf_len,
+                        false);
   }
 
-  int result = InternalReadData(index, offset, buf, buf_len, callback);
+  int result =
+      InternalReadData(index, offset, buf, buf_len, std::move(callback));
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(net::NetLogEventType::ENTRY_READ_DATA,
-                      CreateNetLogReadWriteCompleteCallback(result));
+    NetLogReadWriteComplete(net_log_, net::NetLogEventType::ENTRY_READ_DATA,
+                            net::NetLogEventPhase::END, result);
   }
   return result;
 }
 
-int EntryImpl::WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
-                             const CompletionCallback& callback,
+int EntryImpl::WriteDataImpl(int index,
+                             int offset,
+                             IOBuffer* buf,
+                             int buf_len,
+                             CompletionOnceCallback callback,
                              bool truncate) {
   if (net_log_.IsCapturing()) {
-    net_log_.BeginEvent(
-        net::NetLogEventType::ENTRY_WRITE_DATA,
-        CreateNetLogReadWriteDataCallback(index, offset, buf_len, truncate));
+    NetLogReadWriteData(net_log_, net::NetLogEventType::ENTRY_WRITE_DATA,
+                        net::NetLogEventPhase::BEGIN, index, offset, buf_len,
+                        truncate);
   }
 
-  int result = InternalWriteData(index, offset, buf, buf_len, callback,
-                                 truncate);
+  int result = InternalWriteData(index, offset, buf, buf_len,
+                                 std::move(callback), truncate);
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(net::NetLogEventType::ENTRY_WRITE_DATA,
-                      CreateNetLogReadWriteCompleteCallback(result));
+    NetLogReadWriteComplete(net_log_, net::NetLogEventType::ENTRY_WRITE_DATA,
+                            net::NetLogEventPhase::END, result);
   }
   return result;
 }
@@ -359,7 +375,7 @@ int EntryImpl::WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
 int EntryImpl::ReadSparseDataImpl(int64_t offset,
                                   IOBuffer* buf,
                                   int buf_len,
-                                  const CompletionCallback& callback) {
+                                  CompletionOnceCallback callback) {
   DCHECK(node_.Data()->dirty || read_only_);
   int result = InitSparseData();
   if (net::OK != result)
@@ -367,7 +383,7 @@ int EntryImpl::ReadSparseDataImpl(int64_t offset,
 
   TimeTicks start = TimeTicks::Now();
   result = sparse_->StartIO(SparseControl::kReadOperation, offset, buf, buf_len,
-                            callback);
+                            std::move(callback));
   ReportIOTime(kSparseRead, start);
   return result;
 }
@@ -375,7 +391,7 @@ int EntryImpl::ReadSparseDataImpl(int64_t offset,
 int EntryImpl::WriteSparseDataImpl(int64_t offset,
                                    IOBuffer* buf,
                                    int buf_len,
-                                   const CompletionCallback& callback) {
+                                   CompletionOnceCallback callback) {
   DCHECK(node_.Data()->dirty || read_only_);
   int result = InitSparseData();
   if (net::OK != result)
@@ -383,7 +399,7 @@ int EntryImpl::WriteSparseDataImpl(int64_t offset,
 
   TimeTicks start = TimeTicks::Now();
   result = sparse_->StartIO(SparseControl::kWriteOperation, offset, buf,
-                            buf_len, callback);
+                            buf_len, std::move(callback));
   ReportIOTime(kSparseWrite, start);
   return result;
 }
@@ -403,9 +419,9 @@ void EntryImpl::CancelSparseIOImpl() {
   sparse_->CancelIO();
 }
 
-int EntryImpl::ReadyForSparseIOImpl(const CompletionCallback& callback) {
+int EntryImpl::ReadyForSparseIOImpl(CompletionOnceCallback callback) {
   DCHECK(sparse_.get());
-  return sparse_->ReadyToUse(callback);
+  return sparse_->ReadyToUse(std::move(callback));
 }
 
 uint32_t EntryImpl::GetHash() {
@@ -736,8 +752,9 @@ void EntryImpl::BeginLogging(net::NetLog* net_log, bool created) {
   DCHECK(!net_log_.net_log());
   net_log_ = net::NetLogWithSource::Make(
       net_log, net::NetLogSourceType::DISK_CACHE_ENTRY);
-  net_log_.BeginEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL,
-                      CreateNetLogEntryCreationCallback(this, created));
+  net_log_.BeginEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL, [&] {
+    return CreateNetLogParametersEntryCreationParams(this, created);
+  });
 }
 
 const net::NetLogWithSource& EntryImpl::net_log() const {
@@ -818,10 +835,13 @@ int32_t EntryImpl::GetDataSize(int index) const {
   return entry->Data()->data_size[index];
 }
 
-int EntryImpl::ReadData(int index, int offset, IOBuffer* buf, int buf_len,
-                        const CompletionCallback& callback) {
+int EntryImpl::ReadData(int index,
+                        int offset,
+                        IOBuffer* buf,
+                        int buf_len,
+                        CompletionOnceCallback callback) {
   if (callback.is_null())
-    return ReadDataImpl(index, offset, buf, buf_len, callback);
+    return ReadDataImpl(index, offset, buf, buf_len, std::move(callback));
 
   DCHECK(node_.Data()->dirty || read_only_);
   if (index < 0 || index >= kNumStreams)
@@ -837,14 +857,20 @@ int EntryImpl::ReadData(int index, int offset, IOBuffer* buf, int buf_len,
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
 
-  background_queue_->ReadData(this, index, offset, buf, buf_len, callback);
+  background_queue_->ReadData(this, index, offset, buf, buf_len,
+                              std::move(callback));
   return net::ERR_IO_PENDING;
 }
 
-int EntryImpl::WriteData(int index, int offset, IOBuffer* buf, int buf_len,
-                         const CompletionCallback& callback, bool truncate) {
+int EntryImpl::WriteData(int index,
+                         int offset,
+                         IOBuffer* buf,
+                         int buf_len,
+                         CompletionOnceCallback callback,
+                         bool truncate) {
   if (callback.is_null())
-    return WriteDataImpl(index, offset, buf, buf_len, callback, truncate);
+    return WriteDataImpl(index, offset, buf, buf_len, std::move(callback),
+                         truncate);
 
   DCHECK(node_.Data()->dirty || read_only_);
   if (index < 0 || index >= kNumStreams)
@@ -857,46 +883,49 @@ int EntryImpl::WriteData(int index, int offset, IOBuffer* buf, int buf_len,
     return net::ERR_UNEXPECTED;
 
   background_queue_->WriteData(this, index, offset, buf, buf_len, truncate,
-                               callback);
+                               std::move(callback));
   return net::ERR_IO_PENDING;
 }
 
 int EntryImpl::ReadSparseData(int64_t offset,
                               IOBuffer* buf,
                               int buf_len,
-                              const CompletionCallback& callback) {
+                              CompletionOnceCallback callback) {
   if (callback.is_null())
-    return ReadSparseDataImpl(offset, buf, buf_len, callback);
+    return ReadSparseDataImpl(offset, buf, buf_len, std::move(callback));
 
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
 
-  background_queue_->ReadSparseData(this, offset, buf, buf_len, callback);
+  background_queue_->ReadSparseData(this, offset, buf, buf_len,
+                                    std::move(callback));
   return net::ERR_IO_PENDING;
 }
 
 int EntryImpl::WriteSparseData(int64_t offset,
                                IOBuffer* buf,
                                int buf_len,
-                               const CompletionCallback& callback) {
+                               CompletionOnceCallback callback) {
   if (callback.is_null())
-    return WriteSparseDataImpl(offset, buf, buf_len, callback);
+    return WriteSparseDataImpl(offset, buf, buf_len, std::move(callback));
 
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
 
-  background_queue_->WriteSparseData(this, offset, buf, buf_len, callback);
+  background_queue_->WriteSparseData(this, offset, buf, buf_len,
+                                     std::move(callback));
   return net::ERR_IO_PENDING;
 }
 
 int EntryImpl::GetAvailableRange(int64_t offset,
                                  int len,
                                  int64_t* start,
-                                 const CompletionCallback& callback) {
+                                 CompletionOnceCallback callback) {
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
 
-  background_queue_->GetAvailableRange(this, offset, len, start, callback);
+  background_queue_->GetAvailableRange(this, offset, len, start,
+                                       std::move(callback));
   return net::ERR_IO_PENDING;
 }
 
@@ -914,15 +943,19 @@ void EntryImpl::CancelSparseIO() {
     background_queue_->CancelSparseIO(this);
 }
 
-int EntryImpl::ReadyForSparseIO(const CompletionCallback& callback) {
+net::Error EntryImpl::ReadyForSparseIO(CompletionOnceCallback callback) {
   if (!sparse_.get())
     return net::OK;
 
   if (!background_queue_.get())
     return net::ERR_UNEXPECTED;
 
-  background_queue_->ReadyForSparseIO(this, callback);
+  background_queue_->ReadyForSparseIO(this, std::move(callback));
   return net::ERR_IO_PENDING;
+}
+
+void EntryImpl::SetLastUsedTimeForTest(base::Time time) {
+  SetTimes(time, time);
 }
 
 // When an entry is deleted from the cache, we clean up all the data associated
@@ -986,9 +1019,11 @@ EntryImpl::~EntryImpl() {
 
 // ------------------------------------------------------------------------
 
-int EntryImpl::InternalReadData(int index, int offset,
-                                IOBuffer* buf, int buf_len,
-                                const CompletionCallback& callback) {
+int EntryImpl::InternalReadData(int index,
+                                int offset,
+                                IOBuffer* buf,
+                                int buf_len,
+                                CompletionOnceCallback callback) {
   DCHECK(node_.Data()->dirty || read_only_);
   DVLOG(2) << "Read from " << index << " at " << offset << " : " << buf_len;
   if (index < 0 || index >= kNumStreams)
@@ -1006,7 +1041,9 @@ int EntryImpl::InternalReadData(int index, int offset,
 
   TimeTicks start = TimeTicks::Now();
 
-  if (offset + buf_len > entry_size)
+  int end_offset;
+  if (!base::CheckAdd(offset, buf_len).AssignIfValid(&end_offset) ||
+      end_offset > entry_size)
     buf_len = entry_size - offset;
 
   UpdateRank(false);
@@ -1045,10 +1082,12 @@ int EntryImpl::InternalReadData(int index, int offset,
                    kBlockHeaderSize;
   }
 
-  SyncCallback* io_callback = NULL;
-  if (!callback.is_null()) {
-    io_callback = new SyncCallback(base::WrapRefCounted(this), buf, callback,
-                                   net::NetLogEventType::ENTRY_READ_DATA);
+  SyncCallback* io_callback = nullptr;
+  bool null_callback = callback.is_null();
+  if (!null_callback) {
+    io_callback =
+        new SyncCallback(base::WrapRefCounted(this), buf, std::move(callback),
+                         net::NetLogEventType::ENTRY_READ_DATA);
   }
 
   TimeTicks start_async = TimeTicks::Now();
@@ -1068,12 +1107,14 @@ int EntryImpl::InternalReadData(int index, int offset,
     ReportIOTime(kReadAsync1, start_async);
 
   ReportIOTime(kRead, start);
-  return (completed || callback.is_null()) ? buf_len : net::ERR_IO_PENDING;
+  return (completed || null_callback) ? buf_len : net::ERR_IO_PENDING;
 }
 
-int EntryImpl::InternalWriteData(int index, int offset,
-                                 IOBuffer* buf, int buf_len,
-                                 const CompletionCallback& callback,
+int EntryImpl::InternalWriteData(int index,
+                                 int offset,
+                                 IOBuffer* buf,
+                                 int buf_len,
+                                 CompletionOnceCallback callback,
                                  bool truncate) {
   DCHECK(node_.Data()->dirty || read_only_);
   DVLOG(2) << "Write to " << index << " at " << offset << " : " << buf_len;
@@ -1088,12 +1129,12 @@ int EntryImpl::InternalWriteData(int index, int offset,
 
   int max_file_size = backend_->MaxFileSize();
 
-  // offset or buf_len could be negative numbers.
+  int end_offset;
   if (offset > max_file_size || buf_len > max_file_size ||
-      offset + buf_len > max_file_size) {
-    int size = offset + buf_len;
-    if (size <= max_file_size)
-      size = std::numeric_limits<int32_t>::max();
+      !base::CheckAdd(offset, buf_len).AssignIfValid(&end_offset) ||
+      end_offset > max_file_size) {
+    int size = base::CheckAdd(offset, buf_len)
+                   .ValueOrDefault(std::numeric_limits<int32_t>::max());
     backend_->TooMuchStorageRequested(size);
     return net::ERR_FAILED;
   }
@@ -1149,9 +1190,10 @@ int EntryImpl::InternalWriteData(int index, int offset,
   if (!buf_len)
     return 0;
 
-  SyncCallback* io_callback = NULL;
-  if (!callback.is_null()) {
-    io_callback = new SyncCallback(this, buf, callback,
+  SyncCallback* io_callback = nullptr;
+  bool null_callback = callback.is_null();
+  if (!null_callback) {
+    io_callback = new SyncCallback(this, buf, std::move(callback),
                                    net::NetLogEventType::ENTRY_WRITE_DATA);
   }
 
@@ -1172,7 +1214,7 @@ int EntryImpl::InternalWriteData(int index, int offset,
     ReportIOTime(kWriteAsync1, start_async);
 
   ReportIOTime(kWrite, start);
-  return (completed || callback.is_null()) ? buf_len : net::ERR_IO_PENDING;
+  return (completed || null_callback) ? buf_len : net::ERR_IO_PENDING;
 }
 
 // ------------------------------------------------------------------------
@@ -1227,7 +1269,7 @@ void EntryImpl::DeleteData(Addr address, int index) {
           backend_->GetFileName(address).value() << " from the cache.";
     }
     if (files_[index].get())
-      files_[index] = NULL;  // Releases the object.
+      files_[index] = nullptr;  // Releases the object.
   } else {
     backend_->DeleteBlock(address, true);
   }
@@ -1252,7 +1294,7 @@ void EntryImpl::UpdateRank(bool modified) {
 
 File* EntryImpl::GetBackingFile(Addr address, int index) {
   if (!backend_.get())
-    return NULL;
+    return nullptr;
 
   File* file;
   if (address.is_separate_file())
@@ -1322,7 +1364,11 @@ bool EntryImpl::HandleTruncation(int index, int offset, int buf_len) {
   int current_size = entry_.Data()->data_size[index];
   int new_size = offset + buf_len;
 
-  if (!new_size) {
+  // This is only called when actually truncating the file, not simply when
+  // truncate = true is passed to WriteData(), which could be growing the file.
+  DCHECK_LT(new_size, current_size);
+
+  if (new_size == 0) {
     // This is by far the most common scenario.
     backend_->ModifyStorageSize(current_size - unreported_size_[index], 0);
     entry_.Data()->data_addr[index] = 0;
@@ -1342,13 +1388,24 @@ bool EntryImpl::HandleTruncation(int index, int offset, int buf_len) {
     if (!address.is_initialized()) {
       // There is no overlap between the buffer and disk.
       if (new_size > user_buffers_[index]->Start()) {
-        // Just truncate our buffer.
+        // Truncate our buffer.
         DCHECK_LT(new_size, user_buffers_[index]->End());
         user_buffers_[index]->Truncate(new_size);
-        return true;
+
+        if (offset < user_buffers_[index]->Start()) {
+          // Request to write before the current buffer's start, so flush it to
+          // disk and re-init.
+          UpdateSize(index, current_size, new_size);
+          if (!Flush(index, 0))
+            return false;
+          return PrepareBuffer(index, offset, buf_len);
+        } else {
+          // Can just stick to using the memory buffer.
+          return true;
+        }
       }
 
-      // Just discard our buffer.
+      // Truncated to before the current buffer, so can just discard it.
       user_buffers_[index]->Reset();
       return PrepareBuffer(index, offset, buf_len);
     }
@@ -1380,7 +1437,7 @@ bool EntryImpl::CopyToLocalBuffer(int index) {
 
   int len = std::min(entry_.Data()->data_size[index], kMaxBlockSize);
   user_buffers_[index].reset(new UserBuffer(backend_.get()));
-  user_buffers_[index]->Write(len, NULL, 0);
+  user_buffers_[index]->Write(len, nullptr, 0);
 
   File* file = GetBackingFile(address, index);
   int offset = 0;
@@ -1388,8 +1445,8 @@ bool EntryImpl::CopyToLocalBuffer(int index) {
   if (address.is_block_file())
     offset = address.start_block() * address.BlockSize() + kBlockHeaderSize;
 
-  if (!file ||
-      !file->Read(user_buffers_[index]->Data(), len, offset, NULL, NULL)) {
+  if (!file || !file->Read(user_buffers_[index]->Data(), len, offset, nullptr,
+                           nullptr)) {
     user_buffers_[index].reset();
     return false;
   }
@@ -1486,7 +1543,7 @@ bool EntryImpl::Flush(int index, int min_len) {
   if (!file)
     return false;
 
-  if (!file->Write(user_buffers_[index]->Data(), len, offset, NULL, NULL))
+  if (!file->Write(user_buffers_[index]->Data(), len, offset, nullptr, nullptr))
     return false;
   user_buffers_[index]->Reset();
 
@@ -1540,7 +1597,7 @@ void EntryImpl::GetData(int index, char** buffer, Addr* address) {
 
   // Bad news: we'd have to read the info from disk so instead we'll just tell
   // the caller where to read from.
-  *buffer = NULL;
+  *buffer = nullptr;
   address->set_value(entry_.Data()->data_addr[index]);
   if (address->is_initialized()) {
     // Prevent us from deleting the block from the backing store.
@@ -1567,3 +1624,5 @@ void EntryImpl::Log(const char* msg) {
 }
 
 }  // namespace disk_cache
+
+#undef CACHE_UMA_BACKEND_IMPL_OBJ  // undef for jumbo builds

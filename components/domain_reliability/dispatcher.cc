@@ -4,13 +4,11 @@
 
 #include "components/domain_reliability/dispatcher.h"
 
-#include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/timer/timer.h"
 #include "components/domain_reliability/util.h"
 
@@ -56,7 +54,7 @@ void DomainReliabilityDispatcher::ScheduleTask(
   // Would be DCHECK_LE, but you can't << a TimeDelta.
   DCHECK(min_delay <= max_delay);
 
-  std::unique_ptr<Task> owned_task = base::MakeUnique<Task>(
+  std::unique_ptr<Task> owned_task = std::make_unique<Task>(
       closure, time_->CreateTimer(), min_delay, max_delay);
   Task* task = owned_task.get();
   tasks_.insert(std::move(owned_task));
@@ -125,11 +123,7 @@ void DomainReliabilityDispatcher::RunAndDeleteTask(Task* task) {
   if (task->eligible)
     eligible_tasks_.erase(task);
 
-  auto it = std::find_if(tasks_.begin(), tasks_.end(),
-                         [task](const std::unique_ptr<Task>& task_ptr) {
-                           return task_ptr.get() == task;
-                         });
-
+  auto it = tasks_.find(task);
   DCHECK(it != tasks_.end());
   tasks_.erase(it);
 }

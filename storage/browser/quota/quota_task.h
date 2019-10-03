@@ -8,9 +8,9 @@
 #include <set>
 
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
-#include "storage/browser/storage_browser_export.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -21,6 +21,12 @@ namespace storage {
 class QuotaTaskObserver;
 
 // A base class for quota tasks.
+//
+// Instances of this class own themselves and schedule themselves for deletion
+// when async tasks are either aborted or completed.
+// This class is not thread-safe and it's subclasses need not be either.
+// CallCompleted(), Abort(), and DeleteSoon() must be called on the same thread
+// that is the constructor is called on.
 // TODO(kinuko): Revise this using base::Callback.
 class QuotaTask {
  public:
@@ -45,21 +51,19 @@ class QuotaTask {
   void DeleteSoon();
 
   QuotaTaskObserver* observer() const { return observer_; }
-  base::SingleThreadTaskRunner* original_task_runner() const {
-    return original_task_runner_.get();
-  }
 
  private:
   friend class base::DeleteHelper<QuotaTask>;
   friend class QuotaTaskObserver;
 
   void Abort();
+
   QuotaTaskObserver* observer_;
-  scoped_refptr<base::SingleThreadTaskRunner> original_task_runner_;
+  const scoped_refptr<base::SingleThreadTaskRunner> original_task_runner_;
   bool delete_scheduled_;
 };
 
-class STORAGE_EXPORT QuotaTaskObserver {
+class COMPONENT_EXPORT(STORAGE_BROWSER) QuotaTaskObserver {
  protected:
   friend class QuotaTask;
 
@@ -69,8 +73,7 @@ class STORAGE_EXPORT QuotaTaskObserver {
   void RegisterTask(QuotaTask* task);
   void UnregisterTask(QuotaTask* task);
 
-  typedef std::set<QuotaTask*> TaskSet;
-  TaskSet running_quota_tasks_;
+  std::set<QuotaTask*> running_quota_tasks_;
 };
 }
 

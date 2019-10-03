@@ -7,6 +7,7 @@
 #ifndef COMPONENTS_CRASH_CONTENT_APP_BREAKPAD_LINUX_H_
 #define COMPONENTS_CRASH_CONTENT_APP_BREAKPAD_LINUX_H_
 
+#include <signal.h>
 #include <string>
 
 #include "build/build_config.h"
@@ -15,6 +16,9 @@ namespace breakpad {
 
 // Turns on the crash reporter in any process.
 extern void InitCrashReporter(const std::string& process_type);
+
+// Sets the product/distribution channel crash key.
+void SetChannelCrashKey(const std::string& channel);
 
 #if defined(OS_ANDROID)
 extern void InitCrashKeysForTesting();
@@ -54,6 +58,13 @@ extern void AddGpuFingerprintToMicrodumpCrashHandler(
 extern void SuppressDumpGeneration();
 #endif  // defined(OS_ANDROID)
 
+#if defined(OS_CHROMEOS)
+// If true, processes of this type should pass crash-loop-before down to the
+// crash reporter and to their children (if the children's type is a process
+// type that wants crash-loop-before).
+bool ShouldPassCrashLoopBefore(const std::string& process_type);
+#endif
+
 // Checks if crash reporting is enabled. Note that this is not the same as
 // being opted into metrics reporting (and crash reporting), which controls
 // whether InitCrashReporter() is called.
@@ -64,7 +75,7 @@ void GenerateMinidumpOnDemandForAndroid(int dump_fd);
 
 // Install a handler that gets a change to handle faults before Breakpad does
 // any processing. This is used by V8 for trap-based bounds checks.
-void SetFirstChanceExceptionHandler(bool (*handler)(int, void*, void*));
+void SetFirstChanceExceptionHandler(bool (*handler)(int, siginfo_t*, void*));
 }  // namespace breakpad
 
 #endif  // COMPONENTS_CRASH_CONTENT_APP_BREAKPAD_LINUX_H_

@@ -214,6 +214,9 @@ class ToValueVisitor {
     if (proto.type() != sync_pb::AutofillWalletSpecifics::MASKED_CREDIT_CARD) {
       value->Remove("masked_card", nullptr);
     }
+    if (proto.type() != sync_pb::AutofillWalletSpecifics::CUSTOMER_DATA) {
+      value->Remove("customer_data", nullptr);
+    }
     return value;
   }
 
@@ -249,16 +252,16 @@ class ToValueVisitor {
   }
 
   std::unique_ptr<base::Value> ToValue(int64_t value) const {
-    return std::make_unique<base::Value>(base::Int64ToString(value));
+    return std::make_unique<base::Value>(base::NumberToString(value));
   }
   std::unique_ptr<base::Value> ToValue(uint64_t value) const {
-    return std::make_unique<base::Value>(base::Int64ToString(value));
+    return std::make_unique<base::Value>(base::NumberToString(value));
   }
   std::unique_ptr<base::Value> ToValue(uint32_t value) const {
-    return std::make_unique<base::Value>(base::Int64ToString(value));
+    return std::make_unique<base::Value>(base::NumberToString(value));
   }
   std::unique_ptr<base::Value> ToValue(int32_t value) const {
-    return std::make_unique<base::Value>(base::Int64ToString(value));
+    return std::make_unique<base::Value>(base::NumberToString(value));
   }
 
   std::unique_ptr<base::Value> ToValue(bool value) const {
@@ -303,7 +306,6 @@ IMPLEMENT_PROTO_TO_VALUE(AppSettingSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(AppSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ArcPackageSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ArticleSpecifics)
-IMPLEMENT_PROTO_TO_VALUE(AttachmentIdProto)
 IMPLEMENT_PROTO_TO_VALUE(AutofillProfileSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(AutofillSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(AutofillWalletSpecifics)
@@ -329,16 +331,20 @@ IMPLEMENT_PROTO_TO_VALUE(ManagedUserSettingSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ManagedUserSharedSettingSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ManagedUserSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ManagedUserWhitelistSpecifics)
+IMPLEMENT_PROTO_TO_VALUE(MountainShareSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(NavigationRedirect)
 IMPLEMENT_PROTO_TO_VALUE(NigoriSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(PasswordSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(PasswordSpecificsData)
+IMPLEMENT_PROTO_TO_VALUE(PaymentsCustomerData)
 IMPLEMENT_PROTO_TO_VALUE(PreferenceSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(PrinterPPDReference)
 IMPLEMENT_PROTO_TO_VALUE(PrinterSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(PriorityPreferenceSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(ReadingListSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(SearchEngineSpecifics)
+IMPLEMENT_PROTO_TO_VALUE(SecurityEventSpecifics)
+IMPLEMENT_PROTO_TO_VALUE(SendTabToSelfSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(SessionHeader)
 IMPLEMENT_PROTO_TO_VALUE(SessionSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(SessionTab)
@@ -350,10 +356,14 @@ IMPLEMENT_PROTO_TO_VALUE(TabNavigation)
 IMPLEMENT_PROTO_TO_VALUE(ThemeSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(TimeRangeDirective)
 IMPLEMENT_PROTO_TO_VALUE(TypedUrlSpecifics)
+IMPLEMENT_PROTO_TO_VALUE(UrlDirective)
+IMPLEMENT_PROTO_TO_VALUE(UserConsentSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(UserEventSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(WalletMaskedCreditCard)
 IMPLEMENT_PROTO_TO_VALUE(WalletMetadataSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(WalletPostalAddress)
+IMPLEMENT_PROTO_TO_VALUE(WebAppSpecifics)
+IMPLEMENT_PROTO_TO_VALUE(WifiConfigurationSpecifics)
 IMPLEMENT_PROTO_TO_VALUE(WifiCredentialSpecifics)
 
 IMPLEMENT_PROTO_TO_VALUE_INCLUDE_SPECIFICS(ClientToServerMessage)

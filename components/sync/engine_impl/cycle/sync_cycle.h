@@ -58,12 +58,8 @@ class SyncCycle {
     // use is for UI reporting.
     virtual bool IsAnyThrottleOrBackoff() = 0;
 
-    // The client has been instructed to change its short poll interval.
-    virtual void OnReceivedShortPollIntervalUpdate(
-        const base::TimeDelta& new_interval) = 0;
-
-    // The client has been instructed to change its long poll interval.
-    virtual void OnReceivedLongPollIntervalUpdate(
+    // The client has been instructed to change its poll interval.
+    virtual void OnReceivedPollIntervalUpdate(
         const base::TimeDelta& new_interval) = 0;
 
     // The client has been instructed to change a nudge delay.
@@ -93,13 +89,12 @@ class SyncCycle {
 
   // Builds a thread-safe and read-only copy of the current cycle state.
   SyncCycleSnapshot TakeSnapshot() const;
-  SyncCycleSnapshot TakeSnapshotWithSource(
-      sync_pb::GetUpdatesCallerInfo::GetUpdatesSource legacy_updates_source)
-      const;
+  SyncCycleSnapshot TakeSnapshotWithOrigin(
+      sync_pb::SyncEnums::GetUpdatesOrigin get_updates_origin) const;
 
   // Builds and sends a snapshot to the cycle context's listeners.
   void SendSyncCycleEndEventNotification(
-      sync_pb::GetUpdatesCallerInfo::GetUpdatesSource source);
+      sync_pb::SyncEnums::GetUpdatesOrigin get_updates_origin);
   void SendEventNotification(SyncCycleEvent::EventCause cause);
 
   void SendProtocolEvent(const ProtocolEvent& event);

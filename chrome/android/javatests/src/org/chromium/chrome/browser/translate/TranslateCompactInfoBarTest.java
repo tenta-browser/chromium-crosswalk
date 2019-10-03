@@ -18,6 +18,7 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.infobar.InfoBar;
@@ -27,6 +28,8 @@ import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ChromeRestriction;
 import org.chromium.chrome.test.util.InfoBarTestAnimationListener;
+import org.chromium.chrome.test.util.InfoBarUtil;
+import org.chromium.chrome.test.util.MenuUtils;
 import org.chromium.chrome.test.util.TranslateUtil;
 import org.chromium.net.test.EmbeddedTestServer;
 
@@ -37,15 +40,13 @@ import java.util.concurrent.TimeoutException;
  * preferences set to English.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TranslateCompactInfoBarTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
 
     private static final String TRANSLATE_PAGE = "/chrome/test/data/translate/fr_test.html";
-    private static final String ENABLE_COMPACT_UI_FEATURE = "enable-features=TranslateCompactUI";
 
     private InfoBarContainer mInfoBarContainer;
     private InfoBarTestAnimationListener mListener;
@@ -54,7 +55,7 @@ public class TranslateCompactInfoBarTest {
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityOnBlankPage();
-        mInfoBarContainer = mActivityTestRule.getActivity().getActivityTab().getInfoBarContainer();
+        mInfoBarContainer = mActivityTestRule.getInfoBarContainer();
         mListener = new InfoBarTestAnimationListener();
         mInfoBarContainer.addAnimationListener(mListener);
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
@@ -72,7 +73,6 @@ public class TranslateCompactInfoBarTest {
     @MediumTest
     @Feature({"Browser", "Main"})
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
-    @CommandLineFlags.Add(ENABLE_COMPACT_UI_FEATURE)
     public void testTranslateCompactInfoBarAppears() throws InterruptedException, TimeoutException {
         mActivityTestRule.loadUrl(mTestServer.getURL(TRANSLATE_PAGE));
         mListener.addInfoBarAnimationFinished("InfoBar not opened.");
@@ -88,7 +88,6 @@ public class TranslateCompactInfoBarTest {
     @MediumTest
     @Feature({"Browser", "Main"})
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
-    @CommandLineFlags.Add(ENABLE_COMPACT_UI_FEATURE)
     public void testTranslateCompactInfoBarOverflowMenus()
             throws InterruptedException, TimeoutException {
         mActivityTestRule.loadUrl(mTestServer.getURL(TRANSLATE_PAGE));
@@ -112,7 +111,6 @@ public class TranslateCompactInfoBarTest {
     @MediumTest
     @Feature({"Browser", "Main"})
     @Restriction(ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
-    @CommandLineFlags.Add(ENABLE_COMPACT_UI_FEATURE)
     public void testTabMenuDismissedOnOrientationChange() throws Exception {
         mActivityTestRule.loadUrl(mTestServer.getURL(TRANSLATE_PAGE));
         mListener.addInfoBarAnimationFinished("InfoBar not opened.");
@@ -133,5 +131,40 @@ public class TranslateCompactInfoBarTest {
         mActivityTestRule.getActivity().setRequestedOrientation(
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
+    /**
+     * Test tab focus is correct, even after closing and (manually) re-opening infobar.
+     */
+    @Test
+    @MediumTest
+    @Feature({"Browser", "Main"})
+    @Restriction(ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
+    public void testTranslateCompactInfoBarReopenOnTarget()
+            throws InterruptedException, TimeoutException {
+        mActivityTestRule.loadUrl(mTestServer.getURL(TRANSLATE_PAGE));
+        mListener.addInfoBarAnimationFinished("InfoBar not opened.");
+
+        TranslateCompactInfoBar infoBar =
+                (TranslateCompactInfoBar) mInfoBarContainer.getInfoBarsForTesting().get(0);
+
+        // Only the source tab is selected.
+        Assert.assertTrue(infoBar.isSourceTabSelectedForTesting());
+        Assert.assertFalse(infoBar.isTargetTabSelectedForTesting());
+
+        // Translate.
+        TranslateUtil.clickTargetMenuItem(infoBar, "en");
+        // Close bar.
+        InfoBarUtil.clickCloseButton(infoBar);
+
+        // Invoke bar by clicking the manual translate button.
+        MenuUtils.invokeCustomMenuActionSync(InstrumentationRegistry.getInstrumentation(),
+                mActivityTestRule.getActivity(), R.id.translate_id);
+
+        infoBar = (TranslateCompactInfoBar) mInfoBarContainer.getInfoBarsForTesting().get(0);
+
+        // Only the target tab is selected.
+        Assert.assertFalse(infoBar.isSourceTabSelectedForTesting());
+        Assert.assertTrue(infoBar.isTargetTabSelectedForTesting());
     }
 }

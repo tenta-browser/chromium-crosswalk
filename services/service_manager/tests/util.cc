@@ -10,18 +10,21 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/path_service.h"
 #include "base/process/process.h"
+#include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/system/invitation.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
-#include "services/service_manager/public/interfaces/service_factory.mojom.h"
-#include "services/service_manager/runner/common/switches.h"
+#include "services/service_manager/public/cpp/service_executable/switches.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace service_manager {
 namespace test {
@@ -30,8 +33,7 @@ namespace {
 
 void GrabConnectResult(base::RunLoop* loop,
                        mojom::ConnectResult* out_result,
-                       mojom::ConnectResult result,
-                       const Identity& resolved_identity) {
+                       mojom::ConnectResult result) {
   loop->Quit();
   *out_result = result;
 }
@@ -44,7 +46,7 @@ mojom::ConnectResult LaunchAndConnectToProcess(
     service_manager::Connector* connector,
     base::Process* process) {
   base::FilePath target_path;
-  CHECK(base::PathService::Get(base::DIR_EXE, &target_path));
+  CHECK(base::PathService::Get(base::DIR_ASSETS, &target_path));
   target_path = target_path.AppendASCII(target_exe_name);
 
   base::CommandLine child_command_line(target_path);
@@ -57,47 +59,44 @@ mojom::ConnectResult LaunchAndConnectToProcess(
 
   // Create the channel to be shared with the target process. Pass one end
   // on the command line.
-  mojo::edk::PlatformChannelPair platform_channel_pair;
-  mojo::edk::HandlePassingInformation handle_passing_info;
-  platform_channel_pair.PrepareToPassClientHandleToChildProcess(
-      &child_command_line, &handle_passing_info);
+  mojo::PlatformChannel channel;
+  mojo::PlatformChannel::HandlePassingInfo handle_passing_info;
+  channel.PrepareToPassRemoteEndpoint(&handle_passing_info,
+                                      &child_command_line);
 
-  mojo::edk::OutgoingBrokerClientInvitation invitation;
-  std::string token = mojo::edk::GenerateRandomToken();
-  mojo::ScopedMessagePipeHandle pipe = invitation.AttachMessagePipe(token);
-  child_command_line.AppendSwitchASCII(switches::kServicePipeToken, token);
+  mojo::OutgoingInvitation invitation;
+  auto pipe_name = base::NumberToString(base::RandUint64());
+  mojo::ScopedMessagePipeHandle pipe = invitation.AttachMessagePipe(pipe_name);
+  child_command_line.AppendSwitchASCII(switches::kServiceRequestAttachmentName,
+                                       pipe_name);
 
-  service_manager::mojom::ServicePtr client;
-  client.Bind(mojo::InterfacePtrInfo<service_manager::mojom::Service>(
-      std::move(pipe), 0u));
-  service_manager::mojom::PIDReceiverPtr receiver;
+  mojo::Remote<service_manager::mojom::ProcessMetadata> metadata;
 
-  connector->StartService(target, std::move(client), MakeRequest(&receiver));
   mojom::ConnectResult result;
-  {
-    base::RunLoop loop(base::RunLoop::Type::kNestableTasksAllowed);
-    Connector::TestApi test_api(connector);
-    test_api.SetStartServiceCallback(
-        base::Bind(&GrabConnectResult, &loop, &result));
-    loop.Run();
-  }
+  base::RunLoop loop(base::RunLoop::Type::kNestableTasksAllowed);
+  connector->RegisterServiceInstance(
+      target,
+      mojo::PendingRemote<service_manager::mojom::Service>(std::move(pipe), 0),
+      metadata.BindNewPipeAndPassReceiver(),
+      base::BindOnce(&GrabConnectResult, &loop, &result));
+  loop.Run();
 
   base::LaunchOptions options;
 #if defined(OS_WIN)
   options.handles_to_inherit = handle_passing_info;
 #elif defined(OS_FUCHSIA)
   options.handles_to_transfer = handle_passing_info;
+#elif defined(OS_MACOSX)
+  options.mach_ports_for_rendezvous = handle_passing_info;
 #elif defined(OS_POSIX)
   options.fds_to_remap = handle_passing_info;
 #endif
   *process = base::LaunchProcess(child_command_line, options);
   DCHECK(process->IsValid());
-  platform_channel_pair.ChildProcessLaunched();
-  receiver->SetPID(process->Pid());
-  invitation.Send(
-      process->Handle(),
-      mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                  platform_channel_pair.PassServerHandle()));
+  channel.RemoteProcessLaunchAttempted();
+  metadata->SetPID(process->Pid());
+  mojo::OutgoingInvitation::Send(std::move(invitation), process->Handle(),
+                                 channel.TakeLocalEndpoint());
   return result;
 }
 

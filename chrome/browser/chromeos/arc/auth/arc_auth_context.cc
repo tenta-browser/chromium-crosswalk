@@ -6,19 +6,19 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/signin/signin_ui_util.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager_base.h"
+#include "components/signin/public/identity_manager/access_token_fetcher.h"
+#include "components/signin/public/identity_manager/ubertoken_fetcher.h"
 #include "content/public/common/url_constants.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
-#include "google_apis/gaia/gaia_constants.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace arc {
 
@@ -57,37 +57,33 @@ constexpr net::BackoffEntry::Policy kRetryBackoffPolicy = {
 
 }  // namespace
 
-ArcAuthContext::ArcAuthContext(Profile* profile)
-    : profile_(profile), retry_backoff_(&kRetryBackoffPolicy) {
-  // Get token service and account ID to fetch auth tokens.
-  token_service_ = ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
-  const SigninManagerBase* const signin_manager =
-      SigninManagerFactory::GetForProfile(profile);
-  CHECK(token_service_ && signin_manager);
-  account_id_ = signin_manager->GetAuthenticatedAccountId();
-
-  full_account_id_ = base::UTF16ToUTF8(
-      signin_ui_util::GetAuthenticatedUsername(signin_manager));
+ArcAuthContext::ArcAuthContext(Profile* profile, const std::string& account_id)
+    : profile_(profile),
+      account_id_(account_id),
+      identity_manager_(IdentityManagerFactory::GetForProfile(profile)),
+      retry_backoff_(&kRetryBackoffPolicy) {
+  DCHECK(identity_manager_->HasAccountWithRefreshToken(account_id));
 }
 
 ArcAuthContext::~ArcAuthContext() {
-  token_service_->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
 }
 
 void ArcAuthContext::Prepare(const PrepareCallback& callback) {
   if (context_prepared_) {
-    callback.Run(profile_->GetRequestContext());
+    callback.Run(true);
     return;
   }
 
   callback_ = callback;
-  token_service_->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
   refresh_token_timeout_.Stop();
   ResetFetchers();
   retry_backoff_.Reset();
 
-  if (!token_service_->RefreshTokenIsAvailable(account_id_)) {
-    token_service_->AddObserver(this);
+  if (!identity_manager_->HasAccountWithRefreshToken(account_id_)) {
+    identity_manager_->AddObserver(this);
+    VLOG(1) << "Waiting for refresh token for account " << account_id_;
     refresh_token_timeout_.Start(FROM_HERE, kRefreshTokenTimeout, this,
                                  &ArcAuthContext::OnRefreshTokenTimeout);
     return;
@@ -96,22 +92,38 @@ void ArcAuthContext::Prepare(const PrepareCallback& callback) {
   StartFetchers();
 }
 
-void ArcAuthContext::OnRefreshTokenAvailable(const std::string& account_id) {
-  if (account_id != account_id_)
+std::unique_ptr<signin::AccessTokenFetcher>
+ArcAuthContext::CreateAccessTokenFetcher(
+    const std::string& consumer_name,
+    const identity::ScopeSet& scopes,
+    signin::AccessTokenFetcher::TokenCallback callback) {
+  DCHECK(identity_manager_->HasAccountWithRefreshToken(account_id_));
+  return identity_manager_->CreateAccessTokenFetcherForAccount(
+      account_id_, consumer_name, scopes, std::move(callback),
+      signin::AccessTokenFetcher::Mode::kImmediate);
+}
+
+void ArcAuthContext::OnRefreshTokenUpdatedForAccount(
+    const CoreAccountInfo& account_info) {
+  // There is no need to check |is_valid| here. It is intended to avoid
+  // adding the ability to query the persistent error state to the
+  // IdentityManager API, which is irrelevant for this case.
+  if (account_info.account_id != account_id_)
     return;
   OnRefreshTokensLoaded();
 }
 
 void ArcAuthContext::OnRefreshTokensLoaded() {
-  token_service_->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
+  VLOG(1) << "Refresh token for account " << account_id_ << " loaded.";
   refresh_token_timeout_.Stop();
   StartFetchers();
 }
 
 void ArcAuthContext::OnRefreshTokenTimeout() {
   LOG(WARNING) << "Failed to wait for refresh token.";
-  token_service_->RemoveObserver(this);
-  std::move(callback_).Run(nullptr);
+  identity_manager_->RemoveObserver(this);
+  std::move(callback_).Run(false);
 }
 
 void ArcAuthContext::StartFetchers() {
@@ -123,10 +135,12 @@ void ArcAuthContext::StartFetchers() {
     return;
   }
 
-  ubertoken_fetcher_.reset(new UbertokenFetcher(token_service_, this,
-                                                GaiaConstants::kChromeOSSource,
-                                                profile_->GetRequestContext()));
-  ubertoken_fetcher_->StartFetchingToken(account_id_);
+  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile_);
+  ubertoken_fetcher_ = identity_manager->CreateUbertokenFetcherForAccount(
+      account_id_,
+      base::BindOnce(&ArcAuthContext::OnUbertokenFetchComplete,
+                     base::Unretained(this)),
+      gaia::GaiaSource::kChromeOS, profile_->GetURLLoaderFactory());
 }
 
 void ArcAuthContext::ResetFetchers() {
@@ -150,19 +164,21 @@ void ArcAuthContext::OnFetcherError(const GoogleServiceAuthError& error) {
     }
     LOG(WARNING) << "Too many transient errors. Stop retrying.";
   }
-  std::move(callback_).Run(nullptr);
+  std::move(callback_).Run(false);
 }
 
-void ArcAuthContext::OnUbertokenSuccess(const std::string& token) {
+void ArcAuthContext::OnUbertokenFetchComplete(GoogleServiceAuthError error,
+                                              const std::string& token) {
+  if (error != GoogleServiceAuthError::AuthErrorNone()) {
+    LOG(WARNING) << "Failed to get ubertoken " << error.ToString() << ".";
+    OnFetcherError(error);
+    return;
+  }
+
   ResetFetchers();
-  merger_fetcher_.reset(new GaiaAuthFetcher(
-      this, GaiaConstants::kChromeOSSource, profile_->GetRequestContext()));
+  merger_fetcher_.reset(new GaiaAuthFetcher(this, gaia::GaiaSource::kChromeOS,
+                                            profile_->GetURLLoaderFactory()));
   merger_fetcher_->StartMergeSession(token, std::string());
-}
-
-void ArcAuthContext::OnUbertokenFailure(const GoogleServiceAuthError& error) {
-  LOG(WARNING) << "Failed to get ubertoken " << error.ToString() << ".";
-  OnFetcherError(error);
 }
 
 void ArcAuthContext::OnMergeSessionSuccess(const std::string& data) {
@@ -170,7 +186,7 @@ void ArcAuthContext::OnMergeSessionSuccess(const std::string& data) {
       << "Auth context was successfully prepared after retry.";
   context_prepared_ = true;
   ResetFetchers();
-  std::move(callback_).Run(profile_->GetRequestContext());
+  std::move(callback_).Run(true);
 }
 
 void ArcAuthContext::OnMergeSessionFailure(

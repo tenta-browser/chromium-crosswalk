@@ -6,11 +6,9 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_shutdown.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/ui/sad_tab.h"
 #include "content/public/browser/web_contents.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SadTabHelper);
 
 namespace {
 
@@ -32,11 +30,14 @@ SadTabKind SadTabKindFromTerminationStatus(base::TerminationStatus status) {
 
 }  // namespace
 
-SadTabHelper::~SadTabHelper() {
-}
+SadTabHelper::~SadTabHelper() {}
 
 SadTabHelper::SadTabHelper(content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents) {
+    : content::WebContentsObserver(web_contents) {}
+
+void SadTabHelper::ReinstallInWebView() {
+  if (sad_tab_)
+    sad_tab_->ReinstallInWebView();
 }
 
 void SadTabHelper::RenderViewReady() {
@@ -61,3 +62,5 @@ void SadTabHelper::InstallSadTab(base::TerminationStatus status) {
   sad_tab_.reset(
       SadTab::Create(web_contents(), SadTabKindFromTerminationStatus(status)));
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SadTabHelper)

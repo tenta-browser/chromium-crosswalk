@@ -14,30 +14,33 @@
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/common/content_client.h"
-#include "ppapi/features/features.h"
+#include "pdf/buildflags.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/common/pepper_plugin_info.h"
 #endif
 
-// Returns the user agent of Chrome.
-std::string GetUserAgent();
-
 class ChromeContentClient : public content::ContentClient {
  public:
 #if defined(GOOGLE_CHROME_BUILD)
-  // kNotPresent is a placeholder plugin location for plugins that are not
+  // |kNotPresent| is a placeholder plugin location for plugins that are not
   // currently present in this installation of Chrome, but which can be fetched
   // on-demand and therefore should still appear in navigator.plugins.
-  static const char kNotPresent[];
+  static const base::FilePath::CharType kNotPresent[];
 #endif
+
+#if BUILDFLAG(ENABLE_NACL)
+  static const base::FilePath::CharType kNaClPluginFileName[];
+#endif
+
   static const char kPDFExtensionPluginName[];
   static const char kPDFInternalPluginName[];
-  static const char kPDFPluginPath[];
+  static const base::FilePath::CharType kPDFPluginPath[];
 
   ChromeContentClient();
   ~ChromeContentClient() override;
@@ -53,12 +56,14 @@ class ChromeContentClient : public content::ContentClient {
       content::PepperPluginInfo::PPP_ShutdownModuleFunc shutdown_module);
 #endif
 
-#if BUILDFLAG(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS) && BUILDFLAG(ENABLE_PDF)
   static void SetPDFEntryFunctions(
       content::PepperPluginInfo::GetInterfaceFunc get_interface,
       content::PepperPluginInfo::PPP_InitializeModuleFunc initialize_module,
       content::PepperPluginInfo::PPP_ShutdownModuleFunc shutdown_module);
+#endif
 
+#if BUILDFLAG(ENABLE_PLUGINS)
   // This returns the most recent plugin based on the plugin versions. In the
   // event of a tie, a debug plugin will be considered more recent than a
   // non-debug plugin.
@@ -69,7 +74,7 @@ class ChromeContentClient : public content::ContentClient {
       const std::vector<std::unique_ptr<content::PepperPluginInfo>>& plugins);
 #endif
 
-  void SetActiveURL(const GURL& url) override;
+  void SetActiveURL(const GURL& url, std::string top_origin) override;
   void SetGpuInfo(const gpu::GPUInfo& gpu_info) override;
   void AddPepperPlugins(
       std::vector<content::PepperPluginInfo>* plugins) override;
@@ -78,29 +83,29 @@ class ChromeContentClient : public content::ContentClient {
       std::vector<media::CdmHostFilePath>* cdm_host_file_paths) override;
 
   void AddAdditionalSchemes(Schemes* schemes) override;
-  std::string GetProduct() const override;
-  std::string GetUserAgent() const override;
-  base::string16 GetLocalizedString(int message_id) const override;
-  base::StringPiece GetDataResource(
-      int resource_id,
-      ui::ScaleFactor scale_factor) const override;
-  base::RefCountedMemory* GetDataResourceBytes(
-      int resource_id) const override;
-  gfx::Image& GetNativeImageNamed(int resource_id) const override;
+  base::string16 GetLocalizedString(int message_id) override;
+  base::string16 GetLocalizedString(int message_id,
+                                    const base::string16& replacement) override;
+  base::StringPiece GetDataResource(int resource_id,
+                                    ui::ScaleFactor scale_factor) override;
+  base::RefCountedMemory* GetDataResourceBytes(int resource_id) override;
+  bool IsDataResourceGzipped(int resource_id) override;
+  gfx::Image& GetNativeImageNamed(int resource_id) override;
+  base::DictionaryValue GetNetLogConstants() override;
   std::string GetProcessTypeNameInEnglish(int type) override;
 
-  bool AllowScriptExtensionForServiceWorker(const GURL& script_url) override;
-  bool IsSupplementarySiteIsolationModeEnabled() override;
+  bool AllowScriptExtensionForServiceWorker(
+      const url::Origin& script_origin) override;
 
-  content::OriginTrialPolicy* GetOriginTrialPolicy() override;
+  blink::OriginTrialPolicy* GetOriginTrialPolicy() override;
 
 #if defined(OS_ANDROID)
   media::MediaDrmBridgeClient* GetMediaDrmBridgeClient() override;
 #endif  // OS_ANDROID
 
-  // This method isn't called by utility processes.
-  void OnServiceManagerConnected(
-      content::ServiceManagerConnection* connection) override;
+  void BindChildProcessInterface(
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* receiving_handle) override;
 
  private:
   // Used to lock when |origin_trial_policy_| is initialized.

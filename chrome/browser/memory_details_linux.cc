@@ -19,10 +19,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/grit/chromium_strings.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/process_type.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -70,7 +72,6 @@ ProcessData GetProcessDataMemoryInformation(
 
     std::unique_ptr<base::ProcessMetrics> metrics(
         base::ProcessMetrics::CreateProcessMetrics(pid));
-    metrics->GetWorkingSetKBytes(&pmi.working_set);
     pmi.num_open_fds = metrics->GetOpenFdCount();
     pmi.open_fds_soft_limit = metrics->GetOpenFdSoftLimit();
 
@@ -113,7 +114,8 @@ ProcessData* MemoryDetails::ChromeBrowser() {
 
 void MemoryDetails::CollectProcessData(
     const std::vector<ProcessMemoryInformation>& child_info) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   ProcessMap process_map = GetProcesses();
   std::set<pid_t> browsers_found;
@@ -123,8 +125,7 @@ void MemoryDetails::CollectProcessData(
   current_browser.name = l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME);
   current_browser.process_name = base::ASCIIToUTF16("chrome");
 
-  for (std::vector<ProcessMemoryInformation>::iterator
-       i = current_browser.processes.begin();
+  for (auto i = current_browser.processes.begin();
        i != current_browser.processes.end(); ++i) {
     // Check if this is one of the child processes whose data we collected
     // on the IO thread, and if so copy over that data.
@@ -144,7 +145,7 @@ void MemoryDetails::CollectProcessData(
 #endif
 
   // Finally return to the browser thread.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&MemoryDetails::CollectChildInfoOnUIThread, this));
 }

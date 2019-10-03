@@ -36,7 +36,7 @@ class CaptivePortalMetricsTabHelper
 
   // Tests if network access is currently blocked by a captive portal.
   void TestForCaptivePortal(
-      const captive_portal::CaptivePortalDetector::DetectionCallback& callback);
+      captive_portal::CaptivePortalDetector::DetectionCallback callback);
 
   // Tests for a captive portal and logs the resulting metric.
   void TimerTriggered();
@@ -67,6 +67,8 @@ class CaptivePortalMetricsTabHelper
   base::OneShotTimer timer_;
   // The web state associated with this tab helper.
   web::WebState* web_state_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(CaptivePortalMetricsTabHelper);
 };

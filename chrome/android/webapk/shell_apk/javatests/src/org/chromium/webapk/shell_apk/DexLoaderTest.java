@@ -27,6 +27,7 @@ import org.junit.runner.RunWith;
 import org.chromium.base.FileUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.webapk.shell_apk.test.dex_optimizer.IDexOptimizerService;
 
@@ -139,6 +140,7 @@ public class DexLoaderTest {
     @Test
     @MediumTest
     @MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT)
+    @DisabledTest(message = "crbug.com/871920")
     public void testLoadFromRemoteDataDir() {
         // Extract the dex file into another app's data directory and optimize the dex.
         String remoteDexFilePath = null;
@@ -201,6 +203,9 @@ public class DexLoaderTest {
     @MediumTest
     public void testPreviouslyLoadedFromLocalDataDir() {
         Assert.assertTrue(mLocalDexDir.mkdir());
+
+        // TODO(pkotwicz): fix on Android-Oreo.  See https://crbug.com/779218.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) return;
 
         {
             // Load dex the first time. This should extract the dex file from the APK's assets and

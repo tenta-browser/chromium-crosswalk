@@ -19,7 +19,7 @@
 #include "base/i18n/rtl.h"
 #include "base/i18n/string_compare.h"
 #include "base/lazy_instance.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -62,6 +62,7 @@ static const char* const kAcceptLanguageList[] = {
     "br",     // Breton
     "bs",     // Bosnian
     "ca",     // Catalan
+    "ceb",    // Cebuano
     "ckb",    // Kurdish (Arabci),  Sorani
     "co",     // Corsican
     "cs",     // Czech
@@ -119,10 +120,12 @@ static const char* const kAcceptLanguageList[] = {
     "hi",      // Hindi
     "hmn",     // Hmong
     "hr",      // Croatian
+    "ht",      // Haitian Creole
     "hu",      // Hungarian
     "hy",      // Armenian
     "ia",      // Interlingua
     "id",      // Indonesian
+    "ig",      // Igbo
     "is",      // Icelandic
     "it",      // Italian
     "it-CH",   // Italian (Switzerland)
@@ -142,6 +145,8 @@ static const char* const kAcceptLanguageList[] = {
     "lo",      // Laothian
     "lt",      // Lithuanian
     "lv",      // Latvian
+    "mg",      // Malagasy
+    "mi",      // Maori
     "mk",      // Macedonian
     "ml",      // Malayalam
     "mn",      // Mongolian
@@ -149,11 +154,13 @@ static const char* const kAcceptLanguageList[] = {
     "mr",      // Marathi
     "ms",      // Malay
     "mt",      // Maltese
+    "my",      // Burmese
     "nb",      // Norwegian (Bokmal)
     "ne",      // Nepali
     "nl",      // Dutch
     "nn",      // Norwegian (Nynorsk)
     "no",      // Norwegian
+    "ny",      // Nyanja
     "oc",      // Occitan
     "om",      // Oromo
     "or",      // Oriya
@@ -261,15 +268,7 @@ bool IsLocaleAvailable(const std::string& locale) {
   if (!l10n_util::IsLocaleSupportedByOS(locale))
     return false;
 
-  // If the ResourceBundle is not yet initialized, return false to avoid the
-  // CHECK failure in ResourceBundle::GetSharedInstance().
-  if (!ui::ResourceBundle::HasSharedInstance())
-    return false;
-
-  // TODO(hshi): make ResourceBundle::LocaleDataPakExists() a static function
-  // so that this can be invoked without initializing the global instance.
-  // See crbug.com/230432: CHECK failure in GetUserDataDir().
-  return ui::ResourceBundle::GetSharedInstance().LocaleDataPakExists(locale);
+  return ui::ResourceBundle::LocaleDataPakExists(locale);
 }
 #endif
 
@@ -472,6 +471,10 @@ std::string GetApplicationLocaleInternal(const std::string& pref_locale) {
 
 #elif defined(OS_ANDROID)
 
+  // Try pref_locale first.
+  if (!pref_locale.empty())
+    candidates.push_back(base::i18n::GetCanonicalLocale(pref_locale));
+
   // On Android, query java.util.Locale for the default locale.
   candidates.push_back(base::android::GetDefaultLocaleString());
 
@@ -581,9 +584,17 @@ base::string16 GetDisplayNameForLocale(const std::string& locale,
     UErrorCode error = U_ZERO_ERROR;
     const int kBufferSize = 1024;
 
-    int actual_size = uloc_getDisplayName(
-        locale_code.c_str(), display_locale.c_str(),
-        base::WriteInto(&display_name, kBufferSize), kBufferSize - 1, &error);
+    int actual_size;
+    // For Country code in ICU64 we need to call uloc_getDisplayCountry
+    if (locale_code[0] == '-' || locale_code[0] == '_') {
+      actual_size = uloc_getDisplayCountry(
+          locale_code.c_str(), display_locale.c_str(),
+          base::WriteInto(&display_name, kBufferSize), kBufferSize - 1, &error);
+    } else {
+      actual_size = uloc_getDisplayName(
+          locale_code.c_str(), display_locale.c_str(),
+          base::WriteInto(&display_name, kBufferSize), kBufferSize - 1, &error);
+    }
     DCHECK(U_SUCCESS(error));
     display_name.resize(actual_size);
   }
@@ -915,7 +926,7 @@ const char* const* GetAcceptLanguageListForTesting() {
 }
 
 size_t GetAcceptLanguageListSizeForTesting() {
-  return arraysize(kAcceptLanguageList);
+  return base::size(kAcceptLanguageList);
 }
 
 }  // namespace l10n_util

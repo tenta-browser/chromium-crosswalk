@@ -9,13 +9,14 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/test/test_support_android.h"
+#include "components/cronet/android/cronet_tests_jni_headers/MockCertVerifier_jni.h"
 #include "crypto/sha2.h"
-#include "jni/MockCertVerifier_jni.h"
 #include "net/base/net_errors.h"
 #include "net/cert/asn1_util.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/mock_cert_verifier.h"
+#include "net/cert/x509_util.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 
@@ -29,21 +30,16 @@ namespace {
 // Returns true on success.
 static bool CalculatePublicKeySha256(const net::X509Certificate& cert,
                                      net::HashValue* out_hash_value) {
-  // Convert the cert to DER encoded bytes.
-  std::string der_cert_bytes;
-  net::X509Certificate::OSCertHandle cert_handle = cert.os_cert_handle();
-  if (!net::X509Certificate::GetDEREncoded(cert_handle, &der_cert_bytes)) {
-    LOG(INFO) << "Unable to convert the given cert to DER encoding";
-    return false;
-  }
   // Extract the public key from the cert.
   base::StringPiece spki_bytes;
-  if (!net::asn1::ExtractSPKIFromDERCert(der_cert_bytes, &spki_bytes)) {
+  if (!net::asn1::ExtractSPKIFromDERCert(
+          net::x509_util::CryptoBufferAsStringPiece(cert.cert_buffer()),
+          &spki_bytes)) {
     LOG(INFO) << "Unable to retrieve the public key from the DER cert";
     return false;
   }
   // Calculate SHA256 hash of public key bytes.
-  out_hash_value->tag = net::HASH_VALUE_SHA256;
+  *out_hash_value = net::HashValue(net::HASH_VALUE_SHA256);
   crypto::SHA256HashString(spki_bytes, out_hash_value->data(),
                            crypto::kSHA256Length);
   return true;
@@ -53,7 +49,6 @@ static bool CalculatePublicKeySha256(const net::X509Certificate& cert,
 
 static jlong JNI_MockCertVerifier_CreateMockCertVerifier(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     const JavaParamRef<jobjectArray>& jcerts,
     const jboolean jknown_root,
     const JavaParamRef<jstring>& jtest_data_dir) {

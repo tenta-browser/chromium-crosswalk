@@ -9,15 +9,11 @@
 #include "base/bind.h"
 #include "base/rand_util.h"
 #include "net/dns/address_sorter.h"
-#include "net/dns/dns_config_service.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_session.h"
 #include "net/dns/dns_socket_pool.h"
 #include "net/dns/dns_transaction.h"
 #include "net/socket/client_socket_factory.h"
-
-namespace base {
-class Value;
-}
 
 namespace net {
 
@@ -49,26 +45,14 @@ class DnsClientImpl : public DnsClient {
   }
 
   const DnsConfig* GetConfig() const override {
-    return session_.get() ? &session_->config() : NULL;
+    return session_.get() ? &session_->config() : nullptr;
   }
 
   DnsTransactionFactory* GetTransactionFactory() override {
-    return session_.get() ? factory_.get() : NULL;
+    return session_.get() ? factory_.get() : nullptr;
   }
 
   AddressSorter* GetAddressSorter() override { return address_sorter_.get(); }
-
-  std::unique_ptr<const base::Value> GetPersistentData() const override {
-    if (!session_)
-      return std::unique_ptr<const base::Value>();
-    return session_->GetPersistentData();
-  }
-
-  void ApplyPersistentData(const base::Value& data) override {
-    if (!session_)
-      return;
-    session_->ApplyPersistentData(data);
-  }
 
  private:
   scoped_refptr<DnsSession> session_;

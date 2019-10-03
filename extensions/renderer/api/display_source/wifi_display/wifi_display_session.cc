@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/timer/timer.h"
 #include "content/public/renderer/render_frame.h"
@@ -140,9 +141,10 @@ void WiFiDisplaySession::SendRTSPData(const std::string& message) {
 }
 
 unsigned WiFiDisplaySession::CreateTimer(int seconds) {
-  std::unique_ptr<base::Timer> timer(new base::Timer(true, true));
-  auto insert_ret = timers_.insert(std::pair<int, std::unique_ptr<base::Timer>>(
-      ++timer_id_, std::move(timer)));
+  std::unique_ptr<base::RepeatingTimer> timer(new base::RepeatingTimer());
+  auto insert_ret =
+      timers_.insert(std::pair<int, std::unique_ptr<base::RepeatingTimer>>(
+          ++timer_id_, std::move(timer)));
   DCHECK(insert_ret.second);
   insert_ret.first->second->Start(FROM_HERE,
                base::TimeDelta::FromSeconds(seconds),

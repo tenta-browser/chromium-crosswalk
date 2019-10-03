@@ -47,10 +47,6 @@ enum DateFormat {
   DATE_FORMAT_MONTH_WEEKDAY_DAY,
 };
 
-// TODO(derat@chromium.org): Update all of these functions to return boolean
-// "success" values and use out-params for formatted strings:
-// http://crbug.com/698802
-
 // Returns the time of day, e.g., "3:07 PM".
 BASE_I18N_EXPORT string16 TimeFormatTimeOfDay(const Time& time);
 
@@ -106,8 +102,8 @@ BASE_I18N_EXPORT string16 TimeFormatWithPattern(const Time& time,
 // Please don't use width = DURATION_WIDTH_NUMERIC when the time duration
 // can possibly be larger than 24h, as the hour value will be cut below 24
 // after formatting.
-// TODO(chengx): fix function output when width = DURATION_WIDTH_NUMERIC
-// (http://crbug.com/675791)
+// TODO(crbug.com/675791): fix function output when width =
+// DURATION_WIDTH_NUMERIC.
 BASE_I18N_EXPORT bool TimeDurationFormat(const TimeDelta time,
                                          const DurationFormatWidth width,
                                          string16* out) WARN_UNUSED_RESULT;
@@ -119,8 +115,8 @@ BASE_I18N_EXPORT bool TimeDurationFormat(const TimeDelta time,
 // Please don't use width = DURATION_WIDTH_NUMERIC when the time duration
 // can possibly be larger than 24h, as the hour value will be cut below 24
 // after formatting.
-// TODO(chengx): fix function output when width = DURATION_WIDTH_NUMERIC
-// (http://crbug.com/675791)
+// TODO(crbug.com/675791): fix function output when width =
+// DURATION_WIDTH_NUMERIC.
 BASE_I18N_EXPORT bool TimeDurationFormatWithSeconds(
     const TimeDelta time,
     const DurationFormatWidth width,

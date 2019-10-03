@@ -5,54 +5,45 @@
 #include "ui/views/controls/menu/menu_config.h"
 
 #include "base/macros.h"
-#include "ui/views/controls/menu/menu_image_util.h"
-#include "ui/views/round_rect_painter.h"
+#include "base/no_destructor.h"
+#include "ui/views/controls/menu/menu_controller.h"
+#include "ui/views/controls/menu/menu_item_view.h"
 
 namespace views {
 
-MenuConfig::MenuConfig()
-    : arrow_color(SK_ColorBLACK),
-      menu_vertical_border_size(3),
-      menu_horizontal_border_size(views::RoundRectPainter::kBorderWidth),
-      submenu_horizontal_inset(3),
-      item_top_margin(4),
-      item_bottom_margin(3),
-      item_no_icon_top_margin(4),
-      item_no_icon_bottom_margin(4),
-      item_left_margin(10),
-      label_to_arrow_padding(10),
-      arrow_to_edge_padding(5),
-      icon_to_label_padding(10),
-      check_width(kMenuCheckSize),
-      check_height(kMenuCheckSize),
-      arrow_width(kSubmenuArrowSize),
-      separator_height(11),
-      separator_upper_height(3),
-      separator_lower_height(4),
-      separator_spacing_height(3),
-      separator_thickness(1),
-      show_mnemonics(false),
-      scroll_arrow_height(3),
-      label_to_minor_text_padding(10),
-      item_min_height(0),
-      show_accelerators(true),
-      always_use_icon_to_label_padding(false),
-      align_arrow_and_shortcut(false),
-      offset_context_menus(false),
-      use_outer_border(true),
-      icons_in_label(false),
-      check_selected_combobox_item(false),
-      show_delay(400),
-      corner_radius(0) {
+MenuConfig::MenuConfig() {
   Init();
 }
 
-MenuConfig::~MenuConfig() {}
+MenuConfig::~MenuConfig() = default;
+
+int MenuConfig::CornerRadiusForMenu(const MenuController* controller) const {
+  if (controller && controller->use_touchable_layout())
+    return touchable_corner_radius;
+  if (controller && (controller->IsCombobox() || controller->IsContextMenu()))
+    return auxiliary_corner_radius;
+  return corner_radius;
+}
+
+bool MenuConfig::ShouldShowAcceleratorText(const MenuItemView* item,
+                                           base::string16* text) const {
+  if (!show_accelerators || !item->GetDelegate() || !item->GetCommand())
+    return false;
+  ui::Accelerator accelerator;
+  if (!item->GetDelegate()->GetAccelerator(item->GetCommand(), &accelerator))
+    return false;
+  if (item->GetMenuController() && item->GetMenuController()->IsContextMenu() &&
+      !show_context_menu_accelerators) {
+    return false;
+  }
+  *text = accelerator.GetShortcutText();
+  return true;
+}
 
 // static
 const MenuConfig& MenuConfig::instance() {
-  CR_DEFINE_STATIC_LOCAL(MenuConfig, instance, ());
-  return instance;
+  static base::NoDestructor<MenuConfig> instance;
+  return *instance;
 }
 
 }  // namespace views

@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.payments;
 
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.content_public.browser.WebContents;
 
 /**
  * A class used to record journey metrics for the Payment Request feature.
@@ -19,10 +20,10 @@ public class JourneyLogger {
     private boolean mWasPaymentRequestTriggered;
     private boolean mHasRecorded;
 
-    public JourneyLogger(boolean isIncognito, String url) {
+    public JourneyLogger(boolean isIncognito, WebContents webContents) {
         // Note that this pointer could leak the native object. The called must call destroy() to
         // ensure that the native object is destroyed.
-        mJourneyLoggerAndroid = nativeInitJourneyLoggerAndroid(isIncognito, url);
+        mJourneyLoggerAndroid = nativeInitJourneyLoggerAndroid(isIncognito, webContents);
     }
 
     /** Will destroy the native object. This class shouldn't be used afterwards. */
@@ -79,12 +80,21 @@ public class JourneyLogger {
     }
 
     /**
-     * Records the fact that the merchant called CanMakePayment and records it's return value.
+     * Records the fact that the merchant called CanMakePayment and records its return value.
      *
      * @param value The return value of the CanMakePayment call.
      */
     public void setCanMakePaymentValue(boolean value) {
         nativeSetCanMakePaymentValue(mJourneyLoggerAndroid, value);
+    }
+
+    /**
+     * Records the fact that the merchant called HasEnrolledInstrument and records its return value.
+     *
+     * @param value The return value of the HasEnrolledInstrument call.
+     */
+    public void setHasEnrolledInstrumentValue(boolean value) {
+        nativeSetHasEnrolledInstrumentValue(mJourneyLoggerAndroid, value);
     }
 
     /**
@@ -135,9 +145,8 @@ public class JourneyLogger {
      */
     public void setCompleted() {
         assert !mHasRecorded;
-        assert mWasPaymentRequestTriggered;
 
-        if (!mHasRecorded && mWasPaymentRequestTriggered) {
+        if (!mHasRecorded) {
             mHasRecorded = true;
             nativeSetCompleted(mJourneyLoggerAndroid);
         }
@@ -154,7 +163,7 @@ public class JourneyLogger {
 
         // The abort reasons on Android cascade into each other, so only the first one should be
         // recorded.
-        if (!mHasRecorded && mWasPaymentRequestTriggered) {
+        if (!mHasRecorded) {
             mHasRecorded = true;
             nativeSetAborted(mJourneyLoggerAndroid, reason);
         }
@@ -167,7 +176,6 @@ public class JourneyLogger {
      */
     public void setNotShown(int reason) {
         assert reason < NotShownReason.MAX;
-        assert !mWasPaymentRequestTriggered;
         assert !mHasRecorded;
 
         if (!mHasRecorded) {
@@ -176,7 +184,19 @@ public class JourneyLogger {
         }
     }
 
-    private native long nativeInitJourneyLoggerAndroid(boolean isIncognito, String url);
+    /**
+     * Records amount of completed/triggered transactions separated by currency.
+     *
+     * @param curreny A string indicating the curreny of the transaction.
+     * @param value A string indicating the value of the transaction.
+     * @param completed A boolean indicating whether the transaction has completed or not.
+     */
+    public void recordTransactionAmount(String currency, String value, boolean completed) {
+        nativeRecordTransactionAmount(mJourneyLoggerAndroid, currency, value, completed);
+    }
+
+    private native long nativeInitJourneyLoggerAndroid(
+            boolean isIncognito, WebContents webContents);
     private native void nativeDestroy(long nativeJourneyLoggerAndroid);
     private native void nativeSetNumberOfSuggestionsShown(long nativeJourneyLoggerAndroid,
             int section, int number, boolean hasCompleteSuggestion);
@@ -185,6 +205,8 @@ public class JourneyLogger {
     private native void nativeIncrementSelectionEdits(long nativeJourneyLoggerAndroid, int section);
     private native void nativeIncrementSelectionAdds(long nativeJourneyLoggerAndroid, int section);
     private native void nativeSetCanMakePaymentValue(
+            long nativeJourneyLoggerAndroid, boolean value);
+    private native void nativeSetHasEnrolledInstrumentValue(
             long nativeJourneyLoggerAndroid, boolean value);
     private native void nativeSetEventOccurred(long nativeJourneyLoggerAndroid, int event);
     private native void nativeSetRequestedInformation(long nativeJourneyLoggerAndroid,
@@ -196,4 +218,6 @@ public class JourneyLogger {
     private native void nativeSetCompleted(long nativeJourneyLoggerAndroid);
     private native void nativeSetAborted(long nativeJourneyLoggerAndroid, int reason);
     private native void nativeSetNotShown(long nativeJourneyLoggerAndroid, int reason);
+    private native void nativeRecordTransactionAmount(
+            long nativeJourneyLoggerAndroid, String currency, String value, boolean completed);
 }

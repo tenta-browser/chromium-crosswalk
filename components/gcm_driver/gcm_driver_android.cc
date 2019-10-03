@@ -13,22 +13,26 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "jni/GCMDriver_jni.h"
+#include "components/gcm_driver/android/jni_headers/GCMDriver_jni.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using base::android::AppendJavaStringArrayToStringVector;
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaByteArrayToByteVector;
+using base::android::JavaByteArrayToString;
 using base::android::JavaParamRef;
 
 namespace gcm {
 
- GCMDriverAndroid::GCMDriverAndroid(
-     const base::FilePath& store_path,
-     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner)
-     : GCMDriver(store_path, blocking_task_runner),
-       recorder_(this) {
+GCMDriverAndroid::GCMDriverAndroid(
+    const base::FilePath& store_path,
+    const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
+    : GCMDriver(store_path,
+                blocking_task_runner,
+                std::move(url_loader_factory)),
+      recorder_(this) {
   JNIEnv* env = AttachCurrentThread();
   java_ref_.Reset(Java_GCMDriver_create(env, reinterpret_cast<intptr_t>(this)));
 }
@@ -73,6 +77,7 @@ void GCMDriverAndroid::OnMessageReceived(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& j_app_id,
     const JavaParamRef<jstring>& j_sender_id,
+    const JavaParamRef<jstring>& j_message_id,
     const JavaParamRef<jstring>& j_collapse_key,
     const JavaParamRef<jbyteArray>& j_raw_data,
     const JavaParamRef<jobjectArray>& j_data_keys_and_values) {
@@ -82,6 +87,9 @@ void GCMDriverAndroid::OnMessageReceived(
 
   IncomingMessage message;
   message.sender_id = ConvertJavaStringToUTF8(env, j_sender_id);
+
+  if (!j_message_id.is_null())
+    ConvertJavaStringToUTF8(env, j_message_id, &message.message_id);
   if (!j_collapse_key.is_null())
     ConvertJavaStringToUTF8(env, j_collapse_key, &message.collapse_key);
 
@@ -96,9 +104,7 @@ void GCMDriverAndroid::OnMessageReceived(
   }
   // Convert j_raw_data from byte[] to binary std::string.
   if (j_raw_data) {
-    std::vector<uint8_t> raw_data;
-    JavaByteArrayToByteVector(env, j_raw_data, &raw_data);
-    message.raw_data.assign(raw_data.begin(), raw_data.end());
+    JavaByteArrayToString(env, j_raw_data, &message.raw_data);
 
     message_byte_size += message.raw_data.size();
   }
@@ -116,13 +122,23 @@ void GCMDriverAndroid::ValidateRegistration(
     const ValidateRegistrationCallback& callback) {
   // gcm_driver doesn't store registration IDs on Android, so assume it's valid.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, true /* is_valid */));
+      FROM_HERE, base::BindOnce(callback, true /* is_valid */));
 }
 
 void GCMDriverAndroid::OnSignedIn() {
 }
 
 void GCMDriverAndroid::OnSignedOut() {
+}
+
+void GCMDriverAndroid::AddAppHandler(const std::string& app_id,
+                                     GCMAppHandler* handler) {
+  GCMDriver::AddAppHandler(app_id, handler);
+  JNIEnv* env = AttachCurrentThread();
+  // TODO(melandory, mamir): check if messages were persisted
+  // and only then go to java.
+  Java_GCMDriver_replayPersistedMessages(env, java_ref_,
+                                         ConvertUTF8ToJavaString(env, app_id));
 }
 
 void GCMDriverAndroid::AddConnectionObserver(GCMConnectionObserver* observer) {

@@ -5,6 +5,7 @@
 #import "chrome/browser/ui/cocoa/history_menu_cocoa_controller.h"
 
 #import "base/mac/foundation_util.h"
+#include "base/metrics/user_metrics.h"
 #include "chrome/app/chrome_command_ids.h"  // IDC_HISTORY_MENU
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/profiles/profile.h"
@@ -45,7 +46,7 @@ using content::Referrer;
   // just load the URL.
   sessions::TabRestoreService* service =
       TabRestoreServiceFactory::GetForProfile(bridge_->profile());
-  if (node->session_id && service) {
+  if (node->session_id.is_valid() && service) {
     Browser* browser = chrome::FindTabbedBrowser(bridge_->profile(), false);
     BrowserLiveTabContext* context =
         browser ? browser->live_tab_context() : NULL;
@@ -55,16 +56,25 @@ using content::Referrer;
     DCHECK(node->url.is_valid());
     WindowOpenDisposition disposition =
         ui::WindowOpenDispositionFromNSEvent([NSApp currentEvent]);
-    chrome::NavigateParams params(bridge_->profile(), node->url,
-        ui::PAGE_TRANSITION_AUTO_BOOKMARK);
+    NavigateParams params(bridge_->profile(), node->url,
+                          ui::PAGE_TRANSITION_AUTO_BOOKMARK);
     params.disposition = disposition;
-    chrome::Navigate(&params);
+    Navigate(&params);
   }
 }
 
 - (IBAction)openHistoryMenuItem:(id)sender {
   const HistoryMenuBridge::HistoryItem* item =
       bridge_->HistoryItemForMenuItem(sender);
+
+  if ([sender tag] == HistoryMenuBridge::kRecentlyClosed) {
+    base::RecordAction(
+        base::UserMetricsAction("TopMenu_History_RecentlyClosed"));
+  } else if ([sender tag] == HistoryMenuBridge::kVisited) {
+    base::RecordAction(
+        base::UserMetricsAction("TopMenu_History_RecentlyVisited"));
+  }
+
   [self openURLForItem:item];
 }
 

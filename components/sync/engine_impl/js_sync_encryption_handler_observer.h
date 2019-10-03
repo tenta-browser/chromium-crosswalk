@@ -33,6 +33,7 @@ class JsSyncEncryptionHandlerObserver : public SyncEncryptionHandler::Observer {
   // SyncEncryptionHandlerObserver::Observer implementation.
   void OnPassphraseRequired(
       PassphraseRequiredReason reason,
+      const KeyDerivationParams& key_derivation_params,
       const sync_pb::EncryptedData& pending_keys) override;
   void OnPassphraseAccepted() override;
   void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
@@ -43,8 +44,6 @@ class JsSyncEncryptionHandlerObserver : public SyncEncryptionHandler::Observer {
   void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time explicit_passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
 
  private:
   void HandleJsEvent(const base::Location& from_here,

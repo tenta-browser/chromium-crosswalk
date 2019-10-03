@@ -6,22 +6,21 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_navigation_util_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/mock_chrome_cleaner_controller_win.h"
-#include "chrome/browser/safe_browsing/chrome_cleaner/srt_field_trial_win.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -41,41 +40,38 @@ class MockPromptDelegate
   MOCK_METHOD2(ShowChromeCleanerRebootPrompt,
                void(Browser* browser,
                     ChromeCleanerRebootDialogControllerImpl* controller));
-  MOCK_METHOD1(OpenSettingsPage, void(Browser* browser));
   MOCK_METHOD0(OnSettingsPageIsActiveTab, void());
 };
 
-// Parameters for this test:
-//  - bool reboot_dialog_enabled_: if kRebootPromptDialogFeature is enabled.
-class ChromeCleanerRebootFlowTest : public InProcessBrowserTest,
-                                    public ::testing::WithParamInterface<bool> {
+// The reboot flow requires loading chrome://settings/cleanup, which only
+// exists on the Google-branded browser.
+#if defined(GOOGLE_CHROME_BUILD)
+
+class ChromeCleanerRebootFlowTest : public InProcessBrowserTest {
  public:
-  ChromeCleanerRebootFlowTest() { reboot_dialog_enabled_ = GetParam(); }
+  ChromeCleanerRebootFlowTest() = default;
 
   void SetUpInProcessBrowserTestFixture() override {
-    if (reboot_dialog_enabled_)
-      scoped_feature_list_.InitAndEnableFeature(kRebootPromptDialogFeature);
-    else
-      scoped_feature_list_.InitAndDisableFeature(kRebootPromptDialogFeature);
-
     // The implementation of dialog_controller_ may check state, and we are not
     // interested in ensuring how many times this is done, since it's not part
     // of the main functionality.
     EXPECT_CALL(mock_cleaner_controller_, state())
         .WillRepeatedly(
             Return(ChromeCleanerController::State::kRebootRequired));
-    mock_prompt_delegate_ = base::MakeUnique<StrictMock<MockPromptDelegate>>();
+    mock_prompt_delegate_ = std::make_unique<StrictMock<MockPromptDelegate>>();
   }
 
   void SetUpOnMainThread() override {
-    run_loop_ = base::MakeUnique<base::RunLoop>();
+    cleanup_settings_page_url_ =
+        chrome::GetSettingsUrl(chrome::kCleanupSubPage);
+
+    run_loop_ = std::make_unique<base::RunLoop>();
   }
 
   void OpenPage(const GURL& gurl, Browser* browser) {
-    chrome::AddSelectedTabWithURL(browser, gurl,
-                                  ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-    content::TestNavigationObserver observer(
-        browser->tab_strip_model()->GetActiveWebContents());
+    content::WebContents* contents = chrome::AddSelectedTabWithURL(
+        browser, gurl, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+    content::TestNavigationObserver observer(contents);
     observer.Wait();
   }
 
@@ -96,21 +92,14 @@ class ChromeCleanerRebootFlowTest : public InProcessBrowserTest,
   }
 
   void SetExpectationsWhenSettingsPageIsNotActive() {
-    if (reboot_dialog_enabled_) {
-      EXPECT_CALL(*mock_prompt_delegate_, ShowChromeCleanerRebootPrompt(_, _))
-          .WillOnce(
-              InvokeWithoutArgs(this, &ChromeCleanerRebootFlowTest::
-                                          RecordRebootPromptStartedAndUnblock));
-      // If the prompt dialog is shown, the controller object will only be
-      // destroyed after user interaction. This will force the object to be
-      // deleted when the test ends.
-      close_required_ = true;
-    } else {
-      EXPECT_CALL(*mock_prompt_delegate_, OpenSettingsPage(_))
-          .WillOnce(
-              InvokeWithoutArgs(this, &ChromeCleanerRebootFlowTest::
-                                          RecordRebootPromptStartedAndUnblock));
-    }
+    EXPECT_CALL(*mock_prompt_delegate_, ShowChromeCleanerRebootPrompt(_, _))
+        .WillOnce(InvokeWithoutArgs(
+            this,
+            &ChromeCleanerRebootFlowTest::RecordRebootPromptStartedAndUnblock));
+    // If the prompt dialog is shown, the controller object will only be
+    // destroyed after user interaction. This will force the object to be
+    // deleted when the test ends.
+    close_required_ = true;
   }
 
   void RecordRebootPromptStartedAndUnblock() {
@@ -127,7 +116,7 @@ class ChromeCleanerRebootFlowTest : public InProcessBrowserTest,
       dialog_controller_->Close();
   }
 
-  bool reboot_dialog_enabled_ = false;
+  GURL cleanup_settings_page_url_;
 
   StrictMock<MockChromeCleanerController> mock_cleaner_controller_;
   std::unique_ptr<MockPromptDelegate> mock_prompt_delegate_;
@@ -136,16 +125,14 @@ class ChromeCleanerRebootFlowTest : public InProcessBrowserTest,
   bool close_required_ = false;
   bool reboot_prompt_started_ = false;
   std::unique_ptr<base::RunLoop> run_loop_;
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
+IN_PROC_BROWSER_TEST_F(ChromeCleanerRebootFlowTest,
                        OnRebootRequired_SettingsPageActive) {
   SetExpectationsWhenSettingsPageIsActive();
 
-  OpenPage(GURL(chrome::kChromeUISettingsURL), browser());
-  ASSERT_TRUE(chrome_cleaner_util::SettingsPageIsActiveTab(browser()));
+  OpenPage(cleanup_settings_page_url_, browser());
+  ASSERT_TRUE(chrome_cleaner_util::CleanupPageIsActiveTab(browser()));
 
   ChromeCleanerRebootDialogControllerImpl::Create(
       &mock_cleaner_controller_, std::move(mock_prompt_delegate_));
@@ -153,9 +140,9 @@ IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
   EnsureCompletedExecution();
 }
 
-IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
+IN_PROC_BROWSER_TEST_F(ChromeCleanerRebootFlowTest,
                        OnRebootRequired_SettingsPageActiveWhenBrowserIsOpened) {
-  auto keep_alive = base::MakeUnique<ScopedKeepAlive>(
+  auto keep_alive = std::make_unique<ScopedKeepAlive>(
       KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
 
   SetExpectationsWhenSettingsPageIsActive();
@@ -167,14 +154,13 @@ IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
       &mock_cleaner_controller_, std::move(mock_prompt_delegate_));
 
   EXPECT_FALSE(reboot_prompt_started_);
-  Browser* browser =
-      CreateBrowserShowingUrl(GURL(chrome::kChromeUISettingsURL));
-  ASSERT_TRUE(chrome_cleaner_util::SettingsPageIsActiveTab(browser));
+  Browser* browser = CreateBrowserShowingUrl(cleanup_settings_page_url_);
+  ASSERT_TRUE(chrome_cleaner_util::CleanupPageIsActiveTab(browser));
 
   EnsureCompletedExecution();
 }
 
-IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
+IN_PROC_BROWSER_TEST_F(ChromeCleanerRebootFlowTest,
                        OnRebootRequired_SettingsPageNotActive) {
   SetExpectationsWhenSettingsPageIsNotActive();
 
@@ -184,10 +170,10 @@ IN_PROC_BROWSER_TEST_P(ChromeCleanerRebootFlowTest,
   EnsureCompletedExecution();
 }
 
-IN_PROC_BROWSER_TEST_P(
+IN_PROC_BROWSER_TEST_F(
     ChromeCleanerRebootFlowTest,
     OnRebootRequired_SettingsPageNotActiveWhenBrowserIsOpened) {
-  auto keep_alive = base::MakeUnique<ScopedKeepAlive>(
+  auto keep_alive = std::make_unique<ScopedKeepAlive>(
       KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
 
   SetExpectationsWhenSettingsPageIsNotActive();
@@ -204,15 +190,11 @@ IN_PROC_BROWSER_TEST_P(
   EnsureCompletedExecution();
 }
 
-INSTANTIATE_TEST_CASE_P(AllTests,
-                        ChromeCleanerRebootFlowTest,
-                        ::testing::Bool());
+#endif  // defined(GOOGLE_CHROME_BUILD)
 
 class ChromeCleanerRebootDialogResponseTest : public InProcessBrowserTest {
  public:
   void SetUpInProcessBrowserTestFixture() override {
-    scoped_feature_list_.InitAndEnableFeature(kRebootPromptDialogFeature);
-
     // The implementation of dialog_controller may check state, and we are not
     // interested in ensuring how many times this is done, since it's not part
     // of the main functionality.
@@ -223,7 +205,7 @@ class ChromeCleanerRebootDialogResponseTest : public InProcessBrowserTest {
 
   ChromeCleanerRebootDialogControllerImpl* dialog_controller() {
     auto mock_prompt_delegate =
-        base::MakeUnique<StrictMock<MockPromptDelegate>>();
+        std::make_unique<StrictMock<MockPromptDelegate>>();
     EXPECT_CALL(*mock_prompt_delegate, ShowChromeCleanerRebootPrompt(_, _))
         .Times(1);
     return ChromeCleanerRebootDialogControllerImpl::Create(
@@ -232,8 +214,6 @@ class ChromeCleanerRebootDialogResponseTest : public InProcessBrowserTest {
 
  protected:
   StrictMock<MockChromeCleanerController> mock_cleaner_controller_;
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(ChromeCleanerRebootDialogResponseTest, Accept) {

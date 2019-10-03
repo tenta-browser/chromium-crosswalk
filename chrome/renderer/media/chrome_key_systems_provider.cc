@@ -6,13 +6,16 @@
 
 #include "base/time/default_tick_clock.h"
 #include "chrome/renderer/media/chrome_key_systems.h"
+#include "third_party/widevine/cdm/buildflags.h"
 
-#include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
+#if BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
+#include "third_party/widevine/cdm/widevine_cdm_common.h"
+#endif
 
 ChromeKeySystemsProvider::ChromeKeySystemsProvider()
     : has_updated_(false),
       is_update_needed_(true),
-      tick_clock_(new base::DefaultTickClock()) {}
+      tick_clock_(base::DefaultTickClock::GetInstance()) {}
 
 ChromeKeySystemsProvider::~ChromeKeySystemsProvider() {}
 
@@ -32,7 +35,7 @@ void ChromeKeySystemsProvider::AddSupportedKeySystems(
 
 // Check whether all potentially supported key systems are supported. If so,
 // no need to update again.
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(WIDEVINE_CDM_IS_COMPONENT)
+#if BUILDFLAG(ENABLE_WIDEVINE_CDM_COMPONENT)
   for (const auto& properties : *key_systems) {
     if (properties->GetKeySystemName() == kWidevineKeySystem) {
       is_update_needed_ = false;
@@ -69,8 +72,8 @@ bool ChromeKeySystemsProvider::IsKeySystemsUpdateNeeded() {
 }
 
 void ChromeKeySystemsProvider::SetTickClockForTesting(
-    std::unique_ptr<base::TickClock> tick_clock) {
-  tick_clock_.swap(tick_clock);
+    const base::TickClock* tick_clock) {
+  tick_clock_ = tick_clock;
 }
 
 void ChromeKeySystemsProvider::SetProviderDelegateForTesting(

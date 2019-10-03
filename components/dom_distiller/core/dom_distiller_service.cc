@@ -4,11 +4,12 @@
 
 #include "components/dom_distiller/core/dom_distiller_service.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/guid.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/dom_distiller/core/distilled_content_store.h"
@@ -52,15 +53,7 @@ DomDistillerService::DomDistillerService(
       distiller_page_factory_(std::move(distiller_page_factory)),
       distilled_page_prefs_(std::move(distilled_page_prefs)) {}
 
-DomDistillerService::~DomDistillerService() {
-}
-
-syncer::SyncableService* DomDistillerService::GetSyncableService() const {
-  if (!store_) {
-    return nullptr;
-  }
-  return store_->GetSyncableService();
-}
+DomDistillerService::~DomDistillerService() {}
 
 std::unique_ptr<DistillerPage> DomDistillerService::CreateDefaultDistillerPage(
     const gfx::Size& render_view_size) {
@@ -92,7 +85,7 @@ const std::string DomDistillerService::AddToList(
       // An article may not be available for a variety of reasons, e.g.
       // distillation failure or blobs not available locally.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(article_cb, true));
+          FROM_HERE, base::BindOnce(article_cb, true));
       return entry.entry_id();
     }
   } else {
@@ -249,7 +242,7 @@ bool DomDistillerService::GetOrCreateTaskTrackerForEntry(
 TaskTracker* DomDistillerService::CreateTaskTracker(const ArticleEntry& entry) {
   TaskTracker::CancelCallback cancel_callback =
       base::Bind(&DomDistillerService::CancelTask, base::Unretained(this));
-  tasks_.push_back(base::MakeUnique<TaskTracker>(entry, cancel_callback,
+  tasks_.push_back(std::make_unique<TaskTracker>(entry, cancel_callback,
                                                  content_store_.get()));
   return tasks_.back().get();
 }

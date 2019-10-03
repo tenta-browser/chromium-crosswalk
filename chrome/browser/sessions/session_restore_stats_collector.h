@@ -7,8 +7,11 @@
 
 #include <stddef.h>
 #include <map>
+#include <memory>
 #include <utility>
+#include <vector>
 
+#include "base//scoped_observer.h"
 #include "base/callback_list.h"
 #include "base/macros.h"
 #include "base/time/tick_clock.h"
@@ -16,6 +19,7 @@
 #include "chrome/browser/sessions/session_restore_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/render_widget_host_observer.h"
 
 namespace content {
 class NavigationController;
@@ -48,8 +52,25 @@ class RenderWidgetHost;
 // Rethink the collection in these cases.
 class SessionRestoreStatsCollector
     : public content::NotificationObserver,
+      public content::RenderWidgetHostObserver,
       public base::RefCounted<SessionRestoreStatsCollector> {
  public:
+  // Recorded in SessionRestore.ForegroundTabFirstPaint4.FinishReason metric.
+  // Values other than PAINT_FINISHED_UMA_DONE indicate why FirstPaint time
+  // was not recorded.
+  enum SessionRestorePaintFinishReasonUma {
+    // SessionRestore.ForegroundTabFirstPaint4_XX successfully recorded.
+    PAINT_FINISHED_UMA_DONE = 0,
+    // No tabs were visible the whole time before first paint.
+    PAINT_FINISHED_UMA_NO_COMPLETELY_VISIBLE_TABS = 1,
+    // No restored tabs were painted.
+    PAINT_FINISHED_UMA_NO_PAINT = 2,
+    // A non-restored tab was painted first.
+    PAINT_FINISHED_NON_RESTORED_TAB_PAINTED_FIRST = 3,
+    // The size of this enum. Must be the last entry.
+    PAINT_FINISHED_UMA_MAX = 4,
+  };
+
   // Houses all of the statistics gathered by the SessionRestoreStatsCollector
   // while the underlying TabLoader is active. These statistics are all reported
   // at once via the reporting delegate.
@@ -91,12 +112,15 @@ class SessionRestoreStatsCollector
     base::TimeDelta foreground_tab_first_loaded;
 
     // The time elapsed between |restore_started| and reception of the first
-    // NOTIFICATION_RENDER_WIDGET_HOST_DID_COMPLETE_RESIZE_OR_REPAINT event for
+    // NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_VISUAL_PROPERTIES event for
     // any of the tabs involved in the session restore. If this is zero it is
-    // because it has not been recorded (all visible tabs were closed or
-    // switched away from before they were painted). Corresponds to
-    // "SessionRestore.ForegroundTabFirstPaint3" and its _XX variants.
+    // because it has not been recorded (all restored tabs were closed or
+    // hidden before they were painted, or were never painted). Corresponds to
+    // "SessionRestore.ForegroundTabFirstPaint4" and its _XX variants.
     base::TimeDelta foreground_tab_first_paint;
+
+    // Whether we recorded |foreground_tab_first_paint| and if not, why.
+    SessionRestorePaintFinishReasonUma tab_first_paint_reason;
 
     // The time taken for all non-deferred tabs to be loaded. This corresponds
     // to the "SessionRestore.AllTabsLoaded" metric and its _XX variants
@@ -149,8 +173,15 @@ class SessionRestoreStatsCollector
     // Set to true if the tab has been deferred by the TabLoader.
     bool is_deferred;
 
+    // True if the tab was ever hidden or occluded during the restore process.
+    bool was_hidden_or_occluded;
+
     // The current loading state of the tab.
     TabLoadingState loading_state;
+
+    // RenderWidgetHost* SessionRestoreStatsCollector is observing for this tab,
+    // if any.
+    content::RenderWidgetHost* observed_host;
   };
 
   // Maps a NavigationController to its state. This is the primary map and
@@ -166,13 +197,20 @@ class SessionRestoreStatsCollector
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
+  // RenderWidgetHostObserver:
+  void RenderWidgetHostVisibilityChanged(content::RenderWidgetHost* widget_host,
+                                         bool became_visible) override;
+
+  void RenderWidgetHostDestroyed(
+      content::RenderWidgetHost* widget_host) override;
+
   // Called when a tab is no longer tracked. This is called by the 'Observe'
   // notification callback. Takes care of unregistering all observers and
   // removing the tab from all internal data structures.
   void RemoveTab(content::NavigationController* tab);
 
   // Registers for relevant notifications for a tab and inserts the tab into
-  // to tabs_tracked_ map. Return a pointer to the newly created TabState.
+  // to |tabs_tracked_| map. Return a pointer to the newly created TabState.
   TabState* RegisterForNotifications(content::NavigationController* tab);
 
   // Returns the tab state, nullptr if not found.
@@ -187,7 +225,7 @@ class SessionRestoreStatsCollector
   void ReleaseIfDoneTracking();
 
   // Testing seam for configuring the tick clock in use.
-  void set_tick_clock(std::unique_ptr<base::TickClock> tick_clock) {
+  void set_tick_clock(std::unique_ptr<const base::TickClock> tick_clock) {
     tick_clock_ = std::move(tick_clock);
   }
 
@@ -198,8 +236,16 @@ class SessionRestoreStatsCollector
   // Has the time for foreground tab load been recorded?
   bool got_first_foreground_load_;
 
-  // Has the time for foreground tab paint been recorded?
-  bool got_first_paint_;
+  // False if the time for foreground tab paint been recorded, or no more
+  // non-deferred tabs are left to wait for, true otherwise.
+  bool waiting_for_first_paint_;
+
+  // Won't record time for foreground tab paint because a non-restored
+  // tab was painted first.
+  bool non_restored_tab_painted_first_;
+
+  // Got first paint of tab that was hidden or occluded before being painted.
+  bool hidden_or_occluded_tab_ignored_;
 
   // The time the restore process started.
   const base::TimeTicks restore_started_;
@@ -226,7 +272,7 @@ class SessionRestoreStatsCollector
   // The source of ticks used for taking timing information. This is
   // configurable as a testing seam. Defaults to using base::DefaultTickClock,
   // which in turn uses base::TimeTicks.
-  std::unique_ptr<base::TickClock> tick_clock_;
+  std::unique_ptr<const base::TickClock> tick_clock_;
 
   // The reporting delegate used to report gathered statistics.
   std::unique_ptr<StatsReportingDelegate> reporting_delegate_;
@@ -235,6 +281,9 @@ class SessionRestoreStatsCollector
   // even if no TabLoader references it. The object only lives on if it still
   // has deferred tabs remaining from an interrupted session restore.
   scoped_refptr<SessionRestoreStatsCollector> this_retainer_;
+
+  ScopedObserver<content::RenderWidgetHost, SessionRestoreStatsCollector>
+      observer_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionRestoreStatsCollector);
 };
@@ -254,6 +303,16 @@ class SessionRestoreStatsCollector::StatsReportingDelegate {
   // Called when a deferred tab has been loaded.
   virtual void ReportDeferredTabLoaded() = 0;
 
+  // Called when a tab starts being tracked. Logs the relative time since last
+  // use of the tab.
+  virtual void ReportTabTimeSinceActive(base::TimeDelta elapsed) = 0;
+
+  // Called when a tab starts being tracked. Logs the relative time since last
+  // use of the tab. The |engagement| is a value that is typically between
+  // 0 and 100, but is technically unbounded. See
+  // chrome/browser/engagement/site_engagement_service.h for details.
+  virtual void ReportTabSiteEngagementScore(double engagement) = 0;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(StatsReportingDelegate);
 };
@@ -269,6 +328,8 @@ class SessionRestoreStatsCollector::UmaStatsReportingDelegate
   void ReportTabLoaderStats(const TabLoaderStats& tab_loader_stats) override;
   void ReportTabDeferred() override;
   void ReportDeferredTabLoaded() override;
+  void ReportTabTimeSinceActive(base::TimeDelta elapsed) override;
+  void ReportTabSiteEngagementScore(double engagement) override;
 
  private:
   // Has ReportTabDeferred been called?

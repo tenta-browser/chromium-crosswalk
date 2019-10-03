@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/strings/string_util.h"
-#include "components/sync/base/attachment_id_proto.h"
 #include "components/sync/base/time.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
@@ -49,8 +48,7 @@ void AddExtensionsActivityToMessage(
   activity->GetAndClearRecords(extensions_activity_buffer);
 
   const ExtensionsActivity::Records& records = *extensions_activity_buffer;
-  for (ExtensionsActivity::Records::const_iterator it = records.begin();
-       it != records.end(); ++it) {
+  for (auto it = records.begin(); it != records.end(); ++it) {
     sync_pb::ChromiumExtensionsActivity* activity_message =
         message->add_extensions_activity();
     activity_message->set_extension_id(it->second.extension_id);
@@ -63,10 +61,10 @@ void AddClientConfigParamsToMessage(ModelTypeSet enabled_types,
                                     bool cookie_jar_mismatch,
                                     sync_pb::CommitMessage* message) {
   sync_pb::ClientConfigParams* config_params = message->mutable_config_params();
-  for (ModelTypeSet::Iterator it = enabled_types.First(); it.Good(); it.Inc()) {
-    if (ProxyTypes().Has(it.Get()))
+  for (ModelType type : enabled_types) {
+    if (ProxyTypes().Has(type))
       continue;
-    int field_number = GetSpecificsFieldNumberFromModelType(it.Get());
+    int field_number = GetSpecificsFieldNumberFromModelType(type);
     config_params->mutable_enabled_type_ids()->Add(field_number);
   }
   config_params->set_tabs_datatype_enabled(enabled_types.Has(PROXY_TABS));
@@ -85,15 +83,6 @@ void SetEntrySpecifics(const Entry& meta_entry,
   // sending password in plain text.
   CHECK(!sync_entry->specifics().password().has_client_only_encrypted_data());
   DCHECK_EQ(meta_entry.GetModelType(), GetModelType(*sync_entry));
-}
-
-void SetAttachmentIds(const Entry& meta_entry,
-                      sync_pb::SyncEntity* sync_entry) {
-  const sync_pb::AttachmentMetadata& attachment_metadata =
-      meta_entry.GetAttachmentMetadata();
-  for (int i = 0; i < attachment_metadata.record_size(); ++i) {
-    *sync_entry->add_attachment_id() = attachment_metadata.record(i).id();
-  }
 }
 
 }  // namespace
@@ -161,8 +150,6 @@ void BuildCommitItem(const syncable::Entry& meta_entry,
   sync_entry->set_ctime(TimeToProtoTime(meta_entry.GetCtime()));
   sync_entry->set_mtime(TimeToProtoTime(meta_entry.GetMtime()));
 
-  SetAttachmentIds(meta_entry, sync_entry);
-
   // Handle bookmarks separately.
   if (meta_entry.GetSpecifics().has_bookmark()) {
     if (meta_entry.GetIsDel()) {
@@ -172,8 +159,8 @@ void BuildCommitItem(const syncable::Entry& meta_entry,
       // in sync.proto for more information.
       sync_entry->set_position_in_parent(
           meta_entry.GetUniquePosition().ToInt64());
-      meta_entry.GetUniquePosition().ToProto(
-          sync_entry->mutable_unique_position());
+      sync_entry->mutable_unique_position()->CopyFrom(
+          meta_entry.GetUniquePosition().ToProto());
     }
     // Always send specifics for bookmarks.
     SetEntrySpecifics(meta_entry, sync_entry);
@@ -295,12 +282,8 @@ void UpdateServerFieldsAfterCommit(
     return;
   }
 
-  local_entry->PutServerIsDir(
-      (committed_entry.folder() ||
-       committed_entry.bookmarkdata().bookmark_folder()));
+  local_entry->PutServerIsDir(committed_entry.folder());
   local_entry->PutServerSpecifics(committed_entry.specifics());
-  local_entry->PutServerAttachmentMetadata(
-      CreateAttachmentMetadata(committed_entry.attachment_id()));
   local_entry->PutServerMtime(ProtoTimeToTime(committed_entry.mtime()));
   local_entry->PutServerCtime(ProtoTimeToTime(committed_entry.ctime()));
   if (committed_entry.has_unique_position()) {

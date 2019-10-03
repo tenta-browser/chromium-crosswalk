@@ -24,6 +24,8 @@ class EffectTree;
 class TransformTree;
 class PropertyTrees;
 struct EffectNode;
+struct TransformNode;
+struct ElementId;
 
 namespace draw_property_utils {
 
@@ -42,8 +44,7 @@ void CC_EXPORT UpdatePropertyTrees(LayerTreeHost* layer_tree_host,
 
 void CC_EXPORT
 UpdatePropertyTreesAndRenderSurfaces(LayerImpl* root_layer,
-                                     PropertyTrees* property_trees,
-                                     bool can_adjust_raster_scales);
+                                     PropertyTrees* property_trees);
 
 void CC_EXPORT FindLayersThatNeedUpdates(LayerTreeHost* layer_tree_host,
                                          const PropertyTrees* property_trees,
@@ -59,7 +60,7 @@ ComputeDrawPropertiesOfVisibleLayers(const LayerImplList* layer_list,
                                      PropertyTrees* property_trees);
 
 void CC_EXPORT ComputeMaskDrawProperties(LayerImpl* mask_layer,
-                                         const PropertyTrees* property_trees);
+                                         PropertyTrees* property_trees);
 
 void CC_EXPORT ComputeSurfaceDrawProperties(PropertyTrees* property_trees,
                                             RenderSurfaceImpl* render_surface);
@@ -88,25 +89,14 @@ gfx::Transform CC_EXPORT ScreenSpaceTransform(const LayerImpl* layer,
                                               const TransformTree& tree);
 
 void CC_EXPORT UpdatePageScaleFactor(PropertyTrees* property_trees,
-                                     const LayerImpl* page_scale_layer,
-                                     float page_scale_factor,
-                                     float device_scale_factor,
-                                     const gfx::Transform device_transform);
-
-void CC_EXPORT UpdatePageScaleFactor(PropertyTrees* property_trees,
-                                     const Layer* page_scale_layer,
+                                     TransformNode* page_scale_node,
                                      float page_scale_factor,
                                      float device_scale_factor,
                                      const gfx::Transform device_transform);
 
 void CC_EXPORT
 UpdateElasticOverscroll(PropertyTrees* property_trees,
-                        const LayerImpl* overscroll_elasticity_layer,
-                        const gfx::Vector2dF& elastic_overscroll);
-
-void CC_EXPORT
-UpdateElasticOverscroll(PropertyTrees* property_trees,
-                        const Layer* overscroll_elasticity_layer,
+                        const ElementId overscroll_elasticity_element_id,
                         const gfx::Vector2dF& elastic_overscroll);
 
 }  // namespace draw_property_utils

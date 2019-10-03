@@ -5,7 +5,8 @@
 #include "extensions/renderer/bindings/argument_spec.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
+#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
 #include "extensions/renderer/bindings/api_invocation_errors.h"
@@ -173,7 +174,7 @@ void ArgumentSpecUnitTest::RunTest(RunTestParams& params) {
     }
   } else if (should_throw) {
     EXPECT_EQ(params.expected_thrown_message,
-              gin::V8ToString(try_catch.Message()->Get()));
+              gin::V8ToString(isolate, try_catch.Message()->Get()));
   }
 }
 
@@ -395,7 +396,7 @@ TEST_F(ArgumentSpecUnitTest, Test) {
       // A non-empty (but zero-filled) ArrayBufferView.
       const char kBuffer[] = {0, 0, 0, 0};
       std::unique_ptr<base::Value> expected_value =
-          base::Value::CreateWithCopiedBuffer(kBuffer, arraysize(kBuffer));
+          base::Value::CreateWithCopiedBuffer(kBuffer, base::size(kBuffer));
       ASSERT_TRUE(expected_value);
       ExpectSuccessWithNoConversion(spec, "(new Int32Array(2))");
     }
@@ -403,7 +404,7 @@ TEST_F(ArgumentSpecUnitTest, Test) {
       // Actual data.
       const char kBuffer[] = {'p', 'i', 'n', 'g'};
       std::unique_ptr<base::Value> expected_value =
-          base::Value::CreateWithCopiedBuffer(kBuffer, arraysize(kBuffer));
+          base::Value::CreateWithCopiedBuffer(kBuffer, base::size(kBuffer));
       ASSERT_TRUE(expected_value);
       ExpectSuccess(spec,
                     "var b = new ArrayBuffer(4);\n"
@@ -859,13 +860,13 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
     ArgumentSpec spec(ArgumentType::INTEGER);
     ExpectSuccess(spec, "1", base::BindOnce([](v8::Local<v8::Value> value) {
                     ASSERT_TRUE(value->IsInt32());
-                    EXPECT_EQ(1, value->Int32Value());
+                    EXPECT_EQ(1, value.As<v8::Int32>()->Value());
                   }));
     // The conversion should handle the -0 value (which is considered an
     // integer but stored in v8 has a number) by converting it to a 0 integer.
     ExpectSuccess(spec, "-0", base::BindOnce([](v8::Local<v8::Value> value) {
                     ASSERT_TRUE(value->IsInt32());
-                    EXPECT_EQ(0, value->Int32Value());
+                    EXPECT_EQ(0, value.As<v8::Int32>()->Value());
                   }));
   }
 
@@ -904,6 +905,44 @@ TEST_F(ArgumentSpecUnitTest, V8Conversion) {
                     EXPECT_EQ("a string", result);
                   }));
   }
+
+  {
+    std::unique_ptr<ArgumentSpec> prop =
+        ArgumentSpecBuilder(ArgumentType::STRING, "str").MakeOptional().Build();
+    std::unique_ptr<ArgumentSpec> spec =
+        ArgumentSpecBuilder(ArgumentType::OBJECT, "obj")
+            .AddProperty("str", std::move(prop))
+            .Build();
+    // The conversion to a v8 value should also protect set an undefined value
+    // on the result value for any absent optional properties. This protects
+    // against cases where an Object.prototype getter would be invoked when a
+    // handler tried to check the value of an argument.
+    constexpr const char kMessWithObjectPrototype[] =
+        R"((function() {
+             Object.defineProperty(
+                 Object.prototype, 'str',
+                 { get() { throw new Error('tricked!'); } });
+           }))";
+    v8::HandleScope handle_scope(instance_->isolate());
+    v8::Local<v8::Context> context =
+        v8::Local<v8::Context>::New(instance_->isolate(), context_);
+    v8::Local<v8::Function> mess_with_proto =
+        FunctionFromString(context, kMessWithObjectPrototype);
+    RunFunction(mess_with_proto, context, 0, nullptr);
+    ExpectSuccess(*spec, "({})", base::BindOnce([](v8::Local<v8::Value> value) {
+      ASSERT_TRUE(value->IsObject());
+      v8::Local<v8::Object> object = value.As<v8::Object>();
+      v8::Local<v8::Context> context = object->CreationContext();
+      // We expect a null prototype to ensure we avoid tricky getters/setters on
+      // the Object prototype.
+      EXPECT_TRUE(object->GetPrototype()->IsNull());
+      gin::Dictionary dict(context->GetIsolate(), object);
+      v8::Local<v8::Value> result;
+      ASSERT_TRUE(dict.Get("str", &result));
+      EXPECT_TRUE(result->IsUndefined());
+    }));
+  }
+
   {
     std::unique_ptr<ArgumentSpec> prop =
         ArgumentSpecBuilder(ArgumentType::STRING, "prop")

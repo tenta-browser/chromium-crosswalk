@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.notifications;
 
-import android.app.Notification;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -22,7 +21,7 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.chrome.browser.widget.RoundedIconGenerator;
-import org.chromium.content.browser.test.NativeLibraryTestRule;
+import org.chromium.content_public.browser.test.NativeLibraryTestRule;
 
 /**
  * Instrumentation unit tests for NotificationBuilderBase.
@@ -66,13 +65,13 @@ public class NotificationBuilderBaseTest {
 
         String origin = "https://example.com";
 
-        NotificationBuilderBase notificationBuilder = new NotificationBuilderBase(resources,
-                ChannelDefinitions.CHANNEL_ID_BROWSER) {
+        NotificationBuilderBase notificationBuilder = new NotificationBuilderBase(resources) {
             @Override
-            public Notification build() {
+            public ChromeNotification build(NotificationMetadata metadata) {
                 return null;
             }
         };
+        notificationBuilder.setChannelId(ChannelDefinitions.ChannelId.BROWSER);
         Bitmap fromNullIcon = notificationBuilder.ensureNormalizedIcon(null, origin);
         Assert.assertNotNull(fromNullIcon);
         Assert.assertEquals(largeIconWidthPx, fromNullIcon.getWidth());

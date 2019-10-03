@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -90,8 +90,7 @@ typedef std::vector<TestBookmarkPosition> TestBookmarkPositions;
 std::string TestBookmarkPositionsAsString(
     const TestBookmarkPositions& positions) {
   std::string position_string("{");
-  for (TestBookmarkPositions::const_iterator i = positions.begin();
-       i != positions.end(); ++i) {
+  for (auto i = positions.begin(); i != positions.end(); ++i) {
     if (i != positions.begin())
       position_string += ", ";
     position_string += "{" + base::NumberToString(i->begin) + ", " +
@@ -105,7 +104,7 @@ std::string TestBookmarkPositionsAsString(
 // diagnostic output.
 base::string16 MatchesAsString16(const ACMatches& matches) {
   base::string16 matches_string;
-  for (ACMatches::const_iterator i = matches.begin(); i != matches.end(); ++i) {
+  for (auto i = matches.begin(); i != matches.end(); ++i) {
     matches_string.append(base::ASCIIToUTF16("    '"));
     matches_string.append(i->description);
     matches_string.append(base::ASCIIToUTF16("'\n"));
@@ -126,8 +125,7 @@ TestBookmarkPositions PositionsFromAutocompleteMatch(
   TestBookmarkPositions positions;
   bool started = false;
   size_t start = 0;
-  for (AutocompleteMatch::ACMatchClassifications::const_iterator
-       i = match.description_class.begin();
+  for (auto i = match.description_class.begin();
        i != match.description_class.end(); ++i) {
     if (i->style & AutocompleteMatch::ACMatchClassification::MATCH) {
       // We have found the start of a match.
@@ -186,8 +184,7 @@ BookmarkProviderTest::BookmarkProviderTest() {
 }
 
 void BookmarkProviderTest::SetUp() {
-  provider_client_.reset(
-      new testing::NiceMock<MockAutocompleteProviderClient>());
+  provider_client_.reset(new MockAutocompleteProviderClient());
   EXPECT_CALL(*provider_client_, GetBookmarkModel())
       .WillRepeatedly(testing::Return(model_.get()));
   EXPECT_CALL(*provider_client_, GetSchemeClassifier())
@@ -195,10 +192,10 @@ void BookmarkProviderTest::SetUp() {
 
   provider_ = new BookmarkProvider(provider_client_.get());
   const BookmarkNode* other_node = model_->other_node();
-  for (size_t i = 0; i < arraysize(bookmark_provider_test_data); ++i) {
+  for (size_t i = 0; i < base::size(bookmark_provider_test_data); ++i) {
     const BookmarksTestInfo& cur(bookmark_provider_test_data[i]);
     const GURL url(cur.url);
-    model_->AddURL(other_node, other_node->child_count(),
+    model_->AddURL(other_node, other_node->children().size(),
                    base::ASCIIToUTF16(cur.title), url);
   }
 }
@@ -235,46 +232,40 @@ TEST_F(BookmarkProviderTest, Positions) {
                                // elements in the following |positions| array.
     const size_t positions[99][9][2];
   } query_data[] = {
-    // This first set is primarily for position detection validation.
-    {"abc",                   3, {{{0, 3}, {0, 0}},
-                                  {{0, 3}, {0, 0}},
-                                  {{0, 3}, {0, 0}}}},
-    {"abcde",                 2, {{{0, 5}, {0, 0}},
-                                  {{0, 5}, {0, 0}}}},
-    {"foo bar",               0, {{{0, 0}}}},
-    {"fooey bark",            0, {{{0, 0}}}},
-    {"def",                   2, {{{2, 5}, {0, 0}},
-                                  {{4, 7}, {0, 0}}}},
-    {"ghi jkl",               2, {{{0, 3}, {4, 7}, {0, 0}},
-                                  {{0, 3}, {4, 7}, {0, 0}}}},
-    // NB: GetBookmarksMatching(...) uses exact match for "a" in title or URL.
-    {"a",                     2, {{{0, 1}, {0, 0}},
-                                  {{0, 0}}}},
-    {"a d",                   0, {{{0, 0}}}},
-    {"carry carbon",          1, {{{0, 5}, {6, 12}, {0, 0}}}},
-    // NB: GetBookmarksMatching(...) sorts the match positions.
-    {"carbon carry",          1, {{{0, 5}, {6, 12}, {0, 0}}}},
-    {"arbon",                 0, {{{0, 0}}}},
-    {"ar",                    0, {{{0, 0}}}},
-    {"arry",                  0, {{{0, 0}}}},
-    // Quoted terms are single terms.
-    {"\"carry carbon\"",      1, {{{0, 12}, {0, 0}}}},
-    {"\"carry carbon\" care", 1, {{{0, 12}, {13, 17}, {0, 0}}}},
-    // Quoted terms require complete word matches.
-    {"\"carry carbo\"",       0, {{{0, 0}}}},
-    // This set uses duplicated and/or overlaps search terms in the title.
-    {"frank",                 1, {{{0, 5}, {8, 13}, {16, 21}, {0, 0}}}},
-    {"frankly",               1, {{{0, 7}, {8, 15}, {0, 0}}}},
-    {"frankly frankly",       1, {{{0, 7}, {8, 15}, {0, 0}}}},
-    {"foobar foo",            1, {{{0, 6}, {7, 13}, {0, 0}}}},
-    {"foo foobar",            1, {{{0, 6}, {7, 13}, {0, 0}}}},
-    // This ensures that leading whitespace in the title is not removed.
-    {"hello",                 1, {{{1, 6}, {9, 14}, {0, 0}}}},
-    // This ensures that empty titles yield empty classifications.
-    {"emptytitle",            1, {}},
+      // This first set is primarily for position detection validation.
+      {"abc", 3, {{{0, 3}, {0, 0}}, {{0, 3}, {0, 0}}, {{0, 3}, {0, 0}}}},
+      {"abcde", 2, {{{0, 5}, {0, 0}}, {{0, 5}, {0, 0}}}},
+      {"foo bar", 0, {{{0, 0}}}},
+      {"fooey bark", 0, {{{0, 0}}}},
+      {"def", 2, {{{2, 5}, {0, 0}}, {{4, 7}, {0, 0}}}},
+      {"ghi jkl", 2, {{{0, 7}, {0, 0}}, {{0, 3}, {4, 7}, {0, 0}}}},
+      // NB: GetBookmarksMatching(...) uses exact match for "a" in title or URL.
+      {"a", 2, {{{0, 1}, {0, 0}}, {{0, 0}}}},
+      {"a d", 0, {{{0, 0}}}},
+      {"carry carbon", 1, {{{0, 12}, {0, 0}}}},
+      // NB: GetBookmarksMatching(...) sorts the match positions.
+      {"carbon carry", 1, {{{0, 5}, {6, 12}, {0, 0}}}},
+      {"arbon", 0, {{{0, 0}}}},
+      {"ar", 0, {{{0, 0}}}},
+      {"arry", 0, {{{0, 0}}}},
+      // Quoted terms are single terms.
+      {"\"carry carbon\"", 1, {{{0, 5}, {6, 12}, {0, 0}}}},
+      {"\"carry carbon\" care", 1, {{{0, 5}, {6, 12}, {13, 17}, {0, 0}}}},
+      // Quoted terms require complete word matches.
+      {"\"carry carbo\"", 0, {{{0, 0}}}},
+      // This set uses duplicated and/or overlaps search terms in the title.
+      {"frank", 1, {{{0, 5}, {0, 0}}}},
+      {"frankly", 1, {{{0, 7}, {0, 0}}}},
+      {"frankly frankly", 1, {{{0, 15}, {0, 0}}}},
+      {"foobar foo", 1, {{{0, 10}, {0, 0}}}},
+      {"foo foobar", 1, {{{0, 6}, {7, 13}, {0, 0}}}},
+      // This ensures that leading whitespace in the title is correctly offset.
+      {"hello", 1, {{{0, 5}, {0, 0}}}},
+      // This ensures that empty titles yield empty classifications.
+      {"emptytitle", 1, {}},
   };
 
-  for (size_t i = 0; i < arraysize(query_data); ++i) {
+  for (size_t i = 0; i < base::size(query_data); ++i) {
     AutocompleteInput input(base::ASCIIToUTF16(query_data[i].query),
                             metrics::OmniboxEventProto::OTHER,
                             TestSchemeClassifier());
@@ -353,7 +344,7 @@ TEST_F(BookmarkProviderTest, Rankings) {
                       "burning worms #2"}},  // not boosted
   };
 
-  for (size_t i = 0; i < arraysize(query_data); ++i) {
+  for (size_t i = 0; i < base::size(query_data); ++i) {
     AutocompleteInput input(base::ASCIIToUTF16(query_data[i].query),
                             metrics::OmniboxEventProto::OTHER,
                             TestSchemeClassifier());
@@ -406,7 +397,7 @@ TEST_F(BookmarkProviderTest, InlineAutocompletion) {
     // actually bookmarked.
   };
 
-  for (size_t i = 0; i < arraysize(query_data); ++i) {
+  for (size_t i = 0; i < base::size(query_data); ++i) {
     const std::string description = "for query=" + query_data[i].query +
         " and url=" + query_data[i].url;
     AutocompleteInput input(base::ASCIIToUTF16(query_data[i].query),
@@ -437,20 +428,21 @@ TEST_F(BookmarkProviderTest, StripHttpAndAdjustOffsets) {
     // |expected_contents_class| is in format offset:style,offset:style,...
     const std::string expected_contents_class;
   } query_data[] = {
-    { "foo",       "www.foobar.com",             "0:1,4:3,7:1"           },
-    { "www foo",   "www.foobar.com",             "0:3,3:1,4:3,7:1"       },
-    { "foo www",   "www.foobar.com",             "0:3,3:1,4:3,7:1"       },
-    { "foo http",  "http://www.foobar.com",      "0:3,4:1,11:3,14:1"     },
-    { "blah",      "blah.com",                   "0:3,4:1"               },
-    { "http blah", "http://blah.com",            "0:3,4:1,7:3,11:1"      },
-    { "dom",       "www.domain.com/http/",       "0:1,4:3,7:1"           },
-    { "dom http",  "http://www.domain.com/http/",
-      "0:3,4:1,11:3,14:1,22:3,26:1"                                      },
-    { "rep",       "www.repeat.com/1/repeat/2/", "0:1,4:3,7:1,17:3,20:1" },
-    { "versi",     "chrome://version",           "0:1,9:3,14:1"          }
+      // clang-format off
+    { "foo",       "foobar.com",              "0:3,3:1"                    },
+    { "www foo",   "www.foobar.com",          "0:3,3:1,4:3,7:1"            },
+    { "foo www",   "www.foobar.com",          "0:3,3:1,4:3,7:1"            },
+    { "foo http",  "http://foobar.com",       "0:3,4:1,7:3,10:1"           },
+    { "blah",      "blah.com",                "0:3,4:1"                    },
+    { "http blah", "http://blah.com",         "0:3,4:1,7:3,11:1"           },
+    { "dom",       "domain.com/http/",        "0:3,3:1"                    },
+    { "dom http",  "http://domain.com/http/", "0:3,4:1,7:3,10:1,18:3,22:1" },
+    { "rep",       "repeat.com/1/repeat/2/",  "0:3,3:1"                    },
+    { "versi",     "chrome://version",        "0:1,9:3,14:1"               },
+      // clang-format on
   };
 
-  for (size_t i = 0; i < arraysize(query_data); ++i) {
+  for (size_t i = 0; i < base::size(query_data); ++i) {
     std::string description = "for query=" + query_data[i].query;
     AutocompleteInput input(base::ASCIIToUTF16(query_data[i].query),
                             metrics::OmniboxEventProto::OTHER,
@@ -459,6 +451,15 @@ TEST_F(BookmarkProviderTest, StripHttpAndAdjustOffsets) {
     const ACMatches& matches(provider_->matches());
     ASSERT_EQ(1U, matches.size()) << description;
     const AutocompleteMatch& match = matches[0];
+
+    description +=
+        "\n EXPECTED classes: " + query_data[i].expected_contents_class;
+    description += "\n ACTUAL classes:  ";
+    for (auto x : match.contents_class) {
+      description += base::NumberToString(x.offset) + ":" +
+                     base::NumberToString(x.style) + ",";
+    }
+
     EXPECT_EQ(base::ASCIIToUTF16(query_data[i].expected_contents),
               match.contents) << description;
     std::vector<std::string> class_strings = base::SplitString(

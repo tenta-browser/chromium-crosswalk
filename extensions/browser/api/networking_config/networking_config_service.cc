@@ -13,7 +13,6 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
@@ -34,6 +33,18 @@ bool IsValidNonEmptyHexString(const std::string& input) {
     if (!base::IsHexDigit<char>(c))
       return false;
   return true;
+}
+
+std::string LookUpExtensionName(content::BrowserContext* context,
+                                std::string extension_id) {
+  extensions::ExtensionRegistry* extension_registry =
+      extensions::ExtensionRegistry::Get(context);
+  DCHECK(extension_registry);
+  const extensions::Extension* extension = extension_registry->GetExtensionById(
+      extension_id, extensions::ExtensionRegistry::ENABLED);
+  if (extension == nullptr)
+    return std::string();
+  return extension->name();
 }
 
 }  // namespace
@@ -98,18 +109,35 @@ bool NetworkingConfigService::RegisterHexSsid(std::string hex_ssid,
   // Transform hex_ssid to uppercase.
   transform(hex_ssid.begin(), hex_ssid.end(), hex_ssid.begin(), toupper);
 
-  return hex_ssid_to_extension_id_.insert(make_pair(hex_ssid, extension_id))
-      .second;
+  // If |hex_ssid| is already in the map, i.e. if a hex ssid is already
+  // registered, this call should fail. TODO(stevenjb): Return an error code so
+  // that the extension API can respond with a better error.
+  if (!hex_ssid_to_extension_id_.insert(make_pair(hex_ssid, extension_id))
+           .second) {
+    LOG(ERROR) << "\'" << hex_ssid << "\' is already registered.";
+    return false;
+  }
+
+  chromeos::NetworkHandler::Get()
+      ->network_state_handler()
+      ->SetCaptivePortalProviderForHexSsid(
+          hex_ssid, extension_id,
+          LookUpExtensionName(browser_context_, extension_id));
+  return true;
 }
 
 void NetworkingConfigService::UnregisterExtension(
     const std::string& extension_id) {
   for (auto it = hex_ssid_to_extension_id_.begin();
        it != hex_ssid_to_extension_id_.end();) {
-    if (it->second == extension_id)
-      hex_ssid_to_extension_id_.erase(it++);
-    else
+    if (it->second == extension_id) {
+      chromeos::NetworkHandler::Get()
+          ->network_state_handler()
+          ->SetCaptivePortalProviderForHexSsid(it->first, "", "");
+      it = hex_ssid_to_extension_id_.erase(it);
+    } else {
       ++it;
+    }
   }
 }
 

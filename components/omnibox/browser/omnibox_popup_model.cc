@@ -6,17 +6,17 @@
 
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/omnibox_client.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
-#include "components/omnibox/browser/omnibox_popup_model_observer.h"
+#include "components/omnibox/browser/omnibox_edit_controller.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
-#include "components/search_engines/template_url.h"
-#include "components/search_engines/template_url_service.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "third_party/icu/source/common/unicode/ubidi.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -26,16 +26,6 @@
 #include "ui/gfx/vector_icon_types.h"
 #endif
 
-namespace {
-
-size_t GetFaviconCacheSize() {
-  // Set cache size to twice the number of maximum results to avoid favicon
-  // refetches as the user types. Favicon fetches are uncached and can hit disk.
-  return 2 * AutocompleteResult::GetMaxMatches();
-}
-
-}  // namespace
-
 ///////////////////////////////////////////////////////////////////////////////
 // OmniboxPopupModel
 
@@ -43,13 +33,11 @@ const size_t OmniboxPopupModel::kNoMatch = static_cast<size_t>(-1);
 
 OmniboxPopupModel::OmniboxPopupModel(OmniboxPopupView* popup_view,
                                      OmniboxEditModel* edit_model)
-    : favicons_cache_(GetFaviconCacheSize()),
-      view_(popup_view),
+    : view_(popup_view),
       edit_model_(edit_model),
       selected_line_(kNoMatch),
       selected_line_state_(NORMAL),
-      has_selected_match_(false),
-      weak_factory_(this) {
+      has_selected_match_(false) {
   edit_model->set_popup_model(this);
 }
 
@@ -171,10 +159,6 @@ void OmniboxPopupModel::SetSelectedLine(size_t line,
     edit_model_->OnPopupDataChanged(match.fill_into_edit, &current_destination,
                                     keyword, is_keyword_hint);
   }
-
-  // Repaint old and new selected lines immediately, so that the edit doesn't
-  // appear to update [much] faster than the popup.
-  view_->PaintUpdatesNow();
 }
 
 void OmniboxPopupModel::ResetToDefaultMatch() {
@@ -184,41 +168,59 @@ void OmniboxPopupModel::ResetToDefaultMatch() {
   view_->OnDragCanceled();
 }
 
-void OmniboxPopupModel::Move(int count) {
-  const AutocompleteResult& result = this->result();
-  if (result.empty())
+void OmniboxPopupModel::MoveTo(size_t new_line) {
+  if (result().empty())
     return;
 
-  // Clamp the new line to [0, result_.count() - 1].
-  const size_t new_line = selected_line_ + count;
-  SetSelectedLine(((count < 0) && (new_line >= selected_line_)) ? 0 : new_line,
-                  false, false);
+  SetSelectedLine(new_line, false, false);
 }
 
 void OmniboxPopupModel::SetSelectedLineState(LineState state) {
   DCHECK(!result().empty());
   DCHECK_NE(kNoMatch, selected_line_);
 
-  const AutocompleteMatch& match = result().match_at(selected_line_);
-  DCHECK(match.associated_keyword.get());
+  const AutocompleteResult& result = this->result();
+  if (result.empty())
+    return;
+
+  const AutocompleteMatch& match = result.match_at(selected_line_);
+  GURL current_destination(match.destination_url);
+
+  if (state == KEYWORD) {
+    DCHECK(match.associated_keyword.get());
+  }
+
+  if (state == BUTTON_FOCUSED) {
+    // TODO(orinj): If in-suggestion Pedals are kept, refactor a bit
+    // so that button presence doesn't always assume tab switching use case.
+    DCHECK(match.has_tab_match || match.pedal);
+    old_focused_url_ = current_destination;
+  }
 
   selected_line_state_ = state;
   view_->InvalidateLine(selected_line_);
+
+  // Ensures update of accessibility data for button text.
+  if (state == BUTTON_FOCUSED) {
+    edit_model_->view()->OnTemporaryTextMaybeChanged(
+        edit_model_->view()->GetText(), match, false, false);
+  }
 }
 
-void OmniboxPopupModel::TryDeletingCurrentItem() {
-  // We could use GetInfoForCurrentText() here, but it seems better to try
-  // and shift-delete the actual selection, rather than any "in progress, not
-  // yet visible" one.
-  if (selected_line_ == kNoMatch)
+void OmniboxPopupModel::TryDeletingLine(size_t line) {
+  // When called with line == selected_line(), we could use
+  // GetInfoForCurrentText() here, but it seems better to try and delete the
+  // actual selection, rather than any "in progress, not yet visible" one.
+  if (line == kNoMatch)
     return;
 
   // Cancel the query so the matches don't change on the user.
   autocomplete_controller()->Stop(false);
 
-  const AutocompleteMatch& match = result().match_at(selected_line_);
+  const AutocompleteMatch& match = result().match_at(line);
   if (match.SupportsDeletion()) {
-    const size_t selected_line = selected_line_;
+    // Try to preserve the selection even after match deletion.
+    const size_t old_selected_line = selected_line_;
     const bool was_temporary_text = has_selected_match_;
 
     // This will synchronously notify both the edit and us that the results
@@ -226,14 +228,14 @@ void OmniboxPopupModel::TryDeletingCurrentItem() {
     autocomplete_controller()->DeleteMatch(match);
     const AutocompleteResult& result = this->result();
     if (!result.empty() &&
-        (was_temporary_text || selected_line != selected_line_)) {
+        (was_temporary_text || old_selected_line != selected_line_)) {
       // Move the selection to the next choice after the deleted one.
       // SetSelectedLine() will clamp to take care of the case where we deleted
       // the last item.
       // TODO(pkasting): Eventually the controller should take care of this
       // before notifying us, reducing flicker.  At that point the check for
       // deletability can move there too.
-      SetSelectedLine(selected_line, false, true);
+      SetSelectedLine(old_selected_line, false, true);
     }
   }
 }
@@ -244,34 +246,47 @@ bool OmniboxPopupModel::IsStarredMatch(const AutocompleteMatch& match) const {
 }
 
 void OmniboxPopupModel::OnResultChanged() {
-  answer_bitmap_ = SkBitmap();
+  rich_suggestion_bitmaps_.clear();
   const AutocompleteResult& result = this->result();
+  size_t old_selected_line = selected_line_;
   selected_line_ = result.default_match() == result.end() ?
       kNoMatch : static_cast<size_t>(result.default_match() - result.begin());
   // There had better not be a nonempty result set with no default match.
   CHECK((selected_line_ != kNoMatch) || result.empty());
   has_selected_match_ = false;
-  selected_line_state_ = NORMAL;
+  // If selected line state was |BUTTON_FOCUSED| and nothing has changed, leave
+  // it.
+  if (selected_line_ != kNoMatch) {
+    const bool has_focused_match =
+        selected_line_state_ == BUTTON_FOCUSED &&
+        result.match_at(selected_line_).has_tab_match;
+    const bool has_changed =
+        selected_line_ != old_selected_line ||
+        result.match_at(selected_line_).destination_url != old_focused_url_;
+    if (!has_focused_match || has_changed)
+      selected_line_state_ = NORMAL;
+  } else {
+    selected_line_state_ = NORMAL;
+  }
 
   bool popup_was_open = view_->IsOpen();
   view_->UpdatePopupAppearance();
-  // If popup has just been shown or hidden, notify observers.
-  if (view_->IsOpen() != popup_was_open) {
-    for (OmniboxPopupModelObserver& observer : observers_)
-      observer.OnOmniboxPopupShownOrHidden();
+  if (view_->IsOpen() != popup_was_open)
+    edit_model_->controller()->OnPopupVisibilityChanged();
+}
+
+const SkBitmap* OmniboxPopupModel::RichSuggestionBitmapAt(
+    int result_index) const {
+  const auto iter = rich_suggestion_bitmaps_.find(result_index);
+  if (iter == rich_suggestion_bitmaps_.end()) {
+    return nullptr;
   }
+  return &iter->second;
 }
 
-void OmniboxPopupModel::AddObserver(OmniboxPopupModelObserver* observer) {
-  observers_.AddObserver(observer);
-}
-
-void OmniboxPopupModel::RemoveObserver(OmniboxPopupModelObserver* observer) {
-  observers_.RemoveObserver(observer);
-}
-
-void OmniboxPopupModel::SetAnswerBitmap(const SkBitmap& bitmap) {
-  answer_bitmap_ = bitmap;
+void OmniboxPopupModel::SetRichSuggestionBitmap(int result_index,
+                                                const SkBitmap& bitmap) {
+  rich_suggestion_bitmaps_[result_index] = bitmap;
   view_->UpdatePopupAppearance();
 }
 
@@ -281,46 +296,53 @@ gfx::Image OmniboxPopupModel::GetMatchIcon(const AutocompleteMatch& match,
                                            SkColor vector_icon_color) {
   gfx::Image extension_icon =
       edit_model_->client()->GetIconIfExtensionMatch(match);
+  // Extension icons are the correct size for non-touch UI but need to be
+  // adjusted to be the correct size for touch mode.
   if (!extension_icon.IsEmpty())
-    return extension_icon;
+    return edit_model_->client()->GetSizedIcon(extension_icon);
 
+  // Get the favicon for navigational suggestions.
   if (base::FeatureList::IsEnabled(
           omnibox::kUIExperimentShowSuggestionFavicons) &&
-      !AutocompleteMatch::IsSearchType(match.type)) {
-    const GURL& page_url = match.destination_url;
-    auto cache_iterator = favicons_cache_.Get(page_url);
-    if (cache_iterator != favicons_cache_.end() &&
-        !cache_iterator->second.IsEmpty()) {
-      return cache_iterator->second;
-    }
+      !AutocompleteMatch::IsSearchType(match.type) &&
+      match.type != AutocompleteMatchType::DOCUMENT_SUGGESTION) {
+    // Because the Views UI code calls GetMatchIcon in both the layout and
+    // painting code, we may generate multiple OnFaviconFetched callbacks,
+    // all run one after another. This seems to be harmless as the callback
+    // just flips a flag to schedule a repaint. However, if it turns out to be
+    // costly, we can optimize away the redundant extra callbacks.
+    gfx::Image favicon = edit_model_->client()->GetFaviconForPageUrl(
+        match.destination_url,
+        base::BindOnce(&OmniboxPopupModel::OnFaviconFetched,
+                       weak_factory_.GetWeakPtr(), match.destination_url));
 
-    // We don't have the favicon in the cache. We kick off the request, but
-    // don't early return. We proceed to return the vector icon for the match
-    // type. If and when we ever get the favicon back, we send a notification.
-    //
-    // Note: We're relying on GetFaviconForPageUrl to call the callback
-    // asynchronously. If the callback is called synchronously, the fetched
-    // favicon may get clobbered by the vector icon once this method returns.
-    edit_model_->client()->GetFaviconForPageUrl(
-        &favicon_task_tracker_, match.destination_url,
-        base::Bind(&OmniboxPopupModel::OnFaviconFetched,
-                   weak_factory_.GetWeakPtr(), match.destination_url));
+    // Extension icons are the correct size for non-touch UI but need to be
+    // adjusted to be the correct size for touch mode.
+    if (!favicon.IsEmpty())
+      return edit_model_->client()->GetSizedIcon(favicon);
   }
 
-  const auto& vector_icon_type =
-      IsStarredMatch(match) ? omnibox::kStarIcon
-                            : AutocompleteMatch::TypeToVectorIcon(match.type);
-  return gfx::Image(
-      gfx::CreateVectorIcon(vector_icon_type, 16, vector_icon_color));
+  const auto& vector_icon_type = match.GetVectorIcon(IsStarredMatch(match));
+
+  return edit_model_->client()->GetSizedIcon(vector_icon_type,
+                                             vector_icon_color);
 }
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+
+bool OmniboxPopupModel::SelectedLineHasTabMatch() {
+  return selected_line_ != kNoMatch &&
+         result().match_at(selected_line_).ShouldShowTabMatch();
+}
+
+bool OmniboxPopupModel::SelectedLineHasButton() {
+  return selected_line_ != kNoMatch &&
+         result().match_at(selected_line_).ShouldShowButton();
+}
 
 void OmniboxPopupModel::OnFaviconFetched(const GURL& page_url,
                                          const gfx::Image& icon) {
   if (icon.IsEmpty())
     return;
-
-  favicons_cache_.Put(page_url, icon);
 
   // Notify all affected matches.
   for (size_t i = 0; i < result().size(); ++i) {

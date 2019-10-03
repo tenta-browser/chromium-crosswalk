@@ -8,52 +8,62 @@
 #include <vector>
 
 #include "base/test/scoped_feature_list.h"
-#include "components/download/public/test/test_download_service.h"
+#include "components/download/public/background_service/test/test_download_service.h"
+#include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/prefetch/prefetch_background_task.h"
 #include "components/offline_pages/core/prefetch/prefetch_dispatcher_impl.h"
+#include "components/offline_pages/core/prefetch/prefetch_prefs.h"
 #include "components/offline_pages/core/prefetch/prefetch_service.h"
 #include "components/offline_pages/core/prefetch/prefetch_service_test_taco.h"
-#include "components/offline_pages/core/prefetch/task_test_base.h"
+#include "components/offline_pages/core/prefetch/tasks/prefetch_task_test_base.h"
 #include "components/offline_pages/core/prefetch/test_download_client.h"
 #include "components/offline_pages/core/prefetch/test_prefetch_dispatcher.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+namespace offline_pages {
 namespace {
 const version_info::Channel kTestChannel = version_info::Channel::UNKNOWN;
 const base::FilePath kTestFilePath(FILE_PATH_LITERAL("foo"));
 const int64_t kTestFileSize = 88888;
-}  // namespace
-
-namespace offline_pages {
 
 // Tests the interaction between prefetch service and download service to
 // validate the whole prefetch download flow regardless which service is up
 // first.
-class PrefetchDownloadFlowTest : public TaskTestBase {
+class PrefetchDownloadFlowTest : public PrefetchTaskTestBase {
  public:
   PrefetchDownloadFlowTest() {
     feature_list_.InitAndEnableFeature(kPrefetchingOfflinePagesFeature);
   }
 
   void SetUp() override {
-    TaskTestBase::SetUp();
+    PrefetchTaskTestBase::SetUp();
 
     prefetch_service_taco_.reset(new PrefetchServiceTestTaco);
-    auto downloader = base::MakeUnique<PrefetchDownloaderImpl>(
-        &download_service_, kTestChannel);
-    download_client_ = base::MakeUnique<TestDownloadClient>(downloader.get());
+    prefetch_service_taco_->SetPrefService(std::move(prefs_));
+    prefetch_prefs::SetEnabledByServer(prefetch_service_taco_->pref_service(),
+                                       true);
+    prefetch_prefs::SetCachedPrefetchGCMToken(
+        prefetch_service_taco_->pref_service(), "dummy_gcm_token");
+
+    auto downloader = std::make_unique<PrefetchDownloaderImpl>(
+        &download_service_, kTestChannel,
+        prefetch_service_taco_->pref_service());
+    download_client_ = std::make_unique<TestDownloadClient>(downloader.get());
     download_service_.set_client(download_client_.get());
     prefetch_service_taco_->SetPrefetchDispatcher(
-        base::MakeUnique<PrefetchDispatcherImpl>());
+        std::make_unique<PrefetchDispatcherImpl>(
+            prefetch_service_taco_->pref_service()));
     prefetch_service_taco_->SetPrefetchStore(store_util()->ReleaseStore());
     prefetch_service_taco_->SetPrefetchDownloader(std::move(downloader));
     prefetch_service_taco_->CreatePrefetchService();
+    item_generator()->set_client_namespace(kSuggestedArticlesNamespace);
   }
 
   void TearDown() override {
     prefetch_service_taco_.reset();
-    TaskTestBase::TearDown();
+    PrefetchTaskTestBase::TearDown();
   }
 
   void SetDownloadServiceReady() {
@@ -75,7 +85,7 @@ class PrefetchDownloadFlowTest : public TaskTestBase {
 
   void BeginBackgroundTask() {
     prefetch_dispatcher()->BeginBackgroundTask(
-        base::MakeUnique<PrefetchBackgroundTask>(
+        std::make_unique<PrefetchBackgroundTask>(
             prefetch_service_taco_->prefetch_service()));
     RunUntilIdle();
   }
@@ -195,4 +205,5 @@ TEST_F(PrefetchDownloadFlowTest, DelayRunningDownloadCleanupTask) {
   EXPECT_EQ(PrefetchItemState::IMPORTING, found_item->state);
 }
 
+}  // namespace
 }  // namespace offline_pages

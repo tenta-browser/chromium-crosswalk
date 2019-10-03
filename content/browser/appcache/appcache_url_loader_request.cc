@@ -9,14 +9,11 @@
 
 namespace content {
 
-// static
-std::unique_ptr<AppCacheURLLoaderRequest> AppCacheURLLoaderRequest::Create(
-    const ResourceRequest& request) {
-  return std::unique_ptr<AppCacheURLLoaderRequest>(
-      new AppCacheURLLoaderRequest(request));
-}
+AppCacheURLLoaderRequest::AppCacheURLLoaderRequest(
+    const network::ResourceRequest& request)
+    : request_(request) {}
 
-AppCacheURLLoaderRequest::~AppCacheURLLoaderRequest() {}
+AppCacheURLLoaderRequest::~AppCacheURLLoaderRequest() = default;
 
 const GURL& AppCacheURLLoaderRequest::GetURL() const {
   return request_.url;
@@ -62,7 +59,7 @@ std::string AppCacheURLLoaderRequest::GetResponseHeaderByName(
   return header;
 }
 
-ResourceRequest* AppCacheURLLoaderRequest::GetResourceRequest() {
+network::ResourceRequest* AppCacheURLLoaderRequest::GetResourceRequest() {
   return &request_;
 }
 
@@ -77,17 +74,16 @@ base::WeakPtr<AppCacheURLLoaderRequest> AppCacheURLLoaderRequest::GetWeakPtr() {
 void AppCacheURLLoaderRequest::UpdateWithRedirectInfo(
     const net::RedirectInfo& redirect_info) {
   bool not_used_clear_body;
-  net::RedirectUtil::UpdateHttpRequest(request_.url, request_.method,
-                                       redirect_info, &request_.headers,
-                                       &not_used_clear_body);
+  net::RedirectUtil::UpdateHttpRequest(
+      request_.url, request_.method, redirect_info,
+      base::nullopt /* removed_request_headers */,
+      base::nullopt /* modified_request_headers */, &request_.headers,
+      &not_used_clear_body);
   request_.url = redirect_info.new_url;
   request_.method = redirect_info.new_method;
   request_.referrer = GURL(redirect_info.new_referrer);
+  request_.referrer_policy = redirect_info.new_referrer_policy;
   request_.site_for_cookies = redirect_info.new_site_for_cookies;
 }
-
-AppCacheURLLoaderRequest::AppCacheURLLoaderRequest(
-    const ResourceRequest& request)
-    : request_(request), weak_factory_(this) {}
 
 }  // namespace content

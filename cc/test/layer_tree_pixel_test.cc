@@ -7,22 +7,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/test/scoped_feature_list.h"
 #include "cc/base/switches.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_output_surface.h"
 #include "cc/test/pixel_test_utils.h"
-#include "cc/test/test_in_process_context_provider.h"
+#include "cc/test/test_layer_tree_frame_sink.h"
+#include "cc/trees/effect_node.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/common/display/renderer_settings.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/service/display/software_output_device.h"
+#include "components/viz/service/display_embedder/skia_output_surface_dependency_impl.h"
+#include "components/viz/service/display_embedder/skia_output_surface_impl.h"
 #include "components/viz/test/paths.h"
-#include "components/viz/test/test_layer_tree_frame_sink.h"
+#include "components/viz/test/test_gpu_service_holder.h"
+#include "components/viz/test/test_in_process_context_provider.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/ipc/gl_in_process_context.h"
 
@@ -32,55 +39,81 @@ namespace cc {
 
 LayerTreePixelTest::LayerTreePixelTest()
     : pixel_comparator_(new ExactPixelComparator(true)),
-      test_type_(PIXEL_TEST_GL),
+      property_trees_(nullptr),
       pending_texture_mailbox_callbacks_(0) {}
 
-LayerTreePixelTest::~LayerTreePixelTest() {}
+LayerTreePixelTest::~LayerTreePixelTest() = default;
 
-std::unique_ptr<viz::TestLayerTreeFrameSink>
+std::unique_ptr<TestLayerTreeFrameSink>
 LayerTreePixelTest::CreateLayerTreeFrameSink(
     const viz::RendererSettings& renderer_settings,
     double refresh_rate,
     scoped_refptr<viz::ContextProvider>,
-    scoped_refptr<viz::ContextProvider>) {
-  scoped_refptr<TestInProcessContextProvider> compositor_context_provider;
-  scoped_refptr<TestInProcessContextProvider> worker_context_provider;
-  if (test_type_ == PIXEL_TEST_GL) {
-    compositor_context_provider = new TestInProcessContextProvider(nullptr);
+    scoped_refptr<viz::RasterContextProvider>) {
+  scoped_refptr<viz::TestInProcessContextProvider> compositor_context_provider;
+  scoped_refptr<viz::TestInProcessContextProvider> worker_context_provider;
+  if (!use_software_renderer()) {
+    compositor_context_provider =
+        base::MakeRefCounted<viz::TestInProcessContextProvider>(
+            /*enable_oop_rasterization=*/false, /*support_locking=*/false);
+    // With vulkan, OOPR has to be enabled.
     worker_context_provider =
-        new TestInProcessContextProvider(compositor_context_provider.get());
+        base::MakeRefCounted<viz::TestInProcessContextProvider>(
+            /*enable_oop_rasterization=*/use_vulkan(),
+            /*support_locking=*/true);
+    // Bind worker context to main thread like it is in production. This is
+    // needed to fully initialize the context. Compositor context is bound to
+    // the impl thread in LayerTreeFrameSink::BindToCurrentThread().
+    gpu::ContextResult result = worker_context_provider->BindToCurrentThread();
+    DCHECK_EQ(result, gpu::ContextResult::kSuccess);
   }
-  constexpr bool disable_display_vsync = false;
+  static constexpr bool disable_display_vsync = false;
   bool synchronous_composite =
       !HasImplThread() &&
       !layer_tree_host()->GetSettings().single_thread_proxy_scheduler;
-  auto delegating_output_surface =
-      std::make_unique<viz::TestLayerTreeFrameSink>(
-          compositor_context_provider, std::move(worker_context_provider),
-          shared_bitmap_manager(), gpu_memory_buffer_manager(),
-          renderer_settings, ImplThreadTaskRunner(), synchronous_composite,
-          disable_display_vsync, refresh_rate);
+  viz::RendererSettings test_settings = renderer_settings;
+  // Keep texture sizes exactly matching the bounds of the RenderPass to avoid
+  // floating point badness in texcoords.
+  test_settings.dont_round_texture_sizes_for_pixel_tests = true;
+  auto delegating_output_surface = std::make_unique<TestLayerTreeFrameSink>(
+      compositor_context_provider, worker_context_provider,
+      gpu_memory_buffer_manager(), test_settings, ImplThreadTaskRunner(),
+      synchronous_composite, disable_display_vsync, refresh_rate);
   delegating_output_surface->SetEnlargePassTextureAmount(
       enlarge_texture_amount_);
   return delegating_output_surface;
+}
+
+std::unique_ptr<viz::SkiaOutputSurface>
+LayerTreePixelTest::CreateDisplaySkiaOutputSurfaceOnThread() {
+  // Set up the SkiaOutputSurfaceImpl.
+  auto output_surface = viz::SkiaOutputSurfaceImpl::Create(
+      std::make_unique<viz::SkiaOutputSurfaceDependencyImpl>(
+          viz::TestGpuServiceHolder::GetInstance()->gpu_service(),
+          gpu::kNullSurfaceHandle),
+      viz::RendererSettings());
+  return output_surface;
 }
 
 std::unique_ptr<viz::OutputSurface>
 LayerTreePixelTest::CreateDisplayOutputSurfaceOnThread(
     scoped_refptr<viz::ContextProvider> compositor_context_provider) {
   std::unique_ptr<PixelTestOutputSurface> display_output_surface;
-  if (test_type_ == PIXEL_TEST_GL) {
+  if (renderer_type_ == RENDERER_GL) {
     // Pixel tests use a separate context for the Display to more closely
     // mimic texture transport from the renderer process to the Display
     // compositor.
     auto display_context_provider =
-        base::MakeRefCounted<TestInProcessContextProvider>(nullptr);
-    display_context_provider->BindToCurrentThread();
+        base::MakeRefCounted<viz::TestInProcessContextProvider>(
+            /*enable_oop_rasterization=*/false, /*support_locking=*/false);
+    gpu::ContextResult result = display_context_provider->BindToCurrentThread();
+    DCHECK_EQ(result, gpu::ContextResult::kSuccess);
 
     bool flipped_output_surface = false;
     display_output_surface = std::make_unique<PixelTestOutputSurface>(
         std::move(display_context_provider), flipped_output_surface);
   } else {
+    EXPECT_EQ(RENDERER_SOFTWARE, renderer_type_);
     display_output_surface = std::make_unique<PixelTestOutputSurface>(
         std::make_unique<viz::SoftwareOutputDevice>());
   }
@@ -107,13 +140,31 @@ void LayerTreePixelTest::ReadbackResult(
 void LayerTreePixelTest::BeginTest() {
   Layer* target =
       readback_target_ ? readback_target_ : layer_tree_host()->root_layer();
-  target->RequestCopyOfOutput(CreateCopyOutputRequest());
+  if (!property_trees_) {
+    target->RequestCopyOfOutput(CreateCopyOutputRequest());
+  } else {
+    layer_tree_host()->property_trees()->effect_tree.AddCopyRequest(
+        target->effect_tree_index(), CreateCopyOutputRequest());
+    layer_tree_host()
+        ->property_trees()
+        ->effect_tree.Node(target->effect_tree_index())
+        ->has_copy_request = true;
+  }
   PostSetNeedsCommitToMainThread();
 }
 
 void LayerTreePixelTest::AfterTest() {
+  // Bitmap comparison.
+  if (ref_file_.empty()) {
+    EXPECT_TRUE(
+        MatchesBitmap(*result_bitmap_, expected_bitmap_, *pixel_comparator_));
+    return;
+  }
+
+  // File comparison.
   base::FilePath test_data_dir;
-  EXPECT_TRUE(PathService::Get(viz::Paths::DIR_TEST_DATA, &test_data_dir));
+  EXPECT_TRUE(
+      base::PathService::Get(viz::Paths::DIR_TEST_DATA, &test_data_dir));
   base::FilePath ref_file_path = test_data_dir.Append(ref_file_);
 
   base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
@@ -128,8 +179,11 @@ scoped_refptr<SolidColorLayer> LayerTreePixelTest::CreateSolidColorLayer(
     const gfx::Rect& rect, SkColor color) {
   scoped_refptr<SolidColorLayer> layer = SolidColorLayer::Create();
   layer->SetIsDrawable(true);
+  layer->SetHitTestable(true);
   layer->SetBounds(rect.size());
   layer->SetPosition(gfx::PointF(rect.origin()));
+  layer->SetOffsetToTransformParent(
+      gfx::Vector2dF(rect.origin().x(), rect.origin().y()));
   layer->SetBackgroundColor(color);
   return layer;
 }
@@ -145,7 +199,7 @@ void LayerTreePixelTest::EndTest() {
 }
 
 void LayerTreePixelTest::InitializeSettings(LayerTreeSettings* settings) {
-  settings->layer_transforms_should_scale_layer_contents = true;
+  settings->gpu_rasterization_forced = use_vulkan();
 }
 
 void LayerTreePixelTest::TryEndTest() {
@@ -185,22 +239,77 @@ scoped_refptr<SolidColorLayer> LayerTreePixelTest::
   return layer;
 }
 
-void LayerTreePixelTest::RunPixelTest(
-    PixelTestType test_type,
-    scoped_refptr<Layer> content_root,
-    base::FilePath file_name) {
-  test_type_ = test_type;
+void LayerTreePixelTest::RunPixelTest(RendererType renderer_type,
+                                      scoped_refptr<Layer> content_root,
+                                      base::FilePath file_name) {
+  renderer_type_ = renderer_type;
   content_root_ = content_root;
   readback_target_ = nullptr;
   ref_file_ = file_name;
   RunTest(CompositorMode::THREADED);
 }
 
+void LayerTreePixelTest::RunPixelTest(RendererType renderer_type,
+                                      scoped_refptr<Layer> content_root,
+                                      const SkBitmap& expected_bitmap) {
+  renderer_type_ = renderer_type;
+  content_root_ = content_root;
+  readback_target_ = nullptr;
+  ref_file_ = base::FilePath();
+  expected_bitmap_ = expected_bitmap;
+  RunTest(CompositorMode::THREADED);
+}
+
+void LayerTreePixelTest::RunPixelTestWithLayerList(
+    RendererType renderer_type,
+    scoped_refptr<Layer> root_layer,
+    base::FilePath file_name,
+    PropertyTrees* property_trees) {
+  renderer_type_ = renderer_type;
+  content_root_ = root_layer;
+  property_trees_ = property_trees;
+  readback_target_ = nullptr;
+  ref_file_ = file_name;
+  RunTest(CompositorMode::THREADED);
+}
+
+void LayerTreePixelTest::InitializeForLayerListMode(
+    scoped_refptr<Layer>* root_layer,
+    PropertyTrees* property_trees) {
+  ClipNode clip_node;
+  property_trees->clip_tree.Insert(clip_node, 0);
+
+  EffectNode root_effect;
+  root_effect.clip_id = 1;
+  root_effect.stable_id = 1;
+  root_effect.transform_id = 1;
+  root_effect.render_surface_reason = RenderSurfaceReason::kTest;
+  property_trees->effect_tree.Insert(root_effect, 0);
+
+  ScrollNode scroll_node;
+  property_trees->scroll_tree.Insert(scroll_node, 0);
+
+  TransformTree& transform_tree = property_trees->transform_tree;
+  auto& transform_node =
+      *transform_tree.Node(transform_tree.Insert(TransformNode(), 0));
+  transform_node.source_node_id = transform_node.parent_id;
+  transform_tree.set_needs_update(true);
+
+  *root_layer = Layer::Create();
+  (*root_layer)->SetBounds(gfx::Size(100, 100));
+  (*root_layer)->SetEffectTreeIndex(1);
+  (*root_layer)->SetClipTreeIndex(1);
+  (*root_layer)->SetScrollTreeIndex(1);
+  (*root_layer)->SetTransformTreeIndex(1);
+  (*root_layer)
+      ->set_property_tree_sequence_number(property_trees->sequence_number);
+}
+
 void LayerTreePixelTest::RunSingleThreadedPixelTest(
-    PixelTestType test_type,
+    RendererType renderer_type,
     scoped_refptr<Layer> content_root,
     base::FilePath file_name) {
-  test_type_ = test_type;
+  renderer_type_ = renderer_type;
   content_root_ = content_root;
   readback_target_ = nullptr;
   ref_file_ = file_name;
@@ -208,11 +317,11 @@ void LayerTreePixelTest::RunSingleThreadedPixelTest(
 }
 
 void LayerTreePixelTest::RunPixelTestWithReadbackTarget(
-    PixelTestType test_type,
+    RendererType renderer_type,
     scoped_refptr<Layer> content_root,
     Layer* target,
     base::FilePath file_name) {
-  test_type_ = test_type;
+  renderer_type_ = renderer_type;
   content_root_ = content_root;
   readback_target_ = target;
   ref_file_ = file_name;
@@ -220,27 +329,32 @@ void LayerTreePixelTest::RunPixelTestWithReadbackTarget(
 }
 
 void LayerTreePixelTest::SetupTree() {
-  scoped_refptr<Layer> root = Layer::Create();
-  root->SetBounds(content_root_->bounds());
-  root->AddChild(content_root_);
-  layer_tree_host()->SetRootLayer(root);
+  if (property_trees_) {
+    layer_tree_host()->SetRootLayer(content_root_);
+    layer_tree_host()->SetPropertyTreesForTesting(property_trees_);
+  } else {
+    scoped_refptr<Layer> root = Layer::Create();
+    root->SetBounds(content_root_->bounds());
+    root->AddChild(content_root_);
+    layer_tree_host()->SetRootLayer(root);
+  }
   LayerTreeTest::SetupTree();
 }
 
 SkBitmap LayerTreePixelTest::CopyMailboxToBitmap(
     const gfx::Size& size,
     const gpu::Mailbox& mailbox,
-    const gpu::SyncToken& sync_token) {
+    const gpu::SyncToken& sync_token,
+    const gfx::ColorSpace& color_space) {
   SkBitmap bitmap;
   std::unique_ptr<gpu::GLInProcessContext> context =
-      CreateTestInProcessContext();
+      viz::CreateTestInProcessContext();
   GLES2Interface* gl = context->GetImplementation();
 
   if (sync_token.HasData())
     gl->WaitSyncTokenCHROMIUM(sync_token.GetConstData());
 
-  GLuint texture_id =
-      gl->CreateAndConsumeTextureCHROMIUM(GL_TEXTURE_2D, mailbox.name);
+  GLuint texture_id = gl->CreateAndConsumeTextureCHROMIUM(mailbox.name);
 
   GLuint fbo = 0;
   gl->GenFramebuffers(1, &fbo);
@@ -262,9 +376,9 @@ SkBitmap LayerTreePixelTest::CopyMailboxToBitmap(
   gl->DeleteFramebuffers(1, &fbo);
   gl->DeleteTextures(1, &texture_id);
 
-  bitmap.allocN32Pixels(size.width(), size.height());
-  // TODO(miu): Provide color space in this allocN32Pixels() call.
-  // http://crbug.com/758057
+  EXPECT_TRUE(color_space.IsValid());
+  bitmap.allocPixels(SkImageInfo::MakeN32Premul(size.width(), size.height(),
+                                                color_space.ToSkColorSpace()));
 
   uint8_t* out_pixels = static_cast<uint8_t*>(bitmap.getPixels());
 
@@ -287,7 +401,7 @@ SkBitmap LayerTreePixelTest::CopyMailboxToBitmap(
 
 void LayerTreePixelTest::Finish() {
   std::unique_ptr<gpu::GLInProcessContext> context =
-      CreateTestInProcessContext();
+      viz::CreateTestInProcessContext();
   GLES2Interface* gl = context->GetImplementation();
   gl->Finish();
 }

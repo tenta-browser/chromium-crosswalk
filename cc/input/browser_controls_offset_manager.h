@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/input/browser_controls_state.h"
 #include "cc/layers/layer_impl.h"
@@ -27,7 +26,11 @@ class CC_EXPORT BrowserControlsOffsetManager {
       BrowserControlsOffsetManagerClient* client,
       float controls_show_threshold,
       float controls_hide_threshold);
+  BrowserControlsOffsetManager(const BrowserControlsOffsetManager&) = delete;
   virtual ~BrowserControlsOffsetManager();
+
+  BrowserControlsOffsetManager& operator=(const BrowserControlsOffsetManager&) =
+      delete;
 
   // The offset from the window top to the top edge of the controls. Runs from 0
   // (controls fully shown) to negative values (down is positive).
@@ -52,6 +55,9 @@ class CC_EXPORT BrowserControlsOffsetManager {
   void UpdateBrowserControlsState(BrowserControlsState constraints,
                                   BrowserControlsState current,
                                   bool animate);
+
+  BrowserControlsState PullConstraintForMainThread(
+      bool* out_changed_since_commit);
 
   void ScrollBegin();
   gfx::Vector2dF ScrollBy(const gfx::Vector2dF& pending_delta);
@@ -81,6 +87,9 @@ class CC_EXPORT BrowserControlsOffsetManager {
   // The client manages the lifecycle of this.
   BrowserControlsOffsetManagerClient* client_;
 
+  // animation_initialized_ tracks if we've initialized the start and end
+  // times since that must happen at a BeginFrame.
+  bool animation_initialized_;
   base::TimeTicks animation_start_time_;
   float animation_start_value_;
   base::TimeTicks animation_stop_time_;
@@ -106,7 +115,9 @@ class CC_EXPORT BrowserControlsOffsetManager {
 
   bool pinch_gesture_active_;
 
-  DISALLOW_COPY_AND_ASSIGN(BrowserControlsOffsetManager);
+  // Used to track whether the constraint has changed and we need up reflect
+  // the changes to Blink.
+  bool constraint_changed_since_commit_;
 };
 
 }  // namespace cc

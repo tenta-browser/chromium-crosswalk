@@ -9,10 +9,42 @@
 
 #include <vector>
 
+#include "base/optional.h"
 #include "base/strings/string16.h"
-#include "content/public/common/manifest.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
+#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_lock_type.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
+
+// https://pr-preview.s3.amazonaws.com/ewilligers/web-share-target/pull/53.html#sharetargetfiles-and-its-members
+struct ShareTargetParamsFile {
+  base::string16 name;
+  std::vector<base::string16> accept;
+  ShareTargetParamsFile();
+  ShareTargetParamsFile(const ShareTargetParamsFile& other);
+  ~ShareTargetParamsFile();
+};
+
+// https://wicg.github.io/web-share-target/#dom-sharetargetparams
+struct ShareTargetParams {
+  base::string16 title;
+  base::string16 text;
+  base::string16 url;
+  std::vector<ShareTargetParamsFile> files;
+  ShareTargetParams();
+  ShareTargetParams(const ShareTargetParams& other);
+  ~ShareTargetParams();
+};
+
+// https://wicg.github.io/web-share-target/#dom-sharetarget
+struct ShareTarget {
+  GURL action;
+  blink::Manifest::ShareTarget::Method method;
+  blink::Manifest::ShareTarget::Enctype enctype;
+  ShareTargetParams params;
+  ShareTarget();
+  ~ShareTarget();
+};
 
 // Information needed to create a shortcut via ShortcutHelper.
 struct ShortcutInfo {
@@ -43,7 +75,7 @@ struct ShortcutInfo {
     // Used for bookmark-type shortcuts that launch the tabbed browser.
     SOURCE_ADD_TO_HOMESCREEN_SHORTCUT = 8,
 
-    // Used for WebAPKs launched via an external intent.
+    // Used for WebAPKs launched via an external intent and not from Chrome.
     SOURCE_EXTERNAL_INTENT = 9,
 
     // Used for WebAPK PWAs added via the banner.
@@ -55,10 +87,19 @@ struct ShortcutInfo {
     // Used for Trusted Web Activities launched from third party Android apps.
     SOURCE_TRUSTED_WEB_ACTIVITY = 12,
 
-    // Used for WebAPK intents received as a result of share events.
+    // Used for WebAPK intents received as a result of text sharing events.
     SOURCE_WEBAPK_SHARE_TARGET = 13,
 
-    SOURCE_COUNT = 14
+    // Used for WebAPKs launched via an external intent from this Chrome APK.
+    // WebAPKs launched from a different Chrome APK (e.g. Chrome Canary) will
+    // report SOURCE_EXTERNAL_INTENT.
+    SOURCE_EXTERNAL_INTENT_FROM_CHROME = 14,
+
+    // Used for WebAPK intents received as a result of binary file sharing
+    // events.
+    SOURCE_WEBAPK_SHARE_TARGET_FILE = 15,
+
+    SOURCE_COUNT = 16
   };
 
   explicit ShortcutInfo(const GURL& shortcut_url);
@@ -66,7 +107,7 @@ struct ShortcutInfo {
   ~ShortcutInfo();
 
   // Updates the info based on the given |manifest|.
-  void UpdateFromManifest(const content::Manifest& manifest);
+  void UpdateFromManifest(const blink::Manifest& manifest);
 
   // Updates the source of the shortcut.
   void UpdateSource(const Source source);
@@ -80,16 +121,15 @@ struct ShortcutInfo {
   blink::WebDisplayMode display;
   blink::WebScreenOrientationLockType orientation;
   Source source;
-  int64_t theme_color;
-  int64_t background_color;
-  GURL splash_screen_url;
+  base::Optional<SkColor> theme_color;
+  base::Optional<SkColor> background_color;
   int ideal_splash_image_size_in_px;
   int minimum_splash_image_size_in_px;
   GURL splash_image_url;
   GURL best_primary_icon_url;
   GURL best_badge_icon_url;
   std::vector<std::string> icon_urls;
-  base::string16 share_target_url_template;
+  base::Optional<ShareTarget> share_target;
 };
 
 #endif  // CHROME_BROWSER_ANDROID_SHORTCUT_INFO_H_

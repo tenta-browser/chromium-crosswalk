@@ -26,7 +26,7 @@ class ExclusiveAccessContext {
     STATE_EXIT_TAB_FULLSCREEN,
   };
 
-  virtual ~ExclusiveAccessContext() {}
+  virtual ~ExclusiveAccessContext() = default;
 
   // Returns the current profile associated with the window.
   virtual Profile* GetProfile() = 0;
@@ -38,11 +38,11 @@ class ExclusiveAccessContext {
   // Called when we transition between tab and browser fullscreen. This method
   // updates the UI by showing/hiding the tab strip, toolbar and bookmark bar
   // in the browser fullscreen. Currently only supported on Mac.
-  virtual void UpdateUIForTabFullscreen(TabFullscreenState state);
+  virtual void UpdateUIForTabFullscreen(TabFullscreenState state) {}
 
   // Updates the toolbar state to be hidden or shown in fullscreen according to
   // the preference's state. Only supported on Mac.
-  virtual void UpdateFullscreenToolbar();
+  virtual void UpdateFullscreenToolbar() {}
 
   // Enters fullscreen and update exit bubble.
   virtual void EnterFullscreen(const GURL& url,
@@ -55,7 +55,8 @@ class ExclusiveAccessContext {
   virtual void UpdateExclusiveAccessExitBubbleContent(
       const GURL& url,
       ExclusiveAccessBubbleType bubble_type,
-      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback) = 0;
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
+      bool force_update) = 0;
 
   // Informs the exclusive access system of some user input, which may update
   // internal timers and/or re-display the bubble.
@@ -73,6 +74,10 @@ class ExclusiveAccessContext {
 
   // Hides download shelf associated with currently active window.
   virtual void HideDownloadShelf() = 0;
+
+  // There are special modes where the user isn't allowed to exit fullscreen on
+  // their own, and this function allows us to check for that.
+  virtual bool CanUserExitFullscreen() const = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_EXCLUSIVE_ACCESS_EXCLUSIVE_ACCESS_CONTEXT_H_

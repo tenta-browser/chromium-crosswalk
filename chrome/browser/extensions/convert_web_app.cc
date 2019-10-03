@@ -19,13 +19,14 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
 #include "chrome/common/extensions/manifest_handlers/app_theme_color_info.h"
@@ -36,6 +37,8 @@
 #include "extensions/common/file_util.h"
 #include "extensions/common/image_util.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/file_handler_info.h"
+#include "net/base/url_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/color_utils.h"
@@ -46,27 +49,51 @@ namespace extensions {
 
 namespace keys = manifest_keys;
 
-using base::Time;
-
 namespace {
-
 const char kIconsDirName[] = "icons";
 const char kScopeUrlHandlerId[] = "scope";
 
-// Create the public key for the converted web app.
-//
-// Web apps are not signed, but the public key for an extension doubles as
-// its unique identity, and we need one of those. A web app's unique identity
-// is its manifest URL, so we hash that to create a public key. There will be
-// no corresponding private key, which means that these extensions cannot be
-// auto-updated using ExtensionUpdater.
-std::string GenerateKey(const GURL& app_url) {
-  char raw[crypto::kSHA256Length] = {0};
-  std::string key;
-  crypto::SHA256HashString(app_url.spec().c_str(), raw,
-                           crypto::kSHA256Length);
-  base::Base64Encode(base::StringPiece(raw, crypto::kSHA256Length), &key);
-  return key;
+std::unique_ptr<base::DictionaryValue> CreateFileHandlersForBookmarkApp(
+    const blink::Manifest::FileHandler& manifest_file_handler) {
+  base::Value file_handlers(base::Value::Type::DICTIONARY);
+
+  for (const auto& handler : manifest_file_handler.files) {
+    base::Value file_handler(base::Value::Type::DICTIONARY);
+    file_handler.SetKey(keys::kFileHandlerIncludeDirectories,
+                        base::Value(false));
+    file_handler.SetKey(keys::kFileHandlerVerb,
+                        base::Value(extensions::file_handler_verbs::kOpenWith));
+
+    base::Value mime_types(base::Value::Type::LIST);
+    base::Value file_extensions(base::Value::Type::LIST);
+
+    for (const auto& acceptsUTF16 : handler.accept) {
+      std::string acceptsUTF8 = base::UTF16ToUTF8(acceptsUTF16);
+      if (acceptsUTF8.size() == 0)
+        continue;
+
+      if (acceptsUTF8[0] == '.') {
+        file_extensions.GetList().push_back(base::Value(acceptsUTF8.substr(1)));
+      } else {
+        mime_types.GetList().push_back(base::Value(acceptsUTF8));
+      }
+    }
+
+    file_handler.SetKey(keys::kFileHandlerTypes, std::move(mime_types));
+    file_handler.SetKey(keys::kFileHandlerExtensions,
+                        std::move(file_extensions));
+
+    // Use '{action}/?name={name}' as the id for the file handler, so we don't
+    // have to introduce a new field to the extension manifest.
+    file_handlers.SetKey(
+        net::AppendQueryParameter(manifest_file_handler.action, "name",
+                                  base::UTF16ToUTF8(handler.name))
+            .spec(),
+        std::move(file_handler));
+  }
+
+  return base::DictionaryValue::From(
+      base::Value::ToUniquePtrValue(std::move(file_handlers)));
 }
 
 }  // namespace
@@ -74,17 +101,17 @@ std::string GenerateKey(const GURL& app_url) {
 std::unique_ptr<base::DictionaryValue> CreateURLHandlersForBookmarkApp(
     const GURL& scope_url,
     const base::string16& title) {
-  auto matches = base::MakeUnique<base::ListValue>();
+  auto matches = std::make_unique<base::ListValue>();
   matches->AppendString(scope_url.GetOrigin().Resolve(scope_url.path()).spec() +
                         "*");
 
-  auto scope_handler = base::MakeUnique<base::DictionaryValue>();
+  auto scope_handler = std::make_unique<base::DictionaryValue>();
   scope_handler->SetList(keys::kMatches, std::move(matches));
   // The URL handler title is not used anywhere but we set it to the
   // web app's title just in case.
   scope_handler->SetString(keys::kUrlHandlerTitle, base::UTF16ToUTF8(title));
 
-  auto url_handlers = base::MakeUnique<base::DictionaryValue>();
+  auto url_handlers = std::make_unique<base::DictionaryValue>();
   // Use "scope" as the url handler's identifier.
   url_handlers->SetDictionary(kScopeUrlHandlerId, std::move(scope_handler));
   return url_handlers;
@@ -121,16 +148,17 @@ GURL GetScopeURLFromBookmarkApp(const Extension* extension) {
 
 // Generates a version for the converted app using the current date. This isn't
 // really needed, but it seems like useful information.
-std::string ConvertTimeToExtensionVersion(const Time& create_time) {
-  Time::Exploded create_time_exploded;
+std::string ConvertTimeToExtensionVersion(const base::Time& create_time) {
+  base::Time::Exploded create_time_exploded;
   create_time.UTCExplode(&create_time_exploded);
 
   double micros = static_cast<double>(
-      (create_time_exploded.millisecond * Time::kMicrosecondsPerMillisecond) +
-      (create_time_exploded.second * Time::kMicrosecondsPerSecond) +
-      (create_time_exploded.minute * Time::kMicrosecondsPerMinute) +
-      (create_time_exploded.hour * Time::kMicrosecondsPerHour));
-  double day_fraction = micros / Time::kMicrosecondsPerDay;
+      (create_time_exploded.millisecond *
+       base::Time::kMicrosecondsPerMillisecond) +
+      (create_time_exploded.second * base::Time::kMicrosecondsPerSecond) +
+      (create_time_exploded.minute * base::Time::kMicrosecondsPerMinute) +
+      (create_time_exploded.hour * base::Time::kMicrosecondsPerHour));
+  double day_fraction = micros / base::Time::kMicrosecondsPerDay;
   int stamp =
       gfx::ToRoundedInt(day_fraction * std::numeric_limits<uint16_t>::max());
 
@@ -141,8 +169,10 @@ std::string ConvertTimeToExtensionVersion(const Time& create_time) {
 
 scoped_refptr<Extension> ConvertWebAppToExtension(
     const WebApplicationInfo& web_app,
-    const Time& create_time,
-    const base::FilePath& extensions_dir) {
+    const base::Time& create_time,
+    const base::FilePath& extensions_dir,
+    int extra_creation_flags,
+    Manifest::Location install_source) {
   base::FilePath install_temp_dir =
       file_util::GetInstallTempDir(extensions_dir);
   if (install_temp_dir.empty()) {
@@ -158,7 +188,8 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
 
   // Create the manifest
   std::unique_ptr<base::DictionaryValue> root(new base::DictionaryValue);
-  root->SetString(keys::kPublicKey, GenerateKey(web_app.app_url));
+  root->SetString(keys::kPublicKey,
+                  web_app::GenerateAppKeyFromURL(web_app.app_url));
   root->SetString(keys::kName, base::UTF16ToUTF8(web_app.title));
   root->SetString(keys::kVersion, ConvertTimeToExtensionVersion(create_time));
   root->SetString(keys::kDescription, base::UTF16ToUTF8(web_app.description));
@@ -178,9 +209,14 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
                                                 web_app.scope, web_app.title));
   }
 
+  if (web_app.file_handler) {
+    root->SetDictionary(keys::kFileHandlers, CreateFileHandlersForBookmarkApp(
+                                                 web_app.file_handler.value()));
+  }
+
   // Add the icons and linked icon information.
-  auto icons = base::MakeUnique<base::DictionaryValue>();
-  auto linked_icons = base::MakeUnique<base::ListValue>();
+  auto icons = std::make_unique<base::DictionaryValue>();
+  auto linked_icons = std::make_unique<base::ListValue>();
   for (const auto& icon : web_app.icons) {
     std::string size = base::StringPrintf("%i", icon.width);
     std::string icon_path = base::StringPrintf("%s/%s.png", kIconsDirName,
@@ -237,9 +273,9 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
 
   // Finally, create the extension object to represent the unpacked directory.
   std::string error;
-  scoped_refptr<Extension> extension =
-      Extension::Create(temp_dir.GetPath(), Manifest::INTERNAL, *root,
-                        Extension::FROM_BOOKMARK, &error);
+  scoped_refptr<Extension> extension = Extension::Create(
+      temp_dir.GetPath(), install_source, *root,
+      Extension::FROM_BOOKMARK | extra_creation_flags, &error);
   if (!extension.get()) {
     LOG(ERROR) << error;
     return NULL;

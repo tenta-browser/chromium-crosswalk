@@ -17,64 +17,68 @@ class TabletModeWindowManager;
 // states to minimized and maximized. If a window cannot be maximized it will be
 // set to normal. If a window cannot fill the entire workspace it will be
 // centered within the workspace.
-class TabletModeWindowState : public wm::WindowState::State {
+class TabletModeWindowState : public WindowState::State {
  public:
   // Called when the window position might need to be updated.
-  static void UpdateWindowPosition(wm::WindowState* window_state);
+  static void UpdateWindowPosition(WindowState* window_state, bool animate);
 
   // The |window|'s state object will be modified to use this new window mode
-  // state handler. Upon destruction it will restore the previous state handler
-  // and call |creator::WindowStateDestroyed()| to inform that the window mode
-  // was reverted to the old window manager.
-  TabletModeWindowState(aura::Window* window, TabletModeWindowManager* creator);
+  // state handler. |snap| is for carrying over a snapped state from clamshell
+  // mode to tablet mode. If |snap| is false, then the window will be maximized,
+  // unless the original state was MAXIMIZED, MINIMIZED, FULLSCREEN, PINNED, or
+  // TRUSTED_PINNED. Use |animate_bounds_on_attach| to specify whether to
+  // animate the corresponding bounds update. Call LeaveTabletMode() to restore
+  // the previous state handler, whereupon ~TabletModeWindowState() will call
+  // |creator::WindowStateDestroyed()| to inform that the window mode was
+  // reverted to the old window manager.
+  TabletModeWindowState(aura::Window* window,
+                        TabletModeWindowManager* creator,
+                        bool snap,
+                        bool animate_bounds_on_attach,
+                        bool entering_tablet_mode);
   ~TabletModeWindowState() override;
 
   void set_ignore_wm_events(bool ignore) { ignore_wm_events_ = ignore; }
 
   // Leaves the tablet mode by reverting to previous state object.
-  void LeaveTabletMode(wm::WindowState* window_state);
-
-  // Sets whether to ignore bounds updates. If set to false, immediately does a
-  // bounds update as the current window bounds may no longer be correct.
-  void SetDeferBoundsUpdates(bool defer_bounds_updates);
+  void LeaveTabletMode(WindowState* window_state, bool was_in_overview);
 
   // WindowState::State overrides:
-  void OnWMEvent(wm::WindowState* window_state,
-                 const wm::WMEvent* event) override;
+  void OnWMEvent(WindowState* window_state, const WMEvent* event) override;
 
-  mojom::WindowStateType GetType() const override;
-  void AttachState(wm::WindowState* window_state,
-                   wm::WindowState::State* previous_state) override;
-  void DetachState(wm::WindowState* window_state) override;
+  WindowStateType GetType() const override;
+  void AttachState(WindowState* window_state,
+                   WindowState::State* previous_state) override;
+  void DetachState(WindowState* window_state) override;
+
+  WindowState::State* old_state() { return old_state_.get(); }
 
  private:
   // Updates the window to |new_state_type| and resulting bounds:
   // Either full screen, maximized centered or minimized. If the state does not
   // change, only the bounds will be changed. If |animate| is set, the bound
   // change get animated.
-  void UpdateWindow(wm::WindowState* window_state,
-                    mojom::WindowStateType new_state_type,
+  void UpdateWindow(WindowState* window_state,
+                    WindowStateType new_state_type,
                     bool animate);
 
   // Depending on the capabilities of the window we either return
-  // |WindowStateType::MAXIMIZED| or |WindowStateType::NORMAL|.
-  mojom::WindowStateType GetMaximizedOrCenteredWindowType(
-      wm::WindowState* window_state);
+  // |WindowStateType::kMaximized| or |WindowStateType::kNormal|.
+  WindowStateType GetMaximizedOrCenteredWindowType(WindowState* window_state);
 
   // If |target_state| is LEFT/RIGHT_SNAPPED and the window can be snapped,
   // returns |target_state|. Otherwise depending on the capabilities of the
-  // window either returns |WindowStateType::MAXIMIZED| or
-  // |WindowStateType::NORMAL|.
-  mojom::WindowStateType GetSnappedWindowStateType(
-      wm::WindowState* window_state,
-      mojom::WindowStateType target_state);
+  // window either returns |WindowStateType::kMaximized| or
+  // |WindowStateType::kNormal|.
+  WindowStateType GetSnappedWindowStateType(WindowState* window_state,
+                                            WindowStateType target_state);
 
   // Updates the bounds to the maximum possible bounds according to the current
   // window state. If |animated| is set we animate the change.
-  void UpdateBounds(wm::WindowState* window_state, bool animated);
+  void UpdateBounds(WindowState* window_state, bool animated);
 
   // The original state object of the window.
-  std::unique_ptr<wm::WindowState::State> old_state_;
+  std::unique_ptr<WindowState::State> old_state_;
 
   // The window whose WindowState owns this instance.
   aura::Window* window_;
@@ -82,12 +86,18 @@ class TabletModeWindowState : public wm::WindowState::State {
   // The creator which needs to be informed when this state goes away.
   TabletModeWindowManager* creator_;
 
+  // The state type to be established in AttachState(), unless
+  // previous_state->GetType() is MAXIMIZED, MINIMIZED, FULLSCREEN, PINNED, or
+  // TRUSTED_PINNED.
+  WindowStateType state_type_on_attach_;
+
+  // Whether to animate in case of a bounds update when switching to
+  // |state_type_on_attach_|.
+  bool animate_bounds_on_attach_;
+
   // The current state type. Due to the nature of this state, this can only be
   // WM_STATE_TYPE{NORMAL, MINIMIZED, MAXIMIZED}.
-  mojom::WindowStateType current_state_type_;
-
-  // If true, do not update bounds.
-  bool defer_bounds_updates_;
+  WindowStateType current_state_type_;
 
   // If true, the state will not process events.
   bool ignore_wm_events_ = false;

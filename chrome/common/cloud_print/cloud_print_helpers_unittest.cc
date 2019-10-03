@@ -4,9 +4,9 @@
 
 #include "chrome/common/cloud_print/cloud_print_helpers.h"
 
-#include "base/md5.h"
+#include "base/hash/md5.h"
 #include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "chrome/common/channel_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"

@@ -28,15 +28,6 @@ struct CONTENT_EXPORT ScreenInfo {
     // The color space of the output display.
     gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
 
-#if defined(OS_MACOSX)
-    // The ICC profile from which |color_space| was derived, if any. This is
-    // used only on macOS, to ensure that the color profile set on an IOSurface
-    // exactly match that of the display, when possible (because that has
-    // significant power implications).
-    // https://crbug.com/766736#c1
-    gfx::ICCProfile icc_profile;
-#endif
-
     // The screen depth in bits per pixel
     uint32_t depth = 0;
 
@@ -46,6 +37,10 @@ struct CONTENT_EXPORT ScreenInfo {
 
     // This can be true for black and white printers
     bool is_monochrome = false;
+
+    // The display frequency in Hz of the monitor. Set to 0 if it fails in the
+    // monitor frequency query.
+    int display_frequency = 0;
 
     // The display monitor rectangle in virtual-screen coordinates. Note that
     // this may be negative.

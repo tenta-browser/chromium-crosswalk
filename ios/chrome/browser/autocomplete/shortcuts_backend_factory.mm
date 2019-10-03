@@ -4,8 +4,9 @@
 
 #include "ios/chrome/browser/autocomplete/shortcuts_backend_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include <memory>
+
+#include "base/no_destructor.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/omnibox/browser/shortcuts_backend.h"
@@ -30,7 +31,7 @@ scoped_refptr<ShortcutsBackend> CreateShortcutsBackend(
     bool suppress_db) {
   scoped_refptr<ShortcutsBackend> shortcuts_backend(new ShortcutsBackend(
       ios::TemplateURLServiceFactory::GetForBrowserState(browser_state),
-      base::MakeUnique<ios::UIThreadSearchTermsData>(browser_state),
+      std::make_unique<ios::UIThreadSearchTermsData>(browser_state),
       ios::HistoryServiceFactory::GetForBrowserState(
           browser_state, ServiceAccessType::EXPLICIT_ACCESS),
       browser_state->GetStatePath().Append(kShortcutsDatabaseName),
@@ -57,7 +58,8 @@ ShortcutsBackendFactory::GetForBrowserStateIfExists(
 
 // static
 ShortcutsBackendFactory* ShortcutsBackendFactory::GetInstance() {
-  return base::Singleton<ShortcutsBackendFactory>::get();
+  static base::NoDestructor<ShortcutsBackendFactory> instance;
+  return instance.get();
 }
 
 ShortcutsBackendFactory::ShortcutsBackendFactory()

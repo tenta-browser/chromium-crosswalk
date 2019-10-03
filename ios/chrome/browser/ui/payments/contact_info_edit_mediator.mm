@@ -6,11 +6,11 @@
 
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/phone_number_i18n.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "components/strings/grit/components_strings.h"
@@ -91,14 +91,19 @@
   return NO;
 }
 
-- (void)formatValueForEditorField:(EditorField*)field {
-  if (field.autofillUIType == AutofillUITypeProfileHomePhoneWholeNumber) {
+- (BOOL)shouldFormatValueForAutofillUIType:(AutofillUIType)type {
+  return (type == AutofillUITypeProfileHomePhoneWholeNumber);
+}
+
+- (NSString*)formatValue:(NSString*)value autofillUIType:(AutofillUIType)type {
+  if (type == AutofillUITypeProfileHomePhoneWholeNumber) {
     const std::string countryCode =
         autofill::AutofillCountry::CountryCodeForLocale(
             _paymentRequest->GetApplicationLocale());
-    field.value = base::SysUTF8ToNSString(autofill::i18n::FormatPhoneForDisplay(
-        base::SysNSStringToUTF8(field.value), countryCode));
+    return base::SysUTF8ToNSString(autofill::i18n::FormatPhoneForDisplay(
+        base::SysNSStringToUTF8(value), countryCode));
   }
+  return nil;
 }
 
 - (UIImage*)iconIdentifyingEditorField:(EditorField*)field {
@@ -116,8 +121,8 @@
         const std::string countryCode =
             autofill::AutofillCountry::CountryCodeForLocale(
                 self.paymentRequest->GetApplicationLocale());
-        if (!autofill::IsValidPhoneNumber(base::SysNSStringToUTF16(field.value),
-                                          countryCode)) {
+        if (!autofill::IsPossiblePhoneNumber(
+                base::SysNSStringToUTF16(field.value), countryCode)) {
           return l10n_util::GetNSString(
               IDS_PAYMENTS_PHONE_INVALID_VALIDATION_MESSAGE);
         }
@@ -136,7 +141,7 @@
     }
   } else if (field.isRequired) {
     return l10n_util::GetNSString(
-        IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE);
+        IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE);
   }
   return nil;
 }

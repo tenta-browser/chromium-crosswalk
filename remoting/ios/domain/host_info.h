@@ -7,6 +7,14 @@
 
 #import <Foundation/Foundation.h>
 
+namespace remoting {
+namespace apis {
+namespace v1 {
+class HostInfo;
+}  // namespace v1
+}  // namespace apis
+}  // namespace remoting
+
 // A detail record for a Remoting Host.
 @interface HostInfo : NSObject
 
@@ -18,17 +26,15 @@
 @property(nonatomic, copy) NSString* hostOsVersion;
 @property(nonatomic, copy) NSString* hostVersion;
 @property(nonatomic, copy) NSString* jabberId;
+@property(nonatomic, copy) NSString* ftlId;
 @property(nonatomic, copy) NSString* kind;
 @property(nonatomic, copy) NSString* publicKey;
-@property(nonatomic, copy) NSString* status;
 @property(nonatomic, copy) NSString* updatedTime;
 @property(nonatomic, copy) NSString* offlineReason;
-// True when |status| is @"ONLINE", anything else is False.
-@property(nonatomic, readonly) bool isOnline;
+@property(nonatomic) BOOL isOnline;
 
-// First consider if |isOnline| is greater than anything else, then consider by
-// case insensitive locale of |hostName|.
-- (NSComparisonResult)compare:(HostInfo*)host;
+- (instancetype)initWithRemotingHostInfo:
+    (const remoting::apis::v1::HostInfo&)hostInfo;
 
 @end
 

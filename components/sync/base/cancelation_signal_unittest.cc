@@ -5,9 +5,9 @@
 #include "components/sync/base/cancelation_signal.h"
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -65,9 +65,9 @@ void BlockingTask::RunAsync(base::WaitableEvent* task_start_signal,
                             base::WaitableEvent* task_done_signal) {
   exec_thread_.Start();
   exec_thread_.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&BlockingTask::Run, base::Unretained(this),
-                            base::Unretained(task_start_signal),
-                            base::Unretained(task_done_signal)));
+      FROM_HERE, base::BindOnce(&BlockingTask::Run, base::Unretained(this),
+                                base::Unretained(task_start_signal),
+                                base::Unretained(task_done_signal)));
 }
 
 void BlockingTask::Run(base::WaitableEvent* task_start_signal,
@@ -112,7 +112,7 @@ class CancelationSignalTest : public ::testing::Test {
   bool VerifyTaskNotStarted();
 
  private:
-  base::MessageLoop main_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
 
   CancelationSignal signal_;
   base::WaitableEvent task_start_event_;

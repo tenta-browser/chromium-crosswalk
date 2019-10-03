@@ -21,27 +21,43 @@ Polymer({
   behaviors: [settings.RouteObserverBehavior],
 
   properties: {
+    /** Preferences state. */
+    prefs: Object,
+
     // <if expr="chromeos">
-    /** @private */
-    showPowerwashDialog_: Boolean,
-    // </if>
+    /**
+     * Dictionary defining page visibility.
+     * @type {!ResetPageVisibility}
+     */
+    pageVisibility: Object,
 
     /** @private */
-    allowPowerwash_: {
-      type: Boolean,
-      value: cr.isChromeOS ? loadTimeData.getBoolean('allowPowerwash') : false
-    },
+    showPowerwashDialog_: Boolean,
+
+    /** @private */
+    allowPowerwash_: Boolean,
+    // </if>
+
 
     // <if expr="_google_chrome and is_win">
     /** @private */
-    userInitiatedCleanupsEnabled_: {
+    showIncompatibleApplications_: {
       type: Boolean,
       value: function() {
-        return loadTimeData.getBoolean('userInitiatedCleanupsEnabled');
+        return loadTimeData.getBoolean('showIncompatibleApplications');
       },
     },
     // </if>
   },
+
+  // <if expr="chromeos">
+  /** @override */
+  ready: function() {
+    // TODO(hsuregan): Remove when OS settings migration is complete.
+    this.allowPowerwash_ = loadTimeData.getBoolean('allowPowerwash') &&
+        this.pageVisibility.powerwash;
+  },
+  // </if>
 
   /**
    * settings.RouteObserverBehavior
@@ -49,11 +65,19 @@ Polymer({
    * @protected
    */
   currentRouteChanged: function(route) {
+    const lazyRender =
+        /** @type {!CrLazyRenderElement} */ (this.$.resetProfileDialog);
+
     if (route == settings.routes.TRIGGERED_RESET_DIALOG ||
         route == settings.routes.RESET_DIALOG) {
-      /** @type {!SettingsResetProfileDialogElement} */ (
-          this.$.resetProfileDialog.get())
+      /** @type {!SettingsResetProfileDialogElement} */ (lazyRender.get())
           .show();
+    } else {
+      const dialog = /** @type {?SettingsResetProfileDialogElement} */ (
+          lazyRender.getIfExists());
+      if (dialog) {
+        dialog.cancel();
+      }
     }
   },
 
@@ -66,7 +90,7 @@ Polymer({
   /** @private */
   onResetProfileDialogClose_: function() {
     settings.navigateToPreviousRoute();
-    cr.ui.focusWithoutInk(assert(this.$.resetProfileArrow));
+    cr.ui.focusWithoutInk(assert(this.$.resetProfile));
   },
 
   // <if expr="chromeos">
@@ -82,13 +106,19 @@ Polymer({
   /** @private */
   onPowerwashDialogClose_: function() {
     this.showPowerwashDialog_ = false;
-    cr.ui.focusWithoutInk(assert(this.$.powerwashArrow));
+    cr.ui.focusWithoutInk(assert(this.$.powerwash));
   },
   // </if>
 
   // <if expr="_google_chrome and is_win">
+  /** @private */
   onChromeCleanupTap_: function() {
     settings.navigateTo(settings.routes.CHROME_CLEANUP);
+  },
+
+  /** @private */
+  onIncompatibleApplicationsTap_: function() {
+    settings.navigateTo(settings.routes.INCOMPATIBLE_APPLICATIONS);
   },
   // </if>
 

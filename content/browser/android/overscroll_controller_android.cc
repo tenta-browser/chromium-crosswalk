@@ -6,14 +6,13 @@
 
 #include "base/android/build_info.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "cc/layers/layer.h"
 #include "components/viz/common/quads/compositor_frame_metadata.h"
-#include "content/common/content_switches_internal.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/common/content_switches.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/android/edge_effect.h"
 #include "ui/android/edge_effect_l.h"
 #include "ui/android/resources/resource_manager.h"
@@ -33,18 +32,17 @@ using ui::OverscrollRefresh;
 namespace content {
 namespace {
 
-// Used for conditional creation of EdgeEffect types for the overscroll glow.
-const int kAndroidLSDKVersion = 21;
-
 // If the glow effect alpha is greater than this value, the refresh effect will
 // be suppressed. This value was experimentally determined to provide a
 // reasonable balance between avoiding accidental refresh activation and
 // minimizing the wait required to refresh after the glow has been triggered.
 const float kMinGlowAlphaToDisableRefreshOnL = 0.085f;
 
+// Used for conditional creation of EdgeEffect types for the overscroll glow.
 bool IsAndroidLOrNewer() {
   static bool android_l_or_newer =
-      base::android::BuildInfo::GetInstance()->sdk_int() >= kAndroidLSDKVersion;
+      base::android::BuildInfo::GetInstance()->sdk_int() >=
+      base::android::SDK_VERSION_LOLLIPOP;
   return android_l_or_newer;
 }
 
@@ -74,8 +72,7 @@ std::unique_ptr<EdgeEffectBase> CreateGlowEdgeEffect(
       new EdgeEffect(resource_manager, dpi_scale));
 }
 
-std::unique_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client,
-                                                 float dpi_scale) {
+std::unique_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableOverscrollEdgeEffect)) {
     return nullptr;
@@ -85,13 +82,15 @@ std::unique_ptr<OverscrollGlow> CreateGlowEffect(OverscrollGlowClient* client,
 }
 
 std::unique_ptr<OverscrollRefresh> CreateRefreshEffect(
-    ui::OverscrollRefreshHandler* overscroll_refresh_handler) {
+    ui::OverscrollRefreshHandler* overscroll_refresh_handler,
+    float dpi_scale) {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisablePullToRefreshEffect)) {
     return nullptr;
   }
 
-  return std::make_unique<OverscrollRefresh>(overscroll_refresh_handler);
+  return std::make_unique<OverscrollRefresh>(overscroll_refresh_handler,
+                                             dpi_scale);
 }
 
 }  // namespace
@@ -127,8 +126,9 @@ OverscrollControllerAndroid::OverscrollControllerAndroid(
     : compositor_(compositor),
       dpi_scale_(dpi_scale),
       enabled_(true),
-      glow_effect_(CreateGlowEffect(this, dpi_scale_)),
-      refresh_effect_(CreateRefreshEffect(overscroll_refresh_handler)) {
+      glow_effect_(CreateGlowEffect(this)),
+      refresh_effect_(
+          CreateRefreshEffect(overscroll_refresh_handler, dpi_scale_)) {
   DCHECK(compositor_);
 }
 
@@ -152,7 +152,8 @@ bool OverscrollControllerAndroid::WillHandleGestureEvent(
   bool handled = false;
   switch (event.GetType()) {
     case blink::WebInputEvent::kGestureScrollBegin:
-      refresh_effect_->OnScrollBegin();
+      refresh_effect_->OnScrollBegin(
+          gfx::ScalePoint(event.PositionInScreen(), dpi_scale_));
       break;
 
     case blink::WebInputEvent::kGestureScrollUpdate: {
@@ -212,11 +213,9 @@ void OverscrollControllerAndroid::OnGestureEventAck(
 
   if (event.GetType() == blink::WebInputEvent::kGestureScrollUpdate &&
       refresh_effect_) {
-    // The effect should only be allowed if both the causal touch events go
-    // unconsumed and the generated scroll events go unconsumed.
+    // The effect should only be allowed if the scroll events go unconsumed.
     if (refresh_effect_->IsAwaitingScrollUpdateAck() &&
-        (ack_result == INPUT_EVENT_ACK_STATE_CONSUMED ||
-         event.data.scroll_update.previous_update_in_sequence_prevented)) {
+        ack_result == INPUT_EVENT_ACK_STATE_CONSUMED) {
       refresh_effect_->Reset();
     }
   }
@@ -228,12 +227,7 @@ void OverscrollControllerAndroid::OnOverscrolled(
     return;
 
   if (refresh_effect_) {
-    if (params.overscroll_behavior.y !=
-        cc::OverscrollBehavior::OverscrollBehaviorType::
-            kOverscrollBehaviorTypeAuto)
-      refresh_effect_->Reset();
-    else
-      refresh_effect_->OnOverscrolled();
+    refresh_effect_->OnOverscrolled(params.overscroll_behavior);
 
     if (refresh_effect_->IsActive() ||
         refresh_effect_->IsAwaitingScrollUpdateAck()) {
@@ -289,26 +283,30 @@ bool OverscrollControllerAndroid::Animate(base::TimeTicks current_time,
 }
 
 void OverscrollControllerAndroid::OnFrameMetadataUpdated(
-    const viz::CompositorFrameMetadata& frame_metadata) {
+    float page_scale_factor,
+    float device_scale_factor,
+    const gfx::SizeF& scrollable_viewport_size,
+    const gfx::SizeF& root_layer_size,
+    const gfx::Vector2dF& root_scroll_offset,
+    bool root_overflow_y_hidden) {
   if (!refresh_effect_ && !glow_effect_)
     return;
 
   // When use-zoom-for-dsf is enabled, frame_metadata.page_scale_factor was
   // already scaled by the device scale factor.
-  float scale_factor = frame_metadata.page_scale_factor;
+  float scale_factor = page_scale_factor;
   if (!IsUseZoomForDSFEnabled()) {
-    scale_factor *= frame_metadata.device_scale_factor;
+    scale_factor *= device_scale_factor;
   }
   gfx::SizeF viewport_size =
-      gfx::ScaleSize(frame_metadata.scrollable_viewport_size, scale_factor);
-  gfx::SizeF content_size =
-      gfx::ScaleSize(frame_metadata.root_layer_size, scale_factor);
+      gfx::ScaleSize(scrollable_viewport_size, scale_factor);
+  gfx::SizeF content_size = gfx::ScaleSize(root_layer_size, scale_factor);
   gfx::Vector2dF content_scroll_offset =
-      gfx::ScaleVector2d(frame_metadata.root_scroll_offset, scale_factor);
+      gfx::ScaleVector2d(root_scroll_offset, scale_factor);
 
   if (refresh_effect_) {
-    refresh_effect_->OnFrameUpdated(content_scroll_offset,
-                                    frame_metadata.root_overflow_y_hidden);
+    refresh_effect_->OnFrameUpdated(viewport_size, content_scroll_offset,
+                                    root_overflow_y_hidden);
   }
 
   if (glow_effect_) {

@@ -57,7 +57,7 @@ class AppInfoSummaryPanel : public AppInfoPanel,
   // Called asynchronously to calculate and update the size of the app displayed
   // in the dialog.
   void StartCalculatingAppSize();
-  void OnAppSizeCalculated(int64_t app_size_in_bytes);
+  void OnAppSizeCalculated(const base::string16& size);
 
   // Returns the launch type of the app (e.g. pinned tab, fullscreen, etc).
   extensions::LaunchType GetLaunchType() const;
@@ -86,7 +86,7 @@ class AppInfoSummaryPanel : public AppInfoPanel,
   std::unique_ptr<LaunchOptionsComboboxModel> launch_options_combobox_model_;
   views::Combobox* launch_options_combobox_;
 
-  base::WeakPtrFactory<AppInfoSummaryPanel> weak_ptr_factory_;
+  base::WeakPtrFactory<AppInfoSummaryPanel> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppInfoSummaryPanel);
 };

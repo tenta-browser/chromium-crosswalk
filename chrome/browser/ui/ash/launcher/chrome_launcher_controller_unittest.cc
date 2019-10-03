@@ -15,18 +15,19 @@
 #include <vector>
 
 #include "ash/display/display_configuration_controller.h"
-#include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/multi_user/multi_user_window_manager_impl.h"
+#include "ash/public/cpp/app_list/internal_app_id_constants.h"
+#include "ash/public/cpp/multi_user_window_manager.h"
 #include "ash/public/cpp/shelf_item.h"
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_model.h"
-#include "ash/public/cpp/shelf_model_observer.h"
+#include "ash/public/cpp/shelf_types.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/shelf/shelf_application_menu_model.h"
-#include "ash/shelf/shelf_constants.h"
-#include "ash/shelf/shelf_controller.h"
-#include "ash/shell.h"
-#include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
@@ -37,59 +38,73 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/arc_apps.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
-#include "chrome/browser/chromeos/ash_config.h"
+#include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
+#include "chrome/browser/chromeos/crostini/crostini_util.h"
+#include "chrome/browser/chromeos/file_manager/app_id.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_mode_test_helper.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/prefs/browser_prefs.h"
+#include "chrome/browser/ui/app_icon_loader.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
+#include "chrome/browser/ui/app_list/app_service_app_model_builder.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/app_list/arc/arc_default_app_list.h"
+#include "chrome/browser/ui/app_list/internal_app/internal_app_metadata.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
 #include "chrome/browser/ui/ash/chrome_launcher_prefs.h"
-#include "chrome/browser/ui/ash/fake_tablet_mode_controller.h"
 #include "chrome/browser/ui/ash/launcher/app_window_launcher_controller.h"
-#include "chrome/browser/ui/ash/launcher/arc_app_deferred_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_window.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/browser_status_monitor.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
 #include "chrome/browser/ui/ash/launcher/extension_app_window_launcher_item_controller.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
+#include "chrome/browser/ui/ash/launcher/shelf_spinner_controller.h"
+#include "chrome/browser/ui/ash/launcher/shelf_spinner_item_controller.h"
+#include "chrome/browser/ui/ash/multi_user/multi_profile_support.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_chromeos.h"
-#include "chrome/browser/ui/ash/session_controller_client.h"
-#include "chrome/browser/ui/ash/tablet_mode_client.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
+#include "chrome/browser/ui/ash/session_controller_client_impl.h"
+#include "chrome/browser/ui/ash/test_wallpaper_controller.h"
+#include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/web_applications/components/externally_installed_web_app_prefs.h"
+#include "chrome/browser/web_applications/components/policy/web_app_policy_constants.h"
+#include "chrome/browser/web_applications/components/web_app_constants.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/services/app_service/app_service.h"
+#include "chrome/services/app_service/public/mojom/constants.mojom.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/test_browser_window_aura.h"
-#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "components/account_id/account_id.h"
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/common/app.mojom.h"
+#include "components/arc/metrics/arc_metrics_constants.h"
 #include "components/arc/test/fake_app_instance.h"
-#include "components/exo/shell_surface.h"
+#include "components/exo/shell_surface_util.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/prefs/pref_notifier_impl.h"
-#include "components/signin/core/account_id/account_id.h"
-#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
 #include "components/sync/model/fake_sync_change_processor.h"
 #include "components/sync/model/sync_error_factory_mock.h"
 #include "components/sync/protocol/sync.pb.h"
@@ -104,17 +119,24 @@
 #include "extensions/browser/app_window/app_window_contents.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/app_window/native_app_window.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/grit/extensions_browser_resources.h"
+#include "services/network/test/test_network_connection_tracker.h"
+#include "services/service_manager/public/cpp/test/test_connector_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/window.h"
 #include "ui/base/models/menu_model.h"
+#include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/display_switches.h"
 #include "ui/display/screen.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event_constants.h"
+#include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/views/widget/widget.h"
 
@@ -122,7 +144,6 @@ using base::ASCIIToUTF16;
 using extensions::Extension;
 using extensions::Manifest;
 using extensions::UnloadedExtensionReason;
-using arc::mojom::OrientationLock;
 
 namespace {
 constexpr char kOfflineGmailUrl[] = "https://mail.google.com/mail/mu/u";
@@ -136,52 +157,13 @@ constexpr char kCrxAppPrefix[] = "_crx_";
 // pin model with default apps that can affect some tests.
 constexpr char kDummyAppId[] = "dummyappid_dummyappid_dummyappid";
 
-// ShelfModelObserver implementation that tracks what messages are invoked.
-class TestShelfModelObserver : public ash::ShelfModelObserver {
- public:
-  TestShelfModelObserver() {}
-  ~TestShelfModelObserver() override {}
+// Web App id.
+constexpr char kWebAppId[] = "lpikggcgamknpihimepdkohalcnpofed";
+constexpr char kWebAppUrl[] = "https://foo.example/";
 
-  // Overridden from ash::ShelfModelObserver:
-  void ShelfItemAdded(int index) override {
-    ++added_;
-    last_index_ = index;
-  }
-
-  void ShelfItemRemoved(int index, const ash::ShelfItem& old_item) override {
-    ++removed_;
-    last_index_ = index;
-  }
-
-  void ShelfItemChanged(int index, const ash::ShelfItem& old_item) override {
-    ++changed_;
-    last_index_ = index;
-  }
-
-  void ShelfItemMoved(int start_index, int target_index) override {
-    last_index_ = target_index;
-  }
-
-  void clear_counts() {
-    added_ = 0;
-    removed_ = 0;
-    changed_ = 0;
-    last_index_ = 0;
-  }
-
-  int added() const { return added_; }
-  int removed() const { return removed_; }
-  int changed() const { return changed_; }
-  int last_index() const { return last_index_; }
-
- private:
-  int added_ = 0;
-  int removed_ = 0;
-  int changed_ = 0;
-  int last_index_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(TestShelfModelObserver);
-};
+constexpr char kCameraAppName[] = "Camera";
+constexpr char kCameraAppPackage[] = "com.google.android.GoogleCameraArc";
+constexpr char kCameraAppActivity[] = "com.android.camera.CameraLauncher";
 
 // Test implementation of AppIconLoader.
 class TestAppIconLoaderImpl : public AppIconLoader {
@@ -266,7 +248,7 @@ class TestV2AppLauncherItemController : public ash::ShelfItemDelegate {
                     int64_t display_id,
                     ash::ShelfLaunchSource source,
                     ItemSelectedCallback callback) override {
-    std::move(callback).Run(ash::SHELF_ACTION_WINDOW_ACTIVATED, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_WINDOW_ACTIVATED, {});
   }
   void ExecuteCommand(bool, int64_t, int32_t, int64_t) override {}
   void Close() override {}
@@ -275,108 +257,27 @@ class TestV2AppLauncherItemController : public ash::ShelfItemDelegate {
   DISALLOW_COPY_AND_ASSIGN(TestV2AppLauncherItemController);
 };
 
-// A test ShelfController implementation that tracks state and function calls.
-class TestShelfController : public ash::mojom::ShelfController {
- public:
-  TestShelfController() : binding_(this) {}
-  ~TestShelfController() override {}
-
-  size_t added_count() const { return added_count_; }
-  size_t removed_count() const { return removed_count_; }
-  size_t updated_count() const { return updated_count_; }
-  size_t set_delegate_count() const { return set_delegate_count_; }
-  const ash::ShelfItem& last_item() const { return last_item_; }
-
-  ash::mojom::ShelfControllerPtr CreateInterfacePtrAndBind() {
-    ash::mojom::ShelfControllerPtr ptr;
-    binding_.Bind(mojo::MakeRequest(&ptr));
-    return ptr;
-  }
-
-  // ash::mojom::ShelfController:
-  void AddObserver(
-      ash::mojom::ShelfObserverAssociatedPtrInfo observer) override {
-    observer_.Bind(std::move(observer));
-  }
-  void AddShelfItem(int32_t, const ash::ShelfItem& item) override {
-    added_count_++;
-    last_item_ = item;
-  }
-  void RemoveShelfItem(const ash::ShelfID&) override { removed_count_++; }
-  void MoveShelfItem(const ash::ShelfID&, int32_t) override {}
-  void UpdateShelfItem(const ash::ShelfItem& item) override {
-    updated_count_++;
-    last_item_ = item;
-  }
-  void SetShelfItemDelegate(const ash::ShelfID&,
-                            ash::mojom::ShelfItemDelegatePtr) override {
-    set_delegate_count_++;
-  }
-
- private:
-  size_t added_count_ = 0;
-  size_t removed_count_ = 0;
-  size_t updated_count_ = 0;
-  size_t set_delegate_count_ = 0;
-  ash::ShelfItem last_item_;
-
-  ash::mojom::ShelfObserverAssociatedPtr observer_;
-  mojo::Binding<ash::mojom::ShelfController> binding_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestShelfController);
-};
-
-// A callback that does nothing after shelf item selection handling.
-void NoopCallback(ash::ShelfAction action, base::Optional<ash::MenuItemList>) {}
-
 // Simulates selection of the shelf item.
 void SelectItem(ash::ShelfItemDelegate* delegate) {
   std::unique_ptr<ui::Event> event = std::make_unique<ui::MouseEvent>(
       ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(), ui::EventTimeForNow(),
       ui::EF_NONE, 0);
   delegate->ItemSelected(std::move(event), display::kInvalidDisplayId,
-                         ash::LAUNCH_FROM_UNKNOWN,
-                         base::BindOnce(&NoopCallback));
+                         ash::LAUNCH_FROM_UNKNOWN, base::DoNothing());
+}
+
+bool IsWindowOnDesktopOfUser(aura::Window* window,
+                             const AccountId& account_id) {
+  return MultiUserWindowManagerHelper::GetInstance()->IsWindowOnDesktopOfUser(
+      window, account_id);
 }
 
 }  // namespace
 
-// A test ChromeLauncherController subclass that uses TestShelfController.
-class TestChromeLauncherController : public ChromeLauncherController {
- public:
-  TestChromeLauncherController(Profile* profile, ash::ShelfModel* model)
-      : ChromeLauncherController(profile, model) {
-    // Connect to the shelf controller, the base ctor can't call overrides.
-    EXPECT_TRUE(ConnectToShelfController());
-    ash::mojom::ShelfObserverAssociatedPtrInfo ptr_info;
-    observer_binding_.Bind(mojo::MakeRequest(&ptr_info));
-    shelf_controller_->AddObserver(std::move(ptr_info));
-  }
-
-  // ChromeLauncherController:
-  using ChromeLauncherController::AttachProfile;
-  using ChromeLauncherController::ReleaseProfile;
-  bool ConnectToShelfController() override {
-    // Set the shelf controller pointer to a test instance.
-    if (!shelf_controller_.is_bound())
-      shelf_controller_ = test_shelf_controller_.CreateInterfacePtrAndBind();
-    return true;
-  }
-
-  TestShelfController* test_shelf_controller() {
-    return &test_shelf_controller_;
-  }
-
- private:
-  TestShelfController test_shelf_controller_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestChromeLauncherController);
-};
-
 class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
  protected:
   ChromeLauncherControllerTest()
-      : BrowserWithTestWindowTest(Browser::TYPE_TABBED, false) {}
+      : BrowserWithTestWindowTest(Browser::TYPE_TABBED) {}
 
   ~ChromeLauncherControllerTest() override {}
 
@@ -388,18 +289,13 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
 
     BrowserWithTestWindowTest::SetUp();
 
-    model_observer_ = std::make_unique<TestShelfModelObserver>();
     model_ = std::make_unique<ash::ShelfModel>();
-    model_->AddObserver(model_observer_.get());
-
-    tablet_mode_client_ = std::make_unique<TabletModeClient>();
-    tablet_mode_client_->InitForTesting(
-        fake_tablet_mode_controller_.CreateInterfacePtr());
 
     base::DictionaryValue manifest;
     manifest.SetString(extensions::manifest_keys::kName,
                        "launcher controller test extension");
     manifest.SetString(extensions::manifest_keys::kVersion, "1");
+    manifest.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
     manifest.SetString(extensions::manifest_keys::kDescription,
                        "for testing pinned apps");
 
@@ -425,17 +321,34 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
         base::CommandLine::ForCurrentProcess(), base::FilePath(), false);
     extension_service_->Init();
 
+    bool flush_app_service_mojo_calls = false;
+    if (app_service_proxy_connector_) {
+      DCHECK(profile());
+      app_service_proxy_.reset(apps::AppServiceProxy::CreateForTesting(
+          profile(), app_service_proxy_connector_));
+      old_app_service_proxy_for_testing_ =
+          AppServiceAppModelBuilder::SetAppServiceProxyForTesting(
+              app_service_proxy_.get());
+      // Flush the App Service Mojo calls, but only after calling
+      // arc_test_.SetUp, as it also pumps the run-loop in general.
+      flush_app_service_mojo_calls = true;
+    }
+
     if (auto_start_arc_test_)
       arc_test_.SetUp(profile());
+
+    if (flush_app_service_mojo_calls)
+      app_service_proxy_->FlushMojoCallsForTesting();
 
     // Wait until |extension_system| is signaled as started.
     base::RunLoop run_loop;
     extension_system->ready().Post(FROM_HERE, run_loop.QuitClosure());
     run_loop.Run();
 
-    app_service_ =
+    app_list_syncable_service_ =
         app_list::AppListSyncableServiceFactory::GetForProfile(profile());
-    StartAppSyncService(syncer::SyncDataList());
+    StartAppSyncService(
+        app_list_syncable_service_->GetAllSyncData(syncer::APP_LIST));
 
     std::string error;
     extension_chrome_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
@@ -447,27 +360,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
     extension2_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
                                     manifest, Extension::NO_FLAGS,
                                     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", &error);
-    // Fake gmail extension.
-    base::DictionaryValue manifest_gmail;
-    manifest_gmail.SetString(extensions::manifest_keys::kName,
-                             "Gmail launcher controller test extension");
-    manifest_gmail.SetString(extensions::manifest_keys::kVersion, "1");
-    manifest_gmail.SetString(extensions::manifest_keys::kDescription,
-                             "for testing pinned Gmail");
-    manifest_gmail.SetString(extensions::manifest_keys::kLaunchWebURL,
-                             kGmailLaunchURL);
-    auto list = std::make_unique<base::ListValue>();
-    list->AppendString("*://mail.google.com/mail/ca");
-    manifest_gmail.Set(extensions::manifest_keys::kWebURLs, std::move(list));
-
-    extension3_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
-                                    manifest_gmail, Extension::NO_FLAGS,
-                                    extension_misc::kGmailAppId, &error);
-
-    // Fake google docs extension.
-    extension4_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
-                                    manifest, Extension::NO_FLAGS,
-                                    extension_misc::kGoogleDocAppId, &error);
     extension5_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
                                     manifest, Extension::NO_FLAGS,
                                     "cccccccccccccccccccccccccccccccc", &error);
@@ -487,6 +379,50 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
         Extension::Create(base::FilePath(), Manifest::UNPACKED, manifest,
                           Extension::NO_FLAGS, arc::kPlayStoreAppId, &error);
     extension_service_->AddExtension(extension_chrome_.get());
+
+    // Fake Gmail app.
+    base::DictionaryValue manifest_gmail;
+    manifest_gmail.SetString(extensions::manifest_keys::kName,
+                             "Gmail launcher controller test extension");
+    manifest_gmail.SetString(extensions::manifest_keys::kVersion, "1");
+    manifest_gmail.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
+    manifest_gmail.SetString(extensions::manifest_keys::kDescription,
+                             "for testing pinned Gmail");
+    manifest_gmail.SetString(extensions::manifest_keys::kLaunchWebURL,
+                             kGmailLaunchURL);
+    auto list = std::make_unique<base::ListValue>();
+    list->AppendString("*://mail.google.com/mail/ca");
+    manifest_gmail.Set(extensions::manifest_keys::kWebURLs, std::move(list));
+
+    extensionGmailApp_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
+                                           manifest_gmail, Extension::NO_FLAGS,
+                                           extension_misc::kGmailAppId, &error);
+    // Fake Google Doc app.
+    extensionDocApp_ = Extension::Create(
+        base::FilePath(), Manifest::UNPACKED, manifest, Extension::NO_FLAGS,
+        extension_misc::kGoogleDocAppId, &error);
+
+    // Fake Youtube app.
+    extensionYoutubeApp_ = Extension::Create(
+        base::FilePath(), Manifest::UNPACKED, manifest, Extension::NO_FLAGS,
+        extension_misc::kYoutubeAppId, &error);
+
+    // Fake Web App.
+    base::DictionaryValue manifest_web_app;
+    manifest_web_app.SetString(extensions::manifest_keys::kName,
+                               "Test Web App");
+    manifest_web_app.SetString(extensions::manifest_keys::kVersion, "1");
+    manifest_web_app.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
+    manifest_web_app.SetString(extensions::manifest_keys::kDescription,
+                               "For testing");
+    web_app_ = Extension::Create(base::FilePath(), Manifest::UNPACKED,
+                                 manifest_web_app, Extension::NO_FLAGS,
+                                 kWebAppId, &error);
+  }
+
+  ui::BaseWindow* GetLastActiveWindowForItemController(
+      AppWindowLauncherItemController* item_controller) {
+    return item_controller->last_active_window_;
   }
 
   // Creates a running platform V2 app (not pinned) of type |app_id|.
@@ -506,33 +442,33 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   virtual void SetUpMultiUserScenario(syncer::SyncChangeList* user_a,
                                       syncer::SyncChangeList* user_b) {
     InitLauncherController();
-    EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+    EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
     // Set an empty pinned pref to begin with.
     syncer::SyncChangeList sync_list;
     InsertAddPinChange(&sync_list, 0, extension_misc::kChromeAppId);
     SendPinChanges(sync_list, true);
-    EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+    EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
     // Assume all applications have been added already.
     extension_service_->AddExtension(extension1_.get());
     extension_service_->AddExtension(extension2_.get());
-    extension_service_->AddExtension(extension3_.get());
-    extension_service_->AddExtension(extension4_.get());
+    extension_service_->AddExtension(extensionGmailApp_.get());
+    extension_service_->AddExtension(extensionDocApp_.get());
     extension_service_->AddExtension(extension5_.get());
     extension_service_->AddExtension(extension6_.get());
     extension_service_->AddExtension(extension7_.get());
     extension_service_->AddExtension(extension8_.get());
     extension_service_->AddExtension(extension_platform_app_.get());
     // There should be nothing in the list by now.
-    EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+    EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
     // Set user a preferences.
     InsertAddPinChange(user_a, 0, extension1_->id());
     InsertAddPinChange(user_a, 1, extension2_->id());
-    InsertAddPinChange(user_a, 2, extension3_->id());
+    InsertAddPinChange(user_a, 2, extensionGmailApp_->id());
     InsertAddPinChange(user_a, 3, extension_platform_app_->id());
-    InsertAddPinChange(user_a, 4, extension4_->id());
+    InsertAddPinChange(user_a, 4, extensionDocApp_->id());
     InsertAddPinChange(user_a, 5, extension5_->id());
     InsertAddPinChange(user_a, 6, extension_misc::kChromeAppId);
 
@@ -545,33 +481,37 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
 
   void TearDown() override {
     arc_test_.TearDown();
-    model_->RemoveObserver(model_observer_.get());
-    model_observer_.reset();
+    if (app_service_proxy_) {
+      AppServiceAppModelBuilder::SetAppServiceProxyForTesting(
+          old_app_service_proxy_for_testing_);
+      app_service_proxy_.reset(nullptr);
+    }
     launcher_controller_ = nullptr;
     BrowserWithTestWindowTest::TearDown();
   }
 
-  BrowserWindow* CreateBrowserWindow() override {
-    return CreateTestBrowserWindowAura();
+  std::unique_ptr<BrowserWindow> CreateBrowserWindow() override {
+    return std::unique_ptr<TestBrowserWindow>(CreateTestBrowserWindowAura());
   }
 
   std::unique_ptr<Browser> CreateBrowserWithTestWindowForProfile(
       Profile* profile) {
     TestBrowserWindow* browser_window = CreateTestBrowserWindowAura();
     new TestBrowserWindowOwner(browser_window);
-    return base::WrapUnique(
-        CreateBrowser(profile, Browser::TYPE_TABBED, false, browser_window));
+    return CreateBrowser(profile, Browser::TYPE_TABBED, false, browser_window);
   }
 
   // Create an uninitialized chrome launcher controller instance.
-  TestChromeLauncherController* CreateLauncherController() {
+  ChromeLauncherController* CreateLauncherController() {
     launcher_controller_ =
-        std::make_unique<TestChromeLauncherController>(profile(), model_.get());
+        std::make_unique<ChromeLauncherController>(profile(), model_.get());
     return launcher_controller_.get();
   }
 
   // Create and initialize the controller, owned by the test shell delegate.
-  void InitLauncherController() { CreateLauncherController()->Init(); }
+  void InitLauncherController() {
+    CreateLauncherController()->Init();
+  }
 
   // Create and initialize the controller; create a tab and show the browser.
   void InitLauncherControllerWithBrowser() {
@@ -587,25 +527,25 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   // Returns a pointer to the uninitialized controller, owned by shell delegate.
   // TODO(msw): This does not accurately represent ChromeLauncherController
   // lifetime or usage in production, and does not accurately simulate restarts.
-  TestChromeLauncherController* RecreateLauncherController() {
+  ChromeLauncherController* RecreateLauncherController() {
     // Destroy any existing controller first; only one may exist at a time.
     ResetLauncherController();
-    model_->RemoveObserver(model_observer_.get());
     model_ = std::make_unique<ash::ShelfModel>();
-    model_observer_ = std::make_unique<TestShelfModelObserver>();
-    model_->AddObserver(model_observer_.get());
     return CreateLauncherController();
   }
 
   void StartAppSyncService(const syncer::SyncDataList& init_sync_list) {
-    app_service_->MergeDataAndStartSyncing(
+    app_list_syncable_service_->MergeDataAndStartSyncing(
         syncer::APP_LIST, init_sync_list,
         std::make_unique<syncer::FakeSyncChangeProcessor>(),
         std::make_unique<syncer::SyncErrorFactoryMock>());
-    EXPECT_EQ(init_sync_list.size(), app_service_->sync_items().size());
+    EXPECT_EQ(init_sync_list.size(),
+              app_list_syncable_service_->sync_items().size());
   }
 
-  void StopAppSyncService() { app_service_->StopSyncing(syncer::APP_LIST); }
+  void StopAppSyncService() {
+    app_list_syncable_service_->StopSyncing(syncer::APP_LIST);
+  }
 
   sync_preferences::PrefModelAssociator* GetPrefSyncService() {
     sync_preferences::PrefServiceSyncable* pref_sync =
@@ -622,25 +562,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
         std::make_unique<syncer::FakeSyncChangeProcessor>(),
         std::make_unique<syncer::SyncErrorFactoryMock>());
     EXPECT_FALSE(r.error().IsSet());
-  }
-
-  void StartPrefSyncServiceForPins(const base::ListValue& init_value) {
-    syncer::SyncDataList init_sync_list;
-    std::string serialized;
-    JSONStringValueSerializer json(&serialized);
-    json.Serialize(init_value);
-    sync_pb::EntitySpecifics one;
-    sync_pb::PreferenceSpecifics* pref_one = one.mutable_preference();
-    pref_one->set_name(prefs::kPinnedLauncherApps);
-    pref_one->set_value(serialized);
-    init_sync_list.push_back(syncer::SyncData::CreateRemoteData(
-        1, one, base::Time(), syncer::AttachmentIdList(),
-        syncer::AttachmentServiceProxyForTest::Create()));
-    StartPrefSyncService(init_sync_list);
-  }
-
-  void StopPrefSyncService() {
-    GetPrefSyncService()->StopSyncing(syncer::PREFERENCES);
   }
 
   void SetAppIconLoader(std::unique_ptr<AppIconLoader> loader) {
@@ -662,16 +583,15 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
         base::WrapUnique<LauncherControllerHelper>(helper));
   }
 
-  void InsertPrefValue(base::ListValue* pref_value,
-                       int index,
+  void AppendPrefValue(base::ListValue* pref_value,
                        const std::string& extension_id) {
-    auto entry = std::make_unique<base::DictionaryValue>();
-    entry->SetString(kPinnedAppsPrefAppIDPath, extension_id);
-    pref_value->Insert(index, std::move(entry));
+    base::DictionaryValue entry;
+    entry.SetKey(kPinnedAppsPrefAppIDKey, base::Value(extension_id));
+    pref_value->GetList().push_back(std::move(entry));
   }
 
   void InsertRemoveAllPinsChange(syncer::SyncChangeList* list) {
-    for (const auto& sync_peer : app_service_->sync_items()) {
+    for (const auto& sync_peer : app_list_syncable_service_->sync_items()) {
       sync_pb::EntitySpecifics specifics;
       sync_pb::AppListSpecifics* app_list_specifics =
           specifics.mutable_app_list();
@@ -743,26 +663,28 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
     syncer::SyncChangeList sync_list;
     InsertRemoveAllPinsChange(&sync_list);
     InsertAddPinChange(&sync_list, 0, kDummyAppId);
-    app_service_->ProcessSyncChanges(FROM_HERE, sync_list);
+    app_list_syncable_service_->ProcessSyncChanges(FROM_HERE, sync_list);
   }
 
   void SendPinChanges(const syncer::SyncChangeList& sync_list,
                       bool reset_pin_model) {
     if (!reset_pin_model) {
-      app_service_->ProcessSyncChanges(FROM_HERE, sync_list);
+      app_list_syncable_service_->ProcessSyncChanges(FROM_HERE, sync_list);
     } else {
       syncer::SyncChangeList combined_sync_list;
       InsertRemoveAllPinsChange(&combined_sync_list);
       combined_sync_list.insert(combined_sync_list.end(), sync_list.begin(),
                                 sync_list.end());
-      app_service_->ProcessSyncChanges(FROM_HERE, combined_sync_list);
+      app_list_syncable_service_->ProcessSyncChanges(FROM_HERE,
+                                                     combined_sync_list);
     }
   }
 
   // Set the index at which the chrome icon should be.
   void SetShelfChromeIconIndex(int index) {
     DCHECK(
-        app_service_->GetPinPosition(extension_misc::kChromeAppId).IsValid());
+        app_list_syncable_service_->GetPinPosition(extension_misc::kChromeAppId)
+            .IsValid());
     syncer::StringOrdinal chrome_position;
     chrome_position = index == 0 ? GeneratePinPosition(0).CreateBefore()
                                  : GeneratePinPosition(index - 1).CreateBetween(
@@ -779,7 +701,7 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
         extension_misc::kChromeAppId, "Test", specifics);
     sync_list.push_back(syncer::SyncChange(
         FROM_HERE, syncer::SyncChange::ACTION_UPDATE, sync_data));
-    app_service_->ProcessSyncChanges(FROM_HERE, sync_list);
+    app_list_syncable_service_->ProcessSyncChanges(FROM_HERE, sync_list);
   }
 
   // Gets the IDs of the currently pinned app items.
@@ -811,10 +733,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
             result += "app1";
           } else if (app == extension2_->id()) {
             result += "app2";
-          } else if (app == extension3_->id()) {
-            result += "app3";
-          } else if (app == extension4_->id()) {
-            result += "app4";
           } else if (app == extension5_->id()) {
             result += "app5";
           } else if (app == extension6_->id()) {
@@ -823,10 +741,24 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
             result += "app7";
           } else if (app == extension8_->id()) {
             result += "app8";
+          } else if (app == extensionGmailApp_->id()) {
+            result += "gmail";
           } else if (app == extension_platform_app_->id()) {
             result += "platform_app";
+          } else if (app == extensionDocApp_->id()) {
+            result += "doc";
+          } else if (app == extensionYoutubeApp_->id()) {
+            result += "youtube";
           } else {
-            result += "unknown";
+            const auto* extension = extension_service_->GetExtensionById(
+                app, /*include_disabled=*/true);
+            if (extension && !extension->name().empty()) {
+              std::string name = extension->name();
+              name[0] = std::tolower(name[0]);
+              result += name;
+            } else {
+              result += "unknown";
+            }
           }
           break;
         }
@@ -839,10 +771,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
             result += "App1";
           } else if (app == extension2_->id()) {
             result += "App2";
-          } else if (app == extension3_->id()) {
-            result += "App3";
-          } else if (app == extension4_->id()) {
-            result += "App4";
           } else if (app == extension5_->id()) {
             result += "App5";
           } else if (app == extension6_->id()) {
@@ -851,10 +779,20 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
             result += "App7";
           } else if (app == extension8_->id()) {
             result += "App8";
+          } else if (app == extensionGmailApp_->id()) {
+            result += "Gmail";
+          } else if (app == extensionDocApp_->id()) {
+            result += "Doc";
+          } else if (app == extensionYoutubeApp_->id()) {
+            result += "Youtube";
           } else if (app == extension_platform_app_->id()) {
             result += "Platform_App";
           } else if (app == arc_support_host_->id()) {
             result += "Play Store";
+          } else if (app == crostini::kCrostiniTerminalId) {
+            result += "Terminal";
+          } else if (app == web_app_->id()) {
+            result += "WebApp";
           } else {
             bool arc_app_found = false;
             for (const auto& arc_app : arc_test_.fake_apps()) {
@@ -864,16 +802,22 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
                 break;
               }
             }
-            if (!arc_app_found)
-              result += "unknown";
+            if (!arc_app_found) {
+              const auto* extension = extension_service_->GetExtensionById(
+                  app, /*include_disabled=*/true);
+              if (extension && !extension->name().empty()) {
+                std::string name = extension->name();
+                name[0] = std::toupper(name[0]);
+                result += name;
+              } else {
+                result += "Unknown";
+              }
+            }
           }
           break;
         }
         case ash::TYPE_BROWSER_SHORTCUT:
           result += "Chrome";
-          break;
-        case ash::TYPE_APP_LIST:
-          result += "AppList";
           break;
         default:
           result += "Unknown";
@@ -896,7 +840,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   }
 
   void SendListOfArcApps() {
-    arc_test_.app_instance()->RefreshAppList();
     arc_test_.app_instance()->SendRefreshAppList(arc_test_.fake_apps());
   }
 
@@ -905,7 +848,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   }
 
   void UninstallArcApps() {
-    arc_test_.app_instance()->RefreshAppList();
     arc_test_.app_instance()->SendRefreshAppList(
         std::vector<arc::mojom::AppInfo>());
   }
@@ -915,10 +857,6 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   void EnablePlayStore(bool enabled) {
     arc::SetArcPlayStoreEnabledForProfile(profile(), enabled);
     base::RunLoop().RunUntilIdle();
-  }
-
-  void EnableTabletMode(bool enable) {
-    TabletModeClient::Get()->OnTabletModeToggled(enable);
   }
 
   void ValidateArcState(bool arc_enabled,
@@ -936,13 +874,12 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
   views::Widget* CreateArcWindow(const std::string& window_app_id) {
     views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
     params.bounds = gfx::Rect(5, 5, 20, 20);
-    params.context = GetContext();
+    params.context = ash_test_helper()->CurrentContext();
     views::Widget* widget = new views::Widget();
     widget->Init(params);
     // Set ARC id before showing the window to be recognized in
     // ArcAppWindowLauncherController.
-    exo::ShellSurface::SetApplicationId(widget->GetNativeWindow(),
-                                        window_app_id);
+    exo::SetShellApplicationId(widget->GetNativeWindow(), window_app_id);
     widget->Show();
     widget->Activate();
     return widget;
@@ -950,13 +887,11 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
 
   arc::mojom::AppInfo CreateAppInfo(const std::string& name,
                                     const std::string& activity,
-                                    const std::string& package_name,
-                                    OrientationLock lock) {
+                                    const std::string& package_name) {
     arc::mojom::AppInfo appinfo;
     appinfo.name = name;
     appinfo.package_name = package_name;
     appinfo.activity = activity;
-    appinfo.orientation_lock = lock;
     return appinfo;
   }
 
@@ -964,11 +899,11 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
     ArcAppListPrefs* const prefs = arc_test_.arc_app_list_prefs();
     // Adding app to the prefs, and check that the app is accessible by id.
     prefs->AddAppAndShortcut(
-        true /* app_ready */, app_info.name, app_info.package_name,
-        app_info.activity, std::string() /* intent_uri */,
-        std::string() /* icon_resource_id */, false /* sticky */,
-        true /* notifications_enabled */, false /* shortcut */,
-        true /* launchable */, app_info.orientation_lock);
+        app_info.name, app_info.package_name, app_info.activity,
+        std::string() /* intent_uri */, std::string() /* icon_resource_id */,
+        false /* sticky */, true /* notifications_enabled */,
+        true /* app_ready */, false /* suspended */, false /* shortcut */,
+        true /* launchable */);
     const std::string app_id =
         ArcAppListPrefs::GetAppId(app_info.package_name, app_info.activity);
     EXPECT_TRUE(prefs->GetApp(app_id));
@@ -982,46 +917,66 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
                          appinfo.name, std::string());
   }
 
-  void NotifyOnTaskOrientationLockRequested(int32_t task_id,
-                                            OrientationLock lock) {
+  // Creates a window with TYPE_APP shelf item type and the given app_id.
+  views::Widget* CreateShelfAppWindow(const std::string& app_id) {
+    views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
+    params.context = GetContext();
+    params.bounds = gfx::Rect(5, 5, 20, 20);
+    views::Widget* widget = new views::Widget();
+    widget->Init(params);
+
+    aura::Window* window = widget->GetNativeWindow();
+    const ash::ShelfID shelf_id(app_id);
+    window->SetProperty(ash::kShelfIDKey,
+                        new std::string(shelf_id.Serialize()));
+    window->SetProperty<int>(ash::kShelfItemTypeKey, ash::TYPE_APP);
+
+    widget->Show();
+    widget->Activate();
+    return widget;
+  }
+
+  void NotifyOnTaskDestroyed(int32_t task_id) {
     ArcAppListPrefs* const prefs = arc_test_.arc_app_list_prefs();
-    prefs->OnTaskOrientationLockRequested(task_id, lock);
+    prefs->OnTaskDestroyed(task_id);
   }
 
   // Needed for extension service & friends to work.
   scoped_refptr<Extension> extension_chrome_;
   scoped_refptr<Extension> extension1_;
   scoped_refptr<Extension> extension2_;
-  scoped_refptr<Extension> extension3_;
-  scoped_refptr<Extension> extension4_;
   scoped_refptr<Extension> extension5_;
   scoped_refptr<Extension> extension6_;
   scoped_refptr<Extension> extension7_;
   scoped_refptr<Extension> extension8_;
+  scoped_refptr<Extension> extensionGmailApp_;
+  scoped_refptr<Extension> extensionDocApp_;
+  scoped_refptr<Extension> extensionYoutubeApp_;
   scoped_refptr<Extension> extension_platform_app_;
   scoped_refptr<Extension> arc_support_host_;
+  scoped_refptr<Extension> web_app_;
 
   ArcAppTest arc_test_;
   bool auto_start_arc_test_ = false;
-  std::unique_ptr<TestChromeLauncherController> launcher_controller_;
-  std::unique_ptr<TestShelfModelObserver> model_observer_;
+  std::unique_ptr<ChromeLauncherController> launcher_controller_;
   std::unique_ptr<ash::ShelfModel> model_;
-
-  FakeTabletModeController fake_tablet_mode_controller_;
-  std::unique_ptr<TabletModeClient> tablet_mode_client_;
 
   // |item_delegate_manager_| owns |test_controller_|.
   ash::ShelfItemDelegate* test_controller_ = nullptr;
 
-  ExtensionService* extension_service_ = nullptr;
+  extensions::ExtensionService* extension_service_ = nullptr;
 
-  app_list::AppListSyncableService* app_service_ = nullptr;
+  app_list::AppListSyncableService* app_list_syncable_service_ = nullptr;
+
+  service_manager::Connector* app_service_proxy_connector_ = nullptr;
+  std::unique_ptr<apps::AppServiceProxy> app_service_proxy_;
+  apps::AppServiceProxy* old_app_service_proxy_for_testing_ = nullptr;
 
  private:
   TestBrowserWindow* CreateTestBrowserWindowAura() {
-    std::unique_ptr<aura::Window> window(new aura::Window(nullptr));
+    std::unique_ptr<aura::Window> window(
+        new aura::Window(nullptr, aura::client::WINDOW_TYPE_NORMAL));
     window->set_id(0);
-    window->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window->Init(ui::LAYER_TEXTURED);
     aura::client::ParentWindowWithContext(window.get(), GetContext(),
                                           gfx::Rect(200, 200));
@@ -1033,25 +988,101 @@ class ChromeLauncherControllerTest : public BrowserWithTestWindowTest {
 };
 
 class ChromeLauncherControllerWithArcTest
-    : public ChromeLauncherControllerTest,
-      public ::testing::WithParamInterface<bool> {
+    : public ChromeLauncherControllerTest {
  protected:
-  ChromeLauncherControllerWithArcTest() { auto_start_arc_test_ = true; }
+  ChromeLauncherControllerWithArcTest() {
+    auto_start_arc_test_ = true;
+    if (!base::FeatureList::IsEnabled(features::kAppServiceAsh)) {
+      return;
+    }
+    // We set some state in the ChromeLauncherControllerTest superclass to
+    // affect what ChromeLauncherControllerTest::SetUp does, making it call
+    // AppServiceAppModelBuilder::SetAppServiceProxyForTesting (ASAMB::SASPFT).
+    // We can only call SASPFT after the TestingProfile is created (which
+    // happens in the superclass' SetUp) but before the ASAMB is constructed
+    // (which also happens in the superclass' SetUp).
+    app_service_ = std::make_unique<apps::AppService>(
+        test_connector_factory_.RegisterInstance(apps::mojom::kServiceName));
+    app_service_proxy_connector_ =
+        test_connector_factory_.GetDefaultConnector();
+  }
+
   ~ChromeLauncherControllerWithArcTest() override {}
 
   void SetUp() override {
-    if (GetParam())
-      arc::SetArcAlwaysStartForTesting(true);
+    // To prevent crash on test exit and pending decode request.
+    ArcAppIcon::DisableSafeDecodingForTesting();
+
     ChromeLauncherControllerTest::SetUp();
+    if (app_service_proxy_connector_) {
+      arc_apps_.reset(
+          apps::ArcApps::CreateForTesting(profile(), app_service_proxy_.get()));
+    }
+  }
+
+  void TearDown() override {
+    if (app_service_proxy_connector_) {
+      arc_apps_.reset(nullptr);
+    }
+    ChromeLauncherControllerTest::TearDown();
   }
 
  private:
+  service_manager::TestConnectorFactory test_connector_factory_;
+  std::unique_ptr<service_manager::Service> app_service_;
+  std::unique_ptr<apps::ArcApps> arc_apps_;
+
   DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerWithArcTest);
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        ChromeLauncherControllerWithArcTest,
-                        ::testing::Bool());
+class ChromeLauncherControllerExtendedSheflTest
+    : public ChromeLauncherControllerWithArcTest {
+ protected:
+  ChromeLauncherControllerExtendedSheflTest() = default;
+  ~ChromeLauncherControllerExtendedSheflTest() override = default;
+
+  void SetUp() override {
+    ChromeLauncherControllerWithArcTest::SetUp();
+
+    StartPrefSyncService(syncer::SyncDataList());
+
+    extension_service_->AddExtension(extensionGmailApp_.get());
+    extension_service_->AddExtension(extensionDocApp_.get());
+    extension_service_->AddExtension(extensionYoutubeApp_.get());
+    extension_service_->AddExtension(arc_support_host_.get());
+
+    std::string error;
+    base::DictionaryValue manifest;
+    manifest.SetString(extensions::manifest_keys::kVersion, "1");
+    manifest.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
+    manifest.SetString(extensions::manifest_keys::kDescription,
+                       "for testing pinned apps");
+
+    const std::vector<std::pair<std::string, std::string>> extra_extensions = {
+        {extension_misc::kCalendarAppId, "Calendar"},
+        {extension_misc::kGoogleSheetsAppId, "Sheets"},
+        {extension_misc::kGoogleSlidesAppId, "Slides"},
+        {extension_misc::kFilesManagerAppId, "Files"},
+        {app_list::kInternalAppIdCamera, "Camera"},
+        {extension_misc::kGooglePhotosAppId, "Photos"},
+    };
+
+    for (const auto& extension_id_name : extra_extensions) {
+      manifest.SetString(extensions::manifest_keys::kName,
+                         extension_id_name.second);
+      scoped_refptr<Extension> extension = Extension::Create(
+          base::FilePath(), Manifest::UNPACKED, manifest, Extension::NO_FLAGS,
+          extension_id_name.first, &error);
+      extension_service_->AddExtension(extension.get());
+      extra_extensions_.emplace_back(extension);
+    }
+  }
+
+ private:
+  std::vector<scoped_refptr<Extension>> extra_extensions_;
+
+  DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerExtendedSheflTest);
+};
 
 // Watches WebContents and blocks until it is destroyed. This is needed for
 // the destruction of a V2 application.
@@ -1103,7 +1134,7 @@ class V1App : public TestBrowserWindow {
 };
 
 // A V2 application window created with an |extension| and for a |profile|.
-// Upon destruction it will properly close the application; supports panels too.
+// Upon destruction it will properly close the application.
 class V2App {
  public:
   V2App(Profile* profile,
@@ -1159,24 +1190,26 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
     user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
         std::make_unique<chromeos::FakeChromeUserManager>());
 
-    // Initialize the WallpaperManager singleton.
-    chromeos::WallpaperManager::Initialize();
-
     // Initialize the rest.
     ChromeLauncherControllerTest::SetUp();
+
+    // Initialize WallpaperControllerClient.
+    wallpaper_controller_client_ =
+        std::make_unique<WallpaperControllerClient>();
+    wallpaper_controller_client_->InitForTesting(&test_wallpaper_controller_);
 
     // AvatarMenu and multiple profiles works after user logged in.
     profile_manager()->SetLoggedIn(true);
 
     // Ensure there are multiple profiles. User 0 is created during setup.
     CreateMultiUserProfile("user1");
-    ASSERT_TRUE(SessionControllerClient::IsMultiProfileAvailable());
+    ASSERT_TRUE(SessionControllerClientImpl::IsMultiProfileAvailable());
   }
 
   void TearDown() override {
     ChromeLauncherControllerTest::TearDown();
     user_manager_enabler_.reset();
-    chromeos::WallpaperManager::Shutdown();
+    wallpaper_controller_client_.reset();
 
     // A Task is leaked if we don't destroy everything, then run the message
     // loop.
@@ -1189,7 +1222,9 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
     const std::string email_string = user_name + "@example.com";
     const AccountId account_id(AccountId::FromUserEmail(email_string));
     // Add a user to the fake user manager.
-    GetFakeUserManager()->AddUser(account_id);
+    auto* user = GetFakeUserManager()->AddUser(account_id);
+    ash_test_helper()->test_session_controller_client()->AddUserSession(
+        user->GetDisplayEmail());
 
     GetFakeUserManager()->LoginUser(account_id);
 
@@ -1199,8 +1234,8 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
 
     // Remember the profile name so that we can destroy it upon destruction.
     created_profiles_[profile] = account_id.GetUserEmail();
-    if (MultiUserWindowManager::GetInstance())
-      MultiUserWindowManager::GetInstance()->AddUser(profile);
+    if (MultiUserWindowManagerHelper::GetInstance())
+      MultiUserWindowManagerHelper::GetInstance()->AddUser(profile);
     if (launcher_controller_)
       launcher_controller_->AdditionalUserAddedToSession(profile);
     return profile;
@@ -1209,12 +1244,12 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
   // Switch to another user.
   void SwitchActiveUser(const AccountId& account_id) {
     GetFakeUserManager()->SwitchActiveUser(account_id);
-    MultiUserWindowManagerChromeOS* manager =
-        static_cast<MultiUserWindowManagerChromeOS*>(
-            MultiUserWindowManager::GetInstance());
-    manager->SetAnimationSpeedForTest(
-        MultiUserWindowManagerChromeOS::ANIMATION_SPEED_DISABLED);
-    manager->ActiveUserChanged(GetFakeUserManager()->FindUser(account_id));
+    ash::MultiUserWindowManagerImpl::Get()->SetAnimationSpeedForTest(
+        ash::MultiUserWindowManagerImpl::ANIMATION_SPEED_DISABLED);
+    ash::MultiUserWindowManagerImpl::Get()->OnActiveUserSessionChanged(
+        account_id);
+    // TODO(crbug.com/956841) This should be redundant with the FlushBindings
+    // call, but removing it breaks some tests.
     launcher_controller_->browser_status_monitor_for_test()->ActiveUserChanged(
         account_id.GetUserEmail());
 
@@ -1266,6 +1301,10 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
 
   std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 
+  std::unique_ptr<WallpaperControllerClient> wallpaper_controller_client_;
+
+  TestWallpaperController test_wallpaper_controller_;
+
   ProfileToNameMap created_profiles_;
 
   DISALLOW_COPY_AND_ASSIGN(
@@ -1273,45 +1312,117 @@ class MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest
 };
 
 class ChromeLauncherControllerMultiProfileWithArcTest
-    : public MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
-      public ::testing::WithParamInterface<bool> {
+    : public MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest {
  protected:
   ChromeLauncherControllerMultiProfileWithArcTest() {
     auto_start_arc_test_ = true;
   }
   ~ChromeLauncherControllerMultiProfileWithArcTest() override {}
 
-  void SetUp() override {
-    if (GetParam())
-      arc::SetArcAlwaysStartForTesting(true);
-    MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest::SetUp();
-  }
-
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerMultiProfileWithArcTest);
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        ChromeLauncherControllerMultiProfileWithArcTest,
-                        ::testing::Bool());
-
 TEST_F(ChromeLauncherControllerTest, DefaultApps) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
 
-  // Installing |extension3_| should add it to the launcher - behind the
-  // chrome icon.
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
+
+  // Pinning the non-default app. It should appear at the end. No default app
+  // is currently installed.
+  extension_service_->AddExtension(extension1_.get());
+  launcher_controller_->PinAppWithID(extension1_->id());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
+
+  // Install default apps in reverse order, compared how they are declared.
+  // However pin positions should be in the order as they declared. Note,
+  // default apps appear on shelf between manually pinned App1.
+
+  // Prefs are not yet synced. No default pin appears.
+  extension_service_->AddExtension(extensionYoutubeApp_.get());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
+
+  StartPrefSyncService(syncer::SyncDataList());
+  EXPECT_EQ("Chrome, Youtube, App1", GetPinnedAppStatus());
+
+  extension_service_->AddExtension(extensionDocApp_.get());
+  EXPECT_EQ("Chrome, Doc, Youtube, App1", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("Chrome, Gmail, Doc, Youtube, App1", GetPinnedAppStatus());
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
+TEST_F(ChromeLauncherControllerExtendedSheflTest, ExtendedShefDefault) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kEnableExtendedShelfLayout,
+      {std::pair<std::string, std::string>("app_count", "0")});
+
+  InitLauncherController();
+  EXPECT_EQ("Chrome, Gmail, Doc, Youtube, Play Store", GetPinnedAppStatus());
+}
+
+TEST_F(ChromeLauncherControllerExtendedSheflTest, ExtendedShef7Apps) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kEnableExtendedShelfLayout,
+      {std::pair<std::string, std::string>("app_count", "7")});
+
+  InitLauncherController();
+  EXPECT_EQ("Chrome, Gmail, Doc, Photos, Files, Youtube, Play Store",
+            GetPinnedAppStatus());
+}
+
+TEST_F(ChromeLauncherControllerExtendedSheflTest, ExtendedShef10Apps) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kEnableExtendedShelfLayout,
+      {std::pair<std::string, std::string>("app_count", "10")});
+
+  InitLauncherController();
+  EXPECT_EQ(
+      "Chrome, Gmail, Calendar, Doc, Sheets, Slides, Files, Camera, Photos, "
+      "Play Store",
+      GetPinnedAppStatus());
+}
+
+TEST_F(ChromeLauncherControllerExtendedSheflTest, UpgradeFromDefault) {
+  InitLauncherController();
+  EXPECT_EQ("Chrome, Gmail, Doc, Youtube, Play Store", GetPinnedAppStatus());
+
+  // Upgrade happens only in case default layout is active.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kEnableExtendedShelfLayout,
+      {std::pair<std::string, std::string>("app_count", "10")});
+
+  // Trigger layout update, app_id does not matter.
+  extension_service_->AddExtension(extension1_.get());
+
+  EXPECT_EQ(
+      "Chrome, Gmail, Calendar, Doc, Sheets, Slides, Files, Camera, Photos, "
+      "Play Store",
+      GetPinnedAppStatus());
+}
+
+TEST_F(ChromeLauncherControllerExtendedSheflTest, NoUpgradeFromNonDefault) {
+  InitLauncherController();
+  launcher_controller_->UnpinAppWithID(extension_misc::kYoutubeAppId);
+  EXPECT_EQ("Chrome, Gmail, Doc, Play Store", GetPinnedAppStatus());
+
+  // Upgrade does not happen due to default pin layout change.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kEnableExtendedShelfLayout,
+      {std::pair<std::string, std::string>("app_count", "10")});
+
+  // Trigger layout update, app_id does not matter.
+  extension_service_->AddExtension(extension1_.get());
+
+  EXPECT_EQ("Chrome, Gmail, Doc, Play Store", GetPinnedAppStatus());
+}
+
+TEST_F(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   // Work on ARC disabled platform first.
   const std::string arc_app_id1 =
       ArcAppTest::GetAppId(arc_test_.fake_apps()[0]);
@@ -1324,7 +1435,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
 
   extension_service_->AddExtension(extension1_.get());
   extension_service_->AddExtension(extension2_.get());
-  extension_service_->AddExtension(extension3_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
 
   // extension 1, 3 are pinned by user
   syncer::SyncChangeList sync_list;
@@ -1332,7 +1443,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   InsertAddPinChange(&sync_list, 1, arc_app_id1);
   InsertAddPinChange(&sync_list, 2, extension2_->id());
   InsertAddPinChange(&sync_list, 3, arc_app_id2);
-  InsertAddPinChange(&sync_list, 4, extension3_->id());
+  InsertAddPinChange(&sync_list, 4, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
   SetShelfChromeIconIndex(1);
 
@@ -1340,19 +1451,19 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id2));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id3));
-  EXPECT_EQ("AppList, App1, Chrome, App2, App3", GetPinnedAppStatus());
+  EXPECT_EQ("App1, Chrome, App2, Gmail", GetPinnedAppStatus());
 
   // Persist pin state, we don't have active pin for ARC apps yet, but pin
   // model should have it.
   syncer::SyncDataList copy_sync_list =
-      app_service_->GetAllSyncData(syncer::APP_LIST);
+      app_list_syncable_service_->GetAllSyncData(syncer::APP_LIST);
 
   ResetLauncherController();
   SendPinChanges(syncer::SyncChangeList(), true);
   StopAppSyncService();
-  EXPECT_EQ(0U, app_service_->sync_items().size());
+  EXPECT_EQ(0U, app_list_syncable_service_->sync_items().size());
 
   // Move to ARC enabled platform, restart syncing with stored data.
   StartAppSyncService(copy_sync_list);
@@ -1364,33 +1475,32 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id2));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id3));
 
-  EXPECT_EQ("AppList, App1, Chrome, Fake App 0, App2, Fake App 1, App3",
+  EXPECT_EQ("App1, Chrome, Fake App 0, App2, Fake App 1, Gmail",
             GetPinnedAppStatus());
 
   // Now move pins on ARC enabled platform.
-  model_->Move(1, 4);
+  model_->Move(0, 3);
+  model_->Move(2, 0);
+  model_->Move(2, 4);
   model_->Move(3, 1);
-  model_->Move(3, 5);
-  model_->Move(4, 2);
-  EXPECT_EQ("AppList, App2, Fake App 1, Chrome, App1, Fake App 0, App3",
+  EXPECT_EQ("App2, Fake App 1, Chrome, App1, Fake App 0, Gmail",
             GetPinnedAppStatus());
 
-  copy_sync_list = app_service_->GetAllSyncData(syncer::APP_LIST);
+  if (app_service_proxy_)
+    app_service_proxy_->FlushMojoCallsForTesting();
+  copy_sync_list = app_list_syncable_service_->GetAllSyncData(syncer::APP_LIST);
 
   ResetLauncherController();
   ResetPinModel();
 
   SendPinChanges(syncer::SyncChangeList(), true);
   StopAppSyncService();
-  EXPECT_EQ(0U, app_service_->sync_items().size());
+  EXPECT_EQ(0U, app_list_syncable_service_->sync_items().size());
 
   // Move back to ARC disabled platform.
-  // TODO(victorhsieh): Implement opt-out.
-  if (arc::ShouldArcAlwaysStart())
-    return;
   EnablePlayStore(false);
   StartAppSyncService(copy_sync_list);
   RecreateLauncherController()->Init();
@@ -1399,14 +1509,14 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id2));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id3));
-  EXPECT_EQ("AppList, App2, Chrome, App1, App3", GetPinnedAppStatus());
+  EXPECT_EQ("App2, Chrome, App1, Gmail", GetPinnedAppStatus());
 
   // Now move/remove pins on ARC disabled platform.
-  model_->Move(4, 2);
+  model_->Move(3, 1);
   launcher_controller_->UnpinAppWithID(extension2_->id());
-  EXPECT_EQ("AppList, App3, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Gmail, Chrome, App1", GetPinnedAppStatus());
   EnablePlayStore(true);
 
   SendListOfArcApps();
@@ -1415,9 +1525,9 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinCrossPlatformWorkflow) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id2));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id3));
-  EXPECT_EQ("AppList, Fake App 1, App3, Chrome, App1, Fake App 0",
+  EXPECT_EQ("Fake App 1, Gmail, Chrome, App1, Fake App 0",
             GetPinnedAppStatus());
 }
 
@@ -1426,28 +1536,28 @@ TEST_F(ChromeLauncherControllerTest, MergePolicyAndUserPrefPinnedApps) {
   InitLauncherController();
 
   extension_service_->AddExtension(extension1_.get());
-  extension_service_->AddExtension(extension3_.get());
-  extension_service_->AddExtension(extension4_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  extension_service_->AddExtension(extensionDocApp_.get());
   extension_service_->AddExtension(extension5_.get());
   // extension 1, 3 are pinned by user
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension_misc::kChromeAppId);
-  InsertAddPinChange(&sync_list, 2, extension3_->id());
+  InsertAddPinChange(&sync_list, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   base::ListValue policy_value;
   // extension 2 4 are pinned by policy
-  InsertPrefValue(&policy_value, 0, extension2_->id());
-  InsertPrefValue(&policy_value, 1, extension4_->id());
+  AppendPrefValue(&policy_value, extension2_->id());
+  AppendPrefValue(&policy_value, extensionDocApp_->id());
   profile()->GetTestingPrefService()->SetManagedPref(
       prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
 
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   // 2 is not pinned as it's not installed
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension4_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionDocApp_->id()));
   // install extension 2 and check
   extension_service_->AddExtension(extension2_.get());
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
@@ -1458,12 +1568,12 @@ TEST_F(ChromeLauncherControllerTest, MergePolicyAndUserPrefPinnedApps) {
   EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
             GetPinnableForAppID(extension2_->id(), profile()));
   EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
-            GetPinnableForAppID(extension3_->id(), profile()));
+            GetPinnableForAppID(extensionGmailApp_->id(), profile()));
   EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
-            GetPinnableForAppID(extension4_->id(), profile()));
+            GetPinnableForAppID(extensionDocApp_->id(), profile()));
 
   // Check the order of shelf pinned apps
-  EXPECT_EQ("AppList, App2, App4, App1, Chrome, App3", GetPinnedAppStatus());
+  EXPECT_EQ("App2, Doc, App1, Chrome, Gmail", GetPinnedAppStatus());
 }
 
 // Check that the restauration of launcher items is happening in the same order
@@ -1475,33 +1585,33 @@ TEST_F(ChromeLauncherControllerTest, RestoreDefaultAppsReverseOrder) {
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension2_->id());
-  InsertAddPinChange(&sync_list, 2, extension3_->id());
+  InsertAddPinChange(&sync_list, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   // The model should only contain the browser shortcut and app list items.
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
-  // Installing |extension3_| should add it to the shelf - behind the
+  // Installing |extensionGmailApp_| should add it to the shelf - behind the
   // chrome icon.
   ash::ShelfItem item;
-  extension_service_->AddExtension(extension3_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail", GetPinnedAppStatus());
 
   // Installing |extension2_| should add it to the launcher - behind the
   // chrome icon, but in first location.
   extension_service_->AddExtension(extension2_.get());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_EQ("AppList, Chrome, App2, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App2, Gmail", GetPinnedAppStatus());
 
   // Installing |extension1_| should add it to the launcher - behind the
   // chrome icon, but in first location.
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App2, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2, Gmail", GetPinnedAppStatus());
 }
 
 // Check that the restauration of launcher items is happening in the same order
@@ -1513,32 +1623,32 @@ TEST_F(ChromeLauncherControllerTest, RestoreDefaultAppsRandomOrder) {
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension2_->id());
-  InsertAddPinChange(&sync_list, 2, extension3_->id());
+  InsertAddPinChange(&sync_list, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   // The model should only contain the browser shortcut and app list items.
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
   // Installing |extension2_| should add it to the launcher - behind the
   // chrome icon.
   extension_service_->AddExtension(extension2_.get());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome, App2", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome, App2", GetPinnedAppStatus());
 
   // Installing |extension1_| should add it to the launcher - behind the
   // chrome icon, but in first location.
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 
-  // Installing |extension3_| should add it to the launcher - behind the
+  // Installing |extensionGmailApp_| should add it to the launcher - behind the
   // chrome icon, but in first location.
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App2, App3", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("Chrome, App1, App2, Gmail", GetPinnedAppStatus());
 }
 
 // Check that the restauration of launcher items is happening in the same order
@@ -1551,33 +1661,33 @@ TEST_F(ChromeLauncherControllerTest, RestoreDefaultAppsRandomOrderChromeMoved) {
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension_misc::kChromeAppId);
   InsertAddPinChange(&sync_list, 2, extension2_->id());
-  InsertAddPinChange(&sync_list, 3, extension3_->id());
+  InsertAddPinChange(&sync_list, 3, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   // The model should only contain the browser shortcut and app list items.
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
 
   // Installing |extension2_| should add it to the shelf - behind the
   // chrome icon.
   ash::ShelfItem item;
   extension_service_->AddExtension(extension2_.get());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, Chrome, App2", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("Chrome, App2", GetPinnedAppStatus());
 
   // Installing |extension1_| should add it to the launcher - behind the
   // chrome icon, but in first location.
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_EQ("AppList, App1, Chrome, App2", GetPinnedAppStatus());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_EQ("App1, Chrome, App2", GetPinnedAppStatus());
 
-  // Installing |extension3_| should add it to the launcher - behind the
+  // Installing |extensionGmailApp_| should add it to the launcher - behind the
   // chrome icon, but in first location.
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, App1, Chrome, App2, App3", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("App1, Chrome, App2, Gmail", GetPinnedAppStatus());
 }
 
 // Check that syncing to a different state does the correct thing.
@@ -1587,131 +1697,131 @@ TEST_F(ChromeLauncherControllerTest, RestoreDefaultAppsResyncOrder) {
   syncer::SyncChangeList sync_list0;
   InsertAddPinChange(&sync_list0, 0, extension1_->id());
   InsertAddPinChange(&sync_list0, 1, extension2_->id());
-  InsertAddPinChange(&sync_list0, 2, extension3_->id());
+  InsertAddPinChange(&sync_list0, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list0, true);
 
   // The shelf layout has always one static item at the beginning (App List).
   extension_service_->AddExtension(extension2_.get());
-  EXPECT_EQ("AppList, Chrome, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App2", GetPinnedAppStatus());
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App2, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("Chrome, App1, App2, Gmail", GetPinnedAppStatus());
 
   // Change the order with increasing chrome position and decreasing position.
   syncer::SyncChangeList sync_list1;
-  InsertAddPinChange(&sync_list1, 0, extension3_->id());
+  InsertAddPinChange(&sync_list1, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list1, 1, extension1_->id());
   InsertAddPinChange(&sync_list1, 2, extension2_->id());
   InsertAddPinChange(&sync_list1, 3, extension_misc::kChromeAppId);
   SendPinChanges(sync_list1, true);
-  EXPECT_EQ("AppList, App3, App1, App2, Chrome", GetPinnedAppStatus());
+  EXPECT_EQ("Gmail, App1, App2, Chrome", GetPinnedAppStatus());
 
   syncer::SyncChangeList sync_list2;
   InsertAddPinChange(&sync_list2, 0, extension2_->id());
-  InsertAddPinChange(&sync_list2, 1, extension3_->id());
+  InsertAddPinChange(&sync_list2, 1, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list2, 2, extension_misc::kChromeAppId);
   InsertAddPinChange(&sync_list2, 3, extension1_->id());
   SendPinChanges(sync_list2, true);
-  EXPECT_EQ("AppList, App2, App3, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("App2, Gmail, Chrome, App1", GetPinnedAppStatus());
 
   // Check that the chrome icon can also be at the first possible location.
   syncer::SyncChangeList sync_list3;
-  InsertAddPinChange(&sync_list3, 0, extension3_->id());
+  InsertAddPinChange(&sync_list3, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list3, 1, extension2_->id());
   InsertAddPinChange(&sync_list3, 2, extension1_->id());
   SendPinChanges(sync_list3, true);
-  EXPECT_EQ("AppList, Chrome, App3, App2, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, App2, App1", GetPinnedAppStatus());
 
   // Check that unloading of extensions works as expected.
   extension_service_->UnloadExtension(extension1_->id(),
                                       UnloadedExtensionReason::UNINSTALL);
-  EXPECT_EQ("AppList, Chrome, App3, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, App2", GetPinnedAppStatus());
 
   extension_service_->UnloadExtension(extension2_->id(),
                                       UnloadedExtensionReason::UNINSTALL);
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail", GetPinnedAppStatus());
 
   // Check that an update of an extension does not crash the system.
-  extension_service_->UnloadExtension(extension3_->id(),
+  extension_service_->UnloadExtension(extensionGmailApp_->id(),
                                       UnloadedExtensionReason::UPDATE);
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail", GetPinnedAppStatus());
 }
 
 // Test the V1 app interaction flow: run it, activate it, close it.
 TEST_F(ChromeLauncherControllerTest, V1AppRunActivateClose) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is running should create a new shelf item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is running again should have no effect.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
 
   // Reporting that the app is closed should remove its shelf item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is closed again should have no effect.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 }
 
 // Test the V1 app interaction flow: pin it, run it, close it, unpin it.
 TEST_F(ChromeLauncherControllerTest, V1AppPinRunCloseUnpin) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
+  // The model should only contain the browser shortcut.
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Pinning the app should create a new shelf item.
   launcher_controller_->PinAppWithID(extension1_->id());
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is running should just update the existing item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is closed should just update the existing item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Unpinning the app should remove its shelf item.
   launcher_controller_->UnpinAppWithID(extension1_->id());
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
@@ -1720,42 +1830,43 @@ TEST_F(ChromeLauncherControllerTest, V1AppPinRunCloseUnpin) {
 // Test the V1 app interaction flow: run it, pin it, close it, unpin it.
 TEST_F(ChromeLauncherControllerTest, V1AppRunPinCloseUnpin) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
+
+  // The model should only contain the browser shortcut.
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is running should create a new shelf item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Pinning the app should just update the existing item.
   launcher_controller_->PinAppWithID(extension1_->id());
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is closed should just update the existing item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Unpinning the app should remove its shelf item.
   launcher_controller_->UnpinAppWithID(extension1_->id());
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
@@ -1764,42 +1875,43 @@ TEST_F(ChromeLauncherControllerTest, V1AppRunPinCloseUnpin) {
 // Test the V1 app interaction flow: pin it, run it, unpin it, close it.
 TEST_F(ChromeLauncherControllerTest, V1AppPinRunUnpinClose) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
+
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Pinning the app should create a new shelf item.
   launcher_controller_->PinAppWithID(extension1_->id());
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is running should just update the existing item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Unpinning the app should just update the existing item.
   launcher_controller_->UnpinAppWithID(extension1_->id());
-  EXPECT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[2].status);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_RUNNING, model_->items()[1].status);
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_NE(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
 
   // Reporting that the app is closed should remove its shelf item.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_EQ(nullptr,
             launcher_controller_->GetItem(ash::ShelfID(extension1_->id())));
@@ -1808,17 +1920,19 @@ TEST_F(ChromeLauncherControllerTest, V1AppPinRunUnpinClose) {
 // Ensure unpinned V1 app ordering is properly restored after user changes.
 TEST_F(ChromeLauncherControllerTest, CheckRunningV1AppOrder) {
   InitLauncherController();
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
+
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ(1, model_->item_count());
 
   // Add a few running applications.
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_RUNNING);
   launcher_controller_->SetV1AppStatus(extension2_->id(), ash::STATUS_RUNNING);
-  launcher_controller_->SetV1AppStatus(extension3_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ(5, model_->item_count());
+  launcher_controller_->SetV1AppStatus(extensionGmailApp_->id(),
+                                       ash::STATUS_RUNNING);
+  EXPECT_EQ(4, model_->item_count());
   // Note that this not only checks the order of applications but also the
   // running type.
-  EXPECT_EQ("AppList, Chrome, app1, app2, app3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, app1, app2, gmail", GetPinnedAppStatus());
 
   // Remember the current order of applications for the current user.
   const AccountId& current_account_id =
@@ -1827,44 +1941,45 @@ TEST_F(ChromeLauncherControllerTest, CheckRunningV1AppOrder) {
 
   // Switch some items and check that restoring a user which was not yet
   // remembered changes nothing.
-  model_->Move(2, 3);
-  EXPECT_EQ("AppList, Chrome, app2, app1, app3", GetPinnedAppStatus());
+  model_->Move(1, 2);
+  EXPECT_EQ("Chrome, app2, app1, gmail", GetPinnedAppStatus());
   const AccountId second_fake_account_id(
       AccountId::FromUserEmail("second-fake-user@fake.com"));
   RestoreUnpinnedRunningApplicationOrder(second_fake_account_id);
-  EXPECT_EQ("AppList, Chrome, app2, app1, app3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, app2, app1, gmail", GetPinnedAppStatus());
 
   // Restoring the stored user should however do the right thing.
   RestoreUnpinnedRunningApplicationOrder(current_account_id);
-  EXPECT_EQ("AppList, Chrome, app1, app2, app3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, app1, app2, gmail", GetPinnedAppStatus());
 
   // Switch again some items and even delete one - making sure that the missing
   // item gets properly handled.
-  model_->Move(3, 4);
+  model_->Move(2, 3);
   launcher_controller_->SetV1AppStatus(extension1_->id(), ash::STATUS_CLOSED);
-  EXPECT_EQ("AppList, Chrome, app3, app2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, gmail, app2", GetPinnedAppStatus());
   RestoreUnpinnedRunningApplicationOrder(current_account_id);
-  EXPECT_EQ("AppList, Chrome, app2, app3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, app2, gmail", GetPinnedAppStatus());
 
   // Check that removing more items does not crash and changes nothing.
   launcher_controller_->SetV1AppStatus(extension2_->id(), ash::STATUS_CLOSED);
   RestoreUnpinnedRunningApplicationOrder(current_account_id);
-  EXPECT_EQ("AppList, Chrome, app3", GetPinnedAppStatus());
-  launcher_controller_->SetV1AppStatus(extension3_->id(), ash::STATUS_CLOSED);
+  EXPECT_EQ("Chrome, gmail", GetPinnedAppStatus());
+  launcher_controller_->SetV1AppStatus(extensionGmailApp_->id(),
+                                       ash::STATUS_CLOSED);
   RestoreUnpinnedRunningApplicationOrder(current_account_id);
-  EXPECT_EQ("AppList, Chrome", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunch) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcDeferredLaunch) {
   InitLauncherController();
 
   const arc::mojom::AppInfo& app1 = arc_test_.fake_apps()[0];
   const arc::mojom::AppInfo& app2 = arc_test_.fake_apps()[1];
-  const arc::mojom::AppInfo& app3 = arc_test_.fake_apps()[2];
+  const arc::mojom::AppInfo& gmail = arc_test_.fake_apps()[2];
   const arc::mojom::ShortcutInfo& shortcut = arc_test_.fake_shortcuts()[0];
   const std::string arc_app_id1 = ArcAppTest::GetAppId(app1);
   const std::string arc_app_id2 = ArcAppTest::GetAppId(app2);
-  const std::string arc_app_id3 = ArcAppTest::GetAppId(app3);
+  const std::string arc_app_id3 = ArcAppTest::GetAppId(gmail);
   const std::string arc_shortcut_id = ArcAppTest::GetAppId(shortcut);
 
   SendListOfArcApps();
@@ -1881,11 +1996,16 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunch) {
   EXPECT_FALSE(launcher_controller_->GetItem(shelf_id_app_3));
   EXPECT_FALSE(launcher_controller_->GetItem(shelf_id_shortcut));
 
-  arc::LaunchApp(profile(), arc_app_id1, ui::EF_LEFT_MOUSE_BUTTON);
-  arc::LaunchApp(profile(), arc_app_id1, ui::EF_LEFT_MOUSE_BUTTON);
-  arc::LaunchApp(profile(), arc_app_id2, ui::EF_LEFT_MOUSE_BUTTON);
-  arc::LaunchApp(profile(), arc_app_id3, ui::EF_LEFT_MOUSE_BUTTON);
-  arc::LaunchApp(profile(), arc_shortcut_id, ui::EF_LEFT_MOUSE_BUTTON);
+  arc::LaunchApp(profile(), arc_app_id1, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  arc::LaunchApp(profile(), arc_app_id1, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  arc::LaunchApp(profile(), arc_app_id2, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  arc::LaunchApp(profile(), arc_app_id3, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  arc::LaunchApp(profile(), arc_shortcut_id, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
 
   EXPECT_TRUE(launcher_controller_->GetItem(shelf_id_app_1));
   EXPECT_TRUE(launcher_controller_->GetItem(shelf_id_app_2));
@@ -1910,7 +2030,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunch) {
 
   base::RunLoop().RunUntilIdle();
 
-  // Now deferred contollers should go away together with shelf items and ARC
+  // Now spinner controllers should go away together with shelf items and ARC
   // app instance should receive request for launching apps and shortcuts.
   EXPECT_FALSE(launcher_controller_->GetItem(shelf_id_app_1));
   EXPECT_FALSE(launcher_controller_->GetItem(shelf_id_app_2));
@@ -1925,15 +2045,46 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunch) {
   const arc::FakeAppInstance::Request* request2 =
       arc_test_.app_instance()->launch_requests()[1].get();
 
-  EXPECT_TRUE((request1->IsForApp(app2) && request2->IsForApp(app3)) ||
-              (request1->IsForApp(app3) && request2->IsForApp(app2)));
+  EXPECT_TRUE((request1->IsForApp(app2) && request2->IsForApp(gmail)) ||
+              (request1->IsForApp(gmail) && request2->IsForApp(app2)));
   EXPECT_EQ(arc_test_.app_instance()->launch_intents()[0].c_str(),
             shortcut.intent_uri);
 }
 
-// Ensure the deferred controller does not override the active app controller
+// Launch is canceled in case app becomes suspended.
+TEST_F(ChromeLauncherControllerWithArcTest, ArcDeferredLaunchForSuspendedApp) {
+  InitLauncherController();
+
+  arc::mojom::AppInfo app = arc_test_.fake_apps()[0];
+  const std::string app_id = ArcAppTest::GetAppId(app);
+
+  // Register app first.
+  arc_test_.app_instance()->SendRefreshAppList({app});
+  arc_test_.StopArcInstance();
+
+  // Restart ARC
+  arc_test_.RestartArcInstance();
+
+  // Deferred controller should be allocated on start.
+  const ash::ShelfID shelf_id(app_id);
+  arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+
+  // Send app with suspended state.
+  app.suspended = true;
+  arc_test_.app_instance()->SendRefreshAppList({app});
+
+  // Controler automatically closed.
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  // And no launch request issued.
+  EXPECT_TRUE(arc_test_.app_instance()->launch_requests().empty());
+}
+
+// Ensure the spinner controller does not override the active app controller
 // (crbug.com/701152).
-TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunchForActiveApp) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcDeferredLaunchForActiveApp) {
   InitLauncherController();
   SendListOfArcApps();
   arc_test_.StopArcInstance();
@@ -1957,8 +2108,10 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunchForActiveApp) {
   launcher_controller_->SetItemStatus(shelf_id, ash::STATUS_RUNNING);
 
   // This launch request should be ignored in case of active app.
-  arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_FALSE(launcher_controller_->GetArcDeferredLauncher()->HasApp(app_id));
+  arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
 
   // Closing the app should leave a pinned but closed shelf item shortcut.
   launcher_controller_->CloseLauncherItem(shelf_id);
@@ -1968,23 +2121,24 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcDeferredLaunchForActiveApp) {
   EXPECT_EQ(ash::TYPE_PINNED_APP, item->type);
 
   // Now launch request should not be ignored.
-  arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON);
-  EXPECT_TRUE(launcher_controller_->GetArcDeferredLauncher()->HasApp(app_id));
+  arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON,
+                 arc::UserInteractionType::NOT_USER_INITIATED);
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
 }
 
-TEST_P(ChromeLauncherControllerMultiProfileWithArcTest, ArcMultiUser) {
+// TODO(crbug.com/915840): this test is flakey and/or often crashes.
+TEST_F(ChromeLauncherControllerMultiProfileWithArcTest, DISABLED_ArcMultiUser) {
   SendListOfArcApps();
 
   InitLauncherController();
-  // TODO(crbug.com/654622): This test breaks with a non-null static instance.
-  ChromeLauncherController::set_instance_for_test(nullptr);
 
   SetLauncherControllerHelper(new TestLauncherControllerHelper);
 
   // App1 exists all the time.
   // App2 is created when primary user is active and destroyed when secondary
   // user is active.
-  // App3 created when secondary user is active.
+  // Gmail created when secondary user is active.
 
   const std::string user2 = "user2";
   TestingProfile* profile2 = CreateMultiUserProfile(user2);
@@ -2039,7 +2193,7 @@ TEST_P(ChromeLauncherControllerMultiProfileWithArcTest, ArcMultiUser) {
   arc_window3->CloseNow();
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcRunningApp) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcRunningApp) {
   InitLauncherController();
 
   const std::string arc_app_id = ArcAppTest::GetAppId(arc_test_.fake_apps()[0]);
@@ -2075,7 +2229,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcRunningApp) {
 
 // Test race creation/deletion of ARC app.
 // TODO(khmel): Remove after moving everything to wayland protocol.
-TEST_P(ChromeLauncherControllerWithArcTest, ArcRaceCreateClose) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcRaceCreateClose) {
   InitLauncherController();
 
   const std::string arc_app_id1 =
@@ -2114,7 +2268,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcRaceCreateClose) {
   EXPECT_FALSE(launcher_controller_->GetItem(ash::ShelfID(arc_app_id2)));
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcWindowRecreation) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcWindowRecreation) {
   InitLauncherController();
 
   const std::string arc_app_id = ArcAppTest::GetAppId(arc_test_.fake_apps()[0]);
@@ -2144,15 +2298,14 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcWindowRecreation) {
 // but in case of ARC boot failure this may lead to such situation. This test
 // verifies that dynamic change of app launcher controllers is safe.
 // See more crbug.com/770005.
-TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
+TEST_F(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
   extension_service_->AddExtension(arc_support_host_.get());
 
   InitLauncherController();
 
   SendListOfArcApps();
-  arc::mojom::AppInfo app_info =
-      CreateAppInfo("Play Store", arc::kPlayStoreActivity,
-                    arc::kPlayStorePackage, OrientationLock::NONE);
+  arc::mojom::AppInfo app_info = CreateAppInfo(
+      "Play Store", arc::kPlayStoreActivity, arc::kPlayStorePackage);
   EXPECT_EQ(arc::kPlayStoreAppId, AddArcAppAndShortcut(app_info));
 
   std::string window_app_id("org.chromium.arc.1");
@@ -2166,7 +2319,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
   // Scenario 1: Create OptIn, Play Store. Destroy OptIn, Play Store.
   {
     std::unique_ptr<V2App> play_store_optin =
-        base::MakeUnique<V2App>(profile(), arc_support_host_.get(),
+        std::make_unique<V2App>(profile(), arc_support_host_.get(),
                                 extensions::AppWindow::WINDOW_TYPE_DEFAULT);
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
@@ -2186,7 +2339,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
   // Scenario 2: Create OptIn, Play Store. Destroy Play Store, OptIn.
   {
     std::unique_ptr<V2App> play_store_optin =
-        base::MakeUnique<V2App>(profile(), arc_support_host_.get(),
+        std::make_unique<V2App>(profile(), arc_support_host_.get(),
                                 extensions::AppWindow::WINDOW_TYPE_DEFAULT);
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
@@ -2211,7 +2364,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
     std::unique_ptr<V2App> play_store_optin =
-        base::MakeUnique<V2App>(profile(), arc_support_host_.get(),
+        std::make_unique<V2App>(profile(), arc_support_host_.get(),
                                 extensions::AppWindow::WINDOW_TYPE_DEFAULT);
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
@@ -2231,7 +2384,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
     std::unique_ptr<V2App> play_store_optin =
-        base::MakeUnique<V2App>(profile(), arc_support_host_.get(),
+        std::make_unique<V2App>(profile(), arc_support_host_.get(),
                                 extensions::AppWindow::WINDOW_TYPE_DEFAULT);
     EXPECT_TRUE(launcher_controller_->GetItem(play_store_shelf_id));
 
@@ -2246,7 +2399,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, OverrideAppItemController) {
 
 // Validate that ARC app is pinned correctly and pin is removed automatically
 // once app is uninstalled.
-TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPin) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcAppPin) {
   InitLauncherController();
 
   const std::string arc_app_id = ArcAppTest::GetAppId(arc_test_.fake_apps()[0]);
@@ -2254,6 +2407,8 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPin) {
   SendListOfArcApps();
   extension_service_->AddExtension(extension1_.get());
   extension_service_->AddExtension(extension2_.get());
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id));
@@ -2267,31 +2422,39 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPin) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
 
-  EXPECT_EQ("AppList, Chrome, App1, Fake App 0, App2", GetPinnedAppStatus());
-  // In opt-out mode, only system apps are available and can't be uninstalled.
-  // Skip the rest of the test.
-  if (arc::ShouldArcAlwaysStart())
-    return;
+  EXPECT_EQ("Chrome, App1, Fake App 0, App2", GetPinnedAppStatus());
+
   UninstallArcApps();
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id));
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
+
   SendListOfArcApps();
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id));
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 
   // Opt-Out/Opt-In remove item from the shelf.
   launcher_controller_->PinAppWithID(arc_app_id);
-  EXPECT_EQ("AppList, Chrome, App1, App2, Fake App 0", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2, Fake App 0", GetPinnedAppStatus());
   EnablePlayStore(false);
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
   EnablePlayStore(true);
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
+
   SendListOfArcApps();
-  EXPECT_EQ("AppList, Chrome, App1, App2, Fake App 0", GetPinnedAppStatus());
+  // Allow async callbacks to run.
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ("Chrome, App1, App2, Fake App 0", GetPinnedAppStatus());
 }
 
 // Validates that ARC app pins persist across OptOut/OptIn.
-TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinOptOutOptIn) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcAppPinOptOutOptIn) {
   InitLauncherController();
 
   const std::string arc_app_id1 =
@@ -2312,15 +2475,11 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinOptOutOptIn) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id2));
-  EXPECT_EQ("AppList, Chrome, App1, Fake App 1, App2, Fake App 0",
-            GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, Fake App 1, App2, Fake App 0", GetPinnedAppStatus());
 
-  // TODO(victorhsieh): Implement opt-out.
-  if (arc::ShouldArcAlwaysStart())
-    return;
   EnablePlayStore(false);
 
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
   EXPECT_FALSE(launcher_controller_->IsAppPinned(arc_app_id1));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
@@ -2335,77 +2494,130 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinOptOutOptIn) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc_app_id2));
 
-  EXPECT_EQ("AppList, Chrome, App1, Fake App 1, App2, Fake App 0",
-            GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, Fake App 1, App2, Fake App 0", GetPinnedAppStatus());
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcCustomAppIcon) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcCustomAppIcon) {
   InitLauncherController();
 
-  ArcAppIcon::DisableSafeDecodingForTesting();
+  // Wait until other apps are updated to avoid race condition while accessing
+  // last updated item.
+  base::RunLoop().RunUntilIdle();
 
   // Register fake ARC apps.
   SendListOfArcApps();
   // Use first fake ARC app for testing.
-  const std::string arc_app_id = ArcAppTest::GetAppId(arc_test_.fake_apps()[0]);
+  const arc::mojom::AppInfo& app = arc_test_.fake_apps()[0];
+  const std::string arc_app_id = ArcAppTest::GetAppId(app);
+  const ash::ShelfID arc_shelf_id(arc_app_id);
 
   // Generate icon for the testing app and use compressed png content as test
-  // input.
+  // input. Take shortcut to separate from default app icon.
   std::string png_data;
-  EXPECT_TRUE(arc_test_.app_instance()->GenerateAndSendIcon(
-      arc_test_.fake_apps()[0], arc::mojom::ScaleFactor::SCALE_FACTOR_100P,
-      &png_data));
+  EXPECT_TRUE(arc_test_.app_instance()->GenerateIconResponse(
+      extension_misc::EXTENSION_ICON_SMALL, false /* app_icon */, &png_data));
   EXPECT_FALSE(png_data.empty());
   // Some input that represents invalid png content.
   std::string invalid_png_data("aaaaaa");
 
-  EXPECT_FALSE(launcher_controller_->GetItem(ash::ShelfID(arc_app_id)));
+  EXPECT_FALSE(launcher_controller_->GetItem(arc_shelf_id));
   std::string window_app_id1("org.chromium.arc.1");
   std::string window_app_id2("org.chromium.arc.2");
   views::Widget* window1 = CreateArcWindow(window_app_id1);
   ASSERT_TRUE(window1 && window1->GetNativeWindow());
-  arc_test_.app_instance()->SendTaskCreated(1, arc_test_.fake_apps()[0],
-                                            std::string());
+  arc_test_.app_instance()->SendTaskCreated(1, app, std::string());
 
   views::Widget* window2 = CreateArcWindow(window_app_id2);
   ASSERT_TRUE(window2 && window2->GetNativeWindow());
-  arc_test_.app_instance()->SendTaskCreated(2, arc_test_.fake_apps()[0],
-                                            std::string());
-  EXPECT_TRUE(launcher_controller_->GetItem(ash::ShelfID(arc_app_id)));
+  arc_test_.app_instance()->SendTaskCreated(2, app, std::string());
+  EXPECT_TRUE(launcher_controller_->GetItem(arc_shelf_id));
   ash::ShelfItemDelegate* item_delegate =
-      model_->GetShelfItemDelegate(ash::ShelfID(arc_app_id));
+      model_->GetShelfItemDelegate(arc_shelf_id);
   ASSERT_TRUE(item_delegate);
+  base::RunLoop().RunUntilIdle();
+
+  auto get_icon = [=]() {
+    return *launcher_controller_->GetItem(arc_shelf_id)->image.bitmap();
+  };
+  const SkBitmap default_icon = get_icon();
 
   // No custom icon set. Acitivating windows should not change icon.
-  EXPECT_FALSE(item_delegate->image_set_by_controller());
   window1->Activate();
-  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
   window2->Activate();
-  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
 
   // Set custom icon on active item. Icon should change to custom.
   arc_test_.app_instance()->SendTaskDescription(2, std::string(), png_data);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(item_delegate->image_set_by_controller());
+  const SkBitmap custom_icon = get_icon();
+  EXPECT_FALSE(gfx::test::AreBitmapsEqual(default_icon, custom_icon));
 
   // Switch back to the item without custom icon. Icon should be changed to
   // default.
   window1->Activate();
-  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
+
   // Test that setting an invalid icon should not change custom icon.
   arc_test_.app_instance()->SendTaskDescription(1, std::string(), png_data);
-  EXPECT_TRUE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(custom_icon, get_icon()));
   arc_test_.app_instance()->SendTaskDescription(1, std::string(),
                                                 invalid_png_data);
-  EXPECT_TRUE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(custom_icon, get_icon()));
 
   // Check window removing with active custom icon. Reseting custom icon of
   // inactive window doesn't reset shelf icon.
   arc_test_.app_instance()->SendTaskDescription(2, std::string(),
                                                 std::string());
-  EXPECT_TRUE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(custom_icon, get_icon()));
+  // Set custom icon back to validate closing active window later.
+  arc_test_.app_instance()->SendTaskDescription(2, std::string(), png_data);
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(custom_icon, get_icon()));
+
+  // Reseting custom icon of active window resets shelf icon.
+  arc_test_.app_instance()->SendTaskDescription(1, std::string(),
+                                                std::string());
+  // Wait for default icon load.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
   window1->CloseNow();
-  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(custom_icon, get_icon()));
+}
+
+TEST_F(ChromeLauncherControllerWithArcTest, ArcWindowPackageName) {
+  InitLauncherController();
+  SendListOfArcApps();
+
+  std::string window_app_id1("org.chromium.arc.1");
+  std::string window_app_id2("org.chromium.arc.2");
+  std::string window_app_id3("org.chromium.arc.3");
+  views::Widget* arc_window1 = CreateArcWindow(window_app_id1);
+  arc_test_.app_instance()->SendTaskCreated(1, arc_test_.fake_apps()[0],
+                                            std::string());
+  const std::string* package_name1 =
+      arc_window1->GetNativeWindow()->GetProperty(ash::kArcPackageNameKey);
+  ASSERT_TRUE(package_name1);
+  EXPECT_EQ(*package_name1, arc_test_.fake_apps()[0].package_name);
+
+  views::Widget* arc_window2 = CreateArcWindow(window_app_id2);
+  arc_test_.app_instance()->SendTaskCreated(2, arc_test_.fake_apps()[1],
+                                            std::string());
+  const std::string* package_name2 =
+      arc_window2->GetNativeWindow()->GetProperty(ash::kArcPackageNameKey);
+  ASSERT_TRUE(package_name2);
+  EXPECT_EQ(*package_name2, arc_test_.fake_apps()[1].package_name);
+
+  // Create another window with the same package name.
+  views::Widget* arc_window3 = CreateArcWindow(window_app_id3);
+  arc_test_.app_instance()->SendTaskCreated(3, arc_test_.fake_apps()[1],
+                                            std::string());
+  const std::string* package_name3 =
+      arc_window3->GetNativeWindow()->GetProperty(ash::kArcPackageNameKey);
+  ASSERT_TRUE(package_name3);
+  EXPECT_EQ(*package_name3, arc_test_.fake_apps()[1].package_name);
+
+  arc_window1->CloseNow();
+  arc_window2->CloseNow();
+  arc_window3->CloseNow();
 }
 
 // Check that with multi profile V1 apps are properly added / removed from the
@@ -2415,12 +2627,12 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
   // Create a browser item in the LauncherController.
   InitLauncherController();
 
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   {
     // Create a "windowed gmail app".
     std::unique_ptr<V1App> v1_app(
         CreateRunningV1App(profile(), extension_misc::kGmailAppId, kGmailUrl));
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     // After switching to a second user the item should be gone.
     std::string user2 = "user2";
@@ -2430,14 +2642,14 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
     const AccountId account_id(
         multi_user_util::GetAccountIdFromProfile(profile()));
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     // After switching back the item should be back.
     SwitchActiveUser(account_id);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
     // Note we destroy now the gmail app with the closure end.
   }
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 }
 
 // Check edge cases with multi profile V1 apps in the shelf.
@@ -2457,23 +2669,23 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
     // Create a "windowed gmail app".
     std::unique_ptr<V1App> v1_app(
         CreateRunningV1App(profile2, extension_misc::kGmailAppId, kGmailUrl));
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     // However - switching to the user should show it.
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     // Second test: Remove the app when the user is not active and see that it
     // works.
     SwitchActiveUser(account_id);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
     // Note: the closure ends and the browser will go away.
   }
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   SwitchActiveUser(account_id2);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   SwitchActiveUser(account_id);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 }
 
 // Check edge case where a visiting V1 app gets closed (crbug.com/321374).
@@ -2481,8 +2693,6 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
        V1CloseOnVisitingDesktop) {
   // Create a browser item in the LauncherController.
   InitLauncherController();
-
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
 
   // First create an app when the user is active.
   std::string user2 = "user2";
@@ -2495,28 +2705,23 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
     // Create a "windowed gmail app".
     std::unique_ptr<V1App> v1_app(CreateRunningV1App(
         profile(), extension_misc::kGmailAppId, kGmailLaunchURL));
-    EXPECT_EQ(3, model_->item_count());
-
-    // Transfer the app to the other screen and switch users.
-    manager->ShowWindowForUser(v1_app->browser()->window()->GetNativeWindow(),
-                               account_id2);
-    EXPECT_EQ(3, model_->item_count());
-    SwitchActiveUser(account_id2);
     EXPECT_EQ(2, model_->item_count());
+    SwitchActiveUser(account_id2);
+    EXPECT_EQ(1, model_->item_count());
   }
   // After the app was destroyed, switch back. (which caused already a crash).
   SwitchActiveUser(account_id);
 
   // Create the same app again - which was also causing the crash.
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   {
     // Create a "windowed gmail app".
     std::unique_ptr<V1App> v1_app(CreateRunningV1App(
         profile(), extension_misc::kGmailAppId, kGmailLaunchURL));
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
   }
   SwitchActiveUser(account_id2);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 }
 
 // Check edge cases with multi profile V1 apps in the shelf.
@@ -2537,23 +2742,23 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
     // Create a "windowed gmail app".
     std::unique_ptr<V1App> v1_app(
         CreateRunningV1App(profile(), extension_misc::kGmailAppId, kGmailUrl));
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     // However - switching to the user should show it.
     SwitchActiveUser(account_id);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     // Second test: Remove the app when the user is not active and see that it
     // works.
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
     v1_app.reset();
   }
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   SwitchActiveUser(account_id);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
   SwitchActiveUser(account_id2);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 }
 
 // Check that activating an item which is on another user's desktop, will bring
@@ -2562,11 +2767,12 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
        TestLauncherActivationPullsBackWindow) {
   // Create a browser item in the LauncherController.
   InitLauncherController();
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
+  ash::MultiUserWindowManager* window_manager =
+      MultiUserWindowManagerHelper::GetWindowManager();
 
   // Create a second test profile. The first is the one in profile() created in
   // BrowserWithTestWindowTest::SetUp().
-  // No need to add the profiles to the MultiUserWindowManager here.
+  // No need to add the profiles to the MultiUserWindowManagerHelper here.
   // CreateMultiUserProfile() already does that.
   TestingProfile* profile2 = CreateMultiUserProfile("user2");
   const AccountId current_user =
@@ -2577,48 +2783,20 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
       CreateBrowserWithTestWindowForProfile(profile()));
   BrowserWindow* browser_window = browser->window();
   aura::Window* window = browser_window->GetNativeWindow();
-  manager->SetWindowOwner(window, current_user);
+  window_manager->SetWindowOwner(window, current_user);
 
   // Check that an activation of the window on its owner's desktop does not
   // change the visibility to another user.
   launcher_controller_->ActivateWindowOrMinimizeIfActive(browser_window, false);
-  EXPECT_TRUE(manager->IsWindowOnDesktopOfUser(window, current_user));
+  EXPECT_TRUE(IsWindowOnDesktopOfUser(window, current_user));
 
   // Transfer the window to another user's desktop and check that activating it
   // does pull it back to that user.
-  manager->ShowWindowForUser(
+  window_manager->ShowWindowForUser(
       window, multi_user_util::GetAccountIdFromProfile(profile2));
-  EXPECT_FALSE(manager->IsWindowOnDesktopOfUser(window, current_user));
+  EXPECT_FALSE(IsWindowOnDesktopOfUser(window, current_user));
   launcher_controller_->ActivateWindowOrMinimizeIfActive(browser_window, false);
-  EXPECT_TRUE(manager->IsWindowOnDesktopOfUser(window, current_user));
-}
-
-// Ensure multi-profile panels are properly added / removed from the shelf.
-TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
-       PanelUpdateOnUserSwitch) {
-  InitLauncherController();
-
-  // Check the shelf model used by ShelfWindowWatcher.
-  ash::ShelfModel* shelf_model = ash::Shell::Get()->shelf_model();
-  ASSERT_EQ(1, shelf_model->item_count());
-  EXPECT_EQ(ash::TYPE_APP_LIST, shelf_model->items()[0].type);
-
-  // Add an app panel window; ShelfWindowWatcher will add a shelf item.
-  V2App panel(profile(), extension_platform_app_.get(),
-              extensions::AppWindow::WINDOW_TYPE_PANEL);
-  ASSERT_EQ(2, shelf_model->item_count());
-  EXPECT_EQ(ash::TYPE_APP_PANEL, shelf_model->items()[1].type);
-
-  // After switching users the item should go away.
-  TestingProfile* profile2 = CreateMultiUserProfile("user2");
-  SwitchActiveUser(multi_user_util::GetAccountIdFromProfile(profile2));
-  ASSERT_EQ(1, shelf_model->item_count());
-  EXPECT_EQ(ash::TYPE_APP_LIST, shelf_model->items()[0].type);
-
-  // And it should come back when switching back.
-  SwitchActiveUser(multi_user_util::GetAccountIdFromProfile(profile()));
-  ASSERT_EQ(2, shelf_model->item_count());
-  EXPECT_EQ(ash::TYPE_APP_PANEL, shelf_model->items()[1].type);
+  EXPECT_TRUE(IsWindowOnDesktopOfUser(window, current_user));
 }
 
 // Check that a running windowed V1 application will be properly pinned and
@@ -2627,44 +2805,48 @@ TEST_F(ChromeLauncherControllerTest,
        RestoreDefaultAndRunningV1AppsResyncOrder) {
   InitLauncherController();
 
+  StartPrefSyncService(syncer::SyncDataList());
+
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension1_->id());
-  InsertAddPinChange(&sync_list, 1, extension3_->id());
+  InsertAddPinChange(&sync_list, 1, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   // The shelf layout has always one static item at the beginning (App List).
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_EQ("AppList, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
   extension_service_->AddExtension(extension2_.get());
   // No new app icon will be generated.
-  EXPECT_EQ("AppList, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
 
   // Set the app status as running, which will add an unpinned item.
   launcher_controller_->SetV1AppStatus(extension2_->id(), ash::STATUS_RUNNING);
-  EXPECT_EQ("AppList, Chrome, App1, app2", GetPinnedAppStatus());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App3, app2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, app2", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("Chrome, App1, Gmail, app2", GetPinnedAppStatus());
 
   // Now request to pin all items, which will pin the running unpinned items.
   syncer::SyncChangeList sync_list1;
-  InsertAddPinChange(&sync_list1, 0, extension3_->id());
+  InsertAddPinChange(&sync_list1, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list1, 1, extension2_->id());
   InsertAddPinChange(&sync_list1, 2, extension1_->id());
   SendPinChanges(sync_list1, true);
-  EXPECT_EQ("AppList, Chrome, App3, App2, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, App2, App1", GetPinnedAppStatus());
 
   // Removing the requirement for app 2 to be pinned should convert it back to
   // running but not pinned. It should move towards the end of the shelf, after
   // the pinned items, as determined by the |ShelfModel|'s weight system.
   syncer::SyncChangeList sync_list2;
-  InsertAddPinChange(&sync_list2, 0, extension3_->id());
+  InsertAddPinChange(&sync_list2, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list2, 1, extension1_->id());
   SendPinChanges(sync_list2, true);
-  EXPECT_EQ("AppList, Chrome, App3, App1, app2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, App1, app2", GetPinnedAppStatus());
 
   // Removing an item should simply close it and everything should shift.
-  SendPinChanges(syncer::SyncChangeList(), true);
-  EXPECT_EQ("AppList, Chrome, App3, app2", GetPinnedAppStatus());
+  syncer::SyncChangeList sync_list3;
+  InsertRemovePinChange(&sync_list3, extension1_->id());
+  SendPinChanges(sync_list3, false /* reset_pin_model */);
+  EXPECT_EQ("Chrome, Gmail, app2", GetPinnedAppStatus());
 }
 
 // Check that a running unpinned V2 application will be properly pinned and
@@ -2674,42 +2856,42 @@ TEST_F(ChromeLauncherControllerTest,
   InitLauncherController();
   syncer::SyncChangeList sync_list0;
   InsertAddPinChange(&sync_list0, 0, extension1_->id());
-  InsertAddPinChange(&sync_list0, 1, extension3_->id());
+  InsertAddPinChange(&sync_list0, 1, extensionGmailApp_->id());
   SendPinChanges(sync_list0, true);
   // The shelf layout has always one static item at the beginning (app List).
   extension_service_->AddExtension(extension1_.get());
-  EXPECT_EQ("AppList, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
   extension_service_->AddExtension(extension_platform_app_.get());
   // No new app icon will be generated.
-  EXPECT_EQ("AppList, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
   // Add an unpinned but running V2 app.
   CreateRunningV2App(extension_platform_app_->id());
-  EXPECT_EQ("AppList, Chrome, App1, *platform_app", GetPinnedAppStatus());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_EQ("AppList, Chrome, App1, App3, *platform_app", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, *platform_app", GetPinnedAppStatus());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_EQ("Chrome, App1, Gmail, *platform_app", GetPinnedAppStatus());
 
   // Now request to pin all items, which should pin the running unpinned item.
   syncer::SyncChangeList sync_list1;
-  InsertAddPinChange(&sync_list1, 0, extension3_->id());
+  InsertAddPinChange(&sync_list1, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list1, 1, extension_platform_app_->id());
   InsertAddPinChange(&sync_list1, 2, extension1_->id());
   SendPinChanges(sync_list1, true);
-  EXPECT_EQ("AppList, Chrome, App3, *Platform_App, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, *Platform_App, App1", GetPinnedAppStatus());
 
   // Removing the requirement for app 2 to be pinned should convert it back to
   // running but not pinned. It should move towards the end of the shelf, after
   // the pinned items, as determined by the |ShelfModel|'s weight system.
   syncer::SyncChangeList sync_list2;
-  InsertAddPinChange(&sync_list2, 0, extension3_->id());
+  InsertAddPinChange(&sync_list2, 0, extensionGmailApp_->id());
   InsertAddPinChange(&sync_list2, 1, extension1_->id());
   SendPinChanges(sync_list2, true);
-  EXPECT_EQ("AppList, Chrome, App3, App1, *platform_app", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, App1, *platform_app", GetPinnedAppStatus());
 
   // Removing an item should simply close it and everything should shift.
   syncer::SyncChangeList sync_list3;
-  InsertAddPinChange(&sync_list3, 0, extension3_->id());
+  InsertAddPinChange(&sync_list3, 0, extensionGmailApp_->id());
   SendPinChanges(sync_list3, true);
-  EXPECT_EQ("AppList, Chrome, App3, *platform_app", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, Gmail, *platform_app", GetPinnedAppStatus());
 }
 
 // Each user has a different set of applications pinned. Check that when
@@ -2722,21 +2904,21 @@ TEST_F(ChromeLauncherControllerTest, UserSwitchIconRestore) {
 
   // Show user 1.
   SendPinChanges(user_a, true);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, App5, Chrome",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, App5, Chrome",
             GetPinnedAppStatus());
 
   // Show user 2.
   SendPinChanges(user_b, true);
-  EXPECT_EQ("AppList, App6, App7, App8, Chrome", GetPinnedAppStatus());
+  EXPECT_EQ("App6, App7, App8, Chrome", GetPinnedAppStatus());
 
   // Switch back to 1.
   SendPinChanges(user_a, true);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, App5, Chrome",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, App5, Chrome",
             GetPinnedAppStatus());
 
   // Switch back to 2.
   SendPinChanges(user_b, true);
-  EXPECT_EQ("AppList, App6, App7, App8, Chrome", GetPinnedAppStatus());
+  EXPECT_EQ("App6, App7, App8, Chrome", GetPinnedAppStatus());
 }
 
 // Each user has a different set of applications pinned, and one user has an
@@ -2753,23 +2935,21 @@ TEST_F(ChromeLauncherControllerTest, UserSwitchIconRestoreWithRunningV2App) {
 
   // Show user 1.
   SendPinChanges(user_a, true);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, App5, Chrome",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, App5, Chrome",
             GetPinnedAppStatus());
 
   // Show user 2.
   SendPinChanges(user_b, true);
-  EXPECT_EQ("AppList, App6, App7, App8, Chrome, *platform_app",
-            GetPinnedAppStatus());
+  EXPECT_EQ("App6, App7, App8, Chrome, *platform_app", GetPinnedAppStatus());
 
   // Switch back to 1.
   SendPinChanges(user_a, true);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, App5, Chrome",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, App5, Chrome",
             GetPinnedAppStatus());
 
   // Switch back to 2.
   SendPinChanges(user_b, true);
-  EXPECT_EQ("AppList, App6, App7, App8, Chrome, *platform_app",
-            GetPinnedAppStatus());
+  EXPECT_EQ("App6, App7, App8, Chrome, *platform_app", GetPinnedAppStatus());
 }
 
 // Each user has a different set of applications pinned, and one user has an
@@ -2788,88 +2968,109 @@ TEST_F(ChromeLauncherControllerTest,
   // Show user 1.
   SendPinChanges(user_a, true);
   SetShelfChromeIconIndex(5);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, Chrome, App5",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, Chrome, App5",
             GetPinnedAppStatus());
 
   // Show user 2.
   SendPinChanges(user_b, true);
-  SetShelfChromeIconIndex(4);
-  EXPECT_EQ("AppList, App6, App7, App8, Chrome, *platform_app",
-            GetPinnedAppStatus());
+  SetShelfChromeIconIndex(3);
+  EXPECT_EQ("App6, App7, App8, Chrome, *platform_app", GetPinnedAppStatus());
 
   // Switch back to 1.
   SendPinChanges(user_a, true);
   SetShelfChromeIconIndex(5);
-  EXPECT_EQ("AppList, App1, App2, App3, *Platform_App, App4, Chrome, App5",
+  EXPECT_EQ("App1, App2, Gmail, *Platform_App, Doc, Chrome, App5",
             GetPinnedAppStatus());
 }
 
 TEST_F(ChromeLauncherControllerTest, Policy) {
-  extension_service_->AddExtension(extension1_.get());
-  extension_service_->AddExtension(extension3_.get());
+  extension_service_->AddExtension(extension2_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
 
-  InitLauncherController();
-
-  syncer::SyncChangeList sync_list;
-  InsertAddPinChange(&sync_list, 0, extension_misc::kChromeAppId);
-  SendPinChanges(sync_list, true);
-
+  // Pin policy should be initilized before controller start.
   base::ListValue policy_value;
-  InsertPrefValue(&policy_value, 0, extension1_->id());
-  InsertPrefValue(&policy_value, 1, extension2_->id());
+  AppendPrefValue(&policy_value, extension1_->id());
+  AppendPrefValue(&policy_value, extension2_->id());
   profile()->GetTestingPrefService()->SetManagedPref(
       prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
 
-  // Only |extension1_| should get pinned. |extension2_| is specified but not
-  // installed, and |extension3_| is part of the default set, but that shouldn't
-  // take effect when the policy override is in place.
-  ASSERT_EQ(3, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
+  InitLauncherController();
 
-  // Installing |extension2_| should add it to the launcher.
-  extension_service_->AddExtension(extension2_.get());
-  ASSERT_EQ(4, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // Only |extension2_| should get pinned. |extension1_| is specified but not
+  // installed, and |extensionGmailApp_| is part of the default set, but that
+  // shouldn't take effect when the policy override is in place.
+  EXPECT_EQ("Chrome, App2", GetPinnedAppStatus());
+
+  // Installing |extension1_| should add it to the launcher. Note, App1 goes
+  // before App2 that is aligned with the pin order in policy.
+  extension_service_->AddExtension(extension1_.get());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 
   // Removing |extension1_| from the policy should not be reflected in the
   // launcher and pin will exist.
   policy_value.Remove(0, NULL);
   profile()->GetTestingPrefService()->SetManagedPref(
       prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
-  EXPECT_EQ(4, model_->item_count());
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 }
 
-TEST_F(ChromeLauncherControllerTest, UnpinWithUninstall) {
-  extension_service_->AddExtension(extension3_.get());
-  extension_service_->AddExtension(extension4_.get());
+TEST_F(ChromeLauncherControllerTest, WebAppPolicy) {
+  // Simulate one Web App being installed.
+  web_app::ExternallyInstalledWebAppPrefs web_app_prefs(profile()->GetPrefs());
+  web_app_prefs.Insert(GURL(kWebAppUrl), kWebAppId,
+                       web_app::ExternalInstallSource::kExternalPolicy);
+  extension_service_->AddExtension(web_app_.get());
+
+  // Set the policy value.
+  base::ListValue policy_value;
+  AppendPrefValue(&policy_value, kWebAppUrl);
+  profile()->GetTestingPrefService()->SetManagedPref(
+      prefs::kPolicyPinnedLauncherApps,
+      base::Value::ToUniquePtrValue(std::move(policy_value)));
 
   InitLauncherController();
 
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension4_->id()));
+  EXPECT_EQ("Chrome, WebApp", GetPinnedAppStatus());
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(kWebAppId, profile()));
+}
 
-  extension_service_->UnloadExtension(extension3_->id(),
+TEST_F(ChromeLauncherControllerTest, WebAppPolicyNonExistentApp) {
+  // Set the policy value but don't install an app for it.
+  base::ListValue policy_value;
+  AppendPrefValue(&policy_value, kWebAppUrl);
+  profile()->GetTestingPrefService()->SetManagedPref(
+      prefs::kPolicyPinnedLauncherApps,
+      base::Value::ToUniquePtrValue(std::move(policy_value)));
+
+  InitLauncherController();
+
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(kWebAppId, profile()));
+}
+
+TEST_F(ChromeLauncherControllerTest, UnpinWithUninstall) {
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  extension_service_->AddExtension(extensionDocApp_.get());
+
+  InitLauncherController();
+  StartPrefSyncService(syncer::SyncDataList());
+
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionDocApp_->id()));
+
+  extension_service_->UnloadExtension(extensionGmailApp_->id(),
                                       UnloadedExtensionReason::UNINSTALL);
 
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension4_->id()));
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionDocApp_->id()));
 }
 
 TEST_F(ChromeLauncherControllerTest, SyncUpdates) {
   extension_service_->AddExtension(extension2_.get());
-  extension_service_->AddExtension(extension3_.get());
-  extension_service_->AddExtension(extension4_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  extension_service_->AddExtension(extensionDocApp_.get());
 
   InitLauncherController();
 
@@ -2886,25 +3087,25 @@ TEST_F(ChromeLauncherControllerTest, SyncUpdates) {
   sync_list.clear();
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension2_->id());
-  InsertAddPinChange(&sync_list, 3, extension4_->id());
+  InsertAddPinChange(&sync_list, 3, extensionDocApp_->id());
   SendPinChanges(sync_list, false);
 
   expected_pinned_apps.push_back(extension2_->id());
-  expected_pinned_apps.push_back(extension4_->id());
+  expected_pinned_apps.push_back(extensionDocApp_->id());
   GetPinnedAppIds(launcher_controller_.get(), &actual_pinned_apps);
   EXPECT_EQ(expected_pinned_apps, actual_pinned_apps);
 
   sync_list.clear();
-  InsertAddPinChange(&sync_list, 2, extension3_->id());
+  InsertAddPinChange(&sync_list, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list, false);
   expected_pinned_apps.insert(expected_pinned_apps.begin() + 1,
-                              extension3_->id());
+                              extensionGmailApp_->id());
   GetPinnedAppIds(launcher_controller_.get(), &actual_pinned_apps);
   EXPECT_EQ(expected_pinned_apps, actual_pinned_apps);
 
   sync_list.clear();
-  InsertUpdatePinChange(&sync_list, 0, extension4_->id());
-  InsertUpdatePinChange(&sync_list, 1, extension3_->id());
+  InsertUpdatePinChange(&sync_list, 0, extensionDocApp_->id());
+  InsertUpdatePinChange(&sync_list, 1, extensionGmailApp_->id());
   InsertUpdatePinChange(&sync_list, 2, extension2_->id());
   SendPinChanges(sync_list, false);
   std::reverse(expected_pinned_apps.begin(), expected_pinned_apps.end());
@@ -2913,20 +3114,20 @@ TEST_F(ChromeLauncherControllerTest, SyncUpdates) {
 
   // Sending legacy sync change without pin info should not affect pin model.
   sync_list.clear();
-  InsertLegacyPinChange(&sync_list, extension4_->id());
+  InsertLegacyPinChange(&sync_list, extensionDocApp_->id());
   SendPinChanges(sync_list, false);
   GetPinnedAppIds(launcher_controller_.get(), &actual_pinned_apps);
   EXPECT_EQ(expected_pinned_apps, actual_pinned_apps);
 
   sync_list.clear();
-  InsertRemovePinChange(&sync_list, extension4_->id());
+  InsertRemovePinChange(&sync_list, extensionDocApp_->id());
   SendPinChanges(sync_list, false);
   expected_pinned_apps.erase(expected_pinned_apps.begin());
   GetPinnedAppIds(launcher_controller_.get(), &actual_pinned_apps);
   EXPECT_EQ(expected_pinned_apps, actual_pinned_apps);
 
   sync_list.clear();
-  InsertRemovePinChange(&sync_list, extension3_->id());
+  InsertRemovePinChange(&sync_list, extensionGmailApp_->id());
   InsertRemovePinChange(&sync_list, extension2_->id());
   SendPinChanges(sync_list, false);
   expected_pinned_apps.clear();
@@ -2934,68 +3135,21 @@ TEST_F(ChromeLauncherControllerTest, SyncUpdates) {
   EXPECT_EQ(expected_pinned_apps, actual_pinned_apps);
 }
 
-TEST_F(ChromeLauncherControllerTest, ImportLegacyPin) {
-  // Note extension3_ is actually Gmail app which is default pinned.
-  extension_service_->AddExtension(extension3_.get());
-  InitLauncherController();
-
-  // Default pins should contain Gmail. Pref is not syncing now.
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
-
-  extension_service_->AddExtension(extension2_.get());
-  EXPECT_EQ("AppList, Chrome, App3", GetPinnedAppStatus());
-
-  // Initially pins are imported from legacy pref based model.
-  base::ListValue value;
-  InsertPrefValue(&value, 0, extension4_->id());
-  InsertPrefValue(&value, 1, extension2_->id());
-  InsertPrefValue(&value, 2, extension3_->id());
-  StartPrefSyncServiceForPins(value);
-
-  // Imported pins contain App2. App2 should be added to pins now.
-  EXPECT_EQ("AppList, Chrome, App2, App3", GetPinnedAppStatus());
-
-  // extension4_ is in the pin list.
-  extension_service_->AddExtension(extension4_.get());
-  // extension5_ is not in the pin list.
-  extension_service_->AddExtension(extension5_.get());
-  EXPECT_EQ("AppList, Chrome, App4, App2, App3", GetPinnedAppStatus());
-
-  // Apply app sync, unpin one app and pin new one.
-  syncer::SyncChangeList sync_list;
-  InsertAddPinChange(&sync_list, -1, extension3_->id());
-  InsertAddPinChange(&sync_list, 3, extension5_->id());
-  SendPinChanges(sync_list, false);
-  EXPECT_EQ("AppList, Chrome, App4, App2, App5", GetPinnedAppStatus());
-
-  // At this point changing old pref based model does not affect pin model.
-  InsertPrefValue(&value, 3, extension5_->id());
-  StopPrefSyncService();
-  StartPrefSyncServiceForPins(value);
-  EXPECT_EQ("AppList, Chrome, App4, App2, App5", GetPinnedAppStatus());
-
-  // Next Chrome start should preserve pins.
-  RecreateLauncherController()->Init();
-  StopPrefSyncService();
-  StartPrefSyncService(syncer::SyncDataList());
-  EXPECT_EQ("AppList, Chrome, App4, App2, App5", GetPinnedAppStatus());
-}
-
 TEST_F(ChromeLauncherControllerTest, PendingInsertionOrder) {
   extension_service_->AddExtension(extension1_.get());
-  extension_service_->AddExtension(extension3_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
 
   InitLauncherController();
 
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension2_->id());
-  InsertAddPinChange(&sync_list, 2, extension3_->id());
+  InsertAddPinChange(&sync_list, 2, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
   std::vector<std::string> expected_pinned_apps;
   expected_pinned_apps.push_back(extension1_->id());
-  expected_pinned_apps.push_back(extension3_->id());
+  expected_pinned_apps.push_back(extensionGmailApp_->id());
   std::vector<std::string> actual_pinned_apps;
 
   GetPinnedAppIds(launcher_controller_.get(), &actual_pinned_apps);
@@ -3014,10 +3168,10 @@ void CheckAppMenu(ChromeLauncherController* controller,
                   const ash::ShelfItem& item,
                   size_t expected_item_count,
                   base::string16 expected_item_titles[]) {
-  ash::MenuItemList items = controller->GetAppMenuItemsForTesting(item);
+  auto items = controller->GetAppMenuItemsForTesting(item);
   ASSERT_EQ(expected_item_count, items.size());
   for (size_t i = 0; i < expected_item_count; i++)
-    EXPECT_EQ(expected_item_titles[i], items[i]->label);
+    EXPECT_EQ(expected_item_titles[i], items[i].first);
 }
 
 // Check that browsers get reflected correctly in the launcher menu.
@@ -3097,7 +3251,7 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
   CheckAppMenu(launcher_controller_.get(), item_browser, 1, one_menu_item2);
 
   // Transferred browsers of other users should not show up in the list.
-  MultiUserWindowManager::GetInstance()->ShowWindowForUser(
+  MultiUserWindowManagerHelper::GetWindowManager()->ShowWindowForUser(
       browser()->window()->GetNativeWindow(), account_id2);
   CheckAppMenu(launcher_controller_.get(), item_browser, 1, one_menu_item2);
 
@@ -3113,15 +3267,16 @@ TEST_F(ChromeLauncherControllerTest, V1AppMenuGeneration) {
   EXPECT_EQ(0, browser()->tab_strip_model()->count());
 
   InitLauncherControllerWithBrowser();
+  StartPrefSyncService(syncer::SyncDataList());
 
-  // The model should only contain the browser shortcut and app list items.
-  EXPECT_EQ(2, model_->item_count());
-  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
 
-  // Installing |extension3_| pins it to the launcher.
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // Installing |extensionGmailApp_| pins it to the launcher.
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   launcher_controller_->SetRefocusURLPatternForTest(gmail_id, GURL(kGmailUrl));
 
   // Check the menu content.
@@ -3172,12 +3327,13 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
        V1AppMenuGenerationTwoUsers) {
   // Create a browser item in the LauncherController.
   InitLauncherController();
+  StartPrefSyncService(syncer::SyncDataList());
   chrome::NewTab(browser());
 
-  // Installing |extension3_| pins it to the launcher.
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // Installing |extensionGmailApp_| pins it to the launcher.
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
   launcher_controller_->SetRefocusURLPatternForTest(gmail_id, GURL(kGmailUrl));
 
   // Check the menu content.
@@ -3209,7 +3365,7 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
   CheckAppMenu(launcher_controller_.get(), item_gmail, 0, nullptr);
 
   // Transfer the browser of the first user - it should still not show up.
-  MultiUserWindowManager::GetInstance()->ShowWindowForUser(
+  MultiUserWindowManagerHelper::GetWindowManager()->ShowWindowForUser(
       browser()->window()->GetNativeWindow(), account_id2);
 
   CheckAppMenu(launcher_controller_.get(), item_browser, 0, nullptr);
@@ -3227,20 +3383,20 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
       multi_user_util::GetAccountIdFromProfile(profile()));
   const AccountId account_id2(
       multi_user_util::GetAccountIdFromProfile(profile2));
-  // Check that there is a browser and a app launcher.
-  EXPECT_EQ(2, model_->item_count());
+  // Check that there is a browser.
+  EXPECT_EQ(1, model_->item_count());
 
   // Add a v2 app.
   V2App v2_app(profile(), extension1_.get());
-  EXPECT_EQ(3, model_->item_count());
+  EXPECT_EQ(2, model_->item_count());
 
   // After switching users the item should go away.
   SwitchActiveUser(account_id2);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 
   // And it should come back when switching back.
   SwitchActiveUser(account_id);
-  EXPECT_EQ(3, model_->item_count());
+  EXPECT_EQ(2, model_->item_count());
 }
 
 // Check that V2 applications are creating items properly in edge cases:
@@ -3255,36 +3411,88 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
       multi_user_util::GetAccountIdFromProfile(profile()));
   const AccountId account_id2(
       multi_user_util::GetAccountIdFromProfile(profile2));
-  // Check that there is a browser and a app launcher.
-  EXPECT_EQ(2, model_->item_count());
+  // Check that there is a browser, back button and a app launcher.
+  EXPECT_EQ(1, model_->item_count());
 
   // Switch to an inactive user.
   SwitchActiveUser(account_id2);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 
   // Add the v2 app to the inactive user and check that no item was added to
   // the launcher.
   {
     V2App v2_app(profile(), extension1_.get());
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     // Switch to the primary user and check that the item is shown.
     SwitchActiveUser(account_id);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     // Switch to the second user and check that the item goes away - even if the
     // item gets closed.
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
   }
 
-  // After the application was killed there should be still 2 items.
-  EXPECT_EQ(2, model_->item_count());
+  // After the application was killed there should still be 1 item.
+  EXPECT_EQ(1, model_->item_count());
 
   // Switching then back to the default user should not show the additional item
   // anymore.
   SwitchActiveUser(account_id);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
+}
+
+TEST_F(ChromeLauncherControllerTest, Active) {
+  InitLauncherController();
+
+  // Creates a new app window.
+  int initial_item_count = model_->item_count();
+  V2App app_1(profile(), extension1_.get());
+  EXPECT_TRUE(app_1.window()->GetNativeWindow()->IsVisible());
+  EXPECT_EQ(initial_item_count + 1, model_->item_count());
+  ash::ShelfItemDelegate* app_item_delegate_1 =
+      model_->GetShelfItemDelegate(model_->items()[initial_item_count].id);
+  ASSERT_TRUE(app_item_delegate_1);
+  AppWindowLauncherItemController* app_item_controller_1 =
+      app_item_delegate_1->AsAppWindowLauncherItemController();
+  ASSERT_TRUE(app_item_controller_1);
+  ui::BaseWindow* last_active =
+      GetLastActiveWindowForItemController(app_item_controller_1);
+  EXPECT_EQ(app_1.window()->GetBaseWindow(), last_active);
+  // Change the status so that we can verify it gets reset when the active
+  // window changes.
+  launcher_controller_->SetItemStatus(app_item_delegate_1->shelf_id(),
+                                      ash::STATUS_ATTENTION);
+
+  // Creates another app window, which should become active and reset |app_1|'s
+  // status (to running).
+  V2App app_2(profile(), extension2_.get());
+  EXPECT_TRUE(app_2.window()->GetNativeWindow()->IsVisible());
+  EXPECT_EQ(initial_item_count + 2, model_->item_count());
+  ash::ShelfItemDelegate* app_item_delegate_2 =
+      model_->GetShelfItemDelegate(model_->items()[initial_item_count + 1].id);
+  ASSERT_TRUE(app_item_delegate_2);
+  AppWindowLauncherItemController* app_item_controller_2 =
+      app_item_delegate_2->AsAppWindowLauncherItemController();
+  ASSERT_TRUE(app_item_controller_2);
+  last_active = GetLastActiveWindowForItemController(app_item_controller_2);
+  EXPECT_EQ(app_2.window()->GetBaseWindow(), last_active);
+  const ash::ShelfItem* shelf_item_1 =
+      launcher_controller_->GetItem(app_item_delegate_1->shelf_id());
+  ASSERT_TRUE(shelf_item_1);
+  EXPECT_EQ(ash::STATUS_RUNNING, shelf_item_1->status);
+
+  launcher_controller_->SetItemStatus(app_item_delegate_2->shelf_id(),
+                                      ash::STATUS_ATTENTION);
+
+  // Activate the first window, which should reset the status of the
+  // second apps window.
+  app_1.window()->GetBaseWindow()->Activate();
+  const ash::ShelfItem* shelf_item_2 =
+      launcher_controller_->GetItem(app_item_delegate_2->shelf_id());
+  ASSERT_TRUE(shelf_item_2);
+  EXPECT_EQ(ash::STATUS_RUNNING, shelf_item_2->status);
 }
 
 // Check that V2 applications will be made visible on the target desktop if
@@ -3292,7 +3500,8 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
 TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
        V2AppFollowsTeleportedWindow) {
   InitLauncherController();
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
+  ash::MultiUserWindowManager* window_manager =
+      MultiUserWindowManagerHelper::GetWindowManager();
 
   // Create and add three users / profiles, and go to #1's desktop.
   TestingProfile* profile1 = CreateMultiUserProfile("user-1");
@@ -3319,7 +3528,8 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
   EXPECT_FALSE(v2_app_2.window()->GetNativeWindow()->IsVisible());
 
   // Teleport the app from user #1 to the desktop #2 should show it.
-  manager->ShowWindowForUser(v2_app_1.window()->GetNativeWindow(), account_id2);
+  window_manager->ShowWindowForUser(v2_app_1.window()->GetNativeWindow(),
+                                    account_id2);
   EXPECT_TRUE(v2_app_1.window()->GetNativeWindow()->IsVisible());
   EXPECT_FALSE(v2_app_2.window()->GetNativeWindow()->IsVisible());
 
@@ -3369,75 +3579,178 @@ TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
   const AccountId account_id2(
       multi_user_util::GetAccountIdFromProfile(profile2));
   SwitchActiveUser(account_id);
-  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(1, model_->item_count());
 
   V2App v2_app_1(profile(), extension1_.get());
-  EXPECT_EQ(3, model_->item_count());
+  EXPECT_EQ(2, model_->item_count());
   {
     // Hide and show the app.
     v2_app_1.window()->Hide();
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     v2_app_1.window()->Show(extensions::AppWindow::SHOW_ACTIVE);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
   }
   {
     // Switch user, hide and show the app and switch back.
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     v2_app_1.window()->Hide();
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     v2_app_1.window()->Show(extensions::AppWindow::SHOW_ACTIVE);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     SwitchActiveUser(account_id);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
   }
   {
     // Switch user, hide the app, switch back and then show it again.
     SwitchActiveUser(account_id2);
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     v2_app_1.window()->Hide();
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
 
     SwitchActiveUser(account_id);
     // The following expectation does not work in current impl. It was working
-    // before because MultiUserWindowManagerChromeOS is not attached to user
+    // before because MultiProfileSupport is not attached to user
     // associated with profile() hence not actually handling windows for the
     // user. It is a real bug. See http://crbug.com/693634
     // EXPECT_EQ(2, model_->item_count());
 
     v2_app_1.window()->Show(extensions::AppWindow::SHOW_ACTIVE);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
   }
   {
     // Create a second app, hide and show it and then hide both apps.
     V2App v2_app_2(profile(), extension1_.get());
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     v2_app_2.window()->Hide();
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     v2_app_2.window()->Show(extensions::AppWindow::SHOW_ACTIVE);
-    EXPECT_EQ(3, model_->item_count());
+    EXPECT_EQ(2, model_->item_count());
 
     v2_app_1.window()->Hide();
     v2_app_2.window()->Hide();
-    EXPECT_EQ(2, model_->item_count());
+    EXPECT_EQ(1, model_->item_count());
   }
+}
+
+// Checks that spinners are hidden and restored on profile switching
+TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
+       SpinnersUpdateOnUserSwitch) {
+  InitLauncherController();
+
+  const AccountId account_id(
+      multi_user_util::GetAccountIdFromProfile(profile()));
+  const std::string user2 = "user2";
+  const TestingProfile* profile2 = CreateMultiUserProfile(user2);
+  const AccountId account_id2(
+      multi_user_util::GetAccountIdFromProfile(profile2));
+
+  const std::string app_id = extension1_->id();
+  extension_service_->AddExtension(extension1_.get());
+
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Add a spinner to the shelf
+  launcher_controller_->GetShelfSpinnerController()->AddSpinnerToShelf(
+      app_id, std::make_unique<ShelfSpinnerItemController>(app_id));
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Switch to a new profile
+  SwitchActiveUser(account_id2);
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Switch back
+  SwitchActiveUser(account_id);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Close the spinner
+  launcher_controller_->GetShelfSpinnerController()->CloseSpinner(app_id);
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+}
+
+// Checks that pinned spinners are hidden and restored on profile switching
+// but are not removed when the spinner closes.
+TEST_F(MultiProfileMultiBrowserShelfLayoutChromeLauncherControllerTest,
+       PinnedSpinnersUpdateOnUserSwitch) {
+  InitLauncherController();
+
+  const AccountId account_id(
+      multi_user_util::GetAccountIdFromProfile(profile()));
+  const std::string user2 = "user2";
+  const TestingProfile* profile2 = CreateMultiUserProfile(user2);
+  const AccountId account_id2(
+      multi_user_util::GetAccountIdFromProfile(profile2));
+
+  const std::string app_id = extension1_->id();
+  extension_service_->AddExtension(extension1_.get());
+
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Pin an app to the shelf
+  launcher_controller_->PinAppWithID(app_id);
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Activate the spinner
+  launcher_controller_->GetShelfSpinnerController()->AddSpinnerToShelf(
+      app_id, std::make_unique<ShelfSpinnerItemController>(app_id));
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Switch to a new profile
+  SwitchActiveUser(account_id2);
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Switch back
+  SwitchActiveUser(account_id);
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+
+  // Close the spinner
+  launcher_controller_->GetShelfSpinnerController()->CloseSpinner(app_id);
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
 }
 
 // Checks that the generated menu list properly activates items.
 TEST_F(ChromeLauncherControllerTest, V1AppMenuExecution) {
   InitLauncherControllerWithBrowser();
+  StartPrefSyncService(syncer::SyncDataList());
 
-  // Add |extension3_| to the launcher and add two items.
+  // Add |extensionGmailApp_| to the launcher and add two items.
   GURL gmail = GURL("https://mail.google.com/mail/u");
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
   launcher_controller_->SetRefocusURLPatternForTest(gmail_id, GURL(kGmailUrl));
   base::string16 title1 = ASCIIToUTF16("Test1");
   NavigateAndCommitActiveTabWithTitle(browser(), GURL(kGmailUrl), title1);
@@ -3455,25 +3768,25 @@ TEST_F(ChromeLauncherControllerTest, V1AppMenuExecution) {
       model_->GetShelfItemDelegate(gmail_id);
   ASSERT_TRUE(item_delegate);
   EXPECT_EQ(1, browser()->tab_strip_model()->active_index());
-  // Execute the second item in the menu, after the title and two separators,
+  // Execute the second item in the menu, after the title,
   // this shouldn't do anything since that item is already the active tab.
   {
     ash::ShelfApplicationMenuModel menu(
         base::string16(),
         launcher_controller_->GetAppMenuItemsForTesting(item_gmail),
         item_delegate);
-    menu.ActivatedAt(4);
+    menu.ActivatedAt(2);
   }
   EXPECT_EQ(1, browser()->tab_strip_model()->active_index());
 
-  // Execute the first item in the menu, after the title and two separators,
+  // Execute the first item in the menu, after the title,
   // this should activate the other tab.
   {
     ash::ShelfApplicationMenuModel menu(
         base::string16(),
         launcher_controller_->GetAppMenuItemsForTesting(item_gmail),
         item_delegate);
-    menu.ActivatedAt(3);
+    menu.ActivatedAt(1);
   }
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
 }
@@ -3481,11 +3794,11 @@ TEST_F(ChromeLauncherControllerTest, V1AppMenuExecution) {
 // Checks that the generated menu list properly deletes items.
 TEST_F(ChromeLauncherControllerTest, V1AppMenuDeletionExecution) {
   InitLauncherControllerWithBrowser();
+  StartPrefSyncService(syncer::SyncDataList());
 
-  // Add |extension3_| to the launcher and add two items.
-  GURL gmail = GURL("https://mail.google.com/mail/u");
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
+  // Add |extensionGmailApp_| to the launcher and add two items.
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
   launcher_controller_->SetRefocusURLPatternForTest(gmail_id, GURL(kGmailUrl));
   base::string16 title1 = ASCIIToUTF16("Test1");
   NavigateAndCommitActiveTabWithTitle(browser(), GURL(kGmailUrl), title1);
@@ -3506,19 +3819,16 @@ TEST_F(ChromeLauncherControllerTest, V1AppMenuDeletionExecution) {
   int tabs = browser()->tab_strip_model()->count();
   // Activate the proper tab through the menu item.
   {
-    ash::MenuItemList items =
-        launcher_controller_->GetAppMenuItemsForTesting(item_gmail);
-    item_delegate->ExecuteCommand(false, items[1]->command_id, ui::EF_NONE,
+    auto items = launcher_controller_->GetAppMenuItemsForTesting(item_gmail);
+    item_delegate->ExecuteCommand(false, 1, ui::EF_NONE,
                                   display::kInvalidDisplayId);
     EXPECT_EQ(tabs, browser()->tab_strip_model()->count());
   }
 
   // Delete one tab through the menu item.
   {
-    ash::MenuItemList items =
-        launcher_controller_->GetAppMenuItemsForTesting(item_gmail);
-    item_delegate->ExecuteCommand(false, items[1]->command_id,
-                                  ui::EF_SHIFT_DOWN,
+    auto items = launcher_controller_->GetAppMenuItemsForTesting(item_gmail);
+    item_delegate->ExecuteCommand(false, 1, ui::EF_SHIFT_DOWN,
                                   display::kInvalidDisplayId);
     EXPECT_EQ(--tabs, browser()->tab_strip_model()->count());
   }
@@ -3528,6 +3838,7 @@ TEST_F(ChromeLauncherControllerTest, V1AppMenuDeletionExecution) {
 // the manifest file.
 TEST_F(ChromeLauncherControllerTest, GmailMatching) {
   InitLauncherControllerWithBrowser();
+  StartPrefSyncService(syncer::SyncDataList());
 
   // Create a Gmail browser tab.
   chrome::NewTab(browser());
@@ -3539,10 +3850,10 @@ TEST_F(ChromeLauncherControllerTest, GmailMatching) {
   // Check that the launcher controller does not recognize the running app.
   EXPECT_FALSE(launcher_controller_->ContentCanBeHandledByGmailApp(content));
 
-  // Installing |extension3_| pins it to the launcher.
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // Installing |extensionGmailApp_| pins it to the launcher.
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
 
   // Check that it is now handled.
   EXPECT_TRUE(launcher_controller_->ContentCanBeHandledByGmailApp(content));
@@ -3559,6 +3870,8 @@ TEST_F(ChromeLauncherControllerTest, GmailMatching) {
 TEST_F(ChromeLauncherControllerTest, GmailOfflineMatching) {
   InitLauncherControllerWithBrowser();
 
+  StartPrefSyncService(syncer::SyncDataList());
+
   // Create a Gmail browser tab.
   chrome::NewTab(browser());
   base::string16 title = ASCIIToUTF16("Test");
@@ -3566,10 +3879,10 @@ TEST_F(ChromeLauncherControllerTest, GmailOfflineMatching) {
   content::WebContents* content =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  // Installing |extension3_| pins it to the launcher.
-  const ash::ShelfID gmail_id(extension3_->id());
-  extension_service_->AddExtension(extension3_.get());
-  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension3_->id()));
+  // Installing |extensionGmailApp_| pins it to the launcher.
+  const ash::ShelfID gmail_id(extensionGmailApp_->id());
+  extension_service_->AddExtension(extensionGmailApp_.get());
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extensionGmailApp_->id()));
 
   // The content should not be able to be handled by the app.
   EXPECT_FALSE(launcher_controller_->ContentCanBeHandledByGmailApp(content));
@@ -3582,8 +3895,7 @@ TEST_F(ChromeLauncherControllerTest, PersistLauncherItemPositions) {
   TestLauncherControllerHelper* helper = new TestLauncherControllerHelper;
   SetLauncherControllerHelper(helper);
 
-  EXPECT_EQ(ash::TYPE_APP_LIST, model_->items()[0].type);
-  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[1].type);
+  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[0].type);
 
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   EXPECT_EQ(0, tab_strip_model->count());
@@ -3598,17 +3910,15 @@ TEST_F(ChromeLauncherControllerTest, PersistLauncherItemPositions) {
   EXPECT_TRUE(launcher_controller_->IsAppPinned("1"));
   launcher_controller_->PinAppWithID("2");
 
-  EXPECT_EQ(ash::TYPE_APP_LIST, model_->items()[0].type);
-  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[1].type);
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[3].type);
-
-  // Move browser shortcut item from index 1 to index 3.
-  model_->Move(1, 3);
-  EXPECT_EQ(ash::TYPE_APP_LIST, model_->items()[0].type);
+  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[0].type);
   EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
   EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[3].type);
+
+  // Move browser shortcut item from index 0 to index 2.
+  model_->Move(0, 2);
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[0].type);
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[2].type);
 
   RecreateLauncherController();
   helper = new TestLauncherControllerHelper(profile());
@@ -3618,10 +3928,9 @@ TEST_F(ChromeLauncherControllerTest, PersistLauncherItemPositions) {
   launcher_controller_->Init();
 
   // Check ShelfItems are restored after resetting ChromeLauncherController.
-  EXPECT_EQ(ash::TYPE_APP_LIST, model_->items()[0].type);
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[0].type);
   EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
-  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[2].type);
-  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[3].type);
+  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[2].type);
 }
 
 // Verifies pinned apps are persisted and restored.
@@ -3675,7 +3984,7 @@ TEST_F(ChromeLauncherControllerTest, MultipleAppIconLoaders) {
 
   const ash::ShelfID shelf_id1(extension1_->id());
   const ash::ShelfID shelf_id2(extension2_->id());
-  const ash::ShelfID shelf_id3(extension3_->id());
+  const ash::ShelfID shelf_id3(extensionGmailApp_->id());
   // app_icon_loader1 and app_icon_loader2 are owned by
   // ChromeLauncherController.
   TestAppIconLoaderImpl* app_icon_loader1 = new TestAppIconLoaderImpl();
@@ -3728,17 +4037,17 @@ TEST_F(ChromeLauncherControllerTest, MultipleAppIconLoaders) {
   EXPECT_EQ(1, app_icon_loader2->clear_count());
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinPolicy) {
+TEST_F(ChromeLauncherControllerWithArcTest, ArcAppPinPolicy) {
   InitLauncherControllerWithBrowser();
-  arc::mojom::AppInfo appinfo = CreateAppInfo(
-      "Some App", "SomeActivity", "com.example.app", OrientationLock::NONE);
+  arc::mojom::AppInfo appinfo =
+      CreateAppInfo("Some App", "SomeActivity", "com.example.app");
   const std::string app_id = AddArcAppAndShortcut(appinfo);
 
   // Set policy, that makes pins ARC app. Unlike native extension, for ARC app
   // package_name (not hash) specified as id. In this test we check that
   // by hash we can determine that appropriate package was set by policy.
   base::ListValue policy_value;
-  InsertPrefValue(&policy_value, 0, appinfo.package_name);
+  AppendPrefValue(&policy_value, appinfo.package_name);
   profile()->GetTestingPrefService()->SetManagedPref(
       prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
 
@@ -3747,11 +4056,7 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcAppPinPolicy) {
             GetPinnableForAppID(app_id, profile()));
 }
 
-TEST_P(ChromeLauncherControllerWithArcTest, ArcManaged) {
-  // TODO(victorhsieh): Implement opt-in and opt-out.
-  if (arc::ShouldArcAlwaysStart())
-    return;
-
+TEST_F(ChromeLauncherControllerWithArcTest, ArcManaged) {
   extension_service_->AddExtension(arc_support_host_.get());
   // Test enables ARC, so turn it off for initial values.
   EnablePlayStore(false);
@@ -3765,56 +4070,57 @@ TEST_P(ChromeLauncherControllerWithArcTest, ArcManaged) {
   // Initial run, ARC is not managed and disabled, Play Store pin should be
   // available.
   ValidateArcState(false, false, arc::ArcSessionManager::State::STOPPED,
-                   "AppList, Chrome, Play Store");
+                   "Chrome, Play Store");
 
   // ARC is managed and enabled, Play Store pin should be available.
-  // Note: NEGOTIATING_TERMS_OF_SERVICE here means that opt-in flow starts.
+  // Note: CHECKING_ANDROID_MANAGEMENT here means that opt-in flow is skipped.
   profile()->GetTestingPrefService()->SetManagedPref(
       arc::prefs::kArcEnabled, std::make_unique<base::Value>(true));
   base::RunLoop().RunUntilIdle();
   ValidateArcState(true, true,
-                   arc::ArcSessionManager::State::NEGOTIATING_TERMS_OF_SERVICE,
-                   "AppList, Chrome, Play Store");
+                   arc::ArcSessionManager::State::CHECKING_ANDROID_MANAGEMENT,
+                   "Chrome, Play Store");
 
   // ARC is managed and disabled, Play Store pin should not be available.
   profile()->GetTestingPrefService()->SetManagedPref(
       arc::prefs::kArcEnabled, std::make_unique<base::Value>(false));
   base::RunLoop().RunUntilIdle();
   ValidateArcState(false, true, arc::ArcSessionManager::State::STOPPED,
-                   "AppList, Chrome");
+                   "Chrome");
 
   // ARC is not managed and disabled, Play Store pin should be available.
   profile()->GetTestingPrefService()->RemoveManagedPref(
       arc::prefs::kArcEnabled);
   base::RunLoop().RunUntilIdle();
   ValidateArcState(false, false, arc::ArcSessionManager::State::STOPPED,
-                   "AppList, Chrome, Play Store");
+                   "Chrome, Play Store");
 
   // ARC is not managed and enabled, Play Store pin should be available.
+  // Note: NEGOTIATING_TERMS_OF_SERVICE here means that opt-in flow starts.
   EnablePlayStore(true);
   ValidateArcState(true, false,
                    arc::ArcSessionManager::State::NEGOTIATING_TERMS_OF_SERVICE,
-                   "AppList, Chrome, Play Store");
+                   "Chrome, Play Store");
 
   // User disables ARC. ARC is not managed and disabled, Play Store pin should
   // be automatically removed.
   EnablePlayStore(false);
   ValidateArcState(false, false, arc::ArcSessionManager::State::STOPPED,
-                   "AppList, Chrome");
+                   "Chrome");
 
   // Even if re-enable it again, Play Store pin does not appear automatically.
   EnablePlayStore(true);
   ValidateArcState(true, false,
                    arc::ArcSessionManager::State::NEGOTIATING_TERMS_OF_SERVICE,
-                   "AppList, Chrome");
+                   "Chrome");
 }
 
 // Test the application menu of a shelf item with multiple ARC windows.
-TEST_P(ChromeLauncherControllerWithArcTest, ShelfItemWithMultipleWindows) {
+TEST_F(ChromeLauncherControllerWithArcTest, ShelfItemWithMultipleWindows) {
   InitLauncherControllerWithBrowser();
 
   arc::mojom::AppInfo appinfo =
-      CreateAppInfo("Test1", "test", "com.example.app", OrientationLock::NONE);
+      CreateAppInfo("Test1", "test", "com.example.app");
   AddArcAppAndShortcut(appinfo);
 
   // Widgets will be deleted by the system.
@@ -3843,13 +4149,11 @@ TEST_P(ChromeLauncherControllerWithArcTest, ShelfItemWithMultipleWindows) {
 
   // Command ids are just app window indices. Note, apps are registered in
   // opposite order. Last created goes in front.
-  ash::MenuItemList items = item_delegate->GetAppMenuItems(0);
+  auto items = item_delegate->GetAppMenuItems(0);
   ASSERT_EQ(items.size(), 2U);
-  EXPECT_EQ(items[0]->command_id, 0U);
-  EXPECT_EQ(items[1]->command_id, 1U);
 
-  // Execute command to activate first window.
-  item_delegate->ExecuteCommand(false, items[1]->command_id, ui::EF_NONE,
+  // Execute command 1 to activate the first window.
+  item_delegate->ExecuteCommand(false, 1, ui::EF_NONE,
                                 display::kInvalidDisplayId);
   EXPECT_TRUE(window1->IsActive());
   EXPECT_FALSE(window2->IsActive());
@@ -3860,104 +4164,76 @@ TEST_P(ChromeLauncherControllerWithArcTest, ShelfItemWithMultipleWindows) {
   EXPECT_TRUE(window1->IsActive());
   EXPECT_FALSE(window2->IsActive());
 
-  // Execute command to activate second window.
-  item_delegate->ExecuteCommand(false, items[0]->command_id, ui::EF_NONE,
+  // Execute command 0 to activate the second window.
+  item_delegate->ExecuteCommand(false, 0, ui::EF_NONE,
                                 display::kInvalidDisplayId);
   EXPECT_FALSE(window1->IsActive());
   EXPECT_TRUE(window2->IsActive());
 }
 
+// Test that ARC camera app can successfully open and close.
+TEST_F(ChromeLauncherControllerWithArcTest, ArcCameraAppOpenAndClose) {
+  InitLauncherControllerWithBrowser();
+
+  const arc::mojom::AppInfo appinfo =
+      CreateAppInfo(kCameraAppName, kCameraAppActivity, kCameraAppPackage);
+
+  // Widgets will be deleted by the system.
+  views::Widget* window1 = CreateArcWindow("org.chromium.arc.1");
+  NotifyOnTaskCreated(appinfo, 1 /* task_id */);
+  ASSERT_TRUE(window1);
+  EXPECT_TRUE(window1->IsActive());
+
+  // After starting the ARC camera app, it's actually the internal camera app
+  // being put onto the shelf. Therefore, we need to specify the internal
+  // camera app shelf ID to access it.
+  const std::string intern_app_id(app_list::kInternalAppIdCamera);
+  const ash::ShelfID intern_shelf_id(intern_app_id);
+  EXPECT_TRUE(launcher_controller_->IsOpen(intern_shelf_id));
+
+  NotifyOnTaskDestroyed(1 /* task_id */);
+  window1->Close();
+
+  EXPECT_FALSE(launcher_controller_->IsOpen(intern_shelf_id));
+}
+
+// Test that the app menu item count is 1 for the built-in camera app.
+TEST_F(ChromeLauncherControllerWithArcTest, ArcCameraAppMenuItemsCount) {
+  InitLauncherControllerWithBrowser();
+
+  const arc::mojom::AppInfo appinfo =
+      CreateAppInfo(kCameraAppName, kCameraAppActivity, kCameraAppPackage);
+
+  // Widgets will be deleted by the system.
+  views::Widget* window1 = CreateArcWindow("org.chromium.arc.1");
+  NotifyOnTaskCreated(appinfo, 1 /* task_id */);
+  ASSERT_TRUE(window1);
+  EXPECT_TRUE(window1->IsActive());
+
+  // After starting the ARC camera app, it's actually the internal camera app
+  // being put onto the shelf. Therefore, we need to specify the internal
+  // camera app shelf ID to access it.
+  const std::string intern_app_id(app_list::kInternalAppIdCamera);
+  ash::ShelfItemDelegate* item_delegate =
+      model_->GetShelfItemDelegate(ash::ShelfID(intern_app_id));
+  ASSERT_TRUE(item_delegate);
+
+  // We want to make sure there's only 1 menu item for camera app, even if both
+  // ARC window and internal app window might have been added to
+  // AppWindowLauncherItemController.
+  ASSERT_EQ(1u, item_delegate->GetAppMenuItems(ui::EF_NONE).size());
+}
+
 namespace {
-
-class ChromeLauncherControllerOrientationTest
-    : public ChromeLauncherControllerWithArcTest {
- public:
-  ChromeLauncherControllerOrientationTest() {}
-  ~ChromeLauncherControllerOrientationTest() override {}
-
- protected:
-  void InitApps() {
-    appinfo_none_ =
-        CreateAppInfo("None", "None", "com.example.app", OrientationLock::NONE);
-    appinfo_landscape_ =
-        CreateAppInfo("Landscape", "Landscape", "com.example.app",
-                      OrientationLock::LANDSCAPE);
-    appinfo_portrait_ = CreateAppInfo("Portrait", "Portrait", "com.example.app",
-                                      OrientationLock::PORTRAIT);
-    appinfo_current_ = CreateAppInfo(
-        "LockCurrent", "current", "com.example.app", OrientationLock::CURRENT);
-
-    AddArcAppAndShortcut(appinfo_none_);
-    AddArcAppAndShortcut(appinfo_landscape_);
-    AddArcAppAndShortcut(appinfo_portrait_);
-    AddArcAppAndShortcut(appinfo_current_);
-
-    ash::ScreenOrientationController* controller =
-        ash::Shell::Get()->screen_orientation_controller();
-
-    // Creating a window with NONE orientation will not lock the screen.
-    window_none_ = CreateArcWindow(window_app_id_none_);
-    NotifyOnTaskCreated(appinfo_none_, task_id_none_);
-    EXPECT_FALSE(controller->rotation_locked());
-    EXPECT_EQ(display::Display::ROTATE_0,
-              display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-    // Create a arc window with PORTRAIT orientation locks the screen to 90.
-    window_portrait_ = CreateArcWindow(window_app_id_portrait_);
-    NotifyOnTaskCreated(appinfo_portrait_, task_id_portrait_);
-    EXPECT_TRUE(controller->rotation_locked());
-    EXPECT_EQ(display::Display::ROTATE_90,
-              display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-    // Create a arc window with LANDSCAPE orientation locks the screen to 0.
-    window_landscape_ = CreateArcWindow(window_app_id_landscape_);
-    NotifyOnTaskCreated(appinfo_landscape_, task_id_landscape_);
-    EXPECT_TRUE(controller->rotation_locked());
-    EXPECT_EQ(display::Display::ROTATE_0,
-              display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-  }
-
-  int32_t task_id_none_ = 1;
-  int32_t task_id_landscape_ = 2;
-  int32_t task_id_portrait_ = 3;
-  int32_t task_id_current_ = 4;
-
-  // This needs to be kept on the instance because window's property has
-  // refeference to this.
-  std::string window_app_id_none_ = {"org.chromium.arc.1"};
-  std::string window_app_id_landscape_ = {"org.chromium.arc.2"};
-  std::string window_app_id_portrait_ = {"org.chromium.arc.3"};
-  std::string window_app_id_current_ = {"org.chromium.arc.4"};
-
-  arc::mojom::AppInfo appinfo_none_;
-  arc::mojom::AppInfo appinfo_landscape_;
-  arc::mojom::AppInfo appinfo_portrait_;
-  arc::mojom::AppInfo appinfo_current_;
-
-  views::Widget* window_none_ = nullptr;
-  views::Widget* window_landscape_ = nullptr;
-  views::Widget* window_portrait_ = nullptr;
-  views::Widget* window_current_ = nullptr;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerOrientationTest);
-};
-
-INSTANTIATE_TEST_CASE_P(,
-                        ChromeLauncherControllerOrientationTest,
-                        ::testing::Bool());
-
 class ChromeLauncherControllerArcDefaultAppsTest
-    : public ChromeLauncherControllerTest,
-      public ::testing::WithParamInterface<bool> {
+    : public ChromeLauncherControllerTest {
  public:
   ChromeLauncherControllerArcDefaultAppsTest() {}
   ~ChromeLauncherControllerArcDefaultAppsTest() override {}
 
  protected:
   void SetUp() override {
-    if (GetParam())
-      arc::SetArcAlwaysStartForTesting(true);
+    ArcAppIcon::DisableSafeDecodingForTesting();
     ArcDefaultAppList::UseTestAppsDirectory();
     ChromeLauncherControllerTest::SetUp();
   }
@@ -3965,10 +4241,6 @@ class ChromeLauncherControllerArcDefaultAppsTest
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerArcDefaultAppsTest);
 };
-
-INSTANTIATE_TEST_CASE_P(,
-                        ChromeLauncherControllerArcDefaultAppsTest,
-                        ::testing::Bool());
 
 class ChromeLauncherControllerPlayStoreAvailabilityTest
     : public ChromeLauncherControllerTest,
@@ -3980,7 +4252,7 @@ class ChromeLauncherControllerPlayStoreAvailabilityTest
  protected:
   void SetUp() override {
     if (GetParam())
-      arc::SetArcAlwaysStartForTesting(false);
+      arc::SetArcAlwaysStartWithoutPlayStoreForTesting();
     ArcDefaultAppList::UseTestAppsDirectory();
     ChromeLauncherControllerTest::SetUp();
   }
@@ -3989,165 +4261,15 @@ class ChromeLauncherControllerPlayStoreAvailabilityTest
   DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerPlayStoreAvailabilityTest);
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        ChromeLauncherControllerPlayStoreAvailabilityTest,
-                        ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(,
+                         ChromeLauncherControllerPlayStoreAvailabilityTest,
+                         ::testing::Bool());
 
 }  // namespace
 
-TEST_P(ChromeLauncherControllerOrientationTest,
-       ArcOrientationLockBeforeWindowReady) {
-  ASSERT_TRUE(display::Display::HasInternalDisplay());
-
-  extension_service_->AddExtension(arc_support_host_.get());
-  EnablePlayStore(true);
-
-  InitLauncherController();
-
-  ash::ScreenOrientationController* controller =
-      ash::Shell::Get()->screen_orientation_controller();
-
-  std::string app_id1("org.chromium.arc.1");
-  int task_id1 = 1;
-  arc::mojom::AppInfo appinfo1 =
-      CreateAppInfo("Test1", "test", "com.example.app", OrientationLock::NONE);
-
-  AddArcAppAndShortcut(appinfo1);
-  NotifyOnTaskCreated(appinfo1, task_id1);
-  NotifyOnTaskOrientationLockRequested(task_id1, OrientationLock::PORTRAIT);
-
-  // Widgets will be deleted by the system.
-  CreateArcWindow(app_id1);
-
-  EXPECT_FALSE(controller->rotation_locked());
-
-  EnableTabletMode(true);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  std::string app_id2("org.chromium.arc.2");
-  int task_id2 = 2;
-  arc::mojom::AppInfo appinfo2 =
-      CreateAppInfo("Test2", "test", "com.example.app", OrientationLock::NONE);
-  // Create in tablet mode.
-  AddArcAppAndShortcut(appinfo2);
-  NotifyOnTaskCreated(appinfo2, task_id2);
-  NotifyOnTaskOrientationLockRequested(task_id2, OrientationLock::LANDSCAPE);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // The screen will be locked when the window is created.
-  CreateArcWindow(app_id2);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-}
-
-TEST_P(ChromeLauncherControllerOrientationTest, ArcOrientationLock) {
-  ASSERT_TRUE(display::Display::HasInternalDisplay());
-
-  extension_service_->AddExtension(arc_support_host_.get());
-  EnablePlayStore(true);
-  EnableTabletMode(true);
-
-  InitLauncherController();
-
-  InitApps();
-  ash::ScreenOrientationController* controller =
-      ash::Shell::Get()->screen_orientation_controller();
-
-  // Activating a window with NON orientation unlocks the screen.
-  window_none_->Activate();
-  EXPECT_FALSE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // Activating a window with PORTRAIT orientation locks the screen to 90.
-  window_portrait_->Activate();
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // Disable Tablet mode, and make sure the screen is unlocked.
-  EnableTabletMode(false);
-  EXPECT_FALSE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // Re-enable Tablet mode, and make sure the screen is locked to 90.
-  EnableTabletMode(true);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  window_portrait_->Activate();
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  window_landscape_->Activate();
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // OnTaskOrientationLockRequested can overwrite the current lock.
-  NotifyOnTaskOrientationLockRequested(task_id_landscape_,
-                                       OrientationLock::NONE);
-  EXPECT_FALSE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  NotifyOnTaskOrientationLockRequested(task_id_landscape_,
-                                       OrientationLock::PORTRAIT);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // Non active window won't change the lock.
-  NotifyOnTaskOrientationLockRequested(task_id_none_,
-                                       OrientationLock::LANDSCAPE);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // But activating it will change the locked orinetation.
-  window_none_->Activate();
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // OnTaskOrientationLockRequested will not lock the screen in non Tablet mode.
-  EnableTabletMode(false);
-  EXPECT_FALSE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  NotifyOnTaskOrientationLockRequested(task_id_none_,
-                                       OrientationLock::PORTRAIT);
-  EXPECT_FALSE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_0,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // But it remembers the orientation lock and use it when Tablet mode is
-  // enabled.
-  EnableTabletMode(true);
-  EXPECT_TRUE(controller->rotation_locked());
-  EXPECT_EQ(display::Display::ROTATE_90,
-            display::Screen::GetScreen()->GetPrimaryDisplay().rotation());
-
-  // Manually unlock first.
-  NotifyOnTaskOrientationLockRequested(task_id_none_, OrientationLock::NONE);
-  EXPECT_FALSE(controller->rotation_locked());
-}
-
-TEST_P(ChromeLauncherControllerArcDefaultAppsTest, DefaultApps) {
+TEST_F(ChromeLauncherControllerArcDefaultAppsTest, DefaultApps) {
   arc_test_.SetUp(profile());
   InitLauncherController();
-
-  // Prevent safe decoding which requires IPC.
-  ArcAppIcon::DisableSafeDecodingForTesting();
 
   ArcAppListPrefs* const prefs = arc_test_.arc_app_list_prefs();
   EnablePlayStore(false);
@@ -4156,29 +4278,53 @@ TEST_P(ChromeLauncherControllerArcDefaultAppsTest, DefaultApps) {
 
   const std::string app_id =
       ArcAppTest::GetAppId(arc_test_.fake_default_apps()[0]);
-  EXPECT_FALSE(launcher_controller_->GetItem(ash::ShelfID(app_id)));
-  EXPECT_TRUE(arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON));
+  const ash::ShelfID shelf_id(app_id);
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+  EXPECT_TRUE(arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON,
+                             arc::UserInteractionType::NOT_USER_INITIATED));
   EXPECT_TRUE(arc::IsArcPlayStoreEnabledForProfile(profile()));
-  EXPECT_TRUE(launcher_controller_->GetItem(ash::ShelfID(app_id)));
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
 
   // Stop ARC again. Shelf item should go away.
   EnablePlayStore(false);
-  EXPECT_FALSE(launcher_controller_->GetItem(ash::ShelfID(app_id)));
 
-  EXPECT_TRUE(arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON));
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  EXPECT_TRUE(arc::LaunchApp(profile(), app_id, ui::EF_LEFT_MOUSE_BUTTON,
+                             arc::UserInteractionType::NOT_USER_INITIATED));
   EXPECT_TRUE(arc::IsArcPlayStoreEnabledForProfile(profile()));
-  EXPECT_TRUE(launcher_controller_->GetItem(ash::ShelfID(app_id)));
-  EXPECT_TRUE(launcher_controller_->GetArcDeferredLauncher()->HasApp(app_id));
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+
+  auto* item_delegate = model_->GetShelfItemDelegate(shelf_id);
+  ASSERT_TRUE(item_delegate);
+  EXPECT_TRUE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+  // Initially, a default icon is set for the shelf item.
+  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  auto get_icon = [=]() {
+    return *launcher_controller_->GetItem(shelf_id)->image.bitmap();
+  };
+  const SkBitmap default_icon = get_icon();
 
   std::string window_app_id("org.chromium.arc.1");
   CreateArcWindow(window_app_id);
   arc_test_.app_instance()->SendTaskCreated(1, arc_test_.fake_default_apps()[0],
                                             std::string());
-  EXPECT_TRUE(launcher_controller_->GetItem(ash::ShelfID(app_id)));
-  EXPECT_FALSE(launcher_controller_->GetArcDeferredLauncher()->HasApp(app_id));
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+  // Refresh delegate, it was changed.
+  item_delegate = model_->GetShelfItemDelegate(shelf_id);
+  ASSERT_TRUE(item_delegate);
+  EXPECT_FALSE(
+      launcher_controller_->GetShelfSpinnerController()->HasApp(app_id));
+  EXPECT_FALSE(item_delegate->image_set_by_controller());
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
+
+  // Wait for the real app icon image to be decoded and set for the shelf item.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(gfx::test::AreBitmapsEqual(default_icon, get_icon()));
 }
 
-TEST_P(ChromeLauncherControllerArcDefaultAppsTest, PlayStoreDeferredLaunch) {
+TEST_F(ChromeLauncherControllerArcDefaultAppsTest, PlayStoreDeferredLaunch) {
   // Add ARC host app to enable Play Store default app.
   extension_service_->AddExtension(arc_support_host_.get());
   arc_test_.SetUp(profile());
@@ -4192,7 +4338,7 @@ TEST_P(ChromeLauncherControllerArcDefaultAppsTest, PlayStoreDeferredLaunch) {
   // Pin Play Store. It should be pinned but not scheduled for deferred launch.
   launcher_controller_->PinAppWithID(arc::kPlayStoreAppId);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc::kPlayStoreAppId));
-  EXPECT_FALSE(launcher_controller_->GetArcDeferredLauncher()->HasApp(
+  EXPECT_FALSE(launcher_controller_->GetShelfSpinnerController()->HasApp(
       arc::kPlayStoreAppId));
 
   // Simulate click. This should schedule Play Store for deferred launch.
@@ -4201,7 +4347,7 @@ TEST_P(ChromeLauncherControllerArcDefaultAppsTest, PlayStoreDeferredLaunch) {
   EXPECT_TRUE(item_delegate);
   SelectItem(item_delegate);
   EXPECT_TRUE(launcher_controller_->IsAppPinned(arc::kPlayStoreAppId));
-  EXPECT_TRUE(launcher_controller_->GetArcDeferredLauncher()->HasApp(
+  EXPECT_TRUE(launcher_controller_->GetShelfSpinnerController()->HasApp(
       arc::kPlayStoreAppId));
 }
 
@@ -4230,25 +4376,25 @@ TEST_F(ChromeLauncherControllerTest, CheckPositionConflict) {
 
   extension_service_->AddExtension(extension1_.get());
   extension_service_->AddExtension(extension2_.get());
-  extension_service_->AddExtension(extension3_.get());
+  extension_service_->AddExtension(extensionGmailApp_.get());
 
   syncer::SyncChangeList sync_list;
   InsertAddPinChange(&sync_list, 0, extension_misc::kChromeAppId);
   InsertAddPinChange(&sync_list, 1, extension1_->id());
   InsertAddPinChange(&sync_list, 1, extension2_->id());
-  InsertAddPinChange(&sync_list, 1, extension3_->id());
+  InsertAddPinChange(&sync_list, 1, extensionGmailApp_->id());
   SendPinChanges(sync_list, true);
 
-  EXPECT_EQ("AppList, Chrome, App1, App2, App3", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2, Gmail", GetPinnedAppStatus());
 
   const syncer::StringOrdinal position_chrome =
-      app_service_->GetPinPosition(extension_misc::kChromeAppId);
+      app_list_syncable_service_->GetPinPosition(extension_misc::kChromeAppId);
   const syncer::StringOrdinal position_1 =
-      app_service_->GetPinPosition(extension1_->id());
+      app_list_syncable_service_->GetPinPosition(extension1_->id());
   const syncer::StringOrdinal position_2 =
-      app_service_->GetPinPosition(extension2_->id());
+      app_list_syncable_service_->GetPinPosition(extension2_->id());
   const syncer::StringOrdinal position_3 =
-      app_service_->GetPinPosition(extension3_->id());
+      app_list_syncable_service_->GetPinPosition(extensionGmailApp_->id());
   EXPECT_TRUE(position_chrome.LessThan(position_1));
   EXPECT_TRUE(position_1.Equals(position_2));
   EXPECT_TRUE(position_2.Equals(position_3));
@@ -4256,21 +4402,21 @@ TEST_F(ChromeLauncherControllerTest, CheckPositionConflict) {
   // Move Chrome between App1 and App2.
   // Note, move target_index is in context when moved element is removed from
   // array first.
-  model_->Move(1, 2);
-  EXPECT_EQ("AppList, App1, Chrome, App2, App3", GetPinnedAppStatus());
+  model_->Move(0, 1);
+  EXPECT_EQ("App1, Chrome, App2, Gmail", GetPinnedAppStatus());
 
   // Expect sync positions for only Chrome is updated and its resolution is
   // after all duplicated ordinals.
-  EXPECT_TRUE(position_3.LessThan(
-      app_service_->GetPinPosition(extension_misc::kChromeAppId)));
-  EXPECT_TRUE(
-      position_1.Equals(app_service_->GetPinPosition(extension1_->id())));
-  EXPECT_TRUE(
-      position_1.Equals(app_service_->GetPinPosition(extension1_->id())));
-  EXPECT_TRUE(
-      position_2.Equals(app_service_->GetPinPosition(extension2_->id())));
-  EXPECT_TRUE(
-      position_3.Equals(app_service_->GetPinPosition(extension3_->id())));
+  EXPECT_TRUE(position_3.LessThan(app_list_syncable_service_->GetPinPosition(
+      extension_misc::kChromeAppId)));
+  EXPECT_TRUE(position_1.Equals(
+      app_list_syncable_service_->GetPinPosition(extension1_->id())));
+  EXPECT_TRUE(position_1.Equals(
+      app_list_syncable_service_->GetPinPosition(extension1_->id())));
+  EXPECT_TRUE(position_2.Equals(
+      app_list_syncable_service_->GetPinPosition(extension2_->id())));
+  EXPECT_TRUE(position_3.Equals(
+      app_list_syncable_service_->GetPinPosition(extensionGmailApp_->id())));
 }
 
 // Test the case when sync app is turned off and we need to use local copy to
@@ -4287,130 +4433,328 @@ TEST_F(ChromeLauncherControllerTest, SyncOffLocalUpdate) {
   InsertAddPinChange(&sync_list, 1, extension2_->id());
   SendPinChanges(sync_list, true);
 
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 
   syncer::SyncDataList copy_sync_list =
-      app_service_->GetAllSyncData(syncer::APP_LIST);
+      app_list_syncable_service_->GetAllSyncData(syncer::APP_LIST);
 
-  app_service_->StopSyncing(syncer::APP_LIST);
+  app_list_syncable_service_->StopSyncing(syncer::APP_LIST);
   RecreateLauncherController()->Init();
 
   // Pinned state should not change.
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
   launcher_controller_->UnpinAppWithID(extension2_->id());
-  EXPECT_EQ("AppList, Chrome, App1", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1", GetPinnedAppStatus());
 
   // Resume syncing and sync information overrides local copy.
   StartAppSyncService(copy_sync_list);
-  EXPECT_EQ("AppList, Chrome, App1, App2", GetPinnedAppStatus());
+  EXPECT_EQ("Chrome, App1, App2", GetPinnedAppStatus());
 }
 
-// Ensure Ash and Chrome ShelfModel changes are synchronized correctly.
-TEST_F(ChromeLauncherControllerTest, ShelfModelSync) {
-  // ShelfModel creates an app list item, ShelfController creates its delegate.
-  TestChromeLauncherController* launcher_controller =
-      RecreateLauncherController();
-  TestShelfController* shelf_controller =
-      launcher_controller->test_shelf_controller();
-  EXPECT_EQ(0u, shelf_controller->added_count());
-  EXPECT_EQ(0u, shelf_controller->removed_count());
-  EXPECT_EQ(1, model_->item_count());
-  EXPECT_EQ(ash::kAppListId, model_->items()[0].id.app_id);
-  EXPECT_EQ(ash::TYPE_APP_LIST, model_->items()[0].type);
-  EXPECT_FALSE(model_->GetShelfItemDelegate(model_->items()[0].id));
-
-  // Init creates the browser item and its delegate in Chrome's ShelfModel.
-  // Ash's ShelfController should be notified about the update and delegate.
-  launcher_controller->Init();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(2, model_->item_count());
-  EXPECT_EQ(1u, shelf_controller->added_count());
-  EXPECT_EQ(0u, shelf_controller->removed_count());
-  EXPECT_LE(0u, shelf_controller->updated_count());
-  EXPECT_EQ(1u, shelf_controller->set_delegate_count());
-  EXPECT_EQ(extension_misc::kChromeAppId, model_->items()[1].id.app_id);
-  EXPECT_EQ(ash::TYPE_BROWSER_SHORTCUT, model_->items()[1].type);
-  EXPECT_TRUE(model_->GetShelfItemDelegate(model_->items()[1].id));
-  EXPECT_FALSE(model_->items()[1].title.empty());
-
-  // Add a shelf item using the ShelfController interface.
-  ash::ShelfItem item;
-  item.type = ash::TYPE_PINNED_APP;
-  item.id = ash::ShelfID(kDummyAppId);
-  shelf_controller->AddShelfItem(2, item);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(2u, shelf_controller->added_count());
-  EXPECT_EQ(0u, shelf_controller->removed_count());
-
-  // Remove a shelf item using the ShelfController interface.
-  shelf_controller->RemoveShelfItem(item.id);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(2u, shelf_controller->added_count());
-  EXPECT_EQ(1u, shelf_controller->removed_count());
-
-  // Add an item to Chrome's model; ShelfController should be notified.
-  model_->Add(item);
-  EXPECT_EQ(3, model_->item_count());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(3u, shelf_controller->added_count());
-  EXPECT_EQ(1u, shelf_controller->removed_count());
-
-  // Remove an item from Chrome's model; ShelfController should be notified.
-  model_->RemoveItemAt(2);
-  EXPECT_EQ(2, model_->item_count());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(3u, shelf_controller->added_count());
-  EXPECT_EQ(2u, shelf_controller->removed_count());
-}
-
-// Ensure Ash and Chrome ShelfModel changes are synchronized correctly.
-TEST_F(ChromeLauncherControllerTest, ShelfItemImageSync) {
+// Test the Settings can be pinned and unpinned.
+TEST_F(ChromeLauncherControllerTest, InternalAppPinUnpin) {
   InitLauncherController();
-  base::RunLoop().RunUntilIdle();
-  TestShelfController* shelf_controller =
-      launcher_controller_->test_shelf_controller();
+  // The model should only contain the browser shortcut item.
+  EXPECT_EQ(1, model_->item_count());
 
-  // Create a ShelfItem struct with a valid image icon.
+  const std::string app_id = app_list::kInternalAppIdSettings;
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(app_id));
+
+  // Pin Settings.
+  launcher_controller_->PinAppWithID(app_id);
+  EXPECT_EQ(2, model_->item_count());
+  EXPECT_EQ(ash::TYPE_PINNED_APP, model_->items()[1].type);
+  EXPECT_EQ(ash::STATUS_CLOSED, model_->items()[1].status);
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+
+  // Unpin Settings.
+  launcher_controller_->UnpinAppWithID(app_id);
+  EXPECT_EQ(1, model_->item_count());
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(app_id));
+}
+
+// Test that internal app can be added and removed on shelf.
+TEST_F(ChromeLauncherControllerTest, InternalAppWindowRecreation) {
+  InitLauncherController();
+
+  // Only test the first internal app. The others should be the same.
+  const auto& internal_app = app_list::GetInternalAppList(profile()).front();
+  const std::string app_id = internal_app.app_id;
+  const ash::ShelfID shelf_id(app_id);
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  views::Widget* internal_app_window = CreateShelfAppWindow(app_id);
+  ASSERT_TRUE(internal_app_window);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+
+  internal_app_window->Close();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  // Create and close again.
+  internal_app_window = CreateShelfAppWindow(app_id);
+  ASSERT_TRUE(internal_app_window);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+
+  internal_app_window->Close();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+}
+
+// Test that internal app can be added and removed by SetProperty of
+// ash::kShelfIDKey.
+TEST_F(ChromeLauncherControllerTest, InternalAppWindowPropertyChanged) {
+  InitLauncherController();
+
+  // Only test the first internal app. The others should be the same.
+  const auto internal_app = app_list::GetInternalAppList(profile()).front();
+  std::string app_id;
+  ash::ShelfID shelf_id;
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  // Set an empty ash::kShelfIDKey.
+  views::Widget* internal_app_window = CreateShelfAppWindow(app_id);
+  ASSERT_TRUE(internal_app_window);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  // Set an invalid ash::kShelfIDKey.
+  app_id = "An invalid internal app id";
+  shelf_id = ash::ShelfID(app_id);
+  internal_app_window->GetNativeWindow()->SetProperty(
+      ash::kShelfIDKey, new std::string(shelf_id.Serialize()));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+
+  // Set a valid ash::kShelfIDKey.
+  app_id = internal_app.app_id;
+  shelf_id = ash::ShelfID(app_id);
+  internal_app_window->GetNativeWindow()->SetProperty(
+      ash::kShelfIDKey, new std::string(shelf_id.Serialize()));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(launcher_controller_->GetItem(shelf_id));
+
+  internal_app_window->Close();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(launcher_controller_->GetItem(shelf_id));
+}
+
+class ChromeLauncherControllerDemoModeTest
+    : public ChromeLauncherControllerTest {
+ protected:
+  ChromeLauncherControllerDemoModeTest() { auto_start_arc_test_ = true; }
+  ~ChromeLauncherControllerDemoModeTest() override {}
+
+  void SetUp() override {
+    // To prevent crash on test exit and pending decode request.
+    ArcAppIcon::DisableSafeDecodingForTesting();
+
+    ChromeLauncherControllerTest::SetUp();
+
+    // Fake Demo Mode.
+    demo_mode_test_helper_ = std::make_unique<chromeos::DemoModeTestHelper>();
+    demo_mode_test_helper_->InitializeSession();
+  }
+
+  void TearDown() override {
+    demo_mode_test_helper_.reset();
+
+    ChromeLauncherControllerTest::TearDown();
+  }
+
+ private:
+  std::unique_ptr<chromeos::DemoModeTestHelper> demo_mode_test_helper_;
+
+  DISALLOW_COPY_AND_ASSIGN(ChromeLauncherControllerDemoModeTest);
+};
+
+TEST_F(ChromeLauncherControllerDemoModeTest, PinnedAppsOnline) {
+  network::TestNetworkConnectionTracker::GetInstance()->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_ETHERNET);
+
+  InitLauncherControllerWithBrowser();
+
+  base::ListValue policy_value;
+
+  extension_service_->AddExtension(extension1_.get());
+  extension_service_->AddExtension(extension2_.get());
+  AppendPrefValue(&policy_value, extension1_->id());
+  AppendPrefValue(&policy_value, extension2_->id());
+
+  arc::mojom::AppInfo appinfo =
+      CreateAppInfo("Some App", "SomeActivity", "com.example.app");
+  const std::string app_id = AddArcAppAndShortcut(appinfo);
+
+  arc::mojom::AppInfo online_only_appinfo =
+      CreateAppInfo("Some App", "SomeActivity", "com.example.onlineonly");
+  const std::string online_only_app_id =
+      AddArcAppAndShortcut(online_only_appinfo);
+
+  AppendPrefValue(&policy_value, appinfo.package_name);
+  AppendPrefValue(&policy_value, online_only_appinfo.package_name);
+
+  // If the device is offline, extension2 and onlineonly should be unpinned.
+  chromeos::DemoSession::Get()->OverrideIgnorePinPolicyAppsForTesting(
+      {extension2_->id(), online_only_appinfo.package_name});
+
+  profile()->GetTestingPrefService()->SetManagedPref(
+      prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
+
+  // Since the device is online, all policy pinned apps are pinned.
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(extension1_->id(), profile()));
+
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(extension2_->id(), profile()));
+
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(app_id, profile()));
+
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(online_only_app_id));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(online_only_app_id, profile()));
+}
+
+TEST_F(ChromeLauncherControllerDemoModeTest, PinnedAppsOffline) {
+  network::TestNetworkConnectionTracker::GetInstance()->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_NONE);
+
+  InitLauncherControllerWithBrowser();
+
+  base::ListValue policy_value;
+
+  extension_service_->AddExtension(extension1_.get());
+  extension_service_->AddExtension(extension2_.get());
+  AppendPrefValue(&policy_value, extension1_->id());
+  AppendPrefValue(&policy_value, extension2_->id());
+
+  arc::mojom::AppInfo appinfo =
+      CreateAppInfo("Some App", "SomeActivity", "com.example.app");
+  const std::string app_id = AddArcAppAndShortcut(appinfo);
+
+  arc::mojom::AppInfo online_only_appinfo =
+      CreateAppInfo("Some App", "SomeActivity", "com.example.onlineonly");
+  const std::string online_only_app_id =
+      AddArcAppAndShortcut(online_only_appinfo);
+
+  AppendPrefValue(&policy_value, appinfo.package_name);
+  AppendPrefValue(&policy_value, online_only_appinfo.package_name);
+
+  // If the device is offline, extension2 and onlineonly should be unpinned.
+  chromeos::DemoSession::Get()->OverrideIgnorePinPolicyAppsForTesting(
+      {extension2_->id(), online_only_appinfo.package_name});
+
+  profile()->GetTestingPrefService()->SetManagedPref(
+      prefs::kPolicyPinnedLauncherApps, policy_value.CreateDeepCopy());
+
+  // Since the device is online, the policy pinned apps that shouldn't be pinned
+  // in Demo Mode are unpinned.
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension1_->id()));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(extension1_->id(), profile()));
+
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(extension2_->id()));
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(extension2_->id(), profile()));
+
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(AppListControllerDelegate::PIN_FIXED,
+            GetPinnableForAppID(app_id, profile()));
+
+  EXPECT_FALSE(launcher_controller_->IsAppPinned(online_only_app_id));
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(online_only_app_id, profile()));
+
+  // Pin a Chrome app that would have been pinned by policy but was suppressed
+  // for Demo Mode.
+  launcher_controller_->PinAppWithID(extension2_->id());
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(extension2_->id()));
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(extension2_->id(), profile()));
+
+  // Pin an ARC app that would have been pinned by policy but was suppressed
+  // for Demo Mode.
+  launcher_controller_->PinAppWithID(online_only_app_id);
+  EXPECT_TRUE(launcher_controller_->IsAppPinned(app_id));
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(online_only_app_id, profile()));
+}
+
+TEST_F(ChromeLauncherControllerTest, CrostiniTerminalPinUnpin) {
+  InitLauncherController();
+
+  // Load pinned Terminal from prefs without Crostini UI being allowed
+  syncer::SyncChangeList sync_list;
+  InsertAddPinChange(&sync_list, 1, crostini::kCrostiniTerminalId);
+  SendPinChanges(sync_list, true);
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
+
+  // Reload after allowing Crostini UI
+  crostini::CrostiniTestHelper test_helper(profile());
+  // TODO(crubug.com/918739): Fix pins are not refreshed on enabling Crostini.
+  // As a workaround add any app that triggers pin update.
+  extension_service_->AddExtension(extension1_.get());
+  EXPECT_EQ("Chrome, Terminal", GetPinnedAppStatus());
+
+  // Unpin the Terminal
+  launcher_controller_->UnpinAppWithID(crostini::kCrostiniTerminalId);
+  EXPECT_EQ("Chrome", GetPinnedAppStatus());
+
+  // Pin Terminal again.
+  launcher_controller_->PinAppWithID(crostini::kCrostiniTerminalId);
+  EXPECT_EQ("Chrome, Terminal", GetPinnedAppStatus());
+}
+
+// TODO(crbug.com/846546) Recognising app id from the browser app_name is only
+// necessary because the crostini terminal is a little hacky. Pending a better
+// terminal implementation we should remove this test.
+TEST_F(ChromeLauncherControllerTest, CrostiniBrowserWindowsRecogniseShelfItem) {
+  InitLauncherController();
+  crostini::CrostiniTestHelper helper(profile());
+
+  // We want to match this shelf item.
   ash::ShelfItem item;
-  item.type = ash::TYPE_PINNED_APP;
-  item.id = ash::ShelfID(kDummyAppId);
-  item.title = base::ASCIIToUTF16("Title");
-  item.status = ash::STATUS_CLOSED;
-  item.image = gfx::test::CreateImageSkia(1, 1);
+  item.id = ash::ShelfID("blah");
+  item.type = ash::ShelfItemType::TYPE_APP;
+  model_->Add(item);
 
-  const size_t added_count = shelf_controller->added_count();
-  const size_t updated_count = shelf_controller->updated_count();
+  // We manually create a browser window with the correct app_name, as this is
+  // how the app_id is communicated.
+  Browser::CreateParams params = Browser::CreateParams::CreateForApp(
+      crostini::AppNameFromCrostiniAppId(item.id.app_id),
+      true /* trusted_srouce */, browser()->window()->GetBounds(), profile(),
+      true /* user_gesture */);
+  params.window = browser()->window();
+  params.type = Browser::TYPE_TABBED;
+  Browser* b = new Browser(params);
+  set_browser(b);
+  chrome::NewTab(browser());
+  browser()->window()->Show();
 
-  // Adding an item to Chrome's model notifies ShelfController with the image.
-  launcher_controller_->shelf_model()->Add(item);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(added_count + 1, shelf_controller->added_count());
-  EXPECT_EQ(updated_count, shelf_controller->updated_count());
-  EXPECT_EQ(item.id, shelf_controller->last_item().id);
-  EXPECT_FALSE(shelf_controller->last_item().image.isNull());
+  EXPECT_EQ(launcher_controller_
+                ->GetShelfIDForWebContents(
+                    browser()->tab_strip_model()->GetActiveWebContents())
+                .app_id,
+            item.id.app_id);
+}
 
-  // Updating the item's status notifies ShelfController with a null image.
-  // This avoids some image transport costs for the unrelated item change.
-  launcher_controller_->SetItemStatus(item.id, ash::STATUS_RUNNING);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(added_count + 1, shelf_controller->added_count());
-  EXPECT_EQ(updated_count + 1, shelf_controller->updated_count());
-  EXPECT_EQ(ash::STATUS_RUNNING, shelf_controller->last_item().status);
-  EXPECT_TRUE(shelf_controller->last_item().image.isNull());
+// Tests behavior for ensuring some component apps can be marked unpinnable.
+TEST_F(ChromeLauncherControllerTest, UnpinnableComponentApps) {
+  InitLauncherController();
 
-  // Calling SetLauncherItemImage will pass the new image to ShelfController.
-  launcher_controller_->SetLauncherItemImage(item.id,
-                                             gfx::test::CreateImageSkia(2, 2));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(added_count + 1, shelf_controller->added_count());
-  EXPECT_EQ(updated_count + 2, shelf_controller->updated_count());
-  EXPECT_EQ(gfx::Size(2, 2), shelf_controller->last_item().image.size());
+  const char* kPinnableApp = file_manager::kFileManagerAppId;
+  const char* kNoPinApps[] = {file_manager::kGalleryAppId,
+                              extension_misc::kFeedbackExtensionId};
 
-  // Calling OnAppImageUpdated will pass the new image to ShelfController.
-  launcher_controller_->OnAppImageUpdated(item.id.app_id,
-                                          gfx::test::CreateImageSkia(3, 3));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(added_count + 1, shelf_controller->added_count());
-  EXPECT_EQ(updated_count + 3, shelf_controller->updated_count());
-  EXPECT_EQ(gfx::Size(3, 3), shelf_controller->last_item().image.size());
+  EXPECT_EQ(AppListControllerDelegate::PIN_EDITABLE,
+            GetPinnableForAppID(kPinnableApp, profile()));
+  for (const char* id : kNoPinApps) {
+    EXPECT_EQ(AppListControllerDelegate::NO_PIN,
+              GetPinnableForAppID(id, profile()));
+  }
 }

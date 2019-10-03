@@ -9,10 +9,10 @@
 
 #include "base/ios/block_types.h"
 #include "base/message_loop/message_loop.h"
-#include "base/test/histogram_tester.h"
 #include "ios/web/public/test/test_web_thread.h"
 #include "net/base/backoff_entry.h"
 #include "testing/platform_test.h"
+#import "third_party/ocmock/OCMock/OCMock.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -78,27 +78,9 @@
 
 @end
 
-@interface MockUIApplication : NSObject
-// Mocks UIApplication's canOpenURL.
-@end
-
-@implementation MockUIApplication {
-  BOOL canOpen_;
-}
-
-- (void)setCanOpenURL:(BOOL)canOpen {
-  canOpen_ = canOpen;
-}
-
-- (BOOL)canOpenURL:(NSURL*)url {
-  return canOpen_;
-}
-
-@end
-
 @interface InstallationNotifier (Testing)
 - (void)setDispatcher:(id<DispatcherProtocol>)dispatcher;
-- (void)setSharedApplication:(id)sharedApplication;
+- (void)resetDispatcher;
 - (void)dispatchInstallationNotifierBlock;
 - (void)registerForInstallationNotifications:(id)observer
                                 withSelector:(SEL)notificationSelector
@@ -120,19 +102,14 @@ class InstallationNotifierTest : public PlatformTest {
     dispatcher_ = dispatcher;
     notificationReceiver1_ = ([[MockNotificationReceiver alloc] init]);
     notificationReceiver2_ = ([[MockNotificationReceiver alloc] init]);
-    sharedApplication_ = [[MockUIApplication alloc] init];
-    [installationNotifier_ setSharedApplication:sharedApplication_];
+    application_ = OCMClassMock([UIApplication class]);
+    OCMStub([application_ sharedApplication]).andReturn(application_);
     [installationNotifier_ setDispatcher:dispatcher_];
-    histogramTester_.reset(new base::HistogramTester());
   }
 
-  void VerifyHistogramValidity(int expectedYes, int expectedNo) {
-    histogramTester_->ExpectTotalCount("NativeAppLauncher.InstallationDetected",
-                                       expectedYes + expectedNo);
-    histogramTester_->ExpectBucketCount(
-        "NativeAppLauncher.InstallationDetected", YES, expectedYes);
-    histogramTester_->ExpectBucketCount(
-        "NativeAppLauncher.InstallationDetected", NO, expectedNo);
+  ~InstallationNotifierTest() override {
+    [installationNotifier_ resetDispatcher];
+    [application_ stopMocking];
   }
 
   void VerifyDelay(int pollingIteration) {
@@ -154,12 +131,11 @@ class InstallationNotifierTest : public PlatformTest {
   __weak FakeDispatcher* dispatcher_;
   MockNotificationReceiver* notificationReceiver1_;
   MockNotificationReceiver* notificationReceiver2_;
-  MockUIApplication* sharedApplication_;
-  std::unique_ptr<base::HistogramTester> histogramTester_;
+  id application_;
 };
 
 TEST_F(InstallationNotifierTest, RegisterWithAppAlreadyInstalled) {
-  [sharedApplication_ setCanOpenURL:YES];
+  OCMStub([application_ canOpenURL:[OCMArg any]]).andReturn(YES);
   [installationNotifier_
       registerForInstallationNotifications:notificationReceiver1_
                               withSelector:@selector(receivedNotification)
@@ -170,29 +146,27 @@ TEST_F(InstallationNotifierTest, RegisterWithAppAlreadyInstalled) {
                               withSelector:@selector(receivedNotification)
                                  forScheme:@"foo-scheme"];
   EXPECT_EQ(2, [notificationReceiver1_ notificationCount]);
-  VerifyHistogramValidity(2, 0);
 }
 
 TEST_F(InstallationNotifierTest, RegisterWithAppInstalledAfterSomeTime) {
-  [sharedApplication_ setCanOpenURL:NO];
-  [dispatcher_ executeAfter:10
-                      block:^{
-                        [sharedApplication_ setCanOpenURL:YES];
-                      }];
+  [dispatcher_
+      executeAfter:10
+             block:^{
+               OCMStub([application_ canOpenURL:[OCMArg any]]).andReturn(YES);
+             }];
   [installationNotifier_
       registerForInstallationNotifications:notificationReceiver1_
                               withSelector:@selector(receivedNotification)
                                  forScheme:@"foo-scheme"];
   EXPECT_EQ(1, [notificationReceiver1_ notificationCount]);
-  VerifyHistogramValidity(1, 0);
 }
 
 TEST_F(InstallationNotifierTest, RegisterForTwoInstallations) {
-  [sharedApplication_ setCanOpenURL:NO];
-  [dispatcher_ executeAfter:10
-                      block:^{
-                        [sharedApplication_ setCanOpenURL:YES];
-                      }];
+  [dispatcher_
+      executeAfter:10
+             block:^{
+               OCMStub([application_ canOpenURL:[OCMArg any]]).andReturn(YES);
+             }];
   [installationNotifier_
       registerForInstallationNotifications:notificationReceiver1_
                               withSelector:@selector(receivedNotification)
@@ -211,11 +185,10 @@ TEST_F(InstallationNotifierTest, RegisterForTwoInstallations) {
   [installationNotifier_ dispatchInstallationNotifierBlock];
   EXPECT_EQ(1, [notificationReceiver1_ notificationCount]);
   EXPECT_EQ(2, [notificationReceiver2_ notificationCount]);
-  VerifyHistogramValidity(2, 0);
 }
 
 TEST_F(InstallationNotifierTest, RegisterAndThenUnregister) {
-  [sharedApplication_ setCanOpenURL:NO];
+  OCMStub([application_ canOpenURL:[OCMArg any]]).andReturn(NO);
   [dispatcher_ executeAfter:10
                       block:^{
                         [installationNotifier_
@@ -226,11 +199,10 @@ TEST_F(InstallationNotifierTest, RegisterAndThenUnregister) {
                               withSelector:@selector(receivedNotification)
                                  forScheme:@"foo-scheme"];
   EXPECT_EQ(0, [notificationReceiver1_ notificationCount]);
-  VerifyHistogramValidity(0, 1);
 }
 
 TEST_F(InstallationNotifierTest, TestExponentialBackoff) {
-  [sharedApplication_ setCanOpenURL:NO];
+  OCMStub([application_ canOpenURL:[OCMArg any]]).andReturn(NO);
   // Making sure that delay is multiplied by |multiplyFactor| every time.
   [dispatcher_ executeAfter:0
                       block:^{
@@ -270,7 +242,6 @@ TEST_F(InstallationNotifierTest, TestExponentialBackoff) {
       registerForInstallationNotifications:notificationReceiver1_
                               withSelector:@selector(receivedNotification)
                                  forScheme:@"foo-scheme"];
-  VerifyHistogramValidity(0, 2);
 }
 
 TEST_F(InstallationNotifierTest, TestThatEmptySchemeDoesntCrashChrome) {

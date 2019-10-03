@@ -8,8 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_bubble_delegate.h"
+#include "ui/base/ui_base_types.h"
 
 // A test delegate for a bubble to hang off the toolbar actions bar.
 class TestToolbarActionsBarBubbleDelegate {
@@ -36,10 +36,13 @@ class TestToolbarActionsBarBubbleDelegate {
 
     if (!info_) {
       info_ =
-          base::MakeUnique<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>();
+          std::make_unique<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>();
     }
     info_->text = learn_more;
-    info_->is_text_linked = true;
+    info_->is_learn_more = true;
+  }
+  void set_default_dialog_button(ui::DialogButton default_button) {
+    default_button_ = default_button;
   }
   void set_item_list_text(const base::string16& item_list) {
     item_list_ = item_list;
@@ -72,6 +75,9 @@ class TestToolbarActionsBarBubbleDelegate {
   base::string16 dismiss_;
   base::string16 learn_more_;
   base::string16 item_list_;
+
+  // The default button for the bubble.
+  ui::DialogButton default_button_;
 
   // Whether to close the bubble on deactivation.
   bool close_on_deactivate_;

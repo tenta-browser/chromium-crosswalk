@@ -4,6 +4,8 @@
 
 #include "base/timer/mock_timer.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,11 +17,10 @@ void CallMeMaybe(int *number) {
 
 TEST(MockTimerTest, FiresOnce) {
   int calls = 0;
-  base::MockTimer timer(false, false);
+  base::MockOneShotTimer timer;
   base::TimeDelta delay = base::TimeDelta::FromSeconds(2);
   timer.Start(FROM_HERE, delay,
-              base::Bind(&CallMeMaybe,
-                         base::Unretained(&calls)));
+              base::BindOnce(&CallMeMaybe, base::Unretained(&calls)));
   EXPECT_EQ(delay, timer.GetCurrentDelay());
   EXPECT_TRUE(timer.IsRunning());
   timer.Fire();
@@ -29,11 +30,10 @@ TEST(MockTimerTest, FiresOnce) {
 
 TEST(MockTimerTest, FiresRepeatedly) {
   int calls = 0;
-  base::MockTimer timer(true, true);
+  base::MockRepeatingTimer timer;
   base::TimeDelta delay = base::TimeDelta::FromSeconds(2);
   timer.Start(FROM_HERE, delay,
-              base::Bind(&CallMeMaybe,
-                         base::Unretained(&calls)));
+              base::BindRepeating(&CallMeMaybe, base::Unretained(&calls)));
   timer.Fire();
   EXPECT_TRUE(timer.IsRunning());
   timer.Fire();
@@ -44,11 +44,10 @@ TEST(MockTimerTest, FiresRepeatedly) {
 
 TEST(MockTimerTest, Stops) {
   int calls = 0;
-  base::MockTimer timer(true, true);
+  base::MockRepeatingTimer timer;
   base::TimeDelta delay = base::TimeDelta::FromSeconds(2);
   timer.Start(FROM_HERE, delay,
-              base::Bind(&CallMeMaybe,
-                         base::Unretained(&calls)));
+              base::BindRepeating(&CallMeMaybe, base::Unretained(&calls)));
   EXPECT_TRUE(timer.IsRunning());
   timer.Stop();
   EXPECT_FALSE(timer.IsRunning());
@@ -63,18 +62,15 @@ class HasWeakPtr : public base::SupportsWeakPtr<HasWeakPtr> {
   DISALLOW_COPY_AND_ASSIGN(HasWeakPtr);
 };
 
-void DoNothingWithWeakPtr(HasWeakPtr* has_weak_ptr) {
-}
-
 TEST(MockTimerTest, DoesNotRetainClosure) {
   HasWeakPtr *has_weak_ptr = new HasWeakPtr();
   base::WeakPtr<HasWeakPtr> weak_ptr(has_weak_ptr->AsWeakPtr());
-  base::MockTimer timer(false, false);
+  base::MockOneShotTimer timer;
   base::TimeDelta delay = base::TimeDelta::FromSeconds(2);
   ASSERT_TRUE(weak_ptr.get());
   timer.Start(FROM_HERE, delay,
-              base::Bind(&DoNothingWithWeakPtr,
-                         base::Owned(has_weak_ptr)));
+              base::BindOnce(base::DoNothing::Once<HasWeakPtr*>(),
+                             base::Owned(has_weak_ptr)));
   ASSERT_TRUE(weak_ptr.get());
   timer.Fire();
   ASSERT_FALSE(weak_ptr.get());

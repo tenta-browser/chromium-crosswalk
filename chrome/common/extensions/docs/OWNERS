@@ -2,12 +2,11 @@
 mkearney@chromium.org
 
 # For webview documentation.
-paulmeyer@chromium.org
-fsamuel@chromium.org
+file://components/guest_view/OWNERS
 
 # For devtools documentation.
 paulirish@chromium.org
 pbakaus@chromium.org
 
 # For server related things (Python, JavaScript, templates, etc).
-rockot@chromium.org
+rockot@google.com

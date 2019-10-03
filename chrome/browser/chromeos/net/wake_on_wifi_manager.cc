@@ -7,16 +7,18 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/net/wake_on_wifi_connection_observer.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_device_handler.h"
 #include "chromeos/network/network_handler.h"
@@ -181,7 +183,7 @@ void WakeOnWifiManager::HandleWakeOnWifiFeatureUpdated() {
 
   NetworkHandler::Get()->network_device_handler()->SetDeviceProperty(
       device->path(), shill::kWakeOnWiFiFeaturesEnabledProperty,
-      base::Value(feature_string), base::Bind(&base::DoNothing),
+      base::Value(feature_string), base::DoNothing(),
       network_handler::ErrorCallback());
 
   bool wake_on_packet_enabled = IsWakeOnPacketEnabled(current_feature_);
@@ -240,7 +242,7 @@ void WakeOnWifiManager::GetDevicePropertiesCallback(
 
   NetworkHandler::Get()
       ->network_device_handler()
-      ->RemoveAllWifiWakeOnPacketConnections(base::Bind(&base::DoNothing),
+      ->RemoveAllWifiWakeOnPacketConnections(base::DoNothing(),
                                              network_handler::ErrorCallback());
 
   for (const auto& kv_pair : connection_observers_) {

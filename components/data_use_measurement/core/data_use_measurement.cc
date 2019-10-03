@@ -4,23 +4,18 @@
 
 #include "components/data_use_measurement/core/data_use_measurement.h"
 
+#include <set>
+
+#include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "components/data_use_measurement/core/data_use_ascriber.h"
-#include "components/data_use_measurement/core/data_use_recorder.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
-#include "components/data_use_measurement/core/url_request_classifier.h"
-#include "components/domain_reliability/uploader.h"
-#include "google_apis/gaia/gaia_auth_util.h"
-#include "net/base/network_change_notifier.h"
-#include "net/base/upload_data_stream.h"
-#include "net/http/http_response_headers.h"
-#include "net/http/http_status_code.h"
-#include "net/url_request/url_request.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/features.h"
 
 #if defined(OS_ANDROID)
 #include "net/android/traffic_stats.h"
@@ -43,77 +38,26 @@ void RecordUMAHistogramCount(const std::string& name, int64_t sample) {
   histogram_pointer->Add(sample);
 }
 
-// This function increases the value of |sample| bucket in |name| sparse
-// histogram by |value|. Conventional UMA histograms are not used because |name|
-// is not static.
-void IncreaseSparseHistogramByValue(const std::string& name,
-                                    int64_t sample,
-                                    int64_t value) {
-  // Convert raw value to KiB and probabilistically round up/down if the
-  // remainder is more than a random number [0, 1KiB). This gives a more
-  // accurate count when there are a large number of records. RandInt is
-  // "inclusive", hence the -1 for the max value.
-  int64_t value_kb = value >> 10;
-  if (value - (value_kb << 10) > base::RandInt(0, (1 << 10) - 1))
-    value_kb += 1;
-  if (value_kb == 0)
-    return;
-
-  base::HistogramBase* histogram = base::SparseHistogram::FactoryGet(
-      name + "KB", base::HistogramBase::kUmaTargetedHistogramFlag);
-  histogram->AddCount(sample, value_kb);
-}
-
-#if defined(OS_ANDROID)
-void IncrementLatencyHistogramByCount(const std::string& name,
-                                      const base::TimeDelta& latency,
-                                      int64_t count) {
-  base::HistogramBase* histogram_pointer = base::Histogram::FactoryTimeGet(
-      name,
-      base::TimeDelta::FromMilliseconds(1),  // Minimum sample
-      base::TimeDelta::FromHours(1),         // Maximum sample
-      50,                                    // Bucket count.
-      base::HistogramBase::kUmaTargetedHistogramFlag);
-  histogram_pointer->AddCount(latency.InMilliseconds(), count);
-}
-#endif
-
-void RecordFavIconDataUse(const net::URLRequest& request) {
-  UMA_HISTOGRAM_COUNTS_100000(
-      "DataUse.FavIcon.Downstream",
-      request.was_cached() ? 0 : request.GetTotalReceivedBytes());
-  if (request.status().is_success() &&
-      request.GetResponseCode() != net::HTTP_OK) {
-    UMA_HISTOGRAM_COUNTS_100000("DataUse.FavIcon.Downstream.Non200Response",
-                                request.GetTotalReceivedBytes());
-  }
-}
-
 }  // namespace
 
 DataUseMeasurement::DataUseMeasurement(
-    std::unique_ptr<URLRequestClassifier> url_request_classifier,
-    const metrics::UpdateUsagePrefCallbackType& metrics_data_use_forwarder,
-    DataUseAscriber* ascriber)
-    : url_request_classifier_(std::move(url_request_classifier)),
-      metrics_data_use_forwarder_(metrics_data_use_forwarder),
-      ascriber_(ascriber)
+    network::NetworkConnectionTracker* network_connection_tracker)
+    :
 #if defined(OS_ANDROID)
-      ,
       app_state_(base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES),
-      app_listener_(new base::android::ApplicationStatusListener(
-          base::Bind(&DataUseMeasurement::OnApplicationStateChange,
-                     base::Unretained(this)))),
+      app_listener_(base::android::ApplicationStatusListener::New(
+          base::BindRepeating(&DataUseMeasurement::OnApplicationStateChange,
+                              base::Unretained(this)))),
       rx_bytes_os_(0),
       tx_bytes_os_(0),
-      bytes_transferred_since_last_traffic_stats_query_(0),
-      no_reads_since_background_(false)
+      no_reads_since_background_(false),
 #endif
-{
-  DCHECK(ascriber_);
-  DCHECK(url_request_classifier_);
-  memset(user_traffic_content_type_bytes_, 0,
-         sizeof(user_traffic_content_type_bytes_));
+      network_connection_tracker_(network_connection_tracker),
+      connection_type_(network::mojom::ConnectionType::CONNECTION_UNKNOWN) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(network_connection_tracker_);
+
+  network_connection_tracker_->AddNetworkConnectionObserver(this);
 
 #if defined(OS_ANDROID)
   int64_t bytes = 0;
@@ -126,171 +70,25 @@ DataUseMeasurement::DataUseMeasurement(
 #endif
 }
 
-DataUseMeasurement::~DataUseMeasurement(){};
-
-void DataUseMeasurement::OnBeforeURLRequest(net::URLRequest* request) {
-  DataUseUserData* data_use_user_data = reinterpret_cast<DataUseUserData*>(
-      request->GetUserData(DataUseUserData::kUserDataKey));
-  if (!data_use_user_data) {
-    DataUseUserData::ServiceName service_name =
-        DataUseUserData::ServiceName::NOT_TAGGED;
-    if (!url_request_classifier_->IsUserRequest(*request) &&
-        domain_reliability::DomainReliabilityUploader::
-            OriginatedFromDomainReliability(*request)) {
-      // Detect if the request originated from DomainReliability.
-      // DataUseUserData::AttachToFetcher() cannot be called from domain
-      // reliability, since it sets userdata on URLFetcher for its purposes.
-      service_name = DataUseUserData::ServiceName::DOMAIN_RELIABILITY;
-    } else if (gaia::RequestOriginatedFromGaia(*request)) {
-      service_name = DataUseUserData::ServiceName::GAIA;
-    }
-
-    data_use_user_data = new DataUseUserData(service_name, CurrentAppState());
-    request->SetUserData(DataUseUserData::kUserDataKey,
-                         base::WrapUnique(data_use_user_data));
-  } else {
-    data_use_user_data->set_app_state(CurrentAppState());
-  }
+DataUseMeasurement::~DataUseMeasurement() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  network_connection_tracker_->RemoveNetworkConnectionObserver(this);
+  DCHECK(!services_data_use_observer_list_.might_have_observers());
 }
 
-void DataUseMeasurement::OnBeforeRedirect(const net::URLRequest& request,
-                                          const GURL& new_location) {
-  // Recording data use of request on redirects.
-  // TODO(rajendrant): May not be needed when http://crbug/651957 is fixed.
-  UpdateDataUsePrefs(request);
-  ReportServicesMessageSizeUMA(request);
-  if (url_request_classifier_->IsFavIconRequest(request))
-    RecordFavIconDataUse(request);
-}
-
-void DataUseMeasurement::OnHeadersReceived(
-    net::URLRequest* request,
-    const net::HttpResponseHeaders* response_headers) {
-  DataUseUserData* data_use_user_data = reinterpret_cast<DataUseUserData*>(
-      request->GetUserData(DataUseUserData::kUserDataKey));
-  if (data_use_user_data) {
-    data_use_user_data->set_content_type(
-        url_request_classifier_->GetContentType(*request, *response_headers));
-  }
-}
-
-void DataUseMeasurement::OnNetworkBytesReceived(const net::URLRequest& request,
-                                                int64_t bytes_received) {
-  UMA_HISTOGRAM_COUNTS("DataUse.BytesReceived.Delegate", bytes_received);
-  ReportDataUseUMA(request, DOWNSTREAM, bytes_received);
-#if defined(OS_ANDROID)
-  bytes_transferred_since_last_traffic_stats_query_ += bytes_received;
-#endif
-}
-
-void DataUseMeasurement::OnNetworkBytesSent(const net::URLRequest& request,
-                                            int64_t bytes_sent) {
-  UMA_HISTOGRAM_COUNTS("DataUse.BytesSent.Delegate", bytes_sent);
-  ReportDataUseUMA(request, UPSTREAM, bytes_sent);
-#if defined(OS_ANDROID)
-  bytes_transferred_since_last_traffic_stats_query_ += bytes_sent;
-#endif
-}
-
-void DataUseMeasurement::OnCompleted(const net::URLRequest& request,
-                                     bool started) {
-  // TODO(amohammadkhan): Verify that there is no double recording in data use
-  // of redirected requests.
-  UpdateDataUsePrefs(request);
-  ReportServicesMessageSizeUMA(request);
-  RecordPageTransitionUMA(request);
-#if defined(OS_ANDROID)
-  MaybeRecordNetworkBytesOS();
-#endif
-  if (url_request_classifier_->IsFavIconRequest(request))
-    RecordFavIconDataUse(request);
-}
-
-void DataUseMeasurement::ReportDataUseUMA(const net::URLRequest& request,
-                                          TrafficDirection dir,
-                                          int64_t bytes) {
-  bool is_user_traffic = url_request_classifier_->IsUserRequest(request);
-  bool is_connection_cellular =
-      net::NetworkChangeNotifier::IsConnectionCellular(
-          net::NetworkChangeNotifier::GetConnectionType());
-
-  DataUseUserData* attached_service_data = static_cast<DataUseUserData*>(
-      request.GetUserData(DataUseUserData::kUserDataKey));
-  DataUseUserData::AppState old_app_state = DataUseUserData::FOREGROUND;
-  DataUseUserData::AppState new_app_state = DataUseUserData::UNKNOWN;
-
-  if (attached_service_data)
-    old_app_state = attached_service_data->app_state();
-
-  if (old_app_state == CurrentAppState())
-    new_app_state = old_app_state;
-
-  if (attached_service_data && old_app_state != new_app_state)
-    attached_service_data->set_app_state(CurrentAppState());
-
+void DataUseMeasurement::RecordTrafficSizeMetric(bool is_user_traffic,
+                                                 bool is_downstream,
+                                                 bool is_tab_visible,
+                                                 int64_t bytes) {
   RecordUMAHistogramCount(
       GetHistogramName(is_user_traffic ? "DataUse.TrafficSize.User"
                                        : "DataUse.TrafficSize.System",
-                       dir, new_app_state, is_connection_cellular),
+                       is_downstream ? DOWNSTREAM : UPSTREAM, CurrentAppState(),
+                       IsCurrentNetworkCellular()),
       bytes);
-
-#if defined(OS_ANDROID)
-  if (dir == DOWNSTREAM && CurrentAppState() == DataUseUserData::BACKGROUND) {
-    DCHECK(!last_app_background_time_.is_null());
-
-    const base::TimeDelta time_since_background =
-        base::TimeTicks::Now() - last_app_background_time_;
-    IncrementLatencyHistogramByCount(
-        is_user_traffic ? "DataUse.BackgroundToDataRecievedPerByte.User"
-                        : "DataUse.BackgroundToDataRecievedPerByte.System",
-        time_since_background, bytes);
-    if (no_reads_since_background_) {
-      no_reads_since_background_ = false;
-      IncrementLatencyHistogramByCount(
-          is_user_traffic ? "DataUse.BackgroundToFirstDownstream.User"
-                          : "DataUse.BackgroundToFirstDownstream.System",
-          time_since_background, 1);
-    }
-  }
-#endif
-
-  bool is_tab_visible = false;
-
-  if (is_user_traffic) {
-    const DataUseRecorder* recorder = ascriber_->GetDataUseRecorder(request);
-    if (recorder) {
-      is_tab_visible = recorder->is_visible();
-      RecordTabStateHistogram(dir, new_app_state, recorder->is_visible(),
-                              bytes);
-    }
-  }
-  if (attached_service_data && dir == DOWNSTREAM &&
-      new_app_state != DataUseUserData::UNKNOWN) {
-    RecordContentTypeHistogram(attached_service_data->content_type(),
-                               is_user_traffic, new_app_state, is_tab_visible,
-                               bytes);
-  }
-}
-
-void DataUseMeasurement::UpdateDataUsePrefs(
-    const net::URLRequest& request) const {
-  bool is_connection_cellular =
-      net::NetworkChangeNotifier::IsConnectionCellular(
-          net::NetworkChangeNotifier::GetConnectionType());
-
-  DataUseUserData* attached_service_data = static_cast<DataUseUserData*>(
-      request.GetUserData(DataUseUserData::kUserDataKey));
-  DataUseUserData::ServiceName service_name =
-      attached_service_data ? attached_service_data->service_name()
-                            : DataUseUserData::NOT_TAGGED;
-
-  // Update data use prefs for cellular connections.
-  if (!metrics_data_use_forwarder_.is_null()) {
-    metrics_data_use_forwarder_.Run(
-        DataUseUserData::GetServiceNameAsString(service_name),
-        request.GetTotalSentBytes() + request.GetTotalReceivedBytes(),
-        is_connection_cellular);
-  }
+  if (is_user_traffic)
+    RecordTabStateHistogram(is_downstream ? DOWNSTREAM : UPSTREAM,
+                            CurrentAppState(), is_tab_visible, bytes);
 }
 
 #if defined(OS_ANDROID)
@@ -307,6 +105,18 @@ DataUseUserData::AppState DataUseMeasurement::CurrentAppState() const {
 #endif
   // If the OS is not Android, all the requests are considered Foreground.
   return DataUseUserData::FOREGROUND;
+}
+
+std::string DataUseMeasurement::GetHistogramNameWithConnectionType(
+    const char* prefix,
+    TrafficDirection dir,
+    DataUseUserData::AppState app_state) const {
+  return base::StringPrintf(
+      "%s.%s.%s", prefix, dir == UPSTREAM ? "Upstream" : "Downstream",
+      app_state == DataUseUserData::UNKNOWN
+          ? "Unknown"
+          : (app_state == DataUseUserData::FOREGROUND ? "Foreground"
+                                                      : "Background"));
 }
 
 std::string DataUseMeasurement::GetHistogramName(
@@ -326,6 +136,7 @@ std::string DataUseMeasurement::GetHistogramName(
 #if defined(OS_ANDROID)
 void DataUseMeasurement::OnApplicationStateChange(
     base::android::ApplicationState application_state) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   app_state_ = application_state;
   if (app_state_ != base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES) {
     last_app_background_time_ = base::TimeTicks::Now();
@@ -342,6 +153,7 @@ void DataUseMeasurement::MaybeRecordNetworkBytesOS() {
   // background). This reduces the overhead of repeatedly calling the API.
   static const int64_t kMinDelegateBytes = 25000;
 
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (bytes_transferred_since_last_traffic_stats_query_ < kMinDelegateBytes &&
       CurrentAppState() == DataUseUserData::FOREGROUND) {
     return;
@@ -356,7 +168,8 @@ void DataUseMeasurement::MaybeRecordNetworkBytesOS() {
       DCHECK_GE(bytes, rx_bytes_os_);
       if (bytes > rx_bytes_os_) {
         // Do not record samples with value 0.
-        UMA_HISTOGRAM_COUNTS("DataUse.BytesReceived.OS", bytes - rx_bytes_os_);
+        UMA_HISTOGRAM_COUNTS_1M("DataUse.BytesReceived.OS",
+                                bytes - rx_bytes_os_);
       }
     }
     rx_bytes_os_ = bytes;
@@ -367,7 +180,7 @@ void DataUseMeasurement::MaybeRecordNetworkBytesOS() {
       DCHECK_GE(bytes, tx_bytes_os_);
       if (bytes > tx_bytes_os_) {
         // Do not record samples with value 0.
-        UMA_HISTOGRAM_COUNTS("DataUse.BytesSent.OS", bytes - tx_bytes_os_);
+        UMA_HISTOGRAM_COUNTS_1M("DataUse.BytesSent.OS", bytes - tx_bytes_os_);
       }
     }
     tx_bytes_os_ = bytes;
@@ -375,48 +188,19 @@ void DataUseMeasurement::MaybeRecordNetworkBytesOS() {
 }
 #endif
 
-void DataUseMeasurement::ReportServicesMessageSizeUMA(
-    const net::URLRequest& request) {
-  bool is_user_traffic = url_request_classifier_->IsUserRequest(request);
-  bool is_connection_cellular =
-      net::NetworkChangeNotifier::IsConnectionCellular(
-          net::NetworkChangeNotifier::GetConnectionType());
-
-  DataUseUserData* attached_service_data = static_cast<DataUseUserData*>(
-      request.GetUserData(DataUseUserData::kUserDataKey));
-  DataUseUserData::ServiceName service_name = DataUseUserData::NOT_TAGGED;
-
-  if (attached_service_data)
-    service_name = attached_service_data->service_name();
-
-  if (!is_user_traffic) {
-    ReportDataUsageServices(service_name, UPSTREAM, CurrentAppState(),
-                            is_connection_cellular,
-                            request.GetTotalSentBytes());
-    ReportDataUsageServices(service_name, DOWNSTREAM, CurrentAppState(),
-                            is_connection_cellular,
-                            request.GetTotalReceivedBytes());
-  }
-}
-
 void DataUseMeasurement::ReportDataUsageServices(
-    DataUseUserData::ServiceName service,
+    int32_t traffic_annotation_hash,
     TrafficDirection dir,
     DataUseUserData::AppState app_state,
-    bool is_connection_cellular,
-    int64_t message_size) const {
-  RecordUMAHistogramCount(
-      "DataUse.MessageSize." + DataUseUserData::GetServiceNameAsString(service),
-      message_size);
-  if (message_size > 0) {
-    IncreaseSparseHistogramByValue(
-        GetHistogramName("DataUse.MessageSize.AllServices", dir, app_state,
-                         is_connection_cellular),
-        service, message_size);
-    if (app_state == DataUseUserData::BACKGROUND) {
-      IncreaseSparseHistogramByValue("DataUse.AllServices.Background", service,
-                                     message_size);
-    }
+    int64_t message_size_bytes) const {
+  if (message_size_bytes > 0) {
+    // Conventional UMA histograms are not used because name is not static.
+    base::HistogramBase* histogram = base::SparseHistogram::FactoryGet(
+        GetHistogramNameWithConnectionType("DataUse.AllServicesKB", dir,
+                                           app_state),
+        base::HistogramBase::kUmaTargetedHistogramFlag);
+    histogram->AddKiB(traffic_annotation_hash,
+                      base::saturated_cast<int>(message_size_bytes));
   }
 }
 
@@ -440,57 +224,82 @@ void DataUseMeasurement::RecordTabStateHistogram(
   RecordUMAHistogramCount(histogram_name, bytes);
 }
 
-void DataUseMeasurement::RecordContentTypeHistogram(
-    DataUseUserData::DataUseContentType content_type,
-    bool is_user_traffic,
-    DataUseUserData::AppState app_state,
-    bool is_tab_visible,
-    int64_t bytes) {
-  if (content_type == DataUseUserData::AUDIO) {
-    content_type = app_state != DataUseUserData::FOREGROUND
-                       ? DataUseUserData::AUDIO_APPBACKGROUND
-                       : (!is_tab_visible ? DataUseUserData::AUDIO_TABBACKGROUND
-                                          : DataUseUserData::AUDIO);
-  } else if (content_type == DataUseUserData::VIDEO) {
-    content_type = app_state != DataUseUserData::FOREGROUND
-                       ? DataUseUserData::VIDEO_APPBACKGROUND
-                       : (!is_tab_visible ? DataUseUserData::VIDEO_TABBACKGROUND
-                                          : DataUseUserData::VIDEO);
-  }
-  // Use the more primitive STATIC_HISTOGRAM_POINTER_BLOCK macro because the
-  // simple UMA_HISTOGRAM_ENUMERATION macros don't expose 'AddCount'.
-  if (is_user_traffic) {
-    bytes += user_traffic_content_type_bytes_[content_type];
-    if (bytes >= 1024) {
-      STATIC_HISTOGRAM_POINTER_BLOCK(
-          "DataUse.ContentType.UserTrafficKB",
-          AddCount(content_type, bytes / 1024),
-          base::LinearHistogram::FactoryGet(
-              "DataUse.ContentType.UserTrafficKB", 1, DataUseUserData::TYPE_MAX,
-              DataUseUserData::TYPE_MAX + 1,
-              base::HistogramBase::kUmaTargetedHistogramFlag));
-    }
-    user_traffic_content_type_bytes_[content_type] = bytes % 1024;
-  } else {
-    STATIC_HISTOGRAM_POINTER_BLOCK(
-        "DataUse.ContentType.Services", AddCount(content_type, bytes),
-        base::LinearHistogram::FactoryGet(
-            "DataUse.ContentType.Services", 1, DataUseUserData::TYPE_MAX,
-            DataUseUserData::TYPE_MAX + 1,
-            base::HistogramBase::kUmaTargetedHistogramFlag));
-  }
+// static
+bool DataUseMeasurement::IsUserRequest(
+    int32_t network_traffic_annotation_hash_id) {
+  static const std::set<int32_t> kUserInitiatedTrafficAnnotations = {
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH(
+          "blink_extension_resource_loader"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("blink_resource_loader"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("parallel_download_job"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("renderer_initiated_download"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("drag_download_file"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH(
+          "download_web_contents_frame"), /*save page action*/
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH(
+          "render_view_context_menu"), /* save link as*/
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("webstore_installer"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("pdf_plugin_placeholder"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH(
+          "downloads_api_run_async"), /* Can be user request or
+                                         autonomous request from extensions*/
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("resource_dispatcher_host"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("navigation_url_loader"),
+  };
+  return kUserInitiatedTrafficAnnotations.find(
+             network_traffic_annotation_hash_id) !=
+         kUserInitiatedTrafficAnnotations.end();
 }
 
-void DataUseMeasurement::RecordPageTransitionUMA(
-    const net::URLRequest& request) const {
-  if (!url_request_classifier_->IsUserRequest(request))
-    return;
+// static
+bool DataUseMeasurement::IsUserDownloadsRequest(
+    int32_t network_traffic_annotation_hash_id) {
+  static const std::set<int32_t> kUserDownloadsTrafficAnnotations = {
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("parallel_download_job"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("renderer_initiated_download"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("drag_download_file"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("download_web_contents_frame"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("downloads_api_run_async"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("resumed_downloads"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("download_via_context_menu"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("offline_pages_download_file"),
+  };
+  return kUserDownloadsTrafficAnnotations.find(
+             network_traffic_annotation_hash_id) !=
+         kUserDownloadsTrafficAnnotations.end();
+}
 
-  const DataUseRecorder* recorder = ascriber_->GetDataUseRecorder(request);
-  if (recorder) {
-    url_request_classifier_->RecordPageTransitionUMA(
-        recorder->page_transition(), request.GetTotalReceivedBytes());
-  }
+// static
+bool DataUseMeasurement::IsMetricsServiceRequest(
+    int32_t network_traffic_annotation_hash_id) {
+  static const std::set<int32_t> kMetricsServiceTrafficAnnotations = {
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("metrics_report_uma"),
+      COMPUTE_NETWORK_TRAFFIC_ANNOTATION_ID_HASH("metrics_report_ukm"),
+  };
+  return kMetricsServiceTrafficAnnotations.find(
+             network_traffic_annotation_hash_id) !=
+         kMetricsServiceTrafficAnnotations.end();
+}
+
+bool DataUseMeasurement::IsCurrentNetworkCellular() const {
+  return network::NetworkConnectionTracker::IsConnectionCellular(
+      connection_type_);
+}
+
+void DataUseMeasurement::OnConnectionChanged(
+    network::mojom::ConnectionType type) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  connection_type_ = type;
+}
+
+void DataUseMeasurement::AddServicesDataUseObserver(
+    ServicesDataUseObserver* observer) {
+  services_data_use_observer_list_.AddObserver(observer);
+}
+
+void DataUseMeasurement::RemoveServicesDataUseObserver(
+    ServicesDataUseObserver* observer) {
+  services_data_use_observer_list_.RemoveObserver(observer);
 }
 
 }  // namespace data_use_measurement

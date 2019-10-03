@@ -22,8 +22,7 @@ MojoDemuxerStreamAdapter::MojoDemuxerStreamAdapter(
     const base::Closure& stream_ready_cb)
     : demuxer_stream_(std::move(demuxer_stream)),
       stream_ready_cb_(stream_ready_cb),
-      type_(UNKNOWN),
-      weak_factory_(this) {
+      type_(UNKNOWN) {
   DVLOG(1) << __func__;
   demuxer_stream_->Initialize(base::Bind(
       &MojoDemuxerStreamAdapter::OnStreamReady, weak_factory_.GetWeakPtr()));
@@ -36,11 +35,15 @@ MojoDemuxerStreamAdapter::~MojoDemuxerStreamAdapter() {
 void MojoDemuxerStreamAdapter::Read(const ReadCB& read_cb) {
   DVLOG(3) << __func__;
   // We shouldn't be holding on to a previous callback if a new Read() came in.
-  DCHECK(read_cb_.is_null());
+  DCHECK(!read_cb_);
 
   read_cb_ = read_cb;
   demuxer_stream_->Read(base::Bind(&MojoDemuxerStreamAdapter::OnBufferReady,
                                    weak_factory_.GetWeakPtr()));
+}
+
+bool MojoDemuxerStreamAdapter::IsReadPending() const {
+  return !read_cb_.is_null();
 }
 
 AudioDecoderConfig MojoDemuxerStreamAdapter::audio_decoder_config() {
@@ -91,17 +94,17 @@ void MojoDemuxerStreamAdapter::OnBufferReady(
     const base::Optional<AudioDecoderConfig>& audio_config,
     const base::Optional<VideoDecoderConfig>& video_config) {
   DVLOG(3) << __func__;
-  DCHECK(!read_cb_.is_null());
+  DCHECK(read_cb_);
   DCHECK_NE(type_, UNKNOWN);
 
   if (status == kConfigChanged) {
     UpdateConfig(std::move(audio_config), std::move(video_config));
-    base::ResetAndReturn(&read_cb_).Run(kConfigChanged, nullptr);
+    std::move(read_cb_).Run(kConfigChanged, nullptr);
     return;
   }
 
   if (status == kAborted) {
-    base::ResetAndReturn(&read_cb_).Run(kAborted, nullptr);
+    std::move(read_cb_).Run(kAborted, nullptr);
     return;
   }
 
@@ -114,11 +117,11 @@ void MojoDemuxerStreamAdapter::OnBufferReady(
 void MojoDemuxerStreamAdapter::OnBufferRead(
     scoped_refptr<DecoderBuffer> buffer) {
   if (!buffer) {
-    base::ResetAndReturn(&read_cb_).Run(kAborted, nullptr);
+    std::move(read_cb_).Run(kAborted, nullptr);
     return;
   }
 
-  base::ResetAndReturn(&read_cb_).Run(kOk, buffer);
+  std::move(read_cb_).Run(kOk, buffer);
 }
 
 void MojoDemuxerStreamAdapter::UpdateConfig(

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -44,9 +46,18 @@ class ProfileManager : public ::ProfileManagerWithoutInit {
 TestingProfileManager::TestingProfileManager(TestingBrowserProcess* process)
     : called_set_up_(false),
       browser_process_(process),
-      local_state_(process),
-      profile_manager_(NULL) {
+      owned_local_state_(std::make_unique<ScopedTestingLocalState>(process)),
+      profile_manager_(nullptr) {
+  local_state_ = owned_local_state_.get();
 }
+
+TestingProfileManager::TestingProfileManager(
+    TestingBrowserProcess* process,
+    ScopedTestingLocalState* local_state)
+    : called_set_up_(false),
+      browser_process_(process),
+      local_state_(local_state),
+      profile_manager_(nullptr) {}
 
 TestingProfileManager::~TestingProfileManager() {
   // Destroying this class also destroys the LocalState, so make sure the
@@ -54,8 +65,8 @@ TestingProfileManager::~TestingProfileManager() {
   browser_process_->SetProfileManager(NULL);
 }
 
-bool TestingProfileManager::SetUp() {
-  SetUpInternal();
+bool TestingProfileManager::SetUp(const base::FilePath& profiles_path) {
+  SetUpInternal(profiles_path);
   return called_set_up_;
 }
 
@@ -65,11 +76,12 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
     const base::string16& user_name,
     int avatar_id,
     const std::string& supervised_user_id,
-    const TestingProfile::TestingFactories& factories) {
+    TestingProfile::TestingFactories testing_factories,
+    base::Optional<bool> override_new_profile) {
   DCHECK(called_set_up_);
 
   // Create a path for the profile based on the name.
-  base::FilePath profile_path(profiles_dir_.GetPath());
+  base::FilePath profile_path(profiles_path_);
 #if defined(OS_CHROMEOS)
   if (profile_name != chrome::kInitialProfile &&
       profile_name != chromeos::ProfileHelper::GetLockScreenAppProfileName()) {
@@ -90,14 +102,16 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   builder.SetPrefService(std::move(prefs));
   builder.SetSupervisedUserId(supervised_user_id);
   builder.SetProfileName(profile_name);
+  if (override_new_profile)
+    builder.OverrideIsNewProfile(*override_new_profile);
 
-  for (TestingProfile::TestingFactories::const_iterator it = factories.begin();
-       it != factories.end(); ++it) {
-    builder.AddTestingFactory(it->first, it->second);
-  }
+  for (TestingProfile::TestingFactories::value_type& pair : testing_factories)
+    builder.AddTestingFactory(pair.first, std::move(pair.second));
+  testing_factories.clear();
 
-  TestingProfile* profile = builder.Build().release();
-  profile_manager_->AddProfile(profile);  // Takes ownership.
+  std::unique_ptr<TestingProfile> profile = builder.Build();
+  TestingProfile* profile_ptr = profile.get();
+  profile_manager_->AddProfile(std::move(profile));
 
   // Update the user metadata.
   ProfileAttributesEntry* entry;
@@ -108,9 +122,9 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   entry->SetSupervisedUserId(supervised_user_id);
   entry->SetName(user_name);
 
-  testing_profiles_.insert(std::make_pair(profile_name, profile));
+  testing_profiles_.insert(std::make_pair(profile_name, profile_ptr));
 
-  return profile;
+  return profile_ptr;
 }
 
 TestingProfile* TestingProfileManager::CreateTestingProfile(
@@ -131,18 +145,21 @@ TestingProfile* TestingProfileManager::CreateGuestProfile() {
   builder.SetPath(ProfileManager::GetGuestProfilePath());
 
   // Add the guest profile to the profile manager, but not to the info cache.
-  TestingProfile* profile = builder.Build().release();
-  profile->set_profile_name(kGuestProfileName);
+  std::unique_ptr<TestingProfile> profile = builder.Build();
+  TestingProfile* profile_ptr = profile.get();
+  profile_ptr->set_profile_name(kGuestProfileName);
 
   // Set up a profile with an off the record profile.
-  TestingProfile::Builder().BuildIncognito(profile);
+  TestingProfile::Builder off_the_record_builder;
+  off_the_record_builder.SetGuestSession();
+  off_the_record_builder.BuildIncognito(profile_ptr);
 
-  profile_manager_->AddProfile(profile);  // Takes ownership.
-  profile_manager_->SetNonPersonalProfilePrefs(profile);
+  profile_manager_->AddProfile(std::move(profile));
+  profile_manager_->SetNonPersonalProfilePrefs(profile_ptr);
 
-  testing_profiles_.insert(std::make_pair(kGuestProfileName, profile));
+  testing_profiles_.insert(std::make_pair(kGuestProfileName, profile_ptr));
 
-  return profile;
+  return profile_ptr;
 }
 
 TestingProfile* TestingProfileManager::CreateSystemProfile() {
@@ -153,20 +170,21 @@ TestingProfile* TestingProfileManager::CreateSystemProfile() {
   builder.SetPath(ProfileManager::GetSystemProfilePath());
 
   // Add the system profile to the profile manager, but not to the info cache.
-  TestingProfile* profile = builder.Build().release();
-  profile->set_profile_name(kSystemProfileName);
+  std::unique_ptr<TestingProfile> profile = builder.Build();
+  TestingProfile* profile_ptr = profile.get();
+  profile_ptr->set_profile_name(kSystemProfileName);
 
-  profile_manager_->AddProfile(profile);  // Takes ownership.
+  profile_manager_->AddProfile(std::move(profile));
 
-  testing_profiles_.insert(std::make_pair(kSystemProfileName, profile));
+  testing_profiles_.insert(std::make_pair(kSystemProfileName, profile_ptr));
 
-  return profile;
+  return profile_ptr;
 }
 
 void TestingProfileManager::DeleteTestingProfile(const std::string& name) {
   DCHECK(called_set_up_);
 
-  TestingProfilesMap::iterator it = testing_profiles_.find(name);
+  auto it = testing_profiles_.find(name);
   DCHECK(it != testing_profiles_.end());
 
   TestingProfile* profile = it->second;
@@ -182,8 +200,8 @@ void TestingProfileManager::DeleteTestingProfile(const std::string& name) {
 void TestingProfileManager::DeleteAllTestingProfiles() {
   ProfileAttributesStorage& storage =
       profile_manager_->GetProfileAttributesStorage();
-  for (TestingProfilesMap::iterator it = testing_profiles_.begin();
-       it != testing_profiles_.end(); ++it) {
+  for (auto it = testing_profiles_.begin(); it != testing_profiles_.end();
+       ++it) {
     TestingProfile* profile = it->second;
     storage.RemoveProfile(profile->GetPath());
   }
@@ -194,7 +212,7 @@ void TestingProfileManager::DeleteAllTestingProfiles() {
 void TestingProfileManager::DeleteGuestProfile() {
   DCHECK(called_set_up_);
 
-  TestingProfilesMap::iterator it = testing_profiles_.find(kGuestProfileName);
+  auto it = testing_profiles_.find(kGuestProfileName);
   DCHECK(it != testing_profiles_.end());
 
   profile_manager_->profiles_info_.erase(ProfileManager::GetGuestProfilePath());
@@ -203,7 +221,7 @@ void TestingProfileManager::DeleteGuestProfile() {
 void TestingProfileManager::DeleteSystemProfile() {
   DCHECK(called_set_up_);
 
-  TestingProfilesMap::iterator it = testing_profiles_.find(kSystemProfileName);
+  auto it = testing_profiles_.find(kSystemProfileName);
   DCHECK(it != testing_profiles_.end());
 
   profile_manager_->profiles_info_.erase(
@@ -226,7 +244,7 @@ void TestingProfileManager::UpdateLastUser(Profile* last_active) {
 
 const base::FilePath& TestingProfileManager::profiles_dir() {
   DCHECK(called_set_up_);
-  return profiles_dir_.GetPath();
+  return profiles_path_;
 }
 
 ProfileManager* TestingProfileManager::profile_manager() {
@@ -243,14 +261,21 @@ ProfileAttributesStorage* TestingProfileManager::profile_attributes_storage() {
   return profile_info_cache();
 }
 
-void TestingProfileManager::SetUpInternal() {
+void TestingProfileManager::SetUpInternal(const base::FilePath& profiles_path) {
   ASSERT_FALSE(browser_process_->profile_manager())
       << "ProfileManager already exists";
 
   // Set up the directory for profiles.
-  ASSERT_TRUE(profiles_dir_.CreateUniqueTempDir());
+  if (profiles_path.empty()) {
+    ASSERT_TRUE(profiles_dir_.CreateUniqueTempDir());
+    profiles_path_ = profiles_dir_.GetPath();
+  } else {
+    profiles_path_ = profiles_path;
+  }
+  user_data_dir_override_ = std::make_unique<base::ScopedPathOverride>(
+      chrome::DIR_USER_DATA, profiles_path_);
 
-  profile_manager_ = new testing::ProfileManager(profiles_dir_.GetPath());
+  profile_manager_ = new testing::ProfileManager(profiles_path_);
   browser_process_->SetProfileManager(profile_manager_);  // Takes ownership.
 
   profile_manager_->GetProfileInfoCache().

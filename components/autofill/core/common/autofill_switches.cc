@@ -8,50 +8,39 @@
 namespace autofill {
 namespace switches {
 
+// Sets the API key that will be used when calling Autofill API instead of
+// using Chrome's baked key by default. You can use this to test new versions
+// of the API that are not linked to the Chrome baked key yet.
+const char kAutofillAPIKey[] = "autofill-api-key";
+
+// Override the default autofill server URL with "scheme://host[:port]/prefix/".
+const char kAutofillServerURL[] = "autofill-server-url";
+
+// The randomized encoding type to use when sending metadata uploads. The
+// value of the parameter must be one of the valid integer values of the
+// AutofillRandomizedValue_EncodingType enum.
+const char kAutofillMetadataUploadEncoding[] =
+    "autofill-metadata-upload-encoding";
+
+// The number of days after which to reset the registry of autofill events for
+// which an upload has been sent.
+const char kAutofillUploadThrottlingPeriodInDays[] =
+    "autofill-upload-throttling-period-in-days";
+
 // Force hiding the local save checkbox in the autofill dialog box for getting
 // the full credit card number for a wallet card. The card will never be stored
 // locally.
 const char kDisableOfferStoreUnmaskedWalletCards[] =
     "disable-offer-store-unmasked-wallet-cards";
 
-// Disables offering to upload credit cards.
-const char kDisableOfferUploadCreditCards[] =
-    "disable-offer-upload-credit-cards";
-
-// Disables password generation when we detect that the user is going through
-// account creation.
-const char kDisablePasswordGeneration[]     = "disable-password-generation";
-
-// The "disable" flag for kEnableSingleClickAutofill.
-const char kDisableSingleClickAutofill[]    = "disable-single-click-autofill";
-
 // Force showing the local save checkbox in the autofill dialog box for getting
 // the full credit card number for a wallet card.
 const char kEnableOfferStoreUnmaskedWalletCards[] =
     "enable-offer-store-unmasked-wallet-cards";
 
-// Enables offering to upload credit cards.
-const char kEnableOfferUploadCreditCards[] = "enable-offer-upload-credit-cards";
-
-// Enables password generation when we detect that the user is going through
-// account creation.
-const char kEnablePasswordGeneration[]      = "enable-password-generation";
-
-// Enables/disables suggestions without typing anything (on first click).
-const char kEnableSingleClickAutofill[]     = "enable-single-click-autofill";
-
-// Enables suggestions with substring matching instead of prefix matching.
-const char kEnableSuggestionsWithSubstringMatch[] =
-    "enable-suggestions-with-substring-match";
-
 // Ignores autocomplete="off" for Autofill data (profiles + credit cards).
 const char kIgnoreAutocompleteOffForAutofill[] =
     "ignore-autocomplete-off-autofill";
-
-// Removes the requirement that we recieved a ping from the autofill servers
-// and that the user doesn't have the given form blacklisted. Used in testing.
-const char kLocalHeuristicsOnlyForPasswordGeneration[] =
-    "local-heuristics-only-for-password-generation";
 
 // Annotates forms with Autofill field type predictions.
 const char kShowAutofillTypePredictions[]   = "show-autofill-type-predictions";
@@ -60,7 +49,7 @@ const char kShowAutofillTypePredictions[]   = "show-autofill-type-predictions";
 const char kShowAutofillSignatures[] = "show-autofill-signatures";
 
 // Use the sandbox Online Wallet service URL (for developer testing).
-const char kWalletServiceUseSandbox[]       = "wallet-service-use-sandbox";
+const char kWalletServiceUseSandbox[] = "wallet-service-use-sandbox";
 
 }  // namespace switches
 }  // namespace autofill

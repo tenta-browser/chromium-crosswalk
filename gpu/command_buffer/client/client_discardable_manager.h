@@ -22,11 +22,19 @@ class GPU_EXPORT ClientDiscardableManager {
  public:
   ClientDiscardableManager();
   ~ClientDiscardableManager();
+
+  // Note that the handles bound to an id are not guaranteed to outlive the
+  // handle id. GetHandle may return an empty handle if the corresponding handle
+  // was deleted on the service.
   ClientDiscardableHandle::Id CreateHandle(CommandBuffer* command_buffer);
   bool LockHandle(ClientDiscardableHandle::Id handle_id);
   void FreeHandle(ClientDiscardableHandle::Id handle_id);
   bool HandleIsValid(ClientDiscardableHandle::Id handle_id) const;
   ClientDiscardableHandle GetHandle(ClientDiscardableHandle::Id handle_id);
+  bool HandleIsDeleted(ClientDiscardableHandle::Id handle_id);
+
+  // For diagnostic tracing only.
+  bool HandleIsDeletedForTracing(ClientDiscardableHandle::Id handle_id) const;
 
   // Test only functions.
   void CheckPendingForTesting(CommandBuffer* command_buffer) {
@@ -42,15 +50,21 @@ class GPU_EXPORT ClientDiscardableManager {
                       scoped_refptr<Buffer>* buffer,
                       int32_t* shm_id,
                       uint32_t* offset);
+  bool FindExistingAllocation(CommandBuffer* command_buffer,
+                              scoped_refptr<Buffer>* buffer,
+                              int32_t* shm_id,
+                              uint32_t* offset);
   void ReturnAllocation(CommandBuffer* command_buffer,
                         const ClientDiscardableHandle& handle);
   void CheckPending(CommandBuffer* command_buffer);
+  // Return true if we found at least one deleted entry.
+  bool CheckDeleted(CommandBuffer* command_buffer);
+  bool CreateNewAllocation(CommandBuffer* command_buffer);
 
  private:
-  size_t allocation_size_;
+  uint32_t allocation_size_;
   size_t element_size_ = sizeof(base::subtle::Atomic32);
-  uint32_t elements_per_allocation_ =
-      static_cast<uint32_t>(allocation_size_ / element_size_);
+  uint32_t elements_per_allocation_ = allocation_size_ / element_size_;
 
   struct Allocation;
   std::vector<std::unique_ptr<Allocation>> allocations_;

@@ -3,22 +3,23 @@
 <dom-module id="device-emulator-shared-styles">
   <template>
     <style>
-      paper-input {
+      cr-icon-button {
+        --cr-icon-button-color: rgb(82, 101, 162);
+        margin: 0;
+      }
+
+      cr-input {
         display: inline-block;
         margin: 0 15px;
+        vertical-align: top;
         width: 200px;
       }
 
-      #editModal paper-checkbox {
-        -webkit-margin-start: 15px;
-      }
-
-      paper-radio-button {
-        display: inline-block;
+      cr-radio-button {
+        display: inline-flex;
       }
 
       .element-label {
-        -webkit-padding-start: 0;
         color: rgb(82, 101, 162);
         display: block;
         font-size: 24px;
@@ -26,6 +27,7 @@
         height: 80px;
         letter-spacing: 0.05em;
         line-height: 80px;
+        padding-inline-start: 0;
       }
 
       .form-label {
@@ -45,17 +47,9 @@
         width: 45%;
       }
 
-      .icon-cell paper-icon-button {
-        color: rgb(82, 101, 162);
-      }
-
       .devices-table {
         border-collapse: collapse;
         padding: 20px 0;
-      }
-
-      .devices-table paper-icon-button[disabled] {
-        color: rgb(150, 194, 244);
       }
 
       .devices-table.custom {
@@ -110,10 +104,10 @@
 
       .add-device-container {
         margin: 15px;
-        text-align: right;
+        text-align: end;
       }
 
-      .add-device-container paper-button {
+      .add-device-container cr-button {
         color: rgb(82, 101, 162);
       }
     </style>

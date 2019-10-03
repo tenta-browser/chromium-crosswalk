@@ -64,7 +64,7 @@ ShellNativeAppWindowMac::ShellNativeAppWindowMac(
   [[window_controller_ window] setDelegate:window_controller_];
   [window_controller_ setAppWindow:this];
 
-  NSView* view = app_window->web_contents()->GetNativeView();
+  NSView* view = app_window->web_contents()->GetNativeView().GetNativeNSView();
   NSView* frameView = [window() contentView];
   [view setFrame:[frameView bounds]];
   [frameView addSubview:view];
@@ -93,6 +93,10 @@ void ShellNativeAppWindowMac::Show() {
 
 void ShellNativeAppWindowMac::Hide() {
   NOTIMPLEMENTED();
+}
+
+bool ShellNativeAppWindowMac::IsVisible() const {
+  return [window() isVisible];
 }
 
 void ShellNativeAppWindowMac::Activate() {

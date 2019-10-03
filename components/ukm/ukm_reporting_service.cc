@@ -6,11 +6,14 @@
 
 #include "components/ukm/ukm_reporting_service.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "components/metrics/metrics_service_client.h"
 #include "components/prefs/pref_registry_simple.h"
-#include "components/ukm/persisted_logs_metrics_impl.h"
+#include "components/ukm/unsent_log_store_metrics_impl.h"
 #include "components/ukm/ukm_pref_names.h"
 #include "components/ukm/ukm_service.h"
 
@@ -21,15 +24,15 @@ namespace {
 // The UKM server's URL.
 constexpr char kMimeType[] = "application/vnd.chrome.ukm";
 
-// The number of UKM logs that will be stored in PersistedLogs before logs
+// The number of UKM logs that will be stored in UnsentLogStore before logs
 // start being dropped.
-constexpr int kMinPersistedLogs = 8;
+constexpr int kMinUnsentLogCount = 8;
 
-// The number of bytes UKM logs that will be stored in PersistedLogs before
+// The number of bytes UKM logs that will be stored in UnsentLogStore before
 // logs start being dropped.
 // This ensures that a reasonable amount of history will be stored even if there
 // is a long series of very small logs.
-constexpr int kMinPersistedBytes = 300000;
+constexpr int kMinUnsentLogBytes = 300000;
 
 // If an upload fails, and the transmission was over this byte count, then we
 // will discard the log, and not try to retransmit it.  We also don't persist
@@ -37,20 +40,20 @@ constexpr int kMinPersistedBytes = 300000;
 // limit is exceeded.
 constexpr size_t kMaxLogRetransmitSize = 100 * 1024;
 
-std::string GetServerUrl() {
+GURL GetServerUrl() {
   constexpr char kDefaultServerUrl[] = "https://clients4.google.com/ukm";
   std::string server_url =
       base::GetFieldTrialParamValueByFeature(kUkmFeature, "ServerUrl");
   if (!server_url.empty())
-    return server_url;
-  return kDefaultServerUrl;
+    return GURL(server_url);
+  return GURL(kDefaultServerUrl);
 }
 
 }  // namespace
 
 // static
 void UkmReportingService::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterListPref(prefs::kUkmPersistedLogs);
+  registry->RegisterListPref(prefs::kUkmUnsentLogStore);
   // Base class already registered by MetricsReportingService::RegisterPrefs
   // ReportingService::RegisterPrefs(registry);
 }
@@ -58,25 +61,26 @@ void UkmReportingService::RegisterPrefs(PrefRegistrySimple* registry) {
 UkmReportingService::UkmReportingService(metrics::MetricsServiceClient* client,
                                          PrefService* local_state)
     : ReportingService(client, local_state, kMaxLogRetransmitSize),
-      persisted_logs_(base::MakeUnique<ukm::PersistedLogsMetricsImpl>(),
+      unsent_log_store_(std::make_unique<ukm::UnsentLogStoreMetricsImpl>(),
                       local_state,
-                      prefs::kUkmPersistedLogs,
-                      kMinPersistedLogs,
-                      kMinPersistedBytes,
-                      kMaxLogRetransmitSize) {}
+                      prefs::kUkmUnsentLogStore,
+                      kMinUnsentLogCount,
+                      kMinUnsentLogBytes,
+                      kMaxLogRetransmitSize,
+                      client->GetUploadSigningKey()) {}
 
 UkmReportingService::~UkmReportingService() {}
 
 metrics::LogStore* UkmReportingService::log_store() {
-  return &persisted_logs_;
+  return &unsent_log_store_;
 }
 
-std::string UkmReportingService::GetUploadUrl() const {
+GURL UkmReportingService::GetUploadUrl() const {
   return GetServerUrl();
 }
 
-std::string UkmReportingService::GetInsecureUploadUrl() const {
-  return "";
+GURL UkmReportingService::GetInsecureUploadUrl() const {
+  return GURL();
 }
 
 base::StringPiece UkmReportingService::upload_mime_type() const {
@@ -97,8 +101,8 @@ void UkmReportingService::LogResponseOrErrorCode(int response_code,
                                                  int error_code,
                                                  bool was_https) {
   // |was_https| is ignored since all UKM logs are received over HTTPS.
-  UMA_HISTOGRAM_SPARSE_SLOWLY("UKM.LogUpload.ResponseOrErrorCode",
-                              response_code >= 0 ? response_code : error_code);
+  base::UmaHistogramSparse("UKM.LogUpload.ResponseOrErrorCode",
+                           response_code >= 0 ? response_code : error_code);
 }
 
 void UkmReportingService::LogSuccess(size_t log_size) {

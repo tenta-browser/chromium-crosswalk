@@ -10,7 +10,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -23,7 +22,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/account_id/account_id.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,10 +55,6 @@ class ProfileListDesktopTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(manager_.SetUp());
-#if defined(OS_CHROMEOS)
-    // AvatarMenu and multiple profiles works after user logged in.
-    manager_.SetLoggedIn(true);
-#endif
   }
 
   AvatarMenu* GetAvatarMenu() {
@@ -82,7 +77,8 @@ class ProfileListDesktopTest : public testing::Test {
   void AddOmittedProfile(const std::string& name) {
     ProfileAttributesStorage* storage = manager()->profile_attributes_storage();
     storage->AddProfile(manager()->profiles_dir().AppendASCII(name),
-      ASCIIToUTF16(name), std::string(), base::string16(), 0, "TEST_ID");
+                        ASCIIToUTF16(name), std::string(), base::string16(), 0,
+                        "TEST_ID", EmptyAccountId());
   }
 
   int change_count() const { return mock_observer_->change_count(); }
@@ -263,69 +259,6 @@ TEST_F(ProfileListDesktopTest, ChangeOnNotify) {
   const AvatarMenu::Item& item3 = menu->GetItemAt(2u);
   EXPECT_EQ(2u, item3.menu_index);
   EXPECT_EQ(ASCIIToUTF16("Test 3"), item3.name);
-}
-
-TEST_F(ProfileListDesktopTest, ShowAvatarMenuInTrial) {
-  // If multiprofile mode is not enabled, the trial will not be enabled, so it
-  // isn't tested.
-  if (!profiles::IsMultipleProfilesEnabled())
-    return;
-
-  base::FieldTrialList field_trial_list_(NULL);
-  base::FieldTrialList::CreateFieldTrial("ShowProfileSwitcher", "AlwaysShow");
-
-#if defined(OS_CHROMEOS)
-  EXPECT_FALSE(AvatarMenu::ShouldShowAvatarMenu());
-#else
-  EXPECT_TRUE(AvatarMenu::ShouldShowAvatarMenu());
-#endif
-}
-
-TEST_F(ProfileListDesktopTest, ShowAvatarMenu) {
-  // If multiprofile mode is not enabled then the menu is never shown.
-  if (!profiles::IsMultipleProfilesEnabled())
-    return;
-
-  manager()->CreateTestingProfile("Test 1");
-  manager()->CreateTestingProfile("Test 2");
-
-#if defined(OS_CHROMEOS)
-  EXPECT_FALSE(AvatarMenu::ShouldShowAvatarMenu());
-#else
-  EXPECT_TRUE(AvatarMenu::ShouldShowAvatarMenu());
-#endif
-}
-
-TEST_F(ProfileListDesktopTest, SyncState) {
-  // If multiprofile mode is not enabled then the menu is never shown.
-  if (!profiles::IsMultipleProfilesEnabled())
-    return;
-
-  manager()->CreateTestingProfile("Test 1");
-
-  // Add a managed user profile.
-  ProfileAttributesStorage* storage = manager()->profile_attributes_storage();
-  base::FilePath path = manager()->profiles_dir().AppendASCII("p2");
-  storage->AddProfile(path, ASCIIToUTF16("Test 2"), std::string(),
-                      base::string16(), 0u, "TEST_ID");
-
-  ProfileAttributesEntry* entry;
-  ASSERT_TRUE(storage->GetProfileAttributesWithPath(path, &entry));
-  entry->SetIsOmitted(false);
-
-  AvatarMenu* menu = GetAvatarMenu();
-  menu->RebuildMenu();
-  EXPECT_EQ(2u, menu->GetNumberOfItems());
-
-  // Now check that the username of a supervised user shows the supervised
-  // user avatar label instead.
-  base::string16 supervised_user_label =
-      l10n_util::GetStringUTF16(IDS_LEGACY_SUPERVISED_USER_AVATAR_LABEL);
-  const AvatarMenu::Item& item1 = menu->GetItemAt(0u);
-  EXPECT_NE(item1.username, supervised_user_label);
-
-  const AvatarMenu::Item& item2 = menu->GetItemAt(1u);
-  EXPECT_EQ(item2.username, supervised_user_label);
 }
 
 }  // namespace

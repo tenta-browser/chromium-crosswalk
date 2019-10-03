@@ -4,14 +4,14 @@
 
 #include "chrome/browser/ui/views/frame/desktop_linux_browser_frame_view_layout.h"
 
+#include <memory>
+
 #include "base/macros.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/nav_button_provider.h"
-#include "chrome/browser/ui/views/tabs/tab.h"
+#include "chrome/test/views/chrome_views_test_base.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
-#include "ui/views/test/views_test_base.h"
-
-using NNBFVL = DesktopLinuxBrowserFrameViewLayout;
 
 namespace {
 
@@ -50,21 +50,20 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   }
   bool ShouldShowCaptionButtons() const override { return true; }
   bool IsRegularOrGuestSession() const override { return true; }
-  gfx::ImageSkia GetIncognitoAvatarIcon() const override {
-    return gfx::ImageSkia();
-  }
   bool IsMaximized() const override { return false; }
   bool IsMinimized() const override { return false; }
-  bool IsFullscreen() const override { return false; }
   bool IsTabStripVisible() const override { return true; }
   int GetTabStripHeight() const override {
-    return Tab::GetMinimumInactiveSize().height();
+    return GetLayoutConstant(TAB_HEIGHT);
   }
   bool IsToolbarVisible() const override { return true; }
   gfx::Size GetTabstripPreferredSize() const override {
     return gfx::Size(78, 29);
   }
   int GetTopAreaHeight() const override { return 0; }
+  bool UseCustomFrame() const override { return true; }
+  bool IsFrameCondensed() const override { return false; }
+  bool EverHasVisibleBackgroundTabShapes() const override { return false; }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestLayoutDelegate);
@@ -115,40 +114,29 @@ class TestNavButtonProvider : public views::NavButtonProvider {
   int GetInterNavButtonSpacing() const override {
     return kInterNavButtonSpacing;
   }
-
-  std::unique_ptr<views::Background> CreateAvatarButtonBackground(
-      const views::Button* avatar_button) const override {
-    return nullptr;
-  }
-
-  void CalculateCaptionButtonLayout(
-      const gfx::Size& content_size,
-      int top_area_height,
-      gfx::Size* caption_button_size,
-      gfx::Insets* caption_button_spacing) const override {}
 };
 
 }  // namespace
 
-class DesktopLinuxBrowserFrameViewLayoutTest : public views::ViewsTestBase {
+class DesktopLinuxBrowserFrameViewLayoutTest : public ChromeViewsTestBase {
  public:
   DesktopLinuxBrowserFrameViewLayoutTest() {}
   ~DesktopLinuxBrowserFrameViewLayoutTest() override {}
 
   void SetUp() override {
-    views::ViewsTestBase::SetUp();
+    ChromeViewsTestBase::SetUp();
 
     delegate_.reset(new TestLayoutDelegate);
-    nav_button_provider_ = base::MakeUnique<::TestNavButtonProvider>();
-    layout_manager_ = new NNBFVL(nav_button_provider_.get());
-    layout_manager_->set_delegate(delegate_.get());
-    layout_manager_->set_extra_caption_y(0);
-    layout_manager_->set_forced_window_caption_spacing_for_test(0);
+    nav_button_provider_ = std::make_unique<::TestNavButtonProvider>();
+    auto layout = std::make_unique<DesktopLinuxBrowserFrameViewLayout>(
+        nav_button_provider_.get());
+    layout->set_delegate(delegate_.get());
+    layout->set_forced_window_caption_spacing_for_test(0);
     widget_ = new views::Widget;
     widget_->Init(CreateParams(views::Widget::InitParams::TYPE_POPUP));
     root_view_ = widget_->GetRootView();
     root_view_->SetSize(gfx::Size(kWindowWidth, kWindowWidth));
-    root_view_->SetLayoutManager(layout_manager_);
+    layout_manager_ = root_view_->SetLayoutManager(std::move(layout));
 
     minimize_button_ = InitWindowCaptionButton(VIEW_ID_MINIMIZE_BUTTON);
     maximize_button_ = InitWindowCaptionButton(VIEW_ID_MAXIMIZE_BUTTON);
@@ -159,13 +147,13 @@ class DesktopLinuxBrowserFrameViewLayoutTest : public views::ViewsTestBase {
   void TearDown() override {
     widget_->CloseNow();
 
-    views::ViewsTestBase::TearDown();
+    ChromeViewsTestBase::TearDown();
   }
 
  protected:
   views::ImageButton* InitWindowCaptionButton(ViewID view_id) {
     views::ImageButton* button = new views::ImageButton(nullptr);
-    button->set_id(view_id);
+    button->SetID(view_id);
     root_view_->AddChildView(button);
     return button;
   }
@@ -187,14 +175,19 @@ class DesktopLinuxBrowserFrameViewLayoutTest : public views::ViewsTestBase {
     }
   }
 
-  int TitlebarTopThickness() const {
+  int FrameTopThickness() const {
     return static_cast<OpaqueBrowserFrameViewLayout*>(layout_manager_)
-        ->TitlebarTopThickness(false);
+        ->FrameTopThickness(false);
+  }
+
+  int FrameSideThickness() const {
+    return static_cast<OpaqueBrowserFrameViewLayout*>(layout_manager_)
+        ->FrameSideThickness(false);
   }
 
   views::Widget* widget_ = nullptr;
   views::View* root_view_ = nullptr;
-  NNBFVL* layout_manager_ = nullptr;
+  DesktopLinuxBrowserFrameViewLayout* layout_manager_ = nullptr;
   std::unique_ptr<TestLayoutDelegate> delegate_;
   std::unique_ptr<views::NavButtonProvider> nav_button_provider_;
 
@@ -211,29 +204,30 @@ class DesktopLinuxBrowserFrameViewLayoutTest : public views::ViewsTestBase {
 TEST_F(DesktopLinuxBrowserFrameViewLayoutTest, NativeNavButtons) {
   std::vector<views::FrameButton> leading_buttons;
   std::vector<views::FrameButton> trailing_buttons;
-  leading_buttons.push_back(views::FRAME_BUTTON_CLOSE);
-  leading_buttons.push_back(views::FRAME_BUTTON_MAXIMIZE);
-  leading_buttons.push_back(views::FRAME_BUTTON_MINIMIZE);
+  leading_buttons.push_back(views::FrameButton::kClose);
+  leading_buttons.push_back(views::FrameButton::kMaximize);
+  leading_buttons.push_back(views::FrameButton::kMinimize);
   layout_manager_->SetButtonOrdering(leading_buttons, trailing_buttons);
   ResetNativeNavButtonImagesFromButtonProvider();
 
   root_view_->Layout();
 
-  const int frame_thickness = TitlebarTopThickness();
-  int x = frame_thickness;
+  const int frame_top_thickness = FrameTopThickness();
+
+  int x = FrameSideThickness();
 
   // Close button.
   EXPECT_EQ(kCloseButtonSize, close_button_->size());
   x += kTopAreaSpacing.left() + kCloseButtonMargin.left();
   EXPECT_EQ(x, close_button_->x());
-  EXPECT_EQ(kCloseButtonMargin.top() + frame_thickness, close_button_->y());
+  EXPECT_EQ(kCloseButtonMargin.top() + frame_top_thickness, close_button_->y());
 
   // Maximize button.
   EXPECT_EQ(kMaximizeButtonSize, maximize_button_->size());
   x += kCloseButtonSize.width() + kCloseButtonMargin.right() +
        kInterNavButtonSpacing + kMaximizeButtonMargin.left();
   EXPECT_EQ(x, maximize_button_->x());
-  EXPECT_EQ(kMaximizeButtonMargin.top() + frame_thickness,
+  EXPECT_EQ(kMaximizeButtonMargin.top() + frame_top_thickness,
             maximize_button_->y());
 
   // Minimize button.
@@ -241,6 +235,6 @@ TEST_F(DesktopLinuxBrowserFrameViewLayoutTest, NativeNavButtons) {
   x += kMaximizeButtonSize.width() + kMaximizeButtonMargin.right() +
        kInterNavButtonSpacing + kMinimizeButtonMargin.left();
   EXPECT_EQ(x, minimize_button_->x());
-  EXPECT_EQ(kMinimizeButtonMargin.top() + frame_thickness,
+  EXPECT_EQ(kMinimizeButtonMargin.top() + frame_top_thickness,
             minimize_button_->y());
 }

@@ -8,7 +8,6 @@
 #include <limits>
 #include <memory>
 
-#include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
@@ -46,7 +45,7 @@ void Clipboard::SetClipboardForCurrentThread(
     // This shouldn't happen. The clipboard should not already exist.
     NOTREACHED();
   }
-  clipboard_map->insert(std::make_pair(id, std::move(platform_clipboard)));
+  clipboard_map->insert({id, std::move(platform_clipboard)});
 }
 
 // static
@@ -60,8 +59,26 @@ Clipboard* Clipboard::GetForCurrentThread() {
     return it->second.get();
 
   Clipboard* clipboard = Clipboard::Create();
-  clipboard_map->insert(std::make_pair(id, base::WrapUnique(clipboard)));
+  clipboard_map->insert({id, base::WrapUnique(clipboard)});
   return clipboard;
+}
+
+// static
+std::unique_ptr<Clipboard> Clipboard::TakeForCurrentThread() {
+  base::AutoLock lock(clipboard_map_lock_.Get());
+
+  ClipboardMap* clipboard_map = clipboard_map_.Pointer();
+  base::PlatformThreadId id = base::PlatformThread::CurrentId();
+
+  Clipboard* clipboard = nullptr;
+
+  auto it = clipboard_map->find(id);
+  if (it != clipboard_map->end()) {
+    clipboard = it->second.release();
+    clipboard_map->erase(it);
+  }
+
+  return base::WrapUnique(clipboard);
 }
 
 // static
@@ -81,7 +98,7 @@ void Clipboard::DestroyClipboardForCurrentThread() {
 
   ClipboardMap* clipboard_map = clipboard_map_.Pointer();
   base::PlatformThreadId id = base::PlatformThread::CurrentId();
-  ClipboardMap::iterator it = clipboard_map->find(id);
+  auto it = clipboard_map->find(id);
   if (it != clipboard_map->end())
     clipboard_map->erase(it);
 }
@@ -111,7 +128,7 @@ void Clipboard::DispatchObject(ObjectType type, const ObjectMapParams& params) {
         WriteHTML(&(params[0].front()), params[0].size(),
                   &(params[1].front()), params[1].size());
       } else if (params.size() == 1) {
-        WriteHTML(&(params[0].front()), params[0].size(), NULL, 0);
+        WriteHTML(&(params[0].front()), params[0].size(), nullptr, 0);
       }
       break;
 
@@ -139,11 +156,9 @@ void Clipboard::DispatchObject(ObjectType type, const ObjectMapParams& params) {
     }
 
     case CBF_DATA:
-      WriteData(
-          FormatType::Deserialize(
-              std::string(&(params[0].front()), params[0].size())),
-          &(params[1].front()),
-          params[1].size());
+      WriteData(ClipboardFormatType::Deserialize(
+                    std::string(&(params[0].front()), params[0].size())),
+                &(params[1].front()), params[1].size());
       break;
 
     default:
@@ -156,13 +171,12 @@ base::PlatformThreadId Clipboard::GetAndValidateThreadID() {
 
   const base::PlatformThreadId id = base::PlatformThread::CurrentId();
 
-  // TODO(fdoray): Surround this block with #if DCHECK_IS_ON() and remove the
-  // DumpWithoutCrashing() call once https://crbug.com/662055 is resolved.
+  // A Clipboard instance must be allocated for every thread that uses the
+  // clipboard. To prevented unbounded memory use, CHECK that the current thread
+  // was whitelisted to use the clipboard. This is a CHECK rather than a DCHECK
+  // to catch incorrect usage in production (e.g. https://crbug.com/872737).
   AllowedThreadsVector* allowed_threads = allowed_threads_.Pointer();
-  if (!allowed_threads->empty() && !base::ContainsValue(*allowed_threads, id)) {
-    NOTREACHED();
-    base::debug::DumpWithoutCrashing();
-  }
+  CHECK(allowed_threads->empty() || base::Contains(*allowed_threads, id));
 
   return id;
 }

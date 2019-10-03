@@ -7,8 +7,10 @@
 
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
+#include "media/base/media_status.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/video_decoder_config.h"
+#include "media/base/waiting.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
@@ -26,11 +28,13 @@ class RendererClient {
   // Executed periodically with rendering statistics.
   virtual void OnStatisticsUpdate(const PipelineStatistics& stats) = 0;
 
-  // Executed when buffering state is changed.
-  virtual void OnBufferingStateChange(BufferingState state) = 0;
+  // Executed when buffering state is changed. |reason| indicates the cause of
+  // the state change, when known.
+  virtual void OnBufferingStateChange(BufferingState state,
+                                      BufferingStateChangeReason reason) = 0;
 
-  // Executed whenever the key needed to decrypt the stream is not available.
-  virtual void OnWaitingForDecryptionKey() = 0;
+  // Executed whenever the Renderer is waiting because of |reason|.
+  virtual void OnWaiting(WaitingReason reason) = 0;
 
   // Executed whenever DemuxerStream status returns kConfigChange. Initial
   // configs provided by OnMetadata.
@@ -44,10 +48,6 @@ class RendererClient {
   // Executed for the first video frame and whenever opacity changes.
   // Only used if media stream contains a video track.
   virtual void OnVideoOpacityChange(bool opaque) = 0;
-
-  // Executed when video metadata is first read, and whenever it changes.
-  // Only used when we are using a URL demuxer (e.g. for MediaPlayerRenderer).
-  virtual void OnDurationChange(base::TimeDelta duration) = 0;
 };
 
 }  // namespace media

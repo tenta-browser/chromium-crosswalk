@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -17,13 +16,15 @@
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "base/version.h"
+#include "build/build_config.h"
 #include "components/component_updater/component_updater_paths.h"
 #include "components/component_updater/component_updater_service.h"
+#include "components/crx_file/crx_verifier.h"
 #include "components/update_client/component_unpacker.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
@@ -61,8 +62,10 @@ ComponentInstaller::~ComponentInstaller() {}
 void ComponentInstaller::Register(ComponentUpdateService* cus,
                                   base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  // Some components may affect user visible features, hence USER_VISIBLE.
   task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 
   if (!installer_policy_) {
@@ -105,7 +108,7 @@ Result ComponentInstaller::InstallHelper(
   if (current_version_.CompareTo(manifest_version) > 0)
     return Result(InstallError::VERSION_NOT_UPGRADED);
   base::FilePath local_install_path;
-  if (!PathService::Get(DIR_COMPONENT_USER, &local_install_path))
+  if (!base::PathService::Get(DIR_COMPONENT_USER, &local_install_path))
     return Result(InstallError::NO_DIR_COMPONENT_USER);
   local_install_path =
       local_install_path.Append(installer_policy_->GetRelativeInstallDir())
@@ -173,16 +176,9 @@ void ComponentInstaller::Install(const base::FilePath& unpack_path,
   current_version_ = version;
   current_install_dir_ = install_path;
 
-  // Invoke |ComponentReady| on the main thread, then after this task has
-  // completed, post a task to call the lamda below using the task scheduler.
-  // The task scheduler PostTaskAndReply call requires the caller to run on
-  // a sequence. This code is not running on a sequence, therefore, there
-  // are two tasks posted to the main thread runner, to ensure that
-  // the |callback| is invoked by the task scheduler after |ComponentReady| has
-  // returned.
   main_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&ComponentInstaller::ComponentReady, this,
-                                base::Passed(std::move(manifest))));
+                                std::move(manifest)));
   main_task_runner_->PostTask(FROM_HERE,
                               base::BindOnce(std::move(callback), result));
 }
@@ -205,7 +201,7 @@ bool ComponentInstaller::Uninstall() {
 
 bool ComponentInstaller::FindPreinstallation(
     const base::FilePath& root,
-    const scoped_refptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   base::FilePath path = root.Append(installer_policy_->GetRelativeInstallDir());
   if (!base::PathExists(path)) {
     DVLOG(1) << "Relative install dir does not exist: " << path.MaybeAsASCII();
@@ -248,16 +244,16 @@ bool ComponentInstaller::FindPreinstallation(
 }
 
 void ComponentInstaller::StartRegistration(
-    const scoped_refptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   VLOG(1) << __func__ << " for " << installer_policy_->GetName();
-  DCHECK(task_runner_.get());
+  DCHECK(task_runner_);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   base::Version latest_version(kNullVersion);
 
   // First check for an installation set up alongside Chrome itself.
   base::FilePath root;
-  if (PathService::Get(DIR_COMPONENT_PREINSTALLED, &root) &&
+  if (base::PathService::Get(DIR_COMPONENT_PREINSTALLED, &root) &&
       FindPreinstallation(root, registration_info)) {
     latest_version = registration_info->version;
   }
@@ -265,7 +261,7 @@ void ComponentInstaller::StartRegistration(
   // If there is a distinct alternate root, check there as well, and override
   // anything found in the basic root.
   base::FilePath root_alternate;
-  if (PathService::Get(DIR_COMPONENT_PREINSTALLED_ALT, &root_alternate) &&
+  if (base::PathService::Get(DIR_COMPONENT_PREINSTALLED_ALT, &root_alternate) &&
       root != root_alternate &&
       FindPreinstallation(root_alternate, registration_info)) {
     latest_version = registration_info->version;
@@ -274,10 +270,11 @@ void ComponentInstaller::StartRegistration(
   // Then check for a higher-versioned user-wide installation.
   base::FilePath latest_path;
   std::unique_ptr<base::DictionaryValue> latest_manifest;
-  base::FilePath base_dir;
-  if (!PathService::Get(DIR_COMPONENT_USER, &base_dir))
+  base::FilePath base_component_dir;
+  if (!base::PathService::Get(DIR_COMPONENT_USER, &base_component_dir))
     return;
-  base_dir = base_dir.Append(installer_policy_->GetRelativeInstallDir());
+  base::FilePath base_dir =
+      base_component_dir.Append(installer_policy_->GetRelativeInstallDir());
   if (!base::PathExists(base_dir) && !base::CreateDirectory(base_dir)) {
     PLOG(ERROR) << "Could not create the base directory for "
                 << installer_policy_->GetName() << " ("
@@ -286,9 +283,15 @@ void ComponentInstaller::StartRegistration(
   }
 
 #if defined(OS_CHROMEOS)
-  if (!base::SetPosixFilePermissions(base_dir, 0755)) {
-    PLOG(ERROR) << "SetPosixFilePermissions failed: " << base_dir.value();
-    return;
+  base::FilePath base_dir_ = base_component_dir;
+  std::vector<base::FilePath::StringType> components;
+  installer_policy_->GetRelativeInstallDir().GetComponents(&components);
+  for (const base::FilePath::StringType component : components) {
+    base_dir_ = base_dir_.Append(component);
+    if (!base::SetPosixFilePermissions(base_dir_, 0755)) {
+      PLOG(ERROR) << "SetPosixFilePermissions failed: " << base_dir.value();
+      return;
+    }
   }
 #endif  // defined(OS_CHROMEOS)
 
@@ -346,12 +349,12 @@ void ComponentInstaller::StartRegistration(
 }
 
 void ComponentInstaller::UninstallOnTaskRunner() {
-  DCHECK(task_runner_.get());
+  DCHECK(task_runner_);
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // Only try to delete any files that are in our user-level install path.
   base::FilePath userInstallPath;
-  if (!PathService::Get(DIR_COMPONENT_USER, &userInstallPath))
+  if (!base::PathService::Get(DIR_COMPONENT_USER, &userInstallPath))
     return;
   if (!userInstallPath.IsParent(current_install_dir_))
     return;
@@ -383,7 +386,7 @@ void ComponentInstaller::UninstallOnTaskRunner() {
 }
 
 void ComponentInstaller::FinishRegistration(
-    const scoped_refptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     ComponentUpdateService* cus,
     base::OnceClosure callback) {
   VLOG(1) << __func__ << " for " << installer_policy_->GetName();
@@ -402,6 +405,8 @@ void ComponentInstaller::FinishRegistration(
   crx.installer_attributes = installer_policy_->GetInstallerAttributes();
   crx.requires_network_encryption =
       installer_policy_->RequiresNetworkEncryption();
+  crx.crx_format_requirement =
+      crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF;
   crx.handled_mime_types = installer_policy_->GetMimeTypes();
   crx.supports_group_policy_enable_component_updates =
       installer_policy_->SupportsGroupPolicyEnabledComponentUpdates();
@@ -412,15 +417,14 @@ void ComponentInstaller::FinishRegistration(
     return;
   }
 
-  if (!callback.is_null())
-    std::move(callback).Run();
-
-  if (!registration_info->manifest) {
+  if (registration_info->manifest) {
+    ComponentReady(std::move(registration_info->manifest));
+  } else {
     DVLOG(1) << "No component found for " << installer_policy_->GetName();
-    return;
   }
 
-  ComponentReady(std::move(registration_info->manifest));
+  if (!callback.is_null())
+    std::move(callback).Run();
 }
 
 void ComponentInstaller::ComponentReady(

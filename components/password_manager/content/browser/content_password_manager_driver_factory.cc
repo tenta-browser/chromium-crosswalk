@@ -77,26 +77,28 @@ ContentPasswordManagerDriverFactory::FromWebContents(
 
 // static
 void ContentPasswordManagerDriverFactory::BindPasswordManagerDriver(
-    autofill::mojom::PasswordManagerDriverRequest request,
+    mojo::PendingAssociatedReceiver<autofill::mojom::PasswordManagerDriver>
+        pending_receiver,
     content::RenderFrameHost* render_frame_host) {
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(render_frame_host);
+  // We try to bind to the driver of this render frame host,
+  // but if driver is not ready for this render frame host for now,
+  // the request will be just dropped, this would cause closing the message pipe
+  // which would raise connection error to peer side.
+  // Peer side could reconnect later when needed.
   if (!web_contents)
     return;
 
   ContentPasswordManagerDriverFactory* factory =
       ContentPasswordManagerDriverFactory::FromWebContents(web_contents);
-  // We try to bind to the driver, but if driver is not ready for now or totally
-  // not available for this render frame host, the request will be just dropped.
-  // This would cause the message pipe to be closed, which will raise a
-  // connection error on the peer side.
   if (!factory)
     return;
 
   ContentPasswordManagerDriver* driver =
       factory->GetDriverForFrame(render_frame_host);
   if (driver)
-    driver->BindRequest(std::move(request));
+    driver->BindPendingReceiver(std::move(pending_receiver));
 }
 
 ContentPasswordManagerDriver*
@@ -128,8 +130,8 @@ void ContentPasswordManagerDriverFactory::DidFinishNavigation(
   if (!navigation_handle->HasCommitted())
     return;
 
-  frame_driver_map_.find(navigation_handle->GetRenderFrameHost())
-      ->second->DidNavigateFrame(navigation_handle);
+  if (auto* driver = GetDriverForFrame(navigation_handle->GetRenderFrameHost()))
+    driver->DidNavigateFrame(navigation_handle);
 }
 
 void ContentPasswordManagerDriverFactory::RequestSendLoggingAvailability() {

@@ -12,6 +12,8 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/api/settings_private/generated_prefs.h"
+#include "chrome/browser/extensions/api/settings_private/generated_prefs_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/settings_private.h"
 #include "components/prefs/pref_service.h"
@@ -21,41 +23,40 @@ namespace extensions {
 
 SettingsPrivateEventRouter::SettingsPrivateEventRouter(
     content::BrowserContext* context)
-    : context_(context), listening_(false), weak_ptr_factory_(this) {
-  // Register with the event router so we know when renderers are listening to
-  // our events. We first check and see if there *is* an event router, because
-  // some unit tests try to create all context services, but don't initialize
-  // the event router first.
-  EventRouter* event_router = EventRouter::Get(context_);
-  if (event_router) {
-    event_router->RegisterObserver(
-        this, api::settings_private::OnPrefsChanged::kEventName);
-    StartOrStopListeningForPrefsChanges();
-  }
-
+    : context_(context) {
   Profile* profile = Profile::FromBrowserContext(context_);
-  prefs_util_.reset(new PrefsUtil(profile));
+  prefs_util_ = std::make_unique<PrefsUtil>(profile);
   user_prefs_registrar_.Init(profile->GetPrefs());
   local_state_registrar_.Init(g_browser_process->local_state());
+
+  EventRouter::Get(context_)->RegisterObserver(
+      this, api::settings_private::OnPrefsChanged::kEventName);
+  StartOrStopListeningForPrefsChanges();
 }
 
 SettingsPrivateEventRouter::~SettingsPrivateEventRouter() {
   DCHECK(!listening_);
 }
 
+void SettingsPrivateEventRouter::OnGeneratedPrefChanged(
+    const std::string& pref_name) {
+  OnPreferenceChanged(pref_name);
+}
+
 void SettingsPrivateEventRouter::Shutdown() {
-  // Unregister with the event router. We first check and see if there *is* an
-  // event router, because some unit tests try to shutdown all context services,
-  // but didn't initialize the event router first.
-  EventRouter* event_router = EventRouter::Get(context_);
-  if (event_router)
-    event_router->UnregisterObserver(this);
+  EventRouter::Get(context_)->UnregisterObserver(this);
 
   if (listening_) {
+#if defined(OS_CHROMEOS)
     cros_settings_subscription_map_.clear();
+#endif
     const PrefsUtil::TypedPrefMap& keys = prefs_util_->GetWhitelistedKeys();
+    settings_private::GeneratedPrefs* generated_prefs =
+        settings_private::GeneratedPrefsFactory::GetForBrowserContext(context_);
     for (const auto& it : keys) {
-      if (!prefs_util_->IsCrosSetting(it.first))
+      if (generated_prefs && generated_prefs->HasPref(it.first))
+        generated_prefs->RemoveObserver(it.first, this);
+      else if (!prefs_util_->IsCrosSetting(it.first))
         FindRegistrarForPref(it.first)->Remove(it.first);
     }
   }
@@ -85,10 +86,13 @@ PrefChangeRegistrar* SettingsPrivateEventRouter::FindRegistrarForPref(
 }
 
 void SettingsPrivateEventRouter::StartOrStopListeningForPrefsChanges() {
+  DCHECK(prefs_util_);
   EventRouter* event_router = EventRouter::Get(context_);
   bool should_listen = event_router->HasEventListener(
       api::settings_private::OnPrefsChanged::kEventName);
 
+  settings_private::GeneratedPrefs* generated_prefs =
+      settings_private::GeneratedPrefsFactory::GetForBrowserContext(context_);
   if (should_listen && !listening_) {
     const PrefsUtil::TypedPrefMap& keys = prefs_util_->GetWhitelistedKeys();
     for (const auto& it : keys) {
@@ -103,6 +107,8 @@ void SettingsPrivateEventRouter::StartOrStopListeningForPrefsChanges() {
         cros_settings_subscription_map_.insert(
             make_pair(pref_name, std::move(subscription)));
 #endif
+      } else if (generated_prefs && generated_prefs->HasPref(pref_name)) {
+        generated_prefs->AddObserver(pref_name, this);
       } else {
         FindRegistrarForPref(it.first)
             ->Add(pref_name,
@@ -113,10 +119,15 @@ void SettingsPrivateEventRouter::StartOrStopListeningForPrefsChanges() {
   } else if (!should_listen && listening_) {
     const PrefsUtil::TypedPrefMap& keys = prefs_util_->GetWhitelistedKeys();
     for (const auto& it : keys) {
-      if (prefs_util_->IsCrosSetting(it.first))
+      if (prefs_util_->IsCrosSetting(it.first)) {
+#if defined(OS_CHROMEOS)
         cros_settings_subscription_map_.erase(it.first);
-      else
+#endif
+      } else if (generated_prefs && generated_prefs->HasPref(it.first)) {
+        generated_prefs->RemoveObserver(it.first, this);
+      } else {
         FindRegistrarForPref(it.first)->Remove(it.first);
+      }
     }
   }
   listening_ = should_listen;

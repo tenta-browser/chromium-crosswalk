@@ -41,24 +41,21 @@ class COLOR_SPACE_EXPORT ICCProfile {
   // processes).
   static ICCProfile FromData(const void* icc_profile, size_t size);
 
-  // Create a profile for a parametric color space. Returns an invalid profile
-  // if the specified space is not parametric.
-  static ICCProfile FromParametricColorSpace(
-      const gfx::ColorSpace& color_space);
+  // Create a profile for a color space. Returns an invalid profile if the
+  // specified space is not expressable as an ICCProfile.
+  static ICCProfile FromColorSpace(const gfx::ColorSpace& color_space);
 
-  // Return the ICCProfile that was used to create the specified ColorSpace, if
-  // available. Otherwise, return an invalid profile. This is used on macOS for
-  // power reasons.
-  static ICCProfile FromCacheMac(const gfx::ColorSpace& color_space);
-
-  // Return a ColorSpace that references this ICCProfile. ColorTransforms
-  // created using this ColorSpace will match this ICCProfile precisely.
+  // Return a ColorSpace that best represents this ICCProfile.
   ColorSpace GetColorSpace() const;
 
-  // Return a ColorSpace that is the best parametric approximation of this
-  // ICCProfile. The resulting ColorSpace will reference this ICCProfile only
-  // if the parametric approximation is almost exact.
-  ColorSpace GetParametricColorSpace() const;
+  // Return a ColorSpace with the primaries from this ICCProfile and an
+  // sRGB transfer function.
+  ColorSpace GetPrimariesOnlyColorSpace() const;
+
+  // Returns true if GetColorSpace returns an accurate representation of this
+  // ICCProfile. This could be false if the result of GetColorSpace had to
+  // approximate transfer functions.
+  bool IsColorSpaceAccurate() const;
 
   // Return the data for the profile.
   std::vector<char> GetData() const;
@@ -68,32 +65,18 @@ class COLOR_SPACE_EXPORT ICCProfile {
   void HistogramDisplay(int64_t display_id) const;
 
  private:
-  // This method is used to hard-code the |id_| to a specific value. It is used
-  // only when a profile is received via IPC.
-  static ICCProfile FromDataWithId(const void* data, size_t size, uint64_t id);
-
-  // This method is used by ColorTransform to construct LUT based transforms.
-  static sk_sp<SkColorSpace> GetSkColorSpaceFromId(uint64_t id);
-
   class Internals : public base::RefCountedThreadSafe<ICCProfile::Internals> {
    public:
-    Internals(std::vector<char>, uint64_t id);
+    explicit Internals(std::vector<char>);
     void HistogramDisplay(int64_t display_id);
 
     // This must match ICCProfileAnalyzeResult enum in histograms.xml.
     enum AnalyzeResult {
-      kICCExtractedMatrixAndAnalyticTrFn = 0,
-      kICCExtractedMatrixAndApproximatedTrFn = 1,
-      kICCFailedToConvergeToApproximateTrFn = 2,
-      kICCFailedToExtractRawTrFn = 3,
-      kICCFailedToExtractMatrix = 4,
       kICCFailedToParse = 5,
-      kICCFailedToExtractSkColorSpace = 6,
-      kICCFailedToCreateXform = 7,
-      kICCFailedToApproximateTrFnAccurately = 8,
-      kICCExtractedSRGBColorSpace = 9,
       kICCNoProfile = 10,
-      kICCProfileAnalyzeLast = kICCNoProfile,
+      kICCFailedToMakeUsable = 11,
+      kICCExtractedMatrixAndTrFn = 12,
+      kMaxValue = kICCExtractedMatrixAndTrFn,
     };
 
     const std::vector<char> data_;
@@ -111,22 +94,9 @@ class COLOR_SPACE_EXPORT ICCProfile {
     // profile will be analytic and not LUT-based.
     bool is_parametric_ = false;
 
-    // If |is_valid_| but not |is_parametric_|, then |id_| is assigned a
-    // non-zero value that can be used to look up this ICCProfile from a
-    // ColorSpace for the purpose of creating a LUT based ColorTransform.
-    uint64_t id_ = 0;
-
-    // Results of Skia parsing the ICC profile data.
-    sk_sp<SkColorSpace> sk_color_space_;
-
     // The best-fit parametric primaries and transfer function.
-    SkMatrix44 to_XYZD50_;
-    SkColorSpaceTransferFn transfer_fn_;
-
-    // The L-infinity error of the parametric color space fit. This is undefined
-    // unless |analyze_result_| is kICCFailedToApproximateTrFnAccurately or
-    // kICCExtractedMatrixAndApproximatedTrFn.
-    float transfer_fn_error_ = 0;
+    skcms_Matrix3x3 to_XYZD50_;
+    skcms_TransferFunction transfer_fn_;
 
     // The set of display ids which have have caused this ICC profile to be
     // recorded in UMA histograms. Only record an ICC profile once per display

@@ -5,10 +5,12 @@
 #ifndef COMPONENTS_OFFLINE_PAGES_CORE_PREFETCH_PREFETCH_TYPES_H_
 #define COMPONENTS_OFFLINE_PAGES_CORE_PREFETCH_PREFETCH_TYPES_H_
 
+#include <array>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/offline_pages/core/client_id.h"
@@ -38,20 +40,35 @@ enum class PrefetchBackgroundTaskRescheduleType {
 // in enums.xml which must be adjusted if we add any new values here.
 enum class PrefetchRequestStatus {
   // Request completed successfully.
-  SUCCESS = 0,
+  kSuccess = 0,
   // Request failed due to to local network problem, unrelated to server load
   // levels. The caller will simply reschedule the retry in the next available
   // WiFi window after 15 minutes have passed.
-  SHOULD_RETRY_WITHOUT_BACKOFF = 1,
+  kShouldRetryWithoutBackoff = 1,
   // Request failed probably related to transient server problems. The caller
   // will reschedule the retry with backoff included.
-  SHOULD_RETRY_WITH_BACKOFF = 2,
+  kShouldRetryWithBackoff = 2,
   // Request failed with error indicating that the server no longer knows how
   // to service a request. The caller will prevent network requests for the
   // period of 1 day.
-  SHOULD_SUSPEND = 3,
-  // MAX should always be the last type
-  COUNT = SHOULD_SUSPEND + 1
+  kShouldSuspendNotImplemented = 3,
+  // Request failed with error indicating that the client is forbidden. The
+  // caller will prevent network requests for the period of 1 day.
+  kShouldSuspendForbidden = 4,
+  // The request failed because the service URL was blocked by the domain
+  // administrator.
+  kShouldSuspendBlockedByAdministrator = 5,
+  // The request was answered with a 403 Forbidden response including a message
+  // indicating that the request was forbidden specifically by an OPS request
+  // filtering rule.
+  kShouldSuspendForbiddenByOPS = 6,
+  // The server responded with 403 forbidden due to a filter rule though the
+  // last request was successful.
+  kShouldSuspendNewlyForbiddenByOPS = 7,
+  // A request for no URLs (i.e. server-enabled check) completed successfully.
+  kEmptyRequestSuccess = 8,
+  // kMaxValue should always be the last type.
+  kMaxValue = kEmptyRequestSuccess
 };
 
 // Status indicating the page rendering status in the server.
@@ -86,14 +103,17 @@ struct RenderPageInfo {
   base::Time render_time;
 };
 
-// List of states a prefetch item can be at during its progress through the
-// prefetching process. They follow somewhat the order below, but some states
-// might be skipped.
+// Contains all states an item can be at during its progress through the
+// prefetching pipeline. State progression will normally follow the order below,
+// but some states might be skipped and there might be backtracking when
+// retrying a failed operation.
 //
 // Changes to this enum must be reflected in the respective metrics enum named
 // OfflinePrefetchItemState in enums.xml. Use the exact same integer value for
-// each mirrored entry.
-enum class PrefetchItemState {
+// each mirrored entry. Existing elements should never have their assigned
+// values changed. Changes should also be reflected in
+// |PrefetchTaskTestBase::kOrderedPrefetchItemStates|.
+enum class PrefetchItemState : int {
   // New request just received from the client.
   NEW_REQUEST = 0,
   // The item has been included in a GeneratePageBundle RPC requesting the
@@ -127,8 +147,10 @@ enum class PrefetchItemState {
   // client.
   ZOMBIE = 100,
   // Max item state, needed for histograms
-  MAX = ZOMBIE
+  kMaxValue = ZOMBIE
 };
+
+base::Optional<PrefetchItemState> ToPrefetchItemState(int value);
 
 // Error codes used to identify the reason why a prefetch entry has finished
 // processing in the pipeline. This values are only meaningful for entries in
@@ -137,12 +159,12 @@ enum class PrefetchItemState {
 // New entries can be added anywhere as long as they are assigned unique values
 // and kept in ascending order. Deprecated entries should be labeled as such but
 // never removed. Assigned values should never be reused. Remember to update the
-// MAX value if adding a new trailing item.
+// kMaxValue value if adding a new trailing item.
 //
 // Changes to this enum must be reflected in the respective metrics enum named
 // OflinePrefetchItemErrorCode in enums.xml. Use the exact same integer value
 // for each mirrored entry.
-enum class PrefetchItemErrorCode {
+enum class PrefetchItemErrorCode : int {
   // The entry had gone through the pipeline and successfully completed
   // prefetching. Explicitly setting to 0 as that is the default value for the
   // respective SQLite column.
@@ -172,6 +194,11 @@ enum class PrefetchItemErrorCode {
   STALE_AT_DOWNLOADING = 1000,
   STALE_AT_IMPORTING = 1050,
   STALE_AT_UNKNOWN = 1100,
+  // The item was terminated because it remained in the pipeline for more than
+  // 7 days.
+  STUCK = 1150,
+  // The item had some invalid data, probably due to database corruption.
+  INVALID_ITEM = 1175,
   // Exceeded maximum retries for get operation request.
   GET_OPERATION_MAX_ATTEMPTS_REACHED = 1200,
   // Exceeded maximum retries limit for generate page bundle request.
@@ -183,22 +210,35 @@ enum class PrefetchItemErrorCode {
   // The archive importing was not completed probably due to that Chrome was
   // killed before everything finishes.
   IMPORT_LOST = 1600,
+  // The page suggestion is no longer valid, so the item no longer needs to be
+  // downloaded.
+  SUGGESTION_INVALIDATED = 1700,
   // Note: Must always have the same value as the last actual entry.
-  MAX = IMPORT_LOST
+  kMaxValue = SUGGESTION_INVALIDATED
 };
+
+base::Optional<PrefetchItemErrorCode> ToPrefetchItemErrorCode(int value);
 
 // Callback invoked upon completion of a prefetch request.
 using PrefetchRequestFinishedCallback =
-    base::Callback<void(PrefetchRequestStatus status,
-                        const std::string& operation_name,
-                        const std::vector<RenderPageInfo>& pages)>;
+    base::OnceCallback<void(PrefetchRequestStatus status,
+                            const std::string& operation_name,
+                            const std::vector<RenderPageInfo>& pages)>;
 
 // Holds information about a suggested URL to be prefetched.
 struct PrefetchURL {
   PrefetchURL(const std::string& id,
               const GURL& url,
-              const base::string16& title)
-      : id(id), url(url), title(title) {}
+              const base::string16& title);
+  PrefetchURL(const std::string& id,
+              const GURL& url,
+              const base::string16& title,
+              const GURL& thumbnail_url,
+              const GURL& favicon_url,
+              const std::string& snippet,
+              const std::string& attribution);
+  ~PrefetchURL();
+  PrefetchURL(const PrefetchURL& other);
 
   // Client provided ID to allow the matching of provided URLs to the respective
   // work item in the prefetching system within that client's assigned
@@ -211,6 +251,19 @@ struct PrefetchURL {
 
   // The title of the page.
   base::string16 title;
+
+  // URL for a thumbnail that represents the page. May be empty if no thumbnail
+  // is available.
+  GURL thumbnail_url;
+
+  // URL for page's favicon.
+  GURL favicon_url;
+
+  // Article snippet.
+  std::string snippet;
+
+  // Identifies the page's publisher.
+  std::string attribution;
 };
 
 // Result of a completed download.
@@ -228,10 +281,6 @@ struct PrefetchDownloadResult {
   int64_t file_size = 0;
 };
 
-// Callback invoked upon completion of a download.
-using PrefetchDownloadCompletedCallback =
-    base::Callback<void(const PrefetchDownloadResult& result)>;
-
 // Describes all the info needed to import an archive.
 struct PrefetchArchiveInfo {
   PrefetchArchiveInfo();
@@ -246,7 +295,19 @@ struct PrefetchArchiveInfo {
   base::string16 title;
   base::FilePath file_path;
   int64_t file_size = 0;
+  GURL favicon_url;
+  std::string snippet;
+  std::string attribution;
 };
+
+// These operators are implemented for testing only, see test_util.cc.
+// They are provided here to avoid ODR problems.
+std::ostream& operator<<(std::ostream& out,
+                         PrefetchBackgroundTaskRescheduleType value);
+std::ostream& operator<<(std::ostream& out, PrefetchRequestStatus value);
+std::ostream& operator<<(std::ostream& out, RenderStatus value);
+std::ostream& operator<<(std::ostream& out, const PrefetchItemState& value);
+std::ostream& operator<<(std::ostream& out, PrefetchItemErrorCode value);
 
 }  // namespace offline_pages
 

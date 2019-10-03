@@ -7,30 +7,27 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/ui/views/chrome_constrained_window_views_client.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_views_delegate.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/ime_driver/ime_driver_mus.h"
+#include "chrome/browser/ui/views/relaunch_notification/relaunch_notification_controller.h"
 #include "components/constrained_window/constrained_window_views.h"
+#include "components/ui_devtools/switches.h"
+#include "components/ui_devtools/views/devtools_server_util.h"
+#include "services/service_manager/sandbox/switches.h"
+#include "ui/base/material_design/material_design_controller.h"
 
 #if defined(USE_AURA)
 #include "base/run_loop.h"
-#include "components/ui_devtools/devtools_server.h"
-#include "components/ui_devtools/views/css_agent.h"
-#include "components/ui_devtools/views/dom_agent.h"
-#include "components/ui_devtools/views/overlay_agent.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/runner/common/client_util.h"
-#include "services/ui/public/cpp/gpu/gpu.h"  // nogncheck
-#include "services/ui/public/cpp/input_devices/input_device_client.h"
-#include "services/ui/public/interfaces/constants.mojom.h"
-#include "services/ui/public/interfaces/input_devices/input_device_server.mojom.h"
-#include "ui/aura/env.h"
+#include "services/viz/public/cpp/gpu/gpu.h"  // nogncheck
 #include "ui/display/screen.h"
-#include "ui/views/mus/mus_client.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
 #include "ui/wm/core/wm_state.h"
 #endif  // defined(USE_AURA)
@@ -47,29 +44,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
 
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/ash_config.h"
-#include "content/public/common/content_switches.h"
-#include "mash/common/config.h"                                   // nogncheck
-#include "mash/quick_launch/public/interfaces/constants.mojom.h"  // nogncheck
-#endif
-
-namespace {
-
-#if defined(USE_AURA)
-bool ShouldCreateWMState() {
-#if defined(OS_CHROMEOS)
-  return chromeos::GetAshConfig() != ash::Config::MUS;
-#else
-  return true;
-#endif
-}
-#endif
-
-}  // namespace
-
-ChromeBrowserMainExtraPartsViews::ChromeBrowserMainExtraPartsViews() {
-}
+ChromeBrowserMainExtraPartsViews::ChromeBrowserMainExtraPartsViews() {}
 
 ChromeBrowserMainExtraPartsViews::~ChromeBrowserMainExtraPartsViews() {
   constrained_window::SetConstrainedWindowViewsClient(nullptr);
@@ -79,54 +54,38 @@ void ChromeBrowserMainExtraPartsViews::ToolkitInitialized() {
   // The delegate needs to be set before any UI is created so that windows
   // display the correct icon.
   if (!views::ViewsDelegate::GetInstance())
-    views_delegate_ = base::MakeUnique<ChromeViewsDelegate>();
+    views_delegate_ = std::make_unique<ChromeViewsDelegate>();
 
   SetConstrainedWindowViewsClient(CreateChromeConstrainedWindowViewsClient());
 
-#if defined(USE_AURA)
-  if (ShouldCreateWMState())
-    wm_state_.reset(new wm::WMState);
-#endif
-}
+  // The MaterialDesignController needs to look at command line flags, which
+  // are not available until this point. Now that they are, proceed with
+  // initializing the MaterialDesignController.
+  ui::MaterialDesignController::Initialize();
 
-void ChromeBrowserMainExtraPartsViews::PreCreateThreads() {
-#if defined(USE_AURA) && !defined(OS_CHROMEOS) && !defined(USE_OZONE)
-  // The screen may have already been set in test initialization.
-  if (!display::Screen::GetScreen())
-    display::Screen::SetScreenInstance(views::CreateDesktopScreen());
+#if defined(USE_AURA)
+  wm_state_.reset(new wm::WMState);
 #endif
 
   // TODO(pkasting): Try to move ViewsDelegate creation here as well;
   // see https://crbug.com/691894#c1
-  // The layout_provider_ must be intialized here instead of in
-  // ToolkitInitialized() because it relies on
-  // ui::MaterialDesignController::Intialize() having already been called.
   if (!views::LayoutProvider::Get())
     layout_provider_ = ChromeLayoutProvider::CreateLayoutProvider();
 }
 
-void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
-#if defined(USE_AURA)
-  // IME driver must be available at login screen, so initialize before profile.
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
-    IMEDriver::Register();
-
-  // Start devtools server
-  devtools_server_ = ui_devtools::UiDevToolsServer::Create(nullptr);
-  if (devtools_server_) {
-    auto dom_backend = base::MakeUnique<ui_devtools::DOMAgent>();
-    auto overlay_backend =
-        base::MakeUnique<ui_devtools::OverlayAgent>(dom_backend.get());
-    auto css_backend =
-        base::MakeUnique<ui_devtools::CSSAgent>(dom_backend.get());
-    auto devtools_client = base::MakeUnique<ui_devtools::UiDevToolsClient>(
-        "UiDevToolsClient", devtools_server_.get());
-    devtools_client->AddAgent(std::move(dom_backend));
-    devtools_client->AddAgent(std::move(css_backend));
-    devtools_client->AddAgent(std::move(overlay_backend));
-    devtools_server_->AttachClient(std::move(devtools_client));
-  }
+void ChromeBrowserMainExtraPartsViews::PreCreateThreads() {
+#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+  views::InstallDesktopScreenIfNecessary();
 #endif
+}
+
+void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
+  if (ui_devtools::UiDevToolsServer::IsUiDevToolsEnabled(
+          ui_devtools::switches::kEnableUiDevTools)) {
+    // Starts the UI Devtools server for browser UI (and Ash UI on Chrome OS).
+    devtools_server_ = ui_devtools::CreateUiDevToolsServerForViews(
+        g_browser_process->system_network_context_manager()->GetContext());
+  }
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   // On the Linux desktop, we want to prevent the user from logging in as root,
@@ -144,7 +103,7 @@ void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
 
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  if (command_line.HasSwitch(switches::kNoSandbox))
+  if (command_line.HasSwitch(service_manager::switches::kNoSandbox))
     return;
 
   base::string16 title = l10n_util::GetStringFUTF16(
@@ -162,45 +121,15 @@ void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
 #endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
 }
 
-void ChromeBrowserMainExtraPartsViews::ServiceManagerConnectionStarted(
-    content::ServiceManagerConnection* connection) {
-  DCHECK(connection);
-#if defined(USE_AURA)
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::LOCAL)
-    return;
+void ChromeBrowserMainExtraPartsViews::PostBrowserStart() {
+  relaunch_notification_controller_ =
+      std::make_unique<RelaunchNotificationController>(
+          UpgradeDetector::GetInstance());
+}
 
-#if defined(OS_CHROMEOS)
-  if (chromeos::GetAshConfig() == ash::Config::MASH) {
-    connection->GetConnector()->StartService(
-        service_manager::Identity(ui::mojom::kServiceName));
-    connection->GetConnector()->StartService(
-        service_manager::Identity(mash::common::GetWindowManagerServiceName()));
-    // Don't start QuickLaunch in tests because it changes the startup shelf
-    // state vs. classic ash.
-    if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kTestType)) {
-      connection->GetConnector()->StartService(
-          service_manager::Identity(mash::quick_launch::mojom::kServiceName));
-    }
-  }
-#endif
-
-  input_device_client_ = base::MakeUnique<ui::InputDeviceClient>();
-  ui::mojom::InputDeviceServerPtr server;
-  connection->GetConnector()->BindInterface(ui::mojom::kServiceName, &server);
-  input_device_client_->Connect(std::move(server));
-
-#if defined(OS_CHROMEOS)
-  if (chromeos::GetAshConfig() != ash::Config::MASH)
-    return;
-#endif
-
-  // WMState is owned as a member, so don't have MusClient create it.
-  const bool create_wm_state = false;
-  mus_client_ = base::MakeUnique<views::MusClient>(
-      connection->GetConnector(), service_manager::Identity(),
-      content::BrowserThread::GetTaskRunnerForThread(
-          content::BrowserThread::IO),
-      create_wm_state);
-#endif  // defined(USE_AURA)
+void ChromeBrowserMainExtraPartsViews::PostMainMessageLoopRun() {
+  // The relaunch notification controller acts on timer-based events. Tear it
+  // down explicitly here to avoid a case where such an event arrives during
+  // shutdown.
+  relaunch_notification_controller_.reset();
 }

@@ -56,8 +56,7 @@ DomainReliabilityContext::DomainReliabilityContext(
       uploader_(uploader),
       uploading_beacons_size_(0),
       last_network_change_time_(last_network_change_time),
-      upload_allowed_callback_(upload_allowed_callback),
-      weak_factory_(this) {}
+      upload_allowed_callback_(upload_allowed_callback) {}
 
 DomainReliabilityContext::~DomainReliabilityContext() {
   ClearBeacons();
@@ -125,8 +124,8 @@ void DomainReliabilityContext::CallUploadAllowedCallback() {
 
   upload_allowed_callback_.Run(
       config().origin,
-      base::Bind(&DomainReliabilityContext::OnUploadAllowedCallbackComplete,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&DomainReliabilityContext::OnUploadAllowedCallbackComplete,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void DomainReliabilityContext::OnUploadAllowedCallbackComplete(bool allowed) {
@@ -231,8 +230,8 @@ void DomainReliabilityContext::RollbackUpload() {
 void DomainReliabilityContext::RemoveOldestBeacon() {
   DCHECK(!beacons_.empty());
 
-  VLOG(1) << "Beacon queue for " << config().origin << " full; "
-          << "removing oldest beacon";
+  DVLOG(1) << "Beacon queue for " << config().origin << " full; "
+           << "removing oldest beacon";
 
   beacons_.pop_front();
 

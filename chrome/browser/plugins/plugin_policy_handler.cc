@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -59,14 +59,14 @@ void PluginPolicyHandler::ProcessPolicy(const policy::PolicyMap& policies,
                             plugin)) &&
         !policies.GetValue(policy::key::kAlwaysOpenPdfExternally)) {
       prefs->SetValue(prefs::kPluginsAlwaysOpenPdfExternally,
-                      base::MakeUnique<base::Value>(disable_pdf_plugin));
+                      base::Value(disable_pdf_plugin));
     }
     if ((base::MatchPattern(
              PluginMetadata::kAdobeFlashPlayerGroupName, plugin) ||
          base::MatchPattern(content::kFlashPluginName, plugin)) &&
         !policies.GetValue(policy::key::kDefaultPluginsSetting)) {
       prefs->SetValue(prefs::kManagedDefaultPluginsSetting,
-                      base::MakeUnique<base::Value>(flash_content_setting));
+                      base::Value(flash_content_setting));
     }
   }
 }
@@ -77,7 +77,7 @@ bool PluginPolicyHandler::CheckPolicySettings(const policy::PolicyMap& policies,
       policy::key::kEnabledPlugins, policy::key::kDisabledPlugins,
       policy::key::kDisabledPluginsExceptions};
   bool ok = true;
-  for (size_t i = 0; i < arraysize(checked_policies); ++i) {
+  for (size_t i = 0; i < base::size(checked_policies); ++i) {
     const base::Value* value = policies.GetValue(checked_policies[i]);
     if (value && !value->is_list()) {
       errors->AddError(checked_policies[i], IDS_POLICY_TYPE_ERROR,

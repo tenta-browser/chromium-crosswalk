@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <string>
 
-#include "base/macros.h"
+#include "base/no_destructor.h"
+#include "base/optional.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -41,11 +43,20 @@ bool GetBrand(std::string* brand) {
     return true;
   }
 
-  base::string16 brand16;
-  bool ret = GoogleUpdateSettings::GetBrand(&brand16);
-  if (ret)
-    brand->assign(base::UTF16ToASCII(brand16));
-  return ret;
+  // Cache brand code value, since it is queried a lot and registry queries are
+  // slow enough to actually affect top-level metrics like
+  // Omnibox.CharTypedToRepaintLatency.
+  static const base::NoDestructor<base::Optional<std::string>> brand_code(
+      []() -> base::Optional<std::string> {
+        base::string16 brand16;
+        if (!GoogleUpdateSettings::GetBrand(&brand16))
+          return base::nullopt;
+        return base::UTF16ToASCII(brand16);
+      }());
+  if (!brand_code->has_value())
+    return false;
+  brand->assign(**brand_code);
+  return true;
 }
 
 bool GetReactivationBrand(std::string* brand) {
@@ -81,14 +92,23 @@ bool GetReactivationBrand(std::string* brand) {
 
 #endif
 
+bool GetRlzBrand(std::string* brand) {
+#if defined(OS_CHROMEOS)
+  brand->assign(google_brand::chromeos::GetRlzBrand());
+  return true;
+#else
+  return GetBrand(brand);
+#endif
+}
+
 bool IsOrganic(const std::string& brand) {
-#if defined(OS_MACOSX)
   if (brand.empty()) {
-    // An empty brand string on Mac is used for channels other than stable,
-    // which are always organic.
+    // An empty brand string is considered the same as GGLS, which is organic.
+    // On Mac, channels other than stable never have a brand code. Linux,
+    // FreeBSD, and OpenBSD never have a brand code. Such installs are always
+    // organic.
     return true;
   }
-#endif
 
   const char* const kOrganicBrands[] = {
       "CHCA", "CHCB", "CHCG", "CHCH", "CHCI", "CHCJ", "CHCK", "CHCL", "CHFO",
@@ -98,7 +118,7 @@ bool IsOrganic(const std::string& brand) {
       "CHOU", "CHOX", "CHOY", "CHOZ", "CHPD", "CHPE", "CHPF", "CHPG", "ECBA",
       "ECBB", "ECDA", "ECDB", "ECSA", "ECSB", "ECVA", "ECVB", "ECWA", "ECWB",
       "ECWC", "ECWD", "ECWE", "ECWF", "EUBB", "EUBC", "GGLA", "GGLS"};
-  const char* const* end = &kOrganicBrands[arraysize(kOrganicBrands)];
+  const char* const* end = &kOrganicBrands[base::size(kOrganicBrands)];
   if (std::binary_search(&kOrganicBrands[0], end, brand))
     return true;
 
@@ -112,13 +132,10 @@ bool IsOrganic(const std::string& brand) {
 }
 
 bool IsOrganicFirstRun(const std::string& brand) {
-#if defined(OS_MACOSX)
   if (brand.empty()) {
-    // An empty brand string on Mac is used for channels other than stable,
-    // which are always organic.
+    // An empty brand string is the same as GGLS, which is organic.
     return true;
   }
-#endif
 
   return base::StartsWith(brand, "GG", base::CompareCase::SENSITIVE) ||
          base::StartsWith(brand, "EU", base::CompareCase::SENSITIVE);
@@ -129,9 +146,7 @@ bool IsInternetCafeBrandCode(const std::string& brand) {
     "CHIQ", "CHSG", "HLJY", "NTMO", "OOBA", "OOBB", "OOBC", "OOBD", "OOBE",
     "OOBF", "OOBG", "OOBH", "OOBI", "OOBJ", "IDCM",
   };
-  const char* const* end = &kBrands[arraysize(kBrands)];
-  const char* const* found = std::find(&kBrands[0], end, brand);
-  return found != end;
+  return base::Contains(kBrands, brand);
 }
 
 // BrandForTesting ------------------------------------------------------------

@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Browser;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
 import org.chromium.base.Log;
@@ -16,13 +17,12 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.feedback.FeedbackCollector;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.browser.util.UrlUtilities;
 
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
 
 /**
  * Launches an activity that displays a relevant support page and has an option to provide feedback.
@@ -86,7 +86,7 @@ public class HelpAndFeedback {
             @Nullable String url) {
         RecordUserAction.record("MobileHelpAndFeedback");
         new FeedbackCollector(activity, profile, url, null /* categoryTag */,
-                null /* description */, true /* takeScreenshot */,
+                null /* description */, helpContext, true /* takeScreenshot */,
                 collector -> show(activity, helpContext, collector));
     }
 
@@ -101,8 +101,25 @@ public class HelpAndFeedback {
      */
     public void showFeedback(final Activity activity, Profile profile, @Nullable String url,
             @Nullable final String categoryTag) {
-        new FeedbackCollector(activity, profile, url, categoryTag, null /* description */,
+        new FeedbackCollector(activity, profile, url, categoryTag, null /* description */, null,
                 true /* takeScreenshot */, collector -> showFeedback(activity, collector));
+    }
+
+    /**
+     * Starts an activity prompting the user to enter feedback.
+     *
+     * @param activity The activity to use for starting the feedback activity and to take a
+     *                 screenshot of.
+     * @param profile the current profile.
+     * @param url the current URL. May be null.
+     * @param categoryTag The category that this feedback report falls under.
+     * @param feedbackContext The context that describes the current feature being used.
+     */
+    public void showFeedback(final Activity activity, Profile profile, @Nullable String url,
+            @Nullable final String categoryTag, @Nullable final String feedbackContext) {
+        new FeedbackCollector(activity, profile, url, categoryTag, null /* description */,
+                feedbackContext, true /* takeScreenshot */,
+                collector -> showFeedback(activity, collector));
     }
 
     /**

@@ -4,96 +4,91 @@
 
 #include "chrome/browser/ui/ash/system_tray_client.h"
 
-#include "ash/login_status.h"
-#include "ash/public/cpp/shell_window_ids.h"
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/shell.h"
+#include "ash/public/cpp/locale_update_controller.h"
+#include "ash/public/cpp/system_tray.h"
+#include "ash/public/cpp/update_types.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/chromeos/accessibility/accessibility_util.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host.h"
-#include "chrome/browser/chromeos/options/network_config_view.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/set_time_dialog.h"
 #include "chrome/browser/chromeos/system/system_clock.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/webui/chromeos/bluetooth_pairing_dialog.h"
 #include "chrome/browser/ui/webui/chromeos/internet_config_dialog.h"
-#include "chrome/browser/upgrade_detector.h"
+#include "chrome/browser/ui/webui/chromeos/internet_detail_dialog.h"
+#include "chrome/browser/ui/webui/chromeos/multidevice_setup/multidevice_setup_dialog.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/url_constants.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_util.h"
+#include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/tether_constants.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/common/net.mojom.h"
-#include "components/arc/connection_holder.h"
+#include "components/arc/metrics/arc_metrics_constants.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/arc/session/connection_holder.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
-#include "content/public/common/service_manager_connection.h"
-#include "device/bluetooth/bluetooth_device.h"
 #include "extensions/browser/api/vpn_provider/vpn_service.h"
 #include "extensions/browser/api/vpn_provider/vpn_service_factory.h"
 #include "net/base/escape.h"
-#include "services/service_manager/public/cpp/connector.h"
-#include "services/ui/public/cpp/property_type_converters.h"
-#include "services/ui/public/interfaces/window_manager.mojom.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 #include "ui/events/event_constants.h"
-#include "ui/views/widget/widget.h"
-#include "ui/views/window/dialog_delegate.h"
 
 using chromeos::DBusThreadManager;
 using chromeos::UpdateEngineClient;
-using session_manager::SessionState;
 using session_manager::SessionManager;
-using views::Widget;
+using session_manager::SessionState;
 
 namespace {
 
-SystemTrayClient* g_instance = nullptr;
+SystemTrayClient* g_system_tray_client_instance = nullptr;
 
 void ShowSettingsSubPageForActiveUser(const std::string& sub_page) {
-  chrome::ShowSettingsSubPageForProfile(ProfileManager::GetActiveUserProfile(),
-                                        sub_page);
+  chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+      ProfileManager::GetActiveUserProfile(), sub_page);
 }
 
 // Returns the severity of a pending Chrome / Chrome OS update.
-ash::mojom::UpdateSeverity GetUpdateSeverity(UpgradeDetector* detector) {
+ash::UpdateSeverity GetUpdateSeverity(UpgradeDetector* detector) {
   switch (detector->upgrade_notification_stage()) {
     case UpgradeDetector::UPGRADE_ANNOYANCE_NONE:
-      return ash::mojom::UpdateSeverity::NONE;
+      return ash::UpdateSeverity::kNone;
+    case UpgradeDetector::UPGRADE_ANNOYANCE_VERY_LOW:
+      return ash::UpdateSeverity::kVeryLow;
     case UpgradeDetector::UPGRADE_ANNOYANCE_LOW:
-      return ash::mojom::UpdateSeverity::LOW;
+      return ash::UpdateSeverity::kLow;
     case UpgradeDetector::UPGRADE_ANNOYANCE_ELEVATED:
-      return ash::mojom::UpdateSeverity::ELEVATED;
+      return ash::UpdateSeverity::kElevated;
     case UpgradeDetector::UPGRADE_ANNOYANCE_HIGH:
-      return ash::mojom::UpdateSeverity::HIGH;
-    case UpgradeDetector::UPGRADE_ANNOYANCE_SEVERE:
-      return ash::mojom::UpdateSeverity::SEVERE;
+      return ash::UpdateSeverity::kHigh;
     case UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL:
-      return ash::mojom::UpdateSeverity::CRITICAL;
+      break;
   }
-  NOTREACHED();
-  return ash::mojom::UpdateSeverity::CRITICAL;
+  DCHECK_EQ(detector->upgrade_notification_stage(),
+            UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL);
+  return ash::UpdateSeverity::kCritical;
 }
 
 const chromeos::NetworkState* GetNetworkState(const std::string& network_id) {
@@ -107,20 +102,14 @@ const chromeos::NetworkState* GetNetworkState(const std::string& network_id) {
 bool IsArcVpn(const std::string& network_id) {
   const chromeos::NetworkState* network_state = GetNetworkState(network_id);
   return network_state && network_state->type() == shill::kTypeVPN &&
-         network_state->vpn_provider_type() == shill::kProviderArcVpn;
+         network_state->GetVpnProviderType() == shill::kProviderArcVpn;
 }
 
 }  // namespace
 
-SystemTrayClient::SystemTrayClient() : binding_(this) {
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindInterface(ash::mojom::kServiceName, &system_tray_);
-  // Register this object as the client interface implementation.
-  ash::mojom::SystemTrayClientPtr client;
-  binding_.Bind(mojo::MakeRequest(&client));
-  system_tray_->SetClient(std::move(client));
-
+SystemTrayClient::SystemTrayClient()
+    : system_tray_(ash::SystemTray::Get()),
+      update_notification_style_(ash::NotificationStyle::kDefault) {
   // If this observes clock setting changes before ash comes up the IPCs will
   // be queued on |system_tray_|.
   g_browser_process->platform_part()->GetSystemClock()->AddObserver(this);
@@ -138,14 +127,18 @@ SystemTrayClient::SystemTrayClient() : binding_(this) {
     policy_manager->core()->store()->AddObserver(this);
   UpdateEnterpriseDisplayDomain();
 
-  DCHECK(!g_instance);
-  g_instance = this;
+  system_tray_->SetClient(this);
+
+  DCHECK(!g_system_tray_client_instance);
+  g_system_tray_client_instance = this;
   UpgradeDetector::GetInstance()->AddObserver(this);
 }
 
 SystemTrayClient::~SystemTrayClient() {
-  DCHECK_EQ(this, g_instance);
-  g_instance = nullptr;
+  DCHECK_EQ(this, g_system_tray_client_instance);
+  g_system_tray_client_instance = nullptr;
+
+  system_tray_->SetClient(nullptr);
 
   policy::BrowserPolicyConnectorChromeOS* connector =
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
@@ -160,40 +153,21 @@ SystemTrayClient::~SystemTrayClient() {
 
 // static
 SystemTrayClient* SystemTrayClient::Get() {
-  return g_instance;
-}
-
-// static
-int SystemTrayClient::GetDialogParentContainerId() {
-  return SessionManager::Get()->session_state() == SessionState::ACTIVE
-             ? ash::kShellWindowId_SystemModalContainer
-             : ash::kShellWindowId_LockSystemModalContainer;
-}
-
-// static
-Widget* SystemTrayClient::CreateUnownedDialogWidget(
-    views::WidgetDelegate* widget_delegate) {
-  DCHECK(widget_delegate);
-  Widget::InitParams params = views::DialogDelegate::GetDialogWidgetInitParams(
-      widget_delegate, nullptr, nullptr, gfx::Rect());
-  // Place the dialog in the appropriate modal dialog container, either above
-  // or below the lock screen, based on the login state.
-  int container_id = GetDialogParentContainerId();
-  if (ash_util::IsRunningInMash()) {
-    using ui::mojom::WindowManager;
-    params.mus_properties[WindowManager::kContainerId_InitProperty] =
-        mojo::ConvertTo<std::vector<uint8_t>>(container_id);
-  } else {
-    params.parent = ash::Shell::GetContainer(
-        ash::Shell::GetRootWindowForNewWindows(), container_id);
-  }
-  Widget* widget = new Widget;  // Owned by native widget.
-  widget->Init(params);
-  return widget;
+  return g_system_tray_client_instance;
 }
 
 void SystemTrayClient::SetFlashUpdateAvailable() {
   flash_update_available_ = true;
+  HandleUpdateAvailable();
+}
+
+void SystemTrayClient::SetUpdateNotificationState(
+    ash::NotificationStyle style,
+    const base::string16& notification_title,
+    const base::string16& notification_body) {
+  update_notification_style_ = style;
+  update_notification_title_ = notification_title;
+  update_notification_body_ = notification_body;
   HandleUpdateAvailable();
 }
 
@@ -209,11 +183,20 @@ void SystemTrayClient::SetPerformanceTracingIconVisible(bool visible) {
   system_tray_->SetPerformanceTracingIconVisible(visible);
 }
 
+void SystemTrayClient::SetLocaleList(
+    std::vector<ash::LocaleInfo> locale_list,
+    const std::string& current_locale_iso_code) {
+  system_tray_->SetLocaleList(std::move(locale_list), current_locale_iso_code);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // ash::mojom::SystemTrayClient:
 
 void SystemTrayClient::ShowSettings() {
-  ShowSettingsSubPageForActiveUser(std::string());
+  // TODO(jamescook): Use different metric for OS settings.
+  base::RecordAction(base::UserMetricsAction("ShowOptions"));
+  chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+      ProfileManager::GetActiveUserProfile());
 }
 
 void SystemTrayClient::ShowBluetoothSettings() {
@@ -226,26 +209,21 @@ void SystemTrayClient::ShowBluetoothPairingDialog(
     const base::string16& name_for_display,
     bool paired,
     bool connected) {
-  std::string canonical_address =
-      device::BluetoothDevice::CanonicalizeAddress(address);
-  if (canonical_address.empty())  // Address was invalid.
-    return;
-
-  base::RecordAction(
-      base::UserMetricsAction("StatusArea_Bluetooth_Connect_Unknown"));
-  chromeos::BluetoothPairingDialog::ShowDialog(
-      canonical_address, name_for_display, paired, connected);
+  if (chromeos::BluetoothPairingDialog::ShowDialog(address, name_for_display,
+                                                   paired, connected)) {
+    base::RecordAction(
+        base::UserMetricsAction("StatusArea_Bluetooth_Connect_Unknown"));
+  }
 }
 
 void SystemTrayClient::ShowDateSettings() {
   base::RecordAction(base::UserMetricsAction("ShowDateOptions"));
   // Everybody can change the time zone (even though it is a device setting).
-  chrome::ShowSettingsSubPageForProfile(ProfileManager::GetActiveUserProfile(),
-                                        chrome::kDateTimeSubPage);
+  ShowSettingsSubPageForActiveUser(chrome::kDateTimeSubPage);
 }
 
 void SystemTrayClient::ShowSetTimeDialog() {
-  chromeos::SetTimeDialog::ShowDialogInContainer(GetDialogParentContainerId());
+  chromeos::SetTimeDialog::ShowDialog();
 }
 
 void SystemTrayClient::ShowDisplaySettings() {
@@ -269,6 +247,10 @@ void SystemTrayClient::ShowIMESettings() {
   ShowSettingsSubPageForActiveUser(chrome::kLanguageOptionsSubPage);
 }
 
+void SystemTrayClient::ShowConnectedDevicesSettings() {
+  ShowSettingsSubPageForActiveUser(chrome::kConnectedDevicesSubPage);
+}
+
 void SystemTrayClient::ShowAboutChromeOS() {
   // We always want to check for updates when showing the about page from the
   // Ash UI.
@@ -284,7 +266,7 @@ void SystemTrayClient::ShowHelp() {
 void SystemTrayClient::ShowAccessibilityHelp() {
   chrome::ScopedTabbedBrowserDisplayer displayer(
       ProfileManager::GetActiveUserProfile());
-  chromeos::accessibility::ShowAccessibilityHelp(displayer.browser());
+  chromeos::AccessibilityManager::ShowAccessibilityHelp(displayer.browser());
 }
 
 void SystemTrayClient::ShowAccessibilitySettings() {
@@ -295,8 +277,7 @@ void SystemTrayClient::ShowAccessibilitySettings() {
 void SystemTrayClient::ShowPaletteHelp() {
   chrome::ScopedTabbedBrowserDisplayer displayer(
       ProfileManager::GetActiveUserProfile());
-  chrome::ShowSingletonTab(displayer.browser(),
-                           GURL(chrome::kChromePaletteHelpURL));
+  ShowSingletonTab(displayer.browser(), GURL(chrome::kChromePaletteHelpURL));
 }
 
 void SystemTrayClient::ShowPaletteSettings() {
@@ -319,11 +300,8 @@ void SystemTrayClient::ShowEnterpriseInfo() {
     return;
   }
 
-  // Otherwise show enterprise help in a browser tab.
-  chrome::ScopedTabbedBrowserDisplayer displayer(
-      ProfileManager::GetActiveUserProfile());
-  chrome::ShowSingletonTab(displayer.browser(),
-                           GURL(chrome::kLearnMoreEnterpriseURL));
+  // Otherwise show enterprise special settings subpage.
+  chrome::ShowManagementPageForProfile(ProfileManager::GetActiveUserProfile());
 }
 
 void SystemTrayClient::ShowNetworkConfigure(const std::string& network_id) {
@@ -343,35 +321,21 @@ void SystemTrayClient::ShowNetworkConfigure(const std::string& network_id) {
     return;
   }
 
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kNetworkSettingsConfig)) {
-    chromeos::InternetConfigDialog::ShowDialogForNetworkState(network_state);
-
-  } else {
-    chromeos::NetworkConfigView::ShowForNetworkId(network_id);
-  }
+  chromeos::InternetConfigDialog::ShowDialogForNetworkId(network_id);
 }
 
 void SystemTrayClient::ShowNetworkCreate(const std::string& type) {
-  if (type == shill::kTypeCellular) {
+  if (type == ::onc::network_type::kCellular) {
     const chromeos::NetworkState* cellular =
         chromeos::NetworkHandler::Get()
             ->network_state_handler()
-            ->FirstNetworkByType(chromeos::NetworkTypePattern::Primitive(type));
+            ->FirstNetworkByType(
+                chromeos::onc::NetworkTypePatternFromOncType(type));
     std::string network_id = cellular ? cellular->guid() : "";
     ShowNetworkSettingsHelper(network_id, false /* show_configure */);
     return;
   }
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kNetworkSettingsConfig)) {
-    // TODO(stevenjb): Pass ONC type to ShowNetworkCreate once NetworkConfigView
-    // is deprecated.
-    std::string onc_type =
-        chromeos::network_util::TranslateShillTypeToONC(type);
-    chromeos::InternetConfigDialog::ShowDialogForNetworkType(onc_type);
-  } else {
-    chromeos::NetworkConfigView::ShowForType(type);
-  }
+  chromeos::InternetConfigDialog::ShowDialogForNetworkType(type);
 }
 
 void SystemTrayClient::ShowThirdPartyVpnCreate(
@@ -392,7 +356,8 @@ void SystemTrayClient::ShowArcVpnCreate(const std::string& app_id) {
   if (!profile)
     return;
 
-  arc::LaunchApp(profile, app_id, ui::EF_NONE);
+  arc::LaunchApp(profile, app_id, ui::EF_NONE,
+                 arc::UserInteractionType::APP_STARTED_FROM_SETTINGS);
 }
 
 void SystemTrayClient::ShowNetworkSettings(const std::string& network_id) {
@@ -405,8 +370,7 @@ void SystemTrayClient::ShowNetworkSettingsHelper(const std::string& network_id,
   if (session_manager->IsInSecondaryLoginScreen())
     return;
   if (!session_manager->IsSessionStarted()) {
-    chromeos::LoginDisplayHost::default_host()->OpenInternetDetailDialog(
-        network_id);
+    chromeos::InternetDetailDialog::ShowDialog(network_id);
     return;
   }
 
@@ -425,15 +389,26 @@ void SystemTrayClient::ShowNetworkSettingsHelper(const std::string& network_id,
   }
 
   std::string page = chrome::kInternetSubPage;
-  if (!network_id.empty()) {
+  const chromeos::NetworkState* network_state = GetNetworkState(network_id);
+  if (!network_id.empty() && network_state) {
     page = chrome::kNetworkDetailSubPage;
     page += "?guid=";
     page += net::EscapeUrlEncodedData(network_id, true);
+    page += "&name=";
+    page += net::EscapeUrlEncodedData(network_state->name(), true);
+    page += "&type=";
+    page += net::EscapeUrlEncodedData(
+        chromeos::network_util::TranslateShillTypeToONC(network_state->type()),
+        true);
     if (show_configure)
       page += "&showConfigure=true";
   }
   base::RecordAction(base::UserMetricsAction("OpenInternetOptionsDialog"));
   ShowSettingsSubPageForActiveUser(page);
+}
+
+void SystemTrayClient::ShowMultiDeviceSetup() {
+  chromeos::multidevice_setup::MultiDeviceSetupDialog::Show();
 }
 
 void SystemTrayClient::RequestRestartForUpdate() {
@@ -445,6 +420,12 @@ void SystemTrayClient::RequestRestartForUpdate() {
   browser_shutdown::NotifyAndTerminate(true /* fast_path */, reboot_policy);
 }
 
+void SystemTrayClient::SetLocaleAndExit(const std::string& locale_iso_code) {
+  ProfileManager::GetActiveUserProfile()->ChangeAppLocale(
+      locale_iso_code, Profile::APP_LOCALE_CHANGED_VIA_SYSTEM_TRAY);
+  chrome::AttemptUserExit();
+}
+
 void SystemTrayClient::HandleUpdateAvailable() {
   // Show an update icon for Chrome updates and Flash component updates.
   UpgradeDetector* detector = UpgradeDetector::GetInstance();
@@ -454,20 +435,27 @@ void SystemTrayClient::HandleUpdateAvailable() {
     return;
 
   // Get the Chrome update severity.
-  ash::mojom::UpdateSeverity severity = GetUpdateSeverity(detector);
+  ash::UpdateSeverity severity = GetUpdateSeverity(detector);
 
   // Flash updates are low severity unless the Chrome severity is higher.
   if (flash_update_available_)
-    severity = std::max(severity, ash::mojom::UpdateSeverity::LOW);
+    severity = std::max(severity, ash::UpdateSeverity::kLow);
 
   // Show a string specific to updating flash player if there is no system
   // update.
-  ash::mojom::UpdateType update_type = detector->notify_upgrade()
-                                           ? ash::mojom::UpdateType::SYSTEM
-                                           : ash::mojom::UpdateType::FLASH;
+  ash::UpdateType update_type = detector->notify_upgrade()
+                                    ? ash::UpdateType::kSystem
+                                    : ash::UpdateType::kFlash;
 
   system_tray_->ShowUpdateIcon(severity, detector->is_factory_reset_required(),
-                               update_type);
+                               detector->is_rollback(), update_type);
+
+  // Only overwrite title and body for system updates, not for flash updates.
+  if (update_type == ash::UpdateType::kSystem) {
+    system_tray_->SetUpdateNotificationState(update_notification_style_,
+                                             update_notification_title_,
+                                             update_notification_body_);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

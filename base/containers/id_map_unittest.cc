@@ -8,7 +8,7 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/test/gtest_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -107,8 +107,8 @@ TEST(IDMapTest, IteratorRemainsValidWhenRemovingOtherElements) {
   const int kCount = 5;
   TestObject obj[kCount];
 
-  for (int i = 0; i < kCount; i++)
-    map.Add(&obj[i]);
+  for (auto& i : obj)
+    map.Add(&i);
 
   // IDMap has no predictable iteration order.
   int32_t ids_in_iteration_order[kCount];
@@ -217,8 +217,8 @@ TEST(IDMapTest, IteratorRemainsValidWhenClearing) {
   const int kCount = 5;
   TestObject obj[kCount];
 
-  for (int i = 0; i < kCount; i++)
-    map.Add(&obj[i]);
+  for (auto& i : obj)
+    map.Add(&i);
 
   // IDMap has no predictable iteration order.
   int32_t ids_in_iteration_order[kCount];
@@ -286,8 +286,8 @@ TEST(IDMapTest, OwningPointersDeletesThemOnRemove) {
     map_owned.Remove(map_owned_ids[i]);
   }
 
-  for (int i = 0; i < kCount; ++i) {
-    delete external_obj[i];
+  for (auto* i : external_obj) {
+    delete i;
   }
 
   EXPECT_EQ(external_del_count, kCount);
@@ -305,9 +305,9 @@ TEST(IDMapTest, OwningPointersDeletesThemOnClear) {
   IDMap<DestructorCounter*> map_external;
   IDMap<std::unique_ptr<DestructorCounter>> map_owned;
 
-  for (int i = 0; i < kCount; ++i) {
-    external_obj[i] = new DestructorCounter(&external_del_count);
-    map_external.Add(external_obj[i]);
+  for (auto*& i : external_obj) {
+    i = new DestructorCounter(&external_del_count);
+    map_external.Add(i);
 
     map_owned.Add(std::make_unique<DestructorCounter>(&owned_del_count));
   }
@@ -321,8 +321,8 @@ TEST(IDMapTest, OwningPointersDeletesThemOnClear) {
   EXPECT_EQ(external_del_count, 0);
   EXPECT_EQ(owned_del_count, kCount);
 
-  for (int i = 0; i < kCount; ++i) {
-    delete external_obj[i];
+  for (auto* i : external_obj) {
+    delete i;
   }
 
   EXPECT_EQ(external_del_count, kCount);
@@ -341,9 +341,9 @@ TEST(IDMapTest, OwningPointersDeletesThemOnDestruct) {
     IDMap<DestructorCounter*> map_external;
     IDMap<std::unique_ptr<DestructorCounter>> map_owned;
 
-    for (int i = 0; i < kCount; ++i) {
-      external_obj[i] = new DestructorCounter(&external_del_count);
-      map_external.Add(external_obj[i]);
+    for (auto*& i : external_obj) {
+      i = new DestructorCounter(&external_del_count);
+      map_external.Add(i);
 
       map_owned.Add(std::make_unique<DestructorCounter>(&owned_del_count));
     }
@@ -351,8 +351,8 @@ TEST(IDMapTest, OwningPointersDeletesThemOnDestruct) {
 
   EXPECT_EQ(external_del_count, 0);
 
-  for (int i = 0; i < kCount; ++i) {
-    delete external_obj[i];
+  for (auto* i : external_obj) {
+    delete i;
   }
 
   EXPECT_EQ(external_del_count, kCount);
@@ -376,6 +376,24 @@ TEST(IDMapTest, Int64KeyType) {
 
   map.Remove(kId1);
   EXPECT_TRUE(map.IsEmpty());
+}
+
+TEST(IDMapTest, RemovedValueHandling) {
+  TestObject obj;
+  IDMap<TestObject*> map;
+  int key = map.Add(&obj);
+
+  IDMap<TestObject*>::iterator itr(&map);
+  map.Clear();
+  EXPECT_DCHECK_DEATH(map.Remove(key));
+  EXPECT_DCHECK_DEATH(map.Replace(key, &obj));
+  EXPECT_FALSE(map.Lookup(key));
+  EXPECT_FALSE(itr.IsAtEnd());
+  EXPECT_FALSE(itr.GetCurrentValue());
+
+  EXPECT_TRUE(map.IsEmpty());
+  map.AddWithID(&obj, key);
+  EXPECT_EQ(1u, map.size());
 }
 
 }  // namespace base

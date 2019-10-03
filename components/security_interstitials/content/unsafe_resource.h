@@ -58,6 +58,8 @@ struct UnsafeResource {
 
   GURL url;
   GURL original_url;
+  GURL navigation_url;
+  GURL referrer_url;
   std::vector<GURL> redirect_urls;
   bool is_subresource;
   bool is_subframe;
@@ -68,7 +70,7 @@ struct UnsafeResource {
   base::Callback<content::WebContents*(void)> web_contents_getter;
   safe_browsing::ThreatSource threat_source;
   // |token| field is only set if |threat_type| is
-  // SB_THREAT_TYPE_PASSWORD_REUSE.
+  // SB_THREAT_TYPE_*_PASSWORD_REUSE.
   std::string token;
 };
 

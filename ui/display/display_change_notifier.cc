@@ -44,7 +44,7 @@ void DisplayChangeNotifier::NotifyDisplaysChanged(
     const std::vector<Display>& old_displays,
     const std::vector<Display>& new_displays) {
   // Display present in old_displays but not in new_displays has been removed.
-  std::vector<Display>::const_iterator old_it = old_displays.begin();
+  auto old_it = old_displays.begin();
   for (; old_it != old_displays.end(); ++old_it) {
     if (std::find_if(new_displays.begin(), new_displays.end(),
                      DisplayComparator(*old_it)) == new_displays.end()) {
@@ -55,10 +55,10 @@ void DisplayChangeNotifier::NotifyDisplaysChanged(
 
   // Display present in new_displays but not in old_displays has been added.
   // Display present in both might have been modified.
-  for (std::vector<Display>::const_iterator new_it = new_displays.begin();
-       new_it != new_displays.end(); ++new_it) {
-    std::vector<Display>::const_iterator old_it = std::find_if(
-        old_displays.begin(), old_displays.end(), DisplayComparator(*new_it));
+  for (auto new_it = new_displays.begin(); new_it != new_displays.end();
+       ++new_it) {
+    auto old_it = std::find_if(old_displays.begin(), old_displays.end(),
+                               DisplayComparator(*new_it));
 
     if (old_it == old_displays.end()) {
       for (DisplayObserver& observer : observer_list_)
@@ -80,8 +80,10 @@ void DisplayChangeNotifier::NotifyDisplaysChanged(
     if (new_it->device_scale_factor() != old_it->device_scale_factor())
       metrics |= DisplayObserver::DISPLAY_METRIC_DEVICE_SCALE_FACTOR;
 
-    if (new_it->color_space() != old_it->color_space())
+    if (new_it->color_space() != old_it->color_space() ||
+        new_it->sdr_white_level() != old_it->sdr_white_level()) {
       metrics |= DisplayObserver::DISPLAY_METRIC_COLOR_SPACE;
+    }
 
     if (metrics != DisplayObserver::DISPLAY_METRIC_NONE) {
       for (DisplayObserver& observer : observer_list_)

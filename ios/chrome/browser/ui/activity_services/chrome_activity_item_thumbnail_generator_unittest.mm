@@ -6,9 +6,10 @@
 
 #include "base/test/scoped_task_environment.h"
 #import "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
-#include "ios/chrome/browser/tabs/tab.h"
+#import "ios/chrome/browser/snapshots/fake_snapshot_generator_delegate.h"
+#import "ios/chrome/browser/snapshots/snapshot_tab_helper.h"
+#import "ios/web/public/test/fakes/test_web_state.h"
 #include "testing/platform_test.h"
-#import "third_party/ocmock/OCMock/OCMock.h"
 #include "ui/base/test/ios/ui_image_test_utils.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -19,48 +20,54 @@ namespace {
 
 class ChromeActivityItemThumbnailGeneratorTest : public PlatformTest {
  protected:
-  void SetUp() override {
-    tab_ = [OCMockObject niceMockForClass:[Tab class]];
+  ChromeActivityItemThumbnailGeneratorTest() {
+    chrome_browser_state_ = TestChromeBrowserState::Builder().Build();
 
-    UIImage* snapshot = ui::test::uiimage_utils::UIImageWithSizeAndSolidColor(
-        CGSizeMake(400, 300), [UIColor redColor]);
-
-    [[[tab_ stub] andReturn:snapshot] generateSnapshotWithOverlay:NO
-                                                 visibleFrameOnly:YES];
+    delegate_ = [[FakeSnapshotGeneratorDelegate alloc] init];
+    CGRect frame = {CGPointZero, CGSizeMake(400, 300)};
+    delegate_.view = [[UIView alloc] initWithFrame:frame];
+    delegate_.view.backgroundColor = [UIColor redColor];
+    SnapshotTabHelper::CreateForWebState(&test_web_state_,
+                                         [[NSUUID UUID] UUIDString]);
+    SnapshotTabHelper::FromWebState(&test_web_state_)->SetDelegate(delegate_);
   }
 
-  void SetBrowserStateOnTab(bool incognito) {
-    TestChromeBrowserState::Builder test_cbs_builder;
-    chrome_browser_state_ = test_cbs_builder.Build();
-    ios::ChromeBrowserState* browserState =
+  void SetIncognito(bool incognito) {
+    test_web_state_.SetBrowserState(
         incognito ? chrome_browser_state_->GetOffTheRecordChromeBrowserState()
-                  : chrome_browser_state_.get();
-    [[[tab_ stub] andReturnValue:OCMOCK_VALUE(browserState)] browserState];
+                  : chrome_browser_state_.get());
   }
 
+  FakeSnapshotGeneratorDelegate* delegate_ = nil;
   base::test::ScopedTaskEnvironment task_environment_;
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
-  id tab_;
+  web::TestWebState test_web_state_;
 };
 
-TEST_F(ChromeActivityItemThumbnailGeneratorTest, ThumbnailForNonIncognitoTab) {
-  SetBrowserStateOnTab(false);
+TEST_F(ChromeActivityItemThumbnailGeneratorTest,
+       ThumbnailForNonIncognitoWebState) {
+  SetIncognito(/*incognito=*/false);
+
   CGSize size = CGSizeMake(50, 50);
-  ThumbnailGeneratorBlock generatorBlock =
-      activity_services::ThumbnailGeneratorForTab(tab_);
-  EXPECT_TRUE(generatorBlock);
-  UIImage* thumbnail = generatorBlock(size);
+  ChromeActivityItemThumbnailGenerator* generator =
+      [[ChromeActivityItemThumbnailGenerator alloc]
+          initWithWebState:&test_web_state_];
+  EXPECT_TRUE(generator);
+  UIImage* thumbnail = [generator thumbnailWithSize:size];
   EXPECT_TRUE(thumbnail);
   EXPECT_TRUE(CGSizeEqualToSize(thumbnail.size, size));
 }
 
-TEST_F(ChromeActivityItemThumbnailGeneratorTest, NoThumbnailForIncognitoTab) {
-  SetBrowserStateOnTab(true);
+TEST_F(ChromeActivityItemThumbnailGeneratorTest,
+       NoThumbnailForIncognitoWebState) {
+  SetIncognito(/*incognito=*/true);
+
   CGSize size = CGSizeMake(50, 50);
-  ThumbnailGeneratorBlock generatorBlock =
-      activity_services::ThumbnailGeneratorForTab(tab_);
-  EXPECT_TRUE(generatorBlock);
-  UIImage* thumbnail = generatorBlock(size);
+  ChromeActivityItemThumbnailGenerator* generator =
+      [[ChromeActivityItemThumbnailGenerator alloc]
+          initWithWebState:&test_web_state_];
+  EXPECT_TRUE(generator);
+  UIImage* thumbnail = [generator thumbnailWithSize:size];
   EXPECT_FALSE(thumbnail);
 }
 

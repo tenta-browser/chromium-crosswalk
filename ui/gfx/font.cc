@@ -24,7 +24,7 @@ Font& Font::operator=(const Font& other) {
   return *this;
 }
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_IOS)
+#if defined(OS_MACOSX) || defined(OS_IOS)
 Font::Font(NativeFont native_font)
     : platform_font_(PlatformFont::CreateFromNativeFont(native_font)) {
 }
@@ -42,6 +42,9 @@ Font::~Font() {
 }
 
 Font Font::Derive(int size_delta, int style, Font::Weight weight) const {
+  if (size_delta == 0 && style == GetStyle() && weight == GetWeight())
+    return *this;
+
   return platform_font_->DeriveFont(size_delta, style, weight);
 }
 
@@ -85,7 +88,7 @@ const FontRenderParams& Font::GetFontRenderParams() const {
   return platform_font_->GetFontRenderParams();
 }
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_IOS)
+#if defined(OS_MACOSX) || defined(OS_IOS)
 NativeFont Font::GetNativeFont() const {
   return platform_font_->GetNativeFont();
 }

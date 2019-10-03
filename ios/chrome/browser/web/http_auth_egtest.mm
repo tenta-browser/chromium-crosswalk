@@ -4,16 +4,16 @@
 
 #import <EarlGrey/EarlGrey.h>
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/strings/sys_string_conversions.h"
+#import "base/test/ios/wait_util.h"
 #include "components/strings/grit/components_strings.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
-#include "ios/chrome/test/app/navigation_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/public/test/http_server/http_auth_response_provider.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
@@ -24,8 +24,8 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForPageLoadTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForPageLoadTimeout;
 
 namespace {
 
@@ -37,14 +37,24 @@ id<GREYMatcher> HttpAuthDialog() {
 
 // Returns matcher for Username text field.
 id<GREYMatcher> UsernameField() {
-  return chrome_test_util::StaticTextWithAccessibilityLabelId(
-      IDS_IOS_HTTP_LOGIN_DIALOG_USERNAME_PLACEHOLDER);
+  if (@available(iOS 13.0, *)) {
+    return grey_accessibilityValue(l10n_util::GetNSStringWithFixup(
+        IDS_IOS_HTTP_LOGIN_DIALOG_USERNAME_PLACEHOLDER));
+  } else {
+    return chrome_test_util::StaticTextWithAccessibilityLabelId(
+        IDS_IOS_HTTP_LOGIN_DIALOG_USERNAME_PLACEHOLDER);
+  }
 }
 
 // Returns matcher for Password text field.
 id<GREYMatcher> PasswordField() {
-  return chrome_test_util::StaticTextWithAccessibilityLabelId(
-      IDS_IOS_HTTP_LOGIN_DIALOG_PASSWORD_PLACEHOLDER);
+  if (@available(iOS 13.0, *)) {
+    return grey_accessibilityValue(l10n_util::GetNSStringWithFixup(
+        IDS_IOS_HTTP_LOGIN_DIALOG_PASSWORD_PLACEHOLDER));
+  } else {
+    return chrome_test_util::StaticTextWithAccessibilityLabelId(
+        IDS_IOS_HTTP_LOGIN_DIALOG_PASSWORD_PLACEHOLDER);
+  }
 }
 
 // Returns matcher for Login button.
@@ -75,7 +85,7 @@ void WaitForHttpAuthDialog() {
 
 // Tests Basic HTTP Authentication with correct username and password.
 - (void)testSuccessfullBasicAuth {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     // EG does not allow interactions with HTTP Dialog when loading spinner is
     // animated. TODO(crbug.com/680290): Enable this test on iPad when EarlGrey
     // allows tapping dialog buttons with active page load spinner.
@@ -83,9 +93,9 @@ void WaitForHttpAuthDialog() {
   }
 
   GURL URL = web::test::HttpServer::MakeUrl("http://good-auth");
-  web::test::SetUpHttpServer(base::MakeUnique<web::HttpAuthResponseProvider>(
+  web::test::SetUpHttpServer(std::make_unique<web::HttpAuthResponseProvider>(
       URL, "GoodRealm", "gooduser", "goodpass"));
-  chrome_test_util::LoadUrl(URL);
+  [ChromeEarlGrey loadURL:URL waitForCompletion:NO];
   WaitForHttpAuthDialog();
 
   // Enter valid username and password.
@@ -96,12 +106,12 @@ void WaitForHttpAuthDialog() {
   [[EarlGrey selectElementWithMatcher:LoginButton()] performAction:grey_tap()];
 
   const std::string pageText = web::HttpAuthResponseProvider::page_text();
-  [ChromeEarlGrey waitForWebViewContainingText:pageText];
+  [ChromeEarlGrey waitForWebStateContainingText:pageText];
 }
 
 // Tests Basic HTTP Authentication with incorrect username and password.
 - (void)testUnsuccessfullBasicAuth {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     // EG does not allow interactions with HTTP Dialog when loading spinner is
     // animated. TODO(crbug.com/680290): Enable this test on iPad when EarlGrey
     // allows tapping dialog buttons with active page load spinner.
@@ -109,9 +119,9 @@ void WaitForHttpAuthDialog() {
   }
 
   GURL URL = web::test::HttpServer::MakeUrl("http://bad-auth");
-  web::test::SetUpHttpServer(base::MakeUnique<web::HttpAuthResponseProvider>(
+  web::test::SetUpHttpServer(std::make_unique<web::HttpAuthResponseProvider>(
       URL, "BadRealm", "baduser", "badpass"));
-  chrome_test_util::LoadUrl(URL);
+  [ChromeEarlGrey loadURL:URL waitForCompletion:NO];
   WaitForHttpAuthDialog();
 
   // Enter invalid username and password.
@@ -127,7 +137,7 @@ void WaitForHttpAuthDialog() {
 
 // Tests Cancelling Basic HTTP Authentication.
 - (void)testCancellingBasicAuth {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     // EG does not allow interactions with HTTP Dialog when loading spinner is
     // animated. TODO(crbug.com/680290): Enable this test on iPad when EarlGrey
     // allows tapping dialog buttons with active page load spinner.
@@ -135,9 +145,9 @@ void WaitForHttpAuthDialog() {
   }
 
   GURL URL = web::test::HttpServer::MakeUrl("http://cancel-auth");
-  web::test::SetUpHttpServer(base::MakeUnique<web::HttpAuthResponseProvider>(
+  web::test::SetUpHttpServer(std::make_unique<web::HttpAuthResponseProvider>(
       URL, "CancellingRealm", "", ""));
-  chrome_test_util::LoadUrl(URL);
+  [ChromeEarlGrey loadURL:URL waitForCompletion:NO];
   WaitForHttpAuthDialog();
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::CancelButton()]

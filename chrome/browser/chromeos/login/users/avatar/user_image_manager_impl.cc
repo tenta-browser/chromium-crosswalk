@@ -18,8 +18,8 @@
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -32,6 +32,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile_downloader.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -39,6 +40,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/storage_partition.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/chromeos/resources/grit/ui_chromeos_resources.h"
 #include "ui/gfx/image/image_skia.h"
@@ -437,7 +439,7 @@ void UserImageManagerImpl::Job::UpdateUser(
     user->SetImage(std::move(user_image), image_index_);
   } else {
     user->SetStubImage(
-        base::MakeUnique<user_manager::UserImage>(
+        std::make_unique<user_manager::UserImage>(
             *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
                 IDR_LOGIN_DEFAULT_USER)),
         image_index_, false);
@@ -491,7 +493,7 @@ void UserImageManagerImpl::Job::SaveImageAndUpdateLocalState(
   }
 
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   // TODO(crbug.com/670557): Use GetAccountIdKey() instead of user_id().
   image_path_ = user_data_dir.AppendASCII(
       user_id() + ChooseExtensionFromImageFormat(image_format));
@@ -537,11 +539,11 @@ void UserImageManagerImpl::Job::UpdateLocalState() {
 
   std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
   entry->Set(kImagePathNodeName,
-             base::MakeUnique<base::Value>(image_path_.value()));
-  entry->Set(kImageIndexNodeName, base::MakeUnique<base::Value>(image_index_));
+             std::make_unique<base::Value>(image_path_.value()));
+  entry->Set(kImageIndexNodeName, std::make_unique<base::Value>(image_index_));
   if (!image_url_.is_empty())
     entry->Set(kImageURLNodeName,
-               base::MakeUnique<base::Value>(image_url_.spec()));
+               std::make_unique<base::Value>(image_url_.spec()));
   DictionaryPrefUpdate update(g_browser_process->local_state(),
                               kUserImageProperties);
   update->SetWithoutPathExpansion(user_id(), std::move(entry));
@@ -563,7 +565,7 @@ UserImageManagerImpl::UserImageManagerImpl(
       has_managed_image_(false),
       weak_factory_(this) {
   background_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
 }
 
@@ -594,7 +596,7 @@ void UserImageManagerImpl::LoadUserImage() {
   int image_index = user_manager::User::USER_IMAGE_INVALID;
   image_properties->GetInteger(kImageIndexNodeName, &image_index);
   if (default_user_image::IsValidIndex(image_index)) {
-    user->SetImage(base::MakeUnique<user_manager::UserImage>(
+    user->SetImage(std::make_unique<user_manager::UserImage>(
                        default_user_image::GetDefaultImage(image_index)),
                    image_index);
     return;
@@ -614,7 +616,7 @@ void UserImageManagerImpl::LoadUserImage() {
 
   user->SetImageURL(image_url);
   user->SetStubImage(
-      base::MakeUnique<user_manager::UserImage>(
+      std::make_unique<user_manager::UserImage>(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
               IDR_LOGIN_DEFAULT_USER)),
       image_index, true);
@@ -759,6 +761,9 @@ void UserImageManagerImpl::OnExternalDataSet(const std::string& policy) {
 
 void UserImageManagerImpl::OnExternalDataCleared(const std::string& policy) {
   DCHECK_EQ(policy::key::kUserAvatarImage, policy);
+  if (!IsUserImageManaged())
+    return;
+
   has_managed_image_ = false;
   SetInitialUserImage();
   TryToCreateImageSyncObserver();
@@ -788,8 +793,16 @@ int UserImageManagerImpl::GetDesiredImageSideLength() const {
   return GetCurrentUserImageSize();
 }
 
-Profile* UserImageManagerImpl::GetBrowserProfile() {
-  return ProfileHelper::Get()->GetProfileByUserUnsafe(GetUser());
+signin::IdentityManager* UserImageManagerImpl::GetIdentityManager() {
+  return IdentityManagerFactory::GetForProfile(
+      ProfileHelper::Get()->GetProfileByUserUnsafe(GetUser()));
+}
+
+network::mojom::URLLoaderFactory* UserImageManagerImpl::GetURLLoaderFactory() {
+  return content::BrowserContext::GetDefaultStoragePartition(
+             ProfileHelper::Get()->GetProfileByUserUnsafe(GetUser()))
+      ->GetURLLoaderFactoryForBrowserProcess()
+      .get();
 }
 
 std::string UserImageManagerImpl::GetCachedPictureURL() const {

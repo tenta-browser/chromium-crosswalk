@@ -7,17 +7,11 @@
 #include <memory>
 #include <set>
 
-#include "base/message_loop/message_loop.h"
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "components/url_matcher/url_matcher_constants.h"
-#include "content/public/browser/resource_request_info.h"
-#include "content/public/common/previews_state.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
-#include "net/base/request_priority.h"
-#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "net/url_request/url_request.h"
-#include "net/url_request/url_request_test_util.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using url_matcher::URLMatcher;
@@ -26,8 +20,6 @@ using url_matcher::URLMatcherConditionSet;
 namespace extensions {
 
 TEST(WebRequestConditionTest, CreateCondition) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
 
   std::string error;
@@ -36,12 +28,11 @@ TEST(WebRequestConditionTest, CreateCondition) {
   // Test wrong condition name passed.
   error.clear();
   result = WebRequestCondition::Create(
-      NULL,
-      matcher.condition_factory(),
-      *base::test::ParseJson(
-           "{ \"invalid\": \"foobar\", \n"
-           "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-           "}"),
+      NULL, matcher.condition_factory(),
+      *base::test::ParseJsonDeprecated(
+          "{ \"invalid\": \"foobar\", \n"
+          "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
+          "}"),
       &error);
   EXPECT_FALSE(error.empty());
   EXPECT_FALSE(result.get());
@@ -49,13 +40,12 @@ TEST(WebRequestConditionTest, CreateCondition) {
   // Test wrong datatype in host_suffix.
   error.clear();
   result = WebRequestCondition::Create(
-      NULL,
-      matcher.condition_factory(),
-      *base::test::ParseJson(
-           "{ \n"
-           "  \"url\": [], \n"
-           "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-           "}"),
+      NULL, matcher.condition_factory(),
+      *base::test::ParseJsonDeprecated(
+          "{ \n"
+          "  \"url\": [], \n"
+          "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
+          "}"),
       &error);
   EXPECT_FALSE(error.empty());
   EXPECT_FALSE(result.get());
@@ -63,14 +53,13 @@ TEST(WebRequestConditionTest, CreateCondition) {
   // Test success (can we support multiple criteria?)
   error.clear();
   result = WebRequestCondition::Create(
-      NULL,
-      matcher.condition_factory(),
-      *base::test::ParseJson(
-           "{ \n"
-           "  \"resourceType\": [\"main_frame\"], \n"
-           "  \"url\": { \"hostSuffix\": \"example.com\" }, \n"
-           "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-           "}"),
+      NULL, matcher.condition_factory(),
+      *base::test::ParseJsonDeprecated(
+          "{ \n"
+          "  \"resourceType\": [\"main_frame\"], \n"
+          "  \"url\": { \"hostSuffix\": \"example.com\" }, \n"
+          "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
+          "}"),
       &error);
   EXPECT_EQ("", error);
   ASSERT_TRUE(result.get());
@@ -79,64 +68,46 @@ TEST(WebRequestConditionTest, CreateCondition) {
   result->GetURLMatcherConditionSets(&url_matcher_condition_set);
   matcher.AddConditionSets(url_matcher_condition_set);
 
-  net::TestURLRequestContext context;
   const GURL http_url("http://www.example.com");
-  std::unique_ptr<net::URLRequest> match_request(context.CreateRequest(
-      http_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
-  WebRequestData data(match_request.get(), ON_BEFORE_REQUEST);
+  WebRequestInfoInitParams match_params;
+  match_params.url = http_url;
+  match_params.type = content::ResourceType::kMainFrame;
+  match_params.web_request_type = WebRequestResourceType::MAIN_FRAME;
+  WebRequestInfo match_request_info(std::move(match_params));
+  WebRequestData data(&match_request_info, ON_BEFORE_REQUEST);
   WebRequestDataWithMatchIds request_data(&data);
   request_data.url_match_ids = matcher.MatchURL(http_url);
   EXPECT_EQ(1u, request_data.url_match_ids.size());
-  content::ResourceRequestInfo::AllocateForTesting(
-      match_request.get(), content::RESOURCE_TYPE_MAIN_FRAME,
-      NULL,   // context
-      -1,     // render_process_id
-      -1,     // render_view_id
-      -1,     // render_frame_id
-      true,   // is_main_frame
-      true,   // allow_download
-      false,  // is_async
-      content::PREVIEWS_OFF,
-      nullptr);  // navigation_ui_data
   EXPECT_TRUE(result->IsFulfilled(request_data));
 
   const GURL https_url("https://www.example.com");
-  std::unique_ptr<net::URLRequest> wrong_resource_type(context.CreateRequest(
-      https_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
-  data.request = wrong_resource_type.get();
+  WebRequestInfoInitParams wrong_resource_type_params;
+  wrong_resource_type_params.url = https_url;
+  wrong_resource_type_params.type = content::ResourceType::kSubFrame;
+  wrong_resource_type_params.web_request_type =
+      WebRequestResourceType::SUB_FRAME;
+  WebRequestInfo wrong_resource_type_request_info(
+      std::move(wrong_resource_type_params));
+  data.request = &wrong_resource_type_request_info;
   request_data.url_match_ids = matcher.MatchURL(http_url);
   // Make sure IsFulfilled does not fail because of URL matching.
   EXPECT_EQ(1u, request_data.url_match_ids.size());
-  content::ResourceRequestInfo::AllocateForTesting(
-      wrong_resource_type.get(), content::RESOURCE_TYPE_SUB_FRAME,
-      NULL,   // context
-      -1,     // render_process_id
-      -1,     // render_view_id
-      -1,     // render_frame_id
-      false,  // is_main_frame
-      true,   // allow_download
-      false,  // is_async
-      content::PREVIEWS_OFF,
-      nullptr);  // navigation_ui_data
   EXPECT_FALSE(result->IsFulfilled(request_data));
 }
 
 TEST(WebRequestConditionTest, CreateConditionFirstPartyForCookies) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
 
   std::string error;
   std::unique_ptr<WebRequestCondition> result;
 
   result = WebRequestCondition::Create(
-      NULL,
-      matcher.condition_factory(),
-      *base::test::ParseJson(
-           "{ \n"
-           "  \"firstPartyForCookiesUrl\": { \"hostPrefix\": \"fpfc\"}, \n"
-           "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-           "}"),
+      NULL, matcher.condition_factory(),
+      *base::test::ParseJsonDeprecated(
+          "{ \n"
+          "  \"firstPartyForCookiesUrl\": { \"hostPrefix\": \"fpfc\"}, \n"
+          "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
+          "}"),
       &error);
   EXPECT_EQ("", error);
   ASSERT_TRUE(result.get());
@@ -145,28 +116,19 @@ TEST(WebRequestConditionTest, CreateConditionFirstPartyForCookies) {
   result->GetURLMatcherConditionSets(&url_matcher_condition_set);
   matcher.AddConditionSets(url_matcher_condition_set);
 
-  net::TestURLRequestContext context;
   const GURL http_url("http://www.example.com");
   const GURL first_party_url("http://fpfc.example.com");
-  std::unique_ptr<net::URLRequest> match_request(context.CreateRequest(
-      http_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
-  WebRequestData data(match_request.get(), ON_BEFORE_REQUEST);
+  WebRequestInfoInitParams match_params;
+  match_params.url = http_url;
+  match_params.type = content::ResourceType::kMainFrame;
+  match_params.web_request_type = WebRequestResourceType::MAIN_FRAME;
+  WebRequestInfo match_request_info(std::move(match_params));
+  WebRequestData data(&match_request_info, ON_BEFORE_REQUEST);
   WebRequestDataWithMatchIds request_data(&data);
   request_data.url_match_ids = matcher.MatchURL(http_url);
   EXPECT_EQ(0u, request_data.url_match_ids.size());
   request_data.first_party_url_match_ids = matcher.MatchURL(first_party_url);
   EXPECT_EQ(1u, request_data.first_party_url_match_ids.size());
-  content::ResourceRequestInfo::AllocateForTesting(
-      match_request.get(), content::RESOURCE_TYPE_MAIN_FRAME,
-      NULL,   // context
-      -1,     // render_process_id
-      -1,     // render_view_id
-      -1,     // render_frame_id
-      true,   // is_main_frame
-      true,   // allow_download
-      false,  // is_async
-      content::PREVIEWS_OFF,
-      nullptr);  // navigation_ui_data
   EXPECT_TRUE(result->IsFulfilled(request_data));
 }
 
@@ -177,8 +139,6 @@ TEST(WebRequestConditionTest, CreateConditionFirstPartyForCookies) {
 //   2. An empty condition (in particular, without UrlFilter attributes) is
 //      always fulfilled.
 TEST(WebRequestConditionTest, NoUrlAttributes) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
   std::string error;
 
@@ -187,7 +147,7 @@ TEST(WebRequestConditionTest, NoUrlAttributes) {
   std::unique_ptr<WebRequestCondition> condition_empty =
       WebRequestCondition::Create(
           NULL, matcher.condition_factory(),
-          *base::test::ParseJson(
+          *base::test::ParseJsonDeprecated(
               "{ \n"
               "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
               "}"),
@@ -200,7 +160,7 @@ TEST(WebRequestConditionTest, NoUrlAttributes) {
   std::unique_ptr<WebRequestCondition> condition_no_url_true =
       WebRequestCondition::Create(
           NULL, matcher.condition_factory(),
-          *base::test::ParseJson(
+          *base::test::ParseJsonDeprecated(
               "{ \n"
               "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", "
               "\n"
@@ -217,7 +177,7 @@ TEST(WebRequestConditionTest, NoUrlAttributes) {
   std::unique_ptr<WebRequestCondition> condition_no_url_false =
       WebRequestCondition::Create(
           NULL, matcher.condition_factory(),
-          *base::test::ParseJson(
+          *base::test::ParseJsonDeprecated(
               "{ \n"
               "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", "
               "\n"
@@ -227,34 +187,32 @@ TEST(WebRequestConditionTest, NoUrlAttributes) {
   EXPECT_EQ("", error);
   ASSERT_TRUE(condition_no_url_false.get());
 
-  net::TestURLRequestContext context;
-  std::unique_ptr<net::URLRequest> https_request(context.CreateRequest(
-      GURL("https://www.example.com"), net::DEFAULT_PRIORITY, nullptr,
-      TRAFFIC_ANNOTATION_FOR_TESTS));
+  WebRequestInfoInitParams params;
+  params.url = GURL("https://www.example.com");
+  params.site_for_cookies = GURL("https://www.example.com");
+  WebRequestInfo https_request_info(std::move(params));
 
   // 1. A non-empty condition without UrlFilter attributes is fulfilled iff its
   //    attributes are fulfilled.
-  WebRequestData data(https_request.get(), ON_BEFORE_REQUEST);
+  WebRequestData data(&https_request_info, ON_BEFORE_REQUEST);
   EXPECT_FALSE(
       condition_no_url_false->IsFulfilled(WebRequestDataWithMatchIds(&data)));
 
-  data = WebRequestData(https_request.get(), ON_BEFORE_REQUEST);
+  data = WebRequestData(&https_request_info, ON_BEFORE_REQUEST);
   EXPECT_TRUE(
       condition_no_url_true->IsFulfilled(WebRequestDataWithMatchIds(&data)));
 
   // 2. An empty condition (in particular, without UrlFilter attributes) is
   //    always fulfilled.
-  data = WebRequestData(https_request.get(), ON_BEFORE_REQUEST);
+  data = WebRequestData(&https_request_info, ON_BEFORE_REQUEST);
   EXPECT_TRUE(condition_empty->IsFulfilled(WebRequestDataWithMatchIds(&data)));
 }
 
 TEST(WebRequestConditionTest, CreateConditionSet) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
 
   WebRequestConditionSet::Values conditions;
-  conditions.push_back(base::test::ParseJson(
+  conditions.push_back(base::test::ParseJsonDeprecated(
       "{ \n"
       "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
       "  \"url\": { \n"
@@ -262,7 +220,7 @@ TEST(WebRequestConditionTest, CreateConditionSet) {
       "    \"schemes\": [\"http\"], \n"
       "  }, \n"
       "}"));
-  conditions.push_back(base::test::ParseJson(
+  conditions.push_back(base::test::ParseJsonDeprecated(
       "{ \n"
       "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
       "  \"url\": { \n"
@@ -289,10 +247,10 @@ TEST(WebRequestConditionTest, CreateConditionSet) {
   // Test that the result is correct and matches http://www.example.com and
   // https://www.example.com
   GURL http_url("http://www.example.com");
-  net::TestURLRequestContext context;
-  std::unique_ptr<net::URLRequest> http_request(context.CreateRequest(
-      http_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
-  WebRequestData data(http_request.get(), ON_BEFORE_REQUEST);
+  WebRequestInfoInitParams http_params;
+  http_params.url = http_url;
+  WebRequestInfo http_request_info(std::move(http_params));
+  WebRequestData data(&http_request_info, ON_BEFORE_REQUEST);
   WebRequestDataWithMatchIds request_data(&data);
   request_data.url_match_ids = matcher.MatchURL(http_url);
   EXPECT_EQ(1u, request_data.url_match_ids.size());
@@ -302,9 +260,10 @@ TEST(WebRequestConditionTest, CreateConditionSet) {
   GURL https_url("https://www.example.com");
   request_data.url_match_ids = matcher.MatchURL(https_url);
   EXPECT_EQ(1u, request_data.url_match_ids.size());
-  std::unique_ptr<net::URLRequest> https_request(context.CreateRequest(
-      https_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
-  data.request = https_request.get();
+  WebRequestInfoInitParams https_params;
+  https_params.url = https_url;
+  WebRequestInfo https_request_info(std::move(https_params));
+  data.request = &https_request_info;
   EXPECT_TRUE(result->IsFulfilled(*(request_data.url_match_ids.begin()),
                                   request_data));
 
@@ -312,20 +271,18 @@ TEST(WebRequestConditionTest, CreateConditionSet) {
   GURL https_foo_url("https://foo.example.com");
   request_data.url_match_ids = matcher.MatchURL(https_foo_url);
   EXPECT_EQ(0u, request_data.url_match_ids.size());
-  std::unique_ptr<net::URLRequest> https_foo_request(
-      context.CreateRequest(https_foo_url, net::DEFAULT_PRIORITY, nullptr,
-                            TRAFFIC_ANNOTATION_FOR_TESTS));
-  data.request = https_foo_request.get();
+  WebRequestInfoInitParams https_foo_params;
+  https_foo_params.url = https_foo_url;
+  WebRequestInfo https_foo_request_info(std::move(https_foo_params));
+  data.request = &https_foo_request_info;
   EXPECT_FALSE(result->IsFulfilled(-1, request_data));
 }
 
 TEST(WebRequestConditionTest, TestPortFilter) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
 
   WebRequestConditionSet::Values conditions;
-  conditions.push_back(base::test::ParseJson(
+  conditions.push_back(base::test::ParseJsonDeprecated(
       "{ \n"
       "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
       "  \"url\": { \n"
@@ -352,30 +309,18 @@ TEST(WebRequestConditionTest, TestPortFilter) {
 
   // Test various URLs.
   GURL http_url("http://www.example.com");
-  net::TestURLRequestContext context;
-  std::unique_ptr<net::URLRequest> http_request(context.CreateRequest(
-      http_url, net::DEFAULT_PRIORITY, nullptr, TRAFFIC_ANNOTATION_FOR_TESTS));
   url_match_ids = matcher.MatchURL(http_url);
   ASSERT_EQ(1u, url_match_ids.size());
 
   GURL http_url_80("http://www.example.com:80");
-  std::unique_ptr<net::URLRequest> http_request_80(
-      context.CreateRequest(http_url_80, net::DEFAULT_PRIORITY, nullptr,
-                            TRAFFIC_ANNOTATION_FOR_TESTS));
   url_match_ids = matcher.MatchURL(http_url_80);
   ASSERT_EQ(1u, url_match_ids.size());
 
   GURL http_url_1000("http://www.example.com:1000");
-  std::unique_ptr<net::URLRequest> http_request_1000(
-      context.CreateRequest(http_url_1000, net::DEFAULT_PRIORITY, nullptr,
-                            TRAFFIC_ANNOTATION_FOR_TESTS));
   url_match_ids = matcher.MatchURL(http_url_1000);
   ASSERT_EQ(1u, url_match_ids.size());
 
   GURL http_url_2000("http://www.example.com:2000");
-  std::unique_ptr<net::URLRequest> http_request_2000(
-      context.CreateRequest(http_url_2000, net::DEFAULT_PRIORITY, nullptr,
-                            TRAFFIC_ANNOTATION_FOR_TESTS));
   url_match_ids = matcher.MatchURL(http_url_2000);
   ASSERT_EQ(0u, url_match_ids.size());
 }
@@ -384,8 +329,6 @@ TEST(WebRequestConditionTest, TestPortFilter) {
 // the response header. The Create() method should fail and complain that it is
 // impossible that both conditions are fulfilled at the same time.
 TEST(WebRequestConditionTest, ConditionsWithConflictingStages) {
-  // Necessary for TestURLRequest.
-  base::MessageLoopForIO message_loop;
   URLMatcher matcher;
 
   std::string error;
@@ -394,16 +337,15 @@ TEST(WebRequestConditionTest, ConditionsWithConflictingStages) {
   // Test error on incompatible application stages for involved attributes.
   error.clear();
   result = WebRequestCondition::Create(
-      NULL,
-      matcher.condition_factory(),
-      *base::test::ParseJson(
-           "{ \n"
-           "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
-           // Pass a JS array with one empty object to each of the header
-           // filters.
-           "  \"requestHeaders\": [{}], \n"
-           "  \"responseHeaders\": [{}], \n"
-           "}"),
+      NULL, matcher.condition_factory(),
+      *base::test::ParseJsonDeprecated(
+          "{ \n"
+          "  \"instanceType\": \"declarativeWebRequest.RequestMatcher\", \n"
+          // Pass a JS array with one empty object to each of the header
+          // filters.
+          "  \"requestHeaders\": [{}], \n"
+          "  \"responseHeaders\": [{}], \n"
+          "}"),
       &error);
   EXPECT_FALSE(error.empty());
   EXPECT_FALSE(result.get());

@@ -28,15 +28,15 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.signin.AccountSigninActivity;
 import org.chromium.chrome.browser.signin.SigninAccessPoint;
+import org.chromium.chrome.browser.signin.SigninActivity;
 import org.chromium.chrome.browser.signin.SigninPromoController;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -44,6 +44,7 @@ import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ProfileDataSource;
 import org.chromium.components.signin.test.util.AccountHolder;
 import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.UiDisableIf;
 
 import java.io.Closeable;
@@ -54,8 +55,8 @@ import java.util.List;
  * Tests for the personalized signin promo on the Bookmarks page.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        "enable-features=AndroidSigninPromos"})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+@RetryOnFailure(message = "crbug.com/789531")
 public class BookmarkPersonalizedSigninPromoTest {
     private static final String TEST_ACCOUNT_NAME = "test@gmail.com";
     private static final String TEST_FULL_NAME = "Test Account";
@@ -75,6 +76,7 @@ public class BookmarkPersonalizedSigninPromoTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/789531")
     public void testManualDismissPromo() throws Exception {
         openBookmarkManager();
         onView(withId(R.id.signin_promo_view_container)).check(matches(isDisplayed()));
@@ -85,7 +87,7 @@ public class BookmarkPersonalizedSigninPromoTest {
     @Test
     @LargeTest
     @DisableIf.Device(type = {UiDisableIf.TABLET}) // https://crbug.com/776405.
-    @DisabledTest(message = "Flaky. See crbug.com/789531")
+    @DisabledTest(message = "crbug.com/789531")
     public void testAutoDismissPromo() throws Exception {
         int impressionCap = SigninPromoController.getMaxImpressionsBookmarksForTests();
         for (int impression = 0; impression < impressionCap; impression++) {
@@ -99,6 +101,7 @@ public class BookmarkPersonalizedSigninPromoTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/789531")
     public void testSigninButtonDefaultAccount() throws Exception {
         addTestAccount();
         openBookmarkManager();
@@ -112,14 +115,15 @@ public class BookmarkPersonalizedSigninPromoTest {
 
         assertEquals("Choosing to sign in with the default account should fire an intent!", 1,
                 startedIntents.size());
-        Intent expectedIntent = AccountSigninActivity.createIntentForConfirmationOnlySigninFlow(
-                mActivityTestRule.getActivity(), SigninAccessPoint.BOOKMARK_MANAGER,
-                TEST_ACCOUNT_NAME, true, true);
+        Intent expectedIntent =
+                SigninActivity.createIntentForPromoDefaultFlow(mActivityTestRule.getActivity(),
+                        SigninAccessPoint.BOOKMARK_MANAGER, TEST_ACCOUNT_NAME);
         assertTrue(expectedIntent.filterEquals(startedIntents.get(0)));
     }
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/789531")
     public void testSigninButtonNotDefaultAccount() throws Exception {
         addTestAccount();
         openBookmarkManager();
@@ -133,13 +137,14 @@ public class BookmarkPersonalizedSigninPromoTest {
 
         assertEquals("Choosing to sign in with another account should fire an intent!", 1,
                 startedIntents.size());
-        Intent expectedIntent = AccountSigninActivity.createIntentForDefaultSigninFlow(
-                mActivityTestRule.getActivity(), SigninAccessPoint.BOOKMARK_MANAGER, true);
+        Intent expectedIntent = SigninActivity.createIntent(
+                mActivityTestRule.getActivity(), SigninAccessPoint.BOOKMARK_MANAGER);
         assertTrue(expectedIntent.filterEquals(startedIntents.get(0)));
     }
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/789531")
     public void testSigninButtonNewAccount() throws Exception {
         openBookmarkManager();
         onView(withId(R.id.signin_promo_view_container)).check(matches(isDisplayed()));
@@ -152,15 +157,16 @@ public class BookmarkPersonalizedSigninPromoTest {
 
         assertFalse(
                 "Adding a new account should fire at least one intent!", startedIntents.isEmpty());
-        Intent expectedIntent = AccountSigninActivity.createIntentForAddAccountSigninFlow(
-                mActivityTestRule.getActivity(), SigninAccessPoint.BOOKMARK_MANAGER, true);
-        // Comparing only the first intent as AccountSigninActivity will fire an intent after
+        Intent expectedIntent = SigninActivity.createIntentForPromoAddAccountFlow(
+                mActivityTestRule.getActivity(), SigninAccessPoint.BOOKMARK_MANAGER);
+        // Comparing only the first intent as SigninActivity will fire an intent after
         // starting the flow to add an account.
         assertTrue(expectedIntent.filterEquals(startedIntents.get(0)));
     }
 
     private void openBookmarkManager() throws InterruptedException {
-        BookmarkUtils.showBookmarkManager((ChromeActivity) mActivityTestRule.getActivity());
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> BookmarkUtils.showBookmarkManager(mActivityTestRule.getActivity()));
     }
 
     private void addTestAccount() {
@@ -169,7 +175,7 @@ public class BookmarkPersonalizedSigninPromoTest {
         mAccountManagerDelegate.addAccountHolderBlocking(accountHolder.build());
         ProfileDataSource.ProfileData profileData =
                 new ProfileDataSource.ProfileData(TEST_ACCOUNT_NAME, null, TEST_FULL_NAME, null);
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> mAccountManagerDelegate.setProfileData(TEST_ACCOUNT_NAME, profileData));
     }
 

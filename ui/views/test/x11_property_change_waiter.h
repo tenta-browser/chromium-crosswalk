@@ -12,7 +12,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
-#include "ui/events/platform/platform_event_types.h"
+#include "ui/events/platform_event.h"
 #include "ui/gfx/x/x11_types.h"
 
 namespace ui {
@@ -53,7 +53,7 @@ class X11PropertyChangeWaiter : public ui::PlatformEventDispatcher {
   bool wait_;
 
   // Ends the run loop.
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
   std::unique_ptr<ui::ScopedEventDispatcher> dispatcher_;
 

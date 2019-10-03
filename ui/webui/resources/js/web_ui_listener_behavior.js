@@ -7,8 +7,11 @@
  * automatically remove WebUI listeners when detached.
  */
 
+// #import {addWebUIListener, removeWebUIListener} from './cr.m.js';
+
 /** @polymerBehavior */
-var WebUIListenerBehavior = {
+// eslint-disable-next-line no-var
+/* #export */ var WebUIListenerBehavior = {
   properties: {
     /**
      * Holds WebUI listeners that need to be removed when this element is

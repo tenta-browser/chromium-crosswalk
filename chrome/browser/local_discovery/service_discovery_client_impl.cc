@@ -4,13 +4,14 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/local_discovery/service_discovery_client_impl.h"
-#include "net/dns/dns_protocol.h"
+#include "net/dns/public/dns_protocol.h"
 #include "net/dns/record_rdata.h"
 
 namespace local_discovery {
@@ -36,8 +37,8 @@ ServiceDiscoveryClientImpl::~ServiceDiscoveryClientImpl() {
 std::unique_ptr<ServiceWatcher>
 ServiceDiscoveryClientImpl::CreateServiceWatcher(
     const std::string& service_type,
-    const ServiceWatcher::UpdatedCallback& callback) {
-  return std::make_unique<ServiceWatcherImpl>(service_type, callback,
+    ServiceWatcher::UpdatedCallback callback) {
+  return std::make_unique<ServiceWatcherImpl>(service_type, std::move(callback),
                                               mdns_client_);
 }
 
@@ -58,13 +59,14 @@ ServiceDiscoveryClientImpl::CreateLocalDomainResolver(
       domain, address_family, std::move(callback), mdns_client_);
 }
 
-ServiceWatcherImpl::ServiceWatcherImpl(
-    const std::string& service_type,
-    const ServiceWatcher::UpdatedCallback& callback,
-    net::MDnsClient* mdns_client)
-    : service_type_(service_type), callback_(callback), started_(false),
-      actively_refresh_services_(false), mdns_client_(mdns_client) {
-}
+ServiceWatcherImpl::ServiceWatcherImpl(const std::string& service_type,
+                                       ServiceWatcher::UpdatedCallback callback,
+                                       net::MDnsClient* mdns_client)
+    : service_type_(service_type),
+      callback_(std::move(callback)),
+      started_(false),
+      actively_refresh_services_(false),
+      mdns_client_(mdns_client) {}
 
 void ServiceWatcherImpl::Start() {
   DCHECK(!started_);
@@ -248,14 +250,14 @@ void ServiceWatcherImpl::AddService(const std::string& service) {
 void ServiceWatcherImpl::AddSRV(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator it = services_.find(service);
+  auto it = services_.find(service);
   if (it != services_.end())
     it->second->set_has_srv(true);
 }
 
 void ServiceWatcherImpl::DeferUpdate(ServiceWatcher::UpdateType update_type,
                                      const std::string& service_name) {
-  ServiceListenersMap::iterator it = services_.find(service_name);
+  auto it = services_.find(service_name);
   if (it != services_.end() && !it->second->update_pending()) {
     it->second->set_update_pending(true);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -266,7 +268,7 @@ void ServiceWatcherImpl::DeferUpdate(ServiceWatcher::UpdateType update_type,
 
 void ServiceWatcherImpl::DeliverDeferredUpdate(
     ServiceWatcher::UpdateType update_type, const std::string& service_name) {
-  ServiceListenersMap::iterator it = services_.find(service_name);
+  auto it = services_.find(service_name);
   if (it != services_.end()) {
     it->second->set_update_pending(false);
     if (!callback_.is_null())
@@ -277,7 +279,7 @@ void ServiceWatcherImpl::DeliverDeferredUpdate(
 void ServiceWatcherImpl::RemovePTR(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator it = services_.find(service);
+  auto it = services_.find(service);
   if (it != services_.end()) {
     it->second->set_has_ptr(false);
     if (!it->second->has_ptr_or_srv()) {
@@ -291,7 +293,7 @@ void ServiceWatcherImpl::RemovePTR(const std::string& service) {
 void ServiceWatcherImpl::RemoveSRV(const std::string& service) {
   DCHECK(started_);
 
-  ServiceListenersMap::iterator it = services_.find(service);
+  auto it = services_.find(service);
   if (it != services_.end()) {
     it->second->set_has_srv(false);
     if (!it->second->has_ptr_or_srv()) {
@@ -532,9 +534,9 @@ void LocalDomainResolverImpl::OnTransactionComplete(
 
   if (transactions_finished_ == 1 &&
       address_family_ == net::ADDRESS_FAMILY_UNSPECIFIED) {
-    timeout_callback_.Reset(base::Bind(
-        &LocalDomainResolverImpl::SendResolvedAddresses,
-        base::Unretained(this)));
+    timeout_callback_.Reset(
+        base::BindOnce(&LocalDomainResolverImpl::SendResolvedAddresses,
+                       base::Unretained(this)));
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, timeout_callback_.callback(),

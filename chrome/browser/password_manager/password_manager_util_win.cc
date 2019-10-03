@@ -25,8 +25,10 @@
 #include "base/bind_helpers.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_thread_priority.h"
 #include "base/time/time.h"
 #include "base/win/win_util.h"
 #include "chrome/browser/browser_process.h"
@@ -34,6 +36,7 @@
 #include "components/password_manager/core/browser/password_manager.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -149,7 +152,7 @@ DWORD CredentialBufferValidator::IsValid(ULONG auth_package,
   LUID luid;
   HANDLE token;
 
-  strcpy_s(source.SourceName, arraysize(source.SourceName), "Chrome");
+  strcpy_s(source.SourceName, base::size(source.SourceName), "Chrome");
   if (!AllocateLocallyUniqueId(&source.SourceIdentifier))
     return GetLastError();
 
@@ -249,6 +252,11 @@ bool CheckBlankPasswordWithPrefs(const WCHAR* username,
   }
 
   if (need_recheck) {
+    // Mitigate the issues caused by loading DLLs on a background thread
+    // (http://crbug/973868).
+    base::ScopedThreadMayLoadLibraryOnBackgroundThread priority_boost(
+        FROM_HERE);
+
     HANDLE handle = INVALID_HANDLE_VALUE;
 
     // Attempt to login using blank password.
@@ -333,7 +341,7 @@ void GetOsPasswordStatus() {
   OsPasswordStatus* status_weak = status.get();
   // This task calls ::LogonUser(), hence MayBlock().
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&GetOsPasswordStatusInternal, prefs_weak, status_weak),
       base::Bind(&ReplyOsPasswordStatus, base::Passed(&prefs),
                  base::Passed(&status)));
@@ -342,7 +350,8 @@ void GetOsPasswordStatus() {
 // Authenticate the user using the old Windows credential prompt.
 // TODO(crbug.com/574581) Remove this feature once this is confirmed to work
 // as expected.
-bool AuthenticateUserOld(gfx::NativeWindow window) {
+bool AuthenticateUserOld(gfx::NativeWindow window,
+                         password_manager::ReauthPurpose purpose) {
   bool retval = false;
   CREDUI_INFO cui = {};
   WCHAR username[CREDUI_MAX_USERNAME_LENGTH+1] = {};
@@ -350,8 +359,17 @@ bool AuthenticateUserOld(gfx::NativeWindow window) {
   WCHAR password[CREDUI_MAX_PASSWORD_LENGTH+1] = {};
   DWORD username_length = CREDUI_MAX_USERNAME_LENGTH;
   base::string16 product_name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
-  base::string16 password_prompt =
-      l10n_util::GetStringUTF16(IDS_PASSWORDS_PAGE_AUTHENTICATION_PROMPT);
+  base::string16 password_prompt;
+  switch (purpose) {
+    case password_manager::ReauthPurpose::VIEW_PASSWORD:
+      password_prompt =
+          l10n_util::GetStringUTF16(IDS_PASSWORDS_PAGE_AUTHENTICATION_PROMPT);
+      break;
+    case password_manager::ReauthPurpose::EXPORT:
+      password_prompt = l10n_util::GetStringUTF16(
+          IDS_PASSWORDS_PAGE_EXPORT_AUTHENTICATION_PROMPT);
+      break;
+  }
   HANDLE handle = INVALID_HANDLE_VALUE;
   size_t tries = 0;
   bool use_displayname = false;
@@ -441,10 +459,11 @@ bool AuthenticateUserOld(gfx::NativeWindow window) {
 // allows the user to authenticate with their password.  This old prompt only
 // supported password authentication which is not enough for enterprise
 // environments.
-bool AuthenticateUserNew(gfx::NativeWindow window) {
+bool AuthenticateUserNew(gfx::NativeWindow window,
+                         password_manager::ReauthPurpose purpose) {
   bool retval = false;
   WCHAR cur_username[CREDUI_MAX_USERNAME_LENGTH + 1] = {};
-  DWORD cur_username_length = arraysize(cur_username);
+  DWORD cur_username_length = base::size(cur_username);
 
   // If this is a standlone workstation, it's possible the current user has no
   // password, so check here and allow it.
@@ -460,8 +479,17 @@ bool AuthenticateUserNew(gfx::NativeWindow window) {
   // left empty on domain joined machines, CredUIPromptForWindowsCredentials()
   // fails to run.
   base::string16 product_name = l10n_util::GetStringUTF16(IDS_PRODUCT_NAME);
-  base::string16 password_prompt =
-      l10n_util::GetStringUTF16(IDS_PASSWORDS_PAGE_AUTHENTICATION_PROMPT);
+  base::string16 password_prompt;
+  switch (purpose) {
+    case password_manager::ReauthPurpose::VIEW_PASSWORD:
+      password_prompt =
+          l10n_util::GetStringUTF16(IDS_PASSWORDS_PAGE_AUTHENTICATION_PROMPT);
+      break;
+    case password_manager::ReauthPurpose::EXPORT:
+      password_prompt = l10n_util::GetStringUTF16(
+          IDS_PASSWORDS_PAGE_EXPORT_AUTHENTICATION_PROMPT);
+      break;
+  }
   CREDUI_INFO cui;
   cui.cbSize = sizeof(cui);
   cui.hwndParent = window->GetHost()->GetAcceleratedWidget();
@@ -504,15 +532,16 @@ bool AuthenticateUserNew(gfx::NativeWindow window) {
 }  // namespace
 
 void DelayReportOsPassword() {
-  content::BrowserThread::PostDelayedTask(content::BrowserThread::UI, FROM_HERE,
-                                          base::Bind(&GetOsPasswordStatus),
-                                          base::TimeDelta::FromSeconds(40));
+  base::PostDelayedTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                                  base::BindOnce(&GetOsPasswordStatus),
+                                  base::TimeDelta::FromSeconds(40));
 }
 
-bool AuthenticateUser(gfx::NativeWindow window) {
+bool AuthenticateUser(gfx::NativeWindow window,
+                      password_manager::ReauthPurpose purpose) {
   return base::FeatureList::IsEnabled(kCredUIPromptForWindowsCredentialsFeature)
-             ? AuthenticateUserNew(window)
-             : AuthenticateUserOld(window);
+             ? AuthenticateUserNew(window, purpose)
+             : AuthenticateUserOld(window, purpose);
 }
 
 }  // namespace password_manager_util_win

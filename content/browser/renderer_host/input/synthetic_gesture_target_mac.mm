@@ -6,6 +6,9 @@
 
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
+#import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
+#include "ui/events/gesture_detection/gesture_configuration.h"
 
 // Unlike some event APIs, Apple does not provide a way to programmatically
 // build a zoom event. To work around this, we leverage ObjectiveC's flexible
@@ -80,51 +83,98 @@ SyntheticGestureTargetMac::SyntheticGestureTargetMac(
     RenderWidgetHostViewCocoa* cocoa_view)
     : SyntheticGestureTargetBase(host), cocoa_view_(cocoa_view) {}
 
-void SyntheticGestureTargetMac::DispatchInputEventToPlatform(
-    const WebInputEvent& event) {
-  if (WebInputEvent::IsGestureEventType(event.GetType())) {
-    // Create an autorelease pool so that we clean up any synthetic events we
-    // generate.
-    base::mac::ScopedNSAutoreleasePool pool;
+void SyntheticGestureTargetMac::DispatchWebGestureEventToPlatform(
+    const WebGestureEvent& web_gesture,
+    const ui::LatencyInfo& latency_info) {
+  // Create an autorelease pool so that we clean up any synthetic events we
+  // generate.
+  base::mac::ScopedNSAutoreleasePool pool;
 
-    const WebGestureEvent* gesture_event =
-        static_cast<const WebGestureEvent*>(&event);
+  NSPoint content_local = NSMakePoint(
+      web_gesture.PositionInWidget().x,
+      [cocoa_view_ frame].size.height - web_gesture.PositionInWidget().y);
+  NSPoint location_in_window =
+      [cocoa_view_ convertPoint:content_local toView:nil];
 
-    switch (event.GetType()) {
-      case WebInputEvent::kGesturePinchBegin: {
-        id event = [SyntheticPinchEvent
-            eventWithMagnification:0.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
-                             phase:NSEventPhaseBegan];
-        [cocoa_view_ handleBeginGestureWithEvent:event];
-        return;
-      }
-      case WebInputEvent::kGesturePinchEnd: {
-        id event = [SyntheticPinchEvent
-            eventWithMagnification:0.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
-                             phase:NSEventPhaseEnded];
-        [cocoa_view_ handleEndGestureWithEvent:event];
-        return;
-      }
-      case WebInputEvent::kGesturePinchUpdate: {
-        id event = [SyntheticPinchEvent
-            eventWithMagnification:gesture_event->data.pinch_update.scale - 1.0f
-                  locationInWindow:NSMakePoint(gesture_event->x,
-                                               gesture_event->y)
-                             phase:NSEventPhaseChanged];
-        [cocoa_view_ magnifyWithEvent:event];
-        return;
-      }
-      default:
-        break;
+  switch (web_gesture.GetType()) {
+    case WebInputEvent::kGesturePinchBegin: {
+      id cocoa_event =
+          [SyntheticPinchEvent eventWithMagnification:0.0f
+                                     locationInWindow:location_in_window
+                                                phase:NSEventPhaseBegan];
+      [cocoa_view_ handleBeginGestureWithEvent:cocoa_event
+                       isSyntheticallyInjected:YES];
+      return;
     }
+    case WebInputEvent::kGesturePinchEnd: {
+      id cocoa_event =
+          [SyntheticPinchEvent eventWithMagnification:0.0f
+                                     locationInWindow:location_in_window
+                                                phase:NSEventPhaseEnded];
+      [cocoa_view_ handleEndGestureWithEvent:cocoa_event];
+      return;
+    }
+    case WebInputEvent::kGesturePinchUpdate: {
+      id cocoa_event = [SyntheticPinchEvent
+          eventWithMagnification:web_gesture.data.pinch_update.scale - 1.0f
+                locationInWindow:location_in_window
+                           phase:NSEventPhaseChanged];
+      [cocoa_view_ magnifyWithEvent:cocoa_event];
+      return;
+    }
+    default:
+      NOTREACHED();
   }
+}
 
-  // This event wasn't handled yet, forward to the base class.
-  SyntheticGestureTargetBase::DispatchInputEventToPlatform(event);
+void SyntheticGestureTargetMac::DispatchWebTouchEventToPlatform(
+    const blink::WebTouchEvent& web_touch,
+    const ui::LatencyInfo& latency_info) {
+  GetView()->InjectTouchEvent(web_touch, latency_info);
+}
+
+void SyntheticGestureTargetMac::DispatchWebMouseWheelEventToPlatform(
+    const blink::WebMouseWheelEvent& web_wheel,
+    const ui::LatencyInfo& latency_info) {
+  GetView()->RouteOrProcessWheelEvent(web_wheel);
+  if (web_wheel.phase == blink::WebMouseWheelEvent::kPhaseEnded) {
+    // Send the pending wheel end event immediately. Otherwise, the
+    // MouseWheelPhaseHandler will defer the end event in case of momentum
+    // scrolling. We want the end event sent before resolving the completion
+    // callback.
+    GetView()->GetMouseWheelPhaseHandler()->DispatchPendingWheelEndEvent();
+  }
+}
+
+void SyntheticGestureTargetMac::DispatchWebMouseEventToPlatform(
+    const blink::WebMouseEvent& web_mouse,
+    const ui::LatencyInfo& latency_info) {
+  GetView()->RouteOrProcessMouseEvent(web_mouse);
+}
+
+SyntheticGestureParams::GestureSourceType
+SyntheticGestureTargetMac::GetDefaultSyntheticGestureSourceType() const {
+  return SyntheticGestureParams::MOUSE_INPUT;
+}
+
+float SyntheticGestureTargetMac::GetTouchSlopInDips() const {
+  return ui::GestureConfiguration::GetInstance()
+      ->max_touch_move_in_pixels_for_click();
+}
+
+float SyntheticGestureTargetMac::GetSpanSlopInDips() const {
+  return ui::GestureConfiguration::GetInstance()->span_slop();
+}
+
+float SyntheticGestureTargetMac::GetMinScalingSpanInDips() const {
+  return ui::GestureConfiguration::GetInstance()->min_scaling_span_in_pixels();
+}
+
+RenderWidgetHostViewMac* SyntheticGestureTargetMac::GetView() const {
+  auto* view =
+      static_cast<RenderWidgetHostViewMac*>(render_widget_host()->GetView());
+  DCHECK(view);
+  return view;
 }
 
 }  // namespace content

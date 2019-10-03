@@ -18,7 +18,7 @@ namespace cc {
 NinePatchLayerImpl::NinePatchLayerImpl(LayerTreeImpl* tree_impl, int id)
     : UIResourceLayerImpl(tree_impl, id) {}
 
-NinePatchLayerImpl::~NinePatchLayerImpl() {}
+NinePatchLayerImpl::~NinePatchLayerImpl() = default;
 
 std::unique_ptr<LayerImpl> NinePatchLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
@@ -85,7 +85,7 @@ const char* NinePatchLayerImpl::LayerTypeAsString() const {
   return "cc::NinePatchLayerImpl";
 }
 
-std::unique_ptr<base::DictionaryValue> NinePatchLayerImpl::LayerAsJson() {
+std::unique_ptr<base::DictionaryValue> NinePatchLayerImpl::LayerAsJson() const {
   std::unique_ptr<base::DictionaryValue> result = LayerImpl::LayerAsJson();
   quad_generator_.AsJson(result.get());
   return result;

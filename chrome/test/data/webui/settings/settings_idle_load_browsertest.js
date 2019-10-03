@@ -4,8 +4,6 @@
 
 /** @fileoverview Tests for settings-idle-load. */
 
-/** @const {string} Path to root from chrome/test/data/webui/settings/. */
-var ROOT_PATH = '../../../../../';
 
 /**
  * @constructor
@@ -21,7 +19,7 @@ SettingsIdleLoadBrowserTest.prototype = {
 
   /** @override */
   extraLibraries: [
-    ROOT_PATH + 'third_party/mocha/mocha.js',
+    '//third_party/mocha/mocha.js',
     '../mocha_adapter.js',
   ],
 
@@ -36,20 +34,23 @@ TEST_F('SettingsIdleLoadBrowserTest', 'All', function() {
   // Register mocha tests.
   suite('Settings idle load tests', function() {
     setup(function() {
-      var template =
-          '<template is="settings-idle-load" id="idleTemplate" '+
-          '    url="chrome://resources/html/polymer.html">' +
-          '  <div></div>' +
-          '</template>';
-      document.body.innerHTML = template;
+      document.body.innerHTML = `
+        <settings-idle-load id="idleTemplate"
+            url="chrome://resources/html/polymer.html">
+          <template>
+            <div></div>
+          </template>
+        </settings-idle-load>
+      `;
       // The div should not be initially accesible.
       assertFalse(!!document.body.querySelector('div'));
     });
 
     test('stamps after get()', function() {
       // Calling get() will force stamping without waiting for idle time.
-      return document.getElementById('idleTemplate').get().then(
-          function(inner) {
+      return document.getElementById('idleTemplate')
+          .get()
+          .then(function(inner) {
             assertEquals('DIV', inner.nodeName);
             assertEquals(inner, document.body.querySelector('div'));
           });

@@ -34,7 +34,6 @@ class SSLErrorNavigationThrottle : public content::NavigationThrottle {
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      bool should_ssl_errors_be_fatal,
       bool expired_previous_decision,
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
       const base::Callback<void(content::CertificateRequestResultType)>&
@@ -52,16 +51,26 @@ class SSLErrorNavigationThrottle : public content::NavigationThrottle {
 
   // content::NavigationThrottle:
   ThrottleCheckResult WillFailRequest() override;
+  ThrottleCheckResult WillProcessResponse() override;
   const char* GetNameForLogging() override;
 
  private:
+  void QueueShowInterstitial(
+      HandleSSLErrorCallback handle_ssl_error_callback,
+      content::WebContents* web_contents,
+      int net_error,
+      int cert_status,
+      const net::SSLInfo& ssl_info,
+      const GURL& request_url,
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter);
   void ShowInterstitial(
+      int net_error,
       std::unique_ptr<security_interstitials::SecurityInterstitialPage>
           blocking_page);
 
   std::unique_ptr<SSLCertReporter> ssl_cert_reporter_;
   HandleSSLErrorCallback handle_ssl_error_callback_;
-  base::WeakPtrFactory<SSLErrorNavigationThrottle> weak_ptr_factory_;
+  base::WeakPtrFactory<SSLErrorNavigationThrottle> weak_ptr_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_SSL_SSL_ERROR_NAVIGATION_THROTTLE_H_

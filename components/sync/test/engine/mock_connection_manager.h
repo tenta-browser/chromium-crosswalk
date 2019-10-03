@@ -45,7 +45,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // Overridden ServerConnectionManager functions.
   bool PostBufferToPath(PostBufferParams*,
                         const std::string& path,
-                        const std::string& auth_token) override;
+                        const std::string& access_token) override;
 
   // Control of commit response.
   // NOTE: Commit callback is invoked only once then reset.
@@ -158,7 +158,6 @@ class MockConnectionManager : public ServerConnectionManager {
   void SetLastUpdateClientTag(const std::string& tag);
   void SetLastUpdateOriginatorFields(const std::string& client_id,
                                      const std::string& entry_id);
-  void SetLastUpdatePosition(int64_t position_in_parent);
   void SetNewTimestamp(int ts);
   void SetChangesRemaining(int64_t count);
 
@@ -209,10 +208,6 @@ class MockConnectionManager : public ServerConnectionManager {
   void set_next_new_id(int value) { next_new_id_ = value; }
   void set_conflict_n_commits(int value) { conflict_n_commits_ = value; }
 
-  void set_use_legacy_bookmarks_protocol(bool value) {
-    use_legacy_bookmarks_protocol_ = value;
-  }
-
   void set_store_birthday(const std::string& new_birthday) {
     // Multiple threads can set store_birthday_ in our tests, need to lock it to
     // ensure atomic read/writes and avoid race conditions.
@@ -255,7 +250,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // requests.
   void UpdateConnectionStatus();
 
-  using ServerConnectionManager::SetServerStatus;
+  using ServerConnectionManager::SetServerResponse;
 
   // Return by copy to be thread-safe.
   const std::string store_birthday() {
@@ -272,7 +267,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // Adds a new progress marker to the last update.
   sync_pb::DataTypeProgressMarker* AddUpdateProgressMarker();
 
-  void ResetAuthToken() { InvalidateAndClearAuthToken(); }
+  void ResetAccessToken() { ClearAccessToken(); }
 
  private:
   sync_pb::SyncEntity* AddUpdateFull(syncable::Id id,
@@ -379,7 +374,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // The AUTHENTICATE response we'll return for auth requests.
   sync_pb::AuthenticateResponse auth_response_;
   // What we use to determine if we should return SUCCESS or BAD_AUTH_TOKEN.
-  std::string valid_auth_token_;
+  std::string valid_access_token_;
 
   // Whether we are faking a server mandating clients to throttle requests.
   // Protected by |response_code_override_lock_|.
@@ -400,11 +395,6 @@ class MockConnectionManager : public ServerConnectionManager {
 
   // The next value to use for the position_in_parent property.
   int64_t next_position_in_parent_;
-
-  // The default is to use the newer sync_pb::BookmarkSpecifics-style protocol.
-  // If this option is set to true, then the MockConnectionManager will
-  // use the older sync_pb::SyncEntity_BookmarkData-style protocol.
-  bool use_legacy_bookmarks_protocol_;
 
   ModelTypeSet expected_filter_;
 

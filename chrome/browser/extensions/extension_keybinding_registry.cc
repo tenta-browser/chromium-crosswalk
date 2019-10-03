@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/values.h"
@@ -11,14 +12,21 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/command.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/media_keys_listener_manager.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/ash/media_client_impl.h"
+#endif
+
 namespace {
+
 const char kOnCommandEventName[] = "commands.onCommand";
+
 }  // namespace
 
 namespace extensions {
@@ -41,6 +49,8 @@ ExtensionKeybindingRegistry::ExtensionKeybindingRegistry(
   registrar_.Add(this,
                  extensions::NOTIFICATION_EXTENSION_COMMAND_REMOVED,
                  content::Source<Profile>(profile->GetOriginalProfile()));
+  media_keys_listener_ = ui::MediaKeysListener::Create(
+      this, ui::MediaKeysListener::Scope::kFocused);
 }
 
 ExtensionKeybindingRegistry::~ExtensionKeybindingRegistry() {
@@ -54,10 +64,11 @@ void ExtensionKeybindingRegistry::SetShortcutHandlingSuspended(bool suspended) {
 void ExtensionKeybindingRegistry::RemoveExtensionKeybinding(
     const Extension* extension,
     const std::string& command_name) {
-  EventTargets::iterator it = event_targets_.begin();
+  bool any_media_keys_removed = false;
+  auto it = event_targets_.begin();
   while (it != event_targets_.end()) {
     TargetList& target_list = it->second;
-    TargetList::iterator target = target_list.begin();
+    auto target = target_list.begin();
     while (target != target_list.end()) {
       if (target->first == extension->id() &&
           (command_name.empty() || command_name == target->second))
@@ -66,16 +77,41 @@ void ExtensionKeybindingRegistry::RemoveExtensionKeybinding(
         target++;
     }
 
-    EventTargets::iterator old = it++;
+    auto old = it++;
     if (target_list.empty()) {
       // Let each platform-specific implementation get a chance to clean up.
       RemoveExtensionKeybindingImpl(old->first, command_name);
+
+      if (Command::IsMediaKey(old->first)) {
+        any_media_keys_removed = true;
+        if (media_keys_listener_)
+          media_keys_listener_->StopWatchingMediaKey(old->first.key_code());
+      }
+
       event_targets_.erase(old);
 
       // If a specific command_name was requested, it has now been deleted so no
       // further work is required.
       if (!command_name.empty())
         break;
+    }
+  }
+
+  // If we're no longer listening to any media keys, tell the browser that
+  // it can start handling media keys.
+  if (any_media_keys_removed && !IsListeningToAnyMediaKeys()) {
+    if (content::MediaKeysListenerManager::
+            IsMediaKeysListenerManagerEnabled()) {
+      content::MediaKeysListenerManager* media_keys_listener_manager =
+          content::MediaKeysListenerManager::GetInstance();
+      DCHECK(media_keys_listener_manager);
+
+      media_keys_listener_manager->EnableInternalMediaKeyHandling();
+    } else {
+#if defined(OS_CHROMEOS)
+      MediaClientImpl::Get()->DisableCustomMediaKeyHandler(browser_context_,
+                                                           this);
+#endif
     }
   }
 }
@@ -123,7 +159,7 @@ void ExtensionKeybindingRegistry::CommandExecuted(
   args->AppendString(command);
 
   auto event =
-      base::MakeUnique<Event>(events::COMMANDS_ON_COMMAND, kOnCommandEventName,
+      std::make_unique<Event>(events::COMMANDS_ON_COMMAND, kOnCommandEventName,
                               std::move(args), browser_context_);
   event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
   EventRouter::Get(browser_context_)
@@ -143,20 +179,40 @@ void ExtensionKeybindingRegistry::AddEventTarget(
       std::make_pair(extension_id, command_name));
   // Shortcuts except media keys have only one target in the list. See comment
   // about |event_targets_|.
-  if (!extensions::Command::IsMediaKey(accelerator))
+  if (!Command::IsMediaKey(accelerator)) {
     DCHECK_EQ(1u, event_targets_[accelerator].size());
+  } else {
+    if (media_keys_listener_)
+      media_keys_listener_->StartWatchingMediaKey(accelerator.key_code());
+
+    // Tell the browser that it should not handle media keys, since we're going
+    // to handle them.
+    if (content::MediaKeysListenerManager::
+            IsMediaKeysListenerManagerEnabled()) {
+      content::MediaKeysListenerManager* media_keys_listener_manager =
+          content::MediaKeysListenerManager::GetInstance();
+      DCHECK(media_keys_listener_manager);
+
+      media_keys_listener_manager->DisableInternalMediaKeyHandling();
+    } else {
+#if defined(OS_CHROMEOS)
+      MediaClientImpl::Get()->EnableCustomMediaKeyHandler(browser_context_,
+                                                          this);
+#endif
+    }
+  }
 }
 
 bool ExtensionKeybindingRegistry::GetFirstTarget(
     const ui::Accelerator& accelerator,
     std::string* extension_id,
     std::string* command_name) const {
-  EventTargets::const_iterator targets = event_targets_.find(accelerator);
+  auto targets = event_targets_.find(accelerator);
   if (targets == event_targets_.end())
     return false;
 
   DCHECK(!targets->second.empty());
-  TargetList::const_iterator first_target = targets->second.begin();
+  auto first_target = targets->second.begin();
   *extension_id = first_target->first;
   *command_name = first_target->second;
   return true;
@@ -226,6 +282,11 @@ void ExtensionKeybindingRegistry::Observe(
   }
 }
 
+void ExtensionKeybindingRegistry::OnMediaKeysAccelerator(
+    const ui::Accelerator& accelerator) {
+  NotifyEventTargets(accelerator);
+}
+
 bool ExtensionKeybindingRegistry::ExtensionMatchesFilter(
     const extensions::Extension* extension)
 {
@@ -243,7 +304,7 @@ bool ExtensionKeybindingRegistry::ExtensionMatchesFilter(
 bool ExtensionKeybindingRegistry::ExecuteCommands(
     const ui::Accelerator& accelerator,
     const std::string& extension_id) {
-  EventTargets::iterator targets = event_targets_.find(accelerator);
+  auto targets = event_targets_.find(accelerator);
   if (targets == event_targets_.end() || targets->second.empty())
     return false;
 
@@ -261,6 +322,14 @@ bool ExtensionKeybindingRegistry::ExecuteCommands(
   }
 
   return executed;
+}
+
+bool ExtensionKeybindingRegistry::IsListeningToAnyMediaKeys() const {
+  for (const auto& accelerator_target : event_targets_) {
+    if (Command::IsMediaKey(accelerator_target.first))
+      return true;
+  }
+  return false;
 }
 
 }  // namespace extensions

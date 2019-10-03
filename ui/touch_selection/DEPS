@@ -1,5 +1,4 @@
 include_rules = [
-  "+services/ui/public/interfaces",
   "+ui/aura",
   "+ui/aura_extra",
   "+ui/base",

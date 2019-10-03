@@ -6,29 +6,38 @@
 #include <string>
 #include <utility>
 
-#include "base/command_line.h"
 #include "base/memory/ref_counted.h"
-#include "base/supports_user_data.h"
+#include "chrome/browser/chrome_content_browser_client.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/browser/usb/usb_chooser_controller.h"
+#include "chrome/browser/usb/web_usb_chooser.h"
+#include "chrome/browser/usb/web_usb_service_impl.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
-#include "device/base/mock_device_client.h"
-#include "device/usb/mock_usb_device.h"
-#include "device/usb/mock_usb_service.h"
-#include "device/usb/public/interfaces/chooser_service.mojom.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/device/public/cpp/test/fake_usb_device_manager.h"
+#include "services/device/public/mojom/usb_device.mojom.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 
+namespace blink {
+namespace mojom {
+class WebUsbService;
+}
+}  // namespace blink
+
 using content::RenderFrameHost;
-using device::MockDeviceClient;
-using device::MockUsbDevice;
+using device::FakeUsbDeviceManager;
+using device::mojom::UsbDeviceManagerPtr;
+using device::mojom::UsbDeviceInfoPtr;
 
 namespace {
 
@@ -61,114 +70,115 @@ class FakeChooserView : public ChooserController::View {
   DISALLOW_COPY_AND_ASSIGN(FakeChooserView);
 };
 
-class FakeChooserService : public device::mojom::UsbChooserService {
+class FakeUsbChooser : public WebUsbChooser {
  public:
-  static void Create(device::mojom::UsbChooserServiceRequest request,
-                     RenderFrameHost* render_frame_host) {
-    mojo::MakeStrongBinding(
-        base::MakeUnique<FakeChooserService>(render_frame_host),
-        std::move(request));
+  explicit FakeUsbChooser(RenderFrameHost* render_frame_host)
+      : WebUsbChooser(render_frame_host) {}
+
+  ~FakeUsbChooser() override {}
+
+  void ShowChooser(std::unique_ptr<UsbChooserController> controller) override {
+    // Device list initialization in UsbChooserController may completed before
+    // having a valid view in which case OnOptionsInitialized() has no chance to
+    // be triggered, so select the first option directly if options are ready.
+    if (controller->NumOptions())
+      controller->Select({0});
+    else
+      new FakeChooserView(std::move(controller));
   }
 
-  explicit FakeChooserService(RenderFrameHost* render_frame_host)
-      : render_frame_host_(render_frame_host) {}
-
-  ~FakeChooserService() override {}
-
-  // device::mojom::UsbChooserService:
-  void GetPermission(
-      std::vector<device::mojom::UsbDeviceFilterPtr> device_filters,
-      GetPermissionCallback callback) override {
-    auto chooser_controller = base::MakeUnique<UsbChooserController>(
-        render_frame_host_, std::move(device_filters), std::move(callback));
-    new FakeChooserView(std::move(chooser_controller));
+  base::WeakPtr<WebUsbChooser> GetWeakPtr() override {
+    return weak_factory_.GetWeakPtr();
   }
 
  private:
-  RenderFrameHost* const render_frame_host_;
+  base::WeakPtrFactory<FakeUsbChooser> weak_factory_{this};
 
-  DISALLOW_COPY_AND_ASSIGN(FakeChooserService);
+  DISALLOW_COPY_AND_ASSIGN(FakeUsbChooser);
 };
 
-const char kUSBBrowserTest_ActiveTabObserverKey[] =
-    "usb_browsertest_active_tab_observer";
-
-class ActiveTabObserver : public content::WebContentsObserver,
-                          public base::SupportsUserData::Data {
+class TestContentBrowserClient : public ChromeContentBrowserClient {
  public:
-  static void Set(content::WebContents* contents) {
-    auto observer = base::MakeUnique<ActiveTabObserver>(contents);
-    contents->SetUserData(kUSBBrowserTest_ActiveTabObserverKey,
-                          std::move(observer));
+  TestContentBrowserClient() {}
+
+  ~TestContentBrowserClient() override {}
+
+  // ChromeContentBrowserClient:
+  void CreateWebUsbService(
+      content::RenderFrameHost* render_frame_host,
+      mojo::InterfaceRequest<blink::mojom::WebUsbService> request) override {
+    if (use_real_chooser_) {
+      ChromeContentBrowserClient::CreateWebUsbService(render_frame_host,
+                                                      std::move(request));
+    } else {
+      usb_chooser_.reset(new FakeUsbChooser(render_frame_host));
+      web_usb_service_.reset(
+          new WebUsbServiceImpl(render_frame_host, usb_chooser_->GetWeakPtr()));
+      web_usb_service_->BindRequest(std::move(request));
+    }
   }
 
-  explicit ActiveTabObserver(content::WebContents* contents)
-      : content::WebContentsObserver(contents) {
-    registry_.AddInterface(base::Bind(&FakeChooserService::Create));
-  }
-  ~ActiveTabObserver() override = default;
+  void UseRealChooser() { use_real_chooser_ = true; }
 
  private:
-  // content::WebContentsObserver:
-  void OnInterfaceRequestFromFrame(
-      content::RenderFrameHost* render_frame_host,
-      const std::string& interface_name,
-      mojo::ScopedMessagePipeHandle* interface_pipe) override {
-    registry_.TryBindInterface(interface_name, interface_pipe,
-                               render_frame_host);
-  }
+  bool use_real_chooser_ = false;
+  std::unique_ptr<WebUsbServiceImpl> web_usb_service_;
+  std::unique_ptr<WebUsbChooser> usb_chooser_;
 
-  service_manager::BinderRegistryWithArgs<content::RenderFrameHost*> registry_;
-
-  DISALLOW_COPY_AND_ASSIGN(ActiveTabObserver);
+  DISALLOW_COPY_AND_ASSIGN(TestContentBrowserClient);
 };
 
 class WebUsbTest : public InProcessBrowserTest {
  public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(
-        switches::kEnableExperimentalWebPlatformFeatures);
-  }
-
   void SetUpOnMainThread() override {
     embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
     ASSERT_TRUE(embedded_test_server()->Start());
-    device_client_.reset(new MockDeviceClient());
-    AddMockDevice("123456");
+    AddFakeDevice("123456");
 
-    // Force the UsbChooserContext to be created before the test begins. This
-    // ensures that it is created before any instances of DeviceManagerImpl and
-    // thus may expose ordering bugs not normally encountered.
-    UsbChooserContextFactory::GetForProfile(browser()->profile());
+    // Connect with the FakeUsbDeviceManager.
+    UsbDeviceManagerPtr device_manager_ptr;
+    device_manager_.AddBinding(mojo::MakeRequest(&device_manager_ptr));
+    UsbChooserContextFactory::GetForProfile(browser()->profile())
+        ->SetDeviceManagerForTesting(std::move(device_manager_ptr));
 
-    ui_test_utils::NavigateToURL(
-        browser(),
-        embedded_test_server()->GetURL("localhost", "/simple_page.html"));
+    original_content_browser_client_ =
+        content::SetBrowserClientForTesting(&test_content_browser_client_);
+
+    GURL url = embedded_test_server()->GetURL("localhost", "/simple_page.html");
+    ui_test_utils::NavigateToURL(browser(), url);
+    origin_ = url.GetOrigin();
 
     RenderFrameHost* render_frame_host =
         browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame();
-    EXPECT_THAT(render_frame_host->GetLastCommittedOrigin().Serialize(),
-                testing::StartsWith("http://localhost:"));
-    ActiveTabObserver::Set(
-        browser()->tab_strip_model()->GetActiveWebContents());
+    EXPECT_EQ(origin_, render_frame_host->GetLastCommittedOrigin().GetURL());
   }
 
-  void AddMockDevice(const std::string& serial_number) {
-    DCHECK(!mock_device_);
-    mock_device_ = base::MakeRefCounted<MockUsbDevice>(
+  void TearDown() override {
+    content::SetBrowserClientForTesting(original_content_browser_client_);
+  }
+
+  void AddFakeDevice(const std::string& serial_number) {
+    DCHECK(!fake_device_info_);
+    fake_device_info_ = device_manager_.CreateAndAddDevice(
         0, 0, "Test Manufacturer", "Test Device", serial_number);
-    device_client_->usb_service()->AddDevice(mock_device_);
   }
 
-  void RemoveMockDevice() {
-    DCHECK(mock_device_);
-    device_client_->usb_service()->RemoveDevice(mock_device_);
-    mock_device_ = nullptr;
+  void RemoveFakeDevice() {
+    DCHECK(fake_device_info_);
+    device_manager_.RemoveDevice(fake_device_info_->guid);
+    fake_device_info_ = nullptr;
   }
+
+  const GURL& origin() { return origin_; }
+
+  void UseRealChooser() { test_content_browser_client_.UseRealChooser(); }
 
  private:
-  std::unique_ptr<MockDeviceClient> device_client_;
-  scoped_refptr<MockUsbDevice> mock_device_;
+  FakeUsbDeviceManager device_manager_;
+  UsbDeviceInfoPtr fake_device_info_;
+  TestContentBrowserClient test_content_browser_client_;
+  content::ContentBrowserClient* original_content_browser_client_;
+  GURL origin_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebUsbTest, RequestAndGetDevices) {
@@ -205,6 +215,29 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, RequestAndGetDevices) {
   EXPECT_EQ(1, int_result);
 }
 
+IN_PROC_BROWSER_TEST_F(WebUsbTest, RequestDeviceWithGuardBlocked) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  auto* map =
+      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+  map->SetContentSettingDefaultScope(origin(), origin(),
+                                     CONTENT_SETTINGS_TYPE_USB_GUARD,
+                                     std::string(), CONTENT_SETTING_BLOCK);
+
+  std::string result;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      web_contents,
+      "navigator.usb.requestDevice({ filters: [ { vendorId: 0 } ] })"
+      "    .then(device => {"
+      "      domAutomationController.send('failed');"
+      "    }, error => {"
+      "      domAutomationController.send(error.name + ': ' + error.message);"
+      "    });",
+      &result));
+  EXPECT_EQ("NotFoundError: No device selected.", result);
+}
+
 IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDevice) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -229,7 +262,9 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDevice) {
       &result));
   EXPECT_EQ("123456", result);
 
-  RemoveMockDevice();
+  RemoveFakeDevice();
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       web_contents,
       "if (deviceRemoved === null) {"
@@ -240,7 +275,9 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDevice) {
       &result));
   EXPECT_EQ("123456", result);
 
-  AddMockDevice("123456");
+  AddFakeDevice("123456");
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       web_contents,
       "if (deviceAdded === null) {"
@@ -257,8 +294,9 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDeviceEphemeral) {
       browser()->tab_strip_model()->GetActiveWebContents();
 
   // Replace the default mock device with one that has no serial number.
-  RemoveMockDevice();
-  AddMockDevice("");
+  RemoveFakeDevice();
+  AddFakeDevice("");
+  base::RunLoop().RunUntilIdle();
 
   std::string result;
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
@@ -275,7 +313,9 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDeviceEphemeral) {
       &result));
   EXPECT_EQ("", result);
 
-  RemoveMockDevice();
+  RemoveFakeDevice();
+  base::RunLoop().RunUntilIdle();
+
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       web_contents,
       "if (deviceRemoved === null) {"
@@ -285,6 +325,24 @@ IN_PROC_BROWSER_TEST_F(WebUsbTest, AddRemoveDeviceEphemeral) {
       "}",
       &result));
   EXPECT_EQ("", result);
+}
+
+IN_PROC_BROWSER_TEST_F(WebUsbTest, NavigateWithChooserCrossOrigin) {
+  UseRealChooser();
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  content::TestNavigationObserver observer(
+      web_contents, 1 /* number_of_navigations */,
+      content::MessageLoopRunner::QuitMode::DEFERRED);
+
+  EXPECT_TRUE(content::ExecuteScript(
+      web_contents,
+      "navigator.usb.requestDevice({ filters: [] });"
+      "document.location.href = \"https://google.com\";"));
+
+  observer.Wait();
+  EXPECT_EQ(0u, browser()->GetBubbleManager()->GetBubbleCountForTesting());
 }
 
 }  // namespace

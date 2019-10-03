@@ -5,7 +5,9 @@
 package org.chromium.android_webview.shell;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
@@ -30,19 +32,20 @@ import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwDevToolsServer;
 import org.chromium.android_webview.AwGeolocationPermissions;
 import org.chromium.android_webview.AwSettings;
+import org.chromium.android_webview.JsResultReceiver;
 import org.chromium.android_webview.test.AwTestContainerView;
 import org.chromium.android_webview.test.NullContentsClient;
 import org.chromium.base.CommandLine;
-import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
-import org.chromium.content.app.ContentApplication;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.ContentUrlConstants;
 
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 
 /**
  * This is a lightweight activity for tests that only require WebView functionality.
@@ -66,10 +69,7 @@ public class AwShellActivity extends Activity {
 
         AwShellResourceProvider.registerResources(this);
 
-        ContentApplication.initCommandLine(this);
-
-        ContextUtils.initApplicationContext(getApplicationContext());
-        AwBrowserProcess.loadLibrary();
+        AwBrowserProcess.loadLibrary(null);
 
         if (CommandLine.getInstance().hasSwitch(AwShellSwitches.ENABLE_ATRACE)) {
             Log.e(TAG, "Enabling Android trace.");
@@ -80,7 +80,7 @@ public class AwShellActivity extends Activity {
 
         mAwTestContainerView = createAwTestContainerView();
 
-        mWebContents = mAwTestContainerView.getContentViewCore().getWebContents();
+        mWebContents = mAwTestContainerView.getWebContents();
         mNavigationController = mWebContents.getNavigationController();
         LinearLayout contentContainer = (LinearLayout) findViewById(R.id.content_container);
         mAwTestContainerView.setLayoutParams(new LinearLayout.LayoutParams(
@@ -115,6 +115,40 @@ public class AwShellActivity extends Activity {
         AwTestContainerView testContainerView = new AwTestContainerView(this, true);
         AwContentsClient awContentsClient = new NullContentsClient() {
             private View mCustomView;
+
+            @Override
+            public void handleJsConfirm(String url, String message, JsResultReceiver receiver) {
+                String title = "From ";
+                try {
+                    URL javaUrl = new URL(url);
+                    title += javaUrl.getProtocol() + "://" + javaUrl.getHost();
+                    if (javaUrl.getPort() != -1) {
+                        title += ":" + javaUrl.getPort();
+                    }
+                } catch (MalformedURLException e) {
+                    title += url;
+                }
+
+                new AlertDialog.Builder(testContainerView.getContext())
+                        .setTitle(title)
+                        .setMessage(message)
+                        .setPositiveButton("OK",
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialogInterface, int i) {
+                                        receiver.confirm();
+                                    }
+                                })
+                        .setNegativeButton("Cancel",
+                                new DialogInterface.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface dialogInterface, int i) {
+                                        receiver.cancel();
+                                    }
+                                })
+                        .create()
+                        .show();
+            }
 
             @Override
             public void onPageStarted(String url) {
@@ -181,7 +215,7 @@ public class AwShellActivity extends Activity {
 
         testContainerView.initialize(new AwContents(mBrowserContext, testContainerView,
                 testContainerView.getContext(), testContainerView.getInternalAccessDelegate(),
-                testContainerView.getNativeDrawGLFunctorFactory(), awContentsClient, awSettings));
+                testContainerView.getNativeDrawFunctorFactory(), awContentsClient, awSettings));
         testContainerView.getAwContents().getSettings().setJavaScriptEnabled(true);
         if (mDevToolsServer == null) {
             mDevToolsServer = new AwDevToolsServer();

@@ -15,8 +15,11 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
+#include "base/containers/span.h"
 #include "base/logging.h"
-#include "mojo/public/cpp/bindings/bindings_export.h"
+#include "base/memory/ptr_util.h"
+#include "mojo/public/cpp/bindings/connection_group.h"
 #include "mojo/public/cpp/bindings/lib/buffer.h"
 #include "mojo/public/cpp/bindings/lib/message_internal.h"
 #include "mojo/public/cpp/bindings/lib/unserialized_message_context.h"
@@ -34,7 +37,7 @@ using ReportBadMessageCallback =
 // Message owns its data and handles, but a consumer of Message is free to
 // mutate the data and handles. The message's data is comprised of a header
 // followed by payload.
-class MOJO_CPP_BINDINGS_EXPORT Message {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) Message {
  public:
   static const uint32_t kFlagExpectsResponse = 1 << 0;
   static const uint32_t kFlagIsResponse = 1 << 1;
@@ -67,13 +70,25 @@ class MOJO_CPP_BINDINGS_EXPORT Message {
           size_t payload_interface_id_count,
           std::vector<ScopedHandle>* handles);
 
+  // Constructs a new serialized Message object from a fully populated message
+  // payload (including a well-formed message header) and an optional set of
+  // handle attachments. This Message may not be extended with additional
+  // payload or handles once constructed, but its payload remains mutable as
+  // long as the Message is not moved and neither |Reset()| nor
+  // |TakeMojoMessage()| is called.
+  Message(base::span<const uint8_t> payload, base::span<ScopedHandle> handles);
+
   // Constructs a new serialized Message object from an existing
   // ScopedMessageHandle; e.g., one read from a message pipe.
   //
   // If the message had any handles attached, they will be extracted and
   // retrievable via |handles()|. Such messages may NOT be sent back over
   // another message pipe, but are otherwise safe to inspect and pass around.
-  Message(ScopedMessageHandle handle);
+  //
+  // If handles are attached and their extraction fails for any reason,
+  // |*handle| remains unchanged and the returned Message will be null (i.e.
+  // calling IsNull() on it will return |true|).
+  static Message CreateFromMessageHandle(ScopedMessageHandle* message_handle);
 
   ~Message();
 
@@ -88,6 +103,11 @@ class MOJO_CPP_BINDINGS_EXPORT Message {
 
   // Indicates whether this Message is uninitialized.
   bool IsNull() const { return !handle_.is_valid(); }
+
+  // Indicates whether this Message is in valid state. A Message may be in an
+  // invalid state iff it failed partial deserialization during construction
+  // over a ScopedMessageHandle.
+  bool IsValid() const;
 
   // Indicates whether this Message is serialized.
   bool is_serialized() const { return serialized_; }
@@ -168,6 +188,17 @@ class MOJO_CPP_BINDINGS_EXPORT Message {
     return &associated_endpoint_handles_;
   }
 
+  // Sets the ConnectionGroup to which this Message's local receiver belongs, if
+  // any. This is called immediately after a Message is read from a message pipe
+  // but before it's deserialized. If non-null, |ref| must point to a Ref that
+  // outlives this Message object.
+  void set_receiver_connection_group(const ConnectionGroup::Ref* ref) {
+    receiver_connection_group_ = ref;
+  }
+  const ConnectionGroup::Ref* receiver_connection_group() const {
+    return receiver_connection_group_;
+  }
+
   // Takes ownership of any handles within |*context| and attaches them to this
   // Message.
   void AttachHandlesFromSerializationContext(
@@ -210,7 +241,30 @@ class MOJO_CPP_BINDINGS_EXPORT Message {
         generic_context.release()->template SafeCast<MessageType>());
   }
 
+  const char* heap_profiler_tag() const { return heap_profiler_tag_; }
+  void set_heap_profiler_tag(const char* heap_profiler_tag) {
+    heap_profiler_tag_ = heap_profiler_tag;
+  }
+
+#if defined(ENABLE_IPC_FUZZER)
+  const char* interface_name() const { return interface_name_; }
+  void set_interface_name(const char* interface_name) {
+    interface_name_ = interface_name;
+  }
+
+  const char* method_name() const { return method_name_; }
+  void set_method_name(const char* method_name) { method_name_ = method_name; }
+#endif
+
  private:
+  // Internal constructor used by |CreateFromMessageHandle()| when either there
+  // are no attached handles or all attached handles are successfully extracted
+  // from the message object.
+  Message(ScopedMessageHandle message_handle,
+          std::vector<ScopedHandle> attached_handles,
+          internal::Buffer payload_buffer,
+          bool serialized);
+
   ScopedMessageHandle handle_;
 
   // A Buffer which may be used to allocate blocks of data within the message
@@ -229,10 +283,21 @@ class MOJO_CPP_BINDINGS_EXPORT Message {
   // Indicates whether this Message object is serialized.
   bool serialized_ = false;
 
+  const char* heap_profiler_tag_ = nullptr;
+#if defined(ENABLE_IPC_FUZZER)
+  const char* interface_name_ = nullptr;
+  const char* method_name_ = nullptr;
+#endif
+
+  // A reference to the ConnectionGroup to which the receiver of this Message
+  // belongs, if any. Only set if this Message was just read off of a message
+  // pipe and is about to be deserialized.
+  const ConnectionGroup::Ref* receiver_connection_group_ = nullptr;
+
   DISALLOW_COPY_AND_ASSIGN(Message);
 };
 
-class MOJO_CPP_BINDINGS_EXPORT MessageReceiver {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MessageReceiver {
  public:
   virtual ~MessageReceiver() {}
 
@@ -267,12 +332,13 @@ class MessageReceiverWithStatus : public MessageReceiver {
 
   // Returns |true| if this MessageReceiver is currently bound to a MessagePipe,
   // the pipe has not been closed, and the pipe has not encountered an error.
-  virtual bool IsValid() = 0;
+  virtual bool IsConnected() = 0;
 
-  // DCHECKs if this MessageReceiver is currently bound to a MessagePipe, the
-  // pipe has not been closed, and the pipe has not encountered an error.
-  // This function may be called on any thread.
-  virtual void DCheckInvalid(const std::string& message) = 0;
+  // Determines if this MessageReceiver is still bound to a message pipe and has
+  // not encountered any errors. This is asynchronous but may be called from any
+  // sequence. |callback| is eventually invoked from an arbitrary sequence with
+  // the result of the query.
+  virtual void IsConnectedAsync(base::OnceCallback<void(bool)> callback) = 0;
 };
 
 // An alternative to MessageReceiverWithResponder for cases in which it
@@ -291,7 +357,8 @@ class MessageReceiverWithResponderStatus : public MessageReceiver {
                                        responder) WARN_UNUSED_RESULT = 0;
 };
 
-class MOJO_CPP_BINDINGS_EXPORT PassThroughFilter : public MessageReceiver {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) PassThroughFilter
+    : public MessageReceiver {
  public:
   PassThroughFilter();
   ~PassThroughFilter() override;
@@ -320,7 +387,7 @@ class SyncMessageResponseSetup;
 //     if (response_value.IsBad())
 //       response_context.ReportBadMessage("Bad response_value!");
 //
-class MOJO_CPP_BINDINGS_EXPORT SyncMessageResponseContext {
+class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) SyncMessageResponseContext {
  public:
   SyncMessageResponseContext();
   ~SyncMessageResponseContext();
@@ -340,21 +407,12 @@ class MOJO_CPP_BINDINGS_EXPORT SyncMessageResponseContext {
   DISALLOW_COPY_AND_ASSIGN(SyncMessageResponseContext);
 };
 
-// Read a single message from the pipe. The caller should have created the
-// Message, but not called Initialize(). Returns MOJO_RESULT_SHOULD_WAIT if
-// the caller should wait on the handle to become readable. Returns
-// MOJO_RESULT_OK if the message was read successfully and should be
-// dispatched, otherwise returns an error code if something went wrong.
-//
-// NOTE: The message hasn't been validated and may be malformed!
-MojoResult ReadMessage(MessagePipeHandle handle, Message* message);
-
 // Reports the currently dispatching Message as bad. Note that this is only
 // legal to call from directly within the stack frame of a message dispatch. If
 // you need to do asynchronous work before you can determine the legitimacy of
 // a message, use GetBadMessageCallback() and retain its result until you're
 // ready to invoke or discard it.
-MOJO_CPP_BINDINGS_EXPORT
+COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE)
 void ReportBadMessage(const std::string& error);
 
 // Acquires a callback which may be run to report the currently dispatching
@@ -362,7 +420,7 @@ void ReportBadMessage(const std::string& error);
 // stack frame of a message dispatch, but the returned callback may be called
 // exactly once any time thereafter to report the message as bad. This may only
 // be called once per message.
-MOJO_CPP_BINDINGS_EXPORT
+COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE)
 ReportBadMessageCallback GetBadMessageCallback();
 
 }  // namespace mojo

@@ -4,17 +4,13 @@
 package org.chromium.net.impl;
 
 import android.support.annotation.IntDef;
-
-import static org.chromium.net.UrlRequest.Builder.REQUEST_PRIORITY_HIGHEST;
-import static org.chromium.net.UrlRequest.Builder.REQUEST_PRIORITY_IDLE;
-import static org.chromium.net.UrlRequest.Builder.REQUEST_PRIORITY_LOW;
-import static org.chromium.net.UrlRequest.Builder.REQUEST_PRIORITY_LOWEST;
-import static org.chromium.net.UrlRequest.Builder.REQUEST_PRIORITY_MEDIUM;
+import android.support.annotation.Nullable;
 
 import org.chromium.net.BidirectionalStream;
 import org.chromium.net.ExperimentalBidirectionalStream;
 import org.chromium.net.ExperimentalCronetEngine;
 import org.chromium.net.ExperimentalUrlRequest;
+import org.chromium.net.RequestFinishedInfo;
 import org.chromium.net.UrlRequest;
 
 import java.lang.annotation.Retention;
@@ -50,11 +46,21 @@ public abstract class CronetEngineBase extends ExperimentalCronetEngine {
      *         request if it is enabled for the session.
      * @param allowDirectExecutor whether executors used by this request are permitted
      *         to execute submitted tasks inline.
+     * @param trafficStatsTagSet {@code true} if {@code trafficStatsTag} represents a TrafficStats
+     *         tag to apply to sockets used to perform this request.
+     * @param trafficStatsTag TrafficStats tag to apply to sockets used to perform this request.
+     * @param trafficStatsUidSet {@code true} if {@code trafficStatsUid} represents a UID to
+     *         attribute traffic used to perform this request.
+     * @param trafficStatsUid UID to attribute traffic used to perform this request.
+     * @param requestFinishedListener callback to get invoked with metrics when request is finished.
+     *        Set to {@code null} if not used.
      * @return new request.
      */
     protected abstract UrlRequestBase createRequest(String url, UrlRequest.Callback callback,
             Executor executor, @RequestPriority int priority, Collection<Object> requestAnnotations,
-            boolean disableCache, boolean disableConnectionMigration, boolean allowDirectExecutor);
+            boolean disableCache, boolean disableConnectionMigration, boolean allowDirectExecutor,
+            boolean trafficStatsTagSet, int trafficStatsTag, boolean trafficStatsUidSet,
+            int trafficStatsUid, @Nullable RequestFinishedInfo.Listener requestFinishedListener);
 
     /**
      * Creates a {@link BidirectionalStream} object. {@code callback} methods will
@@ -75,12 +81,20 @@ public abstract class CronetEngineBase extends ExperimentalCronetEngine {
      *         with the next data frame.
      * @param requestAnnotations Objects to pass on to
      *       {@link org.chromium.net.RequestFinishedInfo.Listener}.
+     * @param trafficStatsTagSet {@code true} if {@code trafficStatsTag} represents a TrafficStats
+     *         tag to apply to sockets used to perform this request.
+     * @param trafficStatsTag TrafficStats tag to apply to sockets used to perform this request.
+     * @param trafficStatsUidSet {@code true} if {@code trafficStatsUid} represents a UID to
+     *         attribute traffic used to perform this request.
+     * @param trafficStatsUid UID to attribute traffic used to perform this request.
      * @return a new stream.
      */
     protected abstract ExperimentalBidirectionalStream createBidirectionalStream(String url,
             BidirectionalStream.Callback callback, Executor executor, String httpMethod,
             List<Map.Entry<String, String>> requestHeaders, @StreamPriority int priority,
-            boolean delayRequestHeadersUntilFirstFlush, Collection<Object> requestAnnotations);
+            boolean delayRequestHeadersUntilFirstFlush, Collection<Object> requestAnnotations,
+            boolean trafficStatsTagSet, int trafficStatsTag, boolean trafficStatsUidSet,
+            int trafficStatsUid);
 
     @Override
     public ExperimentalUrlRequest.Builder newUrlRequestBuilder(
@@ -88,10 +102,9 @@ public abstract class CronetEngineBase extends ExperimentalCronetEngine {
         return new UrlRequestBuilderImpl(url, callback, executor, this);
     }
 
-    @IntDef({
-            REQUEST_PRIORITY_IDLE, REQUEST_PRIORITY_LOWEST, REQUEST_PRIORITY_LOW,
-            REQUEST_PRIORITY_MEDIUM, REQUEST_PRIORITY_HIGHEST,
-    })
+    @IntDef({UrlRequest.Builder.REQUEST_PRIORITY_IDLE, UrlRequest.Builder.REQUEST_PRIORITY_LOWEST,
+            UrlRequest.Builder.REQUEST_PRIORITY_LOW, UrlRequest.Builder.REQUEST_PRIORITY_MEDIUM,
+            UrlRequest.Builder.REQUEST_PRIORITY_HIGHEST})
     @Retention(RetentionPolicy.SOURCE)
     public @interface RequestPriority {}
 

@@ -4,9 +4,9 @@
 
 #include "extensions/renderer/feature_cache.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "components/crx_file/id_util.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -16,10 +16,10 @@
 #include "extensions/renderer/script_context.h"
 #include "v8/include/v8.h"
 
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace extensions {
 
@@ -34,7 +34,7 @@ struct FakeContext {
 bool HasFeature(FeatureCache& cache,
                 const FakeContext& context,
                 const std::string& feature) {
-  return base::ContainsValue(
+  return base::Contains(
       cache.GetAvailableFeatures(context.context_type, context.extension,
                                  context.url),
       feature);
@@ -75,10 +75,10 @@ TEST_F(FeatureCacheTest, WebUIContexts) {
 
   // The chrome://extensions page is whitelisted for the management API.
   FakeContext webui_context = {Feature::WEBUI_CONTEXT, nullptr,
-                               GURL("chrome://extensions")};
+                               content::GetWebUIURL("extensions")};
   // chrome://baz is not whitelisted, and should not have access.
   FakeContext webui_context_without_access = {Feature::WEBUI_CONTEXT, nullptr,
-                                              GURL("chrome://baz")};
+                                              content::GetWebUIURL("baz")};
 
   EXPECT_TRUE(HasFeature(cache, webui_context, "management"));
   EXPECT_FALSE(HasFeature(cache, webui_context_without_access, "management"));

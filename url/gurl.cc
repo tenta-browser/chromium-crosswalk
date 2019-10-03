@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <ostream>
+#include <utility>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -19,8 +20,6 @@
 
 namespace {
 
-static base::LazyInstance<std::string>::Leaky empty_string =
-    LAZY_INSTANCE_INITIALIZER;
 static base::LazyInstance<GURL>::Leaky empty_gurl = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
@@ -150,7 +149,7 @@ GURL& GURL::operator=(const GURL& other) {
   return *this;
 }
 
-GURL& GURL::operator=(GURL&& other) {
+GURL& GURL::operator=(GURL&& other) noexcept {
   spec_ = std::move(other.spec_);
   is_valid_ = other.is_valid_;
   parsed_ = other.parsed_;
@@ -166,7 +165,7 @@ const std::string& GURL::spec() const {
     return spec_;
 
   DCHECK(false) << "Trying to get the spec of an invalid URL!";
-  return empty_string.Get();
+  return base::EmptyString();
 }
 
 bool GURL::operator<(const GURL& other) const {
@@ -178,7 +177,7 @@ bool GURL::operator>(const GURL& other) const {
 }
 
 // Note: code duplicated below (it's inconvenient to use a template here).
-GURL GURL::Resolve(const std::string& relative) const {
+GURL GURL::Resolve(base::StringPiece relative) const {
   // Not allowed for invalid URLs.
   if (!is_valid_)
     return GURL();
@@ -204,7 +203,7 @@ GURL GURL::Resolve(const std::string& relative) const {
 }
 
 // Note: code duplicated above (it's inconvenient to use a template here).
-GURL GURL::Resolve(const base::string16& relative) const {
+GURL GURL::Resolve(base::StringPiece16 relative) const {
   // Not allowed for invalid URLs.
   if (!is_valid_)
     return GURL();
@@ -341,16 +340,11 @@ bool GURL::IsStandard() const {
 }
 
 bool GURL::IsAboutBlank() const {
-  if (!SchemeIs(url::kAboutScheme))
-    return false;
+  return IsAboutUrl(url::kAboutBlankPath);
+}
 
-  if (has_host() || has_username() || has_password() || has_port())
-    return false;
-
-  if (path() != url::kAboutBlankPath && path() != url::kAboutBlankWithHashPath)
-    return false;
-
-  return true;
+bool GURL::IsAboutSrcdoc() const {
+  return IsAboutUrl(url::kAboutSrcdocPath);
 }
 
 bool GURL::SchemeIs(base::StringPiece lower_ascii_scheme) const {
@@ -372,6 +366,20 @@ bool GURL::SchemeIsValidForReferrer() const {
 
 bool GURL::SchemeIsWSOrWSS() const {
   return SchemeIs(url::kWsScheme) || SchemeIs(url::kWssScheme);
+}
+
+bool GURL::SchemeIsCryptographic() const {
+  if (parsed_.scheme.len <= 0)
+    return false;
+  return SchemeIsCryptographic(scheme_piece());
+}
+
+bool GURL::SchemeIsCryptographic(base::StringPiece lower_ascii_scheme) {
+  DCHECK(base::IsStringASCII(lower_ascii_scheme));
+  DCHECK(base::ToLowerASCII(lower_ascii_scheme) == lower_ascii_scheme);
+
+  return lower_ascii_scheme == url::kHttpsScheme ||
+         lower_ascii_scheme == url::kWssScheme;
 }
 
 int GURL::IntPort() const {
@@ -428,7 +436,12 @@ base::StringPiece GURL::HostNoBracketsPiece() const {
 }
 
 std::string GURL::GetContent() const {
-  return is_valid_ ? ComponentString(parsed_.GetContent()) : std::string();
+  if (!is_valid_)
+    return std::string();
+  std::string content = ComponentString(parsed_.GetContent());
+  if (!SchemeIs(url::kJavaScriptScheme) && parsed_.ref.len >= 0)
+    content.erase(content.size() - parsed_.ref.len - 1);
+  return content;
 }
 
 bool GURL::HostIsIPAddress() const {
@@ -468,6 +481,30 @@ size_t GURL::EstimateMemoryUsage() const {
   return base::trace_event::EstimateMemoryUsage(spec_) +
          base::trace_event::EstimateMemoryUsage(inner_url_) +
          (parsed_.inner_parsed() ? sizeof(url::Parsed) : 0);
+}
+
+bool GURL::IsAboutUrl(base::StringPiece allowed_path) const {
+  if (!SchemeIs(url::kAboutScheme))
+    return false;
+
+  if (has_host() || has_username() || has_password() || has_port())
+    return false;
+
+  if (!path_piece().starts_with(allowed_path))
+    return false;
+
+  if (path_piece().size() == allowed_path.size()) {
+    DCHECK_EQ(path_piece(), allowed_path);
+    return true;
+  }
+
+  if ((path_piece().size() == allowed_path.size() + 1) &&
+      path_piece().back() == '/') {
+    DCHECK_EQ(path_piece(), allowed_path.as_string() + '/');
+    return true;
+  }
+
+  return false;
 }
 
 std::ostream& operator<<(std::ostream& out, const GURL& url) {

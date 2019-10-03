@@ -5,7 +5,7 @@
 #include "ios/chrome/browser/reading_list/reading_list_download_service_factory.h"
 
 #include "base/files/file_path.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/dom_distiller/core/distiller.h"
 #include "components/dom_distiller/core/distiller_url_fetcher.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
@@ -16,6 +16,7 @@
 #include "ios/chrome/browser/reading_list/reading_list_distiller_page_factory.h"
 #include "ios/chrome/browser/reading_list/reading_list_download_service.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 // static
 ReadingListDownloadService*
@@ -28,7 +29,8 @@ ReadingListDownloadServiceFactory::GetForBrowserState(
 // static
 ReadingListDownloadServiceFactory*
 ReadingListDownloadServiceFactory::GetInstance() {
-  return base::Singleton<ReadingListDownloadServiceFactory>::get();
+  static base::NoDestructor<ReadingListDownloadServiceFactory> instance;
+  return instance.get();
 }
 
 ReadingListDownloadServiceFactory::ReadingListDownloadServiceFactory()
@@ -50,23 +52,23 @@ ReadingListDownloadServiceFactory::BuildServiceInstanceFor(
 
   std::unique_ptr<reading_list::ReadingListDistillerPageFactory>
       distiller_page_factory =
-          base::MakeUnique<reading_list::ReadingListDistillerPageFactory>(
+          std::make_unique<reading_list::ReadingListDistillerPageFactory>(
               context);
 
   auto distiller_url_fetcher_factory =
-      base::MakeUnique<dom_distiller::DistillerURLFetcherFactory>(
-          context->GetRequestContext());
+      std::make_unique<dom_distiller::DistillerURLFetcherFactory>(
+          context->GetSharedURLLoaderFactory());
 
   dom_distiller::proto::DomDistillerOptions options;
   auto distiller_factory =
-      base::MakeUnique<dom_distiller::DistillerFactoryImpl>(
+      std::make_unique<dom_distiller::DistillerFactoryImpl>(
           std::move(distiller_url_fetcher_factory), options);
 
-  return base::MakeUnique<ReadingListDownloadService>(
+  return std::make_unique<ReadingListDownloadService>(
       ReadingListModelFactory::GetForBrowserState(chrome_browser_state),
       chrome_browser_state->GetPrefs(), chrome_browser_state->GetStatePath(),
-      chrome_browser_state->GetRequestContext(), std::move(distiller_factory),
-      std::move(distiller_page_factory));
+      chrome_browser_state->GetSharedURLLoaderFactory(),
+      std::move(distiller_factory), std::move(distiller_page_factory));
 }
 
 web::BrowserState* ReadingListDownloadServiceFactory::GetBrowserStateToUse(

@@ -19,7 +19,45 @@ function assertIsSameSetOfTabs(list_a, list_b, id_field_name) {
   }
 }
 
-chrome.test.runTests([
+function assertIsValidStreamId(streamId) {
+  chrome.test.assertTrue(typeof streamId == 'string');
+  navigator.webkitGetUserMedia({
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource: 'tab',
+        chromeMediaSourceId: streamId
+      }
+    }
+  }, function(stream) {
+    chrome.test.assertTrue(!!stream);
+    stream.getVideoTracks()[0].stop();
+    chrome.test.succeed();
+  }, function(error) {
+    chrome.test.fail(error);
+  });
+}
+
+function assertGetUserMediaError(streamId) {
+  chrome.test.assertTrue(typeof streamId == 'string');
+  navigator.webkitGetUserMedia({
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource: 'tab',
+        chromeMediaSourceId: streamId
+      }
+    }
+  }, function(stream) {
+    chrome.test.assertTrue(!!stream);
+    stream.getVideoTracks()[0].stop();
+    chrome.test.fail('Should not get stream.');
+  }, function(error) {
+    chrome.test.succeed();
+  });
+}
+
+var testsToRun = [
   function captureTabAndVerifyStateTransitions() {
     // Tab capture events in the order they happen.
     var tabCaptureEvents = [];
@@ -115,28 +153,6 @@ chrome.test.runTests([
     });
   },
 
-  function tabIsUnmutedWhenTabCaptured() {
-    var stream1 = null;
-
-    chrome.tabs.getCurrent(function(tab) {
-      var stopListener = chrome.test.listenForever(chrome.tabs.onUpdated,
-          function(tabId, changeInfo, updatedTab) {
-        if ((changeInfo.mutedInfo.muted === true)) {
-          tabCapture.capture({audio: true}, function(stream) {
-            stream1 = stream;
-          });
-        }
-        else if ((changeInfo.mutedInfo.reason == "capture") &&
-                 (changeInfo.mutedInfo.muted === false)) {
-          stream1.getAudioTracks()[0].stop();
-          stopListener();
-        }
-      });
-
-      chrome.tabs.update(tab.id, {muted: true});
-    });
-  },
-
   function onlyVideo() {
     tabCapture.capture({video: true}, function(stream) {
       chrome.test.assertTrue(!!stream);
@@ -193,5 +209,76 @@ chrome.test.runTests([
             });
           });
     });
-  }
-]);
+  },
+
+  function getMediaStreamIdWithCallerTab() {
+    chrome.tabs.getCurrent(function(tab) {
+      tabCapture.getMediaStreamId({consumerTabId: tab.id}, function(streamId) {
+        assertIsValidStreamId(streamId);
+      });
+    });
+  },
+
+  function getMediaStreamIdWithTargetTab() {
+    chrome.tabs.getCurrent(function(tab) {
+      tabCapture.getMediaStreamId({targetTabId: tab.id}, function(streamId) {
+        assertIsValidStreamId(streamId);
+      });
+    });
+  },
+
+  function getMediaStreamIdWithoutTabIds() {
+    tabCapture.getMediaStreamId(function(streamId) {
+      assertIsValidStreamId(streamId);
+    });
+  },
+
+  // Test that if calling getMediaStreamId() with consumber tab specified,
+  // then calling getUserMedia() on another tab will fail to get the stream.
+  function getMediaStreamIdAndGetUserMediaOnDifferentTabs() {
+    var currentTabId;
+    var secondTabId;
+
+    var listener = function(tabId, changeInfo, tab) {
+      if (changeInfo.status == 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        tabCapture.getMediaStreamId(
+            {consumerTabId: secondTabId},
+            function(streamId) {
+              chrome.tabs.get(currentTabId, function(tab) {
+                assertGetUserMediaError(streamId);
+                chrome.tabs.remove(secondTabId);
+              });
+            });
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.getCurrent(function(tab) {
+      currentTabId = tab.id;
+      chrome.tabs.create({}, function(tab) {
+        secondTabId = tab.id;
+      });
+    });
+  },
+
+  function getMediaStreamIdWithCallerTabWithoutSecuredUrl() {
+    var listener = function(tabId, changeInfo, tab) {
+      if (changeInfo.status == 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        tabCapture.getMediaStreamId({consumerTabId: tabId}, function(streamId) {
+          chrome.test.assertTrue(typeof streamId == 'undefined');
+          chrome.test.assertLastError(
+              'URL scheme for the specified tab is not secure.');
+          chrome.test.succeed();
+          chrome.tabs.remove(tab.id);
+        });
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.create({url: 'http://example.com/fun.html'});
+  },
+];
+
+chrome.test.runTests(testsToRun);

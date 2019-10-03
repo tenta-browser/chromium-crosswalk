@@ -2,14 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/frame_host/navigation_entry_impl.h"
+
+#include <utility>
+
+#include "base/path_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/test_file_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/browser/ssl_status.h"
+#include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::ASCIIToUTF16;
@@ -51,11 +58,15 @@ class NavigationEntryTest : public testing::Test {
   void SetUp() override {
     entry1_.reset(new NavigationEntryImpl);
 
-    instance_ = SiteInstanceImpl::Create(nullptr);
+    const url::Origin kInitiatorOrigin =
+        url::Origin::Create(GURL("https://initiator.example.com"));
+
+    instance_ = SiteInstanceImpl::Create(&browser_context_);
     entry2_.reset(new NavigationEntryImpl(
         instance_, GURL("test:url"),
-        Referrer(GURL("from"), blink::kWebReferrerPolicyDefault),
-        ASCIIToUTF16("title"), ui::PAGE_TRANSITION_TYPED, false));
+        Referrer(GURL("from"), network::mojom::ReferrerPolicy::kDefault),
+        kInitiatorOrigin, ASCIIToUTF16("title"), ui::PAGE_TRANSITION_TYPED,
+        false, nullptr /* blob_url_loader_factory */));
   }
 
   void TearDown() override {}
@@ -65,6 +76,10 @@ class NavigationEntryTest : public testing::Test {
   std::unique_ptr<NavigationEntryImpl> entry2_;
   // SiteInstances are deleted when their NavigationEntries are gone.
   scoped_refptr<SiteInstanceImpl> instance_;
+
+ private:
+  TestBrowserThreadBundle thread_bundle_;
+  TestBrowserContext browser_context_;
 };
 
 // Test unique ID accessors
@@ -165,7 +180,6 @@ TEST_F(NavigationEntryTest, NavigationEntrySSLStatus) {
   EXPECT_FALSE(entry2_->GetSSL().initialized);
   EXPECT_FALSE(!!entry1_->GetSSL().certificate);
   EXPECT_EQ(0U, entry1_->GetSSL().cert_status);
-  EXPECT_EQ(-1, entry1_->GetSSL().security_bits);
   int content_status = entry1_->GetSSL().content_status;
   EXPECT_FALSE(!!(content_status & SSLStatus::DISPLAYED_INSECURE_CONTENT));
   EXPECT_FALSE(!!(content_status & SSLStatus::RAN_INSECURE_CONTENT));
@@ -208,7 +222,7 @@ TEST_F(NavigationEntryTest, NavigationEntryAccessors) {
   EXPECT_EQ(GURL(), entry1_->GetReferrer().url);
   EXPECT_EQ(GURL("from"), entry2_->GetReferrer().url);
   entry2_->SetReferrer(
-      Referrer(GURL("from2"), blink::kWebReferrerPolicyDefault));
+      Referrer(GURL("from2"), network::mojom::ReferrerPolicy::kDefault));
   EXPECT_EQ(GURL("from2"), entry2_->GetReferrer().url);
 
   // Title
@@ -270,10 +284,18 @@ TEST_F(NavigationEntryTest, NavigationEntryAccessors) {
   EXPECT_FALSE(entry2_->GetPostData());
   const int length = 11;
   const char* raw_data = "post\n\n\0data";
-  scoped_refptr<ResourceRequestBody> post_data =
-      ResourceRequestBody::CreateFromBytes(raw_data, length);
+  scoped_refptr<network::ResourceRequestBody> post_data =
+      network::ResourceRequestBody::CreateFromBytes(raw_data, length);
   entry2_->SetPostData(post_data);
   EXPECT_EQ(post_data, entry2_->GetPostData());
+
+  // Initiator origin.
+  EXPECT_FALSE(
+      entry1_->root_node()->frame_entry->initiator_origin().has_value());
+  EXPECT_TRUE(
+      entry2_->root_node()->frame_entry->initiator_origin().has_value());
+  EXPECT_EQ(url::Origin::Create(GURL("https://initiator.example.com")),
+            entry2_->root_node()->frame_entry->initiator_origin().value());
 }
 
 // Test basic Clone behavior.
@@ -284,8 +306,11 @@ TEST_F(NavigationEntryTest, NavigationEntryClone) {
 
   std::unique_ptr<NavigationEntryImpl> clone(entry2_->Clone());
 
-  // Value from FrameNavigationEntry.
+  // Values from FrameNavigationEntry.
   EXPECT_EQ(entry2_->site_instance(), clone->site_instance());
+  EXPECT_TRUE(clone->root_node()->frame_entry->initiator_origin().has_value());
+  EXPECT_EQ(entry2_->root_node()->frame_entry->initiator_origin(),
+            clone->root_node()->frame_entry->initiator_origin());
 
   // Value from constructor.
   EXPECT_EQ(entry2_->GetTitle(), clone->GetTitle());
@@ -306,25 +331,22 @@ TEST_F(NavigationEntryTest, NavigationEntryTimestamps) {
   EXPECT_EQ(now, entry1_->GetTimestamp());
 }
 
-// Test extra data stored in the navigation entry.
-TEST_F(NavigationEntryTest, NavigationEntryExtraData) {
-  base::string16 test_data = ASCIIToUTF16("my search terms");
-  base::string16 output;
-  entry1_->SetExtraData("search_terms", test_data);
+#if defined(OS_ANDROID)
+// Test that content URIs correctly show the file display name as the title.
+TEST_F(NavigationEntryTest, NavigationEntryContentUri) {
+  base::FilePath image_path;
+  EXPECT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &image_path));
+  image_path = image_path.Append(FILE_PATH_LITERAL("content"));
+  image_path = image_path.Append(FILE_PATH_LITERAL("test"));
+  image_path = image_path.Append(FILE_PATH_LITERAL("data"));
+  image_path = image_path.Append(FILE_PATH_LITERAL("blank.jpg"));
+  EXPECT_TRUE(base::PathExists(image_path));
 
-  EXPECT_FALSE(entry1_->GetExtraData("non_existent_key", &output));
-  EXPECT_EQ(ASCIIToUTF16(""), output);
-  EXPECT_TRUE(entry1_->GetExtraData("search_terms", &output));
-  EXPECT_EQ(test_data, output);
-  // Data is cleared.
-  entry1_->ClearExtraData("search_terms");
-  // Content in |output| is not modified if data is not present at the key.
-  EXPECT_FALSE(entry1_->GetExtraData("search_terms", &output));
-  EXPECT_EQ(test_data, output);
-  // Using an empty string shows that the data is not present in the map.
-  base::string16 output2;
-  EXPECT_FALSE(entry1_->GetExtraData("search_terms", &output2));
-  EXPECT_EQ(ASCIIToUTF16(""), output2);
+  base::FilePath content_uri = base::InsertImageIntoMediaStore(image_path);
+
+  entry1_->SetURL(GURL(content_uri.value()));
+  EXPECT_EQ(ASCIIToUTF16("blank.jpg"), entry1_->GetTitleForDisplay());
 }
+#endif
 
 }  // namespace content

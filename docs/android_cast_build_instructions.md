@@ -115,11 +115,11 @@ development and testing purposes.
 
 ## Setting up the build
 
-Chromium uses [Ninja](https://ninja-build.org) as its main build tool along
-with a tool called [GN](../tools/gn/docs/quick_start.md) to generate `.ninja`
-files. You can create any number of *build directories* with different
-configurations. To create a build directory which builds Chrome for Android,
-run:
+Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
+a tool called [GN](https://gn.googlesource.com/gn/+/master/docs/quick_start.md)
+to generate `.ninja` files. You can create any number of *build directories*
+with different configurations. To create a build directory which builds Chrome
+for Android, run:
 
 ```shell
 $ gn gen --args='target_os="android" is_chromecast=true' out/Default
@@ -144,8 +144,11 @@ require you to set `CHROMIUM_OUTPUT_DIR=out/Default`.
 Build `cast_shell_apk` with Ninja using the command:
 
 ```shell
-$ ninja -C out/Default cast_shell_apk
+$ autoninja -C out/Default cast_shell_apk
 ```
+
+(`autoninja` is a wrapper that automatically provides optimal values for the
+arguments passed to `ninja`.)
 
 ## Installing and Running `cast_shell_apk` on a device
 
@@ -167,7 +170,7 @@ plugged in.
 You can check if the device is connected by running:
 
 ```shell
-third_party/android_tools/sdk/platform-tools/adb devices
+third_party/android_sdk/public/platform-tools/adb devices
 ```
 
 Which prints a list of connected devices. If not connected, try
@@ -176,7 +179,7 @@ unplugging and reattaching your device.
 ### Build the APK
 
 ```shell
-ninja -C out/Release cast_shell_apk
+autoninja -C out/Release cast_shell_apk
 ```
 
 And deploy it to your Android device:
@@ -191,4 +194,5 @@ The app will appear on the device as "Chromium".
 
 ### Testing
 
-For information on running tests, see [Android Test Instructions](android_test_instructions.md).
+For information on running tests, see
+[Android Test Instructions](testing/android_test_instructions.md).

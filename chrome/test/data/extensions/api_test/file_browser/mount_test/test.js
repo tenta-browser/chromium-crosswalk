@@ -9,7 +9,7 @@ var expectedVolume1 = {
   sourcePath: 'device_path1',
   volumeType: 'removable',
   deviceType: 'usb',
-  devicePath: 'system_path_prefix1',
+  devicePath: 'storage_device_path1',
   isParentDevice: false,
   isReadOnly: false,
   isReadOnlyRemovableDevice: false,
@@ -18,7 +18,9 @@ var expectedVolume1 = {
   watchable: true,
   source: 'device',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: 'exfat'
+  diskFileSystemType: 'exfat',
+  iconSet: {},
+  driveLabel: 'drive_label1'
 };
 
 var expectedVolume2 = {
@@ -27,7 +29,7 @@ var expectedVolume2 = {
   sourcePath: 'device_path2',
   volumeType: 'removable',
   deviceType: 'mobile',
-  devicePath: 'system_path_prefix2',
+  devicePath: 'storage_device_path2',
   isParentDevice: true,
   isReadOnly: true,
   isReadOnlyRemovableDevice: true,
@@ -38,7 +40,9 @@ var expectedVolume2 = {
   watchable: true,
   source: 'device',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: 'exfat'
+  diskFileSystemType: 'exfat',
+  iconSet: {},
+  driveLabel: 'drive_label2'
 };
 
 var expectedVolume3 = {
@@ -47,7 +51,7 @@ var expectedVolume3 = {
   sourcePath: 'device_path3',
   volumeType: 'removable',
   deviceType: 'optical',
-  devicePath: 'system_path_prefix3',
+  devicePath: 'storage_device_path3',
   isParentDevice: true,
   isReadOnly: true,
   isReadOnlyRemovableDevice: false,
@@ -56,11 +60,13 @@ var expectedVolume3 = {
   watchable: true,
   source: 'device',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: 'exfat'
+  diskFileSystemType: 'exfat',
+  iconSet: {},
+  driveLabel: 'drive_label3'
 };
 
 var expectedDownloadsVolume = {
-  volumeId: /^downloads:Downloads[^\/]*$/,
+  volumeId: /^downloads:[^\/]*$/,
   volumeLabel: '',
   volumeType: 'downloads',
   isReadOnly: false,
@@ -70,22 +76,9 @@ var expectedDownloadsVolume = {
   watchable: true,
   source: 'system',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: ''
-};
-
-var expectedDriveVolume = {
-  volumeId: /^drive:drive[^\/]*$/,
-  volumeLabel: '',
-  sourcePath: /^\/special\/drive[^\/]*$/,
-  volumeType: 'drive',
-  isReadOnly: false,
-  isReadOnlyRemovableDevice: false,
-  hasMedia: false,
-  configurable: false,
-  watchable: true,
-  source: 'network',
-  profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: ''
+  diskFileSystemType: '',
+  iconSet: {},
+  driveLabel: ''
 };
 
 var expectedArchiveVolume = {
@@ -100,7 +93,9 @@ var expectedArchiveVolume = {
   watchable: true,
   source: 'file',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: ''
+  diskFileSystemType: '',
+  iconSet: {},
+  driveLabel: ''
 };
 
 var expectedProvidedVolume = {
@@ -112,12 +107,17 @@ var expectedProvidedVolume = {
   hasMedia: false,
   configurable: true,
   watchable: false,
-  extensionId: 'testing-extension-id',
+  providerId: 'testing-provider-id',
   source: 'network',
   mountContext: 'auto',
   fileSystemId: '',
   profile: {profileId: '', displayName: '', isCurrentProfile: true},
-  diskFileSystemType: ''
+  diskFileSystemType: '',
+  iconSet: {
+    icon16x16Url: 'chrome://resources/testing-provider-id-16.jpg',
+    icon32x32Url: 'chrome://resources/testing-provider-id-32.jpg'
+  },
+  driveLabel: ''
 };
 
 // List of expected mount points.
@@ -126,7 +126,6 @@ var expectedProvidedVolume = {
 var expectedVolumeList = [
   expectedArchiveVolume,
   expectedDownloadsVolume,
-  expectedDriveVolume,
   expectedProvidedVolume,
   expectedVolume1,
   expectedVolume2,
@@ -169,6 +168,14 @@ function validateObject(received, expected, name) {
 
 chrome.test.runTests([
   function removeMount() {
+    chrome.fileManagerPrivate.removeMount('removable:mount_path1');
+
+    // We actually check this one on C++ side. If MountLibrary.RemoveMount
+    // doesn't get called, test will fail.
+    chrome.test.succeed();
+  },
+
+  function removeMountArchive() {
     chrome.fileManagerPrivate.removeMount('archive:archive_mount_path');
 
     // We actually check this one on C++ side. If MountLibrary.RemoveMount

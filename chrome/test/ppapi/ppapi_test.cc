@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -16,7 +17,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -28,9 +28,8 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/nacl/common/nacl_switches.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/ppapi_test_utils.h"
@@ -76,9 +75,9 @@ void PPAPITestMessageHandler::Reset() {
 PPAPITestBase::InfoBarObserver::InfoBarObserver(PPAPITestBase* test_base)
     : test_base_(test_base),
       expecting_infobar_(false),
-      should_accept_(false) {
-  registrar_.Add(this, chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
-                 content::NotificationService::AllSources());
+      should_accept_(false),
+      infobar_observer_(this) {
+  infobar_observer_.Add(GetInfoBarService());
 }
 
 PPAPITestBase::InfoBarObserver::~InfoBarObserver() {
@@ -92,27 +91,23 @@ void PPAPITestBase::InfoBarObserver::ExpectInfoBarAndAccept(
   should_accept_ = should_accept;
 }
 
-void PPAPITestBase::InfoBarObserver::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  ASSERT_EQ(chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED, type);
+void PPAPITestBase::InfoBarObserver::OnInfoBarAdded(
+    infobars::InfoBar* infobar) {
   // It's not safe to remove the infobar here, since other observers (e.g. the
   // InfoBarContainer) may still need to access it.  Instead, post a task to
   // do all necessary infobar manipulation as soon as this call stack returns.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&InfoBarObserver::VerifyInfoBarState, base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&InfoBarObserver::VerifyInfoBarState,
+                                base::Unretained(this)));
+}
+
+void PPAPITestBase::InfoBarObserver::OnManagerShuttingDown(
+    infobars::InfoBarManager* manager) {
+  infobar_observer_.Remove(manager);
 }
 
 void PPAPITestBase::InfoBarObserver::VerifyInfoBarState() {
-  content::WebContents* web_contents =
-      test_base_->browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_TRUE(web_contents != NULL);
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents);
-  ASSERT_TRUE(infobar_service != NULL);
-
+  InfoBarService* infobar_service = GetInfoBarService();
   EXPECT_EQ(expecting_infobar_ ? 1U : 0U, infobar_service->infobar_count());
   if (!expecting_infobar_)
     return;
@@ -128,6 +123,12 @@ void PPAPITestBase::InfoBarObserver::VerifyInfoBarState() {
     delegate->Cancel();
 
   infobar_service->RemoveInfoBar(infobar);
+}
+
+InfoBarService* PPAPITestBase::InfoBarObserver::GetInfoBarService() {
+  content::WebContents* web_contents =
+      test_base_->browser()->tab_strip_model()->GetActiveWebContents();
+  return InfoBarService::FromWebContents(web_contents);
 }
 
 PPAPITestBase::PPAPITestBase() {
@@ -155,9 +156,9 @@ void PPAPITestBase::SetUpOnMainThread() {
 }
 
 GURL PPAPITestBase::GetTestFileUrl(const std::string& test_case) {
-  base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_setup;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath test_path;
-  EXPECT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_path));
+  EXPECT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_path));
   test_path = test_path.Append(FILE_PATH_LITERAL("ppapi"));
   test_path = test_path.Append(FILE_PATH_LITERAL("tests"));
   test_path = test_path.Append(FILE_PATH_LITERAL("test_case.html"));

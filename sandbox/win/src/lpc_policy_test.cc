@@ -12,6 +12,7 @@
 #include <winioctl.h>
 
 #include "base/win/windows_version.h"
+#include "build/build_config.h"
 #include "sandbox/win/src/heap_helper.h"
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/sandbox_factory.h"
@@ -26,7 +27,7 @@ namespace {
 
 bool CsrssDisconnectSupported() {
   // This functionality has not been verified on versions before Win10.
-  if (base::win::GetVersion() < base::win::VERSION_WIN10)
+  if (base::win::GetVersion() < base::win::Version::WIN10)
     return false;
 
   // Does not work on 32-bit on x64 (ie Wow64).
@@ -208,7 +209,14 @@ TEST(LpcPolicyTest, TestCanFindCsrPortHeap) {
   EXPECT_NE(nullptr, csr_port_handle);
 }
 
-TEST(LpcPolicyTest, TestHeapFlags) {
+// Fails on Windows ARM64: https://crbug.com/905328
+#if defined(ARCH_CPU_ARM64)
+#define MAYBE_TestHeapFlags DISABLED_TestHeapFlags
+#else
+#define MAYBE_TestHeapFlags TestHeapFlags
+#endif
+
+TEST(LpcPolicyTest, MAYBE_TestHeapFlags) {
   if (!CsrssDisconnectSupported()) {
     // This functionality has not been verified on versions before Win10.
     return;

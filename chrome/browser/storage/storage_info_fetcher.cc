@@ -4,8 +4,11 @@
 
 #include "chrome/browser/storage/storage_info_fetcher.h"
 
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "storage/browser/quota/quota_manager.h"
@@ -18,8 +21,7 @@ StorageInfoFetcher::StorageInfoFetcher(Profile* profile) {
       profile)->GetQuotaManager();
 }
 
-StorageInfoFetcher::~StorageInfoFetcher() {
-}
+StorageInfoFetcher::~StorageInfoFetcher() = default;
 
 void StorageInfoFetcher::FetchStorageInfo(const FetchCallback& fetch_callback) {
   // Balanced in OnFetchCompleted.
@@ -29,47 +31,44 @@ void StorageInfoFetcher::FetchStorageInfo(const FetchCallback& fetch_callback) {
 
   // QuotaManager must be called on IO thread, but the callback must then be
   // called on the UI thread.
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&StorageInfoFetcher::GetUsageInfo, this,
-          base::Bind(&StorageInfoFetcher::OnGetUsageInfoInternal, this)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
+      base::BindOnce(
+          &StorageInfoFetcher::GetUsageInfo, this,
+          base::BindOnce(&StorageInfoFetcher::OnGetUsageInfoInternal, this)));
 }
 
-void StorageInfoFetcher::ClearStorage(
-    const std::string& host,
-    storage::StorageType type,
-    const ClearCallback& clear_callback) {
+void StorageInfoFetcher::ClearStorage(const std::string& host,
+                                      blink::mojom::StorageType type,
+                                      const ClearCallback& clear_callback) {
   // Balanced in OnUsageCleared.
   AddRef();
 
   clear_callback_ = clear_callback;
   type_to_delete_ = type;
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&storage::QuotaManager::DeleteHostData,
-                 quota_manager_,
-                 host,
-                 type,
-                 storage::QuotaClient::kAllClientsMask,
-                 base::Bind(&StorageInfoFetcher::OnUsageClearedInternal,
-                            this)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
+      base::BindOnce(
+          &storage::QuotaManager::DeleteHostData, quota_manager_, host, type,
+          storage::QuotaClient::kAllClientsMask,
+          base::BindOnce(&StorageInfoFetcher::OnUsageClearedInternal, this)));
 }
 
-void StorageInfoFetcher::GetUsageInfo(
-    const storage::GetUsageInfoCallback& callback) {
+void StorageInfoFetcher::GetUsageInfo(storage::GetUsageInfoCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  quota_manager_->GetUsageInfo(callback);
+  quota_manager_->GetUsageInfo(std::move(callback));
 }
 
 void StorageInfoFetcher::OnGetUsageInfoInternal(
-    const storage::UsageInfoEntries& entries) {
+    storage::UsageInfoEntries entries) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
-  entries_.insert(entries_.begin(), entries.begin(), entries.end());
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&StorageInfoFetcher::OnFetchCompleted, this));
+  entries_ = std::move(entries);
+
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&StorageInfoFetcher::OnFetchCompleted, this));
 }
 
 void StorageInfoFetcher::OnFetchCompleted() {
@@ -80,17 +79,18 @@ void StorageInfoFetcher::OnFetchCompleted() {
   Release();
 }
 
-void StorageInfoFetcher::OnUsageClearedInternal(storage::QuotaStatusCode code) {
+void StorageInfoFetcher::OnUsageClearedInternal(
+    blink::mojom::QuotaStatusCode code) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
   quota_manager_->ResetUsageTracker(type_to_delete_);
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&StorageInfoFetcher::OnClearCompleted, this, code));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&StorageInfoFetcher::OnClearCompleted, this, code));
 }
 
-void StorageInfoFetcher::OnClearCompleted(storage::QuotaStatusCode code) {
+void StorageInfoFetcher::OnClearCompleted(blink::mojom::QuotaStatusCode code) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   clear_callback_.Run(code);

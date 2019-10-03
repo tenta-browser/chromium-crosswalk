@@ -27,6 +27,14 @@ class HistoryProvider : public AutocompleteProvider {
   // is true or the input text contains trailing whitespace.
   static bool PreventInlineAutocomplete(const AutocompleteInput& input);
 
+  // Fill and return an ACMatchClassifications structure given the |matches|
+  // to highlight.
+  // TODO (manukh) replace calls to SpansFromTermMatch with calls to
+  // ClassifyTermMatches (autocomplete_match_classification.h)
+  static ACMatchClassifications SpansFromTermMatch(const TermMatches& matches,
+                                                   size_t text_length,
+                                                   bool is_url);
+
  protected:
   HistoryProvider(AutocompleteProvider::Type type,
                   AutocompleteProviderClient* client);
@@ -37,20 +45,9 @@ class HistoryProvider : public AutocompleteProvider {
   // backing data.
   void DeleteMatchFromMatches(const AutocompleteMatch& match);
 
-  // Fill and return an ACMatchClassifications structure given the |matches|
-  // to highlight.
-  static ACMatchClassifications SpansFromTermMatch(const TermMatches& matches,
-                                                   size_t text_length,
-                                                   bool is_url);
-
   AutocompleteProviderClient* client() { return client_; }
 
-  // Converts matches whose URL matches a tab's URL to TAB_SEARCH matches.
-  // Fixes up description as well.
-  void ConvertOpenTabMatches();
-
  private:
-  FRIEND_TEST_ALL_PREFIXES(HistoryProviderTest, ConvertsOpenTabsCorrectly);
   AutocompleteProviderClient* client_;
 
   DISALLOW_COPY_AND_ASSIGN(HistoryProvider);

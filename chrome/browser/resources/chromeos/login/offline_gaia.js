@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-Polymer((function() {
-  var DEFAULT_EMAIL_DOMAIN = '@gmail.com';
+{
+  const DEFAULT_EMAIL_DOMAIN = '@gmail.com';
 
-  var TRANSITION_TYPE = {FORWARD: 0, BACKWARD: 1, NONE: 2};
+  /** @enum */
+  const TRANSITION_TYPE = {FORWARD: 0, BACKWARD: 1, NONE: 2};
 
-  return {
+  Polymer({
     is: 'offline-gaia',
 
-    behaviors: [I18nBehavior],
+    behaviors: [I18nBehavior, OobeDialogHostBehavior],
 
     properties: {
       disabled: {
@@ -18,14 +19,8 @@ Polymer((function() {
         value: false,
       },
 
-      showEnterpriseMessage: {
-        type: Boolean,
-        value: false,
-      },
-
       domain: {
         type: String,
-        observer: 'onDomainChanged_',
       },
 
       emailDomain: String,
@@ -36,14 +31,6 @@ Polymer((function() {
       },
 
       animationInProgress: Boolean,
-
-      /**
-       * Controls GLIF MM mode.
-       */
-      glifMode: {
-        type: Boolean,
-        value: false,
-      },
     },
 
     attached: function() {
@@ -62,12 +49,6 @@ Polymer((function() {
       this.switchToEmailCard(true /* animated */);
     },
 
-    onDomainChanged_: function() {
-      this.$$('#managedBy').textContent =
-          loadTimeData.getStringF('enterpriseInfoMessage', this.domain);
-      this.showEnterpriseMessage = !!this.domain.length;
-    },
-
     onAnimationFinish_: function() {
       this.fire('backButton', !this.isEmailSectionActive_());
       this.focus();
@@ -77,17 +58,15 @@ Polymer((function() {
       this.disabled = true;
       this.fire('dialogShown');
       this.$$('#forgotPasswordDlg').showModal();
-      this.$$('#passwordCard').classList.add('full-disabled');
     },
 
     onForgotPasswordCloseTap_: function() {
-      this.$$('#.forgotPasswordDlg').close();
+      this.$$('#forgotPasswordDlg').close();
     },
 
     onDialogOverlayClosed_: function() {
       this.fire('dialogHidden');
       this.disabled = false;
-      this.$$('#passwordCard').classList.remove('full-disabled');
     },
 
     setEmail: function(email) {
@@ -141,6 +120,7 @@ Polymer((function() {
 
     onSlideAnimationEnd_: function() {
       this.animationInProgress = false;
+      this.focus();
     },
 
     onEmailSubmitted_: function() {
@@ -171,5 +151,5 @@ Polymer((function() {
         this.fire('offline-gaia-cancel');
       }
     },
-  };
-})());
+  });
+}

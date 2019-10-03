@@ -15,13 +15,13 @@ namespace device {
 
 // Implementation of PlatformSensor for macOS to query the ambient light sensor.
 // This is a single instance object per browser process which is created by
-// The singleton PlatformSensorProviderMac. If there are no clients, this
-// instance is not created.
+// PlatformSensorProviderMac. If there are no clients, this instance is not
+// created.
 class PlatformSensorAmbientLightMac : public PlatformSensor {
  public:
   // Construct a platform sensor of AMBIENT_LIGHT, given a buffer |mapping|
   // to write the result back.
-  PlatformSensorAmbientLightMac(mojo::ScopedSharedBufferMapping mapping,
+  PlatformSensorAmbientLightMac(SensorReadingSharedBuffer* reading_buffer,
                                 PlatformSensorProvider* provider);
 
   mojom::ReportingMode GetReportingMode() override;

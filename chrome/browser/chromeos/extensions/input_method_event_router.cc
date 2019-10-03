@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/extensions/input_method_event_router.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/json/json_writer.h"
@@ -34,11 +35,12 @@ void ExtensionInputMethodEventRouter::InputMethodChanged(
     input_method::InputMethodManager* manager,
     Profile* profile,
     bool show_message) {
-  // This should probably be CHECK, as delivering event to a wrong
-  // profile means delivering it to a wrong extension instance.
-  DCHECK(profile->IsSameProfile(Profile::FromBrowserContext(context_)));
-  extensions::EventRouter* router = extensions::EventRouter::Get(context_);
+  // If an event is recieved from a different profile, e.g. while switching
+  // between multiple profiles, ignore it.
+  if (!profile->IsSameProfile(Profile::FromBrowserContext(context_)))
+    return;
 
+  extensions::EventRouter* router = extensions::EventRouter::Get(context_);
   if (!router->HasEventListener(OnChanged::kEventName))
     return;
 
@@ -47,7 +49,7 @@ void ExtensionInputMethodEventRouter::InputMethodChanged(
       manager->GetActiveIMEState()->GetCurrentInputMethod().id());
 
   // The router will only send the event to extensions that are listening.
-  auto event = base::MakeUnique<extensions::Event>(
+  auto event = std::make_unique<extensions::Event>(
       extensions::events::INPUT_METHOD_PRIVATE_ON_CHANGED,
       OnChanged::kEventName, std::move(args), context_);
   router->BroadcastEvent(std::move(event));

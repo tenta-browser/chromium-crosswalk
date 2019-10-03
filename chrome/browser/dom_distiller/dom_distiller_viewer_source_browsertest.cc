@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/run_loop.h"
@@ -43,6 +44,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/test/browser_test_utils.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -51,8 +53,8 @@ namespace dom_distiller {
 
 using leveldb_proto::test::FakeDB;
 using test::FakeDistiller;
-using test::MockDistillerPage;
 using test::MockDistillerFactory;
+using test::MockDistillerPage;
 using test::MockDistillerPageFactory;
 using test::util::CreateStoreWithFakeDB;
 using testing::HasSubstr;
@@ -62,23 +64,23 @@ namespace {
 
 const char kGetLoadIndicatorClassName[] =
     "window.domAutomationController.send("
-        "document.getElementById('loadingIndicator').className)";
+    "document.getElementById('loadingIndicator').className)";
 
 const char kGetContent[] =
     "window.domAutomationController.send("
-        "document.getElementById('content').innerHTML)";
+    "document.getElementById('content').innerHTML)";
 
 const char kGetTitle[] =
     "window.domAutomationController.send("
-        "document.title)";
+    "document.title)";
 
 const char kGetBodyClass[] =
     "window.domAutomationController.send("
-        "document.body.className)";
+    "document.body.className)";
 
 const char kGetFontSize[] =
     "window.domAutomationController.send("
-        "window.getComputedStyle(document.documentElement).fontSize)";
+    "window.getComputedStyle(document.documentElement).fontSize)";
 
 const unsigned kDarkToolbarThemeColor = 0xFF1A1A1A;
 
@@ -99,6 +101,16 @@ ArticleEntry CreateEntry(const std::string& entry_id,
     page->set_url(page_url);
   }
   return entry;
+}
+
+void ExpectBodyHasThemeAndFont(content::WebContents* contents,
+                               const std::string& expected_theme,
+                               const std::string& expected_font) {
+  std::string result;
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetBodyClass, &result));
+  EXPECT_THAT(result, HasSubstr(expected_theme));
+  EXPECT_THAT(result, HasSubstr(expected_font));
 }
 
 }  // namespace
@@ -134,7 +146,7 @@ class DomDistillerViewerSourceBrowserTest : public InProcessBrowserTest {
             std::unique_ptr<DistillerPageFactory>(distiller_page_factory_),
             std::unique_ptr<DistilledPagePrefs>(new DistilledPagePrefs(
                 Profile::FromBrowserContext(context)->GetPrefs()))));
-    fake_db->InitCallback(true);
+    fake_db->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
     fake_db->LoadCallback(true);
     if (expect_distillation_) {
       // There will only be destillation of an article if the database contains
@@ -153,6 +165,7 @@ class DomDistillerViewerSourceBrowserTest : public InProcessBrowserTest {
 
   void ViewSingleDistilledPage(const GURL& url,
                                const std::string& expected_mime_type);
+  void ViewSingleDistilledPageAndExpectErrorPage(const GURL& url);
   void PrefTest(bool is_error_page);
   // Database entries.
   static FakeDB<ArticleEntry>::EntryMap* database_model_;
@@ -207,10 +220,10 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   // We should expect distillation for any valid URL.
   expect_distillation_ = true;
   expect_distiller_page_ = true;
-  GURL view_url("http://www.example.com/1");
-  const GURL url =
-      url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, view_url);
-  ViewSingleDistilledPage(url, "text/html");
+  GURL original_url("http://www.example.com/1");
+  const GURL view_url =
+      url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, original_url);
+  ViewSingleDistilledPage(view_url, "text/html");
 }
 
 void DomDistillerViewerSourceBrowserTest::ViewSingleDistilledPage(
@@ -218,7 +231,8 @@ void DomDistillerViewerSourceBrowserTest::ViewSingleDistilledPage(
     const std::string& expected_mime_type) {
   // Ensure the correct factory is used for the DomDistillerService.
   dom_distiller::DomDistillerServiceFactory::GetInstance()
-      ->SetTestingFactoryAndUse(browser()->profile(), &Build);
+      ->SetTestingFactoryAndUse(browser()->profile(),
+                                base::BindRepeating(&Build));
 
   // Navigate to a URL which the source should respond to.
   ui_test_utils::NavigateToURL(browser(), url);
@@ -228,7 +242,7 @@ void DomDistillerViewerSourceBrowserTest::ViewSingleDistilledPage(
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(contents_after_nav != NULL);
   EXPECT_EQ(url, contents_after_nav->GetLastCommittedURL());
-  const content::RenderFrameHost* render_frame_host =
+  content::RenderFrameHost* render_frame_host =
       contents_after_nav->GetMainFrame();
   EXPECT_EQ(0, render_frame_host->GetEnabledBindings());
   EXPECT_EQ(expected_mime_type, contents_after_nav->GetContentsMimeType());
@@ -243,9 +257,13 @@ void DomDistillerViewerSourceBrowserTest::ViewSingleDistilledPage(
 IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
                        MAYBE_TestBadUrlErrorPage) {
   GURL url("chrome-distiller://bad");
+  ViewSingleDistilledPageAndExpectErrorPage(url);
+}
 
+void DomDistillerViewerSourceBrowserTest::
+    ViewSingleDistilledPageAndExpectErrorPage(const GURL& url) {
   // Navigate to a distiller URL.
-  ui_test_utils::NavigateToURL(browser(), url);
+  ViewSingleDistilledPage(url, "text/html");
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -257,14 +275,16 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   EXPECT_EQ(url, contents->GetLastCommittedURL());
 
   std::string result;
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetContent, &result));
-  EXPECT_THAT(result, HasSubstr(l10n_util::GetStringUTF8(
-      IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_CONTENT)));
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetTitle, &result));
-  EXPECT_THAT(result, HasSubstr(l10n_util::GetStringUTF8(
-      IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_TITLE)));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
+  EXPECT_THAT(result,
+              HasSubstr(l10n_util::GetStringUTF8(
+                  IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_CONTENT)));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetTitle, &result));
+  EXPECT_THAT(result,
+              HasSubstr(l10n_util::GetStringUTF8(
+                  IDS_DOM_DISTILLER_VIEWER_FAILED_TO_FIND_ARTICLE_TITLE)));
 }
 
 // The DomDistillerViewerSource renders untrusted content, so ensure no bindings
@@ -279,7 +299,6 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   GURL url(kDomDistillerScheme + url_without_scheme);
   ViewSingleDistilledPage(url, "text/css");
 }
-
 
 #if defined(OS_LINUX)
 // Flaky on Ubuntu-12.04 bots: https://crbug.com/604362
@@ -306,24 +325,36 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
-                       EarlyTemplateLoad) {
+                       InvalidURLShouldGetErrorPage) {
+  const GURL original_url("http://www.example.com/1");
+  const GURL different_url("http://www.example.com/2");
+  const GURL view_url =
+      url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, original_url);
+  // This is a bogus URL, so no distillation will happen.
+  const GURL bad_view_url = net::AppendOrReplaceQueryParameter(
+      view_url, kUrlKey, different_url.spec());
+
+  ViewSingleDistilledPageAndExpectErrorPage(bad_view_url);
+}
+
+IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, EarlyTemplateLoad) {
   dom_distiller::DomDistillerServiceFactory::GetInstance()
-      ->SetTestingFactoryAndUse(browser()->profile(), &Build);
+      ->SetTestingFactoryAndUse(browser()->profile(),
+                                base::BindRepeating(&Build));
 
   scoped_refptr<content::MessageLoopRunner> distillation_done_runner =
       new content::MessageLoopRunner;
 
-  FakeDistiller* distiller = new FakeDistiller(
-      false,
-      distillation_done_runner->QuitClosure());
+  FakeDistiller* distiller =
+      new FakeDistiller(false, distillation_done_runner->QuitClosure());
   EXPECT_CALL(*distiller_factory_, CreateDistillerImpl())
       .WillOnce(testing::Return(distiller));
 
   // Navigate to a URL.
   GURL url(dom_distiller::url_utils::GetDistillerViewUrlFromUrl(
       kDomDistillerScheme, GURL("http://urlthatlooksvalid.com")));
-  chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
-  chrome::Navigate(&params);
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  Navigate(&params);
   distillation_done_runner->Run();
 
   content::WebContents* contents =
@@ -334,19 +365,19 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   std::string result;
   // Loading spinner should be on screen at this point.
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetLoadIndicatorClassName , &result));
+      contents, kGetLoadIndicatorClassName, &result));
   EXPECT_EQ("visible", result);
 
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetContent , &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
   EXPECT_THAT(result, Not(HasSubstr("content")));
 
   // Finish distillation and make sure the spinner has been replaced by text.
-  std::vector<scoped_refptr<ArticleDistillationUpdate::RefCountedPageProto> >
+  std::vector<scoped_refptr<ArticleDistillationUpdate::RefCountedPageProto>>
       update_pages;
   std::unique_ptr<DistilledArticleProto> article(new DistilledArticleProto());
 
-  scoped_refptr<base::RefCountedData<DistilledPageProto> > page_proto =
+  scoped_refptr<base::RefCountedData<DistilledPageProto>> page_proto =
       new base::RefCountedData<DistilledPageProto>();
   page_proto->data.set_url("http://foo.html");
   page_proto->data.set_html("<div>content</div>");
@@ -358,8 +389,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
 
   content::WaitForLoadStop(contents);
 
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetContent , &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
   EXPECT_THAT(result, HasSubstr("content"));
 }
 
@@ -367,8 +398,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
                        DistillerJavaScriptExposed) {
   // Navigate to a distiller URL.
   GURL url(std::string(kDomDistillerScheme) + "://url");
-  chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
-  chrome::Navigate(&params);
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  Navigate(&params);
 
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -376,20 +407,19 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   // Wait for the page load to complete (this will be a distiller error page).
   content::WaitForLoadStop(contents);
 
-  bool result;
   // Execute in isolated world; where all distiller scripts are run.
-  EXPECT_TRUE(content::ExecuteScriptInIsolatedWorldAndExtractBool(
-      contents, ISOLATED_WORLD_ID_CHROME_INTERNAL, kTestDistillerObject,
-      &result));
-  EXPECT_TRUE(result);
+  EXPECT_EQ(true, content::EvalJsWithManualReply(
+                      contents, kTestDistillerObject,
+                      content::EXECUTE_SCRIPT_DEFAULT_OPTIONS,
+                      ISOLATED_WORLD_ID_CHROME_INTERNAL));
 }
 
 IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
                        DistillerJavaScriptNotInMainWorld) {
   // Navigate to a distiller URL.
   GURL url(std::string(kDomDistillerScheme) + "://url");
-  chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
-  chrome::Navigate(&params);
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  Navigate(&params);
 
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -408,8 +438,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
                        DistillerJavaScriptNotExposed) {
   // Navigate to a non-distiller URL.
   GURL url("http://url");
-  chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
-  chrome::Navigate(&params);
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  Navigate(&params);
 
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -427,14 +457,14 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
   expect_distillation_ = false;
   expect_distiller_page_ = true;
   dom_distiller::DomDistillerServiceFactory::GetInstance()
-      ->SetTestingFactoryAndUse(browser()->profile(), &Build);
+      ->SetTestingFactoryAndUse(browser()->profile(),
+                                base::BindRepeating(&Build));
 
   scoped_refptr<content::MessageLoopRunner> distillation_done_runner =
       new content::MessageLoopRunner;
 
-  FakeDistiller* distiller = new FakeDistiller(
-      false,
-      distillation_done_runner->QuitClosure());
+  FakeDistiller* distiller =
+      new FakeDistiller(false, distillation_done_runner->QuitClosure());
   EXPECT_CALL(*distiller_factory_, CreateDistillerImpl())
       .WillOnce(testing::Return(distiller));
 
@@ -445,19 +475,19 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
   // Navigate to a URL and wait for the distiller to flush contents to the page.
   GURL url(dom_distiller::url_utils::GetDistillerViewUrlFromUrl(
       kDomDistillerScheme, GURL("http://urlthatlooksvalid.com")));
-  chrome::NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
-  chrome::Navigate(&params);
+  NavigateParams params(browser(), url, ui::PAGE_TRANSITION_TYPED);
+  Navigate(&params);
   distillation_done_runner->Run();
 
   // Fake a multi-page response from distiller.
 
-  std::vector<scoped_refptr<ArticleDistillationUpdate::RefCountedPageProto> >
+  std::vector<scoped_refptr<ArticleDistillationUpdate::RefCountedPageProto>>
       update_pages;
   std::unique_ptr<DistilledArticleProto> article(new DistilledArticleProto());
 
   // Flush page 1.
   {
-    scoped_refptr<base::RefCountedData<DistilledPageProto> > page_proto =
+    scoped_refptr<base::RefCountedData<DistilledPageProto>> page_proto =
         new base::RefCountedData<DistilledPageProto>();
     page_proto->data.set_url("http://foobar.1.html");
     page_proto->data.set_html("<div>Page 1 content</div>");
@@ -473,18 +503,18 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
 
     std::string result;
     EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        contents, kGetLoadIndicatorClassName , &result));
+        contents, kGetLoadIndicatorClassName, &result));
     EXPECT_EQ("visible", result);
 
-    EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        contents, kGetContent , &result));
+    EXPECT_TRUE(
+        content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
     EXPECT_THAT(result, HasSubstr("Page 1 content"));
     EXPECT_THAT(result, Not(HasSubstr("Page 2 content")));
   }
 
   // Flush page 2.
   {
-    scoped_refptr<base::RefCountedData<DistilledPageProto> > page_proto =
+    scoped_refptr<base::RefCountedData<DistilledPageProto>> page_proto =
         new base::RefCountedData<DistilledPageProto>();
     page_proto->data.set_url("http://foobar.2.html");
     page_proto->data.set_html("<div>Page 2 content</div>");
@@ -496,11 +526,11 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
 
     std::string result;
     EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        contents, kGetLoadIndicatorClassName , &result));
+        contents, kGetLoadIndicatorClassName, &result));
     EXPECT_EQ("hidden", result);
 
-    EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-        contents, kGetContent , &result));
+    EXPECT_TRUE(
+        content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
     EXPECT_THAT(result, HasSubstr("Page 1 content"));
     EXPECT_THAT(result, HasSubstr("Page 2 content"));
   }
@@ -513,8 +543,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       contents, kGetLoadIndicatorClassName, &result));
   EXPECT_EQ("hidden", result);
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetContent , &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetContent, &result));
   EXPECT_THAT(result, HasSubstr("Page 1 content"));
   EXPECT_THAT(result, HasSubstr("Page 2 content"));
 }
@@ -525,8 +555,7 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MultiPageArticle) {
 #else
 #define MAYBE_PrefChange PrefChange
 #endif
-IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
-                       MAYBE_PrefChange) {
+IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, MAYBE_PrefChange) {
   PrefTest(false);
 }
 
@@ -541,63 +570,58 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   PrefTest(true);
 }
 
-
 void DomDistillerViewerSourceBrowserTest::PrefTest(bool is_error_page) {
-  GURL url;
+  GURL view_url;
   if (is_error_page) {
     expect_distillation_ = false;
     expect_distiller_page_ = false;
-    url = GURL("chrome-distiller://bad");
+    view_url = GURL("chrome-distiller://bad");
   } else {
     expect_distillation_ = true;
     expect_distiller_page_ = true;
-    GURL view_url("http://www.example.com/1");
-    url = url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme, view_url);
+    GURL original_url("http://www.example.com/1");
+    view_url = url_utils::GetDistillerViewUrlFromUrl(kDomDistillerScheme,
+                                                     original_url);
   }
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  ViewSingleDistilledPage(url, "text/html");
+  ViewSingleDistilledPage(view_url, "text/html");
   content::WaitForLoadStop(contents);
-  std::string result;
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetBodyClass, &result));
-  EXPECT_EQ("light sans-serif", result);
+  ExpectBodyHasThemeAndFont(contents, "light", "sans-serif");
 
   DistilledPagePrefs* distilled_page_prefs =
-       DomDistillerServiceFactory::GetForBrowserContext(
-            browser()->profile())->GetDistilledPagePrefs();
+      DomDistillerServiceFactory::GetForBrowserContext(browser()->profile())
+          ->GetDistilledPagePrefs();
 
   // Test theme.
-  distilled_page_prefs->SetTheme(DistilledPagePrefs::DARK);
+  distilled_page_prefs->SetTheme(DistilledPagePrefs::THEME_DARK);
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetBodyClass, &result));
-  EXPECT_EQ("dark sans-serif", result);
+  ExpectBodyHasThemeAndFont(contents, "dark", "sans-serif");
 
   // Verify that the theme color for the tab is updated as well.
   EXPECT_EQ(kDarkToolbarThemeColor, contents->GetThemeColor());
 
   // Test font family.
-  distilled_page_prefs->SetFontFamily(DistilledPagePrefs::SERIF);
+  distilled_page_prefs->SetFontFamily(
+      DistilledPagePrefs::FONT_FAMILY_MONOSPACE);
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(
-      content::ExecuteScriptAndExtractString(contents, kGetBodyClass, &result));
-  EXPECT_EQ("dark serif", result);
+  ExpectBodyHasThemeAndFont(contents, "dark", "monospace");
 
   // Test font scaling.
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetFontSize, &result));
+  std::string result;
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetFontSize, &result));
   double oldFontSize;
   base::StringToDouble(result, &oldFontSize);
 
   const double kScale = 1.23;
   distilled_page_prefs->SetFontScaling(kScale);
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetFontSize, &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetFontSize, &result));
   double fontSize;
   base::StringToDouble(result, &fontSize);
-  ASSERT_FLOAT_EQ(kScale, fontSize/oldFontSize);
+  ASSERT_FLOAT_EQ(kScale, fontSize / oldFontSize);
 }
 
 IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, PrefPersist) {
@@ -611,30 +635,30 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, PrefPersist) {
 
   std::string result;
   DistilledPagePrefs* distilled_page_prefs =
-       DomDistillerServiceFactory::GetForBrowserContext(
-            browser()->profile())->GetDistilledPagePrefs();
+      DomDistillerServiceFactory::GetForBrowserContext(browser()->profile())
+          ->GetDistilledPagePrefs();
 
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetFontSize, &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetFontSize, &result));
   double oldFontSize;
   base::StringToDouble(result, &oldFontSize);
 
   // Set preference.
   const double kScale = 1.23;
-  distilled_page_prefs->SetTheme(DistilledPagePrefs::DARK);
-  distilled_page_prefs->SetFontFamily(DistilledPagePrefs::SERIF);
+  distilled_page_prefs->SetTheme(DistilledPagePrefs::THEME_DARK);
+  distilled_page_prefs->SetFontFamily(
+      DistilledPagePrefs::FONT_FAMILY_MONOSPACE);
   distilled_page_prefs->SetFontScaling(kScale);
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetBodyClass, &result));
-  EXPECT_EQ("dark serif", result);
+  ExpectBodyHasThemeAndFont(contents, "dark", "monospace");
+
   EXPECT_EQ(kDarkToolbarThemeColor, contents->GetThemeColor());
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetFontSize, &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetFontSize, &result));
   double fontSize;
   base::StringToDouble(result, &fontSize);
-  ASSERT_FLOAT_EQ(kScale, fontSize/oldFontSize);
+  ASSERT_FLOAT_EQ(kScale, fontSize / oldFontSize);
 
   // Make sure perf persist across web pages.
   GURL url2("chrome-distiller://bad2");
@@ -642,15 +666,15 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest, PrefPersist) {
   content::WaitForLoadStop(contents);
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetBodyClass, &result));
-  EXPECT_EQ("dark serif", result);
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetBodyClass, &result));
+  ExpectBodyHasThemeAndFont(contents, "dark", "monospace");
   EXPECT_EQ(kDarkToolbarThemeColor, contents->GetThemeColor());
 
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
-      contents, kGetFontSize, &result));
+  EXPECT_TRUE(
+      content::ExecuteScriptAndExtractString(contents, kGetFontSize, &result));
   base::StringToDouble(result, &fontSize);
-  ASSERT_FLOAT_EQ(kScale, fontSize/oldFontSize);
+  ASSERT_FLOAT_EQ(kScale, fontSize / oldFontSize);
 }
 
 }  // namespace dom_distiller

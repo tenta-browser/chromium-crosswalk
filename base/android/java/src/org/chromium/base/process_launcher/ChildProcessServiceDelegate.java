@@ -32,9 +32,6 @@ public interface ChildProcessServiceDelegate {
      */
     void onConnectionSetup(Bundle connectionBundle, List<IBinder> clientInterfaces);
 
-    /** Called when the service gets destroyed. */
-    void onDestroy();
-
     /**
      * Called when the delegate should load the native library.
      * @param hostContext The host context the library should be loaded with (i.e. Chrome).

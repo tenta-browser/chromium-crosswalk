@@ -3,31 +3,19 @@
 // found in the LICENSE file.
 
 /**
- * @typedef {{
- *   cache: (boolean|undefined),
- *   priority: (number|undefined),
- *   taskId: number,
- *   timestamp: (number|undefined),
- *   url: string,
- *   orientation: !ImageOrientation,
- *   colorSpace: ?ColorSpace
- * }}
- */
-var LoadImageRequest;
-
-/**
  * Creates and starts downloading and then resizing of the image. Finally,
  * returns the image using the callback.
  *
  * @param {string} id Request ID.
  * @param {ImageCache} cache Cache object.
  * @param {!PiexLoader} piexLoader Piex loader for RAW file.
- * @param {LoadImageRequest} request Request message as a hash array.
- * @param {function(Object)} callback Callback used to send the response.
+ * @param {!LoadImageRequest} request Request message as a hash array.
+ * @param {function(!LoadImageResponse)} callback Response handler.
  * @constructor
  */
 function ImageRequest(id, cache, piexLoader, request, callback) {
   /**
+   * Global ID (concatenated client ID and client request ID).
    * @type {string}
    * @private
    */
@@ -46,13 +34,13 @@ function ImageRequest(id, cache, piexLoader, request, callback) {
   this.piexLoader_ = piexLoader;
 
   /**
-   * @type {LoadImageRequest}
+   * @type {!LoadImageRequest}
    * @private
    */
   this.request_ = request;
 
   /**
-   * @type {function(Object)}
+   * @type {function(!LoadImageResponse)}
    * @private
    */
   this.sendResponse_ = callback;
@@ -70,6 +58,14 @@ function ImageRequest(id, cache, piexLoader, request, callback) {
    * @private
    */
   this.contentType_ = null;
+
+  /**
+   * IFD data of the fetched image. Only RAW images provide non-null ifd
+   * data at this time; images on Drive might provide ifd in future.
+   * @type {?string}
+   * @private
+   */
+  this.ifd_ = null;
 
   /**
    * Used to download remote images using http:// or https:// protocols.
@@ -112,11 +108,29 @@ function ImageRequest(id, cache, piexLoader, request, callback) {
 ImageRequest.VIDEO_THUMBNAIL_POSITION = 3; // [sec]
 
 /**
+ * The maximum milliseconds to load video. If loading video exceeds the limit,
+ * we give up generating video thumbnail and free the consumed memory.
+ * @const
+ * @type {number}
+ */
+ImageRequest.MAX_MILLISECONDS_TO_LOAD_VIDEO = 3000;
+
+/**
  * Returns ID of the request.
  * @return {string} Request ID.
  */
 ImageRequest.prototype.getId = function() {
   return this.id_;
+};
+
+/**
+ * Returns the client's task ID for the request.
+ * @return {number}
+ */
+ImageRequest.prototype.getClientTaskId = function() {
+  // Every incoming request should have been given a taskId.
+  assert(this.request_.taskId);
+  return this.request_.taskId;
 };
 
 /**
@@ -130,7 +144,8 @@ ImageRequest.prototype.getPriority = function() {
 };
 
 /**
- * Tries to load the image from cache if exists and sends the response.
+ * Tries to load the image from cache, if it exists in the cache, and sends
+ * the response. Fails if the image is not found in the cache.
  *
  * @param {function()} onSuccess Success callback.
  * @param {function()} onFailure Failure callback.
@@ -138,8 +153,9 @@ ImageRequest.prototype.getPriority = function() {
 ImageRequest.prototype.loadFromCacheAndProcess = function(
     onSuccess, onFailure) {
   this.loadFromCache_(
-      function(data, width, height) {  // Found in cache.
-        this.sendImageData_(data, width, height);
+      function(width, height, ifd, data) {  // Found in cache.
+        this.ifd_ = ifd;
+        this.sendImageData_(width, height, data);
         onSuccess();
       }.bind(this),
       onFailure);  // Not found in cache.
@@ -147,11 +163,13 @@ ImageRequest.prototype.loadFromCacheAndProcess = function(
 
 /**
  * Tries to download the image, resizes and sends the response.
+ *
  * @param {function()} callback Completion callback.
  */
 ImageRequest.prototype.downloadAndProcess = function(callback) {
-  if (this.downloadCallback_)
+  if (this.downloadCallback_) {
     throw new Error('Downloading already started.');
+  }
 
   this.downloadCallback_ = callback;
   this.downloadOriginal_(this.onImageLoad_.bind(this),
@@ -161,12 +179,13 @@ ImageRequest.prototype.downloadAndProcess = function(callback) {
 /**
  * Fetches the image from the persistent cache.
  *
- * @param {function(string, number, number)} onSuccess Success callback.
+ * @param {function(number, number, ?string, string)} onSuccess
+ *    Success callback with the image width, height, ?ifd, and data.
  * @param {function()} onFailure Failure callback.
  * @private
  */
 ImageRequest.prototype.loadFromCache_ = function(onSuccess, onFailure) {
-  var cacheKey = ImageCache.createKey(this.request_);
+  const cacheKey = LoadImageRequest.cacheKey(this.request_);
 
   if (!cacheKey) {
     // Cache key is not provided for the request.
@@ -182,43 +201,39 @@ ImageRequest.prototype.loadFromCache_ = function(onSuccess, onFailure) {
     return;
   }
 
-  if (!this.request_.timestamp) {
+  const timestamp = this.request_.timestamp;
+  if (!timestamp) {
     // Persistent cache is available only when a timestamp is provided.
     onFailure();
     return;
   }
 
-  this.cache_.loadImage(cacheKey,
-                        this.request_.timestamp,
-                        onSuccess,
-                        onFailure);
+  this.cache_.loadImage(cacheKey, timestamp, onSuccess, onFailure);
 };
 
 /**
  * Saves the image to the persistent cache.
  *
- * @param {string} data The image's data.
  * @param {number} width Image width.
  * @param {number} height Image height.
+ * @param {string} data Image data.
  * @private
  */
-ImageRequest.prototype.saveToCache_ = function(data, width, height) {
-  if (!this.request_.cache || !this.request_.timestamp) {
+ImageRequest.prototype.saveToCache_ = function(width, height, data) {
+  const timestamp = this.request_.timestamp;
+
+  if (!this.request_.cache || !timestamp) {
     // Persistent cache is available only when a timestamp is provided.
     return;
   }
 
-  var cacheKey = ImageCache.createKey(this.request_);
+  const cacheKey = LoadImageRequest.cacheKey(this.request_);
   if (!cacheKey) {
     // Cache key is not provided for the request.
     return;
   }
 
-  this.cache_.saveImage(cacheKey,
-                        data,
-                        width,
-                        height,
-                        this.request_.timestamp);
+  this.cache_.saveImage(cacheKey, timestamp, width, height, this.ifd_, data);
 };
 
 /**
@@ -245,22 +260,38 @@ ImageRequest.prototype.downloadOriginal_ = function(onSuccess, onFailure) {
     this.contentType_ = dataUrlMatches[1];
     return;
   }
+  var drivefsUrlMatches = this.request_.url.match(/^drivefs:(.*)/);
+  if (drivefsUrlMatches) {
+    window.webkitResolveLocalFileSystemURL(
+        drivefsUrlMatches[1],
+        entry => {
+          chrome.fileManagerPrivate.getThumbnail(
+              entry, !!this.request_.crop, thumbnail => {
+                if (!thumbnail) {
+                  onFailure();
+                  return;
+                }
+                this.image_.src = thumbnail;
+                this.contentType_ = 'image/png';
+              });
+        },
+        error => {
+          onFailure();
+        });
+    return;
+  }
 
   var fileType = FileType.getTypeForName(this.request_.url);
 
   // Load RAW images by using Piex loader instead of XHR.
   if (fileType.type === 'raw') {
-    var timer = metrics.getTracker().startTiming(
-        metrics.Categories.INTERNALS,
-        metrics.timing.Variables.EXTRACT_THUMBNAIL_FROM_RAW,
-        fileType.subtype);
     this.piexLoader_.load(this.request_.url).then(function(data) {
-      timer.send();
       var blob = new Blob([data.thumbnail], {type: 'image/jpeg'});
       var url = URL.createObjectURL(blob);
       this.image_.src = url;
       this.request_.orientation = data.orientation;
       this.request_.colorSpace = data.colorSpace;
+      this.ifd_ = data.ifd;
     }.bind(this), function() {
       // The error has already been logged in PiexLoader.
       onFailure();
@@ -281,8 +312,9 @@ ImageRequest.prototype.downloadOriginal_ = function(onSuccess, onFailure) {
 
   // Fetch the image via authorized XHR and parse it.
   var parseImage = function(contentType, blob) {
-    if (contentType)
+    if (contentType) {
       this.contentType_ = contentType;
+    }
     this.image_.src = URL.createObjectURL(blob);
   }.bind(this);
 
@@ -299,20 +331,38 @@ ImageRequest.prototype.downloadOriginal_ = function(onSuccess, onFailure) {
  * @private
  */
 ImageRequest.prototype.createVideoThumbnailUrl_ = function(url) {
-  var video = document.createElement('video');
-  return new Promise(function(resolve, reject) {
-    video.addEventListener('canplay', resolve);
-    video.addEventListener('error', reject);
-    video.currentTime = ImageRequest.VIDEO_THUMBNAIL_POSITION;
-    video.preload = 'auto';
-    video.src = url;
-  }).then(function() {
-    var canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-    return canvas.toDataURL();
-  });
+  const video =
+      assertInstanceof(document.createElement('video'), HTMLVideoElement);
+  return Promise
+      .race([
+        new Promise((resolve, reject) => {
+          video.addEventListener('canplay', resolve);
+          video.addEventListener('error', reject);
+          video.currentTime = ImageRequest.VIDEO_THUMBNAIL_POSITION;
+          video.preload = 'auto';
+          video.src = url;
+          video.load();
+        }),
+        new Promise((resolve) => {
+          setTimeout(resolve, ImageRequest.MAX_MILLISECONDS_TO_LOAD_VIDEO);
+        }).then(() => {
+          // If we don't receive 'canplay' event after 3 seconds have passed for
+          // some reason (e.g. unseekable video), we give up generating
+          // thumbnail.
+          video.src =
+              '';  // Make sure to stop loading remaining part of the video.
+          throw new Error('Seeking video failed.');
+        })
+      ])
+      .then(() => {
+        const canvas = assertInstanceof(
+            document.createElement('canvas'), HTMLCanvasElement);
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        assertInstanceof(canvas.getContext('2d'), CanvasRenderingContext2D)
+            .drawImage(video, 0, 0);
+        return canvas.toDataURL();
+      });
 };
 
 /**
@@ -342,8 +392,9 @@ AuthorizedXHR.ExtensionContentTypeMap = {
  */
 AuthorizedXHR.prototype.abort = function() {
   this.aborted_ = true;
-  if (this.xhr_)
+  if (this.xhr_) {
     this.xhr_.abort();
+  }
 };
 
 /**
@@ -367,22 +418,24 @@ AuthorizedXHR.prototype.load = function(url, onSuccess, onFailure) {
               this.extractExtension_(url)];
         }
 
-        if (!this.aborted_)
+        if (!this.aborted_) {
           onSuccess(contentType, response);
+        }
       }.bind(this));
 
-  var onMaybeFailure = /** @type {function(number=)} */ (
-      function(opt_code) {
-        if (!this.aborted_)
-          onFailure();
-      }.bind(this));
+  var onMaybeFailure = /** @type {function(number=)} */ (function(opt_code) {
+    if (!this.aborted_) {
+      onFailure();
+    }
+  }.bind(this));
 
   // Fetches the access token and makes an authorized call. If refresh is true,
   // then forces refreshing the access token.
   var requestTokenAndCall = function(refresh, onInnerSuccess, onInnerFailure) {
     chrome.fileManagerPrivate.requestAccessToken(refresh, function(token) {
-      if (this.aborted_)
+      if (this.aborted_) {
         return;
+      }
       if (!token) {
         onInnerFailure();
         return;
@@ -394,8 +447,9 @@ AuthorizedXHR.prototype.load = function(url, onSuccess, onFailure) {
 
   // Refreshes the access token and retries the request.
   var maybeRetryCall = function(code) {
-    if (this.aborted_)
+    if (this.aborted_) {
       return;
+    }
     requestTokenAndCall(true, onMaybeSuccess, onMaybeFailure);
   }.bind(this);
 
@@ -441,26 +495,28 @@ AuthorizedXHR.prototype.extractExtension_ = function(url) {
  * @private
  */
 AuthorizedXHR.load_ = function(token, url, onSuccess, onFailure) {
-  var xhr = new XMLHttpRequest();
+  let xhr = new XMLHttpRequest();
   xhr.responseType = 'blob';
 
   xhr.onreadystatechange = function() {
-    if (xhr.readyState != 4)
+    if (xhr.readyState != 4) {
       return;
+    }
     if (xhr.status != 200) {
       onFailure(xhr.status);
       return;
     }
-    var contentType = xhr.getResponseHeader('Content-Type') ||
-      xhr.response.type;
-    onSuccess(contentType, /** @type {Blob} */ (xhr.response));
+    let response = /** @type {Blob} */ (xhr.response);
+    let contentType = xhr.getResponseHeader('Content-Type') || response.type;
+    onSuccess(contentType, response);
   }.bind(this);
 
   // Perform a xhr request.
   try {
     xhr.open('GET', url, true);
-    if (token)
+    if (token) {
       xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    }
     xhr.send();
   } catch (e) {
     onFailure();
@@ -477,15 +533,16 @@ AuthorizedXHR.load_ = function(token, url, onSuccess, onFailure) {
  * @private
  */
 ImageRequest.prototype.sendImage_ = function(imageChanged) {
-  var imageData;
-  var width;
-  var height;
+  let width;
+  let height;
+  let data;
+
   if (!imageChanged) {
     // The image hasn't been processed, so the raw data can be directly
     // forwarded for speed (no need to encode the image again).
-    imageData = this.image_.src;
     width = this.image_.width;
     height = this.image_.height;
+    data = this.image_.src;
   } else {
     // The image has been resized or rotated, therefore the canvas has to be
     // encoded to get the correct compressed image data.
@@ -497,31 +554,32 @@ ImageRequest.prototype.sendImage_ = function(imageChanged) {
       case 'image/png':
       case 'image/svg':
       case 'image/bmp':
-        imageData = this.canvas_.toDataURL('image/png');
+        data = this.canvas_.toDataURL('image/png');
         break;
       case 'image/jpeg':
       default:
-        imageData = this.canvas_.toDataURL('image/jpeg', 0.9);
+        data = this.canvas_.toDataURL('image/jpeg', 0.9);
+        break;
     }
   }
 
-  // Send and store in the persistent cache.
-  this.sendImageData_(imageData, width, height);
-  this.saveToCache_(imageData, width, height);
+  // Send the image data and also save it in the persistent cache.
+  this.sendImageData_(width, height, data);
+  this.saveToCache_(width, height, data);
 };
 
 /**
  * Sends the resized image via the callback.
- * @param {string} data Compressed image data.
- * @param {number} width Width.
- * @param {number} height Height.
+ *
+ * @param {number} width Image width.
+ * @param {number} height Image height.
+ * @param {string} data Image data.
  * @private
  */
-ImageRequest.prototype.sendImageData_ = function(data, width, height) {
-  this.sendResponse_({
-    status: 'success', data: data, width: width, height: height,
-    taskId: this.request_.taskId
-  });
+ImageRequest.prototype.sendImageData_ = function(width, height, data) {
+  const result = {width, height, ifd: this.ifd_, data};
+  this.sendResponse_(new LoadImageResponse(
+      LoadImageResponseStatus.SUCCESS, this.getClientTaskId(), result));
 };
 
 /**
@@ -532,10 +590,10 @@ ImageRequest.prototype.sendImageData_ = function(data, width, height) {
 ImageRequest.prototype.onImageLoad_ = function() {
   // Perform processing if the url is not a data url, or if there are some
   // operations requested.
-  if (!this.request_.url.match(/^data/) ||
-      ImageLoaderUtil.shouldProcess(this.image_.width,
-                                    this.image_.height,
-                                    this.request_)) {
+  if (!(this.request_.url.match(/^data/) ||
+        this.request_.url.match(/^drivefs:/)) ||
+      ImageLoaderUtil.shouldProcess(
+          this.image_.width, this.image_.height, this.request_)) {
     ImageLoaderUtil.resizeAndCrop(this.image_, this.canvas_, this.request_);
     ImageLoaderUtil.convertColorSpace(
         this.canvas_, this.request_.colorSpace || ColorSpace.SRGB);
@@ -553,8 +611,8 @@ ImageRequest.prototype.onImageLoad_ = function() {
  * @private
  */
 ImageRequest.prototype.onImageError_ = function() {
-  this.sendResponse_(
-      {status: 'error', taskId: this.request_.taskId});
+  this.sendResponse_(new LoadImageResponse(
+      LoadImageResponseStatus.ERROR, this.getClientTaskId()));
   this.cleanup_();
   this.downloadCallback_();
 };
@@ -566,8 +624,9 @@ ImageRequest.prototype.cancel = function() {
   this.cleanup_();
 
   // If downloading has started, then call the callback.
-  if (this.downloadCallback_)
+  if (this.downloadCallback_) {
     this.downloadCallback_();
+  }
 };
 
 /**
@@ -582,7 +641,6 @@ ImageRequest.prototype.cleanup_ = function() {
   this.image_.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAA' +
       'ABAAEAAAICTAEAOw==';
 
-  this.xhr_.onload = function() {};
   this.xhr_.abort();
 
   // Dispose memory allocated by Canvas.

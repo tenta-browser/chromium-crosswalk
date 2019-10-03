@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -227,11 +229,11 @@ TEST_F(ImageTest, MultiResolutionPNGToImageSkia) {
   scales.push_back(1.0f);
   scales.push_back(2.0f);
   gfx::ImageSkia image_skia = image.AsImageSkia();
-  EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(bytes1x,
-      image_skia.GetRepresentation(1.0f).sk_bitmap(),
+  EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(
+      bytes1x, image_skia.GetRepresentation(1.0f).GetBitmap(),
       gt::MaxColorSpaceConversionColorShift()));
-  EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(bytes2x,
-      image_skia.GetRepresentation(2.0f).sk_bitmap(),
+  EXPECT_TRUE(gt::ArePNGBytesCloseToBitmap(
+      bytes2x, image_skia.GetRepresentation(2.0f).GetBitmap(),
       gt::MaxColorSpaceConversionColorShift()));
   EXPECT_TRUE(gt::ImageSkiaStructureMatches(image_skia, kSize1x, kSize1x,
                                             scales));
@@ -249,15 +251,7 @@ TEST_F(ImageTest, MultiResolutionPNGToImageSkia) {
 #endif
 }
 
-// TODO(crbug.com/153782): disable this test as it fails on iOS retina devices.
-#if defined(OS_IOS)
-#define MAYBE_MultiResolutionPNGToPlatform \
-    DISABLED_MultiResolutionPNGToPlatform
-#else
-#define MAYBE_MultiResolutionPNGToPlatform \
-    MultiResolutionPNGToPlatform
-#endif
-TEST_F(ImageTest, MAYBE_MultiResolutionPNGToPlatform) {
+TEST_F(ImageTest, MultiResolutionPNGToPlatform) {
   const int kSize1x = 25;
   const int kSize2x = 50;
 
@@ -307,15 +301,7 @@ TEST_F(ImageTest, PlatformToPNGEncodeAndDecode) {
 
 // The platform types use the platform provided encoding/decoding of PNGs. Make
 // sure these work with the Skia Encode/Decode.
-// TODO(crbug.com/153782): disable this test as it fails on iOS retina devices.
-#if defined(OS_IOS)
-#define MAYBE_PNGEncodeFromSkiaDecodeToPlatform \
-    DISABLED_PNGEncodeFromSkiaDecodeToPlatform
-#else
-#define MAYBE_PNGEncodeFromSkiaDecodeToPlatform \
-    PNGEncodeFromSkiaDecodeToPlatform
-#endif
-TEST_F(ImageTest, MAYBE_PNGEncodeFromSkiaDecodeToPlatform) {
+TEST_F(ImageTest, PNGEncodeFromSkiaDecodeToPlatform) {
   // Force the conversion sequence skia to png to platform_type.
   gfx::Image from_bitmap = gfx::Image::CreateFrom1xBitmap(
       gt::CreateBitmap(25, 25));
@@ -434,41 +420,6 @@ TEST_F(ImageTest, PlatformToPlatform) {
   EXPECT_EQ(25, image.Width());
   EXPECT_EQ(25, image.Height());
 }
-
-TEST_F(ImageTest, PlatformToSkiaToCopy) {
-  const gfx::ImageSkia* image_skia = NULL;
-  {
-    gfx::Image image(gt::CreatePlatformImage());
-    image_skia = image.CopyImageSkia();
-  }
-  EXPECT_TRUE(image_skia);
-  EXPECT_FALSE(image_skia->isNull());
-  delete image_skia;
-
-  const SkBitmap* bitmap = NULL;
-  {
-    gfx::Image image(gt::CreatePlatformImage());
-    bitmap = image.CopySkBitmap();
-  }
-
-  EXPECT_TRUE(bitmap);
-  EXPECT_FALSE(bitmap->isNull());
-  delete bitmap;
-}
-
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-TEST_F(ImageTest, SkiaToCocoaCopy) {
-  NSImage* ns_image;
-
-  {
-    gfx::Image image(gt::CreateImageSkia(25, 25));
-    ns_image = image.CopyNSImage();
-  }
-
-  EXPECT_TRUE(ns_image);
-  base::mac::NSObjectRelease(ns_image);
-}
-#endif
 
 TEST_F(ImageTest, CheckSkiaColor) {
   gfx::Image image(gt::CreatePlatformImage());
@@ -624,6 +575,72 @@ TEST_F(ImageTest, MoveAssign) {
 
   EXPECT_EQ(0U, image1.RepresentationCount());
   EXPECT_EQ(1U, image2.RepresentationCount());
+}
+
+TEST_F(ImageTest, Copy_PreservesRepresentation) {
+  const gfx::Size kSize1x(25, 25);
+  const gfx::Size kSize2x(50, 50);
+  std::vector<gfx::ImagePNGRep> image_png_reps;
+  image_png_reps.push_back(
+      gfx::ImagePNGRep(gt::CreatePNGBytes(kSize1x.width()), 1.0f));
+  image_png_reps.push_back(
+      gfx::ImagePNGRep(gt::CreatePNGBytes(kSize2x.width()), 2.0f));
+  gfx::Image image(image_png_reps);
+
+  gfx::ImageSkia image_skia = image.AsImageSkia();
+  EXPECT_EQ(kSize1x, image_skia.size());
+  SkISize size = image_skia.GetRepresentation(2.0f).GetBitmap().dimensions();
+  EXPECT_EQ(kSize2x, gfx::Size(size.fWidth, size.fHeight));
+
+  gfx::Image image2(image);
+  gfx::ImageSkia image_skia2 = image2.AsImageSkia();
+  EXPECT_EQ(kSize1x, image_skia2.size());
+  size = image_skia2.GetRepresentation(2.0f).GetBitmap().dimensions();
+  EXPECT_EQ(kSize2x, gfx::Size(size.fWidth, size.fHeight));
+
+  EXPECT_TRUE(image_skia.BackedBySameObjectAs(image_skia2));
+}
+
+TEST_F(ImageTest, Copy_PreventsDuplication) {
+  const gfx::Size kSize1x(25, 25);
+  const gfx::Size kSize2x(50, 50);
+  std::vector<gfx::ImagePNGRep> image_png_reps;
+  image_png_reps.push_back(
+      gfx::ImagePNGRep(gt::CreatePNGBytes(kSize1x.width()), 1.0f));
+  image_png_reps.push_back(
+      gfx::ImagePNGRep(gt::CreatePNGBytes(kSize2x.width()), 2.0f));
+  gfx::Image image(image_png_reps);
+
+  gfx::Image image2(image);
+
+  gfx::ImageSkia image_skia = image.AsImageSkia();
+  EXPECT_EQ(kSize1x, image_skia.size());
+  SkISize size = image_skia.GetRepresentation(2.0f).GetBitmap().dimensions();
+  EXPECT_EQ(kSize2x, gfx::Size(size.fWidth, size.fHeight));
+
+  gfx::ImageSkia image_skia2 = image2.AsImageSkia();
+  EXPECT_EQ(kSize1x, image_skia2.size());
+  size = image_skia2.GetRepresentation(2.0f).GetBitmap().dimensions();
+  EXPECT_EQ(kSize2x, gfx::Size(size.fWidth, size.fHeight));
+
+  EXPECT_TRUE(image_skia.BackedBySameObjectAs(image_skia2));
+}
+
+TEST_F(ImageTest, Copy_PreservesBackingStore) {
+  const gfx::Size kSize1x(25, 25);
+
+  gfx::Image image(gt::CreateImageSkia(kSize1x.width(), kSize1x.height()));
+  gfx::Image image2 = gfx::Image::CreateFrom1xBitmap(image.AsBitmap());
+
+  gfx::ImageSkia image_skia = image.AsImageSkia();
+  gfx::ImageSkia image_skia2 = image2.AsImageSkia();
+
+  // Because we haven't copied the image representation (scale info, etc.) the
+  // new Skia image isn't backed by the same object, but it should still contain
+  // the same bitmap data.
+  EXPECT_FALSE(image_skia2.BackedBySameObjectAs(image_skia));
+  EXPECT_EQ(image_skia.bitmap()->getPixels(),
+            image_skia2.bitmap()->getPixels());
 }
 
 TEST_F(ImageTest, MultiResolutionImageSkia) {

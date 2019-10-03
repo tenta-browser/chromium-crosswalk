@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
@@ -71,8 +70,10 @@ base::string16 ExtensionMessageBubbleBridge::GetDismissButtonText() {
   return controller_->delegate()->GetDismissButtonLabel();
 }
 
-base::string16 ExtensionMessageBubbleBridge::GetLearnMoreButtonText() {
-  return controller_->delegate()->GetLearnMoreLabel();
+ui::DialogButton ExtensionMessageBubbleBridge::GetDefaultDialogButton() {
+  // TODO(estade): we should set a default where appropriate. See
+  // http://crbug.com/751279
+  return ui::DIALOG_BUTTON_NONE;
 }
 
 std::string ExtensionMessageBubbleBridge::GetAnchorActionId() {
@@ -116,17 +117,17 @@ ExtensionMessageBubbleBridge::GetExtraViewInfo() {
   DCHECK(extension);
 
   std::unique_ptr<ExtraViewInfo> extra_view_info =
-      base::MakeUnique<ExtraViewInfo>();
+      std::make_unique<ExtraViewInfo>();
 
   if (IsPolicyIndicationNeeded(extension)) {
     DCHECK_EQ(1u, list.size());
     extra_view_info->resource = &vector_icons::kBusinessIcon;
     extra_view_info->text =
         l10n_util::GetStringUTF16(IDS_EXTENSIONS_INSTALLED_BY_ADMIN);
-    extra_view_info->is_text_linked = false;
+    extra_view_info->is_learn_more = false;
   } else {
     extra_view_info->text = controller_->delegate()->GetLearnMoreLabel();
-    extra_view_info->is_text_linked = true;
+    extra_view_info->is_learn_more = true;
   }
 
   return extra_view_info;

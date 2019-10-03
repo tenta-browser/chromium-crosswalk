@@ -29,25 +29,10 @@ class Screen;
 //  and persistent storage (using preferences) but can be overrided with mocks
 //  for testing.
 //
+// TODO(crbug.com/846736): Extract the platform-specific code out of this class.
 class WindowSizer {
  public:
   class StateProvider;
-  class TargetDisplayProvider;
-
-  // WindowSizer owns |state_provider| and |target_display_provider|,
-  // and will use the platforms's display::Screen.
-  WindowSizer(std::unique_ptr<StateProvider> state_provider,
-              std::unique_ptr<TargetDisplayProvider> target_display_provider,
-              const Browser* browser);
-
-  // WindowSizer owns |state_provider| and |target_display_provider|,
-  // and will use the supplied |screen|. Used only for testing.
-  WindowSizer(std::unique_ptr<StateProvider> state_provider,
-              std::unique_ptr<TargetDisplayProvider> target_display_provider,
-              display::Screen* screen,
-              const Browser* browser);
-
-  virtual ~WindowSizer();
 
   // An interface implemented by an object that can retrieve state from either a
   // persistent store or an existing window.
@@ -71,17 +56,6 @@ class WindowSizer {
     virtual bool GetLastActiveWindowState(
         gfx::Rect* bounds,
         ui::WindowShowState* show_state) const = 0;
-  };
-
-  // An interface implemented by an object to identify on which
-  // display a new window should be located.
-  class TargetDisplayProvider {
-   public:
-    virtual ~TargetDisplayProvider() {}
-
-    virtual display::Display GetTargetDisplay(
-        const display::Screen* screen,
-        const gfx::Rect& bounds) const = 0;
   };
 
   // Determines the position and size for a window as it is created as well
@@ -119,9 +93,27 @@ class WindowSizer {
   // The maximum default window width. This value may differ between platforms.
   static const int kWindowMaxDefaultWidth;
 
+#if defined(OS_CHROMEOS)
+  // The number of pixels which are kept free top, left and right when a window
+  // gets positioned to its default location.
+  static const int kDesktopBorderSize = 16;
+
+  // Maximum width of a window even if there is more room on the desktop.
+  static const int kMaximumWindowWidth = 1100;
+#endif
+
+ protected:
+  const StateProvider* state_provider() const { return state_provider_.get(); }
+
  private:
-  // The edge of the screen to check for out-of-bounds.
-  enum Edge { TOP, LEFT, BOTTOM, RIGHT };
+  friend class WindowSizerAshTest;
+  friend class WindowSizerTestUtil;
+
+  // WindowSizer will use the platforms's display::Screen.
+  WindowSizer(std::unique_ptr<StateProvider> state_provider,
+              const Browser* browser);
+
+  virtual ~WindowSizer();
 
   // Gets the size and placement of the last active window. Returns true if this
   // data is valid, false if there is no last window and the application should
@@ -157,11 +149,6 @@ class WindowSizer {
                                         const gfx::Rect& saved_work_area,
                                         gfx::Rect* bounds) const;
 
-  // Determine the target display for a new window based on
-  // |bounds|. On ash environment, this returns the display containing
-  // ash's the target root window.
-  display::Display GetTargetDisplay(const gfx::Rect& bounds) const;
-
 #if defined(OS_CHROMEOS)
   // Ash specific logic for window placement. Returns true if |bounds| and
   // |show_state| have been fully determined, otherwise returns false (but
@@ -178,16 +165,22 @@ class WindowSizer {
   // if it was set to SHOW_STATE_DEFAULT.
   void GetTabbedBrowserBoundsAsh(gfx::Rect* bounds,
                                  ui::WindowShowState* show_state) const;
+
+  // Returns the default bounds for a browser window on |display|.
+  static gfx::Rect GetDefaultWindowBoundsAsh(const display::Display& display);
 #endif
 
   // Determine the default show state for the window - not looking at other
   // windows or at persistent information.
   ui::WindowShowState GetWindowDefaultShowState() const;
 
+  // Returns the target display for a new window with |bounds| in screen
+  // coordinates.
+  static display::Display GetDisplayForNewWindow(
+      const gfx::Rect& bounds = gfx::Rect());
+
   // Providers for persistent storage and monitor metrics.
   std::unique_ptr<StateProvider> state_provider_;
-  std::unique_ptr<TargetDisplayProvider> target_display_provider_;
-  display::Screen* screen_;  // not owned.
 
   // Note that this browser handle might be NULL.
   const Browser* const browser_;

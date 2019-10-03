@@ -6,14 +6,16 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/persistent_memory_allocator.h"
+#include "base/task/post_task.h"
 #include "components/metrics/metrics_service.h"
 #include "content/public/browser/browser_child_process_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/notification_service.h"
@@ -29,7 +31,7 @@ SubprocessMetricsProvider* g_subprocess_metrics_provider_for_testing;
 }  // namespace
 
 SubprocessMetricsProvider::SubprocessMetricsProvider()
-    : scoped_observer_(this), weak_ptr_factory_(this) {
+    : scoped_observer_(this) {
   base::StatisticsRecorder::RegisterHistogramProvider(
       weak_ptr_factory_.GetWeakPtr());
   content::BrowserChildProcessObserver::Add(this);
@@ -53,7 +55,7 @@ void SubprocessMetricsProvider::MergeHistogramDeltasForTesting() {
 void SubprocessMetricsProvider::RegisterSubprocessAllocator(
     int id,
     std::unique_ptr<base::PersistentHistogramAllocator> allocator) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!allocators_by_id_.Lookup(id));
 
   // Stop now if this was called without an allocator, typically because
@@ -67,7 +69,7 @@ void SubprocessMetricsProvider::RegisterSubprocessAllocator(
 }
 
 void SubprocessMetricsProvider::DeregisterSubprocessAllocator(int id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!allocators_by_id_.Lookup(id))
     return;
@@ -103,7 +105,7 @@ void SubprocessMetricsProvider::MergeHistogramDeltasFromAllocator(
 }
 
 void SubprocessMetricsProvider::MergeHistogramDeltas() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   for (AllocatorByIdMap::iterator iter(&allocators_by_id_); !iter.IsAtEnd();
        iter.Advance()) {
@@ -118,39 +120,38 @@ void SubprocessMetricsProvider::MergeHistogramDeltas() {
 
 void SubprocessMetricsProvider::BrowserChildProcessHostConnected(
     const content::ChildProcessData& data) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // It's necessary to access the BrowserChildProcessHost object that is
   // managing the child in order to extract the metrics memory from it.
   // Unfortunately, the required lookup can only be performed on the IO
   // thread so do the necessary dance.
-  content::BrowserThread::PostTaskAndReplyWithResult(
-      content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&SubprocessMetricsProvider::
-                     GetSubprocessHistogramAllocatorOnIOThread,
-                 data.id),
-      base::Bind(&SubprocessMetricsProvider::
-                     RegisterSubprocessAllocator,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {content::BrowserThread::IO},
+      base::Bind(
+          &SubprocessMetricsProvider::GetSubprocessHistogramAllocatorOnIOThread,
+          data.id),
+      base::Bind(&SubprocessMetricsProvider::RegisterSubprocessAllocator,
                  weak_ptr_factory_.GetWeakPtr(), data.id));
 }
 
 void SubprocessMetricsProvider::BrowserChildProcessHostDisconnected(
     const content::ChildProcessData& data) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DeregisterSubprocessAllocator(data.id);
 }
 
 void SubprocessMetricsProvider::BrowserChildProcessCrashed(
     const content::ChildProcessData& data,
-    int exit_code) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    const content::ChildProcessTerminationInfo& info) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DeregisterSubprocessAllocator(data.id);
 }
 
 void SubprocessMetricsProvider::BrowserChildProcessKilled(
     const content::ChildProcessData& data,
-    int exit_code) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    const content::ChildProcessTerminationInfo& info) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DeregisterSubprocessAllocator(data.id);
 }
 
@@ -158,7 +159,7 @@ void SubprocessMetricsProvider::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
 
   content::RenderProcessHost* host =
@@ -172,31 +173,30 @@ void SubprocessMetricsProvider::Observe(
 
 void SubprocessMetricsProvider::RenderProcessReady(
     content::RenderProcessHost* host) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // If the render-process-host passed a persistent-memory-allocator to the
   // renderer process, extract it and register it here.
-  std::unique_ptr<base::SharedPersistentMemoryAllocator> allocator =
+  std::unique_ptr<base::PersistentMemoryAllocator> allocator =
       host->TakeMetricsAllocator();
   if (allocator) {
     RegisterSubprocessAllocator(
-        host->GetID(), base::MakeUnique<base::PersistentHistogramAllocator>(
+        host->GetID(), std::make_unique<base::PersistentHistogramAllocator>(
                            std::move(allocator)));
   }
 }
 
 void SubprocessMetricsProvider::RenderProcessExited(
     content::RenderProcessHost* host,
-    base::TerminationStatus status,
-    int exit_code) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+    const content::ChildProcessTerminationInfo& info) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   DeregisterSubprocessAllocator(host->GetID());
 }
 
 void SubprocessMetricsProvider::RenderProcessHostDestroyed(
     content::RenderProcessHost* host) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // It's possible for a Renderer to terminate without RenderProcessExited
   // (above) being called so it's necessary to de-register also upon the
@@ -216,11 +216,11 @@ SubprocessMetricsProvider::GetSubprocessHistogramAllocatorOnIOThread(int id) {
   if (!host)
     return nullptr;
 
-  std::unique_ptr<base::SharedPersistentMemoryAllocator> allocator =
+  std::unique_ptr<base::PersistentMemoryAllocator> allocator =
       host->TakeMetricsAllocator();
   if (!allocator)
     return nullptr;
 
-  return base::MakeUnique<base::PersistentHistogramAllocator>(
+  return std::make_unique<base::PersistentHistogramAllocator>(
       std::move(allocator));
 }

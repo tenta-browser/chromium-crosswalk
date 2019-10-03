@@ -17,6 +17,7 @@
 #include "base/process/launch.h"
 #include "base/process/process_info.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/win/registry.h"
@@ -221,10 +222,10 @@ bool ShouldRunUserExperiment(const InstallerState& installer_state) {
     return false;
 
   // The current experiment only applies to Windows 10 and newer.
-  if (base::win::GetVersion() < base::win::VERSION_WIN10)
+  if (base::win::GetVersion() < base::win::Version::WIN10)
     return false;
 
-  // Enterprise brand codes and domain joined machines are excluded.
+  // Installs originating from the MSI and domain joined machines are excluded.
   if (IsEnterpriseInstall(installer_state))
     return false;
 
@@ -272,7 +273,7 @@ void BeginUserExperiment(const InstallerState& installer_state,
       kExperimentRetryDelay,
   };
   setup_command.CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                                 kSwitchesToCopy, arraysize(kSwitchesToCopy));
+                                 kSwitchesToCopy, base::size(kSwitchesToCopy));
 
   if (user_context) {
     // This is either a per-user install or a per-machine install run via
@@ -530,7 +531,7 @@ void LaunchChrome(const InstallerState& installer_state,
   base::CommandLine command_line(chrome_exe);
 #if defined(OS_WIN)
   command_line.AppendSwitchNative(::switches::kTryChromeAgain,
-                                  base::IntToString16(experiment.group()));
+                                  base::NumberToString16(experiment.group()));
 #endif  // defined(OS_WIN)
 
   STARTUPINFOW startup_info = {sizeof(startup_info)};

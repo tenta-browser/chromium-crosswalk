@@ -13,17 +13,22 @@
  * Chrome OS only strings may be undefined.
  * @type {{
  *   controlledSettingExtension: string,
+ *   controlledSettingExtensionWithoutName: string,
  *   controlledSettingPolicy: string,
  *   controlledSettingRecommendedMatches: string,
  *   controlledSettingRecommendedDiffers: string,
  *   controlledSettingShared: (string|undefined),
- *   controlledSettingOwner: (string|undefined),
+ *   controlledSettingWithOwner: string,
+ *   controlledSettingNoOwner: string,
+ *   controlledSettingParent: string,
+ *   controlledSettingChildRestriction: string,
  * }}
  */
+// eslint-disable-next-line no-var
 var CrPolicyStrings;
 
 /** @enum {string} */
-var CrPolicyIndicatorType = {
+const CrPolicyIndicatorType = {
   DEVICE_POLICY: 'devicePolicy',
   EXTENSION: 'extension',
   NONE: 'none',
@@ -31,10 +36,12 @@ var CrPolicyIndicatorType = {
   PRIMARY_USER: 'primary_user',
   RECOMMENDED: 'recommended',
   USER_POLICY: 'userPolicy',
+  PARENT: 'parent',
+  CHILD_RESTRICTION: 'childRestriction',
 };
 
 /** @polymerBehavior */
-var CrPolicyIndicatorBehavior = {
+const CrPolicyIndicatorBehavior = {
   // Properties exposed to all policy indicators.
   properties: {
     /**
@@ -67,11 +74,6 @@ var CrPolicyIndicatorBehavior = {
       type: String,
       computed: 'getIndicatorIcon_(indicatorType)',
     },
-
-    indicatorTooltip: {
-      type: String,
-      computed: 'getIndicatorTooltip(indicatorType, indicatorSourceName)',
-    },
   },
 
   /**
@@ -102,6 +104,9 @@ var CrPolicyIndicatorBehavior = {
       case CrPolicyIndicatorType.DEVICE_POLICY:
       case CrPolicyIndicatorType.RECOMMENDED:
         return 'cr20:domain';
+      case CrPolicyIndicatorType.PARENT:
+      case CrPolicyIndicatorType.CHILD_RESTRICTION:
+        return 'cr20:kite';
       default:
         assertNotReached();
     }
@@ -116,15 +121,20 @@ var CrPolicyIndicatorBehavior = {
    * @return {string} The tooltip text for |type|.
    */
   getIndicatorTooltip: function(type, name, opt_matches) {
-    if (!CrPolicyStrings)
-      return '';  // Tooltips may not be defined, e.g. in OOBE.
+    if (!CrPolicyStrings) {
+      return '';
+    }  // Tooltips may not be defined, e.g. in OOBE.
     switch (type) {
       case CrPolicyIndicatorType.EXTENSION:
-        return CrPolicyStrings.controlledSettingExtension;
+        return name.length > 0 ?
+            CrPolicyStrings.controlledSettingExtension.replace('$1', name) :
+            CrPolicyStrings.controlledSettingExtensionWithoutName;
       case CrPolicyIndicatorType.PRIMARY_USER:
         return CrPolicyStrings.controlledSettingShared.replace('$1', name);
       case CrPolicyIndicatorType.OWNER:
-        return CrPolicyStrings.controlledSettingOwner.replace('$1', name);
+        return name.length > 0 ?
+            CrPolicyStrings.controlledSettingWithOwner.replace('$1', name) :
+            CrPolicyStrings.controlledSettingNoOwner;
       case CrPolicyIndicatorType.USER_POLICY:
       case CrPolicyIndicatorType.DEVICE_POLICY:
         return CrPolicyStrings.controlledSettingPolicy;
@@ -132,6 +142,10 @@ var CrPolicyIndicatorBehavior = {
         return opt_matches ?
             CrPolicyStrings.controlledSettingRecommendedMatches :
             CrPolicyStrings.controlledSettingRecommendedDiffers;
+      case CrPolicyIndicatorType.PARENT:
+        return CrPolicyStrings.controlledSettingParent;
+      case CrPolicyIndicatorType.CHILD_RESTRICTION:
+        return CrPolicyStrings.controlledSettingChildRestriction;
     }
     return '';
   },

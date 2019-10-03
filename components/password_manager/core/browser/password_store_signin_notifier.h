@@ -30,11 +30,8 @@ class PasswordStoreSigninNotifier {
  protected:
   void set_store(PasswordStore* store) { store_ = store; }
 
-  // Passes sign-in to |store_|.
-  void NotifySignin(const std::string& password);
-
   // Passes signed-out to |store_|.
-  void NotifySignedOut();
+  void NotifySignedOut(const std::string& username, bool primary_account);
 
  private:
   PasswordStore* store_ = nullptr;  // weak

@@ -28,7 +28,7 @@
 //
 //   LargeObjectList my_stuff;
 //   ... fill my_stuff with lots of LargeObjects ...
-//   some_loop->PostTask(FROM_HERE, base::Bind(&ProcessStuff, my_stuff));
+//   some_loop->PostTask(FROM_HERE, base::BindOnce(&ProcessStuff, my_stuff));
 //
 // The last line incurs the cost of copying my_stuff, which is
 // undesirable.  Here's the above code re-written using Immutable<T>:
@@ -57,9 +57,7 @@
 // (http://en.wikipedia.org/wiki/Argument-dependent_name_lookup) to
 // find a swap() function for T, falling back to std::swap() when
 // necessary.  If you overload swap() for your type in its namespace,
-// or if you specialize std::swap() for your type, (see
-// http://stackoverflow.com/questions/11562/how-to-overload-stdswap
-// for discussion) Immutable<T> should be able to find it.
+// Immutable<T> should be able to find it.
 //
 // Alternatively, you could explicitly control which swap function is
 // used by providing your own traits class or using one of the

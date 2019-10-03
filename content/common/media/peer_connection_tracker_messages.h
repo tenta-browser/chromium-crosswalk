@@ -15,39 +15,34 @@
 #define IPC_MESSAGE_START PeerConnectionTrackerMsgStart
 
 IPC_STRUCT_BEGIN(PeerConnectionInfo)
+  // ID of the peer connection. Unique only within the renderer process.
   IPC_STRUCT_MEMBER(int, lid)
+  // Serialized version of RTCConfiguration.
   IPC_STRUCT_MEMBER(std::string, rtc_configuration)
+  // Serialized version of blink::WebMediaConstraints.
   IPC_STRUCT_MEMBER(std::string, constraints)
+  // The URL of the blink::WebLocalFrame within which this peer connection
+  // lives. Used for debugging purposes (displayed by WebRTC-Internals).
   IPC_STRUCT_MEMBER(std::string, url)
 IPC_STRUCT_END()
 
 // Messages sent from PeerConnectionTracker to PeerConnectionTrackerHost.
 IPC_MESSAGE_CONTROL1(PeerConnectionTrackerHost_AddPeerConnection,
                      PeerConnectionInfo /* info */)
-IPC_MESSAGE_CONTROL1(PeerConnectionTrackerHost_RemovePeerConnection,
-                     int /* lid */)
-IPC_MESSAGE_CONTROL3(PeerConnectionTrackerHost_UpdatePeerConnection,
-                     int /* lid */,
-                     std::string /* type */,
-                     std::string /* value */)
-IPC_MESSAGE_CONTROL2(PeerConnectionTrackerHost_AddStats,
+IPC_MESSAGE_CONTROL2(PeerConnectionTrackerHost_AddStandardStats,
                      int /* lid */,
                      base::ListValue /* value */)
-IPC_MESSAGE_CONTROL5(PeerConnectionTrackerHost_GetUserMedia,
-                     std::string /*origin*/,
-                     bool /*audio*/,
-                     bool /*video*/,
-                     // The constraints strings are for dispaly only and should
-                     // not be parsed by the browser for security reasons.
-                     std::string /* audio_constraints */,
-                     std::string /* video_constraints */)
+IPC_MESSAGE_CONTROL2(PeerConnectionTrackerHost_AddLegacyStats,
+                     int /* lid */,
+                     base::ListValue /* value */)
 
 // Messages sent to PeerConnectionTracker.
-IPC_MESSAGE_CONTROL0(PeerConnectionTracker_GetAllStats)
+IPC_MESSAGE_CONTROL0(PeerConnectionTracker_GetStandardStats)
+IPC_MESSAGE_CONTROL0(PeerConnectionTracker_GetLegacyStats)
 IPC_MESSAGE_CONTROL0(PeerConnectionTracker_OnSuspend)
 IPC_MESSAGE_CONTROL2(PeerConnectionTracker_StartEventLog,
                      int /* peer_connection_local_id */,
-                     IPC::PlatformFileForTransit /* file */)
+                     int /* output_period_ms */)
 IPC_MESSAGE_CONTROL1(PeerConnectionTracker_StopEventLog,
                      int /* peer_connection_local_id */)
 

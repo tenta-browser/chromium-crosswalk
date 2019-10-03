@@ -6,9 +6,6 @@
 
 namespace switches {
 
-// Passes if it's AMD switchable dual GPUs from browser process to GPU process.
-const char kAMDSwitchable[] = "amd-switchable";
-
 // Disable workarounds for various GPU driver bugs.
 const char kDisableGpuDriverBugWorkarounds[] =
     "disable-gpu-driver-bug-workarounds";
@@ -22,72 +19,38 @@ const char kDisableGpuRasterization[] = "disable-gpu-rasterization";
 // impl-side painting.
 const char kEnableGpuRasterization[] = "enable-gpu-rasterization";
 
-// Turns on out of process raster for the renderer whenever gpu raster
-// would have been used.  Enables the chromium_raster_transport extension.
-const char kEnableOOPRasterization[] = "enable-oop-rasterization";
+// Select a different set of GPU blacklist entries with the specificed
+// test_group ID.
+const char kGpuBlacklistTestGroup[] = "gpu-blacklist-test-group";
+
+// Enable an extra set of GPU driver bug list entries with the specified
+// test_group ID. Note the default test group (group 0) is still active.
+const char kGpuDriverBugListTestGroup[] = "gpu-driver-bug-list-test-group";
 
 // Passes encoded GpuPreferences to GPU process.
 const char kGpuPreferences[] = "gpu-preferences";
 
-// Passes active gpu vendor id from browser process to GPU process.
-const char kGpuActiveVendorID[] = "gpu-active-vendor-id";
-
-// Passes active gpu device id from browser process to GPU process.
-const char kGpuActiveDeviceID[] = "gpu-active-device-id";
-
-// Passes gpu device_id from browser process to GPU process.
-const char kGpuDeviceID[] = "gpu-device-id";
-
-// Passes gpu driver_vendor from browser process to GPU process.
-const char kGpuDriverVendor[] = "gpu-driver-vendor";
-
-// Passes gpu driver_version from browser process to GPU process.
-const char kGpuDriverVersion[] = "gpu-driver-version";
-
-// Passes gpu driver_date from browser process to GPU process.
-const char kGpuDriverDate[] = "gpu-driver-date";
-
-// Passes secondary gpu vendor ids from browser process to GPU process.
-const char kGpuSecondaryVendorIDs[] = "gpu-secondary-vendor-ids";
-
-// Passes secondary gpu device ids from browser process to GPU process.
-const char kGpuSecondaryDeviceIDs[] = "gpu-secondary-device-ids";
-
-// Testing switch to not launch the gpu process for full gpu info collection.
-const char kGpuTestingNoCompleteInfoCollection[] =
-    "gpu-no-complete-info-collection";
-
-// Override os version from GpuControlList::MakeDecision.
-const char kGpuTestingOsVersion[] = "gpu-testing-os-version";
-
-// Override gpu vendor id from the GpuInfoCollector.
-const char kGpuTestingVendorId[] = "gpu-testing-vendor-id";
-
-// Override gpu device id from the GpuInfoCollector.
-const char kGpuTestingDeviceId[] = "gpu-testing-device-id";
-
-// Override secondary gpu vendor ids from the GpuInfoCollector.
-const char kGpuTestingSecondaryVendorIDs[] = "gpu-testing-secondary-vendor-ids";
-
-// Override secondary gpu device ids from the GpuInfoCollector.
-const char kGpuTestingSecondaryDeviceIDs[] = "gpu-testing-secondary-device-ids";
-
-// Override gpu driver date from the GpuInfoCollector.
-const char kGpuTestingDriverDate[] = "gpu-testing-driver-date";
-
-// Override gl vendor from the GpuInfoCollector.
-const char kGpuTestingGLVendor[] = "gpu-testing-gl-vendor";
-
-// Override gl renderer from the GpuInfoCollector.
-const char kGpuTestingGLRenderer[] = "gpu-testing-gl-renderer";
-
-// Override gl version from the GpuInfoCollector.
-const char kGpuTestingGLVersion[] = "gpu-testing-gl-version";
-
-// Passes gpu vendor_id from browser process to GPU process.
-const char kGpuVendorID[] = "gpu-vendor-id";
-
 // Ignores GPU blacklist.
 const char kIgnoreGpuBlacklist[] = "ignore-gpu-blacklist";
+
+// Allows explicitly specifying the shader disk cache size for embedded devices.
+// Default value is 6MB. On Android, 2MB is default and 128KB for low-end
+// devices.
+const char kShaderDiskCacheSizeKB[] = "shader-disk-cache-size-kb";
+
+// Disables the non-sandboxed GPU process for DX12 and Vulkan info collection
+const char kDisableGpuProcessForDX12VulkanInfoCollection[] =
+    "disable-gpu-process-for-dx12-vulkan-info-collection";
+
+const char kEnableUnsafeWebGPU[] = "enable-unsafe-webgpu";
+
+// Enables WebGL overlays for Windows.
+const char kEnableWebGLSwapChain[] = "enable-webgl-swap-chain";
+
+// Increases the priority (to REALTIME_AUDIO) of gpu process and compositor
+// thread.
+// This is only to be used for perf tests on macOS for more reliable values.
+const char kUseHighGPUThreadPriorityForPerfTests[] =
+    "use-gpu-high-thread-priority-for-perf-tests";
 
 }  // namespace switches

@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include "base/test/histogram_tester.h"
-#import "ios/chrome/browser/ui/ui_util.h"
+#include "base/test/metrics/histogram_tester.h"
+#import "ios/chrome/browser/ui/util/ui_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -171,7 +171,7 @@ TEST_F(SizeClassRecorderTest, RecordSizeClassOnPageLoaded_Unspecified) {
 
   recorder_ = [[SizeClassRecorder alloc]
       initWithHorizontalSizeClass:UIUserInterfaceSizeClassUnspecified];
-  [recorder_
+  [[recorder_ class]
       pageLoadedWithHorizontalSizeClass:UIUserInterfaceSizeClassUnspecified];
 
   histogram_tester_->ExpectTotalCount(kSizeClassUsedHistogramName, 0);
@@ -187,7 +187,8 @@ TEST_F(SizeClassRecorderTest, RecordSizeClassOnPageLoaded_Compact) {
 
   recorder_ = [[SizeClassRecorder alloc]
       initWithHorizontalSizeClass:UIUserInterfaceSizeClassUnspecified];
-  [recorder_ pageLoadedWithHorizontalSizeClass:UIUserInterfaceSizeClassCompact];
+  [[recorder_ class]
+      pageLoadedWithHorizontalSizeClass:UIUserInterfaceSizeClassCompact];
 
   histogram_tester_->ExpectTotalCount(kSizeClassUsedHistogramName, 0);
   histogram_tester_->ExpectUniqueSample(
@@ -202,7 +203,8 @@ TEST_F(SizeClassRecorderTest, RecordSizeClassOnPageLoaded_Regular) {
 
   recorder_ = [[SizeClassRecorder alloc]
       initWithHorizontalSizeClass:UIUserInterfaceSizeClassUnspecified];
-  [recorder_ pageLoadedWithHorizontalSizeClass:UIUserInterfaceSizeClassRegular];
+  [[recorder_ class]
+      pageLoadedWithHorizontalSizeClass:UIUserInterfaceSizeClassRegular];
 
   histogram_tester_->ExpectTotalCount(kSizeClassUsedHistogramName, 0);
   histogram_tester_->ExpectUniqueSample(

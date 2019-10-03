@@ -12,14 +12,15 @@
 #include "ash/display/null_mouse_warp_controller.h"
 #include "ash/display/unified_mouse_warp_controller.h"
 #include "ash/host/ash_window_tree_host.h"
-#include "ash/new_window_controller.h"
+#include "ash/public/cpp/new_window_delegate.h"
+#include "ash/public/cpp/notification_utils.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/system/system_notifier.h"
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -31,42 +32,16 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
 #include "ui/message_center/notification_list.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
 namespace ash {
 namespace {
 
 const char kDisplayErrorNotificationId[] = "chrome://settings/display/error";
-
-// TODO(glevin): These are for new MD vector icons, but are using pre-MD color
-// scheme. When we switch to all MD icons for notifications, these should be
-// updated to use MD color scheme.
-const SkColor kDisplayIconColor = SkColorSetRGB(0xBD, 0xBD, 0xBD);
-const SkColor kFeedbackIconColor = SkColorSetRGB(0x96, 0x96, 0x98);
-
-// A notification delegate that will start the feedback app when the notication
-// is clicked.
-class DisplayErrorNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  DisplayErrorNotificationDelegate() = default;
-
-  // message_center::NotificationDelegate:
-  void ButtonClick(int index) override {
-    DCHECK_EQ(0, index);
-    Shell::Get()->new_window_controller()->OpenFeedbackPage();
-  }
-
- private:
-  // Private destructor since NotificationDelegate is ref-counted.
-  ~DisplayErrorNotificationDelegate() override = default;
-
-  DISALLOW_COPY_AND_ASSIGN(DisplayErrorNotificationDelegate);
-};
-
+const char kNotifierDisplayError[] = "ash.display.error";
 
 void ConvertPointFromScreenToNative(aura::WindowTreeHost* host,
                                     gfx::Point* point) {
@@ -160,7 +135,7 @@ void MoveCursorTo(AshWindowTreeHost* ash_host,
       Shell::GetPrimaryRootWindow()->GetHost()->ConvertScreenInPixelsToDIP(
           &new_point_in_screen);
     }
-    aura::Env::GetInstance()->set_last_mouse_location(new_point_in_screen);
+    aura::Env::GetInstance()->SetLastMouseLocation(new_point_in_screen);
   }
 }
 
@@ -175,26 +150,28 @@ void ShowDisplayErrorNotification(const base::string16& message,
   if (allow_feedback) {
     message_center::ButtonInfo send_button(
         l10n_util::GetStringUTF16(IDS_ASH_DISPLAY_FAILURE_SEND_FEEDBACK));
-    send_button.icon = gfx::Image(
-        CreateVectorIcon(kNotificationFeedbackButtonIcon, kFeedbackIconColor));
     data.buttons.push_back(send_button);
   }
 
   std::unique_ptr<message_center::Notification> notification =
-      system_notifier::CreateSystemNotification(
+      ash::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kDisplayErrorNotificationId,
           base::string16(),  // title
           message,
-          gfx::Image(CreateVectorIcon(kNotificationDisplayErrorIcon,
-                                      kDisplayIconColor)),
           base::string16(),  // display_source
           GURL(),
           message_center::NotifierId(
-              message_center::NotifierId::SYSTEM_COMPONENT,
-              system_notifier::kNotifierDisplayError),
-          data, new DisplayErrorNotificationDelegate,
+              message_center::NotifierType::SYSTEM_COMPONENT,
+              kNotifierDisplayError),
+          data,
+          base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+              base::BindRepeating([](base::Optional<int> button_index) {
+                if (button_index)
+                  NewWindowDelegate::GetInstance()->OpenFeedbackPage();
+              })),
           kNotificationMonitorWarningIcon,
           message_center::SystemNotificationWarningLevel::WARNING);
+  notification->set_priority(message_center::SYSTEM_PRIORITY);
   message_center::MessageCenter::Get()->AddNotification(
       std::move(notification));
 }

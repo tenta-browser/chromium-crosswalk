@@ -7,32 +7,34 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/chromeos/login/terms_of_service_screen_handler.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/resource_request.h"
-#include "content/public/common/simple_url_loader.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/http/http_response_headers.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "url/gurl.h"
 
 namespace chromeos {
 
 TermsOfServiceScreen::TermsOfServiceScreen(
-    BaseScreenDelegate* base_screen_delegate,
-    TermsOfServiceScreenView* view)
-    : BaseScreen(base_screen_delegate, OobeScreen::SCREEN_TERMS_OF_SERVICE),
-      view_(view) {
+    TermsOfServiceScreenView* view,
+    const ScreenExitCallback& exit_callback)
+    : BaseScreen(TermsOfServiceScreenView::kScreenId),
+      view_(view),
+      exit_callback_(exit_callback) {
   DCHECK(view_);
   if (view_)
     view_->SetDelegate(this);
@@ -41,6 +43,19 @@ TermsOfServiceScreen::TermsOfServiceScreen(
 TermsOfServiceScreen::~TermsOfServiceScreen() {
   if (view_)
     view_->SetDelegate(NULL);
+}
+
+void TermsOfServiceScreen::OnDecline() {
+  exit_callback_.Run(Result::DECLINED);
+}
+
+void TermsOfServiceScreen::OnAccept() {
+  exit_callback_.Run(Result::ACCEPTED);
+}
+
+void TermsOfServiceScreen::OnViewDestroyed(TermsOfServiceScreenView* view) {
+  if (view_ == view)
+    view_ = NULL;
 }
 
 void TermsOfServiceScreen::Show() {
@@ -62,19 +77,6 @@ void TermsOfServiceScreen::Show() {
 void TermsOfServiceScreen::Hide() {
   if (view_)
     view_->Hide();
-}
-
-void TermsOfServiceScreen::OnDecline() {
-  Finish(ScreenExitCode::TERMS_OF_SERVICE_DECLINED);
-}
-
-void TermsOfServiceScreen::OnAccept() {
-  Finish(ScreenExitCode::TERMS_OF_SERVICE_ACCEPTED);
-}
-
-void TermsOfServiceScreen::OnViewDestroyed(TermsOfServiceScreenView* view) {
-  if (view_ == view)
-    view_ = NULL;
 }
 
 void TermsOfServiceScreen::StartDownload() {
@@ -113,18 +115,18 @@ void TermsOfServiceScreen::StartDownload() {
           })");
   // Start downloading the Terms of Service.
 
-  auto resource_request = std::make_unique<content::ResourceRequest>();
+  auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = GURL(terms_of_service_url);
   // Request a text/plain MIME type as only plain-text Terms of Service are
   // accepted.
   resource_request->headers.SetHeader("Accept", "text/plain");
-  terms_of_service_loader_ = content::SimpleURLLoader::Create(
+  terms_of_service_loader_ = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
   // Retry up to three times if network changes are detected during the
   // download.
   terms_of_service_loader_->SetRetryOptions(
-      3, content::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
-  content::mojom::URLLoaderFactory* loader_factory =
+      3, network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
+  network::mojom::URLLoaderFactory* loader_factory =
       g_browser_process->system_network_context_manager()
           ->GetURLLoaderFactory();
   terms_of_service_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
@@ -150,7 +152,7 @@ void TermsOfServiceScreen::OnDownloaded(
   download_timer_.Stop();
 
   // Destroy the fetcher when this method returns.
-  std::unique_ptr<content::SimpleURLLoader> loader(
+  std::unique_ptr<network::SimpleURLLoader> loader(
       std::move(terms_of_service_loader_));
   if (!view_)
     return;

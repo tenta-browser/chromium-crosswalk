@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/power_monitor/power_monitor.h"
+#include "base/macros.h"
 #include "base/test/power_monitor_test_base.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -14,30 +14,28 @@ class PowerMonitorTest : public testing::Test {
  protected:
   PowerMonitorTest() {
     power_monitor_source_ = new PowerMonitorTestSource();
-    power_monitor_.reset(new PowerMonitor(
-        std::unique_ptr<PowerMonitorSource>(power_monitor_source_)));
+    PowerMonitor::Initialize(
+        std::unique_ptr<PowerMonitorSource>(power_monitor_source_));
   }
-  ~PowerMonitorTest() override = default;
+  ~PowerMonitorTest() override { PowerMonitor::ShutdownForTesting(); }
 
   PowerMonitorTestSource* source() { return power_monitor_source_; }
-  PowerMonitor* monitor() { return power_monitor_.get(); }
 
  private:
-  base::MessageLoop message_loop_;
+  test::ScopedTaskEnvironment scoped_task_environment_;
   PowerMonitorTestSource* power_monitor_source_;
-  std::unique_ptr<PowerMonitor> power_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerMonitorTest);
 };
 
 // PowerMonitorSource is tightly coupled with the PowerMonitor, so this test
-// Will cover both classes
+// covers both classes.
 TEST_F(PowerMonitorTest, PowerNotifications) {
   const int kObservers = 5;
 
   PowerMonitorTestObserver observers[kObservers];
-  for (int index = 0; index < kObservers; ++index)
-    monitor()->AddObserver(&observers[index]);
+  for (auto& index : observers)
+    EXPECT_TRUE(PowerMonitor::AddObserver(&index));
 
   // Sending resume when not suspended should have no effect.
   source()->GenerateResumeEvent();
@@ -46,8 +44,8 @@ TEST_F(PowerMonitorTest, PowerNotifications) {
   // Pretend we suspended.
   source()->GenerateSuspendEvent();
   // Ensure all observers were notified of the event
-  for (int index = 0; index < kObservers; ++index)
-    EXPECT_EQ(observers[index].suspends(), 1);
+  for (const auto& index : observers)
+    EXPECT_EQ(index.suspends(), 1);
 
   // Send a second suspend notification.  This should be suppressed.
   source()->GenerateSuspendEvent();
@@ -78,6 +76,9 @@ TEST_F(PowerMonitorTest, PowerNotifications) {
   // Repeated indications the device is off battery power should be suppressed.
   source()->GeneratePowerStateEvent(false);
   EXPECT_EQ(observers[0].power_state_changes(), 2);
+
+  for (auto& index : observers)
+    PowerMonitor::RemoveObserver(&index);
 }
 
 }  // namespace base

@@ -158,17 +158,16 @@ class GESTURE_DETECTION_EXPORT GestureConfiguration {
   int set_show_press_delay_in_ms(int val) {
     return show_press_delay_in_ms_ = val;
   }
+  bool single_pointer_cancel_enabled() const {
+    return single_pointer_cancel_enabled_;
+  }
+  void set_single_pointer_cancel_enabled(bool enabled) {
+    single_pointer_cancel_enabled_ = enabled;
+  }
+
   float span_slop() const { return span_slop_; }
   bool swipe_enabled() const { return swipe_enabled_; }
   void set_swipe_enabled(bool val) { swipe_enabled_ = val; }
-
-  // TODO(davemoore): Move into chrome/browser/ui.
-  int tab_scrub_activation_delay_in_ms() const {
-    return tab_scrub_activation_delay_in_ms_;
-  }
-  void set_tab_scrub_activation_delay_in_ms(int val) {
-    tab_scrub_activation_delay_in_ms_ = val;
-  }
   bool two_finger_tap_enabled() const { return two_finger_tap_enabled_; }
   void set_two_finger_tap_enabled(bool val) { two_finger_tap_enabled_ = val; }
   VelocityTracker::Strategy velocity_tracker_strategy() const {
@@ -252,11 +251,11 @@ class GESTURE_DETECTION_EXPORT GestureConfiguration {
   int scroll_debounce_interval_in_ms_;
   int semi_long_press_time_in_ms_;
   int show_press_delay_in_ms_;
+  // When enabled, a cancel action affects only the corresponding pointer (vs
+  // all pointers active at that time).
+  bool single_pointer_cancel_enabled_;
   float span_slop_;
   bool swipe_enabled_;
-
-  // TODO(davemoore): Move into chrome/browser/ui.
-  int tab_scrub_activation_delay_in_ms_;
   bool two_finger_tap_enabled_;
   VelocityTracker::Strategy velocity_tracker_strategy_;
 

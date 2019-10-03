@@ -14,7 +14,8 @@
 //   BasicRuntimeChecks="0"
 //   BufferSecurityCheck="false" compiler: /GS-
 //   EntryPointSymbol="MainEntryPoint" linker: /ENTRY
-//   IgnoreAllDefaultLibraries="true" linker: /NODEFAULTLIB
+//       /ENTRY also stops the CRT from being pulled in and does this more
+//       precisely than /NODEFAULTLIB
 //   OptimizeForWindows98="1" linker: /OPT:NOWIN98
 //   linker: /SAFESEH:NO
 
@@ -461,7 +462,7 @@ ProcessExitResult UnpackBinaryResources(const Configuration& configuration,
 
 #if defined(COMPONENT_BUILD)
   if (exit_code.IsSuccess()) {
-    // Extract the (uncompressed) modules required by setup.exe.
+    // Extract the modules in component build required by setup.exe.
     if (!::EnumResourceNames(module, kBinResourceType, WriteResourceToDirectory,
                              reinterpret_cast<LONG_PTR>(base_path))) {
       return ProcessExitResult(UNABLE_TO_EXTRACT_SETUP, ::GetLastError());
@@ -502,9 +503,7 @@ ProcessExitResult RunSetup(const Configuration& configuration,
 
   // Append the command line param for chrome archive file.
   if (!cmd_line.append(L" --") ||
-#if defined(COMPONENT_BUILD)
-      // For faster developer turnaround, the component build generates
-      // uncompressed archives.
+#if defined(SKIP_ARCHIVE_COMPRESSION)
       !cmd_line.append(kCmdUncompressedArchive) ||
 #else
       !cmd_line.append(kCmdInstallArchive) ||

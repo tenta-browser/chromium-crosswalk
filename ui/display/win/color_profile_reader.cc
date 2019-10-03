@@ -7,9 +7,9 @@
 #include <stddef.h>
 #include <windows.h>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task/post_task.h"
 #include "ui/display/win/display_info.h"
 #include "ui/gfx/icc_profile.h"
 
@@ -17,10 +17,10 @@ namespace display {
 namespace win {
 namespace {
 
-BOOL CALLBACK EnumMonitorCallback(HMONITOR monitor,
-                                  HDC input_hdc,
-                                  LPRECT rect,
-                                  LPARAM data) {
+BOOL CALLBACK EnumMonitorForProfilePathCallback(HMONITOR monitor,
+                                                HDC input_hdc,
+                                                LPRECT rect,
+                                                LPARAM data) {
   base::string16 device_name;
   MONITORINFOEX monitor_info;
   ::ZeroMemory(&monitor_info, sizeof(monitor_info));
@@ -60,12 +60,9 @@ void ColorProfileReader::UpdateIfNeeded() {
   if (device_to_path_map_ == new_device_to_path_map)
     return;
 
-  if (!base::SequencedWorkerPool::IsEnabled())
-    return;
-
   update_in_flight_ = true;
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&ColorProfileReader::ReadProfilesOnBackgroundThread,
                  new_device_to_path_map),
       base::Bind(&ColorProfileReader::ReadProfilesCompleted,
@@ -75,7 +72,7 @@ void ColorProfileReader::UpdateIfNeeded() {
 // static
 ColorProfileReader::DeviceToPathMap ColorProfileReader::BuildDeviceToPathMap() {
   DeviceToPathMap device_to_path_map;
-  EnumDisplayMonitors(nullptr, nullptr, EnumMonitorCallback,
+  EnumDisplayMonitors(nullptr, nullptr, EnumMonitorForProfilePathCallback,
                       reinterpret_cast<LPARAM>(&device_to_path_map));
   return device_to_path_map;
 }
@@ -124,7 +121,7 @@ gfx::ColorSpace ColorProfileReader::GetDisplayColorSpace(
     icc_profile = found->second;
   if (has_read_profiles_)
     icc_profile.HistogramDisplay(display_id);
-  return icc_profile.IsValid() ? icc_profile.GetColorSpace()
+  return icc_profile.IsValid() ? icc_profile.GetPrimariesOnlyColorSpace()
                                : gfx::ColorSpace::CreateSRGB();
 }
 

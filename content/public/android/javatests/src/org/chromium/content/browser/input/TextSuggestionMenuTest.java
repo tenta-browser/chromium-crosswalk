@@ -18,17 +18,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.content.R;
-import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.test.ContentJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
 
 import java.util.concurrent.TimeoutException;
 
@@ -46,7 +45,7 @@ public class TextSuggestionMenuTest {
 
     @Before
     public void setUp() throws Throwable {
-        mRule.setUp();
+        mRule.setUpForUrl(ImeActivityTestRule.INPUT_FORM_HTML);
         mRule.fullyLoadUrl(URL);
     }
 
@@ -54,42 +53,40 @@ public class TextSuggestionMenuTest {
     @LargeTest
     public void testDeleteWordMarkedWithSuggestionMarker()
             throws InterruptedException, Throwable, TimeoutException {
-        final ContentViewCore cvc = mRule.getContentViewCore();
-        WebContents webContents = cvc.getWebContents();
+        WebContents webContents = mRule.getWebContents();
 
         DOMUtils.focusNode(webContents, "div");
 
         SpannableString textToCommit = new SpannableString("hello");
-        SuggestionSpan suggestionSpan = new SuggestionSpan(mRule.getContentViewCore().getContext(),
-                new String[] {"goodbye"}, SuggestionSpan.FLAG_EASY_CORRECT);
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[] {"goodbye"}, SuggestionSpan.FLAG_EASY_CORRECT);
         textToCommit.setSpan(suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         mRule.commitText(textToCommit, 1);
 
-        DOMUtils.clickNode(cvc, "div");
-        waitForMenuToShow(cvc);
+        DOMUtils.clickNode(webContents, "div");
+        waitForMenuToShow(webContents);
 
-        TouchCommon.singleClickView(getDeleteButton(cvc));
+        TouchCommon.singleClickView(getDeleteButton(webContents));
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 try {
-                    return DOMUtils.getNodeContents(cvc.getWebContents(), "div").equals("");
+                    return DOMUtils.getNodeContents(webContents, "div").equals("");
                 } catch (InterruptedException | TimeoutException e) {
                     return false;
                 }
             }
         });
 
-        waitForMenuToHide(cvc);
+        waitForMenuToHide(webContents);
     }
 
     @Test
     @LargeTest
     public void testDeleteWordMarkedWithSpellingMarker()
             throws InterruptedException, Throwable, TimeoutException {
-        final ContentViewCore cvc = mRule.getContentViewCore();
-        WebContents webContents = cvc.getWebContents();
+        WebContents webContents = mRule.getWebContents();
 
         DOMUtils.focusNode(webContents, "div");
 
@@ -112,41 +109,37 @@ public class TextSuggestionMenuTest {
         });
 
         // Add a spelling marker on "hello".
-        // Note: we disable spell checking first to avoid the spell checker immediately clearing
-        // the added marker.
         JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
-                "internals.setSpellCheckingEnabled(false);"
-                        + "const div = document.getElementById('div');"
+                "const div = document.getElementById('div');"
                         + "const text = div.firstChild;"
                         + "const range = document.createRange();"
                         + "range.setStart(text, 0);"
                         + "range.setEnd(text, 5);"
                         + "internals.setMarker(document, range, 'spelling');");
 
-        DOMUtils.clickNode(cvc, "div");
-        waitForMenuToShow(cvc);
+        DOMUtils.clickNode(webContents, "div");
+        waitForMenuToShow(webContents);
 
-        TouchCommon.singleClickView(getDeleteButton(cvc));
+        TouchCommon.singleClickView(getDeleteButton(webContents));
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 try {
-                    return DOMUtils.getNodeContents(cvc.getWebContents(), "div").equals("");
+                    return DOMUtils.getNodeContents(mRule.getWebContents(), "div").equals("");
                 } catch (InterruptedException | TimeoutException e) {
                     return false;
                 }
             }
         });
 
-        waitForMenuToHide(cvc);
+        waitForMenuToHide(webContents);
     }
 
     @Test
     @LargeTest
     public void testApplySuggestion() throws InterruptedException, Throwable, TimeoutException {
-        final ContentViewCore cvc = mRule.getContentViewCore();
-        WebContents webContents = cvc.getWebContents();
+        WebContents webContents = mRule.getWebContents();
 
         DOMUtils.focusNode(webContents, "div");
 
@@ -163,42 +156,54 @@ public class TextSuggestionMenuTest {
 
         SpannableString textToCommit = new SpannableString("hello world");
 
-        SuggestionSpan suggestionSpan1 = new SuggestionSpan(mRule.getContentViewCore().getContext(),
+        SuggestionSpan suggestionSpan1 = new SuggestionSpan(mRule.getActivity(),
                 new String[] {"invalid_suggestion"}, SuggestionSpan.FLAG_EASY_CORRECT);
         textToCommit.setSpan(suggestionSpan1, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-        SuggestionSpan suggestionSpan2 = new SuggestionSpan(mRule.getContentViewCore().getContext(),
+        SuggestionSpan suggestionSpan2 = new SuggestionSpan(mRule.getActivity(),
                 new String[] {"suggestion3", "suggestion4"}, SuggestionSpan.FLAG_EASY_CORRECT);
         textToCommit.setSpan(suggestionSpan2, 0, 11, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-        SuggestionSpan suggestionSpan3 = new SuggestionSpan(mRule.getContentViewCore().getContext(),
+        SuggestionSpan suggestionSpan3 = new SuggestionSpan(mRule.getActivity(),
                 new String[] {"suggestion1", "suggestion2"}, SuggestionSpan.FLAG_EASY_CORRECT);
         textToCommit.setSpan(suggestionSpan3, 6, 11, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         mRule.commitText(textToCommit, 1);
 
-        DOMUtils.clickNode(cvc, "span");
-        waitForMenuToShow(cvc);
+        // Wait for renderer to acknowledge commitText().
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                try {
+                    return DOMUtils.getNodeContents(webContents, "div").equals("hello world");
+                } catch (InterruptedException | TimeoutException e) {
+                    return false;
+                }
+            }
+        });
+
+        DOMUtils.clickNode(webContents, "span");
+        waitForMenuToShow(webContents);
 
         // There should be 5 child views: 4 suggestions plus the list footer.
-        Assert.assertEquals(5, getSuggestionList(cvc).getChildCount());
+        Assert.assertEquals(5, getSuggestionList(webContents).getChildCount());
 
-        Assert.assertEquals(
-                "hello suggestion1", ((TextView) getSuggestionButton(cvc, 0)).getText().toString());
-        Assert.assertEquals(
-                "hello suggestion2", ((TextView) getSuggestionButton(cvc, 1)).getText().toString());
-        Assert.assertEquals(
-                "suggestion3", ((TextView) getSuggestionButton(cvc, 2)).getText().toString());
-        Assert.assertEquals(
-                "suggestion4", ((TextView) getSuggestionButton(cvc, 3)).getText().toString());
+        Assert.assertEquals("hello suggestion1",
+                ((TextView) getSuggestionButton(webContents, 0)).getText().toString());
+        Assert.assertEquals("hello suggestion2",
+                ((TextView) getSuggestionButton(webContents, 1)).getText().toString());
+        Assert.assertEquals("suggestion3",
+                ((TextView) getSuggestionButton(webContents, 2)).getText().toString());
+        Assert.assertEquals("suggestion4",
+                ((TextView) getSuggestionButton(webContents, 3)).getText().toString());
 
-        TouchCommon.singleClickView(getSuggestionButton(cvc, 2));
+        TouchCommon.singleClickView(getSuggestionButton(webContents, 2));
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 try {
-                    return DOMUtils.getNodeContents(cvc.getWebContents(), "div")
+                    return DOMUtils.getNodeContents(mRule.getWebContents(), "div")
                             .equals("suggestion3");
                 } catch (InterruptedException | TimeoutException e) {
                     return false;
@@ -206,43 +211,42 @@ public class TextSuggestionMenuTest {
             }
         });
 
-        waitForMenuToHide(cvc);
+        waitForMenuToHide(webContents);
     }
 
     @Test
     @LargeTest
     public void testApplyMisspellingSuggestion()
             throws InterruptedException, Throwable, TimeoutException {
-        final ContentViewCore cvc = mRule.getContentViewCore();
-        WebContents webContents = cvc.getWebContents();
+        WebContents webContents = mRule.getWebContents();
 
         DOMUtils.focusNode(webContents, "div");
 
         SpannableString textToCommit = new SpannableString("word");
 
-        SuggestionSpan suggestionSpan = new SuggestionSpan(mRule.getContentViewCore().getContext(),
-                new String[] {"replacement"},
-                SuggestionSpan.FLAG_EASY_CORRECT | SuggestionSpan.FLAG_MISSPELLED);
+        SuggestionSpan suggestionSpan =
+                new SuggestionSpan(mRule.getActivity(), new String[] {"replacement"},
+                        SuggestionSpan.FLAG_EASY_CORRECT | SuggestionSpan.FLAG_MISSPELLED);
         textToCommit.setSpan(suggestionSpan, 0, 4, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
 
         mRule.commitText(textToCommit, 1);
 
-        DOMUtils.clickNode(cvc, "span");
-        waitForMenuToShow(cvc);
+        DOMUtils.clickNode(webContents, "span");
+        waitForMenuToShow(webContents);
 
         // There should be 2 child views: 1 suggestion plus the list footer.
-        Assert.assertEquals(2, getSuggestionList(cvc).getChildCount());
+        Assert.assertEquals(2, getSuggestionList(webContents).getChildCount());
 
-        Assert.assertEquals(
-                "replacement", ((TextView) getSuggestionButton(cvc, 0)).getText().toString());
+        Assert.assertEquals("replacement",
+                ((TextView) getSuggestionButton(webContents, 0)).getText().toString());
 
-        TouchCommon.singleClickView(getSuggestionButton(cvc, 0));
+        TouchCommon.singleClickView(getSuggestionButton(webContents, 0));
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 try {
-                    return DOMUtils.getNodeContents(cvc.getWebContents(), "div")
+                    return DOMUtils.getNodeContents(mRule.getWebContents(), "div")
                             .equals("replacement");
                 } catch (InterruptedException | TimeoutException e) {
                     return false;
@@ -250,7 +254,7 @@ public class TextSuggestionMenuTest {
             }
         });
 
-        waitForMenuToHide(cvc);
+        waitForMenuToHide(webContents);
 
         // Verify that the suggestion marker was replaced.
         Assert.assertEquals("0",
@@ -262,36 +266,156 @@ public class TextSuggestionMenuTest {
     @Test
     @LargeTest
     public void suggestionMenuDismissal() throws InterruptedException, Throwable, TimeoutException {
-        final ContentViewCore cvc = mRule.getContentViewCore();
-        WebContents webContents = cvc.getWebContents();
+        WebContents webContents = mRule.getWebContents();
 
         DOMUtils.focusNode(webContents, "div");
 
         SpannableString textToCommit = new SpannableString("hello");
-        SuggestionSpan suggestionSpan = new SuggestionSpan(mRule.getContentViewCore().getContext(),
-                new String[] {"goodbye"}, SuggestionSpan.FLAG_EASY_CORRECT);
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[] {"goodbye"}, SuggestionSpan.FLAG_EASY_CORRECT);
         textToCommit.setSpan(suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         mRule.commitText(textToCommit, 1);
 
-        DOMUtils.clickNode(cvc, "div");
-        waitForMenuToShow(cvc);
+        DOMUtils.clickNode(webContents, "div");
+        waitForMenuToShow(webContents);
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                cvc.getTextSuggestionHostForTesting()
-                        .getTextSuggestionsPopupWindowForTesting()
-                        .dismiss();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            getTextSuggestionHost(webContents).getTextSuggestionsPopupWindowForTesting().dismiss();
         });
-        waitForMenuToHide(cvc);
+        waitForMenuToHide(webContents);
     }
 
-    private void waitForMenuToShow(ContentViewCore cvc) {
+    @Test
+    @LargeTest
+    public void testAutoCorrectionSuggestionSpan() throws InterruptedException, Throwable {
+        WebContents webContents = mRule.getWebContents();
+
+        DOMUtils.focusNode(webContents, "div");
+        mRule.waitAndVerifyUpdateSelection(0, 0, 0, -1, -1);
+
+        SpannableString textToCommit = new SpannableString("hello");
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[0], SuggestionSpan.FLAG_AUTO_CORRECTION);
+        textToCommit.setSpan(suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        mRule.commitText(textToCommit, 1);
+        mRule.waitAndVerifyUpdateSelection(1, 5, 5, -1, -1);
+
+        Assert.assertEquals("1",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+    }
+
+    // The following 3 tests (test*RemovesAutoCorrectionSuggestionSpan()) are testing if we
+    // correctly removed SuggestionSpan with SPAN_COMPOSING flag. If IME sets the SPAN_COMPOSING
+    // flag for the span, the SuggestionSpan is in transition state, and we should remove it once we
+    // done with composing.
+    @Test
+    @LargeTest
+    public void testSetComposingTextRemovesAutoCorrectionSuggestionSpan()
+            throws InterruptedException, Throwable {
+        WebContents webContents = mRule.getWebContents();
+
+        DOMUtils.focusNode(webContents, "div");
+        mRule.waitAndVerifyUpdateSelection(0, 0, 0, -1, -1);
+
+        SpannableString composingText = new SpannableString("hello");
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[0], SuggestionSpan.FLAG_AUTO_CORRECTION);
+        composingText.setSpan(
+                suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE | Spanned.SPAN_COMPOSING);
+        mRule.setComposingText(composingText, 1);
+        mRule.waitAndVerifyUpdateSelection(1, 5, 5, 0, 5);
+
+        Assert.assertEquals("1",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+
+        // setComposingText() will replace the text in current composing range and set a new
+        // composing range, so the spans associated with composing range should be removed. If there
+        // is no new span attached to the SpannableString, we should get 0 marker.
+        mRule.setComposingText(new SpannableString("helloworld"), 1);
+        mRule.waitAndVerifyUpdateSelection(2, 10, 10, 0, 10);
+
+        Assert.assertEquals("0",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+    }
+
+    @Test
+    @LargeTest
+    public void testCommitTextRemovesAutoCorrectionSuggestionSpan()
+            throws InterruptedException, Throwable {
+        WebContents webContents = mRule.getWebContents();
+
+        DOMUtils.focusNode(webContents, "div");
+        mRule.waitAndVerifyUpdateSelection(0, 0, 0, -1, -1);
+
+        SpannableString composingText = new SpannableString("hello");
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[0], SuggestionSpan.FLAG_AUTO_CORRECTION);
+        composingText.setSpan(
+                suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE | Spanned.SPAN_COMPOSING);
+        mRule.setComposingText(composingText, 1);
+        mRule.waitAndVerifyUpdateSelection(1, 5, 5, 0, 5);
+
+        Assert.assertEquals("1",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+
+        // commitText() will replace the text in current composing range and there won't be a new
+        // composing range. So we done with composing and the SuggestionSpan with SPAN_COMPOSING
+        // should be removed.
+        mRule.commitText(new SpannableString("helloworld"), 1);
+        mRule.waitAndVerifyUpdateSelection(2, 10, 10, -1, -1);
+
+        Assert.assertEquals("0",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+    }
+
+    @Test
+    @LargeTest
+    public void testFinishComposingRemovesAutoCorrectionSuggestionSpan()
+            throws InterruptedException, Throwable {
+        WebContents webContents = mRule.getWebContents();
+
+        DOMUtils.focusNode(webContents, "div");
+        mRule.waitAndVerifyUpdateSelection(0, 0, 0, -1, -1);
+
+        SpannableString composingText = new SpannableString("hello");
+        SuggestionSpan suggestionSpan = new SuggestionSpan(
+                mRule.getActivity(), new String[0], SuggestionSpan.FLAG_AUTO_CORRECTION);
+        composingText.setSpan(
+                suggestionSpan, 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE | Spanned.SPAN_COMPOSING);
+        mRule.setComposingText(composingText, 1);
+        mRule.waitAndVerifyUpdateSelection(1, 5, 5, 0, 5);
+
+        Assert.assertEquals("1",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+
+        // finishComposingText() will remove the composing range, any span has SPAN_COMPOSING flag
+        // should be removed since there is no composing range available.
+        mRule.finishComposingText();
+        mRule.waitAndVerifyUpdateSelection(2, 5, 5, -1, -1);
+
+        Assert.assertEquals("0",
+                JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
+                        "internals.markerCountForNode("
+                                + "document.getElementById('div').firstChild, 'suggestion')"));
+    }
+
+    private void waitForMenuToShow(WebContents webContents) {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                View deleteButton = getDeleteButton(cvc);
+                View deleteButton = getDeleteButton(webContents);
                 if (deleteButton == null) {
                     return false;
                 }
@@ -305,32 +429,32 @@ public class TextSuggestionMenuTest {
         });
     }
 
-    private void waitForMenuToHide(ContentViewCore cvc) {
+    private void waitForMenuToHide(WebContents webContents) {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 SuggestionsPopupWindow suggestionsPopupWindow =
-                        cvc.getTextSuggestionHostForTesting()
+                        getTextSuggestionHost(webContents)
                                 .getTextSuggestionsPopupWindowForTesting();
 
                 SuggestionsPopupWindow spellCheckPopupWindow =
-                        cvc.getTextSuggestionHostForTesting().getSpellCheckPopupWindowForTesting();
+                        getTextSuggestionHost(webContents).getSpellCheckPopupWindowForTesting();
 
                 return suggestionsPopupWindow == null && spellCheckPopupWindow == null;
             }
         });
     }
 
-    private View getContentView(ContentViewCore cvc) {
+    private View getContentView(WebContents webContents) {
         SuggestionsPopupWindow suggestionsPopupWindow =
-                cvc.getTextSuggestionHostForTesting().getTextSuggestionsPopupWindowForTesting();
+                getTextSuggestionHost(webContents).getTextSuggestionsPopupWindowForTesting();
 
         if (suggestionsPopupWindow != null) {
             return suggestionsPopupWindow.getContentViewForTesting();
         }
 
         SuggestionsPopupWindow spellCheckPopupWindow =
-                cvc.getTextSuggestionHostForTesting().getSpellCheckPopupWindowForTesting();
+                getTextSuggestionHost(webContents).getSpellCheckPopupWindowForTesting();
 
         if (spellCheckPopupWindow != null) {
             return spellCheckPopupWindow.getContentViewForTesting();
@@ -339,17 +463,22 @@ public class TextSuggestionMenuTest {
         return null;
     }
 
-    private ListView getSuggestionList(ContentViewCore cvc) {
-        View contentView = getContentView(cvc);
+    private TextSuggestionHost getTextSuggestionHost(WebContents webContents) {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(
+                () -> TextSuggestionHost.fromWebContents(webContents));
+    }
+
+    private ListView getSuggestionList(WebContents webContents) {
+        View contentView = getContentView(webContents);
         return (ListView) contentView.findViewById(R.id.suggestionContainer);
     }
 
-    private View getSuggestionButton(ContentViewCore cvc, int suggestionIndex) {
-        return getSuggestionList(cvc).getChildAt(suggestionIndex);
+    private View getSuggestionButton(WebContents webContents, int suggestionIndex) {
+        return getSuggestionList(webContents).getChildAt(suggestionIndex);
     }
 
-    private View getDeleteButton(ContentViewCore cvc) {
-        View contentView = getContentView(cvc);
+    private View getDeleteButton(WebContents webContents) {
+        View contentView = getContentView(webContents);
         if (contentView == null) {
             return null;
         }

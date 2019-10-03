@@ -8,20 +8,23 @@
 #include <map>
 #include <string>
 
+#include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/system/statistics_provider.h"
 
 namespace chromeos {
 namespace system {
 
 // A fake StatisticsProvider implementation that is useful in tests.
-class CHROMEOS_EXPORT FakeStatisticsProvider : public StatisticsProvider {
+class COMPONENT_EXPORT(CHROMEOS_SYSTEM) FakeStatisticsProvider
+    : public StatisticsProvider {
  public:
   FakeStatisticsProvider();
   ~FakeStatisticsProvider() override;
 
   // StatisticsProvider implementation:
+  void ScheduleOnMachineStatisticsLoaded(base::OnceClosure callback) override;
   void StartLoadingMachineStatistics(bool load_oem_manifest) override;
   bool GetMachineStatistic(const std::string& name,
                            std::string* result) override;
@@ -43,7 +46,7 @@ class CHROMEOS_EXPORT FakeStatisticsProvider : public StatisticsProvider {
 
 // A convenience subclass that automatically registers itself as the test
 // StatisticsProvider during construction and cleans up at destruction.
-class CHROMEOS_EXPORT ScopedFakeStatisticsProvider
+class COMPONENT_EXPORT(CHROMEOS_SYSTEM) ScopedFakeStatisticsProvider
     : public FakeStatisticsProvider {
  public:
   ScopedFakeStatisticsProvider();

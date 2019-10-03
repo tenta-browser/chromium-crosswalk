@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/extensions/blocked_action_bubble_delegate.h"
 
-#include "base/callback_helpers.h"
+#include <utility>
+
 #include "base/strings/string16.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_types.h"
 
 BlockedActionBubbleDelegate::BlockedActionBubbleDelegate(
     const base::Callback<void(CloseAction)>& callback,
@@ -32,7 +34,7 @@ base::string16 BlockedActionBubbleDelegate::GetHeadingText() {
 
 base::string16 BlockedActionBubbleDelegate::GetBodyText(
     bool anchored_to_action) {
-  return l10n_util::GetStringUTF16(IDS_EXTENSION_BLOCKED_ACTION_BUBBLE_CONTENT);
+  return base::string16();
 }
 
 base::string16 BlockedActionBubbleDelegate::GetItemListText() {
@@ -45,12 +47,11 @@ base::string16 BlockedActionBubbleDelegate::GetActionButtonText() {
 }
 
 base::string16 BlockedActionBubbleDelegate::GetDismissButtonText() {
-  return l10n_util::GetStringUTF16(
-      IDS_EXTENSION_BLOCKED_ACTION_BUBBLE_CANCEL_BUTTON);
+  return base::string16();
 }
 
-base::string16 BlockedActionBubbleDelegate::GetLearnMoreButtonText() {
-  return base::string16();  // No learn more link.
+ui::DialogButton BlockedActionBubbleDelegate::GetDefaultDialogButton() {
+  return ui::DIALOG_BUTTON_OK;
 }
 
 std::string BlockedActionBubbleDelegate::GetAnchorActionId() {
@@ -61,7 +62,7 @@ void BlockedActionBubbleDelegate::OnBubbleShown(
     const base::Closure& close_bubble_callback) {}
 
 void BlockedActionBubbleDelegate::OnBubbleClosed(CloseAction action) {
-  base::ResetAndReturn(&callback_).Run(action);
+  std::move(callback_).Run(action);
 }
 
 std::unique_ptr<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>

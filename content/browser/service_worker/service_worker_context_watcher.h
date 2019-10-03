@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -14,7 +16,7 @@
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_info.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_provider_type.mojom.h"
 
 namespace content {
 
@@ -27,20 +29,20 @@ class CONTENT_EXPORT ServiceWorkerContextWatcher
     : public ServiceWorkerContextCoreObserver,
       public base::RefCountedThreadSafe<ServiceWorkerContextWatcher> {
  public:
-  typedef base::Callback<void(
-      const std::vector<ServiceWorkerRegistrationInfo>&)>
-      WorkerRegistrationUpdatedCallback;
-  typedef base::Callback<void(const std::vector<ServiceWorkerVersionInfo>&)>
-      WorkerVersionUpdatedCallback;
-  typedef base::Callback<void(int64_t /* registration_id */,
-                              int64_t /* version_id */,
-                              const ErrorInfo&)> WorkerErrorReportedCallback;
+  using WorkerRegistrationUpdatedCallback = base::RepeatingCallback<void(
+      const std::vector<ServiceWorkerRegistrationInfo>&)>;
+  using WorkerVersionUpdatedCallback = base::RepeatingCallback<void(
+      const std::vector<ServiceWorkerVersionInfo>&)>;
+  using WorkerErrorReportedCallback =
+      base::RepeatingCallback<void(int64_t /* registration_id */,
+                                   int64_t /* version_id */,
+                                   const ErrorInfo&)>;
 
   ServiceWorkerContextWatcher(
       scoped_refptr<ServiceWorkerContextWrapper> context,
-      const WorkerRegistrationUpdatedCallback& registration_callback,
-      const WorkerVersionUpdatedCallback& version_callback,
-      const WorkerErrorReportedCallback& error_callback);
+      WorkerRegistrationUpdatedCallback registration_callback,
+      WorkerVersionUpdatedCallback version_callback,
+      WorkerErrorReportedCallback error_callback);
   void Start();
   void Stop();
 
@@ -52,7 +54,7 @@ class CONTENT_EXPORT ServiceWorkerContextWatcher
 
   void GetStoredRegistrationsOnIOThread();
   void OnStoredRegistrationsOnIOThread(
-      ServiceWorkerStatusCode status,
+      blink::ServiceWorkerStatusCode status,
       const std::vector<ServiceWorkerRegistrationInfo>& stored_registrations);
   void StopOnIOThread();
 
@@ -65,7 +67,7 @@ class CONTENT_EXPORT ServiceWorkerContextWatcher
 
   void SendRegistrationInfo(
       int64_t registration_id,
-      const GURL& pattern,
+      const GURL& scope,
       ServiceWorkerRegistrationInfo::DeleteFlag delete_flag);
   void SendVersionInfo(const ServiceWorkerVersionInfo& version);
 
@@ -80,13 +82,14 @@ class CONTENT_EXPORT ServiceWorkerContextWatcher
 
   // ServiceWorkerContextCoreObserver implements
   void OnNewLiveRegistration(int64_t registration_id,
-                             const GURL& pattern) override;
+                             const GURL& scope) override;
   void OnNewLiveVersion(const ServiceWorkerVersionInfo& version_info) override;
   void OnRunningStateChanged(
       int64_t version_id,
       content::EmbeddedWorkerStatus running_status) override;
   void OnVersionStateChanged(
       int64_t version_id,
+      const GURL& scope,
       content::ServiceWorkerVersion::Status status) override;
   void OnVersionDevToolsRoutingIdChanged(int64_t version_id,
                                          int process_id,
@@ -96,26 +99,20 @@ class CONTENT_EXPORT ServiceWorkerContextWatcher
       base::Time script_response_time,
       base::Time script_last_modified) override;
   void OnErrorReported(int64_t version_id,
-                       int process_id,
-                       int thread_id,
                        const ErrorInfo& info) override;
   void OnReportConsoleMessage(int64_t version_id,
-                              int process_id,
-                              int thread_id,
                               const ConsoleMessage& message) override;
-  void OnControlleeAdded(
-      int64_t version_id,
-      const std::string& uuid,
-      int process_id,
-      int route_id,
-      const base::Callback<WebContents*(void)>& web_contents_getter,
-      blink::mojom::ServiceWorkerProviderType type) override;
+  void OnControlleeAdded(int64_t version_id,
+                         const GURL& scope,
+                         const std::string& uuid,
+                         const ServiceWorkerClientInfo& info) override;
   void OnControlleeRemoved(int64_t version_id,
+                           const GURL& scope,
                            const std::string& uuid) override;
-  void OnRegistrationStored(int64_t registration_id,
-                            const GURL& pattern) override;
+  void OnRegistrationCompleted(int64_t registration_id,
+                               const GURL& scope) override;
   void OnRegistrationDeleted(int64_t registration_id,
-                             const GURL& pattern) override;
+                             const GURL& scope) override;
 
   std::unordered_map<int64_t, std::unique_ptr<ServiceWorkerVersionInfo>>
       version_info_map_;

@@ -6,19 +6,22 @@
 #define UI_VIEWS_CONTROLS_SCROLLBAR_OVERLAY_SCROLL_BAR_H_
 
 #include "base/macros.h"
-#include "ui/views/controls/scrollbar/base_scroll_bar.h"
+#include "base/timer/timer.h"
 #include "ui/views/controls/scrollbar/base_scroll_bar_thumb.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
 
 namespace views {
 
 // The transparent scrollbar which overlays its contents.
-class VIEWS_EXPORT OverlayScrollBar : public BaseScrollBar {
+class VIEWS_EXPORT OverlayScrollBar : public ScrollBar {
  public:
+  METADATA_HEADER(OverlayScrollBar);
+
   explicit OverlayScrollBar(bool horizontal);
   ~OverlayScrollBar() override;
 
  protected:
-  // BaseScrollBar overrides:
+  // ScrollBar overrides:
   gfx::Rect GetTrackBounds() const override;
 
   // ScrollBar overrides:
@@ -59,7 +62,7 @@ class VIEWS_EXPORT OverlayScrollBar : public BaseScrollBar {
   // Starts a countdown that hides this when it fires.
   void StartHideCountdown();
 
-  base::Timer hide_timer_;
+  base::OneShotTimer hide_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(OverlayScrollBar);
 };

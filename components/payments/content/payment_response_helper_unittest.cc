@@ -11,15 +11,15 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
 #include "components/payments/content/payment_request_spec.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/test_payment_request_delegate.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 
 namespace payments {
 
@@ -30,13 +30,13 @@ class PaymentResponseHelperTest : public testing::Test,
       : test_payment_request_delegate_(&test_personal_data_manager_),
         address_(autofill::test::GetFullProfile()),
         billing_addresses_({&address_}) {
-    test_personal_data_manager_.AddTestingProfile(&address_);
+    test_personal_data_manager_.AddProfile(address_);
 
-    // Setup the autofill payment instrument.
+    // Set up the autofill payment instrument.
     autofill::CreditCard visa_card = autofill::test::GetCreditCard();
     visa_card.set_billing_address_id(address_.guid());
     visa_card.set_use_count(5u);
-    autofill_instrument_ = base::MakeUnique<AutofillPaymentInstrument>(
+    autofill_instrument_ = std::make_unique<AutofillPaymentInstrument>(
         "visa", visa_card, /*matches_merchant_card_type_exactly=*/true,
         billing_addresses_, "en-US", &test_payment_request_delegate_);
   }
@@ -45,7 +45,10 @@ class PaymentResponseHelperTest : public testing::Test,
   // PaymentRequestState::Delegate:
   void OnPaymentResponseReady(mojom::PaymentResponsePtr response) override {
     payment_response_ = std::move(response);
-  };
+  }
+
+  // PaymentRequestState::Delegate:
+  void OnPaymentResponseError(const std::string& error_message) override {}
 
   // Convenience method to create a PaymentRequestSpec with specified |details|
   // and |method_data|.
@@ -54,7 +57,7 @@ class PaymentResponseHelperTest : public testing::Test,
       mojom::PaymentDetailsPtr details,
       std::vector<mojom::PaymentMethodDataPtr> method_data) {
     // The spec will be based on the |options| and |details| passed in.
-    spec_ = base::MakeUnique<PaymentRequestSpec>(
+    spec_ = std::make_unique<PaymentRequestSpec>(
         std::move(options), std::move(details), std::move(method_data), nullptr,
         "en-US");
   }
@@ -79,7 +82,7 @@ class PaymentResponseHelperTest : public testing::Test,
   std::vector<mojom::PaymentMethodDataPtr> GetMethodDataForVisa() {
     std::vector<mojom::PaymentMethodDataPtr> method_data;
     mojom::PaymentMethodDataPtr entry = mojom::PaymentMethodData::New();
-    entry->supported_methods.push_back("visa");
+    entry->supported_method = "visa";
     method_data.push_back(std::move(entry));
     return method_data;
   }
@@ -121,7 +124,6 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_SupportedMethod) {
       "\"city\":\"Elysium\","
       "\"country\":\"US\","
       "\"dependentLocality\":\"\","
-      "\"languageCode\":\"\","
       "\"organization\":\"Underworld\","
       "\"phone\":\"16502111111\","
       "\"postalCode\":\"91111\","
@@ -141,7 +143,7 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_SupportedMethod) {
 TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_BasicCard) {
   // The method data supports visa through basic-card.
   mojom::PaymentMethodDataPtr entry = mojom::PaymentMethodData::New();
-  entry->supported_methods.push_back("basic-card");
+  entry->supported_method = "basic-card";
   entry->supported_networks.push_back(mojom::BasicCardNetwork::VISA);
   std::vector<mojom::PaymentMethodDataPtr> method_data;
   method_data.push_back(std::move(entry));
@@ -160,7 +162,6 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_BasicCard) {
       "\"city\":\"Elysium\","
       "\"country\":\"US\","
       "\"dependentLocality\":\"\","
-      "\"languageCode\":\"\","
       "\"organization\":\"Underworld\","
       "\"phone\":\"16502111111\","
       "\"postalCode\":\"91111\","
@@ -204,7 +205,6 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ShippingAddress) {
   EXPECT_EQ("", response()->shipping_address->dependent_locality);
   EXPECT_EQ("91111", response()->shipping_address->postal_code);
   EXPECT_EQ("", response()->shipping_address->sorting_code);
-  EXPECT_EQ("", response()->shipping_address->language_code);
   EXPECT_EQ("Underworld", response()->shipping_address->organization);
   EXPECT_EQ("John H. Doe", response()->shipping_address->recipient);
   EXPECT_EQ("16502111111", response()->shipping_address->phone);
@@ -225,9 +225,9 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ContactDetails_All) {
                                test_address(), this);
 
   // Check that all the expected values were set.
-  EXPECT_EQ("John H. Doe", response()->payer_name.value());
-  EXPECT_EQ("+16502111111", response()->payer_phone.value());
-  EXPECT_EQ("johndoe@hades.com", response()->payer_email.value());
+  EXPECT_EQ("John H. Doe", response()->payer->name.value());
+  EXPECT_EQ("+16502111111", response()->payer->phone.value());
+  EXPECT_EQ("johndoe@hades.com", response()->payer->email.value());
 }
 
 // Tests the the generated PaymentResponse has the correct values for the
@@ -243,15 +243,34 @@ TEST_F(PaymentResponseHelperTest, GeneratePaymentResponse_ContactDetails_Some) {
                                test_address(), this);
 
   // Check that the name was set, but not the other values.
-  EXPECT_EQ("John H. Doe", response()->payer_name.value());
-  EXPECT_FALSE(response()->payer_phone.has_value());
-  EXPECT_FALSE(response()->payer_email.has_value());
+  EXPECT_EQ("John H. Doe", response()->payer->name.value());
+  EXPECT_FALSE(response()->payer->phone.has_value());
+  EXPECT_FALSE(response()->payer->email.has_value());
 }
 
-// Tests the the generated PaymentResponse has the correct values for the
-// contact details when all values are requested.
+// Tests the the generated PaymentResponse has phone number formatted to E.164
+// if the number is valid.
 TEST_F(PaymentResponseHelperTest,
-       GeneratePaymentResponse_ContactPhoneIsFormatted) {
+       GeneratePaymentResponse_ContactPhoneIsFormattedWhenValid) {
+  // Request one contact detail value.
+  mojom::PaymentOptionsPtr options = mojom::PaymentOptions::New();
+  options->request_payer_phone = true;
+  test_address()->SetRawInfo(autofill::PHONE_HOME_WHOLE_NUMBER,
+                             base::UTF8ToUTF16("(515) 223-1234"));
+  RecreateSpecWithOptions(std::move(options));
+
+  PaymentResponseHelper helper("en-US", spec(), test_instrument(),
+                               test_payment_request_delegate(), test_address(),
+                               test_address(), this);
+
+  // Check that the phone was formatted.
+  EXPECT_EQ("+15152231234", response()->payer->phone.value());
+}
+
+// Tests the the generated PaymentResponse has phone number minimumly formatted
+// (removing non-digit letters), if the number is invalid
+TEST_F(PaymentResponseHelperTest,
+       GeneratePaymentResponse_ContactPhoneIsMinimumlyFormattedWhenInvalid) {
   // Request one contact detail value.
   mojom::PaymentOptionsPtr options = mojom::PaymentOptions::New();
   options->request_payer_phone = true;
@@ -264,7 +283,7 @@ TEST_F(PaymentResponseHelperTest,
                                test_address(), this);
 
   // Check that the phone was formatted.
-  EXPECT_EQ("+15151231234", response()->payer_phone.value());
+  EXPECT_EQ("5151231234", response()->payer->phone.value());
 }
 
 }  // namespace payments

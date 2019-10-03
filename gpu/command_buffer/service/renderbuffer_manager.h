@@ -10,14 +10,14 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "base/containers/flat_set.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
-#include "gpu/gpu_export.h"
+#include "gpu/gpu_gles2_export.h"
 
 namespace gpu {
 class GpuDriverBugWorkarounds;
@@ -29,8 +29,7 @@ class Framebuffer;
 class RenderbufferManager;
 
 // Info about a Renderbuffer.
-class GPU_EXPORT Renderbuffer
-    : public base::RefCounted<Renderbuffer> {
+class GPU_GLES2_EXPORT Renderbuffer : public base::RefCounted<Renderbuffer> {
  public:
   Renderbuffer(RenderbufferManager* manager,
                GLuint client_id,
@@ -146,7 +145,7 @@ class GPU_EXPORT Renderbuffer
 
 // This class keeps track of the renderbuffers and whether or not they have
 // been cleared.
-class GPU_EXPORT RenderbufferManager
+class GPU_GLES2_EXPORT RenderbufferManager
     : public base::trace_event::MemoryDumpProvider {
  public:
   RenderbufferManager(MemoryTracker* memory_tracker,
@@ -225,7 +224,8 @@ class GPU_EXPORT RenderbufferManager
   bool have_context_;
 
   // Info for each renderbuffer in the system.
-  typedef base::hash_map<GLuint, scoped_refptr<Renderbuffer> > RenderbufferMap;
+  typedef std::unordered_map<GLuint, scoped_refptr<Renderbuffer>>
+      RenderbufferMap;
   RenderbufferMap renderbuffers_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderbufferManager);

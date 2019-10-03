@@ -4,19 +4,22 @@
 
 #include "net/url_request/url_request_context.h"
 
+#include "base/strings/pattern.h"
 #include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/process_memory_dump.h"
-#include "net/proxy/proxy_config_service_fixed.h"
+#include "net/proxy_resolution/proxy_config_service_fixed.h"
+#include "net/test/test_with_scoped_task_environment.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
 
 class URLRequestContextMemoryDumpTest
-    : public testing::TestWithParam<
-          base::trace_event::MemoryDumpLevelOfDetail> {};
+    : public testing::TestWithParam<base::trace_event::MemoryDumpLevelOfDetail>,
+      public WithScopedTaskEnvironment {};
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     URLRequestContextMemoryDumpTest,
     ::testing::Values(base::trace_event::MemoryDumpLevelOfDetail::DETAILED,
@@ -26,11 +29,11 @@ INSTANTIATE_TEST_CASE_P(
 TEST_P(URLRequestContextMemoryDumpTest, MemoryDumpProvider) {
   base::trace_event::MemoryDumpArgs dump_args = {GetParam()};
   std::unique_ptr<base::trace_event::ProcessMemoryDump> process_memory_dump(
-      new base::trace_event::ProcessMemoryDump(nullptr, dump_args));
+      new base::trace_event::ProcessMemoryDump(dump_args));
   URLRequestContextBuilder builder;
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-  builder.set_proxy_config_service(
-      std::make_unique<ProxyConfigServiceFixed>(ProxyConfig::CreateDirect()));
+  builder.set_proxy_config_service(std::make_unique<ProxyConfigServiceFixed>(
+      ProxyConfigWithAnnotation::CreateDirect()));
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
   std::unique_ptr<URLRequestContext> context(builder.Build());
   context->OnMemoryDump(dump_args, process_memory_dump.get());
@@ -45,7 +48,9 @@ TEST_P(URLRequestContextMemoryDumpTest, MemoryDumpProvider) {
     const std::string& dump_name = it.first;
     if (dump_name.find("net/http_network_session") != std::string::npos)
       did_dump_http_network_session = true;
-    if (dump_name.find("net/ssl_session_cache") != std::string::npos)
+    // Match against a relaxed form of the memory dump whitelist pattern.
+    if (base::MatchPattern(
+            dump_name, "net/http_network_session_0x*/ssl_client_session_cache"))
       did_dump_ssl_client_session_cache = true;
     if (dump_name.find("net/url_request_context") != std::string::npos) {
       // A sub allocator dump to take into account of the sharing relationship.

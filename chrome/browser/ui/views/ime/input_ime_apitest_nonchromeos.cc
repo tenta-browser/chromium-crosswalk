@@ -4,10 +4,10 @@
 
 #include "base/auto_reset.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/input_ime/input_ime_api_nonchromeos.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "extensions/test/extension_test_message_listener.h"
@@ -24,11 +24,6 @@ class InputImeApiTest : public ExtensionApiTest {
   InputImeApiTest() {}
 
  protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionApiTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kEnableInputImeAPI);
-  }
-
   // Sets the private flag of |track_key_events_for_testing_| in InputMethod.
   void SetTrackKeyEvents(ui::InputMethod* input_method, bool track) {
     input_method->track_key_events_for_testing_ = track;
@@ -63,7 +58,9 @@ class InputImeApiTest : public ExtensionApiTest {
   DISALLOW_COPY_AND_ASSIGN(InputImeApiTest);
 };
 
-IN_PROC_BROWSER_TEST_F(InputImeApiTest, BasicApiTest) {
+// TODO(crbug.com/882338) This test fails basically once per try run.
+// See bug for details.
+IN_PROC_BROWSER_TEST_F(InputImeApiTest, DISABLED_BasicApiTest) {
   // Manipulates the focused text input client because the follow cursor
   // window requires the text input focus.
   ui::InputMethod* input_method =
@@ -92,7 +89,7 @@ IN_PROC_BROWSER_TEST_F(InputImeApiTest, BasicApiTest) {
   composition.text = base::UTF8ToUTF16("test_set_composition");
   composition.ime_text_spans.push_back(ui::ImeTextSpan(
       ui::ImeTextSpan::Type::kComposition, 0, composition.text.length(),
-      SK_ColorBLACK, false /* thick */, SK_ColorTRANSPARENT));
+      ui::ImeTextSpan::Thickness::kThin, SK_ColorTRANSPARENT));
   composition.selection = gfx::Range(2, 2);
   const std::vector<ui::CompositionText>& composition_history =
       client->composition_history();
@@ -145,7 +142,12 @@ IN_PROC_BROWSER_TEST_F(InputImeApiTest, SendKeyEventsOnNormalPage) {
   input_method->DetachTextInputClient(client.get());
 }
 
+// TODO(https://crbug.com/795631): This test is failing on the Linux bot.
+#if defined(OS_LINUX)
+IN_PROC_BROWSER_TEST_F(InputImeApiTest, DISABLED_SendKeyEventsOnSpecialPage) {
+#else
 IN_PROC_BROWSER_TEST_F(InputImeApiTest, SendKeyEventsOnSpecialPage) {
+#endif
   // Navigates to special page that sendKeyEvents API has limition with.
   ui_test_utils::NavigateToURL(browser(), GURL("chrome://flags"));
 

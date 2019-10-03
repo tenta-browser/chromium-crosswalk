@@ -10,9 +10,10 @@
 #include "base/callback_forward.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "ui/gfx/native_widget_types.h"
 
+class Browser;
 class GURL;
 class Profile;
 
@@ -105,6 +106,11 @@ bool IsVisible(gfx::NativeView view);
 // the feature is supported and enabled, and false otherwise.
 bool IsSwipeTrackingFromScrollEventsEnabled();
 #endif
+
+// Returns true if the given browser window is in locked fullscreen mode
+// (a special type of fullscreen where the user is locked into one browser
+// window).
+bool IsBrowserLockedFullscreen(const Browser* browser);
 
 }  // namespace platform_util
 

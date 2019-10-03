@@ -12,7 +12,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/storage/settings_namespace.h"
@@ -25,7 +24,6 @@
 namespace extensions {
 
 namespace settings = settings_namespace;
-namespace util = settings_test_util;
 
 namespace {
 
@@ -39,9 +37,6 @@ const ValueStore::WriteOptions DEFAULTS = ValueStore::DEFAULTS;
 // history, the test names are unchanged.
 class ExtensionSettingsFrontendTest : public ExtensionsTest {
  public:
-  ExtensionSettingsFrontendTest()
-      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
-
   void SetUp() override {
     ExtensionsTest::SetUp();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -88,10 +83,11 @@ TEST_F(ExtensionSettingsFrontendTest, Basics) {
 TEST_F(ExtensionSettingsFrontendTest, SettingsPreservedAcrossReconstruction) {
   const std::string id = "ext";
   scoped_refptr<const Extension> extension =
-      util::AddExtensionWithId(browser_context(), id, Manifest::TYPE_EXTENSION);
+      settings_test_util::AddExtensionWithId(browser_context(), id,
+                                             Manifest::TYPE_EXTENSION);
 
-  ValueStore* storage =
-      util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  ValueStore* storage = settings_test_util::GetStorage(
+      extension, settings::LOCAL, frontend_.get());
 
   // The correctness of Get/Set/Remove/Clear is tested elsewhere so no need to
   // be too rigorous.
@@ -108,7 +104,8 @@ TEST_F(ExtensionSettingsFrontendTest, SettingsPreservedAcrossReconstruction) {
   }
 
   ResetFrontend();
-  storage = util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  storage = settings_test_util::GetStorage(extension, settings::LOCAL,
+                                           frontend_.get());
 
   {
     ValueStore::ReadResult result = storage->Get();
@@ -119,11 +116,12 @@ TEST_F(ExtensionSettingsFrontendTest, SettingsPreservedAcrossReconstruction) {
 
 TEST_F(ExtensionSettingsFrontendTest, SettingsClearedOnUninstall) {
   const std::string id = "ext";
-  scoped_refptr<const Extension> extension = util::AddExtensionWithId(
-      browser_context(), id, Manifest::TYPE_LEGACY_PACKAGED_APP);
+  scoped_refptr<const Extension> extension =
+      settings_test_util::AddExtensionWithId(
+          browser_context(), id, Manifest::TYPE_LEGACY_PACKAGED_APP);
 
-  ValueStore* storage =
-      util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  ValueStore* storage = settings_test_util::GetStorage(
+      extension, settings::LOCAL, frontend_.get());
 
   {
     base::Value bar("bar");
@@ -136,7 +134,8 @@ TEST_F(ExtensionSettingsFrontendTest, SettingsClearedOnUninstall) {
   content::RunAllTasksUntilIdle();
 
   // The storage area may no longer be valid post-uninstall, so re-request.
-  storage = util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  storage = settings_test_util::GetStorage(extension, settings::LOCAL,
+                                           frontend_.get());
   {
     ValueStore::ReadResult result = storage->Get();
     ASSERT_TRUE(result.status().ok());
@@ -147,10 +146,11 @@ TEST_F(ExtensionSettingsFrontendTest, SettingsClearedOnUninstall) {
 TEST_F(ExtensionSettingsFrontendTest, LeveldbDatabaseDeletedFromDiskOnClear) {
   const std::string id = "ext";
   scoped_refptr<const Extension> extension =
-      util::AddExtensionWithId(browser_context(), id, Manifest::TYPE_EXTENSION);
+      settings_test_util::AddExtensionWithId(browser_context(), id,
+                                             Manifest::TYPE_EXTENSION);
 
-  ValueStore* storage =
-      util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  ValueStore* storage = settings_test_util::GetStorage(
+      extension, settings::LOCAL, frontend_.get());
 
   {
     base::Value bar("bar");
@@ -180,17 +180,18 @@ TEST_F(ExtensionSettingsFrontendTest,
        DISABLED_QuotaLimitsEnforcedCorrectlyForSyncAndLocal) {
   const std::string id = "ext";
   scoped_refptr<const Extension> extension =
-      util::AddExtensionWithId(browser_context(), id, Manifest::TYPE_EXTENSION);
+      settings_test_util::AddExtensionWithId(browser_context(), id,
+                                             Manifest::TYPE_EXTENSION);
 
-  ValueStore* sync_storage =
-      util::GetStorage(extension, settings::SYNC, frontend_.get());
-  ValueStore* local_storage =
-      util::GetStorage(extension, settings::LOCAL, frontend_.get());
+  ValueStore* sync_storage = settings_test_util::GetStorage(
+      extension, settings::SYNC, frontend_.get());
+  ValueStore* local_storage = settings_test_util::GetStorage(
+      extension, settings::LOCAL, frontend_.get());
 
   // Sync storage should run out after ~100K.
-  std::unique_ptr<base::Value> kilobyte = util::CreateKilobyte();
+  std::unique_ptr<base::Value> kilobyte = settings_test_util::CreateKilobyte();
   for (int i = 0; i < 100; ++i) {
-    sync_storage->Set(DEFAULTS, base::IntToString(i), *kilobyte);
+    sync_storage->Set(DEFAULTS, base::NumberToString(i), *kilobyte);
   }
 
   EXPECT_FALSE(
@@ -198,16 +199,16 @@ TEST_F(ExtensionSettingsFrontendTest,
 
   // Local storage shouldn't run out after ~100K.
   for (int i = 0; i < 100; ++i) {
-    local_storage->Set(DEFAULTS, base::IntToString(i), *kilobyte);
+    local_storage->Set(DEFAULTS, base::NumberToString(i), *kilobyte);
   }
 
   EXPECT_TRUE(
       local_storage->Set(DEFAULTS, "WontError", *kilobyte).status().ok());
 
   // Local storage should run out after ~5MB.
-  std::unique_ptr<base::Value> megabyte = util::CreateMegabyte();
+  std::unique_ptr<base::Value> megabyte = settings_test_util::CreateMegabyte();
   for (int i = 0; i < 5; ++i) {
-    local_storage->Set(DEFAULTS, base::IntToString(i), *megabyte);
+    local_storage->Set(DEFAULTS, base::NumberToString(i), *megabyte);
   }
 
   EXPECT_FALSE(

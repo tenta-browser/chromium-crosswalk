@@ -13,9 +13,9 @@
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebCryptoAlgorithmParams.h"
-#include "third_party/WebKit/public/platform/WebCryptoKey.h"
-#include "third_party/WebKit/public/platform/WebCryptoKeyAlgorithm.h"
+#include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
+#include "third_party/blink/public/platform/web_crypto_key.h"
+#include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
 
 namespace webcrypto {
 
@@ -168,14 +168,14 @@ TEST_F(WebCryptoRsaPssTest, SignEmptyMessage) {
 //   * Verify over corrupted message should fail
 //   * Verification with corrupted signature should fail
 TEST_F(WebCryptoRsaPssTest, VerifyKnownAnswer) {
-  std::unique_ptr<base::DictionaryValue> test_data;
+  base::DictionaryValue test_data;
   ASSERT_TRUE(ReadJsonTestFileToDictionary("rsa_pss.json", &test_data));
 
   const base::DictionaryValue* keys_dict = nullptr;
-  ASSERT_TRUE(test_data->GetDictionary("keys", &keys_dict));
+  ASSERT_TRUE(test_data.GetDictionary("keys", &keys_dict));
 
   const base::ListValue* tests = nullptr;
-  ASSERT_TRUE(test_data->GetList("tests", &tests));
+  ASSERT_TRUE(test_data.GetList("tests", &tests));
 
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {
     SCOPED_TRACE(test_index);

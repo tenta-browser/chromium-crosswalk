@@ -18,10 +18,6 @@ namespace base {
 class SingleThreadTaskRunner;
 }
 
-namespace ui {
-class SystemInputInjectorFactory;
-}
-
 namespace webrtc {
 
 class DesktopCaptureOptions;
@@ -37,13 +33,14 @@ class BasicDesktopEnvironment : public DesktopEnvironment {
   ~BasicDesktopEnvironment() override;
 
   // DesktopEnvironment implementation.
+  std::unique_ptr<ActionExecutor> CreateActionExecutor() override;
   std::unique_ptr<AudioCapturer> CreateAudioCapturer() override;
   std::unique_ptr<InputInjector> CreateInputInjector() override;
   std::unique_ptr<ScreenControls> CreateScreenControls() override;
   std::unique_ptr<webrtc::DesktopCapturer> CreateVideoCapturer() override;
   std::unique_ptr<webrtc::MouseCursorMonitor> CreateMouseCursorMonitor()
       override;
-  std::unique_ptr<FileProxyWrapper> CreateFileProxyWrapper() override;
+  std::unique_ptr<FileOperations> CreateFileOperations() override;
   std::string GetCapabilities() const override;
   void SetCapabilities(const std::string& capabilities) override;
   uint32_t GetDesktopSessionId() const override;
@@ -56,7 +53,7 @@ class BasicDesktopEnvironment : public DesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory,
+      base::WeakPtr<ClientSessionControl> client_session_control,
       const DesktopEnvironmentOptions& options);
 
   scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner() const {
@@ -84,10 +81,6 @@ class BasicDesktopEnvironment : public DesktopEnvironment {
     return *options_.desktop_capture_options();
   }
 
-  ui::SystemInputInjectorFactory* system_input_injector_factory() const {
-    return system_input_injector_factory_;
-  }
-
   const DesktopEnvironmentOptions& desktop_environment_options() const {
     return options_;
   }
@@ -106,8 +99,8 @@ class BasicDesktopEnvironment : public DesktopEnvironment {
   // Used to run UI code.
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 
-  // Passed to InputInjector.
-  ui::SystemInputInjectorFactory* system_input_injector_factory_;
+  // Used to send messages directly to the client session.
+  base::WeakPtr<ClientSessionControl> client_session_control_;
 
   DesktopEnvironmentOptions options_;
 
@@ -121,8 +114,7 @@ class BasicDesktopEnvironmentFactory : public DesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory);
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
   ~BasicDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory implementation.
@@ -146,10 +138,6 @@ class BasicDesktopEnvironmentFactory : public DesktopEnvironmentFactory {
     return ui_task_runner_;
   }
 
-  ui::SystemInputInjectorFactory* system_input_injector_factory() const {
-    return system_input_injector_factory_;
-  }
-
  private:
   // Task runner on which methods of DesktopEnvironmentFactory interface should
   // be called.
@@ -163,9 +151,6 @@ class BasicDesktopEnvironmentFactory : public DesktopEnvironmentFactory {
 
   // Used to run UI code.
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
-
-  // Passed to the environments built.
-  ui::SystemInputInjectorFactory* system_input_injector_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BasicDesktopEnvironmentFactory);
 };

@@ -22,6 +22,11 @@ static base::TimeDelta CalculateDuration(int frames, double sample_rate) {
 AudioBufferMemoryPool::AudioBufferMemoryPool() = default;
 AudioBufferMemoryPool::~AudioBufferMemoryPool() = default;
 
+size_t AudioBufferMemoryPool::GetPoolSizeForTesting() {
+  base::AutoLock al(entry_lock_);
+  return entries_.size();
+}
+
 AudioBufferMemoryPool::AudioMemory AudioBufferMemoryPool::CreateBuffer(
     size_t size) {
   base::AutoLock al(entry_lock_);
@@ -235,7 +240,7 @@ void AudioBuffer::AdjustSampleRate(int sample_rate) {
 void AudioBuffer::ReadFrames(int frames_to_copy,
                              int source_frame_offset,
                              int dest_frame_offset,
-                             AudioBus* dest) {
+                             AudioBus* dest) const {
   // Deinterleave each channel (if necessary) and convert to 32bit
   // floating-point with nominal range -1.0 -> +1.0 (if necessary).
 
@@ -366,7 +371,8 @@ void AudioBuffer::TrimRange(int start, int end) {
   CHECK_LE(frames_to_trim, adjusted_frame_count_);
 
   const int bytes_per_channel = SampleFormatToBytesPerChannel(sample_format_);
-  const int frames_to_copy = adjusted_frame_count_ - end;
+  // Empty buffers do not have frames to copy backed by data_.
+  const int frames_to_copy = data_ ? adjusted_frame_count_ - end : 0;
   if (frames_to_copy > 0) {
     switch (sample_format_) {
       case kSampleFormatPlanarS16:
@@ -394,6 +400,7 @@ void AudioBuffer::TrimRange(int start, int end) {
       case kUnknownSampleFormat:
       case kSampleFormatAc3:
       case kSampleFormatEac3:
+      case kSampleFormatMpegHAudio:
         NOTREACHED() << "Invalid sample format!";
     }
   } else {
@@ -404,7 +411,7 @@ void AudioBuffer::TrimRange(int start, int end) {
   TrimEnd(frames_to_trim);
 }
 
-bool AudioBuffer::IsBitstreamFormat() {
+bool AudioBuffer::IsBitstreamFormat() const {
   return IsBitstream(sample_format_);
 }
 

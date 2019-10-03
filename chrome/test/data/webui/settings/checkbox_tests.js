@@ -9,13 +9,13 @@ cr.define('settings_checkbox', function() {
      * Checkbox created before each test.
      * @type {SettingsCheckbox}
      */
-    var testElement;
+    let testElement;
 
     /**
      * Pref value used in tests, should reflect checkbox 'checked' attribute.
      * @type {SettingsCheckbox}
      */
-    var pref = {
+    const pref = {
       key: 'test',
       type: chrome.settingsPrivate.PrefType.BOOLEAN,
       value: true
@@ -32,11 +32,11 @@ cr.define('settings_checkbox', function() {
     test('value changes on tap', function() {
       assertTrue(testElement.checked);
 
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
       assertFalse(testElement.checked);
       assertFalse(pref.value);
 
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
       assertTrue(testElement.checked);
       assertTrue(pref.value);
     });
@@ -46,7 +46,7 @@ cr.define('settings_checkbox', function() {
         assertFalse(testElement.checked);
         done();
       });
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
     });
 
     test('does not change when disabled', function() {
@@ -55,13 +55,13 @@ cr.define('settings_checkbox', function() {
       assertTrue(testElement.disabled);
       assertTrue(testElement.$.checkbox.disabled);
 
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
       assertFalse(testElement.checked);
       assertFalse(testElement.$.checkbox.checked);
     });
 
     test('numerical pref', function() {
-      var prefNum = {
+      const prefNum = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 1
@@ -70,11 +70,11 @@ cr.define('settings_checkbox', function() {
       testElement.set('pref', prefNum);
       assertTrue(testElement.checked);
 
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
       assertFalse(testElement.checked);
       assertEquals(0, prefNum.value);
 
-      MockInteractions.tap(testElement.$.checkbox);
+      testElement.$.checkbox.click();
       assertTrue(testElement.checked);
       assertEquals(1, prefNum.value);
     });

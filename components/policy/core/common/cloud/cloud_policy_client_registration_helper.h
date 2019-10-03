@@ -19,10 +19,12 @@
 #include "components/policy/policy_export.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 
-class OAuth2TokenService;
+namespace signin {
+class IdentityManager;
+}
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace policy {
@@ -41,30 +43,21 @@ class POLICY_EXPORT CloudPolicyClientRegistrationHelper
   ~CloudPolicyClientRegistrationHelper() override;
 
   // Starts the client registration process. This version uses the
-  // supplied OAuth2TokenService to mint the new token for the userinfo
+  // supplied IdentityManager to mint the new token for the userinfo
   // and DM services, using the |account_id|.
   // |callback| is invoked when the registration is complete.
-  void StartRegistration(
-      OAuth2TokenService* token_service,
-      const std::string& account_id,
-      const base::Closure& callback);
+  void StartRegistration(signin::IdentityManager* identity_manager,
+                         const std::string& account_id,
+                         const base::Closure& callback);
 
-#if !defined(OS_ANDROID)
-  // Starts the client registration process. The |login_refresh_token| is used
-  // to mint a new token for the userinfo and DM services.
+  // Starts the device registration with an token enrollment process.
   // |callback| is invoked when the registration is complete.
-  void StartRegistrationWithLoginToken(const std::string& login_refresh_token,
-                                       const base::Closure& callback);
-
-  // Returns the scopes required for policy client registration.
-  static std::vector<std::string> GetScopes();
-#endif
+  void StartRegistrationWithEnrollmentToken(const std::string& token,
+                                            const std::string& client_id,
+                                            const base::Closure& callback);
 
  private:
-  class TokenServiceHelper;
-#if !defined(OS_ANDROID)
-  class LoginTokenHelper;
-#endif
+  class IdentityManagerHelper;
 
   void OnTokenFetched(const std::string& oauth_access_token);
 
@@ -80,18 +73,9 @@ class POLICY_EXPORT CloudPolicyClientRegistrationHelper
   // Invoked when the registration request has been completed.
   void RequestCompleted();
 
-  // Internal helper class that uses OAuth2TokenService to fetch an OAuth
-  // access token. On desktop, this is only used after the user has signed in -
-  // desktop platforms use LoginTokenHelper for policy fetches performed before
-  // signin is complete.
-  std::unique_ptr<TokenServiceHelper> token_service_helper_;
-
-#if !defined(OS_ANDROID)
-  // Special desktop-only helper to fetch an OAuth access token prior to
-  // the completion of signin. Not used on Android since all token fetching
-  // is done via OAuth2TokenService.
-  std::unique_ptr<LoginTokenHelper> login_token_helper_;
-#endif
+  // Internal helper class that uses IdentityManager to fetch an OAuth
+  // access token.
+  std::unique_ptr<IdentityManagerHelper> identity_manager_helper_;
 
   // Helper class for fetching information from GAIA about the currently
   // signed-in user.
@@ -101,7 +85,7 @@ class POLICY_EXPORT CloudPolicyClientRegistrationHelper
   // GAIA to get information about the signed in user.
   std::string oauth_access_token_;
 
-  scoped_refptr<net::URLRequestContextGetter> context_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   CloudPolicyClient* client_;
   enterprise_management::DeviceRegisterRequest::Type registration_type_;
   base::Closure callback_;

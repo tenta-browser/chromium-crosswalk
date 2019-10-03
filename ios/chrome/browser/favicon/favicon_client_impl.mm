@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/favicon/core/favicon_service.h"
@@ -88,18 +87,16 @@ base::CancelableTaskTracker::TaskId
 FaviconClientImpl::GetFaviconForNativeApplicationURL(
     const GURL& url,
     const std::vector<int>& desired_sizes_in_pixel,
-    const favicon_base::FaviconResultsCallback& callback,
+    favicon_base::FaviconResultsCallback callback,
     base::CancelableTaskTracker* tracker) {
   DCHECK(tracker);
   DCHECK(IsNativeApplicationURL(url));
 
-  auto favicon_bitmap_results =
-      base::MakeUnique<std::vector<favicon_base::FaviconRawBitmapResult>>();
+  std::vector<favicon_base::FaviconRawBitmapResult> favicon_bitmap_results;
   GetFaviconBitmapForNativeURL(url, desired_sizes_in_pixel,
-                               favicon_bitmap_results.get());
+                               &favicon_bitmap_results);
 
   return tracker->PostTask(
       base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
-      base::Bind(&favicon::FaviconService::FaviconResultsCallbackRunner,
-                 callback, base::Owned(favicon_bitmap_results.release())));
+      base::BindOnce(std::move(callback), std::move(favicon_bitmap_results)));
 }

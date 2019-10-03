@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <tuple>
+
 #include "base/files/file_path.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -78,76 +80,6 @@ Warning Warning::CreateNetworkDelayWarning(
 }
 
 // static
-Warning Warning::CreateNetworkConflictWarning(const std::string& extension_id) {
-  std::vector<std::string> message_parameters;
-  return Warning(
-      kNetworkConflict,
-      extension_id,
-      IDS_EXTENSION_WARNINGS_NETWORK_CONFLICT,
-      message_parameters);
-}
-
-// static
-Warning Warning::CreateRedirectConflictWarning(
-    const std::string& extension_id,
-    const std::string& winning_extension_id,
-    const GURL& attempted_redirect_url,
-    const GURL& winning_redirect_url) {
-  std::vector<std::string> message_parameters;
-  message_parameters.push_back(attempted_redirect_url.spec());
-  message_parameters.push_back(kTranslate + winning_extension_id);
-  message_parameters.push_back(winning_redirect_url.spec());
-  return Warning(
-      kRedirectConflict,
-      extension_id,
-      IDS_EXTENSION_WARNINGS_REDIRECT_CONFLICT,
-      message_parameters);
-}
-
-// static
-Warning Warning::CreateRequestHeaderConflictWarning(
-    const std::string& extension_id,
-    const std::string& winning_extension_id,
-    const std::string& conflicting_header) {
-  std::vector<std::string> message_parameters;
-  message_parameters.push_back(conflicting_header);
-  message_parameters.push_back(kTranslate + winning_extension_id);
-  return Warning(
-      kNetworkConflict,
-      extension_id,
-      IDS_EXTENSION_WARNINGS_REQUEST_HEADER_CONFLICT,
-      message_parameters);
-}
-
-// static
-Warning Warning::CreateResponseHeaderConflictWarning(
-    const std::string& extension_id,
-    const std::string& winning_extension_id,
-    const std::string& conflicting_header) {
-  std::vector<std::string> message_parameters;
-  message_parameters.push_back(conflicting_header);
-  message_parameters.push_back(kTranslate + winning_extension_id);
-  return Warning(
-      kNetworkConflict,
-      extension_id,
-      IDS_EXTENSION_WARNINGS_RESPONSE_HEADER_CONFLICT,
-      message_parameters);
-}
-
-// static
-Warning Warning::CreateCredentialsConflictWarning(
-    const std::string& extension_id,
-    const std::string& winning_extension_id) {
-  std::vector<std::string> message_parameters;
-  message_parameters.push_back(kTranslate + winning_extension_id);
-  return Warning(
-      kNetworkConflict,
-      extension_id,
-      IDS_EXTENSION_WARNINGS_CREDENTIALS_CONFLICT,
-      message_parameters);
-}
-
-// static
 Warning Warning::CreateRepeatedCacheFlushesWarning(
     const std::string& extension_id) {
   std::vector<std::string> message_parameters;
@@ -188,6 +120,19 @@ Warning Warning::CreateReloadTooFrequentWarning(
                           message_parameters);
 }
 
+// static
+Warning Warning::CreateRulesetFailedToLoadWarning(
+    const ExtensionId& extension_id) {
+  return Warning(kRulesetFailedToLoad, extension_id,
+                 IDS_EXTENSION_WARNING_RULESET_FAILED_TO_LOAD,
+                 {} /*message_parameters*/);
+}
+
+bool Warning::operator<(const Warning& other) const {
+  return std::tie(extension_id_, type_) <
+         std::tie(other.extension_id_, other.type_);
+}
+
 std::string Warning::GetLocalizedMessage(const ExtensionSet* extensions) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -226,12 +171,6 @@ std::string Warning::GetLocalizedMessage(const ExtensionSet* extensions) const {
       NOTREACHED();
       return std::string();
   }
-}
-
-bool operator<(const Warning& a, const Warning& b) {
-  if (a.extension_id() != b.extension_id())
-    return a.extension_id() < b.extension_id();
-  return a.warning_type() < b.warning_type();
 }
 
 }  // namespace extensions

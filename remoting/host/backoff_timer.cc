@@ -3,12 +3,13 @@
 // found in the LICENSE file.
 
 #include "remoting/host/backoff_timer.h"
+#include "base/bind.h"
 
 #include <utility>
 
 namespace remoting {
 
-BackoffTimer::BackoffTimer() : timer_(new base::Timer(false, false)) {}
+BackoffTimer::BackoffTimer() : timer_(new base::OneShotTimer()) {}
 
 BackoffTimer::~BackoffTimer() = default;
 
@@ -31,9 +32,9 @@ void BackoffTimer::Stop() {
   timer_->Stop();
   user_task_.Reset();
   backoff_entry_.reset();
-};
+}
 
-void BackoffTimer::SetTimerForTest(std::unique_ptr<base::Timer> timer) {
+void BackoffTimer::SetTimerForTest(std::unique_ptr<base::OneShotTimer> timer) {
   timer_ = std::move(timer);
 }
 

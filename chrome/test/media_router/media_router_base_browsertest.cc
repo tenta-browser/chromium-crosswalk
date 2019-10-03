@@ -13,6 +13,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/elapsed_timer.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_switches.h"
@@ -113,12 +114,12 @@ void MediaRouterBaseBrowserTest::ParseCommandLine() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   extension_unpacked_ = command_line->GetSwitchValuePath(kExtensionUnpacked);
 
-  // Check if there is mr_extension folder under PRODUCT_DIR folder.
+  // No extension provided. Use the default component extension in Chromium.
   if (extension_unpacked_.empty()) {
     base::FilePath base_dir;
-    ASSERT_TRUE(PathService::Get(base::DIR_MODULE, &base_dir));
-    base::FilePath extension_path =
-        base_dir.Append(FILE_PATH_LITERAL("mr_extension/"));
+    ASSERT_TRUE(base::PathService::Get(base::DIR_MODULE, &base_dir));
+    base::FilePath extension_path = base_dir.Append(FILE_PATH_LITERAL(
+        "gen/chrome/browser/resources/media_router/extension"));
     if (PathExists(extension_path)) {
       extension_unpacked_ = extension_path;
     }

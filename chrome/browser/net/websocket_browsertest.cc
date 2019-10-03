@@ -130,7 +130,7 @@ class AutoLogin : public content::NotificationObserver {
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
     DCHECK_EQ(chrome::NOTIFICATION_AUTH_NEEDED, type);
-    scoped_refptr<LoginHandler> login_handler =
+    LoginHandler* login_handler =
         content::Details<LoginNotificationDetails>(details)->handler();
     login_handler->SetAuth(username_, password_);
     logged_in_ = true;
@@ -185,24 +185,26 @@ IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest,
     // Create a new tab, establish a WebSocket connection and close the tab.
     content::WebContents* tab =
         browser()->tab_strip_model()->GetActiveWebContents();
-    content::WebContents* new_tab = content::WebContents::Create(
-        content::WebContents::CreateParams(tab->GetBrowserContext()));
-    browser()->tab_strip_model()->AppendWebContents(new_tab, true);
-    ASSERT_EQ(new_tab, browser()->tab_strip_model()->GetWebContentsAt(1));
+    std::unique_ptr<content::WebContents> new_tab =
+        content::WebContents::Create(
+            content::WebContents::CreateParams(tab->GetBrowserContext()));
+    content::WebContents* raw_new_tab = new_tab.get();
+    browser()->tab_strip_model()->AppendWebContents(std::move(new_tab), true);
+    ASSERT_EQ(raw_new_tab, browser()->tab_strip_model()->GetWebContentsAt(1));
 
     content::TitleWatcher connected_title_watcher(
-        new_tab, base::ASCIIToUTF16("CONNECTED"));
+        raw_new_tab, base::ASCIIToUTF16("CONNECTED"));
     connected_title_watcher.AlsoWaitForTitle(base::ASCIIToUTF16("CLOSED"));
-    NavigateToHTTP("counted_connection.html");
+    NavigateToHTTP("connect_and_be_observed.html");
     const base::string16 result = connected_title_watcher.WaitAndGetTitle();
     EXPECT_TRUE(base::EqualsASCII(result, "CONNECTED"));
 
-    content::WebContentsDestroyedWatcher destroyed_watcher(new_tab);
+    content::WebContentsDestroyedWatcher destroyed_watcher(raw_new_tab);
     browser()->tab_strip_model()->CloseWebContentsAt(1, 0);
     destroyed_watcher.Wait();
   }
 
-  NavigateToHTTP("count_connection.html");
+  NavigateToHTTP("close_observer.html");
   EXPECT_EQ("PASS", WaitAndGetTitle());
 }
 
@@ -311,7 +313,7 @@ IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest, WebSocketAppliesHSTS) {
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
   https_server.SetSSLConfig(
       net::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
-  https_server.ServeFilesFromSourceDirectory("chrome/test/data");
+  https_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
   net::SpawnedTestServer wss_server(
       net::SpawnedTestServer::TYPE_WSS,
       net::SpawnedTestServer::SSLOptions(
@@ -320,7 +322,7 @@ IN_PROC_BROWSER_TEST_F(WebSocketBrowserTest, WebSocketAppliesHSTS) {
   // This test sets HSTS on localhost. To avoid being redirected to https, start
   // the http server on 127.0.0.1 instead.
   net::EmbeddedTestServer http_server;
-  http_server.ServeFilesFromSourceDirectory("chrome/test/data");
+  http_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
   ASSERT_TRUE(https_server.Start());
   ASSERT_TRUE(http_server.Start());
   ASSERT_TRUE(wss_server.StartInBackground());

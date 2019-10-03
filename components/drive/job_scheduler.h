@@ -19,8 +19,8 @@
 #include "components/drive/job_list.h"
 #include "components/drive/job_queue.h"
 #include "components/drive/service/drive_service_interface.h"
-#include "net/base/network_change_notifier.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 
 class PrefService;
 
@@ -61,12 +61,13 @@ struct ClientContext {
 // On offline case, no jobs run. USER_INITIATED jobs fail immediately.
 // BACKGROUND jobs stay in the queue and wait for network connection.
 class JobScheduler
-    : public net::NetworkChangeNotifier::ConnectionTypeObserver,
+    : public network::NetworkConnectionTracker::NetworkConnectionObserver,
       public JobListInterface {
  public:
   JobScheduler(PrefService* pref_service,
                EventLogger* logger,
                DriveServiceInterface* drive_service,
+               network::NetworkConnectionTracker* network_connection_tracker,
                base::SequencedTaskRunner* blocking_task_runner,
                device::mojom::WakeLockProviderPtr wake_lock_provider);
 
@@ -79,21 +80,28 @@ class JobScheduler
   void CancelJob(JobID job_id) override;
   void CancelAllJobs() override;
 
-  // Adds a GetAppList operation to the queue.
-  // |callback| must not be null.
-  void GetAppList(const google_apis::AppListCallback& callback);
-
   // Adds a GetAboutResource operation to the queue.
   // |callback| must not be null.
   void GetAboutResource(const google_apis::AboutResourceCallback& callback);
+
+  // Adds a GetStartPageToken operation to the queue.
+  // If |team_drive_id| is empty then it will return the start token for the
+  // users changelog.
+  // |callback| must not be null.
+  void GetStartPageToken(const std::string& team_drive_id,
+                         const google_apis::StartPageTokenCallback& callback);
 
   // Adds a GetAllTeamDriveList operation to the queue.
   // |callback| must not be null.
   void GetAllTeamDriveList(const google_apis::TeamDriveListCallback& callback);
 
   // Adds a GetAllFileList operation to the queue.
+  // If |team_drive_id| is empty then it will return the file list for the
+  // users default corpus, otherwise will return the file list for the
+  // specified team drive.
   // |callback| must not be null.
-  void GetAllFileList(const google_apis::FileListCallback& callback);
+  void GetAllFileList(const std::string& team_drive_id,
+                      const google_apis::FileListCallback& callback);
 
   // Adds a GetFileListInDirectory operation to the queue.
   // |callback| must not be null.
@@ -108,6 +116,15 @@ class JobScheduler
   // Adds a GetChangeList operation to the queue.
   // |callback| must not be null.
   void GetChangeList(int64_t start_changestamp,
+                     const google_apis::ChangeListCallback& callback);
+
+  // Adds a GetChangeList operation to the queue, where |start_page_token|
+  // is used to specify where to start retrieving the change list from.
+  // If |team_drive_id| is empty then it will return the change list for the
+  // users changelog.
+  // |callback| must not be null.
+  void GetChangeList(const std::string& team_drive_id,
+                     const std::string& start_page_token,
                      const google_apis::ChangeListCallback& callback);
 
   // Adds GetRemainingChangeList operation to the queue.
@@ -130,12 +147,6 @@ class JobScheduler
   void GetFileResource(const std::string& resource_id,
                        const ClientContext& context,
                        const google_apis::FileResourceCallback& callback);
-
-  // Adds a GetShareUrl operation to the queue.
-  void GetShareUrl(const std::string& resource_id,
-                   const GURL& embed_origin,
-                   const ClientContext& context,
-                   const google_apis::GetShareUrlCallback& callback);
 
   // Adds a TrashResource operation to the queue.
   void TrashResource(const std::string& resource_id,
@@ -316,18 +327,12 @@ class JobScheduler
       google_apis::DriveApiErrorCode error,
       std::unique_ptr<google_apis::AboutResource> about_resource);
 
-  // Callback for job finishing with a GetShareUrlCallback.
-  void OnGetShareUrlJobDone(
+  // Callback for job finishing with a GetStartPageTokenCallback.
+  void OnGetStartPageTokenDone(
       JobID job_id,
-      const google_apis::GetShareUrlCallback& callback,
+      const google_apis::StartPageTokenCallback& callback,
       google_apis::DriveApiErrorCode error,
-      const GURL& share_url);
-
-  // Callback for job finishing with a AppListCallback.
-  void OnGetAppListJobDone(JobID job_id,
-                           const google_apis::AppListCallback& callback,
-                           google_apis::DriveApiErrorCode error,
-                           std::unique_ptr<google_apis::AppList> app_list);
+      std::unique_ptr<google_apis::StartPageToken> start_page_token);
 
   // Callback for job finishing with a EntryActionCallback.
   void OnEntryActionJobDone(JobID job_id,
@@ -362,9 +367,8 @@ class JobScheduler
   // Updates the progress status of the specified job.
   void UpdateProgress(JobID job_id, int64_t progress, int64_t total);
 
-  // net::NetworkChangeNotifier::ConnectionTypeObserver override.
-  void OnConnectionTypeChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
+  // network::NetworkConnectionTracker::NetworkConnectionObserver override.
+  void OnConnectionChanged(network::mojom::ConnectionType type) override;
 
   // Get the type of queue the specified job should be put in.
   QueueType GetJobQueueType(JobType type);
@@ -406,10 +410,11 @@ class JobScheduler
   JobIDMap job_map_;
 
   // The list of observers for the scheduler.
-  base::ObserverList<JobListObserver> observer_list_;
+  base::ObserverList<JobListObserver>::Unchecked observer_list_;
 
   EventLogger* logger_;
   DriveServiceInterface* drive_service_;
+  network::NetworkConnectionTracker* network_connection_tracker_;
   base::SequencedTaskRunner* blocking_task_runner_;
   std::unique_ptr<DriveUploaderInterface> uploader_;
 
@@ -419,7 +424,7 @@ class JobScheduler
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<JobScheduler> weak_ptr_factory_;
+  base::WeakPtrFactory<JobScheduler> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(JobScheduler);
 };
 

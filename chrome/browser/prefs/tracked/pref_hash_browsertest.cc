@@ -12,7 +12,6 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
@@ -41,7 +40,7 @@
 #include "services/preferences/public/cpp/tracked/tracked_preference_histogram_names.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 #if defined(OS_WIN)
@@ -81,7 +80,7 @@ base::string16 GetRegistryPathForTestProfile() {
   }
 
   base::FilePath profile_dir;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_USER_DATA, &profile_dir));
+  EXPECT_TRUE(base::PathService::Get(chrome::DIR_USER_DATA, &profile_dir));
 
   // Use a location under the real PreferenceMACs path so that the backup
   // cleanup logic in ChromeTestLauncherDelegate::PreSharding() for interrupted
@@ -158,23 +157,18 @@ bool SupportsRegistryValidation() {
 #endif
 }
 
-#define PREF_HASH_BROWSER_TEST(fixture, test_name)                          \
-  IN_PROC_BROWSER_TEST_P(fixture, PRE_##test_name) {                        \
-    SetupPreferences();                                                     \
-  }                                                                         \
-  IN_PROC_BROWSER_TEST_P(fixture, test_name) {                              \
-    VerifyReactionToPrefAttack();                                           \
-  }                                                                         \
-  INSTANTIATE_TEST_CASE_P(                                                  \
-      fixture##Instance,                                                    \
-      fixture,                                                              \
-      testing::Values(                                                      \
-          chrome_prefs::internals::kSettingsEnforcementGroupNoEnforcement,  \
-          chrome_prefs::internals::kSettingsEnforcementGroupEnforceAlways,  \
-          chrome_prefs::internals::                                         \
-              kSettingsEnforcementGroupEnforceAlwaysWithDSE,                \
-          chrome_prefs::internals::                                         \
-              kSettingsEnforcementGroupEnforceAlwaysWithExtensionsAndDSE));
+#define PREF_HASH_BROWSER_TEST(fixture, test_name)                             \
+  IN_PROC_BROWSER_TEST_P(fixture, PRE_##test_name) { SetupPreferences(); }     \
+  IN_PROC_BROWSER_TEST_P(fixture, test_name) { VerifyReactionToPrefAttack(); } \
+  INSTANTIATE_TEST_SUITE_P(                                                    \
+      fixture##Instance, fixture,                                              \
+      testing::Values(                                                         \
+          chrome_prefs::internals::kSettingsEnforcementGroupNoEnforcement,     \
+          chrome_prefs::internals::kSettingsEnforcementGroupEnforceAlways,     \
+          chrome_prefs::internals::                                            \
+              kSettingsEnforcementGroupEnforceAlwaysWithDSE,                   \
+          chrome_prefs::internals::                                            \
+              kSettingsEnforcementGroupEnforceAlwaysWithExtensionsAndDSE))
 
 // A base fixture designed such that implementations do two things:
 //  1) Override all three pure-virtual methods below to setup, attack, and
@@ -183,7 +177,7 @@ bool SupportsRegistryValidation() {
 // Based on top of ExtensionBrowserTest to allow easy interaction with the
 // ExtensionService.
 class PrefHashBrowserTestBase
-    : public ExtensionBrowserTest,
+    : public extensions::ExtensionBrowserTest,
       public testing::WithParamInterface<std::string> {
  public:
   // List of potential protection levels for this test in strict increasing
@@ -204,7 +198,7 @@ class PrefHashBrowserTestBase
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionBrowserTest::SetUpCommandLine(command_line);
+    extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
     EXPECT_FALSE(command_line->HasSwitch(switches::kForceFieldTrials));
     command_line->AppendSwitchASCII(
         switches::kForceFieldTrials,
@@ -220,7 +214,7 @@ class PrefHashBrowserTestBase
     // Do the normal setup in the PRE test and attack preferences in the main
     // test.
     if (content::IsPreTest())
-      return ExtensionBrowserTest::SetUpUserDataDirectory();
+      return extensions::ExtensionBrowserTest::SetUpUserDataDirectory();
 
 #if defined(OS_CHROMEOS)
     // For some reason, the Preferences file does not exist in the location
@@ -235,7 +229,7 @@ class PrefHashBrowserTestBase
 #endif
 
     base::FilePath profile_dir;
-    EXPECT_TRUE(PathService::Get(chrome::DIR_USER_DATA, &profile_dir));
+    EXPECT_TRUE(base::PathService::Get(chrome::DIR_USER_DATA, &profile_dir));
     profile_dir = profile_dir.AppendASCII(TestingProfile::kTestUserProfileDir);
 
     // Sanity check that old protected pref file is never present in modern
@@ -285,7 +279,7 @@ class PrefHashBrowserTestBase
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    ExtensionBrowserTest::SetUpInProcessBrowserTestFixture();
+    extensions::ExtensionBrowserTest::SetUpInProcessBrowserTestFixture();
 
     // Bots are on a domain, turn off the domain check for settings hardening in
     // order to be able to test all SettingsEnforcement groups.
@@ -325,14 +319,14 @@ class PrefHashBrowserTestBase
       }
     }
 #endif
-    ExtensionBrowserTest::TearDown();
+    extensions::ExtensionBrowserTest::TearDown();
   }
 
   // In the PRE_ test, find the number of tracked preferences that were
   // initialized and save it to a file to be read back in the main test and used
   // as the total number of tracked preferences.
   void SetUpOnMainThread() override {
-    ExtensionBrowserTest::SetUpOnMainThread();
+    extensions::ExtensionBrowserTest::SetUpOnMainThread();
 
     // File in which the PRE_ test will save the number of tracked preferences
     // on this platform.
@@ -340,7 +334,7 @@ class PrefHashBrowserTestBase
 
     base::FilePath num_tracked_prefs_file;
     ASSERT_TRUE(
-        PathService::Get(chrome::DIR_USER_DATA, &num_tracked_prefs_file));
+        base::PathService::Get(chrome::DIR_USER_DATA, &num_tracked_prefs_file));
     num_tracked_prefs_file =
         num_tracked_prefs_file.AppendASCII(kNumTrackedPrefFilename);
 
@@ -378,7 +372,8 @@ class PrefHashBrowserTestBase
 
       num_tracked_prefs_ += num_split_tracked_prefs;
 
-      std::string num_tracked_prefs_str = base::IntToString(num_tracked_prefs_);
+      std::string num_tracked_prefs_str =
+          base::NumberToString(num_tracked_prefs_);
       EXPECT_EQ(static_cast<int>(num_tracked_prefs_str.size()),
                 base::WriteFile(num_tracked_prefs_file,
                                 num_tracked_prefs_str.c_str(),
@@ -688,18 +683,16 @@ class PrefHashBrowserTestUntrustedInitialized : public PrefHashBrowserTestBase {
     // the previous one.
     switch (protection_level_) {
       case PROTECTION_ENABLED_ALL:
-        // Falls through.
       case PROTECTION_ENABLED_EXTENSIONS:
         ++num_protected_prefs;
-        // Falls through.
+        FALLTHROUGH;
       case PROTECTION_ENABLED_DSE:
         ++num_protected_prefs;
-        // Falls through.
+        FALLTHROUGH;
       case PROTECTION_ENABLED_BASIC:
         num_protected_prefs += num_tracked_prefs() - num_null_values - 2;
-        // Falls through.
+        FALLTHROUGH;
       case PROTECTION_DISABLED_FOR_GROUP:
-        // No protection. Falls through.
       case PROTECTION_DISABLED_ON_PLATFORM:
         // No protection.
         break;
@@ -893,7 +886,7 @@ class PrefHashBrowserTestChangedSplitPref : public PrefHashBrowserTestBase {
 
     // Drop a fake extension (for the purpose of this test, dropped settings
     // don't need to be valid extension settings).
-    auto fake_extension = base::MakeUnique<base::DictionaryValue>();
+    auto fake_extension = std::make_unique<base::DictionaryValue>();
     fake_extension->SetString("name", "foo");
     extensions_dict->Set(std::string(32, 'a'), std::move(fake_extension));
   }
@@ -1243,9 +1236,9 @@ class PrefHashBrowserTestDefaultSearch : public PrefHashBrowserTestBase {
 
     // Try to override default search in all three of available preferences.
     auto attack1 = base::DictionaryValue::From(
-        base::JSONReader::Read(default_search_provider_data));
+        base::JSONReader::ReadDeprecated(default_search_provider_data));
     auto attack2 = base::DictionaryValue::From(
-        base::JSONReader::Read(search_provider_overrides));
+        base::JSONReader::ReadDeprecated(search_provider_overrides));
     unprotected_preferences->MergeDictionary(attack1.get());
     unprotected_preferences->MergeDictionary(attack2.get());
     if (protected_preferences) {

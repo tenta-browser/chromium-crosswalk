@@ -4,6 +4,8 @@
 
 #include "chrome/browser/feedback/feedback_dialog_utils.h"
 
+#include "ash/public/cpp/multi_user_window_manager.h"
+#include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -14,14 +16,14 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #endif
 
 namespace chrome {
 
-GURL GetTargetTabUrl(int session_id, int index) {
+GURL GetTargetTabUrl(SessionID session_id, int index) {
   Browser* browser = chrome::FindBrowserWithID(session_id);
   // Sanity checks.
   if (!browser || index >= browser->tab_strip_model()->count())
@@ -30,8 +32,14 @@ GURL GetTargetTabUrl(int session_id, int index) {
   if (index >= 0) {
     content::WebContents* target_tab =
         browser->tab_strip_model()->GetWebContentsAt(index);
-    if (target_tab)
-      return target_tab->GetURL();
+    if (target_tab) {
+      if (browser->is_devtools()) {
+        target_tab = DevToolsWindow::AsDevToolsWindow(target_tab)
+                         ->GetInspectedWebContents();
+      }
+      if (target_tab)
+        return target_tab->GetURL();
+    }
   }
 
   return GURL();
@@ -50,13 +58,11 @@ Profile* GetFeedbackProfile(Browser* browser) {
 
 #if defined(OS_CHROMEOS)
   // Obtains the display profile ID on which the Feedback window should show.
-  MultiUserWindowManager* const window_manager =
-      MultiUserWindowManager::GetInstance();
+  auto* const window_manager = MultiUserWindowManagerHelper::GetWindowManager();
   const AccountId display_account_id =
-      window_manager && browser
-          ? window_manager->GetUserPresentingWindow(
-                browser->window()->GetNativeWindow())
-          : EmptyAccountId();
+      window_manager && browser ? window_manager->GetUserPresentingWindow(
+                                      browser->window()->GetNativeWindow())
+                                : EmptyAccountId();
   if (display_account_id.is_valid())
     profile = multi_user_util::GetProfileFromAccountId(display_account_id);
 #endif

@@ -11,12 +11,13 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "jni/HttpNegotiateAuthenticator_jni.h"
 #include "net/base/auth.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_multi_round_parse.h"
 #include "net/http/http_auth_preferences.h"
+#include "net/log/net_log_with_source.h"
+#include "net/net_jni_headers/HttpNegotiateAuthenticator_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -43,13 +44,15 @@ void JavaNegotiateResultWrapper::SetResult(JNIEnv* env,
                                            const JavaParamRef<jstring>& token) {
   // This will be called on the UI thread, so we have to post a task back to the
   // correct thread to actually save the result
-  std::string raw_token = ConvertJavaStringToUTF8(env, token);
+  std::string raw_token;
+  if (token.obj())
+    raw_token = ConvertJavaStringToUTF8(env, token);
   // Always post, even if we are on the same thread. This guarantees that the
   // result will be delayed until after the request has completed, which
   // simplifies the logic. In practice the result will only ever come back on
   // the original thread in an obscure error case.
   callback_task_runner_->PostTask(
-      FROM_HERE, base::Bind(thread_safe_callback_, result, raw_token));
+      FROM_HERE, base::BindOnce(thread_safe_callback_, result, raw_token));
   // We will always get precisely one call to set result for each call to
   // getNextAuthToken, so we can now delete the callback object, and must
   // do so to avoid a memory leak.
@@ -58,21 +61,16 @@ void JavaNegotiateResultWrapper::SetResult(JNIEnv* env,
 
 HttpAuthNegotiateAndroid::HttpAuthNegotiateAndroid(
     const HttpAuthPreferences* prefs)
-    : prefs_(prefs),
-      can_delegate_(false),
-      first_challenge_(true),
-      auth_token_(nullptr),
-      weak_factory_(this) {
+    : prefs_(prefs) {
   JNIEnv* env = AttachCurrentThread();
   java_authenticator_.Reset(Java_HttpNegotiateAuthenticator_create(
-      env,
-      ConvertUTF8ToJavaString(env, prefs->AuthAndroidNegotiateAccountType())));
+      env, ConvertUTF8ToJavaString(env, GetAuthAndroidNegotiateAccountType())));
 }
 
 HttpAuthNegotiateAndroid::~HttpAuthNegotiateAndroid() {
 }
 
-bool HttpAuthNegotiateAndroid::Init() {
+bool HttpAuthNegotiateAndroid::Init(const NetLogWithSource& net_log) {
   return true;
 }
 
@@ -95,13 +93,24 @@ HttpAuth::AuthorizationResult HttpAuthNegotiateAndroid::ParseChallenge(
                                        &decoded_auth_token);
 }
 
+int HttpAuthNegotiateAndroid::GenerateAuthTokenAndroid(
+    const AuthCredentials* credentials,
+    const std::string& spn,
+    const std::string& channel_bindings,
+    std::string* auth_token,
+    net::CompletionOnceCallback callback) {
+  return GenerateAuthToken(credentials, spn, channel_bindings, auth_token,
+                           NetLogWithSource(), std::move(callback));
+}
+
 int HttpAuthNegotiateAndroid::GenerateAuthToken(
     const AuthCredentials* credentials,
     const std::string& spn,
     const std::string& channel_bindings,
     std::string* auth_token,
-    const net::CompletionCallback& callback) {
-  if (prefs_->AuthAndroidNegotiateAccountType().empty()) {
+    const NetLogWithSource& net_log,
+    net::CompletionOnceCallback callback) {
+  if (GetAuthAndroidNegotiateAccountType().empty()) {
     // This can happen if there is a policy change, removing the account type,
     // in the middle of a negotiation.
     return ERR_UNSUPPORTED_AUTH_SCHEME;
@@ -111,7 +120,7 @@ int HttpAuthNegotiateAndroid::GenerateAuthToken(
   DCHECK(!callback.is_null());
 
   auth_token_ = auth_token;
-  completion_callback_ = callback;
+  completion_callback_ = std::move(callback);
   scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner =
       base::ThreadTaskRunnerHandle::Get();
   base::Callback<void(int, const std::string&)> thread_safe_callback =
@@ -121,8 +130,6 @@ int HttpAuthNegotiateAndroid::GenerateAuthToken(
   ScopedJavaLocalRef<jstring> java_server_auth_token =
       ConvertUTF8ToJavaString(env, server_auth_token_);
   ScopedJavaLocalRef<jstring> java_spn = ConvertUTF8ToJavaString(env, spn);
-  ScopedJavaLocalRef<jstring> java_account_type =
-      ConvertUTF8ToJavaString(env, prefs_->AuthAndroidNegotiateAccountType());
 
   // It is intentional that callback_wrapper is not owned or deleted by the
   // HttpAuthNegotiateAndroid object. The Java code will call the callback
@@ -137,12 +144,19 @@ int HttpAuthNegotiateAndroid::GenerateAuthToken(
       callback_task_runner, thread_safe_callback);
   Java_HttpNegotiateAuthenticator_getNextAuthToken(
       env, java_authenticator_, reinterpret_cast<intptr_t>(callback_wrapper),
-      java_spn, java_server_auth_token, can_delegate_);
+      java_spn, java_server_auth_token, can_delegate());
   return ERR_IO_PENDING;
 }
 
-void HttpAuthNegotiateAndroid::Delegate() {
-  can_delegate_ = true;
+void HttpAuthNegotiateAndroid::SetDelegation(
+    HttpAuth::DelegationType delegation_type) {
+  DCHECK_NE(delegation_type, HttpAuth::DelegationType::kByKdcPolicy);
+  can_delegate_ = delegation_type == HttpAuth::DelegationType::kUnconstrained;
+}
+
+std::string HttpAuthNegotiateAndroid::GetAuthAndroidNegotiateAccountType()
+    const {
+  return prefs_->AuthAndroidNegotiateAccountType();
 }
 
 void HttpAuthNegotiateAndroid::SetResultInternal(int result,
@@ -151,7 +165,7 @@ void HttpAuthNegotiateAndroid::SetResultInternal(int result,
   DCHECK(!completion_callback_.is_null());
   if (result == OK)
     *auth_token_ = "Negotiate " + raw_token;
-  base::ResetAndReturn(&completion_callback_).Run(result);
+  std::move(completion_callback_).Run(result);
 }
 
 }  // namespace android

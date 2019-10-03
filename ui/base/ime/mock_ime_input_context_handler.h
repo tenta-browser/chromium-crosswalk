@@ -7,14 +7,15 @@
 
 #include <stdint.h>
 
+#include "base/component_export.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/ime_input_context_handler_interface.h"
-#include "ui/base/ime/ui_base_ime_export.h"
+#include "ui/events/event.h"
 
 namespace ui {
 class InputMethod;
 
-class UI_BASE_IME_EXPORT MockIMEInputContextHandler
+class COMPONENT_EXPORT(UI_BASE_IME) MockIMEInputContextHandler
     : public IMEInputContextHandlerInterface {
  public:
   struct UpdateCompositionTextArg {
@@ -35,9 +36,19 @@ class UI_BASE_IME_EXPORT MockIMEInputContextHandler
   void UpdateCompositionText(const CompositionText& text,
                              uint32_t cursor_pos,
                              bool visible) override;
+
+#if defined(OS_CHROMEOS)
+  bool SetCompositionRange(
+      uint32_t before,
+      uint32_t after,
+      const std::vector<ui::ImeTextSpan>& text_spans) override;
+#endif
+
   void DeleteSurroundingText(int32_t offset, uint32_t length) override;
+  SurroundingTextInfo GetSurroundingTextInfo() override;
   void SendKeyEvent(KeyEvent* event) override;
   InputMethod* GetInputMethod() override;
+  void ConfirmCompositionText() override;
 
   int commit_text_call_count() const { return commit_text_call_count_; }
 
@@ -49,7 +60,7 @@ class UI_BASE_IME_EXPORT MockIMEInputContextHandler
     return delete_surrounding_text_call_count_;
   }
 
-  const std::string& last_commit_text() const { return last_commit_text_; };
+  const std::string& last_commit_text() const { return last_commit_text_; }
 
   const UpdateCompositionTextArg& last_update_composition_arg() const {
     return last_update_composition_arg_;
@@ -57,6 +68,10 @@ class UI_BASE_IME_EXPORT MockIMEInputContextHandler
 
   const DeleteSurroundingTextArg& last_delete_surrounding_text_arg() const {
     return last_delete_surrounding_text_arg_;
+  }
+
+  const ui::KeyEvent& last_sent_key_event() const {
+    return last_sent_key_event_;
   }
 
   // Resets all call count.
@@ -67,6 +82,7 @@ class UI_BASE_IME_EXPORT MockIMEInputContextHandler
   int update_preedit_text_call_count_;
   int delete_surrounding_text_call_count_;
   std::string last_commit_text_;
+  ui::KeyEvent last_sent_key_event_;
   UpdateCompositionTextArg last_update_composition_arg_;
   DeleteSurroundingTextArg last_delete_surrounding_text_arg_;
 };

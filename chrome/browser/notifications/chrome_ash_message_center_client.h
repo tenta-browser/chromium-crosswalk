@@ -5,51 +5,39 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_CHROME_ASH_MESSAGE_CENTER_CLIENT_H_
 #define CHROME_BROWSER_NOTIFICATIONS_CHROME_ASH_MESSAGE_CENTER_CLIENT_H_
 
-#include "ash/public/interfaces/ash_message_center_controller.mojom.h"
+#include "ash/public/cpp/notifier_settings_controller.h"
+#include "base/observer_list.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
 #include "chrome/browser/notifications/notification_platform_bridge_chromeos.h"
 #include "chrome/browser/notifications/notifier_controller.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
-#include "ui/message_center/notifier_id.h"
+#include "content/public/browser/notification_observer.h"
+#include "content/public/browser/notification_registrar.h"
 
 // This class serves as Chrome's AshMessageCenterClient, as well as the
 // NotificationPlatformBridge for ChromeOS. It dispatches notifications to Ash
 // and handles interactions with those notifications, plus it keeps track of
 // NotifierControllers to provide notifier settings information to Ash (visible
 // in NotifierSettingsView).
-class ChromeAshMessageCenterClient : public NotificationPlatformBridge,
-                                     public ash::mojom::AshMessageCenterClient,
-                                     public NotifierController::Observer {
+class ChromeAshMessageCenterClient : public ash::NotifierSettingsController,
+                                     public NotifierController::Observer,
+                                     public content::NotificationObserver {
  public:
   explicit ChromeAshMessageCenterClient(
       NotificationPlatformBridgeDelegate* delegate);
 
   ~ChromeAshMessageCenterClient() override;
 
-  // NotificationPlatformBridge:
-  void Display(NotificationHandler::Type notification_type,
-               const std::string& profile_id,
-               bool is_incognito,
-               const message_center::Notification& notification,
-               std::unique_ptr<NotificationCommon::Metadata> metadata) override;
-  void Close(const std::string& profile_id,
-             const std::string& notification_id) override;
-  void GetDisplayed(
-      const std::string& profile_id,
-      bool incognito,
-      const GetDisplayedNotificationsCallback& callback) const override;
-  void SetReadyCallback(NotificationBridgeReadyCallback callback) override;
+  void Display(const message_center::Notification& notification);
+  void Close(const std::string& notification_id);
 
-  // ash::mojom::AshMessageCenterClient:
-  void HandleNotificationClosed(const std::string& id, bool by_user) override;
-  void HandleNotificationClicked(const std::string& id) override;
-  void HandleNotificationButtonClicked(const std::string& id,
-                                       int button_index) override;
+  // ash::NotifierSettingsController:
+  void GetNotifiers() override;
   void SetNotifierEnabled(const message_center::NotifierId& notifier_id,
                           bool enabled) override;
-  void HandleNotifierAdvancedSettingsRequested(
-      const message_center::NotifierId& notifier_id) override;
-  void GetNotifierList(GetNotifierListCallback callback) override;
+  void AddNotifierSettingsObserver(
+      ash::NotifierSettingsObserver* observer) override;
+  void RemoveNotifierSettingsObserver(
+      ash::NotifierSettingsObserver* observer) override;
 
   // NotifierController::Observer:
   void OnIconImageUpdated(const message_center::NotifierId& notifier_id,
@@ -58,15 +46,20 @@ class ChromeAshMessageCenterClient : public NotificationPlatformBridge,
                                 bool enabled) override;
 
  private:
+  // content::NotificationObserver override.
+  void Observe(int type,
+               const content::NotificationSource& source,
+               const content::NotificationDetails& details) override;
+
   NotificationPlatformBridgeDelegate* delegate_;
 
   // Notifier source for each notifier type.
-  std::map<message_center::NotifierId::NotifierType,
-           std::unique_ptr<NotifierController>>
+  std::map<message_center::NotifierType, std::unique_ptr<NotifierController>>
       sources_;
 
-  ash::mojom::AshMessageCenterControllerPtr controller_;
-  mojo::AssociatedBinding<ash::mojom::AshMessageCenterClient> binding_;
+  base::ObserverList<ash::NotifierSettingsObserver> notifier_observers_;
+
+  content::NotificationRegistrar registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeAshMessageCenterClient);
 };

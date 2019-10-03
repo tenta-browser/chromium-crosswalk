@@ -12,8 +12,8 @@ import android.widget.FrameLayout;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.ContentViewRenderView;
+import org.chromium.components.embedder_support.view.ContentViewRenderView;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
@@ -91,7 +91,10 @@ public class ShellManager extends FrameLayout {
     @SuppressWarnings("unused")
     @CalledByNative
     private Object createShell(long nativeShellPtr) {
-        assert mContentViewRenderView != null;
+        if (mContentViewRenderView == null) {
+            mContentViewRenderView = new ContentViewRenderView(getContext());
+            mContentViewRenderView.onNativeLibraryLoaded(mWindow);
+        }
         LayoutInflater inflater =
                 (LayoutInflater) getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         Shell shellView = (Shell) inflater.inflate(R.layout.shell_view, null);
@@ -109,10 +112,10 @@ public class ShellManager extends FrameLayout {
         addView(shellView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         mActiveShell = shellView;
-        ContentViewCore contentViewCore = mActiveShell.getContentViewCore();
-        if (contentViewCore != null) {
-            mContentViewRenderView.setCurrentContentViewCore(contentViewCore);
-            contentViewCore.onShow();
+        WebContents webContents = mActiveShell.getWebContents();
+        if (webContents != null) {
+            mContentViewRenderView.setCurrentWebContents(webContents);
+            webContents.onShow();
         }
     }
 
@@ -120,20 +123,25 @@ public class ShellManager extends FrameLayout {
     private void removeShell(Shell shellView) {
         if (shellView == mActiveShell) mActiveShell = null;
         if (shellView.getParent() == null) return;
-        ContentViewCore contentViewCore = shellView.getContentViewCore();
-        if (contentViewCore != null) contentViewCore.onHide();
         shellView.setContentViewRenderView(null);
         removeView(shellView);
     }
 
     /**
      * Destroys the Shell manager and associated components.
+     * Always called at activity exit, and potentially called by native in cases where we need to
+     * control the timing of mContentViewRenderView destruction. Must handle being called twice.
      */
+    @CalledByNative
     public void destroy() {
         // Remove active shell (Currently single shell support only available).
-        removeShell(mActiveShell);
-        mContentViewRenderView.destroy();
-        mContentViewRenderView = null;
+        if (mActiveShell != null) {
+            removeShell(mActiveShell);
+        }
+        if (mContentViewRenderView != null) {
+            mContentViewRenderView.destroy();
+            mContentViewRenderView = null;
+        }
     }
 
     private static native void nativeInit(Object shellManagerInstance);

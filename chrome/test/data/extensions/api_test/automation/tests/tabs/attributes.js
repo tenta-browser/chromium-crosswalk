@@ -30,8 +30,9 @@ var TableCellAttributes = [ 'tableCellColumnIndex',
                             'ariaCellRowIndex',
                             'tableCellRowSpan' ];
 
-var allTests = [
-  function testDocumentAndScrollAttributes() {
+var disabledTests = [
+  // http://crbug.com/725420
+  function testDocumentAndScrollAttributes_flaky() {
     for (var i = 0; i < DocumentAttributes.length; i++) {
       var attribute = DocumentAttributes[i];
       assertTrue(attribute in rootNode,
@@ -43,7 +44,6 @@ var allTests = [
                  'rootNode should have a ' + attribute + ' attribute');
     }
 
-    assertEq(url, rootNode.docUrl);
     assertEq('Automation Tests - Attributes', rootNode.docTitle);
     assertEq(true, rootNode.docLoaded);
     assertEq(1, rootNode.docLoadingProgress);
@@ -54,16 +54,21 @@ var allTests = [
     assertEq(0, rootNode.scrollYMin);
     assertEq(0, rootNode.scrollYMax);
     chrome.test.succeed();
-  },
+  }
+];
 
+var allTests = [
   function testActiveDescendant() {
-    var combobox = rootNode.find({ role: 'comboBox' });
-    assertTrue('activeDescendant' in combobox,
-               'combobox should have an activedescendant attribute');
-    var listbox = rootNode.find({ role: 'listBox' });
-    var opt6 = listbox.children[5];
-    assertEq(opt6, combobox.activeDescendant);
-    chrome.test.succeed();
+    let combobox = rootNode.find({ role: 'textFieldWithComboBox' });
+    combobox.addEventListener(EventType.FOCUS, () => {
+      assertTrue('activeDescendant' in combobox,
+                 'combobox button should have an activedescendant attribute');
+      let listbox = rootNode.find({ role: 'listBox' });
+      let opt6 = listbox.children[5];
+      assertEq(opt6, combobox.activeDescendant);
+      chrome.test.succeed();
+    }, true);
+    combobox.focus();
   },
 
   function testLinkAttributes() {
@@ -83,40 +88,56 @@ var allTests = [
   },
 
   function testEditableTextAttributes() {
-    var textFields = rootNode.findAll({ role: 'textField' });
+    let textFields = rootNode.findAll({ role: 'textField' });
     assertEq(3, textFields.length);
-    var EditableTextAttributes = [ 'textSelStart', 'textSelEnd' ];
-    for (var i = 0; i < textFields.length; i++) {
-      var textField = textFields[i];
-      var description = textField.description;
-      for (var j = 0; j < EditableTextAttributes.length; j++) {
-        var attribute = EditableTextAttributes[j];
+    for (let textField of textFields) {
+      let description = textField.description;
+      for (let attribute of EditableTextAttributes) {
         assertTrue(attribute in textField,
                    'textField (' + description + ') should have a ' +
                    attribute + ' attribute');
       }
     }
-    var input = textFields[0];
-    assertEq('text-input', input.name);
-    assertEq(2, input.textSelStart);
-    assertEq(8, input.textSelEnd);
 
-    var textArea = textFields[1];
-    assertEq('textarea', textArea.name);
-    for (var i = 0; i < EditableTextAttributes.length; i++) {
-      var attribute = EditableTextAttributes[i];
-      assertTrue(attribute in textArea,
-                 'textArea should have a ' + attribute + ' attribute');
-    }
-    assertEq(0, textArea.textSelStart);
-    assertEq(0, textArea.textSelEnd);
+    let input = textFields[0];
+    input.addEventListener(EventType.FOCUS, () => {
+      assertEq('text-input', input.name);
+      assertEq(2, input.textSelStart);
+      assertEq(8, input.textSelEnd);
 
-    var ariaTextbox = textFields[2];
-    assertEq('textbox-role', ariaTextbox.name);
-    assertEq(0, ariaTextbox.textSelStart);
-    assertEq(0, ariaTextbox.textSelEnd);
+      let textArea = textFields[1];
+      assertEq('textarea', textArea.name);
+      for (let attribute of EditableTextAttributes) {
+        assertTrue(attribute in textArea,
+                   'textArea should have a ' + attribute + ' attribute');
+      }
 
-    chrome.test.succeed();
+      /* Re-enable the following two assertions once the new selection code is
+       * switched on.
+      assertEq(0, textArea.textSelStart);
+      assertEq(0, textArea.textSelEnd);
+      */
+
+      textArea.addEventListener(EventType.FOCUS, () => {
+        assertEq(2, textArea.textSelStart);
+        assertEq(4, textArea.textSelEnd);
+
+        let ariaTextbox = textFields[2];
+        assertEq('textbox-role', ariaTextbox.name);
+        assertEq(undefined, ariaTextbox.textSelStart,
+                 'ariaTextbox.textSelStart');
+        assertEq(undefined, ariaTextbox.textSelEnd, 'ariaTextbox.textSelEnd');
+        ariaTextbox.addEventListener(EventType.FOCUS, () => {
+          assertEq(undefined, ariaTextbox.textSelStart,
+                   'ariaTextbox.textSelStart');
+          assertEq(undefined, ariaTextbox.textSelEnd, 'ariaTextbox.textSelEnd');
+          chrome.test.succeed();
+        }, true);
+        ariaTextbox.focus();
+      }, true);
+      textArea.focus();
+    }, true);
+    input.focus();
   },
 
   function testRangeAttributes() {
@@ -125,13 +146,13 @@ var allTests = [
     var spinButtons = rootNode.findAll({ role: 'spinButton' });
     assertEq(1, spinButtons.length);
     var progressIndicators = rootNode.findAll({ role: 'progressIndicator' });
-    assertEq(1, progressIndicators.length);
+    assertEq(2, progressIndicators.length);
     assertEq('progressbar-role', progressIndicators[0].name);
     var scrollBars = rootNode.findAll({ role: 'scrollBar' });
     assertEq(1, scrollBars.length);
 
     var ranges = sliders.concat(spinButtons, progressIndicators, scrollBars);
-    assertEq(5, ranges.length);
+    assertEq(6, ranges.length);
 
     for (var i = 0; i < ranges.length; i++) {
       var range = ranges[i];
@@ -160,9 +181,11 @@ var allTests = [
     assertEq(1, spinButton.minValueForRange);
     assertEq(31, spinButton.maxValueForRange);
 
-    assertEq('0.9', progressIndicators[0].valueForRange.toPrecision(1));
+    assertEq(0.9, progressIndicators[0].valueForRange);
     assertEq(0, progressIndicators[0].minValueForRange);
     assertEq(1, progressIndicators[0].maxValueForRange);
+
+    assertEq(0.05, progressIndicators[1].valueForRange);
 
     assertEq(0, scrollBars[0].valueForRange);
     assertEq(0, scrollBars[0].minValueForRange);

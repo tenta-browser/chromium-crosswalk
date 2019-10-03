@@ -5,8 +5,6 @@
 package org.chromium.chrome.browser.sync.ui;
 
 import android.app.Dialog;
-import android.app.DialogFragment;
-import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
@@ -16,6 +14,8 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.customtabs.CustomTabsIntent;
+import android.support.v4.app.DialogFragment;
+import android.support.v4.app.Fragment;
 import android.support.v7.app.AlertDialog;
 import android.text.SpannableString;
 import android.text.method.LinkMovementMethod;
@@ -30,14 +30,16 @@ import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.BuildInfo;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeStringConstants;
+import org.chromium.chrome.browser.help.HelpAndFeedback;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.util.IntentUtils;
-import org.chromium.components.sync.PassphraseType;
+import org.chromium.components.sync.Passphrase;
 import org.chromium.ui.text.SpanApplier;
 import org.chromium.ui.text.SpanApplier.SpanInfo;
 
@@ -51,7 +53,7 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
     /**
      * A listener for passphrase events.
      */
-    interface Listener {
+    public interface Listener {
         /**
          * @return whether passphrase was valid.
          */
@@ -98,6 +100,7 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
 
         TextView promptText = (TextView) v.findViewById(R.id.prompt_text);
         promptText.setText(getPromptText());
+        promptText.setMovementMethod(LinkMovementMethod.getInstance());
 
         TextView resetText = (TextView) v.findViewById(R.id.reset_text);
         resetText.setText(getResetText());
@@ -107,7 +110,6 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
         mVerifyingTextView = (TextView) v.findViewById(R.id.verifying);
 
         mPassphraseEditText = (EditText) v.findViewById(R.id.passphrase);
-        mPassphraseEditText.setHint(R.string.sync_enter_custom_passphrase_hint);
         mPassphraseEditText.setOnEditorActionListener(new OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
@@ -128,19 +130,21 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
                 ApiCompatibilityUtils.getColor(getResources(), R.color.input_underline_error_color),
                 PorterDuff.Mode.SRC_IN);
 
-        final AlertDialog d = new AlertDialog.Builder(getActivity(), R.style.AlertDialogTheme)
-                .setView(v)
-                .setPositiveButton(R.string.submit, new Dialog.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface d, int which) {
-                        // We override the onclick. This is a hack to not dismiss the dialog after
-                        // click of OK and instead dismiss it after confirming the passphrase
-                        // is correct.
-                    }
-                })
-                 .setNegativeButton(R.string.cancel, this)
-                 .setTitle(R.string.sign_in_google_account)
-                 .create();
+        final AlertDialog d =
+                new AlertDialog.Builder(getActivity(), R.style.Theme_Chromium_AlertDialog)
+                        .setView(v)
+                        .setPositiveButton(R.string.submit,
+                                new Dialog.OnClickListener() {
+                                    @Override
+                                    public void onClick(DialogInterface d, int which) {
+                                        // We override the onclick. This is a hack to not dismiss
+                                        // the dialog after click of OK and instead dismiss it after
+                                        // confirming the passphrase is correct.
+                                    }
+                                })
+                        .setNegativeButton(R.string.cancel, this)
+                        .setTitle(R.string.sign_in_google_account)
+                        .create();
 
         d.getDelegate().setHandleNativeActionModesEnabled(false);
         d.setOnShowListener(new DialogInterface.OnShowListener() {
@@ -171,25 +175,43 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
         super.onResume();
     }
 
-    private String getPromptText() {
+    private SpannableString applyInProductHelpSpan(
+            String stringWithLearnMoreTag, String helpContext) {
+        return SpanApplier.applySpans(stringWithLearnMoreTag,
+                new SpanInfo("<learnmore>", "</learnmore>", new ClickableSpan() {
+                    @Override
+                    public void onClick(View view) {
+                        HelpAndFeedback help = HelpAndFeedback.getInstance(getActivity());
+                        help.show(getActivity(), helpContext, Profile.getLastUsedProfile(), null);
+                    }
+                }));
+    }
+
+    private SpannableString getPromptText() {
         ProfileSyncService pss = ProfileSyncService.get();
         String accountName = pss.getCurrentSignedInAccountText() + "\n\n";
-        PassphraseType passphraseType = pss.getPassphraseType();
+        @Passphrase.Type
+        int passphraseType = pss.getPassphraseType();
         if (pss.hasExplicitPassphraseTime()) {
+            String syncPassphraseHelpContext =
+                    getString(R.string.help_context_change_sync_passphrase);
             switch (passphraseType) {
-                case FROZEN_IMPLICIT_PASSPHRASE:
-                    return accountName + pss.getSyncEnterGooglePassphraseBodyWithDateText();
-                case CUSTOM_PASSPHRASE:
-                    return accountName + pss.getSyncEnterCustomPassphraseBodyWithDateText();
-                case IMPLICIT_PASSPHRASE: // Falling through intentionally.
-                case KEYSTORE_PASSPHRASE: // Falling through intentionally.
+                case Passphrase.Type.FROZEN_IMPLICIT:
+                    return applyInProductHelpSpan(
+                            accountName + pss.getSyncEnterGooglePassphraseBodyWithDateText(),
+                            syncPassphraseHelpContext);
+                case Passphrase.Type.CUSTOM:
+                    return applyInProductHelpSpan(
+                            accountName + pss.getSyncEnterCustomPassphraseBodyWithDateText(),
+                            syncPassphraseHelpContext);
+                case Passphrase.Type.IMPLICIT: // Falling through intentionally.
+                case Passphrase.Type.KEYSTORE: // Falling through intentionally.
                 default:
                     Log.w(TAG, "Found incorrect passphrase type " + passphraseType
                                     + ". Falling back to default string.");
-                    return accountName + pss.getSyncEnterCustomPassphraseBodyText();
             }
         }
-        return accountName + pss.getSyncEnterCustomPassphraseBodyText();
+        return new SpannableString(accountName + pss.getSyncEnterCustomPassphraseBodyText());
     }
 
     private SpannableString getResetText() {
@@ -202,7 +224,7 @@ public class PassphraseDialogFragment extends DialogFragment implements OnClickL
                         recordPassphraseDialogDismissal(PASSPHRASE_DIALOG_RESET_LINK);
                         Uri syncDashboardUrl = Uri.parse(ChromeStringConstants.SYNC_DASHBOARD_URL);
                         Intent intent = new Intent(Intent.ACTION_VIEW, syncDashboardUrl);
-                        intent.setPackage(BuildInfo.getPackageName());
+                        intent.setPackage(ContextUtils.getApplicationContext().getPackageName());
                         IntentUtils.safePutBinderExtra(
                                 intent, CustomTabsIntent.EXTRA_SESSION, null);
                         context.startActivity(intent);

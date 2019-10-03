@@ -4,14 +4,13 @@
 
 #include "content/browser/service_worker/service_worker_navigation_handle_core.h"
 
-#include <utility>
-
 #include "base/bind.h"
-#include "content/browser/service_worker/service_worker_context_core.h"
+#include "base/task/post_task.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_navigation_handle.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
-#include "content/common/service_worker/service_worker_types.h"
+#include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace content {
@@ -27,39 +26,35 @@ ServiceWorkerNavigationHandleCore::ServiceWorkerNavigationHandleCore(
 
 ServiceWorkerNavigationHandleCore::~ServiceWorkerNavigationHandleCore() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (precreated_host_.get() && context_wrapper_->context()) {
-    context_wrapper_->context()->RemoveNavigationHandleCore(
-        precreated_host_->provider_id());
-  }
 }
 
-void ServiceWorkerNavigationHandleCore::DidPreCreateProviderHost(
-    std::unique_ptr<ServiceWorkerProviderHost> precreated_host) {
+void ServiceWorkerNavigationHandleCore::OnCreatedProviderHost(
+    base::WeakPtr<ServiceWorkerProviderHost> provider_host,
+    blink::mojom::ServiceWorkerProviderInfoForClientPtr provider_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(precreated_host.get());
-  DCHECK(context_wrapper_->context());
+  DCHECK(provider_host);
+  provider_host_ = std::move(provider_host);
 
-  precreated_host_ = std::move(precreated_host);
-  context_wrapper_->context()->AddNavigationHandleCore(
-      precreated_host_->provider_id(), this);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(
-          &ServiceWorkerNavigationHandle::DidCreateServiceWorkerProviderHost,
-          ui_handle_, precreated_host_->provider_id()));
+  DCHECK(provider_info->host_ptr_info.is_valid() &&
+         provider_info->client_request.is_pending());
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&ServiceWorkerNavigationHandle::OnCreatedProviderHost,
+                     ui_handle_, std::move(provider_info)));
 }
 
-std::unique_ptr<ServiceWorkerProviderHost>
-ServiceWorkerNavigationHandleCore::RetrievePreCreatedHost() {
+void ServiceWorkerNavigationHandleCore::OnBeginNavigationCommit(
+    int render_process_id,
+    int render_frame_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(precreated_host_);
-  // Remove the ServiceWorkerNavigationHandleCore from the list of
-  // ServiceWorkerNavigationHandleCores since it will no longer hold a
-  // ServiceWorkerProviderHost.
-  DCHECK(context_wrapper_->context());
-  context_wrapper_->context()->RemoveNavigationHandleCore(
-      precreated_host_->provider_id());
-  return std::move(precreated_host_);
+  if (provider_host_)
+    provider_host_->OnBeginNavigationCommit(render_process_id, render_frame_id);
+}
+
+void ServiceWorkerNavigationHandleCore::OnBeginWorkerCommit() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (provider_host_)
+    provider_host_->CompleteWebWorkerPreparation();
 }
 
 }  // namespace content

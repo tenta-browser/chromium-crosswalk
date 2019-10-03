@@ -13,6 +13,7 @@
 #include "base/callback_forward.h"
 
 class Profile;
+class PrefService;
 
 namespace chromeos {
 namespace locale_util {
@@ -50,6 +51,47 @@ void SwitchLanguage(const std::string& locale,
                     const bool login_layouts_only,
                     const SwitchLanguageCallback& callback,
                     Profile* profile);
+
+// This function checks if the given language is allowed according to the list
+// of allowed languages (stored in |prefs|, managed by 'AllowedLanguages'
+// policy). If the list is empty, every language is allowed.
+bool IsAllowedLanguage(const std::string& language, const PrefService* prefs);
+
+// This function checks if the given language is allowed
+// by 'AllowedLanguages' and also can be used as a UI locale.
+// (see |IsAllowedLanguage|).
+bool IsAllowedUILanguage(const std::string& language, const PrefService* prefs);
+
+// This functions checks if the given language is a native UI language or can be
+// converted to one. (e.g., 'en-US', 'fr', 'de', 'de-CH', 'fr-CH' etc. are all
+// valid, but 'az' is not.
+bool IsNativeUILanguage(const std::string& locale);
+
+// This function removes languages that are disallowed by the
+// 'AllowedLanguages' policy from the list of preferred languages.
+// If no current preferred languages are allowed, this functions sets
+// a language provided by GetAllowedFallbackLanguage() as the only preferred
+// language.
+void RemoveDisallowedLanguagesFromPreferred(PrefService* prefs);
+
+// This function returns a fallback language that is allowed by the
+// 'AllowedLanguages' policy and can be used as a UI language
+// (see |IsNativeUILanguage|) as well. We check the user's preferred language
+// for any of these conditions. If none of them match, we will take the first
+// valid UI language in the list of allowed languages. If none of them are UI
+// languages, we default to "en-US" (see kAllowedUILanguageFallback).
+// languages (stored in |prefs|, managed by 'AllowedLanguages' policy). If none
+// of the user's preferred languages is allowed, the function returns the first
+// valid entry in the allowed languages list. If the list contains no valid
+// entries, the default fallback will be 'en-US'
+// (kAllowedLanguagesFallbackLocale);
+std::string GetAllowedFallbackUILanguage(const PrefService* prefs);
+
+// This function adds the |locale| to the list of preferred languages (pref
+// |kLanguagePreferredLanguages|). Returns true if the locale was newly added
+// to the list, false otherwise.
+bool AddLocaleToPreferredLanguages(const std::string& locale,
+                                   PrefService* prefs);
 
 }  // namespace locale_util
 }  // namespace chromeos

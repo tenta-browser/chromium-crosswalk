@@ -36,21 +36,25 @@ class AX_EXPORT AXTreeSourceAdapter
 
   void GetChildren(const AXNode* node,
                    std::vector<const AXNode*>* out_children) const override {
-    for (int i = 0; i < node->child_count(); ++i)
-      out_children->push_back(node->ChildAtIndex(i));
+    *out_children = std::vector<const AXNode*>(node->children().cbegin(),
+                                               node->children().cend());
   }
 
   AXNode* GetParent(const AXNode* node) const override {
     return node->parent();
   }
 
-  bool IsValid(const AXNode* node) const override { return node != NULL; }
+  bool IsIgnored(const AXNode* node) const override {
+    return node->data().HasState(ax::mojom::State::kIgnored);
+  }
+
+  bool IsValid(const AXNode* node) const override { return node != nullptr; }
 
   bool IsEqual(const AXNode* node1, const AXNode* node2) const override {
     return node1 == node2;
   }
 
-  const AXNode* GetNull() const override { return NULL; }
+  const AXNode* GetNull() const override { return nullptr; }
 
   void SerializeNode(const AXNode* node, AXNodeData* out_data) const override {
     *out_data = node->data();

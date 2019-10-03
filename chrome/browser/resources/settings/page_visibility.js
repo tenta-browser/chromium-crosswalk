@@ -3,22 +3,38 @@
 // found in the LICENSE file.
 
 /**
- * Specifies page visibility in guest mode in cr and cros.
+ * Specifies page visibility based on incognito status, Chrome OS guest mode,
+ * and whether or not to include OS settings. Once the Chrome OS SplitSettings
+ * project is completed this can be changed to only consider incognito and
+ * guest mode. https://crbug.com/950007
  * @typedef {{
+ *   a11y: (boolean|undefined|A11yPageVisibility),
  *   advancedSettings: (boolean|undefined),
  *   appearance: (boolean|undefined|AppearancePageVisibility),
- *   dateTime: (boolean|undefined|DateTimePageVisibility),
+ *   autofill: (boolean|undefined),
+ *   bluetooth: (boolean|undefined),
+ *   dateTime: (boolean|undefined),
  *   defaultBrowser: (boolean|undefined),
+ *   device: (boolean|undefined),
  *   downloads: (boolean|undefined|DownloadsPageVisibility),
+ *   internet: (boolean|undefined),
+ *   languages: (boolean|undefined|LanguagesPageVisibility),
  *   multidevice: (boolean|undefined),
  *   onStartup: (boolean|undefined),
- *   passwordsAndForms: (boolean|undefined),
- *   people: (boolean|undefined),
+ *   people: (boolean|undefined|PeoplePageVisibility),
+ *   printing: (boolean|undefined),
  *   privacy: (boolean|undefined|PrivacyPageVisibility),
- *   reset:(boolean|undefined),
+ *   reset:(boolean|undefined|ResetPageVisibility),
  * }}
  */
-var GuestModePageVisibility;
+let PageVisibility;
+
+/**
+ * @typedef {{
+ *   webstoreLink: boolean,
+ * }}
+ */
+let A11yPageVisibility;
 
 /**
  * @typedef {{
@@ -29,54 +45,83 @@ var GuestModePageVisibility;
  *   setWallpaper: boolean,
  * }}
  */
-var AppearancePageVisibility;
+let AppearancePageVisibility;
 
 /**
  * @typedef {{
- *   timeZoneSelector: boolean,
+ *   googleDrive: boolean,
+ *   smbShares: boolean,
  * }}
  */
-var DateTimePageVisibility;
+let DownloadsPageVisibility;
 
 /**
  * @typedef {{
- *   googleDrive: boolean
+ *   googleAccounts: boolean,
+ *   kerberosAccounts: boolean,
+ *   lockScreen: boolean,
+ *   manageUsers: boolean,
  * }}
  */
-var DownloadsPageVisibility;
+let PeoplePageVisibility;
 
 /**
  * @typedef {{
+ *   contentProtectionAttestation: boolean,
  *   networkPrediction: boolean,
  *   searchPrediction: boolean,
+ *   wakeOnWifi: boolean,
  * }}
  */
-var PrivacyPageVisibility;
+let PrivacyPageVisibility;
+
+/**
+ * @typedef {{
+ *   powerwash: boolean,
+ * }}
+ */
+let ResetPageVisibility;
+
+/**
+ * @typedef {{
+ *   manageInputMethods: boolean,
+ *   inputMethodsList: boolean,
+ * }}
+ */
+let LanguagesPageVisibility;
 
 cr.define('settings', function() {
   /**
    * Dictionary defining page visibility.
-   * @type {!GuestModePageVisibility}
+   * @type {!PageVisibility}
    */
-  var pageVisibility;
+  let pageVisibility;
+
+  const showOSSettings = loadTimeData.getBoolean('showOSSettings');
 
   if (loadTimeData.getBoolean('isGuest')) {
     // "if not chromeos" and "if chromeos" in two completely separate blocks
     // to work around closure compiler.
     // <if expr="not chromeos">
     pageVisibility = {
-      passwordsAndForms: false,
+      autofill: false,
       people: false,
       onStartup: false,
       reset: false,
       appearance: false,
       defaultBrowser: false,
       advancedSettings: false,
+      extensions: false,
+      printing: false,
+      languages: false,
     };
     // </if>
     // <if expr="chromeos">
     pageVisibility = {
-      passwordsAndForms: false,
+      internet: showOSSettings,
+      bluetooth: showOSSettings,
+      multidevice: false,
+      autofill: false,
       people: false,
       onStartup: false,
       reset: false,
@@ -87,15 +132,28 @@ cr.define('settings', function() {
         bookmarksBar: false,
         pageZoom: false,
       },
+      device: showOSSettings,
       advancedSettings: true,
+      dateTime: showOSSettings,
       privacy: {
+        contentProtectionAttestation: showOSSettings,
         searchPrediction: false,
         networkPrediction: false,
+        wakeOnWifi: showOSSettings,
       },
       downloads: {
         googleDrive: false,
+        smbShares: false,
       },
-      multidevice: false,
+      a11y: {
+        webstoreLink: showOSSettings,
+      },
+      extensions: false,
+      printing: true,
+      languages: {
+        manageInputMethods: showOSSettings,
+        inputMethodsList: showOSSettings,
+      },
     };
     // </if>
   } else {
@@ -103,26 +161,49 @@ cr.define('settings', function() {
     // after a property is set.
     // <if expr="chromeos">
     pageVisibility = {
-      passwordsAndForms: true,
-      people: true,
+      internet: showOSSettings,
+      bluetooth: showOSSettings,
+      multidevice: showOSSettings,
+      autofill: true,
+      people: {
+        lockScreen: showOSSettings,
+        kerberosAccounts: showOSSettings,
+        googleAccounts: showOSSettings,
+        manageUsers: showOSSettings,
+      },
       onStartup: true,
-      reset: true,
+      reset: {
+        powerwash: showOSSettings,
+      },
       appearance: {
-        setWallpaper: true,
+        setWallpaper: showOSSettings,
         setTheme: true,
         homeButton: true,
         bookmarksBar: true,
         pageZoom: true,
       },
+      device: showOSSettings,
       advancedSettings: true,
+      dateTime: showOSSettings,
       privacy: {
+        contentProtectionAttestation: showOSSettings,
         searchPrediction: true,
         networkPrediction: true,
+        wakeOnWifi: showOSSettings,
       },
       downloads: {
-        googleDrive: true,
+        googleDrive: showOSSettings,
+        smbShares: showOSSettings,
       },
-      multidevice: true,
+      a11y: {
+        webstoreLink: showOSSettings,
+      },
+      extensions: true,
+      printing: true,
+      languages: {
+        manageInputMethods: showOSSettings,
+        inputMethodsList: showOSSettings,
+      },
     };
     // </if>
   }

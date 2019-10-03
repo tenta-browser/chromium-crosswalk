@@ -13,6 +13,7 @@
 #include "ui/gfx/native_widget_types.h"
 
 namespace ui {
+class PlatformWindowSurface;
 class SurfaceOzoneCanvas;
 }
 
@@ -24,8 +25,9 @@ namespace viz {
 class VIZ_SERVICE_EXPORT SoftwareOutputDeviceOzone
     : public SoftwareOutputDevice {
  public:
-  static std::unique_ptr<SoftwareOutputDeviceOzone> Create(
-      gfx::AcceleratedWidget widget);
+  SoftwareOutputDeviceOzone(
+      std::unique_ptr<ui::PlatformWindowSurface> platform_window_surface,
+      std::unique_ptr<ui::SurfaceOzoneCanvas> surface_ozone);
   ~SoftwareOutputDeviceOzone() override;
 
   void Resize(const gfx::Size& viewport_pixel_size,
@@ -34,7 +36,9 @@ class VIZ_SERVICE_EXPORT SoftwareOutputDeviceOzone
   void EndPaint() override;
 
  private:
-  explicit SoftwareOutputDeviceOzone(gfx::AcceleratedWidget widget);
+  // This object should outlive |surface_ozone_|. Ending its lifetime may
+  // cause the platform to tear down surface resources.
+  std::unique_ptr<ui::PlatformWindowSurface> platform_window_surface_;
 
   std::unique_ptr<ui::SurfaceOzoneCanvas> surface_ozone_;
 

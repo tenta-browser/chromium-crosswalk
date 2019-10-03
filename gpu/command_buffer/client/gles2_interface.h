@@ -8,25 +8,34 @@
 #include <GLES2/gl2.h>
 
 #include "base/compiler_specific.h"
+#include "gpu/command_buffer/client/interface_base.h"
 
 namespace cc {
 class ClientTransferCacheEntry;
 class DisplayItemList;
-}
+class ImageProvider;
+}  // namespace cc
+
+namespace gfx {
+class Rect;
+class Vector2d;
+class Vector2dF;
+}  // namespace gfx
 
 extern "C" typedef struct _ClientBuffer* ClientBuffer;
 extern "C" typedef struct _GLColorSpace* GLColorSpace;
+extern "C" typedef struct _ClientGpuFence* ClientGpuFence;
 
 namespace gpu {
 namespace gles2 {
 
 // This class is the interface for all client side GL functions.
-class GLES2Interface {
+class GLES2Interface : public InterfaceBase {
  public:
-  GLES2Interface() {}
-  virtual ~GLES2Interface() {}
+  GLES2Interface() = default;
+  virtual ~GLES2Interface() = default;
 
-  virtual void FreeSharedMemory(void*) {};
+  virtual void FreeSharedMemory(void*) {}
 
   // Include the auto-generated part of this class. We split this because
   // it means we can easily edit the non-auto generated parts right here in

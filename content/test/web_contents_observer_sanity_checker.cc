@@ -5,6 +5,7 @@
 #include "content/test/web_contents_observer_sanity_checker.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -15,6 +16,7 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/navigation_policy.h"
 #include "net/base/net_errors.h"
 
 namespace content {
@@ -53,12 +55,14 @@ void WebContentsObserverSanityChecker::RenderFrameCreated(
                  << Format(render_frame_host);
   }
 
-  CHECK(render_frame_host->GetProcess()->HasConnection())
+  CHECK(render_frame_host->IsRenderFrameCreated())
+      << "RenderFrameCreated was called for a RenderFrameHost that has not been"
+         "marked created.";
+  CHECK(render_frame_host->GetProcess()->IsInitializedAndNotDead())
       << "RenderFrameCreated was called for a RenderFrameHost whose render "
          "process is not currently live, so there's no way for the RenderFrame "
          "to have been created.";
-  CHECK(
-      static_cast<RenderFrameHostImpl*>(render_frame_host)->IsRenderFrameLive())
+  CHECK(render_frame_host->IsRenderFrameLive())
       << "RenderFrameCreated called on for a RenderFrameHost that thinks it is "
          "not alive.";
 
@@ -79,6 +83,13 @@ void WebContentsObserverSanityChecker::RenderFrameCreated(
 void WebContentsObserverSanityChecker::RenderFrameDeleted(
     RenderFrameHost* render_frame_host) {
   CHECK(!web_contents_destroyed_);
+  CHECK(!render_frame_host->IsRenderFrameCreated())
+      << "RenderFrameDeleted was called for a RenderFrameHost that is"
+         "(still) marked as created.";
+  CHECK(!render_frame_host->IsRenderFrameLive())
+      << "RenderFrameDeleted was called for a RenderFrameHost that is"
+         "still live.";
+
   GlobalRoutingID routing_pair = GetRoutingPair(render_frame_host);
   bool was_live = !!live_routes_.erase(routing_pair);
   bool was_dead_already = !deleted_routes_.insert(routing_pair).second;
@@ -99,7 +110,7 @@ void WebContentsObserverSanityChecker::RenderFrameDeleted(
 
   // All players should have been paused by this point.
   for (const auto& id : active_media_players_)
-    CHECK_NE(id.first, render_frame_host);
+    CHECK_NE(id.render_frame_host, render_frame_host);
 }
 
 void WebContentsObserverSanityChecker::RenderFrameForInterstitialPageCreated(
@@ -123,8 +134,6 @@ void WebContentsObserverSanityChecker::RenderFrameHostChanged(
           << "RenderFrameHostChanged called with old host that did not exist:"
           << Format(old_host);
     }
-    CHECK(!HasAnyChildren(old_host))
-        << "All children should be detached before a parent is detached.";
   }
 
   EnsureStableParentValue(new_host);
@@ -141,8 +150,14 @@ void WebContentsObserverSanityChecker::RenderFrameHostChanged(
         << "RenderFrameHostChanged called more than once for routing pair:"
         << Format(new_host);
   }
-  CHECK(!HasAnyChildren(new_host))
-      << "A frame should not have children before it is committed.";
+
+  // If |new_host| is restored from the BackForwardCache, it can contain
+  // iframes, otherwise it has just been created and can't contain iframes for
+  // the moment.
+  if (!IsBackForwardCacheEnabled()) {
+    CHECK(!HasAnyChildren(new_host))
+        << "A frame should not have children before it is committed.";
+  }
 }
 
 void WebContentsObserverSanityChecker::FrameDeleted(
@@ -194,6 +209,10 @@ void WebContentsObserverSanityChecker::ReadyToCommitNavigation(
   CHECK(navigation_handle->GetRenderFrameHost());
   CHECK_EQ(navigation_handle->GetWebContents(), web_contents());
   CHECK(navigation_handle->GetRenderFrameHost() != nullptr);
+
+  ready_to_commit_hosts_.insert(
+      std::make_pair(navigation_handle->GetNavigationId(),
+                     navigation_handle->GetRenderFrameHost()));
 }
 
 void WebContentsObserverSanityChecker::DidFinishNavigation(
@@ -207,6 +226,16 @@ void WebContentsObserverSanityChecker::DidFinishNavigation(
 
   CHECK(!navigation_handle->HasCommitted() ||
         navigation_handle->GetRenderFrameHost() != nullptr);
+
+  // If ReadyToCommitNavigation was dispatched, verify that the
+  // |navigation_handle| has the same RenderFrameHost at this time as the one
+  // returned at ReadyToCommitNavigation.
+  if (base::Contains(ready_to_commit_hosts_,
+                     navigation_handle->GetNavigationId())) {
+    CHECK_EQ(ready_to_commit_hosts_[navigation_handle->GetNavigationId()],
+             navigation_handle->GetRenderFrameHost());
+    ready_to_commit_hosts_.erase(navigation_handle->GetNavigationId());
+  }
 
   ongoing_navigations_.erase(navigation_handle);
 }
@@ -254,8 +283,7 @@ void WebContentsObserverSanityChecker::MediaStartedPlaying(
     const MediaPlayerInfo& media_info,
     const MediaPlayerId& id) {
   CHECK(!web_contents_destroyed_);
-  CHECK(std::find(active_media_players_.begin(), active_media_players_.end(),
-                  id) == active_media_players_.end());
+  CHECK(!base::Contains(active_media_players_, id));
   active_media_players_.push_back(id);
 }
 
@@ -264,19 +292,13 @@ void WebContentsObserverSanityChecker::MediaStoppedPlaying(
     const MediaPlayerId& id,
     WebContentsObserver::MediaStoppedReason reason) {
   CHECK(!web_contents_destroyed_);
-  CHECK(std::find(active_media_players_.begin(), active_media_players_.end(),
-                  id) != active_media_players_.end());
-  active_media_players_.erase(std::remove(active_media_players_.begin(),
-                                          active_media_players_.end(), id),
-                              active_media_players_.end());
+  CHECK(base::Contains(active_media_players_, id));
+  base::Erase(active_media_players_, id);
 }
 
 bool WebContentsObserverSanityChecker::OnMessageReceived(
     const IPC::Message& message,
     RenderFrameHost* render_frame_host) {
-  // FrameHostMsg_RenderProcessGone is special internal IPC message that
-  // should not be leaking outside of RenderFrameHost.
-  CHECK(message.type() != FrameHostMsg_RenderProcessGone::ID);
   CHECK(render_frame_host->IsRenderFrameLive());
 
   AssertRenderFrameExists(render_frame_host);
@@ -300,7 +322,8 @@ void WebContentsObserverSanityChecker::DidStartLoading() {
 }
 
 void WebContentsObserverSanityChecker::DidStopLoading() {
-  CHECK(is_loading_);
+  // TODO(crbug.com/466089): Add back CHECK(is_loading_). The CHECK was removed
+  // because of flaky failures during browser_test shutdown.
   CHECK(!web_contents()->IsLoading());
   is_loading_ = false;
 }
@@ -313,6 +336,7 @@ WebContentsObserverSanityChecker::WebContentsObserverSanityChecker(
 
 WebContentsObserverSanityChecker::~WebContentsObserverSanityChecker() {
   CHECK(web_contents_destroyed_);
+  CHECK(ready_to_commit_hosts_.empty());
 }
 
 void WebContentsObserverSanityChecker::AssertRenderFrameExists(

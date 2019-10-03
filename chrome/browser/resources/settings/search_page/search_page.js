@@ -14,12 +14,6 @@ Polymer({
   properties: {
     prefs: Object,
 
-    // <if expr="chromeos">
-    arcEnabled: Boolean,
-
-    voiceInteractionValuePropAccepted: Boolean,
-    // </if>
-
     /**
      * List of default search engines available.
      * @private {!Array<!SearchEngine>}
@@ -38,20 +32,14 @@ Polymer({
     focusConfig_: Object,
 
     // <if expr="chromeos">
-    /** @private */
-    voiceInteractionFeatureEnabled_: {
+    /** @private Can be disallowed due to flag, policy, locale, etc. */
+    isAssistantAllowed_: {
       type: Boolean,
       value: function() {
-        return loadTimeData.getBoolean('enableVoiceInteraction');
+        return loadTimeData.getBoolean('isAssistantAllowed') &&
+            loadTimeData.getBoolean('showOSSettings');
       },
     },
-
-    /** @private */
-    assistantOn_: {
-      type: Boolean,
-      computed:
-          'isAssistantTurnedOn_(arcEnabled, voiceInteractionValuePropAccepted)',
-    }
     // </if>
   },
 
@@ -66,7 +54,7 @@ Polymer({
   /** @override */
   ready: function() {
     // Omnibox search engine
-    var updateSearchEngines = searchEngines => {
+    const updateSearchEngines = searchEngines => {
       this.set('searchEngines_', searchEngines.defaults);
     };
     this.browserProxy_.getSearchEnginesList().then(updateSearchEngines);
@@ -75,22 +63,21 @@ Polymer({
     this.focusConfig_ = new Map();
     if (settings.routes.SEARCH_ENGINES) {
       this.focusConfig_.set(
-          settings.routes.SEARCH_ENGINES.path,
-          '#engines-subpage-trigger .subpage-arrow');
+          settings.routes.SEARCH_ENGINES.path, '#enginesSubpageTrigger');
     }
     // <if expr="chromeos">
     if (settings.routes.GOOGLE_ASSISTANT) {
       this.focusConfig_.set(
           settings.routes.GOOGLE_ASSISTANT.path,
-          '#assistant-subpage-trigger .subpage-arrow');
+          '#assistantSubpageTrigger .subpage-arrow');
     }
     // </if>
   },
 
   /** @private */
   onChange_: function() {
-    var select = /** @type {!HTMLSelectElement} */ (this.$$('select'));
-    var searchEngine = this.searchEngines_[select.selectedIndex];
+    const select = /** @type {!HTMLSelectElement} */ (this.$$('select'));
+    const searchEngine = this.searchEngines_[select.selectedIndex];
     this.browserProxy_.setDefaultSearchEngine(searchEngine.modelIndex);
   },
 
@@ -107,18 +94,8 @@ Polymer({
   // <if expr="chromeos">
   /** @private */
   onGoogleAssistantTap_: function() {
-    assert(this.voiceInteractionFeatureEnabled_);
-
-    if (!this.assistantOn_) {
-      return;
-    }
-
+    assert(this.isAssistantAllowed_);
     settings.navigateTo(settings.routes.GOOGLE_ASSISTANT);
-  },
-
-  /** @private */
-  onAssistantTurnOnTap_: function(event) {
-    this.browserProxy_.turnOnGoogleAssistant();
   },
   // </if>
 
@@ -132,15 +109,6 @@ Polymer({
     return this.i18n(
         toggleValue ? 'searchGoogleAssistantEnabled' :
                       'searchGoogleAssistantDisabled');
-  },
-
-  /** @private
-   *  @param {boolean} arcEnabled
-   *  @param {boolean} valuePropAccepted
-   *  @return {boolean}
-   */
-  isAssistantTurnedOn_: function(arcEnabled, valuePropAccepted) {
-    return arcEnabled && valuePropAccepted;
   },
   // </if>
 

@@ -18,7 +18,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.params.ParameterAnnotations;
+import org.chromium.base.test.params.ParameterSet;
+import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
@@ -26,6 +28,7 @@ import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
@@ -34,29 +37,35 @@ import org.chromium.chrome.browser.download.DownloadTestRule.CustomMainActivityS
 import org.chromium.chrome.browser.infobar.InfoBarContainer;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.test.ChromeActivityTestRule;
-import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.util.InfoBarUtil;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * Tests Chrome download feature by attempting to download some files.
  */
-@RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
-public class DownloadTest implements CustomMainActivityStart {
+@RunWith(ParameterizedRunner.class)
+@ParameterAnnotations
+        .UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
+        @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+        public class DownloadTest implements CustomMainActivityStart {
+    @ParameterAnnotations.ClassParameter
+    private static List<ParameterSet> sClassParams = Arrays.asList(
+            new ParameterSet().value(true).name("UseDownloadOfflineContentProviderEnabled"),
+            new ParameterSet().value(false).name("UseDownloadOfflineContentProviderDisabled"));
+
     @Rule
     public DownloadTestRule mDownloadTestRule = new DownloadTestRule(this);
 
@@ -80,6 +89,8 @@ public class DownloadTest implements CustomMainActivityStart {
         FILENAME_GZIP
     };
 
+    private boolean mUseDownloadOfflineContentProvider;
+
     static class DownloadManagerRequestInterceptorForTest
             implements DownloadManagerService.DownloadManagerRequestInterceptor {
         public DownloadItem mDownloadItem;
@@ -89,6 +100,10 @@ public class DownloadTest implements CustomMainActivityStart {
             mDownloadItem = item;
             Assert.assertTrue(notifyComplete);
         }
+    }
+
+    public DownloadTest(boolean useDownloadOfflineContentProvider) {
+        mUseDownloadOfflineContentProvider = useDownloadOfflineContentProvider;
     }
 
     @Before
@@ -105,6 +120,11 @@ public class DownloadTest implements CustomMainActivityStart {
 
     @Override
     public void customMainActivityStart() throws InterruptedException {
+        if (mUseDownloadOfflineContentProvider) {
+            Features.getInstance().enable(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER);
+        } else {
+            Features.getInstance().disable(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER);
+        }
         mDownloadTestRule.startMainActivityOnBlankPage();
     }
 
@@ -179,6 +199,7 @@ public class DownloadTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/849876")
     @Feature({"Downloads"})
     @RetryOnFailure
     public void testDuplicateHttpPostDownload_Download() throws Exception {
@@ -325,7 +346,7 @@ public class DownloadTest implements CustomMainActivityStart {
         final int count = model.getCount();
 
         InstrumentationRegistry.getInstrumentation().runOnMainSync(
-                (Runnable) () -> TabModelUtils.setIndex(model, count - 1));
+                () -> TabModelUtils.setIndex(model, count - 1));
 
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
@@ -356,7 +377,7 @@ public class DownloadTest implements CustomMainActivityStart {
             @Override
             public boolean isSatisfied() {
                 CompositorViewHolder compositorViewHolder =
-                        (CompositorViewHolder) mDownloadTestRule.getActivity().findViewById(
+                        mDownloadTestRule.getActivity().findViewById(
                                 R.id.compositor_view_holder);
                 LayoutManager layoutManager = compositorViewHolder.getLayoutManager();
 
@@ -428,7 +449,7 @@ public class DownloadTest implements CustomMainActivityStart {
         try {
             final DownloadManagerRequestInterceptorForTest interceptor =
                     new DownloadManagerRequestInterceptorForTest();
-            ThreadUtils.runOnUiThreadBlocking(
+            TestThreadUtils.runOnUiThreadBlocking(
                     () -> DownloadManagerService.getDownloadManagerService()
                             .setDownloadManagerRequestInterceptor(interceptor));
             List<Pair<String, String>> headers = new ArrayList<Pair<String, String>>();
@@ -440,7 +461,7 @@ public class DownloadTest implements CustomMainActivityStart {
                     + "  }"
                     + "</script>"
                     + "<body id='body' onclick='download()'></body>"));
-            DOMUtils.clickNode(mDownloadTestRule.getActivity().getCurrentContentViewCore(), "body");
+            DOMUtils.clickNode(mDownloadTestRule.getActivity().getCurrentWebContents(), "body");
             CriteriaHelper.pollUiThread(new Criteria() {
                 @Override
                 public boolean isSatisfied() {
@@ -467,8 +488,7 @@ public class DownloadTest implements CustomMainActivityStart {
      * @param size The size of info bars to poll for.
      */
     private void assertPollForInfoBarSize(final int size) {
-        final InfoBarContainer container =
-                mDownloadTestRule.getActivity().getActivityTab().getInfoBarContainer();
+        final InfoBarContainer container = mDownloadTestRule.getInfoBarContainer();
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {

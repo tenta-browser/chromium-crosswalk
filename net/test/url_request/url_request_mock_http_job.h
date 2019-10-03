@@ -28,7 +28,7 @@ namespace net {
 
 class URLRequestMockHTTPJob : public URLRequestFileJob {
  public:
-  // Note that all file I/O is done using TaskScheduler.
+  // Note that all file I/O is done using ThreadPool.
   URLRequestMockHTTPJob(URLRequest* request,
                         NetworkDelegate* network_delegate,
                         const base::FilePath& file_path);
@@ -39,7 +39,9 @@ class URLRequestMockHTTPJob : public URLRequestFileJob {
   bool GetMimeType(std::string* mime_type) const override;
   bool GetCharset(std::string* charset) override;
   void GetResponseInfo(HttpResponseInfo* info) override;
-  bool IsRedirectResponse(GURL* location, int* http_status_code) override;
+  bool IsRedirectResponse(GURL* location,
+                          int* http_status_code,
+                          bool* insecure_scheme_was_upgraded) override;
 
   // URLRequestFileJob overridess.
   void OnReadComplete(net::IOBuffer* buffer, int result) override;
@@ -75,7 +77,7 @@ class URLRequestMockHTTPJob : public URLRequestFileJob {
   std::string raw_headers_;
   int64_t total_received_bytes_ = 0;
 
-  base::WeakPtrFactory<URLRequestMockHTTPJob> weak_ptr_factory_;
+  base::WeakPtrFactory<URLRequestMockHTTPJob> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestMockHTTPJob);
 };

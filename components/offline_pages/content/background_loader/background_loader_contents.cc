@@ -4,15 +4,22 @@
 
 #include "components/offline_pages/content/background_loader/background_loader_contents.h"
 
+#include <utility>
+
 #include "content/public/browser/web_contents.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 
 namespace background_loader {
 
 BackgroundLoaderContents::BackgroundLoaderContents(
     content::BrowserContext* browser_context)
     : browser_context_(browser_context) {
-  web_contents_.reset(content::WebContents::Create(
-      content::WebContents::CreateParams(browser_context_)));
+  // It is very important that we create the web contents with
+  // CreateParams::initially_hidden == false, and that we never change the
+  // visibility after that.  If we did change it, then background throttling
+  // could kill the background offliner while it was running.
+  web_contents_ = content::WebContents::Create(
+      content::WebContents::CreateParams(browser_context_));
   web_contents_->SetAudioMuted(true);
   web_contents_->SetDelegate(this);
 }
@@ -29,6 +36,10 @@ void BackgroundLoaderContents::LoadPage(const GURL& url) {
 
 void BackgroundLoaderContents::Cancel() {
   web_contents_->Close();
+}
+
+void BackgroundLoaderContents::SetDelegate(Delegate* delegate) {
+  delegate_ = delegate;
 }
 
 bool BackgroundLoaderContents::IsNeverVisible(
@@ -56,9 +67,13 @@ bool BackgroundLoaderContents::ShouldFocusPageAfterCrash() {
 void BackgroundLoaderContents::CanDownload(
     const GURL& url,
     const std::string& request_method,
-    const base::Callback<void(bool)>& callback) {
-  // Do not download anything.
-  callback.Run(false);
+    base::OnceCallback<void(bool)> callback) {
+  if (delegate_) {
+    delegate_->CanDownload(std::move(callback));
+  } else {
+    // Do not download anything if there's no delegate.
+    std::move(callback).Run(false);
+  }
 }
 
 bool BackgroundLoaderContents::ShouldCreateWebContents(
@@ -80,7 +95,7 @@ bool BackgroundLoaderContents::ShouldCreateWebContents(
 
 void BackgroundLoaderContents::AddNewContents(
     content::WebContents* source,
-    content::WebContents* new_contents,
+    std::unique_ptr<content::WebContents> new_contents,
     WindowOpenDisposition disposition,
     const gfx::Rect& initial_rect,
     bool user_gesture,
@@ -101,38 +116,30 @@ bool BackgroundLoaderContents::ShouldBlockMediaRequest(const GURL& url) {
 void BackgroundLoaderContents::RequestMediaAccessPermission(
     content::WebContents* contents,
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback) {
+    content::MediaResponseCallback callback) {
   // No permissions granted, act as if dismissed.
-  callback.Run(
-      content::MediaStreamDevices(),
-      content::MediaStreamRequestResult::MEDIA_DEVICE_PERMISSION_DISMISSED,
+  std::move(callback).Run(
+      blink::MediaStreamDevices(),
+      blink::mojom::MediaStreamRequestResult::PERMISSION_DISMISSED,
       std::unique_ptr<content::MediaStreamUI>());
 }
 
 bool BackgroundLoaderContents::CheckMediaAccessPermission(
-    content::WebContents* contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    content::MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   return false;  // No permissions granted.
 }
 
 void BackgroundLoaderContents::AdjustPreviewsStateForNavigation(
+    content::WebContents* web_contents,
     content::PreviewsState* previews_state) {
-  DCHECK(previews_state);
-
-  // If previews are already disabled, do nothing.
-  if (*previews_state == content::PREVIEWS_OFF ||
-      *previews_state == content::PREVIEWS_NO_TRANSFORM) {
-    return;
-  }
-
-  if (*previews_state == content::PREVIEWS_UNSPECIFIED) {
-    *previews_state = content::PARTIAL_CONTENT_SAFE_PREVIEWS;
-  } else {
-    *previews_state &= content::PARTIAL_CONTENT_SAFE_PREVIEWS;
     if (*previews_state == 0)
       *previews_state = content::PREVIEWS_OFF;
-  }
+}
+
+bool BackgroundLoaderContents::ShouldAllowLazyLoad() {
+  return false;
 }
 
 BackgroundLoaderContents::BackgroundLoaderContents()

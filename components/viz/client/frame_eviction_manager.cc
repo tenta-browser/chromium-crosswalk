@@ -8,12 +8,11 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/memory_coordinator_client_registry.h"
-#include "base/memory/memory_coordinator_proxy.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/memory_pressure_monitor.h"
 #include "base/memory/shared_memory.h"
-#include "base/sys_info.h"
+#include "base/stl_util.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 
 namespace viz {
@@ -24,9 +23,19 @@ const int kCriticalPressurePercentage = 10;
 
 }  // namespace
 
+FrameEvictionManager::ScopedPause::ScopedPause() {
+  FrameEvictionManager::GetInstance()->Pause();
+}
+
+FrameEvictionManager::ScopedPause::~ScopedPause() {
+  FrameEvictionManager::GetInstance()->Unpause();
+}
+
 FrameEvictionManager* FrameEvictionManager::GetInstance() {
   return base::Singleton<FrameEvictionManager>::get();
 }
+
+FrameEvictionManager::~FrameEvictionManager() = default;
 
 void FrameEvictionManager::AddFrame(FrameEvictionManagerClient* frame,
                                     bool locked) {
@@ -39,17 +48,14 @@ void FrameEvictionManager::AddFrame(FrameEvictionManagerClient* frame,
 }
 
 void FrameEvictionManager::RemoveFrame(FrameEvictionManagerClient* frame) {
-  std::map<FrameEvictionManagerClient*, size_t>::iterator locked_iter =
-      locked_frames_.find(frame);
+  auto locked_iter = locked_frames_.find(frame);
   if (locked_iter != locked_frames_.end())
     locked_frames_.erase(locked_iter);
   unlocked_frames_.remove(frame);
 }
 
 void FrameEvictionManager::LockFrame(FrameEvictionManagerClient* frame) {
-  std::list<FrameEvictionManagerClient*>::iterator unlocked_iter =
-      std::find(unlocked_frames_.begin(), unlocked_frames_.end(), frame);
-  if (unlocked_iter != unlocked_frames_.end()) {
+  if (base::Contains(unlocked_frames_, frame)) {
     DCHECK(locked_frames_.find(frame) == locked_frames_.end());
     unlocked_frames_.remove(frame);
     locked_frames_[frame] = 1;
@@ -74,39 +80,23 @@ void FrameEvictionManager::UnlockFrame(FrameEvictionManagerClient* frame) {
 
 size_t FrameEvictionManager::GetMaxNumberOfSavedFrames() const {
   int percentage = 100;
-  auto* memory_coordinator_proxy = base::MemoryCoordinatorProxy::GetInstance();
-  if (memory_coordinator_proxy) {
-    switch (memory_coordinator_proxy->GetCurrentMemoryState()) {
-      case base::MemoryState::NORMAL:
-        percentage = 100;
-        break;
-      case base::MemoryState::THROTTLED:
-        percentage = kCriticalPressurePercentage;
-        break;
-      case base::MemoryState::SUSPENDED:
-      case base::MemoryState::UNKNOWN:
-        NOTREACHED();
-        break;
-    }
-  } else {
-    base::MemoryPressureMonitor* monitor = base::MemoryPressureMonitor::Get();
+  base::MemoryPressureMonitor* monitor = base::MemoryPressureMonitor::Get();
 
-    if (!monitor)
-      return max_number_of_saved_frames_;
+  if (!monitor)
+    return max_number_of_saved_frames_;
 
-    // Until we have a global OnMemoryPressureChanged event we need to query the
-    // value from our specific pressure monitor.
-    switch (monitor->GetCurrentPressureLevel()) {
-      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
-        percentage = 100;
-        break;
-      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
-        percentage = kModeratePressurePercentage;
-        break;
-      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
-        percentage = kCriticalPressurePercentage;
-        break;
-    }
+  // Until we have a global OnMemoryPressureChanged event we need to query the
+  // value from our specific pressure monitor.
+  switch (monitor->GetCurrentPressureLevel()) {
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
+      percentage = 100;
+      break;
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
+      percentage = kModeratePressurePercentage;
+      break;
+    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
+      percentage = kCriticalPressurePercentage;
+      break;
   }
   size_t frames = (max_number_of_saved_frames_ * percentage) / 100;
   return std::max(static_cast<size_t>(1), frames);
@@ -114,9 +104,8 @@ size_t FrameEvictionManager::GetMaxNumberOfSavedFrames() const {
 
 FrameEvictionManager::FrameEvictionManager()
     : memory_pressure_listener_(new base::MemoryPressureListener(
-          base::Bind(&FrameEvictionManager::OnMemoryPressure,
-                     base::Unretained(this)))) {
-  base::MemoryCoordinatorClientRegistry::GetInstance()->Register(this);
+          base::BindRepeating(&FrameEvictionManager::OnMemoryPressure,
+                              base::Unretained(this)))) {
   max_number_of_saved_frames_ =
 #if defined(OS_ANDROID)
       // If the amount of memory on the device is >= 3.5 GB, save up to 5
@@ -127,9 +116,12 @@ FrameEvictionManager::FrameEvictionManager()
 #endif
 }
 
-FrameEvictionManager::~FrameEvictionManager() {}
-
 void FrameEvictionManager::CullUnlockedFrames(size_t saved_frame_limit) {
+  if (pause_count_) {
+    pending_unlocked_frame_limit_ = saved_frame_limit;
+    return;
+  }
+
   while (!unlocked_frames_.empty() &&
          unlocked_frames_.size() + locked_frames_.size() > saved_frame_limit) {
     size_t old_size = unlocked_frames_.size();
@@ -154,15 +146,29 @@ void FrameEvictionManager::OnMemoryPressure(
   }
 }
 
-void FrameEvictionManager::OnPurgeMemory() {
-  PurgeMemory(kCriticalPressurePercentage);
-}
-
 void FrameEvictionManager::PurgeMemory(int percentage) {
   int saved_frame_limit = max_number_of_saved_frames_;
   if (saved_frame_limit <= 1)
     return;
   CullUnlockedFrames(std::max(1, (saved_frame_limit * percentage) / 100));
+}
+
+void FrameEvictionManager::PurgeAllUnlockedFrames() {
+  CullUnlockedFrames(0);
+}
+
+void FrameEvictionManager::Pause() {
+  ++pause_count_;
+}
+
+void FrameEvictionManager::Unpause() {
+  --pause_count_;
+  DCHECK_GE(pause_count_, 0);
+
+  if (pause_count_ == 0 && pending_unlocked_frame_limit_) {
+    CullUnlockedFrames(pending_unlocked_frame_limit_.value());
+    pending_unlocked_frame_limit_.reset();
+  }
 }
 
 }  // namespace viz

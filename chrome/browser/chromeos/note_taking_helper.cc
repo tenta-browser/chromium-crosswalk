@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -27,10 +26,11 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
-#include "components/arc/arc_bridge_service.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "components/arc/metrics/arc_metrics_constants.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_thread.h"
@@ -80,9 +80,6 @@ arc::mojom::IntentInfoPtr CreateIntentInfo(const GURL& clip_data_uri) {
 // Whether the app's manifest indicates that the app supports note taking on the
 // lock screen.
 bool IsLockScreenEnabled(const extensions::Extension* app) {
-  if (!lock_screen_apps::StateController::IsEnabled())
-    return false;
-
   if (!app->permissions_data()->HasAPIPermission(
           extensions::APIPermission::kLockScreen)) {
     return false;
@@ -117,7 +114,7 @@ std::unique_ptr<std::set<std::string>> GetAllowedLockScreenApps(
     return nullptr;
   }
 
-  auto allowed_apps = base::MakeUnique<std::set<std::string>>();
+  auto allowed_apps = std::make_unique<std::set<std::string>>();
   for (const base::Value& app_value : allowed_apps_list->GetList()) {
     if (!app_value.is_string()) {
       LOG(ERROR) << "Invalid app ID value " << app_value;
@@ -226,7 +223,7 @@ std::unique_ptr<NoteTakingAppInfo> NoteTakingHelper::GetPreferredChromeAppInfo(
   }
 
   std::unique_ptr<NoteTakingAppInfo> info =
-      base::MakeUnique<NoteTakingAppInfo>();
+      std::make_unique<NoteTakingAppInfo>();
   info->name = preferred_app->name();
   info->app_id = preferred_app->id();
   info->preferred = true;
@@ -362,7 +359,7 @@ NoteTakingHelper::NoteTakingHelper()
   }
   whitelisted_chrome_app_ids_.insert(whitelisted_chrome_app_ids_.end(),
                                      kExtensionIds,
-                                     kExtensionIds + arraysize(kExtensionIds));
+                                     kExtensionIds + base::size(kExtensionIds));
 
   // Track profiles so we can observe their extension registries.
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_ADDED,
@@ -418,7 +415,7 @@ NoteTakingHelper::~NoteTakingHelper() {
 bool NoteTakingHelper::IsWhitelistedChromeApp(
     const extensions::Extension* extension) const {
   DCHECK(extension);
-  return base::ContainsValue(whitelisted_chrome_app_ids_, extension->id());
+  return base::Contains(whitelisted_chrome_app_ids_, extension->id());
 }
 
 std::vector<const extensions::Extension*> NoteTakingHelper::GetChromeApps(
@@ -440,7 +437,7 @@ std::vector<const extensions::Extension*> NoteTakingHelper::GetChromeApps(
   // Add any extensions which have a "note" action in their manifest
   // "action_handler" entry.
   for (const auto& extension : enabled_extensions) {
-    if (base::ContainsValue(extensions, extension.get()))
+    if (base::Contains(extensions, extension.get()))
       continue;
 
     if (extensions::ActionHandlersInfo::HasActionHandler(
@@ -518,6 +515,11 @@ NoteTakingHelper::LaunchResult NoteTakingHelper::LaunchAppInternal(
     // TODO(derat): Is there some way to detect whether this fails due to the
     // package no longer being available?
     helper->HandleIntent(CreateIntentInfo(clip_data_uri), std::move(activity));
+
+    UMA_HISTOGRAM_ENUMERATION(
+        "Arc.UserInteraction",
+        arc::UserInteractionType::APP_STARTED_FROM_STYLUS_TOOLS);
+
     return LaunchResult::ANDROID_SUCCESS;
   } else {
     // Chrome app.
@@ -529,7 +531,7 @@ NoteTakingHelper::LaunchResult NoteTakingHelper::LaunchAppInternal(
       LOG(WARNING) << "Failed to find Chrome note-taking app " << app_id;
       return LaunchResult::CHROME_APP_MISSING;
     }
-    auto action_data = base::MakeUnique<app_runtime::ActionData>();
+    auto action_data = std::make_unique<app_runtime::ActionData>();
     action_data->action_type = app_runtime::ActionType::ACTION_TYPE_NEW_NOTE;
     launch_chrome_app_callback_.Run(profile, app, std::move(action_data), path);
     return LaunchResult::CHROME_SUCCESS;

@@ -4,7 +4,6 @@
 
 #include "ui/views/widget/desktop_aura/desktop_drop_target_win.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/win/win_util.h"
 #include "ui/aura/client/drag_drop_client.h"
@@ -47,12 +46,8 @@ int ConvertKeyStateToAuraEventFlags(DWORD key_state)
 
 namespace views {
 
-DesktopDropTargetWin::DesktopDropTargetWin(aura::Window* root_window,
-                                           HWND window)
-    : ui::DropTargetWin(window),
-      root_window_(root_window),
-      target_window_(NULL) {
-}
+DesktopDropTargetWin::DesktopDropTargetWin(aura::Window* root_window)
+    : root_window_(root_window), target_window_(nullptr) {}
 
 DesktopDropTargetWin::~DesktopDropTargetWin() {
   if (target_window_)
@@ -83,6 +78,9 @@ DWORD DesktopDropTargetWin::OnDragOver(IDataObject* data_object,
   Translate(data_object, key_state, position, effect, &data, &event, &delegate);
   if (delegate)
     drag_operation = delegate->OnDragUpdated(*event);
+
+  UMA_HISTOGRAM_BOOLEAN("Event.DragDrop.AcceptDragUpdate",
+                        drag_operation != ui::DragDropTypes::DRAG_NONE);
   return ui::DragDropTypes::DragOperationToDropEffect(drag_operation);
 }
 
@@ -100,23 +98,23 @@ DWORD DesktopDropTargetWin::OnDrop(IDataObject* data_object,
   DragDropDelegate* delegate;
   Translate(data_object, key_state, position, effect, &data, &event, &delegate);
   if (delegate) {
-    drag_operation = delegate->OnPerformDrop(*event);
+    drag_operation = delegate->OnPerformDrop(*event, std::move(data));
     DragDropClient* client = aura::client::GetDragDropClient(root_window_);
     if (client && !client->IsDragDropInProgress() &&
         drag_operation != ui::DragDropTypes::DRAG_NONE) {
-      UMA_HISTOGRAM_COUNTS("Event.DragDrop.ExternalOriginDrop", 1);
+      UMA_HISTOGRAM_COUNTS_1M("Event.DragDrop.ExternalOriginDrop", 1);
     }
   }
   if (target_window_) {
     target_window_->RemoveObserver(this);
-    target_window_ = NULL;
+    target_window_ = nullptr;
   }
   return ui::DragDropTypes::DragOperationToDropEffect(drag_operation);
 }
 
 void DesktopDropTargetWin::OnWindowDestroyed(aura::Window* window) {
   DCHECK(window == target_window_);
-  target_window_ = NULL;
+  target_window_ = nullptr;
 }
 
 void DesktopDropTargetWin::Translate(
@@ -141,22 +139,20 @@ void DesktopDropTargetWin::Translate(
       target_window_->AddObserver(this);
     target_window_changed = true;
   }
-  *delegate = NULL;
+  *delegate = nullptr;
   if (!target_window_)
     return;
   *delegate = aura::client::GetDragDropDelegate(target_window_);
   if (!*delegate)
     return;
 
-  data->reset(new OSExchangeData(
-      std::make_unique<OSExchangeDataProviderWin>(data_object)));
+  *data = std::make_unique<OSExchangeData>(
+      std::make_unique<OSExchangeDataProviderWin>(data_object));
   location = root_location;
   aura::Window::ConvertPointToTarget(root_window_, target_window_, &location);
-  event->reset(new ui::DropTargetEvent(
-      *(data->get()),
-      location,
-      root_location,
-      ui::DragDropTypes::DropEffectToDragOperation(effect)));
+  *event = std::make_unique<ui::DropTargetEvent>(
+      *(data->get()), gfx::PointF(location), gfx::PointF(root_location),
+      ui::DragDropTypes::DropEffectToDragOperation(effect));
   (*event)->set_flags(ConvertKeyStateToAuraEventFlags(key_state));
   if (target_window_changed)
     (*delegate)->OnDragEntered(*event->get());
@@ -170,7 +166,7 @@ void DesktopDropTargetWin::NotifyDragLeave() {
   if (delegate)
     delegate->OnDragExited();
   target_window_->RemoveObserver(this);
-  target_window_ = NULL;
+  target_window_ = nullptr;
 }
 
 }  // namespace views

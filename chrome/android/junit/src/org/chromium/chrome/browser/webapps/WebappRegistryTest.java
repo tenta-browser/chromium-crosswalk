@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.webapps;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -13,7 +14,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -23,11 +23,11 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.task.test.BackgroundShadowAsyncTask;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.browsing_data.UrlFilters;
-import org.chromium.testing.local.BackgroundShadowAsyncTask;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 import org.chromium.webapk.lib.common.WebApkConstants;
 
 import java.util.Arrays;
@@ -41,10 +41,9 @@ import java.util.Set;
  * Tests the WebappRegistry class by ensuring that it persists data to
  * SharedPreferences as expected.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE, shadows = {BackgroundShadowAsyncTask.class})
 public class WebappRegistryTest {
-
     // These were copied from WebappRegistry for backward compatibility checking.
     private static final String REGISTRY_FILE_NAME = "webapp_registry";
     private static final String KEY_WEBAPP_SET = "webapp_set";
@@ -80,18 +79,12 @@ public class WebappRegistryTest {
 
     @Before
     public void setUp() throws Exception {
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
         WebappRegistry.refreshSharedPrefsForTesting();
         mSharedPreferences = ContextUtils.getApplicationContext().getSharedPreferences(
                 REGISTRY_FILE_NAME, Context.MODE_PRIVATE);
         mSharedPreferences.edit().putLong(KEY_LAST_CLEANUP, INITIAL_TIME).commit();
 
         mCallbackCalled = false;
-    }
-
-    @After
-    public void tearDown() {
-        mSharedPreferences.edit().clear().apply();
     }
 
     private void registerWebapp(String webappId,
@@ -671,6 +664,25 @@ public class WebappRegistryTest {
         WebappDataStorage storage2 =
                 WebappRegistry.getInstance().getWebappDataStorageForUrl(testUrl);
         assertEquals(webappId, storage2.getId());
+    }
+
+    @Test
+    @Feature({"WebApk"})
+    public void testHasWebApkForUrl() throws Exception {
+        final String startUrl = START_URL;
+        final String testUrl = START_URL + "/index.html";
+
+        assertFalse(WebappRegistry.getInstance().hasWebApkForUrl(testUrl));
+
+        String webappId = "webapp";
+        registerWebapp(webappId, new FetchStorageCallback(createShortcutIntent(startUrl)));
+        assertFalse(WebappRegistry.getInstance().hasWebApkForUrl(testUrl));
+
+        String webApkId = WebApkConstants.WEBAPK_ID_PREFIX + "WebApk";
+        registerWebapp(webApkId,
+                new FetchStorageCallback(
+                        createWebApkIntent(webApkId, startUrl, "org.chromium.webapk")));
+        assertTrue(WebappRegistry.getInstance().hasWebApkForUrl(testUrl));
     }
 
     private Set<String> addWebappsToRegistry(String... webapps) {

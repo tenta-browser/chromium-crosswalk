@@ -9,7 +9,7 @@
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/common/media/media_player_delegate_messages.h"
@@ -19,6 +19,7 @@
 #include "content/renderer/render_process.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 
 using testing::NiceMock;
 using testing::Return;
@@ -31,7 +32,7 @@ constexpr base::TimeDelta kIdleTimeout = base::TimeDelta::FromSeconds(1);
 }
 
 class MockWebMediaPlayerDelegateObserver
-    : public WebMediaPlayerDelegate::Observer {
+    : public blink::WebMediaPlayerDelegate::Observer {
  public:
   MockWebMediaPlayerDelegateObserver() {}
   ~MockWebMediaPlayerDelegateObserver() {}
@@ -43,10 +44,12 @@ class MockWebMediaPlayerDelegateObserver
   MOCK_METHOD0(OnIdleTimeout, void());
   MOCK_METHOD0(OnPlay, void());
   MOCK_METHOD0(OnPause, void());
+  MOCK_METHOD1(OnMuted, void(bool));
   MOCK_METHOD1(OnSeekForward, void(double));
   MOCK_METHOD1(OnSeekBackward, void(double));
   MOCK_METHOD1(OnVolumeMultiplierUpdate, void(double));
   MOCK_METHOD1(OnBecamePersistentVideo, void(bool));
+  MOCK_METHOD0(OnPictureInPictureModeEnded, void());
 };
 
 class RendererWebMediaPlayerDelegateTest : public content::RenderViewTest {
@@ -77,7 +80,8 @@ class RendererWebMediaPlayerDelegateTest : public content::RenderViewTest {
   }
 
   void CallOnMediaDelegatePause(int delegate_id) {
-    delegate_manager_->OnMediaDelegatePause(delegate_id);
+    delegate_manager_->OnMediaDelegatePause(delegate_id,
+                                            true /* triggered_by_user */);
   }
 
   void SetIsLowEndDeviceForTesting() {
@@ -92,8 +96,8 @@ class RendererWebMediaPlayerDelegateTest : public content::RenderViewTest {
 
   void RunLoopOnce() {
     base::RunLoop run_loop;
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                  run_loop.QuitClosure());
+    blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
+        FROM_HERE, run_loop.QuitClosure());
     run_loop.Run();
   }
 
@@ -203,7 +207,8 @@ TEST_F(RendererWebMediaPlayerDelegateTest, DeliversObserverNotifications) {
   delegate_manager_->WasShown();
 
   EXPECT_CALL(observer_1_, OnPause());
-  MediaPlayerDelegateMsg_Pause pause_msg(0, delegate_id);
+  MediaPlayerDelegateMsg_Pause pause_msg(0, delegate_id,
+                                         true /* triggered_by_user */);
   delegate_manager_->OnMessageReceived(pause_msg);
 
   EXPECT_CALL(observer_1_, OnPlay());

@@ -4,17 +4,20 @@
 
 #include "chrome/browser/lifetime/termination_notification.h"
 
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/sys_info.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_policy_controller.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 #include "chromeos/dbus/update_engine_client.h"
+#include "chromeos/login/session/session_termination_manager.h"
 #endif
 
 namespace browser_shutdown {
@@ -50,7 +53,8 @@ void NotifyAndTerminate(bool fast_path, RebootPolicy reboot_policy) {
   if (chromeos::PowerPolicyController::IsInitialized())
     chromeos::PowerPolicyController::Get()->NotifyChromeIsExiting();
 
-  if (base::SysInfo::IsRunningOnChromeOS()) {
+  if (chromeos::DBusThreadManager::IsInitialized() &&
+      !chromeos::DBusThreadManager::Get()->IsUsingFakes()) {
     // If we're on a ChromeOS device, reboot if an update has been applied,
     // or else signal the session manager to log out.
     chromeos::UpdateEngineClient* update_engine_client =
@@ -62,16 +66,15 @@ void NotifyAndTerminate(bool fast_path, RebootPolicy reboot_policy) {
     } else if (chrome::IsAttemptingShutdown()) {
       // Don't ask SessionManager to stop session if the shutdown request comes
       // from session manager.
-      chromeos::DBusThreadManager::Get()
-          ->GetSessionManagerClient()
-          ->StopSession();
+      chromeos::SessionTerminationManager::Get()->StopSession();
     }
   } else {
     if (chrome::IsAttemptingShutdown()) {
       // If running the Chrome OS build, but we're not on the device, act
       // as if we received signal from SessionManager.
-      content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                       base::Bind(&chrome::ExitCleanly));
+      base::PostTaskWithTraits(
+          FROM_HERE, {content::BrowserThread::UI},
+          base::BindOnce(&chrome::ExitIgnoreUnloadHandlers));
     }
   }
 #endif

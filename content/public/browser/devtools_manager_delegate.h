@@ -13,12 +13,10 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "url/gurl.h"
 
-namespace base {
-class DictionaryValue;
-}
-
 namespace content {
 
+class DevToolsAgentHostClient;
+class RenderFrameHost;
 class WebContents;
 
 class CONTENT_EXPORT DevToolsManagerDelegate {
@@ -35,6 +33,9 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
   // Returns DevToolsAgentHost title to use for given |web_contents| target.
   virtual std::string GetTargetDescription(WebContents* web_contents);
 
+  // Returns whether embedder allows to inspect given |rfh|.
+  virtual bool AllowInspectingRenderFrameHost(RenderFrameHost* rfh);
+
   // Returns all targets embedder would like to report as debuggable
   // remotely.
   virtual DevToolsAgentHost::List RemoteDebuggingTargets();
@@ -42,30 +43,43 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
   // Creates new inspectable target given the |url|.
   virtual scoped_refptr<DevToolsAgentHost> CreateNewTarget(const GURL& url);
 
-  // Called when a new session is created/destroyed. Note that |session_id| is
-  // globally unique.
-  virtual void SessionCreated(content::DevToolsAgentHost* agent_host,
-                              int session_id);
-  virtual void SessionDestroyed(content::DevToolsAgentHost* agent_host,
-                                int session_id);
+  // Get all live browser contexts created by CreateBrowserContext() method.
+  virtual std::vector<BrowserContext*> GetBrowserContexts();
 
-  // Returns true if the command has been handled, false otherwise.
-  virtual bool HandleCommand(DevToolsAgentHost* agent_host,
-                             int session_id,
-                             base::DictionaryValue* command);
+  // Get default browser context. May return null if not supported.
+  virtual BrowserContext* GetDefaultBrowserContext();
 
-  using CommandCallback =
-      base::Callback<void(std::unique_ptr<base::DictionaryValue> response)>;
-  virtual bool HandleAsyncCommand(DevToolsAgentHost* agent_host,
-                                  int session_id,
-                                  base::DictionaryValue* command,
-                                  const CommandCallback& callback);
+  // Create new browser context. May return null if not supported or not
+  // possible. Delegate must take ownership of the created browser context, and
+  // may destroy it at will.
+  virtual BrowserContext* CreateBrowserContext();
+
+  // Dispose browser context that was created with |CreateBrowserContext|
+  // method.
+  using DisposeCallback = base::OnceCallback<void(bool, const std::string&)>;
+  virtual void DisposeBrowserContext(BrowserContext* context,
+                                     DisposeCallback callback);
+
+  // Called when a new client is attached/detached.
+  virtual void ClientAttached(DevToolsAgentHost* agent_host,
+                              DevToolsAgentHostClient* client);
+  virtual void ClientDetached(DevToolsAgentHost* agent_host,
+                              DevToolsAgentHostClient* client);
+
+  // Call callback if command was not handled.
+  using NotHandledCallback = base::OnceCallback<void(const std::string&)>;
+  virtual void HandleCommand(DevToolsAgentHost* agent_host,
+                             DevToolsAgentHostClient* client,
+                             const std::string& method,
+                             const std::string& message,
+                             NotHandledCallback callback);
+
   // Should return discovery page HTML that should list available tabs
   // and provide attach links.
   virtual std::string GetDiscoveryPageHTML();
 
-  // Returns frontend resource data by |path|.
-  virtual std::string GetFrontendResource(const std::string& path);
+  // Returns whether frontend resources are bundled within the binary.
+  virtual bool HasBundledFrontendResources();
 
   // Makes browser target easily discoverable for remote debugging.
   // This should only return true when remote debugging endpoint is not

@@ -4,12 +4,15 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/active_directory_password_change_screen_handler.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
+#include "base/bind.h"
+#include "chrome/browser/chromeos/authpolicy/authpolicy_helper.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
-#include "chrome/browser/chromeos/login/screens/core_oobe_view.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
+#include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/login/auth/authpolicy_login_helper.h"
 #include "chromeos/login/auth/key.h"
 #include "components/login/localized_values_builder.h"
 #include "components/user_manager/known_user.h"
@@ -19,7 +22,6 @@ namespace chromeos {
 
 namespace {
 
-constexpr char kJsScreenPath[] = "login.ActiveDirectoryPasswordChangeScreen";
 constexpr char kUsernameKey[] = "username";
 constexpr char kErrorKey[] = "error";
 
@@ -34,12 +36,14 @@ enum class ActiveDirectoryPasswordChangeErrorState {
 }  // namespace
 
 ActiveDirectoryPasswordChangeScreenHandler::
-    ActiveDirectoryPasswordChangeScreenHandler(CoreOobeView* core_oobe_view)
-    : BaseScreenHandler(OobeScreen::SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE),
-      authpolicy_login_helper_(base::MakeUnique<AuthPolicyLoginHelper>()),
+    ActiveDirectoryPasswordChangeScreenHandler(
+        JSCallsContainer* js_calls_container,
+        CoreOobeView* core_oobe_view)
+    : BaseScreenHandler(OobeScreen::SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE,
+                        js_calls_container),
+      authpolicy_login_helper_(std::make_unique<AuthPolicyHelper>()),
       core_oobe_view_(core_oobe_view),
       weak_factory_(this) {
-  set_call_js_prefix(kJsScreenPath);
 }
 
 ActiveDirectoryPasswordChangeScreenHandler::
@@ -76,9 +80,7 @@ void ActiveDirectoryPasswordChangeScreenHandler::HandleCancel() {
 }
 
 void ActiveDirectoryPasswordChangeScreenHandler::ShowScreen(
-    const std::string& username,
-    SigninScreenHandlerDelegate* delegate) {
-  delegate_ = delegate;
+    const std::string& username) {
   base::DictionaryValue data;
   data.SetString(kUsernameKey, username);
   ShowScreenWithData(OobeScreen::SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE,
@@ -104,16 +106,15 @@ void ActiveDirectoryPasswordChangeScreenHandler::OnAuthFinished(
              !account_info.account_id().empty());
       const AccountId account_id = user_manager::known_user::GetAccountId(
           username, account_info.account_id(), AccountType::ACTIVE_DIRECTORY);
-      DCHECK(delegate_);
-      delegate_->SetDisplayAndGivenName(account_info.display_name(),
-                                        account_info.given_name());
-      UserContext user_context(account_id);
+      DCHECK(LoginDisplayHost::default_host());
+      LoginDisplayHost::default_host()->SetDisplayAndGivenName(
+          account_info.display_name(), account_info.given_name());
+      UserContext user_context(
+          user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY, account_id);
       user_context.SetKey(key);
       user_context.SetAuthFlow(UserContext::AUTH_FLOW_ACTIVE_DIRECTORY);
       user_context.SetIsUsingOAuth(false);
-      user_context.SetUserType(
-          user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY);
-      delegate_->CompleteLogin(user_context);
+      LoginDisplayHost::default_host()->CompleteLogin(user_context);
       break;
     }
     case authpolicy::ERROR_BAD_PASSWORD:
@@ -131,7 +132,7 @@ void ActiveDirectoryPasswordChangeScreenHandler::OnAuthFinished(
       break;
     default:
       NOTREACHED() << "Unhandled error: " << error;
-      ShowScreen(username, delegate_);
+      ShowScreen(username);
       core_oobe_view_->ShowSignInError(
           0, l10n_util::GetStringUTF8(IDS_AD_AUTH_UNKNOWN_ERROR), std::string(),
           HelpAppLauncher::HELP_CANT_ACCESS_ACCOUNT);

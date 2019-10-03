@@ -6,10 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
@@ -101,7 +102,7 @@ void ShortcutsBackendTest::SetSearchProvider() {
   data.SetKeyword(base::UTF8ToUTF16("foo"));
 
   TemplateURL* template_url =
-      template_url_service_->Add(base::MakeUnique<TemplateURL>(data));
+      template_url_service_->Add(std::make_unique<TemplateURL>(data));
   template_url_service_->SetUserSelectedDefaultSearchProvider(template_url);
 }
 
@@ -115,7 +116,7 @@ void ShortcutsBackendTest::SetUp() {
   base::FilePath shortcuts_database_path =
       profile_dir_.GetPath().Append(kShortcutsDatabaseName);
   backend_ = new ShortcutsBackend(
-      template_url_service_.get(), base::MakeUnique<SearchTermsData>(),
+      template_url_service_.get(), std::make_unique<SearchTermsData>(),
       history_service_.get(), shortcuts_database_path, false);
   ASSERT_TRUE(backend_.get());
   backend_->AddObserver(this);
@@ -199,7 +200,7 @@ TEST_F(ShortcutsBackendTest, SanitizeMatchCore) {
       "",        "",         AutocompleteMatchType::SEARCH_HISTORY },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     ShortcutsDatabase::Shortcut::MatchCore match_core(MatchCoreForTesting(
         std::string(), cases[i].input_contents_class,
         cases[i].input_description_class, cases[i].input_type));
@@ -249,8 +250,7 @@ TEST_F(ShortcutsBackendTest, AddAndUpdateShortcut) {
       MatchCoreForTesting("http://www.google.com"), base::Time::Now(), 100);
   EXPECT_TRUE(AddShortcut(shortcut));
   EXPECT_TRUE(changed_notified());
-  ShortcutsBackend::ShortcutMap::const_iterator shortcut_iter(
-      shortcuts_map().find(shortcut.text));
+  auto shortcut_iter(shortcuts_map().find(shortcut.text));
   ASSERT_TRUE(shortcut_iter != shortcuts_map().end());
   EXPECT_EQ(shortcut.id, shortcut_iter->second.id);
   EXPECT_EQ(shortcut.match_core.contents,

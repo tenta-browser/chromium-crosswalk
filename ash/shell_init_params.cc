@@ -4,8 +4,9 @@
 
 #include "ash/shell_init_params.h"
 
+#include "ash/keyboard/ui/keyboard_ui_factory.h"
 #include "ash/shell_delegate.h"
-#include "ash/shell_port.h"
+#include "base/values.h"
 
 namespace ash {
 

@@ -43,7 +43,7 @@ class ExternalVideoEncoder : public VideoEncoder {
 
   // VideoEncoder implementation.
   bool EncodeVideoFrame(
-      const scoped_refptr<media::VideoFrame>& video_frame,
+      scoped_refptr<media::VideoFrame> video_frame,
       const base::TimeTicks& reference_time,
       const FrameEncodedCallback& frame_encoded_callback) final;
   void SetBitRate(int new_bit_rate) final;
@@ -51,6 +51,10 @@ class ExternalVideoEncoder : public VideoEncoder {
 
  private:
   class VEAClientImpl;
+
+  // Called from the destructor (or earlier on error), to schedule destruction
+  // of |client_| via the encoder task runner.
+  void DestroyClientSoon();
 
   // Method invoked by the CreateVideoEncodeAcceleratorCallback to construct a
   // VEAClientImpl to own and interface with a new |vea|.  Upon return,
@@ -75,7 +79,7 @@ class ExternalVideoEncoder : public VideoEncoder {
 
   // Provides a weak pointer for the OnCreateVideoEncoderAccelerator() callback.
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<ExternalVideoEncoder> weak_factory_;
+  base::WeakPtrFactory<ExternalVideoEncoder> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExternalVideoEncoder);
 };

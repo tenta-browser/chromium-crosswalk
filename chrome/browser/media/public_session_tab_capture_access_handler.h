@@ -9,9 +9,9 @@
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/media/capture_access_handler_base.h"
 #include "chrome/browser/media/webrtc/tab_capture_access_handler.h"
-#include "content/public/common/media_stream_request.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/permissions/api_permission_set.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 // MediaAccessHandler for TabCapture API in Public Sessions. This class is
 // implemented as a wrapper around TabCaptureAccessHandler. It allows for finer
@@ -31,16 +31,16 @@ class PublicSessionTabCaptureAccessHandler : public CaptureAccessHandlerBase {
 
   // MediaAccessHandler implementation.
   bool SupportsStreamType(content::WebContents* web_contents,
-                          const content::MediaStreamType type,
+                          const blink::mojom::MediaStreamType type,
                           const extensions::Extension* extension) override;
   bool CheckMediaAccessPermission(
-      content::WebContents* web_contents,
+      content::RenderFrameHost* render_frame_host,
       const GURL& security_origin,
-      content::MediaStreamType type,
+      blink::mojom::MediaStreamType type,
       const extensions::Extension* extension) override;
   void HandleRequest(content::WebContents* web_contents,
                      const content::MediaStreamRequest& request,
-                     const content::MediaResponseCallback& callback,
+                     content::MediaResponseCallback callback,
                      const extensions::Extension* extension) override;
 
  private:
@@ -49,7 +49,7 @@ class PublicSessionTabCaptureAccessHandler : public CaptureAccessHandlerBase {
   void ChainHandleRequest(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback,
+      content::MediaResponseCallback callback,
       const extensions::Extension* extension,
       const extensions::PermissionIDSet& allowed_permissions);
 

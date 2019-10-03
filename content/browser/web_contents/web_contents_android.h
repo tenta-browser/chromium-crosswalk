@@ -10,11 +10,9 @@
 #include <memory>
 
 #include "base/android/jni_android.h"
-#include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/supports_user_data.h"
 #include "content/browser/frame_host/navigation_controller_android.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/common/content_export.h"
@@ -23,27 +21,38 @@ class GURL;
 
 namespace content {
 
-class GinJavaBridgeDispatcherHost;
 class WebContentsImpl;
 
 // Android wrapper around WebContents that provides safer passage from java and
 // back to native and provides java with a means of communicating with its
 // native counterpart.
-class CONTENT_EXPORT WebContentsAndroid
-    : public base::SupportsUserData::Data {
+class CONTENT_EXPORT WebContentsAndroid {
  public:
   explicit WebContentsAndroid(WebContentsImpl* web_contents);
-  ~WebContentsAndroid() override;
+  ~WebContentsAndroid();
 
   WebContentsImpl* web_contents() const { return web_contents_; }
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
   // Methods called from Java
+  void ClearNativeReference(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& obj);
   base::android::ScopedJavaLocalRef<jobject> GetTopLevelNativeWindow(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  void SetTopLevelNativeWindow(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& jwindow_android);
+  void SetViewAndroidDelegate(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& jview_delegate);
   base::android::ScopedJavaLocalRef<jobject> GetMainFrame(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj) const;
+  base::android::ScopedJavaLocalRef<jobject> GetFocusedFrame(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj) const;
   base::android::ScopedJavaLocalRef<jstring> GetTitle(
@@ -94,27 +103,14 @@ class CONTENT_EXPORT WebContentsAndroid
                      const base::android::JavaParamRef<jobject>& jobj,
                      jboolean mute);
 
-  void ShowInterstitialPage(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj,
-                            const base::android::JavaParamRef<jstring>& jurl,
-                            jlong delegate_ptr);
   jboolean IsShowingInterstitialPage(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
   jboolean FocusLocationBarByDefault(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
-  jboolean IsRenderWidgetHostViewReady(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
   void ExitFullscreen(JNIEnv* env,
                       const base::android::JavaParamRef<jobject>& obj);
-  void UpdateBrowserControlsState(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      bool enable_hiding,
-      bool enable_showing,
-      bool animate);
   void ScrollFocusedEditableNodeIntoView(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -142,10 +138,9 @@ class CONTENT_EXPORT WebContentsAndroid
       jint level,
       const base::android::JavaParamRef<jstring>& message);
 
-  void PostMessageToFrame(
+  void PostMessageToMainFrame(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& jframe_name,
       const base::android::JavaParamRef<jstring>& jmessage,
       const base::android::JavaParamRef<jstring>& jsource_origin,
       const base::android::JavaParamRef<jstring>& jtarget_origin,
@@ -155,8 +150,12 @@ class CONTENT_EXPORT WebContentsAndroid
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj);
 
+  // No theme color is represented by SK_ColorTRANSPARENT.
   jint GetThemeColor(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& obj);
+
+  jint GetLoadProgress(JNIEnv* env,
+                       const base::android::JavaParamRef<jobject>& obj);
 
   void RequestSmartClipExtract(
       JNIEnv* env,
@@ -181,12 +180,10 @@ class CONTENT_EXPORT WebContentsAndroid
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& overscroll_refresh_handler);
 
-  // Relay the access from Java layer to RWHV::CopyFromSurface() through JNI.
-  void GetContentBitmap(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj,
-                        jint width,
-                        jint height,
-                        const base::android::JavaParamRef<jobject>& jcallback);
+  void SetSpatialNavigationDisabled(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      bool disabled);
 
   void ReloadLoFiImages(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& obj);
@@ -198,19 +195,16 @@ class CONTENT_EXPORT WebContentsAndroid
                     jint max_bitmap_size,
                     jboolean bypass_cache,
                     const base::android::JavaParamRef<jobject>& jcallback);
-  void DismissTextHandles(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj);
-  void ShowContextMenuAtTouchHandle(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      int x,
-      int y);
   void SetHasPersistentVideo(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              jboolean value);
   bool HasActiveEffectivelyFullscreenVideo(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  bool IsPictureInPictureAllowedForFullscreenVideo(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
   base::android::ScopedJavaLocalRef<jobject> GetFullscreenVideoSize(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -218,44 +212,56 @@ class CONTENT_EXPORT WebContentsAndroid
                const base::android::JavaParamRef<jobject>& obj,
                jint width,
                jint height);
+  int GetWidth(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  int GetHeight(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
   base::android::ScopedJavaLocalRef<jobject> GetOrCreateEventForwarder(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
-  void CreateJavaBridgeDispatcherHost(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& retained_javascript_objects);
-
-  void SetAllowJavascriptInterfacesInspection(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jboolean allow);
-
-  void AddJavascriptInterface(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& /* obj */,
-      const base::android::JavaParamRef<jobject>& object,
-      const base::android::JavaParamRef<jstring>& name,
-      const base::android::JavaParamRef<jclass>& safe_annotation_clazz);
-
-  void RemoveJavascriptInterface(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& /* obj */,
-      const base::android::JavaParamRef<jstring>& name);
-
   void SetMediaSession(
       const base::android::ScopedJavaLocalRef<jobject>& j_media_session);
 
- private:
+  void SendOrientationChangeEvent(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint orientation);
+
+  void OnScaleFactorChanged(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& obj);
+  void SetFocus(JNIEnv* env,
+                const base::android::JavaParamRef<jobject>& obj,
+                jboolean focused);
+  bool IsBeingDestroyed(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& obj);
+
+  void SetDisplayCutoutSafeArea(JNIEnv* env,
+                                const base::android::JavaParamRef<jobject>& obj,
+                                int top,
+                                int left,
+                                int bottom,
+                                int right);
+  void NotifyRendererPreferenceUpdate(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
+  base::android::ScopedJavaLocalRef<jobject> GetRenderWidgetHostView(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
   RenderWidgetHostViewAndroid* GetRenderWidgetHostViewAndroid();
 
-  void OnFinishGetContentBitmap(const base::android::JavaRef<jobject>& obj,
-                                const base::android::JavaRef<jobject>& callback,
-                                const SkBitmap& bitmap,
-                                ReadbackResponse response);
+  class DestructionObserver : public base::CheckedObserver {
+   public:
+    // Invoked when the Java reference to the WebContents is being destroyed.
+    virtual void WebContentsAndroidDestroyed(
+        WebContentsAndroid* web_contents_android) = 0;
+  };
 
+  void AddDestructionObserver(DestructionObserver* observer);
+  void RemoveDestructionObserver(DestructionObserver* observer);
+
+ private:
   void OnFinishDownloadImage(const base::android::JavaRef<jobject>& obj,
                              const base::android::JavaRef<jobject>& callback,
                              int id,
@@ -263,13 +269,16 @@ class CONTENT_EXPORT WebContentsAndroid
                              const GURL& url,
                              const std::vector<SkBitmap>& bitmaps,
                              const std::vector<gfx::Size>& sizes);
+  void SelectWordAroundCaretAck(bool did_select,
+                                int start_adjust,
+                                int end_adjust);
 
   WebContentsImpl* web_contents_;
+
   NavigationControllerAndroid navigation_controller_;
   base::android::ScopedJavaGlobalRef<jobject> obj_;
 
-  // Manages injecting Java objects.
-  scoped_refptr<GinJavaBridgeDispatcherHost> java_bridge_dispatcher_host_;
+  base::ObserverList<DestructionObserver> destruction_observers_;
 
   base::WeakPtrFactory<WebContentsAndroid> weak_factory_;
 

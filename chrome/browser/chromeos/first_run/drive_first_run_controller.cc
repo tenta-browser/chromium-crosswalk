@@ -5,8 +5,10 @@
 #include "chrome/browser/chromeos/first_run/drive_first_run_controller.h"
 
 #include <stdint.h>
+
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -18,9 +20,11 @@
 #include "chrome/browser/background/background_contents.h"
 #include "chrome/browser/background/background_contents_service.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
+#include "chrome/browser/background/background_contents_service_observer.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/grit/generated_resources.h"
@@ -29,24 +33,19 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_source.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/window_container_type.mojom-shared.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 #include "url/gurl.h"
 
 namespace chromeos {
@@ -76,42 +75,6 @@ const char kDriveOfflineSupportUrl[] =
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
-// DriveOfflineNotificationDelegate
-
-// NotificationDelegate for the notification that is displayed when Drive
-// offline mode is enabled automatically. Clicking on the notification button
-// will open the Drive settings page.
-class DriveOfflineNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  explicit DriveOfflineNotificationDelegate(Profile* profile)
-      : profile_(profile) {}
-
-  // message_center::NotificationDelegate overrides:
-  void ButtonClick(int button_index) override;
-
- protected:
-  ~DriveOfflineNotificationDelegate() override {}
-
- private:
-  Profile* profile_;
-
-  DISALLOW_COPY_AND_ASSIGN(DriveOfflineNotificationDelegate);
-};
-
-void DriveOfflineNotificationDelegate::ButtonClick(int button_index) {
-  DCHECK_EQ(0, button_index);
-
-  // The support page will be localized based on the user's GAIA account.
-  const GURL url = GURL(kDriveOfflineSupportUrl);
-
-  chrome::ScopedTabbedBrowserDisplayer displayer(profile_);
-  chrome::ShowSingletonTabOverwritingNTP(
-      displayer.browser(),
-      chrome::GetSingletonTabNavigateParams(displayer.browser(), url));
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // DriveWebContentsManager
 
 // Manages web contents that initializes Google Drive offline mode. We create
@@ -120,7 +83,7 @@ void DriveOfflineNotificationDelegate::ButtonClick(int button_index) {
 // files for offline use.
 class DriveWebContentsManager : public content::WebContentsObserver,
                                 public content::WebContentsDelegate,
-                                public content::NotificationObserver {
+                                public BackgroundContentsServiceObserver {
  public:
   typedef base::Callback<
       void(bool, DriveFirstRunController::UMAOutcome)> CompletionCallback;
@@ -172,19 +135,17 @@ class DriveWebContentsManager : public content::WebContentsObserver,
       const std::string& partition_id,
       content::SessionStorageNamespace* session_storage_namespace) override;
 
-  // content::NotificationObserver overrides:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // BackgroundContentsServiceObserver:
+  void OnBackgroundContentsOpened(
+      const BackgroundContentsOpenedDetails& details) override;
 
   Profile* profile_;
   const std::string app_id_;
   const std::string endpoint_url_;
   std::unique_ptr<content::WebContents> web_contents_;
-  content::NotificationRegistrar registrar_;
-  bool started_;
+  bool started_ = false;
   CompletionCallback completion_callback_;
-  base::WeakPtrFactory<DriveWebContentsManager> weak_ptr_factory_;
+  base::WeakPtrFactory<DriveWebContentsManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DriveWebContentsManager);
 };
@@ -197,15 +158,14 @@ DriveWebContentsManager::DriveWebContentsManager(
     : profile_(profile),
       app_id_(app_id),
       endpoint_url_(endpoint_url),
-      started_(false),
-      completion_callback_(completion_callback),
-      weak_ptr_factory_(this) {
+      completion_callback_(completion_callback) {
   DCHECK(!completion_callback_.is_null());
-  registrar_.Add(this, chrome::NOTIFICATION_BACKGROUND_CONTENTS_OPENED,
-                 content::Source<Profile>(profile_));
+  BackgroundContentsServiceFactory::GetForProfile(profile)->AddObserver(this);
 }
 
 DriveWebContentsManager::~DriveWebContentsManager() {
+  BackgroundContentsServiceFactory::GetForProfile(profile_)->RemoveObserver(
+      this);
 }
 
 void DriveWebContentsManager::StartLoad() {
@@ -214,7 +174,7 @@ void DriveWebContentsManager::StartLoad() {
   content::WebContents::CreateParams create_params(
         profile_, content::SiteInstance::CreateForURL(profile_, url));
 
-  web_contents_.reset(content::WebContents::Create(create_params));
+  web_contents_ = content::WebContents::Create(create_params);
   web_contents_->SetDelegate(this);
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents_.get());
@@ -238,8 +198,8 @@ void DriveWebContentsManager::OnOfflineInit(
     // of a call stack for some routine of the contained WebContents.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&DriveWebContentsManager::RunCompletionCallback,
-                   weak_ptr_factory_.GetWeakPtr(), success, outcome));
+        base::BindOnce(&DriveWebContentsManager::RunCompletionCallback,
+                       weak_ptr_factory_.GetWeakPtr(), success, outcome));
     StopLoad();
   }
 }
@@ -324,15 +284,9 @@ bool DriveWebContentsManager::ShouldCreateWebContents(
   return false;
 }
 
-void DriveWebContentsManager::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_BACKGROUND_CONTENTS_OPENED, type);
-  const std::string& app_id =
-      content::Details<BackgroundContentsOpenedDetails>(details)
-          ->application_id;
-  if (app_id == app_id_)
+void DriveWebContentsManager::OnBackgroundContentsOpened(
+    const BackgroundContentsOpenedDetails& details) {
+  if (details.application_id == app_id_)
     OnOfflineInit(true, DriveFirstRunController::OUTCOME_OFFLINE_ENABLED);
 }
 
@@ -369,7 +323,7 @@ void DriveFirstRunController::EnableOfflineMode() {
     return;
   }
 
-  ExtensionService* extension_service =
+  extensions::ExtensionService* extension_service =
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   if (!extension_service->GetExtensionById(drive_hosted_app_id_, false)) {
     LOG(WARNING) << "Drive app is not installed.";
@@ -449,7 +403,7 @@ void DriveFirstRunController::OnOfflineInit(bool success, UMAOutcome outcome) {
 }
 
 void DriveFirstRunController::ShowNotification() {
-  ExtensionService* service =
+  extensions::ExtensionService* service =
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   DCHECK(service);
   const extensions::Extension* extension =
@@ -460,19 +414,40 @@ void DriveFirstRunController::ShowNotification() {
   data.buttons.push_back(message_center::ButtonInfo(
       l10n_util::GetStringUTF16(IDS_DRIVE_OFFLINE_NOTIFICATION_BUTTON)));
   ui::ResourceBundle& resource_bundle = ui::ResourceBundle::GetSharedInstance();
-  std::unique_ptr<message_center::Notification> notification(
-      new message_center::Notification(
-          message_center::NOTIFICATION_TYPE_SIMPLE, kDriveOfflineNotificationId,
-          base::string16(),  // title
-          l10n_util::GetStringUTF16(IDS_DRIVE_OFFLINE_NOTIFICATION_MESSAGE),
-          resource_bundle.GetImageNamed(IDR_NOTIFICATION_DRIVE),
-          base::UTF8ToUTF16(extension->name()), GURL(),
-          message_center::NotifierId(message_center::NotifierId::APPLICATION,
-                                     kDriveHostedAppId),
-          data, new DriveOfflineNotificationDelegate(profile_)));
-  notification->set_priority(message_center::LOW_PRIORITY);
-  message_center::MessageCenter::Get()->AddNotification(
-      std::move(notification));
+
+  // Clicking on the notification button will open the Drive settings page.
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating(
+              [](Profile* profile, base::Optional<int> button_index) {
+                if (!button_index)
+                  return;
+
+                DCHECK_EQ(0, *button_index);
+
+                // The support page will be localized based on the user's GAIA
+                // account.
+                const GURL url = GURL(kDriveOfflineSupportUrl);
+
+                chrome::ScopedTabbedBrowserDisplayer displayer(profile);
+                ShowSingletonTabOverwritingNTP(
+                    displayer.browser(),
+                    GetSingletonTabNavigateParams(displayer.browser(), url));
+              },
+              profile_));
+
+  message_center::Notification notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE, kDriveOfflineNotificationId,
+      base::string16(),  // title
+      l10n_util::GetStringUTF16(IDS_DRIVE_OFFLINE_NOTIFICATION_MESSAGE),
+      resource_bundle.GetImageNamed(IDR_NOTIFICATION_DRIVE),
+      base::UTF8ToUTF16(extension->name()), GURL(),
+      message_center::NotifierId(message_center::NotifierType::APPLICATION,
+                                 kDriveHostedAppId),
+      data, std::move(delegate));
+  notification.set_priority(message_center::LOW_PRIORITY);
+  NotificationDisplayService::GetForProfile(profile_)->Display(
+      NotificationHandler::Type::TRANSIENT, notification, /*metadata=*/nullptr);
 }
 
 }  // namespace chromeos

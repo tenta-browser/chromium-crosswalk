@@ -7,16 +7,19 @@
 #include <algorithm>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
 #include "components/component_updater/component_updater_service.h"
+#include "components/component_updater/timer_update_scheduler.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_desktop_utils.h"
 #include "components/gcm_driver/gcm_driver.h"
@@ -24,36 +27,71 @@
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
-#include "components/net_log/chrome_net_log.h"
+#include "components/net_log/net_export_file_writer.h"
 #include "components/network_time/network_time_tracker.h"
-#include "components/physical_web/data_source/physical_web_data_source.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/sessions/core/session_id_generator.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/ukm/ukm_service.h"
 #include "components/update_client/configurator.h"
 #include "components/update_client/update_query_params.h"
 #include "components/variations/service/variations_service.h"
+#include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager_impl.h"
 #include "ios/chrome/browser/chrome_paths.h"
 #include "ios/chrome/browser/component_updater/ios_component_updater_configurator.h"
+#include "ios/chrome/browser/gcm/ios_chrome_gcm_profile_service_factory.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/ios_chrome_io_thread.h"
 #include "ios/chrome/browser/metrics/ios_chrome_metrics_services_manager_client.h"
-#include "ios/chrome/browser/physical_web/create_physical_web_data_source.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/browser_prefs.h"
 #include "ios/chrome/browser/prefs/ios_chrome_pref_service_factory.h"
-#include "ios/chrome/browser/services/gcm/ios_chrome_gcm_profile_service_factory.h"
 #include "ios/chrome/browser/update_client/ios_chrome_update_query_params_delegate.h"
-#include "ios/chrome/browser/web_resource/web_resource_util.h"
 #include "ios/chrome/common/channel_info.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
+#include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/socket/client_socket_pool_manager.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "services/network/network_change_manager.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
+#include "services/network/public/mojom/network_service.mojom.h"
+
+namespace {
+
+// Requests a network::mojom::ProxyResolvingSocketFactory on the UI thread.
+// Note that this cannot be called on a thread that is not the UI thread.
+void RequestProxyResolvingSocketFactoryOnUIThread(
+    ApplicationContextImpl* app_context,
+    network::mojom::ProxyResolvingSocketFactoryRequest request) {
+  network::mojom::NetworkContext* network_context =
+      app_context->GetSystemNetworkContext();
+  network_context->CreateProxyResolvingSocketFactory(std::move(request));
+}
+
+// Wrapper on top of the method above. This does a PostTask to the UI thread.
+void RequestProxyResolvingSocketFactory(
+    ApplicationContextImpl* app_context,
+    network::mojom::ProxyResolvingSocketFactoryRequest request) {
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::UI},
+      base::BindOnce(&RequestProxyResolvingSocketFactoryOnUIThread, app_context,
+                     std::move(request)));
+}
+
+// Passed to NetworkConnectionTracker to bind a NetworkChangeManagerRequest.
+void BindNetworkChangeManagerRequest(
+    network::NetworkChangeManager* network_change_manager,
+    network::mojom::NetworkChangeManagerRequest request) {
+  network_change_manager->AddRequest(std::move(request));
+}
+
+}  // namespace
 
 ApplicationContextImpl::ApplicationContextImpl(
     base::SequencedTaskRunner* local_state_task_runner,
@@ -64,7 +102,7 @@ ApplicationContextImpl::ApplicationContextImpl(
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
 
-  net_log_.reset(new net_log::ChromeNetLog());
+  net_log_ = std::make_unique<net::NetLog>();
 
   SetApplicationLocale(locale);
 
@@ -97,6 +135,8 @@ void ApplicationContextImpl::StartTearDown() {
   metrics_services_manager_.reset();
   network_time_tracker_.reset();
 
+  net_export_file_writer_.reset();
+
   // Need to clear browser states before the IO thread.
   chrome_browser_state_manager_.reset();
 
@@ -106,7 +146,10 @@ void ApplicationContextImpl::StartTearDown() {
 
   if (local_state_) {
     local_state_->CommitPendingWrite();
+    sessions::SessionIdGenerator::GetInstance()->Shutdown();
   }
+
+  ios_chrome_io_thread_->NetworkTearDown();
 }
 
 void ApplicationContextImpl::PostDestroyThreads() {
@@ -193,6 +236,16 @@ ApplicationContextImpl::GetSystemURLRequestContext() {
   return ios_chrome_io_thread_->system_url_request_context_getter();
 }
 
+scoped_refptr<network::SharedURLLoaderFactory>
+ApplicationContextImpl::GetSharedURLLoaderFactory() {
+  return ios_chrome_io_thread_->GetSharedURLLoaderFactory();
+}
+
+network::mojom::NetworkContext*
+ApplicationContextImpl::GetSystemNetworkContext() {
+  return ios_chrome_io_thread_->GetSystemNetworkContext();
+}
+
 const std::string& ApplicationContextImpl::GetApplicationLocale() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!application_locale_.empty());
@@ -213,7 +266,7 @@ ApplicationContextImpl::GetMetricsServicesManager() {
   if (!metrics_services_manager_) {
     metrics_services_manager_.reset(
         new metrics_services_manager::MetricsServicesManager(
-            base::MakeUnique<IOSChromeMetricsServicesManagerClient>(
+            std::make_unique<IOSChromeMetricsServicesManagerClient>(
                 GetLocalState())));
   }
   return metrics_services_manager_.get();
@@ -239,9 +292,17 @@ rappor::RapporServiceImpl* ApplicationContextImpl::GetRapporServiceImpl() {
   return GetMetricsServicesManager()->GetRapporServiceImpl();
 }
 
-net_log::ChromeNetLog* ApplicationContextImpl::GetNetLog() {
+net::NetLog* ApplicationContextImpl::GetNetLog() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return net_log_.get();
+}
+
+net_log::NetExportFileWriter* ApplicationContextImpl::GetNetExportFileWriter() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  if (!net_export_file_writer_) {
+    net_export_file_writer_ = std::make_unique<net_log::NetExportFileWriter>();
+  }
+  return net_export_file_writer_.get();
 }
 
 network_time::NetworkTimeTracker*
@@ -251,7 +312,7 @@ ApplicationContextImpl::GetNetworkTimeTracker() {
     network_time_tracker_.reset(new network_time::NetworkTimeTracker(
         base::WrapUnique(new base::DefaultClock),
         base::WrapUnique(new base::DefaultTickClock), GetLocalState(),
-        GetSystemURLRequestContext()));
+        GetSharedURLLoaderFactory()));
   }
   return network_time_tracker_.get();
 }
@@ -278,21 +339,25 @@ ApplicationContextImpl::GetComponentUpdateService() {
     // be registered and Start() needs to be called.
     component_updater_ = component_updater::ComponentUpdateServiceFactory(
         component_updater::MakeIOSComponentUpdaterConfigurator(
-            base::CommandLine::ForCurrentProcess(),
-            GetSystemURLRequestContext()));
+            base::CommandLine::ForCurrentProcess()),
+        std::make_unique<component_updater::TimerUpdateScheduler>());
   }
   return component_updater_.get();
 }
 
-physical_web::PhysicalWebDataSource*
-ApplicationContextImpl::GetPhysicalWebDataSource() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!physical_web_data_source_) {
-    physical_web_data_source_ =
-        CreateIOSChromePhysicalWebDataSource(GetLocalState());
-    DCHECK(physical_web_data_source_);
+network::NetworkConnectionTracker*
+ApplicationContextImpl::GetNetworkConnectionTracker() {
+  if (!network_connection_tracker_) {
+    if (!network_change_manager_) {
+      network_change_manager_ =
+          std::make_unique<network::NetworkChangeManager>(nullptr);
+    }
+    network_connection_tracker_ =
+        std::make_unique<network::NetworkConnectionTracker>(base::BindRepeating(
+            &BindNetworkChangeManagerRequest,
+            base::Unretained(network_change_manager_.get())));
   }
-  return physical_web_data_source_.get();
+  return network_connection_tracker_.get();
 }
 
 void ApplicationContextImpl::SetApplicationLocale(const std::string& locale) {
@@ -307,7 +372,7 @@ void ApplicationContextImpl::CreateLocalState() {
   DCHECK(!local_state_);
 
   base::FilePath local_state_path;
-  CHECK(PathService::Get(ios::FILE_LOCAL_STATE, &local_state_path));
+  CHECK(base::PathService::Get(ios::FILE_LOCAL_STATE, &local_state_path));
   scoped_refptr<PrefRegistrySimple> pref_registry(new PrefRegistrySimple);
 
   // Register local state preferences.
@@ -316,6 +381,8 @@ void ApplicationContextImpl::CreateLocalState() {
   local_state_ = ::CreateLocalState(
       local_state_path, local_state_task_runner_.get(), pref_registry);
   DCHECK(local_state_);
+
+  sessions::SessionIdGenerator::GetInstance()->Init(local_state_.get());
 
   net::ClientSocketPoolManager::set_max_sockets_per_proxy_server(
       net::HttpNetworkSession::NORMAL_SOCKET_POOL,
@@ -335,18 +402,23 @@ void ApplicationContextImpl::CreateGCMDriver() {
   DCHECK(!gcm_driver_);
 
   base::FilePath store_path;
-  CHECK(PathService::Get(ios::DIR_GLOBAL_GCM_STORE, &store_path));
+  CHECK(base::PathService::Get(ios::DIR_GLOBAL_GCM_STORE, &store_path));
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
 
   gcm_driver_ = gcm::CreateGCMDriverDesktop(
       base::WrapUnique(new gcm::GCMClientFactory), GetLocalState(), store_path,
-      GetSystemURLRequestContext(), ::GetChannel(),
+      // Because ApplicationContextImpl is destroyed after all WebThreads have
+      // been shut down, base::Unretained() is safe here.
+      base::BindRepeating(&RequestProxyResolvingSocketFactory,
+                          base::Unretained(this)),
+      GetSharedURLLoaderFactory(),
+      GetApplicationContext()->GetNetworkConnectionTracker(), ::GetChannel(),
       IOSChromeGCMProfileServiceFactory::GetProductCategoryForSubtypes(),
-      web::WebThread::GetTaskRunnerForThread(web::WebThread::UI),
-      web::WebThread::GetTaskRunnerForThread(web::WebThread::IO),
+      base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::UI}),
+      base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::IO}),
       blocking_task_runner);
 }

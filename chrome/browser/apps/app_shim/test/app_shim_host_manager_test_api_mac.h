@@ -17,7 +17,7 @@ class FilePath;
 
 namespace apps {
 class ExtensionAppShimHandler;
-class UnixDomainSocketAcceptor;
+class MachBootstrapAcceptor;
 }
 
 namespace test {
@@ -26,7 +26,7 @@ class AppShimHostManagerTestApi {
  public:
   explicit AppShimHostManagerTestApi(AppShimHostManager* host_manager);
 
-  apps::UnixDomainSocketAcceptor* acceptor();
+  apps::MachBootstrapAcceptor* mach_acceptor();
 
   const base::FilePath& directory_in_tmp();
 

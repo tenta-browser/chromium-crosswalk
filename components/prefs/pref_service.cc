@@ -5,9 +5,12 @@
 #include "components/prefs/pref_service.h"
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/debug/alias.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -18,19 +21,19 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/util/values/values_util.h"
 #include "base/value_conversions.h"
 #include "build/build_config.h"
 #include "components/prefs/default_pref_store.h"
 #include "components/prefs/pref_notifier_impl.h"
 #include "components/prefs/pref_registry.h"
-#include "components/prefs/pref_value_store.h"
 
 namespace {
 
 class ReadErrorHandler : public PersistentPrefStore::ReadErrorDelegate {
  public:
   using ErrorCallback =
-      base::Callback<void(PersistentPrefStore::PrefReadError)>;
+      base::RepeatingCallback<void(PersistentPrefStore::PrefReadError)>;
   explicit ReadErrorHandler(ErrorCallback cb) : callback_(cb) {}
 
   void OnError(PersistentPrefStore::PrefReadError error) override {
@@ -56,28 +59,48 @@ uint32_t GetWriteFlags(const PrefService::Preference* pref) {
   return write_flags;
 }
 
+// For prefs names in |pref_store| that are not presented in |pref_changed_map|,
+// check if their values differ from those in pref_service->FindPreference() and
+// add the result into |pref_changed_map|.
+void CheckForNewPrefChangesInPrefStore(
+    std::map<std::string, bool>* pref_changed_map,
+    PrefStore* pref_store,
+    PrefService* pref_service) {
+  if (!pref_store)
+    return;
+  auto values = pref_store->GetValues();
+  for (const auto& item : values->DictItems()) {
+    // If the key already presents, skip it as a store with higher precedence
+    // already sets the entry.
+    if (pref_changed_map->find(item.first) != pref_changed_map->end())
+      continue;
+    const PrefService::Preference* pref =
+        pref_service->FindPreference(item.first);
+    if (!pref)
+      continue;
+    pref_changed_map->emplace(item.first, *(pref->GetValue()) != item.second);
+  }
+}
+
 }  // namespace
 
 PrefService::PrefService(
-    PrefNotifierImpl* pref_notifier,
-    PrefValueStore* pref_value_store,
-    PersistentPrefStore* user_prefs,
-    PrefRegistry* pref_registry,
-    base::Callback<void(PersistentPrefStore::PrefReadError)>
+    std::unique_ptr<PrefNotifierImpl> pref_notifier,
+    std::unique_ptr<PrefValueStore> pref_value_store,
+    scoped_refptr<PersistentPrefStore> user_prefs,
+    scoped_refptr<PrefRegistry> pref_registry,
+    base::RepeatingCallback<void(PersistentPrefStore::PrefReadError)>
         read_error_callback,
     bool async)
-    : pref_notifier_(pref_notifier),
-      pref_value_store_(pref_value_store),
-      pref_registry_(pref_registry),
-      user_pref_store_(user_prefs),
-      read_error_callback_(read_error_callback) {
+    : pref_notifier_(std::move(pref_notifier)),
+      pref_value_store_(std::move(pref_value_store)),
+      user_pref_store_(std::move(user_prefs)),
+      read_error_callback_(std::move(read_error_callback)),
+      pref_registry_(std::move(pref_registry)) {
   pref_notifier_->SetPrefService(this);
 
-  // TODO(battre): This is a check for crbug.com/435208 to make sure that
-  // access violations are caused by a use-after-free bug and not by an
-  // initialization bug.
-  CHECK(pref_registry_);
-  CHECK(pref_value_store_);
+  DCHECK(pref_registry_);
+  DCHECK(pref_value_store_);
 
   InitFromStorage(async);
 }
@@ -85,11 +108,19 @@ PrefService::PrefService(
 PrefService::~PrefService() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // Reset pointers so accesses after destruction reliably crash.
-  pref_value_store_.reset();
-  pref_registry_ = nullptr;
-  user_pref_store_ = nullptr;
-  pref_notifier_.reset();
+  // TODO(crbug.com/942491, 946668, 945772) The following code collects
+  // augments stack dumps created by ~PrefNotifierImpl() with information
+  // whether the profile owning the PrefService is an incognito profile.
+  // Delete this, once the bugs are closed.
+  const bool is_incognito_profile = user_pref_store_->IsInMemoryPrefStore();
+  base::debug::Alias(&is_incognito_profile);
+  // Export value of is_incognito_profile to a string so that `grep`
+  // is a sufficient tool to analyze crashdumps.
+  char is_incognito_profile_string[32];
+  strncpy(is_incognito_profile_string,
+          is_incognito_profile ? "is_incognito: yes" : "is_incognito: no",
+          sizeof(is_incognito_profile_string));
+  base::debug::Alias(&is_incognito_profile_string);
 }
 
 void PrefService::InitFromStorage(bool async) {
@@ -101,18 +132,17 @@ void PrefService::InitFromStorage(bool async) {
     // Guarantee that initialization happens after this function returned.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&PersistentPrefStore::ReadPrefsAsync, user_pref_store_,
-                   new ReadErrorHandler(read_error_callback_)));
+        base::BindOnce(&PersistentPrefStore::ReadPrefsAsync, user_pref_store_,
+                       new ReadErrorHandler(read_error_callback_)));
   }
 }
 
-void PrefService::CommitPendingWrite() {
-  CommitPendingWrite(base::OnceClosure());
-}
-
-void PrefService::CommitPendingWrite(base::OnceClosure done_callback) {
+void PrefService::CommitPendingWrite(
+    base::OnceClosure reply_callback,
+    base::OnceClosure synchronous_done_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  user_pref_store_->CommitPendingWrite(std::move(done_callback));
+  user_pref_store_->CommitPendingWrite(std::move(reply_callback),
+                                       std::move(synchronous_done_callback));
 }
 
 void PrefService::SchedulePendingLossyWrites() {
@@ -125,11 +155,9 @@ bool PrefService::GetBoolean(const std::string& path) const {
 
   bool result = false;
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return result;
-  }
   bool rv = value->GetAsBoolean(&result);
   DCHECK(rv);
   return result;
@@ -140,11 +168,9 @@ int PrefService::GetInteger(const std::string& path) const {
 
   int result = 0;
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return result;
-  }
   bool rv = value->GetAsInteger(&result);
   DCHECK(rv);
   return result;
@@ -155,11 +181,9 @@ double PrefService::GetDouble(const std::string& path) const {
 
   double result = 0.0;
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return result;
-  }
   bool rv = value->GetAsDouble(&result);
   DCHECK(rv);
   return result;
@@ -170,11 +194,9 @@ std::string PrefService::GetString(const std::string& path) const {
 
   std::string result;
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return result;
-  }
   bool rv = value->GetAsString(&result);
   DCHECK(rv);
   return result;
@@ -185,11 +207,9 @@ base::FilePath PrefService::GetFilePath(const std::string& path) const {
 
   base::FilePath result;
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return base::FilePath(result);
-  }
   bool rv = base::GetValueAsFilePath(*value, &result);
   DCHECK(rv);
   return result;
@@ -228,7 +248,7 @@ std::unique_ptr<base::DictionaryValue> PrefService::GetPreferenceValues(
 const PrefService::Preference* PrefService::FindPreference(
     const std::string& pref_name) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  PreferenceMap::iterator it = prefs_map_.find(pref_name);
+  auto it = prefs_map_.find(pref_name);
   if (it != prefs_map_.end())
     return &(it->second);
   const base::Value* default_value = nullptr;
@@ -285,15 +305,22 @@ bool PrefService::IsUserModifiablePreference(
   return pref && pref->IsUserModifiable();
 }
 
+const base::Value* PrefService::Get(const std::string& path) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
+    return nullptr;
+  return value;
+}
+
 const base::DictionaryValue* PrefService::GetDictionary(
     const std::string& path) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return nullptr;
-  }
   if (value->type() != base::Value::Type::DICTIONARY) {
     NOTREACHED();
     return nullptr;
@@ -344,11 +371,9 @@ const base::Value* PrefService::GetDefaultPrefValue(
 const base::ListValue* PrefService::GetList(const std::string& path) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return nullptr;
-  }
   if (value->type() != base::Value::Type::LIST) {
     NOTREACHED();
     return nullptr;
@@ -365,8 +390,8 @@ void PrefService::RemovePrefObserver(const std::string& path,
   pref_notifier_->RemovePrefObserver(path, obs);
 }
 
-void PrefService::AddPrefInitObserver(base::Callback<void(bool)> obs) {
-  pref_notifier_->AddInitObserver(obs);
+void PrefService::AddPrefInitObserver(base::OnceCallback<void(bool)> obs) {
+  pref_notifier_->AddInitObserver(std::move(obs));
 }
 
 PrefRegistry* PrefService::DeprecatedGetPrefRegistry() {
@@ -392,6 +417,45 @@ void PrefService::OnStoreDeletionFromDisk() {
   user_pref_store_->OnStoreDeletionFromDisk();
 }
 
+void PrefService::ChangePrefValueStore(
+    PrefStore* managed_prefs,
+    PrefStore* supervised_user_prefs,
+    PrefStore* extension_prefs,
+    PrefStore* recommended_prefs,
+    std::unique_ptr<PrefValueStore::Delegate> delegate) {
+  // Only adding new pref stores are supported.
+  DCHECK(!pref_value_store_->HasPrefStore(PrefValueStore::MANAGED_STORE) ||
+         !managed_prefs);
+  DCHECK(
+      !pref_value_store_->HasPrefStore(PrefValueStore::SUPERVISED_USER_STORE) ||
+      !supervised_user_prefs);
+  DCHECK(!pref_value_store_->HasPrefStore(PrefValueStore::EXTENSION_STORE) ||
+         !extension_prefs);
+  DCHECK(!pref_value_store_->HasPrefStore(PrefValueStore::RECOMMENDED_STORE) ||
+         !recommended_prefs);
+
+  // If some of the stores are already initialized, check for pref value changes
+  // according to store precedence.
+  std::map<std::string, bool> pref_changed_map;
+  CheckForNewPrefChangesInPrefStore(&pref_changed_map, managed_prefs, this);
+  CheckForNewPrefChangesInPrefStore(&pref_changed_map, supervised_user_prefs,
+                                    this);
+  CheckForNewPrefChangesInPrefStore(&pref_changed_map, extension_prefs, this);
+  CheckForNewPrefChangesInPrefStore(&pref_changed_map, recommended_prefs, this);
+
+  pref_value_store_ = pref_value_store_->CloneAndSpecialize(
+      managed_prefs, supervised_user_prefs, extension_prefs,
+      nullptr /* command_line_prefs */, nullptr /* user_prefs */,
+      recommended_prefs, nullptr /* default_prefs */, pref_notifier_.get(),
+      std::move(delegate));
+
+  // Notify |pref_notifier_| on all changed values.
+  for (const auto& kv : pref_changed_map) {
+    if (kv.second)
+      pref_notifier_.get()->OnPreferenceChanged(kv.first);
+  }
+}
+
 void PrefService::AddPrefObserverAllPrefs(PrefObserver* obs) {
   pref_notifier_->AddPrefObserverAllPrefs(obs);
 }
@@ -405,61 +469,50 @@ void PrefService::Set(const std::string& path, const base::Value& value) {
 }
 
 void PrefService::SetBoolean(const std::string& path, bool value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetInteger(const std::string& path, int value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetDouble(const std::string& path, double value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetString(const std::string& path, const std::string& value) {
-  SetUserPrefValue(path, base::MakeUnique<base::Value>(value));
+  SetUserPrefValue(path, std::make_unique<base::Value>(value));
 }
 
 void PrefService::SetFilePath(const std::string& path,
                               const base::FilePath& value) {
-  SetUserPrefValue(path, base::CreateFilePathValue(value));
+  SetUserPrefValue(
+      path, base::Value::ToUniquePtrValue(base::CreateFilePathValue(value)));
 }
 
 void PrefService::SetInt64(const std::string& path, int64_t value) {
   SetUserPrefValue(path,
-                   base::MakeUnique<base::Value>(base::Int64ToString(value)));
+                   base::Value::ToUniquePtrValue(util::Int64ToValue(value)));
 }
 
 int64_t PrefService::GetInt64(const std::string& path) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
-    return 0;
-  }
-  std::string result("0");
-  bool rv = value->GetAsString(&result);
-  DCHECK(rv);
-
-  int64_t val;
-  base::StringToInt64(result, &val);
-  return val;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  base::Optional<int64_t> integer = util::ValueToInt64(value);
+  DCHECK(integer);
+  return integer.value_or(0);
 }
 
 void PrefService::SetUint64(const std::string& path, uint64_t value) {
   SetUserPrefValue(path,
-                   base::MakeUnique<base::Value>(base::Uint64ToString(value)));
+                   std::make_unique<base::Value>(base::NumberToString(value)));
 }
 
 uint64_t PrefService::GetUint64(const std::string& path) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  const base::Value* value = GetPreferenceValue(path);
-  if (!value) {
-    NOTREACHED() << "Trying to read an unregistered pref: " << path;
+  const base::Value* value = GetPreferenceValueChecked(path);
+  if (!value)
     return 0;
-  }
   std::string result("0");
   bool rv = value->GetAsString(&result);
   DCHECK(rv);
@@ -467,6 +520,30 @@ uint64_t PrefService::GetUint64(const std::string& path) const {
   uint64_t val;
   base::StringToUint64(result, &val);
   return val;
+}
+
+void PrefService::SetTime(const std::string& path, base::Time value) {
+  SetUserPrefValue(path,
+                   base::Value::ToUniquePtrValue(util::TimeToValue(value)));
+}
+
+base::Time PrefService::GetTime(const std::string& path) const {
+  const base::Value* value = GetPreferenceValueChecked(path);
+  base::Optional<base::Time> time = util::ValueToTime(value);
+  DCHECK(time);
+  return time.value_or(base::Time());
+}
+
+void PrefService::SetTimeDelta(const std::string& path, base::TimeDelta value) {
+  SetUserPrefValue(
+      path, base::Value::ToUniquePtrValue(util::TimeDeltaToValue(value)));
+}
+
+base::TimeDelta PrefService::GetTimeDelta(const std::string& path) const {
+  const base::Value* value = GetPreferenceValueChecked(path);
+  base::Optional<base::TimeDelta> time_delta = util::ValueToTimeDelta(value);
+  DCHECK(time_delta);
+  return time_delta.value_or(base::TimeDelta());
 }
 
 base::Value* PrefService::GetMutableUserPref(const std::string& path,
@@ -485,21 +562,31 @@ base::Value* PrefService::GetMutableUserPref(const std::string& path,
     return nullptr;
   }
 
-  // Look for an existing preference in the user store. If it doesn't
-  // exist or isn't the correct type, create a new user preference.
+  // Look for an existing preference in the user store. Return it in case it
+  // exists and has the correct type.
   base::Value* value = nullptr;
-  if (!user_pref_store_->GetMutableValue(path, &value) ||
-      value->type() != type) {
-    if (type == base::Value::Type::DICTIONARY) {
-      value = new base::DictionaryValue;
-    } else if (type == base::Value::Type::LIST) {
-      value = new base::ListValue;
-    } else {
-      NOTREACHED();
-    }
-    user_pref_store_->SetValueSilently(path, base::WrapUnique(value),
-                                       GetWriteFlags(pref));
+  if (user_pref_store_->GetMutableValue(path, &value) &&
+      value->type() == type) {
+    return value;
   }
+
+  // TODO(crbug.com/859477): Remove once root cause has been found.
+  if (value && value->type() != type) {
+    DEBUG_ALIAS_FOR_CSTR(path_copy, path.c_str(), 1024);
+    base::debug::DumpWithoutCrashing();
+  }
+
+  // If no user preference of the correct type exists, clone default value.
+  const base::Value* default_value = nullptr;
+  pref_registry_->defaults()->GetValue(path, &default_value);
+  // TODO(crbug.com/859477): Revert to DCHECK once root cause has been found.
+  if (default_value->type() != type) {
+    DEBUG_ALIAS_FOR_CSTR(path_copy, path.c_str(), 1024);
+    base::debug::DumpWithoutCrashing();
+  }
+  user_pref_store_->SetValueSilently(path, default_value->CreateDeepCopy(),
+                                     GetWriteFlags(pref));
+  user_pref_store_->GetMutableValue(path, &value);
   return value;
 }
 
@@ -553,9 +640,7 @@ PrefService::Preference::Preference(const PrefService* service,
       pref_service_(service) {}
 
 const base::Value* PrefService::Preference::GetValue() const {
-  const base::Value* result = pref_service_->GetPreferenceValue(name_);
-  DCHECK(result) << "Must register pref before getting its value";
-  return result;
+  return pref_service_->GetPreferenceValueChecked(name_);
 }
 
 const base::Value* PrefService::Preference::GetRecommendedValue() const {
@@ -637,4 +722,11 @@ const base::Value* PrefService::GetPreferenceValue(
   }
 
   return nullptr;
+}
+
+const base::Value* PrefService::GetPreferenceValueChecked(
+    const std::string& path) const {
+  const base::Value* value = GetPreferenceValue(path);
+  DCHECK(value) << "Trying to read an unregistered pref: " << path;
+  return value;
 }

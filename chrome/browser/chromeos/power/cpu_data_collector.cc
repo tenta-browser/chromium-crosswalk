@@ -14,8 +14,8 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/chromeos/power/power_data_collector.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -360,7 +360,7 @@ bool CpuDataCollector::ReadCpuFreqTimeInState(
       return false;
     }
 
-    const std::string state_name = base::IntToString(freq_in_khz / 1000);
+    const std::string state_name = base::NumberToString(freq_in_khz / 1000);
     size_t index = EnsureInVector(state_name, cpu_freq_state_names);
     if (index >= freq_sample->time_in_state.size())
       freq_sample->time_in_state.resize(index + 1);
@@ -407,7 +407,7 @@ bool CpuDataCollector::ReadCpuFreqAllTimeInState(
       return false;
     }
 
-    const std::string state_name = base::IntToString(freq_in_khz / 1000);
+    const std::string state_name = base::NumberToString(freq_in_khz / 1000);
     size_t index = EnsureInVector(state_name, cpu_freq_state_names);
     for (int cpu = 0; cpu < online_cpu_count; ++cpu) {
       // array.size() is previously checked to be equal to online_cpu_count+1.
@@ -458,7 +458,7 @@ void CpuDataCollector::PostSampleCpuState() {
       new std::vector<StateOccupancySample>;
 
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&SampleCpuStateAsync, base::Unretained(cpu_count),
                  base::Unretained(cpu_idle_state_names),
                  base::Unretained(idle_samples),

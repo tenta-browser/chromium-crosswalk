@@ -11,7 +11,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/supports_user_data.h"
-#include "base/time/time.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -42,11 +41,8 @@ class TabStripModelStatsRecorder::TabInfo
     return info;
   }
 
-  base::TimeTicks creation_time() const { return creation_time_; }
-
  private:
   TabState current_state_ = TabState::INITIAL;
-  base::TimeTicks creation_time_ = base::TimeTicks::Now();
 
   static const char kKey[];
 };
@@ -86,30 +82,20 @@ void TabStripModelStatsRecorder::TabInfo::UpdateState(TabState new_state) {
       break;
   }
 
-  if (new_state == TabState::CLOSED) {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "Tabs.FineTiming.TimeBetweenTabCreatedAndSameTabClosed",
-        base::TimeTicks::Now() - creation_time_);
-  }
-
   current_state_ = new_state;
 }
 
-void TabStripModelStatsRecorder::TabClosingAt(TabStripModel*,
-                                              content::WebContents* contents,
-                                              int index) {
+void TabStripModelStatsRecorder::OnTabClosing(content::WebContents* contents) {
   TabInfo::Get(contents)->UpdateState(TabState::CLOSED);
-  last_close_time_ = base::TimeTicks::Now();
 
   // Avoid having stale pointer in active_tab_history_
   std::replace(active_tab_history_.begin(), active_tab_history_.end(), contents,
                static_cast<content::WebContents*>(nullptr));
 }
 
-void TabStripModelStatsRecorder::ActiveTabChanged(
+void TabStripModelStatsRecorder::OnActiveTabChanged(
     content::WebContents* old_contents,
     content::WebContents* new_contents,
-    int index,
     int reason) {
   if (reason & TabStripModelObserver::CHANGE_REASON_REPLACED) {
     // We already handled tab clobber at TabReplacedAt notification.
@@ -121,25 +107,6 @@ void TabStripModelStatsRecorder::ActiveTabChanged(
 
   DCHECK(new_contents);
   TabInfo* tab_info = TabInfo::Get(new_contents);
-
-  if (tab_info->state() == TabState::INITIAL) {
-    // A new tab has been created: log the time since the last one was created.
-    if (!last_creation_time_.is_null()) {
-      UMA_HISTOGRAM_MEDIUM_TIMES(
-          "Tabs.FineTiming.TimeBetweenTabCreatedAndNextTabCreated",
-          tab_info->creation_time() - last_creation_time_);
-    }
-    last_creation_time_ = tab_info->creation_time();
-
-    // Also log the time since a tab was closed, but only if this is the first
-    // tab that was opened since the closing.
-    if (!last_close_time_.is_null()) {
-      UMA_HISTOGRAM_MEDIUM_TIMES(
-          "Tabs.FineTiming.TimeBetweenTabClosedAndNextTabCreated",
-          tab_info->creation_time() - last_close_time_);
-      last_close_time_ = base::TimeTicks();
-    }
-  }
 
   bool was_inactive = tab_info->state() == TabState::INACTIVE;
   tab_info->UpdateState(TabState::ACTIVE);
@@ -162,14 +129,32 @@ void TabStripModelStatsRecorder::ActiveTabChanged(
     active_tab_history_.resize(kMaxTabHistory);
 }
 
-void TabStripModelStatsRecorder::TabReplacedAt(
-    TabStripModel* tab_strip_model,
+void TabStripModelStatsRecorder::OnTabReplaced(
     content::WebContents* old_contents,
-    content::WebContents* new_contents,
-    int index) {
+    content::WebContents* new_contents) {
   DCHECK(old_contents != new_contents);
   *TabInfo::Get(new_contents) = *TabInfo::Get(old_contents);
 
   std::replace(active_tab_history_.begin(), active_tab_history_.end(),
                old_contents, new_contents);
+}
+
+void TabStripModelStatsRecorder::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (change.type() == TabStripModelChange::kRemoved &&
+      change.GetRemove()->will_be_deleted) {
+    for (const auto& contents : change.GetRemove()->contents)
+      OnTabClosing(contents.contents);
+  } else if (change.type() == TabStripModelChange::kReplaced) {
+    auto* replace = change.GetReplace();
+    OnTabReplaced(replace->old_contents, replace->new_contents);
+  }
+
+  if (!selection.active_tab_changed() || tab_strip_model->empty())
+    return;
+
+  OnActiveTabChanged(selection.old_contents, selection.new_contents,
+                     selection.reason);
 }

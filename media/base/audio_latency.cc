@@ -131,24 +131,9 @@ int AudioLatency::GetRtcBufferSize(int sample_rate, int hardware_buffer_size) {
 // static
 int AudioLatency::GetInteractiveBufferSize(int hardware_buffer_size) {
 #if defined(OS_ANDROID)
-  // The optimum low-latency hardware buffer size is usually too small on
-  // Android for WebAudio to render without glitching. So, if it is small, use
-  // a larger size.
-  //
-  // Since WebAudio renders in 128-frame blocks, the small buffer sizes (144 for
-  // a Galaxy Nexus), cause significant processing jitter. Sometimes multiple
-  // blocks will processed, but other times will not be since the WebAudio can't
-  // satisfy the request. By using a larger render buffer size, we smooth out
-  // the jitter.
-  const int kSmallBufferSize = 1024;
-  const int kDefaultCallbackBufferSize = 2048;
-
+  // Always log this because it's relatively hard to get this
+  // information out.
   LOG(INFO) << "audioHardwareBufferSize = " << hardware_buffer_size;
-
-  if (hardware_buffer_size <= kSmallBufferSize)
-    hardware_buffer_size = kDefaultCallbackBufferSize;
-
-  LOG(INFO) << "callbackBufferSize      = " << hardware_buffer_size;
 #endif
 
   return hardware_buffer_size;
@@ -156,33 +141,58 @@ int AudioLatency::GetInteractiveBufferSize(int hardware_buffer_size) {
 
 int AudioLatency::GetExactBufferSize(base::TimeDelta duration,
                                      int sample_rate,
-                                     int hardware_buffer_size) {
+                                     int hardware_buffer_size,
+                                     int min_hardware_buffer_size,
+                                     int max_hardware_buffer_size,
+                                     int max_allowed_buffer_size) {
   DCHECK_NE(0, hardware_buffer_size);
+  DCHECK_NE(0, max_allowed_buffer_size);
+  DCHECK_GE(hardware_buffer_size, min_hardware_buffer_size);
+  DCHECK_GE(max_hardware_buffer_size, min_hardware_buffer_size);
+  DCHECK(max_hardware_buffer_size == 0 ||
+         hardware_buffer_size <= max_hardware_buffer_size);
+  DCHECK(max_hardware_buffer_size == 0 ||
+         max_hardware_buffer_size <= max_allowed_buffer_size);
 
-// Other platforms do not currently support custom buffer sizes.
-#if !defined(OS_MACOSX) && !defined(USE_CRAS)
-  return hardware_buffer_size;
+  int requested_buffer_size = std::round(duration.InSecondsF() * sample_rate);
+
+  if (min_hardware_buffer_size &&
+      requested_buffer_size <= min_hardware_buffer_size)
+    return min_hardware_buffer_size;
+
+  if (requested_buffer_size <= hardware_buffer_size)
+    return hardware_buffer_size;
+
+#if defined(OS_WIN)
+  // On Windows we allow either exactly the minimum buffer size (using
+  // IAudioClient3) or multiples of the default buffer size using the previous
+  // IAudioClient API.
+  const int multiplier = hardware_buffer_size;
 #else
-  const double requested_buffer_size = duration.InSecondsF() * sample_rate;
-  int minimum_buffer_size = hardware_buffer_size;
-
-// On OSX and CRAS the preferred buffer size is larger than the minimum,
-// however we allow values down to the minimum if requested explicitly.
-#if defined(OS_MACOSX)
-  minimum_buffer_size =
-      GetMinAudioBufferSizeMacOS(limits::kMinAudioBufferSize, sample_rate);
-#elif defined(USE_CRAS)
-  minimum_buffer_size = limits::kMinAudioBufferSize;
+  const int multiplier = min_hardware_buffer_size > 0 ? min_hardware_buffer_size
+                                                      : hardware_buffer_size;
 #endif
 
-  // Round the requested size to the nearest multiple of the hardware size
-  const int buffer_size =
-      std::round(std::max(requested_buffer_size, 1.0) / hardware_buffer_size) *
-      hardware_buffer_size;
+  int buffer_size =
+      std::ceil(requested_buffer_size / static_cast<double>(multiplier)) *
+      multiplier;
 
-  return std::min(static_cast<int>(limits::kMaxAudioBufferSize),
-                  std::max(buffer_size, minimum_buffer_size));
-#endif
+  // If the user is requesting a buffer size >= max_hardware_buffer_size then we
+  // want the hardware to run at this max and then only return sizes that are
+  // multiples of this here so that we don't end up with Web Audio running with
+  // a period that's misaligned with the hardware one.
+  if (max_hardware_buffer_size && buffer_size >= max_hardware_buffer_size) {
+    buffer_size = std::ceil(requested_buffer_size /
+                            static_cast<double>(max_hardware_buffer_size)) *
+                  max_hardware_buffer_size;
+  }
+
+  const int platform_max_buffer_size =
+      max_hardware_buffer_size
+          ? (max_allowed_buffer_size / max_hardware_buffer_size) *
+                max_hardware_buffer_size
+          : (max_allowed_buffer_size / multiplier) * multiplier;
+
+  return std::min(buffer_size, platform_max_buffer_size);
 }
-
 }  // namespace media

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "components/sync/base/passphrase_enums.h"
 #include "components/sync/engine/non_blocking_sync_common.h"
 #include "components/sync/engine_impl/commit_contribution.h"
 #include "components/sync/engine_impl/cycle/data_type_debug_info_emitter.h"
@@ -30,9 +31,10 @@ class NonBlockingTypeCommitContribution : public CommitContribution {
   NonBlockingTypeCommitContribution(
       ModelType type,
       const sync_pb::DataTypeContext& context,
-      const CommitRequestDataList& commit_requests,
+      CommitRequestDataList commit_requests,
       ModelTypeWorker* worker,
       Cryptographer* cryptographer,
+      PassphraseType passphrase_type,
       DataTypeDebugInfoEmitter* debug_info_emitter,
       bool only_commit_specifics);
   ~NonBlockingTypeCommitContribution() override;
@@ -45,12 +47,14 @@ class NonBlockingTypeCommitContribution : public CommitContribution {
   void CleanUp() override;
   size_t GetNumEntries() const override;
 
- private:
+  // Public for testing.
   // Copies data to be committed from CommitRequestData into SyncEntity proto.
-  static void PopulateCommitProto(const CommitRequestData& commit_entity,
+  static void PopulateCommitProto(ModelType type,
+                                  const CommitRequestData& commit_entity,
                                   sync_pb::SyncEntity* commit_proto);
 
-  // Generates id for new entites and encrypts entity if needed.
+ private:
+  // Generates id for new entities and encrypts entity if needed.
   void AdjustCommitProto(sync_pb::SyncEntity* commit_proto);
 
   const ModelType type_;
@@ -60,6 +64,8 @@ class NonBlockingTypeCommitContribution : public CommitContribution {
 
   // A non-owned pointer to cryptographer to encrypt entities.
   Cryptographer* const cryptographer_;
+
+  const PassphraseType passphrase_type_;
 
   // The type-global context information.
   const sync_pb::DataTypeContext context_;

@@ -6,7 +6,8 @@
 
 namespace browser_sync {
 
-bool TestHttpBridge::MakeSynchronousPost(int* error_code, int* response_code) {
+bool TestHttpBridge::MakeSynchronousPost(int* net_error_code,
+                                         int* http_status_code) {
   return false;
 }
 
@@ -29,9 +30,7 @@ TestHttpBridgeFactory::TestHttpBridgeFactory() {}
 
 TestHttpBridgeFactory::~TestHttpBridgeFactory() {}
 
-void TestHttpBridgeFactory::Init(
-    const std::string& user_agent,
-    const syncer::BindToTrackerCallback& bind_to_tracker_callback) {}
+void TestHttpBridgeFactory::Init(const std::string& user_agent) {}
 
 syncer::HttpPostProviderInterface* TestHttpBridgeFactory::Create() {
   return new TestHttpBridge();

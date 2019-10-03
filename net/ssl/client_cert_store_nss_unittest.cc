@@ -15,6 +15,8 @@
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
+#include "crypto/nss_util.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/cert/pem_tokenizer.h"
 #include "net/cert/x509_certificate.h"
@@ -60,19 +62,22 @@ class ClientCertStoreNSSTestDelegate {
 
     // Filters |selected_identities| using the logic being used to filter the
     // system store when GetClientCerts() is called.
+    crypto::EnsureNSSInit();
     ClientCertStoreNSS::FilterCertsOnWorkerThread(selected_identities,
                                                   cert_request_info);
     return true;
   }
 };
 
-INSTANTIATE_TYPED_TEST_CASE_P(NSS,
-                              ClientCertStoreTest,
-                              ClientCertStoreNSSTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(NSS,
+                               ClientCertStoreTest,
+                               ClientCertStoreNSSTestDelegate);
 
 // Tests that ClientCertStoreNSS attempts to build a certificate chain by
 // querying NSS before return a certificate.
 TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   // Set up a test DB and import client_1.pem and client_1_ca.pem.
   crypto::ScopedTestNSSDB test_db;
   scoped_refptr<X509Certificate> client_1(ImportClientCertAndKeyFromFile(
@@ -95,7 +100,7 @@ TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
 
   {
     // Request certificates matching B CA, |client_1|'s issuer.
-    scoped_refptr<SSLCertRequestInfo> request(new SSLCertRequestInfo);
+    auto request = base::MakeRefCounted<SSLCertRequestInfo>();
     request->cert_authorities.push_back(std::string(
         reinterpret_cast<const char*>(kAuthority1DN), sizeof(kAuthority1DN)));
 
@@ -110,15 +115,15 @@ TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
     ASSERT_EQ(1u, selected_identities.size());
     scoped_refptr<X509Certificate> selected_cert =
         selected_identities[0]->certificate();
-    EXPECT_TRUE(X509Certificate::IsSameOSCert(client_1->os_cert_handle(),
-                                              selected_cert->os_cert_handle()));
-    ASSERT_EQ(0u, selected_cert->GetIntermediateCertificates().size());
+    EXPECT_TRUE(x509_util::CryptoBufferEqual(client_1->cert_buffer(),
+                                             selected_cert->cert_buffer()));
+    ASSERT_EQ(0u, selected_cert->intermediate_buffers().size());
 
     scoped_refptr<SSLPrivateKey> ssl_private_key;
     base::RunLoop key_loop;
     selected_identities[0]->AcquirePrivateKey(
-        base::Bind(SavePrivateKeyAndQuitCallback, &ssl_private_key,
-                   key_loop.QuitClosure()));
+        base::BindOnce(SavePrivateKeyAndQuitCallback, &ssl_private_key,
+                       key_loop.QuitClosure()));
     key_loop.Run();
 
     ASSERT_TRUE(ssl_private_key);
@@ -128,7 +133,7 @@ TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
 
   {
     // Request certificates matching C Root CA, |client_1_ca|'s issuer.
-    scoped_refptr<SSLCertRequestInfo> request(new SSLCertRequestInfo);
+    auto request = base::MakeRefCounted<SSLCertRequestInfo>();
     request->cert_authorities.push_back(
         std::string(reinterpret_cast<const char*>(kAuthorityRootDN),
                     sizeof(kAuthorityRootDN)));
@@ -144,18 +149,18 @@ TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
     ASSERT_EQ(1u, selected_identities.size());
     scoped_refptr<X509Certificate> selected_cert =
         selected_identities[0]->certificate();
-    EXPECT_TRUE(X509Certificate::IsSameOSCert(client_1->os_cert_handle(),
-                                              selected_cert->os_cert_handle()));
-    ASSERT_EQ(1u, selected_cert->GetIntermediateCertificates().size());
-    EXPECT_TRUE(X509Certificate::IsSameOSCert(
-        client_1_ca->os_cert_handle(),
-        selected_cert->GetIntermediateCertificates()[0]));
+    EXPECT_TRUE(x509_util::CryptoBufferEqual(client_1->cert_buffer(),
+                                             selected_cert->cert_buffer()));
+    ASSERT_EQ(1u, selected_cert->intermediate_buffers().size());
+    EXPECT_TRUE(x509_util::CryptoBufferEqual(
+        client_1_ca->cert_buffer(),
+        selected_cert->intermediate_buffers()[0].get()));
 
     scoped_refptr<SSLPrivateKey> ssl_private_key;
     base::RunLoop key_loop;
     selected_identities[0]->AcquirePrivateKey(
-        base::Bind(SavePrivateKeyAndQuitCallback, &ssl_private_key,
-                   key_loop.QuitClosure()));
+        base::BindOnce(SavePrivateKeyAndQuitCallback, &ssl_private_key,
+                       key_loop.QuitClosure()));
     key_loop.Run();
     ASSERT_TRUE(ssl_private_key);
     EXPECT_EQ(expected, ssl_private_key->GetAlgorithmPreferences());
@@ -164,6 +169,8 @@ TEST(ClientCertStoreNSSTest, BuildsCertificateChain) {
 }
 
 TEST(ClientCertStoreNSSTest, SubjectPrintableStringContainingUTF8) {
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+
   crypto::ScopedTestNSSDB test_db;
   base::FilePath certs_dir =
       GetTestNetDataDirectory().AppendASCII("parse_certificate_unittest");
@@ -205,7 +212,7 @@ TEST(ClientCertStoreNSSTest, SubjectPrintableStringContainingUTF8) {
       0x31, 0x21, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x18, 0x49,
       0x6e, 0x74, 0x65, 0x72, 0x6e, 0x65, 0x74, 0x20, 0x57, 0x69, 0x64, 0x67,
       0x69, 0x74, 0x73, 0x20, 0x50, 0x74, 0x79, 0x20, 0x4c, 0x74, 0x64};
-  scoped_refptr<SSLCertRequestInfo> request(new SSLCertRequestInfo);
+  auto request = base::MakeRefCounted<SSLCertRequestInfo>();
   request->cert_authorities.push_back(std::string(
       reinterpret_cast<const char*>(kAuthorityDN), sizeof(kAuthorityDN)));
 
@@ -221,11 +228,11 @@ TEST(ClientCertStoreNSSTest, SubjectPrintableStringContainingUTF8) {
   scoped_refptr<X509Certificate> selected_cert =
       selected_identities[0]->certificate();
   EXPECT_TRUE(x509_util::IsSameCertificate(cert.get(), selected_cert.get()));
-  EXPECT_EQ(0u, selected_cert->GetIntermediateCertificates().size());
+  EXPECT_EQ(0u, selected_cert->intermediate_buffers().size());
 
   scoped_refptr<SSLPrivateKey> ssl_private_key;
   base::RunLoop key_loop;
-  selected_identities[0]->AcquirePrivateKey(base::Bind(
+  selected_identities[0]->AcquirePrivateKey(base::BindOnce(
       SavePrivateKeyAndQuitCallback, &ssl_private_key, key_loop.QuitClosure()));
   key_loop.Run();
 

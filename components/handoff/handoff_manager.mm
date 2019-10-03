@@ -10,7 +10,6 @@
 #include "net/base/mac/url_conversions.h"
 
 #if defined(OS_IOS)
-#include "base/ios/ios_util.h"
 #include "components/handoff/pref_names_ios.h"
 #include "components/pref_registry/pref_registry_syncable.h"  // nogncheck
 #endif
@@ -23,20 +22,19 @@
 @interface HandoffManager ()
 
 // The active user activity.
-@property(nonatomic, retain)
-    NSUserActivity* userActivity API_AVAILABLE(macos(10.10));
+@property(nonatomic, retain) NSUserActivity* userActivity;
 
 // Whether the URL of the current tab should be exposed for Handoff.
 - (BOOL)shouldUseActiveURL;
 
 // Updates the active NSUserActivity.
-- (void)updateUserActivity API_AVAILABLE(macos(10.10));
+- (void)updateUserActivity;
 
 @end
 
 @implementation HandoffManager {
   GURL _activeURL;
-  NSUserActivity* _userActivity API_AVAILABLE(macos(10.10));
+  NSUserActivity* _userActivity;
   handoff::Origin _origin;
 }
 
@@ -70,11 +68,6 @@
 }
 
 - (void)updateActiveURL:(const GURL&)url {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // Handoff is only available on OSX 10.10+.
-  DCHECK(base::mac::IsAtLeastOS10_10());
-#endif
-
   _activeURL = url;
   [self updateUserActivity];
 }
@@ -100,7 +93,7 @@
   [self.userActivity invalidate];
 
   base::scoped_nsobject<NSUserActivity> userActivity([[NSUserActivity alloc]
-      initWithActivityType:handoff::kChromeHandoffActivityType]);
+      initWithActivityType:NSUserActivityTypeBrowsingWeb]);
   self.userActivity = userActivity;
   self.userActivity.webpageURL = net::NSURLWithGURL(_activeURL);
   NSString* origin = handoff::StringFromOrigin(_origin);

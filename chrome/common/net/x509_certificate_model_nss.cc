@@ -127,17 +127,13 @@ string GetCertNameOrNickname(CERTCertificate* cert_handle) {
   return GetNickname(cert_handle);
 }
 
-string GetTokenName(CERTCertificate* cert_handle) {
-  return psm::GetCertTokenName(cert_handle);
-}
-
 string GetVersion(CERTCertificate* cert_handle) {
   // If the version field is omitted from the certificate, the default
   // value is v1(0).
   unsigned long version = 0;
   if (cert_handle->version.len == 0 ||
       SEC_ASN1DecodeInteger(&cert_handle->version, &version) == SECSuccess) {
-    return base::Uint64ToString(base::strict_cast<uint64_t>(version + 1));
+    return base::NumberToString(base::strict_cast<uint64_t>(version + 1));
   }
   return std::string();
 }

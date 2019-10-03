@@ -6,53 +6,53 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/chrome_colors/chrome_colors_factory.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/search.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/search/search_suggest/search_suggest_service.h"
+#include "chrome/browser/search/search_suggest/search_suggest_service_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/omnibox/clipboard_utils.h"
 #include "chrome/browser/ui/search/ntp_user_data_logger.h"
 #include "chrome/browser/ui/search/search_ipc_router_policy_impl.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/search/search.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SearchTabHelper);
-
 namespace {
 
-bool IsCacheableNTP(const content::WebContents* contents) {
-  const content::NavigationEntry* entry =
+bool IsCacheableNTP(content::WebContents* contents) {
+  content::NavigationEntry* entry =
       contents->GetController().GetLastCommittedEntry();
   return search::NavEntryIsInstantNTP(contents, entry) &&
          entry->GetURL() != chrome::kChromeSearchLocalNtpUrl;
@@ -60,7 +60,7 @@ bool IsCacheableNTP(const content::WebContents* contents) {
 
 // Returns true if |contents| are rendered inside an Instant process.
 bool InInstantProcess(const InstantService* instant_service,
-                      const content::WebContents* contents) {
+                      content::WebContents* contents) {
   if (!instant_service || !contents)
     return false;
 
@@ -92,17 +92,6 @@ void RecordNewTabLoadTime(content::WebContents* contents) {
   core_tab_helper->set_new_tab_start_time(base::TimeTicks());
 }
 
-// Returns true if the user wants to sync history. This function returning true
-// is not a guarantee that history is being synced, but it can be used to
-// disable a feature that should not be shown to users who prefer not to sync
-// their history.
-bool IsHistorySyncEnabled(Profile* profile) {
-  browser_sync::ProfileSyncService* sync =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile);
-  return sync &&
-      sync->GetPreferredDataTypes().Has(syncer::HISTORY_DELETE_DIRECTIVES);
-}
-
 }  // namespace
 
 SearchTabHelper::SearchTabHelper(content::WebContents* web_contents)
@@ -110,14 +99,19 @@ SearchTabHelper::SearchTabHelper(content::WebContents* web_contents)
       web_contents_(web_contents),
       ipc_router_(web_contents,
                   this,
-                  base::MakeUnique<SearchIPCRouterPolicyImpl>(web_contents)),
+                  std::make_unique<SearchIPCRouterPolicyImpl>(web_contents)),
       instant_service_(nullptr) {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
+  DCHECK(search::IsInstantExtendedAPIEnabled());
 
   instant_service_ = InstantServiceFactory::GetForProfile(profile());
   if (instant_service_)
     instant_service_->AddObserver(this);
+
+  search_suggest_service_ =
+      SearchSuggestServiceFactory::GetForProfile(profile());
+
+  chrome_colors_service_ =
+      chrome_colors::ChromeColorsFactory::GetForProfile(profile());
 }
 
 SearchTabHelper::~SearchTabHelper() {
@@ -126,19 +120,11 @@ SearchTabHelper::~SearchTabHelper() {
 }
 
 void SearchTabHelper::OmniboxInputStateChanged() {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
-
   ipc_router_.SetInputInProgress(IsInputInProgress());
 }
 
 void SearchTabHelper::OmniboxFocusChanged(OmniboxFocusState state,
                                           OmniboxFocusChangeReason reason) {
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_OMNIBOX_FOCUS_CHANGED,
-      content::Source<SearchTabHelper>(this),
-      content::NotificationService::NoDetails());
-
   ipc_router_.OmniboxFocusChanged(state, reason);
 
   // Don't send oninputstart/oninputend updates in response to focus changes
@@ -167,41 +153,19 @@ void SearchTabHelper::OnTabDeactivated() {
   ipc_router_.OnTabDeactivated();
 }
 
-void SearchTabHelper::DidStartNavigationToPendingEntry(
-    const GURL& url,
-    content::ReloadType reload_type) {
-  // TODO(jam): delete this method once PlzNavigate is turned on by default.
-  // When PlzNavigate is enabled, DidStartNavigation is called early enough such
-  // that there's no flickering. However when PlzNavigate is disabled,
-  // DidStartNavigation is called too late and "Untitled" shows up momentarily.
-  // The fix is to override this deprecated callback for the non-PlzNavigate
-  // case.
-  if (content::IsBrowserSideNavigationEnabled())
-    return;
-
-  if (search::IsNTPURL(url, profile())) {
-    // Set the title on any pending entry corresponding to the NTP. This
-    // prevents any flickering of the tab title.
-    content::NavigationEntry* entry =
-        web_contents_->GetController().GetPendingEntry();
-    if (entry) {
-      web_contents_->UpdateTitleForEntry(
-          entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
-    }
-  }
+void SearchTabHelper::OnTabClosing() {
+  if (search::IsInstantNTP(web_contents_) && chrome_colors_service_)
+    chrome_colors_service_->RevertThemeChangesForTab(web_contents_);
 }
 
 void SearchTabHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!content::IsBrowserSideNavigationEnabled())
-    return;
-
   if (!navigation_handle->IsInMainFrame() ||
       navigation_handle->IsSameDocument()) {
     return;
   }
 
-  if (search::IsNTPURL(navigation_handle->GetURL(), profile())) {
+  if (search::IsNTPOrRelatedURL(navigation_handle->GetURL(), profile())) {
     // Set the title on any pending entry corresponding to the NTP. This
     // prevents any flickering of the tab title.
     content::NavigationEntry* entry =
@@ -210,19 +174,6 @@ void SearchTabHelper::DidStartNavigation(
       web_contents_->UpdateTitleForEntry(
           entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
     }
-  }
-}
-
-void SearchTabHelper::DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame() ||
-      navigation_handle->IsSameDocument())
-    return;
-
-  if (IsCacheableNTP(web_contents_)) {
-    UMA_HISTOGRAM_ENUMERATION("InstantExtended.CacheableNTPLoad",
-                              search::CACHEABLE_NTP_LOAD_SUCCEEDED,
-                              search::CACHEABLE_NTP_LOAD_MAX);
   }
 }
 
@@ -250,17 +201,12 @@ void SearchTabHelper::TitleWasSet(content::NavigationEntry* entry) {
 
 void SearchTabHelper::DidFinishLoad(content::RenderFrameHost* render_frame_host,
                                     const GURL& /* validated_url */) {
-  if (!render_frame_host->GetParent()) {
-    if (search::IsInstantNTP(web_contents_))
-      RecordNewTabLoadTime(web_contents_);
-  }
+  if (!render_frame_host->GetParent() && search::IsInstantNTP(web_contents_))
+    RecordNewTabLoadTime(web_contents_);
 }
 
 void SearchTabHelper::NavigationEntryCommitted(
     const content::LoadCommittedDetails& load_details) {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
-
   if (!load_details.is_main_frame)
     return;
 
@@ -275,50 +221,35 @@ void SearchTabHelper::ThemeInfoChanged(const ThemeBackgroundInfo& theme_info) {
   ipc_router_.SendThemeBackgroundInfo(theme_info);
 }
 
-void SearchTabHelper::MostVisitedItemsChanged(
-    const std::vector<InstantMostVisitedItem>& items) {
-  ipc_router_.SendMostVisitedItems(items);
+void SearchTabHelper::MostVisitedInfoChanged(
+    const InstantMostVisitedInfo& most_visited_info) {
+  ipc_router_.SendMostVisitedInfo(most_visited_info);
 }
 
-void SearchTabHelper::FocusOmnibox(OmniboxFocusState state) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
+void SearchTabHelper::FocusOmnibox(bool focus) {
   OmniboxView* omnibox_view = GetOmniboxView();
   if (!omnibox_view)
     return;
 
-  // Do not add a default case in the switch block for the following reasons:
-  // (1) Explicitly handle the new states. If new states are added in the
-  // OmniboxFocusState, the compiler will warn the developer to handle the new
-  // states.
-  // (2) An attacker may control the renderer and sends the browser process a
-  // malformed IPC. This function responds to the invalid |state| values by
-  // doing nothing instead of crashing the browser process (intentional no-op).
-  switch (state) {
-    case OMNIBOX_FOCUS_VISIBLE:
-      omnibox_view->SetFocus();
-      omnibox_view->model()->SetCaretVisibility(true);
-      break;
-    case OMNIBOX_FOCUS_INVISIBLE:
-      omnibox_view->SetFocus();
-      omnibox_view->model()->SetCaretVisibility(false);
-      // If the user clicked on the fakebox, any text already in the omnibox
-      // should get cleared when they start typing. Selecting all the existing
-      // text is a convenient way to accomplish this. It also gives a slight
-      // visual cue to users who really understand selection state about what
-      // will happen if they start typing.
-      omnibox_view->SelectAll(false);
-      omnibox_view->ShowImeIfNeeded();
-      break;
-    case OMNIBOX_FOCUS_NONE:
-      // Remove focus only if the popup is closed. This will prevent someone
-      // from changing the omnibox value and closing the popup without user
-      // interaction.
-      if (!omnibox_view->model()->popup_model()->IsOpen())
-        web_contents()->Focus();
-      break;
-  }
+  if (focus) {
+    omnibox_view->SetFocus();
+    omnibox_view->model()->SetCaretVisibility(false);
+    // If the user clicked on the fakebox, any text already in the omnibox
+    // should get cleared when they start typing. Selecting all the existing
+    // text is a convenient way to accomplish this. It also gives a slight
+    // visual cue to users who really understand selection state about what
+    // will happen if they start typing.
+    omnibox_view->SelectAll(false);
+#if !defined(OS_WIN)
+    omnibox_view->ShowVirtualKeyboardIfEnabled();
 #endif
+  } else {
+    // Remove focus only if the popup is closed. This will prevent someone
+    // from changing the omnibox value and closing the popup without user
+    // interaction.
+    if (!omnibox_view->model()->popup_model()->IsOpen())
+      web_contents()->Focus();
+  }
 }
 
 void SearchTabHelper::OnDeleteMostVisitedItem(const GURL& url) {
@@ -338,36 +269,84 @@ void SearchTabHelper::OnUndoAllMostVisitedDeletions() {
     instant_service_->UndoAllMostVisitedDeletions();
 }
 
+bool SearchTabHelper::OnAddCustomLink(const GURL& url,
+                                      const std::string& title) {
+  DCHECK(!url.is_empty());
+  if (instant_service_)
+    return instant_service_->AddCustomLink(url, title);
+  return false;
+}
+
+bool SearchTabHelper::OnUpdateCustomLink(const GURL& url,
+                                         const GURL& new_url,
+                                         const std::string& new_title) {
+  DCHECK(!url.is_empty());
+  if (instant_service_)
+    return instant_service_->UpdateCustomLink(url, new_url, new_title);
+  return false;
+}
+
+bool SearchTabHelper::OnReorderCustomLink(const GURL& url, int new_pos) {
+  DCHECK(!url.is_empty());
+  if (instant_service_)
+    return instant_service_->ReorderCustomLink(url, new_pos);
+  return false;
+}
+
+bool SearchTabHelper::OnDeleteCustomLink(const GURL& url) {
+  DCHECK(!url.is_empty());
+  if (instant_service_)
+    return instant_service_->DeleteCustomLink(url);
+  return false;
+}
+
+void SearchTabHelper::OnUndoCustomLinkAction() {
+  if (instant_service_)
+    instant_service_->UndoCustomLinkAction();
+}
+
+void SearchTabHelper::OnResetCustomLinks() {
+  if (instant_service_)
+    instant_service_->ResetCustomLinks();
+}
+
+void SearchTabHelper::OnToggleMostVisitedOrCustomLinks() {
+  if (instant_service_)
+    instant_service_->ToggleMostVisitedOrCustomLinks();
+}
+
+void SearchTabHelper::OnToggleShortcutsVisibility(bool do_notify) {
+  if (instant_service_)
+    instant_service_->ToggleShortcutsVisibility(do_notify);
+}
+
 void SearchTabHelper::OnLogEvent(NTPLoggingEventType event,
                                  base::TimeDelta time) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogEvent(event, time);
-#endif
+}
+
+void SearchTabHelper::OnLogSuggestionEventWithValue(
+    NTPSuggestionsLoggingEventType event,
+    int data,
+    base::TimeDelta time) {
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogSuggestionEventWithValue(event, data, time);
 }
 
 void SearchTabHelper::OnLogMostVisitedImpression(
     const ntp_tiles::NTPTileImpression& impression) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogMostVisitedImpression(impression);
-#endif
 }
 
 void SearchTabHelper::OnLogMostVisitedNavigation(
     const ntp_tiles::NTPTileImpression& impression) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogMostVisitedNavigation(impression);
-#endif
 }
 
 void SearchTabHelper::PasteIntoOmnibox(const base::string16& text) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   OmniboxView* omnibox_view = GetOmniboxView();
   if (!omnibox_view)
     return;
@@ -389,30 +368,131 @@ void SearchTabHelper::PasteIntoOmnibox(const base::string16& text) {
   omnibox_view->model()->OnPaste();
   omnibox_view->SetUserText(text_to_paste);
   omnibox_view->OnAfterPossibleChange(true);
-#endif
 }
 
-bool SearchTabHelper::ChromeIdentityCheck(const base::string16& identity) {
-  SigninManagerBase* manager = SigninManagerFactory::GetForProfile(profile());
-  return manager &&
-         gaia::AreEmailsSame(base::UTF16ToUTF8(identity),
-                             manager->GetAuthenticatedAccountInfo().email);
+void SearchTabHelper::OnSetCustomBackgroundInfo(
+    const GURL& background_url,
+    const std::string& attribution_line_1,
+    const std::string& attribution_line_2,
+    const GURL& action_url,
+    const std::string& collection_id) {
+  if (instant_service_) {
+    instant_service_->SetCustomBackgroundInfo(
+        background_url, attribution_line_1, attribution_line_2, action_url,
+        collection_id);
+  }
 }
 
-bool SearchTabHelper::HistorySyncCheck() {
-  return IsHistorySyncEnabled(profile());
+void SearchTabHelper::FileSelected(const base::FilePath& path,
+                                   int index,
+                                   void* params) {
+  if (instant_service_) {
+    profile()->set_last_selected_directory(path.DirName());
+    instant_service_->SelectLocalBackgroundImage(path);
+  }
+
+  select_file_dialog_ = nullptr;
+  // File selection can happen at any time after NTP load, and is not logged
+  // with the event.
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogEvent(NTP_CUSTOMIZE_LOCAL_IMAGE_DONE,
+                 base::TimeDelta::FromSeconds(0));
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogEvent(NTP_BACKGROUND_UPLOAD_DONE, base::TimeDelta::FromSeconds(0));
+
+  ipc_router_.SendLocalBackgroundSelected();
+}
+
+void SearchTabHelper::FileSelectionCanceled(void* params) {
+  select_file_dialog_ = nullptr;
+  // File selection can happen at any time after NTP load, and is not logged
+  // with the event.
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogEvent(NTP_CUSTOMIZE_LOCAL_IMAGE_CANCEL,
+                 base::TimeDelta::FromSeconds(0));
+  NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
+      ->LogEvent(NTP_BACKGROUND_UPLOAD_CANCEL, base::TimeDelta::FromSeconds(0));
+}
+
+void SearchTabHelper::OnSelectLocalBackgroundImage() {
+  if (select_file_dialog_)
+    return;
+
+  select_file_dialog_ = ui::SelectFileDialog::Create(
+      this, std::make_unique<ChromeSelectFilePolicy>(web_contents_));
+
+  const base::FilePath directory = profile()->last_selected_directory();
+
+  gfx::NativeWindow parent_window = web_contents_->GetTopLevelNativeWindow();
+
+  ui::SelectFileDialog::FileTypeInfo file_types;
+  file_types.allowed_paths = ui::SelectFileDialog::FileTypeInfo::NATIVE_PATH;
+  file_types.extensions.resize(1);
+  file_types.extensions[0].push_back(FILE_PATH_LITERAL("jpg"));
+  file_types.extensions[0].push_back(FILE_PATH_LITERAL("jpeg"));
+  file_types.extensions[0].push_back(FILE_PATH_LITERAL("png"));
+  file_types.extension_description_overrides.push_back(
+      l10n_util::GetStringUTF16(IDS_UPLOAD_IMAGE_FORMAT));
+
+  select_file_dialog_->SelectFile(
+      ui::SelectFileDialog::SELECT_OPEN_FILE, base::string16(), directory,
+      &file_types, 0, base::FilePath::StringType(), parent_window, nullptr);
 }
 
 const OmniboxView* SearchTabHelper::GetOmniboxView() const {
-#if defined(OS_ANDROID)
-  return nullptr;
-#else
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
   if (!browser)
     return nullptr;
 
   return browser->window()->GetLocationBar()->GetOmniboxView();
-#endif  // OS_ANDROID
+}
+
+void SearchTabHelper::OnBlocklistSearchSuggestion(int task_version,
+                                                  long task_id) {
+  if (search_suggest_service_)
+    search_suggest_service_->BlocklistSearchSuggestion(task_version, task_id);
+}
+
+void SearchTabHelper::OnBlocklistSearchSuggestionWithHash(
+    int task_version,
+    long task_id,
+    const uint8_t hash[4]) {
+  if (search_suggest_service_)
+    search_suggest_service_->BlocklistSearchSuggestionWithHash(task_version,
+                                                               task_id, hash);
+}
+
+void SearchTabHelper::OnSearchSuggestionSelected(int task_version,
+                                                 long task_id,
+                                                 const uint8_t hash[4]) {
+  if (search_suggest_service_)
+    search_suggest_service_->SearchSuggestionSelected(task_version, task_id,
+                                                      hash);
+}
+
+void SearchTabHelper::OnOptOutOfSearchSuggestions() {
+  if (search_suggest_service_)
+    search_suggest_service_->OptOutOfSearchSuggestions();
+}
+
+void SearchTabHelper::OnApplyDefaultTheme() {
+  if (chrome_colors_service_)
+    chrome_colors_service_->ApplyDefaultTheme(web_contents_);
+}
+
+void SearchTabHelper::OnApplyAutogeneratedTheme(SkColor color) {
+  if (chrome_colors_service_)
+    chrome_colors_service_->ApplyAutogeneratedTheme(color, web_contents_);
+}
+
+void SearchTabHelper::OnRevertThemeChanges() {
+  if (chrome_colors_service_)
+    chrome_colors_service_->RevertThemeChanges();
+}
+
+void SearchTabHelper::OnConfirmThemeChanges() {
+  if (chrome_colors_service_)
+    chrome_colors_service_->ConfirmThemeChanges();
 }
 
 OmniboxView* SearchTabHelper::GetOmniboxView() {
@@ -429,3 +509,5 @@ bool SearchTabHelper::IsInputInProgress() const {
   return omnibox_view && omnibox_view->model()->user_input_in_progress() &&
          omnibox_view->model()->focus_state() == OMNIBOX_FOCUS_VISIBLE;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SearchTabHelper)

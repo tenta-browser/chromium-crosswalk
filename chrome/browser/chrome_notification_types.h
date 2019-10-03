@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_CHROME_NOTIFICATION_TYPES_H_
 
 #include "build/build_config.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/notification_types.h"
@@ -20,11 +20,19 @@
 #define PREVIOUS_END content::NOTIFICATION_CONTENT_END
 #endif
 
+// **
+// ** NOTICE
+// **
+// ** The notification system is deprecated, obsolete, and is slowly being
+// ** removed. See https://crbug.com/268984.
+// **
+// ** Please don't add any new notification types, and please help migrate
+// ** existing uses of the notification types below to use the Observer and
+// ** Callback patterns.
+// **
+
 namespace chrome {
 
-// NotificationService &c. are deprecated (https://crbug.com/268984).
-// Don't add any new notification types, and migrate existing uses of the
-// notification types below to observers.
 enum NotificationType {
   NOTIFICATION_CHROME_START = PREVIOUS_END,
 
@@ -33,16 +41,8 @@ enum NotificationType {
   // This message is sent after a window has been opened.  The source is a
   // Source<Browser> containing the affected Browser.  No details are
   // expected.
+  // DEPRECATED: Use BrowserListObserver::OnBrowserAdded()
   NOTIFICATION_BROWSER_OPENED = NOTIFICATION_CHROME_START,
-
-  // This message is sent soon after BROWSER_OPENED, and indicates that
-  // the Browser's |window_| is now non-NULL. The source is a Source<Browser>
-  // containing the affected Browser.  No details are expected.
-  NOTIFICATION_BROWSER_WINDOW_READY,
-
-  // This message is sent after a window has been closed.  The source is a
-  // Source<Browser> containing the affected Browser.  No details are exptected.
-  NOTIFICATION_BROWSER_CLOSED,
 
   // This message is sent when closing a browser has been cancelled, either by
   // the user cancelling a beforeunload dialog, or IsClosingPermitted()
@@ -66,16 +66,6 @@ enum NotificationType {
   // The user has changed the browser theme. The source is a
   // Source<ThemeService>. There are no details.
   NOTIFICATION_BROWSER_THEME_CHANGED,
-
-#if defined(USE_AURA)
-  // The user has changed the fling curve configuration.
-  // Source<GesturePrefsObserver>. There are no details.
-  NOTIFICATION_BROWSER_FLING_CURVE_PARAMETERS_CHANGED,
-#endif  // defined(USE_AURA)
-
-  // Sent when the renderer returns focus to the browser, as part of focus
-  // traversal. The source is the browser, there are no details.
-  NOTIFICATION_FOCUS_RETURNED_TO_BROWSER,
 
   // Application-wide ----------------------------------------------------------
 
@@ -104,18 +94,6 @@ enum NotificationType {
   // handler.  Use APP_TERMINATING for such needs.
   NOTIFICATION_CLOSE_ALL_BROWSERS_REQUEST,
 
-  // This message is sent when a new InfoBar has been added to an
-  // InfoBarService.  The source is a Source<InfoBarService> with a pointer to
-  // the InfoBarService the InfoBar was added to.  The details is a
-  // Details<InfoBar::AddedDetails>.
-  NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
-
-  // This message is sent when an InfoBar is about to be removed from an
-  // InfoBarService.  The source is a Source<InfoBarService> with a pointer to
-  // the InfoBarService the InfoBar was removed from.  The details is a
-  // Details<InfoBar::RemovedDetails>.
-  NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
-
   // Tabs --------------------------------------------------------------------
 
   // Sent when a tab is added to a WebContentsDelegate. The source is the
@@ -135,49 +113,7 @@ enum NotificationType {
   // the WebContents containing the NavigationController is destroyed.
   NOTIFICATION_TAB_CLOSING,
 
-  // Stuff inside the tabs ---------------------------------------------------
-
-  // This notification is sent when the result of a find-in-page search is
-  // available with the browser process. The source is a Source<WebContents>.
-  // Details encompass a FindNotificationDetail object that tells whether the
-  // match was found or not found.
-  NOTIFICATION_FIND_RESULT_AVAILABLE,
-
-  // BackgroundContents ------------------------------------------------------
-
-  // A new background contents was opened by script. The source is the parent
-  // profile and the details are BackgroundContentsOpenedDetails.
-  NOTIFICATION_BACKGROUND_CONTENTS_OPENED,
-
-  // The background contents navigated to a new location. The source is the
-  // parent Profile, and the details are the BackgroundContents that was
-  // navigated.
-  NOTIFICATION_BACKGROUND_CONTENTS_NAVIGATED,
-
-  // The background contents were closed by someone invoking window.close()
-  // or the parent application was uninstalled.
-  // The source is the parent profile, and the details are the
-  // BackgroundContents.
-  NOTIFICATION_BACKGROUND_CONTENTS_CLOSED,
-
-  // The background contents is being deleted. The source is the
-  // parent Profile, and the details are the BackgroundContents being deleted.
-  NOTIFICATION_BACKGROUND_CONTENTS_DELETED,
-
-  // The background contents has crashed. The source is the parent Profile,
-  // and the details are the BackgroundContents.
-  NOTIFICATION_BACKGROUND_CONTENTS_TERMINATED,
-
-  // The background contents associated with a hosted app has changed (either
-  // a new background contents has been created, or an existing background
-  // contents has closed). The source is the parent Profile, and the details
-  // are the BackgroundContentsService.
-  NOTIFICATION_BACKGROUND_CONTENTS_SERVICE_CHANGED,
-
-  // Chrome has entered/exited background mode. The source is the
-  // BackgroundModeManager and the details are a boolean value which is set to
-  // true if Chrome is now in background mode.
-  NOTIFICATION_BACKGROUND_MODE_CHANGED,
+  // Authentication ----------------------------------------------------------
 
   // This is sent when a login prompt is shown.  The source is the
   // Source<NavigationController> for the tab in which the prompt is shown.
@@ -231,17 +167,6 @@ enum NotificationType {
   // The details are none and the source is a Profile*.
   NOTIFICATION_PROFILE_URL_REQUEST_CONTEXT_GETTER_INITIALIZED,
 
-  // Non-history storage services --------------------------------------------
-
-  // Autocomplete ------------------------------------------------------------
-
-  // Sent by the autocomplete controller when done.  The source is the
-  // AutocompleteController, the details not used.
-  NOTIFICATION_AUTOCOMPLETE_CONTROLLER_RESULT_READY,
-
-  // This is sent from Instant when the omnibox focus state changes.
-  NOTIFICATION_OMNIBOX_FOCUS_CHANGED,
-
   // Printing ----------------------------------------------------------------
 
   // Notification from PrintJob that an event occurred. It can be that a page
@@ -252,32 +177,6 @@ enum NotificationType {
   // Sent when a PrintJob has been released.
   // Source is the WebContents that holds the print job.
   NOTIFICATION_PRINT_JOB_RELEASED,
-
-  // Content Settings --------------------------------------------------------
-
-  // Sent when the collect cookies dialog is shown. The source is a
-  // TabSpecificContentSettings object, there are no details.
-  NOTIFICATION_COLLECTED_COOKIES_SHOWN,
-
-  // Sent when content settings change for a tab. The source is a
-  // content::WebContents object, the details are None.
-  NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED,
-
-  // Cookies -----------------------------------------------------------------
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Sent when a cookie changes, for consumption by extensions. The source is a
-  // Profile object, the details are a ChromeCookieDetails object.
-  NOTIFICATION_COOKIE_CHANGED_FOR_EXTENSIONS,
-#endif
-
-  // Download Notifications --------------------------------------------------
-
-  // Sent when a download is initiated. It is possible that the download will
-  // not actually begin due to the DownloadRequestLimiter cancelling it
-  // prematurely.
-  // The source is the corresponding WebContents. There are no details.
-  NOTIFICATION_DOWNLOAD_INITIATED,
 
   // Misc --------------------------------------------------------------------
 
@@ -318,8 +217,6 @@ enum NotificationType {
   //    NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE
   // 4. Boot into retail mode
   //    NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE
-  // 5. Boot into kiosk mode
-  //    NOTIFICATION_KIOSK_APP_LAUNCHED
   NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
 
   // Send when kiosk auto-launch warning screen is visible.
@@ -340,9 +237,6 @@ enum NotificationType {
   // Sent when kiosk app list is loaded in UI.
   NOTIFICATION_KIOSK_APPS_LOADED,
 
-  // Sent when a kiosk app is launched.
-  NOTIFICATION_KIOSK_APP_LAUNCHED,
-
   // Sent when the user list has changed.
   NOTIFICATION_USER_LIST_CHANGED,
 
@@ -352,12 +246,6 @@ enum NotificationType {
   // is being deleted, so the receiver shouldn't use the screen locker
   // object.
   NOTIFICATION_SCREEN_LOCK_STATE_CHANGED,
-
-  // Sent by DeviceSettingsService to indicate that the ownership status
-  // changed. If you can, please use DeviceSettingsService::Observer instead.
-  // Other singleton-based services can't use that because Observer
-  // unregistration is impossible due to unpredictable deletion order.
-  NOTIFICATION_OWNERSHIP_STATUS_CHANGED,
 #endif
 
 #if defined(TOOLKIT_VIEWS)
@@ -369,10 +257,6 @@ enum NotificationType {
   // Used for testing.
   NOTIFICATION_TAB_DRAG_LOOP_DONE,
 #endif
-
-  // Send when a context menu is shown. Used to notify tests that the context
-  // menu has been created and shown.
-  NOTIFICATION_RENDER_VIEW_CONTEXT_MENU_SHOWN,
 
   // Sent when the CaptivePortalService checks if we're behind a captive portal.
   // The Source is the Profile the CaptivePortalService belongs to, and the
@@ -389,37 +273,6 @@ enum NotificationType {
   // which was installed.
   NOTIFICATION_APP_INSTALLED_TO_NTP,
 
-#if defined(OS_CHROMEOS)
-  // Sent when wallpaper show animation has finished.
-  NOTIFICATION_WALLPAPER_ANIMATION_FINISHED,
-#endif
-
-  // Protocol Handler Registry -----------------------------------------------
-  // Sent when a ProtocolHandlerRegistry is changed. The source is the profile.
-  NOTIFICATION_PROTOCOL_HANDLER_REGISTRY_CHANGED,
-
-  // Sent when the browser enters or exits fullscreen mode.
-  NOTIFICATION_FULLSCREEN_CHANGED,
-
-  // Sent when the FullscreenController changes, confirms, or denies mouse lock.
-  // The source is the browser's FullscreenController, no details.
-  NOTIFICATION_MOUSE_LOCK_CHANGED,
-
-  // Sent by the PluginPrefs when there is a change of plugin enable/disable
-  // status. The source is the profile.
-  NOTIFICATION_PLUGIN_ENABLE_STATUS_CHANGED,
-
-  // Sent when a global error has changed and the error UI should update it
-  // self. The source is a Source<Profile> containing the profile for the
-  // error. The detail is a GlobalError object that has changed or NULL if
-  // all error UIs should update.
-  NOTIFICATION_GLOBAL_ERRORS_CHANGED,
-
-  // The user accepted or dismissed a SSL client authentication request.
-  // The source is a Source<net::HttpNetworkSession>.  Details is a
-  // (std::pair<net::SSLCertRequestInfo*, net::X509Certificate*>).
-  NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED,
-
   // Note:-
   // Currently only Content and Chrome define and use notifications.
   // Custom notifications not belonging to Content and Chrome should start
@@ -428,5 +281,16 @@ enum NotificationType {
 };
 
 }  // namespace chrome
+
+// **
+// ** NOTICE
+// **
+// ** The notification system is deprecated, obsolete, and is slowly being
+// ** removed. See https://crbug.com/268984.
+// **
+// ** Please don't add any new notification types, and please help migrate
+// ** existing uses of the notification types below to use the Observer and
+// ** Callback patterns.
+// **
 
 #endif  // CHROME_BROWSER_CHROME_NOTIFICATION_TYPES_H_

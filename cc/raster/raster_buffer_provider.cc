@@ -8,7 +8,6 @@
 
 #include "base/trace_event/trace_event.h"
 #include "cc/raster/raster_source.h"
-#include "cc/raster/texture_compressor.h"
 #include "components/viz/common/resources/platform_color.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -18,9 +17,9 @@
 
 namespace cc {
 
-RasterBufferProvider::RasterBufferProvider() {}
+RasterBufferProvider::RasterBufferProvider() = default;
 
-RasterBufferProvider::~RasterBufferProvider() {}
+RasterBufferProvider::~RasterBufferProvider() = default;
 
 namespace {
 
@@ -29,15 +28,25 @@ bool IsSupportedPlaybackToMemoryFormat(viz::ResourceFormat format) {
     case viz::RGBA_4444:
     case viz::RGBA_8888:
     case viz::BGRA_8888:
-    case viz::ETC1:
       return true;
     case viz::ALPHA_8:
     case viz::LUMINANCE_8:
     case viz::RGB_565:
+    case viz::ETC1:
     case viz::RED_8:
     case viz::LUMINANCE_F16:
     case viz::RGBA_F16:
     case viz::R16_EXT:
+    case viz::BGR_565:
+    case viz::RG_88:
+    case viz::RGBX_8888:
+    case viz::BGRX_8888:
+    case viz::RGBX_1010102:
+    case viz::BGRX_1010102:
+    case viz::YVU_420:
+    case viz::YUV_420_BIPLANAR:
+    case viz::UYVY_422:
+    case viz::P010:
       return false;
   }
   NOTREACHED();
@@ -57,15 +66,20 @@ void RasterBufferProvider::PlaybackToMemory(
     const gfx::Rect& canvas_playback_rect,
     const gfx::AxisTransform2d& transform,
     const gfx::ColorSpace& target_color_space,
+    bool gpu_compositing,
     const RasterSource::PlaybackSettings& playback_settings) {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
                "RasterBufferProvider::PlaybackToMemory");
 
   DCHECK(IsSupportedPlaybackToMemoryFormat(format)) << format;
 
+  SkColorType color_type =
+      ResourceFormatToClosestSkColorType(gpu_compositing, format);
+
   // Uses kPremul_SkAlphaType since the result is not known to be opaque.
-  SkImageInfo info =
-      SkImageInfo::MakeN32(size.width(), size.height(), kPremul_SkAlphaType);
+  SkImageInfo info = SkImageInfo::Make(size.width(), size.height(), color_type,
+                                       kPremul_SkAlphaType,
+                                       target_color_space.ToSkColorSpace());
 
   // Use unknown pixel geometry to disable LCD text.
   SkSurfaceProps surface_props(0, kUnknown_SkPixelGeometry);
@@ -78,6 +92,8 @@ void RasterBufferProvider::PlaybackToMemory(
     stride = info.minRowBytes();
   DCHECK_GT(stride, 0u);
 
+  gfx::Size content_size = raster_source->GetContentSize(transform.scale());
+
   switch (format) {
     case viz::RGBA_8888:
     case viz::BGRA_8888:
@@ -89,77 +105,53 @@ void RasterBufferProvider::PlaybackToMemory(
       // invalid content, just crash the renderer and try again.
       // See: http://crbug.com/721744.
       CHECK(surface);
-      raster_source->PlaybackToCanvas(surface->getCanvas(), target_color_space,
+      raster_source->PlaybackToCanvas(surface->getCanvas(), content_size,
                                       canvas_bitmap_rect, canvas_playback_rect,
                                       transform, playback_settings);
       return;
     }
-    case viz::RGBA_4444:
-    case viz::ETC1: {
+    case viz::RGBA_4444: {
       sk_sp<SkSurface> surface = SkSurface::MakeRaster(info, &surface_props);
       // TODO(reveman): Improve partial raster support by reducing the size of
       // playback rect passed to PlaybackToCanvas. crbug.com/519070
-      raster_source->PlaybackToCanvas(surface->getCanvas(), target_color_space,
+      raster_source->PlaybackToCanvas(surface->getCanvas(), content_size,
                                       canvas_bitmap_rect, canvas_bitmap_rect,
                                       transform, playback_settings);
 
-      if (format == viz::ETC1) {
-        TRACE_EVENT0("cc",
-                     "RasterBufferProvider::PlaybackToMemory::CompressETC1");
-        DCHECK_EQ(size.width() % 4, 0);
-        DCHECK_EQ(size.height() % 4, 0);
-        std::unique_ptr<TextureCompressor> texture_compressor =
-            TextureCompressor::Create(TextureCompressor::kFormatETC1);
-        SkPixmap pixmap;
-        surface->peekPixels(&pixmap);
-        texture_compressor->Compress(
-            reinterpret_cast<const uint8_t*>(pixmap.addr()),
-            reinterpret_cast<uint8_t*>(memory), size.width(), size.height(),
-            TextureCompressor::kQualityHigh);
-      } else {
-        TRACE_EVENT0("cc",
-                     "RasterBufferProvider::PlaybackToMemory::ConvertRGBA4444");
-        SkImageInfo dst_info =
-            info.makeColorType(ResourceFormatToClosestSkColorType(format));
-        bool rv = surface->readPixels(dst_info, memory, stride, 0, 0);
-        DCHECK(rv);
-      }
+      TRACE_EVENT0("cc",
+                   "RasterBufferProvider::PlaybackToMemory::ConvertRGBA4444");
+      SkImageInfo dst_info = info.makeColorType(
+          ResourceFormatToClosestSkColorType(gpu_compositing, format));
+      auto dst_canvas = SkCanvas::MakeRasterDirect(dst_info, memory, stride);
+      DCHECK(dst_canvas);
+      SkPaint paint;
+      paint.setDither(true);
+      paint.setBlendMode(SkBlendMode::kSrc);
+      surface->draw(dst_canvas.get(), 0, 0, &paint);
       return;
     }
-    case viz::ALPHA_8:
-    case viz::LUMINANCE_8:
-    case viz::RGB_565:
-    case viz::RED_8:
-    case viz::LUMINANCE_F16:
-    case viz::R16_EXT:
-      NOTREACHED();
-      return;
-  }
-
-  NOTREACHED();
-}
-
-bool RasterBufferProvider::ResourceFormatRequiresSwizzle(
-    viz::ResourceFormat format) {
-  switch (format) {
-    case viz::RGBA_8888:
-    case viz::BGRA_8888:
-      // Initialize resource using the preferred viz::PlatformColor component
-      // order and swizzle in the shader instead of in software.
-      return !viz::PlatformColor::SameComponentOrder(format);
-    case viz::RGBA_4444:
     case viz::ETC1:
     case viz::ALPHA_8:
     case viz::LUMINANCE_8:
     case viz::RGB_565:
     case viz::RED_8:
     case viz::LUMINANCE_F16:
-    case viz::RGBA_F16:
     case viz::R16_EXT:
-      return false;
+    case viz::BGR_565:
+    case viz::RG_88:
+    case viz::RGBX_8888:
+    case viz::BGRX_8888:
+    case viz::RGBX_1010102:
+    case viz::BGRX_1010102:
+    case viz::YVU_420:
+    case viz::YUV_420_BIPLANAR:
+    case viz::UYVY_422:
+    case viz::P010:
+      NOTREACHED();
+      return;
   }
+
   NOTREACHED();
-  return false;
 }
 
 }  // namespace cc

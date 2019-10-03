@@ -13,14 +13,17 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/time/time.h"
 #include "google_apis/gcm/base/gcm_export.h"
 #include "net/base/backoff_entry.h"
-#include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
 namespace net {
-class URLRequestContextGetter;
+class HttpRequestHeaders;
+}
+
+namespace network {
+class SharedURLLoaderFactory;
+class SimpleURLLoader;
 }
 
 namespace gcm {
@@ -31,7 +34,7 @@ class GCMStatsRecorder;
 // and InstanceID delete-token requests. In case an attempt fails, it will retry
 // using the backoff policy.
 // TODO(fgorski): Consider sharing code with RegistrationRequest if possible.
-class GCM_EXPORT UnregistrationRequest : public net::URLFetcherDelegate {
+class GCM_EXPORT UnregistrationRequest {
  public:
   // Outcome of the response parsing. Note that these enums are consumed by a
   // histogram, so ordering should not be modified.
@@ -98,10 +101,8 @@ class GCM_EXPORT UnregistrationRequest : public net::URLFetcherDelegate {
     // UnregistrationRequest::ParseResponse to proceed the parsing.
     virtual Status ParseResponse(const std::string& response) = 0;
 
-    // Reports various UMAs, including status, retry count and completion time.
-    virtual void ReportUMAs(Status status,
-                            int retry_count,
-                            base::TimeDelta complete_time) = 0;
+    // Reports UMAs.
+    virtual void ReportUMAs(Status status) = 0;
   };
 
   // Creates an instance of UnregistrationRequest. |callback| will be called
@@ -114,21 +115,24 @@ class GCM_EXPORT UnregistrationRequest : public net::URLFetcherDelegate {
       const net::BackoffEntry::Policy& backoff_policy,
       const UnregistrationCallback& callback,
       int max_retry_count,
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
       GCMStatsRecorder* recorder,
       const std::string& source_to_record);
-  ~UnregistrationRequest() override;
+  ~UnregistrationRequest();
 
   // Starts an unregistration request.
   void Start();
 
  private:
-  // URLFetcherDelegate implementation.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  // Invoked from SimpleURLLoader.
+  void OnURLLoadComplete(const network::SimpleURLLoader* source,
+                         std::unique_ptr<std::string> body);
 
-  void BuildRequestHeaders(std::string* extra_headers);
+  void BuildRequestHeaders(net::HttpRequestHeaders* headers);
   void BuildRequestBody(std::string* body);
-  Status ParseResponse(const net::URLFetcher* source);
+  Status ParseResponse(const network::SimpleURLLoader* source,
+                       std::unique_ptr<std::string> body);
 
   // Schedules a retry attempt with a backoff.
   void RetryWithBackoff();
@@ -139,10 +143,11 @@ class GCM_EXPORT UnregistrationRequest : public net::URLFetcherDelegate {
   GURL registration_url_;
 
   net::BackoffEntry backoff_entry_;
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  std::unique_ptr<net::URLFetcher> url_fetcher_;
-  base::TimeTicks request_start_time_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+  std::unique_ptr<network::SimpleURLLoader> url_loader_;
   int retries_left_;
+
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
 
   // Recorder that records GCM activities for debugging purpose. Not owned.
   GCMStatsRecorder* recorder_;

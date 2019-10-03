@@ -4,7 +4,9 @@
 
 #include "chrome/browser/extensions/extension_apitest.h"
 
+#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -20,10 +22,10 @@
 #include "ui/aura/window_tree_host.h"
 #endif
 
-class ExtensionApiTabTest : public ExtensionApiTest {
+class ExtensionApiTabTest : public extensions::ExtensionApiTest {
  public:
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
   }
@@ -50,7 +52,13 @@ class ExtensionApiNewTabTest : public ExtensionApiTabTest {
   }
 };
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiNewTabTest, Tabs) {
+// Flaky on chromeos: http://crbug.com/870322
+#if defined(OS_CHROMEOS)
+#define MAYBE_Tabs DISABLED_Tabs
+#else
+#define MAYBE_Tabs Tabs
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionApiNewTabTest, MAYBE_Tabs) {
   // The test creates a tab and checks that the URL of the new tab
   // is that of the new tab page.  Make sure the pref that controls
   // this is set.
@@ -204,8 +212,17 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, CaptureVisibleDisabled) {
                                   "test_disabled.html")) << message_;
 }
 
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, CaptureNullWindow) {
+  ASSERT_TRUE(RunExtensionTest("tabs/capture_visible_tab_null_window"))
+      << message_;
+}
+
 IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, TabsOnCreated) {
   ASSERT_TRUE(RunExtensionTest("tabs/on_created")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, LazyBackgroundTabsOnCreated) {
+  ASSERT_TRUE(RunExtensionTest("tabs/lazy_background_on_created")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, TabsOnUpdated) {
@@ -226,7 +243,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, HostPermission) {
   ASSERT_TRUE(RunExtensionTest("tabs/host_permission")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, UpdateWindowResize) {
+// Flaky on Windows, Mac and Linux. http://crbug.com/820110.
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#define MAYBE_UpdateWindowResize DISABLED_UpdateWindowResize
+#else
+#define MAYBE_UpdateWindowResize UpdateWindowResize
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, MAYBE_UpdateWindowResize) {
   ASSERT_TRUE(RunExtensionTest("window_update/resize")) << message_;
 }
 
@@ -269,6 +292,28 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, OnUpdatedDiscardedState) {
 IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, TabOpenerCraziness) {
   ASSERT_TRUE(RunExtensionTest("tabs/tab_opener_id"));
 }
+
+class IncognitoExtensionApiTabTest : public ExtensionApiTabTest,
+                                     public testing::WithParamInterface<bool> {
+};
+
+IN_PROC_BROWSER_TEST_P(IncognitoExtensionApiTabTest, Tabs) {
+  bool is_incognito_enabled = GetParam();
+  Browser* incognito_browser =
+      OpenURLOffTheRecord(browser()->profile(), GURL("about:blank"));
+  std::string args = base::StringPrintf(
+      R"({"isIncognito": %s, "windowId": %d})",
+      is_incognito_enabled ? "true" : "false",
+      extensions::ExtensionTabUtil::GetWindowId(incognito_browser));
+
+  EXPECT_TRUE(RunExtensionSubtestWithArgAndFlags(
+      "tabs/basics", "incognito.html", args.data(),
+      is_incognito_enabled ? extensions::ExtensionApiTest::kFlagEnableIncognito
+                           : extensions::ExtensionApiTest::kFlagNone))
+      << message_;
+}
+
+INSTANTIATE_TEST_SUITE_P(, IncognitoExtensionApiTabTest, testing::Bool());
 
 // Adding a new test? Awesome. But API tests are the old hotness. The new
 // hotness is extension_function_test_utils. See tabs_test.cc for an example.

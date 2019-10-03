@@ -1,5 +1,7 @@
 include_rules = [
+  "+cc/base",
   "+third_party/khronos",
+  "+third_party/libsync",
   "+third_party/skia",
   "+ui/events",
   "+ui/base/x",
@@ -7,15 +9,13 @@ include_rules = [
 ]
 
 specific_include_rules = {
-# This is the only target that should use the osmesa.h header. Everything else
-# should use the GLES2 headers from third_party/khronos/ or use gl_bindings.h to
-# get access to desktop OpenGL.
-  "gl_surface_osmesa.cc": [
-    "+third_party/mesa/src/include/GL/osmesa.h",
-  ],
 # Allow us to include ANGLE's base platform implementation.
   "angle_platform_impl.cc": [
     "+third_party/angle/include/platform/Platform.h",
+  ],
+  "direct_composition_surface_win_unittest.cc": [
+    "+ui/base/win/hidden_window.h",
+    "+ui/platform_window",
   ],
   "gl_angle_util_win.cc": [
     "+third_party/angle/include/EGL/egl.h",

@@ -13,16 +13,56 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/version.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "chromeos/printing/usb_printer_id.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
+}
 }
 
 namespace chromeos {
 
 class PpdCache;
+
+// Everything we might know about a printer when looking for a
+// driver for it.  All of the default values for fields in this struct
+// mean we *don't* have that piece of information.
+//
+// Fields are listed in search order preference -- we use earlier
+// fields first to attempt to find a match.
+struct CHROMEOS_EXPORT PrinterSearchData {
+  PrinterSearchData();
+  PrinterSearchData(const PrinterSearchData& other);
+  ~PrinterSearchData();
+
+  // Make-and-model string guesses.
+  std::vector<std::string> make_and_model;
+
+  // 16-bit usb identifiers.
+  int usb_vendor_id = 0;
+  int usb_product_id = 0;
+
+  // Method of printer discovery.
+  enum PrinterDiscoveryType {
+    kUnknown = 0,
+    kManual = 1,
+    kUsb = 2,
+    kZeroconf = 3,
+    kDiscoveryTypeMax
+  };
+  PrinterDiscoveryType discovery_type;
+
+  // Set of MIME types supported by this printer.
+  std::vector<std::string> supported_document_formats;
+
+  // Representation of IEEE1284 standard printing device ID.
+  // Contains a set of languages this printer understands.
+  UsbPrinterId printer_id;
+};
 
 // PpdProvider is responsible for mapping printer descriptions to
 // CUPS-PostScript Printer Description (PPD) files.  It provides PPDs that a
@@ -46,7 +86,7 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
     // Other error that is not expected to be transient.
     INTERNAL_ERROR,
 
-    // The provded PPD was too large to be processed.
+    // The provided PPD was too large to be processed.
     PPD_TOO_LARGE,
   };
 
@@ -55,27 +95,31 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   struct Options {
     Options() {}
 
+    // Any results from PpdCache older than this are treated as
+    // non-authoritative -- PpdProvider will attempt to re-resolve from the
+    // network anyways and only use the cache results if the network is
+    // unavailable.
+    base::TimeDelta cache_staleness_age = base::TimeDelta::FromDays(14);
+
     // Root of the ppd serving hierarchy.
     std::string ppd_server_root = "https://www.gstatic.com/chromeos_printing";
   };
 
-  // Everything we might know about a printer when looking for a
-  // driver for it.  All of the default values for fields in this struct
-  // mean we *don't* have that piece of information.
-  //
-  // Fields are listed in search order preference -- we use earlier
-  // fields first to attempt to find a match.
-  struct PrinterSearchData {
-    PrinterSearchData();
-    PrinterSearchData(const PrinterSearchData& other);
-    ~PrinterSearchData();
+  // Defines the limitations on when we show a particular PPD
+  struct Restrictions {
+    // Minimum milestone for ChromeOS build
+    base::Version min_milestone = base::Version("0.0");
 
-    // Make-and-model string guesses.
-    std::vector<std::string> make_and_model;
+    // Maximum milestone for ChomeOS build
+    base::Version max_milestone = base::Version("0.0");
+  };
 
-    // 16-bit usb identifiers.
-    int usb_vendor_id = 0;
-    int usb_product_id = 0;
+  struct ResolvedPpdReference {
+    // The name of the model of printer or printer line
+    std::string name;
+
+    // Correct PpdReferece to be used with this printer
+    Printer::PpdReference ppd_ref;
   };
 
   // Result of a ResolvePpd() call.
@@ -92,49 +136,53 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   // then the vector contains a sorted list of manufacturers for which we have
   // at least one printer driver.
   using ResolveManufacturersCallback =
-      base::Callback<void(CallbackResultCode, const std::vector<std::string>&)>;
+      base::OnceCallback<void(CallbackResultCode,
+                              const std::vector<std::string>&)>;
 
   // A list of printer names paired with the PpdReference that should be used
   // for that printer.
-  using ResolvedPrintersList =
-      std::vector<std::pair<std::string, Printer::PpdReference>>;
+  using ResolvedPrintersList = std::vector<ResolvedPpdReference>;
 
   // Result of a ResolvePrinters() call.  If the result code is SUCCESS, then
   // the vector contains a sorted list <model_name, PpdReference> tuples of all
   // printer models from the given manufacturer for which we have a driver,
   // sorted by model_name.
   using ResolvePrintersCallback =
-      base::Callback<void(CallbackResultCode, const ResolvedPrintersList&)>;
+      base::OnceCallback<void(CallbackResultCode, const ResolvedPrintersList&)>;
 
-  // Result of a ResolvePpdReference call.  If the result code is
-  // SUCCESS, then the second argument contains the a PpdReference
-  // that we have high confidence can be used to obtain a driver for
-  // the printer.  NOT_FOUND means we couldn't confidently figure out
-  // a driver for the printer.
+  // Result of a ResolvePpdReference call.  If the result code is SUCCESS, then
+  // the second argument contains the a PpdReference that we have high
+  // confidence can be used to obtain a driver for the printer.  NOT_FOUND means
+  // we couldn't confidently figure out a driver for the printer.  If we got
+  // NOT_FOUND from a USB printer, we may have been able to determine the
+  // manufacturer name which is the third argument.
   using ResolvePpdReferenceCallback =
-      base::Callback<void(CallbackResultCode, const Printer::PpdReference&)>;
+      base::OnceCallback<void(CallbackResultCode,
+                              const Printer::PpdReference& ref,
+                              const std::string& manufacturer)>;
 
   // Result of a ReverseLookup call.  If the result code is SUCCESS, then
   // |manufactuer| and |model| contain the strings that could have generated
   // the reference being looked up.
   using ReverseLookupCallback =
-      base::Callback<void(CallbackResultCode,
-                          const std::string& manufacturer,
-                          const std::string& model)>;
+      base::OnceCallback<void(CallbackResultCode,
+                              const std::string& manufacturer,
+                              const std::string& model)>;
 
   // Create and return a new PpdProvider with the given cache and options.
   // A references to |url_context_getter| is taken.
   static scoped_refptr<PpdProvider> Create(
       const std::string& browser_locale,
-      scoped_refptr<net::URLRequestContextGetter> url_context_getter,
+      network::mojom::URLLoaderFactory* loader_factory,
       scoped_refptr<PpdCache> cache,
+      const base::Version& current_version,
       const Options& options = Options());
 
   // Get all manufacturers for which we have drivers.  Keys of the map will be
   // localized in the default browser locale or the closest available fallback.
   //
   // |cb| will be called on the invoking thread, and will be sequenced.
-  virtual void ResolveManufacturers(const ResolveManufacturersCallback& cb) = 0;
+  virtual void ResolveManufacturers(ResolveManufacturersCallback cb) = 0;
 
   // Get all models from a given manufacturer, localized in the
   // default browser locale or the closest available fallback.
@@ -144,12 +192,12 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   //
   // |cb| will be called on the invoking thread, and will be sequenced.
   virtual void ResolvePrinters(const std::string& manufacturer,
-                               const ResolvePrintersCallback& cb) = 0;
+                               ResolvePrintersCallback cb) = 0;
 
   // Attempt to find a PpdReference for the given printer.  You should supply
   // as much information in search_data as you can.
   virtual void ResolvePpdReference(const PrinterSearchData& search_data,
-                                   const ResolvePpdReferenceCallback& cb) = 0;
+                                   ResolvePpdReferenceCallback cb) = 0;
 
   // Given a PpdReference, attempt to get the PPD for printing.
   //
@@ -160,7 +208,12 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   // For a given PpdReference, retrieve the make and model strings used to
   // construct that reference.
   virtual void ReverseLookup(const std::string& effective_make_and_model,
-                             const ReverseLookupCallback& cb) = 0;
+                             ReverseLookupCallback cb) = 0;
+
+  // Transform from ppd reference to ppd cache key.  This is exposed for
+  // testing, and should not be used by other code.
+  static std::string PpdReferenceToCacheKey(
+      const Printer::PpdReference& reference);
 
  protected:
   friend class base::RefCounted<PpdProvider>;

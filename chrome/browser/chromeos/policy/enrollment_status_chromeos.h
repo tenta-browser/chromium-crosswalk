@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_ENROLLMENT_STATUS_CHROMEOS_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_ENROLLMENT_STATUS_CHROMEOS_H_
 
-#include "chrome/browser/chromeos/settings/install_attributes.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/cloud_policy_validator.h"
@@ -46,6 +46,10 @@ class EnrollmentStatus {
     DM_TOKEN_STORE_FAILED = 18,   // Failed to store DM token into the
                                   // local state.
     LICENSE_REQUEST_FAILED = 19,  // Failed to get available license types.
+    OFFLINE_POLICY_LOAD_FAILED = 20,  // Failed to load the policy data for the
+                                      // offline demo mode.
+    OFFLINE_POLICY_DECODING_FAILED = 21,  // Failed when the policy data fails
+                                          // to be decoded.
   };
 
   // Helpers for constructing errors for relevant cases.

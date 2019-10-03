@@ -7,27 +7,27 @@
 
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "services/device/public/interfaces/sensor_provider.mojom.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/strong_binding_set.h"
+#include "services/device/public/mojom/sensor_provider.mojom.h"
 
 namespace device {
 
 class PlatformSensorProvider;
 class PlatformSensor;
 
-// Implementation of SensorProvider mojo interface.
-// Uses PlatformSensorProvider singleton to create platform specific instances
-// of PlatformSensor which are used by SensorImpl.
+// Implementation of SensorProvider mojo interface. Owns an instance of
+// PlatformSensorProvider to create platform specific instances of
+// PlatformSensor which are used by SensorImpl. A single instance of this class
+// is owned by DeviceService.
 class SensorProviderImpl final : public mojom::SensorProvider {
  public:
-  static void Create(
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
-      mojom::SensorProviderRequest request);
-
+  explicit SensorProviderImpl(std::unique_ptr<PlatformSensorProvider> provider);
   ~SensorProviderImpl() override;
 
- private:
-  explicit SensorProviderImpl(PlatformSensorProvider* provider);
+  void Bind(mojom::SensorProviderRequest request);
 
+ private:
   // SensorProvider implementation.
   void GetSensor(mojom::SensorType type,
                  mojom::SensorRequest sensor_request,
@@ -40,8 +40,10 @@ class SensorProviderImpl final : public mojom::SensorProvider {
                      GetSensorCallback callback,
                      scoped_refptr<PlatformSensor> sensor);
 
-  PlatformSensorProvider* provider_;
-  base::WeakPtrFactory<SensorProviderImpl> weak_ptr_factory_;
+  std::unique_ptr<PlatformSensorProvider> provider_;
+  mojo::BindingSet<mojom::SensorProvider> bindings_;
+  mojo::StrongBindingSet<mojom::Sensor> sensor_bindings_;
+  base::WeakPtrFactory<SensorProviderImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SensorProviderImpl);
 };

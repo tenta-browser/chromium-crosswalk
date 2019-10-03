@@ -4,7 +4,9 @@
 
 #include "media/remoting/courier_renderer.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -47,6 +49,8 @@ PipelineStatistics DefaultStats() {
   stats.audio_memory_usage = 5678;
   stats.video_memory_usage = 6789;
   stats.video_keyframe_distance_average = base::TimeDelta::Max();
+  stats.audio_decoder_info = {false, false, "Default"};
+  stats.video_decoder_info = {false, false, "Default"};
   return stats;
 }
 
@@ -59,7 +63,7 @@ class RendererClientImpl final : public RendererClient {
     ON_CALL(*this, OnPipelineStatus(_))
         .WillByDefault(
             Invoke(this, &RendererClientImpl::DelegateOnPipelineStatus));
-    ON_CALL(*this, OnBufferingStateChange(_))
+    ON_CALL(*this, OnBufferingStateChange(_, _))
         .WillByDefault(
             Invoke(this, &RendererClientImpl::DelegateOnBufferingStateChange));
     ON_CALL(*this, OnAudioConfigChange(_))
@@ -74,9 +78,6 @@ class RendererClientImpl final : public RendererClient {
     ON_CALL(*this, OnVideoOpacityChange(_))
         .WillByDefault(
             Invoke(this, &RendererClientImpl::DelegateOnVideoOpacityChange));
-    ON_CALL(*this, OnDurationChange(_))
-        .WillByDefault(
-            Invoke(this, &RendererClientImpl::DelegateOnDurationChange));
   }
   ~RendererClientImpl() = default;
 
@@ -84,18 +85,22 @@ class RendererClientImpl final : public RendererClient {
   void OnError(PipelineStatus status) override {}
   void OnEnded() override {}
   MOCK_METHOD1(OnStatisticsUpdate, void(const PipelineStatistics& stats));
-  MOCK_METHOD1(OnBufferingStateChange, void(BufferingState state));
+  MOCK_METHOD2(OnBufferingStateChange,
+               void(BufferingState state, BufferingStateChangeReason reason));
   MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig& config));
   MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig& config));
-  void OnWaitingForDecryptionKey() override {}
+  void OnWaiting(WaitingReason reason) override {}
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size& size));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool opaque));
-  MOCK_METHOD1(OnDurationChange, void(base::TimeDelta duration));
+  MOCK_METHOD1(OnRemotePlayStateChange, void(MediaStatus::State state));
 
   void DelegateOnStatisticsUpdate(const PipelineStatistics& stats) {
     stats_ = stats;
   }
-  void DelegateOnBufferingStateChange(BufferingState state) { state_ = state; }
+  void DelegateOnBufferingStateChange(BufferingState state,
+                                      BufferingStateChangeReason reason) {
+    state_ = state;
+  }
   void DelegateOnAudioConfigChange(const AudioDecoderConfig& config) {
     audio_decoder_config_ = config;
   }
@@ -104,9 +109,6 @@ class RendererClientImpl final : public RendererClient {
   }
   void DelegateOnVideoNaturalSizeChange(const gfx::Size& size) { size_ = size; }
   void DelegateOnVideoOpacityChange(bool opaque) { opaque_ = opaque; }
-  void DelegateOnDurationChange(base::TimeDelta duration) {
-    duration_ = duration;
-  }
 
   MOCK_METHOD1(OnPipelineStatus, void(PipelineStatus status));
   void DelegateOnPipelineStatus(PipelineStatus status) {
@@ -120,7 +122,6 @@ class RendererClientImpl final : public RendererClient {
   BufferingState state() const { return state_; }
   gfx::Size size() const { return size_; }
   bool opaque() const { return opaque_; }
-  base::TimeDelta duration() const { return duration_; }
   VideoDecoderConfig video_decoder_config() const {
     return video_decoder_config_;
   }
@@ -133,7 +134,6 @@ class RendererClientImpl final : public RendererClient {
   BufferingState state_ = BUFFERING_HAVE_NOTHING;
   gfx::Size size_;
   bool opaque_ = false;
-  base::TimeDelta duration_;
   PipelineStatistics stats_;
   VideoDecoderConfig video_decoder_config_;
   AudioDecoderConfig audio_decoder_config_;
@@ -278,8 +278,7 @@ class CourierRendererTest : public testing::Test {
   }
 
   void SetUp() override {
-    controller_ = base::MakeUnique<RendererController>(
-        FakeRemoterFactory::CreateSharedSession(false));
+    controller_ = FakeRemoterFactory::CreateController(false);
     controller_->OnMetadataChanged(DefaultMetadata());
 
     // Redirect RPC message to CourierRendererTest::OnSendMessageToSink().
@@ -288,9 +287,8 @@ class CourierRendererTest : public testing::Test {
 
     renderer_.reset(new CourierRenderer(base::ThreadTaskRunnerHandle::Get(),
                                         controller_->GetWeakPtr(), nullptr));
-    clock_ = new base::SimpleTestTickClock();
-    renderer_->clock_.reset(clock_);
-    clock_->Advance(base::TimeDelta::FromSeconds(1));
+    renderer_->clock_ = &clock_;
+    clock_.Advance(base::TimeDelta::FromSeconds(1));
 
     RunPendingTasks();
   }
@@ -338,7 +336,7 @@ class CourierRendererTest : public testing::Test {
       ASSERT_FALSE(DidEncounterFatalError());
       IssueTimeUpdateRpc(base::TimeDelta::FromMilliseconds(100 + i * 800),
                          base::TimeDelta::FromSeconds(100));
-      clock_->Advance(base::TimeDelta::FromSeconds(1));
+      clock_.Advance(base::TimeDelta::FromSeconds(1));
       RunPendingTasks();
     }
   }
@@ -358,6 +356,18 @@ class CourierRendererTest : public testing::Test {
     message->set_video_frames_dropped(stats.video_frames_dropped);
     message->set_audio_memory_usage(stats.audio_memory_usage);
     message->set_video_memory_usage(stats.video_memory_usage);
+    message->mutable_audio_decoder_info()->set_is_platform_decoder(
+        stats.audio_decoder_info.is_platform_decoder);
+    message->mutable_audio_decoder_info()->set_is_decrypting_demuxer_stream(
+        stats.audio_decoder_info.is_decrypting_demuxer_stream);
+    message->mutable_audio_decoder_info()->set_decoder_name(
+        stats.audio_decoder_info.decoder_name);
+    message->mutable_video_decoder_info()->set_is_platform_decoder(
+        stats.video_decoder_info.is_platform_decoder);
+    message->mutable_video_decoder_info()->set_is_decrypting_demuxer_stream(
+        stats.video_decoder_info.is_decrypting_demuxer_stream);
+    message->mutable_video_decoder_info()->set_decoder_name(
+        stats.video_decoder_info.decoder_name);
     OnReceivedRpc(std::move(rpc));
     RunPendingTasks();
   }
@@ -384,7 +394,7 @@ class CourierRendererTest : public testing::Test {
   std::unique_ptr<RendererClientImpl> render_client_;
   std::unique_ptr<FakeMediaResource> media_resource_;
   std::unique_ptr<CourierRenderer> renderer_;
-  base::SimpleTestTickClock* clock_;  // Owned by |renderer_|;
+  base::SimpleTestTickClock clock_;
 
   // RPC handles.
   const int receiver_renderer_handle_;
@@ -540,7 +550,8 @@ TEST_F(CourierRendererTest, OnTimeUpdate) {
 
 TEST_F(CourierRendererTest, OnBufferingStateChange) {
   InitializeRenderer();
-  EXPECT_CALL(*render_client_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING))
+  EXPECT_CALL(*render_client_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING, _))
       .Times(1);
   IssuesBufferingStateRpc(BufferingState::BUFFERING_HAVE_NOTHING);
 }
@@ -651,36 +662,6 @@ TEST_F(CourierRendererTest, OnStatisticsUpdate) {
   EXPECT_EQ(DefaultStats(), render_client_->stats());
 }
 
-TEST_F(CourierRendererTest, OnDurationChange) {
-  InitializeRenderer();
-  ASSERT_NE(render_client_->duration(),
-            base::TimeDelta::FromMicroseconds(1234));
-  // Issues RPC_RC_ONDURATIONCHANGE RPC message.
-  EXPECT_CALL(*render_client_,
-              OnDurationChange(base::TimeDelta::FromMicroseconds(1234)))
-      .Times(1);
-  std::unique_ptr<pb::RpcMessage> rpc(new pb::RpcMessage());
-  rpc->set_handle(5);
-  rpc->set_proc(pb::RpcMessage::RPC_RC_ONDURATIONCHANGE);
-  rpc->set_integer64_value(1234);
-  OnReceivedRpc(std::move(rpc));
-  RunPendingTasks();
-  ASSERT_EQ(render_client_->duration(),
-            base::TimeDelta::FromMicroseconds(1234));
-}
-
-TEST_F(CourierRendererTest, OnDurationChangeWithInvalidValue) {
-  InitializeRenderer();
-  // Issues RPC_RC_ONDURATIONCHANGE RPC message.
-  EXPECT_CALL(*render_client_, OnDurationChange(_)).Times(0);
-  std::unique_ptr<pb::RpcMessage> rpc(new pb::RpcMessage());
-  rpc->set_handle(5);
-  rpc->set_proc(pb::RpcMessage::RPC_RC_ONDURATIONCHANGE);
-  rpc->set_integer64_value(-345);
-  OnReceivedRpc(std::move(rpc));
-  RunPendingTasks();
-}
-
 TEST_F(CourierRendererTest, OnPacingTooSlowly) {
   InitializeRenderer();
 
@@ -690,10 +671,10 @@ TEST_F(CourierRendererTest, OnPacingTooSlowly) {
   // There should be no error reported with this playback rate.
   renderer_->SetPlaybackRate(0.8);
   RunPendingTasks();
-  EXPECT_CALL(*render_client_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH))
+  EXPECT_CALL(*render_client_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH, _))
       .Times(1);
   IssuesBufferingStateRpc(BufferingState::BUFFERING_HAVE_ENOUGH);
-  clock_->Advance(base::TimeDelta::FromSeconds(3));
+  clock_.Advance(base::TimeDelta::FromSeconds(3));
   VerifyAndReportTimeUpdates(0, 15);
   ASSERT_FALSE(DidEncounterFatalError());
 
@@ -701,7 +682,7 @@ TEST_F(CourierRendererTest, OnPacingTooSlowly) {
   // playback was continuously delayed for 10 times.
   renderer_->SetPlaybackRate(1);
   RunPendingTasks();
-  clock_->Advance(base::TimeDelta::FromSeconds(3));
+  clock_.Advance(base::TimeDelta::FromSeconds(3));
   VerifyAndReportTimeUpdates(15, 30);
   ASSERT_TRUE(DidEncounterFatalError());
 }
@@ -712,7 +693,7 @@ TEST_F(CourierRendererTest, OnFrameDropRateHigh) {
   for (int i = 0; i < 7; ++i) {
     ASSERT_FALSE(DidEncounterFatalError());  // Not enough measurements.
     IssueStatisticsUpdateRpc();
-    clock_->Advance(base::TimeDelta::FromSeconds(1));
+    clock_.Advance(base::TimeDelta::FromSeconds(1));
     RunPendingTasks();
   }
   ASSERT_TRUE(DidEncounterFatalError());

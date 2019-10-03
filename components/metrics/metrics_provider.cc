@@ -33,10 +33,18 @@ void MetricsProvider::OnRecordingDisabled() {
 void MetricsProvider::OnAppEnterBackground() {
 }
 
-bool MetricsProvider::ProvideIndependentMetrics(
-    SystemProfileProto* system_profile_proto,
-    base::HistogramSnapshotManager* snapshot_manager) {
+bool MetricsProvider::HasIndependentMetrics() {
   return false;
+}
+
+void MetricsProvider::ProvideIndependentMetrics(
+    base::OnceCallback<void(bool)> done_callback,
+    ChromeUserMetricsExtension* uma_proto,
+    base::HistogramSnapshotManager* snapshot_manager) {
+  // Either the method HasIndependentMetrics() has been overridden and this
+  // method has not, or this method being called without regard to Has().
+  // Both are wrong.
+  NOTREACHED();
 }
 
 void MetricsProvider::ProvideSystemProfileMetrics(

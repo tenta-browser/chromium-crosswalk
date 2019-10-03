@@ -24,8 +24,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
@@ -36,6 +36,7 @@ import org.chromium.chrome.browser.compositor.layouts.phone.stack.Stack;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackTab;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
@@ -43,6 +44,7 @@ import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel.MockTabModelDelegate;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModelSelector;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.UiRestriction;
 
 /**
@@ -52,7 +54,7 @@ import org.chromium.ui.test.util.UiRestriction;
 public class LayoutManagerTest implements MockTabModelDelegate {
     private static final String TAG = "LayoutManagerTest";
 
-    private long mLastDownTime = 0;
+    private long mLastDownTime;
 
     private TabModelSelector mTabModelSelector;
     private LayoutManagerChrome mManager;
@@ -132,8 +134,9 @@ public class LayoutManagerTest implements MockTabModelDelegate {
         FrameLayout container = new FrameLayout(context);
         parentContainer.addView(container);
 
-        mManagerPhone = new LayoutManagerChromePhone(layoutManagerHost);
+        mManagerPhone = new LayoutManagerChromePhone(layoutManagerHost, null);
         mManager = mManagerPhone;
+        mManager.getAnimationHandler().setTestingMode(true);
         mManager.init(mTabModelSelector, null, null, container, null, null);
         initializeMotionEvent();
     }
@@ -218,6 +221,7 @@ public class LayoutManagerTest implements MockTabModelDelegate {
     @Feature({"Android-TabSwitcher"})
     @UiThreadTest
     @Restriction({UiRestriction.RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
+    @DisabledTest(message = "https://crbug.com/965250")
     public void testStack() throws Exception {
         initializeLayoutManagerPhone(3, 0);
         mManagerPhone.showOverview(true);
@@ -265,7 +269,7 @@ public class LayoutManagerTest implements MockTabModelDelegate {
                 mManager.getActiveLayout() instanceof StackLayout);
 
         StackLayout layout = (StackLayout) mManager.getActiveLayout();
-        Stack stack = layout.getTabStack(false);
+        Stack stack = layout.getTabStackAtIndex(StackLayout.NORMAL_STACK_INDEX);
         StackTab[] tabs = stack.getTabs();
 
         long time = 0;
@@ -502,20 +506,18 @@ public class LayoutManagerTest implements MockTabModelDelegate {
     @Before
     public void setUp() throws Exception {
         // Load the browser process.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
-                            .handleSynchronousStartup();
-                } catch (ProcessInitException e) {
-                    Assert.fail("Failed to load browser");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
+                        .handleSynchronousStartup();
+            } catch (ProcessInitException e) {
+                Assert.fail("Failed to load browser");
             }
         });
     }
 
-    private void runToolbarSideSwipeTestOnCurrentModel(ScrollDirection direction, int finalIndex) {
+    private void runToolbarSideSwipeTestOnCurrentModel(
+            @ScrollDirection int direction, int finalIndex) {
         final TabModel model = mTabModelSelector.getCurrentModel();
         final int finalId = model.getTabAt(finalIndex).getId();
 
@@ -531,14 +533,14 @@ public class LayoutManagerTest implements MockTabModelDelegate {
                 mManager.getActiveLayout() instanceof StaticLayout);
     }
 
-    private void performToolbarSideSwipe(ScrollDirection direction) {
+    private void performToolbarSideSwipe(@ScrollDirection int direction) {
         Assert.assertTrue("Unexpected direction for side swipe " + direction,
                 direction == ScrollDirection.LEFT || direction == ScrollDirection.RIGHT);
 
         final Layout layout = mManager.getActiveLayout();
-        final EdgeSwipeHandler eventHandler = mManager.getTopSwipeHandler();
+        final EdgeSwipeHandler eventHandler = mManager.getToolbarSwipeHandler();
 
-        Assert.assertNotNull("LayoutManager#getTopSwipeHandler() returned null", eventHandler);
+        Assert.assertNotNull("LayoutManager#getToolbarSwipeHandler() returned null", eventHandler);
         Assert.assertNotNull("LayoutManager#getActiveLayout() returned null", layout);
 
         final float layoutWidth = layout.getWidth();
@@ -560,6 +562,6 @@ public class LayoutManagerTest implements MockTabModelDelegate {
 
     @Override
     public Tab createTab(int id, boolean incognito) {
-        return new Tab(id, incognito, null);
+        return new TabBuilder().setId(id).setIncognito(incognito).build();
     }
 }

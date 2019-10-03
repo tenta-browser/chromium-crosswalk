@@ -6,7 +6,9 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -14,17 +16,17 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/apps/app_info_dialog.h"
-#include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -32,9 +34,9 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
@@ -49,10 +51,11 @@
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/native_theme/native_theme.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/strings/grit/ash_strings.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chromeos/strings/grit/chromeos_strings.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -108,13 +111,13 @@ std::string GetNewTabBackgroundCSS(const ui::ThemeProvider& theme_provider,
   if (alignment & ThemeProperties::ALIGN_TOP) {
     // The bar is detached, so we must offset the background by the bar size
     // if it's a top-aligned bar.
-    int offset = chrome::kNTPBookmarkBarHeight;
+    int offset = GetLayoutConstant(BOOKMARK_BAR_NTP_HEIGHT);
 
     if (alignment & ThemeProperties::ALIGN_LEFT)
-      return "left " + base::IntToString(-offset) + "px";
+      return "left " + base::NumberToString(-offset) + "px";
     else if (alignment & ThemeProperties::ALIGN_RIGHT)
-      return "right " + base::IntToString(-offset) + "px";
-    return "center " + base::IntToString(-offset) + "px";
+      return "right " + base::NumberToString(-offset) + "px";
+    return "center " + base::NumberToString(-offset) + "px";
   }
 
   return ThemeProperties::AlignmentToString(alignment);
@@ -132,7 +135,9 @@ std::string GetNewTabBackgroundTilingCSS(
 }  // namespace
 
 NTPResourceCache::NTPResourceCache(Profile* profile)
-    : profile_(profile), is_swipe_tracking_from_scroll_events_enabled_(false) {
+    : profile_(profile),
+      is_swipe_tracking_from_scroll_events_enabled_(false),
+      theme_observer_(this) {
   registrar_.Add(this, chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(
                      ThemeServiceFactory::GetForProfile(profile)));
@@ -145,9 +150,9 @@ NTPResourceCache::NTPResourceCache(Profile* profile)
   profile_pref_change_registrar_.Add(bookmarks::prefs::kShowBookmarkBar,
                                      callback);
   profile_pref_change_registrar_.Add(prefs::kNtpShownPage, callback);
-  profile_pref_change_registrar_.Add(prefs::kSignInPromoShowNTPBubble,
-                                     callback);
   profile_pref_change_registrar_.Add(prefs::kHideWebStoreIcon, callback);
+
+  theme_observer_.Add(ui::NativeTheme::GetInstanceForNativeUi());
 }
 
 NTPResourceCache::~NTPResourceCache() {}
@@ -228,6 +233,11 @@ void NTPResourceCache::Observe(int type,
   Invalidate();
 }
 
+void NTPResourceCache::OnNativeThemeUpdated(ui::NativeTheme* updated_theme) {
+  DCHECK_EQ(updated_theme, ui::NativeTheme::GetInstanceForNativeUi());
+  Invalidate();
+}
+
 void NTPResourceCache::OnPreferenceChanged() {
   // A change occurred to one of the preferences we care about, so flush the
   // cache.
@@ -242,6 +252,7 @@ void NTPResourceCache::Invalidate() {
   new_tab_html_ = nullptr;
   new_tab_incognito_css_ = nullptr;
   new_tab_css_ = nullptr;
+  new_tab_guest_html_ = nullptr;
 }
 
 void NTPResourceCache::CreateNewTabIncognitoHTML() {
@@ -292,7 +303,7 @@ void NTPResourceCache::CreateNewTabGuestHTML() {
   int guest_tab_ids = IDR_GUEST_TAB_HTML;
   int guest_tab_description_ids = IDS_NEW_TAB_GUEST_SESSION_DESCRIPTION;
   int guest_tab_heading_ids = IDS_NEW_TAB_GUEST_SESSION_HEADING;
-  int guest_tab_link_ids = IDS_NEW_TAB_GUEST_SESSION_LEARN_MORE_LINK;
+  int guest_tab_link_ids = IDS_LEARN_MORE;
 
 #if defined(OS_CHROMEOS)
   guest_tab_ids = IDR_GUEST_SESSION_TAB_HTML;
@@ -351,6 +362,16 @@ void NTPResourceCache::CreateNewTabGuestHTML() {
   new_tab_guest_html_ = base::RefCountedString::TakeString(&full_html);
 }
 
+// TODO(alancutter): Consider moving this utility function up somewhere where it
+// can be shared with bookmarks_ui.cc.
+// Ampersands are used by menus to determine which characters to use as shortcut
+// keys. This functionality is not implemented for NTP.
+static base::string16 GetLocalizedString(int message_id) {
+  base::string16 result = l10n_util::GetStringUTF16(message_id);
+  base::Erase(result, '&');
+  return result;
+}
+
 void NTPResourceCache::CreateNewTabHTML() {
   // TODO(estade): these strings should be defined in their relevant handlers
   // (in GetLocalizedValues) and should have more legible names.
@@ -361,57 +382,65 @@ void NTPResourceCache::CreateNewTabHTML() {
   load_time_data.SetString(
       "bookmarkbarattached",
       prefs->GetBoolean(bookmarks::prefs::kShowBookmarkBar) ? "true" : "false");
-  load_time_data.SetString("title",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
+  load_time_data.SetString("title", GetLocalizedString(IDS_NEW_TAB_TITLE));
   load_time_data.SetString("webStoreTitle",
-      l10n_util::GetStringUTF16(IDS_EXTENSION_WEB_STORE_TITLE));
-  load_time_data.SetString("webStoreTitleShort",
-      l10n_util::GetStringUTF16(IDS_EXTENSION_WEB_STORE_TITLE_SHORT));
+                           GetLocalizedString(IDS_EXTENSION_WEB_STORE_TITLE));
+  load_time_data.SetString(
+      "webStoreTitleShort",
+      GetLocalizedString(IDS_EXTENSION_WEB_STORE_TITLE_SHORT));
   load_time_data.SetString("attributionintro",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_ATTRIBUTION_INTRO));
+                           GetLocalizedString(IDS_NEW_TAB_ATTRIBUTION_INTRO));
   load_time_data.SetString("appuninstall",
-      l10n_util::GetStringUTF16(IDS_EXTENSIONS_UNINSTALL));
+                           GetLocalizedString(IDS_EXTENSIONS_UNINSTALL));
   load_time_data.SetString("appoptions",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_APP_OPTIONS));
+                           GetLocalizedString(IDS_NEW_TAB_APP_OPTIONS));
   load_time_data.SetString("appdetails",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_APP_DETAILS));
+                           GetLocalizedString(IDS_NEW_TAB_APP_DETAILS));
   load_time_data.SetString("appinfodialog",
-      l10n_util::GetStringUTF16(IDS_APP_CONTEXT_MENU_SHOW_INFO));
+                           GetLocalizedString(IDS_APP_CONTEXT_MENU_SHOW_INFO));
   load_time_data.SetString("appcreateshortcut",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_APP_CREATE_SHORTCUT));
+                           GetLocalizedString(IDS_NEW_TAB_APP_CREATE_SHORTCUT));
+  load_time_data.SetString("appinstalllocally",
+                           GetLocalizedString(IDS_NEW_TAB_APP_INSTALL_LOCALLY));
   load_time_data.SetString("appDefaultPageName",
-      l10n_util::GetStringUTF16(IDS_APP_DEFAULT_PAGE_NAME));
-  load_time_data.SetString("applaunchtypepinned",
-      l10n_util::GetStringUTF16(IDS_APP_CONTEXT_MENU_OPEN_PINNED));
-  load_time_data.SetString("applaunchtyperegular",
-      l10n_util::GetStringUTF16(IDS_APP_CONTEXT_MENU_OPEN_REGULAR));
-  load_time_data.SetString("applaunchtypewindow",
-      l10n_util::GetStringUTF16(IDS_APP_CONTEXT_MENU_OPEN_WINDOW));
-  load_time_data.SetString("applaunchtypefullscreen",
-      l10n_util::GetStringUTF16(IDS_APP_CONTEXT_MENU_OPEN_FULLSCREEN));
-  load_time_data.SetString("syncpromotext",
-      l10n_util::GetStringUTF16(IDS_SYNC_START_SYNC_BUTTON_LABEL));
+                           GetLocalizedString(IDS_APP_DEFAULT_PAGE_NAME));
+  load_time_data.SetString(
+      "applaunchtypepinned",
+      GetLocalizedString(IDS_APP_CONTEXT_MENU_OPEN_PINNED));
+  load_time_data.SetString(
+      "applaunchtyperegular",
+      GetLocalizedString(IDS_APP_CONTEXT_MENU_OPEN_REGULAR));
+  load_time_data.SetString(
+      "applaunchtypewindow",
+      GetLocalizedString(IDS_APP_CONTEXT_MENU_OPEN_WINDOW));
+  load_time_data.SetString(
+      "applaunchtypefullscreen",
+      GetLocalizedString(IDS_APP_CONTEXT_MENU_OPEN_FULLSCREEN));
+  load_time_data.SetString(
+      "syncpromotext", GetLocalizedString(IDS_SYNC_START_SYNC_BUTTON_LABEL));
   load_time_data.SetString("syncLinkText",
-      l10n_util::GetStringUTF16(IDS_SYNC_ADVANCED_OPTIONS));
+                           GetLocalizedString(IDS_SYNC_ADVANCED_OPTIONS));
   load_time_data.SetBoolean("shouldShowSyncLogin",
                             AppLauncherLoginHandler::ShouldShow(profile_));
-  load_time_data.SetString("learnMore",
-      l10n_util::GetStringUTF16(IDS_LEARN_MORE));
+  load_time_data.SetString("learnMore", GetLocalizedString(IDS_LEARN_MORE));
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   load_time_data.SetString(
       "webStoreLink", google_util::AppendGoogleLocaleParam(
                           extension_urls::GetWebstoreLaunchURL(), app_locale)
                           .spec());
-  load_time_data.SetString("appInstallHintText",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_APP_INSTALL_HINT_LABEL));
-  load_time_data.SetString("learn_more",
-      l10n_util::GetStringUTF16(IDS_LEARN_MORE));
-  load_time_data.SetString("tile_grid_screenreader_accessible_description",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_TILE_GRID_ACCESSIBLE_DESCRIPTION));
-  load_time_data.SetString("page_switcher_change_title",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_PAGE_SWITCHER_CHANGE_TITLE));
-  load_time_data.SetString("page_switcher_same_title",
-      l10n_util::GetStringUTF16(IDS_NEW_TAB_PAGE_SWITCHER_SAME_TITLE));
+  load_time_data.SetString(
+      "appInstallHintText",
+      GetLocalizedString(IDS_NEW_TAB_APP_INSTALL_HINT_LABEL));
+  load_time_data.SetString("learn_more", GetLocalizedString(IDS_LEARN_MORE));
+  load_time_data.SetString(
+      "tile_grid_screenreader_accessible_description",
+      GetLocalizedString(IDS_NEW_TAB_TILE_GRID_ACCESSIBLE_DESCRIPTION));
+  load_time_data.SetString(
+      "page_switcher_change_title",
+      GetLocalizedString(IDS_NEW_TAB_PAGE_SWITCHER_CHANGE_TITLE));
+  load_time_data.SetString(
+      "page_switcher_same_title",
+      GetLocalizedString(IDS_NEW_TAB_PAGE_SWITCHER_SAME_TITLE));
   // On Mac OS X 10.7+, horizontal scrolling can be treated as a back or
   // forward gesture. Pass through a flag that indicates whether or not that
   // feature is enabled.
@@ -421,17 +450,10 @@ void NTPResourceCache::CreateNewTabHTML() {
   load_time_data.SetBoolean("showWebStoreIcon",
                             !prefs->GetBoolean(prefs::kHideWebStoreIcon));
 
-  load_time_data.SetBoolean("enableNewBookmarkApps",
-                            extensions::util::IsNewBookmarkAppsEnabled());
-
-  load_time_data.SetBoolean("canHostedAppsOpenInWindows",
-                            extensions::util::CanHostedAppsOpenInWindows());
-
   load_time_data.SetBoolean("canShowAppInfoDialog",
                             CanShowAppInfoDialog());
 
   AppLauncherHandler::GetLocalizedValues(profile_, &load_time_data);
-  AppLauncherLoginHandler::GetLocalizedValues(profile_, &load_time_data);
 
   webui::SetLoadTimeDataDefaults(app_locale, &load_time_data);
 
@@ -441,7 +463,7 @@ void NTPResourceCache::CreateNewTabHTML() {
 
   load_time_data.SetBoolean(
       "isUserSignedIn",
-      SigninManagerFactory::GetForProfile(profile_)->IsAuthenticated());
+      IdentityManagerFactory::GetForProfile(profile_)->HasPrimaryAccount());
 
   // Load the new tab page appropriate for this build.
   base::StringPiece new_tab_html(
@@ -453,17 +475,8 @@ void NTPResourceCache::CreateNewTabHTML() {
 }
 
 void NTPResourceCache::CreateNewTabIncognitoCSS() {
-  // TODO(estade): this returns a subtly incorrect theme provider because
-  // |profile_| is actually not the incognito profile. See crbug.com/568388
-  const ui::ThemeProvider& tp =
-      ThemeService::GetThemeProviderForProfile(profile_);
-
-  // Get our theme colors
-  SkColor color_background =
-      tp.HasCustomImage(IDR_THEME_NTP_BACKGROUND)
-          ? GetThemeColor(tp, ThemeProperties::COLOR_NTP_BACKGROUND)
-          : ThemeProperties::GetDefaultColor(
-                ThemeProperties::COLOR_NTP_BACKGROUND, true /* incognito */);
+  const ui::ThemeProvider& tp = ThemeService::GetThemeProviderForProfile(
+      profile_->GetOffTheRecordProfile());
 
   // Generate the replacements.
   ui::TemplateReplacements substitutions;
@@ -473,8 +486,8 @@ void NTPResourceCache::CreateNewTabIncognitoCSS() {
       profile_->GetPrefs()->GetString(prefs::kCurrentThemeID);
 
   // Colors.
-  substitutions["colorBackground"] =
-      color_utils::SkColorToRgbaString(color_background);
+  substitutions["colorBackground"] = color_utils::SkColorToRgbaString(
+      GetThemeColor(tp, ThemeProperties::COLOR_NTP_BACKGROUND));
   substitutions["backgroundBarDetached"] = GetNewTabBackgroundCSS(tp, false);
   substitutions["backgroundBarAttached"] = GetNewTabBackgroundCSS(tp, true);
   substitutions["backgroundTiling"] = GetNewTabBackgroundTilingCSS(tp);
@@ -495,7 +508,7 @@ void NTPResourceCache::CreateNewTabCSS() {
   const ui::ThemeProvider& tp =
       ThemeService::GetThemeProviderForProfile(profile_);
 
-  // Get our theme colors
+  // Get our theme colors.
   SkColor color_background =
       GetThemeColor(tp, ThemeProperties::COLOR_NTP_BACKGROUND);
   SkColor color_text = GetThemeColor(tp, ThemeProperties::COLOR_NTP_TEXT);
@@ -528,6 +541,8 @@ void NTPResourceCache::CreateNewTabCSS() {
   // Colors.
   substitutions["colorBackground"] =
       color_utils::SkColorToRgbaString(color_background);
+  substitutions["colorLink"] = color_utils::SkColorToRgbString(
+      GetThemeColor(tp, ThemeProperties::COLOR_NTP_LINK));
   substitutions["backgroundBarDetached"] = GetNewTabBackgroundCSS(tp, false);
   substitutions["backgroundBarAttached"] = GetNewTabBackgroundCSS(tp, true);
   substitutions["backgroundTiling"] = GetNewTabBackgroundTilingCSS(tp);

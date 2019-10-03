@@ -5,8 +5,8 @@
 #include "extensions/browser/extension_file_task_runner.h"
 
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/lazy_task_runner.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/lazy_task_runner.h"
+#include "base/task/task_traits.h"
 
 namespace extensions {
 
@@ -20,7 +20,8 @@ namespace {
 // task posted to a named thread (like the FILE thread) would receive.
 base::LazySequencedTaskRunner g_task_runner =
     LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
-        base::TaskTraits(base::MayBlock(),
+        base::TaskTraits(base::ThreadPool(),
+                         base::MayBlock(),
                          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
                          base::TaskPriority::USER_VISIBLE));
 

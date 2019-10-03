@@ -4,7 +4,13 @@
 
 #include "ui/views/controls/prefix_selector.h"
 
+#if defined(OS_WIN)
+#include <vector>
+#endif
+
 #include "base/i18n/case_conversion.h"
+#include "base/time/default_tick_clock.h"
+#include "build/build_config.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/range/range.h"
@@ -16,19 +22,24 @@ namespace views {
 
 namespace {
 
-const int64_t kTimeBeforeClearingMS = 1000;
+constexpr int64_t kTimeBeforeClearingMS = 1000;
 
 }  // namespace
 
 PrefixSelector::PrefixSelector(PrefixDelegate* delegate, View* host_view)
-    : prefix_delegate_(delegate), host_view_(host_view) {
-}
+    : prefix_delegate_(delegate),
+      host_view_(host_view),
+      tick_clock_(base::DefaultTickClock::GetInstance()) {}
 
-PrefixSelector::~PrefixSelector() {
-}
+PrefixSelector::~PrefixSelector() = default;
 
 void PrefixSelector::OnViewBlur() {
   ClearText();
+}
+
+bool PrefixSelector::ShouldContinueSelection() const {
+  const base::TimeTicks now(tick_clock_->NowTicks());
+  return ((now - time_of_last_key_).InMilliseconds() < kTimeBeforeClearingMS);
 }
 
 void PrefixSelector::SetCompositionText(
@@ -89,6 +100,12 @@ bool PrefixSelector::HasCompositionText() const {
   return false;
 }
 
+ui::TextInputClient::FocusReason PrefixSelector::GetFocusReason() const {
+  // TODO(https://crbug.com/824604): Implement this correctly.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return ui::TextInputClient::FOCUS_REASON_OTHER;
+}
+
 bool PrefixSelector::GetTextRange(gfx::Range* range) const {
   *range = gfx::Range();
   return false;
@@ -99,12 +116,12 @@ bool PrefixSelector::GetCompositionTextRange(gfx::Range* range) const {
   return false;
 }
 
-bool PrefixSelector::GetSelectionRange(gfx::Range* range) const {
+bool PrefixSelector::GetEditableSelectionRange(gfx::Range* range) const {
   *range = gfx::Range();
   return false;
 }
 
-bool PrefixSelector::SetSelectionRange(const gfx::Range& range) {
+bool PrefixSelector::SetEditableSelectionRange(const gfx::Range& range) {
   return false;
 }
 
@@ -139,11 +156,34 @@ bool PrefixSelector::IsTextEditCommandEnabled(
 void PrefixSelector::SetTextEditCommandForNextKeyEvent(
     ui::TextEditCommand command) {}
 
-const std::string& PrefixSelector::GetClientSourceInfo() const {
-  // TODO(yhanada): Implement this method.
+ukm::SourceId PrefixSelector::GetClientSourceForMetrics() const {
+  // TODO(shend): Implement this method.
   NOTIMPLEMENTED_LOG_ONCE();
-  return base::EmptyString();
+  return ukm::SourceId();
 }
+
+bool PrefixSelector::ShouldDoLearning() {
+  // TODO(https://crbug.com/311180): Implement this method.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return false;
+}
+
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+bool PrefixSelector::SetCompositionFromExistingText(
+    const gfx::Range& range,
+    const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) {
+  // TODO(https://crbug.com/952757): Implement this method.
+  NOTIMPLEMENTED_LOG_ONCE();
+  return false;
+}
+#endif
+
+#if defined(OS_WIN)
+void PrefixSelector::SetActiveCompositionForAccessibility(
+    const gfx::Range& range,
+    const base::string16& active_composition_text,
+    bool is_composition_committed) {}
+#endif
 
 void PrefixSelector::OnTextInput(const base::string16& text) {
   // Small hack to filter out 'tab' and 'enter' input, as the expectation is
@@ -162,15 +202,14 @@ void PrefixSelector::OnTextInput(const base::string16& text) {
   // while search after the current row, otherwise search starting from the
   // current row.
   int row = std::max(0, prefix_delegate_->GetSelectedRow());
-  const base::TimeTicks now(base::TimeTicks::Now());
-  if ((now - time_of_last_key_).InMilliseconds() < kTimeBeforeClearingMS) {
+  if (ShouldContinueSelection()) {
     current_text_ += text;
   } else {
     current_text_ = text;
     if (prefix_delegate_->GetSelectedRow() >= 0)
       row = (row + 1) % row_count;
   }
-  time_of_last_key_ = now;
+  time_of_last_key_ = tick_clock_->NowTicks();
 
   const int start_row = row;
   const base::string16 lower_text(base::i18n::ToLower(current_text_));

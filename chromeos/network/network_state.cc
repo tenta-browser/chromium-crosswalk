@@ -14,6 +14,7 @@
 #include "base/values.h"
 #include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_type_pattern.h"
+#include "chromeos/network/network_ui_data.h"
 #include "chromeos/network/network_util.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/shill_property_util.h"
@@ -23,39 +24,47 @@
 
 namespace {
 
-const char kErrorUnknown[] = "Unknown";
-
 const char kDefaultCellularNetworkPath[] = "/cellular";
 
-bool IsCaptivePortalState(const base::DictionaryValue& properties, bool log) {
-  std::string state;
-  properties.GetStringWithoutPathExpansion(shill::kStateProperty, &state);
-  if (state != shill::kStatePortal)
+// TODO(tbarzic): Add payment portal method values to shill/dbus-constants.
+constexpr char kPaymentPortalMethodPost[] = "POST";
+
+std::string GetStringFromDictionary(const base::Value* dict, const char* key) {
+  const base::Value* v = dict ? dict->FindKey(key) : nullptr;
+  return v ? v->GetString() : std::string();
+}
+
+bool IsCaptivePortalState(const base::Value& properties, bool log) {
+  std::string state =
+      GetStringFromDictionary(&properties, shill::kStateProperty);
+  if (!chromeos::NetworkState::StateIsPortalled(state))
     return false;
-  std::string portal_detection_phase, portal_detection_status;
-  if (!properties.GetStringWithoutPathExpansion(
-          shill::kPortalDetectionFailedPhaseProperty,
-          &portal_detection_phase) ||
-      !properties.GetStringWithoutPathExpansion(
-          shill::kPortalDetectionFailedStatusProperty,
-          &portal_detection_status)) {
+  if (!properties.FindKey(shill::kPortalDetectionFailedPhaseProperty) ||
+      !properties.FindKey(shill::kPortalDetectionFailedStatusProperty)) {
     // If Shill (or a stub) has not set PortalDetectionFailedStatus
     // or PortalDetectionFailedPhase, assume we are in captive portal state.
     return true;
   }
+
+  std::string portal_detection_phase = GetStringFromDictionary(
+      &properties, shill::kPortalDetectionFailedPhaseProperty);
+  std::string portal_detection_status = GetStringFromDictionary(
+      &properties, shill::kPortalDetectionFailedStatusProperty);
 
   // Shill reports the phase in which it determined that the device is behind a
   // captive portal. We only want to rely only on incorrect content being
   // returned and ignore other reasons.
   bool is_captive_portal =
       portal_detection_phase == shill::kPortalDetectionPhaseContent &&
-      portal_detection_status == shill::kPortalDetectionStatusFailure;
+      (portal_detection_status == shill::kPortalDetectionStatusSuccess ||
+       portal_detection_status == shill::kPortalDetectionStatusFailure ||
+       portal_detection_status == shill::kPortalDetectionStatusRedirect);
 
   if (log) {
-    std::string name;
-    properties.GetStringWithoutPathExpansion(shill::kNameProperty, &name);
+    std::string name =
+        GetStringFromDictionary(&properties, shill::kNameProperty);
     if (name.empty())
-      properties.GetStringWithoutPathExpansion(shill::kSSIDProperty, &name);
+      name = GetStringFromDictionary(&properties, shill::kSSIDProperty);
     if (!is_captive_portal) {
       NET_LOG(EVENT) << "State is 'portal' but not in captive portal state:"
                      << " name=" << name << " phase=" << portal_detection_phase
@@ -66,12 +75,6 @@ bool IsCaptivePortalState(const base::DictionaryValue& properties, bool log) {
   }
 
   return is_captive_portal;
-}
-
-std::string GetStringFromDictionary(const base::DictionaryValue& dict,
-                                    const char* key) {
-  const base::Value* v = dict.FindKey(key);
-  return v ? v->GetString() : std::string();
 }
 
 }  // namespace
@@ -91,25 +94,21 @@ bool NetworkState::PropertyChanged(const std::string& key,
   if (key == shill::kSignalStrengthProperty) {
     return GetIntegerValue(key, value, &signal_strength_);
   } else if (key == shill::kStateProperty) {
-    std::string saved_state = connection_state_;
-    if (GetStringValue(key, value, &connection_state_)) {
-      if (connection_state_ != saved_state)
-        last_connection_state_ = saved_state;
-      return true;
-    } else {
+    std::string connection_state;
+    if (!GetStringValue(key, value, &connection_state))
       return false;
-    }
+    SetConnectionState(connection_state);
+    return true;
   } else if (key == shill::kVisibleProperty) {
     return GetBooleanValue(key, value, &visible_);
   } else if (key == shill::kConnectableProperty) {
     return GetBooleanValue(key, value, &connectable_);
   } else if (key == shill::kErrorProperty) {
-    if (!GetStringValue(key, value, &error_))
+    std::string error;
+    if (!GetStringValue(key, value, &error))
       return false;
-    if (ErrorIsValid(error_))
-      last_error_ = error_;
-    else
-      error_.clear();
+    if (ErrorIsValid(error))
+      last_error_ = error;
     return true;
   } else if (key == shill::kWifiFrequency) {
     return GetIntegerValue(key, value, &frequency_);
@@ -120,11 +119,24 @@ bool NetworkState::PropertyChanged(const std::string& key,
   } else if (key == shill::kRoamingStateProperty) {
     return GetStringValue(key, value, &roaming_);
   } else if (key == shill::kPaymentPortalProperty) {
-    const base::DictionaryValue* olp;
-    if (!value.GetAsDictionary(&olp))
+    if (!value.is_dict())
       return false;
-    return olp->GetStringWithoutPathExpansion(shill::kPaymentPortalURL,
-                                              &payment_url_);
+    const base::Value* portal_url_value = value.FindKeyOfType(
+        shill::kPaymentPortalURL, base::Value::Type::STRING);
+    if (!portal_url_value)
+      return false;
+    payment_url_ = portal_url_value->GetString();
+    // If payment portal uses post method, set up post data.
+    const base::Value* portal_method_value = value.FindKeyOfType(
+        shill::kPaymentPortalMethod, base::Value::Type::STRING);
+    const base::Value* portal_post_data_value = value.FindKeyOfType(
+        shill::kPaymentPortalPostData, base::Value::Type::STRING);
+    if (portal_method_value &&
+        portal_method_value->GetString() == kPaymentPortalMethodPost &&
+        portal_post_data_value) {
+      payment_post_data_ = portal_post_data_value->GetString();
+    }
+    return true;
   } else if (key == shill::kSecurityClassProperty) {
     return GetStringValue(key, value, &security_class_);
   } else if (key == shill::kEapMethodProperty) {
@@ -158,58 +170,67 @@ bool NetworkState::PropertyChanged(const std::string& key,
       return false;
     }
 
-    proxy_config_.Clear();
+    proxy_config_.reset();
     if (proxy_config_str.empty())
       return true;
 
-    std::unique_ptr<base::DictionaryValue> proxy_config_dict(
+    std::unique_ptr<base::Value> proxy_config_dict(
         onc::ReadDictionaryFromJson(proxy_config_str));
     if (proxy_config_dict) {
-      // Warning: The DictionaryValue returned from
-      // ReadDictionaryFromJson/JSONParser is an optimized derived class that
-      // doesn't allow releasing ownership of nested values. A Swap in the wrong
-      // order leads to memory access errors.
-      proxy_config_.MergeDictionary(proxy_config_dict.get());
+      proxy_config_ = std::move(proxy_config_dict);
     } else {
       NET_LOG(ERROR) << "Failed to parse " << path() << "." << key;
     }
     return true;
   } else if (key == shill::kProviderProperty) {
-    std::string vpn_provider_type;
-    const base::DictionaryValue* dict;
-    if (!value.GetAsDictionary(&dict) ||
-        !dict->GetStringWithoutPathExpansion(shill::kTypeProperty,
-                                             &vpn_provider_type)) {
+    const base::Value* type_value =
+        value.is_dict() ? value.FindKeyOfType(shill::kTypeProperty,
+                                              base::Value::Type::STRING)
+                        : nullptr;
+    if (!type_value) {
       NET_LOG(ERROR) << "Failed to parse " << path() << "." << key;
       return false;
     }
-
+    std::string vpn_provider_type = type_value->GetString();
+    std::string vpn_provider_id;
     if (vpn_provider_type == shill::kProviderThirdPartyVpn ||
         vpn_provider_type == shill::kProviderArcVpn) {
       // If the network uses a third-party or Arc VPN provider,
       // |shill::kHostProperty| contains the extension ID or Arc package name.
-      if (!dict->GetStringWithoutPathExpansion(shill::kHostProperty,
-                                               &vpn_provider_id_)) {
+      const base::Value* host_value =
+          value.FindKeyOfType(shill::kHostProperty, base::Value::Type::STRING);
+      if (!host_value) {
         NET_LOG(ERROR) << "Failed to parse " << path() << "." << key;
         return false;
       }
-    } else {
-      vpn_provider_id_.clear();
+      vpn_provider_id = host_value->GetString();
     }
-
-    vpn_provider_type_ = vpn_provider_type;
+    SetVpnProvider(vpn_provider_id, vpn_provider_type);
     return true;
   } else if (key == shill::kTetheringProperty) {
     return GetStringValue(key, value, &tethering_state_);
+  } else if (key == shill::kUIDataProperty) {
+    std::unique_ptr<NetworkUIData> ui_data =
+        chromeos::shill_property_util::GetUIDataFromValue(value);
+    if (!ui_data)
+      return false;
+    onc_source_ = ui_data->onc_source();
+    return true;
+  } else if (key == shill::kProbeUrlProperty) {
+    std::string probe_url_string;
+    if (!GetStringValue(key, value, &probe_url_string))
+      return false;
+    probe_url_ = GURL(probe_url_string);
+    return true;
   }
   return false;
 }
 
-bool NetworkState::InitialPropertiesReceived(
-    const base::DictionaryValue& properties) {
-  NET_LOG(EVENT) << "InitialPropertiesReceived: " << path() << ": " << name()
-                 << " State: " << connection_state_ << " Visible: " << visible_;
-  if (!properties.HasKey(shill::kTypeProperty)) {
+bool NetworkState::InitialPropertiesReceived(const base::Value& properties) {
+  NET_LOG(EVENT) << "InitialPropertiesReceived: " << name() << " (" << path()
+                 << ") State: " << connection_state_
+                 << " Visible: " << visible_;
+  if (!properties.FindKey(shill::kTypeProperty)) {
     NET_LOG(ERROR) << "NetworkState has no type: "
                    << shill_property_util::GetNetworkIdFromProperties(
                           properties);
@@ -231,7 +252,7 @@ bool NetworkState::InitialPropertiesReceived(
   return UpdateName(properties);
 }
 
-void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
+void NetworkState::GetStateProperties(base::Value* dictionary) const {
   ManagedState::GetStateProperties(dictionary);
 
   // Properties shared by all types.
@@ -247,27 +268,25 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
     dictionary->SetKey(shill::kDeviceProperty, base::Value(device_path()));
 
   // VPN properties.
-  if (NetworkTypePattern::VPN().MatchesType(type())) {
+  if (NetworkTypePattern::VPN().MatchesType(type()) && vpn_provider()) {
     // Shill sends VPN provider properties in a nested dictionary. |dictionary|
     // must replicate that nested structure.
-    std::unique_ptr<base::DictionaryValue> provider_property(
-        new base::DictionaryValue);
-    provider_property->SetKey(shill::kTypeProperty,
-                              base::Value(vpn_provider_type_));
-    if (vpn_provider_type_ == shill::kProviderThirdPartyVpn ||
-        vpn_provider_type_ == shill::kProviderArcVpn) {
-      provider_property->SetKey(shill::kHostProperty,
-                                base::Value(vpn_provider_id_));
+    std::string provider_type = vpn_provider()->type;
+    base::Value provider_property(base::Value::Type::DICTIONARY);
+    provider_property.SetKey(shill::kTypeProperty, base::Value(provider_type));
+    if (provider_type == shill::kProviderThirdPartyVpn ||
+        provider_type == shill::kProviderArcVpn) {
+      provider_property.SetKey(shill::kHostProperty,
+                               base::Value(vpn_provider()->id));
     }
-    dictionary->SetWithoutPathExpansion(shill::kProviderProperty,
-                                        std::move(provider_property));
+    dictionary->SetKey(shill::kProviderProperty, std::move(provider_property));
   }
 
   // Tether properties
   if (NetworkTypePattern::Tether().MatchesType(type())) {
     dictionary->SetKey(kTetherBatteryPercentage,
                        base::Value(battery_percentage()));
-    dictionary->SetKey(kTetherCarrier, base::Value(carrier()));
+    dictionary->SetKey(kTetherCarrier, base::Value(tether_carrier()));
     dictionary->SetKey(kTetherHasConnectedToHost,
                        base::Value(tether_has_connected_to_host()));
     dictionary->SetKey(kTetherSignalStrength, base::Value(signal_strength()));
@@ -293,6 +312,8 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
     dictionary->SetKey(shill::kEapMethodProperty, base::Value(eap_method()));
     dictionary->SetKey(shill::kWifiFrequency, base::Value(frequency_));
     dictionary->SetKey(shill::kWifiHexSsid, base::Value(GetHexSsid()));
+    dictionary->SetKey(shill::kTetheringProperty,
+                       base::Value(tethering_state_));
   }
 
   // Mobile properties
@@ -301,29 +322,31 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
                        base::Value(network_technology()));
     dictionary->SetKey(shill::kActivationStateProperty,
                        base::Value(activation_state()));
-    dictionary->SetKey(shill::kRoamingStateProperty, base::Value(roaming()));
+    dictionary->SetKey(shill::kRoamingStateProperty, base::Value(roaming_));
     dictionary->SetKey(shill::kOutOfCreditsProperty,
                        base::Value(cellular_out_of_credits()));
   }
 }
 
-void NetworkState::IPConfigPropertiesChanged(
-    const base::DictionaryValue& properties) {
-  ipv4_config_.Clear();
-  ipv4_config_.MergeDictionary(&properties);
+void NetworkState::IPConfigPropertiesChanged(const base::Value& properties) {
+  if (properties.DictEmpty()) {
+    ipv4_config_.reset();
+    return;
+  }
+  ipv4_config_ = std::make_unique<base::Value>(properties.Clone());
 }
 
 std::string NetworkState::GetIpAddress() const {
-  return GetStringFromDictionary(ipv4_config_, shill::kAddressProperty);
+  return GetStringFromDictionary(ipv4_config_.get(), shill::kAddressProperty);
 }
 
 std::string NetworkState::GetGateway() const {
-  return GetStringFromDictionary(ipv4_config_, shill::kGatewayProperty);
+  return GetStringFromDictionary(ipv4_config_.get(), shill::kGatewayProperty);
 }
 
 GURL NetworkState::GetWebProxyAutoDiscoveryUrl() const {
   std::string url = GetStringFromDictionary(
-      ipv4_config_, shill::kWebProxyAutoDiscoveryUrlProperty);
+      ipv4_config_.get(), shill::kWebProxyAutoDiscoveryUrlProperty);
   if (url.empty())
     return GURL();
   GURL gurl(url);
@@ -335,26 +358,99 @@ GURL NetworkState::GetWebProxyAutoDiscoveryUrl() const {
   return gurl;
 }
 
+void NetworkState::SetCaptivePortalProvider(const std::string& id,
+                                            const std::string& name) {
+  if (id.empty()) {
+    captive_portal_provider_ = nullptr;
+    return;
+  }
+  if (!captive_portal_provider_)
+    captive_portal_provider_ = std::make_unique<CaptivePortalProviderInfo>();
+  captive_portal_provider_->id = id;
+  captive_portal_provider_->name = name;
+}
+
+std::string NetworkState::GetVpnProviderType() const {
+  return vpn_provider_ ? vpn_provider_->type : std::string();
+}
+
 bool NetworkState::RequiresActivation() const {
-  return (type() == shill::kTypeCellular &&
-          activation_state() != shill::kActivationStateActivated &&
-          activation_state() != shill::kActivationStateUnknown);
+  return type() == shill::kTypeCellular &&
+         activation_state() != shill::kActivationStateActivated &&
+         activation_state() != shill::kActivationStateUnknown;
+}
+
+bool NetworkState::SecurityRequiresPassphraseOnly() const {
+  return type() == shill::kTypeWifi &&
+         (security_class() == shill::kSecurityPsk ||
+          security_class() == shill::kSecurityWep);
+}
+
+const std::string& NetworkState::GetError() const {
+  return last_error_;
+}
+
+void NetworkState::ClearError() {
+  last_error_.clear();
 }
 
 std::string NetworkState::connection_state() const {
   if (!visible())
-    return shill::kStateDisconnect;
+    return shill::kStateIdle;
+  DCHECK(connection_state_ == shill::kStateIdle ||
+         connection_state_ == shill::kStateAssociation ||
+         connection_state_ == shill::kStateConfiguration ||
+         connection_state_ == shill::kStateReady ||
+         connection_state_ == shill::kStatePortal ||
+         connection_state_ == shill::kStateNoConnectivity ||
+         connection_state_ == shill::kStateRedirectFound ||
+         connection_state_ == shill::kStatePortalSuspected ||
+         // TODO(https://crbug.com/552190): Remove kStateOffline from this list
+         // when occurrences in chromium code have been eliminated.
+         connection_state_ == shill::kStateOffline ||
+         connection_state_ == shill::kStateOnline ||
+         connection_state_ == shill::kStateFailure ||
+         // TODO(https://crbug.com/552190): Remove kStateActivationFailure from
+         // this list when occurrences in chromium code have been eliminated.
+         connection_state_ == shill::kStateActivationFailure ||
+         // TODO(https://crbug.com/552190): Empty should not be a valid state,
+         // but e.g. new tether NetworkStates and unit tests use it currently.
+         connection_state_.empty());
+
   return connection_state_;
 }
 
-void NetworkState::set_connection_state(const std::string connection_state) {
+void NetworkState::SetConnectionState(const std::string& connection_state) {
+  if (connection_state == connection_state_)
+    return;
   last_connection_state_ = connection_state_;
   connection_state_ = connection_state;
+  if (StateIsConnected(connection_state_) ||
+      StateIsConnecting(last_connection_state_)) {
+    // If connected or previously connecting, clear |connect_requested_|.
+    connect_requested_ = false;
+  } else if (StateIsConnected(last_connection_state_) &&
+             StateIsConnecting(connection_state_)) {
+    // If transitioning from a connected state to a connecting state, set
+    // |connect_requested_| so that the UI knows the connecting state is
+    // important (i.e. not a normal auto connect).
+    connect_requested_ = true;
+  }
+}
+
+bool NetworkState::IsManagedByPolicy() const {
+  return onc_source_ == ::onc::ONCSource::ONC_SOURCE_DEVICE_POLICY ||
+         onc_source_ == ::onc::ONCSource::ONC_SOURCE_USER_POLICY;
 }
 
 bool NetworkState::IsUsingMobileData() const {
   return type() == shill::kTypeCellular || type() == chromeos::kTypeTether ||
          tethering_state() == shill::kTetheringConfirmedState;
+}
+
+bool NetworkState::IndicateRoaming() const {
+  return type() == shill::kTypeCellular &&
+         roaming_ == shill::kRoamingStateRoaming && !provider_requires_roaming_;
 }
 
 bool NetworkState::IsDynamicWep() const {
@@ -367,17 +463,23 @@ bool NetworkState::IsConnectedState() const {
 }
 
 bool NetworkState::IsConnectingState() const {
-  return visible() && StateIsConnecting(connection_state_);
+  return visible() &&
+         (connect_requested_ || StateIsConnecting(connection_state_));
 }
 
 bool NetworkState::IsConnectingOrConnected() const {
-  return visible() && (StateIsConnecting(connection_state_) ||
-                       StateIsConnected(connection_state_));
+  return visible() &&
+         (connect_requested_ || StateIsConnecting(connection_state_) ||
+          StateIsConnected(connection_state_));
 }
 
-bool NetworkState::IsReconnecting() const {
-  return visible() && StateIsConnecting(connection_state_) &&
-         StateIsConnected(last_connection_state_);
+bool NetworkState::IsActive() const {
+  return IsConnectingOrConnected() ||
+         activation_state() == shill::kActivationStateActivating;
+}
+
+bool NetworkState::IsOnline() const {
+  return connection_state() == shill::kStateOnline;
 }
 
 bool NetworkState::IsInProfile() const {
@@ -401,12 +503,18 @@ bool NetworkState::IsDefaultCellular() const {
          path() == kDefaultCellularNetworkPath;
 }
 
+bool NetworkState::IsCaptivePortal() const {
+  return is_captive_portal_ || is_chrome_captive_portal_;
+}
+
 std::string NetworkState::GetHexSsid() const {
   return base::HexEncode(raw_ssid().data(), raw_ssid().size());
 }
 
 std::string NetworkState::GetDnsServersAsString() const {
-  const base::Value* listv = ipv4_config_.FindKey(shill::kNameServersProperty);
+  const base::Value* listv =
+      ipv4_config_ ? ipv4_config_->FindKey(shill::kNameServersProperty)
+                   : nullptr;
   if (!listv)
     return std::string();
   std::string result;
@@ -419,7 +527,8 @@ std::string NetworkState::GetDnsServersAsString() const {
 }
 
 std::string NetworkState::GetNetmask() const {
-  const base::Value* v = ipv4_config_.FindKey(shill::kPrefixlenProperty);
+  const base::Value* v =
+      ipv4_config_ ? ipv4_config_->FindKey(shill::kPrefixlenProperty) : nullptr;
   int prefixlen = v ? v->GetInt() : -1;
   return network_util::PrefixLengthToNetmask(prefixlen);
 }
@@ -440,46 +549,72 @@ void NetworkState::SetGuid(const std::string& guid) {
   guid_ = guid;
 }
 
-bool NetworkState::UpdateName(const base::DictionaryValue& properties) {
-  std::string updated_name =
-      shill_property_util::GetNameFromProperties(path(), properties);
-  if (updated_name != name()) {
-    set_name(updated_name);
-    return true;
-  }
-  return false;
+network_config::mojom::ActivationStateType
+NetworkState::GetMojoActivationState() const {
+  using network_config::mojom::ActivationStateType;
+  if (IsDefaultCellular())
+    return ActivationStateType::kNoService;
+  if (activation_state_.empty())
+    return ActivationStateType::kUnknown;
+  if (activation_state_ == shill::kActivationStateActivated)
+    return ActivationStateType::kActivated;
+  if (activation_state_ == shill::kActivationStateActivating)
+    return ActivationStateType::kActivating;
+  if (activation_state_ == shill::kActivationStateNotActivated)
+    return ActivationStateType::kNotActivated;
+  if (activation_state_ == shill::kActivationStatePartiallyActivated)
+    return ActivationStateType::kPartiallyActivated;
+  NET_LOG(ERROR) << "Unexpected shill activation state: " << activation_state_;
+  return ActivationStateType::kUnknown;
 }
 
-std::string NetworkState::GetErrorState() const {
-  if (ErrorIsValid(error()))
-    return error();
-  return last_error();
+network_config::mojom::SecurityType NetworkState::GetMojoSecurity() const {
+  using network_config::mojom::SecurityType;
+  if (security_class_.empty() || security_class_ == shill::kSecurityNone)
+    return SecurityType::kNone;
+  if (IsDynamicWep())
+    return SecurityType::kWep8021x;
+
+  if (security_class_ == shill::kSecurityWep)
+    return SecurityType::kWepPsk;
+  if (security_class_ == shill::kSecurityPsk)
+    return SecurityType::kWpaPsk;
+  if (security_class_ == shill::kSecurity8021x)
+    return SecurityType::kWpaEap;
+  NET_LOG(ERROR) << "Unsupported shill security class: " << security_class_;
+  return SecurityType::kNone;
 }
 
 // static
 bool NetworkState::StateIsConnected(const std::string& connection_state) {
   return (connection_state == shill::kStateReady ||
           connection_state == shill::kStateOnline ||
-          connection_state == shill::kStatePortal);
+          StateIsPortalled(connection_state));
 }
 
 // static
 bool NetworkState::StateIsConnecting(const std::string& connection_state) {
   return (connection_state == shill::kStateAssociation ||
-          connection_state == shill::kStateConfiguration ||
-          connection_state == shill::kStateCarrier);
+          connection_state == shill::kStateConfiguration);
+}
+
+// static
+bool NetworkState::StateIsPortalled(const std::string& connection_state) {
+  return (connection_state == shill::kStatePortal ||
+          connection_state == shill::kStateNoConnectivity ||
+          connection_state == shill::kStateRedirectFound ||
+          connection_state == shill::kStatePortalSuspected);
 }
 
 // static
 bool NetworkState::NetworkStateIsCaptivePortal(
-    const base::DictionaryValue& shill_properties) {
+    const base::Value& shill_properties) {
   return IsCaptivePortalState(shill_properties, false /* log */);
 }
 
 // static
 bool NetworkState::ErrorIsValid(const std::string& error) {
-  // Shill uses "Unknown" to indicate an unset or cleared error state.
-  return !error.empty() && error != kErrorUnknown;
+  return !error.empty() && error != shill::kErrorNoFailure;
 }
 
 // static
@@ -491,6 +626,31 @@ std::unique_ptr<NetworkState> NetworkState::CreateDefaultCellular(
   new_state->set_visible(true);
   new_state->device_path_ = device_path;
   return new_state;
+}
+
+// Private methods.
+
+bool NetworkState::UpdateName(const base::Value& properties) {
+  std::string updated_name =
+      shill_property_util::GetNameFromProperties(path(), properties);
+  if (updated_name != name()) {
+    set_name(updated_name);
+    return true;
+  }
+  return false;
+}
+
+void NetworkState::SetVpnProvider(const std::string& id,
+                                  const std::string& type) {
+  // |type| is required but |id| is only set for ThirdParty and Arc VPNs.
+  if (type.empty()) {
+    vpn_provider_ = nullptr;
+    return;
+  }
+  if (!vpn_provider_)
+    vpn_provider_ = std::make_unique<VpnProviderInfo>();
+  vpn_provider_->id = id;
+  vpn_provider_->type = type;
 }
 
 }  // namespace chromeos

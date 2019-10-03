@@ -12,10 +12,10 @@
 namespace content {
 namespace protocol {
 
-DOMHandler::DOMHandler()
+DOMHandler::DOMHandler(bool allow_file_access)
     : DevToolsDomainHandler(DOM::Metainfo::domainName),
-      host_(nullptr) {
-}
+      host_(nullptr),
+      allow_file_access_(allow_file_access) {}
 
 DOMHandler::~DOMHandler() {
 }
@@ -24,7 +24,7 @@ void DOMHandler::Wire(UberDispatcher* dispatcher) {
   DOM::Dispatcher::wire(dispatcher, this);
 }
 
-void DOMHandler::SetRenderer(RenderProcessHost* process_host,
+void DOMHandler::SetRenderer(int process_host_id,
                              RenderFrameHostImpl* frame_host) {
   host_ = frame_host;
 }
@@ -38,17 +38,12 @@ Response DOMHandler::SetFileInputFiles(
     Maybe<DOM::NodeId> node_id,
     Maybe<DOM::BackendNodeId> backend_node_id,
     Maybe<String> in_object_id) {
+  if (!allow_file_access_)
+    return Response::Error("Not allowed");
   if (host_) {
-    for (size_t i = 0; i < files->length(); i++) {
-#if defined(OS_WIN)
+    for (const std::string& file : *files) {
       ChildProcessSecurityPolicyImpl::GetInstance()->GrantReadFile(
-          host_->GetProcess()->GetID(),
-          base::FilePath(base::UTF8ToUTF16(files->get(i))));
-#else
-      ChildProcessSecurityPolicyImpl::GetInstance()->GrantReadFile(
-          host_->GetProcess()->GetID(),
-          base::FilePath(files->get(i)));
-#endif  // OS_WIN
+          host_->GetProcess()->GetID(), base::FilePath::FromUTF8Unsafe(file));
     }
   }
   return Response::FallThrough();

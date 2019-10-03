@@ -11,21 +11,25 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "base/bind.h"
+#include "base/feature_list.h"
 #import "base/ios/block_types.h"
-#import "base/ios/ios_util.h"
-#import "base/mac/bind_objc_block.h"
 #include "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
 #include "base/timer/elapsed_timer.h"
-#include "base/timer/timer.h"
-#include "components/signin/core/browser/signin_metrics.h"
+#include "components/consent_auditor/consent_auditor.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/unified_consent/feature.h"
+#include "components/unified_consent/unified_consent_service.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/signin/authentication_service.h"
 #import "ios/chrome/browser/signin/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/chrome_identity_service_observer_bridge.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/signin/signin_util.h"
+#include "ios/chrome/browser/sync/consent_auditor_factory.h"
 #import "ios/chrome/browser/sync/sync_setup_service.h"
 #import "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
@@ -33,11 +37,15 @@
 #import "ios/chrome/browser/ui/authentication/authentication_ui_util.h"
 #include "ios/chrome/browser/ui/authentication/signin_account_selector_view_controller.h"
 #include "ios/chrome/browser/ui/authentication/signin_confirmation_view_controller.h"
-#import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/authentication/unified_consent/unified_consent_coordinator.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/util/label_link_controller.h"
+#import "ios/chrome/browser/ui/util/rtl_geometry.h"
+#import "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#include "ios/chrome/browser/unified_consent/unified_consent_service_factory.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #include "ios/chrome/common/string_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -57,19 +65,22 @@
 
 namespace {
 
+// Controls whether the activity indicator should be added to the sign-in view.
+BOOL gChromeSigninViewControllerShowsActivityIndicator = YES;
+
 // Default animation duration.
 const CGFloat kAnimationDuration = 0.5f;
-
-enum LayoutType {
-  LAYOUT_REGULAR,
-  LAYOUT_COMPACT,
-};
 
 // Minimum duration of the pending state in milliseconds.
 const int64_t kMinimunPendingStateDurationMs = 300;
 
 // Internal padding between the title and image in the "More" button.
 const CGFloat kMoreButtonPadding = 5.0f;
+
+// The maximum size for th unified consent embedded view on regular width and
+// regular height layout.
+const CGFloat kUCEmbeddedViewMaxWidthForRegularLayout = 600;
+const CGFloat kUCEmbeddedViewMaxHeightForRegularLayout = 600;
 
 struct AuthenticationViewConstants {
   CGFloat PrimaryFontSize;
@@ -96,15 +107,30 @@ const AuthenticationViewConstants kRegularConstants = {
     1.5 * kCompactConstants.SecondaryFontSize,
     kCompactConstants.GradientHeight,
     1.5 * kCompactConstants.ButtonHeight,
-    32,
-    32,
-    32,
+    32,  // ButtonHorizontalPadding
+    32,  // ButtonTopPadding
+    32,  // ButtonBottomPadding
 };
 
 enum AuthenticationState {
+  // Initial state.
   NULL_STATE,
+  // Unified consent:
+  //   Shows UnifiedConsentUserController
+  // Non unified consent:
+  //   Shows SigninAccountSelectorViewController
+  // Lets the user add an account and choose an identity. Once the dialog is
+  // validated, the state transitions to SIGNIN_PENDING_STATE to sign in.
   IDENTITY_PICKER_STATE,
+  // Signs in using AuthenticationFlow. If it fails, the state transitions back
+  // to IDENTITY_PICKER_STATE.
+  // Unified consent:
+  //   When done, transitions to DONE_STATE.
+  // Non unified consent:
+  //   When done, transitions to IDENTITY_SELECTED_STATE.
   SIGNIN_PENDING_STATE,
+  // Used only for non unified consent. Shows the confirmation dialog with
+  // SigninConfirmationViewController.
   IDENTITY_SELECTED_STATE,
   DONE_STATE,
 };
@@ -114,11 +140,10 @@ enum AuthenticationState {
 @interface ChromeSigninViewController ()<
     ChromeIdentityInteractionManagerDelegate,
     ChromeIdentityServiceObserver,
+    MDCActivityIndicatorDelegate,
     SigninAccountSelectorViewControllerDelegate,
-    SigninConfirmationViewControllerDelegate,
-    MDCActivityIndicatorDelegate>
+    UnifiedConsentCoordinatorDelegate>
 @property(nonatomic, strong) ChromeIdentity* selectedIdentity;
-
 @end
 
 @implementation ChromeSigninViewController {
@@ -126,6 +151,8 @@ enum AuthenticationState {
   __weak id<ChromeSigninViewControllerDelegate> _delegate;
   std::unique_ptr<ChromeIdentityServiceObserverBridge> _identityServiceObserver;
   ChromeIdentity* _selectedIdentity;
+  TimerGeneratorBlock _timerGenerator;
+  BOOL _unifiedConsentEnabled;
 
   // Authentication
   AlertCoordinator* _alertCoordinator;
@@ -147,14 +174,16 @@ enum AuthenticationState {
   MDCButton* _secondaryButton;
   UIView* _gradientView;
   CAGradientLayer* _gradientLayer;
+  UIView* _embeddedView;
 
   // Identity picker state.
   SigninAccountSelectorViewController* _accountSelectorVC;
+  UnifiedConsentCoordinator* _unifiedConsentCoordinator;
 
   // Signin pending state.
   AuthenticationState _activityIndicatorNextState;
   std::unique_ptr<base::ElapsedTimer> _pendingStateTimer;
-  std::unique_ptr<base::Timer> _leavingPendingStateTimer;
+  std::unique_ptr<base::OneShotTimer> _leavingPendingStateTimer;
 
   // Identity selected state.
   SigninConfirmationViewController* _confirmationVC;
@@ -164,6 +193,7 @@ enum AuthenticationState {
 @synthesize delegate = _delegate;
 @synthesize shouldClearData = _shouldClearData;
 @synthesize dispatcher = _dispatcher;
+@synthesize confirmationVC = _confirmationVC;
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
                          accessPoint:(signin_metrics::AccessPoint)accessPoint
@@ -172,13 +202,14 @@ enum AuthenticationState {
                           dispatcher:(id<ApplicationCommands>)dispatcher {
   self = [super init];
   if (self) {
+    _unifiedConsentEnabled = unified_consent::IsUnifiedConsentFeatureEnabled();
     _browserState = browserState;
     _accessPoint = accessPoint;
     _promoAction = promoAction;
     _dispatcher = dispatcher;
 
     if (identity) {
-      _autoSignIn = YES;
+      _autoSignIn = !_unifiedConsentEnabled;
       [self setSelectedIdentity:identity];
     }
     _identityServiceObserver.reset(
@@ -199,7 +230,6 @@ enum AuthenticationState {
   [_secondaryButton removeTarget:self
                           action:@selector(onSecondaryButtonPressed:)
                 forControlEvents:UIControlEventTouchDown];
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)cancel {
@@ -229,34 +259,252 @@ enum AuthenticationState {
 
 - (void)acceptSignInAndShowAccountsSettings:(BOOL)showAccountsSettings {
   signin_metrics::LogSigninAccessPointCompleted(_accessPoint, _promoAction);
+  if (showAccountsSettings) {
+    base::RecordAction(
+        base::UserMetricsAction("Signin_Signin_WithAdvancedSyncSettings"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("Signin_Signin_WithDefaultSyncSettings"));
+  }
+  std::vector<int> consent_text_ids;
+  int openSettingsStringId = -1;
+  if (_unifiedConsentEnabled) {
+    DCHECK(_unifiedConsentCoordinator);
+    DCHECK(!_confirmationVC);
+    consent_text_ids = _unifiedConsentCoordinator.consentStringIds;
+    openSettingsStringId = _unifiedConsentCoordinator.openSettingsStringId;
+  } else {
+    DCHECK(_confirmationVC);
+    DCHECK(!_unifiedConsentCoordinator);
+    consent_text_ids = _confirmationVC.consentStringIds;
+    openSettingsStringId = _confirmationVC.openSettingsStringId;
+  }
+  int consent_confirmation_id = showAccountsSettings
+                                    ? openSettingsStringId
+                                    : [self acceptSigninButtonStringId];
+  std::string account_id =
+      IdentityManagerFactory::GetForBrowserState(_browserState)
+          ->PickAccountIdForAccount(
+              base::SysNSStringToUTF8([_selectedIdentity gaiaID]),
+              base::SysNSStringToUTF8([_selectedIdentity userEmail]));
+
+  sync_pb::UserConsentTypes::SyncConsent sync_consent;
+  sync_consent.set_status(sync_pb::UserConsentTypes::ConsentStatus::
+                              UserConsentTypes_ConsentStatus_GIVEN);
+  sync_consent.set_confirmation_grd_id(consent_confirmation_id);
+  for (int id : consent_text_ids) {
+    sync_consent.add_description_grd_ids(id);
+  }
+  ConsentAuditorFactory::GetForBrowserState(_browserState)
+      ->RecordSyncConsent(account_id, sync_consent);
   _didAcceptSignIn = YES;
   if (!_didFinishSignIn) {
     _didFinishSignIn = YES;
     [_delegate didAcceptSignIn:self showAccountsSettings:showAccountsSettings];
   }
+  _unifiedConsentCoordinator.delegate = nil;
+  _unifiedConsentCoordinator = nil;
+}
+
+// Starts the sync engine only if the user tapped on "YES, I'm in", and closes
+// the sign-in view.
+- (void)signinCompletedWithUnity {
+  DCHECK(_didSignIn);
+  DCHECK(_unifiedConsentEnabled);
+  // The consent has to be given as soon as the user is signed in. Even when
+  // they open the settings through the link.
+  unified_consent::UnifiedConsentService* unifiedConsentService =
+      UnifiedConsentServiceFactory::GetForBrowserState(_browserState);
+  // |unifiedConsentService| may be null in unit tests.
+  if (unifiedConsentService)
+    unifiedConsentService->SetUrlKeyedAnonymizedDataCollectionEnabled(true);
+  if (!_unifiedConsentCoordinator.settingsLinkWasTapped) {
+    // FirstSetupComplete flag should be only turned on when the user agrees
+    // to start Sync.
+    SyncSetupService* syncSetupService =
+        SyncSetupServiceFactory::GetForBrowserState(_browserState);
+    syncSetupService->SetFirstSetupComplete();
+    syncSetupService->CommitSyncChanges();
+  }
+  [self acceptSignInAndShowAccountsSettings:_unifiedConsentCoordinator
+                                                .settingsLinkWasTapped];
 }
 
 - (void)acceptSignInAndCommitSyncChanges {
   DCHECK(_didSignIn);
-  SyncSetupServiceFactory::GetForBrowserState(_browserState)->CommitChanges();
+  DCHECK(!_unifiedConsentEnabled);
+  SyncSetupServiceFactory::GetForBrowserState(_browserState)
+      ->PreUnityCommitChanges();
   [self acceptSignInAndShowAccountsSettings:NO];
 }
 
 - (void)setPrimaryButtonStyling:(MDCButton*)button {
-  [button setBackgroundColor:[[MDCPalette cr_bluePalette] tint500]
-                    forState:UIControlStateNormal];
-  [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-  [button setUnderlyingColorHint:[UIColor blackColor]];
-  [button setInkColor:[UIColor colorWithWhite:1 alpha:0.2f]];
+  UIColor* hintColor = UIColor.cr_systemBackgroundColor;
+  UIColor* backgroundColor = [UIColor colorNamed:kTintColor];
+  UIColor* titleColor = [UIColor colorNamed:kSolidButtonTextColor];
+
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+  if (@available(iOS 13, *)) {
+    // As of iOS 13 Beta 3, MDCFlatButton has a bug updating it's colors
+    // automatically. Here the colors are resolved and passed instead.
+    hintColor =
+        [hintColor resolvedColorWithTraitCollection:self.traitCollection];
+    backgroundColor =
+        [backgroundColor resolvedColorWithTraitCollection:self.traitCollection];
+    titleColor =
+        [titleColor resolvedColorWithTraitCollection:self.traitCollection];
+  }
+#endif
+
+  button.underlyingColorHint = hintColor;
+  button.inkColor = [UIColor colorWithWhite:1 alpha:0.2f];
+  [button setBackgroundColor:backgroundColor forState:UIControlStateNormal];
+  [button setTitleColor:titleColor forState:UIControlStateNormal];
+  [button setImage:nil forState:UIControlStateNormal];
 }
 
 - (void)setSecondaryButtonStyling:(MDCButton*)button {
-  [button setBackgroundColor:self.backgroundColor
-                    forState:UIControlStateNormal];
-  [button setTitleColor:[[MDCPalette cr_bluePalette] tint500]
-               forState:UIControlStateNormal];
-  [button setUnderlyingColorHint:[UIColor whiteColor]];
-  [button setInkColor:[UIColor colorWithWhite:0 alpha:0.06f]];
+  UIColor* hintColor = UIColor.cr_systemBackgroundColor;
+  UIColor* backgroundColor = UIColor.cr_systemBackgroundColor;
+  UIColor* titleColor = [UIColor colorNamed:kTintColor];
+
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+  if (@available(iOS 13, *)) {
+    // As of iOS 13 Beta 3, MDCFlatButton has a bug updating it's colors
+    // automatically. Here the colors are resolved and passed instead.
+    hintColor =
+        [hintColor resolvedColorWithTraitCollection:self.traitCollection];
+    backgroundColor =
+        [backgroundColor resolvedColorWithTraitCollection:self.traitCollection];
+    titleColor =
+        [titleColor resolvedColorWithTraitCollection:self.traitCollection];
+  }
+#endif
+
+  button.underlyingColorHint = hintColor;
+  button.inkColor = [UIColor colorWithWhite:0 alpha:0.06f];
+  [button setBackgroundColor:backgroundColor forState:UIControlStateNormal];
+  [button setTitleColor:titleColor forState:UIControlStateNormal];
+}
+
+// Configures the primary button as the more button. This can be used in
+// IDENTITY_PICKER_STATE or IDENTITY_SELECTED_STATE.
+- (void)updatePrimaryButtonAsMoreButton {
+  DCHECK(_currentState == IDENTITY_PICKER_STATE ||
+         _currentState == IDENTITY_SELECTED_STATE)
+      << "Unsupported current state: " << _currentState;
+  NSString* primaryButtonTitle = l10n_util::GetNSString(
+      IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_SCROLL_BUTTON);
+  [_primaryButton setTitle:primaryButtonTitle forState:UIControlStateNormal];
+  UIImage* primaryButtomImage =
+      [UIImage imageNamed:@"signin_confirmation_more"];
+  [_primaryButton setImage:primaryButtomImage forState:UIControlStateNormal];
+  [self setSecondaryButtonStyling:_primaryButton];
+}
+
+// Configures the primary button for consent validation. This can be used in
+// IDENTITY_PICKER_STATE or IDENTITY_SELECTED_STATE.
+- (void)updatePrimaryButtonAsConsentValidationButton {
+  DCHECK(_currentState == IDENTITY_PICKER_STATE ||
+         _currentState == IDENTITY_SELECTED_STATE)
+      << "Unsupported current state: " << _currentState;
+  [self setPrimaryButtonStyling:_primaryButton];
+  [_primaryButton setTitle:[self acceptSigninButtonTitle]
+                  forState:UIControlStateNormal];
+  [self.view setNeedsLayout];
+}
+
+// Displays |viewController.view| above the primary and secondary button.
+// -[ChromeSigninViewController removeEmbeddedViewController:] has to be called
+// before calling this method again.
+- (void)showEmbeddedViewController:(UIViewController*)viewController {
+  DCHECK(viewController);
+  DCHECK(!_embeddedView);
+  [self addChildViewController:viewController];
+  _embeddedView = viewController.view;
+  _embeddedView.frame = self.view.bounds;
+  [self.view insertSubview:viewController.view belowSubview:_primaryButton];
+  [viewController didMoveToParentViewController:self];
+}
+
+// Removes the view previously added by -[ChromeSigninViewController
+// showEmbeddedViewController:].
+- (void)removeEmbeddedViewController:(UIViewController*)viewController {
+  DCHECK(_embeddedView);
+  DCHECK_EQ(_embeddedView, viewController.view);
+  [viewController willMoveToParentViewController:nil];
+  [_embeddedView removeFromSuperview];
+  [viewController removeFromParentViewController];
+  _embeddedView = nil;
+}
+
+- (void)updateLayout {
+  BOOL isRegularSizeClass = IsRegularXRegularSizeClass(self.traitCollection);
+  AuthenticationViewConstants constants =
+      isRegularSizeClass ? kRegularConstants : kCompactConstants;
+
+  [self layoutButtons:constants];
+
+  // Layout |_embeddedView|.
+  CGSize viewSize = self.view.bounds.size;
+  CGPoint contentViewOrigin = CGPointZero;
+  CGSize collectionViewSize =
+      CGSizeMake(viewSize.width,
+                 _primaryButton.frame.origin.y - constants.ButtonTopPadding);
+  if (_unifiedConsentEnabled) {
+    if (isRegularSizeClass &&
+        !UIContentSizeCategoryIsAccessibilityCategory(
+            self.traitCollection.preferredContentSizeCategory)) {
+      // Constraint the size to (|kUCEmbeddedViewMaxWidthForRegularLayout| x
+      // |kUCEmbeddedViewMaxHeightForRegularLayout|) on regular layout. This is
+      // required to avoid having a lot of empty space between |_embeddedView|
+      // and the buttons.
+      if (collectionViewSize.width > kUCEmbeddedViewMaxWidthForRegularLayout) {
+        contentViewOrigin.x = floorf((collectionViewSize.width -
+                                      kUCEmbeddedViewMaxWidthForRegularLayout) /
+                                     2);
+        collectionViewSize.width = kUCEmbeddedViewMaxWidthForRegularLayout;
+      }
+      if (collectionViewSize.height >
+          kUCEmbeddedViewMaxHeightForRegularLayout) {
+        contentViewOrigin.y =
+            floorf((collectionViewSize.height -
+                    kUCEmbeddedViewMaxHeightForRegularLayout) /
+                   2);
+        collectionViewSize.height = kUCEmbeddedViewMaxHeightForRegularLayout;
+      }
+    }
+  }
+  [_embeddedView setFrame:CGRect{contentViewOrigin, collectionViewSize}];
+
+  // Layout the gradient view right above the buttons.
+  CGFloat gradientOriginY = _primaryButton.frame.origin.y -
+                            constants.ButtonTopPadding -
+                            constants.GradientHeight;
+  [_gradientView setFrame:CGRectMake(0, gradientOriginY, viewSize.width,
+                                     constants.GradientHeight)];
+  [_gradientLayer setFrame:[_gradientView bounds]];
+
+  // Layout the activity indicator in the center of the view.
+  CGRect bounds = self.view.bounds;
+  [_activityIndicator
+      setCenter:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds))];
+}
+
+- (void)updateGradientColors {
+  UIColor* backgroundColor = UIColor.cr_systemBackgroundColor;
+
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+  if (@available(iOS 13, *)) {
+    backgroundColor =
+        [backgroundColor resolvedColorWithTraitCollection:self.traitCollection];
+  }
+#endif
+
+  _gradientLayer.colors = @[
+    (id)[backgroundColor colorWithAlphaComponent:0].CGColor,
+    (id)backgroundColor.CGColor
+  ];
 }
 
 #pragma mark - Accessibility
@@ -277,17 +525,18 @@ enum AuthenticationState {
   return _delegate;
 }
 
-- (UIColor*)backgroundColor {
-  return [[MDCPalette greyPalette] tint50];
-}
-
 - (NSString*)identityPickerTitle {
   return l10n_util::GetNSString(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_TITLE);
 }
 
+- (int)acceptSigninButtonStringId {
+  return _unifiedConsentEnabled
+             ? IDS_IOS_ACCOUNT_UNIFIED_CONSENT_OK_BUTTON
+             : IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_OK_BUTTON;
+}
+
 - (NSString*)acceptSigninButtonTitle {
-  return l10n_util::GetNSString(
-      IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_OK_BUTTON);
+  return l10n_util::GetNSString([self acceptSigninButtonStringId]);
 }
 
 - (NSString*)skipSigninButtonTitle {
@@ -305,6 +554,7 @@ enum AuthenticationState {
 - (void)setSelectedIdentity:(ChromeIdentity*)identity {
   DCHECK(identity || (IDENTITY_PICKER_STATE == _currentState));
   _selectedIdentity = identity;
+  _unifiedConsentCoordinator.selectedIdentity = identity;
 }
 
 - (ChromeIdentity*)selectedIdentity {
@@ -331,6 +581,7 @@ enum AuthenticationState {
                                        shouldClearData:_shouldClearData
                                       postSignInAction:POST_SIGNIN_ACTION_NONE
                               presentingViewController:self];
+  _authenticationFlow.dispatcher = self.dispatcher;
   __weak ChromeSigninViewController* weakSelf = self;
   [_authenticationFlow startSignInWithCompletion:^(BOOL success) {
     [weakSelf onAccountSigninCompletion:success];
@@ -346,24 +597,29 @@ enum AuthenticationState {
   __weak ChromeSigninViewController* weakSelf = self;
   SigninCompletionCallback completion =
       ^(ChromeIdentity* identity, NSError* error) {
-        ChromeSigninViewController* strongSelf = weakSelf;
-        if (!strongSelf || !strongSelf->_interactionManager)
-          return;
-        // The ChromeIdentityInteractionManager is not used anymore at this
-        // point.
-        strongSelf->_interactionManager = nil;
-
-        if (error) {
-          [strongSelf handleAuthenticationError:error];
-          return;
-        }
-        strongSelf->_addedAccount = YES;
-        [strongSelf identityListChanged];
-        [strongSelf setSelectedIdentity:identity];
-        [strongSelf changeToState:SIGNIN_PENDING_STATE];
+        [weakSelf addAccountCompletedWithIdentity:identity error:error];
       };
   [_delegate willStartAddAccount:self];
   [_interactionManager addAccountWithCompletion:completion];
+}
+
+// Sets the added identity as the selected identity (if no error), and signs in
+// with this identity only if not using unified consent.
+- (void)addAccountCompletedWithIdentity:(ChromeIdentity*)identity
+                                  error:(NSError*)error {
+  // ChromeIdentityInteractionManager is not used anymore at this point.
+  _interactionManager = nil;
+
+  if (error) {
+    [self handleAuthenticationError:error];
+    return;
+  }
+  [self identityListChanged];
+  [self setSelectedIdentity:identity];
+  if (!_unifiedConsentEnabled) {
+    _addedAccount = YES;
+    [self changeToState:SIGNIN_PENDING_STATE];
+  }
 }
 
 - (void)onAccountSigninCompletion:(BOOL)success {
@@ -372,9 +628,14 @@ enum AuthenticationState {
     DCHECK(!_didSignIn);
     _didSignIn = YES;
     [_delegate didSignIn:self];
-    [self changeToState:IDENTITY_SELECTED_STATE];
+    if (_unifiedConsentEnabled) {
+      [self signinCompletedWithUnity];
+    } else {
+      [self changeToState:IDENTITY_SELECTED_STATE];
+    }
   } else {
     [self changeToState:IDENTITY_PICKER_STATE];
+    [_unifiedConsentCoordinator resetSettingLinkTapped];
   }
 }
 
@@ -425,6 +686,7 @@ enum AuthenticationState {
 }
 
 - (void)changeToState:(AuthenticationState)nextState {
+  CHECK(nextState != IDENTITY_SELECTED_STATE || !_unifiedConsentEnabled);
   if (_currentState == nextState)
     return;
   _ongoingStateChange = YES;
@@ -453,36 +715,65 @@ enum AuthenticationState {
 
 #pragma mark - IdentityPickerState
 
-- (void)updatePrimaryButtonTitle {
-  bool hasIdentities = ios::GetChromeBrowserProvider()
-                           ->GetChromeIdentityService()
-                           ->HasIdentities();
-  NSString* primaryButtonTitle =
-      hasIdentities
-          ? l10n_util::GetNSString(
-                IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON)
-          : l10n_util::GetNSString(
-                IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_NO_ACCOUNT_BUTTON);
-  [_primaryButton setTitle:primaryButtonTitle forState:UIControlStateNormal];
-  [_primaryButton setImage:nil forState:UIControlStateNormal];
+// Updates the primary button for IDENTITY_PICKER_STATE to be either the
+// more button, the consent validation or sign-in button.
+- (void)updatePrimaryButtonForIdentityPickerState {
+  DCHECK_EQ(IDENTITY_PICKER_STATE, _currentState);
+  if (_unifiedConsentEnabled) {
+    if (!_unifiedConsentCoordinator.selectedIdentity) {
+      [_primaryButton setTitle:l10n_util::GetNSString(
+                                   IDS_IOS_ACCOUNT_UNIFIED_CONSENT_ADD_ACCOUNT)
+                      forState:UIControlStateNormal];
+      [self setPrimaryButtonStyling:_primaryButton];
+    } else if (!_hasConfirmationScreenReachedBottom) {
+      [self updatePrimaryButtonAsMoreButton];
+    } else {
+      [self updatePrimaryButtonAsConsentValidationButton];
+    }
+  } else {
+    bool hasIdentities = ios::GetChromeBrowserProvider()
+                             ->GetChromeIdentityService()
+                             ->HasIdentities();
+    NSString* primaryButtonTitle =
+        hasIdentities
+            ? l10n_util::GetNSString(
+                  IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON)
+            : l10n_util::GetNSString(
+                  IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_NO_ACCOUNT_BUTTON);
+    [_primaryButton setTitle:primaryButtonTitle forState:UIControlStateNormal];
+    [self setPrimaryButtonStyling:_primaryButton];
+  }
   [self.view setNeedsLayout];
 }
 
 - (void)enterIdentityPickerState {
-  // Reset the selected identity.
-  [self setSelectedIdentity:nil];
-
   // Add the account selector view controller.
-  _accountSelectorVC = [[SigninAccountSelectorViewController alloc] init];
-  _accountSelectorVC.delegate = self;
-  [_accountSelectorVC willMoveToParentViewController:self];
-  [self addChildViewController:_accountSelectorVC];
-  _accountSelectorVC.view.frame = self.view.bounds;
-  [self.view insertSubview:_accountSelectorVC.view belowSubview:_primaryButton];
-  [_accountSelectorVC didMoveToParentViewController:self];
+  if (_unifiedConsentEnabled) {
+    if (!_unifiedConsentCoordinator) {
+      // The user can refuse to sign-in into a managed account, so the state
+      // returns to "IdentityPicker". In that case, there is no need to create a
+      // new UnifiedConsentCoordinator. The current one should be used.
+      _unifiedConsentCoordinator = [[UnifiedConsentCoordinator alloc] init];
+      _unifiedConsentCoordinator.delegate = self;
+      if (_selectedIdentity)
+        _unifiedConsentCoordinator.selectedIdentity = _selectedIdentity;
+      _unifiedConsentCoordinator.autoOpenIdentityPicker =
+          _promoAction == signin_metrics::PromoAction::PROMO_ACTION_NOT_DEFAULT;
+      [_unifiedConsentCoordinator start];
+      [self
+          showEmbeddedViewController:_unifiedConsentCoordinator.viewController];
+    }
+    DCHECK_EQ(_embeddedView, _unifiedConsentCoordinator.viewController.view);
+  } else {
+    // Reset the selected identity.
+    [self setSelectedIdentity:nil];
+    _accountSelectorVC = [[SigninAccountSelectorViewController alloc] init];
+    _accountSelectorVC.delegate = self;
+    [self showEmbeddedViewController:_accountSelectorVC];
+  }
 
   // Update the button title.
-  [self updatePrimaryButtonTitle];
+  [self updatePrimaryButtonForIdentityPickerState];
   [_secondaryButton setTitle:self.skipSigninButtonTitle
                     forState:UIControlStateNormal];
   [self.view setNeedsLayout];
@@ -508,7 +799,7 @@ enum AuthenticationState {
   // The account selector view controller reloads itself each time the list
   // of identities changes, thus there is no need to reload it.
 
-  [self updatePrimaryButtonTitle];
+  [self updatePrimaryButtonForIdentityPickerState];
 }
 
 - (void)leaveIdentityPickerState:(AuthenticationState)nextState {
@@ -526,10 +817,13 @@ enum AuthenticationState {
         _secondaryButton.hidden = YES;
       }
       completion:^(BOOL finished) {
-        [_accountSelectorVC willMoveToParentViewController:nil];
-        [[_accountSelectorVC view] removeFromSuperview];
-        [_accountSelectorVC removeFromParentViewController];
-        _accountSelectorVC = nil;
+        // When the unified consent is enabled, the |_unifiedConsentVC| has to
+        // be kept, so the consent can be recorded (with the string ids), once
+        // the sign-in is done.
+        if (!_unifiedConsentEnabled) {
+          [self removeEmbeddedViewController:_accountSelectorVC];
+          _accountSelectorVC = nil;
+        }
         [self enterState:nextState];
       }];
 }
@@ -588,13 +882,31 @@ enum AuthenticationState {
       [strongSelf->_activityIndicator stopAnimating];
       strongSelf->_leavingPendingStateTimer.reset();
     };
-    _leavingPendingStateTimer.reset(new base::Timer(false, false));
+    if (self.timerGenerator) {
+      _leavingPendingStateTimer = self.timerGenerator();
+      DCHECK(_leavingPendingStateTimer);
+    } else {
+      _leavingPendingStateTimer = std::make_unique<base::OneShotTimer>();
+    }
     _leavingPendingStateTimer->Start(FROM_HERE, remainingTime,
-                                     base::BindBlockArc(completionBlock));
+                                     base::BindRepeating(completionBlock));
   }
 }
 
 #pragma mark - IdentitySelectedState
+
+// Updates the primary button for IDENTITY_SELECTED_STATE to be either the
+// more button or the consent validation.
+- (void)updatePrimaryButtonForIdentitySelectedState {
+  DCHECK_EQ(IDENTITY_SELECTED_STATE, _currentState);
+  DCHECK(!_unifiedConsentEnabled);
+  if (_hasConfirmationScreenReachedBottom) {
+    [self updatePrimaryButtonAsConsentValidationButton];
+  } else {
+    [self updatePrimaryButtonAsMoreButton];
+  }
+  [self.view setNeedsLayout];
+}
 
 - (void)enterIdentitySelectedState {
   _confirmationVC = [[SigninConfirmationViewController alloc]
@@ -602,18 +914,9 @@ enum AuthenticationState {
   _confirmationVC.delegate = self;
 
   _hasConfirmationScreenReachedBottom = NO;
-  [_confirmationVC willMoveToParentViewController:self];
-  [self addChildViewController:_confirmationVC];
-  _confirmationVC.view.frame = self.view.bounds;
-  [self.view insertSubview:_confirmationVC.view belowSubview:_primaryButton];
-  [_confirmationVC didMoveToParentViewController:self];
+  [self showEmbeddedViewController:_confirmationVC];
 
-  [self setSecondaryButtonStyling:_primaryButton];
-  NSString* primaryButtonTitle = l10n_util::GetNSString(
-      IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_SCROLL_BUTTON);
-  [_primaryButton setTitle:primaryButtonTitle forState:UIControlStateNormal];
-  [_primaryButton setImage:[UIImage imageNamed:@"signin_confirmation_more"]
-                  forState:UIControlStateNormal];
+  [self updatePrimaryButtonForIdentitySelectedState];
   NSString* secondaryButtonTitle = l10n_util::GetNSString(
       IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_UNDO_BUTTON);
   [_secondaryButton setTitle:secondaryButtonTitle
@@ -648,9 +951,7 @@ enum AuthenticationState {
 }
 
 - (void)leaveIdentitySelectedState:(AuthenticationState)nextState {
-  [_confirmationVC willMoveToParentViewController:nil];
-  [[_confirmationVC view] removeFromSuperview];
-  [_confirmationVC removeFromParentViewController];
+  [self removeEmbeddedViewController:_confirmationVC];
   _confirmationVC = nil;
   [self setPrimaryButtonStyling:_primaryButton];
   _primaryButton.hidden = YES;
@@ -663,7 +964,7 @@ enum AuthenticationState {
 
 - (void)viewDidLoad {
   [super viewDidLoad];
-  self.view.backgroundColor = self.backgroundColor;
+  self.view.backgroundColor = UIColor.cr_systemBackgroundColor;
 
   _primaryButton = [[MDCFlatButton alloc] init];
   [self setPrimaryButtonStyling:_primaryButton];
@@ -682,19 +983,19 @@ enum AuthenticationState {
   _secondaryButton.hidden = YES;
   [self.view addSubview:_secondaryButton];
 
-  _activityIndicator = [[MDCActivityIndicator alloc] initWithFrame:CGRectZero];
-  [_activityIndicator setDelegate:self];
-  [_activityIndicator setStrokeWidth:3];
-  [_activityIndicator
-      setCycleColors:@[ [[MDCPalette cr_bluePalette] tint500] ]];
-  [self.view addSubview:_activityIndicator];
+  if (gChromeSigninViewControllerShowsActivityIndicator) {
+    _activityIndicator =
+        [[MDCActivityIndicator alloc] initWithFrame:CGRectZero];
+    [_activityIndicator setDelegate:self];
+    [_activityIndicator setStrokeWidth:3];
+    [_activityIndicator setCycleColors:@[ [UIColor colorNamed:kTintColor] ]];
+    [self.view addSubview:_activityIndicator];
+  }
 
   _gradientView = [[UIView alloc] initWithFrame:CGRectZero];
   _gradientLayer = [CAGradientLayer layer];
   [_gradientView setUserInteractionEnabled:NO];
-  _gradientLayer.colors = [NSArray
-      arrayWithObjects:(id)[[UIColor colorWithWhite:1 alpha:0] CGColor],
-                       (id)[self.backgroundColor CGColor], nil];
+  [self updateGradientColors];
   [[_gradientView layer] insertSublayer:_gradientLayer atIndex:0];
   [self.view addSubview:_gradientView];
 }
@@ -712,6 +1013,28 @@ enum AuthenticationState {
   }
 }
 
+- (void)viewSafeAreaInsetsDidChange {
+  [super viewSafeAreaInsetsDidChange];
+  [self updateLayout];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+  if (@available(iOS 13, *)) {
+    if ([self.traitCollection
+            hasDifferentColorAppearanceComparedToTraitCollection:
+                previousTraitCollection]) {
+      [self updateGradientColors];
+      // As of iOS 13 Beta 3, MDCFlatButton doesn't update it's colors
+      // automatically. These lines do it instead.
+      [self updatePrimaryButtonForIdentityPickerState];
+      [self setSecondaryButtonStyling:_secondaryButton];
+    }
+  }
+#endif
+}
+
 #pragma mark - Events
 
 - (void)onPrimaryButtonPressed:(id)sender {
@@ -720,16 +1043,30 @@ enum AuthenticationState {
       NOTREACHED();
       return;
     case IDENTITY_PICKER_STATE: {
-      if (_interactionManager) {
-        // Adding an account is ongoing, ignore the button press.
-        return;
-      }
-      ChromeIdentity* selectedIdentity = [_accountSelectorVC selectedIdentity];
-      [self setSelectedIdentity:selectedIdentity];
-      if (selectedIdentity) {
-        [self changeToState:SIGNIN_PENDING_STATE];
+      if (_unifiedConsentEnabled) {
+        if (!_unifiedConsentCoordinator.selectedIdentity) {
+          [self openAuthenticationDialogAddIdentity];
+        } else if (!_hasConfirmationScreenReachedBottom) {
+          [_unifiedConsentCoordinator scrollToBottom];
+        } else {
+          ChromeIdentity* selectedIdentity =
+              _unifiedConsentCoordinator.selectedIdentity;
+          [self setSelectedIdentity:selectedIdentity];
+          [self changeToState:SIGNIN_PENDING_STATE];
+        }
       } else {
-        [self openAuthenticationDialogAddIdentity];
+        if (_interactionManager) {
+          // Adding an account is ongoing, ignore the button press.
+          return;
+        }
+        ChromeIdentity* selectedIdentity =
+            [_accountSelectorVC selectedIdentity];
+        [self setSelectedIdentity:selectedIdentity];
+        if (selectedIdentity) {
+          [self changeToState:SIGNIN_PENDING_STATE];
+        } else {
+          [self openAuthenticationDialogAddIdentity];
+        }
       }
       return;
     }
@@ -757,6 +1094,9 @@ enum AuthenticationState {
       return;
     case IDENTITY_PICKER_STATE:
       if (!_didFinishSignIn) {
+        if (_unifiedConsentEnabled) {
+          base::RecordAction(base::UserMetricsAction("Signin_Undo_Signin"));
+        }
         _didFinishSignIn = YES;
         [_delegate didSkipSignIn:self];
       }
@@ -805,46 +1145,14 @@ enum AuthenticationState {
 
 - (void)viewDidLayoutSubviews {
   [super viewDidLayoutSubviews];
-
-  AuthenticationViewConstants constants;
-  if ([self.traitCollection horizontalSizeClass] ==
-      UIUserInterfaceSizeClassRegular) {
-    constants = kRegularConstants;
-  } else {
-    constants = kCompactConstants;
-  }
-
-  [self layoutButtons:constants];
-
-  CGSize viewSize = self.view.bounds.size;
-  CGFloat collectionViewHeight =
-      viewSize.height - _primaryButton.frame.size.height -
-      constants.ButtonBottomPadding - constants.ButtonTopPadding;
-  CGRect collectionViewFrame =
-      CGRectMake(0, 0, viewSize.width, collectionViewHeight);
-  [_accountSelectorVC.view setFrame:collectionViewFrame];
-  [_confirmationVC.view setFrame:collectionViewFrame];
-
-  // Layout the gradient view right above the buttons.
-  CGFloat gradientOriginY = CGRectGetHeight(self.view.bounds) -
-                            constants.ButtonBottomPadding -
-                            constants.ButtonTopPadding -
-                            constants.ButtonHeight - constants.GradientHeight;
-  [_gradientView setFrame:CGRectMake(0, gradientOriginY, viewSize.width,
-                                     constants.GradientHeight)];
-  [_gradientLayer setFrame:[_gradientView bounds]];
-
-  // Layout the activity indicator in the center of the view.
-  CGRect bounds = self.view.bounds;
-  [_activityIndicator
-      setCenter:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds))];
+  [self updateLayout];
 }
 
 - (void)layoutButtons:(const AuthenticationViewConstants&)constants {
-  [_primaryButton titleLabel].font =
+  UIFont* font =
       [[MDCTypography fontLoader] mediumFontOfSize:constants.SecondaryFontSize];
-  [_secondaryButton titleLabel].font =
-      [[MDCTypography fontLoader] mediumFontOfSize:constants.SecondaryFontSize];
+  [_primaryButton setTitleFont:font forState:UIControlStateNormal];
+  [_secondaryButton setTitleFont:font forState:UIControlStateNormal];
 
   LayoutRect primaryButtonLayout = LayoutRectZero;
   primaryButtonLayout.boundingWidth = CGRectGetWidth(self.view.bounds);
@@ -856,6 +1164,7 @@ enum AuthenticationState {
   primaryButtonLayout.position.originY = CGRectGetHeight(self.view.bounds) -
                                          constants.ButtonBottomPadding -
                                          constants.ButtonHeight;
+  primaryButtonLayout.position.originY -= self.view.safeAreaInsets.bottom;
   primaryButtonLayout.size.height = constants.ButtonHeight;
   [_primaryButton setFrame:LayoutRectGetRect(primaryButtonLayout)];
 
@@ -879,6 +1188,25 @@ enum AuthenticationState {
   secondaryButtonLayout.position.leading = constants.ButtonHorizontalPadding;
   secondaryButtonLayout.size.height = constants.ButtonHeight;
   [_secondaryButton setFrame:LayoutRectGetRect(secondaryButtonLayout)];
+}
+
+- (void)didReachBottom {
+  if (_hasConfirmationScreenReachedBottom)
+    return;
+  _hasConfirmationScreenReachedBottom = YES;
+  switch (_currentState) {
+    case NULL_STATE:
+    case DONE_STATE:
+    case SIGNIN_PENDING_STATE:
+      NOTREACHED();
+      break;
+    case IDENTITY_PICKER_STATE:
+      [self updatePrimaryButtonForIdentityPickerState];
+      break;
+    case IDENTITY_SELECTED_STATE:
+      [self updatePrimaryButtonForIdentitySelectedState];
+      break;
+  }
 }
 
 #pragma mark - MDCActivityIndicatorDelegate
@@ -936,15 +1264,59 @@ enum AuthenticationState {
 
 - (void)signinConfirmationControllerDidReachBottom:
     (SigninConfirmationViewController*)controller {
-  if (_hasConfirmationScreenReachedBottom) {
-    return;
+  [self didReachBottom];
+}
+
+#pragma mark - UnifiedConsentCoordinatorDelegate
+
+- (void)unifiedConsentCoordinatorDidTapSettingsLink:
+    (UnifiedConsentCoordinator*)coordinator {
+  DCHECK_EQ(_unifiedConsentCoordinator, coordinator);
+  DCHECK_EQ(IDENTITY_PICKER_STATE, _currentState);
+  ChromeIdentity* selectedIdentity =
+      _unifiedConsentCoordinator.selectedIdentity;
+  [self setSelectedIdentity:selectedIdentity];
+  if (selectedIdentity) {
+    [self changeToState:SIGNIN_PENDING_STATE];
+  } else {
+    [self openAuthenticationDialogAddIdentity];
   }
-  _hasConfirmationScreenReachedBottom = YES;
-  [self setPrimaryButtonStyling:_primaryButton];
-  [_primaryButton setTitle:[self acceptSigninButtonTitle]
-                  forState:UIControlStateNormal];
-  [_primaryButton setImage:nil forState:UIControlStateNormal];
-  [self.view setNeedsLayout];
+}
+
+- (void)unifiedConsentCoordinatorDidReachBottom:
+    (UnifiedConsentCoordinator*)coordinator {
+  DCHECK_EQ(_unifiedConsentCoordinator, coordinator);
+  DCHECK_EQ(IDENTITY_PICKER_STATE, _currentState);
+  [self didReachBottom];
+}
+
+- (void)unifiedConsentCoordinatorDidTapOnAddAccount:
+    (UnifiedConsentCoordinator*)coordinator {
+  DCHECK_EQ(_unifiedConsentCoordinator, coordinator);
+  [self openAuthenticationDialogAddIdentity];
+}
+
+- (void)unifiedConsentCoordinatorNeedPrimaryButtonUpdate:
+    (UnifiedConsentCoordinator*)coordinator {
+  if (_currentState == IDENTITY_PICKER_STATE)
+    [self updatePrimaryButtonForIdentityPickerState];
+}
+
+@end
+
+@implementation ChromeSigninViewController (Testing)
+
+- (TimerGeneratorBlock)timerGenerator {
+  return _timerGenerator;
+}
+
+- (void)setTimerGenerator:(TimerGeneratorBlock)timerGenerator {
+  _timerGenerator = [timerGenerator copy];
+}
+
++ (std::unique_ptr<base::AutoReset<BOOL>>)hideActivityIndicatorForTesting {
+  return std::make_unique<base::AutoReset<BOOL>>(
+      &gChromeSigninViewControllerShowsActivityIndicator, NO);
 }
 
 @end

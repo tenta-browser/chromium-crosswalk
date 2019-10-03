@@ -4,11 +4,15 @@
 
 #include "chromeos/components/tether/mock_host_connection_metrics_logger.h"
 
+#include "chromeos/components/tether/active_host.h"
+
 namespace chromeos {
 
 namespace tether {
 
-MockHostConnectionMetricsLogger::MockHostConnectionMetricsLogger() = default;
+MockHostConnectionMetricsLogger::MockHostConnectionMetricsLogger(
+    ActiveHost* active_host)
+    : HostConnectionMetricsLogger(active_host) {}
 
 MockHostConnectionMetricsLogger::~MockHostConnectionMetricsLogger() = default;
 

@@ -29,8 +29,23 @@ class StubChrome : public Chrome {
   Status GetWebViewIds(std::list<std::string>* web_view_ids,
                        bool w3c_compliant) override;
   Status GetWebViewById(const std::string& id, WebView** web_view) override;
+  Status NewWindow(const std::string& target_id,
+                   WindowType type,
+                   std::string* window_handle) override;
+  Status GetWindowSize(const std::string& id, int* width, int* height) override;
+  Status SetWindowSize(const std::string& id, int width, int height) override;
+  Status SetWindowRect(const std::string& target_id,
+                       const base::DictionaryValue& params) override;
+  Status GetWindowPosition(const std::string& target_id,
+                           int* x,
+                           int* y) override;
+  Status SetWindowPosition(const std::string& target_id, int x, int y) override;
+  Status MaximizeWindow(const std::string& target_id) override;
+  Status MinimizeWindow(const std::string& target_id) override;
+  Status FullScreenWindow(const std::string& target_id) override;
   Status CloseWebView(const std::string& id) override;
   Status ActivateWebView(const std::string& id) override;
+  Status SetAcceptInsecureCerts() override;
   std::string GetOperatingSystemName() override;
   bool IsMobileEmulationEnabled() const override;
   bool HasTouchScreen() const override;

@@ -9,17 +9,20 @@
 #include <utility>
 #include <vector>
 
-#include "ash/ime/test_ime_controller.h"
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/scoped_task_environment.h"
+#include "chrome/browser/ui/ash/test_ime_controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/chromeos/fake_input_method_delegate.h"
 #include "ui/base/ime/chromeos/input_method_descriptor.h"
 #include "ui/base/ime/chromeos/input_method_util.h"
+#include "ui/base/ime/chromeos/mock_ime_candidate_window_handler.h"
 #include "ui/base/ime/chromeos/mock_input_method_manager.h"
+#include "ui/base/ime/ime_bridge.h"
 
 using chromeos::input_method::FakeInputMethodDelegate;
 using chromeos::input_method::InputMethodDescriptor;
@@ -64,7 +67,7 @@ class TestInputMethodManager : public MockInputMethodManager {
     }
     std::unique_ptr<std::vector<InputMethodDescriptor>> GetActiveInputMethods()
         const override {
-      return base::MakeUnique<std::vector<InputMethodDescriptor>>(
+      return std::make_unique<std::vector<InputMethodDescriptor>>(
           input_methods_);
     }
     const InputMethodDescriptor* GetInputMethodFromId(
@@ -83,7 +86,7 @@ class TestInputMethodManager : public MockInputMethodManager {
       return InputMethodUtil::GetFallbackInputMethodDescriptor();
     }
     void SwitchToNextInputMethod() override { ++next_input_method_count_; }
-    void SwitchToPreviousInputMethod() override {
+    void SwitchToLastUsedInputMethod() override {
       ++previous_input_method_count_;
     }
 
@@ -120,6 +123,10 @@ class TestInputMethodManager : public MockInputMethodManager {
   void ActivateInputMethodMenuItem(const std::string& key) override {
     last_activate_menu_item_key_ = key;
   }
+  void OverrideKeyboardKeyset(
+      chromeos::input_method::mojom::ImeKeyset keyset) override {
+    keyboard_keyset_ = keyset;
+  }
 
   InputMethodUtil* GetInputMethodUtil() override { return &util_; }
   scoped_refptr<InputMethodManager::State> GetActiveIMEState() override {
@@ -132,6 +139,7 @@ class TestInputMethodManager : public MockInputMethodManager {
   int add_menu_observer_count_ = 0;
   int remove_menu_observer_count_ = 0;
   std::string last_activate_menu_item_key_;
+  chromeos::input_method::mojom::ImeKeyset keyboard_keyset_;
   FakeInputMethodDelegate delegate_;
   InputMethodUtil util_;
 
@@ -151,7 +159,7 @@ class ImeControllerClientTest : public testing::Test {
   TestInputMethodManager input_method_manager_;
 
   // Mock of mojo interface in ash.
-  ash::TestImeController ime_controller_;
+  TestImeController ime_controller_;
 
  private:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
@@ -161,7 +169,7 @@ class ImeControllerClientTest : public testing::Test {
 
 TEST_F(ImeControllerClientTest, Construction) {
   std::unique_ptr<ImeControllerClient> client =
-      base::MakeUnique<ImeControllerClient>(&input_method_manager_);
+      std::make_unique<ImeControllerClient>(&input_method_manager_);
   client->InitForTesting(ime_controller_.CreateInterfacePtr());
   EXPECT_EQ(1, input_method_manager_.add_observer_count_);
   EXPECT_EQ(1, input_method_manager_.add_menu_observer_count_);
@@ -191,6 +199,19 @@ TEST_F(ImeControllerClientTest, CapsLock) {
   client.OnCapsLockChanged(false);
   client.FlushMojoForTesting();
   EXPECT_FALSE(ime_controller_.is_caps_lock_enabled_);
+}
+
+TEST_F(ImeControllerClientTest, LayoutName) {
+  ImeControllerClient client(&input_method_manager_);
+  client.InitForTesting(ime_controller_.CreateInterfacePtr());
+
+  client.OnLayoutChanging("us(dvorak)");
+  client.FlushMojoForTesting();
+  EXPECT_EQ("us(dvorak)", ime_controller_.keyboard_layout_name_);
+
+  client.OnLayoutChanging("us");
+  client.FlushMojoForTesting();
+  EXPECT_EQ("us", ime_controller_.keyboard_layout_name_);
 }
 
 TEST_F(ImeControllerClientTest, ExtraInputEnabledStateChange) {
@@ -229,6 +250,12 @@ TEST_F(ImeControllerClientTest, ShowImeMenuOnShelf) {
 }
 
 TEST_F(ImeControllerClientTest, InputMethodChanged) {
+  ui::IMEBridge::Initialize();
+  std::unique_ptr<chromeos::MockIMECandidateWindowHandler>
+      mock_candidate_window =
+          std::make_unique<chromeos::MockIMECandidateWindowHandler>();
+  ui::IMEBridge::Get()->SetCandidateWindowHandler(mock_candidate_window.get());
+
   ImeControllerClient client(&input_method_manager_);
   client.InitForTesting(ime_controller_.CreateInterfacePtr());
 
@@ -247,6 +274,16 @@ TEST_F(ImeControllerClientTest, InputMethodChanged) {
   EXPECT_EQ("id2", ime_controller_.available_imes_[1]->id);
   EXPECT_EQ(base::ASCIIToUTF16("name2"),
             ime_controller_.available_imes_[1]->name);
+  EXPECT_FALSE(ime_controller_.show_mode_indicator_);
+
+  // Simulate a switch and show message.
+  input_method_manager_.state_->current_ime_id_ = "id1";
+  client.InputMethodChanged(&input_method_manager_, nullptr /* profile */,
+                            true /* show_message */);
+  client.FlushMojoForTesting();
+
+  // Mode indicator should be shown.
+  EXPECT_TRUE(ime_controller_.show_mode_indicator_);
 }
 
 TEST_F(ImeControllerClientTest, NoActiveState) {
@@ -265,7 +302,6 @@ TEST_F(ImeControllerClientTest, NoActiveState) {
 TEST_F(ImeControllerClientTest, MenuItemChanged) {
   ImeControllerClient client(&input_method_manager_);
   client.InitForTesting(ime_controller_.CreateInterfacePtr());
-
   const bool is_selection_item = true;
   InputMethodMenuItem item1("key1", "label1", is_selection_item,
                             true /* checked */);
@@ -293,7 +329,7 @@ TEST_F(ImeControllerClientTest, SwitchToNextIme) {
 
 TEST_F(ImeControllerClientTest, SwitchToPreviousIme) {
   ImeControllerClient client(&input_method_manager_);
-  client.SwitchToPreviousIme();
+  client.SwitchToLastUsedIme();
   EXPECT_EQ(1, input_method_manager_.state_->previous_input_method_count_);
 }
 
@@ -314,6 +350,18 @@ TEST_F(ImeControllerClientTest, ActivateImeMenuItem) {
   ImeControllerClient client(&input_method_manager_);
   client.ActivateImeMenuItem("key1");
   EXPECT_EQ("key1", input_method_manager_.last_activate_menu_item_key_);
+}
+
+TEST_F(ImeControllerClientTest, OverrideKeyboardKeyset) {
+  ImeControllerClient client(&input_method_manager_);
+  bool callback_called = false;
+  client.OverrideKeyboardKeyset(
+      chromeos::input_method::mojom::ImeKeyset::kEmoji,
+      base::BindLambdaForTesting(
+          [&callback_called]() { callback_called = true; }));
+  EXPECT_EQ(chromeos::input_method::mojom::ImeKeyset::kEmoji,
+            input_method_manager_.keyboard_keyset_);
+  EXPECT_TRUE(callback_called);
 }
 
 }  // namespace

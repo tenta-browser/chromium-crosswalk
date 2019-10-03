@@ -4,8 +4,8 @@
 
 #include <vector>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/features/feature.h"
@@ -15,13 +15,13 @@
 #include "extensions/renderer/test_extensions_renderer_client.h"
 #include "gin/public/context_holder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/blink/public/web/web_frame.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
 
 TEST(ScriptContextSetTest, Lifecycle) {
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   ScopedWebFrame web_frame;
   // Used by ScriptContextSet::Register().
   TestExtensionsRendererClient extensions_renderer_client;

@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <tuple>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -20,7 +21,7 @@
 #include "build/build_config.h"
 #include "content/browser/frame_host/navigation_controller_impl.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
-#include "content/browser/frame_host/navigation_entry_screenshot_manager.h"
+#include "content/browser/renderer_host/overscroll_controller.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
@@ -28,10 +29,12 @@
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/overscroll_configuration.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/web_drag_dest_delegate.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -39,9 +42,12 @@
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/dragdrop/drop_target_event.h"
+#include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event_sink.h"
@@ -65,121 +71,9 @@ void GiveItSomeTime() {
 
 namespace content {
 
-// This class keeps track of the RenderViewHost whose screenshot was captured.
-class ScreenshotTracker : public NavigationEntryScreenshotManager {
- public:
-  explicit ScreenshotTracker(NavigationControllerImpl* controller)
-      : NavigationEntryScreenshotManager(controller),
-        screenshot_taken_for_(nullptr),
-        waiting_for_screenshots_(0) {}
-
-  ~ScreenshotTracker() override {}
-
-  RenderViewHost* screenshot_taken_for() { return screenshot_taken_for_; }
-
-  void Reset() {
-    screenshot_taken_for_ = nullptr;
-    screenshot_set_.clear();
-  }
-
-  void SetScreenshotInterval(int interval_ms) {
-    SetMinScreenshotIntervalMS(interval_ms);
-  }
-
-  void WaitUntilScreenshotIsReady() {
-    if (!waiting_for_screenshots_)
-      return;
-    message_loop_runner_ = new content::MessageLoopRunner;
-    message_loop_runner_->Run();
-  }
-
-  bool ScreenshotSetForEntry(NavigationEntryImpl* entry) const {
-    return screenshot_set_.count(entry) > 0;
-  }
-
- private:
-  // Overridden from NavigationEntryScreenshotManager:
-  void WillTakeScreenshot(RenderViewHost* host) override {
-    ++waiting_for_screenshots_;
-    screenshot_taken_for_ = host;
-  }
-
-  void OnScreenshotSet(NavigationEntryImpl* entry) override {
-    --waiting_for_screenshots_;
-    screenshot_set_[entry] = true;
-    NavigationEntryScreenshotManager::OnScreenshotSet(entry);
-    if (waiting_for_screenshots_ == 0 && message_loop_runner_.get())
-      message_loop_runner_->Quit();
-  }
-
-  RenderViewHost* screenshot_taken_for_;
-  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
-  int waiting_for_screenshots_;
-  std::map<NavigationEntryImpl*, bool> screenshot_set_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScreenshotTracker);
-};
-
-class InputEventMessageFilterWaitsForAcks : public BrowserMessageFilter {
- public:
-  InputEventMessageFilterWaitsForAcks()
-      : BrowserMessageFilter(InputMsgStart),
-        type_(blink::WebInputEvent::kUndefined),
-        state_(INPUT_EVENT_ACK_STATE_UNKNOWN) {}
-
-  void WaitForAck(blink::WebInputEvent::Type type) {
-    base::RunLoop run_loop;
-    base::AutoReset<base::Closure> reset_quit(&quit_, run_loop.QuitClosure());
-    base::AutoReset<blink::WebInputEvent::Type> reset_type(&type_, type);
-    run_loop.Run();
-  }
-
-  InputEventAckState last_ack_state() const { return state_; }
-
- protected:
-  ~InputEventMessageFilterWaitsForAcks() override {}
-
- private:
-  void ReceivedEventAck(blink::WebInputEvent::Type type,
-                        InputEventAckState state) {
-    if (type_ == type) {
-      state_ = state;
-      quit_.Run();
-    }
-  }
-
-  // BrowserMessageFilter:
-  bool OnMessageReceived(const IPC::Message& message) override {
-    if (message.type() == InputHostMsg_HandleInputEvent_ACK::ID) {
-      InputHostMsg_HandleInputEvent_ACK::Param params;
-      InputHostMsg_HandleInputEvent_ACK::Read(&message, &params);
-      blink::WebInputEvent::Type type = std::get<0>(params).type;
-      InputEventAckState ack = std::get<0>(params).state;
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
-          base::BindOnce(&InputEventMessageFilterWaitsForAcks::ReceivedEventAck,
-                         this, type, ack));
-    }
-    return false;
-  }
-
-  base::Closure quit_;
-  blink::WebInputEvent::Type type_;
-  InputEventAckState state_;
-
-  DISALLOW_COPY_AND_ASSIGN(InputEventMessageFilterWaitsForAcks);
-};
-
 class WebContentsViewAuraTest : public ContentBrowserTest {
  public:
-  WebContentsViewAuraTest() : screenshot_manager_(nullptr) {}
-
-  // Executes the javascript synchronously and makes sure the returned value is
-  // freed properly.
-  void ExecuteSyncJSFunction(RenderFrameHost* rfh, const std::string& jscript) {
-    std::unique_ptr<base::Value> value =
-        content::ExecuteScriptAndGetValue(rfh, jscript);
-  }
+  WebContentsViewAuraTest() = default;
 
   // Starts the test server and navigates to the given url. Sets a large enough
   // size to the root window.  Returns after the navigation to the url is
@@ -193,19 +87,30 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
       test_url = GURL(embedded_test_server()->GetURL(url));
     NavigateToURL(shell(), test_url);
 
-    WebContentsImpl* web_contents =
-        static_cast<WebContentsImpl*>(shell()->web_contents());
-    NavigationControllerImpl* controller = &web_contents->GetController();
+    frame_observer_ = std::make_unique<RenderFrameSubmissionObserver>(
+        shell()->web_contents());
+  }
 
-    screenshot_manager_ = new ScreenshotTracker(controller);
-    controller->SetScreenshotManager(base::WrapUnique(screenshot_manager_));
-
-    frame_watcher_.Observe(shell()->web_contents());
+  void SetUpOnMainThread() override {
+    // Setup the server to allow serving separate sites, so we can perform
+    // cross-process navigation.
+    host_resolver()->AddRule("*", "127.0.0.1");
   }
 
   void SetUpCommandLine(base::CommandLine* cmd) override {
     cmd->AppendSwitchASCII(switches::kTouchEventFeatureDetection,
                            switches::kTouchEventFeatureDetectionEnabled);
+  }
+
+  void OnDropComplete(RenderWidgetHostImpl* target_rwh,
+                      const DropData& drop_data,
+                      const gfx::PointF& client_pt,
+                      const gfx::PointF& screen_pt,
+                      int key_modifiers,
+                      bool drop_allowed) {
+    // Cache the data for verification.
+    drop_target_widget_ = target_rwh;
+    std::move(async_drop_closure_).Run();
   }
 
   void TestOverscrollNavigation(bool touch_handler) {
@@ -217,19 +122,17 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
 
     EXPECT_FALSE(controller.CanGoBack());
     EXPECT_FALSE(controller.CanGoForward());
-    int index = -1;
-    std::unique_ptr<base::Value> value =
-        content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-    ASSERT_TRUE(value->GetAsInteger(&index));
+    base::Value value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+    int index = value.GetInt();
     EXPECT_EQ(0, index);
 
     if (touch_handler)
-      ExecuteSyncJSFunction(main_frame, "install_touch_handler()");
+      content::ExecuteScriptAndGetValue(main_frame, "install_touch_handler()");
 
-    ExecuteSyncJSFunction(main_frame, "navigate_next()");
-    ExecuteSyncJSFunction(main_frame, "navigate_next()");
+    content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
+    content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
     value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-    ASSERT_TRUE(value->GetAsInteger(&index));
+    index = value.GetInt();
     EXPECT_EQ(2, index);
     EXPECT_TRUE(controller.CanGoBack());
     EXPECT_FALSE(controller.CanGoForward());
@@ -251,8 +154,8 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
           kScrollSteps);
       base::string16 actual_title = title_watcher.WaitAndGetTitle();
       EXPECT_EQ(expected_title, actual_title);
-      value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-      ASSERT_TRUE(value->GetAsInteger(&index));
+      value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+      index = value.GetInt();
       EXPECT_EQ(1, index);
       EXPECT_TRUE(controller.CanGoBack());
       EXPECT_TRUE(controller.CanGoForward());
@@ -269,8 +172,8 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
           kScrollSteps);
       base::string16 actual_title = title_watcher.WaitAndGetTitle();
       EXPECT_EQ(expected_title, actual_title);
-      value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-      ASSERT_TRUE(value->GetAsInteger(&index));
+      value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+      index = value.GetInt();
       EXPECT_EQ(0, index);
       EXPECT_FALSE(controller.CanGoBack());
       EXPECT_TRUE(controller.CanGoForward());
@@ -287,8 +190,8 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
           kScrollSteps);
       base::string16 actual_title = title_watcher.WaitAndGetTitle();
       EXPECT_EQ(expected_title, actual_title);
-      value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-      ASSERT_TRUE(value->GetAsInteger(&index));
+      value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+      index = value.GetInt();
       EXPECT_EQ(1, index);
       EXPECT_TRUE(controller.CanGoBack());
       EXPECT_TRUE(controller.CanGoForward());
@@ -299,12 +202,10 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
     WebContentsImpl* web_contents =
         static_cast<WebContentsImpl*>(shell()->web_contents());
     RenderFrameHost* main_frame = web_contents->GetMainFrame();
-    int index = -1;
-    std::unique_ptr<base::Value> value;
-    value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-    if (!value->GetAsInteger(&index))
-      index = -1;
-    return index;
+    base::Value value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+    if (!value.is_int())
+      return -1;
+    return value.GetInt();
   }
 
   int ExecuteScriptAndExtractInt(const std::string& script) {
@@ -335,31 +236,49 @@ class WebContentsViewAuraTest : public ContentBrowserTest {
         GetRenderViewHost()->GetWidget()->GetView());
   }
 
-  InputEventMessageFilterWaitsForAcks* filter() {
-    return filter_.get();
+  void WaitAFrame() {
+    while (!GetRenderWidgetHost()->RequestRepaintForTesting())
+      GiveItSomeTime();
+    frame_observer_->WaitForAnyFrameSubmission();
   }
 
-  void WaitAFrame() {
-    while (!GetRenderWidgetHost()->ScheduleComposite())
-      GiveItSomeTime();
-    frame_watcher_.WaitFrames(1);
-  }
+  void StopObserveringFrames() { frame_observer_.reset(); }
 
  protected:
-  ScreenshotTracker* screenshot_manager() { return screenshot_manager_; }
-  void set_min_screenshot_interval(int interval_ms) {
-    screenshot_manager_->SetScreenshotInterval(interval_ms);
+  class MockWebDragDestDelegate : public WebDragDestDelegate {
+   public:
+    void DragInitialize(WebContents* contents) override {
+      drag_initialize_called_ = true;
+    }
+    void OnDragOver() override {}
+    void OnDragEnter() override {}
+    void OnDrop() override {}
+    void OnDragLeave() override {}
+    void OnReceiveDragData(const ui::OSExchangeData& data) override {}
+
+    void Reset() { drag_initialize_called_ = false; }
+    bool GetDragInitializeCalled() { return drag_initialize_called_; }
+
+   private:
+    bool drag_initialize_called_ = false;
+  };
+
+  // ContentBrowserTest:
+  void PostRunTestOnMainThread() override {
+    // Delete this before the WebContents is destroyed.
+    StopObserveringFrames();
+    ContentBrowserTest::PostRunTestOnMainThread();
   }
 
-  void AddInputEventMessageFilter() {
-    filter_ = new InputEventMessageFilterWaitsForAcks();
-    GetRenderWidgetHost()->GetProcess()->AddFilter(filter_.get());
-  }
+  RenderWidgetHostImpl* drop_target_widget_;
+
+  // A closure indicating that async drop operation has completed.
+  base::OnceClosure async_drop_closure_;
+
+  MockWebDragDestDelegate drag_dest_delegate_;
 
  private:
-  ScreenshotTracker* screenshot_manager_;
-  scoped_refptr<InputEventMessageFilterWaitsForAcks> filter_;
-  FrameWatcher frame_watcher_;
+  std::unique_ptr<RenderFrameSubmissionObserver> frame_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsViewAuraTest);
 };
@@ -381,10 +300,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, MAYBE_OverscrollNavigation) {
 // On Linux, the test frequently times out. (See crbug.com/440043).
 #if defined(OS_WIN) || defined(OS_LINUX)
 #define MAYBE_OverscrollNavigationWithTouchHandler \
-        DISABLED_OverscrollNavigationWithTouchHandler
+  DISABLED_OverscrollNavigationWithTouchHandler
 #else
 #define MAYBE_OverscrollNavigationWithTouchHandler \
-        OverscrollNavigationWithTouchHandler
+  OverscrollNavigationWithTouchHandler
 #endif
 IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
                        MAYBE_OverscrollNavigationWithTouchHandler) {
@@ -422,8 +341,9 @@ class SpuriousMouseMoveEventObserver
 // these should all be marked as synthesized and get dropped while the
 // overscroll gesture is in progress.
 // See crbug.com/731914
+// Disabled due to flakiness: https://crbug.com/807107.
 IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
-                       OverscrollNotInterruptedBySpuriousMouseEvents) {
+                       DISABLED_OverscrollNotInterruptedBySpuriousMouseEvents) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
@@ -432,15 +352,13 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
 
   EXPECT_FALSE(controller.CanGoBack());
   EXPECT_FALSE(controller.CanGoForward());
-  int index = -1;
-  std::unique_ptr<base::Value> value =
-      content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-  ASSERT_TRUE(value->GetAsInteger(&index));
+  base::Value value = ExecuteScriptAndGetValue(main_frame, "get_current()");
+  int index = value.GetInt();
   EXPECT_EQ(0, index);
 
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
+  content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
   value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
-  ASSERT_TRUE(value->GetAsInteger(&index));
+  index = value.GetInt();
   EXPECT_EQ(1, index);
   EXPECT_TRUE(controller.CanGoBack());
   EXPECT_FALSE(controller.CanGoForward());
@@ -454,10 +372,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   blink::WebGestureEvent gesture_scroll_begin(
       blink::WebGestureEvent::kGestureScrollBegin,
       blink::WebInputEvent::kNoModifiers,
-      blink::WebInputEvent::kTimeStampForTesting);
-  gesture_scroll_begin.source_device = blink::kWebGestureDeviceTouchscreen;
+      blink::WebInputEvent::GetStaticTimeStampForTests(),
+      blink::WebGestureDevice::kTouchscreen);
   gesture_scroll_begin.data.scroll_begin.delta_hint_units =
-      blink::WebGestureEvent::ScrollUnits::kPrecisePixels;
+      ui::input_types::ScrollGranularity::kScrollByPrecisePixel;
   gesture_scroll_begin.data.scroll_begin.delta_x_hint = 0.f;
   gesture_scroll_begin.data.scroll_begin.delta_y_hint = 0.f;
   GetRenderWidgetHost()->ForwardGestureEvent(gesture_scroll_begin);
@@ -465,13 +383,12 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   blink::WebGestureEvent gesture_scroll_update(
       blink::WebGestureEvent::kGestureScrollUpdate,
       blink::WebInputEvent::kNoModifiers,
-      blink::WebInputEvent::kTimeStampForTesting);
-  gesture_scroll_update.source_device = blink::kWebGestureDeviceTouchscreen;
+      blink::WebInputEvent::GetStaticTimeStampForTests(),
+      blink::WebGestureDevice::kTouchscreen);
   gesture_scroll_update.data.scroll_update.delta_units =
-      blink::WebGestureEvent::ScrollUnits::kPrecisePixels;
+      ui::input_types::ScrollGranularity::kScrollByPrecisePixel;
   gesture_scroll_update.data.scroll_update.delta_y = 0.f;
-  float start_threshold =
-      GetOverscrollConfig(OverscrollConfig::THRESHOLD_START_TOUCHSCREEN);
+  float start_threshold = OverscrollConfig::kStartTouchscreenThresholdDips;
   gesture_scroll_update.data.scroll_update.delta_x = start_threshold + 1;
   GetRenderWidgetHost()->ForwardGestureEvent(gesture_scroll_update);
 
@@ -495,9 +412,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
 
 // Disabled because the test always fails the first time it runs on the Win Aura
 // bots, and usually but not always passes second-try (See crbug.com/179532).
-#if defined(OS_WIN)
+// Flaky on CrOS as well: https://crbug.com/856079
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
 #define MAYBE_QuickOverscrollDirectionChange \
-        DISABLED_QuickOverscrollDirectionChange
+  DISABLED_QuickOverscrollDirectionChange
 #else
 #define MAYBE_QuickOverscrollDirectionChange QuickOverscrollDirectionChange
 #endif
@@ -514,11 +432,11 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
       ui::ScopedAnimationDurationScaleMode::FAST_DURATION);
 
   // Make sure the page has both back/forward history.
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
+  content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
   EXPECT_EQ(1, GetCurrentIndex());
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
+  content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
   EXPECT_EQ(2, GetCurrentIndex());
-  web_contents->GetController().GoBack();
+  web_contents->GetController().GoToOffset(-1);
   EXPECT_EQ(1, GetCurrentIndex());
 
   aura::Window* content = web_contents->GetContentNativeView();
@@ -583,206 +501,6 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   // Do not end the overscroll sequence.
 }
 
-// Tests that the page has has a screenshot when navigation happens:
-//  - from within the page (from a JS function)
-//  - interactively, when user does an overscroll gesture
-//  - interactively, when user navigates in history without the overscroll
-//    gesture.
-// Flaky on Windows (http://crbug.com/357311). Might be related to
-// OverscrollNavigation test.
-// Flaky on Ozone (http://crbug.com/399676).
-// Flaky on ChromeOS (http://crbug.com/405945).
-// Flaky on Linux (http://crbug.com/705599)
-#if defined(OS_WIN) || defined(USE_OZONE) || defined(OS_CHROMEOS) || \
-    defined(OS_LINUX)
-#define MAYBE_OverscrollScreenshot DISABLED_OverscrollScreenshot
-#else
-#define MAYBE_OverscrollScreenshot OverscrollScreenshot
-#endif
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, MAYBE_OverscrollScreenshot) {
-  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(shell()->web_contents());
-  RenderFrameHost* main_frame = web_contents->GetMainFrame();
-
-  set_min_screenshot_interval(0);
-
-  // Do a few navigations initiated by the page.
-  // Screenshots should never be captured since these are all in-page
-  // navigations.
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  EXPECT_EQ(1, GetCurrentIndex());
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  EXPECT_EQ(2, GetCurrentIndex());
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-
-  NavigationEntryImpl* entry = web_contents->GetController().GetEntryAtIndex(2);
-  EXPECT_FALSE(entry->screenshot().get());
-
-  entry = web_contents->GetController().GetEntryAtIndex(1);
-  EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-
-  entry = web_contents->GetController().GetEntryAtIndex(0);
-  EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-
-  entry = web_contents->GetController().GetEntryAtIndex(2);
-  EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-
-  entry = web_contents->GetController().GetEntryAtIndex(3);
-  EXPECT_FALSE(entry->screenshot().get());
-  {
-    // Now, swipe right to navigate backwards. This should navigate away from
-    // index 3 to index 2.
-    base::string16 expected_title = base::ASCIIToUTF16("Title: #2");
-    content::TitleWatcher title_watcher(web_contents, expected_title);
-    aura::Window* content = web_contents->GetContentNativeView();
-    gfx::Rect bounds = content->GetBoundsInRootWindow();
-    ui::test::EventGenerator generator(content->GetRootWindow(), content);
-    generator.GestureScrollSequence(
-        gfx::Point(bounds.x() + 2, bounds.y() + 10),
-        gfx::Point(bounds.right() - 10, bounds.y() + 10),
-        base::TimeDelta::FromMilliseconds(20),
-        1);
-    base::string16 actual_title = title_watcher.WaitAndGetTitle();
-    EXPECT_EQ(expected_title, actual_title);
-    EXPECT_EQ(2, GetCurrentIndex());
-    screenshot_manager()->WaitUntilScreenshotIsReady();
-    entry = web_contents->GetController().GetEntryAtIndex(3);
-    EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-  }
-
-  // Navigate a couple more times.
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  EXPECT_EQ(3, GetCurrentIndex());
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  EXPECT_EQ(4, GetCurrentIndex());
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-  entry = web_contents->GetController().GetEntryAtIndex(4);
-  EXPECT_FALSE(entry->screenshot().get());
-
-  {
-    // Navigate back in history.
-    base::string16 expected_title = base::ASCIIToUTF16("Title: #3");
-    content::TitleWatcher title_watcher(web_contents, expected_title);
-    web_contents->GetController().GoBack();
-    base::string16 actual_title = title_watcher.WaitAndGetTitle();
-    EXPECT_EQ(expected_title, actual_title);
-    EXPECT_EQ(3, GetCurrentIndex());
-    screenshot_manager()->WaitUntilScreenshotIsReady();
-    entry = web_contents->GetController().GetEntryAtIndex(4);
-    EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-  }
-}
-
-// Crashes under ThreadSanitizer, http://crbug.com/356758.
-#if defined(THREAD_SANITIZER)
-#define MAYBE_ScreenshotForSwappedOutRenderViews \
-    DISABLED_ScreenshotForSwappedOutRenderViews
-#else
-#define MAYBE_ScreenshotForSwappedOutRenderViews \
-    ScreenshotForSwappedOutRenderViews
-#endif
-// Tests that screenshot is taken correctly when navigation causes a
-// RenderViewHost to be swapped out.
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
-                       MAYBE_ScreenshotForSwappedOutRenderViews) {
-  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
-  // Create a new server with a different site.
-  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.ServeFilesFromSourceDirectory("content/test/data");
-  ASSERT_TRUE(https_server.Start());
-
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(shell()->web_contents());
-  set_min_screenshot_interval(0);
-
-  struct {
-    GURL url;
-    int transition;
-  } navigations[] = {
-      {https_server.GetURL("/title1.html"),
-       ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR},
-      {embedded_test_server()->GetURL("/title2.html"),
-       ui::PAGE_TRANSITION_AUTO_BOOKMARK},
-      {https_server.GetURL("/title3.html"),
-       ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR},
-      {GURL(), 0}};
-
-  screenshot_manager()->Reset();
-  for (int i = 0; !navigations[i].url.is_empty(); ++i) {
-    // Navigate via the user initiating a navigation from the UI.
-    NavigationController::LoadURLParams params(navigations[i].url);
-    params.transition_type =
-        ui::PageTransitionFromInt(navigations[i].transition);
-
-    RenderViewHost* old_host = web_contents->GetRenderViewHost();
-    web_contents->GetController().LoadURLWithParams(params);
-    WaitForLoadStop(web_contents);
-    screenshot_manager()->WaitUntilScreenshotIsReady();
-
-    EXPECT_NE(old_host, web_contents->GetRenderViewHost())
-        << navigations[i].url.spec();
-    EXPECT_EQ(old_host, screenshot_manager()->screenshot_taken_for());
-
-    NavigationEntryImpl* entry =
-        web_contents->GetController().GetEntryAtOffset(-1);
-    EXPECT_TRUE(screenshot_manager()->ScreenshotSetForEntry(entry));
-
-    entry = web_contents->GetController().GetLastCommittedEntry();
-    EXPECT_FALSE(screenshot_manager()->ScreenshotSetForEntry(entry));
-    EXPECT_FALSE(entry->screenshot().get());
-    screenshot_manager()->Reset();
-  }
-
-  // Increase the minimum interval between taking screenshots.
-  set_min_screenshot_interval(60000);
-
-  // Navigate again. This should not take any screenshot because of the
-  // increased screenshot interval.
-  NavigationController::LoadURLParams params(navigations[0].url);
-  params.transition_type = ui::PageTransitionFromInt(navigations[0].transition);
-  web_contents->GetController().LoadURLWithParams(params);
-  WaitForLoadStop(web_contents);
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-
-  EXPECT_EQ(nullptr, screenshot_manager()->screenshot_taken_for());
-}
-
-// Tests that navigations resulting from reloads, history.replaceState,
-// and history.pushState do not capture screenshots.
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, ReplaceStateReloadPushState) {
-  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(shell()->web_contents());
-  RenderFrameHost* main_frame = web_contents->GetMainFrame();
-
-  set_min_screenshot_interval(0);
-  screenshot_manager()->Reset();
-  ExecuteSyncJSFunction(main_frame, "use_replace_state()");
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-  // history.replaceState shouldn't capture a screenshot
-  EXPECT_FALSE(screenshot_manager()->screenshot_taken_for());
-  screenshot_manager()->Reset();
-  web_contents->GetController().Reload(ReloadType::NORMAL, true);
-  WaitForLoadStop(web_contents);
-  // reloading the page shouldn't capture a screenshot
-  // TODO (mfomitchev): currently broken. Uncomment when
-  // FrameHostMsg_DidCommitProvisionalLoad_Params.was_within_same_document
-  // is populated properly when reloading the page.
-  // EXPECT_FALSE(screenshot_manager()->screenshot_taken_for());
-  screenshot_manager()->Reset();
-  ExecuteSyncJSFunction(main_frame, "use_push_state()");
-  screenshot_manager()->WaitUntilScreenshotIsReady();
-  // pushing a state shouldn't capture a screenshot
-  // TODO (mfomitchev): currently broken. Uncomment when
-  // FrameHostMsg_DidCommitProvisionalLoad_Params.was_within_same_document
-  // is populated properly when pushState is used.
-  // EXPECT_FALSE(screenshot_manager()->screenshot_taken_for());
-}
-
 // TODO(sadrul): This test is disabled because it reparents in a way the
 //               FocusController does not support. This code would crash in
 //               a production build. It only passed prior to this revision
@@ -799,7 +517,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
 
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
-  ExecuteSyncJSFunction(web_contents->GetMainFrame(), "navigate_next()");
+  content::ExecuteScriptAndGetValue(web_contents->GetMainFrame(),
+                                    "navigate_next()");
   EXPECT_EQ(1, GetCurrentIndex());
 
   aura::Window* content = web_contents->GetContentNativeView();
@@ -814,12 +533,86 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   window->AddChild(shell()->web_contents()->GetContentNativeView());
 }
 
+IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, DragDropOnOopif) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = embedded_test_server()->GetURL(
+      "a.com", "/overlapping_cross_site_iframe.html");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+
+  WebContentsImpl* contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+  WebContentsViewAura* view =
+      static_cast<WebContentsViewAura*>(contents->GetView());
+
+  view->SetDragDestDelegateForTesting(&drag_dest_delegate_);
+
+  // Drop on the root frame.
+  {
+    drag_dest_delegate_.Reset();
+    std::unique_ptr<ui::OSExchangeData> data =
+        std::make_unique<ui::OSExchangeData>();
+    view->RegisterDropCallbackForTesting(base::BindOnce(
+        &WebContentsViewAuraTest::OnDropComplete, base::Unretained(this)));
+    base::RunLoop run_loop;
+    async_drop_closure_ = run_loop.QuitClosure();
+
+    gfx::PointF point = {10, 10};
+    ui::DropTargetEvent event(*data.get(), point, point,
+                              ui::DragDropTypes::DRAG_COPY);
+    view->OnDragEntered(event);
+    EXPECT_TRUE(drag_dest_delegate_.GetDragInitializeCalled());
+    view->OnPerformDrop(event, std::move(data));
+
+    run_loop.Run();
+
+    EXPECT_EQ(drop_target_widget_,
+              RenderWidgetHostImpl::From(contents->GetFrameTree()
+                                             ->root()
+                                             ->current_frame_host()
+                                             ->GetRenderWidgetHost()));
+  }
+  // Drop on the element in the root frame overlapping the embedded OOPIF.
+  {
+    drag_dest_delegate_.Reset();
+    std::unique_ptr<ui::OSExchangeData> data =
+        std::make_unique<ui::OSExchangeData>();
+    view->RegisterDropCallbackForTesting(base::BindOnce(
+        &WebContentsViewAuraTest::OnDropComplete, base::Unretained(this)));
+    base::RunLoop run_loop;
+    async_drop_closure_ = run_loop.QuitClosure();
+
+    int left =
+        EvalJs(contents,
+               "document.getElementById('target').getBoundingClientRect().left")
+            .ExtractInt();
+    int top =
+        EvalJs(contents,
+               "document.getElementById('target').getBoundingClientRect().top")
+            .ExtractInt();
+    gfx::PointF point = {left + 5, top + 5};
+    ui::DropTargetEvent event(*data.get(), point, point,
+                              ui::DragDropTypes::DRAG_COPY);
+    view->OnDragEntered(event);
+    EXPECT_TRUE(drag_dest_delegate_.GetDragInitializeCalled());
+    view->OnPerformDrop(event, std::move(data));
+
+    run_loop.Run();
+
+    EXPECT_EQ(drop_target_widget_,
+              RenderWidgetHostImpl::From(contents->GetFrameTree()
+                                             ->root()
+                                             ->current_frame_host()
+                                             ->GetRenderWidgetHost()));
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, ContentWindowClose) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
 
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
-  ExecuteSyncJSFunction(web_contents->GetMainFrame(), "navigate_next()");
+  content::ExecuteScriptAndGetValue(web_contents->GetMainFrame(),
+                                    "navigate_next()");
   EXPECT_EQ(1, GetCurrentIndex());
 
   aura::Window* content = web_contents->GetContentNativeView();
@@ -854,11 +647,11 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
       static_cast<WebContentsImpl*>(shell()->web_contents());
   NavigationController& controller = web_contents->GetController();
   RenderFrameHost* main_frame = web_contents->GetMainFrame();
-  ExecuteSyncJSFunction(main_frame, "install_touch_handler()");
+  content::ExecuteScriptAndGetValue(main_frame, "install_touch_handler()");
 
   // Navigate twice, then navigate back in history once.
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
-  ExecuteSyncJSFunction(main_frame, "navigate_next()");
+  content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
+  content::ExecuteScriptAndGetValue(main_frame, "navigate_next()");
   EXPECT_EQ(2, GetCurrentIndex());
   EXPECT_TRUE(controller.CanGoBack());
   EXPECT_FALSE(controller.CanGoForward());
@@ -901,34 +694,16 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   EXPECT_FALSE(controller.CanGoForward());
 }
 
-// Verify that hiding a parent of the renderer will hide the content too.
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, HideContentOnParenHide) {
-  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/title1.html"));
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(shell()->web_contents());
-  aura::Window* content = web_contents->GetNativeView()->parent();
-  EXPECT_TRUE(web_contents->should_normally_be_visible());
-  content->Hide();
-  EXPECT_FALSE(web_contents->should_normally_be_visible());
-  content->Show();
-  EXPECT_TRUE(web_contents->should_normally_be_visible());
-}
-
 // Ensure that SnapToPhysicalPixelBoundary() is called on WebContentsView parent
 // change. This is a regression test for http://crbug.com/388908.
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, WebContentsViewReparent) {
+// Disabled due to flakiness: https://crbug.com/807107.
+IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
+                       DISABLED_WebContentsViewReparent) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
 
   std::unique_ptr<aura::Window> window(new aura::Window(nullptr));
   window->Init(ui::LAYER_NOT_DRAWN);
-
-  RenderWidgetHostViewAura* rwhva =
-      static_cast<RenderWidgetHostViewAura*>(
-          shell()->web_contents()->GetRenderWidgetHostView());
-  rwhva->ResetHasSnappedToBoundary();
-  EXPECT_FALSE(rwhva->has_snapped_to_boundary());
   window->AddChild(shell()->web_contents()->GetNativeView());
-  EXPECT_TRUE(rwhva->has_snapped_to_boundary());
 }
 
 // Flaky on some platforms, likely for the same reason as other flaky overscroll
@@ -949,47 +724,57 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
                        MAYBE_OverscrollNavigationTouchThrottling) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
 
-  AddInputEventMessageFilter();
-
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
   aura::Window* content = web_contents->GetContentNativeView();
   gfx::Rect bounds = content->GetBoundsInRootWindow();
   const int dx = 20;
 
-  ExecuteSyncJSFunction(web_contents->GetMainFrame(),
-                        "install_touchmove_handler()");
+  content::ExecuteScriptAndGetValue(web_contents->GetMainFrame(),
+                                    "install_touchmove_handler()");
 
   WaitAFrame();
 
   for (int navigated = 0; navigated <= 1; ++navigated) {
     if (navigated) {
-      ExecuteSyncJSFunction(web_contents->GetMainFrame(), "navigate_next()");
-      ExecuteSyncJSFunction(web_contents->GetMainFrame(),
-                            "reset_touchmove_count()");
+      content::ExecuteScriptAndGetValue(web_contents->GetMainFrame(),
+                                        "navigate_next()");
+      content::ExecuteScriptAndGetValue(web_contents->GetMainFrame(),
+                                        "reset_touchmove_count()");
     }
+    InputEventAckWaiter touch_start_waiter(
+        GetRenderWidgetHost(),
+        base::BindRepeating([](content::InputEventAckSource,
+                               content::InputEventAckState state,
+                               const blink::WebInputEvent& event) {
+          return event.GetType() == blink::WebGestureEvent::kTouchStart &&
+                 state == content::INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
+        }));
     // Send touch press.
     SyntheticWebTouchEvent touch;
     touch.PressPoint(bounds.x() + 2, bounds.y() + 10);
     GetRenderWidgetHost()->ForwardTouchEventWithLatencyInfo(touch,
                                                             ui::LatencyInfo());
-    filter()->WaitForAck(blink::WebInputEvent::kTouchStart);
+    touch_start_waiter.Wait();
     WaitAFrame();
-
-    // Assert on the ack, because we'll end up waiting for acks that will never
-    // come if this is not true.
-    ASSERT_EQ(INPUT_EVENT_ACK_STATE_NOT_CONSUMED, filter()->last_ack_state());
 
     // Send first touch move, and then a scroll begin.
     touch.MovePoint(0, bounds.x() + 20 + 1 * dx, bounds.y() + 100);
+    InputEventAckWaiter touch_move_waiter(
+        GetRenderWidgetHost(),
+        base::BindRepeating([](content::InputEventAckSource,
+                               content::InputEventAckState state,
+                               const blink::WebInputEvent& event) {
+          return event.GetType() == blink::WebGestureEvent::kTouchMove &&
+                 state == content::INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
+        }));
     GetRenderWidgetHost()->ForwardTouchEventWithLatencyInfo(touch,
                                                             ui::LatencyInfo());
-    filter()->WaitForAck(blink::WebInputEvent::kTouchMove);
-    ASSERT_EQ(INPUT_EVENT_ACK_STATE_NOT_CONSUMED, filter()->last_ack_state());
+    touch_move_waiter.Wait();
 
     blink::WebGestureEvent scroll_begin =
         SyntheticWebGestureEventBuilder::BuildScrollBegin(
-            1, 1, blink::kWebGestureDeviceTouchscreen);
+            1, 1, blink::WebGestureDevice::kTouchscreen);
     GetRenderWidgetHost()->ForwardGestureEventWithLatencyInfo(
         scroll_begin, ui::LatencyInfo());
     // Scroll begin ignores ack disposition, so don't wait for the ack.
@@ -1005,7 +790,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
 
       blink::WebGestureEvent scroll_update =
           SyntheticWebGestureEventBuilder::BuildScrollUpdate(
-              dx, 5, 0, blink::kWebGestureDeviceTouchscreen);
+              dx, 5, 0, blink::WebGestureDevice::kTouchscreen);
 
       GetRenderWidgetHost()->ForwardGestureEventWithLatencyInfo(
           scroll_update, ui::LatencyInfo());
@@ -1018,10 +803,9 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
                                                             ui::LatencyInfo());
     WaitAFrame();
 
-    blink::WebGestureEvent scroll_end(
-        blink::WebInputEvent::kGestureScrollEnd,
-        blink::WebInputEvent::kNoModifiers,
-        ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+    blink::WebGestureEvent scroll_end(blink::WebInputEvent::kGestureScrollEnd,
+                                      blink::WebInputEvent::kNoModifiers,
+                                      ui::EventTimeForNow());
     GetRenderWidgetHost()->ForwardGestureEventWithLatencyInfo(
         scroll_end, ui::LatencyInfo());
     WaitAFrame();

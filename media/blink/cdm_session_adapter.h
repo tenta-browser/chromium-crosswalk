@@ -8,16 +8,18 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "media/base/cdm_config.h"
 #include "media/base/content_decryption_module.h"
-#include "third_party/WebKit/public/platform/WebContentDecryptionModuleResult.h"
-#include "third_party/WebKit/public/platform/WebContentDecryptionModuleSession.h"
+#include "third_party/blink/public/platform/web_content_decryption_module_result.h"
+#include "third_party/blink/public/platform/web_content_decryption_module_session.h"
 
 namespace url {
 class Origin;
@@ -26,6 +28,7 @@ class Origin;
 namespace media {
 
 struct CdmConfig;
+class CdmContextRef;
 class CdmFactory;
 class WebContentDecryptionModuleSessionImpl;
 
@@ -96,8 +99,9 @@ class CdmSessionAdapter : public base::RefCounted<CdmSessionAdapter> {
   void RemoveSession(const std::string& session_id,
                      std::unique_ptr<SimpleCdmPromise> promise);
 
-  // Returns a reference to the CDM.
-  scoped_refptr<ContentDecryptionModule> GetCdm();
+  // Returns a CdmContextRef which provides access to CdmContext and by holding
+  // the CdmContextRef, makes sure the CdmContext is kept alive.
+  std::unique_ptr<CdmContextRef> GetCdmContextRef();
 
   // Returns the key system name.
   const std::string& GetKeySystem() const;
@@ -105,18 +109,23 @@ class CdmSessionAdapter : public base::RefCounted<CdmSessionAdapter> {
   // Returns a prefix to use for UMAs.
   const std::string& GetKeySystemUMAPrefix() const;
 
+  // Returns the CdmConfig used in creation of CDM.
+  const CdmConfig& GetCdmConfig() const;
+
  private:
   friend class base::RefCounted<CdmSessionAdapter>;
 
   // Session ID to WebContentDecryptionModuleSessionImpl mapping.
-  typedef base::hash_map<std::string,
-                         base::WeakPtr<WebContentDecryptionModuleSessionImpl> >
+  typedef std::unordered_map<
+      std::string,
+      base::WeakPtr<WebContentDecryptionModuleSessionImpl>>
       SessionMap;
 
   ~CdmSessionAdapter();
 
   // Callback for CreateCdm().
   void OnCdmCreated(const std::string& key_system,
+                    const CdmConfig& cdm_config,
                     base::TimeTicks start_time,
                     const scoped_refptr<ContentDecryptionModule>& cdm,
                     const std::string& error_message);
@@ -143,6 +152,9 @@ class CdmSessionAdapter : public base::RefCounted<CdmSessionAdapter> {
   std::string key_system_;
   std::string key_system_uma_prefix_;
 
+  // CdmConfig used in creation of cdm_.
+  CdmConfig cdm_config_;
+
   // A unique ID to trace CdmSessionAdapter::CreateCdm() call and the matching
   // OnCdmCreated() call.
   uint32_t trace_id_;
@@ -150,7 +162,7 @@ class CdmSessionAdapter : public base::RefCounted<CdmSessionAdapter> {
   std::unique_ptr<blink::WebContentDecryptionModuleResult> cdm_created_result_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<CdmSessionAdapter> weak_ptr_factory_;
+  base::WeakPtrFactory<CdmSessionAdapter> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CdmSessionAdapter);
 };

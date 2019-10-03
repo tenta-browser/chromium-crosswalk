@@ -22,7 +22,6 @@ import org.junit.runner.RunWith;
 import org.chromium.base.Log;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.webview_shell.WebViewLayoutTestActivity;
@@ -51,7 +50,7 @@ public class WebViewLayoutTest {
     private static final String EXTERNAL_PREFIX = UrlUtils.getIsolatedTestRoot() + "/";
     private static final String BASE_WEBVIEW_TEST_PATH =
             "android_webview/tools/system_webview_shell/test/data/";
-    private static final String BASE_BLINK_TEST_PATH = "third_party/WebKit/LayoutTests/";
+    private static final String BASE_BLINK_TEST_PATH = "third_party/blink/web_tests/";
     private static final String PATH_WEBVIEW_PREFIX = EXTERNAL_PREFIX + BASE_WEBVIEW_TEST_PATH;
     private static final String PATH_BLINK_PREFIX = EXTERNAL_PREFIX + BASE_BLINK_TEST_PATH;
     private static final String GLOBAL_LISTING_FILE =
@@ -61,7 +60,7 @@ public class WebViewLayoutTest {
     // stable interfaces can dissapear and reappear later. To select the file to compare
     // against a fallback approach is used. The order in the List below is important due
     // to how blink performs baseline optimizations. For more details see
-    // third_party/WebKit/Tools/Scripts/webkitpy/common/checkout/baseline_optimizer.py.
+    // third_party/blink/tools/blinkpy/common/checkout/baseline_optimizer.py.
     private static final List<String> BLINK_STABLE_FALLBACKS = Arrays.asList(
             EXTERNAL_PREFIX + BASE_BLINK_TEST_PATH + "virtual/stable/" + GLOBAL_LISTING_FILE,
             EXTERNAL_PREFIX + BASE_BLINK_TEST_PATH + "platform/linux/virtual/stable/"
@@ -234,9 +233,16 @@ public class WebViewLayoutTest {
                 }
             }
         }
-        Assert.assertEquals("Missing webview interfaces found", "", missing.toString());
+
+        if (missing.length() > 0) {
+            Assert.fail("Android WebView is missing the following declared Blink interfaces: "
+                    + missing.toString()
+                    + ". Interfaces which are intentionally not exposed in WebView need to be"
+                    + " added to not-webview-exposed.txt");
+        }
     }
 
+    @DisabledTest(message = "crbug.com/929129")
     @Test
     @MediumTest
     public void testRequestMIDIAccess() throws Exception {
@@ -296,17 +302,17 @@ public class WebViewLayoutTest {
     }
 
     /*
-    currently failing on aosp bots, see crbug.com/607350
+    TODO(aluo): Investigate why this is failing on google devices too and not
+    just aosp per crbug.com/607350
     */
     @Test
     @MediumTest
-    @DisableIf.Build(product_name_includes = "aosp")
+    @DisabledTest(message = "crbug.com/607350")
     public void testEMEPermission() throws Exception {
         mTestActivity.setGrantPermission(true);
         runWebViewLayoutTest("blink-apis/eme/eme.html", "blink-apis/eme/eme-expected.txt");
         mTestActivity.setGrantPermission(false);
     }
-
 
     // test helper methods
 

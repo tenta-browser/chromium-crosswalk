@@ -11,18 +11,17 @@
 
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
-#include "components/autofill/core/browser/address_i18n.h"
 #include "components/autofill/core/browser/autofill_address_util.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/country_combobox_model.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/address_i18n.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/phone_number_i18n.h"
+#include "components/autofill/core/browser/ui/country_combobox_model.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "components/strings/grit/components_strings.h"
@@ -170,12 +169,17 @@ NSString* NormalizeRegionName(NSString* region, NSArray<RegionData*>* regions) {
   return NO;
 }
 
-- (void)formatValueForEditorField:(EditorField*)field {
-  if (field.autofillUIType == AutofillUITypeProfileHomePhoneWholeNumber) {
-    field.value = base::SysUTF8ToNSString(autofill::i18n::FormatPhoneForDisplay(
-        base::SysNSStringToUTF8(field.value),
+- (BOOL)shouldFormatValueForAutofillUIType:(AutofillUIType)type {
+  return (type == AutofillUITypeProfileHomePhoneWholeNumber);
+}
+
+- (NSString*)formatValue:(NSString*)value autofillUIType:(AutofillUIType)type {
+  if (type == AutofillUITypeProfileHomePhoneWholeNumber) {
+    return base::SysUTF8ToNSString(autofill::i18n::FormatPhoneForDisplay(
+        base::SysNSStringToUTF8(value),
         base::SysNSStringToUTF8(self.selectedCountryCode)));
   }
+  return nil;
 }
 
 - (UIImage*)iconIdentifyingEditorField:(EditorField*)field {
@@ -192,8 +196,8 @@ NSString* NormalizeRegionName(NSString* region, NSArray<RegionData*>* regions) {
       case AutofillUITypeProfileHomePhoneWholeNumber: {
         const std::string selectedCountryCode =
             base::SysNSStringToUTF8(self.selectedCountryCode);
-        if (!autofill::IsValidPhoneNumber(base::SysNSStringToUTF16(field.value),
-                                          selectedCountryCode)) {
+        if (!autofill::IsPossiblePhoneNumber(
+                base::SysNSStringToUTF16(field.value), selectedCountryCode)) {
           return l10n_util::GetNSString(
               IDS_PAYMENTS_PHONE_INVALID_VALIDATION_MESSAGE);
         }
@@ -204,7 +208,7 @@ NSString* NormalizeRegionName(NSString* region, NSArray<RegionData*>* regions) {
     }
   } else if (field.isRequired) {
     return l10n_util::GetNSString(
-        IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE);
+        IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE);
   }
   return nil;
 }
@@ -292,7 +296,7 @@ NSString* NormalizeRegionName(NSString* region, NSArray<RegionData*>* regions) {
 
 // Queries the region names based on the selected country code.
 - (void)loadRegions {
-  _regionDataLoader = base::MakeUnique<RegionDataLoader>(self);
+  _regionDataLoader = std::make_unique<RegionDataLoader>(self);
   _regionDataLoader->LoadRegionData(
       base::SysNSStringToUTF8(self.selectedCountryCode),
       _paymentRequest->GetRegionDataLoader());

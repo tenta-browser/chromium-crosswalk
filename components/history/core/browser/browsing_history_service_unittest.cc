@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind_helpers.h"
 #include "base/callback_forward.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
@@ -52,9 +53,6 @@ struct TestResult {
   int64_t hour_offset;  // Visit time in hours past the baseline time.
   HistoryEntry::EntryType type;
 };
-
-// Used to bind a callback.
-void DoNothing(bool ignored) {}
 
 class TestSyncService : public syncer::FakeSyncService {
  public:
@@ -123,14 +121,11 @@ class TestBrowsingHistoryDriver : public BrowsingHistoryDriver {
 
 class TestWebHistoryService : public FakeWebHistoryService {
  public:
-  TestWebHistoryService()
-      : FakeWebHistoryService(nullptr,
-                              nullptr,
-                              scoped_refptr<net::URLRequestContextGetter>()) {}
+  TestWebHistoryService() : FakeWebHistoryService() {}
 
   void TriggerOnWebHistoryDeleted() {
     TestRequest request;
-    ExpireHistoryCompletionCallback(base::Bind(&DoNothing), &request, true);
+    ExpireHistoryCompletionCallback(base::DoNothing(), &request, true);
   }
 
  protected:
@@ -140,11 +135,11 @@ class TestWebHistoryService : public FakeWebHistoryService {
     bool IsPending() override { return false; }
     int GetResponseCode() override { return net::HTTP_OK; }
     const std::string& GetResponseBody() override { return body_; }
-    void SetPostData(const std::string& post_data) override{};
+    void SetPostData(const std::string& post_data) override {}
     void SetPostDataAndType(const std::string& post_data,
-                            const std::string& mime_type) override{};
-    void SetUserAgent(const std::string& user_agent) override{};
-    void Start() override{};
+                            const std::string& mime_type) override {}
+    void SetUserAgent(const std::string& user_agent) override {}
+    void Start() override {}
 
     std::string body_ = "{}";
   };
@@ -180,7 +175,7 @@ class TestBrowsingHistoryService : public BrowsingHistoryService {
   TestBrowsingHistoryService(BrowsingHistoryDriver* driver,
                              HistoryService* local_history,
                              syncer::SyncService* sync_service,
-                             std::unique_ptr<base::Timer> timer)
+                             std::unique_ptr<base::OneShotTimer> timer)
       : BrowsingHistoryService(driver,
                                local_history,
                                sync_service,
@@ -206,8 +201,8 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
   void ResetService(BrowsingHistoryDriver* driver,
                     HistoryService* local_history,
                     syncer::SyncService* sync_service) {
-    std::unique_ptr<base::MockTimer> timer =
-        std::make_unique<base::MockTimer>(false, false);
+    std::unique_ptr<base::MockOneShotTimer> timer =
+        std::make_unique<base::MockOneShotTimer>();
     timer_ = timer.get();
     browsing_history_service_ = std::make_unique<TestBrowsingHistoryService>(
         driver, local_history, sync_service, std::move(timer));
@@ -291,7 +286,7 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
   TestWebHistoryService* web_history() { return &web_history_; }
   TestSyncService* sync() { return &sync_service_; }
   TestBrowsingHistoryDriver* driver() { return &driver_; }
-  base::MockTimer* timer() { return timer_; }
+  base::MockOneShotTimer* timer() { return timer_; }
   TestBrowsingHistoryService* service() {
     return browsing_history_service_.get();
   }
@@ -308,7 +303,7 @@ class BrowsingHistoryServiceTest : public ::testing::Test {
   TestWebHistoryService web_history_;
   TestSyncService sync_service_;
   TestBrowsingHistoryDriver driver_;
-  base::MockTimer* timer_;
+  base::MockOneShotTimer* timer_;
   std::unique_ptr<TestBrowsingHistoryService> browsing_history_service_;
 };
 

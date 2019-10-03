@@ -4,13 +4,11 @@
 
 #include "chrome/browser/ui/views/chrome_views_delegate.h"
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/public/cpp/accelerators.h"
 #include "ash/shell.h"
-#include "ash/wm/window_state.h"
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 
@@ -19,7 +17,7 @@ namespace {
 void ProcessAcceleratorNow(const ui::Accelerator& accelerator) {
   // TODO(afakhry): See if we need here to send the accelerator to the
   // FocusManager of the active window in a follow-up CL.
-  ash::Shell::Get()->accelerator_controller()->Process(accelerator);
+  ash::AcceleratorController::Get()->Process(accelerator);
 }
 
 }  // namespace
@@ -27,21 +25,11 @@ void ProcessAcceleratorNow(const ui::Accelerator& accelerator) {
 views::ViewsDelegate::ProcessMenuAcceleratorResult
 ChromeViewsDelegate::ProcessAcceleratorWhileMenuShowing(
     const ui::Accelerator& accelerator) {
-  DCHECK(base::MessageLoopForUI::IsCurrent());
+  DCHECK(base::MessageLoopCurrentForUI::IsSet());
 
-  // Early return because mash chrome does not have access to ash::Shell
-  if (ash_util::IsRunningInMash())
-    return views::ViewsDelegate::ProcessMenuAcceleratorResult::LEAVE_MENU_OPEN;
-
-  ash::AcceleratorController* accelerator_controller =
-      ash::Shell::Get()->accelerator_controller();
-
-  accelerator_controller->accelerator_history()->StoreCurrentAccelerator(
-      accelerator);
-  if (accelerator_controller->ShouldCloseMenuAndRepostAccelerator(
-          accelerator)) {
+  if (ash::AcceleratorController::Get()->OnMenuAccelerator(accelerator)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(ProcessAcceleratorNow, accelerator));
+        FROM_HERE, base::BindOnce(ProcessAcceleratorNow, accelerator));
     return views::ViewsDelegate::ProcessMenuAcceleratorResult::CLOSE_MENU;
   }
 
@@ -59,11 +47,9 @@ void ChromeViewsDelegate::AdjustSavedWindowPlacementChromeOS(
     gfx::Rect* bounds) const {
   // On ChromeOS a window won't span across displays.  Adjust the bounds to fit
   // the work area.
-  aura::Window* window = widget->GetNativeView();
   display::Display display =
       display::Screen::GetScreen()->GetDisplayMatching(*bounds);
   bounds->AdjustToFit(display.work_area());
-  ash::wm::GetWindowState(window)->set_minimum_visibility(true);
 }
 
 views::Widget::InitParams::WindowOpacity
@@ -75,20 +61,18 @@ ChromeViewsDelegate::GetOpacityForInitParams(
 views::NativeWidget* ChromeViewsDelegate::CreateNativeWidget(
     views::Widget::InitParams* params,
     views::internal::NativeWidgetDelegate* delegate) {
-  // When we are doing straight chromeos builds, we still need to handle the
-  // toplevel window case.
-  // There may be a few remaining widgets in Chrome OS that are not top level,
-  // but have neither a context nor a parent. Provide a fallback context so
-  // users don't crash. Developers will hit the DCHECK and should provide a
-  // context.
+  // The context should be associated with a root window. If the context has a
+  // null root window (e.g. the context window has no parent) it will trigger
+  // the fallback case below. https://crbug.com/828626 https://crrev.com/230793
   if (params->context)
     params->context = params->context->GetRootWindow();
-  DCHECK(params->parent || params->context || !params->child)
-      << "Please provide a parent or context for this widget.";
+
+  // Ash requires a parent or a context that it can use to look up a root window
+  // to find a WindowParentingClient.
   if (!params->parent && !params->context)
-    params->context = ash::Shell::GetPrimaryRootWindow();
+    params->context = ash::Shell::GetRootWindowForNewWindows();
 
   // By returning null Widget creates the default NativeWidget implementation,
-  // which for chromeos is NativeWidgetAura.
+  // which for Chrome OS is NativeWidgetAura.
   return nullptr;
 }

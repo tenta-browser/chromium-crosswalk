@@ -102,14 +102,41 @@ cr.googleTranslate = (function() {
    */
   var endTime = 0.0;
 
+  /**
+   * Callback invoked when Translate Element's ready state is known.
+   * Will only be invoked once to indicate successful or failed initialization.
+   * In the failure case, errorCode() and error() will indicate the reason.
+   * Only used on iOS.
+   * @type {function}
+   */
+  var readyCallback;
+
+  /**
+   * Callback invoked when Translate Element's translation result is known.
+   * Will only be invoked once to indicate successful or failed translation.
+   * In the failure case, errorCode() and error() will indicate the reason.
+   * Only used on iOS.
+   * @type {function}
+   */
+  var resultCallback;
+
+  /**
+   * Callback invoked when Translate Element requests load of javascript files.
+   * Currently main.js and element_main.js are expected to be loaded.
+   * @type {function(string)}
+   */
+  var loadJavascriptCallback;
+
   function checkLibReady() {
     if (lib.isAvailable()) {
       readyTime = performance.now();
       libReady = true;
+      invokeReadyCallback();
       return;
     }
     if (checkReadyCount++ > 5) {
       errorCode = ERROR['TRANSLATION_TIMEOUT'];
+      invokeReadyCallback();
       return;
     }
     setTimeout(checkLibReady, 100);
@@ -123,16 +150,73 @@ cr.googleTranslate = (function() {
       errorCode = ERROR['TRANSLATION_ERROR'];
       // We failed to translate, restore so the page is in a consistent state.
       lib.restore();
+      invokeResultCallback();
     } else if (typeof opt_error == 'number' && opt_error != 0) {
       errorCode = TRANSLATE_ERROR_TO_ERROR_CODE_MAP[opt_error];
       lib.restore();
+      invokeResultCallback();
     }
-    if (finished)
+    // Translate works differently depending on the prescence of the native
+    // IntersectionObserver APIs.
+    // If it is available, translate will occur incrementally as the user
+    // scrolls elements into view, and this method will be called continuously
+    // with |opt_finished| always set as true.
+    // On the other hand, if it is unavailable, the entire page will be
+    // translated at once in a piece meal manner, and this method may still be
+    // called several times, though only the last call will have |opt_finished|
+    // set as true.
+    if (finished) {
       endTime = performance.now();
+      invokeResultCallback();
+    }
+  }
+
+  function invokeReadyCallback() {
+    if (readyCallback) {
+      readyCallback();
+      readyCallback = null;
+    }
+  }
+
+  function invokeResultCallback() {
+    if (resultCallback) {
+      resultCallback();
+      resultCallback = null;
+    }
   }
 
   // Public API.
   return {
+    /**
+     * Setter for readyCallback. No op if already set.
+     * @param {function} callback The function to be invoked.
+     */
+    set readyCallback(callback) {
+      if (!readyCallback) {
+        readyCallback = callback;
+      }
+    },
+
+    /**
+     * Setter for resultCallback. No op if already set.
+     * @param {function} callback The function to be invoked.
+     */
+    set resultCallback(callback) {
+      if (!resultCallback) {
+        resultCallback = callback;
+      }
+    },
+
+    /**
+     * Setter for loadJavascriptCallback. No op if already set.
+     * @param {function(string)} callback The function to be invoked.
+     */
+    set loadJavascriptCallback(callback) {
+      if (!loadJavascriptCallback) {
+        loadJavascriptCallback = callback;
+      }
+    },
+
     /**
      * Whether the library is ready.
      * The translate function should only be called when |libReady| is true.
@@ -235,6 +319,7 @@ cr.googleTranslate = (function() {
       } catch (err) {
         console.error('Translate: ' + err);
         errorCode = ERROR['UNEXPECTED_SCRIPT_ERROR'];
+        invokeResultCallback();
         return false;
       }
       return true;
@@ -246,6 +331,15 @@ cr.googleTranslate = (function() {
      */
     revert: function() {
       lib.restore();
+    },
+
+    /**
+     * Called when an error is caught while executing script fetched in
+     * translate_script.cc.
+     */
+    onTranslateElementError: function(error) {
+      errorCode = ERROR['UNEXPECTED_SCRIPT_ERROR'];
+      invokeReadyCallback();
     },
 
     /**
@@ -270,6 +364,7 @@ cr.googleTranslate = (function() {
         translateApiKey = undefined;
         serverParams = undefined;
         gtTimeInfo = undefined;
+        invokeReadyCallback();
         return;
       }
       // The TranslateService is not available immediately as it needs to start
@@ -303,6 +398,12 @@ cr.googleTranslate = (function() {
         errorCode = ERROR['BAD_ORIGIN'];
         return;
       }
+
+      if (loadJavascriptCallback) {
+        loadJavascriptCallback(url);
+        return;
+      }
+
       var xhr = new XMLHttpRequest();
       xhr.open('GET', url, true);
       xhr.onreadystatechange = function() {

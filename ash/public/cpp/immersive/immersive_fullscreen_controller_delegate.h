@@ -25,6 +25,9 @@ class ASH_PUBLIC_EXPORT ImmersiveFullscreenControllerDelegate {
   // prior to OnImmersiveRevealEnded().
   virtual void OnImmersiveRevealEnded() = 0;
 
+  // Called as a result of enabling immersive fullscreen via SetEnabled().
+  virtual void OnImmersiveFullscreenEntered() = 0;
+
   // Called as a result of disabling immersive fullscreen via SetEnabled().
   virtual void OnImmersiveFullscreenExited() = 0;
 
@@ -37,6 +40,10 @@ class ASH_PUBLIC_EXPORT ImmersiveFullscreenControllerDelegate {
   // are revealed. GetVisibleBoundsInScreen() must return a valid value when
   // not in immersive fullscreen for the sake of SetupForTest().
   virtual std::vector<gfx::Rect> GetVisibleBoundsInScreen() const = 0;
+
+  // Re-layout the frame. Called when |EnableForWidget| is called
+  // but full state did not change.
+  virtual void Relayout() {}
 
  protected:
   virtual ~ImmersiveFullscreenControllerDelegate() {}

@@ -8,26 +8,22 @@
 #include <memory>
 #include <string>
 
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/resource_coordinator/public/interfaces/tracing/tracing.mojom.h"
+#include "services/tracing/public/cpp/base_agent.h"
+#include "services/tracing/public/mojom/tracing.mojom.h"
 
 namespace base {
 class RefCountedString;
 }  // namespace base
 
-namespace chromeos {
-class DebugDaemonClient;
-}  // namespace chromeos
-
-namespace service_manager {
-class Connector;
-}  // namespace service_manager
-
 namespace content {
 
-class CrOSTracingAgent : public tracing::mojom::Agent {
+class CrOSSystemTracingSession;
+
+// TODO(crbug.com/839086): Remove once we have replaced the legacy tracing
+// service with perfetto.
+class CrOSTracingAgent : public tracing::BaseAgent {
  public:
-  explicit CrOSTracingAgent(service_manager::Connector* connector);
+  CrOSTracingAgent();
 
  private:
   friend std::default_delete<CrOSTracingAgent>;
@@ -37,23 +33,14 @@ class CrOSTracingAgent : public tracing::mojom::Agent {
   // tracing::mojom::Agent. Called by Mojo internals on the UI thread.
   void StartTracing(const std::string& config,
                     base::TimeTicks coordinator_time,
-                    const Agent::StartTracingCallback& callback) override;
+                    Agent::StartTracingCallback callback) override;
   void StopAndFlush(tracing::mojom::RecorderPtr recorder) override;
-  void RequestClockSyncMarker(
-      const std::string& sync_id,
-      const Agent::RequestClockSyncMarkerCallback& callback) override;
-  void GetCategories(const Agent::GetCategoriesCallback& callback) override;
-  void RequestBufferStatus(
-      const Agent::RequestBufferStatusCallback& callback) override;
 
-  void StartTracingCallbackProxy(const std::string& agent_name, bool success);
-  void RecorderProxy(const std::string& event_name,
-                     const std::string& events_label,
-                     const scoped_refptr<base::RefCountedString>& events);
+  void StartTracingCallbackProxy(Agent::StartTracingCallback callback,
+                                 bool success);
+  void RecorderProxy(const scoped_refptr<base::RefCountedString>& events);
 
-  mojo::Binding<tracing::mojom::Agent> binding_;
-  chromeos::DebugDaemonClient* debug_daemon_ = nullptr;
-  Agent::StartTracingCallback start_tracing_callback_;
+  std::unique_ptr<CrOSSystemTracingSession> session_;
   tracing::mojom::RecorderPtr recorder_;
 
   DISALLOW_COPY_AND_ASSIGN(CrOSTracingAgent);

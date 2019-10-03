@@ -4,13 +4,13 @@
 
 #include "components/guest_view/browser/guest_view_message_filter.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "components/guest_view/browser/bad_message.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 #include "components/guest_view/common/guest_view_messages.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -27,8 +27,7 @@ GuestViewMessageFilter::GuestViewMessageFilter(int render_process_id,
                                                BrowserContext* context)
     : BrowserMessageFilter(GuestViewMsgStart),
       render_process_id_(render_process_id),
-      browser_context_(context),
-      weak_ptr_factory_(this) {
+      browser_context_(context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -40,8 +39,7 @@ GuestViewMessageFilter::GuestViewMessageFilter(
     : BrowserMessageFilter(message_classes_to_filter,
                            num_message_classes_to_filter),
       render_process_id_(render_process_id),
-      browser_context_(context),
-      weak_ptr_factory_(this) {
+      browser_context_(context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -53,7 +51,7 @@ GuestViewManager* GuestViewMessageFilter::GetOrCreateGuestViewManager() {
   auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   if (!manager) {
     manager = GuestViewManager::CreateWithDelegate(
-        browser_context_, base::MakeUnique<GuestViewManagerDelegate>());
+        browser_context_, std::make_unique<GuestViewManagerDelegate>());
   }
   return manager;
 }
@@ -146,11 +144,6 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   DCHECK(owner_web_contents);
   auto* embedder_frame = RenderFrameHost::FromID(
       render_process_id_, embedder_local_render_frame_id);
-  // If we're creating a new guest through window.open /
-  // RenderViewImpl::CreateView, the embedder may not be the same as
-  // the original creator/owner, so update embedder_web_contents here.
-  content::WebContents* embedder_web_contents =
-      WebContents::FromRenderFrameHost(embedder_frame);
 
   // Update the guest manager about the attachment.
   // This sets up the embedder and guest pairing information inside
@@ -158,21 +151,8 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   manager->AttachGuest(render_process_id_, element_instance_id,
                        guest_instance_id, params);
 
-  embedder_web_contents->GetMainFrame()->Send(
-      new GuestViewMsg_AttachToEmbedderFrame_ACK(element_instance_id));
-
-  guest->WillAttach(
-      embedder_web_contents, element_instance_id, false,
-      base::Bind(&GuestViewBase::DidAttach,
-                 guest->weak_ptr_factory_.GetWeakPtr(), MSG_ROUTING_NONE));
-
-  // Attach this inner WebContents |guest_web_contents| to the outer
-  // WebContents |embedder_web_contents|. The outer WebContents's
-  // frame |embedder_frame| hosts the inner WebContents.
-  // NOTE: this must be called last, because it could unblock pending requests
-  // which depend on the WebViewGuest being initialized which happens above.
-  guest_web_contents->AttachToOuterWebContentsFrame(embedder_web_contents,
-                                                    embedder_frame);
+  guest->AttachToOuterWebContentsFrame(embedder_frame, element_instance_id,
+                                       false /* is_full_page_plugin */);
 }
 
 }  // namespace guest_view

@@ -8,29 +8,26 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/presentation_screen_availability_listener.h"
 #include "content/public/browser/presentation_service_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/frame_navigate_params.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "third_party/WebKit/public/platform/modules/presentation/presentation.mojom.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 
-struct PresentationConnectionMessage;
 class RenderFrameHost;
 
 // Implementation of Mojo PresentationService.
@@ -46,7 +43,6 @@ class RenderFrameHost;
 //   Create()
 //   SetClient()
 //   StartPresentation()
-//   SetPresentationConnection()
 //   ...
 // TODO(crbug.com/749327): Split the controller and receiver logic into separate
 // classes so that each is easier to reason about.
@@ -56,8 +52,8 @@ class CONTENT_EXPORT PresentationServiceImpl
       public PresentationServiceDelegate::Observer {
  public:
   using NewPresentationCallback =
-      base::OnceCallback<void(const base::Optional<PresentationInfo>&,
-                              const base::Optional<PresentationError>&)>;
+      base::OnceCallback<void(blink::mojom::PresentationConnectionResultPtr,
+                              blink::mojom::PresentationErrorPtr)>;
 
   // Creates a PresentationServiceImpl using the given RenderFrameHost.
   static std::unique_ptr<PresentationServiceImpl> Create(
@@ -72,7 +68,8 @@ class CONTENT_EXPORT PresentationServiceImpl
   // PresentationService implementation.
   void SetDefaultPresentationUrls(
       const std::vector<GURL>& presentation_urls) override;
-  void SetClient(blink::mojom::PresentationServiceClientPtr client) override;
+  void SetController(
+      blink::mojom::PresentationControllerPtr controller) override;
   void SetReceiver(blink::mojom::PresentationReceiverPtr receiver) override;
   void ListenForScreenAvailability(const GURL& url) override;
   void StopListeningForScreenAvailability(const GURL& url) override;
@@ -85,11 +82,6 @@ class CONTENT_EXPORT PresentationServiceImpl
                        const std::string& presentation_id) override;
   void Terminate(const GURL& presentation_url,
                  const std::string& presentation_id) override;
-  void SetPresentationConnection(
-      const PresentationInfo& presentation_info,
-      blink::mojom::PresentationConnectionPtr controller_connection_ptr,
-      blink::mojom::PresentationConnectionRequest receiver_connection_request)
-      override;
 
  private:
   friend class PresentationServiceImplTest;
@@ -113,9 +105,6 @@ class CONTENT_EXPORT PresentationServiceImpl
   // Maximum number of pending ReconnectPresentation requests at any given time.
   static const int kMaxQueuedRequests = 10;
 
-  using ConnectionMessagesCallback =
-      base::OnceCallback<void(std::vector<PresentationConnectionMessage>)>;
-
   // Listener implementation owned by PresentationServiceImpl. An instance of
   // this is created when PresentationRequest.getAvailability() is resolved.
   // The instance receives screen availability results from the embedder and
@@ -128,7 +117,7 @@ class CONTENT_EXPORT PresentationServiceImpl
     ~ScreenAvailabilityListenerImpl() override;
 
     // PresentationScreenAvailabilityListener implementation.
-    GURL GetAvailabilityUrl() const override;
+    GURL GetAvailabilityUrl() override;
     void OnScreenAvailabilityChanged(
         blink::mojom::ScreenAvailability availability) override;
 
@@ -144,8 +133,8 @@ class CONTENT_EXPORT PresentationServiceImpl
     explicit NewPresentationCallbackWrapper(NewPresentationCallback callback);
     ~NewPresentationCallbackWrapper();
 
-    void Run(const base::Optional<PresentationInfo>& presentation_info,
-             const base::Optional<PresentationError>& error);
+    void Run(blink::mojom::PresentationConnectionResultPtr result,
+             blink::mojom::PresentationErrorPtr error);
 
    private:
     NewPresentationCallback callback_;
@@ -177,17 +166,18 @@ class CONTENT_EXPORT PresentationServiceImpl
 
   // Passed to embedder's implementation of PresentationServiceDelegate for
   // later invocation when default presentation has started.
-  void OnDefaultPresentationStarted(const PresentationInfo& presentation_info);
+  void OnDefaultPresentationStarted(
+      blink::mojom::PresentationConnectionResultPtr result);
 
   // Finds the callback from |pending_reconnect_presentation_cbs_| using
   // |request_id|.
-  // If it exists, invoke it with |presentation_info| and |error|, then erase it
+  // If it exists, invoke it with |result| and |error|, then erase it
   // from |pending_reconnect_presentation_cbs_|. Returns true if the callback
   // was found.
   bool RunAndEraseReconnectPresentationMojoCallback(
       int request_id,
-      const base::Optional<PresentationInfo>& presentation_info,
-      const base::Optional<PresentationError>& error);
+      blink::mojom::PresentationConnectionResultPtr result,
+      blink::mojom::PresentationErrorPtr error);
 
   // Removes all listeners and resets default presentation URL on this instance
   // and informs the PresentationServiceDelegate of such.
@@ -196,30 +186,28 @@ class CONTENT_EXPORT PresentationServiceImpl
   // These functions are bound as base::Callbacks and passed to
   // embedder's implementation of PresentationServiceDelegate for later
   // invocation.
-  void OnStartPresentationSucceeded(int request_id,
-                                    const PresentationInfo& presentation_info);
-  void OnStartPresentationError(int request_id, const PresentationError& error);
+  void OnStartPresentationSucceeded(
+      int request_id,
+      blink::mojom::PresentationConnectionResultPtr result);
+  void OnStartPresentationError(int request_id,
+                                const blink::mojom::PresentationError& error);
   void OnReconnectPresentationSucceeded(
       int request_id,
-      const PresentationInfo& presentation_info);
-  void OnReconnectPresentationError(int request_id,
-                                    const PresentationError& error);
+      blink::mojom::PresentationConnectionResultPtr result);
+  void OnReconnectPresentationError(
+      int request_id,
+      const blink::mojom::PresentationError& error);
 
   // Calls to |delegate_| to start listening for state changes for |connection|.
   // State changes will be returned via |OnConnectionStateChanged|.
-  void ListenForConnectionStateChange(const PresentationInfo& connection);
-
-  // Passed to embedder's implementation of PresentationServiceDelegate for
-  // later invocation when connection messages arrive.
-  void OnConnectionMessages(
-      const content::PresentationInfo& presentation_info,
-      std::vector<content::PresentationConnectionMessage> messages);
+  void ListenForConnectionStateChange(
+      const blink::mojom::PresentationInfo& connection);
 
   // A callback registered to LocalPresentationManager when
   // the PresentationServiceImpl for the presentation receiver is initialized.
-  // Calls |client_| to create a new PresentationConnection on receiver page.
+  // Calls |receiver_| to create a new PresentationConnection on receiver page.
   void OnReceiverConnectionAvailable(
-      const content::PresentationInfo& presentation_info,
+      blink::mojom::PresentationInfoPtr presentation_info,
       PresentationConnectionPtr controller_connection_ptr,
       PresentationConnectionRequest receiver_connection_request);
 
@@ -232,11 +220,15 @@ class CONTENT_EXPORT PresentationServiceImpl
   // Invoked by the embedder's PresentationServiceDelegate when a
   // PresentationConnection's state has changed.
   void OnConnectionStateChanged(
-      const PresentationInfo& connection,
+      const blink::mojom::PresentationInfo& connection,
       const PresentationConnectionStateChangeInfo& info);
 
   // Returns true if this object is associated with |render_frame_host|.
   bool FrameMatches(content::RenderFrameHost* render_frame_host) const;
+
+  // Invoked on Mojo connection error. Closes all Mojo message pipes held by
+  // |this|.
+  void OnConnectionError();
 
   // Returns |controller_delegate| if current frame is controller frame; Returns
   // |receiver_delegate| if current frame is receiver frame.
@@ -255,10 +247,10 @@ class CONTENT_EXPORT PresentationServiceImpl
   // embedder does not support Presentation API.
   ReceiverPresentationServiceDelegate* receiver_delegate_;
 
-  // Proxy to the PresentationServiceClient to send results (e.g., screen
-  // availability) to.
-  blink::mojom::PresentationServiceClientPtr client_;
+  // Pointer to the PresentationController implementation in the renderer.
+  blink::mojom::PresentationControllerPtr controller_;
 
+  // Pointer to the PresentationReceiver implementation in the renderer.
   blink::mojom::PresentationReceiverPtr receiver_;
 
   std::vector<GURL> default_presentation_urls_;
@@ -275,11 +267,11 @@ class CONTENT_EXPORT PresentationServiceImpl
       pending_start_presentation_cb_;
 
   // For ReconnectPresentation requests.
-  base::hash_map<int, linked_ptr<NewPresentationCallbackWrapper>>
+  std::unordered_map<int, std::unique_ptr<NewPresentationCallbackWrapper>>
       pending_reconnect_presentation_cbs_;
 
-  // RAII binding of |this| to PresentationService requests.
-  mojo::BindingSet<blink::mojom::PresentationService> bindings_;
+  // RAII binding of |this| to PresentationService request.
+  mojo::Binding<blink::mojom::PresentationService> binding_;
 
   // ID of the RenderFrameHost this object is associated with.
   int render_process_id_;
@@ -289,7 +281,7 @@ class CONTENT_EXPORT PresentationServiceImpl
   bool is_main_frame_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<PresentationServiceImpl> weak_factory_;
+  base::WeakPtrFactory<PresentationServiceImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PresentationServiceImpl);
 };

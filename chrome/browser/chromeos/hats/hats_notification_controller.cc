@@ -4,10 +4,11 @@
 
 #include "chrome/browser/chromeos/hats/hats_notification_controller.h"
 
+#include "ash/public/cpp/notification_utils.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/hats/hats_dialog.h"
@@ -20,17 +21,15 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_state.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_types.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/strings/grit/ui_strings.h"
 
 namespace {
@@ -41,34 +40,35 @@ const char kNotifierHats[] = "ash.hats";
 
 // Minimum amount of time before the notification is displayed again after a
 // user has interacted with it.
-const int kHatsThresholdDays = 90;
+constexpr base::TimeDelta kHatsThreshold = base::TimeDelta::FromDays(90);
 
-// The threshold for a googler is less.
-const int kHatsGooglerThresholdDays = 30;
+// The threshold for a Googler is less.
+constexpr base::TimeDelta kHatsGooglerThreshold = base::TimeDelta::FromDays(30);
 
 // Minimum amount of time after initial login or oobe after which we can show
 // the HaTS notification.
-const int kHatsNewDeviceThresholdDays = 7;
+constexpr base::TimeDelta kHatsNewDeviceThreshold =
+    base::TimeDelta::FromDays(7);
 
 // Returns true if the given |profile| interacted with HaTS by either
-// dismissing the notification or taking the survey within a given threshold
-// days |threshold_days|.
-bool DidShowSurveyToProfileRecently(Profile* profile, int threshold_days) {
+// dismissing the notification or taking the survey within a given
+// |threshold_time|.
+bool DidShowSurveyToProfileRecently(Profile* profile,
+                                    base::TimeDelta threshold_time) {
   int64_t serialized_timestamp =
       profile->GetPrefs()->GetInt64(prefs::kHatsLastInteractionTimestamp);
 
   base::Time previous_interaction_timestamp =
       base::Time::FromInternalValue(serialized_timestamp);
-  return (previous_interaction_timestamp +
-          base::TimeDelta::FromDays(threshold_days)) > base::Time::Now();
+  return previous_interaction_timestamp + threshold_time > base::Time::Now();
 }
 
-// Returns true if at least |threshold_days| days have passed since OOBE. This
-// is an indirect measure of whether the owner has used the device for at least
-// |threshold_days| days.
-bool IsNewDevice(int threshold_days) {
+// Returns true if at least |kHatsNewDeviceThreshold| time have passed since
+// OOBE. This is an indirect measure of whether the owner has used the device
+// for at least |kHatsNewDeviceThreshold| time.
+bool IsNewDevice() {
   return chromeos::StartupUtils::GetTimeSinceOobeFlagFileCreation() <=
-         base::TimeDelta::FromDays(threshold_days);
+         kHatsNewDeviceThreshold;
 }
 
 bool IsGoogleUser(std::string username) {
@@ -90,19 +90,25 @@ const char HatsNotificationController::kNotificationId[] = "hats_notification";
 
 HatsNotificationController::HatsNotificationController(Profile* profile)
     : profile_(profile), weak_pointer_factory_(this) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&IsNewDevice, kHatsNewDeviceThresholdDays),
-      base::Bind(&HatsNotificationController::Initialize,
-                 weak_pointer_factory_.GetWeakPtr()));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&IsNewDevice),
+      base::BindOnce(&HatsNotificationController::Initialize,
+                     weak_pointer_factory_.GetWeakPtr()));
 }
 
 HatsNotificationController::~HatsNotificationController() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
   if (network_portal_detector::IsInitialized())
     network_portal_detector::GetInstance()->RemoveObserver(this);
 }
 
 void HatsNotificationController::Initialize(bool is_new_device) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
   if (is_new_device && !IsTestingEnabled()) {
     // This device has been chosen for a survey, but it is too new. Instead
     // of showing the user the survey, just mark it as completed.
@@ -117,6 +123,8 @@ void HatsNotificationController::Initialize(bool is_new_device) {
 
 // static
 bool HatsNotificationController::ShouldShowSurveyToProfile(Profile* profile) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
   if (IsTestingEnabled())
     return true;
 
@@ -148,87 +156,82 @@ bool HatsNotificationController::ShouldShowSurveyToProfile(Profile* profile) {
   if (!hats_finch_helper.IsDeviceSelectedForCurrentCycle())
     return false;
 
-  int threshold_days = IsGoogleUser(profile->GetProfileUserName())
-                           ? kHatsGooglerThresholdDays
-                           : kHatsThresholdDays;
+  base::TimeDelta threshold_time = IsGoogleUser(profile->GetProfileUserName())
+                                       ? kHatsGooglerThreshold
+                                       : kHatsThreshold;
   // Do not show survey to user if user has interacted with HaTS within the past
-  // |kHatsThresholdTime| time delta.
-  if (DidShowSurveyToProfileRecently(profile, threshold_days))
+  // |threshold_time| time delta.
+  if (DidShowSurveyToProfileRecently(profile, threshold_time))
     return false;
 
   return true;
 }
 
-// message_center::NotificationDelegate override:
-void HatsNotificationController::Click() {
-  ButtonClick(0 /* unused */);
-}
+void HatsNotificationController::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-// message_center::NotificationDelegate override:
-void HatsNotificationController::ButtonClick(int /* button_index */) {
   UpdateLastInteractionTime();
 
-  // The dialog deletes itslef on close.
+  // The dialog deletes itself on close.
   HatsDialog::CreateAndShow(IsGoogleUser(profile_->GetProfileUserName()));
 
   // Remove the notification.
+  network_portal_detector::GetInstance()->RemoveObserver(this);
+  notification_.reset(nullptr);
   NotificationDisplayService::GetForProfile(profile_)->Close(
       NotificationHandler::Type::TRANSIENT, kNotificationId);
 }
 
 // message_center::NotificationDelegate override:
 void HatsNotificationController::Close(bool by_user) {
-  if (by_user)
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  if (by_user) {
     UpdateLastInteractionTime();
+    network_portal_detector::GetInstance()->RemoveObserver(this);
+    notification_.reset(nullptr);
+  }
 }
 
 // NetworkPortalDetector::Observer override:
 void HatsNotificationController::OnPortalDetectionCompleted(
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalState& state) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   VLOG(1) << "HatsController::OnPortalDetectionCompleted(): "
           << "network=" << (network ? network->path() : "") << ", "
           << "state.status=" << state.status << ", "
           << "state.response_code=" << state.response_code;
-  // Return if device is not connected to the internet.
-  if (state.status != NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE)
-    return;
-  // Remove self as an observer to no longer receive network change updates.
-  network_portal_detector::GetInstance()->RemoveObserver(this);
+  if (state.status == NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE) {
+    // Create and display the notification for the user.
+    if (!notification_) {
+      notification_ = ash::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
+          l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TITLE),
+          l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_BODY),
+          l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_HATS_NAME),
+          GURL(kNotificationOriginUrl),
+          message_center::NotifierId(
+              message_center::NotifierType::SYSTEM_COMPONENT, kNotifierHats),
+          message_center::RichNotificationData(), this, kNotificationGoogleIcon,
+          message_center::SystemNotificationWarningLevel::NORMAL);
+    }
 
-  // Create and display the notification for the user.
-  message_center::RichNotificationData optional;
-  if (!message_center::IsNewStyleNotificationEnabled()) {
-    optional.buttons.push_back(message_center::ButtonInfo(
-        l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TAKE_SURVEY_BUTTON)));
+    NotificationDisplayService::GetForProfile(profile_)->Display(
+        NotificationHandler::Type::TRANSIENT, *notification_,
+        /*metadata=*/nullptr);
+  } else if (notification_) {
+    // Hide the notification if device loses its connection to the internet.
+    NotificationDisplayService::GetForProfile(profile_)->Close(
+        NotificationHandler::Type::TRANSIENT, kNotificationId);
   }
-
-  message_center::Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
-      l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TITLE),
-      l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_BODY),
-      gfx::Image(
-          gfx::CreateVectorIcon(kGoogleGLogoIcon, gfx::kPlaceholderColor)),
-      l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_HATS_NAME),
-      GURL(kNotificationOriginUrl),
-      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
-                                 kNotifierHats),
-      optional, this);
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification.set_icon(gfx::Image());
-    notification.set_accent_color(
-        message_center::kSystemNotificationColorNormal);
-    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
-        kNotificationGoogleIcon, message_center::kSmallImageSizeMD,
-        message_center::kSystemNotificationColorNormal)));
-    notification.set_vector_small_image(kNotificationGoogleIcon);
-  }
-
-  NotificationDisplayService::GetForProfile(profile_)->Display(
-      NotificationHandler::Type::TRANSIENT, notification);
 }
 
 void HatsNotificationController::UpdateLastInteractionTime() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
   PrefService* pref_service = profile_->GetPrefs();
   pref_service->SetInt64(prefs::kHatsLastInteractionTimestamp,
                          base::Time::Now().ToInternalValue());

@@ -9,7 +9,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -61,14 +61,26 @@ ChromeCleanerDialog::ChromeCleanerDialog(
   DCHECK(dialog_controller_);
   DCHECK(cleaner_controller_);
 
-  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
-      views::TEXT, views::TEXT));
-  SetLayoutManager(new views::FillLayout());
+  ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
+  set_margins(
+      layout_provider->GetDialogInsetsForContentType(views::TEXT, views::TEXT));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+      layout_provider->GetDistanceMetric(
+          views::DISTANCE_RELATED_CONTROL_VERTICAL)));
   views::Label* label = new views::Label(
       l10n_util::GetStringUTF16(IDS_CHROME_CLEANUP_PROMPT_EXPLANATION));
   label->SetMultiLine(true);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+
+  logs_permission_checkbox_ = new views::Checkbox(
+      l10n_util::GetStringUTF16(IDS_CHROME_CLEANUP_LOGS_PERMISSION), this);
+  logs_permission_checkbox_->SetChecked(dialog_controller_->LogsEnabled());
+  if (dialog_controller_->LogsManaged())
+    logs_permission_checkbox_->SetState(views::Checkbox::STATE_DISABLED);
+
   AddChildView(label);
+  AddChildView(logs_permission_checkbox_);
 }
 
 ChromeCleanerDialog::~ChromeCleanerDialog() {
@@ -127,22 +139,6 @@ bool ChromeCleanerDialog::ShouldShowCloseButton() const {
 
 // DialogDelegate overrides.
 
-views::View* ChromeCleanerDialog::CreateFootnoteView() {
-  DCHECK(!logs_permission_checkbox_);
-  DCHECK(dialog_controller_);
-
-  views::View* footnote_view = new views::View();
-  footnote_view->SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, ChromeLayoutProvider::Get()->GetInsetsMetric(
-                                       views::INSETS_DIALOG_SUBSECTION)));
-  logs_permission_checkbox_ = new views::Checkbox(
-      l10n_util::GetStringUTF16(IDS_CHROME_CLEANUP_LOGS_PERMISSION));
-  logs_permission_checkbox_->SetChecked(dialog_controller_->LogsEnabled());
-  logs_permission_checkbox_->set_listener(this);
-  footnote_view->AddChildView(logs_permission_checkbox_);
-  return footnote_view;
-}
-
 base::string16 ChromeCleanerDialog::GetDialogButtonLabel(
     ui::DialogButton button) const {
   DCHECK(button == ui::DIALOG_BUTTON_OK || button == ui::DIALOG_BUTTON_CANCEL);
@@ -154,13 +150,14 @@ base::string16 ChromeCleanerDialog::GetDialogButtonLabel(
              : DialogDelegate::GetDialogButtonLabel(button);
 }
 
-views::View* ChromeCleanerDialog::CreateExtraView() {
+std::unique_ptr<views::View> ChromeCleanerDialog::CreateExtraView() {
   DCHECK(!details_button_);
 
-  details_button_ = views::MdTextButton::CreateSecondaryUiButton(
+  auto details_button = views::MdTextButton::CreateSecondaryUiButton(
       this, l10n_util::GetStringUTF16(
                 IDS_CHROME_CLEANUP_PROMPT_DETAILS_BUTTON_LABEL));
-  return details_button_;
+  details_button_ = details_button.get();
+  return details_button;
 }
 
 bool ChromeCleanerDialog::Accept() {
@@ -181,8 +178,10 @@ bool ChromeCleanerDialog::Close() {
 // View overrides.
 
 gfx::Size ChromeCleanerDialog::CalculatePreferredSize() const {
-  constexpr int kDialogWidth = 448;
-  return gfx::Size(kDialogWidth, GetHeightForWidth(kDialogWidth));
+  const int dialog_width = ChromeLayoutProvider::Get()->GetDistanceMetric(
+                               DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH) -
+                           margins().width();
+  return gfx::Size(dialog_width, GetHeightForWidth(dialog_width));
 }
 
 // views::ButtonListener overrides.
@@ -194,7 +193,7 @@ void ChromeCleanerDialog::ButtonPressed(views::Button* sender,
   if (sender == details_button_) {
     if (dialog_controller_) {
       dialog_controller_->DetailsButtonClicked(
-          /*logs_enabled=*/logs_permission_checkbox_->checked());
+          /*logs_enabled=*/logs_permission_checkbox_->GetChecked());
       dialog_controller_ = nullptr;
     }
     GetWidget()->Close();
@@ -204,7 +203,7 @@ void ChromeCleanerDialog::ButtonPressed(views::Button* sender,
   DCHECK_EQ(logs_permission_checkbox_, sender);
 
   if (dialog_controller_)
-    dialog_controller_->SetLogsEnabled(logs_permission_checkbox_->checked());
+    dialog_controller_->SetLogsEnabled(logs_permission_checkbox_->GetChecked());
 }
 
 // safe_browsing::ChromeCleanerController::Observer overrides
@@ -219,6 +218,7 @@ void ChromeCleanerDialog::OnScanning() {
 }
 
 void ChromeCleanerDialog::OnCleaning(
+    bool is_powered_by_partner,
     const safe_browsing::ChromeCleanerScannerResults& scanner_results) {
   Abort();
 }
@@ -240,7 +240,7 @@ void ChromeCleanerDialog::HandleDialogInteraction(
   switch (result) {
     case DialogInteractionResult::kAccept:
       dialog_controller_->Accept(
-          /*logs_enabled=*/logs_permission_checkbox_->checked());
+          /*logs_enabled=*/logs_permission_checkbox_->GetChecked());
       break;
     case DialogInteractionResult::kCancel:
       dialog_controller_->Cancel();

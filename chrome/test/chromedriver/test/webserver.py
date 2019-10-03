@@ -4,7 +4,9 @@
 
 import BaseHTTPServer
 import os
+import SocketServer
 import threading
+import ssl
 import sys
 
 
@@ -97,9 +99,8 @@ class _BaseServer(BaseHTTPServer.HTTPServer):
 
     if server_cert_and_key_path is not None:
       self._is_https_enabled = True
-      self._server.socket = ssl.wrap_socket(
-          self._server.socket, certfile=server_cert_and_key_path,
-          server_side=True)
+      self.socket = ssl.wrap_socket(
+          self.socket, certfile=server_cert_and_key_path, server_side=True)
     else:
       self._is_https_enabled = False
 
@@ -113,6 +114,11 @@ class _BaseServer(BaseHTTPServer.HTTPServer):
     if self._is_https_enabled:
       return 'https' + postfix
     return 'http' + postfix
+
+
+class _ThreadingServer(SocketServer.ThreadingMixIn, _BaseServer):
+  """_BaseServer enhanced to handle multiple requests simultaneously"""
+  pass
 
 
 class WebServer(object):
@@ -133,7 +139,7 @@ class WebServer(object):
                                 if it is None, start the server as an HTTP one.
     """
     self._root_dir = os.path.abspath(root_dir)
-    self._server = _BaseServer(self._OnRequest, server_cert_and_key_path)
+    self._server = _ThreadingServer(self._OnRequest, server_cert_and_key_path)
     self._thread = threading.Thread(target=self._server.serve_forever)
     self._thread.daemon = True
     self._thread.start()

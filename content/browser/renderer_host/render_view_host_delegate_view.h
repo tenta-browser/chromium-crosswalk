@@ -9,10 +9,15 @@
 
 #include "base/callback.h"
 #include "build/build_config.h"
+#include "content/common/buildflags.h"
 #include "content/common/content_export.h"
 #include "content/common/drag_event_source_info.h"
-#include "content/common/features.h"
-#include "third_party/WebKit/public/platform/WebDragOperation.h"
+#include "content/public/common/input_event_ack_state.h"
+#include "third_party/blink/public/platform/web_drag_operation.h"
+
+namespace blink {
+class WebGestureEvent;
+}
 
 namespace gfx {
 class ImageSkia;
@@ -75,8 +80,12 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
   // Returns the height of the bottom controls in DIP.
   virtual int GetBottomControlsHeight() const;
 
-  // Returns true if the browser controls resize Blink's view size.
-  virtual bool DoBrowserControlsShrinkBlinkSize() const;
+  // Returns true if the browser controls resize the renderer's view size.
+  virtual bool DoBrowserControlsShrinkRendererSize() const;
+
+  // Do post-event tasks for gesture events.
+  virtual void GestureEventAck(const blink::WebGestureEvent& event,
+                               InputEventAckState ack_result);
 
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
   // Shows a popup menu with the specified items.
@@ -89,10 +98,10 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
                              int selected_item,
                              const std::vector<MenuItem>& items,
                              bool right_aligned,
-                             bool allow_multiple_selection) {};
+                             bool allow_multiple_selection) {}
 
   // Hides a popup menu opened by ShowPopupMenu().
-  virtual void HidePopupMenu() {};
+  virtual void HidePopupMenu() {}
 #endif
 
 #if defined(OS_ANDROID)

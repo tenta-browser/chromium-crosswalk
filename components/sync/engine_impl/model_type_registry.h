@@ -12,7 +12,9 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/base/passphrase_enums.h"
 #include "components/sync/engine/cycle/type_debug_info_observer.h"
 #include "components/sync/engine/model_safe_worker.h"
 #include "components/sync/engine/model_type_connector.h"
@@ -29,6 +31,7 @@ class CommitContributor;
 class DataTypeDebugInfoEmitter;
 class DirectoryCommitContributor;
 class DirectoryUpdateHandler;
+class KeystoreKeysHandler;
 class ModelTypeWorker;
 class UpdateHandler;
 
@@ -43,7 +46,8 @@ class ModelTypeRegistry : public ModelTypeConnector,
                     UserShare* user_share,
                     NudgeHandler* nudge_handler,
                     const UssMigrator& uss_migrator,
-                    CancelationSignal* cancelation_signal);
+                    CancelationSignal* cancelation_signal,
+                    KeystoreKeysHandler* keystore_keys_handler);
   ~ModelTypeRegistry() override;
 
   // Enables an off-thread type for syncing.  Connects the given proxy
@@ -52,7 +56,7 @@ class ModelTypeRegistry : public ModelTypeConnector,
   // Expects that the proxy's ModelType is not currently enabled.
   void ConnectNonBlockingType(
       ModelType type,
-      std::unique_ptr<ActivationContext> activation_context) override;
+      std::unique_ptr<DataTypeActivationResponse> activation_response) override;
 
   // Disables the syncing of an off-thread type.
   //
@@ -71,6 +75,7 @@ class ModelTypeRegistry : public ModelTypeConnector,
   // Implementation of SyncEncryptionHandler::Observer.
   void OnPassphraseRequired(
       PassphraseRequiredReason reason,
+      const KeyDerivationParams& key_derivation_params,
       const sync_pb::EncryptedData& pending_keys) override;
   void OnPassphraseAccepted() override;
   void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
@@ -81,8 +86,6 @@ class ModelTypeRegistry : public ModelTypeConnector,
   void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
 
   // Gets the set of enabled types.
   ModelTypeSet GetEnabledTypes() const;
@@ -94,9 +97,13 @@ class ModelTypeRegistry : public ModelTypeConnector,
   // Returns the set of non-blocking types with initial sync done.
   ModelTypeSet GetInitialSyncDoneNonBlockingTypes() const;
 
+  // Returns the update handler for |type|.
+  const UpdateHandler* GetUpdateHandler(ModelType type) const;
+
   // Simple getters.
   UpdateHandlerMap* update_handler_map();
   CommitContributorMap* commit_contributor_map();
+  KeystoreKeysHandler* keystore_keys_handler();
 
   void RegisterDirectoryTypeDebugInfoObserver(TypeDebugInfoObserver* observer);
   void UnregisterDirectoryTypeDebugInfoObserver(
@@ -104,6 +111,8 @@ class ModelTypeRegistry : public ModelTypeConnector,
   bool HasDirectoryTypeDebugInfoObserver(
       const TypeDebugInfoObserver* observer) const;
   void RequestEmitDebugInfo();
+
+  bool HasUnsyncedItems() const;
 
   base::WeakPtr<ModelTypeConnector> AsWeakPtr();
 
@@ -143,24 +152,28 @@ class ModelTypeRegistry : public ModelTypeConnector,
   // The known ModelSafeWorkers.
   std::map<ModelSafeGroup, scoped_refptr<ModelSafeWorker>> workers_map_;
 
-  // The user share. Not owned.
-  UserShare* user_share_;
+  UserShare* const user_share_;
 
   // A copy of the directory's most recent cryptographer.
   std::unique_ptr<Cryptographer> cryptographer_;
 
+  // A copy of the directory's most recent passphrase type.
+  PassphraseType passphrase_type_ =
+      SyncEncryptionHandler::kInitialPassphraseType;
+
   // The set of encrypted types.
   ModelTypeSet encrypted_types_;
 
-  // The NudgeHandler.  Not owned.
-  NudgeHandler* nudge_handler_;
+  NudgeHandler* const nudge_handler_;
 
   // Function to call to migrate data from the directory to USS.
   UssMigrator uss_migrator_;
 
   // CancelationSignal is signalled on engine shutdown. It is passed to
   // ModelTypeWorker to cancel blocking operation.
-  CancelationSignal* cancelation_signal_;
+  CancelationSignal* const cancelation_signal_;
+
+  KeystoreKeysHandler* const keystore_keys_handler_;
 
   // The set of observers of per-type debug info.
   //
@@ -168,9 +181,10 @@ class ModelTypeRegistry : public ModelTypeConnector,
   // a lot of them, and their lifetimes are unpredictable, so it makes the
   // book-keeping easier if we just store the list here.  That way it's
   // guaranteed to live as long as this sync backend.
-  base::ObserverList<TypeDebugInfoObserver> type_debug_info_observers_;
+  base::ObserverList<TypeDebugInfoObserver>::Unchecked
+      type_debug_info_observers_;
 
-  base::WeakPtrFactory<ModelTypeRegistry> weak_ptr_factory_;
+  base::WeakPtrFactory<ModelTypeRegistry> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ModelTypeRegistry);
 };

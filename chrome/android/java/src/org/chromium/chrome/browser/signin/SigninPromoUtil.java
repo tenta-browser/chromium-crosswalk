@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser.signin;
 
+import android.accounts.Account;
 import android.app.Activity;
+import android.support.v4.util.ArraySet;
 import android.text.TextUtils;
 
-import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.Supplier;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.ChromeVersionInfo;
@@ -17,7 +19,8 @@ import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.ui.base.WindowAndroid;
 
-import java.util.HashSet;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -36,16 +39,18 @@ public class SigninPromoUtil {
         int currentMajorVersion = ChromeVersionInfo.getProductMajorVersion();
         boolean wasSignedIn =
                 TextUtils.isEmpty(PrefServiceBridge.getInstance().getSyncLastAccountName());
-        HashSet<String> accountNames =
-                new HashSet<>(AccountManagerFacade.get().tryGetGoogleAccountNames());
+
+        Supplier<Set<String>> accountNamesSupplier =
+                () -> new ArraySet<>(AccountManagerFacade.get().tryGetGoogleAccountNames());
         if (!shouldLaunchSigninPromo(preferenceManager, currentMajorVersion,
-                    ChromeSigninController.get().isSignedIn(), wasSignedIn, accountNames)) {
+                    ChromeSigninController.get().isSignedIn(), wasSignedIn, accountNamesSupplier)) {
             return false;
         }
 
-        AccountSigninActivity.startIfAllowed(activity, SigninAccessPoint.SIGNIN_PROMO);
+        SigninActivity.startIfAllowed(activity, SigninAccessPoint.SIGNIN_PROMO);
         preferenceManager.setSigninPromoLastShownVersion(currentMajorVersion);
-        preferenceManager.setSigninPromoLastAccountNames(accountNames);
+        preferenceManager.setSigninPromoLastAccountNames(
+                new ArraySet<>(AccountManagerFacade.get().tryGetGoogleAccountNames()));
         return true;
     }
 
@@ -55,22 +60,23 @@ public class SigninPromoUtil {
      * @param currentMajorVersion the current major version of Chrome
      * @param isSignedIn is user currently signed in
      * @param wasSignedIn has used manually signed out
-     * @param accountNames the set of account names currently on device
+     * @param accountNamesSupplier the supplier of the set of account names currently on device.
+     *         Supplier is used here because AccountManagerFacade cache may be not populated yet, so
+     *         it makes sense to check other flags before getting accounts.
      * @return Whether the signin promo should be shown.
      */
     @VisibleForTesting
     static boolean shouldLaunchSigninPromo(ChromePreferenceManager preferenceManager,
             int currentMajorVersion, boolean isSignedIn, boolean wasSignedIn,
-            Set<String> accountNames) {
+            Supplier<Set<String>> accountNamesSupplier) {
         int lastPromoMajorVersion = preferenceManager.getSigninPromoLastShownVersion();
         if (lastPromoMajorVersion == 0) {
             preferenceManager.setSigninPromoLastShownVersion(currentMajorVersion);
             return false;
         }
 
-        // Don't show if user is signed in or there are no Google accounts on the device.
+        // Don't show if user is signed in.
         if (isSignedIn) return false;
-        if (accountNames.isEmpty()) return false;
 
         // Don't show if user has manually signed out.
         if (wasSignedIn) return false;
@@ -78,22 +84,47 @@ public class SigninPromoUtil {
         // Promo can be shown at most once every 2 Chrome major versions.
         if (currentMajorVersion < lastPromoMajorVersion + 2) return false;
 
-        // Don't show if account list hasn't changed since the last time promo was shown.
+        // Defer getting accounts, as AccountManagerFacade cache may be not populated yet.
+        Set<String> accountNames = accountNamesSupplier.get();
+        // Don't show if there are no Google accounts on the device.
+        if (accountNames.isEmpty()) return false;
+
+        // Don't show if no new accounts have been added after the last time promo was shown.
         Set<String> previousAccountNames = preferenceManager.getSigninPromoLastAccountNames();
-        return !ApiCompatibilityUtils.objectEquals(previousAccountNames, accountNames);
+        return previousAccountNames == null || !previousAccountNames.containsAll(accountNames);
     }
 
     /**
-     * A convenience method to create an AccountSigninActivity, passing the access point as an
+     * @param signinPromoController The {@link SigninPromoController} that maintains the view.
+     * @param profileDataCache The {@link ProfileDataCache} that stores profile data.
+     * @param view The {@link PersonalizedSigninPromoView} that should be set up.
+     * @param listener The {@link SigninPromoController.OnDismissListener} to be set to the view.
+     */
+    public static void setupPromoViewFromCache(SigninPromoController signinPromoController,
+            ProfileDataCache profileDataCache, PersonalizedSigninPromoView view,
+            SigninPromoController.OnDismissListener listener) {
+        DisplayableProfileData profileData = null;
+        List<Account> accounts = AccountManagerFacade.get().tryGetGoogleAccounts();
+        if (accounts.size() > 0) {
+            String defaultAccountName = accounts.get(0).name;
+            profileDataCache.update(Collections.singletonList(defaultAccountName));
+            profileData = profileDataCache.getProfileDataOrDefault(defaultAccountName);
+        }
+        signinPromoController.detach();
+        signinPromoController.setupPromoView(view.getContext(), view, profileData, listener);
+    }
+
+    /**
+     * A convenience method to create an SigninActivity, passing the access point as an
      * intent extra.
      * @param window WindowAndroid from which to get the Activity/Context.
      * @param accessPoint for metrics purposes.
      */
     @CalledByNative
-    private static void openAccountSigninActivityForPromo(WindowAndroid window, int accessPoint) {
+    private static void openSigninActivityForPromo(WindowAndroid window, int accessPoint) {
         Activity activity = window.getActivity().get();
         if (activity != null) {
-            AccountSigninActivity.startIfAllowed(activity, accessPoint);
+            SigninActivity.startIfAllowed(activity, accessPoint);
         }
     }
 }

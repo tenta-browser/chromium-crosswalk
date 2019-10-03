@@ -5,6 +5,7 @@
 #ifndef CONTENT_PUBLIC_BROWSER_NAVIGATION_THROTTLE_H_
 #define CONTENT_PUBLIC_BROWSER_NAVIGATION_THROTTLE_H_
 
+#include "base/callback.h"
 #include "base/optional.h"
 #include "content/common/content_export.h"
 #include "net/base/net_errors.h"
@@ -19,10 +20,12 @@ class CONTENT_EXPORT NavigationThrottle {
   // Represents what a NavigationThrottle can decide to do to a navigation. Note
   // that this enum is implicitly convertable to ThrottleCheckResult.
   enum ThrottleAction {
+    FIRST = 0,
+
     // The action proceeds. This can either mean the navigation continues (e.g.
     // for WillStartRequest) or that the navigation fails (e.g. for
     // WillFailRequest).
-    PROCEED,
+    PROCEED = FIRST,
 
     // Defers the navigation until the NavigationThrottle calls
     // NavigationHandle::Resume or NavigationHandle::CancelDeferredRequest. If
@@ -54,6 +57,8 @@ class CONTENT_EXPORT NavigationThrottle {
     // embedding restrictions like 'X-Frame-Options'). This result will only
     // be returned from WillProcessResponse.
     BLOCK_RESPONSE,
+
+    LAST = BLOCK_RESPONSE,
   };
 
   // ThrottleCheckResult, the return value for NavigationThrottle decision
@@ -150,8 +155,9 @@ class CONTENT_EXPORT NavigationThrottle {
   // CANCEL_AND_IGNORE or DEFER and perform the destruction asynchronously.
   virtual ThrottleCheckResult WillFailRequest();
 
-  // Called when a response's headers and metadata are available.
+  // Called when a response's metadata is available.
   //
+  // For HTTP(S) responses, headers will be available.
   // The implementer is responsible for ensuring that the WebContents this
   // throttle is associated with remain alive during the duration of this
   // method. Failing to do so will result in use-after-free bugs. Should the
@@ -167,6 +173,19 @@ class CONTENT_EXPORT NavigationThrottle {
   // The NavigationHandle that is tracking the information related to this
   // navigation.
   NavigationHandle* navigation_handle() const { return navigation_handle_; }
+
+  // Overrides the default Resume method and replaces it by |callback|. This
+  // should only be used in tests.
+  void set_resume_callback_for_testing(const base::RepeatingClosure& callback) {
+    resume_callback_ = callback;
+  }
+
+  // Overrides the default CancelDeferredNavigation method and replaces it by
+  // |callback|. This should only be used in tests.
+  void set_cancel_deferred_navigation_callback_for_testing(
+      const base::RepeatingCallback<void(ThrottleCheckResult)> callback) {
+    cancel_deferred_navigation_callback_ = callback;
+  }
 
  protected:
   // Resumes a navigation that was previously deferred by this
@@ -186,6 +205,11 @@ class CONTENT_EXPORT NavigationThrottle {
 
  private:
   NavigationHandle* navigation_handle_;
+
+  // Used in tests.
+  base::RepeatingClosure resume_callback_;
+  base::RepeatingCallback<void(ThrottleCheckResult)>
+      cancel_deferred_navigation_callback_;
 };
 
 #if defined(UNIT_TEST)

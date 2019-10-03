@@ -16,16 +16,6 @@
 
 namespace net {
 
-TEST(HttpAuthPreferencesTest, AuthSchemes) {
-  const char* const expected_schemes[] = {"scheme1", "scheme2"};
-  std::vector<std::string> expected_schemes_vector(
-      expected_schemes, expected_schemes + arraysize(expected_schemes));
-  HttpAuthPreferences http_auth_preferences(expected_schemes_vector);
-  EXPECT_TRUE(http_auth_preferences.IsSupportedScheme("scheme1"));
-  EXPECT_TRUE(http_auth_preferences.IsSupportedScheme("scheme2"));
-  EXPECT_FALSE(http_auth_preferences.IsSupportedScheme("scheme3"));
-}
-
 TEST(HttpAuthPreferencesTest, DisableCnameLookup) {
   HttpAuthPreferences http_auth_preferences;
   EXPECT_FALSE(http_auth_preferences.NegotiateDisableCnameLookup());
@@ -41,11 +31,11 @@ TEST(HttpAuthPreferencesTest, NegotiateEnablePort) {
 }
 
 #if defined(OS_POSIX)
-TEST(HttpAuthPreferencesTest, EnableNtlmV2) {
+TEST(HttpAuthPreferencesTest, DisableNtlmV2) {
   HttpAuthPreferences http_auth_preferences;
-  EXPECT_FALSE(http_auth_preferences.NtlmV2Enabled());
-  http_auth_preferences.set_ntlm_v2_enabled(true);
   EXPECT_TRUE(http_auth_preferences.NtlmV2Enabled());
+  http_auth_preferences.set_ntlm_v2_enabled(false);
+  EXPECT_FALSE(http_auth_preferences.NtlmV2Enabled());
 }
 #endif
 
@@ -60,24 +50,11 @@ TEST(HttpAuthPreferencesTest, AuthAndroidhNegotiateAccountType) {
 }
 #endif
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-TEST(HttpAuthPreferencesTest, GssApiLibraryName) {
-  std::vector<std::string> auth_schemes;
-  HttpAuthPreferences http_auth_preferences(auth_schemes, "bar");
-  EXPECT_EQ(std::string("bar"), http_auth_preferences.GssapiLibraryName());
-}
-#endif
-
 #if defined(OS_CHROMEOS)
-TEST(HttpAuthPreferencesTest, AllowGssapiLibraryLoadTrue) {
-  std::vector<std::string> auth_schemes;
-  HttpAuthPreferences http_auth_preferences(auth_schemes, true);
+TEST(HttpAuthPreferencesTest, AllowGssapiLibraryLoad) {
+  HttpAuthPreferences http_auth_preferences;
   EXPECT_TRUE(http_auth_preferences.AllowGssapiLibraryLoad());
-}
-
-TEST(HttpAuthPreferencesTest, AllowGssapiLibraryLoadFalse) {
-  std::vector<std::string> auth_schemes;
-  HttpAuthPreferences http_auth_preferences(auth_schemes, false);
+  http_auth_preferences.set_allow_gssapi_library_load(false);
   EXPECT_FALSE(http_auth_preferences.AllowGssapiLibraryLoad());
 }
 #endif
@@ -90,12 +67,24 @@ TEST(HttpAuthPreferencesTest, AuthServerWhitelist) {
   EXPECT_TRUE(http_auth_preferences.CanUseDefaultCredentials(GURL("abc")));
 }
 
-TEST(HttpAuthPreferencesTest, AuthDelegateWhitelist) {
+TEST(HttpAuthPreferencesTest, DelegationType) {
+  using DelegationType = HttpAuth::DelegationType;
   HttpAuthPreferences http_auth_preferences;
   // Check initial value
-  EXPECT_FALSE(http_auth_preferences.CanDelegate(GURL("abc")));
+  EXPECT_EQ(DelegationType::kNone,
+            http_auth_preferences.GetDelegationType(GURL("abc")));
+
   http_auth_preferences.SetDelegateWhitelist("*");
-  EXPECT_TRUE(http_auth_preferences.CanDelegate(GURL("abc")));
+  EXPECT_EQ(DelegationType::kUnconstrained,
+            http_auth_preferences.GetDelegationType(GURL("abc")));
+
+  http_auth_preferences.set_delegate_by_kdc_policy(true);
+  EXPECT_EQ(DelegationType::kByKdcPolicy,
+            http_auth_preferences.GetDelegationType(GURL("abc")));
+
+  http_auth_preferences.SetDelegateWhitelist("");
+  EXPECT_EQ(DelegationType::kNone,
+            http_auth_preferences.GetDelegationType(GURL("abc")));
 }
 
 }  // namespace net

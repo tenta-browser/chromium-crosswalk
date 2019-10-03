@@ -8,9 +8,11 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "cc/cc_export.h"
-#include "components/viz/common/gpu/context_provider.h"
+
+namespace viz {
+class ContextProvider;
+}  // namespace viz
 
 namespace cc {
 
@@ -20,15 +22,16 @@ namespace cc {
 class CC_EXPORT ScopedGpuRaster {
  public:
   explicit ScopedGpuRaster(viz::ContextProvider* context_provider);
+  ScopedGpuRaster(const ScopedGpuRaster&) = delete;
   ~ScopedGpuRaster();
+
+  ScopedGpuRaster& operator=(const ScopedGpuRaster&) = delete;
 
  private:
   void BeginGpuRaster();
   void EndGpuRaster();
 
   viz::ContextProvider* context_provider_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedGpuRaster);
 };
 
 }  // namespace cc

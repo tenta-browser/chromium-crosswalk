@@ -17,6 +17,7 @@
 #include "components/sync/protocol/session_specifics.pb.h"
 #include "components/sync/protocol/theme_specifics.pb.h"
 #include "components/sync/protocol/typed_url_specifics.pb.h"
+#include "components/sync/protocol/wifi_configuration_specifics.pb.h"
 #include "components/sync/syncable/base_transaction.h"
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/entry.h"
@@ -41,7 +42,9 @@ static int64_t IdToMetahandle(syncable::BaseTransaction* trans,
   return entry.GetMetahandle();
 }
 
-BaseNode::BaseNode() : password_data_(new sync_pb::PasswordSpecificsData) {}
+BaseNode::BaseNode()
+    : password_data_(new sync_pb::PasswordSpecificsData),
+      wifi_configuration_data_(new sync_pb::WifiConfigurationSpecificsData) {}
 
 BaseNode::~BaseNode() {}
 
@@ -51,9 +54,9 @@ bool BaseNode::DecryptIfNecessary() {
   const sync_pb::EntitySpecifics& specifics = GetEntry()->GetSpecifics();
   if (specifics.has_password()) {
     // Passwords have their own legacy encryption structure.
-    std::unique_ptr<sync_pb::PasswordSpecificsData> data(
+    std::unique_ptr<sync_pb::PasswordSpecificsData> data =
         DecryptPasswordSpecifics(specifics,
-                                 GetTransaction()->GetCryptographer()));
+                                 GetTransaction()->GetCryptographer());
     if (!data) {
       GetTransaction()->GetWrappedTrans()->OnUnrecoverableError(
           FROM_HERE, std::string("Failed to decrypt encrypted node of type ") +
@@ -61,6 +64,21 @@ bool BaseNode::DecryptIfNecessary() {
       return false;
     }
     password_data_.swap(data);
+    return true;
+  }
+
+  if (specifics.has_wifi_configuration()) {
+    // Wifi configs have their own legacy encryption structure.
+    std::unique_ptr<sync_pb::WifiConfigurationSpecificsData> data =
+        DecryptWifiConfigurationSpecifics(specifics,
+                                          GetTransaction()->GetCryptographer());
+    if (!data) {
+      GetTransaction()->GetWrappedTrans()->OnUnrecoverableError(
+          FROM_HERE, std::string("Failed to decrypt encrypted node of type ") +
+                         ModelTypeToString(GetModelType()));
+      return false;
+    }
+    wifi_configuration_data_.swap(data);
     return true;
   }
 
@@ -85,9 +103,9 @@ bool BaseNode::DecryptIfNecessary() {
   }
 
   const sync_pb::EncryptedData& encrypted = specifics.encrypted();
-  std::string plaintext_data =
-      GetTransaction()->GetCryptographer()->DecryptToString(encrypted);
-  if (plaintext_data.length() == 0) {
+  std::string plaintext_data;
+  if (!GetTransaction()->GetCryptographer()->DecryptToString(encrypted,
+                                                             &plaintext_data)) {
     GetTransaction()->GetWrappedTrans()->OnUnrecoverableError(
         FROM_HERE, std::string("Failed to decrypt encrypted node of type ") +
                        ModelTypeToString(GetModelType()));
@@ -242,14 +260,15 @@ const sync_pb::PasswordSpecificsData& BaseNode::GetPasswordSpecifics() const {
   return *password_data_;
 }
 
+const sync_pb::WifiConfigurationSpecificsData&
+BaseNode::GetWifiConfigurationSpecifics() const {
+  DCHECK_EQ(GetModelType(), WIFI_CONFIGURATIONS);
+  return *wifi_configuration_data_;
+}
+
 const sync_pb::TypedUrlSpecifics& BaseNode::GetTypedUrlSpecifics() const {
   DCHECK_EQ(GetModelType(), TYPED_URLS);
   return GetEntitySpecifics().typed_url();
-}
-
-const sync_pb::ExperimentsSpecifics& BaseNode::GetExperimentsSpecifics() const {
-  DCHECK_EQ(GetModelType(), EXPERIMENTS);
-  return GetEntitySpecifics().experiments();
 }
 
 const sync_pb::EntitySpecifics& BaseNode::GetEntitySpecifics() const {
@@ -258,16 +277,6 @@ const sync_pb::EntitySpecifics& BaseNode::GetEntitySpecifics() const {
 
 ModelType BaseNode::GetModelType() const {
   return GetEntry()->GetModelType();
-}
-
-const AttachmentIdList BaseNode::GetAttachmentIds() const {
-  AttachmentIdList result;
-  const sync_pb::AttachmentMetadata& metadata =
-      GetEntry()->GetAttachmentMetadata();
-  for (int i = 0; i < metadata.record_size(); ++i) {
-    result.push_back(AttachmentId::CreateFromProto(metadata.record(i).id()));
-  }
-  return result;
 }
 
 void BaseNode::SetUnencryptedSpecifics(

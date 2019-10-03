@@ -1,3 +1,5 @@
-include_rules = [
-  "+mojo/edk/embedder",
-]
+specific_include_rules = {
+  "app_shim_host_manager_browsertest_mac.mm": [
+    "+chrome/app_shim/app_shim_controller.h",
+  ],
+}

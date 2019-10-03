@@ -8,34 +8,53 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "components/feedback/feedback_uploader.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "components/signin/public/identity_manager/access_token_info.h"
+
+namespace signin {
+class PrimaryAccountAccessTokenFetcher;
+}  // namespace signin
+
+class GoogleServiceAuthError;
 
 namespace feedback {
 
-class FeedbackUploaderChrome : public OAuth2TokenService::Consumer,
-                               public FeedbackUploader {
+class FeedbackUploaderChrome : public FeedbackUploader {
  public:
   FeedbackUploaderChrome(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       content::BrowserContext* context,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~FeedbackUploaderChrome() override;
 
- private:
-  // OAuth2TokenService::Consumer:
-  void OnGetTokenSuccess(const OAuth2TokenService::Request* request,
-                         const std::string& access_token,
-                         const base::Time& expiration_time) override;
-  void OnGetTokenFailure(const OAuth2TokenService::Request* request,
-                         const GoogleServiceAuthError& error) override;
+  class Delegate {
+   public:
+    // Notifies the delegate when we have started dispatching a feedback report.
+    virtual void OnStartDispatchingReport() = 0;
 
+   protected:
+    virtual ~Delegate() = default;
+  };
+
+  void set_feedback_uploader_delegate(Delegate* delegate) {
+    delegate_ = delegate;
+  }
+
+ private:
   // feedback::FeedbackUploader:
   void StartDispatchingReport() override;
-  void AppendExtraHeadersToUploadRequest(net::URLFetcher* fetcher) override;
+  void AppendExtraHeadersToUploadRequest(
+      network::ResourceRequest* resource_request) override;
 
-  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
+  void AccessTokenAvailable(GoogleServiceAuthError error,
+                            signin::AccessTokenInfo access_token_info);
+
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher> token_fetcher_;
 
   std::string access_token_;
+
+  Delegate* delegate_ = nullptr;  // Not owned.
 
   DISALLOW_COPY_AND_ASSIGN(FeedbackUploaderChrome);
 };

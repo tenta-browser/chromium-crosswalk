@@ -5,6 +5,7 @@
 #include "net/url_request/redirect_util.h"
 
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/url_request/redirect_info.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -12,15 +13,23 @@
 namespace net {
 
 // static
-void RedirectUtil::UpdateHttpRequest(const GURL& original_url,
-                                     const std::string& original_method,
-                                     const RedirectInfo& redirect_info,
-                                     HttpRequestHeaders* request_headers,
-                                     bool* should_clear_upload) {
+void RedirectUtil::UpdateHttpRequest(
+    const GURL& original_url,
+    const std::string& original_method,
+    const RedirectInfo& redirect_info,
+    const base::Optional<std::vector<std::string>>& removed_headers,
+    const base::Optional<net::HttpRequestHeaders>& modified_headers,
+    HttpRequestHeaders* request_headers,
+    bool* should_clear_upload) {
   DCHECK(request_headers);
   DCHECK(should_clear_upload);
 
   *should_clear_upload = false;
+
+  if (removed_headers) {
+    for (const std::string& key : removed_headers.value())
+      request_headers->RemoveHeader(key);
+  }
 
   if (redirect_info.new_method != original_method) {
     // TODO(davidben): This logic still needs to be replicated at the consumers.
@@ -63,6 +72,22 @@ void RedirectUtil::UpdateHttpRequest(const GURL& original_url,
     request_headers->SetHeader(HttpRequestHeaders::kOrigin,
                                url::Origin().Serialize());
   }
+
+  if (modified_headers)
+    request_headers->MergeFrom(modified_headers.value());
+}
+
+// static
+base::Optional<std::string> RedirectUtil::GetReferrerPolicyHeader(
+    const HttpResponseHeaders* response_headers) {
+  if (!response_headers)
+    return base::nullopt;
+  std::string referrer_policy_header;
+  if (!response_headers->GetNormalizedHeader("Referrer-Policy",
+                                             &referrer_policy_header)) {
+    return base::nullopt;
+  }
+  return referrer_policy_header;
 }
 
 }  // namespace net

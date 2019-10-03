@@ -11,6 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_switches.h"
@@ -49,10 +50,10 @@ static const char kManifestDisabledTokenSignaturesPath[] =
     "origin-trials.disabled-tokens.signatures";
 
 // Extension id is llkgjffcdpffmhiakmfcdcblohccpfmo
-const uint8_t kSha256Hash[] = {0xbb, 0xa6, 0x95, 0x52, 0x3f, 0x55, 0xc7, 0x80,
-                               0xac, 0x52, 0x32, 0x1b, 0xe7, 0x22, 0xf5, 0xce,
-                               0x6a, 0xfd, 0x9c, 0x9e, 0xa9, 0x2a, 0x0b, 0x50,
-                               0x60, 0x2b, 0x7f, 0x6c, 0x64, 0x80, 0x09, 0x04};
+const uint8_t kOriginTrialSha2Hash[] = {
+    0xbb, 0xa6, 0x95, 0x52, 0x3f, 0x55, 0xc7, 0x80, 0xac, 0x52, 0x32,
+    0x1b, 0xe7, 0x22, 0xf5, 0xce, 0x6a, 0xfd, 0x9c, 0x9e, 0xa9, 0x2a,
+    0x0b, 0x50, 0x60, 0x2b, 0x7f, 0x6c, 0x64, 0x80, 0x09, 0x04};
 
 }  // namespace
 
@@ -127,7 +128,8 @@ void OriginTrialsComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
   if (!hash)
     return;
-  hash->assign(kSha256Hash, kSha256Hash + arraysize(kSha256Hash));
+  hash->assign(kOriginTrialSha2Hash,
+               kOriginTrialSha2Hash + base::size(kOriginTrialSha2Hash));
 }
 
 std::string OriginTrialsComponentInstallerPolicy::GetName() const {

@@ -6,17 +6,10 @@
 
 #include <memory>
 
-#include "ash/accelerators/accelerator_commands_classic.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
-
-// Note: The unit tests for |ToggleMaximized()| and
-// |ToggleFullscreen()| are in
-// chrome/browser/ui/ash/accelerator_commands_browsertests.cc.
-// because they depends on chrome implementation of
-// |ash::wm::WindowStateDelegate|.
 
 namespace ash {
 namespace accelerators {
@@ -28,8 +21,8 @@ TEST_F(AcceleratorCommandsTest, ToggleMinimized) {
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
   std::unique_ptr<aura::Window> window2(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
-  wm::WindowState* window_state1 = wm::GetWindowState(window1.get());
-  wm::WindowState* window_state2 = wm::GetWindowState(window2.get());
+  WindowState* window_state1 = WindowState::Get(window1.get());
+  WindowState* window_state2 = WindowState::Get(window2.get());
   window_state1->Activate();
   window_state2->Activate();
 
@@ -51,16 +44,41 @@ TEST_F(AcceleratorCommandsTest, ToggleMinimized) {
   EXPECT_TRUE(window_state1->IsActive());
 }
 
+TEST_F(AcceleratorCommandsTest, ToggleMaximized) {
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
+  WindowState* window_state = WindowState::Get(window.get());
+  window_state->Activate();
+
+  // When not in fullscreen, accelerators::ToggleMaximized toggles Maximized.
+  EXPECT_FALSE(window_state->IsMaximized());
+  accelerators::ToggleMaximized();
+  EXPECT_TRUE(window_state->IsMaximized());
+  accelerators::ToggleMaximized();
+  EXPECT_FALSE(window_state->IsMaximized());
+
+  // When in fullscreen accelerators::ToggleMaximized gets out of fullscreen.
+  EXPECT_FALSE(window_state->IsFullscreen());
+  accelerators::ToggleFullscreen();
+  EXPECT_TRUE(window_state->IsFullscreen());
+  accelerators::ToggleMaximized();
+  EXPECT_FALSE(window_state->IsFullscreen());
+  EXPECT_FALSE(window_state->IsMaximized());
+  accelerators::ToggleMaximized();
+  EXPECT_FALSE(window_state->IsFullscreen());
+  EXPECT_TRUE(window_state->IsMaximized());
+}
+
 TEST_F(AcceleratorCommandsTest, Unpin) {
   std::unique_ptr<aura::Window> window1(
       CreateTestWindowInShellWithBounds(gfx::Rect(5, 5, 20, 20)));
-  wm::WindowState* window_state1 = wm::GetWindowState(window1.get());
+  WindowState* window_state1 = WindowState::Get(window1.get());
   window_state1->Activate();
 
-  wm::PinWindow(window1.get(), /* trusted */ false);
+  window_util::PinWindow(window1.get(), /* trusted */ false);
   EXPECT_TRUE(window_state1->IsPinned());
 
-  Unpin();
+  UnpinWindow();
   EXPECT_FALSE(window_state1->IsPinned());
 }
 

@@ -14,7 +14,7 @@
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 
 namespace gfx {
 class Size;
@@ -28,16 +28,23 @@ namespace translate {
 class TranslateHelper;
 }
 
+namespace web_cache {
+class WebCacheImpl;
+}
+
 // This class holds the Chrome specific parts of RenderFrame, and has the same
 // lifetime.
-class ChromeRenderFrameObserver
-    : public content::RenderFrameObserver,
-      public chrome::mojom::ChromeRenderFrame {
+class ChromeRenderFrameObserver : public content::RenderFrameObserver,
+                                  public chrome::mojom::ChromeRenderFrame {
  public:
-  explicit ChromeRenderFrameObserver(content::RenderFrame* render_frame);
+  ChromeRenderFrameObserver(content::RenderFrame* render_frame,
+                            web_cache::WebCacheImpl* web_cache_impl);
   ~ChromeRenderFrameObserver() override;
 
   service_manager::BinderRegistry* registry() { return &registry_; }
+  blink::AssociatedInterfaceRegistry* associated_interfaces() {
+    return &associated_interfaces_;
+  }
 
  private:
   enum TextCaptureType { PRELIMINARY_CAPTURE, FINAL_CAPTURE };
@@ -46,18 +53,23 @@ class ChromeRenderFrameObserver
   void OnInterfaceRequestForFrame(
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) override;
+  bool OnAssociatedInterfaceRequestForFrame(
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle* handle) override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  void DidStartProvisionalLoad(blink::WebDocumentLoader* loader) override;
+  void ReadyToCommitNavigation(
+      blink::WebDocumentLoader* document_loader) override;
   void DidFinishLoad() override;
-  void DidCommitProvisionalLoad(bool is_new_navigation,
-                                bool is_same_document_navigation) override;
+  void DidCreateNewDocument() override;
+  void DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                ui::PageTransition transition) override;
   void DidClearWindowObject() override;
   void DidMeaningfulLayout(blink::WebMeaningfulLayout layout_type) override;
   void OnDestruct() override;
 
   // IPC handlers
-  void OnGetWebApplicationInfo();
-  void OnSetIsPrerendering(prerender::PrerenderMode mode);
+  void OnSetIsPrerendering(prerender::PrerenderMode mode,
+                           const std::string& histogram_prefix);
   void OnRequestThumbnailForContextNode(
       int thumbnail_min_area_pixels,
       const gfx::Size& thumbnail_max_size_pixels,
@@ -73,9 +85,13 @@ class ChromeRenderFrameObserver
       int32_t thumbnail_min_area_pixels,
       const gfx::Size& thumbnail_max_size_pixels,
       chrome::mojom::ImageFormat image_format,
-      const RequestThumbnailForContextNodeCallback& callback) override;
+      RequestThumbnailForContextNodeCallback callback) override;
   void RequestReloadImageForContextNode() override;
   void SetClientSidePhishingDetection(bool enable_phishing_detection) override;
+  void GetWebApplicationInfo(GetWebApplicationInfoCallback callback) override;
+  void UpdateBrowserControlsState(content::BrowserControlsState constraints,
+                                  content::BrowserControlsState current,
+                                  bool animate) override;
 
   void OnRenderFrameObserverRequest(
       chrome::mojom::ChromeRenderFrameAssociatedRequest request);
@@ -94,6 +110,8 @@ class ChromeRenderFrameObserver
   translate::TranslateHelper* translate_helper_;
   safe_browsing::PhishingClassifierDelegate* phishing_classifier_;
 
+  // Owned by ChromeContentRendererClient and outlive us.
+  web_cache::WebCacheImpl* web_cache_impl_;
 
 #if !defined(OS_ANDROID)
   // Save the JavaScript to preload if ExecuteWebUIJavaScript is invoked.
@@ -103,6 +121,7 @@ class ChromeRenderFrameObserver
   mojo::AssociatedBindingSet<chrome::mojom::ChromeRenderFrame> bindings_;
 
   service_manager::BinderRegistry registry_;
+  blink::AssociatedInterfaceRegistry associated_interfaces_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeRenderFrameObserver);
 };

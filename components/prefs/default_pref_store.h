@@ -32,13 +32,11 @@ class COMPONENTS_PREFS_EXPORT DefaultPrefStore : public PrefStore {
 
   // Sets a |value| for |key|. Should only be called if a value has not been
   // set yet; otherwise call ReplaceDefaultValue().
-  void SetDefaultValue(const std::string& key,
-                       std::unique_ptr<base::Value> value);
+  void SetDefaultValue(const std::string& key, base::Value value);
 
   // Replaces the the value for |key| with a new value. Should only be called
   // if a value has alreday been set; otherwise call SetDefaultValue().
-  void ReplaceDefaultValue(const std::string& key,
-                           std::unique_ptr<base::Value> value);
+  void ReplaceDefaultValue(const std::string& key, base::Value value);
 
   const_iterator begin() const;
   const_iterator end() const;
@@ -48,7 +46,7 @@ class COMPONENTS_PREFS_EXPORT DefaultPrefStore : public PrefStore {
 
   PrefValueMap prefs_;
 
-  base::ObserverList<PrefStore::Observer, true> observers_;
+  base::ObserverList<PrefStore::Observer, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultPrefStore);
 };

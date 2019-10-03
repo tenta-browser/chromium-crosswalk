@@ -6,7 +6,7 @@
 #define SERVICES_DEVICE_SCREEN_ORIENTATION_SCREEN_ORIENTATION_LISTENER_ANDROID_H_
 
 #include "base/macros.h"
-#include "device/screen_orientation/public/interfaces/screen_orientation.mojom.h"
+#include "services/device/public/mojom/screen_orientation.mojom.h"
 
 namespace device {
 
@@ -21,12 +21,8 @@ class ScreenOrientationListenerAndroid
   ScreenOrientationListenerAndroid();
 
   // mojom::ScreenOrientationListener:
-  void Start() override;
-  void Stop() override;
   void IsAutoRotateEnabledByUser(
       IsAutoRotateEnabledByUserCallback callback) override;
-
-  int listeners_count_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenOrientationListenerAndroid);
 };

@@ -12,8 +12,7 @@
 #include "chrome/browser/profiles/profile_statistics_aggregator.h"
 
 ProfileStatistics::ProfileStatistics(Profile* profile)
-    : profile_(profile), aggregator_(nullptr), weak_ptr_factory_(this) {
-}
+    : profile_(profile), aggregator_(nullptr) {}
 
 ProfileStatistics::~ProfileStatistics() {
 }
@@ -26,7 +25,7 @@ void ProfileStatistics::GatherStatistics(
   DCHECK(!profile_->IsOffTheRecord() && !profile_->IsSystemProfile());
 
   if (!aggregator_) {
-    aggregator_ = base::MakeUnique<ProfileStatisticsAggregator>(
+    aggregator_ = std::make_unique<ProfileStatisticsAggregator>(
         profile_, base::Bind(&ProfileStatistics::DeregisterAggregator,
                              weak_ptr_factory_.GetWeakPtr()));
   }

@@ -13,7 +13,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "media/remoting/rpc.pb.h"
+#include "media/remoting/media_remoting_rpc.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,8 +31,7 @@ class FakeMessageSender {
   FakeMessageSender()
       : received_rpc_(new pb::RpcMessage()),
         has_sent_message_(false),
-        send_count_(0),
-        weak_factory_(this) {}
+        send_count_(0) {}
   ~FakeMessageSender() = default;
 
   void OnSendMessageAndQuit(std::unique_ptr<std::vector<uint8_t>> message) {
@@ -55,14 +54,14 @@ class FakeMessageSender {
   std::unique_ptr<pb::RpcMessage> received_rpc_;
   bool has_sent_message_;
   int send_count_;
-  base::WeakPtrFactory<FakeMessageSender> weak_factory_;
+  base::WeakPtrFactory<FakeMessageSender> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageSender);
 };
 
 class FakeMessageReceiver {
  public:
-  FakeMessageReceiver() : has_received_message_(false), weak_factory_(this) {}
+  FakeMessageReceiver() : has_received_message_(false) {}
   ~FakeMessageReceiver() = default;
 
   // RpcBroker::MessageReceiver implementation.
@@ -81,7 +80,7 @@ class FakeMessageReceiver {
  private:
   std::unique_ptr<pb::RpcMessage> received_rpc_;
   int has_received_message_;
-  base::WeakPtrFactory<FakeMessageReceiver> weak_factory_;
+  base::WeakPtrFactory<FakeMessageReceiver> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageReceiver);
 };

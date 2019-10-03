@@ -8,11 +8,13 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.net.TrafficStats;
 import android.os.Build;
+import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import android.util.Log;
 
 import org.chromium.net.CronetException;
 import org.chromium.net.InlineExecutionProhibitedException;
+import org.chromium.net.ThreadStatsUid;
 import org.chromium.net.UploadDataProvider;
 import org.chromium.net.UploadDataSink;
 import org.chromium.net.UrlResponseInfo;
@@ -20,6 +22,8 @@ import org.chromium.net.UrlResponseInfo;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
@@ -67,15 +71,10 @@ final class JavaUrlRequest extends UrlRequestBase {
      * waiting for the read to succeed), runtime error (network code or user code throws an
      * exception), or cancellation.
      */
-    private final AtomicReference<State> mState = new AtomicReference<>(State.NOT_STARTED);
+    private final AtomicReference<Integer /* @State */> mState =
+            new AtomicReference<>(State.NOT_STARTED);
     private final AtomicBoolean mUploadProviderClosed = new AtomicBoolean(false);
 
-    /**
-     * Traffic stats tag to associate this requests' data use with. It's captured when the request
-     * is created, so that applications doing work on behalf of another app can correctly attribute
-     * that data use.
-     */
-    private final int mTrafficStatsTag;
     private final boolean mAllowDirectExecutor;
 
     /* These don't change with redirects */
@@ -112,16 +111,20 @@ final class JavaUrlRequest extends UrlRequestBase {
      * NOT_STARTED --->                   STARTED                       ----> AWAITING_READ --->
      * COMPLETE
      */
-    private enum State {
-        NOT_STARTED,
-        STARTED,
-        REDIRECT_RECEIVED,
-        AWAITING_FOLLOW_REDIRECT,
-        AWAITING_READ,
-        READING,
-        ERROR,
-        COMPLETE,
-        CANCELLED,
+    @IntDef({State.NOT_STARTED, State.STARTED, State.REDIRECT_RECEIVED,
+            State.AWAITING_FOLLOW_REDIRECT, State.AWAITING_READ, State.READING, State.ERROR,
+            State.COMPLETE, State.CANCELLED})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface State {
+        int NOT_STARTED = 0;
+        int STARTED = 1;
+        int REDIRECT_RECEIVED = 2;
+        int AWAITING_FOLLOW_REDIRECT = 3;
+        int AWAITING_READ = 4;
+        int READING = 5;
+        int ERROR = 6;
+        int COMPLETE = 7;
+        int CANCELLED = 8;
     }
 
     // Executor that runs one task at a time on an underlying Executor.
@@ -196,7 +199,8 @@ final class JavaUrlRequest extends UrlRequestBase {
      * @param userExecutor The executor used to dispatch to {@code callback}
      */
     JavaUrlRequest(Callback callback, final Executor executor, Executor userExecutor, String url,
-            String userAgent, boolean allowDirectExecutor) {
+            String userAgent, boolean allowDirectExecutor, boolean trafficStatsTagSet,
+            int trafficStatsTag, final boolean trafficStatsUidSet, final int trafficStatsUid) {
         if (url == null) {
             throw new NullPointerException("URL is required");
         }
@@ -212,7 +216,8 @@ final class JavaUrlRequest extends UrlRequestBase {
 
         this.mAllowDirectExecutor = allowDirectExecutor;
         this.mCallbackAsync = new AsyncUrlRequestCallback(callback, userExecutor);
-        this.mTrafficStatsTag = TrafficStats.getThreadStatsTag();
+        final int trafficStatsTagToUse =
+                trafficStatsTagSet ? trafficStatsTag : TrafficStats.getThreadStatsTag();
         this.mExecutor = new SerializingExecutor(new Executor() {
             @Override
             public void execute(final Runnable command) {
@@ -220,10 +225,16 @@ final class JavaUrlRequest extends UrlRequestBase {
                     @Override
                     public void run() {
                         int oldTag = TrafficStats.getThreadStatsTag();
-                        TrafficStats.setThreadStatsTag(mTrafficStatsTag);
+                        TrafficStats.setThreadStatsTag(trafficStatsTagToUse);
+                        if (trafficStatsUidSet) {
+                            ThreadStatsUid.set(trafficStatsUid);
+                        }
                         try {
                             command.run();
                         } finally {
+                            if (trafficStatsUidSet) {
+                                ThreadStatsUid.clear();
+                            }
                             TrafficStats.setThreadStatsTag(oldTag);
                         }
                     }
@@ -251,7 +262,8 @@ final class JavaUrlRequest extends UrlRequestBase {
     }
 
     private void checkNotStarted() {
-        State state = mState.get();
+        @State
+        int state = mState.get();
         if (state != State.NOT_STARTED) {
             throw new IllegalStateException("Request is already started. State is: " + state);
         }
@@ -323,15 +335,19 @@ final class JavaUrlRequest extends UrlRequestBase {
         }
     }
 
-    private enum SinkState {
-        AWAITING_READ_RESULT,
-        AWAITING_REWIND_RESULT,
-        UPLOADING,
-        NOT_STARTED,
+    @IntDef({SinkState.AWAITING_READ_RESULT, SinkState.AWAITING_REWIND_RESULT, SinkState.UPLOADING,
+            SinkState.NOT_STARTED})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface SinkState {
+        int AWAITING_READ_RESULT = 0;
+        int AWAITING_REWIND_RESULT = 1;
+        int UPLOADING = 2;
+        int NOT_STARTED = 3;
     }
 
     private final class OutputStreamDataSink extends UploadDataSink {
-        final AtomicReference<SinkState> mSinkState = new AtomicReference<>(SinkState.NOT_STARTED);
+        final AtomicReference<Integer /*SinkState*/> mSinkState =
+                new AtomicReference<>(SinkState.NOT_STARTED);
         final Executor mUserUploadExecutor;
         final Executor mExecutor;
         final HttpURLConnection mUrlConnection;
@@ -343,7 +359,7 @@ final class JavaUrlRequest extends UrlRequestBase {
         /** This holds the total bytes to send (the content-length). -1 if unknown. */
         long mTotalBytes;
         /** This holds the bytes written so far */
-        long mWrittenBytes = 0;
+        long mWrittenBytes;
 
         OutputStreamDataSink(final Executor userExecutor, Executor executor,
                 HttpURLConnection urlConnection,
@@ -434,6 +450,7 @@ final class JavaUrlRequest extends UrlRequestBase {
                 public void run() throws Exception {
                     if (mOutputChannel == null) {
                         mAdditionalStatusDetails = Status.CONNECTING;
+                        mUrlConnection.setDoOutput(true);
                         mUrlConnection.connect();
                         mAdditionalStatusDetails = Status.SENDING_REQUEST;
                         mUrlConnectionOutputStream = mUrlConnection.getOutputStream();
@@ -530,15 +547,16 @@ final class JavaUrlRequest extends UrlRequestBase {
         }
     }
 
-    private boolean setTerminalState(State error) {
+    private boolean setTerminalState(@State int error) {
         while (true) {
-            State oldState = mState.get();
+            @State
+            int oldState = mState.get();
             switch (oldState) {
-                case NOT_STARTED:
+                case State.NOT_STARTED:
                     throw new IllegalStateException("Can't enter error state before start");
-                case ERROR: // fallthrough
-                case COMPLETE: // fallthrough
-                case CANCELLED:
+                case State.ERROR: // fallthrough
+                case State.COMPLETE: // fallthrough
+                case State.CANCELLED:
                     return false; // Already in a terminal state
                 default: {
                     if (mState.compareAndSet(oldState, error)) {
@@ -573,9 +591,11 @@ final class JavaUrlRequest extends UrlRequestBase {
      *
      * @param afterTransition Callback to run after transition completes successfully.
      */
-    private void transitionStates(State expected, State newState, Runnable afterTransition) {
+    private void transitionStates(
+            @State int expected, @State int newState, Runnable afterTransition) {
         if (!mState.compareAndSet(expected, newState)) {
-            State state = mState.get();
+            @State
+            int state = mState.get();
             if (!(state == State.CANCELLED || state == State.ERROR)) {
                 throw new IllegalStateException(
                         "Invalid state transition - expected " + expected + " but was " + state);
@@ -625,7 +645,7 @@ final class JavaUrlRequest extends UrlRequestBase {
                 // that would throw ConcurrentModificationException.
                 mUrlResponseInfo = new UrlResponseInfoImpl(new ArrayList<>(mUrlChain), responseCode,
                         mCurrentUrlConnection.getResponseMessage(),
-                        Collections.unmodifiableList(headerList), false, selectedTransport, "");
+                        Collections.unmodifiableList(headerList), false, selectedTransport, "", 0);
                 // TODO(clm) actual redirect handling? post -> get and whatnot?
                 if (responseCode >= 300 && responseCode < 400) {
                     fireRedirectReceived(mUrlResponseInfo.getAllHeaders());
@@ -815,27 +835,28 @@ final class JavaUrlRequest extends UrlRequestBase {
 
     @Override
     public void cancel() {
-        State oldState = mState.getAndSet(State.CANCELLED);
+        @State
+        int oldState = mState.getAndSet(State.CANCELLED);
         switch (oldState) {
             // We've just scheduled some user code to run. When they perform their next operation,
             // they'll observe it and fail. However, if user code is cancelling in response to one
             // of these callbacks, we'll never actually cancel!
             // TODO(clm) figure out if it's possible to avoid concurrency in user callbacks.
-            case REDIRECT_RECEIVED:
-            case AWAITING_FOLLOW_REDIRECT:
-            case AWAITING_READ:
+            case State.REDIRECT_RECEIVED:
+            case State.AWAITING_FOLLOW_REDIRECT:
+            case State.AWAITING_READ:
 
             // User code is waiting on us - cancel away!
-            case STARTED:
-            case READING:
+            case State.STARTED:
+            case State.READING:
                 fireDisconnect();
                 fireCloseUploadDataProvider();
                 mCallbackAsync.onCanceled(mUrlResponseInfo);
                 break;
             // The rest are all termination cases - we're too late to cancel.
-            case ERROR:
-            case COMPLETE:
-            case CANCELLED:
+            case State.ERROR:
+            case State.COMPLETE:
+            case State.CANCELLED:
                 break;
             default:
                 break;
@@ -844,33 +865,35 @@ final class JavaUrlRequest extends UrlRequestBase {
 
     @Override
     public boolean isDone() {
-        State state = mState.get();
-        return state == State.COMPLETE | state == State.ERROR | state == State.CANCELLED;
+        @State
+        int state = mState.get();
+        return state == State.COMPLETE || state == State.ERROR || state == State.CANCELLED;
     }
 
     @Override
     public void getStatus(StatusListener listener) {
-        State state = mState.get();
+        @State
+        int state = mState.get();
         int extraStatus = this.mAdditionalStatusDetails;
 
         @StatusValues
         final int status;
         switch (state) {
-            case ERROR:
-            case COMPLETE:
-            case CANCELLED:
-            case NOT_STARTED:
+            case State.ERROR:
+            case State.COMPLETE:
+            case State.CANCELLED:
+            case State.NOT_STARTED:
                 status = Status.INVALID;
                 break;
-            case STARTED:
+            case State.STARTED:
                 status = extraStatus;
                 break;
-            case REDIRECT_RECEIVED:
-            case AWAITING_FOLLOW_REDIRECT:
-            case AWAITING_READ:
+            case State.REDIRECT_RECEIVED:
+            case State.AWAITING_FOLLOW_REDIRECT:
+            case State.AWAITING_READ:
                 status = Status.IDLE;
                 break;
-            case READING:
+            case State.READING:
                 status = Status.READING_RESPONSE;
                 break;
             default:
@@ -1042,7 +1065,7 @@ final class JavaUrlRequest extends UrlRequestBase {
         private static final class InlineCheckingRunnable implements Runnable {
             private final Runnable mCommand;
             private Thread mCallingThread;
-            private InlineExecutionProhibitedException mExecutedInline = null;
+            private InlineExecutionProhibitedException mExecutedInline;
 
             private InlineCheckingRunnable(Runnable command, Thread callingThread) {
                 this.mCommand = command;

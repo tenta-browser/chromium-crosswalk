@@ -14,9 +14,15 @@
 #include "chrome/common/chrome_content_client.h"
 #include "content/public/app/content_main_delegate.h"
 
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
+#include "chrome/browser/startup_data.h"
+#endif
+
 namespace base {
 class CommandLine;
 }
+
+class ChromeContentBrowserClient;
 
 // Chrome implementation of ContentMainDelegate.
 class ChromeMainDelegate : public content::ContentMainDelegate {
@@ -32,7 +38,7 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
   ~ChromeMainDelegate() override;
 
  protected:
-  // content::ContentMainDelegate implementation:
+  // content::ContentMainDelegate:
   bool BasicStartupComplete(int* exit_code) override;
   void PreSandboxStartup() override;
   void SandboxInitialized(const std::string& process_type) override;
@@ -43,15 +49,21 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
 #if defined(OS_MACOSX)
   bool ProcessRegistersWithSystemProcess(
       const std::string& process_type) override;
-  bool ShouldSendMachPort(const std::string& process_type) override;
   bool DelaySandboxInitialization(const std::string& process_type) override;
 #elif defined(OS_LINUX)
-  void ZygoteStarting(std::vector<std::unique_ptr<content::ZygoteForkDelegate>>*
-                          delegates) override;
+  void ZygoteStarting(
+      std::vector<std::unique_ptr<service_manager::ZygoteForkDelegate>>*
+          delegates) override;
   void ZygoteForked() override;
 #endif
-  bool ShouldEnableProfilerRecording() override;
   service_manager::ProcessType OverrideProcessType() override;
+  void PreCreateMainMessageLoop() override;
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
+  void PostEarlyInitialization(bool is_running_tests) override;
+  bool ShouldCreateFeatureList() override;
+  void PostTaskSchedulerStart() override;
+#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
+  void PostFieldTrialInitialization() override;
 
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentGpuClient* CreateContentGpuClient() override;
@@ -65,6 +77,12 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
 #endif  // defined(OS_MACOSX)
 
   ChromeContentClient chrome_content_client_;
+
+  std::unique_ptr<ChromeContentBrowserClient> chrome_content_browser_client_;
+
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
+  std::unique_ptr<StartupData> startup_data_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeMainDelegate);
 };

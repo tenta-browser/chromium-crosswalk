@@ -6,12 +6,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include <utility>
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/url_matcher/url_matcher_constants.h"
@@ -81,7 +81,7 @@ class URLMatcherConditionFactoryMethods {
       URLMatcherConditionFactory* url_matcher_condition_factory,
       const std::string& pattern_type,
       const std::string& pattern_value) const {
-    FactoryMethods::const_iterator i = factory_methods_.find(pattern_type);
+    auto i = factory_methods_.find(pattern_type);
     CHECK(i != factory_methods_.end());
     const FactoryMethod& method = i->second;
     return (url_matcher_condition_factory->*method)(pattern_value);
@@ -234,7 +234,7 @@ URLMatcherFactory::CreateURLMatcherScheme(const base::Value* value,
       return nullptr;
     }
   }
-  return base::MakeUnique<URLMatcherSchemeFilter>(schemas);
+  return std::make_unique<URLMatcherSchemeFilter>(schemas);
 }
 
 // static
@@ -268,7 +268,7 @@ std::unique_ptr<URLMatcherPortFilter> URLMatcherFactory::CreateURLMatcherPorts(
     }
   }
 
-  return base::MakeUnique<URLMatcherPortFilter>(ranges);
+  return std::make_unique<URLMatcherPortFilter>(ranges);
 }
 
 }  // namespace url_matcher

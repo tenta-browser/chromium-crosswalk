@@ -22,7 +22,7 @@ base::TimeDelta GetTimeoutForNotification(Notification* notification) {
 #else
   const bool use_high_priority_delay =
       notification->priority() > DEFAULT_PRIORITY ||
-      notification->notifier_id().type == NotifierId::WEB_PAGE;
+      notification->notifier_id().type == NotifierType::WEB_PAGE;
 #endif
 
   if (use_high_priority_delay)
@@ -76,7 +76,7 @@ void PopupTimersController::CancelAll() {
 }
 
 void PopupTimersController::TimerFinished(const std::string& id) {
-  if (!base::ContainsKey(popup_timers_, id))
+  if (!base::Contains(popup_timers_, id))
     return;
 
   CancelTimer(id);
@@ -98,8 +98,7 @@ void PopupTimersController::OnNotificationUpdated(const std::string& id) {
     return;
   }
 
-  NotificationList::PopupNotifications::const_iterator iter =
-      popup_notifications.begin();
+  auto iter = popup_notifications.begin();
   for (; iter != popup_notifications.end(); ++iter) {
     if ((*iter)->id() == id)
       break;

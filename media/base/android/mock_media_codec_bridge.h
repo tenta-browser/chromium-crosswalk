@@ -7,14 +7,10 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "media/base/android/media_codec_bridge.h"
+#include "media/base/android/media_codec_bridge_impl.h"
 #include "media/base/android/test_destruction_observable.h"
-#include "media/base/video_codecs.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-namespace base {
-class WaitableEvent;
-}
 
 namespace media {
 
@@ -73,22 +69,23 @@ class MockMediaCodecBridge : public MediaCodecBridge,
   MOCK_METHOD2(SetVideoBitrate, void(int bps, int frame_rate));
   MOCK_METHOD0(RequestKeyFrameSoon, void());
   MOCK_METHOD0(IsAdaptivePlaybackSupported, bool());
+  MOCK_METHOD2(OnBuffersAvailable,
+               void(JNIEnv*, const base::android::JavaParamRef<jobject>&));
+  CodecType GetCodecType() const override;
 
-  // Set an optional WaitableEvent that we'll signal on destruction.
-  void SetCodecDestroyedEvent(base::WaitableEvent* event);
+  // Return true if the codec is already drained.
+  bool IsDrained() const;
 
   static std::unique_ptr<MediaCodecBridge> CreateVideoDecoder(
-      VideoCodec codec,
-      CodecType codec_type,
-      const gfx::Size& size,  // Output frame size.
-      const base::android::JavaRef<jobject>& surface,
-      const base::android::JavaRef<jobject>& media_crypto,
-      const std::vector<uint8_t>& csd0,
-      const std::vector<uint8_t>& csd1,
-      bool allow_adaptive_playback);
+      const VideoCodecConfig& config);
 
  private:
-  base::WaitableEvent* destruction_event_ = nullptr;
+  // Is the codec in the drained state?
+  bool is_drained_ = true;
+
+  CodecType codec_type_ = CodecType::kAny;
+
+  DISALLOW_COPY_AND_ASSIGN(MockMediaCodecBridge);
 };
 
 }  // namespace media

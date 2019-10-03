@@ -10,11 +10,10 @@
 #include "chrome/browser/media_galleries/media_galleries_dialog_controller_mock.h"
 #include "chrome/browser/ui/views/extensions/media_galleries_dialog_views.h"
 #include "chrome/browser/ui/views/extensions/media_gallery_checkbox_view.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/test/views/chrome_test_views_delegate.h"
 #include "components/storage_monitor/storage_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/controls/button/checkbox.h"
-#include "ui/views/test/test_views_delegate.h"
 
 using ::testing::_;
 using ::testing::AnyNumber;
@@ -30,7 +29,7 @@ MediaGalleryPrefInfo MakePrefInfoForTesting(MediaGalleryPrefId id) {
   gallery.pref_id = id;
   gallery.device_id = storage_monitor::StorageInfo::MakeDeviceId(
       storage_monitor::StorageInfo::FIXED_MASS_STORAGE,
-      base::Uint64ToString(id));
+      base::NumberToString(id));
   gallery.display_name = base::ASCIIToUTF16("Display Name");
   return gallery;
 }
@@ -49,8 +48,6 @@ class MediaGalleriesDialogTest : public testing::Test {
         WillByDefault(Return(headers));
     EXPECT_CALL(controller_, GetSectionEntries(_)).
         Times(AnyNumber());
-    test_views_delegate_.set_layout_provider(
-        ChromeLayoutProvider::CreateLayoutProvider());
   }
 
   void TearDown() override {
@@ -64,7 +61,7 @@ class MediaGalleriesDialogTest : public testing::Test {
  private:
   // TODO(gbillock): Get rid of this mock; make something specialized.
   NiceMock<MediaGalleriesDialogControllerMock> controller_;
-  views::TestViewsDelegate test_views_delegate_;
+  ChromeTestViewsDelegate test_views_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaGalleriesDialogTest);
 };
@@ -84,10 +81,10 @@ TEST_F(MediaGalleriesDialogTest, InitializeCheckboxes) {
   EXPECT_EQ(2U, dialog.checkbox_map_.size());
 
   MediaGalleryCheckboxView* checkbox_view1 = dialog.checkbox_map_[1];
-  EXPECT_TRUE(checkbox_view1->checkbox()->checked());
+  EXPECT_TRUE(checkbox_view1->checkbox()->GetChecked());
 
   MediaGalleryCheckboxView* checkbox_view2 = dialog.checkbox_map_[2];
-  EXPECT_FALSE(checkbox_view2->checkbox()->checked());
+  EXPECT_FALSE(checkbox_view2->checkbox()->GetChecked());
 }
 
 // Tests that toggling checkboxes updates the controller.
@@ -101,7 +98,7 @@ TEST_F(MediaGalleriesDialogTest, ToggleCheckboxes) {
   MediaGalleriesDialogViews dialog(controller());
   EXPECT_EQ(1U, dialog.checkbox_map_.size());
   views::Checkbox* checkbox = dialog.checkbox_map_[1]->checkbox();
-  EXPECT_TRUE(checkbox->checked());
+  EXPECT_TRUE(checkbox->GetChecked());
 
   ui::KeyEvent dummy_event(ui::ET_KEY_PRESSED, ui::VKEY_A, ui::EF_NONE);
   EXPECT_CALL(*controller(), DidToggleEntry(1, false));

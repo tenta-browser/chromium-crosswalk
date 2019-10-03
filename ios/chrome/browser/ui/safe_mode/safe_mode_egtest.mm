@@ -5,13 +5,15 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#import "ios/chrome/app/chrome_overlay_window.h"
-#import "ios/chrome/browser/ui/main/view_controller_swapping.h"
 #import "ios/chrome/browser/ui/safe_mode/safe_mode_view_controller.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
+#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/base/scoped_block_swizzler.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -19,15 +21,6 @@
 #endif
 
 namespace {
-
-// Returns the top view controller for rendering the Safe Mode Controller.
-UIViewController* GetActiveViewController() {
-  UIWindow* mainWindow = [[UIApplication sharedApplication] keyWindow];
-  DCHECK([mainWindow isKindOfClass:[ChromeOverlayWindow class]]);
-  id<ViewControllerSwapping> main_view_controller =
-      static_cast<id<ViewControllerSwapping>>([mainWindow rootViewController]);
-  return main_view_controller.activeViewController;
-}
 
 // Verifies that |message| is displayed.
 void AssertMessageOnPage(NSString* message) {
@@ -72,6 +65,16 @@ void AssertTryAgainButtonOnPage() {
 
 @implementation SafeModeTestCase
 
+// Per crbug.com/845186, Disable flakey iPad Retina tests that are limited
+// to iOS 10.2.
++ (NSArray*)testInvocations {
+#if TARGET_IPHONE_SIMULATOR
+  if ([ChromeEarlGrey isIPadIdiom] && !base::ios::IsRunningOnOrLater(10, 3, 0))
+    return @[];
+#endif  // TARGET_IPHONE_SIMULATOR
+  return [super testInvocations];
+}
+
 // Tests that Safe Mode crash upload screen is displayed when there are crash
 // reports to upload.
 - (void)testSafeModeSendingCrashReport {
@@ -85,9 +88,10 @@ void AssertTryAgainButtonOnPage() {
   // Instantiates a Safe Mode controller and displays it.
   SafeModeViewController* safeModeController =
       [[SafeModeViewController alloc] initWithDelegate:nil];
-  [GetActiveViewController() presentViewController:safeModeController
-                                          animated:NO
-                                        completion:nil];
+  [chrome_test_util::GetActiveViewController()
+      presentViewController:safeModeController
+                   animated:NO
+                 completion:nil];
   // Verifies screen content that shows that crash report is being uploaded.
   AssertMessageOnPage(NSLocalizedString(@"IDS_IOS_SAFE_MODE_AW_SNAP", @""));
   AssertMessageOnPage(
@@ -115,9 +119,10 @@ void AssertTryAgainButtonOnPage() {
   // Instantiates a Safe Mode controller and displays it.
   SafeModeViewController* safeModeController =
       [[SafeModeViewController alloc] initWithDelegate:nil];
-  [GetActiveViewController() presentViewController:safeModeController
-                                          animated:NO
-                                        completion:nil];
+  [chrome_test_util::GetActiveViewController()
+      presentViewController:safeModeController
+                   animated:NO
+                 completion:nil];
   // Verifies screen content that does not show crash report being uploaded.
   // When devices are jailbroken, the crash reports are not very useful.
   AssertMessageOnPage(NSLocalizedString(@"IDS_IOS_SAFE_MODE_AW_SNAP", @""));
@@ -151,9 +156,10 @@ void AssertTryAgainButtonOnPage() {
   // Instantiates a Safe Mode controller and displays it.
   SafeModeViewController* safeModeController =
       [[SafeModeViewController alloc] initWithDelegate:nil];
-  [GetActiveViewController() presentViewController:safeModeController
-                                          animated:NO
-                                        completion:nil];
+  [chrome_test_util::GetActiveViewController()
+      presentViewController:safeModeController
+                   animated:NO
+                 completion:nil];
   // Verifies screen content that does not show crash report being uploaded.
   // When devices are jailbroken, the crash reports are not very useful.
   AssertMessageOnPage(NSLocalizedString(@"IDS_IOS_SAFE_MODE_AW_SNAP", @""));

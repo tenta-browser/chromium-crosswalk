@@ -14,10 +14,10 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/win/registry.h"
@@ -26,7 +26,7 @@
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/scoped_sc_handle_win.h"
 #include "remoting/host/branding.h"
@@ -112,7 +112,7 @@ class DaemonProcessWin : public DaemonProcess {
   // Mojo keeps the task runner passed to it alive forever, so an
   // AutoThreadTaskRunner should not be passed to it. Otherwise, the process may
   // never shut down cleanly.
-  mojo::edk::ScopedIPCSupport ipc_support_;
+  mojo::core::ScopedIPCSupport ipc_support_;
 
   std::unique_ptr<WorkerProcessLauncher> network_launcher_;
 
@@ -131,7 +131,7 @@ DaemonProcessWin::DaemonProcessWin(
     const base::Closure& stopped_callback)
     : DaemonProcess(caller_task_runner, io_task_runner, stopped_callback),
       ipc_support_(io_task_runner->task_runner(),
-                   mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST) {}
+                   mojo::core::ScopedIPCSupport::ShutdownPolicy::FAST) {}
 
 DaemonProcessWin::~DaemonProcessWin() {
 }
@@ -220,7 +220,7 @@ void DaemonProcessWin::LaunchNetworkProcess() {
   std::unique_ptr<base::CommandLine> target(new base::CommandLine(host_binary));
   target->AppendSwitchASCII(kProcessTypeSwitchName, kProcessTypeHost);
   target->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                           kCopiedSwitchNames, arraysize(kCopiedSwitchNames));
+                           kCopiedSwitchNames, base::size(kCopiedSwitchNames));
 
   std::unique_ptr<UnprivilegedProcessDelegate> delegate(
       new UnprivilegedProcessDelegate(io_task_runner(), std::move(target)));

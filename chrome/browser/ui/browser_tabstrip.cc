@@ -19,45 +19,48 @@
 
 namespace chrome {
 
-void AddTabAt(Browser* browser, const GURL& url, int idx, bool foreground) {
+void AddTabAt(Browser* browser,
+              const GURL& url,
+              int idx,
+              bool foreground,
+              base::Optional<TabGroupId> group) {
   // Time new tab page creation time.  We keep track of the timing data in
   // WebContents, but we want to include the time it takes to create the
   // WebContents object too.
   base::TimeTicks new_tab_start_time = base::TimeTicks::Now();
-  chrome::NavigateParams params(browser,
-      url.is_empty() ? GURL(chrome::kChromeUINewTabURL) : url,
-      ui::PAGE_TRANSITION_TYPED);
+  NavigateParams params(browser,
+                        url.is_empty() ? GURL(chrome::kChromeUINewTabURL) : url,
+                        ui::PAGE_TRANSITION_TYPED);
   params.disposition = foreground ? WindowOpenDisposition::NEW_FOREGROUND_TAB
                                   : WindowOpenDisposition::NEW_BACKGROUND_TAB;
   params.tabstrip_index = idx;
-  chrome::Navigate(&params);
+  params.group = group;
+  Navigate(&params);
   CoreTabHelper* core_tab_helper =
-      CoreTabHelper::FromWebContents(params.target_contents);
+      CoreTabHelper::FromWebContents(params.navigated_or_inserted_contents);
   core_tab_helper->set_new_tab_start_time(new_tab_start_time);
 }
 
-content::WebContents* AddSelectedTabWithURL(
-    Browser* browser,
-    const GURL& url,
-    ui::PageTransition transition) {
+content::WebContents* AddSelectedTabWithURL(Browser* browser,
+                                            const GURL& url,
+                                            ui::PageTransition transition) {
   NavigateParams params(browser, url, transition);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   Navigate(&params);
-  return params.target_contents;
+  return params.navigated_or_inserted_contents;
 }
 
 void AddWebContents(Browser* browser,
                     content::WebContents* source_contents,
-                    content::WebContents* new_contents,
+                    std::unique_ptr<content::WebContents> new_contents,
                     WindowOpenDisposition disposition,
-                    const gfx::Rect& initial_rect,
-                    bool user_gesture) {
+                    const gfx::Rect& initial_rect) {
   // No code for this yet.
   DCHECK(disposition != WindowOpenDisposition::SAVE_TO_DISK);
   // Can't create a new contents for the current tab - invalid case.
   DCHECK(disposition != WindowOpenDisposition::CURRENT_TAB);
 
-  NavigateParams params(browser, new_contents);
+  NavigateParams params(browser, std::move(new_contents));
   params.source_contents = source_contents;
   params.disposition = disposition;
   params.window_bounds = initial_rect;
@@ -79,9 +82,8 @@ void CloseWebContents(Browser* browser,
   }
 
   browser->tab_strip_model()->CloseWebContentsAt(
-      index,
-      add_to_history ? TabStripModel::CLOSE_CREATE_HISTORICAL_TAB
-                     : TabStripModel::CLOSE_NONE);
+      index, add_to_history ? TabStripModel::CLOSE_CREATE_HISTORICAL_TAB
+                            : TabStripModel::CLOSE_NONE);
 }
 
 }  // namespace chrome

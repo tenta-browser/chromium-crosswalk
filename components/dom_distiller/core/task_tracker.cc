@@ -10,6 +10,7 @@
 #include "base/auto_reset.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/dom_distiller/core/distilled_content_store.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
@@ -35,8 +36,7 @@ TaskTracker::TaskTracker(const ArticleEntry& entry,
       entry_(entry),
       distilled_article_(),
       content_ready_(false),
-      destruction_allowed_(true),
-      weak_ptr_factory_(this) {}
+      destruction_allowed_(true) {}
 
 TaskTracker::~TaskTracker() {
   DCHECK(destruction_allowed_);
@@ -89,14 +89,16 @@ std::unique_ptr<ViewerHandle> TaskTracker::AddViewer(
     // Distillation for this task has already completed, and so the delegate can
     // be immediately told of the result.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&TaskTracker::NotifyViewer,
-                              weak_ptr_factory_.GetWeakPtr(), delegate));
+        FROM_HERE, base::BindOnce(&TaskTracker::NotifyViewer,
+                                  weak_ptr_factory_.GetWeakPtr(), delegate));
   }
   return std::unique_ptr<ViewerHandle>(new ViewerHandle(base::Bind(
       &TaskTracker::RemoveViewer, weak_ptr_factory_.GetWeakPtr(), delegate)));
 }
 
-const std::string& TaskTracker::GetEntryId() const { return entry_.entry_id(); }
+const std::string& TaskTracker::GetEntryId() const {
+  return entry_.entry_id();
+}
 
 bool TaskTracker::HasEntryId(const std::string& entry_id) const {
   return entry_.entry_id() == entry_id;
@@ -112,7 +114,7 @@ bool TaskTracker::HasUrl(const GURL& url) const {
 }
 
 void TaskTracker::RemoveViewer(ViewRequestDelegate* delegate) {
-  viewers_.erase(std::remove(viewers_.begin(), viewers_.end(), delegate));
+  base::Erase(viewers_, delegate);
   if (viewers_.empty()) {
     MaybeCancel();
   }
@@ -131,13 +133,15 @@ void TaskTracker::MaybeCancel() {
   cancel_callback_.Run(this);
 }
 
-void TaskTracker::CancelSaveCallbacks() { ScheduleSaveCallbacks(false); }
+void TaskTracker::CancelSaveCallbacks() {
+  ScheduleSaveCallbacks(false);
+}
 
 void TaskTracker::ScheduleSaveCallbacks(bool distillation_succeeded) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&TaskTracker::DoSaveCallbacks, weak_ptr_factory_.GetWeakPtr(),
-                 distillation_succeeded));
+      base::BindOnce(&TaskTracker::DoSaveCallbacks,
+                     weak_ptr_factory_.GetWeakPtr(), distillation_succeeded));
 }
 
 void TaskTracker::OnDistillerFinished(
@@ -231,8 +235,7 @@ void TaskTracker::DoSaveCallbacks(bool success) {
   if (!save_callbacks_.empty()) {
     for (size_t i = 0; i < save_callbacks_.size(); ++i) {
       DCHECK(!save_callbacks_[i].is_null());
-      save_callbacks_[i].Run(
-          entry_, distilled_article_.get(), success);
+      save_callbacks_[i].Run(entry_, distilled_article_.get(), success);
     }
 
     save_callbacks_.clear();
@@ -250,10 +253,9 @@ void TaskTracker::OnArticleDistillationUpdated(
 void TaskTracker::AddDistilledContentToStore(
     const DistilledArticleProto& content) {
   if (content_store_) {
-    content_store_->SaveContent(
-        entry_, content, DistilledContentStore::SaveCallback());
+    content_store_->SaveContent(entry_, content,
+                                DistilledContentStore::SaveCallback());
   }
 }
-
 
 }  // namespace dom_distiller

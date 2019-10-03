@@ -12,7 +12,6 @@
 #include "base/format_macros.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -22,7 +21,7 @@
 #include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/grit/ios_strings.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 #include "net/base/mac/url_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
@@ -30,8 +29,6 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-DEFINE_WEB_STATE_USER_DATA_KEY(BlockedPopupTabHelper);
 
 namespace {
 // The infobar to display when a popup is blocked.
@@ -46,7 +43,7 @@ class BlockPopupInfoBarDelegate : public ConfirmInfoBarDelegate {
   ~BlockPopupInfoBarDelegate() override {}
 
   InfoBarIdentifier GetIdentifier() const override {
-    return POPUP_BLOCKED_INFOBAR_DELEGATE;
+    return POPUP_BLOCKED_INFOBAR_DELEGATE_MOBILE;
   }
 
   gfx::Image GetIcon() const override {
@@ -54,10 +51,6 @@ class BlockPopupInfoBarDelegate : public ConfirmInfoBarDelegate {
       icon_ = gfx::Image([UIImage imageNamed:@"infobar_popup_blocker"]);
     }
     return icon_;
-  }
-
-  infobars::InfoBarDelegate::Type GetInfoBarType() const override {
-    return WARNING_TYPE;
   }
 
   base::string16 GetMessageText() const override {
@@ -142,7 +135,7 @@ void BlockedPopupTabHelper::ShowInfoBar() {
   RegisterAsInfoBarManagerObserverIfNeeded(infobar_manager);
 
   std::unique_ptr<BlockPopupInfoBarDelegate> delegate(
-      base::MakeUnique<BlockPopupInfoBarDelegate>(GetBrowserState(), web_state_,
+      std::make_unique<BlockPopupInfoBarDelegate>(GetBrowserState(), web_state_,
                                                   popups_));
   std::unique_ptr<infobars::InfoBar> infobar =
       infobar_manager->CreateConfirmInfoBar(std::move(delegate));
@@ -170,3 +163,5 @@ void BlockedPopupTabHelper::RegisterAsInfoBarManagerObserverIfNeeded(
   DCHECK(!scoped_observer_.IsObservingSources());
   scoped_observer_.Add(infobar_manager);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(BlockedPopupTabHelper)

@@ -4,18 +4,18 @@
 
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/tabs/tab_features.h"
-#include "chrome/browser/ui/views/feature_promos/new_tab_promo_bubble_view.h"
+#include "chrome/browser/ui/views/feature_promos/feature_promo_bubble_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/tabs/new_tab_button.h"
-#include "chrome/browser/ui/views/tabs/tab_strip_impl.h"
+#include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "components/feature_engagement/public/event_constants.h"
@@ -41,7 +41,7 @@ MATCHER_P(IsFeature, feature, "") {
 
 std::unique_ptr<KeyedService> BuildTestTrackerFactory(
     content::BrowserContext* context) {
-  return base::MakeUnique<testing::StrictMock<test::MockTracker>>();
+  return std::make_unique<testing::StrictMock<test::MockTracker>>();
 }
 
 class NewTabTrackerBrowserTest : public InProcessBrowserTest {
@@ -51,7 +51,7 @@ class NewTabTrackerBrowserTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     TrackerFactory::GetInstance()->SetTestingFactoryAndUse(
-        browser()->profile(), &BuildTestTrackerFactory);
+        browser()->profile(), base::BindRepeating(&BuildTestTrackerFactory));
 
     // Ensure all initialization is finished.
     base::RunLoop().RunUntilIdle();
@@ -79,10 +79,6 @@ class NewTabTrackerBrowserTest : public InProcessBrowserTest {
 }  // namespace
 
 IN_PROC_BROWSER_TEST_F(NewTabTrackerBrowserTest, TestShowPromo) {
-  // This test reaches into the tab strip internals.
-  if (IsExperimentalTabStripEnabled())
-    return;
-
   base::ScopedAllowBlockingForTesting allow_blocking;
 
   // Bypassing the 2 hour active session time requirement.
@@ -103,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(NewTabTrackerBrowserTest, TestShowPromo) {
   omnibox_view->OnBeforePossibleChange();
   omnibox_view->SetUserText(base::ASCIIToUTF16("http://www.chromium.org/"));
   omnibox_view->OnAfterPossibleChange(true);
-  omnibox_view->model()->AcceptInput(WindowOpenDisposition::CURRENT_TAB, false);
+  omnibox_view->model()->AcceptInput(WindowOpenDisposition::CURRENT_TAB);
 
   // Focus on the omnibox.
   EXPECT_CALL(*feature_engagement_tracker_,
@@ -112,13 +108,8 @@ IN_PROC_BROWSER_TEST_F(NewTabTrackerBrowserTest, TestShowPromo) {
       .WillRepeatedly(::testing::Return(false));
   chrome::FocusLocationBar(browser());
 
-  // At the top this test should be a no-op if the experimental controller is
-  // used. Otherwise, we know the cast from TabStrip->TabStripImpl is safe.
-  TabStripImpl* tab_strip = BrowserView::GetBrowserViewForBrowser(browser())
-                                ->tabstrip()
-                                ->AsTabStripImpl();
-  ASSERT_TRUE(tab_strip);
-
+  TabStrip* tab_strip =
+      BrowserView::GetBrowserViewForBrowser(browser())->tabstrip();
   EXPECT_TRUE(
       tab_strip->new_tab_button()->new_tab_promo()->GetWidget()->IsVisible());
 

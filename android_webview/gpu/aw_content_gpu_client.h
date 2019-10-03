@@ -13,26 +13,23 @@ namespace android_webview {
 
 class AwContentGpuClient : public content::ContentGpuClient {
  public:
-  using GetSyncPointManagerCallback = base::Callback<gpu::SyncPointManager*()>;
-  using GetGPUInfoCallback = base::Callback<const gpu::GPUInfo&()>;
-  using GetGpuFeatureInfoCallback =
-      base::Callback<const gpu::GpuFeatureInfo&()>;
+  using GetSyncPointManagerCallback =
+      base::RepeatingCallback<gpu::SyncPointManager*()>;
+  using GetSharedImageManagerCallback =
+      base::RepeatingCallback<gpu::SharedImageManager*()>;
 
-  explicit AwContentGpuClient(
+  AwContentGpuClient(
       const GetSyncPointManagerCallback& sync_point_manager_callback,
-      const GetGPUInfoCallback gpu_info_callback,
-      const GetGpuFeatureInfoCallback gpu_feature_info_callback);
+      const GetSharedImageManagerCallback& shared_image_manager_callback);
   ~AwContentGpuClient() override;
 
   // content::ContentGpuClient implementation.
   gpu::SyncPointManager* GetSyncPointManager() override;
-  const gpu::GPUInfo* GetGPUInfo() override;
-  const gpu::GpuFeatureInfo* GetGpuFeatureInfo() override;
+  gpu::SharedImageManager* GetSharedImageManager() override;
 
  private:
   GetSyncPointManagerCallback sync_point_manager_callback_;
-  GetGPUInfoCallback gpu_info_callback_;
-  GetGpuFeatureInfoCallback gpu_feature_info_callback_;
+  GetSharedImageManagerCallback shared_image_manager_callback_;
   DISALLOW_COPY_AND_ASSIGN(AwContentGpuClient);
 };
 

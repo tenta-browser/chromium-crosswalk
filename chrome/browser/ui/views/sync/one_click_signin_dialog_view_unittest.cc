@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "chrome/browser/ui/sync/one_click_signin_links_delegate.h"
 #include "chrome/browser/ui/views/chrome_constrained_window_views_client.h"
@@ -50,9 +49,9 @@ class OneClickSigninDialogViewTest : public ChromeViewsTestBase,
   OneClickSigninDialogView* ShowOneClickSigninDialog() {
     OneClickSigninDialogView::ShowDialog(
         base::string16(),
-        base::MakeUnique<TestOneClickSigninLinksDelegate>(this),
+        std::make_unique<TestOneClickSigninLinksDelegate>(this),
         anchor_widget_->GetNativeWindow(),
-        base::Bind(&OneClickSigninDialogViewTest::OnStartSync,
+        base::Bind(&OneClickSigninDialogViewTest::ConfirmedCallback,
                    base::Unretained(this)));
 
     OneClickSigninDialogView* view =
@@ -61,9 +60,9 @@ class OneClickSigninDialogViewTest : public ChromeViewsTestBase,
     return view;
   }
 
-  void OnStartSync(OneClickSigninSyncStarter::StartSyncMode mode) {
-    on_start_sync_called_ = true;
-    mode_ = mode;
+  void ConfirmedCallback(bool confirmed) {
+    on_confirmed_callback_called_ = true;
+    confirmed_ = confirmed;
   }
 
   // Waits for the OneClickSigninDialogView to close, by observing its Widget,
@@ -86,11 +85,9 @@ class OneClickSigninDialogViewTest : public ChromeViewsTestBase,
   // views::WidgetObserver method:
   void OnWidgetDestroyed(views::Widget* widget) override { run_loop_->Quit(); }
 
-  bool on_start_sync_called_ = false;
-  OneClickSigninSyncStarter::StartSyncMode mode_ =
-      OneClickSigninSyncStarter::CONFIGURE_SYNC_FIRST;
+  bool on_confirmed_callback_called_ = false;
+  bool confirmed_ = false;
   int learn_more_click_count_ = 0;
-  int advanced_click_count_ = 0;
 
  private:
   friend class TestOneClickSigninLinksDelegate;
@@ -105,7 +102,6 @@ class OneClickSigninDialogViewTest : public ChromeViewsTestBase,
     void OnLearnMoreLinkClicked(bool is_dialog) override {
       ++test_->learn_more_click_count_;
     }
-    void OnAdvancedLinkClicked() override { ++test_->advanced_click_count_; }
 
    private:
     OneClickSigninDialogViewTest* test_;
@@ -132,12 +128,13 @@ TEST_F(OneClickSigninDialogViewTest, HideDialog) {
   OneClickSigninDialogView::Hide();
   WaitForClose();
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::UNDO_SYNC, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(false, confirmed_);
 }
 
 TEST_F(OneClickSigninDialogViewTest, OkButton) {
   OneClickSigninDialogView* view = ShowOneClickSigninDialog();
+  view->GetDialogClientView()->ResetViewShownTimeStampForTesting();
 
   gfx::Point center(10, 10);
   const ui::MouseEvent event(ui::ET_MOUSE_PRESSED, center, center,
@@ -148,12 +145,13 @@ TEST_F(OneClickSigninDialogViewTest, OkButton) {
 
   WaitForClose();
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::SYNC_WITH_DEFAULT_SETTINGS, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(true, confirmed_);
 }
 
 TEST_F(OneClickSigninDialogViewTest, UndoButton) {
   OneClickSigninDialogView* view = ShowOneClickSigninDialog();
+  view->GetDialogClientView()->ResetViewShownTimeStampForTesting();
 
   gfx::Point center(10, 10);
   const ui::MouseEvent event(ui::ET_MOUSE_PRESSED, center, center,
@@ -164,8 +162,8 @@ TEST_F(OneClickSigninDialogViewTest, UndoButton) {
 
   WaitForClose();
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::UNDO_SYNC, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(false, confirmed_);
 }
 
 TEST_F(OneClickSigninDialogViewTest, AdvancedLink) {
@@ -176,10 +174,9 @@ TEST_F(OneClickSigninDialogViewTest, AdvancedLink) {
   listener->LinkClicked(view->advanced_link_, 0);
 
   WaitForClose();
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::CONFIGURE_SYNC_FIRST, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(true, confirmed_);
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_EQ(0, advanced_click_count_);
 }
 
 TEST_F(OneClickSigninDialogViewTest, LearnMoreLink) {
@@ -202,8 +199,8 @@ TEST_F(OneClickSigninDialogViewTest, PressEnterKey) {
 
   WaitForClose();
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::SYNC_WITH_DEFAULT_SETTINGS, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(true, confirmed_);
 }
 
 TEST_F(OneClickSigninDialogViewTest, PressEscapeKey) {
@@ -213,6 +210,6 @@ TEST_F(OneClickSigninDialogViewTest, PressEscapeKey) {
 
   WaitForClose();
   EXPECT_FALSE(OneClickSigninDialogView::IsShowing());
-  EXPECT_TRUE(on_start_sync_called_);
-  EXPECT_EQ(OneClickSigninSyncStarter::UNDO_SYNC, mode_);
+  EXPECT_TRUE(on_confirmed_callback_called_);
+  EXPECT_EQ(false, confirmed_);
 }

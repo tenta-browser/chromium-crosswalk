@@ -12,6 +12,7 @@
 
 #include "base/strings/string16.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
 
 namespace base {
 struct Feature;
@@ -19,10 +20,13 @@ struct Feature;
 
 namespace autofill {
 
-extern const base::Feature kAutofillKeyboardAccessory;
 extern const char kAutofillKeyboardAccessoryAnimationDurationKey[];
 extern const char kAutofillKeyboardAccessoryLimitLabelWidthKey[];
 extern const char kAutofillKeyboardAccessoryHintKey[];
+
+// The length of the GUIDs used for local autofill data. It is different than
+// the length used for server autofill data.
+constexpr int kLocalGuidSize = 36;
 
 // Returns true when command line switch |kEnableSuggestionsWithSubstringMatch|
 // is on.
@@ -33,6 +37,9 @@ bool IsShowAutofillSignaturesEnabled();
 
 // Returns true when keyboard accessory is enabled.
 bool IsKeyboardAccessoryEnabled();
+
+// Returns whether the Touch To Fill feature is enabled.
+bool IsTouchToFillEnabled();
 
 // Returns animation duration for keyboard accessory. If 0, we do not animate.
 unsigned int GetKeyboardAccessoryAnimationDuration();
@@ -88,6 +95,21 @@ void SetCheckStatus(FormFieldData* form_field_data,
 // Also ignores empty tokens, resulting in a collapsing of whitespace.
 std::vector<std::string> LowercaseAndTokenizeAttributeString(
     const std::string& attribute);
+
+// Returns true if and only if the field value has no character except the
+// formatting characters. This means that the field value is a formatting string
+// entered by the website and not a real value entered by the user.
+bool SanitizedFieldIsEmpty(const base::string16& value);
+
+// Returns true if the first suggestion should be autoselected when the autofill
+// dropdown is shown due to an arrow down event. Enabled on desktop only.
+bool ShouldAutoselectFirstSuggestionOnArrowDown();
+
+// Returns true if focused_field_type corresponds to a fillable field.
+bool IsFillable(mojom::FocusedFieldType focused_field_type);
+
+mojom::SubmissionIndicatorEvent ToSubmissionIndicatorEvent(
+    mojom::SubmissionSource source);
 
 }  // namespace autofill
 

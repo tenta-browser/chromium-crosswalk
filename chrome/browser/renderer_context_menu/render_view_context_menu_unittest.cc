@@ -4,27 +4,32 @@
 
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
+#include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings.h"
+#include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/extensions/menu_manager.h"
 #include "chrome/browser/extensions/menu_manager_factory.h"
 #include "chrome/browser/extensions/test_extension_environment.h"
 #include "chrome/browser/extensions/test_extension_prefs.h"
-#include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
-#include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
+#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/browser/data_store.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/password_manager/content/browser/content_password_manager_driver_factory.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
@@ -33,8 +38,10 @@
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/url_pattern.h"
+#include "services/network/test/test_shared_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
+#include "ui/base/clipboard/clipboard.h"
 #include "url/gurl.h"
 
 using extensions::Extension;
@@ -89,7 +96,7 @@ std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu(
     ProtocolHandlerRegistry* registry) {
   content::ContextMenuParams params = CreateParams(MenuItem::LINK);
   params.unfiltered_link_url = params.link_url;
-  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
       web_contents->GetMainFrame(), params);
   menu->set_protocol_handler_registry(registry);
   menu->Init();
@@ -100,13 +107,18 @@ std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu(
 
 class RenderViewContextMenuTest : public testing::Test {
  protected:
-  RenderViewContextMenuTest() = default;
+  RenderViewContextMenuTest()
+      : RenderViewContextMenuTest(
+            std::unique_ptr<extensions::TestExtensionEnvironment>()) {}
+
   // If the test uses a TestExtensionEnvironment, which provides a MessageLoop,
   // it needs to be passed to the constructor so that it exists before the
   // RenderViewHostTestEnabler which needs to use the MessageLoop.
   explicit RenderViewContextMenuTest(
       std::unique_ptr<extensions::TestExtensionEnvironment> env)
-      : environment_(std::move(env)) {}
+      : environment_(std::move(env)) {
+    // TODO(mgiuca): Add tests with DesktopPWAs enabled.
+  }
 
   // Proxy defined here to minimize friend classes in RenderViewContextMenu
   static bool ExtensionContextAndPatternMatch(
@@ -126,7 +138,7 @@ class RenderViewContextMenuTest : public testing::Test {
     bool incognito = false;
     MenuItem::Id id(incognito, key);
     id.uid = uid;
-    return base::MakeUnique<MenuItem>(id, "Added by an extension", false, true,
+    return std::make_unique<MenuItem>(id, "Added by an extension", false, true,
                                       true, type, contexts);
   }
 
@@ -312,12 +324,12 @@ class RenderViewContextMenuExtensionsTest : public RenderViewContextMenuTest {
  protected:
   RenderViewContextMenuExtensionsTest()
       : RenderViewContextMenuTest(
-            base::MakeUnique<extensions::TestExtensionEnvironment>()) {}
+            std::make_unique<extensions::TestExtensionEnvironment>()) {}
 
   void SetUp() override {
     RenderViewContextMenuTest::SetUp();
     // TestingProfile does not provide a protocol registry.
-    registry_ = base::MakeUnique<ProtocolHandlerRegistry>(profile(), nullptr);
+    registry_ = std::make_unique<ProtocolHandlerRegistry>(profile(), nullptr);
   }
 
   void TearDown() override {
@@ -341,7 +353,8 @@ TEST_F(RenderViewContextMenuExtensionsTest,
       static_cast<MenuManager*>(
           (MenuManagerFactory::GetInstance()->SetTestingFactoryAndUse(
               profile(),
-              &MenuManagerFactory::BuildServiceInstanceForTesting)));
+              base::BindRepeating(
+                  &MenuManagerFactory::BuildServiceInstanceForTesting))));
 
   const Extension* extension1 = environment().MakeExtension(
       base::DictionaryValue(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -376,7 +389,7 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
 
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-    registry_ = base::MakeUnique<ProtocolHandlerRegistry>(profile(), nullptr);
+    registry_ = std::make_unique<ProtocolHandlerRegistry>(profile(), nullptr);
   }
 
   void TearDown() override {
@@ -392,8 +405,9 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
   // incognito mode.
   std::unique_ptr<TestRenderViewContextMenu> CreateContextMenuOnChromeLink() {
     content::ContextMenuParams params = CreateParams(MenuItem::LINK);
-    params.unfiltered_link_url = params.link_url = GURL("chrome://settings");
-    auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+    params.unfiltered_link_url = params.link_url =
+        GURL(chrome::kChromeUISettingsURL);
+    auto menu = std::make_unique<TestRenderViewContextMenu>(
         web_contents()->GetMainFrame(), params);
     menu->set_protocol_handler_registry(registry_.get());
     menu->Init();
@@ -422,12 +436,10 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
     registry->RegisterDictionaryPref(proxy_config::prefs::kProxy);
     drp_test_context_->SetDataReductionProxyEnabled(
         enable_data_reduction_proxy);
-    settings->set_data_reduction_proxy_enabled_pref_name_for_test(
-        drp_test_context_->GetDataReductionProxyEnabledPrefName());
     settings->InitDataReductionProxySettings(
         drp_test_context_->io_data(), drp_test_context_->pref_service(),
-        drp_test_context_->request_context_getter(),
-        base::MakeUnique<data_reduction_proxy::DataStore>(),
+        profile(), base::MakeRefCounted<network::TestSharedURLLoaderFactory>(),
+        std::make_unique<data_reduction_proxy::DataStore>(),
         base::ThreadTaskRunnerHandle::Get(),
         base::ThreadTaskRunnerHandle::Get());
   }
@@ -501,7 +513,7 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverEnabledSaveImageAs) {
 
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
-  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
       web_contents()->GetMainFrame(), params);
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
@@ -522,7 +534,7 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverDisabledSaveImageAs) {
 
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
-  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
       web_contents()->GetMainFrame(), params);
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
@@ -536,20 +548,143 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverDisabledSaveImageAs) {
   DestroyDataReductionProxySettings();
 }
 
-// Verify that the Chrome-Proxy Lo-Fi directive causes the context menu to
-// display the "Load Image" menu item.
-TEST_F(RenderViewContextMenuPrefsTest, DataSaverLoadImage) {
-  SetupDataReductionProxy(true);
+// Check that if image is broken "Load image" menu item is present.
+TEST_F(RenderViewContextMenuPrefsTest, LoadBrokenImage) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      features::kLoadBrokenImagesFromContextMenu);
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
-  params.properties[
-      data_reduction_proxy::chrome_proxy_content_transform_header()] =
-          data_reduction_proxy::empty_image_directive();
   params.unfiltered_link_url = params.link_url;
-  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+  params.has_image_contents = false;
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
       web_contents()->GetMainFrame(), params);
   AppendImageItems(menu.get());
 
-  ASSERT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_LOAD_ORIGINAL_IMAGE));
+  ASSERT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_LOAD_IMAGE));
+}
 
-  DestroyDataReductionProxySettings();
+// Verify that the suggested file name is propagated to web contents when save a
+// media file in context menu.
+TEST_F(RenderViewContextMenuPrefsTest, SaveMediaSuggestedFileName) {
+  const base::string16 kTestSuggestedFileName = base::ASCIIToUTF16("test_file");
+  content::ContextMenuParams params = CreateParams(MenuItem::VIDEO);
+  params.suggested_filename = kTestSuggestedFileName;
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
+  menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEAVAS, 0 /* event_flags */);
+
+  // Video item should have suggested file name.
+  base::string16 suggested_filename =
+      content::WebContentsTester::For(web_contents())->GetSuggestedFileName();
+  EXPECT_EQ(kTestSuggestedFileName, suggested_filename);
+
+  params = CreateParams(MenuItem::AUDIO);
+  params.suggested_filename = kTestSuggestedFileName;
+  menu = std::make_unique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
+  menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEAVAS, 0 /* event_flags */);
+
+  // Audio item should have suggested file name.
+  suggested_filename =
+      content::WebContentsTester::For(web_contents())->GetSuggestedFileName();
+  EXPECT_EQ(kTestSuggestedFileName, suggested_filename);
+}
+
+// Verify that "Show all passwords" is displayed on a password field.
+TEST_F(RenderViewContextMenuPrefsTest, ShowAllPasswords) {
+  // Set up password manager stuff.
+  ChromePasswordManagerClient::CreateForWebContentsWithAutofillClient(
+      web_contents(), nullptr);
+  password_manager::ContentPasswordManagerDriverFactory::FromWebContents(
+      web_contents())
+      ->RenderFrameCreated(web_contents()->GetMainFrame());
+
+  NavigateAndCommit(GURL("http://www.foo.com/"));
+  content::ContextMenuParams params = CreateParams(MenuItem::EDITABLE);
+  params.input_field_type = blink::WebContextMenuData::kInputFieldTypePassword;
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
+  menu->Init();
+
+  EXPECT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_SHOWALLSAVEDPASSWORDS));
+}
+
+// Verify that "Show all passwords" is displayed on a password field in
+// Incognito.
+TEST_F(RenderViewContextMenuPrefsTest, ShowAllPasswordsIncognito) {
+  std::unique_ptr<content::WebContents> incognito_web_contents(
+      content::WebContentsTester::CreateTestWebContents(
+          profile()->GetOffTheRecordProfile(), nullptr));
+
+  // Set up password manager stuff.
+  ChromePasswordManagerClient::CreateForWebContentsWithAutofillClient(
+      incognito_web_contents.get(), nullptr);
+  password_manager::ContentPasswordManagerDriverFactory::FromWebContents(
+      incognito_web_contents.get())
+      ->RenderFrameCreated(incognito_web_contents->GetMainFrame());
+
+  content::WebContentsTester::For(incognito_web_contents.get())
+      ->NavigateAndCommit(GURL("http://www.foo.com/"));
+  content::ContextMenuParams params = CreateParams(MenuItem::EDITABLE);
+  params.input_field_type = blink::WebContextMenuData::kInputFieldTypePassword;
+  auto menu = std::make_unique<TestRenderViewContextMenu>(
+      incognito_web_contents->GetMainFrame(), params);
+  menu->Init();
+
+  EXPECT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_SHOWALLSAVEDPASSWORDS));
+}
+
+// Test FormatUrlForClipboard behavior
+// -------------------------------------------
+
+struct FormatUrlForClipboardTestData {
+  const char* const input;
+  const char* const output;
+  const char* const name;
+};
+
+class FormatUrlForClipboardTest
+    : public testing::TestWithParam<FormatUrlForClipboardTestData> {
+ public:
+  static base::string16 FormatUrl(const GURL& url) {
+    return RenderViewContextMenu::FormatURLForClipboard(url);
+  }
+};
+
+const FormatUrlForClipboardTestData kFormatUrlForClipboardTestData[]{
+    {"http://www.foo.com/", "http://www.foo.com/", "HttpNoEscapes"},
+    {"http://www.foo.com/%61%62%63", "http://www.foo.com/abc",
+     "HttpSafeUnescapes"},
+    {"https://www.foo.com/abc%20def", "https://www.foo.com/abc%20def",
+     "HttpsEscapedSpecialCharacters"},
+    {"https://www.foo.com/%CE%B1%CE%B2%CE%B3",
+     "https://www.foo.com/%CE%B1%CE%B2%CE%B3", "HttpsEscapedUnicodeCharacters"},
+    {"file:///etc/%CE%B1%CE%B2%CE%B3", "file:///etc/%CE%B1%CE%B2%CE%B3",
+     "FileEscapedUnicodeCharacters"},
+    {"file://stuff.host.co/my%2Bshare/foo.txt",
+     "file://stuff.host.co/my%2Bshare/foo.txt", "FileEscapedSpecialCharacters"},
+    {"file://stuff.host.co/my%2Dshare/foo.txt",
+     "file://stuff.host.co/my-share/foo.txt", "FileSafeUnescapes"},
+    {"mailto:me@foo.com", "me@foo.com", "MailToNoEscapes"},
+    {"mailto:me@foo.com,you@bar.com?subject=Hello%20world",
+     "me@foo.com,you@bar.com", "MailToWithQuery"},
+    {"mailto:me@%66%6F%6F.com", "me@foo.com", "MailToSafeEscapes"},
+    {"mailto:me%2Bsorting-tag@foo.com", "me+sorting-tag@foo.com",
+     "MailToEscapedSpecialCharacters"},
+    {"mailto:%CE%B1%CE%B2%CE%B3@foo.gr", "αβγ@foo.gr",
+     "MailToEscapedUnicodeCharacters"},
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    FormatUrlForClipboardTest,
+    testing::ValuesIn(kFormatUrlForClipboardTestData),
+    [](const testing::TestParamInfo<FormatUrlForClipboardTestData>&
+           param_info) { return param_info.param.name; });
+
+TEST_P(FormatUrlForClipboardTest, FormatUrlForClipboard) {
+  auto param = GetParam();
+  GURL url(param.input);
+  const base::string16 result = FormatUrl(url);
+  DCHECK_EQ(base::UTF8ToUTF16(param.output), result);
 }

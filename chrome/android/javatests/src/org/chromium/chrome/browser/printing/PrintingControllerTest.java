@@ -15,6 +15,7 @@ import android.print.PrintDocumentAdapter;
 import android.print.PrintDocumentInfo;
 import android.support.test.filters.LargeTest;
 import android.support.test.filters.MediumTest;
+import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -23,7 +24,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -37,6 +37,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.printing.PrintDocumentAdapterWrapper;
 import org.chromium.printing.PrintDocumentAdapterWrapper.LayoutResultCallbackWrapper;
 import org.chromium.printing.PrintDocumentAdapterWrapper.WriteResultCallbackWrapper;
@@ -45,6 +46,8 @@ import org.chromium.printing.PrintingControllerImpl;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -58,8 +61,7 @@ import java.util.concurrent.TimeoutException;
 @RetryOnFailure
 @SuppressLint("NewApi")
 @MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PrintingControllerTest {
     @Rule
     public final ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -101,8 +103,56 @@ public class PrintingControllerTest {
     }
 
     private static class WaitForOnWriteHelper extends CallbackHelper {
+        @Override
         public void waitForCallback(String msg) throws InterruptedException, TimeoutException {
             waitForCallback(msg, 0, 1, TEST_TIMEOUT, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private static class TemporaryFileHandler implements AutoCloseable {
+        private File mTempFile;
+        private ParcelFileDescriptor mFileDescriptor;
+
+        public TemporaryFileHandler() throws IOException {
+            mTempFile = File.createTempFile(TEMP_FILE_NAME, TEMP_FILE_EXTENSION);
+            try {
+                mFileDescriptor =
+                        ParcelFileDescriptor.open(mTempFile, ParcelFileDescriptor.MODE_READ_WRITE);
+            } catch (FileNotFoundException e) {
+                // Exception happened, can't continue, cleanup the file.
+                TestFileUtil.deleteFile(mTempFile.getAbsolutePath());
+                throw new FileNotFoundException();
+            }
+        }
+
+        ParcelFileDescriptor getFileDescriptor() {
+            return mFileDescriptor;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                mFileDescriptor.close();
+            } finally {
+                TestFileUtil.deleteFile(mTempFile.getAbsolutePath());
+            }
+        }
+    }
+
+    private static class PrintingControllerImplPdfWritingDone extends PrintingControllerImpl {
+        private WaitForOnWriteHelper mWaitForOnWrite;
+
+        public PrintingControllerImplPdfWritingDone(
+                PrintDocumentAdapterWrapper printDocumentAdapterWrapper, String errorText,
+                WaitForOnWriteHelper waitForOnWrite) {
+            super(printDocumentAdapterWrapper, errorText);
+            mWaitForOnWrite = waitForOnWrite;
+            sInstance = this;
+        }
+
+        @Override
+        public void pdfWritingDone(int pageCount) {
+            mWaitForOnWrite.notifyCalled();
         }
     }
 
@@ -193,12 +243,12 @@ public class PrintingControllerTest {
         final PrintManagerDelegate mockPrintManagerDelegate =
                 mockPrintManagerDelegate(() -> Assert.fail("Shouldn't start a printing job."));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             printingController.setPendingPrint(
                     new TabPrinter(currentTab), mockPrintManagerDelegate, -1, -1);
             TabModelUtils.closeCurrentTab(mActivityTestRule.getActivity().getCurrentTabModel());
             Assert.assertFalse("currentTab should be closed already.", currentTab.isInitialized());
-            printingController.startPendingPrint(null);
+            printingController.startPendingPrint();
         });
     }
 
@@ -241,7 +291,7 @@ public class PrintingControllerTest {
         final ParcelFileDescriptor fileDescriptor =
                 ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_WRITE);
         try {
-            ThreadUtils.runOnUiThreadBlocking(() -> {
+            TestThreadUtils.runOnUiThreadBlocking(() -> {
                 // Close tab.
                 TabModelUtils.closeCurrentTab(mActivityTestRule.getActivity().getCurrentTabModel());
                 Assert.assertFalse(
@@ -269,8 +319,88 @@ public class PrintingControllerTest {
         }
     }
 
+    /**
+     * Test for http://crbug.com/863297
+     * This bug shows Android printing framework could call |PrintDocumentAdapter.onFinish()|
+     * before one of |WriteResultCallback.onWrite{Cancelled, Failed, Finished}()| get called.
+     * Crash test, pass if there is no crash.
+     */
+    @Test
+    @TargetApi(Build.VERSION_CODES.KITKAT)
+    @MediumTest
+    @Feature({"Printing"})
+    public void testCancelPrintBeforeWriteResultCallbacks() throws Throwable {
+        if (!ApiCompatibilityUtils.isPrintingSupported()) return;
+
+        mActivityTestRule.startMainActivityWithURL(URL);
+
+        final WaitForOnWriteHelper onWriteHelper = new WaitForOnWriteHelper();
+        final Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
+        final PrintingControllerImpl printingController =
+                TestThreadUtils.runOnUiThreadBlockingNoException(() -> {
+                    return new PrintingControllerImplPdfWritingDone(
+                            new PrintDocumentAdapterWrapper(), PRINT_JOB_NAME, onWriteHelper);
+                });
+
+        startControllerOnUiThread(printingController, currentTab);
+        callStartOnUiThread(printingController);
+
+        final WriteResultCallbackWrapper writeResultCallback =
+                new WriteResultCallbackWrapperMock() {
+                    @Override
+                    public void onWriteFinished(PageRange[] pages) {
+                        Assert.fail("onWriteFinished shouldn't be called");
+                    }
+
+                    @Override
+                    public void onWriteFailed(CharSequence error) {
+                        Assert.fail("onWriteFailed shouldn't be called");
+                    }
+
+                    @Override
+                    public void onWriteCancelled() {
+                        Assert.fail("onWriteCancelled shouldn't be called");
+                    }
+                };
+
+        try (TemporaryFileHandler handler = new TemporaryFileHandler()) {
+            final LayoutResultCallbackWrapper layoutResultCallback =
+                    new LayoutResultCallbackWrapperMock() {
+                        @Override
+                        public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {
+                            printingController.onWrite(new PageRange[] {PageRange.ALL_PAGES},
+                                    handler.getFileDescriptor(), new CancellationSignal(),
+                                    writeResultCallback);
+                        }
+                    };
+            callLayoutOnUiThread(
+                    printingController, null, createDummyPrintAttributes(), layoutResultCallback);
+            onWriteHelper.waitForCallback("pdfWritingDone never called");
+            callFinishOnUiThread(printingController);
+        }
+    }
+
+    /**
+     * Regresstion test for crbug.com/974581. In some cases, native printing code will fail without
+     * starting a printing task in Java side. pdfWritingDone() will be called with |pageCount| = 0
+     * in this case. We don't need to do anything for this in Java side for now.
+     */
+    @Test
+    @SmallTest
+    @Feature({"Printing"})
+    public void testPdfWritingDoneCalledWithoutInitailizePrintingTask() throws Throwable {
+        if (!ApiCompatibilityUtils.isPrintingSupported()) return;
+
+        mActivityTestRule.startMainActivityWithURL(URL);
+        final PrintingControllerImpl controller = createControllerOnUiThread();
+
+        // Calling pdfWritingDone() with |pageCount| = 0 before onWrite() was called. It shouldn't
+        // crash.
+        TestThreadUtils.runOnUiThreadBlocking(() -> controller.pdfWritingDone(0));
+    }
+
     private PrintingControllerImpl createControllerOnUiThread() {
-        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
+        return TestThreadUtils.runOnUiThreadBlockingNoException(() -> {
             return (PrintingControllerImpl) PrintingControllerImpl.create(
                     new PrintDocumentAdapterWrapper(), PRINT_JOB_NAME);
         });
@@ -296,26 +426,26 @@ public class PrintingControllerTest {
     }
 
     private void startControllerOnUiThread(final PrintingControllerImpl controller, final Tab tab) {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             controller.startPrint(new TabPrinter(tab),
                     /* non-op PrintManagerDelegate */ mockPrintManagerDelegate(null));
         });
     }
 
     private void callStartOnUiThread(final PrintingControllerImpl controller) {
-        ThreadUtils.runOnUiThreadBlocking(() -> controller.onStart());
+        TestThreadUtils.runOnUiThreadBlocking(() -> controller.onStart());
     }
 
     private void callLayoutOnUiThread(final PrintingControllerImpl controller,
             final PrintAttributes oldAttributes, final PrintAttributes newAttributes,
             final LayoutResultCallbackWrapper layoutResultCallback) {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             controller.onLayout(oldAttributes, newAttributes, new CancellationSignal(),
                     layoutResultCallback, null);
         });
     }
 
     private void callFinishOnUiThread(final PrintingControllerImpl controller) {
-        ThreadUtils.runOnUiThreadBlocking(() -> controller.onFinish());
+        TestThreadUtils.runOnUiThreadBlocking(() -> controller.onFinish());
     }
 }

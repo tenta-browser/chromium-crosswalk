@@ -11,8 +11,7 @@ import android.view.textclassifier.TextClassification;
 import android.view.textclassifier.TextClassifier;
 import android.view.textclassifier.TextSelection;
 
-import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.SmartSelectionClient;
+import org.chromium.content.browser.selection.SmartSelectionClient;
 
 /**
  * Interface to a content layer client that can process and modify selection text.
@@ -98,13 +97,6 @@ public interface SelectionClient {
     void onSelectionEvent(int eventType, float posXPix, float posYPix);
 
     /**
-     * Requests to show the UI for an unhandled tap, if needed.
-     * @param x The x coordinate of the tap.
-     * @param y The y coordinate of the tap.
-     */
-    void showUnhandledTapUIIfNeeded(int x, int y);
-
-    /**
      * Acknowledges that a selectWordAroundCaret action has completed with the given result.
      * @param didSelect Whether a word was actually selected or not.
      * @param startAdjust The adjustment to the selection start offset needed to select the word.
@@ -127,9 +119,6 @@ public interface SelectionClient {
      */
     void cancelAllRequests();
 
-    // The clang-format tool is confused by the java 8 usage of default in an interface.
-    // TODO(donnd): remove this once it's supported.  See b/67428051.
-    // clang-format off
     /**
      * Returns a SelectionMetricsLogger associated with the SelectionClient or null.
      */
@@ -160,12 +149,11 @@ public interface SelectionClient {
     default TextClassifier getCustomTextClassifier() {
         return null;
     }
-    // clang-format on
 
     /** Creates a {@link SelectionClient} instance. */
     public static SelectionClient createSmartSelectionClient(WebContents webContents) {
         SelectionClient.ResultCallback callback =
-                ContentViewCore.fromWebContents(webContents).getPopupControllerResultCallback();
+                SelectionPopupController.fromWebContents(webContents).getResultCallback();
         return SmartSelectionClient.create(callback, webContents);
     }
 }

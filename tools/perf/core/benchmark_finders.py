@@ -43,25 +43,42 @@ def GetBenchmarkNamesForFile(top_level_dir, benchmark_file_dir):
     sys.path = original_sys_path
 
 
-def GetAllPerfBenchmarks():
-  return discover.DiscoverClasses(
-      start_dir=path_util.GetPerfBenchmarksDir(),
+def GetOfficialBenchmarks():
+  """Returns the list of all benchmarks to be run on perf waterfall.
+  The benchmarks are sorted by order of their names.
+  """
+  benchmarks = discover.DiscoverClasses(
+      start_dir=path_util.GetOfficialBenchmarksDir(),
       top_level_dir=path_util.GetPerfDir(),
       base_class=benchmark_module.Benchmark,
       index_by_class_name=True).values()
+  benchmarks.sort(key=lambda b: b.Name())
+  return benchmarks
 
 
-def GetAllContribBenchmarks():
-  return discover.DiscoverClasses(
-      start_dir=path_util.GetPerfContribDir(),
+def GetContribBenchmarks():
+  """Returns the list of all contrib benchmarks.
+  The benchmarks are sorted by order of their names.
+  """
+  benchmarks = discover.DiscoverClasses(
+      start_dir=path_util.GetContribDir(),
       top_level_dir=path_util.GetPerfDir(),
       base_class=benchmark_module.Benchmark,
       index_by_class_name=True).values()
+  benchmarks.sort(key=lambda b: b.Name())
+  return benchmarks
+
 
 def GetAllBenchmarks():
-  all_perf_benchmarks = GetAllPerfBenchmarks()
-  all_contrib_benchmarks = GetAllContribBenchmarks()
-  return all_perf_benchmarks + all_contrib_benchmarks
+  """Returns all benchmarks in tools/perf directory.
+  The benchmarks are sorted by order of their names.
+  """
+  waterfall_benchmarks = GetOfficialBenchmarks()
+  contrib_benchmarks = GetContribBenchmarks()
+  benchmarks = waterfall_benchmarks + contrib_benchmarks
+  benchmarks.sort(key=lambda b: b.Name())
+  return benchmarks
+
 
 def GetBenchmarksInSubDirectory(directory):
   return discover.DiscoverClasses(

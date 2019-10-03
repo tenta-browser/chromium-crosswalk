@@ -2,6 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// Decodes a UTF16 string that is encoded as base64.
+function decodeUTF16Base64ToString(encoded_text) {
+  var data = atob(encoded_text);
+  var result = '';
+  for (var i = 0; i < data.length; i += 2) {
+    result +=
+        String.fromCharCode(data.charCodeAt(i) * 256 + data.charCodeAt(i + 1));
+  }
+  return result;
+}
+
 function toggleHelpBox() {
   var helpBoxOuter = document.getElementById('details');
   helpBoxOuter.classList.toggle(HIDDEN_CLASS);
@@ -46,6 +57,7 @@ if (window.top.location != window.location)
 function updateForDnsProbe(strings) {
   var context = new JsEvalContext(strings);
   jstProcess(context, document.getElementById('t'));
+  onDocumentLoadOrUpdate();
 }
 
 // Given the classList property of an element, adds an icon class to the list
@@ -66,7 +78,7 @@ function updateIconClass(classList, newClass) {
   classList['last_icon_class'] = newClass;
 
   if (newClass == 'icon-offline') {
-    document.body.classList.add('offline');
+    document.firstElementChild.classList.add('offline');
     new Runner('.interstitial-wrapper');
   } else {
     document.body.classList.add('neterror');
@@ -108,18 +120,17 @@ function reloadButtonClick(url) {
   }
 }
 
-function showSavedCopyButtonClick() {
-  if (window.errorPageController) {
-    errorPageController.showSavedCopyButtonClick();
-  }
-}
-
 function downloadButtonClick() {
   if (window.errorPageController) {
     errorPageController.downloadButtonClick();
     var downloadButton = document.getElementById('download-button');
     downloadButton.disabled = true;
     downloadButton.textContent = downloadButton.disabledText;
+
+    document.getElementById('download-link-wrapper')
+        .classList.add(HIDDEN_CLASS);
+    document.getElementById('download-link-clicked-wrapper')
+        .classList.remove(HIDDEN_CLASS);
   }
 }
 
@@ -146,7 +157,6 @@ function setUpCachedButton(buttonStrings) {
     location = url;
   };
   reloadButton.style.display = '';
-  document.getElementById('control-buttons').hidden = false;
 }
 
 var primaryControlOnLeft = true;
@@ -154,62 +164,225 @@ var primaryControlOnLeft = true;
 primaryControlOnLeft = false;
 // </if>
 
-function onDocumentLoad() {
-  var controlButtonDiv = document.getElementById('control-buttons');
-  var reloadButton = document.getElementById('reload-button');
+function setAutoFetchState(scheduled, can_schedule) {
+  document.getElementById('cancel-save-page-button')
+      .classList.toggle(HIDDEN_CLASS, !scheduled);
+  document.getElementById('save-page-for-later-button')
+      .classList.toggle(HIDDEN_CLASS, scheduled || !can_schedule);
+}
+
+function savePageLaterClick() {
+  errorPageController.savePageForLater();
+  // savePageForLater will eventually trigger a call to setAutoFetchState() when
+  // it completes.
+}
+
+function cancelSavePageClick() {
+  errorPageController.cancelSavePage();
+  // setAutoFetchState is not called in response to cancelSavePage(), so do it
+  // now.
+  setAutoFetchState(false, true);
+}
+
+function toggleErrorInformationPopup() {
+  document.getElementById('error-information-popup-container')
+      .classList.toggle(HIDDEN_CLASS);
+}
+
+function launchOfflineItem(itemID, name_space) {
+  errorPageController.launchOfflineItem(itemID, name_space);
+}
+
+function launchDownloadsPage() {
+  errorPageController.launchDownloadsPage();
+}
+
+function getIconForSuggestedItem(item) {
+  // Note: |item.content_type| contains the enum values from
+  // chrome::mojom::AvailableContentType.
+  switch (item.content_type) {
+    case 1:  // kVideo
+      return 'image-video';
+    case 2:  // kAudio
+      return 'image-music-note';
+    case 0:  // kPrefetchedPage
+    case 3:  // kOtherPage
+      return 'image-earth';
+  }
+  return 'image-file';
+}
+
+function getSuggestedContentDiv(item, index) {
+  // Note: See AvailableContentToValue in available_offline_content_helper.cc
+  // for the data contained in an |item|.
+  // TODO(carlosk): Present |snippet_base64| when that content becomes
+  // available.
+  var thumbnail = '';
+  var extraContainerClasses = [];
+  // html_inline.py will try to replace src attributes with data URIs using a
+  // simple regex. The following is obfuscated slightly to avoid that.
+  var src = 'src';
+  if (item.thumbnail_data_uri) {
+    extraContainerClasses.push('suggestion-with-image');
+    thumbnail = `<img ${src}="${item.thumbnail_data_uri}">`;
+  } else {
+    extraContainerClasses.push('suggestion-with-icon');
+    iconClass = getIconForSuggestedItem(item);
+    thumbnail = `<div><img class="${iconClass}"></div>`;
+  }
+
+  var favicon = '';
+  if (item.favicon_data_uri) {
+    favicon = `<img ${src}="${item.favicon_data_uri}">`;
+  } else {
+    extraContainerClasses.push('no-favicon');
+  }
+
+  if (!item.attribution_base64)
+    extraContainerClasses.push('no-attribution');
+
+  return `
+  <div class="offline-content-suggestion ${extraContainerClasses.join(' ')}"
+    onclick="launchOfflineItem('${item.ID}', '${item.name_space}')">
+      <div class="offline-content-suggestion-texts">
+        <div id="offline-content-suggestion-title-${index}"
+             class="offline-content-suggestion-title">
+        </div>
+        <div class="offline-content-suggestion-attribution-freshness">
+          <div id="offline-content-suggestion-favicon-${index}"
+               class="offline-content-suggestion-favicon">
+            ${favicon}
+          </div>
+          <div id="offline-content-suggestion-attribution-${index}"
+               class="offline-content-suggestion-attribution">
+          </div>
+          <div class="offline-content-suggestion-freshness">
+            ${item.date_modified}
+          </div>
+          <div class="offline-content-suggestion-pin-spacer"></div>
+          <div class="offline-content-suggestion-pin"></div>
+        </div>
+      </div>
+      <div class="offline-content-suggestion-thumbnail">
+        ${thumbnail}
+      </div>
+  </div>`;
+}
+
+// Populates a list of suggested offline content.
+// Note: For security reasons all content downloaded from the web is considered
+// unsafe and must be securely handled to be presented on the dino page. Images
+// have already been safely re-encoded but textual content -- like title and
+// attribution -- must be properly handled here.
+function offlineContentAvailable(isShown, suggestions) {
+  if (!suggestions || !loadTimeData.valueExists('offlineContentList'))
+    return;
+
+  var suggestionsHTML = [];
+  for (var index = 0; index < suggestions.length; index++)
+    suggestionsHTML.push(getSuggestedContentDiv(suggestions[index], index));
+
+  document.getElementById('offline-content-suggestions').innerHTML =
+      suggestionsHTML.join('\n');
+
+  // Sets textual web content using |textContent| to make sure it's handled as
+  // plain text.
+  for (var index = 0; index < suggestions.length; index++) {
+    document.getElementById(`offline-content-suggestion-title-${index}`)
+        .textContent =
+        decodeUTF16Base64ToString(suggestions[index].title_base64);
+    document.getElementById(`offline-content-suggestion-attribution-${index}`)
+        .textContent =
+        decodeUTF16Base64ToString(suggestions[index].attribution_base64);
+  }
+
+  var contentListElement = document.getElementById('offline-content-list');
+  if (document.dir == 'rtl')
+    contentListElement.classList.add('is-rtl');
+  contentListElement.hidden = false;
+  // The list is configured as hidden by default. Show it if needed.
+  if (isShown)
+    toggleOfflineContentListVisibility(false);
+}
+
+function toggleOfflineContentListVisibility(updatePref) {
+  if (!loadTimeData.valueExists('offlineContentList'))
+    return;
+
+  var contentListElement = document.getElementById('offline-content-list');
+  var isVisible = !contentListElement.classList.toggle('list-hidden');
+
+  if (updatePref && window.errorPageController) {
+    errorPageController.listVisibilityChanged(isVisible);
+  }
+}
+
+// Called on document load, and from updateForDnsProbe().
+function onDocumentLoadOrUpdate() {
+  var downloadButtonVisible = loadTimeData.valueExists('downloadButton') &&
+      loadTimeData.getValue('downloadButton').msg;
   var detailsButton = document.getElementById('details-button');
-  var showSavedCopyButton = document.getElementById('show-saved-copy-button');
-  var downloadButton = document.getElementById('download-button');
+
+// <if expr="HIDE_ERROR_MESSAGE_FOR_DINO_PAGE">
+  if ('chrome://dino/' == document.title) {
+    // If the user explicitly loads the dino page, don't show offline
+    // information as it's not accurate.
+    document.getElementById('main-message').classList.add(HIDDEN_CLASS);
+  }
+// </if>
+
+  // If offline content suggestions will be visible, the usual buttons will not
+  // be presented.
+  var offlineContentVisible =
+      loadTimeData.valueExists('suggestedOfflineContentPresentation');
+  if (offlineContentVisible) {
+    document.querySelector('.nav-wrapper').classList.add(HIDDEN_CLASS);
+    detailsButton.classList.add(HIDDEN_CLASS);
+
+    document.getElementById('download-link').hidden = !downloadButtonVisible;
+    document.getElementById('download-links-wrapper')
+        .classList.remove(HIDDEN_CLASS);
+    document.getElementById('error-information-popup-container')
+        .classList.add('use-popup-container', HIDDEN_CLASS)
+    document.getElementById('error-information-button')
+        .classList.remove(HIDDEN_CLASS);
+  }
+
+  var attemptAutoFetch = loadTimeData.valueExists('attemptAutoFetch') &&
+      loadTimeData.getValue('attemptAutoFetch');
 
   var reloadButtonVisible = loadTimeData.valueExists('reloadButton') &&
       loadTimeData.getValue('reloadButton').msg;
-  var showSavedCopyButtonVisible =
-      loadTimeData.valueExists('showSavedCopyButton') &&
-      loadTimeData.getValue('showSavedCopyButton').msg;
-  var downloadButtonVisible =
-      loadTimeData.valueExists('downloadButton') &&
-      loadTimeData.getValue('downloadButton').msg;
-
-  var primaryButton, secondaryButton;
-  if (showSavedCopyButton.primary) {
-    primaryButton = showSavedCopyButton;
-    secondaryButton = reloadButton;
-  } else {
-    primaryButton = reloadButton;
-    secondaryButton = showSavedCopyButton;
-  }
-
-  // Sets up the proper button layout for the current platform.
-  if (primaryControlOnLeft) {
-    buttons.classList.add('suggested-left');
-    controlButtonDiv.insertBefore(secondaryButton, primaryButton);
-  } else {
-    buttons.classList.add('suggested-right');
-    controlButtonDiv.insertBefore(primaryButton, secondaryButton);
-  }
 
   // Check for Google cached copy suggestion.
+  var cacheButtonVisible = false;
   if (loadTimeData.valueExists('cacheButton')) {
     setUpCachedButton(loadTimeData.getValue('cacheButton'));
+    cacheButtonVisible = true;
   }
 
+  var reloadButton = document.getElementById('reload-button');
+  var downloadButton = document.getElementById('download-button');
   if (reloadButton.style.display == 'none' &&
-      showSavedCopyButton.style.display == 'none' &&
       downloadButton.style.display == 'none') {
     detailsButton.classList.add('singular');
   }
 
-  // Show control buttons.
-  if (reloadButtonVisible || showSavedCopyButtonVisible ||
-      downloadButtonVisible) {
-    controlButtonDiv.hidden = false;
+  // Show or hide control buttons.
+  var controlButtonDiv = document.getElementById('control-buttons');
+  controlButtonDiv.hidden = offlineContentVisible ||
+      !(reloadButtonVisible || downloadButtonVisible || cacheButtonVisible);
+}
 
-    // Set the secondary button state in the cases of two call to actions.
-    if ((reloadButtonVisible || downloadButtonVisible) &&
-        showSavedCopyButtonVisible) {
-      secondaryButton.classList.add('secondary-button');
-    }
+function onDocumentLoad() {
+  // Sets up the proper button layout for the current platform.
+  if (primaryControlOnLeft) {
+    buttons.classList.add('suggested-left');
+  } else {
+    buttons.classList.add('suggested-right');
   }
+
+  onDocumentLoadOrUpdate();
 }
 
 document.addEventListener('DOMContentLoaded', onDocumentLoad);

@@ -4,7 +4,7 @@
 
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/browser/browser_context.h"
 
@@ -19,12 +19,11 @@ const char kDumpBrowserContextDependencyGraphFlag[] =
 #endif  // NDEBUG
 
 void BrowserContextDependencyManager::RegisterProfilePrefsForServices(
-    content::BrowserContext* context,
     user_prefs::PrefRegistrySyncable* pref_registry) {
   TRACE_EVENT0(
      "browser",
      "BrowserContextDependencyManager::RegisterProfilePrefsForServices");
-  RegisterPrefsForServices(context, pref_registry);
+  RegisterPrefsForServices(pref_registry);
 }
 
 void BrowserContextDependencyManager::CreateBrowserContextServices(
@@ -73,7 +72,8 @@ void BrowserContextDependencyManager::MarkBrowserContextLive(
 // static
 BrowserContextDependencyManager*
 BrowserContextDependencyManager::GetInstance() {
-  return base::Singleton<BrowserContextDependencyManager>::get();
+  static base::NoDestructor<BrowserContextDependencyManager> factory;
+  return factory.get();
 }
 
 BrowserContextDependencyManager::BrowserContextDependencyManager() {
@@ -84,15 +84,14 @@ BrowserContextDependencyManager::~BrowserContextDependencyManager() {
 
 #ifndef NDEBUG
 void BrowserContextDependencyManager::DumpContextDependencies(
-    base::SupportsUserData* context) const {
+    void* context) const {
   // Whenever we try to build a destruction ordering, we should also dump a
   // dependency graph to "/path/to/context/context-dependencies.dot".
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           kDumpBrowserContextDependencyGraphFlag)) {
     base::FilePath dot_file =
-        static_cast<const content::BrowserContext*>(context)
-            ->GetPath()
-            .AppendASCII("browser-context-dependencies.dot");
+        static_cast<content::BrowserContext*>(context)->GetPath().AppendASCII(
+            "browser-context-dependencies.dot");
     DumpDependenciesAsGraphviz("BrowserContext", dot_file);
   }
 }

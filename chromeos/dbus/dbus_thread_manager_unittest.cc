@@ -23,18 +23,15 @@ TEST(DBusThreadManagerTest, Initialize) {
   EXPECT_TRUE(manager->GetArcMidisClient());
   EXPECT_TRUE(manager->GetArcObbMounterClient());
   EXPECT_TRUE(manager->GetArcOemCryptoClient());
-  EXPECT_TRUE(manager->GetCrasAudioClient());
+  EXPECT_TRUE(manager->GetCiceroneClient());
+  EXPECT_TRUE(manager->GetConciergeClient());
   EXPECT_TRUE(manager->GetCrosDisksClient());
-  EXPECT_TRUE(manager->GetCryptohomeClient());
   EXPECT_TRUE(manager->GetDebugDaemonClient());
   EXPECT_TRUE(manager->GetEasyUnlockClient());
-  EXPECT_TRUE(manager->GetGsmSMSClient());
   EXPECT_TRUE(manager->GetImageBurnerClient());
   EXPECT_TRUE(manager->GetLorgnetteManagerClient());
   EXPECT_TRUE(manager->GetModemMessagingClient());
-  EXPECT_TRUE(manager->GetPermissionBrokerClient());
-  EXPECT_TRUE(manager->GetPowerManagerClient());
-  EXPECT_TRUE(manager->GetSessionManagerClient());
+  EXPECT_TRUE(manager->GetSeneschalClient());
   EXPECT_TRUE(manager->GetShillDeviceClient());
   EXPECT_TRUE(manager->GetShillIPConfigClient());
   EXPECT_TRUE(manager->GetShillManagerClient());
@@ -42,7 +39,6 @@ TEST(DBusThreadManagerTest, Initialize) {
   EXPECT_TRUE(manager->GetShillProfileClient());
   EXPECT_TRUE(manager->GetShillThirdPartyVpnDriverClient());
   EXPECT_TRUE(manager->GetSMSClient());
-  EXPECT_TRUE(manager->GetSystemClockClient());
   EXPECT_TRUE(manager->GetUpdateEngineClient());
 
   DBusThreadManager::Shutdown();
@@ -51,18 +47,12 @@ TEST(DBusThreadManagerTest, Initialize) {
 
 // Tests that clients can be created for the browser process.
 TEST(DBusThreadManagerTest, InitializeForBrowser) {
-  DBusThreadManager::Initialize(DBusThreadManager::PROCESS_BROWSER);
+  DBusThreadManager::Initialize(DBusThreadManager::kAll);
   DBusThreadManager* manager = DBusThreadManager::Get();
   ASSERT_TRUE(manager);
 
   // Common clients were created.
-  EXPECT_TRUE(manager->GetCrasAudioClient());
-  EXPECT_TRUE(manager->GetCryptohomeClient());
-  EXPECT_TRUE(manager->GetGsmSMSClient());
   EXPECT_TRUE(manager->GetModemMessagingClient());
-  EXPECT_TRUE(manager->GetPermissionBrokerClient());
-  EXPECT_TRUE(manager->GetPowerManagerClient());
-  EXPECT_TRUE(manager->GetSessionManagerClient());
   EXPECT_TRUE(manager->GetShillDeviceClient());
   EXPECT_TRUE(manager->GetShillIPConfigClient());
   EXPECT_TRUE(manager->GetShillManagerClient());
@@ -70,36 +60,32 @@ TEST(DBusThreadManagerTest, InitializeForBrowser) {
   EXPECT_TRUE(manager->GetShillServiceClient());
   EXPECT_TRUE(manager->GetShillThirdPartyVpnDriverClient());
   EXPECT_TRUE(manager->GetSMSClient());
-  EXPECT_TRUE(manager->GetSystemClockClient());
   EXPECT_TRUE(manager->GetUpdateEngineClient());
 
   // Clients for the browser were created.
   EXPECT_TRUE(manager->GetArcMidisClient());
   EXPECT_TRUE(manager->GetArcObbMounterClient());
   EXPECT_TRUE(manager->GetArcOemCryptoClient());
+  EXPECT_TRUE(manager->GetCiceroneClient());
+  EXPECT_TRUE(manager->GetConciergeClient());
   EXPECT_TRUE(manager->GetCrosDisksClient());
   EXPECT_TRUE(manager->GetDebugDaemonClient());
   EXPECT_TRUE(manager->GetEasyUnlockClient());
   EXPECT_TRUE(manager->GetImageBurnerClient());
   EXPECT_TRUE(manager->GetLorgnetteManagerClient());
+  EXPECT_TRUE(manager->GetSeneschalClient());
 
   DBusThreadManager::Shutdown();
 }
 
 // Tests that clients can be created for the ash process.
 TEST(DBusThreadManagerTest, InitializeForAsh) {
-  DBusThreadManager::Initialize(DBusThreadManager::PROCESS_ASH);
+  DBusThreadManager::Initialize(DBusThreadManager::kShared);
   DBusThreadManager* manager = DBusThreadManager::Get();
   ASSERT_TRUE(manager);
 
   // Common clients were created.
-  EXPECT_TRUE(manager->GetCrasAudioClient());
-  EXPECT_TRUE(manager->GetCryptohomeClient());
-  EXPECT_TRUE(manager->GetGsmSMSClient());
   EXPECT_TRUE(manager->GetModemMessagingClient());
-  EXPECT_TRUE(manager->GetPermissionBrokerClient());
-  EXPECT_TRUE(manager->GetPowerManagerClient());
-  EXPECT_TRUE(manager->GetSessionManagerClient());
   EXPECT_TRUE(manager->GetShillDeviceClient());
   EXPECT_TRUE(manager->GetShillIPConfigClient());
   EXPECT_TRUE(manager->GetShillManagerClient());
@@ -107,18 +93,20 @@ TEST(DBusThreadManagerTest, InitializeForAsh) {
   EXPECT_TRUE(manager->GetShillServiceClient());
   EXPECT_TRUE(manager->GetShillThirdPartyVpnDriverClient());
   EXPECT_TRUE(manager->GetSMSClient());
-  EXPECT_TRUE(manager->GetSystemClockClient());
-  EXPECT_TRUE(manager->GetUpdateEngineClient());
 
   // Clients for other processes were not created.
   EXPECT_FALSE(manager->GetArcMidisClient());
   EXPECT_FALSE(manager->GetArcObbMounterClient());
   EXPECT_FALSE(manager->GetArcOemCryptoClient());
+  EXPECT_FALSE(manager->GetCiceroneClient());
+  EXPECT_FALSE(manager->GetConciergeClient());
   EXPECT_FALSE(manager->GetCrosDisksClient());
   EXPECT_FALSE(manager->GetDebugDaemonClient());
   EXPECT_FALSE(manager->GetEasyUnlockClient());
   EXPECT_FALSE(manager->GetImageBurnerClient());
   EXPECT_FALSE(manager->GetLorgnetteManagerClient());
+  EXPECT_FALSE(manager->GetSeneschalClient());
+  EXPECT_FALSE(manager->GetUpdateEngineClient());
 
   DBusThreadManager::Shutdown();
 }

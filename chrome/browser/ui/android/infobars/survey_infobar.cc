@@ -8,12 +8,11 @@
 #include <utility>
 
 #include "base/android/jni_string.h"
-#include "base/memory/ptr_util.h"
+#include "chrome/android/chrome_jni_headers/SurveyInfoBar_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/SurveyInfoBar_jni.h"
 #include "ui/android/window_android.h"
 
 using base::android::JavaParamRef;
@@ -100,7 +99,6 @@ ScopedJavaLocalRef<jobject> SurveyInfoBar::CreateRenderInfoBar(JNIEnv* env) {
 
 void JNI_SurveyInfoBar_Create(
     JNIEnv* env,
-    const JavaParamRef<jclass>& j_caller,
     const JavaParamRef<jobject>& j_web_contents,
     const JavaParamRef<jstring>& j_site_id,
     jboolean j_show_as_bottom_sheet,
@@ -110,7 +108,7 @@ void JNI_SurveyInfoBar_Create(
       content::WebContents::FromJavaWebContents(j_web_contents));
 
   service->AddInfoBar(
-      base::MakeUnique<SurveyInfoBar>(base::MakeUnique<SurveyInfoBarDelegate>(
+      std::make_unique<SurveyInfoBar>(std::make_unique<SurveyInfoBarDelegate>(
           env, base::android::ConvertJavaStringToUTF8(env, j_site_id),
           j_show_as_bottom_sheet, j_display_logo_resource_id,
           j_survey_info_bar_delegate.obj())));

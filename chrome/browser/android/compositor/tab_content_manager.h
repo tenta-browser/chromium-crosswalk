@@ -11,11 +11,13 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/layers/ui_resource_layer.h"
 #include "chrome/browser/android/thumbnail/thumbnail_cache.h"
+#include "content/public/browser/render_widget_host_view.h"
 
 using base::android::ScopedJavaLocalRef;
 
@@ -43,7 +45,8 @@ class TabContentManager : public ThumbnailCacheObserver {
                     jint approximation_cache_size,
                     jint compression_queue_max_size,
                     jint write_queue_max_size,
-                    jboolean use_approximation_thumbnail);
+                    jboolean use_approximation_thumbnail,
+                    jboolean save_jpeg_thumbnails);
 
   virtual ~TabContentManager();
 
@@ -59,27 +62,32 @@ class TabContentManager : public ThumbnailCacheObserver {
   // Get the static thumbnail from the cache, or the NTP.
   scoped_refptr<ThumbnailLayer> GetOrCreateStaticLayer(int tab_id,
                                                        bool force_disk_read);
+  // JNI methods.
 
   // Should be called when a tab gets a new live layer that should be served
   // by the cache to the CompositorView.
-  void AttachLiveLayer(int tab_id, scoped_refptr<cc::Layer> layer);
+  void AttachTab(JNIEnv* env,
+                 const base::android::JavaParamRef<jobject>& obj,
+                 const base::android::JavaParamRef<jobject>& jtab,
+                 jint tab_id);
 
   // Should be called when a tab removes a live layer because it should no
   // longer be served by the CompositorView.  If |layer| is NULL, will
   // make sure all live layers are detached.
-  void DetachLiveLayer(int tab_id, scoped_refptr<cc::Layer> layer);
-
-  // Callback for when the thumbnail decompression for tab_id is done.
-  void OnFinishDecompressThumbnail(int tab_id, bool success, SkBitmap bitmap);
-  // JNI methods.
+  void DetachTab(JNIEnv* env,
+                 const base::android::JavaParamRef<jobject>& obj,
+                 const base::android::JavaParamRef<jobject>& jtab,
+                 jint tab_id);
   jboolean HasFullCachedThumbnail(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jint tab_id);
-  void CacheTab(JNIEnv* env,
-                const base::android::JavaParamRef<jobject>& obj,
-                const base::android::JavaParamRef<jobject>& tab,
-                jfloat thumbnail_scale);
+  void CaptureThumbnail(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& obj,
+                        const base::android::JavaParamRef<jobject>& tab,
+                        jfloat thumbnail_scale,
+                        jboolean write_to_cache,
+                        const base::android::JavaParamRef<jobject>& j_callback);
   void CacheTabWithBitmap(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj,
                           const base::android::JavaParamRef<jobject>& tab,
@@ -98,6 +106,18 @@ class TabContentManager : public ThumbnailCacheObserver {
                           const base::android::JavaParamRef<jobject>& obj,
                           jint tab_id);
   void OnUIResourcesWereEvicted();
+  void GetEtc1TabThumbnail(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint tab_id,
+      const base::android::JavaParamRef<jobject>& j_callback);
+  void SetCaptureMinRequestTimeForTesting(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint timeMs);
+  jint GetPendingReadbacksForTesting(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
 
   // ThumbnailCacheObserver implementation;
   void OnFinishedThumbnailRead(TabId tab_id) override;
@@ -111,9 +131,21 @@ class TabContentManager : public ThumbnailCacheObserver {
   using TabReadbackRequestMap =
       base::flat_map<int, std::unique_ptr<TabReadbackRequest>>;
 
-  void PutThumbnailIntoCache(int tab_id,
-                             float thumbnail_scale,
-                             const SkBitmap& bitmap);
+  content::RenderWidgetHostView* GetRwhvForTab(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& tab);
+  void OnTabReadback(int tab_id,
+                     base::android::ScopedJavaGlobalRef<jobject> j_callback,
+                     bool write_to_cache,
+                     float thumbnail_scale,
+                     const SkBitmap& bitmap);
+
+  void SendThumbnailToJava(
+      base::android::ScopedJavaGlobalRef<jobject> j_callback,
+      bool need_downsampling,
+      bool result,
+      SkBitmap bitmap);
 
   std::unique_ptr<ThumbnailCache> thumbnail_cache_;
   ThumbnailLayerMap static_layer_cache_;

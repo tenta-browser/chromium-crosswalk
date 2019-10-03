@@ -4,8 +4,11 @@
 
 #include "chrome/browser/devtools/devtools_window_testing.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -20,9 +23,8 @@ namespace {
 const char kHarnessScript[] = "Tests.js";
 
 typedef std::vector<DevToolsWindowTesting*> DevToolsWindowTestings;
-base::LazyInstance<DevToolsWindowTestings>::Leaky g_instances =
-    LAZY_INSTANCE_INITIALIZER;
-
+base::LazyInstance<DevToolsWindowTestings>::Leaky
+    g_devtools_window_testing_instances = LAZY_INSTANCE_INITIALIZER;
 }
 
 DevToolsWindowTesting::DevToolsWindowTesting(DevToolsWindow* window)
@@ -30,19 +32,23 @@ DevToolsWindowTesting::DevToolsWindowTesting(DevToolsWindow* window)
   DCHECK(window);
   window->close_callback_ =
       base::Bind(&DevToolsWindowTesting::WindowClosed, window);
-  g_instances.Get().push_back(this);
+  g_devtools_window_testing_instances.Get().push_back(this);
 }
 
 DevToolsWindowTesting::~DevToolsWindowTesting() {
-  DevToolsWindowTestings* instances = g_instances.Pointer();
-  DevToolsWindowTestings::iterator it(
-      std::find(instances->begin(), instances->end(), this));
+  DevToolsWindowTestings* instances =
+      g_devtools_window_testing_instances.Pointer();
+  auto it(std::find(instances->begin(), instances->end(), this));
   DCHECK(it != instances->end());
   instances->erase(it);
   if (!close_callback_.is_null()) {
     close_callback_.Run();
     close_callback_ = base::Closure();
   }
+
+  // Needed for Chrome_DevToolsADBThread to shut down gracefully in tests.
+  ChromeDevToolsManagerDelegate::GetInstance()
+      ->ResetAndroidDeviceManagerForTesting();
 }
 
 // static
@@ -55,12 +61,11 @@ DevToolsWindowTesting* DevToolsWindowTesting::Get(DevToolsWindow* window) {
 
 // static
 DevToolsWindowTesting* DevToolsWindowTesting::Find(DevToolsWindow* window) {
-  if (g_instances == NULL)
+  if (!g_devtools_window_testing_instances.IsCreated())
     return NULL;
-  DevToolsWindowTestings* instances = g_instances.Pointer();
-  for (DevToolsWindowTestings::iterator it(instances->begin());
-       it != instances->end();
-       ++it) {
+  DevToolsWindowTestings* instances =
+      g_devtools_window_testing_instances.Pointer();
+  for (auto it(instances->begin()); it != instances->end(); ++it) {
     if ((*it)->devtools_window_ == window)
       return *it;
   }
@@ -87,6 +92,10 @@ void DevToolsWindowTesting::SetCloseCallback(const base::Closure& closure) {
   close_callback_ = closure;
 }
 
+void DevToolsWindowTesting::SetOpenNewWindowForPopups(bool value) {
+  devtools_window_->SetOpenNewWindowForPopups(value);
+}
+
 // static
 void DevToolsWindowTesting::WindowClosed(DevToolsWindow* window) {
   DevToolsWindowTesting* testing = DevToolsWindowTesting::Find(window);
@@ -104,7 +113,8 @@ void DevToolsWindowTesting::WaitForDevToolsWindowLoad(DevToolsWindow* window) {
   }
   base::string16 harness = base::UTF8ToUTF16(
       content::DevToolsFrontendHost::GetFrontendResource(kHarnessScript));
-  window->main_web_contents_->GetMainFrame()->ExecuteJavaScript(harness);
+  window->main_web_contents_->GetMainFrame()->ExecuteJavaScript(
+      harness, base::NullCallback());
 }
 
 // static
@@ -137,6 +147,14 @@ DevToolsWindow* DevToolsWindowTesting::OpenDevToolsWindowSync(
     scoped_refptr<content::DevToolsAgentHost> agent_host) {
   DevToolsWindow::OpenDevToolsWindow(agent_host, profile);
   DevToolsWindow* window = DevToolsWindow::FindDevToolsWindow(agent_host.get());
+  WaitForDevToolsWindowLoad(window);
+  return window;
+}
+
+// static
+DevToolsWindow* DevToolsWindowTesting::OpenDiscoveryDevToolsWindowSync(
+    Profile* profile) {
+  DevToolsWindow* window = DevToolsWindow::OpenNodeFrontendWindow(profile);
   WaitForDevToolsWindowLoad(window);
   return window;
 }
@@ -175,7 +193,7 @@ DevToolsWindowCreationObserver::~DevToolsWindowCreationObserver() {
 }
 
 void DevToolsWindowCreationObserver::Wait() {
-  if (devtools_windows_.size())
+  if (!devtools_windows_.empty())
     return;
   runner_ = new content::MessageLoopRunner();
   runner_->Run();

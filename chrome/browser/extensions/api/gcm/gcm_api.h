@@ -17,7 +17,7 @@ class Profile;
 
 namespace extensions {
 
-class GcmApiFunction : public AsyncExtensionFunction {
+class GcmApiFunction : public UIThreadExtensionFunction {
  public:
   GcmApiFunction() {}
 
@@ -25,28 +25,25 @@ class GcmApiFunction : public AsyncExtensionFunction {
   ~GcmApiFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() final;
-
-  // Actual implementation of specific functions.
-  virtual bool DoWork() = 0;
+  bool PreRunValidation(std::string* error) final;
 
   // Checks that the GCM API is enabled.
-  bool IsGcmApiEnabled() const;
+  bool IsGcmApiEnabled(std::string* error) const;
 
   gcm::GCMDriver* GetGCMDriver() const;
 };
 
 class GcmRegisterFunction : public GcmApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("gcm.register", GCM_REGISTER);
+  DECLARE_EXTENSION_FUNCTION("gcm.register", GCM_REGISTER)
 
   GcmRegisterFunction();
 
  protected:
   ~GcmRegisterFunction() override;
 
-  // Register function implementation.
-  bool DoWork() final;
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   void CompleteFunctionWithResult(const std::string& registration_id,
@@ -55,15 +52,15 @@ class GcmRegisterFunction : public GcmApiFunction {
 
 class GcmUnregisterFunction : public GcmApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("gcm.unregister", GCM_UNREGISTER);
+  DECLARE_EXTENSION_FUNCTION("gcm.unregister", GCM_UNREGISTER)
 
   GcmUnregisterFunction();
 
  protected:
   ~GcmUnregisterFunction() override;
 
-  // Register function implementation.
-  bool DoWork() final;
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   void CompleteFunctionWithResult(gcm::GCMClient::Result result);
@@ -71,15 +68,15 @@ class GcmUnregisterFunction : public GcmApiFunction {
 
 class GcmSendFunction : public GcmApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("gcm.send", GCM_SEND);
+  DECLARE_EXTENSION_FUNCTION("gcm.send", GCM_SEND)
 
   GcmSendFunction();
 
  protected:
   ~GcmSendFunction() override;
 
-  // Send function implementation.
-  bool DoWork() final;
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   void CompleteFunctionWithResult(const std::string& message_id,

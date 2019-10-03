@@ -7,20 +7,23 @@ package org.chromium.chrome.browser.widget;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.os.AsyncTask;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.util.AtomicFile;
 import android.support.v4.util.Pair;
 import android.text.TextUtils;
 
-import com.google.protobuf.nano.MessageNano;
+import com.google.protobuf.ByteString;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
+import org.chromium.chrome.browser.util.ConversionUtils;
 import org.chromium.chrome.browser.widget.ThumbnailCacheEntry.ContentId;
 import org.chromium.chrome.browser.widget.ThumbnailCacheEntry.ThumbnailEntry;
 
@@ -49,7 +52,8 @@ import java.util.LinkedHashSet;
  */
 public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     private static final String TAG = "ThumbnailStorage";
-    private static final int MAX_CACHE_BYTES = 1024 * 1024; // Max disk cache size is 1MB.
+    private static final int MAX_CACHE_BYTES =
+            5 * ConversionUtils.BYTES_PER_MEGABYTE; // Max disk cache size is 5MB.
 
     // LRU cache of a pair of thumbnail's contentID and size. The order is based on the sequence of
     // add and get with the most recent at the end. The order at initialization (i.e. browser
@@ -74,21 +78,27 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
 
     private ThumbnailStorageDelegate mDelegate;
 
+    // Maximum size in bytes for the disk cache.
+    private final int mMaxCacheBytes;
+
     // Number of bytes used in disk for cache.
     @VisibleForTesting
     long mSizeBytes;
 
-    private class InitTask extends AsyncTask<Void, Void, Void> {
+    // Whether or not this class has been destroyed and should not be used.
+    private boolean mDestroyed;
+
+    private class InitTask extends BackgroundOnlyAsyncTask<Void> {
         @Override
-        protected Void doInBackground(Void... params) {
+        protected Void doInBackground() {
             initDiskCache();
             return null;
         }
     }
 
-    private class ClearTask extends AsyncTask<Void, Void, Void> {
+    private class ClearTask extends BackgroundOnlyAsyncTask<Void> {
         @Override
-        protected Void doInBackground(Void... params) {
+        protected Void doInBackground() {
             clearDiskCache();
             return null;
         }
@@ -98,7 +108,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      * Writes to disk cache.
      */
     @VisibleForTesting
-    class CacheThumbnailTask extends AsyncTask<Void, Void, Void> {
+    class CacheThumbnailTask extends BackgroundOnlyAsyncTask<Void> {
         private final String mContentId;
         private final Bitmap mBitmap;
         private final int mIconSizePx;
@@ -110,7 +120,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
         }
 
         @Override
-        protected Void doInBackground(Void... params) {
+        protected Void doInBackground() {
             addToDisk(mContentId, mBitmap, mIconSizePx);
             return null;
         }
@@ -119,7 +129,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     /**
      * Reads from disk cache. If missing, fetch from {@link ThumbnailGenerator}.
      */
-    private class GetThumbnailTask extends AsyncTask<Void, Void, Bitmap> {
+    private class GetThumbnailTask extends AsyncTask<Bitmap> {
         private final ThumbnailProvider.ThumbnailRequest mRequest;
 
         public GetThumbnailTask(ThumbnailProvider.ThumbnailRequest request) {
@@ -127,7 +137,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
         }
 
         @Override
-        protected Bitmap doInBackground(Void... params) {
+        protected Bitmap doInBackground() {
             if (sDiskLruCache.contains(
                         Pair.create(mRequest.getContentId(), mRequest.getIconSize()))) {
                 return getFromDisk(mRequest.getContentId(), mRequest.getIconSize());
@@ -137,6 +147,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
 
         @Override
         protected void onPostExecute(Bitmap bitmap) {
+            RecordHistogram.recordBooleanHistogram(
+                    "Android.ThumbnailDiskStorage.CachedBitmap.Found", bitmap != null);
+
             if (bitmap != null) {
                 onThumbnailRetrieved(mRequest.getContentId(), bitmap, mRequest.getIconSize());
                 return;
@@ -149,7 +162,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     /**
      * Removes thumbnails with the given contentId from disk cache.
      */
-    private class RemoveThumbnailTask extends AsyncTask<Void, Void, Void> {
+    private class RemoveThumbnailTask extends BackgroundOnlyAsyncTask<Void> {
         private final String mContentId;
 
         public RemoveThumbnailTask(String contentId) {
@@ -157,7 +170,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
         }
 
         @Override
-        protected Void doInBackground(Void... params) {
+        protected Void doInBackground() {
             // Check again if thumbnails with the specified content ID still exists
             if (!sIconSizesMap.containsKey(mContentId)) return null;
 
@@ -172,10 +185,12 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     }
 
     @VisibleForTesting
-    ThumbnailDiskStorage(ThumbnailStorageDelegate delegate, ThumbnailGenerator thumbnailGenerator) {
+    ThumbnailDiskStorage(ThumbnailStorageDelegate delegate, ThumbnailGenerator thumbnailGenerator,
+            int maxCacheSizeBytes) {
         ThreadUtils.assertOnUiThread();
         mDelegate = delegate;
         mThumbnailGenerator = thumbnailGenerator;
+        mMaxCacheBytes = maxCacheSizeBytes;
         new InitTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
 
@@ -186,7 +201,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      * @return An instance of {@link ThumbnailDiskStorage}.
      */
     public static ThumbnailDiskStorage create(ThumbnailStorageDelegate delegate) {
-        return new ThumbnailDiskStorage(delegate, new ThumbnailGenerator());
+        return new ThumbnailDiskStorage(delegate, new ThumbnailGenerator(), MAX_CACHE_BYTES);
     }
 
     /**
@@ -194,6 +209,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      */
     public void destroy() {
         mThumbnailGenerator.destroy();
+        mDestroyed = true;
     }
 
     /**
@@ -210,7 +226,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      */
     public void retrieveThumbnail(ThumbnailProvider.ThumbnailRequest request) {
         ThreadUtils.assertOnUiThread();
-        if (TextUtils.isEmpty(request.getContentId())) return;
+        if (mDestroyed || TextUtils.isEmpty(request.getContentId())) return;
 
         new GetThumbnailTask(request).executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
@@ -226,6 +242,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     @Override
     public void onThumbnailRetrieved(
             @NonNull String contentId, @Nullable Bitmap bitmap, int iconSizePx) {
+        // If we've been destroyed, drop any responses coming back from retrieval tasks.
+        if (mDestroyed) return;
+
         ThreadUtils.assertOnUiThread();
         if (bitmap != null && !TextUtils.isEmpty(contentId)) {
             new CacheThumbnailTask(contentId, bitmap, iconSizePx)
@@ -259,14 +278,13 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
         for (File file : cachedFiles) {
             AtomicFile atomicFile = new AtomicFile(file);
             try {
-                ThumbnailEntry entry =
-                        MessageNano.mergeFrom(new ThumbnailEntry(), atomicFile.readFully());
-                if (entry.contentId == null) continue;
+                ThumbnailEntry entry = ThumbnailEntry.parseFrom(atomicFile.readFully());
+                if (!entry.hasContentId()) continue;
 
-                String contentId = entry.contentId.id;
-                if (entry.sizePx == null) continue;
+                String contentId = entry.getContentId().getId();
+                if (!entry.hasSizePx()) continue;
 
-                int iconSizePx = entry.sizePx;
+                int iconSizePx = entry.getSizePx();
 
                 // Update internal cache state.
                 sDiskLruCache.add(Pair.create(contentId, iconSizePx));
@@ -282,6 +300,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
                 Log.e(TAG, "Error while reading from disk.", e);
             }
         }
+
+        RecordHistogram.recordMemoryKBHistogram("Android.ThumbnailDiskStorage.Size",
+                (int) (mSizeBytes / ConversionUtils.BYTES_PER_KILOBYTE));
     }
 
     /**
@@ -312,17 +333,18 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
             byte[] compressedBitmapBytes = baos.toByteArray();
 
             // Construct proto.
-            ThumbnailEntry newEntry = new ThumbnailEntry();
-            newEntry.contentId = new ContentId();
-            newEntry.contentId.id = contentId;
-            newEntry.sizePx = iconSizePx;
-            newEntry.compressedPng = compressedBitmapBytes;
+            ThumbnailEntry newEntry =
+                    ThumbnailEntry.newBuilder()
+                            .setContentId(ContentId.newBuilder().setId(contentId))
+                            .setSizePx(iconSizePx)
+                            .setCompressedPng(ByteString.copyFrom(compressedBitmapBytes))
+                            .build();
 
             // Write proto to disk.
             File newFile = new File(getThumbnailFilePath(contentId, iconSizePx));
             atomicFile = new AtomicFile(newFile);
             fos = atomicFile.startWrite();
-            fos.write(MessageNano.toByteArray(newEntry));
+            fos.write(newEntry.toByteArray());
             atomicFile.finishWrite(fos);
 
             // Update internal cache state.
@@ -374,12 +396,11 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
 
             AtomicFile atomicFile = new AtomicFile(file);
             fis = atomicFile.openRead();
-            ThumbnailEntry entry =
-                    MessageNano.mergeFrom(new ThumbnailEntry(), atomicFile.readFully());
-            if (entry.compressedPng == null) return null;
+            ThumbnailEntry entry = ThumbnailEntry.parseFrom(atomicFile.readFully());
+            if (!entry.hasCompressedPng()) return null;
 
             bitmap = BitmapFactory.decodeByteArray(
-                    entry.compressedPng, 0, entry.compressedPng.length);
+                    entry.getCompressedPng().toByteArray(), 0, entry.getCompressedPng().size());
         } catch (IOException e) {
             Log.e(TAG, "Error while reading from disk.", e);
         } finally {
@@ -390,12 +411,12 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     }
 
     /**
-     * Trim the cache to stay under the MAX_CACHE_BYTES limit by removing the oldest entries.
+     * Trim the cache to stay under the max cache size by removing the oldest entries.
      */
     @VisibleForTesting
     void trim() {
         ThreadUtils.assertOnBackgroundThread();
-        while (mSizeBytes > MAX_CACHE_BYTES) {
+        while (mSizeBytes > mMaxCacheBytes) {
             removeFromDiskHelper(sDiskLruCache.iterator().next());
         }
     }
@@ -475,7 +496,6 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      * Get directory for thumbnail entries in the designated app (internal) cache directory.
      * The directory's name must be unique.
      * @param context The application's context.
-     * @param uniqueName The name of the thumbnail directory. Must be unique.
      * @return The path to the thumbnail cache directory.
      */
     private static File getDiskCacheDir(Context context, String thumbnailDirName) {

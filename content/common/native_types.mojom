@@ -8,6 +8,10 @@ module content.mojom;
 // ParamTraits for serialization. All of these should eventually be converted to
 // proper mojom definitions.
 
+// NOTE: This type is only mapped and usable on Mac.
+[Native]
+struct EncodedAttributedString;
+
 [Native]
 struct FrameOwnerProperties;
 
@@ -15,10 +19,7 @@ struct FrameOwnerProperties;
 struct FrameReplicationState;
 
 [Native]
-struct RendererPreferences;
-
-[Native]
-struct ResizeParams;
+struct VisualProperties;
 
 // NOTE: This type is only mapped and usable on Mac.
 [Native]
@@ -39,13 +40,8 @@ struct WebPreferences;
 [Native]
 enum NetworkConnectionType;
 
-// TODO(rockot): This should most likely be defined by network service mojom,
-// but the network service doesn't exist yet.
 [Native]
-enum EffectiveConnectionType;
-
-[Native]
-enum WebPopupType;
+struct WebCursor;
 
 [Native]
 enum Button;
@@ -72,7 +68,7 @@ enum Cancelability;
 enum GestureDevice;
 
 [Native]
-enum ScrollUnits;
+enum ScrollGranularity;
 
 [Native]
 enum InertialPhaseState;

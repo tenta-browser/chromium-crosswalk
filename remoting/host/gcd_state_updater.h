@@ -19,9 +19,9 @@ namespace base {
 class TimeDelta;
 }  // namespace base
 
-namespace buzz {
+namespace jingle_xmpp {
 class XmlElement;
-}  // namespace buzz
+}  // namespace jingle_xmpp
 
 namespace remoting {
 
@@ -40,7 +40,7 @@ class GcdStateUpdater : public SignalStrategy::Listener {
                   std::unique_ptr<GcdRestClient> gcd_client);
   ~GcdStateUpdater() override;
 
-  // See HeartbeatSender::SetHostOfflineReason.
+  // See XmppHeartbeatSender::SetHostOfflineReason.
   void SetHostOfflineReason(
       const std::string& host_offline_reason,
       const base::TimeDelta& timeout,
@@ -49,7 +49,7 @@ class GcdStateUpdater : public SignalStrategy::Listener {
  private:
   // SignalStrategy::Listener interface.
   void OnSignalStrategyStateChange(SignalStrategy::State state) override;
-  bool OnSignalStrategyIncomingStanza(const buzz::XmlElement* stanza) override;
+  bool OnSignalStrategyIncomingStanza(const jingle_xmpp::XmlElement* stanza) override;
 
   void OnPatchStateResult(GcdRestClient::Result result);
   void MaybeSendStateUpdate();

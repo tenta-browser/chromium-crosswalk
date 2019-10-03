@@ -16,10 +16,11 @@
 #include "remoting/host/host_status_observer.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog_proxy.h"
+#include "remoting/host/register_support_host_request.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/port_range.h"
 #include "remoting/protocol/validating_authenticator.h"
-#include "remoting/signaling/xmpp_signal_strategy.h"
+#include "remoting/signaling/signal_strategy.h"
 
 namespace base {
 class DictionaryValue;
@@ -32,6 +33,7 @@ class ChromotingHostContext;
 class DesktopEnvironmentFactory;
 class HostEventLogger;
 class HostStatusLogger;
+class LogToServer;
 class RegisterSupportHostRequest;
 class RsaKeyPair;
 
@@ -68,13 +70,27 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
 
   It2MeHost();
 
+  // Enable, disable, or query whether or not the confirm, continue, and
+  // disconnect dialogs are shown.
+  void set_enable_dialogs(bool enable);
+  bool enable_dialogs() const { return enable_dialogs_; }
+
+  // Enable or disable whether or not the session should be terminated if local
+  // input is detected.
+  void set_terminate_upon_input(bool terminate_upon_input);
+
   // Methods called by the script object, from the plugin thread.
 
   // Creates It2Me host structures and starts the host.
+  //
+  // XmppLogToServer cannot be created and used in different sequence, so pass
+  // in a factory callback instead.
   virtual void Connect(
       std::unique_ptr<ChromotingHostContext> context,
       std::unique_ptr<base::DictionaryValue> policies,
       std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+      std::unique_ptr<RegisterSupportHostRequest> register_request,
+      std::unique_ptr<LogToServer> log_to_server,
       base::WeakPtr<It2MeHost::Observer> observer,
       std::unique_ptr<SignalStrategy> signal_strategy,
       const std::string& username,
@@ -126,9 +142,11 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
       It2MeConfirmationDialog::Result result);
 
   // Task posted to the network thread from Connect().
-  void ConnectOnNetworkThread(const std::string& username,
-                              const std::string& directory_bot_jid,
-                              const protocol::IceConfig& ice_config);
+  void ConnectOnNetworkThread(
+      const std::string& username,
+      const std::string& directory_bot_jid,
+      const protocol::IceConfig& ice_config,
+      std::unique_ptr<RegisterSupportHostRequest> register_request);
 
   // Called when the support host registration completes.
   void OnReceivedSupportID(const std::string& support_id,
@@ -154,6 +172,7 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
   std::unique_ptr<ChromotingHostContext> host_context_;
   base::WeakPtr<It2MeHost::Observer> observer_;
   std::unique_ptr<SignalStrategy> signal_strategy_;
+  std::unique_ptr<LogToServer> log_to_server_;
 
   It2MeHostState state_ = kDisconnected;
 
@@ -181,6 +200,9 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
 
   // Tracks the JID of the remote user when in a connecting state.
   std::string connecting_jid_;
+
+  bool enable_dialogs_ = true;
+  bool terminate_upon_input_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(It2MeHost);
 };

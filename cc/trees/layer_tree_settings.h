@@ -36,11 +36,13 @@ class CC_EXPORT LayerTreeSettings {
   bool single_thread_proxy_scheduler = true;
   bool main_frame_before_activation_enabled = false;
   bool using_synchronous_renderer_compositor = false;
+  bool enable_early_damage_check = false;
+  // When |enable_early_damage_check| is true, the early damage check is
+  // performed if one of the last |damaged_frame_limit| frames had no damage.
+  int damaged_frame_limit = 3;
   bool enable_latency_recovery = true;
   bool can_use_lcd_text = true;
-  bool use_distance_field_text = false;
   bool gpu_rasterization_forced = false;
-  bool async_worker_context_enabled = false;
   int gpu_rasterization_msaa_sample_count = 0;
   float gpu_rasterization_skewport_target_time_in_seconds = 0.2f;
   bool create_low_res_tiling = false;
@@ -58,16 +60,18 @@ class CC_EXPORT LayerTreeSettings {
   bool scrollbar_flash_after_any_scroll_update = false;
   bool scrollbar_flash_when_mouse_enter = false;
   SkColor solid_color_scrollbar_color = SK_ColorWHITE;
+  base::TimeDelta scroll_animation_duration_for_testing;
   bool timeout_and_draw_when_animation_checkerboards = true;
-  bool layer_transforms_should_scale_layer_contents = false;
   bool layers_always_allowed_lcd_text = false;
   float minimum_contents_scale = 0.0625f;
   float low_res_contents_scale_factor = 0.25f;
   float top_controls_show_threshold = 0.5f;
   float top_controls_hide_threshold = 0.5f;
-  double background_animation_rate = 1.0;
   gfx::Size default_tile_size;
   gfx::Size max_untiled_layer_size;
+  // If set, indicates the largest tile size we will use for GPU Raster. If not
+  // set, no limit is enforced.
+  gfx::Size max_gpu_raster_tile_size;
   gfx::Size minimum_occlusion_tracking_size;
   // 3000 pixels should give sufficient area for prepainting.
   // Note this value is specified with an ideal contents scale in mind. That
@@ -85,13 +89,11 @@ class CC_EXPORT LayerTreeSettings {
   bool use_occlusion_for_tile_prioritization = false;
   bool use_layer_lists = false;
   int max_staging_buffer_usage_in_bytes = 32 * 1024 * 1024;
-  ManagedMemoryPolicy gpu_memory_policy;
-  ManagedMemoryPolicy software_memory_policy;
+  ManagedMemoryPolicy memory_policy;
   size_t decoded_image_working_set_budget_bytes = 128 * 1024 * 1024;
   int max_preraster_distance_in_screen_pixels = 1000;
-  viz::ResourceFormat preferred_tile_format;
-
-  bool enable_mask_tiling = true;
+  bool use_rgba_4444 = false;
+  bool unpremultiply_and_dither_low_bit_depth_tiles = false;
 
   // If set to true, the compositor may selectively defer image decodes to the
   // Image Decode Service and raster tiles without images until the decode is
@@ -126,11 +128,9 @@ class CC_EXPORT LayerTreeSettings {
   // deadlines.
   bool wait_for_all_pipeline_stages_before_draw = false;
 
-  // On a low-end android devices where the GPU memory is low, we are reducing
-  // the tile width to half in the cases where the content width > screen width.
-  // This doesn't impact CPU tile size, and we should see an obvious GPU memory
-  // saving.
-  bool use_half_width_tiles_for_gpu_rasterization = false;
+  // Determines whether mouse interactions on composited scrollbars are handled
+  // on the compositor thread.
+  bool compositor_threaded_scrollbar_scrolling = false;
 
   // Whether layer tree commits should be made directly to the active
   // tree on the impl thread. If |false| LayerTreeHostImpl creates a
@@ -139,15 +139,35 @@ class CC_EXPORT LayerTreeSettings {
   // produces the active tree as its 'sync tree'.
   bool commit_to_active_tree = true;
 
-  // Whether to use out of process raster.  If true, whenever gpu raster
-  // would have been used, out of process gpu raster will be used instead.
-  bool enable_oop_rasterization = false;
-
-  // Whether images should be animated in the compositor.
-  bool enable_image_animations = false;
+  // Whether image animations can be reset to the beginning to avoid skipping
+  // many frames.
+  bool enable_image_animation_resync = true;
 
   // Whether to use edge anti-aliasing for all layer types that supports it.
   bool enable_edge_anti_aliasing = true;
+
+  // Whether SetViewportSizeAndScale should update the painted scale factor or
+  // the device scale factor.
+  bool use_painted_device_scale_factor = false;
+
+  // Whether a HitTestRegionList should be built from the active layer tree when
+  // submitting a CompositorFrame.
+  bool build_hit_test_data = false;
+
+  // When false, sync tokens are expected to be present, and are verified,
+  // before transfering gpu resources to the display compositor.
+  bool delegated_sync_points_required = true;
+
+  // When true, LayerTreeHostImplClient will be posting a task to call
+  // DidReceiveCompositorFrameAck, used by the Compositor but not the
+  // LayerTreeView.
+  bool send_compositor_frame_ack = true;
+
+  // When false, scroll deltas accumulated on the impl thread are rounded to
+  // integer values when sent to Blink on commit. This flag should eventually
+  // go away and CC should send Blink fractional values:
+  // https://crbug.com/414283.
+  bool commit_fractional_scroll_deltas = false;
 };
 
 }  // namespace cc

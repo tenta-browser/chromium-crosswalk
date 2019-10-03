@@ -17,11 +17,17 @@
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/gpu_export.h"
+#include "ui/gfx/overlay_transform.h"
 
 extern "C" typedef struct _ClientBuffer* ClientBuffer;
+extern "C" typedef struct _ClientGpuFence* ClientGpuFence;
 
 namespace base {
 class Lock;
+}
+
+namespace gfx {
+class GpuFence;
 }
 
 namespace gpu {
@@ -31,26 +37,30 @@ struct SyncToken;
 // Common interface for GpuControl implementations.
 class GPU_EXPORT GpuControl {
  public:
-  GpuControl() {}
-  virtual ~GpuControl() {}
+  GpuControl() = default;
+  virtual ~GpuControl() = default;
 
   virtual void SetGpuControlClient(GpuControlClient* gpu_control_client) = 0;
 
   virtual const Capabilities& GetCapabilities() const = 0;
 
-  // Create an image for a client buffer with the given dimensions and
-  // format. Returns its ID or -1 on error.
+  // Create an image for a client buffer with the given dimensions. Returns its
+  // ID or -1 on error.
   virtual int32_t CreateImage(ClientBuffer buffer,
                               size_t width,
-                              size_t height,
-                              unsigned internalformat) = 0;
+                              size_t height) = 0;
 
   // Destroy an image. The ID must be positive.
   virtual void DestroyImage(int32_t id) = 0;
 
   // Runs |callback| when a query created via glCreateQueryEXT() has cleared
   // passed the glEndQueryEXT() point.
-  virtual void SignalQuery(uint32_t query, const base::Closure& callback) = 0;
+  virtual void SignalQuery(uint32_t query, base::OnceClosure callback) = 0;
+
+  virtual void CreateGpuFence(uint32_t gpu_fence_id, ClientGpuFence source) = 0;
+  virtual void GetGpuFence(
+      uint32_t gpu_fence_id,
+      base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) = 0;
 
   // Sets a lock this will be held on every callback from the GPU
   // implementation. This lock must be set and must be held on every call into
@@ -85,16 +95,6 @@ class GPU_EXPORT GpuControl {
   // must be verified before sending a sync token across channel boundaries.
   virtual uint64_t GenerateFenceSyncRelease() = 0;
 
-  // Returns true if the fence sync is valid.
-  virtual bool IsFenceSyncRelease(uint64_t release) = 0;
-
-  // Returns true if the client has flushed the fence sync.
-  virtual bool IsFenceSyncFlushed(uint64_t release) = 0;
-
-  // Returns true if the service has received the fence sync. Used for verifying
-  // sync tokens.
-  virtual bool IsFenceSyncFlushReceived(uint64_t release) = 0;
-
   // Returns true if the service has released (executed) the fence sync. Some
   // implementations may support calling this from any thread without holding
   // the lock provided by the client.
@@ -102,14 +102,12 @@ class GPU_EXPORT GpuControl {
 
   // Runs |callback| when sync token is signaled.
   virtual void SignalSyncToken(const SyncToken& sync_token,
-                               const base::Closure& callback) = 0;
+                               base::OnceClosure callback) = 0;
 
   // This allows the command buffer proxy to mark the next flush with sync token
-  // dependencies for the gpu scheduler. This is used in addition to the
-  // WaitSyncToken command in the command buffer which is still needed. For
-  // example, the WaitSyncToken command is used to pull texture updates when
-  // used in conjunction with MailboxManagerSync.
-  virtual void WaitSyncTokenHint(const SyncToken& sync_token) = 0;
+  // dependencies for the gpu scheduler, or to block prior to the flush in case
+  // of android webview.
+  virtual void WaitSyncToken(const SyncToken& sync_token) = 0;
 
   // Under some circumstances a sync token may be used which has not been
   // verified to have been flushed. For example, fence syncs queued on the same
@@ -117,8 +115,9 @@ class GPU_EXPORT GpuControl {
   // first so does not need to be flushed.
   virtual bool CanWaitUnverifiedSyncToken(const SyncToken& sync_token) = 0;
 
-  // Indicates whether a snapshot is associated with the next swap.
-  virtual void SetSnapshotRequested() = 0;
+  // Notifies the onscreen surface of the display transform applied to the swaps
+  // from the client.
+  virtual void SetDisplayTransform(gfx::OverlayTransform transform) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GpuControl);

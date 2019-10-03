@@ -6,8 +6,9 @@
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #include "ios/chrome/browser/test/perf_test_with_bvc_ios.h"
-#import "ios/chrome/browser/ui/browser_view_controller.h"
-#import "ios/chrome/browser/ui/browser_view_controller_dependency_factory.h"
+#import "ios/chrome/browser/ui/browser_view/browser_view_controller.h"
+#import "ios/chrome/browser/ui/browser_view/browser_view_controller_dependency_factory.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 
@@ -39,7 +40,7 @@ class NewTabPagePerfTest : public PerfTestWithBVC {
   }
   base::TimeDelta TimedNewTab() {
     base::Time startTime = base::Time::NowFromSystemTime();
-    [[bvc_ dispatcher] openNewTab:[OpenNewTabCommand command]];
+    [[bvc_ dispatcher] openURLInNewTab:[OpenNewTabCommand command]];
     return base::Time::NowFromSystemTime() - startTime;
   }
   void SettleUI() {

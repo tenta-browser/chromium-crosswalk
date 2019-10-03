@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "cc/test/fake_layer_tree_frame_sink.h"
 #include "cc/test/layer_test_common.h"
 #include "cc/trees/layer_tree_frame_sink.h"
@@ -52,14 +53,11 @@ TEST(TextureLayerImplTest, Occlusion) {
 
   LayerTestCommon::LayerImplTest impl;
 
-  auto* gl = impl.layer_tree_frame_sink()->context_provider()->ContextGL();
-
-  gpu::Mailbox mailbox;
-  gl->GenMailboxCHROMIUM(mailbox.name);
   auto resource = viz::TransferableResource::MakeGL(
-      std::move(mailbox), GL_LINEAR, GL_TEXTURE_2D,
-      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO, 0x123,
-                     gpu::CommandBufferId::FromUnsafeValue(0x234), 0x456));
+      gpu::Mailbox::Generate(), GL_LINEAR, GL_TEXTURE_2D,
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                     gpu::CommandBufferId::FromUnsafeValue(0x234), 0x456),
+      layer_size, false /* is_overlay_candidate */);
 
   TextureLayerImpl* texture_layer_impl =
       impl.AddChildToRoot<TextureLayerImpl>();
@@ -67,7 +65,7 @@ TEST(TextureLayerImplTest, Occlusion) {
   texture_layer_impl->SetDrawsContent(true);
   texture_layer_impl->SetTransferableResource(
       resource,
-      viz::SingleReleaseCallback::Create(base::Bind(&IgnoreCallback)));
+      viz::SingleReleaseCallback::Create(base::BindOnce(&IgnoreCallback)));
 
   impl.CalcDrawProps(viewport_size);
 
@@ -113,13 +111,11 @@ TEST(TextureLayerImplTest, ResourceNotFreedOnGpuRasterToggle) {
   gfx::Size layer_size(1000, 1000);
   gfx::Size viewport_size(1000, 1000);
 
-  auto* gl = impl.layer_tree_frame_sink()->context_provider()->ContextGL();
-
   viz::TransferableResource resource;
   resource.is_software = false;
-  gl->GenMailboxCHROMIUM(resource.mailbox_holder.mailbox.name);
+  resource.mailbox_holder.mailbox = gpu::Mailbox::Generate();
   resource.mailbox_holder.sync_token =
-      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO, 0x123,
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
                      gpu::CommandBufferId::FromUnsafeValue(0x234), 0x456);
   resource.mailbox_holder.texture_target = GL_TEXTURE_2D;
 
@@ -128,7 +124,7 @@ TEST(TextureLayerImplTest, ResourceNotFreedOnGpuRasterToggle) {
   texture_layer_impl->SetBounds(layer_size);
   texture_layer_impl->SetDrawsContent(true);
   texture_layer_impl->SetTransferableResource(
-      resource, viz::SingleReleaseCallback::Create(base::Bind(
+      resource, viz::SingleReleaseCallback::Create(base::BindOnce(
                     [](bool* released, const gpu::SyncToken& sync_token,
                        bool lost) { *released = true; },
                     base::Unretained(&released))));

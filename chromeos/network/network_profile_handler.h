@@ -10,12 +10,12 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
-#include "chromeos/dbus/shill_property_changed_observer.h"
+#include "chromeos/dbus/shill/shill_property_changed_observer.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_profile.h"
 
@@ -27,7 +27,7 @@ namespace chromeos {
 
 class NetworkProfileObserver;
 
-class CHROMEOS_EXPORT NetworkProfileHandler
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkProfileHandler
     : public ShillPropertyChangedObserver {
  public:
   typedef std::vector<NetworkProfile> ProfileList;
@@ -80,7 +80,7 @@ class CHROMEOS_EXPORT NetworkProfileHandler
   // properties are retrieved and the path is still in this set, a new profile
   // object is created.
   std::set<std::string> pending_profile_creations_;
-  base::ObserverList<NetworkProfileObserver, true> observers_;
+  base::ObserverList<NetworkProfileObserver, true>::Unchecked observers_;
 
   // For Shill client callbacks
   base::WeakPtrFactory<NetworkProfileHandler> weak_ptr_factory_;

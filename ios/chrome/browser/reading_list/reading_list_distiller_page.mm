@@ -10,12 +10,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/favicon/ios/web_favicon_driver.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "ios/chrome/browser/reading_list/favicon_web_state_dispatcher_impl.h"
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/ssl_status.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/cert/cert_status_flags.h"
@@ -178,8 +178,8 @@ void ReadingListDistillerPage::OnLoadURLDone(
       weak_ptr_factory_.GetWeakPtr();
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&ReadingListDistillerPage::DelayedOnLoadURLDone, weak_this,
-                 delayed_task_id_),
+      base::BindOnce(&ReadingListDistillerPage::DelayedOnLoadURLDone, weak_this,
+                     delayed_task_id_),
       base::TimeDelta::FromSeconds(kPageLoadDelayInSeconds));
 }
 

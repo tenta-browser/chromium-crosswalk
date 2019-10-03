@@ -6,14 +6,12 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/screen_orientation_delegate.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebLockOrientationError.h"
 
 namespace content {
 
@@ -111,7 +109,7 @@ void ScreenOrientationProvider::OnOrientationChange() {
 void ScreenOrientationProvider::NotifyLockResult(
     ScreenOrientationLockResult result) {
   if (!pending_callback_.is_null())
-    base::ResetAndReturn(&pending_callback_).Run(result);
+    std::move(pending_callback_).Run(result);
 
   pending_lock_orientation_.reset();
 }
@@ -119,6 +117,10 @@ void ScreenOrientationProvider::NotifyLockResult(
 void ScreenOrientationProvider::SetDelegate(
     ScreenOrientationDelegate* delegate) {
   delegate_ = delegate;
+}
+
+ScreenOrientationDelegate* ScreenOrientationProvider::GetDelegateForTesting() {
+  return delegate_;
 }
 
 void ScreenOrientationProvider::DidToggleFullscreenModeForTab(

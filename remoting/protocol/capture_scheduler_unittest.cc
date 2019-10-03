@@ -8,9 +8,10 @@
 
 #include <utility>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/timer/mock_timer.h"
 #include "remoting/proto/video.pb.h"
@@ -31,9 +32,8 @@ class CaptureSchedulerTest : public testing::Test {
         base::Bind(&CaptureSchedulerTest::DoCapture, base::Unretained(this))));
     scheduler_->set_minimum_interval(
         base::TimeDelta::FromMilliseconds(kMinumumFrameIntervalMs));
-    tick_clock_ = new base::SimpleTestTickClock();
-    scheduler_->SetTickClockForTest(base::WrapUnique(tick_clock_));
-    capture_timer_ = new base::MockTimer(false, false);
+    scheduler_->SetTickClockForTest(&tick_clock_);
+    capture_timer_ = new base::MockOneShotTimer();
     scheduler_->SetTimerForTest(base::WrapUnique(capture_timer_));
     scheduler_->Start();
   }
@@ -53,7 +53,7 @@ class CaptureSchedulerTest : public testing::Test {
       base::TimeDelta expected_delay_between_frames) {
     capture_timer_->Fire();
     CheckCaptureCalled();
-    tick_clock_->Advance(capture_delay);
+    tick_clock_.Advance(capture_delay);
     scheduler_->OnCaptureCompleted();
 
     VideoPacket packet;
@@ -73,27 +73,28 @@ class CaptureSchedulerTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   std::unique_ptr<CaptureScheduler> scheduler_;
 
+  base::SimpleTestTickClock tick_clock_;
+
   // Owned by |scheduler_|.
-  base::SimpleTestTickClock* tick_clock_;
-  base::MockTimer* capture_timer_;
+  base::MockOneShotTimer* capture_timer_;
 
   bool capture_called_;
 };
 
 TEST_F(CaptureSchedulerTest, SingleSampleSameTimes) {
-  const int kTestResults[][arraysize(kTestInputs)] = {
-    { 400, 200, 120, 80, 50, 120, 240, 320 }, // One core.
-    { 200, 100, 60, 50, 50, 60, 120, 160 },   // Two cores.
-    { 100, 50, 50, 50, 50, 50, 60, 80 },      // Four cores.
-    { 50, 50, 50, 50, 50, 50, 50, 50 }        // Eight cores.
+  const int kTestResults[][base::size(kTestInputs)] = {
+      {400, 200, 120, 80, 50, 120, 240, 320},  // One core.
+      {200, 100, 60, 50, 50, 60, 120, 160},    // Two cores.
+      {100, 50, 50, 50, 50, 50, 60, 80},       // Four cores.
+      {50, 50, 50, 50, 50, 50, 50, 50}         // Eight cores.
   };
 
-  for (size_t i = 0; i < arraysize(kTestResults); ++i) {
-    for (size_t j = 0; j < arraysize(kTestInputs); ++j) {
+  for (size_t i = 0; i < base::size(kTestResults); ++i) {
+    for (size_t j = 0; j < base::size(kTestInputs); ++j) {
       InitScheduler();
       scheduler_->SetNumOfProcessorsForTest(1 << i);
 
@@ -106,43 +107,43 @@ TEST_F(CaptureSchedulerTest, SingleSampleSameTimes) {
 }
 
 TEST_F(CaptureSchedulerTest, SingleSampleDifferentTimes) {
-  const int kTestResults[][arraysize(kTestInputs)] = {
-    { 360, 220, 120, 60, 60, 120, 220, 360 }, // One core.
-    { 180, 110, 60, 50, 50, 60, 110, 180 },   // Two cores.
-    { 90, 55, 50, 50, 50, 50, 55, 90 },       // Four cores.
-    { 50, 50, 50, 50, 50, 50, 50, 50 }        // Eight cores.
+  const int kTestResults[][base::size(kTestInputs)] = {
+      {360, 220, 120, 60, 60, 120, 220, 360},  // One core.
+      {180, 110, 60, 50, 50, 60, 110, 180},    // Two cores.
+      {90, 55, 50, 50, 50, 50, 55, 90},        // Four cores.
+      {50, 50, 50, 50, 50, 50, 50, 50}         // Eight cores.
   };
 
-  for (size_t i = 0; i < arraysize(kTestResults); ++i) {
-    for (size_t j = 0; j < arraysize(kTestInputs); ++j) {
+  for (size_t i = 0; i < base::size(kTestResults); ++i) {
+    for (size_t j = 0; j < base::size(kTestInputs); ++j) {
       InitScheduler();
       scheduler_->SetNumOfProcessorsForTest(1 << i);
 
       SimulateSingleFrameCapture(
           base::TimeDelta::FromMilliseconds(kTestInputs[j]),
           base::TimeDelta::FromMilliseconds(
-              kTestInputs[arraysize(kTestInputs) - 1 - j]),
+              kTestInputs[base::size(kTestInputs) - 1 - j]),
           base::TimeDelta::FromMilliseconds(kTestResults[i][j]));
     }
   }
 }
 
 TEST_F(CaptureSchedulerTest, RollingAverageDifferentTimes) {
-  const int kTestResults[][arraysize(kTestInputs)] = {
-    { 360, 290, 233, 133, 80, 80, 133, 233 }, // One core.
-    { 180, 145, 116, 66, 50, 50, 66, 116 },   // Two cores.
-    { 90, 72, 58, 50, 50, 50, 50, 58 },       // Four cores.
-    { 50, 50, 50, 50, 50, 50, 50, 50 }        // Eight cores.
+  const int kTestResults[][base::size(kTestInputs)] = {
+      {360, 290, 233, 133, 80, 80, 133, 233},  // One core.
+      {180, 145, 116, 66, 50, 50, 66, 116},    // Two cores.
+      {90, 72, 58, 50, 50, 50, 50, 58},        // Four cores.
+      {50, 50, 50, 50, 50, 50, 50, 50}         // Eight cores.
   };
 
-  for (size_t i = 0; i < arraysize(kTestResults); ++i) {
+  for (size_t i = 0; i < base::size(kTestResults); ++i) {
     InitScheduler();
     scheduler_->SetNumOfProcessorsForTest(1 << i);
-    for (size_t j = 0; j < arraysize(kTestInputs); ++j) {
+    for (size_t j = 0; j < base::size(kTestInputs); ++j) {
       SimulateSingleFrameCapture(
           base::TimeDelta::FromMilliseconds(kTestInputs[j]),
           base::TimeDelta::FromMilliseconds(
-              kTestInputs[arraysize(kTestInputs) - 1 - j]),
+              kTestInputs[base::size(kTestInputs) - 1 - j]),
           base::TimeDelta::FromMilliseconds(kTestResults[i][j]));
     }
   }

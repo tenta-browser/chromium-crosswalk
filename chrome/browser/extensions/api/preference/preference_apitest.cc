@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
@@ -19,7 +20,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
@@ -33,9 +34,9 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
-class ExtensionPreferenceApiTest : public ExtensionApiTest {
+class ExtensionPreferenceApiTest : public extensions::ExtensionApiTest {
  protected:
   ExtensionPreferenceApiTest() : profile_(NULL) {}
 
@@ -46,7 +47,9 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     ASSERT_TRUE(pref);
     EXPECT_TRUE(pref->IsExtensionControlled());
     EXPECT_TRUE(prefs->GetBoolean(prefs::kAlternateErrorPagesEnabled));
-    EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillEnabled));
+    EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillEnabledDeprecated));
+    EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled));
+    EXPECT_TRUE(prefs->GetBoolean(autofill::prefs::kAutofillProfileEnabled));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kBlockThirdPartyCookies));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableReferrers));
@@ -66,7 +69,11 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     ASSERT_TRUE(pref);
     EXPECT_FALSE(pref->IsExtensionControlled());
     EXPECT_FALSE(prefs->GetBoolean(prefs::kAlternateErrorPagesEnabled));
-    EXPECT_FALSE(prefs->GetBoolean(autofill::prefs::kAutofillEnabled));
+    EXPECT_FALSE(
+        prefs->GetBoolean(autofill::prefs::kAutofillEnabledDeprecated));
+    EXPECT_FALSE(
+        prefs->GetBoolean(autofill::prefs::kAutofillCreditCardEnabled));
+    EXPECT_FALSE(prefs->GetBoolean(autofill::prefs::kAutofillProfileEnabled));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kBlockThirdPartyCookies));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableReferrers));
@@ -80,7 +87,7 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
   }
 
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
 
     // The browser might get closed later (and therefore be destroyed), so we
     // save the profile.
@@ -101,7 +108,7 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
                                   base::Unretained(&keep_alive_), nullptr));
     content::RunAllPendingInMessageLoop();
 
-    ExtensionApiTest::TearDownOnMainThread();
+    extensions::ExtensionApiTest::TearDownOnMainThread();
   }
 
   Profile* profile_;
@@ -117,7 +124,9 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
 IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, MAYBE_Standard) {
   PrefService* prefs = profile_->GetPrefs();
   prefs->SetBoolean(prefs::kAlternateErrorPagesEnabled, false);
-  prefs->SetBoolean(autofill::prefs::kAutofillEnabled, false);
+  prefs->SetBoolean(autofill::prefs::kAutofillEnabledDeprecated, false);
+  prefs->SetBoolean(autofill::prefs::kAutofillCreditCardEnabled, false);
+  prefs->SetBoolean(autofill::prefs::kAutofillProfileEnabled, false);
   prefs->SetBoolean(prefs::kBlockThirdPartyCookies, true);
   prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, false);
   prefs->SetBoolean(prefs::kEnableReferrers, false);
@@ -127,12 +136,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, MAYBE_Standard) {
   prefs->SetBoolean(password_manager::prefs::kCredentialsEnableService, false);
   prefs->SetBoolean(prefs::kSafeBrowsingEnabled, false);
   prefs->SetBoolean(prefs::kSearchSuggestEnabled, false);
-#if BUILDFLAG(ENABLE_WEBRTC)
   prefs->SetBoolean(prefs::kWebRTCMultipleRoutesEnabled, false);
   prefs->SetBoolean(prefs::kWebRTCNonProxiedUdpEnabled, false);
   prefs->SetString(prefs::kWebRTCIPHandlingPolicy,
                    content::kWebRTCIPHandlingDefaultPublicInterfaceOnly);
-#endif
 
   const char kExtensionPath[] = "preference/standard";
 
@@ -343,7 +350,55 @@ IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, OnChangeSplit) {
   listener_incognito10.Reply("ok");
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
-  EXPECT_TRUE(catcher_incognito.GetNextResult()) << catcher.message();
+  EXPECT_TRUE(catcher_incognito.GetNextResult()) << catcher_incognito.message();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest,
+                       OnChangeSplitWithNoOTRProfile) {
+  PrefService* prefs = profile_->GetPrefs();
+  prefs->SetBoolean(prefs::kBlockThirdPartyCookies, true);
+
+  extensions::ResultCatcher catcher;
+  ExtensionTestMessageListener loaded_incognito_test_listener(
+      "incognito loaded", false);
+
+  ExtensionTestMessageListener change_pref_listener("change pref value", false);
+
+  ASSERT_TRUE(
+      LoadExtensionIncognito(test_data_dir_.AppendASCII("preference")
+                                 .AppendASCII("onchange_split_regular_only")));
+
+  ASSERT_TRUE(change_pref_listener.WaitUntilSatisfied());
+  prefs->SetBoolean(prefs::kBlockThirdPartyCookies, false);
+
+  EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
+  EXPECT_FALSE(loaded_incognito_test_listener.was_satisfied());
+  EXPECT_FALSE(profile_->HasOffTheRecordProfile());
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest,
+                       OnChangeSplitWithoutIncognitoAccess) {
+  PrefService* prefs = profile_->GetPrefs();
+  prefs->SetBoolean(prefs::kBlockThirdPartyCookies, true);
+
+  // Open an incognito window.
+  OpenURLOffTheRecord(profile_, GURL("chrome://newtab/"));
+  EXPECT_TRUE(profile_->HasOffTheRecordProfile());
+
+  extensions::ResultCatcher catcher;
+  ExtensionTestMessageListener loaded_incognito_test_listener(
+      "incognito loaded", false);
+
+  ExtensionTestMessageListener change_pref_listener("change pref value", false);
+
+  ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("preference")
+                                .AppendASCII("onchange_split_regular_only")));
+
+  ASSERT_TRUE(change_pref_listener.WaitUntilSatisfied());
+  prefs->SetBoolean(prefs::kBlockThirdPartyCookies, false);
+
+  EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
+  EXPECT_FALSE(loaded_incognito_test_listener.was_satisfied());
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, DataReductionProxy) {

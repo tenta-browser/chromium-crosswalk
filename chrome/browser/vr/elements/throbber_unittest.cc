@@ -4,7 +4,8 @@
 
 #include "chrome/browser/vr/elements/throbber.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "cc/animation/transform_operation.h"
 #include "cc/animation/transform_operations.h"
 #include "chrome/browser/vr/elements/ui_element.h"
@@ -24,20 +25,21 @@ constexpr float kInitialOpacity = 0.8;
 
 TEST(Throbber, CircleGrowAnimation) {
   UiScene scene;
-  auto element = base::MakeUnique<Throbber>();
+  scene.RunFirstFrameForTest();
+  auto element = std::make_unique<Throbber>();
   element->SetSize(kTestSize, kTestSize);
-  element->set_corner_radius(kTestSize / 2);
+  element->SetCornerRadius(kTestSize / 2);
   element->SetScale(kInitialScale, kInitialScale, kInitialScale);
   element->SetOpacity(kInitialOpacity);
   Throbber* throbber = element.get();
   scene.AddUiElement(kRoot, std::move(element));
 
   throbber->SetCircleGrowAnimationEnabled(true);
-  scene.OnBeginFrame(MsToTicks(1), kForwardVector);
+  scene.OnBeginFrame(MsToTicks(1), kStartHeadPose);
   EXPECT_TRUE(throbber->IsAnimatingProperty(CIRCLE_GROW));
 
   // Half way through animation.
-  scene.OnBeginFrame(MsToTicks(501), kForwardVector);
+  scene.OnBeginFrame(MsToTicks(501), kStartHeadPose);
   EXPECT_FLOAT_EQ(throbber->opacity(), kInitialOpacity / 2);
   EXPECT_FLOAT_EQ(
       throbber->GetTargetTransform().at(UiElement::kScaleIndex).scale.x,

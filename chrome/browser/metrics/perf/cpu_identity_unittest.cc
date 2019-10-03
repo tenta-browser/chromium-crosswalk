@@ -10,11 +10,13 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(CpuIdentityTest, IntelUarchTableIsSorted) {
+namespace metrics {
+
+TEST(CpuIdentityTest, CpuUarchTableIsSorted) {
   EXPECT_TRUE(std::is_sorted(
-      internal::kIntelUarchTable,
-      internal::kIntelUarchTableEnd,
-      internal::IntelUarchTableCmp));
+      internal::kCpuUarchTable,
+      internal::kCpuUarchTableEnd,
+      internal::CpuUarchTableCmp));
 }
 
 TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_IvyBridge) {
@@ -24,7 +26,7 @@ TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_IvyBridge) {
   cpuid.family = 0x06;
   cpuid.model = 0x3a;  // IvyBridge
   cpuid.model_name = "";
-  EXPECT_EQ("IvyBridge", GetIntelUarch(cpuid));
+  EXPECT_EQ("IvyBridge", GetCpuUarch(cpuid));
 }
 
 TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_SandyBridge) {
@@ -34,7 +36,27 @@ TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_SandyBridge) {
   cpuid.family = 0x06;
   cpuid.model = 0x2a;  // SandyBridge
   cpuid.model_name = "";
-  EXPECT_EQ("SandyBridge", GetIntelUarch(cpuid));
+  EXPECT_EQ("SandyBridge", GetCpuUarch(cpuid));
+}
+
+TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_GoldmontPlus) {
+  CPUIdentity cpuid;
+  cpuid.arch = "x86_64";
+  cpuid.vendor = "GenuineIntel";
+  cpuid.family = 0x06;
+  cpuid.model = 0x7a;  // Gemini Lake
+  cpuid.model_name = "";
+  EXPECT_EQ("GoldmontPlus", GetCpuUarch(cpuid));
+}
+
+TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_Excavator) {
+  CPUIdentity cpuid;
+  cpuid.arch = "x86_64";
+  cpuid.vendor = "AuthenticAMD";
+  cpuid.family = 0x15;
+  cpuid.model = 0x70;  // Excavator
+  cpuid.model_name = "";
+  EXPECT_EQ("Excavator", GetCpuUarch(cpuid));
 }
 
 TEST(CpuIdentityTest, DefaultCommandsBasedOnArch_x86_32) {
@@ -44,17 +66,17 @@ TEST(CpuIdentityTest, DefaultCommandsBasedOnArch_x86_32) {
   cpuid.family = 0x06;
   cpuid.model = 0x2f;  // Westmere
   cpuid.model_name = "";
-  EXPECT_EQ("Westmere", GetIntelUarch(cpuid));
+  EXPECT_EQ("Westmere", GetCpuUarch(cpuid));
 }
 
 TEST(CpuIdentityTest, DefaultCommandsBasedOnArch_Unknown) {
   CPUIdentity cpuid;
   cpuid.arch = "x86_64";
-  cpuid.vendor = "NotIntel";
+  cpuid.vendor = "NotIntelOrAmd";
   cpuid.family = 0;
   cpuid.model = 0;
   cpuid.model_name = "";
-  EXPECT_EQ("", GetIntelUarch(cpuid));
+  EXPECT_EQ("", GetCpuUarch(cpuid));
 }
 
 TEST(CpuIdentityTest, SimplifyCPUModelName) {
@@ -64,3 +86,5 @@ TEST(CpuIdentityTest, SimplifyCPUModelName) {
   EXPECT_EQ("armv7-processor-rev-3-(v7l)",
             SimplifyCPUModelName("ARMv7 Processor rev 3 (v7l)"));
 }
+
+}  // namespace metrics

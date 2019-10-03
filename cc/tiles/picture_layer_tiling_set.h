@@ -7,11 +7,10 @@
 
 #include <stddef.h>
 
-#include <list>
+#include <deque>
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
 #include "cc/base/region.h"
 #include "cc/tiles/picture_layer_tiling.h"
 #include "ui/gfx/geometry/size.h"
@@ -48,7 +47,10 @@ class CC_EXPORT PictureLayerTilingSet {
       int skewport_extrapolation_limit_in_screen_pixels,
       float max_preraster_distance);
 
+  PictureLayerTilingSet(const PictureLayerTilingSet&) = delete;
   ~PictureLayerTilingSet();
+
+  PictureLayerTilingSet& operator=(const PictureLayerTilingSet&) = delete;
 
   const PictureLayerTilingClient* client() const { return client_; }
 
@@ -111,6 +113,9 @@ class CC_EXPORT PictureLayerTilingSet {
 
   // Removes all tilings with a contents scale key > |maximum_scale_key|.
   void RemoveTilingsAboveScaleKey(float maximum_scale);
+
+  // Removes all resources (tilings, raster source).
+  void ReleaseAllResources();
 
   // Remove all tilings.
   void RemoveAllTilings();
@@ -247,8 +252,8 @@ class CC_EXPORT PictureLayerTilingSet {
   PictureLayerTilingClient* client_;
   const float max_preraster_distance_;
   // State saved for computing velocities based on finite differences.
-  // .front() of the list refers to the most recent FrameVisibleRect.
-  std::list<FrameVisibleRect> visible_rect_history_;
+  // .front() of the deque refers to the most recent FrameVisibleRect.
+  std::deque<FrameVisibleRect> visible_rect_history_;
   StateSinceLastTilePriorityUpdate state_since_last_tile_priority_update_;
 
   scoped_refptr<RasterSource> raster_source_;
@@ -259,9 +264,6 @@ class CC_EXPORT PictureLayerTilingSet {
   gfx::Rect eventually_rect_in_layer_space_;
 
   friend class Iterator;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PictureLayerTilingSet);
 };
 
 }  // namespace cc

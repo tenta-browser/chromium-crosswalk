@@ -9,9 +9,11 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/time/time.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/dns/dns_query.h"
@@ -32,6 +34,8 @@ class RecordParsed;
 // time out after a reasonable number of seconds.
 class NET_EXPORT MDnsTransaction {
  public:
+  static const base::TimeDelta kTransactionTimeout;
+
   // Used to signify what type of result the transaction has received.
   enum Result {
     // Passed whenever a record is found.
@@ -86,6 +90,10 @@ class NET_EXPORT MDnsTransaction {
 // A listener listens for updates regarding a specific record or set of records.
 // Created by the MDnsClient (see |MDnsClient::CreateListener|) and used to keep
 // track of listeners.
+//
+// TODO(ericorth@chromium.org): Consider moving this inside MDnsClient to better
+// organize the namespace and avoid confusion with
+// net::HostResolver::MdnsListener.
 class NET_EXPORT MDnsListener {
  public:
   // Used in the MDnsListener delegate to signify what type of change has been
@@ -163,7 +171,7 @@ class NET_EXPORT MDnsClient {
       int flags,
       const MDnsTransaction::ResultCallback& callback) = 0;
 
-  virtual bool StartListening(MDnsSocketFactory* factory) = 0;
+  virtual int StartListening(MDnsSocketFactory* factory) = 0;
 
   // Do not call this inside callbacks from related MDnsListener and
   // MDnsTransaction objects.
@@ -174,7 +182,16 @@ class NET_EXPORT MDnsClient {
   static std::unique_ptr<MDnsClient> CreateDefault();
 };
 
-NET_EXPORT IPEndPoint GetMDnsIPEndPoint(AddressFamily address_family);
+// Gets the endpoint for the multicast group a socket should join to receive
+// MDNS messages. Such sockets should also bind to the endpoint from
+// GetMDnsReceiveEndPoint().
+//
+// This is also the endpoint messages should be sent to to send MDNS messages.
+NET_EXPORT IPEndPoint GetMDnsGroupEndPoint(AddressFamily address_family);
+
+// Gets the endpoint sockets should be bound to to receive MDNS messages. Such
+// sockets should also join the multicast group from GetMDnsGroupEndPoint().
+NET_EXPORT IPEndPoint GetMDnsReceiveEndPoint(AddressFamily address_family);
 
 typedef std::vector<std::pair<uint32_t, AddressFamily>>
     InterfaceIndexFamilyList;

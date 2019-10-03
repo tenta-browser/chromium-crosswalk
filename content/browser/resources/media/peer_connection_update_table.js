@@ -89,10 +89,13 @@ var PeerConnectionUpdateTable = (function() {
         onRenegotiationNeeded: 'negotiationneeded',
         signalingStateChange: 'signalingstatechange',
         iceGatheringStateChange: 'icegatheringstatechange',
+        legacyIceConnectionStateChange: 'iceconnectionstatechange (legacy)',
         iceConnectionStateChange: 'iceconnectionstatechange',
+        connectionStateChange: 'connectionstatechange',
         onIceCandidate: 'icecandidate',
         stop: 'close'
-      }[update.type] || update.type;
+      }[update.type] ||
+          update.type;
 
       if (update.value.length == 0) {
         row.innerHTML += '<td>' + type + '</td>';
@@ -102,14 +105,13 @@ var PeerConnectionUpdateTable = (function() {
       if (update.type === 'onIceCandidate' ||
           update.type === 'addIceCandidate') {
         // extract ICE candidate type from the field following typ.
-        var candidateType = update.value.match(
-          /(?: typ )(host|srflx|relay)/)[1];
+        var candidateType = update.value.match(/(?: typ )(host|srflx|relay)/);
         if (candidateType) {
-          type += ' (' + candidateType + ')';
+          type += ' (' + candidateType[1] + ')';
         }
       }
-      row.innerHTML += '<td><details><summary>' + type +
-          '</summary></details></td>';
+      row.innerHTML +=
+          '<td><details><summary>' + type + '</summary></details></td>';
 
       var valueContainer = document.createElement('pre');
       var details = row.cells[1].childNodes[0];
@@ -136,13 +138,15 @@ var PeerConnectionUpdateTable = (function() {
           ICEConnectionStateFailed: 'failed',
           ICEConnectionStateDisconnected: 'disconnected',
           ICEConnectionStateClosed: 'closed',
-        }[value] || value;
+        }[value] ||
+            value;
       } else if (update.type === 'iceGatheringStateChange') {
         value = {
           ICEGatheringStateNew: 'new',
           ICEGatheringStateGathering: 'gathering',
           ICEGatheringStateComplete: 'complete',
-        }[value] || value;
+        }[value] ||
+            value;
       } else if (update.type === 'signalingStateChange') {
         value = {
           SignalingStateStable: 'stable',
@@ -151,7 +155,8 @@ var PeerConnectionUpdateTable = (function() {
           SignalingStateHaveLocalPrAnswer: 'have-local-pranswer',
           SignalingStateHaveRemotePrAnswer: 'have-remote-pranswer',
           SignalingStateClosed: 'closed',
-        }[value] || value;
+        }[value] ||
+            value;
       }
 
       valueContainer.textContent = value;

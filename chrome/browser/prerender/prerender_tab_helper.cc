@@ -17,14 +17,10 @@
 
 using content::WebContents;
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(prerender::PrerenderTabHelper);
-
 namespace prerender {
 
 PrerenderTabHelper::PrerenderTabHelper(content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents),
-      origin_(ORIGIN_NONE),
-      weak_factory_(this) {}
+    : content::WebContentsObserver(web_contents), origin_(ORIGIN_NONE) {}
 
 PrerenderTabHelper::~PrerenderTabHelper() {
 }
@@ -101,5 +97,7 @@ void PrerenderTabHelper::PrerenderSwappedIn() {
   DCHECK(!IsPrerendering());
   swap_ticks_ = GetTimeTicksFromPrerenderManager();
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(PrerenderTabHelper)
 
 }  // namespace prerender

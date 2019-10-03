@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,8 +5,11 @@
 """The 'grit xmb' tool.
 """
 
+from __future__ import print_function
+
 import getopt
 import os
+import sys
 
 from xml.sax import saxutils
 
@@ -20,7 +22,7 @@ from grit.tool import interface
 
 # Used to collapse presentable content to determine if
 # xml:space="preserve" is needed.
-_WHITESPACES_REGEX = lazy_re.compile(ur'\s\s*')
+_WHITESPACES_REGEX = lazy_re.compile(r'\s\s*')
 
 
 # See XmlEscape below.
@@ -165,12 +167,14 @@ Other options:
     return 'Exports all translateable messages into an XMB file.'
 
   def Run(self, opts, args):
+    os.environ['cwd'] = os.getcwd()
+
     self.SetOptions(opts)
 
     limit_file = None
     limit_is_grd = False
     limit_file_dir = None
-    own_opts, args = getopt.getopt(args, 'l:D:ih')
+    own_opts, args = getopt.getopt(args, 'l:D:ih', ('help',))
     for key, val in own_opts:
       if key == '-l':
         limit_file = open(val, 'r')
@@ -186,13 +190,16 @@ Other options:
       elif key == '-E':
         (env_name, env_value) = val.split('=', 1)
         os.environ[env_name] = env_value
+      elif key == '--help':
+        self.ShowUsage()
+        sys.exit(0)
     if not len(args) == 1:
-      print ('grit xmb takes exactly one argument, the path to the XMB file '
-             'to output.')
+      print('grit xmb takes exactly one argument, the path to the XMB file '
+            'to output.')
       return 2
 
     xmb_path = args[0]
-    res_tree = grd_reader.Parse(opts.input, debug=opts.extra_verbose)
+    res_tree = grd_reader.Parse(opts.input, debug=opts.extra_verbose, defines=self.defines)
     res_tree.SetOutputLanguage('en')
     res_tree.SetDefines(self.defines)
     res_tree.OnlyTheseTranslations([])
@@ -203,7 +210,7 @@ Other options:
         res_tree, output_file, limit_file, limit_is_grd, limit_file_dir)
     if limit_file:
       limit_file.close()
-    print "Wrote %s" % xmb_path
+    print("Wrote %s" % xmb_path)
 
   def Process(self, res_tree, output_file, limit_file=None, limit_is_grd=False,
               dir=None):

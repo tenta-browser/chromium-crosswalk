@@ -42,8 +42,8 @@ class FakeDisplaySchedulerClient : public DisplaySchedulerClient {
     return success;
   }
 
-  bool SurfaceHasUndrawnFrame(const SurfaceId& surface_id) const override {
-    return base::ContainsKey(undrawn_surfaces_, surface_id);
+  bool SurfaceHasUnackedFrame(const SurfaceId& surface_id) const override {
+    return base::Contains(undrawn_surfaces_, surface_id);
   }
 
   bool SurfaceDamaged(const SurfaceId& surface_id,
@@ -51,7 +51,7 @@ class FakeDisplaySchedulerClient : public DisplaySchedulerClient {
     return false;
   }
 
-  void SurfaceDiscarded(const SurfaceId& surface_id) override {}
+  void SurfaceDestroyed(const SurfaceId& surface_id) override {}
 
   void DidFinishFrame(const BeginFrameAck& ack) override {
     last_begin_frame_ack_ = ack;
@@ -114,6 +114,10 @@ class TestDisplayScheduler : public DisplayScheduler {
 
   bool has_pending_surfaces() { return has_pending_surfaces_; }
 
+  bool is_swap_throttled() const {
+    return pending_swaps_ >= max_pending_swaps_;
+  }
+
  protected:
   int scheduler_begin_frame_deadline_count_;
 };
@@ -123,6 +127,7 @@ class DisplaySchedulerTest : public testing::Test {
   explicit DisplaySchedulerTest(bool wait_for_all_surfaces_before_draw = false)
       : fake_begin_frame_source_(0.f, false),
         task_runner_(new base::NullTaskRunner),
+        surface_manager_(nullptr, 4u),
         scheduler_(&fake_begin_frame_source_,
                    &surface_manager_,
                    task_runner_.get(),
@@ -137,7 +142,7 @@ class DisplaySchedulerTest : public testing::Test {
     surface_manager_.RemoveObserver(&scheduler_);
   }
 
-  void SetUp() override { scheduler_.SetRootSurfaceResourcesLocked(false); }
+  void SetUp() override { scheduler_.SetRootFrameMissing(false); }
 
   void AdvanceTimeAndBeginFrameForTest(
       const std::vector<SurfaceId>& observing_surfaces) {
@@ -162,8 +167,7 @@ class DisplaySchedulerTest : public testing::Test {
   DisplayScheduler& scheduler() { return scheduler_; }
   BeginFrameAck AckForCurrentBeginFrame() {
     DCHECK(last_begin_frame_args_.IsValid());
-    return BeginFrameAck(last_begin_frame_args_.source_id,
-                         last_begin_frame_args_.sequence_number, true);
+    return BeginFrameAck(last_begin_frame_args_, true);
   }
 
   FakeExternalBeginFrameSource fake_begin_frame_source_;
@@ -202,7 +206,7 @@ TEST_F(DisplaySchedulerTest, ResizeHasLateDeadlineUntilNewRootSurface) {
   EXPECT_GT(late_deadline, scheduler_.DesiredBeginFrameDeadlineTimeForTest());
   scheduler_.DisplayResized();
   EXPECT_EQ(late_deadline, scheduler_.DesiredBeginFrameDeadlineTimeForTest());
-  scheduler_.OnSurfaceDestroyed(root_surface_id1);
+  scheduler_.OnSurfaceMarkedForDestruction(root_surface_id1);
   scheduler_.SetNewRootSurface(root_surface_id2);
   EXPECT_GE(now_src().NowTicks(),
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
@@ -287,8 +291,7 @@ TEST_F(DisplaySchedulerTest, SurfaceDamaged) {
   EXPECT_GE(now_src().NowTicks(),
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
   scheduler_.BeginFrameDeadlineForTest();
-  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_.source_id,
-                          last_begin_frame_args_.sequence_number, true),
+  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_, true),
             client_.last_begin_frame_ack());
 
   // Set both surface 1 and 2 as active via SurfaceDamageExpected().
@@ -304,8 +307,7 @@ TEST_F(DisplaySchedulerTest, SurfaceDamaged) {
   EXPECT_GE(now_src().NowTicks(),
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
   scheduler_.BeginFrameDeadlineForTest();
-  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_.source_id,
-                          last_begin_frame_args_.sequence_number, true),
+  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_, true),
             client_.last_begin_frame_ack());
 
   // Surface damage with |!has_damage| triggers early deadline if other damage
@@ -334,8 +336,7 @@ TEST_F(DisplaySchedulerTest, SurfaceDamaged) {
   EXPECT_LT(now_src().NowTicks(),
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
   scheduler_.BeginFrameDeadlineForTest();
-  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_.source_id,
-                          last_begin_frame_args_.sequence_number, false),
+  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_, false),
             client_.last_begin_frame_ack());
 
   // System should be idle now.
@@ -592,7 +593,7 @@ TEST_F(DisplaySchedulerTest, ResizeCausesSwap) {
   EXPECT_EQ(2, client_.draw_and_swap_count());
 }
 
-TEST_F(DisplaySchedulerTest, RootSurfaceResourcesLocked) {
+TEST_F(DisplaySchedulerTest, RootFrameMissing) {
   SurfaceId root_surface_id(
       kArbitraryFrameSinkId,
       LocalSurfaceId(1, base::UnguessableToken::Create()));
@@ -612,26 +613,30 @@ TEST_F(DisplaySchedulerTest, RootSurfaceResourcesLocked) {
   scheduler_.BeginFrameDeadlineForTest();
   EXPECT_EQ(1, client_.draw_and_swap_count());
 
-  // Deadline triggers late while root resources are locked.
+  // Deadline triggers late while root frame is missing.
   AdvanceTimeAndBeginFrameForTest({sid1});
   late_deadline = now_src().NowTicks() + BeginFrameArgs::DefaultInterval();
   SurfaceDamaged(sid1);
   EXPECT_GT(late_deadline, scheduler_.DesiredBeginFrameDeadlineTimeForTest());
-  scheduler_.SetRootSurfaceResourcesLocked(true);
+  scheduler_.SetRootFrameMissing(true);
   EXPECT_EQ(late_deadline, scheduler_.DesiredBeginFrameDeadlineTimeForTest());
 
-  // Deadline does not DrawAndSwap while root resources are locked.
+  // Deadline does not DrawAndSwap while root frame is missing.
   EXPECT_EQ(1, client_.draw_and_swap_count());
   SurfaceDamaged(sid1);
   scheduler_.BeginFrameDeadlineForTest();
   EXPECT_EQ(1, client_.draw_and_swap_count());
 
-  //  Deadline triggers normally when root resources are unlocked.
+  //  Deadline triggers normally when root frame is not missing.
   AdvanceTimeAndBeginFrameForTest({sid1, root_surface_id});
-  late_deadline = now_src().NowTicks() + BeginFrameArgs::DefaultInterval();
+  EXPECT_FALSE(scheduler_.inside_begin_frame_deadline_interval());
   SurfaceDamaged(sid1);
+
+  // The deadline is not updated because the display scheduler does not receive
+  // a BeginFrame while the root frame is missing.
   EXPECT_EQ(late_deadline, scheduler_.DesiredBeginFrameDeadlineTimeForTest());
-  scheduler_.SetRootSurfaceResourcesLocked(false);
+  scheduler_.SetRootFrameMissing(false);
+  EXPECT_TRUE(scheduler_.inside_begin_frame_deadline_interval());
   SurfaceDamaged(root_surface_id);
   EXPECT_EQ(base::TimeTicks(),
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
@@ -686,7 +691,8 @@ TEST_F(DisplaySchedulerTest, DidSwapBuffers) {
   AdvanceTimeAndBeginFrameForTest({sid2});
   base::TimeTicks expected_deadline =
       scheduler_.LastUsedBeginFrameArgs().deadline -
-      BeginFrameArgs::DefaultEstimatedParentDrawTime();
+      BeginFrameArgs::DefaultEstimatedDisplayDrawTime(
+          scheduler_.LastUsedBeginFrameArgs().interval);
   EXPECT_EQ(expected_deadline,
             scheduler_.DesiredBeginFrameDeadlineTimeForTest());
   // Still waiting for surface 2. Once it updates, deadline should trigger
@@ -751,7 +757,7 @@ TEST_F(DisplaySchedulerTest, ScheduleBeginFrameDeadline) {
   SurfaceDamaged(sid1);
   EXPECT_EQ(++count, scheduler_.scheduler_begin_frame_deadline_count());
 
-  scheduler_.SetRootSurfaceResourcesLocked(true);
+  scheduler_.SetRootFrameMissing(true);
   EXPECT_EQ(++count, scheduler_.scheduler_begin_frame_deadline_count());
 
   scheduler_.OutputSurfaceLost();
@@ -781,13 +787,44 @@ TEST_F(DisplaySchedulerTest, SetNeedsOneBeginFrame) {
   scheduler_.SetNeedsOneBeginFrame();
   EXPECT_TRUE(scheduler_.inside_begin_frame_deadline_interval());
   scheduler_.BeginFrameDeadlineForTest();
-  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_.source_id,
-                          last_begin_frame_args_.sequence_number, false),
+  EXPECT_EQ(BeginFrameAck(last_begin_frame_args_, false),
             client_.last_begin_frame_ack());
 
   // System should be idle again.
   AdvanceTimeAndBeginFrameForTest(std::vector<SurfaceId>());
   EXPECT_FALSE(scheduler_.inside_begin_frame_deadline_interval());
+}
+
+TEST_F(DisplaySchedulerTest, GpuBusyNotifications) {
+  fake_begin_frame_source_.AllowOneBeginFrameAfterGpuBusy();
+
+  SurfaceId root_surface_id(
+      kArbitraryFrameSinkId,
+      LocalSurfaceId(1, base::UnguessableToken::Create()));
+
+  scheduler_.SetVisible(true);
+  scheduler_.SetNewRootSurface(root_surface_id);
+
+  // Swap one frame, since max pending swaps is 1 it puts us in a swap throttled
+  // state.
+  AdvanceTimeAndBeginFrameForTest({root_surface_id});
+  EXPECT_EQ(scheduler_.current_frame_time(), last_begin_frame_args_.frame_time);
+  EXPECT_EQ(client().draw_and_swap_count(), 0);
+  SurfaceDamaged(root_surface_id);
+  scheduler_.BeginFrameDeadlineForTest();
+  EXPECT_EQ(client().draw_and_swap_count(), 1);
+  scheduler_.DidSwapBuffers();
+  EXPECT_TRUE(scheduler_.is_swap_throttled());
+
+  // The next vsync should not be blocked from the swap throttling.
+  EXPECT_FALSE(fake_begin_frame_source_.RequestCallbackOnGpuAvailable());
+
+  // Send the next vsync, after which vsyncs will be blocked on busy gpu.
+  EXPECT_TRUE(fake_begin_frame_source_.RequestCallbackOnGpuAvailable());
+
+  // Ack the pending swap buffers, we should no longer be marked gpu busy.
+  scheduler_.DidReceiveSwapBuffersAck();
+  EXPECT_FALSE(fake_begin_frame_source_.RequestCallbackOnGpuAvailable());
 }
 
 }  // namespace

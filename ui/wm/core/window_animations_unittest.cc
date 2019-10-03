@@ -31,8 +31,7 @@ namespace {
 template<typename T>int GetZPosition(const T* child) {
   const T* parent = child->parent();
   const std::vector<T*> children = parent->children();
-  typename std::vector<T*>::const_iterator iter =
-      std::find(children.begin(), children.end(), child);
+  auto iter = std::find(children.begin(), children.end(), child);
   DCHECK(iter != children.end());
   return iter - children.begin();
 }
@@ -50,8 +49,6 @@ int GetLayerZPosition(const ui::Layer* child) {
 class WindowAnimationsTest : public aura::test::AuraTestBase {
  public:
   WindowAnimationsTest() {}
-
-  void TearDown() override { AuraTestBase::TearDown(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WindowAnimationsTest);
@@ -158,10 +155,9 @@ TEST_F(WindowAnimationsTest, HideAnimationDetachLayers) {
     // Make sure the Hide animation create another layer, and both are in
     // the parent layer.
     EXPECT_NE(animating_window->layer(), animating_layer);
+    EXPECT_TRUE(base::Contains(parent->layer()->children(), animating_layer));
     EXPECT_TRUE(
-        base::ContainsValue(parent->layer()->children(), animating_layer));
-    EXPECT_TRUE(base::ContainsValue(parent->layer()->children(),
-                                    animating_window->layer()));
+        base::Contains(parent->layer()->children(), animating_window->layer()));
     // Current layer must be already hidden.
     EXPECT_FALSE(animating_window->layer()->visible());
 
@@ -180,8 +176,7 @@ TEST_F(WindowAnimationsTest, HideAnimationDetachLayers) {
 
     // Animating layer must be gone
     animating_layer->GetAnimator()->StopAnimating();
-    EXPECT_FALSE(
-        base::ContainsValue(parent->layer()->children(), animating_layer));
+    EXPECT_FALSE(base::Contains(parent->layer()->children(), animating_layer));
   }
 }
 

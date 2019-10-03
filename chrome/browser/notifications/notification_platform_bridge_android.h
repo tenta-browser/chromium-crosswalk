@@ -43,11 +43,11 @@ class NotificationPlatformBridgeAndroid : public NotificationPlatformBridge {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& java_object,
       const base::android::JavaParamRef<jstring>& java_notification_id,
+      jint java_notification_type,
       const base::android::JavaParamRef<jstring>& java_origin,
       const base::android::JavaParamRef<jstring>& java_scope_url,
       const base::android::JavaParamRef<jstring>& java_profile_id,
       jboolean incognito,
-      const base::android::JavaParamRef<jstring>& java_tag,
       const base::android::JavaParamRef<jstring>& java_webapk_package,
       jint action_index,
       const base::android::JavaParamRef<jstring>& java_reply);
@@ -65,25 +65,22 @@ class NotificationPlatformBridgeAndroid : public NotificationPlatformBridge {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& java_object,
       const base::android::JavaParamRef<jstring>& java_notification_id,
+      jint java_notification_type,
       const base::android::JavaParamRef<jstring>& java_origin,
       const base::android::JavaParamRef<jstring>& java_profile_id,
       jboolean incognito,
-      const base::android::JavaParamRef<jstring>& java_tag,
       jboolean by_user);
 
   // NotificationPlatformBridge implementation.
   void Display(NotificationHandler::Type notification_type,
-               const std::string& profile_id,
-               bool incognito,
+               Profile* profile,
                const message_center::Notification& notification,
                std::unique_ptr<NotificationCommon::Metadata> metadata) override;
-  void Close(const std::string& profile_id,
-             const std::string& notification_id) override;
-  void GetDisplayed(
-      const std::string& profile_id,
-      bool incognito,
-      const GetDisplayedNotificationsCallback& callback) const override;
+  void Close(Profile* profile, const std::string& notification_id) override;
+  void GetDisplayed(Profile* profile,
+                    GetDisplayedNotificationsCallback callback) const override;
   void SetReadyCallback(NotificationBridgeReadyCallback callback) override;
+  void DisplayServiceShutDown(Profile* profile) override;
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
@@ -104,15 +101,11 @@ class NotificationPlatformBridgeAndroid : public NotificationPlatformBridge {
   struct RegeneratedNotificationInfo {
     RegeneratedNotificationInfo();
     RegeneratedNotificationInfo(
-        const GURL& origin,
         const GURL& service_worker_scope,
-        const std::string& tag,
         const base::Optional<std::string>& webapk_package);
     ~RegeneratedNotificationInfo();
 
-    GURL origin;
     GURL service_worker_scope;
-    std::string tag;
     base::Optional<std::string> webapk_package;
   };
 

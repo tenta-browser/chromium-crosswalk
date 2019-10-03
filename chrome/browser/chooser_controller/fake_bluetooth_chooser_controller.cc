@@ -22,6 +22,10 @@ bool FakeBluetoothChooserController::ShouldShowIconBeforeText() const {
   return true;
 }
 
+bool FakeBluetoothChooserController::ShouldShowReScanButton() const {
+  return true;
+}
+
 base::string16 FakeBluetoothChooserController::GetNoOptionsText() const {
   return l10n_util::GetStringUTF16(
       IDS_BLUETOOTH_DEVICE_CHOOSER_NO_DEVICES_FOUND_PROMPT);
@@ -30,6 +34,10 @@ base::string16 FakeBluetoothChooserController::GetNoOptionsText() const {
 base::string16 FakeBluetoothChooserController::GetOkButtonLabel() const {
   return l10n_util::GetStringUTF16(
       IDS_BLUETOOTH_DEVICE_CHOOSER_PAIR_BUTTON_TEXT);
+}
+
+bool FakeBluetoothChooserController::TableViewAlwaysDisabled() const {
+  return table_view_always_disabled_;
 }
 
 size_t FakeBluetoothChooserController::NumOptions() const {

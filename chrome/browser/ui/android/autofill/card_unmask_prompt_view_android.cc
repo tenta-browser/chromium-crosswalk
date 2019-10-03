@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ui/android/autofill/card_unmask_prompt_view_android.h"
 
+#include "chrome/android/chrome_jni_headers/CardUnmaskBridge_jni.h"
 #include "chrome/browser/android/resource_mapper.h"
-#include "chrome/browser/ui/autofill/create_card_unmask_prompt_view.h"
-#include "components/autofill/core/browser/ui/card_unmask_prompt_controller.h"
+#include "chrome/browser/ui/autofill/payments/create_card_unmask_prompt_view.h"
+#include "components/autofill/core/browser/ui/payments/card_unmask_prompt_controller.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/CardUnmaskBridge_jni.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
 
@@ -56,7 +56,8 @@ void CardUnmaskPromptViewAndroid::Show() {
       controller_->GetSuccessMessageDuration().InMilliseconds(),
       view_android->GetWindowAndroid()->GetJavaObject()));
 
-  Java_CardUnmaskBridge_show(env, java_object_);
+  Java_CardUnmaskBridge_show(env, java_object_,
+                             view_android->GetWindowAndroid()->GetJavaObject());
 }
 
 bool CardUnmaskPromptViewAndroid::CheckUserInputValidity(

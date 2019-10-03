@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -19,8 +18,8 @@
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -56,6 +55,10 @@ namespace {
 const int64_t kMaxPRegFileSize = 1024 * 1024 * 16;
 static_assert(kMaxPRegFileSize <= std::numeric_limits<ptrdiff_t>::max(),
               "Max PReg file size too large.");
+
+// Maximum number of components in registry key names. This corresponds to the
+// maximum nesting level of RegistryDict trees.
+const size_t kMaxKeyNameComponents = 1024;
 
 // Constants for PReg file delimiters.
 const base::char16 kDelimBracketOpen = L'[';
@@ -142,7 +145,7 @@ bool DecodePRegStringValue(const std::vector<uint8_t>& data,
       reinterpret_cast<const base::char16*>(data.data());
   base::string16 utf16_str;
   std::transform(chars, chars + len - 1, std::back_inserter(utf16_str),
-                 std::ptr_fun(base::ByteSwapToLE16));
+                 base::ByteSwapToLE16);
   // Note: UTF16ToUTF8() only checks whether all chars are valid code points,
   // but not whether they're valid characters. IsStringUTF8(), however, does.
   *value = base::UTF16ToUTF8(utf16_str);
@@ -221,12 +224,19 @@ void HandleRecord(const base::string16& key_name,
   // Locate/create the dictionary to place the value in.
   std::vector<base::string16> path;
 
-  for (const base::string16& entry :
-       base::SplitString(key_name, kRegistryPathSeparator,
-                         base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    if (entry.empty())
+  std::vector<base::StringPiece16> key_name_components =
+      base::SplitStringPiece(key_name, kRegistryPathSeparator,
+                             base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  if (key_name_components.size() > kMaxKeyNameComponents) {
+    LOG(ERROR) << "Encountered a key which has more than "
+               << kMaxKeyNameComponents << " components.";
+    return;
+  }
+  for (const base::StringPiece16& key_name_component : key_name_components) {
+    if (key_name_component.empty())
       continue;
-    const std::string name = base::UTF16ToUTF8(entry);
+
+    const std::string name = base::UTF16ToUTF8(key_name_component);
     RegistryDict* subdict = dict->GetKey(name);
     if (!subdict) {
       subdict = new RegistryDict();
@@ -249,7 +259,7 @@ void HandleRecord(const base::string16& key_name,
 
   std::string data_utf8;
   std::string action_trigger(base::ToLowerASCII(
-      value_name.substr(arraysize(kActionTriggerPrefix) - 1)));
+      value_name.substr(base::size(kActionTriggerPrefix) - 1)));
   if (action_trigger == kActionTriggerDeleteValues) {
     if (DecodePRegStringValue(data, &data_utf8)) {
       for (const std::string& value :
@@ -267,8 +277,8 @@ void HandleRecord(const base::string16& key_name,
     }
   } else if (base::StartsWith(action_trigger, kActionTriggerDel,
                               base::CompareCase::SENSITIVE)) {
-    dict->RemoveValue(value_name.substr(arraysize(kActionTriggerPrefix) - 1 +
-                                        arraysize(kActionTriggerDel) - 1));
+    dict->RemoveValue(value_name.substr(base::size(kActionTriggerPrefix) - 1 +
+                                        base::size(kActionTriggerDel) - 1));
   } else if (base::StartsWith(action_trigger, kActionTriggerDelVals,
                               base::CompareCase::SENSITIVE)) {
     // Delete all values.
@@ -304,7 +314,7 @@ bool ReadFile(const base::FilePath& file_path,
 
   return ReadDataInternal(
       mapped_file.data(), mapped_file.length(), root, dict, status,
-      base::StringPrintf("file '%" PRIsFP "'", file_path.value().c_str()));
+      base::StringPrintf("file '%" PRFilePath "'", file_path.value().c_str()));
 }
 
 POLICY_EXPORT bool ReadDataInternal(const uint8_t* preg_data,
@@ -324,7 +334,7 @@ POLICY_EXPORT bool ReadDataInternal(const uint8_t* preg_data,
   }
 
   // Check the header.
-  const int kHeaderSize = arraysize(kPRegFileHeader);
+  const int kHeaderSize = base::size(kPRegFileHeader);
   if (!preg_data || preg_data_size < kHeaderSize ||
       memcmp(kPRegFileHeader, preg_data, kHeaderSize) != 0) {
     LOG(ERROR) << "Bad PReg " << debug_name;

@@ -7,9 +7,12 @@
 
 #include "base/memory/ref_counted.h"
 
-@class Tab;
+@protocol LoadQueryCommands;
 @class UIViewController;
-@protocol VoiceSearchControllerDelegate;
+
+namespace web {
+class WebState;
+}
 
 // TODO(crbug.com/607204): Convert to Objective-C class.
 class VoiceSearchController
@@ -17,8 +20,8 @@ class VoiceSearchController
  public:
   VoiceSearchController();
 
-  // Sets the delegate for this object.
-  virtual void SetDelegate(id<VoiceSearchControllerDelegate> delegate);
+  // Sets the dispatcher for this object.
+  virtual void SetDispatcher(id<LoadQueryCommands> dispatcher);
 
   // Preloads views and view controllers needed for the voice search UI.
   virtual void PrepareToAppear();
@@ -28,7 +31,7 @@ class VoiceSearchController
   // |presenting_view_controller| is the UIViewController from which to present
   // the Voice Search input UI.
   virtual void StartRecognition(UIViewController* presenting_view_controller,
-                                Tab* current_tab);
+                                web::WebState* current_web_state);
 
   // Whether or not the Text To Speech user preference is enabled.
   virtual bool IsTextToSpeechEnabled();

@@ -7,16 +7,21 @@ package org.chromium.content.browser;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.LoaderErrors;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.content_public.browser.BrowserStartupController.StartupCallback;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Test of BrowserStartupController
@@ -25,12 +30,12 @@ import org.chromium.base.test.BaseJUnit4ClassRunner;
 public class BrowserStartupControllerTest {
     private TestBrowserStartupController mController;
 
-    private static class TestBrowserStartupController extends BrowserStartupController {
-
+    private static class TestBrowserStartupController extends BrowserStartupControllerImpl {
         private int mStartupResult;
         private boolean mLibraryLoadSucceeds;
-        private int mInitializedCounter = 0;
-        private boolean mStartupCompleteCalled;
+        private int mServiceManagerLaunchCounter;
+        private int mFullBrowserLaunchCounter;
+        private boolean mServiceManagerStarted;
 
         @Override
         void prepareToStartBrowserProcess(boolean singleProcess, Runnable completionCallback)
@@ -48,42 +53,59 @@ public class BrowserStartupControllerTest {
         }
 
         @Override
-        int contentStart() {
-            mInitializedCounter++;
+        void recordStartupUma() {}
+
+        @Override
+        int contentMainStart(boolean startServiceManagerOnly) {
+            if (startServiceManagerOnly) {
+                mServiceManagerLaunchCounter++;
+            } else {
+                mFullBrowserLaunchCounter++;
+            }
+            return kickOffStartup(startServiceManagerOnly);
+        }
+
+        @Override
+        void flushStartupTasks() {
+            assert mFullBrowserLaunchCounter > 0;
+            BrowserStartupControllerImpl.browserStartupComplete(mStartupResult);
+        }
+
+        private int kickOffStartup(boolean startServiceManagerOnly) {
             // Post to the UI thread to emulate what would happen in a real scenario.
-            ThreadUtils.postOnUiThread(new Runnable() {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
                 @Override
                 public void run() {
-                    if (mStartupCompleteCalled) return;
-                    BrowserStartupController.browserStartupComplete(mStartupResult);
+                    if (!mServiceManagerStarted) {
+                        BrowserStartupControllerImpl.serviceManagerStartupComplete();
+                        mServiceManagerStarted = true;
+                    }
+                    if (!startServiceManagerOnly) {
+                        BrowserStartupControllerImpl.browserStartupComplete(mStartupResult);
+                    }
                 }
             });
             return mStartupResult;
         }
 
-        @Override
-        void flushStartupTasks() {
-            assert mInitializedCounter > 0;
-            if (mStartupCompleteCalled) return;
-            BrowserStartupController.browserStartupComplete(mStartupResult);
+        private int serviceManagerLaunchCounter() {
+            return mServiceManagerLaunchCounter;
         }
 
-        private int initializedCounter() {
-            return mInitializedCounter;
+        private int fullBrowserLaunchCounter() {
+            return mFullBrowserLaunchCounter;
         }
     }
 
-    private static class TestStartupCallback implements BrowserStartupController.StartupCallback {
+    private static class TestStartupCallback implements StartupCallback {
         private boolean mWasSuccess;
         private boolean mWasFailure;
         private boolean mHasStartupResult;
-        private boolean mAlreadyStarted;
 
         @Override
-        public void onSuccess(boolean alreadyStarted) {
+        public void onSuccess() {
             assert !mHasStartupResult;
             mWasSuccess = true;
-            mAlreadyStarted = alreadyStarted;
             mHasStartupResult = true;
         }
 
@@ -98,83 +120,73 @@ public class BrowserStartupControllerTest {
     @Before
     public void setUp() throws Exception {
         mController = new TestBrowserStartupController();
+        RecordHistogram.setDisabledForTests(true);
         // Setting the static singleton instance field enables more correct testing, since it is
         // is possible to call {@link BrowserStartupController#browserStartupComplete(int)} instead
         // of {@link BrowserStartupController#executeEnqueuedCallbacks(int, boolean)} directly.
-        BrowserStartupController.overrideInstanceForTest(mController);
+        BrowserStartupControllerImpl.overrideInstanceForTest(mController);
+    }
+
+    @After
+    public void tearDown() {
+        RecordHistogram.setDisabledForTests(false);
     }
 
     @Test
     @SmallTest
     public void testSingleAsynchronousStartupRequest() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback = new TestStartupCallback();
 
         // Kick off the asynchronous startup request.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         Assert.assertTrue("Callback should have been executed.", callback.mHasStartupResult);
         Assert.assertTrue("Callback should have been a success.", callback.mWasSuccess);
-        Assert.assertFalse(
-                "Callback should be told that the browser process was not already started.",
-                callback.mAlreadyStarted);
     }
 
     @Test
     @SmallTest
     public void testMultipleAsynchronousStartupRequests() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback1 = new TestStartupCallback();
         final TestStartupCallback callback2 = new TestStartupCallback();
         final TestStartupCallback callback3 = new TestStartupCallback();
 
         // Kick off the asynchronous startup requests.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback1);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback2);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback2);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mController.addStartupCompletedObserver(callback3);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback3); });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -185,41 +197,29 @@ public class BrowserStartupControllerTest {
         Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
         Assert.assertTrue("Callback 3 should have been executed.", callback3.mHasStartupResult);
         Assert.assertTrue("Callback 3 should have been a success.", callback3.mWasSuccess);
-        // Some startup tasks might have been enqueued after the browser process was started, but
-        // not the first one which kicked of the startup.
-        Assert.assertFalse(
-                "Callback 1 should be told that the browser process was not already started.",
-                callback1.mAlreadyStarted);
     }
 
     @Test
     @SmallTest
     public void testConsecutiveAsynchronousStartupRequests() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback1 = new TestStartupCallback();
         final TestStartupCallback callback2 = new TestStartupCallback();
 
         // Kick off the asynchronous startup requests.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback1);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mController.addStartupCompletedObserver(callback2);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback2); });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -233,57 +233,43 @@ public class BrowserStartupControllerTest {
         final TestStartupCallback callback4 = new TestStartupCallback();
 
         // Kick off more asynchronous startup requests.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback3);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback3);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mController.addStartupCompletedObserver(callback4);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback4); });
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         Assert.assertTrue("Callback 3 should have been executed.", callback3.mHasStartupResult);
         Assert.assertTrue("Callback 3 should have been a success.", callback3.mWasSuccess);
-        Assert.assertTrue("Callback 3 should be told that the browser process was already started.",
-                callback3.mAlreadyStarted);
         Assert.assertTrue("Callback 4 should have been executed.", callback4.mHasStartupResult);
         Assert.assertTrue("Callback 4 should have been a success.", callback4.mWasSuccess);
-        Assert.assertTrue("Callback 4 should be told that the browser process was already started.",
-                callback4.mAlreadyStarted);
     }
 
     @Test
     @SmallTest
     public void testSingleFailedAsynchronousStartupRequest() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_FAILURE;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_FAILURE;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback = new TestStartupCallback();
 
         // Kick off the asynchronous startup request.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been lauched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -295,31 +281,24 @@ public class BrowserStartupControllerTest {
     @Test
     @SmallTest
     public void testConsecutiveFailedAsynchronousStartupRequests() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_FAILURE;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_FAILURE;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback1 = new TestStartupCallback();
         final TestStartupCallback callback2 = new TestStartupCallback();
 
         // Kick off the asynchronous startup requests.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback1);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mController.addStartupCompletedObserver(callback2);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback2); });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -333,22 +312,15 @@ public class BrowserStartupControllerTest {
         final TestStartupCallback callback4 = new TestStartupCallback();
 
         // Kick off more asynchronous startup requests.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback3);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback3);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mController.addStartupCompletedObserver(callback4);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback4); });
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
@@ -362,105 +334,88 @@ public class BrowserStartupControllerTest {
     @Test
     @SmallTest
     public void testSingleSynchronousRequest() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         // Kick off the synchronous startup.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesSync(false);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should have been initialized one time.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
     }
 
     @Test
     @SmallTest
     public void testAsyncThenSyncRequests() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback = new TestStartupCallback();
 
         // Kick off the startups.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
-                // To ensure that the async startup doesn't complete too soon we have
-                // to do both these in a since Runnable instance. This avoids the
-                // unpredictable race that happens in real situations.
-                try {
-                    mController.startBrowserProcessesSync(false);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+            // To ensure that the async startup doesn't complete too soon we have
+            // to do both these in a since Runnable instance. This avoids the
+            // unpredictable race that happens in real situations.
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should have been initialized twice.", 2,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         Assert.assertTrue("Callback should have been executed.", callback.mHasStartupResult);
         Assert.assertTrue("Callback should have been a success.", callback.mWasSuccess);
-        Assert.assertFalse(
-                "Callback should be told that the browser process was not already started.",
-                callback.mAlreadyStarted);
     }
 
     @Test
     @SmallTest
     public void testSyncThenAsyncRequests() {
-        mController.mStartupResult = BrowserStartupController.STARTUP_SUCCESS;
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
         mController.mLibraryLoadSucceeds = true;
         final TestStartupCallback callback = new TestStartupCallback();
 
         // Do a synchronous startup first.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesSync(false);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should have been initialized once.", 1,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Kick off the asynchronous startup request. This should just queue the callback.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback);
-                } catch (Exception e) {
-                    Assert.fail("Browser should have started successfully");
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
             }
         });
 
-        Assert.assertEquals("The browser process should not have been initialized a second time.",
-                1, mController.initializedCounter());
+        Assert.assertEquals("The browser process should not have been launched a second time.", 1,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         Assert.assertTrue("Callback should have been executed.", callback.mHasStartupResult);
         Assert.assertTrue("Callback should have been a success.", callback.mWasSuccess);
-        Assert.assertTrue("Callback should be told that the browser process was already started.",
-                callback.mAlreadyStarted);
     }
 
     @Test
@@ -470,23 +425,329 @@ public class BrowserStartupControllerTest {
         final TestStartupCallback callback = new TestStartupCallback();
 
         // Kick off the asynchronous startup request.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    mController.startBrowserProcessesAsync(true, callback);
-                    Assert.fail("Browser should not have started successfully");
-                } catch (Exception e) {
-                    // Exception expected, ignore.
-                }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback);
+                Assert.fail("Browser should not have started successfully");
+            } catch (Exception e) {
+                // Exception expected, ignore.
             }
         });
 
-        Assert.assertEquals("The browser process should not have been initialized.", 0,
-                mController.initializedCounter());
+        Assert.assertEquals("The browser process should not have been launched.", 0,
+                mController.fullBrowserLaunchCounter());
 
         // Wait for callbacks to complete.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
+    @Test
+    @SmallTest
+    public void testAsynchronousStartServiceManagerThenStartFullBrowser() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+
+        // Kick off the asynchronous startup requests to start ServiceManagerOnly.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback2 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback2);
+        });
+
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertFalse("Callback 2 should not be executed.", callback2.mHasStartupResult);
+
+        Assert.assertEquals("The browser process should not have been launched.", 0,
+                mController.fullBrowserLaunchCounter());
+
+        final TestStartupCallback callback3 = new TestStartupCallback();
+        final TestStartupCallback callback4 = new TestStartupCallback();
+
+        // Kick off another asynchronous startup requests to start full browser.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback3);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mController.addStartupCompletedObserver(callback4); });
+
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+        Assert.assertTrue("Callback 3 should have been executed.", callback3.mHasStartupResult);
+        Assert.assertTrue("Callback 3 should have been a success.", callback3.mWasSuccess);
+        Assert.assertTrue("Callback 4 should have been executed.", callback4.mHasStartupResult);
+        Assert.assertTrue("Callback 4 should have been a success.", callback4.mWasSuccess);
+    }
+
+    @Test
+    @SmallTest
+    public void testMultipleAsynchronousStartServiceManagerRequests() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        final TestStartupCallback callback3 = new TestStartupCallback();
+
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback2);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback3 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback3);
+        });
+
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertEquals("The browser process should not have been launched.", 0,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+        Assert.assertFalse("Callback 3 should not be executed.", callback3.mHasStartupResult);
+    }
+
+    @Test
+    @SmallTest
+    public void testConsecutiveAsynchronousStartServiceManagerRequests() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        final TestStartupCallback callback3 = new TestStartupCallback();
+
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback2);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback3 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback3);
+        });
+
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertEquals("The browser process should not have been launched.", 0,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+        Assert.assertFalse("Callback 3 should not be executed.", callback3.mHasStartupResult);
+    }
+
+    @Test
+    @SmallTest
+    public void testMultipleAsynchronousStartServiceManagerAndFullBrowserRequests() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        final TestStartupCallback callback3 = new TestStartupCallback();
+
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+            try {
+                mController.startBrowserProcessesAsync(true, false, callback2);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback3 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback3);
+        });
+
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+        Assert.assertTrue("Callback 3 should have been executed.", callback3.mHasStartupResult);
+        Assert.assertTrue("Callback 3 should have been a success.", callback3.mWasSuccess);
+    }
+
+    @Test
+    @SmallTest
+    public void testAsynchronousStartServiceManagerThenSynchronousStartFullBrowser() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback2 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback2);
+        });
+
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        // Wait for callbacks to complete.
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+    }
+
+    @Test
+    @SmallTest
+    public void testAsynchronousStartServiceManagerAlongWithSynchronousStartFullBrowser() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback2 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback2);
+        });
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        // Wait for callbacks to complete.
+        Assert.assertEquals("The service manager should have been launched once.", 1,
+                mController.serviceManagerLaunchCounter());
+
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+    }
+
+    @Test
+    @SmallTest
+    public void testSynchronousStartFullBrowserThenAsynchronousStartServiceManager() {
+        mController.mStartupResult = BrowserStartupControllerImpl.STARTUP_SUCCESS;
+        mController.mLibraryLoadSucceeds = true;
+        final TestStartupCallback callback1 = new TestStartupCallback();
+        final TestStartupCallback callback2 = new TestStartupCallback();
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Callback2 will only be run when full browser is started.
+            mController.addStartupCompletedObserver(callback2);
+        });
+        // Kick off the asynchronous startup requests.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                mController.startBrowserProcessesSync(false);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+            try {
+                mController.startBrowserProcessesAsync(true, true, callback1);
+            } catch (Exception e) {
+                Assert.fail("Browser should have started successfully");
+            }
+        });
+        // Wait for callbacks to complete.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        Assert.assertEquals("The service manager should not have been launched.", 0,
+                mController.serviceManagerLaunchCounter());
+
+        Assert.assertEquals("The browser process should have been launched once.", 1,
+                mController.fullBrowserLaunchCounter());
+
+        Assert.assertTrue("Callback 1 should have been executed.", callback1.mHasStartupResult);
+        Assert.assertTrue("Callback 1 should have been a success.", callback1.mWasSuccess);
+        Assert.assertTrue("Callback 2 should have been executed.", callback2.mHasStartupResult);
+        Assert.assertTrue("Callback 2 should have been a success.", callback2.mWasSuccess);
+    }
 }

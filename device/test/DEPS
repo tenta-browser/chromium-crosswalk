@@ -1,7 +1,5 @@
 include_rules = [
-  "+mojo/edk/embedder",
-  "+net/base",
-  "+net/proxy",
-  "+net/traffic_annotation",
-  "+net/url_request",
+  "+mojo/core/embedder",
+  # The test runner needs to initialize various parts of the UI stack.
+  "+ui",
 ]

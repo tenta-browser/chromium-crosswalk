@@ -14,11 +14,12 @@
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
@@ -99,9 +100,8 @@ void AppendCommonSwitches(ShellLinkItem* shell_link) {
   const char* kSwitchNames[] = { switches::kUserDataDir };
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  shell_link->GetCommandLine()->CopySwitchesFrom(command_line,
-                                                 kSwitchNames,
-                                                 arraysize(kSwitchNames));
+  shell_link->GetCommandLine()->CopySwitchesFrom(command_line, kSwitchNames,
+                                                 base::size(kSwitchNames));
 }
 
 // Creates a ShellLinkItem preloaded with common switches.
@@ -131,7 +131,7 @@ bool CreateIconFile(const gfx::ImageSkia& image_skia,
       gfx::ImageSkiaRep image_skia_rep = image_skia.GetRepresentation(scale);
       if (!image_skia_rep.is_null()) {
         image_family.Add(
-            gfx::Image::CreateFrom1xBitmap(image_skia_rep.sk_bitmap()));
+            gfx::Image::CreateFrom1xBitmap(image_skia_rep.GetBitmap()));
       }
     }
   }
@@ -154,7 +154,7 @@ bool UpdateTaskCategory(
     JumpListUpdater* jumplist_updater,
     IncognitoModePrefs::Availability incognito_availability) {
   base::FilePath chrome_path;
-  if (!PathService::Get(base::FILE_EXE, &chrome_path))
+  if (!base::PathService::Get(base::FILE_EXE, &chrome_path))
     return false;
 
   int icon_index = install_static::GetIconResourceIndex();
@@ -225,7 +225,7 @@ JumpList::JumpList(Profile* profile)
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})),
       delete_jumplisticons_task_runner_(
           base::CreateSequencedTaskRunnerWithTraits(
-              {base::MayBlock(), base::TaskPriority::BACKGROUND,
+              {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})),
       weak_ptr_factory_(this) {
   DCHECK(Enabled());
@@ -387,10 +387,8 @@ void JumpList::ProcessTopSitesNotification() {
   scoped_refptr<history::TopSites> top_sites =
       TopSitesFactory::GetForProfile(profile_);
   if (top_sites) {
-    top_sites->GetMostVisitedURLs(
-        base::Bind(&JumpList::OnMostVisitedURLsAvailable,
-                   weak_ptr_factory_.GetWeakPtr()),
-        false);
+    top_sites->GetMostVisitedURLs(base::Bind(
+        &JumpList::OnMostVisitedURLsAvailable, weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -539,8 +537,8 @@ void JumpList::OnFaviconDataAvailable(
     if (!image_result.image.IsEmpty() && icon_urls_.front().second.get()) {
       gfx::ImageSkia image_skia = image_result.image.AsImageSkia();
       image_skia.EnsureRepsForSupportedScales();
-      std::unique_ptr<gfx::ImageSkia> deep_copy(image_skia.DeepCopy());
-      icon_urls_.front().second->set_icon_image(*deep_copy);
+      gfx::ImageSkia deep_copy(image_skia.DeepCopy());
+      icon_urls_.front().second->set_icon_image(deep_copy);
     }
     icon_urls_.pop_front();
   }
@@ -562,7 +560,7 @@ void JumpList::PostRunUpdate() {
   IncognitoModePrefs::Availability incognito_availability =
       IncognitoModePrefs::GetAvailability(profile_->GetPrefs());
 
-  auto update_transaction = base::MakeUnique<UpdateTransaction>();
+  auto update_transaction = std::make_unique<UpdateTransaction>();
   if (most_visited_should_update_)
     update_transaction->most_visited_icons = std::move(most_visited_icons_);
   if (recently_closed_should_update_) {
@@ -586,7 +584,7 @@ void JumpList::PostRunUpdate() {
           base::Bind(&JumpList::OnRunUpdateCompletion,
                      weak_ptr_factory_.GetWeakPtr(),
                      base::Passed(std::move(update_transaction))))) {
-    OnRunUpdateCompletion(base::MakeUnique<UpdateTransaction>());
+    OnRunUpdateCompletion(std::make_unique<UpdateTransaction>());
   }
 }
 
@@ -626,14 +624,14 @@ void JumpList::OnRunUpdateCompletion(
     base::FilePath icon_dir =
         GenerateJumplistIconDirName(profile_dir, FILE_PATH_LITERAL(""));
     delete_jumplisticons_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&DeleteDirectory, std::move(icon_dir), kFileDeleteLimit));
+        FROM_HERE, base::BindOnce(&DeleteDirectory, std::move(icon_dir),
+                                  kFileDeleteLimit));
 
     base::FilePath icon_dir_old =
         GenerateJumplistIconDirName(profile_dir, FILE_PATH_LITERAL("Old"));
     delete_jumplisticons_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&DeleteDirectory, std::move(icon_dir_old),
-                              kFileDeleteLimit));
+        FROM_HERE, base::BindOnce(&DeleteDirectory, std::move(icon_dir_old),
+                                  kFileDeleteLimit));
   }
 }
 
@@ -862,8 +860,8 @@ int JumpList::CreateIconFiles(const base::FilePath& icon_dir,
   int icons_created = 0;
 
   // Reuse icons for urls that already present in the current JumpList.
-  for (ShellLinkItemList::const_iterator iter = item_list.begin();
-       iter != item_list.end() && max_items > 0; ++iter, --max_items) {
+  for (auto iter = item_list.begin(); iter != item_list.end() && max_items > 0;
+       ++iter, --max_items) {
     ShellLinkItem* item = iter->get();
     auto cache_iter = icon_cur.find(item->url());
     if (cache_iter != icon_cur.end()) {

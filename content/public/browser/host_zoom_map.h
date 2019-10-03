@@ -64,7 +64,7 @@ class HostZoomMap {
 
   // Extracts the URL from NavigationEntry, substituting the error page
   // URL in the event that the error page is showing.
-  CONTENT_EXPORT static GURL GetURLFromEntry(const NavigationEntry* entry);
+  CONTENT_EXPORT static GURL GetURLFromEntry(NavigationEntry* entry);
 
   CONTENT_EXPORT static HostZoomMap* GetDefaultForBrowserContext(
       BrowserContext* browser_context);
@@ -77,26 +77,24 @@ class HostZoomMap {
   // Returns the HostZoomMap associated with this WebContent's main frame. If
   // multiple WebContents share the same SiteInstance, then they share a single
   // HostZoomMap.
-  CONTENT_EXPORT static HostZoomMap* GetForWebContents(
-      const WebContents* contents);
+  CONTENT_EXPORT static HostZoomMap* GetForWebContents(WebContents* contents);
 
   // Returns the current zoom level for the specified WebContents. May be
   // temporary or host-specific.
-  CONTENT_EXPORT static double GetZoomLevel(const WebContents* web_contents);
+  CONTENT_EXPORT static double GetZoomLevel(WebContents* web_contents);
 
   // Returns true if the page scale factor for the WebContents is one.
-  CONTENT_EXPORT static bool PageScaleFactorIsOne(
-      const WebContents* web_contents);
+  CONTENT_EXPORT static bool PageScaleFactorIsOne(WebContents* web_contents);
 
   // Sets the current zoom level for the specified WebContents. The level may
   // be temporary or host-specific depending on the particular WebContents.
-  CONTENT_EXPORT static void SetZoomLevel(const WebContents* web_contents,
+  CONTENT_EXPORT static void SetZoomLevel(WebContents* web_contents,
                                           double level);
 
   // Send an IPC to refresh any displayed error page's zoom levels. Needs to
   // be called since error pages don't get loaded via the normal channel.
   CONTENT_EXPORT static void SendErrorPageZoomLevelRefresh(
-      const WebContents* web_contents);
+      WebContents* web_contents);
 
   // Set or clear whether or not the page scale factor for a view is one.
   virtual void SetPageScaleFactorIsOneForView(
@@ -114,19 +112,18 @@ class HostZoomMap {
   // description for details.
   //
   // This may be called on any thread.
-  virtual double GetZoomLevelForHostAndScheme(
-      const std::string& scheme,
-      const std::string& host) const = 0;
+  virtual double GetZoomLevelForHostAndScheme(const std::string& scheme,
+                                              const std::string& host) = 0;
 
   // Returns true if the specified |scheme| and/or |host| has a zoom level
   // currently set.
   //
   // This may be called on any thread.
   virtual bool HasZoomLevel(const std::string& scheme,
-                            const std::string& host) const = 0;
+                            const std::string& host) = 0;
 
   // Returns all non-temporary zoom levels. Can be called on any thread.
-  virtual ZoomLevelVector GetAllZoomLevels() const = 0;
+  virtual ZoomLevelVector GetAllZoomLevels() = 0;
 
   // Here |host| is the host portion of URL, or (in the absence of a host)
   // the complete spec of the URL.
@@ -158,7 +155,7 @@ class HostZoomMap {
   // Returns whether the view manages its zoom level independently of other
   // views displaying content from the same host.
   virtual bool UsesTemporaryZoomLevel(int render_process_id,
-                                      int render_view_id) const = 0;
+                                      int render_view_id) = 0;
 
   // Sets the temporary zoom level that's only valid for the lifetime of this
   // WebContents.
@@ -174,9 +171,6 @@ class HostZoomMap {
   virtual void ClearZoomLevels(base::Time delete_begin,
                                base::Time delete_end) = 0;
 
-  // Set whether the map should keep track of modification timestamps.
-  virtual void SetStoreLastModified(bool store_last_modified) = 0;
-
   // Clears the temporary zoom level stored for this WebContents.
   //
   // This should only be called on the UI thread.
@@ -184,7 +178,7 @@ class HostZoomMap {
                                        int render_view_id) = 0;
 
   // Get/Set the default zoom level for pages that don't override it.
-  virtual double GetDefaultZoomLevel() const = 0;
+  virtual double GetDefaultZoomLevel() = 0;
   virtual void SetDefaultZoomLevel(double level) = 0;
 
   typedef base::Callback<void(const ZoomLevelChange&)> ZoomLevelChangedCallback;

@@ -3,27 +3,12 @@
 // found in the LICENSE file.
 
 var CHECK = requireNative('logging').CHECK;
-var eventBindings = bindingUtil ? undefined : require('event_bindings');
 var idGeneratorNatives = requireNative('id_generator');
 var utils = require('utils');
-var validate = require('schemaUtils').validate;
-var webRequestInternal = getInternalApi ?
-    getInternalApi('webRequestInternal') :
-    require('binding').Binding.create('webRequestInternal').generate();
+var webRequestInternal = getInternalApi('webRequestInternal');
 
 function getUniqueSubEventName(eventName) {
   return eventName + '/' + idGeneratorNatives.GetNextId();
-}
-
-function createSubEvent(name, argSchemas) {
-  if (bindingUtil) {
-    var supportsFilters = false;
-    var supportsLazyListeners = true;
-    return bindingUtil.createCustomEvent(name, undefined,
-                                         supportsFilters,
-                                         supportsLazyListeners);
-  }
-  return new eventBindings.Event(name, argSchemas);
 }
 
 // WebRequestEventImpl object. This is used for special webRequest events
@@ -31,6 +16,7 @@ function createSubEvent(name, argSchemas) {
 // sub-event. That sub-event is associated with the extra parameters in the
 // browser process, so that only it is dispatched when the main event occurs
 // matching the extra parameters.
+// Note: this is not used for the onActionIgnored event.
 //
 // Example:
 //   chrome.webRequest.onBeforeRequest.addListener(
@@ -41,17 +27,13 @@ function WebRequestEventImpl(eventName, opt_argSchemas, opt_extraArgSchemas,
   if (typeof eventName != 'string')
     throw new Error('chrome.WebRequestEvent requires an event name.');
 
+  bindingUtil.addCustomSignature(eventName, opt_extraArgSchemas);
+
   this.eventName = eventName;
   this.argSchemas = opt_argSchemas;
   this.extraArgSchemas = opt_extraArgSchemas;
   this.webViewInstanceId = opt_webViewInstanceId || 0;
   this.subEvents = [];
-  if (eventBindings) {
-    var eventOptions = eventBindings.parseEventOptions(opt_eventOptions);
-    CHECK(!eventOptions.supportsRules, eventName + ' supports rules');
-    CHECK(eventOptions.supportsListeners,
-          eventName + ' does not support listeners');
-  }
 }
 $Object.setPrototypeOf(WebRequestEventImpl.prototype, null);
 
@@ -77,35 +59,44 @@ WebRequestEventImpl.prototype.addListener =
   var subEventName = getUniqueSubEventName(this.eventName);
   // Note: this could fail to validate, in which case we would not add the
   // subEvent listener.
-  validate($Array.slice(arguments, 1), this.extraArgSchemas);
+  bindingUtil.validateCustomSignature(this.eventName,
+                                      $Array.slice(arguments, 1));
   webRequestInternal.addEventListener(
       cb, opt_filter, opt_extraInfo, this.eventName, subEventName,
       this.webViewInstanceId);
 
-  var subEvent = createSubEvent(subEventName, this.argSchemas);
+  var supportsFilters = false;
+  var supportsLazyListeners = true;
+  var subEvent =
+      bindingUtil.createCustomEvent(subEventName, supportsFilters,
+                                    supportsLazyListeners);
+
   var subEventCallback = cb;
-  if (opt_extraInfo && opt_extraInfo.indexOf('blocking') >= 0) {
+  if (opt_extraInfo && $Array.indexOf(opt_extraInfo, 'blocking') >= 0) {
     var eventName = this.eventName;
+    var webViewInstanceId = this.webViewInstanceId;
     subEventCallback = function() {
       var requestId = arguments[0].requestId;
       try {
         var result = $Function.apply(cb, null, arguments);
         webRequestInternal.eventHandled(
-            eventName, subEventName, requestId, result);
+            eventName, subEventName, requestId, webViewInstanceId, result);
       } catch (e) {
         webRequestInternal.eventHandled(
-            eventName, subEventName, requestId);
+            eventName, subEventName, requestId, webViewInstanceId);
         throw e;
       }
     };
-  } else if (opt_extraInfo && opt_extraInfo.indexOf('asyncBlocking') >= 0) {
+  } else if (
+      opt_extraInfo && $Array.indexOf(opt_extraInfo, 'asyncBlocking') >= 0) {
     var eventName = this.eventName;
+    var webViewInstanceId = this.webViewInstanceId;
     subEventCallback = function() {
       var details = arguments[0];
       var requestId = details.requestId;
       var handledCallback = function(response) {
         webRequestInternal.eventHandled(
-            eventName, subEventName, requestId, response);
+            eventName, subEventName, requestId, webViewInstanceId, response);
       };
       $Function.apply(cb, null, [details, handledCallback]);
     };

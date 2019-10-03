@@ -7,19 +7,19 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
-#include "jni/Client_jni.h"
+#include "remoting/android/jni_headers/Client_jni.h"
 #include "remoting/client/audio/audio_player_android.h"
 #include "remoting/client/chromoting_client_runtime.h"
 #include "remoting/client/chromoting_session.h"
 #include "remoting/client/connect_to_host_info.h"
 #include "remoting/client/jni/jni_gl_display_handler.h"
-#include "remoting/client/jni/jni_pairing_secret_fetcher.h"
 #include "remoting/client/jni/jni_runtime_delegate.h"
 #include "remoting/client/jni/jni_touch_event_data.h"
 #include "remoting/protocol/video_renderer.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaObjectArrayReader;
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -42,44 +42,20 @@ JniClient::~JniClient() {
 void JniClient::ConnectToHost(const ConnectToHostInfo& info) {
   DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
   DCHECK(!display_handler_);
-  DCHECK(!audio_player_);
   DCHECK(!session_);
-  DCHECK(!secret_fetcher_);
+  host_id_ = info.host_id;
+
   display_handler_.reset(new JniGlDisplayHandler(java_client_));
-  secret_fetcher_.reset(
-      new JniPairingSecretFetcher(GetWeakPtr(), info.host_id));
-
-  protocol::ClientAuthenticationConfig client_auth_config;
-  client_auth_config.host_id = info.host_id;
-  client_auth_config.pairing_client_id = info.pairing_id;
-  client_auth_config.pairing_secret = info.pairing_secret;
-  client_auth_config.fetch_secret_callback = base::Bind(
-      &JniPairingSecretFetcher::FetchSecret, secret_fetcher_->GetWeakPtr());
-
-  audio_player_.reset(new AudioPlayerAndroid());
 
   session_.reset(new ChromotingSession(
       weak_ptr_, display_handler_->CreateCursorShapeStub(),
-      display_handler_->CreateVideoRenderer(), audio_player_->GetWeakPtr(),
-      info, client_auth_config));
-  session_->Connect();
+      display_handler_->CreateVideoRenderer(),
+      std::make_unique<AudioPlayerAndroid>(), info));
 }
 
 void JniClient::DisconnectFromHost() {
   DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
-  if (session_) {
-    session_->Disconnect();
-    runtime_->network_task_runner()->DeleteSoon(FROM_HERE,
-                                                session_.release());
-  }
-  if (secret_fetcher_) {
-    runtime_->network_task_runner()->DeleteSoon(FROM_HERE,
-                                                secret_fetcher_.release());
-  }
-  if (audio_player_) {
-    runtime_->network_task_runner()->DeleteSoon(FROM_HERE,
-                                                audio_player_.release());
-  }
+  session_.reset();
   display_handler_.reset();
 }
 
@@ -112,19 +88,38 @@ void JniClient::CommitPairingCredentials(const std::string& host,
                                        j_secret);
 }
 
-void JniClient::FetchThirdPartyToken(const std::string& token_url,
-                                     const std::string& client_id,
-                                     const std::string& scope) {
+void JniClient::FetchSecret(
+    bool pairing_supported,
+    const protocol::SecretFetchedCallback& secret_fetched_callback) {
   DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
+  DCHECK(!secret_fetched_callback_);
+
+  secret_fetched_callback_ = secret_fetched_callback;
+
+  // Delete pairing credentials if they exist.
+  CommitPairingCredentials(host_id_, std::string(), std::string());
+
+  DisplayAuthenticationPrompt(pairing_supported);
+}
+
+void JniClient::FetchThirdPartyToken(
+    const std::string& token_url,
+    const std::string& client_id,
+    const std::string& scopes,
+    const protocol::ThirdPartyTokenFetchedCallback& callback) {
+  DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
+  DCHECK(!third_party_token_fetched_callback_);
+
+  third_party_token_fetched_callback_ = callback;
   JNIEnv* env = base::android::AttachCurrentThread();
 
   ScopedJavaLocalRef<jstring> j_url = ConvertUTF8ToJavaString(env, token_url);
   ScopedJavaLocalRef<jstring> j_client_id =
       ConvertUTF8ToJavaString(env, client_id);
-  ScopedJavaLocalRef<jstring> j_scope = ConvertUTF8ToJavaString(env, scope);
+  ScopedJavaLocalRef<jstring> j_scopes = ConvertUTF8ToJavaString(env, scopes);
 
   Java_Client_fetchThirdPartyToken(env, java_client_, j_url, j_client_id,
-                                   j_scope);
+                                   j_scopes);
 }
 
 void JniClient::SetCapabilities(const std::string& capabilities) {
@@ -154,6 +149,7 @@ void JniClient::Connect(
     const base::android::JavaParamRef<jstring>& username,
     const base::android::JavaParamRef<jstring>& auth_token,
     const base::android::JavaParamRef<jstring>& host_jid,
+    const base::android::JavaParamRef<jstring>& host_ftl_id,
     const base::android::JavaParamRef<jstring>& host_id,
     const base::android::JavaParamRef<jstring>& host_pubkey,
     const base::android::JavaParamRef<jstring>& pair_id,
@@ -167,6 +163,7 @@ void JniClient::Connect(
   info.username = ConvertJavaStringToUTF8(env, username);
   info.auth_token = ConvertJavaStringToUTF8(env, auth_token);
   info.host_jid = ConvertJavaStringToUTF8(env, host_jid);
+  info.host_ftl_id = ConvertJavaStringToUTF8(env, host_ftl_id);
   info.host_id = ConvertJavaStringToUTF8(env, host_id);
   info.host_pubkey = ConvertJavaStringToUTF8(env, host_pubkey);
   info.pairing_id = ConvertJavaStringToUTF8(env, pair_id);
@@ -191,16 +188,12 @@ void JniClient::AuthenticationResponse(
     const JavaParamRef<jstring>& pin,
     jboolean createPair,
     const JavaParamRef<jstring>& deviceName) {
-  if (session_) {
-    session_->ProvideSecret(ConvertJavaStringToUTF8(env, pin), createPair,
-                            ConvertJavaStringToUTF8(env, deviceName));
+  if (session_ && createPair) {
+    session_->RequestPairing(ConvertJavaStringToUTF8(env, deviceName));
   }
 
-  if (secret_fetcher_) {
-    runtime_->network_task_runner()->PostTask(
-        FROM_HERE, base::Bind(&JniPairingSecretFetcher::ProvideSecret,
-                              secret_fetcher_->GetWeakPtr(),
-                              ConvertJavaStringToUTF8(env, pin)));
+  if (secret_fetched_callback_) {
+    std::move(secret_fetched_callback_).Run(ConvertJavaStringToUTF8(env, pin));
   }
 }
 
@@ -255,14 +248,10 @@ void JniClient::SendTouchEvent(
 
   // Iterate over the elements in the object array and transfer the data from
   // the java object to a native event object.
-  jsize length = env->GetArrayLength(touchEventObjectArray);
-  DCHECK_GE(length, 0);
-  for (jsize i = 0; i < length; ++i) {
+  JavaObjectArrayReader<jobject> java_touch_events(touchEventObjectArray);
+  DCHECK_GE(java_touch_events.size(), 0);
+  for (auto java_touch_event : java_touch_events) {
     protocol::TouchEventPoint* touch_point = touch_event.add_touch_points();
-
-    ScopedJavaLocalRef<jobject> java_touch_event(
-        env, env->GetObjectArrayElement(touchEventObjectArray, i));
-
     JniTouchEventData::CopyTouchPointData(env, java_touch_event, touch_point);
   }
 
@@ -281,11 +270,11 @@ void JniClient::OnThirdPartyTokenFetched(
     const base::android::JavaParamRef<jobject>& caller,
     const JavaParamRef<jstring>& token,
     const JavaParamRef<jstring>& shared_secret) {
-  runtime_->network_task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&ChromotingSession::HandleOnThirdPartyTokenFetched,
-                 session_->GetWeakPtr(), ConvertJavaStringToUTF8(env, token),
-                 ConvertJavaStringToUTF8(env, shared_secret)));
+  if (third_party_token_fetched_callback_) {
+    std::move(third_party_token_fetched_callback_)
+        .Run(ConvertJavaStringToUTF8(env, token),
+             ConvertJavaStringToUTF8(env, shared_secret));
+  }
 }
 
 void JniClient::SendExtensionMessage(
@@ -295,6 +284,15 @@ void JniClient::SendExtensionMessage(
     const JavaParamRef<jstring>& data) {
   session_->SendClientMessage(ConvertJavaStringToUTF8(env, type),
                               ConvertJavaStringToUTF8(env, data));
+}
+
+void JniClient::SendClientResolution(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& caller,
+    jint dips_width,
+    jint dips_height,
+    jfloat scale) {
+  session_->SendClientResolution(dips_width, dips_height, scale);
 }
 
 void JniClient::Destroy(JNIEnv* env, const JavaParamRef<jobject>& caller) {

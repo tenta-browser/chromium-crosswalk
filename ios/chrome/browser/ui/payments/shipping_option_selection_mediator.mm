@@ -14,7 +14,7 @@
 #include "components/payments/core/web_payment_request.h"
 #include "ios/chrome/browser/payments/payment_request.h"
 #import "ios/chrome/browser/ui/payments/cells/payments_text_item.h"
-#include "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -103,7 +103,7 @@ using payments::GetShippingOptionSectionString;
     payments::CurrencyFormatter* currencyFormatter =
         _paymentRequest->GetOrCreateCurrencyFormatter();
     item.detailText = base::SysUTF16ToNSString(
-        currencyFormatter->Format(shippingOption->amount.value));
+        currencyFormatter->Format(shippingOption->amount->value));
     if (_paymentRequest->selected_shipping_option() == shippingOption)
       _selectedItemIndex = index;
 

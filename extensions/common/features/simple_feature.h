@@ -35,15 +35,15 @@ class SimpleFeature : public Feature {
   // Used by tests to override the cached --whitelisted-extension-id.
   // NOTE: Not thread-safe! This is because it sets extension id on global
   // singleton during its construction and destruction.
-  class ScopedThreadUnsafeWhitelistForTest {
+  class ScopedThreadUnsafeAllowlistForTest {
    public:
-    explicit ScopedThreadUnsafeWhitelistForTest(const std::string& id);
-    ~ScopedThreadUnsafeWhitelistForTest();
+    explicit ScopedThreadUnsafeAllowlistForTest(const std::string& id);
+    ~ScopedThreadUnsafeAllowlistForTest();
 
    private:
     std::string previous_id_;
 
-    DISALLOW_COPY_AND_ASSIGN(ScopedThreadUnsafeWhitelistForTest);
+    DISALLOW_COPY_AND_ASSIGN(ScopedThreadUnsafeAllowlistForTest);
   };
 
   SimpleFeature();
@@ -76,8 +76,8 @@ class SimpleFeature : public Feature {
                                     Platform platform) const override;
   Availability IsAvailableToEnvironment() const override;
   bool IsInternal() const override;
-  bool IsIdInBlacklist(const HashedExtensionId& hashed_id) const override;
-  bool IsIdInWhitelist(const HashedExtensionId& hashed_id) const override;
+  bool IsIdInBlocklist(const HashedExtensionId& hashed_id) const override;
+  bool IsIdInAllowlist(const HashedExtensionId& hashed_id) const override;
 
   static bool IsIdInArray(const std::string& extension_id,
                           const char* const array[],
@@ -97,7 +97,7 @@ class SimpleFeature : public Feature {
   // than std::string and std::vector for binary size reasons. Using STL types
   // directly in the header means that code that doesn't already have that exact
   // type ends up triggering many implicit conversions which are all inlined.
-  void set_blacklist(std::initializer_list<const char* const> blacklist);
+  void set_blocklist(std::initializer_list<const char* const> blocklist);
   void set_channel(version_info::Channel channel) { channel_ = channel; }
   void set_command_line_switch(base::StringPiece command_line_switch);
   void set_component_extensions_auto_granted(bool granted) {
@@ -108,6 +108,9 @@ class SimpleFeature : public Feature {
   void set_extension_types(std::initializer_list<Manifest::Type> types);
   void set_session_types(std::initializer_list<FeatureSessionType> types);
   void set_internal(bool is_internal) { is_internal_ = is_internal; }
+  void set_disallow_for_service_workers(bool disallow) {
+    disallow_for_service_workers_ = disallow;
+  }
   void set_location(Location location) { location_ = location; }
   // set_matches() is an exception to pass-by-value since we construct an
   // URLPatternSet from the vector of strings.
@@ -121,12 +124,12 @@ class SimpleFeature : public Feature {
   }
   void set_noparent(bool no_parent) { no_parent_ = no_parent; }
   void set_platforms(std::initializer_list<Platform> platforms);
-  void set_whitelist(std::initializer_list<const char* const> whitelist);
+  void set_allowlist(std::initializer_list<const char* const> allowlist);
 
  protected:
   // Accessors used by subclasses in feature verification.
-  const std::vector<std::string>& blacklist() const { return blacklist_; }
-  const std::vector<std::string>& whitelist() const { return whitelist_; }
+  const std::vector<std::string>& blocklist() const { return blocklist_; }
+  const std::vector<std::string>& allowlist() const { return allowlist_; }
   const std::vector<Manifest::Type>& extension_types() const {
     return extension_types_;
   }
@@ -211,14 +214,16 @@ class SimpleFeature : public Feature {
                                        int manifest_version) const;
 
   // Returns the availability of the feature with respect to a given context.
-  Availability GetContextAvailability(Context context, const GURL& url) const;
+  Availability GetContextAvailability(Context context,
+                                      const GURL& url,
+                                      bool is_for_service_worker) const;
 
   // For clarity and consistency, we handle the default value of each of these
   // members the same way: it matches everything. It is up to the higher level
   // code that reads Features out of static data to validate that data and set
   // sensible defaults.
-  std::vector<std::string> blacklist_;
-  std::vector<std::string> whitelist_;
+  std::vector<std::string> blocklist_;
+  std::vector<std::string> allowlist_;
   std::vector<std::string> dependencies_;
   std::vector<Manifest::Type> extension_types_;
   std::vector<FeatureSessionType> session_types_;
@@ -238,6 +243,7 @@ class SimpleFeature : public Feature {
 
   bool component_extensions_auto_granted_;
   bool is_internal_;
+  bool disallow_for_service_workers_;
 
   DISALLOW_COPY_AND_ASSIGN(SimpleFeature);
 };

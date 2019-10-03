@@ -103,7 +103,7 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // time of the frame based on previous frames or the value of
   // VideoFrameMetadata::FRAME_DURATION if no previous frames, so that
   // EffectiveFramesQueued() is relatively accurate immediately after this call.
-  void EnqueueFrame(const scoped_refptr<VideoFrame>& frame);
+  void EnqueueFrame(scoped_refptr<VideoFrame> frame);
 
   // Removes all frames from the |frame_queue_| and clears predictors.  The
   // algorithm will be as if freshly constructed after this call.  By default
@@ -144,6 +144,14 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
     return average_frame_duration_;
   }
 
+  // End time of the last frame.
+  base::TimeTicks last_frame_end_time() const {
+    return frame_queue_.back().end_time;
+  }
+
+  // Current render interval.
+  base::TimeDelta render_interval() const { return render_interval_; }
+
   // Method used for testing which disables frame dropping, in this mode the
   // algorithm will never drop frames and instead always return every frame
   // for display at least once.
@@ -173,7 +181,7 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
 
   // Metadata container for enqueued frames.  See |frame_queue_| below.
   struct ReadyFrame {
-    ReadyFrame(const scoped_refptr<VideoFrame>& frame);
+    ReadyFrame(scoped_refptr<VideoFrame> frame);
     ReadyFrame(const ReadyFrame& other);
     ~ReadyFrame();
 
@@ -222,14 +230,7 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // If |cadence_estimator_| has detected a valid cadence, attempts to find the
   // next frame which should be rendered.  Returns -1 if not enough frames are
   // available for cadence selection or there is no cadence.
-  //
-  // Returns the number of times a prior frame was over displayed and ate into
-  // the returned frames ideal render count via |remaining_overage|.
-  //
-  // For example, if we have 2 frames and each has an ideal display count of 3,
-  // but the first was displayed 4 times, the best frame is the second one, but
-  // it should only be displayed twice instead of thrice, so it's overage is 1.
-  int FindBestFrameByCadence(int* remaining_overage) const;
+  int FindBestFrameByCadence() const;
 
   // Iterates over |frame_queue_| and finds the frame which covers the most of
   // the deadline interval.  If multiple frames have coverage of the interval,
@@ -330,10 +331,6 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // Given to |cadence_estimator_| when assigning cadence values to the
   // ReadyFrameQueue.  Cleared when a new cadence is detected.
   uint64_t cadence_frame_counter_;
-
-  // Tracks whether the last call to Render() choose to ignore the frame chosen
-  // by cadence in favor of one by drift or coverage.
-  bool last_render_ignored_cadence_frame_;
 
   // Indicates if time was moving, set to the return value from
   // UpdateFrameStatistics() during Render() or externally by

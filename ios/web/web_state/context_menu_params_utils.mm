@@ -6,7 +6,7 @@
 
 #include "base/strings/sys_string_conversions.h"
 #include "components/url_formatter/url_formatter.h"
-#include "ios/web/public/referrer_util.h"
+#include "ios/web/common/referrer_util.h"
 #import "ios/web/web_state/context_menu_constants.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,6 +14,18 @@
 #endif
 
 namespace web {
+
+BOOL CanShowContextMenuForElementDictionary(NSDictionary* element) {
+  NSString* href = element[kContextMenuElementHyperlink];
+  if (GURL(base::SysNSStringToUTF8(href)).is_valid()) {
+    return YES;
+  }
+  NSString* src = element[kContextMenuElementSource];
+  if (GURL(base::SysNSStringToUTF8(src)).is_valid()) {
+    return YES;
+  }
+  return NO;
+}
 
 ContextMenuParams ContextMenuParamsFromElementDictionary(
     NSDictionary* element) {
@@ -41,7 +53,7 @@ ContextMenuParams ContextMenuParamsFromElementDictionary(
   if (titleAttribute)
     title = titleAttribute;
   if (title) {
-    params.menu_title.reset([title copy]);
+    params.menu_title = [title copy];
   }
   NSString* referrerPolicy = element[kContextMenuElementReferrerPolicy];
   if (referrerPolicy) {
@@ -50,7 +62,7 @@ ContextMenuParams ContextMenuParamsFromElementDictionary(
   }
   NSString* innerText = element[kContextMenuElementInnerText];
   if ([innerText length] > 0) {
-    params.link_text.reset([innerText copy]);
+    params.link_text = [innerText copy];
   }
   return params;
 }

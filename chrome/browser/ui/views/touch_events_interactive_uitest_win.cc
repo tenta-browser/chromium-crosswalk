@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/win/windows_version.h"
+#include "chrome/browser/ui/views/test/view_event_test_base.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/view_event_test_base.h"
+#include "ui/aura/env.h"
+#include "ui/aura/test/env_test_helper.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/models/simple_menu_model.h"
@@ -35,15 +36,11 @@ class TouchEventHandler : public ui::EventHandler {
   }
 
   void WaitForIdle() {
-    base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-    base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
-    base::RunLoop run_loop;
+    base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
     run_loop.RunUntilIdle();
   }
   void WaitForEvents() {
-    base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-    base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
-    base::RunLoop run_loop;
+    base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
     quit_closure_ = run_loop.QuitClosure();
     run_loop.Run();
   }
@@ -137,15 +134,16 @@ class TouchEventsViewTest : public ViewEventTestBase {
   // ViewEventTestBase:
   void SetUp() override {
     touch_view_ = new views::View();
-    initial_gr_ = ui::GestureRecognizer::Get();
-    gesture_recognizer_ = std::make_unique<TestingGestureRecognizer>();
-    ui::SetGestureRecognizerForTesting(gesture_recognizer_.get());
     ViewEventTestBase::SetUp();
+    aura::test::EnvTestHelper().SetGestureRecognizer(
+        std::make_unique<TestingGestureRecognizer>());
+    gesture_recognizer_ = static_cast<TestingGestureRecognizer*>(
+        aura::Env::GetInstance()->gesture_recognizer());
   }
 
   void TearDown() override {
     touch_view_ = nullptr;
-    ui::SetGestureRecognizerForTesting(initial_gr_);
+    gesture_recognizer_ = nullptr;
     ViewEventTestBase::TearDown();
   }
 
@@ -158,7 +156,7 @@ class TouchEventsViewTest : public ViewEventTestBase {
   void DoTestOnMessageLoop() override {
     // ui_controls::SendTouchEvents which uses InjectTouchInput API only works
     // on Windows 8 and up.
-    if (base::win::GetVersion() <= base::win::VERSION_WIN7) {
+    if (base::win::GetVersion() <= base::win::Version::WIN7) {
       Done();
       return;
     }
@@ -190,7 +188,7 @@ class TouchEventsViewTest : public ViewEventTestBase {
 
  protected:
   views::View* touch_view_ = nullptr;
-  std::unique_ptr<TestingGestureRecognizer> gesture_recognizer_;
+  TestingGestureRecognizer* gesture_recognizer_ = nullptr;
   ui::GestureRecognizer* initial_gr_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(TouchEventsViewTest);
@@ -205,7 +203,7 @@ class TouchEventsRecursiveViewTest : public TouchEventsViewTest {
   void DoTestOnMessageLoop() override {
     // ui_controls::SendTouchEvents which uses InjectTouchInput API only works
     // on Windows 8 and up.
-    if (base::win::GetVersion() <= base::win::VERSION_WIN7) {
+    if (base::win::GetVersion() <= base::win::Version::WIN7) {
       Done();
       return;
     }

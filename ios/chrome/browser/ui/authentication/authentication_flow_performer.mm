@@ -6,32 +6,31 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/ios/block_types.h"
 #include "base/logging.h"
-#include "base/mac/bind_objc_block.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/unified_consent/feature.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/experimental_flags.h"
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #include "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
-#import "ios/chrome/browser/signin/browser_state_data_remover.h"
 #import "ios/chrome/browser/signin/constants.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
+#include "ios/chrome/browser/system_flags.h"
 #include "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/authentication/authentication_ui_util.h"
-#import "ios/chrome/browser/ui/settings/import_data_collection_view_controller.h"
+#import "ios/chrome/browser/ui/commands/browsing_data_commands.h"
+#import "ios/chrome/browser/ui/settings/import_data_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -73,7 +72,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
   __weak id<AuthenticationFlowPerformerDelegate> _delegate;
   AlertCoordinator* _alertCoordinator;
   SettingsNavigationController* _navigationController;
-  std::unique_ptr<base::Timer> _watchdogTimer;
+  std::unique_ptr<base::OneShotTimer> _watchdogTimer;
 }
 
 - (id<AuthenticationFlowPerformerDelegate>)delegate {
@@ -101,7 +100,13 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 }
 
 - (void)commitSyncForBrowserState:(ios::ChromeBrowserState*)browserState {
-  SyncSetupServiceFactory::GetForBrowserState(browserState)->CommitChanges();
+  if (unified_consent::IsUnifiedConsentFeatureEnabled()) {
+    SyncSetupServiceFactory::GetForBrowserState(browserState)
+        ->CommitSyncChanges();
+  } else {
+    SyncSetupServiceFactory::GetForBrowserState(browserState)
+        ->PreUnityCommitChanges();
+  }
 }
 
 - (void)startWatchdogTimerForManagedStatus {
@@ -116,11 +121,11 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
                                      userInfo:nil];
     [strongSelf->_delegate didFailFetchManagedStatus:error];
   };
-  _watchdogTimer.reset(new base::Timer(false, false));
+  _watchdogTimer.reset(new base::OneShotTimer());
   _watchdogTimer->Start(
       FROM_HERE,
       base::TimeDelta::FromSeconds(kAuthenticationFlowTimeoutSeconds),
-      base::BindBlockArc(onTimeout));
+      base::Bind(onTimeout));
 }
 
 - (BOOL)stopWatchdogTimer {
@@ -134,11 +139,12 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 
 - (void)fetchManagedStatus:(ios::ChromeBrowserState*)browserState
                forIdentity:(ChromeIdentity*)identity {
-  if (gaia::ExtractDomainName(gaia::CanonicalizeEmail(
-          base::SysNSStringToUTF8(identity.userEmail))) == "gmail.com") {
-    // Do nothing for @gmail.com addresses as they can't have a hosted domain.
-    // This avoids waiting for this step to complete (and a network call).
-    [_delegate didFetchManagedStatus:nil];
+  ios::ChromeIdentityService* identityService =
+      ios::GetChromeBrowserProvider()->GetChromeIdentityService();
+  NSString* hostedDomain =
+      identityService->GetCachedHostedDomainForIdentity(identity);
+  if (hostedDomain) {
+    [_delegate didFetchManagedStatus:hostedDomain];
     return;
   }
 
@@ -172,7 +178,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
       withHostedDomain:(NSString*)hostedDomain
         toBrowserState:(ios::ChromeBrowserState*)browserState {
   AuthenticationServiceFactory::GetForBrowserState(browserState)
-      ->SignIn(identity, base::SysNSStringToUTF8(hostedDomain));
+      ->SignIn(identity);
 }
 
 - (void)signOutBrowserState:(ios::ChromeBrowserState*)browserState {
@@ -213,16 +219,16 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
     AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
+    [strongSelf alertControllerDidDisappear:weakAlert];
     [[strongSelf delegate]
         didChooseClearDataPolicy:SHOULD_CLEAR_DATA_CLEAR_DATA];
-    [strongSelf alertControllerDidDisappear:weakAlert];
   };
   ProceduralBlock cancelBlock = ^{
     AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
-    [[strongSelf delegate] didChooseCancel];
     [strongSelf alertControllerDidDisappear:weakAlert];
+    [[strongSelf delegate] didChooseCancel];
   };
 
   [_alertCoordinator addItemWithTitle:cancelLabel
@@ -251,10 +257,14 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 
   if (AuthenticationServiceFactory::GetForBrowserState(browserState)
           ->IsAuthenticatedIdentityManaged()) {
-    NSString* hostedDomain = base::SysUTF8ToNSString(
-        ios::SigninManagerFactory::GetForBrowserState(browserState)
-            ->GetAuthenticatedAccountInfo()
-            .hosted_domain);
+    signin::IdentityManager* identity_manager =
+        IdentityManagerFactory::GetForBrowserState(browserState);
+    base::Optional<AccountInfo> primary_account_info =
+        identity_manager->FindExtendedAccountInfoForAccount(
+            identity_manager->GetPrimaryAccountInfo());
+    DCHECK(primary_account_info);
+    NSString* hostedDomain =
+        base::SysUTF8ToNSString(primary_account_info->hosted_domain);
     [self promptSwitchFromManagedEmail:lastSignedInEmail
                       withHostedDomain:hostedDomain
                                toEmail:[identity userEmail]
@@ -275,12 +285,18 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
                  completion:nil];
 }
 
-- (void)clearData:(ios::ChromeBrowserState*)browserState {
+- (void)clearData:(ios::ChromeBrowserState*)browserState
+       dispatcher:(id<BrowsingDataCommands>)dispatcher {
   DCHECK(!AuthenticationServiceFactory::GetForBrowserState(browserState)
-              ->GetAuthenticatedUserEmail());
-  BrowserStateDataRemover::ClearData(browserState, ^{
-    [_delegate didClearData];
-  });
+              ->IsAuthenticated());
+
+  [dispatcher
+      removeBrowsingDataForBrowserState:browserState
+                             timePeriod:browsing_data::TimePeriod::ALL_TIME
+                             removeMask:BrowsingDataRemoveMask::REMOVE_ALL
+                        completionBlock:^{
+                          [_delegate didClearData];
+                        }];
 }
 
 - (BOOL)shouldHandleMergeCaseForIdentity:(ChromeIdentity*)identity
@@ -289,7 +305,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
   std::string lastSignedInAccountId =
       browserState->GetPrefs()->GetString(prefs::kGoogleServicesLastAccountId);
   std::string currentSignedInAccountId =
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browserState)
+      IdentityManagerFactory::GetForBrowserState(browserState)
           ->PickAccountIdForAccount(
               base::SysNSStringToUTF8([identity gaiaID]),
               base::SysNSStringToUTF8([identity userEmail]));
@@ -331,15 +347,15 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
     AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
-    [[strongSelf delegate] didAcceptManagedConfirmation];
     [strongSelf alertControllerDidDisappear:weakAlert];
+    [[strongSelf delegate] didAcceptManagedConfirmation];
   };
   ProceduralBlock cancelBlock = ^{
     AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
-    [[strongSelf delegate] didCancelManagedConfirmation];
     [strongSelf alertControllerDidDisappear:weakAlert];
+    [[strongSelf delegate] didCancelManagedConfirmation];
   };
 
   [_alertCoordinator addItemWithTitle:cancelLabel
@@ -362,9 +378,9 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
   __weak AuthenticationFlowPerformer* weakSelf = self;
   __weak AlertCoordinator* weakAlert = _alertCoordinator;
   ProceduralBlock dismissAction = ^{
+    [weakSelf alertControllerDidDisappear:weakAlert];
     if (callback)
       callback();
-    [weakSelf alertControllerDidDisappear:weakAlert];
   };
 
   NSString* okButtonLabel = l10n_util::GetNSString(IDS_OK);
@@ -390,7 +406,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 
 #pragma mark - ImportDataControllerDelegate
 
-- (void)didChooseClearDataPolicy:(ImportDataCollectionViewController*)controller
+- (void)didChooseClearDataPolicy:(ImportDataTableViewController*)controller
                  shouldClearData:(ShouldClearData)shouldClearData {
   DCHECK_NE(SHOULD_CLEAR_DATA_USER_CHOICE, shouldClearData);
   if (shouldClearData == SHOULD_CLEAR_DATA_CLEAR_DATA) {

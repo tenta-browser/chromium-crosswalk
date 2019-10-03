@@ -8,8 +8,8 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/demuxer_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,13 +33,13 @@ class FakeDemuxerStreamTest : public testing::Test {
   ~FakeDemuxerStreamTest() override = default;
 
   void BufferReady(DemuxerStream::Status status,
-                   const scoped_refptr<DecoderBuffer>& buffer) {
+                   scoped_refptr<DecoderBuffer> buffer) {
     DCHECK(read_pending_);
     read_pending_ = false;
     status_ = status;
-    buffer_ = buffer;
     if (status == DemuxerStream::kOk && !buffer->end_of_stream())
       num_buffers_received_++;
+    buffer_ = std::move(buffer);
   }
 
   enum ReadResult { OK, ABORTED, CONFIG_CHANGED, READ_ERROR, EOS, PENDING };
@@ -180,7 +180,7 @@ class FakeDemuxerStreamTest : public testing::Test {
     ReadAllBuffers(num_configs, num_buffers_in_one_config);
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<FakeDemuxerStream> stream_;
 
   DemuxerStream::Status status_;

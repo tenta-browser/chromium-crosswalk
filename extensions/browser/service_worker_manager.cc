@@ -5,16 +5,13 @@
 #include "extensions/browser/service_worker_manager.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/extension_registry.h"
 
 namespace extensions {
-
-namespace {
-void EmptySuccessCallback(bool success) {}
-}
 
 ServiceWorkerManager::ServiceWorkerManager(
     content::BrowserContext* browser_context)
@@ -45,7 +42,7 @@ void ServiceWorkerManager::OnExtensionUninstalled(
   content::BrowserContext::GetStoragePartitionForSite(browser_context_,
                                                       extension->url())
       ->GetServiceWorkerContext()
-      ->DeleteForOrigin(extension->url(), base::Bind(&EmptySuccessCallback));
+      ->DeleteForOrigin(extension->url(), base::DoNothing());
 }
 
 }  // namespace extensions

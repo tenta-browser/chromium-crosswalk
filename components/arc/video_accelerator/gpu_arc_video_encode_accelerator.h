@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "components/arc/common/video_encode_accelerator.mojom.h"
 #include "components/arc/video_accelerator/video_frame_plane.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
+#include "gpu/config/gpu_preferences.h"
 #include "media/video/video_encode_accelerator.h"
 
 namespace arc {
@@ -38,22 +38,18 @@ class GpuArcVideoEncodeAccelerator
   void RequireBitstreamBuffers(unsigned int input_count,
                                const gfx::Size& input_coded_size,
                                size_t output_buffer_size) override;
-  void BitstreamBufferReady(int32_t bitstream_buffer_id,
-                            size_t payload_size,
-                            bool key_frame,
-                            base::TimeDelta timestamp) override;
+  void BitstreamBufferReady(
+      int32_t bitstream_buffer_id,
+      const media::BitstreamBufferMetadata& metadata) override;
   void NotifyError(Error error) override;
 
   // ::arc::mojom::VideoEncodeAccelerator implementation.
   void GetSupportedProfiles(GetSupportedProfilesCallback callback) override;
-  void Initialize(VideoPixelFormat input_format,
-                  const gfx::Size& visible_size,
-                  VideoEncodeAccelerator::StorageType input_storage,
-                  VideoCodecProfile output_profile,
-                  uint32_t initial_bitrate,
+  void Initialize(const media::VideoEncodeAccelerator::Config& config,
                   VideoEncodeClientPtr client,
                   InitializeCallback callback) override;
-  void Encode(mojo::ScopedHandle fd,
+  void Encode(media::VideoPixelFormat format,
+              mojo::ScopedHandle fd,
               std::vector<::arc::VideoFramePlane> planes,
               int64_t timestamp,
               bool force_keyframe,
@@ -66,10 +62,18 @@ class GpuArcVideoEncodeAccelerator
                                        uint32_t framerate) override;
   void Flush(FlushCallback callback) override;
 
-  // Unwraps a file descriptor from the given mojo::ScopedHandle.
-  // If an error is encountered, it returns an invalid base::ScopedFD and
-  // notifies client about the error via VideoEncodeClient::NotifyError.
-  base::ScopedFD UnwrapFdFromMojoHandle(mojo::ScopedHandle handle);
+  void EncodeDmabuf(base::ScopedFD fd,
+                    media::VideoPixelFormat format,
+                    const std::vector<::arc::VideoFramePlane>& planes,
+                    int64_t timestamp,
+                    bool force_keyframe,
+                    EncodeCallback callback);
+  void EncodeSharedMemory(base::ScopedFD fd,
+                          media::VideoPixelFormat format,
+                          const std::vector<::arc::VideoFramePlane>& planes,
+                          int64_t timestamp,
+                          bool force_keyframe,
+                          EncodeCallback callback);
 
   gpu::GpuPreferences gpu_preferences_;
   std::unique_ptr<media::VideoEncodeAccelerator> accelerator_;
@@ -77,6 +81,7 @@ class GpuArcVideoEncodeAccelerator
   gfx::Size coded_size_;
   gfx::Size visible_size_;
   VideoPixelFormat input_pixel_format_;
+  media::VideoEncodeAccelerator::Config::StorageType input_storage_type_;
   int32_t bitstream_buffer_serial_;
   std::unordered_map<uint32_t, UseBitstreamBufferCallback> use_bitstream_cbs_;
 

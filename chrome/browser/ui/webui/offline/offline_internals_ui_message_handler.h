@@ -57,6 +57,20 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   // Set whether to record prefetch service events.
   void HandleSetRecordPrefetchService(const base::ListValue* args);
 
+  // Set whether to enable limitless prefetching.
+  void HandleSetLimitlessPrefetchingEnabled(const base::ListValue* args);
+
+  // Get whether limitless prefetching is enabled.
+  void HandleGetLimitlessPrefetchingEnabled(const base::ListValue* args);
+
+  // Set whether to enable sending the testing header when making
+  // GeneratePageBundle requests.
+  void HandleSetPrefetchTestingHeader(const base::ListValue* args);
+
+  // Get whether we are sending the testing header for GeneratePageBundle
+  // requests.
+  void HandleGetPrefetchTestingHeader(const base::ListValue* args);
+
   // Load all offline services' event logs.
   void HandleGetEventLogs(const base::ListValue* args);
 
@@ -95,7 +109,6 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   // Callback for async GetRequests calls.
   void HandleRequestQueueCallback(
       std::string callback_id,
-      offline_pages::GetRequestsResult result,
       std::vector<std::unique_ptr<offline_pages::SavePageRequest>> requests);
 
   // Callback for DeletePage/DeleteAllPages calls.
@@ -106,6 +119,10 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   void HandleDeletedRequestsCallback(
       std::string callback_id,
       const offline_pages::MultipleItemStatuses& results);
+
+  // Callback for SavePageLater calls.
+  void HandleSavePageLaterCallback(std::string callback_id,
+                                   offline_pages::AddRequestResult result);
 
   // Offline page model to call methods on.
   offline_pages::OfflinePageModel* offline_page_model_;

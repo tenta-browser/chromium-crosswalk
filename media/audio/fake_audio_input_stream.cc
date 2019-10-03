@@ -54,7 +54,7 @@ bool FakeAudioInputStream::Open() {
 void FakeAudioInputStream::Start(AudioInputCallback* callback)  {
   DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
   callback_ = callback;
-  fake_audio_worker_.Start(base::Bind(
+  fake_audio_worker_.Start(base::BindRepeating(
       &FakeAudioInputStream::ReadAudioFromSource, base::Unretained(this)));
 }
 
@@ -66,7 +66,7 @@ void FakeAudioInputStream::Stop() {
 
 void FakeAudioInputStream::Close() {
   DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
-  DCHECK(!callback_);
+  Stop();
   audio_manager_->ReleaseInputStream(this);
 }
 
@@ -97,16 +97,32 @@ bool FakeAudioInputStream::GetAutomaticGainControl() {
   return false;
 }
 
-void FakeAudioInputStream::ReadAudioFromSource() {
+void FakeAudioInputStream::SetOutputDeviceForAec(
+    const std::string& output_device_id) {
+  // Not supported. Do nothing.
+}
+
+void FakeAudioInputStream::ReadAudioFromSource(base::TimeTicks ideal_time,
+                                               base::TimeTicks now) {
   DCHECK(audio_manager_->GetWorkerTaskRunner()->BelongsToCurrentThread());
   DCHECK(callback_);
 
   if (!audio_source_)
     audio_source_ = ChooseSource();
 
-  audio_source_->OnMoreData(base::TimeDelta(), base::TimeTicks::Now(), 0,
-                            audio_bus_.get());
-  callback_->OnData(audio_bus_.get(), base::TimeTicks::Now(), 1.0);
+  // This OnMoreData()/OnData() timing would never happen in a real system:
+  //
+  //   1. Real AudioSources would never be asked to generate audio that should
+  //      already be playing-out exactly at this very moment; they are asked to
+  //      do so for audio to be played-out in the future.
+  //   2. Real AudioInputStreams could never provide audio that is striking a
+  //      microphone element exactly at this very moment; they provide audio
+  //      that happened in the recent past.
+  //
+  // However, it would be pointless to add a FIFO queue here to delay the signal
+  // in this "fake" implementation. So, just hack the timing and carry-on.
+  audio_source_->OnMoreData(base::TimeDelta(), ideal_time, 0, audio_bus_.get());
+  callback_->OnData(audio_bus_.get(), ideal_time, 1.0);
 }
 
 using AudioSourceCallback = AudioOutputStream::AudioSourceCallback;
@@ -132,9 +148,9 @@ std::unique_ptr<AudioSourceCallback> FakeAudioInputStream::ChooseSource() {
           << switches::kUseFileForFakeAudioCapture << ".";
       looping = false;
     }
-    return base::MakeUnique<FileSource>(params_, path_to_wav_file, looping);
+    return std::make_unique<FileSource>(params_, path_to_wav_file, looping);
   }
-  return base::MakeUnique<BeepingSource>(params_);
+  return std::make_unique<BeepingSource>(params_);
 }
 
 void FakeAudioInputStream::BeepOnce() {

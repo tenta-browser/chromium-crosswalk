@@ -9,9 +9,8 @@
 
 #include "base/android/scoped_java_ref.h"
 
-namespace content {
-class NavigationEntry;
-class WebContents;
+namespace sessions {
+class SerializedNavigationEntry;
 }
 
 class TabAndroid;
@@ -19,18 +18,20 @@ class TabAndroid;
 // Stores state for a WebContents, including its navigation history.
 class WebContentsState {
  public:
+  using DeletionPredicate = base::RepeatingCallback<bool(
+      const sessions::SerializedNavigationEntry& entry)>;
+
   static base::android::ScopedJavaLocalRef<jobject>
       GetContentsStateAsByteBuffer(JNIEnv* env, TabAndroid* tab);
 
-  // Common implementation for GetContentsStateAsByteBuffer() and
-  // CreateContentsStateAsByteBuffer(). Does not assume ownership of the
-  // navigations.
+  // Returns a new buffer without the navigations matching |predicate|.
+  // Returns null if no deletions happened.
   static base::android::ScopedJavaLocalRef<jobject>
-      WriteNavigationsAsByteBuffer(
-          JNIEnv* env,
-          bool is_off_the_record,
-          const std::vector<content::NavigationEntry*>& navigations,
-          int current_entry);
+  DeleteNavigationEntriesFromByteBuffer(JNIEnv* env,
+                                        void* data,
+                                        int size,
+                                        int saved_state_version,
+                                        const DeletionPredicate& predicate);
 
   // Extracts display title from serialized tab data on restore
   static base::android::ScopedJavaLocalRef<jstring>
@@ -43,16 +44,8 @@ class WebContentsState {
                                   int size, int saved_state_version);
 
   // Restores a WebContents from the passed in state.
-  static content::WebContents* RestoreContentsFromByteBuffer(
-      void* data,
-      int size,
-      int saved_state_version,
-      bool initially_hidden);
-
-  // Restores a WebContents from the passed in state.
   static base::android::ScopedJavaLocalRef<jobject>
   RestoreContentsFromByteBuffer(JNIEnv* env,
-                                jclass clazz,
                                 jobject state,
                                 jint saved_state_version,
                                 jboolean initially_hidden);
@@ -60,10 +53,12 @@ class WebContentsState {
   // Synthesizes a stub, single-navigation state for a tab that will be loaded
   // lazily.
   static base::android::ScopedJavaLocalRef<jobject>
-      CreateSingleNavigationStateAsByteBuffer(JNIEnv* env, jstring url,
-                                              jstring referrer_url,
-                                              jint referrer_policy,
-                                              jboolean is_off_the_record);
+  CreateSingleNavigationStateAsByteBuffer(JNIEnv* env,
+                                          jstring url,
+                                          jstring referrer_url,
+                                          jint referrer_policy,
+                                          jstring initiator_origin,
+                                          jboolean is_off_the_record);
 };
 
 #endif  // CHROME_BROWSER_ANDROID_TAB_STATE_H_

@@ -6,6 +6,7 @@
 #define CHROMEOS_COMPONENTS_TETHER_FAKE_ASYNCHRONOUS_SHUTDOWN_OBJECT_CONTAINER_H_
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "chromeos/components/tether/asynchronous_shutdown_object_container.h"
@@ -20,7 +21,7 @@ class FakeAsynchronousShutdownObjectContainer
  public:
   // |deletion_callback| will be invoked when the object is deleted.
   FakeAsynchronousShutdownObjectContainer(
-      const base::Closure& deletion_callback = base::Bind(&base::DoNothing));
+      const base::Closure& deletion_callback = base::DoNothing());
   ~FakeAsynchronousShutdownObjectContainer() override;
 
   base::Closure& shutdown_complete_callback() {
@@ -29,11 +30,6 @@ class FakeAsynchronousShutdownObjectContainer
 
   void set_tether_host_fetcher(TetherHostFetcher* tether_host_fetcher) {
     tether_host_fetcher_ = tether_host_fetcher;
-  }
-
-  void set_ble_connection_manager(
-      BleConnectionManager* ble_connection_manager) {
-    ble_connection_manager_ = ble_connection_manager;
   }
 
   void set_disconnect_tethering_request_sender(
@@ -54,7 +50,6 @@ class FakeAsynchronousShutdownObjectContainer
   // AsynchronousShutdownObjectContainer:
   void Shutdown(const base::Closure& shutdown_complete_callback) override;
   TetherHostFetcher* tether_host_fetcher() override;
-  BleConnectionManager* ble_connection_manager() override;
   DisconnectTetheringRequestSender* disconnect_tethering_request_sender()
       override;
   NetworkConfigurationRemover* network_configuration_remover() override;
@@ -65,7 +60,6 @@ class FakeAsynchronousShutdownObjectContainer
   base::Closure shutdown_complete_callback_;
 
   TetherHostFetcher* tether_host_fetcher_ = nullptr;
-  BleConnectionManager* ble_connection_manager_ = nullptr;
   DisconnectTetheringRequestSender* disconnect_tethering_request_sender_ =
       nullptr;
   NetworkConfigurationRemover* network_configuration_remover_ = nullptr;

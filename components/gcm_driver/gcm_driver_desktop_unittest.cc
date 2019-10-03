@@ -11,9 +11,10 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -30,16 +31,19 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync/protocol/experiment_status.pb.h"
 #include "components/sync/protocol/experiments_specifics.pb.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_network_connection_tracker.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace gcm {
 
 namespace {
 
+const char kTestChannelStatusRequestURL[] = "http://channel.status.request.com";
 const char kTestAppID1[] = "TestApp1";
 const char kTestAppID2[] = "TestApp2";
 const char kUserID1[] = "user1";
@@ -78,9 +82,7 @@ void FakeGCMConnectionObserver::OnDisconnected() {
 }
 
 void PumpCurrentLoop() {
-  base::MessageLoop::ScopedNestableTaskAllower
-      nestable_task_allower(base::MessageLoop::current());
-  base::RunLoop().RunUntilIdle();
+  base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed).RunUntilIdle();
 }
 
 void PumpUILoop() {
@@ -151,8 +153,7 @@ class GCMDriverTest : public testing::Test {
   void RegisterCompleted(const std::string& registration_id,
                          GCMClient::Result result);
   void SendCompleted(const std::string& message_id, GCMClient::Result result);
-  void GetEncryptionInfoCompleted(const std::string& p256dh,
-                                  const std::string& auth_secret);
+  void GetEncryptionInfoCompleted(std::string p256dh, std::string auth_secret);
   void UnregisterCompleted(GCMClient::Result result);
 
   const base::Closure& async_operation_completed_callback() const {
@@ -165,8 +166,11 @@ class GCMDriverTest : public testing::Test {
  private:
   base::ScopedTempDir temp_dir_;
   TestingPrefServiceSimple prefs_;
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::UI};
   base::Thread io_thread_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
+
   std::unique_ptr<GCMDriverDesktop> driver_;
   std::unique_ptr<FakeGCMAppHandler> gcm_app_handler_;
   std::unique_ptr<FakeGCMConnectionObserver> gcm_connection_observer_;
@@ -188,8 +192,7 @@ GCMDriverTest::GCMDriverTest()
     : io_thread_("IOThread"),
       registration_result_(GCMClient::UNKNOWN_ERROR),
       send_result_(GCMClient::UNKNOWN_ERROR),
-      unregistration_result_(GCMClient::UNKNOWN_ERROR) {
-}
+      unregistration_result_(GCMClient::UNKNOWN_ERROR) {}
 
 GCMDriverTest::~GCMDriverTest() {
 }
@@ -214,7 +217,7 @@ void GCMDriverTest::TearDown() {
 void GCMDriverTest::PumpIOLoop() {
   base::RunLoop run_loop;
   io_thread_.task_runner()->PostTaskAndReply(
-      FROM_HERE, base::Bind(&PumpCurrentLoop), run_loop.QuitClosure());
+      FROM_HERE, base::BindOnce(&PumpCurrentLoop), run_loop.QuitClosure());
   run_loop.Run();
 }
 
@@ -241,13 +244,16 @@ void GCMDriverTest::CreateDriver() {
       new net::TestURLRequestContextGetter(io_thread_.task_runner());
   GCMClient::ChromeBuildInfo chrome_build_info;
   chrome_build_info.product_category_for_subtypes = "com.chrome.macosx";
-  driver_.reset(new GCMDriverDesktop(
+  driver_ = std::make_unique<GCMDriverDesktop>(
       std::unique_ptr<GCMClientFactory>(new FakeGCMClientFactory(
           base::ThreadTaskRunnerHandle::Get(), io_thread_.task_runner())),
-      chrome_build_info, "http://channel.status.request.url",
-      "user-agent-string", &prefs_, temp_dir_.GetPath(), request_context,
+      chrome_build_info, kTestChannelStatusRequestURL, "user-agent-string",
+      &prefs_, temp_dir_.GetPath(), base::DoNothing(),
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          &test_url_loader_factory_),
+      network::TestNetworkConnectionTracker::GetInstance(),
       base::ThreadTaskRunnerHandle::Get(), io_thread_.task_runner(),
-      message_loop_.task_runner()));
+      task_environment_.GetMainThreadTaskRunner());
 
   gcm_app_handler_.reset(new FakeGCMAppHandler);
   gcm_connection_observer_.reset(new FakeGCMConnectionObserver);
@@ -304,8 +310,8 @@ void GCMDriverTest::GetEncryptionInfo(const std::string& app_id,
   base::RunLoop run_loop;
   async_operation_completed_callback_ = run_loop.QuitClosure();
   driver_->GetEncryptionInfo(
-      app_id, base::Bind(&GCMDriverTest::GetEncryptionInfoCompleted,
-                         base::Unretained(this)));
+      app_id, base::BindOnce(&GCMDriverTest::GetEncryptionInfoCompleted,
+                             base::Unretained(this)));
   if (wait_to_finish == WAIT)
     run_loop.Run();
 }
@@ -343,10 +349,10 @@ void GCMDriverTest::SendCompleted(const std::string& message_id,
     async_operation_completed_callback_.Run();
 }
 
-void GCMDriverTest::GetEncryptionInfoCompleted(const std::string& p256dh,
-                                               const std::string& auth_secret) {
-  p256dh_ = p256dh;
-  auth_secret_ = auth_secret;
+void GCMDriverTest::GetEncryptionInfoCompleted(std::string p256dh,
+                                               std::string auth_secret) {
+  p256dh_ = std::move(p256dh);
+  auth_secret_ = std::move(auth_secret);
   if (!async_operation_completed_callback_.is_null())
     async_operation_completed_callback_.Run();
 }
@@ -890,6 +896,9 @@ TEST_F(GCMDriverFunctionalTest, EncryptedMessageReceivedError) {
   PumpUILoop();
   PumpIOLoop();
 
+  EXPECT_EQ(FakeGCMAppHandler::DECRYPTION_FAILED_EVENT,
+            gcm_app_handler()->received_event());
+
   GCMClient::GCMStatistics statistics = GetGCMClient()->GetStatistics();
   EXPECT_TRUE(statistics.is_recording);
   EXPECT_EQ(
@@ -935,8 +944,6 @@ class GCMChannelStatusSyncerTest : public GCMDriverTest {
   }
 
  private:
-  net::TestURLFetcherFactory url_fetcher_factory_;
-
   DISALLOW_COPY_AND_ASSIGN(GCMChannelStatusSyncerTest);
 };
 
@@ -948,8 +955,6 @@ GCMChannelStatusSyncerTest::~GCMChannelStatusSyncerTest() {
 
 void GCMChannelStatusSyncerTest::SetUp() {
   GCMDriverTest::SetUp();
-
-  url_fetcher_factory_.set_remove_fetcher_on_delete(true);
 }
 
 void GCMChannelStatusSyncerTest::CompleteGCMChannelStatusRequest(
@@ -962,14 +967,7 @@ void GCMChannelStatusSyncerTest::CompleteGCMChannelStatusRequest(
   if (poll_interval_seconds)
     response_proto.set_poll_interval_seconds(poll_interval_seconds);
 
-  std::string response_string;
-  response_proto.SerializeToString(&response_string);
-
-  net::TestURLFetcher* fetcher = url_fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(net::HTTP_OK);
-  fetcher->SetResponseString(response_string);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  syncer()->request_for_testing()->ParseResponseProto(response_proto);
 }
 
 bool GCMChannelStatusSyncerTest::CompareDelaySeconds(

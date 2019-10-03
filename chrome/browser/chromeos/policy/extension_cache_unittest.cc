@@ -9,10 +9,10 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
-#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/chromeos/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/extensions/updater/chromeos_extension_cache_delegate.h"
 #include "chrome/browser/extensions/updater/extension_cache_impl.h"
 #include "chrome/browser/extensions/updater/local_extension_cache.h"
@@ -59,12 +59,12 @@ static base::FilePath CreateExtensionFile(const base::FilePath& dir,
 class ExtensionCacheTest : public testing::Test {
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  chromeos::ScopedCrosSettingsTestHelper settings_helper_;
+  chromeos::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 };
 
 TEST_F(ExtensionCacheTest, SizePolicy) {
-  settings_helper_.ReplaceProvider(chromeos::kExtensionCacheSize);
-  settings_helper_.SetInteger(chromeos::kExtensionCacheSize, kMaxCacheSize);
+  scoped_testing_cros_settings_.device_settings()->SetInteger(
+      chromeos::kExtensionCacheSize, kMaxCacheSize);
 
   // Create and initialize local cache.
   const base::Time now = base::Time::Now();
@@ -86,7 +86,7 @@ TEST_F(ExtensionCacheTest, SizePolicy) {
                           now - base::TimeDelta::FromSeconds(3));
 
   ExtensionCacheImpl cache_impl(
-      base::MakeUnique<ChromeOSExtensionCacheDelegate>(cache_path));
+      std::make_unique<ChromeOSExtensionCacheDelegate>(cache_path));
 
   std::unique_ptr<base::RunLoop> run_loop(new base::RunLoop);
   cache_impl.Start(run_loop->QuitClosure());

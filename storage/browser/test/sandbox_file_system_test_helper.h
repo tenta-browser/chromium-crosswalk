@@ -16,7 +16,7 @@
 #include "storage/browser/fileapi/task_runner_bound_observer_list.h"
 #include "storage/common/fileapi/file_system_types.h"
 #include "storage/common/fileapi/file_system_util.h"
-#include "storage/common/quota/quota_types.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -32,6 +32,7 @@ class FileSystemContext;
 class FileSystemFileUtil;
 class FileSystemOperationContext;
 class FileSystemOperationRunner;
+class ObfuscatedFileUtilDelegate;
 }
 
 namespace content {
@@ -87,11 +88,13 @@ class SandboxFileSystemTestHelper {
 
   const GURL& origin() const { return origin_; }
   storage::FileSystemType type() const { return type_; }
-  storage::StorageType storage_type() const {
+  blink::mojom::StorageType storage_type() const {
     return storage::FileSystemTypeToQuotaStorageType(type_);
   }
   storage::FileSystemFileUtil* file_util() const { return file_util_; }
   storage::FileSystemUsageCache* usage_cache();
+
+  storage::ObfuscatedFileUtilDelegate* file_util_delegate();
 
  private:
   void SetUpFileSystem();

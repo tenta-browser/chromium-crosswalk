@@ -34,11 +34,7 @@ std::string ManagedState::TypeToString(ManagedType type) {
 }
 
 ManagedState::ManagedState(ManagedType type, const std::string& path)
-    : managed_type_(type),
-      path_(path),
-      update_received_(false),
-      update_requested_(false) {
-}
+    : managed_type_(type), path_(path) {}
 
 ManagedState::~ManagedState() = default;
 
@@ -65,12 +61,11 @@ DeviceState* ManagedState::AsDeviceState() {
   return NULL;
 }
 
-bool ManagedState::InitialPropertiesReceived(
-    const base::DictionaryValue& properties) {
+bool ManagedState::InitialPropertiesReceived(const base::Value& properties) {
   return false;
 }
 
-void ManagedState::GetStateProperties(base::DictionaryValue* dictionary) const {
+void ManagedState::GetStateProperties(base::Value* dictionary) const {
   dictionary->SetKey(shill::kNameProperty, base::Value(name()));
   dictionary->SetKey(shill::kTypeProperty, base::Value(type()));
 }

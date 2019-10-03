@@ -10,7 +10,7 @@
 #include "ash/root_window_settings.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
-#include "ash/wm/root_window_finder.h"
+#include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -27,8 +27,7 @@ namespace ash {
 
 namespace {
 
-// We need to keep this in order for unittests to tell if
-// the object in display::Screen::GetScreenByType is for shutdown.
+// Intentionally leaked in production.
 display::Screen* screen_for_shutdown = nullptr;
 
 display::DisplayManager* GetDisplayManager() {
@@ -39,7 +38,9 @@ class ScreenForShutdown : public display::Screen {
  public:
   explicit ScreenForShutdown(display::Screen* screen_ash)
       : display_list_(screen_ash->GetAllDisplays()),
-        primary_display_(screen_ash->GetPrimaryDisplay()) {}
+        primary_display_(screen_ash->GetPrimaryDisplay()) {
+    SetDisplayForNewWindows(primary_display_.id());
+  }
 
   // display::Screen overrides:
   gfx::Point GetCursorScreenPoint() override { return gfx::Point(); }
@@ -97,7 +98,7 @@ bool ScreenAsh::IsWindowUnderCursor(gfx::NativeWindow window) {
 }
 
 gfx::NativeWindow ScreenAsh::GetWindowAtScreenPoint(const gfx::Point& point) {
-  aura::Window* root_window = wm::GetRootWindowAt(point);
+  aura::Window* root_window = window_util::GetRootWindowAt(point);
   aura::client::ScreenPositionClient* position_client =
       aura::client::GetScreenPositionClient(root_window);
 
@@ -120,6 +121,7 @@ display::Display ScreenAsh::GetDisplayNearestWindow(
     gfx::NativeView window) const {
   if (!window)
     return GetPrimaryDisplay();
+
   const aura::Window* root_window = window->GetRootWindow();
   if (!root_window)
     return GetPrimaryDisplay();
@@ -165,6 +167,17 @@ display::Display ScreenAsh::GetDisplayMatching(
 }
 
 display::Display ScreenAsh::GetPrimaryDisplay() const {
+  if (!WindowTreeHostManager::HasValidPrimaryDisplayId()) {
+    // This should only be allowed temporarily when there are no displays
+    // available and hence no primary display. In this case we return a default
+    // display to avoid crashes for display observers trying to get the primary
+    // display when notified with the removal of the last display.
+    // https://crbug.com/866714.
+    DCHECK(
+        Shell::Get()->window_tree_host_manager()->GetAllRootWindows().empty());
+    return display::Display::GetDefaultDisplay();
+  }
+
   return GetDisplayManager()->GetDisplayForId(
       WindowTreeHostManager::GetPrimaryDisplayId());
 }
@@ -200,6 +213,14 @@ void ScreenAsh::CreateScreenForShutdown() {
   delete screen_for_shutdown;
   screen_for_shutdown = new ScreenForShutdown(display::Screen::GetScreen());
   display::Screen::SetScreenInstance(screen_for_shutdown);
+}
+
+// static
+void ScreenAsh::DeleteScreenForShutdown() {
+  if (display::Screen::GetScreen() == screen_for_shutdown)
+    display::Screen::SetScreenInstance(nullptr);
+  delete screen_for_shutdown;
+  screen_for_shutdown = nullptr;
 }
 
 }  // namespace ash

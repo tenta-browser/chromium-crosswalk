@@ -20,6 +20,9 @@ namespace {
 class SecureHashSHA256 : public SecureHash {
  public:
   SecureHashSHA256() {
+    // Ensure that CPU features detection is performed before using
+    // BoringSSL. This will enable hw accelerated implementations.
+    EnsureOpenSSLInit();
     SHA256_Init(&ctx_);
   }
 
@@ -42,7 +45,7 @@ class SecureHashSHA256 : public SecureHash {
   }
 
   std::unique_ptr<SecureHash> Clone() const override {
-    return base::MakeUnique<SecureHashSHA256>(*this);
+    return std::make_unique<SecureHashSHA256>(*this);
   }
 
   size_t GetHashLength() const override { return SHA256_DIGEST_LENGTH; }
@@ -56,7 +59,7 @@ class SecureHashSHA256 : public SecureHash {
 std::unique_ptr<SecureHash> SecureHash::Create(Algorithm algorithm) {
   switch (algorithm) {
     case SHA256:
-      return base::MakeUnique<SecureHashSHA256>();
+      return std::make_unique<SecureHashSHA256>();
     default:
       NOTIMPLEMENTED();
       return nullptr;

@@ -19,25 +19,9 @@ using gfx::TestAnimationDelegate;
 namespace views {
 namespace {
 
-class TestBoundsAnimator : public BoundsAnimator {
- public:
-  explicit TestBoundsAnimator(View* view) : BoundsAnimator(view) {
-  }
-
- protected:
-  SlideAnimation* CreateAnimation() override {
-    SlideAnimation* animation = BoundsAnimator::CreateAnimation();
-    animation->SetSlideDuration(10);
-    return animation;
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestBoundsAnimator);
-};
-
 class OwnedDelegate : public gfx::AnimationDelegate {
  public:
-  OwnedDelegate() {}
+  OwnedDelegate() = default;
 
   ~OwnedDelegate() override { deleted_ = true; }
 
@@ -71,7 +55,7 @@ bool OwnedDelegate::canceled_ = false;
 
 class TestView : public View {
  public:
-  TestView() {}
+  TestView() = default;
 
   void SchedulePaintInRect(const gfx::Rect& r) override {
     if (dirty_rect_.IsEmpty())
@@ -98,17 +82,18 @@ class BoundsAnimatorTest : public testing::Test {
         child_(new TestView()),
         animator_(&parent_) {
     parent_.AddChildView(child_);
+    animator_.SetAnimationDuration(10);
   }
 
   TestView* parent() { return &parent_; }
   TestView* child() { return child_; }
-  TestBoundsAnimator* animator() { return &animator_; }
+  BoundsAnimator* animator() { return &animator_; }
 
  private:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   TestView parent_;
   TestView* child_;  // Owned by |parent_|.
-  TestBoundsAnimator animator_;
+  BoundsAnimator animator_;
 
   DISALLOW_COPY_AND_ASSIGN(BoundsAnimatorTest);
 };

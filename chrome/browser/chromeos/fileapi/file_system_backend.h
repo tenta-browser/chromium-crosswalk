@@ -31,6 +31,10 @@ namespace chromeos {
 class FileSystemBackendDelegate;
 class FileAccessPermissions;
 
+constexpr char kSystemMountNameArchive[] = "archive";
+constexpr char kSystemMountNameOem[] = "oem";
+constexpr char kSystemMountNameRemovable[] = "removable";
+
 // FileSystemBackend is a Chrome OS specific implementation of
 // ExternalFileSystemBackend. This class is responsible for a
 // number of things, including:
@@ -75,6 +79,7 @@ class FileSystemBackend : public storage::ExternalFileSystemBackend {
       std::unique_ptr<FileSystemBackendDelegate> arc_content_delegate,
       std::unique_ptr<FileSystemBackendDelegate>
           arc_documents_provider_delegate,
+      std::unique_ptr<FileSystemBackendDelegate> drivefs_delegate,
       scoped_refptr<storage::ExternalMountPoints> mount_points,
       storage::ExternalMountPoints* system_mount_points);
   ~FileSystemBackend() override;
@@ -159,6 +164,9 @@ class FileSystemBackend : public storage::ExternalFileSystemBackend {
 
   // The delegate instance for the ARC documents provider related operations.
   std::unique_ptr<FileSystemBackendDelegate> arc_documents_provider_delegate_;
+
+  // The delegate instance for the DriveFS file system related operations.
+  std::unique_ptr<FileSystemBackendDelegate> drivefs_delegate_;
 
   // Mount points specific to the owning context (i.e. per-profile mount
   // points).

@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/metrics/user_metrics.h"
@@ -53,15 +53,15 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
     SetPreferredSize(
         gfx::Size(text_width_ + kHorizontalMarginAroundText,
                   font_list.GetHeight() + kVerticalMarginAroundText));
-    views::Label* label = new views::Label();
+    auto label = std::make_unique<views::Label>();
     label->SetText(text_);
     label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
     label->SetFontList(font_list);
     label->SetEnabledColor(kTextColor);
     label->SetAutoColorReadabilityEnabled(false);
     label->SetSubpixelRenderingEnabled(false);
-    AddChildView(label);
-    SetLayoutManager(new views::FillLayout);
+    AddChildView(std::move(label));
+    SetLayoutManager(std::make_unique<views::FillLayout>());
   }
 
   void OnPaint(gfx::Canvas* canvas) override {
@@ -74,7 +74,7 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
 
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     node_data->SetName(accessible_name_);
-    node_data->role = ui::AX_ROLE_ALERT;
+    node_data->role = ax::mojom::Role::kAlert;
   }
 
  private:
@@ -147,8 +147,7 @@ void ExitWarningHandler::Show() {
   params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.accept_events = false;
-  params.keep_on_top = true;
-  params.remove_standard_frame = true;
+  params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.delegate = delegate;
   params.bounds = bounds;
   params.name = "ExitWarningWindow";
@@ -158,7 +157,7 @@ void ExitWarningHandler::Show() {
   widget_->Init(params);
   widget_->Show();
 
-  delegate->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+  delegate->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
 }
 
 void ExitWarningHandler::Hide() {

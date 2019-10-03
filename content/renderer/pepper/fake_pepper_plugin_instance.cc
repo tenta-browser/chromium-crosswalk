@@ -19,7 +19,9 @@ blink::WebPluginContainer* FakePepperPluginInstance::GetContainer() {
   return nullptr;
 }
 
-v8::Isolate* FakePepperPluginInstance::GetIsolate() const { return nullptr; }
+v8::Isolate* FakePepperPluginInstance::GetIsolate() {
+  return nullptr;
+}
 
 ppapi::VarTracker* FakePepperPluginInstance::GetVarTracker() { return nullptr; }
 
@@ -89,6 +91,24 @@ bool FakePepperPluginInstance::CanEditText() {
   return false;
 }
 
+bool FakePepperPluginInstance::HasEditableText() {
+  return false;
+}
+
 void FakePepperPluginInstance::ReplaceSelection(const std::string& text) {}
+
+void FakePepperPluginInstance::SelectAll() {}
+
+bool FakePepperPluginInstance::CanUndo() {
+  return false;
+}
+
+bool FakePepperPluginInstance::CanRedo() {
+  return false;
+}
+
+void FakePepperPluginInstance::Undo() {}
+
+void FakePepperPluginInstance::Redo() {}
 
 }  // namespace content

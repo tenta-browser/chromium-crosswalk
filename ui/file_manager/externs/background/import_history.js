@@ -76,9 +76,18 @@ importer.ImportHistory.prototype.addObserver;
 importer.ImportHistory.prototype.removeObserver;
 
 /**
+ * @enum{string} Import history changed event |state| values.
+ */
+importer.ImportHistoryState = {};
+
+/**
+ * Import history changed event (sent to ImportHistory.Observer's).
+ *
  * @typedef {{
  *   state: !importer.ImportHistoryState,
- *   entry: !FileEntry
+ *   entry: !FileEntry,
+ *   destination: !importer.Destination,
+ *   destinationUrl: (string|undefined)
  * }}
  */
 importer.ImportHistory.ChangedEvent;

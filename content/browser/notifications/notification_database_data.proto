@@ -11,8 +11,14 @@ package content;
 // Stores information about a Web Notification. This message is the protocol
 // buffer meant to serialize the content::NotificationDatabaseData structure.
 //
-// Next tag: 6
+// Next tag: 15
 message NotificationDatabaseDataProto {
+  enum ClosedReason {
+    USER = 0;
+    DEVELOPER = 1;
+    UNKNOWN = 2;
+  }
+
   // DEPRECATED: Use |notification_id| instead.
   optional int64 persistent_notification_id = 1;
 
@@ -20,12 +26,20 @@ message NotificationDatabaseDataProto {
 
   optional string origin = 2;
   optional int64 service_worker_registration_id = 3;
+  optional bool replaced_existing_notification = 6;
+  optional int32 num_clicks = 7;
+  optional int32 num_action_button_clicks = 8;
+  optional int64 creation_time_millis = 9;
+  optional int64 time_until_first_click_millis = 10;
+  optional int64 time_until_last_click_millis = 11;
+  optional int64 time_until_close_millis = 12;
+  optional ClosedReason closed_reason = 13;
 
-  // A notification action, corresponds to content::PlatformNotificationAction.
+  // A notification action, corresponds to blink::PlatformNotificationAction.
   //
   // Next tag: 6
   message NotificationAction {
-    // Corresponds to PlatformNotificationActionType.
+    // Corresponds to blink::PlatformNotificationActionType.
     enum Type {
       BUTTON = 0;
       TEXT = 1;
@@ -39,9 +53,9 @@ message NotificationDatabaseDataProto {
   }
 
   // Actual data payload of the notification. This message is the protocol
-  // buffer meant to serialize the content::PlatformNotificationData structure.
+  // buffer meant to serialize the blink::PlatformNotificationData structure.
   //
-  // Next tag: 16
+  // Next tag: 17
   message NotificationData {
     enum Direction {
       LEFT_TO_RIGHT = 0;
@@ -64,7 +78,13 @@ message NotificationDatabaseDataProto {
     optional bool require_interaction = 11;
     optional bytes data = 8;
     repeated NotificationAction actions = 10;
+    // Stored as offset from the windows epoch in microseconds.
+    optional int64 show_trigger_timestamp = 16;
   }
 
   optional NotificationData notification_data = 4;
+
+  // Keeps track if a notification with a |show_trigger_timestamp| has been
+  // displayed already.
+  optional bool has_triggered = 14;
 }

@@ -38,18 +38,6 @@ SKIP = {
   # instance on GCE.  Swarming doesn't work in that environment yet.
   'Android Cloud Tests',
 
-  # Recipes don't promise execution on jelly bean.  This could work if the
-  # OS dimensions go into the recipe, they're set in the json file, and
-  # jelly bean devices are in the pool.  For now, just blacklist.
-  'Jelly Bean Tester',
-  'KitKat Tablet Tester',
-  'Lollipop Consumer Tester',
-  'Lollipop Low-end Tester',
-  'Lollipop Phone Tester',
-  'Lollipop Tablet Tester',
-  'Marshmallow 64 bit Tester',
-  'Marshmallow Tablet Tester',
-
   # Android bots need custom dimension_sets entries for swarming, and capacity
   # is not there yet -- so don't let manage.py add swarming automatically there.
   'Android User Builder Tests',
@@ -64,7 +52,7 @@ SKIP = {
   'WebKit Mac10.11',
   'WebKit Mac10.12',
   'WebKit Mac10.11 (dbg)',
-  'WebKit Mac10.11 (retina)',
+  'WebKit Mac10.13 (retina)',
   'Chromium Mac10.10 Tests',
   'Chromium Mac10.11 Tests',
 
@@ -79,39 +67,52 @@ SKIP = {
 SKIP_GN_ISOLATE_MAP_TARGETS = {
   # This target is magic and not present in gn_isolate_map.pyl.
   'all',
+  'remoting/client:client',
+  'remoting/host:host',
 
   # These targets are listed only in build-side recipes.
   'All_syzygy',
   'blink_tests',
+  'captured_sites_interactive_tests',
   'cast_shell',
   'cast_shell_apk',
   'chrome_official_builder',
   'chrome_official_builder_no_unittests',
+  'chrome_sandbox',
   'chromium_builder_asan',
   'chromium_builder_perf',
   'chromiumos_preflight',
+  'linux_symbols',
   'mini_installer',
-  'next_version_mini_installer',
+  'previous_version_mini_installer',
+  'symupload',
 
   # iOS tests are listed in //ios/build/bots.
   'cronet_test',
+  'cronet_unittests_ios',
   'ios_chrome_bookmarks_egtests',
   'ios_chrome_integration_egtests',
-  'ios_chrome_payments_egtests',
   'ios_chrome_reading_list_egtests',
   'ios_chrome_settings_egtests',
   'ios_chrome_smoke_egtests',
+  'ios_chrome_translate_egtests',
   'ios_chrome_ui_egtests',
   'ios_chrome_unittests',
   'ios_chrome_web_egtests',
+  'ios_chrome_smoke_eg2tests_module',
+  'ios_chrome_ui_eg2tests_module',
+  'ios_chrome_web_eg2tests_module',
+  'ios_web_shell_eg2tests_module',
   'ios_components_unittests',
   'ios_net_unittests',
+  "ios_remoting_unittests",
   'ios_showcase_egtests',
   'ios_web_inttests',
   'ios_web_shell_egtests',
   'ios_web_unittests',
   'ios_web_view_inttests',
   'ios_web_view_unittests',
+  'ocmock_support_unittests',
 
   # These are listed in Builders that are skipped for other reasons.
   'chrome_junit_tests',
@@ -120,23 +121,26 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'components_invalidation_impl_junit_tests',
   'components_policy_junit_tests',
   'components_variations_junit_tests',
-  'components_web_restrictions_junit_tests',
   'content_junit_tests',
   'content_junit_tests',
   'device_junit_tests',
   'junit_unit_tests',
+  'keyboard_accessory_junit_tests',
+  'media_router_e2e_tests',
+  'media_router_junit_tests',
   'media_router_perf_tests',
-  'media_router_tests',
   'motopho_latency_test',
   'net_junit_tests',
   'net_junit_tests',
   'service_junit_tests',
+  'shipped_binaries',
   'system_webview_apk',
   'ui_junit_tests',
-  'vrcore_fps_test',
   'vr_common_perftests',
   'vr_perf_tests',
+  'vrcore_fps_test',
   'webapk_client_junit_tests',
+  'webapk_shell_apk_h2o_junit_tests',
   'webapk_shell_apk_junit_tests',
 
   # These tests are only run on WebRTC CI.
@@ -170,6 +174,19 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   # These are only run on V8 CI.
   'pdfium_test',
   'postmortem-metadata',
+
+  # These are only for developer convenience and not on any bots.
+  'telemetry_gpu_integration_test_scripts_only',
+
+  # These are defined by an android internal gn_isolate_map.pyl file.
+  'chrome_apk',
+  'resource_sizes_chrome_apk',
+  'resource_sizes_chrome_modern_minimal_apks',
+  'resource_sizes_monochrome_minimal_apks',
+  'resource_sizes_system_webview_google_apk',
+
+  # These are used by https://www.chromium.org/developers/cluster-telemetry.
+  'ct_telemetry_perf_tests_without_chrome',
 }
 
 
@@ -442,8 +459,10 @@ def main():
                           ninja_targets, ninja_targets_seen):
         result = 1
 
-    extra_targets = (set(ninja_targets) - ninja_targets_seen -
-                     SKIP_GN_ISOLATE_MAP_TARGETS)
+    skip_targets = [k for k, v in gn_isolate_map.items() if
+                    ('skip_usage_check' in v and v['skip_usage_check'])]
+    extra_targets = (set(ninja_targets) - set(skip_targets) -
+                     ninja_targets_seen - SKIP_GN_ISOLATE_MAP_TARGETS)
     if extra_targets:
       if len(extra_targets) > 1:
         extra_targets_str = ', '.join(extra_targets) + ' are'

@@ -9,10 +9,9 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
 #include "build/build_config.h"
@@ -22,36 +21,34 @@ namespace content {
 
 namespace {
 base::LazyInstance<base::ThreadLocalPointer<ChildProcess>>::DestructorAtExit
-    g_lazy_tls = LAZY_INSTANCE_INITIALIZER;
+    g_lazy_child_process_tls = LAZY_INSTANCE_INITIALIZER;
 }
 
-ChildProcess::ChildProcess(
-    base::ThreadPriority io_thread_priority,
-    const std::string& task_scheduler_name,
-    std::unique_ptr<base::TaskScheduler::InitParams> task_scheduler_init_params)
+ChildProcess::ChildProcess(base::ThreadPriority io_thread_priority,
+                           const std::string& thread_pool_name,
+                           std::unique_ptr<base::ThreadPoolInstance::InitParams>
+                               thread_pool_init_params)
     : ref_count_(0),
       shutdown_event_(base::WaitableEvent::ResetPolicy::MANUAL,
                       base::WaitableEvent::InitialState::NOT_SIGNALED),
       io_thread_("Chrome_ChildIOThread") {
-  DCHECK(!g_lazy_tls.Pointer()->Get());
-  g_lazy_tls.Pointer()->Set(this);
+  DCHECK(!g_lazy_child_process_tls.Pointer()->Get());
+  g_lazy_child_process_tls.Pointer()->Set(this);
 
-  base::StatisticsRecorder::Initialize();
-
-  // Initialize TaskScheduler if not already done. A TaskScheduler may already
-  // exist when ChildProcess is instantiated in the browser process or in a
-  // test process.
-  if (!base::TaskScheduler::GetInstance()) {
-    if (task_scheduler_init_params) {
-      base::TaskScheduler::Create(task_scheduler_name);
-      base::TaskScheduler::GetInstance()->Start(
-          *task_scheduler_init_params.get());
+  // Initialize ThreadPoolInstance if not already done. A ThreadPoolInstance may
+  // already exist when ChildProcess is instantiated in the browser process or
+  // in a test process.
+  if (!base::ThreadPoolInstance::Get()) {
+    if (thread_pool_init_params) {
+      base::ThreadPoolInstance::Create(thread_pool_name);
+      base::ThreadPoolInstance::Get()->Start(*thread_pool_init_params.get());
     } else {
-      base::TaskScheduler::CreateAndStartWithDefaultParams(task_scheduler_name);
+      base::ThreadPoolInstance::CreateAndStartWithDefaultParams(
+          thread_pool_name);
     }
 
-    DCHECK(base::TaskScheduler::GetInstance());
-    initialized_task_scheduler_ = true;
+    DCHECK(base::ThreadPoolInstance::Get());
+    initialized_thread_pool_ = true;
   }
 
   // We can't recover from failing to start the IO thread.
@@ -66,7 +63,7 @@ ChildProcess::ChildProcess(
 }
 
 ChildProcess::~ChildProcess() {
-  DCHECK(g_lazy_tls.Pointer()->Get() == this);
+  DCHECK(g_lazy_child_process_tls.Pointer()->Get() == this);
 
   // Signal this event before destroying the child process.  That way all
   // background threads can cleanup.
@@ -85,12 +82,12 @@ ChildProcess::~ChildProcess() {
     }
   }
 
-  g_lazy_tls.Pointer()->Set(nullptr);
+  g_lazy_child_process_tls.Pointer()->Set(nullptr);
   io_thread_.Stop();
 
-  if (initialized_task_scheduler_) {
-    DCHECK(base::TaskScheduler::GetInstance());
-    base::TaskScheduler::GetInstance()->Shutdown();
+  if (initialized_thread_pool_) {
+    DCHECK(base::ThreadPoolInstance::Get());
+    base::ThreadPoolInstance::Get()->Shutdown();
   }
 }
 
@@ -104,13 +101,13 @@ void ChildProcess::set_main_thread(ChildThreadImpl* thread) {
 
 void ChildProcess::AddRefProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
+         main_thread_->main_thread_runner()->BelongsToCurrentThread());
   ref_count_++;
 }
 
 void ChildProcess::ReleaseProcess() {
   DCHECK(!main_thread_.get() ||  // null in unittests.
-         main_thread_->message_loop()->task_runner()->BelongsToCurrentThread());
+         main_thread_->main_thread_runner()->BelongsToCurrentThread());
   DCHECK(ref_count_);
   if (--ref_count_)
     return;
@@ -120,7 +117,7 @@ void ChildProcess::ReleaseProcess() {
 }
 
 ChildProcess* ChildProcess::current() {
-  return g_lazy_tls.Pointer()->Get();
+  return g_lazy_child_process_tls.Pointer()->Get();
 }
 
 base::WaitableEvent* ChildProcess::GetShutDownEvent() {

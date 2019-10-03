@@ -6,6 +6,7 @@
 #define UI_AURA_WINDOW_TREE_HOST_OBSERVER_H_
 
 #include "ui/aura/aura_export.h"
+#include "ui/aura/window.h"
 
 namespace gfx {
 class Point;
@@ -28,6 +29,19 @@ class AURA_EXPORT WindowTreeHostObserver {
 
   // Called when the native window system sends the host request to close.
   virtual void OnHostCloseRequested(WindowTreeHost* host) {}
+
+  // Called when the occlusion status of the native window changes, iff
+  // occlusion tracking is enabled for a descendant of the root.
+  virtual void OnOcclusionStateChanged(WindowTreeHost* host,
+                                       Window::OcclusionState new_state) {}
+
+  // Called before processing a bounds change. The bounds change may result in
+  // one or both of OnHostResized() and OnHostMovedInPixels() being called.
+  // This is not supported by all WindowTreeHosts.
+  // OnHostWillProcessBoundsChange() is always followed by
+  // OnHostDidProcessBoundsChange().
+  virtual void OnHostWillProcessBoundsChange(WindowTreeHost* host) {}
+  virtual void OnHostDidProcessBoundsChange(WindowTreeHost* host) {}
 
  protected:
   virtual ~WindowTreeHostObserver() {}

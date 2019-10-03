@@ -3,9 +3,10 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
-<merge xmlns:android="http://schemas.android.com/apk/res/android">
+<merge
+    xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <org.chromium.chrome.browser.widget.TintedImageView
+    <org.chromium.ui.widget.ChromeImageView
         android:id="@+id/icon_view"
         style="@style/ListItemStartIcon" />
 
@@ -22,7 +23,7 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textAppearance="@style/BlackDenseListText1" />
+            android:textAppearance="@style/TextAppearance.BlackTitle1" />
 
         <TextView
             android:id="@+id/description"
@@ -30,7 +31,7 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:ellipsize="end"
-            android:textAppearance="@style/BlackDenseListText2" />
+            android:textAppearance="@style/TextAppearance.BlackBody" />
     </LinearLayout>
 
 </merge>

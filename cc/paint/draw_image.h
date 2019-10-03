@@ -18,9 +18,14 @@
 
 namespace cc {
 
+// A DrawImage is a logical snapshot in time and space of a PaintImage.  It
+// includes decisions about scaling, animation frame, final colorspace, etc.
+// It has not been decoded yet.  DrawImage turns into DecodedDrawImage via
+// ImageDecodeCache::GetDecodedImageForDraw during playback.
 class CC_PAINT_EXPORT DrawImage {
  public:
   DrawImage();
+  explicit DrawImage(PaintImage image);
   DrawImage(PaintImage image,
             const SkIRect& src_rect,
             SkFilterQuality filter_quality,

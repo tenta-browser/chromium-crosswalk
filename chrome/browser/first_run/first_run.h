@@ -12,6 +12,7 @@
 
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/installer/util/master_preferences.h"
 
 class GURL;
 class Profile;
@@ -47,21 +48,6 @@ enum AutoImportState {
   AUTO_IMPORT_BOOKMARKS_FILE_IMPORTED = 1 << 2,
 };
 
-enum FirstRunBubbleMetric {
-  FIRST_RUN_BUBBLE_SHOWN = 0,       // The search engine bubble was shown.
-  FIRST_RUN_BUBBLE_CHANGE_INVOKED,  // The bubble's "Change" was invoked.
-  NUM_FIRST_RUN_BUBBLE_METRICS
-};
-
-// Options for the first run bubble. The default is FIRST_RUN_BUBBLE_DONT_SHOW.
-// FIRST_RUN_BUBBLE_SUPPRESS is stronger in that FIRST_RUN_BUBBLE_SHOW should
-// never be set once FIRST_RUN_BUBBLE_SUPPRESS is set.
-enum FirstRunBubbleOptions {
-  FIRST_RUN_BUBBLE_DONT_SHOW,
-  FIRST_RUN_BUBBLE_SUPPRESS,
-  FIRST_RUN_BUBBLE_SHOW,
-};
-
 enum ProcessMasterPreferencesResult {
   FIRST_RUN_PROCEED = 0,  // Proceed with first run.
   EULA_EXIT_NOW,          // Should immediately exit due to EULA flow.
@@ -78,12 +64,9 @@ struct MasterPrefs {
 
   bool make_chrome_default_for_user = false;
   bool suppress_first_run_default_browser_prompt = false;
-  bool welcome_page_on_os_upgrade_enabled = true;
   std::vector<GURL> new_tabs;
   std::vector<GURL> bookmarks;
   std::string import_bookmarks_path;
-  std::string compressed_variations_seed;
-  std::string variations_seed_signature;
   std::string suppress_default_browser_prompt_for_version;
 };
 
@@ -119,12 +102,9 @@ void CreateSentinelIfNeeded();
 // permission on the sequence it is first called on.
 base::Time GetFirstRunSentinelCreationTime();
 
-// Sets the kShowFirstRunBubbleOption local state pref so that the browser
-// shows the bubble once the main message loop gets going (or refrains from
-// showing the bubble, if |show_bubble| is not FIRST_RUN_BUBBLE_SHOW).
-// Once FIRST_RUN_BUBBLE_SUPPRESS is set, no other value can be set.
-// Returns false if the pref service could not be retrieved.
-bool SetShowFirstRunBubblePref(FirstRunBubbleOptions show_bubble_option);
+// Resets the first run status and cached first run sentinel creation time.
+// This is needed for unit tests which are runned in the same process.
+void ResetCachedSentinelDataForTesting();
 
 // Sets a flag that will cause ShouldShowWelcomePage to return true
 // exactly once, so that the browser loads the welcome tab once the
@@ -156,9 +136,6 @@ void SetShouldDoPersonalDataManagerFirstRun();
 // SetShouldDoPersonalDataManagerFirstRun() is called.
 bool ShouldDoPersonalDataManagerFirstRun();
 
-// Log a metric for the "FirstRun.SearchEngineBubble" histogram.
-void LogFirstRunMetric(FirstRunBubbleMetric metric);
-
 // Automatically imports items requested by |profile|'s configuration (sum of
 // policies and master prefs). Also imports bookmarks from file if
 // |import_bookmarks_path| is not empty.
@@ -178,6 +155,11 @@ uint16_t auto_import_state();
 // Set a master preferences file path that overrides platform defaults.
 void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs);
 
+// Loads master preferences from the master preference file into the installer
+// master preferences. Returns the pointer to installer::MasterPreferences
+// object if successful; otherwise, returns nullptr.
+std::unique_ptr<installer::MasterPreferences> LoadMasterPrefs();
+
 // The master_preferences is a JSON file with the same entries as the
 // 'Default\Preferences' file. This function locates this file from a standard
 // location, processes it, and uses its content to initialize the preferences
@@ -193,6 +175,7 @@ void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs);
 // 'master_preferences' file.
 ProcessMasterPreferencesResult ProcessMasterPreferences(
     const base::FilePath& user_data_dir,
+    std::unique_ptr<installer::MasterPreferences> install_prefs,
     MasterPrefs* out_prefs);
 
 }  // namespace first_run

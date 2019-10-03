@@ -7,9 +7,12 @@ package org.chromium.chrome.browser.metrics;
 import android.content.ComponentCallbacks;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.text.TextUtils;
 
-import org.chromium.base.ContextUtils;
-import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.library_loader.LibraryProcessType;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.DefaultBrowserInfo;
 import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.preferences.privacy.PrivacyPreferencesManager;
@@ -17,6 +20,8 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
+import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.content_public.browser.BrowserStartupController;
 import org.chromium.content_public.browser.WebContents;
 
 /**
@@ -25,8 +30,6 @@ import org.chromium.content_public.browser.WebContents;
  * and the framework's MetricService.
  */
 public class UmaSessionStats {
-    public static final String LAST_USED_TIME_PREF = "umasessionstats.lastusedtime";
-
     private static final String SAMSUNG_MULTWINDOW_PACKAGE = "com.sec.feature.multiwindow";
 
     private static long sNativeUmaSessionStats;
@@ -37,15 +40,12 @@ public class UmaSessionStats {
     private TabModelSelectorTabObserver mTabModelSelectorTabObserver;
 
     private final Context mContext;
-    private final boolean mIsMultiWindowCapable;
     private ComponentCallbacks mComponentCallbacks;
 
     private boolean mKeyboardConnected;
 
     public UmaSessionStats(Context context) {
         mContext = context;
-        mIsMultiWindowCapable = context.getPackageManager().hasSystemFeature(
-                SAMSUNG_MULTWINDOW_PACKAGE);
     }
 
     private void recordPageLoadStats(Tab tab) {
@@ -57,8 +57,14 @@ public class UmaSessionStats {
             nativeRecordPageLoadedWithKeyboard();
         }
 
-        if (InstantAppsHandler.getInstance().getInstantAppIntentForUrl(tab.getUrl()) != null) {
-            RecordUserAction.record("Android.InstantApps.InstantAppsEligiblePageLoaded");
+        String url = tab.getUrl();
+        if (!TextUtils.isEmpty(url) && UrlUtilities.isHttpOrHttps(url)) {
+            PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
+                boolean isEligible =
+                        InstantAppsHandler.getInstance().getInstantAppIntentForUrl(url) != null;
+                RecordHistogram.recordBooleanHistogram(
+                        "Android.InstantApps.EligiblePageLoaded", isEligible);
+            });
         }
 
         // If the session has ended (i.e. chrome is in the background), escape early. Ideally we
@@ -100,7 +106,7 @@ public class UmaSessionStats {
                     .keyboard != Configuration.KEYBOARD_NOKEYS;
             mTabModelSelectorTabObserver = new TabModelSelectorTabObserver(mTabModelSelector) {
                 @Override
-                public void onPageLoadFinished(Tab tab) {
+                public void onPageLoadFinished(Tab tab, String url) {
                     recordPageLoadStats(tab);
                 }
             };
@@ -121,18 +127,6 @@ public class UmaSessionStats {
     }
 
     /**
-     * Logs screen ratio on Samsung MultiWindow devices.
-     */
-    public void logMultiWindowStats(int windowArea, int displayArea, int instanceCount) {
-        if (mIsMultiWindowCapable) {
-            if (displayArea == 0) return;
-            int areaPercent = (windowArea * 100) / displayArea;
-            int safePercent = areaPercent > 0 ? areaPercent : 0;
-            nativeRecordMultiWindowSession(safePercent, instanceCount);
-        }
-    }
-
-    /**
      * Logs the current session.
      */
     public void logAndEndSession() {
@@ -143,10 +137,6 @@ public class UmaSessionStats {
         }
 
         nativeUmaEndSession(sNativeUmaSessionStats);
-        ContextUtils.getAppSharedPreferences()
-                .edit()
-                .putLong(LAST_USED_TIME_PREF, System.currentTimeMillis())
-                .apply();
     }
 
     /**
@@ -162,6 +152,27 @@ public class UmaSessionStats {
         nativeChangeMetricsReportingConsent(consent);
 
         updateMetricsServiceState();
+    }
+
+    /**
+     * Initializes the metrics consent bit to false. Used only for testing.
+     */
+    public static void initMetricsAndCrashReportingForTesting() {
+        nativeInitMetricsAndCrashReportingForTesting();
+    }
+
+    /**
+     * Clears the metrics consent bit used for testing to original setting. Used only for testing.
+     */
+    public static void unSetMetricsAndCrashReportingForTesting() {
+        nativeUnsetMetricsAndCrashReportingForTesting();
+    }
+
+    /**
+     * Updates the metrics consent bit to |consent|. Used only for testing.
+     */
+    public static void updateMetricsAndCrashReportingForTesting(boolean consent) {
+        nativeUpdateMetricsAndCrashReportingForTesting(consent);
     }
 
     /**
@@ -195,15 +206,30 @@ public class UmaSessionStats {
     }
 
     public static void registerExternalExperiment(String studyName, int[] experimentIds) {
+        assert isMetricsServiceAvailable();
         nativeRegisterExternalExperiment(studyName, experimentIds);
     }
 
     public static void registerSyntheticFieldTrial(String trialName, String groupName) {
+        assert isMetricsServiceAvailable();
         nativeRegisterSyntheticFieldTrial(trialName, groupName);
+    }
+
+    /**
+     * UmaSessionStats exposes two static methods on the metrics service. Namely {@link
+     * #registerExternalExperiment} and {@link #registerSyntheticFieldTrial}. However those can only
+     * be used in full-browser mode and as such you must check this before calling them.
+     */
+    public static boolean isMetricsServiceAvailable() {
+        return BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
+                .isFullBrowserStarted();
     }
 
     private static native long nativeInit();
     private static native void nativeChangeMetricsReportingConsent(boolean consent);
+    private static native void nativeInitMetricsAndCrashReportingForTesting();
+    private static native void nativeUnsetMetricsAndCrashReportingForTesting();
+    private static native void nativeUpdateMetricsAndCrashReportingForTesting(boolean consent);
     private static native void nativeUpdateMetricsServiceState(boolean mayUpload);
     private native void nativeUmaResumeSession(long nativeUmaSessionStats);
     private native void nativeUmaEndSession(long nativeUmaSessionStats);
@@ -211,7 +237,6 @@ public class UmaSessionStats {
             String studyName, int[] experimentIds);
     private static native void nativeRegisterSyntheticFieldTrial(
             String trialName, String groupName);
-    private static native void nativeRecordMultiWindowSession(int areaPercent, int instanceCount);
     private static native void nativeRecordTabCountPerLoad(int numTabsOpen);
     private static native void nativeRecordPageLoaded(boolean isDesktopUserAgent);
     private static native void nativeRecordPageLoadedWithKeyboard();

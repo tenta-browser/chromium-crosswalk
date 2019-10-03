@@ -4,21 +4,27 @@
 
 package org.chromium.chrome.browser;
 
-import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
 import android.util.Pair;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
 
+import org.chromium.base.ActivityState;
+import org.chromium.base.ApplicationStatus;
+import org.chromium.base.CommandLine;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabBuilder;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
-import org.chromium.chrome.browser.tab.TabUma.TabCreationState;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.tabmodel.SingleTabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
-import org.chromium.content_public.browser.ChildProcessImportance;
 import org.chromium.content_public.browser.LoadUrlParams;
-
-import java.io.File;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * Base class for task-focused activities that need to display a single tab.
@@ -27,20 +33,15 @@ import java.io.File;
  * activities - anything where maintaining multiple tabs is unnecessary.
  */
 public abstract class SingleTabActivity extends ChromeActivity {
-    protected static final String BUNDLE_TAB_ID = "tabId";
-    protected static final String BUNDLE_TAB_URL = "tabUrl";
+    private static final int PREWARM_RENDERER_DELAY_MS = 500;
 
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-    }
+    protected static final String BUNDLE_TAB_ID = "tabId";
 
     @Override
     protected TabModelSelector createTabModelSelector() {
         return new SingleTabModelSelector(this, false, false) {
             @Override
-            public Tab openNewTab(LoadUrlParams loadUrlParams, TabLaunchType type, Tab parent,
+            public Tab openNewTab(LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent,
                     boolean incognito) {
                 getTabCreator(incognito).createNewTab(loadUrlParams, type, parent);
                 return null;
@@ -49,12 +50,12 @@ public abstract class SingleTabActivity extends ChromeActivity {
     }
 
     @Override
-    protected Pair<TabDelegate, TabDelegate> createTabCreators() {
-        return Pair.create(createTabDelegate(false), createTabDelegate(true));
+    protected Pair<? extends TabCreator, ? extends TabCreator> createTabCreators() {
+        return Pair.create(createTabCreator(false), createTabCreator(true));
     }
 
     /** Creates TabDelegates for opening new Tabs. */
-    protected TabDelegate createTabDelegate(boolean incognito) {
+    protected TabCreator createTabCreator(boolean incognito) {
         return new TabDelegate(incognito);
     }
 
@@ -62,10 +63,13 @@ public abstract class SingleTabActivity extends ChromeActivity {
     public void initializeState() {
         super.initializeState();
 
+        createAndShowTab();
+    }
+
+    protected void createAndShowTab() {
         Tab tab = createTab();
         getTabModelSelector().setTab(tab);
         tab.show(TabSelectionType.FROM_NEW);
-        tab.setImportance(ChildProcessImportance.MODERATE);
     }
 
     @Override
@@ -81,44 +85,46 @@ public abstract class SingleTabActivity extends ChromeActivity {
      */
     protected Tab createTab() {
         Tab tab = null;
-        boolean unfreeze = false;
-
+        TabState tabState = null;
         int tabId = Tab.INVALID_TAB_ID;
-        String tabUrl = null;
-        if (getSavedInstanceState() != null) {
-            tabId = getSavedInstanceState().getInt(BUNDLE_TAB_ID, Tab.INVALID_TAB_ID);
-            tabUrl = getSavedInstanceState().getString(BUNDLE_TAB_URL);
+        Bundle savedInstanceState = getSavedInstanceState();
+        if (savedInstanceState != null) {
+            tabId = savedInstanceState.getInt(BUNDLE_TAB_ID, Tab.INVALID_TAB_ID);
+            if (tabId != Tab.INVALID_TAB_ID) {
+                tabState = restoreTabState(savedInstanceState, tabId);
+            }
         }
-
-        if (tabId != Tab.INVALID_TAB_ID && tabUrl != null && getActivityDirectory() != null) {
-            // Restore the tab.
-            TabState tabState = TabState.restoreTabState(getActivityDirectory(), tabId);
-            tab = new Tab(tabId, Tab.INVALID_TAB_ID, false, getWindowAndroid(),
-                    TabLaunchType.FROM_RESTORE, TabCreationState.FROZEN_ON_RESTORE, tabState);
-            unfreeze = true;
+        boolean unfreeze = tabId != Tab.INVALID_TAB_ID && tabState != null;
+        if (unfreeze) {
+            tab = TabBuilder.createFromFrozenState()
+                          .setId(tabId)
+                          .setWindow(getWindowAndroid())
+                          .build();
+        } else {
+            tab = new TabBuilder()
+                          .setWindow(getWindowAndroid())
+                          .setLaunchType(TabLaunchType.FROM_CHROME_UI)
+                          .build();
         }
-
-        if (tab == null) {
-            tab = new Tab(Tab.INVALID_TAB_ID, Tab.INVALID_TAB_ID, false, getWindowAndroid(),
-                    TabLaunchType.FROM_CHROME_UI, null, null);
-        }
-
-        tab.initialize(null, getTabContentManager(), createTabDelegateFactory(), false, unfreeze);
+        tab.initialize(null, createTabDelegateFactory(), false, tabState, unfreeze);
         return tab;
     }
 
     /**
      * @return {@link TabDelegateFactory} to be used while creating the associated {@link Tab}.
      */
-    protected TabDelegateFactory createTabDelegateFactory() {
-        return new TabDelegateFactory();
-    }
+    protected abstract TabDelegateFactory createTabDelegateFactory();
 
     /**
-     * @return {@link File} pointing at a directory specific for this class.
+     * Restore {@link TabState} from a given {@link Bundle} and tabId.
+     * @param saveInstanceState The saved bundle for the last recorded state.
+     * @param tabId ID of the tab restored from.
      */
-    protected File getActivityDirectory() {
-        return null;
+    protected abstract TabState restoreTabState(Bundle savedInstanceState, int tabId);
+
+    private boolean supportsAppSwitcher() {
+        return getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+                || KeyCharacterMap.deviceHasKey(KeyEvent.KEYCODE_APP_SWITCH);
     }
 
     @Override
@@ -132,9 +138,44 @@ public abstract class SingleTabActivity extends ChromeActivity {
             tab.goBack();
             return true;
         }
+
+        if (!supportsAppSwitcher()) {
+            // If the device has no way to get to the task switcher, we don't want the default back
+            // button behavior of finishing the Activity. If the device is low on memory LMK will
+            // kill us, and if not, we'll start up faster when returned to.
+            moveTaskToBack(true);
+            return true;
+        }
         return false;
     }
 
     @Override
-    public void onCheckForUpdate(boolean updateAvailable) {}
+    public void onUpdateStateChanged() {}
+
+    @Override
+    public void onStopWithNative() {
+        super.onStopWithNative();
+        if (CommandLine.getInstance().hasSwitch(ChromeSwitches.AGGRESSIVELY_PREWARM_RENDERERS)) {
+            PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
+                @Override
+                public void run() {
+                    // If we're not still stopped, we don't need the spare WebContents.
+                    if (ApplicationStatus.getStateForActivity(SingleTabActivity.this)
+                            == ActivityState.STOPPED) {
+                        WarmupManager.getInstance().createSpareWebContents(!WarmupManager.FOR_CCT);
+                    }
+                }
+            }, PREWARM_RENDERER_DELAY_MS);
+        }
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (CommandLine.getInstance().hasSwitch(ChromeSwitches.AGGRESSIVELY_PREWARM_RENDERERS)) {
+            if (ChromeApplication.isSevereMemorySignal(level)) {
+                WarmupManager.getInstance().destroySpareWebContents();
+            }
+        }
+    }
 }

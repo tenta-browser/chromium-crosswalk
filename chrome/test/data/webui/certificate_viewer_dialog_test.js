@@ -54,44 +54,27 @@ CertificateViewerUITest.prototype = {
     // Override the receive certificate function to catch when fields are
     // loaded.
     var getCertificateFields = cert_viewer.getCertificateFields;
-    cert_viewer.getCertificateFields = this.continueTest(WhenTestDone.ALWAYS,
-        function(certFieldDetails) {
-      getCertificateFields(certFieldDetails);
-      cert_viewer.getCertificateFields = getCertificateFields;
-      assertLT(0, certFields.childNodes.length);
+    cert_viewer.getCertificateFields =
+        this.continueTest(WhenTestDone.ALWAYS, function(certFieldDetails) {
+          getCertificateFields(certFieldDetails);
+          cert_viewer.getCertificateFields = getCertificateFields;
+          assertLT(0, certFields.childNodes.length);
 
-      // Test that a field can be selected to see the details for that field.
-      var item = getElementWithValue(certFields);
-      assertNotEquals(null, item);
-      certFields.selectedItem = item;
-      assertEquals(item.detail.payload.val, certFieldVal.textContent);
+          // Test that a field can be selected to see the details for that
+          // field.
+          var item = getElementWithValue(certFields);
+          assertNotEquals(null, item);
+          certFields.selectedItem = item;
+          assertEquals(item.detail.payload.val, certFieldVal.textContent);
 
-      // Test that selecting an item without a value empties the field.
-      certFields.selectedItem = certFields.childNodes[0];
-      assertEquals('', certFieldVal.textContent);
-    });
+          // Test that selecting an item without a value empties the field.
+          certFields.selectedItem = certFields.childNodes[0];
+          assertEquals('', certFieldVal.textContent);
+        });
     certHierarchy.selectedItem = certHierarchy.childNodes[0];
   }
 };
 
-/**
- * Test fixture for ChromeOS modal dialog version of certificate viewer.
- * @extends {CertificateViewerUITest}
- */
-function CertificateViewerModalUITest() {}
-
-CertificateViewerModalUITest.prototype = {
-  __proto__: CertificateViewerUITest.prototype,
-
-  /**
-   * Show the certificate viewer dialog.
-   */
-  testGenPreamble: function() {
-    GEN('#if defined(OS_CHROMEOS)');
-    GEN('ShowModalCertificateViewer();');
-    GEN('#endif');
-  },
-};
 
 /**
  * Test fixture for asynchronous tests.
@@ -106,19 +89,6 @@ CertificateViewerUITestAsync.prototype = {
   isAsync: true,
 };
 
-
-/**
- * Test fixture for ChromeOS modal dialog version for asynchronous tests.
- * @extends {CertificateViewerUITest}
- */
-function CertificateViewerModalUITestAsync() {}
-
-CertificateViewerModalUITestAsync.prototype = {
-  __proto__: CertificateViewerModalUITest.prototype,
-
-  /** @inheritDoc */
-  isAsync: true,
-};
 
 // Include the bulk of c++ code.
 // Certificate viewer UI tests are disabled on platforms with native certificate
@@ -153,27 +123,6 @@ TEST_F('CertificateViewerUITestAsync', 'testDetails', function() {
   this.testDetails();
 });
 
-// Same tests as above but running within modal (instead of constrained) dialog
-// version of certificate viewer UI.
-GEN('#if defined(OS_CHROMEOS)');
-
-TEST_F('CertificateViewerModalUITest', 'testDialogURL', function() {
-  this.testDialogUrl();
-});
-
-TEST_F('CertificateViewerModalUITest', 'testCN', function() {
-  this.testCN();
-});
-
-/**
- * Disabled due to flakiness on Linux ChromiumOS bot: http://crbug/669597
- */
-TEST_F('CertificateViewerModalUITestAsync', 'DISABLED_testDetails', function() {
-  this.testDetails();
-});
-
-GEN('#endif');
-
 ////////////////////////////////////////////////////////////////////////////////
 // Support functions
 
@@ -185,10 +134,13 @@ GEN('#endif');
 function getElementWithValue(tree) {
   for (var i = 0; i < tree.childNodes.length; i++) {
     var element = tree.childNodes[i];
-    if (element.detail && element.detail.payload && element.detail.payload.val)
+    if (element.detail && element.detail.payload &&
+        element.detail.payload.val) {
       return element;
-    if (element = getElementWithValue(element))
+    }
+    if (element = getElementWithValue(element)) {
       return element;
+    }
   }
   return null;
 }

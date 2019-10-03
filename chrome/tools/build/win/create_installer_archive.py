@@ -17,7 +17,6 @@ import fnmatch
 import glob
 import optparse
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -104,8 +103,11 @@ def CopyAllFilesToStagingDir(config, distribution, staging_dir, build_dir,
   if distribution:
     if len(distribution) > 1 and distribution[0] == '_':
       distribution = distribution[1:]
-    CopySectionFilesToStagingDir(config, distribution.upper(),
-                                 staging_dir, build_dir)
+
+    distribution = distribution.upper()
+    if config.has_section(distribution):
+      CopySectionFilesToStagingDir(config, distribution,
+                                   staging_dir, build_dir)
   if enable_hidpi == '1':
     CopySectionFilesToStagingDir(config, 'HIDPI', staging_dir, build_dir)
 
@@ -119,9 +121,10 @@ def CopySectionFilesToStagingDir(config, section, staging_dir, src_dir):
     if option.endswith('dir'):
       continue
 
+    src_subdir = option.replace('\\', os.sep)
     dst_dir = os.path.join(staging_dir, config.get(section, option))
     dst_dir = dst_dir.replace('\\', os.sep)
-    src_paths = glob.glob(os.path.join(src_dir, option))
+    src_paths = glob.glob(os.path.join(src_dir, src_subdir))
     if src_paths and not os.path.exists(dst_dir):
       os.makedirs(dst_dir)
     for src_path in src_paths:
@@ -144,7 +147,7 @@ def GetLZMAExec(build_dir):
     lzma_exec = os.path.join(build_dir, "..", "..", "third_party",
                              "lzma_sdk", "Executable", "7za.exe")
   else:
-    lzma_exec = '7za'  # Use system 7za.
+    lzma_exec = '7zr'  # Use system 7zr.
   return lzma_exec
 
 def GetPrevVersion(build_dir, temp_dir, last_chrome_installer, output_name):
@@ -268,8 +271,8 @@ def CreateArchiveFile(options, staging_dir, current_version, prev_version):
     os.remove(archive_file)
     RunSystemCommand(cmd, options.verbose)
 
-  # Do not compress the archive in developer (component) builds.
-  if options.component_build == '1':
+  # Do not compress the archive when skip_archive_compression is specified.
+  if options.skip_archive_compression:
     compressed_file = os.path.join(
         options.output_dir, options.output_name + COMPRESSED_ARCHIVE_SUFFIX)
     if os.path.exists(compressed_file):
@@ -321,7 +324,10 @@ def PrepareSetupExec(options, current_version, prev_version):
     CompressUsingLZMA(options.build_dir, setup_file_path, patch_file,
                       options.verbose)
   else:
-    cmd = ['makecab.exe',
+    # Use makecab.py instead of makecab.exe so that this works when building
+    # on non-Windows hosts too.
+    makecab_py = os.path.join(os.path.dirname(__file__), 'makecab.py')
+    cmd = [sys.executable, makecab_py,
            '/D', 'CompressionType=LZX',
            '/V1',
            '/L', options.output_dir,
@@ -428,36 +434,6 @@ def CopyIfChanged(src, target_dir):
     shutil.copyfile(src, dest)
 
 
-# Taken and modified from:
-# third_party\WebKit\Tools\Scripts\webkitpy\layout_tests\port\factory.py
-def _read_configuration_from_gn(build_dir):
-  """Return the configuration to used based on args.gn, if possible."""
-  path = os.path.join(build_dir, 'args.gn')
-  if not os.path.exists(path):
-    path = os.path.join(build_dir, 'toolchain.ninja')
-    if not os.path.exists(path):
-      # This does not appear to be a GN-based build directory, so we don't
-      # know how to interpret it.
-      return None
-
-    # toolchain.ninja exists, but args.gn does not; this can happen when
-    # `gn gen` is run with no --args.
-    return 'Debug'
-
-  args = open(path).read()
-  for l in args.splitlines():
-    # See the original of this function and then gn documentation for why this
-    # regular expression is correct:
-    # https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/reference.md#GN-build-language-grammar
-    m = re.match('^\s*is_debug\s*=\s*false(\s*$|\s*#.*$)', l)
-    if m:
-      return 'Release'
-
-  # if is_debug is set to anything other than false, or if it
-  # does not exist at all, we should use the default value (True).
-  return 'Debug'
-
-
 def ParseDLLsFromDeps(build_dir, runtime_deps_file):
   """Parses the runtime_deps file and returns the set of DLLs in it, relative
   to build_dir."""
@@ -537,15 +513,7 @@ def main(options):
                                 options.last_chrome_installer,
                                 options.output_name)
 
-  # Preferentially copy the files we can find from the output_dir, as
-  # this is where we'll find the Syzygy-optimized executables when
-  # building the optimized mini_installer.
-  if options.build_dir != options.output_dir:
-    CopyAllFilesToStagingDir(config, options.distribution,
-                             staging_dir, options.output_dir,
-                             options.enable_hidpi)
-
-  # Now copy the remainder of the files from the build dir.
+  # Copy the files from the build dir.
   CopyAllFilesToStagingDir(config, options.distribution,
                            staging_dir, options.build_dir,
                            options.enable_hidpi)
@@ -610,9 +578,11 @@ def _ParseOptions():
   parser.add_option('--enable_hidpi', default='0',
       help='Whether to include HiDPI resource files.')
   parser.add_option('--component_build', default='0',
-      help='Whether this archive is packaging a component build. This will '
-           'also turn off compression of chrome.7z into chrome.packed.7z and '
-           'helpfully delete any old chrome.packed.7z in |output_dir|.')
+      help='Whether this archive is packaging a component build.')
+  parser.add_option('--skip_archive_compression',
+      action='store_true', default=False,
+      help='This will turn off compression of chrome.7z into chrome.packed.7z '
+           'and helpfully delete any old chrome.packed.7z in |output_dir|.')
   parser.add_option('--depfile',
       help='Generate a depfile with the given name listing the implicit inputs '
            'to the archive process that can be used with a build system.')

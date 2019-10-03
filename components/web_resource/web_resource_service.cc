@@ -4,9 +4,10 @@
 
 #include "components/web_resource/web_resource_service.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -14,20 +15,16 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/prefs/pref_service.h"
 #include "net/base/load_flags.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
 
 // No anonymous namespace, because const variables automatically get internal
 // linkage.
-const char kInvalidDataTypeError[] =
-    "Data from web resource server is missing or not valid JSON.";
-
 const char kUnexpectedJSONFormatError[] =
     "Data from web resource server does not have expected format.";
 
@@ -40,13 +37,17 @@ WebResourceService::WebResourceService(
     const char* last_update_time_pref_name,
     int start_fetch_delay_ms,
     int cache_update_delay_ms,
-    net::URLRequestContextGetter* request_context,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const char* disable_network_switch,
     const ParseJSONCallback& parse_json_callback,
-    const net::NetworkTrafficAnnotationTag& traffic_annotation)
+    const net::NetworkTrafficAnnotationTag& traffic_annotation,
+    ResourceRequestAllowedNotifier::NetworkConnectionTrackerGetter
+        network_connection_tracker_getter)
     : prefs_(prefs),
-      resource_request_allowed_notifier_(
-          new ResourceRequestAllowedNotifier(prefs, disable_network_switch)),
+      resource_request_allowed_notifier_(new ResourceRequestAllowedNotifier(
+          prefs,
+          disable_network_switch,
+          std::move(network_connection_tracker_getter))),
       fetch_scheduled_(false),
       in_fetch_(false),
       web_resource_server_(web_resource_server),
@@ -54,11 +55,10 @@ WebResourceService::WebResourceService(
       last_update_time_pref_name_(last_update_time_pref_name),
       start_fetch_delay_ms_(start_fetch_delay_ms),
       cache_update_delay_ms_(cache_update_delay_ms),
-      request_context_(request_context),
+      url_loader_factory_(url_loader_factory),
       parse_json_callback_(parse_json_callback),
-      traffic_annotation_(traffic_annotation),
-      weak_ptr_factory_(this) {
-  resource_request_allowed_notifier_->Init(this);
+      traffic_annotation_(traffic_annotation) {
+  resource_request_allowed_notifier_->Init(this, false /* leaky */);
   DCHECK(prefs);
 }
 
@@ -68,29 +68,26 @@ void WebResourceService::StartAfterDelay() {
     OnResourceRequestsAllowed();
 }
 
-WebResourceService::~WebResourceService() {
-}
+WebResourceService::~WebResourceService() = default;
 
-void WebResourceService::OnURLFetchComplete(const net::URLFetcher* source) {
-  // Delete the URLFetcher when this function exits.
-  std::unique_ptr<net::URLFetcher> clean_up_fetcher(url_fetcher_.release());
-
-  if (source->GetStatus().is_success() && source->GetResponseCode() == 200) {
-    std::string data;
-    source->GetResponseAsString(&data);
+void WebResourceService::OnSimpleLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  simple_url_loader_.reset();
+  if (response_body) {
     // Calls EndFetch() on completion.
     // Full JSON parsing might spawn a utility process (for security).
     // To limit the the number of simultaneously active processes
     // (on Android in particular) we short-cut the full parsing in the case of
     // trivially "empty" JSONs.
-    if (data.empty() || data == "{}") {
-      OnUnpackFinished(base::MakeUnique<base::DictionaryValue>());
+    if (response_body->empty() || *response_body == "{}") {
+      OnUnpackFinished(base::Value(base::Value::Type::DICTIONARY));
     } else {
-      parse_json_callback_.Run(data,
-                               base::Bind(&WebResourceService::OnUnpackFinished,
-                                          weak_ptr_factory_.GetWeakPtr()),
-                               base::Bind(&WebResourceService::OnUnpackError,
-                                          weak_ptr_factory_.GetWeakPtr()));
+      parse_json_callback_.Run(
+          *response_body,
+          base::BindOnce(&WebResourceService::OnUnpackFinished,
+                         weak_ptr_factory_.GetWeakPtr()),
+          base::BindOnce(&WebResourceService::OnUnpackError,
+                         weak_ptr_factory_.GetWeakPtr()));
     }
   } else {
     // Don't parse data if attempt to download was unsuccessful.
@@ -108,15 +105,16 @@ void WebResourceService::ScheduleFetch(int64_t delay_ms) {
     return;
   fetch_scheduled_ = true;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&WebResourceService::StartFetch,
-                            weak_ptr_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&WebResourceService::StartFetch,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(delay_ms));
 }
 
 void WebResourceService::SetResourceRequestAllowedNotifier(
     std::unique_ptr<ResourceRequestAllowedNotifier> notifier) {
   resource_request_allowed_notifier_ = std::move(notifier);
-  resource_request_allowed_notifier_->Init(this);
+  resource_request_allowed_notifier_->Init(this, false /* leaky */);
 }
 
 bool WebResourceService::GetFetchScheduled() const {
@@ -124,10 +122,10 @@ bool WebResourceService::GetFetchScheduled() const {
 }
 
 // Initializes the fetching of data from the resource server.  Data
-// load calls OnURLFetchComplete.
+// load calls OnSimpleLoaderComplete.
 void WebResourceService::StartFetch() {
   // Set to false so that next fetch can be scheduled after this fetch or
-  // if we recieve notification that resource is allowed.
+  // if we receive notification that resource is allowed.
   fetch_scheduled_ = false;
   // Check whether fetching is allowed.
   if (!resource_request_allowed_notifier_->ResourceRequestsAllowed())
@@ -152,32 +150,28 @@ void WebResourceService::StartFetch() {
                                                  application_locale_);
 
   DVLOG(1) << "WebResourceService StartFetch " << web_resource_server;
-  url_fetcher_ = net::URLFetcher::Create(
-      web_resource_server, net::URLFetcher::GET, this, traffic_annotation_);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      url_fetcher_.get(),
-      data_use_measurement::DataUseUserData::WEB_RESOURCE_SERVICE);
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = web_resource_server;
   // Do not let url fetcher affect existing state in system context
   // (by setting cookies, for example).
-  url_fetcher_->SetLoadFlags(net::LOAD_DISABLE_CACHE |
-                             net::LOAD_DO_NOT_SEND_COOKIES |
-                             net::LOAD_DO_NOT_SAVE_COOKIES);
-  url_fetcher_->SetRequestContext(request_context_.get());
-  url_fetcher_->Start();
+  resource_request->load_flags = net::LOAD_DISABLE_CACHE |
+                                 net::LOAD_DO_NOT_SEND_COOKIES |
+                                 net::LOAD_DO_NOT_SAVE_COOKIES;
+  simple_url_loader_ = network::SimpleURLLoader::Create(
+      std::move(resource_request), traffic_annotation_);
+  simple_url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      url_loader_factory_.get(),
+      base::BindOnce(&WebResourceService::OnSimpleLoaderComplete,
+                     base::Unretained(this)));
 }
 
 void WebResourceService::EndFetch() {
   in_fetch_ = false;
 }
 
-void WebResourceService::OnUnpackFinished(std::unique_ptr<base::Value> value) {
-  if (!value) {
-    // Page information not properly read, or corrupted.
-    OnUnpackError(kInvalidDataTypeError);
-    return;
-  }
+void WebResourceService::OnUnpackFinished(base::Value value) {
   const base::DictionaryValue* dict = nullptr;
-  if (!value->GetAsDictionary(&dict)) {
+  if (!value.GetAsDictionary(&dict)) {
     OnUnpackError(kUnexpectedJSONFormatError);
     return;
   }

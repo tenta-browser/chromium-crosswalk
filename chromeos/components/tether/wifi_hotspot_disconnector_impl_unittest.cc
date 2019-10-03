@@ -4,17 +4,17 @@
 
 #include "chromeos/components/tether/wifi_hotspot_disconnector_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "chromeos/components/tether/fake_network_configuration_remover.h"
 #include "chromeos/components/tether/pref_names.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/network_connection_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "chromeos/network/network_state_test.h"
+#include "chromeos/network/network_state_test_helper.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -72,11 +72,8 @@ class TestNetworkConnectionHandler : public NetworkConnectionHandler {
   void ConnectToNetwork(const std::string& service_path,
                         const base::Closure& success_callback,
                         const network_handler::ErrorCallback& error_callback,
-                        bool check_error_state) override {}
-  bool HasConnectingNetwork(const std::string& service_path) override {
-    return false;
-  }
-  bool HasPendingConnectRequest() override { return false; }
+                        bool check_error_state,
+                        ConnectCallbackMode mode) override {}
   void Init(NetworkStateHandler* network_state_handler,
             NetworkConfigurationHandler* network_configuration_handler,
             ManagedNetworkConfigurationHandler*
@@ -92,15 +89,12 @@ class TestNetworkConnectionHandler : public NetworkConnectionHandler {
 
 }  // namespace
 
-class WifiHotspotDisconnectorImplTest : public NetworkStateTest {
+class WifiHotspotDisconnectorImplTest : public testing::Test {
  public:
   WifiHotspotDisconnectorImplTest() = default;
   ~WifiHotspotDisconnectorImplTest() override = default;
 
   void SetUp() override {
-    DBusThreadManager::Initialize();
-    NetworkStateTest::SetUp();
-
     should_disconnect_successfully_ = true;
 
     test_network_connection_handler_ =
@@ -109,33 +103,30 @@ class WifiHotspotDisconnectorImplTest : public NetworkStateTest {
                            OnNetworkConnectionManagerDisconnect,
                        base::Unretained(this))));
     fake_configuration_remover_ =
-        base::MakeUnique<FakeNetworkConfigurationRemover>();
+        std::make_unique<FakeNetworkConfigurationRemover>();
     test_pref_service_ =
-        base::MakeUnique<sync_preferences::TestingPrefServiceSyncable>();
+        std::make_unique<sync_preferences::TestingPrefServiceSyncable>();
 
     WifiHotspotDisconnectorImpl::RegisterPrefs(test_pref_service_->registry());
-    wifi_hotspot_disconnector_ = base::MakeUnique<WifiHotspotDisconnectorImpl>(
-        test_network_connection_handler_.get(), network_state_handler(),
+    wifi_hotspot_disconnector_ = std::make_unique<WifiHotspotDisconnectorImpl>(
+        test_network_connection_handler_.get(), helper_.network_state_handler(),
         test_pref_service_.get(), fake_configuration_remover_.get());
   }
 
   void TearDown() override {
     wifi_hotspot_disconnector_.reset();
-    ShutdownNetworkState();
-    NetworkStateTest::TearDown();
-    DBusThreadManager::Shutdown();
   }
 
   void SimulateConnectionToWifiNetwork() {
-    wifi_service_path_ = ConfigureService(
+    wifi_service_path_ = helper_.ConfigureService(
         CreateConnectedWifiConfigurationJsonString(kWifiNetworkGuid));
     EXPECT_FALSE(wifi_service_path_.empty());
   }
 
   void SetWifiNetworkToDisconnected() {
     EXPECT_FALSE(wifi_service_path_.empty());
-    SetServiceProperty(wifi_service_path_, shill::kStateProperty,
-                       base::Value(shill::kStateIdle));
+    helper_.SetServiceProperty(wifi_service_path_, shill::kStateProperty,
+                               base::Value(shill::kStateIdle));
   }
 
   void SuccessCallback() { disconnection_result_ = kSuccessResult; }
@@ -165,8 +156,8 @@ class WifiHotspotDisconnectorImplTest : public NetworkStateTest {
     // yet have been cleared, and the disconnecting GUID should still be in
     // prefs.
     EXPECT_TRUE(
-        fake_configuration_remover_->last_removed_wifi_network_guid().empty());
-    EXPECT_FALSE(GetDisconnectingWifiGuidFromPrefs().empty());
+        fake_configuration_remover_->last_removed_wifi_network_path().empty());
+    EXPECT_FALSE(GetDisconnectingWifiPathFromPrefs().empty());
 
     if (should_disconnect_successfully_) {
       EXPECT_FALSE(
@@ -187,8 +178,8 @@ class WifiHotspotDisconnectorImplTest : public NetworkStateTest {
     // Now that the callbacks have been invoked, both the network
     // configuration and the disconnecting GUID should have cleared.
     EXPECT_FALSE(
-        fake_configuration_remover_->last_removed_wifi_network_guid().empty());
-    EXPECT_TRUE(GetDisconnectingWifiGuidFromPrefs().empty());
+        fake_configuration_remover_->last_removed_wifi_network_path().empty());
+    EXPECT_TRUE(GetDisconnectingWifiPathFromPrefs().empty());
   }
 
   std::string GetResultAndReset() {
@@ -197,11 +188,17 @@ class WifiHotspotDisconnectorImplTest : public NetworkStateTest {
     return result;
   }
 
-  std::string GetDisconnectingWifiGuidFromPrefs() {
-    return test_pref_service_->GetString(prefs::kDisconnectingWifiNetworkGuid);
+  std::string GetDisconnectingWifiPathFromPrefs() {
+    return test_pref_service_->GetString(prefs::kDisconnectingWifiNetworkPath);
   }
 
-  const base::test::ScopedTaskEnvironment scoped_task_environment_;
+  std::string GetServiceStringProperty(const std::string& service_path,
+                                       const std::string& key) {
+    return helper_.GetServiceStringProperty(service_path, key);
+  }
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  NetworkStateTestHelper helper_{true /* use_default_devices_and_services */};
 
   std::unique_ptr<TestNetworkConnectionHandler>
       test_network_connection_handler_;
@@ -225,7 +222,7 @@ TEST_F(WifiHotspotDisconnectorImplTest, NetworkDoesNotExist) {
 
   // Configuration should not have been removed.
   EXPECT_TRUE(
-      fake_configuration_remover_->last_removed_wifi_network_guid().empty());
+      fake_configuration_remover_->last_removed_wifi_network_path().empty());
 }
 
 TEST_F(WifiHotspotDisconnectorImplTest, NetworkNotActuallyConnected) {
@@ -233,12 +230,12 @@ TEST_F(WifiHotspotDisconnectorImplTest, NetworkNotActuallyConnected) {
   SimulateConnectionToWifiNetwork();
   SetWifiNetworkToDisconnected();
 
-  CallDisconnect(wifi_service_path_);
+  CallDisconnect(kWifiNetworkGuid);
   EXPECT_EQ(NetworkConnectionHandler::kErrorNotConnected, GetResultAndReset());
 
   // Configuration should not have been removed.
   EXPECT_TRUE(
-      fake_configuration_remover_->last_removed_wifi_network_guid().empty());
+      fake_configuration_remover_->last_removed_wifi_network_path().empty());
 }
 
 TEST_F(WifiHotspotDisconnectorImplTest, WifiDisconnectionFails) {
@@ -246,7 +243,7 @@ TEST_F(WifiHotspotDisconnectorImplTest, WifiDisconnectionFails) {
 
   should_disconnect_successfully_ = false;
 
-  CallDisconnect(wifi_service_path_);
+  CallDisconnect(kWifiNetworkGuid);
   EXPECT_EQ(NetworkConnectionHandler::kErrorDisconnectFailed,
             GetResultAndReset());
 
@@ -257,13 +254,13 @@ TEST_F(WifiHotspotDisconnectorImplTest, WifiDisconnectionFails) {
 
   // Configuration should have been removed despite the failure.
   EXPECT_FALSE(
-      fake_configuration_remover_->last_removed_wifi_network_guid().empty());
+      fake_configuration_remover_->last_removed_wifi_network_path().empty());
 }
 
 TEST_F(WifiHotspotDisconnectorImplTest, WifiDisconnectionSucceeds) {
   SimulateConnectionToWifiNetwork();
 
-  CallDisconnect(wifi_service_path_);
+  CallDisconnect(kWifiNetworkGuid);
   EXPECT_EQ(kSuccessResult, GetResultAndReset());
 
   // The Wi-Fi network should be disconnected.
@@ -272,7 +269,7 @@ TEST_F(WifiHotspotDisconnectorImplTest, WifiDisconnectionSucceeds) {
 
   // Configuration should have been removed.
   EXPECT_FALSE(
-      fake_configuration_remover_->last_removed_wifi_network_guid().empty());
+      fake_configuration_remover_->last_removed_wifi_network_path().empty());
 }
 
 }  // namespace tether

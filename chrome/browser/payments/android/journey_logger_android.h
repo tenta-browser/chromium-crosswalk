@@ -8,13 +8,14 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "components/payments/core/journey_logger.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace payments {
 
 // Forwarding calls to payments::JourneyLogger.
 class JourneyLoggerAndroid {
  public:
-  JourneyLoggerAndroid(bool is_incognito, const std::string& url);
+  JourneyLoggerAndroid(bool is_incognito, ukm::SourceId source_id);
   ~JourneyLoggerAndroid();
 
   // Message from Java to destroy this object.
@@ -43,6 +44,10 @@ class JourneyLoggerAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
       jboolean jvalue);
+  void SetHasEnrolledInstrumentValue(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      jboolean jvalue);
   void SetEventOccurred(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& jcaller,
                         jint jevent);
@@ -67,6 +72,12 @@ class JourneyLoggerAndroid {
   void SetNotShown(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& jcaller,
                    jint jreason);
+  void RecordTransactionAmount(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      const base::android::JavaParamRef<jstring>& jcurrency,
+      const base::android::JavaParamRef<jstring>& jvalue,
+      jboolean jcompleted);
 
  private:
   JourneyLogger journey_logger_;

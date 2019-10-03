@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "chrome/browser/browser_process.h"
@@ -11,7 +12,7 @@
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "chrome/browser/chromeos/system/timezone_util.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/pref_service.h"
 
@@ -32,11 +33,6 @@ enum ServiceConfiguration {
 // SystemTimezoneAutomaticDetectionPolicy.
 // Returns SHOULD_* if timezone resolver status is controlled by this policy.
 ServiceConfiguration GetServiceConfigurationFromAutomaticDetectionPolicy() {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableSystemTimezoneAutomaticDetectionPolicy)) {
-    return UNSPECIFIED;
-  }
-
   PrefService* local_state = g_browser_process->local_state();
   const bool is_managed = local_state->IsManagedPreference(
       prefs::kSystemTimezoneAutomaticDetectionPolicy);
@@ -128,8 +124,8 @@ TimeZoneResolverManager::TimeZoneResolverManager() : weak_factory_(this) {
       g_browser_process->local_state()->GetInitializationStatus() ==
       PrefService::INITIALIZATION_STATUS_SUCCESS;
   g_browser_process->local_state()->AddPrefInitObserver(
-      base::Bind(&TimeZoneResolverManager::OnLocalStateInitialized,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&TimeZoneResolverManager::OnLocalStateInitialized,
+                     weak_factory_.GetWeakPtr()));
 
   local_state_pref_change_registrar_.Init(g_browser_process->local_state());
   local_state_pref_change_registrar_.Add(
@@ -189,6 +185,19 @@ void TimeZoneResolverManager::UpdateTimezoneResolver() {
     resolver->Start();
   else
     resolver->Stop();
+
+  // Observers must be notified whenever UpdateTimezoneResolver() is called.
+  // This allows observers to listen for all relevant prefs updates.
+  for (Observer& observer : observers_)
+    observer.OnTimeZoneResolverUpdated();
+}
+
+void TimeZoneResolverManager::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void TimeZoneResolverManager::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 bool TimeZoneResolverManager::ShouldApplyResolvedTimezone() {
@@ -293,6 +302,11 @@ TimeZoneResolverManager::GetEffectiveUserTimeZoneResolveMethod(
   return user_prefs->GetBoolean(prefs::kResolveTimezoneByGeolocation)
              ? TimeZoneResolveMethod::IP_ONLY
              : TimeZoneResolveMethod::DISABLED;
+}
+
+// static
+bool TimeZoneResolverManager::IsTimeZoneResolutionPolicyControlled() {
+  return GetServiceConfigurationFromPolicy() != UNSPECIFIED;
 }
 
 }  // namespace system

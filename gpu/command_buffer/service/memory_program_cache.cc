@@ -13,17 +13,16 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
-#include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/activity_flags.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/disk_cache_proto.pb.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/shader_manager.h"
+#include "gpu/config/gpu_preferences.h"
 #include "third_party/zlib/zlib.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -206,7 +205,7 @@ void RetrieveShaderInterfaceBlockInfo(const ShaderInterfaceBlockProto& proto,
   (*map)[proto.mapped_name()] = interface_block;
 }
 
-void RunShaderCallback(GLES2DecoderClient* client,
+void RunShaderCallback(DecoderClient* client,
                        GpuProgramProto* proto,
                        std::string sha_string) {
   std::string shader;
@@ -297,7 +296,7 @@ MemoryProgramCache::MemoryProgramCache(
       store_(ProgramMRUCache::NO_AUTO_EVICT),
       activity_flags_(activity_flags) {}
 
-MemoryProgramCache::~MemoryProgramCache() {}
+MemoryProgramCache::~MemoryProgramCache() = default;
 
 void MemoryProgramCache::ClearBackend() {
   store_.Clear();
@@ -311,7 +310,7 @@ ProgramCache::ProgramLoadResult MemoryProgramCache::LoadLinkedProgram(
     const LocationMap* bind_attrib_location_map,
     const std::vector<std::string>& transform_feedback_varyings,
     GLenum transform_feedback_buffer_mode,
-    GLES2DecoderClient* client) {
+    DecoderClient* client) {
   if (!ProgramBinaryExtensionsAvailable()) {
     // Early exit if this context can't support program binaries
     return PROGRAM_LOAD_FAILURE;
@@ -398,7 +397,7 @@ void MemoryProgramCache::SaveLinkedProgram(
     const LocationMap* bind_attrib_location_map,
     const std::vector<std::string>& transform_feedback_varyings,
     GLenum transform_feedback_buffer_mode,
-    GLES2DecoderClient* client) {
+    DecoderClient* client) {
   if (!ProgramBinaryExtensionsAvailable()) {
     // Early exit if this context can't support program binaries
     return;
@@ -414,7 +413,7 @@ void MemoryProgramCache::SaveLinkedProgram(
     return;
   }
   std::vector<uint8_t> binary(length);
-  glGetProgramBinary(program, length, NULL, &format,
+  glGetProgramBinary(program, length, nullptr, &format,
                      reinterpret_cast<char*>(binary.data()));
 
   if (compress_program_binaries_) {
@@ -424,8 +423,13 @@ void MemoryProgramCache::SaveLinkedProgram(
       return;
     }
   }
-  UMA_HISTOGRAM_COUNTS("GPU.ProgramCache.ProgramBinarySizeBytes",
-                       binary.size());
+
+  // If the binary is so big it will never fit in the cache, throw it away.
+  if (binary.size() > max_size_bytes())
+    return;
+
+  UMA_HISTOGRAM_COUNTS_1M("GPU.ProgramCache.ProgramBinarySizeBytes",
+                          binary.size());
 
   char a_sha[kHashLength];
   char b_sha[kHashLength];
@@ -445,8 +449,8 @@ void MemoryProgramCache::SaveLinkedProgram(
                      sha);
   const std::string sha_string(sha, sizeof(sha));
 
-  UMA_HISTOGRAM_COUNTS("GPU.ProgramCache.MemorySizeBeforeKb",
-                       curr_size_bytes_ / 1024);
+  UMA_HISTOGRAM_COUNTS_1M("GPU.ProgramCache.MemorySizeBeforeKb",
+                          curr_size_bytes_ / 1024);
 
   // Evict any cached program with the same key in favor of the least recently
   // accessed.
@@ -454,10 +458,9 @@ void MemoryProgramCache::SaveLinkedProgram(
   if(existing != store_.end())
     store_.Erase(existing);
 
-  while (curr_size_bytes_ + binary.size() > max_size_bytes()) {
-    DCHECK(!store_.empty());
-    store_.Erase(store_.rbegin());
-  }
+  // If the cache is overflowing, remove some old entries.
+  DCHECK(max_size_bytes() >= binary.size());
+  Trim(max_size_bytes() - binary.size());
 
   if (!disable_gpu_shader_disk_cache_) {
     std::unique_ptr<GpuProgramProto> proto(
@@ -484,8 +487,8 @@ void MemoryProgramCache::SaveLinkedProgram(
           shader_b->output_variable_list(), shader_b->interface_block_map(),
           this));
 
-  UMA_HISTOGRAM_COUNTS("GPU.ProgramCache.MemorySizeAfterKb",
-                       curr_size_bytes_ / 1024);
+  UMA_HISTOGRAM_COUNTS_1M("GPU.ProgramCache.MemorySizeAfterKb",
+                          curr_size_bytes_ / 1024);
 }
 
 void MemoryProgramCache::LoadProgram(const std::string& key,
@@ -563,20 +566,20 @@ void MemoryProgramCache::LoadProgram(const std::string& key,
             fragment_attribs, fragment_uniforms, fragment_varyings,
             fragment_output_variables, fragment_interface_blocks, this));
 
-    UMA_HISTOGRAM_COUNTS("GPU.ProgramCache.MemorySizeAfterKb",
-                         curr_size_bytes_ / 1024);
+    UMA_HISTOGRAM_COUNTS_1M("GPU.ProgramCache.MemorySizeAfterKb",
+                            curr_size_bytes_ / 1024);
   } else {
-    LOG(ERROR) << "Failed to parse proto file.";
+    DVLOG(2) << "Failed to parse proto file.";
   }
 }
 
 size_t MemoryProgramCache::Trim(size_t limit) {
-  if (curr_size_bytes_ <= limit)
-    return 0;
   size_t initial_size = curr_size_bytes_;
-  while (curr_size_bytes_ > limit && !store_.empty())
+  while (curr_size_bytes_ > limit) {
+    DCHECK(!store_.empty());
     store_.Erase(store_.rbegin());
-  return (initial_size - curr_size_bytes_);
+  }
+  return initial_size - curr_size_bytes_;
 }
 
 MemoryProgramCache::ProgramCacheValue::ProgramCacheValue(
@@ -617,12 +620,14 @@ MemoryProgramCache::ProgramCacheValue::ProgramCacheValue(
       interface_block_map_1_(interface_block_map_1),
       program_cache_(program_cache) {
   program_cache_->curr_size_bytes_ += data_.size();
+  program_cache->CompiledShaderCacheSuccess(shader_0_hash_);
+  program_cache->CompiledShaderCacheSuccess(shader_1_hash_);
   program_cache_->LinkedProgramCacheSuccess(program_hash);
 }
 
 MemoryProgramCache::ProgramCacheValue::~ProgramCacheValue() {
   program_cache_->curr_size_bytes_ -= data_.size();
-  program_cache_->Evict(program_hash_);
+  program_cache_->Evict(program_hash_, shader_0_hash_, shader_1_hash_);
 }
 
 }  // namespace gles2

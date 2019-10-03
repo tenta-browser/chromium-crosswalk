@@ -16,8 +16,8 @@
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/resource_message_params.h"
-#include "third_party/WebKit/public/web/WebPepperSocket.h"
-#include "third_party/WebKit/public/web/WebPepperSocketClient.h"
+#include "third_party/blink/public/web/web_pepper_socket.h"
+#include "third_party/blink/public/web/web_pepper_socket_client.h"
 
 namespace content {
 
@@ -41,11 +41,11 @@ class CONTENT_EXPORT PepperWebSocketHost
   void DidReceiveMessage(const blink::WebString& message) override;
   void DidReceiveArrayBuffer(const blink::WebArrayBuffer& binaryData) override;
   void DidReceiveMessageError() override;
-  void DidUpdateBufferedAmount(unsigned long buffered_amount) override;
+  void DidUpdateBufferedAmount(uint64_t buffered_amount) override;
   void DidStartClosingHandshake() override;
-  void DidClose(unsigned long unhandled_buffered_amount,
+  void DidClose(uint64_t unhandled_buffered_amount,
                 ClosingHandshakeCompletionStatus status,
-                unsigned short code,
+                uint16_t code,
                 const blink::WebString& reason) override;
 
  private:

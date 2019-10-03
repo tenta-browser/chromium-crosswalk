@@ -8,11 +8,10 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 // ProtocolHandlersHandler
@@ -28,7 +27,7 @@ class DictionaryValue;
 namespace settings {
 
 class ProtocolHandlersHandler : public SettingsPageUIHandler,
-                              public content::NotificationObserver {
+                                public ProtocolHandlerRegistry::Observer {
  public:
   ProtocolHandlersHandler();
   ~ProtocolHandlersHandler() override;
@@ -38,10 +37,8 @@ class ProtocolHandlersHandler : public SettingsPageUIHandler,
   void OnJavascriptDisallowed() override;
   void RegisterMessages() override;
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // ProtocolHandlerRegistry::Observer:
+  void OnProtocolHandlerRegistryChanged() override;
 
  private:
   // Called to fetch the state of the protocol handlers. If the full list of
@@ -63,12 +60,8 @@ class ProtocolHandlersHandler : public SettingsPageUIHandler,
   // Called when the user sets a new default handler for a protocol.
   void HandleSetDefault(const base::ListValue* args);
 
-  // Called when the user clears the default handler for a protocol.
-  // |args| is the string name of the protocol to clear.
-  void HandleClearDefault(const base::ListValue* args);
-
   // Parses a ProtocolHandler out of the arguments passed back from the view.
-  // |args| is a list of [protocol, url, title].
+  // |args| is a list of [protocol, url].
   ProtocolHandler ParseHandlerFromArgs(const base::ListValue* args) const;
 
   // Returns a JSON object describing the set of protocol handlers for the
@@ -83,16 +76,13 @@ class ProtocolHandlersHandler : public SettingsPageUIHandler,
   void UpdateHandlerList();
 
   // Remove a handler.
-  // |args| is a list of [protocol, url, title].
+  // |args| is a list of [protocol, url].
   void HandleRemoveHandler(const base::ListValue* args);
-
-  // Remove an ignored handler.
-  // |args| is a list of [protocol, url, title].
-  void HandleRemoveIgnoredHandler(const base::ListValue* args);
 
   ProtocolHandlerRegistry* GetProtocolHandlerRegistry();
 
-  content::NotificationRegistrar notification_registrar_;
+  ScopedObserver<ProtocolHandlerRegistry, ProtocolHandlerRegistry::Observer>
+      registry_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ProtocolHandlersHandler);
 };

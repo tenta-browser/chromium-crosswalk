@@ -7,18 +7,17 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/ntp/new_tab_page_panel_protocol.h"
+#import "ios/web/public/deprecated/crw_native_content.h"
 
-@protocol UrlLoader;
-@protocol IncognitoViewControllerDelegate;
+class UrlLoadingService;
 
-@interface IncognitoViewController : UIViewController<NewTabPagePanelProtocol>
+@protocol NewTabPageControllerDelegate;
+
+@interface IncognitoViewController : UIViewController
 
 // Init with the given loader object. |loader| may be nil, but isn't
 // retained so it must outlive this controller.
-// |toolbarDelegate| is used to fade the toolbar views on page scroll.
-- (id)initWithLoader:(id<UrlLoader>)loader
-     toolbarDelegate:(id<IncognitoViewControllerDelegate>)toolbarDelegate;
+- (id)initWithUrlLoadingService:(UrlLoadingService*)urlLoadingService;
 
 @end
 

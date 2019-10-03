@@ -19,15 +19,12 @@
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_namespace.h"
+#include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema_registry.h"
 #include "components/policy/policy_export.h"
 
 namespace base {
 class SequencedTaskRunner;
-}
-
-namespace net {
-class URLRequestContextGetter;
 }
 
 namespace policy {
@@ -69,6 +66,11 @@ class POLICY_EXPORT ComponentCloudPolicyService
   // allowed values are: |dm_protocol::kChromeExtensionPolicyType|,
   // |dm_protocol::kChromeSigninExtensionPolicyType|.
   //
+  // |policy_source| specifies where the policy originates from, and can be used
+  // to configure precedence when the same components are configured by policies
+  // from different sources. It only accepts POLICY_SOURCE_CLOUD and
+  // POLICY_SOURCE_PRIORITY_CLOUD now.
+  //
   // The |delegate| is notified of updates to the downloaded policies and must
   // outlive this object.
   //
@@ -90,12 +92,10 @@ class POLICY_EXPORT ComponentCloudPolicyService
   // |cache| is used to load and store local copies of the downloaded policies.
   //
   // Download scheduling, validation and caching of policies are done via the
-  // |backend_task_runner|, which must support file I/O. Network I/O is done via
-  // the |io_task_runner|.
-  //
-  // |request_context| is used by the background URLFetchers.
+  // |backend_task_runner|, which must support file I/O.
   ComponentCloudPolicyService(
       const std::string& policy_type,
+      PolicySource policy_source,
       Delegate* delegate,
       SchemaRegistry* schema_registry,
       CloudPolicyCore* core,
@@ -103,9 +103,7 @@ class POLICY_EXPORT ComponentCloudPolicyService
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
       std::unique_ptr<ResourceCache> cache,
 #endif
-      scoped_refptr<net::URLRequestContextGetter> request_context,
-      scoped_refptr<base::SequencedTaskRunner> backend_task_runner,
-      scoped_refptr<base::SequencedTaskRunner> io_task_runner);
+      scoped_refptr<base::SequencedTaskRunner> backend_task_runner);
   ~ComponentCloudPolicyService() override;
 
   // Returns true if |domain| is supported by the service.
@@ -154,15 +152,11 @@ class POLICY_EXPORT ComponentCloudPolicyService
   Delegate* delegate_;
   SchemaRegistry* schema_registry_;
   CloudPolicyCore* core_;
-  scoped_refptr<net::URLRequestContextGetter> request_context_;
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
-  scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
 
   // The |external_policy_data_fetcher_backend_| handles network I/O for the
-  // |backend_| because URLRequestContextGetter and URLFetchers cannot be
-  // referenced from background threads. It is instantiated on the thread |this|
-  // runs on but after that, must only be accessed and eventually destroyed via
-  // the |io_task_runner_|.
+  // |backend_| because the system SharedURLLoaderFactory cannot be referenced
+  // from background threads. It is owned by the thread |this| runs on.
   std::unique_ptr<ExternalPolicyDataFetcherBackend>
       external_policy_data_fetcher_backend_;
 
@@ -191,7 +185,7 @@ class POLICY_EXPORT ComponentCloudPolicyService
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Must be the last member.
-  base::WeakPtrFactory<ComponentCloudPolicyService> weak_ptr_factory_;
+  base::WeakPtrFactory<ComponentCloudPolicyService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ComponentCloudPolicyService);
 };

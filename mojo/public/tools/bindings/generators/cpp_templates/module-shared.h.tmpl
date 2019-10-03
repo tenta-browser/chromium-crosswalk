@@ -43,25 +43,36 @@ namespace {{namespace}} {
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/containers/flat_map.h"
 #include "mojo/public/cpp/bindings/array_data_view.h"
 #include "mojo/public/cpp/bindings/enum_traits.h"
 #include "mojo/public/cpp/bindings/interface_data_view.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
 #include "mojo/public/cpp/bindings/lib/serialization.h"
 #include "mojo/public/cpp/bindings/map_data_view.h"
-#include "mojo/public/cpp/bindings/native_enum.h"
 #include "mojo/public/cpp/bindings/string_data_view.h"
 #include "{{module.path}}-shared-internal.h"
 {%- for import in imports %}
 #include "{{import.path}}-shared.h"
 {%- endfor %}
 
-{% if allow_native_structs %}
+{% if not disallow_interfaces -%}
+#include "mojo/public/cpp/bindings/lib/interface_serialization.h"
+{%- endif %}
+
+{% if not disallow_native_types %}
+#include "mojo/public/cpp/bindings/native_enum.h"
 #include "mojo/public/cpp/bindings/lib/native_struct_serialization.h"
 {%- endif %}
 
 {%- if export_header %}
 #include "{{export_header}}"
+{%- endif %}
+
+{% if enable_kythe_annotations -%}
+#ifdef KYTHE_IS_RUNNING
+#pragma kythe_inline_metadata "Metadata comment"
+#endif
 {%- endif %}
 
 {{namespace_begin()}}
@@ -100,13 +111,15 @@ namespace internal {
 
 {{namespace_begin()}}
 
+{%- set module_prefix = "%s"|format(namespaces_as_array|join(".")) %}
+
 {#--- Enums #}
-{%- from "enum_macros.tmpl" import enum_decl%}
+{%- from "enum_macros.tmpl" import enum_decl with context %}
 {%- for enum in all_enums %}
 {%-   if enum|is_native_only_kind %}
 using {{enum|get_name_for_kind(flatten_nested_kind=True)}} = mojo::NativeEnum;
 {%-   else %}
-{{enum_decl(enum)}}
+{{enum_decl(enum, export_attribute)}}
 {%-   endif %}
 {%- endfor %}
 
@@ -133,18 +146,6 @@ using {{interface.name}}AssociatedRequestDataView =
 {%-   if not struct|is_native_only_kind %}
 {%      include "struct_data_view_declaration.tmpl" %}
 {%-   endif %}
-{%- endfor %}
-
-{#--- Interface parameter definitions #}
-{%- for interface in interfaces %}
-{%-   for method in interface.methods %}
-{%-     set struct = method.param_struct %}
-{%      include "struct_data_view_declaration.tmpl" %}
-{%-     if method.response_parameters != None %}
-{%-       set struct = method.response_param_struct %}
-{%        include "struct_data_view_declaration.tmpl" %}
-{%-     endif %}
-{%-   endfor %}
 {%- endfor %}
 
 {#--- Unions #}
@@ -198,17 +199,6 @@ namespace mojo {
 {%-   endif %}
 {%- endfor %}
 
-{%- for interface in interfaces %}
-{%-   for method in interface.methods %}
-{%-     set struct = method.param_struct %}
-{%      include "struct_data_view_definition.tmpl" %}
-{%-     if method.response_parameters != None %}
-{%-       set struct = method.response_param_struct %}
-{%        include "struct_data_view_definition.tmpl" %}
-{%-     endif %}
-{%-   endfor %}
-{%- endfor %}
-
 {%- for union in unions %}
 {%    include "union_data_view_definition.tmpl" %}
 {%- endfor %}
@@ -216,4 +206,3 @@ namespace mojo {
 {{namespace_end()}}
 
 #endif  // {{header_guard}}
-

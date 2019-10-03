@@ -4,100 +4,62 @@
 
 #import "ios/chrome/browser/ui/bookmarks/bookmark_path_cache.h"
 
-#include "base/logging.h"
+#include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/bookmark_node.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "ios/chrome/browser/pref_names.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-namespace {
-// The current version of the cached position. This number should be incremented
-// each time the NSCoding implementation changes.
-const int kVersion = 1;
+using bookmarks::BookmarkModel;
+using bookmarks::BookmarkNode;
 
-NSString* kBookmarkFolderIdKey = @"BookmarkFolderIdKey";
-NSString* kPositionKey = @"PositionKey";
-NSString* kVersionKey = @"VersionKey";
+namespace {
+const int64_t kFolderNone = -1;
 }  // namespace
 
-@interface BookmarkPathCache ()
-
-// This is the designated initializer. It does not perform any validation.
-- (instancetype)initWithBookmarkFolder:(int64_t)folderId
-                              position:(CGFloat)position
-    NS_DESIGNATED_INITIALIZER;
-
-- (instancetype)init NS_UNAVAILABLE;
-
-@end
-
 @implementation BookmarkPathCache
-@synthesize position = _position;
-@synthesize folderId = _folderId;
 
-#pragma mark - Public Constructors
-
-+ (BookmarkPathCache*)cacheForBookmarkFolder:(int64_t)folderId
-                                    position:(CGFloat)position {
-  return [[BookmarkPathCache alloc] initWithBookmarkFolder:folderId
-                                                  position:position];
++ (void)registerBrowserStatePrefs:(user_prefs::PrefRegistrySyncable*)registry {
+  registry->RegisterInt64Pref(prefs::kIosBookmarkCachedFolderId, kFolderNone);
+  registry->RegisterIntegerPref(prefs::kIosBookmarkCachedTopMostRow, 0);
 }
 
-#pragma mark - Designated Initializer
-
-- (instancetype)initWithBookmarkFolder:(int64_t)folderId
-                              position:(CGFloat)position {
-  self = [super init];
-  if (self) {
-    _folderId = folderId;
-    _position = position;
-  }
-  return self;
++ (void)cacheBookmarkTopMostRowWithPrefService:(PrefService*)prefService
+                                      folderId:(int64_t)folderId
+                                    topMostRow:(int)topMostRow {
+  prefService->SetInt64(prefs::kIosBookmarkCachedFolderId, folderId);
+  prefService->SetInteger(prefs::kIosBookmarkCachedTopMostRow, topMostRow);
 }
 
-#pragma mark - Superclass Overrides
++ (BOOL)getBookmarkTopMostRowCacheWithPrefService:(PrefService*)prefService
+                                            model:
+                                                (bookmarks::BookmarkModel*)model
+                                         folderId:(int64_t*)folderId
+                                       topMostRow:(int*)topMostRow {
+  *folderId = prefService->GetInt64(prefs::kIosBookmarkCachedFolderId);
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (BOOL)isEqual:(id)object {
-  if (self == object)
-    return YES;
-  if (![object isKindOfClass:[BookmarkPathCache class]])
-    return NO;
-  BookmarkPathCache* other = static_cast<BookmarkPathCache*>(object);
-  if (fabs(self.position - other.position) > 0.01)
-    return NO;
-  if (self.folderId != other.folderId)
+  // If the cache was at root node, consider it as nothing was cached.
+  if (*folderId == kFolderNone || *folderId == model->root_node()->id())
     return NO;
 
+  // Create bookmark Path.
+  const BookmarkNode* bookmark =
+      bookmark_utils_ios::FindFolderById(model, *folderId);
+  // The bookmark node is gone from model, maybe deleted remotely.
+  if (!bookmark)
+    return NO;
+
+  *topMostRow = prefService->GetInteger(prefs::kIosBookmarkCachedTopMostRow);
   return YES;
 }
 
-- (NSUInteger)hash {
-  return static_cast<NSUInteger>(self.folderId) ^
-         static_cast<NSUInteger>(self.position);
-}
-
-#pragma mark - NSCoding
-
-- (instancetype)initWithCoder:(NSCoder*)coder {
-  int version = [coder decodeIntForKey:kVersionKey];
-  if (version != kVersion) {
-    return nil;
-  }
-
-  return [self
-      initWithBookmarkFolder:[coder decodeInt64ForKey:kBookmarkFolderIdKey]
-                    position:[coder decodeFloatForKey:kPositionKey]];
-}
-
-- (void)encodeWithCoder:(NSCoder*)coder {
-  [coder encodeInt:kVersion forKey:kVersionKey];
-  [coder encodeFloat:self.position forKey:kPositionKey];
-  [coder encodeInt64:self.folderId forKey:kBookmarkFolderIdKey];
++ (void)clearBookmarkTopMostRowCacheWithPrefService:(PrefService*)prefService {
+  prefService->SetInt64(prefs::kIosBookmarkCachedFolderId, kFolderNone);
 }
 
 @end

@@ -14,7 +14,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/networking_cast_private/chrome_networking_cast_private_delegate.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -197,11 +196,11 @@ class TestNetworkingPrivateDelegate : public NetworkingPrivateDelegate {
   }
 
   std::unique_ptr<base::DictionaryValue> GetGlobalPolicy() override {
-    return base::MakeUnique<base::DictionaryValue>();
+    return std::make_unique<base::DictionaryValue>();
   }
 
   std::unique_ptr<base::DictionaryValue> GetCertificateLists() override {
-    return base::MakeUnique<base::DictionaryValue>();
+    return std::make_unique<base::DictionaryValue>();
   }
 
   bool EnableNetworkType(const std::string& type) override {
@@ -292,17 +291,6 @@ class TestNetworkingCastPrivateDelegate
     }
   }
 
-  void VerifyAndEncryptCredentials(
-      const std::string& guid,
-      std::unique_ptr<Credentials> credentials,
-      const DataCallback& success_callback,
-      const FailureCallback& failure_callback) override {
-    if (fail_) {
-      failure_callback.Run(kFailure);
-    } else {
-      success_callback.Run("encrypted_credentials");
-    }
-  }
   void VerifyAndEncryptData(const std::string& data,
                             std::unique_ptr<Credentials> credentials,
                             const DataCallback& success_callback,
@@ -322,15 +310,6 @@ class TestNetworkingCastPrivateDelegate
 
 class NetworkingPrivateApiTest : public ExtensionApiTest {
  public:
-  using TestNetworkingPrivateDelegateFactory =
-      base::Callback<std::unique_ptr<KeyedService>()>;
-
-  static std::unique_ptr<KeyedService> GetNetworkingPrivateDelegate(
-      content::BrowserContext* profile) {
-    CHECK(s_networking_private_delegate_factory_ptr);
-    return s_networking_private_delegate_factory_ptr->Run();
-  }
-
   NetworkingPrivateApiTest() = default;
   ~NetworkingPrivateApiTest() override = default;
 
@@ -340,12 +319,6 @@ class NetworkingPrivateApiTest : public ExtensionApiTest {
         base::Unretained(this), test_failure_);
     ChromeNetworkingCastPrivateDelegate::SetFactoryCallbackForTest(
         &networking_cast_delegate_factory_);
-
-    networking_private_delegate_factory_ = base::Bind(
-        &NetworkingPrivateApiTest::CreateTestNetworkingPrivateDelegate,
-        base::Unretained(this), test_failure_);
-    s_networking_private_delegate_factory_ptr =
-        &networking_private_delegate_factory_;
 
     ExtensionApiTest::SetUp();
   }
@@ -361,28 +334,28 @@ class NetworkingPrivateApiTest : public ExtensionApiTest {
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
     NetworkingPrivateDelegateFactory::GetInstance()->SetTestingFactory(
-        profile(), &NetworkingPrivateApiTest::GetNetworkingPrivateDelegate);
+        profile(),
+        base::BindRepeating(
+            &NetworkingPrivateApiTest::CreateTestNetworkingPrivateDelegate,
+            base::Unretained(this), test_failure_));
   }
 
   void TearDown() override {
     ExtensionApiTest::TearDown();
 
-    s_networking_private_delegate_factory_ptr = nullptr;
     ChromeNetworkingCastPrivateDelegate::SetFactoryCallbackForTest(nullptr);
-
-    networking_private_delegate_ = nullptr;
   }
 
   bool GetEnabled(const std::string& type) {
-    return networking_private_delegate_->GetEnabled(type);
+    return networking_private_delegate()->GetEnabled(type);
   }
 
   bool GetDisabled(const std::string& type) {
-    return networking_private_delegate_->GetDisabled(type);
+    return networking_private_delegate()->GetDisabled(type);
   }
 
   const std::vector<std::string>& GetScanRequested() {
-    return networking_private_delegate_->GetScanRequested();
+    return networking_private_delegate()->GetScanRequested();
   }
 
  protected:
@@ -395,41 +368,32 @@ class NetworkingPrivateApiTest : public ExtensionApiTest {
  private:
   std::unique_ptr<ChromeNetworkingCastPrivateDelegate>
   CreateTestNetworkingCastPrivateDelegate(bool test_failure) {
-    return base::MakeUnique<TestNetworkingCastPrivateDelegate>(test_failure);
+    return std::make_unique<TestNetworkingCastPrivateDelegate>(test_failure);
   }
 
   std::unique_ptr<KeyedService> CreateTestNetworkingPrivateDelegate(
-      bool test_failure) {
-    CHECK(!networking_private_delegate_);
-    auto delegate =
-        base::MakeUnique<TestNetworkingPrivateDelegate>(test_failure);
-    networking_private_delegate_ = delegate.get();
-    return delegate;
+      bool test_failure,
+      content::BrowserContext* /*context*/) {
+    return std::make_unique<TestNetworkingPrivateDelegate>(test_failure);
+  }
+
+  // Returns a pointer to a networking private delegate created by the
+  // test factory callback.
+  TestNetworkingPrivateDelegate* networking_private_delegate() {
+    return static_cast<TestNetworkingPrivateDelegate*>(
+        NetworkingPrivateDelegateFactory::GetInstance()->GetForBrowserContext(
+            profile()));
   }
 
  protected:
   bool test_failure_ = false;
 
  private:
-  // Pointer to a networking private delegate created by the test factory
-  // callback.
-  TestNetworkingPrivateDelegate* networking_private_delegate_ = nullptr;
-
-  TestNetworkingPrivateDelegateFactory networking_private_delegate_factory_;
-  // Static pointer to |test_delegate_factory_|, so it can be used from
-  // |CreateNetwokringPrivateDelegate|.
-  static TestNetworkingPrivateDelegateFactory*
-      s_networking_private_delegate_factory_ptr;
-
   ChromeNetworkingCastPrivateDelegate::FactoryCallback
       networking_cast_delegate_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateApiTest);
 };
-
-NetworkingPrivateApiTest::TestNetworkingPrivateDelegateFactory*
-    NetworkingPrivateApiTest::s_networking_private_delegate_factory_ptr =
-        nullptr;
 
 }  // namespace
 
@@ -516,10 +480,6 @@ IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTest, StartActivate) {
 
 IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTest, VerifyDestination) {
   EXPECT_TRUE(RunNetworkingSubtest("verifyDestination")) << message_;
-}
-
-IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTest, VerifyAndEncryptCredentials) {
-  EXPECT_TRUE(RunNetworkingSubtest("verifyAndEncryptCredentials")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTest, VerifyAndEncryptData) {
@@ -626,11 +586,6 @@ IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTestFail, StartActivate) {
 
 IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTestFail, VerifyDestination) {
   EXPECT_FALSE(RunNetworkingSubtest("verifyDestination")) << message_;
-}
-
-IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTestFail,
-                       VerifyAndEncryptCredentials) {
-  EXPECT_FALSE(RunNetworkingSubtest("verifyAndEncryptCredentials")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(NetworkingPrivateApiTestFail, VerifyAndEncryptData) {

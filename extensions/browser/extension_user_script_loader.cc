@@ -16,9 +16,13 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/memory/read_only_shared_memory_region.h"
+#include "base/one_shot_event.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "base/version.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
@@ -31,7 +35,6 @@
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_handlers/default_locale_handler.h"
 #include "extensions/common/message_bundle.h"
-#include "extensions/common/one_shot_event.h"
 #include "ui/base/resource/resource_bundle.h"
 
 using content::BrowserContext;
@@ -42,20 +45,41 @@ namespace {
 
 using SubstitutionMap = std::map<std::string, std::string>;
 
+struct VerifyContentInfo {
+  VerifyContentInfo(const scoped_refptr<ContentVerifier>& verifier,
+                    const ExtensionId& extension_id,
+                    const base::FilePath& extension_root,
+                    const base::FilePath relative_path,
+                    const std::string& content)
+      : verifier(verifier),
+        extension_id(extension_id),
+        extension_root(extension_root),
+        relative_path(relative_path),
+        content(content) {}
+
+  scoped_refptr<ContentVerifier> verifier;
+  ExtensionId extension_id;
+  base::FilePath extension_root;
+  base::FilePath relative_path;
+  std::string content;
+};
+
 // Verifies file contents as they are read.
-void VerifyContent(const scoped_refptr<ContentVerifier>& verifier,
-                   const std::string& extension_id,
-                   const base::FilePath& extension_root,
-                   const base::FilePath& relative_path,
-                   const std::string& content) {
+void VerifyContent(const VerifyContentInfo& info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  scoped_refptr<ContentVerifyJob> job(
-      verifier->CreateJobFor(extension_id, extension_root, relative_path));
+  DCHECK(info.verifier);
+  scoped_refptr<ContentVerifyJob> job(info.verifier->CreateAndStartJobFor(
+      info.extension_id, info.extension_root, info.relative_path));
   if (job.get()) {
-    job->Start();
-    job->BytesRead(content.size(), content.data());
-    job->DoneReading();
+    job->Read(info.content.data(), info.content.size(), MOJO_RESULT_OK);
+    job->Done();
   }
+}
+
+void ForwardVerifyContentToIO(const VerifyContentInfo& info) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::IO},
+                           base::BindOnce(&VerifyContent, info));
 }
 
 // Loads user scripts from the extension who owns these scripts.
@@ -76,6 +100,7 @@ bool LoadScriptContent(const HostID& host_id,
                                            script_file->relative_path(),
                                            &resource_id)) {
       const ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+      DCHECK(!rb.IsGzipped(resource_id));
       content = rb.GetRawDataResource(resource_id).as_string();
     } else {
       LOG(WARNING) << "Failed to get file path to "
@@ -89,11 +114,15 @@ bool LoadScriptContent(const HostID& host_id,
       return false;
     }
     if (verifier.get()) {
-      content::BrowserThread::PostTask(
-          content::BrowserThread::IO, FROM_HERE,
-          base::Bind(&VerifyContent, verifier, host_id.id(),
-                     script_file->extension_root(),
-                     script_file->relative_path(), content));
+      // Call VerifyContent() after yielding on UI thread so it is ensured that
+      // ContentVerifierIOData is populated at the time we call VerifyContent().
+      base::PostTaskWithTraits(
+          FROM_HERE, {content::BrowserThread::UI},
+          base::BindOnce(
+              &ForwardVerifyContentToIO,
+              VerifyContentInfo(verifier, host_id.id(),
+                                script_file->extension_root(),
+                                script_file->relative_path(), content)));
     }
   }
 
@@ -120,8 +149,7 @@ bool LoadScriptContent(const HostID& host_id,
 SubstitutionMap* GetLocalizationMessages(
     const ExtensionUserScriptLoader::HostsInfo& hosts_info,
     const HostID& host_id) {
-  ExtensionUserScriptLoader::HostsInfo::const_iterator iter =
-      hosts_info.find(host_id);
+  auto iter = hosts_info.find(host_id);
   if (iter == hosts_info.end())
     return nullptr;
   return file_util::LoadMessageBundleSubstitutionMap(
@@ -164,10 +192,10 @@ void LoadScriptsOnFileTaskRunner(
   DCHECK(GetExtensionFileTaskRunner()->RunsTasksInCurrentSequence());
   DCHECK(user_scripts.get());
   LoadUserScripts(user_scripts.get(), hosts_info, added_script_ids, verifier);
-  std::unique_ptr<base::SharedMemory> memory =
+  base::ReadOnlySharedMemoryRegion memory =
       UserScriptLoader::Serialize(*user_scripts);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(std::move(callback), std::move(user_scripts),
                      std::move(memory)));
 }
@@ -181,15 +209,14 @@ ExtensionUserScriptLoader::ExtensionUserScriptLoader(
     : UserScriptLoader(browser_context, host_id),
       content_verifier_(
           ExtensionSystem::Get(browser_context)->content_verifier()),
-      extension_registry_observer_(this),
-      weak_factory_(this) {
+      extension_registry_observer_(this) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context));
   if (listen_for_extension_system_loaded) {
     ExtensionSystem::Get(browser_context)
         ->ready()
         .Post(FROM_HERE,
-              base::Bind(&ExtensionUserScriptLoader::OnExtensionSystemReady,
-                         weak_factory_.GetWeakPtr()));
+              base::BindOnce(&ExtensionUserScriptLoader::OnExtensionSystemReady,
+                             weak_factory_.GetWeakPtr()));
   } else {
     SetReady(true);
   }

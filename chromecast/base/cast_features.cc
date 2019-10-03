@@ -4,27 +4,41 @@
 
 #include "chromecast/base/cast_features.h"
 
+#include <algorithm>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/lazy_instance.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/no_destructor.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 
 namespace chromecast {
 namespace {
-
 // A constant used to always activate a FieldTrial.
 const base::FieldTrial::Probability k100PercentProbability = 100;
 
 // The name of the default group to use for Cast DCS features.
 const char kDefaultDCSFeaturesGroup[] = "default_dcs_features_group";
 
-base::LazyInstance<std::unordered_set<int32_t>>::Leaky g_experiment_ids =
-    LAZY_INSTANCE_INITIALIZER;
+std::unordered_set<int32_t>& GetExperimentIds() {
+  static base::NoDestructor<std::unordered_set<int32_t>> g_experiment_ids;
+  return *g_experiment_ids;
+}
+
 bool g_experiment_ids_initialized = false;
+
+// The collection of features that have been registered by unit tests
+std::vector<const base::Feature*>& GetTestFeatures() {
+  static base::NoDestructor<std::vector<const base::Feature*>>
+      features_for_test;
+  return *features_for_test;
+}
 
 void SetExperimentIds(const base::ListValue& list) {
   DCHECK(!g_experiment_ids_initialized);
@@ -37,7 +51,7 @@ void SetExperimentIds(const base::ListValue& list) {
       LOG(ERROR) << "Non-integer value found in experiment id list!";
     }
   }
-  g_experiment_ids.Get().swap(ids);
+  GetExperimentIds().swap(ids);
   g_experiment_ids_initialized = true;
 }
 
@@ -78,8 +92,8 @@ void SetExperimentIds(const base::ListValue& list) {
 //
 //      std::unique_ptr<Foo> CreateFoo() {
 //        if (base::FeatureList::IsEnabled(kSuperSecretSauce))
-//          return base::MakeUnique<SuperSecretFoo>();
-//        return base::MakeUnique<BoringOldFoo>();
+//          return std::make_unique<SuperSecretFoo>();
+//        return std::make_unique<BoringOldFoo>();
 //      }
 //
 //    base::FeatureList can be called from any thread, in any process, at any
@@ -105,6 +119,10 @@ void SetExperimentIds(const base::ListValue& list) {
 //
 //      --disable-features=enable_foo,enable_bar
 //
+// 5) If you add a new feature to the system you must include it in kFeatures
+//    This is because the system relies on knowing all of the features so
+//    it can properly iterate over all features to detect changes.
+//
 
 // Begin Chromecast Feature definitions.
 
@@ -124,25 +142,65 @@ const base::Feature kTripleBuffer720{"enable_triple_buffer_720",
 // settings and takes precedence over triple-buffer feature).
 const base::Feature kSingleBuffer{"enable_single_buffer",
                                   base::FEATURE_DISABLED_BY_DEFAULT};
+// Disable idle sockets closing on memory pressure. See
+// chromecast/browser/url_request_context_factory.cc for usage.
+const base::Feature kDisableIdleSocketsCloseOnMemoryPressure{
+    "disable_idle_sockets_close_on_memory_pressure",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kEnableGeneralAudienceBrowsing{
+    "enable_general_audience_browsing", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // End Chromecast Feature definitions.
+const base::Feature* kFeatures[] = {
+    &kAllowUserMediaAccess,
+    &kEnableQuic,
+    &kTripleBuffer720,
+    &kSingleBuffer,
+    &kDisableIdleSocketsCloseOnMemoryPressure,
+    &kEnableGeneralAudienceBrowsing,
+};
 
 // An iterator for a base::DictionaryValue. Use an alias for brevity in loops.
 using Iterator = base::DictionaryValue::Iterator;
 
+std::vector<const base::Feature*> GetInternalFeatures();
+
+const std::vector<const base::Feature*>& GetFeatures() {
+  static const base::NoDestructor<std::vector<const base::Feature*>> features(
+      [] {
+        auto features = std::vector<const base::Feature*>(
+            kFeatures, kFeatures + sizeof(kFeatures) / sizeof(base::Feature*));
+        auto internal_features = GetInternalFeatures();
+        features.insert(features.end(), internal_features.begin(),
+                        internal_features.end());
+        return features;
+      }());
+  if (GetTestFeatures().size() > 0)
+    return GetTestFeatures();
+  return *features;
+}
+
 void InitializeFeatureList(const base::DictionaryValue& dcs_features,
                            const base::ListValue& dcs_experiment_ids,
                            const std::string& cmd_line_enable_features,
-                           const std::string& cmd_line_disable_features) {
+                           const std::string& cmd_line_disable_features,
+                           const std::string& extra_enable_features,
+                           const std::string& extra_disable_features) {
   DCHECK(!base::FeatureList::GetInstance());
 
   // Set the experiments.
   SetExperimentIds(dcs_experiment_ids);
 
+  std::string all_enable_features =
+      cmd_line_enable_features + "," + extra_enable_features;
+  std::string all_disable_features =
+      cmd_line_disable_features + "," + extra_disable_features;
+
   // Initialize the FeatureList from the command line.
-  auto feature_list = base::MakeUnique<base::FeatureList>();
-  feature_list->InitializeFromCommandLine(cmd_line_enable_features,
-                                          cmd_line_disable_features);
+  auto feature_list = std::make_unique<base::FeatureList>();
+  feature_list->InitializeFromCommandLine(all_enable_features,
+                                          all_disable_features);
 
   // Override defaults from the DCS config.
   for (Iterator it(dcs_features); !it.IsAtEnd(); it.Advance()) {
@@ -166,7 +224,6 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
     const std::string& feature_name = it.key();
     auto* field_trial = base::FieldTrialList::FactoryGetFieldTrial(
         feature_name, k100PercentProbability, kDefaultDCSFeaturesGroup,
-        base::FieldTrialList::kNoExpirationYear, 1 /* month */, 1 /* day */,
         base::FieldTrial::SESSION_RANDOMIZED, nullptr);
 
     bool enabled;
@@ -193,7 +250,7 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
               feature_name, base::FeatureList::OVERRIDE_DISABLE_FEATURE)) {
         // Build a map of the FieldTrial parameters and associate it to the
         // FieldTrial.
-        base::FieldTrialParamAssociator::FieldTrialParams params;
+        base::FieldTrialParams params;
         for (Iterator p(*params_dict); !p.IsAtEnd(); p.Advance()) {
           std::string val;
           if (p.value().GetAsString(&val)) {
@@ -220,21 +277,25 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
   base::FeatureList::SetInstance(std::move(feature_list));
 }
 
+bool IsFeatureEnabled(const base::Feature& feature) {
+  DCHECK(base::Contains(GetFeatures(), &feature)) << feature.name;
+  return base::FeatureList::IsEnabled(feature);
+}
+
 base::DictionaryValue GetOverriddenFeaturesForStorage(
-    const base::DictionaryValue& features) {
+    const base::Value& features) {
   base::DictionaryValue persistent_dict;
 
   // |features| maps feature names to either a boolean or a dict of params.
-  for (Iterator it(features); !it.IsAtEnd(); it.Advance()) {
-    bool enabled;
-    if (it.value().GetAsBoolean(&enabled)) {
-      persistent_dict.SetBoolean(it.key(), enabled);
+  for (const auto& feature : features.DictItems()) {
+    if (feature.second.is_bool()) {
+      persistent_dict.SetBoolean(feature.first, feature.second.GetBool());
       continue;
     }
 
     const base::DictionaryValue* params_dict;
-    if (it.value().GetAsDictionary(&params_dict)) {
-      auto params = base::MakeUnique<base::DictionaryValue>();
+    if (feature.second.GetAsDictionary(&params_dict)) {
+      auto params = std::make_unique<base::DictionaryValue>();
 
       bool bval;
       int ival;
@@ -246,24 +307,24 @@ base::DictionaryValue GetOverriddenFeaturesForStorage(
         if (param_val.GetAsBoolean(&bval)) {
           params->SetString(param_key, bval ? "true" : "false");
         } else if (param_val.GetAsInteger(&ival)) {
-          params->SetString(param_key, base::IntToString(ival));
+          params->SetString(param_key, base::NumberToString(ival));
         } else if (param_val.GetAsDouble(&dval)) {
           params->SetString(param_key, base::NumberToString(dval));
         } else if (param_val.GetAsString(&sval)) {
           params->SetString(param_key, sval);
         } else {
-          LOG(ERROR) << "Entry in params dict for \"" << it.key() << "\""
-                     << " is not of a supported type (key: " << p.key()
+          LOG(ERROR) << "Entry in params dict for \"" << feature.first << "\""
+                     << " is not of a supported type (key: " << param_key
                      << ", type: " << param_val.type();
         }
       }
-      persistent_dict.Set(it.key(), std::move(params));
+      persistent_dict.Set(feature.first, std::move(params));
       continue;
     }
 
     // Other base::Value types are not supported.
     LOG(ERROR) << "A DCS feature mapped to an unsupported value. key: "
-               << it.key() << " type: " << it.value().type();
+               << feature.first << " type: " << feature.second.type();
   }
 
   return persistent_dict;
@@ -271,12 +332,17 @@ base::DictionaryValue GetOverriddenFeaturesForStorage(
 
 const std::unordered_set<int32_t>& GetDCSExperimentIds() {
   DCHECK(g_experiment_ids_initialized);
-  return g_experiment_ids.Get();
+  return GetExperimentIds();
 }
 
 void ResetCastFeaturesForTesting() {
   g_experiment_ids_initialized = false;
   base::FeatureList::ClearInstanceForTesting();
+  GetTestFeatures().clear();
+}
+
+void SetFeaturesForTest(std::vector<const base::Feature*> features) {
+  GetTestFeatures() = std::move(features);
 }
 
 }  // namespace chromecast

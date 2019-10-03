@@ -19,7 +19,7 @@ class ExtensionAction;
 class ExtensionActionPlatformDelegate;
 class GURL;
 class IconWithBadgeImageSource;
-class ToolbarActionsBar;
+class ExtensionsContainer;
 
 namespace extensions {
 class Command;
@@ -45,7 +45,8 @@ class ExtensionActionViewController
   ExtensionActionViewController(const extensions::Extension* extension,
                                 Browser* browser,
                                 ExtensionAction* extension_action,
-                                ToolbarActionsBar* toolbar_actions_bar);
+                                ExtensionsContainer* extensions_container,
+                                bool in_overflow_mode);
   ~ExtensionActionViewController() override;
 
   // ToolbarActionViewController:
@@ -57,9 +58,12 @@ class ExtensionActionViewController
   base::string16 GetAccessibleName(content::WebContents* web_contents) const
       override;
   base::string16 GetTooltip(content::WebContents* web_contents) const override;
+  PageInteractionStatus GetPageInteractionStatus(
+      content::WebContents* web_contents) const override;
   bool IsEnabled(content::WebContents* web_contents) const override;
   bool WantsToRun(content::WebContents* web_contents) const override;
   bool HasPopup(content::WebContents* web_contents) const override;
+  bool IsShowingPopup() const override;
   void HidePopup() override;
   gfx::NativeView GetPopupNativeView() override;
   ui::MenuModel* GetContextMenu() override;
@@ -72,9 +76,6 @@ class ExtensionActionViewController
   // ExtensionContextMenuModel::PopupDelegate:
   void InspectPopup() override;
 
-  // Closes the active popup (whether it was this action's popup or not).
-  void HideActivePopup();
-
   // Populates |command| with the command associated with |extension|, if one
   // exists. Returns true if |command| was populated.
   bool GetExtensionCommand(extensions::Command* command);
@@ -84,7 +85,6 @@ class ExtensionActionViewController
   ExtensionAction* extension_action() { return extension_action_; }
   const ExtensionAction* extension_action() const { return extension_action_; }
   ToolbarActionViewDelegate* view_delegate() { return view_delegate_; }
-  bool is_showing_popup() const { return popup_host_ != nullptr; }
 
   std::unique_ptr<IconWithBadgeImageSource> GetIconImageSourceForTesting(
       content::WebContents* web_contents,
@@ -150,18 +150,18 @@ class ExtensionActionViewController
   scoped_refptr<const extensions::Extension> extension_;
 
   // The corresponding browser.
-  Browser* browser_;
+  Browser* const browser_;
+
+  // Whether we are displayed in the 3-dot menu or not.
+  // TODO(pbos): Remove when 3-dot menu no longer contains extensions.
+  const bool in_overflow_mode_;
 
   // The browser action this view represents. The ExtensionAction is not owned
   // by this class.
-  ExtensionAction* extension_action_;
+  ExtensionAction* const extension_action_;
 
-  // The owning ToolbarActionsBar, if any. This will be null if this is a
-  // page action without the toolbar redesign turned on.
-  // TODO(devlin): Would this be better behind a delegate interface? On the one
-  // hand, it's odd for this class to know about ToolbarActionsBar, but on the
-  // other, yet-another-delegate-class might just confuse things.
-  ToolbarActionsBar* toolbar_actions_bar_;
+  // The corresponding ExtensionsContainer on the toolbar.
+  ExtensionsContainer* const extensions_container_;
 
   // The extension popup's host if the popup is visible; null otherwise.
   extensions::ExtensionViewHost* popup_host_;
@@ -187,7 +187,7 @@ class ExtensionActionViewController
   ScopedObserver<extensions::ExtensionHost, extensions::ExtensionHostObserver>
       popup_host_observer_;
 
-  base::WeakPtrFactory<ExtensionActionViewController> weak_factory_;
+  base::WeakPtrFactory<ExtensionActionViewController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionActionViewController);
 };

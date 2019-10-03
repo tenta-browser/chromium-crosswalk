@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <set>
 #include <string>
 
@@ -15,6 +16,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/renderer/renderer_extension_registry.h"
+#include "extensions/renderer/script_context_set_iterable.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
 
@@ -38,14 +40,14 @@ class ScriptContext;
 // Since calling JavaScript within a context can cause any number of contexts
 // to be created or destroyed, this has additional smarts to help with the set
 // changing underneath callers.
-class ScriptContextSet {
+class ScriptContextSet : public ScriptContextSetIterable {
  public:
   explicit ScriptContextSet(
       // Set of the IDs of extensions that are active in this process.
       // Must outlive this. TODO(kalman): Combine this and |extensions|.
       ExtensionIdSet* active_extension_ids);
 
-  ~ScriptContextSet();
+  ~ScriptContextSet() override;
 
   // Returns the number of contexts being tracked by this set.
   // This may also include invalid contexts. TODO(kalman): Useful?
@@ -83,25 +85,16 @@ class ScriptContextSet {
   // context has access to the other context).
   static ScriptContext* GetContextByObject(const v8::Local<v8::Object>& object);
 
-  // Synchronously runs |callback| with each ScriptContext that belongs to
-  // |extension_id| in |render_frame|.
-  //
-  // An empty |extension_id| will match all extensions, and a null
-  // |render_frame| will match all render views, but try to use the inline
-  // variants of these methods instead.
-  void ForEach(const std::string& extension_id,
-               content::RenderFrame* render_frame,
-               const base::Callback<void(ScriptContext*)>& callback) const;
-  // ForEach which matches all extensions.
-  void ForEach(content::RenderFrame* render_frame,
-               const base::Callback<void(ScriptContext*)>& callback) const {
-    ForEach(std::string(), render_frame, callback);
-  }
-  // ForEach which matches all render views.
-  void ForEach(const std::string& extension_id,
-               const base::Callback<void(ScriptContext*)>& callback) const {
-    ForEach(extension_id, nullptr, callback);
-  }
+  // Returns the ScriptContext corresponding to the main world of the
+  // |render_frame|.
+  static ScriptContext* GetMainWorldContextForFrame(
+      content::RenderFrame* render_frame);
+
+  // ScriptContextIterable:
+  void ForEach(
+      const std::string& extension_id,
+      content::RenderFrame* render_frame,
+      const base::RepeatingCallback<void(ScriptContext*)>& callback) override;
 
   // Cleans up contexts belonging to an unloaded extension.
   void OnExtensionUnloaded(const std::string& extension_id);

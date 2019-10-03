@@ -21,11 +21,11 @@
  *   children: !Array<!Bookmark>
  * }}
  */
-var Bookmark;
+let Bookmark;
 
 (function() {
 /** Amount that each level of bookmarks is indented by (px). */
-var BOOKMARK_INDENT = 20;
+const BOOKMARK_INDENT = 20;
 
 Polymer({
   is: 'viewer-bookmark',
@@ -40,17 +40,18 @@ Polymer({
 
     childrenShown: {type: Boolean, reflectToAttribute: true, value: false},
 
-    keyEventTarget: {
-      type: Object,
-      value: function() {
-        return this.$.item;
-      }
-    }
+    /** @type {?HTMLElement} The target for the key bindings below. */
+    keyEventTarget: Object,
   },
 
   behaviors: [Polymer.IronA11yKeysBehavior],
 
   keyBindings: {'enter': 'onEnter_', 'space': 'onSpace_'},
+
+  /** @override */
+  attached: function() {
+    this.keyEventTarget = this.$.item;
+  },
 
   bookmarkChanged_: function() {
     this.$.expand.style.visibility =
@@ -59,18 +60,22 @@ Polymer({
 
   depthChanged: function() {
     this.childDepth = this.depth + 1;
-    this.$.item.style.webkitPaddingStart =
+    this.$.item.style.paddingInlineStart =
         (this.depth * BOOKMARK_INDENT) + 'px';
   },
 
   onClick: function() {
     if (this.bookmark.hasOwnProperty('page')) {
       if (this.bookmark.hasOwnProperty('y')) {
-        this.fire(
-            'change-page-and-y',
-            {page: this.bookmark.page, y: this.bookmark.y});
+        this.fire('change-page-and-xy', {
+          page: this.bookmark.page,
+          x: 0,
+          y: this.bookmark.y,
+          origin: 'bookmark'
+        });
       } else {
-        this.fire('change-page', {page: this.bookmark.page});
+        this.fire(
+            'change-page', {page: this.bookmark.page, origin: 'bookmark'});
       }
     } else if (this.bookmark.hasOwnProperty('uri')) {
       this.fire('navigate', {uri: this.bookmark.uri, newtab: true});
@@ -80,12 +85,13 @@ Polymer({
   onEnter_: function(e) {
     // Don't allow events which have propagated up from the expand button to
     // trigger a click.
-    if (e.detail.keyboardEvent.target != this.$.expand)
+    if (e.detail.keyboardEvent.target != this.$.expand) {
       this.onClick();
+    }
   },
 
   onSpace_: function(e) {
-    // paper-icon-button stops propagation of space events, so there's no need
+    // cr-icon-button stops propagation of space events, so there's no need
     // to check the event source here.
     this.onClick();
     // Prevent default space scroll behavior.

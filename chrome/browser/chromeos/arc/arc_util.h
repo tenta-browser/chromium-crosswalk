@@ -7,8 +7,9 @@
 
 #include <stdint.h>
 
-#include "ash/public/interfaces/voice_interaction_controller.mojom.h"
 #include "base/callback_forward.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
+#include "components/arc/session/arc_supervision_transition.h"
 
 // Most utility should be put in components/arc/arc_util.{h,cc}, rather than
 // here. However, some utility implementation requires other modules defined in
@@ -23,6 +24,10 @@ namespace base {
 class FilePath;
 }
 
+namespace user_manager {
+class User;
+}
+
 namespace arc {
 
 // Values to be stored in the local state preference to keep track of the
@@ -33,12 +38,20 @@ enum FileSystemCompatibilityState : int32_t {
   // Migration has happened. New filesystem is in use.
   kFileSystemCompatible = 1,
   // Migration has happened, and a notification about it was already shown.
-  kFileSystemCompatibleAndNotified = 2,
+  // This pref value will not be written anymore since we stopped showing the
+  // notification, but existing profiles which had shown the notification can
+  // have this value in their pref.
+  kFileSystemCompatibleAndNotifiedDeprecated = 2,
 
   // Existing code assumes that kFileSystemIncompatible is the only state
   // representing incompatibility and other values are all variants of
   // "compatible" state. Be careful in the case adding a new enum value.
 };
+
+// Returns false if |profile| is not a real user profile but some internal
+// profile for service purposes, which should be ignored for ARC and metrics
+// recording. Also returns false if |profile| is null.
+bool IsRealUserProfile(const Profile* profile);
 
 // Returns true if ARC is allowed to run for the given profile.
 // Otherwise, returns false, e.g. if the Profile is not for the primary user,
@@ -47,10 +60,12 @@ enum FileSystemCompatibilityState : int32_t {
 // nullptr can be safely passed to this function. In that case, returns false.
 bool IsArcAllowedForProfile(const Profile* profile);
 
+// Returns whether ARC was successfully provisioned and the Primary/Device
+// Account has been signed into ARC.
+bool IsArcProvisioned(const Profile* profile);
+
 // Returns true if the profile is unmanaged or if the policy
 // EcryptfsMigrationStrategy for the user doesn't disable the migration.
-// Specifically if the policy states to ask the user, it is also considered that
-// migration is allowed, so return true.
 bool IsArcMigrationAllowedByPolicyForProfile(const Profile* profile);
 
 // Returns true if the profile is temporarily blocked to run ARC in the current
@@ -65,11 +80,11 @@ bool IsArcBlockedDueToIncompatibleFileSystem(const Profile* profile);
 // Sets the result of IsArcBlockedDueToIncompatibleFileSystem for testing.
 void SetArcBlockedDueToIncompatibleFileSystemForTesting(bool block);
 
-// Returns true if the profile is already marked to be on a filesystem
+// Returns true if the user is already marked to be on a filesystem
 // compatible to the currently installed ARC version. The check almost never
 // is meaningful on test workstation. Usually it should be checked only when
 // running on the real Chrome OS.
-bool IsArcCompatibleFileSystemUsedForProfile(const Profile* profile);
+bool IsArcCompatibleFileSystemUsedForUser(const user_manager::User* user);
 
 // Disallows ARC for all profiles for testing.
 // In most cases, disabling ARC should be done via commandline. However,
@@ -122,17 +137,44 @@ bool IsActiveDirectoryUserForProfile(const Profile* profile);
 // Returns true if ChromeOS OOBE opt-in window is currently showing.
 bool IsArcOobeOptInActive();
 
+// Returns true if opt-in during ChromeOS OOBE is triggered by configuration.
+bool IsArcOobeOptInConfigurationBased();
+
+// Returns true if Terms of Service negotiation is needed. Otherwise false.
+bool IsArcTermsOfServiceNegotiationNeeded(const Profile* profile);
+
+// Returns true if Terms of Service negotiation is needed in OOBE flow.
+// Otherwise false. Similar to IsArcTermsOfServiceNegotiationNeeded but
+// also checks set of preconditions and uses active user profile.
+bool IsArcTermsOfServiceOobeNegotiationNeeded();
+
+// Returns true if stats reporting is enabled. Otherwise false.
+bool IsArcStatsReportingEnabled();
+
+// Returns whether ARC opt-in in demo mode setup flow is in progress.
+bool IsArcDemoModeSetupFlow();
+
 // Checks and updates the preference value whether the underlying filesystem
 // for the profile is compatible with ARC, when necessary. After it's done (or
 // skipped), |callback| is run either synchronously or asynchronously.
 void UpdateArcFileSystemCompatibilityPrefIfNeeded(
     const AccountId& account_id,
     const base::FilePath& profile_path,
-    const base::Closure& callback);
+    base::OnceClosure callback);
 
-// Returns whether Google Assistant feature is allowed for given |profile|.
-ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
-    const Profile* profile);
+// Returns the supervision transition status as stored in profile prefs.
+ArcSupervisionTransition GetSupervisionTransition(const Profile* profile);
+
+// Returns true if Play Store package is present and can be launched in this
+// session.
+bool IsPlayStoreAvailable();
+
+// Skip to show OOBE/in sesion UI asking users to set up ARC OptIn preferences,
+// iff all of them are managed by the admin policy.
+// Skips in session play terms of service for managed user and starts ARC
+// directly. Leaves B&R/GLS off if not set by admin since users don't see
+// the Tos page.
+bool ShouldStartArcSilentlyForManagedProfile(const Profile* profile);
 
 }  // namespace arc
 

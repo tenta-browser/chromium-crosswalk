@@ -10,26 +10,25 @@
 #include <memory>
 #include <vector>
 
-#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "base/macros.h"
 #include "chrome/browser/image_decoder.h"
 #include "components/arc/common/wallpaper.mojom.h"
-#include "components/arc/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 namespace content {
 class BrowserContext;
 }  // namespace content
 
+namespace gfx {
+class ImageSkia;
+}  // namespace gfx
+
 namespace arc {
 
 class ArcBridgeService;
 
 // Lives on the UI thread.
-class ArcWallpaperService : public KeyedService,
-                            public ash::WallpaperControllerObserver,
-                            public ConnectionObserver<mojom::WallpaperInstance>,
-                            public mojom::WallpaperHost {
+class ArcWallpaperService : public KeyedService, public mojom::WallpaperHost {
  public:
   // Returns singleton instance for the given BrowserContext,
   // or nullptr if the browser |context| is not allowed to use ARC.
@@ -40,18 +39,11 @@ class ArcWallpaperService : public KeyedService,
                       ArcBridgeService* bridge_service);
   ~ArcWallpaperService() override;
 
-  // ConnectionObserver<mojom::WallpaperInstance> overrides.
-  void OnConnectionReady() override;
-  void OnConnectionClosed() override;
-
   // mojom::WallpaperHost overrides.
   void SetWallpaper(const std::vector<uint8_t>& data,
                     int32_t wallpaper_id) override;
   void SetDefaultWallpaper() override;
   void GetWallpaper(GetWallpaperCallback callback) override;
-
-  // WallpaperControllerObserver implementation.
-  void OnWallpaperDataChanged() override;
 
   class DecodeRequestSender {
    public:
@@ -71,17 +63,19 @@ class ArcWallpaperService : public KeyedService,
   friend class TestApi;
   class AndroidIdStore;
   class DecodeRequest;
-  struct WallpaperIdPair;
+
+  // Initiates a set wallpaper request to //ash.
+  void OnWallpaperDecoded(const gfx::ImageSkia& image, int32_t android_id);
 
   // Notifies wallpaper change if we have wallpaper instance.
   void NotifyWallpaperChanged(int android_id);
+
   // Notifies wallpaper change of |android_id|, then notify wallpaper change of
   // -1 to reset wallpaper cache at Android side.
   void NotifyWallpaperChangedAndReset(int android_id);
 
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
   std::unique_ptr<DecodeRequest> decode_request_;
-  std::vector<WallpaperIdPair> id_pairs_;
   std::unique_ptr<DecodeRequestSender> decode_request_sender_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcWallpaperService);

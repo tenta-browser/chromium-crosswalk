@@ -8,31 +8,36 @@
 #include "base/macros.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
 #include "chrome/browser/ui/passwords/manage_passwords_icon_view.h"
-#include "chrome/browser/ui/views/location_bar/bubble_icon_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
 #include "ui/views/controls/image_view.h"
 
 class CommandUpdater;
 
 // View for the password icon in the Omnibox.
 class ManagePasswordsIconViews : public ManagePasswordsIconView,
-                                 public BubbleIconView {
+                                 public PageActionIconView {
  public:
-  explicit ManagePasswordsIconViews(CommandUpdater* updater);
+  static const char kClassName[];
+
+  ManagePasswordsIconViews(CommandUpdater* updater,
+                           PageActionIconView::Delegate* delegate);
   ~ManagePasswordsIconViews() override;
 
   // ManagePasswordsIconView:
   void SetState(password_manager::ui::State state) override;
 
-  // BubbleIconView:
-  void OnExecuting(BubbleIconView::ExecuteSource source) override;
-  bool OnMousePressed(const ui::MouseEvent& event) override;
-  bool OnKeyPressed(const ui::KeyEvent& event) override;
+  // PageActionIconView:
   views::BubbleDialogDelegateView* GetBubble() const override;
+  bool Update() override;
+  void OnExecuting(PageActionIconView::ExecuteSource source) override;
+  bool OnMousePressed(const ui::MouseEvent& event) override;
   const gfx::VectorIcon& GetVectorIcon() const override;
+  base::string16 GetTextForTooltipAndAccessibleName() const override;
 
   // views::View:
   void AboutToRequestFocusFromTabTraversal(bool reverse) override;
+  const char* GetClassName() const override;
 
  private:
   friend class ManagePasswordsIconViewTest;

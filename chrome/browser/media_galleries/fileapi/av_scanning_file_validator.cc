@@ -4,57 +4,38 @@
 
 #include "chrome/browser/media_galleries/fileapi/av_scanning_file_validator.h"
 
-#if defined(OS_WIN)
-#include <windows.h>
-#include <objbase.h>
-#include <shlobj.h>
-#include <wrl/client.h>
-#endif
+#include <string>
 
-#include "base/bind.h"
 #include "base/callback.h"
-#include "base/location.h"
-#include "base/logging.h"
-#include "base/single_thread_task_runner.h"
-#include "base/strings/utf_string_conversions.h"
-#include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "chrome/common/chrome_constants.h"
 #include "content/public/browser/browser_thread.h"
 
-using content::BrowserThread;
+#if defined(OS_WIN)
+#include "base/bind.h"
+#include "base/files/file_path.h"
+#include "base/location.h"
+#include "base/task/post_task.h"
+#include "base/task_runner_util.h"
+#include "base/threading/scoped_blocking_call.h"
+#include "components/download/quarantine/quarantine.h"
+#include "url/gurl.h"
+#endif  // defined(OS_WIN)
 
 namespace {
 
 #if defined(OS_WIN)
 base::File::Error ScanFile(const base::FilePath& dest_platform_path) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
-  Microsoft::WRL::ComPtr<IAttachmentExecute> attachment_services;
-  HRESULT hr = ::CoCreateInstance(CLSID_AttachmentServices, nullptr, CLSCTX_ALL,
-                                  IID_PPV_ARGS(&attachment_services));
+    download::QuarantineFileResult quarantine_result = download::QuarantineFile(
+        dest_platform_path, GURL(), GURL(), std::string());
 
-  if (FAILED(hr)) {
-    // The thread must have COM initialized.
-    DCHECK_NE(CO_E_NOTINITIALIZED, hr);
-    return base::File::FILE_ERROR_SECURITY;
-  }
-
-  hr = attachment_services->SetLocalPath(dest_platform_path.value().c_str());
-  if (FAILED(hr))
-    return base::File::FILE_ERROR_SECURITY;
-
-  // A failure in the Save() call below could result in the downloaded file
-  // being deleted.
-  HRESULT scan_result = attachment_services->Save();
-  if (scan_result == S_OK)
-    return base::File::FILE_OK;
-
-  return base::File::FILE_ERROR_SECURITY;
+    return quarantine_result == download::QuarantineFileResult::OK
+               ? base::File::FILE_OK
+               : base::File::FILE_ERROR_SECURITY;
 }
-#endif
+#endif  // defined(OS_WIN)
 
 }  // namespace
 
@@ -63,7 +44,7 @@ AVScanningFileValidator::~AVScanningFileValidator() {}
 void AVScanningFileValidator::StartPostWriteValidation(
     const base::FilePath& dest_platform_path,
     const ResultCallback& result_callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
 #if defined(OS_WIN)
   base::PostTaskAndReplyWithResult(

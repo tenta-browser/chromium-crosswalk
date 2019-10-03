@@ -9,6 +9,9 @@
 #include "base/macros.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_targeter.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -43,8 +46,8 @@ class NativeViewHostWindowObserver : public aura::WindowObserver {
     }
   };
 
-  NativeViewHostWindowObserver() {}
-  ~NativeViewHostWindowObserver() override {}
+  NativeViewHostWindowObserver() = default;
+  ~NativeViewHostWindowObserver() override = default;
 
   const std::vector<EventDetails>& events() const { return events_; }
 
@@ -86,8 +89,7 @@ class NativeViewHostWindowObserver : public aura::WindowObserver {
 
 class NativeViewHostAuraTest : public test::NativeViewHostTestBase {
  public:
-  NativeViewHostAuraTest() {
-  }
+  NativeViewHostAuraTest() = default;
 
   NativeViewHostAura* native_host() {
     return static_cast<NativeViewHostAura*>(GetNativeWrapper());
@@ -97,7 +99,9 @@ class NativeViewHostAuraTest : public test::NativeViewHostTestBase {
     return child_.get();
   }
 
-  aura::Window* clipping_window() { return &(native_host()->clipping_window_); }
+  aura::Window* clipping_window() {
+    return native_host()->clipping_window_.get();
+  }
 
   void CreateHost() {
     CreateTopLevel();
@@ -320,6 +324,10 @@ TEST_F(NativeViewHostAuraTest, InstallClip) {
 // a regression test for http://crbug.com/389261.
 TEST_F(NativeViewHostAuraTest, ParentAfterDetach) {
   CreateHost();
+  // Force a Layout() now so that the visibility is set to false (because the
+  // bounds is empty).
+  host()->Layout();
+
   aura::Window* child_win = child()->GetNativeView();
   aura::Window* root_window = child_win->GetRootWindow();
   aura::WindowTreeHost* child_win_tree_host = child_win->GetHost();
@@ -333,18 +341,12 @@ TEST_F(NativeViewHostAuraTest, ParentAfterDetach) {
 
   DestroyHost();
   DestroyTopLevel();
-  if (!IsMus()) {
-    // The window is detached, so no longer associated with any Widget
-    // hierarchy. The root window still owns it, but the test harness checks
-    // for orphaned windows during TearDown().
-    EXPECT_EQ(0u, test_observer.events().size())
-        << (*test_observer.events().begin()).type;
-    delete child_win;
-  } else {
-    // In mus and aura-mus, the child window is still attached to the
-    // aura::WindowTreeHost for the Widget. So destroying the toplevel Widget
-    // takes down the child window with it.
-  }
+  // The window is detached, so no longer associated with any Widget
+  // hierarchy. The root window still owns it, but the test harness checks
+  // for orphaned windows during TearDown().
+  EXPECT_EQ(0u, test_observer.events().size())
+      << (*test_observer.events().begin()).type;
+  delete child_win;
 
   ASSERT_EQ(1u, test_observer.events().size());
   EXPECT_EQ(NativeViewHostWindowObserver::EVENT_DESTROYED,
@@ -399,6 +401,10 @@ TEST_F(NativeViewHostAuraTest, Attach) {
 
   host()->Attach(child()->GetNativeView());
 
+  // Visibiliity is not updated until Layout() happens. This is normally async,
+  // but force a Layout() so this code doesn't have to wait.
+  host()->Layout();
+
   ASSERT_EQ(3u, test_observer.events().size());
   EXPECT_EQ(NativeViewHostWindowObserver::EVENT_BOUNDS_CHANGED,
             test_observer.events()[0].type);
@@ -444,7 +450,7 @@ namespace {
 
 class TestFocusChangeListener : public FocusChangeListener {
  public:
-  TestFocusChangeListener(FocusManager* focus_manager)
+  explicit TestFocusChangeListener(FocusManager* focus_manager)
       : focus_manager_(focus_manager) {
     focus_manager_->AddFocusChangeListener(this);
   }
@@ -514,6 +520,58 @@ TEST_F(NativeViewHostAuraTest, FocusManagerUpdatedDuringDestruction) {
 
   child_widget.reset();
   EXPECT_EQ(nullptr, toplevel()->GetFocusManager()->GetFocusedView());
+}
+
+namespace {
+
+ui::EventTarget* GetTarget(aura::Window* window, const gfx::Point& location) {
+  gfx::Point root_location = location;
+  aura::Window::ConvertPointToTarget(window, window->GetRootWindow(),
+                                     &root_location);
+  ui::MouseEvent event(ui::ET_MOUSE_MOVED, root_location, root_location,
+                       base::TimeTicks::Now(), 0, 0);
+  return window->GetHost()->dispatcher()->event_targeter()->FindTargetForEvent(
+      window->GetRootWindow(), &event);
+}
+
+}  // namespace
+
+TEST_F(NativeViewHostAuraTest, TopInsets) {
+  CreateHost();
+  toplevel()->SetBounds(gfx::Rect(20, 20, 100, 100));
+  toplevel()->Show();
+
+  aura::Window* toplevel_window = toplevel()->GetNativeWindow();
+  aura::Window* child_window = child()->GetNativeWindow();
+  EXPECT_EQ(child_window, GetTarget(toplevel_window, gfx::Point(1, 1)));
+  EXPECT_EQ(child_window, GetTarget(toplevel_window, gfx::Point(1, 11)));
+
+  host()->SetHitTestTopInset(10);
+  EXPECT_EQ(toplevel_window, GetTarget(toplevel_window, gfx::Point(1, 1)));
+  EXPECT_EQ(child_window, GetTarget(toplevel_window, gfx::Point(1, 11)));
+
+  host()->SetHitTestTopInset(0);
+  EXPECT_EQ(child_window, GetTarget(toplevel_window, gfx::Point(1, 1)));
+  EXPECT_EQ(child_window, GetTarget(toplevel_window, gfx::Point(1, 11)));
+
+  DestroyHost();
+  DestroyTopLevel();
+}
+
+TEST_F(NativeViewHostAuraTest, WindowHiddenWhenAttached) {
+  std::unique_ptr<aura::Window> window =
+      std::make_unique<aura::Window>(nullptr);
+  window->Init(ui::LAYER_NOT_DRAWN);
+  window->set_owned_by_parent(false);
+  window->Show();
+  EXPECT_TRUE(window->TargetVisibility());
+  CreateTopLevel();
+  NativeViewHost* host = toplevel()->GetRootView()->AddChildView(
+      std::make_unique<NativeViewHost>());
+  host->SetVisible(false);
+  host->Attach(window.get());
+  // Is |host| is not visible, |window| should immediately be hidden.
+  EXPECT_FALSE(window->TargetVisibility());
 }
 
 }  // namespace views

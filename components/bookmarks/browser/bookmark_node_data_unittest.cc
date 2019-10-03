@@ -11,6 +11,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
+#include "build/build_config.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -284,11 +285,11 @@ TEST_F(BookmarkNodeDataTest, WriteToClipboardURL) {
   const base::string16 title(ASCIIToUTF16("blah"));
 
   data.ReadFromTuple(url, title);
-  data.WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  data.WriteToClipboard();
 
   // Now read the data back in.
   base::string16 clipboard_result;
-  clipboard().ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_result);
+  clipboard().ReadText(ui::ClipboardType::kCopyPaste, &clipboard_result);
   EXPECT_EQ(base::UTF8ToUTF16(url.spec()), clipboard_result);
 }
 
@@ -306,15 +307,19 @@ TEST_F(BookmarkNodeDataTest, WriteToClipboardMultipleURLs) {
   nodes.push_back(url_node2);
 
   data.ReadFromVector(nodes);
-  data.WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  data.WriteToClipboard();
 
   // Now read the data back in.
   base::string16 combined_text;
+#if defined(OS_WIN)
+  base::string16 new_line = base::ASCIIToUTF16("\r\n");
+#else
   base::string16 new_line = base::ASCIIToUTF16("\n");
+#endif
   combined_text = base::UTF8ToUTF16(url.spec()) + new_line
     + base::UTF8ToUTF16(url2.spec());
   base::string16 clipboard_result;
-  clipboard().ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_result);
+  clipboard().ReadText(ui::ClipboardType::kCopyPaste, &clipboard_result);
   EXPECT_EQ(combined_text, clipboard_result);
 }
 
@@ -326,11 +331,11 @@ TEST_F(BookmarkNodeDataTest, WriteToClipboardEmptyFolder) {
   nodes.push_back(folder);
 
   data.ReadFromVector(nodes);
-  data.WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  data.WriteToClipboard();
 
   // Now read the data back in.
   base::string16 clipboard_result;
-  clipboard().ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_result);
+  clipboard().ReadText(ui::ClipboardType::kCopyPaste, &clipboard_result);
   EXPECT_EQ(base::ASCIIToUTF16("g1"), clipboard_result);
 }
 
@@ -345,11 +350,11 @@ TEST_F(BookmarkNodeDataTest, WriteToClipboardFolderWithChildren) {
   nodes.push_back(folder);
 
   data.ReadFromVector(nodes);
-  data.WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  data.WriteToClipboard();
 
   // Now read the data back in.
   base::string16 clipboard_result;
-  clipboard().ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_result);
+  clipboard().ReadText(ui::ClipboardType::kCopyPaste, &clipboard_result);
   EXPECT_EQ(base::ASCIIToUTF16("g1"), clipboard_result);
 }
 
@@ -365,15 +370,19 @@ TEST_F(BookmarkNodeDataTest, WriteToClipboardFolderAndURL) {
   nodes.push_back(folder);
 
   data.ReadFromVector(nodes);
-  data.WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  data.WriteToClipboard();
 
   // Now read the data back in.
   base::string16 combined_text;
+#if defined(OS_WIN)
+  base::string16 new_line = base::ASCIIToUTF16("\r\n");
+#else
   base::string16 new_line = base::ASCIIToUTF16("\n");
+#endif
   base::string16 folder_title = ASCIIToUTF16("g1");
   combined_text = base::ASCIIToUTF16(url.spec()) + new_line + folder_title;
   base::string16 clipboard_result;
-  clipboard().ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &clipboard_result);
+  clipboard().ReadText(ui::ClipboardType::kCopyPaste, &clipboard_result);
   EXPECT_EQ(combined_text, clipboard_result);
 }
 
@@ -404,5 +413,16 @@ TEST_F(BookmarkNodeDataTest, MetaInfo) {
   EXPECT_EQ("somevalue", meta_info_map["somekey"]);
   EXPECT_EQ("someothervalue", meta_info_map["someotherkey"]);
 }
+
+#if !defined(OS_MACOSX)
+TEST_F(BookmarkNodeDataTest, ReadFromPickleTooManyNodes) {
+  // Test case determined by a fuzzer. See https://crbug.com/956583.
+  const char pickled_data[] = {0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+                               0x00, 0x00, 0xff, 0x03, 0x03, 0x41};
+  base::Pickle pickle(pickled_data, sizeof(pickled_data));
+  BookmarkNodeData bookmark_node_data;
+  EXPECT_FALSE(bookmark_node_data.ReadFromPickle(&pickle));
+}
+#endif
 
 }  // namespace bookmarks

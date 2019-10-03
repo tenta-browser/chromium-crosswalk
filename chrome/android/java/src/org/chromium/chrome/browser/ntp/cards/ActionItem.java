@@ -8,16 +8,14 @@ import android.support.annotation.IntDef;
 import android.support.annotation.LayoutRes;
 import android.support.annotation.Nullable;
 import android.view.View;
-import android.widget.Button;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ntp.ContextMenuManager;
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
 import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.suggestions.ContentSuggestionsAdditionalAction;
-import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
 import org.chromium.chrome.browser.suggestions.SuggestionsRanker;
 import org.chromium.chrome.browser.suggestions.SuggestionsRecyclerView;
@@ -26,24 +24,26 @@ import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Locale;
 
 /**
  * Item that allows the user to perform an action on the NTP. Depending on its state, it can also
  * show a progress indicator over the same space. See {@link State}.
  */
 public class ActionItem extends OptionalLeaf {
+    @IntDef({State.HIDDEN, State.BUTTON, State.INITIAL_LOADING, State.MORE_BUTTON_LOADING})
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({State.HIDDEN, State.BUTTON, State.LOADING})
     public @interface State {
         int HIDDEN = 0;
         int BUTTON = 1;
-        int LOADING = 2;
+        int INITIAL_LOADING = 2;
+        int MORE_BUTTON_LOADING = 3;
     }
 
     private final SuggestionsCategoryInfo mCategoryInfo;
     private final SuggestionsSection mParentSection;
     private final SuggestionsRanker mSuggestionsRanker;
-    private final SuggestionsMetrics.DurationTracker mSpinnerDurationTracker =
+    private final SuggestionsMetrics.SpinnerDurationTracker mSpinnerDurationTracker =
             SuggestionsMetrics.getSpinnerVisibilityReporter();
 
     private boolean mImpressionTracked;
@@ -69,14 +69,13 @@ public class ActionItem extends OptionalLeaf {
     }
 
     @Override
-    public void visitOptionalItem(NodeVisitor visitor) {
+    public String describeForTesting() {
         switch (mState) {
             case State.BUTTON:
-                visitor.visitActionItem(mCategoryInfo.getAdditionalAction());
-                break;
-            case State.LOADING:
-                visitor.visitProgressItem();
-                break;
+                return String.format(Locale.US, "ACTION(%d)", mCategoryInfo.getAdditionalAction());
+            case State.INITIAL_LOADING:
+            case State.MORE_BUTTON_LOADING:
+                return "PROGRESS";
             case State.HIDDEN:
                 // If state is HIDDEN, itemCount should be 0 and this method should not be called.
             default:
@@ -106,10 +105,10 @@ public class ActionItem extends OptionalLeaf {
         if (mState == newState) return;
         mState = newState;
 
-        if (mState == State.LOADING) {
-            mSpinnerDurationTracker.startTracking();
+        if (mState == State.INITIAL_LOADING || mState == State.MORE_BUTTON_LOADING) {
+            mSpinnerDurationTracker.startTracking(mState);
         } else {
-            mSpinnerDurationTracker.endTracking();
+            mSpinnerDurationTracker.endCompleteTracking();
         }
 
         boolean newVisibility = (newState != State.HIDDEN);
@@ -122,6 +121,16 @@ public class ActionItem extends OptionalLeaf {
 
     public @State int getState() {
         return mState;
+    }
+
+    public void maybeResetForDismiss() {
+        if (isVisible()) {
+            notifyItemChanged(0, NewTabPageRecyclerView::resetForDismissCallback);
+        }
+    }
+
+    public void destroy() {
+        mSpinnerDurationTracker.endIncompleteTracking();
     }
 
     /**
@@ -140,11 +149,6 @@ public class ActionItem extends OptionalLeaf {
         uiDelegate.getEventReporter().onMoreButtonClicked(this);
 
         switch (mCategoryInfo.getAdditionalAction()) {
-            case ContentSuggestionsAdditionalAction.VIEW_ALL:
-                // The action does not reach the backend, so we record it here.
-                SuggestionsMetrics.recordActionViewAll();
-                mCategoryInfo.performViewAllAction(uiDelegate.getNavigationDelegate());
-                return;
             case ContentSuggestionsAdditionalAction.FETCH:
                 mParentSection.fetchSuggestions(onFailure, onNoNewSuggestions);
                 return;
@@ -158,23 +162,34 @@ public class ActionItem extends OptionalLeaf {
     /** ViewHolder associated to {@link ItemViewType#ACTION}. */
     public static class ViewHolder extends CardViewHolder implements ContextMenuManager.Delegate {
         private ActionItem mActionListItem;
+        protected View mButton;
+
         private final ProgressIndicatorView mProgressIndicator;
-        private final Button mButton;
         private final SuggestionsUiDelegate mUiDelegate;
 
         public ViewHolder(SuggestionsRecyclerView recyclerView,
                 ContextMenuManager contextMenuManager, final SuggestionsUiDelegate uiDelegate,
                 UiConfig uiConfig) {
-            super(getLayout(), recyclerView, uiConfig, contextMenuManager);
+            this(getLayout(), recyclerView, contextMenuManager, uiDelegate, uiConfig);
+        }
+
+        public ViewHolder(int layoutId, SuggestionsRecyclerView recyclerView,
+                ContextMenuManager contextMenuManager, final SuggestionsUiDelegate uiDelegate,
+                UiConfig uiConfig) {
+            super(layoutId, recyclerView, uiConfig, contextMenuManager);
 
             mProgressIndicator = itemView.findViewById(R.id.progress_indicator);
             mButton = itemView.findViewById(R.id.action_button);
+            // If we fail to find it under the action_button id, fallback to the top-level view.
+            if (mButton == null) mButton = itemView;
             mUiDelegate = uiDelegate;
-            mButton.setOnClickListener(v -> mActionListItem.performAction(uiDelegate,
-                    this::showFetchFailureSnackbar, this::showNoNewSuggestionsSnackbar));
+            mButton.setOnClickListener(v
+                    -> mActionListItem.performAction(uiDelegate, this::showFetchFailureMessage,
+                            this::showNoNewSuggestionsMessage));
         }
 
-        private void showFetchFailureSnackbar() {
+        /** Shows a message to the user that the fetch failed. */
+        protected void showFetchFailureMessage() {
             mUiDelegate.getSnackbarManager().showSnackbar(Snackbar.make(
                     itemView.getResources().getString(R.string.ntp_suggestions_fetch_failed),
                     new SnackbarManager.SnackbarController() { },
@@ -183,7 +198,8 @@ public class ActionItem extends OptionalLeaf {
             );
         }
 
-        private void showNoNewSuggestionsSnackbar() {
+        /** Shows a message to the user that no new suggestions could be loaded. */
+        protected void showNoNewSuggestionsMessage() {
             mUiDelegate.getSnackbarManager().showSnackbar(Snackbar.make(
                     itemView.getResources().getString(
                             R.string.ntp_suggestions_fetch_no_new_suggestions),
@@ -202,12 +218,10 @@ public class ActionItem extends OptionalLeaf {
 
         @LayoutRes
         private static int getLayout() {
-            return SuggestionsConfig.useModernLayout()
-                    ? R.layout.content_suggestions_action_card_modern
-                    : R.layout.new_tab_page_action_card;
+            return R.layout.content_suggestions_action_card_modern;
         }
 
-        private void setState(@State int state) {
+        protected void setState(@State int state) {
             assert state != State.HIDDEN;
 
             // When hiding children, we keep them invisible rather than GONE to make sure the
@@ -215,7 +229,7 @@ public class ActionItem extends OptionalLeaf {
             if (state == State.BUTTON) {
                 mButton.setVisibility(View.VISIBLE);
                 mProgressIndicator.hide(/* keepSpace = */ true);
-            } else if (state == State.LOADING) {
+            } else if (state == State.INITIAL_LOADING || state == State.MORE_BUTTON_LOADING) {
                 mButton.setVisibility(View.INVISIBLE);
                 mProgressIndicator.show();
             } else {

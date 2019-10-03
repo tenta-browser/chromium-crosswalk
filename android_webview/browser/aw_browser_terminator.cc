@@ -5,17 +5,22 @@
 #include "android_webview/browser/aw_browser_terminator.h"
 
 #include <unistd.h>
+#include <memory>
 
 #include "android_webview/browser/aw_render_process_gone_delegate.h"
 #include "android_webview/common/aw_descriptors.h"
-#include "android_webview/common/crash_reporter/aw_microdump_crash_reporter.h"
-#include "base/bind.h"
+#include "android_webview/native_jni/AwBrowserProcess_jni.h"
+#include "base/android/scoped_java_ref.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "base/sync_socket.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
+#include "components/crash/content/app/crashpad.h"
+#include "components/crash/content/browser/crash_metrics_reporter_android.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
@@ -23,22 +28,17 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/AwBrowserProcess_jni.h"
 
+using base::android::ScopedJavaGlobalRef;
 using content::BrowserThread;
 
 namespace android_webview {
 
 namespace {
 
-void GetAwRenderProcessGoneDelegatesForRenderProcess(
-    int render_process_id,
-    std::vector<AwRenderProcessGoneDelegate*>* delegates) {
-  content::RenderProcessHost* rph =
-      content::RenderProcessHost::FromID(render_process_id);
-  if (!rph)
-    return;
-
+void GetJavaWebContentsForRenderProcess(
+    content::RenderProcessHost* rph,
+    std::vector<ScopedJavaGlobalRef<jobject>>* java_web_contents) {
   std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       content::RenderWidgetHost::GetRenderWidgetHosts());
   while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
@@ -46,46 +46,56 @@ void GetAwRenderProcessGoneDelegatesForRenderProcess(
     if (view && rph == view->GetProcess()) {
       content::WebContents* wc = content::WebContents::FromRenderViewHost(view);
       if (wc) {
-        AwRenderProcessGoneDelegate* delegate =
-            AwRenderProcessGoneDelegate::FromWebContents(wc);
-        if (delegate)
-          delegates->push_back(delegate);
+        java_web_contents->push_back(static_cast<ScopedJavaGlobalRef<jobject>>(
+            wc->GetJavaWebContents()));
       }
     }
   }
 }
 
-void OnRenderProcessGone(int process_host_id) {
+void OnRenderProcessGone(
+    const std::vector<ScopedJavaGlobalRef<jobject>>& java_web_contents,
+    base::ProcessId child_process_pid,
+    bool crashed) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  std::vector<AwRenderProcessGoneDelegate*> delegates;
-  GetAwRenderProcessGoneDelegatesForRenderProcess(process_host_id, &delegates);
-  for (auto* delegate : delegates)
-    delegate->OnRenderProcessGone(process_host_id);
-}
 
-void OnRenderProcessGoneDetail(int process_host_id,
-                               base::ProcessHandle child_process_pid,
-                               bool crashed) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  std::vector<AwRenderProcessGoneDelegate*> delegates;
-  GetAwRenderProcessGoneDelegatesForRenderProcess(process_host_id, &delegates);
-  for (auto* delegate : delegates) {
-    if (!delegate->OnRenderProcessGoneDetail(child_process_pid, crashed)) {
-      if (crashed) {
-        crash_reporter::SuppressDumpGeneration();
-        // Keeps this log unchanged, CTS test uses it to detect crash.
-        LOG(FATAL) << "Render process (" << child_process_pid << ")'s crash"
-                   << " wasn't handled by all associated  webviews, triggering"
-                   << " application crash.";
-      } else {
-        // The render process was most likely killed for OOM or switching
-        // WebView provider, to make WebView backward compatible, kills the
-        // browser process instead of triggering crash.
-        LOG(ERROR) << "Render process (" << child_process_pid << ") kill (OOM"
-                   << " or update) wasn't handed by all associated webviews,"
-                   << " killing application.";
-        kill(getpid(), SIGKILL);
-      }
+  for (auto& java_wc : java_web_contents) {
+    content::WebContents* wc =
+        content::WebContents::FromJavaWebContents(java_wc);
+    if (!wc)
+      continue;
+
+    AwRenderProcessGoneDelegate* delegate =
+        AwRenderProcessGoneDelegate::FromWebContents(wc);
+    if (!delegate)
+      continue;
+
+    switch (delegate->OnRenderProcessGone(child_process_pid, crashed)) {
+      case AwRenderProcessGoneDelegate::RenderProcessGoneResult::kException:
+        // Let the exception propagate back to the message loop.
+        base::MessageLoopCurrentForUI::Get()->Abort();
+        return;
+      case AwRenderProcessGoneDelegate::RenderProcessGoneResult::kUnhandled:
+        if (crashed) {
+          // Keeps this log unchanged, CTS test uses it to detect crash.
+          std::string message = base::StringPrintf(
+              "Render process (%d)'s crash wasn't handled by all associated  "
+              "webviews, triggering application crash.",
+              child_process_pid);
+          crash_reporter::CrashWithoutDumping(message);
+        } else {
+          // The render process was most likely killed for OOM or switching
+          // WebView provider, to make WebView backward compatible, kills the
+          // browser process instead of triggering crash.
+          LOG(ERROR) << "Render process (" << child_process_pid << ") kill (OOM"
+                     << " or update) wasn't handed by all associated webviews,"
+                     << " killing application.";
+          kill(getpid(), SIGKILL);
+        }
+        NOTREACHED();
+        break;
+      case AwRenderProcessGoneDelegate::RenderProcessGoneResult::kHandled:
+        break;
     }
   }
 
@@ -97,101 +107,31 @@ void OnRenderProcessGoneDetail(int process_host_id,
 
 }  // namespace
 
-AwBrowserTerminator::AwBrowserTerminator(base::FilePath crash_dump_dir)
-    : crash_dump_dir_(crash_dump_dir) {}
+AwBrowserTerminator::AwBrowserTerminator() = default;
 
-AwBrowserTerminator::~AwBrowserTerminator() {}
-
-void AwBrowserTerminator::OnChildStart(
-    int process_host_id,
-    content::PosixFileDescriptorInfo* mappings) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::PROCESS_LAUNCHER);
-
-  base::AutoLock auto_lock(process_host_id_to_pipe_lock_);
-  DCHECK(!ContainsKey(process_host_id_to_pipe_, process_host_id));
-
-  auto local_pipe = base::MakeUnique<base::SyncSocket>();
-  auto child_pipe = base::MakeUnique<base::SyncSocket>();
-  if (base::SyncSocket::CreatePair(local_pipe.get(), child_pipe.get())) {
-    process_host_id_to_pipe_[process_host_id] = std::move(local_pipe);
-    mappings->Transfer(kAndroidWebViewCrashSignalDescriptor,
-                       base::ScopedFD(dup(child_pipe->handle())));
-  }
-  if (crash_reporter::IsCrashReporterEnabled()) {
-    base::ScopedFD file(
-        breakpad::CrashDumpManager::GetInstance()->CreateMinidumpFileForChild(
-            process_host_id));
-    if (file != base::kInvalidPlatformFile)
-      mappings->Transfer(kAndroidMinidumpDescriptor, std::move(file));
-  }
-}
-
-void AwBrowserTerminator::OnChildExitAsync(
-    int process_host_id,
-    base::ProcessHandle pid,
-    content::ProcessType process_type,
-    base::TerminationStatus termination_status,
-    base::android::ApplicationState app_state,
-    base::FilePath crash_dump_dir,
-    std::unique_ptr<base::SyncSocket> pipe) {
-  if (crash_reporter::IsCrashReporterEnabled()) {
-    breakpad::CrashDumpManager::GetInstance()->ProcessMinidumpFileFromChild(
-        crash_dump_dir, process_host_id, process_type, termination_status,
-        app_state);
-  }
-
-  if (!pipe.get() ||
-      termination_status == base::TERMINATION_STATUS_NORMAL_TERMINATION)
-    return;
-
-  bool crashed = false;
-
-  // If the child process hasn't written anything into the pipe. This implies
-  // that it was terminated via SIGKILL by the low memory killer.
-  if (pipe->Peek() >= sizeof(int)) {
-    int exit_code;
-    pipe->Receive(&exit_code, sizeof(exit_code));
-    LOG(ERROR) << "Renderer process (" << pid << ") crash detected (code "
-               << exit_code << ").";
-    crashed = true;
-  }
-
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&OnRenderProcessGoneDetail, process_host_id, pid, crashed));
-}
+AwBrowserTerminator::~AwBrowserTerminator() = default;
 
 void AwBrowserTerminator::OnChildExit(
-    int process_host_id,
-    base::ProcessHandle pid,
-    content::ProcessType process_type,
-    base::TerminationStatus termination_status,
-    base::android::ApplicationState app_state) {
-  std::unique_ptr<base::SyncSocket> pipe;
+    const crash_reporter::ChildExitObserver::TerminationInfo& info) {
+  content::RenderProcessHost* rph =
+      content::RenderProcessHost::FromID(info.process_host_id);
 
-  {
-    base::AutoLock auto_lock(process_host_id_to_pipe_lock_);
-    // We might get a NOTIFICATION_RENDERER_PROCESS_TERMINATED and a
-    // NOTIFICATION_RENDERER_PROCESS_CLOSED. In that case we only want
-    // to process the first notification.
-    const auto& iter = process_host_id_to_pipe_.find(process_host_id);
-    if (iter != process_host_id_to_pipe_.end()) {
-      pipe = std::move(iter->second);
-      DCHECK(pipe->handle() != base::SyncSocket::kInvalidHandle);
-      process_host_id_to_pipe_.erase(iter);
-    }
+  crash_reporter::CrashMetricsReporter::GetInstance()->ChildProcessExited(info);
+
+  if (info.normal_termination) {
+    return;
   }
-  if (pipe.get()) {
-    OnRenderProcessGone(process_host_id);
-  }
+
+  LOG(ERROR) << "Renderer process (" << info.pid << ") crash detected (code "
+             << info.crash_signo << ").";
+
+  std::vector<ScopedJavaGlobalRef<jobject>> java_web_contents;
+  GetJavaWebContentsForRenderProcess(rph, &java_web_contents);
 
   base::PostTaskWithTraits(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
-       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::Bind(&AwBrowserTerminator::OnChildExitAsync, process_host_id, pid,
-                 process_type, termination_status, app_state, crash_dump_dir_,
-                 base::Passed(std::move(pipe))));
+      FROM_HERE, {content::BrowserThread::UI, base::TaskPriority::HIGHEST},
+      base::BindOnce(OnRenderProcessGone, java_web_contents, info.pid,
+                     info.is_crashed()));
 }
 
 }  // namespace android_webview

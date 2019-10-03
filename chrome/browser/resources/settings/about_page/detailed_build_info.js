@@ -28,7 +28,7 @@ Polymer({
 
   /** @override */
   ready: function() {
-    var browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
+    const browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
     browserProxy.pageReady();
 
     browserProxy.getVersionInfo().then(versionInfo => {
@@ -40,7 +40,7 @@ Polymer({
 
   /** @private */
   updateChannelInfo_: function() {
-    var browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
+    const browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
     browserProxy.getChannelInfo().then(info => {
       // Display the target channel for the 'Currently on' message.
       this.currentlyOnChannelText_ = this.i18n(
@@ -76,8 +76,9 @@ Polymer({
    * @private
    */
   getChangeChannelIndicatorType_: function(canChangeChannel) {
-    if (canChangeChannel)
+    if (canChangeChannel) {
       return CrPolicyIndicatorType.NONE;
+    }
     return loadTimeData.getBoolean('aboutEnterpriseManaged') ?
         CrPolicyIndicatorType.DEVICE_POLICY :
         CrPolicyIndicatorType.OWNER;
@@ -95,7 +96,7 @@ Polymer({
   /** @private */
   onChannelSwitcherDialogClosed_: function() {
     this.showChannelSwitcherDialog_ = false;
-    cr.ui.focusWithoutInk(assert(this.$$('paper-button')));
+    cr.ui.focusWithoutInk(assert(this.$$('cr-button')));
     this.updateChannelInfo_();
   },
 });

@@ -10,12 +10,15 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "components/payments/content/developer_console_logger.h"
+#include "components/payments/content/payment_handler_host.h"
+#include "components/payments/content/payment_request_display_manager.h"
 #include "components/payments/content/payment_request_spec.h"
 #include "components/payments/content/payment_request_state.h"
 #include "components/payments/core/journey_logger.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -35,6 +38,7 @@ class PaymentRequestWebContentsManager;
 // PaymentRequestSpec, and the current user selection state (and related data)
 // is stored in PaymentRequestSpec.
 class PaymentRequest : public mojom::PaymentRequest,
+                       public PaymentHandlerHost::Delegate,
                        public PaymentRequestSpec::Observer,
                        public PaymentRequestState::Delegate {
  public:
@@ -42,6 +46,8 @@ class PaymentRequest : public mojom::PaymentRequest,
    public:
     virtual void OnCanMakePaymentCalled() = 0;
     virtual void OnCanMakePaymentReturned() = 0;
+    virtual void OnHasEnrolledInstrumentCalled() = 0;
+    virtual void OnHasEnrolledInstrumentReturned() = 0;
     virtual void OnNotSupportedError() = 0;
     virtual void OnConnectionTerminated() = 0;
     virtual void OnAbortCalled() = 0;
@@ -54,6 +60,7 @@ class PaymentRequest : public mojom::PaymentRequest,
                  content::WebContents* web_contents,
                  std::unique_ptr<ContentPaymentRequestDelegate> delegate,
                  PaymentRequestWebContentsManager* manager,
+                 PaymentRequestDisplayManager* display_manager,
                  mojo::InterfaceRequest<mojom::PaymentRequest> request,
                  ObserverForTest* observer_for_testing);
   ~PaymentRequest() override;
@@ -63,20 +70,28 @@ class PaymentRequest : public mojom::PaymentRequest,
             std::vector<mojom::PaymentMethodDataPtr> method_data,
             mojom::PaymentDetailsPtr details,
             mojom::PaymentOptionsPtr options) override;
-  void Show() override;
+  void Show(bool is_user_gesture, bool wait_for_updated_details) override;
+  void Retry(mojom::PaymentValidationErrorsPtr errors) override;
   void UpdateWith(mojom::PaymentDetailsPtr details) override;
   void NoUpdatedPaymentDetails() override;
   void Abort() override;
   void Complete(mojom::PaymentComplete result) override;
-  void CanMakePayment() override;
+  void CanMakePayment(bool legacy_mode) override;
+  void HasEnrolledInstrument(bool per_method_quota) override;
+
+  // PaymentHandlerHost::Delegate
+  bool ChangePaymentMethod(const std::string& method_name,
+                           const std::string& stringified_data) override;
 
   // PaymentRequestSpec::Observer:
   void OnSpecUpdated() override {}
 
   // PaymentRequestState::Delegate:
   void OnPaymentResponseAvailable(mojom::PaymentResponsePtr response) override;
+  void OnPaymentResponseError(const std::string& error_message) override;
   void OnShippingOptionIdSelected(std::string shipping_option_id) override;
   void OnShippingAddressSelected(mojom::PaymentAddressPtr address) override;
+  void OnPayerInfoSelected(mojom::PayerDetailPtr payer_info) override;
 
   // Called when the user explicitly cancelled the flow. Will send a message
   // to the renderer which will indirectly destroy this object (through
@@ -96,12 +111,36 @@ class PaymentRequest : public mojom::PaymentRequest,
   // Called when the user clicks on the "Pay" button.
   void Pay();
 
+  // Hide this Payment Request if it's already showing.
+  void HideIfNecessary();
+
+  bool IsIncognito() const;
+
   content::WebContents* web_contents() { return web_contents_; }
+
+  bool skipped_payment_request_ui() { return skipped_payment_request_ui_; }
 
   PaymentRequestSpec* spec() { return spec_.get(); }
   PaymentRequestState* state() { return state_.get(); }
 
+  PaymentRequestSpec* spec() const { return spec_.get(); }
+  PaymentRequestState* state() const { return state_.get(); }
+
  private:
+  // Returns true after init() has been called and the mojo connection has been
+  // established. If the mojo connection gets later disconnected, this will
+  // returns false.
+  bool IsInitialized() const;
+
+  // Returns true after show() has been called and the payment sheet is showing.
+  // If the payment sheet is later hidden, this will return false.
+  bool IsThisPaymentRequestShowing() const;
+
+  // Returns true if this payment request supports skipping the Payment Sheet.
+  // Typically, this means only one payment method is supported, it's a URL
+  // based method, and no other info is requested from the user.
+  bool SatisfiesSkipUIConstraints();
+
   // Only records the abort reason if it's the first completion for this Payment
   // Request. This is necessary since the aborts cascade into one another with
   // the first one being the most precise.
@@ -109,28 +148,42 @@ class PaymentRequest : public mojom::PaymentRequest,
 
   // The callback for PaymentRequestState::CanMakePayment. Checks for query
   // quota and may send QUERY_QUOTA_EXCEEDED.
-  void CanMakePaymentCallback(bool can_make_payment);
+  void CanMakePaymentCallback(bool legacy_mode, bool can_make_payment);
+
+  // The callback for PaymentRequestState::HasEnrolledInstrument. Checks for
+  // query quota and may send QUERY_QUOTA_EXCEEDED.
+  void HasEnrolledInstrumentCallback(bool per_method_quota,
+                                     bool has_enrolled_instrument);
 
   // The callback for PaymentRequestState::AreRequestedMethodsSupported.
-  void AreRequestedMethodsSupportedCallback(bool methods_supported);
+  void AreRequestedMethodsSupportedCallback(bool methods_supported,
+                                            const std::string& error_message);
 
-  // Sends either CAN_MAKE_PAYMENT or CANNOT_MAKE_PAYMENT to the renderer,
-  // depending on |can_make_payment| value. Never sends QUERY_QUOTA_EXCEEDED.
-  // Does not check query quota, but does check for incognito mode. If
-  // |warn_localhost_or_file| is true, then sends WARNING_CAN_MAKE_PAYMENT or
-  // WARNING_CANNOT_MAKE_PAYMENT version of the values instead.
-  void RespondToCanMakePaymentQuery(bool can_make_payment,
-                                    bool warn_localhost_or_file);
+  // Sends either HAS_ENROLLED_INSTRUMENT or HAS_NO_ENROLLED_INSTRUMENT to the
+  // renderer, depending on |has_enrolled_instrument| value. Does not check
+  // query quota so never sends QUERY_QUOTA_EXCEEDED. If
+  // |warn_localhost_or_file| is true, then sends
+  // WARNING_HAS_ENROLLED_INSTRUMENT or WARNING_HAS_NO_ENROLLED_INSTRUMENT
+  // version of the values instead.
+  void RespondToHasEnrolledInstrumentQuery(bool has_enrolled_instrument,
+                                           bool warn_localhost_or_file);
 
   content::WebContents* web_contents_;
+  DeveloperConsoleLogger log_;
   std::unique_ptr<ContentPaymentRequestDelegate> delegate_;
   // |manager_| owns this PaymentRequest.
   PaymentRequestWebContentsManager* manager_;
+  PaymentRequestDisplayManager* display_manager_;
+  std::unique_ptr<PaymentRequestDisplayManager::DisplayHandle> display_handle_;
   mojo::Binding<mojom::PaymentRequest> binding_;
   mojom::PaymentRequestClientPtr client_;
 
   std::unique_ptr<PaymentRequestSpec> spec_;
   std::unique_ptr<PaymentRequestState> state_;
+
+  // The end-point for the payment handler renderer process to call into the
+  // browser process.
+  PaymentHandlerHost payment_handler_host_;
 
   // The RFC 6454 origin of the top level frame that has invoked PaymentRequest
   // API. This is what the user sees in the address bar.
@@ -148,7 +201,23 @@ class PaymentRequest : public mojom::PaymentRequest,
   // Whether a completion was already recorded for this Payment Request.
   bool has_recorded_completion_ = false;
 
-  base::WeakPtrFactory<PaymentRequest> weak_ptr_factory_;
+  // Whether PaymentRequest.show() was invoked with a user gesture.
+  bool is_show_user_gesture_ = false;
+
+  // Whether PaymentRequest.show() was invoked by skipping payment request UI.
+  bool skipped_payment_request_ui_ = false;
+
+  // Whether PaymentRequest mojo connection has been initialized from the
+  // renderer.
+  bool is_initialized_ = false;
+
+  // Whether PaymentRequest.show() has been called.
+  bool is_show_called_ = false;
+
+  // If not empty, use this error message for rejecting PaymentRequest.show().
+  std::string reject_show_error_message_;
+
+  base::WeakPtrFactory<PaymentRequest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequest);
 };

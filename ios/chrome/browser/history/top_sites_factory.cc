@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/memory/singleton.h"
-#include "components/history/core/browser/default_top_sites_provider.h"
+#include "base/bind.h"
+#include "base/no_destructor.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/top_sites_impl.h"
 #include "components/keyed_service/core/refcounted_keyed_service.h"
@@ -17,7 +17,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/history/history_utils.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 
 namespace ios {
 
@@ -30,7 +30,8 @@ scoped_refptr<history::TopSites> TopSitesFactory::GetForBrowserState(
 
 // static
 TopSitesFactory* TopSitesFactory::GetInstance() {
-  return base::Singleton<TopSitesFactory>::get();
+  static base::NoDestructor<TopSitesFactory> instance;
+  return instance.get();
 }
 
 TopSitesFactory::TopSitesFactory()
@@ -52,7 +53,6 @@ scoped_refptr<RefcountedKeyedService> TopSitesFactory::BuildServiceInstanceFor(
           browser_state, ServiceAccessType::EXPLICIT_ACCESS);
   scoped_refptr<history::TopSitesImpl> top_sites(new history::TopSitesImpl(
       browser_state->GetPrefs(), history_service,
-      std::make_unique<history::DefaultTopSitesProvider>(history_service),
       history::PrepopulatedPageList(), base::Bind(CanAddURLToHistory)));
   top_sites->Init(
       browser_state->GetStatePath().Append(history::kTopSitesFilename));

@@ -33,7 +33,7 @@ constexpr auto kFadeDuration = base::TimeDelta::FromMilliseconds(150);
 constexpr auto kPointMoveDuration = base::TimeDelta::FromMilliseconds(400);
 constexpr auto kPointMoveDurationLong = base::TimeDelta::FromMilliseconds(500);
 
-const SkColor kExitLabelColor = SkColorSetARGBInline(255, 138, 138, 138);
+const SkColor kExitLabelColor = SkColorSetARGB(255, 138, 138, 138);
 constexpr int kExitLabelWidth = 300;
 constexpr int kExitLabelHeight = 20;
 
@@ -59,7 +59,7 @@ constexpr int kTapLabelHeight = 48;
 constexpr int kTapLabelWidth = 80;
 
 const SkColor kHintLabelTextColor = SK_ColorBLACK;
-const SkColor kHintSublabelTextColor = SkColorSetARGBInline(255, 161, 161, 161);
+const SkColor kHintSublabelTextColor = SkColorSetARGB(255, 161, 161, 161);
 
 const SkColor kInnerCircleColor = SK_ColorWHITE;
 const SkColor kOuterCircleColor = SkColorSetA(kInnerCircleColor, 255 * 0.2);
@@ -75,11 +75,10 @@ constexpr int kTouchTargetHeight = kTouchTargetWidth + kTouchTargetWidth / 2;
 
 constexpr float kTouchTargetVerticalOffsetFactor = 11.f / 24.f;
 
-const SkColor kTouchTargetInnerCircleColor =
-    SkColorSetARGBInline(255, 66, 133, 244);
+const SkColor kTouchTargetInnerCircleColor = SkColorSetARGB(255, 66, 133, 244);
 const SkColor kTouchTargetOuterCircleColor =
     SkColorSetA(kTouchTargetInnerCircleColor, 255 * 0.2);
-const SkColor kHandIconColor = SkColorSetARGBInline(255, 201, 201, 201);
+const SkColor kHandIconColor = SkColorSetARGB(255, 201, 201, 201);
 constexpr float kHandIconHorizontalOffsetFactor = 7.f / 32.f;
 
 // Returns the initialization params for the widget that contains the touch
@@ -88,7 +87,7 @@ views::Widget::InitParams GetWidgetParams(aura::Window* root_window) {
   views::Widget::InitParams params;
   params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   params.name = kWidgetName;
-  params.keep_on_top = true;
+  params.z_order = ui::ZOrderLevel::kFloatingWindow;
   params.accept_events = true;
   params.activatable = views::Widget::InitParams::ACTIVATABLE_NO;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -125,7 +124,8 @@ void AnimateLayerToPosition(views::View* view,
 // min and max radius. The animation takes |animation_duration| milliseconds
 // to complete. The center of these circles are at the center of the view
 // element.
-class CircularThrobberView : public views::View, public gfx::AnimationDelegate {
+class CircularThrobberView : public views::View,
+                             public views::AnimationDelegateViews {
  public:
   CircularThrobberView(int width,
                        const SkColor& inner_circle_color,
@@ -133,10 +133,10 @@ class CircularThrobberView : public views::View, public gfx::AnimationDelegate {
                        int animation_duration);
   ~CircularThrobberView() override;
 
-  // views::View overrides:
+  // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
 
-  // gfx::AnimationDelegate overrides:
+  // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
 
  private:
@@ -167,7 +167,8 @@ CircularThrobberView::CircularThrobberView(int width,
                                            const SkColor& inner_circle_color,
                                            const SkColor& outer_circle_color,
                                            int animation_duration)
-    : inner_radius_(width / 4),
+    : views::AnimationDelegateViews(this),
+      inner_radius_(width / 4),
       outer_radius_(inner_radius_),
       smallest_radius_animated_circle_(width * kThrobberCircleRadiusFactor),
       largest_radius_animated_circle_(width / 2),
@@ -214,7 +215,7 @@ class TouchTargetThrobberView : public CircularThrobberView {
                           int animation_duration);
   ~TouchTargetThrobberView() override;
 
-  // views::View overrides:
+  // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:
@@ -272,7 +273,7 @@ class HintBox : public views::View {
   HintBox(const gfx::Rect& bounds, int border_radius);
   ~HintBox() override;
 
-  // views::View overrides:
+  // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
 
   void SetLabel(const base::string16& text, const SkColor& color);
@@ -412,7 +413,7 @@ class CompletionMessageView : public views::View {
   CompletionMessageView(const gfx::Rect& bounds, const base::string16& message);
   ~CompletionMessageView() override;
 
-  // views::View overrides:
+  // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:
@@ -463,7 +464,8 @@ void CompletionMessageView::OnPaint(gfx::Canvas* canvas) {
 
 TouchCalibratorView::TouchCalibratorView(const display::Display& target_display,
                                          bool is_primary_view)
-    : display_(target_display),
+    : views::AnimationDelegateViews(this),
+      display_(target_display),
       is_primary_view_(is_primary_view),
       exit_label_(nullptr),
       tap_label_(nullptr),

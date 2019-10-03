@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <unordered_set>
 #include <utility>
 
 #include "base/bind.h"
@@ -14,6 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/one_shot_event.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
@@ -36,18 +38,19 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_handlers/app_isolation_info.h"
-#include "extensions/common/one_shot_event.h"
 
 namespace extensions {
 
 namespace {
 
-// Wait this many seconds before trying to garbage collect extensions again.
-const int kGarbageCollectRetryDelayInSeconds = 30;
+// Wait this long before trying to garbage collect extensions again.
+constexpr base::TimeDelta kGarbageCollectRetryDelay =
+    base::TimeDelta::FromSeconds(30);
 
-// Wait this many seconds after startup to see if there are any extensions
-// which can be garbage collected.
-const int kGarbageCollectStartupDelay = 30;
+// Wait this long after startup to see if there are any extensions which can be
+// garbage collected.
+constexpr base::TimeDelta kGarbageCollectStartupDelay =
+    base::TimeDelta::FromSeconds(30);
 
 typedef std::multimap<std::string, base::FilePath> ExtensionPathsMultimap;
 
@@ -93,7 +96,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
        !version_dir.empty();
        version_dir = versions_enumerator.Next()) {
     bool known_version = false;
-    for (Iter iter = iter_pair.first; iter != iter_pair.second; ++iter) {
+    for (auto iter = iter_pair.first; iter != iter_pair.second; ++iter) {
       if (version_dir.BaseName() == iter->second.BaseName()) {
         known_version = true;
         break;
@@ -108,20 +111,19 @@ void CheckExtensionDirectory(const base::FilePath& path,
 
 ExtensionGarbageCollector::ExtensionGarbageCollector(
     content::BrowserContext* context)
-    : context_(context), crx_installs_in_progress_(0), weak_factory_(this) {
-
+    : context_(context), crx_installs_in_progress_(0) {
   ExtensionSystem* extension_system = ExtensionSystem::Get(context_);
   DCHECK(extension_system);
 
   extension_system->ready().PostDelayed(
       FROM_HERE,
-      base::Bind(&ExtensionGarbageCollector::GarbageCollectExtensions,
-                 weak_factory_.GetWeakPtr()),
-      base::TimeDelta::FromSeconds(kGarbageCollectStartupDelay));
+      base::BindOnce(&ExtensionGarbageCollector::GarbageCollectExtensions,
+                     weak_factory_.GetWeakPtr()),
+      kGarbageCollectStartupDelay);
 
   extension_system->ready().Post(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &ExtensionGarbageCollector::GarbageCollectIsolatedStorageIfNeeded,
           weak_factory_.GetWeakPtr()));
 
@@ -182,7 +184,7 @@ void ExtensionGarbageCollector::GarbageCollectExtensions() {
         FROM_HERE,
         base::BindOnce(&ExtensionGarbageCollector::GarbageCollectExtensions,
                        weak_factory_.GetWeakPtr()),
-        base::TimeDelta::FromSeconds(kGarbageCollectRetryDelayInSeconds));
+        kGarbageCollectRetryDelay);
     return;
   }
 
@@ -219,8 +221,8 @@ void ExtensionGarbageCollector::GarbageCollectIsolatedStorageIfNeeded() {
     return;
   extension_prefs->SetNeedsStorageGarbageCollection(false);
 
-  std::unique_ptr<base::hash_set<base::FilePath>> active_paths(
-      new base::hash_set<base::FilePath>());
+  std::unique_ptr<std::unordered_set<base::FilePath>> active_paths(
+      new std::unordered_set<base::FilePath>());
   std::unique_ptr<ExtensionSet> extensions =
       ExtensionRegistry::Get(context_)->GenerateInstalledExtensionsSet();
   for (ExtensionSet::const_iterator iter = extensions->begin();

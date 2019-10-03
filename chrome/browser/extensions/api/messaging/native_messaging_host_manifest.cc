@@ -10,6 +10,7 @@
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chrome/common/chrome_features.h"
 
 namespace extensions {
 
@@ -109,7 +110,7 @@ bool NativeMessagingHostManifest::Parse(base::DictionaryValue* dictionary,
     return false;
   }
   allowed_origins_.ClearPatterns();
-  for (base::ListValue::const_iterator it = allowed_origins_list->begin();
+  for (auto it = allowed_origins_list->begin();
        it != allowed_origins_list->end(); ++it) {
     std::string pattern_string;
     if (!it->GetAsString(&pattern_string)) {
@@ -119,7 +120,7 @@ bool NativeMessagingHostManifest::Parse(base::DictionaryValue* dictionary,
 
     URLPattern pattern(URLPattern::SCHEME_EXTENSION);
     URLPattern::ParseResult result = pattern.Parse(pattern_string);
-    if (result != URLPattern::PARSE_SUCCESS) {
+    if (result != URLPattern::ParseResult::kSuccess) {
       *error_message = "Failed to parse pattern \"" + pattern_string +
           "\": " + URLPattern::GetParseResultString(result);
       return false;
@@ -133,6 +134,19 @@ bool NativeMessagingHostManifest::Parse(base::DictionaryValue* dictionary,
     }
 
     allowed_origins_.AddPattern(pattern);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kOnConnectNative)) {
+    if (const base::Value* supports_native_initiated_connections =
+            dictionary->FindKey("supports_native_initiated_connections")) {
+      if (!supports_native_initiated_connections->is_bool()) {
+        *error_message =
+            "supports_native_initiated_connections must be a boolean.";
+        return false;
+      }
+      supports_native_initiated_connections_ =
+          supports_native_initiated_connections->GetBool();
+    }
   }
 
   return true;

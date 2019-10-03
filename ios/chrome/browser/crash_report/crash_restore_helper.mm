@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
@@ -24,10 +24,10 @@
 #import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
-#import "ios/chrome/browser/tabs/tab.h"
-#import "ios/chrome/browser/tabs/tab_model.h"
+#import "ios/chrome/browser/sessions/session_window_restoring.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
+#import "ios/web/public/web_state/web_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -140,7 +140,7 @@ bool SessionCrashedInfoBarDelegate::Create(
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 SessionCrashedInfoBarDelegate::GetIdentifier() const {
-  return SESSION_CRASHED_INFOBAR_DELEGATE;
+  return SESSION_CRASHED_INFOBAR_DELEGATE_IOS;
 }
 
 base::string16 SessionCrashedInfoBarDelegate::GetMessageText() const {
@@ -174,8 +174,8 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   ios::ChromeBrowserState* _browserState;
   BOOL _needRestoration;
   std::unique_ptr<InfoBarManagerObserverBridge> _infoBarBridge;
-  // The TabModel to restore sessions to.
-  TabModel* _tabModel;
+  // Object that will handle session restoration.
+  id<SessionWindowRestoring> _restorer;
 
   // Indicate that the session has been restored to tabs or to recently closed
   // and should not be rerestored.
@@ -189,19 +189,19 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   return self;
 }
 
-- (void)showRestoreIfNeeded:(TabModel*)tabModel {
+- (void)showRestoreIfNeededUsingWebState:(web::WebState*)webState
+                         sessionRestorer:(id<SessionWindowRestoring>)restorer {
   if (!_needRestoration)
     return;
 
   // The last session didn't exit cleanly. Show an infobar to the user so
   // that they can restore if they want. The delegate deletes itself when
   // it is closed.
-  DCHECK(tabModel);
-  web::WebState* webState = tabModel.webStateList->GetActiveWebState();
+
   DCHECK(webState);
   infobars::InfoBarManager* infoBarManager =
       InfoBarManagerImpl::FromWebState(webState);
-  _tabModel = tabModel;
+  _restorer = restorer;
   SessionCrashedInfoBarDelegate::Create(infoBarManager, self);
   _infoBarBridge.reset(new InfoBarManagerObserverBridge(infoBarManager, self));
 }
@@ -219,16 +219,16 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
     BOOL fileOperationSuccess =
         [fileManager removeItemAtPath:file error:&error];
     NSInteger errorCode = fileOperationSuccess ? 0 : [error code];
-    UMA_HISTOGRAM_SPARSE_SLOWLY("TabRestore.error_remove_backup_at_path",
-                                errorCode);
+    base::UmaHistogramSparse("TabRestore.error_remove_backup_at_path",
+                             errorCode);
     if (!fileOperationSuccess && errorCode != NSFileNoSuchFileError) {
       return NO;
     }
     fileOperationSuccess =
         [fileManager moveItemAtPath:sessionPath toPath:file error:&error];
     errorCode = fileOperationSuccess ? 0 : [error code];
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
-        "TabRestore.error_move_session_at_path_to_backup", errorCode);
+    base::UmaHistogramSparse("TabRestore.error_move_session_at_path_to_backup",
+                             errorCode);
     if (!fileOperationSuccess) {
       return NO;
     }
@@ -237,8 +237,8 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
     BOOL fileOperationSuccess =
         [fileManager removeItemAtPath:sessionPath error:&error];
     NSInteger errorCode = fileOperationSuccess ? 0 : [error code];
-    UMA_HISTOGRAM_SPARSE_SLOWLY("TabRestore.error_remove_session_at_path",
-                                errorCode);
+    base::UmaHistogramSparse("TabRestore.error_remove_session_at_path",
+                             errorCode);
     if (!fileOperationSuccess) {
       return NO;
     }
@@ -274,14 +274,15 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
 
   DCHECK_EQ(session.sessionWindows.count, 1u);
   breakpad_helper::WillStartCrashRestoration();
-  return [_tabModel restoreSessionWindow:session.sessionWindows[0]];
+  return [_restorer restoreSessionWindow:session.sessionWindows[0]
+                       forInitialRestore:NO];
 }
 
 - (void)infoBarRemoved:(infobars::InfoBar*)infobar {
   DCHECK(infobar->delegate());
   if (_sessionRestored ||
       infobar->delegate()->GetIdentifier() !=
-          infobars::InfoBarDelegate::SESSION_CRASHED_INFOBAR_DELEGATE) {
+          infobars::InfoBarDelegate::SESSION_CRASHED_INFOBAR_DELEGATE_IOS) {
     return;
   }
 

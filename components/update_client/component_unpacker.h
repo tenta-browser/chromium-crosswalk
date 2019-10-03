@@ -16,12 +16,17 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/update_client/update_client_errors.h"
-#include "services/service_manager/public/cpp/connector.h"
+
+namespace crx_file {
+enum class VerifierFormat;
+}
 
 namespace update_client {
 
 class CrxInstaller;
 class ComponentPatcher;
+class Patcher;
+class Unzipper;
 
 // In charge of unpacking the component CRX package and verifying that it is
 // well formed and the cryptographic signature is correct.
@@ -83,8 +88,10 @@ class ComponentUnpacker : public base::RefCountedThreadSafe<ComponentUnpacker> {
   // location of the CRX.
   ComponentUnpacker(const std::vector<uint8_t>& pk_hash,
                     const base::FilePath& path,
-                    const scoped_refptr<CrxInstaller>& installer,
-                    std::unique_ptr<service_manager::Connector> connector);
+                    scoped_refptr<CrxInstaller> installer,
+                    std::unique_ptr<Unzipper> unzipper,
+                    scoped_refptr<Patcher> patcher,
+                    crx_file::VerifierFormat crx_format);
 
   // Begins the actual unpacking of the files. May invoke a patcher and the
   // component installer if the package is a differential update.
@@ -96,16 +103,15 @@ class ComponentUnpacker : public base::RefCountedThreadSafe<ComponentUnpacker> {
 
   virtual ~ComponentUnpacker();
 
-  bool UnpackInternal();
-
   // The first step of unpacking is to verify the file. Returns false if an
   // error is encountered, the file is malformed, or the file is incorrectly
   // signed.
   bool Verify();
 
-  // The second step of unpacking is to unzip. Returns false if an error
-  // occurs as part of unzipping.
-  bool Unzip();
+  // The second step of unpacking is to unzip. Returns false if an early error
+  // is encountered.
+  bool BeginUnzipping();
+  void EndUnzipping(bool error);
 
   // The third step is to optionally patch files - this is a no-op for full
   // (non-differential) updates. This step is asynchronous. Returns false if an
@@ -127,7 +133,9 @@ class ComponentUnpacker : public base::RefCountedThreadSafe<ComponentUnpacker> {
   scoped_refptr<ComponentPatcher> patcher_;
   scoped_refptr<CrxInstaller> installer_;
   Callback callback_;
-  std::unique_ptr<service_manager::Connector> connector_;
+  std::unique_ptr<Unzipper> unzipper_;
+  scoped_refptr<Patcher> patcher_tool_;
+  crx_file::VerifierFormat crx_format_;
   UnpackerError error_;
   int extended_error_;
   std::string public_key_;

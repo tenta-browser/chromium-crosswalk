@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/timer/timer.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/pp_rect.h"
 #include "ppapi/c/pp_resource.h"
@@ -212,6 +213,9 @@ class ChromotingInstance : public ClientUserInterface,
 
   void Disconnect();
 
+  void UpdateNetConfigAndConnect(const base::DictionaryValue& data);
+  void OnNetConfigUpdated(std::unique_ptr<base::DictionaryValue> data);
+
   // Helper method to post messages to the webapp.
   void PostChromotingMessage(const std::string& method,
                              const pp::VarDictionary& data);
@@ -242,6 +246,8 @@ class ChromotingInstance : public ClientUserInterface,
       bool pairing_supported,
       const protocol::SecretFetchedCallback& secret_fetched_callback);
 
+  void SendNetworkInfo();
+
   bool initialized_;
 
   scoped_refptr<base::SingleThreadTaskRunner> plugin_task_runner_;
@@ -259,6 +265,8 @@ class ChromotingInstance : public ClientUserInterface,
   std::unique_ptr<DelegatingSignalStrategy> signal_strategy_;
 
   std::unique_ptr<ChromotingClient> client_;
+
+  scoped_refptr<protocol::TransportContext> transport_context_;
 
   // Input pipeline components, in reverse order of distance from input source.
   protocol::MouseInputFilter mouse_input_filter_;

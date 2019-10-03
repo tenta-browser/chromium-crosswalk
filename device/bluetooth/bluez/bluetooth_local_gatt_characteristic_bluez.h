@@ -12,9 +12,9 @@
 #include "base/memory/weak_ptr.h"
 #include "device/bluetooth/bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_local_gatt_characteristic.h"
-#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_gatt_characteristic_bluez.h"
 #include "device/bluetooth/bluez/bluetooth_local_gatt_descriptor_bluez.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace bluez {
 
@@ -23,13 +23,14 @@ class BluetoothLocalGattServiceBlueZ;
 // The BluetoothLocalGattCharacteristicBlueZ class implements
 // BluetoothLocalGattCharacteristic for local GATT characteristics for
 // platforms that use BlueZ.
-class BluetoothLocalGattCharacteristicBlueZ
+class DEVICE_BLUETOOTH_EXPORT BluetoothLocalGattCharacteristicBlueZ
     : public BluetoothGattCharacteristicBlueZ,
       public device::BluetoothLocalGattCharacteristic {
  public:
   BluetoothLocalGattCharacteristicBlueZ(
       const device::BluetoothUUID& uuid,
       Properties properties,
+      Permissions permissions,
       BluetoothLocalGattServiceBlueZ* service);
   ~BluetoothLocalGattCharacteristicBlueZ() override;
 
@@ -61,6 +62,9 @@ class BluetoothLocalGattCharacteristicBlueZ
 
   // Properties of this characteristic.
   Properties properties_;
+
+  // Permissions of this characteristic.
+  Permissions permissions_;
 
   // Service that contains this characteristic.
   BluetoothLocalGattServiceBlueZ* service_;

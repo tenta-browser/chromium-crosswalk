@@ -6,8 +6,9 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/limits.h"
@@ -32,7 +33,7 @@ class AomVideoDecoderTest : public testing::Test {
  public:
   AomVideoDecoderTest()
       : decoder_(new AomVideoDecoder(&media_log_)),
-        i_frame_buffer_(ReadTestDataFile("av1-I-frame-352x288")) {}
+        i_frame_buffer_(ReadTestDataFile("av1-I-frame-320x240")) {}
 
   ~AomVideoDecoderTest() override { Destroy(); }
 
@@ -44,7 +45,8 @@ class AomVideoDecoderTest : public testing::Test {
                                       bool success) {
     decoder_->Initialize(
         config, false, nullptr, NewExpectedBoolCB(success),
-        base::Bind(&AomVideoDecoderTest::FrameReady, base::Unretained(this)));
+        base::Bind(&AomVideoDecoderTest::FrameReady, base::Unretained(this)),
+        base::NullCallback());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -88,14 +90,15 @@ class AomVideoDecoderTest : public testing::Test {
   // output frames into |output_frames|. Returns the last decode status returned
   // by the decoder.
   DecodeStatus DecodeMultipleFrames(const InputBuffers& input_buffers) {
-    for (InputBuffers::const_iterator iter = input_buffers.begin();
-         iter != input_buffers.end(); ++iter) {
+    for (auto iter = input_buffers.begin(); iter != input_buffers.end();
+         ++iter) {
       DecodeStatus status = Decode(*iter);
       switch (status) {
         case DecodeStatus::OK:
           break;
         case DecodeStatus::ABORTED:
           NOTREACHED();
+          FALLTHROUGH;
         case DecodeStatus::DECODE_ERROR:
           DCHECK(output_frames_.empty());
           return status;
@@ -152,16 +155,16 @@ class AomVideoDecoderTest : public testing::Test {
     return status;
   }
 
-  void FrameReady(const scoped_refptr<VideoFrame>& frame) {
+  void FrameReady(scoped_refptr<VideoFrame> frame) {
     DCHECK(!frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM));
-    output_frames_.push_back(frame);
+    output_frames_.push_back(std::move(frame));
   }
 
   MOCK_METHOD1(DecodeDone, void(DecodeStatus));
 
   testing::StrictMock<MockMediaLog> media_log_;
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<AomVideoDecoder> decoder_;
 
   scoped_refptr<DecoderBuffer> i_frame_buffer_;
@@ -205,7 +208,7 @@ TEST_F(AomVideoDecoderTest, DecodeFrame_Normal) {
 // the output size was adjusted.
 // TODO(dalecurtis): Get an I-frame from a larger video.
 TEST_F(AomVideoDecoderTest, DISABLED_DecodeFrame_LargerWidth) {
-  DecodeIFrameThenTestFile("av1-I-frame-352x288", gfx::Size(1280, 720));
+  DecodeIFrameThenTestFile("av1-I-frame-320x240", gfx::Size(1280, 720));
 }
 
 // Decode a VP9 frame which should trigger a decoder error.

@@ -12,14 +12,15 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chromeos/cryptohome/async_method_caller.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/cryptohome/cryptohome_util.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/rpc.pb.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/arc/arc_util.h"
@@ -28,6 +29,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "third_party/cros_system_api/dbus/cryptohome/dbus-constants.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -53,19 +55,19 @@ void CancelDelayedCryptohomeRemoval(const cryptohome::Identification& id) {
   local_state->CommitPendingWrite();
 }
 
-void OnRemoveAppCryptohomeComplete(const cryptohome::Identification& id,
-                                   const base::Closure& callback,
-                                   bool success,
-                                   cryptohome::MountError return_code) {
-  if (success) {
+void OnRemoveAppCryptohomeComplete(
+    const cryptohome::Identification& id,
+    base::OnceClosure callback,
+    base::Optional<cryptohome::BaseReply> reply) {
+  cryptohome::MountError error = BaseReplyToMountError(reply);
+  if (error == cryptohome::MOUNT_ERROR_NONE) {
     CancelDelayedCryptohomeRemoval(id);
   } else {
     ScheduleDelayedCryptohomeRemoval(id);
-    LOG(ERROR) << "Remove one of the cryptohomes failed, return code: "
-               << return_code;
+    LOG(ERROR) << "Remove app cryptohome failed, error: " << error;
   }
   if (!callback.is_null())
-    callback.Run();
+    std::move(callback).Run();
 }
 
 void PerformDelayedCryptohomeRemovals(bool service_is_available) {
@@ -86,9 +88,13 @@ void PerformDelayedCryptohomeRemovals(bool service_is_available) {
     }
     const cryptohome::Identification cryptohome_id(
         cryptohome::Identification::FromString(entry));
-    cryptohome::AsyncMethodCaller::GetInstance()->AsyncRemove(
-        cryptohome_id, base::Bind(&OnRemoveAppCryptohomeComplete, cryptohome_id,
-                                  base::Closure()));
+
+    cryptohome::AccountIdentifier account_id_proto;
+    account_id_proto.set_account_id(cryptohome_id.id());
+
+    CryptohomeClient::Get()->RemoveEx(
+        account_id_proto, base::BindOnce(&OnRemoveAppCryptohomeComplete,
+                                         cryptohome_id, base::OnceClosure()));
   }
 }
 
@@ -108,8 +114,7 @@ void ArcKioskAppManager::RegisterPrefs(PrefRegistrySimple* registry) {
 
 // static
 void ArcKioskAppManager::RemoveObsoleteCryptohomes() {
-  chromeos::CryptohomeClient* const client =
-      chromeos::DBusThreadManager::Get()->GetCryptohomeClient();
+  chromeos::CryptohomeClient* const client = chromeos::CryptohomeClient::Get();
   client->WaitForServiceToBeAvailable(
       base::Bind(&PerformDelayedCryptohomeRemovals));
 }
@@ -179,6 +184,25 @@ void ArcKioskAppManager::RemoveObserver(ArcKioskAppManagerObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
+void ArcKioskAppManager::AddAutoLaunchAppForTest(
+    const std::string& app_id,
+    const policy::ArcKioskAppBasicInfo& app_info,
+    const AccountId& account_id) {
+  for (auto it = apps_.begin(); it != apps_.end(); ++it) {
+    if ((*it)->app_id() == app_id) {
+      apps_.erase(it);
+      break;
+    }
+  }
+
+  apps_.emplace_back(std::make_unique<ArcKioskAppData>(
+      app_id, app_info.package_name(), app_info.class_name(), app_info.action(),
+      account_id, app_info.display_name()));
+
+  auto_launch_account_id_ = account_id;
+  auto_launched_with_zero_delay_ = true;
+}
+
 void ArcKioskAppManager::UpdateApps() {
   // Do not populate ARC kiosk apps if ARC kiosk apps can't be run on the
   // device.
@@ -235,7 +259,7 @@ void ArcKioskAppManager::UpdateApps() {
       std::string name = app_info.package_name();
       if (!app_info.display_name().empty())
         name = app_info.display_name();
-      apps_.push_back(base::MakeUnique<ArcKioskAppData>(
+      apps_.push_back(std::make_unique<ArcKioskAppData>(
           app_id, app_info.package_name(), app_info.class_name(),
           app_info.action(), account_id, name));
       apps_.back()->LoadFromCache();
@@ -274,9 +298,12 @@ void ArcKioskAppManager::ClearRemovedApps(
       // Schedule cryptohome removal after active user logout.
       ScheduleDelayedCryptohomeRemoval(cryptohome_id);
     } else {
-      cryptohome::AsyncMethodCaller::GetInstance()->AsyncRemove(
-          cryptohome_id, base::Bind(&OnRemoveAppCryptohomeComplete,
-                                    cryptohome_id, base::Closure()));
+      cryptohome::AccountIdentifier account_id_proto;
+      account_id_proto.set_account_id(cryptohome_id.id());
+
+      CryptohomeClient::Get()->RemoveEx(
+          account_id_proto, base::BindOnce(&OnRemoveAppCryptohomeComplete,
+                                           cryptohome_id, base::OnceClosure()));
     }
   }
 

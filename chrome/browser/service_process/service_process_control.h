@@ -20,7 +20,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "build/build_config.h"
-#include "chrome/browser/upgrade_observer.h"
+#include "chrome/browser/upgrade_detector/upgrade_observer.h"
 #include "chrome/common/service_process.mojom.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
@@ -33,9 +33,7 @@ class CommandLine;
 }
 
 namespace mojo {
-namespace edk {
-class PeerConnection;
-}
+class IsolatedConnection;
 }
 
 // A ServiceProcessControl works as a portal between the service process and
@@ -87,8 +85,8 @@ class ServiceProcessControl : public UpgradeObserver {
   // Note that if we are already connected to service process then
   // |success_task| can be invoked in the context of the Launch call.
   // Virtual for testing.
-  virtual void Launch(const base::Closure& success_task,
-                      const base::Closure& failure_task);
+  virtual void Launch(base::OnceClosure success_task,
+                      base::OnceClosure failure_task);
 
   // Disconnect the IPC channel from the service process.
   // Virtual for testing.
@@ -115,6 +113,8 @@ class ServiceProcessControl : public UpgradeObserver {
     return remote_interfaces_;
   }
 
+  base::ProcessId GetLaunchedPidForTesting() const { return saved_pid_; }
+
  private:
   // This class is responsible for launching the service process on the
   // PROCESS_LAUNCHER thread.
@@ -128,6 +128,7 @@ class ServiceProcessControl : public UpgradeObserver {
     void Run(const base::Closure& task);
 
     bool launched() const { return launched_; }
+    base::ProcessId saved_pid() const { return saved_pid_; }
 
    private:
     friend class base::RefCountedThreadSafe<ServiceProcessControl::Launcher>;
@@ -144,6 +145,10 @@ class ServiceProcessControl : public UpgradeObserver {
     bool launched_;
     uint32_t retry_count_;
     base::Process process_;
+
+    // Used to save the process id for |process_| upon successful launch.
+    // Only used for testing.
+    base::ProcessId saved_pid_;
   };
 
   friend class MockServiceProcessControl;
@@ -155,7 +160,7 @@ class ServiceProcessControl : public UpgradeObserver {
 
   friend struct base::DefaultSingletonTraits<ServiceProcessControl>;
 
-  typedef std::vector<base::Closure> TaskList;
+  using TaskList = std::vector<base::OnceClosure>;
 
   void OnChannelConnected();
   void OnChannelError();
@@ -176,14 +181,14 @@ class ServiceProcessControl : public UpgradeObserver {
 
   // Called when ConnectInternal's async work is done.
   void OnPeerConnectionComplete(
-      std::unique_ptr<mojo::edk::PeerConnection> connection);
+      std::unique_ptr<mojo::IsolatedConnection> connection);
 
   // Split out for testing.
   void SetMojoHandle(service_manager::mojom::InterfaceProviderPtr handle);
 
   static void RunAllTasksHelper(TaskList* task_list);
 
-  std::unique_ptr<mojo::edk::PeerConnection> peer_connection_;
+  std::unique_ptr<mojo::IsolatedConnection> mojo_connection_;
 
   service_manager::InterfaceProvider remote_interfaces_;
   chrome::mojom::ServiceProcessPtr service_process_;
@@ -206,7 +211,10 @@ class ServiceProcessControl : public UpgradeObserver {
   // If true changes to UpgradeObserver are applied, if false they are ignored.
   bool apply_changes_from_upgrade_observer_;
 
-  base::WeakPtrFactory<ServiceProcessControl> weak_factory_;
+  // Same as |Launcher::saved_pid_|.
+  base::ProcessId saved_pid_;
+
+  base::WeakPtrFactory<ServiceProcessControl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceProcessControl);
 };

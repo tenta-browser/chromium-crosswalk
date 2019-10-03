@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.download.ui;
 
+import org.chromium.chrome.browser.ChromeFeatureList;
+
 /**
  * Determines when the data from all of the backends has been loaded.
  * <p>
@@ -19,7 +21,7 @@ public class LoadingStateDelegate {
     private static final int ALL_LOADED = 0b111;
 
     private int mLoadingState;
-    private int mPendingFilter = DownloadFilter.FILTER_ALL;
+    private @DownloadFilter.Type int mPendingFilter = DownloadFilter.Type.ALL;
 
     /** @param offTheRecord Whether this delegate needs to consider incognito. */
     public LoadingStateDelegate(boolean offTheRecord) {
@@ -39,16 +41,19 @@ public class LoadingStateDelegate {
 
     /** @return Whether all backends are loaded. */
     public boolean isLoaded() {
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER))
+            return true;
+
         return mLoadingState == ALL_LOADED;
     }
 
     /** Caches a filter for when the backends have loaded. */
-    public void setPendingFilter(int filter) {
+    public void setPendingFilter(@DownloadFilter.Type int filter) {
         mPendingFilter = filter;
     }
 
     /** @return The cached filter, or {@link DownloadFilter#FILTER_ALL} if none was set. */
-    public int getPendingFilter() {
+    public @DownloadFilter.Type int getPendingFilter() {
         return mPendingFilter;
     }
 }

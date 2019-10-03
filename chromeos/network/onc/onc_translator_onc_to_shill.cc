@@ -20,12 +20,14 @@
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chromeos/network/client_cert_util.h"
+#include "chromeos/network/network_event_log.h"
 #include "chromeos/network/onc/onc_signature.h"
 #include "chromeos/network/onc/onc_translation_tables.h"
 #include "chromeos/network/onc/onc_translator.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/shill_property_util.h"
 #include "components/onc/onc_constants.h"
+#include "net/base/ip_address.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -93,6 +95,7 @@ class LocalTranslator {
   void TranslateVPN();
   void TranslateWiFi();
   void TranslateEAP();
+  void TranslateStaticIPConfig();
   void TranslateNetworkConfiguration();
 
   // Copies all entries from |onc_object_| to |shill_dictionary_| for which a
@@ -143,6 +146,8 @@ void LocalTranslator::TranslateFields() {
     TranslateWiFi();
   else if (onc_signature_ == &kEAPSignature)
     TranslateEAP();
+  else if (onc_signature_ == &kStaticIPConfigSignature)
+    TranslateStaticIPConfig();
   else
     CopyFieldsAccordingToSignature();
 }
@@ -175,7 +180,7 @@ void LocalTranslator::TranslateOpenVPN() {
   // identical to kPasswordAndOTP.
   if (user_auth_type.empty())
     user_auth_type = ::onc::openvpn_user_auth_type::kPasswordAndOTP;
-
+  NET_LOG(DEBUG) << "USER AUTH TYPE: " << user_auth_type;
   if (user_auth_type == ::onc::openvpn_user_auth_type::kPassword ||
       user_auth_type == ::onc::openvpn_user_auth_type::kPasswordAndOTP) {
     CopyFieldFromONCToShill(::onc::openvpn::kPassword,
@@ -318,7 +323,37 @@ void LocalTranslator::TranslateEAP() {
   SetClientCertProperties(client_cert::CONFIG_TYPE_EAP, onc_object_,
                           shill_dictionary_);
 
+  // Set shill::kEapUseLoginPasswordProperty according to whether or not the
+  // password substitution variable is set.
+  const base::Value* password_field =
+      onc_object_->FindKey(::onc::eap::kPassword);
+  if (password_field && password_field->GetString() ==
+                            ::onc::substitutes::kPasswordPlaceholderVerbatim) {
+    shill_dictionary_->SetKey(shill::kEapUseLoginPasswordProperty,
+                              base::Value(true));
+  }
+
   CopyFieldsAccordingToSignature();
+}
+
+void LocalTranslator::TranslateStaticIPConfig() {
+  CopyFieldsAccordingToSignature();
+  // Shill expects 4 valid nameserver values. Ensure all values are valid and
+  // replace any invalid values with 0.0.0.0 (which has no effect). See
+  // https://crbug.com/922219 for details.
+  base::Value* name_servers =
+      shill_dictionary_->FindKey(shill::kNameServersProperty);
+  if (name_servers) {
+    static const char kDefaultIpAddr[] = "0.0.0.0";
+    net::IPAddress ip_addr;
+    for (base::Value& value_ref : name_servers->GetList()) {
+      // AssignFromIPLiteral returns true if a string is valid ipv4 or ipv6.
+      if (!ip_addr.AssignFromIPLiteral(value_ref.GetString()))
+        value_ref = base::Value(kDefaultIpAddr);
+    }
+    while (name_servers->GetList().size() < 4)
+      name_servers->GetList().push_back(base::Value(kDefaultIpAddr));
+  }
 }
 
 void LocalTranslator::TranslateNetworkConfiguration() {
@@ -326,9 +361,9 @@ void LocalTranslator::TranslateNetworkConfiguration() {
   onc_object_->GetStringWithoutPathExpansion(::onc::network_config::kType,
                                              &type);
 
-  // Set the type except for Ethernet which is set in TranslateEthernet.
-  if (type != ::onc::network_type::kEthernet)
-    TranslateWithTableAndSet(type, kNetworkTypeTable, shill::kTypeProperty);
+  // Note; The Ethernet type might be overridden to EthernetEap in
+  // TranslateEthernet if Ethernet specific properties are provided.
+  TranslateWithTableAndSet(type, kNetworkTypeTable, shill::kTypeProperty);
 
   // Shill doesn't allow setting the name for non-VPN networks.
   if (type == ::onc::network_type::kVPN)
@@ -352,10 +387,10 @@ void LocalTranslator::TranslateNetworkConfiguration() {
   const base::DictionaryValue* proxy_settings = nullptr;
   if (onc_object_->GetDictionaryWithoutPathExpansion(
           ::onc::network_config::kProxySettings, &proxy_settings)) {
-    std::unique_ptr<base::DictionaryValue> proxy_config =
+    base::Value proxy_config =
         ConvertOncProxySettingsToProxyConfig(*proxy_settings);
     std::string proxy_config_str;
-    base::JSONWriter::Write(*proxy_config.get(), &proxy_config_str);
+    base::JSONWriter::Write(proxy_config, &proxy_config_str);
     shill_dictionary_->SetKey(shill::kProxyConfigProperty,
                               base::Value(proxy_config_str));
   }
@@ -384,12 +419,12 @@ void LocalTranslator::CopyFieldFromONCToShill(
     base::Value::Type expected_type =
         field_signature->value_signature->onc_type;
     if (value->type() != expected_type) {
-      LOG(ERROR) << "Found field " << onc_field_name << " of type "
-                 << value->type() << " but expected type " << expected_type;
+      NET_LOG(ERROR) << "Found field " << onc_field_name << " of type "
+                     << value->type() << " but expected type " << expected_type;
       return;
     }
   } else {
-    LOG(ERROR)
+    NET_LOG(ERROR)
         << "Attempt to translate a field that is not part of the ONC format.";
     return;
   }
@@ -423,9 +458,9 @@ void LocalTranslator::TranslateWithTableAndSet(
   // As we previously validate ONC, this case should never occur. If it still
   // occurs, we should check here. Otherwise the failure will only show up much
   // later in Shill.
-  LOG(ERROR) << "Value '" << onc_value
-             << "' cannot be translated to Shill property: "
-             << shill_property_name;
+  NET_LOG(ERROR) << "Value '" << onc_value
+                 << "' cannot be translated to Shill property: "
+                 << shill_property_name;
 }
 
 // Iterates recursively over |onc_object| and its |signature|. At each object

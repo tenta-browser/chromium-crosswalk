@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 
 #import <Cocoa/Cocoa.h>
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/i18n/message_formatter.h"
 #include "base/location.h"
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -106,13 +109,13 @@ void It2MeConfirmationDialogMac::OnDialogAction(Result result) {
   }
 
   if (result_callback_) {
-    base::ResetAndReturn(&result_callback_).Run(result);
+    std::move(result_callback_).Run(result);
   }
 }
 
 std::unique_ptr<It2MeConfirmationDialog>
 It2MeConfirmationDialogFactory::Create() {
-  return base::MakeUnique<It2MeConfirmationDialogMac>();
+  return std::make_unique<It2MeConfirmationDialogMac>();
 }
 
 }  // namespace remoting
@@ -168,13 +171,16 @@ It2MeConfirmationDialogFactory::Create() {
 }
 
 - (void)hide {
-  confirmation_alert_.reset();
+  if (confirmation_alert_) {
+    [[confirmation_alert_ window] close];
+    confirmation_alert_.reset();
+  }
 }
 
 - (void)onCancel:(id)sender {
   [self hide];
   if (dialog_action_callback_) {
-    base::ResetAndReturn(&dialog_action_callback_)
+    std::move(dialog_action_callback_)
         .Run(remoting::It2MeConfirmationDialog::Result::CANCEL);
   }
 }
@@ -182,7 +188,7 @@ It2MeConfirmationDialogFactory::Create() {
 - (void)onAccept:(id)sender {
   [self hide];
   if (dialog_action_callback_) {
-    base::ResetAndReturn(&dialog_action_callback_)
+    std::move(dialog_action_callback_)
         .Run(remoting::It2MeConfirmationDialog::Result::OK);
   }
 }

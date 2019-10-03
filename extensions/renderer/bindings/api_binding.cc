@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -25,7 +24,7 @@
 #include "gin/arguments.h"
 #include "gin/handle.h"
 #include "gin/per_context_data.h"
-#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
+#include "third_party/blink/public/web/web_user_gesture_indicator.h"
 
 namespace extensions {
 
@@ -62,9 +61,38 @@ std::string GetJSEnumEntryName(const std::string& original) {
   return result;
 }
 
-void CallbackHelper(const v8::FunctionCallbackInfo<v8::Value>& info) {
+struct SignaturePair {
+  std::unique_ptr<APISignature> method_signature;
+  std::unique_ptr<APISignature> callback_signature;
+};
+
+SignaturePair GetAPISignatureFromDictionary(const base::DictionaryValue* dict) {
+  const base::ListValue* params = nullptr;
+  CHECK(dict->GetList("parameters", &params));
+
+  SignaturePair result;
+  result.method_signature = std::make_unique<APISignature>(*params);
+  // If response validation is enabled, parse the callback signature. Otherwise,
+  // there's no reason to, so don't bother.
+  if (result.method_signature->has_callback() &&
+      binding::IsResponseValidationEnabled()) {
+    const base::Value* callback_params = params->GetList().back().FindKeyOfType(
+        "parameters", base::Value::Type::LIST);
+    if (callback_params) {
+      const base::ListValue* params_as_list = nullptr;
+      callback_params->GetAsList(&params_as_list);
+      result.callback_signature =
+          std::make_unique<APISignature>(*params_as_list);
+    }
+  }
+
+  return result;
+}
+
+void RunAPIBindingHandlerCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
   gin::Arguments args(info);
-  if (!binding::IsContextValid(args.isolate()->GetCurrentContext()))
+  if (!binding::IsContextValidOrThrowError(args.isolate()->GetCurrentContext()))
     return;
 
   v8::Local<v8::External> external;
@@ -175,8 +203,8 @@ APIBinding::APIBinding(const std::string& api_name,
                        const base::ListValue* type_definitions,
                        const base::ListValue* event_definitions,
                        const base::DictionaryValue* property_definitions,
-                       const CreateCustomType& create_custom_type,
-                       const OnSilentRequest& on_silent_request,
+                       CreateCustomType create_custom_type,
+                       OnSilentRequest on_silent_request,
                        std::unique_ptr<APIBindingHooks> binding_hooks,
                        APITypeReferenceMap* type_refs,
                        APIRequestHandler* request_handler,
@@ -184,14 +212,13 @@ APIBinding::APIBinding(const std::string& api_name,
                        BindingAccessChecker* access_checker)
     : api_name_(api_name),
       property_definitions_(property_definitions),
-      create_custom_type_(create_custom_type),
-      on_silent_request_(on_silent_request),
+      create_custom_type_(std::move(create_custom_type)),
+      on_silent_request_(std::move(on_silent_request)),
       binding_hooks_(std::move(binding_hooks)),
       type_refs_(type_refs),
       request_handler_(request_handler),
       event_handler_(event_handler),
-      access_checker_(access_checker),
-      weak_factory_(this) {
+      access_checker_(access_checker) {
   // TODO(devlin): It might make sense to instantiate the object_template_
   // directly here, which would avoid the need to hold on to
   // |property_definitions_| and |enums_|. However, there are *some* cases where
@@ -205,20 +232,23 @@ APIBinding::APIBinding(const std::string& api_name,
       std::string name;
       CHECK(func_dict->GetString("name", &name));
 
-      const base::ListValue* params = nullptr;
-      CHECK(func_dict->GetList("parameters", &params));
+      SignaturePair signatures = GetAPISignatureFromDictionary(func_dict);
 
       bool for_io_thread = false;
       func_dict->GetBoolean("forIOThread", &for_io_thread);
 
-      auto signature = std::make_unique<APISignature>(*params);
       std::string full_name =
           base::StringPrintf("%s.%s", api_name_.c_str(), name.c_str());
       methods_[name] = std::make_unique<MethodData>(
-          full_name, signature.get(),
+          full_name, signatures.method_signature.get(),
           for_io_thread ? binding::RequestThread::IO
                         : binding::RequestThread::UI);
-      type_refs->AddAPIMethodSignature(full_name, std::move(signature));
+      type_refs->AddAPIMethodSignature(full_name,
+                                       std::move(signatures.method_signature));
+      if (signatures.callback_signature) {
+        type_refs->AddCallbackSignature(
+            full_name, std::move(signatures.callback_signature));
+      }
     }
   }
 
@@ -254,11 +284,16 @@ APIBinding::APIBinding(const std::string& api_name,
           std::string function_name;
           CHECK(func_dict->GetString("name", &function_name));
 
-          const base::ListValue* params = nullptr;
-          CHECK(func_dict->GetList("parameters", &params));
+          SignaturePair signatures = GetAPISignatureFromDictionary(func_dict);
+
+          std::string full_name =
+              base::StringPrintf("%s.%s", id.c_str(), function_name.c_str());
           type_refs->AddTypeMethodSignature(
-              base::StringPrintf("%s.%s", id.c_str(), function_name.c_str()),
-              std::make_unique<APISignature>(*params));
+              full_name, std::move(signatures.method_signature));
+          if (signatures.callback_signature) {
+            type_refs->AddCallbackSignature(
+                full_name, std::move(signatures.callback_signature));
+          }
         }
       }
     }
@@ -381,12 +416,12 @@ void APIBinding::InitializeTemplate(v8::Isolate* isolate) {
     MethodData& method = *key_value.second;
     DCHECK(method.callback.is_null());
     method.callback =
-        base::Bind(&APIBinding::HandleCall, weak_factory_.GetWeakPtr(),
-                   method.full_name, method.signature, method.thread);
+        base::BindRepeating(&APIBinding::HandleCall, weak_factory_.GetWeakPtr(),
+                            method.full_name, method.signature, method.thread);
 
     object_template->Set(
         gin::StringToSymbol(isolate, key_value.first),
-        v8::FunctionTemplate::New(isolate, &CallbackHelper,
+        v8::FunctionTemplate::New(isolate, &RunAPIBindingHandlerCallback,
                                   v8::External::New(isolate, &method.callback),
                                   v8::Local<v8::Signature>(), 0,
                                   v8::ConstructorBehavior::kThrow));
@@ -507,7 +542,7 @@ void APIBinding::GetEventObject(
   v8::Isolate* isolate = info.GetIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context = info.Holder()->CreationContext();
-  if (!binding::IsContextValid(context))
+  if (!binding::IsContextValidOrThrowError(context))
     return;
 
   CHECK(info.Data()->IsExternal());
@@ -595,6 +630,11 @@ void APIBinding::HandleCall(const std::string& name,
         DCHECK(try_catch.HasCaught());
         try_catch.ReThrow();
         return;
+      case APIBindingHooks::RequestResult::CONTEXT_INVALIDATED:
+        DCHECK(!binding::IsContextValid(context));
+        // The context was invalidated during the course of running the custom
+        // hooks. Bail.
+        return;
       case APIBindingHooks::RequestResult::HANDLED:
         if (!hooks_result.return_value.IsEmpty())
           arguments->Return(hooks_result.return_value);
@@ -608,7 +648,8 @@ void APIBinding::HandleCall(const std::string& name,
 
         return;  // Our work here is done.
       case APIBindingHooks::RequestResult::ARGUMENTS_UPDATED:
-        updated_args = true;  // Intentional fall-through.
+        updated_args = true;
+        FALLTHROUGH;
       case APIBindingHooks::RequestResult::NOT_HANDLED:
         break;  // Handle in the default manner.
     }
@@ -621,8 +662,7 @@ void APIBinding::HandleCall(const std::string& name,
     return;
   }
 
-  std::unique_ptr<base::ListValue> converted_arguments;
-  v8::Local<v8::Function> callback;
+  APISignature::JSONParseResult parse_result;
   {
     v8::TryCatch try_catch(isolate);
 
@@ -635,33 +675,30 @@ void APIBinding::HandleCall(const std::string& name,
     // here, but it also means we can't auto-generate the params for the
     // function on the browser side.
     if (updated_args) {
-      bool success = signature->ConvertArgumentsIgnoringSchema(
-          context, argument_list, &converted_arguments, &callback);
-      if (!success) {
-        // Converted arguments passed to us by our bindings should never fail.
-        NOTREACHED();
-        return;
-      }
+      parse_result =
+          signature->ConvertArgumentsIgnoringSchema(context, argument_list);
+      // Converted arguments passed to us by our bindings should never fail.
+      DCHECK(parse_result.succeeded());
     } else {
-      invalid_invocation = !signature->ParseArgumentsToJSON(
-          context, argument_list, *type_refs_, &converted_arguments, &callback,
-          &error);
+      parse_result =
+          signature->ParseArgumentsToJSON(context, argument_list, *type_refs_);
     }
 
     if (try_catch.HasCaught()) {
-      DCHECK(!converted_arguments);
+      DCHECK(!parse_result.succeeded());
       try_catch.ReThrow();
       return;
     }
   }
-  if (invalid_invocation) {
+  if (!parse_result.succeeded()) {
     arguments->ThrowTypeError(api_errors::InvocationError(
-        name, signature->GetExpectedSignature(), error));
+        name, signature->GetExpectedSignature(), *parse_result.error));
     return;
   }
 
-  request_handler_->StartRequest(context, name, std::move(converted_arguments),
-                                 callback, custom_callback, thread);
+  request_handler_->StartRequest(
+      context, name, std::move(parse_result.arguments), parse_result.callback,
+      custom_callback, thread);
 }
 
 }  // namespace extensions

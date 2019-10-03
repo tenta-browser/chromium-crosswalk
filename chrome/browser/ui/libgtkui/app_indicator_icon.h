@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/nix/xdg_util.h"
-#include "chrome/browser/ui/libgtkui/gtk_signal.h"
+#include "ui/base/glib/glib_signal.h"
 #include "ui/views/linux_ui/status_icon_linux.h"
 
 typedef struct _AppIndicator AppIndicator;
@@ -44,7 +44,7 @@ class AppIndicatorIcon : public views::StatusIconLinux {
   static bool CouldOpen();
 
   // Overridden from views::StatusIconLinux:
-  void SetImage(const gfx::ImageSkia& image) override;
+  void SetIcon(const gfx::ImageSkia& image) override;
   void SetToolTip(const base::string16& tool_tip) override;
   void UpdatePlatformContextMenu(ui::MenuModel* menu) override;
   void RefreshPlatformContextMenu() override;
@@ -100,7 +100,7 @@ class AppIndicatorIcon : public views::StatusIconLinux {
   base::FilePath temp_dir_;
   int icon_change_count_;
 
-  base::WeakPtrFactory<AppIndicatorIcon> weak_factory_;
+  base::WeakPtrFactory<AppIndicatorIcon> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppIndicatorIcon);
 };

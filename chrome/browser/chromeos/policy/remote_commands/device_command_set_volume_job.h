@@ -19,14 +19,12 @@ class DeviceCommandSetVolumeJob : public RemoteCommandJob {
 
   // RemoteCommandJob:
   enterprise_management::RemoteCommand_Type GetType() const override;
-  base::TimeDelta GetCommmandTimeout() const override;
 
  protected:
   // RemoteCommandJob:
   bool ParseCommandPayload(const std::string& command_payload) override;
-  bool IsExpired(base::TimeTicks now) override;
-  void RunImpl(const CallbackWithResult& succeeded_callback,
-               const CallbackWithResult& failed_callback) override;
+  void RunImpl(CallbackWithResult succeeded_callback,
+               CallbackWithResult failed_callback) override;
 
  private:
   // New volume level to be set, value in range [0,100].

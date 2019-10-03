@@ -18,8 +18,8 @@ solution and guidelines for future developments.
 - **Allow for radical UI changes.** The core architecture of the package should
   be structured to allow for flexibility and experimentation in the UI. This
   means it generally shouldn't be tied to any particular UI surface, and
-  specifically that it is flexible enough to accomodate both the NTP and Chrome
-  Home.
+  specifically that it is flexible enough to accomodate both the current NTP and
+  its evolutions.
 
 
 ## Principles
@@ -145,17 +145,6 @@ javadoc and the unit tests for more info.
 - [`ContextMenuManager.Delegate`](../ntp/ContextMenuManager.java)
 
 
-### BottomSheet vs NewTabPage
-
-The suggestions were initially only displayed on New Tab pages. They had a
-fairly standard lifecycle, like other Native Pages, as an independent page
-created and rendered when the user opens it. When ChromeHome is enabled, the
-suggestions move to the bottom sheet and become part of the Chrome UI.
-
-Lifecycle differences are discussed in a
-[separate document (internal)](https://docs.google.com/document/d/1roFf_B9rNj49PzaEnzh0AljKj63M7m30RlvLZ-oAt08/preview)
-
-
 ## Appendix
 
 ### Sample operations
@@ -186,7 +175,7 @@ Sample code path: [`SigninPromo.SigninObserver#onSignedOut()`][cs_link_1]
 - The Adapter transfers the ViewHolder down the tree to the leaf associated to
   that position
 - The leaf node updates the view holder with the data to be displayed.
-- The RecyclerView perfoms the associated canned animation, attaches the view
+- The RecyclerView performs the associated canned animation, attaches the view
   and displays it.
 
 [cs_link_1]: https://cs.chromium.org/chromium/src/chrome/android/java/src/org/chromium/chrome/browser/ntp/cards/SignInPromo.java?l=174&rcl=da4b23b1d2a82705f7f4fdfb6c9c8de00341c0af

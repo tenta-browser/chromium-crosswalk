@@ -4,6 +4,7 @@
 
 #include "extensions/browser/api/document_scan/document_scan_interface_chromeos.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
@@ -14,9 +15,9 @@
 
 namespace {
 
-const char kImageScanFailedError[] = "Image scan failed";
-const char kScannerImageMimeTypePng[] = "image/png";
-const char kPngImageDataUrlPrefix[] = "data:image/png;base64,";
+constexpr char kImageScanFailedError[] = "Image scan failed";
+constexpr char kScannerImageMimeTypePng[] = "image/png";
+constexpr char kPngImageDataUrlPrefix[] = "data:image/png;base64,";
 
 chromeos::LorgnetteManagerClient* GetLorgnetteManagerClient() {
   DCHECK(chromeos::DBusThreadManager::IsInitialized());
@@ -26,7 +27,6 @@ chromeos::LorgnetteManagerClient* GetLorgnetteManagerClient() {
 }  // namespace
 
 namespace extensions {
-
 namespace api {
 
 DocumentScanInterfaceChromeos::DocumentScanInterfaceChromeos() = default;
@@ -34,44 +34,45 @@ DocumentScanInterfaceChromeos::DocumentScanInterfaceChromeos() = default;
 DocumentScanInterfaceChromeos::~DocumentScanInterfaceChromeos() = default;
 
 void DocumentScanInterfaceChromeos::ListScanners(
-    const ListScannersResultsCallback& callback) {
+    ListScannersResultsCallback callback) {
   GetLorgnetteManagerClient()->ListScanners(
-      base::Bind(&DocumentScanInterfaceChromeos::OnScannerListReceived,
-                 base::Unretained(this), callback));
+      base::BindOnce(&DocumentScanInterfaceChromeos::OnScannerListReceived,
+                     base::Unretained(this), std::move(callback)));
 }
 
 void DocumentScanInterfaceChromeos::OnScannerListReceived(
-    const ListScannersResultsCallback& callback,
-    bool succeeded,
-    const chromeos::LorgnetteManagerClient::ScannerTable& scanners) {
+    ListScannersResultsCallback callback,
+    base::Optional<chromeos::LorgnetteManagerClient::ScannerTable> scanners) {
   std::vector<ScannerDescription> scanner_descriptions;
-  for (const auto& scanner : scanners) {
-    ScannerDescription description;
-    description.name = scanner.first;
-    const auto& entry = scanner.second;
-    auto info_it = entry.find(lorgnette::kScannerPropertyManufacturer);
-    if (info_it != entry.end()) {
-      description.manufacturer = info_it->second;
+  if (scanners.has_value()) {
+    for (const auto& scanner : scanners.value()) {
+      ScannerDescription description;
+      description.name = scanner.first;
+      const auto& entry = scanner.second;
+      auto info_it = entry.find(lorgnette::kScannerPropertyManufacturer);
+      if (info_it != entry.end()) {
+        description.manufacturer = info_it->second;
+      }
+      info_it = entry.find(lorgnette::kScannerPropertyModel);
+      if (info_it != entry.end()) {
+        description.model = info_it->second;
+      }
+      info_it = entry.find(lorgnette::kScannerPropertyType);
+      if (info_it != entry.end()) {
+        description.scanner_type = info_it->second;
+      }
+      description.image_mime_type = kScannerImageMimeTypePng;
+      scanner_descriptions.push_back(description);
     }
-    info_it = entry.find(lorgnette::kScannerPropertyModel);
-    if (info_it != entry.end()) {
-      description.model = info_it->second;
-    }
-    info_it = entry.find(lorgnette::kScannerPropertyType);
-    if (info_it != entry.end()) {
-      description.scanner_type = info_it->second;
-    }
-    description.image_mime_type = kScannerImageMimeTypePng;
-    scanner_descriptions.push_back(description);
   }
   const std::string kNoError;
-  callback.Run(scanner_descriptions, kNoError);
+  std::move(callback).Run(scanner_descriptions, kNoError);
 }
 
 void DocumentScanInterfaceChromeos::Scan(const std::string& scanner_name,
                                          ScanMode mode,
                                          int resolution_dpi,
-                                         const ScanResultsCallback& callback) {
+                                         ScanResultsCallback callback) {
   VLOG(1) << "Choosing scanner " << scanner_name;
   chromeos::LorgnetteManagerClient::ScanProperties properties;
   switch (mode) {
@@ -94,25 +95,23 @@ void DocumentScanInterfaceChromeos::Scan(const std::string& scanner_name,
 
   GetLorgnetteManagerClient()->ScanImageToString(
       scanner_name, properties,
-      base::Bind(&DocumentScanInterfaceChromeos::OnScanCompleted,
-                 base::Unretained(this), callback));
+      base::BindOnce(&DocumentScanInterfaceChromeos::OnScanCompleted,
+                     base::Unretained(this), std::move(callback)));
 }
 
 void DocumentScanInterfaceChromeos::OnScanCompleted(
-    const ScanResultsCallback& callback,
-    bool succeeded,
-    const std::string& image_data) {
-  VLOG(1) << "ScanImage returns " << succeeded;
-  std::string error_string;
-  if (!succeeded) {
-    error_string = kImageScanFailedError;
+    ScanResultsCallback callback,
+    base::Optional<std::string> image_data) {
+  VLOG(1) << "ScanImage returns " << image_data.has_value();
+  if (!image_data.has_value()) {
+    std::move(callback).Run(std::string(), std::string(),
+                            kImageScanFailedError);
+    return;
   }
-
   std::string image_base64;
-  base::Base64Encode(image_data, &image_base64);
-  std::string image_url(std::string(kPngImageDataUrlPrefix) + image_base64);
-
-  callback.Run(image_url, kScannerImageMimeTypePng, error_string);
+  base::Base64Encode(image_data.value(), &image_base64);
+  std::move(callback).Run(kPngImageDataUrlPrefix + image_base64,
+                          kScannerImageMimeTypePng, std::string() /* error */);
 }
 
 // static
@@ -121,5 +120,4 @@ DocumentScanInterface* DocumentScanInterface::CreateInstance() {
 }
 
 }  // namespace api
-
 }  // namespace extensions

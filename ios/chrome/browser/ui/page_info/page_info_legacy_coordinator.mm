@@ -8,20 +8,27 @@
 
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
+#include "ios/chrome/browser/reading_list/features.h"
+#import "ios/chrome/browser/reading_list/offline_page_tab_helper.h"
 #include "ios/chrome/browser/reading_list/offline_url_utils.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/commands/page_info_commands.h"
+#import "ios/chrome/browser/ui/fullscreen/chrome_coordinator+fullscreen_disabling.h"
 #include "ios/chrome/browser/ui/page_info/page_info_model.h"
 #import "ios/chrome/browser/ui/page_info/page_info_view_controller.h"
 #import "ios/chrome/browser/ui/page_info/requirements/page_info_presentation.h"
 #import "ios/chrome/browser/ui/page_info/requirements/page_info_reloading.h"
-#import "ios/chrome/browser/ui/url_loader.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_manager.h"
-#include "ios/web/public/reload_type.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
+#import "ios/chrome/browser/url_loading/url_loading_service.h"
+#import "ios/chrome/browser/url_loading/url_loading_service_factory.h"
+#import "ios/chrome/browser/web_state_list/web_state_list.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/navigation/reload_type.h"
 #include "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/web_state.h"
 
@@ -44,23 +51,24 @@ NSString* const kPageInfoWillHideNotification =
 
 @implementation PageInfoLegacyCoordinator
 
-@synthesize browserState = _browserState;
 @synthesize dispatcher = _dispatcher;
-@synthesize loader = _loader;
 @synthesize pageInfoViewController = _pageInfoViewController;
 @synthesize presentationProvider = _presentationProvider;
 @synthesize tabModel = _tabModel;
 
-- (void)disconnect {
+#pragma mark - ChromeCoordinator
+
+- (void)stop {
+  [super stop];
   // DCHECK that the Page Info UI is not displayed before disconnecting.
   DCHECK(!self.pageInfoViewController);
-  self.browserState = nil;
   [self.dispatcher stopDispatchingToTarget:self];
   self.dispatcher = nil;
-  self.loader = nil;
   self.presentationProvider = nil;
   self.tabModel = nil;
 }
+
+#pragma mark - Public
 
 - (void)setDispatcher:(CommandDispatcher*)dispatcher {
   if (dispatcher == self.dispatcher)
@@ -75,9 +83,9 @@ NSString* const kPageInfoWillHideNotification =
 #pragma mark - PageInfoCommands
 
 - (void)showPageInfoForOriginPoint:(CGPoint)originPoint {
-  Tab* tab = self.tabModel.currentTab;
-  DCHECK([tab navigationManager]);
-  web::NavigationItem* navItem = [tab navigationManager]->GetVisibleItem();
+  web::WebState* webState = self.tabModel.webStateList->GetActiveWebState();
+  web::NavigationItem* navItem =
+      webState->GetNavigationManager()->GetVisibleItem();
 
   // It is fully expected to have a navItem here, as showPageInfoPopup can only
   // be trigerred by a button enabled when a current item matches some
@@ -86,13 +94,6 @@ NSString* const kPageInfoWillHideNotification =
   DCHECK(navItem);
   if (!navItem)
     return;
-
-  // Don't show if the page is native except for offline pages (to show the
-  // offline page info).
-  if (web::GetWebClient()->IsAppSpecificURL(navItem->GetURL()) &&
-      !reading_list::IsOfflineURL(navItem->GetURL())) {
-    return;
-  }
 
   // Don't show the bubble twice (this can happen when tapping very quickly in
   // accessibility mode).
@@ -107,10 +108,24 @@ NSString* const kPageInfoWillHideNotification =
       postNotificationName:kPageInfoWillShowNotification
                     object:nil];
 
+  // Disable fullscreen while the page info UI is displayed.
+  [self didStartFullscreenDisablingUI];
+
+  GURL url = navItem->GetURL();
+  bool presenting_offline_page = false;
+  if (reading_list::IsOfflinePageWithoutNativeContentEnabled()) {
+    presenting_offline_page =
+        OfflinePageTabHelper::FromWebState(webState)->presenting_offline_page();
+  } else {
+    presenting_offline_page =
+        url.SchemeIs(kChromeUIScheme) && url.host() == kChromeUIOfflineHost;
+  }
+
   // TODO(crbug.com/760387): Get rid of PageInfoModel completely.
   PageInfoModelBubbleBridge* bridge = new PageInfoModelBubbleBridge();
-  PageInfoModel* pageInfoModel = new PageInfoModel(
-      self.browserState, navItem->GetURL(), navItem->GetSSL(), bridge);
+  PageInfoModel* pageInfoModel =
+      new PageInfoModel(self.browserState, navItem->GetURL(), navItem->GetSSL(),
+                        presenting_offline_page, bridge);
 
   CGPoint originPresentationCoordinates = [self.presentationProvider
       convertToPresentationCoordinatesForOrigin:originPoint];
@@ -132,22 +147,24 @@ NSString* const kPageInfoWillHideNotification =
       postNotificationName:kPageInfoWillHideNotification
                     object:nil];
 
+  // Stop disabling fullscreen since the page info UI was stopped.
+  [self didStopFullscreenDisablingUI];
+
   [self.pageInfoViewController dismiss];
   self.pageInfoViewController = nil;
 }
 
 - (void)showSecurityHelpPage {
-  [self.loader webPageOrderedOpen:GURL(kPageInfoHelpCenterURL)
-                         referrer:web::Referrer()
-                     inBackground:NO
-                         appendTo:kCurrentTab];
+  UrlLoadParams params = UrlLoadParams::InNewTab(GURL(kPageInfoHelpCenterURL));
+  params.in_incognito = self.browserState->IsOffTheRecord();
+  UrlLoadingServiceFactory::GetForBrowserState(self.browserState)->Load(params);
   [self hidePageInfo];
 }
 
 #pragma mark - PageInfoReloading
 
 - (void)reload {
-  web::WebState* webState = self.tabModel.currentTab.webState;
+  web::WebState* webState = self.tabModel.webStateList->GetActiveWebState();
   if (webState) {
     // |check_for_repost| is true because the reload is explicitly initiated
     // by the user.

@@ -11,18 +11,25 @@
 #include <string>
 #include <vector>
 
-#include "ash/first_run/first_run_helper.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/callback.h"
-#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/chromeos/first_run/first_run_actor.h"
+#include "ui/gfx/geometry/size.h"
 
 class Profile;
 
+namespace ash {
+class FirstRunHelper;
+}
+
 namespace content {
 class WebContents;
+}
+
+namespace views {
+class Widget;
 }
 
 namespace chromeos {
@@ -36,10 +43,7 @@ class Step;
 // FirstRunController creates and manages first-run tutorial.
 // Object manages its lifetime and deletes itself after completion of the
 // tutorial.
-class FirstRunController : public FirstRunActor::Delegate,
-                           public ash::FirstRunHelper::Observer {
-  typedef std::vector<linked_ptr<first_run::Step> > Steps;
-
+class FirstRunController : public FirstRunActor::Delegate {
  public:
   ~FirstRunController() override;
 
@@ -48,6 +52,17 @@ class FirstRunController : public FirstRunActor::Delegate,
 
   // Finalizes first-run tutorial and destroys UI.
   static void Stop();
+
+  // Returns the size of the semi-transparent overlay window in DIPs.
+  gfx::Size GetOverlaySize() const;
+
+  // Returns the shelf alignment on the primary display.
+  ash::ShelfAlignment GetShelfAlignment() const;
+
+  // Stops the tutorial and records early cancellation metrics.
+  void Cancel();
+
+  ash::FirstRunHelper* first_run_helper() { return first_run_helper_.get(); }
 
  private:
   friend class FirstRunUIBrowserTest;
@@ -67,8 +82,7 @@ class FirstRunController : public FirstRunActor::Delegate,
   void OnActorFinalized() override;
   void OnActorDestroyed() override;
 
-  // Overriden from ash::FirstRunHelper::Observer.
-  void OnCancelled() override;
+  void OnCancelled();
 
   void RegisterSteps();
   void ShowNextStep();
@@ -79,11 +93,10 @@ class FirstRunController : public FirstRunActor::Delegate,
   // FirstRunController.
   FirstRunActor* actor_;
 
-  // Helper for manipulating and retreiving information from Shell.
-  std::unique_ptr<ash::FirstRunHelper> shell_helper_;
+  std::unique_ptr<ash::FirstRunHelper> first_run_helper_;
 
   // List of all tutorial steps.
-  Steps steps_;
+  std::vector<std::unique_ptr<first_run::Step>> steps_;
 
   // Index of step that is currently shown.
   size_t current_step_index_;
@@ -93,6 +106,9 @@ class FirstRunController : public FirstRunActor::Delegate,
 
   // The work that should be made after actor has been finalized.
   base::Closure on_actor_finalized_;
+
+  // Widget containing the first-run webui.
+  std::unique_ptr<views::Widget> widget_;
 
   // Web contents of WebUI.
   content::WebContents* web_contents_for_tests_;
@@ -106,4 +122,3 @@ class FirstRunController : public FirstRunActor::Delegate,
 }  // namespace chromeos
 
 #endif  // CHROME_BROWSER_CHROMEOS_FIRST_RUN_FIRST_RUN_CONTROLLER_H_
-

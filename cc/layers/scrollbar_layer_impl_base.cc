@@ -26,7 +26,9 @@ ScrollbarLayerImplBase::ScrollbarLayerImplBase(
       scroll_layer_length_(0.f),
       orientation_(orientation),
       is_left_side_vertical_scrollbar_(is_left_side_vertical_scrollbar),
-      vertical_adjust_(0.f) {}
+      vertical_adjust_(0.f) {
+  set_is_scrollbar(true);
+}
 
 ScrollbarLayerImplBase::~ScrollbarLayerImplBase() {
   layer_tree_impl()->UnregisterScrollbar(this);
@@ -85,6 +87,12 @@ bool ScrollbarLayerImplBase::CanScrollOrientation() const {
   const auto* scroll_node =
       property_trees->scroll_tree.FindNodeFromElementId(scroll_element_id_);
   DCHECK(scroll_node);
+  // TODO(bokan): Looks like we sometimes get here without a ScrollNode. It
+  // should be safe to just return false here (we don't use scroll_element_id_
+  // anywhere else) so we can merge the fix. Once merged, will investigate the
+  // underlying cause. https://crbug.com/924068.
+  if (!scroll_node)
+    return false;
 
   if (orientation() == ScrollbarOrientation::HORIZONTAL) {
     if (!scroll_node->user_scrollable_horizontal)
@@ -268,6 +276,53 @@ void ScrollbarLayerImplBase::SetOverlayScrollbarLayerOpacityAnimated(
 LayerTreeSettings::ScrollbarAnimator
 ScrollbarLayerImplBase::GetScrollbarAnimator() const {
   return layer_tree_impl()->settings().scrollbar_animator;
+}
+
+bool ScrollbarLayerImplBase::HasFindInPageTickmarks() const {
+  return false;
+}
+
+gfx::Rect ScrollbarLayerImplBase::BackButtonRect() const {
+  return gfx::Rect(0, 0);
+}
+
+gfx::Rect ScrollbarLayerImplBase::ForwardButtonRect() const {
+  return gfx::Rect(0, 0);
+}
+
+gfx::Rect ScrollbarLayerImplBase::BackTrackRect() const {
+  return gfx::Rect(0, 0);
+}
+
+gfx::Rect ScrollbarLayerImplBase::ForwardTrackRect() const {
+  return gfx::Rect(0, 0);
+}
+
+// This manages identifying which part of a composited scrollbar got hit based
+// on the position_in_widget.
+ScrollbarPart ScrollbarLayerImplBase::IdentifyScrollbarPart(
+    const gfx::PointF position_in_widget) const {
+  const gfx::Point pointer_location(position_in_widget.x(),
+                                    position_in_widget.y());
+  if (BackButtonRect().Contains(pointer_location))
+    return ScrollbarPart::BACK_BUTTON;
+
+  if (ForwardButtonRect().Contains(pointer_location))
+    return ScrollbarPart::FORWARD_BUTTON;
+
+  if (ComputeThumbQuadRect().Contains(pointer_location))
+    return ScrollbarPart::THUMB;
+
+  if (BackTrackRect().Contains(pointer_location))
+    return ScrollbarPart::BACK_TRACK;
+
+  if (ForwardTrackRect().Contains(pointer_location))
+    return ScrollbarPart::FORWARD_TRACK;
+
+  // TODO(arakeri): Once crbug.com/952314 is fixed, add a DCHECK to verify that
+  // the point that is passed in is within the TrackRect. Also, please note that
+  // hit testing other scrollbar parts is not yet implemented.
+  return ScrollbarPart::NO_PART;
 }
 
 }  // namespace cc

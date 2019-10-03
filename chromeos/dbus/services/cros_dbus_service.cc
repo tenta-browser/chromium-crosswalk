@@ -11,8 +11,7 @@
 
 #include "base/bind.h"
 #include "base/stl_util.h"
-#include "base/sys_info.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "base/system/sys_info.h"
 #include "dbus/bus.h"
 #include "dbus/exported_object.h"
 #include "dbus/object_path.h"
@@ -46,6 +45,12 @@ class CrosDBusServiceImpl : public CrosDBusService {
     DCHECK(OnOriginThread());
     DCHECK(!service_started_);
 
+    // Methods must be exported before RequestOwnership is called:
+    // https://crbug.com/874978
+    exported_object_ = bus_->GetExportedObject(object_path_);
+    for (const auto& provider : service_providers_)
+      provider->Start(exported_object_);
+
     // There are some situations, described in http://crbug.com/234382#c27,
     // where processes on Linux can wind up stuck in an uninterruptible state
     // for tens of seconds. If this happens when Chrome is trying to exit, this
@@ -57,10 +62,6 @@ class CrosDBusServiceImpl : public CrosDBusService {
     bus_->RequestOwnership(
         service_name_, dbus::Bus::REQUIRE_PRIMARY_ALLOW_REPLACEMENT,
         base::Bind(&CrosDBusServiceImpl::OnOwnership, base::Unretained(this)));
-
-    exported_object_ = bus_->GetExportedObject(object_path_);
-    for (size_t i = 0; i < service_providers_.size(); ++i)
-      service_providers_[i]->Start(exported_object_);
 
     service_started_ = true;
   }
@@ -103,14 +104,15 @@ class CrosDBusServiceStubImpl : public CrosDBusService {
 
 // static
 std::unique_ptr<CrosDBusService> CrosDBusService::Create(
+    dbus::Bus* system_bus,
     const std::string& service_name,
     const dbus::ObjectPath& object_path,
     ServiceProviderList service_providers) {
-  if (DBusThreadManager::Get()->IsUsingFakes())
+  if (!system_bus)
     return std::make_unique<CrosDBusServiceStubImpl>();
 
-  return CreateRealImpl(DBusThreadManager::Get()->GetSystemBus(), service_name,
-                        object_path, std::move(service_providers));
+  return CreateRealImpl(system_bus, service_name, object_path,
+                        std::move(service_providers));
 }
 
 // static

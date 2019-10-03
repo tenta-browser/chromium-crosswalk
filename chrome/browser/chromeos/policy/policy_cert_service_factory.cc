@@ -7,7 +7,6 @@
 #include "base/memory/singleton.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service.h"
-#include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
 #include "chrome/browser/chromeos/policy/user_network_configuration_updater_factory.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
@@ -17,6 +16,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
+#include "services/network/cert_verifier_with_trust_anchors.h"
 
 namespace policy {
 
@@ -27,14 +27,17 @@ PolicyCertService* PolicyCertServiceFactory::GetForProfile(Profile* profile) {
 }
 
 // static
-std::unique_ptr<PolicyCertVerifier> PolicyCertServiceFactory::CreateForProfile(
+bool PolicyCertServiceFactory::CreateAndStartObservingForProfile(
     Profile* profile) {
-  DCHECK(!GetInstance()->GetServiceForBrowserContext(profile, false));
+  // This can be called multiple times if the network process crashes.
+  if (GetInstance()->GetServiceForBrowserContext(profile, false))
+    return true;
   PolicyCertService* service = static_cast<PolicyCertService*>(
       GetInstance()->GetServiceForBrowserContext(profile, true));
   if (!service)
-    return std::unique_ptr<PolicyCertVerifier>();
-  return service->CreatePolicyCertVerifier();
+    return false;
+  service->StartObservingPolicyCerts();
+  return true;
 }
 
 // static
@@ -99,11 +102,11 @@ KeyedService* PolicyCertServiceFactory::BuildServiceInstanceFor(
     return NULL;
 
   UserNetworkConfigurationUpdater* net_conf_updater =
-      UserNetworkConfigurationUpdaterFactory::GetForProfile(profile);
+      UserNetworkConfigurationUpdaterFactory::GetForBrowserContext(profile);
   if (!net_conf_updater)
     return NULL;
 
-  return new PolicyCertService(user->GetAccountId().GetUserEmail(),
+  return new PolicyCertService(profile, user->GetAccountId().GetUserEmail(),
                                net_conf_updater, user_manager);
 }
 

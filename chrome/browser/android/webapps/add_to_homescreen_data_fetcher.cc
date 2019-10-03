@@ -6,28 +6,31 @@
 
 #include <vector>
 
+#include "base/android/build_info.h"
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/android/shortcut_helper.h"
+#include "chrome/browser/android/webapk/chrome_webapk_host.h"
 #include "chrome/browser/android/webapk/webapk_web_manifest_checker.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/installable/installable_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
-#include "chrome/common/render_messages.h"
 #include "chrome/common/web_application_info.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/favicon_types.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/manifest_icon_selector.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/manifest.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
+#include "third_party/blink/public/common/manifest/manifest_icon_selector.h"
+#include "third_party/blink/public/common/screen_orientation/web_screen_orientation_lock_type.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/favicon_size.h"
 #include "url/gurl.h"
@@ -37,26 +40,33 @@ namespace {
 // Looks up the original, online, visible URL of |web_contents|. The current
 // visible URL may be a distilled article which is not appropriate for a home
 // screen shortcut.
-GURL GetShortcutUrl(const content::WebContents* web_contents) {
+GURL GetShortcutUrl(content::WebContents* web_contents) {
   return dom_distiller::url_utils::GetOriginalUrlFromDistillerUrl(
       web_contents->GetVisibleURL());
 }
 
-InstallableParams ParamsToPerformManifestAndIconFetch(
-    bool check_webapk_compatibility) {
+bool DoesAndroidSupportMaskableIconsForHomescreen() {
+  // TODO(crbug.com/977173): re-enable maskable icon support once server support
+  // is ready.
+  return false;
+}
+
+InstallableParams ParamsToPerformManifestAndIconFetch() {
   InstallableParams params;
   params.valid_primary_icon = true;
-  params.valid_badge_icon = check_webapk_compatibility;
+  params.prefer_maskable_icon = DoesAndroidSupportMaskableIconsForHomescreen();
+  params.valid_badge_icon = true;
   params.wait_for_worker = true;
   return params;
 }
 
-InstallableParams ParamsToPerformInstallableCheck(
-    bool check_webapk_compatibility) {
+InstallableParams ParamsToPerformInstallableCheck() {
   InstallableParams params;
-  params.valid_manifest = check_webapk_compatibility;
-  params.has_worker = check_webapk_compatibility;
-  params.valid_primary_icon = check_webapk_compatibility;
+  params.check_eligibility = true;
+  params.valid_manifest = true;
+  params.has_worker = true;
+  params.valid_primary_icon = true;
+  params.prefer_maskable_icon = DoesAndroidSupportMaskableIconsForHomescreen();
   params.wait_for_worker = true;
   return params;
 }
@@ -66,12 +76,11 @@ InstallableParams ParamsToPerformInstallableCheck(
 // - the generated icon
 // - whether |icon| was used in generating the launcher icon
 std::pair<SkBitmap, bool> CreateLauncherIconInBackground(const GURL& start_url,
-                                                         const SkBitmap& icon) {
-  base::AssertBlockingAllowed();
-
+                                                         const SkBitmap& icon,
+                                                         bool maskable) {
   bool is_generated = false;
   SkBitmap primary_icon = ShortcutHelper::FinalizeLauncherIconInBackground(
-      icon, start_url, &is_generated);
+      icon, maskable, start_url, &is_generated);
   return std::make_pair(primary_icon, is_generated);
 }
 
@@ -84,14 +93,14 @@ std::pair<SkBitmap, bool> CreateLauncherIconInBackground(const GURL& start_url,
 std::pair<SkBitmap, bool> CreateLauncherIconFromFaviconInBackground(
     const GURL& start_url,
     const favicon_base::FaviconRawBitmapResult& bitmap_result) {
-  base::AssertBlockingAllowed();
-
   SkBitmap decoded;
   if (bitmap_result.is_valid()) {
+    base::AssertLongCPUWorkAllowed();
     gfx::PNGCodec::Decode(bitmap_result.bitmap_data->front(),
                           bitmap_result.bitmap_data->size(), &decoded);
   }
-  return CreateLauncherIconInBackground(start_url, decoded);
+  return CreateLauncherIconInBackground(start_url, decoded,
+                                        /* maskable */ false);
 }
 
 void RecordAddToHomescreenDialogDuration(base::TimeDelta duration) {
@@ -103,30 +112,34 @@ void RecordAddToHomescreenDialogDuration(base::TimeDelta duration) {
 AddToHomescreenDataFetcher::AddToHomescreenDataFetcher(
     content::WebContents* web_contents,
     int data_timeout_ms,
-    bool check_webapk_compatibility,
     Observer* observer)
     : content::WebContentsObserver(web_contents),
       installable_manager_(InstallableManager::FromWebContents(web_contents)),
       observer_(observer),
       shortcut_info_(GetShortcutUrl(web_contents)),
+      has_maskable_primary_icon_(false),
       data_timeout_ms_(base::TimeDelta::FromMilliseconds(data_timeout_ms)),
-      check_webapk_compatibility_(check_webapk_compatibility),
-      is_waiting_for_web_application_info_(true),
       is_waiting_for_manifest_(true),
       weak_ptr_factory_(this) {
   DCHECK(shortcut_info_.url.is_valid());
 
   // Send a message to the renderer to retrieve information about the page.
-  content::RenderFrameHost* main_frame = web_contents->GetMainFrame();
-  main_frame->Send(
-      new ChromeFrameMsg_GetWebApplicationInfo(main_frame->GetRoutingID()));
+  chrome::mojom::ChromeRenderFrameAssociatedPtr chrome_render_frame;
+  web_contents->GetMainFrame()->GetRemoteAssociatedInterfaces()->GetInterface(
+      &chrome_render_frame);
+  // Bind the InterfacePtr into the callback so that it's kept alive
+  // until there's either a connection error or a response.
+  auto* web_app_info_proxy = chrome_render_frame.get();
+  web_app_info_proxy->GetWebApplicationInfo(base::Bind(
+      &AddToHomescreenDataFetcher::OnDidGetWebApplicationInfo,
+      weak_ptr_factory_.GetWeakPtr(), base::Passed(&chrome_render_frame)));
 }
 
 AddToHomescreenDataFetcher::~AddToHomescreenDataFetcher() {}
 
 void AddToHomescreenDataFetcher::OnDidGetWebApplicationInfo(
+    chrome::mojom::ChromeRenderFrameAssociatedPtr chrome_render_frame,
     const WebApplicationInfo& received_web_app_info) {
-  is_waiting_for_web_application_info_ = false;
   if (!web_contents())
     return;
 
@@ -174,26 +187,9 @@ void AddToHomescreenDataFetcher::OnDidGetWebApplicationInfo(
   start_time_ = base::TimeTicks::Now();
 
   installable_manager_->GetData(
-      ParamsToPerformManifestAndIconFetch(check_webapk_compatibility_),
-      base::Bind(&AddToHomescreenDataFetcher::OnDidGetManifestAndIcons,
-                 weak_ptr_factory_.GetWeakPtr()));
-}
-
-bool AddToHomescreenDataFetcher::OnMessageReceived(
-    const IPC::Message& message,
-    content::RenderFrameHost* sender) {
-  if (!is_waiting_for_web_application_info_)
-    return false;
-
-  bool handled = true;
-
-  IPC_BEGIN_MESSAGE_MAP(AddToHomescreenDataFetcher, message)
-    IPC_MESSAGE_HANDLER(ChromeFrameHostMsg_DidGetWebApplicationInfo,
-                        OnDidGetWebApplicationInfo)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-
-  return handled;
+      ParamsToPerformManifestAndIconFetch(),
+      base::BindOnce(&AddToHomescreenDataFetcher::OnDidGetManifestAndIcons,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AddToHomescreenDataFetcher::StopTimer() {
@@ -208,15 +204,8 @@ void AddToHomescreenDataFetcher::OnDataTimedout() {
   if (!web_contents())
     return;
 
-  if (is_waiting_for_manifest_)
-    installable_manager_->RecordAddToHomescreenManifestAndIconTimeout();
-  else
-    installable_manager_->RecordAddToHomescreenInstallabilityTimeout();
-
-  if (check_webapk_compatibility_)
-    observer_->OnDidDetermineWebApkCompatibility(false);
-  observer_->OnUserTitleAvailable(shortcut_info_.user_title,
-                                  shortcut_info_.url);
+  observer_->OnUserTitleAvailable(shortcut_info_.user_title, shortcut_info_.url,
+                                  false);
 
   CreateLauncherIcon(raw_primary_icon_);
 }
@@ -237,17 +226,15 @@ void AddToHomescreenDataFetcher::OnDidGetManifestAndIcons(
   // Do this after updating from the manifest for the case where a site has
   // a manifest with name and standalone specified, but no icons.
   if (data.manifest->IsEmpty() || !data.primary_icon) {
-    if (check_webapk_compatibility_)
-      observer_->OnDidDetermineWebApkCompatibility(false);
     observer_->OnUserTitleAvailable(shortcut_info_.user_title,
-                                    shortcut_info_.url);
+                                    shortcut_info_.url, false);
     StopTimer();
-    installable_manager_->RecordAddToHomescreenNoTimeout();
     FetchFavicon();
     return;
   }
 
   raw_primary_icon_ = *data.primary_icon;
+  has_maskable_primary_icon_ = data.has_maskable_primary_icon;
   shortcut_info_.best_primary_icon_url = data.primary_icon_url;
 
   // Save the splash screen URL for the later download.
@@ -256,19 +243,19 @@ void AddToHomescreenDataFetcher::OnDidGetManifestAndIcons(
   shortcut_info_.minimum_splash_image_size_in_px =
       ShortcutHelper::GetMinimumSplashImageSizeInPx();
   shortcut_info_.splash_image_url =
-      content::ManifestIconSelector::FindBestMatchingIcon(
+      blink::ManifestIconSelector::FindBestMatchingSquareIcon(
           data.manifest->icons, shortcut_info_.ideal_splash_image_size_in_px,
           shortcut_info_.minimum_splash_image_size_in_px,
-          content::Manifest::Icon::IconPurpose::ANY);
+          blink::Manifest::ImageResource::Purpose::ANY);
   if (data.badge_icon) {
     shortcut_info_.best_badge_icon_url = data.badge_icon_url;
     badge_icon_ = *data.badge_icon;
   }
 
   installable_manager_->GetData(
-      ParamsToPerformInstallableCheck(check_webapk_compatibility_),
-      base::Bind(&AddToHomescreenDataFetcher::OnDidPerformInstallableCheck,
-                 weak_ptr_factory_.GetWeakPtr()));
+      ParamsToPerformInstallableCheck(),
+      base::BindOnce(&AddToHomescreenDataFetcher::OnDidPerformInstallableCheck,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AddToHomescreenDataFetcher::OnDidPerformInstallableCheck(
@@ -278,19 +265,13 @@ void AddToHomescreenDataFetcher::OnDidPerformInstallableCheck(
   if (!web_contents())
     return;
 
-  installable_manager_->RecordAddToHomescreenNoTimeout();
-
-  bool webapk_compatible = false;
-  if (check_webapk_compatibility_) {
-    webapk_compatible =
-        (data.error_code == NO_ERROR_DETECTED && data.valid_manifest &&
-         data.has_worker && AreWebManifestUrlsWebApkCompatible(*data.manifest));
-    observer_->OnDidDetermineWebApkCompatibility(webapk_compatible);
-  }
-
+  bool webapk_compatible =
+      (data.errors.empty() && data.valid_manifest && data.has_worker &&
+       AreWebManifestUrlsWebApkCompatible(*data.manifest) &&
+       ChromeWebApkHost::CanInstallWebApk());
   observer_->OnUserTitleAvailable(
       webapk_compatible ? shortcut_info_.name : shortcut_info_.user_title,
-      shortcut_info_.url);
+      shortcut_info_.url, webapk_compatible);
   if (webapk_compatible) {
     shortcut_info_.UpdateSource(ShortcutInfo::SOURCE_ADD_TO_HOMESCREEN_PWA);
     NotifyObserver(std::make_pair(raw_primary_icon_, false /* is_generated */));
@@ -360,7 +341,8 @@ void AddToHomescreenDataFetcher::CreateLauncherIcon(const SkBitmap& icon) {
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&CreateLauncherIconInBackground, shortcut_info_.url, icon),
+      base::BindOnce(&CreateLauncherIconInBackground, shortcut_info_.url, icon,
+                     has_maskable_primary_icon_),
       base::BindOnce(&AddToHomescreenDataFetcher::NotifyObserver,
                      weak_ptr_factory_.GetWeakPtr()));
 }

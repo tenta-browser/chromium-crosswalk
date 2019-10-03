@@ -3,13 +3,13 @@
 # found in the LICENSE file.
 #
 # This script should not be run directly but sourced by the other
-# scripts (e.g. sysroot-creator-stretch.sh).  Its up to the parent scripts
+# scripts (e.g. sysroot-creator-sid.sh).  Its up to the parent scripts
 # to define certain environment variables: e.g.
 #  DISTRO=debian
-#  DIST=stretch
+#  DIST=sid
 #  # Similar in syntax to /etc/apt/sources.list
-#  APT_SOURCES_LIST="http://ftp.us.debian.org/debian/ stretch main"
-#  KEYRING_FILE=debian-archive-stretch-stable.gpg
+#  APT_SOURCES_LIST="http://ftp.us.debian.org/debian/ sid main"
+#  KEYRING_FILE=debian-archive-sid-stable.gpg
 #  DEBIAN_PACKAGES="gcc libz libssl"
 
 #@ This script builds Debian/Ubuntu sysroot images for building Google Chrome.
@@ -45,28 +45,30 @@ if [ -z "${DEBIAN_PACKAGES:-}" ]; then
 fi
 
 readonly HAS_ARCH_AMD64=${HAS_ARCH_AMD64:=0}
+readonly HAS_ARCH_AMD64MULTILIB=${HAS_ARCH_AMD64MULTILIB:=0}
 readonly HAS_ARCH_I386=${HAS_ARCH_I386:=0}
 readonly HAS_ARCH_ARM=${HAS_ARCH_ARM:=0}
 readonly HAS_ARCH_ARM64=${HAS_ARCH_ARM64:=0}
 readonly HAS_ARCH_MIPS=${HAS_ARCH_MIPS:=0}
 readonly HAS_ARCH_MIPS64EL=${HAS_ARCH_MIPS64EL:=0}
 
-readonly REQUIRED_TOOLS="curl gunzip"
+readonly REQUIRED_TOOLS="curl xzcat"
 
 ######################################################################
 # Package Config
 ######################################################################
 
-readonly PACKAGES_EXT=gz
+readonly PACKAGES_EXT=xz
 readonly RELEASE_FILE="Release"
 readonly RELEASE_FILE_GPG="Release.gpg"
 
-readonly DEBIAN_DEP_LIST_AMD64="packagelist.${DIST}.amd64"
-readonly DEBIAN_DEP_LIST_I386="packagelist.${DIST}.i386"
-readonly DEBIAN_DEP_LIST_ARM="packagelist.${DIST}.arm"
-readonly DEBIAN_DEP_LIST_ARM64="packagelist.${DIST}.arm64"
-readonly DEBIAN_DEP_LIST_MIPS="packagelist.${DIST}.mipsel"
-readonly DEBIAN_DEP_LIST_MIPS64EL="packagelist.${DIST}.mips64el"
+readonly DEBIAN_DEP_LIST_AMD64="generated_package_lists/${DIST}.amd64"
+readonly DEBIAN_DEP_LIST_AMD64MULTILIB="generated_package_lists/${DIST}.amd64-multilib"
+readonly DEBIAN_DEP_LIST_I386="generated_package_lists/${DIST}.i386"
+readonly DEBIAN_DEP_LIST_ARM="generated_package_lists/${DIST}.arm"
+readonly DEBIAN_DEP_LIST_ARM64="generated_package_lists/${DIST}.arm64"
+readonly DEBIAN_DEP_LIST_MIPS="generated_package_lists/${DIST}.mipsel"
+readonly DEBIAN_DEP_LIST_MIPS64EL="generated_package_lists/${DIST}.mips64el"
 
 
 ######################################################################
@@ -92,6 +94,19 @@ Usage() {
 }
 
 
+DownloadOrCopyNonUniqueFilename() {
+  # Use this function instead of DownloadOrCopy when the url uniquely
+  # identifies the file, but the filename (excluding the directory)
+  # does not.
+  local url="$1"
+  local dest="$2"
+
+  local hash="$(echo "$url" | sha256sum | cut -d' ' -f1)"
+
+  DownloadOrCopy "${url}" "${dest}.${hash}"
+  cp "${dest}.${hash}" "$dest"
+}
+
 DownloadOrCopy() {
   if [ -f "$2" ] ; then
     echo "$2 already in place"
@@ -99,14 +114,14 @@ DownloadOrCopy() {
   fi
 
   HTTP=0
-  echo "$1" | grep -qs ^http:// && HTTP=1
+  echo "$1" | grep -Eqs '^https?://' && HTTP=1
   if [ "$HTTP" = "1" ]; then
     SubBanner "downloading from $1 -> $2"
     # Appending the "$$" shell pid is necessary here to prevent concurrent
     # instances of sysroot-creator.sh from trying to write to the same file.
     # --create-dirs is added in case there are slashes in the filename, as can
     # happen with the "debian/security" release class.
-    curl "$1" --create-dirs -o "${2}.partial.$$"
+    curl -L "$1" --create-dirs -o "${2}.partial.$$"
     mv "${2}.partial.$$" $2
   else
     SubBanner "copying from $1"
@@ -116,27 +131,33 @@ DownloadOrCopy() {
 
 
 SetEnvironmentVariables() {
-  ARCH=""
-  echo $1 | grep -qs Amd64$ && ARCH=AMD64
-  if [ -z "$ARCH" ]; then
-    echo $1 | grep -qs I386$ && ARCH=I386
-  fi
-  if [ -z "$ARCH" ]; then
-    echo $1 | grep -qs Mips64el$ && ARCH=MIPS64EL
-  fi
-  if [ -z "$ARCH" ]; then
-    echo $1 | grep -qs Mips$ && ARCH=MIPS
-  fi
-  if [ -z "$ARCH" ]; then
-    echo $1 | grep -qs ARM$ && ARCH=ARM
-  fi
-  if [ -z "$ARCH" ]; then
-    echo $1 | grep -qs ARM64$ && ARCH=ARM64
-  fi
-  if [ -z "${ARCH}" ]; then
-    echo "ERROR: Unable to determine architecture based on: $1"
-    exit 1
-  fi
+  case $1 in
+    *Amd64)
+      ARCH=AMD64
+      ;;
+    *Amd64Multilib)
+      ARCH=AMD64MULTILIB
+      ;;
+    *I386)
+      ARCH=I386
+      ;;
+    *Mips64el)
+      ARCH=MIPS64EL
+      ;;
+    *Mips)
+      ARCH=MIPS
+      ;;
+    *ARM)
+      ARCH=ARM
+      ;;
+    *ARM64)
+      ARCH=ARM64
+      ;;
+    *)
+      echo "ERROR: Unable to determine architecture based on: $1"
+      exit 1
+      ;;
+  esac
   ARCH_LOWER=$(echo $ARCH | tr '[:upper:]' '[:lower:]')
 }
 
@@ -187,11 +208,11 @@ CreateTarBall() {
   tar -I "xz -9 -T0" -cf ${TARBALL} -C ${INSTALL_ROOT} .
 }
 
-ExtractPackageGz() {
+ExtractPackageXz() {
   local src_file="$1"
   local dst_file="$2"
   local repo="$3"
-  gunzip -c "${src_file}" | egrep '^(Package:|Filename:|SHA256:) ' |
+  xzcat "${src_file}" | egrep '^(Package:|Filename:|SHA256:) ' |
     sed "s|Filename: |Filename: ${repo}|" > "${dst_file}"
 }
 
@@ -208,9 +229,9 @@ GeneratePackageListDist() {
   local package_file_arch="${repo_name}/binary-${arch}/Packages.${PACKAGES_EXT}"
   local package_list_arch="${repo_basedir}/${package_file_arch}"
 
-  DownloadOrCopy "${package_list_arch}" "${package_list}"
+  DownloadOrCopyNonUniqueFilename "${package_list_arch}" "${package_list}"
   VerifyPackageListing "${package_file_arch}" "${package_list}" ${repo} ${dist}
-  ExtractPackageGz "${package_list}" "${TMP_PACKAGE_LIST}" ${repo}
+  ExtractPackageXz "${package_list}" "${TMP_PACKAGE_LIST}" ${repo}
 }
 
 GeneratePackageListCommon() {
@@ -234,6 +255,12 @@ GeneratePackageListCommon() {
 GeneratePackageListAmd64() {
   GeneratePackageListCommon "$1" amd64 "${DEBIAN_PACKAGES}
     ${DEBIAN_PACKAGES_X86:=} ${DEBIAN_PACKAGES_AMD64:=}"
+}
+
+GeneratePackageListAmd64Multilib() {
+  GeneratePackageListCommon "$1" amd64 "${DEBIAN_PACKAGES}
+    ${DEBIAN_PACKAGES_X86:=} ${DEBIAN_PACKAGES_AMD64:=}
+    ${DEBIAN_PACKAGES_AMD64MULTILIB:=}"
 }
 
 GeneratePackageListI386() {
@@ -265,17 +292,6 @@ StripChecksumsFromPackageList() {
   sed -i 's/ [a-f0-9]\{64\}$//' "$package_file"
 }
 
-VerifyPackageFilesMatch() {
-  local downloaded_package_file="$1"
-  local stored_package_file="$2"
-  diff -u "$downloaded_package_file" "$stored_package_file"
-  if [ "$?" -ne "0" ]; then
-    echo "ERROR: downloaded package files does not match $2."
-    echo "You may need to run UpdatePackageLists."
-    exit 1
-  fi
-}
-
 ######################################################################
 #
 ######################################################################
@@ -304,6 +320,24 @@ HacksAndPatchesCommon() {
   cp "${SCRIPT_DIR}/libdbus-1-3-symbols" \
     "${INSTALL_ROOT}/debian/libdbus-1-3/DEBIAN/symbols"
 
+  # Glibc 2.27 introduced some new optimizations to several math functions, but
+  # it will be a while before it makes it into all supported distros.  Luckily,
+  # glibc maintains ABI compatibility with previous versions, so the old symbols
+  # are still there.
+  # TODO(thomasanderson): Remove this once glibc 2.27 is available on all
+  # supported distros.
+  local math_h="${INSTALL_ROOT}/usr/include/math.h"
+  local libm_so="${INSTALL_ROOT}/lib/${arch}-${os}/libm.so.6"
+  nm -D --defined-only --with-symbol-versions "${libm_so}" | \
+    "${SCRIPT_DIR}/find_incompatible_glibc_symbols.py" >> "${math_h}"
+
+  # glob64() was also optimized in glibc 2.27.  Make sure to choose the older
+  # version.
+  local glob_h="${INSTALL_ROOT}/usr/include/glob.h"
+  local libc_so="${INSTALL_ROOT}/lib/${arch}-${os}/libc.so.6"
+  nm -D --defined-only --with-symbol-versions "${libc_so}" | \
+    "${SCRIPT_DIR}/find_incompatible_glibc_symbols.py" >> "${glob_h}"
+
   # This is for chrome's ./build/linux/pkg-config-wrapper
   # which overwrites PKG_CONFIG_LIBDIR internally
   SubBanner "Move pkgconfig scripts"
@@ -314,6 +348,11 @@ HacksAndPatchesCommon() {
 
 
 HacksAndPatchesAmd64() {
+  HacksAndPatchesCommon x86_64 linux-gnu strip
+}
+
+
+HacksAndPatchesAmd64Multilib() {
   HacksAndPatchesCommon x86_64 linux-gnu strip
 }
 
@@ -448,6 +487,11 @@ VerifyLibraryDepsAmd64() {
 }
 
 
+VerifyLibraryDepsAmd64Multilib() {
+  VerifyLibraryDepsCommon x86_64 linux-gnu
+}
+
+
 VerifyLibraryDepsI386() {
   VerifyLibraryDepsCommon i386 linux-gnu
 }
@@ -482,15 +526,34 @@ BuildSysrootAmd64() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_amd64"
+  local package_file="${DEBIAN_DEP_LIST_AMD64}"
   GeneratePackageListAmd64 "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_AMD64"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesAmd64
   VerifyLibraryDepsAmd64
+  CreateTarBall
+}
+
+#@
+#@ BuildSysrootAmd64Multilib
+#@
+#@    Build everything and package it
+BuildSysrootAmd64Multilib() {
+  if [ "$HAS_ARCH_AMD64MULTILIB" = "0" ]; then
+    return
+  fi
+  ClearInstallDir
+  local package_file="${DEBIAN_DEP_LIST_AMD64MULTILIB}"
+  GeneratePackageListAmd64Multilib "$package_file"
+  local files_and_sha256sums="$(cat ${package_file})"
+  StripChecksumsFromPackageList "$package_file"
+  InstallIntoSysroot ${files_and_sha256sums}
+  CleanupJailSymlinks
+  HacksAndPatchesAmd64Multilib
+  VerifyLibraryDepsAmd64Multilib
   CreateTarBall
 }
 
@@ -503,11 +566,10 @@ BuildSysrootI386() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_i386"
+  local package_file="${DEBIAN_DEP_LIST_I386}"
   GeneratePackageListI386 "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_I386"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesI386
@@ -524,11 +586,10 @@ BuildSysrootARM() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_arm"
+  local package_file="${DEBIAN_DEP_LIST_ARM}"
   GeneratePackageListARM "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_ARM"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesARM
@@ -545,18 +606,16 @@ BuildSysrootARM64() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_arm64"
+  local package_file="${DEBIAN_DEP_LIST_ARM64}"
   GeneratePackageListARM64 "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_ARM64"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesARM64
   VerifyLibraryDepsARM64
   CreateTarBall
 }
-
 
 #@
 #@ BuildSysrootMips
@@ -567,18 +626,16 @@ BuildSysrootMips() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_mips"
+  local package_file="${DEBIAN_DEP_LIST_MIPS}"
   GeneratePackageListMips "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_MIPS"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesMips
   VerifyLibraryDepsMips
   CreateTarBall
 }
-
 
 #@
 #@ BuildSysrootMips64el
@@ -589,11 +646,10 @@ BuildSysrootMips64el() {
     return
   fi
   ClearInstallDir
-  local package_file="$BUILD_DIR/package_with_sha256sum_mips64el"
+  local package_file="${DEBIAN_DEP_LIST_MIPS64EL}"
   GeneratePackageListMips64el "$package_file"
   local files_and_sha256sums="$(cat ${package_file})"
   StripChecksumsFromPackageList "$package_file"
-  VerifyPackageFilesMatch "$package_file" "$DEBIAN_DEP_LIST_MIPS64EL"
   InstallIntoSysroot ${files_and_sha256sums}
   CleanupJailSymlinks
   HacksAndPatchesMips64el
@@ -607,6 +663,7 @@ BuildSysrootMips64el() {
 #@    Build sysroot images for all architectures
 BuildSysrootAll() {
   RunCommand BuildSysrootAmd64
+  RunCommand BuildSysrootAmd64Multilib
   RunCommand BuildSysrootI386
   RunCommand BuildSysrootARM
   RunCommand BuildSysrootARM64
@@ -615,19 +672,15 @@ BuildSysrootAll() {
 }
 
 UploadSysroot() {
-  local rev=$1
-  if [ -z "${rev}" ]; then
-    echo "Please specify a revision to upload at."
-    exit 1
-  fi
+  local sha=$(sha1sum "${TARBALL}" | awk '{print $1;}')
   set -x
-  gsutil cp -a public-read "${TARBALL}" \
-      "gs://chrome-linux-sysroot/toolchain/$rev/"
+  gsutil.py cp -a public-read "${TARBALL}" \
+      "gs://chrome-linux-sysroot/toolchain/$sha/"
   set +x
 }
 
 #@
-#@ UploadSysrootAmd64 <revision>
+#@ UploadSysrootAmd64
 #@
 UploadSysrootAmd64() {
   if [ "$HAS_ARCH_AMD64" = "0" ]; then
@@ -637,7 +690,17 @@ UploadSysrootAmd64() {
 }
 
 #@
-#@ UploadSysrootI386 <revision>
+#@ UploadSysrootAmd64Multilib
+#@
+UploadSysrootAmd64Multilib() {
+  if [ "$HAS_ARCH_AMD64MULTILIB" = "0" ]; then
+    return
+  fi
+  UploadSysroot "$@"
+}
+
+#@
+#@ UploadSysrootI386
 #@
 UploadSysrootI386() {
   if [ "$HAS_ARCH_I386" = "0" ]; then
@@ -647,7 +710,7 @@ UploadSysrootI386() {
 }
 
 #@
-#@ UploadSysrootARM <revision>
+#@ UploadSysrootARM
 #@
 UploadSysrootARM() {
   if [ "$HAS_ARCH_ARM" = "0" ]; then
@@ -657,7 +720,7 @@ UploadSysrootARM() {
 }
 
 #@
-#@ UploadSysrootARM64 <revision>
+#@ UploadSysrootARM64
 #@
 UploadSysrootARM64() {
   if [ "$HAS_ARCH_ARM64" = "0" ]; then
@@ -667,7 +730,7 @@ UploadSysrootARM64() {
 }
 
 #@
-#@ UploadSysrootMips <revision>
+#@ UploadSysrootMips
 #@
 UploadSysrootMips() {
   if [ "$HAS_ARCH_MIPS" = "0" ]; then
@@ -677,7 +740,7 @@ UploadSysrootMips() {
 }
 
 #@
-#@ UploadSysrootMips64el <revision>
+#@ UploadSysrootMips64el
 #@
 UploadSysrootMips64el() {
   if [ "$HAS_ARCH_MIPS64EL" = "0" ]; then
@@ -687,11 +750,12 @@ UploadSysrootMips64el() {
 }
 
 #@
-#@ UploadSysrootAll <revision>
+#@ UploadSysrootAll
 #@
 #@    Upload sysroot image for all architectures
 UploadSysrootAll() {
   RunCommand UploadSysrootAmd64 "$@"
+  RunCommand UploadSysrootAmd64Multilib "$@"
   RunCommand UploadSysrootI386 "$@"
   RunCommand UploadSysrootARM "$@"
   RunCommand UploadSysrootARM64 "$@"
@@ -716,7 +780,7 @@ CheckForDebianGPGKeyring() {
 #
 # VerifyPackageListing
 #
-#     Verifies the downloaded Packages.bz2 file has the right checksums.
+#     Verifies the downloaded Packages.xz file has the right checksums.
 #
 VerifyPackageListing() {
   local file_path="$1"
@@ -733,8 +797,8 @@ VerifyPackageListing() {
 
   CheckForDebianGPGKeyring
 
-  DownloadOrCopy ${release_list} ${release_file}
-  DownloadOrCopy ${release_list_gpg} ${release_file_gpg}
+  DownloadOrCopyNonUniqueFilename ${release_list} ${release_file}
+  DownloadOrCopyNonUniqueFilename ${release_list_gpg} ${release_file_gpg}
   echo "Verifying: ${release_file} with ${release_file_gpg}"
   set -x
   gpgv --keyring "${KEYRING_FILE}" "${release_file_gpg}" "${release_file}"
@@ -785,104 +849,15 @@ GeneratePackageList() {
 }
 
 #@
-#@ UpdatePackageListsAmd64
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For amd64)
-UpdatePackageListsAmd64() {
-  if [ "$HAS_ARCH_AMD64" = "0" ]; then
-    return
-  fi
-  GeneratePackageListAmd64 "$DEBIAN_DEP_LIST_AMD64"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_AMD64"
-}
-
-#@
-#@ UpdatePackageListsI386
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For i386)
-UpdatePackageListsI386() {
-  if [ "$HAS_ARCH_I386" = "0" ]; then
-    return
-  fi
-  GeneratePackageListI386 "$DEBIAN_DEP_LIST_I386"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_I386"
-}
-
-#@
-#@ UpdatePackageListsARM
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For arm)
-UpdatePackageListsARM() {
-  if [ "$HAS_ARCH_ARM" = "0" ]; then
-    return
-  fi
-  GeneratePackageListARM "$DEBIAN_DEP_LIST_ARM"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_ARM"
-}
-
-#@
-#@ UpdatePackageListsARM64
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For arm64)
-UpdatePackageListsARM64() {
-  if [ "$HAS_ARCH_ARM64" = "0" ]; then
-    return
-  fi
-  GeneratePackageListARM64 "$DEBIAN_DEP_LIST_ARM64"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_ARM64"
-}
-
-#@
-#@ UpdatePackageListsMips
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For mips)
-UpdatePackageListsMips() {
-  if [ "$HAS_ARCH_MIPS" = "0" ]; then
-    return
-  fi
-  GeneratePackageListMips "$DEBIAN_DEP_LIST_MIPS"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_MIPS"
-}
-
-
-#@
-#@ UpdatePackageListsMips64el
-#@
-#@     Regenerate the package lists such that they contain an up-to-date
-#@     list of URLs within the Debian archive. (For mips64el)
-UpdatePackageListsMips64el() {
-  if [ "$HAS_ARCH_MIPS64EL" = "0" ]; then
-    return
-  fi
-  GeneratePackageListMips64el "$DEBIAN_DEP_LIST_MIPS64EL"
-  StripChecksumsFromPackageList "$DEBIAN_DEP_LIST_MIPS64EL"
-}
-
-#@
-#@ UpdatePackageListsAll
-#@
-#@    Regenerate the package lists for all architectures.
-UpdatePackageListsAll() {
-  RunCommand UpdatePackageListsAmd64
-  RunCommand UpdatePackageListsI386
-  RunCommand UpdatePackageListsARM
-  RunCommand UpdatePackageListsARM64
-  RunCommand UpdatePackageListsMips
-  RunCommand UpdatePackageListsMips64el
-}
-
-#@
 #@ PrintArchitectures
 #@
 #@    Prints supported architectures.
 PrintArchitectures() {
   if [ "$HAS_ARCH_AMD64" = "1" ]; then
     echo Amd64
+  fi
+  if [ "$HAS_ARCH_AMD64MULTILIB" = "1" ]; then
+    echo Amd64Multilib
   fi
   if [ "$HAS_ARCH_I386" = "1" ]; then
     echo I386

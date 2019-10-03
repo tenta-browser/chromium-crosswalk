@@ -14,8 +14,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/test/test_pending_task.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -23,7 +25,7 @@ namespace base {
 namespace {
 
 TaskRunner* GetCurrentTaskRunner() {
-  return MessageLoop::current()->task_runner().get();
+  return ThreadTaskRunnerHandle::Get().get();
 }
 
 void AssignTrue(bool* out) {
@@ -41,7 +43,7 @@ class ScopedMockTimeMessageLoopTaskRunnerTest : public testing::Test {
  public:
   ScopedMockTimeMessageLoopTaskRunnerTest()
       : original_task_runner_(new TestMockTimeTaskRunner()) {
-    MessageLoop::current()->SetTaskRunner(original_task_runner_);
+    MessageLoopCurrent::Get()->SetTaskRunner(original_task_runner_);
   }
 
  protected:
@@ -76,10 +78,10 @@ TEST_F(ScopedMockTimeMessageLoopTaskRunnerTest,
   bool task_10_has_run = false;
   bool task_11_has_run = false;
 
-  Closure task_1 = Bind(&DoNothing);
-  Closure task_2 = Bind(&DoNothing);
-  Closure task_10 = Bind(&AssignTrue, &task_10_has_run);
-  Closure task_11 = Bind(&AssignTrue, &task_11_has_run);
+  OnceClosure task_1 = DoNothing();
+  OnceClosure task_2 = DoNothing();
+  OnceClosure task_10 = BindOnce(&AssignTrue, &task_10_has_run);
+  OnceClosure task_11 = BindOnce(&AssignTrue, &task_11_has_run);
 
   constexpr TimeDelta task_1_delay = TimeDelta::FromSeconds(1);
   constexpr TimeDelta task_2_delay = TimeDelta::FromSeconds(2);
@@ -88,10 +90,14 @@ TEST_F(ScopedMockTimeMessageLoopTaskRunnerTest,
 
   constexpr TimeDelta step_time_by = TimeDelta::FromSeconds(5);
 
-  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, task_1, task_1_delay);
-  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, task_2, task_2_delay);
-  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, task_10, task_10_delay);
-  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, task_11, task_11_delay);
+  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, std::move(task_1),
+                                          task_1_delay);
+  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, std::move(task_2),
+                                          task_2_delay);
+  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, std::move(task_10),
+                                          task_10_delay);
+  GetCurrentTaskRunner()->PostDelayedTask(FROM_HERE, std::move(task_11),
+                                          task_11_delay);
 
   scoped_task_runner_->task_runner()->FastForwardBy(step_time_by);
 

@@ -5,19 +5,22 @@
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 
 #include <stddef.h>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/one_shot_event.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_checker.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -36,6 +39,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -49,7 +53,6 @@
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_messages.h"
-#include "extensions/common/one_shot_event.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "url/gurl.h"
 
@@ -175,8 +178,7 @@ class ApiInfoDatabase {
   // pointer to the record, or NULL if no such record was found.
   const ApiInfo* Lookup(Action::ActionType action_type,
                         const std::string& api_name) const {
-    std::map<std::string, const ApiInfo*>::const_iterator i =
-        api_database_.find(api_name);
+    auto i = api_database_.find(api_name);
     if (i == api_database_.end())
       return NULL;
     if (i->second->action_type != action_type)
@@ -186,7 +188,7 @@ class ApiInfoDatabase {
 
  private:
   ApiInfoDatabase() {
-    for (size_t i = 0; i < arraysize(kApiInfoTable); i++) {
+    for (size_t i = 0; i < base::size(kApiInfoTable); i++) {
       const ApiInfo* info = &kApiInfoTable[i];
       api_database_[info->api_name] = info;
     }
@@ -280,7 +282,7 @@ void ExtractUrls(scoped_refptr<Action> action, Profile* profile) {
       if (action->args()->GetString(url_index, &url_string) &&
           ResolveUrl(action->page_url(), url_string, &arg_url)) {
         action->mutable_args()->Set(
-            url_index, base::MakeUnique<base::Value>(kArgUrlPlaceholder));
+            url_index, std::make_unique<base::Value>(kArgUrlPlaceholder));
       }
       break;
     }
@@ -312,7 +314,7 @@ void ExtractUrls(scoped_refptr<Action> action, Profile* profile) {
         GetUrlForTabId(tab_id, profile, &arg_url, &arg_incognito);
         if (arg_url.is_valid()) {
           action->mutable_args()->Set(
-              url_index, base::MakeUnique<base::Value>(kArgUrlPlaceholder));
+              url_index, std::make_unique<base::Value>(kArgUrlPlaceholder));
         }
       } else if (action->mutable_args()->GetList(url_index, &tab_list)) {
         // A list of possible IDs to translate.  Work through in reverse order
@@ -322,13 +324,13 @@ void ExtractUrls(scoped_refptr<Action> action, Profile* profile) {
           if (tab_list->GetInteger(i, &tab_id) &&
               GetUrlForTabId(tab_id, profile, &arg_url, &arg_incognito)) {
             if (!arg_incognito)
-              tab_list->Set(i, base::MakeUnique<base::Value>(arg_url.spec()));
+              tab_list->Set(i, std::make_unique<base::Value>(arg_url.spec()));
             extracted_index = i;
           }
         }
         if (extracted_index >= 0) {
           tab_list->Set(extracted_index,
-                        base::MakeUnique<base::Value>(kArgUrlPlaceholder));
+                        std::make_unique<base::Value>(kArgUrlPlaceholder));
         }
       }
       break;
@@ -436,11 +438,10 @@ void LogApiActivity(content::BrowserContext* browser_context,
       state.IsWhitelistedId(extension_id))
     return;
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&LogApiActivityOnUI, browser_context, extension_id,
-                       activity_name, base::Passed(args.CreateDeepCopy()),
-                       type));
+                       activity_name, args.CreateDeepCopy(), type));
     return;
   }
   LogApiActivityOnUI(browser_context, extension_id, activity_name,
@@ -498,11 +499,11 @@ void LogWebRequestActivity(content::BrowserContext* browser_context,
       state.IsWhitelistedId(extension_id))
     return;
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&LogWebRequestActivityOnUI, browser_context,
                        extension_id, url, is_incognito, api_call,
-                       base::Passed(&details)));
+                       std::move(details)));
     return;
   }
   LogWebRequestActivityOnUI(browser_context, extension_id, url, is_incognito,
@@ -562,8 +563,8 @@ ActivityLog::ActivityLog(content::BrowserContext* context)
       extension_registry_observer_(this),
       active_consumers_(0),
       cached_consumer_count_(0),
-      is_active_(false),
-      weak_factory_(this) {
+      has_listeners_(false),
+      is_active_(false) {
   SetActivityHandlers();
 
   // This controls whether logging statements are printed & which policy is set.
@@ -579,9 +580,8 @@ ActivityLog::ActivityLog(content::BrowserContext* context)
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
   CheckActive(true);  // use cached
   extension_system_->ready().Post(
-      FROM_HERE,
-      base::Bind(&ActivityLog::OnExtensionSystemReady,
-                 weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ActivityLog::OnExtensionSystemReady,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void ActivityLog::SetDatabasePolicy(
@@ -650,6 +650,11 @@ void ActivityLog::UpdateCachedConsumerCount() {
 
 void ActivityLog::SetWatchdogAppActiveForTesting(bool active) {
   active_consumers_ = active ? 1 : 0;
+  CheckActive(false);  // don't use cached
+}
+
+void ActivityLog::SetHasListeners(bool has_listeners) {
+  has_listeners_ = has_listeners;
   CheckActive(false);  // don't use cached
 }
 
@@ -733,25 +738,26 @@ void ActivityLog::LogAction(scoped_refptr<Action> action) {
   }
   if (IsDatabaseEnabled() && database_policy_)
     database_policy_->ProcessAction(action);
-  if (IsWatchdogAppActive())
+  if (has_listeners_)
     observers_->Notify(FROM_HERE, &Observer::OnExtensionActivity, action);
   if (testing_mode_)
     VLOG(1) << action->PrintForDebug();
 }
 
 bool ActivityLog::ShouldLog(const std::string& extension_id) const {
-  return is_active_ && !ActivityLogAPI::IsExtensionWhitelisted(extension_id);
+  // Do not log for activities from the browser/WebUI, which is indicated by an
+  // empty extension ID.
+  return is_active_ && !extension_id.empty() &&
+         !ActivityLogAPI::IsExtensionWhitelisted(extension_id);
 }
 
-void ActivityLog::OnScriptsExecuted(
-    const content::WebContents* web_contents,
-    const ExecutingScriptsMap& extension_ids,
-    const GURL& on_url) {
+void ActivityLog::OnScriptsExecuted(content::WebContents* web_contents,
+                                    const ExecutingScriptsMap& extension_ids,
+                                    const GURL& on_url) {
   if (!is_active_)
     return;
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile_);
-  for (ExecutingScriptsMap::const_iterator it = extension_ids.begin();
-       it != extension_ids.end(); ++it) {
+  for (auto it = extension_ids.begin(); it != extension_ids.end(); ++it) {
     const Extension* extension =
         registry->GetExtensionById(it->first, ExtensionRegistry::ENABLED);
     if (!extension || ActivityLogAPI::IsExtensionWhitelisted(extension->id()))
@@ -776,14 +782,17 @@ void ActivityLog::OnScriptsExecuted(
       if (prerender_manager &&
           prerender_manager->IsWebContentsPrerendering(web_contents, NULL))
         action->mutable_other()->SetBoolean(constants::kActionPrerender, true);
-      for (std::set<std::string>::const_iterator it2 = it->second.begin();
-           it2 != it->second.end();
-           ++it2) {
+      for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
         action->mutable_args()->AppendString(*it2);
       }
       LogAction(action);
     }
   }
+}
+
+void ActivityLog::ObserveScripts(ScriptExecutor* executor) {
+  executor->set_observer(base::BindRepeating(&ActivityLog::OnScriptsExecuted,
+                                             weak_factory_.GetWeakPtr()));
 }
 
 // LOOKUP ACTIONS. -------------------------------------------------------------
@@ -795,11 +804,11 @@ void ActivityLog::GetFilteredActions(
     const std::string& page_url,
     const std::string& arg_url,
     const int daysAgo,
-    const base::Callback<
-        void(std::unique_ptr<std::vector<scoped_refptr<Action>>>)>& callback) {
+    base::OnceCallback<
+        void(std::unique_ptr<std::vector<scoped_refptr<Action>>>)> callback) {
   if (database_policy_) {
-    database_policy_->ReadFilteredData(
-        extension_id, type, api_name, page_url, arg_url, daysAgo, callback);
+    database_policy_->ReadFilteredData(extension_id, type, api_name, page_url,
+                                       arg_url, daysAgo, std::move(callback));
   }
 }
 
@@ -809,6 +818,12 @@ void ActivityLog::RemoveActions(const std::vector<int64_t>& action_ids) {
   if (!database_policy_)
     return;
   database_policy_->RemoveActions(action_ids);
+}
+
+void ActivityLog::RemoveExtensionData(const std::string& extension_id) {
+  if (!database_policy_)
+    return;
+  database_policy_->RemoveExtensionData(extension_id);
 }
 
 void ActivityLog::RemoveURLs(const std::vector<GURL>& restrict_urls) {
@@ -822,8 +837,7 @@ void ActivityLog::RemoveURLs(const std::set<GURL>& restrict_urls) {
     return;
 
   std::vector<GURL> urls;
-  for (std::set<GURL>::const_iterator it = restrict_urls.begin();
-       it != restrict_urls.end(); ++it) {
+  for (auto it = restrict_urls.begin(); it != restrict_urls.end(); ++it) {
     urls.push_back(*it);
   }
   database_policy_->RemoveURLs(urls);
@@ -844,12 +858,16 @@ void ActivityLog::DeleteDatabase() {
 }
 
 void ActivityLog::CheckActive(bool use_cached) {
-  bool has_consumer =
-      active_consumers_ || (use_cached && cached_consumer_count_);
-  bool needs_db =
-      has_consumer || base::CommandLine::ForCurrentProcess()->HasSwitch(
-                          switches::kEnableExtensionActivityLogging);
-  bool should_be_active = needs_db || has_consumer;
+  const bool has_switch = base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableExtensionActivityLogging);
+  const bool has_consumer =
+      active_consumers_ || (use_cached && cached_consumer_count_) ||
+      // Only check |has_listeners_| if the switch is also present, since
+      // we want to ensure the activity log is inactive unless the switch
+      // or the app (covered by active_consumers_) is present.
+      (has_listeners_ && has_switch);
+  const bool needs_db = has_consumer || has_switch;
+  const bool should_be_active = needs_db || has_consumer;
 
   if (should_be_active == is_active_)
     return;

@@ -13,7 +13,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 
 namespace content {
 class RenderFrameHost;
@@ -56,12 +56,6 @@ class PaymentRequestWebContentsManager
   // Destroys the given |request|.
   void DestroyRequest(PaymentRequest* request);
 
-  // Called when |request| has received the show() call. If the |request| can be
-  // shown, then returns true and assumes that |request| is now showing until
-  // DestroyRequest(|request|) is called with the same pointer. (Only one
-  // request at a time can be shown per tab.)
-  bool CanShow(PaymentRequest* request);
-
   // WebContentsObserver::
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override;
@@ -77,9 +71,7 @@ class PaymentRequestWebContentsManager
   // the requests themselves call DestroyRequest().
   std::map<PaymentRequest*, std::unique_ptr<PaymentRequest>> payment_requests_;
 
-  // The currently displayed instance of PaymentRequest. Points to one of the
-  // elements in |payment_requests_|. Can be null.
-  PaymentRequest* showing_;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestWebContentsManager);
 };

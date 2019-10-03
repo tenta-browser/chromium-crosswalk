@@ -10,10 +10,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_service_client.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/dbus/shill/shill_clients.h"
+#include "chromeos/dbus/shill/shill_device_client.h"
+#include "chromeos/dbus/shill/shill_service_client.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "chromeos/network/network_connect.h"
 #include "chromeos/network/network_connection_handler.h"
 #include "chromeos/network/network_handler.h"
@@ -92,7 +92,7 @@ class NetworkConnectTest : public testing::Test {
 
   void SetUp() override {
     testing::Test::SetUp();
-    DBusThreadManager::Initialize();
+    shill_clients::InitializeFakes();
     LoginState::Initialize();
     SetupDefaultShillState();
     NetworkHandler::Initialize();
@@ -113,26 +113,24 @@ class NetworkConnectTest : public testing::Test {
     mock_delegate_.reset();
     LoginState::Shutdown();
     NetworkHandler::Shutdown();
-    DBusThreadManager::Shutdown();
+    shill_clients::Shutdown();
     testing::Test::TearDown();
   }
 
  protected:
   void SetupDefaultShillState() {
     base::RunLoop().RunUntilIdle();
-    device_test_ =
-        DBusThreadManager::Get()->GetShillDeviceClient()->GetTestInterface();
+    device_test_ = ShillDeviceClient::Get()->GetTestInterface();
     device_test_->ClearDevices();
     device_test_->AddDevice("/device/stub_wifi_device1", shill::kTypeWifi,
                             "stub_wifi_device1");
     device_test_->AddDevice(kCellular1DevicePath, shill::kTypeCellular,
                             "stub_cellular_device1");
-    device_test_->SetDeviceProperty(kCellular1DevicePath,
-                                    shill::kTechnologyFamilyProperty,
-                                    base::Value(shill::kNetworkTechnologyGsm));
+    device_test_->SetDeviceProperty(
+        kCellular1DevicePath, shill::kTechnologyFamilyProperty,
+        base::Value(shill::kNetworkTechnologyGsm), /*notify_changed=*/true);
 
-    service_test_ =
-        DBusThreadManager::Get()->GetShillServiceClient()->GetTestInterface();
+    service_test_ = ShillServiceClient::Get()->GetTestInterface();
     service_test_->ClearServices();
     const bool add_to_visible = true;
 
@@ -213,62 +211,6 @@ TEST_F(NetworkConnectTest,
                                                       false);
 }
 
-TEST_F(NetworkConnectTest, ShowConfigureUI) {
-  EXPECT_CALL(*mock_delegate_, ShowNetworkConfigure(kWiFi1Guid)).Times(5);
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorBadPassphrase);
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorPassphraseRequired);
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorConfigurationRequired);
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorAuthenticationRequired);
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorConnectFailed);
-}
-
-TEST_F(NetworkConnectTest, ConfigureUINotShownForTetherAssociatedWifiNetwork) {
-  // The configure UI should *not* be shown for Wi-Fi networks which serve as
-  // the underlying Wi-Fi hotspot for a Tether network.
-  EXPECT_CALL(*mock_delegate_, ShowNetworkConfigure(kWiFi1Guid)).Times(0);
-
-  AddTetherNetwork(false /* has_connected_to_host */);
-  NetworkHandler::Get()
-      ->network_state_handler()
-      ->AssociateTetherNetworkStateWithWifiNetwork(kTetherGuid, kWiFi1Guid);
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorConnectFailed);
-}
-
-TEST_F(NetworkConnectTest, ShowConfigureUI_BadErrorCode) {
-  EXPECT_CALL(*mock_delegate_, ShowNetworkConfigure(kWiFi1Guid)).Times(0);
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(kWiFi1Guid,
-                                              "incorrect error code");
-}
-
-TEST_F(NetworkConnectTest, ShowConfigureUI_CertRequired_ShowEnrollNetwork) {
-  EXPECT_CALL(*mock_delegate_, ShowEnrollNetwork(_)).Times(AnyNumber());
-  EXPECT_CALL(*mock_delegate_, ShowNetworkConfigure(kWiFi1Guid)).Times(0);
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorCertificateRequired);
-}
-
-TEST_F(NetworkConnectTest,
-       ShowConfigureUI_CertRequired_DoNotShowEnrollNetwork) {
-  EXPECT_CALL(*mock_delegate_, ShowEnrollNetwork(_)).Times(AnyNumber());
-  EXPECT_CALL(*mock_delegate_, ShowNetworkConfigure(kWiFi1Guid));
-
-  ON_CALL(*mock_delegate_, ShowEnrollNetwork(kWiFi1Guid))
-      .WillByDefault(Return(false));
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kWiFi1Guid, NetworkConnectionHandler::kErrorCertificateRequired);
-}
-
 TEST_F(NetworkConnectTest, ConnectThenDisconnectWiFiNetwork) {
   const NetworkState* network =
       NetworkHandler::Get()->network_state_handler()->GetNetworkStateFromGuid(
@@ -302,26 +244,6 @@ TEST_F(NetworkConnectTest, ConnectToTetherNetwork_HasNotConnectedToHost) {
   NetworkConnect::Get()->ConnectToNetworkId(kTetherGuid);
   EXPECT_TRUE(
       fake_tether_delegate_->last_connected_tether_network_guid().empty());
-}
-
-// ShowNetworkSettings only applies to cellular networks.
-TEST_F(NetworkConnectTest, ShowNetworkSettings) {
-  EXPECT_CALL(*mock_delegate_, ShowNetworkSettings(kCellular1Guid));
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kCellular1Guid, NetworkConnectionHandler::kErrorConnectFailed);
-}
-
-TEST_F(NetworkConnectTest, ShowNetworkSettings_CellOutOfCredits) {
-  EXPECT_CALL(*mock_delegate_, ShowNetworkSettings(kCellular1Guid)).Times(0);
-  EXPECT_CALL(*mock_delegate_, ShowMobileSetupDialog(kCellular1Guid));
-
-  service_test_->SetServiceProperty(
-      kCellular1ServicePath, shill::kOutOfCreditsProperty, base::Value(true));
-  base::RunLoop().RunUntilIdle();
-
-  NetworkConnect::Get()->MaybeShowConfigureUI(
-      kCellular1Guid, NetworkConnectionHandler::kErrorConnectFailed);
 }
 
 TEST_F(NetworkConnectTest, ActivateCellular) {

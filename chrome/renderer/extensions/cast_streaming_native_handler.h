@@ -26,23 +26,23 @@ class IPEndPoint;
 }
 
 namespace media {
-class AudioCapturerSource;
-class AudioParameters;
-class VideoCapturerSource;
 namespace cast {
 struct FrameReceiverConfig;
 }
 }
 
 namespace extensions {
-class ExtensionBindingsSystem;
+class NativeExtensionBindingsSystem;
 
 // Native code that handle chrome.webrtc custom bindings.
 class CastStreamingNativeHandler : public ObjectBackedNativeHandler {
  public:
   CastStreamingNativeHandler(ScriptContext* context,
-                             ExtensionBindingsSystem* bindings_system);
+                             NativeExtensionBindingsSystem* bindings_system);
   ~CastStreamingNativeHandler() override;
+
+  // ObjectBackedNativeHandler:
+  void AddRoutes() override;
 
  protected:
   // Shut down all sessions and cancel any in-progress operations because the
@@ -73,9 +73,6 @@ class CastStreamingNativeHandler : public ObjectBackedNativeHandler {
   void StopCastUdpTransport(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
-  void StartCastRtpReceiver(
-      const v8::FunctionCallbackInfo<v8::Value>& args);
-
   void ToggleLogging(const v8::FunctionCallbackInfo<v8::Value>& args);
   void GetRawEvents(const v8::FunctionCallbackInfo<v8::Value>& args);
   void GetStats(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -89,14 +86,6 @@ class CastStreamingNativeHandler : public ObjectBackedNativeHandler {
   void CallStartCallback(int stream_id) const;
   void CallStopCallback(int stream_id) const;
   void CallErrorCallback(int stream_id, const std::string& message) const;
-
-  // Callback called after a cast receiver has been started. Adds the
-  // output audio/video streams to the MediaStream specified by |url|.
-  void AddTracksToMediaStream(
-      const std::string& url,
-      const media::AudioParameters& params,
-      scoped_refptr<media::AudioCapturerSource> audio,
-      std::unique_ptr<media::VideoCapturerSource> video);
 
   // |function| is a javascript function that will take |error_message| as
   // an argument. Called when something goes wrong in a cast receiver.
@@ -141,9 +130,9 @@ class CastStreamingNativeHandler : public ObjectBackedNativeHandler {
   RtpStreamCallbackMap get_raw_events_callbacks_;
   RtpStreamCallbackMap get_stats_callbacks_;
 
-  ExtensionBindingsSystem* bindings_system_;
+  NativeExtensionBindingsSystem* bindings_system_;
 
-  base::WeakPtrFactory<CastStreamingNativeHandler> weak_factory_;
+  base::WeakPtrFactory<CastStreamingNativeHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastStreamingNativeHandler);
 };

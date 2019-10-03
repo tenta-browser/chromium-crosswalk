@@ -4,13 +4,14 @@
 
 #include "chrome/browser/ui/webui/chromeos/slow_ui.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/localized_string.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -44,13 +45,16 @@ content::WebUIDataSource* CreateSlowUIHTMLSource() {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUISlowHost);
 
-  source->AddLocalizedString("slowDisable", IDS_SLOW_DISABLE);
-  source->AddLocalizedString("slowEnable", IDS_SLOW_ENABLE);
-  source->AddLocalizedString("slowDescription", IDS_SLOW_DESCRIPTION);
-  source->AddLocalizedString("slowWarning", IDS_SLOW_WARNING);
+  static constexpr LocalizedString kStrings[] = {
+      {"slowDisable", IDS_SLOW_DISABLE},
+      {"slowEnable", IDS_SLOW_ENABLE},
+      {"slowDescription", IDS_SLOW_DESCRIPTION},
+      {"slowWarning", IDS_SLOW_WARNING},
+  };
+  AddLocalizedStringsBulk(source, kStrings, base::size(kStrings));
 
-  source->SetJsonPath("strings.js");
   source->AddResourcePath("slow.js", IDR_SLOW_JS);
+  source->AddResourcePath("slow.css", IDR_SLOW_CSS);
   source->SetDefaultResource(IDR_SLOW_HTML);
   return source;
 }
@@ -87,12 +91,15 @@ SlowHandler::~SlowHandler() {
 }
 
 void SlowHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(kJsApiDisableTracing,
-      base::Bind(&SlowHandler::HandleDisable, base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kJsApiEnableTracing,
-      base::Bind(&SlowHandler::HandleEnable, base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kJsApiLoadComplete,
-      base::Bind(&SlowHandler::LoadComplete, base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kJsApiDisableTracing,
+      base::BindRepeating(&SlowHandler::HandleDisable, base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kJsApiEnableTracing,
+      base::BindRepeating(&SlowHandler::HandleEnable, base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kJsApiLoadComplete,
+      base::BindRepeating(&SlowHandler::LoadComplete, base::Unretained(this)));
 
   user_pref_registrar_.reset(new PrefChangeRegistrar);
   user_pref_registrar_->Init(profile_->GetPrefs());
@@ -127,7 +134,7 @@ void SlowHandler::UpdatePage() {
 SlowUI::SlowUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
 
-  web_ui->AddMessageHandler(base::MakeUnique<SlowHandler>(profile));
+  web_ui->AddMessageHandler(std::make_unique<SlowHandler>(profile));
 
   // Set up the chrome://slow/ source.
   content::WebUIDataSource::Add(profile, CreateSlowUIHTMLSource());

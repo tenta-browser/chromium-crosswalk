@@ -54,37 +54,34 @@ class UIOverridesHandler::ManifestPermissionImpl : public ManifestPermission {
         new base::Value(override_bookmarks_ui_permission_));
   }
 
-  ManifestPermission* Diff(const ManifestPermission* rhs) const override {
+  std::unique_ptr<ManifestPermission> Diff(
+      const ManifestPermission* rhs) const override {
     const ManifestPermissionImpl* other =
         static_cast<const ManifestPermissionImpl*>(rhs);
 
-    return std::unique_ptr<ManifestPermissionImpl>(
-               new ManifestPermissionImpl(
-                   override_bookmarks_ui_permission_ &&
-                   !other->override_bookmarks_ui_permission_))
-        .release();
+    return std::make_unique<ManifestPermissionImpl>(
+        override_bookmarks_ui_permission_ &&
+        !other->override_bookmarks_ui_permission_);
   }
 
-  ManifestPermission* Union(const ManifestPermission* rhs) const override {
+  std::unique_ptr<ManifestPermission> Union(
+      const ManifestPermission* rhs) const override {
     const ManifestPermissionImpl* other =
         static_cast<const ManifestPermissionImpl*>(rhs);
 
-    return std::unique_ptr<ManifestPermissionImpl>(
-               new ManifestPermissionImpl(
-                   override_bookmarks_ui_permission_ ||
-                   other->override_bookmarks_ui_permission_))
-        .release();
+    return std::make_unique<ManifestPermissionImpl>(
+        override_bookmarks_ui_permission_ ||
+        other->override_bookmarks_ui_permission_);
   }
 
-  ManifestPermission* Intersect(const ManifestPermission* rhs) const override {
+  std::unique_ptr<ManifestPermission> Intersect(
+      const ManifestPermission* rhs) const override {
     const ManifestPermissionImpl* other =
         static_cast<const ManifestPermissionImpl*>(rhs);
 
-    return std::unique_ptr<ManifestPermissionImpl>(
-               new ManifestPermissionImpl(
-                   override_bookmarks_ui_permission_ &&
-                   other->override_bookmarks_ui_permission_))
-        .release();
+    return std::make_unique<ManifestPermissionImpl>(
+        override_bookmarks_ui_permission_ &&
+        other->override_bookmarks_ui_permission_);
   }
 
  private:
@@ -173,11 +170,12 @@ ManifestPermission* UIOverridesHandler::CreateInitialRequiredPermission(
     const Extension* extension) {
   const UIOverrides* data = UIOverrides::Get(extension);
   if (data)
-    return data->manifest_permission->Clone();
+    return data->manifest_permission->Clone().release();
   return NULL;
 }
-const std::vector<std::string> UIOverridesHandler::Keys() const {
-  return SingleKey(manifest_keys::kUIOverride);
+base::span<const char* const> UIOverridesHandler::Keys() const {
+  static constexpr const char* kKeys[] = {manifest_keys::kUIOverride};
+  return kKeys;
 }
 
 }  // namespace extensions

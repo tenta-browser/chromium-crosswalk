@@ -41,7 +41,19 @@ bool DialDeviceData::IsDeviceDescriptionUrl(const GURL& url) {
 
   // TODO(crbug.com/679432): check that this IP address matches the address that
   // we received the SSDP advertisement from.
-  return address.IsReserved();
+  return !address.IsPubliclyRoutable();
+}
+
+// static
+bool DialDeviceData::IsValidDialAppUrl(
+    const GURL& url,
+    const net::IPAddress& expected_ip_address) {
+  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS())
+    return false;
+
+  net::IPAddress host_ip;
+  return host_ip.AssignFromIPLiteral(url.HostNoBracketsPiece()) &&
+         host_ip.IsValid() && host_ip == expected_ip_address;
 }
 
 bool DialDeviceData::UpdateFrom(const DialDeviceData& new_data) {
@@ -60,5 +72,11 @@ DialDeviceDescriptionData::DialDeviceDescriptionData(
     const std::string& device_description,
     const GURL& app_url)
     : device_description(device_description), app_url(app_url) {}
+
+bool DialDeviceDescriptionData::operator==(
+    const DialDeviceDescriptionData& other_data) const {
+  return device_description == other_data.device_description &&
+         app_url == other_data.app_url;
+}
 
 }  // namespace media_router

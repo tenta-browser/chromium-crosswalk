@@ -7,23 +7,26 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
+#include "chrome/browser/apps/platform_apps/audio_focus_web_contents_observer.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/data_use_measurement/data_use_web_contents_observer.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/color_chooser.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/extensions/chrome_extension_messages.h"
@@ -31,20 +34,23 @@
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/host_zoom_map.h"
+#include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/mojo/app_window.mojom.h"
-#include "printing/features/features.h"
+#include "extensions/common/extension_messages.h"
+#include "extensions/common/mojom/app_window.mojom.h"
+#include "printing/buildflags/buildflags.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/shelf/shelf_constants.h"
 #include "chrome/browser/chromeos/lock_screen_apps/state_controller.h"
 #endif
 
@@ -65,22 +71,22 @@ content::WebContents* OpenURLFromTabInternal(
     const content::OpenURLParams& params) {
   // Force all links to open in a new tab, even if they were trying to open a
   // window.
-  chrome::NavigateParams new_tab_params(
-      static_cast<Browser*>(NULL), params.url, params.transition);
+  NavigateParams new_tab_params(static_cast<Browser*>(NULL), params.url,
+                                params.transition);
   if (params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
     new_tab_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   } else {
     new_tab_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-    new_tab_params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+    new_tab_params.window_action = NavigateParams::SHOW_WINDOW;
   }
 
   new_tab_params.initiating_profile = Profile::FromBrowserContext(context);
-  chrome::Navigate(&new_tab_params);
+  Navigate(&new_tab_params);
 
-  return new_tab_params.target_contents;
+  return new_tab_params.navigated_or_inserted_contents;
 }
 
-void OnCheckIsDefaultBrowserFinished(
+void OpenURLAfterCheckIsDefaultBrowser(
     std::unique_ptr<content::WebContents> source,
     const content::OpenURLParams& params,
     shell_integration::DefaultWebClientState state) {
@@ -125,11 +131,18 @@ class ChromeAppDelegate::NewWindowContentsDelegate
   NewWindowContentsDelegate() {}
   ~NewWindowContentsDelegate() override {}
 
+  void BecomeOwningDeletageOf(
+      std::unique_ptr<content::WebContents> web_contents) {
+    web_contents->SetDelegate(this);
+    owned_contents_.push_back(std::move(web_contents));
+  }
+
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params) override;
 
  private:
+  std::vector<std::unique_ptr<content::WebContents>> owned_contents_;
   DISALLOW_COPY_AND_ASSIGN(NewWindowContentsDelegate);
 };
 
@@ -142,17 +155,26 @@ ChromeAppDelegate::NewWindowContentsDelegate::OpenURLFromTab(
     // WebContents by being assigned as its delegate within
     // ChromeAppDelegate::AddNewContents(), but this is the first time
     // NewWindowContentsDelegate actually sees the WebContents. Here ownership
-    // is captured and passed to OnCheckIsDefaultBrowserFinished(), which
+    // is captured and passed to OpenURLAfterCheckIsDefaultBrowser(), which
     // destroys it after the default browser worker completes.
-    std::unique_ptr<content::WebContents> source_ptr(source);
+    std::unique_ptr<content::WebContents> owned_source;
+    for (auto it = owned_contents_.begin(); it != owned_contents_.end(); ++it) {
+      if (it->get() == source) {
+        owned_source = std::move(*it);
+        owned_contents_.erase(it);
+        break;
+      }
+    }
+    DCHECK(owned_source);
+
     // Object lifetime notes: StartCheckIsDefault() takes lifetime ownership of
     // check_if_default_browser_worker and will clean up after the asynchronous
     // tasks.
     scoped_refptr<shell_integration::DefaultBrowserWorker>
         check_if_default_browser_worker =
             new shell_integration::DefaultBrowserWorker(
-                base::Bind(&OnCheckIsDefaultBrowserFinished,
-                           base::Passed(&source_ptr), params));
+                base::Bind(&OpenURLAfterCheckIsDefaultBrowser,
+                           base::Passed(&owned_source), params));
     check_if_default_browser_worker->StartCheckIsDefault();
   }
   return NULL;
@@ -162,8 +184,7 @@ ChromeAppDelegate::ChromeAppDelegate(bool keep_alive)
     : has_been_shown_(false),
       is_hidden_(true),
       for_lock_screen_app_(false),
-      new_window_contents_delegate_(new NewWindowContentsDelegate()),
-      weak_factory_(this) {
+      new_window_contents_delegate_(new NewWindowContentsDelegate()) {
   if (keep_alive) {
     keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
                                           KeepAliveRestartOption::DISABLED));
@@ -183,8 +204,6 @@ void ChromeAppDelegate::DisableExternalOpenForTesting() {
 }
 
 void ChromeAppDelegate::InitWebContents(content::WebContents* web_contents) {
-  data_use_measurement::DataUseWebContentsObserver::CreateForWebContents(
-      web_contents);
   favicon::CreateContentFaviconDriverForWebContents(web_contents);
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -192,6 +211,8 @@ void ChromeAppDelegate::InitWebContents(content::WebContents* web_contents) {
 #endif
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents);
+
+  apps::AudioFocusWebContentsObserver::CreateForWebContents(web_contents);
 
   zoom::ZoomController::CreateForWebContents(web_contents);
 }
@@ -226,19 +247,22 @@ content::WebContents* ChromeAppDelegate::OpenURLFromTab(
   return OpenURLFromTabInternal(context, params);
 }
 
-void ChromeAppDelegate::AddNewContents(content::BrowserContext* context,
-                                       content::WebContents* new_contents,
-                                       WindowOpenDisposition disposition,
-                                       const gfx::Rect& initial_rect,
-                                       bool user_gesture) {
+void ChromeAppDelegate::AddNewContents(
+    content::BrowserContext* context,
+    std::unique_ptr<content::WebContents> new_contents,
+    WindowOpenDisposition disposition,
+    const gfx::Rect& initial_rect,
+    bool user_gesture) {
   if (!disable_external_open_for_testing_) {
     // We don't really want to open a window for |new_contents|, but we need to
     // capture its intended navigation. Here we give ownership to the
     // NewWindowContentsDelegate, which will dispose of the contents once
     // a navigation is captured.
-    new_contents->SetDelegate(new_window_contents_delegate_.get());
+    new_window_contents_delegate_->BecomeOwningDeletageOf(
+        std::move(new_contents));
     return;
   }
+
   chrome::ScopedTabbedBrowserDisplayer displayer(
       Profile::FromBrowserContext(context));
   // Force all links to open in a new tab, even if they were trying to open a
@@ -246,8 +270,8 @@ void ChromeAppDelegate::AddNewContents(content::BrowserContext* context,
   disposition = disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB
                     ? disposition
                     : WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::AddWebContents(displayer.browser(), NULL, new_contents, disposition,
-                         initial_rect, user_gesture);
+  chrome::AddWebContents(displayer.browser(), NULL, std::move(new_contents),
+                         disposition, initial_rect);
 }
 
 content::ColorChooser* ChromeAppDelegate::ShowColorChooser(
@@ -258,32 +282,35 @@ content::ColorChooser* ChromeAppDelegate::ShowColorChooser(
 
 void ChromeAppDelegate::RunFileChooser(
     content::RenderFrameHost* render_frame_host,
-    const content::FileChooserParams& params) {
-  FileSelectHelper::RunFileChooser(render_frame_host, params);
+    std::unique_ptr<content::FileSelectListener> listener,
+    const blink::mojom::FileChooserParams& params) {
+  FileSelectHelper::RunFileChooser(render_frame_host, std::move(listener),
+                                   params);
 }
 
 void ChromeAppDelegate::RequestMediaAccessPermission(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback,
+    content::MediaResponseCallback callback,
     const extensions::Extension* extension) {
   MediaCaptureDevicesDispatcher::GetInstance()->ProcessMediaAccessRequest(
-      web_contents, request, callback, extension);
+      web_contents, request, std::move(callback), extension);
 }
 
 bool ChromeAppDelegate::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    content::MediaStreamType type,
+    blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
   return MediaCaptureDevicesDispatcher::GetInstance()
-      ->CheckMediaAccessPermission(
-          web_contents, security_origin, type, extension);
+      ->CheckMediaAccessPermission(render_frame_host, security_origin, type,
+                                   extension);
 }
 
 int ChromeAppDelegate::PreferredIconSize() const {
 #if defined(OS_CHROMEOS)
-  return ash::kShelfSize;
+  // Use a size appropriate for the ash shelf (see ash::kShelfSize).
+  return extension_misc::EXTENSION_ICON_MEDIUM;
 #else
   return extension_misc::EXTENSION_ICON_SMALL;
 #endif
@@ -298,7 +325,7 @@ void ChromeAppDelegate::SetWebContentsBlocked(
   content::RenderFrameHost* host = web_contents->GetMainFrame();
   if (host) {
     extensions::mojom::AppWindowPtr app_window;
-    BindInterface(host->GetProcess(), &app_window);
+    host->GetRemoteInterfaces()->GetInterface(&app_window);
     app_window->SetVisuallyDeemphasized(blocked);
   }
 }
@@ -321,8 +348,8 @@ void ChromeAppDelegate::OnHide() {
 
   // Hold on to the keep alive for some time to give the app a chance to show
   // the window.
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&ChromeAppDelegate::RelinquishKeepAliveAfterTimeout,
                      weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromSeconds(kAppWindowFirstShowTimeoutSeconds));
@@ -345,6 +372,18 @@ bool ChromeAppDelegate::TakeFocus(content::WebContents* web_contents,
 #else
   return false;
 #endif
+}
+
+content::PictureInPictureResult ChromeAppDelegate::EnterPictureInPicture(
+    content::WebContents* web_contents,
+    const viz::SurfaceId& surface_id,
+    const gfx::Size& natural_size) {
+  return PictureInPictureWindowManager::GetInstance()->EnterPictureInPicture(
+      web_contents, surface_id, natural_size);
+}
+
+void ChromeAppDelegate::ExitPictureInPicture() {
+  PictureInPictureWindowManager::GetInstance()->ExitPictureInPicture();
 }
 
 void ChromeAppDelegate::Observe(int type,

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,8 +5,11 @@
 '''The 'grit resize' tool.
 '''
 
+from __future__ import print_function
+
 import getopt
 import os
+import sys
 
 from grit import grd_reader
 from grit import pseudo
@@ -194,7 +196,7 @@ near the top of the file, before you open it in Visual Studio.
   def Run(self, opts, args):
     self.SetOptions(opts)
 
-    own_opts, args = getopt.getopt(args, 'l:f:c:D:')
+    own_opts, args = getopt.getopt(args, 'l:f:c:D:', ('help',))
     for key, val in own_opts:
       if key == '-l':
         self.SetLanguage(val)
@@ -206,6 +208,9 @@ near the top of the file, before you open it in Visual Studio.
       if key == '-D':
         name, val = util.ParseDefine(val)
         self.defines[name] = val
+      elif key == '--help':
+        self.ShowUsage()
+        sys.exit(0)
 
     res_tree = grd_reader.Parse(opts.input, debug=opts.extra_verbose)
     res_tree.OnlyTheseTranslations([self.lang])
@@ -250,7 +255,7 @@ near the top of the file, before you open it in Visual Studio.
       ).replace('[[DIALOG_NAME]]', project_name)
     fname = os.path.join(dir_path, '%s.vcproj' % project_name)
     self.WriteFile(fname, project_text)
-    print "Wrote %s" % fname
+    print("Wrote %s" % fname)
 
     # Create the .rc file
     # Output all <include> nodes since the dialogs might depend on them (e.g.
@@ -274,14 +279,14 @@ near the top of the file, before you open it in Visual Studio.
 
     fname = os.path.join(dir_path, '%s.rc' % project_name)
     self.WriteFile(fname, rc_text, self.GetEncoding())
-    print "Wrote %s" % fname
+    print("Wrote %s" % fname)
 
     # Create the resource.h file
     header_defines = ''.join(rc_header.FormatDefines(grd))
     header_text = HEADER_TEMPLATE.replace('[[DEFINES]]', header_defines)
     fname = os.path.join(dir_path, 'resource.h')
     self.WriteFile(fname, header_text)
-    print "Wrote %s" % fname
+    print("Wrote %s" % fname)
 
   def WriteFile(self, filename, contents, encoding='cp1252'):
     with open(filename, 'wb') as f:

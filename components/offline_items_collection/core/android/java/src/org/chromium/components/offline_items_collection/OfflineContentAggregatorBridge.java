@@ -6,6 +6,7 @@ package org.chromium.components.offline_items_collection;
 
 import android.os.Handler;
 
+import org.chromium.base.Callback;
 import org.chromium.base.ObserverList;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -24,7 +25,6 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
 
     private long mNativeOfflineContentAggregatorBridge;
     private ObserverList<OfflineContentProvider.Observer> mObservers;
-    private boolean mItemsAvailable;
 
     /**
      * A private constructor meant to be called by the C++ OfflineContentAggregatorBridge.
@@ -33,20 +33,14 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
      */
     private OfflineContentAggregatorBridge(long nativeOfflineContentAggregatorBridge) {
         mNativeOfflineContentAggregatorBridge = nativeOfflineContentAggregatorBridge;
-        mItemsAvailable = false;
         mObservers = new ObserverList<OfflineContentProvider.Observer>();
     }
 
     // OfflineContentProvider implementation.
     @Override
-    public boolean areItemsAvailable() {
-        return mItemsAvailable;
-    }
-
-    @Override
-    public void openItem(ContentId id) {
+    public void openItem(@LaunchLocation int location, ContentId id) {
         if (mNativeOfflineContentAggregatorBridge == 0) return;
-        nativeOpenItem(mNativeOfflineContentAggregatorBridge, id.namespace, id.id);
+        nativeOpenItem(mNativeOfflineContentAggregatorBridge, location, id.namespace, id.id);
     }
 
     @Override
@@ -75,15 +69,15 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     }
 
     @Override
-    public OfflineItem getItemById(ContentId id) {
-        if (mNativeOfflineContentAggregatorBridge == 0) return null;
-        return nativeGetItemById(mNativeOfflineContentAggregatorBridge, id.namespace, id.id);
+    public void getItemById(ContentId id, Callback<OfflineItem> callback) {
+        if (mNativeOfflineContentAggregatorBridge == 0) return;
+        nativeGetItemById(mNativeOfflineContentAggregatorBridge, id.namespace, id.id, callback);
     }
 
     @Override
-    public ArrayList<OfflineItem> getAllItems() {
-        if (mNativeOfflineContentAggregatorBridge == 0) return null;
-        return nativeGetAllItems(mNativeOfflineContentAggregatorBridge);
+    public void getAllItems(Callback<ArrayList<OfflineItem>> callback) {
+        if (mNativeOfflineContentAggregatorBridge == 0) return;
+        nativeGetAllItems(mNativeOfflineContentAggregatorBridge, callback);
     }
 
     @Override
@@ -93,16 +87,20 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     }
 
     @Override
+    public void getShareInfoForItem(ContentId id, ShareCallback callback) {
+        nativeGetShareInfoForItem(
+                mNativeOfflineContentAggregatorBridge, id.namespace, id.id, callback);
+    }
+
+    @Override
+    public void renameItem(ContentId id, String name, Callback</*RenameResult*/ Integer> callback) {
+        nativeRenameItem(
+                mNativeOfflineContentAggregatorBridge, id.namespace, id.id, name, callback);
+    }
+
+    @Override
     public void addObserver(final OfflineContentProvider.Observer observer) {
         mObservers.addObserver(observer);
-        if (!areItemsAvailable()) return;
-
-        mHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                notifyObserverOfItemsReady(observer);
-            }
-        });
     }
 
     @Override
@@ -110,21 +108,7 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
         mObservers.removeObserver(observer);
     }
 
-    private void notifyObserverOfItemsReady(Observer observer) {
-        if (!mObservers.hasObserver(observer)) return;
-        observer.onItemsAvailable();
-    }
-
     // Methods called from C++ via JNI.
-    @CalledByNative
-    private void onItemsAvailable() {
-        mItemsAvailable = true;
-
-        for (Observer observer : mObservers) {
-            observer.onItemsAvailable();
-        }
-    }
-
     @CalledByNative
     private void onItemsAdded(ArrayList<OfflineItem> items) {
         if (items.size() == 0) return;
@@ -144,9 +128,9 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     }
 
     @CalledByNative
-    private void onItemUpdated(OfflineItem item) {
+    private void onItemUpdated(OfflineItem item, UpdateDelta updateDelta) {
         for (Observer observer : mObservers) {
-            observer.onItemUpdated(item);
+            observer.onItemUpdated(item, updateDelta);
         }
     }
 
@@ -154,6 +138,12 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     private static void onVisualsAvailable(
             VisualsCallback callback, String nameSpace, String id, OfflineItemVisuals visuals) {
         callback.onVisualsAvailable(new ContentId(nameSpace, id), visuals);
+    }
+
+    @CalledByNative
+    private static void onShareInfoAvailable(
+            ShareCallback callback, String nameSpace, String id, OfflineItemShareInfo shareInfo) {
+        callback.onShareInfoAvailable(new ContentId(nameSpace, id), shareInfo);
     }
 
     /**
@@ -179,8 +169,8 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     }
 
     // Methods called to C++ via JNI.
-    private native void nativeOpenItem(
-            long nativeOfflineContentAggregatorBridge, String nameSpace, String id);
+    private native void nativeOpenItem(long nativeOfflineContentAggregatorBridge,
+            @LaunchLocation int location, String nameSpace, String id);
     private native void nativeRemoveItem(
             long nativeOfflineContentAggregatorBridge, String nameSpace, String id);
     private native void nativeCancelDownload(
@@ -189,10 +179,14 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
             long nativeOfflineContentAggregatorBridge, String nameSpace, String id);
     private native void nativeResumeDownload(long nativeOfflineContentAggregatorBridge,
             String nameSpace, String id, boolean hasUserGesture);
-    private native OfflineItem nativeGetItemById(
-            long nativeOfflineContentAggregatorBridge, String nameSpace, String id);
-    private native ArrayList<OfflineItem> nativeGetAllItems(
-            long nativeOfflineContentAggregatorBridge);
+    private native void nativeGetItemById(long nativeOfflineContentAggregatorBridge,
+            String nameSpace, String id, Callback<OfflineItem> callback);
+    private native void nativeGetAllItems(
+            long nativeOfflineContentAggregatorBridge, Callback<ArrayList<OfflineItem>> callback);
     private native void nativeGetVisualsForItem(long nativeOfflineContentAggregatorBridge,
             String nameSpace, String id, VisualsCallback callback);
+    private native void nativeGetShareInfoForItem(long nativeOfflineContentAggregatorBridge,
+            String nameSpace, String id, ShareCallback callback);
+    private native void nativeRenameItem(long nativeOfflineContentAggregatorBridge,
+            String nameSpace, String id, String name, Callback</*RenameResult*/ Integer> callback);
 }

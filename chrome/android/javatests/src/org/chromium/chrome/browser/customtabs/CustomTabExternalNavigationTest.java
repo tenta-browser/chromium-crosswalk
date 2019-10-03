@@ -16,6 +16,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
@@ -25,7 +26,6 @@ import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler.Overrid
 import org.chromium.chrome.browser.externalnav.ExternalNavigationParams;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.net.test.EmbeddedTestServer;
 
@@ -33,10 +33,7 @@ import org.chromium.net.test.EmbeddedTestServer;
  * Instrumentation test for external navigation handling of a Custom Tab.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @RetryOnFailure
 public class CustomTabExternalNavigationTest {
     @Rule
@@ -80,7 +77,8 @@ public class CustomTabExternalNavigationTest {
         Assert.assertTrue(delegateFactory instanceof CustomTabDelegateFactory);
         CustomTabDelegateFactory customTabDelegateFactory =
                 ((CustomTabDelegateFactory) delegateFactory);
-        mUrlHandler = customTabDelegateFactory.getExternalNavigationHandler();
+        mUrlHandler = ThreadUtils.runOnUiThreadBlocking(
+                () -> customTabDelegateFactory.createExternalNavigationHandler(tab));
         Assert.assertTrue(customTabDelegateFactory.getExternalNavigationDelegate()
                                   instanceof CustomTabNavigationDelegate);
         mNavigationDelegate = (CustomTabNavigationDelegate)
@@ -103,7 +101,8 @@ public class CustomTabExternalNavigationTest {
         final String testUrl = "customtab://customtabtest/intent";
         ExternalNavigationParams params = new ExternalNavigationParams.Builder(testUrl, false)
                 .build();
-        OverrideUrlLoadingResult result = mUrlHandler.shouldOverrideUrlLoading(params);
+        @OverrideUrlLoadingResult
+        int result = mUrlHandler.shouldOverrideUrlLoading(params);
         Assert.assertEquals(OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT, result);
         Assert.assertTrue("A dummy activity should have been started to handle the special url.",
                 mNavigationDelegate.hasExternalActivityStarted());
@@ -119,7 +118,8 @@ public class CustomTabExternalNavigationTest {
         final String testUrl = "http://customtabtest.com";
         ExternalNavigationParams params = new ExternalNavigationParams.Builder(testUrl, false)
                 .build();
-        OverrideUrlLoadingResult result = mUrlHandler.shouldOverrideUrlLoading(params);
+        @OverrideUrlLoadingResult
+        int result = mUrlHandler.shouldOverrideUrlLoading(params);
         Assert.assertEquals(OverrideUrlLoadingResult.NO_OVERRIDE, result);
         Assert.assertFalse("External activities should not be started to handle the url",
                 mNavigationDelegate.hasExternalActivityStarted());

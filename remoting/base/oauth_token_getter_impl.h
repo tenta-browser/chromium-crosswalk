@@ -7,15 +7,17 @@
 
 #include "base/callback.h"
 #include "base/containers/queue.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
+#include "remoting/base/oauth_token_exchanger.h"
 #include "remoting/base/oauth_token_getter.h"
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace remoting {
 
@@ -33,20 +35,21 @@ class OAuthTokenGetterImpl : public OAuthTokenGetter,
   OAuthTokenGetterImpl(
       std::unique_ptr<OAuthIntermediateCredentials> intermediate_credentials,
       const OAuthTokenGetter::CredentialsUpdatedCallback& on_credentials_update,
-      const scoped_refptr<net::URLRequestContextGetter>&
-          url_request_context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       bool auto_refresh);
   OAuthTokenGetterImpl(
       std::unique_ptr<OAuthAuthorizationCredentials> authorization_credentials,
-      const scoped_refptr<net::URLRequestContextGetter>&
-          url_request_context_getter,
+      const OAuthTokenGetter::RefreshTokenUpdatedCallback&
+          on_refresh_token_updated,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       bool auto_refresh);
   ~OAuthTokenGetterImpl() override;
 
   // OAuthTokenGetter interface.
-  void CallWithToken(
-      const OAuthTokenGetter::TokenCallback& on_access_token) override;
+  void CallWithToken(OAuthTokenGetter::TokenCallback on_access_token) override;
   void InvalidateCache() override;
+
+  base::WeakPtr<OAuthTokenGetterImpl> GetWeakPtr();
 
  private:
   // gaia::GaiaOAuthClient::Delegate interface.
@@ -67,12 +70,20 @@ class OAuthTokenGetterImpl : public OAuthTokenGetter,
                               const std::string& refresh_token);
   void GetOauthTokensFromAuthCode();
   void RefreshAccessToken();
+  void OnExchangeTokenResponse(Status status,
+                               const std::string& refresh_token,
+                               const std::string& access_token);
+
+  // Fetches the OAuth scopes for |oauth_access_token_|. If it is missing the
+  // new scopes required by FTL signaling, it exchanges it for a new access
+  // token from a token-exchange service, before notifying the token callbacks.
+  void ExchangeAccessToken();
 
   std::unique_ptr<OAuthIntermediateCredentials> intermediate_credentials_;
   std::unique_ptr<OAuthAuthorizationCredentials> authorization_credentials_;
   std::unique_ptr<gaia::GaiaOAuthClient> gaia_oauth_client_;
   OAuthTokenGetter::CredentialsUpdatedCallback credentials_updated_callback_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
+  OAuthTokenGetter::RefreshTokenUpdatedCallback refresh_token_updated_callback_;
 
   bool response_pending_ = false;
   bool email_verified_ = false;
@@ -82,7 +93,11 @@ class OAuthTokenGetterImpl : public OAuthTokenGetter,
   base::queue<OAuthTokenGetter::TokenCallback> pending_callbacks_;
   std::unique_ptr<base::OneShotTimer> refresh_timer_;
 
+  OAuthTokenExchanger token_exchanger_;
+
   SEQUENCE_CHECKER(sequence_checker_);
+
+  base::WeakPtrFactory<OAuthTokenGetterImpl> weak_factory_;
 };
 
 }  // namespace remoting

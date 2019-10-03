@@ -5,22 +5,33 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_DISCARDS_DISCARDS_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_DISCARDS_DISCARDS_UI_H_
 
+#include <memory>
+
 #include "base/macros.h"
+#include "chrome/browser/performance_manager/webui_graph_dump.mojom.h"
 #include "chrome/browser/ui/webui/discards/discards.mojom.h"
-#include "chrome/browser/ui/webui/mojo_web_ui_controller.h"
+#include "ui/webui/mojo_web_ui_controller.h"
+
+namespace resource_coordinator {
+class LocalSiteCharacteristicsDataStoreInspector;
+}  // namespace resource_coordinator
 
 // Controller for chrome://discards. Corresponding resources are in
 // file://chrome/browser/resources/discards.
-class DiscardsUI : public MojoWebUIController<mojom::DiscardsDetailsProvider> {
+class DiscardsUI : public ui::MojoWebUIController {
  public:
   explicit DiscardsUI(content::WebUI* web_ui);
   ~DiscardsUI() override;
 
  private:
-  // MojoWebUIController overrides:
-  void BindUIHandler(mojom::DiscardsDetailsProviderRequest request) override;
+  void BindDiscardsDetailsProvider(
+      mojom::DiscardsDetailsProviderRequest request);
+  void BindWebUIGraphDumpProvider(
+      performance_manager::mojom::WebUIGraphDumpRequest request);
 
   std::unique_ptr<mojom::DiscardsDetailsProvider> ui_handler_;
+  resource_coordinator::LocalSiteCharacteristicsDataStoreInspector*
+      data_store_inspector_;
 
   DISALLOW_COPY_AND_ASSIGN(DiscardsUI);
 };

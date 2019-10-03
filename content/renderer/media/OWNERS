@@ -2,7 +2,6 @@ file://media/OWNERS
 miu@chromium.org
 
 # WebRTC OWNERS.
-emircan@chromium.org
 hbos@chromium.org
 perkj@chromium.org
 tommi@chromium.org
@@ -10,7 +9,7 @@ guidou@chromium.org
 olka@chromium.org
 maxmorin@chromium.org
 
-per-file *midi*=toyoshim@chromium.org
-per-file media_stream_audio_processor*=aluebs@chromium.org
+# Original (legacy) owner.
+emircan@chromium.org
 
 # COMPONENT: Internals>Media

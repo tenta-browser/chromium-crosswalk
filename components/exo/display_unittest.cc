@@ -4,6 +4,8 @@
 
 #include "components/exo/display.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/window_pin_type.h"
+#include "ash/wm/desks/desks_util.h"
 #include "components/exo/buffer.h"
 #include "components/exo/client_controlled_shell_surface.h"
 #include "components/exo/data_device.h"
@@ -39,22 +41,18 @@ TEST_F(DisplayTest, CreateSharedMemory) {
   std::unique_ptr<Display> display(new Display);
 
   int shm_size = 8192;
-  std::unique_ptr<base::SharedMemory> shared_memory(new base::SharedMemory);
-  bool rv = shared_memory->CreateAnonymous(shm_size);
-  ASSERT_TRUE(rv);
+  base::UnsafeSharedMemoryRegion shared_memory =
+      base::UnsafeSharedMemoryRegion::Create(shm_size);
+  ASSERT_TRUE(shared_memory.IsValid());
 
-  base::SharedMemoryHandle handle =
-      base::SharedMemory::DuplicateHandle(shared_memory->handle());
-  ASSERT_TRUE(base::SharedMemory::IsHandleValid(handle));
-
-  // Creating a shared memory instance from a valid handle should succeed.
+  // Creating a shared memory instance from a valid region should succeed.
   std::unique_ptr<SharedMemory> shm1 =
-      display->CreateSharedMemory(handle, shm_size);
+      display->CreateSharedMemory(std::move(shared_memory));
   EXPECT_TRUE(shm1);
 
-  // Creating a shared memory instance from a invalid handle should fail.
+  // Creating a shared memory instance from a invalid region should fail.
   std::unique_ptr<SharedMemory> shm2 =
-      display->CreateSharedMemory(base::SharedMemoryHandle(), shm_size);
+      display->CreateSharedMemory(base::UnsafeSharedMemoryRegion());
   EXPECT_FALSE(shm2);
 }
 
@@ -68,25 +66,23 @@ TEST_F(DisplayTest, DISABLED_CreateLinuxDMABufBuffer) {
   scoped_refptr<gfx::NativePixmap> pixmap =
       ui::OzonePlatform::GetInstance()
           ->GetSurfaceFactoryOzone()
-          ->CreateNativePixmap(gfx::kNullAcceleratedWidget, buffer_size,
-                               gfx::BufferFormat::RGBA_8888,
+          ->CreateNativePixmap(gfx::kNullAcceleratedWidget, VK_NULL_HANDLE,
+                               buffer_size, gfx::BufferFormat::RGBA_8888,
                                gfx::BufferUsage::GPU_READ);
   gfx::NativePixmapHandle native_pixmap_handle = pixmap->ExportHandle();
-  std::vector<gfx::NativePixmapPlane> planes;
-  std::vector<base::ScopedFD> fds;
-  planes.push_back(native_pixmap_handle.planes[0]);
-  fds.push_back(base::ScopedFD(native_pixmap_handle.fds[0].fd));
-
   std::unique_ptr<Buffer> buffer1 = display->CreateLinuxDMABufBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888, planes, std::move(fds));
+      buffer_size, gfx::BufferFormat::RGBA_8888,
+      std::move(native_pixmap_handle), false);
   EXPECT_TRUE(buffer1);
 
-  std::vector<base::ScopedFD> invalid_fds;
-  invalid_fds.push_back(base::ScopedFD());
+  // Create a handle without a file descriptor.
+  native_pixmap_handle = pixmap->ExportHandle();
+  native_pixmap_handle.planes[0].fd.reset();
+
   // Creating a prime buffer using an invalid fd should fail.
   std::unique_ptr<Buffer> buffer2 = display->CreateLinuxDMABufBuffer(
-      buffer_size, gfx::BufferFormat::RGBA_8888, planes,
-      std::move(invalid_fds));
+      buffer_size, gfx::BufferFormat::RGBA_8888,
+      std::move(native_pixmap_handle), false);
   EXPECT_FALSE(buffer2);
 }
 
@@ -125,16 +121,17 @@ TEST_F(DisplayTest, CreateClientControlledShellSurface) {
   ASSERT_TRUE(surface2);
 
   // Create a remote shell surface for surface1.
-  std::unique_ptr<ShellSurfaceBase> shell_surface1 =
+  std::unique_ptr<ClientControlledShellSurface> shell_surface1 =
       display->CreateClientControlledShellSurface(
           surface1.get(), ash::kShellWindowId_SystemModalContainer,
           2.0 /* default_scale_factor */);
-  EXPECT_TRUE(shell_surface1);
+  ASSERT_TRUE(shell_surface1);
+  EXPECT_EQ(shell_surface1->scale(), 2.0);
 
   // Create a remote shell surface for surface2.
   std::unique_ptr<ShellSurfaceBase> shell_surface2 =
       display->CreateClientControlledShellSurface(
-          surface2.get(), ash::kShellWindowId_DefaultContainer,
+          surface2.get(), ash::desks_util::GetActiveDeskContainerId(),
           1.0 /* default_scale_factor */);
   EXPECT_TRUE(shell_surface2);
 }
@@ -208,7 +205,9 @@ class TestDataDeviceDelegate : public DataDeviceDelegate {
  public:
   // Overriden from DataDeviceDelegate:
   void OnDataDeviceDestroying(DataDevice* data_device) override {}
-  DataOffer* OnDataOffer() override { return nullptr; }
+  DataOffer* OnDataOffer(DataOffer::Purpose purpose) override {
+    return nullptr;
+  }
   void OnEnter(Surface* surface,
                const gfx::PointF& location,
                const DataOffer& data_offer) override {}
@@ -227,18 +226,42 @@ class TestFileHelper : public FileHelper {
   // Overriden from TestFileHelper:
   TestFileHelper() {}
   std::string GetMimeTypeForUriList() const override { return ""; }
-  bool ConvertPathToUrl(const base::FilePath& path, GURL* out) override {
+  bool GetUrlFromPath(const std::string& app_id,
+                      const base::FilePath& path,
+                      GURL* out) override {
     return true;
   }
+  bool HasUrlsInPickle(const base::Pickle& pickle) override { return false; }
+  void GetUrlsFromPickle(const std::string& app_id,
+                         const base::Pickle& pickle,
+                         UrlsFromPickleCallback callback) override {}
 };
 
 TEST_F(DisplayTest, CreateDataDevice) {
   TestDataDeviceDelegate device_delegate;
-  Display display(nullptr, std::make_unique<TestFileHelper>());
+  Display display(nullptr, nullptr, std::make_unique<TestFileHelper>());
 
   std::unique_ptr<DataDevice> device =
       display.CreateDataDevice(&device_delegate);
   EXPECT_TRUE(device.get());
+}
+
+TEST_F(DisplayTest, PinnedAlwaysOnTopWindow) {
+  Display display;
+
+  std::unique_ptr<Surface> surface = display.CreateSurface();
+  ASSERT_TRUE(surface);
+
+  std::unique_ptr<ClientControlledShellSurface> shell_surface =
+      display.CreateClientControlledShellSurface(
+          surface.get(), ash::desks_util::GetActiveDeskContainerId(),
+          2.0 /* default_scale_factor */);
+  ASSERT_TRUE(shell_surface);
+  EXPECT_EQ(shell_surface->scale(), 2.0);
+
+  // This should not crash
+  shell_surface->SetAlwaysOnTop(true);
+  shell_surface->SetPinned(ash::WindowPinType::kPinned);
 }
 
 }  // namespace

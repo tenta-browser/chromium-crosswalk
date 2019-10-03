@@ -14,56 +14,91 @@
  * @return {Promise} Promise to be fulfilled or rejected depending on the test
  *     result.
  */
-function showGridView(rootPath, expectedSet) {
-  var expectedLabels = expectedSet.map(function(entryInfo) {
-    return entryInfo.nameText;
-  }).sort();
-  var setupPromise = setupAndWaitUntilReady(null, rootPath);
-  return setupPromise.then(function(results) {
-    var windowId = results.windowId;
-    // Click the grid view button.
-    var clickedPromise = remoteCall.waitForElement(windowId,
-                                                   '#view-button').
-        then(function() {
-          return remoteCall.callRemoteTestUtil(
-              'fakeEvent', windowId, ['#view-button', 'click']);
-        });
+async function showGridView(rootPath, expectedSet) {
+  const caller = getCaller();
+  const expectedLabels =
+      expectedSet.map((entryInfo) => entryInfo.nameText).sort();
 
-    // Compare the grid labels of the entries.
-    return clickedPromise.then(function() {
-      return repeatUntil(function() {
-        var labelsPromise = remoteCall.callRemoteTestUtil(
-            'queryAllElements',
-            windowId,
-            ['grid:not([hidden]) .thumbnail-item .entry-name']);
-        return labelsPromise.then(function(labels) {
-          var actualLabels = labels.map(function(label) {
-            return label.text;
-          }).sort();
-          if (chrome.test.checkDeepEq(expectedLabels, actualLabels))
-            return true;
-          return pending(
-              'Failed to compare the grid lables, expected: %j, actual %j.',
-              expectedLabels,
-              actualLabels);
-        });
-      });
-    });
+  // Open Files app on |rootPath|.
+  const appId = await setupAndWaitUntilReady(rootPath);
+
+  // Click the grid view button.
+  await remoteCall.waitForElement(appId, '#view-button');
+  await remoteCall.callRemoteTestUtil(
+      'fakeEvent', appId, ['#view-button', 'click']);
+
+  // Compare the grid labels of the entries.
+  await repeatUntil(async () => {
+    const labels = await remoteCall.callRemoteTestUtil(
+        'queryAllElements', appId,
+        ['grid:not([hidden]) .thumbnail-item .entry-name']);
+    const actualLabels = labels.map((label) => label.text).sort();
+
+    if (chrome.test.checkDeepEq(expectedLabels, actualLabels)) {
+      return true;
+    }
+    return pending(
+        caller, 'Failed to compare the grid lables, expected: %j, actual %j.',
+        expectedLabels, actualLabels);
   });
+  return appId;
 }
 
 /**
  * Tests to show grid view on a local directory.
  */
-testcase.showGridViewDownloads = function() {
-  testPromise(showGridView(
-      RootPath.DOWNLOADS, BASIC_LOCAL_ENTRY_SET));
+testcase.showGridViewDownloads = () => {
+  return showGridView(RootPath.DOWNLOADS, BASIC_LOCAL_ENTRY_SET);
 };
 
 /**
  * Tests to show grid view on a drive directory.
  */
-testcase.showGridViewDrive = function() {
-  testPromise(showGridView(
-      RootPath.DRIVE, BASIC_DRIVE_ENTRY_SET));
+testcase.showGridViewDrive = () => {
+  return showGridView(RootPath.DRIVE, BASIC_DRIVE_ENTRY_SET);
+};
+
+/**
+ * Tests to view-button switches to thumbnail (grid) view and clicking again
+ * switches back to detail (file list) view.
+ */
+testcase.showGridViewButtonSwitches = async () => {
+  const appId = await showGridView(RootPath.DOWNLOADS, BASIC_LOCAL_ENTRY_SET);
+
+  // Check that a11y message for switching to grid view.
+  let a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(1, a11yMessages.length, 'Missing a11y message');
+  chrome.test.assertEq(
+      'File list has changed to thumbnail view.', a11yMessages[0]);
+
+  // Click view-button again to switch to detail view.
+  await remoteCall.waitAndClickElement(appId, '#view-button');
+
+  // Wait for detail-view to be visible and grid to be hidden.
+  await remoteCall.waitForElement(appId, '#detail-table:not([hidden])');
+  await remoteCall.waitForElement(appId, 'grid[hidden]');
+
+  // Check that a11y message for switching to list view.
+  a11yMessages =
+      await remoteCall.callRemoteTestUtil('getA11yAnnounces', appId, []);
+  chrome.test.assertEq(2, a11yMessages.length, 'Missing a11y message');
+  chrome.test.assertEq('File list has changed to list view.', a11yMessages[1]);
+};
+
+/**
+ * Tests that selecting/de-selecting files with keyboard produces a11y
+ * messages.
+ */
+testcase.showGridViewKeyboardSelectionA11y = async () => {
+  const isGridView = true;
+  return testcase.fileListKeyboardSelectionA11y(isGridView);
+};
+
+/**
+ * Tests that selecting/de-selecting files with mouse produces a11y messages.
+ */
+testcase.showGridViewMouseSelectionA11y = async () => {
+  const isGridView = true;
+  return testcase.fileListMouseSelectionA11y(isGridView);
 };

@@ -15,17 +15,14 @@ StubWindow::StubWindow(PlatformWindowDelegate* delegate,
     : delegate_(delegate), bounds_(bounds) {
   DCHECK(delegate);
   if (use_default_accelerated_widget)
-    delegate_->OnAcceleratedWidgetAvailable(gfx::kNullAcceleratedWidget, 1.f);
+    delegate_->OnAcceleratedWidgetAvailable(gfx::kNullAcceleratedWidget);
 }
 
-StubWindow::~StubWindow() {
-}
+StubWindow::~StubWindow() {}
 
-void StubWindow::Show() {
-}
+void StubWindow::Show() {}
 
-void StubWindow::Hide() {
-}
+void StubWindow::Hide() {}
 
 void StubWindow::Close() {
   delegate_->OnClosed();
@@ -47,35 +44,44 @@ gfx::Rect StubWindow::GetBounds() {
 
 void StubWindow::SetTitle(const base::string16& title) {}
 
-void StubWindow::SetCapture() {
+void StubWindow::SetCapture() {}
+
+void StubWindow::ReleaseCapture() {}
+
+bool StubWindow::HasCapture() const {
+  return false;
 }
 
-void StubWindow::ReleaseCapture() {
+void StubWindow::ToggleFullscreen() {}
+
+void StubWindow::Maximize() {}
+
+void StubWindow::Minimize() {}
+
+void StubWindow::Restore() {}
+
+PlatformWindowState StubWindow::GetPlatformWindowState() const {
+  return PlatformWindowState::kUnknown;
 }
 
-void StubWindow::ToggleFullscreen() {
+void StubWindow::Activate() {
+  NOTIMPLEMENTED_LOG_ONCE();
 }
 
-void StubWindow::Maximize() {
+void StubWindow::Deactivate() {
+  NOTIMPLEMENTED_LOG_ONCE();
 }
 
-void StubWindow::Minimize() {
-}
+void StubWindow::SetCursor(PlatformCursor cursor) {}
 
-void StubWindow::Restore() {
-}
+void StubWindow::MoveCursorTo(const gfx::Point& location) {}
 
-void StubWindow::SetCursor(PlatformCursor cursor) {
-}
+void StubWindow::ConfineCursorToBounds(const gfx::Rect& bounds) {}
 
-void StubWindow::MoveCursorTo(const gfx::Point& location) {
-}
+void StubWindow::SetRestoredBoundsInPixels(const gfx::Rect& bounds) {}
 
-void StubWindow::ConfineCursorToBounds(const gfx::Rect& bounds) {
-}
-
-PlatformImeController* StubWindow::GetPlatformImeController() {
-  return nullptr;
+gfx::Rect StubWindow::GetRestoredBoundsInPixels() const {
+  return gfx::Rect();
 }
 
 }  // namespace ui

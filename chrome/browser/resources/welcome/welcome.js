@@ -1,37 +1,15 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.define('welcome', function() {
-  'use strict';
+/**
+ * This file should only be included once. It will generate an assert error if
+ * it's included more than once, which can happen when an include is misspelled.
+ */
 
-  function onAccept(e) {
-    chrome.send('handleActivateSignIn');
-  }
-
-  function onDecline(e) {
-    chrome.send('handleUserDecline');
-    e.preventDefault();
-  }
-
-  function initialize() {
-    $('accept-button').addEventListener('click', onAccept);
-    $('decline-button').addEventListener('click', onDecline);
-
-    var logo = document.querySelector('.logo-icon');
-    logo.onclick = function(e) {
-      logo.animate(
-          {
-            transform: ['none', 'rotate(-10turn)'],
-          },
-          /** @type {!KeyframeEffectOptions} */ ({
-            duration: 500,
-            easing: 'cubic-bezier(1, 0, 0, 1)',
-          }));
-    };
-  }
-
-  return {initialize: initialize};
-});
-
-document.addEventListener('DOMContentLoaded', welcome.initialize);
+cr.exportPath('welcome');
+assert(
+    !welcome.defaultResourceLoaded,
+    'welcome.js run twice. You probably have an invalid import.');
+/** Global defined when the main welcome script runs. */
+welcome.defaultResourceLoaded = true;

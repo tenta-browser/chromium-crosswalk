@@ -39,12 +39,17 @@ class PRINTING_EXPORT PageSetup {
   PageSetup(const PageSetup& other);
   ~PageSetup();
 
+  // Gets a symmetrical printable area.
+  static gfx::Rect GetSymmetricalPrintableArea(const gfx::Size& page_size,
+                                               const gfx::Rect& printable_area);
+
   void Clear();
 
   // Equality operator.
   bool Equals(const PageSetup& rhs) const;
 
-  void Init(const gfx::Size& physical_size, const gfx::Rect& printable_area,
+  void Init(const gfx::Size& physical_size,
+            const gfx::Rect& printable_area,
             int text_height);
 
   // Use |requested_margins| as long as they fall inside the printable area.
@@ -60,9 +65,7 @@ class PRINTING_EXPORT PageSetup {
   const gfx::Rect& overlay_area() const { return overlay_area_; }
   const gfx::Rect& content_area() const { return content_area_; }
   const gfx::Rect& printable_area() const { return printable_area_; }
-  const PageMargins& effective_margins() const {
-    return effective_margins_;
-  }
+  const PageMargins& effective_margins() const { return effective_margins_; }
 
  private:
   // Store |requested_margins_| and update page setup values.

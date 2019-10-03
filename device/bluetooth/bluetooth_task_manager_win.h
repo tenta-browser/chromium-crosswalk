@@ -29,6 +29,11 @@ class SequencedTaskRunner;
 
 namespace device {
 
+namespace win {
+class BluetoothClassicWrapper;
+class BluetoothLowEnergyWrapper;
+}  // namespace win
+
 // Manages the blocking Bluetooth tasks using |SequencedWorkerPool|. It runs
 // bluetooth tasks using |SequencedWorkerPool| and informs its observers of
 // bluetooth adapter state changes and any other bluetooth device inquiry
@@ -111,6 +116,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
   explicit BluetoothTaskManagerWin(
       scoped_refptr<base::SequencedTaskRunner> ui_task_runner);
 
+  static scoped_refptr<BluetoothTaskManagerWin> CreateForTesting(
+      std::unique_ptr<win::BluetoothClassicWrapper> classic_wrapper,
+      std::unique_ptr<win::BluetoothLowEnergyWrapper> le_wrapper,
+      scoped_refptr<base::SequencedTaskRunner> ui_task_runner);
+
   static BluetoothUUID BluetoothLowEnergyUuidToBluetoothUuid(
       const BTH_LE_UUID& bth_le_uuid);
 
@@ -141,7 +151,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
       ReadGattCharacteristicValueCallback;
   typedef base::Callback<void(std::unique_ptr<std::vector<uint8_t>>)>
       GattCharacteristicValueChangedCallback;
-  typedef base::Callback<void(PVOID, HRESULT)> GattEventRegistrationCallback;
+  using GattEventRegistrationCallback =
+      base::OnceCallback<void(PVOID, HRESULT)>;
 
   // Get all included characteristics of a given service. The service is
   // uniquely identified by its |uuid| and |attribute_handle| with service
@@ -186,7 +197,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
       const base::FilePath& service_path,
       const PBTH_LE_GATT_CHARACTERISTIC characteristic,
       const PBTH_LE_GATT_DESCRIPTOR ccc_descriptor,
-      const GattEventRegistrationCallback& callback,
+      GattEventRegistrationCallback callback,
       const GattCharacteristicValueChangedCallback& registered_callback);
 
   // Post a task to unregister from value change notifications. |event_handle|
@@ -199,6 +210,10 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
 
   static const int kPollIntervalMs;
 
+  BluetoothTaskManagerWin(
+      std::unique_ptr<win::BluetoothClassicWrapper> classic_wrapper,
+      std::unique_ptr<win::BluetoothLowEnergyWrapper> le_wrapper,
+      scoped_refptr<base::SequencedTaskRunner> ui_task_runner);
   virtual ~BluetoothTaskManagerWin();
 
   // Logs Win32 errors occurring during polling on the worker thread. The method
@@ -309,7 +324,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
       base::FilePath service_path,
       BTH_LE_GATT_CHARACTERISTIC characteristic,
       BTH_LE_GATT_DESCRIPTOR ccc_descriptor,
-      const GattEventRegistrationCallback& callback,
+      GattEventRegistrationCallback callback,
       const GattCharacteristicValueChangedCallback& registered_callback);
   void UnregisterGattCharacteristicValueChangedEvent(PVOID event_handle);
 
@@ -319,18 +334,18 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
   scoped_refptr<base::SequencedTaskRunner> bluetooth_task_runner_;
 
   // List of observers interested in event notifications.
-  base::ObserverList<Observer> observers_;
-
-  // Weak reference of the adapter handle, let BluetoothClassicWrapper handle
-  // the close of |adapter_handle_|.
-  HANDLE adapter_handle_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   // indicates whether the adapter is in discovery mode or not.
-  bool discovering_;
+  bool discovering_ = false;
 
   // Use for discarding too many log messages.
   base::TimeTicks current_logging_batch_ticks_;
-  int current_logging_batch_count_;
+  int current_logging_batch_count_ = 0;
+
+  // Wrapper around the Windows Bluetooth APIs. Owns the radio handle.
+  std::unique_ptr<win::BluetoothClassicWrapper> classic_wrapper_;
+  std::unique_ptr<win::BluetoothLowEnergyWrapper> le_wrapper_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothTaskManagerWin);
 };

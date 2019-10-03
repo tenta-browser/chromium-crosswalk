@@ -5,11 +5,11 @@
 package org.chromium.chrome.browser.signin;
 
 import android.app.Dialog;
-import android.app.DialogFragment;
-import android.app.FragmentManager;
-import android.app.FragmentTransaction;
 import android.content.DialogInterface;
 import android.os.Bundle;
+import android.support.v4.app.DialogFragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.AlertDialog;
 
 import org.chromium.chrome.R;
@@ -65,7 +65,7 @@ public class ConfirmSyncDataStateMachineDelegate {
                 dismiss();
             }
 
-            return new AlertDialog.Builder(getActivity(), R.style.SigninAlertDialogTheme)
+            return new AlertDialog.Builder(getActivity(), R.style.Theme_Chromium_AlertDialog)
                     .setView(R.layout.signin_progress_bar_dialog)
                     .setNegativeButton(R.string.cancel, (dialog, i) -> dialog.cancel())
                     .create();
@@ -107,11 +107,11 @@ public class ConfirmSyncDataStateMachineDelegate {
                 dismiss();
             }
 
-            return new AlertDialog.Builder(getActivity(), R.style.SigninAlertDialogTheme)
+            return new AlertDialog.Builder(getActivity(), R.style.Theme_Chromium_AlertDialog)
                     .setTitle(R.string.sign_in_timeout_title)
                     .setMessage(R.string.sign_in_timeout_message)
                     .setNegativeButton(R.string.cancel, (dialog, which) -> dialog.cancel())
-                    .setPositiveButton(R.string.retry, (dialog, which) -> mListener.onRetry())
+                    .setPositiveButton(R.string.try_again, (dialog, which) -> mListener.onRetry())
                     .create();
         }
 

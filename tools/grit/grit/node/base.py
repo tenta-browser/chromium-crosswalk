@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,15 +5,20 @@
 '''Base types for nodes in a GRIT resource tree.
 '''
 
+from __future__ import print_function
+
 import ast
 import os
+import struct
 import sys
 import types
 from xml.sax import saxutils
 
+from grit import constants
 from grit import clique
 from grit import exception
 from grit import util
+from grit.node import brotli_util
 import grit.format.gzip_string
 
 
@@ -55,7 +59,7 @@ class Node(object):
 
   def __exit__(self, exc_type, exc_value, traceback):
     if exc_type is not None:
-      print u'Error processing node %s' % unicode(self)
+      print(u'Error processing node %s' % unicode(self))
 
   def __iter__(self):
     '''A preorder iteration through the tree that this node is the root of.'''
@@ -597,39 +601,45 @@ class Node(object):
     '''Whether this node is a resource map source.'''
     return False
 
-  def GeneratesResourceMapEntry(self, output_all_resource_defines,
-                                is_active_descendant):
-    '''Whether this node should output a resource map entry.
-
-    Args:
-      output_all_resource_defines: The value of output_all_resource_defines for
-                                   the root node.
-      is_active_descendant: Whether the current node is an active descendant
-                            from the root node.'''
-    return False
-
   def CompressDataIfNeeded(self, data):
     '''Compress data using the format specified in the compress attribute.
 
     Args:
       data: The data to compressed.
     Returns:
-      The data in compressed format. If the format was unknown then this returns
-      the data uncompressed.
+      The data in gzipped or brotli compressed format. If the format is
+      unspecified then this returns the data uncompressed.
     '''
-    if self.attrs.get('compress') != 'gzip':
+    if self.attrs.get('compress') == 'gzip':
+      # We only use rsyncable compression on Linux.
+      # We exclude ChromeOS since ChromeOS bots are Linux based but do not have
+      # the --rsyncable option built in for gzip. See crbug.com/617950.
+      if sys.platform == 'linux2' and 'chromeos' not in self.GetRoot().defines:
+        return grit.format.gzip_string.GzipStringRsyncable(data)
+      return grit.format.gzip_string.GzipString(data)
+
+    elif self.attrs.get('compress') in ('true', 'brotli'):
+      # The length of the uncompressed data as 8 bytes little-endian.
+      size_bytes = struct.pack("<q", len(data))
+      data = brotli_util.BrotliCompress(data)
+      # BROTLI_CONST is prepended to brotli decompressed data in order to
+      # easily check if a resource has been brotli compressed.
+      # The length of the uncompressed data is also appended to the start,
+      # truncated to 6 bytes, little-endian. size_bytes is 8 bytes,
+      # need to truncate further to 6.
+      formatter = '%ds %dx %ds' % (6, 2, len(size_bytes) - 8)
+      return (constants.BROTLI_CONST +
+             b''.join(struct.unpack(formatter, size_bytes)) +
+             data)
+
+    elif self.attrs.get('compress') == 'false':
       return data
 
-    # We only use rsyncable compression on Linux.
-    # We exclude ChromeOS since ChromeOS bots are Linux based but do not have
-    # the --rsyncable option built in for gzip. See crbug.com/617950.
-    if sys.platform == 'linux2' and 'chromeos' not in self.GetRoot().defines:
-      return grit.format.gzip_string.GzipStringRsyncable(data)
-    return grit.format.gzip_string.GzipString(data)
+    else:
+      raise Exception('Invalid value for compression')
 
 
 class ContentNode(Node):
   '''Convenience baseclass for nodes that can have content.'''
   def _ContentType(self):
     return self._CONTENT_TYPE_MIXED
-

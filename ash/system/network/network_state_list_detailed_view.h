@@ -8,23 +8,24 @@
 #include <string>
 
 #include "ash/login_status.h"
-#include "ash/system/tray/tray_details_view.h"
+#include "ash/system/tray/tray_detailed_view.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
+#include "chromeos/services/network_config/public/mojom/cros_network_config.mojom-forward.h"
 
 namespace views {
 class Button;
 }
 
 namespace ash {
-class SystemTrayItem;
+
+class TrayNetworkStateModel;
 
 namespace tray {
 
 // Exported for tests.
-class ASH_EXPORT NetworkStateListDetailedView
-    : public TrayDetailsView,
-      public base::SupportsWeakPtr<NetworkStateListDetailedView> {
+class ASH_EXPORT NetworkStateListDetailedView : public TrayDetailedView {
  public:
   ~NetworkStateListDetailedView() override;
 
@@ -36,10 +37,13 @@ class ASH_EXPORT NetworkStateListDetailedView
 
   void ToggleInfoBubbleForTesting();
 
+  // views::View:
+  const char* GetClassName() const override;
+
  protected:
   enum ListType { LIST_TYPE_NETWORK, LIST_TYPE_VPN };
 
-  NetworkStateListDetailedView(SystemTrayItem* owner,
+  NetworkStateListDetailedView(DetailedViewDelegate* delegate,
                                ListType list_type,
                                LoginStatus login);
 
@@ -54,17 +58,24 @@ class ASH_EXPORT NetworkStateListDetailedView
  private:
   class InfoBubble;
 
-  // TrayDetailsView:
+  // TrayDetailedView:
   void HandleViewClicked(views::View* view) override;
   void HandleButtonPressed(views::Button* sender,
                            const ui::Event& event) override;
   void CreateExtraTitleRowButtons() override;
 
+  // Implementation of 'HandleViewClicked' once networks are received.
+  void HandleViewClickedImpl(
+      chromeos::network_config::mojom::NetworkStatePropertiesPtr network);
+
   // Launches the WebUI settings in a browser and closes the system menu.
   void ShowSettings();
 
-  // Update UI components.
+  // Update info and settings buttons in header.
   void UpdateHeaderButtons();
+
+  // Update scanning progress bar.
+  void UpdateScanningBar();
 
   // Create and manage the network info bubble.
   void ToggleInfoBubble();
@@ -72,8 +83,13 @@ class ASH_EXPORT NetworkStateListDetailedView
   void OnInfoBubbleDestroyed();
   views::View* CreateNetworkInfoView();
 
-  // Periodically request a network scan.
+  // Scan and start timer to periodically request a network scan.
+  void ScanAndStartTimer();
+
+  // Request a network scan.
   void CallRequestScan();
+
+  bool IsWifiEnabled();
 
   // Type of list (all networks or vpn)
   ListType list_type_;
@@ -81,11 +97,18 @@ class ASH_EXPORT NetworkStateListDetailedView
   // Track login state.
   LoginStatus login_;
 
+  TrayNetworkStateModel* model_;
+
   views::Button* info_button_;
   views::Button* settings_button_;
 
   // A small bubble for displaying network info.
   InfoBubble* info_bubble_;
+
+  // Timer for starting and stopping network scans.
+  base::RepeatingTimer network_scan_repeating_timer_;
+
+  base::WeakPtrFactory<NetworkStateListDetailedView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NetworkStateListDetailedView);
 };

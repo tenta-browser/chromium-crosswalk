@@ -4,8 +4,10 @@
 
 #include "media/cast/test/utility/in_process_receiver.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
@@ -16,10 +18,10 @@
 #include "media/cast/cast_environment.h"
 #include "media/cast/cast_receiver.h"
 #include "media/cast/net/cast_transport_config.h"
-#include "media/cast/net/udp_transport.h"
+#include "media/cast/net/udp_transport_impl.h"
 
 using media::cast::CastTransportStatus;
-using media::cast::UdpTransport;
+using media::cast::UdpTransportImpl;
 
 namespace media {
 namespace cast {
@@ -47,8 +49,7 @@ InProcessReceiver::InProcessReceiver(
       local_end_point_(local_end_point),
       remote_end_point_(remote_end_point),
       audio_config_(audio_config),
-      video_config_(video_config),
-      weak_factory_(this) {}
+      video_config_(video_config) {}
 
 InProcessReceiver::~InProcessReceiver() {
   Stop();
@@ -59,9 +60,13 @@ void InProcessReceiver::Start() {
                               FROM_HERE,
                               base::Bind(&InProcessReceiver::StartOnMainThread,
                                          base::Unretained(this)));
+  stopped_ = false;
 }
 
 void InProcessReceiver::Stop() {
+  if (stopped_) {
+    return;
+  }
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   if (cast_environment_->CurrentlyOn(CastEnvironment::MAIN)) {
@@ -74,6 +79,7 @@ void InProcessReceiver::Stop() {
                                            &event));
     event.Wait();
   }
+  stopped_ = true;
 }
 
 void InProcessReceiver::StopOnMainThread(base::WaitableEvent* event) {
@@ -98,8 +104,8 @@ void InProcessReceiver::StartOnMainThread() {
   transport_ = CastTransport::Create(
       cast_environment_->Clock(), base::TimeDelta(),
       base::WrapUnique(new InProcessReceiver::TransportClient(this)),
-      base::MakeUnique<UdpTransport>(
-          nullptr, cast_environment_->GetTaskRunner(CastEnvironment::MAIN),
+      std::make_unique<UdpTransportImpl>(
+          cast_environment_->GetTaskRunner(CastEnvironment::MAIN),
           local_end_point_, remote_end_point_,
           base::Bind(&InProcessReceiver::UpdateCastTransportStatus,
                      base::Unretained(this))),
@@ -113,7 +119,7 @@ void InProcessReceiver::StartOnMainThread() {
 }
 
 void InProcessReceiver::GotAudioFrame(std::unique_ptr<AudioBus> audio_frame,
-                                      const base::TimeTicks& playout_time,
+                                      base::TimeTicks playout_time,
                                       bool is_continuous) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   if (audio_frame.get())
@@ -121,13 +127,12 @@ void InProcessReceiver::GotAudioFrame(std::unique_ptr<AudioBus> audio_frame,
   PullNextAudioFrame();
 }
 
-void InProcessReceiver::GotVideoFrame(
-    const scoped_refptr<VideoFrame>& video_frame,
-    const base::TimeTicks& playout_time,
-    bool is_continuous) {
+void InProcessReceiver::GotVideoFrame(scoped_refptr<VideoFrame> video_frame,
+                                      base::TimeTicks playout_time,
+                                      bool is_continuous) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
-  if (video_frame.get())
-    OnVideoFrame(video_frame, playout_time, is_continuous);
+  if (video_frame)
+    OnVideoFrame(std::move(video_frame), playout_time, is_continuous);
   PullNextVideoFrame();
 }
 

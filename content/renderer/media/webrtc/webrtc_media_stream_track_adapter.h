@@ -10,17 +10,18 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "content/common/content_export.h"
-#include "content/renderer/media/remote_media_stream_track_adapter.h"
 #include "content/renderer/media/webrtc/media_stream_video_webrtc_sink.h"
 #include "content/renderer/media/webrtc/webrtc_audio_sink.h"
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/webrtc/api/mediastreaminterface.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/web/modules/mediastream/remote_media_stream_track_adapter.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
 
 namespace content {
 
 class PeerConnectionDependencyFactory;
+struct WebRtcMediaStreamTrackAdapterTraits;
 
 // This is a mapping between a webrtc and blink media stream track. It takes
 // care of creation, initialization and disposing of tracks independently of
@@ -29,7 +30,8 @@ class PeerConnectionDependencyFactory;
 // and whether it is an audio or video track; this adapter hides that fact and
 // lets you use a single class for any type of track.
 class CONTENT_EXPORT WebRtcMediaStreamTrackAdapter
-    : public base::RefCountedThreadSafe<WebRtcMediaStreamTrackAdapter> {
+    : public base::RefCountedThreadSafe<WebRtcMediaStreamTrackAdapter,
+                                        WebRtcMediaStreamTrackAdapterTraits> {
  public:
   // Invoke on the main thread. The returned adapter is fully initialized, see
   // |is_initialized|. The adapter will keep a reference to the |main_thread|.
@@ -53,6 +55,7 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapter
   void Dispose();
 
   bool is_initialized() const;
+  void InitializeOnMainThread();
   // These methods must be called on the main thread.
   // TODO(hbos): Allow these methods to be called on any thread and make them
   // const. https://crbug.com/756436
@@ -67,15 +70,17 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapter
   MediaStreamVideoWebRtcSink* GetLocalTrackVideoSinkForTesting() {
     return local_track_video_sink_.get();
   }
-  RemoteAudioTrackAdapter* GetRemoteAudioTrackAdapterForTesting() {
+  blink::RemoteAudioTrackAdapter* GetRemoteAudioTrackAdapterForTesting() {
     return remote_audio_track_adapter_.get();
   }
-  RemoteVideoTrackAdapter* GetRemoteVideoTrackAdapterForTesting() {
+  blink::RemoteVideoTrackAdapter* GetRemoteVideoTrackAdapterForTesting() {
     return remote_video_track_adapter_.get();
   }
 
  protected:
-  friend class base::RefCountedThreadSafe<WebRtcMediaStreamTrackAdapter>;
+  friend class base::RefCountedThreadSafe<WebRtcMediaStreamTrackAdapter,
+                                          WebRtcMediaStreamTrackAdapterTraits>;
+  friend struct WebRtcMediaStreamTrackAdapterTraits;
 
   WebRtcMediaStreamTrackAdapter(
       PeerConnectionDependencyFactory* factory,
@@ -116,6 +121,7 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapter
   // completed on the main thread.
   base::WaitableEvent remote_track_can_complete_initialization_;
   bool is_initialized_;
+  bool is_disposed_;
   blink::WebMediaStreamTrack web_track_;
   scoped_refptr<webrtc::MediaStreamTrackInterface> webrtc_track_;
   // If the track is local, a sink is added to the local webrtc track that is
@@ -124,10 +130,20 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapter
   std::unique_ptr<MediaStreamVideoWebRtcSink> local_track_video_sink_;
   // If the track is remote, an adapter is used that listens to notifications on
   // the remote webrtc track and notifies Blink.
-  scoped_refptr<RemoteAudioTrackAdapter> remote_audio_track_adapter_;
-  scoped_refptr<RemoteVideoTrackAdapter> remote_video_track_adapter_;
+  scoped_refptr<blink::RemoteAudioTrackAdapter> remote_audio_track_adapter_;
+  scoped_refptr<blink::RemoteVideoTrackAdapter> remote_video_track_adapter_;
 
   DISALLOW_COPY_AND_ASSIGN(WebRtcMediaStreamTrackAdapter);
+};
+
+struct CONTENT_EXPORT WebRtcMediaStreamTrackAdapterTraits {
+ private:
+  friend class base::RefCountedThreadSafe<WebRtcMediaStreamTrackAdapter,
+                                          WebRtcMediaStreamTrackAdapterTraits>;
+
+  // Ensure destruction occurs on main thread so that "Web" and other resources
+  // are destroyed on the correct thread.
+  static void Destruct(const WebRtcMediaStreamTrackAdapter* adapter);
 };
 
 }  // namespace content

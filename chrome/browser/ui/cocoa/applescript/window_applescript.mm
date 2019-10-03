@@ -108,7 +108,7 @@
 - (NSWindow*)nativeHandle {
   // window() can be NULL during startup.
   if (browser_->window())
-    return browser_->window()->GetNativeWindow();
+    return browser_->window()->GetNativeWindow().GetNativeNSWindow();
   return nil;
 }
 
@@ -124,9 +124,10 @@
 - (void)setActiveTabIndex:(NSNumber*)anActiveTabIndex {
   // Note: applescript is 1-based, that is lists begin with index 1.
   int atIndex = [anActiveTabIndex intValue] - 1;
-  if (atIndex >= 0 && atIndex < browser_->tab_strip_model()->count())
-    browser_->tab_strip_model()->ActivateTabAt(atIndex, true);
-  else
+  if (atIndex >= 0 && atIndex < browser_->tab_strip_model()->count()) {
+    browser_->tab_strip_model()->ActivateTabAt(
+        atIndex, {TabStripModel::GestureType::kOther});
+  } else
     AppleScript::SetError(AppleScript::errInvalidTabIndex);
 }
 
@@ -198,16 +199,16 @@
 
   // Set how long it takes a tab to be created.
   base::TimeTicks newTabStartTime = base::TimeTicks::Now();
-  chrome::NavigateParams params(browser_, GURL(chrome::kChromeUINewTabURL),
-                                ui::PAGE_TRANSITION_TYPED);
+  NavigateParams params(browser_, GURL(chrome::kChromeUINewTabURL),
+                        ui::PAGE_TRANSITION_TYPED);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   params.tabstrip_index = index;
-  chrome::Navigate(&params);
+  Navigate(&params);
   CoreTabHelper* core_tab_helper =
-      CoreTabHelper::FromWebContents(params.target_contents);
+      CoreTabHelper::FromWebContents(params.navigated_or_inserted_contents);
   core_tab_helper->set_new_tab_start_time(newTabStartTime);
 
-  [aTab setWebContents:params.target_contents];
+  [aTab setWebContents:params.navigated_or_inserted_contents];
 }
 
 - (void)removeFromTabsAtIndex:(int)index {

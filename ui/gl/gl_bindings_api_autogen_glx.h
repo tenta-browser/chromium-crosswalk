@@ -8,6 +8,10 @@
 //    clang-format -i -style=chromium filename
 // DO NOT EDIT!
 
+// Silence presubmit and Tricium warnings about include guards
+// no-include-guard-because-multiply-included
+// NOLINT(build/header_guard)
+
 void glXBindTexImageEXTFn(Display* dpy,
                           GLXDrawable drawable,
                           int buffer,

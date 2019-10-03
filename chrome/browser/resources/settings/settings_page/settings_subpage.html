@@ -1,22 +1,32 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
+<link rel="import" href="chrome://resources/html/cr/ui/focus_without_ink.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_icon_button/cr_icon_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_search_field/cr_search_field.html">
+<link rel="import" href="chrome://resources/cr_elements/icons.html">
+<link rel="import" href="chrome://resources/cr_elements/shared_style_css.html">
+<link rel="import" href="chrome://resources/html/find_shortcut_behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-icon/iron-icon.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-resizable-behavior/iron-resizable-behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/neon-animation/neon-animatable-behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-ripple/paper-ripple.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner.html">
-<link rel="import" href="../icons.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner-lite.html">
 <link rel="import" href="../route.html">
-<link rel="import" href="settings_subpage_search.html">
 <link rel="import" href="../settings_shared_css.html">
 
 <dom-module id="settings-subpage">
   <template>
-    <style include="settings-shared">
+    <style include="cr-shared-style settings-shared">
       :host {
+        background-color: var(--cr-card-background-color);
+        box-sizing: border-box;
         display: block;
+        left: 0;
+        min-height: calc(100vh - var(--cr-toolbar-height));
         padding-bottom: 60px;
+        position: absolute;
+        right: 0;
+        top: 0;
+        @apply --cr-card-elevation;
       }
 
       #headerLine {
@@ -26,7 +36,7 @@
       }
 
       #learnMore {
-        @apply(--cr-paper-icon-button-margin);
+        @apply --cr-paper-icon-button-margin;
         align-items: center;
         display: flex;
         height: var(--cr-icon-ripple-size);
@@ -35,46 +45,45 @@
         width: var(--cr-icon-ripple-size);
       }
 
-      button[is='paper-icon-button-light'] {
+      cr-icon-button {
         /* Centers the ripple on the icon with appropriate margin on right. */
-        -webkit-margin-end: 10px;
-        -webkit-margin-start: -10px;
+        margin-inline-end: 10px;
+        margin-inline-start: -10px;
       }
 
-      paper-spinner {
-        @apply(--cr-icon-height-width);
+      paper-spinner-lite {
+        @apply --cr-icon-height-width;
       }
 
       h1 {
         flex: 1;  /* Push other items to the end. */
-        @apply(--cr-title-text);
       }
 
-      settings-subpage-search {
+      cr-search-field {
         /* Keep normal icon spacing from subpage-title-extra controls. */
-        -webkit-margin-start: 16px;
+        margin-inline-start: 16px;
       }
     </style>
     <div class="settings-box first" id="headerLine">
-      <button is="paper-icon-button-light" on-tap="onTapBack_"
-          aria-label="$i18n{back}" class="icon-arrow-back">
-      </button>
-      <h1>[[pageTitle]]</h1>
+      <cr-icon-button class="icon-arrow-back" id="closeButton"
+          on-click="onTapBack_" aria-label="$i18n{back}"></cr-icon-button>
+      <h1 class="cr-title-text">[[pageTitle]]</h1>
       <slot name="subpage-title-extra"></slot>
       <template is="dom-if" if="[[learnMoreUrl]]">
         <a id="learnMore" aria-label="$i18n{learnMore}"
             href="[[learnMoreUrl]]" target="_blank">
-          <iron-icon icon="settings:help-outline"></iron-icon>
+          <iron-icon icon="cr:help-outline"></iron-icon>
           <paper-ripple class="circle" center></paper-ripple>
         </a>
       </template>
       <template is="dom-if" if="[[searchLabel]]">
-        <settings-subpage-search label="[[searchLabel]]"
+        <cr-search-field label="[[searchLabel]]"
             on-search-changed="onSearchChanged_">
-        </settings-subpage-search>
+        </cr-search-field>
       </template>
       <template is="dom-if" if="[[showSpinner]]">
-        <paper-spinner active></paper-spinner>
+        <paper-spinner-lite active title$="[[spinnerTitle]]">
+        </paper-spinner-lite>
       </template>
     </div>
     <slot></slot>

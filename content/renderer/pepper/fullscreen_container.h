@@ -6,10 +6,13 @@
 #define CONTENT_RENDERER_PEPPER_FULLSCREEN_CONTAINER_H_
 
 namespace blink {
-class WebLayer;
 struct WebCursorInfo;
 struct WebRect;
 }  // namespace blink
+
+namespace cc {
+class Layer;
+}
 
 namespace content {
 
@@ -17,12 +20,6 @@ namespace content {
 // plugins, that only handles painting.
 class FullscreenContainer {
  public:
-  // Invalidates the full plugin region.
-  virtual void Invalidate() = 0;
-
-  // Invalidates a partial region of the plugin.
-  virtual void InvalidateRect(const blink::WebRect&) = 0;
-
   // Scrolls a partial region of the plugin in the given direction.
   virtual void ScrollRect(int dx, int dy, const blink::WebRect&) = 0;
 
@@ -33,7 +30,7 @@ class FullscreenContainer {
   // Notifies the container that the mouse cursor has changed.
   virtual void PepperDidChangeCursor(const blink::WebCursorInfo& cursor) = 0;
 
-  virtual void SetLayer(blink::WebLayer* layer) = 0;
+  virtual void SetLayer(cc::Layer* layer) = 0;
 
  protected:
   virtual ~FullscreenContainer() {}

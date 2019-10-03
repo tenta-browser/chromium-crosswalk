@@ -8,8 +8,6 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(chromeos::WebContentsForcedTitle);
-
 namespace chromeos {
 
 // static
@@ -36,5 +34,7 @@ void WebContentsForcedTitle::TitleWasSet(content::NavigationEntry* entry) {
   if (!entry || entry->GetTitle() != title_)
     web_contents()->UpdateTitleForEntry(entry, title_);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsForcedTitle)
 
 }  // namespace chromeos

@@ -15,21 +15,26 @@
 #include "chrome/browser/banners/app_banner_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/extensions/permissions_updater.h"
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
+#include "chrome/browser/web_applications/extensions/bookmark_app_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
 #include "chrome/common/extensions/sync_helper.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/site_instance.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/manifest.h"
@@ -126,16 +131,6 @@ void SetIsIncognitoEnabled(const std::string& extension_id,
   }
 }
 
-bool CanCrossIncognito(const Extension* extension,
-                       content::BrowserContext* context) {
-  // We allow the extension to see events and data from another profile iff it
-  // uses "spanning" behavior and it has incognito access. "split" mode
-  // extensions only see events for a matching profile.
-  CHECK(extension);
-  return IsIncognitoEnabled(extension->id(), context) &&
-         !IncognitoInfo::IsSplitMode(extension);
-}
-
 bool CanLoadInIncognito(const Extension* extension,
                         content::BrowserContext* context) {
   CHECK(extension);
@@ -150,7 +145,7 @@ bool CanLoadInIncognito(const Extension* extension,
 bool AllowFileAccess(const std::string& extension_id,
                      content::BrowserContext* context) {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kDisableExtensionsFileAccessCheck) ||
+             ::switches::kDisableExtensionsFileAccessCheck) ||
          ExtensionPrefs::Get(context)->AllowFileAccess(extension_id);
 }
 
@@ -177,7 +172,7 @@ void SetWasInstalledByCustodian(const std::string& extension_id,
 
   prefs->UpdateExtensionPref(
       extension_id, kWasInstalledByCustodianPrefName,
-      installed_by_custodian ? base::MakeUnique<base::Value>(true) : nullptr);
+      installed_by_custodian ? std::make_unique<base::Value>(true) : nullptr);
   ExtensionService* service =
       ExtensionSystem::Get(context)->extension_service();
 
@@ -304,29 +299,58 @@ const gfx::ImageSkia& GetDefaultExtensionIcon() {
       IDR_EXTENSION_DEFAULT_ICON);
 }
 
-bool IsNewBookmarkAppsEnabled() {
-#if defined(OS_MACOSX)
-  return base::FeatureList::IsEnabled(features::kBookmarkApps) ||
-         base::FeatureList::IsEnabled(features::kAppBanners) ||
-         banners::AppBannerManager::IsExperimentalAppBannersEnabled();
-#else
-  return true;
-#endif
-}
-
-bool CanHostedAppsOpenInWindows() {
-#if defined(OS_MACOSX)
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kEnableHostedAppsInWindows) ||
-         base::FeatureList::IsEnabled(features::kDesktopPWAWindowing);
-#else
-  return true;
-#endif
-}
-
 bool IsExtensionSupervised(const Extension* extension, Profile* profile) {
   return WasInstalledByCustodian(extension->id(), profile) &&
          profile->IsSupervised();
+}
+
+const Extension* GetInstalledPwaForUrl(
+    content::BrowserContext* context,
+    const GURL& url,
+    base::Optional<LaunchContainer> launch_container_filter) {
+  const ExtensionPrefs* prefs = ExtensionPrefs::Get(context);
+  for (scoped_refptr<const Extension> app :
+       ExtensionRegistry::Get(context)->enabled_extensions()) {
+    if (!app->from_bookmark())
+      continue;
+    if (!BookmarkAppIsLocallyInstalled(prefs, app.get()))
+      continue;
+    if (launch_container_filter &&
+        GetLaunchContainer(prefs, app.get()) != *launch_container_filter) {
+      continue;
+    }
+    if (UrlHandlers::CanBookmarkAppHandleUrl(app.get(), url))
+      return app.get();
+  }
+  return nullptr;
+}
+
+const Extension* GetPwaForSecureActiveTab(Browser* browser) {
+  switch (browser->location_bar_model()->GetSecurityLevel()) {
+    case security_state::SECURITY_LEVEL_COUNT:
+      NOTREACHED();
+      FALLTHROUGH;
+    case security_state::NONE:
+    case security_state::HTTP_SHOW_WARNING:
+    case security_state::DANGEROUS:
+      return nullptr;
+    case security_state::EV_SECURE:
+    case security_state::SECURE:
+    case security_state::SECURE_WITH_POLICY_INSTALLED_CERT:
+      break;
+  }
+  content::WebContents* web_contents =
+      browser->tab_strip_model()->GetActiveWebContents();
+  return GetInstalledPwaForUrl(
+      web_contents->GetBrowserContext(),
+      web_contents->GetMainFrame()->GetLastCommittedURL());
+}
+
+bool IsWebContentsInAppWindow(content::WebContents* web_contents) {
+  // TODO(loyso): Unify this check as a util (including
+  // MaybeCreateHostedAppController).
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
+  return browser && browser->app_controller();
 }
 
 }  // namespace util

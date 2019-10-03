@@ -6,7 +6,9 @@
 
 #import <Foundation/Foundation.h>
 
-#include "base/message_loop/message_loop.h"
+#include <memory>
+
+#include "base/test/scoped_task_environment.h"
 #include "ios/net/cookies/system_cookie_store_unittest_template.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -22,11 +24,9 @@ class NSHTTPSystemCookieStoreTestDelegate {
  public:
   NSHTTPSystemCookieStoreTestDelegate()
       : scoped_cookie_store_ios_client_(
-            base::MakeUnique<TestCookieStoreIOSClient>()),
+            std::make_unique<TestCookieStoreIOSClient>()),
         shared_store_([NSHTTPCookieStorage sharedHTTPCookieStorage]),
-        store_(base::MakeUnique<net::NSHTTPSystemCookieStore>(shared_store_)) {}
-
-  bool IsTestEnabled() { return true; }
+        store_(std::make_unique<net::NSHTTPSystemCookieStore>(shared_store_)) {}
 
   bool IsCookieSet(NSHTTPCookie* system_cookie, NSURL* url) {
     // Verify that cookie is set in system storage.
@@ -55,14 +55,14 @@ class NSHTTPSystemCookieStoreTestDelegate {
   SystemCookieStore* GetCookieStore() { return store_.get(); }
 
  private:
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   ScopedTestingCookieStoreIOSClient scoped_cookie_store_ios_client_;
   NSHTTPCookieStorage* shared_store_;
   std::unique_ptr<net::NSHTTPSystemCookieStore> store_;
 };
 
-INSTANTIATE_TYPED_TEST_CASE_P(NSHTTPSystemCookieStore,
-                              SystemCookieStoreTest,
-                              NSHTTPSystemCookieStoreTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(NSHTTPSystemCookieStore,
+                               SystemCookieStoreTest,
+                               NSHTTPSystemCookieStoreTestDelegate);
 
 }  // namespace net

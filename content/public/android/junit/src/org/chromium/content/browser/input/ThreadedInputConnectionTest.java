@@ -36,18 +36,21 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.concurrent.Callable;
 
 /**
  * Unit tests for {@ThreadedInputConnection}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class ThreadedInputConnectionTest {
-    @Mock ImeAdapter mImeAdapter;
+    @Mock
+    ImeAdapterImpl mImeAdapter;
 
     ThreadedInputConnection mConnection;
     InOrder mInOrder;
@@ -59,7 +62,7 @@ public class ThreadedInputConnectionTest {
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
 
-        mImeAdapter = Mockito.mock(ImeAdapter.class);
+        mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
         mInOrder = inOrder(mImeAdapter);
 
         // Mocks required to create a ThreadedInputConnection object
@@ -185,7 +188,7 @@ public class ThreadedInputConnectionTest {
     public void testRendererCannotUpdateState() {
         when(mImeAdapter.requestTextInputStateUpdate()).thenReturn(true);
         // We found that renderer cannot update state, e.g., due to a crash.
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 try {

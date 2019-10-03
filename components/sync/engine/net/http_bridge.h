@@ -21,17 +21,18 @@
 #include "components/sync/engine/net/http_post_provider_factory.h"
 #include "components/sync/engine/net/http_post_provider_interface.h"
 #include "components/sync/engine/net/network_time_update_callback.h"
-#include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
 
 class HttpBridgeTest;
 
 namespace net {
 class HttpResponseHeaders;
-class URLFetcher;
-}
+}  // namespace net
+
+namespace network {
+class SimpleURLLoader;
+}  // namespace network
 
 namespace syncer {
 
@@ -44,13 +45,12 @@ class CancelationSignal;
 // It is RefCountedThreadSafe because it can PostTask to the io loop, and thus
 // needs to stick around across context switches, etc.
 class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
-                   public HttpPostProviderInterface,
-                   public net::URLFetcherDelegate {
+                   public HttpPostProviderInterface {
  public:
   HttpBridge(const std::string& user_agent,
-             const scoped_refptr<net::URLRequestContextGetter>& context,
-             const NetworkTimeUpdateCallback& network_time_update_callback,
-             const BindToTrackerCallback& bind_to_tracker_callback);
+             std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+                 url_loader_factory_info,
+             const NetworkTimeUpdateCallback& network_time_update_callback);
 
   // HttpPostProviderInterface implementation.
   void SetExtraRequestHeaders(const char* headers) override;
@@ -58,7 +58,7 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
   void SetPostPayload(const char* content_type,
                       int content_length,
                       const char* content) override;
-  bool MakeSynchronousPost(int* error_code, int* response_code) override;
+  bool MakeSynchronousPost(int* net_error_code, int* http_status_code) override;
   void Abort() override;
 
   // WARNING: these response content methods are used to extract plain old data
@@ -70,17 +70,11 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
   const std::string GetResponseHeaderValue(
       const std::string& name) const override;
 
-  // net::URLFetcherDelegate implementation.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
-  void OnURLFetchDownloadProgress(const net::URLFetcher* source,
-                                  int64_t current,
-                                  int64_t total,
-                                  int64_t current_network_bytes) override;
-  void OnURLFetchUploadProgress(const net::URLFetcher* source,
-                                int64_t current,
-                                int64_t total) override;
+  void OnURLLoadComplete(std::unique_ptr<std::string> response_body);
+  void OnURLLoadUploadProgress(uint64_t position, uint64_t total);
 
-  net::URLRequestContextGetter* GetRequestContextGetterForTest() const;
+  static void SetIOCapableTaskRunnerForTest(
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
 
  protected:
   ~HttpBridge() override;
@@ -88,9 +82,19 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
   // Protected virtual so the unit test can override to shunt network requests.
   virtual void MakeAsynchronousPost();
 
+  void set_url_loader_factory_for_testing(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+    url_loader_factory_ = url_loader_factory;
+  }
+
  private:
   friend class base::RefCountedThreadSafe<HttpBridge>;
-  friend class SyncHttpBridgeTest;
+  FRIEND_TEST_ALL_PREFIXES(SyncHttpBridgeTest,
+                           AbortAndReleaseBeforeFetchComplete);
+  // Test is disabled on Android.
+  FRIEND_TEST_ALL_PREFIXES(DISABLED_SyncHttpBridgeTest,
+                           AbortAndReleaseBeforeFetchComplete);
+  friend class ShuntedHttpBridge;
   friend class ::HttpBridgeTest;
 
   // Called on the IO loop to issue the network request. The extra level
@@ -98,17 +102,24 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
   // still have a function to statically pass to PostTask.
   void CallMakeAsynchronousPost() { MakeAsynchronousPost(); }
 
+  // Actual implementation of the load complete callback. Called by tests too.
+  void OnURLLoadCompleteInternal(int http_status_code,
+                                 int net_error_code,
+                                 const GURL& final_url,
+                                 std::unique_ptr<std::string> response_body);
+
   // Used to destroy a fetcher when the bridge is Abort()ed, to ensure that
   // a reference to |this| is held while flushing any pending fetch completion
   // callbacks coming from the IO thread en route to finally destroying the
   // fetcher.
-  void DestroyURLFetcherOnIOThread(net::URLFetcher* fetcher,
-                                   base::Timer* fetch_timer);
+  void DestroyURLLoaderOnIOThread(
+      std::unique_ptr<network::SimpleURLLoader> loader,
+      std::unique_ptr<base::OneShotTimer> loader_timer);
 
   void UpdateNetworkTime();
 
   // Helper method to abort the request if we timed out.
-  void OnURLFetchTimedOut();
+  void OnURLLoadTimedOut();
 
   // Used to check whether a method runs on the thread that we were created on.
   // This is the thread that will block on MakeSynchronousPost while the IO
@@ -141,7 +152,7 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
     // NOTE: This is not a unique_ptr for a reason. It must be deleted on the
     // same thread that created it, which isn't the same thread |this| gets
     // deleted on. We must manually delete url_poster_ on the IO loop.
-    net::URLFetcher* url_poster;
+    std::unique_ptr<network::SimpleURLLoader> url_loader;
 
     // Start and finish time of request. Set immediately before sending
     // request and after receiving response.
@@ -154,33 +165,33 @@ class HttpBridge : public base::RefCountedThreadSafe<HttpBridge>,
     // Cached response data.
     bool request_completed;
     bool request_succeeded;
-    int http_response_code;
-    int error_code;
+    int http_status_code;
+    int net_error_code;
     std::string response_content;
     scoped_refptr<net::HttpResponseHeaders> response_headers;
 
     // Timer to ensure http requests aren't stalled. Reset every time upload or
     // download progress is made.
-    std::unique_ptr<base::Timer> http_request_timeout_timer;
+    std::unique_ptr<base::OneShotTimer> http_request_timeout_timer;
   };
 
-  // This lock synchronizes use of state involved in the flow to fetch a URL
-  // using URLFetcher, including |fetch_state_| and |request_context_getter_| on
-  // any thread, for example, this flow needs to be synchronized to gracefully
+  // This lock synchronizes use of state involved in the flow to load a URL
+  // using URLLoader, including |fetch_state_| on any thread, for example,
+  // this flow needs to be synchronized to gracefully
   // clean up URLFetcher and return appropriate values in |error_code|.
+  //
+  // TODO(crbug.com/844968): Check whether we can get rid of |fetch_state_lock_|
+  // altogether after the migration to SimpleURLLoader.
   mutable base::Lock fetch_state_lock_;
   URLFetchState fetch_state_;
 
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+  std::unique_ptr<network::SharedURLLoaderFactoryInfo> url_loader_factory_info_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
-  const scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> network_task_runner_;
 
   // Callback for updating network time.
   NetworkTimeUpdateCallback network_time_update_callback_;
-
-  // A callback to tag Sync request to be able to record data use of this
-  // service by data_use_measurement component.
-  BindToTrackerCallback bind_to_tracker_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpBridge);
 };
@@ -189,15 +200,14 @@ class HttpBridgeFactory : public HttpPostProviderFactory,
                           public CancelationObserver {
  public:
   HttpBridgeFactory(
-      const scoped_refptr<net::URLRequestContextGetter>&
-          baseline_context_getter,
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+          url_loader_factory_info,
       const NetworkTimeUpdateCallback& network_time_update_callback,
       CancelationSignal* cancelation_signal);
   ~HttpBridgeFactory() override;
 
   // HttpPostProviderFactory:
-  void Init(const std::string& user_agent,
-            const BindToTrackerCallback& bind_to_tracker_callback) override;
+  void Init(const std::string& user_agent) override;
   HttpPostProviderInterface* Create() override;
   void Destroy(HttpPostProviderInterface* http) override;
 
@@ -208,20 +218,13 @@ class HttpBridgeFactory : public HttpPostProviderFactory,
   // The user agent to use in all requests.
   std::string user_agent_;
 
-  // Protects |request_context_getter_| to allow releasing it's reference from
-  // the sync thread, even when it's in use on the IO thread.
-  base::Lock request_context_getter_lock_;
-
-  // The request context getter used for making all requests.
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+  // The URL loader factory used for making all requests.
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   NetworkTimeUpdateCallback network_time_update_callback_;
 
   CancelationSignal* const cancelation_signal_;
-
-  // A callback to tag Sync request to be able to record data use of this
-  // service by data_use_measurement component.
-  BindToTrackerCallback bind_to_tracker_callback_;
+  bool registered_for_cancelation_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(HttpBridgeFactory);
 };

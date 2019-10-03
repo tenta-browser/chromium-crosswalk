@@ -19,13 +19,13 @@ namespace {
 views::BoxLayout::Orientation GetOrientation(TriView::Orientation orientation) {
   switch (orientation) {
     case TriView::Orientation::HORIZONTAL:
-      return views::BoxLayout::kHorizontal;
+      return views::BoxLayout::Orientation::kHorizontal;
     case TriView::Orientation::VERTICAL:
-      return views::BoxLayout::kVertical;
+      return views::BoxLayout::Orientation::kVertical;
   }
   // Required for some compilers.
   NOTREACHED();
-  return views::BoxLayout::kHorizontal;
+  return views::BoxLayout::Orientation::kHorizontal;
 }
 
 // A View that will perform a layout if a child view's preferred size changes.
@@ -49,27 +49,26 @@ TriView::TriView(int padding_between_containers)
 
 TriView::TriView(Orientation orientation) : TriView(orientation, 0) {}
 
-TriView::TriView(Orientation orientation, int padding_between_containers)
-    : box_layout_(new views::BoxLayout(GetOrientation(orientation),
-                                       gfx::Insets(),
-                                       padding_between_containers)),
-      start_container_layout_manager_(new SizeRangeLayout),
-      center_container_layout_manager_(new SizeRangeLayout),
-      end_container_layout_manager_(new SizeRangeLayout) {
+TriView::TriView(Orientation orientation, int padding_between_containers) {
   AddChildView(new RelayoutView);
   AddChildView(new RelayoutView);
   AddChildView(new RelayoutView);
 
-  GetContainer(Container::START)
-      ->SetLayoutManager(GetLayoutManager(Container::START));
-  GetContainer(Container::CENTER)
-      ->SetLayoutManager(GetLayoutManager(Container::CENTER));
-  GetContainer(Container::END)
-      ->SetLayoutManager(GetLayoutManager(Container::END));
+  start_container_layout_manager_ =
+      GetContainer(Container::START)
+          ->SetLayoutManager(std::make_unique<SizeRangeLayout>());
+  center_container_layout_manager_ =
+      GetContainer(Container::CENTER)
+          ->SetLayoutManager(std::make_unique<SizeRangeLayout>());
+  end_container_layout_manager_ =
+      GetContainer(Container::END)
+          ->SetLayoutManager(std::make_unique<SizeRangeLayout>());
 
-  box_layout_->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
-  SetLayoutManager(box_layout_);
+  auto layout = std::make_unique<views::BoxLayout>(
+      GetOrientation(orientation), gfx::Insets(), padding_between_containers);
+  layout->set_cross_axis_alignment(
+      views::BoxLayout::CrossAxisAlignment::kStart);
+  box_layout_ = SetLayoutManager(std::move(layout));
 
   enable_hierarchy_changed_dcheck_ = true;
 }
@@ -124,7 +123,7 @@ void TriView::SetContainerBorder(Container container,
 }
 
 void TriView::SetContainerVisible(Container container, bool visible) {
-  if (GetContainer(container)->visible() == visible)
+  if (GetContainer(container)->GetVisible() == visible)
     return;
   GetContainer(container)->SetVisible(visible);
   Layout();
@@ -141,7 +140,7 @@ void TriView::SetContainerLayout(
 }
 
 void TriView::ViewHierarchyChanged(
-    const views::View::ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   views::View::ViewHierarchyChanged(details);
   if (!enable_hierarchy_changed_dcheck_)
     return;
@@ -162,7 +161,7 @@ const char* TriView::GetClassName() const {
 }
 
 views::View* TriView::GetContainer(Container container) {
-  return child_at(static_cast<int>(container));
+  return children()[static_cast<size_t>(container)];
 }
 
 SizeRangeLayout* TriView::GetLayoutManager(Container container) {

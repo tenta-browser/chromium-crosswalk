@@ -28,7 +28,7 @@ MultiProcessLock* TakeServiceInitializingLock(bool waiting) {
 std::string GetBaseDesktopName() {
 #if defined(GOOGLE_CHROME_BUILD)
   return "google-chrome-service.desktop";
-#else  // CHROMIUM_BUILD
+#else  // BUILDFLAG(CHROMIUM_BRANDING)
   return "chromium-service.desktop";
 #endif
 }
@@ -51,15 +51,12 @@ bool ForceServiceProcessShutdown(const std::string& version,
 
 // Gets the name of the service process IPC channel.
 // Returns an absolute path as required.
-mojo::edk::NamedPlatformHandle GetServiceProcessChannel() {
+mojo::NamedPlatformChannel::ServerName GetServiceProcessServerName() {
   base::FilePath temp_dir;
-  PathService::Get(base::DIR_TEMP, &temp_dir);
+  base::PathService::Get(base::DIR_TEMP, &temp_dir);
   std::string pipe_name = GetServiceProcessScopedVersionedName("_service_ipc");
-  std::string pipe_path = temp_dir.Append(pipe_name).value();
-  return mojo::edk::NamedPlatformHandle(pipe_path);
+  return temp_dir.Append(pipe_name).value();
 }
-
-
 
 bool CheckServiceProcessReady() {
   std::unique_ptr<MultiProcessLock> running_lock(TakeServiceRunningLock(false));
@@ -75,7 +72,7 @@ bool ServiceProcessState::AddToAutoRun() {
   DCHECK(autorun_command_line_.get());
 #if defined(GOOGLE_CHROME_BUILD)
   std::string app_name = "Google Chrome Service";
-#else  // CHROMIUM_BUILD
+#else  // BUILDFLAG(CHROMIUM_BRANDING)
   std::string app_name = "Chromium Service";
 #endif
   return AutoStart::AddApplication(

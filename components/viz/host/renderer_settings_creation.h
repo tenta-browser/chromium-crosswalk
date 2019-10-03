@@ -7,23 +7,15 @@
 
 #include <stdint.h>
 
-#include "components/viz/common/resources/buffer_to_texture_target_map.h"
 #include "components/viz/host/viz_host_export.h"
 
 namespace viz {
 class RendererSettings;
-class ResourceSettings;
 }  // namespace viz
 
 namespace viz {
 
-// |image_targets| is a map from every supported pair of GPU memory buffer
-// usage/format to its GL texture target.
-VIZ_HOST_EXPORT ResourceSettings
-CreateResourceSettings(const BufferToTextureTargetMap& image_targets);
-
-VIZ_HOST_EXPORT RendererSettings
-CreateRendererSettings(const BufferToTextureTargetMap& image_targets);
+VIZ_HOST_EXPORT RendererSettings CreateRendererSettings();
 
 }  // namespace viz
 

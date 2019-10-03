@@ -7,37 +7,47 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "chrome/common/chrome_isolated_world_ids.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
-#include "chrome/common/extensions/extension_process_policy.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/chrome_render_thread_observer.h"
 #include "chrome/renderer/extensions/chrome_extensions_dispatcher_delegate.h"
+#include "chrome/renderer/extensions/extension_process_policy.h"
 #include "chrome/renderer/extensions/renderer_permissions_policy_delegate.h"
 #include "chrome/renderer/extensions/resource_request_policy.h"
 #include "chrome/renderer/media/cast_ipc_dispatcher.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/mime_handler_view_mode.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/common/extensions_client.h"
+#include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/switches.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_frame_helper.h"
 #include "extensions/renderer/extensions_render_frame_observer.h"
+#include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/guest_view/extensions_guest_view_container.h"
 #include "extensions/renderer/guest_view/extensions_guest_view_container_dispatcher.h"
 #include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container.h"
+#include "extensions/renderer/guest_view/mime_handler_view/mime_handler_view_container_manager.h"
+#include "extensions/renderer/renderer_extension_registry.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
+#include "url/origin.h"
 
 using extensions::Extension;
 
@@ -100,14 +110,8 @@ bool CrossesExtensionExtents(blink::WebLocalFrame* frame,
       return false;
   }
 
-  // Only consider keeping non-app URLs in an app process if this window
-  // has an opener (in which case it might be an OAuth popup that tries to
-  // script an iframe within the app).
-  bool should_consider_workaround = !!frame->Opener();
-
   return extensions::CrossesExtensionProcessBoundary(
-      *extension_registry->GetMainThreadExtensionSet(), old_url, new_url,
-      should_consider_workaround);
+      *extension_registry->GetMainThreadExtensionSet(), old_url, new_url);
 }
 
 }  // namespace
@@ -145,6 +149,33 @@ void ChromeExtensionsRendererClient::OnExtensionUnloaded(
   resource_request_policy_->OnExtensionUnloaded(extension_id);
 }
 
+bool ChromeExtensionsRendererClient::ExtensionAPIEnabledForServiceWorkerScript(
+    const GURL& scope,
+    const GURL& script_url) const {
+  if (!script_url.SchemeIs(extensions::kExtensionScheme))
+    return false;
+
+  if (!extensions::ExtensionsClient::Get()
+           ->ExtensionAPIEnabledInExtensionServiceWorkers())
+    return false;
+
+  const Extension* extension =
+      extensions::RendererExtensionRegistry::Get()->GetExtensionOrAppByURL(
+          script_url);
+
+  if (!extension ||
+      !extensions::BackgroundInfo::IsServiceWorkerBased(extension))
+    return false;
+
+  if (scope != extension->url())
+    return false;
+
+  const std::string& sw_script =
+      extensions::BackgroundInfo::GetBackgroundServiceWorkerScript(extension);
+
+  return extension->GetResourceURL(sw_script) == script_url;
+}
+
 void ChromeExtensionsRendererClient::RenderThreadStarted() {
   content::RenderThread* thread = content::RenderThread::Get();
   // ChromeRenderViewTest::SetUp() creates its own ExtensionDispatcher and
@@ -153,6 +184,7 @@ void ChromeExtensionsRendererClient::RenderThreadStarted() {
     extension_dispatcher_ = std::make_unique<extensions::Dispatcher>(
         std::make_unique<ChromeExtensionsDispatcherDelegate>());
   }
+  extension_dispatcher_->OnRenderThreadStarted(thread);
   permissions_policy_delegate_.reset(
       new extensions::RendererPermissionsPolicyDelegate(
           extension_dispatcher_.get()));
@@ -182,7 +214,7 @@ bool ChromeExtensionsRendererClient::OverrideCreatePlugin(
     return true;
 
   bool guest_view_api_available = false;
-  extension_dispatcher_->script_context_set().ForEach(
+  extension_dispatcher_->script_context_set_iterator()->ForEach(
       render_frame, base::Bind(&IsGuestViewApiAvailableToScriptContext,
                                &guest_view_api_available));
   return !guest_view_api_available;
@@ -200,10 +232,10 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
     case extensions::Feature::WEB_PAGE_CONTEXT:
     case extensions::Feature::UNBLESSED_EXTENSION_CONTEXT:
     case extensions::Feature::WEBUI_CONTEXT:
-    case extensions::Feature::SERVICE_WORKER_CONTEXT:
     case extensions::Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
       return false;
     case extensions::Feature::BLESSED_EXTENSION_CONTEXT:
+      return !current_context->IsForServiceWorker();
     case extensions::Feature::CONTENT_SCRIPT_CONTEXT:
       return true;
     case extensions::Feature::BLESSED_WEB_PAGE_CONTEXT:
@@ -214,19 +246,46 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
   }
 }
 
-bool ChromeExtensionsRendererClient::WillSendRequest(
+void ChromeExtensionsRendererClient::WillSendRequest(
     blink::WebLocalFrame* frame,
     ui::PageTransition transition_type,
     const blink::WebURL& url,
-    GURL* new_url) {
+    const url::Origin* initiator_origin,
+    GURL* new_url,
+    bool* attach_same_site_cookies) {
+  if (initiator_origin &&
+      initiator_origin->scheme() == extensions::kExtensionScheme) {
+    const extensions::RendererExtensionRegistry* extension_registry =
+        extensions::RendererExtensionRegistry::Get();
+    const Extension* extension =
+        extension_registry->GetByID(initiator_origin->host());
+    if (extension) {
+      int tab_id = extensions::ExtensionFrameHelper::Get(
+                       content::RenderFrame::FromWebFrame(frame))
+                       ->tab_id();
+      GURL request_url(url);
+      if (extension->permissions_data()->GetPageAccess(request_url, tab_id,
+                                                       nullptr) ==
+              extensions::PermissionsData::PageAccess::kAllowed ||
+          extension->permissions_data()->GetContentScriptAccess(
+              request_url, tab_id, nullptr) ==
+              extensions::PermissionsData::PageAccess::kAllowed) {
+        *attach_same_site_cookies = true;
+      }
+    } else {
+      // If there is no extension installed for the origin, it may be from a
+      // recently uninstalled extension.  The tabs of such extensions are
+      // automatically closed, but subframes and content scripts may stick
+      // around. Fail such requests without killing the process.
+      *new_url = GURL(chrome::kExtensionInvalidRequestURL);
+    }
+  }
+
   if (url.ProtocolIs(extensions::kExtensionScheme) &&
       !resource_request_policy_->CanRequestResource(GURL(url), frame,
                                                     transition_type)) {
     *new_url = GURL(chrome::kExtensionInvalidRequestURL);
-    return true;
   }
-
-  return false;
 }
 
 void ChromeExtensionsRendererClient::SetExtensionDispatcherForTest(
@@ -235,8 +294,6 @@ void ChromeExtensionsRendererClient::SetExtensionDispatcherForTest(
   permissions_policy_delegate_.reset(
       new extensions::RendererPermissionsPolicyDelegate(
           extension_dispatcher_.get()));
-  content::RenderThread::Get()->RegisterExtension(
-      extensions::SafeBuiltins::CreateV8Extension());
 }
 
 extensions::Dispatcher*
@@ -248,8 +305,7 @@ ChromeExtensionsRendererClient::GetExtensionDispatcherForTest() {
 bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
                                                 const GURL& url,
                                                 bool is_initial_navigation,
-                                                bool is_server_redirect,
-                                                bool* send_referrer) {
+                                                bool is_server_redirect) {
   const extensions::RendererExtensionRegistry* extension_registry =
       extensions::RendererExtensionRegistry::Get();
 
@@ -266,11 +322,6 @@ bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
   if (!is_server_redirect &&
       CrossesExtensionExtents(frame, url, is_extension_url,
                               is_initial_navigation)) {
-    // Include the referrer in this case since we're going from a hosted web
-    // page. (the packaged case is handled previously by the extension
-    // navigation test)
-    *send_referrer = true;
-
     const Extension* extension =
         extension_registry->GetExtensionOrAppByURL(url);
     if (extension && extension->is_app()) {
@@ -280,17 +331,6 @@ bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
     return true;
   }
 
-  // If this is a reload, check whether it has the wrong process type.  We
-  // should send it to the browser if it's an extension URL (e.g., hosted app)
-  // in a normal process, or if it's a process for an extension that has been
-  // uninstalled.  Without --site-per-process mode, we never fork processes for
-  // subframes, so this check only makes sense for top-level frames.
-  // TODO(alexmos,nasko): Figure out how this check should work when reloading
-  // subframes in --site-per-process mode.
-  if (!frame->Parent() && GURL(frame->GetDocument().Url()) == url) {
-    if (is_extension_url != IsStandaloneExtensionProcess())
-      return true;
-  }
   return false;
 }
 
@@ -298,12 +338,63 @@ bool ChromeExtensionsRendererClient::ShouldFork(blink::WebLocalFrame* frame,
 content::BrowserPluginDelegate*
 ChromeExtensionsRendererClient::CreateBrowserPluginDelegate(
     content::RenderFrame* render_frame,
+    const content::WebPluginInfo& info,
     const std::string& mime_type,
     const GURL& original_url) {
   if (mime_type == content::kBrowserPluginMimeType)
     return new extensions::ExtensionsGuestViewContainer(render_frame);
-  return new extensions::MimeHandlerViewContainer(render_frame, mime_type,
+  return new extensions::MimeHandlerViewContainer(render_frame, info, mime_type,
                                                   original_url);
+}
+
+// static
+void ChromeExtensionsRendererClient::DidBlockMimeHandlerViewForDisallowedPlugin(
+    const blink::WebElement& plugin_element) {
+  extensions::MimeHandlerViewContainerManager::Get(
+      content::RenderFrame::FromWebFrame(
+          plugin_element.GetDocument().GetFrame()),
+      true /* create_if_does_not_exist */)
+      ->DidBlockMimeHandlerViewForDisallowedPlugin(plugin_element);
+}
+
+// static
+bool ChromeExtensionsRendererClient::MaybeCreateMimeHandlerView(
+    const blink::WebElement& plugin_element,
+    const GURL& resource_url,
+    const std::string& mime_type,
+    const content::WebPluginInfo& plugin_info) {
+  CHECK(content::MimeHandlerViewMode::UsesCrossProcessFrame());
+  return extensions::MimeHandlerViewContainerManager::Get(
+             content::RenderFrame::FromWebFrame(
+                 plugin_element.GetDocument().GetFrame()),
+             true /* create_if_does_not_exist */)
+      ->CreateFrameContainer(plugin_element, resource_url, mime_type,
+                             plugin_info);
+}
+
+v8::Local<v8::Object> ChromeExtensionsRendererClient::GetScriptableObject(
+    const blink::WebElement& plugin_element,
+    v8::Isolate* isolate) {
+  CHECK(content::MimeHandlerViewMode::UsesCrossProcessFrame());
+  // If there is a MimeHandlerView that can provide the scriptable object then
+  // MaybeCreateMimeHandlerView must have been called before and a container
+  // manager should exist.
+  auto* container_manager = extensions::MimeHandlerViewContainerManager::Get(
+      content::RenderFrame::FromWebFrame(
+          plugin_element.GetDocument().GetFrame()),
+      false /* create_if_does_not_exist */);
+  if (container_manager)
+    return container_manager->GetScriptableObject(plugin_element, isolate);
+  return v8::Local<v8::Object>();
+}
+
+// static
+blink::WebFrame* ChromeExtensionsRendererClient::FindFrame(
+    blink::WebLocalFrame* relative_to_frame,
+    const std::string& name) {
+  content::RenderFrame* result = extensions::ExtensionFrameHelper::FindFrame(
+      content::RenderFrame::FromWebFrame(relative_to_frame), name);
+  return result ? result->GetWebFrame() : nullptr;
 }
 
 void ChromeExtensionsRendererClient::RunScriptsAtDocumentStart(

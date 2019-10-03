@@ -17,6 +17,7 @@ import android.util.Pair;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -48,8 +49,8 @@ import javax.security.auth.x500.X500Principal;
  * Utility functions for verifying X.509 certificates.
  */
 @JNINamespace("net")
+@MainDex
 public class X509Util {
-
     private static final String TAG = "X509Util";
 
     private static final class TrustStorageListener extends BroadcastReceiver {
@@ -70,11 +71,12 @@ public class X509Util {
                     shouldReloadTrustManager = true;
                 }
             } else {
+                @SuppressWarnings("deprecation")
+                String action = KeyChain.ACTION_STORAGE_CHANGED;
                 // Before Android O, KeyChain only emitted a coarse-grained intent. This fires much
                 // more often than it should (https://crbug.com/381912), but there are no APIs to
                 // distinguish the various cases.
-                shouldReloadTrustManager =
-                        KeyChain.ACTION_STORAGE_CHANGED.equals(intent.getAction());
+                shouldReloadTrustManager = action.equals(intent.getAction());
             }
 
             if (shouldReloadTrustManager) {
@@ -197,9 +199,8 @@ public class X509Util {
     private static final Object sLock = new Object();
 
     /**
-     * Allow disabling registering the observer and recording histograms for the certificate
-     * changes. Net unit tests do not load native libraries which prevent this to succeed. Moreover,
-     * the system does not allow to interact with the certificate store without user interaction.
+     * Allow disabling recording histograms for the certificate changes. Java unit tests do not load
+     * native libraries which prevent this from succeeding.
      */
     private static boolean sDisableNativeCodeForTest;
 
@@ -243,9 +244,6 @@ public class X509Util {
                 // Could not load AndroidCAStore. Continue anyway; isKnownRoot will always
                 // return false.
             }
-            if (!sDisableNativeCodeForTest) {
-                nativeRecordCertVerifyCapabilitiesHistogram(sSystemKeyStore != null);
-            }
             sLoadedSystemKeyStore = true;
         }
         if (sSystemTrustAnchorCache == null) {
@@ -262,7 +260,7 @@ public class X509Util {
         if (sTestTrustManager == null) {
             sTestTrustManager = X509Util.createTrustManager(sTestKeyStore);
         }
-        if (!sDisableNativeCodeForTest && sTrustStorageListener == null) {
+        if (sTrustStorageListener == null) {
             sTrustStorageListener = new TrustStorageListener();
             IntentFilter filter = new IntentFilter();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -270,7 +268,9 @@ public class X509Util {
                 filter.addAction(KeyChain.ACTION_KEY_ACCESS_CHANGED);
                 filter.addAction(KeyChain.ACTION_TRUST_STORE_CHANGED);
             } else {
-                filter.addAction(KeyChain.ACTION_STORAGE_CHANGED);
+                @SuppressWarnings("deprecation")
+                String action = KeyChain.ACTION_STORAGE_CHANGED;
+                filter.addAction(action);
             }
             ContextUtils.getApplicationContext().registerReceiver(sTrustStorageListener, filter);
         }
@@ -561,11 +561,4 @@ public class X509Util {
      * Notify the native net::CertDatabase instance that the system database has been updated.
      */
     private static native void nativeNotifyKeyChainChanged();
-
-    /**
-     * Record histograms on the platform's certificate verification capabilities.
-     */
-    private static native void nativeRecordCertVerifyCapabilitiesHistogram(
-            boolean foundSystemTrustRoots);
-
 }

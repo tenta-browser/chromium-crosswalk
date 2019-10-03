@@ -6,12 +6,11 @@
 #define COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_POPUP_MODEL_H_
 
 #include <stddef.h>
+#include <map>
 
-#include "base/containers/mru_cache.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/task/cancelable_task_tracker.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_result.h"
@@ -21,6 +20,7 @@
 
 class OmniboxPopupModelObserver;
 class OmniboxPopupView;
+class GURL;
 
 namespace gfx {
 class Image;
@@ -31,7 +31,8 @@ class OmniboxPopupModel {
   // See selected_line_state_ for details.
   enum LineState {
     NORMAL = 0,
-    KEYWORD
+    KEYWORD,
+    BUTTON_FOCUSED
   };
 
   OmniboxPopupModel(OmniboxPopupView* popup_view, OmniboxEditModel* edit_model);
@@ -63,6 +64,7 @@ class OmniboxPopupModel {
   bool IsOpen() const;
 
   OmniboxPopupView* view() const { return view_; }
+  OmniboxEditModel* edit_model() const { return edit_model_; }
 
   // Returns the AutocompleteController used by this popup.
   AutocompleteController* autocomplete_controller() const {
@@ -94,11 +96,10 @@ class OmniboxPopupModel {
   void ResetToDefaultMatch();
 
   // Immediately updates and opens the popup if necessary, then moves the
-  // current selection down (|count| > 0) or up (|count| < 0), clamping to the
-  // first or last result if necessary.  If |count| == 0, the selection will be
-  // unchanged, but the popup will still redraw and modify the text in the
-  // OmniboxEditModel.
-  void Move(int count);
+  // current selection to the respective line. If the line is unchanged, the
+  // selection will be unchanged, but the popup will still redraw and modify
+  // the text in the OmniboxEditModel.
+  void MoveTo(size_t new_line);
 
   // If the selected line has both a normal match and a keyword match, this can
   // be used to choose which to select.  This allows the user to toggle between
@@ -111,9 +112,10 @@ class OmniboxPopupModel {
   // matches (or there is no selection).
   void SetSelectedLineState(LineState state);
 
-  // Called when the user hits shift-delete.  This should determine if the item
-  // can be removed from history, and if so, remove it and update the popup.
-  void TryDeletingCurrentItem();
+  // Tries to erase the suggestion at |line|.  This should determine if the item
+  // at |line| can be removed from history, and if so, remove it and update the
+  // popup.
+  void TryDeletingLine(size_t line);
 
   // Returns true if the destination URL of the match is bookmarked.
   bool IsStarredMatch(const AutocompleteMatch& match) const;
@@ -129,15 +131,30 @@ class OmniboxPopupModel {
   void AddObserver(OmniboxPopupModelObserver* observer);
   void RemoveObserver(OmniboxPopupModelObserver* observer);
 
+  // Lookup the bitmap for |result_index|. Returns nullptr if not found.
+  const SkBitmap* RichSuggestionBitmapAt(int result_index) const;
   // Stores the image in a local data member and schedules a repaint.
-  void SetAnswerBitmap(const SkBitmap& bitmap);
-  const SkBitmap& answer_bitmap() const { return answer_bitmap_; }
+  void SetRichSuggestionBitmap(int result_index, const SkBitmap& bitmap);
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   // Gets the icon for the match index.
   gfx::Image GetMatchIcon(const AutocompleteMatch& match,
                           SkColor vector_icon_color);
 #endif
+
+  // Helper function to see if the current selection specifically has a
+  // tab switch button.
+  bool SelectedLineHasTabMatch();
+
+  // Helper function to see if current selection has button and can accept
+  // the tab key.
+  bool SelectedLineHasButton();
+
+  // If |closes| is set true, the popup will close when the omnibox is blurred.
+  bool popup_closes_on_blur() const { return popup_closes_on_blur_; }
+  void set_popup_closes_on_blur(bool closes) { popup_closes_on_blur_ = closes; }
+
+  OmniboxEditModel* edit_model() { return edit_model_; }
 
   // The token value for selected_line_ and functions dealing with a "line
   // number" that indicates "no line".
@@ -146,12 +163,7 @@ class OmniboxPopupModel {
  private:
   void OnFaviconFetched(const GURL& page_url, const gfx::Image& icon);
 
-  SkBitmap answer_bitmap_;
-
-  // We cache a very small number of favicons so we can synchronously deliver
-  // them to prevent flicker as the user types.
-  base::MRUCache<GURL, gfx::Image> favicons_cache_;
-  base::CancelableTaskTracker favicon_task_tracker_;
+  std::map<int, SkBitmap> rich_suggestion_bitmaps_;
 
   OmniboxPopupView* view_;
 
@@ -163,16 +175,27 @@ class OmniboxPopupModel {
 
   // If the selected line has both a normal match and a keyword match, this
   // determines whether the normal match (if NORMAL) or the keyword match
-  // (if KEYWORD) is selected.
+  // (if KEYWORD) is selected. Likewise, if the selected line has a normal
+  // match and a tab switch match, this determines whether the tab switch match
+  // (if TAB_SWITCH) is selected.
   LineState selected_line_state_;
+
+  // When a result changes, this informs of the URL in the previously selected
+  // suggestion whose tab switch button was focused, so that we may compare
+  // if equal.
+  GURL old_focused_url_;
 
   // The user has manually selected a match.
   bool has_selected_match_;
 
-  // Observers.
-  base::ObserverList<OmniboxPopupModelObserver> observers_;
+  // True if the popup should close on omnibox blur. This defaults to true, and
+  // is only false while a bubble related to the popup contents is shown.
+  bool popup_closes_on_blur_ = true;
 
-  base::WeakPtrFactory<OmniboxPopupModel> weak_factory_;
+  // Observers.
+  base::ObserverList<OmniboxPopupModelObserver>::Unchecked observers_;
+
+  base::WeakPtrFactory<OmniboxPopupModel> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxPopupModel);
 };

@@ -14,17 +14,17 @@ cr.define('snackbar', function() {
    *    action: (function()|undefined)
    *  }}
    */
-  var SnackbarOptions;
+  let SnackbarOptions;
 
-  /** @const {number} */ var SHOW_DURATION = 5000;
-  /** @const {number} */ var TRANSITION_DURATION = 225;
+  /** @type {number} */ const SHOW_DURATION = 5000;
+  /** @type {number} */ const TRANSITION_DURATION = 225;
 
   /**
    * Enum of Snackbar types. Used by Snackbar to determine the styling for the
    * Snackbar.
    * @enum {string}
    */
-  var SnackbarType = {
+  const SnackbarType = {
     INFO: 'info',
     SUCCESS: 'success',
     WARNING: 'warning',
@@ -36,8 +36,10 @@ cr.define('snackbar', function() {
    * This element should not be instantiated directly. Instead, users should
    * use the Snackbar.show and Snackbar.dismiss functions to ensure proper
    * queuing of messages.
+   * @constructor
+   * @extends {HTMLDivElement}
    */
-  var Snackbar = cr.ui.define('div');
+  const Snackbar = cr.ui.define('div');
 
   Snackbar.prototype = {
     __proto__: HTMLDivElement.prototype,
@@ -72,8 +74,9 @@ cr.define('snackbar', function() {
       this.actionLink_.textContent = options.actionText || 'Dismiss';
 
       this.actionLink_.addEventListener('click', function() {
-        if (options.action)
+        if (options.action) {
           options.action();
+        }
         this.dismiss();
       }.bind(this));
     },
@@ -83,10 +86,11 @@ cr.define('snackbar', function() {
      */
     show: function() {
       this.classList.add('open');
-      if (Snackbar.hasContentFocus_)
+      if (Snackbar.hasContentFocus_) {
         this.startTimeout_();
-      else
+      } else {
         this.stopTimeout_();
+      }
 
       document.addEventListener('contentfocus', this.boundStartTimeout_);
       document.addEventListener('contentblur', this.boundStopTimeout_);
@@ -102,8 +106,9 @@ cr.define('snackbar', function() {
     dismiss: function() {
       this.stopTimeout_();
 
-      if (!this.classList.contains('open'))
+      if (!this.classList.contains('open')) {
         return Promise.resolve();
+      }
 
       return new Promise(function(resolve) {
         listenOnce(this, 'transitionend', function() {
@@ -142,10 +147,10 @@ cr.define('snackbar', function() {
     },
   };
 
-  /** @private {?Snackbar} */
+  /** @private {?snackbar.Snackbar} */
   Snackbar.current_ = null;
 
-  /** @private {!Array<!SnackbarOptions>} */
+  /** @private {!Array<!snackbar.Snackbar>} */
   Snackbar.queue_ = [];
 
   /** @private {boolean} */
@@ -171,23 +176,24 @@ cr.define('snackbar', function() {
    * @param {string=} opt_actionText The text to display for the action link.
    * @param {function()=} opt_action A function to be called when the user
    *     presses the action link.
-   * @return {!Snackbar}
+   * @return {!snackbar.Snackbar}
    */
   Snackbar.show = function(message, opt_type, opt_actionText, opt_action) {
-    var options = {
+    const options = {
       message: message,
       type: opt_type || SnackbarType.INFO,
       actionText: opt_actionText,
       action: opt_action,
     };
 
-    var newSnackbar = new Snackbar();
+    const newSnackbar = new Snackbar();
     newSnackbar.initialize(options);
 
-    if (Snackbar.current_)
+    if (Snackbar.current_) {
       Snackbar.queue_.push(newSnackbar);
-    else
+    } else {
       Snackbar.show_(newSnackbar);
+    }
 
     return newSnackbar;
   };
@@ -195,7 +201,7 @@ cr.define('snackbar', function() {
   /**
    * TODO(crbug.com/675299): Add ability to specify parent element to Snackbar.
    * Creates a Snackbar and sets events for queuing the next Snackbar to show.
-   * @param {!Snackbar} newSnackbar
+   * @param {!snackbar.Snackbar} newSnackbar
    * @private
    */
   Snackbar.show_ = function(newSnackbar) {
@@ -204,7 +210,7 @@ cr.define('snackbar', function() {
     newSnackbar.addEventListener('dismissed', function() {
       $('snackbar-container').removeChild(Snackbar.current_);
 
-      var newSnackbar = Snackbar.queue_.shift();
+      const newSnackbar = Snackbar.queue_.shift();
       if (newSnackbar) {
         Snackbar.show_(newSnackbar);
         return;
@@ -227,10 +233,12 @@ cr.define('snackbar', function() {
    *     dismissing.
    */
   Snackbar.dismiss = function(clearQueue) {
-    if (clearQueue)
+    if (clearQueue) {
       Snackbar.queue_ = [];
-    if (Snackbar.current_)
+    }
+    if (Snackbar.current_) {
       return Snackbar.current_.dismiss();
+    }
     return Promise.resolve();
   };
 

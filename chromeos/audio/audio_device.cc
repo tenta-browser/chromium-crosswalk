@@ -178,9 +178,8 @@ std::string AudioDevice::ToString() const {
   base::StringAppendF(&result,
                       "active = %s ",
                       active ? "true" : "false");
-  base::StringAppendF(&result,
-                      "plugged_time= %s ",
-                      base::Uint64ToString(plugged_time).c_str());
+  base::StringAppendF(&result, "plugged_time= %s ",
+                      base::NumberToString(plugged_time).c_str());
   base::StringAppendF(&result, "mic_positions = %s ", mic_positions.c_str());
 
   return result;
@@ -191,10 +190,20 @@ bool AudioDevice::IsExternalDevice() const {
     return false;
 
   if (is_input) {
-    return (type != AUDIO_TYPE_INTERNAL_MIC && type != AUDIO_TYPE_FRONT_MIC &&
-            type != AUDIO_TYPE_REAR_MIC);
+    return !IsInternalMic();
   } else {
     return (type != AUDIO_TYPE_INTERNAL_SPEAKER);
+  }
+}
+
+bool AudioDevice::IsInternalMic() const {
+  switch (type) {
+    case AUDIO_TYPE_INTERNAL_MIC:
+    case AUDIO_TYPE_FRONT_MIC:
+    case AUDIO_TYPE_REAR_MIC:
+      return true;
+    default:
+      return false;
   }
 }
 

@@ -8,11 +8,9 @@
 #include <vector>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/shell.h"
-#include "ash/wm/window_util.h"
+#include "ash/shell.h"           // mash-ok
+#include "ash/wm/window_util.h"  // mash-ok
 #include "base/logging.h"
-#include "chrome/browser/chromeos/input_method/mode_indicator_controller.h"
-#include "chrome/browser/ui/ash/ash_util.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/chromeos/ime/infolist_window.h"
 #include "ui/views/widget/widget.h"
@@ -24,17 +22,12 @@ namespace {
 
 }  // namespace
 
-CandidateWindowControllerImpl::CandidateWindowControllerImpl()
-    : candidate_window_view_(NULL),
-      infolist_window_(NULL) {
+CandidateWindowControllerImpl::CandidateWindowControllerImpl() {
   ui::IMEBridge::Get()->SetCandidateWindowHandler(this);
-  // Create the mode indicator controller.
-  mode_indicator_controller_.reset(
-      new ModeIndicatorController(InputMethodManager::Get()));
 }
 
 CandidateWindowControllerImpl::~CandidateWindowControllerImpl() {
-  ui::IMEBridge::Get()->SetCandidateWindowHandler(NULL);
+  ui::IMEBridge::Get()->SetCandidateWindowHandler(nullptr);
   if (candidate_window_view_) {
     candidate_window_view_->RemoveObserver(this);
     candidate_window_view_->GetWidget()->RemoveObserver(this);
@@ -46,15 +39,16 @@ void CandidateWindowControllerImpl::InitCandidateWindowView() {
     return;
 
   gfx::NativeView parent = nullptr;
-  if (!ash_util::IsRunningInMash()) {
-    aura::Window* active_window = ash::wm::GetActiveWindow();
-    parent = ash::Shell::GetContainer(
-        active_window ? active_window->GetRootWindow()
-                      : ash::Shell::GetRootWindowForNewWindows(),
-        ash::kShellWindowId_SettingBubbleContainer);
-  }
+
+  aura::Window* active_window = ash::window_util::GetActiveWindow();
+  // Use VirtualKeyboardContainer so that it works even with a system modal
+  // dialog.
+  parent = ash::Shell::GetContainer(
+      active_window ? active_window->GetRootWindow()
+                    : ash::Shell::GetRootWindowForNewWindows(),
+      ash::kShellWindowId_VirtualKeyboardContainer);
   candidate_window_view_ = new ui::ime::CandidateWindowView(
-      parent, ash::kShellWindowId_SettingBubbleContainer);
+      parent, ash::kShellWindowId_VirtualKeyboardContainer);
   candidate_window_view_->AddObserver(this);
   candidate_window_view_->SetCursorBounds(cursor_bounds_, composition_head_);
   views::Widget* widget = candidate_window_view_->InitWidget();
@@ -94,13 +88,14 @@ void CandidateWindowControllerImpl::SetCursorBounds(
   // Remember the cursor bounds.
   if (candidate_window_view_)
     candidate_window_view_->SetCursorBounds(cursor_bounds, composition_head);
+}
 
-  // Mode indicator controller also needs the cursor bounds.
-  mode_indicator_controller_->SetCursorBounds(cursor_bounds);
+gfx::Rect CandidateWindowControllerImpl::GetCursorBounds() const {
+  return is_focused_ ? cursor_bounds_ : gfx::Rect();
 }
 
 void CandidateWindowControllerImpl::FocusStateChanged(bool is_focused) {
-  mode_indicator_controller_->FocusStateChanged(is_focused);
+  is_focused_ = is_focused;
   if (candidate_window_view_)
     candidate_window_view_->HidePreeditText();
 }
@@ -180,12 +175,12 @@ void CandidateWindowControllerImpl::OnCandidateCommitted(int index) {
 void CandidateWindowControllerImpl::OnWidgetClosing(views::Widget* widget) {
   if (infolist_window_ && widget == infolist_window_->GetWidget()) {
     widget->RemoveObserver(this);
-    infolist_window_ = NULL;
+    infolist_window_ = nullptr;
   } else if (candidate_window_view_ &&
              widget == candidate_window_view_->GetWidget()) {
     widget->RemoveObserver(this);
     candidate_window_view_->RemoveObserver(this);
-    candidate_window_view_ = NULL;
+    candidate_window_view_ = nullptr;
     for (auto& observer : observers_)
       observer.CandidateWindowClosed();
   }

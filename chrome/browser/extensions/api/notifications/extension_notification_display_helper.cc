@@ -6,12 +6,11 @@
 
 #include <algorithm>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/notifications/notification_handler.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -32,7 +31,7 @@ void ExtensionNotificationDisplayHelper::Display(
       std::make_unique<message_center::Notification>(notification));
 
   GetDisplayService()->Display(NotificationHandler::Type::EXTENSION,
-                               notification);
+                               notification, /*metadata=*/nullptr);
 }
 
 message_center::Notification*

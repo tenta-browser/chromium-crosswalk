@@ -14,7 +14,6 @@
 #include "base/base_paths.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
@@ -25,7 +24,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/component_updater/component_installer_errors.h"
@@ -40,10 +39,13 @@
 #include "components/component_updater/component_updater_service.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
+#include "components/update_client/utils.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/pepper_plugin_info.h"
+#include "crypto/sha2.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
 
 #if defined(OS_CHROMEOS)
@@ -68,17 +70,19 @@ namespace {
 #if defined(OS_CHROMEOS)
 // CRX hash for Chrome OS. The extension id is:
 // ckjlcfmdbdglblbjglepgnoekdnkoklc.
-const uint8_t kSha2Hash[] = {0x2a, 0x9b, 0x25, 0xc3, 0x13, 0x6b, 0x1b, 0x19,
-                             0x6b, 0x4f, 0x6d, 0xe4, 0xa3, 0xda, 0xea, 0xb2,
-                             0x67, 0xeb, 0xf0, 0xbb, 0x1f, 0x48, 0xa2, 0x73,
-                             0xea, 0x47, 0x11, 0xc8, 0x2b, 0xd9, 0x03, 0xb5};
+const uint8_t kFlashSha2Hash[] = {
+    0x2a, 0x9b, 0x25, 0xc3, 0x13, 0x6b, 0x1b, 0x19, 0x6b, 0x4f, 0x6d,
+    0xe4, 0xa3, 0xda, 0xea, 0xb2, 0x67, 0xeb, 0xf0, 0xbb, 0x1f, 0x48,
+    0xa2, 0x73, 0xea, 0x47, 0x11, 0xc8, 0x2b, 0xd9, 0x03, 0xb5};
 #else
 // CRX hash. The extension id is: mimojjlkmoijpicakmndhoigimigcmbb.
-const uint8_t kSha2Hash[] = {0xc8, 0xce, 0x99, 0xba, 0xce, 0x89, 0xf8, 0x20,
-                             0xac, 0xd3, 0x7e, 0x86, 0x8c, 0x86, 0x2c, 0x11,
-                             0xb9, 0x40, 0xc5, 0x55, 0xaf, 0x08, 0x63, 0x70,
-                             0x54, 0xf9, 0x56, 0xd3, 0xe7, 0x88, 0xba, 0x8c};
+const uint8_t kFlashSha2Hash[] = {
+    0xc8, 0xce, 0x99, 0xba, 0xce, 0x89, 0xf8, 0x20, 0xac, 0xd3, 0x7e,
+    0x86, 0x8c, 0x86, 0x2c, 0x11, 0xb9, 0x40, 0xc5, 0x55, 0xaf, 0x08,
+    0x63, 0x70, 0x54, 0xf9, 0x56, 0xd3, 0xe7, 0x88, 0xba, 0x8c};
 #endif  // defined(OS_CHROMEOS)
+static_assert(base::size(kFlashSha2Hash) == crypto::kSHA256Length,
+              "Wrong hash length");
 
 #if defined(OS_CHROMEOS)
 void LogRegistrationResult(base::Optional<bool> result) {
@@ -199,17 +203,16 @@ void RegisterPepperFlashWithChrome(const base::FilePath& path,
   content::WebPluginInfo web_plugin = plugin_info.ToWebPluginInfo();
 
   base::FilePath system_flash_path;
-  PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN, &system_flash_path);
+  base::PathService::Get(chrome::FILE_PEPPER_FLASH_SYSTEM_PLUGIN,
+                         &system_flash_path);
 
   std::vector<content::WebPluginInfo> plugins;
   PluginService::GetInstance()->GetInternalPlugins(&plugins);
-  base::FilePath placeholder_path =
-      base::FilePath::FromUTF8Unsafe(ChromeContentClient::kNotPresent);
   for (const auto& plugin : plugins) {
     if (!plugin.is_pepper_plugin() || plugin.name != web_plugin.name)
       continue;
 
-    if (plugin.path == placeholder_path) {
+    if (plugin.path.value() == ChromeContentClient::kNotPresent) {
       // This is the Flash placeholder; replace it regardless of version or
       // other considerations.
       PluginService::GetInstance()->UnregisterInternalPlugin(plugin.path);
@@ -234,7 +237,7 @@ void RegisterPepperFlashWithChrome(const base::FilePath& path,
 }
 
 void UpdatePathService(const base::FilePath& path) {
-  PathService::Override(chrome::DIR_PEPPER_FLASH_PLUGIN, path);
+  base::PathService::Override(chrome::DIR_PEPPER_FLASH_PLUGIN, path);
 }
 #endif  // !defined(OS_LINUX) && defined(GOOGLE_CHROME_BUILD)
 
@@ -283,11 +286,12 @@ FlashComponentInstallerPolicy::OnCustomInstall(
     const base::FilePath& install_dir) {
   std::string version;
   if (!manifest.GetString("version", &version)) {
-    return ToInstallerResult(FlashError::MISSING_VERSION_IN_MANIFEST);
+    return update_client::ToInstallerResult(
+        FlashError::MISSING_VERSION_IN_MANIFEST);
   }
 
 #if defined(OS_CHROMEOS)
-  content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
+  base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::UI})
       ->PostTask(FROM_HERE, base::BindOnce(&ImageLoaderRegistration, version,
                                            install_dir));
 #elif defined(OS_LINUX)
@@ -297,7 +301,7 @@ FlashComponentInstallerPolicy::OnCustomInstall(
   // locate and preload the latest version of flash.
   if (!component_flash_hint_file::RecordFlashUpdate(flash_path, flash_path,
                                                     version)) {
-    return ToInstallerResult(FlashError::HINT_FILE_RECORD_ERROR);
+    return update_client::ToInstallerResult(FlashError::HINT_FILE_RECORD_ERROR);
   }
 #endif  // defined(OS_LINUX)
   return update_client::CrxInstaller::Result(update_client::InstallError::NONE);
@@ -316,7 +320,7 @@ void FlashComponentInstallerPolicy::ComponentReady(
   RegisterPepperFlashWithChrome(path.Append(chrome::kPepperFlashPluginFilename),
                                 version);
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::TaskPriority::BACKGROUND, base::MayBlock()},
+                           {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
                            base::BindOnce(&UpdatePathService, path));
 #endif  // !defined(OS_LINUX)
 }
@@ -335,7 +339,7 @@ base::FilePath FlashComponentInstallerPolicy::GetRelativeInstallDir() const {
 }
 
 void FlashComponentInstallerPolicy::GetHash(std::vector<uint8_t>* hash) const {
-  hash->assign(kSha2Hash, kSha2Hash + arraysize(kSha2Hash));
+  hash->assign(kFlashSha2Hash, kFlashSha2Hash + base::size(kFlashSha2Hash));
 }
 
 std::string FlashComponentInstallerPolicy::GetName() const {

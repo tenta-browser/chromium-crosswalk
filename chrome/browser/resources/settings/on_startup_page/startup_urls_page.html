@@ -1,7 +1,7 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
 <link rel="import" href="chrome://resources/html/action_link.html">
-<link rel="import" href="chrome://resources/html/action_link_css.html">
+<link rel="import" href="chrome://resources/cr_elements/action_link_css.html">
 <link rel="import" href="chrome://resources/html/assert.html">
 <link rel="import" href="chrome://resources/html/cr/ui/focus_without_ink.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-flex-layout/iron-flex-layout-classes.html">
@@ -18,7 +18,7 @@
   <template>
     <style include="settings-shared action-link iron-flex">
       .list-frame {
-        @apply(--settings-list-frame-padding);
+        @apply --settings-list-frame-padding;
       }
 
       .list-frame > div {
@@ -26,7 +26,7 @@
       }
 
       #outer {
-        @apply(--settings-list-frame-padding);
+        @apply --settings-list-frame-padding;
         max-height: 355px;  /** Enough height to show six entries. */
       }
 
@@ -41,7 +41,7 @@
           <template>
             <settings-startup-url-entry model="[[item]]" first$="[[!index]]"
                 tabindex$="[[tabIndex]]" iron-list-tab-index="[[tabIndex]]"
-                last-focused="{{lastFocused_}}"
+                last-focused="{{lastFocused_}}" list-blurred="{{listBlurred_}}"
                 editable="[[shouldAllowUrlsEdit_(
                     prefs.session.startup_urls.enforcement)]]">
             </settings-startup-url-entry>
@@ -53,13 +53,13 @@
       <template is="dom-if" if="[[shouldAllowUrlsEdit_(
           prefs.session.startup_urls.enforcement)]]" restamp>
         <div class="list-item" id="addPage">
-          <a is="action-link" class="list-button" on-tap="onAddPageTap_">
+          <a is="action-link" class="list-button" on-click="onAddPageTap_">
             $i18n{onStartupAddNewPage}
           </a>
         </div>
         <div class="list-item" id="useCurrentPages">
           <a is="action-link" class="list-button"
-              on-tap="onUseCurrentPagesTap_">
+              on-click="onUseCurrentPagesTap_">
             $i18n{onStartupUseCurrent}
           </a>
         </div>

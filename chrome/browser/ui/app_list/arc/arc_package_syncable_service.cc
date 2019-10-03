@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_package_syncable_service_factory.h"
 #include "chrome/common/pref_names.h"
-#include "components/arc/connection_holder.h"
+#include "components/arc/arc_util.h"
+#include "components/arc/session/connection_holder.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sync/model/sync_change_processor.h"
 #include "components/sync/model/sync_data.h"
@@ -31,7 +31,7 @@ constexpr int64_t kNoAndroidID = 0;
 
 std::unique_ptr<ArcSyncItem> CreateSyncItemFromSyncSpecifics(
     const sync_pb::ArcPackageSpecifics& specifics) {
-  return base::MakeUnique<ArcSyncItem>(
+  return std::make_unique<ArcSyncItem>(
       specifics.package_name(), specifics.package_version(),
       specifics.last_backup_android_id(), specifics.last_backup_time());
 }
@@ -68,7 +68,7 @@ syncer::SyncData GetSyncDataFromSyncItem(const ArcSyncItem* item) {
 std::unique_ptr<ArcSyncItem> CreateSyncItemFromPrefs(
     std::unique_ptr<ArcAppListPrefs::PackageInfo> package_info) {
   DCHECK(package_info);
-  return base::MakeUnique<ArcSyncItem>(
+  return std::make_unique<ArcSyncItem>(
       package_info->package_name, package_info->package_version,
       package_info->last_backup_android_id, package_info->last_backup_time);
 }
@@ -120,6 +120,19 @@ bool ArcPackageSyncableService::IsPackageSyncing(
       pending_install_items_.end();
 }
 
+void ArcPackageSyncableService::WaitUntilReadyToSync(base::OnceClosure done) {
+  DCHECK(!wait_until_ready_to_sync_cb_);
+
+  if (prefs_->package_list_initial_refreshed()) {
+    std::move(done).Run();
+    return;
+  }
+
+  // Wait until the initial list is loaded, handled in
+  // OnPackageListInitialRefreshed().
+  wait_until_ready_to_sync_cb_ = std::move(done);
+}
+
 syncer::SyncMergeResult ArcPackageSyncableService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
@@ -129,6 +142,8 @@ syncer::SyncMergeResult ArcPackageSyncableService::MergeDataAndStartSyncing(
   DCHECK(error_handler.get());
   DCHECK_EQ(type, syncer::ARC_PACKAGE);
   DCHECK(!sync_processor_.get());
+  DCHECK(!IsArcAppSyncFlowDisabled());
+
   sync_processor_ = std::move(sync_processor);
   sync_error_handler_ = std::move(error_handler);
 
@@ -144,7 +159,7 @@ syncer::SyncMergeResult ArcPackageSyncableService::MergeDataAndStartSyncing(
     std::unique_ptr<ArcSyncItem> sync_item(
         CreateSyncItemFromSyncData(sync_data));
     const std::string& package_name = sync_item->package_name;
-    if (!base::ContainsKey(local_package_set, package_name)) {
+    if (!base::Contains(local_package_set, package_name)) {
       pending_install_items_[package_name] = std::move(sync_item);
       InstallPackage(pending_install_items_[package_name].get());
     } else {
@@ -156,7 +171,7 @@ syncer::SyncMergeResult ArcPackageSyncableService::MergeDataAndStartSyncing(
   // Creates sync items for local unsynced packages.
   syncer::SyncChangeList change_list;
   for (const auto& local_package_name : local_packages) {
-    if (base::ContainsKey(sync_items_, local_package_name))
+    if (base::Contains(sync_items_, local_package_name))
       continue;
 
     if (!ShouldSyncPackage(local_package_name))
@@ -320,6 +335,11 @@ void ArcPackageSyncableService::OnPackageModified(
   SendSyncChange(package_info, SyncChange::ACTION_UPDATE);
 }
 
+void ArcPackageSyncableService::OnPackageListInitialRefreshed() {
+  if (wait_until_ready_to_sync_cb_)
+    std::move(wait_until_ready_to_sync_cb_).Run();
+}
+
 void ArcPackageSyncableService::SendSyncChange(
     const mojom::ArcPackageInfo& package_info,
     const syncer::SyncChange::SyncChangeType& sync_change_type) {
@@ -330,7 +350,7 @@ void ArcPackageSyncableService::SendSyncChange(
     return;
   }
 
-  std::unique_ptr<ArcSyncItem> sync_item = base::MakeUnique<ArcSyncItem>(
+  std::unique_ptr<ArcSyncItem> sync_item = std::make_unique<ArcSyncItem>(
       package_info.package_name, package_info.package_version,
       package_info.last_backup_android_id, package_info.last_backup_time);
 
@@ -434,7 +454,12 @@ void ArcPackageSyncableService::UninstallPackage(const ArcSyncItem* sync_item) {
   if (!instance)
     return;
 
-  instance->UninstallPackage(sync_item->package_name);
+  // Make a copy of the package name string instead of handing out a reference
+  // to |sync_item->package_name|. The reason is that |sync_item| may get
+  // destroyed as a result of this call, making any references to it invalid.
+  // See crbug.com/970063.
+  std::string package_name = sync_item->package_name;
+  instance->UninstallPackage(package_name);
 }
 
 bool ArcPackageSyncableService::ShouldSyncPackage(

@@ -7,9 +7,11 @@
 
 #include <memory>
 
+#include "base/optional.h"
 #include "components/viz/common/viz_common_export.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace base {
@@ -34,6 +36,7 @@ class VIZ_COMMON_EXPORT SharedQuadState {
   void SetAll(const gfx::Transform& quad_to_target_transform,
               const gfx::Rect& layer_rect,
               const gfx::Rect& visible_layer_rect,
+              const gfx::RRectF& rounded_corner_bounds,
               const gfx::Rect& clip_rect,
               bool is_clipped,
               bool are_contents_opaque,
@@ -45,18 +48,33 @@ class VIZ_COMMON_EXPORT SharedQuadState {
   // Transforms quad rects into the target content space.
   gfx::Transform quad_to_target_transform;
   // The rect of the quads' originating layer in the space of the quad rects.
+  // Note that the |quad_layer_rect| represents the union of the |rect| of
+  // DrawQuads in this SharedQuadState. If it does not hold, then
+  // |are_contents_opaque| needs to be set to false.
   gfx::Rect quad_layer_rect;
   // The size of the visible area in the quads' originating layer, in the space
   // of the quad rects.
   gfx::Rect visible_quad_layer_rect;
+  // This rect lives in the target content space. It defines the corner radius
+  // to clip the quads with.
+  gfx::RRectF rounded_corner_bounds;
   // This rect lives in the target content space.
   gfx::Rect clip_rect;
   bool is_clipped;
-  // Indicates whether the quads share this sqs contains opaque content.
+  // Indicates whether the content in |quad_layer_rect| are fully opaque.
   bool are_contents_opaque;
   float opacity;
   SkBlendMode blend_mode;
   int sorting_context_id;
+  // An internal flag used only by the SurfaceAggregator to decide whether to
+  // merge quads for a surface into their target render pass. It is a
+  // performance optimization by avoiding render passes as much as possible.
+  bool is_fast_rounded_corner = false;
+  // This is for underlay optimization and used only in the SurfaceAggregator
+  // and the OverlayProcessor. This damage rect contains union of damage from
+  // occluding surfaces and is only for quads that are the only quad in
+  // their surface. SetAll() doesn't update this data.
+  base::Optional<gfx::Rect> occluding_damage_rect;
 };
 
 }  // namespace viz

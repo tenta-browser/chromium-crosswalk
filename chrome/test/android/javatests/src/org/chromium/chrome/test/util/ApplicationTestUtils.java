@@ -4,30 +4,38 @@
 
 package org.chromium.chrome.test.util;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Handler;
 import android.os.PowerManager;
+import android.util.Pair;
 
 import org.junit.Assert;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.omaha.OmahaBase;
 import org.chromium.chrome.browser.omaha.VersionNumberGetter;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.content.browser.test.util.Coordinates;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Coordinates;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Methods used for testing Chrome at the Application-level.
@@ -40,19 +48,17 @@ public class ApplicationTestUtils {
 
     // TODO(jbudorick): fix deprecation warning crbug.com/537347
     @SuppressWarnings("deprecation")
-    public static void setUp(Context context, boolean clearAppData) {
-        if (clearAppData) {
-            // Clear data and remove any tasks listed in Android's Overview menu between test runs.
-            clearAppData(context);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                finishAllChromeTasks(context);
-            }
+    @SuppressLint("WakelockTimeout")
+    public static void setUp(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            finishAllChromeTasks(context);
         }
 
         // Make sure the screen is on during test runs.
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         sWakeLock = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK
-                | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, TAG);
+                        | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
+                "Chromium:" + TAG);
         sWakeLock.acquire();
 
         // Disable Omaha related activities.
@@ -71,15 +77,8 @@ public class ApplicationTestUtils {
         }
     }
 
-    /**
-     * Clear all files and folders in the Chrome application directory except 'lib'.
-     * The 'cache' directory is recreated as an empty directory.
-     * @param context Target instrumentation context.
-     */
-    public static void clearAppData(Context context) {
-        ApplicationData.clearAppData(context);
-    }
-
+    // TODO(bauerb): make this function throw more specific exception and update
+    // StartupLoadingMetricsTest correspondingly.
     /** Send the user to the Android home screen. */
     public static void fireHomeScreenIntent(Context context) throws Exception {
         Intent intent = new Intent(Intent.ACTION_MAIN);
@@ -101,12 +100,40 @@ public class ApplicationTestUtils {
 
     /** Waits until Chrome is in the background. */
     public static void waitUntilChromeInBackground() {
-        CriteriaHelper.pollInstrumentationThread(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 int state = ApplicationStatus.getStateForApplication();
-                return state == ApplicationState.HAS_STOPPED_ACTIVITIES
+                boolean retVal = state == ApplicationState.HAS_STOPPED_ACTIVITIES
                         || state == ApplicationState.HAS_DESTROYED_ACTIVITIES;
+                if (!retVal) updateVisibleActivitiesError();
+                return retVal;
+            }
+
+            private void updateVisibleActivitiesError() {
+                List<Pair<Activity, Integer>> visibleActivities = new ArrayList<>();
+                for (Activity activity : ApplicationStatus.getRunningActivities()) {
+                    @ActivityState
+                    int activityState = ApplicationStatus.getStateForActivity(activity);
+                    if (activityState != ActivityState.DESTROYED
+                            && activityState != ActivityState.STOPPED) {
+                        visibleActivities.add(Pair.create(activity, activityState));
+                    }
+                }
+                if (visibleActivities.isEmpty()) {
+                    updateFailureReason(
+                            "No visible activities, application status response is suspect.");
+                } else {
+                    StringBuilder error = new StringBuilder("Unexpected visible activities: ");
+                    for (Pair<Activity, Integer> visibleActivityState : visibleActivities) {
+                        Activity activity = visibleActivityState.first;
+                        error.append(
+                                String.format(Locale.US, "\n\tActivity: %s, State: %d, Intent: %s",
+                                        activity.getClass().getSimpleName(),
+                                        visibleActivityState.second, activity.getIntent()));
+                    }
+                    updateFailureReason(error.toString());
+                }
             }
         });
     }
@@ -135,19 +162,20 @@ public class ApplicationTestUtils {
                     }
                 };
         try {
-            boolean alreadyDestroyed = ThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
-                @Override
-                public Boolean call() {
-                    if (ApplicationStatus.getStateForActivity(activity)
-                            == ActivityState.DESTROYED) {
-                        return true;
-                    }
-                    ApplicationStatus.registerStateListenerForActivity(
-                            activityStateListener, activity);
-                    activity.finish();
-                    return false;
-                }
-            });
+            boolean alreadyDestroyed =
+                    TestThreadUtils.runOnUiThreadBlocking(new Callable<Boolean>() {
+                        @Override
+                        public Boolean call() {
+                            if (ApplicationStatus.getStateForActivity(activity)
+                                    == ActivityState.DESTROYED) {
+                                return true;
+                            }
+                            ApplicationStatus.registerStateListenerForActivity(
+                                    activityStateListener, activity);
+                            activity.finish();
+                            return false;
+                        }
+                    });
             if (!alreadyDestroyed) {
                 callbackHelper.waitForCallback(0);
             }
@@ -159,20 +187,17 @@ public class ApplicationTestUtils {
     /** Finishes all tasks Chrome has listed in Android's Overview. */
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     public static void finishAllChromeTasks(final Context context) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Close all of the tasks one by one.
-                    ActivityManager activityManager =
-                            (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-                    for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
-                        task.finishAndRemoveTask();
-                    }
-                } catch (Exception e) {
-                    // Ignore any exceptions the Android framework throws so that otherwise passing
-                    // tests don't fail during tear down. See crbug.com/653731.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            try {
+                // Close all of the tasks one by one.
+                ActivityManager activityManager =
+                        (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
+                    task.finishAndRemoveTask();
                 }
+            } catch (Exception e) {
+                // Ignore any exceptions the Android framework throws so that otherwise passing
+                // tests don't fail during tear down. See crbug.com/653731.
             }
         });
 
@@ -214,5 +239,44 @@ public class ApplicationTestUtils {
                 return Math.abs(scale - expectedScale) < FLOAT_EPSILON;
             }
         });
+    }
+
+    /**
+     * Recreates the provided Activity, returning the newly created Activity once it's finished
+     * starting up.
+     * @param activity The Activity to recreate.
+     * @return The newly created Activity.
+     */
+    public static <T extends Activity> T recreateActivity(T activity) {
+        final Class<?> activityClass = activity.getClass();
+        final CallbackHelper activityCallback = new CallbackHelper();
+        final AtomicReference<T> activityRef = new AtomicReference<>();
+        ApplicationStatus.ActivityStateListener stateListener =
+                new ApplicationStatus.ActivityStateListener() {
+                    @SuppressWarnings("unchecked")
+                    @Override
+                    public void onActivityStateChange(Activity activity, int newState) {
+                        if (newState == ActivityState.RESUMED) {
+                            if (!activityClass.isAssignableFrom(activity.getClass())) return;
+
+                            activityRef.set((T) activity);
+                            new Handler().post(() -> activityCallback.notifyCalled());
+                            ApplicationStatus.unregisterActivityStateListener(this);
+                        }
+                    }
+                };
+        ApplicationStatus.registerStateListenerForAllActivities(stateListener);
+
+        try {
+            TestThreadUtils.runOnUiThreadBlocking(() -> activity.recreate());
+            activityCallback.waitForCallback("Activity did not start as expected", 0);
+            T createdActivity = activityRef.get();
+            Assert.assertNotNull("Activity reference is null.", createdActivity);
+            return createdActivity;
+        } catch (InterruptedException | TimeoutException e) {
+            throw new RuntimeException(e);
+        } finally {
+            ApplicationStatus.unregisterActivityStateListener(stateListener);
+        }
     }
 }

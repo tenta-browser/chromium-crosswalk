@@ -7,11 +7,12 @@
 #include <vector>
 
 #include "base/strings/stringprintf.h"
-#include "content/public/test/mock_download_item.h"
+#include "chrome/browser/download/download_item_model.h"
+#include "components/download/public/common/mock_download_item.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using content::DownloadItem;
+using download::DownloadItem;
 using ::testing::Mock;
 using ::testing::NiceMock;
 using ::testing::Return;
@@ -29,10 +30,9 @@ const char kDefaultURL[] = "http://example.com/foo.bar";
 
 class DownloadCommandsTest : public testing::Test {
  public:
-  DownloadCommandsTest() : commands_(&item_) {}
+  DownloadCommandsTest() : model_(&item_), commands_(&model_) {}
 
-  virtual ~DownloadCommandsTest() {
-  }
+  ~DownloadCommandsTest() override {}
 
  protected:
   // Sets up defaults for the download item.
@@ -58,10 +58,7 @@ class DownloadCommandsTest : public testing::Test {
         .WillByDefault(ReturnRefOfCopy(base::FilePath(kDefaultTargetFilePath)));
   }
 
-  content::MockDownloadItem& item() {
-    return item_;
-  }
-
+  download::MockDownloadItem& item() { return item_; }
 
   bool IsCommandEnabled(DownloadCommands::Command command) {
     return commands().IsCommandEnabled(command);
@@ -77,7 +74,8 @@ class DownloadCommandsTest : public testing::Test {
   }
 
  private:
-  NiceMock<content::MockDownloadItem> item_;
+  NiceMock<download::MockDownloadItem> item_;
+  DownloadItemModel model_;
   DownloadCommands commands_;
 };
 
@@ -157,7 +155,7 @@ TEST_F(DownloadCommandsTest, DoPause) {
 
 TEST_F(DownloadCommandsTest, DoResume) {
   // Resume.
-  EXPECT_CALL(item(), Resume()).Times(1);
+  EXPECT_CALL(item(), Resume(true)).Times(1);
   commands().ExecuteCommand(DownloadCommands::RESUME);
 }
 
@@ -165,10 +163,10 @@ TEST_F(DownloadCommandsTest,
        GetLearnMoreURLForInterruptedDownload_ContainsContext) {
   EXPECT_CALL(item(), GetLastReason())
       .WillOnce(
-          Return(content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED));
+          Return(download::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED));
   GURL learn_more_url = commands().GetLearnMoreURLForInterruptedDownload();
   std::string name_value_pair = base::StringPrintf(
-      "ctx=%d", content::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED);
+      "ctx=%d", download::DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED);
   EXPECT_LT(0u, learn_more_url.query().find(name_value_pair))
       << learn_more_url.spec();
 }

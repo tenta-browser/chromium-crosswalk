@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/time/time.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 
@@ -49,30 +48,25 @@ class TabStripModelStatsRecorder : public TabStripModelObserver {
   ~TabStripModelStatsRecorder() override;
 
  private:
+  // Called by OnTabStripModelChanged().
+  void OnActiveTabChanged(content::WebContents* old_contents,
+                          content::WebContents* new_contents,
+                          int reason);
+  void OnTabClosing(content::WebContents* contents);
+  void OnTabReplaced(content::WebContents* old_contents,
+                     content::WebContents* new_contents);
+
   // TabStripModelObserver implementation.
-  void TabClosingAt(TabStripModel* tab_strip_model,
-                    content::WebContents* contents,
-                    int index) override;
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override;
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* old_contents,
-                     content::WebContents* new_contents,
-                     int index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
 
   class TabInfo;
 
   std::vector<content::WebContents*> active_tab_history_;
 
   BrowserTabStripTracker browser_tab_strip_tracker_;
-
-  // Record a single create and close timestamp to track the time between tab
-  // creation. (Tabs actually are not opened in a strict sequence so these
-  // timestamps are not accurate, but they'll suffice for an estimate.)
-  base::TimeTicks last_creation_time_;
-  base::TimeTicks last_close_time_;
 
   DISALLOW_COPY_AND_ASSIGN(TabStripModelStatsRecorder);
 };

@@ -12,8 +12,8 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/policy/core/common/policy_pref_names.h"
@@ -22,7 +22,6 @@
 #include "components/url_formatter/url_fixer.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/load_flags.h"
-#include "net/base/net_errors.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -30,17 +29,10 @@ namespace policy {
 
 namespace {
 
-bool OverrideBlacklistForURL(const GURL& url, bool* block, int* reason) {
-  return false;
-}
-
 class TestingURLBlacklistManager : public URLBlacklistManager {
  public:
   explicit TestingURLBlacklistManager(PrefService* pref_service)
-      : URLBlacklistManager(pref_service,
-                            base::ThreadTaskRunnerHandle::Get(),
-                            base::ThreadTaskRunnerHandle::Get(),
-                            base::Bind(OverrideBlacklistForURL)),
+      : URLBlacklistManager(pref_service),
         update_called_(0),
         set_blacklist_called_(false) {}
 
@@ -48,14 +40,6 @@ class TestingURLBlacklistManager : public URLBlacklistManager {
 
   // Make this method public for testing.
   using URLBlacklistManager::ScheduleUpdate;
-
-  // Makes a direct call to UpdateOnIO during tests.
-  void UpdateOnIOForTesting() {
-    std::unique_ptr<base::ListValue> block(new base::ListValue);
-    block->AppendString("example.com");
-    std::unique_ptr<base::ListValue> allow(new base::ListValue);
-    URLBlacklistManager::UpdateOnIO(std::move(block), std::move(allow));
-  }
 
   // URLBlacklistManager overrides:
   void SetBlacklist(std::unique_ptr<URLBlacklist> blacklist) override {
@@ -86,21 +70,19 @@ class URLBlacklistManagerTest : public testing::Test {
     pref_service_.registry()->RegisterListPref(policy_prefs::kUrlBlacklist);
     pref_service_.registry()->RegisterListPref(policy_prefs::kUrlWhitelist);
     blacklist_manager_.reset(new TestingURLBlacklistManager(&pref_service_));
-    base::RunLoop().RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
   }
 
   void TearDown() override {
-    if (blacklist_manager_.get())
-      blacklist_manager_->ShutdownOnUIThread();
-    base::RunLoop().RunUntilIdle();
-    // Delete |blacklist_manager_| while |io_thread_| is mapping IO to
-    // |loop_|.
+    if (blacklist_manager_)
+      scoped_task_environment_.RunUntilIdle();
     blacklist_manager_.reset();
   }
 
-  base::MessageLoopForIO loop_;
   TestingPrefServiceSimple pref_service_;
   std::unique_ptr<TestingURLBlacklistManager> blacklist_manager_;
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 // Parameters for the FilterToComponents test.
@@ -223,80 +205,40 @@ TEST_P(URLBlacklistFilterToComponentsTest, FilterToComponents) {
 }
 
 TEST_F(URLBlacklistManagerTest, LoadBlacklistOnCreate) {
-  auto list = base::MakeUnique<base::ListValue>();
+  auto list = std::make_unique<base::ListValue>();
   list->AppendString("example.com");
   pref_service_.SetManagedPref(policy_prefs::kUrlBlacklist, std::move(list));
-  auto manager = base::MakeUnique<URLBlacklistManager>(
-      &pref_service_, base::ThreadTaskRunnerHandle::Get(),
-      base::ThreadTaskRunnerHandle::Get(),
-      URLBlacklistManager::OverrideBlacklistCallback());
-  base::RunLoop().RunUntilIdle();
+  auto manager = std::make_unique<URLBlacklistManager>(&pref_service_);
+  scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(URLBlacklist::URL_IN_BLACKLIST,
             manager->GetURLBlacklistState(GURL("http://example.com")));
 }
 
 TEST_F(URLBlacklistManagerTest, LoadWhitelistOnCreate) {
-  auto list = base::MakeUnique<base::ListValue>();
+  auto list = std::make_unique<base::ListValue>();
   list->AppendString("example.com");
   pref_service_.SetManagedPref(policy_prefs::kUrlWhitelist, std::move(list));
-  auto manager = base::MakeUnique<URLBlacklistManager>(
-      &pref_service_, base::ThreadTaskRunnerHandle::Get(),
-      base::ThreadTaskRunnerHandle::Get(),
-      URLBlacklistManager::OverrideBlacklistCallback());
-  base::RunLoop().RunUntilIdle();
+  auto manager = std::make_unique<URLBlacklistManager>(&pref_service_);
+  scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(URLBlacklist::URL_IN_WHITELIST,
             manager->GetURLBlacklistState(GURL("http://example.com")));
 }
 
 TEST_F(URLBlacklistManagerTest, SingleUpdateForTwoPrefChanges) {
-  auto blacklist = base::MakeUnique<base::ListValue>();
+  auto blacklist = std::make_unique<base::ListValue>();
   blacklist->AppendString("*.google.com");
-  auto whitelist = base::MakeUnique<base::ListValue>();
+  auto whitelist = std::make_unique<base::ListValue>();
   whitelist->AppendString("mail.google.com");
   pref_service_.SetManagedPref(policy_prefs::kUrlBlacklist,
                                std::move(blacklist));
   pref_service_.SetManagedPref(policy_prefs::kUrlBlacklist,
                                std::move(whitelist));
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   EXPECT_EQ(1, blacklist_manager_->update_called());
 }
 
-TEST_F(URLBlacklistManagerTest, ShutdownWithPendingTask0) {
-  // Post an update task to the UI thread.
-  blacklist_manager_->ScheduleUpdate();
-  // Shutdown comes before the task is executed.
-  blacklist_manager_->ShutdownOnUIThread();
-  blacklist_manager_.reset();
-  // Run the task after shutdown and deletion.
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(URLBlacklistManagerTest, ShutdownWithPendingTask1) {
-  // Post an update task.
-  blacklist_manager_->ScheduleUpdate();
-  // Shutdown comes before the task is executed.
-  blacklist_manager_->ShutdownOnUIThread();
-  // Run the task after shutdown, but before deletion.
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(0, blacklist_manager_->update_called());
-  blacklist_manager_.reset();
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(URLBlacklistManagerTest, ShutdownWithPendingTask2) {
-  // This posts a task to the FILE thread.
-  blacklist_manager_->UpdateOnIOForTesting();
-  // But shutdown happens before it is done.
-  blacklist_manager_->ShutdownOnUIThread();
-
-  EXPECT_FALSE(blacklist_manager_->set_blacklist_called());
-  blacklist_manager_.reset();
-  base::RunLoop().RunUntilIdle();
-}
-
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     URLBlacklistFilterToComponentsTestInstance,
     URLBlacklistFilterToComponentsTest,
     testing::Values(
@@ -675,21 +617,6 @@ TEST_F(URLBlacklistManagerTest, BlockAllWithExceptions) {
   EXPECT_TRUE(blacklist.IsURLBlocked(GURL("https://very.safe/")));
   EXPECT_TRUE(blacklist.IsURLBlocked(GURL("http://very.safe/path")));
   EXPECT_FALSE(blacklist.IsURLBlocked(GURL("https://very.safe/path")));
-}
-
-TEST_F(URLBlacklistManagerTest, DontBlockResources) {
-  std::unique_ptr<URLBlacklist>
-  blacklist(new URLBlacklist);
-  std::unique_ptr<base::ListValue> blocked(new base::ListValue);
-  blocked->AppendString("google.com");
-  blacklist->Block(blocked.get());
-  blacklist_manager_->SetBlacklist(std::move(blacklist));
-  EXPECT_TRUE(blacklist_manager_->IsURLBlocked(GURL("http://google.com")));
-
-  int reason = net::ERR_UNEXPECTED;
-  EXPECT_TRUE(blacklist_manager_->ShouldBlockRequestForFrame(
-      GURL("http://google.com"), &reason));
-  EXPECT_EQ(net::ERR_BLOCKED_BY_ADMINISTRATOR, reason);
 }
 
 TEST_F(URLBlacklistManagerTest, DefaultBlacklistExceptions) {

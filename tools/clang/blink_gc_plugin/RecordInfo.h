@@ -75,7 +75,7 @@ class RecordInfo {
 
   struct FieldDeclCmp {
     bool operator()(clang::FieldDecl* a, clang::FieldDecl *b) const {
-      return a->getLocStart() < b->getLocStart();
+      return a->getBeginLoc() < b->getBeginLoc();
     }
   };
   typedef std::map<clang::FieldDecl*, FieldPoint, FieldDeclCmp> Fields;
@@ -89,6 +89,7 @@ class RecordInfo {
   Fields& GetFields();
   Bases& GetBases();
   clang::CXXMethodDecl* GetTraceMethod();
+  clang::CXXMethodDecl* GetTraceWrappersMethod();
   clang::CXXMethodDecl* GetTraceDispatchMethod();
   clang::CXXMethodDecl* GetFinalizeDispatchMethod();
 
@@ -102,7 +103,6 @@ class RecordInfo {
   bool IsStackAllocated();
   bool IsNonNewable();
   bool IsOnlyPlacementNewable();
-  bool IsEagerlyFinalized();
 
   bool HasDefinition();
 
@@ -131,6 +131,8 @@ class RecordInfo {
   Edge* CreateEdge(const clang::Type* type);
   Edge* CreateEdgeFromOriginalType(const clang::Type* type);
 
+  bool HasOptionalFinalizer();
+
   RecordCache* cache_;
   clang::CXXRecordDecl* record_;
   const std::string name_;
@@ -145,7 +147,6 @@ class RecordInfo {
   CachedBool does_need_finalization_;
   CachedBool has_gc_mixin_methods_;
   CachedBool is_declaring_local_trace_;
-  CachedBool is_eagerly_finalized_;
 
   bool determined_trace_methods_;
   clang::CXXMethodDecl* trace_method_;

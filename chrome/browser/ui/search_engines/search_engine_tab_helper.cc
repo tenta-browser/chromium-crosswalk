@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/search_engines/search_engine_tab_helper.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/metrics/histogram_macros.h"
+#include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_fetcher_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -22,24 +24,21 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/url_fetcher.h"
+#include "content/public/common/resource_type.h"
 
 using content::NavigationController;
 using content::NavigationEntry;
 using content::WebContents;
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SearchEngineTabHelper);
-
 namespace {
 
 // Returns true if the entry's transition type is FORM_SUBMIT.
-bool IsFormSubmit(const NavigationEntry* entry) {
+bool IsFormSubmit(NavigationEntry* entry) {
   return ui::PageTransitionCoreTypeIs(entry->GetTransitionType(),
                                       ui::PAGE_TRANSITION_FORM_SUBMIT);
 }
 
-base::string16 GenerateKeywordFromNavigationEntry(
-    const NavigationEntry* entry) {
+base::string16 GenerateKeywordFromNavigationEntry(NavigationEntry* entry) {
   // Don't autogenerate keywords for pages that are the result of form
   // submissions.
   if (IsFormSubmit(entry))
@@ -69,14 +68,6 @@ base::string16 GenerateKeywordFromNavigationEntry(
   return TemplateURL::GenerateKeyword(url);
 }
 
-void AssociateURLFetcherWithWebContents(content::WebContents* web_contents,
-                                        net::URLFetcher* url_fetcher) {
-  content::AssociateURLFetcherWithRenderFrame(
-      url_fetcher, url::Origin::Create(web_contents->GetURL()),
-      web_contents->GetMainFrame()->GetProcess()->GetID(),
-      web_contents->GetMainFrame()->GetRoutingID());
-}
-
 }  // namespace
 
 SearchEngineTabHelper::~SearchEngineTabHelper() {
@@ -87,10 +78,18 @@ void SearchEngineTabHelper::DidFinishNavigation(
   GenerateKeywordIfNecessary(handle);
 }
 
+void SearchEngineTabHelper::WebContentsDestroyed() {
+  favicon_driver_observer_.RemoveAll();
+}
+
 SearchEngineTabHelper::SearchEngineTabHelper(WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       osdd_handler_bindings_(web_contents, this) {
   DCHECK(web_contents);
+
+  favicon::CreateContentFaviconDriverForWebContents(web_contents);
+  favicon_driver_observer_.Add(
+      favicon::ContentFaviconDriver::FromWebContents(web_contents));
 }
 
 void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
@@ -121,8 +120,8 @@ void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
 
   // If the current page is a form submit, find the last page that was not a
   // form submit and use its url to generate the keyword from.
-  const NavigationController& controller = web_contents()->GetController();
-  const NavigationEntry* entry = controller.GetLastCommittedEntry();
+  NavigationController& controller = web_contents()->GetController();
+  NavigationEntry* entry = controller.GetLastCommittedEntry();
   for (int index = controller.GetLastCommittedEntryIndex();
        (index > 0) && IsFormSubmit(entry);
        entry = controller.GetEntryAtIndex(index))
@@ -136,11 +135,32 @@ void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
   if (keyword.empty())
     return;
 
+  auto* frame = web_contents()->GetMainFrame();
+  network::mojom::URLLoaderFactoryPtr url_loader_factory;
+  frame->CreateNetworkServiceDefaultFactory(
+      mojo::MakeRequest(&url_loader_factory));
+
   // Download the OpenSearch description document. If this is successful, a
   // new keyword will be created when done.
   TemplateURLFetcherFactory::GetForProfile(profile)->ScheduleDownload(
       keyword, osdd_url, entry->GetFavicon().url,
-      base::Bind(&AssociateURLFetcherWithWebContents, web_contents()));
+      url::Origin::Create(web_contents()->GetURL()), url_loader_factory.get(),
+      frame->GetRoutingID(),
+      static_cast<int>(content::ResourceType::kSubResource));
+}
+
+void SearchEngineTabHelper::OnFaviconUpdated(
+    favicon::FaviconDriver* driver,
+    NotificationIconType notification_icon_type,
+    const GURL& icon_url,
+    bool icon_url_changed,
+    const gfx::Image& image) {
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  TemplateURLService* url_service =
+      TemplateURLServiceFactory::GetForProfile(profile);
+  if (url_service && url_service->loaded())
+    url_service->UpdateProviderFavicons(driver->GetActiveURL(), icon_url);
 }
 
 void SearchEngineTabHelper::GenerateKeywordIfNecessary(
@@ -153,7 +173,7 @@ void SearchEngineTabHelper::GenerateKeywordIfNecessary(
   if (profile->IsOffTheRecord())
     return;
 
-  const NavigationController& controller = web_contents()->GetController();
+  NavigationController& controller = web_contents()->GetController();
   int last_index = controller.GetLastCommittedEntryIndex();
   // When there was no previous page, the last index will be 0. This is
   // normally due to a form submit that opened in a new tab.
@@ -177,7 +197,7 @@ void SearchEngineTabHelper::GenerateKeywordIfNecessary(
     return;
   }
 
-  TemplateURL* current_url;
+  const TemplateURL* current_url;
   GURL url = handle->GetSearchableFormURL();
   if (!url_service->CanAddAutogeneratedKeyword(keyword, url, &current_url))
     return;
@@ -211,5 +231,7 @@ void SearchEngineTabHelper::GenerateKeywordIfNecessary(
   }
   data.safe_for_autoreplace = true;
   data.input_encodings.push_back(handle->GetSearchableFormEncoding());
-  url_service->Add(base::MakeUnique<TemplateURL>(data));
+  url_service->Add(std::make_unique<TemplateURL>(data));
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SearchEngineTabHelper)

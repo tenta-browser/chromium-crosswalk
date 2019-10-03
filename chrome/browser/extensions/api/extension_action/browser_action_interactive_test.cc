@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -16,12 +17,17 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/extensions/browser_action_test_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/zoom/test/zoom_test_utils.h"
+#include "components/zoom/zoom_controller.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/common/page_zoom.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/notification_types.h"
@@ -30,7 +36,7 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "ui/base/ui_features.h"
+#include "ui/base/buildflags.h"
 
 #if defined(OS_WIN)
 #include "ui/views/win/hwnd_util.h"
@@ -95,7 +101,7 @@ class BrowserActionInteractiveTest : public ExtensionApiTest {
 
   // BrowserTestBase:
   void SetUpOnMainThread() override {
-    host_watcher_ = base::MakeUnique<ExtensionHostWatcher>();
+    host_watcher_ = std::make_unique<ExtensionHostWatcher>();
     ExtensionApiTest::SetUpOnMainThread();
     EXPECT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   }
@@ -125,21 +131,30 @@ class BrowserActionInteractiveTest : public ExtensionApiTest {
   }
 
   void EnsurePopupActive() {
-    BrowserActionTestUtil test_util(browser());
-    EXPECT_TRUE(test_util.HasPopup());
-    EXPECT_TRUE(test_util.WaitForPopup());
-    EXPECT_TRUE(test_util.HasPopup());
+    auto test_util = BrowserActionTestUtil::Create(browser());
+    EXPECT_TRUE(test_util->HasPopup());
+    EXPECT_TRUE(test_util->WaitForPopup());
+    EXPECT_TRUE(test_util->HasPopup());
   }
 
   // Open an extension popup via the chrome.browserAction.openPopup API.
-  void OpenPopupViaAPI() {
+  // If |will_reply| is true, then the listener is responsible for having a
+  // test message listener that replies to the extension. Otherwise, this
+  // method will create a listener and reply to the extension before returning
+  // to avoid leaking an API function while waiting for a reply.
+  void OpenPopupViaAPI(bool will_reply) {
     // Setup the notification observer to wait for the popup to finish loading.
     content::WindowedNotificationObserver frame_observer(
         content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME,
         content::NotificationService::AllSources());
+    std::unique_ptr<ExtensionTestMessageListener> listener;
+    if (!will_reply)
+      listener = std::make_unique<ExtensionTestMessageListener>("ready", false);
     // Show first popup in first window and expect it to have loaded.
     ASSERT_TRUE(RunExtensionSubtest("browser_action/open_popup",
                                     "open_popup_succeeds.html")) << message_;
+    if (listener)
+      EXPECT_TRUE(listener->WaitUntilSatisfied());
     frame_observer.Wait();
     EnsurePopupActive();
   }
@@ -149,17 +164,17 @@ class BrowserActionInteractiveTest : public ExtensionApiTest {
     content::WindowedNotificationObserver frame_observer(
         content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME,
         content::NotificationService::AllSources());
-    BrowserActionTestUtil(browser()).Press(0);
+    BrowserActionTestUtil::Create(browser())->Press(0);
     frame_observer.Wait();
     EnsurePopupActive();
   }
 
   // Close the popup window directly.
-  void ClosePopup() { BrowserActionTestUtil(browser()).HidePopup(); }
+  void ClosePopup() { BrowserActionTestUtil::Create(browser())->HidePopup(); }
 
   // Trigger a focus loss to close the popup.
   void ClosePopupViaFocusLoss() {
-    EXPECT_TRUE(BrowserActionTestUtil(browser()).HasPopup());
+    EXPECT_TRUE(BrowserActionTestUtil::Create(browser())->HasPopup());
     content::WindowedNotificationObserver observer(
         extensions::NOTIFICATION_EXTENSION_HOST_DESTROYED,
         content::NotificationService::AllSources());
@@ -178,7 +193,7 @@ class BrowserActionInteractiveTest : public ExtensionApiTest {
 #endif
 
     // The window disappears immediately.
-    EXPECT_FALSE(BrowserActionTestUtil(browser()).HasPopup());
+    EXPECT_FALSE(BrowserActionTestUtil::Create(browser())->HasPopup());
 
     // Wait for the notification to achieve a consistent state and verify that
     // the popup was properly torn down.
@@ -199,13 +214,13 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, TestOpenPopup) {
   if (!ShouldRunPopupTest())
     return;
 
-  BrowserActionTestUtil browserActionBar(browser());
+  auto browserActionBar = BrowserActionTestUtil::Create(browser());
   // Setup extension message listener to wait for javascript to finish running.
   ExtensionTestMessageListener listener("ready", true);
   {
-    OpenPopupViaAPI();
-    EXPECT_TRUE(browserActionBar.HasPopup());
-    browserActionBar.HidePopup();
+    OpenPopupViaAPI(true);
+    EXPECT_TRUE(browserActionBar->HasPopup());
+    browserActionBar->HidePopup();
   }
 
   EXPECT_TRUE(listener.WaitUntilSatisfied());
@@ -235,10 +250,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, TestOpenPopup) {
     // Show second popup in new window.
     listener.Reply("show another");
     frame_observer.Wait();
-    EXPECT_TRUE(BrowserActionTestUtil(new_browser).HasPopup());
+    EXPECT_TRUE(BrowserActionTestUtil::Create(new_browser)->HasPopup());
   }
   ASSERT_TRUE(catcher.GetNextResult()) << message_;
-  BrowserActionTestUtil(new_browser).HidePopup();
+  BrowserActionTestUtil::Create(new_browser)->HidePopup();
 }
 
 // Tests opening a popup in an incognito window.
@@ -258,12 +273,13 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, TestOpenPopupIncognito) {
   // have popups if there is any popup open.
 #if !(defined(OS_LINUX) && !defined(USE_AURA))
   // Starting window does not have a popup.
-  EXPECT_FALSE(BrowserActionTestUtil(browser()).HasPopup());
+  EXPECT_FALSE(BrowserActionTestUtil::Create(browser())->HasPopup());
 #endif
   // Incognito window should have a popup.
-  BrowserActionTestUtil test_util(BrowserList::GetInstance()->GetLastActive());
-  EXPECT_TRUE(test_util.HasPopup());
-  test_util.HidePopup();
+  auto test_util = BrowserActionTestUtil::Create(
+      BrowserList::GetInstance()->GetLastActive());
+  EXPECT_TRUE(test_util->HasPopup());
+  test_util->HidePopup();
 }
 
 // Tests that an extension can open a popup in the last active incognito window
@@ -283,22 +299,17 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
 
   Browser* incognito_browser =
       OpenURLOffTheRecord(profile(), GURL("chrome://newtab/"));
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
   EXPECT_EQ(std::string("opened"), listener.message());
-  BrowserActionTestUtil test_util(incognito_browser);
-  EXPECT_TRUE(test_util.HasPopup());
-  test_util.HidePopup();
+  auto test_util = BrowserActionTestUtil::Create(incognito_browser);
+  EXPECT_TRUE(test_util->HasPopup());
+  test_util->HidePopup();
 }
 
-#if defined(OS_LINUX)
-#define MAYBE_TestOpenPopupDoesNotCloseOtherPopups DISABLED_TestOpenPopupDoesNotCloseOtherPopups
-#else
-#define MAYBE_TestOpenPopupDoesNotCloseOtherPopups TestOpenPopupDoesNotCloseOtherPopups
-#endif
 // Tests if there is already a popup open (by a user click or otherwise), that
 // the openPopup API does not override it.
 IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
-                       MAYBE_TestOpenPopupDoesNotCloseOtherPopups) {
+                       TestOpenPopupDoesNotCloseOtherPopups) {
   if (!ShouldRunPopupTest())
     return;
 
@@ -329,16 +340,16 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
   if (!ShouldRunPopupTest())
     return;
 
-  OpenPopupViaAPI();
+  OpenPopupViaAPI(false);
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
-  ASSERT_FALSE(
-      service->GetExtensionById(last_loaded_extension_id(), false)
-          ->permissions_data()
-          ->HasAPIPermissionForTab(
-              SessionTabHelper::IdForTab(
-                  browser()->tab_strip_model()->GetActiveWebContents()),
-              APIPermission::kTab));
+  ASSERT_FALSE(service->GetExtensionById(last_loaded_extension_id(), false)
+                   ->permissions_data()
+                   ->HasAPIPermissionForTab(
+                       SessionTabHelper::IdForTab(
+                           browser()->tab_strip_model()->GetActiveWebContents())
+                           .id(),
+                       APIPermission::kTab));
   ClosePopup();
 }
 
@@ -346,7 +357,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
 IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, FocusLossClosesPopup1) {
   if (!ShouldRunPopupTest())
     return;
-  OpenPopupViaAPI();
+  OpenPopupViaAPI(false);
   ClosePopupViaFocusLoss();
 }
 
@@ -374,16 +385,17 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, TabSwitchClosesPopup) {
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
   EXPECT_EQ(browser()->tab_strip_model()->GetWebContentsAt(1),
             browser()->tab_strip_model()->GetActiveWebContents());
-  OpenPopupViaAPI();
+  OpenPopupViaAPI(false);
 
   content::WindowedNotificationObserver observer(
       extensions::NOTIFICATION_EXTENSION_HOST_DESTROYED,
       content::NotificationService::AllSources());
   // Change active tabs, the extension popup should close.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   observer.Wait();
 
-  EXPECT_FALSE(BrowserActionTestUtil(browser()).HasPopup());
+  EXPECT_FALSE(BrowserActionTestUtil::Create(browser())->HasPopup());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
@@ -392,9 +404,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
     return;
 
   // First, we open a popup.
-  OpenPopupViaAPI();
-  BrowserActionTestUtil browser_action_test_util(browser());
-  EXPECT_TRUE(browser_action_test_util.HasPopup());
+  OpenPopupViaAPI(false);
+  auto browser_action_test_util = BrowserActionTestUtil::Create(browser());
+  EXPECT_TRUE(browser_action_test_util->HasPopup());
 
   // Then, find the extension that created it.
   content::WebContents* active_web_contents =
@@ -408,18 +420,92 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
   // Finally, uninstall the extension, which causes the view to be deleted and
   // the popup to go away. This should not crash.
   UninstallExtension(extension->id());
-  EXPECT_FALSE(browser_action_test_util.HasPopup());
+  EXPECT_FALSE(browser_action_test_util->HasPopup());
 }
 
-// BrowserActionTestUtil::InspectPopup() is not implemented for a Cocoa browser.
-#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
-#define MAYBE_CloseBrowserWithDevTools CloseBrowserWithDevTools
-#else
-#define MAYBE_CloseBrowserWithDevTools DISABLED_CloseBrowserWithDevTools
-#endif
+IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, PopupZoomsIndependently) {
+  if (!ShouldRunPopupTest())
+    return;
+
+  ASSERT_TRUE(
+      LoadExtension(test_data_dir_.AppendASCII("browser_action/open_popup")));
+  const Extension* extension = GetSingleLoadedExtension();
+  ASSERT_TRUE(extension) << message_;
+
+  // Navigate to one of the extension's pages in a tab.
+  ui_test_utils::NavigateToURL(browser(),
+                               extension->GetResourceURL("popup.html"));
+  content::WebContents* tab_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Zoom the extension page in the tab.
+  zoom::ZoomController* zoom_controller =
+      zoom::ZoomController::FromWebContents(tab_contents);
+  double tab_old_zoom_level = zoom_controller->GetZoomLevel();
+  double tab_new_zoom_level = tab_old_zoom_level + 1.0;
+  zoom::ZoomController::ZoomChangedEventData zoom_change_data(
+      tab_contents, tab_old_zoom_level, tab_new_zoom_level,
+      zoom::ZoomController::ZOOM_MODE_DEFAULT, true);
+  zoom::ZoomChangedWatcher zoom_change_watcher(tab_contents, zoom_change_data);
+  zoom_controller->SetZoomLevel(tab_new_zoom_level);
+  zoom_change_watcher.Wait();
+
+  // Open the extension's popup.
+  content::WindowedNotificationObserver popup_observer(
+      NOTIFICATION_EXTENSION_HOST_CREATED,
+      content::NotificationService::AllSources());
+  OpenPopupViaToolbar();
+  popup_observer.Wait();
+  ExtensionHost* extension_host =
+      content::Details<ExtensionHost>(popup_observer.details()).ptr();
+  content::WebContents* popup_contents = extension_host->host_contents();
+
+  // The popup should not use the per-origin zoom level that was set by zooming
+  // the tab.
+  const double default_zoom_level =
+      content::HostZoomMap::GetForWebContents(popup_contents)
+          ->GetDefaultZoomLevel();
+  double popup_zoom_level = content::HostZoomMap::GetZoomLevel(popup_contents);
+  EXPECT_TRUE(content::ZoomValuesEqual(popup_zoom_level, default_zoom_level))
+      << popup_zoom_level << " vs " << default_zoom_level;
+
+  // Preventing the use of the per-origin zoom level in the popup should not
+  // affect the zoom of the tab.
+  EXPECT_TRUE(content::ZoomValuesEqual(zoom_controller->GetZoomLevel(),
+                                       tab_new_zoom_level))
+      << zoom_controller->GetZoomLevel() << " vs " << tab_new_zoom_level;
+
+  // Subsequent zooming in the tab should also be done independently of the
+  // popup.
+  tab_old_zoom_level = zoom_controller->GetZoomLevel();
+  tab_new_zoom_level = tab_old_zoom_level + 1.0;
+  zoom::ZoomController::ZoomChangedEventData zoom_change_data2(
+      tab_contents, tab_old_zoom_level, tab_new_zoom_level,
+      zoom::ZoomController::ZOOM_MODE_DEFAULT, true);
+  zoom::ZoomChangedWatcher zoom_change_watcher2(tab_contents,
+                                                zoom_change_data2);
+  zoom_controller->SetZoomLevel(tab_new_zoom_level);
+  zoom_change_watcher2.Wait();
+
+  popup_zoom_level = content::HostZoomMap::GetZoomLevel(popup_contents);
+  EXPECT_TRUE(content::ZoomValuesEqual(popup_zoom_level, default_zoom_level))
+      << popup_zoom_level << " vs " << default_zoom_level;
+
+  ClosePopup();
+}
+
+class BrowserActionInteractiveViewsTest : public BrowserActionInteractiveTest {
+ public:
+  BrowserActionInteractiveViewsTest() = default;
+  ~BrowserActionInteractiveViewsTest() override = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(BrowserActionInteractiveViewsTest);
+};
+
 // Test closing the browser while inspecting an extension popup with dev tools.
-IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
-                       MAYBE_CloseBrowserWithDevTools) {
+IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveViewsTest,
+                       CloseBrowserWithDevTools) {
   if (!ShouldRunPopupTest())
     return;
 
@@ -433,30 +519,29 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
   content::WindowedNotificationObserver frame_observer(
       content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME,
       content::NotificationService::AllSources());
-  BrowserActionTestUtil(browser()).InspectPopup(0);
+  BrowserActionTestUtil::Create(browser())->InspectPopup(0);
   frame_observer.Wait();
-  EXPECT_TRUE(BrowserActionTestUtil(browser()).HasPopup());
+  EXPECT_TRUE(BrowserActionTestUtil::Create(browser())->HasPopup());
 
   // Close the browser window, this should not cause a crash.
   chrome::CloseWindow(browser());
 }
 
 #if defined(OS_WIN)
-// Test that forcibly closing the browser and popup HWND does not cause a crash.
-// http://crbug.com/400646
-IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
-                       DISABLED_DestroyHWNDDoesNotCrash) {
+// Forcibly closing a browser HWND with a popup should not cause a crash.
+IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest, DestroyHWNDDoesNotCrash) {
   if (!ShouldRunPopupTest())
     return;
 
-  OpenPopupViaAPI();
-  BrowserActionTestUtil test_util(browser());
-  const gfx::NativeView view = test_util.GetPopupNativeView();
-  EXPECT_NE(static_cast<gfx::NativeView>(NULL), view);
-  const HWND hwnd = views::HWNDForNativeView(view);
-  EXPECT_EQ(hwnd,
-            views::HWNDForNativeView(browser()->window()->GetNativeWindow()));
-  EXPECT_EQ(TRUE, ::IsWindow(hwnd));
+  OpenPopupViaAPI(false);
+  auto test_util = BrowserActionTestUtil::Create(browser());
+  const gfx::NativeView popup_view = test_util->GetPopupNativeView();
+  EXPECT_NE(static_cast<gfx::NativeView>(nullptr), popup_view);
+  const HWND popup_hwnd = views::HWNDForNativeView(popup_view);
+  EXPECT_EQ(TRUE, ::IsWindow(popup_hwnd));
+  const HWND browser_hwnd =
+      views::HWNDForNativeView(browser()->window()->GetNativeWindow());
+  EXPECT_EQ(TRUE, ::IsWindow(browser_hwnd));
 
   // Create a new browser window to prevent the message loop from terminating.
   browser()->OpenURL(content::OpenURLParams(GURL("about:"), content::Referrer(),
@@ -464,9 +549,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionInteractiveTest,
                                             ui::PAGE_TRANSITION_TYPED, false));
 
   // Forcibly closing the browser HWND should not cause a crash.
-  EXPECT_EQ(TRUE, ::CloseWindow(hwnd));
-  EXPECT_EQ(TRUE, ::DestroyWindow(hwnd));
-  EXPECT_EQ(FALSE, ::IsWindow(hwnd));
+  EXPECT_EQ(TRUE, ::CloseWindow(browser_hwnd));
+  EXPECT_EQ(TRUE, ::DestroyWindow(browser_hwnd));
+  EXPECT_EQ(FALSE, ::IsWindow(browser_hwnd));
+  EXPECT_EQ(FALSE, ::IsWindow(popup_hwnd));
 }
 #endif  // OS_WIN
 

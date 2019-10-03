@@ -11,28 +11,24 @@
 #include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "build/build_config.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/browser/browser_main_parts.h"
 #include "content/public/common/main_function_params.h"
-#include "ui/aura/window_tree_host_observer.h"
 
 class PrefService;
 
 namespace content {
-class BrowserContext;
 struct MainFunctionParams;
 }
 
 namespace extensions {
 
 class DesktopController;
-class ExtensionsBrowserClient;
-class ExtensionsClient;
 class ShellBrowserContext;
 class ShellBrowserMainDelegate;
-class ShellDeviceClient;
+class ShellExtensionsClient;
+class ShellExtensionsBrowserClient;
 class ShellExtensionSystem;
-class ShellOAuth2TokenService;
 class ShellUpdateQueryParamsDelegate;
 
 #if defined(OS_CHROMEOS)
@@ -52,7 +48,7 @@ class ShellBrowserMainParts : public content::BrowserMainParts {
   ShellExtensionSystem* extension_system() { return extension_system_; }
 
   // BrowserMainParts overrides.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   void PreMainMessageLoopStart() override;
   void PostMainMessageLoopStart() override;
   int PreCreateThreads() override;
@@ -61,17 +57,9 @@ class ShellBrowserMainParts : public content::BrowserMainParts {
   void PostMainMessageLoopRun() override;
   void PostDestroyThreads() override;
 
- protected:
-  // app_shell embedders may need custom extensions client interfaces.
-  // This class takes ownership of the returned objects.
-  virtual ExtensionsClient* CreateExtensionsClient();
-  virtual ExtensionsBrowserClient* CreateExtensionsBrowserClient(
-      content::BrowserContext* context,
-      PrefService* service);
-
  private:
-  // Creates and initializes the ExtensionSystem.
-  void CreateExtensionSystem();
+  // Initializes the ExtensionSystem.
+  void InitExtensionSystem();
 
 #if defined(OS_CHROMEOS)
   std::unique_ptr<ShellNetworkController> network_controller_;
@@ -88,11 +76,9 @@ class ShellBrowserMainParts : public content::BrowserMainParts {
   // The DesktopController outlives ExtensionSystem and context-keyed services.
   std::unique_ptr<DesktopController> desktop_controller_;
 
-  std::unique_ptr<ShellDeviceClient> device_client_;
-  std::unique_ptr<ExtensionsClient> extensions_client_;
-  std::unique_ptr<ExtensionsBrowserClient> extensions_browser_client_;
+  std::unique_ptr<ShellExtensionsClient> extensions_client_;
+  std::unique_ptr<ShellExtensionsBrowserClient> extensions_browser_client_;
   std::unique_ptr<ShellUpdateQueryParamsDelegate> update_query_params_delegate_;
-  std::unique_ptr<ShellOAuth2TokenService> oauth2_token_service_;
 
   // Owned by the KeyedService system.
   ShellExtensionSystem* extension_system_;

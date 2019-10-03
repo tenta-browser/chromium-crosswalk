@@ -45,7 +45,7 @@ void CalculateWindowStylesFromInitParams(
   DCHECK_NE(Widget::InitParams::ACTIVATABLE_DEFAULT, params.activatable);
   if (params.activatable == Widget::InitParams::ACTIVATABLE_NO)
     *ex_style |= WS_EX_NOACTIVATE;
-  if (params.keep_on_top)
+  if (params.EffectiveZOrderLevel() != ui::ZOrderLevel::kNormal)
     *ex_style |= WS_EX_TOPMOST;
   if (params.mirror_origin_in_rtl)
     *ex_style |= l10n_util::GetExtendedTooltipStyles();
@@ -54,13 +54,6 @@ void CalculateWindowStylesFromInitParams(
 
   // Set type-dependent style attributes.
   switch (params.type) {
-    case Widget::InitParams::TYPE_PANEL:
-      *ex_style |= WS_EX_TOPMOST;
-      if (params.remove_standard_frame) {
-        *style |= WS_POPUP;
-        break;
-      }
-      // Else, no break. Fall through to TYPE_WINDOW.
     case Widget::InitParams::TYPE_WINDOW: {
       // WS_OVERLAPPEDWINDOW is equivalent to:
       //   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
@@ -116,6 +109,9 @@ void CalculateWindowStylesFromInitParams(
     case Widget::InitParams::TYPE_MENU:
       *style |= WS_POPUP;
       break;
+    case Widget::InitParams::TYPE_TOOLTIP:
+      *style |= WS_POPUP;
+      break;
     default:
       NOTREACHED();
   }
@@ -126,6 +122,12 @@ void CalculateWindowStylesFromInitParams(
 bool DidClientAreaSizeChange(const WINDOWPOS* window_pos) {
   return !(window_pos->flags & SWP_NOSIZE) ||
          window_pos->flags & SWP_FRAMECHANGED;
+}
+
+bool DidMinimizedChange(UINT old_size_param, UINT new_size_param) {
+  return (
+      (old_size_param == SIZE_MINIMIZED && new_size_param != SIZE_MINIMIZED) ||
+      (old_size_param != SIZE_MINIMIZED && new_size_param == SIZE_MINIMIZED));
 }
 
 void ConfigureWindowStyles(

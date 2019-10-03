@@ -6,8 +6,8 @@
 
 #include <string>
 
-#include "chromeos/login/login_state.h"
-#include "chromeos/login/scoped_test_public_session_login_state.h"
+#include "chromeos/login/login_state/login_state.h"
+#include "chromeos/login/login_state/scoped_test_public_session_login_state.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/value_builder.h"
@@ -24,12 +24,8 @@ const char kNonWhitelistedId[] = "bogus";
 const char kTestUrl[] = "http://www.foo.bar/baz?key=val";
 const char kFilteredUrl[] = "http://www.foo.bar/";
 
-scoped_refptr<Extension> CreateExtension(const std::string& id) {
-  return ExtensionBuilder()
-      .SetManifest(
-          DictionaryBuilder().Set("name", "test").Set("version", "0.1").Build())
-      .SetID(id)
-      .Build();
+scoped_refptr<const Extension> CreateExtension(const std::string& id) {
+  return ExtensionBuilder("test").SetID(id).Build();
 }
 
 }  // namespace

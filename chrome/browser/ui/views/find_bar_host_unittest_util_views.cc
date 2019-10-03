@@ -4,7 +4,10 @@
 
 #include "chrome/browser/ui/find_bar/find_bar_host_unittest_util.h"
 
+#include "build/build_config.h"
+#include "build/buildflag.h"
 #include "chrome/browser/ui/views/dropdown_bar_host.h"
+#include "ui/base/ui_base_features.h"
 
 namespace chrome {
 

@@ -8,8 +8,8 @@
 #include <string>
 
 #include "base/macros.h"
+#include "chrome/browser/chromeos/authpolicy/authpolicy_helper.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
-#include "chromeos/login/auth/authpolicy_login_helper.h"
 
 namespace authpolicy {
 class ActiveDirectoryAccountInfo;
@@ -19,12 +19,12 @@ namespace chromeos {
 
 class CoreOobeView;
 class Key;
-class SigninScreenHandlerDelegate;
 
 // A class that handles WebUI hooks in Active Directory password change  screen.
 class ActiveDirectoryPasswordChangeScreenHandler : public BaseScreenHandler {
  public:
-  explicit ActiveDirectoryPasswordChangeScreenHandler(
+  ActiveDirectoryPasswordChangeScreenHandler(
+      JSCallsContainer* js_calls_container,
       CoreOobeView* core_oobe_view);
   ~ActiveDirectoryPasswordChangeScreenHandler() override;
 
@@ -42,17 +42,15 @@ class ActiveDirectoryPasswordChangeScreenHandler : public BaseScreenHandler {
                       const std::string& new_password);
   void HandleCancel();
 
-  // Shows the password change screen for |username|. Uses |delegate| to
-  // compelete authentication process.
-  void ShowScreen(const std::string& username,
-                  SigninScreenHandlerDelegate* delegate);
+  // Shows the password change screen for |username|.
+  void ShowScreen(const std::string& username);
 
  private:
   // Shows the screen with the error message corresponding to |error|.
   void ShowScreenWithError(int error);
 
-  // Callback called by AuthPolicyLoginHelper::AuthenticateUser with results and
-  // error code. (see AuthPolicyLoginHelper::AuthenticateUser)
+  // Callback called by AuthPolicyHelper::AuthenticateUser with results and
+  // error code. (see AuthPolicyHelper::AuthenticateUser)
   void OnAuthFinished(
       const std::string& username,
       const Key& key,
@@ -61,10 +59,7 @@ class ActiveDirectoryPasswordChangeScreenHandler : public BaseScreenHandler {
 
   // Helper to call AuthPolicyClient and cancel calls if needed. Used to change
   // password on the Active Directory server.
-  std::unique_ptr<AuthPolicyLoginHelper> authpolicy_login_helper_;
-
-  // Non-owned. Used to complete authentication process.
-  SigninScreenHandlerDelegate* delegate_ = nullptr;
+  std::unique_ptr<AuthPolicyHelper> authpolicy_login_helper_;
 
   // Non-owned. Used to display signin error.
   CoreOobeView* core_oobe_view_ = nullptr;

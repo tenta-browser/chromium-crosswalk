@@ -7,15 +7,19 @@
 
 #include <map>
 #include <memory>
+#include <string>
+#include <unordered_set>
+#include <utility>
 
-#include "base/containers/hash_tables.h"
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/scoped_observer.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task/post_task.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_registry.h"
@@ -33,7 +37,7 @@ namespace api {
 class BluetoothSocketApiFunction;
 class BluetoothSocketEventDispatcher;
 class SerialConnectFunction;
-class SerialEventDispatcher;
+class SerialPortManager;
 class TCPServerSocketEventDispatcher;
 class TCPSocketEventDispatcher;
 class UDPSocketEventDispatcher;
@@ -45,12 +49,12 @@ struct NamedThreadTraits {
                     T::kThreadId == content::BrowserThread::UI,
                 "ApiResources can only belong to the IO or UI thread.");
 
-  static bool IsMessageLoopValid() {
-    return content::BrowserThread::IsMessageLoopValid(T::kThreadId);
+  static bool IsThreadInitialized() {
+    return content::BrowserThread::IsThreadInitialized(T::kThreadId);
   }
 
   static scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner() {
-    return content::BrowserThread::GetTaskRunnerForThread(T::kThreadId);
+    return base::CreateSingleThreadTaskRunnerWithTraits({T::kThreadId});
   }
 };
 
@@ -110,7 +114,7 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
 
   virtual ~ApiResourceManager() {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    DCHECK(ThreadingTraits::IsMessageLoopValid())
+    DCHECK(ThreadingTraits::IsThreadInitialized())
         << "A unit test is using an ApiResourceManager but didn't provide "
            "the thread message loop needed for that kind of resource. "
            "Please ensure that the appropriate message loop is operational.";
@@ -130,7 +134,7 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
     return data_->Get(extension_id, api_resource_id);
   }
 
-  base::hash_set<int>* GetResourceIds(const std::string& extension_id) {
+  std::unordered_set<int>* GetResourceIds(const std::string& extension_id) {
     return data_->GetResourceIds(extension_id);
   }
 
@@ -177,7 +181,7 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
   friend class api::BluetoothSocketApiFunction;
   friend class api::BluetoothSocketEventDispatcher;
   friend class api::SerialConnectFunction;
-  friend class api::SerialEventDispatcher;
+  friend class api::SerialPortManager;
   friend class api::TCPServerSocketEventDispatcher;
   friend class api::TCPSocketEventDispatcher;
   friend class api::UDPSocketEventDispatcher;
@@ -192,7 +196,8 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
    public:
     typedef std::map<int, std::unique_ptr<T>> ApiResourceMap;
     // Lookup map from extension id's to allocated resource id's.
-    typedef std::map<std::string, base::hash_set<int>> ExtensionToResourceMap;
+    typedef std::map<std::string, std::unordered_set<int>>
+        ExtensionToResourceMap;
 
     ApiResourceData() : next_id_(1) { sequence_checker_.DetachFromSequence(); }
 
@@ -208,7 +213,8 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
             extension_resource_map_.find(extension_id);
         if (it == extension_resource_map_.end()) {
           it = extension_resource_map_
-                   .insert(std::make_pair(extension_id, base::hash_set<int>()))
+                   .insert(
+                       std::make_pair(extension_id, std::unordered_set<int>()))
                    .first;
         }
         it->second.insert(id);
@@ -248,7 +254,7 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
       return false;
     }
 
-    base::hash_set<int>* GetResourceIds(const std::string& extension_id) {
+    std::unordered_set<int>* GetResourceIds(const std::string& extension_id) {
       DCHECK(sequence_checker_.CalledOnValidSequence());
       return GetOwnedResourceIds(extension_id);
     }
@@ -256,20 +262,22 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
     void InitiateExtensionUnloadedCleanup(const std::string& extension_id) {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(&ApiResourceData::CleanupResourcesFromUnloadedExtension,
-                     this, extension_id));
+          base::BindOnce(
+              &ApiResourceData::CleanupResourcesFromUnloadedExtension, this,
+              extension_id));
     }
 
     void InitiateExtensionSuspendedCleanup(const std::string& extension_id) {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(&ApiResourceData::CleanupResourcesFromSuspendedExtension,
-                     this, extension_id));
+          base::BindOnce(
+              &ApiResourceData::CleanupResourcesFromSuspendedExtension, this,
+              extension_id));
     }
 
     void InititateCleanup() {
       ThreadingTraits::GetSequencedTaskRunner()->PostTask(
-          FROM_HERE, base::Bind(&ApiResourceData::Cleanup, this));
+          FROM_HERE, base::BindOnce(&ApiResourceData::Cleanup, this));
     }
 
    private:
@@ -285,7 +293,8 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
       return NULL;
     }
 
-    base::hash_set<int>* GetOwnedResourceIds(const std::string& extension_id) {
+    std::unordered_set<int>* GetOwnedResourceIds(
+        const std::string& extension_id) {
       DCHECK(sequence_checker_.CalledOnValidSequence());
       ExtensionToResourceMap::iterator it =
           extension_resource_map_.find(extension_id);
@@ -315,8 +324,8 @@ class ApiResourceManager : public BrowserContextKeyedAPI,
 
       // Remove all resources, or the non persistent ones only if |remove_all|
       // is false.
-      base::hash_set<int>& resource_ids = it->second;
-      for (base::hash_set<int>::iterator it = resource_ids.begin();
+      std::unordered_set<int>& resource_ids = it->second;
+      for (std::unordered_set<int>::iterator it = resource_ids.begin();
            it != resource_ids.end();) {
         bool erase = false;
         if (remove_all) {

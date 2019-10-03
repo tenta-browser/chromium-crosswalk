@@ -5,38 +5,50 @@
 #ifndef CONTENT_BROWSER_WEBSOCKETS_WEBSOCKET_MANAGER_H_
 #define CONTENT_BROWSER_WEBSOCKETS_WEBSOCKET_MANAGER_H_
 
+#include <memory>
 #include <set>
 
 #include "base/compiler_specific.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/timer/timer.h"
-#include "content/browser/websockets/websocket_impl.h"
 #include "content/common/content_export.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_context_getter_observer.h"
+#include "services/network/websocket.h"
+#include "services/network/websocket_throttler.h"
 
 namespace content {
 class StoragePartition;
+class RenderProcessHost;
 
 // The WebSocketManager is a per child process instance that manages the
-// lifecycle of WebSocketImpl objects. It is responsible for creating
-// WebSocketImpl objects for each WebSocketRequest and throttling the number of
-// WebSocketImpl objects in use.
+// lifecycle of network::WebSocket objects. It is responsible for creating
+// network::WebSocket objects for each WebSocketRequest and throttling the
+// number of network::WebSocket objects in use.
 class CONTENT_EXPORT WebSocketManager
-    : public WebSocketImpl::Delegate,
-      public net::URLRequestContextGetterObserver {
+    : public net::URLRequestContextGetterObserver {
  public:
-  // Called on the UI thread:
   static void CreateWebSocket(
-      int process_id,
-      int frame_id,
-      blink::mojom::WebSocketRequest request);
+      const GURL& url,
+      const std::vector<std::string>& requested_protocols,
+      const GURL& site_for_cookies,
+      const base::Optional<std::string>& user_agent,
+      RenderProcessHost* process,
+      int32_t frame_id,
+      const url::Origin& origin,
+      uint32_t options,
+      network::mojom::WebSocketHandshakeClientPtr handshake_client,
+      network::mojom::WebSocketClientPtr client);
 
   // net::URLRequestContextGetterObserver implementation.
   void OnContextShuttingDown() override;
 
+  size_t num_sockets() const { return impls_.size(); }
+
  protected:
+  class Delegate;
   class Handle;
   friend class base::DeleteHelper<WebSocketManager>;
 
@@ -44,48 +56,49 @@ class CONTENT_EXPORT WebSocketManager
   WebSocketManager(int process_id, StoragePartition* storage_partition);
 
   // All other methods must run on the IO thread.
-
   ~WebSocketManager() override;
-  void DoCreateWebSocket(int frame_id, blink::mojom::WebSocketRequest request);
-  base::TimeDelta CalculateDelay() const;
+  void DoCreateWebSocket(
+      const GURL& url,
+      const std::vector<std::string>& requested_protocols,
+      const GURL& site_for_cookies,
+      const base::Optional<std::string>& user_agent,
+      int32_t render_frame_id,
+      const url::Origin& origin,
+      uint32_t options,
+      network::mojom::WebSocketHandshakeClientPtrInfo handshake_client,
+      network::mojom::WebSocketClientPtrInfo websocket_client);
   void ThrottlingPeriodTimerCallback();
 
   // This is virtual to support testing.
-  virtual WebSocketImpl* CreateWebSocketImpl(
-      WebSocketImpl::Delegate* delegate,
-      blink::mojom::WebSocketRequest request,
-      int child_id,
-      int frame_id,
+  virtual std::unique_ptr<network::WebSocket> DoCreateWebSocketInternal(
+      std::unique_ptr<network::WebSocket::Delegate> delegate,
+      const GURL& url,
+      const std::vector<std::string>& requested_protocols,
+      const GURL& site_for_cookies,
+      const base::Optional<std::string>& user_agent,
+      int32_t frame_id,
+      const url::Origin& origin,
+      uint32_t options,
+      network::mojom::WebSocketHandshakeClientPtr handshake_client,
+      network::mojom::WebSocketClientPtr websocket_client,
+      network::WebSocketThrottler::PendingConnection pending_connection_tracker,
       base::TimeDelta delay);
 
-  // WebSocketImpl::Delegate methods:
-  int GetClientProcessId() override;
-  net::URLRequestContext* GetURLRequestContext() override;
-  void OnReceivedResponseFromServer(WebSocketImpl* impl) override;
-  void OnLostConnectionToClient(WebSocketImpl* impl) override;
+  net::URLRequestContext* GetURLRequestContext();
+  virtual void OnLostConnectionToClient(network::WebSocket* impl);
 
   void ObserveURLRequestContextGetter();
 
   int process_id_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
 
-  std::set<WebSocketImpl*> impls_;
+  std::set<std::unique_ptr<network::WebSocket>, base::UniquePtrComparator>
+      impls_;
 
   // Timer and counters for per-renderer WebSocket throttling.
   base::RepeatingTimer throttling_period_timer_;
 
-  // The current number of pending connections.
-  int num_pending_connections_;
-
-  // The number of handshakes that failed in the current and previous time
-  // period.
-  int64_t num_current_succeeded_connections_;
-  int64_t num_previous_succeeded_connections_;
-
-  // The number of handshakes that succeeded in the current and previous time
-  // period.
-  int64_t num_current_failed_connections_;
-  int64_t num_previous_failed_connections_;
+  network::WebSocketPerProcessThrottler throttler_;
 
   bool context_destroyed_;
 

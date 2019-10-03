@@ -13,33 +13,6 @@
 
 namespace base {
 
-namespace internal {
-
-const ThreadPriorityToNiceValuePair kThreadPriorityToNiceValueMap[4] = {
-    {ThreadPriority::BACKGROUND, 10},
-    {ThreadPriority::NORMAL, 0},
-    {ThreadPriority::DISPLAY, -8},
-    {ThreadPriority::REALTIME_AUDIO, -10},
-};
-
-bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority) {
-  sched_param prio = {0};
-  prio.sched_priority = ThreadPriorityToNiceValue(priority);
-  return pthread_setschedparam(pthread_self(), SCHED_OTHER, &prio) == 0;
-}
-
-bool GetCurrentThreadPriorityForPlatform(ThreadPriority* priority) {
-  sched_param prio = {0};
-  int policy;
-  if (pthread_getschedparam(pthread_self(), &policy, &prio) != 0) {
-    return false;
-  }
-  *priority = NiceValueToThreadPriority(prio.sched_priority);
-  return true;
-}
-
-}  // namespace internal
-
 void InitThreading() {}
 
 void TerminateOnThread() {}
@@ -54,8 +27,22 @@ void PlatformThread::SetName(const std::string& name) {
                                               name.data(), name.size());
   DCHECK_EQ(status, ZX_OK);
 
-  ThreadIdNameManager::GetInstance()->SetName(PlatformThread::CurrentId(),
-                                              name);
+  ThreadIdNameManager::GetInstance()->SetName(name);
+}
+
+// static
+bool PlatformThread::CanIncreaseThreadPriority(ThreadPriority priority) {
+  return false;
+}
+
+// static
+void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
+  // TODO(https://crbug.com/926583): Fuchsia does not currently support this.
+}
+
+// static
+ThreadPriority PlatformThread::GetCurrentThreadPriority() {
+  return ThreadPriority::NORMAL;
 }
 
 }  // namespace base

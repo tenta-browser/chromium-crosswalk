@@ -7,22 +7,10 @@
 #include "base/logging.h"
 #include "chrome/browser/ui/cocoa/notifications/notification_constants_mac.h"
 
-namespace {
-
-// Make sure this Obj-C enum is kept in sync with the
-// NotificationCommon::Operation enum.
-// The latter cannot be reused because the XPC service is not aware of
-// PlatformNotificationCenter.
-enum NotificationOperation {
-  NOTIFICATION_CLICK = 0,
-  NOTIFICATION_CLOSE = 1,
-  NOTIFICATION_SETTINGS = 2
-};
-}  // namespace
-
 @implementation NotificationResponseBuilder
 
-+ (NSDictionary*)buildDictionary:(NSUserNotification*)notification {
++ (NSDictionary*)buildDictionary:(NSUserNotification*)notification
+                       dismissed:(BOOL)dismissed {
   NSString* origin =
       [[notification userInfo]
           objectForKey:notification_constants::kNotificationOrigin]
@@ -49,16 +37,18 @@ enum NotificationOperation {
       objectForKey:notification_constants::kNotificationHasSettingsButton];
 
   // Closed notifications are not activated.
+  NSUserNotificationActivationType activationType =
+      dismissed ? NSUserNotificationActivationTypeNone
+                : notification.activationType;
   NotificationOperation operation =
-      notification.activationType == NSUserNotificationActivationTypeNone
+      activationType == NSUserNotificationActivationTypeNone
           ? NOTIFICATION_CLOSE
           : NOTIFICATION_CLICK;
   int buttonIndex = notification_constants::kNotificationInvalidButtonIndex;
 
   // Determine whether the user clicked on a button, and if they did, whether it
   // was a developer-provided button or the  Settings button.
-  if (notification.activationType ==
-      NSUserNotificationActivationTypeActionButtonClicked) {
+  if (activationType == NSUserNotificationActivationTypeActionButtonClicked) {
     NSArray* alternateButtons = @[];
     if ([notification
             respondsToSelector:@selector(_alternateActionButtonTitles)]) {
@@ -104,6 +94,16 @@ enum NotificationOperation {
     notification_constants::
     kNotificationButtonIndex : [NSNumber numberWithInt:buttonIndex],
   };
+}
+
++ (NSDictionary*)buildActivatedDictionary:(NSUserNotification*)notification {
+  return [NotificationResponseBuilder buildDictionary:notification
+                                            dismissed:NO];
+}
+
++ (NSDictionary*)buildDismissedDictionary:(NSUserNotification*)notification {
+  return [NotificationResponseBuilder buildDictionary:notification
+                                            dismissed:YES];
 }
 
 @end

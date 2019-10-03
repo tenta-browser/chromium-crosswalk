@@ -3,13 +3,13 @@
 `services/device/generic_sensor` contains the platform-specific parts of the Sensor APIs
 implementation.
 
-Sensors Mojo interfaces are defined in the `services/device/public/interfaces` subdirectory.
+Sensors Mojo interfaces are defined in the `services/device/public/mojom` subdirectory.
 
 ## Web-exposed Interfaces
 
-### Generic Sensors
+### [Generic Sensors](https://www.w3.org/TR/generic-sensor/)
 
-The Generic Sensors API is implemented in `third_party/WebKit/Source/modules/sensor` and exposes the following sensor types as JavaScript objects:
+The Generic Sensors API is implemented in `third_party/blink/renderer/modules/sensor` and exposes the following sensor types as JavaScript objects:
 
 * [AbsoluteOrientationSensor] &rarr; ABSOLUTE_ORIENTATION_QUATERNION
 * [Accelerometer] &rarr; ACCELEROMETER
@@ -19,17 +19,17 @@ The Generic Sensors API is implemented in `third_party/WebKit/Source/modules/sen
 * [Magnetometer] &rarr; MAGNETOMETER
 * [RelativeOrientationSensor] &rarr; RELATIVE_ORIENTATION_QUATERNION
 
-[AbsoluteOrientationSensor]: ../../../third_party/WebKit/Source/modules/sensor/AbsoluteOrientationSensor.idl
-[Accelerometer]: ../../../third_party/WebKit/Source/modules/sensor/Accelerometer.idl
-[AmbientLightSensor]: ../../../third_party/WebKit/Source/modules/sensor/AmbientLightSensor.idl
-[Gyroscope]: ../../../third_party/WebKit/Source/modules/sensor/Gyroscope.idl
-[LinearAccelerationSensor]: ../../../third_party/WebKit/Source/modules/sensor/LinearAccelerationSensor.idl
-[Magnetometer]: ../../../third_party/WebKit/Source/modules/sensor/Magnetometer.idl
-[RelativeOrientationSensor]: ../../../third_party/WebKit/Source/modules/sensor/RelativeOrientationSensor.idl
+[AbsoluteOrientationSensor]: ../../../third_party/blink/renderer/modules/sensor/absolute_orientation_sensor.idl
+[Accelerometer]: ../../../third_party/blink/renderer/modules/sensor/accelerometer.idl
+[AmbientLightSensor]: ../../../third_party/blink/renderer/modules/sensor/ambient_light_sensor.idl
+[Gyroscope]: ../../../third_party/blink/renderer/modules/sensor/gyroscope.idl
+[LinearAccelerationSensor]: ../../../third_party/blink/renderer/modules/sensor/linear_acceleration_sensor.idl
+[Magnetometer]: ../../../third_party/blink/renderer/modules/sensor/magnetometer.idl
+[RelativeOrientationSensor]: ../../../third_party/blink/renderer/modules/sensor/relative_orientation_sensor.idl
 
-### DeviceOrientation Events
+### [DeviceOrientation Events](https://www.w3.org/TR/orientation-event/)
 
-The DeviceOrientation Events API is implemented in `third_party/WebKit/Source/modules/device_orientation` and exposes two events based on the following sensors:
+The DeviceOrientation Events API is implemented in `third_party/blink/renderer/modules/device_orientation` and exposes two events based on the following sensors:
 
 * [DeviceMotionEvent]
   * ACCELEROMETER: populates the `accelerationIncludingGravity` field
@@ -39,9 +39,16 @@ The DeviceOrientation Events API is implemented in `third_party/WebKit/Source/mo
   * ABSOLUTE_ORIENTATION_EULER_ANGLES (when a listener for the `'deviceorientationabsolute'` event is added)
   * RELATIVE_ORIENTATION_EULER_ANGLES (when a listener for the `'deviceorientation'` event is added)
 
-[DeviceMotionEvent]: ../../../third_party/WebKit/Source/modules/device_orientation/DeviceMotionEvent.idl
-[DeviceOrientationEvent]: ../../../third_party/WebKit/Source/modules/device_orientation/DeviceOrientationEvent.idl
+[DeviceMotionEvent]: ../../../third_party/blink/renderer/modules/device_orientation/device_motion_event.idl
+[DeviceOrientationEvent]: ../../../third_party/blink/renderer/modules/device_orientation/device_orientation_event.idl
 
+The content renderer layer is located in `third_party/blink/renderer/modules/device_orientation`.
+
+Testing:
+
+* Browser tests are located in `content/browser/device_sensors`.
+* Layout tests are located in `third_party/WebKit/LayoutTests/device_orientation`.
+* Web platform tests are located in `third_party/WebKit/LayoutTests/external/wpt/orientation-event` and are a mirror of the [web-platform-tests GitHub repository](https://github.com/web-platform-tests/wpt).
 
 ## Permissions
 
@@ -57,16 +64,17 @@ platform.
 
 | SensorType                        | Android                   | Linux                                 | macOS                                 | Windows                                   |
 | --------------------------------- | ------------------------- | ------------------------------------- | ------------------------------------- | ----------------------------------------- |
-| AMBIENT_LIGHT                     | TYPE_LIGHT                | in_illuminance                        | AppleLMUController                    | SENSOR_TYPE_AMBIENT_LIGHT                 |
+| AMBIENT_LIGHT                     | TYPE_LIGHT                | in_illuminance                        | AppleLMUController                    | Yes                                       |
 | PROXIMITY                         |                           |                                       |                                       |                                           |
-| ACCELEROMETER                     | TYPE_ACCELEROMETER        | in_accel                              | SMCMotionSensor                       | SENSOR_TYPE_ACCELEROMETER_3D              |
-| LINEAR_ACCELEROMETER              | TYPE_LINEAR_ACCELEROMETER | ACCELEROMETER (*)                     |                                       | ACCELEROMETER (*)                         |
-| GYROSCOPE                         | TYPE_GYROSCOPE            | in_anglvel                            |                                       | SENSOR_TYPE_GYROMETER_3D                  |
-| MAGNETOMETER                      | TYPE_MAGNETIC_FIELD       | in_magn                               |                                       | SENSOR_TYPE_COMPASS_3D                    |
+| ACCELEROMETER                     | TYPE_ACCELEROMETER        | in_accel                              | SMCMotionSensor                       | Yes                                       |
+| LINEAR_ACCELEROMETER              | See below                 | ACCELEROMETER (*)                     |                                       | ACCELEROMETER (*)                         |
+| GYROSCOPE                         | TYPE_GYROSCOPE            | in_anglvel                            |                                       | Yes                                       |
+| MAGNETOMETER                      | TYPE_MAGNETIC_FIELD       | in_magn                               |                                       | Yes                                       |
 | PRESSURE                          |                           |                                       |                                       |                                           |
-| ABSOLUTE_ORIENTATION_EULER_ANGLES | See below                 |                                       |                                       | SENSOR_TYPE_INCLINOMETER_3D               |
-| ABSOLUTE_ORIENTATION_QUATERNION   | See below                 |                                       |                                       | SENSOR_TYPE_AGGREGATED_DEVICE_ORIENTATION |
-| RELATIVE_ORIENTATION_EULER_ANGLES | See below                 | ACCELEROMETER (*)                     | ACCELEROMETER (*)                     |                                           |
+| ABSOLUTE_ORIENTATION_EULER_ANGLES | See below                 | ACCELEROMETER and MAGNETOMETER (*)    |                                       | Yes                                       |
+| ABSOLUTE_ORIENTATION_QUATERNION   | See below                 | ABSOLUTE_ORIENTATION_EULER_ANGLES (*) |                                       | Yes                                       |
+| RELATIVE_ORIENTATION_EULER_ANGLES | See below                 | ACCELEROMETER and GYROSCOPE (*)       | ACCELEROMETER (*)                     |                                           |
+|                                   |                           | or ACCELEROMETER (*)                  |                                       |                                           |
 | RELATIVE_ORIENTATION_QUATERNION   | TYPE_GAME_ROTATION_VECTOR | RELATIVE_ORIENTATION_EULER_ANGLES (*) | RELATIVE_ORIENTATION_EULER_ANGLES (*) |                                           |
 
 (Note: "*" means the sensor type is provided by sensor fusion.)
@@ -78,6 +86,10 @@ Sensors are implemented by passing through values provided by the
 class. The TYPE_* values in the below descriptions correspond to the integer
 constants from the android.hardware.Sensor used to provide data for a
 SensorType.
+
+For LINEAR_ACCELEROMETER, the following sensor fallback is used:
+1. Use TYPE_LINEAR_ACCELERATION directly
+2. ACCELEROMETER, with a low-pass filter to isolate the effect of gravity
 
 For ABSOLUTE_ORIENTATION_EULER_ANGLES, the following sensor fallback is used:
 1. ABSOLUTE_ORIENTATION_QUATERNION (if it uses TYPE_ROTATION_VECTOR
@@ -96,9 +108,13 @@ RELATIVE_ORIENTATION_QUATERNION to euler angles.
 Sensors are implemented by reading values from the IIO subsystem. The values in
 the "Linux" column of the table above are the prefix of the sysfs files Chrome
 searches for to provide data for a SensorType. The
+ABSOLUTE_ORIENTATION_EULER_ANGLES sensor type is provided by interpreting the
+value that can be read from the ACCELEROMETER and MAGNETOMETER. The
+ABSOLUTE_ORIENTATION_QUATERNION sensor type is provided by interpreting the
+value that can be read from the ABSOLUTE_ORIENTATION_EULER_ANGLES. The
 RELATIVE_ORIENTATION_EULER_ANGLES sensor type is provided by interpreting the
-value that can be read from the ACCELEROMETER. The
-RELATIVE_ORIENTATION_QUATERNION sensor type is provided by interpreting the
+value that can be read from the ACCELEROMETER and GYROSCOPE, or ACCELEROMETER.
+The RELATIVE_ORIENTATION_QUATERNION sensor type is provided by interpreting the
 value that can be read from the RELATIVE_ORIENTATION_EULER_ANGLES.
 LINEAR_ACCELEROMETER sensor type is provided by implementing a low-pass-filter
 over the values returned by the ACCELEROMETER in order to remove the
@@ -116,13 +132,7 @@ value that can be read from the RELATIVE_ORIENTATION_EULER_ANGLES.
 
 ### Windows
 
-Sensors are implemented by passing through values provided by the
-[Sensor API](https://msdn.microsoft.com/en-us/library/windows/desktop/dd318953(v=vs.85).aspx).
-The values in the "Windows" column of the table above correspond to the names of
-the sensor type GUIDs used to provide data for a SensorType. The
-LINEAR_ACCELEROMETER sensor type is provided by implementing a low-pass-filter
-over the values returned by the ACCELEROMETER in order to remove the
-contribution of the gravitational force.
+Please refer to this [document](windows/README.md).
 
 ## Testing
 
@@ -133,7 +143,6 @@ The sensors unit tests file for Android is
 `android/junit/src/org/chromium/device/sensors/PlatformSensorAndProviderTest.java`.
 
 Sensors browser tests are located in `content/test/data/generic_sensor`.
-
 
 ## Design Documents
 

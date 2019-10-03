@@ -37,30 +37,10 @@ public:
     static const bool isGarbageCollected = false;
 };
 
-template<typename T>
-struct VectorTraits {
-    static const bool needsDestruction = true;
-};
-
-template<size_t inlineCapacity, bool isGarbageCollected, bool tNeedsDestruction>
-class VectorDestructorBase {
-public:
-    ~VectorDestructorBase() {}
-};
-
-template<size_t inlineCapacity>
-class VectorDestructorBase<inlineCapacity, true, false> {};
-
-template<>
-class VectorDestructorBase<0, true, true> {};
-
-template<
-    typename T,
-    size_t inlineCapacity = 0,
-    typename Allocator = DefaultAllocator>
-class Vector : public VectorDestructorBase<inlineCapacity,
-                                           Allocator::isGarbageCollected,
-                                           VectorTraits<T>::needsDestruction> {
+template <typename T,
+          size_t inlineCapacity = 0,
+          typename Allocator = DefaultAllocator>
+class Vector {
  public:
   using iterator = T*;
   using const_iterator = const T*;
@@ -69,6 +49,8 @@ class Vector : public VectorDestructorBase<inlineCapacity,
 
   size_t size();
   T& operator[](size_t);
+
+  ~Vector() {}
 };
 
 template <typename T,
@@ -80,6 +62,8 @@ class Deque {
   using const_iterator = const T*;
   using reverse_iterator = T*;
   using const_reverse_iterator = const T*;
+
+  ~Deque() {}
 };
 
 template <typename ValueArg,
@@ -92,6 +76,8 @@ class HashSet {
   typedef const ValueArg* const_iterator;
   typedef ValueArg* reverse_iterator;
   typedef const ValueArg* const_reverse_iterator;
+
+  ~HashSet() {}
 };
 
 template <typename ValueArg,
@@ -104,6 +90,8 @@ class ListHashSet {
   typedef const ValueArg* const_iterator;
   typedef ValueArg* reverse_iterator;
   typedef const ValueArg* const_reverse_iterator;
+
+  ~ListHashSet() {}
 };
 
 template <typename ValueArg,
@@ -116,14 +104,18 @@ class LinkedHashSet {
   typedef const ValueArg* const_iterator;
   typedef ValueArg* reverse_iterator;
   typedef const ValueArg* const_reverse_iterator;
+
+  ~LinkedHashSet() {}
 };
 
-template<
-    typename ValueArg,
-    typename HashArg = void,
-    typename TraitsArg = void,
-    typename Allocator = DefaultAllocator>
-class HashCountedSet {};
+template <typename ValueArg,
+          typename HashArg = void,
+          typename TraitsArg = void,
+          typename Allocator = DefaultAllocator>
+class HashCountedSet {
+ public:
+  ~HashCountedSet() {}
+};
 
 template <typename KeyArg,
           typename MappedArg,
@@ -137,6 +129,8 @@ class HashMap {
   typedef const MappedArg* const_iterator;
   typedef MappedArg* reverse_iterator;
   typedef const MappedArg* const_reverse_iterator;
+
+  ~HashMap() {}
 };
 }
 
@@ -198,12 +192,17 @@ using namespace WTF;
 #define GC_PLUGIN_IGNORE(bug)                           \
     __attribute__((annotate("blink_gc_plugin_ignore")))
 
-#define USING_GARBAGE_COLLECTED_MIXIN(type)                     \
-public:                                                         \
-    virtual void AdjustAndMark(Visitor*) const override { }     \
-    virtual bool IsHeapObjectAlive(Visitor*) const override { return 0; }
+#define USING_GARBAGE_COLLECTED_MIXIN(type)                             \
+ public:                                                                \
+  virtual void AdjustAndMark(Visitor*) const override {}                \
+  virtual bool IsHeapObjectAlive(Visitor*) const override { return 0; } \
+  void* mixin_constructor_marker_
 
-#define EAGERLY_FINALIZED() typedef int IsEagerlyFinalizedMarker
+#define USING_GARBAGE_COLLECTED_MIXIN_NEW(type)                         \
+ public:                                                                \
+  virtual void AdjustAndMark(Visitor*) const override {}                \
+  virtual bool IsHeapObjectAlive(Visitor*) const override { return 0; } \
+  typedef int HasUsingGarbageCollectedMixinMacro
 
 template<typename T> class GarbageCollected { };
 
@@ -255,6 +254,14 @@ public:
     bool operator!() const { return false; }
 };
 
+template <typename T>
+class TraceWrapperV8Reference {
+ public:
+  operator T*() const { return 0; }
+  T* operator->() { return 0; }
+  bool operator!() const { return false; }
+};
+
 class HeapAllocator {
 public:
     static const bool isGarbageCollected = true;
@@ -283,9 +290,6 @@ class HeapHashCountedSet : public HashCountedSet<T, void, void, HeapAllocator> {
 template<typename K, typename V>
 class HeapHashMap : public HashMap<K, V, void, void, void, HeapAllocator> { };
 
-template<typename T>
-class PersistentHeapVector : public Vector<T, 0, HeapAllocator> { };
-
 class Visitor {
  public:
   template <typename T, void (T::*method)(Visitor*)>
@@ -305,15 +309,6 @@ public:
 template<typename T>
 struct TraceIfNeeded {
     static void Trace(Visitor*, T*);
-};
-
-}
-
-namespace WTF {
-
-template<typename T>
-struct VectorTraits<blink::Member<T> > {
-    static const bool needsDestruction = false;
 };
 
 }

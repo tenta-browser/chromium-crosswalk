@@ -8,14 +8,21 @@
 #include <vector>
 
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/resource_coordinator/tab_helper.h"
+#include "chrome/browser/resource_coordinator/tab_load_tracker.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/sessions/session_restore.h"
+#include "chrome/browser/sessions/session_restore_stats_collector.h"
 #include "chrome/browser/sessions/tab_loader.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/web_contents_tester.h"
 
 using content::WebContentsTester;
+using resource_coordinator::TabLoadTracker;
+using LoadingState = TabLoadTracker::LoadingState;
 
 namespace {
 
@@ -75,7 +82,9 @@ class SessionRestoreObserverTest : public ChromeRenderViewHostTestHarness {
   // testing::Test:
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-    restored_tabs_.emplace_back(web_contents(), false, false, false);
+    SetContents(CreateRestoredWebContents());
+    restored_tabs_.emplace_back(web_contents(), false, false, false,
+                                base::nullopt);
   }
 
   void TearDown() override {
@@ -84,6 +93,20 @@ class SessionRestoreObserverTest : public ChromeRenderViewHostTestHarness {
   }
 
  protected:
+  std::unique_ptr<content::WebContents> CreateRestoredWebContents() {
+    std::unique_ptr<content::WebContents> test_contents(
+        WebContentsTester::CreateTestWebContents(browser_context(), nullptr));
+    std::vector<std::unique_ptr<content::NavigationEntry>> entries;
+    entries.push_back(content::NavigationEntry::Create());
+    test_contents->GetController().Restore(
+        0, content::RestoreType::LAST_SESSION_EXITED_CLEANLY, &entries);
+    // TabLoadTracker needs the resource_coordinator WebContentsData to be
+    // initialized, which is needed by TabLoader.
+    resource_coordinator::ResourceCoordinatorTabHelper::CreateForWebContents(
+        test_contents.get());
+    return test_contents;
+  }
+
   void RestoreTabs() {
     TabLoader::RestoreTabs(restored_tabs_, base::TimeTicks());
   }
@@ -91,6 +114,15 @@ class SessionRestoreObserverTest : public ChromeRenderViewHostTestHarness {
   void LoadWebContents(content::WebContents* contents) {
     WebContentsTester::For(contents)->NavigateAndCommit(GURL(kDefaultUrl));
     WebContentsTester::For(contents)->TestSetIsLoading(false);
+    // Transition through LOADING to LOADED in order to keep the
+    // SessionRestoreStatsCollector state machine happy.
+    if (TabLoadTracker::Get()->GetLoadingState(contents) !=
+        LoadingState::LOADING) {
+      TabLoadTracker::Get()->TransitionStateForTesting(contents,
+                                                       LoadingState::LOADING);
+    }
+    TabLoadTracker::Get()->TransitionStateForTesting(contents,
+                                                     LoadingState::LOADED);
     mock_observer_.OnDidRestoreTab(contents);
   }
 
@@ -140,11 +172,10 @@ TEST_F(SessionRestoreObserverTest, SequentialSessionRestores) {
   std::vector<std::unique_ptr<content::WebContents>> different_test_contents;
 
   for (size_t i = 0; i < number_of_session_restores; ++i) {
-    different_test_contents.emplace_back(
-        WebContentsTester::CreateTestWebContents(browser_context(), nullptr));
+    different_test_contents.emplace_back(CreateRestoredWebContents());
     content::WebContents* test_contents = different_test_contents.back().get();
     std::vector<RestoredTab> restored_tabs{
-        RestoredTab(test_contents, false, false, false)};
+        RestoredTab(test_contents, false, false, false, base::nullopt)};
 
     SessionRestore::NotifySessionRestoreStartedLoadingTabs();
     SessionRestore::OnWillRestoreTab(test_contents);
@@ -157,7 +188,6 @@ TEST_F(SessionRestoreObserverTest, SequentialSessionRestores) {
     EXPECT_EQ(1u, number_of_tabs_restoring());
 
     LoadWebContents(test_contents);
-
     ASSERT_EQ(event_index + 1, number_of_session_restore_events());
     EXPECT_EQ(
         MockSessionRestoreObserver::SessionRestoreEvent::FINISHED_LOADING_TABS,
@@ -168,9 +198,9 @@ TEST_F(SessionRestoreObserverTest, SequentialSessionRestores) {
 
 TEST_F(SessionRestoreObserverTest, ConcurrentSessionRestores) {
   std::vector<RestoredTab> another_restored_tabs;
-  std::unique_ptr<content::WebContents> test_contents(
-      WebContentsTester::CreateTestWebContents(browser_context(), nullptr));
-  another_restored_tabs.emplace_back(test_contents.get(), false, false, false);
+  auto test_contents = CreateRestoredWebContents();
+  another_restored_tabs.emplace_back(test_contents.get(), false, false, false,
+                                     base::nullopt);
 
   SessionRestore::NotifySessionRestoreStartedLoadingTabs();
   SessionRestore::OnWillRestoreTab(web_contents());
@@ -186,7 +216,6 @@ TEST_F(SessionRestoreObserverTest, ConcurrentSessionRestores) {
 
   LoadWebContents(web_contents());
   LoadWebContents(test_contents.get());
-
   ASSERT_EQ(2u, number_of_session_restore_events());
   EXPECT_EQ(
       MockSessionRestoreObserver::SessionRestoreEvent::FINISHED_LOADING_TABS,
@@ -195,12 +224,11 @@ TEST_F(SessionRestoreObserverTest, ConcurrentSessionRestores) {
 }
 
 TEST_F(SessionRestoreObserverTest, TabManagerShouldObserveSessionRestore) {
-  std::unique_ptr<content::WebContents> test_contents(
-      WebContentsTester::CreateTestWebContents(browser_context(), nullptr));
+  auto test_contents = CreateRestoredWebContents();
 
   std::vector<SessionRestoreDelegate::RestoredTab> restored_tabs{
       SessionRestoreDelegate::RestoredTab(test_contents.get(), false, false,
-                                          false)};
+                                          false, base::nullopt)};
 
   resource_coordinator::TabManager* tab_manager =
       g_browser_process->GetTabManager();
@@ -213,9 +241,7 @@ TEST_F(SessionRestoreObserverTest, TabManagerShouldObserveSessionRestore) {
   EXPECT_TRUE(tab_manager->IsTabInSessionRestore(test_contents.get()));
   TabLoader::RestoreTabs(restored_tabs, base::TimeTicks());
 
-  WebContentsTester::For(test_contents.get())
-      ->NavigateAndCommit(GURL("about:blank"));
-  WebContentsTester::For(test_contents.get())->TestSetIsLoading(false);
+  LoadWebContents(test_contents.get());
   EXPECT_FALSE(tab_manager->IsSessionRestoreLoadingTabs());
   EXPECT_FALSE(tab_manager->IsTabInSessionRestore(test_contents.get()));
 }

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
@@ -78,7 +79,7 @@ IN_PROC_BROWSER_TEST_F(TryChromeDialogBrowserTest, ToastCrasher) {}
 // functionality.
 class TryChromeDialogBrowserTestBase : public InProcessBrowserTest {
  public:
-  // Breaks ShowDialog() out of its modal run loop.
+  // Breaks ShowDialogSync() out of its modal run loop.
   void QuitModalLoop() {
     if (quit_closure_)
       quit_closure_.Run();
@@ -134,8 +135,8 @@ class TryChromeDialogBrowserTestBase : public InProcessBrowserTest {
   // process.
   void PostRendezvousTask() {
     base::SequencedTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&TryChromeDialog::OnProcessNotification,
-                              base::Unretained(dialog_.get())));
+        FROM_HERE, base::BindOnce(&TryChromeDialog::OnProcessNotification,
+                                  base::Unretained(dialog_.get())));
   }
 
   // Runs a loop until it is quit via either the dialog being shown (by way of
@@ -280,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(TryChromeDialogBrowserTestBase, EarlyRendezvous) {
   EXPECT_THAT(result(), Eq(TryChromeDialog::OPEN_CHROME_DEFER));
 }
 
-// Test harness to display the TryChromeDialog for testing. Template parameter 0
+// Test harness to display the TryChromeDialog for testing. The test parameter
 // is the group number to be evaluated.
 class TryChromeDialogTest
     : public SupportsTestDialog<TryChromeDialogBrowserTestBase>,
@@ -289,22 +290,22 @@ class TryChromeDialogTest
   TryChromeDialogTest()
       : SupportsTestDialog<TryChromeDialogBrowserTestBase>(GetParam()) {}
 
-  // SupportsTestDialog:
-  void SetUp() override {
-    UseMdOnly();
-    SupportsTestDialog::SetUp();
+  // TestBrowserDialog:
+  void ShowUi(const std::string& name) override { ShowDialogSync(); }
+  std::string GetNonDialogName() override {
+    // This class tests a non-dialog widget with the following name.
+    return "TryChromeDialog";
   }
-  void ShowDialog(const std::string& name) override { ShowDialogSync(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TryChromeDialogTest);
 };
 
-IN_PROC_BROWSER_TEST_P(TryChromeDialogTest, InvokeDialog_default) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_P(TryChromeDialogTest, InvokeUi_default) {
+  ShowAndVerifyUi();
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Variations,
     TryChromeDialogTest,
     ::testing::Range(

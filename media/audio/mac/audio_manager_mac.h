@@ -16,6 +16,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "media/audio/audio_manager_base.h"
 #include "media/audio/mac/audio_device_listener_mac.h"
 
@@ -60,6 +61,8 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
       const AudioParameters& params,
       const std::string& device_id,
       const LogCallback& log_callback) override;
+
+  std::string GetDefaultInputDeviceID() override;
   std::string GetDefaultOutputDeviceID() override;
 
   // Used to track destruction of input and output streams.
@@ -75,6 +78,9 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
 
   static int HardwareSampleRateForDevice(AudioDeviceID device_id);
   static int HardwareSampleRate();
+  static bool GetDefaultOutputDevice(AudioDeviceID* device);
+  static AudioDeviceID GetAudioDeviceIdByUId(bool is_input,
+                                             const std::string& device_id);
 
   // OSX has issues with starting streams as the system goes into suspend and
   // immediately after it wakes up from resume.  See http://crbug.com/160920.
@@ -176,7 +182,9 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
   // false otherwise.
   // TODO(henrika): possibly extend the scheme to also take input streams into
   // account.
-  bool IncreaseIOBufferSizeIfPossible(AudioDeviceID device_id);
+  void IncreaseIOBufferSizeIfPossible(AudioDeviceID device_id);
+
+  std::string GetDefaultDeviceID(bool is_input);
 
   std::unique_ptr<AudioDeviceListenerMac> output_device_listener_;
 
@@ -207,6 +215,8 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
   // Set to true in the destructor. Ensures that methods that touches native
   // Core Audio APIs are not executed during shutdown.
   bool in_shutdown_;
+
+  base::WeakPtrFactory<AudioManagerMac> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioManagerMac);
 };

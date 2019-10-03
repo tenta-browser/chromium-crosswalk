@@ -8,15 +8,16 @@
  */
 
 cr.define('expandable_list', function() {
-  /** @const */ var List = cr.ui.List;
-  /** @const */ var ListItem = cr.ui.ListItem;
+  const List = cr.ui.List;
+  const ListItem = cr.ui.ListItem;
 
   /**
    * A list item that has expandable content that toggles when the item is
    * clicked.
    * @constructor
+   * @extends {cr.ui.ListItem}
    */
-  var ExpandableListItem = cr.ui.define('li');
+  const ExpandableListItem = cr.ui.define('li');
 
   ExpandableListItem.prototype = {
     __proto__: ListItem.prototype,
@@ -55,10 +56,10 @@ cr.define('expandable_list', function() {
 
   /**
    * A list that contains expandable list items.
-   * @abstract
    * @constructor
+   * @extends {cr.ui.List}
    */
-  var ExpandableList = cr.ui.define('list');
+  const ExpandableList = cr.ui.define('list');
 
   ExpandableList.prototype = {
     __proto__: List.prototype,
@@ -91,8 +92,9 @@ cr.define('expandable_list', function() {
      * @param {cr.ui.ArrayDataModel} data
      */
     setData: function(data) {
-      if (this.dataModel)
+      if (this.dataModel) {
         this.dataModel.removeEventListener('splice', this.boundUpdateMessage_);
+      }
 
       this.dataModel = data;
       this.dataModel.addEventListener('splice', this.boundUpdateMessage_);

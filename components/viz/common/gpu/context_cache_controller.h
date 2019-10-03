@@ -67,6 +67,12 @@ class VIZ_COMMON_EXPORT ContextCacheController {
   virtual void ClientBecameNotVisible(
       std::unique_ptr<ScopedVisibility> scoped_visibility);
 
+  // When a client becomes not visible because it is being deleted, hold on to
+  // the visibility token so that we don't aggressively free resources that are
+  // still going to be used. Instead, release the token when this is deleted.
+  virtual void ClientBecameNotVisibleDuringShutdown(
+      std::unique_ptr<ScopedVisibility> scoped_visibility);
+
   // Clients of the owning ContextProvider may call this function when they
   // become busy. The returned ScopedBusy pointer must be passed back
   // to ClientBecameNotBusy or it will DCHECK in its destructor.
@@ -85,6 +91,8 @@ class VIZ_COMMON_EXPORT ContextCacheController {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   GrContext* gr_context_ = nullptr;
 
+  std::unique_ptr<ScopedVisibility> held_visibility_;
+
   // If set, |context_lock_| must be held before accessing any member within
   // the idle callback. Exceptions to this are |current_idle_generation_|,
   // which has its own lock, and weak_ptr_ and task_runner_, which may be
@@ -102,7 +110,7 @@ class VIZ_COMMON_EXPORT ContextCacheController {
   uint32_t current_idle_generation_ = 0;
 
   base::WeakPtr<ContextCacheController> weak_ptr_;
-  base::WeakPtrFactory<ContextCacheController> weak_factory_;
+  base::WeakPtrFactory<ContextCacheController> weak_factory_{this};
 };
 
 }  // namespace viz

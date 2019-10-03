@@ -13,6 +13,7 @@ namespace supervised_users {
 extern const char kAccountConsistencyMirrorRequired[];
 #endif
 extern const char kApprovedExtensions[];
+extern const char kAuthorizationHeaderFormat[];
 extern const char kCameraMicDisabled[];
 extern const char kContentPackDefaultFilteringBehavior[];
 extern const char kContentPackManualBehaviorHosts[];
@@ -21,7 +22,6 @@ extern const char kCookiesAlwaysAllowed[];
 extern const char kForceSafeSearch[];
 extern const char kGeolocationDisabled[];
 extern const char kRecordHistory[];
-extern const char kRecordHistoryIncludesSessionSync[];
 extern const char kSafeSitesEnabled[];
 extern const char kSigninAllowed[];
 extern const char kUserName[];

@@ -13,8 +13,7 @@ namespace fake_server {
 
 FakeServerInvalidationService::FakeServerInvalidationService()
     : client_id_(invalidation::GenerateInvalidatorClientId()),
-      self_notify_(true),
-      identity_provider_(&token_service_) {
+      self_notify_(true) {
   invalidator_registrar_.UpdateInvalidatorState(syncer::INVALIDATIONS_ENABLED);
 }
 
@@ -57,10 +56,6 @@ void FakeServerInvalidationService::RequestDetailedStatus(
   caller.Run(value);
 }
 
-IdentityProvider* FakeServerInvalidationService::GetIdentityProvider() {
-  return &identity_provider_;
-}
-
 void FakeServerInvalidationService::EnableSelfNotifications() {
   self_notify_ = true;
 }
@@ -75,8 +70,7 @@ void FakeServerInvalidationService::OnCommit(
   syncer::ObjectIdSet object_ids = syncer::ModelTypeSetToObjectIdSet(
       committed_model_types);
   syncer::ObjectIdInvalidationMap invalidation_map;
-  for (syncer::ObjectIdSet::const_iterator it = object_ids.begin();
-       it != object_ids.end(); ++it) {
+  for (auto it = object_ids.begin(); it != object_ids.end(); ++it) {
     // TODO(pvalenzuela): Create more refined invalidations instead of
     // invalidating all items of a given type.
 

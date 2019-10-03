@@ -12,16 +12,20 @@
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/cert_report_helper.h"
-#include "chrome/browser/ui/browser.h"
-#include "components/certificate_reporting/error_report.h"
+#include "chrome/browser/ssl/certificate_error_report.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/variations/variations_associated_data.h"
 #include "net/url_request/report_sender.h"
 #include "net/url_request/url_request_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#endif
 
 namespace certificate_reporting_test_utils {
 
@@ -34,7 +38,7 @@ class MockSSLCertReporter : public SSLCertReporter {
   MockSSLCertReporter(
       const base::Callback<
           void(const std::string&,
-               const certificate_reporting::CertLoggerRequest_ChromeChannel)>&
+               const chrome_browser_ssl::CertLoggerRequest_ChromeChannel)>&
           report_sent_callback,
       ExpectReport expect_report)
       : report_sent_callback_(report_sent_callback),
@@ -53,7 +57,7 @@ class MockSSLCertReporter : public SSLCertReporter {
   void ReportInvalidCertificateChain(
       const std::string& serialized_report) override {
     reported_ = true;
-    certificate_reporting::ErrorReport report;
+    CertificateErrorReport report;
     EXPECT_TRUE(report.InitializeFromString(serialized_report));
     report_sent_callback_.Run(report.hostname(), report.chrome_channel());
   }
@@ -61,7 +65,7 @@ class MockSSLCertReporter : public SSLCertReporter {
  private:
   const base::Callback<void(
       const std::string&,
-      const certificate_reporting::CertLoggerRequest_ChromeChannel)>
+      const chrome_browser_ssl::CertLoggerRequest_ChromeChannel)>
       report_sent_callback_;
   const ExpectReport expect_report_;
   bool reported_;
@@ -72,14 +76,13 @@ class MockSSLCertReporter : public SSLCertReporter {
 SSLCertReporterCallback::SSLCertReporterCallback(base::RunLoop* run_loop)
     : run_loop_(run_loop),
       chrome_channel_(
-          certificate_reporting::CertLoggerRequest::CHROME_CHANNEL_NONE) {}
+          chrome_browser_ssl::CertLoggerRequest::CHROME_CHANNEL_NONE) {}
 
 SSLCertReporterCallback::~SSLCertReporterCallback() {}
 
 void SSLCertReporterCallback::ReportSent(
     const std::string& hostname,
-    const certificate_reporting::CertLoggerRequest::ChromeChannel
-        chrome_channel) {
+    const chrome_browser_ssl::CertLoggerRequest::ChromeChannel chrome_channel) {
   latest_hostname_reported_ = hostname;
   chrome_channel_ = chrome_channel;
   run_loop_->Quit();
@@ -89,20 +92,22 @@ const std::string& SSLCertReporterCallback::GetLatestHostnameReported() const {
   return latest_hostname_reported_;
 }
 
-certificate_reporting::CertLoggerRequest::ChromeChannel
+chrome_browser_ssl::CertLoggerRequest::ChromeChannel
 SSLCertReporterCallback::GetLatestChromeChannelReported() const {
   return chrome_channel_;
 }
 
+#if !defined(OS_ANDROID)
 void SetCertReportingOptIn(Browser* browser, OptIn opt_in) {
   safe_browsing::SetExtendedReportingPref(browser->profile()->GetPrefs(),
                                           opt_in == EXTENDED_REPORTING_OPT_IN);
 }
+#endif
 
 std::unique_ptr<SSLCertReporter> CreateMockSSLCertReporter(
     const base::Callback<
         void(const std::string&,
-             const certificate_reporting::CertLoggerRequest_ChromeChannel)>&
+             const chrome_browser_ssl::CertLoggerRequest_ChromeChannel)>&
         report_sent_callback,
     ExpectReport expect_report) {
   return std::unique_ptr<SSLCertReporter>(

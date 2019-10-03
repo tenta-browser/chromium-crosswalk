@@ -4,26 +4,35 @@
 
 #import "chrome/browser/chrome_browser_application_mac.h"
 
-#include "base/auto_reset.h"
 #include "base/command_line.h"
-#include "base/debug/crash_logging.h"
 #include "base/logging.h"
 #include "base/mac/call_with_eh_frame.h"
+#include "base/mac/sdk_forward_declarations.h"
+#include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #import "chrome/browser/app_controller_mac.h"
 #import "chrome/browser/mac/exception_processor.h"
+#include "chrome/browser/ui/cocoa/l10n_util.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/crash_keys.h"
+#include "components/crash/core/common/crash_key.h"
 #import "components/crash/core/common/objc_zombie.h"
 #include "content/public/browser/browser_accessibility_state.h"
+#include "content/public/browser/native_event_processor_mac.h"
+#include "content/public/browser/native_event_processor_observer_mac.h"
+#include "ui/base/cocoa/accessibility_focus_overrider.h"
 
 namespace chrome_browser_application_mac {
 
 void RegisterBrowserCrApp() {
   [BrowserCrApplication sharedApplication];
-};
+
+  // If there was an invocation to NSApp prior to this method, then the NSApp
+  // will not be a BrowserCrApplication, but will instead be an NSApplication.
+  // This is undesirable and we must enforce that this doesn't happen.
+  CHECK([NSApp isKindOfClass:[BrowserCrApplication class]]);
+}
 
 void Terminate() {
   [NSApp terminate:nil];
@@ -35,10 +44,66 @@ void CancelTerminate() {
 
 }  // namespace chrome_browser_application_mac
 
-// Method exposed for the purposes of overriding.
-// Used to determine when a Panel window can become the key window.
-@interface NSApplication (PanelsCanBecomeKey)
-- (void)_cycleWindowsReversed:(BOOL)arg1;
+namespace {
+
+// Calling -[NSEvent description] is rather slow to build up the event
+// description. The description is stored in a crash key to aid debugging, so
+// this helper function constructs a shorter, but still useful, description.
+// See <https://crbug.com/770405>.
+std::string DescriptionForNSEvent(NSEvent* event) {
+  std::string desc = base::StringPrintf(
+      "NSEvent type=%ld modifierFlags=0x%lx locationInWindow=(%g,%g)",
+      event.type, event.modifierFlags, event.locationInWindow.x,
+      event.locationInWindow.y);
+  switch (event.type) {
+    case NSEventTypeKeyDown:
+    case NSEventTypeKeyUp: {
+      // Some NSEvents return a string with NUL in event.characters, see
+      // <https://crbug.com/826908>.
+      std::string characters = base::SysNSStringToUTF8([event.characters
+          stringByReplacingOccurrencesOfString:@"\0"
+                                    withString:@"\\x00"]);
+      std::string unmodified_characters =
+          base::SysNSStringToUTF8([event.charactersIgnoringModifiers
+              stringByReplacingOccurrencesOfString:@"\0"
+                                        withString:@"\\x00"]);
+      desc += base::StringPrintf(
+          " keyCode=0x%d ARepeat=%d characters='%s' unmodifiedCharacters='%s'",
+          event.keyCode, event.ARepeat, characters.c_str(),
+          unmodified_characters.c_str());
+      break;
+    }
+    case NSEventTypeLeftMouseDown:
+    case NSEventTypeLeftMouseDragged:
+    case NSEventTypeLeftMouseUp:
+    case NSEventTypeOtherMouseDown:
+    case NSEventTypeOtherMouseDragged:
+    case NSEventTypeOtherMouseUp:
+    case NSEventTypeRightMouseDown:
+    case NSEventTypeRightMouseDragged:
+    case NSEventTypeRightMouseUp:
+      desc += base::StringPrintf(" buttonNumber=%ld clickCount=%ld",
+                                 event.buttonNumber, event.clickCount);
+      break;
+    case NSAppKitDefined:
+    case NSSystemDefined:
+    case NSApplicationDefined:
+    case NSPeriodic:
+      desc += base::StringPrintf(" subtype=%d data1=%ld data2=%ld",
+                                 event.subtype, event.data1, event.data2);
+      break;
+    default:
+      break;
+  }
+  return desc;
+}
+
+}  // namespace
+
+@interface BrowserCrApplication ()<NativeEventProcessor> {
+  base::ObserverList<content::NativeEventProcessorObserver>::Unchecked
+      observers_;
+}
 @end
 
 @implementation BrowserCrApplication
@@ -49,20 +114,8 @@ void CancelTerminate() {
   ObjcEvilDoers::ZombieEnable(true, 10000);
 
   chrome::InstallObjcExceptionPreprocessor();
-}
 
-- (id)init {
-  self = [super init];
-
-  // Sanity check to alert if overridden methods are not supported.
-  DCHECK([NSApplication
-      instancesRespondToSelector:@selector(_cycleWindowsReversed:)]);
-  DCHECK([NSApplication
-      instancesRespondToSelector:@selector(_removeWindow:)]);
-  DCHECK([NSApplication
-      instancesRespondToSelector:@selector(_setKeyWindow:)]);
-
-  return self;
+  cocoa_l10n_util::ApplyForcedRTL();
 }
 
 // Initialize NSApplication using the custom subclass.  Check whether NSApp
@@ -224,7 +277,9 @@ void CancelTerminate() {
       static_cast<long>(tag),
       [actionString UTF8String],
       aTarget);
-  base::debug::ScopedCrashKey key(crash_keys::mac::kSendAction, value);
+
+  static crash_reporter::CrashKeyString<256> sendActionKey("sendaction");
+  crash_reporter::ScopedCrashKeyString scopedKey(&sendActionKey, value);
 
   __block BOOL rv;
   base::mac::CallWithEHFrame(^{
@@ -243,8 +298,10 @@ void CancelTerminate() {
 
 - (void)sendEvent:(NSEvent*)event {
   TRACE_EVENT0("toplevel", "BrowserCrApplication::sendEvent");
-  base::debug::ScopedCrashKey crash_key(
-      crash_keys::mac::kNSEvent, base::SysNSStringToUTF8([event description]));
+
+  static crash_reporter::CrashKeyString<256> nseventKey("nsevent");
+  crash_reporter::ScopedCrashKeyString scopedKey(&nseventKey,
+                                                 DescriptionForNSEvent(event));
 
   base::mac::CallWithEHFrame(^{
     switch (event.type) {
@@ -258,10 +315,13 @@ void CancelTerminate() {
         bool ctrlDown = [event modifierFlags] & NSControlKeyMask;
         if (kioskMode && ([event type] == NSRightMouseDown || ctrlDown))
           break;
+        FALLTHROUGH;  // Not menu-generating, so pass on the event.
       }
 
       default: {
         base::mac::ScopedSendingEvent sendingEventScoper;
+        content::ScopedNotifyNativeEventProcessorObserver
+            scopedObserverNotifier(&observers_, event);
         [super sendEvent:event];
       }
     }
@@ -281,13 +341,20 @@ void CancelTerminate() {
   return [super accessibilitySetValue:value forAttribute:attribute];
 }
 
-- (void)_cycleWindowsReversed:(BOOL)arg1 {
-  base::AutoReset<BOOL> pin(&cyclingWindows_, YES);
-  [super _cycleWindowsReversed:arg1];
+- (id)accessibilityFocusedUIElement {
+  if (id forced_focus = ui::AccessibilityFocusOverrider::GetFocusedUIElement())
+    return forced_focus;
+  return [super accessibilityFocusedUIElement];
 }
 
-- (BOOL)isCyclingWindows {
-  return cyclingWindows_;
+- (void)addNativeEventProcessorObserver:
+    (content::NativeEventProcessorObserver*)observer {
+  observers_.AddObserver(observer);
+}
+
+- (void)removeNativeEventProcessorObserver:
+    (content::NativeEventProcessorObserver*)observer {
+  observers_.RemoveObserver(observer);
 }
 
 @end

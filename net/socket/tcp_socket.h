@@ -11,7 +11,7 @@
 
 #if defined(OS_WIN)
 #include "net/socket/tcp_socket_win.h"
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include "net/socket/tcp_socket_posix.h"
 #endif
 
@@ -25,12 +25,9 @@ namespace net {
 // before you know whether it is a client or server socket).
 #if defined(OS_WIN)
 typedef TCPSocketWin TCPSocket;
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 typedef TCPSocketPosix TCPSocket;
 #endif
-
-// Check if TCP FastOpen is supported by the OS.
-bool IsTCPFastOpenSupported();
 
 }  // namespace net
 

@@ -4,10 +4,7 @@
 
 #include "remoting/host/clipboard.h"
 
-#include <X11/Xlib.h>
-
 #include "base/memory/ptr_util.h"
-#undef Status  // Xlib.h #defines this, which breaks protobuf headers.
 
 #include "base/bind.h"
 #include "base/files/file_descriptor_watcher_posix.h"
@@ -16,6 +13,7 @@
 #include "remoting/host/linux/x_server_clipboard.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/clipboard_stub.h"
+#include "ui/gfx/x/x11.h"
 
 namespace remoting {
 
@@ -56,6 +54,7 @@ ClipboardX11::ClipboardX11()
 }
 
 ClipboardX11::~ClipboardX11() {
+  x_connection_watch_controller_ = nullptr;
   if (display_)
     XCloseDisplay(display_);
 }

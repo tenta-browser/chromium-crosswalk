@@ -8,7 +8,6 @@
 #include "chrome/browser/chromeos/policy/user_network_configuration_updater.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/network/network_handler.h"
@@ -21,9 +20,10 @@ namespace policy {
 
 // static
 UserNetworkConfigurationUpdater*
-UserNetworkConfigurationUpdaterFactory::GetForProfile(Profile* profile) {
+UserNetworkConfigurationUpdaterFactory::GetForBrowserContext(
+    content::BrowserContext* browser_context) {
   return static_cast<UserNetworkConfigurationUpdater*>(
-      GetInstance()->GetServiceForBrowserContext(profile, true));
+      GetInstance()->GetServiceForBrowserContext(browser_context, true));
 }
 
 // static
@@ -35,9 +35,7 @@ UserNetworkConfigurationUpdaterFactory::GetInstance() {
 UserNetworkConfigurationUpdaterFactory::UserNetworkConfigurationUpdaterFactory()
     : BrowserContextKeyedServiceFactory(
           "UserNetworkConfigurationUpdater",
-          BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ProfilePolicyConnectorFactory::GetInstance());
-}
+          BrowserContextDependencyManager::GetInstance()) {}
 
 UserNetworkConfigurationUpdaterFactory::
     ~UserNetworkConfigurationUpdaterFactory() {}
@@ -75,27 +73,20 @@ KeyedService* UserNetworkConfigurationUpdaterFactory::BuildServiceInstanceFor(
   if (user != user_manager::UserManager::Get()->GetPrimaryUser())
     return nullptr;
 
+  // Guest sessions don't get user policy, but a UserNetworkConfigurationUpdater
+  // can be created for them anyway.
+  const bool allow_trusted_certs_from_policy =
+      user->GetType() != user_manager::USER_TYPE_GUEST;
+
   ProfilePolicyConnector* profile_connector =
-      ProfilePolicyConnectorFactory::GetForBrowserContext(context);
+      profile->GetProfilePolicyConnector();
 
   return UserNetworkConfigurationUpdater::CreateForUserPolicy(
-             profile, AllowTrustedCertsFromPolicy(user), *user,
+             profile, allow_trusted_certs_from_policy, *user,
              profile_connector->policy_service(),
              chromeos::NetworkHandler::Get()
                  ->managed_network_configuration_handler())
       .release();
-}
-
-// static
-bool UserNetworkConfigurationUpdaterFactory::AllowTrustedCertsFromPolicy(
-    const user_manager::User* user) {
-  user_manager::UserType user_type = user->GetType();
-
-  // Disallow trusted root certs for public sessions.
-  // Also, guest sessions don't get user policy, but a
-  // UserNetworkCofnigurationUpdater can be created for them anyway.
-  return user_type != user_manager::USER_TYPE_GUEST &&
-         user_type != user_manager::USER_TYPE_PUBLIC_ACCOUNT;
 }
 
 }  // namespace policy

@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/socket/tcp_client_socket.h"
 #include "net/websockets/websocket_frame_parser.h"
 #include "url/gurl.h"
@@ -28,12 +28,14 @@ class WebSocketListener;
 class WebSocket {
  public:
   // |url| must be an IP v4/v6 literal, not a host name.
-  WebSocket(const GURL& url, WebSocketListener* listener);
+  WebSocket(const GURL& url,
+            WebSocketListener* listener,
+            size_t read_buffer_size = 4096);
   virtual ~WebSocket();
 
   // Initializes the WebSocket connection. Invokes the given callback with
   // a net::Error. May only be called once.
-  void Connect(const net::CompletionCallback& callback);
+  void Connect(net::CompletionOnceCallback callback);
 
   // Sends the given message and returns true on success.
   bool Send(const std::string& message);
@@ -53,7 +55,7 @@ class WebSocket {
   void ContinueWritingIfNecessary();
 
   void Read();
-  void OnRead(int code);
+  void OnRead(bool read_again, int code);
   void OnReadDuringHandshake(const char* data, int len);
   void OnReadDuringOpen(const char* data, int len);
 
@@ -67,7 +69,7 @@ class WebSocket {
   State state_;
   std::unique_ptr<net::TCPClientSocket> socket_;
 
-  net::CompletionCallback connect_callback_;
+  net::CompletionOnceCallback connect_callback_;
   std::string sec_key_;
   std::string handshake_response_;
 

@@ -6,18 +6,19 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/common/cast_messages.h"
-#include "components/net_log/chrome_net_log.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "media/cast/net/cast_transport.h"
+#include "media/cast/net/udp_transport_impl.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "net/url_request/url_request_context.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace {
@@ -105,24 +106,19 @@ class RtcpClient : public media::cast::RtcpObserver {
   DISALLOW_COPY_AND_ASSIGN(RtcpClient);
 };
 
-void BindConnectorRequest(
+void CastBindConnectorRequest(
     service_manager::mojom::ConnectorRequest connector_request) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindConnectorRequest(std::move(connector_request));
+  content::GetSystemConnector()->BindConnectorRequest(
+      std::move(connector_request));
 }
 
 }  // namespace
 
 namespace cast {
 
-CastTransportHostFilter::CastTransportHostFilter(Profile* profile)
-    : BrowserMessageFilter(CastMsgStart),
-      url_request_context_getter_(profile->GetRequestContext()),
-      weak_factory_(this) {}
+CastTransportHostFilter::CastTransportHostFilter()
+    : BrowserMessageFilter(CastMsgStart) {}
 
 CastTransportHostFilter::~CastTransportHostFilter() {}
 
@@ -174,18 +170,15 @@ void CastTransportHostFilter::OnNew(int32_t channel_id,
     id_map_.Remove(channel_id);
   }
 
-  std::unique_ptr<media::cast::UdpTransport> udp_transport(
-      new media::cast::UdpTransport(
-          url_request_context_getter_->GetURLRequestContext()->net_log(),
-          base::ThreadTaskRunnerHandle::Get(), local_end_point,
-          remote_end_point,
-          base::Bind(&CastTransportHostFilter::OnStatusChanged,
-                     weak_factory_.GetWeakPtr(), channel_id)));
+  auto udp_transport = std::make_unique<media::cast::UdpTransportImpl>(
+      base::ThreadTaskRunnerHandle::Get(), local_end_point, remote_end_point,
+      base::BindRepeating(&CastTransportHostFilter::OnStatusChanged,
+                          weak_factory_.GetWeakPtr(), channel_id));
   udp_transport->SetUdpOptions(options);
   std::unique_ptr<media::cast::CastTransport> transport =
       media::cast::CastTransport::Create(
-          &clock_, kSendEventsInterval,
-          base::MakeUnique<TransportClient>(channel_id, this),
+          base::DefaultTickClock::GetInstance(), kSendEventsInterval,
+          std::make_unique<TransportClient>(channel_id, this),
           std::move(udp_transport), base::ThreadTaskRunnerHandle::Get());
   transport->SetOptions(options);
   id_map_.AddWithID(std::move(transport), channel_id);
@@ -227,10 +220,11 @@ void CastTransportHostFilter::OnInitializeStream(
         config.rtp_payload_type == media::cast::RtpPayloadType::REMOTE_VIDEO) {
       // Create CastRemotingSender for this RTP stream.
       remoting_sender_map_.AddWithID(
-          base::MakeUnique<CastRemotingSender>(
+          std::make_unique<mirroring::CastRemotingSender>(
               transport, config, kSendEventsInterval,
-              base::Bind(&CastTransportHostFilter::OnCastRemotingSenderEvents,
-                         weak_factory_.GetWeakPtr(), channel_id)),
+              base::BindRepeating(
+                  &CastTransportHostFilter::OnCastRemotingSenderEvents,
+                  weak_factory_.GetWeakPtr(), channel_id)),
           config.rtp_stream_id);
       DVLOG(3) << "Create CastRemotingSender for stream: "
                << config.rtp_stream_id;
@@ -238,7 +232,7 @@ void CastTransportHostFilter::OnInitializeStream(
       stream_id_map_.insert(std::make_pair(channel_id, config.rtp_stream_id));
     } else {
       transport->InitializeStream(
-          config, base::MakeUnique<RtcpClient>(channel_id, config.ssrc,
+          config, std::make_unique<RtcpClient>(channel_id, config.ssrc,
                                                weak_factory_.GetWeakPtr()));
     }
   } else {
@@ -407,13 +401,11 @@ device::mojom::WakeLock* CastTransportHostFilter::GetWakeLock() {
 
   device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
 
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-
   service_manager::mojom::ConnectorRequest connector_request;
   auto connector = service_manager::Connector::Create(&connector_request);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&BindConnectorRequest, std::move(connector_request)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&CastBindConnectorRequest, std::move(connector_request)));
 
   device::mojom::WakeLockProviderPtr wake_lock_provider;
   connector->BindInterface(device::mojom::kServiceName,

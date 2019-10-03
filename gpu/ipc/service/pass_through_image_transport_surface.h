@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "gpu/ipc/service/image_transport_surface.h"
@@ -18,14 +19,6 @@
 
 namespace gpu {
 
-enum MultiWindowSwapInterval {
-  // Use the default swap interval of 1 even if multiple windows are swapping.
-  // This can reduce frame rate if the swap buffers calls block.
-  kMultiWindowSwapIntervalDefault,
-  // Force swap interval to 0 when multiple windows are swapping.
-  kMultiWindowSwapIntervalForceZero
-};
-
 // An implementation of ImageTransportSurface that implements GLSurface through
 // GLSurfaceAdapter, thereby forwarding GLSurface methods through to it.
 class PassThroughImageTransportSurface : public gl::GLSurfaceAdapter {
@@ -33,69 +26,66 @@ class PassThroughImageTransportSurface : public gl::GLSurfaceAdapter {
   PassThroughImageTransportSurface(
       base::WeakPtr<ImageTransportSurfaceDelegate> delegate,
       gl::GLSurface* surface,
-      MultiWindowSwapInterval multi_window_swap_interval);
+      bool override_vsync_for_multi_window_swap);
 
   // GLSurface implementation.
   bool Initialize(gl::GLSurfaceFormat format) override;
-  void Destroy() override;
-  gfx::SwapResult SwapBuffers(const PresentationCallback& callback) override;
-  void SwapBuffersAsync(
-      const SwapCompletionCallback& completion_callback,
-      const PresentationCallback& presentation_callback) override;
-  gfx::SwapResult SwapBuffersWithBounds(
-      const std::vector<gfx::Rect>& rects,
-      const PresentationCallback& callback) override;
+  gfx::SwapResult SwapBuffers(PresentationCallback callback) override;
+  void SwapBuffersAsync(SwapCompletionCallback completion_callback,
+                        PresentationCallback presentation_callback) override;
+  gfx::SwapResult SwapBuffersWithBounds(const std::vector<gfx::Rect>& rects,
+                                        PresentationCallback callback) override;
   gfx::SwapResult PostSubBuffer(int x,
                                 int y,
                                 int width,
                                 int height,
-                                const PresentationCallback& callback) override;
-  void PostSubBufferAsync(
-      int x,
-      int y,
-      int width,
-      int height,
-      const SwapCompletionCallback& completion_callback,
-      const PresentationCallback& presentation_callback) override;
-  gfx::SwapResult CommitOverlayPlanes(
-      const PresentationCallback& callback) override;
+                                PresentationCallback callback) override;
+  void PostSubBufferAsync(int x,
+                          int y,
+                          int width,
+                          int height,
+                          SwapCompletionCallback completion_callback,
+                          PresentationCallback presentation_callback) override;
+  gfx::SwapResult CommitOverlayPlanes(PresentationCallback callback) override;
   void CommitOverlayPlanesAsync(
-      const SwapCompletionCallback& completion_callback,
-      const PresentationCallback& presentation_callback) override;
+      SwapCompletionCallback completion_callback,
+      PresentationCallback presentation_callback) override;
+  void SetVSyncEnabled(bool enabled) override;
 
  private:
   ~PassThroughImageTransportSurface() override;
 
-  void SetSnapshotRequested();
-  bool GetAndResetSnapshotRequested();
-
-  // If updated vsync parameters can be determined, send this information to
-  // the browser.
-  void SendVSyncUpdateIfAvailable();
-
-  void UpdateSwapInterval();
+  void UpdateVSyncEnabled();
 
   void StartSwapBuffers(gfx::SwapResponse* response);
-  void FinishSwapBuffers(bool snapshot_requested, gfx::SwapResponse response);
-  void FinishSwapBuffersAsync(GLSurface::SwapCompletionCallback callback,
-                              bool snapshot_requested,
+  void FinishSwapBuffers(gfx::SwapResponse response, uint64_t local_swap_id);
+  void FinishSwapBuffersAsync(SwapCompletionCallback callback,
                               gfx::SwapResponse response,
-                              gfx::SwapResult result);
+                              uint64_t local_swap_id,
+                              gfx::SwapResult result,
+                              std::unique_ptr<gfx::GpuFence> gpu_fence);
 
-  void BufferPresented(uint64_t swap_id,
-                       const GLSurface::PresentationCallback& callback,
+  void BufferPresented(PresentationCallback callback,
+                       uint64_t local_swap_id,
                        const gfx::PresentationFeedback& feedback);
 
   const bool is_gpu_vsync_disabled_;
-  const bool is_presentation_callback_enabled_;
+  const bool is_multi_window_swap_vsync_override_enabled_;
   base::WeakPtr<ImageTransportSurfaceDelegate> delegate_;
-  uint64_t swap_id_ = 0;
-  bool snapshot_requested_ = false;
-  MultiWindowSwapInterval multi_window_swap_interval_ =
-      kMultiWindowSwapIntervalDefault;
   int swap_generation_ = 0;
+  bool vsync_enabled_ = true;
 
-  base::WeakPtrFactory<PassThroughImageTransportSurface> weak_ptr_factory_;
+  // Local swap ids, which are used to make sure the swap order is correct and
+  // the presentation callbacks are not called earlier than the swap ack of the
+  // same swap request. Checked only when DCHECK is on.
+  uint64_t local_swap_id_ = 0;
+
+#if DCHECK_IS_ON()
+  base::queue<uint64_t> pending_local_swap_ids_;
+#endif
+
+  base::WeakPtrFactory<PassThroughImageTransportSurface> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(PassThroughImageTransportSurface);
 };

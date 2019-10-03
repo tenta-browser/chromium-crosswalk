@@ -4,33 +4,14 @@
 
 #include "services/test/echo/echo_service.h"
 
-#include "services/service_manager/public/cpp/service_context.h"
+#include "base/immediate_crash.h"
 
 namespace echo {
 
-std::unique_ptr<service_manager::Service> CreateEchoService() {
-  return std::make_unique<EchoService>();
-}
+EchoService::EchoService(mojo::PendingReceiver<mojom::EchoService> receiver)
+    : receiver_(this, std::move(receiver)) {}
 
-EchoService::EchoService() {
-  registry_.AddInterface<mojom::Echo>(
-      base::Bind(&EchoService::BindEchoRequest, base::Unretained(this)));
-}
-
-EchoService::~EchoService() {}
-
-void EchoService::OnStart() {}
-
-void EchoService::OnBindInterface(
-    const service_manager::BindSourceInfo& source_info,
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(interface_name, std::move(interface_pipe));
-}
-
-void EchoService::BindEchoRequest(mojom::EchoRequest request) {
-  bindings_.AddBinding(this, std::move(request));
-}
+EchoService::~EchoService() = default;
 
 void EchoService::EchoString(const std::string& input,
                              EchoStringCallback callback) {
@@ -38,7 +19,11 @@ void EchoService::EchoString(const std::string& input,
 }
 
 void EchoService::Quit() {
-  context()->RequestQuit();
+  receiver_.reset();
+}
+
+void EchoService::Crash() {
+  IMMEDIATE_CRASH();
 }
 
 }  // namespace echo

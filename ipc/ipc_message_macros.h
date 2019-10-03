@@ -42,9 +42,6 @@
 //     // Generate constructors.
 //     #include "ipc/struct_constructor_macros.h"
 //     #include "path/to/YYY_message_generator.h"
-//     // Generate destructors.
-//     #include "ipc/struct_destructor_macros.h"
-//     #include "path/to/YYY_message_generator.h"
 //     // Generate param traits write methods.
 //     #include "ipc/param_traits_write_macros.h"
 //     namespace IPC {
@@ -202,6 +199,9 @@
 #include <tuple>
 
 #include "base/export_template.h"
+#include "base/hash/md5_constexpr.h"
+#include "base/location.h"
+#include "base/task/common/task_annotator.h"
 #include "ipc/ipc_message_templates.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/param_traits_macros.h"
@@ -217,8 +217,7 @@
   IPC_STRUCT_TRAITS_BEGIN(struct_name) \
   IPC_STRUCT_TRAITS_END() \
   struct IPC_MESSAGE_EXPORT struct_name : parent { \
-    struct_name(); \
-    ~struct_name();
+    struct_name();
 // Optional variadic parameters specify the default value for this struct
 // member. They are passed through to the constructor for |type|.
 #define IPC_STRUCT_MEMBER(type, name, ...) type name;
@@ -327,6 +326,15 @@
 //     return handled;
 //   }
 
+#define IPC_TASK_ANNOTATOR_STRINGIFY(s) #s
+
+// A macro to be used from within the IPC_MESSAGE_FORWARD macros, for providing
+// the IPC message context to the TaskAnnotator. This allows posted tasks to be
+// associated with the incoming IPC message that caused them to be posted.
+#define IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                            \
+  static constexpr uint32_t kMessageHash =                               \
+      base::MD5Hash32Constexpr(IPC_TASK_ANNOTATOR_STRINGIFY(msg_class)); \
+  base::TaskAnnotator::ScopedSetIpcHash scoped_ipc_hash(kMessageHash);
 
 #define IPC_BEGIN_MESSAGE_MAP(class_name, msg) \
   { \
@@ -342,48 +350,46 @@
     decltype(param) param__ = param;                              \
     const IPC::Message& ipc_message__ = msg;                      \
     switch (ipc_message__.type()) {
-
-#define IPC_MESSAGE_FORWARD(msg_class, obj, member_func)                       \
-    case msg_class::ID: {                                                      \
-        if (!msg_class::Dispatch(&ipc_message__, obj, this, param__,           \
-                                 &member_func))                                \
-          ipc_message__.set_dispatch_error();                                  \
-      }                                                                        \
-      break;
+#define IPC_MESSAGE_FORWARD(msg_class, obj, member_func)         \
+  case msg_class::ID: {                                          \
+    IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                        \
+    if (!msg_class::Dispatch(&ipc_message__, obj, this, param__, \
+                             &member_func))                      \
+      ipc_message__.set_dispatch_error();                        \
+  } break;
 
 #define IPC_MESSAGE_HANDLER(msg_class, member_func) \
   IPC_MESSAGE_FORWARD(msg_class, this, _IpcMessageHandlerClass::member_func)
 
-#define IPC_MESSAGE_FORWARD_DELAY_REPLY(msg_class, obj, member_func)           \
-    case msg_class::ID: {                                                      \
-        if (!msg_class::DispatchDelayReply(&ipc_message__, obj, param__,       \
-                                           &member_func))                      \
-          ipc_message__.set_dispatch_error();                                  \
-      }                                                                        \
-      break;
+#define IPC_MESSAGE_FORWARD_DELAY_REPLY(msg_class, obj, member_func) \
+  case msg_class::ID: {                                              \
+    IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                            \
+    if (!msg_class::DispatchDelayReply(&ipc_message__, obj, param__, \
+                                       &member_func))                \
+      ipc_message__.set_dispatch_error();                            \
+  } break;
 
 #define IPC_MESSAGE_HANDLER_DELAY_REPLY(msg_class, member_func)                \
     IPC_MESSAGE_FORWARD_DELAY_REPLY(msg_class, this,                           \
                                     _IpcMessageHandlerClass::member_func)
 
-#define IPC_MESSAGE_FORWARD_WITH_PARAM_DELAY_REPLY(msg_class, obj,             \
-                                                   member_func)                \
-  case msg_class::ID: {                                                        \
-    if (!msg_class::DispatchWithParamDelayReply(&ipc_message__, obj, param__,  \
-                                                &member_func))                 \
-      ipc_message__.set_dispatch_error();                                      \
-  }                                                                            \
-  break;
+#define IPC_MESSAGE_FORWARD_WITH_PARAM_DELAY_REPLY(msg_class, obj,         \
+                                                   member_func)            \
+  case msg_class::ID: {                                                    \
+    IPC_TASK_ANNOTATOR_CONTEXT(msg_class)                                  \
+    if (!msg_class::DispatchWithParamDelayReply(&ipc_message__, obj,       \
+                                                param__, \ & member_func)) \
+      ipc_message__.set_dispatch_error();                                  \
+  } break;
 
 #define IPC_MESSAGE_HANDLER_WITH_PARAM_DELAY_REPLY(msg_class, member_func)     \
     IPC_MESSAGE_FORWARD_WITH_PARAM_DELAY_REPLY(                                \
         msg_class, this, _IpcMessageHandlerClass::member_func)
 
-#define IPC_MESSAGE_HANDLER_GENERIC(msg_class, code)                           \
-    case msg_class::ID: {                                                      \
-        code;                                                                  \
-      }                                                                        \
-      break;
+#define IPC_MESSAGE_HANDLER_GENERIC(msg_class, code) \
+  case msg_class::ID: {                              \
+    IPC_TASK_ANNOTATOR_CONTEXT(msg_class) { code; }  \
+  } break;
 
 #define IPC_REPLY_HANDLER(func)                                                \
     case IPC_REPLY_ID: {                                                       \

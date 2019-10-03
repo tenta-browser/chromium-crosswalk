@@ -4,21 +4,24 @@
 
 #include "chrome/browser/ui/webui/settings/chromeos/internet_handler.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/options/network_config_view.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/chromeos/tether/tether_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/common/net.mojom.h"
-#include "components/arc/connection_holder.h"
+#include "components/arc/metrics/arc_metrics_constants.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/arc/session/connection_holder.h"
 #include "components/onc/onc_constants.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -31,17 +34,14 @@ namespace chromeos {
 
 namespace {
 
-const char kAddNetworkMessage[] = "addNetwork";
-const char kConfigureNetworkMessage[] = "configureNetwork";
+const char kAddThirdPartyVpnMessage[] = "addThirdPartyVpn";
+const char kConfigureThirdPartyVpnMessage[] = "configureThirdPartyVpn";
 const char kRequestArcVpnProviders[] = "requestArcVpnProviders";
 const char kSendArcVpnProviders[] = "sendArcVpnProviders";
-
-std::string ServicePathFromGuid(const std::string& guid) {
-  const NetworkState* network =
-      NetworkHandler::Get()->network_state_handler()->GetNetworkStateFromGuid(
-          guid);
-  return network ? network->path() : "";
-}
+const char kRequestGmsCoreNotificationsDisabledDeviceNames[] =
+    "requestGmsCoreNotificationsDisabledDeviceNames";
+const char kSendGmsCoreNotificationsDisabledDeviceNames[] =
+    "sendGmsCoreNotificationsDisabledDeviceNames";
 
 Profile* GetProfileForPrimaryUser() {
   return ProfileHelper::Get()->GetProfileByUser(
@@ -66,29 +66,44 @@ namespace settings {
 
 InternetHandler::InternetHandler(Profile* profile) : profile_(profile) {
   DCHECK(profile_);
+
   arc_vpn_provider_manager_ = app_list::ArcVpnProviderManager::Get(profile_);
   if (arc_vpn_provider_manager_)
     arc_vpn_provider_manager_->AddObserver(this);
+
+  TetherService* tether_service = TetherService::Get(profile);
+  gms_core_notifications_state_tracker_ =
+      tether_service ? tether_service->GetGmsCoreNotificationsStateTracker()
+                     : nullptr;
+  if (gms_core_notifications_state_tracker_)
+    gms_core_notifications_state_tracker_->AddObserver(this);
 }
 
 InternetHandler::~InternetHandler() {
   if (arc_vpn_provider_manager_)
     arc_vpn_provider_manager_->RemoveObserver(this);
+  if (gms_core_notifications_state_tracker_)
+    gms_core_notifications_state_tracker_->RemoveObserver(this);
 }
 
 void InternetHandler::RegisterMessages() {
-  // TODO(stevenjb): Eliminate once network configuration UI is integrated
-  // into settings.
   web_ui()->RegisterMessageCallback(
-      kAddNetworkMessage,
-      base::Bind(&InternetHandler::AddNetwork, base::Unretained(this)));
+      kAddThirdPartyVpnMessage,
+      base::BindRepeating(&InternetHandler::AddThirdPartyVpn,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      kConfigureNetworkMessage,
-      base::Bind(&InternetHandler::ConfigureNetwork, base::Unretained(this)));
+      kConfigureThirdPartyVpnMessage,
+      base::BindRepeating(&InternetHandler::ConfigureThirdPartyVpn,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kRequestArcVpnProviders,
-      base::Bind(&InternetHandler::RequestArcVpnProviders,
-                 base::Unretained(this)));
+      base::BindRepeating(&InternetHandler::RequestArcVpnProviders,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kRequestGmsCoreNotificationsDisabledDeviceNames,
+      base::BindRepeating(
+          &InternetHandler::RequestGmsCoreNotificationsDisabledDeviceNames,
+          base::Unretained(this)));
 }
 
 void InternetHandler::OnJavascriptAllowed() {}
@@ -116,85 +131,86 @@ void InternetHandler::OnArcVpnProviderUpdated(
   SendArcVpnProviders();
 }
 
-void InternetHandler::AddNetwork(const base::ListValue* args) {
-  std::string onc_type;
-  if (args->GetSize() < 1 || !args->GetString(0, &onc_type)) {
-    NOTREACHED() << "Invalid args for: " << kAddNetworkMessage;
-    return;
-  }
-
-  if (onc_type == ::onc::network_type::kVPN) {
-    std::string app_id;
-    if (args->GetSize() >= 2)
-      args->GetString(1, &app_id);
-    if (app_id.empty()) {
-      // Show the "add network" dialog for the built-in OpenVPN/L2TP provider.
-      NetworkConfigView::ShowForType(shill::kTypeVPN);
-      return;
-    }
-    // Request to launch Arc VPN provider.
-    const auto* arc_app_list_prefs = ArcAppListPrefs::Get(profile_);
-    if (arc_app_list_prefs && arc_app_list_prefs->GetApp(app_id)) {
-      arc::LaunchApp(profile_, app_id, ui::EF_NONE);
-      return;
-    }
-    // Request that the third-party VPN provider identified by |provider_id|
-    // show its "add network" dialog.
-    VpnServiceFactory::GetForBrowserContext(GetProfileForPrimaryUser())
-        ->SendShowAddDialogToExtension(app_id);
-  } else if (onc_type == ::onc::network_type::kWiFi) {
-    NetworkConfigView::ShowForType(shill::kTypeWifi);
-  } else {
-    LOG(ERROR) << "Unsupported type for: " << kAddNetworkMessage;
-  }
+void InternetHandler::OnGmsCoreNotificationStateChanged() {
+  SetGmsCoreNotificationsDisabledDeviceNames();
 }
 
-void InternetHandler::ConfigureNetwork(const base::ListValue* args) {
-  std::string guid;
-  if (args->GetSize() < 1 || !args->GetString(0, &guid)) {
-    NOTREACHED() << "Invalid args for: " << kConfigureNetworkMessage;
+void InternetHandler::AddThirdPartyVpn(const base::ListValue* args) {
+  std::string app_id;
+  if (args->GetSize() < 1 || !args->GetString(0, &app_id)) {
+    NOTREACHED() << "Invalid args for: " << kAddThirdPartyVpnMessage;
+    return;
+  }
+  if (app_id.empty()) {
+    NET_LOG(ERROR) << "Empty app id for " << kAddThirdPartyVpnMessage;
+    return;
+  }
+  if (profile_ != GetProfileForPrimaryUser() || profile_->IsChild()) {
+    NET_LOG(ERROR)
+        << "Only the primary user and non-child accounts can add VPNs";
     return;
   }
 
-  const std::string service_path = ServicePathFromGuid(guid);
-  if (service_path.empty()) {
-    LOG(ERROR) << "Network not found: " << guid;
+  // Request to launch Arc VPN provider.
+  const auto* arc_app_list_prefs = ArcAppListPrefs::Get(profile_);
+  if (arc_app_list_prefs && arc_app_list_prefs->GetApp(app_id)) {
+    arc::LaunchApp(profile_, app_id, ui::EF_NONE,
+                   arc::UserInteractionType::APP_STARTED_FROM_SETTINGS);
+    return;
+  }
+
+  // Request that the third-party VPN provider identified by |provider_id|
+  // show its "add network" dialog.
+  VpnServiceFactory::GetForBrowserContext(GetProfileForPrimaryUser())
+      ->SendShowAddDialogToExtension(app_id);
+}
+
+void InternetHandler::ConfigureThirdPartyVpn(const base::ListValue* args) {
+  std::string guid;
+  if (args->GetSize() < 1 || !args->GetString(0, &guid)) {
+    NOTREACHED() << "Invalid args for: " << kConfigureThirdPartyVpnMessage;
+    return;
+  }
+  if (profile_ != GetProfileForPrimaryUser()) {
+    NET_LOG(ERROR) << "Only the primary user can configure VPNs";
     return;
   }
 
   const NetworkState* network =
-      NetworkHandler::Get()->network_state_handler()->GetNetworkState(
-          service_path);
+      NetworkHandler::Get()->network_state_handler()->GetNetworkStateFromGuid(
+          guid);
   if (!network) {
-    LOG(ERROR) << "Network not found with service_path: " << service_path;
+    NET_LOG(ERROR) << "ConfigureThirdPartyVpn: Network not found: " << guid;
+    return;
+  }
+  if (network->type() != shill::kTypeVPN) {
+    NET_LOG(ERROR) << "ConfigureThirdPartyVpn: Network is not a VPN: " << guid;
     return;
   }
 
-  if (network->type() == shill::kTypeVPN) {
-    if (profile_ != GetProfileForPrimaryUser())
-      return;
-
-    if (network->vpn_provider_type() == shill::kProviderThirdPartyVpn) {
-      // Request that the third-party VPN provider used by the |network| show a
-      // configuration dialog for it.
-      VpnServiceFactory::GetForBrowserContext(profile_)
-          ->SendShowConfigureDialogToExtension(network->vpn_provider_id(),
-                                               network->name());
-      return;
-    } else if (network->vpn_provider_type() == shill::kProviderArcVpn) {
-      auto* net_instance = ARC_GET_INSTANCE_FOR_METHOD(
-          arc::ArcServiceManager::Get()->arc_bridge_service()->net(),
-          ConfigureAndroidVpn);
-      if (!net_instance) {
-        LOG(ERROR) << "User requested VPN configuration but API is unavailable";
-        return;
-      }
-      net_instance->ConfigureAndroidVpn();
-      return;
-    }
+  if (network->GetVpnProviderType() == shill::kProviderThirdPartyVpn) {
+    // Request that the third-party VPN provider used by the |network| show a
+    // configuration dialog for it.
+    VpnServiceFactory::GetForBrowserContext(profile_)
+        ->SendShowConfigureDialogToExtension(network->vpn_provider()->id,
+                                             network->name());
+    return;
   }
 
-  NetworkConfigView::ShowForNetworkId(network->guid());
+  if (network->GetVpnProviderType() == shill::kProviderArcVpn) {
+    auto* net_instance = ARC_GET_INSTANCE_FOR_METHOD(
+        arc::ArcServiceManager::Get()->arc_bridge_service()->net(),
+        ConfigureAndroidVpn);
+    if (!net_instance) {
+      NET_LOG(ERROR) << "ConfigureThirdPartyVpn: API is unavailable";
+      return;
+    }
+    net_instance->ConfigureAndroidVpn();
+    return;
+  }
+
+  NET_LOG(ERROR) << "ConfigureThirdPartyVpn: Unsupported VPN type: "
+                 << network->GetVpnProviderType() << " For: " << guid;
 }
 
 void InternetHandler::RequestArcVpnProviders(const base::ListValue* args) {
@@ -203,6 +219,12 @@ void InternetHandler::RequestArcVpnProviders(const base::ListValue* args) {
 
   AllowJavascript();
   SetArcVpnProviders(arc_vpn_provider_manager_->GetArcVpnProviders());
+}
+
+void InternetHandler::RequestGmsCoreNotificationsDisabledDeviceNames(
+    const base::ListValue* args) {
+  AllowJavascript();
+  SetGmsCoreNotificationsDisabledDeviceNames();
 }
 
 void InternetHandler::SetArcVpnProviders(
@@ -228,9 +250,52 @@ void InternetHandler::SendArcVpnProviders() {
   FireWebUIListener(kSendArcVpnProviders, arc_vpn_providers_value);
 }
 
+void InternetHandler::SetGmsCoreNotificationsDisabledDeviceNames() {
+  if (!gms_core_notifications_state_tracker_) {
+    // No device names should be present in the list if
+    // |gms_core_notifications_state_tracker_| is null.
+    DCHECK(device_names_without_notifications_.empty());
+    return;
+  }
+
+  device_names_without_notifications_.clear();
+
+  const std::vector<std::string> device_names =
+      gms_core_notifications_state_tracker_
+          ->GetGmsCoreNotificationsDisabledDeviceNames();
+  for (const auto& device_name : device_names) {
+    device_names_without_notifications_.emplace_back(
+        std::make_unique<base::Value>(device_name));
+  }
+  SendGmsCoreNotificationsDisabledDeviceNames();
+}
+
+void InternetHandler::SendGmsCoreNotificationsDisabledDeviceNames() {
+  if (!IsJavascriptAllowed())
+    return;
+
+  base::ListValue device_names_value;
+  for (const auto& device_name : device_names_without_notifications_)
+    device_names_value.GetList().push_back(device_name->Clone());
+
+  FireWebUIListener(kSendGmsCoreNotificationsDisabledDeviceNames,
+                    device_names_value);
+}
+
 gfx::NativeWindow InternetHandler::GetNativeWindow() const {
   return web_ui()->GetWebContents()->GetTopLevelNativeWindow();
 }
 
+void InternetHandler::SetGmsCoreNotificationsStateTrackerForTesting(
+    chromeos::tether::GmsCoreNotificationsStateTracker*
+        gms_core_notifications_state_tracker) {
+  if (gms_core_notifications_state_tracker_)
+    gms_core_notifications_state_tracker_->RemoveObserver(this);
+
+  gms_core_notifications_state_tracker_ = gms_core_notifications_state_tracker;
+  gms_core_notifications_state_tracker_->AddObserver(this);
+}
+
 }  // namespace settings
+
 }  // namespace chromeos

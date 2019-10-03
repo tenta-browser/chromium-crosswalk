@@ -10,9 +10,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_filter.h"
-#include "services/preferences/public/interfaces/tracked_preference_validation_delegate.mojom.h"
+#include "services/preferences/public/mojom/tracked_preference_validation_delegate.mojom.h"
 #include "services/preferences/tracked/pref_hash_filter.h"
 #include "services/preferences/tracked/pref_hash_store_impl.h"
 #include "services/preferences/tracked/segregated_pref_store.h"
@@ -107,8 +108,8 @@ PersistentPrefStore* CreateTrackedPersistentPrefStore(
                          GetExternalVerificationPrefHashStorePair(
                              *config, temp_scoped_dir_cleaner),
                          unprotected_configuration, nullptr,
-                         validation_delegate.get(), config->reporting_ids_count,
-                         false));
+                         validation_delegate.get(),
+                         config->reporting_ids_count));
   prefs::mojom::ResetOnLoadObserverPtr reset_on_load_observer(
       std::move(config->reset_on_load_observer));
   std::unique_ptr<PrefHashFilter> protected_pref_hash_filter(new PrefHashFilter(
@@ -116,19 +117,19 @@ PersistentPrefStore* CreateTrackedPersistentPrefStore(
       GetExternalVerificationPrefHashStorePair(*config,
                                                temp_scoped_dir_cleaner),
       protected_configuration, std::move(reset_on_load_observer),
-      validation_delegate.get(), config->reporting_ids_count, true));
+      validation_delegate.get(), config->reporting_ids_count));
 
   PrefHashFilter* raw_unprotected_pref_hash_filter =
       unprotected_pref_hash_filter.get();
   PrefHashFilter* raw_protected_pref_hash_filter =
       protected_pref_hash_filter.get();
 
-  scoped_refptr<JsonPrefStore> unprotected_pref_store(
-      new JsonPrefStore(config->unprotected_pref_filename, io_task_runner.get(),
-                        std::move(unprotected_pref_hash_filter)));
-  scoped_refptr<JsonPrefStore> protected_pref_store(
-      new JsonPrefStore(config->protected_pref_filename, io_task_runner.get(),
-                        std::move(protected_pref_hash_filter)));
+  scoped_refptr<JsonPrefStore> unprotected_pref_store(new JsonPrefStore(
+      config->unprotected_pref_filename,
+      std::move(unprotected_pref_hash_filter), io_task_runner.get()));
+  scoped_refptr<JsonPrefStore> protected_pref_store(new JsonPrefStore(
+      config->protected_pref_filename, std::move(protected_pref_hash_filter),
+      io_task_runner.get()));
 
   SetupTrackedPreferencesMigration(
       unprotected_pref_names, protected_pref_names,
@@ -153,6 +154,6 @@ void InitializeMasterPrefsTracking(
       CreatePrefHashStore(*configuration, false),
       GetExternalVerificationPrefHashStorePair(*configuration, nullptr),
       configuration->tracking_configuration, nullptr, nullptr,
-      configuration->reporting_ids_count, false)
+      configuration->reporting_ids_count)
       .Initialize(master_prefs);
 }

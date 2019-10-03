@@ -6,14 +6,16 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/stack_frame.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 namespace extensions {
 
@@ -102,7 +104,8 @@ void ExtensionsRenderFrameObserver::SetVisuallyDeemphasized(bool deemphasized) {
 
   SkColor color =
       deemphasized ? SkColorSetARGB(178, 0, 0, 0) : SK_ColorTRANSPARENT;
-  render_frame()->GetRenderView()->GetWebView()->SetPageOverlayColor(color);
+  render_frame()->GetRenderView()->GetWebView()->SetMainFrameOverlayColor(
+      color);
 }
 
 void ExtensionsRenderFrameObserver::DetailedConsoleMessageAdded(
@@ -111,6 +114,12 @@ void ExtensionsRenderFrameObserver::DetailedConsoleMessageAdded(
     const base::string16& stack_trace_string,
     uint32_t line_number,
     int32_t severity_level) {
+  if (severity_level <
+      static_cast<int32_t>(extension_misc::kMinimumSeverityToReportError)) {
+    // We don't report certain low-severity errors.
+    return;
+  }
+
   base::string16 trimmed_message = message;
   StackTrace stack_trace = GetStackTraceFromMessage(
       &trimmed_message,

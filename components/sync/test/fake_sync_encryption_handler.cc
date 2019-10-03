@@ -4,7 +4,7 @@
 
 #include "components/sync/test/fake_sync_encryption_handler.h"
 
-#include "components/sync/base/passphrase_type.h"
+#include "components/sync/base/passphrase_enums.h"
 #include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/syncable/nigori_util.h"
 
@@ -13,17 +13,18 @@ namespace syncer {
 FakeSyncEncryptionHandler::FakeSyncEncryptionHandler()
     : encrypted_types_(SensitiveTypes()),
       encrypt_everything_(false),
-      passphrase_type_(PassphraseType::IMPLICIT_PASSPHRASE),
-      cryptographer_(&encryptor_) {}
+      passphrase_type_(PassphraseType::IMPLICIT_PASSPHRASE) {}
 FakeSyncEncryptionHandler::~FakeSyncEncryptionHandler() {}
 
-void FakeSyncEncryptionHandler::Init() {
+bool FakeSyncEncryptionHandler::Init() {
   // Set up a basic cryptographer.
-  KeyParams keystore_params = {"localhost", "dummy", "keystore_key"};
+  KeyParams keystore_params = {KeyDerivationParams::CreateForPbkdf2(),
+                               "keystore_key"};
   cryptographer_.AddKey(keystore_params);
+  return true;
 }
 
-void FakeSyncEncryptionHandler::ApplyNigoriUpdate(
+bool FakeSyncEncryptionHandler::ApplyNigoriUpdate(
     const sync_pb::NigoriSpecifics& nigori,
     syncable::BaseTransaction* const trans) {
   if (nigori.encrypt_everything())
@@ -41,15 +42,20 @@ void FakeSyncEncryptionHandler::ApplyNigoriUpdate(
     DVLOG(1) << "OnPassPhraseRequired Sent";
     sync_pb::EncryptedData pending_keys = cryptographer_.GetPendingKeys();
     for (auto& observer : observers_)
-      observer.OnPassphraseRequired(REASON_DECRYPTION, pending_keys);
+      observer.OnPassphraseRequired(REASON_DECRYPTION,
+                                    KeyDerivationParams::CreateForPbkdf2(),
+                                    pending_keys);
   } else if (!cryptographer_.is_ready()) {
     DVLOG(1) << "OnPassphraseRequired sent because cryptographer is not "
              << "ready";
     for (auto& observer : observers_) {
       observer.OnPassphraseRequired(REASON_ENCRYPTION,
+                                    KeyDerivationParams::CreateForPbkdf2(),
                                     sync_pb::EncryptedData());
     }
   }
+
+  return true;
 }
 
 void FakeSyncEncryptionHandler::UpdateNigoriFromEncryptedTypes(
@@ -59,17 +65,15 @@ void FakeSyncEncryptionHandler::UpdateNigoriFromEncryptedTypes(
                                            encrypt_everything_, nigori);
 }
 
-bool FakeSyncEncryptionHandler::NeedKeystoreKey(
-    syncable::BaseTransaction* const trans) const {
+bool FakeSyncEncryptionHandler::NeedKeystoreKey() const {
   return keystore_key_.empty();
 }
 
 bool FakeSyncEncryptionHandler::SetKeystoreKeys(
-    const google::protobuf::RepeatedPtrField<google::protobuf::string>& keys,
-    syncable::BaseTransaction* const trans) {
-  if (keys.size() == 0)
+    const std::vector<std::string>& keys) {
+  if (keys.empty())
     return false;
-  std::string new_key = keys.Get(keys.size() - 1);
+  std::string new_key = keys.back();
   if (new_key.empty())
     return false;
   keystore_key_ = new_key;
@@ -95,10 +99,8 @@ void FakeSyncEncryptionHandler::RemoveObserver(Observer* observer) {
 }
 
 void FakeSyncEncryptionHandler::SetEncryptionPassphrase(
-    const std::string& passphrase,
-    bool is_explicit) {
-  if (is_explicit)
-    passphrase_type_ = PassphraseType::CUSTOM_PASSPHRASE;
+    const std::string& passphrase) {
+  passphrase_type_ = PassphraseType::CUSTOM_PASSPHRASE;
 }
 
 void FakeSyncEncryptionHandler::SetDecryptionPassphrase(
@@ -122,6 +124,22 @@ bool FakeSyncEncryptionHandler::IsEncryptEverythingEnabled() const {
 PassphraseType FakeSyncEncryptionHandler::GetPassphraseType(
     syncable::BaseTransaction* const trans) const {
   return passphrase_type_;
+}
+
+base::Time FakeSyncEncryptionHandler::GetKeystoreMigrationTime() const {
+  return base::Time();
+}
+
+Cryptographer* FakeSyncEncryptionHandler::GetCryptographerUnsafe() {
+  return &cryptographer_;
+}
+
+KeystoreKeysHandler* FakeSyncEncryptionHandler::GetKeystoreKeysHandler() {
+  return this;
+}
+
+syncable::NigoriHandler* FakeSyncEncryptionHandler::GetNigoriHandler() {
+  return this;
 }
 
 }  // namespace syncer

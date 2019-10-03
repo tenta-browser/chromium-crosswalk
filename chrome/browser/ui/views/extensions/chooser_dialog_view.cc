@@ -11,17 +11,19 @@
 #include "chrome/browser/extensions/chrome_extension_chooser_dialog.h"
 #include "chrome/browser/extensions/device_permissions_dialog_controller.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/device_chooser_content_view.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/fill_layout.h"
+#include "ui/views/window/dialog_client_view.h"
 
 ChooserDialogView::ChooserDialogView(
     std::unique_ptr<ChooserController> chooser_controller) {
@@ -72,14 +74,13 @@ bool ChooserDialogView::IsDialogButtonEnabled(ui::DialogButton button) const {
   return device_chooser_content_view_->IsDialogButtonEnabled(button);
 }
 
-views::View* ChooserDialogView::CreateFootnoteView() {
-  views::View* footnote_link = device_chooser_content_view_->footnote_link();
-  if (footnote_link) {
-    footnote_link->SetBorder(
-        views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
-            views::INSETS_DIALOG_SUBSECTION)));
-  }
-  return footnote_link;
+views::View* ChooserDialogView::GetInitiallyFocusedView() {
+  const views::DialogClientView* dcv = GetDialogClientView();
+  return dcv ? dcv->cancel_button() : nullptr;
+}
+
+std::unique_ptr<views::View> ChooserDialogView::CreateExtraView() {
+  return device_chooser_content_view_->CreateExtraView();
 }
 
 bool ChooserDialogView::Accept() {

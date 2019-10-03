@@ -6,11 +6,11 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/http/http_util.h"
-#include "pdf/timer.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/cpp/logging.h"
 #include "ppapi/cpp/url_request_info.h"
@@ -19,8 +19,9 @@
 namespace chrome_pdf {
 
 namespace {
+
 // We should read with delay to prevent block UI thread, and reduce CPU usage.
-const int kReadDelayMs = 2;
+constexpr base::TimeDelta kReadDelayMs = base::TimeDelta::FromMilliseconds(2);
 
 pp::URLRequestInfo MakeRangeRequest(pp::Instance* plugin_instance,
                                     const std::string& url,
@@ -72,7 +73,7 @@ bool GetByteRangeFromStr(const std::string& content_range_str,
 bool GetByteRangeFromHeaders(const std::string& headers, int* start, int* end) {
   net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n");
   while (it.GetNext()) {
-    if (base::LowerCaseEqualsASCII(it.name(), "content-range")) {
+    if (base::LowerCaseEqualsASCII(it.name_piece(), "content-range")) {
       if (GetByteRangeFromStr(it.values().c_str(), start, end))
         return true;
     }
@@ -95,19 +96,6 @@ bool IsDoubleEndLineAtEnd(const char* buffer, int size) {
 }
 
 }  // namespace
-
-class URLLoaderWrapperImpl::ReadStarter : public Timer {
- public:
-  explicit ReadStarter(URLLoaderWrapperImpl* owner)
-      : Timer(kReadDelayMs), owner_(owner) {}
-  ~ReadStarter() override = default;
-
-  // Timer overrides:
-  void OnTimer() override { owner_->ReadResponseBodyImpl(); }
-
- private:
-  URLLoaderWrapperImpl* owner_;
-};
 
 URLLoaderWrapperImpl::URLLoaderWrapperImpl(pp::Instance* plugin_instance,
                                            const pp::URLLoader& url_loader)
@@ -155,11 +143,9 @@ bool URLLoaderWrapperImpl::IsMultipart() const {
   return is_multipart_;
 }
 
-bool URLLoaderWrapperImpl::GetByteRange(int* start, int* end) const {
+bool URLLoaderWrapperImpl::GetByteRangeStart(int* start) const {
   DCHECK(start);
-  DCHECK(end);
   *start = byte_range_.start();
-  *end = byte_range_.end();
   return byte_range_.IsValid();
 }
 
@@ -172,7 +158,7 @@ bool URLLoaderWrapperImpl::GetDownloadProgress(
 
 void URLLoaderWrapperImpl::Close() {
   url_loader_.Close();
-  read_starter_.reset();
+  read_starter_.Stop();
 }
 
 void URLLoaderWrapperImpl::OpenRange(const std::string& url,
@@ -196,11 +182,13 @@ void URLLoaderWrapperImpl::ReadResponseBody(char* buffer,
   did_read_callback_ = cc;
   buffer_ = buffer;
   buffer_size_ = buffer_size;
-  read_starter_ = std::make_unique<ReadStarter>(this);
+  read_starter_.Start(
+      FROM_HERE, kReadDelayMs,
+      base::BindRepeating(&URLLoaderWrapperImpl::ReadResponseBodyImpl,
+                          base::Unretained(this)));
 }
 
 void URLLoaderWrapperImpl::ReadResponseBodyImpl() {
-  read_starter_.reset();
   pp::CompletionCallback callback =
       callback_factory_.NewCallback(&URLLoaderWrapperImpl::DidRead);
   int rv = url_loader_.ReadResponseBody(buffer_, buffer_size_, callback);
@@ -231,13 +219,14 @@ void URLLoaderWrapperImpl::ParseHeaders() {
   net::HttpUtil::HeadersIterator it(response_headers_.begin(),
                                     response_headers_.end(), "\n");
   while (it.GetNext()) {
-    if (base::LowerCaseEqualsASCII(it.name(), "content-length")) {
+    base::StringPiece name = it.name_piece();
+    if (base::LowerCaseEqualsASCII(name, "content-length")) {
       content_length_ = atoi(it.values().c_str());
-    } else if (base::LowerCaseEqualsASCII(it.name(), "accept-ranges")) {
+    } else if (base::LowerCaseEqualsASCII(name, "accept-ranges")) {
       accept_ranges_bytes_ = base::LowerCaseEqualsASCII(it.values(), "bytes");
-    } else if (base::LowerCaseEqualsASCII(it.name(), "content-encoding")) {
+    } else if (base::LowerCaseEqualsASCII(name, "content-encoding")) {
       content_encoded_ = true;
-    } else if (base::LowerCaseEqualsASCII(it.name(), "content-type")) {
+    } else if (base::LowerCaseEqualsASCII(name, "content-type")) {
       content_type_ = it.values();
       size_t semi_colon_pos = content_type_.find(';');
       if (semi_colon_pos != std::string::npos) {
@@ -245,7 +234,7 @@ void URLLoaderWrapperImpl::ParseHeaders() {
       }
       base::TrimWhitespaceASCII(content_type_, base::TRIM_ALL, &content_type_);
       // multipart boundary.
-      std::string type = base::ToLowerASCII(it.values());
+      std::string type = base::ToLowerASCII(it.values_piece());
       if (base::StartsWith(type, "multipart/", base::CompareCase::SENSITIVE)) {
         const char* boundary = strstr(type.c_str(), "boundary=");
         DCHECK(boundary);
@@ -254,9 +243,9 @@ void URLLoaderWrapperImpl::ParseHeaders() {
           is_multipart_ = !multipart_boundary_.empty();
         }
       }
-    } else if (base::LowerCaseEqualsASCII(it.name(), "content-disposition")) {
+    } else if (base::LowerCaseEqualsASCII(name, "content-disposition")) {
       content_disposition_ = it.values();
-    } else if (base::LowerCaseEqualsASCII(it.name(), "content-range")) {
+    } else if (base::LowerCaseEqualsASCII(name, "content-range")) {
       int start = 0;
       int end = 0;
       if (GetByteRangeFromStr(it.values().c_str(), &start, &end)) {

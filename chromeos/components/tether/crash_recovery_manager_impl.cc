@@ -4,14 +4,16 @@
 
 #include "chromeos/components/tether/crash_recovery_manager_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "chromeos/components/multidevice/logging/logging.h"
+#include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/tether/host_scan_cache.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "components/cryptauth/remote_device.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -47,8 +49,8 @@ CrashRecoveryManagerImpl::Factory::BuildInstance(
     NetworkStateHandler* network_state_handler,
     ActiveHost* active_host,
     HostScanCache* host_scan_cache) {
-  return base::MakeUnique<CrashRecoveryManagerImpl>(
-      network_state_handler, active_host, host_scan_cache);
+  return base::WrapUnique(new CrashRecoveryManagerImpl(
+      network_state_handler, active_host, host_scan_cache));
 }
 
 CrashRecoveryManagerImpl::CrashRecoveryManagerImpl(
@@ -154,7 +156,7 @@ void CrashRecoveryManagerImpl::RestoreConnectedState(
 void CrashRecoveryManagerImpl::OnActiveHostFetched(
     const base::Closure& on_restoration_finished,
     ActiveHost::ActiveHostStatus active_host_status,
-    std::shared_ptr<cryptauth::RemoteDevice> active_host,
+    base::Optional<multidevice::RemoteDeviceRef> active_host,
     const std::string& tether_network_guid,
     const std::string& wifi_network_guid) {
   DCHECK(ActiveHost::ActiveHostStatus::CONNECTED == active_host_status);
@@ -172,7 +174,8 @@ void CrashRecoveryManagerImpl::OnActiveHostFetched(
   // event which has equal old and new values.
   active_host_->SendActiveHostChangedUpdate(
       ActiveHost::ActiveHostStatus::CONNECTED /* old_status */,
-      active_host->GetDeviceId() /* old_active_host_id */,
+      active_host ? active_host->GetDeviceId()
+                  : std::string() /* old_active_host_id */,
       tether_network_guid /* old_tether_network_guid */,
       wifi_network_guid /* old_wifi_network_guid */,
       ActiveHost::ActiveHostStatus::CONNECTED /* new_status */,

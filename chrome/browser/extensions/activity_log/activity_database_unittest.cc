@@ -10,8 +10,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/test/simple_test_clock.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -49,8 +49,8 @@ class ActivityDatabaseTestPolicy : public ActivityDatabase::Delegate {
   virtual void Record(ActivityDatabase* db, scoped_refptr<Action> action);
 
  protected:
-  bool InitDatabase(sql::Connection* db) override;
-  bool FlushDatabase(sql::Connection*) override;
+  bool InitDatabase(sql::Database* db) override;
+  bool FlushDatabase(sql::Database*) override;
   void OnDatabaseFailure() override {}
   void OnDatabaseClose() override { delete this; }
 
@@ -63,15 +63,13 @@ const char* const ActivityDatabaseTestPolicy::kTableContentFields[] = {
 const char* const ActivityDatabaseTestPolicy::kTableFieldTypes[] = {
     "LONGVARCHAR NOT NULL", "INTEGER", "INTEGER", "LONGVARCHAR"};
 
-bool ActivityDatabaseTestPolicy::InitDatabase(sql::Connection* db) {
-  return ActivityDatabase::InitializeTable(db,
-                                           kTableName,
-                                           kTableContentFields,
+bool ActivityDatabaseTestPolicy::InitDatabase(sql::Database* db) {
+  return ActivityDatabase::InitializeTable(db, kTableName, kTableContentFields,
                                            kTableFieldTypes,
-                                           arraysize(kTableContentFields));
+                                           base::size(kTableContentFields));
 }
 
-bool ActivityDatabaseTestPolicy::FlushDatabase(sql::Connection* db) {
+bool ActivityDatabaseTestPolicy::FlushDatabase(sql::Database* db) {
   std::string sql_str =
       "INSERT INTO " + std::string(kTableName) +
       " (extension_id, time, action_type, api_name) VALUES (?,?,?,?)";
@@ -137,7 +135,7 @@ class ActivityDatabaseTest : public ChromeRenderViewHostTestHarness {
     db_delegate_->Record(db, action);
   }
 
-  int CountActions(sql::Connection* db, const std::string& api_name_pattern) {
+  int CountActions(sql::Database* db, const std::string& api_name_pattern) {
     if (!db->DoesTableExist(ActivityDatabaseTestPolicy::kTableName))
       return -1;
     std::string sql_str = "SELECT COUNT(*) FROM " +
@@ -161,12 +159,12 @@ TEST_F(ActivityDatabaseTest, Init) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityInit.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   ActivityDatabase* activity_db = OpenDatabase(db_file);
   activity_db->Close();
 
-  sql::Connection db;
+  sql::Database db;
   ASSERT_TRUE(db.Open(db_file));
   ASSERT_TRUE(db.DoesTableExist(ActivityDatabaseTestPolicy::kTableName));
   db.Close();
@@ -178,7 +176,7 @@ TEST_F(ActivityDatabaseTest, RecordAction) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   ActivityDatabase* activity_db = OpenDatabase(db_file);
   activity_db->SetBatchModeForTesting(false);
@@ -186,7 +184,7 @@ TEST_F(ActivityDatabaseTest, RecordAction) {
   Record(activity_db, action);
   activity_db->Close();
 
-  sql::Connection db;
+  sql::Database db;
   ASSERT_TRUE(db.Open(db_file));
 
   ASSERT_EQ(1, CountActions(&db, "brewster"));
@@ -197,7 +195,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOff) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   // Record some actions
   ActivityDatabase* activity_db = OpenDatabase(db_file);
@@ -215,7 +213,7 @@ TEST_F(ActivityDatabaseTest, BatchModeOn) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   // Record some actions
   ActivityDatabase* activity_db = OpenDatabase(db_file);
@@ -237,7 +235,7 @@ TEST_F(ActivityDatabaseTest, BatchModeFlush) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityFlush.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   // Record some actions
   ActivityDatabase* activity_db = OpenDatabase(db_file);
@@ -259,7 +257,7 @@ TEST_F(ActivityDatabaseTest, InitFailure) {
   base::FilePath db_file;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   db_file = temp_dir.GetPath().AppendASCII("ActivityRecord.db");
-  sql::Connection::Delete(db_file);
+  sql::Database::Delete(db_file);
 
   ActivityDatabaseTestPolicy* delegate = new ActivityDatabaseTestPolicy();
   ActivityDatabase* activity_db = new ActivityDatabase(delegate);

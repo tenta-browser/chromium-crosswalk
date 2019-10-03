@@ -9,18 +9,23 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "cc/base/base_export.h"
 
 namespace cc {
 namespace devtools_instrumentation {
 
 namespace internal {
-CC_BASE_EXPORT extern const char kCategory[];
-CC_BASE_EXPORT extern const char kCategoryFrame[];
+struct CC_BASE_EXPORT CategoryName {
+  // Put these strings into a struct to allow external linkage.
+  static constexpr const char kTimeline[] =
+      TRACE_DISABLED_BY_DEFAULT("devtools.timeline");
+  static constexpr const char kTimelineFrame[] =
+      TRACE_DISABLED_BY_DEFAULT("devtools.timeline.frame");
+};
+
 CC_BASE_EXPORT extern const char kData[];
 CC_BASE_EXPORT extern const char kFrameId[];
 CC_BASE_EXPORT extern const char kLayerId[];
@@ -44,15 +49,18 @@ class CC_BASE_EXPORT ScopedLayerTask {
  public:
   ScopedLayerTask(const char* event_name, int layer_id)
       : event_name_(event_name) {
-    TRACE_EVENT_BEGIN1(internal::kCategory, event_name_, internal::kLayerId,
-                       layer_id);
+    TRACE_EVENT_BEGIN1(internal::CategoryName::kTimeline, event_name_,
+                       internal::kLayerId, layer_id);
   }
-  ~ScopedLayerTask() { TRACE_EVENT_END0(internal::kCategory, event_name_); }
+  ScopedLayerTask(const ScopedLayerTask&) = delete;
+  ~ScopedLayerTask() {
+    TRACE_EVENT_END0(internal::CategoryName::kTimeline, event_name_);
+  }
+
+  ScopedLayerTask& operator=(const ScopedLayerTask&) = delete;
 
  private:
   const char* event_name_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedLayerTask);
 };
 
 class CC_BASE_EXPORT ScopedImageDecodeTask {
@@ -63,13 +71,20 @@ class CC_BASE_EXPORT ScopedImageDecodeTask {
   ScopedImageDecodeTask(const void* image_ptr,
                         DecodeType decode_type,
                         TaskType task_type);
+  ScopedImageDecodeTask(const ScopedImageDecodeTask&) = delete;
   ~ScopedImageDecodeTask();
+
+  ScopedImageDecodeTask& operator=(const ScopedImageDecodeTask&) = delete;
+
+  // Prevents logging duration metrics. Used in cases where a task performed
+  // uninteresting work or was terminated early.
+  void SuppressMetrics() { suppress_metrics_ = true; }
 
  private:
   const DecodeType decode_type_;
   const TaskType task_type_;
   const base::TimeTicks start_time_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedImageDecodeTask);
+  bool suppress_metrics_ = false;
 };
 
 class CC_BASE_EXPORT ScopedLayerTreeTask {
@@ -78,64 +93,72 @@ class CC_BASE_EXPORT ScopedLayerTreeTask {
                       int layer_id,
                       int layer_tree_host_id)
       : event_name_(event_name) {
-    TRACE_EVENT_BEGIN2(internal::kCategory, event_name_, internal::kLayerId,
-                       layer_id, internal::kLayerTreeId, layer_tree_host_id);
+    TRACE_EVENT_BEGIN2(internal::CategoryName::kTimeline, event_name_,
+                       internal::kLayerId, layer_id, internal::kLayerTreeId,
+                       layer_tree_host_id);
   }
-  ~ScopedLayerTreeTask() { TRACE_EVENT_END0(internal::kCategory, event_name_); }
+  ScopedLayerTreeTask(const ScopedLayerTreeTask&) = delete;
+  ~ScopedLayerTreeTask() {
+    TRACE_EVENT_END0(internal::CategoryName::kTimeline, event_name_);
+  }
+
+  ScopedLayerTreeTask& operator=(const ScopedLayerTreeTask&) = delete;
 
  private:
   const char* event_name_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedLayerTreeTask);
 };
 
 struct CC_BASE_EXPORT ScopedCommitTrace {
  public:
   explicit ScopedCommitTrace(int layer_tree_host_id) {
-    TRACE_EVENT_BEGIN1(internal::kCategory, internal::kCompositeLayers,
-                       internal::kLayerTreeId, layer_tree_host_id);
+    TRACE_EVENT_BEGIN1(internal::CategoryName::kTimeline,
+                       internal::kCompositeLayers, internal::kLayerTreeId,
+                       layer_tree_host_id);
   }
+  ScopedCommitTrace(const ScopedCommitTrace&) = delete;
   ~ScopedCommitTrace() {
-    TRACE_EVENT_END0(internal::kCategory, internal::kCompositeLayers);
+    TRACE_EVENT_END0(internal::CategoryName::kTimeline,
+                     internal::kCompositeLayers);
   }
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(ScopedCommitTrace);
+  ScopedCommitTrace& operator=(const ScopedCommitTrace&) = delete;
 };
 
 struct CC_BASE_EXPORT ScopedLayerObjectTracker
-    : public base::trace_event::TraceScopedTrackableObject<int> {
+    : public base::trace_event::
+          TraceScopedTrackableObject<int, internal::CategoryName::kTimeline> {
   explicit ScopedLayerObjectTracker(int layer_id)
-      : base::trace_event::TraceScopedTrackableObject<int>(internal::kCategory,
-                                                           internal::kLayerId,
-                                                           layer_id) {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ScopedLayerObjectTracker);
+      : base::trace_event::
+            TraceScopedTrackableObject<int, internal::CategoryName::kTimeline>(
+                internal::kLayerId,
+                layer_id) {}
+  ScopedLayerObjectTracker(const ScopedLayerObjectTracker&) = delete;
+  ScopedLayerObjectTracker& operator=(const ScopedLayerObjectTracker&) = delete;
 };
 
 inline void CC_BASE_EXPORT DidActivateLayerTree(int layer_tree_host_id,
                                                 int frame_id) {
-  TRACE_EVENT_INSTANT2(internal::kCategoryFrame, internal::kActivateLayerTree,
-                       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId,
-                       layer_tree_host_id, internal::kFrameId, frame_id);
+  TRACE_EVENT_INSTANT2(internal::CategoryName::kTimelineFrame,
+                       internal::kActivateLayerTree, TRACE_EVENT_SCOPE_THREAD,
+                       internal::kLayerTreeId, layer_tree_host_id,
+                       internal::kFrameId, frame_id);
 }
 
 inline void CC_BASE_EXPORT DidBeginFrame(int layer_tree_host_id) {
-  TRACE_EVENT_INSTANT1(internal::kCategoryFrame, internal::kBeginFrame,
-                       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId,
-                       layer_tree_host_id);
+  TRACE_EVENT_INSTANT1(internal::CategoryName::kTimelineFrame,
+                       internal::kBeginFrame, TRACE_EVENT_SCOPE_THREAD,
+                       internal::kLayerTreeId, layer_tree_host_id);
 }
 
 inline void CC_BASE_EXPORT DidDrawFrame(int layer_tree_host_id) {
-  TRACE_EVENT_INSTANT1(internal::kCategoryFrame, internal::kDrawFrame,
-                       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId,
-                       layer_tree_host_id);
+  TRACE_EVENT_INSTANT1(internal::CategoryName::kTimelineFrame,
+                       internal::kDrawFrame, TRACE_EVENT_SCOPE_THREAD,
+                       internal::kLayerTreeId, layer_tree_host_id);
 }
 
 inline void CC_BASE_EXPORT DidRequestMainThreadFrame(int layer_tree_host_id) {
   TRACE_EVENT_INSTANT1(
-      internal::kCategoryFrame, internal::kRequestMainThreadFrame,
+      internal::CategoryName::kTimelineFrame, internal::kRequestMainThreadFrame,
       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId, layer_tree_host_id);
 }
 
@@ -150,7 +173,7 @@ BeginMainThreadFrameData(int frame_id) {
 inline void CC_BASE_EXPORT WillBeginMainThreadFrame(int layer_tree_host_id,
                                                     int frame_id) {
   TRACE_EVENT_INSTANT2(
-      internal::kCategoryFrame, internal::kBeginMainThreadFrame,
+      internal::CategoryName::kTimelineFrame, internal::kBeginMainThreadFrame,
       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId, layer_tree_host_id,
       internal::kData, BeginMainThreadFrameData(frame_id));
 }
@@ -166,7 +189,7 @@ NeedsBeginFrameData(bool needs_begin_frame) {
 inline void CC_BASE_EXPORT NeedsBeginFrameChanged(int layer_tree_host_id,
                                                   bool new_value) {
   TRACE_EVENT_INSTANT2(
-      internal::kCategoryFrame, internal::kNeedsBeginFrameChanged,
+      internal::CategoryName::kTimelineFrame, internal::kNeedsBeginFrameChanged,
       TRACE_EVENT_SCOPE_THREAD, internal::kLayerTreeId, layer_tree_host_id,
       internal::kData, NeedsBeginFrameData(new_value));
 }

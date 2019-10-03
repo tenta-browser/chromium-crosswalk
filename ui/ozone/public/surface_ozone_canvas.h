@@ -7,12 +7,13 @@
 
 #include <memory>
 
+#include "base/component_export.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "ui/ozone/ozone_base_export.h"
 
 class SkSurface;
 
 namespace gfx {
+class Rect;
 class Size;
 class VSyncProvider;
 }
@@ -23,7 +24,7 @@ namespace ui {
 // for use when no EGL/GLES2 acceleration is possible.
 // This class owns any bits that the ozone implementation needs freed when
 // the software output is destroyed.
-class OZONE_BASE_EXPORT SurfaceOzoneCanvas {
+class COMPONENT_EXPORT(OZONE_BASE) SurfaceOzoneCanvas {
  public:
   virtual ~SurfaceOzoneCanvas() {}
 
@@ -31,13 +32,13 @@ class OZONE_BASE_EXPORT SurfaceOzoneCanvas {
   virtual sk_sp<SkSurface> GetSurface() = 0;
 
   // Attempts to resize the canvas to match the viewport size. After
-  // resizing, the compositor must call GetCanvas() to get the next
-  // canvas - this invalidates any previous canvas from GetCanvas().
+  // resizing, the compositor must call GetSurface() to get the next
+  // surface - this invalidates any previous surface from GetSurface().
   virtual void ResizeCanvas(const gfx::Size& viewport_size) = 0;
 
-  // Present the current canvas. After presenting, the compositor must
-  // call GetCanvas() to get the next canvas - this invalidates any
-  // previous canvas from GetCanvas().
+  // Present the current surface. After presenting, the compositor must
+  // call GetSurface() to get the next surface - this invalidates any
+  // previous surface from GetSurface().
   //
   // The implementation may assume that any pixels outside the damage
   // rectangle are unchanged since the previous call to PresentCanvas().

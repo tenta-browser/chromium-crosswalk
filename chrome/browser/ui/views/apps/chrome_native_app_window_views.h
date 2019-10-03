@@ -30,22 +30,16 @@ class ChromeNativeAppWindowViews
       const extensions::AppWindow::CreateParams& create_params,
       views::Widget::InitParams* init_params,
       views::Widget* widget);
-  // Called before views::Widget::Init() in InitializeDefaultWindow() to allow
-  // subclasses to customize the InitParams that would be passed.
-  virtual void OnBeforePanelWidgetInit(views::Widget::InitParams* init_params,
-                                       views::Widget* widget);
-
   virtual void InitializeDefaultWindow(
-      const extensions::AppWindow::CreateParams& create_params);
-  virtual void InitializePanelWindow(
       const extensions::AppWindow::CreateParams& create_params);
   virtual views::NonClientFrameView* CreateStandardDesktopAppFrame();
   virtual views::NonClientFrameView* CreateNonStandardAppFrame() = 0;
+  virtual bool ShouldRemoveStandardFrame();
 
   // ui::BaseWindow implementation.
   gfx::Rect GetRestoredBounds() const override;
   ui::WindowShowState GetRestoredState() const override;
-  bool IsAlwaysOnTop() const override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
 
   // WidgetDelegate implementation.
   gfx::ImageSkia GetWindowAppIcon() override;
@@ -53,7 +47,7 @@ class ChromeNativeAppWindowViews
   views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) override;
   bool WidgetHasHitTestMask() const override;
-  void GetWidgetHitTestMask(gfx::Path* mask) const override;
+  void GetWidgetHitTestMask(SkPath* mask) const override;
 
   // views::View implementation.
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;

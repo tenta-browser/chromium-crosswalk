@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/attestation/fake_certificate.h"
@@ -16,10 +17,10 @@
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/profiles/profile_impl.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/attestation/attestation.pb.h"
 #include "chromeos/attestation/mock_attestation_flow.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
-#include "chromeos/dbus/fake_cryptohome_client.h"
+#include "chromeos/dbus/attestation/attestation.pb.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -98,7 +99,7 @@ class FakeDelegate : public PlatformVerificationFlow::Delegate {
 class PlatformVerificationFlowTest : public ::testing::Test {
  public:
   PlatformVerificationFlowTest()
-      : certificate_success_(true),
+      : certificate_status_(ATTESTATION_SUCCESS),
         fake_certificate_index_(0),
         sign_challenge_success_(true),
         result_(PlatformVerificationFlow::INTERNAL_ERROR) {}
@@ -114,7 +115,7 @@ class PlatformVerificationFlowTest : public ::testing::Test {
     callback_ = base::Bind(&PlatformVerificationFlowTest::FakeChallengeCallback,
                            base::Unretained(this));
 
-    settings_helper_.ReplaceProvider(kAttestationForContentProtectionEnabled);
+    settings_helper_.ReplaceDeviceSettingsProviderWithStub();
     settings_helper_.SetBoolean(kAttestationForContentProtectionEnabled, true);
   }
 
@@ -148,7 +149,7 @@ class PlatformVerificationFlowTest : public ::testing::Test {
         (fake_certificate_index_ < fake_certificate_list_.size()) ?
             fake_certificate_list_[fake_certificate_index_] : kTestCertificate;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, certificate_success_, certificate));
+        FROM_HERE, base::BindOnce(callback, certificate_status_, certificate));
     ++fake_certificate_index_;
   }
 
@@ -188,7 +189,7 @@ class PlatformVerificationFlowTest : public ::testing::Test {
   scoped_refptr<PlatformVerificationFlow> verifier_;
 
   // Controls result of FakeGetCertificate.
-  bool certificate_success_;
+  AttestationStatus certificate_status_;
   std::vector<std::string> fake_certificate_list_;
   size_t fake_certificate_index_;
 
@@ -227,8 +228,16 @@ TEST_F(PlatformVerificationFlowTest, FeatureDisabledByPolicy) {
   EXPECT_EQ(PlatformVerificationFlow::POLICY_REJECTED, result_);
 }
 
-TEST_F(PlatformVerificationFlowTest, NotVerified) {
-  certificate_success_ = false;
+TEST_F(PlatformVerificationFlowTest, NotVerifiedDueToUnspeciedFailure) {
+  certificate_status_ = ATTESTATION_UNSPECIFIED_FAILURE;
+  ExpectAttestationFlow();
+  verifier_->ChallengePlatformKey(NULL, kTestID, kTestChallenge, callback_);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(PlatformVerificationFlow::PLATFORM_NOT_VERIFIED, result_);
+}
+
+TEST_F(PlatformVerificationFlowTest, NotVerifiedDueToBadRequestFailure) {
+  certificate_status_ = ATTESTATION_SERVER_BAD_REQUEST_FAILURE;
   ExpectAttestationFlow();
   verifier_->ChallengePlatformKey(NULL, kTestID, kTestChallenge, callback_);
   base::RunLoop().RunUntilIdle();

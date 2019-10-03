@@ -12,8 +12,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
+#include "base/memory/writable_shared_memory_region.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event_watcher.h"
@@ -22,7 +22,7 @@
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/common/child_process_host_delegate.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
+#include "mojo/public/cpp/system/invitation.h"
 
 #if defined(OS_WIN)
 #include "base/win/object_watcher.h"
@@ -64,26 +64,29 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   // from FieldTrials.
   static void CopyFeatureAndFieldTrialFlags(base::CommandLine* cmd_line);
 
+  // Appends kTraceStartup and kTraceRecordMode flags to the command line, if
+  // needed.
+  static void CopyTraceStartupFlags(base::CommandLine* cmd_line);
+
   // BrowserChildProcessHost implementation:
   bool Send(IPC::Message* message) override;
   void Launch(std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
               std::unique_ptr<base::CommandLine> cmd_line,
               bool terminate_on_shutdown) override;
-  const ChildProcessData& GetData() const override;
-  ChildProcessHost* GetHost() const override;
-  base::TerminationStatus GetTerminationStatus(bool known_dead,
-                                               int* exit_code) override;
-  std::unique_ptr<base::SharedPersistentMemoryAllocator> TakeMetricsAllocator()
+  const ChildProcessData& GetData() override;
+  ChildProcessHost* GetHost() override;
+  ChildProcessTerminationInfo GetTerminationInfo(bool known_dead) override;
+  std::unique_ptr<base::PersistentMemoryAllocator> TakeMetricsAllocator()
       override;
   void SetName(const base::string16& name) override;
-  void SetHandle(base::ProcessHandle handle) override;
+  void SetMetricsName(const std::string& metrics_name) override;
+  void SetProcess(base::Process process) override;
   service_manager::mojom::ServiceRequest TakeInProcessServiceRequest() override;
 
   // ChildProcessHostDelegate implementation:
-  bool CanShutdown() override;
   void OnChannelInitialized(IPC::Channel* channel) override;
   void OnChildDisconnected() override;
-  const base::Process& GetProcess() const override;
+  const base::Process& GetProcess() override;
   void BindInterface(const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe) override;
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -101,7 +104,20 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   // Adds an IPC message filter.
   void AddFilter(BrowserMessageFilter* filter);
 
+  // Unlike Launch(), AppendExtraCommandLineSwitches will not be called
+  // in this function. If AppendExtraCommandLineSwitches has been called before
+  // reaching launch, call this function instead so the command line switches
+  // won't be appended twice
+  void LaunchWithoutExtraCommandLineSwitches(
+      std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
+      std::unique_ptr<base::CommandLine> cmd_line,
+      bool terminate_on_shutdown);
+
   static void HistogramBadMessageTerminated(ProcessType process_type);
+
+#if defined(OS_ANDROID)
+  void EnableWarmUpConnection();
+#endif
 
   BrowserChildProcessHostDelegate* delegate() const { return delegate_; }
 
@@ -109,9 +125,8 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
     return child_connection_.get();
   }
 
-  mojo::edk::OutgoingBrokerClientInvitation*
-  GetInProcessBrokerClientInvitation() {
-    return broker_client_invitation_.get();
+  mojo::OutgoingInvitation* GetInProcessMojoInvitation() {
+    return &mojo_invitation_;
   }
 
   IPC::Channel* child_channel() const { return channel_; }
@@ -137,6 +152,9 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   // ChildProcessLauncher::Client implementation.
   void OnProcessLaunched() override;
   void OnProcessLaunchFailed(int error_code) override;
+#if defined(OS_ANDROID)
+  bool CanUseWarmUpConnection() override;
+#endif
 
   // Returns true if the process has successfully launched. Must only be called
   // on the IO thread.
@@ -153,11 +171,11 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
 #endif
 
   ChildProcessData data_;
+  std::string metrics_name_;
   BrowserChildProcessHostDelegate* delegate_;
   std::unique_ptr<ChildProcessHost> child_process_host_;
 
-  std::unique_ptr<mojo::edk::OutgoingBrokerClientInvitation>
-      broker_client_invitation_;
+  mojo::OutgoingInvitation mojo_invitation_;
   std::unique_ptr<ChildConnection> child_connection_;
 
   std::unique_ptr<ChildProcessLauncher> child_process_;
@@ -170,13 +188,23 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
 #endif
 
   // The memory allocator, if any, in which the process will write its metrics.
-  std::unique_ptr<base::SharedPersistentMemoryAllocator> metrics_allocator_;
+  std::unique_ptr<base::PersistentMemoryAllocator> metrics_allocator_;
+
+  // The shared memory region used by |metrics_allocator_| that should be
+  // transferred to the child process.
+  base::WritableSharedMemoryRegion metrics_shared_region_;
 
   IPC::Channel* channel_ = nullptr;
   bool is_channel_connected_;
   bool notify_child_disconnected_;
 
-  base::WeakPtrFactory<BrowserChildProcessHostImpl> weak_factory_;
+#if defined(OS_ANDROID)
+  // whether the child process can use pre-warmed up connection for better
+  // performance.
+  bool can_use_warm_up_connection_ = false;
+#endif
+
+  base::WeakPtrFactory<BrowserChildProcessHostImpl> weak_factory_{this};
 };
 
 }  // namespace content

@@ -12,8 +12,8 @@
 }
 
 #terms-of-service .step-contents {
-  -webkit-margin-start: 32px;
   margin-bottom: 49px;
+  margin-inline-start: 32px;
 }
 
 #terms-of-service h1 {
@@ -31,7 +31,7 @@
 }
 
 #tos-container {
-  -webkit-margin-end: -2px;
+  margin-inline-end: -2px;
   width: 630px;
 }
 
@@ -40,6 +40,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   padding: 8px 13px 0 13px;
 }
 
@@ -80,6 +81,7 @@
 
 .step.tos-loading #tos-loading {
   display: -webkit-flex;
+  min-height: 0;
 }
 
 .step.error #tos-content,
@@ -89,8 +91,9 @@
 
 .step.error #tos-error {
   display: -webkit-flex;
+  min-height: 0;
 }
 
 #terms-of-service.error #tos-back-button {
-  -webkit-margin-end: 1px;
+  margin-inline-end: 1px;
 }

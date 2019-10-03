@@ -166,11 +166,9 @@ std::string GetUnregistrationStatusString(
 GCMStatsRecorderImpl::GCMStatsRecorderImpl()
     : is_recording_(false),
       delegate_(nullptr),
-      data_message_received_since_connected_(false),
       received_data_message_burst_size_(0) {}
 
-GCMStatsRecorderImpl::~GCMStatsRecorderImpl() {
-}
+GCMStatsRecorderImpl::~GCMStatsRecorderImpl() = default;
 
 void GCMStatsRecorderImpl::SetDelegate(Delegate* delegate) {
   delegate_ = delegate;
@@ -263,10 +261,9 @@ void GCMStatsRecorderImpl::RecordConnection(
 
 void GCMStatsRecorderImpl::RecordConnectionInitiated(const std::string& host) {
   last_connection_initiation_time_ = base::TimeTicks::Now();
-  last_connection_success_time_ = base::TimeTicks();
-  data_message_received_since_connected_ = false;
   if (!is_recording_)
     return;
+
   RecordConnection("Connection initiated", host);
 }
 
@@ -274,6 +271,7 @@ void GCMStatsRecorderImpl::RecordConnectionDelayedDueToBackoff(
     int64_t delay_msec) {
   if (!is_recording_)
     return;
+
   RecordConnection("Connection backoff",
                    base::StringPrintf("Delayed for %" PRId64 " msec",
                                       delay_msec));
@@ -284,7 +282,6 @@ void GCMStatsRecorderImpl::RecordConnectionSuccess() {
   UMA_HISTOGRAM_MEDIUM_TIMES(
       "GCM.ConnectionLatency",
       (base::TimeTicks::Now() - last_connection_initiation_time_));
-  last_connection_success_time_ = base::TimeTicks::Now();
   last_connection_initiation_time_ = base::TimeTicks();
   if (!is_recording_)
     return;
@@ -324,7 +321,7 @@ void GCMStatsRecorderImpl::RecordRegistration(
 void GCMStatsRecorderImpl::RecordRegistrationSent(
     const std::string& app_id,
     const std::string& sender_ids) {
-  UMA_HISTOGRAM_COUNTS("GCM.RegistrationRequest", 1);
+  UMA_HISTOGRAM_COUNTS_1M("GCM.RegistrationRequest", 1);
   if (!is_recording_)
     return;
   RecordRegistration(app_id, sender_ids,
@@ -360,7 +357,7 @@ void GCMStatsRecorderImpl::RecordRegistrationRetryDelayed(
 
 void GCMStatsRecorderImpl::RecordUnregistrationSent(
     const std::string& app_id, const std::string& source) {
-  UMA_HISTOGRAM_COUNTS("GCM.UnregistrationRequest", 1);
+  UMA_HISTOGRAM_COUNTS_1M("GCM.UnregistrationRequest", 1);
   if (!is_recording_)
     return;
   RecordRegistration(app_id, source, "Unregistration request sent",
@@ -420,7 +417,6 @@ void GCMStatsRecorderImpl::RecordDataMessageReceived(
   base::TimeTicks new_timestamp = base::TimeTicks::Now();
   if (last_received_data_message_burst_start_time_.is_null()) {
     last_received_data_message_burst_start_time_ = new_timestamp;
-    last_received_data_message_time_within_burst_ = new_timestamp;
     received_data_message_burst_size_ = 1;
   } else if ((new_timestamp - last_received_data_message_burst_start_time_) >=
              base::TimeDelta::FromSeconds(
@@ -428,23 +424,12 @@ void GCMStatsRecorderImpl::RecordDataMessageReceived(
     UMA_HISTOGRAM_LONG_TIMES(
         "GCM.DataMessageBurstReceivedInterval",
         (new_timestamp - last_received_data_message_burst_start_time_));
-    UMA_HISTOGRAM_COUNTS("GCM.ReceivedDataMessageBurstSize",
-                         received_data_message_burst_size_);
+    UMA_HISTOGRAM_COUNTS_1M("GCM.ReceivedDataMessageBurstSize",
+                            received_data_message_burst_size_);
     last_received_data_message_burst_start_time_ = new_timestamp;
-    last_received_data_message_time_within_burst_ = new_timestamp;
     received_data_message_burst_size_ = 1;
   } else {
-    UMA_HISTOGRAM_TIMES(
-        "GCM.ReceivedDataMessageIntervalWithinBurst",
-        (new_timestamp - last_received_data_message_time_within_burst_));
-    last_received_data_message_time_within_burst_ = new_timestamp;
     ++received_data_message_burst_size_;
-  }
-  if (!data_message_received_since_connected_) {
-    DCHECK(!last_connection_success_time_.is_null());
-    UMA_HISTOGRAM_TIMES("GCM.FirstReceivedDataMessageLatencyAfterConnection",
-                        (new_timestamp - last_connection_success_time_));
-    data_message_received_since_connected_ = true;
   }
 
   if (!is_recording_)
@@ -541,7 +526,7 @@ void GCMStatsRecorderImpl::RecordIncomingSendError(
     const std::string& app_id,
     const std::string& receiver_id,
     const std::string& message_id) {
-  UMA_HISTOGRAM_COUNTS("GCM.IncomingSendErrors", 1);
+  UMA_HISTOGRAM_COUNTS_1M("GCM.IncomingSendErrors", 1);
   if (!is_recording_)
     return;
   RecordSending(app_id, receiver_id, message_id, "Received 'send error' msg",

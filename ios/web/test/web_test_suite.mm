@@ -5,10 +5,9 @@
 #include "ios/web/public/test/web_test_suite.h"
 
 #include "base/memory/ptr_util.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/path_service.h"
+#include "ios/web/public/navigation/url_schemes.h"
 #import "ios/web/public/test/fakes/test_web_client.h"
-#include "ios/web/public/url_schemes.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -26,11 +25,6 @@ WebTestSuite::~WebTestSuite() {}
 
 void WebTestSuite::Initialize() {
   base::TestSuite::Initialize();
-
-  // Initialize the histograms subsystem, so that any histograms hit in tests
-  // are correctly registered with the statistics recorder and can be queried
-  // by tests.
-  base::StatisticsRecorder::Initialize();
 
   RegisterWebSchemes(false);
 

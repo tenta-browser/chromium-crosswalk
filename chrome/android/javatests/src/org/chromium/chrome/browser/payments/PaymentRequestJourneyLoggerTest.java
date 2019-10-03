@@ -4,15 +4,18 @@
 
 package org.chromium.chrome.browser.payments;
 
+import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.DECEMBER;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.DELAYED_RESPONSE;
+import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.FIRST_BILLING_ADDRESS;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.HAVE_INSTRUMENTS;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.IMMEDIATE_RESPONSE;
+import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.NEXT_YEAR;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.NO_INSTRUMENTS;
 
-import android.content.DialogInterface;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -28,21 +31,22 @@ import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * A payment integration test to validate the logging of Payment Request metrics.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_metrics_test.html", this);
@@ -50,8 +54,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Override
     public void onMainActivityStarted() {}
 
-    private void createTestData()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    private void createTestData() throws InterruptedException, TimeoutException {
         AutofillTestHelper mHelper = new AutofillTestHelper();
         // The user has a shipping address and a credit card associated with that address on disk.
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -77,7 +80,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Feature({"Payments"})
     @RetryOnFailure
     public void testNumberOfSuggestionsShown_ShippingAddress_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -87,7 +90,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the right number of suggestions were logged.
         Assert.assertEquals(1,
@@ -113,7 +116,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_ShippingAddress_AbortedByUser()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Cancel the payment request.
@@ -148,7 +151,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSelectionEdits_ShippingAddress_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -163,13 +166,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 new String[] {"In Complete", "Google", "344 Main St", "CA", "Los Angeles"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getReadyForUnmaskInput());
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the edit was logged.
         Assert.assertEquals(1,
@@ -194,7 +197,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSelectionAdds_ShippingAddress_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -212,7 +215,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                         "Alice", "Supreme Court", "Airport Road", "Kabul", "1043", "020-253-0000"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
 
         // Complete the transaction.
         mPaymentRequestTestRule.clickAndWait(
@@ -220,7 +223,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the add was logged.
         Assert.assertEquals(1,
@@ -243,7 +246,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_PaymentMethod_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add two credit cards.
         createTestData();
 
@@ -282,7 +285,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_PaymentMethod_AbortedByUser()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add two credit cards.
         createTestData();
 
@@ -322,7 +325,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_PaymentMethod_InvalidPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add two credit cards.
         createTestData();
 
@@ -350,7 +353,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSelectionAdds_PaymentMethod_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -362,12 +365,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.clickInPaymentMethodAndWait(
                 R.id.payments_add_option_button, mPaymentRequestTestRule.getReadyToEdit());
         mPaymentRequestTestRule.setSpinnerSelectionsInCardEditorAndWait(
-                new int[] {11, 1, 0}, mPaymentRequestTestRule.getBillingAddressChangeProcessed());
+                new int[] {DECEMBER, NEXT_YEAR, FIRST_BILLING_ADDRESS},
+                mPaymentRequestTestRule.getBillingAddressChangeProcessed());
         mPaymentRequestTestRule.setTextInCardEditorAndWait(
                 new String[] {"4111111111111111", "Jon Doe"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInCardEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
 
         // Complete the transaction.
         mPaymentRequestTestRule.clickAndWait(
@@ -375,7 +379,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the add was logged.
         Assert.assertEquals(1,
@@ -398,7 +402,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_ContactInfo_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -409,7 +413,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the right number of suggestions were logged.
         Assert.assertEquals(1,
@@ -435,7 +439,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSuggestionsShown_ContactInfo_AbortedByUser()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Cancel the payment request.
@@ -471,7 +475,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSelectionEdits_ContactInfo_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -487,13 +491,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 new String[] {"In Complete", "514-123-1234", "test@email.com"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getReadyForUnmaskInput());
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the edit was logged.
         Assert.assertEquals(1,
@@ -518,7 +522,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testNumberOfSelectionAdds_ContactInfo_Completed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -534,7 +538,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 new String[] {"Alice", "020-253-0000", "test@email.com"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
 
         // Complete the transaction.
         mPaymentRequestTestRule.clickAndWait(
@@ -542,7 +546,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the add was logged.
         Assert.assertEquals(1,
@@ -566,7 +570,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_ShippingAndPayment()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add two addresses and two cards.
         createTestData();
 
@@ -574,7 +578,8 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.triggerUIAndWait("ccBuy", mPaymentRequestTestRule.getReadyToPay());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
@@ -593,7 +598,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserDidNotHaveCompleteSuggestions_ShippingAndPayment_IncompleteShipping()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add a card and an incomplete address (no region).
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -608,11 +613,14 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "ccBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
-        // Make sure the events were logged correctly.
+        // Make sure the events were logged correctly. Since the added credit card is using the same
+        // incomplete profile for billing address, NEEDS_COMPLETION_PAYMENT is also set.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
-                | Event.REQUEST_SHIPPING | Event.REQUEST_METHOD_BASIC_CARD;
+                | Event.REQUEST_SHIPPING | Event.REQUEST_METHOD_BASIC_CARD
+                | Event.NEEDS_COMPLETION_PAYMENT | Event.NEEDS_COMPLETION_SHIPPING;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -626,7 +634,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserDidNotHaveCompleteSuggestions_ShippingAndPayment_IncompleteCard()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an incomplete card (no exp date) and an complete address.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -641,11 +649,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "ccBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
-                | Event.REQUEST_SHIPPING | Event.REQUEST_METHOD_BASIC_CARD;
+                | Event.REQUEST_SHIPPING | Event.REQUEST_METHOD_BASIC_CARD
+                | Event.NEEDS_COMPLETION_PAYMENT;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -658,8 +668,9 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
+    @CommandLineFlags.Add("disable-features=NoCreditCardAbort")
     public void testUserDidNotHaveCompleteSuggestions_ShippingAndPayment_UnsupportedCard()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an unsupported card (mastercard) and an complete address.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -674,11 +685,12 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "ccBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.REQUEST_SHIPPING
-                | Event.REQUEST_METHOD_BASIC_CARD;
+                | Event.REQUEST_METHOD_BASIC_CARD | Event.NEEDS_COMPLETION_PAYMENT;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -691,8 +703,9 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
+    @CommandLineFlags.Add("disable-features=NoCreditCardAbort")
     public void testUserDidNotHaveCompleteSuggestions_ShippingAndPayment_OnlyPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add a complete address and a working payment app.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         mHelper.setProfile(new AutofillProfile("", "https://example.com", true, "Jon Doe", "Google",
@@ -705,11 +718,12 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "ccBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.REQUEST_SHIPPING
-                | Event.REQUEST_METHOD_BASIC_CARD;
+                | Event.REQUEST_METHOD_BASIC_CARD | Event.NEEDS_COMPLETION_PAYMENT;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -722,8 +736,9 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
+    @CommandLineFlags.Add("disable-features=NoCreditCardAbort")
     public void testUserDidNotHaveCompleteSuggestions_PaymentApp_NoInstruments()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address and a payment app without instruments on file.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         mHelper.setProfile(new AutofillProfile("", "https://example.com", true, "Jon Doe", "Google",
@@ -736,11 +751,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "cardsAndBobPayBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.REQUEST_SHIPPING
-                | Event.REQUEST_METHOD_BASIC_CARD | Event.REQUEST_METHOD_OTHER;
+                | Event.REQUEST_METHOD_BASIC_CARD | Event.REQUEST_METHOD_OTHER
+                | Event.NEEDS_COMPLETION_PAYMENT;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -754,7 +771,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_PaymentApp_HasValidPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address and a payment app on file.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         mHelper.setProfile(new AutofillProfile("", "https://example.com", true, "Jon Doe", "Google",
@@ -767,7 +784,8 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "cardsAndBobPayBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
@@ -786,7 +804,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_ShippingAndPaymentApp_HasInvalidShipping()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add a card and an incomplete address (no region).
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -801,12 +819,15 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
                 "cardsAndBobPayBuy", mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
-        // Make sure the events were logged correctly.
+        // Make sure the events were logged correctly. Since the added credit card is using the same
+        // incomplete profile, NEEDS_COMPLETION_PAYMENT is also set.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
                 | Event.REQUEST_SHIPPING | Event.REQUEST_METHOD_BASIC_CARD
-                | Event.REQUEST_METHOD_OTHER;
+                | Event.REQUEST_METHOD_OTHER | Event.NEEDS_COMPLETION_PAYMENT
+                | Event.NEEDS_COMPLETION_SHIPPING;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -820,7 +841,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_AcceptsCardsAndApps_UserHasOnlyCard()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address and a credit card on file.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -836,7 +857,8 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         // The user cancels the Payment Request (trigger the logs).
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
@@ -855,7 +877,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_AcceptsCardsAndApps_UserHasOnlyPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address and a payment app on file.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         mHelper.setProfile(new AutofillProfile("", "https://example.com", true, "Jon Doe", "Google",
@@ -869,7 +891,8 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         // The user cancels the Payment Request (trigger the logs).
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
@@ -888,7 +911,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @MediumTest
     @Feature({"Payments"})
     public void testUserHadCompleteSuggestions_AcceptsCardsAndApps_UserHasCardAndPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address, a credit card and a payment app on file.
         AutofillTestHelper mHelper = new AutofillTestHelper();
         String mBillingAddressId = mHelper.setProfile(new AutofillProfile("", "https://example.com",
@@ -905,7 +928,8 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         // The user cancels the Payment Request (trigger the logs).
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.HAD_INITIAL_FORM_OF_PAYMENT
@@ -923,8 +947,9 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
+    @CommandLineFlags.Add("disable-features=NoCreditCardAbort")
     public void testUserDidNotHaveCompleteSuggestions_AcceptsCardsAndApps_NoCardOrPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Add an address on file.
         new AutofillTestHelper().setProfile(new AutofillProfile("", "https://example.com", true,
                 "Jon Doe", "Google", "340 Main St", "CA", "Los Angeles", "", "90291", "", "US",
@@ -936,11 +961,13 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         // The user cancels the Payment Request (trigger the logs).
         mPaymentRequestTestRule.clickAndWait(
                 R.id.close_button, mPaymentRequestTestRule.getDismissed());
-        mPaymentRequestTestRule.expectResultContains(new String[] {"Request cancelled"});
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"User closed the Payment Request UI."});
 
         // Make sure the events were logged correctly.
         int expectedSample = Event.SHOWN | Event.USER_ABORTED | Event.REQUEST_SHIPPING
-                | Event.REQUEST_METHOD_BASIC_CARD | Event.REQUEST_METHOD_OTHER;
+                | Event.REQUEST_METHOD_BASIC_CARD | Event.REQUEST_METHOD_OTHER
+                | Event.NEEDS_COMPLETION_PAYMENT;
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
                         "PaymentRequest.Events", expectedSample));
@@ -952,8 +979,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoContactInfoHistogram()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testNoContactInfoHistogram() throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -963,7 +989,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure nothing was logged for contact info.
         Assert.assertEquals(0,
@@ -987,7 +1013,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testTwoTimes() throws InterruptedException, ExecutionException, TimeoutException {
+    public void testTwoTimes() throws InterruptedException, TimeoutException {
         createTestData();
 
         // Complete a Payment Request with a credit card.
@@ -997,7 +1023,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the right number of suggestions were logged.
         Assert.assertEquals(1,
@@ -1023,7 +1049,7 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
         mPaymentRequestTestRule.setTextInCardUnmaskDialogAndWait(
                 R.id.card_unmask_input, "123", mPaymentRequestTestRule.getReadyToUnmask());
         mPaymentRequestTestRule.clickCardUnmaskButtonAndWait(
-                DialogInterface.BUTTON_POSITIVE, mPaymentRequestTestRule.getDismissed());
+                ModalDialogProperties.ButtonType.POSITIVE, mPaymentRequestTestRule.getDismissed());
 
         // Make sure the right number of suggestions were logged.
         Assert.assertEquals(2,
@@ -1058,14 +1084,14 @@ public class PaymentRequestJourneyLoggerTest implements MainActivityStartCallbac
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoShow() throws InterruptedException, ExecutionException, TimeoutException {
+    public void testNoShow() throws InterruptedException, TimeoutException {
         // Android Pay is supported but no instruments are present.
         mPaymentRequestTestRule.installPaymentApp(
                 "https://android.com/pay", NO_INSTRUMENTS, DELAYED_RESPONSE);
         mPaymentRequestTestRule.openPageAndClickNodeAndWait(
                 "androidPayBuy", mPaymentRequestTestRule.getShowFailed());
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"The payment method", "not supported"});
+                new String[] {"Payment method not supported"});
 
         // Make sure that no journey metrics were logged.
         Assert.assertEquals(0,

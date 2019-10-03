@@ -25,7 +25,8 @@ class ZoomLevelDelegate;
 
 class TestBrowserContext : public BrowserContext {
  public:
-  TestBrowserContext();
+  explicit TestBrowserContext(
+      base::FilePath browser_context_dir_path = base::FilePath());
   ~TestBrowserContext() override;
 
   // Takes ownership of the temporary directory so that it's not deleted when
@@ -33,8 +34,8 @@ class TestBrowserContext : public BrowserContext {
   base::FilePath TakePath();
 
   void SetSpecialStoragePolicy(storage::SpecialStoragePolicy* policy);
-  void SetPermissionManager(
-      std::unique_ptr<PermissionManager> permission_manager);
+  void SetPermissionControllerDelegate(
+      std::unique_ptr<PermissionControllerDelegate> delegate);
   net::URLRequestContextGetter* GetRequestContext();
 
   // Allow clients to make this an incognito context.
@@ -43,34 +44,27 @@ class TestBrowserContext : public BrowserContext {
   }
 
   // BrowserContext implementation.
-  base::FilePath GetPath() const override;
+  base::FilePath GetPath() override;
 #if !defined(OS_ANDROID)
   std::unique_ptr<ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
 #endif  // !defined(OS_ANDROID)
-  bool IsOffTheRecord() const override;
+  bool IsOffTheRecord() override;
   DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   ResourceContext* GetResourceContext() override;
   BrowserPluginGuestManager* GetGuestManager() override;
   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
   PushMessagingService* GetPushMessagingService() override;
   SSLHostStateDelegate* GetSSLHostStateDelegate() override;
-  PermissionManager* GetPermissionManager() override;
+  PermissionControllerDelegate* GetPermissionControllerDelegate() override;
+  ClientHintsControllerDelegate* GetClientHintsControllerDelegate() override;
   BackgroundFetchDelegate* GetBackgroundFetchDelegate() override;
   BackgroundSyncController* GetBackgroundSyncController() override;
   BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate() override;
   net::URLRequestContextGetter* CreateRequestContext(
       ProtocolHandlerMap* protocol_handlers,
       URLRequestInterceptorScopedVector request_interceptors) override;
-  net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      ProtocolHandlerMap* protocol_handlers,
-      URLRequestInterceptorScopedVector request_interceptors)  override;
   net::URLRequestContextGetter* CreateMediaRequestContext() override;
-  net::URLRequestContextGetter* CreateMediaRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory) override;
 
  private:
   // Hold a reference here because BrowserContext owns lifetime.
@@ -80,7 +74,7 @@ class TestBrowserContext : public BrowserContext {
   std::unique_ptr<MockResourceContext> resource_context_;
   scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy_;
   std::unique_ptr<MockSSLHostStateDelegate> ssl_host_state_delegate_;
-  std::unique_ptr<PermissionManager> permission_manager_;
+  std::unique_ptr<PermissionControllerDelegate> permission_controller_delegate_;
   std::unique_ptr<MockBackgroundSyncController> background_sync_controller_;
   bool is_off_the_record_ = false;
 

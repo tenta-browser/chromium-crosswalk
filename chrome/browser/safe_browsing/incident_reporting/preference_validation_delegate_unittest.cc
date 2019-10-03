@@ -8,12 +8,12 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/mock_incident_receiver.h"
@@ -100,9 +100,9 @@ class PreferenceValidationDelegateTest : public testing::Test {
 
 // Tests that a NULL value results in an incident with no value.
 TEST_F(PreferenceValidationDelegateTest, NullValue) {
-  instance_->OnAtomicPreferenceValidation(kPrefPath, NULL, ValueState::CLEARED,
-                                          ValueState::UNSUPPORTED,
-                                          false /* is_personal */);
+  instance_->OnAtomicPreferenceValidation(
+      kPrefPath, base::nullopt, ValueState::CLEARED, ValueState::UNSUPPORTED,
+      false /* is_personal */);
   std::unique_ptr<safe_browsing::ClientIncidentReport_IncidentData> incident(
       incidents_.back()->TakePayload());
   EXPECT_FALSE(incident->tracked_preference().has_atomic_value());
@@ -118,44 +118,43 @@ TEST_F(PreferenceValidationDelegateTest, NullValue) {
 class PreferenceValidationDelegateValues
     : public PreferenceValidationDelegateTest,
       public testing::WithParamInterface<
-          std::tr1::tuple<base::Value::Type, const char*> > {
+          std::tuple<base::Value::Type, const char*>> {
  protected:
   void SetUp() override {
     PreferenceValidationDelegateTest::SetUp();
-    value_type_ = std::tr1::get<0>(GetParam());
-    expected_value_ = std::tr1::get<1>(GetParam());
+    value_type_ = std::get<0>(GetParam());
+    expected_value_ = std::get<1>(GetParam());
   }
 
-  static std::unique_ptr<base::Value> MakeValue(base::Value::Type value_type) {
+  static base::Value MakeValue(base::Value::Type value_type) {
     using base::Value;
     switch (value_type) {
       case Value::Type::NONE:
-        return base::MakeUnique<base::Value>();
+        return Value();
       case Value::Type::BOOLEAN:
-        return std::unique_ptr<Value>(new base::Value(false));
+        return Value(false);
       case Value::Type::INTEGER:
-        return std::unique_ptr<Value>(new base::Value(47));
+        return Value(47);
       case Value::Type::DOUBLE:
-        return std::unique_ptr<Value>(new base::Value(0.47));
+        return Value(0.47);
       case Value::Type::STRING:
-        return std::unique_ptr<Value>(new base::Value("i have a spleen"));
+        return Value("i have a spleen");
       case Value::Type::DICTIONARY: {
-        std::unique_ptr<base::DictionaryValue> value(
-            new base::DictionaryValue());
-        value->SetInteger("twenty-two", 22);
-        value->SetInteger("forty-seven", 47);
-        return std::move(value);
+        Value value(base::Value::Type::DICTIONARY);
+        value.SetKey("twenty-two", Value(22));
+        value.SetKey("forty-seven", Value(47));
+        return value;
       }
       case Value::Type::LIST: {
-        std::unique_ptr<base::ListValue> value(new base::ListValue());
-        value->AppendInteger(22);
-        value->AppendInteger(47);
-        return std::move(value);
+        Value value(base::Value::Type::LIST);
+        value.GetList().emplace_back(22);
+        value.GetList().emplace_back(47);
+        return value;
       }
       default:
         ADD_FAILURE() << "unsupported value type " << value_type;
     }
-    return std::unique_ptr<Value>();
+    return Value();
   }
 
   base::Value::Type value_type_;
@@ -173,38 +172,34 @@ TEST_P(PreferenceValidationDelegateValues, Value) {
             incident->tracked_preference().atomic_value());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     Values,
     PreferenceValidationDelegateValues,
     // On Android, make_tuple(..., "null") doesn't compile due to the error:
     // testing/gtest/include/gtest/internal/gtest-tuple.h:246:48:
     //   error: array used as initializer
     testing::Values(
-        std::tr1::make_tuple(base::Value::Type::NONE,
-                             const_cast<char*>("null")),
-        std::tr1::make_tuple(base::Value::Type::BOOLEAN,
-                             const_cast<char*>("false")),
-        std::tr1::make_tuple(base::Value::Type::INTEGER,
-                             const_cast<char*>("47")),
-        std::tr1::make_tuple(base::Value::Type::DOUBLE,
-                             const_cast<char*>("0.47")),
-        std::tr1::make_tuple(base::Value::Type::STRING,
-                             const_cast<char*>("i have a spleen")),
-        std::tr1::make_tuple(base::Value::Type::DICTIONARY,
+        std::make_tuple(base::Value::Type::NONE, const_cast<char*>("null")),
+        std::make_tuple(base::Value::Type::BOOLEAN, const_cast<char*>("false")),
+        std::make_tuple(base::Value::Type::INTEGER, const_cast<char*>("47")),
+        std::make_tuple(base::Value::Type::DOUBLE, const_cast<char*>("0.47")),
+        std::make_tuple(base::Value::Type::STRING,
+                        const_cast<char*>("i have a spleen")),
+        std::make_tuple(
+            base::Value::Type::DICTIONARY,
             const_cast<char*>("{\"forty-seven\":47,\"twenty-two\":22}")),
-        std::tr1::make_tuple(base::Value::Type::LIST,
-                             const_cast<char*>("[22,47]"))));
+        std::make_tuple(base::Value::Type::LIST,
+                        const_cast<char*>("[22,47]"))));
 
 // Tests that no incidents are reported for relevant combinations of ValueState.
 class PreferenceValidationDelegateNoIncident
     : public PreferenceValidationDelegateTest,
-      public testing::WithParamInterface<
-          std::tr1::tuple<ValueState, ValueState>> {
+      public testing::WithParamInterface<std::tuple<ValueState, ValueState>> {
  protected:
   void SetUp() override {
     PreferenceValidationDelegateTest::SetUp();
-    value_state_ = std::tr1::get<0>(GetParam());
-    external_validation_value_state_ = std::tr1::get<1>(GetParam());
+    value_state_ = std::get<0>(GetParam());
+    external_validation_value_state_ = std::get<1>(GetParam());
   }
 
   ValueState value_state_;
@@ -213,7 +208,7 @@ class PreferenceValidationDelegateNoIncident
 
 TEST_P(PreferenceValidationDelegateNoIncident, Atomic) {
   instance_->OnAtomicPreferenceValidation(
-      kPrefPath, base::MakeUnique<base::Value>(), value_state_,
+      kPrefPath, base::make_optional<base::Value>(), value_state_,
       external_validation_value_state_, false /* is_personal */);
   EXPECT_EQ(0U, incidents_.size());
 }
@@ -225,7 +220,7 @@ TEST_P(PreferenceValidationDelegateNoIncident, Split) {
   EXPECT_EQ(0U, incidents_.size());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     NoIncident,
     PreferenceValidationDelegateNoIncident,
     testing::Combine(testing::Values(ValueState::UNCHANGED,
@@ -240,13 +235,13 @@ INSTANTIATE_TEST_CASE_P(
 class PreferenceValidationDelegateWithIncident
     : public PreferenceValidationDelegateTest,
       public testing::WithParamInterface<
-          std::tr1::tuple<ValueState, ValueState, bool>> {
+          std::tuple<ValueState, ValueState, bool>> {
  protected:
   void SetUp() override {
     PreferenceValidationDelegateTest::SetUp();
-    value_state_ = std::tr1::get<0>(GetParam());
-    external_validation_value_state_ = std::tr1::get<1>(GetParam());
-    is_personal_ = std::tr1::get<2>(GetParam());
+    value_state_ = std::get<0>(GetParam());
+    external_validation_value_state_ = std::get<1>(GetParam());
+    is_personal_ = std::get<2>(GetParam());
   }
 
   ValueState value_state_;
@@ -256,7 +251,7 @@ class PreferenceValidationDelegateWithIncident
 
 TEST_P(PreferenceValidationDelegateWithIncident, Atomic) {
   instance_->OnAtomicPreferenceValidation(
-      kPrefPath, base::MakeUnique<base::Value>(), value_state_,
+      kPrefPath, base::make_optional<base::Value>(), value_state_,
       external_validation_value_state_, is_personal_);
   ASSERT_EQ(1U, incidents_.size());
   std::unique_ptr<safe_browsing::ClientIncidentReport_IncidentData> incident(
@@ -308,7 +303,7 @@ TEST_P(PreferenceValidationDelegateWithIncident, Split) {
                           tp_incident.value_state());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     WithIncident,
     PreferenceValidationDelegateWithIncident,
     testing::Combine(testing::Values(ValueState::CLEARED,
@@ -319,7 +314,7 @@ INSTANTIATE_TEST_CASE_P(
                                      ValueState::UNTRUSTED_UNKNOWN_VALUE),
                      testing::Bool()));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     WithBypassIncident,
     PreferenceValidationDelegateWithIncident,
     testing::Combine(testing::Values(ValueState::UNCHANGED,
@@ -328,7 +323,7 @@ INSTANTIATE_TEST_CASE_P(
                      testing::Values(ValueState::CHANGED, ValueState::CLEARED),
                      testing::Bool()));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     WithIncidentIgnoreBypass,
     PreferenceValidationDelegateWithIncident,
     testing::Combine(testing::Values(ValueState::CLEARED,

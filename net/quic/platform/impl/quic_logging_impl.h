@@ -6,6 +6,7 @@
 #define NET_QUIC_PLATFORM_IMPL_QUIC_LOGGING_IMPL_H_
 
 #include "base/logging.h"
+#include "net/base/net_export.h"
 
 #define QUIC_LOG_IMPL(severity) QUIC_CHROMIUM_LOG_##severity
 #define QUIC_VLOG_IMPL(verbose_level) VLOG(verbose_level)
@@ -42,6 +43,18 @@
 #define QUIC_CHROMIUM_DLOG_IF_DFATAL(condition) DLOG_IF(DFATAL, condition)
 
 #define QUIC_DVLOG_IMPL(verbose_level) DVLOG(verbose_level)
+#define QUIC_DVLOG_IF_IMPL(verbose_level, condition) \
+  DVLOG_IF(verbose_level, condition)
+
+#define QUIC_LOG_INFO_IS_ON_IMPL() 0
+#ifdef NDEBUG
+#define QUIC_LOG_WARNING_IS_ON_IMPL() 0
+#define QUIC_LOG_ERROR_IS_ON_IMPL() 0
+#else
+#define QUIC_LOG_WARNING_IS_ON_IMPL() 1
+#define QUIC_LOG_ERROR_IS_ON_IMPL() 1
+#endif
+#define QUIC_DLOG_INFO_IS_ON_IMPL() 0
 
 #if defined(OS_WIN)
 // wingdi.h defines ERROR to be 0. When we call QUIC_DLOG(ERROR), it gets
@@ -59,5 +72,19 @@
 #define QUIC_NOTREACHED_IMPL() NOTREACHED()
 
 #define QUIC_PLOG_IMPL(severity) DVLOG(1)
+
+namespace quic {
+template <typename T>
+NET_EXPORT_PRIVATE inline std::ostream& operator<<(std::ostream& out,
+                                                   const std::vector<T>& v) {
+  out << "[";
+  const char* sep = "";
+  for (size_t i = 0; i < v.size(); ++i) {
+    out << sep << v[i];
+    sep = ", ";
+  }
+  return out << "]";
+}
+}  // namespace quic
 
 #endif  // NET_QUIC_PLATFORM_IMPL_QUIC_LOGGING_IMPL_H_

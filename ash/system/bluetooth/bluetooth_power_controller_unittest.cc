@@ -5,11 +5,12 @@
 #include "ash/system/bluetooth/bluetooth_power_controller.h"
 
 #include "ash/public/cpp/ash_pref_names.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test_shell_delegate.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
@@ -57,10 +58,9 @@ class BluetoothPowerControllerTest : public NoSessionAshTestBase {
 
     BluetoothPowerController::RegisterProfilePrefs(
         active_user_prefs_.registry());
-    BluetoothPowerController::RegisterLocalStatePrefs(
-        local_state_prefs_.registry());
+    BluetoothPowerController::RegisterLocalStatePrefs(local_state_.registry());
 
-    GetController()->local_state_pref_service_ = &local_state_prefs_;
+    GetController()->local_state_ = &local_state_;
 
     SetupBluetoothAdapter();
   }
@@ -89,8 +89,22 @@ class BluetoothPowerControllerTest : public NoSessionAshTestBase {
     GetController()->ApplyBluetoothPrimaryUserPref();
   }
 
+  const base::queue<BluetoothPowerController::BluetoothTask>&
+  GetPendingBluetoothTasks() {
+    return GetController()->pending_bluetooth_tasks_;
+  }
+
+  // Pretends that the controller is busy doing bluetooth work. This is needed
+  // to test the behavior when multiple power change requests are queued when
+  // the controller is busy.
+  void SimulateControllerBusy(bool is_busy) {
+    GetController()->pending_tasks_busy_ = is_busy;
+    if (!is_busy)
+      GetController()->TriggerRunPendingBluetoothTasks();
+  }
+
   TestingPrefServiceSimple active_user_prefs_;
-  TestingPrefServiceSimple local_state_prefs_;
+  TestingPrefServiceSimple local_state_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BluetoothPowerControllerTest);
@@ -100,24 +114,21 @@ class BluetoothPowerControllerTest : public NoSessionAshTestBase {
 TEST_F(BluetoothPowerControllerTest, ToggleBluetoothEnabled) {
   // Toggling bluetooth on/off when there is no user session should affect
   // local state prefs.
-  EXPECT_FALSE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
-  GetController()->ToggleBluetoothEnabled();
-  EXPECT_TRUE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
-  GetController()->ToggleBluetoothEnabled();
-  EXPECT_FALSE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  EXPECT_FALSE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  GetController()->SetBluetoothEnabled(true);
+  EXPECT_TRUE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  GetController()->SetBluetoothEnabled(false);
+  EXPECT_FALSE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
 
   // Toggling bluetooth on/off when there is user session should affect
   // user prefs.
   AddUserSessionAndStartWatchingPrefsChanges(kUser1Email);
   EXPECT_FALSE(
       active_user_prefs_.GetBoolean(prefs::kUserBluetoothAdapterEnabled));
-  GetController()->ToggleBluetoothEnabled();
+  GetController()->SetBluetoothEnabled(true);
   EXPECT_TRUE(
       active_user_prefs_.GetBoolean(prefs::kUserBluetoothAdapterEnabled));
-  GetController()->ToggleBluetoothEnabled();
+  GetController()->SetBluetoothEnabled(false);
   EXPECT_FALSE(
       active_user_prefs_.GetBoolean(prefs::kUserBluetoothAdapterEnabled));
 }
@@ -129,15 +140,14 @@ TEST_F(BluetoothPowerControllerTest, ListensPrefChangesLocalState) {
 
   // Makes sure we start with bluetooth power off.
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
-  EXPECT_FALSE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  EXPECT_FALSE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
 
   // Power should be turned on when pref changes to enabled.
-  local_state_prefs_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, true);
+  local_state_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, true);
   EXPECT_TRUE(GetBluetoothAdapter()->IsPowered());
 
   // Power should be turned off when pref changes to disabled.
-  local_state_prefs_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, false);
+  local_state_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, false);
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 }
 
@@ -160,46 +170,71 @@ TEST_F(BluetoothPowerControllerTest, ListensPrefChangesActiveUser) {
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 }
 
+// Tests that BluetoothPowerController listens to multiple active user pref
+// changes and applies the changes to bluetooth device. The queued multiple
+// power change tasks shouldn't be executed all but rather only the last request
+// is executed.
+TEST_F(BluetoothPowerControllerTest, ListensPrefChangesLongQueue) {
+  AddUserSessionAndStartWatchingPrefsChanges(kUser1Email);
+
+  // Makes sure we start with bluetooth power off.
+  EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
+  EXPECT_FALSE(
+      active_user_prefs_.GetBoolean(prefs::kUserBluetoothAdapterEnabled));
+
+  // Multiple power change requests come in when the controller is busy.
+  SimulateControllerBusy(true);
+  active_user_prefs_.SetBoolean(prefs::kUserBluetoothAdapterEnabled, true);
+  active_user_prefs_.SetBoolean(prefs::kUserBluetoothAdapterEnabled, false);
+  active_user_prefs_.SetBoolean(prefs::kUserBluetoothAdapterEnabled, true);
+  active_user_prefs_.SetBoolean(prefs::kUserBluetoothAdapterEnabled, false);
+  active_user_prefs_.SetBoolean(prefs::kUserBluetoothAdapterEnabled, true);
+
+  // The controller should execute only the last request.
+  EXPECT_EQ(1u, GetPendingBluetoothTasks().size());
+  // Flush the queue to be executed.
+  SimulateControllerBusy(false);
+  // The power state should represent the last request in the queue.
+  EXPECT_TRUE(GetBluetoothAdapter()->IsPowered());
+}
+
 // Tests how BluetoothPowerController applies the local state pref when
 // the pref hasn't been set before.
 TEST_F(BluetoothPowerControllerTest, ApplyBluetoothLocalStatePrefDefault) {
   // Makes sure pref hasn't been set before.
   EXPECT_TRUE(
-      local_state_prefs_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
+      local_state_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power on.
-  GetBluetoothAdapter()->SetPowered(true, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(true, base::DoNothing(), base::DoNothing());
   EXPECT_TRUE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothLocalStatePref();
 
   // Pref should now contain the current bluetooth adapter state (on).
   EXPECT_FALSE(
-      local_state_prefs_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
+      local_state_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
           ->IsDefaultValue());
-  EXPECT_TRUE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  EXPECT_TRUE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
 }
 
 // Tests how BluetoothPowerController applies the local state pref when
 // the pref has been set before.
 TEST_F(BluetoothPowerControllerTest, ApplyBluetoothLocalStatePrefOn) {
   // Set the pref to true.
-  local_state_prefs_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, true);
+  local_state_.SetBoolean(prefs::kSystemBluetoothAdapterEnabled, true);
   EXPECT_FALSE(
-      local_state_prefs_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
+      local_state_.FindPreference(prefs::kSystemBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power off.
-  GetBluetoothAdapter()->SetPowered(false, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(false, base::DoNothing(),
+                                    base::DoNothing());
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothLocalStatePref();
 
   // Bluetooth power setting should be applied (on), and pref value unchanged.
-  EXPECT_TRUE(
-      local_state_prefs_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
+  EXPECT_TRUE(local_state_.GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
   EXPECT_TRUE(GetBluetoothAdapter()->IsPowered());
 }
 
@@ -213,8 +248,8 @@ TEST_F(BluetoothPowerControllerTest, ApplyBluetoothPrimaryUserPrefDefault) {
       active_user_prefs_.FindPreference(prefs::kUserBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power off.
-  GetBluetoothAdapter()->SetPowered(false, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(false, base::DoNothing(),
+                                    base::DoNothing());
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothPrimaryUserPref();
@@ -238,8 +273,8 @@ TEST_F(BluetoothPowerControllerTest, ApplyBluetoothPrimaryUserPrefDefaultNew) {
       active_user_prefs_.FindPreference(prefs::kUserBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power off.
-  GetBluetoothAdapter()->SetPowered(false, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(false, base::DoNothing(),
+                                    base::DoNothing());
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothPrimaryUserPref();
@@ -265,8 +300,8 @@ TEST_F(BluetoothPowerControllerTest, ApplyBluetoothKioskUserPrefDefault) {
       active_user_prefs_.FindPreference(prefs::kUserBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power off.
-  GetBluetoothAdapter()->SetPowered(false, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(false, base::DoNothing(),
+                                    base::DoNothing());
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothPrimaryUserPref();
@@ -292,8 +327,8 @@ TEST_F(BluetoothPowerControllerTest, ApplyBluetoothPrimaryUserPrefOn) {
       active_user_prefs_.FindPreference(prefs::kUserBluetoothAdapterEnabled)
           ->IsDefaultValue());
   // Start with bluetooth power off.
-  GetBluetoothAdapter()->SetPowered(false, base::Bind(&base::DoNothing),
-                                    base::Bind(&base::DoNothing));
+  GetBluetoothAdapter()->SetPowered(false, base::DoNothing(),
+                                    base::DoNothing());
   EXPECT_FALSE(GetBluetoothAdapter()->IsPowered());
 
   ApplyBluetoothPrimaryUserPref();
@@ -315,11 +350,11 @@ TEST_F(BluetoothPowerControllerIntegrationTest, Basics) {
   device::BluetoothAdapter* adapter = GetBluetoothAdapter();
 
   // Verify toggling bluetooth before login.
-  PrefService* local_state = Shell::Get()->GetLocalStatePrefService();
-  GetController()->ToggleBluetoothEnabled();
+  PrefService* local_state = ash_test_helper()->GetLocalStatePrefService();
+  GetController()->SetBluetoothEnabled(true);
   EXPECT_TRUE(local_state->GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
   EXPECT_TRUE(adapter->IsPowered());
-  GetController()->ToggleBluetoothEnabled();
+  GetController()->SetBluetoothEnabled(false);
   EXPECT_FALSE(local_state->GetBoolean(prefs::kSystemBluetoothAdapterEnabled));
   EXPECT_FALSE(adapter->IsPowered());
 
@@ -327,10 +362,10 @@ TEST_F(BluetoothPowerControllerIntegrationTest, Basics) {
   SimulateUserLogin(kUser1Email);
   PrefService* user_prefs =
       Shell::Get()->session_controller()->GetLastActiveUserPrefService();
-  GetController()->ToggleBluetoothEnabled();
+  GetController()->SetBluetoothEnabled(true);
   EXPECT_TRUE(user_prefs->GetBoolean(prefs::kUserBluetoothAdapterEnabled));
   EXPECT_TRUE(adapter->IsPowered());
-  GetController()->ToggleBluetoothEnabled();
+  GetController()->SetBluetoothEnabled(false);
   EXPECT_FALSE(user_prefs->GetBoolean(prefs::kUserBluetoothAdapterEnabled));
   EXPECT_FALSE(adapter->IsPowered());
 }

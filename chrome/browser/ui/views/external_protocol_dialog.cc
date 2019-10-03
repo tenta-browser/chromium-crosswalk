@@ -12,11 +12,10 @@
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/external_protocol_dialog_delegate.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/base/ui_features.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/label.h"
@@ -25,32 +24,39 @@
 
 using content::WebContents;
 
-#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
-// This should be kept in sync with RunExternalProtocolDialogViews in
-// external_protocol_dialog_views_mac.mm.
 // static
 void ExternalProtocolHandler::RunExternalProtocolDialog(
-    const GURL& url, int render_process_host_id, int routing_id,
-    ui::PageTransition page_transition, bool has_user_gesture) {
+    const GURL& url,
+    WebContents* web_contents,
+    ui::PageTransition page_transition,
+    bool has_user_gesture) {
+  DCHECK(web_contents);
   std::unique_ptr<ExternalProtocolDialogDelegate> delegate(
-      new ExternalProtocolDialogDelegate(url, render_process_host_id,
-                                         routing_id));
+      new ExternalProtocolDialogDelegate(url, web_contents));
   if (delegate->program_name().empty()) {
     // ShellExecute won't do anything. Don't bother warning the user.
     return;
   }
 
   // Windowing system takes ownership.
-  new ExternalProtocolDialog(std::move(delegate), render_process_host_id,
-                             routing_id);
+  new ExternalProtocolDialog(std::move(delegate), web_contents);
 }
-#endif  // !OS_MACOSX || MAC_VIEWS_BROWSER
 
-ExternalProtocolDialog::~ExternalProtocolDialog() {}
+ExternalProtocolDialog::~ExternalProtocolDialog() {
+  delete remember_decision_checkbox_;
+}
 
 gfx::Size ExternalProtocolDialog::CalculatePreferredSize() const {
   constexpr int kDialogContentWidth = 400;
   return gfx::Size(kDialogContentWidth, GetHeightForWidth(kDialogContentWidth));
+}
+
+bool ExternalProtocolDialog::ShouldShowCloseButton() const {
+  return false;
+}
+
+int ExternalProtocolDialog::GetDefaultDialogButton() const {
+  return ui::DIALOG_BUTTON_CANCEL;
 }
 
 base::string16 ExternalProtocolDialog::GetDialogButtonLabel(
@@ -77,7 +83,7 @@ bool ExternalProtocolDialog::Accept() {
   UMA_HISTOGRAM_LONG_TIMES("clickjacking.launch_url",
                            base::TimeTicks::Now() - creation_time_);
 
-  const bool remember = remember_decision_checkbox_->checked();
+  const bool remember = remember_decision_checkbox_->GetChecked();
   ExternalProtocolHandler::RecordHandleStateMetrics(
       remember, ExternalProtocolHandler::DONT_BLOCK);
 
@@ -93,28 +99,23 @@ ui::ModalType ExternalProtocolDialog::GetModalType() const {
 
 ExternalProtocolDialog::ExternalProtocolDialog(
     std::unique_ptr<const ProtocolDialogDelegate> delegate,
-    int render_process_host_id,
-    int routing_id)
-    : delegate_(std::move(delegate)),
-      render_process_host_id_(render_process_host_id),
-      routing_id_(routing_id),
-      creation_time_(base::TimeTicks::Now()) {
+    WebContents* web_contents)
+    : delegate_(std::move(delegate)), creation_time_(base::TimeTicks::Now()) {
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   set_margins(
-      provider->GetDialogInsetsForContentType(views::CONTROL, views::CONTROL));
+      provider->GetDialogInsetsForContentType(views::TEXT, views::TEXT));
 
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   DCHECK(delegate_->GetMessageText().empty());
   remember_decision_checkbox_ =
       new views::Checkbox(delegate_->GetCheckboxText());
-  AddChildView(remember_decision_checkbox_);
+  remember_decision_checkbox_->SetChecked(false);
 
-  WebContents* web_contents = tab_util::GetWebContentsByID(
-      render_process_host_id_, routing_id_);
-  // Only launch the dialog if there is a web contents associated with the
-  // request.
-  if (web_contents)
-    constrained_window::ShowWebModalDialogViews(this, web_contents);
+  // TODO(982341): We intentionally don't add |remember_decision_checkbox_| to
+  // the dialog, as we're reevaluating whether we actually want persistence
+  // for this mechanism going forward.
+
+  constrained_window::ShowWebModalDialogViews(this, web_contents);
   chrome::RecordDialogCreation(chrome::DialogIdentifier::EXTERNAL_PROTOCOL);
 }

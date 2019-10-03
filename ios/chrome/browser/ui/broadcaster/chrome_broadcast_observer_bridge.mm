@@ -23,8 +23,16 @@ ChromeBroadcastObserverInterface::~ChromeBroadcastObserverInterface() = default;
   return self;
 }
 
-- (void)broadcastTabStripVisible:(BOOL)visible {
-  self.observer->OnTabStripVisbibleBroadcasted(visible);
+- (void)broadcastScrollViewSize:(CGSize)scrollViewSize {
+  self.observer->OnScrollViewSizeBroadcasted(scrollViewSize);
+}
+
+- (void)broadcastScrollViewContentSize:(CGSize)contentSize {
+  self.observer->OnScrollViewContentSizeBroadcasted(contentSize);
+}
+
+- (void)broadcastScrollViewContentInset:(UIEdgeInsets)contentInset {
+  self.observer->OnScrollViewContentInsetBroadcasted(contentInset);
 }
 
 - (void)broadcastContentScrollOffset:(CGFloat)offset {
@@ -35,12 +43,24 @@ ChromeBroadcastObserverInterface::~ChromeBroadcastObserverInterface() = default;
   self.observer->OnScrollViewIsScrollingBroadcasted(scrolling);
 }
 
+- (void)broadcastScrollViewIsZooming:(BOOL)zooming {
+  self.observer->OnScrollViewIsZoomingBroadcasted(zooming);
+}
+
 - (void)broadcastScrollViewIsDragging:(BOOL)dragging {
   self.observer->OnScrollViewIsDraggingBroadcasted(dragging);
 }
 
-- (void)broadcastToolbarHeight:(CGFloat)height {
-  self.observer->OnToolbarHeightBroadcasted(height);
+- (void)broadcastCollapsedToolbarHeight:(CGFloat)height {
+  self.observer->OnCollapsedToolbarHeightBroadcasted(height);
+}
+
+- (void)broadcastExpandedToolbarHeight:(CGFloat)height {
+  self.observer->OnExpandedToolbarHeightBroadcasted(height);
+}
+
+- (void)broadcastBottomToolbarHeight:(CGFloat)height {
+  self.observer->OnBottomToolbarHeightBroadcasted(height);
 }
 
 @end

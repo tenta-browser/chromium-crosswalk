@@ -5,10 +5,9 @@
 #import "ios/chrome/browser/ui/payments/contact_info_selection_coordinator.h"
 
 #include "base/mac/foundation_util.h"
-#include "base/test/ios/wait_util.h"
-
-#include "components/autofill/core/browser/autofill_profile.h"
+#import "base/test/ios/wait_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #import "ios/chrome/browser/payments/payment_request_unittest_base.h"
 #import "ios/chrome/browser/ui/payments/payment_request_selector_view_controller.h"
@@ -29,8 +28,10 @@ class PaymentRequestContactInfoSelectionCoordinatorTest
     : public PaymentRequestUnitTestBase,
       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     // One profile is incomplete.
     AddAutofillProfile(autofill::test::GetFullProfile());
@@ -39,7 +40,11 @@ class PaymentRequestContactInfoSelectionCoordinatorTest
     CreateTestPaymentRequest();
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 };
 
 // Tests that invoking start and stop on the coordinator presents and dismisses

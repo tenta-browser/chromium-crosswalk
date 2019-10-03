@@ -4,20 +4,18 @@
 
 #include "components/sync/engine_impl/conflict_resolver.h"
 
-#include <list>
 #include <string>
 
 #include "base/metrics/histogram_macros.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/engine/cycle/update_counters.h"
 #include "components/sync/engine_impl/conflict_util.h"
 #include "components/sync/engine_impl/cycle/status_controller.h"
 #include "components/sync/engine_impl/syncer_util.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/mutable_entry.h"
 #include "components/sync/syncable/syncable_write_transaction.h"
 
-using std::list;
 using std::set;
 
 namespace syncer {
@@ -26,46 +24,12 @@ using syncable::Directory;
 using syncable::Entry;
 using syncable::Id;
 using syncable::MutableEntry;
-using syncable::WriteTransaction;
-
-namespace {
-
-// Returns true iff the set of attachment ids contained in attachment_metadata
-// matches the set of ids contained in server_attachment_metadata.
-bool AttachmentMetadataMatches(const MutableEntry& entity) {
-  const sync_pb::AttachmentMetadata& local = entity.GetAttachmentMetadata();
-  const sync_pb::AttachmentMetadata& server =
-      entity.GetServerAttachmentMetadata();
-  if (local.record_size() != server.record_size()) {
-    return false;
-  }
-
-  // The order of records in local and server may be different so use a std::set
-  // to determine if they are equivalent.
-  std::set<std::string> local_ids;
-  for (int i = 0; i < local.record_size(); ++i) {
-    const sync_pb::AttachmentMetadataRecord& record = local.record(i);
-    DCHECK(record.is_on_server());
-    local_ids.insert(record.id().SerializeAsString());
-  }
-  for (int i = 0; i < server.record_size(); ++i) {
-    const sync_pb::AttachmentMetadataRecord& record = server.record(i);
-    DCHECK(record.is_on_server());
-    if (local_ids.find(record.id().SerializeAsString()) == local_ids.end()) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-}  // namespace
 
 ConflictResolver::ConflictResolver() {}
 
 ConflictResolver::~ConflictResolver() {}
 
-void ConflictResolver::ProcessSimpleConflict(WriteTransaction* trans,
+void ConflictResolver::ProcessSimpleConflict(syncable::WriteTransaction* trans,
                                              const Id& id,
                                              const Cryptographer* cryptographer,
                                              StatusController* status,
@@ -149,8 +113,9 @@ void ConflictResolver::ProcessSimpleConflict(WriteTransaction* trans,
     bool server_encrypted_with_default_key = false;
     if (specifics.has_encrypted()) {
       DCHECK(cryptographer->CanDecryptUsingDefaultKey(specifics.encrypted()));
-      decrypted_specifics =
-          cryptographer->DecryptToString(specifics.encrypted());
+      // TODO(crbug.com/908391): what if the decryption below fails?
+      cryptographer->DecryptToString(specifics.encrypted(),
+                                     &decrypted_specifics);
     } else {
       decrypted_specifics = specifics.SerializeAsString();
     }
@@ -158,8 +123,9 @@ void ConflictResolver::ProcessSimpleConflict(WriteTransaction* trans,
       server_encrypted_with_default_key =
           cryptographer->CanDecryptUsingDefaultKey(
               server_specifics.encrypted());
-      decrypted_server_specifics =
-          cryptographer->DecryptToString(server_specifics.encrypted());
+      // TODO(crbug.com/908391): what if the decryption below fails?
+      cryptographer->DecryptToString(server_specifics.encrypted(),
+                                     &decrypted_server_specifics);
     } else {
       decrypted_server_specifics = server_specifics.SerializeAsString();
     }
@@ -175,16 +141,16 @@ void ConflictResolver::ProcessSimpleConflict(WriteTransaction* trans,
         decrypted_base_server_specifics =
             base_server_specifics.SerializeAsString();
       } else {
-        decrypted_base_server_specifics =
-            cryptographer->DecryptToString(base_server_specifics.encrypted());
+        // TODO(crbug.com/908391): what if the decryption below fails?
+        cryptographer->DecryptToString(base_server_specifics.encrypted(),
+                                       &decrypted_base_server_specifics);
       }
       if (decrypted_server_specifics == decrypted_base_server_specifics)
         base_server_specifics_match = true;
     }
 
-    bool attachment_metadata_matches = AttachmentMetadataMatches(entry);
     if (!entry_deleted && name_matches && parent_matches && specifics_match &&
-        position_matches && attachment_metadata_matches) {
+        position_matches) {
       DVLOG(1) << "Resolving simple conflict, everything matches, ignoring "
                << "changes for: " << entry;
       conflict_util::IgnoreConflict(&entry);
@@ -210,6 +176,9 @@ void ConflictResolver::ProcessSimpleConflict(WriteTransaction* trans,
                << "for: " << entry;
       UMA_HISTOGRAM_ENUMERATION("Sync.ResolveSimpleConflict", OVERWRITE_SERVER,
                                 CONFLICT_RESOLUTION_SIZE);
+      // TODO(crbug.com/890746): It seems like local deletion can override a
+      // remote update, which goes against the usual spirit of undeletion-wins,
+      // and differs from the USS logic.
     } else {
       DVLOG(1) << "Resolving simple conflict, ignoring local changes for: "
                << entry;

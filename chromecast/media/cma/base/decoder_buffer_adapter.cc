@@ -24,7 +24,7 @@ DecoderBufferAdapter::DecoderBufferAdapter(
 
   const ::media::DecryptConfig* decrypt_config =
       buffer_->end_of_stream() ? nullptr : buffer_->decrypt_config();
-  if (decrypt_config && decrypt_config->is_encrypted()) {
+  if (decrypt_config) {
     std::vector<SubsampleEntry> subsamples;
     for (const auto& sample : decrypt_config->subsamples()) {
       subsamples.emplace_back(sample.clear_bytes, sample.cypher_bytes);
@@ -35,8 +35,17 @@ DecoderBufferAdapter::DecoderBufferAdapter(
       // consistent backend handling.
       subsamples.emplace_back(0, buffer_->data_size());
     }
+
+    EncryptionPattern pattern;
+    if (decrypt_config->encryption_pattern()) {
+      pattern = EncryptionPattern(
+          decrypt_config->encryption_pattern()->crypt_byte_block(),
+          decrypt_config->encryption_pattern()->skip_byte_block());
+    }
+
     decrypt_config_.reset(new CastDecryptConfigImpl(
-        decrypt_config->key_id(), decrypt_config->iv(), std::move(subsamples)));
+        decrypt_config->key_id(), decrypt_config->iv(), pattern,
+        std::move(subsamples)));
   }
 }
 

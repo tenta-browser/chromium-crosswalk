@@ -5,8 +5,6 @@
 #include "content/common/swapped_out_messages.h"
 
 #include "content/common/accessibility_messages.h"
-#include "content/common/frame_messages.h"
-#include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_client.h"
 
@@ -17,18 +15,12 @@ bool SwappedOutMessages::CanSendWhileSwappedOut(const IPC::Message* msg) {
   // important (e.g., ACKs) for keeping the browser and renderer state
   // consistent in case we later return to the same renderer.
   switch (msg->type()) {
-    // Handled by RenderWidgetHost.
-    case InputHostMsg_HandleInputEvent_ACK::ID:
-    case ViewHostMsg_ResizeOrRepaint_ACK::ID:
-    // Handled by RenderWidgetHostView.
-    case ViewHostMsg_SetNeedsBeginFrames::ID:
     // Handled by RenderViewHost.
-    case FrameHostMsg_RenderProcessGone::ID:
     case ViewHostMsg_ClosePage_ACK::ID:
     case ViewHostMsg_Focus::ID:
     case ViewHostMsg_ShowFullscreenWidget::ID:
     case ViewHostMsg_ShowWidget::ID:
-    // Allow cross-process JavaScript calls.
+    case ViewHostMsg_UpdateTargetURL::ID:
     case ViewHostMsg_RouteCloseEvent::ID:
     // Send page scale factor reset notification upon cross-process navigations.
     case ViewHostMsg_PageScaleFactorChanged::ID:
@@ -56,13 +48,7 @@ bool SwappedOutMessages::CanHandleWhileSwappedOut(
   // error reply instead, to avoid leaving the renderer in a stuck state.
   switch (msg.type()) {
     // Sends an ACK.
-    case ViewHostMsg_UpdateTargetURL::ID:
-    // We allow closing even if we are in the process of swapping out.
-    case ViewHostMsg_Close::ID:
-    // Sends an ACK.
-    case ViewHostMsg_RequestMove::ID:
-    // Sends an ACK.
-    case AccessibilityHostMsg_Events::ID:
+    case AccessibilityHostMsg_EventBundle::ID:
       return true;
     default:
       break;

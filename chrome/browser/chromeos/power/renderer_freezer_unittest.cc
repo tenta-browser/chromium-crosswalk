@@ -11,18 +11,15 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "chromeos/dbus/power_manager/suspend.pb.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -132,17 +129,17 @@ class TestDelegate : public RendererFreezer::Delegate, public ActionRecorder {
 
 class RendererFreezerTest : public testing::Test {
  public:
-  RendererFreezerTest()
-      : power_manager_client_(new FakePowerManagerClient()),
-        test_delegate_(new TestDelegate()) {
-    DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        std::unique_ptr<PowerManagerClient>(power_manager_client_));
-  }
+  RendererFreezerTest() : test_delegate_(new TestDelegate()) {}
 
-  ~RendererFreezerTest() override {
+  ~RendererFreezerTest() override = default;
+
+  // testing::Test:
+  void SetUp() override { PowerManagerClient::InitializeFake(); }
+
+  void TearDown() override {
+    DCHECK(renderer_freezer_);
+    PowerManagerClient::Shutdown();
     renderer_freezer_.reset();
-
-    DBusThreadManager::Shutdown();
   }
 
  protected:
@@ -150,9 +147,6 @@ class RendererFreezerTest : public testing::Test {
     renderer_freezer_.reset(new RendererFreezer(
         std::unique_ptr<RendererFreezer::Delegate>(test_delegate_)));
   }
-
-  // Owned by DBusThreadManager.
-  FakePowerManagerClient* power_manager_client_;
 
   // Owned by |renderer_freezer_|.
   TestDelegate* test_delegate_;
@@ -169,12 +163,12 @@ class RendererFreezerTest : public testing::Test {
 TEST_F(RendererFreezerTest, SuspendResume) {
   Init();
 
-  power_manager_client_->SendSuspendImminent(
+  FakePowerManagerClient::Get()->SendSuspendImminent(
       power_manager::SuspendImminent_Reason_OTHER);
   EXPECT_EQ(kFreezeRenderers, test_delegate_->GetActions());
 
   // The renderers should be thawed when we resume.
-  power_manager_client_->SendSuspendDone();
+  FakePowerManagerClient::Get()->SendSuspendDone();
   EXPECT_EQ(kThawRenderers, test_delegate_->GetActions());
 }
 
@@ -185,12 +179,12 @@ TEST_F(RendererFreezerTest, DelegateCannotFreezeRenderers) {
   Init();
 
   // Nothing happens on suspend.
-  power_manager_client_->SendSuspendImminent(
+  FakePowerManagerClient::Get()->SendSuspendImminent(
       power_manager::SuspendImminent_Reason_OTHER);
   EXPECT_EQ(kNoActions, test_delegate_->GetActions());
 
   // Nothing happens on resume.
-  power_manager_client_->SendSuspendDone();
+  FakePowerManagerClient::Get()->SendSuspendDone();
   EXPECT_EQ(kNoActions, test_delegate_->GetActions());
 }
 
@@ -205,11 +199,12 @@ TEST_F(RendererFreezerTest, ErrorThawingRenderers) {
   Init();
   test_delegate_->set_thaw_renderers_result(false);
 
-  power_manager_client_->SendSuspendImminent(
+  FakePowerManagerClient::Get()->SendSuspendImminent(
       power_manager::SuspendImminent_Reason_OTHER);
   EXPECT_EQ(kFreezeRenderers, test_delegate_->GetActions());
 
-  EXPECT_DEATH(power_manager_client_->SendSuspendDone(), "Unable to thaw");
+  EXPECT_DEATH(FakePowerManagerClient::Get()->SendSuspendDone(),
+               "Unable to thaw");
 }
 #endif  // GTEST_HAS_DEATH_TEST
 
@@ -253,14 +248,14 @@ class RendererFreezerTestWithExtensions : public RendererFreezerTest {
   }
 
  protected:
-  void CreateRenderProcessForExtension(extensions::Extension* extension) {
+  void CreateRenderProcessForExtension(const extensions::Extension* extension) {
     std::unique_ptr<content::MockRenderProcessHostFactory> rph_factory(
         new content::MockRenderProcessHostFactory());
     scoped_refptr<content::SiteInstance> site_instance(
         extensions::ProcessManager::Get(profile_)->GetSiteInstanceForURL(
             extensions::BackgroundInfo::GetBackgroundURL(extension)));
     std::unique_ptr<content::RenderProcessHost> rph(
-        rph_factory->CreateRenderProcessHost(profile_));
+        rph_factory->CreateRenderProcessHost(profile_, site_instance.get()));
 
     // Fake that the RenderProcessHost is hosting the gcm app.
     extensions::ProcessMap::Get(profile_)
@@ -278,10 +273,8 @@ class RendererFreezerTestWithExtensions : public RendererFreezerTest {
   std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:
-  // Chrome OS needs extra services to run in the following order.
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
-  chromeos::ScopedTestUserManager test_user_manager_;
+  // Chrome OS needs the CrosSettings test helper.
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererFreezerTestWithExtensions);
 };
@@ -297,7 +290,7 @@ TEST_F(RendererFreezerTestWithExtensions, FreezesNonExtensionRenderers) {
   scoped_refptr<content::SiteInstance> site_instance(
       content::SiteInstance::Create(profile_));
   std::unique_ptr<content::RenderProcessHost> rph(
-      rph_factory->CreateRenderProcessHost(profile_));
+      rph_factory->CreateRenderProcessHost(profile_, site_instance.get()));
 
   // Send the notification that the RenderProcessHost has been created.
   content::NotificationService::current()->Notify(
@@ -314,7 +307,7 @@ TEST_F(RendererFreezerTestWithExtensions, DoesNotFreezeGcmExtensionRenderers) {
   Init();
 
   // First build the GCM extension.
-  scoped_refptr<extensions::Extension> gcm_app =
+  scoped_refptr<const extensions::Extension> gcm_app =
       extensions::ExtensionBuilder()
           .SetManifest(
               extensions::DictionaryBuilder()
@@ -350,7 +343,7 @@ TEST_F(RendererFreezerTestWithExtensions, FreezesNonGcmExtensionRenderers) {
   Init();
 
   // First build the extension.
-  scoped_refptr<extensions::Extension> background_app =
+  scoped_refptr<const extensions::Extension> background_app =
       extensions::ExtensionBuilder()
           .SetManifest(
               extensions::DictionaryBuilder()

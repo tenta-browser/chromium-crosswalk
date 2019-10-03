@@ -6,15 +6,16 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/interstitials/enterprise_util.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/ping_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_blocking_page.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/tab_contents/tab_util.h"
@@ -23,6 +24,8 @@
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/browser/threat_details.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/features.h"
+#include "components/safe_browsing/ping_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
@@ -44,15 +47,15 @@ namespace safe_browsing {
 
 SafeBrowsingUIManager::SafeBrowsingUIManager(
     const scoped_refptr<SafeBrowsingService>& service)
-    : sb_service_(service) {}
+    : BaseUIManager(), sb_service_(service) {}
 
 SafeBrowsingUIManager::~SafeBrowsingUIManager() {}
 
-void SafeBrowsingUIManager::StopOnIOThread(bool shutdown) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+void SafeBrowsingUIManager::Stop(bool shutdown) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (shutdown)
-    sb_service_ = NULL;
+    sb_service_ = nullptr;
 }
 
 void SafeBrowsingUIManager::CreateAndSendHitReport(
@@ -103,11 +106,15 @@ void SafeBrowsingUIManager::ShowBlockingPageForResource(
   SafeBrowsingBlockingPage::ShowBlockingPage(this, resource);
 }
 
+bool SafeBrowsingUIManager::SafeBrowsingInterstitialsAreCommittedNavigations() {
+  return base::FeatureList::IsEnabled(kCommittedSBInterstitials);
+}
+
 // static
-bool SafeBrowsingUIManager::ShouldSendHitReport(
-    const HitReport& hit_report,
-    const WebContents* web_contents) {
-  return hit_report.extended_reporting_level != SBER_LEVEL_OFF &&
+bool SafeBrowsingUIManager::ShouldSendHitReport(const HitReport& hit_report,
+                                                WebContents* web_contents) {
+  return web_contents &&
+         hit_report.extended_reporting_level != SBER_LEVEL_OFF &&
          !web_contents->GetBrowserContext()->IsOffTheRecord();
 }
 
@@ -116,22 +123,13 @@ bool SafeBrowsingUIManager::ShouldSendHitReport(
 // extended-reporting users.
 void SafeBrowsingUIManager::MaybeReportSafeBrowsingHit(
     const HitReport& hit_report,
-    const WebContents* web_contents) {
+    WebContents* web_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // Send report if user opted-in to extended reporting and is not in
   //  incognito mode.
-  if (ShouldSendHitReport(hit_report, web_contents)) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&SafeBrowsingUIManager::ReportSafeBrowsingHitOnIOThread,
-                       this, hit_report));
-  }
-}
-
-void SafeBrowsingUIManager::ReportSafeBrowsingHitOnIOThread(
-    const HitReport& hit_report) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (!ShouldSendHitReport(hit_report, web_contents))
+    return;
 
   // The service may delete the ping manager (i.e. when user disabling service,
   // etc). This happens on the IO thread.
@@ -142,15 +140,6 @@ void SafeBrowsingUIManager::ReportSafeBrowsingHitOnIOThread(
            << hit_report.page_url << " " << hit_report.referrer_url << " "
            << hit_report.is_subresource << " " << hit_report.threat_type;
   sb_service_->ping_manager()->ReportSafeBrowsingHit(hit_report);
-}
-
-void SafeBrowsingUIManager::ReportPermissionAction(
-    const PermissionReportInfo& report_info) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&SafeBrowsingUIManager::ReportPermissionActionOnIOThread,
-                     this, report_info));
 }
 
 // Static.
@@ -187,23 +176,11 @@ const GURL SafeBrowsingUIManager::default_safe_page() const {
   return GURL(chrome::kChromeUINewTabURL);
 }
 
-void SafeBrowsingUIManager::ReportPermissionActionOnIOThread(
-    const PermissionReportInfo& report_info) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  // The service may delete the ping manager (i.e. when user disabling service,
-  // etc). This happens on the IO thread.
-  if (!sb_service_ || !sb_service_->ping_manager())
-    return;
-
-  sb_service_->ping_manager()->ReportPermissionAction(report_info);
-}
-
 // If the user had opted-in to send ThreatDetails, this gets called
 // when the report is ready.
 void SafeBrowsingUIManager::SendSerializedThreatDetails(
     const std::string& serialized) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // The service may delete the ping manager (i.e. when user disabling service,
   // etc). This happens on the IO thread.
@@ -216,6 +193,20 @@ void SafeBrowsingUIManager::SendSerializedThreatDetails(
   }
 }
 
+void SafeBrowsingUIManager::OnBlockingPageDone(
+    const std::vector<UnsafeResource>& resources,
+    bool proceed,
+    content::WebContents* web_contents,
+    const GURL& main_frame_url) {
+  BaseUIManager::OnBlockingPageDone(resources, proceed, web_contents,
+                                    main_frame_url);
+  if (proceed && !resources.empty()) {
+    MaybeTriggerSecurityInterstitialProceededEvent(
+        web_contents, main_frame_url,
+        GetThreatTypeStringForInterstitial(resources[0].threat_type),
+        /*net_error_code=*/0);
+  }
+}
 // Static.
 GURL SafeBrowsingUIManager::GetMainFrameWhitelistUrlForResourceForTesting(
     const security_interstitials::UnsafeResource& resource) {

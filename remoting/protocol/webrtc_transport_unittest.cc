@@ -6,10 +6,12 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "net/base/io_buffer.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -147,7 +149,9 @@ class TestMessagePipeEventHandler : public MessagePipe::EventHandler {
 
 class WebrtcTransportTest : public testing::Test {
  public:
-  WebrtcTransportTest() {
+  WebrtcTransportTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::IO) {
     jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
     network_settings_ =
         NetworkSettings(NetworkSettings::NAT_TRAVERSAL_OUTGOING);
@@ -164,14 +168,14 @@ class WebrtcTransportTest : public testing::Test {
 
   void ProcessTransportInfo(std::unique_ptr<WebrtcTransport>* target_transport,
                             bool normalize_line_endings,
-                            std::unique_ptr<buzz::XmlElement> transport_info) {
+                            std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
     ASSERT_TRUE(target_transport);
 
     // Reformat the message to normalize line endings by removing CR symbol.
     if (normalize_line_endings) {
       std::string xml = transport_info->Str();
       base::ReplaceChars(xml, "\r", std::string(), &xml);
-      transport_info.reset(buzz::XmlElement::ForStr(xml));
+      transport_info.reset(jingle_xmpp::XmlElement::ForStr(xml));
     }
 
     EXPECT_TRUE(
@@ -196,8 +200,8 @@ class WebrtcTransportTest : public testing::Test {
   }
 
   void StartConnection() {
-    host_event_handler_.set_connected_callback(base::Bind(&base::DoNothing));
-    client_event_handler_.set_connected_callback(base::Bind(&base::DoNothing));
+    host_event_handler_.set_connected_callback(base::DoNothing());
+    client_event_handler_.set_connected_callback(base::DoNothing());
 
     host_event_handler_.set_error_callback(
         base::Bind(&WebrtcTransportTest::OnSessionError, base::Unretained(this),
@@ -293,7 +297,7 @@ class WebrtcTransportTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoopForIO message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
 
   NetworkSettings network_settings_;

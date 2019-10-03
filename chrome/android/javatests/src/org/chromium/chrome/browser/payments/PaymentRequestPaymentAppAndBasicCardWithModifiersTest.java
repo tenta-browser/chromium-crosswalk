@@ -14,10 +14,13 @@ import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.ENABLE
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.HAVE_INSTRUMENTS;
 import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.IMMEDIATE_RESPONSE;
 
-import android.graphics.drawable.ColorDrawable;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.drawable.BitmapDrawable;
 import android.support.test.filters.MediumTest;
 
 import org.junit.Before;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -25,17 +28,18 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
 import org.chromium.payments.mojom.BasicCardNetwork;
 import org.chromium.payments.mojom.BasicCardType;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -43,12 +47,14 @@ import java.util.concurrent.TimeoutException;
  * modifiers.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
         ENABLE_EXPERIMENTAL_WEB_PLATFORM_FEATURES, ENABLE_WEB_PAYMENTS_MODIFIERS,
-})
+        "enable-features=" + ChromeFeatureList.WEB_PAYMENTS_RETURN_GOOGLE_PAY_IN_BASIC_CARD})
 public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule = new PaymentRequestTestRule(
             "payment_request_bobpay_and_basic_card_with_modifiers_test.html");
@@ -71,7 +77,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithBobPayModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Mastercard card with complete set of information and unknown type.
         mHelper.setCreditCard(new CreditCard("", "https://example.com", true /* isLocal */,
                 true /* isCached */, "Jon Doe", "5555555555554444", "" /* obfuscatedNumber */, "12",
@@ -100,7 +106,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithCreditModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Credit mastercard card with complete set of information.
         mHelper.addServerCreditCard(new CreditCard("guid_1", "https://example.com",
                 false /* isLocal */, true /* isCached */, "Jon Doe", "5454545454545454",
@@ -135,7 +141,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithDebitModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Debit mastercard card with complete set of information.
         mHelper.addServerCreditCard(new CreditCard("guid_1", "https://example.com",
                 false /* isLocal */, true /* isCached */, "Jon Doe", "5200828282828210",
@@ -170,7 +176,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithCreditVisaModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Credit visa card with complete set of information.
         mHelper.addServerCreditCard(new CreditCard("guid_1", "https://example.com",
                 false /* isLocal */, true /* isCached */, "Jon Doe", "4111111111111111",
@@ -204,7 +210,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithMasterCreditModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Credit mastercard with complete set of information.
         mHelper.addServerCreditCard(new CreditCard("guid_1", "https://example.com",
                 false /* isLocal */, true /* isCached */, "Jon Doe", "5200828282828210",
@@ -238,7 +244,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalAndInstrumentLabelWithMastercardModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         // Mastercard card with complete set of information and unknown type.
         String guid = mHelper.setCreditCard(new CreditCard("", "https://example.com",
                 true /* isLocal */, true /* isCached */, "Jon Doe", "5555555555554444",
@@ -286,8 +292,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPaymentAppCanPayWithModifiers()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPaymentAppCanPayWithModifiers() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.installPaymentApp(HAVE_INSTRUMENTS, DELAYED_RESPONSE);
         mPaymentRequestTestRule.triggerUIAndWait(
                 "buy_with_bobpay_discount", mPaymentRequestTestRule.getReadyToPay());
@@ -311,7 +316,7 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
     @MediumTest
     @Feature({"Payments"})
     public void testUpdateTotalWithCreditVisaModifiersForServiceWorkerPaymentApp()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         String[] bobpayMethodNames = {"https://bobpay.com", "basic-card"};
         int[] bobpayNetworks = {BasicCardNetwork.VISA};
         int[] bobPayTypes = {BasicCardType.CREDIT};
@@ -325,22 +330,29 @@ public class PaymentRequestPaymentAppAndBasicCardWithModifiersTest {
                 new ServiceWorkerPaymentApp.Capabilities(alicepayNetworks, alicepayTypes)};
 
         PaymentAppFactory.getInstance().addAdditionalFactory((webContents, methodNames,
-                                                                     callback) -> {
+                                                                     mayCrawlUnused, callback) -> {
+            ChromeActivity activity = ChromeActivity.fromWebContents(webContents);
+            BitmapDrawable icon = new BitmapDrawable(activity.getResources(),
+                    Bitmap.createBitmap(new int[] {Color.RED}, 1 /* width */, 1 /* height */,
+                            Bitmap.Config.ARGB_8888));
+
             ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
-            callback.onPaymentAppCreated(new ServiceWorkerPaymentApp(webContents,
-                    0 /* registrationId */,
-                    UriUtils.parseUriFromString("https://bobpay.com") /* scope */,
-                    "BobPay" /* label */, "https://bobpay.com" /* sublabel*/,
-                    "https://bobpay.com" /* tertiarylabel */, new ColorDrawable() /* icon */,
-                    bobpayMethodNames /* methodNames */, bobpayCapabilities /* capabilities */,
-                    new String[0] /* preferredRelatedApplicationIds */));
-            callback.onPaymentAppCreated(new ServiceWorkerPaymentApp(webContents,
-                    0 /* registrationId */,
-                    UriUtils.parseUriFromString("https://alicepay.com") /* scope */,
-                    "AlicePay" /* label */, "https://bobpay.com" /* sublabel*/,
-                    "https://alicepay.com" /* tertiarylabel */, new ColorDrawable() /* icon */,
-                    alicepayMethodNames /* methodNames */, alicepayCapabilities /* capabilities */,
-                    new String[0] /* preferredRelatedApplicationIds */));
+            callback.onPaymentAppCreated(
+                    new ServiceWorkerPaymentApp(webContents, 0 /* registrationId */,
+                            UriUtils.parseUriFromString("https://bobpay.com") /* scope */,
+                            "BobPay" /* label */, "https://bobpay.com" /* sublabel*/,
+                            "https://bobpay.com" /* tertiarylabel */, icon /* icon */,
+                            bobpayMethodNames /* methodNames */, true /* explicitlyVerified */,
+                            bobpayCapabilities /* capabilities */,
+                            new String[0] /* preferredRelatedApplicationIds */));
+            callback.onPaymentAppCreated(
+                    new ServiceWorkerPaymentApp(webContents, 0 /* registrationId */,
+                            UriUtils.parseUriFromString("https://alicepay.com") /* scope */,
+                            "AlicePay" /* label */, "https://bobpay.com" /* sublabel*/,
+                            "https://alicepay.com" /* tertiarylabel */, icon /* icon */,
+                            alicepayMethodNames /* methodNames */, true /* explicitlyVerified */,
+                            alicepayCapabilities /* capabilities */,
+                            new String[0] /* preferredRelatedApplicationIds */));
             callback.onAllPaymentAppsCreated();
         });
         mPaymentRequestTestRule.triggerUIAndWait(

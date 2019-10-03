@@ -14,7 +14,7 @@
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 
 namespace content {
 class WebContents;
@@ -27,6 +27,7 @@ class URLRequest;
 namespace android_webview {
 
 class AwWebResourceResponse;
+struct AwWebResourceRequest;
 
 // This class provides a means of calling Java methods on an instance that has
 // a 1:1 relationship with a WebContents instance directly from the IO thread.
@@ -108,11 +109,11 @@ class AwContentsIoThreadClient {
                               int child_render_frame_id);
 
   // This method is called on the IO thread only.
-  typedef base::Callback<void(std::unique_ptr<AwWebResourceResponse>)>
-      ShouldInterceptRequestResultCallback;
+  using ShouldInterceptRequestResultCallback =
+      base::OnceCallback<void(std::unique_ptr<AwWebResourceResponse>)>;
   void ShouldInterceptRequestAsync(
-      const net::URLRequest* request,
-      const ShouldInterceptRequestResultCallback callback);
+      AwWebResourceRequest request,
+      ShouldInterceptRequestResultCallback callback);
 
   // Retrieve the AllowContentAccess setting value of this AwContents.
   // This method is called on the IO thread only.

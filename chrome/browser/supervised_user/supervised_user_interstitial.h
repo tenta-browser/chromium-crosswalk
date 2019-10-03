@@ -10,6 +10,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
 #include "chrome/browser/supervised_user/supervised_user_service_observer.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
 #include "components/supervised_user_error_page/supervised_user_error_page.h"
@@ -17,11 +18,11 @@
 #include "url/gurl.h"
 
 namespace content {
-class InterstitialPage;
 class WebContents;
 }
 
 class Profile;
+class SupervisedUserService;
 
 // Delegate for an interstitial page when a page is blocked for a supervised
 // user because it is on a blacklist (in "allow everything" mode) or not on any
@@ -34,15 +35,27 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
   // Interstitial type, used for testing.
   static const content::InterstitialPageDelegate::TypeID kTypeForTesting;
 
-  static void Show(content::WebContents* web_contents,
-                   const GURL& url,
-                   supervised_user_error_page::FilteringBehaviorReason reason,
-                   bool initial_page_load,
-                   const base::Callback<void(bool)>& callback);
+  static std::unique_ptr<SupervisedUserInterstitial> Create(
+      content::WebContents* web_contents,
+      const GURL& url,
+      supervised_user_error_page::FilteringBehaviorReason reason,
+      bool initial_page_load,
+      base::OnceClosure callback);
 
   static std::string GetHTMLContents(
       Profile* profile,
       supervised_user_error_page::FilteringBehaviorReason reason);
+
+  // InterstitialPageDelegate implementation. This method was made public while
+  // both committed and non-committed interstitials are supported. Once
+  // committed interstitials are the only codepath, this method will be removed
+  // and replaced with separate handlers for go back and request permission.
+  void CommandReceived(const std::string& command) override;
+
+  // Permission requests need to be handled separately for committed
+  // interstitials, since a callback needs to be setup so success/failure can be
+  // reported back.
+  void RequestPermission(base::OnceCallback<void(bool)> RequestCallback);
 
  private:
   SupervisedUserInterstitial(
@@ -50,22 +63,19 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
       const GURL& url,
       supervised_user_error_page::FilteringBehaviorReason reason,
       bool initial_page_load,
-      const base::Callback<void(bool)>& callback);
+      base::OnceClosure callback);
 
   void Init();
 
   // InterstitialPageDelegate implementation.
   std::string GetHTMLContents() override;
-  void CommandReceived(const std::string& command) override;
   void OnProceed() override;
   void OnDontProceed() override;
-  content::InterstitialPageDelegate::TypeID GetTypeForTesting() const override;
+  content::InterstitialPageDelegate::TypeID GetTypeForTesting() override;
 
   // SupervisedUserServiceObserver implementation.
   void OnURLFilterChanged() override;
   // TODO(treib): Also listen to OnCustodianInfoChanged and update as required.
-
-  void OnAccessRequestAdded(bool success);
 
   // Returns whether we should now proceed on a previously-blocked URL.
   // Called initially before the interstitial is shown (to catch race
@@ -78,26 +88,26 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
   // the request.
   void MoveAwayFromCurrentPage();
 
-  void DispatchContinueRequest(bool continue_request);
+  void OnInterstitialDone();
+
+  void ProceedInternal();
+
+  void DontProceedInternal();
 
   // Owns the interstitial, which owns us.
   content::WebContents* web_contents_;
 
   Profile* profile_;
 
-  content::InterstitialPage* interstitial_page_;  // Owns us.
-
   GURL url_;
   supervised_user_error_page::FilteringBehaviorReason reason_;
 
-  // True if the interstitial was shown while loading a page (with a pending
-  // navigation), false if it was shown over an already loaded page.
-  // Interstitials behave very differently in those cases.
-  bool initial_page_load_;
+  base::OnceClosure callback_;
 
-  base::Callback<void(bool)> callback_;
+  ScopedObserver<SupervisedUserService, SupervisedUserInterstitial>
+      scoped_observer_;
 
-  base::WeakPtrFactory<SupervisedUserInterstitial> weak_ptr_factory_;
+  base::WeakPtrFactory<SupervisedUserInterstitial> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserInterstitial);
 };

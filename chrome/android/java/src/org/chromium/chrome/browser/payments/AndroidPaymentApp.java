@@ -16,7 +16,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Parcelable;
 import android.os.RemoteException;
-import android.support.v7.app.AlertDialog;
+import android.support.annotation.Nullable;
 import android.util.JsonWriter;
 
 import org.chromium.IsReadyToPayService;
@@ -25,12 +25,14 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.components.payments.ErrorStrings;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.payments.mojom.PaymentCurrencyAmount;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
 import org.chromium.payments.mojom.PaymentMethodData;
+import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.io.IOException;
@@ -41,10 +43,9 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * The point of interaction with a locally installed 3rd party native Android payment app.
@@ -79,8 +80,8 @@ public class AndroidPaymentApp
     private static final String EXTRA_MODIFIERS = "modifiers";
     private static final String EXTRA_PAYMENT_REQUEST_ID = "paymentRequestId";
     private static final String EXTRA_PAYMENT_REQUEST_ORIGIN = "paymentRequestOrigin";
-    private static final String EXTRA_TOP_LEVEL_CERTIFICATE_CHAIN = "topLevelCertificateChain";
-    private static final String EXTRA_TOP_LEVEL_ORIGIN = "topLevelOrigin";
+    private static final String EXTRA_TOP_CERTIFICATE_CHAIN = "topLevelCertificateChain";
+    private static final String EXTRA_TOP_ORIGIN = "topLevelOrigin";
     private static final String EXTRA_TOTAL = "total";
 
     // Response from the payment app.
@@ -102,6 +103,7 @@ public class AndroidPaymentApp
     @Nullable
     private URI mCanDedupedApplicationId;
     private boolean mIsReadyToPayQueried;
+    private boolean mIsServiceConnected;
 
     /**
      * Builds the point of interaction with a locally installed 3rd party native Android payment
@@ -143,8 +145,8 @@ public class AndroidPaymentApp
     }
 
     @Override
-    public void getInstruments(Map<String, PaymentMethodData> methodDataMap, String origin,
-            String iframeOrigin, @Nullable byte[][] certificateChain,
+    public void getInstruments(String unusedId, Map<String, PaymentMethodData> methodDataMap,
+            String origin, String iframeOrigin, @Nullable byte[][] certificateChain,
             Map<String, PaymentDetailsModifier> modifiers, InstrumentsCallback callback) {
         assert mMethodNames.containsAll(methodDataMap.keySet());
         assert mInstrumentsCallback
@@ -160,6 +162,7 @@ public class AndroidPaymentApp
         mServiceConnection = new ServiceConnection() {
             @Override
             public void onServiceConnected(ComponentName name, IBinder service) {
+                mIsServiceConnected = true;
                 IsReadyToPayService isReadyToPayService =
                         IsReadyToPayService.Stub.asInterface(service);
                 if (isReadyToPayService == null) {
@@ -170,7 +173,9 @@ public class AndroidPaymentApp
             }
 
             @Override
-            public void onServiceDisconnected(ComponentName name) {}
+            public void onServiceDisconnected(ComponentName name) {
+                mIsServiceConnected = false;
+            }
         };
 
         mIsReadyToPayIntent.putExtras(buildExtras(null /* id */, null /* merchantName */,
@@ -194,7 +199,10 @@ public class AndroidPaymentApp
 
     private void respondToGetInstrumentsQuery(final PaymentInstrument instrument) {
         if (mServiceConnection != null) {
-            ContextUtils.getApplicationContext().unbindService(mServiceConnection);
+            if (mIsServiceConnected) {
+                ContextUtils.getApplicationContext().unbindService(mServiceConnection);
+                mIsServiceConnected = false;
+            }
             mServiceConnection = null;
         }
 
@@ -283,26 +291,28 @@ public class AndroidPaymentApp
 
         ChromeActivity activity = ChromeActivity.fromWebContents(mWebContents);
         if (activity == null) {
-            notifyErrorInvokingPaymentApp();
+            notifyErrorInvokingPaymentApp(ErrorStrings.ACTIVITY_NOT_FOUND);
             return;
         }
 
-        new AlertDialog.Builder(activity, R.style.AlertDialogTheme)
+        new UiUtils.CompatibleAlertDialogBuilder(activity, R.style.Theme_Chromium_AlertDialog)
                 .setTitle(R.string.external_app_leave_incognito_warning_title)
                 .setMessage(R.string.external_payment_app_leave_incognito_warning)
                 .setPositiveButton(R.string.ok,
-                        (OnClickListener) (dialog, which) -> launchPaymentApp(id, merchantName,
-                                schemelessOrigin,
-                                schemelessIframeOrigin, certificateChain, methodDataMap,
-                                total, displayItems, modifiers))
+                        (OnClickListener) (dialog, which)
+                                -> launchPaymentApp(id, merchantName, schemelessOrigin,
+                                        schemelessIframeOrigin, certificateChain, methodDataMap,
+                                        total, displayItems, modifiers))
                 .setNegativeButton(R.string.cancel,
-                        (OnClickListener) (dialog, which) -> notifyErrorInvokingPaymentApp())
-                .setOnCancelListener(dialog -> notifyErrorInvokingPaymentApp())
+                        (OnClickListener) (dialog, which)
+                                -> notifyErrorInvokingPaymentApp(ErrorStrings.USER_CANCELLED))
+                .setOnCancelListener(
+                        dialog -> notifyErrorInvokingPaymentApp(ErrorStrings.USER_CANCELLED))
                 .show();
     }
 
     private static String removeUrlScheme(String url) {
-        return UrlFormatter.formatUrlForSecurityDisplay(url, false /* omit scheme */);
+        return UrlFormatter.formatUrlForSecurityDisplayOmitScheme(url);
     }
 
     private void launchPaymentApp(String id, String merchantName, String origin,
@@ -313,13 +323,13 @@ public class AndroidPaymentApp
         assert mInstrumentDetailsCallback != null;
 
         if (mWebContents.isDestroyed()) {
-            notifyErrorInvokingPaymentApp();
+            notifyErrorInvokingPaymentApp(ErrorStrings.PAYMENT_APP_LAUNCH_FAIL);
             return;
         }
 
         WindowAndroid window = mWebContents.getTopLevelNativeWindow();
         if (window == null) {
-            notifyErrorInvokingPaymentApp();
+            notifyErrorInvokingPaymentApp(ErrorStrings.PAYMENT_APP_LAUNCH_FAIL);
             return;
         }
 
@@ -327,11 +337,11 @@ public class AndroidPaymentApp
                 methodDataMap, total, displayItems, modifiers));
         try {
             if (!window.showIntent(mPayIntent, this, R.string.payments_android_app_error)) {
-                notifyErrorInvokingPaymentApp();
+                notifyErrorInvokingPaymentApp(ErrorStrings.PAYMENT_APP_LAUNCH_FAIL);
             }
         } catch (SecurityException e) {
             // Payment app does not have android:exported="true" on the PAY activity.
-            notifyErrorInvokingPaymentApp();
+            notifyErrorInvokingPaymentApp(ErrorStrings.PAYMENT_APP_PRIVATE_ACTIVITY);
         }
     }
 
@@ -346,15 +356,14 @@ public class AndroidPaymentApp
 
         if (merchantName != null) extras.putString(EXTRA_MERCHANT_NAME, merchantName);
 
-        extras.putString(EXTRA_TOP_LEVEL_ORIGIN, origin);
+        extras.putString(EXTRA_TOP_ORIGIN, origin);
 
         extras.putString(EXTRA_PAYMENT_REQUEST_ORIGIN, iframeOrigin);
 
         Parcelable[] serializedCertificateChain = null;
         if (certificateChain != null && certificateChain.length > 0) {
             serializedCertificateChain = buildCertificateChain(certificateChain);
-            extras.putParcelableArray(
-                    EXTRA_TOP_LEVEL_CERTIFICATE_CHAIN, serializedCertificateChain);
+            extras.putParcelableArray(EXTRA_TOP_CERTIFICATE_CHAIN, serializedCertificateChain);
         }
 
         extras.putStringArrayList(EXTRA_METHOD_NAMES, new ArrayList<>(methodDataMap.keySet()));
@@ -421,8 +430,8 @@ public class AndroidPaymentApp
         return result;
     }
 
-    private void notifyErrorInvokingPaymentApp() {
-        mHandler.post(() -> mInstrumentDetailsCallback.onInstrumentDetailsError());
+    private void notifyErrorInvokingPaymentApp(String errorMessage) {
+        mHandler.post(() -> mInstrumentDetailsCallback.onInstrumentDetailsError(errorMessage));
     }
 
     private static String deprecatedSerializeDetails(
@@ -522,11 +531,11 @@ public class AndroidPaymentApp
         }
         // }}} total
 
+        // TODO(https://crbug.com/754779): The supportedMethods field was already changed from array
+        // to string but we should keep backward-compatibility for now.
         // supportedMethods {{{
         json.name("supportedMethods").beginArray();
-        for (String method : modifier.methodData.supportedMethods) {
-            json.value(method);
-        }
+        json.value(modifier.methodData.supportedMethod);
         json.endArray();
         // }}} supportedMethods
 
@@ -542,8 +551,15 @@ public class AndroidPaymentApp
     public void onIntentCompleted(WindowAndroid window, int resultCode, Intent data) {
         ThreadUtils.assertOnUiThread();
         window.removeIntentCallback(this);
-        if (data == null || data.getExtras() == null || resultCode != Activity.RESULT_OK) {
-            mInstrumentDetailsCallback.onInstrumentDetailsError();
+        if (data == null) {
+            mInstrumentDetailsCallback.onInstrumentDetailsError(ErrorStrings.MISSING_INTENT_DATA);
+        } else if (data.getExtras() == null) {
+            mInstrumentDetailsCallback.onInstrumentDetailsError(ErrorStrings.MISSING_INTENT_EXTRAS);
+        } else if (resultCode == Activity.RESULT_CANCELED) {
+            mInstrumentDetailsCallback.onInstrumentDetailsError(ErrorStrings.RESULT_CANCELED);
+        } else if (resultCode != Activity.RESULT_OK) {
+            mInstrumentDetailsCallback.onInstrumentDetailsError(String.format(
+                    Locale.US, ErrorStrings.UNRECOGNIZED_ACTIVITY_RESULT, resultCode));
         } else {
             String details = data.getExtras().getString(EXTRA_RESPONSE_DETAILS);
             if (details == null) {

@@ -10,13 +10,13 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "remoting/protocol/audio_stream.h"
+#include "third_party/webrtc/api/scoped_refptr.h"
 
 namespace base {
 class SingleThreadTaskRunner;
 }  // namespace webrtc
 
 namespace webrtc {
-class MediaStreamInterface;
 class PeerConnectionInterface;
 }  // namespace webrtc
 
@@ -43,7 +43,6 @@ class WebrtcAudioStream : public AudioStream {
   scoped_refptr<WebrtcAudioSourceAdapter> source_adapter_;
 
   scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
-  scoped_refptr<webrtc::MediaStreamInterface> stream_;
 
   DISALLOW_COPY_AND_ASSIGN(WebrtcAudioStream);
 };

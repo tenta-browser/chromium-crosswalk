@@ -10,12 +10,14 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/values.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_shill_device_client.h"
-#include "chromeos/dbus/fake_shill_manager_client.h"
+#include "chromeos/dbus/shill/fake_shill_device_client.h"
+#include "chromeos/dbus/shill/shill_clients.h"
+#include "chromeos/dbus/shill/shill_manager_client.h"
 #include "chromeos/network/network_device_handler_impl.h"
 #include "chromeos/network/network_state_handler.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
+#include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
 
 namespace chromeos {
 
@@ -37,9 +39,9 @@ class NetworkDeviceHandlerTest : public testing::Test {
   ~NetworkDeviceHandlerTest() override = default;
 
   void SetUp() override {
-    fake_device_client_ = new FakeShillDeviceClient;
-    DBusThreadManager::GetSetterForTesting()->SetShillDeviceClient(
-        std::unique_ptr<ShillDeviceClient>(fake_device_client_));
+    shill_clients::InitializeFakes();
+    fake_device_client_ = ShillDeviceClient::Get();
+    fake_device_client_->GetTestInterface()->ClearDevices();
 
     success_callback_ = base::Bind(&NetworkDeviceHandlerTest::SuccessCallback,
                                    base::Unretained(this));
@@ -66,8 +68,9 @@ class NetworkDeviceHandlerTest : public testing::Test {
 
     base::ListValue test_ip_configs;
     test_ip_configs.AppendString("ip_config1");
-    device_test->SetDeviceProperty(
-        kDefaultWifiDevicePath, shill::kIPConfigsProperty, test_ip_configs);
+    device_test->SetDeviceProperty(kDefaultWifiDevicePath,
+                                   shill::kIPConfigsProperty, test_ip_configs,
+                                   /*notify_changed=*/true);
 
     base::RunLoop().RunUntilIdle();
   }
@@ -76,7 +79,7 @@ class NetworkDeviceHandlerTest : public testing::Test {
     network_state_handler_->Shutdown();
     network_device_handler_.reset();
     network_state_handler_.reset();
-    DBusThreadManager::Shutdown();
+    shill_clients::Shutdown();
   }
 
   void ErrorCallback(const std::string& error_name,
@@ -103,7 +106,7 @@ class NetworkDeviceHandlerTest : public testing::Test {
  protected:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::string result_;
-  FakeShillDeviceClient* fake_device_client_ = nullptr;
+  ShillDeviceClient* fake_device_client_ = nullptr;
   std::unique_ptr<NetworkDeviceHandler> network_device_handler_;
   std::unique_ptr<NetworkStateHandler> network_state_handler_;
   base::Closure success_callback_;
@@ -184,7 +187,7 @@ TEST_F(NetworkDeviceHandlerTest, CellularAllowRoaming) {
       fake_device_client_->GetTestInterface();
   device_test->SetDeviceProperty(kDefaultCellularDevicePath,
                                  shill::kCellularAllowRoamingProperty,
-                                 base::Value(false));
+                                 base::Value(false), /*notify_changed=*/true);
 
   network_device_handler_->SetCellularAllowRoaming(true);
   base::RunLoop().RunUntilIdle();
@@ -291,22 +294,6 @@ TEST_F(NetworkDeviceHandlerTest, RequestRefreshIPConfigs) {
   // refresh calls.
 }
 
-TEST_F(NetworkDeviceHandlerTest, SetCarrier) {
-  const char kCarrier[] = "carrier";
-
-  // Test that the success callback gets called.
-  network_device_handler_->SetCarrier(
-      kDefaultCellularDevicePath, kCarrier, success_callback_, error_callback_);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(kResultSuccess, result_);
-
-  // Test that the shill error propagates to the error callback.
-  network_device_handler_->SetCarrier(
-      kUnknownCellularDevicePath, kCarrier, success_callback_, error_callback_);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(NetworkDeviceHandler::kErrorDeviceMissing, result_);
-}
-
 TEST_F(NetworkDeviceHandlerTest, RequirePin) {
   // Test that the success callback gets called.
   network_device_handler_->RequirePin(kDefaultCellularDevicePath,
@@ -372,7 +359,8 @@ TEST_F(NetworkDeviceHandlerTest, ChangePin) {
   const char kNewPin[] = "1234";
   const char kIncorrectPin[] = "9999";
 
-  fake_device_client_->SetSimLocked(kDefaultCellularDevicePath, true);
+  fake_device_client_->GetTestInterface()->SetSimLocked(
+      kDefaultCellularDevicePath, true);
 
   // Test that the success callback gets called.
   network_device_handler_->ChangePin(
@@ -387,6 +375,32 @@ TEST_F(NetworkDeviceHandlerTest, ChangePin) {
                                      error_callback_);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(NetworkDeviceHandler::kErrorIncorrectPin, result_);
+}
+
+TEST_F(NetworkDeviceHandlerTest, AddWifiWakeOnPacketOfTypes) {
+  std::vector<std::string> valid_packet_types = {shill::kWakeOnTCP,
+                                                 shill::kWakeOnUDP};
+
+  network_device_handler_->AddWifiWakeOnPacketOfTypes(
+      valid_packet_types, success_callback_, error_callback_);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(kResultSuccess, result_);
+}
+
+TEST_F(NetworkDeviceHandlerTest, AddAndRemoveWifiWakeOnPacketOfTypes) {
+  std::vector<std::string> valid_packet_types = {shill::kWakeOnTCP,
+                                                 shill::kWakeOnUDP};
+  std::vector<std::string> remove_packet_types = {shill::kWakeOnTCP};
+
+  network_device_handler_->AddWifiWakeOnPacketOfTypes(
+      valid_packet_types, success_callback_, error_callback_);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(kResultSuccess, result_);
+
+  network_device_handler_->RemoveWifiWakeOnPacketOfTypes(
+      remove_packet_types, success_callback_, error_callback_);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(kResultSuccess, result_);
 }
 
 }  // namespace chromeos

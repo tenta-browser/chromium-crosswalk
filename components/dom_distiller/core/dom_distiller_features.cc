@@ -13,12 +13,7 @@ namespace dom_distiller {
 
 bool IsEnableDomDistillerSet() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableDomDistiller);
-}
-
-bool IsEnableSyncArticlesSet() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableSyncArticles);
+      switches::kEnableDomDistiller);
 }
 
 }  // namespace dom_distiller

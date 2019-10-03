@@ -14,7 +14,6 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequence_checker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -82,7 +81,8 @@ class ChannelMultiplexer::MuxChannel {
   // Called by MuxSocket.
   void OnSocketDestroyed();
   void DoWrite(std::unique_ptr<MultiplexPacket> packet,
-               const base::Closure& done_task);
+               base::OnceClosure done_task,
+               const net::NetworkTrafficAnnotationTag& traffic_annotation);
   int DoRead(const scoped_refptr<net::IOBuffer>& buffer, int buffer_len);
 
  private:
@@ -107,23 +107,27 @@ class ChannelMultiplexer::MuxSocket : public P2PStreamSocket {
   void OnPacketReceived();
 
   // P2PStreamSocket interface.
-  int Read(const scoped_refptr<net::IOBuffer>& buffer, int buffer_len,
-           const net::CompletionCallback& callback) override;
-  int Write(const scoped_refptr<net::IOBuffer>& buffer, int buffer_len,
-            const net::CompletionCallback& callback) override;
+  int Read(const scoped_refptr<net::IOBuffer>& buffer,
+           int buffer_len,
+           net::CompletionOnceCallback callback) override;
+  int Write(
+      const scoped_refptr<net::IOBuffer>& buffer,
+      int buffer_len,
+      net::CompletionOnceCallback callback,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) override;
 
  private:
   MuxChannel* channel_;
 
   int base_channel_error_ = net::OK;
 
-  net::CompletionCallback read_callback_;
+  net::CompletionOnceCallback read_callback_;
   scoped_refptr<net::IOBuffer> read_buffer_;
   int read_buffer_size_;
 
   bool write_pending_;
   int write_result_;
-  net::CompletionCallback write_callback_;
+  net::CompletionOnceCallback write_callback_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -160,7 +164,7 @@ void ChannelMultiplexer::MuxChannel::OnIncomingPacket(
   DCHECK_EQ(packet->channel_id(), receive_id_);
   if (packet->data().size() > 0) {
     pending_packets_.push_back(
-        base::MakeUnique<PendingPacket>(std::move(packet)));
+        std::make_unique<PendingPacket>(std::move(packet)));
     if (socket_) {
       // Notify the socket that we have more data.
       socket_->OnPacketReceived();
@@ -180,13 +184,15 @@ void ChannelMultiplexer::MuxChannel::OnSocketDestroyed() {
 
 void ChannelMultiplexer::MuxChannel::DoWrite(
     std::unique_ptr<MultiplexPacket> packet,
-    const base::Closure& done_task) {
+    base::OnceClosure done_task,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   packet->set_channel_id(send_id_);
   if (!id_sent_) {
     packet->set_channel_name(name_);
     id_sent_ = true;
   }
-  multiplexer_->DoWrite(std::move(packet), done_task);
+  multiplexer_->DoWrite(std::move(packet), std::move(done_task),
+                        traffic_annotation);
 }
 
 int ChannelMultiplexer::MuxChannel::DoRead(
@@ -218,8 +224,9 @@ ChannelMultiplexer::MuxSocket::~MuxSocket() {
 }
 
 int ChannelMultiplexer::MuxSocket::Read(
-    const scoped_refptr<net::IOBuffer>& buffer, int buffer_len,
-    const net::CompletionCallback& callback) {
+    const scoped_refptr<net::IOBuffer>& buffer,
+    int buffer_len,
+    net::CompletionOnceCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(read_callback_.is_null());
 
@@ -230,15 +237,17 @@ int ChannelMultiplexer::MuxSocket::Read(
   if (result == 0) {
     read_buffer_ = buffer;
     read_buffer_size_ = buffer_len;
-    read_callback_ = callback;
+    read_callback_ = std::move(callback);
     return net::ERR_IO_PENDING;
   }
   return result;
 }
 
 int ChannelMultiplexer::MuxSocket::Write(
-    const scoped_refptr<net::IOBuffer>& buffer, int buffer_len,
-    const net::CompletionCallback& callback) {
+    const scoped_refptr<net::IOBuffer>& buffer,
+    int buffer_len,
+    net::CompletionOnceCallback callback,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(write_callback_.is_null());
 
@@ -250,14 +259,16 @@ int ChannelMultiplexer::MuxSocket::Write(
   packet->mutable_data()->assign(buffer->data(), size);
 
   write_pending_ = true;
-  channel_->DoWrite(std::move(packet),
-                    base::Bind(&ChannelMultiplexer::MuxSocket::OnWriteComplete,
-                               weak_factory_.GetWeakPtr()));
+  channel_->DoWrite(
+      std::move(packet),
+      base::BindOnce(&ChannelMultiplexer::MuxSocket::OnWriteComplete,
+                     weak_factory_.GetWeakPtr()),
+      traffic_annotation);
 
   // OnWriteComplete() might be called above synchronously.
   if (write_pending_) {
     DCHECK(write_callback_.is_null());
-    write_callback_ = callback;
+    write_callback_ = std::move(callback);
     write_result_ = size;
     return net::ERR_IO_PENDING;
   }
@@ -268,8 +279,7 @@ int ChannelMultiplexer::MuxSocket::Write(
 void ChannelMultiplexer::MuxSocket::OnWriteComplete() {
   write_pending_ = false;
   if (!write_callback_.is_null())
-    base::ResetAndReturn(&write_callback_).Run(write_result_);
-
+    std::move(write_callback_).Run(write_result_);
 }
 
 void ChannelMultiplexer::MuxSocket::OnBaseChannelError(int error) {
@@ -283,12 +293,12 @@ void ChannelMultiplexer::MuxSocket::OnBaseChannelError(int error) {
   // callbacks is enough.
 
   if (!read_callback_.is_null()) {
-    base::ResetAndReturn(&read_callback_).Run(error);
+    std::move(read_callback_).Run(error);
     return;
   }
 
   if (!write_callback_.is_null())
-    base::ResetAndReturn(&write_callback_).Run(error);
+    std::move(write_callback_).Run(error);
 }
 
 void ChannelMultiplexer::MuxSocket::OnPacketReceived() {
@@ -296,7 +306,7 @@ void ChannelMultiplexer::MuxSocket::OnPacketReceived() {
     int result = channel_->DoRead(read_buffer_.get(), read_buffer_size_);
     read_buffer_ = nullptr;
     DCHECK_GT(result, 0);
-    base::ResetAndReturn(&read_callback_).Run(result);
+    std::move(read_callback_).Run(result);
   }
 }
 
@@ -340,8 +350,8 @@ void ChannelMultiplexer::CreateChannel(const std::string& name,
 }
 
 void ChannelMultiplexer::CancelChannelCreation(const std::string& name) {
-  for (std::list<PendingChannel>::iterator it = pending_channels_.begin();
-       it != pending_channels_.end(); ++it) {
+  for (auto it = pending_channels_.begin(); it != pending_channels_.end();
+       ++it) {
     if (it->name == name) {
       pending_channels_.erase(it);
       return;
@@ -379,8 +389,8 @@ void ChannelMultiplexer::DoCreatePendingChannels() {
   // callback may destroy the multiplexer or somehow else modify
   // |pending_channels_| list (e.g. call CancelChannelCreation()).
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ChannelMultiplexer::DoCreatePendingChannels,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ChannelMultiplexer::DoCreatePendingChannels,
+                                weak_factory_.GetWeakPtr()));
 
   PendingChannel c = pending_channels_.front();
   pending_channels_.erase(pending_channels_.begin());
@@ -395,7 +405,7 @@ ChannelMultiplexer::MuxChannel* ChannelMultiplexer::GetOrCreateChannel(
   std::unique_ptr<MuxChannel>& channel = channels_[name];
   if (!channel) {
     // Create a new channel if we haven't found existing one.
-    channel = base::MakeUnique<MuxChannel>(this, name, next_channel_id_);
+    channel = std::make_unique<MuxChannel>(this, name, next_channel_id_);
     ++next_channel_id_;
   }
 
@@ -407,8 +417,8 @@ void ChannelMultiplexer::OnBaseChannelError(int error) {
   for (auto it = channels_.begin(); it != channels_.end(); ++it) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&ChannelMultiplexer::NotifyBaseChannelError,
-                   weak_factory_.GetWeakPtr(), it->second->name(), error));
+        base::BindOnce(&ChannelMultiplexer::NotifyBaseChannelError,
+                       weak_factory_.GetWeakPtr(), it->second->name(), error));
   }
 }
 
@@ -434,8 +444,7 @@ void ChannelMultiplexer::OnIncomingPacket(
 
   int receive_id = packet->channel_id();
   MuxChannel* channel = nullptr;
-  std::map<int, MuxChannel*>::iterator it =
-      channels_by_receive_id_.find(receive_id);
+  auto it = channels_by_receive_id_.find(receive_id);
   if (it != channels_by_receive_id_.end()) {
     channel = it->second;
   } else {
@@ -453,9 +462,12 @@ void ChannelMultiplexer::OnIncomingPacket(
   channel->OnIncomingPacket(std::move(packet));
 }
 
-void ChannelMultiplexer::DoWrite(std::unique_ptr<MultiplexPacket> packet,
-                                 const base::Closure& done_task) {
-  writer_.Write(SerializeAndFrameMessage(*packet), done_task);
+void ChannelMultiplexer::DoWrite(
+    std::unique_ptr<MultiplexPacket> packet,
+    base::OnceClosure done_task,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
+  writer_.Write(SerializeAndFrameMessage(*packet), std::move(done_task),
+                traffic_annotation);
 }
 
 }  // namespace protocol

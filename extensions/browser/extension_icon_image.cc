@@ -57,8 +57,7 @@ extensions::ExtensionResource GetExtensionIconResource(
 class BlankImageSource : public gfx::CanvasImageSource {
  public:
   explicit BlankImageSource(const gfx::Size& size_in_dip)
-      : CanvasImageSource(size_in_dip, /*is_opaque =*/ false) {
-  }
+      : CanvasImageSource(size_in_dip) {}
   ~BlankImageSource() override {}
 
  private:
@@ -120,23 +119,24 @@ gfx::ImageSkiaRep IconImage::Source::GetImageForScale(float scale) {
 ////////////////////////////////////////////////////////////////////////////////
 // IconImage
 
-IconImage::IconImage(
-    content::BrowserContext* context,
-    const Extension* extension,
-    const ExtensionIconSet& icon_set,
-    int resource_size_in_dip,
-    const gfx::ImageSkia& default_icon,
-    Observer* observer)
+IconImage::IconImage(content::BrowserContext* context,
+                     const Extension* extension,
+                     const ExtensionIconSet& icon_set,
+                     int resource_size_in_dip,
+                     bool keep_original_size,
+                     const gfx::ImageSkia& default_icon,
+                     Observer* observer)
     : browser_context_(context),
       extension_(extension),
       icon_set_(icon_set),
       resource_size_in_dip_(resource_size_in_dip),
+      keep_original_size_(keep_original_size),
+      did_complete_initial_load_(false),
       source_(NULL),
       default_icon_(gfx::ImageSkiaOperations::CreateResizedImage(
           default_icon,
           skia::ImageOperations::RESIZE_BEST,
-          gfx::Size(resource_size_in_dip, resource_size_in_dip))),
-      weak_ptr_factory_(this) {
+          gfx::Size(resource_size_in_dip, resource_size_in_dip))) {
   if (observer)
     AddObserver(observer);
   gfx::Size resource_size(resource_size_in_dip, resource_size_in_dip);
@@ -148,6 +148,20 @@ IconImage::IconImage(
                  extensions::NOTIFICATION_EXTENSION_REMOVED,
                  content::NotificationService::AllSources());
 }
+
+IconImage::IconImage(content::BrowserContext* context,
+                     const Extension* extension,
+                     const ExtensionIconSet& icon_set,
+                     int resource_size_in_dip,
+                     const gfx::ImageSkia& default_icon,
+                     Observer* observer)
+    : IconImage(context,
+                extension,
+                icon_set,
+                resource_size_in_dip,
+                /* keep_original_size */ false,
+                default_icon,
+                observer) {}
 
 void IconImage::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
@@ -187,22 +201,26 @@ void IconImage::LoadImageForScaleAsync(float scale) {
 
   if (!resource.empty()) {
     std::vector<ImageLoader::ImageRepresentation> info_list;
+    const ImageLoader::ImageRepresentation::ResizeCondition resize_condition =
+        keep_original_size_ ? ImageLoader::ImageRepresentation::NEVER_RESIZE
+                            : ImageLoader::ImageRepresentation::ALWAYS_RESIZE;
     info_list.push_back(ImageLoader::ImageRepresentation(
-        resource, ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
+        resource, resize_condition,
         gfx::Size(resource_size_in_pixel, resource_size_in_pixel), scale));
 
     extensions::ImageLoader* loader =
         extensions::ImageLoader::Get(browser_context_);
-    loader->LoadImagesAsync(extension_.get(), info_list,
-                            base::Bind(&IconImage::OnImageLoaded,
-                                       weak_ptr_factory_.GetWeakPtr(), scale));
+    loader->LoadImagesAsync(
+        extension_.get(), info_list,
+        base::BindOnce(&IconImage::OnImageLoaded,
+                       weak_ptr_factory_.GetWeakPtr(), scale));
   } else {
     // If there is no resource found, update from the default icon.
     const gfx::ImageSkiaRep& rep = default_icon_.GetRepresentation(scale);
     if (!rep.is_null()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&IconImage::OnImageRepLoaded,
-                                weak_ptr_factory_.GetWeakPtr(), rep));
+          FROM_HERE, base::BindOnce(&IconImage::OnImageRepLoaded,
+                                    weak_ptr_factory_.GetWeakPtr(), rep));
     }
   }
 }
@@ -220,6 +238,7 @@ void IconImage::OnImageLoaded(float scale, const gfx::Image& image_in) {
 
 void IconImage::OnImageRepLoaded(const gfx::ImageSkiaRep& rep) {
   DCHECK(!rep.is_null());
+  did_complete_initial_load_ = true;
 
   image_skia_.RemoveRepresentation(rep.scale());
   image_skia_.AddRepresentation(rep);

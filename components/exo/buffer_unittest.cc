@@ -2,21 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/exo/buffer.h"
+
 #include <GLES2/gl2extchromium.h>
 
+#include "ash/shell.h"
 #include "base/bind.h"
-#include "components/exo/buffer.h"
+#include "base/run_loop.h"
+#include "components/exo/frame_sink_resource_manager.h"
 #include "components/exo/surface_tree_host.h"
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/exo_test_helper.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "components/viz/common/resources/single_release_callback.h"
-#include "gpu/command_buffer/client/gles2_interface.h"
+#include "gpu/command_buffer/client/raster_interface.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/khronos/GLES2/gl2.h"
 #include "ui/aura/env.h"
 #include "ui/compositor/compositor.h"
-#include "ui/compositor/test/in_process_context_factory.h"
+#include "ui/compositor/test/in_process_context_provider.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
 namespace exo {
@@ -28,6 +31,18 @@ void Release(int* release_call_count) {
   (*release_call_count)++;
 }
 
+void VerifySyncTokensInCompositorFrame(viz::CompositorFrame* frame) {
+  std::vector<GLbyte*> sync_tokens;
+  for (auto& resource : frame->resource_list)
+    sync_tokens.push_back(resource.mailbox_holder.sync_token.GetData());
+  gpu::raster::RasterInterface* ri =
+      aura::Env::GetInstance()
+          ->context_factory()
+          ->SharedMainThreadRasterContextProvider()
+          ->RasterInterface();
+  ri->VerifySyncTokensCHROMIUM(sync_tokens.data(), sync_tokens.size());
+}
+
 TEST_F(BufferTest, ReleaseCallback) {
   gfx::Size buffer_size(256, 256);
   auto buffer = std::make_unique<Buffer>(
@@ -36,7 +51,7 @@ TEST_F(BufferTest, ReleaseCallback) {
   LayerTreeFrameSinkHolder* frame_sink_holder =
       surface_tree_host->layer_tree_frame_sink_holder();
 
-  // This is needed to ensure that RunAllPendingInMessageLoop() call below
+  // This is needed to ensure that base::RunLoop().RunUntilIdle() call below
   // is always sufficient for buffer to be released.
   buffer->set_wait_for_release_delay_for_testing(base::TimeDelta());
 
@@ -48,8 +63,8 @@ TEST_F(BufferTest, ReleaseCallback) {
   buffer->OnAttach();
   viz::TransferableResource resource;
   // Produce a transferable resource for the contents of the buffer.
-  bool rv =
-      buffer->ProduceTransferableResource(frame_sink_holder, false, &resource);
+  bool rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &resource);
   ASSERT_TRUE(rv);
 
   // Release buffer.
@@ -60,7 +75,7 @@ TEST_F(BufferTest, ReleaseCallback) {
   std::vector<viz::ReturnedResource> resources = {returned_resource};
   frame_sink_holder->ReclaimResources(resources);
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(release_call_count, 0);
 
   buffer->OnDetach();
@@ -80,18 +95,18 @@ TEST_F(BufferTest, IsLost) {
   buffer->OnAttach();
   // Acquire a texture transferable resource for the contents of the buffer.
   viz::TransferableResource resource;
-  bool rv =
-      buffer->ProduceTransferableResource(frame_sink_holder, false, &resource);
+  bool rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &resource);
   ASSERT_TRUE(rv);
 
-  scoped_refptr<viz::ContextProvider> context_provider =
+  scoped_refptr<viz::RasterContextProvider> context_provider =
       aura::Env::GetInstance()
           ->context_factory()
-          ->SharedMainThreadContextProvider();
+          ->SharedMainThreadRasterContextProvider();
   if (context_provider) {
-    gpu::gles2::GLES2Interface* gles2 = context_provider->ContextGL();
-    gles2->LoseContextCHROMIUM(GL_GUILTY_CONTEXT_RESET_ARB,
-                               GL_INNOCENT_CONTEXT_RESET_ARB);
+    gpu::raster::RasterInterface* ri = context_provider->RasterInterface();
+    ri->LoseContextCHROMIUM(GL_GUILTY_CONTEXT_RESET_ARB,
+                            GL_INNOCENT_CONTEXT_RESET_ARB);
   }
 
   // Release buffer.
@@ -102,13 +117,13 @@ TEST_F(BufferTest, IsLost) {
   returned_resource.lost = is_lost;
   std::vector<viz::ReturnedResource> resources = {returned_resource};
   frame_sink_holder->ReclaimResources(resources);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   // Producing a new texture transferable resource for the contents of the
   // buffer.
   viz::TransferableResource new_resource;
-  rv = buffer->ProduceTransferableResource(frame_sink_holder, false,
-                                           &new_resource);
+  rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &new_resource);
   ASSERT_TRUE(rv);
   buffer->OnDetach();
 
@@ -118,7 +133,7 @@ TEST_F(BufferTest, IsLost) {
   returned_resource2.lost = false;
   std::vector<viz::ReturnedResource> resources2 = {returned_resource2};
   frame_sink_holder->ReclaimResources(resources2);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 }
 
 // Buffer::Texture::OnLostResources is called when the gpu crashes. This test
@@ -135,13 +150,17 @@ TEST_F(BufferTest, OnLostResources) {
   buffer->OnAttach();
   // Acquire a texture transferable resource for the contents of the buffer.
   viz::TransferableResource resource;
-  bool rv =
-      buffer->ProduceTransferableResource(frame_sink_holder, false, &resource);
+  bool rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &resource);
   ASSERT_TRUE(rv);
 
-  static_cast<ui::InProcessContextFactory*>(
-      aura::Env::GetInstance()->context_factory())
-      ->SendOnLostResources();
+  viz::RasterContextProvider* context_provider =
+      aura::Env::GetInstance()
+          ->context_factory()
+          ->SharedMainThreadRasterContextProvider()
+          .get();
+  static_cast<ui::InProcessContextProvider*>(context_provider)
+      ->SendOnContextLost();
 }
 
 TEST_F(BufferTest, SurfaceTreeHostDestruction) {
@@ -152,7 +171,7 @@ TEST_F(BufferTest, SurfaceTreeHostDestruction) {
   LayerTreeFrameSinkHolder* frame_sink_holder =
       surface_tree_host->layer_tree_frame_sink_holder();
 
-  // This is needed to ensure that RunAllPendingInMessageLoop() call below
+  // This is needed to ensure that base::RunLoop().RunUntilIdle() call below
   // is always sufficient for buffer to be released.
   buffer->set_wait_for_release_delay_for_testing(base::TimeDelta());
 
@@ -164,33 +183,36 @@ TEST_F(BufferTest, SurfaceTreeHostDestruction) {
   buffer->OnAttach();
   viz::TransferableResource resource;
   // Produce a transferable resource for the contents of the buffer.
-  bool rv =
-      buffer->ProduceTransferableResource(frame_sink_holder, false, &resource);
+  bool rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &resource);
   ASSERT_TRUE(rv);
 
+  // Submit frame with resource.
+  {
+    viz::CompositorFrame frame;
+    frame.metadata.begin_frame_ack.source_id =
+        viz::BeginFrameArgs::kManualSourceId;
+    frame.metadata.begin_frame_ack.sequence_number =
+        viz::BeginFrameArgs::kStartingFrameNumber;
+    frame.metadata.begin_frame_ack.has_damage = true;
+    frame.metadata.frame_token = 1;
+    frame.metadata.device_scale_factor = 1;
+    frame.metadata.local_surface_id_allocation_time = base::TimeTicks::Now();
+    std::unique_ptr<viz::RenderPass> pass = viz::RenderPass::Create();
+    pass->SetNew(1, gfx::Rect(buffer_size), gfx::Rect(buffer_size),
+                 gfx::Transform());
+    frame.render_pass_list.push_back(std::move(pass));
+    frame.resource_list.push_back(resource);
+    VerifySyncTokensInCompositorFrame(&frame);
+    frame_sink_holder->SubmitCompositorFrame(std::move(frame));
+  }
+
   buffer->OnDetach();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(release_call_count, 0);
 
-  // Get a weak reference to frame sink holder.
-  auto weak_frame_sink_holder = frame_sink_holder->GetWeakPtr();
-
-  // Destroy surface tree host. Weak reference should be valid until all
-  // resources have been reclaimed.
   surface_tree_host.reset();
-  ASSERT_EQ(release_call_count, 0);
-  ASSERT_TRUE(weak_frame_sink_holder);
-
-  // Release buffer.
-  viz::ReturnedResource returned_resource;
-  returned_resource.id = resource.id;
-  returned_resource.sync_token = resource.mailbox_holder.sync_token;
-  returned_resource.lost = false;
-  std::vector<viz::ReturnedResource> resources = {returned_resource};
-  weak_frame_sink_holder->ReclaimResources(resources);
-
-  RunAllPendingInMessageLoop();
-
-  // Release() should have been called exactly once.
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(release_call_count, 1);
 }
 
@@ -202,7 +224,7 @@ TEST_F(BufferTest, SurfaceTreeHostLastFrame) {
   LayerTreeFrameSinkHolder* frame_sink_holder =
       surface_tree_host->layer_tree_frame_sink_holder();
 
-  // This is needed to ensure that RunAllPendingInMessageLoop() call below
+  // This is needed to ensure that base::RunLoop().RunUntilIdle() call below
   // is always sufficient for buffer to be released.
   buffer->set_wait_for_release_delay_for_testing(base::TimeDelta());
 
@@ -214,8 +236,8 @@ TEST_F(BufferTest, SurfaceTreeHostLastFrame) {
   buffer->OnAttach();
   viz::TransferableResource resource;
   // Produce a transferable resource for the contents of the buffer.
-  bool rv =
-      buffer->ProduceTransferableResource(frame_sink_holder, false, &resource);
+  bool rv = buffer->ProduceTransferableResource(
+      frame_sink_holder->resource_manager(), nullptr, false, &resource);
   ASSERT_TRUE(rv);
 
   // Submit frame with resource.
@@ -226,11 +248,15 @@ TEST_F(BufferTest, SurfaceTreeHostLastFrame) {
     frame.metadata.begin_frame_ack.sequence_number =
         viz::BeginFrameArgs::kStartingFrameNumber;
     frame.metadata.begin_frame_ack.has_damage = true;
+    frame.metadata.frame_token = 1;
     frame.metadata.device_scale_factor = 1;
+    frame.metadata.local_surface_id_allocation_time = base::TimeTicks::Now();
     std::unique_ptr<viz::RenderPass> pass = viz::RenderPass::Create();
-    pass->SetNew(1, gfx::Rect(buffer_size), gfx::Rect(), gfx::Transform());
+    pass->SetNew(1, gfx::Rect(buffer_size), gfx::Rect(buffer_size),
+                 gfx::Transform());
     frame.render_pass_list.push_back(std::move(pass));
     frame.resource_list.push_back(resource);
+    VerifySyncTokensInCompositorFrame(&frame);
     frame_sink_holder->SubmitCompositorFrame(std::move(frame));
 
     // Try to release buffer in last frame. This can happen during a resize
@@ -239,11 +265,12 @@ TEST_F(BufferTest, SurfaceTreeHostLastFrame) {
     returned_resource.id = resource.id;
     returned_resource.sync_token = resource.mailbox_holder.sync_token;
     returned_resource.lost = false;
+
     std::vector<viz::ReturnedResource> resources = {returned_resource};
     frame_sink_holder->ReclaimResources(resources);
   }
 
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   buffer->OnDetach();
 
   // Release() should not have been called as resource is used by last frame.
@@ -257,13 +284,17 @@ TEST_F(BufferTest, SurfaceTreeHostLastFrame) {
     frame.metadata.begin_frame_ack.sequence_number =
         viz::BeginFrameArgs::kStartingFrameNumber;
     frame.metadata.begin_frame_ack.has_damage = true;
+    frame.metadata.frame_token = 1;
     frame.metadata.device_scale_factor = 1;
+    frame.metadata.local_surface_id_allocation_time = base::TimeTicks::Now();
     std::unique_ptr<viz::RenderPass> pass = viz::RenderPass::Create();
-    pass->SetNew(1, gfx::Rect(buffer_size), gfx::Rect(), gfx::Transform());
+    pass->SetNew(1, gfx::Rect(buffer_size), gfx::Rect(buffer_size),
+                 gfx::Transform());
     frame.render_pass_list.push_back(std::move(pass));
     frame_sink_holder->SubmitCompositorFrame(std::move(frame));
   }
 
+  base::RunLoop().RunUntilIdle();
   // Release() should have been called exactly once.
   ASSERT_EQ(release_call_count, 1);
 }

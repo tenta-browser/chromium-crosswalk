@@ -14,9 +14,11 @@
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "printing/backend/cups_helper.h"
 #include "printing/backend/print_backend_consts.h"
 #include "url/gurl.h"
@@ -29,8 +31,19 @@ const char kCUPSPrinterInfoOpt[] = "printer-info";
 const char kCUPSPrinterStateOpt[] = "printer-state";
 const char kCUPSPrinterTypeOpt[] = "printer-type";
 
-bool PrinterBasicInfoFromCUPS(const cups_dest_t& printer,
-                              PrinterBasicInfo* printer_info) {
+}  // namespace
+
+PrintBackendCUPS::PrintBackendCUPS(const GURL& print_server_url,
+                                   http_encryption_t encryption,
+                                   bool blocking)
+    : print_server_url_(print_server_url),
+      cups_encryption_(encryption),
+      blocking_(blocking) {}
+
+// static
+bool PrintBackendCUPS::PrinterBasicInfoFromCUPS(
+    const cups_dest_t& printer,
+    PrinterBasicInfo* printer_info) {
   // CUPS can have 'printers' that are actually scanners. (not MFC)
   // At least on Mac. Check for scanners and skip them.
   const char* type_str =
@@ -46,16 +59,14 @@ bool PrinterBasicInfoFromCUPS(const cups_dest_t& printer,
 
   const char* info =
       cupsGetOption(kCUPSPrinterInfoOpt, printer.num_options, printer.options);
-  if (info)
-    printer_info->printer_description = info;
 
   const char* state =
       cupsGetOption(kCUPSPrinterStateOpt, printer.num_options, printer.options);
   if (state)
     base::StringToInt(state, &printer_info->printer_status);
 
-  const char* drv_info = cupsGetOption(kDriverNameTagName,
-                                       printer.num_options, printer.options);
+  const char* drv_info =
+      cupsGetOption(kDriverNameTagName, printer.num_options, printer.options);
   if (drv_info)
     printer_info->options[kDriverInfoTagName] = *drv_info;
 
@@ -64,17 +75,22 @@ bool PrinterBasicInfoFromCUPS(const cups_dest_t& printer,
     printer_info->options[printer.options[opt_index].name] =
         printer.options[opt_index].value;
   }
+
+#if defined(OS_MACOSX)
+  // On Mac, "printer-info" option specifies the printer name and
+  // "printer-make-and-model" specifies the printer description.
+  if (info)
+    printer_info->display_name = info;
+  if (drv_info)
+    printer_info->printer_description = drv_info;
+#else
+  // On Linux destination name specifies the printer name and "printer-info"
+  // specifies the printer description.
+  printer_info->display_name = printer.name;
+  if (info)
+    printer_info->printer_description = info;
+#endif
   return true;
-}
-
-}  // namespace
-
-PrintBackendCUPS::PrintBackendCUPS(const GURL& print_server_url,
-                                   http_encryption_t encryption,
-                                   bool blocking)
-    : print_server_url_(print_server_url),
-      cups_encryption_(encryption),
-      blocking_(blocking) {
 }
 
 bool PrintBackendCUPS::EnumeratePrinters(PrinterList* printer_list) {
@@ -131,11 +147,11 @@ bool PrintBackendCUPS::GetPrinterSemanticCapsAndDefaults(
     const std::string& printer_name,
     PrinterSemanticCapsAndDefaults* printer_info) {
   PrinterCapsAndDefaults info;
-  if (!GetPrinterCapsAndDefaults(printer_name, &info) )
+  if (!GetPrinterCapsAndDefaults(printer_name, &info))
     return false;
 
-  return ParsePpdCapabilities(
-      printer_name, info.printer_capabilities, printer_info);
+  return ParsePpdCapabilities(printer_name, info.printer_capabilities,
+                              printer_info);
 }
 
 bool PrintBackendCUPS::GetPrinterCapsAndDefaults(
@@ -203,8 +219,7 @@ scoped_refptr<PrintBackend> PrintBackend::CreateInstanceImpl(
     print_backend_settings->GetString(kCUPSPrintServerURL,
                                       &print_server_url_str);
 
-    print_backend_settings->GetString(kCUPSBlocking,
-                                      &cups_blocking);
+    print_backend_settings->GetString(kCUPSBlocking, &cups_blocking);
 
     print_backend_settings->GetInteger(kCUPSEncryption, &encryption);
   }
@@ -227,8 +242,8 @@ int PrintBackendCUPS::GetDests(cups_dest_t** dests) {
 base::FilePath PrintBackendCUPS::GetPPD(const char* name) {
   // cupsGetPPD returns a filename stored in a static buffer in CUPS.
   // Protect this code with lock.
-  CR_DEFINE_STATIC_LOCAL(base::Lock, ppd_lock, ());
-  base::AutoLock ppd_autolock(ppd_lock);
+  static base::NoDestructor<base::Lock> ppd_lock;
+  base::AutoLock ppd_autolock(*ppd_lock);
   base::FilePath ppd_path;
   const char* ppd_file_path = nullptr;
   if (print_server_url_.is_empty()) {  // Use default (local) print server.

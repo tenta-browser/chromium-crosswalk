@@ -28,6 +28,12 @@ class DEVICE_EVENT_LOG_EXPORT DeviceEventLogImpl {
              LogType log_type,
              LogLevel log_level,
              const std::string& event);
+    LogEntry(const char* filedesc,
+             int file_line,
+             LogType log_type,
+             LogLevel log_level,
+             const std::string& event,
+             base::Time time_for_testing);
     LogEntry(const LogEntry& other);
 
     std::string file;
@@ -51,12 +57,23 @@ class DEVICE_EVENT_LOG_EXPORT DeviceEventLogImpl {
                 LogLevel level,
                 const std::string& event);
 
+  void AddEntryWithTimestampForTesting(const char* file,
+                                       int file_line,
+                                       LogType log_type,
+                                       LogLevel log_level,
+                                       const std::string& event,
+                                       base::Time time);
+
   // Implements device_event_log::GetAsString.
   std::string GetAsString(StringOrder order,
                           const std::string& format,
                           const std::string& types,
                           LogLevel max_level,
                           size_t max_events);
+
+  // Implements device_event_log::Clear.
+  void ClearAll();
+  void Clear(const base::Time& begin, const base::Time& end);
 
   // Called from device_event_log::AddEntry if the global instance has not been
   // created (or has already been destroyed). Logs to LOG(ERROR) or VLOG(1).
@@ -81,7 +98,7 @@ class DEVICE_EVENT_LOG_EXPORT DeviceEventLogImpl {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   size_t max_entries_;
   LogEntryList entries_;
-  base::WeakPtrFactory<DeviceEventLogImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<DeviceEventLogImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DeviceEventLogImpl);
 };

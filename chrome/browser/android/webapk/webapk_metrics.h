@@ -28,18 +28,10 @@ enum InstallEvent {
   INSTALL_EVENT_MAX,
 };
 
-// The ways in which WebAPK installation can be started.
-enum InstallSource {
-  INSTALL_SOURCE_BANNER,
-  INSTALL_SOURCE_MENU,
-  INSTALL_SOURCE_MAX,
-};
-
 void TrackRequestTokenDuration(base::TimeDelta delta);
 void TrackInstallDuration(base::TimeDelta delta);
 void TrackInstallEvent(InstallEvent event);
-void TrackInstallSource(InstallSource event);
 
-};  // namespace webapk
+}  // namespace webapk
 
 #endif  // CHROME_BROWSER_ANDROID_WEBAPK_WEBAPK_METRICS_H_

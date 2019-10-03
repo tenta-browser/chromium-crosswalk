@@ -24,17 +24,19 @@ using content::BrowserThread;
 
 namespace chromeos {
 
-bool IsExternalFileURLType(storage::FileSystemType type) {
+bool IsExternalFileURLType(storage::FileSystemType type, bool force) {
   return type == storage::kFileSystemTypeDrive ||
          type == storage::kFileSystemTypeDeviceMediaAsFileStorage ||
          type == storage::kFileSystemTypeProvided ||
-         type == storage::kFileSystemTypeArcContent;
+         type == storage::kFileSystemTypeArcContent ||
+         type == storage::kFileSystemTypeArcDocumentsProvider || force;
 }
 
 GURL FileSystemURLToExternalFileURL(
-    const storage::FileSystemURL& file_system_url) {
+    const storage::FileSystemURL& file_system_url,
+    bool force) {
   if (file_system_url.mount_type() != storage::kFileSystemTypeExternal ||
-      !IsExternalFileURLType(file_system_url.type())) {
+      !IsExternalFileURLType(file_system_url.type(), force)) {
     return GURL();
   }
 
@@ -44,18 +46,19 @@ GURL FileSystemURLToExternalFileURL(
 base::FilePath ExternalFileURLToVirtualPath(const GURL& url) {
   if (!url.is_valid() || url.scheme() != content::kExternalFileScheme)
     return base::FilePath();
-  const std::string path_string =
-      net::UnescapeURLComponent(url.GetContent(), net::UnescapeRule::NORMAL);
-  return base::FilePath::FromUTF8Unsafe(path_string);
+  return base::FilePath::FromUTF8Unsafe(
+      net::UnescapeBinaryURLComponent(url.path_piece()));
 }
 
 GURL VirtualPathToExternalFileURL(const base::FilePath& virtual_path) {
-  return GURL(base::StringPrintf("%s:%s", content::kExternalFileScheme,
-                                 virtual_path.AsUTF8Unsafe().c_str()));
+  return GURL(
+      base::StringPrintf("%s:%s", content::kExternalFileScheme,
+                         net::EscapePath(virtual_path.AsUTF8Unsafe()).c_str()));
 }
 
 GURL CreateExternalFileURLFromPath(Profile* profile,
-                                   const base::FilePath& path) {
+                                   const base::FilePath& path,
+                                   bool force) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   GURL raw_file_system_url;
@@ -74,7 +77,7 @@ GURL CreateExternalFileURLFromPath(Profile* profile,
   if (!file_system_url.is_valid())
     return GURL();
 
-  return FileSystemURLToExternalFileURL(file_system_url);
+  return FileSystemURLToExternalFileURL(file_system_url, force);
 }
 
 }  // namespace chromeos

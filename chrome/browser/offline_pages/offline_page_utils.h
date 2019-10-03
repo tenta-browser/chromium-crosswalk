@@ -6,11 +6,16 @@
 #define CHROME_BROWSER_OFFLINE_PAGES_OFFLINE_PAGE_UTILS_H_
 
 #include <stdint.h>
+#include <string>
+#include <vector>
 
 #include "base/callback.h"
+#include "base/files/file_util.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/offline_page_types.h"
 #include "url/gurl.h"
+
+class SimpleFactoryKey;
 
 namespace base {
 class Time;
@@ -18,12 +23,14 @@ class Time;
 
 namespace content {
 class BrowserContext;
+class NavigationEntry;
 class WebContents;
 }
 
 namespace offline_pages {
 struct OfflinePageHeader;
 struct OfflinePageItem;
+struct PageCriteria;
 
 class OfflinePageUtils {
  public:
@@ -51,20 +58,27 @@ class OfflinePageUtils {
     ALL = 0xFFFF
   };
 
+  static const base::FilePath::CharType kMHTMLExtension[];
+
   // Callback to inform the duplicate checking result.
   using DuplicateCheckCallback = base::Callback<void(DuplicateCheckResult)>;
 
-  // Returns via callback an offline page related to |url|, if any. The
-  // page is chosen based on creation date; a more recently created offline
-  // page will be preferred over an older one. The offline page captured from
-  // last visit in the tab will not be considered if its tab id does not match
-  // the provided |tab_id|.
-  static void SelectPageForURL(
-      content::BrowserContext* browser_context,
+  // Returns via callback all offline pages related to |url|. The provided URL
+  // is matched both against the original and the actual URL fields (they
+  // sometimes differ because of possible redirects). If |tab_id| is provided
+  // with a valid ID, offline pages bound to that tab will also be included in
+  // the search. The returned list is sorted by descending creation date so that
+  // the most recent offline page will be the first element of the list.
+  static void SelectPagesForURL(
+      SimpleFactoryKey* key,
       const GURL& url,
-      URLSearchMode url_search_mode,
       int tab_id,
-      const base::Callback<void(const OfflinePageItem*)>& callback);
+      base::OnceCallback<void(const std::vector<OfflinePageItem>&)> callback);
+
+  static void SelectPagesWithCriteria(
+      SimpleFactoryKey* key,
+      const PageCriteria& criteria,
+      base::OnceCallback<void(const std::vector<OfflinePageItem>&)> callback);
 
   // Gets the offline page corresponding to the given web contents.  The
   // returned pointer is owned by the web_contents and may be deleted by user
@@ -92,8 +106,6 @@ class OfflinePageUtils {
   // Returns true if the |web_contents| is currently being presented inside a
   // custom tab.
   static bool CurrentlyShownInCustomTab(content::WebContents* web_contents);
-
-  static bool EqualsIgnoringFragment(const GURL& lhs, const GURL& rhs);
 
   // Returns original URL of the given web contents. Empty URL is returned if
   // no redirect occurred.
@@ -146,9 +158,25 @@ class OfflinePageUtils {
   // means no callback should be expected.
   static bool GetCachedOfflinePageSizeBetween(
       content::BrowserContext* browser_context,
-      const SizeInBytesCallback& callback,
+      SizeInBytesCallback callback,
       const base::Time& begin_time,
       const base::Time& end_time);
+
+  // Extracts and returns the value of the custom offline header from a
+  // navigation entry. Empty string is returned if it is not found.
+  // Note that the offline header is assumed to be the onlt extra header if it
+  // exists.
+  static std::string ExtractOfflineHeaderValueFromNavigationEntry(
+      content::NavigationEntry* entry);
+
+  // Returns true if |web_contents| is showing a trusted offline page.
+  static bool IsShowingTrustedOfflinePage(content::WebContents* web_contents);
+
+  // Tries to acquires the file access permission. |callback| will be called
+  // to inform if the file access permission is granted.
+  static void AcquireFileAccessPermission(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> callback);
 };
 
 }  // namespace offline_pages

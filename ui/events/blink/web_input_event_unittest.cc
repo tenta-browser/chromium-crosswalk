@@ -7,8 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/bind.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/base_event_utils.h"
@@ -26,14 +25,6 @@
 #endif
 
 namespace ui {
-
-namespace {
-
-gfx::PointF GetScreenLocationFromEvent(const LocatedEvent& event) {
-  return event.root_location_f();
-}
-
-}  // namespace
 
 // Checks that MakeWebKeyboardEvent makes a DOM3 spec compliant key event.
 // crbug.com/127142
@@ -215,7 +206,7 @@ TEST(WebInputEventTest, TestMakeWebKeyboardEventKeyPadKeyCode) {
   }
 #if defined(USE_X11)
   ScopedXI2Event xev;
-  for (size_t i = 0; i < arraysize(kTesCases); ++i) {
+  for (size_t i = 0; i < base::size(kTesCases); ++i) {
     const TestCase& test_case = kTesCases[i];
 
     // TODO: re-enable the two cases excluded here once all trybots
@@ -251,12 +242,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_PRESSED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_LEFT_MOUSE_BUTTON,
                         EF_LEFT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kLeft, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseDown, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -269,12 +258,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_RELEASED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, 0,
                         EF_LEFT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kLeft, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseUp, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -287,12 +274,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_PRESSED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_MIDDLE_MOUSE_BUTTON,
                         EF_MIDDLE_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kMiddle, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseDown, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -305,12 +290,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_RELEASED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, 0,
                         EF_MIDDLE_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kMiddle, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseUp, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -323,12 +306,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_PRESSED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_RIGHT_MOUSE_BUTTON,
                         EF_RIGHT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kRight, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseDown, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -341,12 +322,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_RELEASED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, 0,
                         EF_RIGHT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kRight, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseUp, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -358,12 +337,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     base::TimeTicks timestamp = EventTimeForNow();
     MouseEvent ui_event(ET_MOUSE_MOVED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, 0, 0);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kNoButton, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseMove, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -376,12 +353,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_MOVED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_LEFT_MOUSE_BUTTON,
                         0);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kLeft, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseMove, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -394,12 +369,10 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(
         ET_MOUSE_PRESSED, gfx::Point(123, 321), gfx::Point(123, 321), timestamp,
         EF_LEFT_MOUSE_BUTTON | EF_SHIFT_DOWN, EF_LEFT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kLeft, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseDown, webkit_event.GetType());
     EXPECT_EQ(ui_event.GetClickCount(), webkit_event.click_count);
@@ -412,8 +385,7 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
     MouseEvent ui_event(ET_MOUSE_PRESSED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_LEFT_MOUSE_BUTTON,
                         EF_LEFT_MOUSE_BUTTON);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
 
     EXPECT_EQ(blink::WebPointerProperties::PointerType::kMouse,
               webkit_event.pointer_type);
@@ -433,15 +405,14 @@ TEST(WebInputEventTest, TestMakeWebMouseEvent) {
                                    /* radius_x */ 0.0f,
                                    /* radius_y */ 0.0f,
                                    /* force */ 0.8f,
+                                   /* twist */ 269,
                                    /* tilt_x */ 89.5f,
                                    /* tilt_y */ -89.5f,
-                                   /* tangential_pressure */ 0.6f,
-                                   /* twist */ 269);
+                                   /* tangential_pressure */ 0.6f);
     MouseEvent ui_event(ET_MOUSE_PRESSED, gfx::Point(123, 321),
                         gfx::Point(123, 321), timestamp, EF_LEFT_MOUSE_BUTTON,
                         EF_LEFT_MOUSE_BUTTON, pointer_details);
-    blink::WebMouseEvent webkit_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent webkit_event = MakeWebMouseEvent(ui_event);
 
     EXPECT_EQ(blink::WebPointerProperties::PointerType::kPen,
               webkit_event.pointer_type);
@@ -464,12 +435,10 @@ TEST(WebInputEventTest, TestMakeWebMouseWheelEvent) {
                                            -MouseWheelEvent::kWheelDelta * 2),
                              gfx::Point(123, 321), gfx::Point(123, 321),
                              timestamp, 0, 0);
-    blink::WebMouseWheelEvent webkit_event = MakeWebMouseWheelEvent(
-        ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseWheelEvent webkit_event = MakeWebMouseWheelEvent(ui_event);
     EXPECT_EQ(EventFlagsToWebEventModifiers(ui_event.flags()),
               webkit_event.GetModifiers());
-    EXPECT_FLOAT_EQ(EventTimeStampToSeconds(timestamp),
-                    webkit_event.TimeStampSeconds());
+    EXPECT_EQ(timestamp, webkit_event.TimeStamp());
     EXPECT_EQ(blink::WebMouseEvent::Button::kNoButton, webkit_event.button);
     EXPECT_EQ(blink::WebInputEvent::kMouseWheel, webkit_event.GetType());
     EXPECT_FLOAT_EQ(ui_event.x_offset() / MouseWheelEvent::kWheelDelta,
@@ -496,13 +465,14 @@ TEST(WebInputEventTest, KeyEvent) {
   } tests[] = {
       {ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_A, ui::EF_NONE),
        blink::WebInputEvent::kRawKeyDown, 0x0},
-      {ui::KeyEvent(L'B', ui::VKEY_B, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN),
+      {ui::KeyEvent(L'B', ui::VKEY_B, ui::DomCode::NONE,
+                    ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN),
        blink::WebInputEvent::kChar,
        blink::WebInputEvent::kShiftKey | blink::WebInputEvent::kControlKey},
       {ui::KeyEvent(ui::ET_KEY_RELEASED, ui::VKEY_C, ui::EF_ALT_DOWN),
        blink::WebInputEvent::kKeyUp, blink::WebInputEvent::kAltKey}};
 
-  for (size_t i = 0; i < arraysize(tests); i++) {
+  for (size_t i = 0; i < base::size(tests); i++) {
     blink::WebKeyboardEvent web_event = MakeWebKeyboardEvent(tests[i].event);
     ASSERT_TRUE(blink::WebInputEvent::IsKeyboardEventType(web_event.GetType()));
     ASSERT_EQ(tests[i].web_type, web_event.GetType());
@@ -519,8 +489,7 @@ TEST(WebInputEventTest, WheelEvent) {
       ui::MouseEvent(ui::ET_UNKNOWN, gfx::Point(), gfx::Point(),
                      base::TimeTicks(), 0, 0),
       kDeltaX, kDeltaY);
-  blink::WebMouseWheelEvent web_event =
-      MakeWebMouseWheelEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+  blink::WebMouseWheelEvent web_event = MakeWebMouseWheelEvent(ui_event);
   ASSERT_EQ(blink::WebInputEvent::kMouseWheel, web_event.GetType());
   ASSERT_EQ(0, web_event.GetModifiers());
   ASSERT_EQ(kDeltaX, web_event.delta_x);
@@ -548,12 +517,11 @@ TEST(WebInputEventTest, MousePointerEvent) {
        gfx::Point(13, 3), gfx::Point(53, 3)},
   };
 
-  for (size_t i = 0; i < arraysize(tests); i++) {
+  for (size_t i = 0; i < base::size(tests); i++) {
     ui::MouseEvent ui_event(tests[i].ui_type, tests[i].location,
                             tests[i].screen_location, base::TimeTicks(),
                             tests[i].ui_modifiers, 0);
-    blink::WebMouseEvent web_event =
-        MakeWebMouseEvent(ui_event, base::Bind(&GetScreenLocationFromEvent));
+    blink::WebMouseEvent web_event = MakeWebMouseEvent(ui_event);
     ASSERT_TRUE(blink::WebInputEvent::IsMouseEventType(web_event.GetType()));
     ASSERT_EQ(tests[i].web_type, web_event.GetType());
     ASSERT_EQ(tests[i].web_modifiers, web_event.GetModifiers());
@@ -563,5 +531,23 @@ TEST(WebInputEventTest, MousePointerEvent) {
     ASSERT_EQ(tests[i].screen_location.y(), web_event.PositionInScreen().y);
   }
 }
+
+#if defined(OS_WIN)
+TEST(WebInputEventTest, MouseLeaveScreenCoordinate) {
+  MSG msg_event = {nullptr, WM_MOUSELEAVE, 0, MAKELPARAM(300, 200)};
+  ::SetCursorPos(250, 350);
+  ui::MouseEvent ui_event(msg_event);
+
+  blink::WebMouseEvent web_event = MakeWebMouseEvent(ui_event);
+  ASSERT_EQ(blink::WebInputEvent::kMouseLeave, web_event.GetType());
+
+  // WM_MOUSELEAVE events take coordinates from cursor position instead of
+  // LPARAM.
+  ASSERT_EQ(250, web_event.PositionInWidget().x);
+  ASSERT_EQ(350, web_event.PositionInWidget().y);
+  ASSERT_EQ(250, web_event.PositionInScreen().x);
+  ASSERT_EQ(350, web_event.PositionInScreen().y);
+}
+#endif
 
 }  // namespace ui

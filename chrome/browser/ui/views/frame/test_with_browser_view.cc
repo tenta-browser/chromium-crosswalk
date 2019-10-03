@@ -4,7 +4,9 @@
 
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
+#include "base/bind.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -13,6 +15,8 @@
 #include "chrome/browser/search_engines/chrome_template_url_service_client.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
+#include "chrome/browser/signin/chrome_signin_client_factory.h"
+#include "chrome/browser/signin/chrome_signin_client_test_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/web_data_service_factory.h"
@@ -23,7 +27,9 @@
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/signin/public/base/list_accounts_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "services/network/test/test_url_loader_factory.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
@@ -35,41 +41,29 @@ namespace {
 std::unique_ptr<KeyedService> CreateTemplateURLService(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  return base::MakeUnique<TemplateURLService>(
-      profile->GetPrefs(),
-      std::unique_ptr<SearchTermsData>(new UIThreadSearchTermsData(profile)),
+  return std::make_unique<TemplateURLService>(
+      profile->GetPrefs(), std::make_unique<UIThreadSearchTermsData>(profile),
       WebDataServiceFactory::GetKeywordWebDataForProfile(
           profile, ServiceAccessType::EXPLICIT_ACCESS),
-      std::unique_ptr<TemplateURLServiceClient>(
-          new ChromeTemplateURLServiceClient(
-              HistoryServiceFactory::GetForProfile(
-                  profile, ServiceAccessType::EXPLICIT_ACCESS))),
+      std::make_unique<ChromeTemplateURLServiceClient>(
+          HistoryServiceFactory::GetForProfile(
+              profile, ServiceAccessType::EXPLICIT_ACCESS)),
       nullptr, nullptr, base::Closure());
 }
 
 std::unique_ptr<KeyedService> CreateAutocompleteClassifier(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  return base::MakeUnique<AutocompleteClassifier>(
-      base::WrapUnique(new AutocompleteController(
-          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)),
-
-          nullptr, AutocompleteClassifier::DefaultOmniboxProviders())),
-      std::unique_ptr<AutocompleteSchemeClassifier>(
-          new TestSchemeClassifier()));
+  return std::make_unique<AutocompleteClassifier>(
+      std::make_unique<AutocompleteController>(
+          std::make_unique<ChromeAutocompleteProviderClient>(profile), nullptr,
+          AutocompleteClassifier::DefaultOmniboxProviders()),
+      std::make_unique<TestSchemeClassifier>());
 }
 
 }  // namespace
 
-TestWithBrowserView::TestWithBrowserView() {
-}
-
-TestWithBrowserView::TestWithBrowserView(Browser::Type browser_type,
-                                         bool hosted_app)
-    : BrowserWithTestWindowTest(browser_type, hosted_app) {}
-
-TestWithBrowserView::~TestWithBrowserView() {
-}
+TestWithBrowserView::~TestWithBrowserView() {}
 
 void TestWithBrowserView::SetUp() {
 #if defined(OS_CHROMEOS)
@@ -103,16 +97,25 @@ TestingProfile* TestWithBrowserView::CreateProfile() {
   // TemplateURLService is normally null during testing. Instant extended
   // needs this service so set a custom factory function.
   TemplateURLServiceFactory::GetInstance()->SetTestingFactory(
-      profile, &CreateTemplateURLService);
+      profile, base::BindRepeating(&CreateTemplateURLService));
   // TODO(jamescook): Eliminate this by introducing a mock toolbar or mock
   // location bar.
   AutocompleteClassifierFactory::GetInstance()->SetTestingFactory(
-      profile, &CreateAutocompleteClassifier);
+      profile, base::BindRepeating(&CreateAutocompleteClassifier));
+
+  // Configure the GaiaCookieManagerService to return no accounts.
+  signin::SetListAccountsResponseHttpNotFound(test_url_loader_factory());
   return profile;
 }
 
-BrowserWindow* TestWithBrowserView::CreateBrowserWindow() {
+std::unique_ptr<BrowserWindow> TestWithBrowserView::CreateBrowserWindow() {
   // Allow BrowserWithTestWindowTest to use Browser to create the default
   // BrowserView and BrowserFrame.
   return nullptr;
+}
+
+TestingProfile::TestingFactories TestWithBrowserView::GetTestingFactories() {
+  return {{ChromeSigninClientFactory::GetInstance(),
+           base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
+                               test_url_loader_factory())}};
 }

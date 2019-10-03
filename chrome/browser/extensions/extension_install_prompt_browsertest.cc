@@ -16,19 +16,13 @@
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/value_builder.h"
 
 using extensions::ScopedTestDialogAutoConfirm;
 
 namespace {
 
-scoped_refptr<extensions::Extension> BuildTestExtension() {
-  return extensions::ExtensionBuilder()
-      .SetManifest(extensions::DictionaryBuilder()
-                       .Set("name", "foo")
-                       .Set("version", "1.0")
-                       .Build())
-      .Build();
+scoped_refptr<const extensions::Extension> BuildTestExtension() {
+  return extensions::ExtensionBuilder("foo").Build();
 }
 
 }  // namespace
@@ -46,7 +40,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallPromptBrowserTest,
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   content::WebContents* web_contents = tab_strip_model->GetActiveWebContents();
   int web_contents_index = tab_strip_model->GetIndexOfWebContents(web_contents);
-  scoped_refptr<extensions::Extension> extension(BuildTestExtension());
+  scoped_refptr<const extensions::Extension> extension(BuildTestExtension());
 
   ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
 
@@ -73,7 +67,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallPromptBrowserTest,
   // closed.
   CreateBrowser(browser()->profile());
 
-  scoped_refptr<extensions::Extension> extension(BuildTestExtension());
+  scoped_refptr<const extensions::Extension> extension(BuildTestExtension());
 
   ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
 
@@ -96,7 +90,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallPromptBrowserTest,
 // web contents or parent gfx::NativeWindow is passed to the
 // ExtensionInstallPrompt constructor.
 IN_PROC_BROWSER_TEST_F(ExtensionInstallPromptBrowserTest, NoParent) {
-  scoped_refptr<extensions::Extension> extension(BuildTestExtension());
+  scoped_refptr<const extensions::Extension> extension(BuildTestExtension());
 
   ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
 

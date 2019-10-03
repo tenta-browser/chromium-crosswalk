@@ -6,6 +6,7 @@
 
 #include "ash/display/display_configuration_controller.h"
 #include "ash/rotator/screen_rotation_animator.h"
+#include "ash/shell.h"
 
 namespace ash {
 
@@ -13,8 +14,8 @@ DisplayConfigurationControllerTestApi::DisplayConfigurationControllerTestApi(
     DisplayConfigurationController* controller)
     : controller_(controller) {}
 
-void DisplayConfigurationControllerTestApi::DisableDisplayAnimator() {
-  controller_->ResetAnimatorForTest();
+void DisplayConfigurationControllerTestApi::SetDisplayAnimator(bool enable) {
+  controller_->SetAnimatorForTest(enable);
 }
 
 ScreenRotationAnimator*
@@ -26,8 +27,9 @@ DisplayConfigurationControllerTestApi::GetScreenRotationAnimatorForDisplay(
 void DisplayConfigurationControllerTestApi::SetScreenRotationAnimatorForDisplay(
     int64_t display_id,
     std::unique_ptr<ScreenRotationAnimator> animator) {
-  controller_->SetScreenRotationAnimatorForTest(display_id,
-                                                std::move(animator));
+  aura::Window* root_window = Shell::GetRootWindowForDisplayId(display_id);
+  ScreenRotationAnimator::SetScreenRotationAnimatorForTest(root_window,
+                                                           std::move(animator));
 }
 
 }  // namespace ash

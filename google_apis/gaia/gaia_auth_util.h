@@ -9,19 +9,17 @@
 #include <utility>
 #include <vector>
 
-class GURL;
+#include "google_apis/gaia/core_account_id.h"
 
-namespace net {
-class URLFetcher;
-class URLRequest;
-} // namespace net
+class GURL;
 
 namespace gaia {
 
 struct ListedAccount {
   // The account's ID, as per Chrome, will be determined in the
   // CookieManagerService.
-  std::string id;
+  // TODO(triploblastic): Rename the id field to account_id.
+  CoreAccountId id;
   std::string email;
   std::string gaia_id;
   std::string raw_email;
@@ -36,6 +34,8 @@ struct ListedAccount {
 
 // Perform basic canonicalization of |email_address|, taking into account that
 // gmail does not consider '.' or caps inside a username to matter.
+// If |email_address| is not a valid, returns it in lower case without
+// additional canonicalization.
 std::string CanonicalizeEmail(const std::string& email_address);
 
 // Returns the canonical form of the given domain.
@@ -63,12 +63,6 @@ bool IsGaiaSignonRealm(const GURL& url);
 bool ParseListAccountsData(const std::string& data,
                            std::vector<ListedAccount>* accounts,
                            std::vector<ListedAccount>* signed_out_accounts);
-
-// Returns true if the URL request originated from GAIA.
-bool RequestOriginatedFromGaia(const net::URLRequest& request);
-
-// Marks the URL request as a Gaia request.
-void MarkURLFetcherAsGaia(net::URLFetcher* request);
 
 }  // namespace gaia
 

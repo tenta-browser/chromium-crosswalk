@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "ui/aura/test/aura_test_base.h"
+#include "ui/aura/test/test_cursor_client.h"
 #include "ui/aura/test/test_screen.h"
 #include "ui/aura/test/window_event_dispatcher_test_api.h"
 #include "ui/aura/window.h"
@@ -10,40 +12,11 @@
 #include "ui/base/ime/input_method.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/test/draw_waiter_for_test.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/events/event_rewriter.h"
+#include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/events/test/test_event_rewriter.h"
 #include "ui/platform_window/stub/stub_window.h"
-
-namespace {
-
-// Counts number of events observed.
-class CounterEventRewriter : public ui::EventRewriter {
- public:
-  CounterEventRewriter() : events_seen_(0) {}
-  ~CounterEventRewriter() override {}
-
-  int events_seen() const { return events_seen_; }
-
- private:
-  // ui::EventRewriter:
-  ui::EventRewriteStatus RewriteEvent(
-      const ui::Event& event,
-      std::unique_ptr<ui::Event>* new_event) override {
-    events_seen_++;
-    return ui::EVENT_REWRITE_CONTINUE;
-  }
-
-  ui::EventRewriteStatus NextDispatchEvent(
-      const ui::Event& last_event,
-      std::unique_ptr<ui::Event>* new_event) override {
-    return ui::EVENT_REWRITE_CONTINUE;
-  }
-
-  int events_seen_;
-
-  DISALLOW_COPY_AND_ASSIGN(CounterEventRewriter);
-};
-
-}  // namespace
 
 namespace aura {
 
@@ -65,47 +38,39 @@ TEST_F(WindowTreeHostTest, DPIWindowSize) {
   host()->SetRootTransform(transform);
   EXPECT_EQ(gfx::Rect(0, 1, 534, 401), root_window()->bounds());
 
-  gfx::Insets padding(1, 2, 3, 4);
-  // Padding is in physical pixels.
-  host()->SetOutputSurfacePaddingInPixels(padding);
-  gfx::Rect padded_rect = starting_bounds;
-  padded_rect.Inset(-padding);
-  EXPECT_EQ(padded_rect.size(), host()->compositor()->size());
   EXPECT_EQ(starting_bounds, host()->GetBoundsInPixels());
-  EXPECT_EQ(gfx::Rect(1, 1, 534, 401), root_window()->bounds());
-  EXPECT_EQ(gfx::Vector2dF(0, 0),
-            host()->compositor()->root_layer()->subpixel_position_offset());
+  EXPECT_EQ(gfx::Rect(0, 1, 534, 401), root_window()->bounds());
 }
 
+#if defined(OS_CHROMEOS)
 TEST_F(WindowTreeHostTest, HoldPointerMovesOnChildResizing) {
-  // Signal to the ui::Compositor that a child is resizing. This will
-  // trigger input throttling on the next BeginFrame.
-  host()->compositor()->OnChildResizing();
-
-  // Wait for a CompositorFrame to be submitted.
-  ui::DrawWaiterForTest::WaitForCompositingStarted(host()->compositor());
   aura::WindowEventDispatcher* dispatcher = host()->dispatcher();
 
   aura::test::WindowEventDispatcherTestApi dispatcher_api(dispatcher);
 
-  // Pointer moves should be throttled until Viz ACKs. If surface
-  // synchronization is on, this may happen several BeginFrames later.
-  // This rate limits further resizing while Viz tries to synchronize
-  // the visuals of multiple clients.
+  EXPECT_FALSE(dispatcher_api.HoldingPointerMoves());
+
+  // Signal to the ui::Compositor that a child is resizing. This will
+  // immediately trigger input throttling.
+  host()->compositor()->OnChildResizing();
+
+  // Pointer moves should be throttled until the next commit. This has the
+  // effect of prioritizing the resize event above other operations in aura.
   EXPECT_TRUE(dispatcher_api.HoldingPointerMoves());
 
-  // Wait until Viz ACKs the submitted CompositorFrame.
+  // Wait for a CompositorFrame to be activated.
   ui::DrawWaiterForTest::WaitForCompositingEnded(host()->compositor());
 
-  // Pointer moves should be routed normally after the ACK.
+  // Pointer moves should be routed normally after commit.
   EXPECT_FALSE(dispatcher_api.HoldingPointerMoves());
 }
+#endif
 
 TEST_F(WindowTreeHostTest, NoRewritesPostIME) {
-  CounterEventRewriter event_rewriter;
+  ui::test::TestEventRewriter event_rewriter;
   host()->AddEventRewriter(&event_rewriter);
 
-  ui::KeyEvent key_event('A', ui::VKEY_A, 0);
+  ui::KeyEvent key_event('A', ui::VKEY_A, ui::DomCode::NONE, 0);
   ui::EventDispatchDetails details =
       host()->GetInputMethod()->DispatchKeyEvent(&key_event);
   ASSERT_TRUE(!details.dispatcher_destroyed && !details.target_destroyed);
@@ -117,10 +82,42 @@ TEST_F(WindowTreeHostTest, NoRewritesPostIME) {
 TEST_F(WindowTreeHostTest, ColorSpace) {
   EXPECT_EQ(gfx::ColorSpace::CreateSRGB(),
             host()->compositor()->output_color_space());
-  test_screen()->SetColorSpace(gfx::ColorSpace::CreateSCRGBLinear());
-  EXPECT_EQ(gfx::ColorSpace::CreateSCRGBLinear(),
+
+  test_screen()->SetColorSpace(gfx::ColorSpace::CreateDisplayP3D65());
+  EXPECT_EQ(gfx::ColorSpace::CreateDisplayP3D65(),
             host()->compositor()->output_color_space());
 }
+
+#if defined(OS_WIN)
+TEST_F(WindowTreeHostTest, ColorSpaceHDR) {
+  EXPECT_EQ(gfx::ColorSpace::CreateSRGB(),
+            host()->compositor()->output_color_space());
+
+  // UI compositor overrides HDR color space based on whether alpha blending is
+  // needed or not.
+  test_screen()->SetColorSpace(gfx::ColorSpace::CreateHDR10());
+  host()->compositor()->SetBackgroundColor(SK_ColorBLACK);
+  EXPECT_EQ(gfx::ColorSpace::CreateHDR10(),
+            host()->compositor()->output_color_space());
+
+  test_screen()->SetColorSpace(gfx::ColorSpace::CreateHDR10());
+  host()->compositor()->SetBackgroundColor(SK_ColorTRANSPARENT);
+  EXPECT_EQ(gfx::ColorSpace::CreateSCRGBLinear(),
+            host()->compositor()->output_color_space());
+
+  // UI compositor does not override color space if it's already SCRGB linear.
+  test_screen()->SetColorSpace(gfx::ColorSpace::CreateSCRGBLinear(), 200.f);
+  host()->compositor()->SetBackgroundColor(SK_ColorBLACK);
+  EXPECT_EQ(gfx::ColorSpace::CreateSCRGBLinear(),
+            host()->compositor()->output_color_space());
+
+  // UI compositor does not override SDR color space.
+  test_screen()->SetColorSpace(gfx::ColorSpace::CreateSRGB(), 200.f);
+  host()->compositor()->SetBackgroundColor(SK_ColorTRANSPARENT);
+  EXPECT_EQ(gfx::ColorSpace::CreateSRGB(),
+            host()->compositor()->output_color_space());
+}
+#endif  // OS_WIN
 
 class TestWindow : public ui::StubWindow {
  public:
@@ -146,12 +143,51 @@ class TestWindowTreeHost : public WindowTreeHostPlatform {
     CreateCompositor();
   }
 
+  ui::CursorType GetCursorType() { return GetCursorNative()->native_type(); }
+  void DispatchEventForTest(ui::Event* event) { DispatchEvent(event); }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(TestWindowTreeHost);
 };
 
+class TestCursorClient : public test::TestCursorClient {
+ public:
+  explicit TestCursorClient(aura::Window* root_window)
+      : test::TestCursorClient(root_window) {
+    window_ = root_window;
+  }
+  ~TestCursorClient() override {}
+
+  // Overridden from test::TestCursorClient:
+  void SetCursor(gfx::NativeCursor cursor) override {
+    WindowTreeHost* host = window_->GetHost();
+    if (host)
+      host->SetCursor(cursor);
+  }
+
+ private:
+  aura::Window* window_;
+  DISALLOW_COPY_AND_ASSIGN(TestCursorClient);
+};
+
 TEST_F(WindowTreeHostTest, LostCaptureDuringTearDown) {
   TestWindowTreeHost host;
+}
+
+// Tests if the cursor type is reset after ET_MOUSE_EXITED event.
+TEST_F(WindowTreeHostTest, ResetCursorOnExit) {
+  TestWindowTreeHost host;
+  aura::TestCursorClient cursor_client(host.window());
+
+  // Set the cursor with the specific type to check if it's reset after
+  // ET_MOUSE_EXITED event.
+  host.SetCursorNative(ui::CursorType::kCross);
+
+  ui::MouseEvent exit_event(ui::ET_MOUSE_EXITED, gfx::Point(), gfx::Point(),
+                            ui::EventTimeForNow(), 0, 0);
+
+  host.DispatchEventForTest(&exit_event);
+  EXPECT_EQ(host.GetCursorType(), ui::CursorType::kNone);
 }
 
 }  // namespace aura

@@ -4,8 +4,10 @@
 
 #include "chrome/browser/history/history_tab_helper.h"
 
+#include <algorithm>
 #include <utility>
 
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/prerender/prerender_contents.h"
@@ -13,9 +15,13 @@
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/history/content/browser/history_context_helper.h"
+#include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/ntp_snippets/features.h"
+#include "components/previews/core/previews_lite_page_redirect.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
@@ -35,20 +41,8 @@ using chrome::android::BackgroundTabManager;
 using content::NavigationEntry;
 using content::WebContents;
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(HistoryTabHelper);
-
-namespace {
-
-// Referrer used for clicks on article suggestions on the NTP.
-const char kChromeContentSuggestionsReferrer[] =
-    "https://www.googleapis.com/auth/chrome-content-suggestions";
-
-}  // namespace
-
 HistoryTabHelper::HistoryTabHelper(WebContents* web_contents)
-    : content::WebContentsObserver(web_contents),
-      received_page_title_(false) {
-}
+    : content::WebContentsObserver(web_contents) {}
 
 HistoryTabHelper::~HistoryTabHelper() {
 }
@@ -60,12 +54,6 @@ void HistoryTabHelper::UpdateHistoryForNavigation(
     GetHistoryService()->AddPage(add_page_args);
 }
 
-void HistoryTabHelper::UpdateHistoryPageTitle(const NavigationEntry& entry) {
-  history::HistoryService* hs = GetHistoryService();
-  if (hs)
-    hs->SetPageTitle(entry.GetVirtualURL(), entry.GetTitleForDisplay());
-}
-
 history::HistoryAddPageArgs
 HistoryTabHelper::CreateHistoryAddPageArgs(
     const GURL& virtual_url,
@@ -74,8 +62,11 @@ HistoryTabHelper::CreateHistoryAddPageArgs(
     content::NavigationHandle* navigation_handle) {
   // Clicks on content suggestions on the NTP should not contribute to the
   // Most Visited tiles in the NTP.
-  const bool consider_for_ntp_most_visited =
-      navigation_handle->GetReferrer().url != kChromeContentSuggestionsReferrer;
+  const GURL& referrer_url = navigation_handle->GetReferrer().url;
+  const bool content_suggestions_navigation =
+      referrer_url == ntp_snippets::GetContentSuggestionsReferrerURL() &&
+      ui::PageTransitionCoreTypeIs(navigation_handle->GetPageTransition(),
+                                   ui::PAGE_TRANSITION_AUTO_BOOKMARK);
 
   const bool status_code_is_error =
       navigation_handle->GetResponseHeaders() &&
@@ -96,7 +87,18 @@ HistoryTabHelper::CreateHistoryAddPageArgs(
       navigation_handle->GetReferrer().url,
       navigation_handle->GetRedirectChain(),
       navigation_handle->GetPageTransition(), hidden, history::SOURCE_BROWSED,
-      navigation_handle->DidReplaceEntry(), consider_for_ntp_most_visited);
+      navigation_handle->DidReplaceEntry(), !content_suggestions_navigation,
+      navigation_handle->IsSameDocument()
+          ? base::Optional<base::string16>(
+                navigation_handle->GetWebContents()->GetTitle())
+          : base::nullopt);
+
+  // If this navigation attempted a Preview, remove those URLS from the redirect
+  // chain so that they are not seen by the user. See http://crbug.com/914404.
+  DCHECK(!add_page_args.redirects.empty());
+  base::EraseIf(add_page_args.redirects, [](const GURL& url) {
+    return previews::IsLitePageRedirectPreviewURL(url);
+  });
   if (ui::PageTransitionIsMainFrame(navigation_handle->GetPageTransition()) &&
       virtual_url != navigation_handle->GetURL()) {
     // Hack on the "virtual" URL so that it will appear in history. For some
@@ -118,8 +120,8 @@ void HistoryTabHelper::DidFinishNavigation(
     return;
 
   if (navigation_handle->IsInMainFrame()) {
-    // Allow the new page to set the title again.
-    received_page_title_ = false;
+    is_loading_ = true;
+    num_title_changes_ = 0;
   } else if (!navigation_handle->HasSubframeNavigationEntryCommitted()) {
     // Filter out unwanted URLs. We don't add auto-subframe URLs that don't
     // change which NavigationEntry is current. They are a large part of history
@@ -140,10 +142,9 @@ void HistoryTabHelper::DidFinishNavigation(
   // the WebContents' URL getter does.
   NavigationEntry* last_committed =
       web_contents()->GetController().GetLastCommittedEntry();
-  const history::HistoryAddPageArgs& add_page_args =
-      CreateHistoryAddPageArgs(
-          web_contents()->GetURL(), last_committed->GetTimestamp(),
-          last_committed->GetUniqueID(), navigation_handle);
+  const history::HistoryAddPageArgs& add_page_args = CreateHistoryAddPageArgs(
+      web_contents()->GetLastCommittedURL(), last_committed->GetTimestamp(),
+      last_committed->GetUniqueID(), navigation_handle);
 
   prerender::PrerenderManager* prerender_manager =
       prerender::PrerenderManagerFactory::GetForBrowserContext(
@@ -166,28 +167,44 @@ void HistoryTabHelper::DidFinishNavigation(
     return;
   }
 #else
-  // Don't update history if this web contents isn't associatd with a tab.
+  // Don't update history if this web contents isn't associated with a tab.
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-  if (!browser || browser->is_app())
+  if (!browser)
     return;
 #endif
 
   UpdateHistoryForNavigation(add_page_args);
 }
 
-void HistoryTabHelper::TitleWasSet(NavigationEntry* entry) {
-  if (received_page_title_)
+void HistoryTabHelper::DidFinishLoad(
+    content::RenderFrameHost* render_frame_host,
+    const GURL& validated_url) {
+  if (render_frame_host->GetParent())
     return;
 
-  if (entry) {
-    UpdateHistoryPageTitle(*entry);
+  is_loading_ = false;
+  last_load_completion_ = base::TimeTicks::Now();
+}
 
-    // For file URLs without a title, the title is synthesized. In that case, we
-    // don't want the update to count toward the "one set per page of the title
-    // to history."
-    bool title_is_synthesized =
-        entry->GetURL().SchemeIsFile() && entry->GetTitle().empty();
-    received_page_title_ = !title_is_synthesized;
+void HistoryTabHelper::TitleWasSet(NavigationEntry* entry) {
+  if (!entry)
+    return;
+
+  // Protect against pages changing their title too often.
+  if (num_title_changes_ >= history::kMaxTitleChanges)
+    return;
+
+  // Only store page titles into history if they were set while the page was
+  // loading or during a brief span after load is complete. This fixes the case
+  // where a page uses a title change to alert a user of a situation but that
+  // title change ends up saved in history.
+  if (is_loading_ || (base::TimeTicks::Now() - last_load_completion_ <
+                      history::GetTitleSettingWindow())) {
+    history::HistoryService* hs = GetHistoryService();
+    if (hs) {
+      hs->SetPageTitle(entry->GetVirtualURL(), entry->GetTitleForDisplay());
+      ++num_title_changes_;
+    }
   }
 }
 
@@ -214,9 +231,11 @@ void HistoryTabHelper::WebContentsDestroyed() {
     NavigationEntry* entry = tab->GetController().GetLastCommittedEntry();
     history::ContextID context_id = history::ContextIDForWebContents(tab);
     if (entry) {
-      hs->UpdateWithPageEndTime(context_id, entry->GetUniqueID(), tab->GetURL(),
-                                base::Time::Now());
+      hs->UpdateWithPageEndTime(context_id, entry->GetUniqueID(),
+                                tab->GetLastCommittedURL(), base::Time::Now());
     }
     hs->ClearCachedDataForContextID(context_id);
   }
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(HistoryTabHelper)

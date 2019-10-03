@@ -20,8 +20,8 @@ namespace supervised_user_error_page {
 
 namespace {
 
-static const int kAvatarSize1x = 45;
-static const int kAvatarSize2x = 90;
+static const int kAvatarSize1x = 36;
+static const int kAvatarSize2x = 72;
 
 bool ReasonIsAutomatic(FilteringBehaviorReason reason) {
   return reason == ASYNC_CHECKER || reason == BLACKLIST;
@@ -30,8 +30,12 @@ bool ReasonIsAutomatic(FilteringBehaviorReason reason) {
 std::string BuildAvatarImageUrl(const std::string& url, int size) {
   std::string result = url;
   size_t slash = result.rfind('/');
-  if (slash != std::string::npos)
-    result.insert(slash, "/s" + base::IntToString(size));
+  if (slash != std::string::npos) {
+    // Check if the URL already contains the monogram (-mo) option.
+    // In that case, we must use the '-' separator, instead of '/'.
+    std::string separator = result.substr(slash - 3, 3) == "/mo" ? "-" : "/";
+    result.insert(slash, separator + "s" + base::NumberToString(size) + "-c");
+  }
   return result;
 }
 
@@ -89,12 +93,12 @@ std::string BuildHtml(bool allow_access_requests,
                     BuildAvatarImageUrl(profile_image_url2, kAvatarSize1x));
   strings.SetString("secondAvatarURL2x",
                     BuildAvatarImageUrl(profile_image_url2, kAvatarSize2x));
+  strings.SetString("custodianName", custodian);
+  strings.SetString("custodianEmail", custodian_email);
+  strings.SetString("secondCustodianName", second_custodian);
+  strings.SetString("secondCustodianEmail", second_custodian_email);
+
   base::string16 custodian16 = base::UTF8ToUTF16(custodian);
-  strings.SetString("custodianName", custodian16);
-  strings.SetString("custodianEmail", base::UTF8ToUTF16(custodian_email));
-  strings.SetString("secondCustodianName", base::UTF8ToUTF16(second_custodian));
-  strings.SetString("secondCustodianEmail",
-                    base::UTF8ToUTF16(second_custodian_email));
   base::string16 block_header;
   base::string16 block_message;
   if (reason == FilteringBehaviorReason::NOT_SIGNED_IN) {

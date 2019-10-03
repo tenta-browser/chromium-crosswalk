@@ -6,7 +6,6 @@
 
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/ui/tabs/requirements/tab_strip_presentation.h"
-#import "ios/chrome/browser/ui/tabs/tab_strip_controller+placeholder_view.h"
 #import "ios/chrome/browser/ui/tabs/tab_strip_controller.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -21,6 +20,7 @@
 @implementation TabStripLegacyCoordinator
 @synthesize browserState = _browserState;
 @synthesize dispatcher = _dispatcher;
+@synthesize longPressDelegate = _longPressDelegate;
 @synthesize tabModel = _tabModel;
 @synthesize presentationProvider = _presentationProvider;
 @synthesize started = _started;
@@ -35,6 +35,11 @@
 - (void)setTabModel:(TabModel*)tabModel {
   DCHECK(!self.started);
   _tabModel = tabModel;
+}
+
+- (void)setLongPressDelegate:(id<PopupMenuLongPressDelegate>)longPressDelegate {
+  _longPressDelegate = longPressDelegate;
+  self.tabStripController.longPressDelegate = longPressDelegate;
 }
 
 - (UIView*)view {
@@ -57,9 +62,8 @@
   self.tabStripController.highlightsSelectedTab = highlightsSelectedTab;
 }
 
-- (UIView<TabStripFoldAnimation>*)placeholderView {
-  DCHECK(self.started);
-  return [self.tabStripController placeholderView];
+- (void)hideTabStrip:(BOOL)hidden {
+  [self.tabStripController hideTabStrip:hidden];
 }
 
 #pragma mark - ChromeCoordinator
@@ -77,6 +81,7 @@
                                         dispatcher:self.dispatcher];
   self.tabStripController.presentationProvider = self.presentationProvider;
   self.tabStripController.animationWaitDuration = self.animationWaitDuration;
+  self.tabStripController.longPressDelegate = self.longPressDelegate;
   [self.presentationProvider showTabStripView:[self.tabStripController view]];
   self.started = YES;
 }
@@ -87,12 +92,6 @@
   self.dispatcher = nil;
   self.tabModel = nil;
   self.presentationProvider = nil;
-}
-
-#pragma mark - BubbleViewAnchorPointProvider methods
-
-- (CGPoint)anchorPointForTabSwitcherButton:(BubbleArrowDirection)direction {
-  return [self.tabStripController anchorPointForTabSwitcherButton:direction];
 }
 
 @end

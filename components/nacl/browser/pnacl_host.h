@@ -13,7 +13,8 @@
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_checker.h"
 #include "components/nacl/browser/nacl_file_host.h"
 #include "components/nacl/common/pnacl_types.h"
@@ -102,7 +103,7 @@ class PnaclHost {
   // thread when finished.
   void ClearTranslationCacheEntriesBetween(base::Time initial_time,
                                            base::Time end_time,
-                                           const base::Closure& callback);
+                                           base::OnceClosure callback);
 
   // Return the number of tracked translations or FD requests currently pending.
   size_t pending_translations() {
@@ -174,7 +175,7 @@ class PnaclHost {
                                 std::unique_ptr<base::File> file,
                                 int file_error);
 
-  void OnEntriesDoomed(const base::Closure& callback, int net_error);
+  void OnEntriesDoomed(base::OnceClosure callback, int net_error);
 
   void DeInitIfSafe();
 

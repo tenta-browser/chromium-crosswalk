@@ -10,9 +10,9 @@
 // which undefines the OpenSSL macros which conflict. Any Chromium headers
 // which want to include cryptuiapi should instead include this header.
 
-#include <windows.h>
 #include <cryptuiapi.h>
+#include <windows.h>
 
-#include "crypto/wincrypt_shim.h"
+#include "base/win/wincrypt_shim.h"
 
 #endif  // CHROME_BROWSER_UI_CRYPTUIAPI_SHIM_H_

@@ -3,12 +3,11 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
-<org.chromium.ui.widget.TextViewWithClickableSpans
+<org.chromium.chrome.browser.infobar.InfoBarMessageView
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/infobar_message"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:textColor="@color/default_text_color"
-    android:textColorLink="@color/infobar_accent_blue"
     android:textDirection="locale"
-    android:textSize="@dimen/infobar_text_size" />
+    android:textAppearance="@style/TextAppearance.BlackTitle1"
+    android:textColorLink="@color/default_text_color_link" />

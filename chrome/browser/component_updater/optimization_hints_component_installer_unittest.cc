@@ -8,8 +8,8 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -17,11 +17,13 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/component_updater/mock_component_updater_service.h"
+#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/optimization_guide/optimization_guide_constants.h"
+#include "components/optimization_guide/optimization_guide_features.h"
 #include "components/optimization_guide/optimization_guide_service.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/previews/core/previews_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -32,23 +34,23 @@ static const char kTestHintsVersion[] = "1.2.3";
 class TestOptimizationGuideService
     : public optimization_guide::OptimizationGuideService {
  public:
-  TestOptimizationGuideService(
-      const scoped_refptr<base::SingleThreadTaskRunner>& io_thread_task_runner)
+  explicit TestOptimizationGuideService(
+      scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner)
       : optimization_guide::OptimizationGuideService(io_thread_task_runner) {}
   ~TestOptimizationGuideService() override {}
 
-  void ProcessHints(
-      const optimization_guide::ComponentInfo& component_info) override {
-    component_info_ =
-        std::make_unique<optimization_guide::ComponentInfo>(component_info);
+  void MaybeUpdateHintsComponent(
+      const optimization_guide::HintsComponentInfo& info) override {
+    hints_component_info_ =
+        std::make_unique<optimization_guide::HintsComponentInfo>(info);
   }
 
-  optimization_guide::ComponentInfo* component_info() const {
-    return component_info_.get();
+  optimization_guide::HintsComponentInfo* hints_component_info() const {
+    return hints_component_info_.get();
   }
 
  private:
-  std::unique_ptr<optimization_guide::ComponentInfo> component_info_;
+  std::unique_ptr<optimization_guide::HintsComponentInfo> hints_component_info_;
 
   DISALLOW_COPY_AND_ASSIGN(TestOptimizationGuideService);
 };
@@ -77,19 +79,24 @@ class OptimizationHintsComponentInstallerTest : public PlatformTest {
     ASSERT_TRUE(component_install_dir_.CreateUniqueTempDir());
 
     auto optimization_guide_service =
-        base::MakeUnique<TestOptimizationGuideService>(
+        std::make_unique<TestOptimizationGuideService>(
             base::ThreadTaskRunnerHandle::Get());
     optimization_guide_service_ = optimization_guide_service.get();
 
-    pref_service_ = base::MakeUnique<TestingPrefServiceSimple>();
-
     TestingBrowserProcess::GetGlobal()->SetOptimizationGuideService(
         std::move(optimization_guide_service));
-    policy_ = base::MakeUnique<OptimizationHintsComponentInstallerPolicy>();
+    policy_ = std::make_unique<OptimizationHintsComponentInstallerPolicy>();
+
+    drp_test_context_ =
+        data_reduction_proxy::DataReductionProxyTestContext::Builder()
+            .WithMockConfig()
+            .Build();
+    drp_test_context_->DisableWarmupURLFetch();
   }
 
   void TearDown() override {
     TestingBrowserProcess::GetGlobal()->SetOptimizationGuideService(nullptr);
+    drp_test_context_->DestroySettings();
     PlatformTest::TearDown();
   }
 
@@ -101,10 +108,16 @@ class OptimizationHintsComponentInstallerTest : public PlatformTest {
     return component_install_dir_.GetPath();
   }
 
-  TestingPrefServiceSimple* profile_prefs() { return pref_service_.get(); }
+  TestingPrefServiceSimple* profile_prefs() {
+    return drp_test_context_->pref_service();
+  }
 
   base::Version ruleset_format_version() {
     return policy_->ruleset_format_version_;
+  }
+
+  void SetDataSaverEnabled(bool enabled) {
+    drp_test_context_->SetDataReductionProxyEnabled(enabled);
   }
 
   void CreateTestOptimizationHints(const std::string& hints_content) {
@@ -144,6 +157,9 @@ class OptimizationHintsComponentInstallerTest : public PlatformTest {
 
   std::unique_ptr<OptimizationHintsComponentInstallerPolicy> policy_;
 
+  std::unique_ptr<data_reduction_proxy::DataReductionProxyTestContext>
+      drp_test_context_;
+
   TestOptimizationGuideService* optimization_guide_service_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(OptimizationHintsComponentInstallerTest);
@@ -152,7 +168,8 @@ class OptimizationHintsComponentInstallerTest : public PlatformTest {
 TEST_F(OptimizationHintsComponentInstallerTest,
        ComponentRegistrationWhenFeatureDisabled) {
   base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndDisableFeature(previews::features::kOptimizationHints);
+  scoped_list.InitAndDisableFeature(
+      optimization_guide::features::kOptimizationHints);
   std::unique_ptr<OptimizationHintsMockComponentUpdateService> cus(
       new OptimizationHintsMockComponentUpdateService());
   EXPECT_CALL(*cus, RegisterComponent(testing::_)).Times(0);
@@ -163,20 +180,21 @@ TEST_F(OptimizationHintsComponentInstallerTest,
 TEST_F(OptimizationHintsComponentInstallerTest,
        ComponentRegistrationWhenFeatureEnabledButDataSaverDisabled) {
   base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(previews::features::kOptimizationHints);
-  TestingPrefServiceSimple* prefs = profile_prefs();
-  prefs->registry()->RegisterBooleanPref(prefs::kDataSaverEnabled, false);
+  scoped_list.InitAndEnableFeature(
+      optimization_guide::features::kOptimizationHints);
+  SetDataSaverEnabled(false);
   std::unique_ptr<OptimizationHintsMockComponentUpdateService> cus(
       new OptimizationHintsMockComponentUpdateService());
   EXPECT_CALL(*cus, RegisterComponent(testing::_)).Times(0);
-  RegisterOptimizationHintsComponent(cus.get(), prefs);
+  RegisterOptimizationHintsComponent(cus.get(), profile_prefs());
   RunUntilIdle();
 }
 
 TEST_F(OptimizationHintsComponentInstallerTest,
        ComponentRegistrationWhenFeatureEnabledButNoProfilePrefs) {
   base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(previews::features::kOptimizationHints);
+  scoped_list.InitAndEnableFeature(
+      optimization_guide::features::kOptimizationHints);
   std::unique_ptr<OptimizationHintsMockComponentUpdateService> cus(
       new OptimizationHintsMockComponentUpdateService());
   EXPECT_CALL(*cus, RegisterComponent(testing::_)).Times(0);
@@ -187,9 +205,9 @@ TEST_F(OptimizationHintsComponentInstallerTest,
 TEST_F(OptimizationHintsComponentInstallerTest,
        ComponentRegistrationWhenFeatureEnabledAndDataSaverEnabled) {
   base::test::ScopedFeatureList scoped_list;
-  scoped_list.InitAndEnableFeature(previews::features::kOptimizationHints);
-  TestingPrefServiceSimple* prefs = profile_prefs();
-  prefs->registry()->RegisterBooleanPref(prefs::kDataSaverEnabled, true);
+  scoped_list.InitAndEnableFeature(
+      optimization_guide::features::kOptimizationHints);
+  SetDataSaverEnabled(true);
   std::unique_ptr<OptimizationHintsMockComponentUpdateService> cus(
       new OptimizationHintsMockComponentUpdateService());
   EXPECT_CALL(*cus, RegisterComponent(testing::_))
@@ -204,7 +222,7 @@ TEST_F(OptimizationHintsComponentInstallerTest, NoRulesetFormatIgnored) {
   ASSERT_NO_FATAL_FAILURE(CreateTestOptimizationHints("some hints"));
 
   ASSERT_NO_FATAL_FAILURE(LoadOptimizationHints(base::Version("")));
-  EXPECT_EQ(nullptr, service()->component_info());
+  EXPECT_EQ(nullptr, service()->hints_component_info());
 }
 
 TEST_F(OptimizationHintsComponentInstallerTest, FutureRulesetFormatIgnored) {
@@ -217,7 +235,7 @@ TEST_F(OptimizationHintsComponentInstallerTest, FutureRulesetFormatIgnored) {
 
   ASSERT_NO_FATAL_FAILURE(
       LoadOptimizationHints(base::Version(future_ruleset_components)));
-  EXPECT_EQ(nullptr, service()->component_info());
+  EXPECT_EQ(nullptr, service()->hints_component_info());
 }
 
 TEST_F(OptimizationHintsComponentInstallerTest, LoadFileWithData) {
@@ -227,12 +245,11 @@ TEST_F(OptimizationHintsComponentInstallerTest, LoadFileWithData) {
   ASSERT_NO_FATAL_FAILURE(CreateTestOptimizationHints(expected_hints));
   ASSERT_NO_FATAL_FAILURE(LoadOptimizationHints(ruleset_format_version()));
 
-  auto* component_info = service()->component_info();
+  auto* component_info = service()->hints_component_info();
   EXPECT_NE(nullptr, component_info);
-  EXPECT_EQ(base::Version(kTestHintsVersion), component_info->hints_version);
+  EXPECT_EQ(base::Version(kTestHintsVersion), component_info->version);
   std::string actual_hints;
-  ASSERT_TRUE(
-      base::ReadFileToString(component_info->hints_path, &actual_hints));
+  ASSERT_TRUE(base::ReadFileToString(component_info->path, &actual_hints));
   EXPECT_EQ(expected_hints, actual_hints);
 }
 

@@ -16,7 +16,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -31,9 +30,6 @@
 #include "url/gurl.h"
 
 namespace extensions {
-
-namespace keys = manifest_keys;
-namespace values = manifest_values;
 
 scoped_refptr<Extension> ConvertUserScriptToExtension(
     const base::FilePath& user_script_path, const GURL& original_url,
@@ -91,29 +87,29 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   // The script may not have a name field, but we need one for an extension. If
   // it is missing, use the filename of the original URL.
   if (!script.name().empty())
-    root->SetString(keys::kName, script.name());
+    root->SetString(manifest_keys::kName, script.name());
   else
-    root->SetString(keys::kName, original_url.ExtractFileName());
+    root->SetString(manifest_keys::kName, original_url.ExtractFileName());
 
   // Not all scripts have a version, but we need one. Default to 1.0 if it is
   // missing.
   if (!script.version().empty())
-    root->SetString(keys::kVersion, script.version());
+    root->SetString(manifest_keys::kVersion, script.version());
   else
-    root->SetString(keys::kVersion, "1.0");
+    root->SetString(manifest_keys::kVersion, "1.0");
 
-  root->SetString(keys::kDescription, script.description());
-  root->SetString(keys::kPublicKey, key);
-  root->SetBoolean(keys::kConvertedFromUserScript, true);
+  root->SetString(manifest_keys::kDescription, script.description());
+  root->SetString(manifest_keys::kPublicKey, key);
+  root->SetBoolean(manifest_keys::kConvertedFromUserScript, true);
 
-  auto js_files = base::MakeUnique<base::ListValue>();
+  auto js_files = std::make_unique<base::ListValue>();
   js_files->AppendString("script.js");
 
   // If the script provides its own match patterns, we use those. Otherwise, we
   // generate some using the include globs.
-  auto matches = base::MakeUnique<base::ListValue>();
+  auto matches = std::make_unique<base::ListValue>();
   if (!script.url_patterns().is_empty()) {
-    for (URLPatternSet::const_iterator i = script.url_patterns().begin();
+    for (auto i = script.url_patterns().begin();
          i != script.url_patterns().end(); ++i) {
       matches->AppendString(i->GetAsString());
     }
@@ -124,42 +120,45 @@ scoped_refptr<Extension> ConvertUserScriptToExtension(
   }
 
   // Read the exclude matches, if any are present.
-  auto exclude_matches = base::MakeUnique<base::ListValue>();
+  auto exclude_matches = std::make_unique<base::ListValue>();
   if (!script.exclude_url_patterns().is_empty()) {
-    for (URLPatternSet::const_iterator i =
-         script.exclude_url_patterns().begin();
+    for (auto i = script.exclude_url_patterns().begin();
          i != script.exclude_url_patterns().end(); ++i) {
       exclude_matches->AppendString(i->GetAsString());
     }
   }
 
-  auto includes = base::MakeUnique<base::ListValue>();
+  auto includes = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < script.globs().size(); ++i)
     includes->AppendString(script.globs().at(i));
 
-  auto excludes = base::MakeUnique<base::ListValue>();
+  auto excludes = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < script.exclude_globs().size(); ++i)
     excludes->AppendString(script.exclude_globs().at(i));
 
-  auto content_script = base::MakeUnique<base::DictionaryValue>();
-  content_script->Set(keys::kMatches, std::move(matches));
-  content_script->Set(keys::kExcludeMatches, std::move(exclude_matches));
-  content_script->Set(keys::kIncludeGlobs, std::move(includes));
-  content_script->Set(keys::kExcludeGlobs, std::move(excludes));
-  content_script->Set(keys::kJs, std::move(js_files));
+  auto content_script = std::make_unique<base::DictionaryValue>();
+  content_script->Set(manifest_keys::kMatches, std::move(matches));
+  content_script->Set(manifest_keys::kExcludeMatches,
+                      std::move(exclude_matches));
+  content_script->Set(manifest_keys::kIncludeGlobs, std::move(includes));
+  content_script->Set(manifest_keys::kExcludeGlobs, std::move(excludes));
+  content_script->Set(manifest_keys::kJs, std::move(js_files));
 
   if (script.run_location() == UserScript::DOCUMENT_START)
-    content_script->SetString(keys::kRunAt, values::kRunAtDocumentStart);
+    content_script->SetString(manifest_keys::kRunAt,
+                              manifest_values::kRunAtDocumentStart);
   else if (script.run_location() == UserScript::DOCUMENT_END)
-    content_script->SetString(keys::kRunAt, values::kRunAtDocumentEnd);
+    content_script->SetString(manifest_keys::kRunAt,
+                              manifest_values::kRunAtDocumentEnd);
   else if (script.run_location() == UserScript::DOCUMENT_IDLE)
     // This is the default, but store it just in case we change that.
-    content_script->SetString(keys::kRunAt, values::kRunAtDocumentIdle);
+    content_script->SetString(manifest_keys::kRunAt,
+                              manifest_values::kRunAtDocumentIdle);
 
-  auto content_scripts = base::MakeUnique<base::ListValue>();
+  auto content_scripts = std::make_unique<base::ListValue>();
   content_scripts->Append(std::move(content_script));
 
-  root->Set(keys::kContentScripts, std::move(content_scripts));
+  root->Set(manifest_keys::kContentScripts, std::move(content_scripts));
 
   base::FilePath manifest_path = temp_dir.GetPath().Append(kManifestFilename);
   JSONFileValueSerializer serializer(manifest_path);

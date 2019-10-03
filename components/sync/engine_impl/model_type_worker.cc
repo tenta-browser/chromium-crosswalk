@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -13,24 +15,70 @@
 #include "base/format_macros.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "components/sync/base/cancelation_signal.h"
+#include "components/sync/base/hash_util.h"
+#include "components/sync/base/model_type.h"
 #include "components/sync/base/time.h"
+#include "components/sync/base/unique_position.h"
 #include "components/sync/engine/model_type_processor.h"
 #include "components/sync/engine_impl/commit_contribution.h"
 #include "components/sync/engine_impl/non_blocking_type_commit_contribution.h"
-#include "components/sync/engine_impl/worker_entity_tracker.h"
+#include "components/sync/engine_impl/syncer_proto_util.h"
 #include "components/sync/protocol/proto_memory_estimations.h"
 
 namespace syncer {
+
+namespace {
+
+bool ContainsDuplicate(std::vector<std::string> values) {
+  std::sort(values.begin(), values.end());
+  return std::adjacent_find(values.begin(), values.end()) != values.end();
+}
+
+bool ContainsDuplicateClientTagHash(const UpdateResponseDataList& updates) {
+  std::vector<std::string> client_tag_hashes;
+  for (const std::unique_ptr<UpdateResponseData>& update : updates) {
+    DCHECK(update);
+    if (!update->entity->client_tag_hash.empty()) {
+      client_tag_hashes.push_back(update->entity->client_tag_hash);
+    }
+  }
+  return ContainsDuplicate(std::move(client_tag_hashes));
+}
+
+bool ContainsDuplicateServerID(const UpdateResponseDataList& updates) {
+  std::vector<std::string> server_ids;
+  for (const std::unique_ptr<UpdateResponseData>& update : updates) {
+    DCHECK(update);
+    server_ids.push_back(update->entity->id);
+  }
+  return ContainsDuplicate(std::move(server_ids));
+}
+
+// Enumeration of possible values for the positioning schemes used in Sync
+// entities. Used in UMA metrics. Do not re-order or delete these entries; they
+// are used in a UMA histogram. Please edit SyncPositioningScheme in enums.xml
+// if a value is added.
+enum class SyncPositioningScheme {
+  UNIQUE_POSITION = 0,
+  POSITION_IN_PARENT = 1,
+  INSERT_AFTER_ITEM_ID = 2,
+  MISSING = 3,
+  kMaxValue = MISSING
+};
+
+}  // namespace
 
 ModelTypeWorker::ModelTypeWorker(
     ModelType type,
     const sync_pb::ModelTypeState& initial_state,
     bool trigger_initial_sync,
     std::unique_ptr<Cryptographer> cryptographer,
+    PassphraseType passphrase_type,
     NudgeHandler* nudge_handler,
     std::unique_ptr<ModelTypeProcessor> model_type_processor,
     DataTypeDebugInfoEmitter* debug_info_emitter,
@@ -40,10 +88,11 @@ ModelTypeWorker::ModelTypeWorker(
       model_type_state_(initial_state),
       model_type_processor_(std::move(model_type_processor)),
       cryptographer_(std::move(cryptographer)),
+      passphrase_type_(passphrase_type),
       nudge_handler_(nudge_handler),
-      cancelation_signal_(cancelation_signal),
-      weak_ptr_factory_(this) {
+      cancelation_signal_(cancelation_signal) {
   DCHECK(model_type_processor_);
+  DCHECK(type_ != PASSWORDS || cryptographer_);
 
   // Request an initial sync if it hasn't been completed yet.
   if (trigger_initial_sync) {
@@ -78,13 +127,13 @@ ModelTypeWorker::~ModelTypeWorker() {
 }
 
 ModelType ModelTypeWorker::GetModelType() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return type_;
 }
 
 void ModelTypeWorker::UpdateCryptographer(
     std::unique_ptr<Cryptographer> cryptographer) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(cryptographer);
   cryptographer_ = std::move(cryptographer);
   UpdateEncryptionKeyName();
@@ -92,21 +141,26 @@ void ModelTypeWorker::UpdateCryptographer(
   NudgeIfReadyToCommit();
 }
 
+void ModelTypeWorker::UpdatePassphraseType(PassphraseType type) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  passphrase_type_ = type;
+}
+
 // UpdateHandler implementation.
 bool ModelTypeWorker::IsInitialSyncEnded() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return model_type_state_.initial_sync_done();
 }
 
 void ModelTypeWorker::GetDownloadProgress(
     sync_pb::DataTypeProgressMarker* progress_marker) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   progress_marker->CopyFrom(model_type_state_.progress_marker());
 }
 
 void ModelTypeWorker::GetDataTypeContext(
     sync_pb::DataTypeContext* context) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   context->CopyFrom(model_type_state_.type_context());
 }
 
@@ -115,102 +169,219 @@ SyncerError ModelTypeWorker::ProcessGetUpdatesResponse(
     const sync_pb::DataTypeContext& mutated_context,
     const SyncEntityList& applicable_updates,
     StatusController* status) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  return ProcessGetUpdatesResponse(progress_marker, mutated_context,
+                                   applicable_updates,
+                                   /*from_uss_migrator=*/false, status);
+}
+
+SyncerError ModelTypeWorker::ProcessGetUpdatesResponse(
+    const sync_pb::DataTypeProgressMarker& progress_marker,
+    const sync_pb::DataTypeContext& mutated_context,
+    const SyncEntityList& applicable_updates,
+    bool from_uss_migrator,
+    StatusController* status) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  const bool is_initial_sync = !model_type_state_.initial_sync_done();
 
   // TODO(rlarocque): Handle data type context conflicts.
   *model_type_state_.mutable_type_context() = mutated_context;
   *model_type_state_.mutable_progress_marker() = progress_marker;
 
   UpdateCounters* counters = debug_info_emitter_->GetMutableUpdateCounters();
-  counters->num_updates_received += applicable_updates.size();
 
-  for (const sync_pb::SyncEntity* update_entity : applicable_updates) {
-    // Skip updates for permanent folders.
-    // TODO(crbug.com/516866): might need to handle this for hierarchical types.
-    if (!update_entity->server_defined_unique_tag().empty())
-      continue;
-
-    // Normal updates are handled here.
-    const std::string& client_tag_hash =
-        update_entity->client_defined_unique_tag();
-
-    // TODO(crbug.com/516866): this wouldn't be true for bookmarks.
-    DCHECK(!client_tag_hash.empty());
-
-    // Prepare the message for the model thread.
-    EntityData data;
-    data.id = update_entity->id_string();
-    data.client_tag_hash = client_tag_hash;
-    data.creation_time = ProtoTimeToTime(update_entity->ctime());
-    data.modification_time = ProtoTimeToTime(update_entity->mtime());
-    data.non_unique_name = update_entity->name();
-
-    UpdateResponseData response_data;
-    response_data.response_version = update_entity->version();
-
-    WorkerEntityTracker* entity =
-        GetOrCreateEntityTracker(data.client_tag_hash);
-
-    if (!entity->UpdateContainsNewVersion(response_data)) {
-      status->increment_num_reflected_updates_downloaded_by(1);
-      ++counters->num_reflected_updates_received;
-    }
-    if (update_entity->deleted()) {
-      status->increment_num_tombstone_updates_downloaded_by(1);
-      ++counters->num_tombstone_updates_received;
-    }
-
-    // Deleted entities must use the default instance of EntitySpecifics in
-    // order for EntityData to correctly reflect that they are deleted.
-    const sync_pb::EntitySpecifics& specifics =
-        update_entity->deleted() ? sync_pb::EntitySpecifics::default_instance()
-                                 : update_entity->specifics();
-
-    // Check if specifics are encrypted and try to decrypt if so.
-    if (!specifics.has_encrypted()) {
-      // No encryption.
-      data.specifics = specifics;
-      response_data.entity = data.PassToPtr();
-      entity->ReceiveUpdate(response_data);
-      pending_updates_.push_back(response_data);
-    } else if (cryptographer_ &&
-               cryptographer_->CanDecrypt(specifics.encrypted())) {
-      // Encrypted and we know the key.
-      if (DecryptSpecifics(specifics, &data.specifics)) {
-        response_data.entity = data.PassToPtr();
-        response_data.encryption_key_name = specifics.encrypted().key_name();
-        entity->ReceiveUpdate(response_data);
-        pending_updates_.push_back(response_data);
-      } else {
-        // Failed to decrypt the entity. Likely it is corrupt. Drop the entity
-        // and move on.
-        entities_.erase(client_tag_hash);
-      }
+  if (!from_uss_migrator) {
+    if (is_initial_sync) {
+      counters->num_initial_updates_received += applicable_updates.size();
     } else {
-      // Can't decrypt right now. Ask the entity tracker to handle it.
-      data.specifics = specifics;
-      response_data.entity = data.PassToPtr();
-      entity->ReceiveEncryptedUpdate(response_data);
-      has_encrypted_updates_ = true;
+      counters->num_non_initial_updates_received += applicable_updates.size();
     }
   }
 
+  std::vector<std::string> client_tag_hashes;
+  for (const sync_pb::SyncEntity* update_entity : applicable_updates) {
+    if (update_entity->deleted()) {
+      status->increment_num_tombstone_updates_downloaded_by(1);
+      if (!is_initial_sync) {
+        ++counters->num_non_initial_tombstone_updates_received;
+      }
+    }
+
+    auto response_data = std::make_unique<UpdateResponseData>();
+    switch (PopulateUpdateResponseData(cryptographer_.get(), type_,
+                                       *update_entity, response_data.get())) {
+      case SUCCESS:
+        if (!response_data->entity->client_tag_hash.empty()) {
+          client_tag_hashes.push_back(response_data->entity->client_tag_hash);
+        }
+        pending_updates_.push_back(std::move(response_data));
+        break;
+      case DECRYPTION_PENDING:
+        entries_pending_decryption_[update_entity->id_string()] =
+            std::move(response_data);
+        break;
+      case FAILED_TO_DECRYPT:
+        // Failed to decrypt the entity. Likely it is corrupt. Move on.
+        break;
+    }
+  }
+  std::string suffix = ModelTypeToHistogramSuffix(type_);
+  base::UmaHistogramBoolean(
+      "Sync.DuplicateClientTagHashInGetUpdatesResponse." + suffix,
+      ContainsDuplicate(std::move(client_tag_hashes)));
+
   debug_info_emitter_->EmitUpdateCountersUpdate();
-  return SYNCER_OK;
+  return SyncerError(SyncerError::SYNCER_OK);
+}
+
+// static
+// |cryptographer| can be null.
+// |response_data| must be not null.
+ModelTypeWorker::DecryptionStatus ModelTypeWorker::PopulateUpdateResponseData(
+    const Cryptographer* cryptographer,
+    ModelType model_type,
+    const sync_pb::SyncEntity& update_entity,
+    UpdateResponseData* response_data) {
+  response_data->response_version = update_entity.version();
+  auto data = std::make_unique<syncer::EntityData>();
+  // Prepare the message for the model thread.
+  data->id = update_entity.id_string();
+  data->client_tag_hash = update_entity.client_defined_unique_tag();
+  data->creation_time = ProtoTimeToTime(update_entity.ctime());
+  data->modification_time = ProtoTimeToTime(update_entity.mtime());
+  data->name = update_entity.name();
+  data->is_folder = update_entity.folder();
+  data->parent_id = update_entity.parent_id_string();
+
+  // Handle deprecated positioning fields. Relevant only for bookmarks.
+  bool has_position_scheme = false;
+  SyncPositioningScheme sync_positioning_scheme;
+  if (update_entity.has_unique_position()) {
+    data->unique_position = update_entity.unique_position();
+    has_position_scheme = true;
+    sync_positioning_scheme = SyncPositioningScheme::UNIQUE_POSITION;
+  } else if (update_entity.has_position_in_parent() ||
+             update_entity.has_insert_after_item_id()) {
+    bool missing_originator_fields = false;
+    if (!update_entity.has_originator_cache_guid() ||
+        !update_entity.has_originator_client_item_id()) {
+      DLOG(ERROR) << "Update is missing requirements for bookmark position.";
+      missing_originator_fields = true;
+    }
+
+    std::string suffix =
+        missing_originator_fields
+            ? UniquePosition::RandomSuffix()
+            : GenerateSyncableHash(
+                  syncer::GetModelType(update_entity),
+                  /*client_tag=*/update_entity.originator_cache_guid() +
+                      update_entity.originator_client_item_id());
+
+    if (update_entity.has_position_in_parent()) {
+      data->unique_position =
+          UniquePosition::FromInt64(update_entity.position_in_parent(), suffix)
+              .ToProto();
+      has_position_scheme = true;
+      sync_positioning_scheme = SyncPositioningScheme::POSITION_IN_PARENT;
+    } else {
+      // If update_entity has insert_after_item_id, use 0 index.
+      DCHECK(update_entity.has_insert_after_item_id());
+      data->unique_position = UniquePosition::FromInt64(0, suffix).ToProto();
+      has_position_scheme = true;
+      sync_positioning_scheme = SyncPositioningScheme::INSERT_AFTER_ITEM_ID;
+    }
+  } else if (SyncerProtoUtil::ShouldMaintainPosition(update_entity) &&
+             !update_entity.deleted()) {
+    DLOG(ERROR) << "Missing required position information in update.";
+    has_position_scheme = true;
+    sync_positioning_scheme = SyncPositioningScheme::MISSING;
+  }
+  if (has_position_scheme) {
+    UMA_HISTOGRAM_ENUMERATION("Sync.Entities.PositioningScheme",
+                              sync_positioning_scheme);
+  }
+
+  // Populate |originator_cache_guid| and |originator_client_item_id|. This is
+  // relevant only for bookmarks.
+  data->originator_cache_guid = update_entity.originator_cache_guid();
+  data->originator_client_item_id = update_entity.originator_client_item_id();
+
+  data->server_defined_unique_tag = update_entity.server_defined_unique_tag();
+
+  // Deleted entities must use the default instance of EntitySpecifics in
+  // order for EntityData to correctly reflect that they are deleted.
+  const sync_pb::EntitySpecifics& specifics =
+      update_entity.deleted() ? sync_pb::EntitySpecifics::default_instance()
+                              : update_entity.specifics();
+
+  // Passwords use their own legacy encryption scheme.
+  if (specifics.password().has_encrypted()) {
+    DCHECK(cryptographer);
+    // TODO(crbug.com/516866): If we switch away from the password legacy
+    // encryption, this method and DecryptStoredEntities() )should be already
+    // ready for that change. Add unit test for this future-proofness.
+
+    // Make sure the worker defers password entities if the encryption key
+    // hasn't been received yet.
+    if (!cryptographer->CanDecrypt(specifics.password().encrypted())) {
+      data->specifics = specifics;
+      response_data->entity = std::move(data);
+      return DECRYPTION_PENDING;
+    }
+    response_data->encryption_key_name =
+        specifics.password().encrypted().key_name();
+    if (!DecryptPasswordSpecifics(*cryptographer, specifics,
+                                  &data->specifics)) {
+      return FAILED_TO_DECRYPT;
+    }
+    response_data->entity = std::move(data);
+    return SUCCESS;
+  }
+
+  // Check if specifics are encrypted and try to decrypt if so.
+  if (!specifics.has_encrypted()) {
+    // No encryption.
+    data->specifics = specifics;
+    // Legacy clients populates the name field in the SyncEntity instead of the
+    // title field in the BookmarkSpecifics.
+    if (model_type == BOOKMARKS && !update_entity.deleted() &&
+        !specifics.bookmark().has_title() && !update_entity.name().empty()) {
+      data->specifics.mutable_bookmark()->set_title(update_entity.name());
+    }
+    response_data->entity = std::move(data);
+    return SUCCESS;
+  }
+  if (cryptographer && cryptographer->CanDecrypt(specifics.encrypted())) {
+    // Encrypted and we know the key.
+    if (!DecryptSpecifics(*cryptographer, specifics, &data->specifics)) {
+      return FAILED_TO_DECRYPT;
+    }
+    response_data->entity = std::move(data);
+    response_data->encryption_key_name = specifics.encrypted().key_name();
+    return SUCCESS;
+  }
+  // Can't decrypt right now.
+  data->specifics = specifics;
+  response_data->entity = std::move(data);
+  return DECRYPTION_PENDING;
 }
 
 void ModelTypeWorker::ApplyUpdates(StatusController* status) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // This should only ever be called after one PassiveApplyUpdates.
-  DCHECK(model_type_state_.initial_sync_done());
+  DCHECK(model_type_state_.initial_sync_done())
+      << "ApplyUpdates() called without initial sync being done for "
+      << ModelTypeToString(type_);
   // Download cycle is done, pass all updates to the processor.
   ApplyPendingUpdates();
 }
 
 void ModelTypeWorker::PassiveApplyUpdates(StatusController* status) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // This should only be called at the end of the very first download cycle.
-  DCHECK(!model_type_state_.initial_sync_done());
+  DCHECK(!model_type_state_.initial_sync_done())
+      << "PassiveApplyUpdates() called after initial sync has been done for "
+      << ModelTypeToString(type_);
   // Indicate to the processor that the initial download is done. The initial
   // sync technically isn't done yet but by the time this value is persisted to
   // disk on the model thread it will be.
@@ -218,43 +389,78 @@ void ModelTypeWorker::PassiveApplyUpdates(StatusController* status) {
   ApplyPendingUpdates();
 }
 
-void ModelTypeWorker::EncryptionAcceptedApplyUpdates() {
+void ModelTypeWorker::EncryptionAcceptedMaybeApplyUpdates() {
   DCHECK(cryptographer_);
   DCHECK(cryptographer_->is_ready());
-  // Reuse ApplyUpdates(...) to get its DCHECKs as well.
-  ApplyUpdates(nullptr);
+
+  // Only push the encryption to the processor if we're already connected.
+  // Otherwise this information can wait for the initial sync's first apply.
+  if (model_type_state_.initial_sync_done()) {
+    // Reuse ApplyUpdates(...) to get its DCHECKs as well.
+    ApplyUpdates(nullptr);
+  }
 }
 
 void ModelTypeWorker::ApplyPendingUpdates() {
   if (BlockForEncryption())
     return;
+
+  DCHECK(entries_pending_decryption_.empty());
+
   DVLOG(1) << ModelTypeToString(type_) << ": "
            << base::StringPrintf("Delivering %" PRIuS " applicable updates.",
                                  pending_updates_.size());
 
-  // If there are still encrypted updates left at this point, they're about to
-  // to be potentially lost if the progress marker is saved to disk. Typically
-  // the nigori update should arrive simultaneously with the first of the
-  // encrypted data. It is possible that non-immediately consistent updates do
-  // not follow this pattern.
-  UMA_HISTOGRAM_BOOLEAN("Sync.WorkerApplyHasEncryptedUpdates",
-                        has_encrypted_updates_);
-  DCHECK(!has_encrypted_updates_);
+  const bool contains_duplicate_server_ids =
+      ContainsDuplicateServerID(pending_updates_);
+  const bool contains_duplicate_client_tag_hashes =
+      ContainsDuplicateClientTagHash(pending_updates_);
 
-  model_type_processor_->OnUpdateReceived(model_type_state_, pending_updates_);
+  // Having duplicates should be rare, so only do the de-duping if
+  // we've actually detected one.
+
+  // Deduplicate updates first based on server ids.
+  if (contains_duplicate_server_ids) {
+    DeduplicatePendingUpdatesBasedOnServerId();
+  }
+
+  // Check for duplicate client tag hashes after removing duplicate server
+  // ids.
+  const bool contains_duplicate_client_tag_hashes_after_deduping_server_ids =
+      ContainsDuplicateClientTagHash(pending_updates_);
+
+  // Deduplicate updates based on client tag hashes.
+  if (contains_duplicate_client_tag_hashes_after_deduping_server_ids) {
+    DeduplicatePendingUpdatesBasedOnClientTagHash();
+  }
+
+  std::string suffix = ModelTypeToHistogramSuffix(type_);
+  base::UmaHistogramBoolean(
+      "Sync.DuplicateClientTagHashInApplyPendingUpdates." + suffix,
+      contains_duplicate_client_tag_hashes);
+  base::UmaHistogramBoolean(
+      "Sync.DuplicateServerIdInApplyPendingUpdates." + suffix,
+      contains_duplicate_server_ids);
+  base::UmaHistogramBoolean(
+      "Sync."
+      "DuplicateClientTagHashWithDifferentServerIdsInApplyPendingUpdates." +
+          suffix,
+      contains_duplicate_client_tag_hashes_after_deduping_server_ids);
+
+  int num_updates_applied = pending_updates_.size();
+  model_type_processor_->OnUpdateReceived(model_type_state_,
+                                          std::move(pending_updates_));
 
   UpdateCounters* counters = debug_info_emitter_->GetMutableUpdateCounters();
-  counters->num_updates_applied += pending_updates_.size();
+  counters->num_updates_applied += num_updates_applied;
   debug_info_emitter_->EmitUpdateCountersUpdate();
   debug_info_emitter_->EmitStatusCountersUpdate();
 
-  DCHECK_EQ(pending_updates_.size(), entities_.size());
   pending_updates_.clear();
-  entities_.clear();
 }
 
 void ModelTypeWorker::NudgeForCommit() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   has_local_changes_ = true;
   NudgeIfReadyToCommit();
 }
@@ -267,19 +473,24 @@ void ModelTypeWorker::NudgeIfReadyToCommit() {
 // CommitContributor implementation.
 std::unique_ptr<CommitContribution> ModelTypeWorker::GetContribution(
     size_t max_entries) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(model_type_state_.initial_sync_done());
   // Early return if type is not ready to commit (initial sync isn't done or
   // cryptographer has pending keys).
   if (!CanCommitItems())
     return std::unique_ptr<CommitContribution>();
-  DCHECK(entities_.empty());
+
+  // Client shouldn't be committing data to server when it hasn't processed all
+  // updates it received.
+  DCHECK(entries_pending_decryption_.empty());
 
   // Request model type for local changes.
   scoped_refptr<GetLocalChangesRequest> request =
       base::MakeRefCounted<GetLocalChangesRequest>(cancelation_signal_);
+  // TODO(mamir): do we need to make this async?
   model_type_processor_->GetLocalChanges(
-      max_entries, base::Bind(&GetLocalChangesRequest::SetResponse, request));
+      max_entries,
+      base::BindOnce(&GetLocalChangesRequest::SetResponse, request));
   request->WaitForResponse();
   CommitRequestDataList response;
   if (!request->WasCancelled())
@@ -291,13 +502,17 @@ std::unique_ptr<CommitContribution> ModelTypeWorker::GetContribution(
 
   DCHECK(response.size() <= max_entries);
   return std::make_unique<NonBlockingTypeCommitContribution>(
-      GetModelType(), model_type_state_.type_context(), response, this,
-      cryptographer_.get(), debug_info_emitter_,
+      GetModelType(), model_type_state_.type_context(), std::move(response),
+      this, cryptographer_.get(), passphrase_type_, debug_info_emitter_,
       CommitOnlyTypes().Has(GetModelType()));
 }
 
+bool ModelTypeWorker::HasLocalChangesForTest() const {
+  return has_local_changes_;
+}
+
 void ModelTypeWorker::OnCommitResponse(CommitResponseDataList* response_list) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Send the responses back to the model thread. It needs to know which
   // items have been successfully committed so it can save that information in
@@ -305,18 +520,11 @@ void ModelTypeWorker::OnCommitResponse(CommitResponseDataList* response_list) {
   model_type_processor_->OnCommitCompleted(model_type_state_, *response_list);
 }
 
-void ModelTypeWorker::CleanupAfterCommit() {
-  // Clear all tracked entities. The ones that didn't get committed will be
-  // retried next time by the processor.
-  entities_.clear();
-}
-
 void ModelTypeWorker::AbortMigration() {
   DCHECK(!model_type_state_.initial_sync_done());
   model_type_state_ = sync_pb::ModelTypeState();
-  entities_.clear();
+  entries_pending_decryption_.clear();
   pending_updates_.clear();
-  has_encrypted_updates_ = false;
   nudge_handler_->NudgeForInitialDownload(type_);
 }
 
@@ -324,7 +532,7 @@ size_t ModelTypeWorker::EstimateMemoryUsage() const {
   using base::trace_event::EstimateMemoryUsage;
   size_t memory_usage = 0;
   memory_usage += EstimateMemoryUsage(model_type_state_);
-  memory_usage += EstimateMemoryUsage(entities_);
+  memory_usage += EstimateMemoryUsage(entries_pending_decryption_);
   memory_usage += EstimateMemoryUsage(pending_updates_);
   return memory_usage;
 }
@@ -344,6 +552,9 @@ bool ModelTypeWorker::CanCommitItems() const {
 }
 
 bool ModelTypeWorker::BlockForEncryption() const {
+  if (!entries_pending_decryption_.empty())
+    return true;
+
   // Should be using encryption, but we do not have the keys.
   return cryptographer_ && !cryptographer_->is_ready();
 }
@@ -362,79 +573,138 @@ bool ModelTypeWorker::UpdateEncryptionKeyName() {
 }
 
 void ModelTypeWorker::DecryptStoredEntities() {
-  has_encrypted_updates_ = false;
-  for (const auto& kv : entities_) {
-    WorkerEntityTracker* entity = kv.second.get();
-    if (entity->HasEncryptedUpdate()) {
-      const UpdateResponseData& encrypted_update = entity->GetEncryptedUpdate();
-      const EntityData& data = encrypted_update.entity.value();
-      DCHECK(data.specifics.has_encrypted());
+  for (auto it = entries_pending_decryption_.begin();
+       it != entries_pending_decryption_.end();) {
+    const UpdateResponseData& encrypted_update = *it->second;
+    const EntityData& data = *encrypted_update.entity;
 
-      if (cryptographer_->CanDecrypt(data.specifics.encrypted())) {
-        EntityData decrypted_data;
-        if (DecryptSpecifics(data.specifics, &decrypted_data.specifics)) {
-          // Copy other fields one by one since EntityData doesn't allow
-          // copying.
-          decrypted_data.id = data.id;
-          decrypted_data.client_tag_hash = data.client_tag_hash;
-          decrypted_data.non_unique_name = data.non_unique_name;
-          decrypted_data.creation_time = data.creation_time;
-          decrypted_data.modification_time = data.modification_time;
+    sync_pb::EntitySpecifics specifics;
+    std::string encryption_key_name;
 
-          UpdateResponseData decrypted_update;
-          decrypted_update.entity = decrypted_data.PassToPtr();
-          decrypted_update.response_version = encrypted_update.response_version;
-          decrypted_update.encryption_key_name =
-              data.specifics.encrypted().key_name();
-          pending_updates_.push_back(decrypted_update);
-
-          entity->ClearEncryptedUpdate();
-        }
-      } else {
-        has_encrypted_updates_ = true;
+    if (data.specifics.password().has_encrypted()) {
+      encryption_key_name = data.specifics.password().encrypted().key_name();
+      if (!cryptographer_->CanDecrypt(data.specifics.password().encrypted())) {
+        ++it;
+        continue;
       }
+      if (!DecryptPasswordSpecifics(*cryptographer_, data.specifics,
+                                    &specifics)) {
+        ++it;
+        continue;
+      }
+    } else {
+      DCHECK(data.specifics.has_encrypted());
+      encryption_key_name = data.specifics.encrypted().key_name();
+
+      if (!cryptographer_->CanDecrypt(data.specifics.encrypted())) {
+        ++it;
+        continue;
+      }
+
+      if (!DecryptSpecifics(*cryptographer_, data.specifics, &specifics)) {
+        // Decryption error should be permanent (e.g. corrupt data), since
+        // CanDecrypt() above claims decryption keys are up-to-date. Let's
+        // ignore this update to avoid blocking other updates.
+        it = entries_pending_decryption_.erase(it);
+        continue;
+      }
+    }
+
+    auto decrypted_update = std::make_unique<UpdateResponseData>();
+    decrypted_update->response_version = encrypted_update.response_version;
+    decrypted_update->encryption_key_name = encryption_key_name;
+    decrypted_update->entity = std::move(it->second->entity);
+    decrypted_update->entity->specifics = std::move(specifics);
+    pending_updates_.push_back(std::move(decrypted_update));
+    it = entries_pending_decryption_.erase(it);
+  }
+}
+
+void ModelTypeWorker::DeduplicatePendingUpdatesBasedOnServerId() {
+  UpdateResponseDataList candidates;
+  pending_updates_.swap(candidates);
+
+  std::map<std::string, size_t> id_to_index;
+  for (std::unique_ptr<UpdateResponseData>& candidate : candidates) {
+    DCHECK(candidate);
+    if (candidate->entity->id.empty()) {
+      continue;
+    }
+    // Try to insert. If we already saw an item with the same server id,
+    // this will fail but give us its iterator.
+    auto it_and_success =
+        id_to_index.emplace(candidate->entity->id, pending_updates_.size());
+    if (it_and_success.second) {
+      // New server id, append at the end. Note that we already inserted
+      // the correct index (|pending_updates_.size()|) above.
+      pending_updates_.push_back(std::move(candidate));
+    } else {
+      // Duplicate! Overwrite the existing item.
+      size_t existing_index = it_and_success.first->second;
+      pending_updates_[existing_index] = std::move(candidate);
     }
   }
 }
 
-bool ModelTypeWorker::DecryptSpecifics(const sync_pb::EntitySpecifics& in,
-                                       sync_pb::EntitySpecifics* out) {
-  DCHECK(cryptographer_);
-  DCHECK(in.has_encrypted());
-  DCHECK(cryptographer_->CanDecrypt(in.encrypted()));
+void ModelTypeWorker::DeduplicatePendingUpdatesBasedOnClientTagHash() {
+  UpdateResponseDataList candidates;
+  pending_updates_.swap(candidates);
 
-  std::string plaintext = cryptographer_->DecryptToString(in.encrypted());
-  if (plaintext.empty()) {
-    LOG(ERROR) << "Failed to decrypt a decryptable entity";
-    return false;
+  std::map<std::string, size_t> tag_to_index;
+  for (std::unique_ptr<UpdateResponseData>& candidate : candidates) {
+    DCHECK(candidate);
+    // Items with empty client tag hash just get passed through.
+    if (candidate->entity->client_tag_hash.empty()) {
+      pending_updates_.push_back(std::move(candidate));
+      continue;
+    }
+    // Try to insert. If we already saw an item with the same client tag hash,
+    // this will fail but give us its iterator.
+    auto it_and_success = tag_to_index.emplace(
+        candidate->entity->client_tag_hash, pending_updates_.size());
+    if (it_and_success.second) {
+      // New client tag hash, append at the end. Note that we already inserted
+      // the correct index (|pending_updates_.size()|) above.
+      pending_updates_.push_back(std::move(candidate));
+    } else {
+      // Duplicate! Overwrite the existing item.
+      size_t existing_index = it_and_success.first->second;
+      pending_updates_[existing_index] = std::move(candidate);
+    }
   }
-  if (!out->ParseFromString(plaintext)) {
-    LOG(ERROR) << "Failed to parse decrypted entity";
+}
+
+// static
+bool ModelTypeWorker::DecryptSpecifics(const Cryptographer& cryptographer,
+                                       const sync_pb::EntitySpecifics& in,
+                                       sync_pb::EntitySpecifics* out) {
+  DCHECK(!in.has_password());
+  DCHECK(in.has_encrypted());
+  DCHECK(cryptographer.CanDecrypt(in.encrypted()));
+
+  if (!cryptographer.Decrypt(in.encrypted(), out)) {
+    DLOG(ERROR) << "Failed to decrypt a decryptable specifics";
     return false;
   }
   return true;
 }
 
-WorkerEntityTracker* ModelTypeWorker::GetEntityTracker(
-    const std::string& tag_hash) {
-  auto it = entities_.find(tag_hash);
-  return it != entities_.end() ? it->second.get() : nullptr;
-}
+// static
+bool ModelTypeWorker::DecryptPasswordSpecifics(
+    const Cryptographer& cryptographer,
+    const sync_pb::EntitySpecifics& in,
+    sync_pb::EntitySpecifics* out) {
+  DCHECK(in.has_password());
+  DCHECK(in.password().has_encrypted());
+  DCHECK(cryptographer.CanDecrypt(in.password().encrypted()));
 
-WorkerEntityTracker* ModelTypeWorker::CreateEntityTracker(
-    const std::string& tag_hash) {
-  DCHECK(entities_.find(tag_hash) == entities_.end());
-  std::unique_ptr<WorkerEntityTracker> entity =
-      std::make_unique<WorkerEntityTracker>(tag_hash);
-  WorkerEntityTracker* entity_ptr = entity.get();
-  entities_[tag_hash] = std::move(entity);
-  return entity_ptr;
-}
-
-WorkerEntityTracker* ModelTypeWorker::GetOrCreateEntityTracker(
-    const std::string& tag_hash) {
-  WorkerEntityTracker* entity = GetEntityTracker(tag_hash);
-  return entity ? entity : CreateEntityTracker(tag_hash);
+  if (!cryptographer.Decrypt(
+          in.password().encrypted(),
+          out->mutable_password()->mutable_client_only_encrypted_data())) {
+    DLOG(ERROR) << "Failed to decrypt a decryptable password";
+    return false;
+  }
+  return true;
 }
 
 GetLocalChangesRequest::GetLocalChangesRequest(
@@ -459,7 +729,7 @@ void GetLocalChangesRequest::WaitForResponse() {
 
 void GetLocalChangesRequest::SetResponse(
     CommitRequestDataList&& local_changes) {
-  response_ = local_changes;
+  response_ = std::move(local_changes);
   response_accepted_.Signal();
 }
 

@@ -14,7 +14,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/nix/mime_util_xdg.h"
 #include "base/nix/xdg_util.h"
 #include "base/process/launch.h"
@@ -22,8 +21,8 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/ui/libgtkui/select_file_dialog_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -262,6 +261,7 @@ void SelectFileDialogImplKDE::SelectFileImpl(
   switch (type) {
     case SELECT_FOLDER:
     case SELECT_UPLOAD_FOLDER:
+    case SELECT_EXISTING_FOLDER:
       CreateSelectFolderDialog(type, title_string, default_path,
                                window_xid, params);
       return;
@@ -274,7 +274,7 @@ void SelectFileDialogImplKDE::SelectFileImpl(
     case SELECT_SAVEAS_FILE:
       CreateSaveAsDialog(title_string, default_path, window_xid, params);
       return;
-    default:
+    case SELECT_NONE:
       NOTREACHED();
       return;
   }
@@ -286,7 +286,6 @@ bool SelectFileDialogImplKDE::HasMultipleFileTypeChoicesImpl() {
 
 std::string SelectFileDialogImplKDE::GetMimeTypeFilterString() {
   DCHECK(pipe_task_runner_->RunsTasksInCurrentSequence());
-  std::string filter_string;
   // We need a filter set because the same mime type can appear multiple times.
   std::set<std::string> filter_set;
   for (size_t i = 0; i < file_types_.extensions.size(); ++i) {
@@ -298,17 +297,16 @@ std::string SelectFileDialogImplKDE::GetMimeTypeFilterString() {
       }
     }
   }
+  std::vector<std::string> filter_vector(filter_set.cbegin(),
+                                         filter_set.cend());
   // Add the *.* filter, but only if we have added other filters (otherwise it
-  // is implied).
-  if (file_types_.include_all_files && !file_types_.extensions.empty())
-    filter_set.insert("application/octet-stream");
-  // Create the final output string.
-  filter_string.clear();
-  for (std::set<std::string>::iterator it = filter_set.begin();
-       it != filter_set.end(); ++it) {
-    filter_string.append(*it + " ");
+  // is implied). It needs to be added last to avoid being picked as the default
+  // filter.
+  if (file_types_.include_all_files && !file_types_.extensions.empty()) {
+    DCHECK(filter_set.find("application/octet-stream") == filter_set.end());
+    filter_vector.push_back("application/octet-stream");
   }
-  return filter_string;
+  return base::JoinString(filter_vector, " ");
 }
 
 std::unique_ptr<SelectFileDialogImplKDE::KDialogOutputParams>
@@ -321,7 +319,7 @@ SelectFileDialogImplKDE::CallKDialogOutput(const KDialogParams& params) {
                         params.parent, params.file_operation,
                         params.multiple_selection, &command_line);
 
-  auto results = base::MakeUnique<KDialogOutputParams>();
+  auto results = std::make_unique<KDialogOutputParams>();
   // Get output from KDialog
   base::GetAppOutputWithExitCode(command_line, &results->output,
                                  &results->exit_code);
@@ -343,9 +341,9 @@ void SelectFileDialogImplKDE::GetKDialogCommandLine(
   // Attach to the current Chrome window.
   if (parent != x11::None) {
     command_line->AppendSwitchNative(
-        desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE3 ?
-            "--embed" : "--attach",
-        base::Uint64ToString(parent));
+        desktop_ == base::nix::DESKTOP_ENVIRONMENT_KDE3 ? "--embed"
+                                                        : "--attach",
+        base::NumberToString(parent));
   }
 
   // Set the correct title for the dialog.
@@ -375,7 +373,8 @@ void SelectFileDialogImplKDE::FileSelected(const base::FilePath& path,
     *last_saved_path_ = path.DirName();
   else if (type_ == SELECT_OPEN_FILE)
     *last_opened_path_ = path.DirName();
-  else if (type_ == SELECT_FOLDER || type_ == SELECT_UPLOAD_FOLDER)
+  else if (type_ == SELECT_FOLDER || type_ == SELECT_UPLOAD_FOLDER ||
+           type_ == SELECT_EXISTING_FOLDER)
     *last_opened_path_ = path;
   else
     NOTREACHED();

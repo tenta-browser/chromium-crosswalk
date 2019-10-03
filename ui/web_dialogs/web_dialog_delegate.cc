@@ -8,6 +8,10 @@
 
 namespace ui {
 
+base::string16 WebDialogDelegate::GetAccessibleDialogTitle() const {
+  return GetDialogTitle();
+}
+
 std::string WebDialogDelegate::GetDialogName() const {
   return std::string();
 }
@@ -24,12 +28,17 @@ bool WebDialogDelegate::CanResizeDialog() const {
   return true;
 }
 
+bool WebDialogDelegate::OnDialogCloseRequested() {
+  return true;
+}
+
 void WebDialogDelegate::OnDialogCloseFromWebUI(
     const std::string& json_retval) {
   OnDialogClosed(json_retval);
 }
 
 bool WebDialogDelegate::HandleContextMenu(
+    content::RenderFrameHost* render_frame_host,
     const content::ContextMenuParams& params) {
   return false;
 }
@@ -38,15 +47,6 @@ bool WebDialogDelegate::HandleOpenURLFromTab(
     content::WebContents* source,
     const content::OpenURLParams& params,
     content::WebContents** out_new_contents) {
-  return false;
-}
-
-bool WebDialogDelegate::HandleAddNewContents(
-    content::WebContents* source,
-    content::WebContents* new_contents,
-    WindowOpenDisposition disposition,
-    const gfx::Rect& initial_rect,
-    bool user_gesture) {
   return false;
 }
 

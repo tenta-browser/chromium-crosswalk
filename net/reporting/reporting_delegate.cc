@@ -18,16 +18,23 @@ class ReportingDelegateImpl : public ReportingDelegate {
     DCHECK(request_context);
   }
 
-  ~ReportingDelegateImpl() override {}
+  ~ReportingDelegateImpl() override = default;
 
   bool CanQueueReport(const url::Origin& origin) const override {
     return network_delegate() &&
            network_delegate()->CanQueueReportingReport(origin);
   }
 
-  bool CanSendReport(const url::Origin& origin) const override {
-    return network_delegate() &&
-           network_delegate()->CanSendReportingReport(origin);
+  void CanSendReports(std::set<url::Origin> origins,
+                      base::OnceCallback<void(std::set<url::Origin>)>
+                          result_callback) const override {
+    if (!network_delegate()) {
+      origins.clear();
+      std::move(result_callback).Run(std::move(origins));
+      return;
+    }
+    network_delegate()->CanSendReportingReports(std::move(origins),
+                                                std::move(result_callback));
   }
 
   bool CanSetClient(const url::Origin& origin,
@@ -58,6 +65,6 @@ std::unique_ptr<ReportingDelegate> ReportingDelegate::Create(
   return std::make_unique<ReportingDelegateImpl>(request_context);
 }
 
-ReportingDelegate::~ReportingDelegate() {}
+ReportingDelegate::~ReportingDelegate() = default;
 
 }  // namespace net

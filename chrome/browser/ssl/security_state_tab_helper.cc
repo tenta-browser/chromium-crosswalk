@@ -4,123 +4,99 @@
 
 #include "chrome/browser/ssl/security_state_tab_helper.h"
 
+#include <string>
+
 #include "base/bind.h"
+#include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/time/time.h"
+#include "base/strings/pattern.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
-#include "components/prefs/pref_service.h"
-#include "components/safe_browsing/features.h"
+#include "chrome/common/secure_origin_whitelist.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/common/omnibox_features.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/security_state/content/content_utils.h"
-#include "components/ssl_config/ssl_config_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
+#include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
+#include "url/origin.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/policy_cert_service.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
 #endif  // defined(OS_CHROMEOS)
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #endif
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(SecurityStateTabHelper);
+namespace {
 
+void RecordSecurityLevel(
+    const security_state::VisibleSecurityState& visible_security_state,
+    security_state::SecurityLevel security_level) {
+  if (security_state::IsSchemeCryptographic(visible_security_state.url)) {
+    UMA_HISTOGRAM_ENUMERATION("Security.SecurityLevel.CryptographicScheme",
+                              security_level,
+                              security_state::SECURITY_LEVEL_COUNT);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION("Security.SecurityLevel.NoncryptographicScheme",
+                              security_level,
+                              security_state::SECURITY_LEVEL_COUNT);
+  }
+}
+
+}  // namespace
+
+using password_manager::metrics_util::PasswordType;
 using safe_browsing::SafeBrowsingUIManager;
 
 SecurityStateTabHelper::SecurityStateTabHelper(
     content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents),
-      logged_http_warning_on_current_navigation_(false),
-      is_incognito_(false) {
-  content::BrowserContext* context = web_contents->GetBrowserContext();
-  if (context->IsOffTheRecord() &&
-      !Profile::FromBrowserContext(context)->IsGuestSession()) {
-    is_incognito_ = true;
-  }
-}
+    : content::WebContentsObserver(web_contents) {}
 
 SecurityStateTabHelper::~SecurityStateTabHelper() {}
 
-void SecurityStateTabHelper::GetSecurityInfo(
-    security_state::SecurityInfo* result) const {
-  security_state::GetSecurityInfo(GetVisibleSecurityState(),
-                                  UsedPolicyInstalledCertificate(),
-                                  base::Bind(&content::IsOriginSecure), result);
+security_state::SecurityLevel SecurityStateTabHelper::GetSecurityLevel() const {
+  return security_state::GetSecurityLevel(
+      *GetVisibleSecurityState(), UsedPolicyInstalledCertificate(),
+      base::BindRepeating(&content::IsOriginSecure));
 }
 
-void SecurityStateTabHelper::VisibleSecurityStateChanged() {
-  if (logged_http_warning_on_current_navigation_)
-    return;
+std::unique_ptr<security_state::VisibleSecurityState>
+SecurityStateTabHelper::GetVisibleSecurityState() const {
+  auto state = security_state::GetVisibleSecurityState(web_contents());
 
-  security_state::SecurityInfo security_info;
-  GetSecurityInfo(&security_info);
-  if (!security_info.insecure_input_events.password_field_shown &&
-      !security_info.insecure_input_events.credit_card_field_edited) {
-    return;
-  }
+  // Malware status might already be known even if connection security
+  // information is still being initialized, thus no need to check for that.
+  state->malicious_content_status = GetMaliciousContentStatus();
 
-  DCHECK(time_of_http_warning_on_current_navigation_.is_null());
-  time_of_http_warning_on_current_navigation_ = base::Time::Now();
-
-  logged_http_warning_on_current_navigation_ = true;
-  web_contents()->GetMainFrame()->AddMessageToConsole(
-      content::CONSOLE_MESSAGE_LEVEL_WARNING,
-      "This page includes a password or credit card input in a non-secure "
-      "context. A warning has been added to the URL bar. For more "
-      "information, see https://goo.gl/zmWq3m.");
-
-  // |warning_is_user_visible| will only be false if the user has set the flag
-  // for marking HTTP pages as Dangerous. In that case, the page will be
-  // flagged as Dangerous, but it isn't distinguished from other HTTP pages,
-  // which is why this code records it as not-user-visible.
-  bool warning_is_user_visible =
-      (security_info.security_level == security_state::HTTP_SHOW_WARNING);
-
-  if (security_info.insecure_input_events.credit_card_field_edited) {
-    UMA_HISTOGRAM_BOOLEAN(
-        "Security.HTTPBad.UserWarnedAboutSensitiveInput.CreditCard",
-        warning_is_user_visible);
-  }
-  if (security_info.insecure_input_events.password_field_shown) {
-    UMA_HISTOGRAM_BOOLEAN(
-        "Security.HTTPBad.UserWarnedAboutSensitiveInput.Password",
-        warning_is_user_visible);
-  }
+  return state;
 }
 
 void SecurityStateTabHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (time_of_http_warning_on_current_navigation_.is_null() ||
-      !navigation_handle->IsInMainFrame() ||
-      navigation_handle->IsSameDocument()) {
-    return;
+  if (navigation_handle->IsFormSubmission()) {
+    UMA_HISTOGRAM_ENUMERATION("Security.SecurityLevel.FormSubmission",
+                              GetSecurityLevel(),
+                              security_state::SECURITY_LEVEL_COUNT);
   }
-  // Record how quickly a user leaves a site after encountering an
-  // HTTP-bad warning. A navigation here only counts if it is a
-  // main-frame, not-same-page navigation, since it aims to measure how
-  // quickly a user leaves a site after seeing the HTTP warning.
-  UMA_HISTOGRAM_LONG_TIMES(
-      "Security.HTTPBad.NavigationStartedAfterUserWarnedAboutSensitiveInput",
-      base::Time::Now() - time_of_http_warning_on_current_navigation_);
-  // After recording the histogram, clear the time of the warning. A
-  // timing histogram will not be recorded again on this page, because
-  // the time is only set the first time the HTTP-bad warning is shown
-  // per page.
-  time_of_http_warning_on_current_navigation_ = base::Time();
 }
 
 void SecurityStateTabHelper::DidFinishNavigation(
@@ -133,19 +109,20 @@ void SecurityStateTabHelper::DidFinishNavigation(
     return;
   }
 
-  logged_http_warning_on_current_navigation_ = false;
-
-  security_state::SecurityInfo security_info;
-  GetSecurityInfo(&security_info);
-  if (security_info.incognito_downgraded_security_level) {
-    web_contents()->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_WARNING,
-        "This page was loaded non-securely in an incognito mode browser. A "
-        "warning has been added to the URL bar. For more information, see "
-        "https://goo.gl/y8SRRv.");
+  content::NavigationEntry* entry =
+      web_contents()->GetController().GetLastCommittedEntry();
+  if (entry) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "Security.CertificateTransparency.MainFrameNavigationCompliance",
+        entry->GetSSL().ct_policy_compliance,
+        net::ct::CTPolicyCompliance::CT_POLICY_COUNT);
   }
-  if (net::IsCertStatusError(security_info.cert_status) &&
-      !net::IsCertStatusMinorError(security_info.cert_status)) {
+
+  std::unique_ptr<security_state::VisibleSecurityState> visible_security_state =
+      GetVisibleSecurityState();
+  if (net::IsCertStatusError(visible_security_state->cert_status) &&
+      !net::IsCertStatusMinorError(visible_security_state->cert_status) &&
+      !navigation_handle->IsErrorPage()) {
     // Record each time a user visits a site after having clicked through a
     // certificate warning interstitial. This is used as a baseline for
     // interstitial.ssl.did_user_revoke_decision2 in order to determine how
@@ -155,16 +132,8 @@ void SecurityStateTabHelper::DidFinishNavigation(
   }
 }
 
-void SecurityStateTabHelper::WebContentsDestroyed() {
-  if (time_of_http_warning_on_current_navigation_.is_null()) {
-    return;
-  }
-  // Record how quickly the tab is closed after a user encounters an
-  // HTTP-bad warning. This histogram will only be recorded if the
-  // WebContents is destroyed before another navigation begins.
-  UMA_HISTOGRAM_LONG_TIMES(
-      "Security.HTTPBad.WebContentsDestroyedAfterUserWarnedAboutSensitiveInput",
-      base::Time::Now() - time_of_http_warning_on_current_navigation_);
+void SecurityStateTabHelper::DidChangeVisibleSecurityState() {
+  RecordSecurityLevel(*GetVisibleSecurityState(), GetSecurityLevel());
 }
 
 bool SecurityStateTabHelper::UsedPolicyInstalledCertificate() const {
@@ -195,7 +164,6 @@ SecurityStateTabHelper::GetMaliciousContentStatus() const {
     switch (threat_type) {
       case safe_browsing::SB_THREAT_TYPE_UNUSED:
       case safe_browsing::SB_THREAT_TYPE_SAFE:
-        break;
       case safe_browsing::SB_THREAT_TYPE_URL_PHISHING:
       case safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING:
         return security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING;
@@ -204,21 +172,32 @@ SecurityStateTabHelper::GetMaliciousContentStatus() const {
         return security_state::MALICIOUS_CONTENT_STATUS_MALWARE;
       case safe_browsing::SB_THREAT_TYPE_URL_UNWANTED:
         return security_state::MALICIOUS_CONTENT_STATUS_UNWANTED_SOFTWARE;
-      case safe_browsing::SB_THREAT_TYPE_PASSWORD_REUSE:
-#if defined(SAFE_BROWSING_DB_LOCAL)
-        if (base::FeatureList::IsEnabled(
-                safe_browsing::kGoogleBrandedPhishingWarning)) {
-          if (safe_browsing::ChromePasswordProtectionService::
-                  ShouldShowChangePasswordSettingUI(Profile::FromBrowserContext(
-                      web_contents()->GetBrowserContext()))) {
-            return security_state::MALICIOUS_CONTENT_STATUS_PASSWORD_REUSE;
-          }
-          // If user has already changed Gaia password, returns the regular
-          // social engineering content status.
-          return security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING;
+      case safe_browsing::SB_THREAT_TYPE_SIGN_IN_PASSWORD_REUSE:
+#if defined(FULL_SAFE_BROWSING)
+        if (safe_browsing::ChromePasswordProtectionService::
+                ShouldShowPasswordReusePageInfoBubble(
+                    web_contents(), PasswordType::PRIMARY_ACCOUNT_PASSWORD)) {
+          return security_state::
+              MALICIOUS_CONTENT_STATUS_SIGN_IN_PASSWORD_REUSE;
         }
-        break;
+        // If user has already changed Gaia password, returns the regular
+        // social engineering content status.
+        return security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING;
 #endif
+      case safe_browsing::SB_THREAT_TYPE_ENTERPRISE_PASSWORD_REUSE:
+#if defined(FULL_SAFE_BROWSING)
+        if (safe_browsing::ChromePasswordProtectionService::
+                ShouldShowPasswordReusePageInfoBubble(
+                    web_contents(), PasswordType::ENTERPRISE_PASSWORD)) {
+          return security_state::
+              MALICIOUS_CONTENT_STATUS_ENTERPRISE_PASSWORD_REUSE;
+        }
+        // If user has already changed Gaia password, returns the regular
+        // social engineering content status.
+        return security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING;
+#endif
+      case safe_browsing::SB_THREAT_TYPE_BILLING:
+        return security_state::MALICIOUS_CONTENT_STATUS_BILLING;
       case safe_browsing::
           DEPRECATED_SB_THREAT_TYPE_URL_PASSWORD_PROTECTION_PHISHING:
       case safe_browsing::SB_THREAT_TYPE_URL_BINARY_MALWARE:
@@ -228,6 +207,11 @@ SecurityStateTabHelper::GetMaliciousContentStatus() const {
       case safe_browsing::SB_THREAT_TYPE_SUBRESOURCE_FILTER:
       case safe_browsing::SB_THREAT_TYPE_CSD_WHITELIST:
       case safe_browsing::SB_THREAT_TYPE_AD_SAMPLE:
+      case safe_browsing::SB_THREAT_TYPE_BLOCKED_AD_POPUP:
+      case safe_browsing::SB_THREAT_TYPE_BLOCKED_AD_REDIRECT:
+      case safe_browsing::SB_THREAT_TYPE_SUSPICIOUS_SITE:
+      case safe_browsing::SB_THREAT_TYPE_APK_DOWNLOAD:
+      case safe_browsing::SB_THREAT_TYPE_HIGH_CONFIDENCE_ALLOWLIST:
         // These threat types are not currently associated with
         // interstitials, and thus resources with these threat types are
         // not ever whitelisted or pending whitelisting.
@@ -238,15 +222,4 @@ SecurityStateTabHelper::GetMaliciousContentStatus() const {
   return security_state::MALICIOUS_CONTENT_STATUS_NONE;
 }
 
-std::unique_ptr<security_state::VisibleSecurityState>
-SecurityStateTabHelper::GetVisibleSecurityState() const {
-  auto state = security_state::GetVisibleSecurityState(web_contents());
-
-  // Malware status might already be known even if connection security
-  // information is still being initialized, thus no need to check for that.
-  state->malicious_content_status = GetMaliciousContentStatus();
-
-  state->is_incognito = is_incognito_;
-
-  return state;
-}
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SecurityStateTabHelper)

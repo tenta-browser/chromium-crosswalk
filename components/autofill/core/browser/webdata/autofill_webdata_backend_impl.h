@@ -12,7 +12,6 @@
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
-#include "components/autofill/core/browser/webdata/autofill_webdata.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/webdata/common/web_data_results.h"
@@ -53,7 +52,12 @@ class AutofillWebDataBackendImpl
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> db_task_runner,
       const base::Closure& on_changed_callback,
+      const base::Closure& on_address_conversion_completed_callback,
       const base::Callback<void(syncer::ModelType)>& on_sync_started_callback);
+
+  void SetAutofillProfileChangedCallback(
+      base::RepeatingCallback<void(const AutofillProfileDeepChange&)>
+          change_cb);
 
   // AutofillWebDataBackend implementation.
   void AddObserver(
@@ -61,9 +65,13 @@ class AutofillWebDataBackendImpl
   void RemoveObserver(
       AutofillWebDataServiceObserverOnDBSequence* observer) override;
   WebDatabase* GetDatabase() override;
-  void RemoveExpiredFormElements() override;
+  void NotifyOfAutofillProfileChanged(
+      const AutofillProfileChange& change) override;
+  void NotifyOfCreditCardChanged(const CreditCardChange& change) override;
   void NotifyOfMultipleAutofillChanges() override;
+  void NotifyOfAddressConversionCompleted() override;
   void NotifyThatSyncHasStarted(syncer::ModelType model_type) override;
+  void CommitChanges() override;
 
   // Returns a SupportsUserData object that may be used to store data accessible
   // from the DB sequence. Should be called only from the DB sequence, and will
@@ -83,6 +91,12 @@ class AutofillWebDataBackendImpl
       const base::string16& name,
       const base::string16& prefix,
       int limit,
+      WebDatabase* db);
+
+  // Function to remove expired Autocomplete entries, which deletes them from
+  // the Sqlite table, unlinks them from Sync and cleans up the metadata.
+  // Returns the number of entries cleaned-up.
+  std::unique_ptr<WDTypedResult> RemoveExpiredAutocompleteEntries(
       WebDatabase* db);
 
   // Removes form elements recorded for Autocomplete from the database.
@@ -115,6 +129,15 @@ class AutofillWebDataBackendImpl
   // Returns the local/server Autofill profiles from the web database.
   std::unique_ptr<WDTypedResult> GetAutofillProfiles(WebDatabase* db);
   std::unique_ptr<WDTypedResult> GetServerProfiles(WebDatabase* db);
+
+  // Converts server profiles to local profiles, comparing profiles using
+  // |app_locale| and filling in |primary_account_email| into newly converted
+  // profiles. The task only converts profiles that have not been converted
+  // before.
+  WebDatabase::State ConvertWalletAddressesAndUpdateWalletCards(
+      const std::string& app_locale,
+      const std::string& primary_account_email,
+      WebDatabase* db);
 
   // Returns the number of values such that all for autofill entries with that
   // value, the interval between creation date and last usage is entirely
@@ -163,7 +186,11 @@ class AutofillWebDataBackendImpl
   WebDatabase::State UpdateServerAddressMetadata(const AutofillProfile& profile,
                                                  WebDatabase* db);
 
+  // Returns the PaymentsCustomerData from the database.
+  std::unique_ptr<WDTypedResult> GetPaymentsCustomerData(WebDatabase* db);
+
   WebDatabase::State ClearAllServerData(WebDatabase* db);
+  WebDatabase::State ClearAllLocalData(WebDatabase* db);
 
   // Removes Autofill records from the database. Valid only for local
   // cards/profiles.
@@ -178,6 +205,10 @@ class AutofillWebDataBackendImpl
       const base::Time& delete_begin,
       const base::Time& delete_end,
       WebDatabase* db);
+
+  // Removes the orphan rows in the autofill_profile_names,
+  // autofill_profile_emails and autofill_profile_phones tables.
+  WebDatabase::State RemoveOrphanAutofillTableRows(WebDatabase* db);
 
  protected:
   ~AutofillWebDataBackendImpl() override;
@@ -202,17 +233,12 @@ class AutofillWebDataBackendImpl
   // The task runner that this class uses for its UI tasks.
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
 
-  // The task runner that this class uses for its DB tasks.
-  scoped_refptr<base::SingleThreadTaskRunner> db_task_runner_;
-
   // Storage for user data to be accessed only on the DB sequence. May
   // be used e.g. for SyncableService subclasses that need to be owned
   // by this object. Is created on first call to |GetDBUserData()|.
   std::unique_ptr<SupportsUserDataAggregatable> user_data_;
 
-  WebDatabase::State RemoveExpiredFormElementsImpl(WebDatabase* db);
-
-  base::ObserverList<AutofillWebDataServiceObserverOnDBSequence>
+  base::ObserverList<AutofillWebDataServiceObserverOnDBSequence>::Unchecked
       db_observer_list_;
 
   // WebDatabaseBackend allows direct access to DB.
@@ -220,7 +246,11 @@ class AutofillWebDataBackendImpl
   scoped_refptr<WebDatabaseBackend> web_database_backend_;
 
   base::Closure on_changed_callback_;
+  base::Closure on_address_conversion_completed_callback_;
   base::Callback<void(syncer::ModelType)> on_sync_started_callback_;
+
+  base::RepeatingCallback<void(const AutofillProfileDeepChange&)>
+      on_autofill_profile_changed_cb_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillWebDataBackendImpl);
 };

@@ -8,7 +8,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -28,7 +27,6 @@ const char kNTPPromoFinchExperiment[] = "IOSNTPPromotion";
 const char kPrefPromoObject[] = "ios.ntppromo";
 
 // Keys in the kPrefPromoObject dictionary; used only here.
-const char kPrefPromoID[] = "id";
 const char kPrefPromoFirstViewTime[] = "first_view_time";
 const char kPrefPromoViews[] = "views";
 const char kPrefPromoClosed[] = "closed";
@@ -37,7 +35,7 @@ const char kPrefPromoClosed[] = "closed";
 
 NotificationPromo::NotificationPromo(PrefService* local_state)
     : local_state_(local_state),
-      promo_payload_(new base::DictionaryValue()),
+      promo_payload_(base::Value::Type::DICTIONARY),
       start_(0.0),
       end_(0.0),
       promo_id_(-1),
@@ -63,58 +61,66 @@ void NotificationPromo::InitFromVariations() {
   // paremeters. The payload is then added to the overall dictionary. This code
   // can be removed if this class is refactored and the payload is then
   // disregarded (crbug.com/608525).
-  base::DictionaryValue json;
-  base::DictionaryValue payload;
-  std::map<std::string, std::string>::iterator iter;
-  for (iter = params.begin(); iter != params.end(); ++iter) {
+  base::Value json(base::Value::Type::DICTIONARY);
+  base::Value payload(base::Value::Type::DICTIONARY);
+  for (const auto& param : params) {
     int converted_number;
-    bool converted = base::StringToInt(iter->second, &converted_number);
+    bool converted = base::StringToInt(param.second, &converted_number);
     // Choose the dictionary to which parameter is added based on whether the
     // parameter belongs in the payload or not.
-    base::DictionaryValue& json_or_payload =
-        IsPayloadParam(iter->first) ? payload : json;
+    base::Value& json_or_payload = IsPayloadParam(param.first) ? payload : json;
     if (converted) {
-      json_or_payload.SetInteger(iter->first, converted_number);
+      json_or_payload.SetKey(param.first, base::Value(converted_number));
     } else {
-      json_or_payload.SetString(iter->first, iter->second);
+      json_or_payload.SetKey(param.first, base::Value(param.second));
     }
   }
-  json.SetKey("payload", payload.Clone());
+  json.SetKey("payload", std::move(payload));
 
-  InitFromJson(json);
+  InitFromJson(std::move(json));
 }
 
-void NotificationPromo::InitFromJson(const base::DictionaryValue& promo) {
-  std::string time_str;
+void NotificationPromo::InitFromJson(base::Value promo) {
   base::Time time;
-  if (promo.GetString("start", &time_str) &&
-      base::Time::FromString(time_str.c_str(), &time)) {
+  const std::string* str = nullptr;
+
+  str = promo.FindStringKey("start");
+  if (str && base::Time::FromString(str->c_str(), &time)) {
     start_ = time.ToDoubleT();
-    DVLOG(1) << "start str=" << time_str
+    DVLOG(1) << "start str=" << *str
              << ", start_=" << base::NumberToString(start_);
   }
-  if (promo.GetString("end", &time_str) &&
-      base::Time::FromString(time_str.c_str(), &time)) {
+
+  str = promo.FindStringKey("end");
+  if (str && base::Time::FromString(str->c_str(), &time)) {
     end_ = time.ToDoubleT();
-    DVLOG(1) << "end str =" << time_str
-             << ", end_=" << base::NumberToString(end_);
+    DVLOG(1) << "end str =" << *str << ", end_=" << base::NumberToString(end_);
   }
 
-  promo.GetString("promo_text", &promo_text_);
+  str = promo.FindStringKey("promo_text");
+  if (str)
+    promo_text_ = *str;
   DVLOG(1) << "promo_text_=" << promo_text_;
 
-  const base::DictionaryValue* payload = NULL;
-  if (promo.GetDictionary("payload", &payload)) {
-    promo_payload_.reset(payload->DeepCopy());
+  const base::Value* payload =
+      promo.FindKeyOfType("payload", base::Value::Type::DICTIONARY);
+  if (payload) {
+    promo_payload_ = payload->Clone();
   }
 
-  promo.GetInteger("max_views", &max_views_);
+  base::Optional<int> max_views = promo.FindIntKey("max_views");
+  if (max_views.has_value())
+    max_views_ = max_views.value();
   DVLOG(1) << "max_views_ " << max_views_;
 
-  promo.GetInteger("max_seconds", &max_seconds_);
+  base::Optional<int> max_seconds = promo.FindIntKey("max_seconds");
+  if (max_seconds.has_value())
+    max_seconds_ = max_seconds.value();
   DVLOG(1) << "max_seconds_ " << max_seconds_;
 
-  promo.GetInteger("promo_id", &promo_id_);
+  base::Optional<int> promo_id = promo.FindIntKey("promo_id");
+  if (promo_id.has_value())
+    promo_id_ = promo_id.value();
   DVLOG(1) << "promo_id_ " << promo_id_;
 }
 
@@ -142,23 +148,19 @@ void NotificationPromo::WritePrefs(int promo_id,
                                    double first_view_time,
                                    int views,
                                    bool closed) {
-  auto ntp_promo = base::MakeUnique<base::DictionaryValue>();
+  auto ntp_promo = std::make_unique<base::DictionaryValue>();
   ntp_promo->SetDouble(kPrefPromoFirstViewTime, first_view_time);
   ntp_promo->SetInteger(kPrefPromoViews, views);
   ntp_promo->SetBoolean(kPrefPromoClosed, closed);
 
   base::DictionaryValue promo_dict;
   promo_dict.MergeDictionary(local_state_->GetDictionary(kPrefPromoObject));
-  promo_dict.Set(base::IntToString(promo_id), std::move(ntp_promo));
+  promo_dict.Set(base::NumberToString(promo_id), std::move(ntp_promo));
   local_state_->Set(kPrefPromoObject, promo_dict);
   DVLOG(1) << "WritePrefs " << promo_dict;
 }
 
 void NotificationPromo::InitFromPrefs() {
-  // Check if data is stored in the old prefs structure, and migrate it before
-  // reading from prefs.
-  MigrateOldPrefs();
-
   // If |promo_id_| is not set, do nothing.
   if (promo_id_ == -1)
     return;
@@ -169,55 +171,13 @@ void NotificationPromo::InitFromPrefs() {
     return;
 
   const base::DictionaryValue* ntp_promo = NULL;
-  promo_dict->GetDictionary(base::IntToString(promo_id_), &ntp_promo);
+  promo_dict->GetDictionary(base::NumberToString(promo_id_), &ntp_promo);
   if (!ntp_promo)
     return;
 
   ntp_promo->GetDouble(kPrefPromoFirstViewTime, &first_view_time_);
   ntp_promo->GetInteger(kPrefPromoViews, &views_);
   ntp_promo->GetBoolean(kPrefPromoClosed, &closed_);
-}
-
-void NotificationPromo::MigrateOldPrefs() {
-  const base::DictionaryValue* promo_dict =
-      local_state_->GetDictionary(kPrefPromoObject);
-  if (!promo_dict)
-    return;
-
-  const base::ListValue* promo_list = NULL;
-  promo_dict->GetList("mobile_ntp_whats_new_promo", &promo_list);
-  if (!promo_list)
-    return;
-
-  const base::DictionaryValue* ntp_promo = NULL;
-  promo_list->GetDictionary(0, &ntp_promo);
-  if (!ntp_promo) {
-    // If the list is saved but there is no promo dictionary, clear prefs to
-    // delete the empty list.
-    NotificationPromo::MigrateUserPrefs(local_state_);
-    return;
-  }
-
-  int promo_id = -1;
-  ntp_promo->GetInteger(kPrefPromoID, &promo_id);
-  if (promo_id == -1) {
-    // If there is no promo id saved in prefs, then data is corrupt and the
-    // prefs can be discarded.
-    NotificationPromo::MigrateUserPrefs(local_state_);
-    return;
-  }
-
-  double first_view_time = 0;
-  ntp_promo->GetDouble(kPrefPromoFirstViewTime, &first_view_time);
-  int views = 0;
-  ntp_promo->GetInteger(kPrefPromoViews, &views);
-  bool closed = false;
-  ntp_promo->GetBoolean(kPrefPromoClosed, &closed);
-
-  // Clear prefs to discard the old structure before saving the data in the new
-  // structure.
-  NotificationPromo::MigrateUserPrefs(local_state_);
-  WritePrefs(promo_id, first_view_time, views, closed);
 }
 
 bool NotificationPromo::CanShow() const {

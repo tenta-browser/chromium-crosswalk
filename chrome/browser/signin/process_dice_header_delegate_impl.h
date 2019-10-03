@@ -12,14 +12,16 @@
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
+#include "components/signin/public/base/account_consistency_method.h"
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
 class WebContents;
 }
 
-class PrefService;
-class SigninManager;
+namespace signin {
+class IdentityManager;
+}
 
 class ProcessDiceHeaderDelegateImpl : public ProcessDiceHeaderDelegate,
                                       public content::WebContentsObserver {
@@ -39,11 +41,12 @@ class ProcessDiceHeaderDelegateImpl : public ProcessDiceHeaderDelegate,
   // tab.
   ProcessDiceHeaderDelegateImpl(
       content::WebContents* web_contents,
-      PrefService* user_prefs,
-      SigninManager* signin_manager,
+      signin::AccountConsistencyMethod account_consistency,
+      signin::IdentityManager* identity_manager,
       bool is_sync_signin_tab,
       EnableSyncCallback enable_sync_callback,
-      ShowSigninErrorCallback show_signin_error_callback);
+      ShowSigninErrorCallback show_signin_error_callback,
+      const GURL& redirect_url = GURL::EmptyGURL());
   ~ProcessDiceHeaderDelegateImpl() override;
 
   // ProcessDiceHeaderDelegate:
@@ -55,11 +58,12 @@ class ProcessDiceHeaderDelegateImpl : public ProcessDiceHeaderDelegate,
   // Returns true if sync should be enabled after the user signs in.
   bool ShouldEnableSync();
 
-  PrefService* user_prefs_;
-  SigninManager* signin_manager_;
+  signin::AccountConsistencyMethod account_consistency_;
+  signin::IdentityManager* identity_manager_;
   EnableSyncCallback enable_sync_callback_;
   ShowSigninErrorCallback show_signin_error_callback_;
   bool is_sync_signin_tab_;
+  GURL redirect_url_;
   DISALLOW_COPY_AND_ASSIGN(ProcessDiceHeaderDelegateImpl);
 };
 

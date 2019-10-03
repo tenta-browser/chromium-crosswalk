@@ -4,7 +4,6 @@
 
 package com.android.webview.chromium;
 
-import android.annotation.TargetApi;
 import android.app.Application;
 import android.content.Context;
 import android.content.ContextWrapper;
@@ -12,10 +11,11 @@ import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.graphics.Canvas;
-import android.os.Build;
 import android.os.Trace;
 import android.util.SparseArray;
 import android.view.View;
+
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 
 import java.lang.reflect.Method;
 
@@ -40,7 +40,7 @@ class WebViewDelegateFactory {
      * Copy of {@link android.webkit.WebViewDelegate android.webkit.WebViewDelegate}'s interface.
      * See {@link WebViewDelegateFactory} for the reasons why this copy is needed.
      */
-    interface WebViewDelegate {
+    interface WebViewDelegate extends AwDrawFnImpl.DrawFnAccess {
         /** @see android.webkit.WebViewDelegate.OnTraceEnabledChangeListener */
         interface OnTraceEnabledChangeListener {
             void onTraceEnabledChange(boolean enabled);
@@ -85,6 +85,9 @@ class WebViewDelegateFactory {
 
         /** @see android.webkit.WebViewDelegate#isMultiProcessEnabled */
         boolean isMultiProcessEnabled();
+
+        /** @see android.webkit.WebViewDelegate#getDataDirectorySuffix */
+        String getDataDirectorySuffix();
     }
 
     /**
@@ -155,7 +158,8 @@ class WebViewDelegateFactory {
         @Override
         public void callDrawGlFunction(
                 Canvas canvas, long nativeDrawGLFunctor, Runnable releasedRunnable) {
-            mDelegate.callDrawGlFunction(canvas, nativeDrawGLFunctor, releasedRunnable);
+            GlueApiHelperForN.callDrawGlFunction(
+                    mDelegate, canvas, nativeDrawGLFunctor, releasedRunnable);
         }
 
         @Override
@@ -204,7 +208,17 @@ class WebViewDelegateFactory {
 
         @Override
         public boolean isMultiProcessEnabled() {
-            return mDelegate.isMultiProcessEnabled();
+            return GlueApiHelperForO.isMultiProcessEnabled(mDelegate);
+        }
+
+        @Override
+        public String getDataDirectorySuffix() {
+            return GlueApiHelperForP.getDataDirectorySuffix(mDelegate);
+        }
+
+        @Override
+        public void drawWebViewFunctor(Canvas canvas, int functor) {
+            throw new RuntimeException();
         }
     }
 
@@ -219,7 +233,6 @@ class WebViewDelegateFactory {
      * reflection to call into hidden frameworks APIs released in the API-21 version of the
      * framework.
      */
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private static class Api21CompatibilityDelegate implements WebViewDelegate {
         /** Copy of Trace.TRACE_TAG_WEBVIEW */
         private static final long TRACE_TAG_WEBVIEW = 1L << 4;
@@ -395,6 +408,16 @@ class WebViewDelegateFactory {
         @Override
         public boolean isMultiProcessEnabled() {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String getDataDirectorySuffix() {
+            return null;
+        }
+
+        @Override
+        public void drawWebViewFunctor(Canvas canvas, int functor) {
+            throw new RuntimeException();
         }
     }
 }

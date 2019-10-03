@@ -6,6 +6,8 @@
 
 #include <android/keycodes.h>
 
+#include "build/build_config.h"
+
 namespace ui {
 namespace {
 
@@ -73,6 +75,11 @@ DomKey GetDomKeyFromAndroidKeycode(int keycode) {
     default:
     case AKEYCODE_UNKNOWN:
       return DomKey::NONE;
+#if defined(OS_ANDROID)
+#define ANDROID_KEYCODE_TO_DOM_KEY
+#include "ui/events/keycodes/dom/keycode_conversion_data_android_generated.inc"
+#undef ANDROID_KEYCODE_TO_DOM_KEY
+#endif
     case AKEYCODE_HOME:
       return DomKey::GO_HOME;
     case AKEYCODE_BACK:
@@ -284,7 +291,7 @@ DomKey GetDomKeyFromAndroidKeycode(int keycode) {
     case AKEYCODE_KATAKANA_HIRAGANA:
       return DomKey::HIRAGANA_KATAKANA;
     case AKEYCODE_KANA:
-      return DomKey::KANA_MODE;
+      return DomKey::KANJI_MODE;
     case AKEYCODE_BRIGHTNESS_DOWN:
       return DomKey::BRIGHTNESS_DOWN;
     case AKEYCODE_BRIGHTNESS_UP:
@@ -379,6 +386,8 @@ DomKey GetDomKeyFromAndroidKeycode(int keycode) {
       return DomKey::COPY;
     case AKEYCODE_PASTE:
       return DomKey::PASTE;
+    case AKEYCODE_DVR:
+      return DomKey::DVR;
 
     // The following codes should already be handled as printable
     // character mapping.
@@ -479,7 +488,6 @@ DomKey GetDomKeyFromAndroidKeycode(int keycode) {
     // case AKEYCODE_BUTTON_SELECT:
     // case AKEYCODE_BUTTON_MODE:
     // case AKEYCODE_WINDOW:
-    // case AKEYCODE_DVR:
     // case AKEYCODE_BUTTON_1:
     // case AKEYCODE_BUTTON_2:
     // case AKEYCODE_BUTTON_3:
@@ -534,6 +542,11 @@ DomKey GetDomKeyFromAndroidEvent(int keycode, int unicode_character) {
 KeyboardCode KeyboardCodeFromAndroidKeyCode(int keycode) {
   // Does not provide all key codes, and does not handle all keys.
   switch (keycode) {
+#if defined(OS_ANDROID)
+#define ANDROID_KEYCODE_TO_KB_CODE
+#include "ui/events/keycodes/dom/keycode_conversion_data_android_generated.inc"
+#undef ANDROID_KEYCODE_TO_KB_CODE
+#endif
     case AKEYCODE_DEL:
       return VKEY_BACK;
     case AKEYCODE_TAB:

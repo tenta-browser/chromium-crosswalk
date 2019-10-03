@@ -8,14 +8,12 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/infobars/core/infobar.h"
-#include "components/infobars/core/infobars_switches.h"
 #include "content/public/test/test_utils.h"
 
 namespace {
@@ -55,22 +53,6 @@ class GlobalConfirmInfoBarTest : public InProcessBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(GlobalConfirmInfoBarTest);
 };
 
-// Subclass for tests that require infobars to be disabled.
-class GlobalConfirmInfoBarWithInfoBarDisabledTest
-    : public GlobalConfirmInfoBarTest {
- public:
-  GlobalConfirmInfoBarWithInfoBarDisabledTest() = default;
-  ~GlobalConfirmInfoBarWithInfoBarDisabledTest() override = default;
-
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(infobars::switches::kDisableInfoBars);
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(GlobalConfirmInfoBarWithInfoBarDisabledTest);
-};
-
 }  // namespace
 
 // Creates a global confirm info bar on a browser with 2 tabs and closes it.
@@ -84,7 +66,7 @@ IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest, MultipleTabs) {
   for (int i = 0; i < tab_strip_model->count(); i++)
     EXPECT_EQ(0u, GetInfoBarServiceFromTabIndex(i)->infobar_count());
 
-  auto delegate = base::MakeUnique<TestConfirmInfoBarDelegate>();
+  auto delegate = std::make_unique<TestConfirmInfoBarDelegate>();
   TestConfirmInfoBarDelegate* delegate_ptr = delegate.get();
 
   base::WeakPtr<GlobalConfirmInfoBar> global_confirm_info_bar =
@@ -116,7 +98,7 @@ IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest, UserInteraction) {
   for (int i = 0; i < tab_strip_model->count(); i++)
     EXPECT_EQ(0u, GetInfoBarServiceFromTabIndex(i)->infobar_count());
 
-  auto delegate = base::MakeUnique<TestConfirmInfoBarDelegate>();
+  auto delegate = std::make_unique<TestConfirmInfoBarDelegate>();
   TestConfirmInfoBarDelegate* delegate_ptr = delegate.get();
 
   base::WeakPtr<GlobalConfirmInfoBar> global_confirm_info_bar =
@@ -145,18 +127,4 @@ IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarTest, UserInteraction) {
   EXPECT_FALSE(global_confirm_info_bar);
   for (int i = 0; i < tab_strip_model->count(); i++)
     EXPECT_EQ(0u, GetInfoBarServiceFromTabIndex(i)->infobar_count());
-}
-
-IN_PROC_BROWSER_TEST_F(GlobalConfirmInfoBarWithInfoBarDisabledTest,
-                       InfoBarsDisabled) {
-  ASSERT_EQ(1, browser()->tab_strip_model()->count());
-
-  auto delegate = base::MakeUnique<TestConfirmInfoBarDelegate>();
-  base::WeakPtr<GlobalConfirmInfoBar> global_confirm_info_bar =
-      GlobalConfirmInfoBar::Show(std::move(delegate));
-
-  // In this case, the deletion is done asynchronously.
-  content::RunAllPendingInMessageLoop();
-
-  ASSERT_FALSE(global_confirm_info_bar);
 }

@@ -7,7 +7,6 @@
 
 #include "ash/ash_export.h"
 #include "ash/session/session_observer.h"
-#include "ash/shell_observer.h"
 #include "base/containers/queue.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -29,14 +28,13 @@ namespace ash {
 // setting instead.
 class ASH_EXPORT BluetoothPowerController
     : public SessionObserver,
-      public ShellObserver,
       public device::BluetoothAdapter::Observer {
  public:
-  BluetoothPowerController();
+  explicit BluetoothPowerController(PrefService* local_state);
   ~BluetoothPowerController() override;
 
-  // Toggles the bluetooth power setting on or off.
-  void ToggleBluetoothEnabled();
+  // Changes the bluetooth power setting to |enabled|.
+  void SetBluetoothEnabled(bool enabled);
 
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
@@ -54,9 +52,6 @@ class ASH_EXPORT BluetoothPowerController
 
   // SessionObserver:
   void OnActiveUserPrefServiceChanged(PrefService* pref_service) override;
-
-  // ShellObserver:
-  void OnLocalStatePrefServiceInitialized(PrefService* pref_service) override;
 
   // BluetoothAdapter::Observer:
   void AdapterPresentChanged(device::BluetoothAdapter* adapter,
@@ -89,7 +84,7 @@ class ASH_EXPORT BluetoothPowerController
   void SetBluetoothPower(bool enabled);
 
   // Sets the bluetooth power given the ready adapter.
-  void SetBluetoothPowerOnAdapterReady(bool enabled);
+  void SetBluetoothPowerOnAdapterReady();
 
   using BluetoothTask = base::OnceClosure;
 
@@ -128,7 +123,7 @@ class ASH_EXPORT BluetoothPowerController
   bool is_primary_user_bluetooth_applied_ = false;
 
   PrefService* active_user_pref_service_ = nullptr;
-  PrefService* local_state_pref_service_ = nullptr;
+  PrefService* local_state_ = nullptr;
 
   // Contains pending tasks which depend on the availability of bluetooth
   // adapter.
@@ -144,6 +139,11 @@ class ASH_EXPORT BluetoothPowerController
   // True indicates that pending_bluetooth_tasks_ is being executed and
   // waiting for complete callback.
   bool pending_tasks_busy_ = false;
+
+  // If not empty this indicates the pending target bluetooth power to be set.
+  // This needs to be tracked so that we can combine multiple pending power
+  // change requests.
+  base::Optional<bool> pending_bluetooth_power_target_;
 
   scoped_refptr<device::BluetoothAdapter> bluetooth_adapter_;
 

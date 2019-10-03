@@ -3,9 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//media/media_options.gni")
-import("//remoting/remoting_options.gni")
 import("//remoting/remoting_locales.gni")
+import("//remoting/remoting_options.gni")
 import("//remoting/remoting_version.gni")
 
 if (is_win) {
@@ -14,6 +13,9 @@ if (is_win) {
 if (is_mac) {
   import("//build/config/mac/rules.gni")
   import("//third_party/icu/config.gni")
+}
+if (is_chromeos) {
+  import("//ui/ozone/ozone.gni")
 }
 
 source_set("common") {
@@ -43,14 +45,14 @@ source_set("common") {
 
   deps = [
     "//base:i18n",
+    "//mojo/core/embedder",
     "//net",
     "//remoting/base",
-    "//remoting/host",
+    "//remoting/host:common",
     "//remoting/protocol",
     "//remoting/resources",
     "//remoting/signaling",
   ]
-
   if (is_desktop_linux) {
     deps += [
       "//build/config/linux/gtk",
@@ -60,6 +62,24 @@ source_set("common") {
       # our own through the indirect dependency to harfbuzz-ng here.
       "//third_party:freetype_harfbuzz",
     ]
+  }
+}
+
+if (is_chromeos) {
+  source_set("chrome_os_host") {
+    sources = [
+      "it2me_native_messaging_host_chromeos.cc",
+      "it2me_native_messaging_host_chromeos.h",
+    ]
+
+    deps = [
+      ":common",
+      "//skia",
+    ]
+
+    if (use_ozone) {
+      deps += [ "//ui/ozone" ]
+    }
   }
 }
 
@@ -150,12 +170,6 @@ if (!is_chromeos && enable_remoting_host) {
         }
       }
 
-      mac_xib_bundle_data("remote_assistance_host_xibs") {
-        sources = [
-          "//remoting/host/mac/disconnect_window.xib",
-        ]
-      }
-
       if (icu_use_data_file) {
         bundle_data("remote_assistance_host_resources") {
           sources = [
@@ -203,10 +217,10 @@ if (!is_chromeos && enable_remoting_host) {
 
       deps = [
         ":common",
-        "//build/config:exe_and_shlib_deps",
         "//remoting/host",
         "//remoting/host/native_messaging",
         "//remoting/proto",
+        "//third_party/webrtc_overrides:init_webrtc",
         "//ui/gfx",
       ]
       if (is_mac) {
@@ -218,17 +232,12 @@ if (!is_chromeos && enable_remoting_host) {
         }
         deps += [
           ":remote_assistance_host_dialog_icon",
-          ":remote_assistance_host_xibs",
           "//remoting/host:remoting_infoplist_strings",
           "//remoting/resources:copy_locales",
         ]
         if (icu_use_data_file) {
           deps += [ ":remote_assistance_host_resources" ]
         }
-      }
-
-      if (enable_webrtc) {
-        deps += [ "//third_party/webrtc_overrides:init_webrtc" ]
       }
 
       if (is_desktop_linux) {

@@ -10,8 +10,8 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -73,9 +73,6 @@ class PlatformParentalControlsValue {
   // feature is available on Windows 7 and beyond. This function should be
   // called on a COM Initialized thread and is potentially blocking.
   static bool IsParentalControlActivityLoggingOn() {
-    // Since we can potentially block, make sure the thread is okay with this.
-    base::AssertBlockingAllowed();
-
     ThreadType thread_type = ThreadType::BLOCKING;
     if (BrowserThread::IsThreadInitialized(BrowserThread::UI) &&
         content::BrowserThread::CurrentlyOn(content::BrowserThread::UI)) {
@@ -97,6 +94,9 @@ class PlatformParentalControlsValue {
   // Does the work of determining if Windows Parental control activity logging
   // is enabled.
   static bool IsParentalControlActivityLoggingOnImpl() {
+    // Since we can potentially block, make sure the thread is okay with this.
+    base::ScopedBlockingCall scoped_blocking_call(
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     Microsoft::WRL::ComPtr<IWindowsParentalControlsCore> parent_controls;
     HRESULT hr = ::CoCreateInstance(__uuidof(WindowsParentalControls), nullptr,
                                     CLSCTX_ALL, IID_PPV_ARGS(&parent_controls));
@@ -124,10 +124,15 @@ class PlatformParentalControlsValue {
 #endif  // OS_WIN
 
 // static
+// Sadly, this is required until c++17.
+constexpr IncognitoModePrefs::Availability
+    IncognitoModePrefs::kDefaultAvailability;
+
+// static
 bool IncognitoModePrefs::IntToAvailability(int in_value,
                                            Availability* out_value) {
   if (in_value < 0 || in_value >= AVAILABILITY_NUM_TYPES) {
-    *out_value = ENABLED;
+    *out_value = kDefaultAvailability;
     return false;
   }
   *out_value = static_cast<Availability>(in_value);
@@ -150,7 +155,7 @@ void IncognitoModePrefs::SetAvailability(PrefService* prefs,
 void IncognitoModePrefs::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(prefs::kIncognitoModeAvailability,
-                                IncognitoModePrefs::ENABLED);
+                                kDefaultAvailability);
 }
 
 // static
@@ -196,7 +201,7 @@ bool IncognitoModePrefs::CanOpenBrowser(Profile* profile) {
 void IncognitoModePrefs::InitializePlatformParentalControls() {
   base::CreateCOMSTATaskRunnerWithTraits(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE})
-      ->PostTask(FROM_HERE, base::Bind(base::IgnoreResult(
+      ->PostTask(FROM_HERE, base::BindOnce(base::IgnoreResult(
                                 &PlatformParentalControlsValue::GetInstance)));
 }
 #endif
@@ -218,7 +223,7 @@ IncognitoModePrefs::Availability IncognitoModePrefs::GetAvailabilityInternal(
     GetAvailabilityMode mode) {
   DCHECK(pref_service);
   int pref_value = pref_service->GetInteger(prefs::kIncognitoModeAvailability);
-  Availability result = IncognitoModePrefs::ENABLED;
+  Availability result = kDefaultAvailability;
   bool valid = IntToAvailability(pref_value, &result);
   DCHECK(valid);
   if (result != IncognitoModePrefs::DISABLED &&

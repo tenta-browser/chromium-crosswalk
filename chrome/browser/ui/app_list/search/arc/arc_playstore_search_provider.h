@@ -5,14 +5,19 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_SEARCH_ARC_ARC_PLAYSTORE_SEARCH_PROVIDER_H_
 #define CHROME_BROWSER_UI_APP_LIST_SEARCH_ARC_ARC_PLAYSTORE_SEARCH_PROVIDER_H_
 
-#include <memory>
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "chrome/browser/ui/app_list/search/search_provider.h"
 #include "components/arc/common/app.mojom.h"
-#include "ui/app_list/search_provider.h"
 
 class Profile;
 class AppListControllerDelegate;
+
+namespace arc {
+enum class ArcPlayStoreSearchRequestState;
+}  // namespace arc
 
 namespace app_list {
 
@@ -24,19 +29,18 @@ class ArcPlayStoreSearchProvider : public SearchProvider {
   ~ArcPlayStoreSearchProvider() override;
 
   // SearchProvider:
-  void Start(bool is_voice_query, const base::string16& query) override;
+  void Start(const base::string16& query) override;
 
  private:
-  void OnResults(base::TimeTicks query_start_time,
-                 arc::mojom::AppDiscoveryRequestState state,
+  void OnResults(const base::string16& query,
+                 base::TimeTicks query_start_time,
+                 arc::ArcPlayStoreSearchRequestState state,
                  std::vector<arc::mojom::AppDiscoveryResultPtr> results);
 
   const int max_results_;
-  // |profile_| is owned by ProfileInfo.
-  Profile* const profile_;
-  // list_controller_ is owned by AppListServiceAsh and lives
-  // until the service finishes.
-  AppListControllerDelegate* const list_controller_;
+  Profile* const profile_;                            // Owned by ProfileInfo.
+  AppListControllerDelegate* const list_controller_;  // Owned by AppListClient.
+  base::string16 last_query_;  // Most recent query issued.
   base::WeakPtrFactory<ArcPlayStoreSearchProvider> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcPlayStoreSearchProvider);

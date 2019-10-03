@@ -4,6 +4,10 @@
 
 #include "components/nacl/browser/nacl_broker_host_win.h"
 
+#include <windows.h>
+
+#include <memory>
+
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/macros.h"
@@ -19,9 +23,7 @@
 #include "content/public/browser/child_process_data.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
-#include "mojo/edk/embedder/embedder.h"
 
 namespace {
 // NOTE: changes to this class need to be reviewed by the security team.
@@ -69,9 +71,8 @@ bool NaClBrokerHost::Init() {
     cmd_line->AppendSwitch(switches::kNoErrorDialogs);
 
   process_->Launch(
-      base::MakeUnique<NaClBrokerSandboxedProcessLauncherDelegate>(),
-      base::WrapUnique(cmd_line),
-      true);
+      std::make_unique<NaClBrokerSandboxedProcessLauncherDelegate>(),
+      base::WrapUnique(cmd_line), true);
   return true;
 }
 
@@ -95,14 +96,16 @@ bool NaClBrokerHost::LaunchLoader(
 
 void NaClBrokerHost::OnLoaderLaunched(int launch_id,
                                       base::ProcessHandle handle) {
-  NaClBrokerService::GetInstance()->OnLoaderLaunched(launch_id, handle);
+  NaClBrokerService::GetInstance()->OnLoaderLaunched(launch_id,
+                                                     base::Process(handle));
 }
 
 bool NaClBrokerHost::LaunchDebugExceptionHandler(
     int32_t pid,
     base::ProcessHandle process_handle,
     const std::string& startup_info) {
-  base::ProcessHandle broker_process = process_->GetData().handle;
+  base::ProcessHandle broker_process =
+      process_->GetData().GetProcess().Handle();
   base::ProcessHandle handle_in_broker_process;
   if (!DuplicateHandle(::GetCurrentProcess(), process_handle,
                        broker_process, &handle_in_broker_process,

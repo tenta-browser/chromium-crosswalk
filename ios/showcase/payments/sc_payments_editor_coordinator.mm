@@ -8,7 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #import "ios/chrome/browser/ui/autofill/autofill_ui_type.h"
 #import "ios/chrome/browser/ui/autofill/autofill_ui_type_util.h"
-#import "ios/chrome/browser/ui/autofill/cells/autofill_edit_item.h"
+#import "ios/chrome/browser/ui/autofill/cells/legacy_autofill_edit_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
 #import "ios/chrome/browser/ui/payments/cells/payments_text_item.h"
 #import "ios/chrome/browser/ui/payments/payment_request_edit_consumer.h"
@@ -112,7 +112,12 @@
   return NO;
 }
 
-- (void)formatValueForEditorField:(EditorField*)field {
+- (BOOL)shouldFormatValueForAutofillUIType:(AutofillUIType)type {
+  return NO;
+}
+
+- (NSString*)formatValue:(NSString*)value autofillUIType:(AutofillUIType)type {
+  return nil;
 }
 
 - (UIImage*)iconIdentifyingEditorField:(EditorField*)field {

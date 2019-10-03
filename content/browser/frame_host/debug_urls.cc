@@ -4,24 +4,25 @@
 
 #include "content/browser/frame_host/debug_urls.h"
 
-#if defined(SYZYASAN)
-#include <windows.h>
-#endif
-
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/asan_invalid_access.h"
 #include "base/debug/profiler.h"
+#include "base/sanitizer_buildflags.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "content/browser/gpu/gpu_process_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/url_constants.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -29,11 +30,15 @@
 #include "ppapi/proxy/ppapi_messages.h"  // nogncheck
 #endif
 
+#if defined(OS_WIN)
+#include "base/debug/invalid_access_win.h"
+#endif
+
 namespace content {
 
 class ScopedAllowWaitForDebugURL {
  private:
-  base::ThreadRestrictions::ScopedAllowWait wait;
+  base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope wait;
 };
 
 namespace {
@@ -43,7 +48,8 @@ const char kAsanCrashDomain[] = "crash";
 const char kAsanHeapOverflow[] = "/browser-heap-overflow";
 const char kAsanHeapUnderflow[] = "/browser-heap-underflow";
 const char kAsanUseAfterFree[] = "/browser-use-after-free";
-#if defined(SYZYASAN)
+
+#if defined(OS_WIN)
 const char kAsanCorruptHeapBlock[] = "/browser-corrupt-heap-block";
 const char kAsanCorruptHeap[] = "/browser-corrupt-heap";
 #endif
@@ -55,8 +61,7 @@ void HandlePpapiFlashDebugURL(const GURL& url) {
   std::vector<PpapiPluginProcessHost*> hosts;
   PpapiPluginProcessHost::FindByName(
       base::UTF8ToUTF16(kFlashPluginName), &hosts);
-  for (std::vector<PpapiPluginProcessHost*>::iterator iter = hosts.begin();
-       iter != hosts.end(); ++iter) {
+  for (auto iter = hosts.begin(); iter != hosts.end(); ++iter) {
     if (crash)
       (*iter)->Send(new PpapiMsg_Crash());
     else
@@ -66,11 +71,6 @@ void HandlePpapiFlashDebugURL(const GURL& url) {
 }
 
 bool IsAsanDebugURL(const GURL& url) {
-#if defined(SYZYASAN)
-  if (!base::debug::IsBinaryInstrumented())
-    return false;
-#endif
-
   if (!(url.is_valid() && url.SchemeIs(kChromeUIScheme) &&
         url.DomainIs(kAsanCrashDomain) &&
         url.has_path())) {
@@ -83,7 +83,7 @@ bool IsAsanDebugURL(const GURL& url) {
     return true;
   }
 
-#if defined(SYZYASAN)
+#if defined(OS_WIN)
   if (url.path_piece() == kAsanCorruptHeapBlock ||
       url.path_piece() == kAsanCorruptHeap) {
     return true;
@@ -94,10 +94,8 @@ bool IsAsanDebugURL(const GURL& url) {
 }
 
 bool HandleAsanDebugURL(const GURL& url) {
-#if defined(SYZYASAN)
-  if (!base::debug::IsBinaryInstrumented())
-    return false;
-
+#if defined(ADDRESS_SANITIZER) || BUILDFLAG(IS_HWASAN)
+#if defined(OS_WIN)
   if (url.path_piece() == kAsanCorruptHeapBlock) {
     base::debug::AsanCorruptHeapBlock();
     return true;
@@ -105,9 +103,8 @@ bool HandleAsanDebugURL(const GURL& url) {
     base::debug::AsanCorruptHeap();
     return true;
   }
-#endif
+#endif  // OS_WIN
 
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
   if (url.path_piece() == kAsanHeapOverflow) {
     base::debug::AsanHeapOverflow();
   } else if (url.path_piece() == kAsanHeapUnderflow) {
@@ -139,8 +136,16 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
           cc::switches::kEnableGpuBenchmarking) &&
       (PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED));
 
-  if (!(transition & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR) &&
-      !is_telemetry_navigation)
+  // TODO(crbug.com/986346): allow this behavior to be customized by the
+  // embedder.
+  bool is_explicit_navigation =
+#if defined(ENABLE_ADDRESS_BAR)
+      transition & ui::PAGE_TRANSITION_FROM_ADDRESS_BAR;
+#else
+      ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_TYPED);
+#endif
+
+  if (!is_explicit_navigation && !is_telemetry_navigation)
     return false;
 
   if (IsAsanDebugURL(url))
@@ -152,6 +157,14 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
     return true;
   }
 
+#if defined(OS_WIN)
+  if (url == kChromeUIBrowserHeapCorruptionURL) {
+    // Induce an intentional heap corruption in the browser process.
+    base::debug::win::TerminateWithHeapCorruption();
+    return true;
+  }
+#endif
+
   if (url == kChromeUIBrowserUIHang) {
     HangCurrentThread();
     return true;
@@ -160,14 +173,14 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
   if (url == kChromeUIDelayedBrowserUIHang) {
     // Webdriver-safe url to hang the ui thread. Webdriver waits for the onload
     // event in javascript which needs a little more time to fire.
-    BrowserThread::PostDelayedTask(BrowserThread::UI, FROM_HERE,
-                                   base::BindOnce(&HangCurrentThread),
-                                   base::TimeDelta::FromSeconds(2));
+    base::PostDelayedTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                                    base::BindOnce(&HangCurrentThread),
+                                    base::TimeDelta::FromSeconds(2));
     return true;
   }
 
   if (url == kChromeUIGpuCleanURL) {
-    GpuProcessHost::CallOnIO(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
+    GpuProcessHost::CallOnIO(GPU_PROCESS_KIND_SANDBOXED,
                              false /* force_create */,
                              base::Bind([](GpuProcessHost* host) {
                                if (host)
@@ -177,7 +190,7 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
   }
 
   if (url == kChromeUIGpuCrashURL) {
-    GpuProcessHost::CallOnIO(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
+    GpuProcessHost::CallOnIO(GPU_PROCESS_KIND_SANDBOXED,
                              false /* force_create */,
                              base::Bind([](GpuProcessHost* host) {
                                if (host)
@@ -188,7 +201,7 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
 
 #if defined(OS_ANDROID)
   if (url == kChromeUIGpuJavaCrashURL) {
-    GpuProcessHost::CallOnIO(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
+    GpuProcessHost::CallOnIO(GPU_PROCESS_KIND_SANDBOXED,
                              false /* force_create */,
                              base::Bind([](GpuProcessHost* host) {
                                if (host)
@@ -199,7 +212,7 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
 #endif
 
   if (url == kChromeUIGpuHangURL) {
-    GpuProcessHost::CallOnIO(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
+    GpuProcessHost::CallOnIO(GPU_PROCESS_KIND_SANDBOXED,
                              false /* force_create */,
                              base::Bind([](GpuProcessHost* host) {
                                if (host)
@@ -209,8 +222,8 @@ bool HandleDebugURL(const GURL& url, ui::PageTransition transition) {
   }
 
   if (url == kChromeUIPpapiFlashCrashURL || url == kChromeUIPpapiFlashHangURL) {
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&HandlePpapiFlashDebugURL, url));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                             base::BindOnce(&HandlePpapiFlashDebugURL, url));
     return true;
   }
 

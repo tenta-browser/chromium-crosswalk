@@ -4,13 +4,16 @@
 
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/sha1.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
+#include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/safe_browsing/advanced_protection_status_manager.h"
 #include "chrome/browser/safe_browsing/download_protection/check_client_download_request.h"
 #include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
 #include "chrome/browser/safe_browsing/download_protection/download_url_sb_client.h"
@@ -18,11 +21,16 @@
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/common/safe_browsing/binary_feature_extractor.h"
 #include "chrome/common/url_constants.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/safe_browsing/common/safebrowsing_switches.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/url_util.h"
+#include "net/cert/x509_util.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using content::BrowserThread;
 namespace safe_browsing {
@@ -35,18 +43,55 @@ const double kWhitelistDownloadSampleRate = 0.01;
 
 // The number of user gestures we trace back for download attribution.
 const int kDownloadAttributionUserGestureLimit = 2;
+const int kDownloadAttributionUserGestureLimitForExtendedReporting = 5;
 
-void AddEventUrlToReferrerChain(const content::DownloadItem& item,
+void AddEventUrlToReferrerChain(const download::DownloadItem& item,
                                 ReferrerChain* out_referrer_chain) {
   ReferrerChainEntry* event_url_entry = out_referrer_chain->Add();
   event_url_entry->set_url(item.GetURL().spec());
   event_url_entry->set_type(ReferrerChainEntry::EVENT_URL);
   event_url_entry->set_referrer_url(
-      item.GetWebContents()->GetLastCommittedURL().spec());
+      content::DownloadItemUtils::GetWebContents(
+          const_cast<download::DownloadItem*>(&item))
+          ->GetLastCommittedURL()
+          .spec());
   event_url_entry->set_is_retargeting(false);
   event_url_entry->set_navigation_time_msec(base::Time::Now().ToJavaTime());
   for (const GURL& url : item.GetUrlChain())
     event_url_entry->add_server_redirect_chain()->set_url(url.spec());
+}
+
+bool MatchesEnterpriseWhitelist(const Profile* profile,
+                                const std::vector<GURL>& url_chain) {
+  if (!profile)
+    return false;
+
+  const PrefService* prefs = profile->GetPrefs();
+  for (const GURL& url : url_chain) {
+    if (IsURLWhitelistedByPolicy(url, *prefs))
+      return true;
+  }
+  return false;
+}
+
+int GetDownloadAttributionUserGestureLimit(const download::DownloadItem& item) {
+  content::WebContents* web_contents =
+      content::DownloadItemUtils::GetWebContents(
+          const_cast<download::DownloadItem*>(&item));
+  if (!web_contents)
+    return kDownloadAttributionUserGestureLimit;
+
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  if (!profile)
+    return kDownloadAttributionUserGestureLimit;
+
+  const PrefService* prefs = profile->GetPrefs();
+  if (!prefs)
+    return kDownloadAttributionUserGestureLimit;
+  if (!IsExtendedReportingEnabled(*prefs))
+    return kDownloadAttributionUserGestureLimit;
+  return kDownloadAttributionUserGestureLimitForExtendedReporting;
 }
 
 }  // namespace
@@ -58,15 +103,15 @@ DownloadProtectionService::DownloadProtectionService(
     SafeBrowsingService* sb_service)
     : sb_service_(sb_service),
       navigation_observer_manager_(nullptr),
-      request_context_getter_(sb_service ? sb_service->url_request_context()
-                                         : nullptr),
+      url_loader_factory_(sb_service ? sb_service->GetURLLoaderFactory()
+                                     : nullptr),
       enabled_(false),
       binary_feature_extractor_(new BinaryFeatureExtractor()),
       download_request_timeout_ms_(kDownloadRequestTimeoutMs),
       feedback_service_(new DownloadFeedbackService(
-          request_context_getter_.get(),
+          url_loader_factory_,
           base::CreateSequencedTaskRunnerWithTraits(
-              {base::MayBlock(), base::TaskPriority::BACKGROUND})
+              {base::MayBlock(), base::TaskPriority::BEST_EFFORT})
               .get())),
       whitelist_sample_rate_(kWhitelistDownloadSampleRate) {
   if (sb_service) {
@@ -119,29 +164,46 @@ bool DownloadProtectionService::IsHashManuallyBlacklisted(
 }
 
 void DownloadProtectionService::CheckClientDownload(
-    content::DownloadItem* item,
+    download::DownloadItem* item,
     const CheckDownloadCallback& callback) {
-  scoped_refptr<CheckClientDownloadRequest> request(
-      new CheckClientDownloadRequest(item, callback, this, database_manager_,
-                                     binary_feature_extractor_.get()));
-  download_requests_.insert(request);
-  request->Start();
+  if (item->GetDangerType() ==
+      download::DOWNLOAD_DANGER_TYPE_WHITELISTED_BY_POLICY) {
+    callback.Run(DownloadCheckResult::WHITELISTED_BY_POLICY);
+    return;
+  }
+  auto request = std::make_unique<CheckClientDownloadRequest>(
+      item, callback, this, database_manager_, binary_feature_extractor_.get());
+  CheckClientDownloadRequest* request_copy = request.get();
+  download_requests_[request_copy] = std::move(request);
+  request_copy->Start();
 }
 
 void DownloadProtectionService::CheckDownloadUrl(
-    content::DownloadItem* item,
+    download::DownloadItem* item,
     const CheckDownloadCallback& callback) {
   DCHECK(!item->GetUrlChain().empty());
+  content::WebContents* web_contents =
+      content::DownloadItemUtils::GetWebContents(item);
+  // |web_contents| can be null in tests.
+  // Checks if this download is whitelisted by enterprise policy.
+  if (web_contents &&
+      MatchesEnterpriseWhitelist(
+          Profile::FromBrowserContext(web_contents->GetBrowserContext()),
+          item->GetUrlChain())) {
+    callback.Run(DownloadCheckResult::WHITELISTED_BY_POLICY);
+    return;
+  }
+
   scoped_refptr<DownloadUrlSBClient> client(new DownloadUrlSBClient(
       item, this, callback, ui_manager_, database_manager_));
   // The client will release itself once it is done.
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&DownloadUrlSBClient::StartCheck, client));
 }
 
 bool DownloadProtectionService::IsSupportedDownload(
-    const content::DownloadItem& item,
+    const download::DownloadItem& item,
     const base::FilePath& target_path) const {
   DownloadCheckResultReason reason = REASON_MAX;
   ClientDownloadRequest::DownloadType type =
@@ -163,6 +225,11 @@ void DownloadProtectionService::CheckPPAPIDownloadRequest(
     const CheckDownloadCallback& callback) {
   DVLOG(1) << __func__ << " url:" << requestor_url
            << " default_file_path:" << default_file_path.value();
+  if (MatchesEnterpriseWhitelist(profile,
+                                 {requestor_url, initiating_frame_url})) {
+    callback.Run(DownloadCheckResult::WHITELISTED_BY_POLICY);
+    return;
+  }
   std::unique_ptr<PPAPIDownloadRequest> request(new PPAPIDownloadRequest(
       requestor_url, initiating_frame_url, web_contents, default_file_path,
       alternate_extensions, profile, callback, this, database_manager_));
@@ -189,13 +256,8 @@ DownloadProtectionService::RegisterPPAPIDownloadRequestCallback(
 
 void DownloadProtectionService::CancelPendingRequests() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  for (auto it = download_requests_.begin(); it != download_requests_.end();) {
-    // We need to advance the iterator before we cancel because canceling
-    // the request will invalidate it when RequestFinished is called below.
-    scoped_refptr<CheckClientDownloadRequest> tmp = *it++;
-    tmp->Cancel();
-  }
-  DCHECK(download_requests_.empty());
+  // It is sufficient to delete the list of CheckClientDownloadRequests.
+  download_requests_.clear();
 
   // It is sufficient to delete the list of PPAPI download requests.
   ppapi_download_requests_.clear();
@@ -206,7 +268,7 @@ void DownloadProtectionService::RequestFinished(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto it = download_requests_.find(request);
   DCHECK(it != download_requests_.end());
-  download_requests_.erase(*it);
+  download_requests_.erase(it);
 }
 
 void DownloadProtectionService::PPAPIDownloadCheckRequestFinished(
@@ -218,14 +280,27 @@ void DownloadProtectionService::PPAPIDownloadCheckRequestFinished(
 }
 
 void DownloadProtectionService::ShowDetailsForDownload(
-    const content::DownloadItem& item,
+    const download::DownloadItem* item,
     content::PageNavigator* navigator) {
   GURL learn_more_url(chrome::kDownloadScanningLearnMoreURL);
   learn_more_url = google_util::AppendGoogleLocaleParam(
       learn_more_url, g_browser_process->GetApplicationLocale());
   learn_more_url = net::AppendQueryParameter(
       learn_more_url, "ctx",
-      base::IntToString(static_cast<int>(item.GetDangerType())));
+      base::NumberToString(static_cast<int>(item->GetDangerType())));
+
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item));
+  if (profile &&
+      AdvancedProtectionStatusManager::RequestsAdvancedProtectionVerdicts(
+          profile) &&
+      item->GetDangerType() ==
+          download::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT) {
+    learn_more_url = GURL(chrome::kAdvancedProtectionDownloadLearnMoreURL);
+    learn_more_url = google_util::AppendGoogleLocaleParam(
+        learn_more_url, g_browser_process->GetApplicationLocale());
+  }
+
   navigator->OpenURL(
       content::OpenURLParams(learn_more_url, content::Referrer(),
                              WindowOpenDisposition::NEW_FOREGROUND_TAB,
@@ -233,16 +308,16 @@ void DownloadProtectionService::ShowDetailsForDownload(
 }
 
 void DownloadProtectionService::SetDownloadPingToken(
-    content::DownloadItem* item,
+    download::DownloadItem* item,
     const std::string& token) {
   if (item) {
     item->SetUserData(kDownloadPingTokenKey,
-                      base::MakeUnique<DownloadPingToken>(token));
+                      std::make_unique<DownloadPingToken>(token));
   }
 }
 
 std::string DownloadProtectionService::GetDownloadPingToken(
-    const content::DownloadItem* item) {
+    const download::DownloadItem* item) {
   base::SupportsUserData::Data* token_data =
       item->GetUserData(kDownloadPingTokenKey);
   if (token_data)
@@ -252,16 +327,22 @@ std::string DownloadProtectionService::GetDownloadPingToken(
 }
 
 void DownloadProtectionService::MaybeSendDangerousDownloadOpenedReport(
-    const content::DownloadItem* item,
+    const download::DownloadItem* item,
     bool show_download_in_folder) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::string token = GetDownloadPingToken(item);
-  content::BrowserContext* browser_context = item->GetBrowserContext();
+  content::BrowserContext* browser_context =
+      content::DownloadItemUtils::GetBrowserContext(item);
+  // When users are in incognito mode, no report will be sent and no
+  // |onDangerousDownloadOpened| extension API will be called.
+  if (browser_context->IsOffTheRecord())
+    return;
+
   Profile* profile = Profile::FromBrowserContext(browser_context);
+  OnDangerousDownloadOpened(item, profile);
   if (sb_service_ &&
       !token.empty() &&  // Only dangerous downloads have token stored.
-      !browser_context->IsOffTheRecord() && profile &&
-      IsExtendedReportingEnabled(*profile->GetPrefs())) {
+      profile && IsExtendedReportingEnabled(*profile->GetPrefs())) {
     safe_browsing::ClientSafeBrowsingReportRequest report;
     report.set_url(item->GetURL().spec());
     report.set_type(safe_browsing::ClientSafeBrowsingReportRequest::
@@ -278,102 +359,28 @@ void DownloadProtectionService::MaybeSendDangerousDownloadOpenedReport(
   }
 }
 
-namespace {
-// Escapes a certificate attribute so that it can be used in a whitelist
-// entry.  Currently, we only escape slashes, since they are used as a
-// separator between attributes.
-std::string EscapeCertAttribute(const std::string& attribute) {
-  std::string escaped;
-  for (size_t i = 0; i < attribute.size(); ++i) {
-    if (attribute[i] == '%') {
-      escaped.append("%25");
-    } else if (attribute[i] == '/') {
-      escaped.append("%2F");
-    } else {
-      escaped.push_back(attribute[i]);
-    }
-  }
-  return escaped;
-}
-}  // namespace
-
-// static
-void DownloadProtectionService::GetCertificateWhitelistStrings(
-    const net::X509Certificate& certificate,
-    const net::X509Certificate& issuer,
-    std::vector<std::string>* whitelist_strings) {
-  // The whitelist paths are in the format:
-  // cert/<ascii issuer fingerprint>[/CN=common_name][/O=org][/OU=unit]
-  //
-  // Any of CN, O, or OU may be omitted from the whitelist entry, in which
-  // case they match anything.  However, the attributes that do appear will
-  // always be in the order shown above.  At least one attribute will always
-  // be present.
-
-  const net::CertPrincipal& subject = certificate.subject();
-  std::vector<std::string> ou_tokens;
-  for (size_t i = 0; i < subject.organization_unit_names.size(); ++i) {
-    ou_tokens.push_back(
-        "/OU=" + EscapeCertAttribute(subject.organization_unit_names[i]));
-  }
-
-  std::vector<std::string> o_tokens;
-  for (size_t i = 0; i < subject.organization_names.size(); ++i) {
-    o_tokens.push_back("/O=" +
-                       EscapeCertAttribute(subject.organization_names[i]));
-  }
-
-  std::string cn_token;
-  if (!subject.common_name.empty()) {
-    cn_token = "/CN=" + EscapeCertAttribute(subject.common_name);
-  }
-
-  std::set<std::string> paths_to_check;
-  if (!cn_token.empty()) {
-    paths_to_check.insert(cn_token);
-  }
-  for (size_t i = 0; i < o_tokens.size(); ++i) {
-    paths_to_check.insert(cn_token + o_tokens[i]);
-    paths_to_check.insert(o_tokens[i]);
-    for (size_t j = 0; j < ou_tokens.size(); ++j) {
-      paths_to_check.insert(cn_token + o_tokens[i] + ou_tokens[j]);
-      paths_to_check.insert(o_tokens[i] + ou_tokens[j]);
-    }
-  }
-  for (size_t i = 0; i < ou_tokens.size(); ++i) {
-    paths_to_check.insert(cn_token + ou_tokens[i]);
-    paths_to_check.insert(ou_tokens[i]);
-  }
-
-  std::string issuer_der;
-  net::X509Certificate::GetDEREncoded(issuer.os_cert_handle(), &issuer_der);
-  std::string hashed = base::SHA1HashString(issuer_der);
-  std::string issuer_fp = base::HexEncode(hashed.data(), hashed.size());
-  for (std::set<std::string>::iterator it = paths_to_check.begin();
-       it != paths_to_check.end(); ++it) {
-    whitelist_strings->push_back("cert/" + issuer_fp + *it);
-  }
-}
-
-std::unique_ptr<ReferrerChain> DownloadProtectionService::IdentifyReferrerChain(
-    const content::DownloadItem& item) {
+std::unique_ptr<ReferrerChainData>
+DownloadProtectionService::IdentifyReferrerChain(
+    const download::DownloadItem& item) {
   // If navigation_observer_manager_ is null, return immediately. This could
   // happen in tests.
   if (!navigation_observer_manager_)
     return nullptr;
 
   std::unique_ptr<ReferrerChain> referrer_chain =
-      base::MakeUnique<ReferrerChain>();
-  content::WebContents* web_contents = item.GetWebContents();
-  int download_tab_id = SessionTabHelper::IdForTab(web_contents);
+      std::make_unique<ReferrerChain>();
+  content::WebContents* web_contents =
+      content::DownloadItemUtils::GetWebContents(
+          const_cast<download::DownloadItem*>(&item));
+  SessionID download_tab_id = SessionTabHelper::IdForTab(web_contents);
   UMA_HISTOGRAM_BOOLEAN(
       "SafeBrowsing.ReferrerHasInvalidTabID.DownloadAttribution",
-      download_tab_id == -1);
+      !download_tab_id.is_valid());
   // We look for the referrer chain that leads to the download url first.
   SafeBrowsingNavigationObserverManager::AttributionResult result =
       navigation_observer_manager_->IdentifyReferrerChainByEventURL(
-          item.GetURL(), download_tab_id, kDownloadAttributionUserGestureLimit,
-          referrer_chain.get());
+          item.GetURL(), download_tab_id,
+          GetDownloadAttributionUserGestureLimit(item), referrer_chain.get());
 
   // If no navigation event is found, this download is not triggered by regular
   // navigation (e.g. html5 file apis, etc). We look for the referrer chain
@@ -383,27 +390,45 @@ std::unique_ptr<ReferrerChain> DownloadProtectionService::IdentifyReferrerChain(
       web_contents && web_contents->GetLastCommittedURL().is_valid()) {
     AddEventUrlToReferrerChain(item, referrer_chain.get());
     result = navigation_observer_manager_->IdentifyReferrerChainByWebContents(
-        web_contents, kDownloadAttributionUserGestureLimit,
+        web_contents, GetDownloadAttributionUserGestureLimit(item),
         referrer_chain.get());
   }
 
   UMA_HISTOGRAM_ENUMERATION(
       "SafeBrowsing.ReferrerAttributionResult.DownloadAttribution", result,
       SafeBrowsingNavigationObserverManager::ATTRIBUTION_FAILURE_TYPE_MAX);
-  return referrer_chain;
+
+  size_t referrer_chain_length = referrer_chain->size();
+
+  // Determines how many recent navigation events to append to referrer chain
+  // if any.
+  size_t recent_navigations_to_collect =
+      web_contents ? SafeBrowsingNavigationObserverManager::
+                         CountOfRecentNavigationsToAppend(
+                             *Profile::FromBrowserContext(
+                                 web_contents->GetBrowserContext()),
+                             result)
+                   : 0u;
+  navigation_observer_manager_->AppendRecentNavigations(
+      recent_navigations_to_collect, referrer_chain.get());
+
+  return std::make_unique<ReferrerChainData>(std::move(referrer_chain),
+                                             referrer_chain_length,
+                                             recent_navigations_to_collect);
 }
 
 void DownloadProtectionService::AddReferrerChainToPPAPIClientDownloadRequest(
     const GURL& initiating_frame_url,
     const GURL& initiating_main_frame_url,
-    int tab_id,
+    SessionID tab_id,
     bool has_user_gesture,
     ClientDownloadRequest* out_request) {
   if (!navigation_observer_manager_)
     return;
 
   UMA_HISTOGRAM_BOOLEAN(
-      "SafeBrowsing.ReferrerHasInvalidTabID.DownloadAttribution", tab_id == -1);
+      "SafeBrowsing.ReferrerHasInvalidTabID.DownloadAttribution",
+      !tab_id.is_valid());
   SafeBrowsingNavigationObserverManager::AttributionResult result =
       navigation_observer_manager_->IdentifyReferrerChainByHostingPage(
           initiating_frame_url, initiating_main_frame_url, tab_id,
@@ -415,6 +440,29 @@ void DownloadProtectionService::AddReferrerChainToPPAPIClientDownloadRequest(
   UMA_HISTOGRAM_ENUMERATION(
       "SafeBrowsing.ReferrerAttributionResult.PPAPIDownloadAttribution", result,
       SafeBrowsingNavigationObserverManager::ATTRIBUTION_FAILURE_TYPE_MAX);
+}
+
+void DownloadProtectionService::OnDangerousDownloadOpened(
+    const download::DownloadItem* item,
+    Profile* profile) {
+  std::string raw_digest_sha256 = item->GetHash();
+  extensions::SafeBrowsingPrivateEventRouterFactory::GetForProfile(profile)
+      ->OnDangerousDownloadOpened(
+          item->GetURL(), item->GetTargetFilePath().AsUTF8Unsafe(),
+          base::HexEncode(raw_digest_sha256.data(), raw_digest_sha256.size()));
+}
+
+bool DownloadProtectionService::MaybeBeginFeedbackForDownload(
+    Profile* profile,
+    download::DownloadItem* download,
+    DownloadCommands::Command download_command) {
+  PrefService* prefs = profile->GetPrefs();
+  if (!profile->IsOffTheRecord() && ExtendedReportingPrefExists(*prefs) &&
+      IsExtendedReportingEnabled(*prefs)) {
+    feedback_service_->BeginFeedbackForDownload(download, download_command);
+    return true;
+  }
+  return false;
 }
 
 }  // namespace safe_browsing

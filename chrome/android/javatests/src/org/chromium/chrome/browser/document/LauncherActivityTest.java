@@ -31,23 +31,18 @@ import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
-import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
-
 
 /**
  * Tests for launching Chrome.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @RetryOnFailure
 public class LauncherActivityTest {
     @Rule
@@ -135,10 +130,9 @@ public class LauncherActivityTest {
                 new Criteria("ChromeLauncherActivity did not start Chrome") {
                     @Override
                     public boolean isSatisfied() {
-                        final List<WeakReference<Activity>> references =
-                                ApplicationStatus.getRunningActivities();
-                        if (references.size() != 1) return false;
-                        launchedActivity.set(references.get(0).get());
+                        final List<Activity> activities = ApplicationStatus.getRunningActivities();
+                        if (activities.size() != 1) return false;
+                        launchedActivity.set(activities.get(0));
                         return launchedActivity.get() instanceof ChromeActivity;
                     }
                 }, DEVICE_STARTUP_TIMEOUT_MS, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
@@ -151,6 +145,7 @@ public class LauncherActivityTest {
      * this will throw a BadParcelableException.
      */
     @SuppressLint("ParcelCreator")
+    @SuppressWarnings("ParcelableCreator")
     private static class InvalidParcelable implements Parcelable {
         @Override
         public void writeToParcel(Parcel parcel, int params) {

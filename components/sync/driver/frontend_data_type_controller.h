@@ -21,8 +21,8 @@ namespace syncer {
 
 class AssociatorInterface;
 class ChangeProcessor;
-class SyncClient;
 class SyncError;
+class SyncService;
 
 // Implementation for datatypes that reside on the frontend thread
 // (UI thread). This is the same thread we perform initialization on, so we
@@ -39,13 +39,14 @@ class FrontendDataTypeController : public DirectoryDataTypeController {
   // |dump_stack| is called when an unrecoverable error occurs.
   FrontendDataTypeController(ModelType type,
                              const base::Closure& dump_stack,
-                             SyncClient* sync_client);
+                             SyncService* sync_service);
   ~FrontendDataTypeController() override;
 
   // DataTypeController interface.
-  void LoadModels(const ModelLoadCallback& model_load_callback) override;
-  void StartAssociating(const StartCallback& start_callback) override;
-  void Stop() override;
+  void LoadModels(const ConfigureContext& configure_context,
+                  const ModelLoadCallback& model_load_callback) override;
+  void StartAssociating(StartCallback start_callback) override;
+  void Stop(ShutdownReason shutdown_reason) override;
   State state() const override;
 
  protected:
@@ -80,9 +81,10 @@ class FrontendDataTypeController : public DirectoryDataTypeController {
   virtual void RecordStartFailure(ConfigureResult result);
 
   virtual AssociatorInterface* model_associator() const;
-  virtual void set_model_associator(AssociatorInterface* associator);
+  virtual void set_model_associator(
+      std::unique_ptr<AssociatorInterface> associator);
   ChangeProcessor* GetChangeProcessor() const override;
-  virtual void set_change_processor(ChangeProcessor* processor);
+  virtual void set_change_processor(std::unique_ptr<ChangeProcessor> processor);
 
   // If the DTC is waiting for models to load, once the models are
   // loaded the datatype service will call this function on DTC to let

@@ -4,6 +4,8 @@
 
 #include "ios/chrome/browser/payments/ios_payment_instrument.h"
 
+#include <limits>
+
 #include "base/strings/utf_string_conversions.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -58,6 +60,18 @@ bool IOSPaymentInstrument::IsCompleteForPayment() const {
   return true;
 }
 
+uint32_t IOSPaymentInstrument::GetCompletenessScore() const {
+  // Return max value since the instrument is always complete for payment.
+  return std::numeric_limits<uint32_t>::max();
+}
+
+bool IOSPaymentInstrument::CanPreselect() const {
+  // Do not preselect the payment instrument when the name and/or icon is
+  // missing.
+  return !GetLabel().empty() && !!icon_image_ && icon_image_.size.height != 0 &&
+         icon_image_.size.width != 0;
+}
+
 bool IOSPaymentInstrument::IsExactlyMatchingMerchantRequest() const {
   // TODO(crbug.com/602666): Determine if the native payment app supports
   // 'basic-card' if the merchant only accepts payment through credit cards.
@@ -90,19 +104,22 @@ base::string16 IOSPaymentInstrument::GetSublabel() const {
 }
 
 bool IOSPaymentInstrument::IsValidForModifier(
-    const std::vector<std::string>& methods,
+    const std::string& method,
     bool supported_networks_specified,
     const std::set<std::string>& supported_networks,
     bool supported_types_specified,
     const std::set<autofill::CreditCard::CardType>& supported_types) const {
-  // This instrument only matches url-based payment method identifiers that
-  // are equal to the instrument's method name.
-  if (std::find(methods.begin(), methods.end(), method_name_) == methods.end())
-    return false;
+  return method_name_ == method;
+}
 
-  // TODO(crbug.com/602666): Determine if the native payment app supports
-  // 'basic-card' if 'basic-card' is the specified modifier.
-  return true;
+void IOSPaymentInstrument::IsValidForPaymentMethodIdentifier(
+    const std::string& payment_method_identifier,
+    bool* is_valid) const {
+  *is_valid = method_name_ == payment_method_identifier;
+}
+
+base::WeakPtr<PaymentInstrument> IOSPaymentInstrument::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
 }
 
 }  // namespace payments

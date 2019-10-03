@@ -21,7 +21,6 @@ class InkDrop;
 class InkDropRipple;
 class InkDropHighlight;
 class InkDropHostView;
-class InkDropMask;
 class Label;
 class LabelButton;
 class Painter;
@@ -63,8 +62,8 @@ class TrayPopupUtils {
   // can grow into the CENTER container if space is required and available. The
   // CENTER container has a flexible width.
   //
-  // TODO(mohsen): Merge this into TrayDetailsView::AddScrollListSubHeader()
-  // once network and VPN also use TrayDetailsView::AddScrollListSubHeader().
+  // TODO(mohsen): Merge this into TrayDetailedView::AddScrollListSubHeader()
+  // once network and VPN also use TrayDetailedView::AddScrollListSubHeader().
   static TriView* CreateSubHeaderRowView(bool start_visible);
 
   // Creates a container view to be used by system menu rows that want to embed
@@ -126,20 +125,11 @@ class TrayPopupUtils {
   // Sets up |view| to be a sticky header in a tray detail scroll view.
   static void ConfigureAsStickyHeader(views::View* view);
 
-  // Configures a |view| to have a visible separator below.
-  static void ShowStickyHeaderSeparator(views::View* view, bool show_separator);
-
   // Configures |container_view| just like CreateDefaultRowView() would
   // configure |container| on its returned TriView. To be used when mutliple
   // targetable areas are required within a single row.
   static void ConfigureContainer(TriView::Container container,
                                  views::View* container_view);
-
-  // Creates a button for use in the system menu that only has a visible border
-  // when being hovered/clicked. Caller assumes ownership.
-  static views::LabelButton* CreateTrayPopupBorderlessButton(
-      views::ButtonListener* listener,
-      const base::string16& text);
 
   // Creates a button for use in the system menu. For MD, this is a prominent
   // text
@@ -154,13 +144,12 @@ class TrayPopupUtils {
   // returned separator.
   static views::Separator* CreateVerticalSeparator();
 
-  // Creates in InkDrop instance for |host| according to the |ink_drop_style|.
+  // Creates in InkDrop instance for |host|.
   // All styles are configured to show the highlight when the ripple is visible.
   //
   // All targetable views in the system menu should delegate
   // InkDropHost::CreateInkDrop() calls here.
   static std::unique_ptr<views::InkDrop> CreateInkDrop(
-      TrayPopupInkDropStyle ink_drop_style,
       views::InkDropHostView* host);
 
   // Creates an InkDropRipple instance for |host| according to the
@@ -184,12 +173,9 @@ class TrayPopupUtils {
       const views::View* host,
       SkColor color = kTrayPopupInkDropBaseColor);
 
-  // Creates in InkDropMask instance for |host| according to the
-  // |ink_drop_style|. May return null.
-  //
-  // All targetable views in the system menu should delegate
-  // InkDropHost::CreateInkDropMask() calls here.
-  static std::unique_ptr<views::InkDropMask> CreateInkDropMask(
+  // Creates a SkPath matching the TrayPopupInkDropStyle. This path is normally
+  // used to generate the focus ring and ink drop shapes.
+  static std::unique_ptr<SkPath> CreateHighlightPath(
       TrayPopupInkDropStyle ink_drop_style,
       const views::View* host);
 
@@ -198,11 +184,6 @@ class TrayPopupUtils {
   // the left by the width normally occupied by an icon. Caller assumes
   // ownership of the returned separator.
   static views::Separator* CreateListItemSeparator(bool left_inset);
-
-  // Creates and returns a horizontal separator line to be drawn between rows
-  // in a detailed view above the sub-header rows. Caller assumes ownership of
-  // the returned separator.
-  static views::Separator* CreateListSubHeaderSeparator();
 
   // Returns true if it is possible to open WebUI settings in a browser window,
   // i.e. the user is logged in, not on the lock screen, not adding a secondary

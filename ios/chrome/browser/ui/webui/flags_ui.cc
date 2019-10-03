@@ -4,6 +4,7 @@
 
 #include "ios/chrome/browser/ui/webui/flags_ui.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -13,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/branding_buildflags.h"
 #include "components/flags_ui/flags_ui_constants.h"
 #include "components/flags_ui/flags_ui_pref_names.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
@@ -22,12 +24,12 @@
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
-#include "ios/chrome/browser/about_flags.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#include "ios/web/public/web_ui_ios_data_source.h"
+#include "ios/chrome/browser/flags/about_flags.h"
 #include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_data_source.h"
 #include "ios/web/public/webui/web_ui_ios_message_handler.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -38,38 +40,13 @@ web::WebUIIOSDataSource* CreateFlagsUIHTMLSource() {
   web::WebUIIOSDataSource* source =
       web::WebUIIOSDataSource::Create(kChromeUIFlagsHost);
 
-  source->AddLocalizedString(flags_ui::kFlagsSearchPlaceholder,
-                             IDS_FLAGS_UI_SEARCH_PLACEHOLDER);
-  source->AddLocalizedString(flags_ui::kFlagsTitle, IDS_FLAGS_UI_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsWarningHeader,
-                             IDS_FLAGS_UI_WARNING_HEADER);
-  source->AddLocalizedString(flags_ui::kFlagsBlurb, IDS_FLAGS_UI_WARNING_TEXT);
-  source->AddLocalizedString(flags_ui::kChannelPromoBeta,
-                             IDS_FLAGS_UI_PROMOTE_BETA_CHANNEL);
-  source->AddLocalizedString(flags_ui::kChannelPromoDev,
-                             IDS_FLAGS_UI_PROMOTE_DEV_CHANNEL);
-  source->AddLocalizedString(flags_ui::kFlagsSupportedTitle,
-                             IDS_FLAGS_UI_SUPPORTED_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsUnsupportedTitle,
-                             IDS_FLAGS_UI_UNSUPPORTED_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsNotSupported,
-                             IDS_FLAGS_UI_NOT_AVAILABLE);
   source->AddLocalizedString(flags_ui::kFlagsRestartNotice,
                              IDS_FLAGS_UI_RELAUNCH_NOTICE);
-  source->AddLocalizedString(flags_ui::kFlagsRestartButton,
-                             IDS_FLAGS_UI_RELAUNCH_BUTTON);
-  source->AddLocalizedString(flags_ui::kResetAllButton,
-                             IDS_FLAGS_UI_RESET_ALL_BUTTON);
-  source->AddLocalizedString(flags_ui::kFlagsNoMatches,
-                             IDS_FLAGS_UI_NO_MATCHES);
-  source->AddLocalizedString(flags_ui::kDisable, IDS_FLAGS_UI_DISABLE);
-  source->AddLocalizedString(flags_ui::kEnable, IDS_FLAGS_UI_ENABLE);
   source->AddString(flags_ui::kVersion, version_info::GetVersionNumber());
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath(flags_ui::kFlagsJS, IDR_FLAGS_UI_FLAGS_JS);
   source->SetDefaultResource(IDR_FLAGS_UI_FLAGS_HTML);
-  source->UseGzip();
   return source;
 }
 
@@ -119,20 +96,21 @@ class FlagsDOMHandler : public web::WebUIIOSMessageHandler {
 void FlagsDOMHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       flags_ui::kRequestExperimentalFeatures,
-      base::Bind(&FlagsDOMHandler::HandleRequestExperimentalFeatures,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleRequestExperimentalFeatures,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kEnableExperimentalFeature,
-      base::Bind(&FlagsDOMHandler::HandleEnableExperimentalFeatureMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &FlagsDOMHandler::HandleEnableExperimentalFeatureMessage,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kRestartBrowser,
-      base::Bind(&FlagsDOMHandler::HandleRestartBrowser,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleRestartBrowser,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kResetAllFlags,
-      base::Bind(&FlagsDOMHandler::HandleResetAllFlags,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleResetAllFlags,
+                          base::Unretained(this)));
 }
 
 void FlagsDOMHandler::Init(
@@ -155,8 +133,8 @@ void FlagsDOMHandler::HandleRequestExperimentalFeatures(
 
   base::DictionaryValue results;
 
-  auto supported_features = base::MakeUnique<base::ListValue>();
-  auto unsupported_features = base::MakeUnique<base::ListValue>();
+  auto supported_features = std::make_unique<base::ListValue>();
+  auto unsupported_features = std::make_unique<base::ListValue>();
   GetFlagFeatureEntries(flags_storage_.get(), access_, supported_features.get(),
                         unsupported_features.get());
   results.Set(flags_ui::kSupportedFeatures, std::move(supported_features));
@@ -168,8 +146,10 @@ void FlagsDOMHandler::HandleRequestExperimentalFeatures(
 
   results.SetBoolean(flags_ui::kShowBetaChannelPromotion, false);
   results.SetBoolean(flags_ui::kShowDevChannelPromotion, false);
+
+  std::vector<const base::Value*> params{&results};
   web_ui()->CallJavascriptFunction(flags_ui::kReturnExperimentalFeatures,
-                                   results);
+                                   params);
 }
 
 void FlagsDOMHandler::HandleEnableExperimentalFeatureMessage(
@@ -191,7 +171,9 @@ void FlagsDOMHandler::HandleEnableExperimentalFeatureMessage(
 }
 
 void FlagsDOMHandler::HandleRestartBrowser(const base::ListValue* args) {
-  NOTREACHED();
+#if BUILDFLAG(CHROMIUM_BRANDING)
+  CHECK(false);
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
 }
 
 void FlagsDOMHandler::HandleResetAllFlags(const base::ListValue* args) {
@@ -214,7 +196,7 @@ FlagsUI::FlagsUI(web::WebUIIOS* web_ui)
   web_ui->AddMessageHandler(base::WrapUnique(handler));
 
   flags_ui::FlagAccess flag_access = flags_ui::kOwnerAccessToFlags;
-  handler->Init(base::MakeUnique<flags_ui::PrefServiceFlagsStorage>(
+  handler->Init(std::make_unique<flags_ui::PrefServiceFlagsStorage>(
                     GetApplicationContext()->GetLocalState()),
                 flag_access);
 

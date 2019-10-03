@@ -18,6 +18,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/gcm_stats_recorder_impl.h"
 #include "google_apis/gcm/base/mcs_message.h"
@@ -29,7 +30,7 @@
 #include "google_apis/gcm/protocol/android_checkin.pb.h"
 #include "google_apis/gcm/protocol/checkin.pb.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/mojom/proxy_resolving_socket.mojom.h"
 
 class GURL;
 
@@ -42,9 +43,10 @@ namespace mcs_proto {
 class DataMessageStanza;
 }  // namespace mcs_proto
 
-namespace net {
-class HttpNetworkSession;
-}  // namespace net
+namespace network {
+class NetworkConnectionTracker;
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace gcm {
 
@@ -59,19 +61,23 @@ class GCMInternalsBuilder {
   GCMInternalsBuilder();
   virtual ~GCMInternalsBuilder();
 
-  virtual std::unique_ptr<base::Clock> BuildClock();
+  virtual base::Clock* GetClock();
   virtual std::unique_ptr<MCSClient> BuildMCSClient(
       const std::string& version,
       base::Clock* clock,
       ConnectionFactory* connection_factory,
       GCMStore* gcm_store,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
       GCMStatsRecorder* recorder);
   virtual std::unique_ptr<ConnectionFactory> BuildConnectionFactory(
       const std::vector<GURL>& endpoints,
       const net::BackoffEntry::Policy& backoff_policy,
-      net::HttpNetworkSession* gcm_network_session,
-      net::HttpNetworkSession* http_network_session,
-      GCMStatsRecorder* recorder);
+      base::RepeatingCallback<
+          void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+          get_socket_factory_callback,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+      GCMStatsRecorder* recorder,
+      network::NetworkConnectionTracker* network_connection_tracker);
 };
 
 // Implements the GCM Client. It is used to coordinate MCS Client (communication
@@ -109,18 +115,20 @@ class GCMClientImpl
       const ChromeBuildInfo& chrome_build_info,
       const base::FilePath& store_path,
       const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
-      const scoped_refptr<net::URLRequestContextGetter>&
-          url_request_context_getter,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+      base::RepeatingCallback<
+          void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+          get_socket_factory_callback,
+      const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
+      network::NetworkConnectionTracker* network_connection_tracker,
       std::unique_ptr<Encryptor> encryptor,
       GCMClient::Delegate* delegate) override;
   void Start(StartMode start_mode) override;
   void Stop() override;
-  void Register(const linked_ptr<RegistrationInfo>& registration_info) override;
-  bool ValidateRegistration(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      const std::string& registration_id) override;
-  void Unregister(
-      const linked_ptr<RegistrationInfo>& registration_info) override;
+  void Register(scoped_refptr<RegistrationInfo> registration_info) override;
+  bool ValidateRegistration(scoped_refptr<RegistrationInfo> registration_info,
+                            const std::string& registration_id) override;
+  void Unregister(scoped_refptr<RegistrationInfo> registration_info) override;
   void Send(const std::string& app_id,
             const std::string& receiver_id,
             const OutgoingMessage& message) override;
@@ -134,7 +142,8 @@ class GCMClientImpl
   void UpdateAccountMapping(const AccountMapping& account_mapping) override;
   void RemoveAccountMapping(const std::string& account_id) override;
   void SetLastTokenFetchTime(const base::Time& time) override;
-  void UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) override;
+  void UpdateHeartbeatTimer(
+      std::unique_ptr<base::RetainingOneShotTimer> timer) override;
   void AddInstanceIDData(const std::string& app_id,
                          const std::string& instance_id,
                          const std::string& extra_data) override;
@@ -191,7 +200,7 @@ class GCMClientImpl
   // instance, while values are pending registration requests to obtain a
   // registration ID for requesting application.
   using PendingRegistrationRequests =
-      std::map<linked_ptr<RegistrationInfo>,
+      std::map<scoped_refptr<RegistrationInfo>,
                std::unique_ptr<RegistrationRequest>,
                RegistrationInfoComparer>;
 
@@ -199,7 +208,7 @@ class GCMClientImpl
   // instance, while values are pending unregistration requests to disable the
   // registration ID currently assigned to the application.
   using PendingUnregistrationRequests =
-      std::map<linked_ptr<RegistrationInfo>,
+      std::map<scoped_refptr<RegistrationInfo>,
                std::unique_ptr<UnregistrationRequest>,
                RegistrationInfoComparer>;
 
@@ -278,15 +287,13 @@ class GCMClientImpl
   void ResetStoreCallback(bool success);
 
   // Completes the registration request.
-  void OnRegisterCompleted(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      RegistrationRequest::Status status,
-      const std::string& registration_id);
+  void OnRegisterCompleted(scoped_refptr<RegistrationInfo> registration_info,
+                           RegistrationRequest::Status status,
+                           const std::string& registration_id);
 
   // Completes the unregistration request.
-  void OnUnregisterCompleted(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      UnregistrationRequest::Status status);
+  void OnUnregisterCompleted(scoped_refptr<RegistrationInfo> registration_info,
+                             UnregistrationRequest::Status status);
 
   // Completes the GCM store destroy request.
   void OnGCMStoreDestroyed(bool success);
@@ -345,9 +352,8 @@ class GCMClientImpl
   // Device checkin info (android ID and security token used by device).
   CheckinInfo device_checkin_info_;
 
-  // Clock used for timing of retry logic. Passed in for testing. Owned by
-  // GCMClientImpl.
-  std::unique_ptr<base::Clock> clock_;
+  // Clock used for timing of retry logic. Passed in for testing.
+  base::Clock* clock_;
 
   // Information about the chrome build.
   // TODO(fgorski): Check if it can be passed in constructor and made const.
@@ -364,9 +370,16 @@ class GCMClientImpl
   // resetting and loading from the store again and again.
   bool gcm_store_reset_;
 
-  std::unique_ptr<net::HttpNetworkSession> network_session_;
   std::unique_ptr<ConnectionFactory> connection_factory_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
+  base::RepeatingCallback<void(
+      network::mojom::ProxyResolvingSocketFactoryRequest)>
+      get_socket_factory_callback_;
+
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+
+  network::NetworkConnectionTracker* network_connection_tracker_;
+
+  scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
 
   // Controls receiving and sending of packets and reliable message queueing.
   // Must be destroyed before |network_session_|.
@@ -396,13 +409,13 @@ class GCMClientImpl
   std::map<std::string, std::pair<std::string, std::string>> instance_id_data_;
 
   // Factory for creating references when scheduling periodic checkin.
-  base::WeakPtrFactory<GCMClientImpl> periodic_checkin_ptr_factory_;
+  base::WeakPtrFactory<GCMClientImpl> periodic_checkin_ptr_factory_{this};
 
   // Factory for wiping out GCM store.
-  base::WeakPtrFactory<GCMClientImpl> destroying_gcm_store_ptr_factory_;
+  base::WeakPtrFactory<GCMClientImpl> destroying_gcm_store_ptr_factory_{this};
 
   // Factory for creating references in callbacks.
-  base::WeakPtrFactory<GCMClientImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<GCMClientImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GCMClientImpl);
 };

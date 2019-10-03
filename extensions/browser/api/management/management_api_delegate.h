@@ -6,9 +6,9 @@
 #define EXTENSIONS_BROWSER_API_MANAGEMENT_MANAGEMENT_API_DELEGATE_H_
 
 #include "base/callback.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "url/gurl.h"
@@ -49,18 +49,13 @@ class ManagementAPIDelegate {
  public:
   virtual ~ManagementAPIDelegate() {}
 
+  enum class InstallWebAppResult { kSuccess, kInvalidWebApp, kUnknownError };
+  typedef base::OnceCallback<void(InstallWebAppResult)> InstallWebAppCallback;
+
   // Launches the app |extension|.
   virtual void LaunchAppFunctionDelegate(
       const Extension* extension,
       content::BrowserContext* context) const = 0;
-
-  // Forwards the call to extensions::util::IsNewBookmarkAppsEnabled in
-  // chrome.
-  virtual bool IsNewBookmarkAppsEnabled() const = 0;
-
-  // Forwards the call to extensions::util::CanHostedAppsOpenInWindows in
-  // chrome.
-  virtual bool CanHostedAppsOpenInWindows() const = 0;
 
   // Forwards the call to AppLaunchInfo::GetFullLaunchURL in chrome.
   virtual GURL GetFullLaunchURL(const Extension* extension) const = 0;
@@ -87,9 +82,11 @@ class ManagementAPIDelegate {
   virtual void EnableExtension(content::BrowserContext* context,
                                const std::string& extension_id) const = 0;
 
-  // Disables the extension identified by |extension_id|.
+  // Disables the extension identified by |extension_id|. |source_extension| (if
+  // specified) is the extension that originated the request.
   virtual void DisableExtension(
       content::BrowserContext* context,
+      const Extension* source_extension,
       const std::string& extension_id,
       disable_reason::DisableReason disable_reason) const = 0;
 
@@ -123,6 +120,19 @@ class ManagementAPIDelegate {
       content::BrowserContext* context,
       const std::string& title,
       const GURL& launch_url) const = 0;
+
+  // Returns true if there is already a web app installed for |web_app_url|.
+  virtual bool IsWebAppInstalled(content::BrowserContext* context,
+                                 const GURL& web_app_url) const = 0;
+  // Returns whether the current user type can install web apps.
+  virtual bool CanContextInstallWebApps(
+      content::BrowserContext* context) const = 0;
+
+  // Installs a web app for |web_app_url|.
+  virtual void InstallReplacementWebApp(
+      content::BrowserContext* context,
+      const GURL& web_app_url,
+      InstallWebAppCallback callback) const = 0;
 
   // Forwards the call to ExtensionIconSource::GetIconURL in chrome.
   virtual GURL GetIconURL(const Extension* extension,

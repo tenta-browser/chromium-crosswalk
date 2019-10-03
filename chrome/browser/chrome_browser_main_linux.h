@@ -13,8 +13,8 @@
 
 class ChromeBrowserMainPartsLinux : public ChromeBrowserMainPartsPosix {
  public:
-  explicit ChromeBrowserMainPartsLinux(
-      const content::MainFunctionParams& parameters);
+  ChromeBrowserMainPartsLinux(const content::MainFunctionParams& parameters,
+                              StartupData* startup_data);
   ~ChromeBrowserMainPartsLinux() override;
 
   // ChromeBrowserMainParts overrides.

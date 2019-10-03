@@ -15,16 +15,17 @@
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "content/public/test/mock_render_thread.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 namespace base {
 class DictionaryValue;
 }
 
 class MockPrinter;
-struct PrintHostMsg_DidGetPreviewPageCount_Params;
+struct PrintHostMsg_DidStartPreview_Params;
 struct PrintHostMsg_DidPreviewPage_Params;
-struct PrintHostMsg_DidPrintPage_Params;
+struct PrintHostMsg_DidPrintDocument_Params;
+struct PrintHostMsg_PreviewIds;
 struct PrintHostMsg_ScriptedPrint_Params;
 struct PrintMsg_PrintPages_Params;
 struct PrintMsg_Print_Params;
@@ -42,7 +43,7 @@ class PrintMockRenderThread : public content::MockRenderThread {
   // The following functions are called by the test itself.
 
   void set_io_task_runner(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
 #if BUILDFLAG(ENABLE_PRINTING)
   // Returns the pseudo-printer instance.
@@ -57,6 +58,9 @@ class PrintMockRenderThread : public content::MockRenderThread {
 
   // Get the number of pages to generate for print preview.
   int print_preview_pages_remaining() const;
+
+  // Get a vector of print preview pages.
+  const std::vector<std::pair<int, uint32_t>>& print_preview_pages() const;
 #endif
 
  private:
@@ -72,14 +76,13 @@ class PrintMockRenderThread : public content::MockRenderThread {
                        PrintMsg_PrintPages_Params* settings);
 
   void OnDidGetPrintedPagesCount(int cookie, int number_pages);
-  void OnDidPrintPage(const PrintHostMsg_DidPrintPage_Params& params);
+  void OnDidPrintDocument(const PrintHostMsg_DidPrintDocument_Params& params);
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-  void OnDidGetPreviewPageCount(
-      const PrintHostMsg_DidGetPreviewPageCount_Params& params);
-  void OnDidPreviewPage(const PrintHostMsg_DidPreviewPage_Params& params);
-  void OnCheckForCancel(int32_t preview_ui_id,
-                        int preview_request_id,
-                        bool* cancel);
+  void OnDidStartPreview(const PrintHostMsg_DidStartPreview_Params& params,
+                         const PrintHostMsg_PreviewIds& ids);
+  void OnDidPreviewPage(const PrintHostMsg_DidPreviewPage_Params& params,
+                        const PrintHostMsg_PreviewIds& ids);
+  void OnCheckForCancel(const PrintHostMsg_PreviewIds& ids, bool* cancel);
 #endif
 
   // For print preview, PrintRenderFrameHelper will update settings.
@@ -100,6 +103,9 @@ class PrintMockRenderThread : public content::MockRenderThread {
 
   // Number of pages to generate for print preview.
   int print_preview_pages_remaining_;
+
+  // Vector of <page_number, content_data_size> that were previewed.
+  std::vector<std::pair<int, uint32_t>> print_preview_pages_;
 #endif
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;

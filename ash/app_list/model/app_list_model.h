@@ -14,11 +14,9 @@
 #include "ash/app_list/model/app_list_item_list.h"
 #include "ash/app_list/model/app_list_item_list_observer.h"
 #include "ash/app_list/model/app_list_model_export.h"
-#include "ash/app_list/model/app_list_view_state.h"
-#include "ash/app_list/model/search_result.h"
+#include "ash/public/cpp/app_list/app_list_types.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "ui/base/models/list_model.h"
 
 namespace app_list {
 
@@ -26,54 +24,28 @@ class AppListFolderItem;
 class AppListItem;
 class AppListItemList;
 class AppListModelObserver;
-class SearchBoxModel;
 
-// Master model of app list that consists of three sub models: AppListItemList,
-// SearchBoxModel and SearchResults. The AppListItemList sub model owns a list
-// of AppListItems and is displayed in the grid view. SearchBoxModel is
-// the model for SearchBoxView. SearchResults owns a list of SearchResult.
+// Master model of app list that holds AppListItemList, which owns a list
+// of AppListItems and is displayed in the grid view.
 // NOTE: Currently this class observes |top_level_item_list_|. The View code may
 // move entries in the item list directly (but can not add or remove them) and
 // the model needs to notify its observers when this occurs.
 class APP_LIST_MODEL_EXPORT AppListModel : public AppListItemListObserver {
  public:
-  enum Status {
-    STATUS_NORMAL,
-    STATUS_SYNCING,  // Syncing apps or installing synced apps.
-  };
-
-  // Do not change the order of these as they are used for metrics.
-  enum State {
-    STATE_APPS = 0,
-    STATE_SEARCH_RESULTS,
-    STATE_START,
-    STATE_CUSTOM_LAUNCHER_PAGE,
-    // Add new values here.
-
-    INVALID_STATE,
-    STATE_LAST = INVALID_STATE,
-  };
-
-  typedef ui::ListModel<SearchResult> SearchResults;
-
   AppListModel();
   ~AppListModel() override;
 
   void AddObserver(AppListModelObserver* observer);
   void RemoveObserver(AppListModelObserver* observer);
 
-  void SetStatus(Status status);
+  void SetStatus(ash::AppListModelStatus status);
 
-  void SetState(State state);
-  State state() const { return state_; }
+  void SetState(ash::AppListState state);
+  ash::AppListState state() const { return state_; }
 
   // The current state of the AppListView. Controlled by AppListView.
-  void SetStateFullscreen(AppListViewState state);
-  AppListViewState state_fullscreen() const { return state_fullscreen_; }
-
-  // Whether tablet mode is active. Controlled by AppListView.
-  void SetTabletMode(bool started);
-  bool tablet_mode() const { return is_tablet_mode_; }
+  void SetStateFullscreen(ash::AppListViewState state);
+  ash::AppListViewState state_fullscreen() const { return state_fullscreen_; }
 
   // Finds the item matching |id|.
   AppListItem* FindItem(const std::string& id);
@@ -90,6 +62,9 @@ class APP_LIST_MODEL_EXPORT AppListModel : public AppListItemListObserver {
   // ownership of |item|. Returns a pointer to the item that is safe to use.
   AppListItem* AddItemToFolder(std::unique_ptr<AppListItem> item,
                                const std::string& folder_id);
+
+  // Add a "page break" item right after the specified item in item list.
+  void AddPageBreakItemAfter(const AppListItem* previous_item);
 
   // Merges two items. If the target item is a folder, the source item is
   // added to the end of the target folder. Otherwise a new folder is created
@@ -142,55 +117,12 @@ class APP_LIST_MODEL_EXPORT AppListModel : public AppListItemListObserver {
   // has a single child left.
   void DeleteUninstalledItem(const std::string& id);
 
-  // Sets whether or not the folder UI should be enabled. If |folders_enabled|
-  // is false, removes any non-OEM folders.
-  void SetFoldersEnabled(bool folders_enabled);
-
-  // Sets whether or not the custom launcher page should be enabled.
-  void SetCustomLauncherPageEnabled(bool enabled);
-  bool custom_launcher_page_enabled() const {
-    return custom_launcher_page_enabled_;
-  }
-
-  void set_custom_launcher_page_name(const std::string& name) {
-    custom_launcher_page_name_ = name;
-  }
-
-  const std::string& custom_launcher_page_name() const {
-    return custom_launcher_page_name_;
-  }
-
-  // Pushes a custom launcher page's subpage into the state stack in the
-  // model.
-  void PushCustomLauncherPageSubpage();
-
-  // If the state stack is not empty, pops a subpage from the stack and
-  // returns true. Returns false if the stack was empty.
-  bool PopCustomLauncherPageSubpage();
-
-  // Clears the custom launcher page's subpage state stack from the model.
-  void ClearCustomLauncherPageSubpages();
-
-  int custom_launcher_page_subpage_depth() {
-    return custom_launcher_page_subpage_depth_;
-  }
-
-  void SetSearchEngineIsGoogle(bool is_google);
-  bool search_engine_is_google() const { return search_engine_is_google_; }
-
-  // Filters the given |results| by |display_type|. The returned list is
-  // truncated to |max_results|.
-  static std::vector<SearchResult*> FilterSearchResultsByDisplayType(
-      SearchResults* results,
-      SearchResult::DisplayType display_type,
-      size_t max_results);
+  // Deletes all items. This is used in profile switches.
+  void DeleteAllItems();
 
   AppListItemList* top_level_item_list() { return top_level_item_list_.get(); }
 
-  SearchBoxModel* search_box() { return search_box_.get(); }
-  SearchResults* results() { return results_.get(); }
-  Status status() const { return status_; }
-  bool folders_enabled() const { return folders_enabled_; }
+  ash::AppListModelStatus status() const { return status_; }
 
  private:
   // AppListItemListObserver
@@ -227,23 +159,11 @@ class APP_LIST_MODEL_EXPORT AppListModel : public AppListItemListObserver {
 
   std::unique_ptr<AppListItemList> top_level_item_list_;
 
-  std::unique_ptr<SearchBoxModel> search_box_;
-  std::unique_ptr<SearchResults> results_;
-
-  Status status_;
-  State state_;
+  ash::AppListModelStatus status_ = ash::AppListModelStatus::kStatusNormal;
+  ash::AppListState state_ = ash::AppListState::kInvalidState;
   // The AppListView state. Controlled by the AppListView.
-  AppListViewState state_fullscreen_;
-  base::ObserverList<AppListModelObserver, true> observers_;
-  bool folders_enabled_;
-  bool custom_launcher_page_enabled_;
-  std::string custom_launcher_page_name_;
-  bool search_engine_is_google_;
-  // Whether tablet mode is active. Controlled by the AppListView.
-  bool is_tablet_mode_;
-
-  // The current number of subpages the custom launcher page has pushed.
-  int custom_launcher_page_subpage_depth_;
+  ash::AppListViewState state_fullscreen_ = ash::AppListViewState::kClosed;
+  base::ObserverList<AppListModelObserver, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListModel);
 };

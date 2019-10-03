@@ -18,6 +18,7 @@ class Window;
 
 namespace client {
 class DragDropClient;
+class ScreenPositionClient;
 }
 }  // namespace aura
 
@@ -40,7 +41,7 @@ class DesktopNativeWidgetAura;
 
 class VIEWS_EXPORT DesktopWindowTreeHost {
  public:
-  virtual ~DesktopWindowTreeHost() {}
+  virtual ~DesktopWindowTreeHost() = default;
 
   static DesktopWindowTreeHost* Create(
       internal::NativeWidgetDelegate* native_widget_delegate,
@@ -48,8 +49,7 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   // Sets up resources needed before the WindowEventDispatcher has been created.
   // It is expected this calls InitHost() on the WindowTreeHost.
-  virtual void Init(aura::Window* content_window,
-                    const Widget::InitParams& params) = 0;
+  virtual void Init(const Widget::InitParams& params) = 0;
 
   // Invoked once the DesktopNativeWidgetAura has been created.
   virtual void OnNativeWidgetCreated(const Widget::InitParams& params) = 0;
@@ -71,13 +71,34 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   virtual std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient(
       DesktopNativeCursorManager* cursor_manager) = 0;
 
+  // Creates the ScreenPositionClient to use for the WindowTreeHost. Default
+  // implementation creates DesktopScreenPositionClient.
+  virtual std::unique_ptr<aura::client::ScreenPositionClient>
+  CreateScreenPositionClient();
+
   virtual void Close() = 0;
   virtual void CloseNow() = 0;
 
   virtual aura::WindowTreeHost* AsWindowTreeHost() = 0;
 
-  virtual void ShowWindowWithState(ui::WindowShowState show_state) = 0;
-  virtual void ShowMaximizedWithBounds(const gfx::Rect& restored_bounds) = 0;
+  // There are two distinct ways for DesktopWindowTreeHosts's to be shown:
+  // 1. This function is called. As this function is specific to
+  //    DesktopWindowTreeHost, it is only called from DesktopNativeWidgetAura.
+  // 2. Calling Show() directly on the WindowTreeHost associated with this
+  //    DesktopWindowTreeHost. This is very rare. In general, calls go through
+  //    Widget, which ends up in (1).
+  //
+  // Implementations must deal with these two code paths. In general, this is
+  // done by having the WindowTreeHost subclass override ShowImpl() to call this
+  // function: Show(ui::SHOW_STATE_NORMAL, gfx::Rect()). A subtle
+  // ramification is the implementation of this function can *not* call
+  // WindowTreeHost::Show(), and the implementation of this must perform the
+  // same work as WindowTreeHost::Show(). This means setting the visibility of
+  // the compositor, window() and DesktopNativeWidgetAura::content_window()
+  // appropriately. Some subclasses set the visibility of window() in the
+  // constructor and assume it's always true.
+  virtual void Show(ui::WindowShowState show_state,
+                    const gfx::Rect& restore_bounds) = 0;
 
   virtual bool IsVisible() const = 0;
 
@@ -109,8 +130,8 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   virtual bool HasCapture() const = 0;
 
-  virtual void SetAlwaysOnTop(bool always_on_top) = 0;
-  virtual bool IsAlwaysOnTop() const = 0;
+  virtual void SetZOrderLevel(ui::ZOrderLevel order) = 0;
+  virtual ui::ZOrderLevel GetZOrderLevel() const = 0;
 
   virtual void SetVisibleOnAllWorkspaces(bool always_visible) = 0;
   virtual bool IsVisibleOnAllWorkspaces() const = 0;
@@ -142,6 +163,8 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   virtual void SetOpacity(float opacity) = 0;
 
+  virtual void SetAspectRatio(const gfx::SizeF& aspect_ratio) = 0;
+
   virtual void SetWindowIcons(const gfx::ImageSkia& window_icon,
                               const gfx::ImageSkia& app_icon) = 0;
 
@@ -170,6 +193,10 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   // Returns whether a VisibilityController should be created.
   virtual bool ShouldCreateVisibilityController() const = 0;
+
+  // Sets the bounds in screen coordinate DIPs (WindowTreeHost generally
+  // operates in pixels). This function is implemented in terms of Screen.
+  virtual void SetBoundsInDIP(const gfx::Rect& bounds);
 };
 
 }  // namespace views

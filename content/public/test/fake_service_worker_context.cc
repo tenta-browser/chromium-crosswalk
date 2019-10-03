@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 #include "content/public/test/fake_service_worker_context.h"
+#include "content/public/browser/service_worker_context_observer.h"
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "third_party/blink/public/common/messaging/transferable_message.h"
 
 namespace content {
 
@@ -14,19 +16,20 @@ FakeServiceWorkerContext::~FakeServiceWorkerContext() {}
 
 void FakeServiceWorkerContext::AddObserver(
     ServiceWorkerContextObserver* observer) {
-  NOTREACHED();
+  observers_.AddObserver(observer);
 }
 void FakeServiceWorkerContext::RemoveObserver(
     ServiceWorkerContextObserver* observer) {
-  NOTREACHED();
+  observers_.RemoveObserver(observer);
 }
-void FakeServiceWorkerContext::RegisterServiceWorker(const GURL& pattern,
-                                                     const GURL& script_url,
-                                                     ResultCallback callback) {
+void FakeServiceWorkerContext::RegisterServiceWorker(
+    const GURL& script_url,
+    const blink::mojom::ServiceWorkerRegistrationOptions& options,
+    ResultCallback callback) {
   NOTREACHED();
 }
 void FakeServiceWorkerContext::UnregisterServiceWorker(
-    const GURL& pattern,
+    const GURL& scope,
     ResultCallback callback) {
   NOTREACHED();
 }
@@ -55,9 +58,12 @@ void FakeServiceWorkerContext::DeleteForOrigin(const GURL& origin,
                                                ResultCallback callback) {
   NOTREACHED();
 }
+void FakeServiceWorkerContext::PerformStorageCleanup(
+    base::OnceClosure callback) {
+  NOTREACHED();
+}
 void FakeServiceWorkerContext::CheckHasServiceWorker(
     const GURL& url,
-    const GURL& other_url,
     CheckHasServiceWorkerCallback callback) {
   NOTREACHED();
 }
@@ -65,9 +71,9 @@ void FakeServiceWorkerContext::ClearAllServiceWorkersForTest(
     base::OnceClosure) {
   NOTREACHED();
 }
-void FakeServiceWorkerContext::StartActiveWorkerForPattern(
-    const GURL& pattern,
-    ServiceWorkerContext::StartActiveWorkerCallback info_callback,
+void FakeServiceWorkerContext::StartWorkerForScope(
+    const GURL& scope,
+    ServiceWorkerContext::StartWorkerCallback info_callback,
     base::OnceClosure failure_callback) {
   NOTREACHED();
 }
@@ -76,12 +82,62 @@ void FakeServiceWorkerContext::StartServiceWorkerForNavigationHint(
     StartServiceWorkerForNavigationHintCallback callback) {
   start_service_worker_for_navigation_hint_called_ = true;
 }
+
+void FakeServiceWorkerContext::StartServiceWorkerAndDispatchMessage(
+    const GURL& scope,
+    blink::TransferableMessage message,
+    ResultCallback result_callback) {
+  start_service_worker_and_dispatch_message_calls_.push_back(
+      std::make_tuple(scope, std::move(message), std::move(result_callback)));
+}
+
+void FakeServiceWorkerContext::StartServiceWorkerAndDispatchLongRunningMessage(
+    const GURL& scope,
+    blink::TransferableMessage message,
+    ResultCallback result_callback) {
+  start_service_worker_and_dispatch_long_running_message_calls_.push_back(
+      std::make_tuple(scope, std::move(message), std::move(result_callback)));
+}
+
 void FakeServiceWorkerContext::StopAllServiceWorkersForOrigin(
     const GURL& origin) {
-  NOTREACHED();
+  stop_all_service_workers_for_origin_calls_.push_back(origin);
 }
+
 void FakeServiceWorkerContext::StopAllServiceWorkers(base::OnceClosure) {
   NOTREACHED();
+}
+
+void FakeServiceWorkerContext::GetAllServiceWorkerRunningInfos(
+    GetAllServiceWorkerRunningInfosCallback callback) {
+  NOTREACHED();
+}
+
+void FakeServiceWorkerContext::GetServiceWorkerRunningInfo(
+    int64_t service_worker_version_id,
+    GetServiceWorkerRunningInfoCallback callback) {
+  NOTREACHED();
+}
+
+void FakeServiceWorkerContext::NotifyObserversOnVersionActivated(
+    int64_t version_id,
+    const GURL& scope) {
+  for (auto& observer : observers_)
+    observer.OnVersionActivated(version_id, scope);
+}
+
+void FakeServiceWorkerContext::NotifyObserversOnVersionRedundant(
+    int64_t version_id,
+    const GURL& scope) {
+  for (auto& observer : observers_)
+    observer.OnVersionRedundant(version_id, scope);
+}
+
+void FakeServiceWorkerContext::NotifyObserversOnNoControllees(
+    int64_t version_id,
+    const GURL& scope) {
+  for (auto& observer : observers_)
+    observer.OnNoControllees(version_id, scope);
 }
 
 }  // namespace content

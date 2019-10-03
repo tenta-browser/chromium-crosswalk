@@ -9,12 +9,13 @@
 #include "base/strings/string_split.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/phone_number_i18n.h"
 #include "components/autofill/core/browser/validation.h"
+#include "components/payments/core/payment_address.h"
 #include "components/payments/core/payment_instrument.h"
 #include "components/payments/core/payment_request_data_util.h"
 #include "components/payments/core/strings_util.h"
@@ -45,27 +46,28 @@ static const char kPaymentResponseShippingOption[] = "shippingOption";
 
 }  // namespace
 
-std::unique_ptr<base::DictionaryValue> PaymentResponseToDictionaryValue(
-    const payments::PaymentResponse& response) {
-  auto result = std::make_unique<base::DictionaryValue>();
-  result->SetString(kPaymentResponseId, response.payment_request_id);
-  result->SetString(kPaymentResponseMethodName, response.method_name);
+base::Value PaymentResponseToValue(const payments::PaymentResponse& response) {
+  base::Value result(base::Value::Type::DICTIONARY);
+  result.SetKey(kPaymentResponseId, base::Value(response.payment_request_id));
+  result.SetKey(kPaymentResponseMethodName, base::Value(response.method_name));
   // |details| is a json-serialized string. Parse it to a base::Value so that
   // when |result| is converted to a JSON string, the "details" property won't
   // get json-escaped.
-  std::unique_ptr<base::Value> details_value =
-      base::JSONReader().ReadToValue(response.details);
-  result->Set(kPaymentResponseDetails, details_value
-                                           ? std::move(details_value)
-                                           : std::make_unique<base::Value>());
-  result->Set(kPaymentResponseShippingAddress,
-              response.shipping_address
-                  ? response.shipping_address->ToDictionaryValue()
-                  : std::make_unique<base::Value>());
-  result->SetString(kPaymentResponseShippingOption, response.shipping_option);
-  result->SetString(kPaymentResponsePayerName, response.payer_name);
-  result->SetString(kPaymentResponsePayerEmail, response.payer_email);
-  result->SetString(kPaymentResponsePayerPhone, response.payer_phone);
+  base::Optional<base::Value> details_value =
+      base::JSONReader::Read(response.details);
+  result.SetKey(kPaymentResponseDetails,
+                std::move(details_value).value_or(base::Value()));
+  result.SetKey(kPaymentResponseShippingAddress,
+                response.shipping_address
+                    ? base::Value::FromUniquePtrValue(
+                          payments::PaymentAddressToDictionaryValue(
+                              *response.shipping_address))
+                    : base::Value());
+  result.SetKey(kPaymentResponseShippingOption,
+                base::Value(response.shipping_option));
+  result.SetKey(kPaymentResponsePayerName, base::Value(response.payer_name));
+  result.SetKey(kPaymentResponsePayerEmail, base::Value(response.payer_email));
+  result.SetKey(kPaymentResponsePayerPhone, base::Value(response.payer_phone));
   return result;
 }
 

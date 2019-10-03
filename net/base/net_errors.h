@@ -14,12 +14,9 @@
 
 namespace net {
 
-// Error domain of the net module's error codes.
-NET_EXPORT extern const char kErrorDomain[];
-
 // Error values are negative.
 enum Error {
-  // No error.
+  // No error. Change NetError.template after changing value.
   OK = 0,
 
 #define NET_ERROR(label, value) ERR_ ## label = value,
@@ -35,6 +32,11 @@ NET_EXPORT std::string ErrorToString(int error);
 
 // Same as above, but leaves off the leading "net::".
 NET_EXPORT std::string ErrorToShortString(int error);
+
+// Returns a textual representation of the error code and the extended eror
+// code.
+NET_EXPORT std::string ExtendedErrorToString(int error,
+                                             int extended_error_code);
 
 // Returns true if |error| is a certificate error code.
 NET_EXPORT bool IsCertificateError(int error);

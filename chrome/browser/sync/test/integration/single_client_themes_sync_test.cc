@@ -10,7 +10,7 @@
 #include "chrome/browser/sync/test/integration/themes_helper.h"
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "content/public/test/test_utils.h"
 
 using themes_helper::GetCustomTheme;
@@ -26,6 +26,7 @@ namespace {
 class SingleClientThemesSyncTest : public SyncTest {
  public:
   SingleClientThemesSyncTest() : SyncTest(SINGLE_CLIENT) {}
+
   ~SingleClientThemesSyncTest() override {}
 
  private:

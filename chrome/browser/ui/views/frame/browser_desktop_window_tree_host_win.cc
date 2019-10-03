@@ -4,10 +4,14 @@
 
 #include "chrome/browser/ui/views/frame/browser_desktop_window_tree_host_win.h"
 
+#include <windows.h>
+
 #include <dwmapi.h>
+#include <uxtheme.h>
 
 #include "base/macros.h"
 #include "base/process/process_handle.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -19,12 +23,11 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/win/titlebar_config.h"
 #include "chrome/common/chrome_constants.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
+#include "ui/base/win/hwnd_metrics.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/views/controls/menu/native_menu_win.h"
-#include "ui/views/resources/grit/views_resources.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserDesktopWindowTreeHostWin, public:
@@ -37,12 +40,9 @@ BrowserDesktopWindowTreeHostWin::BrowserDesktopWindowTreeHostWin(
     : DesktopWindowTreeHostWin(native_widget_delegate,
                                desktop_native_widget_aura),
       browser_view_(browser_view),
-      browser_frame_(browser_frame),
-      did_gdi_clear_(false) {
-}
+      browser_frame_(browser_frame) {}
 
-BrowserDesktopWindowTreeHostWin::~BrowserDesktopWindowTreeHostWin() {
-}
+BrowserDesktopWindowTreeHostWin::~BrowserDesktopWindowTreeHostWin() {}
 
 views::NativeMenuWin* BrowserDesktopWindowTreeHostWin::GetSystemMenu() {
   if (!system_menu_.get()) {
@@ -74,6 +74,51 @@ bool BrowserDesktopWindowTreeHostWin::UsesNativeSystemMenu() const {
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserDesktopWindowTreeHostWin, views::DesktopWindowTreeHostWin overrides:
 
+void BrowserDesktopWindowTreeHostWin::Init(
+    const views::Widget::InitParams& params) {
+  DesktopWindowTreeHostWin::Init(params);
+  if (base::win::GetVersion() < base::win::Version::WIN10)
+    return;  // VirtualDesktopManager isn't support pre Win-10.
+
+  // Virtual Desktops on Windows are best-effort and may not always be
+  // available.
+  if (FAILED(::CoCreateInstance(__uuidof(VirtualDesktopManager), nullptr,
+                                CLSCTX_ALL,
+                                IID_PPV_ARGS(&virtual_desktop_manager_)))) {
+    return;
+  }
+
+  if (!params.workspace.empty()) {
+    GUID guid = GUID_NULL;
+    HRESULT hr =
+        CLSIDFromString(base::UTF8ToUTF16(params.workspace).c_str(), &guid);
+    if (SUCCEEDED(hr)) {
+      // There are valid reasons MoveWindowToDesktop can fail, e.g.,
+      // the desktop was deleted. If it fails, the window will open on the
+      // current desktop.
+      virtual_desktop_manager_->MoveWindowToDesktop(GetHWND(), guid);
+    }
+  }
+}
+
+std::string BrowserDesktopWindowTreeHostWin::GetWorkspace() const {
+  std::string workspace_id;
+  if (virtual_desktop_manager_) {
+    GUID workspace_guid;
+    HRESULT hr = virtual_desktop_manager_->GetWindowDesktopId(GetHWND(),
+                                                              &workspace_guid);
+    if (FAILED(hr) || workspace_guid == GUID_NULL)
+      return workspace_.value_or("");
+
+    LPOLESTR workspace_widestr;
+    StringFromCLSID(workspace_guid, &workspace_widestr);
+    workspace_id = base::WideToUTF8(workspace_widestr);
+    workspace_ = workspace_id;
+    CoTaskMemFree(workspace_widestr);
+  }
+  return workspace_id;
+}
+
 int BrowserDesktopWindowTreeHostWin::GetInitialShowState() const {
   STARTUPINFO si = {0};
   si.cb = sizeof(si);
@@ -83,7 +128,8 @@ int BrowserDesktopWindowTreeHostWin::GetInitialShowState() const {
 }
 
 bool BrowserDesktopWindowTreeHostWin::GetClientAreaInsets(
-    gfx::Insets* insets) const {
+    gfx::Insets* insets,
+    HMONITOR monitor) const {
   // Always use default insets for opaque frame.
   if (!ShouldUseNativeFrame())
     return false;
@@ -98,14 +144,49 @@ bool BrowserDesktopWindowTreeHostWin::GetClientAreaInsets(
     // In fullscreen mode there is no frame.
     *insets = gfx::Insets();
   } else {
-    const int frame_thickness =
-        display::win::ScreenWin::GetSystemMetricsForHwnd(
-            GetHWND(), SM_CXSIZEFRAME);
+    const int frame_thickness = ui::GetFrameThickness(monitor);
     // Reduce the Windows non-client border size because we extend the border
     // into our client area in UpdateDWMFrame(). The top inset must be 0 or
     // else Windows will draw a full native titlebar outside the client area.
-    *insets = gfx::Insets(0, frame_thickness, frame_thickness,
-                          frame_thickness) - GetClientEdgeThicknesses();
+    *insets = gfx::Insets(0, frame_thickness, frame_thickness, frame_thickness);
+  }
+  return true;
+}
+
+bool BrowserDesktopWindowTreeHostWin::GetDwmFrameInsetsInPixels(
+    gfx::Insets* insets) const {
+  // For "normal" windows on Aero, we always need to reset the glass area
+  // correctly, even if we're not currently showing the native frame (e.g.
+  // because a theme is showing), so we explicitly check for that case rather
+  // than checking ShouldUseNativeFrame() here.  Using that here would mean we
+  // wouldn't reset the glass area to zero when moving from the native frame to
+  // an opaque frame, leading to graphical glitches behind the opaque frame.
+  // Instead, we use that function below to tell us whether the frame is
+  // currently native or opaque.
+  if (!GetWidget()->client_view() || !browser_view_->IsBrowserTypeNormal() ||
+      !DesktopWindowTreeHostWin::ShouldUseNativeFrame())
+    return false;
+
+  // Don't extend the glass in at all if it won't be visible.
+  if (!ShouldUseNativeFrame() || GetWidget()->IsFullscreen() ||
+      ShouldCustomDrawSystemTitlebar()) {
+    *insets = gfx::Insets();
+  } else {
+    // The glass should extend to the bottom of the tabstrip.
+    HWND hwnd = GetHWND();
+    gfx::Rect tabstrip_region_bounds(
+        browser_frame_->GetBoundsForTabStripRegion(browser_view_->tabstrip()));
+    tabstrip_region_bounds =
+        display::win::ScreenWin::DIPToClientRect(hwnd, tabstrip_region_bounds);
+
+    // The 2 px (not DIP) at the inner edges of Win 7 glass are a light and dark
+    // line, so we must inset further to account for those.
+    constexpr int kWin7GlassInset = 2;
+    const int inset = (base::win::GetVersion() < base::win::Version::WIN8)
+                          ? kWin7GlassInset
+                          : 0;
+    *insets = gfx::Insets(tabstrip_region_bounds.bottom() + inset, inset, inset,
+                          inset);
   }
   return true;
 }
@@ -118,6 +199,11 @@ void BrowserDesktopWindowTreeHostWin::HandleCreate() {
 }
 
 void BrowserDesktopWindowTreeHostWin::HandleDestroying() {
+  // TODO(crbug/976176): Move all access to |virtual_desktop_manager_| off of
+  // the ui thread to prevent reentrancy bugs due to COM objects pumping
+  // messages. For now, Reset() so COM object destructor is called before
+  // |this| is in the process of being deleted.
+  virtual_desktop_manager_.Reset();
   browser_window_property_manager_.reset();
   DesktopWindowTreeHostWin::HandleDestroying();
 }
@@ -126,10 +212,6 @@ void BrowserDesktopWindowTreeHostWin::HandleFrameChanged() {
   // Reinitialize the status bubble, since it needs to be initialized
   // differently depending on whether or not DWM composition is enabled
   browser_view_->InitStatusBubble();
-
-  // We need to update the glass region on or off before the base class adjusts
-  // the window region.
-  UpdateDWMFrame();
   DesktopWindowTreeHostWin::HandleFrameChanged();
 }
 
@@ -162,14 +244,18 @@ bool BrowserDesktopWindowTreeHostWin::PreHandleMSG(UINT message,
 void BrowserDesktopWindowTreeHostWin::PostHandleMSG(UINT message,
                                                     WPARAM w_param,
                                                     LPARAM l_param) {
-  HWND hwnd = GetHWND();
   switch (message) {
+    case WM_SETFOCUS: {
+      // GetWorkspace sets |workspace_|, so stash prev value.
+      std::string prev_workspace = workspace_.value_or("");
+      if (prev_workspace != GetWorkspace())
+        OnHostWorkspaceChanged();
+      break;
+    }
     case WM_CREATE:
-      minimize_button_metrics_.Init(hwnd);
+      minimize_button_metrics_.Init(GetHWND());
       break;
     case WM_WINDOWPOSCHANGED: {
-      UpdateDWMFrame();
-
       // Windows lies to us about the position of the minimize button before a
       // window is visible. We use this position to place the incognito avatar
       // in RTL mode, so when the window is shown, we need to re-layout and
@@ -188,25 +274,6 @@ void BrowserDesktopWindowTreeHostWin::PostHandleMSG(UINT message,
       }
       break;
     }
-    case WM_ERASEBKGND: {
-      gfx::Insets insets;
-      if (!did_gdi_clear_ && GetClientAreaInsets(&insets)) {
-        // This is necessary to avoid white flashing in the titlebar area around
-        // the minimize/maximize/close buttons.
-        DCHECK_EQ(0, insets.top());
-        HDC dc = GetDC(hwnd);
-        MARGINS margins = GetDWMFrameMargins();
-        RECT client_rect;
-        GetClientRect(hwnd, &client_rect);
-        HBRUSH brush = CreateSolidBrush(0);
-        RECT rect = {0, 0, client_rect.right, margins.cyTopHeight};
-        FillRect(dc, &rect, brush);
-        DeleteObject(brush);
-        ReleaseDC(hwnd, dc);
-        did_gdi_clear_ = true;
-      }
-      break;
-    }
     case WM_DWMCOLORIZATIONCOLORCHANGED: {
       // The activation border may have changed color.
       views::NonClientView* non_client_view = GetWidget()->non_client_view();
@@ -218,6 +285,9 @@ void BrowserDesktopWindowTreeHostWin::PostHandleMSG(UINT message,
 }
 
 views::FrameMode BrowserDesktopWindowTreeHostWin::GetFrameMode() const {
+  if (IsOpaqueHostedAppFrame())
+    return views::FrameMode::CUSTOM_DRAWN;
+
   const views::FrameMode system_frame_mode =
       ShouldCustomDrawSystemTitlebar()
           ? views::FrameMode::SYSTEM_DRAWN_NO_CONTROLS
@@ -246,6 +316,10 @@ bool BrowserDesktopWindowTreeHostWin::ShouldUseNativeFrame() const {
   // context of the BrowserView destructor.
   if (!browser_view_->browser())
     return false;
+
+  if (IsOpaqueHostedAppFrame())
+    return false;
+
   // We don't theme popup or app windows, so regardless of whether or not a
   // theme is active for normal browser windows, we don't want to use the custom
   // frame for popups/apps.
@@ -262,79 +336,13 @@ bool BrowserDesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent()
          views::DesktopWindowTreeHostWin::ShouldWindowContentsBeTransparent();
 }
 
-void BrowserDesktopWindowTreeHostWin::FrameTypeChanged() {
-  views::DesktopWindowTreeHostWin::FrameTypeChanged();
-  did_gdi_clear_ = false;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserDesktopWindowTreeHostWin, private:
-
-void BrowserDesktopWindowTreeHostWin::UpdateDWMFrame() {
-  // For "normal" windows on Aero, we always need to reset the glass area
-  // correctly, even if we're not currently showing the native frame (e.g.
-  // because a theme is showing), so we explicitly check for that case rather
-  // than checking browser_frame_->ShouldUseNativeFrame() here.  Using that here
-  // would mean we wouldn't reset the glass area to zero when moving from the
-  // native frame to an opaque frame, leading to graphical glitches behind the
-  // opaque frame.  Instead, we use that function below to tell us whether the
-  // frame is currently native or opaque.
-  if (!GetWidget()->client_view() || !browser_view_->IsBrowserTypeNormal() ||
-      !DesktopWindowTreeHostWin::ShouldUseNativeFrame())
-    return;
-
-  MARGINS margins = GetDWMFrameMargins();
-
-  DwmExtendFrameIntoClientArea(GetHWND(), &margins);
-}
-
-gfx::Insets
-BrowserDesktopWindowTreeHostWin::GetClientEdgeThicknesses() const {
-  // Maximized windows have no visible client edge; the content goes to
-  // the edge of the screen.  Restored windows on Windows 10 don't paint
-  // the full 3D client edge, but paint content right to the edge of the
-  // client area.
-  if (IsMaximized() ||
-      (base::win::GetVersion() >= base::win::VERSION_WIN10))
-    return gfx::Insets();
-
-  const ui::ThemeProvider* const tp = GetWidget()->GetThemeProvider();
-    return gfx::Insets(
-        0, tp->GetImageSkiaNamed(IDR_CONTENT_LEFT_SIDE)->width(),
-        tp->GetImageSkiaNamed(IDR_CONTENT_BOTTOM_CENTER)->height(),
-        tp->GetImageSkiaNamed(IDR_CONTENT_RIGHT_SIDE)->width());
-}
-
-MARGINS BrowserDesktopWindowTreeHostWin::GetDWMFrameMargins() const {
-  // Don't extend the glass in at all if it won't be visible.
-  if (!ShouldUseNativeFrame() || GetWidget()->IsFullscreen() ||
-      ShouldCustomDrawSystemTitlebar())
-    return MARGINS{0};
-
-  // The glass should extend to the bottom of the tabstrip.
-  HWND hwnd = GetHWND();
-  gfx::Rect tabstrip_bounds(
-      browser_frame_->GetBoundsForTabStrip(browser_view_->tabstrip()));
-  tabstrip_bounds =
-      display::win::ScreenWin::DIPToClientRect(hwnd, tabstrip_bounds);
-
-  // Extend inwards far enough to go under the semitransparent client edges.
-  const gfx::Insets thicknesses = GetClientEdgeThicknesses();
-  gfx::Point left_top = display::win::ScreenWin::DIPToClientPoint(
-      hwnd, gfx::Point(thicknesses.left(), thicknesses.top()));
-  gfx::Point right_bottom = display::win::ScreenWin::DIPToClientPoint(
-      hwnd, gfx::Point(thicknesses.right(), thicknesses.bottom()));
-
-  if (base::win::GetVersion() < base::win::VERSION_WIN8) {
-    // The 2 px (not DIP) at the inner edges of the glass are a light and
-    // dark line, so we must inset further to account for those.
-    constexpr gfx::Vector2d kDWMEdgeThickness(2, 2);
-    left_top += kDWMEdgeThickness;
-    right_bottom += kDWMEdgeThickness;
-  }
-
-  return MARGINS{left_top.x(), right_bottom.x(),
-                 tabstrip_bounds.bottom() + left_top.y(), right_bottom.y()};
+bool BrowserDesktopWindowTreeHostWin::IsOpaqueHostedAppFrame() const {
+  // TODO(https://crbug.com/868239): Support Windows 7 Aero glass for hosted app
+  // window titlebar controls.
+  return browser_view_->IsBrowserTypeHostedApp() &&
+         base::win::GetVersion() < base::win::Version::WIN10;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -349,6 +357,5 @@ BrowserDesktopWindowTreeHost*
         BrowserFrame* browser_frame) {
   return new BrowserDesktopWindowTreeHostWin(native_widget_delegate,
                                              desktop_native_widget_aura,
-                                             browser_view,
-                                             browser_frame);
+                                             browser_view, browser_frame);
 }

@@ -1,4 +1,6 @@
-dpapad@chromium.org
-michaelpg@chromium.org
+file://ui/webui/PLATFORM_OWNERS
+
+per-file *.mojom=set noparent
+per-file *.mojom=file://ipc/SECURITY_OWNERS
 
 # COMPONENT: UI>Browser>WebUI

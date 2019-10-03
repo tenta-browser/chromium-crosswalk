@@ -10,56 +10,91 @@
 
 namespace offline_pages {
 
-TEST(OfflinePageFeatureTest, OfflineBookmarks) {
-  // Enabled by default.
-  EXPECT_TRUE(offline_pages::IsOfflineBookmarksEnabled());
-
-  // Check if feature is correctly disabled by command-line flag.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(kOfflineBookmarksFeature);
-  EXPECT_FALSE(offline_pages::IsOfflineBookmarksEnabled());
-}
-
 TEST(OfflinePageFeatureTest, OffliningRecentPages) {
   // Enabled by default.
   EXPECT_TRUE(offline_pages::IsOffliningRecentPagesEnabled());
 
-  // Check if feature is correctly disabled by command-line flag.
+  // Check if helper method works correctly when the features is disabled.
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndDisableFeature(kOffliningRecentPagesFeature);
   EXPECT_FALSE(offline_pages::IsOffliningRecentPagesEnabled());
 }
 
-TEST(OfflinePageFeatureTest, OfflinePagesSharing) {
-  // This feature is disabled by default.
-  EXPECT_FALSE(offline_pages::IsOfflinePagesSharingEnabled());
+TEST(OfflinePageFeatureTest, OfflinePagesLivePageSharing) {
+  // Disabled by default.
+  EXPECT_FALSE(
+      base::FeatureList::IsEnabled(kOfflinePagesLivePageSharingFeature));
 
-  // Check if feature is correctly disabled by command-line flag.
+  // Check if helper method works correctly when the feature is disabled.
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(kOfflinePagesSharingFeature);
-  EXPECT_TRUE(offline_pages::IsOfflinePagesSharingEnabled());
-}
-
-TEST(OfflinePageFeatureTest, OfflinePagesSvelteConcurrentLoading) {
-  // This feature is disabled by default.
-  EXPECT_FALSE(offline_pages::IsOfflinePagesSvelteConcurrentLoadingEnabled());
-
-  // Check if feature is correctly enabled by command-line flag.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      kOfflinePagesSvelteConcurrentLoadingFeature);
-  EXPECT_TRUE(offline_pages::IsOfflinePagesSvelteConcurrentLoadingEnabled());
+  scoped_feature_list.InitAndEnableFeature(kOfflinePagesLivePageSharingFeature);
+  EXPECT_TRUE(offline_pages::IsOfflinePagesLivePageSharingEnabled());
 }
 
 TEST(OfflinePageFeatureTest, OfflinePagesLoadSignalCollecting) {
-  // This feature is disabled by default.
+  // Disabled by default.
   EXPECT_FALSE(offline_pages::IsOfflinePagesLoadSignalCollectingEnabled());
 
-  // Check if feature is correctly enabled by command-line flag.
+  // Check if helper method works correctly when the features is enabled.
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeature(
       kOfflinePagesLoadSignalCollectingFeature);
   EXPECT_TRUE(offline_pages::IsOfflinePagesLoadSignalCollectingEnabled());
+}
+
+TEST(OfflinePageFeatureTest, OfflinePagesPrefetching) {
+  // Enabled by default.
+  EXPECT_EQ(offline_pages::IsOfflinePagesEnabled(),
+            offline_pages::IsPrefetchingOfflinePagesEnabled());
+
+  // Check if helper method works correctly when the features is disabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(kPrefetchingOfflinePagesFeature);
+  EXPECT_FALSE(offline_pages::IsPrefetchingOfflinePagesEnabled());
+}
+
+TEST(OfflinePageFeatureTest, OfflinePagesInDownloadHomeOpenInCct) {
+  // Enabled by default.
+  EXPECT_TRUE(offline_pages::ShouldOfflinePagesInDownloadHomeOpenInCct());
+
+  // Check if helper method works correctly when the features is disabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      kOfflinePagesInDownloadHomeOpenInCctFeature);
+  EXPECT_FALSE(offline_pages::ShouldOfflinePagesInDownloadHomeOpenInCct());
+}
+
+TEST(OfflinePageFeatureTest, OfflinePagesDescriptiveFailStatus) {
+  // Disabled by default.
+  EXPECT_FALSE(offline_pages::IsOfflinePagesDescriptiveFailStatusEnabled());
+
+  // Check if helper method works correctly when the features is enabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      kOfflinePagesDescriptiveFailStatusFeature);
+  EXPECT_TRUE(offline_pages::IsOfflinePagesDescriptiveFailStatusEnabled());
+}
+
+TEST(OfflinePageFeatureTest, OfflinePagesDescriptivePendingStatus) {
+  // Enabled by default.
+  EXPECT_TRUE(offline_pages::IsOfflinePagesDescriptivePendingStatusEnabled());
+
+  // Check if helper method works correctly when the features is enabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      kOfflinePagesDescriptivePendingStatusFeature);
+  EXPECT_FALSE(offline_pages::IsOfflinePagesDescriptivePendingStatusEnabled());
+}
+
+TEST(OfflinePageFeatureTest, AlternateDinoPage) {
+  // Disabled by default.
+  EXPECT_FALSE(offline_pages::ShouldShowAlternateDinoPage());
+
+  // Check if helper method works correctly when the features is enabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      kOfflinePagesShowAlternateDinoPageFeature);
+  EXPECT_TRUE(offline_pages::ShouldShowAlternateDinoPage());
 }
 
 }  // namespace offline_pages

@@ -5,12 +5,13 @@
 #ifndef CHROMECAST_MEDIA_CMA_BACKEND_AUDIO_DECODER_FOR_MIXER_H_
 #define CHROMECAST_MEDIA_CMA_BACKEND_AUDIO_DECODER_FOR_MIXER_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "base/bind.h"
 #include "base/containers/circular_deque.h"
 #include "base/location.h"
-#include "chromecast/media/cma/backend/stream_mixer_input.h"
+#include "chromecast/media/cma/backend/buffering_mixer_source.h"
 #include "chromecast/media/cma/decoder/cast_audio_decoder.h"
 #include "chromecast/public/media/decoder_config.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
@@ -29,25 +30,26 @@ class AudioRendererAlgorithm;
 namespace chromecast {
 namespace media {
 class DecoderBufferBase;
-class MediaPipelineBackendAudio;
+class MediaPipelineBackendForMixer;
 
 // AudioDecoder implementation that streams decoded stream to the StreamMixer.
 class AudioDecoderForMixer : public MediaPipelineBackend::AudioDecoder,
-                             public StreamMixerInput::Delegate {
+                             public BufferingMixerSource::Delegate {
  public:
   using BufferStatus = MediaPipelineBackend::BufferStatus;
 
-  explicit AudioDecoderForMixer(MediaPipelineBackendAudio* backend);
+  explicit AudioDecoderForMixer(MediaPipelineBackendForMixer* backend);
   ~AudioDecoderForMixer() override;
 
-  void Initialize();
-  bool Start(int64_t start_pts);
-  void Stop();
-  bool Pause();
-  bool Resume();
-  bool SetPlaybackRate(float rate);
-
-  int64_t GetCurrentPts() const;
+  virtual void Initialize();
+  virtual bool Start(int64_t pts, bool start_playback_asap);
+  void StartPlaybackAt(int64_t timestamp);
+  virtual void Stop();
+  virtual bool Pause();
+  virtual bool Resume();
+  virtual float SetPlaybackRate(float rate);
+  virtual bool GetTimestampedPts(int64_t* timestamp, int64_t* pts) const;
+  virtual int64_t GetCurrentPts() const;
 
   // MediaPipelineBackend::AudioDecoder implementation:
   void SetDelegate(MediaPipelineBackend::Decoder::Delegate* delegate) override;
@@ -57,27 +59,44 @@ class AudioDecoderForMixer : public MediaPipelineBackend::AudioDecoder,
   bool SetVolume(float multiplier) override;
   RenderingDelay GetRenderingDelay() override;
 
+  // This allows for very small changes in the rate of audio playback that are
+  // (supposedly) imperceptible.
+  float SetAvSyncPlaybackRate(float rate);
+  void RestartPlaybackAt(int64_t pts, int64_t timestamp);
+
+  RenderingDelay GetMixerRenderingDelay();
+
  private:
+  friend class MockAudioDecoderForMixer;
+  friend class AvSyncTest;
+
   struct RateShifterInfo {
     explicit RateShifterInfo(float playback_rate);
 
-    double rate;
-    double input_frames;
-    int64_t output_frames;
+    const double rate;
+    double input_frames = 0;
+    int64_t output_frames = 0;
+    // Tracks the PTS of the end of data pushed at this rate.
+    int64_t end_pts = INT64_MIN;
   };
 
-  // StreamMixerInput::Delegate implementation:
-  void OnWritePcmCompletion(BufferStatus status,
-                            const RenderingDelay& delay) override;
+  // BufferingMixerSource::Delegate implementation:
+  void OnWritePcmCompletion(RenderingDelay delay) override;
   void OnMixerError(MixerError error) override;
+  void OnEos() override;
+  void OnAudioReadyForPlayback() override;
 
   void CleanUpPcm();
+  void ResetMixerInputForNewSampleRate(int sample_rate);
   void CreateDecoder();
   void CreateRateShifter(int samples_per_second);
+
   void OnDecoderInitialized(bool success);
   void OnBufferDecoded(uint64_t input_bytes,
+                       bool has_config,
                        CastAudioDecoder::Status status,
-                       const scoped_refptr<DecoderBufferBase>& decoded);
+                       const AudioConfig& config,
+                       scoped_refptr<DecoderBufferBase> decoded);
   void CheckBufferComplete();
   void PushRateShifted();
   void PushMorePcm();
@@ -86,16 +105,17 @@ class AudioDecoderForMixer : public MediaPipelineBackend::AudioDecoder,
   bool ShouldStartClock() const;
   void UpdateStatistics(Statistics delta);
 
-  MediaPipelineBackendAudio* const backend_;
+  MediaPipelineBackendForMixer* const backend_;
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  MediaPipelineBackend::Decoder::Delegate* delegate_;
+  MediaPipelineBackend::Decoder::Delegate* delegate_ = nullptr;
 
   Statistics stats_;
 
-  bool pending_buffer_complete_;
-  bool got_eos_;
-  bool pushed_eos_;
-  bool mixer_error_;
+  bool pending_buffer_complete_ = false;
+  bool got_eos_ = false;
+  bool pushed_eos_ = false;
+  bool mixer_error_ = false;
+  bool paused_ = false;
 
   AudioConfig config_;
   std::unique_ptr<CastAudioDecoder> decoder_;
@@ -104,18 +124,19 @@ class AudioDecoderForMixer : public MediaPipelineBackend::AudioDecoder,
   base::circular_deque<RateShifterInfo> rate_shifter_info_;
   std::unique_ptr<::media::AudioBus> rate_shifter_output_;
 
-  int64_t first_push_pts_;
-  int64_t last_push_pts_;
-  int64_t last_push_timestamp_;
-  int64_t last_push_pts_length_;
-  int64_t paused_pts_;
-
-  std::unique_ptr<StreamMixerInput> mixer_input_;
+  std::unique_ptr<BufferingMixerSource, BufferingMixerSource::Deleter>
+      mixer_input_;
   RenderingDelay last_mixer_delay_;
-  int64_t pending_output_frames_;
-  float volume_multiplier_;
+  int64_t pending_output_frames_ = -1;
+  float volume_multiplier_ = 1.0f;
+
+  int64_t last_push_pts_ = INT64_MIN;
+  int64_t last_push_playout_timestamp_ = INT64_MIN;
 
   scoped_refptr<::media::AudioBufferMemoryPool> pool_;
+
+  int64_t playback_start_pts_ = 0;
+  bool start_playback_asap_ = false;
 
   base::WeakPtrFactory<AudioDecoderForMixer> weak_factory_;
 

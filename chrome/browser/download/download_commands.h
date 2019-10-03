@@ -8,10 +8,14 @@
 #include "base/gtest_prod_util.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/browser.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/page_navigator.h"
 #include "ui/gfx/image/image.h"
+
+#if !defined(OS_ANDROID)
+class Browser;
+#endif
+
+class DownloadUIModel;
 
 class DownloadCommands {
  public:
@@ -31,11 +35,10 @@ class DownloadCommands {
     ANNOTATE,             // Open an app to annotate the image.
   };
 
-  // |download_item| must outlive DownloadCommands.
-  explicit DownloadCommands(content::DownloadItem* download_item);
+  // |model| must outlive DownloadCommands.
+  // TODO(shaktisahu): Investigate if model lifetime is shorter than |this|.
+  explicit DownloadCommands(DownloadUIModel* model);
   virtual ~DownloadCommands();
-
-  gfx::Image GetCommandIcon(Command command);
 
   bool IsCommandEnabled(Command command) const;
   bool IsCommandChecked(Command command) const;
@@ -45,21 +48,23 @@ class DownloadCommands {
 #if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
   bool IsDownloadPdf() const;
   bool CanOpenPdfInSystemViewer() const;
+  Browser* GetBrowser() const;
 #endif
+
+  GURL GetLearnMoreURLForInterruptedDownload() const;
+  void CopyFileAsImageToClipboard();
+  bool CanBeCopiedToClipboard() const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(
       DownloadCommandsTest,
       GetLearnMoreURLForInterruptedDownload_ContainsContext);
 
-  Browser* GetBrowser() const;
-  int GetCommandIconId(Command command) const;
-  GURL GetLearnMoreURLForInterruptedDownload() const;
-  void CopyFileAsImageToClipboard();
-
-  content::DownloadItem* const download_item_;
+  DownloadUIModel* model_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+
+  DISALLOW_COPY_AND_ASSIGN(DownloadCommands);
 };
 
 #endif  // CHROME_BROWSER_DOWNLOAD_DOWNLOAD_COMMANDS_H_

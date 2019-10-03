@@ -10,16 +10,15 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/BrowsingHistoryBridge_jni.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "components/history/core/browser/browsing_history_service.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/url_formatter/url_formatter.h"
-#include "jni/BrowsingHistoryBridge_jni.h"
 
 using history::BrowsingHistoryService;
 
@@ -41,8 +40,8 @@ BrowsingHistoryBridge::BrowsingHistoryBridge(JNIEnv* env,
   history::HistoryService* local_history = HistoryServiceFactory::GetForProfile(
       profile_, ServiceAccessType::EXPLICIT_ACCESS);
   syncer::SyncService* sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile_);
-  browsing_history_service_ = base::MakeUnique<BrowsingHistoryService>(
+      ProfileSyncServiceFactory::GetForProfile(profile_);
+  browsing_history_service_ = std::make_unique<BrowsingHistoryService>(
       this, local_history, sync_service);
 
   j_history_service_obj_.Reset(env, obj);

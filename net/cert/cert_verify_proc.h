@@ -17,6 +17,7 @@
 
 namespace net {
 
+class CertNetFetcher;
 class CertVerifyResult;
 class CRLSet;
 class X509Certificate;
@@ -28,8 +29,45 @@ typedef std::vector<scoped_refptr<X509Certificate> > CertificateList;
 class NET_EXPORT CertVerifyProc
     : public base::RefCountedThreadSafe<CertVerifyProc> {
  public:
-  // Creates and returns the default CertVerifyProc.
-  static scoped_refptr<CertVerifyProc> CreateDefault();
+  enum VerifyFlags {
+    // If set, enables online revocation checking via CRLs and OCSP for the
+    // certificate chain.
+    VERIFY_REV_CHECKING_ENABLED = 1 << 0,
+
+    // If set, this is equivalent to VERIFY_REV_CHECKING_ENABLED, in that it
+    // enables online revocation checking via CRLs or OCSP, but only
+    // for certificates issued by non-public trust anchors. Failure to check
+    // revocation is treated as a hard failure.
+    // Note: If VERIFY_CERT_IO_ENABLE is not also supplied, certificates
+    // that chain to local trust anchors will likely fail - for example, due to
+    // lacking fresh cached revocation issue (Windows) or because OCSP stapling
+    // can only provide information for the leaf, and not for any
+    // intermediates.
+    VERIFY_REV_CHECKING_REQUIRED_LOCAL_ANCHORS = 1 << 1,
+
+    // If set, certificates with SHA-1 signatures will be allowed, but only if
+    // they are issued by non-public trust anchors.
+    VERIFY_ENABLE_SHA1_LOCAL_ANCHORS = 1 << 2,
+
+    // If set, disables the policy enforcement described at
+    // https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
+    VERIFY_DISABLE_SYMANTEC_ENFORCEMENT = 1 << 3,
+  };
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class NameNormalizationResult {
+    kError = 0,
+    kByteEqual = 1,
+    kNormalized = 2,
+    kChainLengthOne = 3,
+    kMaxValue = kChainLengthOne
+  };
+
+  // Creates and returns the default CertVerifyProc. |cert_net_fetcher| may not
+  // be used, depending on the implementation.
+  static scoped_refptr<CertVerifyProc> CreateDefault(
+      scoped_refptr<CertNetFetcher> cert_net_fetcher);
 
   // Verifies the certificate against the given hostname as an SSL server
   // certificate. Returns OK if successful or an error code upon failure.
@@ -42,6 +80,9 @@ class NET_EXPORT CertVerifyProc
   //
   // |ocsp_response|, if non-empty, is a stapled OCSP response to use.
   //
+  // |sct_list|, if non-empty, is a SignedCertificateTimestampList from the TLS
+  // extension as described in RFC6962 section 3.3.1.
+  //
   // |flags| is bitwise OR'd of VerifyFlags:
   //
   // If VERIFY_REV_CHECKING_ENABLED is set in |flags|, online certificate
@@ -49,11 +90,9 @@ class NET_EXPORT CertVerifyProc
   // based revocation checking is always enabled, regardless of this flag, if
   // |crl_set| is given.
   //
-  // If VERIFY_EV_CERT is set in |flags| too, EV certificate verification is
-  // performed.
-  //
-  // |crl_set| points to an optional CRLSet structure which can be used to
-  // avoid revocation checks over the network.
+  // |crl_set|, which is required, points to an CRLSet structure which can be
+  // used to avoid revocation checks over the network.  If you do not have one
+  // handy, use CRLSet::BuiltinCRLSet().
   //
   // |additional_trust_anchors| lists certificates that can be trusted when
   // building a certificate chain, in addition to the anchors known to the
@@ -61,6 +100,7 @@ class NET_EXPORT CertVerifyProc
   int Verify(X509Certificate* cert,
              const std::string& hostname,
              const std::string& ocsp_response,
+             const std::string& sct_list,
              int flags,
              CRLSet* crl_set,
              const CertificateList& additional_trust_anchors,
@@ -71,14 +111,20 @@ class NET_EXPORT CertVerifyProc
   // passed to Verify() is ignored when this returns false.
   virtual bool SupportsAdditionalTrustAnchors() const = 0;
 
-  // Returns true if the implementation supports passing a stapled OCSP response
-  // to the Verify() call. The |ocsp_response| parameter passed to Verify() is
-  // ignored when this returns false.
-  virtual bool SupportsOCSPStapling() const = 0;
-
  protected:
   CertVerifyProc();
   virtual ~CertVerifyProc();
+
+  // Record a histogram of whether Name normalization was used in verifying the
+  // chain. This should only be called for successfully validated chains.
+  static void LogNameNormalizationResult(const std::string& histogram_suffix,
+                                         NameNormalizationResult result);
+
+  // Record a histogram of whether Name normalization was used in verifying the
+  // chain. This should only be called for successfully validated chains.
+  static void LogNameNormalizationMetrics(const std::string& histogram_suffix,
+                                          X509Certificate* verified_cert,
+                                          bool is_issued_by_known_root);
 
  private:
   friend class base::RefCountedThreadSafe<CertVerifyProc>;
@@ -86,6 +132,7 @@ class NET_EXPORT CertVerifyProc
   FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest, TestHasTooLongValidity);
   FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest,
                            VerifyRejectsSHA1AfterDeprecationLegacyMode);
+  FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest, SymantecCertsRejected);
 
   // Performs the actual verification using the desired underlying
   //
@@ -110,17 +157,11 @@ class NET_EXPORT CertVerifyProc
   virtual int VerifyInternal(X509Certificate* cert,
                              const std::string& hostname,
                              const std::string& ocsp_response,
+                             const std::string& sct_list,
                              int flags,
                              CRLSet* crl_set,
                              const CertificateList& additional_trust_anchors,
                              CertVerifyResult* verify_result) = 0;
-
-  // Returns true if |cert| is explicitly blacklisted.
-  static bool IsBlacklisted(X509Certificate* cert);
-
-  // IsPublicKeyBlacklisted returns true iff one of |public_key_hashes| (which
-  // are hashes of SubjectPublicKeyInfo structures) is explicitly blocked.
-  static bool IsPublicKeyBlacklisted(const HashValueVector& public_key_hashes);
 
   // HasNameConstraintsViolation returns true iff one of |public_key_hashes|
   // (which are hashes of SubjectPublicKeyInfo structures) has name constraints
@@ -132,10 +173,11 @@ class NET_EXPORT CertVerifyProc
       const std::vector<std::string>& ip_addrs);
 
   // The CA/Browser Forum's Baseline Requirements specify maximum validity
-  // periods (https://cabforum.org/Baseline_Requirements_V1.pdf):
+  // periods (https://cabforum.org/baseline-requirements-documents/).
   //
   // For certificates issued after 1 July 2012: 60 months.
   // For certificates issued after 1 April 2015: 39 months.
+  // For certificates issued after 1 March 2018: 825 days.
   //
   // For certificates issued before the BRs took effect, there were no
   // guidelines, but clamp them at a maximum of 10 year validity, with the
@@ -143,9 +185,9 @@ class NET_EXPORT CertVerifyProc
   // (i.e. by 1 July 2019).
   static bool HasTooLongValidity(const X509Certificate& cert);
 
-  // Emergency kill-switch for SHA-1 deprecation. Disabled by default.
-  static const base::Feature kSHA1LegacyMode;
-  const bool sha1_legacy_mode_enabled;
+  // Feature flag affecting the Legacy Symantec PKI deprecation, documented
+  // at https://g.co/chrome/symantecpkicerts
+  static const base::Feature kLegacySymantecPKIEnforcement;
 
   DISALLOW_COPY_AND_ASSIGN(CertVerifyProc);
 };

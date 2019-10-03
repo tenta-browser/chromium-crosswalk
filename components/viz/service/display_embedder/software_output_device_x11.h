@@ -5,13 +5,12 @@
 #ifndef COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_SOFTWARE_OUTPUT_DEVICE_X11_H_
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_EMBEDDER_SOFTWARE_OUTPUT_DEVICE_X11_H_
 
-#include <X11/Xlib.h>
-
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "components/viz/service/display/software_output_device.h"
 #include "components/viz/service/viz_service_export.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_types.h"
 
 namespace viz {
@@ -29,6 +28,9 @@ class VIZ_SERVICE_EXPORT SoftwareOutputDeviceX11 : public SoftwareOutputDevice {
   XDisplay* display_;
   GC gc_;
   XWindowAttributes attributes_;
+  // If nonzero, indicates that the widget should be drawn over its
+  // parent-relative background.
+  int composite_ = 0;
   THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(SoftwareOutputDeviceX11);

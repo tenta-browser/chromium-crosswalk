@@ -5,9 +5,10 @@
 #ifndef IOS_WEB_PUBLIC_TEST_FAKES_TEST_NAVIGATION_MANAGER_H_
 #define IOS_WEB_PUBLIC_TEST_FAKES_TEST_NAVIGATION_MANAGER_H_
 
-#import "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_item_list.h"
-#import "ios/web/public/navigation_manager.h"
+#include "base/callback.h"
+#include "ios/web/public/deprecated/navigation_item_list.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 #include "ui/base/page_transition_types.h"
 
 namespace web {
@@ -42,10 +43,13 @@ class TestNavigationManager : public NavigationManager {
   void GoForward() override;
   void GoToIndex(int index) override;
   void Reload(ReloadType reload_type, bool check_for_reposts) override;
+  void ReloadWithUserAgentType(UserAgentType user_agent_type) override;
   NavigationItemList GetBackwardItems() const override;
   NavigationItemList GetForwardItems() const override;
   void Restore(int last_committed_item_index,
                std::vector<std::unique_ptr<NavigationItem>> items) override;
+  bool IsRestoreSessionInProgress() const override;
+  void AddRestoreCompletionCallback(base::OnceClosure callback) override;
   void CopyStateFromAndPrune(const NavigationManager* source) override;
   bool CanPruneAllButLastCommittedItem() const override;
 
@@ -56,6 +60,9 @@ class TestNavigationManager : public NavigationManager {
 
   // Sets a value for pending item that will be returned by GetPendingItem().
   void SetPendingItem(NavigationItem* item);
+
+  // Sets a value for the index that will be returned by GetPendingItemIndex().
+  void SetPendingItemIndex(int index);
 
   // Sets a value for visible item that will be returned by GetVisibleItem().
   void SetVisibleItem(NavigationItem* item);
@@ -83,6 +90,7 @@ class TestNavigationManager : public NavigationManager {
   int items_index_;
   // Individual backing instance variables for Set* test set up methods.
   NavigationItem* pending_item_;
+  int pending_item_index_;
   NavigationItem* last_committed_item_;
   NavigationItem* visible_item_;
   web::BrowserState* browser_state_;

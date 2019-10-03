@@ -4,27 +4,28 @@
 
 #include "chrome/browser/media/android/router/media_router_dialog_controller_android.h"
 
+#include <vector>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/android/features/media_router/jni_headers/ChromeMediaRouterDialogController_jni.h"
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/media/android/router/media_router_android.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
 #include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/common/media_router/media_source.h"
-#include "chrome/common/media_router/media_source_helper.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/presentation_request.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "device/vr/features/features.h"
-#include "jni/ChromeMediaRouterDialogController_jni.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(
-    media_router::MediaRouterDialogControllerAndroid);
+#include "device/vr/buildflags/buildflags.h"
+#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
@@ -34,8 +35,8 @@ using content::WebContents;
 namespace media_router {
 
 // static
-MediaRouterDialogControllerAndroid*
-MediaRouterDialogControllerAndroid::GetOrCreateForWebContents(
+MediaRouterDialogController*
+MediaRouterDialogController::GetOrCreateForWebContents(
     WebContents* web_contents) {
   DCHECK(web_contents);
   // This call does nothing if the controller already exists.
@@ -60,8 +61,9 @@ void MediaRouterDialogControllerAndroid::OnSinkSelected(
 #ifndef NDEBUG
   // Verify that there was a request containing the source id the sink was
   // selected for.
-  auto sources =
-      MediaSourcesForPresentationUrls(presentation_request.presentation_urls);
+  std::vector<MediaSource> sources;
+  for (const auto& url : presentation_request.presentation_urls)
+    sources.push_back(MediaSource::ForPresentationUrl(url));
   bool is_source_from_request = false;
   for (const auto& source : sources) {
     if (source.id() == source_id) {
@@ -72,18 +74,15 @@ void MediaRouterDialogControllerAndroid::OnSinkSelected(
   DCHECK(is_source_from_request);
 #endif  // NDEBUG
 
-  std::vector<MediaRouteResponseCallback> route_response_callbacks;
-  route_response_callbacks.push_back(
-      base::BindOnce(&StartPresentationContext::HandleRouteResponse,
-                     std::move(start_presentation_context)));
-
   content::BrowserContext* browser_context = initiator()->GetBrowserContext();
-  MediaRouter* router = MediaRouterFactory::GetApiForBrowserContext(
-      browser_context);
-  router->CreateRoute(source_id, ConvertJavaStringToUTF8(env, jsink_id),
-                      presentation_request.frame_origin, initiator(),
-                      std::move(route_response_callbacks), base::TimeDelta(),
-                      browser_context->IsOffTheRecord());
+  MediaRouter* router =
+      MediaRouterFactory::GetApiForBrowserContext(browser_context);
+  router->CreateRoute(
+      source_id, ConvertJavaStringToUTF8(env, jsink_id),
+      presentation_request.frame_origin, initiator(),
+      base::BindOnce(&StartPresentationContext::HandleRouteResponse,
+                     std::move(start_presentation_context)),
+      base::TimeDelta(), browser_context->IsOffTheRecord());
 }
 
 void MediaRouterDialogControllerAndroid::OnRouteClosed(
@@ -113,8 +112,9 @@ void MediaRouterDialogControllerAndroid::OnMediaSourceNotSupported(
   if (!request)
     return;
 
-  request->InvokeErrorCallback(content::PresentationError(
-      content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS, "No screens found."));
+  request->InvokeErrorCallback(blink::mojom::PresentationError(
+      blink::mojom::PresentationErrorType::NO_AVAILABLE_SCREENS,
+      "No screens found."));
 }
 
 void MediaRouterDialogControllerAndroid::CancelPresentationRequest() {
@@ -122,8 +122,8 @@ void MediaRouterDialogControllerAndroid::CancelPresentationRequest() {
   if (!request)
     return;
 
-  request->InvokeErrorCallback(content::PresentationError(
-      content::PRESENTATION_ERROR_PRESENTATION_REQUEST_CANCELLED,
+  request->InvokeErrorCallback(blink::mojom::PresentationError(
+      blink::mojom::PresentationErrorType::PRESENTATION_REQUEST_CANCELLED,
       "Dialog closed."));
 }
 
@@ -135,20 +135,23 @@ MediaRouterDialogControllerAndroid::MediaRouterDialogControllerAndroid(
       env, reinterpret_cast<jlong>(this)));
 }
 
-MediaRouterDialogControllerAndroid::~MediaRouterDialogControllerAndroid() {
-}
+MediaRouterDialogControllerAndroid::~MediaRouterDialogControllerAndroid() {}
 
 void MediaRouterDialogControllerAndroid::CreateMediaRouterDialog() {
   // TODO(crbug.com/736568): Re-enable dialog in VR.
-  if (vr::VrTabHelper::IsInVr(initiator())) {
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          initiator(),
+          vr::UiSuppressedElement::kMediaRouterPresentationRequest)) {
     CancelPresentationRequest();
     return;
   }
 
   JNIEnv* env = base::android::AttachCurrentThread();
 
-  auto sources = MediaSourcesForPresentationUrls(
-      start_presentation_context_->presentation_request().presentation_urls);
+  std::vector<MediaSource> sources;
+  for (const auto& url :
+       start_presentation_context_->presentation_request().presentation_urls)
+    sources.push_back(MediaSource::ForPresentationUrl(url));
 
   // If it's a single route with the same source, show the controller dialog
   // instead of the device picker.
@@ -197,5 +200,7 @@ bool MediaRouterDialogControllerAndroid::IsShowingMediaRouterDialog() const {
   return Java_ChromeMediaRouterDialogController_isShowingDialog(
       env, java_dialog_controller_);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(MediaRouterDialogControllerAndroid)
 
 }  // namespace media_router

@@ -17,28 +17,40 @@
 #include "content/common/content_param_traits_macros.h"
 #include "content/common/cursors/webcursor.h"
 #include "ipc/ipc_mojo_param_traits.h"
+#include "net/base/hash_value.h"
 #include "storage/common/blob_storage/blob_handle.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "ui/accessibility/ax_modes.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "ui/accessibility/ax_mode.h"
 
 namespace blink {
+class PolicyValue;
 class MessagePortChannel;
+struct TransferableMessage;
 }
+
+namespace content {
+struct FrameMsg_ViewChanged_Params;
+struct RecordTabSwitchTimeRequest;
+}
+
+namespace viz {
+class FrameSinkId;
+class LocalSurfaceId;
+class LocalSurfaceIdAllocation;
+class SurfaceId;
+class SurfaceInfo;
+}  // namespace viz
 
 namespace IPC {
 
 template <>
-struct ParamTraits<content::WebCursor> {
+struct CONTENT_EXPORT ParamTraits<content::WebCursor> {
   typedef content::WebCursor param_type;
-  static void Write(base::Pickle* m, const param_type& p) { p.Serialize(m); }
+  static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
-                   param_type* r) {
-    return r->Deserialize(iter);
-  }
-  static void Log(const param_type& p, std::string* l) {
-    l->append("<WebCursor>");
-  }
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
 };
 
 typedef const blink::WebInputEvent* WebInputEventPointer;
@@ -57,7 +69,18 @@ template <>
 struct CONTENT_EXPORT ParamTraits<blink::MessagePortChannel> {
   typedef blink::MessagePortChannel param_type;
   static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m, base::PickleIterator* iter,
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<blink::PolicyValue> {
+  typedef blink::PolicyValue param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
                    param_type* r);
   static void Log(const param_type& p, std::string* l);
 };
@@ -75,6 +98,98 @@ struct CONTENT_EXPORT ParamTraits<ui::AXMode> {
 template <>
 struct CONTENT_EXPORT ParamTraits<scoped_refptr<storage::BlobHandle>> {
   typedef scoped_refptr<storage::BlobHandle> param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<
+    scoped_refptr<base::RefCountedData<blink::TransferableMessage>>> {
+  typedef scoped_refptr<base::RefCountedData<blink::TransferableMessage>>
+      param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<content::FrameMsg_ViewChanged_Params> {
+  using param_type = content::FrameMsg_ViewChanged_Params;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* p);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<viz::FrameSinkId> {
+  typedef viz::FrameSinkId param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<viz::LocalSurfaceId> {
+  typedef viz::LocalSurfaceId param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<viz::LocalSurfaceIdAllocation> {
+  typedef viz::LocalSurfaceIdAllocation param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<viz::SurfaceId> {
+  typedef viz::SurfaceId param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<viz::SurfaceInfo> {
+  typedef viz::SurfaceInfo param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<net::SHA256HashValue> {
+  typedef net::SHA256HashValue param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<content::RecordTabSwitchTimeRequest> {
+  using param_type = content::RecordTabSwitchTimeRequest;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,

@@ -9,14 +9,12 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/controls/button/button.h"
 
 class Profile;
-
-namespace gfx {
-class FontList;
-}
+enum class OmniboxTint;
 
 namespace views {
 class Label;
@@ -33,34 +31,35 @@ class Label;
 // couldn't bring myself to use such a long name.
 class KeywordHintView : public views::Button {
  public:
-  KeywordHintView(views::ButtonListener* listener,
-                  Profile* profile,
-                  const gfx::FontList& font_list,
-                  const gfx::FontList& chip_font_list,
-                  SkColor text_color,
-                  SkColor background_color);
+  KeywordHintView(LocationBarView* parent, Profile* profile);
   ~KeywordHintView() override;
 
   void SetKeyword(const base::string16& keyword);
 
- private:
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Insets GetInsets() const override;
   // The minimum size is just big enough to show the tab.
   gfx::Size GetMinimumSize() const override;
-  void Layout() override;
   const char* GetClassName() const override;
+  void Layout() override;
+  gfx::Size CalculatePreferredSize() const override;
+  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
 
-  views::Label* CreateLabel(const gfx::FontList& font_list,
-                            SkColor text_color,
-                            SkColor background_color);
+  void OnThemeChanged() override;
 
-  Profile* profile_;
+ private:
+  // Creates a label for non-chip text.
+  views::Label* CreateLabel(SkColor text_color, SkColor background_color);
 
-  views::Label* leading_label_;
-  views::View* chip_container_;
-  views::Label* chip_label_;
-  views::Label* trailing_label_;
+  int GetCornerRadius() const;
+
+  LocationBarView* location_bar_view_ = nullptr;
+  Profile* profile_ = nullptr;
+
+  views::Label* leading_label_ = nullptr;
+  views::View* chip_container_ = nullptr;
+  views::Label* chip_label_ = nullptr;
+  views::Label* trailing_label_ = nullptr;
 
   base::string16 keyword_;
 

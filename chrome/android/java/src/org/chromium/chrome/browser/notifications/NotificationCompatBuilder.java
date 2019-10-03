@@ -9,19 +9,34 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
+import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.widget.RemoteViews;
 
+import org.chromium.base.Log;
+import org.chromium.chrome.browser.notifications.channels.ChannelsInitializer;
+
 /**
  * Wraps a NotificationCompat.Builder object.
  */
 public class NotificationCompatBuilder implements ChromeNotificationBuilder {
+    private static final String TAG = "NotifCompatBuilder";
     private final NotificationCompat.Builder mBuilder;
+    private final NotificationMetadata mMetadata;
 
-    public NotificationCompatBuilder(Context context) {
-        mBuilder = new NotificationCompat.Builder(context);
+    NotificationCompatBuilder(Context context, String channelId,
+            ChannelsInitializer channelsInitializer, NotificationMetadata metadata) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            channelsInitializer.safeInitialize(channelId);
+        }
+        mBuilder = new NotificationCompat.Builder(context, channelId);
+        mMetadata = metadata;
+        if (mMetadata != null) {
+            mBuilder.setDeleteIntent(
+                    NotificationIntentInterceptor.getDefaultDeletePendingIntent(mMetadata));
+        }
     }
 
     @Override
@@ -33,6 +48,16 @@ public class NotificationCompatBuilder implements ChromeNotificationBuilder {
     @Override
     public ChromeNotificationBuilder setContentIntent(PendingIntent contentIntent) {
         mBuilder.setContentIntent(contentIntent);
+        return this;
+    }
+
+    @Override
+    public ChromeNotificationBuilder setContentIntent(PendingIntentProvider contentIntent) {
+        assert mMetadata != null;
+        PendingIntent pendingIntent = NotificationIntentInterceptor.createInterceptPendingIntent(
+                NotificationIntentInterceptor.IntentType.CONTENT_INTENT, 0 /* intentId */,
+                mMetadata, contentIntent);
+        mBuilder.setContentIntent(pendingIntent);
         return this;
     }
 
@@ -57,6 +82,12 @@ public class NotificationCompatBuilder implements ChromeNotificationBuilder {
     @Override
     public ChromeNotificationBuilder setSmallIcon(Icon icon) {
         assert false; // unused
+        return this;
+    }
+
+    @Override
+    public ChromeNotificationBuilder setColor(int argb) {
+        mBuilder.setColor(argb);
         return this;
     }
 
@@ -115,7 +146,25 @@ public class NotificationCompatBuilder implements ChromeNotificationBuilder {
     }
 
     @Override
+    public ChromeNotificationBuilder addAction(int icon, CharSequence title,
+            PendingIntentProvider pendingIntentProvider,
+            @NotificationUmaTracker.ActionType int actionType) {
+        assert (mMetadata != null);
+        PendingIntent pendingIntent = NotificationIntentInterceptor.createInterceptPendingIntent(
+                NotificationIntentInterceptor.IntentType.ACTION_INTENT, actionType, mMetadata,
+                pendingIntentProvider);
+        addAction(icon, title, pendingIntent);
+        return this;
+    }
+
+    @Override
     public ChromeNotificationBuilder addAction(Notification.Action action) {
+        return this;
+    }
+
+    @Override
+    public ChromeNotificationBuilder addAction(Notification.Action action, int flags,
+            @NotificationUmaTracker.ActionType int actionType) {
         return this;
     }
 
@@ -126,7 +175,16 @@ public class NotificationCompatBuilder implements ChromeNotificationBuilder {
     }
 
     @Override
-    public ChromeNotificationBuilder setPriority(int pri) {
+    public ChromeNotificationBuilder setDeleteIntent(PendingIntentProvider intent) {
+        assert (mMetadata != null);
+        mBuilder.setDeleteIntent(NotificationIntentInterceptor.createInterceptPendingIntent(
+                NotificationIntentInterceptor.IntentType.DELETE_INTENT, 0 /* intentId */, mMetadata,
+                intent));
+        return this;
+    }
+
+    @Override
+    public ChromeNotificationBuilder setPriorityBeforeO(int pri) {
         mBuilder.setPriority(pri);
         return this;
     }
@@ -217,20 +275,45 @@ public class NotificationCompatBuilder implements ChromeNotificationBuilder {
     }
 
     @Override
-    public Notification buildWithBigContentView(RemoteViews view) {
-        return mBuilder.setCustomBigContentView(view).build();
+    public ChromeNotificationBuilder setCategory(String category) {
+        mBuilder.setCategory(category);
+        return this;
     }
 
     @Override
-    public Notification buildWithBigTextStyle(String bigText) {
+    public ChromeNotification buildWithBigContentView(RemoteViews view) {
+        assert mMetadata != null;
+        return new ChromeNotification(mBuilder.setCustomBigContentView(view).build(), mMetadata);
+    }
+
+    @Override
+    public ChromeNotification buildWithBigTextStyle(String bigText) {
         NotificationCompat.BigTextStyle bigTextStyle =
                 new NotificationCompat.BigTextStyle(mBuilder);
         bigTextStyle.bigText(bigText);
-        return bigTextStyle.build();
+
+        assert mMetadata != null;
+        return new ChromeNotification(bigTextStyle.build(), mMetadata);
     }
 
     @Override
     public Notification build() {
-        return mBuilder.build();
+        Notification notification = null;
+        try {
+            notification = mBuilder.build();
+        } catch (NullPointerException e) {
+            // Android M and L may throw exception, see https://crbug.com/949794.
+            Log.e(TAG, "Failed to build notification.", e);
+            if (mMetadata != null) {
+                NotificationUmaTracker.onNotificationFailedToCreate(mMetadata.type);
+            }
+        }
+        return notification;
+    }
+
+    @Override
+    public ChromeNotification buildChromeNotification() {
+        assert mMetadata != null;
+        return new ChromeNotification(build(), mMetadata);
     }
 }

@@ -15,7 +15,7 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/scoped_blocking_call.h"
 
 namespace net {
@@ -44,12 +44,12 @@ ScopedCERTCertificateList NSSCertDatabaseChromeOS::ListCertsSync() {
 }
 
 void NSSCertDatabaseChromeOS::ListCerts(
-    const NSSCertDatabase::ListCertsCallback& callback) {
+    NSSCertDatabase::ListCertsCallback callback) {
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&NSSCertDatabaseChromeOS::ListCertsImpl, profile_filter_),
-      callback);
+      base::BindOnce(&NSSCertDatabaseChromeOS::ListCertsImpl, profile_filter_),
+      std::move(callback));
 }
 
 crypto::ScopedPK11Slot NSSCertDatabaseChromeOS::GetSystemSlot() const {
@@ -64,9 +64,10 @@ void NSSCertDatabaseChromeOS::ListModules(
   NSSCertDatabase::ListModules(modules, need_rw);
 
   size_t pre_size = modules->size();
-  base::EraseIf(*modules,
-                NSSProfileFilterChromeOS::ModuleNotAllowedForProfilePredicate(
-                    profile_filter_));
+  const NSSProfileFilterChromeOS& profile_filter = profile_filter_;
+  base::EraseIf(*modules, [&profile_filter](crypto::ScopedPK11Slot& module) {
+    return !profile_filter.IsModuleAllowed(module.get());
+  });
   DVLOG(1) << "filtered " << pre_size - modules->size() << " of " << pre_size
            << " modules";
 }
@@ -77,15 +78,16 @@ ScopedCERTCertificateList NSSCertDatabaseChromeOS::ListCertsImpl(
   // hooks (such as smart card UI). To ensure threads are not starved or
   // deadlocked, the base::ScopedBlockingCall below increments the thread pool
   // capacity if this method takes too much time to run.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   ScopedCERTCertificateList certs(
       NSSCertDatabase::ListCertsImpl(crypto::ScopedPK11Slot()));
 
   size_t pre_size = certs.size();
-  base::EraseIf(certs,
-                NSSProfileFilterChromeOS::CertNotAllowedForProfilePredicate(
-                    profile_filter));
+  base::EraseIf(certs, [&profile_filter](ScopedCERTCertificate& cert) {
+    return !profile_filter.IsCertAllowed(cert.get());
+  });
   DVLOG(1) << "filtered " << pre_size - certs.size() << " of " << pre_size
            << " certs";
   return certs;

@@ -4,10 +4,9 @@
 
 #include "components/offline_pages/core/prefetch/suggested_articles_observer.h"
 
-#include "base/run_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/test_simple_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/prefetch/prefetch_dispatcher.h"
 #include "components/offline_pages/core/prefetch/prefetch_gcm_app_handler.h"
@@ -40,29 +39,25 @@ ContentSuggestion ContentSuggestionFromTestURL(const GURL& test_url) {
 
 class OfflinePageSuggestedArticlesObserverTest : public testing::Test {
  public:
-  OfflinePageSuggestedArticlesObserverTest()
-      : task_runner_(new base::TestSimpleTaskRunner),
-        task_runner_handle_(task_runner_) {}
-
-  void SetUp() override {
-    prefetch_service_test_taco_ = base::MakeUnique<PrefetchServiceTestTaco>();
+  OfflinePageSuggestedArticlesObserverTest() {
+    prefetch_service_test_taco_ = std::make_unique<PrefetchServiceTestTaco>();
     test_prefetch_dispatcher_ = new TestPrefetchDispatcher();
     prefetch_service_test_taco_->SetPrefetchDispatcher(
         base::WrapUnique(test_prefetch_dispatcher_));
     prefetch_service_test_taco_->SetSuggestedArticlesObserver(
-        base::MakeUnique<SuggestedArticlesObserver>());
+        std::make_unique<SuggestedArticlesObserver>());
     prefetch_service_test_taco_->CreatePrefetchService();
   }
 
-  void TearDown() override {
+  ~OfflinePageSuggestedArticlesObserverTest() override {
     // Ensure the store can be properly disposed off.
     prefetch_service_test_taco_.reset();
-    task_runner_->RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
   }
 
   SuggestedArticlesObserver* observer() {
     return prefetch_service_test_taco_->prefetch_service()
-        ->GetSuggestedArticlesObserver();
+        ->GetSuggestedArticlesObserverForTesting();
   }
 
   TestPrefetchDispatcher* test_prefetch_dispatcher() {
@@ -74,8 +69,7 @@ class OfflinePageSuggestedArticlesObserverTest : public testing::Test {
       Category::FromKnownCategory(ntp_snippets::KnownCategories::ARTICLES);
 
  private:
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<PrefetchServiceTestTaco> prefetch_service_test_taco_;
 
   // Owned by the PrefetchServiceTestTaco.

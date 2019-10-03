@@ -59,7 +59,7 @@ class ASH_EXPORT VideoDetector : public aura::EnvObserver,
     virtual ~Observer() {}
   };
 
-  VideoDetector(viz::mojom::VideoDetectorObserverRequest request);
+  VideoDetector();
   ~VideoDetector() override;
 
   State state() const { return state_; }
@@ -79,7 +79,7 @@ class ASH_EXPORT VideoDetector : public aura::EnvObserver,
 
   // ShellObserver overrides.
   void OnFullscreenStateChanged(bool is_fullscreen,
-                                aura::Window* root_window) override;
+                                aura::Window* container) override;
 
   // viz::mojom::VideoDetectorObserver implementation.
   void OnVideoActivityStarted() override;
@@ -89,16 +89,23 @@ class ASH_EXPORT VideoDetector : public aura::EnvObserver,
   // Updates |state_| and notifies |observers_| if it changed.
   void UpdateState();
 
+  // Connects to Viz and starts observing video activities.
+  void EstablishConnectionToViz();
+
+  // Called when connection to Viz is lost. The connection will be
+  // re-established after a short delay.
+  void OnConnectionError();
+
   // Current playback state.
   State state_;
 
   // True if video has been observed in the last |kVideoTimeoutMs|.
   bool video_is_playing_;
 
-  // Currently-fullscreen root windows.
-  std::set<aura::Window*> fullscreen_root_windows_;
+  // Currently-fullscreen desks containers windows.
+  std::set<aura::Window*> fullscreen_desks_containers_;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   ScopedObserver<aura::Window, aura::WindowObserver> window_observer_manager_;
   ScopedSessionObserver scoped_session_observer_;
@@ -106,6 +113,8 @@ class ASH_EXPORT VideoDetector : public aura::EnvObserver,
   bool is_shutting_down_;
 
   mojo::Binding<viz::mojom::VideoDetectorObserver> binding_;
+
+  base::WeakPtrFactory<VideoDetector> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoDetector);
 };

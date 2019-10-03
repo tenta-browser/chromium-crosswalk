@@ -8,7 +8,7 @@
 #include "base/compiler_specific.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/login/auth/auth_status_consumer.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user.h"
 
 namespace chromeos {
@@ -42,7 +42,6 @@ class UserFlow {
   virtual bool AllowsNotificationBalloons() = 0;
   virtual bool HandleLoginFailure(const AuthFailure& failure) = 0;
   virtual void HandleLoginSuccess(const UserContext& context) = 0;
-  virtual bool HandlePasswordChangeDetected() = 0;
   virtual void HandleOAuthTokenStatusChange(
       user_manager::User::OAuthTokenStatus status) = 0;
   virtual void LaunchExtraSteps(Profile* profile) = 0;
@@ -71,7 +70,6 @@ class DefaultUserFlow : public UserFlow {
   bool AllowsNotificationBalloons() override;
   bool HandleLoginFailure(const AuthFailure& failure) override;
   void HandleLoginSuccess(const UserContext& context) override;
-  bool HandlePasswordChangeDetected() override;
   void HandleOAuthTokenStatusChange(
       user_manager::User::OAuthTokenStatus status) override;
   void LaunchExtraSteps(Profile* profile) override;

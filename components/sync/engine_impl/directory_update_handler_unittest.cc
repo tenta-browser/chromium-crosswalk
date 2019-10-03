@@ -11,8 +11,8 @@
 #include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/message_loop/message_loop.h"
-#include "components/sync/base/attachment_id_proto.h"
+#include "base/stl_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/sync/engine_impl/cycle/directory_type_debug_info_emitter.h"
 #include "components/sync/engine_impl/cycle/status_controller.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
@@ -85,10 +85,11 @@ class DirectoryUpdateHandlerProcessUpdateTest : public ::testing::Test {
 
  protected:
   // Used in the construction of DirectoryTypeDebugInfoEmitters.
-  base::ObserverList<TypeDebugInfoObserver> type_observers_;
+  base::ObserverList<TypeDebugInfoObserver>::Unchecked type_observers_;
 
  private:
-  base::MessageLoop loop_;  // Needed to initialize the directory.
+  // Needed to initialize the directory.
+  base::test::ScopedTaskEnvironment task_environment_;
   TestDirectorySetterUpper dir_maker_;
   scoped_refptr<FakeModelWorker> ui_worker_;
 };
@@ -112,7 +113,9 @@ void DirectoryUpdateHandlerProcessUpdateTest::UpdateSyncEntities(
     const SyncEntityList& applicable_updates,
     StatusController* status) {
   syncable::ModelNeutralWriteTransaction trans(FROM_HERE, UNITTEST, dir());
-  handler->UpdateSyncEntities(&trans, applicable_updates, status);
+  // We pick is_initial_sync arbitrarily as it has only impact on counters.
+  handler->UpdateSyncEntities(&trans, applicable_updates,
+                              /*is_initial_sync=*/true, status);
 }
 
 void DirectoryUpdateHandlerProcessUpdateTest::UpdateProgressMarkers(
@@ -136,7 +139,7 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, NewBookmarkTag) {
   std::unique_ptr<sync_pb::SyncEntity> e =
       CreateUpdate(SyncableIdToProto(server_id), root, BOOKMARKS);
   e->set_originator_cache_guid(
-      std::string(kCacheGuid, arraysize(kCacheGuid) - 1));
+      std::string(kCacheGuid, base::size(kCacheGuid) - 1));
   Id client_id = Id::CreateFromClientString("-2");
   e->set_originator_client_item_id(client_id.GetServerId());
   e->set_position_in_parent(0);
@@ -248,30 +251,31 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ProcessNewProgressMarkers) {
 }
 
 TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByVersion) {
-  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
-  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
-                                 &emitter);
+  DirectoryTypeDebugInfoEmitter emitter(DEPRECATED_SYNCED_NOTIFICATIONS,
+                                        &type_observers_);
+  DirectoryUpdateHandler handler(dir(), DEPRECATED_SYNCED_NOTIFICATIONS,
+                                 ui_worker(), &emitter);
   StatusController status;
 
   sync_pb::DataTypeProgressMarker progress;
   progress.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS));
   progress.set_token("token");
   progress.mutable_gc_directive()->set_version_watermark(kDefaultVersion + 10);
 
   sync_pb::DataTypeContext context;
   context.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS));
   context.set_context("context");
   context.set_version(1);
 
   std::unique_ptr<sync_pb::SyncEntity> e1 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
 
   std::unique_ptr<sync_pb::SyncEntity> e2 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
   e2->set_version(kDefaultVersion + 100);
 
   // Add to the applicable updates list.
@@ -280,19 +284,24 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByVersion) {
   updates.push_back(e2.get());
 
   // Process and apply updates.
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
-                                                         updates, &status));
+  EXPECT_EQ(
+      SyncerError::SYNCER_OK,
+      handler.ProcessGetUpdatesResponse(progress, context, updates, &status)
+          .value());
   handler.ApplyUpdates(&status);
 
   // Verify none is deleted because they are unapplied during GC.
-  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
+  EXPECT_TRUE(TypeRootExists(DEPRECATED_SYNCED_NOTIFICATIONS));
   EXPECT_TRUE(EntryExists(e1->id_string()));
   EXPECT_TRUE(EntryExists(e2->id_string()));
 
   // Process and apply again. Old entry is deleted but not root.
   progress.mutable_gc_directive()->set_version_watermark(kDefaultVersion + 20);
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(
-                           progress, context, SyncEntityList(), &status));
+  EXPECT_EQ(SyncerError::SYNCER_OK,
+            handler
+                .ProcessGetUpdatesResponse(progress, context, SyncEntityList(),
+                                           &status)
+                .value());
   handler.ApplyUpdates(&status);
   EXPECT_FALSE(EntryExists(e1->id_string()));
   EXPECT_TRUE(EntryExists(e2->id_string()));
@@ -301,32 +310,33 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByVersion) {
 // Create 2 entries, one is 15-days-old, another is 5-days-old. Check if sync
 // will delete 15-days-old entry when server set expired age is 10 days.
 TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByAge) {
-  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
-  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
-                                 &emitter);
+  DirectoryTypeDebugInfoEmitter emitter(DEPRECATED_SYNCED_NOTIFICATIONS,
+                                        &type_observers_);
+  DirectoryUpdateHandler handler(dir(), DEPRECATED_SYNCED_NOTIFICATIONS,
+                                 ui_worker(), &emitter);
   StatusController status;
 
   sync_pb::DataTypeProgressMarker progress;
   progress.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS));
   progress.set_token("token");
   progress.mutable_gc_directive()->set_age_watermark_in_days(20);
 
   sync_pb::DataTypeContext context;
   context.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS));
   context.set_context("context");
   context.set_version(1);
 
   std::unique_ptr<sync_pb::SyncEntity> e1 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
   e1->set_mtime(
       TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(15)));
 
   std::unique_ptr<sync_pb::SyncEntity> e2 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
   e2->set_mtime(
       TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(5)));
 
@@ -336,100 +346,42 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByAge) {
   updates.push_back(e2.get());
 
   // Process and apply updates.
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
-                                                         updates, &status));
+  EXPECT_EQ(
+      SyncerError::SYNCER_OK,
+      handler.ProcessGetUpdatesResponse(progress, context, updates, &status)
+          .value());
   handler.ApplyUpdates(&status);
 
   // Verify none is deleted because they are unapplied during GC.
-  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
+  EXPECT_TRUE(TypeRootExists(DEPRECATED_SYNCED_NOTIFICATIONS));
   EXPECT_TRUE(EntryExists(e1->id_string()));
   EXPECT_TRUE(EntryExists(e2->id_string()));
 
   // Process and apply again. 15-days-old entry is deleted but not 5-days-old
   // entry.
   progress.mutable_gc_directive()->set_age_watermark_in_days(10);
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(
-                           progress, context, SyncEntityList(), &status));
+  EXPECT_EQ(SyncerError::SYNCER_OK,
+            handler
+                .ProcessGetUpdatesResponse(progress, context, SyncEntityList(),
+                                           &status)
+                .value());
   handler.ApplyUpdates(&status);
   EXPECT_FALSE(EntryExists(e1->id_string()));
   EXPECT_TRUE(EntryExists(e2->id_string()));
-}
-
-// Create 3 entries, one is 15-days-old, one is 10-days-old, another is
-// 5-days-old. Check if sync will delete 15-days-old entry when server set
-// max_number_of_items is 2.
-TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByItemLimit) {
-  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
-  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
-                                 &emitter);
-  StatusController status;
-
-  sync_pb::DataTypeProgressMarker progress;
-  progress.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
-  progress.set_token("token");
-  progress.mutable_gc_directive()->set_max_number_of_items(3);
-
-  sync_pb::DataTypeContext context;
-  context.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
-  context.set_context("context");
-  context.set_version(1);
-
-  std::unique_ptr<sync_pb::SyncEntity> e1 =
-      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
-                   SYNCED_NOTIFICATIONS);
-  e1->set_mtime(
-      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(15)));
-
-  std::unique_ptr<sync_pb::SyncEntity> e2 =
-      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
-                   SYNCED_NOTIFICATIONS);
-  e2->set_mtime(
-      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(5)));
-
-  std::unique_ptr<sync_pb::SyncEntity> e3 =
-      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e3")), "",
-                   SYNCED_NOTIFICATIONS);
-  e3->set_mtime(
-      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(10)));
-
-  // Add to the applicable updates list.
-  SyncEntityList updates;
-  updates.push_back(e1.get());
-  updates.push_back(e2.get());
-  updates.push_back(e3.get());
-
-  // Process and apply updates.
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
-                                                         updates, &status));
-  handler.ApplyUpdates(&status);
-
-  // Verify none is deleted because they are unapplied during GC.
-  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
-  EXPECT_TRUE(EntryExists(e1->id_string()));
-  EXPECT_TRUE(EntryExists(e2->id_string()));
-
-  // Process and apply again. 15-days-old entry is deleted.
-  progress.mutable_gc_directive()->set_max_number_of_items(2);
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(
-                           progress, context, SyncEntityList(), &status));
-  handler.ApplyUpdates(&status);
-  EXPECT_FALSE(EntryExists(e1->id_string()));
-  EXPECT_TRUE(EntryExists(e2->id_string()));
-  EXPECT_TRUE(EntryExists(e3->id_string()));
 }
 
 TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ContextVersion) {
-  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
-  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
-                                 &emitter);
+  DirectoryTypeDebugInfoEmitter emitter(DEPRECATED_SYNCED_NOTIFICATIONS,
+                                        &type_observers_);
+  DirectoryUpdateHandler handler(dir(), DEPRECATED_SYNCED_NOTIFICATIONS,
+                                 ui_worker(), &emitter);
   StatusController status;
-  int field_number = GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS);
+  int field_number =
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS);
 
   sync_pb::DataTypeProgressMarker progress;
   progress.set_data_type_id(
-      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+      GetSpecificsFieldNumberFromModelType(DEPRECATED_SYNCED_NOTIFICATIONS));
   progress.set_token("token");
 
   sync_pb::DataTypeContext old_context;
@@ -439,26 +391,28 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ContextVersion) {
 
   std::unique_ptr<sync_pb::SyncEntity> e1 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
 
   SyncEntityList updates;
   updates.push_back(e1.get());
 
   // The first response should be processed fine.
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, old_context,
-                                                         updates, &status));
+  EXPECT_EQ(
+      SyncerError::SYNCER_OK,
+      handler.ProcessGetUpdatesResponse(progress, old_context, updates, &status)
+          .value());
   handler.ApplyUpdates(&status);
 
   // The PREFERENCES root should be auto-created.
-  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
+  EXPECT_TRUE(TypeRootExists(DEPRECATED_SYNCED_NOTIFICATIONS));
 
   EXPECT_TRUE(EntryExists(e1->id_string()));
 
   {
     sync_pb::DataTypeContext dir_context;
     syncable::ReadTransaction trans(FROM_HERE, dir());
-    trans.directory()->GetDataTypeContext(&trans, SYNCED_NOTIFICATIONS,
-                                          &dir_context);
+    trans.directory()->GetDataTypeContext(
+        &trans, DEPRECATED_SYNCED_NOTIFICATIONS, &dir_context);
     EXPECT_EQ(old_context.SerializeAsString(), dir_context.SerializeAsString());
   }
 
@@ -469,15 +423,16 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ContextVersion) {
 
   std::unique_ptr<sync_pb::SyncEntity> e2 =
       CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
-                   SYNCED_NOTIFICATIONS);
+                   DEPRECATED_SYNCED_NOTIFICATIONS);
   updates.clear();
   updates.push_back(e2.get());
 
   // The second response, with an old context version, should result in an
   // error and the updates should be dropped.
-  EXPECT_EQ(DATATYPE_TRIGGERED_RETRY,
-            handler.ProcessGetUpdatesResponse(progress, new_context, updates,
-                                              &status));
+  EXPECT_EQ(
+      SyncerError::DATATYPE_TRIGGERED_RETRY,
+      handler.ProcessGetUpdatesResponse(progress, new_context, updates, &status)
+          .value());
   handler.ApplyUpdates(&status);
 
   EXPECT_FALSE(EntryExists(e2->id_string()));
@@ -485,60 +440,9 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ContextVersion) {
   {
     sync_pb::DataTypeContext dir_context;
     syncable::ReadTransaction trans(FROM_HERE, dir());
-    trans.directory()->GetDataTypeContext(&trans, SYNCED_NOTIFICATIONS,
-                                          &dir_context);
+    trans.directory()->GetDataTypeContext(
+        &trans, DEPRECATED_SYNCED_NOTIFICATIONS, &dir_context);
     EXPECT_EQ(old_context.SerializeAsString(), dir_context.SerializeAsString());
-  }
-}
-
-// See that updates containing attachment metadata are applied
-// (i.e. server_attachment_metadata is copied to attachment_metadata).
-TEST_F(DirectoryUpdateHandlerProcessUpdateTest,
-       ProcessAndApplyUpdatesWithAttachments) {
-  DirectoryTypeDebugInfoEmitter emitter(ARTICLES, &type_observers_);
-  DirectoryUpdateHandler handler(dir(), ARTICLES, ui_worker(), &emitter);
-  StatusController status;
-
-  sync_pb::DataTypeProgressMarker progress;
-  progress.set_data_type_id(GetSpecificsFieldNumberFromModelType(ARTICLES));
-  progress.set_token("token");
-  progress.mutable_gc_directive()->set_version_watermark(kDefaultVersion + 10);
-
-  sync_pb::DataTypeContext context;
-  context.set_data_type_id(GetSpecificsFieldNumberFromModelType(ARTICLES));
-  context.set_context("context");
-  context.set_version(1);
-
-  std::unique_ptr<sync_pb::SyncEntity> e1 = CreateUpdate(
-      SyncableIdToProto(Id::CreateFromServerId("e1")), "", ARTICLES);
-  sync_pb::AttachmentIdProto* attachment_id = e1->add_attachment_id();
-  *attachment_id = CreateAttachmentIdProto(0, 0);
-
-  SyncEntityList updates;
-  updates.push_back(e1.get());
-
-  // Process and apply updates.
-  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
-                                                         updates, &status));
-  handler.ApplyUpdates(&status);
-
-  ASSERT_TRUE(TypeRootExists(ARTICLES));
-  ASSERT_TRUE(EntryExists(e1->id_string()));
-  {
-    syncable::ReadTransaction trans(FROM_HERE, dir());
-    syncable::Entry e(&trans, syncable::GET_BY_ID,
-                      Id::CreateFromServerId(e1->id_string()));
-
-    // See that the attachment_metadata is correct.
-    sync_pb::AttachmentMetadata attachment_metadata = e.GetAttachmentMetadata();
-    ASSERT_EQ(1, attachment_metadata.record_size());
-    ASSERT_EQ(attachment_id->SerializeAsString(),
-              attachment_metadata.record(0).id().SerializeAsString());
-    ASSERT_TRUE(attachment_metadata.record(0).is_on_server());
-
-    // See that attachment_metadata and server_attachment_metadata are equal.
-    ASSERT_EQ(attachment_metadata.SerializeAsString(),
-              e.GetServerAttachmentMetadata().SerializeAsString());
   }
 }
 
@@ -594,7 +498,7 @@ class DirectoryUpdateHandlerApplyUpdateTest : public ::testing::Test {
         passive_worker_(new FakeModelWorker(GROUP_PASSIVE)),
         bookmarks_emitter_(BOOKMARKS, &type_observers_),
         passwords_emitter_(PASSWORDS, &type_observers_),
-        articles_emitter_(ARTICLES, &type_observers_) {}
+        articles_emitter_(DEPRECATED_ARTICLES, &type_observers_) {}
 
   void SetUp() override {
     dir_maker_.SetUp();
@@ -608,9 +512,6 @@ class DirectoryUpdateHandlerApplyUpdateTest : public ::testing::Test {
         PASSWORDS,
         std::make_unique<DirectoryUpdateHandler>(
             directory(), PASSWORDS, password_worker_, &passwords_emitter_)));
-    update_handler_map_.insert(std::make_pair(
-        ARTICLES, std::make_unique<DirectoryUpdateHandler>(
-                      directory(), ARTICLES, ui_worker_, &articles_emitter_)));
   }
 
   void TearDown() override { dir_maker_.TearDown(); }
@@ -636,16 +537,13 @@ class DirectoryUpdateHandlerApplyUpdateTest : public ::testing::Test {
     update_handler_map_.find(PASSWORDS)->second->ApplyUpdates(status);
   }
 
-  void ApplyArticlesUpdates(StatusController* status) {
-    update_handler_map_.find(ARTICLES)->second->ApplyUpdates(status);
-  }
-
   TestEntryFactory* entry_factory() { return entry_factory_.get(); }
 
   syncable::Directory* directory() { return dir_maker_.directory(); }
 
  private:
-  base::MessageLoop loop_;  // Needed to initialize the directory.
+  // Needed to initialize the directory.
+  base::test::ScopedTaskEnvironment task_environment_;
   TestDirectorySetterUpper dir_maker_;
   std::unique_ptr<TestEntryFactory> entry_factory_;
 
@@ -653,7 +551,7 @@ class DirectoryUpdateHandlerApplyUpdateTest : public ::testing::Test {
   scoped_refptr<FakeModelWorker> password_worker_;
   scoped_refptr<FakeModelWorker> passive_worker_;
 
-  base::ObserverList<TypeDebugInfoObserver> type_observers_;
+  base::ObserverList<TypeDebugInfoObserver>::Unchecked type_observers_;
   DirectoryTypeDebugInfoEmitter bookmarks_emitter_;
   DirectoryTypeDebugInfoEmitter passwords_emitter_;
   DirectoryTypeDebugInfoEmitter articles_emitter_;
@@ -1053,7 +951,7 @@ TEST_F(DirectoryUpdateHandlerApplyUpdateTest, DecryptablePassword) {
     cryptographer = directory()->GetCryptographer(&trans);
   }
 
-  KeyParams params = {"localhost", "dummy", "foobar"};
+  KeyParams params = {KeyDerivationParams::CreateForPbkdf2(), "foobar"};
   cryptographer->AddKey(params);
 
   sync_pb::EntitySpecifics specifics;
@@ -1143,7 +1041,7 @@ TEST_F(DirectoryUpdateHandlerApplyUpdateTest, SomeUndecryptablePassword) {
       syncable::ReadTransaction trans(FROM_HERE, directory());
       cryptographer = directory()->GetCryptographer(&trans);
 
-      KeyParams params = {"localhost", "dummy", "foobar"};
+      KeyParams params = {KeyDerivationParams::CreateForPbkdf2(), "foobar"};
       cryptographer->AddKey(params);
 
       cryptographer->Encrypt(data,
@@ -1154,8 +1052,8 @@ TEST_F(DirectoryUpdateHandlerApplyUpdateTest, SomeUndecryptablePassword) {
   }
   {
     // Create a new cryptographer, independent of the one in the cycle.
-    Cryptographer other_cryptographer(cryptographer->encryptor());
-    KeyParams params = {"localhost", "dummy", "bazqux"};
+    Cryptographer other_cryptographer;
+    KeyParams params = {KeyDerivationParams::CreateForPbkdf2(), "bazqux"};
     other_cryptographer.AddKey(params);
 
     sync_pb::EntitySpecifics specifics;
@@ -1187,97 +1085,6 @@ TEST_F(DirectoryUpdateHandlerApplyUpdateTest, SomeUndecryptablePassword) {
     EXPECT_FALSE(e1.GetIsUnappliedUpdate());
     EXPECT_TRUE(e2.GetIsUnappliedUpdate());
   }
-}
-
-TEST_F(DirectoryUpdateHandlerApplyUpdateTest,
-       SimpleConflictDifferentAttachmentMetadata) {
-  const bool is_folder = false;
-  sync_pb::EntitySpecifics specifics;
-  *specifics.mutable_article() = sync_pb::ArticleSpecifics();
-  int64_t handle =
-      entry_factory()->CreateSyncedItem("art1", ARTICLES, is_folder);
-
-  sync_pb::AttachmentIdProto local_attachment_id =
-      CreateAttachmentIdProto(0, 0);
-  sync_pb::AttachmentIdProto server_attachment_id =
-      CreateAttachmentIdProto(0, 0);
-
-  // Add an attachment to the local attachment metadata.
-  sync_pb::AttachmentMetadata local_metadata;
-  sync_pb::AttachmentMetadataRecord* local_record = local_metadata.add_record();
-  *local_record->mutable_id() = local_attachment_id;
-  local_record->set_is_on_server(true);
-  entry_factory()->SetLocalAttachmentMetadataForItem(handle, local_metadata);
-
-  // Add a different attachment to the server attachment metadata.
-  sync_pb::AttachmentMetadata server_metadata;
-  sync_pb::AttachmentMetadataRecord* server_record =
-      server_metadata.add_record();
-  *server_record->mutable_id() = server_attachment_id;
-  server_record->set_is_on_server(true);
-  entry_factory()->SetServerAttachmentMetadataForItem(handle, server_metadata);
-
-  // At this point we have a simple conflict.  The server says art1 should have
-  // server_attachment_id, but the local sync engine says it should have
-  // local_attachment_id.
-
-  StatusController status;
-  ApplyArticlesUpdates(&status);
-
-  // See that the server won.
-  const UpdateCounters& counters = GetArticlesUpdateCounters();
-  EXPECT_EQ(1, counters.num_updates_applied);
-  EXPECT_EQ(1, counters.num_local_overwrites);
-  EXPECT_EQ(0, counters.num_server_overwrites);
-  local_metadata = entry_factory()->GetLocalAttachmentMetadataForItem(handle);
-  EXPECT_EQ(server_metadata.SerializeAsString(),
-            local_metadata.SerializeAsString());
-}
-
-TEST_F(DirectoryUpdateHandlerApplyUpdateTest,
-       SimpleConflictSameAttachmentMetadataDifferentOrder) {
-  const bool is_folder = false;
-  sync_pb::EntitySpecifics specifics;
-  *specifics.mutable_article() = sync_pb::ArticleSpecifics();
-  int64_t handle =
-      entry_factory()->CreateSyncedItem("art1", ARTICLES, is_folder);
-
-  sync_pb::AttachmentIdProto id1 = CreateAttachmentIdProto(0, 0);
-  sync_pb::AttachmentIdProto id2 = CreateAttachmentIdProto(0, 0);
-
-  // Add id1, then id2 to the local attachment metadata.
-  sync_pb::AttachmentMetadata local_metadata;
-  sync_pb::AttachmentMetadataRecord* record = local_metadata.add_record();
-  *record->mutable_id() = id1;
-  record->set_is_on_server(true);
-  record = local_metadata.add_record();
-  *record->mutable_id() = id2;
-  record->set_is_on_server(true);
-  entry_factory()->SetLocalAttachmentMetadataForItem(handle, local_metadata);
-
-  // Add id1 and id2 to the server attachment metadata, but in reverse order.
-  sync_pb::AttachmentMetadata server_metadata;
-  record = server_metadata.add_record();
-  *record->mutable_id() = id2;
-  record->set_is_on_server(true);
-  record = local_metadata.add_record();
-  *record->mutable_id() = id1;
-  record->set_is_on_server(true);
-  entry_factory()->SetServerAttachmentMetadataForItem(handle, server_metadata);
-
-  // At this point we have a (false) conflict.
-
-  StatusController status;
-  ApplyArticlesUpdates(&status);
-
-  // See that the server won.
-  const UpdateCounters& counters = GetArticlesUpdateCounters();
-  EXPECT_EQ(1, counters.num_updates_applied);
-  EXPECT_EQ(1, counters.num_local_overwrites);
-  EXPECT_EQ(0, counters.num_server_overwrites);
-  local_metadata = entry_factory()->GetLocalAttachmentMetadataForItem(handle);
-  EXPECT_EQ(server_metadata.SerializeAsString(),
-            local_metadata.SerializeAsString());
 }
 
 }  // namespace syncer

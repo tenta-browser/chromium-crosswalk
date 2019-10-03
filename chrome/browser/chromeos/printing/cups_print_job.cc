@@ -15,27 +15,36 @@ CupsPrintJob::CupsPrintJob(const Printer& printer,
     : printer_(printer),
       job_id_(job_id),
       document_title_(document_title),
-      total_page_number_(total_page_number) {}
+      total_page_number_(total_page_number),
+      weak_factory_(this) {}
 
-CupsPrintJob::~CupsPrintJob() {}
+CupsPrintJob::~CupsPrintJob() = default;
 
 std::string CupsPrintJob::GetUniqueId() const {
-  return GetUniqueId(printer_.id(), job_id_);
+  return CreateUniqueId(printer_.id(), job_id_);
+}
+
+base::WeakPtr<CupsPrintJob> CupsPrintJob::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
+}
+
+bool CupsPrintJob::IsExpired() const {
+  return error_code_ == ErrorCode::PRINTER_UNREACHABLE;
 }
 
 // static
-std::string CupsPrintJob::GetUniqueId(const std::string& printer_id,
-                                      int job_id) {
+std::string CupsPrintJob::CreateUniqueId(const std::string& printer_id,
+                                         int job_id) {
   return base::StringPrintf("%s%d", printer_id.c_str(), job_id);
 }
 
-bool CupsPrintJob::IsJobFinished() {
+bool CupsPrintJob::IsJobFinished() const {
   return state_ == CupsPrintJob::State::STATE_CANCELLED ||
-         state_ == CupsPrintJob::State::STATE_ERROR ||
+         state_ == CupsPrintJob::State::STATE_FAILED ||
          state_ == CupsPrintJob::State::STATE_DOCUMENT_DONE;
 }
 
-bool CupsPrintJob::PipelineDead() {
+bool CupsPrintJob::PipelineDead() const {
   return error_code_ == CupsPrintJob::ErrorCode::FILTER_FAILED;
 }
 

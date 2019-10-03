@@ -17,10 +17,12 @@
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
-struct OpenURLParams;
 class WebContents;
 }  // namespace content
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
 
 extern const base::Feature kAbusiveExperienceEnforce;
 
@@ -38,6 +40,7 @@ constexpr char kAbusiveWarnMessage[] =
 // tab helper in applying a stronger policy for blocked popups.
 class SafeBrowsingTriggeredPopupBlocker
     : public content::WebContentsObserver,
+      public content::WebContentsUserData<SafeBrowsingTriggeredPopupBlocker>,
       public subresource_filter::SubresourceFilterObserver {
  public:
   // This enum backs a histogram. Please append new entries to the end, and
@@ -66,14 +69,17 @@ class SafeBrowsingTriggeredPopupBlocker
     kCount
   };
 
-  static std::unique_ptr<SafeBrowsingTriggeredPopupBlocker> MaybeCreate(
-      content::WebContents* web_contents);
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
+  // Creates a SafeBrowsingTriggeredPopupBlocker and attaches it (via UserData)
+  // to |web_contents|.
+  static void MaybeCreate(content::WebContents* web_contents);
   ~SafeBrowsingTriggeredPopupBlocker() override;
 
-  bool ShouldApplyStrongPopupBlocker(
-      const content::OpenURLParams* open_url_params);
+  bool ShouldApplyAbusivePopupBlocker();
 
  private:
+  friend class content::WebContentsUserData<SafeBrowsingTriggeredPopupBlocker>;
   // The |web_contents| and |observer_manager| are expected to be
   // non-nullptr.
   SafeBrowsingTriggeredPopupBlocker(
@@ -85,11 +91,14 @@ class SafeBrowsingTriggeredPopupBlocker
       content::NavigationHandle* navigation_handle) override;
 
   // subresource_filter::SubresourceFilterObserver:
-  void OnSafeBrowsingCheckComplete(
+  void OnSafeBrowsingChecksComplete(
       content::NavigationHandle* navigation_handle,
-      safe_browsing::SBThreatType threat_type,
-      const safe_browsing::ThreatMetadata& threat_metadata) override;
+      const SafeBrowsingCheckResults& results) override;
   void OnSubresourceFilterGoingAway() override;
+
+  // Enabled state is governed by both a feature flag and a pref (which can be
+  // controlled by enterprise policy).
+  static bool IsEnabled(content::WebContents* web_contents);
 
   // Data scoped to a single page. Will be reset at navigation commit.
   class PageData {
@@ -127,10 +136,7 @@ class SafeBrowsingTriggeredPopupBlocker
   // Should never be nullptr.
   std::unique_ptr<PageData> current_page_data_;
 
-  // Whether to ignore the threat pattern type. Useful for flexibility because
-  // we have to wait until metadata patterns reach Stable before using them
-  // without error. Governed by a variation param.
-  bool ignore_sublists_ = false;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingTriggeredPopupBlocker);
 };

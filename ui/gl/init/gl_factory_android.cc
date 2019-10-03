@@ -9,14 +9,12 @@
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_context_egl.h"
-#include "ui/gl/gl_context_osmesa.h"
 #include "ui/gl/gl_context_stub.h"
 #include "ui/gl/gl_egl_api_implementation.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gl_surface_egl.h"
-#include "ui/gl/gl_surface_osmesa.h"
 #include "ui/gl/gl_surface_stub.h"
 
 namespace gl {
@@ -38,7 +36,6 @@ class GLNonOwnedContext : public GLContextReal {
   void ReleaseCurrent(GLSurface* surface) override {}
   bool IsCurrent(GLSurface* surface) override { return true; }
   void* GetHandle() override { return nullptr; }
-  void OnSetSwapInterval(int interval) override {}
 
  protected:
   ~GLNonOwnedContext() override {}
@@ -70,13 +67,15 @@ bool GLNonOwnedContext::MakeCurrent(GLSurface* surface) {
 std::vector<GLImplementation> GetAllowedGLImplementations() {
   std::vector<GLImplementation> impls;
   impls.push_back(kGLImplementationEGLGLES2);
-  impls.push_back(kGLImplementationOSMesaGL);
+  impls.push_back(kGLImplementationEGLANGLE);
   return impls;
 }
 
-bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info) {
+bool GetGLWindowSystemBindingInfo(const GLVersionInfo& gl_info,
+                                  GLWindowSystemBindingInfo* info) {
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return GetGLWindowSystemBindingInfoEGL(info);
     default:
       return false;
@@ -96,9 +95,9 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
       stub_context->SetUseStubApi(true);
       return stub_context;
     }
-    case kGLImplementationOSMesaGL:
-      return InitializeGLContext(new GLContextOSMesa(share_group),
-                                 compatible_surface, attribs);
+    case kGLImplementationDisabled:
+      NOTREACHED();
+      return nullptr;
     default:
       if (compatible_surface->GetHandle() ||
           compatible_surface->IsSurfaceless()) {
@@ -115,9 +114,8 @@ scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
   TRACE_EVENT0("gpu", "gl::init::CreateViewGLSurface");
   CHECK_NE(kGLImplementationNone, GetGLImplementation());
   switch (GetGLImplementation()) {
-    case kGLImplementationOSMesaGL:
-      return InitializeGLSurface(new GLSurfaceOSMesaHeadless());
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       if (window != gfx::kNullAcceleratedWidget) {
         return InitializeGLSurface(new NativeViewGLSurfaceEGL(window, nullptr));
       } else {
@@ -134,19 +132,14 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
   TRACE_EVENT0("gpu", "gl::init::CreateOffscreenGLSurface");
   CHECK_NE(kGLImplementationNone, GetGLImplementation());
   switch (GetGLImplementation()) {
-    case kGLImplementationOSMesaGL: {
-      format.SetDefaultPixelLayout(GLSurfaceFormat::PIXEL_LAYOUT_BGRA);
-      return InitializeGLSurfaceWithFormat(
-          new GLSurfaceOSMesa(format, size), format);
-    }
-    case kGLImplementationEGLGLES2: {
+    case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE: {
       if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
           (size.width() == 0 && size.height() == 0)) {
-        return InitializeGLSurfaceWithFormat(
-            new SurfacelessEGL(size), format);
+        return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
       } else {
-        return InitializeGLSurfaceWithFormat(
-            new PbufferGLSurfaceEGL(size), format);
+        return InitializeGLSurfaceWithFormat(new PbufferGLSurfaceEGL(size),
+                                             format);
       }
     }
     case kGLImplementationMockGL:
@@ -163,11 +156,11 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
   DCHECK_NE(kGLImplementationNone, implementation);
   switch (implementation) {
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       SetDisabledExtensionsEGL(disabled_extensions);
       break;
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
-    case kGLImplementationOSMesaGL:
       break;
     default:
       NOTREACHED();
@@ -179,10 +172,10 @@ bool InitializeExtensionSettingsOneOffPlatform() {
   DCHECK_NE(kGLImplementationNone, implementation);
   switch (implementation) {
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return InitializeExtensionSettingsOneOffEGL();
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
-    case kGLImplementationOSMesaGL:
       return true;
     default:
       NOTREACHED();

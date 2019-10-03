@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/values.h"
 #include "cc/raster/raster_buffer_provider.h"
 
@@ -18,43 +17,41 @@ class ConvertableToTraceFormat;
 }
 
 namespace cc {
-class LayerTreeResourceProvider;
+class LayerTreeFrameSink;
 
 class CC_EXPORT BitmapRasterBufferProvider : public RasterBufferProvider {
  public:
+  BitmapRasterBufferProvider(const BitmapRasterBufferProvider&) = delete;
   ~BitmapRasterBufferProvider() override;
 
-  static std::unique_ptr<RasterBufferProvider> Create(
-      LayerTreeResourceProvider* resource_provider);
+  BitmapRasterBufferProvider& operator=(const BitmapRasterBufferProvider&) =
+      delete;
+
+  explicit BitmapRasterBufferProvider(LayerTreeFrameSink* frame_sink);
 
   // Overridden from RasterBufferProvider:
   std::unique_ptr<RasterBuffer> AcquireBufferForRaster(
-      const Resource* resource,
+      const ResourcePool::InUsePoolResource& resource,
       uint64_t resource_content_id,
       uint64_t previous_content_id) override;
-  void OrderingBarrier() override;
   void Flush() override;
-  viz::ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
-  bool IsResourceSwizzleRequired(bool must_support_alpha) const override;
+  viz::ResourceFormat GetResourceFormat() const override;
+  bool IsResourcePremultiplied() const override;
   bool CanPartialRasterIntoProvidedResource() const override;
-  bool IsResourceReadyToDraw(viz::ResourceId id) const override;
+  bool IsResourceReadyToDraw(
+      const ResourcePool::InUsePoolResource& resource) const override;
   uint64_t SetReadyToDrawCallback(
-      const ResourceProvider::ResourceIdArray& resource_ids,
-      const base::Closure& callback,
+      const std::vector<const ResourcePool::InUsePoolResource*>& resources,
+      base::OnceClosure callback,
       uint64_t pending_callback_id) const override;
   void Shutdown() override;
-
- protected:
-  explicit BitmapRasterBufferProvider(
-      LayerTreeResourceProvider* resource_provider);
+  bool CheckRasterFinishedQueries() override;
 
  private:
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat> StateAsValue()
       const;
 
-  LayerTreeResourceProvider* resource_provider_;
-
-  DISALLOW_COPY_AND_ASSIGN(BitmapRasterBufferProvider);
+  LayerTreeFrameSink* const frame_sink_;
 };
 
 }  // namespace cc

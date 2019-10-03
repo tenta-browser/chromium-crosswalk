@@ -8,13 +8,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
-import android.os.AsyncTask;
 import android.support.annotation.Nullable;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.ShortcutSource;
@@ -23,7 +26,6 @@ import org.chromium.content_public.common.ScreenOrientationValues;
 import org.chromium.webapk.lib.common.WebApkConstants;
 
 import java.io.File;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Stores data about an installed web app. Uses SharedPreferences to persist the data to disk.
@@ -38,7 +40,6 @@ public class WebappDataStorage {
     static final String KEY_LAST_USED = "last_used";
     static final String KEY_HAS_BEEN_LAUNCHED = "has_been_launched";
     static final String KEY_URL = "url";
-    static final String KEY_SPLASH_SCREEN_URL = "splash_screen_url";
     static final String KEY_SCOPE = "scope";
     static final String KEY_ICON = "icon";
     static final String KEY_NAME = "name";
@@ -50,6 +51,7 @@ public class WebappDataStorage {
     static final String KEY_SOURCE = "source";
     static final String KEY_ACTION = "action";
     static final String KEY_IS_ICON_GENERATED = "is_icon_generated";
+    static final String KEY_IS_ICON_ADAPTIVE = "is_icon_adaptive";
     static final String KEY_VERSION = "version";
     static final String KEY_WEBAPK_PACKAGE_NAME = "webapk_package_name";
 
@@ -69,22 +71,27 @@ public class WebappDataStorage {
     // The shell Apk version requested in the last update.
     static final String KEY_LAST_REQUESTED_SHELL_APK_VERSION = "last_requested_shell_apk_version";
 
-    // Whether the user has dismissed the disclosure UI.
-    static final String KEY_DISMISSED_DISCLOSURE = "dismissed_dislosure";
+    // Whether to show the user the Snackbar disclosure UI.
+    static final String KEY_SHOW_DISCLOSURE = "show_disclosure";
 
     // The path where serialized update data is written before uploading to the WebAPK server.
     static final String KEY_PENDING_UPDATE_FILE_PATH = "pending_update_file_path";
 
+    // Whether to force an update.
+    static final String KEY_SHOULD_FORCE_UPDATE = "should_force_update";
+
+    // Whether an update has been scheduled.
+    static final String KEY_UPDATE_SCHEDULED = "update_scheduled";
+
+    // Status indicating a WebAPK is not updatable through chrome://webapks.
+    public static final String NOT_UPDATABLE = "Not updatable";
+
     // Number of milliseconds between checks for whether the WebAPK's Web Manifest has changed.
-    public static final long UPDATE_INTERVAL = TimeUnit.DAYS.toMillis(3L);
+    public static final long UPDATE_INTERVAL = DateUtils.DAY_IN_MILLIS;
 
     // Number of milliseconds between checks of updates for a WebAPK that is expected to check
     // updates less frequently. crbug.com/680128.
-    public static final long RELAXED_UPDATE_INTERVAL = TimeUnit.DAYS.toMillis(30L);
-
-    // Number of milliseconds to wait before re-requesting an updated WebAPK from the WebAPK
-    // server if the previous update attempt failed.
-    public static final long RETRY_UPDATE_DURATION = TimeUnit.DAYS.toMillis(1L);
+    public static final long RELAXED_UPDATE_INTERVAL = DateUtils.DAY_IN_MILLIS * 30;
 
     // The default shell Apk version of WebAPKs.
     static final int DEFAULT_SHELL_APK_VERSION = 1;
@@ -98,7 +105,7 @@ public class WebappDataStorage {
     // We use a heuristic to determine whether a web app is still installed on the home screen, as
     // there is no way to do so directly. Any web app which has been opened in the last ten days
     // is considered to be still on the home screen.
-    static final long WEBAPP_LAST_OPEN_MAX_TIME = TimeUnit.DAYS.toMillis(10L);
+    static final long WEBAPP_LAST_OPEN_MAX_TIME = DateUtils.DAY_IN_MILLIS * 10;
 
     private static Clock sClock = new Clock();
     private static Factory sFactory = new Factory();
@@ -170,9 +177,9 @@ public class WebappDataStorage {
      *                 The bitmap result will be null if no image was found.
      */
     public void getSplashScreenImage(final FetchCallback<Bitmap> callback) {
-        new AsyncTask<Void, Void, Bitmap>() {
+        new AsyncTask<Bitmap>() {
             @Override
-            protected final Bitmap doInBackground(Void... nothing) {
+            protected final Bitmap doInBackground() {
                 return ShortcutHelper.decodeBitmapFromString(
                         mPreferences.getString(KEY_SPLASH_ICON, null));
             }
@@ -182,7 +189,8 @@ public class WebappDataStorage {
                 assert callback != null;
                 callback.onDataRetrieved(result);
             }
-        }.execute();
+        }
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /**
@@ -209,15 +217,16 @@ public class WebappDataStorage {
                 mPreferences.getString(KEY_ACTION, null), mPreferences.getString(KEY_URL, null),
                 mPreferences.getString(KEY_SCOPE, null), mPreferences.getString(KEY_NAME, null),
                 mPreferences.getString(KEY_SHORT_NAME, null),
-                mPreferences.getString(KEY_ICON, null), version,
+                mPreferences.getString(KEY_ICON, null),
+                version,
                 mPreferences.getInt(KEY_DISPLAY_MODE, WebDisplayMode.STANDALONE),
                 mPreferences.getInt(KEY_ORIENTATION, ScreenOrientationValues.DEFAULT),
                 mPreferences.getLong(
                         KEY_THEME_COLOR, ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING),
                 mPreferences.getLong(
                         KEY_BACKGROUND_COLOR, ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING),
-                mPreferences.getString(KEY_SPLASH_SCREEN_URL, ""),
-                mPreferences.getBoolean(KEY_IS_ICON_GENERATED, false));
+                mPreferences.getBoolean(KEY_IS_ICON_GENERATED, false),
+                mPreferences.getBoolean(KEY_IS_ICON_ADAPTIVE, false));
     }
 
     /**
@@ -255,9 +264,6 @@ public class WebappDataStorage {
         // cleared together.
         if (mPreferences.getInt(KEY_VERSION, VERSION_INVALID)
                 != ShortcutHelper.WEBAPP_SHORTCUT_VERSION) {
-            editor.putString(KEY_SPLASH_SCREEN_URL,
-                    IntentUtils.safeGetStringExtra(
-                            shortcutIntent, ShortcutHelper.EXTRA_SPLASH_SCREEN_URL));
             editor.putString(KEY_NAME, IntentUtils.safeGetStringExtra(
                         shortcutIntent, ShortcutHelper.EXTRA_NAME));
             editor.putString(KEY_SHORT_NAME, IntentUtils.safeGetStringExtra(
@@ -281,6 +287,8 @@ public class WebappDataStorage {
                         ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING));
             editor.putBoolean(KEY_IS_ICON_GENERATED, IntentUtils.safeGetBooleanExtra(
                         shortcutIntent, ShortcutHelper.EXTRA_IS_ICON_GENERATED, false));
+            editor.putBoolean(KEY_IS_ICON_ADAPTIVE, IntentUtils.safeGetBooleanExtra(
+                        shortcutIntent, ShortcutHelper.EXTRA_IS_ICON_ADAPTIVE, false));
             editor.putString(KEY_ACTION, shortcutIntent.getAction());
 
             String webApkPackageName = IntentUtils.safeGetStringExtra(
@@ -305,7 +313,7 @@ public class WebappDataStorage {
      */
     public boolean wasUsedRecently() {
         // WebappRegistry.register sets the last used time, so that counts as a 'launch'.
-        return (sClock.currentTimeMillis() - getLastUsedTime() < WEBAPP_LAST_OPEN_MAX_TIME);
+        return (sClock.currentTimeMillis() - getLastUsedTimeMs() < WEBAPP_LAST_OPEN_MAX_TIME);
     }
 
     /**
@@ -334,7 +342,7 @@ public class WebappDataStorage {
         editor.remove(KEY_LAST_UPDATE_REQUEST_COMPLETE_TIME);
         editor.remove(KEY_DID_LAST_UPDATE_REQUEST_SUCCEED);
         editor.remove(KEY_RELAX_UPDATES);
-        editor.remove(KEY_DISMISSED_DISCLOSURE);
+        editor.remove(KEY_SHOW_DISCLOSURE);
         editor.apply();
     }
 
@@ -368,9 +376,9 @@ public class WebappDataStorage {
     }
 
     /**
-     * Returns the last used time of this object, or -1 if it is not stored.
+     * Returns the last used time, in milliseconds, of this object, or -1 if it is not stored.
      */
-    public long getLastUsedTime() {
+    public long getLastUsedTimeMs() {
         return mPreferences.getLong(KEY_LAST_USED, TIMESTAMP_INVALID);
     }
 
@@ -382,6 +390,15 @@ public class WebappDataStorage {
     @VisibleForTesting
     void updateSplashScreenImageForTests(String splashScreenImage) {
         mPreferences.edit().putString(KEY_SPLASH_ICON, splashScreenImage).apply();
+    }
+
+    /**
+     * Update the package name of the WebAPK. Used for testing.
+     * @param webApkPackageName The package name of the WebAPK.
+     */
+    @VisibleForTesting
+    void updateWebApkPackageNameForTests(String webApkPackageName) {
+        mPreferences.edit().putString(KEY_WEBAPK_PACKAGE_NAME, webApkPackageName).apply();
     }
 
     /**
@@ -419,10 +436,10 @@ public class WebappDataStorage {
     }
 
     /**
-     * Returns the completion time of the last check for whether the WebAPK's Web Manifest was
-     * updated. This time needs to be set when the WebAPK is registered.
+     * Returns the completion time, in milliseconds, of the last check for whether the WebAPK's Web
+     * Manifest was updated. This time needs to be set when the WebAPK is registered.
      */
-    private long getLastCheckForWebManifestUpdateTime() {
+    public long getLastCheckForWebManifestUpdateTimeMs() {
         return mPreferences.getLong(KEY_LAST_CHECK_WEB_MANIFEST_UPDATE_TIME, TIMESTAMP_INVALID);
     }
 
@@ -436,10 +453,10 @@ public class WebappDataStorage {
     }
 
     /**
-     * Returns when the last WebAPK update request completed (successfully or unsuccessfully).
-     * This time needs to be set when the WebAPK is registered.
+     * Returns the time, in milliseconds, that the last WebAPK update request completed
+     * (successfully or unsuccessfully). This time needs to be set when the WebAPK is registered.
      */
-    long getLastWebApkUpdateRequestCompletionTime() {
+    public long getLastWebApkUpdateRequestCompletionTimeMs() {
         return mPreferences.getLong(KEY_LAST_UPDATE_REQUEST_COMPLETE_TIME, TIMESTAMP_INVALID);
     }
 
@@ -457,12 +474,30 @@ public class WebappDataStorage {
         return mPreferences.getBoolean(KEY_DID_LAST_UPDATE_REQUEST_SUCCEED, false);
     }
 
-    void setDismissedDisclosure() {
-        mPreferences.edit().putBoolean(KEY_DISMISSED_DISCLOSURE, true).apply();
+    /**
+     * Returns whether to show the user a privacy disclosure (used for TWAs and unbound WebAPKs).
+     * This is not cleared until the user explicitly acknowledges it.
+     */
+    boolean shouldShowDisclosure() {
+        return mPreferences.getBoolean(KEY_SHOW_DISCLOSURE, false);
     }
 
-    boolean hasDismissedDisclosure() {
-        return mPreferences.getBoolean(KEY_DISMISSED_DISCLOSURE, false);
+    /**
+     * Clears the show disclosure bit, this stops TWAs and unbound WebAPKs from showing a privacy
+     * disclosure on every resume of the Webapp. This should be called when the user has
+     * acknowledged the disclosure.
+     */
+    void clearShowDisclosure() {
+        mPreferences.edit().putBoolean(KEY_SHOW_DISCLOSURE, false).apply();
+    }
+
+    /**
+     * Sets the disclosure bit which causes TWAs and unbound WebAPKs to show a privacy disclosure.
+     * This is set the first time an app is opened without storage (either right after install or
+     * after Chrome's storage is cleared).
+     */
+    void setShowDisclosure() {
+        mPreferences.edit().putBoolean(KEY_SHOW_DISCLOSURE, true).apply();
     }
 
     /** Updates the shell Apk version requested in the last update. */
@@ -480,7 +515,7 @@ public class WebappDataStorage {
      * been any update attempts.
      */
     boolean didPreviousUpdateSucceed() {
-        long lastUpdateCompletionTime = getLastWebApkUpdateRequestCompletionTime();
+        long lastUpdateCompletionTime = getLastWebApkUpdateRequestCompletionTimeMs();
         if (lastUpdateCompletionTime == TIMESTAMP_INVALID) {
             return true;
         }
@@ -493,8 +528,45 @@ public class WebappDataStorage {
     }
 
     /** Returns whether we should check for updates less frequently. */
-    private boolean shouldRelaxUpdates() {
+    public boolean shouldRelaxUpdates() {
         return mPreferences.getBoolean(KEY_RELAX_UPDATES, false);
+    }
+
+    /** Sets whether an update has been scheduled. */
+    public void setUpdateScheduled(boolean isUpdateScheduled) {
+        mPreferences.edit().putBoolean(KEY_UPDATE_SCHEDULED, isUpdateScheduled).apply();
+    }
+
+    /** Gets whether an update has been scheduled. */
+    public boolean isUpdateScheduled() {
+        return mPreferences.getBoolean(KEY_UPDATE_SCHEDULED, false);
+    }
+
+    /** Whether a WebAPK is unbound. */
+    private boolean isUnboundWebApk() {
+        String webApkPackageName = getWebApkPackageName();
+        return (webApkPackageName != null
+                && !webApkPackageName.startsWith(WebApkConstants.WEBAPK_PACKAGE_PREFIX));
+    }
+
+    /** Sets whether an update should be forced. */
+    public void setShouldForceUpdate(boolean forceUpdate) {
+        if (!isUnboundWebApk()) {
+            mPreferences.edit().putBoolean(KEY_SHOULD_FORCE_UPDATE, forceUpdate).apply();
+        }
+    }
+
+    /** Whether to force an update. */
+    public boolean shouldForceUpdate() {
+        return mPreferences.getBoolean(KEY_SHOULD_FORCE_UPDATE, false);
+    }
+
+    /** Returns the update status. */
+    public String getUpdateStatus() {
+        if (isUnboundWebApk()) return NOT_UPDATABLE;
+        if (isUpdateScheduled()) return "Scheduled";
+        if (shouldForceUpdate()) return "Pending";
+        return didPreviousUpdateSucceed() ? "Succeeded" : "Failed";
     }
 
     /**
@@ -522,15 +594,11 @@ public class WebappDataStorage {
         if (pendingUpdateFilePath == null) return;
 
         mPreferences.edit().remove(KEY_PENDING_UPDATE_FILE_PATH).apply();
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... params) {
-                if (!new File(pendingUpdateFilePath).delete()) {
-                    Log.d(TAG, "Failed to delete file " + pendingUpdateFilePath);
-                }
-                return null;
+        PostTask.postTask(TaskTraits.BEST_EFFORT_MAY_BLOCK, () -> {
+            if (!new File(pendingUpdateFilePath).delete()) {
+                Log.d(TAG, "Failed to delete file " + pendingUpdateFilePath);
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        });
     }
 
     /**
@@ -538,20 +606,17 @@ public class WebappDataStorage {
      * last {@link numMillis} milliseconds.
      */
     boolean wasCheckForUpdatesDoneInLastMs(long numMillis) {
-        return (sClock.currentTimeMillis() - getLastCheckForWebManifestUpdateTime()) < numMillis;
+        return (sClock.currentTimeMillis() - getLastCheckForWebManifestUpdateTimeMs()) < numMillis;
     }
 
     /** Returns whether we should check for update. */
     boolean shouldCheckForUpdate() {
+        if (shouldForceUpdate()) return true;
         long checkUpdatesInterval =
                 shouldRelaxUpdates() ? RELAXED_UPDATE_INTERVAL : UPDATE_INTERVAL;
         long now = sClock.currentTimeMillis();
-        long sinceLastCheckDurationMs = now - getLastCheckForWebManifestUpdateTime();
-        if (sinceLastCheckDurationMs >= checkUpdatesInterval) return true;
-
-        long sinceLastUpdateRequestDurationMs = now - getLastWebApkUpdateRequestCompletionTime();
-        return sinceLastUpdateRequestDurationMs >= RETRY_UPDATE_DURATION
-                && !didPreviousUpdateSucceed();
+        long sinceLastCheckDurationMs = now - getLastCheckForWebManifestUpdateTimeMs();
+        return sinceLastCheckDurationMs >= checkUpdatesInterval;
     }
 
     protected WebappDataStorage(String webappId) {

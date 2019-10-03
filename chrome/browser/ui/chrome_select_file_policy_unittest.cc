@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/prefs/browser_prefs.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -20,7 +21,8 @@
 
 #if defined(USE_AURA)
 // http://crbug.com/105200
-#define MAYBE_ExpectAsynchronousListenerCall DISABLED_ExpectAsynchronousListenerCall
+#define MAYBE_ExpectAsynchronousListenerCall \
+  DISABLED_ExpectAsynchronousListenerCall
 #else
 #define MAYBE_ExpectAsynchronousListenerCall ExpectAsynchronousListenerCall
 #endif
@@ -29,9 +31,7 @@ namespace {
 
 class FileSelectionUser : public ui::SelectFileDialog::Listener {
  public:
-  FileSelectionUser()
-      : file_selection_initialisation_in_progress(false) {
-  }
+  FileSelectionUser() : file_selection_initialisation_in_progress(false) {}
 
   ~FileSelectionUser() override {
     if (select_file_dialog_.get())
@@ -48,13 +48,8 @@ class FileSelectionUser : public ui::SelectFileDialog::Listener {
 
     file_selection_initialisation_in_progress = true;
     select_file_dialog_->SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE,
-                                    title,
-                                    file_path,
-                                    NULL,
-                                    0,
-                                    base::FilePath::StringType(),
-                                    NULL,
-                                    NULL);
+                                    title, file_path, NULL, 0,
+                                    base::FilePath::StringType(), NULL, NULL);
     file_selection_initialisation_in_progress = false;
   }
 
@@ -87,15 +82,14 @@ typedef testing::Test ChromeSelectFilePolicyTest;
 TEST_F(ChromeSelectFilePolicyTest, MAYBE_ExpectAsynchronousListenerCall) {
   content::TestBrowserThreadBundle test_browser_thread_bundle;
 
-  ScopedTestingLocalState local_state(
-      TestingBrowserProcess::GetGlobal());
+  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
 
   std::unique_ptr<FileSelectionUser> file_selection_user(
       new FileSelectionUser());
 
   // Disallow file-selection dialogs.
   local_state.Get()->SetManagedPref(prefs::kAllowFileSelectionDialogs,
-                                    base::MakeUnique<base::Value>(false));
+                                    std::make_unique<base::Value>(false));
 
   file_selection_user->StartFileSelection();
 }

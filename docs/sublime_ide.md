@@ -86,8 +86,8 @@ The settings will take effect as soon as you save the file.
     of the sidebar
 *   ``Ctrl+` `` will show the console; it shows errors and debugging output, and
     you can run Python
-*   `View > Distractio-Free Mode` goes into fullscreen and removes Sublime's
-    header and footer
+*   `View > Enter Distraction Free Mode` goes into fullscreen and removes
+    Sublime's header and footer
 *   `View > Layout > ...` changes the configuration of files you can open side-
     by-side
 *   `Ctrl + P` (`Cmd + P` on Mac) quickly opens a search box to find a file or
@@ -125,7 +125,7 @@ configured. You can install the package manager by following in the
 website. Once the package manager is installed, restart Sublime.
 
 To install a package, press `Ctrl + Shift + P` and select `Package Manager:
-Install Package` (the string match is fairly leniant; you can just type
+Install Package` (the string match is fairly lenient; you can just type
 `"instp"` and it should find it). Then type or select the package you want to
 install.
 
@@ -182,7 +182,7 @@ as a separate entry in the `folders` array:
 ```json
 {
   "name": "blink",
-  "path": "src/third_party/WebKit",
+  "path": "src/third_party/blink",
 }
 ```
 
@@ -210,13 +210,13 @@ useful on third_party projects that use another style.
     Package > SublimeLinter-cpplint`).
 
 Now when you save a C++ file, red dots should appear next to lines that
-invalidate the style. You can change this behavior with Choose Lint Mode (`Ctrl
-+ Shift + P > "lint mode"`).
+invalidate the style. You can change this behavior with Choose Lint Mode
+(`Ctrl + Shift + P > "lint mode"`).
 
-You can also see and navigate all the linter errors with Show All Errors (`Ctrl
-+ Shift + P > "show all"`). You can also use Next Error/Previous Error (and
-their associated shortcuts) to navigate the errors. The gutter at the bottom of
-the screen shows the message for the error on the current line.
+You can also see and navigate all the linter errors with Show All Errors
+(`Ctrl + Shift + P > "show all"`). You can also use Next Error/Previous Error
+(and their associated shortcuts) to navigate the errors. The gutter at the
+bottom of the screen shows the message for the error on the current line.
 
 You can also change the style of dot next to the line with Choose Gutter Theme
 (`Ctrl + Shift + P > "gutter"`)
@@ -262,21 +262,44 @@ mouse shortcuts) can be found on the [Chromium X-Refs
 page](https://github.com/karlinjf/ChromiumXRefs/).
 
 
-## Code Completion with SublimeClang (Linux Only)
+## Code Completion, Error Highlighting, Go-to-Definition, and Find References with LSP (clangd)
+
+Gives Sublime Text 3 rich editing features for languages with Language Server
+Protocol support. It searches the current compilation unit for definitions and
+references and provides super fast code completion.
+
+In this case, we're going to add C/C++ support.
+
+1. Refer to [clangd.md](clangd.md) to install clangd and build a compilation
+   database.
+
+1. Install the [LSP Package](https://github.com/tomv564/LSP) and enable clangd
+   support by following the [link](https://clang.llvm.org/extra/clangd/Installation.html#editor-plugins)
+   and following the instructions for Sublime Text.
+
+To remove sublime text's auto completion and only show LSPs (recommended), set
+the following LSP preference:
+
+```json
+"only_show_lsp_completions": true
+```
+
+## Code Completion with SublimeClang (Linux Only) [Deprecated, see LSP above]
 
 SublimeClang is a powerful autocompletion plugin for Sublime that uses the Clang
 static analyzer to provide real-time type and function completion and
 compilation errors on save. It works with Chromium with a script that finds and
-parses the appropriate *.ninja files to find the necessary include paths for a
+parses the appropriate \*.ninja files to find the necessary include paths for a
 given file.
 
 **Note**: Currently, only the Linux setup of SublimeClang is working. However,
 there are instructions below for Windows/Mac which you are welcome to try -- if
-you can get them to work, please update these instructions ^_^
+you can get them to work, please update these instructions ^\_^
 
 More information on SublimeClang's functionality (including keyboard shortcuts)
 can be found on the [SublimeClang GitHub
 page](https://github.com/quarnster/SublimeClang).
+
 
 ### Linux
 
@@ -300,6 +323,8 @@ resource directory instead of that supplied by SublimeClang.
     cd SublimeClang
     # Copy libclang.so to the internals dir
     cp /usr/lib/llvm-3.9/lib/libclang.so.1 internals/libclang.so
+    # Fix src/main.cpp (shared_ptr -> std::shared_ptr)
+    sed -i -- 's/shared_ptr/std::shared_ptr/g' src/main.cpp
     # Make the project - should be really quick, since libclang.so is already built
     cd src && mkdir build && cd build
     cmake ..
@@ -309,7 +334,7 @@ resource directory instead of that supplied by SublimeClang.
 1.  Edit your project file `Project > Edit Project` to call the script above
     (replace `/path/to/depot_tools` with your depot_tools directory):
 
-    ```
+    ```json
     {
       "folders":
       [
@@ -330,6 +355,16 @@ resource directory instead of that supplied by SublimeClang.
    true. This way you use the resource directory we set instead of the ancient
    ones included in the repository. Without this you won't have C++14 support.
 
+1. (Optional) To remove errors that sometimes show up from importing out of
+   third_party, edit your SublimeClang settings and set:
+
+   ```json
+   "diagnostic_ignore_dirs":
+   [
+     "${project_path}/src/third_party/"
+   ],
+   ```
+
 1.  Restart Sublime. Now when you save a file, you should see a "Reparsing…"
     message in the footer and errors will show up in the output panel. Also,
     variables and function definitions should auto-complete as you type.
@@ -337,6 +372,20 @@ resource directory instead of that supplied by SublimeClang.
 **Note:** If you're having issues, adding `"sublimeclang_debug_options": true` to
 your settings file will print more to the console (accessed with ``Ctrl + ` ``)
 which can be helpful when debugging.
+
+**Debugging:** If things don't seem to be working, the console ``Ctrl + ` `` is
+your friend. Here are some basic errors which have workarounds:
+
+1. Bad Libclang args
+    - *problem:* ```tu is None...``` is showing up repeatedly in the console:
+    - *solution:* ninja_options_script.py is generating arguments that libclang
+    can't parse properly. To fix this, make sure to
+    ```export CHROMIUM_OUT_DIR="{Default Out Directory}"```
+    This is because the ninja_options_script.py file will use the most recently
+    modified build directory unless specified to do otherwise. If the chosen
+    build directory has unusual args (say for thread sanitization), libclang may
+    fail.
+
 
 ### Mac (not working)
 
@@ -427,27 +476,6 @@ about it with this command: Windows: `git config --global core.excludesfile
 %USERPROFILE%\.gitignore` Mac, Linux: `git config --global core.excludesfile
 ~/.gitignore`
 
-### Build a single file
-Copy the file `compile_current_file.py` to your Packages directory:
-
-```shell
-cd /path/to/chromium/src
-cp tools/sublime/compile_current_file.py ~/.config/sublime-text-3/Packages/User
-```
-
-This will give you access to a command `"compile_current_file"`, which you can
-then add to your `Preferences > Keybindings - User` file:
-
-```json
-[
-  { "keys": ["ctrl+f7"], "command": "compile_current_file", "args": {"target_build": "Debug"} },
-  { "keys": ["ctrl+shift+f7"], "command": "compile_current_file", "args": {"target_build": "Release"} },
-]
-```
-
-You can then press those key combinations to compile the current file in the
-given target build.
-
 ## Building inside Sublime
 
 To build inside Sublime Text, we first have to create a new build system.
@@ -481,7 +509,7 @@ If you're using goma, add the -j parameter (replace out/Debug with your out dire
     "cmd": ["ninja", "-j", "1000", "-C", "out/Debug", "chrome"],
 ```
 
-**Regex explanation:** Aims to capture these these error formats while respecting
+**Regex explanation:** Aims to capture these error formats while respecting
 [Sublime's perl-like group matching](http://docs.sublimetext.info/en/latest/reference/build_systems/configuration.html#build-capture-error-output):
 
 1.  `d:\src\chrome\src\base\threading\sequenced_worker_pool.cc(670): error
@@ -523,6 +551,10 @@ build targets with `Ctrl + Shift + B`:
       "name": "Browser Tests",
       "cmd": ["ninja", "-j", "1000", "-C", "out/Debug", "browser_tests"],
     },
+    {
+      "name": "Current file",
+      "cmd": ["compile_single_file", "--build-dir", "out/Debug", "--file-path", "$file"],
+    },
   ]
 ```
 
@@ -542,6 +574,36 @@ shortcut to run it after building:
       },
     },
   ]
+```
+
+### More detailed stack traces
+
+Chrome's default stack traces don't have full file paths so Sublime can't
+parse them. You can enable more detailed stack traces and use F4 to step right
+to the crashing line of code.
+
+First, add `print_unsymbolized_stack_traces = true` to your gn args, and make
+sure you have debug symbols enabled too (`symbol_level = 2`). Then, pipe
+Chrome's stderr through the asan_symbolize.py script. Here's a suitable build
+variant for Linux (with tweaked file_regex):
+
+```json
+{
+  "name": "Build and run with asan_symbolize",
+  "cmd": "ninja -j 1000 -C out/Debug chrome && out/Debug/chrome 2>&1 | ./tools/valgrind/asan/asan_symbolize.py",
+  "shell": true,
+  "file_regex": "(?:^|[)] )[.\\\\/]*([a-z]?:?[\\w.\\\\/]+)[(:]([0-9]+)[,:]?([0-9]+)?[)]?:?(.*)$"
+}
+```
+
+You can test it by visiting chrome://crash. You should be able to step through
+each line in the resulting stacktrace with F4. You can also get a stack trace
+without crashing like so:
+
+```c++
+#include "base/debug/stack_trace.h"
+[...]
+base::debug::StackTrace().Print();
 ```
 
 ### Assigning builds to keyboard shortcuts

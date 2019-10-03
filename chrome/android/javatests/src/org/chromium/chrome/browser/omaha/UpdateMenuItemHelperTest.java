@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.omaha;
 
 import android.content.Context;
 import android.support.test.filters.MediumTest;
-import android.view.View;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -14,29 +13,30 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.UrlConstants;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.appmenu.AppMenuTestSupport;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.OverviewModeBehaviorWatcher;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.UiRestriction;
 
 /**
  * Tests for the UpdateMenuItemHelper.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG, "enable_update_menu_item"})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable_update_menu_item"})
 public class UpdateMenuItemHelperTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -90,7 +90,7 @@ public class UpdateMenuItemHelperTest {
         }
 
         @Override
-        protected String getMarketUrlInternal(Context context) {
+        protected String getMarketUrlInternal() {
             return mURL;
         }
     }
@@ -148,12 +148,7 @@ public class UpdateMenuItemHelperTest {
         prepareAndStartMainActivity(currentVersion, latestVersion);
         showAppMenuAndAssertMenuShown();
         Assert.assertTrue("Update menu item is not showing.",
-                mActivityTestRule.getActivity()
-                        .getAppMenuHandler()
-                        .getAppMenu()
-                        .getMenu()
-                        .findItem(R.id.update_menu_id)
-                        .isVisible());
+                mActivityTestRule.getMenu().findItem(R.id.update_menu_id).isVisible());
     }
 
     /**
@@ -164,18 +159,15 @@ public class UpdateMenuItemHelperTest {
         prepareAndStartMainActivity(currentVersion, latestVersion);
         showAppMenuAndAssertMenuShown();
         Assert.assertFalse("Update menu item is showing.",
-                mActivityTestRule.getActivity()
-                        .getAppMenuHandler()
-                        .getAppMenu()
-                        .getMenu()
-                        .findItem(R.id.update_menu_id)
-                        .isVisible());
+                mActivityTestRule.getMenu().findItem(R.id.update_menu_id).isVisible());
     }
 
     @Test
     @MediumTest
     @Feature({"Omaha"})
     @RetryOnFailure
+    // TODO(https://crbug.com/965106): Fix tests when InlineUpdateFlow is enabled.
+    @DisableFeatures("InlineUpdateFlow")
     public void testCurrentVersionIsOlder() throws Exception {
         checkUpdateMenuItemIsShowing("0.0.0.0", "1.2.3.4");
     }
@@ -208,56 +200,59 @@ public class UpdateMenuItemHelperTest {
     @Feature({"Omaha"})
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
     @RetryOnFailure
+    // TODO(https://crbug.com/965106): Fix tests when InlineUpdateFlow is enabled.
+    @DisableFeatures("InlineUpdateFlow")
     public void testMenuItemNotShownInOverview() throws Exception {
         checkUpdateMenuItemIsShowing("0.0.0.0", "1.2.3.4");
 
         // checkUpdateMenuItemIsShowing() opens the menu; hide it and assert it's dismissed.
         hideAppMenuAndAssertMenuShown();
 
-        // Ensure not shown in tab switcher app menu.
+        // Enter the tab switcher.
         OverviewModeBehaviorWatcher overviewModeWatcher = new OverviewModeBehaviorWatcher(
                 mActivityTestRule.getActivity().getLayoutManager(), true, false);
-        View tabSwitcherButton =
-                mActivityTestRule.getActivity().findViewById(R.id.tab_switcher_button);
-        Assert.assertNotNull("'tab_switcher_button' view is not found", tabSwitcherButton);
-        TouchCommon.singleClickView(tabSwitcherButton);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mActivityTestRule.getActivity().getLayoutManager().showOverview(false));
         overviewModeWatcher.waitForBehavior();
+
+        // Make sure the item is not shown in tab switcher app menu.
         showAppMenuAndAssertMenuShown();
         Assert.assertFalse("Update menu item is showing.",
-                mActivityTestRule.getActivity()
-                        .getAppMenuHandler()
-                        .getAppMenu()
-                        .getMenu()
-                        .findItem(R.id.update_menu_id)
-                        .isVisible());
+                mActivityTestRule.getMenu().findItem(R.id.update_menu_id).isVisible());
     }
 
     private void showAppMenuAndAssertMenuShown() {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mActivityTestRule.getActivity().getAppMenuHandler().showAppMenu(null, false);
-            }
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+            AppMenuTestSupport.showAppMenu(mActivityTestRule.getActivity(), null, false, false);
         });
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return mActivityTestRule.getActivity().getAppMenuHandler().isAppMenuShowing();
+                return mActivityTestRule.getActivity()
+                        .getRootUiCoordinatorForTesting()
+                        .getAppMenuCoordinatorForTesting()
+                        .getAppMenuHandler()
+                        .isAppMenuShowing();
             }
         });
     }
 
     private void hideAppMenuAndAssertMenuShown() {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mActivityTestRule.getActivity().getAppMenuHandler().hideAppMenu();
-            }
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+            mActivityTestRule.getActivity()
+                    .getRootUiCoordinatorForTesting()
+                    .getAppMenuCoordinatorForTesting()
+                    .getAppMenuHandler()
+                    .hideAppMenu();
         });
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return !mActivityTestRule.getActivity().getAppMenuHandler().isAppMenuShowing();
+                return !mActivityTestRule.getActivity()
+                                .getRootUiCoordinatorForTesting()
+                                .getAppMenuCoordinatorForTesting()
+                                .getAppMenuHandler()
+                                .isAppMenuShowing();
             }
         });
     }

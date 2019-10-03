@@ -6,17 +6,24 @@
 #define CONTENT_RENDERER_MEDIA_WEBRTC_RTC_STATS_H_
 
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/WebRTCStats.h"
-#include "third_party/webrtc/api/stats/rtcstats.h"
-#include "third_party/webrtc/api/stats/rtcstatsreport.h"
+#include "third_party/blink/public/platform/web_rtc_stats.h"
+#include "third_party/webrtc/api/stats/rtc_stats.h"
+#include "third_party/webrtc/api/stats/rtc_stats_collector_callback.h"
+#include "third_party/webrtc/api/stats/rtc_stats_report.h"
 
 namespace content {
 
+// Wrapper around a webrtc::RTCStatsReport. Filters out any stats objects that
+// aren't whitelisted. |filter| controls whether to include only standard
+// members (RTCStatsMemberInterface::is_standardized return true) or not
+// (RTCStatsMemberInterface::is_standardized return false).
 class CONTENT_EXPORT RTCStatsReport : public blink::WebRTCStatsReport {
  public:
   RTCStatsReport(
-      const scoped_refptr<const webrtc::RTCStatsReport>& stats_report);
+      const scoped_refptr<const webrtc::RTCStatsReport>& stats_report,
+      const blink::WebVector<webrtc::NonStandardGroupId>& exposed_group_ids);
   ~RTCStatsReport() override;
   std::unique_ptr<blink::WebRTCStatsReport> CopyHandle() const override;
 
@@ -29,12 +36,17 @@ class CONTENT_EXPORT RTCStatsReport : public blink::WebRTCStatsReport {
   const scoped_refptr<const webrtc::RTCStatsReport> stats_report_;
   webrtc::RTCStatsReport::ConstIterator it_;
   const webrtc::RTCStatsReport::ConstIterator end_;
+  blink::WebVector<webrtc::NonStandardGroupId> exposed_group_ids_;
+  // Number of whitelisted webrtc::RTCStats in |stats_report_|.
+  const size_t size_;
 };
 
 class CONTENT_EXPORT RTCStats : public blink::WebRTCStats {
  public:
-  RTCStats(const scoped_refptr<const webrtc::RTCStatsReport>& stats_owner,
-           const webrtc::RTCStats* stats);
+  RTCStats(
+      const scoped_refptr<const webrtc::RTCStatsReport>& stats_owner,
+      const webrtc::RTCStats* stats,
+      const blink::WebVector<webrtc::NonStandardGroupId>& exposed_group_ids);
   ~RTCStats() override;
 
   blink::WebString Id() const override;
@@ -83,6 +95,35 @@ class CONTENT_EXPORT RTCStatsMember : public blink::WebRTCStatsMember {
   const scoped_refptr<const webrtc::RTCStatsReport> stats_owner_;
   // Pointer to member of a stats object that is owned by |stats_owner_|.
   const webrtc::RTCStatsMemberInterface* const member_;
+};
+
+// A stats collector callback.
+// It is invoked on the WebRTC signaling thread and will post a task to invoke
+// |callback| on the thread given in the |main_thread| argument.
+// The argument to the callback will be a |blink::WebRTCStatsReport|.
+class RTCStatsCollectorCallbackImpl : public webrtc::RTCStatsCollectorCallback {
+ public:
+  static rtc::scoped_refptr<RTCStatsCollectorCallbackImpl> Create(
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+      blink::WebRTCStatsReportCallback callback,
+      const blink::WebVector<webrtc::NonStandardGroupId>& exposed_group_ids);
+
+  void OnStatsDelivered(
+      const rtc::scoped_refptr<const webrtc::RTCStatsReport>& report) override;
+
+ protected:
+  RTCStatsCollectorCallbackImpl(
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+      blink::WebRTCStatsReportCallback callback2,
+      const blink::WebVector<webrtc::NonStandardGroupId>& exposed_group_ids);
+  ~RTCStatsCollectorCallbackImpl() override;
+
+  void OnStatsDeliveredOnMainThread(
+      rtc::scoped_refptr<const webrtc::RTCStatsReport> report);
+
+  const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
+  blink::WebRTCStatsReportCallback callback_;
+  blink::WebVector<webrtc::NonStandardGroupId> exposed_group_ids_;
 };
 
 CONTENT_EXPORT void WhitelistStatsForTesting(const char* type);

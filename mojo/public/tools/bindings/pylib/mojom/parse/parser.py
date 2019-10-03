@@ -4,24 +4,12 @@
 
 """Generates a syntax tree from a Mojo IDL file."""
 
-import imp
 import os.path
 import sys
 
-def _GetDirAbove(dirname):
-  """Returns the directory "above" this file containing |dirname| (which must
-  also be "above" this file)."""
-  path = os.path.abspath(__file__)
-  while True:
-    path, tail = os.path.split(path)
-    assert tail
-    if tail == dirname:
-      return path
-
-try:
-  imp.find_module("ply")
-except ImportError:
-  sys.path.append(os.path.join(_GetDirAbove("mojo"), "third_party"))
+_current_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(
+    1, os.path.join(_current_dir, *([os.pardir] * 7 + ['third_party'])))
 from ply import lex
 from ply import yacc
 
@@ -103,10 +91,11 @@ class Parser(object):
     p[0].definition_list.append(p[2])
 
   def p_import(self, p):
-    """import : IMPORT STRING_LITERAL SEMI"""
+    """import : attribute_section IMPORT STRING_LITERAL SEMI"""
     # 'eval' the literal to strip the quotes.
     # TODO(vtl): This eval is dubious. We should unquote/unescape ourselves.
-    p[0] = ast.Import(eval(p[2]), filename=self.filename, lineno=p.lineno(2))
+    p[0] = ast.Import(p[1], eval(p[3]), filename=self.filename,
+                      lineno=p.lineno(2))
 
   def p_module(self, p):
     """module : attribute_section MODULE identifier_wrapped SEMI"""
@@ -282,13 +271,35 @@ class Parser(object):
     p[0] = p[1]
 
   def p_basictypename(self, p):
-    """basictypename : identifier
+    """basictypename : remotetype
+                     | receivertype
+                     | associatedremotetype
+                     | associatedreceivertype
+                     | identifier
                      | ASSOCIATED identifier
                      | handletype"""
     if len(p) == 2:
       p[0] = p[1]
     else:
       p[0] = "asso<" + p[2] + ">"
+
+  def p_remotetype(self, p):
+    """remotetype : PENDING_REMOTE LANGLE identifier RANGLE"""
+    p[0] = "rmt<%s>" % p[3]
+
+  def p_receivertype(self, p):
+    """receivertype : PENDING_RECEIVER LANGLE identifier RANGLE"""
+    p[0] = "rcv<%s>" % p[3]
+
+  def p_associatedremotetype(self, p):
+    """associatedremotetype : PENDING_ASSOCIATED_REMOTE LANGLE identifier \
+                                  RANGLE"""
+    p[0] = "rma<%s>" % p[3]
+
+  def p_associatedreceivertype(self, p):
+    """associatedreceivertype : PENDING_ASSOCIATED_RECEIVER LANGLE identifier \
+                                    RANGLE"""
+    p[0] = "rca<%s>" % p[3]
 
   def p_handletype(self, p):
     """handletype : HANDLE
@@ -383,8 +394,8 @@ class Parser(object):
                          filename=self.filename, lineno=p.lineno(2))
 
   def p_const(self, p):
-    """const : CONST typename NAME EQUALS constant SEMI"""
-    p[0] = ast.Const(p[3], p[2], p[5])
+    """const : attribute_section CONST typename NAME EQUALS constant SEMI"""
+    p[0] = ast.Const(p[4], p[1], p[3], p[6])
 
   def p_constant(self, p):
     """constant : literal

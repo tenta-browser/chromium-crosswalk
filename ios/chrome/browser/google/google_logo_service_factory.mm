@@ -4,14 +4,14 @@
 
 #include "ios/chrome/browser/google/google_logo_service_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/google/google_logo_service.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -26,7 +26,8 @@ GoogleLogoService* GoogleLogoServiceFactory::GetForBrowserState(
 
 // static
 GoogleLogoServiceFactory* GoogleLogoServiceFactory::GetInstance() {
-  return base::Singleton<GoogleLogoServiceFactory>::get();
+  static base::NoDestructor<GoogleLogoServiceFactory> instance;
+  return instance.get();
 }
 
 GoogleLogoServiceFactory::GoogleLogoServiceFactory()
@@ -34,6 +35,7 @@ GoogleLogoServiceFactory::GoogleLogoServiceFactory()
           "GoogleLogoService",
           BrowserStateDependencyManager::GetInstance()) {
   DependsOn(ios::TemplateURLServiceFactory::GetInstance());
+  DependsOn(IdentityManagerFactory::GetInstance());
 }
 
 GoogleLogoServiceFactory::~GoogleLogoServiceFactory() {}
@@ -42,9 +44,10 @@ std::unique_ptr<KeyedService> GoogleLogoServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return base::MakeUnique<GoogleLogoService>(
+  return std::make_unique<GoogleLogoService>(
       ios::TemplateURLServiceFactory::GetForBrowserState(browser_state),
-      browser_state->GetRequestContext());
+      IdentityManagerFactory::GetForBrowserState(browser_state),
+      browser_state->GetSharedURLLoaderFactory());
 }
 
 web::BrowserState* GoogleLogoServiceFactory::GetBrowserStateToUse(

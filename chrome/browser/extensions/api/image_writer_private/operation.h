@@ -12,21 +12,29 @@
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/md5.h"
+#include "base/hash/md5.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/task_traits.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/image_writer_utility_client.h"
 #include "chrome/common/extensions/api/image_writer_private.h"
 #include "extensions/common/extension_id.h"
+
+#if defined(OS_CHROMEOS)
+#include "chromeos/disks/disk_mount_manager.h"
+#endif
 
 namespace image_writer_api = extensions::api::image_writer_private;
 
 namespace base {
 class FilePath;
 }  // namespace base
+
+namespace service_manager {
+class Connector;
+}
 
 namespace extensions {
 namespace image_writer {
@@ -59,6 +67,7 @@ class Operation : public base::RefCountedThreadSafe<Operation> {
       base::OnceCallback<void(bool, const std::string&)>;
 
   Operation(base::WeakPtr<OperationManager> manager,
+            std::unique_ptr<service_manager::Connector> connector,
             const ExtensionId& extension_id,
             const std::string& device_path,
             const base::FilePath& download_folder);
@@ -150,7 +159,7 @@ class Operation : public base::RefCountedThreadSafe<Operation> {
   base::FilePath device_path_;
 
   // Temporary directory to store files as we go.
-  base::ScopedTempDir temp_dir_;
+  std::unique_ptr<base::ScopedTempDir> temp_dir_;
 
  private:
   friend class base::RefCountedThreadSafe<Operation>;
@@ -178,7 +187,8 @@ class Operation : public base::RefCountedThreadSafe<Operation> {
   // Unmounts all volumes on |device_path_|.
   void UnmountVolumes(const base::Closure& continuation);
   // Starts the write after unmounting.
-  void UnmountVolumesCallback(const base::Closure& continuation, bool success);
+  void UnmountVolumesCallback(const base::Closure& continuation,
+                              chromeos::MountError error_code);
   // Starts the ImageBurner write.  Note that target_path is the file path of
   // the device where device_path has been a system device path.
   void StartWriteOnUIThread(const std::string& target_path,
@@ -208,6 +218,9 @@ class Operation : public base::RefCountedThreadSafe<Operation> {
 
   // Runs all cleanup functions.
   void CleanUp();
+
+  // Connector to the service manager. Used and deleted on |task_runner_|.
+  std::unique_ptr<service_manager::Connector> connector_;
 
   // |stage_| and |progress_| are owned by the FILE thread, use |SetStage| and
   // |SetProgress| to update.  Progress should be in the interval [0,100]

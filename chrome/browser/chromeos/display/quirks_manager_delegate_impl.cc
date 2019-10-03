@@ -5,10 +5,10 @@
 #include "chrome/browser/chromeos/display/quirks_manager_delegate_impl.h"
 
 #include "base/path_service.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/common/chrome_paths.h"
-#include "chromeos/chromeos_paths.h"
+#include "chromeos/constants/chromeos_paths.h"
 #include "google_apis/google_api_keys.h"
 
 namespace {
@@ -28,9 +28,9 @@ std::string QuirksManagerDelegateImpl::GetApiKey() const {
 base::FilePath QuirksManagerDelegateImpl::GetDisplayProfileDirectory() const {
   base::FilePath directory;
   if (base::SysInfo::IsRunningOnChromeOS()) {
-    PathService::Get(chromeos::DIR_DEVICE_DISPLAY_PROFILES, &directory);
+    base::PathService::Get(chromeos::DIR_DEVICE_DISPLAY_PROFILES, &directory);
   } else {
-    PathService::Get(chrome::DIR_USER_DATA, &directory);
+    base::PathService::Get(chrome::DIR_USER_DATA, &directory);
     directory = directory.Append(kUserDataDisplayProfilesDirectory);
   }
   return directory;

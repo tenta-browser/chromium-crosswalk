@@ -22,6 +22,7 @@ class Me2MeDesktopEnvironment : public BasicDesktopEnvironment {
   ~Me2MeDesktopEnvironment() override;
 
   // DesktopEnvironment interface.
+  std::unique_ptr<ActionExecutor> CreateActionExecutor() override;
   std::unique_ptr<ScreenControls> CreateScreenControls() override;
   std::string GetCapabilities() const override;
 
@@ -32,7 +33,7 @@ class Me2MeDesktopEnvironment : public BasicDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory,
+      base::WeakPtr<ClientSessionControl> client_session_control,
       const DesktopEnvironmentOptions& options);
 
   // Initializes security features of the desktop environment (the curtain mode
@@ -61,8 +62,7 @@ class Me2MeDesktopEnvironmentFactory : public BasicDesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory);
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
   ~Me2MeDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory interface.

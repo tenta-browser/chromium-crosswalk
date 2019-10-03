@@ -14,7 +14,7 @@
  *   url: string,
  * }}
  */
-var RegulatoryInfo;
+let RegulatoryInfo;
 
 /**
  * @typedef {{
@@ -23,7 +23,7 @@ var RegulatoryInfo;
  *   canChangeChannel: boolean,
  * }}
  */
-var ChannelInfo;
+let ChannelInfo;
 
 /**
  * @typedef {{
@@ -32,7 +32,7 @@ var ChannelInfo;
  *   osVersion: string,
  * }}
  */
-var VersionInfo;
+let VersionInfo;
 
 /**
  * @typedef {{
@@ -40,13 +40,13 @@ var VersionInfo;
  *   size: (string|undefined),
  * }}
  */
-var AboutPageUpdateInfo;
+let AboutPageUpdateInfo;
 
 /**
  * Enumeration of all possible browser channels.
  * @enum {string}
  */
-var BrowserChannel = {
+const BrowserChannel = {
   BETA: 'beta-channel',
   CANARY: 'canary-channel',
   DEV: 'dev-channel',
@@ -58,7 +58,7 @@ var BrowserChannel = {
  *   updateAvailable: boolean,
  * }}
  */
-var TPMFirmwareUpdateStatusChangedEvent;
+let TPMFirmwareUpdateStatusChangedEvent;
 // </if>
 
 /**
@@ -66,7 +66,7 @@ var TPMFirmwareUpdateStatusChangedEvent;
  * the ones defined at |AboutHandler::UpdateStatusToString|.
  * @enum {string}
  */
-var UpdateStatus = {
+const UpdateStatus = {
   CHECKING: 'checking',
   UPDATING: 'updating',
   NEARLY_UPDATED: 'nearly_updated',
@@ -86,7 +86,7 @@ var UpdateStatus = {
  *   text: (string|undefined)
  * }}
  */
-var PromoteUpdaterStatus;
+let PromoteUpdaterStatus;
 // </if>
 
 /**
@@ -99,7 +99,7 @@ var PromoteUpdaterStatus;
  *   size: (string|undefined),
  * }}
  */
-var UpdateStatusChangedEvent;
+let UpdateStatusChangedEvent;
 
 cr.define('settings', function() {
   /**
@@ -129,14 +129,14 @@ cr.define('settings', function() {
    */
   function isTargetChannelMoreStable(currentChannel, targetChannel) {
     // List of channels in increasing stability order.
-    var channelList = [
+    const channelList = [
       BrowserChannel.CANARY,
       BrowserChannel.DEV,
       BrowserChannel.BETA,
       BrowserChannel.STABLE,
     ];
-    var currentIndex = channelList.indexOf(currentChannel);
-    var targetIndex = channelList.indexOf(targetChannel);
+    const currentIndex = channelList.indexOf(currentChannel);
+    const targetIndex = channelList.indexOf(targetChannel);
     return currentIndex < targetIndex;
   }
 
@@ -153,6 +153,12 @@ cr.define('settings', function() {
      */
     refreshUpdateStatus() {}
 
+    // <if expr="chromeos">
+    /** Opens the release notes app. */
+    launchReleaseNotes() {}
+    // </if>
+
+
     /** Opens the help page. */
     openHelpPage() {}
 
@@ -165,6 +171,9 @@ cr.define('settings', function() {
     // </if>
 
     // <if expr="chromeos">
+    /** Opens the OS help page. */
+    openOsHelpPage() {}
+
     /**
      * Checks for available update and applies if it exists.
      */
@@ -198,6 +207,13 @@ cr.define('settings', function() {
     getRegulatoryInfo() {}
 
     /**
+     * Checks if the device has reached end-of-life status and will no longer
+     * receive updates.
+     * @return {!Promise<boolean>}
+     */
+    getHasEndOfLife() {}
+
+    /**
      * Request TPM firmware update status from the browser. It results in one or
      * more 'tpm-firmware-update-status-changed' WebUI events.
      */
@@ -209,6 +225,20 @@ cr.define('settings', function() {
      * Triggers setting up auto-updates for all users.
      */
     promoteUpdater() {}
+    // </if>
+
+    // <if expr="chromeos">
+    /**
+     * Checks if the device has release notes enabled.
+     * @return {!Promise<boolean>}
+     */
+    getEnabledReleaseNotes() {}
+
+    /**
+     * Checks if the device is connected to the internet.
+     * @return {!Promise<boolean>}
+     */
+    checkInternetConnection() {}
     // </if>
   }
 
@@ -235,6 +265,11 @@ cr.define('settings', function() {
     // </if>
 
     /** @override */
+    launchReleaseNotes() {
+      chrome.send('launchReleaseNotes');
+    }
+
+    /** @override */
     openHelpPage() {
       chrome.send('openHelpPage');
     }
@@ -248,6 +283,11 @@ cr.define('settings', function() {
     // </if>
 
     // <if expr="chromeos">
+    /** @override */
+    openOsHelpPage() {
+      chrome.send('openOsHelpPage');
+    }
+
     /** @override */
     requestUpdate() {
       chrome.send('requestUpdate');
@@ -276,6 +316,21 @@ cr.define('settings', function() {
     /** @override */
     getRegulatoryInfo() {
       return cr.sendWithPromise('getRegulatoryInfo');
+    }
+
+    /** @override */
+    getHasEndOfLife() {
+      return cr.sendWithPromise('getHasEndOfLife');
+    }
+
+    /** @override */
+    getEnabledReleaseNotes() {
+      return cr.sendWithPromise('getEnabledReleaseNotes');
+    }
+
+    /** @override */
+    checkInternetConnection() {
+      return cr.sendWithPromise('checkInternetConnection');
     }
 
     /** @override */

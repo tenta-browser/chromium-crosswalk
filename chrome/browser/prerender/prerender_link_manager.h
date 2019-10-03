@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <list>
+#include <memory>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/prerender/prerender_handle.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 struct Referrer;
@@ -50,6 +52,7 @@ class PrerenderLinkManager : public KeyedService,
                       const GURL& url,
                       uint32_t rel_types,
                       const content::Referrer& referrer,
+                      const url::Origin& initiator_origin,
                       const gfx::Size& size,
                       int render_view_route_id);
 
@@ -79,6 +82,7 @@ class PrerenderLinkManager : public KeyedService,
                   const GURL& url,
                   uint32_t rel_types,
                   const content::Referrer& referrer,
+                  const url::Origin& initiator_origin,
                   const gfx::Size& size,
                   int render_view_route_id,
                   base::TimeTicks creation_time,
@@ -92,6 +96,7 @@ class PrerenderLinkManager : public KeyedService,
     GURL url;
     uint32_t rel_types;
     content::Referrer referrer;
+    url::Origin initiator_origin;
     gfx::Size size;
     int render_view_route_id;
 
@@ -154,7 +159,7 @@ class PrerenderLinkManager : public KeyedService,
 
   bool has_shutdown_;
 
-  PrerenderManager* manager_;
+  PrerenderManager* const manager_;
 
   // All prerenders known to this PrerenderLinkManager. Insertions are always
   // made at the back, so the oldest prerender is at the front, and the youngest

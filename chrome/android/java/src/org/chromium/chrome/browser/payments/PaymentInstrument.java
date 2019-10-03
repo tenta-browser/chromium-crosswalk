@@ -5,23 +5,24 @@
 package org.chromium.chrome.browser.payments;
 
 import android.graphics.drawable.Drawable;
+import android.support.annotation.Nullable;
 
-import org.chromium.base.ThreadUtils;
-import org.chromium.chrome.browser.payments.ui.PaymentOption;
+import org.chromium.base.task.PostTask;
+import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
+import org.chromium.payments.mojom.PaymentMethodChangeResponse;
 import org.chromium.payments.mojom.PaymentMethodData;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import javax.annotation.Nullable;
-
 /**
  * The base class for a single payment instrument, e.g., a credit card.
  */
-public abstract class PaymentInstrument extends PaymentOption {
+public abstract class PaymentInstrument extends EditableOption {
     /**
      * The interface for the requester of instrument details.
      */
@@ -43,8 +44,10 @@ public abstract class PaymentInstrument extends PaymentOption {
 
         /**
          * Called if unable to retrieve instrument details.
+         * @param errorMessage Developer-facing error message to be used when rejecting the promise
+         *                     returned from PaymentRequest.show().
          */
-        void onInstrumentDetailsError();
+        void onInstrumentDetailsError(String errorMessage);
     }
 
     /** The interface for the requester to abort payment. */
@@ -72,7 +75,7 @@ public abstract class PaymentInstrument extends PaymentOption {
      * @param modifiedTotal The new modified total to use.
      */
     public void setModifiedTotal(@Nullable String modifiedTotal) {
-        updateTertiarylabel(modifiedTotal);
+        updatePromoMessage(modifiedTotal);
     }
 
     /**
@@ -120,7 +123,7 @@ public abstract class PaymentInstrument extends PaymentOption {
      *         supported card types and networks in the data should be verified for 'basic-card'
      *         payment method.
      */
-    public boolean isValidForPaymentMethodData(String method, PaymentMethodData data) {
+    public boolean isValidForPaymentMethodData(String method, @Nullable PaymentMethodData data) {
         return getInstrumentMethodNames().contains(method);
     }
 
@@ -140,6 +143,11 @@ public abstract class PaymentInstrument extends PaymentOption {
 
     /** @return Whether this payment instrument can be pre-selected for immediate payment. */
     public boolean canPreselect() {
+        return true;
+    }
+
+    /** @return Whether skip-UI flow with this instrument requires a user gesture. */
+    public boolean isUserGestureRequiredToSkipUi() {
         return true;
     }
 
@@ -169,12 +177,31 @@ public abstract class PaymentInstrument extends PaymentOption {
             InstrumentDetailsCallback callback);
 
     /**
+     * Update the payment information in response to payment method change event.
+     *
+     * @param response The merchant's response to the payment method change event.
+     */
+    public void updateWith(PaymentMethodChangeResponse response) {}
+
+    /** Called when the merchant ignored the payment method change event. */
+    public void noUpdatedPaymentDetails() {}
+
+    /**
+     * @return True after changePaymentMethodFromInvokedApp(), before update updateWith() or
+     * noUpdatedPaymentDetails().
+     */
+    public boolean isChangingPaymentMethod() {
+        return false;
+    }
+
+    /**
      * Abort invocation of the payment app.
      *
+     * @param id       The unique identifier of the PaymentRequest.
      * @param callback The callback to return abort result.
      */
-    public void abortPaymentApp(AbortCallback callback) {
-        ThreadUtils.postOnUiThread(new Runnable() {
+    public void abortPaymentApp(String id, AbortCallback callback) {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 callback.onInstrumentAbortResult(false);

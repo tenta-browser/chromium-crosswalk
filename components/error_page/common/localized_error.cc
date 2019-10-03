@@ -6,14 +6,15 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -24,6 +25,7 @@
 #include "components/error_page/common/error_page_params.h"
 #include "components/error_page/common/error_page_switches.h"
 #include "components/error_page/common/net_error_info.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
@@ -35,10 +37,6 @@
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
-#endif
-
-#if defined(OS_ANDROID)
-#include "components/offline_pages/core/offline_page_feature.h"
 #endif
 
 namespace error_page {
@@ -82,7 +80,7 @@ struct LocalizedErrorMap {
   // mouse over when the error is in a frame.
   unsigned int summary_resource_id;
   int suggestions;  // Bitmap of SUGGEST_* values.
-  int buttons; // Which buttons if any to show.
+  int buttons;      // Bitmap of which buttons if any to show.
 };
 
 // clang-format off
@@ -255,7 +253,7 @@ const LocalizedErrorMap net_error_options[] = {
    SUGGEST_CONTACT_ADMINISTRATOR,
    SHOW_NO_BUTTONS,
   },
-  {net::ERR_SSL_VERSION_INTERFERENCE,
+  {net::ERR_TLS13_DOWNGRADE_DETECTED,
    IDS_ERRORPAGES_HEADING_NOT_AVAILABLE,
    IDS_ERRORPAGES_SUMMARY_CONNECTION_FAILED,
    SUGGEST_CHECK_CONNECTION | SUGGEST_FIREWALL_CONFIG | SUGGEST_PROXY_CONFIG,
@@ -451,17 +449,16 @@ const LocalizedErrorMap* FindErrorMapInArray(const LocalizedErrorMap* maps,
 
 const LocalizedErrorMap* LookupErrorMap(const std::string& error_domain,
                                         int error_code, bool is_post) {
-  if (error_domain == net::kErrorDomain) {
+  if (error_domain == Error::kNetErrorDomain) {
     // Display a different page in the special case of navigating through the
     // history to an uncached page created by a POST.
     if (is_post && error_code == net::ERR_CACHE_MISS)
       return &repost_error;
-    return FindErrorMapInArray(net_error_options,
-                               arraysize(net_error_options),
+    return FindErrorMapInArray(net_error_options, base::size(net_error_options),
                                error_code);
   } else if (error_domain == Error::kHttpErrorDomain) {
     const LocalizedErrorMap* map = FindErrorMapInArray(
-        http_error_options, arraysize(http_error_options), error_code);
+        http_error_options, base::size(http_error_options), error_code);
     // Handle miscellaneous 400/500 errors.
     return !map && error_code >= 400 && error_code < 600
                ? &generic_4xx_5xx_error
@@ -469,8 +466,7 @@ const LocalizedErrorMap* LookupErrorMap(const std::string& error_domain,
   } else if (error_domain == Error::kDnsProbeErrorDomain) {
     const LocalizedErrorMap* map =
         FindErrorMapInArray(dns_probe_error_options,
-                            arraysize(dns_probe_error_options),
-                            error_code);
+                            base::size(dns_probe_error_options), error_code);
     DCHECK(map);
     return map;
   } else {
@@ -490,47 +486,53 @@ base::DictionaryValue* GetStandardMenuItemsText() {
   return standard_menu_items_text;
 }
 
+// Returns true if the error is due to a disconnected network.
+bool IsOfflineError(const std::string& error_domain, int error_code) {
+  return ((error_code == net::ERR_INTERNET_DISCONNECTED &&
+           error_domain == Error::kNetErrorDomain) ||
+          (error_code == error_page::DNS_PROBE_FINISHED_NO_INTERNET &&
+           error_domain == Error::kDnsProbeErrorDomain));
+}
+
 // Gets the icon class for a given |error_domain| and |error_code|.
 const char* GetIconClassForError(const std::string& error_domain,
                                  int error_code) {
-  if ((error_code == net::ERR_INTERNET_DISCONNECTED &&
-       error_domain == net::kErrorDomain) ||
-      (error_code == error_page::DNS_PROBE_FINISHED_NO_INTERNET &&
-       error_domain == Error::kDnsProbeErrorDomain))
-    return "icon-offline";
-
-  return "icon-generic";
+  return IsOfflineError(error_domain, error_code) ? "icon-offline"
+                                                  : "icon-generic";
 }
 
-// If the first suggestion is for a Google cache copy link. Promote the
+// If the first suggestion is for a Google cache copy link, promote the
 // suggestion to a separate set of strings for displaying as a button.
-void AddGoogleCachedCopyButton(base::ListValue* suggestions_summary_list,
+// Returns true if the cache copy button is shown.
+bool AddGoogleCachedCopyButton(base::ListValue* suggestions_summary_list,
                                base::DictionaryValue* error_strings) {
-  if (!suggestions_summary_list->empty()) {
-    base::DictionaryValue* suggestion;
-    suggestions_summary_list->GetDictionary(0, &suggestion);
-    int type = -1;
-    suggestion->GetInteger("type", &type);
+  if (suggestions_summary_list->empty())
+    return false;
 
-    if (type == kGoogleCachedCopySuggestionType) {
-      base::string16 cache_url;
-      suggestion->GetString("urlCorrection", &cache_url);
-      int cache_tracking_id = -1;
-      suggestion->GetInteger("trackingId", &cache_tracking_id);
-      std::unique_ptr<base::DictionaryValue> cache_button(
-          new base::DictionaryValue);
-      cache_button->SetString(
-            "msg",
-            l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY));
-      cache_button->SetString("cacheUrl", cache_url);
-      cache_button->SetInteger("trackingId", cache_tracking_id);
-      error_strings->Set("cacheButton", std::move(cache_button));
+  base::DictionaryValue* suggestion;
+  suggestions_summary_list->GetDictionary(0, &suggestion);
+  int type = -1;
+  suggestion->GetInteger("type", &type);
 
-      // Remove the item from suggestions dictionary so that it does not get
-      // displayed by the template in the details section.
-      suggestions_summary_list->Remove(0, nullptr);
-    }
-  }
+  if (type != kGoogleCachedCopySuggestionType)
+    return false;
+
+  base::string16 cache_url;
+  suggestion->GetString("urlCorrection", &cache_url);
+  int cache_tracking_id = -1;
+  suggestion->GetInteger("trackingId", &cache_tracking_id);
+  std::unique_ptr<base::DictionaryValue> cache_button(
+      new base::DictionaryValue);
+  cache_button->SetString(
+      "msg", l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY));
+  cache_button->SetString("cacheUrl", cache_url);
+  cache_button->SetInteger("trackingId", cache_tracking_id);
+  error_strings->Set("cacheButton", std::move(cache_button));
+
+  // Remove the item from suggestions dictionary so that it does not get
+  // displayed by the template in the details section.
+  suggestions_summary_list->Remove(0, nullptr);
+  return true;
 }
 
 // Helper function that creates a single entry dictionary and adds it
@@ -539,7 +541,7 @@ void AddSingleEntryDictionaryToList(base::ListValue* list,
                                     const char* path,
                                     int message_id,
                                     bool insert_as_first_item) {
-  auto suggestion_list_item = base::MakeUnique<base::DictionaryValue>();
+  auto suggestion_list_item = std::make_unique<base::DictionaryValue>();
   suggestion_list_item->SetString(path, l10n_util::GetStringUTF16(message_id));
 
   if (insert_as_first_item) {
@@ -658,10 +660,10 @@ void GetSuggestionsSummaryList(int error_code,
     DCHECK(suggestions_summary_list->empty());
     DCHECK(!(suggestions & ~SUGGEST_NAVIGATE_TO_ORIGIN));
     url::Origin failed_origin = url::Origin::Create(failed_url);
-    if (failed_origin.unique())
+    if (failed_origin.opaque())
       return;
 
-    auto suggestion = base::MakeUnique<base::DictionaryValue>();
+    auto suggestion = std::make_unique<base::DictionaryValue>();
     suggestion->SetString("summary",
                           l10n_util::GetStringUTF16(
                               IDS_ERRORPAGES_SUGGESTION_NAVIGATE_TO_ORIGIN));
@@ -854,12 +856,18 @@ void AddSuggestionsDetails(int error_code,
 }
 
 std::string HttpErrorCodeToString(int error) {
-  return std::string("HTTP ERROR ") + base::IntToString(error);
+  return std::string("HTTP ERROR ") + base::NumberToString(error);
 }
 
 }  // namespace
 
-void LocalizedError::GetStrings(
+LocalizedError::PageState::PageState() = default;
+LocalizedError::PageState::~PageState() = default;
+LocalizedError::PageState::PageState(PageState&& other) = default;
+LocalizedError::PageState& LocalizedError::PageState::operator=(
+    PageState&& other) = default;
+
+LocalizedError::PageState LocalizedError::GetPageState(
     int error_code,
     const std::string& error_domain,
     const GURL& failed_url,
@@ -867,10 +875,14 @@ void LocalizedError::GetStrings(
     bool stale_copy_in_cache,
     bool can_show_network_diagnostics_dialog,
     bool is_incognito,
+    bool offline_content_feature_enabled,
+    bool auto_fetch_feature_enabled,
     const std::string& locale,
-    std::unique_ptr<error_page::ErrorPageParams> params,
-    base::DictionaryValue* error_strings) {
-  webui::SetLoadTimeDataDefaults(locale, error_strings);
+    std::unique_ptr<error_page::ErrorPageParams> params) {
+  LocalizedError::PageState result;
+  result.is_offline_error = IsOfflineError(error_domain, error_code);
+
+  webui::SetLoadTimeDataDefaults(locale, &result.strings);
 
   // Grab the strings and settings that depend on the error type.  Init
   // options with default values.
@@ -891,7 +903,7 @@ void LocalizedError::GetStrings(
   // file instead of just using the "not available" default message. Just adding
   // ERR_ACCESS_DENIED to the map isn't sufficient, since that message may be
   // generated by some OSs when the operation doesn't involve a file URL.
-  if (error_domain == net::kErrorDomain &&
+  if (error_domain == Error::kNetErrorDomain &&
       error_code == net::ERR_ACCESS_DENIED && failed_url.scheme() == "file") {
     options.heading_resource_id = IDS_ERRORPAGES_HEADING_FILE_ACCESS_DENIED;
     options.summary_resource_id = IDS_ERRORPAGES_SUMMARY_FILE_ACCESS_DENIED;
@@ -908,20 +920,20 @@ void LocalizedError::GetStrings(
 
   base::string16 host_name(url_formatter::IDNToUnicode(failed_url.host()));
   if (failed_url.SchemeIsHTTPOrHTTPS())
-    error_strings->SetString("title", host_name);
+    result.strings.SetString("title", host_name);
   else
-    error_strings->SetString("title", failed_url_string);
+    result.strings.SetString("title", failed_url_string);
 
   std::string icon_class = GetIconClassForError(error_domain, error_code);
-  error_strings->SetString("iconClass", icon_class);
+  result.strings.SetString("iconClass", icon_class);
 
-  auto heading = base::MakeUnique<base::DictionaryValue>();
+  auto heading = std::make_unique<base::DictionaryValue>();
   heading->SetString("msg",
                      l10n_util::GetStringUTF16(options.heading_resource_id));
   heading->SetString("hostName", host_name);
-  error_strings->Set("heading", std::move(heading));
+  result.strings.Set("heading", std::move(heading));
 
-  auto summary = base::MakeUnique<base::DictionaryValue>();
+  auto summary = std::make_unique<base::DictionaryValue>();
 
   // Set summary message under the heading.
   summary->SetString(
@@ -933,22 +945,23 @@ void LocalizedError::GetStrings(
   if (command_line->HasSwitch(
           error_page::switches::kDisableDinosaurEasterEgg)) {
     // The presence of this string disables the easter egg. Acts as a flag.
-    error_strings->SetString("disabledEasterEgg",
+    result.strings.SetString(
+        "disabledEasterEgg",
         l10n_util::GetStringUTF16(IDS_ERRORPAGE_FUN_DISABLED));
   }
 
   summary->SetString("failedUrl", failed_url_string);
   summary->SetString("hostName", host_name);
 
-  error_strings->SetString(
+  result.strings.SetString(
       "details", l10n_util::GetStringUTF16(IDS_ERRORPAGE_NET_BUTTON_DETAILS));
-  error_strings->SetString(
-      "hideDetails", l10n_util::GetStringUTF16(
-          IDS_ERRORPAGE_NET_BUTTON_HIDE_DETAILS));
-  error_strings->Set("summary", std::move(summary));
+  result.strings.SetString(
+      "hideDetails",
+      l10n_util::GetStringUTF16(IDS_ERRORPAGE_NET_BUTTON_HIDE_DETAILS));
+  result.strings.Set("summary", std::move(summary));
 
   base::string16 error_string;
-  if (error_domain == net::kErrorDomain) {
+  if (error_domain == Error::kNetErrorDomain) {
     // Non-internationalized error string, for debugging Chrome itself.
     error_string = base::ASCIIToUTF16(net::ErrorToShortString(error_code));
   } else if (error_domain == Error::kDnsProbeErrorDomain) {
@@ -959,12 +972,12 @@ void LocalizedError::GetStrings(
     DCHECK_EQ(Error::kHttpErrorDomain, error_domain);
     error_string = base::ASCIIToUTF16(HttpErrorCodeToString(error_code));
   }
-  error_strings->SetString("errorCode", error_string);
+  result.strings.SetString("errorCode", error_string);
 
   // If no parameters were provided, use the defaults.
   if (!params) {
     params.reset(new error_page::ErrorPageParams());
-    params->suggest_reload = !!(options.buttons && SHOW_BUTTON_RELOAD);
+    params->suggest_reload = !!(options.buttons & SHOW_BUTTON_RELOAD);
   }
 
   base::ListValue* suggestions_details = nullptr;
@@ -973,15 +986,16 @@ void LocalizedError::GetStrings(
   bool use_default_suggestions = true;
   if (!params->override_suggestions) {
     // Detailed suggestion information.
-    suggestions_details = error_strings->SetList(
-        "suggestionsDetails", base::MakeUnique<base::ListValue>());
-    suggestions_summary_list = error_strings->SetList(
-        "suggestionsSummaryList", base::MakeUnique<base::ListValue>());
+    suggestions_details = result.strings.SetList(
+        "suggestionsDetails", std::make_unique<base::ListValue>());
+    suggestions_summary_list = result.strings.SetList(
+        "suggestionsSummaryList", std::make_unique<base::ListValue>());
   } else {
-    suggestions_summary_list = error_strings->SetList(
+    suggestions_summary_list = result.strings.SetList(
         "suggestionsSummaryList", std::move(params->override_suggestions));
     use_default_suggestions = false;
-    AddGoogleCachedCopyButton(suggestions_summary_list, error_strings);
+    result.show_cached_copy_button_shown =
+        AddGoogleCachedCopyButton(suggestions_summary_list, &result.strings);
   }
 
   if (params->search_url.is_valid()) {
@@ -999,82 +1013,78 @@ void LocalizedError::GetStrings(
 
   // Add the reload suggestion, if needed for pages that didn't come
   // from a post.
-#if defined(OS_ANDROID)
-  bool reload_visible = false;
-#endif  // defined(OS_ANDROID)
   if (params->suggest_reload && !is_post) {
-#if defined(OS_ANDROID)
-    reload_visible = true;
-#endif  // defined(OS_ANDROID)
-    auto reload_button = base::MakeUnique<base::DictionaryValue>();
+    auto reload_button = std::make_unique<base::DictionaryValue>();
+    result.reload_button_shown = true;
     reload_button->SetString(
         "msg", l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_RELOAD));
     reload_button->SetString("reloadUrl", failed_url.spec());
     reload_button->SetInteger("reloadTrackingId", params->reload_tracking_id);
-    error_strings->Set("reloadButton", std::move(reload_button));
+    result.strings.Set("reloadButton", std::move(reload_button));
   }
 
-  // If not using the default suggestions, nothing else to do.
-  if (!use_default_suggestions)
-    return;
-
+  if (use_default_suggestions) {
 #if defined(OS_CHROMEOS)
-  // ChromeOS has its own diagnostics extension, which doesn't rely on a
-  // browser-initiated dialog.
-  can_show_network_diagnostics_dialog = true;
+    // ChromeOS has its own diagnostics extension, which doesn't rely on a
+    // browser-initiated dialog.
+    can_show_network_diagnostics_dialog = true;
 #endif  // defined(OS_CHROMEOS)
 
-  // Add default suggestions and any relevant supporting details.
-  GetSuggestionsSummaryList(error_code, error_strings, options.suggestions,
-                            locale, suggestions_summary_list,
-                            can_show_network_diagnostics_dialog, failed_url);
-  AddSuggestionsDetails(error_code, error_strings, options.suggestions,
-                        suggestions_details);
-
-  // Add action buttons.
-  const std::string& show_saved_copy_value =
-      command_line->GetSwitchValueASCII(error_page::switches::kShowSavedCopy);
-  bool show_saved_copy_primary =
-      (show_saved_copy_value ==
-       error_page::switches::kEnableShowSavedCopyPrimary);
-  bool show_saved_copy_secondary =
-      (show_saved_copy_value ==
-       error_page::switches::kEnableShowSavedCopySecondary);
-  bool show_saved_copy_visible =
-      (stale_copy_in_cache && !is_post &&
-      (show_saved_copy_primary || show_saved_copy_secondary));
-
-  if (show_saved_copy_visible) {
-    auto show_saved_copy_button = base::MakeUnique<base::DictionaryValue>();
-    show_saved_copy_button->SetString(
-        "msg", l10n_util::GetStringUTF16(
-            IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY));
-    show_saved_copy_button->SetString(
-        "title",
-        l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY_HELP));
-    if (show_saved_copy_primary)
-      show_saved_copy_button->SetString("primary", "true");
-    error_strings->Set("showSavedCopyButton",
-                       std::move(show_saved_copy_button));
+    // Add default suggestions and any relevant supporting details.
+    GetSuggestionsSummaryList(error_code, &result.strings, options.suggestions,
+                              locale, suggestions_summary_list,
+                              can_show_network_diagnostics_dialog, failed_url);
+    AddSuggestionsDetails(error_code, &result.strings, options.suggestions,
+                          suggestions_details);
   }
 
 #if defined(OS_ANDROID)
-  if (!is_post && !reload_visible && !show_saved_copy_visible &&
-      !is_incognito && failed_url.is_valid() &&
-      failed_url.SchemeIsHTTPOrHTTPS() &&
-      IsSuggested(options.suggestions, SUGGEST_OFFLINE_CHECKS) &&
-      offline_pages::IsOfflinePagesAsyncDownloadEnabled()) {
-    std::unique_ptr<base::DictionaryValue> download_button =
-        base::MakeUnique<base::DictionaryValue>();
-    download_button->SetString(
-        "msg",
-        l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOAD));
-    download_button->SetString(
-        "disabledMsg",
-        l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOADING));
-    error_strings->Set("downloadButton", std::move(download_button));
+  if (!is_post && !result.reload_button_shown && !is_incognito &&
+      failed_url.is_valid() && failed_url.SchemeIsHTTPOrHTTPS() &&
+      IsOfflineError(error_domain, error_code)) {
+    if (!auto_fetch_feature_enabled && offline_pages::IsOfflinePagesEnabled()) {
+      result.download_button_shown = true;
+      result.strings.SetPath({"downloadButton", "msg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_BUTTON_DOWNLOAD)));
+      result.strings.SetPath({"downloadButton", "disabledMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_BUTTON_DOWNLOADING)));
+    } else {
+      result.auto_fetch_allowed = true;
+      result.strings.SetString("attemptAutoFetch", "true");
+      result.strings.SetPath({"savePageLater", "savePageMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_SAVE_PAGE_BUTTON)));
+      result.strings.SetPath({"savePageLater", "cancelMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_CANCEL_SAVE_PAGE_BUTTON)));
+    }
+  }
+
+  result.strings.SetString(
+      "closeDescriptionPopup",
+      l10n_util::GetStringUTF16(IDS_ERRORPAGES_SUGGESTION_CLOSE_POPUP_BUTTON));
+
+  if (IsOfflineError(error_domain, error_code) && !is_incognito) {
+    result.offline_content_feature_enabled = offline_content_feature_enabled;
+    if (offline_content_feature_enabled) {
+      result.strings.SetString("suggestedOfflineContentPresentation", "on");
+      result.strings.SetPath({"offlineContentList", "title"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_OFFLINE_CONTENT_LIST_TITLE)));
+      result.strings.SetPath(
+          {"offlineContentList", "actionText"},
+          base::Value(l10n_util::GetStringUTF16(
+              IDS_ERRORPAGES_OFFLINE_CONTENT_LIST_OPEN_ALL_BUTTON)));
+      result.strings.SetPath({"offlineContentList", "showText"},
+                             base::Value(l10n_util::GetStringUTF16(IDS_SHOW)));
+      result.strings.SetPath({"offlineContentList", "hideText"},
+                             base::Value(l10n_util::GetStringUTF16(IDS_HIDE)));
+    }
   }
 #endif  // defined(OS_ANDROID)
+  return result;
 }
 
 base::string16 LocalizedError::GetErrorDetails(const std::string& error_domain,

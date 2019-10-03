@@ -5,29 +5,27 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_PRINT_PREVIEW_PRINT_PREVIEW_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_PRINT_PREVIEW_PRINT_PREVIEW_HANDLER_H_
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 
-#include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
-#include "chrome/common/features.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
+#include "chrome/common/buildflags.h"
+#include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "printing/backend/print_backend.h"
-#include "printing/features/features.h"
-
-class PdfPrinterHandler;
-class PrinterHandler;
-class PrintPreviewUI;
+#include "printing/buildflags/buildflags.h"
 
 namespace base {
 class DictionaryValue;
-class RefCountedBytes;
+class RefCountedMemory;
 }
 
 namespace content {
@@ -36,21 +34,23 @@ class WebContents;
 
 namespace printing {
 
+class PdfPrinterHandler;
+class PrinterHandler;
+class PrintPreviewUI;
+
 // Must match print_preview.PrinterType in
 // chrome/browser/resources/print_preview/native_layer.js
 enum PrinterType {
   kPrivetPrinter,
   kExtensionPrinter,
   kPdfPrinter,
-  kLocalPrinter
+  kLocalPrinter,
+  kCloudPrinter
 };
 
-}  // namespace printing
-
 // The handler for Javascript messages related to the print preview dialog.
-class PrintPreviewHandler
-    : public content::WebUIMessageHandler,
-      public GaiaCookieManagerService::Observer {
+class PrintPreviewHandler : public content::WebUIMessageHandler,
+                            public signin::IdentityManager::Observer {
  public:
   PrintPreviewHandler();
   ~PrintPreviewHandler() override;
@@ -60,19 +60,22 @@ class PrintPreviewHandler
   void OnJavascriptAllowed() override;
   void OnJavascriptDisallowed() override;
 
-  // GaiaCookieManagerService::Observer implementation.
-  void OnAddAccountToCookieCompleted(
-      const std::string& account_id,
+  // IdentityManager::Observer implementation.
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
       const GoogleServiceAuthError& error) override;
 
-  // Called when print preview failed.
-  void OnPrintPreviewFailed();
+  // Called when print preview failed. |request_id| identifies the request that
+  // failed.
+  void OnPrintPreviewFailed(int request_id);
 
-  // Called when print preview is cancelled due to a new request.
-  void OnPrintPreviewCancelled();
+  // Called when print preview is cancelled due to a new request. |request_id|
+  // identifies the cancelled request.
+  void OnPrintPreviewCancelled(int request_id);
 
-  // Called when printer settings were invalid.
-  void OnInvalidPrinterSettings();
+  // Called when printer settings were invalid. |request_id| identifies the
+  // request that requested the printer with invalid settings.
+  void OnInvalidPrinterSettings(int request_id);
 
   // Called when print preview is ready.
   void OnPrintPreviewReady(int preview_uid, int request_id);
@@ -81,21 +84,25 @@ class PrintPreviewHandler
   void OnPrintRequestCancelled();
 
   // Send the print preset options from the document.
-  void SendPrintPresetOptions(bool disable_scaling, int copies, int duplex);
+  void SendPrintPresetOptions(bool disable_scaling,
+                              int copies,
+                              int duplex,
+                              int request_id);
 
   // Send the print preview page count and fit to page scaling
   void SendPageCountReady(int page_count,
-                          int request_id,
-                          int fit_to_page_scaling);
+                          int fit_to_page_scaling,
+                          int request_id);
 
   // Send the default page layout
   void SendPageLayoutReady(const base::DictionaryValue& layout,
-                           bool has_custom_page_size_style);
+                           bool has_custom_page_size_style,
+                           int request_id);
 
   // Notify the WebUI that the page preview is ready.
   void SendPagePreviewReady(int page_index,
                             int preview_uid,
-                            int preview_response_id);
+                            int preview_request_id);
 
   int regenerate_preview_request_count() const {
     return regenerate_preview_request_count_;
@@ -107,7 +114,7 @@ class PrintPreviewHandler
                               void* params);
 
   // Sets |pdf_file_saved_closure_| to |closure|.
-  void SetPdfSavedClosureForTesting(const base::Closure& closure);
+  void SetPdfSavedClosureForTesting(base::OnceClosure closure);
 
   // Fires the 'enable-manipulate-settings-for-test' WebUI event.
   void SendEnableManipulateSettingsForTest();
@@ -117,7 +124,8 @@ class PrintPreviewHandler
 
  protected:
   // Protected so unit tests can override.
-  virtual PrinterHandler* GetPrinterHandler(printing::PrinterType printer_type);
+  virtual PrinterHandler* GetPrinterHandler(PrinterType printer_type);
+  virtual bool IsCloudPrintEnabled();
 
   // Shuts down the initiator renderer. Called when a bad IPC message is
   // received.
@@ -136,17 +144,41 @@ class PrintPreviewHandler
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewPdfGeneratedBrowserTest,
                            MANUAL_DummyTest);
   friend class PrintPreviewHandlerTest;
-  FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, InitialSettings);
+  FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, InitialSettingsSimple);
+  FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest,
+                           InitialSettingsEnableHeaderFooter);
+  FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest,
+                           InitialSettingsDisableHeaderFooter);
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, GetPrinters);
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, GetPrinterCapabilities);
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, Print);
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, GetPreview);
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, SendPreviewUpdates);
+  friend class PrintPreviewHandlerFailingTest;
+  FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerFailingTest,
+                           GetPrinterCapabilities);
+
+#if defined(OS_CHROMEOS)
   class AccessTokenService;
+#endif
 
   content::WebContents* preview_web_contents() const;
 
   PrintPreviewUI* print_preview_ui() const;
+
+  PrefService* GetPrefs() const;
+
+  // Whether the the handler should be receiving messages from the renderer to
+  // forward to the Print Preview JS in response to preview request with id
+  // |request_id|. Kills the renderer if the handler should not be receiving
+  // messages, or if |request_id| does not correspond to an outstanding request.
+  bool ShouldReceiveRendererMessage(int request_id);
+
+  // Gets the preview callback id associated with |request_id| and removes it
+  // from the |preview_callbacks_| map. Returns an empty string and kills the
+  // renderer if no callback is found, the handler should not be receiving
+  // messages, or if |request_id| is invalid.
+  std::string GetCallbackId(int request_id);
 
   // Gets the list of printers. First element of |args| is the Javascript
   // callback, second element of |args| is the printer type to fetch.
@@ -190,19 +222,17 @@ class PrintPreviewHandler
   void HandleShowSystemDialog(const base::ListValue* args);
 #endif
 
-  // Callback for the signin dialog to call once signin is complete.
-  void OnSigninComplete(const std::string& callback_id);
-
-  // Brings up a dialog to allow the user to sign into cloud print.
-  // |args| is unused.
+  // Opens a new tab to allow the user to sign into cloud print. |args| holds
+  // a boolean indicating whether the user is adding an account.
   void HandleSignin(const base::ListValue* args);
 
+  // Called when the tab opened by HandleSignIn() is closed.
+  void OnSignInTabClosed();
+
+#if defined(OS_CHROMEOS)
   // Generates new token and sends back to UI.
   void HandleGetAccessToken(const base::ListValue* args);
-
-  // Brings up Chrome printing setting page to allow the user to configure local
-  // printers or Google Cloud printers. |args| is unused.
-  void HandleManagePrinters(const base::ListValue* args);
+#endif
 
   // Gathers UMA stats when the print preview dialog is about to close.
   // |args| is unused.
@@ -212,41 +242,35 @@ class PrintPreviewHandler
   // preview is displayed.
   void HandleGetInitialSettings(const base::ListValue* args);
 
-  // Forces the opening of a new tab. |args| should consist of one element: the
-  // URL to set the new tab to.
-  //
-  // NOTE: This is needed to open register promo for Cloud Print as a new tab.
-  // Javascript's "window.open" opens a new window popup (since initiated from
-  // async HTTP request) and worse yet, on Windows and Chrome OS, the opened
-  // window opens behind the initiator window.
-  void HandleForceOpenNewTab(const base::ListValue* args);
+#if defined(OS_CHROMEOS)
+  // Opens printer settings in the Chrome OS Settings App.
+  void HandleOpenPrinterSettings(const base::ListValue* args);
+#endif
 
   void SendInitialSettings(const std::string& callback_id,
                            const std::string& default_printer);
 
+#if defined(OS_CHROMEOS)
   // Send OAuth2 access token.
   void SendAccessToken(const std::string& callback_id,
                        const std::string& access_token);
+#endif
 
   // Sends the printer capabilities to the Web UI. |settings_info| contains
   // printer capabilities information. If |settings_info| is empty, sends
   // error notification to the Web UI instead.
-  void SendPrinterCapabilities(
-      const std::string& callback_id,
-      std::unique_ptr<base::DictionaryValue> settings_info);
+  void SendPrinterCapabilities(const std::string& callback_id,
+                               base::Value settings_info);
 
   // Send the result of performing printer setup. |settings_info| contains
   // printer capabilities.
   void SendPrinterSetup(const std::string& callback_id,
                         const std::string& printer_name,
-                        std::unique_ptr<base::DictionaryValue> settings_info);
-
-  // Send whether cloud print integration should be enabled.
-  void SendCloudPrintEnabled();
+                        base::Value settings_info);
 
   // Send the PDF data to the cloud to print.
   void SendCloudPrintJob(const std::string& callback_id,
-                         const base::RefCountedBytes* data);
+                         const base::RefCountedMemory* data);
 
   // Closes the preview dialog.
   void ClosePreviewDialog();
@@ -255,7 +279,10 @@ class PrintPreviewHandler
   void ClearInitiatorDetails();
 
   // Populates |settings| according to the current locale.
-  void GetNumberFormatAndMeasurementSystem(base::DictionaryValue* settings);
+  void GetLocaleInformation(base::Value* settings);
+
+  // Populates |settings| with the list of logged in accounts.
+  void GetUserAccountList(base::Value* settings);
 
   PdfPrinterHandler* GetPdfPrinterHandler();
 
@@ -263,7 +290,7 @@ class PrintPreviewHandler
   // |printer_type|: The type of printers that were added.
   // |printers|: A non-empty list containing information about the printer or
   //     printers that have been added.
-  void OnAddedPrinters(printing::PrinterType printer_type,
+  void OnAddedPrinters(PrinterType printer_type,
                        const base::ListValue& printers);
 
   // Called when printer search is done for some destination type.
@@ -297,12 +324,24 @@ class PrintPreviewHandler
   // Whether we have already logged the number of printers this session.
   bool has_logged_printers_count_;
 
+  // Whether Google Cloud Print is enabled for the active profile.
+  bool cloud_print_enabled_ = false;
+
+  // The settings used for the most recent preview request.
+  base::Value last_preview_settings_;
+
+#if defined(OS_CHROMEOS)
   // Holds token service to get OAuth2 access tokens.
   std::unique_ptr<AccessTokenService> token_service_;
+#endif
 
-  // Pointer to cookie manager service so that print preview can listen for GAIA
-  // cookie changes.
-  GaiaCookieManagerService* gaia_cookie_manager_service_;
+  // Pointer to the identity manager service so that print preview can listen
+  // for GAIA cookie changes.
+  signin::IdentityManager* identity_manager_;
+
+  // Handles requests for cloud printers. Created lazily by calling
+  // GetPrinterHandler().
+  std::unique_ptr<PrinterHandler> cloud_printer_handler_;
 
   // Handles requests for extension printers. Created lazily by calling
   // GetPrinterHandler().
@@ -320,17 +359,17 @@ class PrintPreviewHandler
   // GetPrinterHandler().
   std::unique_ptr<PrinterHandler> local_printer_handler_;
 
-  base::queue<std::string> preview_callbacks_;
+  // Maps preview request ids to callbacks.
+  std::map<int, std::string> preview_callbacks_;
 
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
-  // Print settings to use in the local print request to send when
-  // HandleHidePreview() is called.
-  std::unique_ptr<base::DictionaryValue> settings_;
-#endif
+  // Set of preview request ids for failed previews.
+  std::set<int> preview_failures_;
 
-  base::WeakPtrFactory<PrintPreviewHandler> weak_factory_;
+  base::WeakPtrFactory<PrintPreviewHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewHandler);
 };
+
+}  // namespace printing
 
 #endif  // CHROME_BROWSER_UI_WEBUI_PRINT_PREVIEW_PRINT_PREVIEW_HANDLER_H_

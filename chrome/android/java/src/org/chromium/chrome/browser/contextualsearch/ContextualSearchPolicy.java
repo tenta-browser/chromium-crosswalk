@@ -6,25 +6,28 @@ package org.chromium.chrome.browser.contextualsearch;
 
 import android.content.Context;
 import android.net.Uri;
+import android.support.annotation.Nullable;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 
 import org.chromium.base.CollectionUtil;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.compositor.bottombar.contextualsearch.ContextualSearchPanel;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSetting;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSwitch;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchSelectionController.SelectionType;
 import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.util.UrlConstants;
 
 import java.net.URL;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
-
-import javax.annotation.Nullable;
-
 
 /**
  * Handles policy decisions for the {@code ContextualSearchManager}.
@@ -34,10 +37,7 @@ class ContextualSearchPolicy {
     private static final String DOMAIN_GOOGLE = "google";
     private static final String PATH_AMP = "/amp/";
     private static final int REMAINING_NOT_APPLICABLE = -1;
-    private static final int ONE_DAY_IN_MILLIS = 24 * 60 * 60 * 1000;
     private static final int TAP_TRIGGERED_PROMO_LIMIT = 50;
-    private static final int TAP_RESOLVE_PREFETCH_LIMIT_FOR_DECIDED = 50;
-    private static final int TAP_RESOLVE_PREFETCH_LIMIT_FOR_UNDECIDED = 20;
 
     private static final HashSet<String> PREDOMINENTLY_ENGLISH_SPEAKING_COUNTRIES =
             CollectionUtil.newHashSet("GB", "US");
@@ -46,13 +46,12 @@ class ContextualSearchPolicy {
     private final ContextualSearchSelectionController mSelectionController;
     private ContextualSearchNetworkCommunicator mNetworkCommunicator;
     private ContextualSearchPanel mSearchPanel;
+    private ContextualSearchPreferenceHelper mContextualSearchPreferenceHelper;
 
     // Members used only for testing purposes.
     private boolean mDidOverrideDecidedStateForTesting;
     private boolean mDecidedStateForTesting;
     private Integer mTapTriggeredPromoLimitForTesting;
-    private Integer mTapLimitForDecided;
-    private Integer mTapLimitForUndecided;
 
     /**
      * ContextualSearchPolicy constructor.
@@ -63,6 +62,11 @@ class ContextualSearchPolicy {
 
         mSelectionController = selectionController;
         mNetworkCommunicator = networkCommunicator;
+    }
+
+    void initialize() {
+        // TODO(donnd): remove when integration with Unified Consent is complete.
+        mContextualSearchPreferenceHelper = ContextualSearchPreferenceHelper.getInstance();
     }
 
     /**
@@ -96,10 +100,9 @@ class ContextualSearchPolicy {
     }
 
     private int getPromoTapTriggeredLimit() {
-        if (mTapTriggeredPromoLimitForTesting != null) {
-            return mTapTriggeredPromoLimitForTesting.intValue();
-        }
-        return TAP_TRIGGERED_PROMO_LIMIT;
+        return mTapTriggeredPromoLimitForTesting != null
+                ? mTapTriggeredPromoLimitForTesting.intValue()
+                : TAP_TRIGGERED_PROMO_LIMIT;
     }
 
     /**
@@ -113,8 +116,12 @@ class ContextualSearchPolicy {
      * @return Whether a Tap gesture is currently supported as a trigger for the feature.
      */
     boolean isTapSupported() {
-        if (!isUserUndecided()) return true;
-        return getPromoTapsRemaining() != 0;
+        return (!isUserUndecided()
+                       || ContextualSearchFieldTrial.getSwitch(
+                               ContextualSearchSwitch
+                                       .IS_CONTEXTUAL_SEARCH_TAP_DISABLE_OVERRIDE_ENABLED))
+                ? true
+                : (getPromoTapsRemaining() != 0);
     }
 
     /**
@@ -122,32 +129,39 @@ class ContextualSearchPolicy {
      *         explicitly interacts with the feature.
      */
     boolean shouldPrefetchSearchResult() {
-        if (isMandatoryPromoAvailable()) return false;
+        if (isMandatoryPromoAvailable()
+                || !PrefServiceBridge.getInstance().getNetworkPredictionEnabled()) {
+            return false;
+        }
 
-        if (!PrefServiceBridge.getInstance().getNetworkPredictionEnabled()) return false;
-
-        // We may not be prefetching due to the resolve/prefetch limit.
-        if (isTapBeyondTheLimit()) return false;
-
-        // We never preload on long-press so users can cut & paste without hitting the servers.
-        return mSelectionController.getSelectionType() == SelectionType.TAP;
+        // We never preload on a regular long-press so users can cut & paste without hitting the
+        // servers.
+        return mSelectionController.getSelectionType() == SelectionType.TAP
+                || mSelectionController.getSelectionType() == SelectionType.RESOLVING_LONG_PRESS;
     }
 
     /**
-     * Returns whether the previous tap (the tap last counted) should resolve.
-     * @return Whether the previous tap should resolve.
+     * @return Whether the previous gesture should resolve.
      */
-    boolean shouldPreviousTapResolve() {
-        if (isMandatoryPromoAvailable()) return false;
+    boolean shouldPreviousGestureResolve() {
+        if (isMandatoryPromoAvailable()
+                || ContextualSearchFieldTrial.getSwitch(
+                        ContextualSearchSwitch.IS_SEARCH_TERM_RESOLUTION_DISABLED)) {
+            return false;
+        }
 
-        if (!ContextualSearchFieldTrial.isSearchTermResolutionEnabled()) return false;
+        if (isPrivacyAggressiveResolveEnabled()) return true;
 
-        // We may not be resolving the tap due to the resolve/prefetch limit.
-        if (isTapBeyondTheLimit()) return false;
+        return (isPromoAvailable()
+                       || (mContextualSearchPreferenceHelper != null
+                                  && mContextualSearchPreferenceHelper.canThrottle()))
+                ? isBasePageHTTP(mNetworkCommunicator.getBasePageUrl())
+                : true;
+    }
 
-        if (isPromoAvailable()) return isBasePageHTTP(mNetworkCommunicator.getBasePageUrl());
-
-        return true;
+    /** @return Whether a long-press gesture can resolve. */
+    boolean canResolveLongpress() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_LONGPRESS_RESOLVE);
     }
 
     /**
@@ -157,20 +171,21 @@ class ContextualSearchPolicy {
     boolean canSendSurroundings() {
         if (mDidOverrideDecidedStateForTesting) return mDecidedStateForTesting;
 
-        if (isPromoAvailable()) return isBasePageHTTP(mNetworkCommunicator.getBasePageUrl());
-
-        return true;
+        return isPromoAvailable() ? isBasePageHTTP(mNetworkCommunicator.getBasePageUrl()) : true;
     }
 
     /**
      * @return Whether the Mandatory Promo is enabled.
      */
     boolean isMandatoryPromoAvailable() {
-        if (!isUserUndecided()) return false;
+        if (!isUserUndecided()
+                || !ContextualSearchFieldTrial.getSwitch(
+                        ContextualSearchSwitch.IS_MANDATORY_PROMO_ENABLED)) {
+            return false;
+        }
 
-        if (!ContextualSearchFieldTrial.isMandatoryPromoEnabled()) return false;
-
-        return getPromoOpenCount() >= ContextualSearchFieldTrial.getMandatoryPromoLimit();
+        return getPromoOpenCount() >= ContextualSearchFieldTrial.getValue(
+                       ContextualSearchSetting.MANDATORY_PROMO_LIMIT);
     }
 
     /**
@@ -187,27 +202,28 @@ class ContextualSearchPolicy {
         if (isPromoAvailable()) {
             DisableablePromoTapCounter promoTapCounter = getPromoTapCounter();
             // Bump the counter only when it is still enabled.
-            if (promoTapCounter.isEnabled()) {
-                promoTapCounter.increment();
-            }
+            if (promoTapCounter.isEnabled()) promoTapCounter.increment();
         }
-        int tapsSinceOpen = mPreferenceManager.getContextualSearchTapCount();
-        mPreferenceManager.setContextualSearchTapCount(++tapsSinceOpen);
+        int tapsSinceOpen = mPreferenceManager.incrementInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_TAP_SINCE_OPEN_COUNT);
         if (isUserUndecided()) {
             ContextualSearchUma.logTapsSinceOpenForUndecided(tapsSinceOpen);
         } else {
             ContextualSearchUma.logTapsSinceOpenForDecided(tapsSinceOpen);
         }
+        mPreferenceManager.incrementInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_ALL_TIME_TAP_COUNT);
     }
 
     /**
      * Updates all the counters to account for an open-action on the panel.
      */
     void updateCountersForOpen() {
-        // Always completely reset the tap counter, since it just counts taps
-        // since the last open.
-        mPreferenceManager.setContextualSearchTapCount(0);
-        mPreferenceManager.setContextualSearchTapQuickAnswerCount(0);
+        // Always completely reset the tap counters that accumulate only since the last open.
+        mPreferenceManager.writeInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_TAP_SINCE_OPEN_COUNT, 0);
+        mPreferenceManager.writeInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_TAP_SINCE_OPEN_QUICK_ANSWER_COUNT, 0);
 
         // Disable the "promo tap" counter, but only if we're using the Opt-out onboarding.
         // For Opt-in, we never disable the promo tap counter.
@@ -215,10 +231,12 @@ class ContextualSearchPolicy {
             getPromoTapCounter().disable();
 
             // Bump the total-promo-opens counter.
-            int count = mPreferenceManager.getContextualSearchPromoOpenCount();
-            mPreferenceManager.setContextualSearchPromoOpenCount(++count);
+            int count = mPreferenceManager.incrementInt(
+                    ChromePreferenceManager.CONTEXTUAL_SEARCH_PROMO_OPEN_COUNT);
             ContextualSearchUma.logPromoOpenCount(count);
         }
+        mPreferenceManager.incrementInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_ALL_TIME_OPEN_COUNT);
     }
 
     /**
@@ -229,9 +247,10 @@ class ContextualSearchPolicy {
      */
     void updateCountersForQuickAnswer(boolean wasActivatedByTap, boolean doesAnswer) {
         if (wasActivatedByTap && doesAnswer) {
-            int tapsWithAnswerSinceOpen =
-                    mPreferenceManager.getContextualSearchTapQuickAnswerCount();
-            mPreferenceManager.setContextualSearchTapQuickAnswerCount(++tapsWithAnswerSinceOpen);
+            mPreferenceManager.incrementInt(
+                    ChromePreferenceManager.CONTEXTUAL_SEARCH_TAP_SINCE_OPEN_QUICK_ANSWER_COUNT);
+            mPreferenceManager.incrementInt(
+                    ChromePreferenceManager.CONTEXTUAL_SEARCH_ALL_TIME_TAP_QUICK_ANSWER_COUNT);
         }
     }
 
@@ -240,10 +259,29 @@ class ContextualSearchPolicy {
      *         is no exiting request.
      */
     boolean shouldCreateVerbatimRequest() {
-        SelectionType selectionType = mSelectionController.getSelectionType();
+        if (isPrivacyAggressiveResolveEnabled()) return false;
+
+        @SelectionType
+        int selectionType = mSelectionController.getSelectionType();
         return (mSelectionController.getSelectedText() != null
                 && (selectionType == SelectionType.LONG_PRESS
-                || (selectionType == SelectionType.TAP && !shouldPreviousTapResolve())));
+                        || (selectionType == SelectionType.TAP
+                                && !shouldPreviousGestureResolve())));
+    }
+
+    /**
+     * Returns whether doing a privacy aggressive resolve is enabled (as opposed to privacy
+     * conservative).  When this is enabled, the selection is sent to the server immediately instead
+     * of waiting for the panel to be opened.  This allows the server to resolve the selection which
+     * will recognize entities, etc. and display those attributes in the Bar.
+     * @return Whether the privacy-aggressive behavior of immediately sending the selection to the
+     *         server is enabled.
+     */
+    boolean isPrivacyAggressiveResolveEnabled() {
+        return ContextualSearchFieldTrial.LONGPRESS_RESOLVE_PRIVACY_AGGRESSIVE.equals(
+                ChromeFeatureList.getFieldTrialParamByFeature(
+                        ChromeFeatureList.CONTEXTUAL_SEARCH_LONGPRESS_RESOLVE,
+                        ContextualSearchFieldTrial.LONGPRESS_RESOLVE_PARAM_NAME));
     }
 
     /**
@@ -316,16 +354,15 @@ class ContextualSearchPolicy {
      * @return Whether the search provider icon should be animated.
      */
     boolean shouldAnimateSearchProviderIcon() {
-        if (mSearchPanel.isShowing()) {
-            return false;
-        }
+        if (mSearchPanel.isShowing()) return false;
 
-        SelectionType selectionType = mSelectionController.getSelectionType();
+        @SelectionType
+        int selectionType = mSelectionController.getSelectionType();
         if (selectionType == SelectionType.TAP) {
             long currentTimeMillis = System.currentTimeMillis();
             long lastAnimatedTimeMillis =
                     mPreferenceManager.getContextualSearchLastAnimationTime();
-            if (Math.abs(currentTimeMillis - lastAnimatedTimeMillis) > ONE_DAY_IN_MILLIS) {
+            if (Math.abs(currentTimeMillis - lastAnimatedTimeMillis) > DateUtils.DAY_IN_MILLIS) {
                 mPreferenceManager.setContextualSearchLastAnimationTime(currentTimeMillis);
                 return true;
             } else {
@@ -370,7 +407,8 @@ class ContextualSearchPolicy {
      */
     @VisibleForTesting
     int getPromoOpenCount() {
-        return mPreferenceManager.getContextualSearchPromoOpenCount();
+        return mPreferenceManager.readInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_PROMO_OPEN_COUNT);
     }
 
     /**
@@ -378,7 +416,14 @@ class ContextualSearchPolicy {
      */
     @VisibleForTesting
     int getTapCount() {
-        return mPreferenceManager.getContextualSearchTapCount();
+        return mPreferenceManager.readInt(
+                ChromePreferenceManager.CONTEXTUAL_SEARCH_TAP_SINCE_OPEN_COUNT);
+    }
+
+    @VisibleForTesting
+    void applyUnifiedConsentGivenMetadata(
+            @ContextualSearchPreviousPreferenceMetadata int metadata) {
+        mContextualSearchPreferenceHelper.applyUnifiedConsentGivenMetadata(metadata);
     }
 
     // --------------------------------------------------------------------------------------------
@@ -439,7 +484,7 @@ class ContextualSearchPolicy {
      * @return Whether any translation feature for Contextual Search is enabled.
      */
     boolean isTranslationDisabled() {
-        return ContextualSearchFieldTrial.isTranslationDisabled();
+        return ContextualSearchFieldTrial.getSwitch(ContextualSearchSwitch.IS_TRANSLATION_DISABLED);
     }
 
     /**
@@ -447,45 +492,23 @@ class ContextualSearchPolicy {
      *         available or privacy-enabled.
      */
     String getHomeCountry(Context context) {
-        if (ContextualSearchFieldTrial.isSendHomeCountryDisabled()) return "";
+        if (ContextualSearchFieldTrial.getSwitch(
+                    ContextualSearchSwitch.IS_SEND_HOME_COUNTRY_DISABLED))
+            return "";
 
         TelephonyManager telephonyManager =
                 (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         if (telephonyManager == null) return "";
 
         String simCountryIso = telephonyManager.getSimCountryIso();
-        if (TextUtils.isEmpty(simCountryIso)) return "";
-
-        return simCountryIso;
+        return TextUtils.isEmpty(simCountryIso) ? "" : simCountryIso;
     }
-
-    /**
-     * Sets the limit for the tap triggered promo.
-     */
-    @VisibleForTesting
-    void setPromoTapTriggeredLimitForTesting(int limit) {
-        mTapTriggeredPromoLimitForTesting = limit;
-    }
-
-    @VisibleForTesting
-    void setTapLimitForDecidedForTesting(int limit) {
-        mTapLimitForDecided = limit;
-    }
-
-    @VisibleForTesting
-    void setTapLimitForUndecidedForTesting(int limit) {
-        mTapLimitForUndecided = limit;
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // Private helpers.
-    // --------------------------------------------------------------------------------------------
 
     /**
      * @return Whether a promo is needed because the user is still undecided
      *         on enabling or disabling the feature.
      */
-    private boolean isUserUndecided() {
+    boolean isUserUndecided() {
         // TODO(donnd) use dependency injection for the PrefServiceBridge instead!
         if (mDidOverrideDecidedStateForTesting) return !mDecidedStateForTesting;
 
@@ -496,40 +519,8 @@ class ContextualSearchPolicy {
      * @param url The URL of the base page.
      * @return Whether the given content view is for an HTTP page.
      */
-    private boolean isBasePageHTTP(@Nullable URL url) {
-        return url != null && "http".equals(url.getProtocol());
-    }
-
-    /**
-     * @return Whether the tap resolve/prefetch limit has been exceeded.
-     */
-    private boolean isTapBeyondTheLimit() {
-        // Discount taps that caused a Quick Answer since the tap may not have been totally ignored.
-        return getTapCount() - mPreferenceManager.getContextualSearchTapQuickAnswerCount()
-                > getTapLimit();
-    }
-
-    /**
-     * @return The limit of the number of taps to resolve or prefetch.
-     */
-    private int getTapLimit() {
-        return isUserUndecided() ? getTapLimitForUndecided() : getTapLimitForDecided();
-    }
-
-    private int getTapLimitForDecided() {
-        if (mTapLimitForDecided != null) {
-            return mTapLimitForDecided.intValue();
-        } else {
-            return TAP_RESOLVE_PREFETCH_LIMIT_FOR_DECIDED;
-        }
-    }
-
-    private int getTapLimitForUndecided() {
-        if (mTapLimitForUndecided != null) {
-            return mTapLimitForUndecided.intValue();
-        } else {
-            return TAP_RESOLVE_PREFETCH_LIMIT_FOR_UNDECIDED;
-        }
+    boolean isBasePageHTTP(@Nullable URL url) {
+        return url != null && UrlConstants.HTTP_SCHEME.equals(url.getProtocol());
     }
 
     // --------------------------------------------------------------------------------------------

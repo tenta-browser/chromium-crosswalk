@@ -8,7 +8,6 @@
 
 #import "remoting/ios/persistence/remoting_preferences.h"
 
-#import "base/mac/bind_objc_block.h"
 #import "remoting/ios/domain/host_info.h"
 #import "remoting/ios/domain/host_settings.h"
 
@@ -54,8 +53,12 @@ static NSString* KeyWithPrefix(NSString* prefix, NSString* key) {
 - (HostSettings*)settingsForHost:(NSString*)hostId {
   NSData* encodedSettings =
       [_defaults objectForKey:KeyWithPrefix(kHostSettingsKey, hostId)];
+  NSKeyedUnarchiver* unarchiver =
+      [[NSKeyedUnarchiver alloc] initForReadingFromData:encodedSettings
+                                                  error:nil];
+  unarchiver.requiresSecureCoding = NO;
   HostSettings* settings =
-      [NSKeyedUnarchiver unarchiveObjectWithData:encodedSettings];
+      [unarchiver decodeObjectForKey:NSKeyedArchiveRootObjectKey];
   if (settings == nil) {
     settings = [[HostSettings alloc] init];
     settings.hostId = hostId;
@@ -68,7 +71,9 @@ static NSString* KeyWithPrefix(NSString* prefix, NSString* key) {
   NSString* key = KeyWithPrefix(kHostSettingsKey, hostId);
   if (settings) {
     NSData* encodedSettings =
-        [NSKeyedArchiver archivedDataWithRootObject:settings];
+        [NSKeyedArchiver archivedDataWithRootObject:settings
+                              requiringSecureCoding:NO
+                                              error:nil];
     [_defaults setObject:encodedSettings forKey:key];
   } else {
     return [_defaults removeObjectForKey:key];

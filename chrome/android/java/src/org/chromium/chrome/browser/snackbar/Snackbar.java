@@ -5,9 +5,15 @@
 package org.chromium.chrome.browser.snackbar;
 
 import android.graphics.drawable.Drawable;
+import android.support.annotation.IntDef;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * A snackbar shows a message at the bottom of the screen and optionally contains an action button.
@@ -31,6 +37,14 @@ public class Snackbar {
      * one by one.
      */
     public static final int TYPE_NOTIFICATION = 1;
+
+    /**
+     * Snackbars that need to persist until acknowledged. These snackbars are stored in a queue and
+     * are lower priority than both {@link #TYPE_ACTION}, and {@link #TYPE_NOTIFICATION}. These must
+     * be dismissed one by one via a click. As such, snackbars of this type MUST call
+     * {@link #setAction(String, Object)} so that there is a way to remove them.
+     */
+    public static final int TYPE_PERSISTENT = 2;
 
     /**
      * UMA Identifiers of features using snackbar. See SnackbarIdentifier enum in histograms.
@@ -59,8 +73,17 @@ public class Snackbar {
     public static final int UMA_TRANSLATE_NEVER = 19;
     public static final int UMA_TRANSLATE_NEVER_SITE = 20;
     public static final int UMA_SNIPPET_FETCH_FAILED = 21;
-    public static final int UMA_CHROME_HOME_OPT_OUT_SURVEY = 22;
+    // Obsolete; don't use: UMA_CHROME_HOME_OPT_OUT_SURVEY = 22;
     public static final int UMA_SNIPPET_FETCH_NO_NEW_SUGGESTIONS = 23;
+    public static final int UMA_MISSING_FILES_NO_SD_CARD = 24;
+    public static final int UMA_OFFLINE_INDICATOR = 25;
+    public static final int UMA_FEED_NTP_STREAM = 26;
+    public static final int UMA_WEBAPK_PRIVACY_DISCLOSURE = 27;
+    public static final int UMA_TWA_PRIVACY_DISCLOSURE = 28;
+    public static final int UMA_AUTOFILL_ASSISTANT_STOP_UNDO = 29;
+    public static final int UMA_TAB_CLOSE_MULTIPLE_UNDO = 30;
+    public static final int UMA_SEARCH_ENGINE_CHOICE_NOTIFICATION = 31;
+    public static final int UMA_TAB_GROUP_MANUAL_CREATION_UNDO = 32;
 
     private SnackbarController mController;
     private CharSequence mText;
@@ -74,6 +97,15 @@ public class Snackbar {
     private Drawable mProfileImage;
     private int mType;
     private int mIdentifier = UMA_UNKNOWN;
+    @Theme
+    private int mTheme = Theme.BASIC;
+
+    @IntDef({Theme.BASIC, Theme.GOOGLE})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Theme {
+        int BASIC = 0;
+        int GOOGLE = 1;
+    }
 
     // Prevent instantiation.
     private Snackbar() {}
@@ -94,6 +126,12 @@ public class Snackbar {
         s.mController = controller;
         s.mType = type;
         s.mIdentifier = identifier;
+        if (type == TYPE_PERSISTENT) {
+            // For persistent snackbars we set a default action text to ensure the snackbar can be
+            // closed.
+            s.mActionText =
+                    ContextUtils.getApplicationContext().getResources().getString(R.string.ok);
+        }
         return s;
     }
 
@@ -142,6 +180,7 @@ public class Snackbar {
      * use the default duration.
      */
     public Snackbar setDuration(int durationMs) {
+        assert !isTypePersistent() : "Persistent snackbars do not timeout.";
         mDurationMs = durationMs;
         return this;
     }
@@ -149,6 +188,8 @@ public class Snackbar {
     /**
      * Sets the background color for the snackbar. If 0, the snackbar will use default color.
      */
+    // TODO(fgorski): Clean up background color and text appearance -- transition all the consumers
+    // to the Theme based styling.
     public Snackbar setBackgroundColor(int color) {
         mBackgroundColor = color;
         return this;
@@ -160,6 +201,15 @@ public class Snackbar {
      */
     public Snackbar setTextAppearance(int resId) {
         mTextApperanceResId = resId;
+        return this;
+    }
+
+    /**
+     * Sets the theme for the snackbar. If not set, or BASIC, the snackbar will use provided text
+     * appearance and background color. Otherwise it will apply selected theme.
+     */
+    public Snackbar setTheme(@Theme int theme) {
+        mTheme = theme;
         return this;
     }
 
@@ -191,7 +241,7 @@ public class Snackbar {
         return mSingleLine;
     }
 
-    int getDuration() {
+    public int getDuration() {
         return mDurationMs;
     }
 
@@ -214,6 +264,15 @@ public class Snackbar {
     }
 
     /**
+     * If method returns BASIC, them background color and text appearance is used, otherwise a
+     * requested theme will be applied to style the Snackbar.
+     */
+    @Theme
+    int getTheme() {
+        return mTheme;
+    }
+
+    /**
      * If method returns null, then no profileImage will be shown in snackbar.
      */
     Drawable getProfileImage() {
@@ -226,4 +285,15 @@ public class Snackbar {
     boolean isTypeAction() {
         return mType == TYPE_ACTION;
     }
+
+    /**
+     * @return Whether the snackbar is of {@link #TYPE_PERSISTENT}.
+     */
+    boolean isTypePersistent() {
+        return mType == TYPE_PERSISTENT;
+    }
+
+    /** So tests can trigger a press on a Snackbar. */
+    @VisibleForTesting
+    public Object getActionDataForTesting() { return mActionData; }
 }

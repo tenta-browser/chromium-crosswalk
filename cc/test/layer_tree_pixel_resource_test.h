@@ -10,15 +10,16 @@
 
 namespace cc {
 
-class LayerTreeHostImpl;
-class RasterBufferProvider;
-class ResourcePool;
-
-enum PixelResourceTestCase {
+enum RasterType {
   SOFTWARE,
   GPU,
   ONE_COPY,
   ZERO_COPY,
+};
+
+struct PixelResourceTestCase {
+  LayerTreeTest::RendererType renderer_type;
+  RasterType raster_type;
 };
 
 class LayerTreeHostPixelResourceTest : public LayerTreePixelTest {
@@ -27,13 +28,23 @@ class LayerTreeHostPixelResourceTest : public LayerTreePixelTest {
                                           Layer::LayerMaskType mask_type);
   LayerTreeHostPixelResourceTest();
 
-  void CreateResourceAndRasterBufferProvider(
-      LayerTreeHostImpl* host_impl,
-      std::unique_ptr<RasterBufferProvider>* raster_buffer_provider,
-      std::unique_ptr<ResourcePool>* resource_pool) override;
+  RendererType renderer_type() const { return test_case_.renderer_type; }
+
+  RasterType raster_type() const { return test_case_.raster_type; }
+
+  const char* GetRendererSuffix() const;
+
+  std::unique_ptr<RasterBufferProvider> CreateRasterBufferProvider(
+      LayerTreeHostImpl* host_impl) override;
 
   void RunPixelResourceTest(scoped_refptr<Layer> content_root,
                             base::FilePath file_name);
+  void RunPixelResourceTest(scoped_refptr<Layer> content_root,
+                            const SkBitmap& expected_bitmap);
+
+  void RunPixelResourceTestWithLayerList(scoped_refptr<Layer> root_layer,
+                                         base::FilePath file_name,
+                                         PropertyTrees* property_trees);
 
  protected:
   PixelResourceTestCase test_case_;
@@ -42,14 +53,6 @@ class LayerTreeHostPixelResourceTest : public LayerTreePixelTest {
 
   void InitializeFromTestCase(PixelResourceTestCase test_case);
 };
-
-#define INSTANTIATE_PIXEL_RESOURCE_TEST_CASE_P(framework_name)         \
-  INSTANTIATE_TEST_CASE_P(                                             \
-      PixelResourceTest, framework_name,                               \
-      ::testing::Combine(                                              \
-          ::testing::Values(SOFTWARE, GPU, ONE_COPY, ZERO_COPY),       \
-          ::testing::Values(Layer::LayerMaskType::SINGLE_TEXTURE_MASK, \
-                            Layer::LayerMaskType::MULTI_TEXTURE_MASK)))
 
 class ParameterizedPixelResourceTest
     : public LayerTreeHostPixelResourceTest,

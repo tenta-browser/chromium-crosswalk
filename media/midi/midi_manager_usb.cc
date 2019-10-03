@@ -4,13 +4,12 @@
 
 #include "media/midi/midi_manager_usb.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
-#include "media/midi/midi_scheduler.h"
 #include "media/midi/midi_service.h"
 #include "media/midi/task_service.h"
 #include "media/midi/usb_midi_descriptor_parser.h"
@@ -25,45 +24,21 @@ MidiManagerUsb::MidiManagerUsb(MidiService* service,
     : MidiManager(service), device_factory_(std::move(factory)) {}
 
 MidiManagerUsb::~MidiManagerUsb() {
-  // TODO(toyoshim): Remove following DCHECKs once the dynamic instantiation
-  // mode is enabled by default.
-  base::AutoLock lock(lock_);
-  DCHECK(initialize_callback_.is_null());
-  DCHECK(device_factory_);
-  DCHECK(devices_.empty());
-  DCHECK(output_streams_.empty());
-  DCHECK(!input_stream_);
-  DCHECK(input_jack_dictionary_.empty());
+  if (!service()->task_service()->UnbindInstance())
+    return;
+
+  // Finalization steps should be implemented after the UnbindInstance() call
+  // above, if we need.
 }
 
 void MidiManagerUsb::StartInitialization() {
-  bool result = service()->task_service()->BindInstance();
-  DCHECK(result);
+  if (!service()->task_service()->BindInstance())
+    return CompleteInitialization(Result::INITIALIZATION_ERROR);
 
-  Initialize(base::BindOnce(&MidiManager::CompleteInitialization,
-                            base::Unretained(this)));
+  Initialize();
 }
 
-void MidiManagerUsb::Finalize() {
-  bool result = service()->task_service()->UnbindInstance();
-  DCHECK(result);
-
-  // TODO(toyoshim): Remove following code once the dynamic instantiation mode
-  // is enabled by default.
-  base::AutoLock lock(lock_);
-  initialize_callback_ = Callback();
-  devices_.clear();
-  output_streams_.clear();
-  input_stream_.reset();
-  input_jack_dictionary_.clear();
-
-  // Do not reset |device_factory_| here because it is set on the thread on
-  // which the constructor runs.
-}
-
-void MidiManagerUsb::Initialize(Callback callback) {
-  initialize_callback_ = std::move(callback);
-
+void MidiManagerUsb::Initialize() {
   // This is safe because EnumerateDevices cancels the operation on destruction.
   device_factory_->EnumerateDevices(
       this, base::BindOnce(&MidiManagerUsb::OnEnumerateDevicesDone,
@@ -73,7 +48,7 @@ void MidiManagerUsb::Initialize(Callback callback) {
 void MidiManagerUsb::DispatchSendMidiData(MidiManagerClient* client,
                                           uint32_t port_index,
                                           const std::vector<uint8_t>& data,
-                                          double timestamp) {
+                                          base::TimeTicks timestamp) {
   if (port_index >= output_streams_.size()) {
     // |port_index| is provided by a renderer so we can't believe that it is
     // in the valid range.
@@ -142,19 +117,21 @@ void MidiManagerUsb::OnReceivedData(size_t jack_index,
 
 void MidiManagerUsb::OnEnumerateDevicesDone(bool result,
                                             UsbMidiDevice::Devices* devices) {
-  if (!result) {
-    std::move(initialize_callback_).Run(Result::INITIALIZATION_ERROR);
-    return;
-  }
-  input_stream_.reset(new UsbMidiInputStream(this));
-  devices->swap(devices_);
-  for (size_t i = 0; i < devices_.size(); ++i) {
-    if (!AddPorts(devices_[i].get(), static_cast<int>(i))) {
-      std::move(initialize_callback_).Run(Result::INITIALIZATION_ERROR);
-      return;
+  if (result) {
+    input_stream_.reset(new UsbMidiInputStream(this));
+    devices->swap(devices_);
+    for (size_t i = 0; i < devices_.size(); ++i) {
+      if (!AddPorts(devices_[i].get(), static_cast<int>(i))) {
+        result = false;
+        break;
+      }
     }
   }
-  std::move(initialize_callback_).Run(Result::OK);
+  service()->task_service()->PostBoundTask(
+      TaskService::kDefaultRunnerId,
+      base::BindOnce(&MidiManager::CompleteInitialization,
+                     base::Unretained(this),
+                     result ? Result::OK : Result::INITIALIZATION_ERROR));
 }
 
 bool MidiManagerUsb::AddPorts(UsbMidiDevice* device, int device_id) {
@@ -181,14 +158,14 @@ bool MidiManagerUsb::AddPorts(UsbMidiDevice* device, int device_id) {
         base::StringPrintf("usb:port-%d-%ld", device_id, static_cast<long>(j)));
     if (jacks[j].direction() == UsbMidiJack::DIRECTION_OUT) {
       output_streams_.push_back(
-          base::MakeUnique<UsbMidiOutputStream>(jacks[j]));
-      AddOutputPort(MidiPortInfo(id, manufacturer, product_name, version,
-                                 PortState::OPENED));
+          std::make_unique<UsbMidiOutputStream>(jacks[j]));
+      AddOutputPort(mojom::PortInfo(id, manufacturer, product_name, version,
+                                    PortState::OPENED));
     } else {
       DCHECK_EQ(jacks[j].direction(), UsbMidiJack::DIRECTION_IN);
       input_stream_->Add(jacks[j]);
-      AddInputPort(MidiPortInfo(id, manufacturer, product_name, version,
-                                PortState::OPENED));
+      AddInputPort(mojom::PortInfo(id, manufacturer, product_name, version,
+                                   PortState::OPENED));
     }
   }
   return true;

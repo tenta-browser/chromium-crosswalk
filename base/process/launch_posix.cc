@@ -33,15 +33,19 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/process/environment_internal.h"
 #include "base/process/process.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/third_party/dynamic_annotations/dynamic_annotations.h"
-#include "base/third_party/valgrind/valgrind.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/platform_thread_internal_posix.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 
 #if defined(OS_LINUX) || defined(OS_AIX)
@@ -58,13 +62,10 @@
 #endif
 
 #if defined(OS_MACOSX)
-#include <crt_externs.h>
-#include <sys/event.h>
-
-#include "base/feature_list.h"
-#else
-extern char** environ;
+#error "macOS should use launch_mac.cc"
 #endif
+
+extern char** environ;
 
 namespace base {
 
@@ -79,29 +80,16 @@ class GetAppOutputScopedAllowBaseSyncPrimitives
 
 namespace {
 
-#if defined(OS_MACOSX)
-const Feature kMacLaunchProcessPosixSpawn{"MacLaunchProcessPosixSpawn",
-                                          FEATURE_ENABLED_BY_DEFAULT};
-#endif
-
 // Get the process's "environment" (i.e. the thing that setenv/getenv
 // work with).
 char** GetEnvironment() {
-#if defined(OS_MACOSX)
-  return *_NSGetEnviron();
-#else
   return environ;
-#endif
 }
 
 // Set the process's "environment" (i.e. the thing that setenv/getenv
 // work with).
 void SetEnvironment(char** env) {
-#if defined(OS_MACOSX)
-  *_NSGetEnviron() = env;
-#else
   environ = env;
-#endif
 }
 
 // Set the calling thread's signal mask to new_sigmask and return
@@ -220,8 +208,6 @@ typedef std::unique_ptr<DIR, ScopedDIRClose> ScopedDIR;
 
 #if defined(OS_LINUX) || defined(OS_AIX)
 static const char kFDDir[] = "/proc/self/fd";
-#elif defined(OS_MACOSX)
-static const char kFDDir[] = "/dev/fd";
 #elif defined(OS_SOLARIS)
 static const char kFDDir[] = "/dev/fd";
 #elif defined(OS_FREEBSD)
@@ -287,14 +273,8 @@ void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
     if (fd == dir_fd)
       continue;
 
-    // When running under Valgrind, Valgrind opens several FDs for its
-    // own use and will complain if we try to close them.  All of
-    // these FDs are >= |max_fds|, so we can check against that here
-    // before closing.  See https://bugs.kde.org/show_bug.cgi?id=191758
-    if (fd < static_cast<int>(max_fds)) {
-      int ret = IGNORE_EINTR(close(fd));
-      DPCHECK(ret == 0);
-    }
+    int ret = IGNORE_EINTR(close(fd));
+    DPCHECK(ret == 0);
   }
 }
 
@@ -305,14 +285,7 @@ Process LaunchProcess(const CommandLine& cmdline,
 
 Process LaunchProcess(const std::vector<std::string>& argv,
                       const LaunchOptions& options) {
-#if defined(OS_MACOSX)
-  if (FeatureList::IsEnabled(kMacLaunchProcessPosixSpawn)) {
-    // TODO(rsesek): Do this unconditionally. There is one user for each of
-    // these two options. https://crbug.com/179923.
-    if (!options.pre_exec_delegate && options.current_directory.empty())
-      return LaunchProcessPosixSpawn(argv, options);
-  }
-#endif
+  TRACE_EVENT0("base", "LaunchProcess");
 
   InjectiveMultimap fd_shuffle1;
   InjectiveMultimap fd_shuffle2;
@@ -328,10 +301,10 @@ Process LaunchProcess(const std::vector<std::string>& argv,
   std::unique_ptr<char* []> new_environ;
   char* const empty_environ = nullptr;
   char* const* old_environ = GetEnvironment();
-  if (options.clear_environ)
+  if (options.clear_environment)
     old_environ = &empty_environ;
-  if (!options.environ.empty())
-    new_environ = AlterEnvironment(old_environ, options.environ);
+  if (!options.environment.empty())
+    new_environ = internal::AlterEnvironment(old_environ, options.environment);
 
   sigset_t full_sigset;
   sigfillset(&full_sigset);
@@ -343,6 +316,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
   }
 
   pid_t pid;
+  base::TimeTicks before_fork = TimeTicks::Now();
 #if defined(OS_LINUX) || defined(OS_AIX)
   if (options.clone_flags) {
     // Signal handling in this function assumes the creation of a new
@@ -369,13 +343,18 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 
   // Always restore the original signal mask in the parent.
   if (pid != 0) {
+    base::TimeTicks after_fork = TimeTicks::Now();
     SetSignalMask(orig_sigmask);
+
+    base::TimeDelta fork_time = after_fork - before_fork;
+    UMA_HISTOGRAM_TIMES("MPArch.ForkTime", fork_time);
   }
 
   if (pid < 0) {
     DPLOG(ERROR) << "fork";
     return Process();
-  } else if (pid == 0) {
+  }
+  if (pid == 0) {
     // Child process
 
     // DANGER: no calls to malloc or locks are allowed from now on:
@@ -413,8 +392,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 
     if (options.maximize_rlimits) {
       // Some resource limits need to be maximal in this child.
-      for (size_t i = 0; i < options.maximize_rlimits->size(); ++i) {
-        const int resource = (*options.maximize_rlimits)[i];
+      for (auto resource : *options.maximize_rlimits) {
         struct rlimit limit;
         if (getrlimit(resource, &limit) < 0) {
           RAW_LOG(WARNING, "getrlimit failed");
@@ -426,10 +404,6 @@ Process LaunchProcess(const std::vector<std::string>& argv,
         }
       }
     }
-
-#if defined(OS_MACOSX)
-    RestoreDefaultExceptionHandler();
-#endif  // defined(OS_MACOSX)
 
     ResetChildSignalHandlersToDefaults();
     SetSignalMask(orig_sigmask);
@@ -458,6 +432,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 #endif  // defined(OS_CHROMEOS)
 
     // Cannot use STL iterators here, since debug iterators use locks.
+    // NOLINTNEXTLINE(modernize-loop-convert)
     for (size_t i = 0; i < options.fds_to_remap.size(); ++i) {
       const FileHandleMappingVector::value_type& value =
           options.fds_to_remap[i];
@@ -465,7 +440,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
       fd_shuffle2.push_back(InjectionArc(value.first, value.second, false));
     }
 
-    if (!options.environ.empty() || options.clear_environ)
+    if (!options.environment.empty() || options.clear_environment)
       SetEnvironment(new_environ.get());
 
     // fd_shuffle1 is mutated by this call because it cannot malloc.
@@ -516,7 +491,8 @@ Process LaunchProcess(const std::vector<std::string>& argv,
     if (options.wait) {
       // While this isn't strictly disk IO, waiting for another process to
       // finish is the sort of thing ThreadRestrictions is trying to prevent.
-      base::AssertBlockingAllowed();
+      ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                              BlockingType::MAY_BLOCK);
       pid_t ret = HANDLE_EINTR(waitpid(pid, nullptr, 0));
       DPCHECK(ret > 0);
     }
@@ -547,7 +523,7 @@ static bool GetAppOutputInternal(
     std::string* output,
     bool do_search_path,
     int* exit_code) {
-  base::AssertBlockingAllowed();
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   // exit_code must be supplied so calling function can determine success.
   DCHECK(exit_code);
   *exit_code = EXIT_FAILURE;
@@ -583,10 +559,6 @@ static bool GetAppOutputInternal(
       // DANGER: no calls to malloc or locks are allowed from now on:
       // http://crbug.com/36678
 
-#if defined(OS_MACOSX)
-      RestoreDefaultExceptionHandler();
-#endif
-
       // Obscure fork() rule: in the child, if you don't end up doing exec*(),
       // you call _exit() instead of exit(). This is because _exit() does not
       // call any previously-registered (in the parent) exit handlers, which
@@ -603,6 +575,8 @@ static bool GetAppOutputInternal(
       // Adding another element here? Remeber to increase the argument to
       // reserve(), above.
 
+      // Cannot use STL iterators here, since debug iterators use locks.
+      // NOLINTNEXTLINE(modernize-loop-convert)
       for (size_t i = 0; i < fd_shuffle1.size(); ++i)
         fd_shuffle2.push_back(fd_shuffle1[i]);
 
@@ -611,8 +585,10 @@ static bool GetAppOutputInternal(
 
       CloseSuperfluousFds(fd_shuffle2);
 
-      for (const auto& arg : argv)
-        argv_cstr.push_back(const_cast<char*>(arg.c_str()));
+      // Cannot use STL iterators here, since debug iterators use locks.
+      // NOLINTNEXTLINE(modernize-loop-convert)
+      for (size_t i = 0; i < argv.size(); ++i)
+        argv_cstr.push_back(const_cast<char*>(argv[i].c_str()));
       argv_cstr.push_back(nullptr);
 
       if (do_search_path)
@@ -751,29 +727,17 @@ pid_t ForkWithFlags(unsigned long flags, pid_t* ptid, pid_t* ctid) {
     RAW_LOG(FATAL, "Invalid usage of ForkWithFlags");
   }
 
-  // Valgrind's clone implementation does not support specifiying a child_stack
-  // without CLONE_VM, so we cannot use libc's clone wrapper when running under
-  // Valgrind. As a result, the libc pid cache may be incorrect under Valgrind.
-  // See crbug.com/442817 for more details.
-  if (RunningOnValgrind()) {
-    // See kernel/fork.c in Linux. There is different ordering of sys_clone
-    // parameters depending on CONFIG_CLONE_BACKWARDS* configuration options.
-#if defined(ARCH_CPU_X86_64)
-    return syscall(__NR_clone, flags, nullptr, ptid, ctid, nullptr);
-#elif defined(ARCH_CPU_X86) || defined(ARCH_CPU_ARM_FAMILY) ||        \
-    defined(ARCH_CPU_MIPS_FAMILY) || defined(ARCH_CPU_S390_FAMILY) || \
-    defined(ARCH_CPU_PPC64_FAMILY)
-    // CONFIG_CLONE_BACKWARDS defined.
-    return syscall(__NR_clone, flags, nullptr, ptid, nullptr, ctid);
-#else
-#error "Unsupported architecture"
-#endif
-  }
-
   jmp_buf env;
   if (setjmp(env) == 0) {
     return CloneAndLongjmpInChild(flags, ptid, ctid, &env);
   }
+
+#if defined(OS_LINUX)
+  // Since we use clone() directly, it does not call any pthread_aftork()
+  // callbacks, we explicitly clear tid cache here (normally this call is
+  // done as pthread_aftork() callback).  See crbug.com/902514.
+  base::internal::ClearTidCache();
+#endif  // defined(OS_LINUX)
 
   return 0;
 }

@@ -4,8 +4,8 @@
 
 var tests = [
   /**
-   * Test that some key elements exist and that they have the appropriate
-   * constructor name. This verifies that polymer is working correctly.
+   * Test that some key elements exist and that they have a shadowRoot. This
+   * verifies that Polymer is working correctly.
    */
   function testHasElements() {
     var elementNames = [
@@ -15,11 +15,9 @@ var tests = [
       'viewer-error-screen'
     ];
     for (var i = 0; i < elementNames.length; i++) {
-      var elements = document.querySelectorAll(elementNames[i]);
+      var elements = document.body.querySelectorAll(elementNames[i]);
       chrome.test.assertEq(1, elements.length);
-      var element = elements[0];
-      chrome.test.assertTrue(
-          String(element.constructor).indexOf(elementNames[i]) != -1);
+      chrome.test.assertTrue(elements[0].shadowRoot !== null);
     }
     chrome.test.succeed();
   },
@@ -43,11 +41,11 @@ var tests = [
   function testIgnoreKeyEvents() {
     // Test that the traversal through the shadow DOM works correctly.
     var toolbar = document.getElementById('toolbar');
-    toolbar.$.pageselector.$.input.focus();
+    toolbar.$.pageselector.pageSelector.inputElement.focus();
     chrome.test.assertTrue(shouldIgnoreKeyEvents(toolbar));
 
     // Test case where the active element has a shadow root of its own.
-    toolbar.$.buttons.children[1].focus();
+    toolbar.$['rotate-right'].focus();
     chrome.test.assertFalse(shouldIgnoreKeyEvents(toolbar));
 
     chrome.test.assertFalse(
@@ -69,13 +67,15 @@ var tests = [
 
     // Clicking on the plugin should close the bookmarks menu.
     chrome.test.assertFalse(dropdown.dropdownOpen);
-    MockInteractions.tap(dropdown.$.icon);
+    MockInteractions.tap(dropdown.$.button);
     chrome.test.assertTrue(dropdown.dropdownOpen);
-    MockInteractions.tap(plugin);
+    // Generate pointer event manually, as MockInteractions doesn't include
+    // this.
+    plugin.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
     chrome.test.assertFalse(dropdown.dropdownOpen,
         "Clicking plugin closes dropdown");
 
-    MockInteractions.tap(dropdown.$.icon);
+    MockInteractions.tap(dropdown.$.button);
     chrome.test.assertTrue(dropdown.dropdownOpen);
     MockInteractions.pressAndReleaseKeyOn(document, ESC_KEY);
     chrome.test.assertFalse(dropdown.dropdownOpen,

@@ -7,11 +7,11 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/task/post_task.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_io_data.h"
 #include "ios/chrome/browser/ios_chrome_io_thread.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "net/cookies/cookie_store.h"
 
 class IOSChromeURLRequestContextFactory {
@@ -119,7 +119,7 @@ void IOSChromeURLRequestContextGetter::NotifyContextShuttingDown() {
 
 scoped_refptr<base::SingleThreadTaskRunner>
 IOSChromeURLRequestContextGetter::GetNetworkTaskRunner() const {
-  return web::WebThread::GetTaskRunnerForThread(web::WebThread::IO);
+  return base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::IO});
 }
 
 // static
@@ -127,7 +127,7 @@ IOSChromeURLRequestContextGetter* IOSChromeURLRequestContextGetter::Create(
     const ChromeBrowserStateIOData* io_data,
     ProtocolHandlerMap* protocol_handlers) {
   return new IOSChromeURLRequestContextGetter(
-      base::MakeUnique<FactoryForMain>(io_data, protocol_handlers));
+      std::make_unique<FactoryForMain>(io_data, protocol_handlers));
 }
 
 // static
@@ -137,6 +137,6 @@ IOSChromeURLRequestContextGetter::CreateForIsolatedApp(
     const ChromeBrowserStateIOData* io_data,
     const base::FilePath& partition_path) {
   return new IOSChromeURLRequestContextGetter(
-      base::MakeUnique<FactoryForIsolatedApp>(io_data, partition_path,
+      std::make_unique<FactoryForIsolatedApp>(io_data, partition_path,
                                               main_context));
 }

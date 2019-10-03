@@ -9,43 +9,38 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #import "chrome/browser/app_controller_mac.h"
-#include "chrome/browser/apps/app_browsertest_util.h"
-#include "chrome/browser/apps/app_window_registry_util.h"
+#include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
+#include "chrome/browser/apps/platform_apps/app_window_registry_util.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/notifications/message_center_notification_manager.h"
-#include "chrome/browser/notifications/notification_ui_manager.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/test/extension_test_message_listener.h"
-#include "ui/message_center/message_center.h"
 
 namespace {
 
 // The param selects whether to use ChromeNativeAppWindowViewsMac, otherwise it
 // will use NativeAppWindowCocoa.
 class QuitWithAppsControllerInteractiveTest
-    : public testing::WithParamInterface<bool>,
-      public extensions::PlatformAppBrowserTest {
+    : public extensions::PlatformAppBrowserTest {
  protected:
   QuitWithAppsControllerInteractiveTest() : app_(NULL) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PlatformAppBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kAppsKeepChromeAliveInTests);
-    command_line->AppendSwitch(
-        GetParam() ? switches::kEnableMacViewsNativeAppWindows
-                   : switches::kDisableMacViewsNativeAppWindows);
   }
 
   const extensions::Extension* app_;
@@ -57,25 +52,21 @@ class QuitWithAppsControllerInteractiveTest
 }  // namespace
 
 // Test that quitting while apps are open shows a notification instead.
-IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
+IN_PROC_BROWSER_TEST_F(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   scoped_refptr<QuitWithAppsController> controller =
       new QuitWithAppsController();
-  message_center::MessageCenter* message_center =
-      message_center::MessageCenter::Get();
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
-  DCHECK(profile_manager);
+  ASSERT_TRUE(profile_manager);
 
   std::vector<Profile*> profiles(profile_manager->GetLoadedProfiles());
-  DCHECK(profiles.size());
+  ASSERT_NE(0u, profiles.size());
+  NotificationDisplayServiceTester display_service(profiles[0]);
 
   // With no app windows open, ShouldQuit returns true.
   EXPECT_TRUE(controller->ShouldQuit());
-  const message_center::Notification* notification =
-      g_browser_process->notification_ui_manager()->FindById(
-          QuitWithAppsController::kQuitWithAppsNotificationID,
-          NotificationUIManager::GetProfileID(profiles[0]));
-  EXPECT_EQ(NULL, notification);
+  EXPECT_FALSE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
 
   // Open an app window.
   ExtensionTestMessageListener listener("Launched", false);
@@ -89,35 +80,32 @@ IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   // On the first quit, show notification.
   EXPECT_FALSE(controller->ShouldQuit());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
-  notification = g_browser_process->notification_ui_manager()->FindById(
-      QuitWithAppsController::kQuitWithAppsNotificationID,
-      NotificationUIManager::GetProfileID(profiles[0]));
-  ASSERT_TRUE(notification);
+  EXPECT_TRUE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
 
   // If notification was dismissed by click, show again on next quit.
-  notification->delegate()->Click();
-  message_center->RemoveAllNotifications(
-      false /* by_user */, message_center::MessageCenter::RemoveType::ALL);
+  display_service.SimulateClick(
+      NotificationHandler::Type::TRANSIENT,
+      QuitWithAppsController::kQuitWithAppsNotificationID, base::nullopt,
+      base::nullopt);
+  EXPECT_FALSE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
   EXPECT_FALSE(controller->ShouldQuit());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
-  notification = g_browser_process->notification_ui_manager()->FindById(
-      QuitWithAppsController::kQuitWithAppsNotificationID,
-      NotificationUIManager::GetProfileID(profiles[0]));
-  ASSERT_TRUE(notification);
+  EXPECT_TRUE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
 
   EXPECT_FALSE(BrowserList::GetInstance()->empty());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
 
   // If notification is closed by user, don't show it next time.
-  notification->delegate()->Close(true);
-  message_center->RemoveAllNotifications(
-      false /* by_user */, message_center::MessageCenter::RemoveType::ALL);
+  display_service.RemoveNotification(
+      NotificationHandler::Type::TRANSIENT,
+      QuitWithAppsController::kQuitWithAppsNotificationID, true);
   EXPECT_FALSE(controller->ShouldQuit());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
-  notification = g_browser_process->notification_ui_manager()->FindById(
-      QuitWithAppsController::kQuitWithAppsNotificationID,
-      NotificationUIManager::GetProfileID(profiles[0]));
-  EXPECT_EQ(NULL, notification);
+  EXPECT_FALSE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
 
   EXPECT_FALSE(BrowserList::GetInstance()->empty());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
@@ -126,21 +114,16 @@ IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   extensions::AppWindow* app_window = GetFirstAppWindow();
 
   // Quitting should not quit but close all browsers
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_BROWSER_CLOSED,
-      content::NotificationService::AllSources());
   chrome_browser_application_mac::Terminate();
-  observer.Wait();
+  ui_test_utils::WaitForBrowserToClose();
 
   EXPECT_TRUE(BrowserList::GetInstance()->empty());
   EXPECT_TRUE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
 
   // Trying to quit while there are no browsers always shows notification.
   EXPECT_FALSE(controller->ShouldQuit());
-  notification = g_browser_process->notification_ui_manager()->FindById(
-      QuitWithAppsController::kQuitWithAppsNotificationID,
-      NotificationUIManager::GetProfileID(profiles[0]));
-  ASSERT_TRUE(notification);
+  EXPECT_TRUE(display_service.GetNotification(
+      QuitWithAppsController::kQuitWithAppsNotificationID));
 
   // Clicking "Quit All Apps." button closes all app windows. With no browsers
   // open, this should also quit Chrome.
@@ -151,16 +134,17 @@ IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitBehavior) {
   // Since closing app windows may be an async operation, use a watcher.
   content::WebContentsDestroyedWatcher destroyed_watcher(
       app_window->web_contents());
-  notification->delegate()->ButtonClick(0);
+  display_service.SimulateClick(
+      NotificationHandler::Type::TRANSIENT,
+      QuitWithAppsController::kQuitWithAppsNotificationID,
+      0 /* kQuitAllAppsButtonIndex */, base::nullopt);
   destroyed_watcher.Wait();
-  message_center->RemoveAllNotifications(
-      false /* by_user */, message_center::MessageCenter::RemoveType::ALL);
   EXPECT_FALSE(AppWindowRegistryUtil::IsAppWindowVisibleInAnyProfile(0));
   quit_observer.Wait();
 }
 
 // Test that, when powering off, Chrome will quit even if there are apps open.
-IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitOnPowerOff) {
+IN_PROC_BROWSER_TEST_F(QuitWithAppsControllerInteractiveTest, QuitOnPowerOff) {
   // Open an app window.
   app_ = LoadAndLaunchPlatformApp("minimal_id", "Launched");
 
@@ -181,7 +165,3 @@ IN_PROC_BROWSER_TEST_P(QuitWithAppsControllerInteractiveTest, QuitOnPowerOff) {
   [NSApp terminate:nil];
   EXPECT_TRUE(browser_shutdown::IsTryingToQuit());
 }
-
-INSTANTIATE_TEST_CASE_P(QuitWithAppsControllerInteractiveTestInstance,
-                        QuitWithAppsControllerInteractiveTest,
-                        ::testing::Bool());

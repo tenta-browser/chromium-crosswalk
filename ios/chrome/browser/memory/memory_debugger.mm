@@ -8,9 +8,10 @@
 
 #include <memory>
 
+#import "build/branding_buildflags.h"
 #import "ios/chrome/browser/memory/memory_metrics.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -75,10 +76,6 @@ const CGFloat kPadding = 10;
   [_memoryWarningTimer invalidate];
 }
 
-- (void)dealloc {
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
-}
-
 #pragma mark UIView methods
 
 - (CGSize)sizeThatFits:(CGSize)size {
@@ -120,7 +117,7 @@ const CGFloat kPadding = 10;
 // official builds.
 // TODO(lliabraa): Figure out how to support memory warnings (or something
 // like them) in official builds.
-#if CHROMIUM_BUILD
+#if BUILDFLAG(CHROMIUM_BRANDING)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundeclared-selector"
   [self addButtonWithTitle:@"Trigger Memory Warning"
@@ -128,7 +125,7 @@ const CGFloat kPadding = 10;
                     action:@selector(_performMemoryWarning)
                 withOrigin:[self originForSubviewAtIndex:index++]];
 #pragma clang diagnostic pop
-#endif  // CHROMIUM_BUILD
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
 
   // Display a text input to set the amount of artificial memory bloat and a
   // button to reset the bloat to zero.
@@ -148,7 +145,7 @@ const CGFloat kPadding = 10;
 // official builds.
 // TODO(lliabraa): Figure out how to support memory warnings (or something
 // like them) in official builds.
-#if CHROMIUM_BUILD
+#if BUILDFLAG(CHROMIUM_BRANDING)
   // Display a text input to control the rate of continuous memory warnings.
   _continuousMemoryWarningField =
       [[UITextField alloc] initWithFrame:CGRectZero];
@@ -158,7 +155,7 @@ const CGFloat kPadding = 10;
              inputAction:@selector(updateMemoryWarningInterval)
                  atIndex:index++];
   [_continuousMemoryWarningField setText:@"0.0"];
-#endif  // CHROMIUM_BUILD
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
 
   // Display a text input to control the refresh rate of the memory debugger.
   _refreshField = [[UITextField alloc] initWithFrame:CGRectZero];
@@ -479,7 +476,7 @@ const CGFloat kPadding = 10;
 // official builds.
 // TODO(lliabraa): Figure out how to support memory warnings (or something
 // like them) in official builds.
-#if CHROMIUM_BUILD
+#if BUILDFLAG(CHROMIUM_BRANDING)
 - (void)updateMemoryWarningInterval {
   [_memoryWarningTimer invalidate];
   double timerValue;
@@ -515,7 +512,7 @@ const CGFloat kPadding = 10;
                                       repeats:YES];
 #pragma clang diagnostic push
 }
-#endif  // CHROMIUM_BUILD
+#endif  // BUILDFLAG(CHROMIUM_BRANDING)
 
 #pragma mark UITextViewDelegate methods
 

@@ -48,40 +48,40 @@ TEST(ParsedCookieTest, TestQuoted) {
   // handle differently.  I've tested Internet Explorer 6, Opera 9.6,
   // Firefox 3, and Safari Windows 3.2.1.  We originally tried to match
   // Firefox closely, however we now match Internet Explorer and Safari.
-  const char* const values[] = {
+  const struct {
+    const char* input;
+    const char* expected;
+  } kTests[] = {
       // Trailing whitespace after a quoted value.  The whitespace after
       // the quote is stripped in all browsers.
-      "\"zzz \"  ",
-      "\"zzz \"",
+      {"\"zzz \"  ", "\"zzz \""},
       // Handling a quoted value with a ';', like FOO="zz;pp"  ;
       // IE and Safari: "zz;
       // Firefox and Opera: "zz;pp"
-      "\"zz;pp\" ;",
-      "\"zz",
+      {"\"zz;pp\" ;", "\"zz"},
       // Handling a value with multiple quoted parts, like FOO="zzz "   "ppp" ;
       // IE and Safari: "zzz "   "ppp";
       // Firefox: "zzz ";
       // Opera: <rejects cookie>
-      "\"zzz \"   \"ppp\" ",
-      "\"zzz \"   \"ppp\"",
+      {
+          "\"zzz \"   \"ppp\" ", "\"zzz \"   \"ppp\"",
+      },
       // A quote in a value that didn't start quoted.  like FOO=A"B ;
       // IE, Safari, and Firefox: A"B;
       // Opera: <rejects cookie>
-      "A\"B",
-      "A\"B",
-  };
+      {
+          "A\"B", "A\"B",
+      }};
 
-  for (size_t i = 0; i < arraysize(values); i += 2) {
-    std::string input(values[i]);
-    std::string expected(values[i + 1]);
-
-    ParsedCookie pc("aBc=" + input + " ; path=\"/\"  ; httponly ");
+  for (const auto& test : kTests) {
+    ParsedCookie pc(std::string("aBc=") + test.input +
+                    " ; path=\"/\"  ; httponly ");
     EXPECT_TRUE(pc.IsValid());
     EXPECT_FALSE(pc.IsSecure());
     EXPECT_TRUE(pc.IsHttpOnly());
     EXPECT_TRUE(pc.HasPath());
     EXPECT_EQ("aBc", pc.Name());
-    EXPECT_EQ(expected, pc.Value());
+    EXPECT_EQ(test.expected, pc.Value());
 
     // If a path was quoted, the path attribute keeps the quotes.  This will
     // make the cookie effectively useless, but path parameters aren't supposed
@@ -181,7 +181,7 @@ TEST(ParsedCookieTest, MultipleEquals) {
   EXPECT_FALSE(pc.HasDomain());
   EXPECT_TRUE(pc.IsSecure());
   EXPECT_TRUE(pc.IsHttpOnly());
-  EXPECT_EQ(CookieSameSite::DEFAULT_MODE, pc.SameSite());
+  EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
   EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, pc.Priority());
   EXPECT_EQ(4U, pc.NumberOfAttributes());
 }
@@ -411,7 +411,7 @@ TEST(ParsedCookieTest, SetAttributes) {
   EXPECT_FALSE(pc.HasMaxAge());
   EXPECT_FALSE(pc.IsSecure());
   EXPECT_FALSE(pc.IsHttpOnly());
-  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, pc.SameSite());
+  EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
   EXPECT_EQ("name2=value2", pc.ToCookieLine());
 }
 
@@ -465,9 +465,9 @@ TEST(ParsedCookieTest, SetSameSite) {
   EXPECT_TRUE(pc.IsValid());
 
   EXPECT_EQ("name=value", pc.ToCookieLine());
-  EXPECT_EQ(CookieSameSite::DEFAULT_MODE, pc.SameSite());
+  EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
 
-  // Test each priority, expect case-insensitive compare.
+  // Test each samesite directive, expect case-insensitive compare.
   EXPECT_TRUE(pc.SetSameSite("strict"));
   EXPECT_EQ("name=value; samesite=strict", pc.ToCookieLine());
   EXPECT_EQ(CookieSameSite::STRICT_MODE, pc.SameSite());
@@ -483,24 +483,120 @@ TEST(ParsedCookieTest, SetSameSite) {
   EXPECT_EQ(CookieSameSite::LAX_MODE, pc.SameSite());
   EXPECT_TRUE(pc.IsValid());
 
+  EXPECT_TRUE(pc.SetSameSite("None"));
+  EXPECT_EQ("name=value; samesite=None", pc.ToCookieLine());
+  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, pc.SameSite());
+  EXPECT_TRUE(pc.IsValid());
+
+  EXPECT_TRUE(pc.SetSameSite("NONE"));
+  EXPECT_EQ("name=value; samesite=NONE", pc.ToCookieLine());
+  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, pc.SameSite());
+  EXPECT_TRUE(pc.IsValid());
+
+  // Remove the SameSite attribute.
   EXPECT_TRUE(pc.SetSameSite(""));
   EXPECT_EQ("name=value", pc.ToCookieLine());
-  EXPECT_EQ(CookieSameSite::DEFAULT_MODE, pc.SameSite());
+  EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
   EXPECT_TRUE(pc.IsValid());
 
   EXPECT_TRUE(pc.SetSameSite("Blah"));
-  EXPECT_FALSE(pc.IsValid());
+  EXPECT_EQ("name=value; samesite=Blah", pc.ToCookieLine());
+  EXPECT_EQ(CookieSameSite::UNSPECIFIED, pc.SameSite());
+  EXPECT_TRUE(pc.IsValid());
 }
 
-TEST(ParsedCookieTest, InvalidSameSiteValue) {
+TEST(ParsedCookieTest, SettersInputValidation) {
+  ParsedCookie pc("name=foobar");
+  EXPECT_TRUE(pc.SetPath("baz"));
+  EXPECT_EQ(pc.ToCookieLine(), "name=foobar; path=baz");
+
+  EXPECT_TRUE(pc.SetPath("  baz "));
+  EXPECT_EQ(pc.ToCookieLine(), "name=foobar; path=baz");
+
+  EXPECT_TRUE(pc.SetPath("     "));
+  EXPECT_EQ(pc.ToCookieLine(), "name=foobar");
+
+  EXPECT_TRUE(pc.SetDomain("  baz "));
+  EXPECT_EQ(pc.ToCookieLine(), "name=foobar; domain=baz");
+
+  // Invalid characters
+  EXPECT_FALSE(pc.SetPath("  baz\n "));
+  EXPECT_FALSE(pc.SetPath("f;oo"));
+  EXPECT_FALSE(pc.SetPath("\r"));
+  EXPECT_FALSE(pc.SetPath("\a"));
+  EXPECT_FALSE(pc.SetPath("\t"));
+  EXPECT_FALSE(pc.SetSameSite("\r"));
+}
+
+TEST(ParsedCookieTest, ToCookieLineSpecialTokens) {
+  // Special tokens "secure" and "httponly" should be treated as any other name
+  // when they are in the first position.
+  {
+    ParsedCookie pc("");
+    pc.SetName("secure");
+    EXPECT_EQ(pc.ToCookieLine(), "secure=");
+  }
+  {
+    ParsedCookie pc("secure");
+    EXPECT_EQ(pc.ToCookieLine(), "=secure");
+  }
+  {
+    ParsedCookie pc("secure=foo");
+    EXPECT_EQ(pc.ToCookieLine(), "secure=foo");
+  }
+  {
+    ParsedCookie pc("foo=secure");
+    EXPECT_EQ(pc.ToCookieLine(), "foo=secure");
+  }
+  {
+    ParsedCookie pc("httponly=foo");
+    EXPECT_EQ(pc.ToCookieLine(), "httponly=foo");
+  }
+  {
+    ParsedCookie pc("foo");
+    pc.SetName("secure");
+    EXPECT_EQ(pc.ToCookieLine(), "secure=foo");
+  }
+  {
+    ParsedCookie pc("bar");
+    pc.SetName("httponly");
+    EXPECT_EQ(pc.ToCookieLine(), "httponly=bar");
+  }
+  {
+    ParsedCookie pc("foo=bar; baz=bob");
+    EXPECT_EQ(pc.ToCookieLine(), "foo=bar; baz=bob");
+  }
+  // Outside of the first position, the value associated with a special name
+  // should not be printed.
+  {
+    ParsedCookie pc("name=foo; secure");
+    EXPECT_EQ(pc.ToCookieLine(), "name=foo; secure");
+  }
+  {
+    ParsedCookie pc("name=foo; secure=bar");
+    EXPECT_EQ(pc.ToCookieLine(), "name=foo; secure");
+  }
+  {
+    ParsedCookie pc("name=foo; httponly=baz");
+    EXPECT_EQ(pc.ToCookieLine(), "name=foo; httponly");
+  }
+  {
+    ParsedCookie pc("name=foo; bar=secure");
+    EXPECT_EQ(pc.ToCookieLine(), "name=foo; bar=secure");
+  }
+}
+
+TEST(ParsedCookieTest, SameSiteValues) {
   struct TestCase {
     const char* cookie;
     bool valid;
     CookieSameSite mode;
   } cases[]{{"n=v; samesite=strict", true, CookieSameSite::STRICT_MODE},
             {"n=v; samesite=lax", true, CookieSameSite::LAX_MODE},
-            {"n=v; samesite=boo", false, CookieSameSite::DEFAULT_MODE},
-            {"n=v; samesite", false, CookieSameSite::DEFAULT_MODE}};
+            {"n=v; samesite=none", true, CookieSameSite::NO_RESTRICTION},
+            {"n=v; samesite=boo", true, CookieSameSite::UNSPECIFIED},
+            {"n=v; samesite", true, CookieSameSite::UNSPECIFIED},
+            {"n=v", true, CookieSameSite::UNSPECIFIED}};
 
   for (const auto& test : cases) {
     SCOPED_TRACE(test.cookie);

@@ -17,13 +17,7 @@ namespace content {
 
 bool IsPinchToZoomEnabled();
 
-V8CacheOptions GetV8CacheOptions();
-
-ProgressBarCompletion GetProgressBarCompletionPolicy();
-
-SavePreviousDocumentResources GetSavePreviousDocumentResources();
-
-CONTENT_EXPORT bool IsUseZoomForDSFEnabled();
+blink::mojom::V8CacheOptions GetV8CacheOptions();
 
 void WaitForDebugger(const std::string& label);
 

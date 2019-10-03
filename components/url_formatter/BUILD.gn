@@ -2,16 +2,18 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
+
 if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-static_library("url_formatter") {
+jumbo_static_library("url_formatter") {
   sources = [
     "elide_url.cc",
     "elide_url.h",
-    "idn_spoof_checker.cc",
-    "idn_spoof_checker.h",
+    "spoof_checks/idn_spoof_checker.cc",
+    "spoof_checks/idn_spoof_checker.h",
     "url_fixer.cc",
     "url_fixer.h",
     "url_formatter.cc",
@@ -19,14 +21,20 @@ static_library("url_formatter") {
     "url_formatter_android.cc",
   ]
 
-  # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
+  configs += [
+    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+    "//build/config/compiler:no_size_t_to_int_warning",
+
+    "//build/config/compiler:noshadowing",
+  ]
 
   deps = [
     "//base",
     "//base:i18n",
-    "//components/url_formatter/top_domains",
+    "//components/url_formatter/top_domains:common",
+    "//components/url_formatter/top_domains:generate_top_domains_trie",
     "//net",
+    "//net:preload_decoder",
     "//third_party/icu",
     "//ui/gfx",
     "//url",
@@ -37,10 +45,11 @@ static_library("url_formatter") {
   }
 }
 
-source_set("unit_tests") {
+jumbo_source_set("unit_tests") {
   testonly = true
   sources = [
     "elide_url_unittest.cc",
+    "spoof_checks/idn_spoof_checker_unittest.cc",
     "url_fixer_unittest.cc",
     "url_formatter_unittest.cc",
   ]
@@ -48,8 +57,10 @@ source_set("unit_tests") {
   deps = [
     ":url_formatter",
     "//base",
-    "//components/url_formatter/top_domains",
+    "//base/test:test_support",
+    "//components/url_formatter/top_domains:generate_top_domains_test_trie",
     "//net",
+    "//net:preload_decoder",
     "//testing/gtest",
     "//ui/gfx",
     "//url",

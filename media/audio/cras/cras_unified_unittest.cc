@@ -15,6 +15,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chromeos/audio/cras_audio_handler.h"
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/cras/audio_manager_cras.h"
 #include "media/audio/fake_audio_log_factory.h"
@@ -41,7 +42,7 @@ namespace media {
 class MockAudioManagerCras : public AudioManagerCras {
  public:
   MockAudioManagerCras()
-      : AudioManagerCras(base::MakeUnique<TestAudioThread>(),
+      : AudioManagerCras(std::make_unique<TestAudioThread>(),
                          &fake_audio_log_factory_) {}
 
   // We need to override this function in order to skip the checking the number
@@ -60,14 +61,16 @@ class MockAudioManagerCras : public AudioManagerCras {
 class CrasUnifiedStreamTest : public testing::Test {
  protected:
   CrasUnifiedStreamTest() {
+    chromeos::CrasAudioClient::InitializeFake();
     chromeos::CrasAudioHandler::InitializeForTesting();
     mock_manager_.reset(new StrictMock<MockAudioManagerCras>());
     base::RunLoop().RunUntilIdle();
   }
 
   ~CrasUnifiedStreamTest() override {
-    chromeos::CrasAudioHandler::Shutdown();
     mock_manager_->Shutdown();
+    chromeos::CrasAudioHandler::Shutdown();
+    chromeos::CrasAudioClient::Shutdown();
   }
 
   CrasUnifiedStream* CreateStream(ChannelLayout layout) {
@@ -77,7 +80,7 @@ class CrasUnifiedStreamTest : public testing::Test {
   CrasUnifiedStream* CreateStream(ChannelLayout layout,
                                   int32_t samples_per_packet) {
     AudioParameters params(kTestFormat, layout, kTestSampleRate,
-                           kTestBitsPerSample, samples_per_packet);
+                           samples_per_packet);
     return new CrasUnifiedStream(params, mock_manager_.get(),
                                  AudioDeviceDescription::kDefaultDeviceId);
   }
@@ -88,7 +91,6 @@ class CrasUnifiedStreamTest : public testing::Test {
 
   static const ChannelLayout kTestChannelLayout;
   static const int kTestSampleRate;
-  static const int kTestBitsPerSample;
   static const AudioParameters::Format kTestFormat;
   static const uint32_t kTestFramesPerPacket;
 
@@ -103,7 +105,6 @@ const ChannelLayout CrasUnifiedStreamTest::kTestChannelLayout =
     CHANNEL_LAYOUT_STEREO;
 const int CrasUnifiedStreamTest::kTestSampleRate =
     AudioParameters::kAudioCDSampleRate;
-const int CrasUnifiedStreamTest::kTestBitsPerSample = 16;
 const AudioParameters::Format CrasUnifiedStreamTest::kTestFormat =
     AudioParameters::AUDIO_PCM_LINEAR;
 const uint32_t CrasUnifiedStreamTest::kTestFramesPerPacket = 1000;
@@ -123,18 +124,9 @@ TEST_F(CrasUnifiedStreamTest, ConstructedState) {
   EXPECT_TRUE(test_stream->Open());
   test_stream->Close();
 
-  // Bad bits per sample.
-  AudioParameters bad_bps_params(kTestFormat, kTestChannelLayout,
-                                 kTestSampleRate, kTestBitsPerSample - 1,
-                                 kTestFramesPerPacket);
-  test_stream = new CrasUnifiedStream(bad_bps_params, mock_manager_.get(),
-                                      AudioDeviceDescription::kDefaultDeviceId);
-  EXPECT_FALSE(test_stream->Open());
-  test_stream->Close();
-
   // Bad sample rate.
-  AudioParameters bad_rate_params(kTestFormat, kTestChannelLayout,
-                                  0, kTestBitsPerSample, kTestFramesPerPacket);
+  AudioParameters bad_rate_params(kTestFormat, kTestChannelLayout, 0,
+                                  kTestFramesPerPacket);
   test_stream = new CrasUnifiedStream(bad_rate_params, mock_manager_.get(),
                                       AudioDeviceDescription::kDefaultDeviceId);
   EXPECT_FALSE(test_stream->Open());

@@ -16,7 +16,6 @@
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "chrome/browser/local_discovery/service_discovery_client.h"
 #include "net/dns/mdns_client.h"
 
@@ -31,7 +30,7 @@ class ServiceDiscoveryClientImpl : public ServiceDiscoveryClient {
   // ServiceDiscoveryClient implementation:
   std::unique_ptr<ServiceWatcher> CreateServiceWatcher(
       const std::string& service_type,
-      const ServiceWatcher::UpdatedCallback& callback) override;
+      ServiceWatcher::UpdatedCallback callback) override;
 
   std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
@@ -53,7 +52,7 @@ class ServiceWatcherImpl : public ServiceWatcher,
                            public base::SupportsWeakPtr<ServiceWatcherImpl> {
  public:
   ServiceWatcherImpl(const std::string& service_type,
-                     const ServiceWatcher::UpdatedCallback& callback,
+                     ServiceWatcher::UpdatedCallback callback,
                      net::MDnsClient* mdns_client);
   // Listening will automatically stop when the destructor is called.
   ~ServiceWatcherImpl() override;
@@ -260,7 +259,7 @@ class LocalDomainResolverImpl : public LocalDomainResolver {
   net::IPAddress address_ipv4_;
   net::IPAddress address_ipv6_;
 
-  base::CancelableCallback<void()> timeout_callback_;
+  base::CancelableOnceClosure timeout_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalDomainResolverImpl);
 };

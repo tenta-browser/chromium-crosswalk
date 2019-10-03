@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/payments/payment_request_item_list.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view.h"
@@ -63,45 +64,47 @@ void PaymentRequestItemList::Item::Init() {
   std::unique_ptr<views::View> content =
       CreateContentView(&accessible_item_description_);
 
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
 
   // Add a column for the item's content view.
   views::ColumnSet* columns = layout->AddColumnSet(0);
-  columns->AddColumn(views::GridLayout::FILL, views::GridLayout::LEADING, 1,
+  columns->AddColumn(views::GridLayout::FILL, views::GridLayout::LEADING, 1.0,
                      views::GridLayout::USE_PREF, 0, 0);
 
   // Add a column for the checkmark shown next to the selected profile.
-  columns->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER, 0,
-                     views::GridLayout::USE_PREF, 0, 0);
+  columns->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER,
+                     views::GridLayout::kFixedSize, views::GridLayout::USE_PREF,
+                     0, 0);
 
   std::unique_ptr<views::View> extra_view = CreateExtraView();
   if (extra_view) {
-    columns->AddPaddingColumn(0, kExtraViewSpacing);
+    columns->AddPaddingColumn(views::GridLayout::kFixedSize, kExtraViewSpacing);
     // Add a column for the extra_view, which comes after the checkmark.
     columns->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER,
-                       0, views::GridLayout::USE_PREF, 0, 0);
+                       views::GridLayout::kFixedSize,
+                       views::GridLayout::USE_PREF, 0, 0);
   }
 
   if (show_edit_button_) {
-    columns->AddPaddingColumn(0, kExtraViewSpacing);
+    columns->AddPaddingColumn(views::GridLayout::kFixedSize, kExtraViewSpacing);
     // Add a column for the edit_button if it exists.
     columns->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER,
-                       0, views::GridLayout::FIXED, kEditIconSize,
-                       kEditIconSize);
+                       views::GridLayout::kFixedSize, views::GridLayout::FIXED,
+                       kEditIconSize, kEditIconSize);
   }
 
-  layout->StartRow(0, 0);
+  layout->StartRow(views::GridLayout::kFixedSize, 0);
   content->set_can_process_events_within_subtree(false);
-  layout->AddView(content.release());
+  layout->AddView(std::move(content));
 
-  checkmark_ = CreateCheckmark(selected() && clickable());
-  layout->AddView(checkmark_.get());
+  layout->AddView(CreateCheckmark(selected() && clickable()));
 
   if (extra_view)
-    layout->AddView(extra_view.release());
+    layout->AddView(std::move(extra_view));
 
   if (show_edit_button_) {
-    views::ImageButton* edit_button = views::CreateVectorImageButton(this);
+    auto edit_button = views::CreateVectorImageButton(this);
     const SkColor icon_color =
         color_utils::DeriveDefaultIconColor(SK_ColorBLACK);
     edit_button->SetImage(views::Button::STATE_NORMAL,
@@ -109,10 +112,10 @@ void PaymentRequestItemList::Item::Init() {
                                                 kEditIconSize, icon_color));
     edit_button->set_ink_drop_base_color(icon_color);
     edit_button->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
-    edit_button->set_id(static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON));
+    edit_button->SetID(static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON));
     edit_button->SetAccessibleName(
         l10n_util::GetStringUTF16(IDS_PAYMENTS_EDIT));
-    layout->AddView(edit_button);
+    layout->AddView(std::move(edit_button));
   }
 
   UpdateAccessibleName();
@@ -121,10 +124,11 @@ void PaymentRequestItemList::Item::Init() {
 void PaymentRequestItemList::Item::SetSelected(bool selected, bool notify) {
   selected_ = selected;
 
-  // This could be called before CreateItemView, so before |checkmark_| is
-  // instantiated.
-  if (checkmark_)
-    checkmark_->SetVisible(selected_);
+  for (views::View* child : children())
+    if (child->GetID() == static_cast<int>(DialogViewID::CHECKMARK_VIEW)) {
+      child->SetVisible(selected);
+      break;
+    }
 
   UpdateAccessibleName();
 
@@ -135,10 +139,9 @@ void PaymentRequestItemList::Item::SetSelected(bool selected, bool notify) {
 std::unique_ptr<views::ImageView> PaymentRequestItemList::Item::CreateCheckmark(
     bool selected) {
   std::unique_ptr<views::ImageView> checkmark =
-      base::MakeUnique<views::ImageView>();
-  checkmark->set_id(static_cast<int>(DialogViewID::CHECKMARK_VIEW));
+      std::make_unique<views::ImageView>();
+  checkmark->SetID(static_cast<int>(DialogViewID::CHECKMARK_VIEW));
   checkmark->set_can_process_events_within_subtree(false);
-  checkmark->set_owned_by_client();
   checkmark->SetImage(
       gfx::CreateVectorIcon(views::kMenuCheckIcon, kCheckmarkColor));
   checkmark->SetVisible(selected);
@@ -152,7 +155,7 @@ std::unique_ptr<views::View> PaymentRequestItemList::Item::CreateExtraView() {
 
 void PaymentRequestItemList::Item::ButtonPressed(views::Button* sender,
                                                  const ui::Event& event) {
-  if (sender->id() == static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON)) {
+  if (sender->GetID() == static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON)) {
     EditButtonPressed();
   } else if (selected_) {
     // |dialog()| may be null in tests
@@ -185,7 +188,7 @@ void PaymentRequestItemList::AddItem(
     std::unique_ptr<PaymentRequestItemList::Item> item) {
   DCHECK_EQ(this, item->list());
   if (!items_.empty())
-    item->set_previous_row(items_.back().get());
+    item->set_previous_row(items_.back()->AsWeakPtr());
   items_.push_back(std::move(item));
   if (items_.back()->selected()) {
     if (selected_item_)
@@ -200,12 +203,11 @@ void PaymentRequestItemList::Clear() {
 }
 
 std::unique_ptr<views::View> PaymentRequestItemList::CreateListView() {
-  std::unique_ptr<views::View> content_view = base::MakeUnique<views::View>();
+  std::unique_ptr<views::View> content_view = std::make_unique<views::View>();
 
-  views::BoxLayout* layout =
-      new views::BoxLayout(views::BoxLayout::kVertical,
-                           gfx::Insets(kPaymentRequestRowVerticalInsets, 0), 0);
-  content_view->SetLayoutManager(layout);
+  content_view->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical,
+      gfx::Insets(kPaymentRequestRowVerticalInsets, 0), 0));
 
   for (auto& item : items_)
     content_view->AddChildView(item.release());

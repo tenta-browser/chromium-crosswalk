@@ -4,12 +4,14 @@
 
 #import <Foundation/Foundation.h>
 #include <launch.h>
+#include <sys/un.h>
 
 #include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
@@ -20,14 +22,13 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/version.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/mac/launchd.h"
 #include "chrome/common/service_process_util_posix.h"
 #include "components/version_info/version_info.h"
-#include "mojo/edk/embedder/named_platform_handle_utils.h"
 
 using ::base::FilePathWatcher;
 
@@ -47,7 +48,7 @@ NSString* GetServiceProcessLaunchDLabel() {
       base::mac::CFToNSCast(CopyServiceProcessLaunchDName()));
   NSString* label = [name stringByAppendingString:@".service_process"];
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   std::string user_data_dir_path = user_data_dir.value();
   NSString* ns_path = base::SysUTF8ToNSString(user_data_dir_path);
   ns_path = [ns_path stringByReplacingOccurrencesOfString:@" "
@@ -56,13 +57,10 @@ NSString* GetServiceProcessLaunchDLabel() {
   return label;
 }
 
-NSString* GetServiceProcessLaunchDSocketKey() {
-  return @"ServiceProcessSocket";
-}
-
 bool RemoveFromLaunchd() {
   // We're killing a file.
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::ScopedCFTypeRef<CFStringRef> name(CopyServiceProcessLaunchDName());
   return Launchd::GetInstance()->DeletePlist(Launchd::User,
                                              Launchd::Agent,
@@ -81,50 +79,42 @@ class ExecFilePathWatcherCallback {
   base::scoped_nsobject<NSURL> executable_fsref_;
 };
 
-base::FilePath GetServiceProcessSocketName() {
-  base::FilePath socket_name;
-  PathService::Get(base::DIR_TEMP, &socket_name);
-  std::string pipe_name = GetServiceProcessScopedName("srv");
-  socket_name = socket_name.Append(pipe_name);
-  CHECK_LT(socket_name.value().size(), mojo::edk::kMaxSocketNameLength);
-  return socket_name;
+NSString* GetServiceProcessMachName() {
+  base::scoped_nsobject<NSString> name(
+      base::mac::CFToNSCast(CopyServiceProcessLaunchDName()));
+  return [name stringByAppendingFormat:@".service_process.%lu",
+                                       [GetServiceProcessLaunchDLabel() hash]];
 }
 
 }  // namespace
 
-mojo::edk::NamedPlatformHandle GetServiceProcessChannel() {
-  base::FilePath socket_name = GetServiceProcessSocketName();
-  VLOG(1) << "ServiceProcessChannel: " << socket_name.value();
-  return mojo::edk::NamedPlatformHandle(socket_name.value());
+mojo::NamedPlatformChannel::ServerName GetServiceProcessServerName() {
+  return base::SysNSStringToUTF8(GetServiceProcessMachName());
 }
 
 bool ForceServiceProcessShutdown(const std::string& /* version */,
                                  base::ProcessId /* process_id */) {
-  base::mac::ScopedNSAutoreleasePool pool;
-  CFStringRef label = base::mac::NSToCFCast(GetServiceProcessLaunchDLabel());
-  CFErrorRef err = NULL;
-  bool ret = Launchd::GetInstance()->RemoveJob(label, &err);
+  const std::string& label =
+      base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel());
+  bool ret = Launchd::GetInstance()->RemoveJob(label);
   if (!ret) {
-    DLOG(ERROR) << "ForceServiceProcessShutdown: " << err << " "
-                << base::SysCFStringRefToUTF8(label);
-    CFRelease(err);
+    DLOG(ERROR) << "ForceServiceProcessShutdown: " << label;
   }
   return ret;
 }
 
-bool GetServiceProcessData(std::string* version, base::ProcessId* pid) {
+bool ServiceProcessState::GetServiceProcessData(std::string* version,
+                                                base::ProcessId* pid) {
   base::mac::ScopedNSAutoreleasePool pool;
-  CFStringRef label = base::mac::NSToCFCast(GetServiceProcessLaunchDLabel());
-  base::scoped_nsobject<NSDictionary> launchd_conf(
-      base::mac::CFToNSCast(Launchd::GetInstance()->CopyJobDictionary(label)));
-  if (!launchd_conf.get()) {
+  std::string label = base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel());
+  mac::services::JobInfo info;
+  if (!Launchd::GetInstance()->GetJobInfo(label, &info))
     return false;
-  }
   // Anything past here will return true in that there does appear
   // to be a service process of some sort registered with launchd.
   if (version) {
     *version = "0";
-    NSString* exe_path = [launchd_conf objectForKey:@ LAUNCH_JOBKEY_PROGRAM];
+    NSString* exe_path = base::SysUTF8ToNSString(info.program);
     if (exe_path) {
       NSString* bundle_path = [[[exe_path stringByDeletingLastPathComponent]
                                 stringByDeletingLastPathComponent]
@@ -150,46 +140,36 @@ bool GetServiceProcessData(std::string* version, base::ProcessId* pid) {
     }
   }
   if (pid) {
-    *pid = -1;
-    NSNumber* ns_pid = [launchd_conf objectForKey:@ LAUNCH_JOBKEY_PID];
-    if (ns_pid) {
-     *pid = [ns_pid intValue];
-    }
+    *pid = info.pid ? *info.pid : -1;
   }
   return true;
 }
 
 bool ServiceProcessState::Initialize() {
-  CFErrorRef err = NULL;
-  CFDictionaryRef dict =
-      Launchd::GetInstance()->CopyDictionaryByCheckingIn(&err);
-  if (!dict) {
-    DLOG(ERROR) << "ServiceProcess must be launched by launchd. "
-                << "CopyLaunchdDictionaryByCheckingIn: " << err;
-    CFRelease(err);
+  mac::services::JobInfo info;
+  // The Mach service will be checked when GetServiceProcessServerEndpoint()
+  // is called.
+  bool ok = Launchd::GetInstance()->GetJobInfo(
+      base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel()), &info);
+  if (!ok) {
+    DLOG(ERROR) << "Failed to look up job info.";
     return false;
   }
-  state_->launchd_conf.reset(dict);
+  state_->job_info.program = info.program;
   return true;
 }
 
-mojo::edk::ScopedPlatformHandle
-ServiceProcessState::GetServiceProcessChannel() {
-  DCHECK(state_);
-  NSDictionary* ns_launchd_conf = base::mac::CFToNSCast(state_->launchd_conf);
-  NSDictionary* socket_dict =
-      [ns_launchd_conf objectForKey:@ LAUNCH_JOBKEY_SOCKETS];
-  NSArray* sockets =
-      [socket_dict objectForKey:GetServiceProcessLaunchDSocketKey()];
-  DCHECK_EQ([sockets count], 1U);
-  int socket = [[sockets objectAtIndex:0] intValue];
-  return mojo::edk::ScopedPlatformHandle(mojo::edk::PlatformHandle(socket));
+mojo::PlatformChannelServerEndpoint
+ServiceProcessState::GetServiceProcessServerEndpoint() {
+  mojo::NamedPlatformChannel::Options options;
+  options.server_name = base::SysNSStringToUTF8(GetServiceProcessMachName());
+  return mojo::NamedPlatformChannel(options).TakeServerEndpoint();
 }
 
 bool CheckServiceProcessReady() {
   std::string version;
   pid_t pid;
-  if (!GetServiceProcessData(&version, &pid)) {
+  if (!ServiceProcessState::GetServiceProcessData(&version, &pid)) {
     return false;
   }
   base::Version service_version(version);
@@ -197,22 +177,36 @@ bool CheckServiceProcessReady() {
   if (!service_version.IsValid()) {
     ready = false;
   } else {
-    base::Version running_version(version_info::GetVersionNumber());
+    const base::Version& running_version = version_info::GetVersion();
     if (!running_version.IsValid()) {
       // Our own version is invalid. This is an error case. Pretend that we
       // are out of date.
       NOTREACHED();
       ready = true;
-    } else if (running_version.CompareTo(service_version) > 0) {
-      ready = false;
     } else {
-      ready = true;
+      ready = running_version.CompareTo(service_version) <= 0;
     }
   }
   if (!ready) {
     ForceServiceProcessShutdown(version, pid);
   }
   return ready;
+}
+
+mac::services::JobOptions GetServiceProcessJobOptions(
+    base::CommandLine* cmd_line,
+    bool for_auto_launch) {
+  mac::services::JobOptions options;
+
+  options.label = base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel());
+  options.executable_path = cmd_line->GetProgram().value();
+  options.arguments = cmd_line->argv();
+  options.mach_service_name =
+      base::SysNSStringToUTF8(GetServiceProcessMachName());
+  options.run_at_load = for_auto_launch;
+  options.auto_launch = for_auto_launch;
+
+  return options;
 }
 
 CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
@@ -231,24 +225,13 @@ CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
     [ns_args addObject:base::SysUTF8ToNSString(*iter)];
   }
 
-  NSString* socket_name =
-      base::SysUTF8ToNSString(GetServiceProcessSocketName().value());
-
-  NSDictionary* socket =
-      [NSDictionary dictionaryWithObject:socket_name
-                                  forKey:@LAUNCH_JOBSOCKETKEY_PATHNAME];
-  NSDictionary* sockets =
-      [NSDictionary dictionaryWithObject:socket
-                                  forKey:GetServiceProcessLaunchDSocketKey()];
-
   // See the man page for launchd.plist.
-  NSMutableDictionary* launchd_plist =
-      [[NSMutableDictionary alloc] initWithObjectsAndKeys:
-        GetServiceProcessLaunchDLabel(), @LAUNCH_JOBKEY_LABEL,
-        program, @LAUNCH_JOBKEY_PROGRAM,
-        ns_args, @LAUNCH_JOBKEY_PROGRAMARGUMENTS,
-        sockets, @LAUNCH_JOBKEY_SOCKETS,
-        nil];
+  NSMutableDictionary* launchd_plist = [@{
+    @LAUNCH_JOBKEY_LABEL : GetServiceProcessLaunchDLabel(),
+    @LAUNCH_JOBKEY_PROGRAM : program,
+    @LAUNCH_JOBKEY_PROGRAMARGUMENTS : ns_args,
+    @LAUNCH_JOBKEY_MACHSERVICES : GetServiceProcessMachName(),
+  } mutableCopy];
 
   if (for_auto_launch) {
     // We want the service process to be able to exit if there are no services
@@ -256,15 +239,12 @@ CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
     // relaunch the service automatically in any other case than exiting
     // cleanly with a 0 return code.
     NSDictionary* keep_alive =
-        [NSDictionary
-           dictionaryWithObject:[NSNumber numberWithBool:NO]
-                         forKey:@LAUNCH_JOBKEY_KEEPALIVE_SUCCESSFULEXIT];
-    NSDictionary* auto_launchd_plist =
-        [[NSDictionary alloc] initWithObjectsAndKeys:
-          [NSNumber numberWithBool:YES], @LAUNCH_JOBKEY_RUNATLOAD,
-          keep_alive, @LAUNCH_JOBKEY_KEEPALIVE,
-          @kServiceProcessSessionType, @LAUNCH_JOBKEY_LIMITLOADTOSESSIONTYPE,
-          nil];
+        @{ @LAUNCH_JOBKEY_KEEPALIVE_SUCCESSFULEXIT : @NO };
+    NSDictionary* auto_launchd_plist = @{
+      @LAUNCH_JOBKEY_RUNATLOAD : @YES,
+      @LAUNCH_JOBKEY_KEEPALIVE : keep_alive,
+      @LAUNCH_JOBKEY_LIMITLOADTOSESSIONTYPE : @kServiceProcessSessionType
+    };
     [launchd_plist addEntriesFromDictionary:auto_launchd_plist];
   }
   return reinterpret_cast<CFDictionaryRef>(launchd_plist);
@@ -275,7 +255,8 @@ CFDictionaryRef CreateServiceProcessLaunchdPlist(base::CommandLine* cmd_line,
 // auto launched on the next user login.
 bool ServiceProcessState::AddToAutoRun() {
   // We're creating directories and writing a file.
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(autorun_command_line_.get());
   base::ScopedCFTypeRef<CFStringRef> name(CopyServiceProcessLaunchDName());
   base::ScopedCFTypeRef<CFDictionaryRef> plist(
@@ -292,15 +273,8 @@ bool ServiceProcessState::RemoveFromAutoRun() {
 
 bool ServiceProcessState::StateData::WatchExecutable() {
   base::mac::ScopedNSAutoreleasePool pool;
-  NSDictionary* ns_launchd_conf = base::mac::CFToNSCast(launchd_conf);
-  NSString* exe_path = [ns_launchd_conf objectForKey:@ LAUNCH_JOBKEY_PROGRAM];
-  if (!exe_path) {
-    DLOG(ERROR) << "No " LAUNCH_JOBKEY_PROGRAM;
-    return false;
-  }
 
-  base::FilePath executable_path =
-      base::FilePath([exe_path fileSystemRepresentation]);
+  base::FilePath executable_path = base::FilePath(job_info.program);
   std::unique_ptr<ExecFilePathWatcherCallback> callback(
       new ExecFilePathWatcherCallback);
   if (!callback->Init(executable_path)) {
@@ -351,34 +325,13 @@ void ExecFilePathWatcherCallback::NotifyPathChanged(const base::FilePath& path,
   } else {
     bool in_trash = false;
     NSFileManager* file_manager = [NSFileManager defaultManager];
-    // Apple deprecated FSDetermineIfRefIsEnclosedByFolder() when deploying to
-    // 10.8, but didn't add getRelationship:... until 10.10.  So fall back to
-    // the deprecated function while running on 10.9 (and delete the else block
-    // when Chromium requires OS X 10.10+).
-    if (@available(macOS 10.10, *)) {
-      NSURLRelationship relationship;
-      if ([file_manager getRelationship:&relationship
-                            ofDirectory:NSTrashDirectory
-                               inDomain:0
-                            toItemAtURL:executable_fsref_
-                                  error:nil]) {
-        in_trash = relationship == NSURLRelationshipContains;
-      }
-    } else {
-      DCHECK(base::mac::IsAtMostOS10_9());
-      Boolean fs_in_trash;
-      FSRef ref;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      if (CFURLGetFSRef(base::mac::NSToCFCast(executable_fsref_.get()), &ref)) {
-        // This is ok because it only happens on 10.9 and won't be needed once
-        // we stop supporting that.
-        OSErr err = FSDetermineIfRefIsEnclosedByFolder(
-            kOnAppropriateDisk, kTrashFolderType, &ref, &fs_in_trash);
-#pragma clang diagnostic pop
-        if (err == noErr && fs_in_trash)
-          in_trash = true;
-      }
+    NSURLRelationship relationship;
+    if ([file_manager getRelationship:&relationship
+                          ofDirectory:NSTrashDirectory
+                             inDomain:0
+                          toItemAtURL:executable_fsref_
+                                error:nil]) {
+      in_trash = relationship == NSURLRelationshipContains;
     }
     if (in_trash) {
       needs_shutdown = true;
@@ -409,11 +362,11 @@ void ExecFilePathWatcherCallback::NotifyPathChanged(const base::FilePath& path,
         NSURL* new_path = [executable_fsref_ filePathURL];
         DCHECK([new_path isFileURL]);
         NSString* ns_new_path = [new_path path];
-        [ns_plist setObject:ns_new_path forKey:@ LAUNCH_JOBKEY_PROGRAM];
-        base::scoped_nsobject<NSMutableArray> args([[ns_plist
-            objectForKey:@LAUNCH_JOBKEY_PROGRAMARGUMENTS] mutableCopy]);
-        [args replaceObjectAtIndex:0 withObject:ns_new_path];
-        [ns_plist setObject:args forKey:@ LAUNCH_JOBKEY_PROGRAMARGUMENTS];
+        ns_plist[@LAUNCH_JOBKEY_PROGRAM] = ns_new_path;
+        base::scoped_nsobject<NSMutableArray> args(
+            [ns_plist[@LAUNCH_JOBKEY_PROGRAMARGUMENTS] mutableCopy]);
+        args[0] = ns_new_path;
+        ns_plist[@LAUNCH_JOBKEY_PROGRAMARGUMENTS] = args;
         if (!Launchd::GetInstance()->WritePlistToFile(Launchd::User,
                                                       Launchd::Agent,
                                                       name,
@@ -444,12 +397,10 @@ void ExecFilePathWatcherCallback::NotifyPathChanged(const base::FilePath& path,
       }
     }
     if (needs_shutdown) {
-      CFStringRef label =
-          base::mac::NSToCFCast(GetServiceProcessLaunchDLabel());
-      CFErrorRef err = NULL;
-      if (!Launchd::GetInstance()->RemoveJob(label, &err)) {
-        base::ScopedCFTypeRef<CFErrorRef> scoped_err(err);
-        DLOG(ERROR) << "RemoveJob " << err;
+      const std::string& label =
+          base::SysNSStringToUTF8(GetServiceProcessLaunchDLabel());
+      if (!Launchd::GetInstance()->RemoveJob(label)) {
+        DLOG(ERROR) << "RemoveJob " << label;
         // Exiting with zero, so launchd doesn't restart the process.
         exit(0);
       }

@@ -20,23 +20,21 @@ import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowNotification;
 
-import org.chromium.base.BaseChromiumApplication;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.media.ui.MediaNotificationManager.ListenerService;
-import org.chromium.content_public.common.MediaMetadata;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.services.media_session.MediaMetadata;
 
 /**
  * Test of media notifications to see whether the text updates when the tab title changes or the
  * MediaMetadata gets updated.
  */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE,
         // Remove this after updating to a version of Robolectric that supports
         // notification channel creation. crbug.com/774315
         sdk = Build.VERSION_CODES.N_MR1,
-        shadows = {MediaNotificationTestShadowResources.class,
-                MediaNotificationTestShadowNotificationManager.class})
+        shadows = {MediaNotificationTestShadowResources.class})
 public class MediaNotificationTitleUpdatedTest extends MediaNotificationManagerTestBase {
     private static final int TAB_ID_1 = 1;
     private static final int TAB_ID_2 = 2;
@@ -53,7 +51,9 @@ public class MediaNotificationTitleUpdatedTest extends MediaNotificationManagerT
 
         getManager().mThrottler.mManager = getManager();
         doCallRealMethod().when(getManager()).onServiceStarted(any(ListenerService.class));
-        doCallRealMethod().when(mMockAppHooks).startForegroundService(any(Intent.class));
+        doCallRealMethod()
+                .when(mMockForegroundServiceUtils)
+                .startForegroundService(any(Intent.class));
         mTabHolder = new MediaNotificationTestTabHolder(TAB_ID_1, "about:blank", "title1");
     }
 

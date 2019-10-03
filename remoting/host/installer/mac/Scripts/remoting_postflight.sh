@@ -15,6 +15,8 @@ PLIST=/Library/LaunchAgents/org.chromium.chromoting.plist
 PAM_CONFIG=/etc/pam.d/chrome-remote-desktop
 ENABLED_FILE="$HELPERTOOLS/$SERVICE_NAME.me2me_enabled"
 ENABLED_FILE_BACKUP="$ENABLED_FILE.backup"
+HOST_BUNDLE_NAME=@@HOST_BUNDLE_NAME@@
+HOST_EXE="$HELPERTOOLS/$HOST_BUNDLE_NAME/Contents/MacOS/remoting_me2me_host"
 
 KSADMIN=/Library/Google/GoogleSoftwareUpdate/GoogleSoftwareUpdate.bundle/Contents/MacOS/ksadmin
 KSUPDATE=https://tools.google.com/service/update2
@@ -90,6 +92,9 @@ else
   logger PAM config has local edits. Not updating.
 fi
 
+# Run the config-upgrade tool.
+"$HOST_EXE" --upgrade-token --host-config="$CONFIG_FILE" || true
+
 # Load the service for each user for whom the service was unloaded in the
 # preflight script (this includes the root user, in case only the login screen
 # is being remoted and this is a Keystone-triggered update).
@@ -103,12 +108,11 @@ if [[ -r "$USERS_TMP_FILE" ]]; then
   for uid in $(sort "$USERS_TMP_FILE" | uniq); do
     logger Starting service for user "$uid".
 
-    sudo_user="sudo -u #$uid"
     load="launchctl load -w -S Aqua $PLIST"
     start="launchctl start $SERVICE_NAME"
 
     if is_el_capitan_or_newer; then
-      boostrap_user="launchctl asuser $uid"
+      bootstrap_user="launchctl asuser $uid"
     else
       # Load the launchd agent in the bootstrap context of user $uid's
       # graphical session, so that screen-capture and input-injection can
@@ -119,6 +123,7 @@ if [[ -r "$USERS_TMP_FILE" ]]; then
       if [[ ! -n "$pid" ]]; then
         exit 1
       fi
+      sudo_user="sudo -u #$uid"
       bootstrap_user="launchctl bsexec $pid"
     fi
 

@@ -24,12 +24,9 @@ namespace chromeos {
 
 namespace policy_util {
 
-namespace {
-
-// This fake credential contains a random postfix which is extremely unlikely to
-// be used by any user.
 const char kFakeCredential[] = "FAKE_CREDENTIAL_VPaJDV9x";
 
+namespace {
 
 // Removes all kFakeCredential values from sensitive fields (determined by
 // onc::FieldIsCredential) of |onc_object|.
@@ -379,7 +376,7 @@ std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
     std::unique_ptr<base::DictionaryValue> sanitized_user_settings(
         onc::MaskCredentialsInOncObject(onc::kNetworkConfigurationSignature,
                                         *user_settings, kFakeCredential));
-    ui_data->set_user_settings(std::move(sanitized_user_settings));
+    ui_data->SetUserSettingsDictionary(std::move(sanitized_user_settings));
   }
 
   shill_property_util::SetUIData(*ui_data, shill_dictionary.get());

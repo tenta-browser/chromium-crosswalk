@@ -4,9 +4,7 @@
 
 #include "components/download/content/public/download_navigation_observer.h"
 
-#include "base/memory/ptr_util.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(download::DownloadNavigationObserver);
+#include <memory>
 
 namespace download {
 
@@ -17,7 +15,7 @@ void DownloadNavigationObserver::CreateForWebContents(
   DCHECK(web_contents);
   if (!FromWebContents(web_contents)) {
     web_contents->SetUserData(UserDataKey(),
-                              base::MakeUnique<DownloadNavigationObserver>(
+                              std::make_unique<DownloadNavigationObserver>(
                                   web_contents, navigation_monitor));
   }
 }
@@ -43,5 +41,7 @@ void DownloadNavigationObserver::NotifyNavigationEvent(
   DCHECK(navigation_monitor_);
   navigation_monitor_->OnNavigationEvent(navigation_event);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(DownloadNavigationObserver)
 
 }  // namespace download

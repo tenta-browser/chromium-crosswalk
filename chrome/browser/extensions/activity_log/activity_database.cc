@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
@@ -136,7 +137,7 @@ void ActivityDatabase::SetBatchModeForTesting(bool batch_mode) {
   batch_mode_ = batch_mode;
 }
 
-sql::Connection* ActivityDatabase::GetSqlConnection() {
+sql::Database* ActivityDatabase::GetSqlConnection() {
   DCHECK(GetActivityLogTaskRunner()->RunsTasksInCurrentSequence());
   if (valid_db_) {
     return &db_;
@@ -200,7 +201,7 @@ void ActivityDatabase::SetTimerForTesting(int ms) {
 }
 
 // static
-bool ActivityDatabase::InitializeTable(sql::Connection* db,
+bool ActivityDatabase::InitializeTable(sql::Database* db,
                                        const char* table_name,
                                        const char* const content_fields[],
                                        const char* const field_types[],

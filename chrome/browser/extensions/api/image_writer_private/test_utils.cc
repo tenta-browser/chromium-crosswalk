@@ -7,15 +7,19 @@
 #include <string.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_image_burner_client.h"
+#include "chromeos/disks/disk.h"
 #endif
 
 namespace extensions {
@@ -71,9 +75,10 @@ FakeDiskMountManager::~FakeDiskMountManager() {}
 
 void FakeDiskMountManager::UnmountDeviceRecursively(
     const std::string& device_path,
-    const UnmountDeviceRecursivelyCallbackType& callback) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::BindOnce(callback, true));
+    UnmountDeviceRecursivelyCallbackType callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), chromeos::MOUNT_ERROR_NONE));
 }
 #endif
 
@@ -86,7 +91,12 @@ SimulateProgressInfo::~SimulateProgressInfo() {}
 SimulateProgressInfo::SimulateProgressInfo(const SimulateProgressInfo&) =
     default;
 
-FakeImageWriterClient::FakeImageWriterClient() {}
+FakeImageWriterClient::FakeImageWriterClient()
+    : ImageWriterUtilityClient(
+          base::CreateSequencedTaskRunnerWithTraits(
+              {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+               base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}),
+          /*connector=*/nullptr) {}
 FakeImageWriterClient::~FakeImageWriterClient() {}
 
 void FakeImageWriterClient::SimulateProgressAndCompletion(
@@ -306,9 +316,7 @@ bool ImageWriterTestUtils::FillFile(const base::FilePath& file,
 }
 
 ImageWriterUnitTestBase::ImageWriterUnitTestBase()
-    : scoped_task_environment_(
-          base::test::ScopedTaskEnvironment::MainThreadType::UI),
-      thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD) {}
+    : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD) {}
 ImageWriterUnitTestBase::~ImageWriterUnitTestBase() {
 }
 

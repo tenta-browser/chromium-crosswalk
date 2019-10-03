@@ -5,7 +5,9 @@
 #ifndef GIN_OBJECT_TEMPLATE_BUILDER_H_
 #define GIN_OBJECT_TEMPLATE_BUILDER_H_
 
+#include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -17,42 +19,33 @@
 
 namespace gin {
 
+namespace internal {
+
 template <typename T>
 v8::Local<v8::FunctionTemplate> CreateFunctionTemplate(v8::Isolate* isolate,
-                                                       T callback) {
+                                                       T callback,
+                                                       const char* type_name) {
   // We need to handle member function pointers case specially because the first
   // parameter for callbacks to MFP should typically come from the the
   // JavaScript "this" object the function was called on, not from the first
   // normal parameter.
-  int callback_flags = 0;
-  if (std::is_member_function_pointer<T>::value)
-    callback_flags = HolderIsFirstArgument;
-
-  return CreateFunctionTemplate(
-      isolate, base::BindRepeating(std::move(callback)), callback_flags);
+  InvokerOptions options;
+  if (std::is_member_function_pointer<T>::value) {
+    options.holder_is_first_argument = true;
+    options.holder_type = type_name;
+  }
+  return ::gin::CreateFunctionTemplate(
+      isolate, base::BindRepeating(std::move(callback)), std::move(options));
 }
 
-template <typename T>
-void SetAsFunctionHandler(v8::Isolate* isolate,
-                          v8::Local<v8::ObjectTemplate> tmpl,
-                          T callback) {
-  // We need to handle member function pointers case specially because the first
-  // parameter for callbacks to MFP should typically come from the the
-  // JavaScript "this" object the function was called on, not from the first
-  // normal parameter.
-  int callback_flags = 0;
-  if (std::is_member_function_pointer<T>::value)
-    callback_flags = HolderIsFirstArgument;
-
-  CreateFunctionHandler(isolate, tmpl, base::BindRepeating(std::move(callback)),
-                        callback_flags);
-}
+}  // namespace internal
 
 // ObjectTemplateBuilder provides a handy interface to creating
 // v8::ObjectTemplate instances with various sorts of properties.
 class GIN_EXPORT ObjectTemplateBuilder {
  public:
   explicit ObjectTemplateBuilder(v8::Isolate* isolate);
+  ObjectTemplateBuilder(v8::Isolate* isolate, const char* type_name);
   ObjectTemplateBuilder(const ObjectTemplateBuilder& other);
   ~ObjectTemplateBuilder();
 
@@ -71,25 +64,42 @@ class GIN_EXPORT ObjectTemplateBuilder {
   template<typename T>
   ObjectTemplateBuilder& SetMethod(const base::StringPiece& name,
                                    const T& callback) {
-    return SetImpl(name, CreateFunctionTemplate(isolate_, callback));
+    return SetImpl(
+        name, internal::CreateFunctionTemplate(isolate_, callback, type_name_));
   }
   template<typename T>
   ObjectTemplateBuilder& SetProperty(const base::StringPiece& name,
                                      const T& getter) {
-    return SetPropertyImpl(name, CreateFunctionTemplate(isolate_, getter),
-                           v8::Local<v8::FunctionTemplate>());
+    return SetPropertyImpl(
+        name, internal::CreateFunctionTemplate(isolate_, getter, type_name_),
+        v8::Local<v8::FunctionTemplate>());
   }
   template<typename T, typename U>
   ObjectTemplateBuilder& SetProperty(const base::StringPiece& name,
                                      const T& getter, const U& setter) {
-    return SetPropertyImpl(name, CreateFunctionTemplate(isolate_, getter),
-                           CreateFunctionTemplate(isolate_, setter));
+    return SetPropertyImpl(
+        name, internal::CreateFunctionTemplate(isolate_, getter, type_name_),
+        internal::CreateFunctionTemplate(isolate_, setter, type_name_));
   }
-  template<typename T>
-  ObjectTemplateBuilder& SetCallAsFunctionHandler(const T& callback) {
-    SetAsFunctionHandler(isolate_, template_, callback);
-    return *this;
+
+  // Whereas SetProperty creates an accessor property, this creates what appears
+  // to be a data property but whose value is lazily computed the first time the
+  // [[Get]] operation occurs.
+  template <typename T>
+  ObjectTemplateBuilder& SetLazyDataProperty(const base::StringPiece& name,
+                                             const T& getter) {
+    InvokerOptions options;
+    if (std::is_member_function_pointer<T>::value) {
+      options.holder_is_first_argument = true;
+      options.holder_type = type_name_;
+    }
+    v8::AccessorNameGetterCallback callback;
+    v8::Local<v8::Value> data;
+    std::tie(callback, data) = CreateDataPropertyCallback(
+        isolate_, base::BindRepeating(getter), std::move(options));
+    return SetLazyDataPropertyImpl(name, callback, data);
   }
+
   ObjectTemplateBuilder& AddNamedPropertyInterceptor();
   ObjectTemplateBuilder& AddIndexedPropertyInterceptor();
 
@@ -101,8 +111,16 @@ class GIN_EXPORT ObjectTemplateBuilder {
   ObjectTemplateBuilder& SetPropertyImpl(
       const base::StringPiece& name, v8::Local<v8::FunctionTemplate> getter,
       v8::Local<v8::FunctionTemplate> setter);
+  ObjectTemplateBuilder& SetLazyDataPropertyImpl(
+      const base::StringPiece& name,
+      v8::AccessorNameGetterCallback callback,
+      v8::Local<v8::Value> data);
 
   v8::Isolate* isolate_;
+
+  // If provided, |type_name_| will be used to give a user-friendly error
+  // message if a member function is invoked on the wrong type of object.
+  const char* type_name_ = nullptr;
 
   // ObjectTemplateBuilder should only be used on the stack.
   v8::Local<v8::ObjectTemplate> template_;

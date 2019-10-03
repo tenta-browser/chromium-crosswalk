@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "cc/base/lap_timer.h"
+#include "base/timer/lap_timer.h"
 #include "cc/paint/draw_image.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/raster/tile_task.h"
@@ -59,7 +59,8 @@ class SoftwareImageDecodeCachePerfTest : public testing::Test {
           images.emplace_back(
               PaintImageBuilder::WithDefault()
                   .set_id(PaintImage::GetNextId())
-                  .set_image(CreateImage(rect.width(), rect.height()))
+                  .set_image(CreateImage(rect.width(), rect.height()),
+                             PaintImage::GetNextContentId())
                   .TakePaintImage(),
               subrect, quality,
               CreateMatrix(SkSize::Make(scale.first, scale.second)), 0u,
@@ -70,8 +71,10 @@ class SoftwareImageDecodeCachePerfTest : public testing::Test {
 
     timer_.Reset();
     do {
-      for (auto& image : images)
-        ImageDecodeCacheKey::FromDrawImage(image, kN32_SkColorType);
+      for (auto& image : images) {
+        SoftwareImageDecodeCache::CacheKey::FromDrawImage(image,
+                                                          kN32_SkColorType);
+      }
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
@@ -80,7 +83,7 @@ class SoftwareImageDecodeCachePerfTest : public testing::Test {
   }
 
  private:
-  LapTimer timer_;
+  base::LapTimer timer_;
 };
 
 TEST_F(SoftwareImageDecodeCachePerfTest, FromDrawImage) {

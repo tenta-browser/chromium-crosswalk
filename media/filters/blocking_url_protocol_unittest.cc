@@ -27,9 +27,7 @@ class BlockingUrlProtocolTest : public testing::Test {
     CHECK(data_source_.Initialize(GetTestDataFilePath("bear-320x240.webm")));
   }
 
-  virtual ~BlockingUrlProtocolTest() {
-    data_source_.Stop();
-  }
+  ~BlockingUrlProtocolTest() override { data_source_.Stop(); }
 
   MOCK_METHOD0(OnDataSourceError, void());
 
@@ -71,7 +69,7 @@ TEST_F(BlockingUrlProtocolTest, Read) {
   EXPECT_TRUE(url_protocol_->GetPosition(&position));
   EXPECT_EQ(size, position);
 
-  EXPECT_EQ(0, url_protocol_->Read(32, buffer));
+  EXPECT_EQ(AVERROR_EOF, url_protocol_->Read(32, buffer));
   EXPECT_TRUE(url_protocol_->GetPosition(&position));
   EXPECT_EQ(size, position);
 }

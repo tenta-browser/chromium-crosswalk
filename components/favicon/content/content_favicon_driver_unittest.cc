@@ -9,7 +9,7 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "components/favicon/core/favicon_client.h"
 #include "components/favicon/core/favicon_handler.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
@@ -25,23 +25,38 @@
 namespace favicon {
 namespace {
 
-using testing::ElementsAre;
 using testing::Return;
+using testing::SizeIs;
 using testing::_;
 
 class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
  protected:
   const std::vector<gfx::Size> kEmptyIconSizes;
   const std::vector<SkBitmap> kEmptyIcons;
-  const std::vector<favicon_base::FaviconRawBitmapResult> kEmptyRawBitmapResult;
   const GURL kPageURL = GURL("http://www.google.com/");
   const GURL kIconURL = GURL("http://www.google.com/favicon.ico");
 
   ContentFaviconDriverTest() {
     ON_CALL(favicon_service_, UpdateFaviconMappingsAndFetch(_, _, _, _, _, _))
-        .WillByDefault(PostReply<6>(kEmptyRawBitmapResult));
+        .WillByDefault([](auto, auto, auto, auto,
+                          favicon_base::FaviconResultsCallback callback,
+                          base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(
+                  std::move(callback),
+                  std::vector<favicon_base::FaviconRawBitmapResult>()));
+        });
     ON_CALL(favicon_service_, GetFaviconForPageURL(_, _, _, _, _))
-        .WillByDefault(PostReply<5>(kEmptyRawBitmapResult));
+        .WillByDefault([](auto, auto, auto,
+                          favicon_base::FaviconResultsCallback callback,
+                          base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(
+                  std::move(callback),
+                  std::vector<favicon_base::FaviconRawBitmapResult>()));
+        });
   }
 
   ~ContentFaviconDriverTest() override {}
@@ -51,7 +66,7 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
     RenderViewHostTestHarness::SetUp();
 
     ContentFaviconDriver::CreateForWebContents(web_contents(),
-                                               &favicon_service_, nullptr);
+                                               &favicon_service_);
   }
 
   content::WebContentsTester* web_contents_tester() {
@@ -98,6 +113,9 @@ TEST_F(ContentFaviconDriverTest, ShouldNotCauseImageDownload) {
   base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
+
+  // Nevertheless, we expect the list exposed via favicon_urls().
+  EXPECT_THAT(favicon_driver->favicon_urls(), SizeIs(1));
 }
 
 // Test that Favicon is not requested repeatedly during the same session if
@@ -148,49 +166,6 @@ TEST_F(ContentFaviconDriverTest, FaviconUpdateNoLastCommittedEntry) {
 
   // Test that ContentFaviconDriver ignored the favicon url update.
   EXPECT_TRUE(driver->favicon_urls().empty());
-}
-
-TEST_F(ContentFaviconDriverTest, RecordsHistorgramsForCandidates) {
-  const std::vector<gfx::Size> kSizes16x16and32x32({{16, 16}, {32, 32}});
-  base::HistogramTester tester;
-
-  // Navigation to a page updating one icon.
-  TestFetchFaviconForPage(
-      GURL("http://www.youtube.com"),
-      {content::FaviconURL(GURL("http://www.youtube.com/favicon.ico"),
-                           content::FaviconURL::IconType::kFavicon,
-                           kSizes16x16and32x32)});
-
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesCount"),
-              ElementsAre(base::Bucket(/*min=*/1, /*count=*/1)));
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesWithDefinedSizesCount"),
-              ElementsAre(base::Bucket(/*min=*/1, /*count=*/1)));
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesWithTouchIconsCount"),
-              ElementsAre(base::Bucket(/*min=*/0, /*count=*/1)));
-
-  std::vector<content::FaviconURL> favicon_urls = {
-      content::FaviconURL(GURL("http://www.google.ca/favicon.ico"),
-                          content::FaviconURL::IconType::kFavicon,
-                          kSizes16x16and32x32),
-      content::FaviconURL(GURL("http://www.google.ca/precomposed_icon.png"),
-                          content::FaviconURL::IconType::kTouchPrecomposedIcon,
-                          kEmptyIconSizes),
-      content::FaviconURL(GURL("http://www.google.ca/touch_icon.png"),
-                          content::FaviconURL::IconType::kTouchIcon,
-                          kEmptyIconSizes)};
-
-  // Double navigation to a page with 3 different icons.
-  TestFetchFaviconForPage(GURL("http://www.google.ca"), favicon_urls);
-  TestFetchFaviconForPage(GURL("http://www.google.ca"), favicon_urls);
-
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesCount"),
-              ElementsAre(base::Bucket(/*min=*/1, /*count=*/1),
-                          base::Bucket(/*min=*/3, /*count=*/2)));
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesWithDefinedSizesCount"),
-              ElementsAre(base::Bucket(/*min=*/1, /*count=*/3)));
-  EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesWithTouchIconsCount"),
-              ElementsAre(base::Bucket(/*min=*/0, /*count=*/1),
-                          base::Bucket(/*min=*/2, /*count=*/2)));
 }
 
 }  // namespace

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -7,6 +6,8 @@
 Unicode RTL overrides.
 More info at https://sites.google.com/a/chromium.org/dev/Home/fake-bidi
 '''
+
+from __future__ import print_function
 
 import re
 

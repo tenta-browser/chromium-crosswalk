@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 
 class TestToolbarActionsBarBubbleDelegate::DelegateImpl
     : public ToolbarActionsBarBubbleDelegate {
@@ -27,13 +26,13 @@ class TestToolbarActionsBarBubbleDelegate::DelegateImpl
   base::string16 GetItemListText() override { return parent_->item_list_; }
   base::string16 GetActionButtonText() override { return parent_->action_; }
   base::string16 GetDismissButtonText() override { return parent_->dismiss_; }
-  base::string16 GetLearnMoreButtonText() override {
-    return parent_->learn_more_;
+  ui::DialogButton GetDefaultDialogButton() override {
+    return parent_->default_button_;
   }
   std::unique_ptr<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>
   GetExtraViewInfo() override {
     if (parent_->info_)
-      return base::MakeUnique<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>(
+      return std::make_unique<ToolbarActionsBarBubbleDelegate::ExtraViewInfo>(
           *parent_->info_);
     return nullptr;
   }
@@ -60,6 +59,7 @@ TestToolbarActionsBarBubbleDelegate::TestToolbarActionsBarBubbleDelegate(
       heading_(heading),
       body_(body),
       action_(action),
+      default_button_(ui::DIALOG_BUTTON_NONE),
       close_on_deactivate_(true) {}
 
 TestToolbarActionsBarBubbleDelegate::~TestToolbarActionsBarBubbleDelegate() {

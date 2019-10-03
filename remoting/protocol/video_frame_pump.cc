@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/time/time.h"
@@ -53,8 +52,7 @@ VideoFramePump::VideoFramePump(
           FROM_HERE,
           base::TimeDelta::FromMilliseconds(kKeepAlivePacketIntervalMs),
           base::Bind(&VideoFramePump::SendKeepAlivePacket,
-                     base::Unretained(this)),
-          false),
+                     base::Unretained(this))),
       capture_scheduler_(base::Bind(&VideoFramePump::CaptureNextFrame,
                                     base::Unretained(this))),
       weak_factory_(this) {
@@ -87,22 +85,26 @@ void VideoFramePump::SetLosslessEncode(bool want_lossless) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   encode_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&VideoEncoder::SetLosslessEncode,
-                            base::Unretained(encoder_.get()), want_lossless));
+      FROM_HERE,
+      base::BindOnce(&VideoEncoder::SetLosslessEncode,
+                     base::Unretained(encoder_.get()), want_lossless));
 }
 
 void VideoFramePump::SetLosslessColor(bool want_lossless) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   encode_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&VideoEncoder::SetLosslessColor,
-                            base::Unretained(encoder_.get()), want_lossless));
+      FROM_HERE,
+      base::BindOnce(&VideoEncoder::SetLosslessColor,
+                     base::Unretained(encoder_.get()), want_lossless));
 }
 
 void VideoFramePump::SetObserver(Observer* observer) {
   DCHECK(thread_checker_.CalledOnValidThread());
   observer_ = observer;
 }
+
+void VideoFramePump::SelectSource(int id) {}
 
 void VideoFramePump::OnCaptureResult(
     webrtc::DesktopCapturer::Result result,
@@ -175,7 +177,7 @@ VideoFramePump::EncodeFrame(VideoEncoder* encoder,
       (timestamps->encode_ended_time - timestamps->encode_started_time)
           .InMilliseconds());
 
-  return base::MakeUnique<PacketWithTimestamps>(std::move(packet),
+  return std::make_unique<PacketWithTimestamps>(std::move(packet),
                                                 std::move(timestamps));
 }
 
@@ -200,9 +202,10 @@ void VideoFramePump::SendPacket(std::unique_ptr<PacketWithTimestamps> packet) {
   UpdateFrameTimers(packet->packet.get(), packet->timestamps.get());
 
   send_pending_ = true;
-  video_stub_->ProcessVideoPacket(std::move(packet->packet),
-                                  base::Bind(&VideoFramePump::OnVideoPacketSent,
-                                             weak_factory_.GetWeakPtr()));
+  video_stub_->ProcessVideoPacket(
+      std::move(packet->packet),
+      base::BindOnce(&VideoFramePump::OnVideoPacketSent,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void VideoFramePump::UpdateFrameTimers(VideoPacket* packet,
@@ -250,9 +253,9 @@ void VideoFramePump::SendKeepAlivePacket() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   video_stub_->ProcessVideoPacket(
-      base::MakeUnique<VideoPacket>(),
-      base::Bind(&VideoFramePump::OnKeepAlivePacketSent,
-                 weak_factory_.GetWeakPtr()));
+      std::make_unique<VideoPacket>(),
+      base::BindOnce(&VideoFramePump::OnKeepAlivePacketSent,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void VideoFramePump::OnKeepAlivePacketSent() {

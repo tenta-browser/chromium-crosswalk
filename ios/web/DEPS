@@ -5,14 +5,19 @@ include_rules = [
   "+ios/web",
   "+mojo/public",
   "+net",
+  "+services/metrics/public/cpp",
+  "+services/network/network_context.h",
+  "+services/network/public/cpp",
+  "+services/network/public/mojom",
   "+ui",
 
   # Needed to embed the ServiceManager in //ios/web.
-  "+services/catalog",
   "+services/service_manager",
 
   # For tests.
   "+ios/testing",
   "+ios/third_party/earl_grey/src",
-  "+mojo/edk/embedder/embedder.h",
+  "+ios/third_party/earl_grey2/src/CommonLib",
+  "+ios/third_party/earl_grey2/src/TestLib",
+  "+mojo/core/embedder/embedder.h",
 ]

@@ -7,17 +7,18 @@
 
 #include <stdint.h>
 
+#include <cstddef>
 #include <string>
 #include <utility>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
+#include "base/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/associated_interface_request.h"
-#include "mojo/public/cpp/bindings/bindings_export.h"
 #include "mojo/public/cpp/bindings/connection_error_callback.h"
 #include "mojo/public/cpp/bindings/lib/associated_interface_ptr_state.h"
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
@@ -36,11 +37,13 @@ class AssociatedInterfacePtr {
 
   // Constructs an unbound AssociatedInterfacePtr.
   AssociatedInterfacePtr() {}
-  AssociatedInterfacePtr(decltype(nullptr)) {}
+  AssociatedInterfacePtr(std::nullptr_t) {}
 
   AssociatedInterfacePtr(AssociatedInterfacePtr&& other) {
     internal_state_.Swap(&other.internal_state_);
   }
+
+  explicit AssociatedInterfacePtr(PtrInfoType&& info) { Bind(std::move(info)); }
 
   AssociatedInterfacePtr& operator=(AssociatedInterfacePtr&& other) {
     reset();
@@ -50,7 +53,7 @@ class AssociatedInterfacePtr {
 
   // Assigning nullptr to this class causes it to closes the associated
   // interface (if any) and returns the pointer to the unbound state.
-  AssociatedInterfacePtr& operator=(decltype(nullptr)) {
+  AssociatedInterfacePtr& operator=(std::nullptr_t) {
     reset();
     return *this;
   }
@@ -61,17 +64,17 @@ class AssociatedInterfacePtr {
   // Calling with an invalid |info| has the same effect as reset(). In this
   // case, the AssociatedInterfacePtr is not considered as bound.
   //
-  // |runner| must belong to the same thread. It will be used to dispatch all
-  // callbacks and connection error notification. It is useful when you attach
-  // multiple task runners to a single thread for the purposes of task
-  // scheduling.
+  // Optionally, |runner| is a SequencedTaskRunner bound to the current sequence
+  // on which all callbacks and connection error notifications will be
+  // dispatched. It is only useful to specify this to use a different
+  // SequencedTaskRunner than SequencedTaskRunnerHandle::Get().
   //
   // NOTE: The corresponding AssociatedInterfaceRequest must be sent over
   // another interface before using this object to make calls. Please see the
   // comments of MakeRequest(AssociatedInterfacePtr<Interface>*) for more
   // details.
   void Bind(AssociatedInterfacePtrInfo<Interface> info,
-            scoped_refptr<base::SingleThreadTaskRunner> runner = nullptr) {
+            scoped_refptr<base::SequencedTaskRunner> runner = nullptr) {
     reset();
 
     if (info.is_valid())
@@ -185,7 +188,7 @@ class AssociatedInterfacePtr {
 template <typename Interface>
 AssociatedInterfaceRequest<Interface> MakeRequest(
     AssociatedInterfacePtr<Interface>* ptr,
-    scoped_refptr<base::SingleThreadTaskRunner> runner = nullptr) {
+    scoped_refptr<base::SequencedTaskRunner> runner = nullptr) {
   AssociatedInterfacePtrInfo<Interface> ptr_info;
   auto request = MakeRequest(&ptr_info);
   ptr->Bind(std::move(ptr_info), std::move(runner));
@@ -252,8 +255,8 @@ AssociatedInterfaceRequest<Interface> MakeRequestAssociatedWithDedicatedPipe(
 // method associates the interface with a dedicated, disconnected message pipe.
 // That way, the corresponding associated interface pointer of |handle| can
 // safely make calls (although those calls are silently dropped).
-MOJO_CPP_BINDINGS_EXPORT void AssociateWithDisconnectedPipe(
-    ScopedInterfaceEndpointHandle handle);
+COMPONENT_EXPORT(MOJO_CPP_BINDINGS)
+void AssociateWithDisconnectedPipe(ScopedInterfaceEndpointHandle handle);
 
 }  // namespace mojo
 

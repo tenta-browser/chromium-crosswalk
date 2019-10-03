@@ -17,13 +17,14 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -33,15 +34,12 @@
 #include "chrome/common/media/media_resource_provider.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/render_messages.h"
-#include "chrome/common/resource_usage_reporter.mojom.h"
-#include "chrome/common/resource_usage_reporter_type_converters.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/content_settings_observer.h"
-#include "chrome/renderer/security_filter_peer.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
 #include "content/public/child/child_thread.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/resource_response.h"
+#include "content/public/common/resource_usage_reporter_type_converters.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/common/simple_connection_filter.h"
@@ -49,7 +47,7 @@
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/render_view_visitor.h"
 #include "content/public/renderer/resource_dispatcher_delegate.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ipc/ipc_sync_channel.h"
 #include "media/base/localized_strings.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
@@ -57,15 +55,18 @@
 #include "net/base/net_module.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebSecurityPolicy.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_security_policy.h"
+#include "third_party/blink/public/web/web_view.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/renderer/extensions/extension_localization_peer.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "chrome/renderer/chromeos_merge_session_loader_throttle.h"
 #endif
 
 using blink::WebCache;
@@ -79,51 +80,27 @@ const int kCacheStatsDelayMS = 2000;
 
 class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
  public:
-  RendererResourceDelegate()
-      : weak_factory_(this) {
-  }
+  RendererResourceDelegate() {}
 
-  std::unique_ptr<content::RequestPeer> OnRequestComplete(
-      std::unique_ptr<content::RequestPeer> current_peer,
-      content::ResourceType resource_type,
-      int error_code) override {
+  void OnRequestComplete() override {
     // Update the browser about our cache.
     // Rate limit informing the host of our cache stats.
     if (!weak_factory_.HasWeakPtrs()) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&RendererResourceDelegate::InformHostOfCacheStats,
-                     weak_factory_.GetWeakPtr()),
+          base::BindOnce(&RendererResourceDelegate::InformHostOfCacheStats,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(kCacheStatsDelayMS));
     }
-
-    if (error_code == net::ERR_ABORTED) {
-      return current_peer;
-    }
-
-    // Resource canceled with a specific error are filtered.
-    return SecurityFilterPeer::CreateSecurityFilterPeerForDeniedRequest(
-        resource_type, std::move(current_peer), error_code);
   }
 
   std::unique_ptr<content::RequestPeer> OnReceivedResponse(
       std::unique_ptr<content::RequestPeer> current_peer,
-      int render_frame_id,
-      const GURL& url,
-      const GURL& referrer,
-      const std::string& method,
-      content::ResourceType resource_type,
-      const content::ResourceResponseHead& response_head) override {
-#if defined(FULL_SAFE_BROWSING)
-    RenderThread::Get()->Send(
-        new SafeBrowsingHostMsg_SubresourceResponseStarted(
-            render_frame_id, response_head.socket_address.host(), url, method,
-            referrer, resource_type));
-#endif
+      const std::string& mime_type,
+      const GURL& url) override {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     return ExtensionLocalizationPeer::CreateExtensionLocalizationPeer(
-        std::move(current_peer), RenderThread::Get(), response_head.mime_type,
-        url);
+        std::move(current_peer), RenderThread::Get(), mime_type, url);
 #else
     return current_peer;
 #endif
@@ -142,122 +119,81 @@ class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
 
   chrome::mojom::CacheStatsRecorderAssociatedPtr cache_stats_recorder_;
 
-  base::WeakPtrFactory<RendererResourceDelegate> weak_factory_;
+  base::WeakPtrFactory<RendererResourceDelegate> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RendererResourceDelegate);
 };
 
-static const int kWaitForWorkersStatsTimeoutMS = 20;
+#if defined(OS_CHROMEOS)
+scoped_refptr<base::SequencedTaskRunner> GetCallbackGroupTaskRunner() {
+  content::ChildThread* child_thread = content::ChildThread::Get();
+  if (child_thread)
+    return child_thread->GetIOTaskRunner();
 
-class ResourceUsageReporterImpl : public chrome::mojom::ResourceUsageReporter {
- public:
-  explicit ResourceUsageReporterImpl(
-      base::WeakPtr<ChromeRenderThreadObserver> observer)
-      : workers_to_go_(0), observer_(observer), weak_factory_(this) {}
-  ~ResourceUsageReporterImpl() override {}
-
- private:
-  static void CollectOnWorkerThread(
-      const scoped_refptr<base::TaskRunner>& master,
-      base::WeakPtr<ResourceUsageReporterImpl> impl) {
-    size_t total_bytes = 0;
-    size_t used_bytes = 0;
-    v8::Isolate* isolate = v8::Isolate::GetCurrent();
-    if (isolate) {
-      v8::HeapStatistics heap_stats;
-      isolate->GetHeapStatistics(&heap_stats);
-      total_bytes = heap_stats.total_heap_size();
-      used_bytes = heap_stats.used_heap_size();
-    }
-    master->PostTask(FROM_HERE,
-                     base::Bind(&ResourceUsageReporterImpl::ReceiveStats, impl,
-                                total_bytes, used_bytes));
-  }
-
-  void ReceiveStats(size_t total_bytes, size_t used_bytes) {
-    usage_data_->v8_bytes_allocated += total_bytes;
-    usage_data_->v8_bytes_used += used_bytes;
-    workers_to_go_--;
-    if (!workers_to_go_)
-      SendResults();
-  }
-
-  void SendResults() {
-    if (!callback_.is_null())
-      callback_.Run(std::move(usage_data_));
-    callback_.Reset();
-    weak_factory_.InvalidateWeakPtrs();
-    workers_to_go_ = 0;
-  }
-
-  void GetUsageData(const GetUsageDataCallback& callback) override {
-    DCHECK(callback_.is_null());
-    weak_factory_.InvalidateWeakPtrs();
-    usage_data_ = chrome::mojom::ResourceUsageData::New();
-    usage_data_->reports_v8_stats = true;
-    callback_ = callback;
-
-    // Since it is not safe to call any Blink or V8 functions until Blink has
-    // been initialized (which also initializes V8), early out and send 0 back
-    // for all resources.
-    if (!observer_) {
-      SendResults();
-      return;
-    }
-
-    WebCache::ResourceTypeStats stats;
-    WebCache::GetResourceTypeStats(&stats);
-    usage_data_->web_cache_stats =
-        chrome::mojom::ResourceTypeStats::From(stats);
-
-    v8::Isolate* isolate = v8::Isolate::GetCurrent();
-    if (isolate) {
-      v8::HeapStatistics heap_stats;
-      isolate->GetHeapStatistics(&heap_stats);
-      usage_data_->v8_bytes_allocated = heap_stats.total_heap_size();
-      usage_data_->v8_bytes_used = heap_stats.used_heap_size();
-    }
-    base::Closure collect = base::Bind(
-        &ResourceUsageReporterImpl::CollectOnWorkerThread,
-        base::ThreadTaskRunnerHandle::Get(), weak_factory_.GetWeakPtr());
-    workers_to_go_ = RenderThread::Get()->PostTaskToAllWebWorkers(collect);
-    if (workers_to_go_) {
-      // The guard task to send out partial stats
-      // in case some workers are not responsive.
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&ResourceUsageReporterImpl::SendResults,
-                                weak_factory_.GetWeakPtr()),
-          base::TimeDelta::FromMilliseconds(kWaitForWorkersStatsTimeoutMS));
-    } else {
-      // No worker threads so just send out the main thread data right away.
-      SendResults();
-    }
-  }
-
-  chrome::mojom::ResourceUsageDataPtr usage_data_;
-  GetUsageDataCallback callback_;
-  int workers_to_go_;
-  base::WeakPtr<ChromeRenderThreadObserver> observer_;
-
-  base::WeakPtrFactory<ResourceUsageReporterImpl> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(ResourceUsageReporterImpl);
-};
-
-void CreateResourceUsageReporter(
-    base::WeakPtr<ChromeRenderThreadObserver> observer,
-    chrome::mojom::ResourceUsageReporterRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<ResourceUsageReporterImpl>(observer),
-                          std::move(request));
+  // This will happen when running via tests.
+  return base::SequencedTaskRunnerHandle::Get();
 }
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 
 bool ChromeRenderThreadObserver::is_incognito_process_ = false;
 
+#if defined(OS_CHROMEOS)
+// static
+scoped_refptr<ChromeRenderThreadObserver::ChromeOSListener>
+ChromeRenderThreadObserver::ChromeOSListener::Create(
+    chrome::mojom::ChromeOSListenerRequest chromeos_listener_request) {
+  scoped_refptr<ChromeOSListener> helper = new ChromeOSListener();
+  content::ChildThread::Get()->GetIOTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&ChromeOSListener::BindOnIOThread, helper,
+                                std::move(chromeos_listener_request)));
+  return helper;
+}
+
+bool ChromeRenderThreadObserver::ChromeOSListener::IsMergeSessionRunning()
+    const {
+  base::AutoLock lock(lock_);
+  return merge_session_running_;
+}
+
+void ChromeRenderThreadObserver::ChromeOSListener::RunWhenMergeSessionFinished(
+    DelayedCallbackGroup::Callback callback) {
+  base::AutoLock lock(lock_);
+  DCHECK(merge_session_running_);
+  session_merged_callbacks_->Add(std::move(callback));
+}
+
+void ChromeRenderThreadObserver::ChromeOSListener::MergeSessionComplete() {
+  {
+    base::AutoLock lock(lock_);
+    merge_session_running_ = false;
+  }
+  session_merged_callbacks_->RunAll();
+}
+
+ChromeRenderThreadObserver::ChromeOSListener::ChromeOSListener()
+    : session_merged_callbacks_(base::MakeRefCounted<DelayedCallbackGroup>(
+          MergeSessionLoaderThrottle::GetMergeSessionTimeout(),
+          GetCallbackGroupTaskRunner())),
+      merge_session_running_(true),
+      binding_(this) {}
+
+ChromeRenderThreadObserver::ChromeOSListener::~ChromeOSListener() {}
+
+void ChromeRenderThreadObserver::ChromeOSListener::BindOnIOThread(
+    chrome::mojom::ChromeOSListenerRequest chromeos_listener_request) {
+  binding_.Bind(std::move(chromeos_listener_request));
+}
+#endif  // defined(OS_CHROMEOS)
+
+chrome::mojom::DynamicParams* GetDynamicConfigParams() {
+  static base::NoDestructor<chrome::mojom::DynamicParams> dynamic_params;
+  return dynamic_params.get();
+}
+
 ChromeRenderThreadObserver::ChromeRenderThreadObserver()
-    : visited_link_slave_(new visitedlink::VisitedLinkSlave),
-      weak_factory_(this) {
+    : visited_link_slave_(new visitedlink::VisitedLinkSlave) {
   RenderThread* thread = RenderThread::Get();
   resource_delegate_.reset(new RendererResourceDelegate());
   thread->SetResourceDispatcherDelegate(resource_delegate_.get());
@@ -279,21 +215,24 @@ ChromeRenderThreadObserver::ChromeRenderThreadObserver()
   WebSecurityPolicy::RegisterURLSchemeAsNotAllowingJavascriptURLs(
       native_scheme);
 
-  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
-  registry->AddInterface(
-      base::Bind(CreateResourceUsageReporter, weak_factory_.GetWeakPtr()),
-      base::ThreadTaskRunnerHandle::Get());
+  auto registry = std::make_unique<service_manager::BinderRegistry>();
   registry->AddInterface(visited_link_slave_->GetBindCallback(),
                          base::ThreadTaskRunnerHandle::Get());
   if (content::ChildThread::Get()) {
     content::ChildThread::Get()
         ->GetServiceManagerConnection()
-        ->AddConnectionFilter(base::MakeUnique<content::SimpleConnectionFilter>(
+        ->AddConnectionFilter(std::make_unique<content::SimpleConnectionFilter>(
             std::move(registry)));
   }
 }
 
 ChromeRenderThreadObserver::~ChromeRenderThreadObserver() {}
+
+// static
+const chrome::mojom::DynamicParams&
+ChromeRenderThreadObserver::GetDynamicParams() {
+  return *GetDynamicConfigParams();
+}
 
 void ChromeRenderThreadObserver::RegisterMojoInterfaces(
     blink::AssociatedInterfaceRegistry* associated_interfaces) {
@@ -309,8 +248,20 @@ void ChromeRenderThreadObserver::UnregisterMojoInterfaces(
 }
 
 void ChromeRenderThreadObserver::SetInitialConfiguration(
-    bool is_incognito_process) {
+    bool is_incognito_process,
+    chrome::mojom::ChromeOSListenerRequest chromeos_listener_request) {
   is_incognito_process_ = is_incognito_process;
+#if defined(OS_CHROMEOS)
+  if (chromeos_listener_request) {
+    chromeos_listener_ =
+        ChromeOSListener::Create(std::move(chromeos_listener_request));
+  }
+#endif  // defined(OS_CHROMEOS)
+}
+
+void ChromeRenderThreadObserver::SetConfiguration(
+    chrome::mojom::DynamicParamsPtr params) {
+  *GetDynamicConfigParams() = std::move(*params);
 }
 
 void ChromeRenderThreadObserver::SetContentSettingRules(

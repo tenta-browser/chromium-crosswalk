@@ -5,20 +5,23 @@
 #include "chrome/browser/chromeos/drive/fileapi/fileapi_worker.h"
 
 #include <stddef.h>
+#include <memory>
+#include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/file_errors.h"
 #include "components/drive/resource_entry_conversion.h"
+#include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "content/public/browser/browser_thread.h"
 #include "storage/browser/fileapi/file_system_url.h"
-#include "storage/common/fileapi/directory_entry.h"
 
 using content::BrowserThread;
 
@@ -74,17 +77,15 @@ void RunReadDirectoryCallbackWithEntries(
     std::unique_ptr<ResourceEntryVector> resource_entries) {
   DCHECK(resource_entries);
 
-  std::vector<storage::DirectoryEntry> entries;
+  std::vector<filesystem::mojom::DirectoryEntry> entries;
   // Convert drive files to File API's directory entry.
   entries.reserve(resource_entries->size());
   for (size_t i = 0; i < resource_entries->size(); ++i) {
     const ResourceEntry& resource_entry = (*resource_entries)[i];
-    storage::DirectoryEntry entry;
-    entry.name = resource_entry.base_name();
-
-    const PlatformFileInfoProto& file_info = resource_entry.file_info();
-    entry.is_directory = file_info.is_directory();
-    entries.push_back(entry);
+    entries.emplace_back(base::FilePath(resource_entry.base_name()),
+                         resource_entry.file_info().is_directory()
+                             ? filesystem::mojom::FsFileType::DIRECTORY
+                             : filesystem::mojom::FsFileType::REGULAR_FILE);
   }
 
   callback.Run(base::File::FILE_OK, entries, true /*has_more*/);
@@ -94,7 +95,7 @@ void RunReadDirectoryCallbackWithEntries(
 void RunReadDirectoryCallbackOnCompletion(const ReadDirectoryCallback& callback,
                                           FileError error) {
   callback.Run(FileErrorToBaseFileError(error),
-               std::vector<storage::DirectoryEntry>(),
+               std::vector<filesystem::mojom::DirectoryEntry>(),
                false /*has_more*/);
 }
 
@@ -196,7 +197,7 @@ FileSystemInterface* GetFileSystemFromUrl(const storage::FileSystemURL& url) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   Profile* profile = util::ExtractProfileFromPath(url.path());
-  return profile ? util::GetFileSystemByProfile(profile) : NULL;
+  return profile ? util::GetFileSystemByProfile(profile) : nullptr;
 }
 
 void RunFileSystemCallback(
@@ -220,8 +221,7 @@ void GetFileInfo(const base::FilePath& file_path,
                  FileSystemInterface* file_system) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   file_system->GetResourceEntry(
-      file_path,
-      base::Bind(&RunGetFileInfoCallback, callback));
+      file_path, base::BindOnce(&RunGetFileInfoCallback, callback));
 }
 
 void Copy(const base::FilePath& src_file_path,
@@ -361,7 +361,6 @@ void TouchFile(const base::FilePath& file_path,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   file_system->TouchFile(file_path, last_access_time, last_modified_time,
                          base::Bind(&RunStatusCallbackByFileError, callback));
-
 }
 
 }  // namespace fileapi_internal

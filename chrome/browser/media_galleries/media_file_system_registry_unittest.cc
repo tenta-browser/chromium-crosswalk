@@ -9,22 +9,22 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <set>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -53,9 +53,12 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
+
+namespace content {
+class SiteInstance;
+}
 
 using content::BrowserThread;
 using storage_monitor::StorageInfo;
@@ -133,15 +136,14 @@ bool TestMediaFileSystemContext::RegisterFileSystem(
 }
 
 void TestMediaFileSystemContext::RevokeFileSystem(const std::string& fs_name) {
-  if (!base::ContainsKey(file_systems_by_name_, fs_name))
+  if (!base::Contains(file_systems_by_name_, fs_name))
     return;
   EXPECT_EQ(1U, file_systems_by_name_.erase(fs_name));
 }
 
 base::FilePath TestMediaFileSystemContext::GetRegisteredPath(
     const std::string& fs_name) const {
-  std::map<std::string /*fs_name*/, FSInfo>::const_iterator it =
-      file_systems_by_name_.find(fs_name);
+  auto it = file_systems_by_name_.find(fs_name);
   if (it == file_systems_by_name_.end())
     return base::FilePath();
   return it->second.path;
@@ -166,7 +168,7 @@ void GetGalleryInfoCallback(
     FSInfoMap* results,
     const std::vector<MediaFileSystemInfo>& file_systems) {
   for (size_t i = 0; i < file_systems.size(); ++i) {
-    ASSERT_FALSE(base::ContainsKey(*results, file_systems[i].pref_id));
+    ASSERT_FALSE(base::Contains(*results, file_systems[i].pref_id));
     (*results)[file_systems[i].pref_id] = file_systems[i];
   }
 }
@@ -202,9 +204,25 @@ class MockProfileSharedRenderProcessHostFactory
       content::BrowserContext* browser_context);
 
   content::RenderProcessHost* CreateRenderProcessHost(
-      content::BrowserContext* browser_context) const override;
+      content::BrowserContext* browser_context,
+      content::SiteInstance* site_instance) override;
 
  private:
+  class SharedMockRenderProcessHost : public content::MockRenderProcessHost {
+   public:
+    explicit SharedMockRenderProcessHost(
+        content::BrowserContext* browser_context)
+        : content::MockRenderProcessHost(browser_context) {}
+
+    // This test class lies that the process has not been used to allow
+    // testing of process sharing/reuse inherent in the unit tests that depend
+    // on the MockProfileSharedRenderProcessHostFactory.
+    bool HostHasNotBeenUsed() override { return true; }
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(SharedMockRenderProcessHost);
+  };
+
   mutable std::map<content::BrowserContext*,
                    std::unique_ptr<content::MockRenderProcessHost>>
       rph_map_;
@@ -375,8 +393,7 @@ class MediaFileSystemRegistryTest : public ChromeRenderViewHostTestHarness {
   // Needed for extension service & friends to work.
 
 #if defined(OS_CHROMEOS)
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 #endif
 
   MockProfileSharedRenderProcessHostFactory rph_factory_;
@@ -416,12 +433,13 @@ MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
 
 content::RenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
-    content::BrowserContext* browser_context) const {
+    content::BrowserContext* browser_context,
+    content::SiteInstance* site_instance) {
   auto existing = rph_map_.find(browser_context);
   if (existing != rph_map_.end())
     return existing->second.get();
   rph_map_[browser_context] =
-      base::MakeUnique<content::MockRenderProcessHost>(browser_context);
+      std::make_unique<SharedMockRenderProcessHost>(browser_context);
   return rph_map_[browser_context].get();
 }
 
@@ -451,14 +469,14 @@ ProfileState::ProfileState(
   no_permissions_extension_ =
       AddMediaGalleriesApp("no", read_permissions, profile_.get());
 
-  single_web_contents_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
+  single_web_contents_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
   single_rph_ = rph_factory->ReleaseRPH(profile_.get());
 
-  shared_web_contents1_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
-  shared_web_contents2_.reset(
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL));
+  shared_web_contents1_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
+  shared_web_contents2_ =
+      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
   shared_rph_ = rph_factory->ReleaseRPH(profile_.get());
 }
 
@@ -497,8 +515,7 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), no_permissions_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (no permission)", test.c_str()),
-                 base::ConstRef(empty_names),
-                 base::ConstRef(empty_expectation)));
+                 std::cref(empty_names), std::cref(empty_expectation)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
@@ -507,8 +524,8 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), regular_permission_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (regular permission)", test.c_str()),
-                 base::ConstRef(compare_names_read_),
-                 base::ConstRef(regular_extension_galleries)));
+                 std::cref(compare_names_read_),
+                 std::cref(regular_extension_galleries)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
@@ -517,8 +534,8 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), all_permission_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (all permission)", test.c_str()),
-                 base::ConstRef(compare_names_all_),
-                 base::ConstRef(all_extension_galleries)));
+                 std::cref(compare_names_all_),
+                 std::cref(all_extension_galleries)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 }
@@ -605,7 +622,7 @@ int ProfileState::GetAndClearComparisonCount() {
 
 void MediaFileSystemRegistryTest::CreateProfileState(size_t profile_count) {
   for (size_t i = 0; i < profile_count; ++i) {
-    profile_states_.push_back(base::MakeUnique<ProfileState>(&rph_factory_));
+    profile_states_.push_back(std::make_unique<ProfileState>(&rph_factory_));
   }
 }
 
@@ -679,9 +696,7 @@ void MediaFileSystemRegistryTest::AssertAllAutoAddedGalleries() {
 #if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
     ASSERT_GT(galleries.size(), 0U);
 #endif
-    for (MediaGalleriesPrefInfoMap::const_iterator it = galleries.begin();
-         it != galleries.end();
-         ++it) {
+    for (auto it = galleries.begin(); it != galleries.end(); ++it) {
       ASSERT_EQ(MediaGalleryPrefInfo::kAutoDetected, it->second.type);
     }
   }
@@ -718,7 +733,7 @@ void MediaFileSystemRegistryTest::CheckNewGalleryInfo(
   for (FSInfoMap::const_iterator it = new_galleries_info.begin();
        it != new_galleries_info.end();
        ++it) {
-    if (base::ContainsKey(galleries_info, it->first))
+    if (base::Contains(galleries_info, it->first))
       continue;
 
     ASSERT_FALSE(found_new);
@@ -735,9 +750,7 @@ MediaFileSystemRegistryTest::GetAutoAddedGalleries(
   const MediaGalleriesPrefInfoMap& galleries =
       profile_state->GetMediaGalleriesPrefs()->known_galleries();
   std::vector<MediaFileSystemInfo> result;
-  for (MediaGalleriesPrefInfoMap::const_iterator it = galleries.begin();
-       it != galleries.end();
-       ++it) {
+  for (auto it = galleries.begin(); it != galleries.end(); ++it) {
     if (it->second.type == MediaGalleryPrefInfo::kAutoDetected) {
       base::FilePath path = it->second.AbsolutePath();
       MediaFileSystemInfo info(path.BaseName().LossyDisplayName(), path,
@@ -752,10 +765,8 @@ MediaFileSystemRegistryTest::GetAutoAddedGalleries(
 size_t MediaFileSystemRegistryTest::GetExtensionGalleriesHostCount(
     const MediaFileSystemRegistry* registry) const {
   size_t extension_galleries_host_count = 0;
-  for (MediaFileSystemRegistry::ExtensionGalleriesHostMap::const_iterator it =
-           registry->extension_hosts_map_.begin();
-       it != registry->extension_hosts_map_.end();
-       ++it) {
+  for (auto it = registry->extension_hosts_map_.begin();
+       it != registry->extension_hosts_map_.end(); ++it) {
     extension_galleries_host_count += it->second.size();
   }
   return extension_galleries_host_count;
@@ -888,8 +899,7 @@ TEST_F(MediaFileSystemRegistryTest,
   bool forget_gallery = false;
   MediaGalleriesPreferences* prefs = GetPreferences(profile_state->profile());
   const MediaGalleriesPrefInfoMap& galleries = prefs->known_galleries();
-  for (MediaGalleriesPrefInfoMap::const_iterator it = galleries.begin();
-       it != galleries.end(); ++it) {
+  for (auto it = galleries.begin(); it != galleries.end(); ++it) {
     if (it->second.device_id == device_id) {
       prefs->ForgetGalleryById(it->first);
       forget_gallery = true;
@@ -1038,11 +1048,11 @@ TEST_F(MediaFileSystemRegistryTest, TestNameConstruction) {
   // on the test platform. In ChromeOS, these directories do not exist.
   base::FilePath path;
   if (num_auto_galleries() > 0) {
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_MUSIC, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_MUSIC, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_PICTURES, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_PICTURES, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
-    ASSERT_TRUE(PathService::Get(chrome::DIR_USER_VIDEOS, &path));
+    ASSERT_TRUE(base::PathService::Get(chrome::DIR_USER_VIDEOS, &path));
     profile_state->AddNameForAllCompare(GetExpectedFolderName(path));
 
     profile_state->CheckGalleries("names-dir", one_expectation, auto_galleries);

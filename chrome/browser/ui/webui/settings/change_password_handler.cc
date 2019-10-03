@@ -4,14 +4,17 @@
 
 #include "chrome/browser/ui/webui/settings/change_password_handler.h"
 
+#include "base/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 
 namespace settings {
 
+using password_manager::metrics_util::PasswordType;
 using safe_browsing::ChromePasswordProtectionService;
 
 ChangePasswordHandler::ChangePasswordHandler(
@@ -26,11 +29,12 @@ ChangePasswordHandler::~ChangePasswordHandler() {}
 void ChangePasswordHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "initializeChangePasswordHandler",
-      base::Bind(&ChangePasswordHandler::HandleInitialize,
-                 base::Unretained(this)));
+      base::BindRepeating(&ChangePasswordHandler::HandleInitialize,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "changePassword", base::Bind(&ChangePasswordHandler::HandleChangePassword,
-                                   base::Unretained(this)));
+      "changePassword",
+      base::BindRepeating(&ChangePasswordHandler::HandleChangePassword,
+                          base::Unretained(this)));
 }
 
 void ChangePasswordHandler::OnJavascriptAllowed() {
@@ -51,16 +55,17 @@ void ChangePasswordHandler::HandleInitialize(const base::ListValue* args) {
 }
 
 void ChangePasswordHandler::HandleChangePassword(const base::ListValue* args) {
-  service_->OnUserAction(
-      web_ui()->GetWebContents(),
-      safe_browsing::PasswordProtectionService::CHROME_SETTINGS,
-      safe_browsing::PasswordProtectionService::CHANGE_PASSWORD);
+  service_->OnUserAction(web_ui()->GetWebContents(),
+                         PasswordType::PRIMARY_ACCOUNT_PASSWORD,
+                         safe_browsing::WarningUIType::CHROME_SETTINGS,
+                         safe_browsing::WarningAction::CHANGE_PASSWORD);
 }
 
 void ChangePasswordHandler::UpdateChangePasswordCardVisibility() {
   FireWebUIListener(
       "change-password-visibility",
-      base::Value(safe_browsing::ChromePasswordProtectionService::
+      base::Value(service_->IsWarningEnabled() &&
+                  safe_browsing::ChromePasswordProtectionService::
                       ShouldShowChangePasswordSettingUI(profile_)));
 }
 

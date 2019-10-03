@@ -26,6 +26,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -206,22 +207,20 @@ class RunOneBenchmark {
   RunOneBenchmark()
       : start_time_(),
         task_runner_(new FakeSingleThreadTaskRunner(&testing_clock_)),
-        testing_clock_sender_(new test::SkewedTickClock(&testing_clock_)),
+        testing_clock_sender_(&testing_clock_),
         task_runner_sender_(
             new test::SkewedSingleThreadTaskRunner(task_runner_)),
-        testing_clock_receiver_(new test::SkewedTickClock(&testing_clock_)),
+        testing_clock_receiver_(&testing_clock_),
         task_runner_receiver_(
             new test::SkewedSingleThreadTaskRunner(task_runner_)),
-        cast_environment_sender_(new CastEnvironment(
-            std::unique_ptr<base::TickClock>(testing_clock_sender_),
-            task_runner_sender_,
-            task_runner_sender_,
-            task_runner_sender_)),
-        cast_environment_receiver_(new CastEnvironment(
-            std::unique_ptr<base::TickClock>(testing_clock_receiver_),
-            task_runner_receiver_,
-            task_runner_receiver_,
-            task_runner_receiver_)),
+        cast_environment_sender_(new CastEnvironment(&testing_clock_sender_,
+                                                     task_runner_sender_,
+                                                     task_runner_sender_,
+                                                     task_runner_sender_)),
+        cast_environment_receiver_(new CastEnvironment(&testing_clock_receiver_,
+                                                       task_runner_receiver_,
+                                                       task_runner_receiver_,
+                                                       task_runner_receiver_)),
         video_bytes_encoded_(0),
         audio_bytes_encoded_(0),
         frames_sent_(0) {
@@ -261,12 +260,12 @@ class RunOneBenchmark {
   }
 
   void SetSenderClockSkew(double skew, base::TimeDelta offset) {
-    testing_clock_sender_->SetSkew(skew, offset);
+    testing_clock_sender_.SetSkew(skew, offset);
     task_runner_sender_->SetSkew(1.0 / skew);
   }
 
   void SetReceiverClockSkew(double skew, base::TimeDelta offset) {
-    testing_clock_receiver_->SetSkew(skew, offset);
+    testing_clock_receiver_.SetSkew(skew, offset);
     task_runner_receiver_->SetSkew(1.0 / skew);
   }
 
@@ -290,9 +289,9 @@ class RunOneBenchmark {
   void SendFakeVideoFrame() {
     // NB: Blackframe with timestamp
     cast_sender_->video_frame_input()->InsertRawVideoFrame(
-        media::VideoFrame::CreateColorFrame(gfx::Size(2, 2),
-        0x00, 0x80, 0x80, VideoTimestamp(frames_sent_)),
-        testing_clock_sender_->NowTicks());
+        media::VideoFrame::CreateColorFrame(gfx::Size(2, 2), 0x00, 0x80, 0x80,
+                                            VideoTimestamp(frames_sent_)),
+        testing_clock_sender_.NowTicks());
     frames_sent_++;
   }
 
@@ -300,21 +299,20 @@ class RunOneBenchmark {
     task_runner_->Sleep(duration);
   }
 
-  void BasicPlayerGotVideoFrame(
-      const scoped_refptr<media::VideoFrame>& video_frame,
-      const base::TimeTicks& render_time,
-      bool continuous) {
+  void BasicPlayerGotVideoFrame(scoped_refptr<media::VideoFrame> video_frame,
+                                base::TimeTicks render_time,
+                                bool continuous) {
     video_ticks_.push_back(
-        std::make_pair(testing_clock_receiver_->NowTicks(), render_time));
+        std::make_pair(testing_clock_receiver_.NowTicks(), render_time));
     cast_receiver_->RequestDecodedVideoFrame(base::Bind(
         &RunOneBenchmark::BasicPlayerGotVideoFrame, base::Unretained(this)));
   }
 
   void BasicPlayerGotAudioFrame(std::unique_ptr<AudioBus> audio_bus,
-                                const base::TimeTicks& playout_time,
+                                base::TimeTicks playout_time,
                                 bool is_continuous) {
     audio_ticks_.push_back(
-        std::make_pair(testing_clock_receiver_->NowTicks(), playout_time));
+        std::make_pair(testing_clock_receiver_.NowTicks(), playout_time));
     cast_receiver_->RequestDecodedAudioFrame(base::Bind(
         &RunOneBenchmark::BasicPlayerGotAudioFrame, base::Unretained(this)));
   }
@@ -418,11 +416,11 @@ class RunOneBenchmark {
   scoped_refptr<FakeSingleThreadTaskRunner> task_runner_;
 
   // These run on the sender timeline.
-  test::SkewedTickClock* testing_clock_sender_;
+  test::SkewedTickClock testing_clock_sender_;
   scoped_refptr<test::SkewedSingleThreadTaskRunner> task_runner_sender_;
 
   // These run on the receiver timeline.
-  test::SkewedTickClock* testing_clock_receiver_;
+  test::SkewedTickClock testing_clock_receiver_;
   scoped_refptr<test::SkewedSingleThreadTaskRunner> task_runner_receiver_;
 
   scoped_refptr<CastEnvironment> cast_environment_sender_;
@@ -454,14 +452,14 @@ class TransportClient : public CastTransport::Client {
 
   void OnStatusChanged(CastTransportStatus status) final {
     EXPECT_EQ(TRANSPORT_STREAM_INITIALIZED, status);
-  };
+  }
   void OnLoggingEventsReceived(
       std::unique_ptr<std::vector<FrameEvent>> frame_events,
-      std::unique_ptr<std::vector<PacketEvent>> packet_events) final{};
+      std::unique_ptr<std::vector<PacketEvent>> packet_events) final {}
   void ProcessRtpPacket(std::unique_ptr<Packet> packet) final {
     if (run_one_benchmark_)
       run_one_benchmark_->ReceivePacket(std::move(packet));
-  };
+  }
 
  private:
   RunOneBenchmark* const run_one_benchmark_;
@@ -475,15 +473,15 @@ void RunOneBenchmark::Create(const MeasuringPoint& p) {
   sender_to_receiver_ = new LoopBackTransport(cast_environment_sender_);
   transport_sender_.Init(
       new CastTransportImpl(
-          testing_clock_sender_, base::TimeDelta::FromSeconds(1),
-          base::MakeUnique<TransportClient>(nullptr),
+          &testing_clock_sender_, base::TimeDelta::FromSeconds(1),
+          std::make_unique<TransportClient>(nullptr),
           base::WrapUnique(sender_to_receiver_), task_runner_sender_),
       &video_bytes_encoded_, &audio_bytes_encoded_);
 
   receiver_to_sender_ = new LoopBackTransport(cast_environment_receiver_);
   transport_receiver_.reset(new CastTransportImpl(
-      testing_clock_receiver_, base::TimeDelta::FromSeconds(1),
-      base::MakeUnique<TransportClient>(this),
+      &testing_clock_receiver_, base::TimeDelta::FromSeconds(1),
+      std::make_unique<TransportClient>(this),
       base::WrapUnique(receiver_to_sender_), task_runner_receiver_));
 
   cast_receiver_ =
@@ -643,7 +641,7 @@ class CastBenchmark {
                       SearchVector b,
                       SearchVector c,
                       double accuracy,
-                      std::vector<linked_ptr<base::Thread> >* threads) {
+                      std::vector<std::unique_ptr<base::Thread>>* threads) {
     static int thread_num = 0;
     if (x > max) return;
     if (skip > max) {
@@ -652,12 +650,9 @@ class CastBenchmark {
       SearchVector ac = a.blend(c, static_cast<double>(x) / max);
       SearchVector v = ab.blend(ac, x == y ? 1.0 : static_cast<double>(y) / x);
       thread_num++;
-      (*threads)[thread_num % threads->size()]
-          ->message_loop()
-          ->task_runner()
-          ->PostTask(FROM_HERE,
-                     base::Bind(&CastBenchmark::BinarySearch,
-                                base::Unretained(this), v, accuracy));
+      (*threads)[thread_num % threads->size()]->task_runner()->PostTask(
+          FROM_HERE, base::BindOnce(&CastBenchmark::BinarySearch,
+                                    base::Unretained(this), v, accuracy));
     } else {
       skip *= 2;
       SpanningSearch(max, x, y, skip, a, b, c, accuracy, threads);
@@ -670,10 +665,10 @@ class CastBenchmark {
   void Run() {
     // Spanning search.
 
-    std::vector<linked_ptr<base::Thread> > threads;
+    std::vector<std::unique_ptr<base::Thread>> threads;
     for (int i = 0; i < 16; i++) {
-      threads.push_back(make_linked_ptr(new base::Thread(
-          base::StringPrintf("cast_bench_thread_%d", i))));
+      threads.push_back(std::make_unique<base::Thread>(
+          base::StringPrintf("cast_bench_thread_%d", i)));
       threads[i]->Start();
     }
 
@@ -683,9 +678,10 @@ class CastBenchmark {
       a.bitrate.grade = 1.0;
       a.latency.grade = 1.0;
       a.packet_drop.grade = 1.0;
-      threads[0]->message_loop()->task_runner()->PostTask(
-          FROM_HERE, base::Bind(base::IgnoreResult(&CastBenchmark::RunOnePoint),
-                                base::Unretained(this), a, 1.0));
+      threads[0]->task_runner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(base::IgnoreResult(&CastBenchmark::RunOnePoint),
+                         base::Unretained(this), a, 1.0));
     } else {
       SearchVector a, b, c;
       a.bitrate.base = b.bitrate.base = c.bitrate.base = 100.0;

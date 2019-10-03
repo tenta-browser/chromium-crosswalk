@@ -39,6 +39,10 @@ class CONTENT_EXPORT SyntheticGestureTarget {
   // considered moving by the platform.
   virtual float GetTouchSlopInDips() const = 0;
 
+  // Returns the maximum change in span (distance between touch points) in DIPs
+  // before being considered a pinch-zoom gesture by the platform.
+  virtual float GetSpanSlopInDips() const = 0;
+
   // Returns the minimum number of DIPs two touch pointers have to be apart
   // to perform a pinch-zoom.
   virtual float GetMinScalingSpanInDips() const = 0;
@@ -47,6 +51,15 @@ class CONTENT_EXPORT SyntheticGestureTarget {
   // multiplier constant, this method returns that constant (in DIPs). If mouse
   // wheels can specify an arbitrary delta this returns 0.
   virtual int GetMouseWheelMinimumGranularity() const = 0;
+
+  // This method will cause the system to flush and process all input before
+  // resolving the given callback. This is used to ensure that all effects of a
+  // gesture have been fully propagated through the system before performing
+  // further actions.
+  virtual void WaitForTargetAck(
+      SyntheticGestureParams::GestureType type,
+      SyntheticGestureParams::GestureSourceType source,
+      base::OnceClosure callback) const = 0;
 };
 
 }  // namespace content

@@ -6,10 +6,13 @@
 #define NET_DNS_MAPPED_HOST_RESOLVER_H_
 
 #include <memory>
-#include <string>
+#include <vector>
 
+#include "base/strings/string_piece.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/base/net_export.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/host_resolver.h"
 
 namespace net {
@@ -35,35 +38,28 @@ class NET_EXPORT MappedHostResolver : public HostResolver {
   // to be resolved with ERR_NAME_NOT_RESOLVED.
   //
   // Returns true if the rule was successfully parsed and added.
-  bool AddRuleFromString(const std::string& rule_string) {
+  bool AddRuleFromString(base::StringPiece rule_string) {
     return rules_.AddRuleFromString(rule_string);
   }
 
   // Takes a comma separated list of rules, and assigns them to this resolver.
-  void SetRulesFromString(const std::string& rules_string) {
+  void SetRulesFromString(base::StringPiece rules_string) {
     rules_.SetRulesFromString(rules_string);
   }
 
   // HostResolver methods:
-  int Resolve(const RequestInfo& info,
-              RequestPriority priority,
-              AddressList* addresses,
-              const CompletionCallback& callback,
-              std::unique_ptr<Request>* request,
-              const NetLogWithSource& net_log) override;
-  int ResolveFromCache(const RequestInfo& info,
-                       AddressList* addresses,
-                       const NetLogWithSource& net_log) override;
-  void SetDnsClientEnabled(bool enabled) override;
+  std::unique_ptr<ResolveHostRequest> CreateRequest(
+      const HostPortPair& host,
+      const NetLogWithSource& net_log,
+      const base::Optional<ResolveHostParameters>& optional_parameters)
+      override;
   HostCache* GetHostCache() override;
   std::unique_ptr<base::Value> GetDnsConfigAsValue() const override;
-  void SetNoIPv6OnWifi(bool no_ipv6_on_wifi) override;
-  bool GetNoIPv6OnWifi() override;
+  void SetRequestContext(URLRequestContext* request_context) override;
+  HostResolverManager* GetManagerForTesting() override;
 
  private:
-  // Modify the request |info| according to |rules_|. Returns either OK or
-  // the network error code that the hostname's resolution mapped to.
-  int ApplyRules(RequestInfo* info) const;
+  class AlwaysErrorRequestImpl;
 
   std::unique_ptr<HostResolver> impl_;
 

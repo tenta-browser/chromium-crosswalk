@@ -88,10 +88,10 @@ class NET_EXPORT NSSCertDatabase {
     DISTRUSTED_OBJ_SIGN   = 1 << 5,
   };
 
-  typedef base::Callback<void(ScopedCERTCertificateList certs)>
-      ListCertsCallback;
+  using ListCertsCallback =
+      base::OnceCallback<void(ScopedCERTCertificateList certs)>;
 
-  typedef base::Callback<void(bool)> DeleteCertCallback;
+  using DeleteCertCallback = base::OnceCallback<void(bool)>;
 
   // Creates a NSSCertDatabase that will store public information (such as
   // certificates and trust records) in |public_slot|, and private information
@@ -114,15 +114,14 @@ class NET_EXPORT NSSCertDatabase {
   // Asynchronously get a list of unique certificates in the certificate
   // database (one instance of all certificates). Note that the callback may be
   // run even after the database is deleted.
-  virtual void ListCerts(const ListCertsCallback& callback);
+  virtual void ListCerts(ListCertsCallback callback);
 
   // Get a list of certificates in the certificate database of the given slot.
   // Note that the callback may be run even after the database is deleted.
   // Must be called on the IO thread and it calls |callback| on the IO thread.
   // This does not block by retrieving the certs asynchronously on a worker
   // thread. Never calls |callback| synchronously.
-  virtual void ListCertsInSlot(const ListCertsCallback& callback,
-                               PK11SlotInfo* slot);
+  virtual void ListCertsInSlot(ListCertsCallback callback, PK11SlotInfo* slot);
 
 #if defined(OS_CHROMEOS)
   // Get the slot for system-wide key data. May be NULL if the system token was
@@ -132,6 +131,10 @@ class NET_EXPORT NSSCertDatabase {
   // before SetSystemSlot is called and get a NULL result.
   // See https://crbug.com/399554 .
   virtual crypto::ScopedPK11Slot GetSystemSlot() const;
+
+  // Check whether the certificate is stored on the system slot (i.e. is a
+  // device certificate).
+  bool IsCertificateOnSystemSlot(CERTCertificate* cert) const;
 #endif
 
   // Get the default slot for public key data.
@@ -211,6 +214,10 @@ class NET_EXPORT NSSCertDatabase {
   // rejecting them.
   bool IsUntrusted(const CERTCertificate* cert) const;
 
+  // IsWebTrustAnchor returns true if |cert| is explicitly trusted for web
+  // navigations according to the trust bits stored in the database.
+  bool IsWebTrustAnchor(const CERTCertificate* cert) const;
+
   // Set trust values for certificate.
   // Returns true on success or false on failure.
   bool SetCertTrust(CERTCertificate* cert, CertType type, TrustBits trust_bits);
@@ -224,7 +231,7 @@ class NET_EXPORT NSSCertDatabase {
   // thread. This must be called on IO thread and it will run |callback| on IO
   // thread. Never calls |callback| synchronously.
   void DeleteCertAndKeyAsync(ScopedCERTCertificate cert,
-                             const DeleteCertCallback& callback);
+                             DeleteCertCallback callback);
 
   // Check whether cert is stored in a readonly slot.
   bool IsReadOnly(const CERTCertificate* cert) const;
@@ -239,7 +246,6 @@ class NET_EXPORT NSSCertDatabase {
   // |slot|.
   static ScopedCERTCertificateList ListCertsImpl(crypto::ScopedPK11Slot slot);
 
- protected:
   // Broadcasts notifications to all registered observers.
   void NotifyObserversCertDBChanged();
 
@@ -258,8 +264,7 @@ class NET_EXPORT NSSCertDatabase {
 
   // Notifies observers of the removal of a cert and calls |callback| with
   // |success| as argument.
-  void NotifyCertRemovalAndCallBack(const DeleteCertCallback& callback,
-                                    bool success);
+  void NotifyCertRemovalAndCallBack(DeleteCertCallback callback, bool success);
 
   // Certificate removal implementation used by |DeleteCertAndKey*|. Static so
   // it may safely be used on the worker thread.
@@ -277,7 +282,7 @@ class NET_EXPORT NSSCertDatabase {
 
   const scoped_refptr<base::ObserverListThreadSafe<Observer>> observer_list_;
 
-  base::WeakPtrFactory<NSSCertDatabase> weak_factory_;
+  base::WeakPtrFactory<NSSCertDatabase> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NSSCertDatabase);
 };

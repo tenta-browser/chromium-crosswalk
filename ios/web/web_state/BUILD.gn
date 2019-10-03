@@ -7,18 +7,25 @@ import("//ios/build/config.gni")
 source_set("web_state") {
   deps = [
     ":context_menu",
-    ":navigation_context",
-    ":session_certificate_policy_cache",
     ":web_state_impl_header",
-    ":wk_web_view_security_util",
     "//base",
-    "//ios/web/interstitials",
+    "//ios/web/common",
+    "//ios/web/js_messaging",
     "//ios/web/navigation",
     "//ios/web/navigation:core",
+    "//ios/web/navigation:wk_navigation_util",
     "//ios/web/public",
+    "//ios/web/public/deprecated",
+    "//ios/web/public/session",
+    "//ios/web/public/webui",
+    "//ios/web/security",
+    "//ios/web/security",
+    "//ios/web/session",
     "//ios/web/web_state/ui",
     "//ios/web/web_state/ui:crw_web_view_navigation_proxy",
+    "//ios/web/web_view:util",
     "//ios/web/webui",
+    "//net",
     "//ui/gfx",
   ]
 
@@ -33,8 +40,7 @@ source_set("web_state") {
     "web_state_observer.mm",
     "web_state_observer_bridge.mm",
     "web_state_policy_decider.mm",
-    "web_state_weak_ptr_factory.h",
-    "web_state_weak_ptr_factory.mm",
+    "web_state_policy_decider_bridge.mm",
   ]
 
   libs = [ "WebKit.framework" ]
@@ -42,88 +48,17 @@ source_set("web_state") {
   configs += [ "//build/config/compiler:enable_arc" ]
 }
 
-source_set("wk_web_view_security_util") {
-  deps = [
-    "//base",
-    "//ios/web/public",
-  ]
-
-  sources = [
-    "wk_web_view_security_util.h",
-    "wk_web_view_security_util.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
-source_set("navigation_context") {
-  deps = [
-    "//base",
-    "//ios/web/public",
-  ]
-
-  sources = [
-    "navigation_context_impl.h",
-    "navigation_context_impl.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
 source_set("web_state_impl_header") {
   deps = [
     "//base",
+    "//ios/web/js_messaging",
     "//ios/web/navigation:core",
     "//ios/web/public",
+    "//ios/web/public/js_messaging",
   ]
 
   sources = [
     "web_state_impl.h",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
-source_set("session_certificate_policy_cache") {
-  deps = [
-    "//base",
-    "//ios/web/public",
-  ]
-
-  sources = [
-    "session_certificate_policy_cache_impl.h",
-    "session_certificate_policy_cache_impl.mm",
-    "session_certificate_policy_cache_storage_builder.h",
-    "session_certificate_policy_cache_storage_builder.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
-source_set("crw_pass_kit_downloader") {
-  deps = [
-    "//base",
-    "//components/url_formatter",
-    "//ios/web/public",
-  ]
-
-  sources = [
-    "crw_pass_kit_downloader.h",
-    "crw_pass_kit_downloader.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
-source_set("error_translation_util") {
-  deps = [
-    "//base",
-    "//net",
-  ]
-
-  sources = [
-    "error_translation_util.h",
-    "error_translation_util.mm",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -164,6 +99,7 @@ source_set("context_menu") {
   deps = [
     "//base",
     "//components/url_formatter",
+    "//ios/web/common",
     "//ios/web/public",
   ]
 
@@ -173,7 +109,21 @@ source_set("context_menu") {
     "context_menu_params.mm",
     "context_menu_params_utils.h",
     "context_menu_params_utils.mm",
-    "form_activity_params.cc",
+  ]
+
+  configs += [ "//build/config/compiler:enable_arc" ]
+}
+
+source_set("user_interaction") {
+  sources = [
+    "user_interaction_event.h",
+    "user_interaction_state.h",
+    "user_interaction_state.mm",
+  ]
+
+  deps = [
+    "//base",
+    "//url",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]

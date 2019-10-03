@@ -7,7 +7,6 @@
 #import <UIKit/UIKit.h>
 
 #include "ios/chrome/grit/ios_theme_resources.h"
-#include "ios/public/provider/chrome/browser/images/whats_new_icon.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -46,12 +45,11 @@ ChromiumBrandedImageProvider::GetSigninConfirmationPersonalizeServicesImage() {
   return rb.GetNativeImageNamed(IDR_IOS_SETTINGS_INFO_24).ToUIImage();
 }
 
-bool ChromiumBrandedImageProvider::GetToolbarVoiceSearchButtonImageId(
-    int* image_id) {
-  return false;
-}
-
 UIImage* ChromiumBrandedImageProvider::GetWhatsNewIconImage(WhatsNewIcon type) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   return rb.GetNativeImageNamed(IDR_IOS_PROMO_INFO).ToUIImage();
+}
+
+UIImage* ChromiumBrandedImageProvider::GetDownloadGoogleDriveImage() {
+  return [UIImage imageNamed:@"download_drivium"];
 }

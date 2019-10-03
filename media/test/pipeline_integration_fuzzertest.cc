@@ -8,16 +8,20 @@
 
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/statistics_recorder.h"
+#include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/eme_constants.h"
 #include "media/base/media.h"
 #include "media/base/media_switches.h"
 #include "media/base/pipeline_status.h"
-#include "media/test/mock_media_source.h"
+#include "media/media_buildflags.h"
 #include "media/test/pipeline_integration_test_base.h"
+#include "media/test/test_media_source.h"
 
 namespace {
 
@@ -29,13 +33,17 @@ enum FuzzerVariant {
   WEBM_VP8,
   WEBM_VP9,
   WEBM_OPUS_VP9,
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+  MP4_AV1,
+#endif
+  MP4_FLAC,
+  MP4_OPUS,
+  MP3,
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
   ADTS,
-  MP3,
   MP4_AACLC,
   MP4_AACSBR,
   MP4_AVC1,
-  MP4_FLAC,
   MP4_AACLC_AVC,
 #if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
   MP2T_AACLC,
@@ -59,19 +67,25 @@ std::string MseFuzzerVariantEnumToMimeTypeString(FuzzerVariant variant) {
       return "video/webm; codecs=\"vp9\"";
     case WEBM_OPUS_VP9:
       return "video/webm; codecs=\"opus,vp9\"";
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+    case MP4_AV1:
+      return "video/mp4; codecs=\"av01.0.04M.08\"";
+#endif  // BUILDFLAG(ENABLE_AV1_DECODER)
+    case MP4_FLAC:
+      return "audio/mp4; codecs=\"flac\"";
+    case MP4_OPUS:
+      return "audio/mp4; codecs=\"opus\"";
+    case MP3:
+      return "audio/mpeg";
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     case ADTS:
       return "audio/aac";
-    case MP3:
-      return "audio/mpeg";
     case MP4_AACLC:
       return "audio/mp4; codecs=\"mp4a.40.2\"";
     case MP4_AACSBR:
       return "audio/mp4; codecs=\"mp4a.40.5\"";
     case MP4_AVC1:
       return "video/mp4; codecs=\"avc1.42E01E\"";
-    case MP4_FLAC:
-      return "audio/mp4; codecs=\"flac\"";
     case MP4_AACLC_AVC:
       return "video/mp4; codecs=\"mp4a.40.2,avc1.42E01E\"";
 #if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
@@ -112,15 +126,26 @@ void OnEncryptedMediaInitData(media::PipelineIntegrationTestBase* test,
   // we will start demuxing the data but media pipeline will wait for a CDM to
   // be available to start initialization, which will not happen in this case.
   // To prevent the test timeout, we'll just fail the test immediately here.
+  // Note: Since the callback is on the media task runner but the test is on
+  // the main task runner, this must be posted.
   // TODO(xhwang): Support encrypted media in this fuzzer test.
-  test->FailTest(media::PIPELINE_ERROR_INITIALIZATION_FAILED);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&PipelineIntegrationTestBase::FailTest,
+                                base::Unretained(test),
+                                media::PIPELINE_ERROR_INITIALIZATION_FAILED));
 }
 
 void OnAudioPlayDelay(media::PipelineIntegrationTestBase* test,
                       base::TimeDelta play_delay) {
   CHECK_GT(play_delay, base::TimeDelta());
-  if (play_delay > kMaxPlayDelay)
-    test->FailTest(media::PIPELINE_ERROR_INITIALIZATION_FAILED);
+  if (play_delay > kMaxPlayDelay) {
+    // Note: Since the callback is on the media task runner but the test is on
+    // the main task runner, this must be posted.
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&PipelineIntegrationTestBase::FailTest,
+                                  base::Unretained(test),
+                                  media::PIPELINE_ERROR_INITIALIZATION_FAILED));
+  }
 }
 
 class ProgressivePipelineIntegrationFuzzerTest
@@ -128,16 +153,15 @@ class ProgressivePipelineIntegrationFuzzerTest
  public:
   ProgressivePipelineIntegrationFuzzerTest() {
     set_encrypted_media_init_data_cb(
-        base::Bind(&OnEncryptedMediaInitData, this));
+        base::BindRepeating(&OnEncryptedMediaInitData, this));
     set_audio_play_delay_cb(
         BindToCurrentLoop(base::BindRepeating(&OnAudioPlayDelay, this)));
   }
 
   ~ProgressivePipelineIntegrationFuzzerTest() override = default;
-  ;
 
   void RunTest(const uint8_t* data, size_t size) {
-    if (PIPELINE_OK != Start(data, size, kUnreliableDuration))
+    if (PIPELINE_OK != Start(data, size, kUnreliableDuration | kFuzzing))
       return;
 
     Play();
@@ -153,13 +177,12 @@ class MediaSourcePipelineIntegrationFuzzerTest
  public:
   MediaSourcePipelineIntegrationFuzzerTest() {
     set_encrypted_media_init_data_cb(
-        base::Bind(&OnEncryptedMediaInitData, this));
+        base::BindRepeating(&OnEncryptedMediaInitData, this));
     set_audio_play_delay_cb(
         BindToCurrentLoop(base::BindRepeating(&OnAudioPlayDelay, this)));
   }
 
   ~MediaSourcePipelineIntegrationFuzzerTest() override = default;
-  ;
 
   void RunTest(const uint8_t* data, size_t size, const std::string& mimetype) {
     if (size == 0)
@@ -168,7 +191,7 @@ class MediaSourcePipelineIntegrationFuzzerTest
     scoped_refptr<media::DecoderBuffer> buffer(
         DecoderBuffer::CopyFrom(data, size));
 
-    MockMediaSource source(buffer, mimetype, kAppendWholeFile);
+    TestMediaSource source(buffer, mimetype, kAppendWholeFile);
 
     // Prevent timeout in the case of not enough media appended to complete
     // demuxer initialization, yet no error in the media appended.  The
@@ -179,11 +202,18 @@ class MediaSourcePipelineIntegrationFuzzerTest
     source.set_encrypted_media_init_data_cb(
         base::Bind(&OnEncryptedMediaInitData, this));
 
+    // Allow parsing to either pass or fail without emitting a gtest failure
+    // from TestMediaSource.
+    source.set_expected_append_result(
+        TestMediaSource::ExpectedAppendResult::kSuccessOrFailure);
+
     // TODO(wolenetz): Vary the behavior (abort/remove/seek/endOfStream/Append
     // in pieces/append near play-head/vary append mode/etc), perhaps using
     // CustomMutator and Seed to insert/update the variation information into/in
     // the |data| we process here.  See https://crbug.com/750818.
-    if (PIPELINE_OK != StartPipelineWithMediaSource(&source))
+    // Use |kFuzzing| test type to allow pipeline start to either pass or fail
+    // without emitting a gtest failure.
+    if (PIPELINE_OK != StartPipelineWithMediaSource(&source, kFuzzing, nullptr))
       return;
 
     Play();
@@ -195,7 +225,15 @@ class MediaSourcePipelineIntegrationFuzzerTest
 // Disable noisy logging.
 struct Environment {
   Environment() {
-    // Note, use logging::LOG_VERBOSE here to assist local debugging.
+    base::CommandLine::Init(0, nullptr);
+
+    // |test| instances uses ScopedTaskEnvironment, which needs TestTimeouts.
+    TestTimeouts::Initialize();
+
+    media::InitializeMediaLibrary();
+
+    // Note, instead of LOG_FATAL, use a value at or below logging::LOG_VERBOSE
+    // here to assist local debugging.
     logging::SetMinLogLevel(logging::LOG_FATAL);
   }
 };
@@ -207,41 +245,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // Media pipeline starts new threads, which needs AtExitManager.
   base::AtExitManager at_exit;
 
-  // Required to avoid leaking histogram memory over long fuzzing runs. Must be
-  // installed before any histograms are acquired. This is safe to call multiple
-  // times.
-  base::StatisticsRecorder::Initialize();
-
-  // Media pipeline checks command line arguments internally.
-  base::CommandLine::Init(0, nullptr);
-
-  media::InitializeMediaLibrary();
-
-  base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(media::kMseFlacInIsobmff);
-
   FuzzerVariant variant = PIPELINE_FUZZER_VARIANT;
 
   if (variant == SRC) {
     media::ProgressivePipelineIntegrationFuzzerTest test;
     test.RunTest(data, size);
   } else {
-    // Sequentially fuzz with new and old MSE buffering APIs.  See
-    // https://crbug.com/718641.
-    {
-      base::test::ScopedFeatureList features_with_buffering_api_forced;
-      features_with_buffering_api_forced.InitAndEnableFeature(
-          media::kMseBufferByPts);
-      media::MediaSourcePipelineIntegrationFuzzerTest test;
-      test.RunTest(data, size, MseFuzzerVariantEnumToMimeTypeString(variant));
-    }
-    {
-      base::test::ScopedFeatureList features_with_buffering_api_forced;
-      features_with_buffering_api_forced.InitAndDisableFeature(
-          media::kMseBufferByPts);
-      media::MediaSourcePipelineIntegrationFuzzerTest test;
-      test.RunTest(data, size, MseFuzzerVariantEnumToMimeTypeString(variant));
-    }
+    media::MediaSourcePipelineIntegrationFuzzerTest test;
+    test.RunTest(data, size, MseFuzzerVariantEnumToMimeTypeString(variant));
   }
 
   return 0;

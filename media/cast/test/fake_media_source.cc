@@ -71,7 +71,7 @@ namespace cast {
 
 FakeMediaSource::FakeMediaSource(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    base::TickClock* clock,
+    const base::TickClock* clock,
     const FrameSenderConfig& audio_config,
     const FrameSenderConfig& video_config,
     bool keep_frames)
@@ -79,7 +79,6 @@ FakeMediaSource::FakeMediaSource(
       output_audio_params_(AudioParameters::AUDIO_PCM_LINEAR,
                            media::GuessChannelLayout(audio_config.channels),
                            audio_config.rtp_timebase,
-                           32,
                            audio_config.rtp_timebase / kAudioPacketsPerSecond),
       video_config_(video_config),
       keep_frames_(keep_frames),
@@ -95,8 +94,7 @@ FakeMediaSource::FakeMediaSource(
       video_frame_rate_numerator_(video_config.max_frame_rate),
       video_frame_rate_denominator_(1),
       video_first_pts_(0),
-      video_first_pts_set_(false),
-      weak_factory_(this) {
+      video_first_pts_set_(false) {
   CHECK(output_audio_params_.IsValid());
   audio_bus_factory_.reset(
       new TestAudioBusFactory(audio_config.channels, audio_config.rtp_timebase,
@@ -180,7 +178,6 @@ void FakeMediaSource::SetSourceFile(const base::FilePath& video_file,
       source_audio_params_.Reset(
           AudioParameters::AUDIO_PCM_LINEAR, layout,
           av_audio_context_->sample_rate,
-          8 * av_get_bytes_per_sample(av_audio_context_->sample_fmt),
           av_audio_context_->sample_rate / kAudioPacketsPerSecond);
       source_audio_params_.set_channels_for_discrete(
           av_audio_context_->channels);
@@ -191,7 +188,7 @@ void FakeMediaSource::SetSourceFile(const base::FilePath& video_file,
     } else if (av_codec->type == AVMEDIA_TYPE_VIDEO) {
       VideoPixelFormat format =
           AVPixelFormatToVideoPixelFormat(av_codec_context->pix_fmt);
-      if (format != PIXEL_FORMAT_YV12) {
+      if (format != PIXEL_FORMAT_I420) {
         LOG(ERROR) << "Cannot handle non YV12 video format: " << format;
         continue;
       }
@@ -242,10 +239,9 @@ void FakeMediaSource::Start(scoped_refptr<AudioFrameInput> audio_frame_input,
 
   if (!is_transcoding_audio() && !is_transcoding_video()) {
     // Send fake patterns.
-    task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&FakeMediaSource::SendNextFakeFrame,
-                   weak_factory_.GetWeakPtr()));
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&FakeMediaSource::SendNextFakeFrame,
+                                          weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -263,9 +259,9 @@ void FakeMediaSource::Start(scoped_refptr<AudioFrameInput> audio_frame_input,
   audio_converter_.reset(new media::AudioConverter(
       source_audio_params_, output_audio_params_, true));
   audio_converter_->AddInput(this);
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFrame, weak_factory_.GetWeakPtr()));
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&FakeMediaSource::SendNextFrame,
+                                        weak_factory_.GetWeakPtr()));
 }
 
 void FakeMediaSource::SendNextFakeFrame() {
@@ -314,8 +310,8 @@ void FakeMediaSource::SendNextFakeFrame() {
 
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFakeFrame,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&FakeMediaSource::SendNextFakeFrame,
+                     weak_factory_.GetWeakPtr()),
       video_time - elapsed_time);
 }
 
@@ -411,7 +407,8 @@ void FakeMediaSource::SendNextFrame() {
   // Send next send.
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFrame, weak_factory_.GetWeakPtr()),
+      base::BindOnce(&FakeMediaSource::SendNextFrame,
+                     weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(kAudioFrameMs));
 }
 
@@ -551,7 +548,7 @@ bool FakeMediaSource::OnNewVideoFrame(AVFrame* frame) {
   AVFrame* shallow_copy = av_frame_clone(frame);
   scoped_refptr<media::VideoFrame> video_frame =
       VideoFrame::WrapExternalYuvData(
-          media::PIXEL_FORMAT_YV12, size, gfx::Rect(size), size,
+          media::PIXEL_FORMAT_I420, size, gfx::Rect(size), size,
           shallow_copy->linesize[0], shallow_copy->linesize[1],
           shallow_copy->linesize[2], shallow_copy->data[0],
           shallow_copy->data[1], shallow_copy->data[2], timestamp);

@@ -5,6 +5,7 @@
 #include "ui/views/widget/desktop_aura/desktop_capture_client.h"
 
 #include "ui/aura/client/capture_client_observer.h"
+#include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tracker.h"
@@ -12,30 +13,38 @@
 
 namespace views {
 
+namespace {
+
+// This comparator facilitates constructing DesktopCaptureClient WeakPtr sets.
+bool CompareWeakPtrs(const base::WeakPtr<DesktopCaptureClient>& lhs,
+                     const base::WeakPtr<DesktopCaptureClient>& rhs) {
+  return lhs.get() < rhs.get();
+}
+
+}  // namespace
+
 // static
-DesktopCaptureClient::CaptureClients* DesktopCaptureClient::capture_clients_ =
-    nullptr;
+DesktopCaptureClient::ClientSet* DesktopCaptureClient::clients_ = nullptr;
 
 // static
 aura::Window* DesktopCaptureClient::GetCaptureWindowGlobal() {
-  for (auto* client : *capture_clients_) {
-    if (client->capture_window_)
+  for (const auto& client : *clients_) {
+    if (client && client->capture_window_)
       return client->capture_window_;
   }
   return nullptr;
 }
 
-DesktopCaptureClient::DesktopCaptureClient(aura::Window* root)
-    : root_(root), capture_window_(nullptr) {
-  if (!capture_clients_)
-    capture_clients_ = new CaptureClients;
-  capture_clients_->insert(this);
+DesktopCaptureClient::DesktopCaptureClient(aura::Window* root) : root_(root) {
+  if (!clients_)
+    clients_ = new ClientSet(&CompareWeakPtrs);
+  clients_->insert(weak_factory_.GetWeakPtr());
   aura::client::SetCaptureClient(root, this);
 }
 
 DesktopCaptureClient::~DesktopCaptureClient() {
   aura::client::SetCaptureClient(root_, nullptr);
-  capture_clients_->erase(this);
+  base::EraseIf(*clients_, [this](const auto& c) { return c.get() == this; });
 }
 
 void DesktopCaptureClient::SetCapture(aura::Window* new_capture_window) {
@@ -58,7 +67,8 @@ void DesktopCaptureClient::SetCapture(aura::Window* new_capture_window) {
     // committing |capture_window_|.
     aura::WindowTracker tracker;
     tracker.Add(new_capture_window);
-    ui::GestureRecognizer::Get()->CancelActiveTouchesExcept(new_capture_window);
+    aura::Env::GetInstance()->gesture_recognizer()->CancelActiveTouchesExcept(
+        new_capture_window);
     if (!tracker.Contains(new_capture_window))
       new_capture_window = nullptr;
   }
@@ -75,13 +85,12 @@ void DesktopCaptureClient::SetCapture(aura::Window* new_capture_window) {
     delegate->SetNativeCapture();
 
     // Notify the other roots that we got capture. This is important so that
-    // they reset state.
-    CaptureClients capture_clients(*capture_clients_);
-    for (CaptureClients::iterator i = capture_clients.begin();
-         i != capture_clients.end(); ++i) {
-      if (*i != this) {
+    // they reset state. Clients may be destroyed during the loop.
+    ClientSet clients(*clients_);
+    for (auto client : clients) {
+      if (client && client.get() != this) {
         aura::client::CaptureDelegate* delegate =
-            (*i)->root_->GetHost()->dispatcher();
+            client->root_->GetHost()->dispatcher();
         delegate->OnOtherRootGotCapture();
       }
     }
@@ -92,9 +101,8 @@ void DesktopCaptureClient::SetCapture(aura::Window* new_capture_window) {
 }
 
 void DesktopCaptureClient::ReleaseCapture(aura::Window* window) {
-  if (capture_window_ != window)
-    return;
-  SetCapture(nullptr);
+  if (capture_window_ == window)
+    SetCapture(nullptr);
 }
 
 aura::Window* DesktopCaptureClient::GetCaptureWindow() {

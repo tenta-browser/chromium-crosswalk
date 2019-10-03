@@ -7,14 +7,14 @@
 #include <map>
 #include <vector>
 
-#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #import "base/strings/sys_string_conversions.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/ui/util/CRUILabel+AttributeUtils.h"
 #import "ios/chrome/browser/ui/util/label_observer.h"
 #import "ios/chrome/browser/ui/util/text_region_mapper.h"
 #import "ios/chrome/browser/ui/util/transparent_link_button.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "net/base/mac/url_conversions.h"
 #include "url/gurl.h"
 
@@ -60,7 +60,7 @@
 
 @interface LabelLinkController ()
 // Private property exposed publically in testing interface.
-@property(nonatomic, unsafe_unretained) Class textMapperClass;
+@property(nonatomic, weak) Class textMapperClass;
 
 // The original attributed text set on the label.  This may be different from
 // the label's |attributedText| property, as additional style attributes may be
@@ -372,9 +372,14 @@
       GURL URL = net::GURLWithNSURL(key);
       NSString* accessibilityLabel =
           [[_label text] substringWithRange:layout.range];
+      // Only pass along line height if there are more than one layouts that
+      // can overlap.
+      CGFloat lineHeightLimit =
+          [_layoutsForURLs count] > 1 ? _label.cr_lineHeight : 0;
       NSArray* buttons =
           [TransparentLinkButton buttonsForLinkFrames:layout.frames
                                                   URL:URL
+                                           lineHeight:lineHeightLimit
                                    accessibilityLabel:accessibilityLabel];
       for (TransparentLinkButton* button in buttons) {
 #ifndef NDEBUG
@@ -404,6 +409,15 @@
   NSURL* key = net::NSURLWithGURL(url);
   LinkLayout* layout = [_layoutsForURLs objectForKey:key];
   return layout.frames;
+}
+
+- (NSArray*)buttonFrames {
+  NSMutableArray* array =
+      [NSMutableArray arrayWithCapacity:[_linkButtons count]];
+  for (TransparentLinkButton* button in _linkButtons) {
+    [array addObject:[NSValue valueWithCGRect:button.frame]];
+  }
+  return array;
 }
 
 - (void)tapLabelAtPoint:(CGPoint)point {

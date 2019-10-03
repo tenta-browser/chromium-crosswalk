@@ -10,6 +10,7 @@ import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.IMMEDI
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -21,10 +22,9 @@ import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -33,19 +33,19 @@ import java.util.concurrent.TimeoutException;
  * incomplete information.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
         implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule = new PaymentRequestTestRule(
             "payment_request_contact_details_and_free_shipping_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         // The user has a shipping address with a valid email address on disk. However the phone
         // number is invalid.
@@ -60,8 +60,7 @@ public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testEditIncompleteShippingAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testEditIncompleteShippingAndPay() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -79,7 +78,7 @@ public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
                 mPaymentRequestTestRule.getEditorTextUpdate());
         // The contact is now complete, but not selected.
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyForInput());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyForInput());
         // We select it.
         mPaymentRequestTestRule.clickInContactInfoAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -99,7 +98,7 @@ public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
     @MediumTest
     @Feature({"Payments"})
     public void testEditIncompleteShippingAndContactAndPay()
-            throws InterruptedException, ExecutionException, TimeoutException {
+            throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
         mPaymentRequestTestRule.clickInShippingAddressAndWait(
                 R.id.payments_section, mPaymentRequestTestRule.getReadyForInput());
@@ -116,7 +115,7 @@ public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
                         "650-253-0000"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyForInput());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyForInput());
         Assert.assertEquals("Jon Doe\njon.doe@google.com\nPhone number required",
                 mPaymentRequestTestRule.getContactDetailsSuggestionLabel(0));
         Assert.assertEquals("Jane Doe\n+1 650-253-0000\nEmail required",
@@ -131,7 +130,7 @@ public class PaymentRequestIncompleteContactDetailsAndFreeShippingTest
                 new String[] {"Jon Doe", "650-253-0000", "jon.doe@google.com"},
                 mPaymentRequestTestRule.getEditorTextUpdate());
         mPaymentRequestTestRule.clickInEditorAndWait(
-                R.id.payments_edit_done_button, mPaymentRequestTestRule.getReadyToPay());
+                R.id.editor_dialog_done_button, mPaymentRequestTestRule.getReadyToPay());
 
         mPaymentRequestTestRule.clickAndWait(
                 R.id.button_primary, mPaymentRequestTestRule.getDismissed());

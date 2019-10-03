@@ -4,6 +4,8 @@
 
 package org.chromium.content_public.browser;
 
+import android.support.annotation.Nullable;
+
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.content_public.browser.navigation_controller.LoadURLType;
@@ -23,10 +25,13 @@ import java.util.Map;
 @JNINamespace("content")
 public class LoadUrlParams {
     // Fields with counterparts in NavigationController::LoadURLParams.
-    // Package private so that ContentViewCore.loadUrl can pass them down to
+    // Package private so that NavigationController.loadUrl can pass them down to
     // native code. Should not be accessed directly anywhere else outside of
     // this class.
     String mUrl;
+    // TODO(nasko,tedchoc): https://crbug.com/980641: Don't use String to store
+    // initiator origin, as it is a lossy format.
+    String mInitiatorOrigin;
     int mLoadUrlType;
     int mTransitionType;
     Referrer mReferrer;
@@ -41,6 +46,7 @@ public class LoadUrlParams {
     boolean mIsRendererInitiated;
     boolean mShouldReplaceCurrentEntry;
     long mIntentReceivedTimestamp;
+    long mInputStartTimestamp;
     boolean mHasUserGesture;
     boolean mShouldClearHistoryList;
 
@@ -196,6 +202,20 @@ public class LoadUrlParams {
      */
     public String getUrl() {
         return mUrl;
+    }
+
+    /**
+     * Sets the initiator origin.
+     */
+    public void setInitiatorOrigin(String initiatorOrigin) {
+        mInitiatorOrigin = initiatorOrigin;
+    }
+
+    /**
+     * Return the initiator origin.
+     */
+    public @Nullable String getInitiatorOrigin() {
+        return mInitiatorOrigin;
     }
 
     /**
@@ -451,6 +471,21 @@ public class LoadUrlParams {
      */
     public long getIntentReceivedTimestamp() {
         return mIntentReceivedTimestamp;
+    }
+
+    /**
+     * @param inputStartTimestamp the timestamp of the event in the location bar that triggered
+     *                            this URL load, as returned by System.currentMillis.
+     */
+    public void setInputStartTimestamp(long inputStartTimestamp) {
+        mInputStartTimestamp = inputStartTimestamp;
+    }
+
+    /**
+     * @return The timestamp of the event in the location bar that triggered this URL load.
+     */
+    public long getInputStartTimestamp() {
+        return mInputStartTimestamp;
     }
 
     /**

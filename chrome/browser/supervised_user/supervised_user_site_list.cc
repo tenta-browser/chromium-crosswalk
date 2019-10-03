@@ -6,12 +6,13 @@
 
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "url/gurl.h"
 
@@ -91,7 +92,7 @@ void SupervisedUserSiteList::Load(const std::string& id,
                                   const LoadedCallback& callback) {
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&ReadFileOnBlockingThread, path),
       base::BindOnce(&SupervisedUserSiteList::OnJsonLoaded, id, title,

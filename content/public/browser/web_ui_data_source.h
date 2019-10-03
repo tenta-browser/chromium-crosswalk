@@ -13,6 +13,7 @@
 
 #include "base/callback.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 
 namespace base {
@@ -44,33 +45,33 @@ class WebUIDataSource {
       std::unique_ptr<base::DictionaryValue> update);
 
   // Adds a string keyed to its name to our dictionary.
-  virtual void AddString(const std::string& name,
+  virtual void AddString(base::StringPiece name,
                          const base::string16& value) = 0;
 
   // Adds a string keyed to its name to our dictionary.
-  virtual void AddString(const std::string& name, const std::string& value) = 0;
+  virtual void AddString(base::StringPiece name, const std::string& value) = 0;
 
   // Adds a localized string with resource |ids| keyed to its name to our
   // dictionary.
-  virtual void AddLocalizedString(const std::string& name, int ids) = 0;
+  virtual void AddLocalizedString(base::StringPiece name, int ids) = 0;
 
   // Add strings from |localized_strings| to our dictionary.
   virtual void AddLocalizedStrings(
       const base::DictionaryValue& localized_strings) = 0;
 
   // Adds a boolean keyed to its name to our dictionary.
-  virtual void AddBoolean(const std::string& name, bool value) = 0;
+  virtual void AddBoolean(base::StringPiece name, bool value) = 0;
 
   // Adds a signed 32-bit integer keyed to its name to our dictionary. Larger
   // integers may not be exactly representable in JavaScript. See
   // MAX_SAFE_INTEGER in /v8/src/globals.h.
-  virtual void AddInteger(const std::string& name, int32_t value) = 0;
+  virtual void AddInteger(base::StringPiece name, int32_t value) = 0;
 
   // Sets the path which will return the JSON strings.
-  virtual void SetJsonPath(const std::string& path) = 0;
+  virtual void SetJsonPath(base::StringPiece path) = 0;
 
   // Adds a mapping between a path name and a resource to return.
-  virtual void AddResourcePath(const std::string& path, int resource_id) = 0;
+  virtual void AddResourcePath(base::StringPiece path, int resource_id) = 0;
 
   // Sets the resource to returned when no other paths match.
   virtual void SetDefaultResource(int resource_id) = 0;
@@ -82,14 +83,24 @@ class WebUIDataSource {
       GotDataCallback;
 
   // Used by SetRequestFilter. The string parameter is the path of the request.
-  // If the callee doesn't want to handle the data, false is returned. Otherwise
-  // true is returned and the GotDataCallback parameter is called either then or
-  // asynchronously with the response.
-  typedef base::Callback<bool(const std::string&, const GotDataCallback&)>
+  // The return value indicates if the callee wants to handle the request. Iff
+  // true is returned, |handle_request_callback| will be called to provide the
+  // request's response.
+  typedef base::RepeatingCallback<bool(const std::string&)>
+      ShouldHandleRequestCallback;
+
+  // Used by SetRequestFilter. The string parameter is the path of the request.
+  // This callback is only called if a prior call to ShouldHandleRequestCallback
+  // returned true. GotDataCallback should be used to provide the response
+  // bytes.
+  typedef base::RepeatingCallback<void(const std::string&,
+                                       const GotDataCallback&)>
       HandleRequestCallback;
 
   // Allows a caller to add a filter for URL requests.
-  virtual void SetRequestFilter(const HandleRequestCallback& callback) = 0;
+  virtual void SetRequestFilter(
+      const ShouldHandleRequestCallback& should_handle_request_callback,
+      const HandleRequestCallback& handle_request_callback) = 0;
 
   // The following map to methods on URLDataSource. See the documentation there.
   // NOTE: it's not acceptable to call DisableContentSecurityPolicy for new
@@ -107,9 +118,8 @@ class WebUIDataSource {
       const std::string& data) = 0;
   virtual void DisableDenyXFrameOptions() = 0;
 
-  // Tells the loading code that resources are gzipped on disk. |excluded_paths|
-  // are uncompressed paths, and therefore should not be decompressed.
-  virtual void UseGzip(const std::vector<std::string>& excluded_paths = {}) = 0;
+  // The |source_name| this WebUIDataSource was created with.
+  virtual std::string GetSource() = 0;
 };
 
 }  // namespace content

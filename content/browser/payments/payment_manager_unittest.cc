@@ -4,11 +4,12 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/browser/payments/payment_app_content_unittest_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_app.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_app.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -18,7 +19,7 @@ using ::payments::mojom::PaymentHandlerStatus;
 using ::payments::mojom::PaymentInstrument;
 using ::payments::mojom::PaymentInstrumentPtr;
 
-const char kServiceWorkerPattern[] = "https://example.com/a";
+const char kServiceWorkerScope[] = "https://example.com/a";
 const char kServiceWorkerScript[] = "https://example.com/a/script.js";
 
 void DeletePaymentInstrumentCallback(PaymentHandlerStatus* out_status,
@@ -62,7 +63,7 @@ void ClearPaymentInstrumentsCallback(PaymentHandlerStatus* out_status,
 class PaymentManagerTest : public PaymentAppContentUnitTestBase {
  public:
   PaymentManagerTest() {
-    manager_ = CreatePaymentManager(GURL(kServiceWorkerPattern),
+    manager_ = CreatePaymentManager(GURL(kServiceWorkerScope),
                                     GURL(kServiceWorkerScript));
     EXPECT_NE(nullptr, manager_);
   }
@@ -126,8 +127,8 @@ class PaymentManagerTest : public PaymentAppContentUnitTestBase {
 TEST_F(PaymentManagerTest, SetAndGetPaymentInstrument) {
   PaymentHandlerStatus write_status = PaymentHandlerStatus::NOT_FOUND;
   PaymentInstrumentPtr write_details = PaymentInstrument::New();
-  write_details->name = "Visa ending ****4756",
-  write_details->enabled_methods.push_back("visa");
+  write_details->name = "Visa ending ****4756";
+  write_details->method = "visa";
   write_details->stringified_capabilities = "{}";
   SetPaymentInstrument("test_key", std::move(write_details), &write_status);
   // Write the first instrument of a web payment app will return
@@ -141,8 +142,7 @@ TEST_F(PaymentManagerTest, SetAndGetPaymentInstrument) {
   GetPaymentInstrument("test_key", &read_details, &read_status);
   ASSERT_EQ(PaymentHandlerStatus::SUCCESS, read_status);
   EXPECT_EQ("Visa ending ****4756", read_details->name);
-  ASSERT_EQ(1U, read_details->enabled_methods.size());
-  EXPECT_EQ("visa", read_details->enabled_methods[0]);
+  EXPECT_EQ("visa", read_details->method);
   EXPECT_EQ("{}", read_details->stringified_capabilities);
 }
 
@@ -156,8 +156,8 @@ TEST_F(PaymentManagerTest, GetUnstoredPaymentInstrument) {
 TEST_F(PaymentManagerTest, DeletePaymentInstrument) {
   PaymentHandlerStatus write_status = PaymentHandlerStatus::NOT_FOUND;
   PaymentInstrumentPtr write_details = PaymentInstrument::New();
-  write_details->name = "Visa ending ****4756",
-  write_details->enabled_methods.push_back("visa");
+  write_details->name = "Visa ending ****4756";
+  write_details->method = "visa";
   write_details->stringified_capabilities = "{}";
   SetPaymentInstrument("test_key", std::move(write_details), &write_status);
   // Write the first instrument of a web payment app will return
@@ -183,8 +183,8 @@ TEST_F(PaymentManagerTest, DeletePaymentInstrument) {
 TEST_F(PaymentManagerTest, HasPaymentInstrument) {
   PaymentHandlerStatus write_status = PaymentHandlerStatus::NOT_FOUND;
   PaymentInstrumentPtr write_details = PaymentInstrument::New();
-  write_details->name = "Visa ending ****4756",
-  write_details->enabled_methods.push_back("visa");
+  write_details->name = "Visa ending ****4756";
+  write_details->method = "visa";
   write_details->stringified_capabilities = "{}";
   SetPaymentInstrument("test_key", std::move(write_details), &write_status);
   // Write the first instrument of a web payment app will return

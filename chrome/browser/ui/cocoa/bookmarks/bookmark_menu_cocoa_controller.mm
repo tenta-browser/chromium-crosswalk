@@ -10,6 +10,8 @@
 #include "chrome/app/chrome_command_ids.h"  // IDC_BOOKMARK_MENU
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_metrics.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser.h"
@@ -27,10 +29,6 @@ using content::Referrer;
 
 namespace {
 
-// Menus more than this many pixels wide will get trimmed
-// TODO(jrg): ask UI dudes what a good value is.
-const NSUInteger kMaximumMenuPixelsWide = 300;
-
 // Returns the NSMenuItem in |submenu|'s supermenu that holds |submenu|.
 NSMenuItem* GetItemWithSubmenu(NSMenu* submenu) {
   NSArray* parent_items = [[submenu supermenu] itemArray];
@@ -46,13 +44,6 @@ NSMenuItem* GetItemWithSubmenu(NSMenu* submenu) {
 @implementation BookmarkMenuCocoaController {
  @private
   BookmarkMenuBridge* bridge_;  // Weak. Owns |self|.
-}
-
-+ (NSString*)menuTitleForNode:(const BookmarkNode*)node {
-  base::string16 title =
-      [MenuControllerCocoa elideMenuTitle:node->GetTitle()
-                                  toWidth:kMaximumMenuPixelsWide];
-  return base::SysUTF16ToNSString(title);
 }
 
 + (NSString*)tooltipForNode:(const BookmarkNode*)node {
@@ -113,6 +104,9 @@ NSMenuItem* GetItemWithSubmenu(NSMenu* submenu) {
       node->url(), Referrer(), disposition,
       ui::PAGE_TRANSITION_AUTO_BOOKMARK, false);
   browser->OpenURL(params);
+  RecordBookmarkLaunch(
+      BOOKMARK_LAUNCH_LOCATION_TOP_MENU,
+      ProfileMetrics::GetBrowserProfileType(bridge_->GetProfile()));
 }
 
 - (IBAction)openBookmarkMenuItem:(id)sender {

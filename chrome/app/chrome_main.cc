@@ -4,23 +4,19 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_main_delegate.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/features.h"
+#include "chrome/common/profiler/main_thread_stack_sampling_profiler.h"
 #include "content/public/app/content_main.h"
 #include "content/public/common/content_switches.h"
 #include "headless/public/headless_shell.h"
-#include "ui/base/ui_base_switches.h"
-#include "ui/base/ui_features.h"
 #include "ui/gfx/switches.h"
-
-#if BUILDFLAG(ENABLE_MUS)
-#include "services/service_manager/runner/common/client_util.h"
-#endif
 
 #if defined(OS_MACOSX)
 #include "chrome/app/chrome_main_mac.h"
@@ -29,10 +25,10 @@
 #if defined(OS_WIN)
 #include "base/debug/dump_without_crashing.h"
 #include "base/win/win_util.h"
+#include "chrome/chrome_elf/chrome_elf_main.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "chrome/install_static/install_details.h"
-#include "chrome_elf/chrome_elf_main.h"
 
 #define DLLEXPORT __declspec(dllexport)
 
@@ -94,38 +90,22 @@ int ChromeMain(int argc, const char** argv) {
   const base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
   ALLOW_UNUSED_LOCAL(command_line);
 
+#if defined(OS_MACOSX)
+  SetUpBundleOverrides();
+#endif
+
+  // Start the sampling profiler as early as possible - namely, once the command
+  // line data is available. Allocated as an object on the stack to ensure that
+  // the destructor runs on shutdown, which is important to avoid the profiler
+  // thread's destruction racing with main thread destruction.
+  MainThreadStackSamplingProfiler scoped_sampling_profiler;
+
   // Chrome-specific process modes.
 #if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
   if (command_line->HasSwitch(switches::kHeadless)) {
-#if defined(OS_MACOSX)
-    SetUpBundleOverrides();
-#endif
     return headless::HeadlessShellMain(params);
   }
 #endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
-
-#if BUILDFLAG(ENABLE_MUS)
-  // In config==mus the ui service runs in process and is shut down well before
-  // the rest of Chrome. Have Chrome create the DiscardableSharedMemoryManager
-  // to ensure the DiscardableSharedMemoryManager is destroyed later on. Doing
-  // this avoids lifetime issues when internal implementation details of
-  // DiscardableSharedMemoryManager assume DiscardableSharedMemoryManager is
-  // long lived.
-  if (command_line->HasSwitch(switches::kMus)) {
-    params.create_discardable_memory = true;
-    params.env_mode = aura::Env::Mode::MUS;
-    // TODO(786453): Remove when mus no longer needs to host viz.
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kMus, switches::kMusHostVizValue);
-  }
-  if (service_manager::ServiceManagerIsRemote() ||
-      command_line->HasSwitch(switches::kMash)) {
-    params.create_discardable_memory = false;
-    params.env_mode = aura::Env::Mode::MUS;
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kMus, switches::kMusHostVizValue);
-  }
-#endif  // BUILDFLAG(ENABLE_MUS)
 
   int rv = content::ContentMain(params);
 

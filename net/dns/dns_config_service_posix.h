@@ -5,6 +5,8 @@
 #ifndef NET_DNS_DNS_CONFIG_SERVICE_POSIX_H_
 #define NET_DNS_DNS_CONFIG_SERVICE_POSIX_H_
 
+#include <memory>
+
 #if !defined(OS_ANDROID)
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -13,50 +15,40 @@
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "net/base/net_export.h"
-#include "net/base/network_change_notifier.h"
 #include "net/dns/dns_config_service.h"
 
-namespace base {
-class Time;
-}  // namespace base
-
 namespace net {
+struct DnsConfig;
 
 // Use DnsConfigService::CreateSystemService to use it outside of tests.
 namespace internal {
 
-// Note: On Android NetworkChangeNotifier::OnNetworkChanged() signals must be
-// passed in via calls to OnNetworkChanged().
+// Service for reading and watching POSIX system DNS settings. This object is
+// not thread-safe and methods may perform blocking I/O so methods must be
+// called on a sequence that allows blocking (i.e. base::MayBlock). It may be
+// constructed on a different sequence than which it's later called on.
+// WatchConfig() must be called prior to ReadConfig().
 class NET_EXPORT_PRIVATE DnsConfigServicePosix : public DnsConfigService {
  public:
   DnsConfigServicePosix();
   ~DnsConfigServicePosix() override;
 
-#if defined(OS_ANDROID)
-  // Returns whether the DnsConfigServicePosix witnessed a DNS configuration
-  // change since |since_time|.  Requires that callers have started listening
-  // for NetworkChangeNotifier::OnNetworkChanged() signals, and passing them in
-  // via OnNetworkChanged(), prior to |since_time|.
-  bool SeenChangeSince(const base::Time& since_time) const;
-  // NetworkChangeNotifier::OnNetworkChanged() signals must be passed
-  // in via calls to OnNetworkChanged().  Allowing external sources of
-  // this signal allows users of DnsConfigServicePosix to start watching for
-  // NetworkChangeNotifier::OnNetworkChanged() signals prior to the
-  // DnsConfigServicePosix even being created.
-  void OnNetworkChanged(NetworkChangeNotifier::ConnectionType type);
-#endif
-
-  void SetDnsConfigForTesting(const DnsConfig* dns_config);
-  void SetHostsFilePathForTesting(const base::FilePath::CharType* file_path);
+  void RefreshConfig() override;
 
  protected:
   // DnsConfigService:
   void ReadNow() override;
   bool StartWatching() override;
 
+  // Create |config_reader_| and |hosts_reader_|.
+  void CreateReaders();
+
  private:
+  FRIEND_TEST_ALL_PREFIXES(DnsConfigServicePosixTest,
+                           ChangeConfigMultipleTimes);
   class Watcher;
   class ConfigReader;
   class HostsReader;
@@ -67,14 +59,8 @@ class NET_EXPORT_PRIVATE DnsConfigServicePosix : public DnsConfigService {
   std::unique_ptr<Watcher> watcher_;
   // Allow a mock hosts file for testing purposes.
   const base::FilePath::CharType* file_path_hosts_;
-  // Allow a mock DNS server for testing purposes.
-  const DnsConfig* dns_config_for_testing_;
   scoped_refptr<ConfigReader> config_reader_;
   scoped_refptr<HostsReader> hosts_reader_;
-#if defined(OS_ANDROID)
-  // Has DnsConfigWatcher detected any config changes yet?
-  bool seen_config_change_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(DnsConfigServicePosix);
 };
@@ -90,6 +76,7 @@ enum ConfigParsePosixResult {
   CONFIG_PARSE_POSIX_MISSING_OPTIONS,
   CONFIG_PARSE_POSIX_UNHANDLED_OPTIONS,
   CONFIG_PARSE_POSIX_NO_DNSINFO,
+  CONFIG_PARSE_POSIX_PRIVATE_DNS_ACTIVE,
   CONFIG_PARSE_POSIX_MAX  // Bounding values for enumeration.
 };
 

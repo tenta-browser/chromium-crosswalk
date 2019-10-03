@@ -8,36 +8,37 @@
 #include <utility>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/attestation/attestation_ca_client.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/extensions/api/enterprise_platform_keys_private.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/attestation/attestation_constants.h"
 #include "chromeos/attestation/attestation_flow.h"
 #include "chromeos/cryptohome/async_method_caller.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/constants/attestation_constants.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "chromeos/tpm/install_attributes.h"
+#include "components/account_id/account_id.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/account_id/account_id.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "extensions/common/manifest.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -82,8 +83,7 @@ EPKPChallengeKeyBase::PrepareKeyContext::~PrepareKeyContext() {
 }
 
 EPKPChallengeKeyBase::EPKPChallengeKeyBase()
-    : cryptohome_client_(
-          chromeos::DBusThreadManager::Get()->GetCryptohomeClient()),
+    : cryptohome_client_(chromeos::CryptohomeClient::Get()),
       async_caller_(cryptohome::AsyncMethodCaller::GetInstance()),
       install_attributes_(g_browser_process->platform_part()
                               ->browser_policy_connector_chromeos()
@@ -146,6 +146,11 @@ bool EPKPChallengeKeyBase::IsExtensionWhitelisted() const {
     // login/signin screen.
     // TODO(drcrash): Use a separate device-wide policy for the API.
     return Manifest::IsPolicyLocation(extension_->location());
+  }
+  if (Manifest::IsComponentLocation(extension_->location())) {
+    // Note: For this to even be called, the component extension must also be
+    // whitelisted in chrome/common/extensions/api/_permission_features.json
+    return true;
   }
   const base::ListValue* list =
       profile_->GetPrefs()->GetList(prefs::kAttestationExtensionWhitelist);
@@ -214,15 +219,33 @@ void EPKPChallengeKeyBase::IsAttestationPreparedCallback(
     return;
   }
   if (!result.value()) {
-    context.callback.Run(PREPARE_KEY_RESET_REQUIRED);
+    cryptohome_client_->TpmIsEnabled(
+        base::BindOnce(&EPKPChallengeKeyBase::PrepareKeyErrorHandlerCallback,
+                       base::Unretained(this), context));
     return;
   }
   // Attestation is available, see if the key we need already exists.
   cryptohome_client_->TpmAttestationDoesKeyExist(
-      context.key_type, cryptohome::Identification(context.account_id),
+      context.key_type,
+      cryptohome::CreateAccountIdentifierFromAccountId(context.account_id),
       context.key_name,
       base::BindOnce(&EPKPChallengeKeyBase::DoesKeyExistCallback,
                      base::Unretained(this), context));
+}
+
+void EPKPChallengeKeyBase::PrepareKeyErrorHandlerCallback(
+    const PrepareKeyContext& context,
+    base::Optional<bool> is_tpm_enabled) {
+  if (!is_tpm_enabled.has_value()) {
+    context.callback.Run(PREPARE_KEY_DBUS_ERROR);
+    return;
+  }
+
+  if (is_tpm_enabled.value()) {
+    context.callback.Run(PREPARE_KEY_RESET_REQUIRED);
+  } else {
+    context.callback.Run(PREPARE_KEY_ATTESTATION_UNSUPPORTED);
+  }
 }
 
 void EPKPChallengeKeyBase::DoesKeyExistCallback(
@@ -278,9 +301,9 @@ void EPKPChallengeKeyBase::AskForUserConsentCallback(
 
 void EPKPChallengeKeyBase::GetCertificateCallback(
     const base::Callback<void(PrepareKeyResult)>& callback,
-    bool success,
+    chromeos::attestation::AttestationStatus status,
     const std::string& pem_certificate_chain) {
-  if (!success) {
+  if (status != chromeos::attestation::ATTESTATION_SUCCESS) {
     callback.Run(PREPARE_KEY_GET_CERTIFICATE_FAILED);
     return;
   }
@@ -296,8 +319,6 @@ const char EPKPChallengeMachineKey::kKeyRegistrationFailedError[] =
     "Machine key registration failed.";
 const char EPKPChallengeMachineKey::kNonEnterpriseDeviceError[] =
     "The device is not enterprise enrolled.";
-
-const char EPKPChallengeMachineKey::kKeyName[] = "attest-ent-machine";
 
 EPKPChallengeMachineKey::EPKPChallengeMachineKey() : EPKPChallengeKeyBase() {
 }
@@ -374,7 +395,7 @@ void EPKPChallengeMachineKey::GetDeviceAttestationEnabledCallback(
 
   PrepareKey(chromeos::attestation::KEY_DEVICE,
              EmptyAccountId(),  // Not used.
-             kKeyName,
+             chromeos::attestation::kEnterpriseMachineKey,
              chromeos::attestation::PROFILE_ENTERPRISE_MACHINE_CERTIFICATE,
              false,  // user consent is not required.
              base::Bind(&EPKPChallengeMachineKey::PrepareKeyCallback,
@@ -394,7 +415,8 @@ void EPKPChallengeMachineKey::PrepareKeyCallback(const std::string& challenge,
   async_caller_->TpmAttestationSignEnterpriseChallenge(
       chromeos::attestation::KEY_DEVICE,
       cryptohome::Identification(),  // Not used.
-      kKeyName, GetEnterpriseDomain(), GetDeviceId(),
+      chromeos::attestation::kEnterpriseMachineKey, GetEnterpriseDomain(),
+      GetDeviceId(),
       register_key ? chromeos::attestation::CHALLENGE_INCLUDE_SIGNED_PUBLIC_KEY
                    : chromeos::attestation::CHALLENGE_OPTION_NONE,
       challenge,
@@ -414,7 +436,7 @@ void EPKPChallengeMachineKey::SignChallengeCallback(
     async_caller_->TpmAttestationRegisterKey(
         chromeos::attestation::KEY_DEVICE,
         cryptohome::Identification(),  // Not used.
-        kKeyName,
+        chromeos::attestation::kEnterpriseMachineKey,
         base::Bind(&EPKPChallengeMachineKey::RegisterKeyCallback,
                    base::Unretained(this), response));
   } else {
@@ -443,8 +465,6 @@ const char EPKPChallengeUserKey::kUserPolicyDisabledError[] =
     "Remote attestation is not enabled for your account.";
 const char EPKPChallengeUserKey::kUserKeyNotAvailable[] =
     "User keys cannot be challenged in this profile.";
-
-const char EPKPChallengeUserKey::kKeyName[] = "attest-ent-user";
 
 EPKPChallengeUserKey::EPKPChallengeUserKey() : EPKPChallengeKeyBase() {
 }
@@ -538,7 +558,8 @@ void EPKPChallengeUserKey::GetDeviceAttestationEnabledCallback(
     return;
   }
 
-  PrepareKey(chromeos::attestation::KEY_USER, GetAccountId(), kKeyName,
+  PrepareKey(chromeos::attestation::KEY_USER, GetAccountId(),
+             chromeos::attestation::kEnterpriseUserKey,
              chromeos::attestation::PROFILE_ENTERPRISE_USER_CERTIFICATE,
              require_user_consent,
              base::Bind(&EPKPChallengeUserKey::PrepareKeyCallback,
@@ -557,12 +578,13 @@ void EPKPChallengeUserKey::PrepareKeyCallback(const std::string& challenge,
   // Everything is checked. Sign the challenge.
   async_caller_->TpmAttestationSignEnterpriseChallenge(
       chromeos::attestation::KEY_USER,
-      cryptohome::Identification(GetAccountId()), kKeyName, GetUserEmail(),
-      GetDeviceId(),
+      cryptohome::Identification(GetAccountId()),
+      chromeos::attestation::kEnterpriseUserKey, GetUserEmail(), GetDeviceId(),
       register_key ? chromeos::attestation::CHALLENGE_INCLUDE_SIGNED_PUBLIC_KEY
                    : chromeos::attestation::CHALLENGE_OPTION_NONE,
-      challenge, base::Bind(&EPKPChallengeUserKey::SignChallengeCallback,
-                            base::Unretained(this), register_key));
+      challenge,
+      base::Bind(&EPKPChallengeUserKey::SignChallengeCallback,
+                 base::Unretained(this), register_key));
 }
 
 void EPKPChallengeUserKey::SignChallengeCallback(bool register_key,
@@ -576,7 +598,8 @@ void EPKPChallengeUserKey::SignChallengeCallback(bool register_key,
   if (register_key) {
     async_caller_->TpmAttestationRegisterKey(
         chromeos::attestation::KEY_USER,
-        cryptohome::Identification(GetAccountId()), kKeyName,
+        cryptohome::Identification(GetAccountId()),
+        chromeos::attestation::kEnterpriseUserKey,
         base::Bind(&EPKPChallengeUserKey::RegisterKeyCallback,
                    base::Unretained(this), response));
   } else {
@@ -626,7 +649,7 @@ EnterprisePlatformKeysPrivateChallengeMachineKeyFunction::Run() {
       &EPKPChallengeMachineKey::DecodeAndRun, base::Unretained(impl_),
       scoped_refptr<UIThreadExtensionFunction>(AsUIThreadExtensionFunction()),
       callback, params->challenge, false);
-  content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE, task);
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI}, task);
   return RespondLater();
 }
 
@@ -669,7 +692,7 @@ EnterprisePlatformKeysPrivateChallengeUserKeyFunction::Run() {
       &EPKPChallengeUserKey::DecodeAndRun, base::Unretained(impl_),
       scoped_refptr<UIThreadExtensionFunction>(AsUIThreadExtensionFunction()),
       callback, params->challenge, params->register_key);
-  content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE, task);
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI}, task);
   return RespondLater();
 }
 

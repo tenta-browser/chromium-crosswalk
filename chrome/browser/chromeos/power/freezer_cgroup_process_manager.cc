@@ -13,7 +13,9 @@
 #include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace chromeos {
@@ -33,8 +35,8 @@ class FreezerCgroupProcessManager::FileWorker {
  public:
   // Called on UI thread.
   explicit FileWorker(scoped_refptr<base::SequencedTaskRunner> file_thread)
-      : ui_thread_(content::BrowserThread::GetTaskRunnerForThread(
-            content::BrowserThread::UI)),
+      : ui_thread_(base::CreateSingleThreadTaskRunnerWithTraits(
+            {content::BrowserThread::UI})),
         file_thread_(file_thread),
         enabled_(false),
         froze_successfully_(false) {
@@ -59,8 +61,9 @@ class FreezerCgroupProcessManager::FileWorker {
                base::PathIsWritable(to_be_frozen_state_path_);
 
     if (!enabled_) {
-      LOG(WARNING) << "Cgroup freezer does not exist or is not writable. "
-                   << "Unable to freeze renderer processes.";
+      LOG_IF(WARNING, base::SysInfo::IsRunningOnChromeOS())
+          << "Cgroup freezer does not exist or is not writable. "
+          << "Unable to freeze renderer processes.";
       return;
     }
 
@@ -68,15 +71,15 @@ class FreezerCgroupProcessManager::FileWorker {
     // start up with renderers in frozen state, for example after the previous
     // Chrome process crashed at a point in time after suspend where it still
     // hadn't thawed renderers yet.
-    ThawRenderers(base::Bind([](bool) {}));
+    ThawRenderers(base::DoNothing());
   }
 
   void SetShouldFreezeRenderer(base::ProcessHandle handle, bool frozen) {
     DCHECK(file_thread_->RunsTasksInCurrentSequence());
 
-    WriteCommandToFile(base::IntToString(handle),
-                       frozen ? to_be_frozen_control_path_
-                              : default_control_path_);
+    WriteCommandToFile(
+        base::NumberToString(handle),
+        frozen ? to_be_frozen_control_path_ : default_control_path_);
   }
 
   void FreezeRenderers() {
@@ -109,13 +112,13 @@ class FreezerCgroupProcessManager::FileWorker {
     if (!result && !froze_successfully_)
       result = true;
 
-    ui_thread_->PostTask(FROM_HERE, base::Bind(callback, result));
+    ui_thread_->PostTask(FROM_HERE, base::BindOnce(callback, result));
   }
 
   void CheckCanFreezeRenderers(ResultCallback callback) {
     DCHECK(file_thread_->RunsTasksInCurrentSequence());
 
-    ui_thread_->PostTask(FROM_HERE, base::Bind(callback, enabled_));
+    ui_thread_->PostTask(FROM_HERE, base::BindOnce(callback, enabled_));
   }
 
  private:
@@ -155,11 +158,11 @@ class FreezerCgroupProcessManager::FileWorker {
 
 FreezerCgroupProcessManager::FreezerCgroupProcessManager()
     : file_thread_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::TaskPriority::BACKGROUND, base::MayBlock()})),
+          {base::TaskPriority::BEST_EFFORT, base::MayBlock()})),
       file_worker_(new FileWorker(file_thread_)) {
-  file_thread_->PostTask(FROM_HERE,
-                         base::Bind(&FileWorker::Start,
-                                    base::Unretained(file_worker_.get())));
+  file_thread_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FileWorker::Start, base::Unretained(file_worker_.get())));
 }
 
 FreezerCgroupProcessManager::~FreezerCgroupProcessManager() {
@@ -169,31 +172,31 @@ FreezerCgroupProcessManager::~FreezerCgroupProcessManager() {
 void FreezerCgroupProcessManager::SetShouldFreezeRenderer(
     base::ProcessHandle handle,
     bool frozen) {
-  file_thread_->PostTask(FROM_HERE,
-                         base::Bind(&FileWorker::SetShouldFreezeRenderer,
-                                    base::Unretained(file_worker_.get()),
-                                    handle, frozen));
+  file_thread_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FileWorker::SetShouldFreezeRenderer,
+                     base::Unretained(file_worker_.get()), handle, frozen));
 }
 
 void FreezerCgroupProcessManager::FreezeRenderers() {
   file_thread_->PostTask(FROM_HERE,
-                         base::Bind(&FileWorker::FreezeRenderers,
-                                    base::Unretained(file_worker_.get())));
+                         base::BindOnce(&FileWorker::FreezeRenderers,
+                                        base::Unretained(file_worker_.get())));
 }
 
 void FreezerCgroupProcessManager::ThawRenderers(ResultCallback callback) {
-  file_thread_->PostTask(FROM_HERE,
-                         base::Bind(&FileWorker::ThawRenderers,
-                                    base::Unretained(file_worker_.get()),
-                                    callback));
+  file_thread_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FileWorker::ThawRenderers,
+                     base::Unretained(file_worker_.get()), callback));
 }
 
 void FreezerCgroupProcessManager::CheckCanFreezeRenderers(
     ResultCallback callback) {
-  file_thread_->PostTask(FROM_HERE,
-                         base::Bind(&FileWorker::CheckCanFreezeRenderers,
-                                    base::Unretained(file_worker_.get()),
-                                    callback));
+  file_thread_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FileWorker::CheckCanFreezeRenderers,
+                     base::Unretained(file_worker_.get()), callback));
 }
 
 }  // namespace chromeos

@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/javascript_dialogs/javascript_dialog_views.h"
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "ui/views/controls/message_box_view.h"
@@ -20,15 +19,18 @@ base::WeakPtr<JavaScriptDialogViews> JavaScriptDialogViews::Create(
     content::JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
-    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback) {
+    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback,
+    base::OnceClosure dialog_force_closed_callback) {
   return (new JavaScriptDialogViews(
               parent_web_contents, alerting_web_contents, title, dialog_type,
-              message_text, default_prompt_text, std::move(dialog_callback)))
+              message_text, default_prompt_text, std::move(dialog_callback),
+              std::move(dialog_force_closed_callback)))
       ->weak_factory_.GetWeakPtr();
 }
 
 void JavaScriptDialogViews::CloseDialogWithoutCallback() {
   dialog_callback_.Reset();
+  dialog_force_closed_callback_.Reset();
   GetWidget()->Close();
 }
 
@@ -62,8 +64,8 @@ bool JavaScriptDialogViews::Accept() {
 }
 
 bool JavaScriptDialogViews::Close() {
-  if (dialog_callback_)
-    std::move(dialog_callback_).Run(false, base::string16());
+  if (dialog_force_closed_callback_)
+    std::move(dialog_force_closed_callback_).Run();
   return true;
 }
 
@@ -103,14 +105,14 @@ JavaScriptDialogViews::JavaScriptDialogViews(
     content::JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
-    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback)
-    : JavaScriptDialog(parent_web_contents),
-      title_(title),
+    content::JavaScriptDialogManager::DialogClosedCallback dialog_callback,
+    base::OnceClosure dialog_force_closed_callback)
+    : title_(title),
       dialog_type_(dialog_type),
       message_text_(message_text),
       default_prompt_text_(default_prompt_text),
       dialog_callback_(std::move(dialog_callback)),
-      weak_factory_(this) {
+      dialog_force_closed_callback_(std::move(dialog_force_closed_callback)) {
   int options = views::MessageBoxView::DETECT_DIRECTIONALITY;
   if (dialog_type == content::JAVASCRIPT_DIALOG_TYPE_PROMPT)
     options |= views::MessageBoxView::HAS_PROMPT_FIELD;

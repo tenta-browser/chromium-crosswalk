@@ -6,12 +6,12 @@
 
 #include "base/strings/sys_string_conversions.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_info.h"
+#include "components/unified_consent/feature.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
+#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui.h"
 #import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
-#import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/settings_table_view_controller.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -19,8 +19,7 @@
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
-
-#include "components/signin/core/browser/signin_manager.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -29,14 +28,8 @@
 using chrome_test_util::PrimarySignInButton;
 using chrome_test_util::SecondarySignInButton;
 using chrome_test_util::SettingsAccountButton;
+using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::ButtonWithAccessibilityLabelId;
-
-namespace {
-
-id<GREYMatcher> NavigationBarDoneButton() {
-  return ButtonWithAccessibilityLabelId(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON);
-}
-}
 
 @interface SigninSettingsTestCase : ChromeTestCase
 @end
@@ -46,13 +39,24 @@ id<GREYMatcher> NavigationBarDoneButton() {
 // Tests the primary button with a cold state.
 - (void)testSignInPromoWithColdStateUsingPrimaryButton {
   [ChromeEarlGreyUI openSettingsMenu];
-  [SigninEarlGreyUtils
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState];
   [ChromeEarlGreyUI tapSettingsMenuButton:PrimarySignInButton()];
 
-  [[EarlGrey selectElementWithMatcher:grey_buttonTitle(@"Cancel")]
-      performAction:grey_tap()];
-  [SigninEarlGreyUtils
+  if (unified_consent::IsUnifiedConsentFeatureEnabled()) {
+    // Cancel the sign-in operation.
+    [[EarlGrey selectElementWithMatcher:
+                   grey_buttonTitle([l10n_util::GetNSString(
+                       IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SKIP_BUTTON)
+                       uppercaseString])] performAction:grey_tap()];
+  } else {
+    // Cancel the add account operation.
+    [[EarlGrey
+        selectElementWithMatcher:grey_allOf(grey_buttonTitle(@"Cancel"),
+                                            grey_sufficientlyVisible(), nil)]
+        performAction:grey_tap()];
+  }
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState];
 }
 
@@ -63,14 +67,14 @@ id<GREYMatcher> NavigationBarDoneButton() {
       identity);
 
   [ChromeEarlGreyUI openSettingsMenu];
-  [SigninEarlGreyUtils
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeWarmState];
   [ChromeEarlGreyUI tapSettingsMenuButton:PrimarySignInButton()];
-  [ChromeEarlGreyUI confirmSigninConfirmationDialog];
+  [SigninEarlGreyUI confirmSigninConfirmationDialog];
 
   // User signed in.
-  [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
-  [SigninEarlGreyUtils checkSigninPromoNotVisible];
+  [SigninEarlGreyUtils checkSignedInWithIdentity:identity];
+  [SigninEarlGreyUI checkSigninPromoNotVisible];
   [[EarlGrey selectElementWithMatcher:SettingsAccountButton()]
       assertWithMatcher:grey_interactable()];
 }
@@ -82,15 +86,15 @@ id<GREYMatcher> NavigationBarDoneButton() {
       identity);
 
   [ChromeEarlGreyUI openSettingsMenu];
-  [SigninEarlGreyUtils
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeWarmState];
   [ChromeEarlGreyUI tapSettingsMenuButton:SecondarySignInButton()];
-  [ChromeEarlGreyUI signInToIdentityByEmail:identity.userEmail];
-  [ChromeEarlGreyUI confirmSigninConfirmationDialog];
+  [SigninEarlGreyUI selectIdentityWithEmail:identity.userEmail];
+  [SigninEarlGreyUI confirmSigninConfirmationDialog];
 
   // User signed in.
-  [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
-  [SigninEarlGreyUtils checkSigninPromoNotVisible];
+  [SigninEarlGreyUtils checkSignedInWithIdentity:identity];
+  [SigninEarlGreyUI checkSigninPromoNotVisible];
   [[EarlGrey selectElementWithMatcher:SettingsAccountButton()]
       assertWithMatcher:grey_interactable()];
 }
@@ -105,7 +109,7 @@ id<GREYMatcher> NavigationBarDoneButton() {
                     displayedCount);
   [ChromeEarlGreyUI openSettingsMenu];
   // Check the sign-in promo view is visible.
-  [SigninEarlGreyUtils
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState];
   // Check the sign-in promo will not be shown anymore.
   GREYAssertEqual(
@@ -113,11 +117,11 @@ id<GREYMatcher> NavigationBarDoneButton() {
       prefs->GetInteger(prefs::kIosSettingsSigninPromoDisplayedCount),
       @"Should have incremented the display count");
   // Close the settings menu and open it again.
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];
   [ChromeEarlGreyUI openSettingsMenu];
   // Check that the sign-in promo is not visible anymore.
-  [SigninEarlGreyUtils checkSigninPromoNotVisible];
+  [SigninEarlGreyUI checkSigninPromoNotVisible];
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityID(kSettingsSignInCellId),
@@ -128,14 +132,14 @@ id<GREYMatcher> NavigationBarDoneButton() {
 - (void)testDissmissSigninPromo {
   [ChromeEarlGreyUI openSettingsMenu];
   // Check the sign-in promo view is visible.
-  [SigninEarlGreyUtils
+  [SigninEarlGreyUI
       checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState];
   // Tap on dismiss button.
   [[EarlGrey
       selectElementWithMatcher:grey_accessibilityID(kSigninPromoCloseButtonId)]
       performAction:grey_tap()];
   // Check that the sign-in promo is not visible anymore.
-  [SigninEarlGreyUtils checkSigninPromoNotVisible];
+  [SigninEarlGreyUI checkSigninPromoNotVisible];
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(
                                    grey_accessibilityID(kSettingsSignInCellId),

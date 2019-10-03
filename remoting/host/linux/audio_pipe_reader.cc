@@ -12,6 +12,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/stl_util.h"
@@ -42,7 +43,8 @@ scoped_refptr<AudioPipeReader> AudioPipeReader::Create(
   scoped_refptr<AudioPipeReader> pipe_reader =
       new AudioPipeReader(task_runner, pipe_path);
   task_runner->PostTask(
-      FROM_HERE, base::Bind(&AudioPipeReader::StartOnAudioThread, pipe_reader));
+      FROM_HERE,
+      base::BindOnce(&AudioPipeReader::StartOnAudioThread, pipe_reader));
   return pipe_reader;
 }
 
@@ -154,8 +156,8 @@ void AudioPipeReader::DoCapture() {
   data.resize(pos + bytes_to_read);
 
   while (pos < data.size()) {
-    int read_result = pipe_.ReadAtCurrentPos(base::string_as_array(&data) + pos,
-                                             data.size() - pos);
+    int read_result =
+        pipe_.ReadAtCurrentPos(base::data(data) + pos, data.size() - pos);
     if (read_result > 0) {
       pos += read_result;
     } else {

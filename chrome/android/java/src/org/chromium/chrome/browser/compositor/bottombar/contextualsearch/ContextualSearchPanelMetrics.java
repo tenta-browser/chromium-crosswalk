@@ -4,12 +4,14 @@
 
 package org.chromium.chrome.browser.compositor.bottombar.contextualsearch;
 
+import org.chromium.base.TimeUtils;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelState;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.StateChangeReason;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchHeuristics;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchIPH;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchRankerLogger;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchInteractionRecorder;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchUma;
+import org.chromium.chrome.browser.contextualsearch.EngagementSuppression;
 import org.chromium.chrome.browser.contextualsearch.QuickActionCategory;
 import org.chromium.chrome.browser.profiles.Profile;
 
@@ -17,8 +19,6 @@ import org.chromium.chrome.browser.profiles.Profile;
  * This class is responsible for all the logging related to Contextual Search.
  */
 public class ContextualSearchPanelMetrics {
-    private static final int MILLISECONDS_TO_NANOSECONDS = 1000000;
-
     // Flags for logging.
     private boolean mDidSearchInvolvePromo;
     private boolean mWasSearchContentViewSeen;
@@ -55,9 +55,10 @@ public class ContextualSearchPanelMetrics {
     private long mPanelOpenedBeyondPeekDurationMs;
     // The current set of heuristics that should be logged with results seen when the panel closes.
     private ContextualSearchHeuristics mResultsSeenExperiments;
-    // The current set of heuristics to be logged through ranker with results seen when the panel
-    // closes.
-    private ContextualSearchRankerLogger mRankerLogger;
+    // The interaction recorder to use to record results seen when the panel closes.
+    private ContextualSearchInteractionRecorder mInteractionRecorder;
+    // Whether interaction Outcomes are valid, because we showed the panel.
+    private boolean mAreOutcomesValid;
 
     /**
      * Log information when the panel's state has changed.
@@ -66,8 +67,8 @@ public class ContextualSearchPanelMetrics {
      * @param reason The reason for the state change.
      * @param profile The current {@link Profile}.
      */
-    public void onPanelStateChanged(
-            PanelState fromState, PanelState toState, StateChangeReason reason, Profile profile) {
+    public void onPanelStateChanged(@PanelState int fromState, @PanelState int toState,
+            @StateChangeReason int reason, Profile profile) {
         // Note: the logging within this function includes the promo, unless specifically
         // excluded.
         boolean isStartingSearch = isStartingNewContextualSearch(toState, reason);
@@ -86,8 +87,8 @@ public class ContextualSearchPanelMetrics {
 
         if (toState == PanelState.CLOSED && mPanelTriggerTimeFromTapNs != 0
                 && reason == StateChangeReason.BASE_PAGE_SCROLL) {
-            long durationMs =
-                    (System.nanoTime() - mPanelTriggerTimeFromTapNs) / MILLISECONDS_TO_NANOSECONDS;
+            long durationMs = (System.nanoTime() - mPanelTriggerTimeFromTapNs)
+                    / TimeUtils.NANOSECONDS_PER_MILLISECOND;
             ContextualSearchUma.logDurationBetweenTriggerAndScroll(
                     durationMs, mWasSearchContentViewSeen);
         }
@@ -95,7 +96,7 @@ public class ContextualSearchPanelMetrics {
         if (isExitingPanelOpenedBeyondPeeked) {
             assert mPanelOpenedBeyondPeekTimeNs != 0;
             mPanelOpenedBeyondPeekDurationMs = (System.nanoTime() - mPanelOpenedBeyondPeekTimeNs)
-                    / MILLISECONDS_TO_NANOSECONDS;
+                    / TimeUtils.NANOSECONDS_PER_MILLISECOND;
             ContextualSearchUma.logPanelOpenDuration(mPanelOpenedBeyondPeekDurationMs);
             mPanelOpenedBeyondPeekTimeNs = 0;
             mWasPanelOpenedBeyondPeek = false;
@@ -103,7 +104,7 @@ public class ContextualSearchPanelMetrics {
 
         if (isEndingSearch) {
             long panelViewDurationMs =
-                    (System.nanoTime() - mFirstPeekTimeNs) / MILLISECONDS_TO_NANOSECONDS;
+                    (System.nanoTime() - mFirstPeekTimeNs) / TimeUtils.NANOSECONDS_PER_MILLISECOND;
             ContextualSearchUma.logPanelViewDurationAction(panelViewDurationMs);
             if (!mDidSearchInvolvePromo) {
                 // Measure duration only when the promo is not involved.
@@ -119,22 +120,15 @@ public class ContextualSearchPanelMetrics {
 
             if (mWasContextualCardsDataShown) {
                 ContextualSearchUma.logContextualCardsResultsSeen(mWasSearchContentViewSeen);
-            }
-            if (mRankerLogger != null) {
-                mRankerLogger.logOutcome(
-                        ContextualSearchRankerLogger.Feature.OUTCOME_WAS_CARDS_DATA_SHOWN,
-                        mWasContextualCardsDataShown);
+                EngagementSuppression.registerContextualCardsImpression(mWasSearchContentViewSeen);
             }
             if (mWasQuickActionShown) {
                 ContextualSearchUma.logQuickActionResultsSeen(mWasSearchContentViewSeen,
                         mQuickActionCategory);
                 ContextualSearchUma.logQuickActionClicked(mWasQuickActionClicked,
                         mQuickActionCategory);
-                if (mRankerLogger != null) {
-                    mRankerLogger.logOutcome(
-                            ContextualSearchRankerLogger.Feature.OUTCOME_WAS_QUICK_ACTION_CLICKED,
-                            mWasQuickActionClicked);
-                }
+                EngagementSuppression.registerQuickActionImpression(
+                        mWasSearchContentViewSeen, mWasQuickActionClicked);
             }
 
             if (mResultsSeenExperiments != null) {
@@ -142,10 +136,7 @@ public class ContextualSearchPanelMetrics {
                         mWasSearchContentViewSeen, mWasActivatedByTap);
                 mResultsSeenExperiments.logPanelViewedDurations(
                         panelViewDurationMs, mPanelOpenedBeyondPeekDurationMs);
-                if (mRankerLogger != null) {
-                    mResultsSeenExperiments.logRankerTapSuppressionOutcome(mRankerLogger);
-                }
-                mResultsSeenExperiments = null;
+                if (!isChained) mResultsSeenExperiments = null;
             }
             mPanelOpenedBeyondPeekDurationMs = 0;
 
@@ -153,27 +144,17 @@ public class ContextualSearchPanelMetrics {
                 boolean wasAnySuppressionHeuristicSatisfied = mWasAnyHeuristicSatisfiedOnPanelShow;
                 ContextualSearchUma.logAnyTapSuppressionHeuristicSatisfied(
                         mWasSearchContentViewSeen, wasAnySuppressionHeuristicSatisfied);
-                // Update The Ranker logger.
-                if (mRankerLogger != null) {
-                    // Tell Ranker about the primary outcome.
-                    mRankerLogger.logOutcome(
-                            ContextualSearchRankerLogger.Feature.OUTCOME_WAS_PANEL_OPENED,
-                            mWasSearchContentViewSeen);
-                    ContextualSearchUma.logRankerInference(mWasSearchContentViewSeen,
-                            mRankerLogger.getPredictionForTapSuppression());
-                }
                 ContextualSearchUma.logSelectionLengthResultsSeen(
                         mWasSearchContentViewSeen, mSelectionLength);
+                ContextualSearchUma.logTapResultsSeen(mWasSearchContentViewSeen);
             }
-
-            // Reset writing to Ranker so whatever interactions occurred are recorded as a
-            // complete record.
-            if (mRankerLogger != null) mRankerLogger.writeLogAndReset();
-            mRankerLogger = null;
+            ContextualSearchUma.logAllResultsSeen(mWasSearchContentViewSeen);
 
             // Notifications to Feature Engagement.
             ContextualSearchIPH.doSearchFinishedNotifications(profile, mWasSearchContentViewSeen,
                     mWasActivatedByTap, mWasContextualCardsDataShown);
+
+            writeInteractionOutcomesAndReset();
         }
 
         if (isStartingSearch) {
@@ -185,6 +166,7 @@ public class ContextualSearchPanelMetrics {
             } else {
                 mWasAnyHeuristicSatisfiedOnPanelShow = false;
             }
+            mAreOutcomesValid = true;
         }
 
         // Log state changes. We only log the first transition to a state within a contextual
@@ -193,8 +175,8 @@ public class ContextualSearchPanelMetrics {
         // CLOSED (TAB_PROMOTION). For the purpose of logging, the reason for the second transition
         // is reinterpreted to SERP_NAVIGATION, in order to distinguish it from a tab promotion
         // caused when tapping on the Search Bar when the Panel is maximized.
-        StateChangeReason reasonForLogging =
-                mIsSerpNavigation ? StateChangeReason.SERP_NAVIGATION : reason;
+        @StateChangeReason
+        int reasonForLogging = mIsSerpNavigation ? StateChangeReason.SERP_NAVIGATION : reason;
         if (isStartingSearch || isEndingSearch
                 || (!mHasExpanded && toState == PanelState.EXPANDED)
                 || (!mHasMaximized && toState == PanelState.MAXIMIZED)) {
@@ -318,8 +300,8 @@ public class ContextualSearchPanelMetrics {
      * Called when a Search Term has been resolved.
      */
     public void onSearchTermResolved() {
-        long durationMs =
-                (System.nanoTime() - mSearchRequestStartTimeNs) / MILLISECONDS_TO_NANOSECONDS;
+        long durationMs = (System.nanoTime() - mSearchRequestStartTimeNs)
+                / TimeUtils.NANOSECONDS_PER_MILLISECOND;
         ContextualSearchUma.logSearchTermResolutionDuration(durationMs);
     }
 
@@ -328,8 +310,8 @@ public class ContextualSearchPanelMetrics {
      * This is the point where the search result starts to render in the panel.
      */
     public void onPanelNavigatedToPrefetchedSearch(boolean didResolve) {
-        long durationMs =
-                (System.nanoTime() - mSearchRequestStartTimeNs) / MILLISECONDS_TO_NANOSECONDS;
+        long durationMs = (System.nanoTime() - mSearchRequestStartTimeNs)
+                / TimeUtils.NANOSECONDS_PER_MILLISECOND;
         ContextualSearchUma.logPrefetchedSearchNavigatedDuration(durationMs, didResolve);
     }
 
@@ -343,11 +325,39 @@ public class ContextualSearchPanelMetrics {
 
     /**
      * Sets up logging through Ranker for outcomes.
-     * @param rankerLogger The {@link ContextualSearchRankerLogger} currently being used to measure
-     *                     or suppress the UI by Ranker.
+     * @param interactionRecorder The {@link ContextualSearchInteractionRecorder} currently being
+     * used to measure to recorder user interaction outcomes.
      */
-    public void setRankerLogger(ContextualSearchRankerLogger rankerLogger) {
-        mRankerLogger = rankerLogger;
+    public void setInteractionRecorder(ContextualSearchInteractionRecorder interactionRecorder) {
+        mInteractionRecorder = interactionRecorder;
+        mAreOutcomesValid = false;
+    }
+
+    /**
+     * Writes all the outcome features to the Interaction Recorder and resets it.
+     */
+    public void writeInteractionOutcomesAndReset() {
+        if (mInteractionRecorder != null && mWasActivatedByTap && mAreOutcomesValid) {
+            // Tell Ranker about the primary outcome.
+            mInteractionRecorder.logOutcome(
+                    ContextualSearchInteractionRecorder.Feature.OUTCOME_WAS_PANEL_OPENED,
+                    mWasSearchContentViewSeen);
+            ContextualSearchUma.logRankerInference(mWasSearchContentViewSeen,
+                    mInteractionRecorder.getPredictionForTapSuppression());
+            mInteractionRecorder.logOutcome(
+                    ContextualSearchInteractionRecorder.Feature.OUTCOME_WAS_CARDS_DATA_SHOWN,
+                    mWasContextualCardsDataShown);
+            if (mWasQuickActionShown) {
+                mInteractionRecorder.logOutcome(ContextualSearchInteractionRecorder.Feature
+                                                        .OUTCOME_WAS_QUICK_ACTION_CLICKED,
+                        mWasQuickActionClicked);
+            }
+            if (mResultsSeenExperiments != null) {
+                mResultsSeenExperiments.logRankerTapSuppressionOutcome(mInteractionRecorder);
+            }
+            mInteractionRecorder.writeLogAndReset();
+            mInteractionRecorder = null;
+        }
     }
 
     /**
@@ -356,7 +366,8 @@ public class ContextualSearchPanelMetrics {
      * @param reason The reason for the search state transition.
      * @return Whether a new contextual search is starting.
      */
-    private boolean isStartingNewContextualSearch(PanelState toState, StateChangeReason reason) {
+    private boolean isStartingNewContextualSearch(
+            @PanelState int toState, @StateChangeReason int reason) {
         return toState == PanelState.PEEKED
                 && (reason == StateChangeReason.TEXT_SELECT_TAP
                         || reason == StateChangeReason.TEXT_SELECT_LONG_PRESS);
@@ -369,8 +380,8 @@ public class ContextualSearchPanelMetrics {
      * @param isStartingSearch Whether a new contextual search is starting.
      * @return Whether a contextual search is ending.
      */
-    private boolean isEndingContextualSearch(PanelState fromState, PanelState toState,
-            boolean isStartingSearch) {
+    private boolean isEndingContextualSearch(
+            @PanelState int fromState, @PanelState int toState, boolean isStartingSearch) {
         return isOngoingContextualSearch(fromState)
                 && (toState == PanelState.CLOSED || isStartingSearch);
     }
@@ -379,8 +390,7 @@ public class ContextualSearchPanelMetrics {
      * @param fromState The state the panel is transitioning from.
      * @return Whether there is an ongoing contextual search.
      */
-    private boolean isOngoingContextualSearch(PanelState fromState) {
+    private boolean isOngoingContextualSearch(@PanelState int fromState) {
         return fromState != PanelState.UNDEFINED && fromState != PanelState.CLOSED;
     }
 }
-

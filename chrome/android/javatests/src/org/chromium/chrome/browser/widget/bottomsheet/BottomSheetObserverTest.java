@@ -8,19 +8,18 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.support.test.filters.MediumTest;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.chrome.R;
-import org.chromium.chrome.browser.bookmarks.BookmarkSheetContent;
-import org.chromium.chrome.browser.download.DownloadSheetContent;
-import org.chromium.chrome.browser.history.HistorySheetContent;
-import org.chromium.chrome.browser.suggestions.SuggestionsBottomSheetContent;
 import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.chrome.test.BottomSheetTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -38,7 +37,11 @@ public class BottomSheetObserverTest {
 
     @Before
     public void setUp() throws Exception {
-        mBottomSheetTestRule.startMainActivityOnBlankPage();
+        mBottomSheetTestRule.startMainActivityOnBottomSheet(BottomSheet.SheetState.PEEK);
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            mBottomSheetTestRule.getBottomSheet().showContent(new TestBottomSheetContent(
+                    mBottomSheetTestRule.getActivity(), BottomSheet.ContentPriority.HIGH, false));
+        });
         mObserver = mBottomSheetTestRule.getObserver();
     }
 
@@ -48,14 +51,14 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testCloseEventCalledNoAnimation() throws InterruptedException, TimeoutException {
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_FULL, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, false);
 
         CallbackHelper closedCallbackHelper = mObserver.mClosedCallbackHelper;
 
         int initialOpenedCount = mObserver.mOpenedCallbackHelper.getCallCount();
 
         int closedCallbackCount = closedCallbackHelper.getCallCount();
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_PEEK, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.PEEK, false);
         closedCallbackHelper.waitForCallback(closedCallbackCount, 1);
 
         assertEquals(initialOpenedCount, mObserver.mOpenedCallbackHelper.getCallCount());
@@ -67,14 +70,14 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testCloseEventCalledWithAnimation() throws InterruptedException, TimeoutException {
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_FULL, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, false);
 
         CallbackHelper closedCallbackHelper = mObserver.mClosedCallbackHelper;
 
         int initialOpenedCount = mObserver.mOpenedCallbackHelper.getCallCount();
 
         int closedCallbackCount = closedCallbackHelper.getCallCount();
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_PEEK, true);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.PEEK, true);
         closedCallbackHelper.waitForCallback(closedCallbackCount, 1);
 
         assertEquals(initialOpenedCount, mObserver.mOpenedCallbackHelper.getCallCount());
@@ -86,14 +89,14 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testOpenedEventCalledNoAnimation() throws InterruptedException, TimeoutException {
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_PEEK, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.PEEK, false);
 
         CallbackHelper openedCallbackHelper = mObserver.mOpenedCallbackHelper;
 
         int initialClosedCount = mObserver.mClosedCallbackHelper.getCallCount();
 
         int openedCallbackCount = openedCallbackHelper.getCallCount();
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_FULL, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, false);
         openedCallbackHelper.waitForCallback(openedCallbackCount, 1);
 
         assertEquals(initialClosedCount, mObserver.mClosedCallbackHelper.getCallCount());
@@ -105,14 +108,14 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testOpenedEventCalledWithAnimation() throws InterruptedException, TimeoutException {
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_PEEK, false);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.PEEK, false);
 
         CallbackHelper openedCallbackHelper = mObserver.mOpenedCallbackHelper;
 
         int initialClosedCount = mObserver.mClosedCallbackHelper.getCallCount();
 
         int openedCallbackCount = openedCallbackHelper.getCallCount();
-        mBottomSheetTestRule.setSheetState(BottomSheet.SHEET_STATE_FULL, true);
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, true);
         openedCallbackHelper.waitForCallback(openedCallbackCount, 1);
 
         assertEquals(initialClosedCount, mObserver.mClosedCallbackHelper.getCallCount());
@@ -124,18 +127,19 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testOffsetChangedEvent() throws InterruptedException, TimeoutException {
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, false);
         CallbackHelper callbackHelper = mObserver.mOffsetChangedCallbackHelper;
 
         BottomSheet bottomSheet = mBottomSheetTestRule.getBottomSheet();
-        float peekHeight = bottomSheet.getPeekRatio() * bottomSheet.getSheetContainerHeight();
+        float hiddenHeight = bottomSheet.getHiddenRatio() * bottomSheet.getSheetContainerHeight();
         float fullHeight = bottomSheet.getFullRatio() * bottomSheet.getSheetContainerHeight();
 
         // The sheet's half state is not necessarily 50% of the way to the top.
-        float midPeekFull = (peekHeight + fullHeight) / 2f;
+        float midPeekFull = (hiddenHeight + fullHeight) / 2f;
 
-        // When in the peeking state, the transition value should be 0.
+        // When in the hidden state, the transition value should be 0.
         int callbackCount = callbackHelper.getCallCount();
-        mBottomSheetTestRule.setSheetOffsetFromBottom(peekHeight);
+        mBottomSheetTestRule.setSheetOffsetFromBottom(hiddenHeight);
         callbackHelper.waitForCallback(callbackCount, 1);
         assertEquals(0f, mObserver.getLastOffsetChangedValue(), MathUtils.EPSILON);
 
@@ -158,6 +162,7 @@ public class BottomSheetObserverTest {
     @Test
     @MediumTest
     public void testPeekToHalfTransition() throws InterruptedException, TimeoutException {
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.FULL, false);
         CallbackHelper callbackHelper = mObserver.mPeekToHalfCallbackHelper;
 
         BottomSheet bottomSheet = mBottomSheetTestRule.getBottomSheet();
@@ -205,33 +210,54 @@ public class BottomSheetObserverTest {
         assertEquals(1f, mObserver.getLastPeekToHalfValue(), MathUtils.EPSILON);
     }
 
-    /**
-     * Test the onSheetContentChanged event.
-     */
     @Test
     @MediumTest
-    public void testSheetContentChanged() throws InterruptedException, TimeoutException {
+    public void testWrapContentBehavior() throws TimeoutException, InterruptedException {
+        // We make sure the height of the wrapped content is smaller than sheetContainerHeight.
+        BottomSheet bottomSheet = mBottomSheetTestRule.getBottomSheet();
+        int wrappedContentHeight = (int) bottomSheet.getSheetContainerHeight() / 2;
+        assertTrue(wrappedContentHeight > 0);
+
+        // Show content that should be wrapped.
         CallbackHelper callbackHelper = mObserver.mContentChangedCallbackHelper;
+        int callCount = callbackHelper.getCallCount();
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            bottomSheet.showContent(new TestBottomSheetContent(
+                    mBottomSheetTestRule.getActivity(), BottomSheet.ContentPriority.HIGH, false) {
+                private final ViewGroup mContentView;
 
-        int callbackCount = callbackHelper.getCallCount();
-        mBottomSheetTestRule.selectBottomSheetContent(R.id.action_bookmarks);
-        callbackHelper.waitForCallback(callbackCount, 1);
-        assertTrue(mBottomSheetTestRule.getBottomSheetContent() instanceof BookmarkSheetContent);
+                {
+                    // We wrap the View in a FrameLayout as we need something to read the hard coded
+                    // height in the layout params. There is no way to create a View with a specific
+                    // height on its own as View::onMeasure will by default set its height/width to
+                    // be the minimum height/width of its background (if any) or expand as much as
+                    // it can.
+                    mContentView = new FrameLayout(mBottomSheetTestRule.getActivity());
+                    View child = new View(mBottomSheetTestRule.getActivity());
+                    child.setLayoutParams(new ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, wrappedContentHeight));
+                    mContentView.addView(child);
+                }
 
-        callbackCount++;
-        mBottomSheetTestRule.selectBottomSheetContent(R.id.action_history);
-        callbackHelper.waitForCallback(callbackCount, 1);
-        assertTrue(mBottomSheetTestRule.getBottomSheetContent() instanceof HistorySheetContent);
+                @Override
+                public View getContentView() {
+                    return mContentView;
+                }
 
-        callbackCount++;
-        mBottomSheetTestRule.selectBottomSheetContent(R.id.action_downloads);
-        callbackHelper.waitForCallback(callbackCount, 1);
-        assertTrue(mBottomSheetTestRule.getBottomSheetContent() instanceof DownloadSheetContent);
+                @Override
+                public boolean wrapContentEnabled() {
+                    return true;
+                }
+            });
+        });
+        callbackHelper.waitForCallback(callCount);
 
-        callbackCount++;
-        mBottomSheetTestRule.selectBottomSheetContent(R.id.action_home);
-        callbackHelper.waitForCallback(callbackCount, 1);
-        assertTrue(mBottomSheetTestRule.getBottomSheetContent()
-                           instanceof SuggestionsBottomSheetContent);
+        // HALF state is forbidden when wrapping the content.
+        mBottomSheetTestRule.setSheetState(BottomSheet.SheetState.HALF, false);
+        assertEquals(BottomSheet.SheetState.FULL, bottomSheet.getSheetState());
+
+        // Check the offset.
+        assertEquals(wrappedContentHeight + bottomSheet.getToolbarShadowHeight(),
+                bottomSheet.getCurrentOffsetPx(), MathUtils.EPSILON);
     }
 }

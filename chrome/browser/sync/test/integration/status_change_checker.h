@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/run_loop.h"
 #include "base/time/time.h"
 
 // Interface for a helper class that can pump the message loop while waiting
@@ -42,10 +43,15 @@ class StatusChangeChecker {
  protected:
   virtual ~StatusChangeChecker();
 
-  // Timeout length when blocking.
-  virtual base::TimeDelta GetTimeoutDuration();
+  // Stop the nested running of the message loop started in StartBlockingWait().
+  void StopWaiting();
 
-  // Helper function to start running the nested run loop.
+  // Checks IsExitConditionSatisfied() and calls StopWaiting() if it returns
+  // true.
+  virtual void CheckExitCondition();
+
+ private:
+  // Helper function to start running the nested run loop (run_loop_).
   //
   // Will exit if IsExitConditionSatisfied() returns true when called from
   // CheckExitCondition(), if a timeout occurs, or if StopWaiting() is called.
@@ -53,16 +59,10 @@ class StatusChangeChecker {
   // The timeout length is specified with GetTimeoutDuration().
   void StartBlockingWait();
 
-  // Stop the nested running of the message loop started in StartBlockingWait().
-  void StopWaiting();
-
-  // Checks IsExitConditionSatisfied() and calls StopWaiting() if it returns
-  // true.
-  void CheckExitCondition();
-
   // Called when the blocking wait timeout is exceeded.
   void OnTimeout();
 
+  base::RunLoop run_loop_;
   bool timed_out_;
 };
 

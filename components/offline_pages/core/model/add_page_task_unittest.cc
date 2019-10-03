@@ -5,24 +5,20 @@
 #include "components/offline_pages/core/model/add_page_task.h"
 
 #include <stdint.h>
-
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/files/scoped_temp_dir.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/offline_pages/core/model/model_task_test_base.h"
 #include "components/offline_pages/core/model/offline_page_item_generator.h"
-#include "components/offline_pages/core/offline_page_item.h"
-#include "components/offline_pages/core/offline_page_metadata_store_test_util.h"
 #include "components/offline_pages/core/offline_page_types.h"
 #include "components/offline_pages/core/offline_store_types.h"
-#include "components/offline_pages/core/test_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -41,18 +37,13 @@ const std::string kTestOrigin("abc.xyz");
 const base::string16 kTestTitle = base::UTF8ToUTF16("a title");
 const int64_t kTestDownloadId = 767574LL;
 const std::string kTestDigest("TesTIngDigEst==");
+const std::string kTestAttribution = "attribution";
+const std::string kTestSnippet = "snippet";
 
 }  // namespace
 
-class AddPageTaskTest : public testing::Test,
-                        public base::SupportsWeakPtr<AddPageTaskTest> {
+class AddPageTaskTest : public ModelTaskTestBase {
  public:
-  AddPageTaskTest();
-  ~AddPageTaskTest() override;
-
-  void SetUp() override;
-  void TearDown() override;
-
   void ResetResults();
   void OnAddPageDone(AddPageResult result);
   AddPageTask::AddPageTaskCallback add_page_callback();
@@ -60,44 +51,16 @@ class AddPageTaskTest : public testing::Test,
   void AddPage(const OfflinePageItem& page);
   bool CheckPageStored(const OfflinePageItem& page);
 
-  OfflinePageMetadataStoreTestUtil* store_test_util() {
-    return &store_test_util_;
+  const base::Optional<AddPageResult>& last_add_page_result() {
+    return last_add_page_result_;
   }
-  OfflinePageMetadataStoreSQL* store() { return store_test_util_.store(); }
-  OfflinePageItemGenerator* generator() { return &generator_; }
-  TestTaskRunner* runner() { return &runner_; }
-
-  AddPageResult last_add_page_result() { return last_add_page_result_; }
 
  private:
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  base::ThreadTaskRunnerHandle task_runner_handle_;
-  OfflinePageMetadataStoreTestUtil store_test_util_;
-  OfflinePageItemGenerator generator_;
-  TestTaskRunner runner_;
-
-  AddPageResult last_add_page_result_;
+  base::Optional<AddPageResult> last_add_page_result_;
 };
 
-AddPageTaskTest::AddPageTaskTest()
-    : task_runner_(new base::TestSimpleTaskRunner()),
-      task_runner_handle_(task_runner_),
-      store_test_util_(task_runner_),
-      runner_(task_runner_),
-      last_add_page_result_(AddPageResult::RESULT_COUNT) {}
-
-AddPageTaskTest::~AddPageTaskTest() {}
-
-void AddPageTaskTest::SetUp() {
-  store_test_util_.BuildStoreInMemory();
-}
-
-void AddPageTaskTest::TearDown() {
-  store_test_util_.DeleteStore();
-}
-
 void AddPageTaskTest::ResetResults() {
-  last_add_page_result_ = AddPageResult::RESULT_COUNT;
+  last_add_page_result_.reset();
 }
 
 void AddPageTaskTest::OnAddPageDone(AddPageResult result) {
@@ -105,12 +68,12 @@ void AddPageTaskTest::OnAddPageDone(AddPageResult result) {
 }
 
 AddPageTask::AddPageTaskCallback AddPageTaskTest::add_page_callback() {
-  return base::Bind(&AddPageTaskTest::OnAddPageDone, AsWeakPtr());
+  return base::BindOnce(&AddPageTaskTest::OnAddPageDone, base::AsWeakPtr(this));
 }
 
 void AddPageTaskTest::AddPage(const OfflinePageItem& page) {
-  auto task = base::MakeUnique<AddPageTask>(store(), page, add_page_callback());
-  runner()->RunTask(std::move(task));
+  auto task = std::make_unique<AddPageTask>(store(), page, add_page_callback());
+  RunTask(std::move(task));
 }
 
 bool AddPageTaskTest::CheckPageStored(const OfflinePageItem& page) {
@@ -131,13 +94,15 @@ TEST_F(AddPageTaskTest, AddPage) {
 
 TEST_F(AddPageTaskTest, AddPageWithAllFieldsSet) {
   OfflinePageItem page(kTestUrl1, kTestOfflineId1, kTestClientId1,
-                       kTestFilePath, kTestFileSize, base::Time::Now(),
-                       kTestOrigin);
+                       kTestFilePath, kTestFileSize, base::Time::Now());
+  page.request_origin = kTestOrigin;
   page.title = kTestTitle;
-  page.original_url = kTestUrl2;
+  page.original_url_if_different = kTestUrl2;
   page.system_download_id = kTestDownloadId;
   page.file_missing_time = base::Time::Now();
   page.digest = kTestDigest;
+  page.attribution = kTestAttribution;
+  page.snippet = kTestSnippet;
 
   AddPage(page);
 
@@ -188,8 +153,8 @@ TEST_F(AddPageTaskTest, AddTwoIdenticalPages) {
 TEST_F(AddPageTaskTest, AddPageWithInvalidStore) {
   generator()->SetNamespace(kTestNamespace);
   OfflinePageItem page = generator()->CreateItem();
-  auto task = base::MakeUnique<AddPageTask>(nullptr, page, add_page_callback());
-  runner()->RunTask(std::move(task));
+  auto task = std::make_unique<AddPageTask>(nullptr, page, add_page_callback());
+  RunTask(std::move(task));
 
   // Start checking if the page is added into the store.
   EXPECT_FALSE(CheckPageStored(page));

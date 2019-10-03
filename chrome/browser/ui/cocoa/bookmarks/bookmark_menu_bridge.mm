@@ -43,6 +43,10 @@ void ClearDelegatesFromSubmenu(NSMenu* menu) {
   }
 }
 
+NSString* MenuTitleForNode(const BookmarkNode* node) {
+  return base::SysUTF16ToNSString(node->GetTitle());
+}
+
 }  // namespace
 
 BookmarkMenuBridge::BookmarkMenuBridge(Profile* profile, NSMenu* menu_root)
@@ -96,7 +100,7 @@ void BookmarkMenuBridge::BuildRootMenu() {
   if (!folder_image_) {
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     folder_image_.reset(
-        rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER).CopyNSImage());
+        [rb.GetNativeImageNamed(IDR_FOLDER_CLOSED).ToNSImage() retain]);
     [folder_image_ setTemplate:YES];
   }
 
@@ -108,31 +112,31 @@ void BookmarkMenuBridge::BuildRootMenu() {
       ManagedBookmarkServiceFactory::GetForProfile(profile_);
   const BookmarkNode* barNode = model->bookmark_bar_node();
   const BookmarkNode* managedNode = managed->managed_node();
-  if (!barNode->empty() || !managedNode->empty())
+  if (!barNode->children().empty() || !managedNode->children().empty())
     [menu_root_ addItem:[NSMenuItem separatorItem]];
-  if (!managedNode->empty()) {
+  if (!managedNode->children().empty()) {
     // Most users never see this node, so the image is only loaded if needed.
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     NSImage* image =
         rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER_MANAGED).ToNSImage();
     AddNodeAsSubmenu(menu_root_, managedNode, image);
   }
-  if (!barNode->empty())
+  if (!barNode->children().empty())
     AddNodeToMenu(barNode, menu_root_);
 
   // If the "Other Bookmarks" folder has any content, make a submenu for it and
   // fill it in.
-  if (!model->other_node()->empty()) {
+  if (!model->other_node()->children().empty()) {
     [menu_root_ addItem:[NSMenuItem separatorItem]];
     AddNodeAsSubmenu(menu_root_, model->other_node(), folder_image_);
   }
 
   // If the "Mobile Bookmarks" folder has any content, make a submenu for it and
   // fill it in.
-  if (!model->mobile_node()->empty()) {
+  if (!model->mobile_node()->children().empty()) {
     // Add a separator if we did not already add one due to a non-empty
     // "Other Bookmarks" folder.
-    if (model->other_node()->empty())
+    if (model->other_node()->children().empty())
       [menu_root_ addItem:[NSMenuItem separatorItem]];
 
     AddNodeAsSubmenu(menu_root_, model->mobile_node(), folder_image_);
@@ -147,22 +151,22 @@ void BookmarkMenuBridge::BookmarkModelBeingDeleted(BookmarkModel* model) {
 
 void BookmarkMenuBridge::BookmarkNodeMoved(BookmarkModel* model,
                                            const BookmarkNode* old_parent,
-                                           int old_index,
+                                           size_t old_index,
                                            const BookmarkNode* new_parent,
-                                           int new_index) {
+                                           size_t new_index) {
   InvalidateMenu();
 }
 
 void BookmarkMenuBridge::BookmarkNodeAdded(BookmarkModel* model,
                                            const BookmarkNode* parent,
-                                           int index) {
+                                           size_t index) {
   InvalidateMenu();
 }
 
 void BookmarkMenuBridge::BookmarkNodeRemoved(
     BookmarkModel* model,
     const BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const BookmarkNode* node,
     const std::set<GURL>& removed_urls) {
   InvalidateMenu();
@@ -245,7 +249,7 @@ void BookmarkMenuBridge::ClearBookmarkMenu() {
 void BookmarkMenuBridge::AddNodeAsSubmenu(NSMenu* menu,
                                           const BookmarkNode* node,
                                           NSImage* image) {
-  NSString* title = base::SysUTF16ToNSString(node->GetTitle());
+  NSString* title = MenuTitleForNode(node);
   base::scoped_nsobject<NSMenuItem> items(
       [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""]);
   [items setImage:image];
@@ -262,8 +266,7 @@ void BookmarkMenuBridge::AddNodeAsSubmenu(NSMenu* menu,
 
 // TODO(jrg): limit the number of bookmarks in the menubar?
 void BookmarkMenuBridge::AddNodeToMenu(const BookmarkNode* node, NSMenu* menu) {
-  int child_count = node->child_count();
-  if (child_count == 0) {
+  if (node->children().empty()) {
     NSString* empty_string = l10n_util::GetNSString(IDS_MENU_EMPTY_SUBMENU);
     base::scoped_nsobject<NSMenuItem> item([[NSMenuItem alloc]
         initWithTitle:empty_string
@@ -273,18 +276,16 @@ void BookmarkMenuBridge::AddNodeToMenu(const BookmarkNode* node, NSMenu* menu) {
     return;
   }
 
-  for (int i = 0; i < child_count; i++) {
-    const BookmarkNode* child = node->GetChild(i);
+  for (const auto& child : node->children()) {
     if (child->is_folder()) {
-      AddNodeAsSubmenu(menu, child, folder_image_);
+      AddNodeAsSubmenu(menu, child.get(), folder_image_);
     } else {
-      NSString* title = [BookmarkMenuCocoaController menuTitleForNode:child];
       base::scoped_nsobject<NSMenuItem> item([[NSMenuItem alloc]
-          initWithTitle:title
+          initWithTitle:MenuTitleForNode(child.get())
                  action:nil
           keyEquivalent:@""]);
-      bookmark_nodes_[child] = item;
-      ConfigureMenuItem(child, item, false);
+      bookmark_nodes_[child.get()] = item;
+      ConfigureMenuItem(child.get(), item, false);
       [menu addItem:item];
     }
   }
@@ -294,7 +295,7 @@ void BookmarkMenuBridge::ConfigureMenuItem(const BookmarkNode* node,
                                            NSMenuItem* item,
                                            bool set_title) {
   if (set_title)
-    [item setTitle:[BookmarkMenuCocoaController menuTitleForNode:node]];
+    [item setTitle:MenuTitleForNode(node)];
   [item setTarget:controller_];
   [item setAction:@selector(openBookmarkMenuItem:)];
   [item setTag:node->id()];

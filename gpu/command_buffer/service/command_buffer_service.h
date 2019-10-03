@@ -18,11 +18,12 @@
 
 namespace gpu {
 
+class MemoryTracker;
 class TransferBufferManager;
 
 class GPU_EXPORT CommandBufferServiceBase {
  public:
-  virtual ~CommandBufferServiceBase() {}
+  virtual ~CommandBufferServiceBase() = default;
 
   // Gets the current state of the service.
   virtual CommandBuffer::State GetState() = 0;
@@ -53,7 +54,7 @@ class GPU_EXPORT CommandBufferServiceClient {
     kPauseExecution,
   };
 
-  virtual ~CommandBufferServiceClient() {}
+  virtual ~CommandBufferServiceClient() = default;
 
   // Called every time a batch of commands was processed by the
   // CommandBufferService. The return value indicates whether the
@@ -73,7 +74,7 @@ class GPU_EXPORT CommandBufferService : public CommandBufferServiceBase {
   static const int kParseCommandsSlice = 20;
 
   CommandBufferService(CommandBufferServiceClient* client,
-                       TransferBufferManager* transfer_buffer_manager);
+                       MemoryTracker* memory_tracker);
   ~CommandBufferService() override;
 
   // CommandBufferServiceBase implementation:
@@ -97,20 +98,19 @@ class GPU_EXPORT CommandBufferService : public CommandBufferServiceBase {
   // Sets the get buffer and call the GetBufferChangeCallback.
   void SetGetBuffer(int32_t transfer_buffer_id);
 
-  // Registers an existing shared memory object with a given ID that can be used
-  // to identify it in the command buffer.
-  bool RegisterTransferBuffer(int32_t id,
-                              std::unique_ptr<BufferBacking> buffer);
+  // Registers an existing Buffer object with a given ID that can be used to
+  // identify it in the command buffer.
+  bool RegisterTransferBuffer(int32_t id, scoped_refptr<Buffer> buffer);
 
   // Unregisters and destroys the transfer buffer associated with the given id.
   void DestroyTransferBuffer(int32_t id);
 
   // Creates an in-process transfer buffer and register it with a newly created
   // id.
-  scoped_refptr<Buffer> CreateTransferBuffer(size_t size, int32_t* id);
+  scoped_refptr<Buffer> CreateTransferBuffer(uint32_t size, int32_t* id);
 
   // Creates an in-process transfer buffer and register it with a given id.
-  scoped_refptr<Buffer> CreateTransferBufferWithId(size_t size, int32_t id);
+  scoped_refptr<Buffer> CreateTransferBufferWithId(uint32_t size, int32_t id);
 
   // Sets whether commands should be processed by this scheduler. Setting to
   // false unschedules. Setting to true reschedules.
@@ -124,9 +124,11 @@ class GPU_EXPORT CommandBufferService : public CommandBufferServiceBase {
     state_.get_offset = get_offset;
   }
 
+  size_t GetSharedMemoryBytesAllocated() const;
+
  private:
   CommandBufferServiceClient* client_;
-  TransferBufferManager* transfer_buffer_manager_;
+  std::unique_ptr<TransferBufferManager> transfer_buffer_manager_;
 
   CommandBuffer::State state_;
   int32_t put_offset_ = 0;

@@ -6,14 +6,13 @@
 
 #include <memory>
 
-// This file is only instantiated in classic ash/mus. It is never used in mash.
-// See native_browser_frame_factory_chromeos.cc switches on GetAshConfig().
-#include "ash/public/cpp/window_properties.h"  // mash-ok
-#include "ash/shell.h"                         // mash-ok
-#include "ash/wm/window_properties.h"          // mash-ok
-#include "ash/wm/window_state.h"               // mash-ok
-#include "ash/wm/window_state_delegate.h"      // mash-ok
-#include "ash/wm/window_util.h"                // mash-ok
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/cpp/window_state_type.h"
+#include "ash/shell.h"
+#include "ash/wm/window_properties.h"
+#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_delegate.h"
+#include "ash/wm/window_util.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -28,7 +27,7 @@ namespace {
 
 // BrowserWindowStateDelegate class handles a user's fullscreen
 // request (Shift+F4/F4).
-class BrowserWindowStateDelegate : public ash::wm::WindowStateDelegate {
+class BrowserWindowStateDelegate : public ash::WindowStateDelegate {
  public:
   explicit BrowserWindowStateDelegate(Browser* browser)
       : browser_(browser) {
@@ -36,8 +35,8 @@ class BrowserWindowStateDelegate : public ash::wm::WindowStateDelegate {
   }
   ~BrowserWindowStateDelegate() override {}
 
-  // Overridden from ash::wm::WindowStateDelegate.
-  bool ToggleFullscreen(ash::wm::WindowState* window_state) override {
+  // Overridden from ash::WindowStateDelegate.
+  bool ToggleFullscreen(ash::WindowState* window_state) override {
     DCHECK(window_state->IsFullscreen() || window_state->CanMaximize());
     // Windows which cannot be maximized should not be fullscreened.
     if (!window_state->IsFullscreen() && !window_state->CanMaximize())
@@ -45,6 +44,7 @@ class BrowserWindowStateDelegate : public ash::wm::WindowStateDelegate {
     chrome::ToggleFullscreenMode(browser_);
     return true;
   }
+
  private:
   Browser* browser_;  // not owned.
 
@@ -62,26 +62,37 @@ BrowserFrameAsh::BrowserFrameAsh(BrowserFrame* browser_frame,
       browser_view_(browser_view) {
   GetNativeWindow()->SetName("BrowserFrameAsh");
   Browser* browser = browser_view->browser();
-  ash::wm::WindowState* window_state =
-      ash::wm::GetWindowState(GetNativeWindow());
-  window_state->SetDelegate(std::unique_ptr<ash::wm::WindowStateDelegate>(
-      new BrowserWindowStateDelegate(browser)));
 
   // Turn on auto window management if we don't need an explicit bounds.
   // This way the requested bounds are honored.
   if (!browser->bounds_overridden() && !browser->is_session_restore())
     SetWindowAutoManaged();
-
-  // For legacy reasons v1 apps (like Secure Shell) are allowed to consume keys
-  // like brightness, volume, etc. Otherwise these keys are handled by the
-  // Ash window manager.
-  window_state->SetCanConsumeSystemKeys(browser->is_app());
 }
 
 BrowserFrameAsh::~BrowserFrameAsh() {}
 
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserFrameAsh, views::NativeWidgetAura overrides:
+
+void BrowserFrameAsh::OnWidgetInitDone() {
+  Browser* browser = browser_view_->browser();
+  ash::WindowState* window_state = ash::WindowState::Get(GetNativeWindow());
+  window_state->SetDelegate(
+      std::make_unique<BrowserWindowStateDelegate>(browser));
+  // For legacy reasons v1 apps (like Secure Shell) are allowed to consume keys
+  // like brightness, volume, etc. Otherwise these keys are handled by the
+  // Ash window manager.
+  window_state->SetCanConsumeSystemKeys(browser->is_app());
+}
+
+void BrowserFrameAsh::OnBoundsChanged(const gfx::Rect& old_bounds,
+                                      const gfx::Rect& new_bounds) {
+  NativeWidgetAura::OnBoundsChanged(old_bounds, new_bounds);
+  if (GetNativeWindow()->transparent()) {
+    GetNativeWindow()->SetOpaqueRegionsForOcclusion(
+        {gfx::Rect(new_bounds.size())});
+  }
+}
 
 void BrowserFrameAsh::OnWindowTargetVisibilityChanged(bool visible) {
   if (visible) {
@@ -107,23 +118,26 @@ void BrowserFrameAsh::GetWindowPlacement(
                                    ash::kRestoreBoundsOverrideKey);
   if (override_bounds && !override_bounds->IsEmpty()) {
     *bounds = *override_bounds;
-    *show_state = GetWidget()->GetNativeWindow()->GetProperty(
-                      ash::kRestoreShowStateOverrideKey);
+    *show_state =
+        ash::ToWindowShowState(GetWidget()->GetNativeWindow()->GetProperty(
+            ash::kRestoreWindowStateTypeOverrideKey));
   } else {
     *bounds = GetWidget()->GetRestoredBounds();
     *show_state = GetWidget()->GetNativeWindow()->GetProperty(
                       aura::client::kShowStateKey);
   }
 
+  // Session restore might be unable to correctly restore other states.
+  // For the record, https://crbug.com/396272
   if (*show_state != ui::SHOW_STATE_MAXIMIZED &&
       *show_state != ui::SHOW_STATE_MINIMIZED) {
     *show_state = ui::SHOW_STATE_NORMAL;
   }
 }
 
-bool BrowserFrameAsh::PreHandleKeyboardEvent(
+content::KeyboardEventProcessingResult BrowserFrameAsh::PreHandleKeyboardEvent(
     const content::NativeWebKeyboardEvent& event) {
-  return false;
+  return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool BrowserFrameAsh::HandleKeyboardEvent(

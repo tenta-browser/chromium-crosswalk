@@ -17,7 +17,6 @@
 #include "content/renderer/pepper/pepper_audio_input_host.h"
 #include "content/renderer/pepper/pepper_audio_output_host.h"
 #include "content/renderer/pepper/pepper_camera_device_host.h"
-#include "content/renderer/pepper/pepper_compositor_host.h"
 #include "content/renderer/pepper/pepper_file_chooser_host.h"
 #include "content/renderer/pepper/pepper_file_ref_renderer_host.h"
 #include "content/renderer/pepper/pepper_file_system_host.h"
@@ -27,22 +26,20 @@
 #include "content/renderer/pepper/pepper_url_loader_host.h"
 #include "content/renderer/pepper/pepper_video_capture_host.h"
 #include "content/renderer/pepper/pepper_video_decoder_host.h"
-#include "content/renderer/pepper/pepper_video_destination_host.h"
 #include "content/renderer/pepper/pepper_video_encoder_host.h"
-#include "content/renderer/pepper/pepper_video_source_host.h"
 #include "content/renderer/pepper/pepper_websocket_host.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_message_utils.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/serialized_structs.h"
 #include "ppapi/shared_impl/ppb_image_data_shared.h"
 #include "services/service_manager/sandbox/switches.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -55,21 +52,7 @@ namespace content {
 
 namespace {
 
-#if BUILDFLAG(ENABLE_WEBRTC)
-bool CanUseMediaStreamAPI(const RendererPpapiHost* host, PP_Instance instance) {
-  blink::WebPluginContainer* container =
-      host->GetContainerForInstance(instance);
-  if (!container)
-    return false;
-
-  GURL document_url = container->GetDocument().Url();
-  ContentRendererClient* content_renderer_client =
-      GetContentClient()->renderer();
-  return content_renderer_client->AllowPepperMediaStreamAPI(document_url);
-}
-#endif  // BUILDFLAG(ENABLE_WEBRTC)
-
-static bool CanUseCameraDeviceAPI(const RendererPpapiHost* host,
+static bool CanUseCameraDeviceAPI(RendererPpapiHost* host,
                                   PP_Instance instance) {
   blink::WebPluginContainer* container =
       host->GetContainerForInstance(instance);
@@ -80,19 +63,6 @@ static bool CanUseCameraDeviceAPI(const RendererPpapiHost* host,
   ContentRendererClient* content_renderer_client =
       GetContentClient()->renderer();
   return content_renderer_client->IsPluginAllowedToUseCameraDeviceAPI(
-      document_url);
-}
-
-bool CanUseCompositorAPI(const RendererPpapiHost* host, PP_Instance instance) {
-  blink::WebPluginContainer* container =
-      host->GetContainerForInstance(instance);
-  if (!container)
-    return false;
-
-  GURL document_url = container->GetDocument().Url();
-  ContentRendererClient* content_renderer_client =
-      GetContentClient()->renderer();
-  return content_renderer_client->IsPluginAllowedToUseCompositorAPI(
       document_url);
 }
 
@@ -123,11 +93,6 @@ ContentRendererPepperHostFactory::CreateResourceHost(
 
   // Public interfaces.
   switch (message.type()) {
-    case PpapiHostMsg_Compositor_Create::ID: {
-      if (!CanUseCompositorAPI(host_, instance))
-        return nullptr;
-      return std::make_unique<PepperCompositorHost>(host_, instance, resource);
-    }
     case PpapiHostMsg_FileRef_CreateForFileAPI::ID: {
       PP_Resource file_system;
       std::string internal_path;
@@ -186,22 +151,9 @@ ContentRendererPepperHostFactory::CreateResourceHost(
                                                       resource);
     case PpapiHostMsg_WebSocket_Create::ID:
       return std::make_unique<PepperWebSocketHost>(host_, instance, resource);
-#if BUILDFLAG(ENABLE_WEBRTC)
     case PpapiHostMsg_MediaStreamVideoTrack_Create::ID:
       return std::make_unique<PepperMediaStreamVideoTrackHost>(host_, instance,
                                                                resource);
-    // These private MediaStream interfaces are exposed as if they were public
-    // so they can be used by NaCl plugins. However, they are available only
-    // for whitelisted apps.
-    case PpapiHostMsg_VideoDestination_Create::ID:
-      if (CanUseMediaStreamAPI(host_, instance))
-        return std::make_unique<PepperVideoDestinationHost>(host_, instance,
-                                                            resource);
-    case PpapiHostMsg_VideoSource_Create::ID:
-      if (CanUseMediaStreamAPI(host_, instance))
-        return std::make_unique<PepperVideoSourceHost>(host_, instance,
-                                                       resource);
-#endif  // BUILDFLAG(ENABLE_WEBRTC)
   }
 
   // Dev interfaces.
@@ -220,9 +172,9 @@ ContentRendererPepperHostFactory::CreateResourceHost(
         return std::make_unique<PepperFileChooserHost>(host_, instance,
                                                        resource);
       case PpapiHostMsg_VideoCapture_Create::ID: {
-        std::unique_ptr<PepperVideoCaptureHost> host(
+        std::unique_ptr<PepperVideoCaptureHost> video_host(
             new PepperVideoCaptureHost(host_, instance, resource));
-        return host->Init() ? std::move(host) : nullptr;
+        return video_host->Init() ? std::move(video_host) : nullptr;
       }
     }
   }
@@ -233,9 +185,9 @@ ContentRendererPepperHostFactory::CreateResourceHost(
     if (!GetPermissions().HasPermission(ppapi::PERMISSION_PRIVATE) &&
         !CanUseCameraDeviceAPI(host_, instance))
       return nullptr;
-    std::unique_ptr<PepperCameraDeviceHost> host(
+    std::unique_ptr<PepperCameraDeviceHost> camera_host(
         new PepperCameraDeviceHost(host_, instance, resource));
-    return host->Init() ? std::move(host) : nullptr;
+    return camera_host->Init() ? std::move(camera_host) : nullptr;
   }
 
   return nullptr;

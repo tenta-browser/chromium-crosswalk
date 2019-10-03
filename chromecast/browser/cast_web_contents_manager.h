@@ -25,6 +25,8 @@ class WebContents;
 
 namespace chromecast {
 
+class CastWebViewFactory;
+
 // This class dispenses CastWebView objects which are used to wrap WebContents
 // in cast_shell. This class can take ownership of a WebContents instance when
 // the page is in the process of tearing down; we cannot simply post a delayed
@@ -32,15 +34,18 @@ namespace chromecast {
 // result of browser shutdown.
 class CastWebContentsManager {
  public:
-  explicit CastWebContentsManager(content::BrowserContext* browser_context);
+  CastWebContentsManager(content::BrowserContext* browser_context,
+                         CastWebViewFactory* web_view_factory);
   ~CastWebContentsManager();
 
   std::unique_ptr<CastWebView> CreateWebView(
-      CastWebView::Delegate* delegate,
+      const CastWebView::CreateParams& params,
       scoped_refptr<content::SiteInstance> site_instance,
-      bool transparent,
-      bool allow_media_access,
-      bool is_headless);
+      const GURL& initial_url);
+
+  std::unique_ptr<CastWebView> CreateWebView(
+      const CastWebView::CreateParams& params,
+      const GURL& initial_url);
 
   // Take ownership of |web_contents| and delete after |time_delta|, or sooner
   // if necessary.
@@ -52,6 +57,7 @@ class CastWebContentsManager {
   void DeleteWebContents(content::WebContents* web_contents);
 
   content::BrowserContext* const browser_context_;
+  CastWebViewFactory* const web_view_factory_;
   base::flat_set<std::unique_ptr<content::WebContents>> expiring_web_contents_;
 
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;

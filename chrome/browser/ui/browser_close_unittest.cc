@@ -4,9 +4,11 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
@@ -18,7 +20,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class TestingDownloadCoreService : public DownloadCoreService {
@@ -65,9 +67,7 @@ class TestingDownloadCoreService : public DownloadCoreService {
     ADD_FAILURE();
   }
 
-  bool IsShelfEnabled() override {
-    return true;
-  }
+  bool IsShelfEnabled() override { return true; }
 
   // KeyedService
   void Shutdown() override {}
@@ -142,7 +142,7 @@ class BrowserCloseTest : public testing::Test {
                                int num_windows,
                                int num_downloads) {
     DownloadCoreServiceFactory::GetInstance()->SetTestingFactory(
-        profile, &CreateTestingDownloadCoreService);
+        profile, base::BindRepeating(&CreateTestingDownloadCoreService));
     DownloadCoreService* download_core_service(
         DownloadCoreServiceFactory::GetForBrowserContext(profile));
     TestingDownloadCoreService* mock_download_service(
@@ -201,6 +201,8 @@ TEST_F(BrowserCloseTest, LastIncognito) {
   EXPECT_EQ(Browser::DOWNLOAD_CLOSE_LAST_WINDOW_IN_INCOGNITO_PROFILE,
             browser->OkToCloseWithInProgressDownloads(&num_downloads_blocking));
   EXPECT_EQ(num_downloads_blocking, 1);
+
+  EXPECT_EQ(false, browser->CanCloseWithInProgressDownloads());
 }
 
 // Last incognito window close with no downloads => no warning.
@@ -259,6 +261,11 @@ TEST_F(BrowserCloseTest, LastRegular) {
   EXPECT_EQ(Browser::DOWNLOAD_CLOSE_BROWSER_SHUTDOWN,
             browser->OkToCloseWithInProgressDownloads(&num_downloads_blocking));
   EXPECT_EQ(num_downloads_blocking, 1);
+#if defined(OS_MACOSX)
+  EXPECT_EQ(true, browser->CanCloseWithInProgressDownloads());
+#else
+  EXPECT_EQ(false, browser->CanCloseWithInProgressDownloads());
+#endif
 }
 
 // Last regular window triggers browser close warning if download is on a

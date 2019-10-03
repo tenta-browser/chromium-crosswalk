@@ -11,8 +11,8 @@
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/icc_profile.h"
@@ -37,6 +37,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::BGRX_1010102:
       DCHECK_EQ(plane, 0);
       return 4;
     case gfx::BufferFormat::RGBA_F16:
@@ -44,23 +45,19 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
       return 8;
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       static int32_t bytes_per_element[] = {1, 2};
-      DCHECK_LT(static_cast<size_t>(plane), arraysize(bytes_per_element));
+      DCHECK_LT(static_cast<size_t>(plane), base::size(bytes_per_element));
       return bytes_per_element[plane];
     case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::UYVY_422:
       DCHECK_EQ(plane, 0);
       return 2;
-    case gfx::BufferFormat::ATC:
-    case gfx::BufferFormat::ATCIA:
-    case gfx::BufferFormat::DXT1:
-    case gfx::BufferFormat::DXT5:
-    case gfx::BufferFormat::ETC1:
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::YVU_420:
+    case gfx::BufferFormat::P010:
       NOTREACHED();
       return 0;
   }
@@ -73,6 +70,8 @@ int32_t PixelFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return 'L008';
+    case gfx::BufferFormat::BGRX_1010102:
+      return 'l10r';  // little-endian ARGB2101010 full-range ARGB
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
@@ -85,16 +84,14 @@ int32_t PixelFormat(gfx::BufferFormat format) {
       return '2vuy';
     case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
-    case gfx::BufferFormat::ATC:
-    case gfx::BufferFormat::ATCIA:
-    case gfx::BufferFormat::DXT1:
-    case gfx::BufferFormat::DXT5:
-    case gfx::BufferFormat::ETC1:
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
+    // Technically RGBX_1010102 should be accepted as 'R10k', but then it won't
+    // be supported by CGLTexImageIOSurface2D(), so it's best to reject it here.
     case gfx::BufferFormat::YVU_420:
+    case gfx::BufferFormat::P010:
       NOTREACHED();
       return 0;
   }
@@ -126,11 +123,13 @@ void IOSurfaceMachPortTraits::Release(mach_port_t port) {
 
 }  // namespace internal
 
-IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
+IOSurfaceRef CreateIOSurface(const gfx::Size& size,
+                             gfx::BufferFormat format,
+                             bool should_clear) {
   TRACE_EVENT0("ui", "CreateIOSurface");
   base::TimeTicks start_time = base::TimeTicks::Now();
 
-  size_t num_planes = gfx::NumberOfPlanesForBufferFormat(format);
+  size_t num_planes = gfx::NumberOfPlanesForLinearBufferFormat(format);
   base::ScopedCFTypeRef<CFMutableArrayRef> planes(CFArrayCreateMutable(
       kCFAllocatorDefault, num_planes, &kCFTypeArrayCallBacks));
 
@@ -176,13 +175,10 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
     return nullptr;
   }
 
-  // For unknown reasons, triggering this lock on OS X 10.9, on certain GPUs,
-  // causes PDFs to render incorrectly. Hopefully this check can be removed once
-  // pdfium switches to a Skia backend on Mac.
-  // https://crbug.com/594343.
   // IOSurface clearing causes significant performance regression on about half
   // of all devices running Yosemite. https://crbug.com/606850#c22.
-  bool should_clear = !base::mac::IsOS10_9() && !base::mac::IsOS10_10();
+  if (base::mac::IsOS10_10())
+    should_clear = false;
 
   if (should_clear) {
     // Zero-initialize the IOSurface. Calling IOSurfaceLock/IOSurfaceUnlock
@@ -192,24 +188,6 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
     r = IOSurfaceUnlock(surface, 0, nullptr);
     DCHECK_EQ(kIOReturnSuccess, r);
   }
-
-  bool force_color_space = false;
-
-  // Displaying an IOSurface that does not have a color space using an
-  // AVSampleBufferDisplayLayer can result in a black screen. Ensure that
-  // a color space always be specified.
-  // https://crbug.com/608879
-  if (format == gfx::BufferFormat::YUV_420_BIPLANAR)
-    force_color_space = true;
-
-  // On Sierra, all IOSurfaces are color corrected as though they are in sRGB
-  // color space by default. Prior to Sierra, IOSurfaces were not color
-  // corrected (they were treated as though they were in the display color
-  // space). Override this by defaulting IOSurfaces to be in the main display
-  // color space.
-  // https://crbug.com/654488
-  if (base::mac::IsAtLeastOS10_12())
-    force_color_space = true;
 
   // Ensure that all IOSurfaces start as sRGB.
   CGColorSpaceRef color_space = base::mac::GetSRGBColorSpace();
@@ -223,25 +201,45 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
 }
 
 void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
-                            const gfx::ColorSpace& color_space) {
-  // Retrieve the ICC profile data that created this profile, if it exists.
-  ICCProfile icc_profile = ICCProfile::FromCacheMac(color_space);
-
-  // If that fails, generate parametric data.
-  if (!icc_profile.IsValid()) {
-    icc_profile =
-        ICCProfile::FromParametricColorSpace(color_space.GetAsFullRangeRGB());
+                            const ColorSpace& color_space) {
+  // Special-case sRGB.
+  if (color_space == ColorSpace::CreateSRGB()) {
+    base::ScopedCFTypeRef<CFDataRef> srgb_icc(
+        CGColorSpaceCopyICCProfile(base::mac::GetSRGBColorSpace()));
+    IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"), srgb_icc);
+    return;
   }
 
-  // If that fails, we can't use this color space.
+  // Special-case BT2020_NCL.
+  if (__builtin_available(macos 10.12, *)) {
+    const ColorSpace kBt2020(
+        ColorSpace::PrimaryID::BT2020, ColorSpace::TransferID::SMPTEST2084,
+        ColorSpace::MatrixID::BT2020_NCL, ColorSpace::RangeID::LIMITED);
+    if (color_space == kBt2020) {
+      base::ScopedCFTypeRef<CGColorSpaceRef> cg_color_space(
+          CGColorSpaceCreateWithName(kCGColorSpaceITUR_2020));
+      DCHECK(cg_color_space);
+
+      base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(
+          CGColorSpaceCopyICCData(cg_color_space));
+      DCHECK(cf_data_icc_profile);
+      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
+                        cf_data_icc_profile);
+      return;
+    }
+  }
+
+  // Generate an ICCProfile from the parametric color space.
+  ICCProfile icc_profile =
+      ICCProfile::FromColorSpace(color_space.GetAsFullRangeRGB());
   if (!icc_profile.IsValid()) {
     DLOG(ERROR) << "Failed to set color space for IOSurface: no ICC profile: "
                 << color_space.ToString();
     return;
   }
-  std::vector<char> icc_profile_data = icc_profile.GetData();
 
   // Package it as a CFDataRef and send it to the IOSurface.
+  std::vector<char> icc_profile_data = icc_profile.GetData();
   base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(CFDataCreate(
       nullptr, reinterpret_cast<const UInt8*>(icc_profile_data.data()),
       icc_profile_data.size()));

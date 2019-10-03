@@ -29,6 +29,7 @@ struct CONTENT_EXPORT SyntheticGestureParams {
     DEFAULT_INPUT,
     TOUCH_INPUT,
     MOUSE_INPUT,
+    TOUCHPAD_INPUT = MOUSE_INPUT,
     PEN_INPUT,
     GESTURE_SOURCE_TYPE_MAX = PEN_INPUT
   };
@@ -40,6 +41,10 @@ struct CONTENT_EXPORT SyntheticGestureParams {
     PINCH_GESTURE,
     TAP_GESTURE,
     POINTER_ACTION_LIST,
+
+    // Used to synchronize with the renderer to a known state. See
+    // WaitForInputProcessed in input_handler.mojom.
+    WAIT_FOR_INPUT_PROCESSED,
     SYNTHETIC_GESTURE_TYPE_MAX = POINTER_ACTION_LIST
   };
 

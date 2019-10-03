@@ -15,11 +15,12 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/win/scoped_handle.h"
 
@@ -117,7 +118,7 @@ base::FilePath ToFilePath(const UNICODE_STRING* str) {
 }
 
 template <typename NotificationDataType>
-void OnModuleEvent(mojom::ModuleEventType event_type,
+void OnModuleEvent(ModuleWatcher::ModuleEventType event_type,
                    const NotificationDataType& notification_data,
                    const ModuleWatcher::OnModuleEventCallback& callback) {
   ModuleWatcher::ModuleEvent event(
@@ -166,7 +167,7 @@ void ModuleWatcher::Initialize(OnModuleEventCallback callback) {
   // doesn't slow down startup.
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::TaskPriority::BACKGROUND,
+      {base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&ModuleWatcher::EnumerateAlreadyLoadedModules,
                      base::SequencedTaskRunnerHandle::Get(),
@@ -218,7 +219,7 @@ void ModuleWatcher::EnumerateAlreadyLoadedModules(
   MODULEENTRY32 module = {sizeof(module)};
   for (BOOL result = ::Module32First(snap.Get(), &module); result != FALSE;
        result = ::Module32Next(snap.Get(), &module)) {
-    ModuleEvent event(mojom::ModuleEventType::MODULE_ALREADY_LOADED,
+    ModuleEvent event(ModuleEventType::kModuleAlreadyLoaded,
                       base::FilePath(module.szExePath), module.modBaseAddr,
                       module.modBaseSize);
     task_runner->PostTask(FROM_HERE, base::BindOnce(callback, event));
@@ -245,8 +246,8 @@ void __stdcall ModuleWatcher::LoaderNotificationCallback(
 
   switch (notification_reason) {
     case LDR_DLL_NOTIFICATION_REASON_LOADED:
-      OnModuleEvent(mojom::ModuleEventType::MODULE_LOADED,
-                    notification_data->Loaded, callback);
+      OnModuleEvent(ModuleEventType::kModuleLoaded, notification_data->Loaded,
+                    callback);
       break;
 
     case LDR_DLL_NOTIFICATION_REASON_UNLOADED:

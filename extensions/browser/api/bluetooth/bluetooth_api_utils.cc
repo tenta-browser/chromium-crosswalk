@@ -7,14 +7,18 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "device/bluetooth/bluetooth_adapter.h"
+#include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "extensions/common/api/bluetooth.h"
 
 namespace bluetooth = extensions::api::bluetooth;
 
+using bluetooth::VendorIdSource;
 using device::BluetoothDevice;
 using device::BluetoothDeviceType;
-using bluetooth::VendorIdSource;
+#if defined(OS_LINUX)
+using device::BluetoothTransport;
+#endif
 
 namespace {
 
@@ -86,6 +90,28 @@ bool ConvertDeviceTypeToApi(const BluetoothDeviceType& input,
   }
 }
 
+#if defined(OS_LINUX)
+bool ConvertTransportToApi(const BluetoothTransport& input,
+                           bluetooth::Transport* output) {
+  switch (input) {
+    case BluetoothTransport::BLUETOOTH_TRANSPORT_INVALID:
+      *output = bluetooth::TRANSPORT_INVALID;
+      return true;
+    case BluetoothTransport::BLUETOOTH_TRANSPORT_CLASSIC:
+      *output = bluetooth::TRANSPORT_CLASSIC;
+      return true;
+    case BluetoothTransport::BLUETOOTH_TRANSPORT_LE:
+      *output = bluetooth::TRANSPORT_LE;
+      return true;
+    case BluetoothTransport::BLUETOOTH_TRANSPORT_DUAL:
+      *output = bluetooth::TRANSPORT_DUAL;
+      return true;
+    default:
+      return false;
+  }
+}
+#endif
+
 }  // namespace
 
 namespace extensions {
@@ -132,6 +158,15 @@ void BluetoothDeviceToApiDevice(const device::BluetoothDevice& device,
     out->inquiry_tx_power.reset(new int(device.GetInquiryTxPower().value()));
   else
     out->inquiry_tx_power.reset();
+
+  if (device.battery_percentage())
+    out->battery_percentage.reset(new int(device.battery_percentage().value()));
+  else
+    out->battery_percentage.reset();
+
+#if defined(OS_LINUX)
+  ConvertTransportToApi(device.GetType(), &(out->transport));
+#endif
 }
 
 void PopulateAdapterState(const device::BluetoothAdapter& adapter,
@@ -142,6 +177,20 @@ void PopulateAdapterState(const device::BluetoothAdapter& adapter,
   out->name = adapter.GetName();
   out->address = adapter.GetAddress();
 }
+
+#if defined(OS_CHROMEOS)
+device::BluetoothFilterType ToBluetoothDeviceFilterType(FilterType type) {
+  switch (type) {
+    case FilterType::FILTER_TYPE_NONE:
+    case FilterType::FILTER_TYPE_ALL:
+      return device::BluetoothFilterType::ALL;
+    case FilterType::FILTER_TYPE_KNOWN:
+      return device::BluetoothFilterType::KNOWN;
+    default:
+      NOTREACHED();
+  }
+}
+#endif
 
 }  // namespace bluetooth
 }  // namespace api

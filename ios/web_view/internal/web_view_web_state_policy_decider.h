@@ -7,7 +7,7 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/web/public/web_state/web_state_policy_decider.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
 
 namespace web {
 class WebState;
@@ -25,8 +25,9 @@ class WebViewWebStatePolicyDecider : public web::WebStatePolicyDecider {
   WebViewWebStatePolicyDecider(web::WebState* web_state, CWVWebView* web_view);
 
   // web::WebStatePolicyDecider overrides:
-  bool ShouldAllowRequest(NSURLRequest* request,
-                          ui::PageTransition transition) override;
+  bool ShouldAllowRequest(
+      NSURLRequest* request,
+      const web::WebStatePolicyDecider::RequestInfo& request_info) override;
   bool ShouldAllowResponse(NSURLResponse* response,
                            bool for_main_frame) override;
 

@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/tick_clock.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 
 namespace ash {
@@ -33,7 +33,9 @@ class ASH_EXPORT PeripheralBatteryNotifier
   PeripheralBatteryNotifier();
   ~PeripheralBatteryNotifier() override;
 
-  void set_testing_clock(base::TickClock* clock) { testing_clock_ = clock; }
+  void set_testing_clock(const base::TickClock* clock) {
+    testing_clock_ = clock;
+  }
 
   // chromeos::PowerManagerClient::Observer:
   void PeripheralBatteryStatusReceived(const std::string& path,
@@ -87,7 +89,7 @@ class ASH_EXPORT PeripheralBatteryNotifier
   scoped_refptr<device::BluetoothAdapter> bluetooth_adapter_;
 
   // Used only for helping test. Not owned and can be nullptr.
-  base::TickClock* testing_clock_ = nullptr;
+  const base::TickClock* testing_clock_ = nullptr;
 
   std::unique_ptr<base::WeakPtrFactory<PeripheralBatteryNotifier>>
       weakptr_factory_;

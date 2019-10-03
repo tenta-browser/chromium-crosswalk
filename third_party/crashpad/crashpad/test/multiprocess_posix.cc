@@ -143,6 +143,10 @@ void Multiprocess::Run() {
     if (exception_swallower.get()) {
       ExceptionSwallower::SwallowExceptions();
     }
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
+    if (reason_ == kTerminationSignal && Signals::IsCrashSignal(code_)) {
+      Signals::InstallDefaultHandler(code_);
+    }
 #endif  // OS_MACOSX
 
     RunChild();
@@ -150,11 +154,19 @@ void Multiprocess::Run() {
 }
 
 void Multiprocess::SetExpectedChildTermination(TerminationReason reason,
-                                               int code) {
+                                               ReturnCodeType code) {
   EXPECT_EQ(info_, nullptr)
       << "SetExpectedChildTermination() must be called before Run()";
   reason_ = reason;
   code_ = code;
+}
+
+void Multiprocess::SetExpectedChildTerminationBuiltinTrap() {
+#if defined(ARCH_CPU_ARM64) || defined(ARCH_CPU_MIPS_FAMILY)
+  SetExpectedChildTermination(kTerminationSignal, SIGTRAP);
+#else
+  SetExpectedChildTermination(kTerminationSignal, SIGILL);
+#endif
 }
 
 Multiprocess::~Multiprocess() {

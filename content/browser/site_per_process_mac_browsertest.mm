@@ -6,11 +6,16 @@
 
 #include <Cocoa/Cocoa.h>
 
+#include "base/bind.h"
 #include "base/mac/mac_util.h"
+#include "base/task/post_task.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_mac.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/hit_test_region_observer.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -47,10 +52,10 @@ class TextInputClientMacHelper {
  private:
   void OnResult(const std::string& string, const gfx::Point& point) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
-          base::Bind(&TextInputClientMacHelper::OnResult,
-                     base::Unretained(this), string, point));
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
+          base::BindOnce(&TextInputClientMacHelper::OnResult,
+                         base::Unretained(this), string, point));
       return;
     }
     word_ = string;
@@ -167,7 +172,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 
   blink::WebMouseWheelEvent scroll_event(
       blink::WebInputEvent::kMouseWheel, blink::WebInputEvent::kNoModifiers,
-      blink::WebInputEvent::kTimeStampForTesting);
+      blink::WebInputEvent::GetStaticTimeStampForTests());
   scroll_event.SetPositionInWidget(1, 1);
   scroll_event.has_precise_scrolling_deltas = true;
   scroll_event.delta_x = 0.0f;
@@ -189,28 +194,11 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
   scroll_event.momentum_phase = blink::WebMouseWheelEvent::kPhaseNone;
   child_rwhv->ProcessMouseWheelEvent(scroll_event, ui::LatencyInfo());
 
-  // If wheel scroll latching is enabled, no wheel event with phase ended will
-  // be sent before a wheel event with momentum phase began. So, no
-  // GestureScrollEnd and no GestureScrollBegin will be generated between
-  // normal scroll and momentum scroll phases.
-  if (!child_rwhv->wheel_scroll_latching_enabled()) {
-    // End of non-momentum scrolling.
-    scroll_event.delta_y = 0.0f;
-    scroll_event.phase = blink::WebMouseWheelEvent::kPhaseEnded;
-    scroll_event.momentum_phase = blink::WebMouseWheelEvent::kPhaseNone;
-    child_rwhv->ProcessMouseWheelEvent(scroll_event, ui::LatencyInfo());
-    gesture_scroll_end_ack_observer.Wait();
-    gesture_scroll_begin_ack_observer.Reset();
-    gesture_scroll_end_ack_observer.Reset();
-  }
-
   // We now go into a fling.
   scroll_event.delta_y = -2.0f;
   scroll_event.phase = blink::WebMouseWheelEvent::kPhaseNone;
   scroll_event.momentum_phase = blink::WebMouseWheelEvent::kPhaseBegan;
   child_rwhv->ProcessMouseWheelEvent(scroll_event, ui::LatencyInfo());
-  if (!child_rwhv->wheel_scroll_latching_enabled())
-    gesture_scroll_begin_ack_observer.Wait();
 
   scroll_event.delta_y = -2.0f;
   scroll_event.phase = blink::WebMouseWheelEvent::kPhaseNone;
@@ -227,17 +215,12 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
 
 namespace {
 
-NSEventPhase PhaseForEventType(NSEventType type) {
-  if (type == NSEventTypeBeginGesture)
-    return NSEventPhaseBegan;
-  if (type == NSEventTypeEndGesture)
-    return NSEventPhaseEnded;
-  return NSEventPhaseChanged;
-}
-
-id MockGestureEvent(NSEventType type, double magnification, int x, int y) {
+id MockGestureEvent(NSEventType type,
+                    double magnification,
+                    int x,
+                    int y,
+                    NSEventPhase phase) {
   id event = [OCMockObject mockForClass:[NSEvent class]];
-  NSEventPhase phase = PhaseForEventType(type);
   NSPoint locationInWindow = NSMakePoint(x, y);
   CGFloat deltaX = 0;
   CGFloat deltaY = 0;
@@ -272,27 +255,33 @@ void SendMacTouchpadPinchSequenceWithExpectedTarget(
     RenderWidgetHostViewBase*& router_touchpad_gesture_target,
     RenderWidgetHostViewBase* expected_target) {
   auto* root_view_mac = static_cast<RenderWidgetHostViewMac*>(root_view);
-  RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->cocoa_view();
+  RenderWidgetHostViewCocoa* cocoa_view = root_view_mac->GetInProcessNSView();
 
-  NSEvent* pinchBeginEvent = MockGestureEvent(
-      NSEventTypeBeginGesture, 0, gesture_point.x(), gesture_point.y());
+  NSEvent* pinchBeginEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseBegan);
   if (ShouldSendGestureEvents())
     [cocoa_view beginGestureWithEvent:pinchBeginEvent];
   [cocoa_view magnifyWithEvent:pinchBeginEvent];
   // We don't check the gesture target yet, since on mac the GesturePinchBegin
   // isn't sent until the first PinchUpdate.
 
-  NSEvent* pinchUpdateEvent = MockGestureEvent(
-      NSEventTypeMagnify, 0.25, gesture_point.x(), gesture_point.y());
+  InputEventAckWaiter waiter(expected_target->GetRenderWidgetHost(),
+                             blink::WebInputEvent::kGesturePinchBegin);
+  NSEvent* pinchUpdateEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0.25, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseChanged);
   [cocoa_view magnifyWithEvent:pinchUpdateEvent];
+  waiter.Wait();
   EXPECT_EQ(expected_target, router_touchpad_gesture_target);
 
-  NSEvent* pinchEndEvent = MockGestureEvent(
-      NSEventTypeEndGesture, 0, gesture_point.x(), gesture_point.y());
+  NSEvent* pinchEndEvent =
+      MockGestureEvent(NSEventTypeMagnify, 0, gesture_point.x(),
+                       gesture_point.y(), NSEventPhaseEnded);
   [cocoa_view magnifyWithEvent:pinchEndEvent];
   if (ShouldSendGestureEvents())
     [cocoa_view endGestureWithEvent:pinchEndEvent];
-  EXPECT_EQ(expected_target, router_touchpad_gesture_target);
+  EXPECT_EQ(nullptr, router_touchpad_gesture_target);
 }
 
 }  // namespace
@@ -316,7 +305,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
   // surface information required for event hit testing is ready.
   auto* rwhv_child =
       static_cast<RenderWidgetHostViewBase*>(child_frame_host->GetView());
-  WaitForChildFrameSurfaceReady(child_frame_host);
+  WaitForHitTestDataOrChildSurfaceReady(child_frame_host);
 
   // All touches & gestures are sent to the main frame's view, and should be
   // routed appropriately from there.
@@ -324,20 +313,19 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessMacBrowserTest,
       contents->GetRenderWidgetHostView());
 
   RenderWidgetHostInputEventRouter* router = contents->GetInputEventRouter();
-  EXPECT_EQ(nullptr, router->touchpad_gesture_target_.target);
+  EXPECT_EQ(nullptr, router->touchpad_gesture_target_);
 
   gfx::Point main_frame_point(25, 575);
   gfx::Point child_center(150, 450);
 
   // Send touchpad pinch sequence to main-frame.
   SendMacTouchpadPinchSequenceWithExpectedTarget(
-      rwhv_parent, main_frame_point, router->touchpad_gesture_target_.target,
+      rwhv_parent, main_frame_point, router->touchpad_gesture_target_,
       rwhv_parent);
 
   // Send touchpad pinch sequence to child.
   SendMacTouchpadPinchSequenceWithExpectedTarget(
-      rwhv_parent, child_center, router->touchpad_gesture_target_.target,
-      rwhv_child);
+      rwhv_parent, child_center, router->touchpad_gesture_target_, rwhv_child);
 }
 
 }  // namespace content

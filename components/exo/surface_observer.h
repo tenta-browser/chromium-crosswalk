@@ -15,6 +15,13 @@ class SurfaceObserver {
   // chance to remove themselves.
   virtual void OnSurfaceDestroying(Surface* surface) = 0;
 
+  // Called when the occlusion of the aura window corresponding to |surface|
+  // changes.
+  virtual void OnWindowOcclusionChanged(Surface* surface) {}
+
+  // Called on each commit.
+  virtual void OnCommit(Surface* surface) {}
+
  protected:
   virtual ~SurfaceObserver() {}
 };

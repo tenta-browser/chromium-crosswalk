@@ -7,142 +7,116 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <string>
+
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "content/browser/service_worker/service_worker_request_handler.h"
-#include "content/browser/service_worker/service_worker_url_job_wrapper.h"
-#include "content/browser/service_worker/service_worker_url_loader_job.h"
-#include "content/browser/service_worker/service_worker_url_request_job.h"
-#include "content/common/service_worker/service_worker_types.h"
-#include "content/public/common/request_context_frame_type.h"
-#include "content/public/common/request_context_type.h"
+#include "content/browser/service_worker/service_worker_navigation_loader.h"
+#include "content/common/content_export.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/service_worker_modes.h"
-#include "services/network/public/interfaces/fetch_api.mojom.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "url/gurl.h"
-
-namespace net {
-class NetworkDelegate;
-class URLRequest;
-}
 
 namespace content {
 
-class ResourceRequestBody;
+class ServiceWorkerContextCore;
+class ServiceWorkerProviderHost;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
 
-// A request handler derivative used to handle requests from
-// controlled documents.
-// Note that in IsServicificationEnabled cases this is used only for
-// main resource fetch during navigation.
-class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
-    : public ServiceWorkerRequestHandler,
-      public ServiceWorkerURLJobWrapper::Delegate {
+// Handles main resource requests for service worker clients (documents and
+// shared workers).
+class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final
+    : public NavigationLoaderInterceptor {
  public:
+  // If |skip_service_worker| is true, service workers are bypassed for
+  // request interception.
   ServiceWorkerControlleeRequestHandler(
       base::WeakPtr<ServiceWorkerContextCore> context,
       base::WeakPtr<ServiceWorkerProviderHost> provider_host,
-      base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
-      network::mojom::FetchRequestMode request_mode,
-      network::mojom::FetchCredentialsMode credentials_mode,
-      FetchRedirectMode redirect_mode,
-      const std::string& integrity,
-      bool keepalive,
       ResourceType resource_type,
-      RequestContextType request_context_type,
-      RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBody> body);
+      bool skip_service_worker);
   ~ServiceWorkerControlleeRequestHandler() override;
 
-  // Called via custom URLRequestJobFactory.
-  // Returning a nullptr indicates that the request is not handled by
-  // this handler.
-  // This could get called multiple times during the lifetime.
-  net::URLRequestJob* MaybeCreateJob(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate,
-      ResourceContext* resource_context) override;
+  // NavigationLoaderInterceptor overrides:
 
-  // S13nServiceWorker:
-  // MaybeCreateLoader replaces MaybeCreateJob() when S13nServiceWorker is
-  // enabled.
   // This could get called multiple times during the lifetime in redirect
   // cases. (In fallback-to-network cases we basically forward the request
   // to the request to the next request handler)
-  // URLLoaderRequestHandler overrides:
-  void MaybeCreateLoader(const ResourceRequest& request,
+  void MaybeCreateLoader(const network::ResourceRequest& tentative_request,
+                         BrowserContext* browser_context,
                          ResourceContext* resource_context,
-                         LoaderCallback callback) override;
+                         LoaderCallback callback,
+                         FallbackCallback fallback_callback) override;
+  // Returns params with the ControllerServiceWorkerInfoPtr if we have found
+  // a matching controller service worker for the |request| that is given
+  // to MaybeCreateLoader(). Otherwise this returns base::nullopt.
+  base::Optional<SubresourceLoaderParams> MaybeCreateSubresourceLoaderParams()
+      override;
+
+  // Does all initialization of |provider_host_| for a request.
+  bool InitializeProvider(const network::ResourceRequest& tentative_request);
+
+  // Exposed for testing.
+  ServiceWorkerNavigationLoader* loader() {
+    return loader_wrapper_ ? loader_wrapper_->get() : nullptr;
+  }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerControlleeRequestHandlerTest,
                            ActivateWaitingVersion);
-  typedef ServiceWorkerControlleeRequestHandler self;
 
-  // For main resource case.
-  void PrepareForMainResource(const GURL& url, const GURL& site_for_cookies);
-  void DidLookupRegistrationForMainResource(
-      ServiceWorkerStatusCode status,
+  void ContinueWithRegistration(
+      blink::ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
-  void OnVersionStatusChanged(
-      ServiceWorkerRegistration* registration,
-      ServiceWorkerVersion* version);
+  void ContinueWithActivatedVersion(
+      scoped_refptr<ServiceWorkerRegistration> registration,
+      scoped_refptr<ServiceWorkerVersion> version);
 
+  // For forced update.
   void DidUpdateRegistration(
-      const scoped_refptr<ServiceWorkerRegistration>& original_registration,
-      ServiceWorkerStatusCode status,
+      scoped_refptr<ServiceWorkerRegistration> original_registration,
+      blink::ServiceWorkerStatusCode status,
       const std::string& status_message,
       int64_t registration_id);
   void OnUpdatedVersionStatusChanged(
-      const scoped_refptr<ServiceWorkerRegistration>& registration,
-      const scoped_refptr<ServiceWorkerVersion>& version);
-
-  // For sub resource case.
-  void PrepareForSubResource();
-
-  // ServiceWorkerURLJobWrapper::Delegate implementation:
-
-  // Called just before the request is restarted. Makes sure the next request
-  // goes over the network.
-  void OnPrepareToRestart() override;
-
-  ServiceWorkerVersion* GetServiceWorkerVersion(
-      ServiceWorkerMetrics::URLRequestJobResult* result) override;
-  bool RequestStillValid(
-      ServiceWorkerMetrics::URLRequestJobResult* result) override;
-  void MainResourceLoadFailed() override;
+      scoped_refptr<ServiceWorkerRegistration> registration,
+      scoped_refptr<ServiceWorkerVersion> version);
 
   // Sets |job_| to nullptr, and clears all extra response info associated with
   // that job, except for timing information.
   void ClearJob();
 
-  bool JobWasCanceled() const;
+  void CompleteWithoutLoader();
 
-  const bool is_main_resource_load_;
-  const bool is_main_frame_load_;
-  std::unique_ptr<ServiceWorkerURLJobWrapper> url_job_;
-  network::mojom::FetchRequestMode request_mode_;
-  network::mojom::FetchCredentialsMode credentials_mode_;
-  FetchRedirectMode redirect_mode_;
-  std::string integrity_;
-  const bool keepalive_;
-  RequestContextType request_context_type_;
-  RequestContextFrameType frame_type_;
-  scoped_refptr<ResourceRequestBody> body_;
+  // Schedules a service worker update to occur shortly after the page and its
+  // initial subresources load, if this handler was for a navigation.
+  void MaybeScheduleUpdate();
+
+  const base::WeakPtr<ServiceWorkerContextCore> context_;
+  const base::WeakPtr<ServiceWorkerProviderHost> provider_host_;
+  const ResourceType resource_type_;
+
+  // If true, service workers are bypassed for request interception.
+  const bool skip_service_worker_;
+
+  std::unique_ptr<ServiceWorkerNavigationLoaderWrapper> loader_wrapper_;
   ResourceContext* resource_context_;
   GURL stripped_url_;
   bool force_update_started_;
+  base::TimeTicks registration_lookup_start_time_;
 
-  // True if the next time this request is started, the response should be
-  // delivered from the network, bypassing the ServiceWorker. Cleared after the
-  // next intercept opportunity, for main frame requests.
-  bool use_network_;
+  LoaderCallback loader_callback_;
+  FallbackCallback fallback_callback_;
 
-  base::WeakPtrFactory<ServiceWorkerControlleeRequestHandler> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerControlleeRequestHandler> weak_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerControlleeRequestHandler);
 };

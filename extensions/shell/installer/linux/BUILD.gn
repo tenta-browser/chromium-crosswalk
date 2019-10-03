@@ -9,10 +9,11 @@ import("//build/config/chrome_build.gni")
 import("//build/config/features.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/sysroot.gni")
+import("//build/util/lastchange.gni")
 import("//build/util/version.gni")
 import("//chrome/process_version_rc_template.gni")  # For branding_file_path.
 import("//components/nacl/features.gni")
-import("//extensions/features/features.gni")
+import("//extensions/buildflags/buildflags.gni")
 
 assert(is_desktop_linux)
 assert(current_cpu == "x64")
@@ -25,7 +26,7 @@ group("linux") {
   deps = [
     # TODO(michaelpg): Add beta/stable once we verify the unstable installer is
     # building and installing properly.
-    ":unstable",
+    ":app_shell_unstable",
   ]
 }
 
@@ -48,7 +49,8 @@ action("strip_app_shell_binary") {
     stripped_file,
   ]
   args = [
-    rebase_path("//third_party/eu-strip/bin/eu-strip", root_build_dir),
+    rebase_path("//buildtools/third_party/eu-strip/bin/eu-strip",
+                root_build_dir),
     "-o",
     rebase_path(stripped_file, root_build_dir),
     "-f",
@@ -60,11 +62,7 @@ action("strip_app_shell_binary") {
 copy("common_packaging_files") {
   visibility = [ ":*" ]
   sources = [
-    "//chrome/installer/linux/common/apt.include",
-    "//chrome/installer/linux/common/repo.cron",
-    "//chrome/installer/linux/common/symlinks.include",
-    "//chrome/installer/linux/common/variables.include",
-    "/usr/bin/eu-strip",
+    "//buildtools/third_party/eu-strip/bin/eu-strip",
     "common/installer.include",
     "common/wrapper",
   ]
@@ -86,8 +84,6 @@ copy("deb_packaging_files") {
     "//chrome/installer/linux/debian/changelog.template",
     "//chrome/installer/linux/debian/control.template",
     "debian/build.sh",
-    "debian/postinst",
-    "debian/postrm",
   ]
   outputs = [
     "$root_out_dir/app_shell_installer/debian/{{source_file_part}}",
@@ -108,9 +104,9 @@ process_version("save_build_info") {
   # Just output the default version info variables (no template).
   process_only = true
   sources = [
-    "//build/util/LASTCHANGE",
     "//chrome/VERSION",
     branding_file_path,
+    lastchange_file,
   ]
   output = "$root_out_dir/app_shell_installer/version.txt"
 }
@@ -142,10 +138,6 @@ group("installer_deps") {
       "//ppapi/native_client:irt",
     ]
   }
-
-  if (!libcpp_is_static && use_custom_libcxx) {
-    public_deps += [ "//buildtools/third_party/libc++:libc++" ]
-  }
 }
 
 # Creates .deb installer package.
@@ -172,19 +164,22 @@ template("linux_package") {
     ]
   }
 
-  if (!libcpp_is_static && use_custom_libcxx) {
-    packaging_files_binaries += [ "$root_out_dir/libc++.so" ]
-  }
-
   deb_target_name = "${target_name}_deb"
   action(deb_target_name) {
     visibility = [ ":*" ]
     script = "//build/gn_run_binary.py"
+
+    assert(current_cpu == "x64", "app_shell installer only supported for amd64")
     deb_arch = "amd64"
+    if (is_chrome_branded) {
+      package = "google-app-shell"
+    } else {
+      package = "chromium-app-shell"
+    }
 
     inputs = packaging_files_binaries
     outputs = [
-      "$root_out_dir/google-app-shell-${channel}_${chrome_version_full}-1_${deb_arch}.deb",
+      "$root_out_dir/${package}-${channel}_${chrome_version_full}-1_${deb_arch}.deb",
     ]
 
     args = [
@@ -220,6 +215,7 @@ template("linux_package") {
 }
 
 # Standard packages.
-linux_package("unstable") {
+# Prefixed with "app_shell_" to not conflict with Chrome's installer targets.
+linux_package("app_shell_unstable") {
   channel = "unstable"
 }

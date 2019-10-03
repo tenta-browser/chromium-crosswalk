@@ -11,6 +11,7 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/TabModelJniBridge_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -18,8 +19,11 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
+#include "chrome/browser/ui/android/tab_model/tab_model_observer_jni_bridge.h"
+#include "chrome/browser/ui/browser_navigator_params.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/TabModelJniBridge_jni.h"
+#include "content/public/common/resource_request_body_android.h"
+#include "ui/base/window_open_disposition.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -71,7 +75,8 @@ void TabModelJniBridge::TabAddedToModel(JNIEnv* env,
   // Tab#initialize() should have been called by now otherwise we can't push
   // the window id.
   TabAndroid* tab = TabAndroid::GetNativeTab(env, jtab);
-  if (tab) tab->SetWindowSessionID(GetSessionId());
+  if (tab)
+    tab->SetWindowSessionID(GetSessionId());
 }
 
 int TabModelJniBridge::GetTabCount() const {
@@ -85,13 +90,51 @@ int TabModelJniBridge::GetActiveIndex() const {
 }
 
 void TabModelJniBridge::CreateTab(TabAndroid* parent,
-                                  WebContents* web_contents,
-                                  int parent_tab_id) {
+                                  WebContents* web_contents) {
   JNIEnv* env = AttachCurrentThread();
   Java_TabModelJniBridge_createTabWithWebContents(
       env, java_object_.get(env), (parent ? parent->GetJavaObject() : nullptr),
       web_contents->GetBrowserContext()->IsOffTheRecord(),
-      web_contents->GetJavaWebContents(), parent_tab_id);
+      web_contents->GetJavaWebContents());
+}
+
+void TabModelJniBridge::HandlePopupNavigation(TabAndroid* parent,
+                                              NavigateParams* params) {
+  DCHECK_EQ(params->source_contents, parent->web_contents());
+  DCHECK(!params->contents_to_insert);
+  DCHECK(!params->switch_to_singleton_tab);
+
+  WindowOpenDisposition disposition = params->disposition;
+  bool supported = disposition == WindowOpenDisposition::NEW_POPUP ||
+                   disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
+                   disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB ||
+                   disposition == WindowOpenDisposition::NEW_WINDOW ||
+                   disposition == WindowOpenDisposition::OFF_THE_RECORD;
+  if (!supported) {
+    NOTIMPLEMENTED();
+    return;
+  }
+
+  const GURL& url = params->url;
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> jobj = java_object_.get(env);
+  ScopedJavaLocalRef<jstring> jurl(ConvertUTF8ToJavaString(env, url.spec()));
+  ScopedJavaLocalRef<jstring> jheaders(
+      ConvertUTF8ToJavaString(env, params->extra_headers));
+  ScopedJavaLocalRef<jstring> jinitiator_origin;
+  if (params->initiator_origin) {
+    jinitiator_origin =
+        ConvertUTF8ToJavaString(env, params->initiator_origin->Serialize());
+  }
+  ScopedJavaLocalRef<jobject> jpost_data;
+  if (params->uses_post && params->post_data) {
+    jpost_data =
+        content::ConvertResourceRequestBodyToJavaObject(env, params->post_data);
+  }
+  Java_TabModelJniBridge_openNewTab(
+      env, jobj, parent->GetJavaObject(), jurl, jinitiator_origin, jheaders,
+      jpost_data, static_cast<int>(disposition), params->created_with_opener,
+      params->is_renderer_initiated);
 }
 
 WebContents* TabModelJniBridge::GetWebContentsAt(int index) const {
@@ -144,6 +187,29 @@ bool TabModelJniBridge::IsSessionRestoreInProgress() const {
       env, java_object_.get(env));
 }
 
+bool TabModelJniBridge::IsCurrentModel() const {
+  JNIEnv* env = AttachCurrentThread();
+  return Java_TabModelJniBridge_isCurrentModel(env, java_object_.get(env));
+}
+
+void TabModelJniBridge::AddObserver(TabModelObserver* observer) {
+  // If a first observer is being added then instantiate an observer bridge.
+  if (!observer_bridge_) {
+    JNIEnv* env = AttachCurrentThread();
+    observer_bridge_ =
+        std::make_unique<TabModelObserverJniBridge>(env, java_object_.get(env));
+  }
+  observer_bridge_->AddObserver(observer);
+}
+
+void TabModelJniBridge::RemoveObserver(TabModelObserver* observer) {
+  observer_bridge_->RemoveObserver(observer);
+
+  // Tear down the bridge if there are no observers left.
+  if (!observer_bridge_->might_have_observers())
+    observer_bridge_.reset();
+}
+
 void TabModelJniBridge::BroadcastSessionRestoreComplete(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
@@ -156,7 +222,6 @@ inline static base::TimeDelta GetTimeDelta(jlong ms) {
 
 void JNI_TabModelJniBridge_LogFromCloseMetric(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     jlong ms,
     jboolean perceived) {
   if (perceived) {
@@ -170,7 +235,6 @@ void JNI_TabModelJniBridge_LogFromCloseMetric(
 
 void JNI_TabModelJniBridge_LogFromExitMetric(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     jlong ms,
     jboolean perceived) {
   if (perceived) {
@@ -183,7 +247,6 @@ void JNI_TabModelJniBridge_LogFromExitMetric(
 }
 
 void JNI_TabModelJniBridge_LogFromNewMetric(JNIEnv* env,
-                                            const JavaParamRef<jclass>& jcaller,
                                             jlong ms,
                                             jboolean perceived) {
   if (perceived) {
@@ -197,7 +260,6 @@ void JNI_TabModelJniBridge_LogFromNewMetric(JNIEnv* env,
 
 void JNI_TabModelJniBridge_LogFromUserMetric(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     jlong ms,
     jboolean perceived) {
   if (perceived) {

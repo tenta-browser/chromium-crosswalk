@@ -4,6 +4,10 @@
 
 #include "ui/gfx/platform_font_win.h"
 
+#include <memory.h>
+#include <string.h>
+#include <windows.h>
+
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
@@ -12,6 +16,8 @@
 #include "base/win/scoped_select_object.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/font.h"
+#include "ui/gfx/font_render_params.h"
+#include "ui/gfx/platform_font_skia.h"
 #include "ui/gfx/win/direct_write.h"
 #include "ui/gfx/win/scoped_set_map_mode.h"
 
@@ -123,6 +129,19 @@ TEST(PlatformFontWinTest, DirectWriteFontSubstitution) {
 
     EXPECT_EQ(font.expected_font_name, h_font_skia->font_name());
   }
+}
+
+// TODO(etienneb): Move this test to platform_font_skia_unittest when the
+// font migration to skia font is completed.
+TEST(PlatformFontWinTest, DefaultFontRenderParams) {
+  scoped_refptr<PlatformFontSkia> default_font(new PlatformFontSkia());
+  scoped_refptr<PlatformFontSkia> named_font(new PlatformFontSkia(
+      default_font->GetFontName(), default_font->GetFontSize()));
+
+  // Ensures that both constructors are producing fonts with the same render
+  // params.
+  EXPECT_EQ(default_font->GetFontRenderParams(),
+            named_font->GetFontRenderParams());
 }
 
 }  // namespace gfx

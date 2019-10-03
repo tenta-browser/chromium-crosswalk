@@ -240,7 +240,7 @@ namespace networking.onc {
     // If set, the value against which to match the certificate subject's
     // organizational units. At least one organizational unit should match the
     // value.
-    DOMString? OrganizationalUnit;    
+    DOMString? OrganizationalUnit;
   };
 
   dictionary CertificatePattern {
@@ -295,8 +295,14 @@ namespace networking.onc {
     // The IP address for a connection. Can be IPv4 or IPv6 address, depending
     // on value of <code>Type</code>.
     DOMString? IPAddress;
+    // Array of IP blocks in CIDR notation, see onc_spec.md for details.
+    DOMString[]? ExcludedRoutes;
+    // Array of IP blocks in CIDR notation, see onc_spec.md for details.
+    DOMString[]? IncludedRoutes;
     // Array of addresses used for name servers.
     DOMString[]? NameServers;
+    // Array of strings for name resolution, see onc_spec.md for details.
+    DOMString[]? SearchDomains;
     // The routing prefix.
     long? RoutingPrefix;
     // The IP configuration type. Can be <code>IPv4</code> or <code>IPv6</code>.
@@ -417,7 +423,7 @@ namespace networking.onc {
 
   [noinline_doc] dictionary CellularProperties {
     // Whether the cellular network should be connected automatically (when
-    // in range). 
+    // in range).
     boolean? AutoConnect;
     // The cellular network activation type.
     DOMString? ActivationType;
@@ -425,8 +431,6 @@ namespace networking.onc {
     ActivationStateType? ActivationState;
     // Whether roaming is allowed for the network.
     boolean? AllowRoaming;
-    // The name of the carrier for which the cellular device is configured.
-    DOMString? Carrier;
     // Cellular device technology family - <code>CDMA</code> or
     // <code>GSM</code>.
     DOMString? Family;
@@ -466,8 +470,6 @@ namespace networking.onc {
     long? SignalStrength;
     // Whether the cellular network supports scanning.
     boolean? SupportNetworkScan;
-    // A list of supported carriers.
-    DOMString[]? SupportedCarriers;
   };
 
   dictionary ManagedCellularProperties {
@@ -479,8 +481,6 @@ namespace networking.onc {
     ActivationStateType? ActivationState;
     // See $(ref:CellularProperties.AllowRoaming).
     boolean? AllowRoaming;
-    // See $(ref:CellularProperties.Carrier).
-    ManagedDOMString? Carrier;
     // See $(ref:CellularProperties.Family).
     DOMString? Family;
     // See $(ref:CellularProperties.FirmwareRevision).
@@ -515,8 +515,6 @@ namespace networking.onc {
     long? SignalStrength;
     // See $(ref:CellularProperties.SupportNetworkScan).
     boolean? SupportNetworkScan;
-    // See $(ref:CellularProperties.SupportedCarriers).
-    DOMString[]? SupportedCarriers;
   };
 
   dictionary CellularStateProperties {
@@ -533,7 +531,7 @@ namespace networking.onc {
   };
 
   dictionary EthernetProperties {
-    // Whether the Ethernet network should be connected automatically. 
+    // Whether the Ethernet network should be connected automatically.
     boolean? AutoConnect;
     // The authentication used by the Ethernet network. Possible values are
     // <code>None</code> and <code>8021X</code>.
@@ -599,6 +597,10 @@ namespace networking.onc {
     DOMString? HexSSID;
     // Whether the network SSID will be broadcast.
     boolean? HiddenSSID;
+    // The passphrase for WEP/WPA/WPA2 connections. This property can only be
+    // set - properties returned by $(ref:getProperties) will not contain this
+    // value.
+    DOMString? Passphrase;
     // Signal-to-noise value (in dB) below which roaming to a new network
     // should be attempted.
     long? RoamThreshold;
@@ -608,6 +610,8 @@ namespace networking.onc {
     DOMString? Security;
     // The network signal strength.
     long? SignalStrength;
+    // The tethering state associated with the connection.
+    DOMString? TetheringState;
   };
 
   dictionary ManagedWiFiProperties {
@@ -633,6 +637,8 @@ namespace networking.onc {
     ManagedDOMString Security;
     // See $(ref:WiFiProperties.SignalStrength).
     long? SignalStrength;
+    // See $(ref:WiFiProperties.TetheringState).
+    DOMString? TetheringState;
   };
 
   dictionary WiFiStateProperties {
@@ -648,6 +654,8 @@ namespace networking.onc {
     long? SignalStrength;
     // See $(ref:WiFiProperties.SSID).
     DOMString? SSID;
+    // See $(ref:WiFiProperties.TetheringState).
+    DOMString? TetheringState;
   };
 
   dictionary WiMAXProperties {
@@ -870,6 +878,16 @@ namespace networking.onc {
     // If true, only policy networks may be connected to and no new networks may
     // be added or configured. Defaults to false.
     boolean? AllowOnlyPolicyNetworksToConnect;
+
+    // If true and a managed network is available in the visible network list,
+    // only policy networks may be connected to and no new networks may be added
+    // or configured. Defaults to false.
+    boolean? AllowOnlyPolicyNetworksToConnectIfAvailable;
+
+    // List of blacklisted networks. Connections to blacklisted networks are
+    // prohibited. Networks can be whitelisted again by specifying an explicit
+    // network configuration. Defaults to an empty list.
+    DOMString[]? BlacklistedHexSSIDs;
   };
 
   callback VoidCallback = void();
@@ -997,7 +1015,9 @@ namespace networking.onc {
     // |networkGuid|: The GUID of the network to connect to.
     // |callback|: Called when the connect request has been sent. Note: the
     //     connection may not have completed. Observe $(ref:onNetworksChanged)
-    //     to be notified when a network state changes.
+    //     to be notified when a network state changes. If the connect request
+    //     immediately failed (e.g. the network is unconfigured),
+    //     $(ref:runtime.lastError) will be set with a failure reason.
     static void startConnect(DOMString networkGuid,
                              optional VoidCallback callback);
 

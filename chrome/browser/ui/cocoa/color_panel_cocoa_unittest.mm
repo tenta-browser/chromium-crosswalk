@@ -4,6 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/color_chooser_mac.h"
 
+#include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,53 +28,26 @@ class ColorPanelCocoaTest : public CocoaTest {
     [[NSColorPanel sharedColorPanel] makeKeyAndOrderFront:nil];
     Init();
   }
+  base::test::ScopedTaskEnvironment task_environment_;
 };
-
-TEST_F(ColorPanelCocoaTest, ClearTargetAndDelegateOnEnd) {
-  NSColorPanel* nscolor_panel = [NSColorPanel sharedColorPanel];
-  EXPECT_TRUE([nscolor_panel respondsToSelector:@selector(__target)]);
-
-  // Create a ColorPanelCocoa.
-  ColorChooserMac* color_chooser_mac =
-      ColorChooserMac::Open(nullptr, SK_ColorBLACK);
-
-  // Confirm the NSColorPanel's configuration by the ColorChooserMac's
-  // ColorPanelCocoa.
-  EXPECT_TRUE([nscolor_panel delegate]);
-  EXPECT_TRUE([nscolor_panel __target]);
-
-  // Release the ColorPanelCocoa and confirm it's no longer the NSColorPanel's
-  // target or delegate.
-  color_chooser_mac->End();
-
-  EXPECT_EQ([nscolor_panel delegate], nil);
-  EXPECT_EQ([nscolor_panel __target], nil);
-}
 
 TEST_F(ColorPanelCocoaTest, ClearTargetOnEnd) {
   NSColorPanel* nscolor_panel = [NSColorPanel sharedColorPanel];
-  EXPECT_TRUE([nscolor_panel respondsToSelector:@selector(__target)]);
+  @autoreleasepool {
+    EXPECT_TRUE([nscolor_panel respondsToSelector:@selector(__target)]);
 
-  // Create a ColorPanelCocoa.
-  ColorChooserMac* color_chooser_mac =
-      ColorChooserMac::Open(nullptr, SK_ColorBLACK);
+    // Create a ColorPanelCocoa.
+    ColorChooserMac* color_chooser_mac =
+        ColorChooserMac::Open(nullptr, SK_ColorBLACK);
+    base::RunLoop().RunUntilIdle();
 
-  // Confirm the NSColorPanel's configuration by the ColorChooserMac's
-  // ColorPanelCocoa.
-  EXPECT_TRUE([nscolor_panel delegate]);
-  EXPECT_TRUE([nscolor_panel __target]);
+    // Confirm the NSColorPanel's configuration by the ColorChooserMac's
+    // ColorPanelCocoa.
+    EXPECT_TRUE([nscolor_panel __target]);
 
-  // Clear the delegate and release the ColorPanelCocoa.
-  [nscolor_panel setDelegate:nil];
-
-  // Release the ColorPanelCocoa.
-  color_chooser_mac->End();
-
-  // Confirm the ColorPanelCocoa is no longer the NSColorPanel's target or
-  // delegate. Previously the ColorPanelCocoa would not clear the target if
-  // the delegate had already been cleared.
-  EXPECT_EQ([nscolor_panel delegate], nil);
-  EXPECT_EQ([nscolor_panel __target], nil);
+    // Release the ColorPanelCocoa.
+    color_chooser_mac->End();
+  }
 }
 
 TEST_F(ColorPanelCocoaTest, SetColor) {
@@ -87,6 +62,7 @@ TEST_F(ColorPanelCocoaTest, SetColor) {
   SkColor initial_color = SK_ColorBLACK;
   ColorChooserMac* color_chooser_mac =
       ColorChooserMac::Open(nullptr, SK_ColorBLACK);
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_NSEQ([nscolor_panel color],
               skia::SkColorToDeviceNSColor(initial_color));
@@ -94,6 +70,7 @@ TEST_F(ColorPanelCocoaTest, SetColor) {
   // Confirm that -[ColorPanelCocoa setColor:] sets the NSColorPanel's color.
   SkColor test_color = SK_ColorRED;
   color_chooser_mac->SetSelectedColor(test_color);
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_NSEQ([nscolor_panel color], skia::SkColorToDeviceNSColor(test_color));
 

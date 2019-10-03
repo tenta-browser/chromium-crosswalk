@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interventions-Internals</title>
     <script src="chrome://resources/js/cr.js"></script>
-    <script src="chrome://resources/js/mojo_bindings.js"></script>
+    <script src="chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js"></script>
+    <script src="chrome://resources/mojo/url/mojom/url.mojom-lite.js"></script>
     <script src="chrome://resources/js/util.js"></script>
-    <script src="chrome/browser/ui/webui/interventions_internals/interventions_internals.mojom.js">
+    <script src="chrome/browser/ui/webui/interventions_internals/interventions_internals.mojom-lite.js">
     </script>
     <script src="index.js"></script>
     <link rel="stylesheet" type="text/css" href="index.css">
@@ -27,7 +28,7 @@
       <label class="inactive-tab">
         <input type="radio" id="blacklist-tab" name="tabs"
             value="blacklist-status">
-        <span>Blacklist Status</span>
+        <span>Blocklist Status</span>
       </label>
       <label class="inactive-tab">
         <input type="radio" id="nqe-tab" name="tabs" value="nqe-info">
@@ -59,6 +60,8 @@
       <input type="text" id="log-search-bar"
           placeholder="Search for something ...">
       <button id="clear-log-button" type="button">Clear logs</button>
+      <button id="collapse-log-button" type="button">Collapse all</button>
+      <button id="expand-log-button" type="button">Expand all</button>
       <table id="message-logs-table">
         <tr>
           <th class="log-time" id="time-table-header">Time</th>
@@ -74,19 +77,19 @@
     <div class="tab-content" id="blacklist-status">
       <div id="blacklist-ignored-status"></div>
       <button id="ignore-blacklist-button" type="button">
-        Ignore Blacklist
+        Ignore Blocklist
       </button>
       <div id="user-blacklisted-status">
-        User blacklisted status:
+        User blocklisted status:
         <span id="user-blacklisted-status-value">N/A</span>
       </div>
       <div id="blacklist-cleared-status">
-        Last blacklist cleared:
+        Last blocklist cleared:
         <span id="blacklist-last-cleared-time">N/A</span>
       </div>
 
       <div id="blacklisted-hosts">
-        <div class="table-name">Blacklisted hosts</div>
+        <div class="table-name">Blocklisted hosts</div>
         <table id="blacklisted-hosts-table">
           <tr>
             <th id="blacklisted-host-header">Host</th>
@@ -100,6 +103,10 @@
       <div id="nqe-status">
         Estimated effective connection type:
         <span id="nqe-type">N/A</span>
+      </div>
+      <div id="nqe-slow-page-threshold">
+        Slow page maximum threshold:
+        <span id="max-intervention-type">N/A</span>
       </div>
       <div id="nqe-logs">
         <div class="table-name">Network Quality Change Log</div>

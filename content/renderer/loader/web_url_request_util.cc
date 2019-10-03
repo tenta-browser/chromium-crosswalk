@@ -11,28 +11,28 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "content/child/child_thread_impl.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/renderer/loader/request_extra_data.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_util.h"
-#include "services/network/public/interfaces/data_pipe_getter.mojom.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/mojom/data_pipe_getter.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/common/blob/blob.mojom.h"
-#include "third_party/WebKit/common/blob/blob_registry.mojom.h"
-#include "third_party/WebKit/public/platform/FilePathConversion.h"
-#include "third_party/WebKit/public/platform/Platform.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebHTTPHeaderVisitor.h"
-#include "third_party/WebKit/public/platform/WebMixedContent.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebThread.h"
-#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
+#include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
+#include "third_party/blink/public/platform/file_path_conversion.h"
+#include "third_party/blink/public/platform/interface_provider.h"
+#include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_http_body.h"
+#include "third_party/blink/public/platform/web_http_header_visitor.h"
+#include "third_party/blink/public/platform/web_mixed_content.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 using blink::mojom::FetchCacheMode;
 using blink::WebData;
@@ -105,275 +105,136 @@ class HeaderFlattener : public blink::WebHTTPHeaderVisitor {
   std::string buffer_;
 };
 
-// Vends data pipes to read a Blob. It stays alive by StrongBinding to the Mojo
-// request.
-class DataPipeGetter : public network::mojom::DataPipeGetter {
- public:
-  DataPipeGetter(blink::mojom::BlobPtr blob,
-                 network::mojom::DataPipeGetterRequest request) {
-    // If a sync XHR is doing the upload, then the main thread will be blocked.
-    // So we must bind on a background thread, otherwise the methods below will
-    // never be called and the process will hang.
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-        base::CreateSingleThreadTaskRunnerWithTraits(
-            {base::TaskPriority::USER_VISIBLE,
-             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
-    task_runner->PostTask(
-        FROM_HERE,
-        base::BindOnce(&DataPipeGetter::BindInternal, base::Unretained(this),
-                       blob.PassInterface(), std::move(request)));
-  }
-  ~DataPipeGetter() override = default;
-
- private:
-  class BlobReaderClient : public blink::mojom::BlobReaderClient {
-   public:
-    explicit BlobReaderClient(ReadCallback callback)
-        : callback_(std::move(callback)) {
-      DCHECK(!callback_.is_null());
-    }
-    ~BlobReaderClient() override = default;
-
-    // blink::mojom::BlobReaderClient implementation:
-    void OnCalculatedSize(uint64_t total_size,
-                          uint64_t expected_content_size) override {
-      // Check if null since it's conceivable OnComplete() was already called
-      // with error.
-      if (!callback_.is_null())
-        std::move(callback_).Run(net::OK, total_size);
-    }
-    void OnComplete(int32_t status, uint64_t data_length) override {
-      // Check if null since OnCalculatedSize() may have already been called
-      // and an error occurred later.
-      if (!callback_.is_null() && status != net::OK) {
-        // On error, signal failure immediately. On success, OnCalculatedSize()
-        // is guaranteed to be called, and the result will be signaled from
-        // there.
-        std::move(callback_).Run(status, 0);
-      }
-    }
-
-   private:
-    ReadCallback callback_;
-
-    DISALLOW_COPY_AND_ASSIGN(BlobReaderClient);
-  };
-
-  void BindInternal(blink::mojom::BlobPtrInfo blob,
-                    network::mojom::DataPipeGetterRequest request) {
-    mojo::MakeStrongBinding(base::WrapUnique(this), std::move(request));
-    blob_.Bind(std::move(blob));
-  }
-
-  // network::mojom::DataPipeGetter implementation:
-  void Read(mojo::ScopedDataPipeProducerHandle handle,
-            ReadCallback callback) override {
-    blink::mojom::BlobReaderClientPtr blob_reader_client_ptr;
-    mojo::MakeStrongBinding(
-        std::make_unique<BlobReaderClient>(std::move(callback)),
-        mojo::MakeRequest(&blob_reader_client_ptr));
-    blob_->ReadAll(std::move(handle), std::move(blob_reader_client_ptr));
-  }
-
- private:
-  blink::mojom::BlobPtr blob_;
-
-  DISALLOW_COPY_AND_ASSIGN(DataPipeGetter);
-};
-
 }  // namespace
 
-ResourceType WebURLRequestContextToResourceType(
-    WebURLRequest::RequestContext request_context) {
+ResourceType RequestContextToResourceType(
+    blink::mojom::RequestContextType request_context) {
   switch (request_context) {
     // CSP report
-    case WebURLRequest::kRequestContextCSPReport:
-      return RESOURCE_TYPE_CSP_REPORT;
+    case blink::mojom::RequestContextType::CSP_REPORT:
+      return ResourceType::kCspReport;
 
     // Favicon
-    case WebURLRequest::kRequestContextFavicon:
-      return RESOURCE_TYPE_FAVICON;
+    case blink::mojom::RequestContextType::FAVICON:
+      return ResourceType::kFavicon;
 
     // Font
-    case WebURLRequest::kRequestContextFont:
-      return RESOURCE_TYPE_FONT_RESOURCE;
+    case blink::mojom::RequestContextType::FONT:
+      return ResourceType::kFontResource;
 
     // Image
-    case WebURLRequest::kRequestContextImage:
-    case WebURLRequest::kRequestContextImageSet:
-      return RESOURCE_TYPE_IMAGE;
+    case blink::mojom::RequestContextType::IMAGE:
+    case blink::mojom::RequestContextType::IMAGE_SET:
+      return ResourceType::kImage;
 
     // Media
-    case WebURLRequest::kRequestContextAudio:
-    case WebURLRequest::kRequestContextVideo:
-      return RESOURCE_TYPE_MEDIA;
+    case blink::mojom::RequestContextType::AUDIO:
+    case blink::mojom::RequestContextType::VIDEO:
+      return ResourceType::kMedia;
 
     // Object
-    case WebURLRequest::kRequestContextEmbed:
-    case WebURLRequest::kRequestContextObject:
-      return RESOURCE_TYPE_OBJECT;
+    case blink::mojom::RequestContextType::EMBED:
+    case blink::mojom::RequestContextType::OBJECT:
+      return ResourceType::kObject;
 
     // Ping
-    case WebURLRequest::kRequestContextBeacon:
-    case WebURLRequest::kRequestContextPing:
-      return RESOURCE_TYPE_PING;
+    case blink::mojom::RequestContextType::BEACON:
+    case blink::mojom::RequestContextType::PING:
+      return ResourceType::kPing;
 
     // Subresource of plugins
-    case WebURLRequest::kRequestContextPlugin:
-      return RESOURCE_TYPE_PLUGIN_RESOURCE;
+    case blink::mojom::RequestContextType::PLUGIN:
+      return ResourceType::kPluginResource;
 
     // Prefetch
-    case WebURLRequest::kRequestContextPrefetch:
-      return RESOURCE_TYPE_PREFETCH;
+    case blink::mojom::RequestContextType::PREFETCH:
+      return ResourceType::kPrefetch;
 
     // Script
-    case WebURLRequest::kRequestContextImport:
-    case WebURLRequest::kRequestContextScript:
-      return RESOURCE_TYPE_SCRIPT;
+    case blink::mojom::RequestContextType::IMPORT:
+    case blink::mojom::RequestContextType::SCRIPT:
+      return ResourceType::kScript;
 
     // Style
-    case WebURLRequest::kRequestContextXSLT:
-    case WebURLRequest::kRequestContextStyle:
-      return RESOURCE_TYPE_STYLESHEET;
+    case blink::mojom::RequestContextType::XSLT:
+    case blink::mojom::RequestContextType::STYLE:
+      return ResourceType::kStylesheet;
 
     // Subresource
-    case WebURLRequest::kRequestContextDownload:
-    case WebURLRequest::kRequestContextManifest:
-    case WebURLRequest::kRequestContextSubresource:
-      return RESOURCE_TYPE_SUB_RESOURCE;
+    case blink::mojom::RequestContextType::DOWNLOAD:
+    case blink::mojom::RequestContextType::MANIFEST:
+    case blink::mojom::RequestContextType::SUBRESOURCE:
+      return ResourceType::kSubResource;
 
     // TextTrack
-    case WebURLRequest::kRequestContextTrack:
-      return RESOURCE_TYPE_MEDIA;
+    case blink::mojom::RequestContextType::TRACK:
+      return ResourceType::kMedia;
 
     // Workers
-    case WebURLRequest::kRequestContextServiceWorker:
-      return RESOURCE_TYPE_SERVICE_WORKER;
-    case WebURLRequest::kRequestContextSharedWorker:
-      return RESOURCE_TYPE_SHARED_WORKER;
-    case WebURLRequest::kRequestContextWorker:
-      return RESOURCE_TYPE_WORKER;
+    case blink::mojom::RequestContextType::SERVICE_WORKER:
+      return ResourceType::kServiceWorker;
+    case blink::mojom::RequestContextType::SHARED_WORKER:
+      return ResourceType::kSharedWorker;
+    case blink::mojom::RequestContextType::WORKER:
+      return ResourceType::kWorker;
 
     // Unspecified
-    case WebURLRequest::kRequestContextInternal:
-    case WebURLRequest::kRequestContextUnspecified:
-      return RESOURCE_TYPE_SUB_RESOURCE;
+    case blink::mojom::RequestContextType::INTERNAL:
+    case blink::mojom::RequestContextType::UNSPECIFIED:
+      return ResourceType::kSubResource;
 
     // XHR
-    case WebURLRequest::kRequestContextEventSource:
-    case WebURLRequest::kRequestContextFetch:
-    case WebURLRequest::kRequestContextXMLHttpRequest:
-      return RESOURCE_TYPE_XHR;
+    case blink::mojom::RequestContextType::EVENT_SOURCE:
+    case blink::mojom::RequestContextType::FETCH:
+    case blink::mojom::RequestContextType::XML_HTTP_REQUEST:
+      return ResourceType::kXhr;
 
-    // These should be handled by the FrameType checks at the top of the
-    // function.
-    case WebURLRequest::kRequestContextForm:
-    case WebURLRequest::kRequestContextHyperlink:
-    case WebURLRequest::kRequestContextLocation:
-    case WebURLRequest::kRequestContextFrame:
-    case WebURLRequest::kRequestContextIframe:
+    // Navigation requests should not go through WebURLLoader.
+    case blink::mojom::RequestContextType::FORM:
+    case blink::mojom::RequestContextType::HYPERLINK:
+    case blink::mojom::RequestContextType::LOCATION:
+    case blink::mojom::RequestContextType::FRAME:
+    case blink::mojom::RequestContextType::IFRAME:
       NOTREACHED();
-      return RESOURCE_TYPE_SUB_RESOURCE;
+      return ResourceType::kSubResource;
 
     default:
       NOTREACHED();
-      return RESOURCE_TYPE_SUB_RESOURCE;
+      return ResourceType::kSubResource;
   }
 }
 
 ResourceType WebURLRequestToResourceType(const WebURLRequest& request) {
-  WebURLRequest::RequestContext request_context = request.GetRequestContext();
-  if (request.GetFrameType() != WebURLRequest::kFrameTypeNone) {
-    DCHECK(request_context == WebURLRequest::kRequestContextForm ||
-           request_context == WebURLRequest::kRequestContextFrame ||
-           request_context == WebURLRequest::kRequestContextHyperlink ||
-           request_context == WebURLRequest::kRequestContextIframe ||
-           request_context == WebURLRequest::kRequestContextInternal ||
-           request_context == WebURLRequest::kRequestContextLocation);
-    if (request.GetFrameType() == WebURLRequest::kFrameTypeTopLevel ||
-        request.GetFrameType() == WebURLRequest::kFrameTypeAuxiliary) {
-      return RESOURCE_TYPE_MAIN_FRAME;
-    }
-    if (request.GetFrameType() == WebURLRequest::kFrameTypeNested)
-      return RESOURCE_TYPE_SUB_FRAME;
-    NOTREACHED();
-    return RESOURCE_TYPE_SUB_RESOURCE;
-  }
-  return WebURLRequestContextToResourceType(request_context);
+  return RequestContextToResourceType(request.GetRequestContext());
 }
 
 net::HttpRequestHeaders GetWebURLRequestHeaders(
     const blink::WebURLRequest& request) {
   net::HttpRequestHeaders headers;
   HttpRequestHeadersVisitor visitor(&headers);
-  request.VisitHTTPHeaderFields(&visitor);
+  request.VisitHttpHeaderFields(&visitor);
   return headers;
 }
 
 std::string GetWebURLRequestHeadersAsString(
     const blink::WebURLRequest& request) {
   HeaderFlattener flattener;
-  request.VisitHTTPHeaderFields(&flattener);
+  request.VisitHttpHeaderFields(&flattener);
   return flattener.GetBuffer();
 }
 
-int GetLoadFlagsForWebURLRequest(const WebURLRequest& request) {
-  int load_flags = net::LOAD_NORMAL;
-  GURL url = request.Url();
-  switch (request.GetCacheMode()) {
-    case FetchCacheMode::kNoStore:
-      load_flags |= net::LOAD_DISABLE_CACHE;
-      break;
-    case FetchCacheMode::kValidateCache:
-      load_flags |= net::LOAD_VALIDATE_CACHE;
-      break;
-    case FetchCacheMode::kBypassCache:
-      load_flags |= net::LOAD_BYPASS_CACHE;
-      break;
-    case FetchCacheMode::kForceCache:
-      load_flags |= net::LOAD_SKIP_CACHE_VALIDATION;
-      break;
-    case FetchCacheMode::kOnlyIfCached:
-      load_flags |= net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
-      break;
-    case FetchCacheMode::kUnspecifiedOnlyIfCachedStrict:
-      load_flags |= net::LOAD_ONLY_FROM_CACHE;
-      break;
-    case FetchCacheMode::kDefault:
-      break;
-    case FetchCacheMode::kUnspecifiedForceCacheMiss:
-      load_flags |= net::LOAD_ONLY_FROM_CACHE | net::LOAD_BYPASS_CACHE;
-      break;
-  }
-
-  if (!request.AllowStoredCredentials()) {
-    load_flags |= net::LOAD_DO_NOT_SAVE_COOKIES;
-    load_flags |= net::LOAD_DO_NOT_SEND_COOKIES;
-    load_flags |= net::LOAD_DO_NOT_SEND_AUTH_DATA;
-  }
-
-  if (request.GetExtraData()) {
-    RequestExtraData* extra_data =
-        static_cast<RequestExtraData*>(request.GetExtraData());
-    if (extra_data->is_prefetch())
-      load_flags |= net::LOAD_PREFETCH;
-  }
-
-  return load_flags;
-}
-
 WebHTTPBody GetWebHTTPBodyForRequestBody(
-    const scoped_refptr<ResourceRequestBody>& input) {
+    const network::ResourceRequestBody& input) {
   WebHTTPBody http_body;
   http_body.Initialize();
-  http_body.SetIdentifier(input->identifier());
-  http_body.SetContainsPasswordData(input->contains_sensitive_info());
-  for (const auto& element : *input->elements()) {
+  http_body.SetIdentifier(input.identifier());
+  http_body.SetContainsPasswordData(input.contains_sensitive_info());
+  for (auto& element : *input.elements()) {
     switch (element.type()) {
-      case ResourceRequestBody::Element::TYPE_BYTES:
+      case network::mojom::DataElementType::kBytes:
         http_body.AppendData(WebData(element.bytes(), element.length()));
         break;
-      case ResourceRequestBody::Element::TYPE_FILE:
+      case network::mojom::DataElementType::kFile:
         http_body.AppendFileRange(
             blink::FilePathToWebString(element.path()), element.offset(),
             (element.length() != std::numeric_limits<uint64_t>::max())
@@ -381,16 +242,17 @@ WebHTTPBody GetWebHTTPBodyForRequestBody(
                 : -1,
             element.expected_modification_time().ToDoubleT());
         break;
-      case ResourceRequestBody::Element::TYPE_BLOB:
-        http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()));
+      case network::mojom::DataElementType::kBlob:
+          http_body.AppendBlob(WebString::FromASCII(element.blob_uuid()));
         break;
-      case ResourceRequestBody::Element::TYPE_DATA_PIPE:
-        // TODO(falken): Implement this.
-        NOTIMPLEMENTED() << "data pipe";
+      case network::mojom::DataElementType::kDataPipe: {
+        http_body.AppendDataPipe(
+            element.CloneDataPipeGetter().PassInterface().PassHandle());
         break;
-      case ResourceRequestBody::Element::TYPE_BYTES_DESCRIPTION:
-      case ResourceRequestBody::Element::TYPE_DISK_CACHE_ENTRY:
-      default:
+      }
+      case network::mojom::DataElementType::kUnknown:
+      case network::mojom::DataElementType::kRawFile:
+      case network::mojom::DataElementType::kChunkedDataPipe:
         NOTREACHED();
         break;
     }
@@ -398,9 +260,9 @@ WebHTTPBody GetWebHTTPBodyForRequestBody(
   return http_body;
 }
 
-scoped_refptr<ResourceRequestBody> GetRequestBodyForWebURLRequest(
+scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebURLRequest(
     const WebURLRequest& request) {
-  scoped_refptr<ResourceRequestBody> request_body;
+  scoped_refptr<network::ResourceRequestBody> request_body;
 
   if (request.HttpBody().IsNull()) {
     return request_body;
@@ -413,27 +275,16 @@ scoped_refptr<ResourceRequestBody> GetRequestBodyForWebURLRequest(
   return GetRequestBodyForWebHTTPBody(request.HttpBody());
 }
 
-void GetBlobRegistry(blink::mojom::BlobRegistryRequest request) {
-  ChildThreadImpl::current()->GetConnector()->BindInterface(
-      mojom::kBrowserServiceName, std::move(request));
-}
-
-scoped_refptr<ResourceRequestBody> GetRequestBodyForWebHTTPBody(
+scoped_refptr<network::ResourceRequestBody> GetRequestBodyForWebHTTPBody(
     const blink::WebHTTPBody& httpBody) {
-  scoped_refptr<ResourceRequestBody> request_body = new ResourceRequestBody();
+  scoped_refptr<network::ResourceRequestBody> request_body =
+      new network::ResourceRequestBody();
   size_t i = 0;
   WebHTTPBody::Element element;
-  // TODO(jam): cache this somewhere so we don't request it each time?
-  blink::mojom::BlobRegistryPtr blob_registry;
   while (httpBody.ElementAt(i++, element)) {
     switch (element.type) {
       case WebHTTPBody::Element::kTypeData:
-        element.data.ForEachSegment([&request_body](const char* segment,
-                                                    size_t segment_size,
-                                                    size_t segment_offset) {
-          request_body->AppendBytes(segment, static_cast<int>(segment_size));
-          return true;
-        });
+        request_body->AppendBytes(element.data.Copy().ReleaseVector());
         break;
       case WebHTTPBody::Element::kTypeFile:
         if (element.file_length == -1) {
@@ -448,49 +299,40 @@ scoped_refptr<ResourceRequestBody> GetRequestBodyForWebHTTPBody(
               base::Time::FromDoubleT(element.modification_time));
         }
         break;
-      case WebHTTPBody::Element::kTypeFileSystemURL: {
-        GURL file_system_url = element.file_system_url;
-        DCHECK(file_system_url.SchemeIsFileSystem());
-        request_body->AppendFileSystemFileRange(
-            file_system_url, static_cast<uint64_t>(element.file_start),
-            static_cast<uint64_t>(element.file_length),
-            base::Time::FromDoubleT(element.modification_time));
-        break;
-      }
       case WebHTTPBody::Element::kTypeBlob: {
-        if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-          if (!blob_registry.is_bound()) {
-            if (ChildThreadImpl::current()) {
-              ChildThreadImpl::current()->GetConnector()->BindInterface(
-                  mojom::kBrowserServiceName, MakeRequest(&blob_registry));
-            } else {
-              // TODO(sammc): We should use per-frame / per-worker
-              // InterfaceProvider instead (crbug.com/734210).
-              blink::Platform::Current()
-                  ->MainThread()
-                  ->GetSingleThreadTaskRunner()
-                  ->PostTask(FROM_HERE,
-                             base::BindOnce(&GetBlobRegistry,
-                                            MakeRequest(&blob_registry)));
-            }
-          }
-          blink::mojom::BlobPtr blob_ptr;
-          blob_registry->GetBlobFromUUID(MakeRequest(&blob_ptr),
-                                         element.blob_uuid.Utf8());
+        if (base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+          DCHECK(element.optional_blob_handle.is_valid());
+          blink::mojom::BlobPtr blob_ptr(
+              blink::mojom::BlobPtrInfo(std::move(element.optional_blob_handle),
+                                        blink::mojom::Blob::Version_));
 
           network::mojom::DataPipeGetterPtr data_pipe_getter_ptr;
-          // Object deletes itself.
-          new DataPipeGetter(std::move(blob_ptr),
-                             MakeRequest(&data_pipe_getter_ptr));
+          blob_ptr->AsDataPipeGetter(MakeRequest(&data_pipe_getter_ptr));
 
           request_body->AppendDataPipe(std::move(data_pipe_getter_ptr));
         } else {
-          request_body->AppendBlob(element.blob_uuid.Utf8());
+          request_body->AppendBlob(element.blob_uuid.Utf8(),
+                                   element.blob_length);
         }
         break;
       }
-      default:
-        NOTREACHED();
+      case WebHTTPBody::Element::kTypeDataPipe: {
+        // Convert the raw message pipe to network::mojom::DataPipeGetterPtr.
+        network::mojom::DataPipeGetterPtr data_pipe_getter;
+        data_pipe_getter.Bind(network::mojom::DataPipeGetterPtrInfo(
+            std::move(element.data_pipe_getter), 0u));
+
+        // Set the cloned DataPipeGetter to the output |request_body|, while
+        // keeping the original message pipe back in the input |httpBody|. This
+        // way the consumer of the |httpBody| can retrieve the data pipe
+        // multiple times (e.g. during redirects) until the request is finished.
+        network::mojom::DataPipeGetterPtr cloned_getter;
+        data_pipe_getter->Clone(mojo::MakeRequest(&cloned_getter));
+        request_body->AppendDataPipe(std::move(cloned_getter));
+        element.data_pipe_getter =
+            data_pipe_getter.PassInterface().PassHandle();
+        break;
+      }
     }
   }
   request_body->set_identifier(httpBody.Identifier());
@@ -502,108 +344,14 @@ scoped_refptr<ResourceRequestBody> GetRequestBodyForWebHTTPBody(
   static_assert(static_cast<int>(a) == static_cast<int>(b), \
                 "mismatching enums: " #a)
 
-STATIC_ASSERT_ENUM(FetchRedirectMode::FOLLOW_MODE,
-                   WebURLRequest::kFetchRedirectModeFollow);
-STATIC_ASSERT_ENUM(FetchRedirectMode::ERROR_MODE,
-                   WebURLRequest::kFetchRedirectModeError);
-STATIC_ASSERT_ENUM(FetchRedirectMode::MANUAL_MODE,
-                   WebURLRequest::kFetchRedirectModeManual);
-
-FetchRedirectMode GetFetchRedirectModeForWebURLRequest(
-    const WebURLRequest& request) {
-  return static_cast<FetchRedirectMode>(request.GetFetchRedirectMode());
-}
-
 std::string GetFetchIntegrityForWebURLRequest(const WebURLRequest& request) {
   return request.GetFetchIntegrity().Utf8();
 }
 
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_FRAME_TYPE_AUXILIARY,
-                   WebURLRequest::kFrameTypeAuxiliary);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_FRAME_TYPE_NESTED,
-                   WebURLRequest::kFrameTypeNested);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_FRAME_TYPE_NONE,
-                   WebURLRequest::kFrameTypeNone);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL,
-                   WebURLRequest::kFrameTypeTopLevel);
-
-RequestContextFrameType GetRequestContextFrameTypeForWebURLRequest(
+blink::mojom::RequestContextType GetRequestContextTypeForWebURLRequest(
     const WebURLRequest& request) {
-  return static_cast<RequestContextFrameType>(request.GetFrameType());
-}
-
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_UNSPECIFIED,
-                   WebURLRequest::kRequestContextUnspecified);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_AUDIO,
-                   WebURLRequest::kRequestContextAudio);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_BEACON,
-                   WebURLRequest::kRequestContextBeacon);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_CSP_REPORT,
-                   WebURLRequest::kRequestContextCSPReport);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_DOWNLOAD,
-                   WebURLRequest::kRequestContextDownload);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_EMBED,
-                   WebURLRequest::kRequestContextEmbed);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_EVENT_SOURCE,
-                   WebURLRequest::kRequestContextEventSource);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_FAVICON,
-                   WebURLRequest::kRequestContextFavicon);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_FETCH,
-                   WebURLRequest::kRequestContextFetch);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_FONT,
-                   WebURLRequest::kRequestContextFont);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_FORM,
-                   WebURLRequest::kRequestContextForm);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_FRAME,
-                   WebURLRequest::kRequestContextFrame);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_HYPERLINK,
-                   WebURLRequest::kRequestContextHyperlink);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_IFRAME,
-                   WebURLRequest::kRequestContextIframe);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_IMAGE,
-                   WebURLRequest::kRequestContextImage);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_IMAGE_SET,
-                   WebURLRequest::kRequestContextImageSet);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_IMPORT,
-                   WebURLRequest::kRequestContextImport);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_INTERNAL,
-                   WebURLRequest::kRequestContextInternal);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_LOCATION,
-                   WebURLRequest::kRequestContextLocation);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_MANIFEST,
-                   WebURLRequest::kRequestContextManifest);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_OBJECT,
-                   WebURLRequest::kRequestContextObject);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_PING,
-                   WebURLRequest::kRequestContextPing);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_PLUGIN,
-                   WebURLRequest::kRequestContextPlugin);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_PREFETCH,
-                   WebURLRequest::kRequestContextPrefetch);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_SCRIPT,
-                   WebURLRequest::kRequestContextScript);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_SERVICE_WORKER,
-                   WebURLRequest::kRequestContextServiceWorker);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_SHARED_WORKER,
-                   WebURLRequest::kRequestContextSharedWorker);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_SUBRESOURCE,
-                   WebURLRequest::kRequestContextSubresource);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_STYLE,
-                   WebURLRequest::kRequestContextStyle);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_TRACK,
-                   WebURLRequest::kRequestContextTrack);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_VIDEO,
-                   WebURLRequest::kRequestContextVideo);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_WORKER,
-                   WebURLRequest::kRequestContextWorker);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_XML_HTTP_REQUEST,
-                   WebURLRequest::kRequestContextXMLHttpRequest);
-STATIC_ASSERT_ENUM(REQUEST_CONTEXT_TYPE_XSLT,
-                   WebURLRequest::kRequestContextXSLT);
-
-RequestContextType GetRequestContextTypeForWebURLRequest(
-    const WebURLRequest& request) {
-  return static_cast<RequestContextType>(request.GetRequestContext());
+  return static_cast<blink::mojom::RequestContextType>(
+      request.GetRequestContext());
 }
 
 blink::WebMixedContentContextType GetMixedContentContextTypeForWebURLRequest(
@@ -619,14 +367,6 @@ blink::WebMixedContentContextType GetMixedContentContextTypeForWebURLRequest(
       request.GetRequestContext(), block_mixed_plugin_content);
 }
 
-STATIC_ASSERT_ENUM(ServiceWorkerMode::NONE,
-                   WebURLRequest::ServiceWorkerMode::kNone);
-STATIC_ASSERT_ENUM(ServiceWorkerMode::ALL,
-                   WebURLRequest::ServiceWorkerMode::kAll);
-
-ServiceWorkerMode GetServiceWorkerModeForWebURLRequest(
-    const WebURLRequest& request) {
-  return static_cast<ServiceWorkerMode>(request.GetServiceWorkerMode());
-}
+#undef STATIC_ASSERT_ENUM
 
 }  // namespace content

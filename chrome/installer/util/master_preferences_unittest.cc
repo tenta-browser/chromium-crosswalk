@@ -12,14 +12,14 @@
 
 #include "base/environment.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/util_constants.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -76,7 +76,6 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       "  \"distribution\": { \n"
       "     \"show_welcome_page\": true,\n"
       "     \"import_bookmarks_from_file\": \"c:\\\\foo\",\n"
-      "     \"welcome_page_on_os_upgrade_enabled\": true,\n"
       "     \"do_not_create_any_shortcuts\": true,\n"
       "     \"do_not_create_desktop_shortcut\": true,\n"
       "     \"do_not_create_quick_launch_shortcut\": true,\n"
@@ -99,7 +98,6 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
   EXPECT_TRUE(prefs.read_from_file());
 
   const char* const expected_true[] = {
-      installer::master_preferences::kDistroWelcomePageOnOSUpgradeEnabled,
       installer::master_preferences::kDoNotCreateAnyShortcuts,
       installer::master_preferences::kDoNotCreateDesktopShortcut,
       installer::master_preferences::kDoNotCreateQuickLaunchShortcut,
@@ -112,7 +110,7 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       installer::master_preferences::kRequireEula,
   };
 
-  for (size_t i = 0; i < arraysize(expected_true); ++i) {
+  for (size_t i = 0; i < base::size(expected_true); ++i) {
     bool value = false;
     EXPECT_TRUE(prefs.GetBool(expected_true[i], &value));
     EXPECT_TRUE(value) << expected_true[i];
@@ -148,19 +146,18 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
   };
 
   bool value = false;
-  for (size_t i = 0; i < arraysize(expected_bool); ++i) {
+  for (size_t i = 0; i < base::size(expected_bool); ++i) {
     EXPECT_TRUE(prefs.GetBool(expected_bool[i].name, &value));
     EXPECT_EQ(value, expected_bool[i].expected_value) << expected_bool[i].name;
   }
 
   const char* const missing_bools[] = {
-    installer::master_preferences::kDistroWelcomePageOnOSUpgradeEnabled,
     installer::master_preferences::kDoNotRegisterForUpdateLaunch,
     installer::master_preferences::kMakeChromeDefault,
     installer::master_preferences::kMakeChromeDefaultForUser,
   };
 
-  for (size_t i = 0; i < arraysize(missing_bools); ++i) {
+  for (size_t i = 0; i < base::size(missing_bools); ++i) {
     EXPECT_FALSE(prefs.GetBool(missing_bools[i], &value)) << missing_bools[i];
   }
 
@@ -200,7 +197,7 @@ TEST_F(MasterPreferencesTest, FirstRunTabs) {
 // general it is expected the extension format to be backwards compatible.
 TEST(MasterPrefsExtension, ValidateExtensionJSON) {
   base::FilePath prefs_path;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &prefs_path));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &prefs_path));
   prefs_path = prefs_path.AppendASCII("extensions")
       .AppendASCII("good").AppendASCII("Preferences");
 
@@ -261,7 +258,7 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
 
   // Now check that prefs got merged correctly.
   bool value = false;
-  for (size_t i = 0; i < arraysize(expected_bool); ++i) {
+  for (size_t i = 0; i < base::size(expected_bool); ++i) {
     EXPECT_TRUE(prefs.GetBool(expected_bool[i].name, &value));
     EXPECT_EQ(value, expected_bool[i].expected_value) << expected_bool[i].name;
   }
@@ -278,7 +275,7 @@ TEST_F(MasterPreferencesTest, GetInstallPreferencesTest) {
     { installer::master_preferences::kDoNotLaunchChrome, true },
   };
 
-  for (size_t i = 0; i < arraysize(expected_bool2); ++i) {
+  for (size_t i = 0; i < base::size(expected_bool2); ++i) {
     EXPECT_TRUE(prefs2.GetBool(expected_bool2[i].name, &value));
     EXPECT_EQ(value, expected_bool2[i].expected_value)
         << expected_bool2[i].name;

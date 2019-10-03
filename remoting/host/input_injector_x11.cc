@@ -6,13 +6,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <X11/extensions/XInput.h>
-#include <X11/extensions/XTest.h>
-#include <X11/Xlib.h>
-#include <X11/XKBlib.h>
-#include <X11/keysym.h>
-#undef Status  // Xlib.h #defines this, which breaks protobuf headers.
-
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -20,10 +14,10 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversion_utils.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/clipboard.h"
@@ -35,6 +29,7 @@
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/gfx/x/x11.h"
 
 #if defined(OS_CHROMEOS)
 #include "remoting/host/chromeos/point_transformer.h"
@@ -50,7 +45,18 @@ using protocol::TextEvent;
 using protocol::MouseEvent;
 using protocol::TouchEvent;
 
-bool IsModifierKey(ui::DomCode dom_code) {
+enum class ScrollDirection {
+  DOWN = -1,
+  UP = 1,
+  NONE = 0,
+};
+
+ScrollDirection WheelDeltaToScrollDirection(float num) {
+  return (num > 0) ? ScrollDirection::UP
+                   : (num < 0) ? ScrollDirection::DOWN : ScrollDirection::NONE;
+}
+
+bool IsDomModifierKey(ui::DomCode dom_code) {
   return dom_code == ui::DomCode::CONTROL_LEFT ||
          dom_code == ui::DomCode::SHIFT_LEFT ||
          dom_code == ui::DomCode::ALT_LEFT ||
@@ -64,6 +70,10 @@ bool IsModifierKey(ui::DomCode dom_code) {
 // Pixel-to-wheel-ticks conversion ratio used by GTK.
 // From third_party/WebKit/Source/web/gtk/WebInputEventFactory.cpp .
 const float kWheelTicksPerPixel = 3.0f / 160.0f;
+
+// When the user is scrolling, generate at least one tick per time period.
+const base::TimeDelta kContinuousScrollTimeout =
+    base::TimeDelta::FromMilliseconds(500);
 
 // A class to generate events on X11.
 class InputInjectorX11 : public InputInjector {
@@ -141,17 +151,22 @@ class InputInjectorX11 : public InputInjector {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
     std::set<int> pressed_keys_;
-    webrtc::DesktopVector latest_mouse_position_;
-    float wheel_ticks_x_;
-    float wheel_ticks_y_;
+    webrtc::DesktopVector latest_mouse_position_ =
+        webrtc::DesktopVector(-1, -1);
+    float wheel_ticks_x_ = 0;
+    float wheel_ticks_y_ = 0;
+    base::Time latest_tick_y_event_;
+    // The direction of the last scroll event that resulted in at least one
+    // "tick" being injected.
+    ScrollDirection latest_tick_y_direction_ = ScrollDirection::NONE;
 
     // X11 graphics context.
-    Display* display_;
-    Window root_window_;
+    Display* display_ = XOpenDisplay(nullptr);
+    Window root_window_ = BadValue;
 
     // Number of buttons we support.
-    // Left, Right, Middle, VScroll Up/Down, HScroll Left/Right.
-    static const int kNumPointerButtons = 7;
+    // Left, Right, Middle, VScroll Up/Down, HScroll Left/Right, back, forward.
+    static const int kNumPointerButtons = 9;
 
     int pointer_button_map_[kNumPointerButtons];
 
@@ -163,7 +178,7 @@ class InputInjectorX11 : public InputInjector {
 
     std::unique_ptr<X11CharacterInjector> character_injector_;
 
-    bool saved_auto_repeat_enabled_;
+    bool saved_auto_repeat_enabled_ = false;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -213,22 +228,16 @@ void InputInjectorX11::Start(
 
 InputInjectorX11::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : task_runner_(task_runner),
-      latest_mouse_position_(-1, -1),
-      wheel_ticks_x_(0.0f),
-      wheel_ticks_y_(0.0f),
-      display_(XOpenDisplay(nullptr)),
-      root_window_(BadValue),
-      saved_auto_repeat_enabled_(false) {
-}
+    : task_runner_(task_runner) {}
 
 bool InputInjectorX11::Core::Init() {
   CHECK(display_);
 
   if (!task_runner_->BelongsToCurrentThread())
-    task_runner_->PostTask(FROM_HERE, base::Bind(&Core::InitClipboard, this));
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&Core::InitClipboard, this));
 
-  root_window_ = RootWindow(display_, DefaultScreen(display_));
+  root_window_ = XRootWindow(display_, DefaultScreen(display_));
   if (root_window_ == BadValue) {
     LOG(ERROR) << "Unable to get the root window";
     return false;
@@ -246,7 +255,7 @@ void InputInjectorX11::Core::InjectClipboardEvent(
     const ClipboardEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectClipboardEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectClipboardEvent, this, event));
     return;
   }
 
@@ -261,7 +270,7 @@ void InputInjectorX11::Core::InjectKeyEvent(const KeyEvent& event) {
 
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectKeyEvent, this, event));
+                           base::BindOnce(&Core::InjectKeyEvent, this, event));
     return;
   }
 
@@ -278,11 +287,11 @@ void InputInjectorX11::Core::InjectKeyEvent(const KeyEvent& event) {
   if (event.pressed()) {
     if (pressed_keys_.find(keycode) != pressed_keys_.end()) {
       // Ignore repeats for modifier keys.
-      if (IsModifierKey(static_cast<ui::DomCode>(event.usb_keycode())))
+      if (IsDomModifierKey(static_cast<ui::DomCode>(event.usb_keycode())))
         return;
       // Key is already held down, so lift the key up to ensure this repeated
       // press takes effect.
-      XTestFakeKeyEvent(display_, keycode, False, CurrentTime);
+      XTestFakeKeyEvent(display_, keycode, x11::False, x11::CurrentTime);
     }
 
     if (!IsLockKey(keycode)) {
@@ -308,31 +317,19 @@ void InputInjectorX11::Core::InjectKeyEvent(const KeyEvent& event) {
       SetLockStates(caps_lock, num_lock);
     }
 
-    if (pressed_keys_.empty()) {
-      // Disable auto-repeat, if necessary, to avoid triggering auto-repeat
-      // if network congestion delays the key-up event from the client.
-      saved_auto_repeat_enabled_ = IsAutoRepeatEnabled();
-      if (saved_auto_repeat_enabled_)
-        SetAutoRepeatEnabled(false);
-    }
     pressed_keys_.insert(keycode);
   } else {
     pressed_keys_.erase(keycode);
-    if (pressed_keys_.empty()) {
-      // Re-enable auto-repeat, if necessary, when all keys are released.
-      if (saved_auto_repeat_enabled_)
-        SetAutoRepeatEnabled(true);
-    }
   }
 
-  XTestFakeKeyEvent(display_, keycode, event.pressed(), CurrentTime);
+  XTestFakeKeyEvent(display_, keycode, event.pressed(), x11::CurrentTime);
   XFlush(display_);
 }
 
 void InputInjectorX11::Core::InjectTextEvent(const TextEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectTextEvent, this, event));
+                           base::BindOnce(&Core::InjectTextEvent, this, event));
     return;
   }
 
@@ -340,7 +337,7 @@ void InputInjectorX11::Core::InjectTextEvent(const TextEvent& event) {
   // any interference with the currently pressed keys. E.g. if Shift is pressed
   // when TextEvent is received.
   for (int key : pressed_keys_) {
-    XTestFakeKeyEvent(display_, key, False, CurrentTime);
+    XTestFakeKeyEvent(display_, key, x11::False, x11::CurrentTime);
   }
   pressed_keys_.clear();
 
@@ -377,14 +374,15 @@ void InputInjectorX11::Core::SetAutoRepeatEnabled(bool mode) {
   XKeyboardControl control;
   control.auto_repeat_mode = mode ? AutoRepeatModeOn : AutoRepeatModeOff;
   XChangeKeyboardControl(display_, KBAutoRepeatMode, &control);
+  XFlush(display_);
 }
 
 bool InputInjectorX11::Core::IsLockKey(KeyCode keycode) {
   XkbStateRec state;
   KeySym keysym;
-  if (XkbGetState(display_, XkbUseCoreKbd, &state) == Success &&
+  if (XkbGetState(display_, XkbUseCoreKbd, &state) == x11::Success &&
       XkbLookupKeySym(display_, keycode, XkbStateMods(&state), nullptr,
-                      &keysym) == True) {
+                      &keysym) == x11::True) {
     return keysym == XK_Caps_Lock || keysym == XK_Num_Lock;
   } else {
     return false;
@@ -426,15 +424,15 @@ void InputInjectorX11::Core::InjectScrollWheelClicks(int button, int count) {
   }
   for (int i = 0; i < count; i++) {
     // Generate a button-down and a button-up to simulate a wheel click.
-    XTestFakeButtonEvent(display_, button, true, CurrentTime);
-    XTestFakeButtonEvent(display_, button, false, CurrentTime);
+    XTestFakeButtonEvent(display_, button, true, x11::CurrentTime);
+    XTestFakeButtonEvent(display_, button, false, x11::CurrentTime);
   }
 }
 
 void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
   if (!task_runner_->BelongsToCurrentThread()) {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&Core::InjectMouseEvent, this, event));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Core::InjectMouseEvent, this, event));
     return;
   }
 
@@ -443,9 +441,8 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
       (event.delta_x() != 0 || event.delta_y() != 0)) {
     latest_mouse_position_.set(-1, -1);
     VLOG(3) << "Moving mouse by " << event.delta_x() << "," << event.delta_y();
-    XTestFakeRelativeMotionEvent(display_,
-                                 event.delta_x(), event.delta_y(),
-                                 CurrentTime);
+    XTestFakeRelativeMotionEvent(display_, event.delta_x(), event.delta_y(),
+                                 x11::CurrentTime);
 
   } else if (event.has_x() && event.has_y()) {
     // Injecting a motion event immediately before a button release results in
@@ -474,8 +471,7 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
               << "," << latest_mouse_position_.y();
       XTestFakeMotionEvent(display_, DefaultScreen(display_),
                            latest_mouse_position_.x(),
-                           latest_mouse_position_.y(),
-                           CurrentTime);
+                           latest_mouse_position_.y(), x11::CurrentTime);
     }
   }
 
@@ -492,14 +488,11 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
             << (event.button_down() ? "down " : "up ")
             << button_number;
     XTestFakeButtonEvent(display_, button_number, event.button_down(),
-                         CurrentTime);
+                         x11::CurrentTime);
   }
 
-  // Older client plugins always send scroll events in pixels, which
-  // must be accumulated host-side. Recent client plugins send both
-  // pixels and ticks with every scroll event, allowing the host to
-  // choose the best model on a per-platform basis. Since we can only
-  // inject ticks on Linux, use them if available.
+  // remotedesktop.google.com currently sends scroll events in pixels, which
+  // are accumulated host-side.
   int ticks_y = 0;
   if (event.has_wheel_ticks_y()) {
     ticks_y = event.wheel_ticks_y();
@@ -508,7 +501,45 @@ void InputInjectorX11::Core::InjectMouseEvent(const MouseEvent& event) {
     ticks_y = static_cast<int>(wheel_ticks_y_);
     wheel_ticks_y_ -= ticks_y;
   }
+  if (ticks_y == 0 && event.has_wheel_delta_y()) {
+    // For the y-direction only (the common case), try to ensure that a tick is
+    // injected when the user would expect one, regardless of how many pixels
+    // the client sends per tick (even if it accelerates wheel events). To do
+    // this, generate a tick if one has not occurred recently in the current
+    // scroll direction. The accumulated pixels are not reset in this case.
+    //
+    // The effect when a physical mouse is used is as follows:
+    //
+    // Client sends slightly too few pixels per tick (e.g. Linux):
+    // * First scroll in either direction synthesizes a tick.
+    // * Subsequent scrolls in the same direction are unaffected (their
+    //   accumulated pixel deltas mostly meet the threshold for a regular
+    //   tick; occasionally a tick will be dropped if the user is scrolling
+    //   quickly).
+    //
+    // Client sends far too few pixels per tick, but applies acceleration
+    // (e.g. macOs, ChromeOS):
+    // * First scroll in either direction synthesizes a tick.
+    // * Slow scrolling will synthesize a tick a few times per second.
+    // * Fast scrolling is unaffected (acceleration means that enough pixels
+    //   are accumulated naturally).
+    //
+    // Client sends too many pixels per tick (e.g. Windows):
+    // * Scrolling is unaffected (most scroll events generate one tick; every
+    //   so often one generates two ticks).
+    //
+    // The effect when a trackpad is used is that the first tick in either
+    // direction occurs sooner; subsequent ticks are mostly unaffected.
+    const ScrollDirection current_tick_y_direction =
+        WheelDeltaToScrollDirection(event.wheel_delta_y());
+    if ((base::Time::Now() - latest_tick_y_event_ > kContinuousScrollTimeout) ||
+        latest_tick_y_direction_ != current_tick_y_direction) {
+      ticks_y = static_cast<int>(current_tick_y_direction);
+    }
+  }
   if (ticks_y != 0) {
+    latest_tick_y_direction_ = WheelDeltaToScrollDirection(ticks_y);
+    latest_tick_y_event_ = base::Time::Now();
     InjectScrollWheelClicks(VerticalScrollWheelToX11ButtonNumber(ticks_y),
                             abs(ticks_y));
   }
@@ -602,7 +633,7 @@ void InputInjectorX11::Core::InitMouseButtonMap() {
   }
   error = XSetDeviceButtonMapping(display_, device, button_mapping.get(),
                                   num_device_buttons);
-  if (error != Success)
+  if (error != x11::Success)
     LOG(ERROR) << "Failed to set XTest device button mapping: " << error;
 
   XCloseDevice(display_, device);
@@ -613,13 +644,14 @@ int InputInjectorX11::Core::MouseButtonToX11ButtonNumber(
   switch (button) {
     case MouseEvent::BUTTON_LEFT:
       return pointer_button_map_[0];
-
     case MouseEvent::BUTTON_RIGHT:
       return pointer_button_map_[2];
-
     case MouseEvent::BUTTON_MIDDLE:
       return pointer_button_map_[1];
-
+    case MouseEvent::BUTTON_BACK:
+      return pointer_button_map_[7];
+    case MouseEvent::BUTTON_FORWARD:
+      return pointer_button_map_[8];
     case MouseEvent::BUTTON_UNDEFINED:
     default:
       return -1;
@@ -641,7 +673,7 @@ void InputInjectorX11::Core::Start(
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&Core::Start, this, base::Passed(&client_clipboard)));
+        base::BindOnce(&Core::Start, this, std::move(client_clipboard)));
     return;
   }
 
@@ -650,17 +682,28 @@ void InputInjectorX11::Core::Start(
   clipboard_->Start(std::move(client_clipboard));
 
   character_injector_.reset(
-      new X11CharacterInjector(base::MakeUnique<X11KeyboardImpl>(display_)));
+      new X11CharacterInjector(std::make_unique<X11KeyboardImpl>(display_)));
+
+  // Disable auto-repeat, if necessary, to avoid triggering auto-repeat
+  // if network congestion delays the key-up event from the client. This is
+  // done for the duration of the session because some window managers do
+  // not handle changes to this setting efficiently.
+  saved_auto_repeat_enabled_ = IsAutoRepeatEnabled();
+  if (saved_auto_repeat_enabled_)
+    SetAutoRepeatEnabled(false);
 }
 
 void InputInjectorX11::Core::Stop() {
   if (!task_runner_->BelongsToCurrentThread()) {
-    task_runner_->PostTask(FROM_HERE, base::Bind(&Core::Stop, this));
+    task_runner_->PostTask(FROM_HERE, base::BindOnce(&Core::Stop, this));
     return;
   }
 
   clipboard_.reset();
   character_injector_.reset();
+  // Re-enable auto-repeat, if necessary, on disconnect.
+  if (saved_auto_repeat_enabled_)
+    SetAutoRepeatEnabled(true);
 }
 
 }  // namespace
@@ -668,8 +711,7 @@ void InputInjectorX11::Core::Stop() {
 // static
 std::unique_ptr<InputInjector> InputInjector::Create(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* chromeos_system_input_injector_factory) {
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
   std::unique_ptr<InputInjectorX11> injector(
       new InputInjectorX11(main_task_runner));
   if (!injector->Init())

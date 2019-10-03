@@ -4,8 +4,10 @@
 
 #include "chrome/renderer/content_settings_observer.h"
 
+#include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/common/client_hints.mojom.h"
@@ -22,17 +24,17 @@
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "extensions/features/features.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebClientHintsType.h"
-#include "third_party/WebKit/public/platform/WebContentSettingCallbacks.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrameClient.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "extensions/buildflags/buildflags.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_client_hints_type.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_local_frame_client.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -46,7 +48,6 @@
 #include "extensions/renderer/renderer_extension_registry.h"
 #endif
 
-using blink::WebContentSettingCallbacks;
 using blink::WebDocument;
 using blink::WebFrame;
 using blink::WebSecurityOrigin;
@@ -54,7 +55,6 @@ using blink::WebString;
 using blink::WebURL;
 using blink::WebView;
 using content::DocumentState;
-using content::NavigationState;
 
 namespace {
 
@@ -65,7 +65,7 @@ GURL GetOriginOrURL(const WebFrame* frame) {
   // TODO(alexmos): This is broken for --site-per-process, since top() can be a
   // WebRemoteFrame which does not have a document(), and the WebRemoteFrame's
   // URL is not replicated.  See https://crbug.com/628759.
-  if (top_origin.unique() && frame->Top()->IsWebLocalFrame())
+  if (top_origin.opaque() && frame->Top()->IsWebLocalFrame())
     return frame->Top()->ToWebLocalFrame()->GetDocument().Url();
   return top_origin.GetURL();
 }
@@ -96,7 +96,7 @@ ContentSetting GetContentSettingFromRules(
   return CONTENT_SETTING_DEFAULT;
 }
 
-bool IsScriptDisabledForPreview(const content::RenderFrame* render_frame) {
+bool IsScriptDisabledForPreview(content::RenderFrame* render_frame) {
   return render_frame->GetPreviewsState() & content::NOSCRIPT_ON;
 }
 
@@ -109,25 +109,17 @@ bool IsUniqueFrame(WebFrame* frame) {
 
 ContentSettingsObserver::ContentSettingsObserver(
     content::RenderFrame* render_frame,
-    extensions::Dispatcher* extension_dispatcher,
     bool should_whitelist,
     service_manager::BinderRegistry* registry)
     : content::RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<ContentSettingsObserver>(
           render_frame),
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-      extension_dispatcher_(extension_dispatcher),
-#endif
-      allow_running_insecure_content_(false),
-      content_setting_rules_(nullptr),
-      is_interstitial_page_(false),
-      current_request_id_(0),
       should_whitelist_(should_whitelist) {
   ClearBlockedContentSettings();
   render_frame->GetWebFrame()->SetContentSettingsClient(this);
 
-  registry->AddInterface(
-      base::Bind(&ContentSettingsObserver::OnInsecureContentRendererRequest,
+  render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
+      base::Bind(&ContentSettingsObserver::OnContentSettingsRendererRequest,
                  base::Unretained(this)));
 
   content::RenderFrame* main_frame =
@@ -148,19 +140,33 @@ ContentSettingsObserver::ContentSettingsObserver(
 ContentSettingsObserver::~ContentSettingsObserver() {
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+void ContentSettingsObserver::SetExtensionDispatcher(
+    extensions::Dispatcher* extension_dispatcher) {
+  DCHECK(!extension_dispatcher_)
+      << "SetExtensionDispatcher() should only be called once.";
+  extension_dispatcher_ = extension_dispatcher;
+}
+#endif
+
 void ContentSettingsObserver::SetContentSettingRules(
     const RendererContentSettingRules* content_setting_rules) {
   content_setting_rules_ = content_setting_rules;
-  UMA_HISTOGRAM_COUNTS("ClientHints.CountRulesReceived",
-                       content_setting_rules_->client_hints_rules.size());
+  UMA_HISTOGRAM_COUNTS_1M("ClientHints.CountRulesReceived",
+                          content_setting_rules_->client_hints_rules.size());
+}
+
+const RendererContentSettingRules*
+ContentSettingsObserver::GetContentSettingRules() {
+  return content_setting_rules_;
 }
 
 bool ContentSettingsObserver::IsPluginTemporarilyAllowed(
     const std::string& identifier) {
   // If the empty string is in here, it means all plugins are allowed.
   // TODO(bauerb): Remove this once we only pass in explicit identifiers.
-  return base::ContainsKey(temporarily_allowed_plugins_, identifier) ||
-         base::ContainsKey(temporarily_allowed_plugins_, std::string());
+  return base::Contains(temporarily_allowed_plugins_, identifier) ||
+         base::Contains(temporarily_allowed_plugins_, std::string());
 }
 
 void ContentSettingsObserver::DidBlockContentType(
@@ -182,7 +188,6 @@ void ContentSettingsObserver::DidBlockContentType(
 bool ContentSettingsObserver::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(ContentSettingsObserver, message)
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_SetAsInterstitial, OnSetAsInterstitial)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_RequestFileSystemAccessAsyncResponse,
                         OnRequestFileSystemAccessAsyncResponse)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -200,8 +205,8 @@ bool ContentSettingsObserver::OnMessageReceived(const IPC::Message& message) {
 }
 
 void ContentSettingsObserver::DidCommitProvisionalLoad(
-    bool is_new_navigation,
-    bool is_same_document_navigation) {
+    bool is_same_document_navigation,
+    ui::PageTransition transition) {
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (frame->Parent())
     return;  // Not a top-level navigation.
@@ -233,17 +238,19 @@ void ContentSettingsObserver::SetAllowRunningInsecureContent() {
   // Reload if we are the main frame.
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (!frame->Parent())
-    frame->Reload(blink::WebFrameLoadType::kReload);
+    frame->StartReload(blink::WebFrameLoadType::kReload);
 }
 
-void ContentSettingsObserver::OnInsecureContentRendererRequest(
-    chrome::mojom::InsecureContentRendererRequest request) {
-  insecure_content_renderer_bindings_.AddBinding(this, std::move(request));
+void ContentSettingsObserver::SetAsInterstitial() {
+  is_interstitial_page_ = true;
 }
 
-bool ContentSettingsObserver::AllowDatabase(const WebString& name,
-                                            const WebString& display_name,
-                                            unsigned estimated_size) {
+void ContentSettingsObserver::OnContentSettingsRendererRequest(
+    chrome::mojom::ContentSettingsRendererAssociatedRequest request) {
+  bindings_.AddBinding(this, std::move(request));
+}
+
+bool ContentSettingsObserver::AllowDatabase() {
   WebFrame* frame = render_frame()->GetWebFrame();
   if (IsUniqueFrame(frame))
     return false;
@@ -251,23 +258,22 @@ bool ContentSettingsObserver::AllowDatabase(const WebString& name,
   bool result = false;
   Send(new ChromeViewHostMsg_AllowDatabase(
       routing_id(), url::Origin(frame->GetSecurityOrigin()).GetURL(),
-      url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(), name.Utf16(),
-      display_name.Utf16(), &result));
+      url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(), &result));
   return result;
 }
 
 void ContentSettingsObserver::RequestFileSystemAccessAsync(
-    const WebContentSettingCallbacks& callbacks) {
+    base::OnceCallback<void(bool)> callback) {
   WebFrame* frame = render_frame()->GetWebFrame();
   if (IsUniqueFrame(frame)) {
-    WebContentSettingCallbacks permissionCallbacks(callbacks);
-    permissionCallbacks.DoDeny();
+    std::move(callback).Run(false);
     return;
   }
   ++current_request_id_;
-  bool inserted = permission_requests_
-                      .insert(std::make_pair(current_request_id_, callbacks))
-                      .second;
+  bool inserted =
+      permission_requests_
+          .insert(std::make_pair(current_request_id_, std::move(callback)))
+          .second;
 
   // Verify there are no duplicate insertions.
   DCHECK(inserted);
@@ -299,8 +305,7 @@ bool ContentSettingsObserver::AllowImage(bool enabled_per_settings,
   return allow;
 }
 
-bool ContentSettingsObserver::AllowIndexedDB(const WebString& name,
-                                             const WebSecurityOrigin& origin) {
+bool ContentSettingsObserver::AllowIndexedDB(const WebSecurityOrigin& origin) {
   WebFrame* frame = render_frame()->GetWebFrame();
   if (IsUniqueFrame(frame))
     return false;
@@ -308,8 +313,20 @@ bool ContentSettingsObserver::AllowIndexedDB(const WebString& name,
   bool result = false;
   Send(new ChromeViewHostMsg_AllowIndexedDB(
       routing_id(), url::Origin(frame->GetSecurityOrigin()).GetURL(),
-      url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(), name.Utf16(),
-      &result));
+      url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(), &result));
+  return result;
+}
+
+bool ContentSettingsObserver::AllowCacheStorage(
+    const blink::WebSecurityOrigin& origin) {
+  WebFrame* frame = render_frame()->GetWebFrame();
+  if (IsUniqueFrame(frame))
+    return false;
+
+  bool result = false;
+  Send(new ChromeViewHostMsg_AllowCacheStorage(
+      routing_id(), url::Origin(frame->GetSecurityOrigin()).GetURL(),
+      url::Origin(frame->Top()->GetSecurityOrigin()).GetURL(), &result));
   return result;
 }
 
@@ -403,7 +420,8 @@ bool ContentSettingsObserver::AllowWriteToClipboard(bool default_value) {
       extension_dispatcher_->script_context_set().GetCurrent();
   if (current_context) {
     if (current_context->effective_context_type() ==
-        extensions::Feature::BLESSED_EXTENSION_CONTEXT) {
+            extensions::Feature::BLESSED_EXTENSION_CONTEXT &&
+        !current_context->IsForServiceWorker()) {
       allowed = true;
     } else {
       allowed |= current_context->HasAPIPermission(
@@ -445,6 +463,16 @@ bool ContentSettingsObserver::AllowAutoplay(bool default_value) {
          CONTENT_SETTING_ALLOW;
 }
 
+bool ContentSettingsObserver::AllowPopupsAndRedirects(bool default_value) {
+  if (!content_setting_rules_)
+    return default_value;
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
+  return GetContentSettingFromRules(
+             content_setting_rules_->popup_redirect_rules, frame,
+             url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL()) ==
+         CONTENT_SETTING_ALLOW;
+}
+
 void ContentSettingsObserver::PassiveInsecureContentFound(
     const blink::WebURL& resource_url) {
   // Note: this implementation is a mirror of
@@ -471,7 +499,7 @@ void ContentSettingsObserver::PersistClientHints(
   // this method should not return early if |update_count| is 0.
   std::vector<::blink::mojom::WebClientHintsType> client_hints;
   static constexpr size_t kWebClientHintsCount =
-      static_cast<size_t>(blink::mojom::WebClientHintsType::kLast) + 1;
+      static_cast<size_t>(blink::mojom::WebClientHintsType::kMaxValue) + 1;
   client_hints.reserve(kWebClientHintsCount);
 
   for (size_t i = 0; i < kWebClientHintsCount; ++i) {
@@ -484,9 +512,16 @@ void ContentSettingsObserver::PersistClientHints(
   if (update_count == 0)
     return;
 
-  UMA_HISTOGRAM_CUSTOM_TIMES("ClientHints.PersistDuration", duration,
-                             base::TimeDelta::FromSeconds(1),
-                             base::TimeDelta::FromDays(365), 100);
+  UMA_HISTOGRAM_CUSTOM_TIMES(
+      "ClientHints.PersistDuration", duration, base::TimeDelta::FromSeconds(1),
+      // TODO(crbug.com/949034): Rename and fix this histogram to have some
+      // intended max value. We throw away the 32 most-significant bits of the
+      // 64-bit time delta in milliseconds. Before it happened silently in
+      // histogram.cc, now it is explicit here. The previous value of 365 days
+      // effectively turns into roughly 17 days when getting cast to int.
+      base::TimeDelta::FromMilliseconds(
+          static_cast<int>(base::TimeDelta::FromDays(365).InMilliseconds())),
+      100);
 
   UMA_HISTOGRAM_COUNTS_100("ClientHints.UpdateSize", update_count);
 
@@ -507,7 +542,8 @@ void ContentSettingsObserver::GetAllowedClientHintsFromSource(
     return;
 
   client_hints::GetAllowedClientHintsFromSource(
-      url, content_setting_rules_->client_hints_rules, client_hints);
+      url,
+      content_setting_rules_->client_hints_rules, client_hints);
 }
 
 void ContentSettingsObserver::DidNotAllowPlugins() {
@@ -523,10 +559,6 @@ void ContentSettingsObserver::OnLoadBlockedPlugins(
   temporarily_allowed_plugins_.insert(identifier);
 }
 
-void ContentSettingsObserver::OnSetAsInterstitial() {
-  is_interstitial_page_ = true;
-}
-
 void ContentSettingsObserver::OnRequestFileSystemAccessAsyncResponse(
     int request_id,
     bool allowed) {
@@ -534,14 +566,10 @@ void ContentSettingsObserver::OnRequestFileSystemAccessAsyncResponse(
   if (it == permission_requests_.end())
     return;
 
-  WebContentSettingCallbacks callbacks = it->second;
+  base::OnceCallback<void(bool)> callback = std::move(it->second);
   permission_requests_.erase(it);
 
-  if (allowed) {
-    callbacks.DoAllow();
-    return;
-  }
-  callbacks.DoDeny();
+  std::move(callback).Run(allowed);
 }
 
 void ContentSettingsObserver::ClearBlockedContentSettings() {

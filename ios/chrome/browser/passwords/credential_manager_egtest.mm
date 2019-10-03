@@ -8,12 +8,16 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
+#import "base/test/ios/wait_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
-#include "ios/chrome/browser/passwords/credential_manager_features.h"
 #include "ios/chrome/browser/passwords/ios_chrome_password_store_factory.h"
+#include "ios/chrome/browser/passwords/password_manager_features.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -21,7 +25,6 @@
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/testing/earl_grey/disabled_test_macros.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 
@@ -37,7 +40,7 @@ constexpr CFTimeInterval kDisappearanceTimeout = 4;
 std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     const net::test_server::HttpRequest& request) {
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response =
-      base::MakeUnique<net::test_server::BasicHttpResponse>();
+      std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(net::HTTP_OK);
   http_response->set_content(
       "<head><title>Example website</title></head>"
@@ -97,7 +100,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   // Loads simple page. It is on localhost so it is considered a secure context.
   const GURL URL = self.testServer->GetURL("/example");
   [ChromeEarlGrey loadURL:URL];
-  [ChromeEarlGrey waitForWebViewContainingText:"You are here."];
+  [ChromeEarlGrey waitForWebStateContainingText:"You are here."];
 
   // Obtain a PasswordStore.
   scoped_refptr<password_manager::PasswordStore> passwordStore =
@@ -116,7 +119,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   passwordCredentialForm.origin =
       chrome_test_util::GetCurrentWebState()->GetLastCommittedURL().GetOrigin();
   passwordCredentialForm.signon_realm = passwordCredentialForm.origin.spec();
-  passwordCredentialForm.scheme = autofill::PasswordForm::SCHEME_HTML;
+  passwordCredentialForm.scheme = autofill::PasswordForm::Scheme::kHtml;
   passwordStore->AddLogin(passwordCredentialForm);
 }
 
@@ -151,8 +154,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     return error == nil;
   };
   // Gives some time for the notification to appear.
-  GREYAssert(testing::WaitUntilConditionOrTimeout(
-                 testing::kWaitForUIElementTimeout, waitForAppearance),
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
+                 base::test::ios::kWaitForUIElementTimeout, waitForAppearance),
              @"Notification did not appear");
   // Wait for the notification to disappear.
   ConditionBlock waitForDisappearance = ^{
@@ -163,8 +166,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     return error == nil;
   };
   // Ensures that notification disappears after time limit.
-  GREYAssert(testing::WaitUntilConditionOrTimeout(kDisappearanceTimeout,
-                                                  waitForDisappearance),
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(kDisappearanceTimeout,
+                                                          waitForDisappearance),
              @"Notification did not disappear");
 }
 
@@ -201,16 +204,17 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   };
 
   // Check that notification doesn't appear in current tab.
-  GREYAssertFalse(testing::WaitUntilConditionOrTimeout(
-                      testing::kWaitForUIElementTimeout, waitForAppearance),
-                  @"Notification appeared in wrong tab");
+  GREYAssertFalse(
+      base::test::ios::WaitUntilConditionOrTimeout(
+          base::test::ios::kWaitForUIElementTimeout, waitForAppearance),
+      @"Notification appeared in wrong tab");
 
   // Switch to previous tab.
-  chrome_test_util::SelectTabAtIndexInCurrentMode(0);
+  [ChromeEarlGrey selectTabAtIndex:0];
 
   // Check that the notification has appeared.
-  GREYAssert(testing::WaitUntilConditionOrTimeout(
-                 testing::kWaitForUIElementTimeout, waitForAppearance),
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
+                 base::test::ios::kWaitForUIElementTimeout, waitForAppearance),
              @"Notification did not appear");
 }
 

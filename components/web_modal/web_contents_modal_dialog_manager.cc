@@ -7,16 +7,13 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/logging.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/render_view_host.h"
-#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
 using content::WebContents;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(web_modal::WebContentsModalDialogManager);
 
 namespace web_modal {
 
@@ -64,11 +61,10 @@ content::WebContents* WebContentsModalDialogManager::GetWebContents() const {
 }
 
 void WebContentsModalDialogManager::WillClose(gfx::NativeWindow dialog) {
-  WebContentsModalDialogList::iterator dlg =
-      std::find_if(child_dialogs_.begin(), child_dialogs_.end(),
-                   [dialog](const DialogState& child_dialog) {
-                     return child_dialog.dialog == dialog;
-                   });
+  auto dlg = std::find_if(child_dialogs_.begin(), child_dialogs_.end(),
+                          [dialog](const DialogState& child_dialog) {
+                            return child_dialog.dialog == dialog;
+                          });
 
   // The Views tab contents modal dialog calls WillClose twice.  Ignore the
   // second invocation.
@@ -90,6 +86,8 @@ WebContentsModalDialogManager::WebContentsModalDialogManager(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       delegate_(nullptr),
+      web_contents_is_hidden_(web_contents->GetVisibility() ==
+                              content::Visibility::HIDDEN),
       closing_all_dialogs_(false) {}
 
 WebContentsModalDialogManager::DialogState::DialogState(
@@ -113,10 +111,7 @@ void WebContentsModalDialogManager::BlockWebContentsInteraction(bool blocked) {
     return;
   }
 
-  // RenderViewHost may be null during shutdown.
-  content::RenderViewHost* host = contents->GetRenderViewHost();
-  if (host)
-    host->GetWidget()->SetIgnoreInputEvents(blocked);
+  contents->SetIgnoreInputEvents(blocked);
   if (delegate_)
     delegate_->SetWebContentsBlocked(contents, blocked);
 }
@@ -150,14 +145,21 @@ void WebContentsModalDialogManager::DidGetIgnoredUIEvent() {
   }
 }
 
-void WebContentsModalDialogManager::WasShown() {
-  if (!child_dialogs_.empty())
-    child_dialogs_.front().manager->Show();
-}
+void WebContentsModalDialogManager::OnVisibilityChanged(
+    content::Visibility visibility) {
+  const bool web_contents_was_hidden = web_contents_is_hidden_;
+  web_contents_is_hidden_ = visibility == content::Visibility::HIDDEN;
 
-void WebContentsModalDialogManager::WasHidden() {
-  if (!child_dialogs_.empty())
+  // Avoid reshowing on transitions between VISIBLE and OCCLUDED.
+  if (child_dialogs_.empty() ||
+      web_contents_is_hidden_ == web_contents_was_hidden) {
+    return;
+  }
+
+  if (web_contents_is_hidden_)
     child_dialogs_.front().manager->Hide();
+  else
+    child_dialogs_.front().manager->Show();
 }
 
 void WebContentsModalDialogManager::WebContentsDestroyed() {
@@ -171,5 +173,7 @@ void WebContentsModalDialogManager::WebContentsDestroyed() {
 void WebContentsModalDialogManager::DidAttachInterstitialPage() {
   CloseAllDialogs();
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsModalDialogManager)
 
 }  // namespace web_modal

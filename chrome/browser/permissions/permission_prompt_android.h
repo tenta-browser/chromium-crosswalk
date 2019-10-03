@@ -23,7 +23,6 @@ class PermissionPromptAndroid : public PermissionPrompt {
   ~PermissionPromptAndroid() override;
 
   // PermissionPrompt:
-  bool CanAcceptRequestUpdate() override;
   void UpdateAnchorPosition() override;
   gfx::NativeWindow GetNativeWindow() override;
 
@@ -36,6 +35,7 @@ class PermissionPromptAndroid : public PermissionPrompt {
   size_t PermissionCount() const;
   ContentSettingsType GetContentSettingType(size_t position) const;
   int GetIconId() const;
+  base::string16 GetTitleText() const;
   base::string16 GetMessageText() const;
 
  private:

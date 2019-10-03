@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "net/base/http_user_agent_settings.h"
 #include "net/base/network_delegate.h"
 #include "net/base/proxy_delegate.h"
 #include "net/cert/cert_verifier.h"
@@ -18,16 +19,18 @@
 #include "net/http/http_server_properties.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/log/net_log.h"
-#include "net/proxy/proxy_service.h"
-#include "net/ssl/channel_id_service.h"
-#include "net/url_request/http_user_agent_settings.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory.h"
 #include "net/url_request/url_request_throttler_manager.h"
 
+#if !BUILDFLAG(DISABLE_FTP_SUPPORT)
+#include "net/ftp/ftp_auth_cache.h"
+#endif  // !BUILDFLAG(DISABLE_FTP_SUPPORT)
+
 #if BUILDFLAG(ENABLE_REPORTING)
+#include "net/network_error_logging/network_error_logging_service.h"
 #include "net/reporting/reporting_service.h"
-#include "net/url_request/network_error_logging_delegate.h"
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace net {
@@ -56,12 +59,6 @@ void URLRequestContextStorage::set_cert_verifier(
   cert_verifier_ = std::move(cert_verifier);
 }
 
-void URLRequestContextStorage::set_channel_id_service(
-    std::unique_ptr<ChannelIDService> channel_id_service) {
-  context_->set_channel_id_service(channel_id_service.get());
-  channel_id_service_ = std::move(channel_id_service);
-}
-
 void URLRequestContextStorage::set_http_auth_handler_factory(
     std::unique_ptr<HttpAuthHandlerFactory> http_auth_handler_factory) {
   context_->set_http_auth_handler_factory(http_auth_handler_factory.get());
@@ -70,6 +67,7 @@ void URLRequestContextStorage::set_http_auth_handler_factory(
 
 void URLRequestContextStorage::set_proxy_delegate(
     std::unique_ptr<ProxyDelegate> proxy_delegate) {
+  context_->set_proxy_delegate(proxy_delegate.get());
   proxy_delegate_ = std::move(proxy_delegate);
 }
 
@@ -79,16 +77,16 @@ void URLRequestContextStorage::set_network_delegate(
   network_delegate_ = std::move(network_delegate);
 }
 
-void URLRequestContextStorage::set_proxy_service(
-    std::unique_ptr<ProxyService> proxy_service) {
-  context_->set_proxy_service(proxy_service.get());
-  proxy_service_ = std::move(proxy_service);
+void URLRequestContextStorage::set_proxy_resolution_service(
+    std::unique_ptr<ProxyResolutionService> proxy_resolution_service) {
+  context_->set_proxy_resolution_service(proxy_resolution_service.get());
+  proxy_resolution_service_ = std::move(proxy_resolution_service);
 }
 
 void URLRequestContextStorage::set_ssl_config_service(
-    SSLConfigService* ssl_config_service) {
-  context_->set_ssl_config_service(ssl_config_service);
-  ssl_config_service_ = ssl_config_service;
+    std::unique_ptr<SSLConfigService> ssl_config_service) {
+  context_->set_ssl_config_service(ssl_config_service.get());
+  ssl_config_service_ = std::move(ssl_config_service);
 }
 
 void URLRequestContextStorage::set_http_server_properties(
@@ -150,6 +148,14 @@ void URLRequestContextStorage::set_http_user_agent_settings(
   http_user_agent_settings_ = std::move(http_user_agent_settings);
 }
 
+#if !BUILDFLAG(DISABLE_FTP_SUPPORT)
+void URLRequestContextStorage::set_ftp_auth_cache(
+    std::unique_ptr<FtpAuthCache> ftp_auth_cache) {
+  context_->set_ftp_auth_cache(ftp_auth_cache.get());
+  ftp_auth_cache_ = std::move(ftp_auth_cache);
+}
+#endif  // !BUILDFLAG(DISABLE_FTP_SUPPORT)
+
 #if BUILDFLAG(ENABLE_REPORTING)
 void URLRequestContextStorage::set_reporting_service(
     std::unique_ptr<ReportingService> reporting_service) {
@@ -157,12 +163,11 @@ void URLRequestContextStorage::set_reporting_service(
   reporting_service_ = std::move(reporting_service);
 }
 
-void URLRequestContextStorage::set_network_error_logging_delegate(
-    std::unique_ptr<NetworkErrorLoggingDelegate>
-        network_error_logging_delegate) {
-  context_->set_network_error_logging_delegate(
-      network_error_logging_delegate.get());
-  network_error_logging_delegate_ = std::move(network_error_logging_delegate);
+void URLRequestContextStorage::set_network_error_logging_service(
+    std::unique_ptr<NetworkErrorLoggingService> network_error_logging_service) {
+  context_->set_network_error_logging_service(
+      network_error_logging_service.get());
+  network_error_logging_service_ = std::move(network_error_logging_service);
 }
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 

@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "media/base/android/media_codec_bridge.h"
@@ -22,24 +23,57 @@
 
 namespace media {
 
+class VideoColorSpace;
+struct HDRMetadata;
+
+// Configuration info for MediaCodec.
+class MEDIA_EXPORT VideoCodecConfig {
+ public:
+  VideoCodecConfig();
+  ~VideoCodecConfig();
+
+  VideoCodec codec = kUnknownVideoCodec;
+
+  CodecType codec_type = CodecType::kAny;
+
+  // The initial coded size. The actual size might change at any time, so this
+  // is only a hint.
+  gfx::Size initial_expected_coded_size;
+
+  // The surface that MediaCodec is configured to output to.
+  base::android::ScopedJavaGlobalRef<jobject> surface;
+
+  // The MediaCrypto that MediaCodec is configured with for an encrypted stream.
+  base::android::ScopedJavaGlobalRef<jobject> media_crypto;
+
+  // Codec specific data (SPS and PPS for H264). See MediaCodec docs.
+  std::vector<uint8_t> csd0;
+  std::vector<uint8_t> csd1;
+
+  VideoColorSpace container_color_space;
+
+  // VP9 HDR metadata is only embedded in the container. HDR10 metadata is
+  // embedded in the video stream.
+  base::Optional<HDRMetadata> hdr_metadata;
+
+  // Enables the async MediaCodec.Callback API. |on_buffers_available_cb|
+  // will be called when input or output buffers are available. This will be
+  // called on an arbitrary thread, so use BindToCurrentLoop if needed.
+  //
+  // May only be used on API level 23 and higher.
+  base::RepeatingClosure on_buffers_available_cb;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(VideoCodecConfig);
+};
+
 // A bridge to a Java MediaCodec.
 class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
  public:
   // Creates and starts a new MediaCodec configured for decoding. Returns
   // nullptr on failure.
   static std::unique_ptr<MediaCodecBridge> CreateVideoDecoder(
-      VideoCodec codec,
-      CodecType codec_type,
-      const gfx::Size& size,  // Output frame size.
-      const base::android::JavaRef<jobject>&
-          surface,  // Output surface, optional.
-      const base::android::JavaRef<jobject>&
-          media_crypto,  // MediaCrypto object, optional.
-      // Codec specific data. See MediaCodec docs.
-      const std::vector<uint8_t>& csd0,
-      const std::vector<uint8_t>& csd1,
-      // Should adaptive playback be allowed if supported.
-      bool allow_adaptive_playback = true);
+      const VideoCodecConfig& config);
 
   // Creates and starts a new MediaCodec configured for encoding. Returns
   // nullptr on failure.
@@ -55,7 +89,18 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
   // nullptr on failure.
   static std::unique_ptr<MediaCodecBridge> CreateAudioDecoder(
       const AudioDecoderConfig& config,
-      const base::android::JavaRef<jobject>& media_crypto);
+      const base::android::JavaRef<jobject>& media_crypto,
+      // Enables the async MediaCodec.Callback API. |on_buffers_available_cb|
+      // will be called when input or output buffers are available. This will be
+      // called on an arbitrary thread, so use BindToCurrentLoop if needed.
+      //
+      // May only be used on API level 23 and higher.
+      base::RepeatingClosure on_buffers_available_cb =
+          base::RepeatingClosure());
+
+  // Required for tests that wish to use a |on_buffers_available_cb| when
+  // creating a MediaCodec. Does nothing unless on API level 23+.
+  static void SetupCallbackHandlerForTesting();
 
   ~MediaCodecBridgeImpl() override;
 
@@ -101,16 +146,13 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
   bool SetSurface(const base::android::JavaRef<jobject>& surface) override;
   void SetVideoBitrate(int bps, int frame_rate) override;
   void RequestKeyFrameSoon() override;
-  bool IsAdaptivePlaybackSupported() override;
+  CodecType GetCodecType() const override;
 
  private:
-  MediaCodecBridgeImpl(const std::string& mime,
-                       CodecType codec_type,
-                       MediaCodecDirection direction,
-                       const base::android::JavaRef<jobject>& media_crypto);
-
-  // Calls MediaCodec#start(). Returns whether it was successful.
-  bool Start();
+  MediaCodecBridgeImpl(CodecType codec_type,
+                       base::android::ScopedJavaGlobalRef<jobject> j_bridge,
+                       base::RepeatingClosure on_buffers_available_cb =
+                           base::RepeatingClosure());
 
   // Fills the given input buffer. Returns false if |data_size| exceeds the
   // input buffer's capacity (and doesn't touch the input buffer in that case).
@@ -126,6 +168,14 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
                                           size_t offset,
                                           const uint8_t** addr,
                                           size_t* capacity);
+
+  void OnBuffersAvailable(
+      JNIEnv* /* env */,
+      const base::android::JavaParamRef<jobject>& /* obj */) override;
+
+  const CodecType codec_type_;
+
+  base::RepeatingClosure on_buffers_available_cb_;
 
   // The Java MediaCodecBridge instance.
   base::android::ScopedJavaGlobalRef<jobject> j_bridge_;

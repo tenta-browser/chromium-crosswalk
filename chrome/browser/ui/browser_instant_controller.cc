@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/browser_instant_controller.h"
 
 #include "base/bind.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_service.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
@@ -43,11 +45,10 @@ class TabReloader : public content::WebContentsUserData<TabReloader> {
   friend class content::WebContentsUserData<TabReloader>;
 
   explicit TabReloader(content::WebContents* web_contents)
-      : web_contents_(web_contents), weak_ptr_factory_(this) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&TabReloader::ReloadImpl,
-                       weak_ptr_factory_.GetWeakPtr()));
+      : web_contents_(web_contents) {
+    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                             base::BindOnce(&TabReloader::ReloadImpl,
+                                            weak_ptr_factory_.GetWeakPtr()));
   }
 
   void ReloadImpl() {
@@ -63,13 +64,13 @@ class TabReloader : public content::WebContentsUserData<TabReloader> {
   }
 
   content::WebContents* web_contents_;
-  base::WeakPtrFactory<TabReloader> weak_ptr_factory_;
+  base::WeakPtrFactory<TabReloader> weak_ptr_factory_{this};
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
+WEB_CONTENTS_USER_DATA_KEY_IMPL(TabReloader)
+
 }  // namespace
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(TabReloader);
-
 
 // BrowserInstantController ---------------------------------------------------
 
@@ -80,9 +81,9 @@ BrowserInstantController::BrowserInstantController(Browser* browser)
   // TemplateURLService can be null in tests.
   if (template_url_service) {
     search_engine_base_url_tracker_ =
-        base::MakeUnique<SearchEngineBaseURLTracker>(
+        std::make_unique<SearchEngineBaseURLTracker>(
             template_url_service,
-            base::MakeUnique<UIThreadSearchTermsData>(profile()),
+            std::make_unique<UIThreadSearchTermsData>(profile()),
             base::Bind(&BrowserInstantController::OnSearchEngineBaseURLChanged,
                        base::Unretained(this)));
   }

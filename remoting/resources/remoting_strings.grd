@@ -638,6 +638,27 @@
         <message name="IDS_MOBILE_NETWORK_WARNING" desc="Message shown in an alert dialog that warns the user that they are trying to connect to a device over mobile network.">
           Data charges may apply when connecting to a device over mobile network. Do you want to continue?
         </message>
+        <message name="IDS_THIRD_PARTY_AUTH_NOT_SUPPORTED" desc="Error message shown when the user attempts to connect to a remote device under third party authentication, which is currently unsupported by the client.">
+          This device is not supported by this client because it requires third party authentication.
+        </message>
+        <message name="IDS_REPORT_THIS" desc="Label text for a button to report a connection failure to the developers.">
+          Report this
+        </message>
+        <message name="IDS_IOS_PHOTO_LIBRARY_USAGE_DESCRIPTION" desc="Message shown when the app requests permission to access the user's photo library.">
+          To choose a profile picture, allow Chrome Remote Desktop to access your photos
+        </message>
+        <message name="IDS_IOS_CAMERA_USAGE_DESCRIPTION" desc="Message shown when the app requests permission to use the camera of the device.">
+          To choose a profile picture, allow Chrome Remote Desktop to access your camera
+        </message>
+        <message name="IDS_SERVER_COMMUNICATION_ERROR" desc="Message shown when the client fails to communicate with the back end server.">
+          Failed to communicate with the server: <ph name="ERROR">$1<ex>Server Unavailable</ex></ph>
+        </message>
+        <message name="IDS_TERMS_OF_SERVICE" desc="The label to access the terms of service, displayed in navigation menu." formatter_data="android_java">
+          Terms of Service
+        </message>
+        <message name="IDS_PRIVACY_POLICY" desc="The label to access the privacy policy, displayed in navigation menu." formatter_data="android_java">
+          Privacy Policy
+        </message>
 
 <!-- Play Store listings text. These Android-specific strings are not marked
      with formatter_data="android_java" since they are used only for the Play
@@ -668,12 +689,15 @@ Remote computers with non US-English keyboards may receive incorrect text input.
 For information about privacy, please see the Google Privacy Policy (http://goo.gl/SyrVzj) and the Chrome Privacy Policy (http://goo.gl/0uXE5d).
         </message>
         <message name="IDS_PLAY_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for Android. [CHAR-LIMIT=500] [NAME=play_store_changes]">
-• Added support for Android 8.0 Oreo.
+Stability improvements and bug fixes.
         </message>
 
         <!-- iOS App Store metadata text. Won't be bundled into the app. -->
-        <message name="IDS_APP_STORE_TITLE" desc="App Store title of the Chrome Remote Desktop app for iOS. If needed to meet the 30-char limit, please translate just 'Remote Desktop' instead. [CHAR-LIMIT=30] [NAME=app_store_title]" meaning="Title used in App Store">
+        <message name="IDS_APP_STORE_TITLE" desc="App Store title of the Chrome Remote Desktop app for iOS. If needed to meet the 50-char limit, please translate just 'Remote Desktop' instead. [CHAR-LIMIT=50] [NAME=app_store_title]" meaning="Title used in App Store">
           Chrome Remote Desktop
+        </message>
+        <message name="IDS_APP_STORE_SUBTITLE" desc="App Store subtitle text. To be displayed below the app title in App Store. No period at the end. [CHAR-LIMIT=30]" meaning="Please try to keep translation below 30 characters. If not possible, please try to translate 'access your computer' instead.">
+          Securely access your computer
         </message>
         <message name="IDS_APP_STORE_KEYWORDS" desc="App Store keywords (to be used to search for the app) for the Chrome Remote Desktop app for iOS. Separate keywords with newline. [NAME=app_store_keywords]">
 Chrome
@@ -691,10 +715,8 @@ Securely access your computer from your iOS device. It's fast, simple and free.
 • Install Chrome Remote Desktop software and follow the instructions to complete setup.
 • On your iOS device, open the app and tap on any of your online computers to connect.
         </message>
-        <message name="IDS_APP_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for iOS. [CHAR-LIMIT=500] [NAME=app_store_changes]">
-• New look and feel.
-• Improved performance, responsiveness and reliability.
-• Support for playing audio from Windows or Linux computers.
+        <message name="IDS_APP_STORE_CHANGES" desc="List of what's changed in this release of Chrome Remote Desktop for iOS. [CHAR-LIMIT=4000] [NAME=app_store_changes]">
+Stability improvements and bug fixes.
         </message>
       </if>  <!-- is_android or is_ios -->
 
@@ -783,8 +805,8 @@ Securely access your computer from your iOS device. It's fast, simple and free.
         Welcome to Chrome Remote Desktop
       </message>
       <message desc="Step 1 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_1">On the computer you want to access remotely, open Chrome and visit <ph name="INSTALLATION_LINK">$1<ex>google.com/remotedesktop</ex></ph></message>
-      <message desc="Step 2 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_2">Install Chrome Remote Desktop software and follow the instructions to complete setup</message>
-      <message desc="Step 3 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_3">After setup is complete, you'll be able to access the computer from this page by entering the PIN or access code</message>
+      <message desc="Step 2 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_2">Follow the instructions to set up your computer for remote access</message>
+      <message desc="Step 3 to set up a computer to be remotely accessible." name="IDS_HOST_SETUP_STEP_3">After setup is complete, refresh this page, then you'll be able to access the computer by choosing your device and entering the PIN</message>
       <message desc="Label for a button for sending the user an email with link and instructions for setting up a computer for remote access." name="IDS_EMAIL_LINKS_AND_INSTRUCTIONS">
         Email these instructions
       </message>
@@ -1150,7 +1172,7 @@ Securely access your computer from your iOS device. It's fast, simple and free.
       <message desc="Label for button to reconnect to the previous Me2Me host. This button appears on the 'session-finished' page." name="IDS_RECONNECT">
         Reconnect
       </message>
-      <message desc="Button for enabling or disabling the 'resize-to-client' functionality, whereby the host desktop is resized to match the client size as closely as possible." name="IDS_RESIZE_TO_CLIENT">
+      <message desc="Button for enabling or disabling the 'resize-to-client' functionality, whereby the host desktop is resized to match the client size as closely as possible." name="IDS_RESIZE_TO_CLIENT" formatter_data="android_java">
         Resize desktop to fit
       </message>
       <message desc="Label for button to retry connecting to a Me2Me host, after failing to connect to that host. This button appears on the 'session-finished' page." name="IDS_RETRY">
@@ -1325,7 +1347,7 @@ Securely access your computer from your iOS device. It's fast, simple and free.
         For Windows 7 and above
       </message>
       <message desc="Platform-specific text indicating that a component is for the Mac OS." name="IDS_FOR_PLATFORM_MAC">
-        For Mac (OS X Mavericks 10.9 and above)
+        For Mac (OS X Yosemite 10.10 and above)
       </message>
       <message desc="Text for the button the user clicks to indicate that they agree to the terms of service and want to proceed with downloading the installer." name="IDS_ACCEPT_AND_INSTALL">
         Accept and Install
@@ -1336,15 +1358,37 @@ Securely access your computer from your iOS device. It's fast, simple and free.
       <message  name="IDS_WEBSITE_INVITE_STABLE" desc="Invitation to all users to try the new version">
         Chrome Remote Desktop is now on the web! Check out our <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>free web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>.
       </message>
-      <message  name="IDS_WEBSITE_INVITE_DEPRECATION_1" desc="Invitation to all users to try the new version">
-        Chrome Remote Desktop is moving to a new home on the web. Try our <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>—it's fast and free, with all the same features as before.
+      <message  name="IDS_WEBSITE_INVITE_FILE_TRANSFER" desc="Announcement of the file transfer feature">
+        Chrome Remote Desktop is now on the web with new features including file transfer! Check out our <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>.
       </message>
-      <message  name="IDS_WEBSITE_INVITE_DEPRECATION_2" desc="Requirement all users to try the new version">
+      <message  name="IDS_WEBSITE_INVITE_MULTI_MONITOR" desc="Announcement of improved support for multi-monitor">
+        Chrome Remote Desktop is now on the web. Try our <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>—it's fast and free, with even more features, including improved support for multiple monitors.
+      </message>
+      <message  name="IDS_WEBSITE_INVITE_DEPRECATION" desc="Requirement all users to try the new version">
         This app is no longer supported. To ensure you're getting the latest features and security updates, please use the <ph name="LINK_BEGIN">$1<ex>&lt;a href=http://example.com&gt;</ex></ph>Chrome Remote Desktop web app<ph name="LINK_END">$2<ex>&lt;/a&gt;</ex></ph>.
+      </message>
+      <message name="IDS_DOWNLOAD_FILE_DIALOG_TITLE" desc="Window title for file chooser to select file to download to the client">
+        Download File
       </message>
       <if expr="is_macosx">
         <message name="IDS_HOST_AUTHENTICATION_PROMPT" desc="The prompt to be displayed in the authentication dialog when making changes to the system.  The system will add a sentence asking for an administrator's name and password.  Mac-only.">
           <ph name="PRODUCT_NAME">$1<ex>Chrome Remote Desktop</ex></ph> wants to make changes.
+        </message>
+        <message name="IDS_ACCESSIBILITY_PERMISSION_DIALOG_TITLE" desc="The title of the prompt used to ask the user to enable the Chrome Remote Desktop service in the accessibility section of the privacy and security preferences pane.  Mac-only.">
+          Allow remote users to control this machine
+        </message>
+        <message name="IDS_ACCESSIBILITY_PERMISSION_DIALOG_BODY_TEXT" desc="The body text of the prompt used to ask the user to enable the Chrome Remote Desktop service in the accessibility section of the privacy and security preferences pane.  Mac-only.">
+An additional configuration step is required before you can control this machine remotely using <ph name="PRODUCT_NAME">$1<ex>Chrome Remote Desktop</ex></ph>.
+
+To enable this functionality, select '<ph name="BUTTON_NAME">$2<ex>Open Preferences</ex></ph>' to display the Security and Privacy preferences pane, then check the box next to '<ph name="SERVICE_SCRIPT_NAME">$3<ex>org.chromium.chromoting.me2me.sh</ex></ph>'.
+
+If '<ph name="SERVICE_SCRIPT_NAME">$3<ex>org.chromium.chromoting.me2me.sh</ex></ph>' is already present and checked, you may need to remove it and then add it again.
+        </message>
+        <message name="IDS_ACCESSIBILITY_PERMISSION_DIALOG_OPEN_BUTTON" desc="The button text of the prompt used to ask the user to enable the Chrome Remote Desktop service in the accessibility section of the privacy and security preferences pane.  Selecting this button will open the security and preferences pane.  Mac-only.">
+          Open Preferences
+        </message>
+        <message name="IDS_ACCESSIBILITY_PERMISSION_DIALOG_NOT_NOW_BUTTON" desc="The button text of the prompt used to ask the user to enable the Chrome Remote Desktop service in the accessibility section of the privacy and security preferences pane.  Selecting this button will close the dialog.  Mac-only.">
+          Not Now
         </message>
       </if>
     </messages>

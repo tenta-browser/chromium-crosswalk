@@ -7,10 +7,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/optional.h"
 #include "base/strings/stringprintf.h"
-#include "device/bluetooth/bluetooth_uuid.h"
-#include "device/bluetooth/public/interfaces/test/fake_bluetooth.mojom.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
+#include "device/bluetooth/public/mojom/test/fake_bluetooth.mojom.h"
 #include "device/bluetooth/test/fake_read_response.h"
 
 namespace bluetooth {
@@ -47,19 +48,20 @@ FakeRemoteGattCharacteristic::~FakeRemoteGattCharacteristic() = default;
 
 std::string FakeRemoteGattCharacteristic::AddFakeDescriptor(
     const device::BluetoothUUID& descriptor_uuid) {
-  FakeDescriptorMap::iterator it;
-  bool inserted;
-
   // Attribute instance Ids need to be unique.
   std::string new_descriptor_id = base::StringPrintf(
       "%s_%zu", GetIdentifier().c_str(), ++last_descriptor_id_);
 
-  std::tie(it, inserted) = fake_descriptors_.emplace(
-      new_descriptor_id, std::make_unique<FakeRemoteGattDescriptor>(
-                             new_descriptor_id, descriptor_uuid, this));
+  bool result = AddDescriptor(std::make_unique<FakeRemoteGattDescriptor>(
+      new_descriptor_id, descriptor_uuid, this));
 
-  DCHECK(inserted);
-  return it->second->GetIdentifier();
+  DCHECK(result);
+  return new_descriptor_id;
+}
+
+bool FakeRemoteGattCharacteristic::RemoveFakeDescriptor(
+    const std::string& identifier) {
+  return descriptors_.erase(identifier) != 0u;
 }
 
 void FakeRemoteGattCharacteristic::SetNextReadResponse(
@@ -80,14 +82,22 @@ void FakeRemoteGattCharacteristic::SetNextSubscribeToNotificationsResponse(
   next_subscribe_to_notifications_response_.emplace(gatt_code);
 }
 
+void FakeRemoteGattCharacteristic::SetNextUnsubscribeFromNotificationsResponse(
+    uint16_t gatt_code) {
+  DCHECK(!next_unsubscribe_from_notifications_response_);
+  next_unsubscribe_from_notifications_response_.emplace(gatt_code);
+}
+
 bool FakeRemoteGattCharacteristic::AllResponsesConsumed() {
   // TODO(crbug.com/569709): Update this when
   // SetNextUnsubscribeFromNotificationsResponse is implemented.
   return !next_read_response_ && !next_write_response_ &&
          !next_subscribe_to_notifications_response_ &&
          std::all_of(
-             fake_descriptors_.begin(), fake_descriptors_.end(),
-             [](const auto& e) { return e.second->AllResponsesConsumed(); });
+             descriptors_.begin(), descriptors_.end(), [](const auto& e) {
+               return static_cast<FakeRemoteGattDescriptor*>(e.second.get())
+                   ->AllResponsesConsumed();
+             });
 }
 
 std::string FakeRemoteGattCharacteristic::GetIdentifier() const {
@@ -119,74 +129,86 @@ device::BluetoothRemoteGattService* FakeRemoteGattCharacteristic::GetService()
   return service_;
 }
 
-std::vector<device::BluetoothRemoteGattDescriptor*>
-FakeRemoteGattCharacteristic::GetDescriptors() const {
-  std::vector<device::BluetoothRemoteGattDescriptor*> descriptors;
-  for (const auto& it : fake_descriptors_)
-    descriptors.push_back(it.second.get());
-  return descriptors;
-}
-
-device::BluetoothRemoteGattDescriptor*
-FakeRemoteGattCharacteristic::GetDescriptor(
-    const std::string& identifier) const {
-  const auto& it = fake_descriptors_.find(identifier);
-  if (it == fake_descriptors_.end())
-    return nullptr;
-
-  return it->second.get();
-}
-
 void FakeRemoteGattCharacteristic::ReadRemoteCharacteristic(
-    const ValueCallback& callback,
-    const ErrorCallback& error_callback) {
+    ValueCallback callback,
+    ErrorCallback error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&FakeRemoteGattCharacteristic::DispatchReadResponse,
-                 weak_ptr_factory_.GetWeakPtr(), callback, error_callback));
+      base::BindOnce(&FakeRemoteGattCharacteristic::DispatchReadResponse,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(error_callback)));
 }
 
 void FakeRemoteGattCharacteristic::WriteRemoteCharacteristic(
     const std::vector<uint8_t>& value,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   // It doesn't make sense to dispatch a custom write response if the
   // characteristic only supports write without response but we still need to
   // run the callback because that's the guarantee the API makes.
   if (properties_ & PROPERTY_WRITE_WITHOUT_RESPONSE) {
     last_written_value_ = value;
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(callback));
     return;
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&FakeRemoteGattCharacteristic::DispatchWriteResponse,
-                 weak_ptr_factory_.GetWeakPtr(), callback, error_callback,
-                 value));
+      base::BindOnce(&FakeRemoteGattCharacteristic::DispatchWriteResponse,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(error_callback), value));
+}
+
+#if defined(OS_CHROMEOS)
+void FakeRemoteGattCharacteristic::PrepareWriteRemoteCharacteristic(
+    const std::vector<uint8_t>& value,
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
+  NOTIMPLEMENTED();
+}
+#endif
+
+bool FakeRemoteGattCharacteristic::WriteWithoutResponse(
+    base::span<const uint8_t> value) {
+  if (properties_ & PROPERTY_WRITE_WITHOUT_RESPONSE) {
+    last_written_value_.emplace(value.begin(), value.end());
+    return true;
+  }
+
+  return false;
 }
 
 void FakeRemoteGattCharacteristic::SubscribeToNotifications(
     device::BluetoothRemoteGattDescriptor* ccc_descriptor,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+#if defined(OS_CHROMEOS)
+    NotificationType notification_type,
+#endif
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&FakeRemoteGattCharacteristic::
-                     DispatchSubscribeToNotificationsResponse,
-                 weak_ptr_factory_.GetWeakPtr(), callback, error_callback));
+      base::BindOnce(&FakeRemoteGattCharacteristic::
+                         DispatchSubscribeToNotificationsResponse,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(error_callback)));
 }
 
 void FakeRemoteGattCharacteristic::UnsubscribeFromNotifications(
     device::BluetoothRemoteGattDescriptor* ccc_descriptor,
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
-  NOTREACHED();
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&FakeRemoteGattCharacteristic::
+                         DispatchUnsubscribeFromNotificationsResponse,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     std::move(error_callback)));
 }
 
 void FakeRemoteGattCharacteristic::DispatchReadResponse(
-    const ValueCallback& callback,
-    const ErrorCallback& error_callback) {
+    ValueCallback callback,
+    ErrorCallback error_callback) {
   DCHECK(next_read_response_);
   uint16_t gatt_code = next_read_response_->gatt_code();
   base::Optional<std::vector<uint8_t>> value = next_read_response_->value();
@@ -196,11 +218,12 @@ void FakeRemoteGattCharacteristic::DispatchReadResponse(
     case mojom::kGATTSuccess:
       DCHECK(value);
       value_ = std::move(value.value());
-      callback.Run(value_);
+      std::move(callback).Run(value_);
       break;
     case mojom::kGATTInvalidHandle:
       DCHECK(!value);
-      error_callback.Run(device::BluetoothGattService::GATT_ERROR_FAILED);
+      std::move(error_callback)
+          .Run(device::BluetoothGattService::GATT_ERROR_FAILED);
       break;
     default:
       NOTREACHED();
@@ -208,8 +231,8 @@ void FakeRemoteGattCharacteristic::DispatchReadResponse(
 }
 
 void FakeRemoteGattCharacteristic::DispatchWriteResponse(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback,
+    base::OnceClosure callback,
+    ErrorCallback error_callback,
     const std::vector<uint8_t>& value) {
   DCHECK(next_write_response_);
   uint16_t gatt_code = next_write_response_.value();
@@ -218,10 +241,11 @@ void FakeRemoteGattCharacteristic::DispatchWriteResponse(
   switch (gatt_code) {
     case mojom::kGATTSuccess:
       last_written_value_ = value;
-      callback.Run();
+      std::move(callback).Run();
       break;
     case mojom::kGATTInvalidHandle:
-      error_callback.Run(device::BluetoothGattService::GATT_ERROR_FAILED);
+      std::move(error_callback)
+          .Run(device::BluetoothGattService::GATT_ERROR_FAILED);
       break;
     default:
       NOTREACHED();
@@ -229,18 +253,39 @@ void FakeRemoteGattCharacteristic::DispatchWriteResponse(
 }
 
 void FakeRemoteGattCharacteristic::DispatchSubscribeToNotificationsResponse(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
   DCHECK(next_subscribe_to_notifications_response_);
   uint16_t gatt_code = next_subscribe_to_notifications_response_.value();
   next_subscribe_to_notifications_response_.reset();
 
   switch (gatt_code) {
     case mojom::kGATTSuccess:
-      callback.Run();
+      std::move(callback).Run();
       break;
     case mojom::kGATTInvalidHandle:
-      error_callback.Run(device::BluetoothGattService::GATT_ERROR_FAILED);
+      std::move(error_callback)
+          .Run(device::BluetoothGattService::GATT_ERROR_FAILED);
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+void FakeRemoteGattCharacteristic::DispatchUnsubscribeFromNotificationsResponse(
+    base::OnceClosure callback,
+    ErrorCallback error_callback) {
+  DCHECK(next_unsubscribe_from_notifications_response_);
+  uint16_t gatt_code = next_unsubscribe_from_notifications_response_.value();
+  next_unsubscribe_from_notifications_response_.reset();
+
+  switch (gatt_code) {
+    case mojom::kGATTSuccess:
+      std::move(callback).Run();
+      break;
+    case mojom::kGATTInvalidHandle:
+      std::move(error_callback)
+          .Run(device::BluetoothGattService::GATT_ERROR_FAILED);
       break;
     default:
       NOTREACHED();

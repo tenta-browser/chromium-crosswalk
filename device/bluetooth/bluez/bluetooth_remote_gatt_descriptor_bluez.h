@@ -15,9 +15,9 @@
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor.h"
-#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_gatt_descriptor_bluez.h"
 #include "device/bluetooth/bluez/bluetooth_remote_gatt_characteristic_bluez.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace bluez {
 
@@ -29,16 +29,17 @@ class BluetoothRemoteGattDescriptorBlueZ
       public device::BluetoothRemoteGattDescriptor {
  public:
   // device::BluetoothRemoteGattDescriptor overrides.
+  ~BluetoothRemoteGattDescriptorBlueZ() override;
   device::BluetoothUUID GetUUID() const override;
   const std::vector<uint8_t>& GetValue() const override;
   device::BluetoothRemoteGattCharacteristic* GetCharacteristic() const override;
   device::BluetoothRemoteGattCharacteristic::Permissions GetPermissions()
       const override;
-  void ReadRemoteDescriptor(const ValueCallback& callback,
-                            const ErrorCallback& error_callback) override;
+  void ReadRemoteDescriptor(ValueCallback callback,
+                            ErrorCallback error_callback) override;
   void WriteRemoteDescriptor(const std::vector<uint8_t>& new_value,
-                             const base::Closure& callback,
-                             const ErrorCallback& error_callback) override;
+                             base::OnceClosure callback,
+                             ErrorCallback error_callback) override;
 
  private:
   friend class BluetoothRemoteGattCharacteristicBlueZ;
@@ -46,11 +47,10 @@ class BluetoothRemoteGattDescriptorBlueZ
   BluetoothRemoteGattDescriptorBlueZ(
       BluetoothRemoteGattCharacteristicBlueZ* characteristic,
       const dbus::ObjectPath& object_path);
-  ~BluetoothRemoteGattDescriptorBlueZ() override;
 
   // Called by dbus:: on unsuccessful completion of a request to read or write
   // the descriptor value.
-  void OnError(const ErrorCallback& error_callback,
+  void OnError(ErrorCallback error_callback,
                const std::string& error_name,
                const std::string& error_message);
 

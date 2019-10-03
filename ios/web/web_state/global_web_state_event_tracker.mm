@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #import "ios/web/public/web_state/web_state_user_data.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -17,7 +17,8 @@
 namespace web {
 
 GlobalWebStateEventTracker* GlobalWebStateEventTracker::GetInstance() {
-  return base::Singleton<GlobalWebStateEventTracker>::get();
+  static base::NoDestructor<GlobalWebStateEventTracker> instance;
+  return instance.get();
 }
 
 GlobalWebStateEventTracker::GlobalWebStateEventTracker()
@@ -38,23 +39,11 @@ void GlobalWebStateEventTracker::RemoveObserver(
   observer_list_.RemoveObserver(observer);
 }
 
-void GlobalWebStateEventTracker::NavigationItemsPruned(
+void GlobalWebStateEventTracker::DidStartNavigation(
     WebState* web_state,
-    size_t pruned_item_count) {
+    NavigationContext* navigation_context) {
   for (auto& observer : observer_list_)
-    observer.NavigationItemsPruned(web_state, pruned_item_count);
-}
-
-void GlobalWebStateEventTracker::NavigationItemChanged(WebState* web_state) {
-  for (auto& observer : observer_list_)
-    observer.NavigationItemChanged(web_state);
-}
-
-void GlobalWebStateEventTracker::NavigationItemCommitted(
-    WebState* web_state,
-    const LoadCommittedDetails& load_details) {
-  for (auto& observer : observer_list_)
-    observer.NavigationItemCommitted(web_state, load_details);
+    observer.WebStateDidStartNavigation(web_state, navigation_context);
 }
 
 void GlobalWebStateEventTracker::DidStartNavigation(
@@ -72,13 +61,6 @@ void GlobalWebStateEventTracker::DidStartLoading(WebState* web_state) {
 void GlobalWebStateEventTracker::DidStopLoading(WebState* web_state) {
   for (auto& observer : observer_list_)
     observer.WebStateDidStopLoading(web_state);
-}
-
-void GlobalWebStateEventTracker::PageLoaded(
-    WebState* web_state,
-    PageLoadCompletionStatus load_completion_status) {
-  for (auto& observer : observer_list_)
-    observer.PageLoaded(web_state, load_completion_status);
 }
 
 void GlobalWebStateEventTracker::RenderProcessGone(WebState* web_state) {

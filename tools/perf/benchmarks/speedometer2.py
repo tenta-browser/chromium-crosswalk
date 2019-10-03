@@ -6,99 +6,64 @@
 """
 
 import os
+import re
+
+from benchmarks import press
 
 from core import path_util
-from core import perf_benchmark
 
 from telemetry import benchmark
-from telemetry import page as page_module
-from telemetry.page import legacy_page_test
 from telemetry import story
-from telemetry.value import list_of_scalar_values
 
+from page_sets import speedometer2_pages
 
 _SPEEDOMETER_DIR = os.path.join(path_util.GetChromiumSrcDir(),
-    'third_party', 'WebKit', 'PerformanceTests', 'Speedometer')
+    'third_party', 'blink', 'perf_tests', 'speedometer')
 
+@benchmark.Info(emails=['hablich@chromium.org'],
+                component='Blink')
+class Speedometer2(press._PressBenchmark): # pylint: disable=protected-access
+  """Speedometer2 Benchmark.
 
-class Speedometer2Measurement(legacy_page_test.LegacyPageTest):
-  def __init__(self):
-    super(Speedometer2Measurement, self).__init__()
+  Runs all the speedometer 2 suites by default. Add --suite=<regex> to filter
+  out suites, and only run suites whose names are matched by the regular
+  expression provided.
+  """
 
-  def ValidateAndMeasurePage(self, page, tab, results):
-    tab.WaitForDocumentReadyStateToBeComplete()
-    iterationCount = 10
-    # A single iteration on android takes ~75 seconds, the benchmark times out
-    # when running for 10 iterations.
-    if tab.browser.platform.GetOSName() == 'android':
-      iterationCount = 3
-
-    enabled_suites = tab.EvaluateJavaScript("""
-      (function() {
-        var suitesNames = [];
-        Suites.forEach(function(s) {
-          if (!s.disabled)
-            suitesNames.push(s.name);
-        });
-        return suitesNames;
-       })();""")
-
-    tab.ExecuteJavaScript("""
-        // Store all the results in the benchmarkClient
-        var testDone = false;
-        var iterationCount = {{ count }};
-        var benchmarkClient = {};
-        var suiteValues = [];
-        var totalValues = [];
-        benchmarkClient.didRunSuites = function(measuredValues) {
-          suiteValues.push(measuredValues);
-          totalValues.push(measuredValues.total);
-        };
-        benchmarkClient.didFinishLastIteration = function () {
-          testDone = true;
-        };
-        var runner = new BenchmarkRunner(Suites, benchmarkClient);
-        runner.runMultipleIterations(iterationCount);
-        """,
-        count=iterationCount)
-    tab.WaitForJavaScriptCondition('testDone', timeout=600)
-    results.AddValue(list_of_scalar_values.ListOfScalarValues(
-        page, 'Total', 'ms',
-        tab.EvaluateJavaScript('totalValues'),
-        important=True))
-
-    # Extract the timings for each suite
-    for suite_name in enabled_suites:
-      results.AddValue(list_of_scalar_values.ListOfScalarValues(
-          page, suite_name, 'ms',
-          tab.EvaluateJavaScript("""
-              var suite_times = [];
-              for(var i = 0; i < iterationCount; i++) {
-                suite_times.push(
-                    suiteValues[i].tests[{{ key }}].total);
-              };
-              suite_times;
-              """,
-              key=suite_name), important=False))
-
-
-@benchmark.Owner(emails=['hablich@chromium.org'])
-class Speedometer2(perf_benchmark.PerfBenchmark):
-  test = Speedometer2Measurement
+  enable_smoke_test_mode = False
 
   @classmethod
   def Name(cls):
     return 'speedometer2'
 
   def CreateStorySet(self, options):
-    ps = story.StorySet(base_dir=_SPEEDOMETER_DIR,
-        serving_dirs=[_SPEEDOMETER_DIR])
-    ps.AddStory(page_module.Page(
-       'file://InteractiveRunner.html', ps, ps.base_dir, name='Speedometer2'))
+    should_filter_suites = bool(options.suite)
+    filtered_suite_names = map(
+        speedometer2_pages.Speedometer2Story.GetFullSuiteName,
+            speedometer2_pages.Speedometer2Story.GetSuites(options.suite))
+
+    ps = story.StorySet(base_dir=_SPEEDOMETER_DIR)
+    ps.AddStory(speedometer2_pages.Speedometer2Story(ps, should_filter_suites,
+        filtered_suite_names, self.enable_smoke_test_mode))
     return ps
 
+  @classmethod
+  def AddBenchmarkCommandLineArgs(cls, parser):
+    parser.add_option('--suite', type="string",
+                      help="Only runs suites that match regex provided")
 
-@benchmark.Owner(emails=['hablich@chromium.org'])
+  @classmethod
+  def ProcessCommandLineArgs(cls, parser, args):
+    if args.suite:
+      try:
+        if not speedometer2_pages.Speedometer2Story.GetSuites(args.suite):
+          raise parser.error('--suite: No matches.')
+      except re.error:
+        raise parser.error('--suite: Invalid regex.')
+
+
+@benchmark.Info(emails=['hablich@chromium.org'],
+                component='Blink')
 class V8Speedometer2Future(Speedometer2):
   """Speedometer2 benchmark with the V8 flag --future.
 

@@ -1,9 +1,11 @@
 include_rules = [
-  "+chrome/common",
   "+components/arc/common",
   "+components/arc/video_accelerator",
   "+components/metrics",
   "+content/public/child",
   "+content/public/gpu",
-  "+services/service_manager/public/cpp",
+  "+media/cdm",
+  "+media/gpu",
+  "+third_party/widevine/cdm/buildflags.h",
+  "+third_party/widevine/cdm/widevine_cdm_common.h",
 ]

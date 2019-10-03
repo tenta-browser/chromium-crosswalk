@@ -5,15 +5,14 @@
 #include "base/bind.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "cc/test/cc_test_suite.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/core/embedder/embedder.h"
 
 int main(int argc, char** argv) {
   cc::CCTestSuite test_suite(argc, argv);
 
-  mojo::edk::Init();
+  mojo::core::Init();
 
   return base::LaunchUnitTests(
-      argc,
-      argv,
-      base::Bind(&cc::CCTestSuite::Run, base::Unretained(&test_suite)));
+      argc, argv,
+      base::BindOnce(&cc::CCTestSuite::Run, base::Unretained(&test_suite)));
 }

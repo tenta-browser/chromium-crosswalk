@@ -6,6 +6,8 @@
 
 #include <GL/gl.h>
 
+#include "ui/gfx/gpu_fence.h"
+
 namespace gl {
 
 GLImageStub::GLImageStub() {}
@@ -18,9 +20,14 @@ gfx::Size GLImageStub::GetSize() {
 
 unsigned GLImageStub::GetInternalFormat() { return GL_RGBA; }
 
+GLImageStub::BindOrCopy GLImageStub::ShouldBindOrCopy() {
+  return BIND;
+}
+
 bool GLImageStub::BindTexImage(unsigned target) { return true; }
 
 bool GLImageStub::CopyTexImage(unsigned target) {
+  NOTREACHED();
   return false;
 }
 
@@ -30,11 +37,14 @@ bool GLImageStub::CopyTexSubImage(unsigned target,
   return false;
 }
 
-bool GLImageStub::ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
-                                       int z_order,
-                                       gfx::OverlayTransform transform,
-                                       const gfx::Rect& bounds_rect,
-                                       const gfx::RectF& crop_rect) {
+bool GLImageStub::ScheduleOverlayPlane(
+    gfx::AcceleratedWidget widget,
+    int z_order,
+    gfx::OverlayTransform transform,
+    const gfx::Rect& bounds_rect,
+    const gfx::RectF& crop_rect,
+    bool enable_blend,
+    std::unique_ptr<gfx::GpuFence> gpu_fence) {
   return false;
 }
 

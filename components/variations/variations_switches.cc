@@ -16,8 +16,7 @@ const char kEnableBenchmarking[] = "enable-benchmarking";
 
 // Fakes the channel of the browser for purposes of Variations filtering. This
 // is to be used for testing only. Possible values are "stable", "beta", "dev"
-// and "canary". Note that this only applies if the browser's reported channel
-// is UNKNOWN.
+// and "canary". This works for official builds as well.
 const char kFakeVariationsChannel[] = "fake-variations-channel";
 
 // This option can be used to force parameters of field trials when testing
@@ -46,6 +45,11 @@ const char kVariationsOverrideCountry[] = "variations-override-country";
 // client. Specifying this switch enables the Variations service on
 // unofficial builds. See variations_service.cc.
 const char kVariationsServerURL[] = "variations-server-url";
+
+// Specifies a custom URL for the server to use as an insecure fallback when
+// requests to |kVariationsServerURL| fail. Requests to this URL will be
+// encrypted.
+const char kVariationsInsecureServerURL[] = "variations-insecure-server-url";
 
 }  // namespace switches
 }  // namespace variations

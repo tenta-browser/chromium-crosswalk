@@ -3,17 +3,16 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/extension_with_management_policy_apitest.h"
+#include "base/bind.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/http_request.h"
 
-ExtensionApiTestWithManagementPolicy::ExtensionApiTestWithManagementPolicy()
-    : ExtensionApiTest() {}
-
+ExtensionApiTestWithManagementPolicy::ExtensionApiTestWithManagementPolicy() {}
 ExtensionApiTestWithManagementPolicy::~ExtensionApiTestWithManagementPolicy() {}
 
 void ExtensionApiTestWithManagementPolicy::SetUpInProcessBrowserTestFixture() {
-  ExtensionApiTest::SetUpInProcessBrowserTestFixture();
+  extensions::ExtensionApiTest::SetUpInProcessBrowserTestFixture();
   embedded_test_server()->RegisterRequestMonitor(
       base::Bind(&ExtensionApiTestWithManagementPolicy::MonitorRequestHandler,
                  base::Unretained(this)));
@@ -25,7 +24,7 @@ void ExtensionApiTestWithManagementPolicy::SetUpInProcessBrowserTestFixture() {
 }
 
 void ExtensionApiTestWithManagementPolicy::SetUpOnMainThread() {
-  ExtensionApiTest::SetUpOnMainThread();
+  extensions::ExtensionApiTest::SetUpOnMainThread();
   host_resolver()->AddRule("*", "127.0.0.1");
 }
 

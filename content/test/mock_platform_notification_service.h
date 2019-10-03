@@ -14,20 +14,24 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
+#include "content/public/browser/notification_database_data.h"
 #include "content/public/browser/platform_notification_service.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
+
+namespace blink {
+struct NotificationResources;
+struct PlatformNotificationData;
+}  // namespace blink
 
 namespace content {
 
-struct NotificationResources;
-struct PlatformNotificationData;
+class BrowserContext;
 
 // Responsible for tracking active notifications and allowed origins for the
 // Web Notification API when running layout and content tests.
 class MockPlatformNotificationService : public PlatformNotificationService {
  public:
-  MockPlatformNotificationService();
+  MockPlatformNotificationService(BrowserContext* context);
   ~MockPlatformNotificationService() override;
 
   // Simulates a click on the notification titled |title|. |action_index|
@@ -42,57 +46,41 @@ class MockPlatformNotificationService : public PlatformNotificationService {
   void SimulateClose(const std::string& title, bool by_user);
 
   // PlatformNotificationService implementation.
-  blink::mojom::PermissionStatus CheckPermissionOnUIThread(
-      BrowserContext* browser_context,
-      const GURL& origin,
-      int render_process_id) override;
-  blink::mojom::PermissionStatus CheckPermissionOnIOThread(
-      ResourceContext* resource_context,
-      const GURL& origin,
-      int render_process_id) override;
   void DisplayNotification(
-      BrowserContext* browser_context,
       const std::string& notification_id,
       const GURL& origin,
-      const PlatformNotificationData& notification_data,
-      const NotificationResources& notification_resources) override;
+      const blink::PlatformNotificationData& notification_data,
+      const blink::NotificationResources& notification_resources) override;
   void DisplayPersistentNotification(
-      BrowserContext* browser_context,
       const std::string& notification_id,
       const GURL& service_worker_scope,
       const GURL& origin,
-      const PlatformNotificationData& notification_data,
-      const NotificationResources& notification_resources) override;
-  void CloseNotification(BrowserContext* browser_context,
-                         const std::string& notification_id) override;
-  void ClosePersistentNotification(BrowserContext* browser_context,
-                                   const std::string& notification_id) override;
+      const blink::PlatformNotificationData& notification_data,
+      const blink::NotificationResources& notification_resources) override;
+  void CloseNotification(const std::string& notification_id) override;
+  void ClosePersistentNotification(const std::string& notification_id) override;
   void GetDisplayedNotifications(
-      BrowserContext* browser_context,
-      const DisplayedNotificationsCallback& callback) override;
-
- protected:
-  // Checks if |origin| has permission to display notifications. May be called
-  // on both the IO and the UI threads.
-  virtual blink::mojom::PermissionStatus CheckPermission(const GURL& origin);
+      DisplayedNotificationsCallback callback) override;
+  void ScheduleTrigger(base::Time timestamp) override;
+  base::Time ReadNextTriggerTimestamp() override;
+  int64_t ReadNextPersistentNotificationId() override;
+  void RecordNotificationUkmEvent(
+      const NotificationDatabaseData& data) override;
 
  private:
-  // Structure to represent the information of a persistent notification.
-  struct PersistentNotification {
-    BrowserContext* browser_context = nullptr;
-    GURL origin;
-  };
-
   // Fakes replacing the notification identified by |notification_id|. Both
   // persistent and non-persistent notifications will be considered for this.
   void ReplaceNotificationIfNeeded(const std::string& notification_id);
 
-  std::unordered_map<std::string, PersistentNotification>
-      persistent_notifications_;
+  BrowserContext* context_;
+
+  std::unordered_map<std::string, GURL> persistent_notifications_;
   std::unordered_set<std::string> non_persistent_notifications_;
 
   // Mapping of titles to notification ids giving test a usable identifier.
   std::unordered_map<std::string, std::string> notification_id_map_;
+
+  int64_t next_persistent_notification_id_ = 1;
 
   DISALLOW_COPY_AND_ASSIGN(MockPlatformNotificationService);
 };

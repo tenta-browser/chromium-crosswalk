@@ -28,6 +28,25 @@ ObjectManager::Object::Object()
 
 ObjectManager::Object::~Object() = default;
 
+scoped_refptr<ObjectManager> ObjectManager::Create(
+    Bus* bus,
+    const std::string& service_name,
+    const ObjectPath& object_path) {
+  auto object_manager =
+      base::WrapRefCounted(new ObjectManager(bus, service_name, object_path));
+
+  // Set up a match rule and a filter function to handle PropertiesChanged
+  // signals from the service. This is important to avoid any race conditions
+  // that might cause us to miss PropertiesChanged signals once all objects are
+  // initialized via GetManagedObjects.
+  base::PostTaskAndReplyWithResult(
+      bus->GetDBusTaskRunner(), FROM_HERE,
+      base::BindOnce(&ObjectManager::SetupMatchRuleAndFilter, object_manager),
+      base::BindOnce(&ObjectManager::OnSetupMatchRuleAndFilterComplete,
+                     object_manager));
+  return object_manager;
+}
+
 ObjectManager::ObjectManager(Bus* bus,
                              const std::string& service_name,
                              const ObjectPath& object_path)
@@ -46,16 +65,6 @@ ObjectManager::ObjectManager(Bus* bus,
   object_proxy_->SetNameOwnerChangedCallback(
       base::Bind(&ObjectManager::NameOwnerChanged,
                  weak_ptr_factory_.GetWeakPtr()));
-
-  // Set up a match rule and a filter function to handle PropertiesChanged
-  // signals from the service. This is important to avoid any race conditions
-  // that might cause us to miss PropertiesChanged signals once all objects are
-  // initialized via GetManagedObjects.
-  base::PostTaskAndReplyWithResult(
-      bus_->GetDBusTaskRunner(),
-      FROM_HERE,
-      base::Bind(&ObjectManager::SetupMatchRuleAndFilter, this),
-      base::Bind(&ObjectManager::OnSetupMatchRuleAndFilterComplete, this));
 }
 
 ObjectManager::~ObjectManager() {
@@ -299,10 +308,8 @@ DBusHandlerResult ObjectManager::HandleMessage(DBusConnection* connection,
     // |signal| to NotifyPropertiesChanged, which will handle the clean up.
     Signal* released_signal = signal.release();
     bus_->GetOriginTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&ObjectManager::NotifyPropertiesChanged,
-                   this, path,
-                   released_signal));
+        FROM_HERE, base::BindOnce(&ObjectManager::NotifyPropertiesChanged, this,
+                                  path, released_signal));
   } else {
     // If the D-Bus thread is not used, just call the callback on the
     // current thread. Transfer the ownership of |signal| to
@@ -325,8 +332,7 @@ void ObjectManager::NotifyPropertiesChanged(
 
   // Delete the message on the D-Bus thread. See comments in HandleMessage.
   bus_->GetDBusTaskRunner()->PostTask(
-      FROM_HERE,
-      base::Bind(&base::DeletePointer<Signal>, signal));
+      FROM_HERE, base::BindOnce(&base::DeletePointer<Signal>, signal));
 }
 
 void ObjectManager::NotifyPropertiesChangedHelper(

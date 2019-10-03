@@ -4,7 +4,6 @@
 
 #include "ui/events/blink/compositor_thread_event_queue.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/blink/blink_event_util.h"
 #include "ui/events/blink/web_input_event_traits.h"
@@ -20,8 +19,9 @@ void CompositorThreadEventQueue::Queue(
     base::TimeTicks timestamp_now) {
   if (queue_.empty() ||
       !IsContinuousGestureEvent(new_event->event().GetType()) ||
-      !IsCompatibleScrollorPinch(ToWebGestureEvent(new_event->event()),
-                                 ToWebGestureEvent(queue_.back()->event()))) {
+      !(queue_.back()->CanCoalesceWith(*new_event) ||
+        IsCompatibleScrollorPinch(ToWebGestureEvent(new_event->event()),
+                                  ToWebGestureEvent(queue_.back()->event())))) {
     if (new_event->first_original_event()) {
       // Trace could be nested as there might be multiple events in queue.
       // e.g. |ScrollUpdate|, |ScrollEnd|, and another scroll sequence.

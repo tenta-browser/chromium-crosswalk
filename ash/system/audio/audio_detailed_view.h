@@ -7,7 +7,7 @@
 
 #include <map>
 
-#include "ash/system/tray/tray_details_view.h"
+#include "ash/system/tray/tray_detailed_view.h"
 #include "base/macros.h"
 #include "chromeos/audio/audio_device.h"
 
@@ -18,13 +18,16 @@ struct VectorIcon;
 namespace ash {
 namespace tray {
 
-class AudioDetailedView : public TrayDetailsView {
+class AudioDetailedView : public TrayDetailedView {
  public:
-  explicit AudioDetailedView(SystemTrayItem* owner);
+  explicit AudioDetailedView(DetailedViewDelegate* delegate);
 
   ~AudioDetailedView() override;
 
   void Update();
+
+  // views::View:
+  const char* GetClassName() const override;
 
  private:
   // Helper function to add non-clickable header rows within the scrollable
@@ -36,7 +39,7 @@ class AudioDetailedView : public TrayDetailsView {
   void UpdateScrollableList();
   void UpdateAudioDevices();
 
-  // TrayDetailsView:
+  // TrayDetailedView:
   void HandleViewClicked(views::View* view) override;
 
   typedef std::map<views::View*, chromeos::AudioDevice> AudioDeviceMap;

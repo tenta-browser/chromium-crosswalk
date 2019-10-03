@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
 
 namespace gfx {
@@ -31,17 +32,12 @@ class VIEWS_EXPORT MouseWatcherListener {
 class VIEWS_EXPORT MouseWatcherHost {
  public:
   // The type of mouse event.
-  enum MouseEventType {
-    MOUSE_MOVE,
-    MOUSE_EXIT,
-    MOUSE_PRESS
-  };
+  enum class EventType { kMove, kExit, kPress };
 
   virtual ~MouseWatcherHost();
 
   // Return false when the mouse has moved outside the monitored region.
-  virtual bool Contains(const gfx::Point& screen_point,
-                        MouseEventType type) = 0;
+  virtual bool Contains(const gfx::Point& screen_point, EventType type) = 0;
 };
 
 // MouseWatcher is used to watch mouse movement and notify its listener when the
@@ -65,8 +61,10 @@ class VIEWS_EXPORT MouseWatcher {
   // Starts watching mouse movements. When the mouse moves outside the bounds of
   // the host the listener is notified. |Start| may be invoked any number of
   // times. If the mouse moves outside the bounds of the host the listener is
-  // notified and watcher stops watching events.
-  void Start();
+  // notified and watcher stops watching events. |window| must be a window in
+  // the hierarchy related to the host. |window| is used to setup initial state,
+  // and may be deleted before MouseWatcher.
+  void Start(gfx::NativeWindow window);
 
   // Stops watching mouse events.
   void Stop();
@@ -75,7 +73,7 @@ class VIEWS_EXPORT MouseWatcher {
   class Observer;
 
   // Are we currently observing events?
-  bool is_observing() const { return observer_.get() != NULL; }
+  bool is_observing() const { return observer_.get() != nullptr; }
 
   // Notifies the listener and stops watching events.
   void NotifyListener();

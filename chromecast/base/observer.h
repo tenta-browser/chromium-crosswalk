@@ -110,7 +110,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
@@ -267,14 +266,14 @@ class ObservableInternals
     void AddObserver(Observer<T>* observer) {
       DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
       DCHECK(observer);
-      DCHECK(!base::ContainsValue(observers_, observer));
+      DCHECK(!base::Contains(observers_, observer));
       observers_.push_back(observer);
     }
 
     void RemoveObserver(Observer<T>* observer) {
       DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
       DCHECK(observer);
-      DCHECK(base::ContainsValue(observers_, observer));
+      DCHECK(base::Contains(observers_, observer));
       observers_.erase(
           std::remove(observers_.begin(), observers_.end(), observer),
           observers_.end());
@@ -310,7 +309,7 @@ class ObservableInternals
     PerSequenceInfo(scoped_refptr<base::SequencedTaskRunner> task_runner,
                     const T& value)
         : task_runner_(std::move(task_runner)),
-          owned_info_(base::MakeUnique<SequenceOwnedInfo>(value)) {}
+          owned_info_(std::make_unique<SequenceOwnedInfo>(value)) {}
 
     PerSequenceInfo(PerSequenceInfo&& other) = default;
 

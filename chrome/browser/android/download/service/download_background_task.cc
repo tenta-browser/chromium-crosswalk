@@ -3,57 +3,78 @@
 // found in the LICENSE file.
 
 #include "base/android/callback_android.h"
+#include "base/bind.h"
 #include "base/callback_forward.h"
+#include "chrome/android/chrome_jni_headers/DownloadBackgroundTask_jni.h"
+#include "chrome/browser/android/download/download_manager_service.h"
 #include "chrome/browser/download/download_service_factory.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_android.h"
-#include "components/download/public/download_service.h"
+#include "chrome/browser/profiles/profile_key.h"
+#include "chrome/browser/profiles/profile_key_android.h"
+#include "components/download/public/background_service/download_service.h"
+#include "components/download/public/common/auto_resumption_handler.h"
 #include "content/public/browser/browser_context.h"
-#include "jni/DownloadBackgroundTask_jni.h"
 
 using base::android::JavaParamRef;
 
 namespace download {
 namespace android {
 
-void CallTaskFinishedCallback(const base::android::JavaRef<jobject>& j_callback,
-                              bool needs_reschedule) {
-  RunCallbackAndroid(j_callback, needs_reschedule);
+DownloadService* GetDownloadService(const JavaParamRef<jobject>& jkey) {
+  ProfileKey* key = ProfileKeyAndroid::FromProfileKeyAndroid(jkey);
+  DCHECK(key);
+  return DownloadServiceFactory::GetForKey(key);
+}
+
+AutoResumptionHandler* GetAutoResumptionHandler() {
+  if (!AutoResumptionHandler::Get())
+    DownloadManagerService::CreateAutoResumptionHandler();
+  return AutoResumptionHandler::Get();
 }
 
 // static
 void JNI_DownloadBackgroundTask_StartBackgroundTask(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jcaller,
-    const base::android::JavaParamRef<jobject>& jprofile,
+    const JavaParamRef<jobject>& jcaller,
+    const JavaParamRef<jobject>& jkey,
     jint task_type,
-    const base::android::JavaParamRef<jobject>& jcallback) {
-  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
-  DCHECK(profile);
-
+    const JavaParamRef<jobject>& jcallback) {
   TaskFinishedCallback finish_callback =
-      base::Bind(&CallTaskFinishedCallback,
-                 base::android::ScopedJavaGlobalRef<jobject>(jcallback));
+      base::BindOnce(&base::android::RunBooleanCallbackAndroid,
+                     base::android::ScopedJavaGlobalRef<jobject>(jcallback));
 
-  DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(profile);
-  download_service->OnStartScheduledTask(
-      static_cast<DownloadTaskType>(task_type), finish_callback);
+  switch (static_cast<DownloadTaskType>(task_type)) {
+    case download::DownloadTaskType::DOWNLOAD_AUTO_RESUMPTION_TASK: {
+      GetAutoResumptionHandler()->OnStartScheduledTask(
+          std::move(finish_callback));
+      break;
+    }
+    case download::DownloadTaskType::DOWNLOAD_TASK:
+      FALLTHROUGH;
+    case download::DownloadTaskType::CLEANUP_TASK:
+      GetDownloadService(jkey)->OnStartScheduledTask(
+          static_cast<DownloadTaskType>(task_type), std::move(finish_callback));
+      break;
+  }
 }
 
 // static
 jboolean JNI_DownloadBackgroundTask_StopBackgroundTask(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& jcaller,
-    const base::android::JavaParamRef<jobject>& jprofile,
+    const JavaParamRef<jobject>& jcaller,
+    const JavaParamRef<jobject>& jkey,
     jint task_type) {
-  Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
-  DCHECK(profile);
-
-  DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(profile);
-  return download_service->OnStopScheduledTask(
-      static_cast<DownloadTaskType>(task_type));
+  switch (static_cast<DownloadTaskType>(task_type)) {
+    case download::DownloadTaskType::DOWNLOAD_AUTO_RESUMPTION_TASK: {
+      GetAutoResumptionHandler()->OnStopScheduledTask();
+      break;
+    }
+    case download::DownloadTaskType::DOWNLOAD_TASK:
+      FALLTHROUGH;
+    case download::DownloadTaskType::CLEANUP_TASK:
+      return GetDownloadService(jkey)->OnStopScheduledTask(
+          static_cast<DownloadTaskType>(task_type));
+  }
+  return false;
 }
 
 }  // namespace android

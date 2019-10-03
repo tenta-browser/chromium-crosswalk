@@ -4,23 +4,30 @@
 
 #include "ash/accelerators/debug_commands.h"
 
+#include <string>
+#include <utility>
+
 #include "ash/accelerators/accelerator_commands.h"
 #include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/toast_data.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/system/toast/toast_data.h"
-#include "ash/system/toast/toast_manager.h"
+#include "ash/system/toast/toast_manager_impl.h"
 #include "ash/touch/touch_devices_controller.h"
-#include "ash/wallpaper/wallpaper_controller.h"
-#include "ash/wallpaper/wallpaper_delegate.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "ash/wm/widget_finder.h"
 #include "ash/wm/window_properties.h"
+#include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/utf_string_conversions.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "ui/accessibility/ax_tree_id.h"
+#include "ui/accessibility/platform/aura_window_properties.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/compositor/debug_utils.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/manager/display_manager.h"
@@ -29,6 +36,7 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/views/debug_utils.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/window_properties.h"
 
 namespace ash {
 namespace debug {
@@ -45,16 +53,17 @@ void HandlePrintLayerHierarchy() {
 }
 
 void HandlePrintViewHierarchy() {
-  aura::Window* active_window = wm::GetActiveWindow();
+  aura::Window* active_window = window_util::GetActiveWindow();
   if (!active_window)
     return;
-  views::Widget* widget = GetInternalWidgetForWindow(active_window);
+  views::Widget* widget = views::Widget::GetWidgetForNativeView(active_window);
   if (!widget)
     return;
   views::PrintViewHierarchy(widget->GetRootView());
 }
 
 void PrintWindowHierarchy(const aura::Window* active_window,
+                          const aura::Window* focused_window,
                           aura::Window* window,
                           int indent,
                           std::ostringstream* out) {
@@ -62,27 +71,47 @@ void PrintWindowHierarchy(const aura::Window* active_window,
   std::string name(window->GetName());
   if (name.empty())
     name = "\"\"";
-  *out << indent_str << name << " (" << window << ")"
-       << " type=" << window->type()
-       << ((window == active_window) ? " [active] " : " ")
-       << (window->IsVisible() ? " visible " : " ")
-       << window->bounds().ToString()
-       << (window->GetProperty(kSnapChildrenToPixelBoundary) ? " [snapped] "
-                                                             : "")
-       << ", subpixel offset="
-       << window->layer()->subpixel_position_offset().ToString() << '\n';
+  const gfx::Vector2dF& subpixel_position_offset =
+      window->layer()->GetSubpixelOffset();
+  *out << indent_str;
+  *out << name << " (" << window << ")"
+       << " type=" << window->type();
+  if (window->GetProperty(kWindowStateKey))
+    *out << " " << WindowState::Get(window)->GetStateType();
+  *out << ((window == active_window) ? " [active]" : "")
+       << ((window == focused_window) ? " [focused]" : "")
+       << (window->IsVisible() ? " visible" : "") << " "
+       << (window->occlusion_state() != aura::Window::OcclusionState::UNKNOWN
+               ? aura::Window::OcclusionStateToString(window->occlusion_state())
+               : "")
+       << " " << window->bounds().ToString();
+  if (!subpixel_position_offset.IsZero())
+    *out << " subpixel offset=" + subpixel_position_offset.ToString();
+  std::string* tree_id = window->GetProperty(ui::kChildAXTreeID);
+  if (tree_id)
+    *out << " ax_tree_id=" << *tree_id;
+  base::string16 title(window->GetTitle());
+  if (!title.empty())
+    *out << " title=" << title;
+  int app_type = window->GetProperty(aura::client::kAppType);
+  *out << " app_type=" << app_type;
+  std::string* pkg_name = window->GetProperty(ash::kArcPackageNameKey);
+  if (pkg_name)
+    *out << " pkg_name=" << *pkg_name;
+  *out << '\n';
 
   for (aura::Window* child : window->children())
-    PrintWindowHierarchy(active_window, child, indent + 3, out);
+    PrintWindowHierarchy(active_window, focused_window, child, indent + 3, out);
 }
 
 void HandlePrintWindowHierarchy() {
-  aura::Window* active_window = wm::GetActiveWindow();
+  aura::Window* active_window = window_util::GetActiveWindow();
+  aura::Window* focused_window = window_util::GetFocusedWindow();
   aura::Window::Windows roots = Shell::Get()->GetAllRootWindows();
   for (size_t i = 0; i < roots.size(); ++i) {
     std::ostringstream out;
     out << "RootWindow " << i << ":\n";
-    PrintWindowHierarchy(active_window, roots[i], 0, &out);
+    PrintWindowHierarchy(active_window, focused_window, roots[i], 0, &out);
     // Error so logs can be collected from end-users.
     LOG(ERROR) << out.str();
   }
@@ -108,28 +137,29 @@ gfx::ImageSkia CreateWallpaperImage(SkColor fill, SkColor rect) {
 
 void HandleToggleWallpaperMode() {
   static int index = 0;
-  WallpaperController* wallpaper_controller =
-      Shell::Get()->wallpaper_controller();
-  wallpaper::WallpaperInfo info("", wallpaper::WALLPAPER_LAYOUT_STRETCH,
-                                wallpaper::DEFAULT,
-                                base::Time::Now().LocalMidnight());
+  auto* wallpaper_controller = Shell::Get()->wallpaper_controller();
+  WallpaperInfo info("", WALLPAPER_LAYOUT_STRETCH, DEFAULT,
+                     base::Time::Now().LocalMidnight());
   switch (++index % 4) {
     case 0:
-      Shell::Get()->wallpaper_delegate()->InitializeWallpaper();
+      wallpaper_controller->ShowDefaultWallpaperForTesting();
       break;
     case 1:
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorRED, SK_ColorBLUE), info);
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorRED, SK_ColorBLUE), info,
+          /*preview_mode=*/false, /*always_on_top=*/false);
       break;
     case 2:
-      info.layout = wallpaper::WALLPAPER_LAYOUT_CENTER;
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorBLUE, SK_ColorGREEN), info);
+      info.layout = WALLPAPER_LAYOUT_CENTER;
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorBLUE, SK_ColorGREEN), info,
+          /*preview_mode=*/false, /*always_on_top=*/false);
       break;
     case 3:
-      info.layout = wallpaper::WALLPAPER_LAYOUT_CENTER_CROPPED;
-      wallpaper_controller->SetWallpaperImage(
-          CreateWallpaperImage(SK_ColorGREEN, SK_ColorRED), info);
+      info.layout = WALLPAPER_LAYOUT_CENTER_CROPPED;
+      wallpaper_controller->ShowWallpaperImage(
+          CreateWallpaperImage(SK_ColorGREEN, SK_ColorRED), info,
+          /*preview_mode=*/false, /*always_on_top=*/false);
       break;
   }
 }
@@ -143,18 +173,17 @@ void HandleToggleTouchscreen() {
   base::RecordAction(base::UserMetricsAction("Accel_Toggle_Touchscreen"));
   TouchDevicesController* controller = Shell::Get()->touch_devices_controller();
   controller->SetTouchscreenEnabled(
-      !controller->GetTouchscreenEnabled(TouchscreenEnabledSource::USER_PREF),
-      TouchscreenEnabledSource::USER_PREF);
+      !controller->GetTouchscreenEnabled(TouchDeviceEnabledSource::USER_PREF),
+      TouchDeviceEnabledSource::USER_PREF);
 }
 
 void HandleToggleTabletMode() {
   TabletModeController* controller = Shell::Get()->tablet_mode_controller();
-  controller->EnableTabletModeWindowManager(
-      !controller->IsTabletModeWindowManagerEnabled());
+  controller->SetEnabledForDev(!controller->InTabletMode());
 }
 
 void HandleTriggerCrash() {
-  CHECK(false) << "Intentional crash via debug accelerator.";
+  LOG(FATAL) << "Intentional crash via debug accelerator.";
 }
 
 }  // namespace

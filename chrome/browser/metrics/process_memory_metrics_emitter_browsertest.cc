@@ -4,10 +4,13 @@
 
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
 
+#include <set>
+
+#include "base/feature_list.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/strings/stringprintf.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/trace_event_analyzer.h"
 #include "base/trace_event/memory_dump_manager.h"
@@ -18,27 +21,31 @@
 #include "chrome/test/base/tracing.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "components/ukm/ukm_source.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/test/test_utils.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source.h"
+#include "services/network/public/cpp/features.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/os_metrics.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/test_extension_dir.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
 #include "extensions/test/background_page_watcher.h"
+#include "extensions/test/test_extension_dir.h"
 #endif
 
 namespace {
 
 using base::trace_event::MemoryDumpType;
+using memory_instrumentation::GlobalMemoryDump;
 using memory_instrumentation::mojom::ProcessType;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -49,6 +56,24 @@ using extensions::TestExtensionDir;
 #endif
 
 using UkmEntry = ukm::builders::Memory_Experimental;
+
+// Whether the value of a metric can be zero.
+enum class ValueRestriction { NONE, ABOVE_ZERO };
+
+// Returns the number of renderers associated with top-level frames in
+// |browser|. There can be other renderers in the process (e.g. spare renderer).
+int GetNumRenderers(Browser* browser) {
+  // Since multiple tabs can be hosted in the same process, RenderProcessHosts
+  // need to be deduped.
+  std::set<content::RenderProcessHost*> render_process_hosts;
+  for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
+    render_process_hosts.insert(browser->tab_strip_model()
+                                    ->GetWebContentsAt(i)
+                                    ->GetSiteInstance()
+                                    ->GetProcess());
+  }
+  return static_cast<int>(render_process_hosts.size());
+}
 
 void RequestGlobalDumpCallback(base::Closure quit_closure,
                                bool success,
@@ -75,18 +100,15 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
  private:
   ~ProcessMemoryMetricsEmitterFake() override {}
 
-  void ReceivedMemoryDump(
-      bool success,
-      memory_instrumentation::mojom::GlobalMemoryDumpPtr ptr) override {
+  void ReceivedMemoryDump(bool success,
+                          std::unique_ptr<GlobalMemoryDump> ptr) override {
     EXPECT_TRUE(success);
     ProcessMemoryMetricsEmitter::ReceivedMemoryDump(success, std::move(ptr));
     finished_memory_dump_ = true;
     QuitIfFinished();
   }
 
-  void ReceivedProcessInfos(
-      std::vector<resource_coordinator::mojom::ProcessInfoPtr> process_infos)
-      override {
+  void ReceivedProcessInfos(std::vector<ProcessInfo> process_infos) override {
     ProcessMemoryMetricsEmitter::ReceivedProcessInfos(std::move(process_infos));
     finished_process_info_ = true;
     QuitIfFinished();
@@ -112,23 +134,22 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
 void CheckMemoryMetric(const std::string& name,
                        const base::HistogramTester& histogram_tester,
                        int count,
-                       bool check_minimum,
+                       ValueRestriction value_restriction,
                        int number_of_processes = 1u) {
   std::unique_ptr<base::HistogramSamples> samples(
       histogram_tester.GetHistogramSamplesSinceCreation(name));
   ASSERT_TRUE(samples);
 
-  bool count_matches = samples->TotalCount() == count * number_of_processes;
-  // The exact number of renderers present at the time the metrics are emitted
-  // is not deterministic. Sometimes there is an extra renderer.
   if (name.find("Renderer") != std::string::npos) {
-    count_matches = samples->TotalCount() >= (count * number_of_processes) &&
-                    samples->TotalCount() <= (number_of_processes + 1) * count;
+    // There can be a spare renderer not accounted for in |number_of_processes|.
+    EXPECT_GE(samples->TotalCount(), count * number_of_processes) << name;
+    EXPECT_LE(samples->TotalCount(), count * (number_of_processes + 1)) << name;
+  } else {
+    EXPECT_EQ(samples->TotalCount(), count * number_of_processes) << name;
   }
 
-  EXPECT_TRUE(count_matches);
-
-  if (check_minimum)
+  if (count != 0 && number_of_processes != 0 &&
+      value_restriction == ValueRestriction::ABOVE_ZERO)
     EXPECT_GT(samples->sum(), 0u) << name;
 
   // As a sanity check, no memory stat should exceed 4 GB.
@@ -136,70 +157,141 @@ void CheckMemoryMetric(const std::string& name,
   EXPECT_LT(samples->sum(), maximum_expected_size) << name;
 }
 
+void CheckExperimentalMemoryMetricsForProcessType(
+    const base::HistogramTester& histogram_tester,
+    int count,
+    const char* process_type,
+    int number_of_processes) {
+#if !defined(OS_WIN)
+  CheckMemoryMetric(
+      std::string("Memory.Experimental.") + process_type + "2.Malloc",
+      histogram_tester, count, ValueRestriction::ABOVE_ZERO,
+      number_of_processes);
+#endif
+  CheckMemoryMetric(
+      std::string("Memory.Experimental.") + process_type + "2.BlinkGC",
+      histogram_tester, count, ValueRestriction::NONE, number_of_processes);
+  CheckMemoryMetric(
+      std::string("Memory.Experimental.") + process_type + "2.PartitionAlloc",
+      histogram_tester, count, ValueRestriction::NONE, number_of_processes);
+  // V8 memory footprint can be below 1 MB, which is reported as zero.
+  CheckMemoryMetric(std::string("Memory.Experimental.") + process_type + "2.V8",
+                    histogram_tester, count, ValueRestriction::NONE,
+                    number_of_processes);
+}
+
+void CheckExperimentalMemoryMetrics(
+    const base::HistogramTester& histogram_tester,
+    int count,
+    int number_of_renderer_processes,
+    int number_of_extension_processes) {
+#if !defined(OS_WIN)
+  CheckMemoryMetric("Memory.Experimental.Browser2.Malloc", histogram_tester,
+                    count, ValueRestriction::ABOVE_ZERO);
+#endif
+  if (number_of_renderer_processes) {
+    CheckExperimentalMemoryMetricsForProcessType(
+        histogram_tester, count, "Renderer", number_of_renderer_processes);
+  }
+  if (number_of_extension_processes) {
+    CheckExperimentalMemoryMetricsForProcessType(
+        histogram_tester, count, "Extension", number_of_extension_processes);
+  }
+  CheckMemoryMetric("Memory.Experimental.Total2.PrivateMemoryFootprint",
+                    histogram_tester, count, ValueRestriction::ABOVE_ZERO);
+}
+
+void CheckStableMemoryMetrics(const base::HistogramTester& histogram_tester,
+                              int count,
+                              int number_of_renderer_processes,
+                              int number_of_extension_processes) {
+  const int count_for_resident_set =
+#if defined(OS_MACOSX)
+      0;
+#else
+      count;
+#endif
+  const int count_for_private_swap_footprint =
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+      count;
+#else
+      0;
+#endif
+
+  if (number_of_renderer_processes) {
+    CheckMemoryMetric("Memory.Renderer.ResidentSet", histogram_tester,
+                      count_for_resident_set, ValueRestriction::ABOVE_ZERO,
+                      number_of_renderer_processes);
+    CheckMemoryMetric("Memory.Renderer.PrivateMemoryFootprint",
+                      histogram_tester, count, ValueRestriction::ABOVE_ZERO,
+                      number_of_renderer_processes);
+    // Shared memory footprint can be below 1 MB, which is reported as zero.
+    CheckMemoryMetric("Memory.Renderer.SharedMemoryFootprint", histogram_tester,
+                      count, ValueRestriction::NONE,
+                      number_of_renderer_processes);
+    CheckMemoryMetric("Memory.Renderer.PrivateSwapFootprint", histogram_tester,
+                      count_for_private_swap_footprint, ValueRestriction::NONE,
+                      number_of_renderer_processes);
+  }
+
+  if (number_of_extension_processes) {
+    CheckMemoryMetric("Memory.Extension.ResidentSet", histogram_tester,
+                      count_for_resident_set, ValueRestriction::ABOVE_ZERO,
+                      number_of_extension_processes);
+    CheckMemoryMetric("Memory.Extension.PrivateMemoryFootprint",
+                      histogram_tester, count, ValueRestriction::ABOVE_ZERO,
+                      number_of_extension_processes);
+    // Shared memory footprint can be below 1 MB, which is reported as zero.
+    CheckMemoryMetric("Memory.Extension.SharedMemoryFootprint",
+                      histogram_tester, count, ValueRestriction::NONE,
+                      number_of_extension_processes);
+    CheckMemoryMetric("Memory.Extension.PrivateSwapFootprint", histogram_tester,
+                      count_for_private_swap_footprint, ValueRestriction::NONE,
+                      number_of_extension_processes);
+  }
+
+  int number_of_ns_processes = content::IsOutOfProcessNetworkService() ? 1 : 0;
+  CheckMemoryMetric("Memory.NetworkService.ResidentSet", histogram_tester,
+                    count_for_resident_set, ValueRestriction::ABOVE_ZERO,
+                    number_of_ns_processes);
+  CheckMemoryMetric("Memory.NetworkService.PrivateMemoryFootprint",
+                    histogram_tester, count, ValueRestriction::ABOVE_ZERO,
+                    number_of_ns_processes);
+  // Shared memory footprint can be below 1 MB, which is reported as zero.
+  CheckMemoryMetric("Memory.NetworkService.SharedMemoryFootprint",
+                    histogram_tester, count, ValueRestriction::NONE,
+                    number_of_ns_processes);
+  CheckMemoryMetric("Memory.NetworkService.PrivateSwapFootprint",
+                    histogram_tester, count_for_private_swap_footprint,
+                    ValueRestriction::NONE, number_of_ns_processes);
+
+  CheckMemoryMetric("Memory.Total.ResidentSet", histogram_tester,
+                    count_for_resident_set, ValueRestriction::ABOVE_ZERO);
+  CheckMemoryMetric("Memory.Total.PrivateMemoryFootprint", histogram_tester,
+                    count, ValueRestriction::ABOVE_ZERO);
+  CheckMemoryMetric("Memory.Total.RendererPrivateMemoryFootprint",
+                    histogram_tester, count, ValueRestriction::ABOVE_ZERO);
+  // Shared memory footprint can be below 1 MB, which is reported as zero.
+  CheckMemoryMetric("Memory.Total.SharedMemoryFootprint", histogram_tester,
+                    count, ValueRestriction::NONE);
+}
+
 void CheckAllMemoryMetrics(const base::HistogramTester& histogram_tester,
                            int count,
                            int number_of_renderer_processes = 1u,
-                           int number_of_extenstion_processes = 0u) {
-#if !defined(OS_WIN)
-  CheckMemoryMetric("Memory.Experimental.Browser2.Malloc", histogram_tester,
-                    count, true);
-#endif
-#if !defined(OS_MACOSX)
-  CheckMemoryMetric("Memory.Experimental.Browser2.Resident", histogram_tester,
-                    count, true);
-#endif
-  CheckMemoryMetric("Memory.Experimental.Browser2.PrivateMemoryFootprint",
-                    histogram_tester, count, true);
-  if (number_of_renderer_processes) {
-#if !defined(OS_WIN)
-    CheckMemoryMetric("Memory.Experimental.Renderer2.Malloc", histogram_tester,
-                      count, true, number_of_renderer_processes);
-#endif
-#if !defined(OS_MACOSX)
-    CheckMemoryMetric("Memory.Experimental.Renderer2.Resident",
-                      histogram_tester, count, true,
-                      number_of_renderer_processes);
-#endif
-    CheckMemoryMetric("Memory.Experimental.Renderer2.BlinkGC", histogram_tester,
-                      count, false, number_of_renderer_processes);
-    CheckMemoryMetric("Memory.Experimental.Renderer2.PartitionAlloc",
-                      histogram_tester, count, false,
-                      number_of_renderer_processes);
-    CheckMemoryMetric("Memory.Experimental.Renderer2.V8", histogram_tester,
-                      count, true, number_of_renderer_processes);
-    CheckMemoryMetric("Memory.Experimental.Renderer2.PrivateMemoryFootprint",
-                      histogram_tester, count, true,
-                      number_of_renderer_processes);
-  }
-  if (number_of_extenstion_processes) {
-#if !defined(OS_WIN)
-    CheckMemoryMetric("Memory.Experimental.Extension2.Malloc", histogram_tester,
-                      count, true, number_of_extenstion_processes);
-#endif
-#if !defined(OS_MACOSX)
-    CheckMemoryMetric("Memory.Experimental.Extension2.Resident",
-                      histogram_tester, count, true,
-                      number_of_extenstion_processes);
-#endif
-    CheckMemoryMetric("Memory.Experimental.Extension2.BlinkGC",
-                      histogram_tester, count, false,
-                      number_of_extenstion_processes);
-    CheckMemoryMetric("Memory.Experimental.Extension2.PartitionAlloc",
-                      histogram_tester, count, false,
-                      number_of_extenstion_processes);
-    CheckMemoryMetric("Memory.Experimental.Extension2.V8", histogram_tester,
-                      count, true, number_of_extenstion_processes);
-    CheckMemoryMetric("Memory.Experimental.Extension2.PrivateMemoryFootprint",
-                      histogram_tester, count, true,
-                      number_of_extenstion_processes);
-  }
-  CheckMemoryMetric("Memory.Experimental.Total2.PrivateMemoryFootprint",
-                    histogram_tester, count, true);
+                           int number_of_extension_processes = 0u) {
+  CheckExperimentalMemoryMetrics(histogram_tester, count,
+                                 number_of_renderer_processes,
+                                 number_of_extension_processes);
+  CheckStableMemoryMetrics(histogram_tester, count,
+                           number_of_renderer_processes,
+                           number_of_extension_processes);
 }
 
 }  // namespace
 
-class ProcessMemoryMetricsEmitterTest : public ExtensionBrowserTest {
+class ProcessMemoryMetricsEmitterTest
+    : public extensions::ExtensionBrowserTest {
  public:
   ProcessMemoryMetricsEmitterTest() {
     scoped_feature_list_.InitAndEnableFeature(ukm::kUkmFeature);
@@ -208,170 +300,171 @@ class ProcessMemoryMetricsEmitterTest : public ExtensionBrowserTest {
   ~ProcessMemoryMetricsEmitterTest() override {}
 
   void SetUpOnMainThread() override {
-    ExtensionBrowserTest::SetUpOnMainThread();
+    extensions::ExtensionBrowserTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
   }
 
   void PreRunTestOnMainThread() override {
     InProcessBrowserTest::PreRunTestOnMainThread();
 
-    test_ukm_recorder_ = base::MakeUnique<ukm::TestAutoSetUkmRecorder>();
+    test_ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
   }
 
  protected:
   std::unique_ptr<ukm::TestAutoSetUkmRecorder> test_ukm_recorder_;
 
-  void CheckMetricWithName(ukm::SourceId source_id,
-                           const char* name,
-                           std::function<bool(int64_t)> check,
-                           size_t metric_count) {
-    std::vector<int64_t> metrics = test_ukm_recorder_->GetMetricValues(
-        source_id, UkmEntry::kEntryName, name);
-    EXPECT_EQ(metric_count, metrics.size()) << name;
-    if (metrics.size() > 0) {
-      // The check should be performed on the last entry.
-      int64_t metric = metrics.back();
-      EXPECT_TRUE(check(metric)) << name;
-    }
-  }
-
-  void CheckExactMetricWithName(ukm::SourceId source_id,
+  void CheckExactMetricWithName(const ukm::mojom::UkmEntry* entry,
                                 const char* name,
-                                int64_t expected_value,
-                                size_t metric_count) {
-    CheckMetricWithName(source_id, name,
-                        [expected_value](int64_t value) -> bool {
-                          return value == expected_value;
-                        },
-                        metric_count);
+                                int64_t expected_value) {
+    const int64_t* value = ukm::TestUkmRecorder::GetEntryMetric(entry, name);
+    ASSERT_TRUE(value) << name;
+    EXPECT_EQ(expected_value, *value) << name;
   }
 
-  void CheckMemoryMetricWithName(ukm::SourceId source_id,
-                                 const char* name,
-                                 bool can_be_zero,
-                                 size_t metric_count = 1u) {
-    CheckMetricWithName(source_id, name,
-                        [can_be_zero](int64_t value) -> bool {
-                          return value >= (can_be_zero ? 0 : 1) &&
-                                 value <= 4000;
-                        },
-                        metric_count);
+  void CheckMemoryMetricWithName(
+      const ukm::mojom::UkmEntry* entry,
+      const char* name,
+      ValueRestriction value_restriction = ValueRestriction::NONE) {
+    const int64_t* value = ukm::TestUkmRecorder::GetEntryMetric(entry, name);
+    ASSERT_TRUE(value) << name;
+
+    switch (value_restriction) {
+      case ValueRestriction::NONE:
+        EXPECT_GE(*value, 0) << name;
+        break;
+      case ValueRestriction::ABOVE_ZERO:
+        EXPECT_GT(*value, 0) << name;
+        break;
+    }
+
+    EXPECT_LE(*value, 4000) << name;
   }
 
-  void CheckTimeMetricWithName(ukm::SourceId source_id,
-                               const char* name,
-                               size_t metric_count = 1u) {
-    CheckMetricWithName(
-        source_id, name,
-        [](int64_t value) -> bool { return value >= 0 && value <= 10; },
-        metric_count);
+  void CheckTimeMetricWithName(const ukm::mojom::UkmEntry* entry,
+                               const char* name) {
+    const int64_t* value = ukm::TestUkmRecorder::GetEntryMetric(entry, name);
+    ASSERT_TRUE(value) << name;
+    EXPECT_GE(*value, 0) << name;
+    EXPECT_LE(*value, 300) << name;
   }
 
-  void CheckAllUkmSources(size_t metric_count = 1u) {
-    std::set<ukm::SourceId> source_ids = test_ukm_recorder_->GetSourceIds();
-    bool has_browser_source = false;
-    bool has_renderer_source = false;
-    bool has_total_source = false;
-    for (auto source_id : source_ids) {
-      // Ignore sources with no entries.
-      const ukm::UkmSource* source =
-          test_ukm_recorder_->GetSourceForSourceId(source_id);
-      if (source &&
-          !test_ukm_recorder_->HasEntry(*source, UkmEntry::kEntryName))
-        continue;
-      if (ProcessHasTypeForSource(source_id, ProcessType::BROWSER)) {
-        has_browser_source = true;
-        CheckUkmBrowserSource(source_id, 1);
-      } else if (ProcessHasTypeForSource(source_id, ProcessType::RENDERER)) {
-        // Renderer metrics associate with navigation's source, instead of
-        // creating a new one.
-        has_renderer_source = true;
-        CheckUkmRendererSource(source_id, metric_count);
-      } else if (ProcessHasTypeForSource(source_id, ProcessType::GPU)) {
-        CheckUkmGPUSource(source_id, 1);
+  void CheckAllUkmEntries(size_t entry_count = 1u) {
+    const auto& entries =
+        test_ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName);
+    size_t browser_entry_count = 0;
+    size_t renderer_entry_count = 0;
+    size_t total_entry_count = 0;
+
+    for (const auto* entry : entries) {
+      if (ProcessHasTypeForEntry(entry, ProcessType::BROWSER)) {
+        browser_entry_count++;
+        CheckUkmBrowserEntry(entry);
+      } else if (ProcessHasTypeForEntry(entry, ProcessType::RENDERER)) {
+        renderer_entry_count++;
+        CheckUkmRendererEntry(entry);
+      } else if (ProcessHasTypeForEntry(entry, ProcessType::GPU)) {
+        CheckUkmGPUEntry(entry);
+      } else if (ProcessHasTypeForEntry(entry, ProcessType::UTILITY)) {
+        // No expectations.
       } else {
         // This must be Total2.
-        has_total_source = true;
-        CheckMemoryMetricWithName(
-            source_id, UkmEntry::kTotal2_PrivateMemoryFootprintName, false, 1);
+        total_entry_count++;
+        CheckMemoryMetricWithName(entry,
+                                  UkmEntry::kTotal2_PrivateMemoryFootprintName,
+                                  ValueRestriction::ABOVE_ZERO);
       }
     }
-    EXPECT_TRUE(has_browser_source);
-    EXPECT_TRUE(has_renderer_source);
-    EXPECT_TRUE(has_total_source);
+    EXPECT_EQ(entry_count, browser_entry_count);
+    EXPECT_EQ(entry_count, total_entry_count);
+
+    EXPECT_GE(renderer_entry_count, entry_count);
   }
 
-  void CheckUkmRendererSource(ukm::SourceId source_id, size_t metric_count) {
+  void CheckUkmRendererEntry(const ukm::mojom::UkmEntry* entry) {
 #if !defined(OS_WIN)
-    CheckMemoryMetricWithName(source_id, UkmEntry::kMallocName, false,
-                              metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kMallocName,
+                              ValueRestriction::ABOVE_ZERO);
 #endif
 #if !defined(OS_MACOSX)
-    CheckMemoryMetricWithName(source_id, UkmEntry::kResidentName, false,
-                              metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kResidentName,
+                              ValueRestriction::ABOVE_ZERO);
 #endif
-    CheckMemoryMetricWithName(source_id, UkmEntry::kPrivateMemoryFootprintName,
-                              false, metric_count);
-    CheckMemoryMetricWithName(source_id, UkmEntry::kBlinkGCName, true,
-                              metric_count);
-    CheckMemoryMetricWithName(source_id, UkmEntry::kPartitionAllocName, true,
-                              metric_count);
-    CheckMemoryMetricWithName(source_id, UkmEntry::kV8Name, true, metric_count);
-    CheckMemoryMetricWithName(source_id, UkmEntry::kNumberOfExtensionsName,
-                              true, metric_count);
-    CheckTimeMetricWithName(source_id, UkmEntry::kUptimeName, metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kPrivateMemoryFootprintName,
+                              ValueRestriction::ABOVE_ZERO);
+    CheckMemoryMetricWithName(entry, UkmEntry::kBlinkGCName,
+                              ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kPartitionAllocName,
+                              ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kV8Name, ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kNumberOfExtensionsName,
+                              ValueRestriction::NONE);
+    CheckTimeMetricWithName(entry, UkmEntry::kUptimeName);
+
+    CheckMemoryMetricWithName(entry, UkmEntry::kNumberOfDocumentsName,
+                              ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kNumberOfFramesName,
+                              ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kNumberOfLayoutObjectsName,
+                              ValueRestriction::NONE);
+    CheckMemoryMetricWithName(entry, UkmEntry::kNumberOfNodesName,
+                              ValueRestriction::NONE);
   }
 
-  void CheckUkmBrowserSource(ukm::SourceId source_id,
-                             size_t metric_count = 1u) {
+  void CheckUkmBrowserEntry(const ukm::mojom::UkmEntry* entry) {
 #if !defined(OS_WIN)
-    CheckMemoryMetricWithName(source_id, UkmEntry::kMallocName, false,
-                              metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kMallocName,
+                              ValueRestriction::ABOVE_ZERO);
 #endif
 #if !defined(OS_MACOSX)
-    CheckMemoryMetricWithName(source_id, UkmEntry::kResidentName, false,
-                              metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kResidentName,
+                              ValueRestriction::ABOVE_ZERO);
 #endif
-    CheckMemoryMetricWithName(source_id, UkmEntry::kPrivateMemoryFootprintName,
-                              false, metric_count);
+    CheckMemoryMetricWithName(entry, UkmEntry::kPrivateMemoryFootprintName,
+                              ValueRestriction::ABOVE_ZERO);
 
-    CheckTimeMetricWithName(source_id, UkmEntry::kUptimeName, metric_count);
+    CheckTimeMetricWithName(entry, UkmEntry::kUptimeName);
   }
 
-  void CheckUkmGPUSource(ukm::SourceId source_id, size_t metric_count = 1u) {
-    CheckTimeMetricWithName(source_id, UkmEntry::kUptimeName, metric_count);
+  void CheckUkmGPUEntry(const ukm::mojom::UkmEntry* entry) {
+    CheckTimeMetricWithName(entry, UkmEntry::kUptimeName);
   }
 
-  bool ProcessHasTypeForSource(ukm::SourceId source_id,
-                               ProcessType process_type) {
-    std::vector<int64_t> metrics = test_ukm_recorder_->GetMetricValues(
-        source_id, UkmEntry::kEntryName, UkmEntry::kProcessTypeName);
-
-    return std::find(metrics.begin(), metrics.end(),
-                     static_cast<int64_t>(process_type)) != metrics.end();
+  bool ProcessHasTypeForEntry(const ukm::mojom::UkmEntry* entry,
+                              ProcessType process_type) {
+    const int64_t* value =
+        ukm::TestUkmRecorder::GetEntryMetric(entry, UkmEntry::kProcessTypeName);
+    return value && *value == static_cast<int64_t>(process_type);
   }
 
   void CheckPageInfoUkmMetrics(GURL url,
                                bool is_visible,
-                               size_t metric_count = 1u) {
-    const ukm::UkmSource* source = test_ukm_recorder_->GetSourceForUrl(url);
-    EXPECT_TRUE(source) << "Ukm Source for Renderer URL not found";
-    // Only renderer processes has an associated URL.
-    EXPECT_TRUE(ProcessHasTypeForSource(source->id(), ProcessType::RENDERER));
-
-    CheckExactMetricWithName(source->id(), UkmEntry::kIsVisibleName, is_visible,
-                             metric_count);
-    CheckTimeMetricWithName(
-        source->id(), UkmEntry::kTimeSinceLastNavigationName, metric_count);
-    CheckTimeMetricWithName(source->id(),
-                            UkmEntry::kTimeSinceLastVisibilityChangeName,
-                            metric_count);
+                               size_t entry_count = 1u) {
+    const auto& entries =
+        test_ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName);
+    size_t found_count = false;
+    const ukm::mojom::UkmEntry* last_entry = nullptr;
+    for (const auto* entry : entries) {
+      const ukm::UkmSource* source =
+          test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
+      if (!source || source->url() != url)
+        continue;
+      if (!test_ukm_recorder_->EntryHasMetric(entry, UkmEntry::kIsVisibleName))
+        continue;
+      found_count++;
+      last_entry = entry;
+      EXPECT_TRUE(ProcessHasTypeForEntry(entry, ProcessType::RENDERER));
+      CheckTimeMetricWithName(entry, UkmEntry::kTimeSinceLastNavigationName);
+      CheckTimeMetricWithName(entry,
+                              UkmEntry::kTimeSinceLastVisibilityChangeName);
+    }
+    CheckExactMetricWithName(last_entry, UkmEntry::kIsVisibleName, is_visible);
+    EXPECT_EQ(entry_count, found_count);
   }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // Create an barebones extension with a background page for the given name.
   const Extension* CreateExtension(const std::string& name) {
-    auto dir = base::MakeUnique<TestExtensionDir>();
+    auto dir = std::make_unique<TestExtensionDir>();
     dir->WriteManifestWithSingleQuotes(
         base::StringPrintf("{"
                            "'name': '%s',"
@@ -444,8 +537,11 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 
   run_loop.Run();
 
-  CheckAllMemoryMetrics(histogram_tester, 1);
-  CheckAllUkmSources();
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers);
+  CheckAllUkmEntries();
   CheckPageInfoUkmMetrics(url, true);
 }
 
@@ -489,9 +585,14 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 
   run_loop.Run();
 
-  CheckAllMemoryMetrics(histogram_tester, 1, 1, 2);
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+  constexpr int kNumExtensionProcesses = 2;
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers,
+                        kNumExtensionProcesses);
   // Extension processes do not have page_info.
-  CheckAllUkmSources();
+  CheckAllUkmEntries();
   CheckPageInfoUkmMetrics(url, true);
 }
 
@@ -499,8 +600,9 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 #define MAYBE_FetchAndEmitMetricsWithHostedApps \
   DISABLED_FetchAndEmitMetricsWithHostedApps
 #else
+// TODO(crbug.com/943207): Re-enable this test once it's not flaky anymore.
 #define MAYBE_FetchAndEmitMetricsWithHostedApps \
-  FetchAndEmitMetricsWithHostedApps
+  DISABLED_FetchAndEmitMetricsWithHostedApps
 #endif
 IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
                        MAYBE_FetchAndEmitMetricsWithHostedApps) {
@@ -532,18 +634,18 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 
   run_loop.Run();
 
-  // No extensions should be observed
-  CheckAllMemoryMetrics(histogram_tester, 1, 1, 0);
-  CheckAllUkmSources();
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+  constexpr int kNumExtensionProcesses = 0;
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers,
+                        kNumExtensionProcesses);
+  CheckAllUkmEntries();
   CheckPageInfoUkmMetrics(url, true);
 }
 
-// Breaks when attempting to add tests for new UKMs: crbug.com/761524
-// Re-enable with crrev.com/c/774120.
-#define MAYBE_FetchAndEmitMetricsWithExtensionsAndHostReuse \
-  DISABLED_FetchAndEmitMetricsWithExtensionsAndHostReuse
 IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
-                       MAYBE_FetchAndEmitMetricsWithExtensionsAndHostReuse) {
+                       FetchAndEmitMetricsWithExtensionsAndHostReuse) {
   // This test does not work with --site-per-process flag since this test
   // combines multiple extensions in the same process.
   if (content::AreAllSitesIsolatedForTesting())
@@ -580,12 +682,21 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
 
   run_loop.Run();
 
-  CheckAllMemoryMetrics(histogram_tester, 1, 1, 1);
-  CheckAllUkmSources();
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+  constexpr int kNumExtensionProcesses = 1;
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers,
+                        kNumExtensionProcesses);
+  CheckAllUkmEntries();
   // When hosts share a process, no unique URL is identified, therefore no page
   // info.
-  EXPECT_FALSE(test_ukm_recorder_->HasEntry(
-      *test_ukm_recorder_->GetSourceForUrl(url), UkmEntry::kEntryName));
+  const auto& entries =
+      test_ukm_recorder_->GetEntriesByName(UkmEntry::kEntryName);
+  for (const auto* entry : entries) {
+    EXPECT_EQ(nullptr,
+              test_ukm_recorder_->GetSourceForSourceId(entry->source_id));
+  }
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -642,17 +753,17 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
       events, trace_analyzer::Query::EventNameIs(MemoryDumpTypeToString(
                   MemoryDumpType::EXPLICITLY_TRIGGERED))));
 
-  CheckAllMemoryMetrics(histogram_tester, 1);
-  CheckAllUkmSources();
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers);
+  CheckAllUkmEntries();
   CheckPageInfoUkmMetrics(url, true);
 }
 
-#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
-#define MAYBE_FetchThreeTimes DISABLED_FetchThreeTimes
-#else
-#define MAYBE_FetchThreeTimes FetchThreeTimes
-#endif
-IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_FetchThreeTimes) {
+// Flaky test: https://crbug.com/731466
+IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
+                       DISABLED_FetchThreeTimes) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url = embedded_test_server()->GetURL("foo.com", "/empty.html");
   ui_test_utils::NavigateToURLWithDisposition(
@@ -672,34 +783,39 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_FetchThreeTimes) {
 
   run_loop.Run();
 
-  CheckAllMemoryMetrics(histogram_tester, count);
-  CheckAllUkmSources(count);
+  constexpr int kNumRenderers = 2;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+
+  CheckAllMemoryMetrics(histogram_tester, count, kNumRenderers);
+  CheckAllUkmEntries(count);
   CheckPageInfoUkmMetrics(url, true, count);
 }
 
-#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
+// Test is flaky on chromeos and linux. https://crbug.com/938054.
+// Test is flaky on mac and win: https://crbug.com/948674.
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) ||         \
+    defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MACOSX) || \
+    defined(OS_WIN)
 #define MAYBE_ForegroundAndBackgroundPages DISABLED_ForegroundAndBackgroundPages
 #else
 #define MAYBE_ForegroundAndBackgroundPages ForegroundAndBackgroundPages
 #endif
 IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
                        MAYBE_ForegroundAndBackgroundPages) {
-  ui_test_utils::WindowedTabAddedNotificationObserver tab_observer(
-      content::NotificationService::AllSources());
+  ui_test_utils::AllBrowserTabAddedWaiter add_tab;
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url1 = embedded_test_server()->GetURL("a.com", "/empty.html");
   const GURL url2 = embedded_test_server()->GetURL("b.com", "/empty.html");
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), url1, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-  tab_observer.Wait();
-  content::WebContents* tab1 = tab_observer.GetTab();
+  content::WebContents* tab1 = add_tab.Wait();
 
+  ui_test_utils::AllBrowserTabAddedWaiter add_tab2;
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), url2, WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-  tab_observer.Wait();
-  content::WebContents* tab2 = tab_observer.GetTab();
+  content::WebContents* tab2 = add_tab2.Wait();
 
   base::HistogramTester histogram_tester;
   {
@@ -711,10 +827,14 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
     run_loop.Run();
   }
 
-  CheckAllMemoryMetrics(histogram_tester, 1, 2);
-  CheckAllUkmSources();
+  constexpr int kNumRenderers = 3;
+  EXPECT_EQ(kNumRenderers, GetNumRenderers(browser()));
+
+  CheckAllMemoryMetrics(histogram_tester, 1, kNumRenderers);
+  CheckAllUkmEntries();
   CheckPageInfoUkmMetrics(url1, true /* is_visible */);
   CheckPageInfoUkmMetrics(url2, false /* is_visible */);
+
   tab1->WasHidden();
   tab2->WasShown();
   {
@@ -725,8 +845,33 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
     emitter->FetchAndEmitProcessMemoryMetrics();
     run_loop.Run();
   }
-  CheckAllMemoryMetrics(histogram_tester, 2, 2);
-  CheckAllUkmSources(2);
+
+  CheckAllMemoryMetrics(histogram_tester, 2, kNumRenderers);
+  CheckAllUkmEntries(2);
   CheckPageInfoUkmMetrics(url1, false /* is_visible */, 2);
   CheckPageInfoUkmMetrics(url2, true /* is_visible */, 2);
+}
+
+// Build id is only emitted for official builds.
+#if defined(OFFICIAL_BUILD)
+#define MAYBE_RendererBuildId RendererBuildId
+#else
+#define MAYBE_RendererBuildId DISABLED_RendererBuildId
+#endif
+IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest, MAYBE_RendererBuildId) {
+  for (content::RenderProcessHost::iterator rph_iter =
+           content::RenderProcessHost::AllHostsIterator();
+       !rph_iter.IsAtEnd(); rph_iter.Advance()) {
+    const base::Process& process = rph_iter.GetCurrentValue()->GetProcess();
+    auto maps =
+        memory_instrumentation::OSMetrics::GetProcessMemoryMaps(process.Pid());
+    bool found = false;
+    for (const memory_instrumentation::mojom::VmRegionPtr& region : maps) {
+      if (region->module_debugid.empty())
+        continue;
+      found = true;
+      break;
+    }
+    EXPECT_TRUE(found);
+  }
 }

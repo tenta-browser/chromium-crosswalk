@@ -27,14 +27,15 @@ namespace chromeos {
 class UserImageSource : public content::URLDataSource {
  public:
   UserImageSource();
+  ~UserImageSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
       const std::string& path,
       const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string& path) const override;
+  std::string GetMimeType(const std::string& path) override;
 
   // Returns PNG encoded image for user with specified |account_id|. If there's
   // no user with such an id, returns the first default image. Always returns
@@ -43,8 +44,6 @@ class UserImageSource : public content::URLDataSource {
       const AccountId& account_id);
 
  private:
-  ~UserImageSource() override;
-
   DISALLOW_COPY_AND_ASSIGN(UserImageSource);
 };
 

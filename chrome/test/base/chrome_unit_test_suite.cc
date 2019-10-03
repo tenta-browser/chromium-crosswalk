@@ -10,7 +10,9 @@
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
+#include "chrome/browser/data_use_measurement/chrome_data_use_measurement.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
@@ -21,7 +23,7 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/common/content_paths.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "gpu/ipc/service/image_transport_surface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -30,15 +32,40 @@
 #include "ui/gl/test/gl_surface_test_support.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_paths.h"
+#include "chromeos/constants/chromeos_paths.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/common/extensions/chrome_extensions_client.h"
+#include "chrome/common/initialize_extensions_client.h"
 #include "extensions/common/extension_paths.h"
+#include "extensions/common/extensions_client.h"
 #endif
 
 namespace {
+
+class ChromeContentBrowserClientWithoutNetworkServiceInitialization
+    : public ChromeContentBrowserClient {
+ public:
+  // content::ContentBrowserClient:
+  // Skip some production Network Service code that doesn't work in unit tests.
+  void OnNetworkServiceCreated(
+      network::mojom::NetworkService* network_service) override {}
+  // Overridden to skip a call to ProfileIOData::FromResourceContext downstream
+  // of ProxyingURLLoaderFactory, which assumes the ResourceContext is a
+  // ProfileIOData::ResourceContext, but in unit tests it's a mock.
+  bool WillCreateURLLoaderFactory(
+      content::BrowserContext* browser_context,
+      content::RenderFrameHost* frame,
+      int render_process_id,
+      bool is_navigation,
+      bool is_download,
+      const url::Origin& request_initiator,
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver,
+      network::mojom::TrustedURLLoaderHeaderClientPtrInfo* header_client,
+      bool* bypass_redirect_checks) override {
+    return false;
+  }
+};
 
 // Creates a TestingBrowserProcess for each test.
 class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
@@ -49,13 +76,9 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
   void OnTestStart(const testing::TestInfo& test_info) override {
     content_client_.reset(new ChromeContentClient);
     content::SetContentClient(content_client_.get());
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    extensions::ExtensionsClient::Get()->InitializeWebStoreUrls(
-        base::CommandLine::ForCurrentProcess());
 
-#endif
-
-    browser_content_client_.reset(new ChromeContentBrowserClient());
+    browser_content_client_.reset(
+        new ChromeContentBrowserClientWithoutNetworkServiceInitialization());
     content::SetBrowserClientForTesting(browser_content_client_.get());
     utility_content_client_.reset(new ChromeContentUtilityClient());
     content::SetUtilityClientForTesting(utility_content_client_.get());
@@ -64,6 +87,10 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
   }
 
   void OnTestEnd(const testing::TestInfo& test_info) override {
+    // To ensure that NetworkConnectionTracker doesn't complain in unit_tests
+    // about outstanding listeners.
+    data_use_measurement::ChromeDataUseMeasurement::DeleteInstance();
+
     browser_content_client_.reset();
     utility_content_client_.reset();
     content_client_.reset();
@@ -124,7 +151,11 @@ void ChromeUnitTestSuite::InitializeProviders() {
   content::RegisterPathProvider();
   ui::RegisterPathProvider();
   component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,
+#if defined(OS_CHROMEOS)
+                                          chromeos::DIR_PREINSTALLED_COMPONENTS,
+#else
                                           chrome::DIR_INTERNAL_PLUGINS,
+#endif
                                           chrome::DIR_USER_DATA);
 
 #if defined(OS_CHROMEOS)
@@ -134,18 +165,13 @@ void ChromeUnitTestSuite::InitializeProviders() {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::RegisterPathProvider();
 
-  extensions::ExtensionsClient::Set(
-      extensions::ChromeExtensionsClient::GetInstance());
+  EnsureExtensionsClientInitialized();
 #endif
 
   content::WebUIControllerFactory::RegisterFactory(
       ChromeWebUIControllerFactory::GetInstance());
 
   gl::GLSurfaceTestSupport::InitializeOneOff();
-
-#if defined(OS_MACOSX)
-  gpu::ImageTransportSurface::SetAllowOSMesaForTesting(true);
-#endif
 
   update_client::UpdateQueryParams::SetDelegate(
       ChromeUpdateQueryParamsDelegate::GetInstance());
@@ -157,7 +183,7 @@ void ChromeUnitTestSuite::InitializeResourceBundle() {
   ui::ResourceBundle::InitSharedInstanceWithLocale(
       "en-US", NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
   base::FilePath resources_pack_path;
-  PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
+  base::PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
   ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       resources_pack_path, ui::SCALE_FACTOR_NONE);
 }

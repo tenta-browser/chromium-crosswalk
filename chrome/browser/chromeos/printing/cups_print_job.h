@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "chromeos/printing/printer_configuration.h"
 
 namespace chromeos {
@@ -23,13 +24,15 @@ class CupsPrintJob {
     STATE_SUSPENDED,
     STATE_RESUMED,
     STATE_DOCUMENT_DONE,
-    STATE_ERROR
+    STATE_FAILED,
   };
 
   enum class ErrorCode {
     NO_ERROR,
     PAPER_JAM,
+    OUT_OF_PAPER,
     OUT_OF_INK,
+    DOOR_OPEN,
     PRINTER_UNREACHABLE,
     FILTER_FAILED,
     UNKNOWN_ERROR,
@@ -42,10 +45,16 @@ class CupsPrintJob {
   ~CupsPrintJob();
 
   // Create a unique id for a print job using the |printer_id| and |job_id|.
-  static std::string GetUniqueId(const std::string& printer_id, int job_id);
+  static std::string CreateUniqueId(const std::string& printer_id, int job_id);
 
   // Returns a unique id for the print job.
   std::string GetUniqueId() const;
+
+  // Returns weak pointer to |this| CupsPrintJob
+  base::WeakPtr<CupsPrintJob> GetWeakPtr();
+
+  // Returns whether this print_job has timed out or not.
+  bool IsExpired() const;
 
   // Getters.
   const Printer& printer() const { return printer_; }
@@ -53,7 +62,6 @@ class CupsPrintJob {
   const std::string& document_title() const { return document_title_; }
   int total_page_number() const { return total_page_number_; }
   int printed_page_number() const { return printed_page_number_; }
-  bool expired() const { return expired_; }
   State state() const { return state_; }
   ErrorCode error_code() const { return error_code_; }
 
@@ -61,29 +69,27 @@ class CupsPrintJob {
   void set_printed_page_number(int page_number) {
     printed_page_number_ = page_number;
   }
-  void set_expired(bool expired) { expired_ = expired; }
   void set_state(State state) { state_ = state; }
   void set_error_code(ErrorCode error_code) { error_code_ = error_code; }
 
   // Returns true if |state_| represents a terminal state.
-  bool IsJobFinished();
+  bool IsJobFinished() const;
 
   // Returns true if cups pipeline failed.
-  bool PipelineDead();
+  bool PipelineDead() const;
 
  private:
-  Printer printer_;
-  int job_id_;
+  const Printer printer_;
+  const int job_id_;
 
   std::string document_title_;
-  int total_page_number_ = 0;
+  const int total_page_number_;
   int printed_page_number_ = 0;
-
-  // True if the job has expired due to timeout.
-  bool expired_ = false;
 
   State state_ = State::STATE_NONE;
   ErrorCode error_code_ = ErrorCode::NO_ERROR;
+
+  base::WeakPtrFactory<CupsPrintJob> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CupsPrintJob);
 };

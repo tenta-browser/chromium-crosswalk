@@ -4,7 +4,12 @@
 
 #include "extensions/browser/renderer_startup_helper.h"
 
+#include <utility>
+#include <vector>
+
+#include "base/bind_helpers.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -18,6 +23,7 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#include "extensions/common/cors_util.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/extensions_client.h"
@@ -25,6 +31,7 @@
 #include "extensions/common/features/feature_session_type.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "ui/base/webui/web_ui_util.h"
+#include "url/origin.h"
 
 using content::BrowserContext;
 
@@ -143,8 +150,8 @@ void RendererStartupHelper::InitializeProcess(
       ExtensionRegistry::Get(browser_context_)->enabled_extensions();
   for (const auto& ext : extensions) {
     // OnLoadedExtension should have already been called for the extension.
-    DCHECK(base::ContainsKey(extension_process_map_, ext->id()));
-    DCHECK(!base::ContainsKey(extension_process_map_[ext->id()], process));
+    DCHECK(base::Contains(extension_process_map_, ext->id()));
+    DCHECK(!base::Contains(extension_process_map_[ext->id()], process));
 
     if (!IsExtensionVisibleToContext(*ext, renderer_context))
       continue;
@@ -166,8 +173,8 @@ void RendererStartupHelper::InitializeProcess(
     for (const ExtensionId& id : iter->second) {
       // The extension should be loaded in the process.
       DCHECK(extensions.Contains(id));
-      DCHECK(base::ContainsKey(extension_process_map_, id));
-      DCHECK(base::ContainsKey(extension_process_map_[id], process));
+      DCHECK(base::Contains(extension_process_map_, id));
+      DCHECK(base::Contains(extension_process_map_[id], process));
       process->Send(new ExtensionMsg_ActivateExtension(id));
     }
   }
@@ -194,7 +201,7 @@ void RendererStartupHelper::ActivateExtensionInProcess(
     content::RenderProcessHost* process) {
   // The extension should have been loaded already. Dump without crashing to
   // debug crbug.com/528026.
-  if (!base::ContainsKey(extension_process_map_, extension.id())) {
+  if (!base::Contains(extension_process_map_, extension.id())) {
 #if DCHECK_IS_ON()
     NOTREACHED() << "Extension " << extension.id()
                  << "activated before loading";
@@ -207,8 +214,8 @@ void RendererStartupHelper::ActivateExtensionInProcess(
   if (!IsExtensionVisibleToContext(extension, process->GetBrowserContext()))
     return;
 
-  if (base::ContainsKey(initialized_processes_, process)) {
-    DCHECK(base::ContainsKey(extension_process_map_[extension.id()], process));
+  if (base::Contains(initialized_processes_, process)) {
+    DCHECK(base::Contains(extension_process_map_[extension.id()], process));
     process->Send(new ExtensionMsg_ActivateExtension(extension.id()));
   } else {
     pending_active_extensions_[process].insert(extension.id());
@@ -219,7 +226,7 @@ void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
   // Extension was already loaded.
   // TODO(crbug.com/708230): Ensure that clients don't call this for an
   // already loaded extension and change this to a DCHECK.
-  if (base::ContainsKey(extension_process_map_, extension.id()))
+  if (base::Contains(extension_process_map_, extension.id()))
     return;
 
   // Mark the extension as loaded.
@@ -231,13 +238,24 @@ void RendererStartupHelper::OnExtensionLoaded(const Extension& extension) {
   if (extension.is_theme())
     return;
 
+  // Registers the initial origin access lists to the BrowserContext
+  // asynchronously.
+  url::Origin extension_origin = url::Origin::Create(extension.url());
+  std::vector<network::mojom::CorsOriginPatternPtr> allow_list =
+      CreateCorsOriginAccessAllowList(
+          extension,
+          PermissionsData::EffectiveHostPermissionsMode::kOmitTabSpecific);
+  browser_context_->SetCorsOriginAccessListForOrigin(
+      extension_origin, std::move(allow_list),
+      CreateCorsOriginAccessBlockList(extension), base::DoNothing::Once());
+
   // We don't need to include tab permisisons here, since the extension
   // was just loaded.
   // Uninitialized renderers will be informed of the extension load during the
   // first batch of messages.
-  std::vector<ExtensionMsg_Loaded_Params> params(
-      1,
-      ExtensionMsg_Loaded_Params(&extension, false /* no tab permissions */));
+  std::vector<ExtensionMsg_Loaded_Params> params;
+  params.emplace_back(&extension, false /* no tab permissions */);
+
   for (content::RenderProcessHost* process : initialized_processes_) {
     if (!IsExtensionVisibleToContext(extension, process->GetBrowserContext()))
       continue;
@@ -250,15 +268,22 @@ void RendererStartupHelper::OnExtensionUnloaded(const Extension& extension) {
   // Extension is not loaded.
   // TODO(crbug.com/708230): Ensure that clients call this for a loaded
   // extension only and change this to a DCHECK.
-  if (!base::ContainsKey(extension_process_map_, extension.id()))
+  if (!base::Contains(extension_process_map_, extension.id()))
     return;
 
   const std::set<content::RenderProcessHost*>& loaded_process_set =
       extension_process_map_[extension.id()];
   for (content::RenderProcessHost* process : loaded_process_set) {
-    DCHECK(base::ContainsKey(initialized_processes_, process));
+    DCHECK(base::Contains(initialized_processes_, process));
     process->Send(new ExtensionMsg_Unloaded(extension.id()));
   }
+
+  // Resets registered origin access lists in the BrowserContext asynchronously.
+  url::Origin extension_origin = url::Origin::Create(extension.url());
+  browser_context_->SetCorsOriginAccessListForOrigin(
+      extension_origin, std::vector<network::mojom::CorsOriginPatternPtr>(),
+      std::vector<network::mojom::CorsOriginPatternPtr>(),
+      base::DoNothing::Once());
 
   for (auto& process_extensions_pair : pending_active_extensions_)
     process_extensions_pair.second.erase(extension.id());

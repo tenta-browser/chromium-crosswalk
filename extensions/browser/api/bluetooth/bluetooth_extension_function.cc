@@ -4,6 +4,7 @@
 
 #include "extensions/browser/api/bluetooth/bluetooth_extension_function.h"
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -32,10 +33,10 @@ bool IsBluetoothSupported(content::BrowserContext* context) {
   return GetEventRouter(context)->IsBluetoothSupported();
 }
 
-void GetAdapter(const device::BluetoothAdapterFactory::AdapterCallback callback,
+void GetAdapter(device::BluetoothAdapterFactory::AdapterCallback callback,
                 content::BrowserContext* context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  GetEventRouter(context)->GetAdapter(callback);
+  GetEventRouter(context)->GetAdapter(std::move(callback));
 }
 
 }  // namespace
@@ -49,16 +50,21 @@ BluetoothExtensionFunction::BluetoothExtensionFunction() {
 BluetoothExtensionFunction::~BluetoothExtensionFunction() {
 }
 
-bool BluetoothExtensionFunction::RunAsync() {
+ExtensionFunction::ResponseAction BluetoothExtensionFunction::Run() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!IsBluetoothSupported(browser_context())) {
-    SetError(kPlatformNotSupported);
-    return false;
-  }
-  GetAdapter(base::Bind(&BluetoothExtensionFunction::RunOnAdapterReady, this),
-             browser_context());
+  EXTENSION_FUNCTION_VALIDATE(CreateParams());
 
+  if (!IsBluetoothSupported(browser_context()))
+    return RespondNow(Error(kPlatformNotSupported));
+
+  GetAdapter(
+      base::BindOnce(&BluetoothExtensionFunction::RunOnAdapterReady, this),
+      browser_context());
+  return did_respond() ? AlreadyResponded() : RespondLater();
+}
+
+bool BluetoothExtensionFunction::CreateParams() {
   return true;
 }
 

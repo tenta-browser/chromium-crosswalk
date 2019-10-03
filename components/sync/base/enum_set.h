@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cstddef>
 #include <string>
+#include <utility>
 
 #include "base/logging.h"
 
@@ -40,11 +41,20 @@ EnumSet<E, Min, Max> Difference(EnumSet<E, Min, Max> set1,
 
 template <typename E, E MinEnumValue, E MaxEnumValue>
 class EnumSet {
+ private:
+  using enum_underlying_type = std::underlying_type_t<E>;
+
+  static constexpr enum_underlying_type GetUnderlyingValue(E value) {
+    return static_cast<enum_underlying_type>(value);
+  }
+
  public:
   using EnumType = E;
   static const E kMinValue = MinEnumValue;
   static const E kMaxValue = MaxEnumValue;
-  static const size_t kValueCount = kMaxValue - kMinValue + 1;
+  static const size_t kValueCount =
+      GetUnderlyingValue(kMaxValue) - GetUnderlyingValue(kMinValue) + 1;
+
   static_assert(kMinValue < kMaxValue, "min value must be less than max value");
 
  private:
@@ -52,59 +62,75 @@ class EnumSet {
   using EnumBitSet = std::bitset<kValueCount>;
 
  public:
-  // Iterator is a forward-only read-only iterator for EnumSet.  Its
-  // interface is deliberately distinct from an STL iterator as its
-  // semantics are substantially different.
+  // Iterator is a forward-only read-only iterator for EnumSet. It follows the
+  // common STL input iterator interface (like std::unordered_set).
   //
-  // Example usage:
+  // Example usage, using a range-based for loop:
   //
-  // for (EnumSet<...>::Iterator it = enums.First(); it.Good(); it.Inc()) {
-  //   Process(it.Get());
+  // EnumSet<SomeType> enums;
+  // for (SomeType val : enums) {
+  //   Process(val);
   // }
   //
-  // The iterator must not be outlived by the set.  In particular, the
-  // following is an error:
+  // Or using an explicit iterator (not recommended):
+  //
+  // for (EnumSet<...>::Iterator it = enums.begin(); it != enums.end(); it++) {
+  //   Process(*it);
+  // }
+  //
+  // The iterator must not be outlived by the set. In particular, the following
+  // is an error:
   //
   // EnumSet<...> SomeFn() { ... }
   //
   // /* ERROR */
-  // for (EnumSet<...>::Iterator it = SomeFun().First(); ...
+  // for (EnumSet<...>::Iterator it = SomeFun().begin(); ...
   //
   // Also, there are no guarantees as to what will happen if you
   // modify an EnumSet while traversing it with an iterator.
   class Iterator {
    public:
-    // A default-constructed iterator can't do anything except check
-    // Good().  You need to call First() on an EnumSet to get a usable
-    // iterator.
     Iterator() : enums_(nullptr), i_(kValueCount) {}
     ~Iterator() {}
 
-    // Copy constructor and assignment welcome.
+    bool operator==(const Iterator& other) const { return i_ == other.i_; }
 
-    // Returns true iff the iterator points to an EnumSet and it
-    // hasn't yet traversed the EnumSet entirely.
-    bool Good() const { return enums_ && i_ < kValueCount && enums_->test(i_); }
+    bool operator!=(const Iterator& other) const { return !(*this == other); }
 
-    // Returns the value the iterator currently points to.  Good()
-    // must hold.
-    E Get() const {
+    E operator*() const {
       DCHECK(Good());
       return FromIndex(i_);
     }
 
-    // Moves the iterator to the next value in the EnumSet.  Good()
-    // must hold.  Takes linear time.
-    void Inc() {
+    Iterator& operator++() {
       DCHECK(Good());
+      // If there are no more set elements in the bitset, this will result in an
+      // index equal to kValueCount, which is equivalent to EnumSet.end().
       i_ = FindNext(i_ + 1);
+
+      return *this;
+    }
+
+    Iterator operator++(int) {
+      DCHECK(Good());
+      Iterator old(*this);
+
+      // If there are no more set elements in the bitset, this will result in an
+      // index equal to kValueCount, which is equivalent to EnumSet.end().
+      i_ = FindNext(i_ + 1);
+
+      return std::move(old);
     }
 
    private:
-    friend Iterator EnumSet::First() const;
+    friend Iterator EnumSet::begin() const;
 
     explicit Iterator(const EnumBitSet& enums)
         : enums_(&enums), i_(FindNext(0)) {}
+
+    // Returns true iff the iterator points to an EnumSet and it
+    // hasn't yet traversed the EnumSet entirely.
+    bool Good() const { return enums_ && i_ < kValueCount && enums_->test(i_); }
 
     size_t FindNext(size_t i) {
       while ((i < kValueCount) && !enums_->test(i)) {
@@ -125,18 +151,13 @@ class EnumSet {
     return 1ULL << (ToIndex(val));
   }
 
-  // Base case for recursive packing of a list of enum values. The uint64_t
-  // corresponding to an empty list is 0.
-  static constexpr uint64_t bitstring() { return 0ULL; }
-
-  // As of writing, constexpr expressions can't contain anything other than a
-  // return statement (and static asserts). To pack a variable number of enum
-  // value arguments into a bitstring, we use template varargs with a recursive
-  // constructor. Each recursive call packs one more enum into the bitstring,
-  // and the individual results are combined with bitwise or.
   template <class... T>
-  static constexpr uint64_t bitstring(E head, T... tail) {
-    return (single_val_bitstring(head)) | bitstring(tail...);
+  static constexpr uint64_t bitstring(T... values) {
+    uint64_t converted[] = {single_val_bitstring(values)...};
+    uint64_t result = 0;
+    for (uint64_t e : converted)
+      result |= e;
+    return result;
   }
 
   template <class... T>
@@ -212,7 +233,11 @@ class EnumSet {
   size_t Size() const { return enums_.count(); }
 
   // Returns an iterator pointing to the first element (if any).
-  Iterator First() const { return Iterator(enums_); }
+  Iterator begin() const { return Iterator(enums_); }
+
+  // Returns an iterator that does not point to any element, but to the position
+  // that follows the last element in the set.
+  Iterator end() const { return Iterator(); }
 
   // Returns true iff our set and the given set contain exactly the same values.
   bool operator==(const EnumSet& other) const { return enums_ == other.enums_; }
@@ -244,11 +269,13 @@ class EnumSet {
 
   // Converts a value to/from an index into |enums_|.
 
-  static constexpr size_t ToIndex(E value) { return value - MinEnumValue; }
+  static constexpr size_t ToIndex(E value) {
+    return GetUnderlyingValue(value) - GetUnderlyingValue(MinEnumValue);
+  }
 
   static E FromIndex(size_t i) {
     DCHECK_LT(i, kValueCount);
-    return static_cast<E>(MinEnumValue + i);
+    return static_cast<E>(GetUnderlyingValue(MinEnumValue) + i);
   }
 
   EnumBitSet enums_;

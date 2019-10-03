@@ -11,7 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/system_monitor/system_monitor.h"
+#include "base/system/system_monitor.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/webrtc_audio_private.h"
 #include "content/public/browser/render_process_host.h"
@@ -59,7 +59,6 @@ class WebrtcAudioPrivateFunction : public ChromeAsyncExtensionFunction {
 
  protected:
   // Calculates a single HMAC, using the extension ID as the security origin.
-  // Call only on IO thread.
   std::string CalculateHMAC(const std::string& raw_id);
 
   // Initializes |device_id_salt_|. Must be called on the UI thread,
@@ -71,13 +70,6 @@ class WebrtcAudioPrivateFunction : public ChromeAsyncExtensionFunction {
   std::string device_id_salt() const;
 
   media::AudioSystem* GetAudioSystem();
-
-  // Returns the RenderProcessHost associated with the given |request|
-  // authorized by the |security_origin|. Returns null if unauthorized or
-  // the RPH does not exist.
-  content::RenderProcessHost* GetRenderProcessHostFromRequest(
-      const api::webrtc_audio_private::RequestInfo& request,
-      const std::string& security_origin);
 
  private:
   std::string device_id_salt_;
@@ -94,20 +86,14 @@ class WebrtcAudioPrivateGetSinksFunction : public WebrtcAudioPrivateFunction {
   using SinkInfoVector = std::vector<api::webrtc_audio_private::SinkInfo>;
 
   DECLARE_EXTENSION_FUNCTION("webrtcAudioPrivate.getSinks",
-                             WEBRTC_AUDIO_PRIVATE_GET_SINKS);
+                             WEBRTC_AUDIO_PRIVATE_GET_SINKS)
 
   bool RunAsync() override;
 
-  // Requests output device descriptions.
-  void GetOutputDeviceDescriptionsOnIOThread();
-
-  // Receives output device descriptions, calculates HMACs for them and replies
-  // to UI thread with DoneOnUIThread().
-  void ReceiveOutputDeviceDescriptionsOnIOThread(
+  // Receives output device descriptions, calculates HMACs for them and sends
+  // the response.
+  void ReceiveOutputDeviceDescriptions(
       media::AudioDeviceDescriptions sink_devices);
-
-  // Sends the response.
-  void DoneOnUIThread(std::unique_ptr<SinkInfoVector> results);
 };
 
 class WebrtcAudioPrivateGetAssociatedSinkFunction
@@ -120,47 +106,23 @@ class WebrtcAudioPrivateGetAssociatedSinkFunction
 
  private:
   DECLARE_EXTENSION_FUNCTION("webrtcAudioPrivate.getAssociatedSink",
-                             WEBRTC_AUDIO_PRIVATE_GET_ASSOCIATED_SINK);
+                             WEBRTC_AUDIO_PRIVATE_GET_ASSOCIATED_SINK)
 
   // UI thread: Entry point, posts GetInputDeviceDescriptions() to IO thread.
   bool RunAsync() override;
 
-  // Enumerates input devices.
-  void GetInputDeviceDescriptionsOnIOThread();
-
   // Receives the input device descriptions, looks up the raw source device ID
   // basing on |params|, and requests the associated raw sink ID for it.
-  void ReceiveInputDeviceDescriptionsOnIOThread(
+  void ReceiveInputDeviceDescriptions(
       media::AudioDeviceDescriptions source_devices);
 
-  // IO thread: Receives the raw sink ID, calculates HMAC and replies to IO
-  // thread with ReceiveHMACOnUIThread().
-  void CalculateHMACOnIOThread(const std::string& raw_sink_id);
+  // Receives the raw sink ID, calculates HMAC and calls Reply().
+  void CalculateHMACAndReply(const base::Optional<std::string>& raw_sink_id);
 
   // Receives the associated sink ID as HMAC and sends the response.
-  void ReceiveHMACOnUIThread(const std::string& hmac);
+  void Reply(const std::string& hmac);
 
-  // Initialized on UI thread in RunAsync(), read-only access on IO thread - no
-  // locking needed.
   std::unique_ptr<api::webrtc_audio_private::GetAssociatedSink::Params> params_;
-};
-
-class WebrtcAudioPrivateSetAudioExperimentsFunction
-    : public WebrtcAudioPrivateFunction {
- public:
-  WebrtcAudioPrivateSetAudioExperimentsFunction();
-
- protected:
-  ~WebrtcAudioPrivateSetAudioExperimentsFunction() override;
-
- private:
-  DECLARE_EXTENSION_FUNCTION("webrtcAudioPrivate.setAudioExperiments",
-                             WEBRTC_AUDIO_PRIVATE_SET_AUDIO_EXPERIMENTS);
-
-  bool RunAsync() override;
-
-  // Must be called on the UI thread.
-  void FireCallback(bool success, const std::string& error_message);
 };
 
 }  // namespace extensions

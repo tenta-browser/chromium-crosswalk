@@ -9,7 +9,6 @@ generate_jni("vibration_jni_headers") {
   sources = [
     "java/src/org/chromium/device/vibration/VibrationManagerImpl.java",
   ]
-  jni_package = "vibration"
 }
 
 android_library("vibration_manager_java") {
@@ -22,7 +21,7 @@ android_library("vibration_manager_java") {
     "//base:base_java",
     "//mojo/public/java:bindings_java",
     "//mojo/public/java:system_java",
-    "//services/device/public/interfaces:interfaces_java",
+    "//services/device/public/mojom:mojom_java",
     "//services/service_manager/public/java:service_manager_java",
   ]
 }

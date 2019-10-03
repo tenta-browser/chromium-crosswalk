@@ -4,14 +4,15 @@
 
 #include "chrome/browser/ui/android/infobars/generated_password_saved_infobar.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/memory/ptr_util.h"
+#include "chrome/android/chrome_jni_headers/GeneratedPasswordSavedInfoBarDelegate_jni.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/GeneratedPasswordSavedInfoBarDelegate_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -20,7 +21,7 @@ void GeneratedPasswordSavedInfoBarDelegateAndroid::Create(
     content::WebContents* web_contents) {
   InfoBarService::FromWebContents(web_contents)
       ->AddInfoBar(
-          base::MakeUnique<GeneratedPasswordSavedInfoBar>(base::WrapUnique(
+          std::make_unique<GeneratedPasswordSavedInfoBar>(base::WrapUnique(
               new GeneratedPasswordSavedInfoBarDelegateAndroid())));
 }
 
@@ -37,8 +38,11 @@ GeneratedPasswordSavedInfoBar::CreateRenderInfoBar(JNIEnv* env) {
       static_cast<GeneratedPasswordSavedInfoBarDelegateAndroid*>(delegate());
 
   return Java_GeneratedPasswordSavedInfoBarDelegate_show(
-      env, GetEnumeratedIconId(), base::android::ConvertUTF16ToJavaString(
-                                      env, infobar_delegate->message_text()),
+      env, GetEnumeratedIconId(),
+      base::android::ConvertUTF16ToJavaString(env,
+                                              infobar_delegate->message_text()),
+      base::android::ConvertUTF16ToJavaString(
+          env, infobar_delegate->details_message_text()),
       infobar_delegate->inline_link_range().start(),
       infobar_delegate->inline_link_range().end(),
       base::android::ConvertUTF16ToJavaString(

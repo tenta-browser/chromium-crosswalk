@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "components/metrics/metrics_provider.h"
+#import "ios/public/provider/chrome/browser/mailto/mailto_handler_provider.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -29,7 +30,8 @@ ChromeBrowserProvider* GetChromeBrowserProvider() {
 
 // A dummy implementation of ChromeBrowserProvider.
 
-ChromeBrowserProvider::ChromeBrowserProvider() {}
+ChromeBrowserProvider::ChromeBrowserProvider()
+    : mailto_handler_provider_(std::make_unique<MailtoHandlerProvider>()) {}
 
 ChromeBrowserProvider::~ChromeBrowserProvider() {
   for (auto& observer : observer_list_)
@@ -71,15 +73,10 @@ UITextField<TextFieldStyling>* ChromeBrowserProvider::CreateStyledTextField(
   return nil;
 }
 
-id<AppRatingPrompt> ChromeBrowserProvider::CreateAppRatingPrompt() const {
-  return nil;
-}
-
 void ChromeBrowserProvider::InitializeCastService(
     TabModel* main_tab_model) const {}
 
-void ChromeBrowserProvider::AttachTabHelpers(web::WebState* web_state,
-                                             Tab* tab) const {}
+void ChromeBrowserProvider::AttachTabHelpers(web::WebState* web_state) const {}
 
 VoiceSearchProvider* ChromeBrowserProvider::GetVoiceSearchProvider() const {
   return nullptr;
@@ -91,8 +88,7 @@ AppDistributionProvider* ChromeBrowserProvider::GetAppDistributionProvider()
 }
 
 id<LogoVendor> ChromeBrowserProvider::CreateLogoVendor(
-    ios::ChromeBrowserState* browser_state,
-    id<UrlLoader> loader) const {
+    ios::ChromeBrowserState* browser_state) const {
   return nil;
 }
 
@@ -104,16 +100,30 @@ UserFeedbackProvider* ChromeBrowserProvider::GetUserFeedbackProvider() const {
   return nullptr;
 }
 
+SpecialUserProvider* ChromeBrowserProvider::GetSpecialUserProvider() const {
+  return nullptr;
+}
+
 SpotlightProvider* ChromeBrowserProvider::GetSpotlightProvider() const {
   return nullptr;
 }
 
-ExternalSearchProvider* ChromeBrowserProvider::GetExternalSearchProvider()
-    const {
+FullscreenProvider* ChromeBrowserProvider::GetFullscreenProvider() const {
   return nullptr;
 }
 
-void ChromeBrowserProvider::CheckForFirstPartyApps() const {}
+BrowserURLRewriterProvider*
+ChromeBrowserProvider::GetBrowserURLRewriterProvider() const {
+  return nullptr;
+}
+
+OverridesProvider* ChromeBrowserProvider::GetOverridesProvider() const {
+  return nullptr;
+}
+
+MailtoHandlerProvider* ChromeBrowserProvider::GetMailtoHandlerProvider() const {
+  return mailto_handler_provider_.get();
+}
 
 BrandedImageProvider* ChromeBrowserProvider::GetBrandedImageProvider() const {
   return nullptr;

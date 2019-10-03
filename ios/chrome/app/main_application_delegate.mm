@@ -7,7 +7,6 @@
 #include "base/mac/foundation_util.h"
 #import "ios/chrome/app/application_delegate/app_navigation.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
-#import "ios/chrome/app/application_delegate/background_activity.h"
 #import "ios/chrome/app/application_delegate/browser_launcher.h"
 #import "ios/chrome/app/application_delegate/memory_warning_helper.h"
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
@@ -125,7 +124,7 @@
   [_appState
       applicationDidEnterBackground:application
                        memoryHelper:_memoryHelper
-                tabSwitcherIsActive:[_mainController isTabSwitcherActive]];
+            incognitoContentVisible:_mainController.incognitoContentVisible];
 }
 
 // Called when returning to the foreground.
@@ -157,34 +156,14 @@
 #pragma mark Downloading Data in the Background
 
 - (void)application:(UIApplication*)application
-    performFetchWithCompletionHandler:
-        (void (^)(UIBackgroundFetchResult))completionHandler {
-  if ([_appState isInSafeMode])
-    return;
-
-  if ([application applicationState] != UIApplicationStateBackground) {
-    // If this handler is called in foreground, it means it has to be activated.
-    // Returning |UIBackgroundFetchResultNewData| means that the handler will be
-    // called again in case of a crash.
-    completionHandler(UIBackgroundFetchResultNewData);
-    return;
-  }
-
-  [BackgroundActivity application:application
-      performFetchWithCompletionHandler:completionHandler
-                        metricsMediator:_metricsMediator
-                        browserLauncher:_browserLauncher];
-}
-
-- (void)application:(UIApplication*)application
     handleEventsForBackgroundURLSession:(NSString*)identifier
                       completionHandler:(void (^)(void))completionHandler {
   if ([_appState isInSafeMode])
     return;
-
-  [BackgroundActivity handleEventsForBackgroundURLSession:identifier
-                                        completionHandler:completionHandler
-                                          browserLauncher:_browserLauncher];
+  // This initialization to BACKGROUND stage may not be necessary, but is
+  // preserved in case somewhere there is a dependency on this.
+  [_browserLauncher startUpBrowserToStage:INITIALIZATION_STAGE_BACKGROUND];
+  completionHandler();
 }
 
 #pragma mark Continuing User Activity and Handling Quick Actions
@@ -194,15 +173,24 @@
   if ([_appState isInSafeMode])
     return NO;
 
+  // Enusre Chrome is fuilly started up in case it had launched to the
+  // background.
+  [_browserLauncher startUpBrowserToStage:INITIALIZATION_STAGE_FOREGROUND];
+
   return
       [UserActivityHandler willContinueUserActivityWithType:userActivityType];
 }
 
 - (BOOL)application:(UIApplication*)application
     continueUserActivity:(NSUserActivity*)userActivity
-      restorationHandler:(void (^)(NSArray*))restorationHandler {
+      restorationHandler:
+          (void (^)(NSArray<id<UIUserActivityRestoring>>*))restorationHandler {
   if ([_appState isInSafeMode])
     return NO;
+
+  // Enusre Chrome is fuilly started up in case it had launched to the
+  // background.
+  [_browserLauncher startUpBrowserToStage:INITIALIZATION_STAGE_FOREGROUND];
 
   BOOL applicationIsActive =
       [application applicationState] == UIApplicationStateActive;
@@ -219,12 +207,16 @@
   if ([_appState isInSafeMode])
     return;
 
+  // Enusre Chrome is fuilly started up in case it had launched to the
+  // background.
+  [_browserLauncher startUpBrowserToStage:INITIALIZATION_STAGE_FOREGROUND];
+
   [UserActivityHandler
       performActionForShortcutItem:shortcutItem
                  completionHandler:completionHandler
                          tabOpener:_tabOpener
                 startupInformation:_startupInformation
-            browserViewInformation:[_mainController browserViewInformation]];
+                 interfaceProvider:_mainController.interfaceProvider];
 }
 
 #pragma mark Opening a URL-Specified Resource
@@ -238,6 +230,13 @@
             options:(NSDictionary<NSString*, id>*)options {
   if ([_appState isInSafeMode])
     return NO;
+
+  // The various URL handling mechanisms require that the application has
+  // fully started up; there are some cases (crbug.com/658420) where a
+  // launch via this method crashes because some services (specifically,
+  // CommandLine) aren't initialized yet. So: before anything further is
+  // done, make sure that Chrome is fully started up.
+  [_browserLauncher startUpBrowserToStage:INITIALIZATION_STAGE_FOREGROUND];
 
   if (ios::GetChromeBrowserProvider()
           ->GetChromeIdentityService()
@@ -253,12 +252,6 @@
                     options:options
                   tabOpener:_tabOpener
          startupInformation:_startupInformation];
-}
-
-#pragma mark - chromeExecuteCommand
-
-- (void)chromeExecuteCommand:(id)sender {
-  [_mainController chromeExecuteCommand:sender];
 }
 
 #pragma mark - Testing methods

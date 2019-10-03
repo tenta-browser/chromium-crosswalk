@@ -30,7 +30,7 @@ DurableStoragePermissionContext::DurableStoragePermissionContext(
     Profile* profile)
     : PermissionContextBase(profile,
                             CONTENT_SETTINGS_TYPE_DURABLE_STORAGE,
-                            blink::FeaturePolicyFeature::kNotFound) {}
+                            blink::mojom::FeaturePolicyFeature::kNotFound) {}
 
 void DurableStoragePermissionContext::DecidePermission(
     content::WebContents* web_contents,
@@ -38,7 +38,7 @@ void DurableStoragePermissionContext::DecidePermission(
     const GURL& requesting_origin,
     const GURL& embedding_origin,
     bool user_gesture,
-    const BrowserPermissionCallback& callback) {
+    BrowserPermissionCallback callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   DCHECK_NE(CONTENT_SETTING_ALLOW,
             GetPermissionStatus(nullptr /* render_frame_host */,
@@ -52,18 +52,23 @@ void DurableStoragePermissionContext::DecidePermission(
   // Durable is only allowed to be granted to the top-level origin. Embedding
   // origin is the last committed navigation origin to the web contents.
   if (requesting_origin != embedding_origin) {
-    NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
-                        false /* persist */, CONTENT_SETTING_DEFAULT);
+    NotifyPermissionSet(id, requesting_origin, embedding_origin,
+                        std::move(callback), false /* persist */,
+                        CONTENT_SETTING_DEFAULT);
     return;
   }
 
-  // Don't grant durable if we can't write cookies.
   scoped_refptr<content_settings::CookieSettings> cookie_settings =
       CookieSettingsFactory::GetForProfile(profile());
-  if (!cookie_settings->IsCookieAccessAllowed(requesting_origin,
+
+  // Don't grant durable for session-only storage, since it won't be persisted
+  // anyway. Don't grant durable if we can't write cookies.
+  if (cookie_settings->IsCookieSessionOnly(requesting_origin) ||
+      !cookie_settings->IsCookieAccessAllowed(requesting_origin,
                                               requesting_origin)) {
-    NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
-                        false /* persist */, CONTENT_SETTING_DEFAULT);
+    NotifyPermissionSet(id, requesting_origin, embedding_origin,
+                        std::move(callback), false /* persist */,
+                        CONTENT_SETTING_DEFAULT);
     return;
   }
 
@@ -81,14 +86,16 @@ void DurableStoragePermissionContext::DecidePermission(
 
   for (const auto& important_site : important_sites) {
     if (important_site.registerable_domain == registerable_domain) {
-      NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
-                          true /* persist */, CONTENT_SETTING_ALLOW);
+      NotifyPermissionSet(id, requesting_origin, embedding_origin,
+                          std::move(callback), true /* persist */,
+                          CONTENT_SETTING_ALLOW);
       return;
     }
   }
 
-  NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
-                      false /* persist */, CONTENT_SETTING_DEFAULT);
+  NotifyPermissionSet(id, requesting_origin, embedding_origin,
+                      std::move(callback), false /* persist */,
+                      CONTENT_SETTING_DEFAULT);
 }
 
 void DurableStoragePermissionContext::UpdateContentSetting(

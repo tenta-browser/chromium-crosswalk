@@ -5,7 +5,7 @@
 package org.chromium.chrome.browser;
 
 import android.os.Bundle;
-import android.support.v7.app.AppCompatActivity;
+import android.support.annotation.CallSuper;
 
 import org.chromium.base.Log;
 import org.chromium.base.library_loader.ProcessInitException;
@@ -19,9 +19,10 @@ import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
  * browser startup pathway, which could happen if the user restarted Chrome after it died in the
  * background with the Activity visible.  One example is {@link BookmarkActivity} and its kin.
  */
-public abstract class SynchronousInitializationActivity extends AppCompatActivity {
+public abstract class SynchronousInitializationActivity extends ChromeBaseAppCompatActivity {
     private static final String TAG = "SyncInitActivity";
 
+    @CallSuper
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

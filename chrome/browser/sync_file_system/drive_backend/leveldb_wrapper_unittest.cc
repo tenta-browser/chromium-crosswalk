@@ -10,8 +10,7 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/env_chromium.h"
@@ -32,7 +31,7 @@ class LevelDBWrapperTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(database_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_ = leveldb_chrome::NewMemEnv("LevelDBWrapperTest");
     InitializeLevelDB();
   }
 
@@ -47,7 +46,7 @@ class LevelDBWrapperTest : public testing::Test {
     // Expected contents are
     // {"a": "1", "ab": "0", "bb": "3", "d": "4"}
     const char* keys[] = {"ab", "a", "d", "bb", "d"};
-    for (size_t i = 0; i < arraysize(keys); ++i) {
+    for (size_t i = 0; i < base::size(keys); ++i) {
       leveldb::Status status =
           db->Put(leveldb::WriteOptions(), keys[i], base::NumberToString(i));
       ASSERT_TRUE(status.ok());
@@ -176,7 +175,7 @@ TEST_F(LevelDBWrapperTest, PutTest) {
   GetDB()->Put("bb", "new2");  // Overwrite an entry.
 
   SCOPED_TRACE("PutTest_Pending");
-  CheckDBContents(merged_data, arraysize(merged_data));
+  CheckDBContents(merged_data, base::size(merged_data));
 
   EXPECT_EQ(3, GetDB()->num_puts());
   // Remove all pending transactions.
@@ -184,7 +183,7 @@ TEST_F(LevelDBWrapperTest, PutTest) {
   EXPECT_EQ(0, GetDB()->num_puts());
 
   SCOPED_TRACE("PutTest_Clear");
-  CheckDBContents(orig_data, arraysize(orig_data));
+  CheckDBContents(orig_data, base::size(orig_data));
 
   // Add pending transactions again, with commiting.
   GetDB()->Put("aa", "new0");
@@ -196,7 +195,7 @@ TEST_F(LevelDBWrapperTest, PutTest) {
   GetDB()->Clear();  // Clear just in case.
 
   SCOPED_TRACE("PutTest_Commit");
-  CheckDBContents(merged_data, arraysize(merged_data));
+  CheckDBContents(merged_data, base::size(merged_data));
 }
 
 TEST_F(LevelDBWrapperTest, DeleteTest) {
@@ -217,13 +216,13 @@ TEST_F(LevelDBWrapperTest, DeleteTest) {
   EXPECT_EQ(2, GetDB()->num_deletes());
 
   SCOPED_TRACE("DeleteTest_Pending");
-  CheckDBContents(merged_data, arraysize(merged_data));
+  CheckDBContents(merged_data, base::size(merged_data));
 
   // Remove all pending transactions.
   GetDB()->Clear();
 
   SCOPED_TRACE("DeleteTest_Clear");
-  CheckDBContents(orig_data, arraysize(orig_data));
+  CheckDBContents(orig_data, base::size(orig_data));
 
   // Add pending transactions again, with commiting.
   GetDB()->Put("aa", "new0");
@@ -238,7 +237,7 @@ TEST_F(LevelDBWrapperTest, DeleteTest) {
   EXPECT_EQ(0, GetDB()->num_deletes());
 
   SCOPED_TRACE("DeleteTest_Commit");
-  CheckDBContents(merged_data, arraysize(merged_data));
+  CheckDBContents(merged_data, base::size(merged_data));
 }
 
 }  // namespace drive_backend

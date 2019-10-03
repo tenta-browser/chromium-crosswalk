@@ -9,7 +9,6 @@
 
 #include "base/feature_list.h"
 #include "base/macros.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "content/public/browser/navigation_throttle.h"
 
@@ -26,14 +25,24 @@ constexpr char kBlockTabUnderFormatMessage[] =
 //
 // Currently, navigations are considered tab-unders if:
 // 1. It is a navigation that is "suspicious"
-//    a. It starts when the tab is in the background.
-//    b. It has no user gesture.
-//    c. It is renderer-initiated.
-//    d. It is cross origin to the last committed URL in the tab.
+//    a. It has no user gesture.
+//    b. It is renderer-initiated.
+//    c. It is cross site to the last committed URL in the tab.
+//    d. The navigation started in the background.
 // 2. The tab has opened a popup and hasn't received a user gesture since then.
 //    This information is tracked by the PopupOpenerTabHelper.
+//
+//  TODO(csharrison): Unfortunately, the provision that a navigation must start
+//  in the background to be considered a tab-under restricts the scope of the
+//  intervention. For instance, popups that do not completely hide the original
+//  page may cause subsequent tab-under navigations to occur while visible (not
+//  compeltely backgrounded). See https://crbug.com/733736.
+//
+//  For now, we allow these tab-unders because this pattern seems to be
+//  legitimate for some cases (like auth).
 class TabUnderNavigationThrottle : public content::NavigationThrottle {
  public:
+  // TODO(https://crbug.com/954178): Remove this.
   static const base::Feature kBlockTabUnders;
 
   // This enum backs a histogram. Update enums.xml if you make any updates, and
@@ -70,16 +79,17 @@ class TabUnderNavigationThrottle : public content::NavigationThrottle {
 
   // This method is described at the top of this file.
   //
-  // Note: Pass in |started_in_background| because depending on the state the
-  // navigation is in, we need additional data to determine whether it started
-  // in the background.
-  //
-  // Note: This method should be robust to navigations at any stage.
-  static bool IsSuspiciousClientRedirect(
-      content::NavigationHandle* navigation_handle,
-      bool started_in_background);
+  // Note: This method must be called before navigation commit.
+  bool IsSuspiciousClientRedirect() const;
 
   content::NavigationThrottle::ThrottleCheckResult MaybeBlockNavigation();
+  void ShowUI();
+
+  bool HasOpenedPopupSinceLastUserGesture() const;
+
+  // Returns true if tab-unders are allowed due to content settings. Currently,
+  // tab-unders blocking is governed by the same setting as popups.
+  bool TabUndersAllowedBySettings() const;
 
   // content::NavigationThrottle:
   content::NavigationThrottle::ThrottleCheckResult WillStartRequest() override;
@@ -87,11 +97,17 @@ class TabUnderNavigationThrottle : public content::NavigationThrottle {
       override;
   const char* GetNameForLogging() override;
 
-  bool started_in_background_ = false;
-
   // True if the experiment is turned on and the class should actually attempt
   // to block tab-unders.
-  bool block_ = false;
+  const bool block_ = false;
+
+  // Tracks whether this WebContents has opened a popup since the last user
+  // gesture, at the time this navigation is starting.
+  const bool has_opened_popup_since_last_user_gesture_at_start_ = false;
+
+  // Whether this object was created when the hosting WebContents had visibility
+  // content::Visibility::VISIBLE.
+  const bool started_in_foreground_ = false;
 
   // True if the throttle has seen a tab under.
   bool seen_tab_under_ = false;

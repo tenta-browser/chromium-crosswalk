@@ -9,35 +9,38 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/sequence_checker.h"
 #include "chrome/browser/browser_process_platform_part_base.h"
+#include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
+
+class BrowserProcessPlatformPartTestApi;
+class Profile;
 
 namespace chromeos {
+class AccountManagerFactory;
 class ChromeSessionManager;
 class ChromeUserManager;
+class KerberosCredentialsManager;
+class InSessionPasswordChangeManager;
 class ProfileHelper;
 class TimeZoneResolver;
-}
 
-namespace chromeos {
 namespace system {
 class AutomaticRebootManager;
 class DeviceDisablingManager;
 class DeviceDisablingManagerDefaultDelegate;
 class SystemClock;
 class TimeZoneResolverManager;
-}
+}  // namespace system
+}  // namespace chromeos
+
+namespace component_updater {
+class CrOSComponentManager;
 }
 
 namespace policy {
-class BrowserPolicyConnector;
 class BrowserPolicyConnectorChromeOS;
-}
-
-namespace ui {
-class InputDeviceControllerClient;
 }
 
 class ScopedKeepAlive;
@@ -58,6 +61,19 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
 
   void InitializeSessionManager();
   void ShutdownSessionManager();
+
+  void InitializeCrosComponentManager();
+  void ShutdownCrosComponentManager();
+
+  // Initializes all services that need the primary profile. Gets called as soon
+  // as the primary profile is available, which implies that the primary user
+  // has logged in. The services are shut down automatically when the primary
+  // profile is destroyed.
+  // Use this for simple 'leaf-type' services with no or negligible inter-
+  // dependencies. If your service has more complex dependencies, consider using
+  // a BrowserContextKeyedService and restricting service creation to the
+  // primary profile.
+  void InitializePrimaryProfileServices(Profile* primary_profile);
 
   // Disable the offline interstitial easter egg if the device is enterprise
   // enrolled.
@@ -90,28 +106,35 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
     return device_disabling_manager_.get();
   }
 
+  component_updater::CrOSComponentManager* cros_component_manager() {
+    return cros_component_manager_.get();
+  }
+
   chromeos::system::TimeZoneResolverManager* GetTimezoneResolverManager();
 
   chromeos::TimeZoneResolver* GetTimezoneResolver();
 
   // Overridden from BrowserProcessPlatformPartBase:
   void StartTearDown() override;
-  std::unique_ptr<policy::BrowserPolicyConnector> CreateBrowserPolicyConnector()
-      override;
-  void RegisterInProcessServices(
-      content::ContentBrowserClient::StaticServiceMap* services) override;
+  std::unique_ptr<policy::ChromeBrowserPolicyConnector>
+  CreateBrowserPolicyConnector() override;
 
   chromeos::system::SystemClock* GetSystemClock();
   void DestroySystemClock();
 
-  void AddCompatibleCrOSComponent(const std::string& name);
+  chromeos::AccountManagerFactory* GetAccountManagerFactory();
 
-  bool IsCompatibleCrOSComponent(const std::string& name);
-
-  ui::InputDeviceControllerClient* GetInputDeviceControllerClient();
+  chromeos::InSessionPasswordChangeManager*
+  in_session_password_change_manager() {
+    return in_session_password_change_manager_.get();
+  }
 
  private:
+  friend class BrowserProcessPlatformPartTestApi;
+
   void CreateProfileHelper();
+
+  void ShutdownPrimaryProfileServices();
 
   std::unique_ptr<chromeos::ChromeSessionManager> session_manager_;
 
@@ -136,12 +159,22 @@ class BrowserProcessPlatformPart : public BrowserProcessPlatformPartBase {
 
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
 
-  base::flat_set<std::string> compatible_cros_components_;
+  // Whether cros_component_manager_ has been initialized for test. Set by
+  // BrowserProcessPlatformPartTestApi.
+  bool using_testing_cros_component_manager_ = false;
+  std::unique_ptr<component_updater::CrOSComponentManager>
+      cros_component_manager_;
 
-#if defined(USE_OZONE)
-  std::unique_ptr<ui::InputDeviceControllerClient>
-      input_device_controller_client_;
-#endif
+  std::unique_ptr<chromeos::AccountManagerFactory> account_manager_factory_;
+
+  std::unique_ptr<chromeos::KerberosCredentialsManager>
+      kerberos_credentials_manager_;
+
+  std::unique_ptr<chromeos::InSessionPasswordChangeManager>
+      in_session_password_change_manager_;
+
+  std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
+      primary_profile_shutdown_subscription_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

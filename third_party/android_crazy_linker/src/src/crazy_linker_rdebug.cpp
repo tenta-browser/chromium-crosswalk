@@ -6,13 +6,13 @@
 
 #include <elf.h>
 #include <inttypes.h>
-#include <pthread.h>
+#include <limits.h>
+#include <sys/auxv.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include "crazy_linker_debug.h"
 #include "crazy_linker_globals.h"
-#include "crazy_linker_proc_maps.h"
 #include "crazy_linker_system.h"
 #include "crazy_linker_util.h"
 #include "elf_traits.h"
@@ -21,394 +21,70 @@ namespace crazy {
 
 namespace {
 
-// Find the full path of the current executable. On success return true
-// and sets |exe_path|. On failure, return false and sets errno.
-bool FindExecutablePath(String* exe_path) {
-  // /proc/self/exe is a symlink to the full path. Read it with
-  // readlink().
-  exe_path->Resize(512);
-  ssize_t ret = TEMP_FAILURE_RETRY(
-      readlink("/proc/self/exe", exe_path->ptr(), exe_path->size()));
-  if (ret < 0) {
-    LOG_ERRNO("%s: Could not get /proc/self/exe link", __FUNCTION__);
+// The <sys/auxv.h> header only declares getauxval for API level >= 18.
+// Declare the same function as a weak import here so we can detect at
+// runtime that getauxval() is not provided, i.e. this is running on an
+// older Android release.
+extern "C" unsigned long getauxval(unsigned long) __attribute__((weak));
+
+// Retrieve the address of the current process' dynamic section.
+bool FindElfDynamicSection(size_t* dynamic_address, size_t* dynamic_size) {
+  // Sanity check. Prevents crashing when running on an Android release older
+  // than KitKat / API 18. The linker will still work, but debugging and
+  // stack crashes will not be supported.
+  if (!getauxval) {
+    LOG("Android API level 18 or higher is needed for stack trace support!");
     return false;
   }
 
-  exe_path->Resize(static_cast<size_t>(ret));
-  LOG("%s: Current executable: %s\n", __FUNCTION__, exe_path->c_str());
-  return true;
-}
-
-// Given an ELF binary at |path| that is _already_ mapped in the process,
-// find the address of its dynamic section and its size.
-// |path| is the full path of the binary (as it appears in /proc/self/maps.
-// |self_maps| is an instance of ProcMaps that is used to inspect
-// /proc/self/maps. The function rewind + iterates over it.
-// On success, return true and set |*dynamic_offset| and |*dynamic_size|.
-bool FindElfDynamicSection(const char* path,
-                           ProcMaps* self_maps,
-                           size_t* dynamic_address,
-                           size_t* dynamic_size) {
-  // Read the ELF header first.
-  ELF::Ehdr header[1];
-
-  crazy::FileDescriptor fd;
-  if (!fd.OpenReadOnly(path) ||
-      fd.Read(header, sizeof(header)) != static_cast<int>(sizeof(header))) {
-    LOG_ERRNO("%s: Could not load ELF binary header", __FUNCTION__);
+  // Use getauxval() to get the address and size of the executable's
+  // program table entry. Note: On Android, getauxval() is only available
+  // starting with API level 18.
+  const size_t phdr_num = static_cast<size_t>(getauxval(AT_PHNUM));
+  const auto* phdr_table = reinterpret_cast<ELF::Phdr*>(getauxval(AT_PHDR));
+  LOG("Found phdr table at %p, count=%d", phdr_table, phdr_num);
+  if (!phdr_table) {
+    LOG_ERRNO("Could not retrieve program header with AT_PHDR");
     return false;
   }
 
-  // Sanity check.
-  if (header->e_ident[0] != 127 || header->e_ident[1] != 'E' ||
-      header->e_ident[2] != 'L' || header->e_ident[3] != 'F' ||
-      header->e_ident[4] != ELF::kElfClass) {
-    LOG("%s: Not a %d-bit ELF binary: %s\n",
-        __FUNCTION__,
-        ELF::kElfBits,
-        path);
+  // NOTE: The program header table contains the following interesting entries:
+  // - A PT_PHDR entry corresponding to the program header table itself!
+  // - A PT_DYNAMIC entry corresponding to the dynamic section.
+  const ELF::Phdr* pt_phdr = nullptr;
+  const ELF::Phdr* pt_dynamic = nullptr;
+  for (size_t n = 0; n < phdr_num; ++n) {
+    const ELF::Phdr* phdr = &phdr_table[n];
+    if (phdr->p_type == PT_PHDR && !pt_phdr)
+      pt_phdr = phdr;
+    else if (phdr->p_type == PT_DYNAMIC && !pt_dynamic)
+      pt_dynamic = phdr;
+  }
+
+  if (!pt_phdr) {
+    LOG("Could not find PT_PHDR entry!?");
+    return false;
+  }
+  if (!pt_dynamic) {
+    LOG("Could not find PT_DYNAMIC entry!?");
     return false;
   }
 
-  if (header->e_phoff == 0 || header->e_phentsize != sizeof(ELF::Phdr)) {
-    LOG("%s: Invalid program header values: %s\n", __FUNCTION__, path);
-    return false;
-  }
+  LOG("Found PT_PHDR [address=%p vaddr=%lu size=%lu] and "
+      "PT_DYNAMIC [vaddr=%lu, size=%lu]",
+      pt_phdr, static_cast<unsigned long>(pt_phdr->p_vaddr),
+      static_cast<unsigned long>(pt_phdr->p_memsz),
+      static_cast<unsigned long>(pt_dynamic->p_vaddr),
+      static_cast<unsigned long>(pt_dynamic->p_memsz));
 
-  // Scan the program header table.
-  if (fd.SeekTo(header->e_phoff) < 0) {
-    LOG_ERRNO("%s: Could not find ELF program header table", __FUNCTION__);
-    return false;
-  }
+  auto pt_hdr_address = reinterpret_cast<ptrdiff_t>(pt_phdr);
+  auto load_bias = pt_hdr_address - static_cast<ptrdiff_t>(pt_phdr->p_vaddr);
 
-  ELF::Phdr phdr_load0 = {0, };
-  ELF::Phdr phdr_dyn = {0, };
-  bool found_load0 = false;
-  bool found_dyn = false;
+  *dynamic_address = static_cast<size_t>(load_bias + pt_dynamic->p_vaddr);
+  *dynamic_size = static_cast<size_t>(pt_dynamic->p_memsz);
 
-  for (size_t n = 0; n < header->e_phnum; ++n) {
-    ELF::Phdr phdr;
-    if (fd.Read(&phdr, sizeof(phdr)) != sizeof(phdr)) {
-      LOG_ERRNO("%s: Could not read program header entry", __FUNCTION__);
-      return false;
-    }
-
-    if (phdr.p_type == PT_LOAD && !found_load0) {
-      phdr_load0 = phdr;
-      found_load0 = true;
-    } else if (phdr.p_type == PT_DYNAMIC && !found_dyn) {
-      phdr_dyn = phdr;
-      found_dyn = true;
-    }
-  }
-
-  if (!found_load0) {
-    LOG("%s: Could not find loadable segment!?\n", __FUNCTION__);
-    return false;
-  }
-  if (!found_dyn) {
-    LOG("%s: Could not find dynamic segment!?\n", __FUNCTION__);
-    return false;
-  }
-
-  LOG("%s: Found first loadable segment [offset=%p vaddr=%p]\n",
-      __FUNCTION__,
-      (void*)phdr_load0.p_offset,
-      (void*)phdr_load0.p_vaddr);
-
-  LOG("%s: Found dynamic segment [offset=%p vaddr=%p size=%p]\n",
-      __FUNCTION__,
-      (void*)phdr_dyn.p_offset,
-      (void*)phdr_dyn.p_vaddr,
-      (void*)phdr_dyn.p_memsz);
-
-  // Parse /proc/self/maps to find the load address of the first
-  // loadable segment.
-  size_t path_len = strlen(path);
-  self_maps->Rewind();
-  ProcMaps::Entry entry;
-  while (self_maps->GetNextEntry(&entry)) {
-    if (!entry.path || entry.path_len != path_len ||
-        memcmp(entry.path, path, path_len) != 0)
-      continue;
-
-    LOG("%s: Found executable segment mapped [%p-%p offset=%p]\n",
-        __FUNCTION__,
-        (void*)entry.vma_start,
-        (void*)entry.vma_end,
-        (void*)entry.load_offset);
-
-    size_t load_bias = entry.vma_start - phdr_load0.p_vaddr;
-    LOG("%s: Load bias is %p\n", __FUNCTION__, (void*)load_bias);
-
-    *dynamic_address = load_bias + phdr_dyn.p_vaddr;
-    *dynamic_size = phdr_dyn.p_memsz;
-    LOG("%s: Dynamic section addr=%p size=%p\n",
-        __FUNCTION__,
-        (void*)*dynamic_address,
-        (void*)*dynamic_size);
-    return true;
-  }
-
-  LOG("%s: Executable is not mapped in current process.\n", __FUNCTION__);
-  return false;
-}
-
-// Helper class to temporarily remap a page to readable+writable until
-// scope exit.
-class ScopedPageReadWriteRemapper {
- public:
-  ScopedPageReadWriteRemapper(void* address);
-  ~ScopedPageReadWriteRemapper();
-
-  // Releases the page so that the destructor does not undo the remapping.
-  void Release();
-
- private:
-  static const uintptr_t kPageSize = 4096;
-  uintptr_t page_address_;
-  int page_prot_;
-};
-
-ScopedPageReadWriteRemapper::ScopedPageReadWriteRemapper(void* address) {
-  page_address_ = reinterpret_cast<uintptr_t>(address) & ~(kPageSize - 1);
-  page_prot_ = 0;
-  if (!FindProtectionFlagsForAddress(address, &page_prot_)) {
-    LOG("Could not find protection flags for %p\n", address);
-    page_address_ = 0;
-    return;
-  }
-
-  // Note: page_prot_ may already indicate read/write, but because of
-  // possible races with the system linker we cannot be confident that
-  // this is reliable. So we always set read/write here.
-  //
-  // See commentary in WriteLinkMapField for more.
-  int new_page_prot = page_prot_ | PROT_READ | PROT_WRITE;
-  int ret = mprotect(
-      reinterpret_cast<void*>(page_address_), kPageSize, new_page_prot);
-  if (ret < 0) {
-    LOG_ERRNO("Could not remap page to read/write");
-    page_address_ = 0;
-  }
-}
-
-ScopedPageReadWriteRemapper::~ScopedPageReadWriteRemapper() {
-  if (page_address_) {
-    int ret =
-        mprotect(reinterpret_cast<void*>(page_address_), kPageSize, page_prot_);
-    if (ret < 0)
-      LOG_ERRNO("Could not remap page to old protection flags");
-  }
-}
-
-void ScopedPageReadWriteRemapper::Release() {
-  page_address_ = 0;
-  page_prot_ = 0;
-}
-
-}  // namespace
-
-bool RDebug::Init() {
-  // The address of '_r_debug' is in the DT_DEBUG entry of the current
-  // executable.
-  init_ = true;
-  call_r_brk_ = true;
-
-  size_t dynamic_addr = 0;
-  size_t dynamic_size = 0;
-  String path;
-
-  // Find the current executable's full path, and its dynamic section
-  // information.
-  if (!FindExecutablePath(&path))
-    return false;
-
-  ProcMaps self_maps;
-  if (!FindElfDynamicSection(
-           path.c_str(), &self_maps, &dynamic_addr, &dynamic_size)) {
-    return false;
-  }
-
-  // Parse the dynamic table and find the DT_DEBUG entry.
-  const ELF::Dyn* dyn_section = reinterpret_cast<const ELF::Dyn*>(dynamic_addr);
-
-  while (dynamic_size >= sizeof(*dyn_section)) {
-    if (dyn_section->d_tag == DT_DEBUG) {
-      // Found it!
-      LOG("%s: Found DT_DEBUG entry inside %s at %p, pointing to %p\n",
-          __FUNCTION__,
-          path.c_str(),
-          dyn_section,
-          dyn_section->d_un.d_ptr);
-      if (dyn_section->d_un.d_ptr) {
-        r_debug_ = reinterpret_cast<r_debug*>(dyn_section->d_un.d_ptr);
-        LOG("%s: r_debug [r_version=%d r_map=%p r_brk=%p r_ldbase=%p]\n",
-            __FUNCTION__,
-            r_debug_->r_version,
-            r_debug_->r_map,
-            r_debug_->r_brk,
-            r_debug_->r_ldbase);
-        // Only version 1 of the struct is supported.
-        if (r_debug_->r_version != 1) {
-          LOG("%s: r_debug.r_version is %d, 1 expected.\n",
-              __FUNCTION__,
-              r_debug_->r_version);
-          r_debug_ = NULL;
-        }
-
-        // The linker of recent Android releases maps its link map entries
-        // in read-only pages. Determine if this is the case and record it
-        // for later. The first entry in the list corresponds to the
-        // executable.
-        int prot = self_maps.GetProtectionFlagsForAddress(r_debug_->r_map);
-        readonly_entries_ = (prot & PROT_WRITE) == 0;
-
-        LOG("%s: r_debug.readonly_entries=%s\n",
-            __FUNCTION__,
-            readonly_entries_ ? "true" : "false");
-        return true;
-      }
-    }
-    dyn_section++;
-    dynamic_size -= sizeof(*dyn_section);
-  }
-
-  LOG("%s: There is no non-0 DT_DEBUG entry in this process\n", __FUNCTION__);
-  return false;
-}
-
-void RDebug::SetDebuggerSupport(bool enabled) {
-  LOG("%s: Setting debugger support to: %s", __FUNCTION__,
-      enabled ? "enabled" : "DISABLED");
-  call_r_brk_ = enabled;
-}
-
-bool RDebug::GetDebuggerSupport() const {
-  return call_r_brk_;
-}
-
-void RDebug::CallRBrk(int state) {
-  if (call_r_brk_) {
-    r_debug_->r_state = state;
-    r_debug_->r_brk();
-  }
-}
-
-namespace {
-
-// Helper class providing a simple scoped pthreads mutex.
-class ScopedMutexLock {
- public:
-  explicit ScopedMutexLock(pthread_mutex_t* mutex) : mutex_(mutex) {
-    pthread_mutex_lock(mutex_);
-  }
-  ~ScopedMutexLock() {
-    pthread_mutex_unlock(mutex_);
-  }
-
- private:
-  pthread_mutex_t* mutex_;
-};
-
-// Helper runnable class. Handler is one of the two static functions
-// AddEntryInternal() or DelEntryInternal(). Calling these invokes
-// AddEntryImpl() or DelEntryImpl() respectively on rdebug.
-class RDebugRunnable {
- public:
-  RDebugRunnable(rdebug_callback_handler_t handler,
-                 RDebug* rdebug,
-                 link_map_t* entry,
-                 bool is_blocking)
-      : handler_(handler), rdebug_(rdebug),
-        entry_(entry), is_blocking_(is_blocking), has_run_(false) {
-    pthread_mutex_init(&mutex_, NULL);
-    pthread_cond_init(&cond_, NULL);
-  }
-
-  static void Run(void* opaque);
-  static void WaitForCallback(void* opaque);
-
- private:
-  rdebug_callback_handler_t handler_;
-  RDebug* rdebug_;
-  link_map_t* entry_;
-  bool is_blocking_;
-  bool has_run_;
-  pthread_mutex_t mutex_;
-  pthread_cond_t cond_;
-};
-
-// Callback entry point.
-void RDebugRunnable::Run(void* opaque) {
-  RDebugRunnable* runnable = static_cast<RDebugRunnable*>(opaque);
-
-  LOG("%s: Callback received, runnable=%p\n", __FUNCTION__, runnable);
-  (*runnable->handler_)(runnable->rdebug_, runnable->entry_);
-
-  if (!runnable->is_blocking_) {
-    delete runnable;
-    return;
-  }
-
-  LOG("%s: Signalling callback, runnable=%p\n", __FUNCTION__, runnable);
-  {
-    ScopedMutexLock m(&runnable->mutex_);
-    runnable->has_run_ = true;
-    pthread_cond_signal(&runnable->cond_);
-  }
-}
-
-// For blocking callbacks, wait for the call to Run().
-void RDebugRunnable::WaitForCallback(void* opaque) {
-  RDebugRunnable* runnable = static_cast<RDebugRunnable*>(opaque);
-
-  if (!runnable->is_blocking_) {
-    LOG("%s: Non-blocking, not waiting, runnable=%p\n", __FUNCTION__, runnable);
-    return;
-  }
-
-  LOG("%s: Waiting for signal, runnable=%p\n", __FUNCTION__, runnable);
-  {
-    ScopedMutexLock m(&runnable->mutex_);
-    while (!runnable->has_run_)
-      pthread_cond_wait(&runnable->cond_, &runnable->mutex_);
-  }
-
-  delete runnable;
-}
-
-}  // namespace
-
-// Helper function to schedule AddEntry() and DelEntry() calls onto another
-// thread where possible. Running them there avoids races with the system
-// linker, which expects to be able to set r_map pages readonly when it
-// is not using them and which may run simultaneously on the main thread.
-bool RDebug::PostCallback(rdebug_callback_handler_t handler,
-                          link_map_t* entry,
-                          bool is_blocking) {
-  if (!post_for_later_execution_) {
-    LOG("%s: Deferred execution disabled\n", __FUNCTION__);
-    return false;
-  }
-
-  RDebugRunnable* runnable =
-      new RDebugRunnable(handler, this, entry, is_blocking);
-  void* context = post_for_later_execution_context_;
-
-  if (!(*post_for_later_execution_)(context, &RDebugRunnable::Run, runnable)) {
-    LOG("%s: Deferred execution enabled, but posting failed\n", __FUNCTION__);
-    delete runnable;
-    return false;
-  }
-
-  LOG("%s: Posted for later execution, runnable=%p\n", __FUNCTION__, runnable);
-
-  if (is_blocking) {
-    RDebugRunnable::WaitForCallback(runnable);
-    LOG("%s: Completed execution, runnable=%p\n", __FUNCTION__, runnable);
-  }
-
+  LOG("Dynamic section addr=%p size=%p", (void*)*dynamic_address,
+      (void*)*dynamic_size);
   return true;
 }
 
@@ -417,12 +93,7 @@ bool RDebug::PostCallback(rdebug_callback_handler_t handler,
 // 'l_next' field in a neighbouring linkmap_t.  If link_pointer is in a
 // page that is mapped readonly, the page is remapped to be writable before
 // assignment.
-void RDebug::WriteLinkMapField(link_map_t** link_pointer, link_map_t* entry) {
-  ScopedPageReadWriteRemapper mapper(link_pointer);
-  LOG("%s: Remapped page for %p for read/write\n", __FUNCTION__, link_pointer);
-
-  *link_pointer = entry;
-
+void WriteLinkMapField(link_map_t** link_pointer, link_map_t* entry) {
   // We always mprotect the page containing link_pointer to read/write,
   // then write the entry. The page may already be read/write, but on
   // recent Android release is most likely readonly. Because of the way
@@ -435,23 +106,95 @@ void RDebug::WriteLinkMapField(link_map_t** link_pointer, link_map_t* entry) {
   // the system linker to crash. Clearly that is undesirable. From
   // observations this occurs most frequently on the gpu process.
   //
-  // TODO(simonb): Revisit this, details in:
   // https://code.google.com/p/chromium/issues/detail?id=450659
   // https://code.google.com/p/chromium/issues/detail?id=458346
-  mapper.Release();
-  LOG("%s: Released mapper, leaving page read/write\n", __FUNCTION__);
+  const uintptr_t kPageSize = PAGE_SIZE;
+  const uintptr_t ptr_address = reinterpret_cast<uintptr_t>(link_pointer);
+  void* page = reinterpret_cast<void*>(ptr_address & ~(kPageSize - 1U));
+
+  LOG("Mapping page at %p read-write for pointer at %p", page, link_pointer);
+  const int prot = PROT_READ | PROT_WRITE;
+  const int ret = ::mprotect(page, kPageSize, prot);
+  if (ret < 0) {
+    // In case of error, return immediately to avoid crashing below when
+    // writing the new value. Note that there is still a tiny chance that the
+    // system linker remapped the page read-only just after mprotect() above
+    // returns, so this cannot be guaranteed 100% of the time.
+    LOG_ERRNO("Error mapping page %p read/write", page);
+    return;
+  }
+  *link_pointer = entry;
 }
 
-void RDebug::AddEntryImpl(link_map_t* entry) {
-  ScopedGlobalLock lock;
-  LOG("%s: Adding: %s\n", __FUNCTION__, entry->l_name);
+}  // namespace
+
+r_debug* RDebug::GetAddress() {
+  if (!init_) {
+    Init();
+  }
+  return r_debug_;
+}
+
+bool RDebug::Init() {
+  // The address of '_r_debug' is in the DT_DEBUG entry of the current
+  // executable.
+  init_ = true;
+
+  size_t dynamic_addr = 0;
+  size_t dynamic_size = 0;
+
+  if (!FindElfDynamicSection(&dynamic_addr, &dynamic_size)) {
+    return false;
+  }
+
+  // Parse the dynamic table and find the DT_DEBUG entry.
+  const ELF::Dyn* dyn_section = reinterpret_cast<const ELF::Dyn*>(dynamic_addr);
+
+  while (dynamic_size >= sizeof(*dyn_section)) {
+    if (dyn_section->d_tag == DT_DEBUG) {
+      // Found it!
+      LOG("Found DT_DEBUG entry at %p, pointing to %p", dyn_section,
+          dyn_section->d_un.d_ptr);
+      if (dyn_section->d_un.d_ptr) {
+        r_debug_ = reinterpret_cast<r_debug*>(dyn_section->d_un.d_ptr);
+        LOG("r_debug [r_version=%d r_map=%p r_brk=%p r_ldbase=%p]",
+            r_debug_->r_version, r_debug_->r_map, r_debug_->r_brk,
+            r_debug_->r_ldbase);
+        // Only version 1 of the struct is supported.
+        if (r_debug_->r_version != 1) {
+          LOG("r_debug.r_version is %d, 1 expected.", r_debug_->r_version);
+          r_debug_ = NULL;
+        }
+        return true;
+      }
+    }
+    dyn_section++;
+    dynamic_size -= sizeof(*dyn_section);
+  }
+
+  LOG("There is no non-0 DT_DEBUG entry in this process");
+  return false;
+}
+
+void RDebug::CallRBrk(int state) {
+#if !defined(CRAZY_DISABLE_R_BRK)
+  r_debug_->r_state = state;
+  r_debug_->r_brk();
+#endif  // !CRAZY_DISABLE_R_BRK
+}
+
+void RDebug::AddEntry(link_map_t* entry) {
+  LOG("Adding: %s", entry->l_name);
   if (!init_)
     Init();
 
   if (!r_debug_) {
-    LOG("%s: Nothing to do\n", __FUNCTION__);
+    LOG("Nothing to do");
     return;
   }
+
+  // Ensure modifications to the global link map are synchronized.
+  ScopedLinkMapLocker locker;
 
   // IMPORTANT: GDB expects the first entry in the list to correspond
   // to the executable. So add our new entry just after it. This is ok
@@ -474,7 +217,7 @@ void RDebug::AddEntryImpl(link_map_t* entry) {
   if (!r_debug_->r_map || !r_debug_->r_map->l_next ||
       !r_debug_->r_map->l_next->l_next) {
     // Sanity check: Must have at least two items in the list.
-    LOG("%s: Malformed r_debug.r_map list\n", __FUNCTION__);
+    LOG("Malformed r_debug.r_map list");
     r_debug_ = NULL;
     return;
   }
@@ -500,11 +243,14 @@ void RDebug::AddEntryImpl(link_map_t* entry) {
   CallRBrk(RT_CONSISTENT);
 }
 
-void RDebug::DelEntryImpl(link_map_t* entry) {
-  ScopedGlobalLock lock;
-  LOG("%s: Deleting: %s\n", __FUNCTION__, entry->l_name);
+void RDebug::DelEntry(link_map_t* entry) {
   if (!r_debug_)
     return;
+
+  LOG("Deleting: %s", entry->l_name);
+
+  // Ensure modifications to the global link map are synchronized.
+  ScopedLinkMapLocker locker;
 
   // Tell GDB the list is going to be modified.
   CallRBrk(RT_DELETE);

@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/navigation_controller.h"
@@ -61,8 +60,6 @@ TEST_F(BrowserAboutHandlerTest, WillHandleBrowserAboutURL) {
         GURL(chrome_prefix + chrome::kChromeUIVersionHost)},
        {GURL(chrome_prefix + chrome::kChromeUIAboutHost),
         GURL(chrome_prefix + chrome::kChromeUIChromeURLsHost)},
-       {GURL(chrome_prefix + chrome::kChromeUICacheHost),
-        GURL(chrome_prefix + content::kChromeUINetworkViewCacheHost)},
        {GURL(chrome_prefix + chrome::kChromeUISignInInternalsHost),
         GURL(chrome_prefix + chrome::kChromeUISignInInternalsHost)},
        {GURL(chrome_prefix + chrome::kChromeUISyncHost),
@@ -86,15 +83,15 @@ TEST_F(BrowserAboutHandlerTest, WillHandleBrowserAboutURLForMDSettings) {
 }
 
 TEST_F(BrowserAboutHandlerTest, WillHandleBrowserAboutURLForHistory) {
+  GURL::Replacements replace_foo_query;
+  replace_foo_query.SetQueryStr("foo");
+  GURL history_foo_url(
+      GURL(chrome::kChromeUIHistoryURL).ReplaceComponents(replace_foo_query));
   TestWillHandleBrowserAboutURL(std::vector<AboutURLTestCase>({
-      {GURL("about:history"), GURL("chrome://history/")},
-      {GURL("about:history-frame"), GURL("chrome://history/")},
-      {GURL("chrome://history"), GURL("chrome://history/")},
-      {GURL("chrome://history-frame"), GURL("chrome://history/")},
-      {GURL("chrome://history/"), GURL("chrome://history/")},
-      {GURL("chrome://history-frame/"), GURL("chrome://history/")},
-      {GURL("chrome://history/?q=foo"), GURL("chrome://history/?q=foo")},
-      {GURL("chrome://history-frame/?q=foo"), GURL("chrome://history/?q=foo")},
+      {GURL("about:history"), GURL(chrome::kChromeUIHistoryURL)},
+      {GURL(chrome::kChromeUIHistoryURL), GURL(chrome::kChromeUIHistoryURL)},
+      {GURL(chrome::kChromeUIHistoryURL), GURL(chrome::kChromeUIHistoryURL)},
+      {history_foo_url, history_foo_url},
   }));
 }
 
@@ -114,8 +111,8 @@ TEST_F(BrowserAboutHandlerTest, NoVirtualURLForFixup) {
   TestingProfile profile;
   std::unique_ptr<NavigationEntry> entry(
       NavigationController::CreateNavigationEntry(
-          url, Referrer(), ui::PAGE_TRANSITION_RELOAD, false, std::string(),
-          &profile));
+          url, Referrer(), base::nullopt, ui::PAGE_TRANSITION_RELOAD, false,
+          std::string(), &profile, nullptr /* blob_url_loader_factory */));
   EXPECT_EQ(fixed_url, entry->GetVirtualURL());
   EXPECT_EQ(rewritten_url, entry->GetURL());
 }

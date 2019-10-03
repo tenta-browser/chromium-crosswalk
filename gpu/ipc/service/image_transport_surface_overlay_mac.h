@@ -5,17 +5,20 @@
 #ifndef GPU_IPC_SERVICE_IMAGE_TRANSPORT_SURFACE_OVERLAY_MAC_H_
 #define GPU_IPC_SERVICE_IMAGE_TRANSPORT_SURFACE_OVERLAY_MAC_H_
 
-#include <list>
-#include <memory>
 #include <vector>
 
 #import "base/mac/scoped_nsobject.h"
-#include "base/timer/timer.h"
-#include "gpu/ipc/service/gpu_command_buffer_stub.h"
+#include "base/memory/weak_ptr.h"
+#include "gpu/ipc/service/command_buffer_stub.h"
 #include "gpu/ipc/service/image_transport_surface.h"
-#include "ui/base/cocoa/remote_layer_api.h"
+#include "ui/gfx/presentation_feedback.h"
+#include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/gpu_switching_observer.h"
+
+#if defined(USE_EGL)
+#include "ui/gl/gl_surface_egl.h"
+#endif
 
 @class CAContext;
 @class CALayer;
@@ -31,26 +34,36 @@ class GLFence;
 
 namespace gpu {
 
-class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
-                                        public ui::GpuSwitchingObserver {
+// Template ImageTransportSurfaceOverlayMac based on its base class so that it
+// can be used by both the validating and passthrough command decoders by
+// inheriting from GLSurface and GLSurfaceEGL respectively. Once the validating
+// command decoder is removed, the template can be removed and
+// ImageTransportSurfaceOverlayMac can always inherit from GLSurfaceEGL.
+
+template <typename BaseClass>
+class ImageTransportSurfaceOverlayMacBase : public BaseClass,
+                                            public ui::GpuSwitchingObserver {
  public:
-  explicit ImageTransportSurfaceOverlayMac(
+  explicit ImageTransportSurfaceOverlayMacBase(
       base::WeakPtr<ImageTransportSurfaceDelegate> delegate);
 
   // GLSurface implementation
   bool Initialize(gl::GLSurfaceFormat format) override;
   void Destroy() override;
+  void PrepareToDestroy(bool have_context) override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
-              ColorSpace color_space,
+              gl::GLSurface::ColorSpace color_space,
               bool has_alpha) override;
   bool IsOffscreen() override;
-  gfx::SwapResult SwapBuffers(const PresentationCallback& callback) override;
-  gfx::SwapResult PostSubBuffer(int x,
-                                int y,
-                                int width,
-                                int height,
-                                const PresentationCallback& callback) override;
+  gfx::SwapResult SwapBuffers(
+      gl::GLSurface::PresentationCallback callback) override;
+  gfx::SwapResult PostSubBuffer(
+      int x,
+      int y,
+      int width,
+      int height,
+      gl::GLSurface::PresentationCallback callback) override;
   bool SupportsPostSubBuffer() override;
   gfx::Size GetSize() override;
   void* GetHandle() override;
@@ -60,47 +73,56 @@ class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
                             gfx::OverlayTransform transform,
                             gl::GLImage* image,
                             const gfx::Rect& bounds_rect,
-                            const gfx::RectF& crop_rect) override;
+                            const gfx::RectF& crop_rect,
+                            bool enable_blend,
+                            std::unique_ptr<gfx::GpuFence> gpu_fence) override;
   bool ScheduleCALayer(const ui::CARendererLayerParams& params) override;
   void ScheduleCALayerInUseQuery(
-      std::vector<CALayerInUseQuery> queries) override;
+      std::vector<gl::GLSurface::CALayerInUseQuery> queries) override;
   bool IsSurfaceless() const override;
 
   // ui::GpuSwitchingObserver implementation.
   void OnGpuSwitched() override;
 
  private:
-  ~ImageTransportSurfaceOverlayMac() override;
+  ~ImageTransportSurfaceOverlayMacBase() override;
 
-  void SetSnapshotRequested();
-  bool GetAndResetSnapshotRequested();
-
-  gfx::SwapResult SwapBuffersInternal(const gfx::Rect& pixel_damage_rect);
-  void ApplyBackpressure(base::TimeTicks* before_flush_time,
-                         base::TimeTicks* after_flush_before_commit_time);
+  gfx::SwapResult SwapBuffersInternal(
+      const gfx::Rect& pixel_damage_rect,
+      gl::GLSurface::PresentationCallback callback);
+  void ApplyBackpressure();
+  void BufferPresented(gl::GLSurface::PresentationCallback callback,
+                       const gfx::PresentationFeedback& feedback);
 
   base::WeakPtr<ImageTransportSurfaceDelegate> delegate_;
 
   bool use_remote_layer_api_;
   base::scoped_nsobject<CAContext> ca_context_;
-  base::scoped_nsobject<CAContext> fullscreen_low_power_ca_context_;
   std::unique_ptr<ui::CALayerTreeCoordinator> ca_layer_tree_coordinator_;
 
   gfx::Size pixel_size_;
   float scale_factor_;
 
-  std::vector<CALayerInUseQuery> ca_layer_in_use_queries_;
-  uint64_t swap_id_;
+  std::vector<gl::GLSurface::CALayerInUseQuery> ca_layer_in_use_queries_;
 
-  // A GLFence marking the end of the previous frame. Must only be accessed
-  // while the associated |previous_frame_context_| is bound.
-  std::unique_ptr<gl::GLFence> previous_frame_fence_;
-  base::ScopedTypeRef<CGLContextObj> fence_context_obj_;
+  // A GLFence marking the end of the previous frame, used for applying
+  // backpressure.
+  uint64_t previous_frame_fence_ = 0;
 
   // The renderer ID that all contexts made current to this surface should be
   // targeting.
   GLint gl_renderer_id_;
+  base::WeakPtrFactory<ImageTransportSurfaceOverlayMacBase<BaseClass>>
+      weak_ptr_factory_;
 };
+
+using ImageTransportSurfaceOverlayMac =
+    ImageTransportSurfaceOverlayMacBase<gl::GLSurface>;
+
+#if defined(USE_EGL)
+using ImageTransportSurfaceOverlayMacEGL =
+    ImageTransportSurfaceOverlayMacBase<gl::GLSurfaceEGL>;
+#endif
 
 }  // namespace gpu
 

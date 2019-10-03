@@ -5,7 +5,6 @@
 #include <stddef.h>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -62,7 +61,6 @@ class MockFunction : public ExtensionFunction {
  public:
   explicit MockFunction(const char* name) { set_name(name); }
 
-  void SetArgs(const base::ListValue* args) override {}
   void Destruct() const override { delete this; }
   ResponseAction Run() override { return RespondLater(); }
 

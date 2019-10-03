@@ -32,8 +32,8 @@ class AppShellTest : public content::BrowserTestBase {
   content::BrowserContext* browser_context() { return browser_context_; }
 
  protected:
-  content::BrowserContext* browser_context_;
-  ShellExtensionSystem* extension_system_;
+  content::BrowserContext* browser_context_ = nullptr;
+  ShellExtensionSystem* extension_system_ = nullptr;
 };
 
 }  // namespace extensions

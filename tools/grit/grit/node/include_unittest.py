@@ -5,6 +5,8 @@
 
 '''Unit tests for include.IncludeNode'''
 
+from __future__ import print_function
+
 import os
 import sys
 if __name__ == '__main__':
@@ -27,7 +29,7 @@ class IncludeNodeUnittest(unittest.TestCase):
     root.StartParsing(u'grit', None)
     root.HandleAttribute(u'latest_public_release', u'0')
     root.HandleAttribute(u'current_release', u'1')
-    root.HandleAttribute(u'base_dir', ur'..\resource')
+    root.HandleAttribute(u'base_dir', r'..\resource')
     release = misc.ReleaseNode()
     release.StartParsing(u'release', root)
     release.HandleAttribute(u'seq', u'1')
@@ -37,20 +39,20 @@ class IncludeNodeUnittest(unittest.TestCase):
     release.AddChild(includes)
     include_node = include.IncludeNode()
     include_node.StartParsing(u'include', includes)
-    include_node.HandleAttribute(u'file', ur'flugel\kugel.pdf')
+    include_node.HandleAttribute(u'file', r'flugel\kugel.pdf')
     includes.AddChild(include_node)
     root.EndParsing()
 
     self.assertEqual(root.ToRealPath(include_node.GetInputPath()),
                      util.normpath(
-                       os.path.join(ur'../resource', ur'flugel/kugel.pdf')))
+                       os.path.join(r'../resource', r'flugel/kugel.pdf')))
 
   def testGetPathNoBasedir(self):
     root = misc.GritNode()
     root.StartParsing(u'grit', None)
     root.HandleAttribute(u'latest_public_release', u'0')
     root.HandleAttribute(u'current_release', u'1')
-    root.HandleAttribute(u'base_dir', ur'..\resource')
+    root.HandleAttribute(u'base_dir', r'..\resource')
     release = misc.ReleaseNode()
     release.StartParsing(u'release', root)
     release.HandleAttribute(u'seq', u'1')
@@ -60,14 +62,16 @@ class IncludeNodeUnittest(unittest.TestCase):
     release.AddChild(includes)
     include_node = include.IncludeNode()
     include_node.StartParsing(u'include', includes)
-    include_node.HandleAttribute(u'file', ur'flugel\kugel.pdf')
+    include_node.HandleAttribute(u'file', r'flugel\kugel.pdf')
     include_node.HandleAttribute(u'use_base_dir', u'false')
     includes.AddChild(include_node)
     root.EndParsing()
 
+    last_dir = os.path.basename(os.getcwd())
+    expected_path = util.normpath(os.path.join(
+        u'..', last_dir, u'flugel/kugel.pdf'))
     self.assertEqual(root.ToRealPath(include_node.GetInputPath()),
-                     util.normpath(
-                       os.path.join(ur'../', ur'flugel/kugel.pdf')))
+                     expected_path)
 
   def testCompressGzip(self):
     root = util.ParseGrdForUnittest('''
@@ -76,12 +80,35 @@ class IncludeNodeUnittest(unittest.TestCase):
                    compress="gzip" type="BINDATA"/>
         </includes>''', base_dir = util.PathFromRoot('grit/testdata'))
     inc, = root.GetChildrenOfType(include.IncludeNode)
-    throwaway, compressed = inc.GetDataPackPair(lang='en', encoding=1)
+    compressed = inc.GetDataPackValue(lang='en', encoding=1)
 
     decompressed_data = zlib.decompress(compressed, 16 + zlib.MAX_WBITS)
-    self.assertEqual(util.ReadFile(util.PathFromRoot('grit/testdata')
-                                   + "/test_text.txt", util.BINARY),
-                     decompressed_data)
+
+  def testSkipInResourceMap(self):
+    root = util.ParseGrdForUnittest('''
+        <includes>
+          <include name="TEST1_TXT" file="test1_text.txt" type="BINDATA"/>
+          <include name="TEST2_TXT" file="test1_text.txt" type="BINDATA"
+                                    skip_in_resource_map="true"/>
+          <include name="TEST3_TXT" file="test1_text.txt" type="BINDATA"
+                                    skip_in_resource_map="false"/>
+        </includes>''', base_dir = util.PathFromRoot('grit/testdata'))
+    inc = root.GetChildrenOfType(include.IncludeNode)
+    self.assertTrue(inc[0].IsResourceMapSource())
+    self.assertFalse(inc[1].IsResourceMapSource())
+    self.assertTrue(inc[2].IsResourceMapSource())
+
+  def testAcceptsPreprocess(self):
+    root = util.ParseGrdForUnittest('''
+        <includes>
+          <include name="PREPROCESS_TEST" file="preprocess_test.html"
+                   preprocess="true" type="chrome_html"/>
+        </includes>''', base_dir = util.PathFromRoot('grit/testdata'))
+    inc, = root.GetChildrenOfType(include.IncludeNode)
+    result = inc.GetDataPackValue(lang='en', encoding=1)
+    self.failUnless(result.find('should be kept') != -1)
+    self.failUnless(result.find('in the middle...') != -1)
+    self.failUnless(result.find('should be removed') == -1)
 
 
 if __name__ == '__main__':

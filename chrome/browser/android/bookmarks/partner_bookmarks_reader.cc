@@ -8,7 +8,8 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "base/task/post_task.h"
+#include "chrome/android/chrome_jni_headers/PartnerBookmarksReader_jni.h"
 #include "chrome/browser/android/bookmarks/partner_bookmarks_shim.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
@@ -16,12 +17,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/favicon/core/favicon_server_fetcher_params.h"
 #include "components/favicon/core/favicon_service.h"
-#include "components/favicon/core/large_icon_service.h"
+#include "components/favicon/core/large_icon_service_impl.h"
 #include "components/favicon_base/favicon_types.h"
 #include "components/image_fetcher/core/image_fetcher.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "jni/PartnerBookmarksReader_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/favicon_size.h"
@@ -90,10 +92,10 @@ void PrepareAndSetFavicon(jbyte* icon_bytes,
 
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&SetFaviconCallback, profile, node->url(), fake_icon_url,
-                 image_data, icon_type, &event));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&SetFaviconCallback, profile, node->url(), fake_icon_url,
+                     image_data, icon_type, &event));
   // TODO(aruslan): http://b/6397072 If possible - avoid using favicon service
   event.Wait();
 }
@@ -101,12 +103,12 @@ void PrepareAndSetFavicon(jbyte* icon_bytes,
 const BookmarkNode* GetNodeByID(const BookmarkNode* parent, int64_t id) {
   if (parent->id() == id)
     return parent;
-  for (int i= 0, child_count = parent->child_count(); i < child_count; ++i) {
-    const BookmarkNode* result = GetNodeByID(parent->GetChild(i), id);
+  for (const auto& child : parent->children()) {
+    const BookmarkNode* result = GetNodeByID(child.get(), id);
     if (result)
       return result;
   }
-  return NULL;
+  return nullptr;
 }
 
 }  // namespace
@@ -142,6 +144,9 @@ void PartnerBookmarksReader::Reset(JNIEnv* env,
   wip_next_available_id_ = 0;
 }
 
+// TODO (crbug.com/980464): This method could theoretically accept contradicting
+// parameters for type (is_folder) and URL validity (jurl) and should therefore
+// be changed.
 jlong PartnerBookmarksReader::AddPartnerBookmark(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -152,19 +157,21 @@ jlong PartnerBookmarksReader::AddPartnerBookmark(
     const JavaParamRef<jbyteArray>& favicon,
     const JavaParamRef<jbyteArray>& touchicon,
     jboolean fetch_uncached_favicons_from_server,
+    jint desired_favicon_size_px,
     const JavaParamRef<jobject>& j_callback) {
   base::string16 url;
   base::string16 title;
-  if (jurl)
+  if (jurl) {
+    DCHECK(!is_folder);
     url = ConvertJavaStringToUTF16(env, jurl);
+  }
   if (jtitle)
     title = ConvertJavaStringToUTF16(env, jtitle);
 
   jlong node_id = 0;
   if (wip_partner_bookmarks_root_.get()) {
     std::unique_ptr<BookmarkNode> node =
-        base::MakeUnique<BookmarkNode>(wip_next_available_id_++, GURL(url));
-    node->set_type(is_folder ? BookmarkNode::FOLDER : BookmarkNode::URL);
+        std::make_unique<BookmarkNode>(wip_next_available_id_++, GURL(url));
     node->SetTitle(title);
 
     // Handle favicon and touchicon
@@ -186,6 +193,7 @@ jlong PartnerBookmarksReader::AddPartnerBookmark(
         Java_FetchFaviconCallback_onFaviconFetch(env, j_callback);
         GetFavicon(
             GURL(url), profile_, fetch_uncached_favicons_from_server,
+            desired_favicon_size_px,
             base::BindOnce(&PartnerBookmarksReader::OnFaviconFetched,
                            base::Unretained(this),
                            ScopedJavaGlobalRef<jobject>(env, j_callback)));
@@ -200,11 +208,11 @@ jlong PartnerBookmarksReader::AddPartnerBookmark(
       parent = wip_partner_bookmarks_root_.get();
     }
     node_id = node->id();
-    const_cast<BookmarkNode*>(parent)->Add(std::move(node),
-                                           parent->child_count());
+    const_cast<BookmarkNode*>(parent)->Add(std::move(node));
   } else {
     std::unique_ptr<BookmarkPermanentNode> node =
-        base::MakeUnique<BookmarkPermanentNode>(wip_next_available_id_++);
+        std::make_unique<BookmarkPermanentNode>(wip_next_available_id_++,
+                                                BookmarkNode::FOLDER);
     node_id = node->id();
     node->SetTitle(title);
     wip_partner_bookmarks_root_ = std::move(node);
@@ -215,17 +223,20 @@ jlong PartnerBookmarksReader::AddPartnerBookmark(
 void PartnerBookmarksReader::GetFavicon(const GURL& page_url,
                                         Profile* profile,
                                         bool fallback_to_server,
+                                        int desired_favicon_size_px,
                                         FaviconFetchedCallback callback) {
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&PartnerBookmarksReader::GetFaviconImpl,
                      base::Unretained(this), page_url, profile,
-                     fallback_to_server, std::move(callback)));
+                     fallback_to_server, desired_favicon_size_px,
+                     std::move(callback)));
 }
 
 void PartnerBookmarksReader::GetFaviconImpl(const GURL& page_url,
                                             Profile* profile,
                                             bool fallback_to_server,
+                                            int desired_favicon_size_px,
                                             FaviconFetchedCallback callback) {
   if (!GetLargeIconService()) {
     std::move(callback).Run(
@@ -234,7 +245,8 @@ void PartnerBookmarksReader::GetFaviconImpl(const GURL& page_url,
   }
 
   GetFaviconFromCacheOrServer(page_url, fallback_to_server,
-                              false /* from_server */, std::move(callback));
+                              false /* from_server */, desired_favicon_size_px,
+                              std::move(callback));
 }
 
 favicon::LargeIconService* PartnerBookmarksReader::GetLargeIconService() {
@@ -249,13 +261,14 @@ void PartnerBookmarksReader::GetFaviconFromCacheOrServer(
     const GURL& page_url,
     bool fallback_to_server,
     bool from_server,
+    int desired_favicon_size_px,
     FaviconFetchedCallback callback) {
-  GetLargeIconService()->GetLargeIconOrFallbackStyle(
-      page_url, kPartnerBookmarksMinimumFaviconSizePx, 0,
+  GetLargeIconService()->GetLargeIconRawBitmapOrFallbackStyleForPageUrl(
+      page_url, kPartnerBookmarksMinimumFaviconSizePx, desired_favicon_size_px,
       base::Bind(&PartnerBookmarksReader::OnGetFaviconFromCacheFinished,
                  base::Unretained(this), page_url,
                  base::Passed(std::move(callback)), fallback_to_server,
-                 from_server),
+                 from_server, desired_favicon_size_px),
       &favicon_task_tracker_);
 }
 
@@ -264,6 +277,7 @@ void PartnerBookmarksReader::OnGetFaviconFromCacheFinished(
     FaviconFetchedCallback callback,
     bool fallback_to_server,
     bool from_server,
+    int desired_favicon_size_px,
     const favicon_base::LargeIconResult& result) {
   // |from_server| tells us if we fetched the image from the cache after we went
   // to server for it, so this successful cache retrieval should actually return
@@ -306,15 +320,17 @@ void PartnerBookmarksReader::OnGetFaviconFromCacheFinished(
         })");
   GetLargeIconService()
       ->GetLargeIconOrFallbackStyleFromGoogleServerSkippingLocalCache(
-          page_url, kPartnerBookmarksMinimumFaviconSizePx, 0,
-          false /* may_page_url_be_private */, traffic_annotation,
+          favicon::FaviconServerFetcherParams::CreateForMobile(page_url),
+          false /* may_page_url_be_private */,
+          false /* should_trim_page_url_path */, traffic_annotation,
           base::Bind(&PartnerBookmarksReader::OnGetFaviconFromServerFinished,
-                     base::Unretained(this), page_url,
+                     base::Unretained(this), page_url, desired_favicon_size_px,
                      base::Passed(std::move(callback))));
 }
 
 void PartnerBookmarksReader::OnGetFaviconFromServerFinished(
     const GURL& page_url,
+    int desired_favicon_size_px,
     FaviconFetchedCallback callback,
     favicon_base::GoogleFaviconServerRequestStatus status) {
   if (status != favicon_base::GoogleFaviconServerRequestStatus::SUCCESS) {
@@ -335,7 +351,8 @@ void PartnerBookmarksReader::OnGetFaviconFromServerFinished(
   // The icon was successfully retrieved from the server, now we just have to
   // retrieve it from the cache where it was stored.
   GetFaviconFromCacheOrServer(page_url, false /* fallback_to_server */,
-                              true /* from_server */, std::move(callback));
+                              true /* from_server */, desired_favicon_size_px,
+                              std::move(callback));
 }
 
 void PartnerBookmarksReader::OnFaviconFetched(
@@ -349,8 +366,7 @@ void PartnerBookmarksReader::OnFaviconFetched(
 // ----------------------------------------------------------------
 
 static void JNI_PartnerBookmarksReader_DisablePartnerBookmarksEditing(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
+    JNIEnv* env) {
   PartnerBookmarksShim::DisablePartnerBookmarksEditing();
 }
 
@@ -367,7 +383,6 @@ static jlong JNI_PartnerBookmarksReader_Init(JNIEnv* env,
 static base::android::ScopedJavaLocalRef<jstring>
 JNI_PartnerBookmarksReader_GetNativeUrlString(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& j_url) {
   GURL url(ConvertJavaStringToUTF8(j_url));
   return ConvertUTF8ToJavaString(env, url.spec());

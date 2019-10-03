@@ -4,215 +4,263 @@
 
 /**
  * Class to manage SwitchAccess and interact with other controllers.
- *
- * @constructor
  * @implements {SwitchAccessInterface}
  */
-function SwitchAccess() {
-  console.log('Switch access is enabled');
+class SwitchAccess {
+  constructor() {
+    console.log('Switch access is enabled');
 
-  /**
-   * User commands.
-   *
-   * @private {Commands}
-   */
-  this.commands_ = null;
+    /**
+     * User commands.
+     * @private {Commands}
+     */
+    this.commands_ = null;
 
-  /**
-   * User preferences.
-   *
-   * @private {SwitchAccessPrefs}
-   */
-  this.switchAccessPrefs_ = null;
+    /**
+     * User preferences.
+     * @private {SwitchAccessPreferences}
+     */
+    this.switchAccessPreferences_ = null;
 
-  /**
-   * Handles changes to auto-scan.
-   *
-   * @private {AutoScanManager}
-   */
-  this.autoScanManager_ = null;
+    /**
+     * Handles changes to auto-scan.
+     * @private {AutoScanManager}
+     */
+    this.autoScanManager_ = null;
 
-  /**
-   * Handles keyboard input.
-   *
-   * @private {KeyboardHandler}
-   */
-  this.keyboardHandler_ = null;
+    /**
+     * Handles keyboard input.
+     * @private {KeyEventHandler}
+     */
+    this.keyEventHandler_ = null;
 
-  /**
-   * Handles interactions with the accessibility tree, including moving to and
-   * selecting nodes.
-   *
-   * @private {AutomationManager}
-   */
-  this.automationManager_ = null;
+    /**
+     * Handles interactions with the accessibility tree, including moving to and
+     * selecting nodes.
+     * @private {NavigationManager}
+     */
+    this.navigationManager_ = null;
 
-  this.init_();
-}
+    /**
+     * Callback for testing use only.
+     * @private {?function()}
+     */
+    this.onMoveForwardForTesting_ = null;
 
-SwitchAccess.prototype = {
+    /**
+     * Callback that is called once the navigation manager is initialized.
+     * Used to setup communications with the menu panel.
+     * @private {?function()}
+     */
+    this.navReadyCallback_ = null;
+
+    /**
+     * Feature flag controlling improvement of text input capabilities.
+     * @private {boolean}
+     */
+    this.enableTextEditing_ = false;
+
+    this.init_();
+  }
+
   /**
    * Set up preferences, controllers, and event listeners.
-   *
    * @private
    */
-  init_: function() {
+  init_() {
     this.commands_ = new Commands(this);
-    this.switchAccessPrefs_ = new SwitchAccessPrefs(this);
+    this.switchAccessPreferences_ = new SwitchAccessPreferences(this);
     this.autoScanManager_ = new AutoScanManager(this);
-    this.keyboardHandler_ = new KeyboardHandler(this);
+    this.keyEventHandler_ = new KeyEventHandler(this);
 
     chrome.automation.getDesktop(function(desktop) {
-      this.automationManager_ = new AutomationManager(desktop);
+      this.navigationManager_ = new NavigationManager(desktop);
+
+      if (this.navReadyCallback_)
+        this.navReadyCallback_();
     }.bind(this));
 
-    document.addEventListener(
-        'prefsUpdate', this.handlePrefsUpdate_.bind(this));
-  },
+    chrome.commandLinePrivate.hasSwitch(
+        'enable-experimental-accessibility-switch-access-text', (result) => {
+          this.enableTextEditing_ = result;
+        });
+  }
 
   /**
-   * Move to the next/previous interesting node. If |doNext| is true, move to
-   * the next node. Otherwise, move to the previous node.
-   *
-   * @param {boolean} doNext
+   * Open and jump to the Switch Access menu.
    * @override
    */
-  moveToNode: function(doNext) {
-    if (this.automationManager_)
-      this.automationManager_.moveToNode(doNext);
-  },
+  enterMenu() {
+    if (this.navigationManager_)
+      this.navigationManager_.enterMenu();
+  }
+
+  /**
+   * Move to the next interesting node.
+   * @override
+   */
+  moveForward() {
+    if (this.navigationManager_)
+      this.navigationManager_.moveForward();
+    this.onMoveForwardForTesting_ && this.onMoveForwardForTesting_();
+  }
+
+  /**
+   * Move to the previous interesting node.
+   * @override
+   */
+  moveBackward() {
+    if (this.navigationManager_)
+      this.navigationManager_.moveBackward();
+  }
 
   /**
    * Perform the default action on the current node.
-   *
    * @override
    */
-  selectCurrentNode: function() {
-    if (this.automationManager_)
-      this.automationManager_.selectCurrentNode();
-  },
+  selectCurrentNode() {
+    if (this.navigationManager_)
+      this.navigationManager_.selectCurrentNode();
+  }
 
   /**
    * Open the options page in a new tab.
-   *
    * @override
    */
-  showOptionsPage: function() {
-    let optionsPage = {url: 'options.html'};
+  showOptionsPage() {
+    const optionsPage = {url: 'options.html'};
     chrome.tabs.create(optionsPage);
-  },
+  }
+
+  /**
+   * Returns whether or not the feature flag
+   * for text editing is enabled.
+   * @return {boolean}
+   * @public
+   */
+  textEditingEnabled() {
+    return this.enableTextEditing_;
+  }
 
   /**
    * Return a list of the names of all user commands.
-   *
    * @override
-   * @return {!Array<string>}
+   * @return {!Array<!SAConstants.Command>}
    */
-  getCommands: function() {
-    return this.commands_.getCommands();
-  },
+  getCommands() {
+    return Object.values(SAConstants.Command);
+  }
 
   /**
-   * Return the default key code for a command.
-   *
-   * @override
+   * Checks if the given string is a valid Switch Access command.
    * @param {string} command
-   * @return {number}
+   * @return {boolean}
    */
-  getDefaultKeyCodeFor: function(command) {
-    return this.commands_.getDefaultKeyCodeFor(command);
-  },
+  hasCommand(command) {
+    return Object.values(SAConstants.Command).includes(command);
+  }
+
+  /**
+   * Forwards the keycodes received from keyPressed events to |callback|.
+   * @param {function(number)} callback
+   */
+  listenForKeycodes(callback) {
+    this.keyEventHandler_.listenForKeycodes(callback);
+  }
+
+  /**
+   * Stops forwarding keycodes.
+   */
+  stopListeningForKeycodes() {
+    this.keyEventHandler_.stopListeningForKeycodes();
+  }
 
   /**
    * Run the function binding for the specified command.
-   *
    * @override
-   * @param {string} command
+   * @param {!SAConstants.Command} command
    */
-  runCommand: function(command) {
+  runCommand(command) {
     this.commands_.runCommand(command);
-  },
+  }
 
   /**
    * Perform actions as the result of actions by the user. Currently, restarts
    * auto-scan if it is enabled.
-   *
    * @override
    */
-  performedUserAction: function() {
+  performedUserAction() {
     this.autoScanManager_.restartIfRunning();
-  },
+  }
 
   /**
    * Handle a change in user preferences.
-   *
-   * @param {!Event} event
-   * @private
+   * @override
+   * @param {!Object} changes
    */
-  handlePrefsUpdate_: function(event) {
-    let updatedPrefs = event.detail;
-    for (let key of Object.keys(updatedPrefs)) {
+  onPreferencesChanged(changes) {
+    for (const key of Object.keys(changes)) {
       switch (key) {
         case 'enableAutoScan':
-          this.autoScanManager_.setEnabled(updatedPrefs[key]);
+          this.autoScanManager_.setEnabled(changes[key]);
           break;
         case 'autoScanTime':
-          this.autoScanManager_.setScanTime(updatedPrefs[key]);
+          this.autoScanManager_.setScanTime(changes[key]);
           break;
         default:
-          if (this.commands_.getCommands().includes(key))
-            this.keyboardHandler_.updateSwitchAccessKeys();
+          if (this.hasCommand(key))
+            this.keyEventHandler_.updateSwitchAccessKeys();
       }
     }
-  },
+  }
 
   /**
    * Set the value of the preference |key| to |value| in chrome.storage.sync.
-   * this.prefs_ is not set until handleStorageChange_.
+   * Once the storage is set, the Switch Access preferences/behavior are
+   * updated.
    *
    * @override
-   * @param {string} key
-   * @param {boolean|string|number} value
+   * @param {SAConstants.Preference} key
+   * @param {boolean|number} value
    */
-  setPref: function(key, value) {
-    this.switchAccessPrefs_.setPref(key, value);
-  },
+  setPreference(key, value) {
+    this.switchAccessPreferences_.setPreference(key, value);
+  }
 
   /**
-   * Get the value of type 'boolean' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'boolean'.
+   * Get the boolean value for the given key. Will throw a type error if the
+   * value associated with |key| is not a boolean, or undefined.
    *
    * @override
-   * @param  {string} key
+   * @param  {SAConstants.Preference} key
    * @return {boolean}
    */
-  getBooleanPref: function(key) {
-    return this.switchAccessPrefs_.getBooleanPref(key);
-  },
+  getBooleanPreference(key) {
+    return this.switchAccessPreferences_.getBooleanPreference(key);
+  }
 
   /**
-   * Get the value of type 'number' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'number'.
+   * Get the number value for the given key. Will throw a type error if the
+   * value associated with |key| is not a number, or undefined.
    *
    * @override
-   * @param  {string} key
+   * @param  {SAConstants.Preference} key
    * @return {number}
    */
-  getNumberPref: function(key) {
-    return this.switchAccessPrefs_.getNumberPref(key);
-  },
+  getNumberPreference(key) {
+    return this.switchAccessPreferences_.getNumberPreference(key);
+  }
 
   /**
-   * Get the value of type 'string' of the preference |key|. Will throw a type
-   * error if the value of |key| is not 'string'.
+   * Get the number value for the given key, or |null| if none exists.
    *
    * @override
-   * @param  {string} key
-   * @return {string}
+   * @param  {SAConstants.Preference} key
+   * @return {number|null}
    */
-  getStringPref: function(key) {
-    return this.switchAccessPrefs_.getStringPref(key);
-  },
+  getNumberPreferenceIfDefined(key) {
+    return this.switchAccessPreferences_.getNumberPreferenceIfDefined(key);
+  }
 
   /**
    * Returns true if |keyCode| is already used to run a command from the
@@ -222,47 +270,23 @@ SwitchAccess.prototype = {
    * @param {number} keyCode
    * @return {boolean}
    */
-  keyCodeIsUsed: function(keyCode) {
-    return this.switchAccessPrefs_.keyCodeIsUsed(keyCode);
-  },
-
-  /**
-   * Move to the next sibling of the current node if it has one.
-   *
-   * @override
-   */
-  debugMoveToNext: function() {
-    if (this.automationManager_)
-      this.automationManager_.debugMoveToNext();
-  },
-
-  /**
-   * Move to the previous sibling of the current node if it has one.
-   *
-   * @override
-   */
-  debugMoveToPrevious: function() {
-    if (this.automationManager_)
-      this.automationManager_.debugMoveToPrevious();
-  },
-
-  /**
-   * Move to the first child of the current node if it has one.
-   *
-   * @override
-   */
-  debugMoveToFirstChild: function() {
-    if (this.automationManager_)
-      this.automationManager_.debugMoveToFirstChild();
-  },
-
-  /**
-   * Move to the parent of the current node if it has one.
-   *
-   * @override
-   */
-  debugMoveToParent: function() {
-    if (this.automationManager_)
-      this.automationManager_.debugMoveToParent();
+  keyCodeIsUsed(keyCode) {
+    return this.switchAccessPreferences_.keyCodeIsUsed(keyCode);
   }
-};
+
+  /**
+   * Sets up the connection between the menuPanel and menuManager.
+   * @param {!PanelInterface} menuPanel
+   * @return {MenuManager}
+   */
+  connectMenuPanel(menuPanel) {
+    // Because this may be called before init_(), check if navigationManager_
+    // is initialized.
+    if (this.navigationManager_)
+      return this.navigationManager_.connectMenuPanel(menuPanel);
+
+    // If not, set navReadyCallback_ to have the menuPanel try again.
+    this.navReadyCallback_ = menuPanel.connectToBackground.bind(menuPanel);
+    return null;
+  }
+}

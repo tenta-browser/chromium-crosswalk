@@ -9,6 +9,7 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataType;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
+import org.chromium.chrome.browser.profiles.Profile;
 
 /**
  * Communicates between ClearBrowsingData, ImportantSitesUtils (C++) and
@@ -86,11 +87,10 @@ public final class BrowsingDataBridge {
      * @param listener A listener to call back when the clearing is finished.
      * @param dataTypes An array of browsing data types to delete, represented as values from
      *                  the shared enum {@link BrowsingDataType}.
-     * @param timePeriod The time period for which to delete the data, represented as a value from
-     *                   the shared enum {@link TimePeriod}.
+     * @param timePeriod The time period for which to delete the data.
      */
     public void clearBrowsingData(
-            OnClearBrowsingDataListener listener, int[] dataTypes, int timePeriod) {
+            OnClearBrowsingDataListener listener, int[] dataTypes, @TimePeriod int timePeriod) {
         clearBrowsingDataExcludingDomains(listener, dataTypes, timePeriod, new String[0],
                 new int[0], new String[0], new int[0]);
     }
@@ -103,8 +103,7 @@ public final class BrowsingDataBridge {
      * @param listener A listener to call back when the clearing is finished.
      * @param dataTypes An array of browsing data types to delete, represented as values from
      *                  the shared enum {@link BrowsingDataType}.
-     * @param timePeriod The time period for which to delete the data, represented as a value from
-     *                   the shared enum {@link TimePeriod}.
+     * @param timePeriod The time period for which to delete the data.
      * @param blacklistDomains A list of registerable domains that we don't clear data for.
      * @param blacklistedDomainReasons A list of the reason metadata for the blacklisted domains.
      * @param ignoredDomains A list of ignored domains that the user chose to not blacklist. We use
@@ -112,12 +111,26 @@ public final class BrowsingDataBridge {
      * @param ignoredDomainReasons A list of reason metadata for the ignored domains.
      */
     public void clearBrowsingDataExcludingDomains(OnClearBrowsingDataListener listener,
-            int[] dataTypes, int timePeriod, String[] blacklistDomains,
+            int[] dataTypes, @TimePeriod int timePeriod, String[] blacklistDomains,
             int[] blacklistedDomainReasons, String[] ignoredDomains, int[] ignoredDomainReasons) {
         assert mClearBrowsingDataListener == null;
         mClearBrowsingDataListener = listener;
-        nativeClearBrowsingData(dataTypes, timePeriod, blacklistDomains, blacklistedDomainReasons,
-                ignoredDomains, ignoredDomainReasons);
+        nativeClearBrowsingData(getProfile(), dataTypes, timePeriod, blacklistDomains,
+                blacklistedDomainReasons, ignoredDomains, ignoredDomainReasons);
+    }
+
+    /**
+     * This method tests clearing of specified types of browsing data for incognito profile.
+     * @param dataTypes An array of browsing data types to delete, represented as values from
+     *                  the shared enum {@link BrowsingDataType}.
+     * @param timePeriod The time period for which to delete the data.
+     */
+    public void clearBrowsingDataIncognitoForTesting(
+            OnClearBrowsingDataListener listener, int[] dataTypes, @TimePeriod int timePeriod) {
+        assert mClearBrowsingDataListener == null;
+        mClearBrowsingDataListener = listener;
+        nativeClearBrowsingData(getProfile().getOffTheRecordProfile(), dataTypes, timePeriod,
+                new String[0], new int[0], new String[0], new int[0]);
     }
 
     /**
@@ -130,7 +143,7 @@ public final class BrowsingDataBridge {
      * @param callback The callback that will be used to set the list of important sites.
      */
     public static void fetchImportantSites(ImportantSitesCallback callback) {
-        nativeFetchImportantSites(callback);
+        nativeFetchImportantSites(getProfile(), callback);
     }
 
     /**
@@ -144,7 +157,7 @@ public final class BrowsingDataBridge {
     /** This lets us mark an origin as important for testing. */
     @VisibleForTesting
     public static void markOriginAsImportantForTesting(String origin) {
-        nativeMarkOriginAsImportantForTesting(origin);
+        nativeMarkOriginAsImportantForTesting(getProfile(), origin);
     }
 
     /**
@@ -154,15 +167,25 @@ public final class BrowsingDataBridge {
      */
     public void requestInfoAboutOtherFormsOfBrowsingHistory(
             OtherFormsOfBrowsingHistoryListener listener) {
-        nativeRequestInfoAboutOtherFormsOfBrowsingHistory(listener);
+        nativeRequestInfoAboutOtherFormsOfBrowsingHistory(getProfile(), listener);
     }
 
-    private native void nativeClearBrowsingData(int[] dataTypes, int timePeriod,
+    /**
+     * @returns The profile on which all UI-based browsing data operations should be performed,
+     *         which is the currently active regular profile.
+     */
+    private static Profile getProfile() {
+        return Profile.getLastUsedProfile().getOriginalProfile();
+    }
+
+    private native void nativeClearBrowsingData(Profile profile, int[] dataTypes, int timePeriod,
             String[] blacklistDomains, int[] blacklistedDomainReasons, String[] ignoredDomains,
             int[] ignoredDomainReasons);
     private native void nativeRequestInfoAboutOtherFormsOfBrowsingHistory(
-            OtherFormsOfBrowsingHistoryListener listener);
-    private static native void nativeFetchImportantSites(ImportantSitesCallback callback);
+            Profile profile, OtherFormsOfBrowsingHistoryListener listener);
+    private static native void nativeFetchImportantSites(
+            Profile profile, ImportantSitesCallback callback);
     private static native int nativeGetMaxImportantSites();
-    private static native void nativeMarkOriginAsImportantForTesting(String origin);
+    private static native void nativeMarkOriginAsImportantForTesting(
+            Profile profile, String origin);
 }

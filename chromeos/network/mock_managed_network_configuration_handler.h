@@ -7,15 +7,15 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/values.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace chromeos {
 
-class CHROMEOS_EXPORT MockManagedNetworkConfigurationHandler
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) MockManagedNetworkConfigurationHandler
     : public ManagedNetworkConfigurationHandler {
  public:
   MockManagedNetworkConfigurationHandler();
@@ -37,6 +37,11 @@ class CHROMEOS_EXPORT MockManagedNetworkConfigurationHandler
   MOCK_METHOD4(SetProperties,
                void(const std::string& service_path,
                     const base::DictionaryValue& user_settings,
+                    const base::Closure& callback,
+                    const network_handler::ErrorCallback& error_callback));
+  MOCK_METHOD4(SetManagerProperty,
+               void(const std::string& property_name,
+                    const base::Value& value,
                     const base::Closure& callback,
                     const network_handler::ErrorCallback& error_callback));
   MOCK_CONST_METHOD4(
@@ -75,6 +80,10 @@ class CHROMEOS_EXPORT MockManagedNetworkConfigurationHandler
       const base::DictionaryValue*(const std::string& guid,
                                    const std::string& profile_path,
                                    ::onc::ONCSource* onc_source));
+  MOCK_CONST_METHOD0(AllowOnlyPolicyNetworksToConnect, bool());
+  MOCK_CONST_METHOD0(AllowOnlyPolicyNetworksToConnectIfAvailable, bool());
+  MOCK_CONST_METHOD0(AllowOnlyPolicyNetworksToAutoconnect, bool());
+  MOCK_CONST_METHOD0(GetBlacklistedHexSSIDs, std::vector<std::string>());
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockManagedNetworkConfigurationHandler);

@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -18,6 +17,7 @@
 #include "net/log/net_log_source.h"
 #include "net/server/http_server_request_info.h"
 #include "net/socket/tcp_server_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 const int kBufferSize = 100 * 1024 * 1024;  // 100 MB
@@ -33,7 +33,7 @@ TestHttpServer::~TestHttpServer() {
 }
 
 bool TestHttpServer::Start() {
-  base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
+  base::Thread::Options options(base::MessagePump::Type::IO, 0);
   bool thread_started = thread_.StartWithOptions(options);
   EXPECT_TRUE(thread_started);
   if (!thread_started)
@@ -102,10 +102,11 @@ void TestHttpServer::OnWebSocketRequest(
 
   switch (action) {
     case kAccept:
-      server_->AcceptWebSocket(connection_id, info);
+      server_->AcceptWebSocket(connection_id, info,
+                               TRAFFIC_ANNOTATION_FOR_TESTS);
       break;
     case kNotFound:
-      server_->Send404(connection_id);
+      server_->Send404(connection_id, TRAFFIC_ANNOTATION_FOR_TESTS);
       break;
     case kClose:
       server_->Close(connection_id);
@@ -113,20 +114,20 @@ void TestHttpServer::OnWebSocketRequest(
   }
 }
 
-void TestHttpServer::OnWebSocketMessage(int connection_id,
-                                        const std::string& data) {
+void TestHttpServer::OnWebSocketMessage(int connection_id, std::string data) {
   WebSocketMessageAction action;
   base::Closure callback;
   {
     base::AutoLock lock(action_lock_);
     action = message_action_;
-    callback = base::ResetAndReturn(&message_callback_);
+    callback = std::move(message_callback_);
   }
   if (!callback.is_null())
     callback.Run();
   switch (action) {
     case kEchoMessage:
-      server_->SendOverWebSocket(connection_id, data);
+      server_->SendOverWebSocket(connection_id, data,
+                                 TRAFFIC_ANNOTATION_FOR_TESTS);
       break;
     case kCloseOnMessage:
       server_->Close(connection_id);

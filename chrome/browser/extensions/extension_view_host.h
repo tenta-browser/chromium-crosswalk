@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/notification_observer.h"
@@ -53,8 +54,8 @@ class ExtensionViewHost
 
   // Handles keyboard events that were not handled by HandleKeyboardEvent().
   // Platform specific implementation may override this method to handle the
-  // event in platform specific way.
-  virtual void UnhandledKeyboardEvent(
+  // event in platform specific way. Returns whether the events are handled.
+  virtual bool UnhandledKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event);
 
@@ -71,7 +72,7 @@ class ExtensionViewHost
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
   bool PreHandleGestureEvent(content::WebContents* source,
@@ -79,9 +80,11 @@ class ExtensionViewHost
   content::ColorChooser* OpenColorChooser(
       content::WebContents* web_contents,
       SkColor color,
-      const std::vector<content::ColorSuggestion>& suggestions) override;
+      const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
+      override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
-                      const content::FileChooserParams& params) override;
+                      std::unique_ptr<content::FileSelectListener> listener,
+                      const blink::mojom::FileChooserParams& params) override;
   void ResizeDueToAutoResize(content::WebContents* source,
                              const gfx::Size& new_size) override;
 
@@ -115,7 +118,6 @@ class ExtensionViewHost
   static std::unique_ptr<ExtensionView> CreateExtensionView(
       ExtensionViewHost* host,
       Browser* browser);
-
   // Optional view that shows the rendered content in the UI.
   std::unique_ptr<ExtensionView> view_;
 

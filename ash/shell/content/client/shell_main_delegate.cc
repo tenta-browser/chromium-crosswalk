@@ -5,11 +5,14 @@
 #include "ash/shell/content/client/shell_main_delegate.h"
 
 #include "ash/shell/content/client/shell_content_browser_client.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "base/path_service.h"
-#include "content/public/common/content_switches.h"
-#include "ui/base/ime/input_method_initializer.h"
+#include "content/public/utility/utility_thread.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "ui/base/ime/init/input_method_initializer.h"
 #include "ui/base/resource/resource_bundle.h"
 
 namespace ash {
@@ -20,13 +23,7 @@ ShellMainDelegate::ShellMainDelegate() = default;
 ShellMainDelegate::~ShellMainDelegate() = default;
 
 bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  std::string process_type =
-      command_line.GetSwitchValueASCII(switches::kProcessType);
-
   content::SetContentClient(&content_client_);
-
   return false;
 }
 
@@ -43,7 +40,7 @@ content::ContentBrowserClient* ShellMainDelegate::CreateContentBrowserClient() {
 void ShellMainDelegate::InitializeResourceBundle() {
   // Load ash resources and strings; not 'common' (Chrome) resources.
   base::FilePath path;
-  PathService::Get(base::DIR_MODULE, &path);
+  base::PathService::Get(base::DIR_MODULE, &path);
   base::FilePath ash_test_strings =
       path.Append(FILE_PATH_LITERAL("ash_test_strings.pak"));
 

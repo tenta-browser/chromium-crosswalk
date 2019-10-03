@@ -11,19 +11,17 @@
 namespace ash {
 
 // Title row for the network section of quick settings, which displays the name
-// of a network type (e.g., Wi-Fi or Mobile data). Supports displaying a title
-// by itself or a title with an associated subtitle.
+// of a network type (e.g., Wi-Fi or Mobile data).
 class ASH_EXPORT NetworkRowTitleView : public views::View {
  public:
   explicit NetworkRowTitleView(int title_message_id);
   ~NetworkRowTitleView() override;
 
-  // Sets the subtitle. If |message_id| is 0, no subtitle will be shown.
-  void SetSubtitle(int subtitle_message_id);
+  // views::View:
+  const char* GetClassName() const override;
 
  private:
   views::Label* const title_;
-  views::Label* const subtitle_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkRowTitleView);
 };

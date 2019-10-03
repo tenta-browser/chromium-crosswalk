@@ -7,7 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/app_startup_parameters.h"
+#import "ios/chrome/app/app_startup_parameters.h"
 #import "ios/chrome/browser/first_run/first_run_metrics.h"
 
 // Values of the UMA Startup.MobileSessionCallerApp histogram.
@@ -25,12 +25,17 @@ enum MobileSessionCallerApp {
   CALLER_APP_GOOGLE_MAPS,
   CALLER_APP_NOT_AVAILABLE,  // Includes being launched from Smart App Banner.
   CALLER_APP_GOOGLE_CHROME_TODAY_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME_SEARCH_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME_CONTENT_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME_SHARE_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME,
   MOBILE_SESSION_CALLER_APP_COUNT,
 };
 
 @interface ChromeAppStartupParameters : AppStartupParameters
 
-- (instancetype)initWithExternalURL:(const GURL&)externalURL NS_UNAVAILABLE;
+- (instancetype)initWithExternalURL:(const GURL&)externalURL
+                        completeURL:(const GURL&)completeURL NS_UNAVAILABLE;
 
 - (instancetype)initWithExternalURL:(const GURL&)externalURL
                   declaredSourceApp:(NSString*)declaredSourceApp
@@ -97,7 +102,8 @@ enum MobileSessionCallerApp {
 @interface ChromeAppStartupParameters (Testing)
 
 + (instancetype)newAppStartupParametersForCommand:(NSString*)command
-                                  withExternalURL:(NSString*)externalURL
+                                 withExternalText:(NSString*)externalText
+                                 withExternalData:(NSData*)externalData
                                         withIndex:(NSNumber*)index
                                           withURL:(NSURL*)url
                             fromSourceApplication:(NSString*)appId

@@ -1,7 +1,7 @@
 include_rules = [
   "-content",
 
-  "+services/network/public/interfaces",
+  "+services/network/public/mojom",
   "+services/service_manager/public",
   "+services/service_manager/sandbox",
 
@@ -10,4 +10,5 @@ include_rules = [
   # available to code in content/public.
   "+content/common/content_export.h",
   "+content/public/common",
+  "+content/public/android/content_jni_headers",
 ]

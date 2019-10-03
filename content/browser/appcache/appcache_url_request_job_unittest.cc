@@ -17,11 +17,11 @@
 #include "base/containers/stack.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
@@ -38,14 +38,14 @@
 #include "net/url_request/url_request_error_job.h"
 #include "net/url_request/url_request_job_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 #include "url/gurl.h"
 
 using net::IOBuffer;
 using net::WrappedIOBuffer;
 
 namespace content {
-
-namespace {
+namespace appcache_url_request_job_unittest {
 
 const char kHttpBasicHeaders[] = "HTTP/1.0 200 OK\0Content-Length: 5\0\0";
 const char kHttpBasicBody[] = "Hello";
@@ -70,7 +70,7 @@ void SetIfCalled(bool* value) {
 
 class MockURLRequestJobFactory : public net::URLRequestJobFactory {
  public:
-  MockURLRequestJobFactory() {}
+  MockURLRequestJobFactory() = default;
 
   ~MockURLRequestJobFactory() override { DCHECK(!job_); }
 
@@ -109,7 +109,7 @@ class MockURLRequestJobFactory : public net::URLRequestJobFactory {
 
   bool IsHandledProtocol(const std::string& scheme) const override {
     return scheme == "http";
-  };
+  }
 
   bool IsSafeRedirectTarget(const GURL& location) const override {
     return false;
@@ -119,8 +119,6 @@ class MockURLRequestJobFactory : public net::URLRequestJobFactory {
   // This is mutable because MaybeCreateJobWithProtocolHandler is const.
   mutable std::unique_ptr<net::URLRequestJob> job_;
 };
-
-}  // namespace
 
 class AppCacheURLRequestJobTest : public testing::Test {
  public:
@@ -150,7 +148,8 @@ class AppCacheURLRequestJobTest : public testing::Test {
    public:
     explicit MockURLRequestDelegate(AppCacheURLRequestJobTest* test)
         : test_(test),
-          received_data_(new net::IOBuffer(kNumBlocks * kBlockSize)),
+          received_data_(
+              base::MakeRefCounted<net::IOBuffer>(kNumBlocks * kBlockSize)),
           did_receive_headers_(false),
           amount_received_(0),
           kill_after_amount_received_(0),
@@ -200,8 +199,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     void ReadSome(net::URLRequest* request) {
       DCHECK(amount_received_ + kBlockSize <= kNumBlocks * kBlockSize);
-      scoped_refptr<IOBuffer> wrapped_buffer(
-          new net::WrappedIOBuffer(received_data_->data() + amount_received_));
+      scoped_refptr<IOBuffer> wrapped_buffer =
+          base::MakeRefCounted<net::WrappedIOBuffer>(received_data_->data() +
+                                                     amount_received_);
       EXPECT_EQ(net::ERR_IO_PENDING,
                 request->Read(wrapped_buffer.get(), kBlockSize));
     }
@@ -231,8 +231,10 @@ class AppCacheURLRequestJobTest : public testing::Test {
   }
 
   static void SetUpTestCase() {
-    scoped_task_environment_.reset(new base::test::ScopedTaskEnvironment());
-    io_thread_.reset(new base::Thread("AppCacheURLRequestJobTest Thread"));
+    scoped_task_environment_ =
+        std::make_unique<base::test::ScopedTaskEnvironment>();
+    io_thread_ =
+        std::make_unique<base::Thread>("AppCacheURLRequestJobTest Thread");
     base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
     io_thread_->StartWithOptions(options);
   }
@@ -246,9 +248,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
   template <class Method>
   void RunTestOnIOThread(Method method) {
-    test_finished_event_.reset(new base::WaitableEvent(
+    test_finished_event_ = std::make_unique<base::WaitableEvent>(
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
-        base::WaitableEvent::InitialState::NOT_SIGNALED));
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     io_thread_->task_runner()->PostTask(
         FROM_HERE,
         base::BindOnce(&AppCacheURLRequestJobTest::MethodWrapper<Method>,
@@ -260,8 +262,8 @@ class AppCacheURLRequestJobTest : public testing::Test {
     DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
     DCHECK(task_stack_.empty());
 
-    storage_delegate_.reset(new MockStorageDelegate(this));
-    service_.reset(new MockAppCacheService());
+    storage_delegate_ = std::make_unique<MockStorageDelegate>(this);
+    service_ = std::make_unique<MockAppCacheService>();
     expected_read_result_ = 0;
     expected_write_result_ = 0;
     written_response_id_ = 0;
@@ -270,9 +272,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     restart_callback_invoked_ = false;
 
-    url_request_delegate_.reset(new MockURLRequestDelegate(this));
-    job_factory_.reset(new MockURLRequestJobFactory());
-    empty_context_.reset(new net::URLRequestContext());
+    url_request_delegate_ = std::make_unique<MockURLRequestDelegate>(this);
+    job_factory_ = std::make_unique<MockURLRequestJobFactory>();
+    empty_context_ = std::make_unique<net::URLRequestContext>();
     empty_context_->set_job_factory(job_factory_.get());
   }
 
@@ -340,49 +342,51 @@ class AppCacheURLRequestJobTest : public testing::Test {
   // Wrappers to call AppCacheResponseReader/Writer Read and Write methods
 
   void WriteBasicResponse() {
-    scoped_refptr<IOBuffer> body(new WrappedIOBuffer(kHttpBasicBody));
-    std::string raw_headers(kHttpBasicHeaders, arraysize(kHttpBasicHeaders));
+    scoped_refptr<IOBuffer> body =
+        base::MakeRefCounted<WrappedIOBuffer>(kHttpBasicBody);
+    std::string raw_headers(kHttpBasicHeaders, base::size(kHttpBasicHeaders));
     WriteResponse(
         MakeHttpResponseInfo(raw_headers), body.get(), strlen(kHttpBasicBody));
   }
 
-  void WriteResponse(net::HttpResponseInfo* head,
-                     IOBuffer* body, int body_len) {
+  void WriteResponse(std::unique_ptr<net::HttpResponseInfo> head,
+                     IOBuffer* body,
+                     int body_len) {
     DCHECK(body);
     scoped_refptr<IOBuffer> body_ref(body);
     PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::WriteResponseBody,
                                 base::Unretained(this), body_ref, body_len));
-    WriteResponseHead(head);
+    WriteResponseHead(std::move(head));
   }
 
-  void WriteResponseHead(net::HttpResponseInfo* head) {
+  void WriteResponseHead(std::unique_ptr<net::HttpResponseInfo> head) {
     EXPECT_FALSE(writer_->IsWritePending());
-    expected_write_result_ = GetHttpResponseInfoSize(head);
-    write_info_buffer_ = new HttpResponseInfoIOBuffer(head);
+    expected_write_result_ = GetHttpResponseInfoSize(*head);
+    write_info_buffer_ =
+        base::MakeRefCounted<HttpResponseInfoIOBuffer>(std::move(head));
     writer_->WriteInfo(
         write_info_buffer_.get(),
-        base::Bind(&AppCacheURLRequestJobTest::OnWriteInfoComplete,
-                   base::Unretained(this)));
+        base::BindOnce(&AppCacheURLRequestJobTest::OnWriteInfoComplete,
+                       base::Unretained(this)));
   }
 
   void WriteResponseBody(scoped_refptr<IOBuffer> io_buffer, int buf_len) {
     EXPECT_FALSE(writer_->IsWritePending());
     write_buffer_ = io_buffer;
     expected_write_result_ = buf_len;
-    writer_->WriteData(write_buffer_.get(),
-                       buf_len,
-                       base::Bind(&AppCacheURLRequestJobTest::OnWriteComplete,
-                                  base::Unretained(this)));
+    writer_->WriteData(
+        write_buffer_.get(), buf_len,
+        base::BindOnce(&AppCacheURLRequestJobTest::OnWriteComplete,
+                       base::Unretained(this)));
   }
 
   void ReadResponseBody(scoped_refptr<IOBuffer> io_buffer, int buf_len) {
     EXPECT_FALSE(reader_->IsReadPending());
     read_buffer_ = io_buffer;
     expected_read_result_ = buf_len;
-    reader_->ReadData(read_buffer_.get(),
-                      buf_len,
-                      base::Bind(&AppCacheURLRequestJobTest::OnReadComplete,
-                                 base::Unretained(this)));
+    reader_->ReadData(read_buffer_.get(), buf_len,
+                      base::BindOnce(&AppCacheURLRequestJobTest::OnReadComplete,
+                                     base::Unretained(this)));
   }
 
   // AppCacheResponseReader / Writer completion callbacks
@@ -413,36 +417,36 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
   // Helpers to work with HttpResponseInfo objects
 
-  net::HttpResponseInfo* MakeHttpResponseInfo(const std::string& raw_headers) {
-    net::HttpResponseInfo* info = new net::HttpResponseInfo;
+  std::unique_ptr<net::HttpResponseInfo> MakeHttpResponseInfo(
+      const std::string& raw_headers) {
+    std::unique_ptr<net::HttpResponseInfo> info =
+        std::make_unique<net::HttpResponseInfo>();
     info->request_time = base::Time::Now();
     info->response_time = base::Time::Now();
     info->was_cached = false;
-    info->headers = new net::HttpResponseHeaders(raw_headers);
+    info->headers = base::MakeRefCounted<net::HttpResponseHeaders>(raw_headers);
     return info;
   }
 
-  int GetHttpResponseInfoSize(const net::HttpResponseInfo* info) {
-    base::Pickle pickle;
-    return PickleHttpResonseInfo(&pickle, info);
+  int GetHttpResponseInfoSize(const net::HttpResponseInfo& info) {
+    base::Pickle pickle = PickleHttpResonseInfo(info);
+    return pickle.size();
   }
 
-  bool CompareHttpResponseInfos(const net::HttpResponseInfo* info1,
-                                const net::HttpResponseInfo* info2) {
-    base::Pickle pickle1;
-    base::Pickle pickle2;
-    PickleHttpResonseInfo(&pickle1, info1);
-    PickleHttpResonseInfo(&pickle2, info2);
+  bool CompareHttpResponseInfos(const net::HttpResponseInfo& info1,
+                                const net::HttpResponseInfo& info2) {
+    base::Pickle pickle1 = PickleHttpResonseInfo(info1);
+    base::Pickle pickle2 = PickleHttpResonseInfo(info2);
     return (pickle1.size() == pickle2.size()) &&
            (0 == memcmp(pickle1.data(), pickle2.data(), pickle1.size()));
   }
 
-  int PickleHttpResonseInfo(base::Pickle* pickle,
-                            const net::HttpResponseInfo* info) {
+  base::Pickle PickleHttpResonseInfo(const net::HttpResponseInfo& info) {
     const bool kSkipTransientHeaders = true;
     const bool kTruncated = false;
-    info->Persist(pickle, kSkipTransientHeaders, kTruncated);
-    return pickle->size();
+    base::Pickle pickle;
+    info.Persist(&pickle, kSkipTransientHeaders, kTruncated);
+    return pickle;
   }
 
   // Helpers to fill and verify blocks of memory with a value
@@ -472,9 +476,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     // Create an instance and see that it looks as expected.
 
-    std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::BindOnce(&ExpectNotRestarted)));
+    auto job = std::make_unique<AppCacheURLRequestJob>(
+        request_.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     EXPECT_TRUE(job->IsWaiting());
     EXPECT_FALSE(job->IsDeliveringAppCacheResponse());
     EXPECT_FALSE(job->IsDeliveringNetworkResponse());
@@ -482,7 +486,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
     EXPECT_FALSE(job->IsStarted());
     EXPECT_FALSE(job->has_been_killed());
     EXPECT_EQ(GURL(), job->manifest_url());
-    EXPECT_EQ(kAppCacheNoCacheId, job->cache_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoCacheId, job->cache_id());
     EXPECT_FALSE(job->entry().has_response_id());
 
     TestFinished();
@@ -498,23 +502,23 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // Create an instance, give it a delivery order and see that
     // it looks as expected.
 
-    std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request.get(), nullptr, storage, nullptr,
-                                  false, base::BindOnce(&ExpectNotRestarted)));
+    auto job = std::make_unique<AppCacheURLRequestJob>(
+        request.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     job->DeliverErrorResponse();
     EXPECT_TRUE(job->IsDeliveringErrorResponse());
     EXPECT_FALSE(job->IsStarted());
 
-    job.reset(new AppCacheURLRequestJob(request.get(), nullptr, storage,
-                                        nullptr, false,
-                                        base::BindOnce(&ExpectNotRestarted)));
+    job = std::make_unique<AppCacheURLRequestJob>(
+        request.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     job->DeliverNetworkResponse();
     EXPECT_TRUE(job->IsDeliveringNetworkResponse());
     EXPECT_FALSE(job->IsStarted());
 
-    job.reset(new AppCacheURLRequestJob(request.get(), nullptr, storage,
-                                        nullptr, false,
-                                        base::BindOnce(&ExpectNotRestarted)));
+    job = std::make_unique<AppCacheURLRequestJob>(
+        request.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     const GURL kManifestUrl("http://blah/");
     const int64_t kCacheId(1);
     const AppCacheEntry kEntry(AppCacheEntry::EXPLICIT, 1);
@@ -545,9 +549,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     // Set up to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
-    std::unique_ptr<AppCacheURLRequestJob> mock_job(new AppCacheURLRequestJob(
+    auto mock_job = std::make_unique<AppCacheURLRequestJob>(
         request_.get(), nullptr, storage, nullptr, false,
-        base::BindOnce(&SetIfCalled, &restart_callback_invoked_)));
+        base::BindOnce(&SetIfCalled, &restart_callback_invoked_));
     mock_job->DeliverNetworkResponse();
     EXPECT_TRUE(mock_job->IsDeliveringNetworkResponse());
     EXPECT_FALSE(mock_job->IsStarted());
@@ -583,9 +587,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     // Setup to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
-    std::unique_ptr<AppCacheURLRequestJob> mock_job(
-        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::BindOnce(&ExpectNotRestarted)));
+    auto mock_job = std::make_unique<AppCacheURLRequestJob>(
+        request_.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     mock_job->DeliverErrorResponse();
     EXPECT_TRUE(mock_job->IsDeliveringErrorResponse());
     EXPECT_FALSE(mock_job->IsStarted());
@@ -621,7 +625,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
         base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
                        base::Unretained(this), false));
 
-    writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
+    writer_ = service_->storage()->CreateResponseWriter(GURL());
     written_response_id_ = writer_->response_id();
     WriteBasicResponse();
     // Continues async
@@ -635,9 +639,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     // Setup to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
-    std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::BindOnce(&ExpectNotRestarted)));
+    auto job = std::make_unique<AppCacheURLRequestJob>(
+        request_.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
 
     if (start_after_delivery_orders) {
       job->DeliverAppCachedResponse(
@@ -669,8 +673,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void VerifyDeliverSmallAppCachedResponse() {
     EXPECT_EQ(net::OK, url_request_delegate_->request_status());
     EXPECT_TRUE(CompareHttpResponseInfos(
-        write_info_buffer_->http_info.get(),
-        &url_request_delegate_->received_info_));
+        *write_info_buffer_->http_info, url_request_delegate_->received_info_));
     EXPECT_EQ(5, url_request_delegate_->amount_received_);
     EXPECT_EQ(0, memcmp(kHttpBasicBody,
                         url_request_delegate_->received_data_->data(),
@@ -694,7 +697,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
         base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
                        base::Unretained(this), true));
 
-    writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
+    writer_ = service_->storage()->CreateResponseWriter(GURL());
     written_response_id_ = writer_->response_id();
     WriteLargeResponse();
     // Continues async
@@ -704,11 +707,12 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 3, 1k blocks
     static const char kHttpHeaders[] =
         "HTTP/1.0 200 OK\0Content-Length: 3072\0\0";
-    scoped_refptr<IOBuffer> body(new IOBuffer(kBlockSize * 3));
+    scoped_refptr<IOBuffer> body =
+        base::MakeRefCounted<IOBuffer>(kBlockSize * 3);
     char* p = body->data();
     for (int i = 0; i < 3; ++i, p += kBlockSize)
       FillData(i + 1, p, kBlockSize);
-    std::string raw_headers(kHttpHeaders, arraysize(kHttpHeaders));
+    std::string raw_headers(kHttpHeaders, base::size(kHttpHeaders));
     WriteResponse(
         MakeHttpResponseInfo(raw_headers), body.get(), kBlockSize * 3);
   }
@@ -716,8 +720,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void VerifyDeliverLargeAppCachedResponse() {
     EXPECT_EQ(net::OK, url_request_delegate_->request_status());
     EXPECT_TRUE(CompareHttpResponseInfos(
-        write_info_buffer_->http_info.get(),
-        &url_request_delegate_->received_info_));
+        *write_info_buffer_->http_info, url_request_delegate_->received_info_));
     EXPECT_EQ(3072, url_request_delegate_->amount_received_);
     char* p = url_request_delegate_->received_data_->data();
     for (int i = 0; i < 3; ++i, p += kBlockSize)
@@ -737,7 +740,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
                        base::Unretained(this)));
     PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::MakeRangeRequest,
                                 base::Unretained(this)));
-    writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
+    writer_ = service_->storage()->CreateResponseWriter(GURL());
     written_response_id_ = writer_->response_id();
     WriteBasicResponse();
     // Continues async
@@ -755,9 +758,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
     request_->SetExtraRequestHeaders(extra_headers);
 
     // Create job with orders to deliver an appcached entry.
-    std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::BindOnce(&ExpectNotRestarted)));
+    auto job = std::make_unique<AppCacheURLRequestJob>(
+        request_.get(), nullptr, storage, nullptr, false,
+        base::BindOnce(&ExpectNotRestarted));
     job->DeliverAppCachedResponse(
         GURL(), 111,
         AppCacheEntry(AppCacheEntry::EXPLICIT, written_response_id_), false);
@@ -804,7 +807,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
         base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
                        base::Unretained(this), true));
 
-    writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
+    writer_ = service_->storage()->CreateResponseWriter(GURL());
     written_response_id_ = writer_->response_id();
     WriteLargeResponse();
 
@@ -832,7 +835,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
         base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
                        base::Unretained(this), true));
 
-    writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
+    writer_ = service_->storage()->CreateResponseWriter(GURL());
     written_response_id_ = writer_->response_id();
     WriteLargeResponse();
 
@@ -915,4 +918,5 @@ TEST_F(AppCacheURLRequestJobTest, CancelRequestWithIOPending) {
   RunTestOnIOThread(&AppCacheURLRequestJobTest::CancelRequestWithIOPending);
 }
 
+}  // namespace appcache_url_request_job_unittest
 }  // namespace content

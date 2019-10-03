@@ -4,12 +4,15 @@
 
 #include "device/bluetooth/test/fake_peripheral.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device/bluetooth/test/fake_remote_gatt_service.h"
 
 namespace bluetooth {
@@ -35,7 +38,20 @@ void FakePeripheral::SetSystemConnected(bool connected) {
 }
 
 void FakePeripheral::SetServiceUUIDs(UUIDSet service_uuids) {
-  service_uuids_ = std::move(service_uuids);
+  device::BluetoothDevice::GattServiceMap gatt_services;
+  bool inserted;
+
+  // Create a temporary map of services, because ReplaceServiceUUIDs expects a
+  // GattServiceMap even though it only uses the UUIDs.
+  int count = 0;
+  for (const auto& uuid : service_uuids) {
+    std::string id = base::NumberToString(count++);
+    std::tie(std::ignore, inserted) =
+        gatt_services.emplace(id, std::make_unique<FakeRemoteGattService>(
+                                      id, uuid, /*is_primary=*/true, this));
+    DCHECK(inserted);
+  }
+  device_uuids_.ReplaceServiceUUIDs(gatt_services);
 }
 
 void FakePeripheral::SetNextGATTConnectionResponse(uint16_t code) {
@@ -66,6 +82,7 @@ void FakePeripheral::SimulateGATTDisconnection() {
   // for more details.
   system_connected_ = false;
   gatt_connected_ = false;
+  device_uuids_.ClearServiceUUIDs();
   SetGattServicesDiscoveryComplete(false);
   DidDisconnectGatt();
 }
@@ -86,6 +103,16 @@ std::string FakePeripheral::AddFakeService(
 
   DCHECK(inserted);
   return it->second->GetIdentifier();
+}
+
+bool FakePeripheral::RemoveFakeService(const std::string& identifier) {
+  auto it = gatt_services_.find(identifier);
+  if (it == gatt_services_.end()) {
+    return false;
+  }
+
+  gatt_services_.erase(it);
+  return true;
 }
 
 uint32_t FakePeripheral::GetBluetoothClass() const {
@@ -168,10 +195,6 @@ bool FakePeripheral::IsConnectable() const {
 bool FakePeripheral::IsConnecting() const {
   NOTREACHED();
   return false;
-}
-
-device::BluetoothDevice::UUIDSet FakePeripheral::GetUUIDs() const {
-  return service_uuids_;
 }
 
 bool FakePeripheral::ExpectingPinCode() const {
@@ -281,8 +304,8 @@ bool FakePeripheral::IsGattServicesDiscoveryComplete() const {
   if (!pending_gatt_discovery_ && !discovery_complete) {
     pending_gatt_discovery_ = true;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&FakePeripheral::DispatchDiscoveryResponse,
-                              weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&FakePeripheral::DispatchDiscoveryResponse,
+                                  weak_ptr_factory_.GetWeakPtr()));
   }
 
   return discovery_complete;
@@ -290,8 +313,8 @@ bool FakePeripheral::IsGattServicesDiscoveryComplete() const {
 
 void FakePeripheral::CreateGattConnectionImpl() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakePeripheral::DispatchConnectionResponse,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&FakePeripheral::DispatchConnectionResponse,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FakePeripheral::DispatchConnectionResponse() {
@@ -318,6 +341,7 @@ void FakePeripheral::DispatchDiscoveryResponse() {
 
   pending_gatt_discovery_ = false;
   if (code == mojom::kHCISuccess) {
+    device_uuids_.ReplaceServiceUUIDs(gatt_services_);
     SetGattServicesDiscoveryComplete(true);
     GetAdapter()->NotifyGattServicesDiscovered(this);
   } else {
@@ -327,5 +351,18 @@ void FakePeripheral::DispatchDiscoveryResponse() {
 
 void FakePeripheral::DisconnectGatt() {
 }
+
+#if defined(OS_CHROMEOS)
+void FakePeripheral::ExecuteWrite(
+    const base::Closure& callback,
+    const ExecuteWriteErrorCallback& error_callback) {
+  NOTIMPLEMENTED();
+}
+
+void FakePeripheral::AbortWrite(const base::Closure& callback,
+                                const AbortWriteErrorCallback& error_callback) {
+  NOTIMPLEMENTED();
+}
+#endif
 
 }  // namespace bluetooth

@@ -14,11 +14,11 @@ import android.os.Build;
 import android.text.SpannableString;
 import android.text.style.LocaleSpan;
 import android.util.SparseArray;
-import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.content_public.browser.WebContents;
 
@@ -34,31 +34,36 @@ public class LollipopWebContentsAccessibility extends KitKatWebContentsAccessibi
             new SparseArray<AccessibilityAction>();
     private String mSystemLanguageTag;
     private BroadcastReceiver mBroadcastReceiver;
-    private Context mContext;
-    private boolean isRegistered = false;
 
-    LollipopWebContentsAccessibility(Context context, ViewGroup containerView,
-            WebContents webContents, boolean shouldFocusOnPageLoad) {
-        super(context, containerView, webContents, shouldFocusOnPageLoad);
-        mContext = context;
+    LollipopWebContentsAccessibility(WebContents webContents) {
+        super(webContents);
+    }
+
+    @Override
+    protected void onNativeInit() {
+        super.onNativeInit();
         mBroadcastReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 mSystemLanguageTag = Locale.getDefault().toLanguageTag();
             }
         };
+
+        // Register a broadcast receiver for locale change for Lollipop or higher version.
+        if (mView.isAttachedToWindow()) registerLocaleChangeReceiver();
     }
 
     @Override
     protected void setAccessibilityNodeInfoLollipopAttributes(AccessibilityNodeInfo node,
             boolean canOpenPopup, boolean contentInvalid, boolean dismissable, boolean multiLine,
-            int inputType, int liveRegion) {
+            int inputType, int liveRegion, String errorMessage) {
         node.setCanOpenPopup(canOpenPopup);
         node.setContentInvalid(contentInvalid);
         node.setDismissable(contentInvalid);
         node.setMultiLine(multiLine);
         node.setInputType(inputType);
         node.setLiveRegion(liveRegion);
+        node.setError(errorMessage);
     }
 
     @Override
@@ -154,24 +159,22 @@ public class LollipopWebContentsAccessibility extends KitKatWebContentsAccessibi
 
     @Override
     public void onDetachedFromWindow() {
-        if (isRegistered) {
-            try {
-                mContext.unregisterReceiver(mBroadcastReceiver);
-            } catch (Exception e) {
-                // WebView may be running inside a BroadcastReceiver, in which case registerReceiver
-                // is
-                // not allowed.
-            }
-        }
-        isRegistered = false;
+        super.onDetachedFromWindow();
+        if (!isNativeInitialized()) return;
+        ContextUtils.getApplicationContext().unregisterReceiver(mBroadcastReceiver);
     }
 
     @Override
     public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        registerLocaleChangeReceiver();
+    }
+
+    private void registerLocaleChangeReceiver() {
+        if (!isNativeInitialized()) return;
         try {
             IntentFilter filter = new IntentFilter(Intent.ACTION_LOCALE_CHANGED);
-            mContext.registerReceiver(mBroadcastReceiver, filter);
-            isRegistered = true;
+            ContextUtils.getApplicationContext().registerReceiver(mBroadcastReceiver, filter);
         } catch (ReceiverCallNotAllowedException e) {
             // WebView may be running inside a BroadcastReceiver, in which case registerReceiver is
             // not allowed.

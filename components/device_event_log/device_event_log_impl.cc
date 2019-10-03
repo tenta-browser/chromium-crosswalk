@@ -33,6 +33,8 @@ const char* kLogTypeBluetoothDesc = "Bluetooth";
 const char* kLogTypeUsbDesc = "USB";
 const char* kLogTypeHidDesc = "HID";
 const char* kLogTypeMemoryDesc = "Memory";
+const char* kLogTypePrinterDesc = "Printer";
+const char* kLogTypeFidoDesc = "FIDO";
 
 std::string GetLogTypeString(LogType type) {
   switch (type) {
@@ -50,6 +52,10 @@ std::string GetLogTypeString(LogType type) {
       return kLogTypeHidDesc;
     case LOG_TYPE_MEMORY:
       return kLogTypeMemoryDesc;
+    case LOG_TYPE_PRINTER:
+      return kLogTypePrinterDesc;
+    case LOG_TYPE_FIDO:
+      return kLogTypeFidoDesc;
     case LOG_TYPE_UNKNOWN:
       break;
   }
@@ -245,9 +251,7 @@ void DeviceEventLogImpl::SendToVLogOrErrorLog(const char* file,
 DeviceEventLogImpl::DeviceEventLogImpl(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     size_t max_entries)
-    : task_runner_(task_runner),
-      max_entries_(max_entries),
-      weak_ptr_factory_(this) {
+    : task_runner_(task_runner), max_entries_(max_entries) {
   DCHECK(task_runner_);
 }
 
@@ -260,9 +264,26 @@ void DeviceEventLogImpl::AddEntry(const char* file,
                                   const std::string& event) {
   LogEntry entry(file, file_line, log_type, log_level, event);
   if (!task_runner_->RunsTasksInCurrentSequence()) {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&DeviceEventLogImpl::AddLogEntry,
-                                      weak_ptr_factory_.GetWeakPtr(), entry));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&DeviceEventLogImpl::AddLogEntry,
+                                  weak_ptr_factory_.GetWeakPtr(), entry));
+    return;
+  }
+  AddLogEntry(entry);
+}
+
+void DeviceEventLogImpl::AddEntryWithTimestampForTesting(
+    const char* file,
+    int file_line,
+    LogType log_type,
+    LogLevel log_level,
+    const std::string& event,
+    base::Time time) {
+  LogEntry entry(file, file_line, log_type, log_level, event, time);
+  if (!task_runner_->RunsTasksInCurrentSequence()) {
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&DeviceEventLogImpl::AddLogEntry,
+                                  weak_ptr_factory_.GetWeakPtr(), entry));
     return;
   }
   AddLogEntry(entry);
@@ -289,8 +310,7 @@ void DeviceEventLogImpl::RemoveEntry() {
   // Remove the first (oldest) non-error entry, or the oldest entry if more
   // than half the entries are errors.
   size_t error_count = 0;
-  for (LogEntryList::iterator iter = entries_.begin(); iter != entries_.end();
-       ++iter) {
+  for (auto iter = entries_.begin(); iter != entries_.end(); ++iter) {
     if (iter->log_level != LOG_LEVEL_ERROR) {
       entries_.erase(iter);
       return;
@@ -382,6 +402,21 @@ std::string DeviceEventLogImpl::GetAsString(StringOrder order,
   return result;
 }
 
+void DeviceEventLogImpl::ClearAll() {
+  entries_.clear();
+}
+
+void DeviceEventLogImpl::Clear(const base::Time& begin, const base::Time& end) {
+  auto begin_it = std::find_if(
+      entries_.begin(), entries_.end(),
+      [begin](const LogEntry& entry) { return entry.time >= begin; });
+  auto end_rev_it =
+      std::find_if(entries_.rbegin(), entries_.rend(),
+                   [end](const LogEntry& entry) { return entry.time <= end; });
+
+  entries_.erase(begin_it, end_rev_it.base());
+}
+
 DeviceEventLogImpl::LogEntry::LogEntry(const char* filedesc,
                                        int file_line,
                                        LogType log_type,
@@ -400,6 +435,16 @@ DeviceEventLogImpl::LogEntry::LogEntry(const char* filedesc,
       file.erase(0, last_slash_pos + 1);
     }
   }
+}
+
+DeviceEventLogImpl::LogEntry::LogEntry(const char* filedesc,
+                                       int file_line,
+                                       LogType log_type,
+                                       LogLevel log_level,
+                                       const std::string& event,
+                                       base::Time time_for_testing)
+    : LogEntry(filedesc, file_line, log_type, log_level, event) {
+  time = time_for_testing;
 }
 
 DeviceEventLogImpl::LogEntry::LogEntry(const LogEntry& other) = default;

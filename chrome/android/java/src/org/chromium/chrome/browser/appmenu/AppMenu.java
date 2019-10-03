@@ -46,12 +46,11 @@ import java.util.List;
 
 /**
  * Shows a popup of menuitems anchored to a host view. When a item is selected we call
- * Activity.onOptionsItemSelected with the appropriate MenuItem.
+ * AppMenuHandlerImpl.AppMenuDelegate.onOptionsItemSelected with the appropriate MenuItem.
  *   - Only visible MenuItems are shown.
  *   - Disabled items are grayed out.
  */
-public class AppMenu implements OnItemClickListener, OnKeyListener {
-
+class AppMenu implements OnItemClickListener, OnKeyListener {
     private static final float LAST_ITEM_SHOW_FRACTION = 0.5f;
 
     private final Menu mMenu;
@@ -61,31 +60,29 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
     private final int mNegativeSoftwareVerticalOffset;
     private final int mNegativeVerticalOffsetNotTopAnchored;
     private final int[] mTempLocation;
-    private final boolean mTranslateMenuItemsOnShow;
 
     private PopupWindow mPopup;
     private ListView mListView;
     private AppMenuAdapter mAdapter;
-    private AppMenuHandler mHandler;
+    private AppMenuHandlerImpl mHandler;
     private View mFooterView;
     private int mCurrentScreenRotation = -1;
     private boolean mIsByPermanentButton;
     private AnimatorSet mMenuItemEnterAnimator;
     private AnimatorListener mAnimationHistogramRecorder = AnimationFrameTimeHistogram
             .getAnimatorRecorder("WrenchMenu.OpeningAnimationFrameTimes");
+    private Runnable mAdapterInvalidator;
 
     /**
      * Creates and sets up the App Menu.
      * @param menu Original menu created by the framework.
      * @param itemRowHeight Desired height for each app menu row.
      * @param itemDividerHeight Desired height for the divider between app menu items.
-     * @param handler AppMenuHandler receives callbacks from AppMenu.
+     * @param handler AppMenuHandlerImpl receives callbacks from AppMenu.
      * @param res Resources object used to get dimensions and style attributes.
-     * @param translateMenuItemsOnShow Whether menu items should be translated during the animation
-     *                                 that is run when the menu is shown.
      */
-    AppMenu(Menu menu, int itemRowHeight, int itemDividerHeight, AppMenuHandler handler,
-            Resources res, boolean translateMenuItemsOnShow) {
+    AppMenu(Menu menu, int itemRowHeight, int itemDividerHeight, AppMenuHandlerImpl handler,
+            Resources res) {
         mMenu = menu;
 
         mItemRowHeight = itemRowHeight;
@@ -103,7 +100,10 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
                 res.getDimensionPixelSize(R.dimen.menu_negative_vertical_offset_not_top_anchored);
 
         mTempLocation = new int[2];
-        mTranslateMenuItemsOnShow = translateMenuItemsOnShow;
+
+        mAdapterInvalidator = () -> {
+            if (mAdapter != null) mAdapter.notifyDataSetChanged();
+        };
     }
 
     /**
@@ -158,28 +158,31 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
      *                              of the menu.  Can be 0 if no such view is required.  The footer
      *                              is always visible and overlays other app menu items if
      *                              necessary.
-     * @param headerView            The {@link View} to add as the first item in menu list.  Can be
-     *                              null if no such view is required. See
+     * @param headerResourceId      The resource id for a view to add as the first item in menu
+     *                              list. Can be null if no such view is required. See
      *                              {@link ListView#addHeaderView(View)}.
      * @param highlightedItemId     The resource id of the menu item that should be highlighted.
      *                              Can be {@code null} if no item should be highlighted.  Note that
      *                              {@code 0} is dedicated to custom menu items and can be declared
      *                              by external apps.
+     * @param circleHighlightItem   Whether the highlighted item should use a circle highlight or
+     *                              not.
+     * @param showFromBottom        Whether the appearance animation should run from the bottom up.
      */
     void show(Context context, final View anchorView, boolean isByPermanentButton,
             int screenRotation, Rect visibleDisplayFrame, int screenHeight,
-            @IdRes int footerResourceId, View headerView, Integer highlightedItemId) {
+            @IdRes int footerResourceId, @IdRes int headerResourceId, Integer highlightedItemId,
+            boolean circleHighlightItem, boolean showFromBottom) {
         mPopup = new PopupWindow(context);
         mPopup.setFocusable(true);
-        if (!isByPermanentButton) mPopup.setClippingEnabled(false);
         mPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
+        UpdateMenuItemHelper.getInstance().registerObserver(mAdapterInvalidator);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             // The window layout type affects the z-index of the popup window on M+.
             mPopup.setWindowLayoutType(WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL);
         }
 
-        boolean anchorAtBottom = isAnchorAtBottom(anchorView, visibleDisplayFrame);
         mPopup.setOnDismissListener(() -> {
             if (anchorView instanceof ImageButton) {
                 ((ImageButton) anchorView).setSelected(false);
@@ -187,6 +190,7 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
 
             if (mMenuItemEnterAnimator != null) mMenuItemEnterAnimator.cancel();
 
+            UpdateMenuItemHelper.getInstance().unregisterObserver(mAdapterInvalidator);
             mHandler.appMenuDismissed();
             mHandler.onMenuVisibilityChanged(false);
 
@@ -204,16 +208,11 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
 
         // Need to explicitly set the background here.  Relying on it being set in the style caused
         // an incorrectly drawn background.
-        if (isByPermanentButton) {
-            mPopup.setBackgroundDrawable(
-                    ApiCompatibilityUtils.getDrawable(context.getResources(), R.drawable.menu_bg));
-        } else {
-            mPopup.setBackgroundDrawable(ApiCompatibilityUtils.getDrawable(context.getResources(),
-                    isAnchorAtTop(anchorView, visibleDisplayFrame)
-                            ? R.drawable.edge_menu_bg
-                            : R.drawable.bottom_anchor_edge_menu_bg));
+        mPopup.setBackgroundDrawable(ApiCompatibilityUtils.getDrawable(
+                context.getResources(), R.drawable.popup_bg_tinted));
+        if (!isByPermanentButton) {
             mPopup.setAnimationStyle(
-                    anchorAtBottom ? R.style.OverflowMenuAnimBottom : R.style.OverflowMenuAnim);
+                    showFromBottom ? R.style.OverflowMenuAnimBottom : R.style.OverflowMenuAnim);
         }
 
         // Turn off window animations for low end devices.
@@ -250,16 +249,20 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
 
         // A List adapter for visible items in the Menu. The first row is added as a header to the
         // list view.
-        mAdapter = new AppMenuAdapter(this, menuItems, LayoutInflater.from(context),
-                highlightedItemId, mTranslateMenuItemsOnShow);
+        mAdapter = new AppMenuAdapter(
+                this, menuItems, LayoutInflater.from(context), highlightedItemId);
 
         ViewGroup contentView =
                 (ViewGroup) LayoutInflater.from(context).inflate(R.layout.app_menu_layout, null);
         mListView = (ListView) contentView.findViewById(R.id.app_menu_list);
 
-        int footerHeight =
-                inflateFooter(footerResourceId, contentView, menuWidth, highlightedItemId);
-        int headerHeight = addHeaderView(headerView, menuWidth);
+        int footerHeight = inflateFooter(footerResourceId, contentView, menuWidth);
+        int headerHeight = inflateHeader(headerResourceId, contentView, menuWidth);
+
+        if (highlightedItemId != null) {
+            View viewToHighlight = contentView.findViewById(highlightedItemId);
+            ViewHighlighter.turnOnHighlight(viewToHighlight, circleHighlightItem);
+        }
 
         // Set the adapter after the header is added to avoid crashes on JellyBean.
         // See crbug.com/761726.
@@ -268,7 +271,7 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
         int popupHeight = setMenuHeight(menuItems.size(), visibleDisplayFrame, screenHeight,
                 sizingPadding, footerHeight, headerHeight, anchorView);
         int[] popupPosition = getPopupPosition(mCurrentScreenRotation, visibleDisplayFrame,
-                sizingPadding, anchorView, anchorAtBottom, popupWidth, popupHeight);
+                sizingPadding, anchorView, popupWidth, popupHeight, showFromBottom);
 
         mPopup.setContentView(contentView);
         mPopup.showAtLocation(
@@ -306,18 +309,8 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
         return mFooterView;
     }
 
-    private boolean isAnchorAtBottom(View anchorView, Rect visibleDisplayFrame) {
-        anchorView.getLocationOnScreen(mTempLocation);
-        return (mTempLocation[1] + anchorView.getHeight()) >= visibleDisplayFrame.bottom;
-    }
-
-    private boolean isAnchorAtTop(View anchorView, Rect visibleDisplayFrame) {
-        anchorView.getLocationOnScreen(mTempLocation);
-        return mTempLocation[1] == visibleDisplayFrame.top;
-    }
-
     private int[] getPopupPosition(int screenRotation, Rect appRect, Rect padding, View anchorView,
-            boolean anchorAtBottom, int popupWidth, int popupHeight) {
+            int popupWidth, int popupHeight, boolean isAnchorAtBottom) {
         anchorView.getLocationInWindow(mTempLocation);
         int anchorViewX = mTempLocation[0];
         int anchorViewY = mTempLocation[1];
@@ -352,18 +345,15 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
             // anchor. The anchor may not be fully visible, so
             // (appRect.bottom - anchorViewLocationOnScreenY) is used to determine the visible
             // bottom edge of the anchor view.
-            if (anchorAtBottom) {
+            if (isAnchorAtBottom) {
                 anchorView.getLocationOnScreen(mTempLocation);
                 int anchorViewLocationOnScreenY = mTempLocation[1];
                 offsets[1] += appRect.bottom - anchorViewLocationOnScreenY - popupHeight;
+                offsets[1] -= mNegativeVerticalOffsetNotTopAnchored;
                 if (!mIsByPermanentButton) offsets[1] += padding.bottom;
             }
 
-            if (!isAnchorAtTop(anchorView, appRect)) {
-                offsets[1] -= mNegativeVerticalOffsetNotTopAnchored;
-            }
-
-            if (!ApiCompatibilityUtils.isLayoutRtl(anchorView.getRootView())) {
+            if (anchorView.getRootView().getLayoutDirection() != View.LAYOUT_DIRECTION_RTL) {
                 offsets[0] = anchorView.getWidth() - popupWidth;
             }
         }
@@ -489,8 +479,6 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
         anchorView.getLocationOnScreen(mTempLocation);
         int anchorViewY = mTempLocation[1] - appDimensions.top;
 
-        if (isAnchorAtBottom(anchorView, appDimensions)) anchorViewY += anchorView.getHeight();
-
         int anchorViewImpactHeight = mIsByPermanentButton ? anchorView.getHeight() : 0;
 
         // Set appDimensions.height() for abnormal anchorViewLocation.
@@ -548,8 +536,7 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
         mMenuItemEnterAnimator.start();
     }
 
-    private int inflateFooter(
-            int footerResourceId, View contentView, int menuWidth, Integer highlightedItemId) {
+    private int inflateFooter(int footerResourceId, View contentView, int menuWidth) {
         if (footerResourceId == 0) {
             mFooterView = null;
             return 0;
@@ -563,22 +550,23 @@ public class AppMenu implements OnItemClickListener, OnKeyListener {
         int heightMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
         mFooterView.measure(widthMeasureSpec, heightMeasureSpec);
 
-        if (highlightedItemId != null) {
-            View viewToHighlight = mFooterView.findViewById(highlightedItemId);
-            ViewHighlighter.turnOnHighlight(viewToHighlight, viewToHighlight != mFooterView);
-        }
+        if (mHandler != null) mHandler.onFooterViewInflated(mFooterView);
 
         return mFooterView.getMeasuredHeight();
     }
 
-    private int addHeaderView(View headerView, int menuWidth) {
-        if (headerView == null) return 0;
+    private int inflateHeader(int headerResourceId, View contentView, int menuWidth) {
+        if (headerResourceId == 0) return 0;
+
+        View headerView = LayoutInflater.from(contentView.getContext())
+                                  .inflate(headerResourceId, mListView, false);
+        mListView.addHeaderView(headerView);
 
         int widthMeasureSpec = MeasureSpec.makeMeasureSpec(menuWidth, MeasureSpec.EXACTLY);
         int heightMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
         headerView.measure(widthMeasureSpec, heightMeasureSpec);
 
-        mListView.addHeaderView(headerView);
+        if (mHandler != null) mHandler.onHeaderViewInflated(headerView);
 
         return headerView.getMeasuredHeight();
     }

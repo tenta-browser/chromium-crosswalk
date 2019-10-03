@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/feature_engagement/internal/event_model.h"
-#include "components/feature_engagement/internal/proto/event.pb.h"
+#include "components/feature_engagement/internal/proto/feature_event.pb.h"
 
 namespace feature_engagement {
 class EventStorageValidator;
@@ -58,7 +58,7 @@ class EventModelImpl : public EventModel {
   // Whether the model has been fully initialized.
   bool ready_;
 
-  base::WeakPtrFactory<EventModelImpl> weak_factory_;
+  base::WeakPtrFactory<EventModelImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EventModelImpl);
 };

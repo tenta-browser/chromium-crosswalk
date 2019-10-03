@@ -4,6 +4,8 @@
 
 #include "cc/test/test_skcanvas.h"
 
+#include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+
 namespace cc {
 
 SaveCountingCanvas::SaveCountingCanvas() : SkNoDrawCanvas(100, 100) {}
@@ -27,7 +29,9 @@ void SaveCountingCanvas::onDrawPaint(const SkPaint& paint) {
   paint_ = paint;
 }
 
-MockCanvas::MockCanvas() : SkNoDrawCanvas(100, 100) {}
+MockCanvas::MockCanvas() : SkNoDrawCanvas(100, 100) {
+  context_ = GrContext::MakeMock(nullptr);
+}
 
 MockCanvas::~MockCanvas() = default;
 

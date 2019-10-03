@@ -4,10 +4,11 @@
 
 #import "ios/chrome/browser/passwords/credential_manager.h"
 
-#import "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ios/chrome/browser/passwords/credential_manager_util.h"
 #include "ios/chrome/browser/passwords/js_credential_manager.h"
+#include "ios/web/public/js_messaging/web_frame.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -32,26 +33,29 @@ CredentialManager::CredentialManager(
     password_manager::PasswordManagerClient* client,
     web::WebState* web_state)
     : impl_(client), web_state_(web_state) {
-  web_state_->AddScriptCommandCallback(
+  subscription_ = web_state_->AddScriptCommandCallback(
       base::Bind(&CredentialManager::HandleScriptCommand,
                  base::Unretained(this)),
       kCommandPrefix);
 }
 
-CredentialManager::~CredentialManager() {
-  web_state_->RemoveScriptCommandCallback(kCommandPrefix);
-}
+CredentialManager::~CredentialManager() {}
 
-bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
+void CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
                                             const GURL& origin_url,
-                                            bool user_is_interacting) {
+                                            bool user_is_interacting,
+                                            web::WebFrame* sender_frame) {
+  if (!sender_frame->IsMainFrame()) {
+    // Credentials manager is only supported on main frame.
+    return;
+  }
   double promise_id_double = -1;
   // |promiseId| field should be an integer value, but since JavaScript has only
   // one type for numbers (64-bit float), all numbers in the messages are sent
   // as doubles.
   if (!json.GetDouble("promiseId", &promise_id_double)) {
     DLOG(ERROR) << "Received bad json - no valid 'promiseId' field";
-    return false;
+    return;
   }
   int promise_id = static_cast<int>(promise_id_double);
 
@@ -60,13 +64,13 @@ bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
         web_state_, promise_id,
         base::ASCIIToUTF16(
             "Credential Manager API called from insecure context"));
-    return true;
+    return;
   }
 
   std::string command;
   if (!json.GetString("command", &command)) {
     DLOG(ERROR) << "Received bad json - no valid 'command' field";
-    return false;
+    return;
   }
 
   if (command == "credentials.get") {
@@ -76,7 +80,7 @@ bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
           web_state_, promise_id,
           base::ASCIIToUTF16(
               "CredentialRequestOptions: Invalid 'mediation' value."));
-      return true;
+      return;
     }
     bool include_passwords;
     if (!ParseIncludePasswords(json, &include_passwords)) {
@@ -84,7 +88,7 @@ bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
           web_state_, promise_id,
           base::ASCIIToUTF16(
               "CredentialRequestOptions: Invalid 'password' value."));
-      return true;
+      return;
     }
     std::vector<GURL> federations;
     if (!ParseFederations(json, &federations)) {
@@ -92,12 +96,12 @@ bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
           web_state_, promise_id,
           base::ASCIIToUTF16(
               "CredentialRequestOptions: invalid 'providers' value."));
-      return true;
+      return;
     }
     impl_.Get(mediation, include_passwords, federations,
               base::BindOnce(&CredentialManager::SendGetResponse,
                              base::Unretained(this), promise_id));
-    return true;
+    return;
   }
   if (command == "credentials.store") {
     CredentialInfo credential;
@@ -105,20 +109,18 @@ bool CredentialManager::HandleScriptCommand(const base::DictionaryValue& json,
     if (!ParseCredentialDictionary(json, &credential, &parse_message)) {
       RejectCredentialPromiseWithTypeError(web_state_, promise_id,
                                            base::UTF8ToUTF16(parse_message));
-      return false;
+      return;
     }
     impl_.Store(credential,
                 base::BindOnce(&CredentialManager::SendStoreResponse,
                                base::Unretained(this), promise_id));
-    return true;
+    return;
   }
   if (command == "credentials.preventSilentAccess") {
     impl_.PreventSilentAccess(
         base::BindOnce(&CredentialManager::SendPreventSilentAccessResponse,
                        base::Unretained(this), promise_id));
-    return true;
   }
-  return false;
 }
 
 void CredentialManager::SendGetResponse(
@@ -129,12 +131,7 @@ void CredentialManager::SendGetResponse(
     case CredentialManagerError::SUCCESS:
       ResolveCredentialPromiseWithCredentialInfo(web_state_, promise_id, info);
       break;
-    case CredentialManagerError::DISABLED:
-      RejectCredentialPromiseWithInvalidStateError(
-          web_state_, promise_id,
-          base::ASCIIToUTF16("Credential Manager is disabled."));
-      break;
-    case CredentialManagerError::PENDINGREQUEST:
+    case CredentialManagerError::PENDING_REQUEST:
       RejectCredentialPromiseWithInvalidStateError(
           web_state_, promise_id,
           base::ASCIIToUTF16("Pending 'get()' request."));

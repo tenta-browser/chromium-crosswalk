@@ -22,6 +22,7 @@
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/gcm_connection_observer.h"
 #include "components/gcm_driver/gcm_driver.h"
+#include "services/network/public/mojom/proxy_resolving_socket.mojom.h"
 
 class PrefService;
 
@@ -30,8 +31,9 @@ class FilePath;
 class SequencedTaskRunner;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class NetworkConnectionTracker;
+class SharedURLLoaderFactory;
 }
 
 namespace gcm {
@@ -53,7 +55,11 @@ class GCMDriverDesktop : public GCMDriver,
       const std::string& user_agent,
       PrefService* prefs,
       const base::FilePath& store_path,
-      const scoped_refptr<net::URLRequestContextGetter>& request_context,
+      base::RepeatingCallback<
+          void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+          get_socket_factory_callback,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_for_ui,
+      network::NetworkConnectionTracker* network_connection_tracker,
       const scoped_refptr<base::SequencedTaskRunner>& ui_thread,
       const scoped_refptr<base::SequencedTaskRunner>& io_thread,
       const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner);
@@ -116,7 +122,7 @@ class GCMDriverDesktop : public GCMDriver,
                 const std::string& authorized_entity,
                 const std::string& scope,
                 const std::map<std::string, std::string>& options,
-                const GetTokenCallback& callback) override;
+                GetTokenCallback callback) override;
   void ValidateToken(const std::string& app_id,
                      const std::string& authorized_entity,
                      const std::string& scope,
@@ -125,7 +131,7 @@ class GCMDriverDesktop : public GCMDriver,
   void DeleteToken(const std::string& app_id,
                    const std::string& authorized_entity,
                    const std::string& scope,
-                   const DeleteTokenCallback& callback) override;
+                   DeleteTokenCallback callback) override;
   void AddInstanceIDData(const std::string& app_id,
                          const std::string& instance_id,
                          const std::string& extra_data) override;
@@ -141,10 +147,9 @@ class GCMDriverDesktop : public GCMDriver,
     bool operator()(const TokenTuple& a, const TokenTuple& b) const;
   };
 
-  void DoValidateRegistration(
-      std::unique_ptr<RegistrationInfo> registration_info,
-      const std::string& registration_id,
-      const ValidateRegistrationCallback& callback);
+  void DoValidateRegistration(scoped_refptr<RegistrationInfo> registration_info,
+                              const std::string& registration_id,
+                              const ValidateRegistrationCallback& callback);
 
   //  Stops the GCM service. It can be restarted by calling EnsureStarted again.
   void Stop();
@@ -216,7 +221,8 @@ class GCMDriverDesktop : public GCMDriver,
   bool connected_;
 
   // List of observers to notify when connection state changes.
-  base::ObserverList<GCMConnectionObserver, false> connection_observer_list_;
+  base::ObserverList<GCMConnectionObserver, false>::Unchecked
+      connection_observer_list_;
 
   // Account mapper. Only works when user is signed in.
   std::unique_ptr<GCMAccountMapper> account_mapper_;
@@ -251,7 +257,7 @@ class GCMDriverDesktop : public GCMDriver,
       delete_token_callbacks_;
 
   // Used to pass a weak pointer to the IO worker.
-  base::WeakPtrFactory<GCMDriverDesktop> weak_ptr_factory_;
+  base::WeakPtrFactory<GCMDriverDesktop> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GCMDriverDesktop);
 };

@@ -8,8 +8,6 @@
 
 #include "base/bind.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
@@ -72,7 +70,7 @@ void LoadMimeTypes(bool matching_mime_types,
     return;
 
   bool success = false;
-  for (base::ListValue::const_iterator mime_type_it = mime_types->begin();
+  for (auto mime_type_it = mime_types->begin();
        mime_type_it != mime_types->end(); ++mime_type_it) {
     std::string mime_type_str;
     success = mime_type_it->GetAsString(&mime_type_str);
@@ -102,14 +100,15 @@ std::unique_ptr<PluginMetadata> CreatePluginMetadata(
   DCHECK(success);
   std::string language_str;
   plugin_dict->GetString("lang", &language_str);
+  bool plugin_is_deprecated = false;
+  plugin_dict->GetBoolean("plugin_is_deprecated", &plugin_is_deprecated);
 
-  std::unique_ptr<PluginMetadata> plugin = base::MakeUnique<PluginMetadata>(
+  std::unique_ptr<PluginMetadata> plugin = std::make_unique<PluginMetadata>(
       identifier, name, display_url, GURL(url), GURL(help_url),
-      group_name_matcher, language_str);
+      group_name_matcher, language_str, plugin_is_deprecated);
   const base::ListValue* versions = NULL;
   if (plugin_dict->GetList("versions", &versions)) {
-    for (base::ListValue::const_iterator it = versions->begin();
-         it != versions->end(); ++it) {
+    for (auto it = versions->begin(); it != versions->end(); ++it) {
       const base::DictionaryValue* version_dict = NULL;
       if (!it->GetAsDictionary(&version_dict)) {
         NOTREACHED();
@@ -174,8 +173,9 @@ std::unique_ptr<base::DictionaryValue> PluginFinder::LoadBuiltInPluginList() {
           IDR_PLUGIN_DB_JSON));
   std::string error_str;
   int error_code = base::JSONReader::JSON_NO_ERROR;
-  std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
-      json_resource, base::JSON_PARSE_RFC, &error_code, &error_str);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          json_resource, base::JSON_PARSE_RFC, &error_code, &error_str);
   if (!value) {
     DLOG(ERROR) << error_str;
     switch (error_code) {
@@ -269,7 +269,7 @@ void PluginFinder::ReinitializePlugins(
       identifier_plugin_[identifier] = CreatePluginMetadata(identifier, plugin);
 
       if (installers_.find(identifier) == installers_.end())
-        installers_[identifier] = base::MakeUnique<PluginInstaller>();
+        installers_[identifier] = std::make_unique<PluginInstaller>();
     }
   }
 }
@@ -285,11 +285,11 @@ std::unique_ptr<PluginMetadata> PluginFinder::GetPluginMetadata(
   }
 
   // The plugin metadata was not found, create a dummy one holding
-  // the name, identifier and group name only.
+  // the name, identifier and group name only. Dummy plugin is not deprecated.
   std::string identifier = GetIdentifier(plugin);
-  std::unique_ptr<PluginMetadata> metadata = base::MakeUnique<PluginMetadata>(
+  std::unique_ptr<PluginMetadata> metadata = std::make_unique<PluginMetadata>(
       identifier, GetGroupName(plugin), false, GURL(), GURL(), plugin.name,
-      std::string());
+      std::string(), false /* plugin_is_deprecated */);
   for (size_t i = 0; i < plugin.mime_types.size(); ++i)
     metadata->AddMatchingMimeType(plugin.mime_types[i].mime_type);
 

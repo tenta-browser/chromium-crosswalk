@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/public/browser/context_factory.h"
@@ -20,7 +20,6 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -35,7 +34,6 @@
 #include "ui/views/widget/widget_delegate.h"
 
 #if defined(OS_CHROMEOS)
-#include "ui/aura/test/test_screen.h"
 #include "ui/wm/test/wm_test_helper.h"
 #else  // !defined(OS_CHROMEOS)
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
@@ -65,24 +63,29 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     STOP_BUTTON
   };
 
-  ShellWindowDelegateView(Shell* shell)
-    : shell_(shell),
-      toolbar_view_(new View),
-      contents_view_(new View) {
-  }
+  ShellWindowDelegateView(Shell* shell) : shell_(shell) {}
+
   ~ShellWindowDelegateView() override {}
 
   // Update the state of UI controls
   void SetAddressBarURL(const GURL& url) {
     url_entry_->SetText(base::ASCIIToUTF16(url.spec()));
   }
+
   void SetWebContents(WebContents* web_contents, const gfx::Size& size) {
-    contents_view_->SetLayoutManager(new views::FillLayout());
-    web_view_ = new views::WebView(web_contents->GetBrowserContext());
-    web_view_->SetWebContents(web_contents);
-    web_view_->SetPreferredSize(size);
+    contents_view_->SetLayoutManager(std::make_unique<views::FillLayout>());
+    // If there was a previous WebView in this Shell it should be removed and
+    // deleted.
+    if (web_view_) {
+      contents_view_->RemoveChildView(web_view_);
+      delete web_view_;
+    }
+    auto web_view =
+        std::make_unique<views::WebView>(web_contents->GetBrowserContext());
+    web_view->SetWebContents(web_contents);
+    web_view->SetPreferredSize(size);
     web_contents->Focus();
-    contents_view_->AddChildView(web_view_);
+    web_view_ = contents_view_->AddChildView(std::move(web_view));
     Layout();
 
     // Resize the widget, keeping the same origin.
@@ -116,7 +119,11 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
   void InitShellWindow() {
     SetBackground(views::CreateStandardPanelBackground());
 
-    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+    auto contents_view = std::make_unique<views::View>();
+    auto toolbar_view = std::make_unique<views::View>();
+
+    views::GridLayout* layout =
+        SetLayoutManager(std::make_unique<views::GridLayout>());
 
     views::ColumnSet* column_set = layout->AddColumnSet(0);
     if (!shell_->hide_toolbar())
@@ -131,41 +138,41 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       layout->AddPaddingRow(0, 2);
       layout->StartRow(0, 0);
       views::GridLayout* toolbar_layout =
-          views::GridLayout::CreateAndInstall(toolbar_view_);
+          toolbar_view->SetLayoutManager(std::make_unique<views::GridLayout>());
 
       views::ColumnSet* toolbar_column_set =
           toolbar_layout->AddColumnSet(0);
       // Back button
-      back_button_ =
+      auto back_button =
           views::MdTextButton::Create(this, base::ASCIIToUTF16("Back"));
-      gfx::Size back_button_size = back_button_->GetPreferredSize();
+      gfx::Size back_button_size = back_button->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
                                     views::GridLayout::FIXED,
                                     back_button_size.width(),
                                     back_button_size.width() / 2);
       // Forward button
-      forward_button_ =
+      auto forward_button =
           views::MdTextButton::Create(this, base::ASCIIToUTF16("Forward"));
-      gfx::Size forward_button_size = forward_button_->GetPreferredSize();
+      gfx::Size forward_button_size = forward_button->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
                                     views::GridLayout::FIXED,
                                     forward_button_size.width(),
                                     forward_button_size.width() / 2);
       // Refresh button
-      refresh_button_ =
+      auto refresh_button =
           views::MdTextButton::Create(this, base::ASCIIToUTF16("Refresh"));
-      gfx::Size refresh_button_size = refresh_button_->GetPreferredSize();
+      gfx::Size refresh_button_size = refresh_button->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
                                     views::GridLayout::FIXED,
                                     refresh_button_size.width(),
                                     refresh_button_size.width() / 2);
       // Stop button
-      stop_button_ =
+      auto stop_button =
           views::MdTextButton::Create(this, base::ASCIIToUTF16("Stop"));
-      gfx::Size stop_button_size = stop_button_->GetPreferredSize();
+      gfx::Size stop_button_size = stop_button->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
                                     views::GridLayout::FIXED,
@@ -173,9 +180,10 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     stop_button_size.width() / 2);
       toolbar_column_set->AddPaddingColumn(0, 2);
       // URL entry
-      url_entry_ = new views::Textfield();
-      url_entry_->set_controller(this);
-      url_entry_->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_URL);
+      auto url_entry = std::make_unique<views::Textfield>();
+      url_entry->SetAccessibleName(base::ASCIIToUTF16("Enter URL"));
+      url_entry->set_controller(this);
+      url_entry->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_URL);
       toolbar_column_set->AddColumn(views::GridLayout::FILL,
                                     views::GridLayout::FILL, 1,
                                     views::GridLayout::USE_PREF, 0, 0);
@@ -183,13 +191,13 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 
       // Fill up the first row
       toolbar_layout->StartRow(0, 0);
-      toolbar_layout->AddView(back_button_);
-      toolbar_layout->AddView(forward_button_);
-      toolbar_layout->AddView(refresh_button_);
-      toolbar_layout->AddView(stop_button_);
-      toolbar_layout->AddView(url_entry_);
+      back_button_ = toolbar_layout->AddView(std::move(back_button));
+      forward_button_ = toolbar_layout->AddView(std::move(forward_button));
+      refresh_button_ = toolbar_layout->AddView(std::move(refresh_button));
+      stop_button_ = toolbar_layout->AddView(std::move(stop_button));
+      url_entry_ = toolbar_layout->AddView(std::move(url_entry));
 
-      layout->AddView(toolbar_view_);
+      toolbar_view_ = layout->AddView(std::move(toolbar_view));
 
       layout->AddPaddingRow(0, 5);
     }
@@ -197,7 +205,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     // Add web contents view as the second row
     {
       layout->StartRow(1, 0);
-      layout->AddView(contents_view_);
+      contents_view_ = layout->AddView(std::move(contents_view));
     }
 
     if (!shell_->hide_toolbar())
@@ -209,7 +217,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     static const ui::KeyboardCode keys[] = { ui::VKEY_F5,
                                              ui::VKEY_BROWSER_BACK,
                                              ui::VKEY_BROWSER_FORWARD };
-    for (size_t i = 0; i < arraysize(keys); ++i) {
+    for (size_t i = 0; i < base::size(keys); ++i) {
       GetFocusManager()->RegisterAccelerator(
         ui::Accelerator(keys[i], ui::EF_NONE),
         ui::AcceleratorManager::kNormalPriority,
@@ -266,7 +274,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     return gfx::Size();
   }
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override {
+      const views::ViewHierarchyChangedDetails& details) override {
     if (details.is_add && details.child == this) {
       InitShellWindow();
     }
@@ -297,16 +305,16 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
   base::string16 title_;
 
   // Toolbar view contains forward/backward/reload button and URL entry
-  View* toolbar_view_;
-  views::Button* back_button_;
-  views::Button* forward_button_;
-  views::Button* refresh_button_;
-  views::Button* stop_button_;
-  views::Textfield* url_entry_;
+  View* toolbar_view_ = nullptr;
+  views::Button* back_button_ = nullptr;
+  views::Button* forward_button_ = nullptr;
+  views::Button* refresh_button_ = nullptr;
+  views::Button* stop_button_ = nullptr;
+  views::Textfield* url_entry_ = nullptr;
 
   // Contents view contains the web contents view
-  View* contents_view_;
-  views::WebView* web_view_;
+  View* contents_view_ = nullptr;
+  views::WebView* web_view_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ShellWindowDelegateView);
 };
@@ -316,8 +324,6 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 #if defined(OS_CHROMEOS)
 // static
 wm::WMTestHelper* Shell::wm_test_helper_ = nullptr;
-// static
-display::Screen* Shell::test_screen_ = nullptr;
 #elif defined(USE_AURA)
 // static
 wm::WMState* Shell::wm_state_ = nullptr;
@@ -332,21 +338,10 @@ void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
   _setmode(_fileno(stderr), _O_BINARY);
 #endif
 #if defined(OS_CHROMEOS)
-  test_screen_ = aura::TestScreen::Create(gfx::Size());
-  display::Screen::SetScreenInstance(test_screen_);
-  ui::ContextFactory* ui_context_factory =
-      aura::Env::GetInstance()->mode() == aura::Env::Mode::LOCAL
-          ? GetContextFactory()
-          : nullptr;
-  wm_test_helper_ = new wm::WMTestHelper(
-      default_window_size,
-      ServiceManagerConnection::GetForProcess()->GetConnector(),
-      ui_context_factory);
+  wm_test_helper_ = new wm::WMTestHelper(default_window_size);
 #else
-#if defined(USE_AURA)
   wm_state_ = new wm::WMState;
-#endif
-  display::Screen::SetScreenInstance(views::CreateDesktopScreen());
+  views::InstallDesktopScreenIfNecessary();
 #endif
   views_delegate_ = new views::DesktopTestViewsDelegate();
 }
@@ -355,9 +350,6 @@ void Shell::PlatformExit() {
 #if defined(OS_CHROMEOS)
   delete wm_test_helper_;
   wm_test_helper_ = nullptr;
-
-  delete test_screen_;
-  test_screen_ = nullptr;
 #endif
   delete views_delegate_;
   views_delegate_ = nullptr;
@@ -426,11 +418,9 @@ void Shell::PlatformCreateWindow(int width, int height) {
 
   content_size_ = gfx::Size(width, height);
 
+  // |window_widget_| is made visible in PlatformSetContents(), so that the
+  // platform-window size does not need to change due to layout again.
   window_ = window_widget_->GetNativeWindow();
-  // Call ShowRootWindow on RootWindow created by WMTestHelper without
-  // which XWindow owned by RootWindow doesn't get mapped.
-  window_->GetHost()->Show();
-  window_widget_->Show();
 }
 
 void Shell::PlatformSetContents() {
@@ -440,6 +430,9 @@ void Shell::PlatformSetContents() {
     aura::Window* parent = platform_->host()->window();
     if (!parent->Contains(content)) {
       parent->AddChild(content);
+      // Move the cursor to a fixed position before tests run to avoid getting
+      // an unpredictable result from mouse events.
+      content->MoveCursorTo(gfx::Point());
       content->Show();
     }
     content->SetBounds(gfx::Rect(content_size_));
@@ -451,6 +444,8 @@ void Shell::PlatformSetContents() {
     ShellWindowDelegateView* delegate_view =
         static_cast<ShellWindowDelegateView*>(widget_delegate);
     delegate_view->SetWebContents(web_contents_.get(), content_size_);
+    window_->GetHost()->Show();
+    window_widget_->Show();
   }
 }
 

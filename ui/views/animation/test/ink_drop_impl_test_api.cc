@@ -4,7 +4,6 @@
 
 #include "ui/views/animation/test/ink_drop_impl_test_api.h"
 
-#include "base/memory/ptr_util.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_ripple.h"
 #include "ui/views/animation/test/ink_drop_highlight_test_api.h"
@@ -92,7 +91,7 @@ void InkDropImplTestApi::SetStateOnExitHighlightState::AnimationEnded(
 InkDropImplTestApi::InkDropImplTestApi(InkDropImpl* ink_drop)
     : ui::test::MultiLayerAnimatorTestController(this), ink_drop_(ink_drop) {}
 
-InkDropImplTestApi::~InkDropImplTestApi() {}
+InkDropImplTestApi::~InkDropImplTestApi() = default;
 
 void InkDropImplTestApi::SetShouldHighlight(bool should_highlight) {
   ink_drop_->SetShowHighlightOnHover(should_highlight);

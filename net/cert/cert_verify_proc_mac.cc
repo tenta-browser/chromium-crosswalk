@@ -8,6 +8,7 @@
 #include <CoreServices/CoreServices.h>
 #include <Security/Security.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -26,9 +27,11 @@
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/crl_set.h"
+#include "net/cert/ct_serialization.h"
 #include "net/cert/ev_root_ca_metadata.h"
 #include "net/cert/internal/certificate_policies.h"
 #include "net/cert/internal/parsed_certificate.h"
+#include "net/cert/known_roots.h"
 #include "net/cert/known_roots_mac.h"
 #include "net/cert/test_keychain_search_list_mac.h"
 #include "net/cert/test_root_certs.h"
@@ -43,6 +46,14 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 using base::ScopedCFTypeRef;
+
+extern "C" {
+// Declared in <Security/SecTrust.h>, available in 10.14.2+
+// TODO(mattm): Remove this weak_import once chromium compiles against the
+// macOS 10.14 SDK.
+OSStatus SecTrustSetSignedCertificateTimestamps(SecTrustRef, CFArrayRef)
+    __attribute__((weak_import));
+}  // extern "C"
 
 namespace net {
 
@@ -180,7 +191,7 @@ OSStatus CreateTrustPolicies(int flags, ScopedCFTypeRef<CFArrayRef>* policies) {
   // revocation checking policies and instead respect the application-level
   // revocation preference.
   status = x509_util::CreateRevocationPolicies(
-      (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED), local_policies);
+      (flags & CertVerifyProc::VERIFY_REV_CHECKING_ENABLED), local_policies);
   if (status)
     return status;
 
@@ -309,14 +320,8 @@ void GetCandidateEVPolicy(const X509Certificate* cert_input,
                           std::string* ev_policy_oid) {
   ev_policy_oid->clear();
 
-  std::string der_cert;
-  if (!X509Certificate::GetDEREncoded(cert_input->os_cert_handle(),
-                                      &der_cert)) {
-    return;
-  }
-
   scoped_refptr<ParsedCertificate> cert(ParsedCertificate::Create(
-      x509_util::CreateCryptoBuffer(der_cert), {}, nullptr));
+      bssl::UpRef(cert_input->cert_buffer()), {}, nullptr));
   if (!cert)
     return;
 
@@ -342,26 +347,23 @@ void GetCandidateEVPolicy(const X509Certificate* cert_input,
 bool CheckCertChainEV(const X509Certificate* cert,
                       const std::string& ev_policy_oid_string) {
   der::Input ev_policy_oid(&ev_policy_oid_string);
-  X509Certificate::OSCertHandles os_cert_chain =
-      cert->GetIntermediateCertificates();
+  const std::vector<bssl::UniquePtr<CRYPTO_BUFFER>>& cert_chain =
+      cert->intermediate_buffers();
 
   // Root should have matching policy in EVRootCAMetadata.
-  if (os_cert_chain.empty())
+  if (cert_chain.empty())
     return false;
   SHA256HashValue fingerprint =
-      X509Certificate::CalculateFingerprint256(os_cert_chain.back());
+      X509Certificate::CalculateFingerprint256(cert_chain.back().get());
   EVRootCAMetadata* metadata = EVRootCAMetadata::GetInstance();
   if (!metadata->HasEVPolicyOID(fingerprint, ev_policy_oid))
     return false;
 
   // Intermediates should have Certificate Policies extension with the EV policy
   // or AnyPolicy.
-  for (size_t i = 0; i < os_cert_chain.size() - 1; ++i) {
-    std::string der_cert;
-    if (!X509Certificate::GetDEREncoded(os_cert_chain[i], &der_cert))
-      return false;
+  for (size_t i = 0; i < cert_chain.size() - 1; ++i) {
     scoped_refptr<ParsedCertificate> intermediate_cert(
-        ParsedCertificate::Create(x509_util::CreateCryptoBuffer(der_cert), {},
+        ParsedCertificate::Create(bssl::UpRef(cert_chain[i].get()), {},
                                   nullptr));
     if (!intermediate_cert)
       return false;
@@ -372,12 +374,13 @@ bool CheckCertChainEV(const X509Certificate* cert,
   return true;
 }
 
-void AppendPublicKeyHashes(CFArrayRef chain,
-                           HashValueVector* hashes) {
-  const CFIndex n = CFArrayGetCount(chain);
-  for (CFIndex i = 0; i < n; i++) {
+void AppendPublicKeyHashesAndUpdateKnownRoot(CFArrayRef chain,
+                                             HashValueVector* hashes,
+                                             bool* known_root) {
+  // Walk the chain in reverse, to optimize for IsKnownRoot checks.
+  for (CFIndex i = CFArrayGetCount(chain); i > 0; i--) {
     SecCertificateRef cert = reinterpret_cast<SecCertificateRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(chain, i)));
+        const_cast<void*>(CFArrayGetValueAtIndex(chain, i - 1)));
 
     CSSM_DATA cert_data;
     OSStatus err = SecCertificateGetData(cert, &cert_data);
@@ -391,7 +394,14 @@ void AppendPublicKeyHashes(CFArrayRef chain,
     HashValue sha256(HASH_VALUE_SHA256);
     CC_SHA256(spki_bytes.data(), spki_bytes.size(), sha256.data());
     hashes->push_back(sha256);
+
+    if (!*known_root) {
+      *known_root =
+          GetNetTrustAnchorHistogramIdForSPKI(sha256) != 0 || IsKnownRoot(cert);
+    }
   }
+  // Reverse the hash array, to maintain the leaf-first ordering.
+  std::reverse(hashes->begin(), hashes->end());
 }
 
 enum CRLSetResult {
@@ -427,9 +437,9 @@ CRLSetResult CheckRevocationWithCRLSet(CFArrayRef chain, CRLSet* crl_set) {
   // We iterate from the root certificate down to the leaf, keeping track of
   // the issuer's SPKI at each step.
   std::string issuer_spki_hash;
-  for (CFIndex i = CFArrayGetCount(chain) - 1; i >= 0; i--) {
+  for (CFIndex i = CFArrayGetCount(chain); i > 0; i--) {
     SecCertificateRef cert = reinterpret_cast<SecCertificateRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(chain, i)));
+        const_cast<void*>(CFArrayGetValueAtIndex(chain, i - 1)));
 
     CSSM_DATA cert_data;
     OSStatus err = SecCertificateGetData(cert, &cert_data);
@@ -440,8 +450,9 @@ CRLSetResult CheckRevocationWithCRLSet(CFArrayRef chain, CRLSet* crl_set) {
     }
     base::StringPiece der_bytes(reinterpret_cast<const char*>(cert_data.Data),
                                 cert_data.Length);
-    base::StringPiece spki;
-    if (!asn1::ExtractSPKIFromDERCert(der_bytes, &spki)) {
+    base::StringPiece spki, subject;
+    if (!asn1::ExtractSPKIFromDERCert(der_bytes, &spki) ||
+        !asn1::ExtractSubjectFromDERCert(der_bytes, &subject)) {
       NOTREACHED();
       error = true;
       continue;
@@ -468,6 +479,8 @@ CRLSetResult CheckRevocationWithCRLSet(CFArrayRef chain, CRLSet* crl_set) {
 
     CRLSet::Result result = crl_set->CheckSPKI(spki_hash);
 
+    if (result != CRLSet::REVOKED)
+      result = crl_set->CheckSubject(subject, spki_hash);
     if (result != CRLSet::REVOKED && !issuer_spki_hash.empty())
       result = crl_set->CheckSerial(serial, issuer_spki_hash);
 
@@ -507,6 +520,8 @@ CRLSetResult CheckRevocationWithCRLSet(CFArrayRef chain, CRLSet* crl_set) {
 // held.
 int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
                                 CFArrayRef trust_policies,
+                                CFDataRef ocsp_response_ref,
+                                CFArrayRef sct_array_ref,
                                 int flags,
                                 CFArrayRef keychain_search_list,
                                 ScopedCFTypeRef<SecTrustRef>* trust_ref,
@@ -532,6 +547,20 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
       return NetErrorFromOSStatus(status);
   }
 
+  if (ocsp_response_ref) {
+    status = SecTrustSetOCSPResponse(tmp_trust, ocsp_response_ref);
+    if (status)
+      return NetErrorFromOSStatus(status);
+  }
+
+  if (sct_array_ref) {
+    if (__builtin_available(macOS 10.14.2, *)) {
+      status = SecTrustSetSignedCertificateTimestamps(tmp_trust, sct_array_ref);
+      if (status)
+        return NetErrorFromOSStatus(status);
+    }
+  }
+
   CSSM_APPLE_TP_ACTION_DATA tp_action_data;
   memset(&tp_action_data, 0, sizeof(tp_action_data));
   tp_action_data.Version = CSSM_APPLE_TP_ACTION_VERSION;
@@ -542,7 +571,7 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
 
   // Note: For EV certificates, the Apple TP will handle setting these flags
   // as part of EV evaluation.
-  if (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED) {
+  if (flags & CertVerifyProc::VERIFY_REV_CHECKING_ENABLED) {
     // Require a positive result from an OCSP responder or a CRL (or both)
     // for every certificate in the chain. The Apple TP automatically
     // excludes the self-signed root from this requirement. If a certificate
@@ -565,15 +594,13 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
     // disabled, these will only go against the local cache.
   }
 
-  CFDataRef action_data_ref =
-      CFDataCreateWithBytesNoCopy(kCFAllocatorDefault,
-                                  reinterpret_cast<UInt8*>(&tp_action_data),
-                                  sizeof(tp_action_data), kCFAllocatorNull);
+  ScopedCFTypeRef<CFDataRef> action_data_ref(CFDataCreate(
+      kCFAllocatorDefault, reinterpret_cast<UInt8*>(&tp_action_data),
+      sizeof(tp_action_data)));
   if (!action_data_ref)
     return ERR_OUT_OF_MEMORY;
-  ScopedCFTypeRef<CFDataRef> scoped_action_data_ref(action_data_ref);
   status = SecTrustSetParameters(tmp_trust, CSSM_TP_ACTION_DEFAULT,
-                                 action_data_ref);
+                                 action_data_ref.get());
   if (status)
     return NetErrorFromOSStatus(status);
 
@@ -600,22 +627,13 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
   return OK;
 }
 
-// IsIssuedByKnownRoot returns true if the given chain is rooted at a root CA
-// that we recognise as a standard root.
-bool IsIssuedByKnownRoot(CFArrayRef chain) {
-  CFIndex n = CFArrayGetCount(chain);
-  if (n < 1)
-    return false;
-  SecCertificateRef root_ref = reinterpret_cast<SecCertificateRef>(
-      const_cast<void*>(CFArrayGetValueAtIndex(chain, n - 1)));
-  return IsKnownRoot(root_ref);
-}
-
 // Runs path building & verification loop for |cert|, given |flags|. This is
 // split into a separate function so verification can be repeated with different
 // flags. This function does not handle EV.
 int VerifyWithGivenFlags(X509Certificate* cert,
                          const std::string& hostname,
+                         const std::string& ocsp_response,
+                         const std::string& sct_list,
                          const int flags,
                          CRLSet* crl_set,
                          CertVerifyResult* verify_result,
@@ -626,6 +644,38 @@ int VerifyWithGivenFlags(X509Certificate* cert,
     return NetErrorFromOSStatus(status);
 
   *completed_chain_crl_result = kCRLSetUnknown;
+
+  ScopedCFTypeRef<CFDataRef> ocsp_response_ref;
+  if (!ocsp_response.empty()) {
+    ocsp_response_ref.reset(
+        CFDataCreate(kCFAllocatorDefault,
+                     reinterpret_cast<const UInt8*>(ocsp_response.data()),
+                     base::checked_cast<CFIndex>(ocsp_response.size())));
+    if (!ocsp_response_ref)
+      return ERR_OUT_OF_MEMORY;
+  }
+
+  ScopedCFTypeRef<CFMutableArrayRef> sct_array_ref;
+  if (!sct_list.empty()) {
+    if (__builtin_available(macOS 10.14.2, *)) {
+      std::vector<base::StringPiece> decoded_sct_list;
+      if (ct::DecodeSCTList(sct_list, &decoded_sct_list)) {
+        sct_array_ref.reset(CFArrayCreateMutable(kCFAllocatorDefault,
+                                                 decoded_sct_list.size(),
+                                                 &kCFTypeArrayCallBacks));
+        if (!sct_array_ref)
+          return ERR_OUT_OF_MEMORY;
+        for (const auto& sct : decoded_sct_list) {
+          ScopedCFTypeRef<CFDataRef> sct_ref(CFDataCreate(
+              kCFAllocatorDefault, reinterpret_cast<const UInt8*>(sct.data()),
+              base::checked_cast<CFIndex>(sct.size())));
+          if (!sct_ref)
+            return ERR_OUT_OF_MEMORY;
+          CFArrayAppendValue(sct_array_ref.get(), sct_ref.get());
+        }
+      }
+    }
+  }
 
   // Serialize all calls that may use the Keychain, to work around various
   // issues in OS X 10.6+ with multi-threaded access to Security.framework.
@@ -763,7 +813,8 @@ int VerifyWithGivenFlags(X509Certificate* cert,
       CSSM_TP_APPLE_EVIDENCE_INFO* temp_chain_info = NULL;
 
       int rv = BuildAndEvaluateSecTrustRef(
-          cert_array, trust_policies, flags,
+          cert_array, trust_policies, ocsp_response_ref.get(),
+          sct_array_ref.get(), flags,
           scoped_alternate_keychain_search_list.get(), &temp_ref,
           &temp_trust_result, &temp_chain, &temp_chain_info);
       if (rv != OK)
@@ -785,9 +836,7 @@ int VerifyWithGivenFlags(X509Certificate* cert,
       // solution might be to have CRLSets contain enough knowledge about what
       // the 'desired' path might be, but for the time being, the
       // implementation is kept as 'simple' as it can be.
-      CRLSetResult crl_result = kCRLSetUnknown;
-      if (crl_set)
-        crl_result = CheckRevocationWithCRLSet(temp_chain, crl_set);
+      CRLSetResult crl_result = CheckRevocationWithCRLSet(temp_chain, crl_set);
       bool untrusted = (temp_trust_result != kSecTrustResultUnspecified &&
                         temp_trust_result != kSecTrustResultProceed) ||
                        crl_result == kCRLSetRevoked;
@@ -837,7 +886,7 @@ int VerifyWithGivenFlags(X509Certificate* cert,
       break;
   }
 
-  if (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED)
+  if (flags & CertVerifyProc::VERIFY_REV_CHECKING_ENABLED)
     verify_result->cert_status |= CERT_STATUS_REV_CHECKING_ENABLED;
 
   if (*completed_chain_crl_result == kCRLSetRevoked)
@@ -915,7 +964,7 @@ int VerifyWithGivenFlags(X509Certificate* cert,
             weak_key_or_signature_algorithm = true;
             policy_fail_already_mapped = true;
           } else if (policy_failed &&
-                     (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED) &&
+                     (flags & CertVerifyProc::VERIFY_REV_CHECKING_ENABLED) &&
                      chain_info[index].StatusCodes[status_code_index] ==
                          CSSMERR_TP_VERIFY_ACTION_FAILED &&
                      base::mac::IsOS10_12()) {
@@ -972,8 +1021,9 @@ int VerifyWithGivenFlags(X509Certificate* cert,
   // compatible with WinHTTP, which doesn't report this error (bug 3004).
   verify_result->cert_status &= ~CERT_STATUS_NO_REVOCATION_MECHANISM;
 
-  AppendPublicKeyHashes(completed_chain, &verify_result->public_key_hashes);
-  verify_result->is_issued_by_known_root = IsIssuedByKnownRoot(completed_chain);
+  AppendPublicKeyHashesAndUpdateKnownRoot(
+      completed_chain, &verify_result->public_key_hashes,
+      &verify_result->is_issued_by_known_root);
 
   if (IsCertStatusError(verify_result->cert_status))
     return MapCertStatusToNetError(verify_result->cert_status);
@@ -991,16 +1041,11 @@ bool CertVerifyProcMac::SupportsAdditionalTrustAnchors() const {
   return false;
 }
 
-bool CertVerifyProcMac::SupportsOCSPStapling() const {
-  // TODO(rsleevi): Plumb an OCSP response into the Mac system library.
-  // https://crbug.com/430714
-  return false;
-}
-
 int CertVerifyProcMac::VerifyInternal(
     X509Certificate* cert,
     const std::string& hostname,
     const std::string& ocsp_response,
+    const std::string& sct_list,
     int flags,
     CRLSet* crl_set,
     const CertificateList& additional_trust_anchors,
@@ -1009,14 +1054,14 @@ int CertVerifyProcMac::VerifyInternal(
   // verification with different flags.
   const CertVerifyResult input_verify_result(*verify_result);
 
-  // If EV verification is enabled, check for EV policy in leaf cert.
+  // Check for EV policy in leaf cert.
   std::string candidate_ev_policy_oid;
-  if (flags & CertVerifier::VERIFY_EV_CERT)
-    GetCandidateEVPolicy(cert, &candidate_ev_policy_oid);
+  GetCandidateEVPolicy(cert, &candidate_ev_policy_oid);
 
   CRLSetResult completed_chain_crl_result;
-  int rv = VerifyWithGivenFlags(cert, hostname, flags, crl_set, verify_result,
-                                &completed_chain_crl_result);
+  int rv =
+      VerifyWithGivenFlags(cert, hostname, ocsp_response, sct_list, flags,
+                           crl_set, verify_result, &completed_chain_crl_result);
   if (rv != OK)
     return rv;
 
@@ -1026,8 +1071,7 @@ int CertVerifyProcMac::VerifyInternal(
     // EV policies check out and the verification succeeded. See if revocation
     // checking still needs to be done before it can be marked as EV.
     if (completed_chain_crl_result == kCRLSetUnknown &&
-        (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED_EV_ONLY) &&
-        !(flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED)) {
+        !(flags & VERIFY_REV_CHECKING_ENABLED)) {
       // If this is an EV cert and it wasn't covered by CRLSets and revocation
       // checking wasn't already on, try again with revocation forced on.
       //
@@ -1035,9 +1079,9 @@ int CertVerifyProcMac::VerifyInternal(
       // re-verification starts with a clean slate.
       *verify_result = input_verify_result;
       int tmp_rv = VerifyWithGivenFlags(
-          verify_result->verified_cert.get(), hostname,
-          flags | CertVerifier::VERIFY_REV_CHECKING_ENABLED, crl_set,
-          verify_result, &completed_chain_crl_result);
+          verify_result->verified_cert.get(), hostname, ocsp_response, sct_list,
+          flags | VERIFY_REV_CHECKING_ENABLED, crl_set, verify_result,
+          &completed_chain_crl_result);
       // If re-verification failed, return those results without setting EV
       // status.
       if (tmp_rv != OK)
@@ -1047,6 +1091,9 @@ int CertVerifyProcMac::VerifyInternal(
     // EV cert and it was covered by CRLSets or revocation checking passed.
     verify_result->cert_status |= CERT_STATUS_IS_EV;
   }
+
+  LogNameNormalizationMetrics(".Mac", verify_result->verified_cert.get(),
+                              verify_result->is_issued_by_known_root);
 
   return OK;
 }

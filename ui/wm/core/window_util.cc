@@ -4,12 +4,14 @@
 
 #include "ui/wm/core/window_util.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
+#include "ui/compositor/dip_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_tree_owner.h"
 #include "ui/wm/core/transient_window_manager.h"
+#include "ui/wm/core/window_properties.h"
 #include "ui/wm/public/activation_client.h"
 
 namespace {
@@ -45,8 +47,8 @@ void MirrorChildren(ui::Layer* to_mirror,
                     ui::Layer* parent,
                     bool sync_bounds) {
   for (auto* child : to_mirror->children()) {
-    child->set_sync_bounds(sync_bounds);
     ui::Layer* mirror = child->Mirror().release();
+    mirror->set_sync_bounds_with_source(sync_bounds);
     parent->Add(mirror);
     MirrorChildren(child, mirror, sync_bounds);
   }
@@ -76,11 +78,11 @@ bool IsActiveWindow(const aura::Window* window) {
   return client && client->GetActiveWindow() == window;
 }
 
-bool CanActivateWindow(aura::Window* window) {
+bool CanActivateWindow(const aura::Window* window) {
   DCHECK(window);
   if (!window->GetRootWindow())
     return false;
-  ActivationClient* client = GetActivationClient(window->GetRootWindow());
+  const ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client && client->CanActivateWindow(window);
 }
 
@@ -117,7 +119,7 @@ void SetWindowFullscreen(aura::Window* window, bool fullscreen) {
   }
 }
 
-bool WindowStateIs(aura::Window* window, ui::WindowShowState state) {
+bool WindowStateIs(const aura::Window* window, ui::WindowShowState state) {
   return window->GetProperty(aura::client::kShowStateKey) == state;
 }
 
@@ -131,11 +133,6 @@ void Unminimize(aura::Window* window) {
   window->SetProperty(
       aura::client::kShowStateKey,
       window->GetProperty(aura::client::kPreMinimizedShowStateKey));
-  // Clear the property only when the window is actually unminimized.
-  if (window->GetProperty(aura::client::kShowStateKey) !=
-      ui::SHOW_STATE_MINIMIZED) {
-    window->ClearProperty(aura::client::kPreMinimizedShowStateKey);
-  }
 }
 
 aura::Window* GetActivatableWindow(aura::Window* window) {
@@ -144,7 +141,12 @@ aura::Window* GetActivatableWindow(aura::Window* window) {
 }
 
 aura::Window* GetToplevelWindow(aura::Window* window) {
-  ActivationClient* client = GetActivationClient(window->GetRootWindow());
+  return const_cast<aura::Window*>(
+      GetToplevelWindow(const_cast<const aura::Window*>(window)));
+}
+
+const aura::Window* GetToplevelWindow(const aura::Window* window) {
+  const ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client ? client->GetToplevelWindow(window) : NULL;
 }
 
@@ -182,7 +184,7 @@ aura::Window* GetTransientParent(aura::Window* window) {
 const aura::Window* GetTransientParent(const aura::Window* window) {
   const TransientWindowManager* manager =
       TransientWindowManager::GetIfExists(window);
-  return manager ? manager->transient_parent() : NULL;
+  return manager ? manager->transient_parent() : nullptr;
 }
 
 const std::vector<aura::Window*>& GetTransientChildren(
@@ -194,6 +196,12 @@ const std::vector<aura::Window*>& GetTransientChildren(
 
   static std::vector<aura::Window*>* shared = new std::vector<aura::Window*>;
   return *shared;
+}
+
+aura::Window* GetTransientRoot(aura::Window* window) {
+  while (window && GetTransientParent(window))
+    window = GetTransientParent(window);
+  return window;
 }
 
 void AddTransientChild(aura::Window* parent, aura::Window* child) {

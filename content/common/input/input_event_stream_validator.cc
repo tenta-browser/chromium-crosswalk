@@ -7,8 +7,8 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "content/public/common/content_switches.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/events/blink/web_input_event_traits.h"
 
 using blink::WebInputEvent;
@@ -34,13 +34,14 @@ void InputEventStreamValidator::Validate(const WebInputEvent& event) {
       << "\nInvalid Event: " << ui::WebInputEventTraits::ToString(event);
 }
 
-bool InputEventStreamValidator::ValidateImpl(const blink::WebInputEvent& event,
-                                             std::string* error_msg) {
+bool InputEventStreamValidator::ValidateImpl(
+    const blink::WebInputEvent& event,
+    std::string* error_msg) {
   DCHECK(error_msg);
   if (WebInputEvent::IsGestureEventType(event.GetType())) {
     const WebGestureEvent& gesture = static_cast<const WebGestureEvent&>(event);
     // TODO(jdduke): Validate touchpad gesture streams.
-    if (gesture.source_device == blink::kWebGestureDeviceTouchscreen)
+    if (gesture.SourceDevice() == blink::WebGestureDevice::kTouchscreen)
       return gesture_validator_.Validate(gesture, error_msg);
   } else if (WebInputEvent::IsTouchEventType(event.GetType())) {
     const WebTouchEvent& touch = static_cast<const WebTouchEvent&>(event);

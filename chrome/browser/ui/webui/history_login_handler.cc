@@ -13,7 +13,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/webui/profile_info_watcher.h"
-#include "components/signin/core/browser/signin_metrics.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 
@@ -28,13 +28,15 @@ void HistoryLoginHandler::RegisterMessages() {
       base::Bind(&HistoryLoginHandler::ProfileInfoChanged,
                  base::Unretained(this))));
 
-  web_ui()->RegisterMessageCallback("otherDevicesInitialized",
-      base::Bind(&HistoryLoginHandler::HandleOtherDevicesInitialized,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "otherDevicesInitialized",
+      base::BindRepeating(&HistoryLoginHandler::HandleOtherDevicesInitialized,
+                          base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback("startSignInFlow",
-      base::Bind(&HistoryLoginHandler::HandleStartSignInFlow,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "startSignInFlow",
+      base::BindRepeating(&HistoryLoginHandler::HandleStartSignInFlow,
+                          base::Unretained(this)));
 }
 
 void HistoryLoginHandler::HandleOtherDevicesInitialized(

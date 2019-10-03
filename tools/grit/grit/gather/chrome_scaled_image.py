@@ -1,10 +1,11 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 '''Gatherer for <structure type="chrome_scaled_image">.
 '''
+
+from __future__ import print_function
 
 import os
 import struct
@@ -104,9 +105,6 @@ class ChromeScaledImage(interface.GathererBase):
     if try_default_layout and 'default' not in layouts:
       layouts.append('default')
 
-    # TODO(tdanderson): Search in descending order of all image scales
-    #                   instead of immediately falling back to 100.
-    #                   See crbug.com/503643.
     scales = [req_scale]
     try_low_res = self.grd_node.FindBooleanAttribute(
         'fallback_to_low_resolution', default=False, skip_self=False)

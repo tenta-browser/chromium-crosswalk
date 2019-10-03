@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/web/public/web_state/web_state_policy_decider.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
 
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/web_state/web_state_impl.h"
@@ -25,8 +25,9 @@ WebStatePolicyDecider::~WebStatePolicyDecider() {
   }
 }
 
-bool WebStatePolicyDecider::ShouldAllowRequest(NSURLRequest* request,
-                                               ui::PageTransition transition) {
+bool WebStatePolicyDecider::ShouldAllowRequest(
+    NSURLRequest* request,
+    const WebStatePolicyDecider::RequestInfo& request_info) {
   return true;
 }
 

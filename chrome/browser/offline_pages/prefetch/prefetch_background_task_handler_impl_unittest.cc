@@ -6,6 +6,7 @@
 
 #include "base/test/test_mock_time_task_runner.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/offline_pages/core/offline_clock.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/backoff_entry.h"
@@ -28,9 +29,9 @@ class PrefetchBackgroundTaskHandlerImplTest : public testing::Test {
   }
 
   std::unique_ptr<PrefetchBackgroundTaskHandlerImpl> CreateHandler() {
-    auto result = base::MakeUnique<PrefetchBackgroundTaskHandlerImpl>(
+    auto result = std::make_unique<PrefetchBackgroundTaskHandlerImpl>(
         profile_.GetPrefs());
-    result->SetTickClockForTesting(clock_.get());
+    result->SetTickClockForTesting(task_runner_->GetMockTickClock());
     return result;
   }
 
@@ -38,7 +39,6 @@ class PrefetchBackgroundTaskHandlerImplTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
-  std::unique_ptr<base::TickClock> clock_;
   std::unique_ptr<PrefetchBackgroundTaskHandlerImpl> task_handler_;
 
  private:
@@ -46,9 +46,8 @@ class PrefetchBackgroundTaskHandlerImplTest : public testing::Test {
 };
 
 PrefetchBackgroundTaskHandlerImplTest::PrefetchBackgroundTaskHandlerImplTest()
-    : task_runner_(new base::TestMockTimeTaskRunner(base::Time::Now(),
-                                                    base::TimeTicks::Now())),
-      clock_(task_runner_->GetMockTickClock()) {
+    : task_runner_(new base::TestMockTimeTaskRunner(OfflineTimeNow(),
+                                                    base::TimeTicks::Now())) {
   task_handler_ = CreateHandler();
 }
 

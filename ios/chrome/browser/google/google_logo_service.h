@@ -22,9 +22,10 @@
 //
 class GoogleLogoService : public search_provider_logos::LogoServiceImpl {
  public:
-  explicit GoogleLogoService(
+  GoogleLogoService(
       TemplateURLService* template_url_service,
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter);
+      signin::IdentityManager* identity_manager,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
   ~GoogleLogoService() override;
 
   using LogoServiceImpl::GetLogo;

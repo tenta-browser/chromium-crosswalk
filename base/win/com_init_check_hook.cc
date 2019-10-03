@@ -93,19 +93,30 @@ class HookManager {
 
   void RegisterHook() {
     AutoLock auto_lock(lock_);
-    if (init_count_ == 0)
-      WriteHook();
-
     ++init_count_;
+    if (disabled_)
+      return;
+    if (init_count_ == 1)
+      WriteHook();
   }
 
   void UnregisterHook() {
     AutoLock auto_lock(lock_);
     DCHECK_NE(0U, init_count_);
-    if (init_count_ == 1)
-      RevertHook();
-
     --init_count_;
+    if (disabled_)
+      return;
+    if (init_count_ == 0)
+      RevertHook();
+  }
+
+  void DisableCOMChecksForProcess() {
+    AutoLock auto_lock(lock_);
+    if (disabled_)
+      return;
+    disabled_ = true;
+    if (init_count_ > 0)
+      RevertHook();
   }
 
  private:
@@ -141,6 +152,12 @@ class HookManager {
         reinterpret_cast<decltype(original_co_create_instance_body_function_)>(
             co_create_instance_padded_address_ + 7);
 
+    uint32_t dchecked_co_create_instance_address =
+        reinterpret_cast<uint32_t>(&HookManager::DCheckedCoCreateInstance);
+    uint32_t jmp_offset_base_address = co_create_instance_padded_address_ + 5;
+    structured_hotpatch_.relative_address =
+        dchecked_co_create_instance_address - jmp_offset_base_address;
+
     HotpatchPlaceholderFormat format = GetHotpatchPlaceholderFormat(
         reinterpret_cast<const void*>(co_create_instance_padded_address_));
     if (format == HotpatchPlaceholderFormat::UNKNOWN) {
@@ -150,40 +167,42 @@ class HookManager {
       return;
     } else if (format == HotpatchPlaceholderFormat::EXTERNALLY_PATCHED) {
       hotpatch_placeholder_format_ = format;
-      NOTREACHED() << "CoCreateInstance appears to be previously patched. ("
+      NOTREACHED() << "CoCreateInstance appears to be previously patched. <"
                    << FirstSevenBytesToString(
                           co_create_instance_padded_address_)
-                   << ")";
+                   << "> Attempted to write <"
+                   << FirstSevenBytesToString(
+                          reinterpret_cast<uint32_t>(&structured_hotpatch_))
+                   << ">";
       return;
     }
-
-    uint32_t dchecked_co_create_instance_address = reinterpret_cast<uint32_t>(
-        static_cast<void*>(&HookManager::DCheckedCoCreateInstance));
-    uint32_t jmp_offset_base_address = co_create_instance_padded_address_ + 5;
-    StructuredHotpatch structured_hotpatch;
-    structured_hotpatch.relative_address =
-        dchecked_co_create_instance_address - jmp_offset_base_address;
 
     DCHECK_EQ(hotpatch_placeholder_format_, HotpatchPlaceholderFormat::UNKNOWN);
     DWORD patch_result = internal::ModifyCode(
         reinterpret_cast<void*>(co_create_instance_padded_address_),
-        reinterpret_cast<void*>(&structured_hotpatch),
-        sizeof(structured_hotpatch));
+        reinterpret_cast<void*>(&structured_hotpatch_),
+        sizeof(structured_hotpatch_));
     if (patch_result == NO_ERROR)
       hotpatch_placeholder_format_ = format;
   }
 
   void RevertHook() {
     lock_.AssertAcquired();
+
+    DWORD revert_result = NO_ERROR;
     switch (hotpatch_placeholder_format_) {
       case HotpatchPlaceholderFormat::INT3:
-        internal::ModifyCode(
+        if (WasHotpatchChanged())
+          return;
+        revert_result = internal::ModifyCode(
             reinterpret_cast<void*>(co_create_instance_padded_address_),
             reinterpret_cast<const void*>(&g_hotpatch_placeholder_int3),
             sizeof(g_hotpatch_placeholder_int3));
         break;
       case HotpatchPlaceholderFormat::NOP:
-        internal::ModifyCode(
+        if (WasHotpatchChanged())
+          return;
+        revert_result = internal::ModifyCode(
             reinterpret_cast<void*>(co_create_instance_padded_address_),
             reinterpret_cast<const void*>(&g_hotpatch_placeholder_nop),
             sizeof(g_hotpatch_placeholder_nop));
@@ -192,6 +211,8 @@ class HookManager {
       case HotpatchPlaceholderFormat::UNKNOWN:
         break;
     }
+    DCHECK_EQ(revert_result, static_cast<DWORD>(NO_ERROR))
+        << "Failed to revert CoCreateInstance hot-patch";
 
     hotpatch_placeholder_format_ = HotpatchPlaceholderFormat::UNKNOWN;
 
@@ -230,6 +251,22 @@ class HookManager {
     return HotpatchPlaceholderFormat::UNKNOWN;
   }
 
+  bool WasHotpatchChanged() {
+    if (::memcmp(reinterpret_cast<void*>(co_create_instance_padded_address_),
+                 reinterpret_cast<const void*>(&structured_hotpatch_),
+                 sizeof(structured_hotpatch_)) == 0) {
+      return false;
+    }
+
+    NOTREACHED() << "CoCreateInstance patch overwritten. Expected: <"
+                 << FirstSevenBytesToString(co_create_instance_padded_address_)
+                 << ">, Actual: <"
+                 << FirstSevenBytesToString(
+                        reinterpret_cast<uint32_t>(&structured_hotpatch_))
+                 << ">";
+    return true;
+  }
+
   static HRESULT __stdcall DCheckedCoCreateInstance(const CLSID& rclsid,
                                                     IUnknown* pUnkOuter,
                                                     DWORD dwClsContext,
@@ -241,12 +278,12 @@ class HookManager {
     //
     // If you hit this assert as part of migrating to the Task Scheduler,
     // evaluate your threading guarantees and dispatch your work with
-    // base::CreateCOMSTATaskRunnerWithTraits().
+    // base::CreateCOMSTATaskRunner().
     //
-    // If you need MTA support, ping //base/task_scheduler/OWNERS.
+    // If you need MTA support, ping //base/task/thread_pool/OWNERS.
     AssertComInitialized(
         "CoCreateInstance calls in Chromium require explicit COM "
-        "initialization via base::CreateCOMSTATaskRunnerWithTraits() or "
+        "initialization via base::CreateCOMSTATaskRunner() or "
         "ScopedCOMInitializer. See the comment in DCheckedCoCreateInstance for "
         "more details.");
     return original_co_create_instance_body_function_(rclsid, pUnkOuter,
@@ -265,10 +302,12 @@ class HookManager {
   // Synchronizes everything in this class.
   base::Lock lock_;
   size_t init_count_ = 0;
+  bool disabled_ = false;
   HMODULE ole32_library_ = nullptr;
   uint32_t co_create_instance_padded_address_ = 0;
   HotpatchPlaceholderFormat hotpatch_placeholder_format_ =
       HotpatchPlaceholderFormat::UNKNOWN;
+  StructuredHotpatch structured_hotpatch_;
   static decltype(
       ::CoCreateInstance)* original_co_create_instance_body_function_;
 
@@ -292,6 +331,12 @@ ComInitCheckHook::~ComInitCheckHook() {
 #if defined(COM_INIT_CHECK_HOOK_ENABLED)
   HookManager::GetInstance()->UnregisterHook();
 #endif  // defined(COM_INIT_CHECK_HOOK_ENABLED)
+}
+
+void ComInitCheckHook::DisableCOMChecksForProcess() {
+#if defined(COM_INIT_CHECK_HOOK_ENABLED)
+  HookManager::GetInstance()->DisableCOMChecksForProcess();
+#endif
 }
 
 }  // namespace win

@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webui/settings/settings_manage_profile_handler.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -45,23 +46,13 @@ class ManageProfileHandlerTest : public testing::Test {
     web_ui()->ClearTrackedCalls();
   }
 
-  void VerifyIconList(const base::Value* value) {
-    const base::ListValue* icons = nullptr;
-    ASSERT_TRUE(value->GetAsList(&icons));
+  void VerifyIconListWithNoneSelected(const base::Value* value) {
+    VerifyIconList(value, 0 /* ignored */, true);
+  }
 
-    // Expect a non-empty list of dictionaries containing non-empty strings for
-    // profile avatar icon urls and labels.
-    EXPECT_FALSE(icons->empty());
-    for (size_t i = 0; i < icons->GetSize(); ++i) {
-      const base::DictionaryValue* icon = nullptr;
-      EXPECT_TRUE(icons->GetDictionary(i, &icon));
-      std::string icon_url;
-      EXPECT_TRUE(icon->GetString("url", &icon_url));
-      EXPECT_FALSE(icon_url.empty());
-      std::string icon_label;
-      EXPECT_TRUE(icon->GetString("label", &icon_label));
-      EXPECT_FALSE(icon_label.empty());
-    }
+  void VerifyIconListWithSingleSelection(const base::Value* value,
+                                         size_t selected_index) {
+    VerifyIconList(value, selected_index, false);
   }
 
   content::TestWebUI* web_ui() { return &web_ui_; }
@@ -75,6 +66,37 @@ class ManageProfileHandlerTest : public testing::Test {
 
   Profile* profile_;
   std::unique_ptr<TestManageProfileHandler> handler_;
+
+  void VerifyIconList(const base::Value* value,
+                      size_t selected_index,
+                      bool all_not_selected) {
+    const base::ListValue* icons = nullptr;
+    ASSERT_TRUE(value->GetAsList(&icons));
+
+    // Expect a non-empty list of dictionaries containing non-empty strings for
+    // profile avatar icon urls and labels.
+    EXPECT_FALSE(icons->empty());
+    for (size_t i = 0; i < icons->GetSize(); ++i) {
+      const base::DictionaryValue* icon = nullptr;
+      EXPECT_TRUE(icons->GetDictionary(i, &icon));
+      std::string icon_url;
+      size_t icon_index;
+      EXPECT_TRUE(icon->GetString("url", &icon_url));
+      EXPECT_FALSE(icon_url.empty());
+      EXPECT_TRUE(profiles::IsDefaultAvatarIconUrl(icon_url, &icon_index));
+      std::string icon_label;
+      EXPECT_TRUE(icon->GetString("label", &icon_label));
+      EXPECT_FALSE(icon_label.empty());
+      bool icon_selected;
+      bool has_icon_selected = icon->GetBoolean("selected", &icon_selected);
+      if (all_not_selected) {
+        EXPECT_FALSE(has_icon_selected);
+      } else if (selected_index == icon_index) {
+        EXPECT_TRUE(has_icon_selected);
+        EXPECT_TRUE(icon_selected);
+      }
+    }
+  }
 };
 
 TEST_F(ManageProfileHandlerTest, HandleSetProfileIconToGaiaAvatar) {
@@ -106,6 +128,29 @@ TEST_F(ManageProfileHandlerTest, HandleSetProfileName) {
 }
 
 TEST_F(ManageProfileHandlerTest, HandleGetAvailableIcons) {
+  PrefService* pref_service = profile()->GetPrefs();
+  pref_service->SetInteger(prefs::kProfileAvatarIndex, 27);
+
+  base::ListValue list_args_1;
+  list_args_1.AppendString("get-icons-callback-id");
+  handler()->HandleGetAvailableIcons(&list_args_1);
+
+  EXPECT_EQ(1U, web_ui()->call_data().size());
+
+  const content::TestWebUI::CallData& data_1 = *web_ui()->call_data().back();
+  EXPECT_EQ("cr.webUIResponse", data_1.function_name());
+
+  std::string callback_id_1;
+  ASSERT_TRUE(data_1.arg1()->GetAsString(&callback_id_1));
+  EXPECT_EQ("get-icons-callback-id", callback_id_1);
+
+  VerifyIconListWithSingleSelection(data_1.arg3(), 27);
+}
+
+TEST_F(ManageProfileHandlerTest, HandleGetAvailableIconsOldIconSelected) {
+  PrefService* pref_service = profile()->GetPrefs();
+  pref_service->SetInteger(prefs::kProfileAvatarIndex, 7);
+
   base::ListValue list_args;
   list_args.AppendString("get-icons-callback-id");
   handler()->HandleGetAvailableIcons(&list_args);
@@ -119,10 +164,34 @@ TEST_F(ManageProfileHandlerTest, HandleGetAvailableIcons) {
   ASSERT_TRUE(data.arg1()->GetAsString(&callback_id));
   EXPECT_EQ("get-icons-callback-id", callback_id);
 
-  VerifyIconList(data.arg3());
+  VerifyIconListWithNoneSelected(data.arg3());
+}
+
+TEST_F(ManageProfileHandlerTest, HandleGetAvailableIconsGaiaAvatarSelected) {
+  PrefService* pref_service = profile()->GetPrefs();
+  pref_service->SetInteger(prefs::kProfileAvatarIndex, 27);
+  pref_service->SetBoolean(prefs::kProfileUsingGAIAAvatar, true);
+
+  base::ListValue list_args;
+  list_args.AppendString("get-icons-callback-id");
+  handler()->HandleGetAvailableIcons(&list_args);
+
+  EXPECT_EQ(1U, web_ui()->call_data().size());
+
+  const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
+  EXPECT_EQ("cr.webUIResponse", data.function_name());
+
+  std::string callback_id;
+  ASSERT_TRUE(data.arg1()->GetAsString(&callback_id));
+  EXPECT_EQ("get-icons-callback-id", callback_id);
+
+  VerifyIconListWithNoneSelected(data.arg3());
 }
 
 TEST_F(ManageProfileHandlerTest, ProfileAvatarChangedWebUIEvent) {
+  PrefService* pref_service = profile()->GetPrefs();
+  pref_service->SetInteger(prefs::kProfileAvatarIndex, 12);
+
   handler()->OnProfileAvatarChanged(base::FilePath());
 
   EXPECT_EQ(1U, web_ui()->call_data().size());
@@ -133,8 +202,7 @@ TEST_F(ManageProfileHandlerTest, ProfileAvatarChangedWebUIEvent) {
   std::string event_id;
   ASSERT_TRUE(data.arg1()->GetAsString(&event_id));
   EXPECT_EQ("available-icons-changed", event_id);
-
-  VerifyIconList(data.arg2());
+  VerifyIconListWithSingleSelection(data.arg2(), 12);
 }
 
 }  // namespace settings

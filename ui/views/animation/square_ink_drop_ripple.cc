@@ -17,6 +17,7 @@
 #include "ui/gfx/geometry/vector3d_f.h"
 #include "ui/gfx/transform_util.h"
 #include "ui/views/animation/ink_drop_painted_layer_delegates.h"
+#include "ui/views/style/platform_style.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -25,11 +26,11 @@ namespace {
 
 // The minimum scale factor to use when scaling rectangle layers. Smaller values
 // were causing visual anomalies.
-const float kMinimumRectScale = 0.0001f;
+constexpr float kMinimumRectScale = 0.0001f;
 
 // The minimum scale factor to use when scaling circle layers. Smaller values
 // were causing visual anomalies.
-const float kMinimumCircleScale = 0.001f;
+constexpr float kMinimumCircleScale = 0.001f;
 
 // All the sub animations that are used to animate each of the InkDropStates.
 // These are used to get time durations with
@@ -107,7 +108,7 @@ enum InkDropSubAnimations {
 };
 
 // The scale factor used to burst the ACTION_TRIGGERED bubble as it fades out.
-const float kQuickActionBurstScale = 1.3f;
+constexpr float kQuickActionBurstScale = 1.3f;
 
 // Duration constants for InkDropStateSubAnimations. See the
 // InkDropStateSubAnimations enum documentation for more info.
@@ -129,14 +130,12 @@ int kAnimationDurationInMs[] = {
 
 // Returns the InkDropState sub animation duration for the given |state|.
 base::TimeDelta GetAnimationDuration(InkDropSubAnimations state) {
-  if (!gfx::Animation::ShouldRenderRichAnimation())
+  if (!PlatformStyle::kUseRipples ||
+      !gfx::Animation::ShouldRenderRichAnimation()) {
     return base::TimeDelta();
+  }
 
-  return base::TimeDelta::FromMilliseconds(
-      (InkDropRipple::UseFastAnimations()
-           ? 1
-           : InkDropRipple::kSlowAnimationDurationFactor) *
-      kAnimationDurationInMs[state]);
+  return base::TimeDelta::FromMilliseconds(kAnimationDurationInMs[state]);
 }
 
 }  // namespace
@@ -383,8 +382,8 @@ void SquareInkDropRipple::SetStateToHidden() {
 
 void SquareInkDropRipple::AbortAllAnimations() {
   root_layer_.GetAnimator()->AbortAllAnimations();
-  for (int i = 0; i < PAINTED_SHAPE_COUNT; ++i)
-    painted_layers_[i]->GetAnimator()->AbortAllAnimations();
+  for (auto& painted_layer : painted_layers_)
+    painted_layer->GetAnimator()->AbortAllAnimations();
 }
 
 void SquareInkDropRipple::AnimateToTransforms(

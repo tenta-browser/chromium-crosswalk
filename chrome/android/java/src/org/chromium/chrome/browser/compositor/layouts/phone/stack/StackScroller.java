@@ -9,6 +9,8 @@ import android.hardware.SensorManager;
 import android.util.Log;
 import android.view.ViewConfiguration;
 
+import org.chromium.chrome.browser.util.MathUtils;
+
 /**
  * This class is vastly copied from {@link android.widget.OverScroller} but decouples the time
  * from the app time so it can be specified manually.
@@ -44,6 +46,41 @@ public class StackScroller {
         // must be set to 1.0 (used in viscousFluid())
         sViscousFluidNormalize = 1.0f;
         sViscousFluidNormalize = 1.0f / viscousFluid(1.0f);
+    }
+
+    public final void setFrictionMultiplier(float frictionMultiplier) {
+        mScrollerX.setFrictionMultiplier(frictionMultiplier);
+        mScrollerY.setFrictionMultiplier(frictionMultiplier);
+    }
+
+    public final void setXSnapDistance(int snapDistance) {
+        mScrollerX.setSnapDistance(snapDistance);
+    }
+
+    public final void setYSnapDistance(int snapDistance) {
+        mScrollerY.setSnapDistance(snapDistance);
+    }
+
+    /**
+     * This method should be called when a touch down event is received if snapping is enabled in
+     * the X direction.
+     *
+     * @param index What multiple of the snap distance (i.e. it can be multiplied by the snap
+     *              distance) we were closest to when a touch down event was received.
+     */
+    public final void setCenteredXSnapIndexAtTouchDown(int index) {
+        mScrollerX.setCenteredSnapIndexAtTouchDown(index);
+    }
+
+    /**
+     * This method should be called when a touch down event is received if snapping is enabled in
+     * the Y direction.
+     *
+     * @param index What multiple of the snap distance (i.e. it can be multiplied by the snap
+     *              distance) we were closest to when a touch down event was received.
+     */
+    public final void setCenteredYSnapIndexAtTouchDown(int index) {
+        mScrollerY.setCenteredSnapIndexAtTouchDown(index);
     }
 
     /**
@@ -118,7 +155,7 @@ public class StackScroller {
         if (x < 1.0f) {
             x -= (1.0f - (float) Math.exp(-x));
         } else {
-            float start = 0.36787944f; // 1/e == exp(-1)
+            float start = 0.36787945f; // 1/e == exp(-1)
             x = 1.0f - (float) Math.exp(1.0f - x);
             x = start + x * (1.0f - start);
         }
@@ -252,14 +289,36 @@ public class StackScroller {
             float oldVelocityY = mScrollerY.mCurrVelocity;
             if (Math.signum(velocityX) == Math.signum(oldVelocityX)
                     && Math.signum(velocityY) == Math.signum(oldVelocityY)) {
-                velocityX += oldVelocityX;
-                velocityY += oldVelocityY;
+                velocityX = (int) (velocityX + oldVelocityX);
+                velocityY = (int) (velocityY + oldVelocityY);
             }
         }
 
         mMode = FLING_MODE;
         mScrollerX.fling(startX, velocityX, minX, maxX, overX, time);
         mScrollerY.fling(startY, velocityY, minY, maxY, overY, time);
+    }
+
+    /**
+     * Tells the X scroller to animate a fling to the specified position.
+     *
+     * @param startX The initial position for the animation.
+     * @param finalX The end position for the animation.
+     * @param time The start time to use for the animation.
+     */
+    public void flingXTo(int startX, int finalX, long time) {
+        mScrollerX.flingTo(startX, finalX, time);
+    }
+
+    /**
+     * Tells the Y scroller to animate a fling to the specified position.
+     *
+     * @param startY The initial position for the animation.
+     * @param finalY The end position for the animation.
+     * @param time The start time to use for the animation.
+     */
+    public void flingYTo(int startY, int finalY, long time) {
+        mScrollerY.flingTo(startY, finalY, time);
     }
 
     /**
@@ -313,6 +372,14 @@ public class StackScroller {
 
         // Fling friction
         private final float mFlingFriction = ViewConfiguration.getScrollFriction();
+        private float mFrictionMultiplier = 1.f;
+
+        private int mCenteredSnapIndexAtTouchDown;
+        private long mLastMaxFlingTime;
+
+        // If this is non-zero, we enable logic to force the ending scroll position to be an integer
+        // multiple of this number.
+        private int mSnapDistance;
 
         // Current state of the animation.
         private int mState = SPLINE;
@@ -324,58 +391,68 @@ public class StackScroller {
         private final float mPhysicalCoeff;
 
         private static final float DECELERATION_RATE = (float) (Math.log(0.78) / Math.log(0.9));
-        private static final float INFLEXION = 0.35f; // Tension lines cross at (INFLEXION, 1)
-        private static final float START_TENSION = 0.5f;
-        private static final float END_TENSION = 1.0f;
-        private static final float P1 = START_TENSION * INFLEXION;
-        private static final float P2 = 1.0f - END_TENSION * (1.0f - INFLEXION);
 
+        // Keep these in sync with the values in //tools/android/ui/generate_spline_constants.py
+        private static final float INFLEXION = 0.35f; // Tension lines cross at (INFLEXION, 1)
         private static final int NB_SAMPLES = 100;
-        private static final float[] SPLINE_POSITION = new float[NB_SAMPLES + 1];
-        private static final float[] SPLINE_TIME = new float[NB_SAMPLES + 1];
+
+        // Values pregenerated by //tools/android/ui/generate_spline_constants.py
+        private static final float[] SPLINE_POSITION = {0.000023f, 0.028561f, 0.057052f, 0.085389f,
+                0.113496f, 0.141299f, 0.168772f, 0.195811f, 0.222396f, 0.248438f, 0.274002f,
+                0.298968f, 0.323332f, 0.347096f, 0.370225f, 0.392725f, 0.414570f, 0.435829f,
+                0.456419f, 0.476410f, 0.495756f, 0.514549f, 0.532721f, 0.550285f, 0.567327f,
+                0.583811f, 0.599748f, 0.615194f, 0.630117f, 0.644548f, 0.658520f, 0.672040f,
+                0.685100f, 0.697728f, 0.709951f, 0.721775f, 0.733178f, 0.744231f, 0.754909f,
+                0.765247f, 0.775225f, 0.784877f, 0.794206f, 0.803230f, 0.811943f, 0.820371f,
+                0.828519f, 0.836379f, 0.843977f, 0.851323f, 0.858411f, 0.865253f, 0.871853f,
+                0.878233f, 0.884389f, 0.890316f, 0.896047f, 0.901557f, 0.906874f, 0.911995f,
+                0.916932f, 0.921675f, 0.926242f, 0.930633f, 0.934848f, 0.938901f, 0.942790f,
+                0.946522f, 0.950094f, 0.953518f, 0.956790f, 0.959924f, 0.962913f, 0.965762f,
+                0.968482f, 0.971068f, 0.973523f, 0.975851f, 0.978060f, 0.980149f, 0.982115f,
+                0.983968f, 0.985709f, 0.987335f, 0.988855f, 0.990269f, 0.991577f, 0.992784f,
+                0.993891f, 0.994899f, 0.995811f, 0.996627f, 0.997352f, 0.997985f, 0.998529f,
+                0.998984f, 0.999354f, 0.999639f, 0.999840f, 0.999960f, 1.000000f};
+        private static final float[] SPLINE_TIME = {0.000002f, 0.003501f, 0.007003f, 0.010507f,
+                0.014014f, 0.017523f, 0.021044f, 0.024569f, 0.028098f, 0.031640f, 0.035195f,
+                0.038755f, 0.042337f, 0.045926f, 0.049530f, 0.053156f, 0.056798f, 0.060456f,
+                0.064138f, 0.067844f, 0.071568f, 0.075316f, 0.079097f, 0.082904f, 0.086737f,
+                0.090596f, 0.094489f, 0.098416f, 0.102385f, 0.106382f, 0.110422f, 0.114497f,
+                0.118615f, 0.122783f, 0.126987f, 0.131243f, 0.135549f, 0.139900f, 0.144309f,
+                0.148776f, 0.153296f, 0.157881f, 0.162519f, 0.167230f, 0.172007f, 0.176851f,
+                0.181767f, 0.186757f, 0.191835f, 0.196993f, 0.202230f, 0.207555f, 0.212973f,
+                0.218491f, 0.224109f, 0.229833f, 0.235656f, 0.241598f, 0.247659f, 0.253837f,
+                0.260147f, 0.266598f, 0.273178f, 0.279912f, 0.286812f, 0.293848f, 0.301075f,
+                0.308475f, 0.316060f, 0.323840f, 0.331824f, 0.340037f, 0.348487f, 0.357182f,
+                0.366129f, 0.375349f, 0.384886f, 0.394732f, 0.404901f, 0.415447f, 0.426381f,
+                0.437738f, 0.449557f, 0.461860f, 0.474729f, 0.488177f, 0.502311f, 0.517150f,
+                0.532822f, 0.549455f, 0.567130f, 0.586069f, 0.606443f, 0.628536f, 0.652774f,
+                0.679739f, 0.710244f, 0.745801f, 0.789246f, 0.848082f, 1.000000f};
 
         private static final int SPLINE = 0;
         private static final int CUBIC = 1;
         private static final int BALLISTIC = 2;
 
-        static {
-            float xMin = 0.0f;
-            float yMin = 0.0f;
-            for (int i = 0; i < NB_SAMPLES; i++) {
-                final float alpha = (float) i / NB_SAMPLES;
+        // The following parameters are only used when snapping is enabled (mSnapDistance != 0).
 
-                float xMax = 1.0f;
-                float x, tx, coef;
-                while (true) {
-                    x = xMin + (xMax - xMin) / 2.0f;
-                    coef = 3.0f * x * (1.0f - x);
-                    tx = coef * ((1.0f - x) * P1 + x * P2) + x * x * x;
-                    if (Math.abs(tx - alpha) < 1E-5) break;
-                    if (tx > alpha) {
-                        xMax = x;
-                    } else {
-                        xMin = x;
-                    }
-                }
-                SPLINE_POSITION[i] = coef * ((1.0f - x) * START_TENSION + x) + x * x * x;
+        // Maximum number of snapped positions to scroll over for a call to fling().
+        private static final int MAX_SNAP_SCROLL = 12;
 
-                float yMax = 1.0f;
-                float y, dy;
-                while (true) {
-                    y = yMin + (yMax - yMin) / 2.0f;
-                    coef = 3.0f * y * (1.0f - y);
-                    dy = coef * ((1.0f - y) * START_TENSION + y) + y * y * y;
-                    if (Math.abs(dy - alpha) < 1E-5) break;
-                    if (dy > alpha) {
-                        yMax = y;
-                    } else {
-                        yMin = y;
-                    }
-                }
-                SPLINE_TIME[i] = coef * ((1.0f - y) * P1 + y * P2) + y * y * y;
-            }
-            SPLINE_POSITION[NB_SAMPLES] = SPLINE_TIME[NB_SAMPLES] = 1.0f;
-        }
+        // Minimum fling velocity to scroll away from the currently-snapped position..
+        private static final int SINGLE_SNAP_MIN_VELOCITY = 100;
+        // Minimum fling velocity to scroll two snap postions instead of one.
+        private static final int DOUBLE_SNAP_MIN_VELOCITY = 1800;
+        // Minimum fling velocity to scroll three snap positions instead of one.
+        private static final int TRIPLE_SNAP_MIN_VELOCITY = 2500;
+        // Minimum fling velocity to scroll by MAX_SNAP_SCROLL positions.
+        private static final int MAX_SNAP_SCROLL_MIN_VELOCITY = 5000;
+
+        // If we receive a fling within this many milliseconds of receiving a previous fling that
+        // caused us to do a maximum distance scroll (and a few other sanity checks hold), we lower
+        // the velocity threshold for the new fling to also do a maximum velocity scroll;
+        private static final int REPEATED_FLING_TIMEOUT = 1500;
+        // Minimum velocity for a "repeated fling" (see previous comment) to trigger a maximum
+        // velocity scroll;
+        private static final int REPEATED_FLING_VELOCITY_THRESHOLD = 1000;
 
         SplineStackScroller(Context context) {
             mFinished = true;
@@ -383,6 +460,22 @@ public class StackScroller {
             mPhysicalCoeff = SensorManager.GRAVITY_EARTH // g (m/s^2)
                     * 39.37f // inch/meter
                     * ppi * 0.84f; // look and feel tuning
+        }
+
+        void setFrictionMultiplier(float frictionMultiplier) {
+            mFrictionMultiplier = frictionMultiplier;
+        }
+
+        private float getFriction() {
+            return mFlingFriction * mFrictionMultiplier;
+        }
+
+        void setSnapDistance(int snapDistance) {
+            mSnapDistance = snapDistance;
+        }
+
+        void setCenteredSnapIndexAtTouchDown(int centeredSnapDistanceAtTouchDown) {
+            mCenteredSnapIndexAtTouchDown = centeredSnapDistanceAtTouchDown;
         }
 
         void updateScroll(float q) {
@@ -411,7 +504,7 @@ public class StackScroller {
                 final float tInf = SPLINE_TIME[index];
                 final float tSup = SPLINE_TIME[index + 1];
                 final float timeCoef = tInf + (x - xInf) / (xSup - xInf) * (tSup - tInf);
-                mDuration *= timeCoef;
+                mDuration = (int) (mDuration * timeCoef);
             }
         }
 
@@ -456,7 +549,6 @@ public class StackScroller {
             } else if (start > max) {
                 startSpringback(start, max, 0);
             }
-
             return !mFinished;
         }
 
@@ -474,7 +566,26 @@ public class StackScroller {
             mDuration = (int) (1000.0 * Math.sqrt(-2.0 * delta / mDeceleration));
         }
 
+        int computeSnapScrollDistance(int velocity) {
+            if (Math.abs(velocity) < SINGLE_SNAP_MIN_VELOCITY) return 0;
+            if (Math.abs(velocity) < DOUBLE_SNAP_MIN_VELOCITY) return 1;
+            if (Math.abs(velocity) < TRIPLE_SNAP_MIN_VELOCITY) return 2;
+            if (Math.abs(velocity) >= MAX_SNAP_SCROLL_MIN_VELOCITY) return MAX_SNAP_SCROLL;
+
+            // For fling velocities between TRIPLE_SNAP_MIN_VELOCITY and
+            // MAX_SNAP_SCROLL_MIN_VELOCITY, we do linear interpolation to decide how many snap
+            // positions to scroll by.
+            float increment = (MAX_SNAP_SCROLL_MIN_VELOCITY - TRIPLE_SNAP_MIN_VELOCITY)
+                    / (MAX_SNAP_SCROLL - 3);
+            return (int) ((Math.abs(velocity) - TRIPLE_SNAP_MIN_VELOCITY) / increment) + 3;
+        }
+
         void fling(int start, int velocity, int min, int max, int over, long time) {
+            if (mSnapDistance != 0) {
+                doSnapScroll(start, velocity, min, max, time);
+                return;
+            }
+
             mOver = over;
             mFinished = false;
             mCurrVelocity = mVelocity = velocity;
@@ -510,15 +621,71 @@ public class StackScroller {
             }
         }
 
+        private void doSnapScroll(int start, int velocity, int min, int max, long time) {
+            boolean sameDirection = (Math.signum(velocity) == Math.signum(mCurrVelocity));
+
+            int numTabsToScroll = computeSnapScrollDistance(velocity);
+            if (numTabsToScroll == MAX_SNAP_SCROLL
+                    || (time < mLastMaxFlingTime + REPEATED_FLING_TIMEOUT && sameDirection
+                               && Math.abs(velocity) > REPEATED_FLING_VELOCITY_THRESHOLD)) {
+                // After receiving one "max speed" fling, give a boost to subsequent flings to make
+                // it easier to scroll by a large number of tabs.
+                mLastMaxFlingTime = time;
+                numTabsToScroll = MAX_SNAP_SCROLL;
+            }
+
+            int newCenteredTab =
+                    mCenteredSnapIndexAtTouchDown - (int) Math.signum(velocity) * numTabsToScroll;
+            double newPositionPostSnapping = -newCenteredTab * mSnapDistance;
+
+            double newPositionPostClamping =
+                    MathUtils.clamp((float) newPositionPostSnapping, min, max);
+            if (newPositionPostSnapping == mCurrentPosition) {
+                // Don't apply the repeated fling boost right after a fling that didn't actually
+                // scroll anything.
+                mLastMaxFlingTime = 0;
+                return;
+            }
+
+            flingTo(start, (int) newPositionPostSnapping, time);
+        }
+
+        /**
+         * Animates a fling to the specified position.
+         *
+         * @param startPosition The initial position for the animation.
+         * @param finalPosition The end position for the animation.
+         * @param time The start time to use for the animation.
+         */
+        void flingTo(int startPosition, int finalPosition, long time) {
+            mCurrentPosition = mStart = startPosition;
+            mFinal = finalPosition;
+            mStartTime = time;
+            mSplineDistance = finalPosition - startPosition;
+            mFinished = false;
+            mOver = 0;
+            mState = SPLINE;
+
+            mCurrVelocity = (int) (Math.signum(mSplineDistance)
+                    * getSplineFlingDistanceInverse(Math.abs(mSplineDistance)));
+            mDuration = mSplineDuration = getSplineFlingDuration((int) mCurrVelocity);
+        }
+
         private double getSplineDeceleration(int velocity) {
-            return Math.log(INFLEXION * Math.abs(velocity) / (mFlingFriction * mPhysicalCoeff));
+            return Math.log(INFLEXION * Math.abs(velocity) / (getFriction() * mPhysicalCoeff));
+        }
+
+        // Note: this always returns a positive velocity. The desired velocity may be negative (with
+        // the same magnitude).
+        private int getSplineDecelerationInverse(double deceleration) {
+            return (int) Math.round(
+                    Math.exp(deceleration) * (getFriction() * mPhysicalCoeff) / INFLEXION);
         }
 
         private double getSplineFlingDistance(int velocity) {
             final double l = getSplineDeceleration(velocity);
             final double decelMinusOne = DECELERATION_RATE - 1.0;
-            return mFlingFriction * mPhysicalCoeff
-                    * Math.exp(DECELERATION_RATE / decelMinusOne * l);
+            return getFriction() * mPhysicalCoeff * Math.exp(DECELERATION_RATE / decelMinusOne * l);
         }
 
         /* Returns the duration, expressed in milliseconds */
@@ -526,6 +693,18 @@ public class StackScroller {
             final double l = getSplineDeceleration(velocity);
             final double decelMinusOne = DECELERATION_RATE - 1.0;
             return (int) (1000.0 * Math.exp(l / decelMinusOne));
+        }
+
+        // This lets us get the required fling velocity to make the scroller move a certain
+        // distance. We use this to implement snapping by calculating where a fling of a given
+        // velocity would move the scroller to, rounding to the nearest multiple of the current snap
+        // distance, and inverting to get the final velocity to use (close enough to the initial
+        // velocity that it's really noticeable that we changed it).
+        private int getSplineFlingDistanceInverse(double distance) {
+            double decelMinusOne = DECELERATION_RATE - 1.0;
+            double splineDeceleration = Math.log(distance / (getFriction() * mPhysicalCoeff))
+                    * decelMinusOne / DECELERATION_RATE;
+            return getSplineDecelerationInverse(splineDeceleration);
         }
 
         private void fitOnBounceCurve(int start, int end, int velocity) {

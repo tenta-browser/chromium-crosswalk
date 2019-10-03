@@ -6,16 +6,17 @@
 
 #include <algorithm>
 
+#include "ash/public/cpp/app_list/app_list_config.h"
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ui/app_list/extension_app_item.h"
+#include "chrome/browser/ui/app_list/extension_app_utils.h"
 #include "chrome/browser/ui/ash/launcher/launcher_extension_app_updater.h"
 #include "chrome/common/pref_names.h"
 #include "extensions/browser/extension_prefs.h"
@@ -53,8 +54,7 @@ void ExtensionAppModelBuilder::OnProfilePreferenceChanged() {
 
   for (extensions::ExtensionSet::const_iterator app = extensions.begin();
        app != extensions.end(); ++app) {
-    bool should_display =
-        extensions::ui_util::ShouldDisplayInAppLauncher(app->get(), profile());
+    bool should_display = app_list::ShouldShowInLauncher(app->get(), profile());
     bool does_display = GetExtensionAppItem((*app)->id()) != nullptr;
 
     if (should_display == does_display)
@@ -84,11 +84,15 @@ void ExtensionAppModelBuilder::OnBeginExtensionInstall(
     return;
   }
 
+  if (app_list::HideInLauncherById(params.extension_id))
+    return;
+
   // Icons from the webstore can be unusual sizes. Once installed,
-  // ExtensionAppItem uses extension_misc::EXTENSION_ICON_MEDIUM (48) to load
-  // it, so be consistent with that.
-  gfx::Size icon_size(extension_misc::EXTENSION_ICON_MEDIUM,
-                      extension_misc::EXTENSION_ICON_MEDIUM);
+  // ExtensionAppItem uses AppListConfig::instance().grid_icon_dimension() to
+  // load it, so be consistent with that.
+  const int icon_dimension =
+      app_list::AppListConfig::instance().grid_icon_dimension();
+  gfx::Size icon_size(icon_dimension, icon_dimension);
   gfx::ImageSkia resized(gfx::ImageSkiaOperations::CreateResizedImage(
       params.installing_icon, skia::ImageOperations::RESIZE_BEST, icon_size));
 
@@ -126,7 +130,7 @@ void ExtensionAppModelBuilder::OnAppInstalled(
     return;
   }
 
-  if (!extensions::ui_util::ShouldDisplayInAppLauncher(extension, profile()))
+  if (!app_list::ShouldShowInLauncher(extension, profile()))
     return;
 
   DVLOG(2) << service() << ": OnAppInstalled: " << app_id.substr(0, 8);
@@ -145,17 +149,13 @@ void ExtensionAppModelBuilder::OnAppInstalled(
 void ExtensionAppModelBuilder::OnAppUninstalled(
     content::BrowserContext* browser_context,
     const std::string& app_id) {
-  if (service()) {
-    DVLOG(2) << service() << ": OnAppUninstalled: " << app_id.substr(0, 8);
-    service()->RemoveUninstalledItem(app_id);
-    return;
-  }
-  model_updater()->RemoveUninstalledItem(app_id);
+  const bool unsynced_change = false;
+  RemoveApp(app_id, unsynced_change);
 }
 
 void ExtensionAppModelBuilder::OnDisabledExtensionUpdated(
     const Extension* extension) {
-  if (!extensions::ui_util::ShouldDisplayInAppLauncher(extension, profile()))
+  if (!app_list::ShouldShowInLauncher(extension, profile()))
     return;
 
   ExtensionAppItem* existing_item = GetExtensionAppItem(extension->id());
@@ -176,9 +176,9 @@ std::unique_ptr<ExtensionAppItem> ExtensionAppModelBuilder::CreateAppItem(
     const std::string& extension_name,
     const gfx::ImageSkia& installing_icon,
     bool is_platform_app) {
-  return base::MakeUnique<ExtensionAppItem>(
-      profile(), GetSyncItem(extension_id), extension_id, extension_name,
-      installing_icon, is_platform_app);
+  return std::make_unique<ExtensionAppItem>(
+      profile(), model_updater(), GetSyncItem(extension_id), extension_id,
+      extension_name, installing_icon, is_platform_app);
 }
 
 void ExtensionAppModelBuilder::BuildModel() {
@@ -194,7 +194,7 @@ void ExtensionAppModelBuilder::BuildModel() {
   if (tracker_)
     tracker_->AddObserver(this);
 
-  app_updater_.reset(new LauncherExtensionAppUpdater(this, profile()));
+  app_updater_ = std::make_unique<LauncherExtensionAppUpdater>(this, profile());
 }
 
 void ExtensionAppModelBuilder::PopulateApps() {
@@ -203,7 +203,7 @@ void ExtensionAppModelBuilder::PopulateApps() {
 
   for (extensions::ExtensionSet::const_iterator app = extensions.begin();
        app != extensions.end(); ++app) {
-    if (!extensions::ui_util::ShouldDisplayInAppLauncher(app->get(), profile()))
+    if (!app_list::ShouldShowInLauncher(app->get(), profile()))
       continue;
     InsertApp(CreateAppItem((*app)->id(),
                             "",

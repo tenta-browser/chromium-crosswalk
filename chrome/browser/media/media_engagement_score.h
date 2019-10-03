@@ -8,12 +8,11 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/clock.h"
 #include "base/values.h"
 #include "chrome/browser/media/media_engagement_score_details.mojom.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 class HostContentSettingsMap;
 
@@ -29,6 +28,11 @@ class MediaEngagementScore final {
   // kSignificantPlaybacksKey will store the number of significant playbacks
   // on an origin. kVisitsWithMediaTagKey will store the number of visits to
   // an origin where at least one page had a media tag.
+  // kSignificantMediaPlaybacksKey will store significant playbacks that
+  // originated from media elements and kSignificantAudioContextPlaybacksKey
+  // will store significant playbacks originated from audio contexts. The
+  // sum of the two may be higher than kMediaPlaybacksKey as a visit may have
+  // both an audio context playback and a media element playback.
   static const char kVisitsKey[];
   static const char kMediaPlaybacksKey[];
   static const char kLastMediaPlaybackTimeKey[];
@@ -36,6 +40,9 @@ class MediaEngagementScore final {
   static const char kAudiblePlaybacksKey[];
   static const char kSignificantPlaybacksKey[];
   static const char kVisitsWithMediaTagKey[];
+  static const char kHighScoreChanges[];
+  static const char kSignificantMediaPlaybacksKey[];
+  static const char kSignificantAudioContextPlaybacksKey[];
 
   // Origins with a number of visits less than this number will recieve
   // a score of zero.
@@ -47,7 +54,7 @@ class MediaEngagementScore final {
   static double GetHighScoreUpperThreshold();
 
   MediaEngagementScore(base::Clock* clock,
-                       const GURL& origin,
+                       const url::Origin& origin,
                        HostContentSettingsMap* settings);
   ~MediaEngagementScore();
 
@@ -59,6 +66,12 @@ class MediaEngagementScore final {
 
   // Returns whether the total score is considered high.
   bool high_score() const { return is_high_; }
+
+  // Returns the number of times the high engagement bit was changed.
+  int high_score_changes() const { return high_score_changes_; }
+
+  // Returns the origin associated with this score.
+  const url::Origin& origin() const { return origin_; }
 
   // Writes the values in this score into |settings_map_|. If there are multiple
   // instances of a score object for an origin, this could result in stale data
@@ -73,9 +86,12 @@ class MediaEngagementScore final {
   int media_playbacks() const { return media_playbacks_; }
   void IncrementMediaPlaybacks();
 
-  // Get the last time media was played on this origin.
+  // Gets/sets the last time media was played on this origin.
   base::Time last_media_playback_time() const {
     return last_media_playback_time_;
+  }
+  void set_last_media_playback_time(base::Time new_time) {
+    last_media_playback_time_ = new_time;
   }
 
   // Get/increment the number of audible media playbacks this origin had.
@@ -96,13 +112,34 @@ class MediaEngagementScore final {
     set_visits_with_media_tag(visits_with_media_tag_ + 1);
   }
 
+  // Get/increment the number of significant playbacks from media elements this
+  // origin had.
+  int media_element_playbacks() const { return media_element_playbacks_; }
+  void IncrementMediaElementPlaybacks() {
+    set_media_element_playbacks(media_element_playbacks_ + 1);
+  }
+
+  // Get/increment the number of significant playbacks from audio contexts this
+  // origin had.
+  int audio_context_playbacks() const { return audio_context_playbacks_; }
+  void IncrementAudioContextPlaybacks() {
+    set_audio_context_playbacks(audio_context_playbacks_ + 1);
+  }
+
   // Get a breakdown of the score that can be serialized by Mojo.
   media::mojom::MediaEngagementScoreDetailsPtr GetScoreDetails() const;
 
  protected:
   friend class MediaEngagementAutoplayBrowserTest;
   friend class MediaEngagementContentsObserverTest;
+  friend class MediaEngagementSessionTest;
   friend class MediaEngagementService;
+
+  // Only used by the Media Engagement service when bulk loading data.
+  MediaEngagementScore(base::Clock* clock,
+                       const url::Origin& origin,
+                       std::unique_ptr<base::DictionaryValue> score_dict,
+                       HostContentSettingsMap* settings);
 
   static const char kScoreMinVisitsParamName[];
   static const char kHighScoreLowerThresholdParamName[];
@@ -118,18 +155,16 @@ class MediaEngagementScore final {
   void set_visits_with_media_tag(int visits) {
     visits_with_media_tag_ = visits;
   }
-  void set_last_media_playback_time(base::Time new_time) {
-    last_media_playback_time_ = new_time;
+  void set_media_element_playbacks(int playbacks) {
+    media_element_playbacks_ = playbacks;
+  }
+  void set_audio_context_playbacks(int playbacks) {
+    audio_context_playbacks_ = playbacks;
   }
 
  private:
   friend class MediaEngagementServiceTest;
   friend class MediaEngagementScoreTest;
-
-  // Used for tests.
-  MediaEngagementScore(base::Clock* clock,
-                       const GURL& origin,
-                       std::unique_ptr<base::DictionaryValue> score_dict);
 
   // Update the dictionary continaing the latest score values and return whether
   // they have changed or not (since what was last retrieved from content
@@ -149,6 +184,9 @@ class MediaEngagementScore final {
   // If the current score is considered high.
   bool is_high_ = false;
 
+  // Number of times the high engagement bit was changed for this origin.
+  int high_score_changes_ = 0;
+
   // The current engagement score.
   double actual_score_ = 0.0;
 
@@ -164,8 +202,14 @@ class MediaEngagementScore final {
   // The last time media was played back on this origin.
   base::Time last_media_playback_time_;
 
+  // The number of significant playbacks from a media element this origin had.
+  int media_element_playbacks_ = 0;
+
+  // The number of significant playbacks from an audio context this origin had.
+  int audio_context_playbacks_ = 0;
+
   // The origin this score represents.
-  GURL origin_;
+  url::Origin origin_;
 
   // A clock that can be used for testing, owned by the service.
   base::Clock* clock_;

@@ -7,10 +7,12 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "chrome/browser/media_galleries/fileapi/mtp_device_async_delegate.h"
 #include "content/public/browser/browser_thread.h"
 #include "storage/browser/fileapi/external_mount_points.h"
+#include "storage/browser/fileapi/file_system_url.h"
 
 namespace {
 
@@ -33,7 +35,7 @@ void MTPDeviceMapService::RegisterMTPFileSystem(
   DCHECK(!filesystem_id.empty());
 
   const AsyncDelegateKey key = GetAsyncDelegateKey(device_location, read_only);
-  if (!base::ContainsKey(mtp_device_usage_map_, key)) {
+  if (!base::Contains(mtp_device_usage_map_, key)) {
     // Note that this initializes the delegate asynchronously, but since
     // the delegate will only be used from the IO thread, it is guaranteed
     // to be created before use of it expects it to be there.
@@ -82,7 +84,7 @@ void MTPDeviceMapService::AddAsyncDelegate(
   DCHECK(!device_location.empty());
 
   const AsyncDelegateKey key = GetAsyncDelegateKey(device_location, read_only);
-  if (base::ContainsKey(async_delegate_map_, key))
+  if (base::Contains(async_delegate_map_, key))
     return;
   async_delegate_map_[key] = delegate;
 }
@@ -115,10 +117,11 @@ MTPDeviceMapService::AsyncDelegateKey MTPDeviceMapService::GetAsyncDelegateKey(
 }
 
 MTPDeviceAsyncDelegate* MTPDeviceMapService::GetMTPDeviceAsyncDelegate(
-    const std::string& filesystem_id) {
+    const storage::FileSystemURL& filesystem_url) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  DCHECK(!filesystem_id.empty());
+  DCHECK(!filesystem_url.filesystem_id().empty());
 
+  const std::string& filesystem_id = filesystem_url.filesystem_id();
   // File system may be already revoked on ExternalMountPoints side, we check
   // here that the file system is still valid.
   base::FilePath device_path;

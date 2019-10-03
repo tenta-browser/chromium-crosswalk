@@ -15,9 +15,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
-#include "content/public/common/browser_side_navigation_policy.h"
-#include "content/public/common/console_message_level.h"
 #include "net/http/http_response_headers.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -58,12 +57,20 @@ enum XFrameOptionsHistogram {
   // The 'frame-ancestors' CSP directive should take effect instead.
   BYPASS = 8,
 
-  XFRAMEOPTIONS_HISTOGRAM_MAX = BYPASS
+  // Navigation would have been blocked if we applied 'X-Frame-Options' to
+  // redirects.
+  //
+  // TODO(mkwst): Rename this when we make a decision around
+  // https://crbug.com/835465.
+  REDIRECT_WOULD_BE_BLOCKED = 9,
+
+  XFRAMEOPTIONS_HISTOGRAM_MAX = REDIRECT_WOULD_BE_BLOCKED
 };
 
 void RecordXFrameOptionsUsage(XFrameOptionsHistogram usage) {
-  UMA_HISTOGRAM_ENUMERATION(kXFrameOptionsSameOriginHistogram, usage,
-                            XFRAMEOPTIONS_HISTOGRAM_MAX);
+  UMA_HISTOGRAM_ENUMERATION(
+      kXFrameOptionsSameOriginHistogram, usage,
+      XFrameOptionsHistogram::XFRAMEOPTIONS_HISTOGRAM_MAX);
 }
 
 bool HeadersContainFrameAncestorsCSP(const net::HttpResponseHeaders* headers) {
@@ -99,7 +106,31 @@ std::unique_ptr<NavigationThrottle> AncestorThrottle::MaybeCreateThrottleFor(
 AncestorThrottle::~AncestorThrottle() {}
 
 NavigationThrottle::ThrottleCheckResult
+AncestorThrottle::WillRedirectRequest() {
+  // During a redirect, we don't know which RenderFrameHost we'll end up in,
+  // so we can't log reliably to the console. We should be able to work around
+  // this iff we decide to ship the redirect-blocking behavior, but for now
+  // we'll just skip the console-logging bits to collect metrics.
+  NavigationThrottle::ThrottleCheckResult result =
+      ProcessResponseImpl(LoggingDisposition::DO_NOT_LOG_TO_CONSOLE);
+
+  if (result.action() == NavigationThrottle::BLOCK_RESPONSE)
+    RecordXFrameOptionsUsage(XFrameOptionsHistogram::REDIRECT_WOULD_BE_BLOCKED);
+
+  // TODO(mkwst): We need to decide whether we'll be able to get away with
+  // tightening the XFO check to include redirect responses once we have a
+  // feel for the REDIRECT_WOULD_BE_BLOCKED numbers we're collecting above.
+  // Until then, we'll allow the response to proceed: https://crbug.com/835465.
+  return NavigationThrottle::PROCEED;
+}
+
+NavigationThrottle::ThrottleCheckResult
 AncestorThrottle::WillProcessResponse() {
+  return ProcessResponseImpl(LoggingDisposition::LOG_TO_CONSOLE);
+}
+
+NavigationThrottle::ThrottleCheckResult AncestorThrottle::ProcessResponseImpl(
+    LoggingDisposition logging) {
   DCHECK(!navigation_handle()->IsInMainFrame());
 
   NavigationHandleImpl* handle =
@@ -116,19 +147,22 @@ AncestorThrottle::WillProcessResponse() {
 
   switch (disposition) {
     case HeaderDisposition::CONFLICT:
-      ParseError(header_value, disposition);
-      RecordXFrameOptionsUsage(CONFLICT);
+      if (logging == LoggingDisposition::LOG_TO_CONSOLE)
+        ParseError(header_value, disposition);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::CONFLICT);
       return NavigationThrottle::BLOCK_RESPONSE;
 
     case HeaderDisposition::INVALID:
-      ParseError(header_value, disposition);
-      RecordXFrameOptionsUsage(INVALID);
+      if (logging == LoggingDisposition::LOG_TO_CONSOLE)
+        ParseError(header_value, disposition);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::INVALID);
       // TODO(mkwst): Consider failing here.
       return NavigationThrottle::PROCEED;
 
     case HeaderDisposition::DENY:
-      ConsoleError(disposition);
-      RecordXFrameOptionsUsage(DENY);
+      if (logging == LoggingDisposition::LOG_TO_CONSOLE)
+        ConsoleError(disposition);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::DENY);
       return NavigationThrottle::BLOCK_RESPONSE;
 
     case HeaderDisposition::SAMEORIGIN: {
@@ -138,8 +172,9 @@ AncestorThrottle::WillProcessResponse() {
           url::Origin::Create(navigation_handle()->GetURL());
       while (parent) {
         if (!parent->current_origin().IsSameOriginWith(current_origin)) {
-          RecordXFrameOptionsUsage(SAMEORIGIN_BLOCKED);
-          ConsoleError(disposition);
+          RecordXFrameOptionsUsage(XFrameOptionsHistogram::SAMEORIGIN_BLOCKED);
+          if (logging == LoggingDisposition::LOG_TO_CONSOLE)
+            ConsoleError(disposition);
 
           // TODO(mkwst): Stop recording this metric once we convince other
           // vendors to follow our lead with XFO: SAMEORIGIN processing.
@@ -147,25 +182,26 @@ AncestorThrottle::WillProcessResponse() {
           // https://crbug.com/250309
           if (parent->frame_tree()->root()->current_origin().IsSameOriginWith(
                   current_origin)) {
-            RecordXFrameOptionsUsage(SAMEORIGIN_WITH_BAD_ANCESTOR_CHAIN);
+            RecordXFrameOptionsUsage(
+                XFrameOptionsHistogram::SAMEORIGIN_WITH_BAD_ANCESTOR_CHAIN);
           }
 
           return NavigationThrottle::BLOCK_RESPONSE;
         }
         parent = parent->parent();
       }
-      RecordXFrameOptionsUsage(SAMEORIGIN);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::SAMEORIGIN);
       return NavigationThrottle::PROCEED;
     }
 
     case HeaderDisposition::NONE:
-      RecordXFrameOptionsUsage(NONE);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::NONE);
       return NavigationThrottle::PROCEED;
     case HeaderDisposition::BYPASS:
-      RecordXFrameOptionsUsage(BYPASS);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::BYPASS);
       return NavigationThrottle::PROCEED;
     case HeaderDisposition::ALLOWALL:
-      RecordXFrameOptionsUsage(ALLOWALL);
+      RecordXFrameOptionsUsage(XFrameOptionsHistogram::ALLOWALL);
       return NavigationThrottle::PROCEED;
   }
   NOTREACHED();
@@ -203,7 +239,7 @@ void AncestorThrottle::ParseError(const std::string& value,
   // Log a console error in the parent of the current RenderFrameHost (as
   // the current RenderFrameHost itself doesn't yet have a document).
   navigation_handle()->GetRenderFrameHost()->GetParent()->AddMessageToConsole(
-      CONSOLE_MESSAGE_LEVEL_ERROR, message);
+      blink::mojom::ConsoleMessageLevel::kError, message);
 }
 
 void AncestorThrottle::ConsoleError(HeaderDisposition disposition) {
@@ -221,7 +257,7 @@ void AncestorThrottle::ConsoleError(HeaderDisposition disposition) {
   // Log a console error in the parent of the current RenderFrameHost (as
   // the current RenderFrameHost itself doesn't yet have a document).
   navigation_handle()->GetRenderFrameHost()->GetParent()->AddMessageToConsole(
-      CONSOLE_MESSAGE_LEVEL_ERROR, message);
+      blink::mojom::ConsoleMessageLevel::kError, message);
 }
 
 AncestorThrottle::HeaderDisposition AncestorThrottle::ParseHeader(

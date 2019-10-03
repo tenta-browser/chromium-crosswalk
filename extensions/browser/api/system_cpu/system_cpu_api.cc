@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/browser/api/system_cpu/system_cpu_api.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "extensions/browser/api/system_cpu/cpu_info_provider.h"
-#include "extensions/browser/api/system_cpu/system_cpu_api.h"
 
 namespace extensions {
 
@@ -16,18 +17,17 @@ SystemCpuGetInfoFunction::SystemCpuGetInfoFunction() {
 SystemCpuGetInfoFunction::~SystemCpuGetInfoFunction() {
 }
 
-bool SystemCpuGetInfoFunction::RunAsync() {
+ExtensionFunction::ResponseAction SystemCpuGetInfoFunction::Run() {
   CpuInfoProvider::Get()->StartQueryInfo(
       base::Bind(&SystemCpuGetInfoFunction::OnGetCpuInfoCompleted, this));
-  return true;
+  return did_respond() ? AlreadyResponded() : RespondLater();
 }
 
 void SystemCpuGetInfoFunction::OnGetCpuInfoCompleted(bool success) {
   if (success)
-    SetResult(CpuInfoProvider::Get()->cpu_info().ToValue());
+    Respond(OneArgument(CpuInfoProvider::Get()->cpu_info().ToValue()));
   else
-    SetError("Error occurred when querying cpu information.");
-  SendResponse(success);
+    Respond(Error("Error occurred when querying cpu information."));
 }
 
 }  // namespace extensions

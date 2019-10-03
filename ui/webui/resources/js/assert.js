@@ -15,17 +15,22 @@
  * @param {string=} opt_message A message to show on failure.
  * @return {T} A non-null |condition|.
  */
-function assert(condition, opt_message) {
+/* #export */ function assert(condition, opt_message) {
   if (!condition) {
-    var message = 'Assertion failed';
-    if (opt_message)
+    let message = 'Assertion failed';
+    if (opt_message) {
       message = message + ': ' + opt_message;
-    var error = new Error(message);
-    var global = function() {
-      return this;
+    }
+    const error = new Error(message);
+    const global = function() {
+      const thisOrSelf = this || self;
+      /** @type {boolean} */
+      thisOrSelf.traceAssertionsForTesting;
+      return thisOrSelf;
     }();
-    if (global.traceAssertionsForTesting)
+    if (global.traceAssertionsForTesting) {
       console.warn(error.stack);
+    }
     throw error;
   }
   return condition;
@@ -52,7 +57,7 @@ function assert(condition, opt_message) {
  *
  * @param {string=} opt_message A message to show when this is hit.
  */
-function assertNotReached(opt_message) {
+/* #export */ function assertNotReached(opt_message) {
   assert(false, opt_message || 'Unreachable code hit');
 }
 
@@ -63,7 +68,7 @@ function assertNotReached(opt_message) {
  * @return {T}
  * @template T
  */
-function assertInstanceof(value, type, opt_message) {
+/* #export */ function assertInstanceof(value, type, opt_message) {
   // We don't use assert immediately here so that we avoid constructing an error
   // message if we don't have to.
   if (!(value instanceof type)) {

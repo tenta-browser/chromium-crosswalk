@@ -5,17 +5,18 @@
 #include "remoting/test/access_token_fetcher.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/google_api_keys.h"
 #include "net/url_request/url_fetcher.h"
 #include "remoting/base/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/transitional_url_loader_factory_owner.h"
 
 namespace {
 const int kMaxGetTokensRetries = 3;
@@ -38,7 +39,7 @@ AccessTokenFetcher::~AccessTokenFetcher() = default;
 
 void AccessTokenFetcher::GetAccessTokenFromAuthCode(
     const std::string& auth_code,
-    const AccessTokenCallback& callback) {
+    AccessTokenCallback callback) {
   DCHECK(!auth_code.empty());
   DCHECK(!callback.is_null());
   DCHECK(access_token_callback_.is_null());
@@ -47,7 +48,7 @@ void AccessTokenFetcher::GetAccessTokenFromAuthCode(
 
   access_token_.clear();
   refresh_token_.clear();
-  access_token_callback_ = callback;
+  access_token_callback_ = std::move(callback);
 
   // Create a new GaiaOAuthClient for each request to GAIA.
   CreateNewGaiaOAuthClientInstance();
@@ -58,7 +59,7 @@ void AccessTokenFetcher::GetAccessTokenFromAuthCode(
 
 void AccessTokenFetcher::GetAccessTokenFromRefreshToken(
     const std::string& refresh_token,
-    const AccessTokenCallback& callback) {
+    AccessTokenCallback callback) {
   DCHECK(!refresh_token.empty());
   DCHECK(!callback.is_null());
   DCHECK(access_token_callback_.is_null());
@@ -67,7 +68,7 @@ void AccessTokenFetcher::GetAccessTokenFromRefreshToken(
 
   access_token_.clear();
   refresh_token_ = refresh_token;
-  access_token_callback_ = callback;
+  access_token_callback_ = std::move(callback);
 
   // Create a new GaiaOAuthClient for each request to GAIA.
   CreateNewGaiaOAuthClientInstance();
@@ -77,13 +78,27 @@ void AccessTokenFetcher::GetAccessTokenFromRefreshToken(
                              /*delegate=*/this);
 }
 
-void AccessTokenFetcher::CreateNewGaiaOAuthClientInstance() {
-  scoped_refptr<remoting::URLRequestContextGetter> request_context_getter;
-  request_context_getter = new remoting::URLRequestContextGetter(
-      base::ThreadTaskRunnerHandle::Get(),   // network_runner
-      base::ThreadTaskRunnerHandle::Get());  // file_runner
+void AccessTokenFetcher::SetURLLoaderFactoryForTesting(
+    scoped_refptr<network::SharedURLLoaderFactory>
+        url_loader_factory_for_testing) {
+  url_loader_factory_for_testing_ = url_loader_factory_for_testing;
+}
 
-  auth_client_.reset(new gaia::GaiaOAuthClient(request_context_getter.get()));
+void AccessTokenFetcher::CreateNewGaiaOAuthClientInstance() {
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory;
+  if (url_loader_factory_for_testing_) {
+    url_loader_factory = url_loader_factory_for_testing_;
+  } else {
+    scoped_refptr<remoting::URLRequestContextGetter> request_context_getter;
+    request_context_getter = new remoting::URLRequestContextGetter(
+        base::ThreadTaskRunnerHandle::Get());
+
+    url_loader_factory_owner_.reset(
+        new network::TransitionalURLLoaderFactoryOwner(request_context_getter));
+    url_loader_factory = url_loader_factory_owner_->GetURLLoaderFactory();
+  }
+
+  auth_client_.reset(new gaia::GaiaOAuthClient(url_loader_factory));
 }
 
 void AccessTokenFetcher::OnGetTokensResponse(const std::string& refresh_token,
@@ -149,8 +164,7 @@ void AccessTokenFetcher::OnGetTokenInfoResponse(
     VLOG(1) << "Access Token has been validated";
   }
 
-  base::ResetAndReturn(&access_token_callback_)
-      .Run(access_token_, refresh_token_);
+  std::move(access_token_callback_).Run(access_token_, refresh_token_);
 }
 
 void AccessTokenFetcher::OnOAuthError() {
@@ -159,8 +173,7 @@ void AccessTokenFetcher::OnOAuthError() {
   access_token_.clear();
   refresh_token_.clear();
 
-  base::ResetAndReturn(&access_token_callback_)
-      .Run(access_token_, refresh_token_);
+  std::move(access_token_callback_).Run(access_token_, refresh_token_);
 }
 
 void AccessTokenFetcher::OnNetworkError(int response_code) {
@@ -170,8 +183,7 @@ void AccessTokenFetcher::OnNetworkError(int response_code) {
   access_token_.clear();
   refresh_token_.clear();
 
-  base::ResetAndReturn(&access_token_callback_)
-      .Run(access_token_, refresh_token_);
+  std::move(access_token_callback_).Run(access_token_, refresh_token_);
 }
 
 void AccessTokenFetcher::ValidateAccessToken() {

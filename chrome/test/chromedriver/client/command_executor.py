@@ -4,7 +4,7 @@
 
 import httplib
 import json
-
+from urlparse import urlparse
 
 class _Method(object):
   GET = 'GET'
@@ -35,6 +35,8 @@ class Command(object):
   GET_TITLE = (_Method.GET, '/session/:sessionId/title')
   GET_PAGE_SOURCE = (_Method.GET, '/session/:sessionId/source')
   SCREENSHOT = (_Method.GET, '/session/:sessionId/screenshot')
+  ELEMENT_SCREENSHOT = (
+      _Method.GET, '/session/:sessionId/element/:id/screenshot')
   SET_BROWSER_VISIBLE = (_Method.POST, '/session/:sessionId/visible')
   IS_BROWSER_VISIBLE = (_Method.GET, '/session/:sessionId/visible')
   FIND_ELEMENT = (_Method.POST, '/session/:sessionId/element')
@@ -56,14 +58,17 @@ class Command(object):
   IS_ELEMENT_ENABLED = (_Method.GET, '/session/:sessionId/element/:id/enabled')
   IS_ELEMENT_DISPLAYED = (
       _Method.GET, '/session/:sessionId/element/:id/displayed')
-  HOVER_OVER_ELEMENT = (_Method.POST, '/session/:sessionId/element/:id/hover')
   GET_ELEMENT_LOCATION = (
       _Method.GET, '/session/:sessionId/element/:id/location')
+  GET_ELEMENT_RECT = (
+      _Method.GET, '/session/:sessionId/element/:id/rect')
   GET_ELEMENT_LOCATION_ONCE_SCROLLED_INTO_VIEW = (
       _Method.GET, '/session/:sessionId/element/:id/location_in_view')
   GET_ELEMENT_SIZE = (_Method.GET, '/session/:sessionId/element/:id/size')
   GET_ELEMENT_ATTRIBUTE = (
       _Method.GET, '/session/:sessionId/element/:id/attribute/:name')
+  GET_ELEMENT_PROPERTY = (
+      _Method.GET, '/session/:sessionId/element/:id/property/:name')
   ELEMENT_EQUALS = (
       _Method.GET, '/session/:sessionId/element/:id/equals/:other')
   GET_COOKIES = (_Method.GET, '/session/:sessionId/cookie')
@@ -74,9 +79,11 @@ class Command(object):
   SWITCH_TO_FRAME = (_Method.POST, '/session/:sessionId/frame')
   SWITCH_TO_PARENT_FRAME = (_Method.POST, '/session/:sessionId/frame/parent')
   SWITCH_TO_WINDOW = (_Method.POST, '/session/:sessionId/window')
-  GET_WINDOW_RECT = (_Method.GET, 'session/:sessionId/window/rect')
+  GET_WINDOW_RECT = (_Method.GET, '/session/:sessionId/window/rect')
   GET_WINDOW_SIZE = (
       _Method.GET, '/session/:sessionId/window/:windowHandle/size')
+  NEW_WINDOW = (
+      _Method.POST, '/session/:sessionId/window/new')
   GET_WINDOW_POSITION = (
       _Method.GET, '/session/:sessionId/window/:windowHandle/position')
   SET_WINDOW_SIZE = (
@@ -86,7 +93,9 @@ class Command(object):
   SET_WINDOW_RECT = (
       _Method.POST, '/session/:sessionId/window/rect')
   MAXIMIZE_WINDOW = (
-      _Method.POST, '/session/:sessionId/window/:windowHandle/maximize')
+      _Method.POST, '/session/:sessionId/window/maximize')
+  MINIMIZE_WINDOW = (
+      _Method.POST, '/session/:sessionId/window/minimize')
   FULLSCREEN_WINDOW = (
       _Method.POST, '/session/:sessionId/window/fullscreen')
   CLOSE = (_Method.DELETE, '/session/:sessionId/window')
@@ -97,7 +106,7 @@ class Command(object):
       _Method.POST, '/session/:sessionId/timeouts/implicit_wait')
   SET_SCRIPT_TIMEOUT = (
       _Method.POST, '/session/:sessionId/timeouts/async_script')
-  SET_TIMEOUT = (_Method.POST, '/session/:sessionId/timeouts')
+  SET_TIMEOUTS = (_Method.POST, '/session/:sessionId/timeouts')
   GET_TIMEOUTS = (_Method.GET, '/session/:sessionId/timeouts')
   EXECUTE_SQL = (_Method.POST, '/session/:sessionId/execute_sql')
   GET_LOCATION = (_Method.GET, '/session/:sessionId/location')
@@ -133,10 +142,6 @@ class Command(object):
       _Method.DELETE, '/session/:sessionId/session_storage')
   GET_SESSION_STORAGE_SIZE = (
       _Method.GET, '/session/:sessionId/session_storage/size')
-  GET_SCREEN_ORIENTATION = (_Method.GET, '/session/:sessionId/orientation')
-  SET_SCREEN_ORIENTATION = (_Method.POST, '/session/:sessionId/orientation')
-  DELETE_SCREEN_ORIENTATION = (
-      _Method.DELETE, '/session/:sessionId/orientation')
   MOUSE_CLICK = (_Method.POST, '/session/:sessionId/click')
   MOUSE_DOUBLE_CLICK = (_Method.POST, '/session/:sessionId/doubleclick')
   MOUSE_BUTTON_DOWN = (_Method.POST, '/session/:sessionId/buttondown')
@@ -151,29 +156,33 @@ class Command(object):
   TOUCH_DOUBLE_TAP = (_Method.POST, '/session/:sessionId/touch/doubleclick')
   TOUCH_LONG_PRESS = (_Method.POST, '/session/:sessionId/touch/longclick')
   TOUCH_FLICK = (_Method.POST, '/session/:sessionId/touch/flick')
-  GET_LOG = (_Method.POST, '/session/:sessionId/log')
-  GET_AVAILABLE_LOG_TYPES = (_Method.GET, '/session/:sessionId/log/types')
-  IS_AUTO_REPORTING = (_Method.GET, '/session/:sessionId/autoreport')
-  SET_AUTO_REPORTING = (_Method.POST, '/session/:sessionId/autoreport')
+  PERFORM_ACTIONS = (_Method.POST, '/session/:sessionId/actions')
+  RELEASE_ACTIONS = (_Method.DELETE, '/session/:sessionId/actions')
+  GET_LOG = (_Method.POST, '/session/:sessionId/se/log')
+  GET_AVAILABLE_LOG_TYPES = (_Method.GET, '/session/:sessionId/se/log/types')
   GET_SESSION_LOGS = (_Method.POST, '/logs')
   STATUS = (_Method.GET, '/status')
   SET_NETWORK_CONNECTION = (
       _Method.POST, '/session/:sessionId/network_connection')
-  SEND_COMMAND = (
-      _Method.POST, '/session/:sessionId/chromium/send_command')
   SEND_COMMAND_AND_GET_RESULT = (
       _Method.POST, '/session/:sessionId/chromium/send_command_and_get_result')
+  GENERATE_TEST_REPORT = (
+      _Method.POST, '/session/:sessionId/reporting/generate_test_report')
+  ADD_VIRTUAL_AUTHENTICATOR = (
+      _Method.POST, '/session/:sessionId/webauthn/authenticator')
+  REMOVE_VIRTUAL_AUTHENTICATOR = (
+      _Method.DELETE,
+      '/session/:sessionId/webauthn/authenticator/:authenticatorId')
 
   # Custom Chrome commands.
   IS_LOADING = (_Method.GET, '/session/:sessionId/is_loading')
-  TOUCH_PINCH = (_Method.POST, '/session/:sessionId/touch/pinch')
-
 
 class CommandExecutor(object):
   def __init__(self, server_url):
     self._server_url = server_url
-    port = int(server_url.split(':')[2].split('/')[0])
-    self._http_client = httplib.HTTPConnection('127.0.0.1', port, timeout=30)
+    parsed_url = urlparse(server_url)
+    self._http_client = httplib.HTTPConnection(
+        parsed_url.hostname, parsed_url.port, timeout=30)
 
   def Execute(self, command, params):
     url_parts = command[1].split('/')

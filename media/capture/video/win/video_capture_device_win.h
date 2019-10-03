@@ -104,11 +104,14 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
   void FrameReceived(const uint8_t* buffer,
                      int length,
                      const VideoCaptureFormat& format,
-                     base::TimeDelta timestamp) override;
+                     base::TimeDelta timestamp,
+                     bool flip_y) override;
+  void FrameDropped(VideoCaptureFrameDropReason reason) override;
 
   bool CreateCapabilityMap();
   void SetAntiFlickerInCaptureFilter(const VideoCaptureParams& params);
-  void SetErrorState(const base::Location& from_here,
+  void SetErrorState(media::VideoCaptureError error,
+                     const base::Location& from_here,
                      const std::string& reason,
                      HRESULT hr);
 
@@ -137,12 +140,15 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
   // These flags keep the manual/auto mode between cycles of SetPhotoOptions().
   bool white_balance_mode_manual_;
   bool exposure_mode_manual_;
+  bool focus_mode_manual_;
 
   base::TimeTicks first_ref_time_;
 
   base::queue<TakePhotoCallback> take_photo_callbacks_;
 
   base::ThreadChecker thread_checker_;
+
+  bool enable_get_photo_state_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceWin);
 };

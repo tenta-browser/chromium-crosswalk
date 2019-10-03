@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef DEVICE_HID_HID_SERVICE_H_
-#define DEVICE_HID_HID_SERVICE_H_
+#ifndef SERVICES_DEVICE_HID_HID_SERVICE_H_
+#define SERVICES_DEVICE_HID_HID_SERVICE_H_
 
 #include <map>
 #include <memory>
@@ -16,11 +16,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_traits.h"
-#include "base/threading/thread_checker.h"
+#include "base/sequence_checker.h"
+#include "base/task/task_traits.h"
 #include "services/device/hid/hid_device_info.h"
-#include "services/device/public/interfaces/hid.mojom.h"
+#include "services/device/public/mojom/hid.mojom.h"
 
 namespace device {
 
@@ -83,7 +82,7 @@ class HidService {
 
   const DeviceMap& devices() const { return devices_; }
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
  private:
   void RunPendingEnumerations();
@@ -94,11 +93,11 @@ class HidService {
 
   bool enumeration_ready_ = false;
   std::vector<GetDevicesCallback> pending_enumerations_;
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(HidService);
 };
 
 }  // namespace device
 
-#endif  // DEVICE_HID_HID_SERVICE_H_
+#endif  // SERVICES_DEVICE_HID_HID_SERVICE_H_

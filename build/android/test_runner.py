@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython
 #
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -25,6 +25,7 @@ import unittest
 # See http://crbug.com/724524 and https://bugs.python.org/issue7980.
 import _strptime  # pylint: disable=unused-import
 
+# pylint: disable=ungrouped-imports
 from pylib.constants import host_paths
 
 if host_paths.DEVIL_PATH not in sys.path:
@@ -46,9 +47,9 @@ from pylib.results import report_results
 from pylib.results.presentation import test_results_presentation
 from pylib.utils import logdog_helper
 from pylib.utils import logging_utils
+from pylib.utils import test_filter
 
 from py_utils import contextlib_ext
-
 
 _DEVIL_STATIC_CONFIG_FILE = os.path.abspath(os.path.join(
     host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'devil_config.json'))
@@ -73,6 +74,7 @@ def AddTestLauncherOptions(parser):
       '--test-launcher-retry-limit',
       '--test_launcher_retry_limit',
       '--num_retries', '--num-retries',
+      '--isolated-script-test-launcher-retry-limit',
       dest='num_retries', type=int, default=2,
       help='Number of retries for a test before '
            'giving up (default: %(default)s).')
@@ -92,6 +94,8 @@ def AddTestLauncherOptions(parser):
       type=int, default=os.environ.get('GTEST_TOTAL_SHARDS', 1),
       help='Total number of external shards.')
 
+  test_filter.AddFilterOptions(parser)
+
   return parser
 
 
@@ -102,6 +106,11 @@ def AddCommandLineOptions(parser):
       type=os.path.realpath,
       help='The relative filepath to a file containing '
            'command-line flags to set on the device')
+  parser.add_argument(
+      '--use-apk-under-test-flags-file',
+      action='store_true',
+      help='Wether to use the flags file for the apk under test. If set, '
+           "the filename will be looked up in the APK's PackageInfo.")
   parser.set_defaults(allow_unknown=True)
   parser.set_defaults(command_line_flags=None)
 
@@ -166,19 +175,21 @@ def AddCommonOptions(parser):
 
   class FastLocalDevAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
-      namespace.verbose_count = max(namespace.verbose_count, 1)
-      namespace.num_retries = 0
-      namespace.enable_device_cache = True
       namespace.enable_concurrent_adb = True
-      namespace.skip_clear_data = True
+      namespace.enable_device_cache = True
       namespace.extract_test_list_from_filter = True
+      namespace.local_output = True
+      namespace.num_retries = 0
+      namespace.skip_clear_data = True
 
   parser.add_argument(
       '--fast-local-dev',
-      type=bool, nargs=0, action=FastLocalDevAction,
-      help='Alias for: --verbose --num-retries=0 '
-           '--enable-device-cache --enable-concurrent-adb '
-           '--skip-clear-data --extract-test-list-from-filter')
+      type=bool,
+      nargs=0,
+      action=FastLocalDevAction,
+      help='Alias for: --num-retries=0 --enable-device-cache '
+      '--enable-concurrent-adb --skip-clear-data '
+      '--extract-test-list-from-filter --local-output')
 
   # TODO(jbudorick): Remove this once downstream bots have switched to
   # api.test_results.
@@ -190,7 +201,6 @@ def AddCommonOptions(parser):
       '--gs-results-bucket',
       help='Google Storage bucket to upload results to.')
 
-
   parser.add_argument(
       '--output-directory',
       dest='output_directory', type=os.path.realpath,
@@ -198,13 +208,21 @@ def AddCommonOptions(parser):
            ' located (must include build type). This will take'
            ' precedence over --debug and --release')
   parser.add_argument(
-      '--repeat', '--gtest_repeat', '--gtest-repeat',
-      dest='repeat', type=int, default=0,
-      help='Number of times to repeat the specified set of tests.')
-  parser.add_argument(
       '-v', '--verbose',
       dest='verbose_count', default=0, action='count',
       help='Verbose level (multiple times for more)')
+
+  parser.add_argument(
+      '--repeat', '--gtest_repeat', '--gtest-repeat',
+      '--isolated-script-test-repeat',
+      dest='repeat', type=int, default=0,
+      help='Number of times to repeat the specified set of tests.')
+  # This is currently only implemented for gtests and instrumentation tests.
+  parser.add_argument(
+      '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
+      '--isolated-script-test-also-run-disabled-tests',
+      dest='run_disabled', action='store_true',
+      help='Also run disabled tests if applicable.')
 
   AddTestLauncherOptions(parser)
 
@@ -212,10 +230,12 @@ def AddCommonOptions(parser):
 def ProcessCommonOptions(args):
   """Processes and handles all common options."""
   run_tests_helper.SetLogLevel(args.verbose_count, add_handler=False)
+  # pylint: disable=redefined-variable-type
   if args.verbose_count > 0:
     handler = logging_utils.ColorStreamHandler()
   else:
     handler = logging.StreamHandler(sys.stdout)
+  # pylint: enable=redefined-variable-type
   handler.setFormatter(run_tests_helper.CustomFormatter())
   logging.getLogger().addHandler(handler)
 
@@ -258,6 +278,11 @@ def AddDeviceOptions(parser):
            'speed up local development and never on bots '
                      '(increases flakiness)')
   parser.add_argument(
+      '--recover-devices',
+      action='store_true',
+      help='Attempt to recover devices prior to the final retry. Warning: '
+           'this will cause all devices to reboot.')
+  parser.add_argument(
       '--tool',
       dest='tool',
       help='Run the test under a tool '
@@ -295,6 +320,9 @@ def AddGTestOptions(parser):
       help='Host directory to which app data files will be'
            ' saved. Used with --app-data-file.')
   parser.add_argument(
+      '--isolated-script-test-perf-output',
+      help='If present, store chartjson results on this path.')
+  parser.add_argument(
       '--delete-stale-data',
       dest='delete_stale_data', action='store_true',
       help='Delete stale test data on the device.')
@@ -315,9 +343,9 @@ def AddGTestOptions(parser):
            'development, but is not safe to use on bots ('
            'http://crbug.com/549214')
   parser.add_argument(
-      '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
-      dest='run_disabled', action='store_true',
-      help='Also run disabled tests if applicable.')
+      '--gs-test-artifacts-bucket',
+      help=('If present, test artifacts will be uploaded to this Google '
+            'Storage bucket.'))
   parser.add_argument(
       '--runtime-deps-path',
       dest='runtime_deps_path', type=os.path.realpath,
@@ -342,22 +370,10 @@ def AddGTestOptions(parser):
       '-w', '--wait-for-java-debugger', action='store_true',
       help='Wait for java debugger to attach before running any application '
            'code. Also disables test timeouts and sets retries=0.')
-
-  filter_group = parser.add_mutually_exclusive_group()
-  filter_group.add_argument(
-      '-f', '--gtest_filter', '--gtest-filter',
-      dest='test_filter',
-      help='googletest-style filter string.')
-  filter_group.add_argument(
-      '--gtest-filter-file',
-      dest='test_filter_file', type=os.path.realpath,
-      help='Path to file that contains googletest-style filter strings. '
-           'See also //testing/buildbot/filters/README.md.')
-
   parser.add_argument(
-      '--gs-test-artifacts-bucket',
-      help=('If present, test artifacts will be uploaded to this Google '
-            'Storage bucket.'))
+      '--coverage-dir',
+      type=os.path.realpath,
+      help='Directory in which to place all generated coverage files.')
 
 
 def AddInstrumentationTestOptions(parser):
@@ -387,7 +403,7 @@ def AddInstrumentationTestOptions(parser):
       '--coverage-dir',
       type=os.path.realpath,
       help='Directory in which to place all generated '
-           'EMMA coverage files.')
+      'Jacoco coverage files.')
   parser.add_argument(
       '--delete-stale-data',
       action='store_true', dest='delete_stale_data',
@@ -405,23 +421,11 @@ def AddInstrumentationTestOptions(parser):
       dest='exclude_annotation_str',
       help='Comma-separated list of annotations. Exclude tests with these '
            'annotations.')
-  parser.add_argument(
-      '-f', '--test-filter', '--gtest_filter', '--gtest-filter',
-      dest='test_filter',
-      help='Test filter (if not fully qualified, will run all matches).')
-  parser.add_argument(
-      '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
-      dest='run_disabled', action='store_true',
-      help='Also run disabled tests if applicable.')
-  parser.add_argument(
-      '--non-native-packed-relocations',
-      action='store_true',
-      help='Whether relocations were packed using the Android '
-           'relocation_packer tool.')
   def package_replacement(arg):
     split_arg = arg.split(',')
     if len(split_arg) != 2:
       raise argparse.ArgumentError(
+          arg,
           'Expected two comma-separated strings for --replace-system-package, '
           'received %d' % len(split_arg))
     PackageReplacement = collections.namedtuple('PackageReplacement',
@@ -436,6 +440,14 @@ def AddInstrumentationTestOptions(parser):
            'the first element being the package and the second the path to the '
            'replacement APK. Only supports replacing one package. Example: '
            '--replace-system-package com.example.app,path/to/some.apk')
+
+  parser.add_argument(
+      '--use-webview-provider',
+      type=_RealPath, default=None,
+      help='Use this apk as the webview provider during test. '
+           'The original provider will be restored if possible, '
+           "on Nougat the provider can't be determined and so "
+           'the system will choose the default provider.')
   parser.add_argument(
       '--runtime-deps-path',
       dest='runtime_deps_path', type=os.path.realpath,
@@ -482,10 +494,6 @@ def AddInstrumentationTestOptions(parser):
       type=float,
       help='Factor by which timeouts should be scaled.')
   parser.add_argument(
-      '--ui-screenshot-directory',
-      dest='ui_screenshot_dir', type=os.path.realpath,
-      help='Destination for screenshots captured by the tests')
-  parser.add_argument(
       '-w', '--wait-for-java-debugger', action='store_true',
       help='Wait for java debugger to attach before running any application '
            'code. Also disables test timeouts and sets retries=0.')
@@ -507,6 +515,10 @@ def AddJUnitTestOptions(parser):
   parser = parser.add_argument_group('junit arguments')
 
   parser.add_argument(
+      '--coverage-on-the-fly',
+      action='store_true',
+      help='Generate coverage data by Jacoco on-the-fly instrumentation.')
+  parser.add_argument(
       '--coverage-dir', type=os.path.realpath,
       help='Directory to store coverage info.')
   parser.add_argument(
@@ -515,9 +527,6 @@ def AddJUnitTestOptions(parser):
   parser.add_argument(
       '--runner-filter',
       help='Filters tests by runner class. Must be fully qualified.')
-  parser.add_argument(
-      '-f', '--test-filter',
-      help='Filters tests googletest-style.')
   parser.add_argument(
       '-s', '--test-suite', required=True,
       help='JUnit test suite to run.')
@@ -533,28 +542,18 @@ def AddJUnitTestOptions(parser):
 
   # These arguments are for Android Robolectric tests.
   parser.add_argument(
-      '--android-manifest-path',
-      help='Path to Android Manifest to configure Robolectric.')
-  parser.add_argument(
-      '--package-name',
-      help='Default app package name for Robolectric tests.')
-  parser.add_argument(
-      '--resource-zip',
-      action='append', dest='resource_zips', default=[],
-      help='Path to resource zips to configure Robolectric.')
-  parser.add_argument(
       '--robolectric-runtime-deps-dir',
       help='Path to runtime deps for Robolectric.')
+  parser.add_argument(
+      '--resource-apk',
+      required=True,
+      help='Path to .ap_ containing binary resources for Robolectric.')
 
 
 def AddLinkerTestOptions(parser):
 
   parser.add_argument_group('linker arguments')
 
-  parser.add_argument(
-      '-f', '--gtest-filter',
-      dest='test_filter',
-      help='googletest-style filter string.')
   parser.add_argument(
       '--test-apk',
       type=os.path.realpath,
@@ -590,99 +589,6 @@ def AddMonkeyTestOptions(parser):
       help='Delay between events (ms) (default: %(default)s). ')
 
 
-def AddPerfTestOptions(parser):
-  """Adds perf test options to |parser|."""
-
-  parser = parser.add_argument_group('perf arguments')
-
-  class SingleStepAction(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-      if values and not namespace.single_step:
-        parser.error('single step command provided, '
-                     'but --single-step not specified.')
-      elif namespace.single_step and not values:
-        parser.error('--single-step specified, '
-                     'but no single step command provided.')
-      setattr(namespace, self.dest, values)
-
-  step_group = parser.add_mutually_exclusive_group(required=True)
-  # TODO(jbudorick): Revise --single-step to use argparse.REMAINDER.
-  # This requires removing "--" from client calls.
-  step_group.add_argument(
-      '--print-step',
-      help='The name of a previously executed perf step to print.')
-  step_group.add_argument(
-      '--single-step',
-      action='store_true',
-      help='Execute the given command with retries, but only print the result '
-           'for the "most successful" round.')
-  step_group.add_argument(
-      '--steps',
-      help='JSON file containing the list of commands to run.')
-
-  parser.add_argument(
-      '--collect-chartjson-data',
-      action='store_true',
-      help='Cache the telemetry chartjson output from each step for later use.')
-  parser.add_argument(
-      '--dry-run',
-      action='store_true',
-      help='Just print the steps without executing.')
-  # TODO(rnephew): Remove this when everything moves to new option in platform
-  # mode.
-  parser.add_argument(
-      '--get-output-dir-archive',
-      metavar='FILENAME', type=os.path.realpath,
-      help='Write the cached output directory archived by a step into the'
-      ' given ZIP file.')
-  parser.add_argument(
-      '--known-devices-file',
-      help='Path to known device list.')
-  # Uses 0.1 degrees C because that's what Android does.
-  parser.add_argument(
-      '--max-battery-temp',
-      type=int,
-      help='Only start tests when the battery is at or below the given '
-           'temperature (0.1 C)')
-  parser.add_argument(
-      '--min-battery-level',
-      type=int,
-      help='Only starts tests when the battery is charged above '
-           'given level.')
-  parser.add_argument(
-      '--no-timeout',
-      action='store_true',
-      help='Do not impose a timeout. Each perf step is responsible for '
-           'implementing the timeout logic.')
-  parser.add_argument(
-      '--output-chartjson-data',
-      type=os.path.realpath,
-      help='Writes telemetry chartjson formatted output into the given file.')
-  parser.add_argument(
-      '--output-dir-archive-path',
-      metavar='FILENAME', type=os.path.realpath,
-      help='Write the cached output directory archived by a step into the'
-      ' given ZIP file.')
-  parser.add_argument(
-      '--output-json-list',
-      type=os.path.realpath,
-      help='Writes a JSON list of information for each --steps into the given '
-           'file. Information includes runtime and device affinity for each '
-           '--steps.')
-  parser.add_argument(
-      '-f', '--test-filter',
-      help='Test filter (will match against the names listed in --steps).')
-  parser.add_argument(
-      '--write-buildbot-json',
-      action='store_true',
-      help='Whether to output buildbot json.')
-
-  parser.add_argument(
-      'single_step_command',
-      nargs='*', action=SingleStepAction,
-      help='If --single-step is specified, the command to run.')
-
-
 def AddPythonTestOptions(parser):
 
   parser = parser.add_argument_group('python arguments')
@@ -711,8 +617,9 @@ def _RunPythonTests(args):
     sys.path = sys.path[1:]
 
 
-_DEFAULT_PLATFORM_MODE_TESTS = ['gtest', 'instrumentation', 'junit',
-                                'linker', 'monkey', 'perf']
+_DEFAULT_PLATFORM_MODE_TESTS = [
+    'gtest', 'instrumentation', 'junit', 'linker', 'monkey'
+]
 
 
 def RunTestsCommand(args):
@@ -748,7 +655,6 @@ _SUPPORTED_IN_PLATFORM_MODE = [
   'junit',
   'linker',
   'monkey',
-  'perf',
 ]
 
 
@@ -763,6 +669,7 @@ def RunTestsInPlatformMode(args):
 
   ### Set up sigterm handler.
 
+  contexts_to_notify_on_sigterm = []
   def unexpected_sigterm(_signum, _frame):
     msg = [
       'Received SIGTERM. Shutting down.',
@@ -775,6 +682,9 @@ def RunTestsInPlatformMode(args):
         'Thread "%s" (ident: %s) is currently running:' % (
             live_thread.name, live_thread.ident),
         thread_stack])
+
+    for context in contexts_to_notify_on_sigterm:
+      context.ReceivedSigterm()
 
     infra_error('\n'.join(msg))
 
@@ -852,8 +762,10 @@ def RunTestsInPlatformMode(args):
   env = environment_factory.CreateEnvironment(
       args, out_manager, infra_error)
   test_instance = test_instance_factory.CreateTestInstance(args, infra_error)
-  test_run = test_run_factory.CreateTestRun(
-      args, env, test_instance, infra_error)
+  test_run = test_run_factory.CreateTestRun(env, test_instance, infra_error)
+
+  contexts_to_notify_on_sigterm.append(env)
+  contexts_to_notify_on_sigterm.append(test_run)
 
   ### Run.
   with out_manager, json_finalizer():
@@ -865,11 +777,17 @@ def RunTestsInPlatformMode(args):
           lambda: collections.defaultdict(int))
       iteration_count = 0
       for _ in repetitions:
-        raw_results = test_run.RunTests()
-        if not raw_results:
-          continue
-
+        # raw_results will be populated with base_test_result.TestRunResults by
+        # test_run.RunTests(). It is immediately added to all_raw_results so
+        # that in the event of an exception, all_raw_results will already have
+        # the up-to-date results and those can be written to disk.
+        raw_results = []
         all_raw_results.append(raw_results)
+
+        test_run.RunTests(raw_results)
+        if not raw_results:
+          all_raw_results.pop()
+          continue
 
         iteration_results = base_test_result.TestRunResults()
         for r in reversed(raw_results):
@@ -924,12 +842,19 @@ def RunTestsInPlatformMode(args):
             test_name=args.command,
             cs_base_url='http://cs.chromium.org',
             local_output=True)
-        results_detail_file.write(result_html_string)
+        results_detail_file.write(result_html_string.encode('utf-8'))
         results_detail_file.flush()
       logging.critical('TEST RESULTS: %s', results_detail_file.Link())
 
-  if args.command == 'perf' and (args.steps or args.single_step):
-    return 0
+      ui_screenshots = test_results_presentation.ui_screenshot_set(
+          json_file.name)
+      if ui_screenshots:
+        with out_manager.ArchivedTempfile(
+            'ui_screenshots.json',
+            'ui_capture',
+            output_manager.Datatype.JSON) as ui_screenshot_file:
+          ui_screenshot_file.write(ui_screenshots)
+        logging.critical('UI Screenshots: %s', ui_screenshot_file.Link())
 
   return (0 if all(r.DidRunPass() for r in all_iteration_results)
           else constants.ERROR_EXIT_CODE)
@@ -986,14 +911,6 @@ def main():
   AddMonkeyTestOptions(subp)
 
   subp = command_parsers.add_parser(
-      'perf',
-      help='performance tests')
-  AddCommonOptions(subp)
-  AddDeviceOptions(subp)
-  AddPerfTestOptions(subp)
-  AddTracingOptions(subp)
-
-  subp = command_parsers.add_parser(
       'python',
       help='python tests based on unittest.TestCase')
   AddCommonOptions(subp)
@@ -1013,6 +930,18 @@ def main():
       args.enable_concurrent_adb):
     parser.error('--replace-system-package and --enable-concurrent-adb cannot '
                  'be used together')
+
+  # --use-webview-provider has the potential to cause issues if
+  # --enable-concurrent-adb is set, so disallow that combination
+  if (hasattr(args, 'use_webview_provider') and
+      hasattr(args, 'enable_concurrent_adb') and args.use_webview_provider and
+      args.enable_concurrent_adb):
+    parser.error('--use-webview-provider and --enable-concurrent-adb cannot '
+                 'be used together')
+
+  if (getattr(args, 'coverage_on_the_fly', False)
+      and not getattr(args, 'coverage_dir', '')):
+    parser.error('--coverage-on-the-fly requires --coverage-dir')
 
   if (hasattr(args, 'debug_socket') or
       (hasattr(args, 'wait_for_java_debugger') and

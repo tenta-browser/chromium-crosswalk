@@ -15,8 +15,8 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/search/launcher_search/launcher_search_result.h"
+#include "chrome/browser/ui/app_list/search/search_provider.h"
 #include "extensions/common/extension_id.h"
-#include "ui/app_list/search_provider.h"
 
 namespace app_list {
 
@@ -27,7 +27,7 @@ class LauncherSearchProvider : public SearchProvider {
   explicit LauncherSearchProvider(Profile* profile);
   ~LauncherSearchProvider() override;
 
-  void Start(bool is_voice_query, const base::string16& query) override;
+  void Start(const base::string16& query) override;
   void SetSearchResults(
       const extensions::ExtensionId& extension_id,
       std::vector<std::unique_ptr<LauncherSearchResult>> extension_results);
@@ -50,6 +50,8 @@ class LauncherSearchProvider : public SearchProvider {
 
   // The timestamp of the last query.
   base::Time last_query_time_;
+
+  base::TimeTicks query_start_time_;
 
   // The reference to profile to get LauncherSearchProvider service.
   Profile* profile_;

@@ -4,11 +4,16 @@
 
 package org.chromium.chrome.browser.toolbar;
 
+import android.content.res.ColorStateList;
+import android.support.annotation.ColorRes;
 import android.support.annotation.DrawableRes;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.StringRes;
 
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ntp.NewTabPage;
+import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
@@ -45,14 +50,30 @@ public interface ToolbarDataProvider {
     boolean isIncognito();
 
     /**
+     * @return Whether the toolbar is currently being displayed in overview mode and showing the
+     *  omnibox.
+     */
+    boolean isInOverviewAndShowingOmnibox();
+
+    /**
+     * @return Whether the location bar should show when in overview mode.
+     */
+    boolean shouldShowLocationBarInOverviewMode();
+
+    /**
      * @return The current {@link Profile}.
      */
     Profile getProfile();
 
     /**
-     * @return The formatted text (URL or search terms) for display.
+     * @return The contents of the {@link org.chromium.chrome.browser.omnibox.UrlBar}.
      */
-    String getText();
+    UrlBarData getUrlBarData();
+
+    /**
+     * @return The title of the current tab, or the empty string if there is currently no tab.
+     */
+    String getTitle();
 
     /**
      * @return The primary color to use for the background drawable.
@@ -70,20 +91,9 @@ public interface ToolbarDataProvider {
     boolean isOfflinePage();
 
     /**
-     * @param urlBarText The text currently displayed in the url bar.
-     * @return Whether the Google 'G' should be shown in the location bar.
+     * @return Whether the page currently shown is a preview.
      */
-    boolean shouldShowGoogleG(String urlBarText);
-
-    /**
-     * @return Whether the security icon should be displayed.
-     */
-    boolean shouldShowSecurityIcon();
-
-    /**
-     * @return Whether verbose status next to the security icon should be displayed.
-     */
-    boolean shouldShowVerboseStatus();
+    boolean isPreview();
 
     /**
      * @return The current {@link ConnectionSecurityLevel}.
@@ -92,9 +102,66 @@ public interface ToolbarDataProvider {
     int getSecurityLevel();
 
     /**
-     * Determines the icon that should be displayed for the current security level.
-     * @return The resource ID of the icon that should be displayed, 0 if no icon should show.
+     * @param isFocusedFromFakebox If the omnibox focus originated from the fakebox.
+     * @return The current page classification.
+     */
+    default int getPageClassification(boolean isFocusedFromFakebox) {
+        return 0;
+    }
+
+    /**
+     * @return The resource ID of the icon that should be displayed or 0 if no icon should be shown.
      */
     @DrawableRes
-    int getSecurityIconResource();
+    int getSecurityIconResource(boolean isTablet);
+
+    /**
+     * @return The resource ID of the content description for the security icon.
+     */
+    @StringRes
+    default int getSecurityIconContentDescription() {
+        switch (getSecurityLevel()) {
+            case ConnectionSecurityLevel.NONE:
+            case ConnectionSecurityLevel.HTTP_SHOW_WARNING:
+                return R.string.accessibility_security_btn_warn;
+            case ConnectionSecurityLevel.DANGEROUS:
+                return R.string.accessibility_security_btn_dangerous;
+            case ConnectionSecurityLevel.SECURE_WITH_POLICY_INSTALLED_CERT:
+            case ConnectionSecurityLevel.SECURE:
+            case ConnectionSecurityLevel.EV_SECURE:
+                return R.string.accessibility_security_btn_secure;
+            default:
+                assert false;
+        }
+        return 0;
+    }
+
+    /**
+     * @return The {@link ColorStateList} to use to tint the security state icon.
+     */
+    @ColorRes
+    int getSecurityIconColorStateList();
+
+    /**
+     * If the current tab state is eligible for displaying the search query terms instead of the
+     * URL, this extracts the query terms from the current URL.
+     *
+     * @return The search terms. Returns null if the tab is ineligible to display the search terms
+     *         instead of the URL.
+     */
+    @Nullable
+    default public String getDisplaySearchTerms() {
+        return null;
+    }
+
+    /**
+     * Update the information required to display the search engine logo in the omnibox.
+     *
+     * @param shouldShowSearchEngineLogo True if we should show the search engine logo in the
+     *         omnibox.
+     * @param isSearchEngineGoogle True if the default search engine is Google.
+     * @param searchEngineUrl The url for the search engine, used to fetch the favicon.
+     */
+    void updateSearchEngineStatusIcon(boolean shouldShowSearchEngineLogo,
+            boolean isSearchEngineGoogle, String searchEngineUrl);
 }

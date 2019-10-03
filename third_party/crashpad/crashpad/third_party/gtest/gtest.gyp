@@ -40,6 +40,21 @@
     'cflags!': [
       '-Wexit-time-destructors',
     ],
+
+    'conditions': [
+      ['OS=="android" and android_api_level!="" and android_api_level<24', {
+        'defines!': [
+          # Although many system interfaces are available to 32-bit code with
+          # 64-bit off_t at API 21, the routines in <stdio.h> are not until API
+          # 24. gtest doesn’t make use of these functions directly, but can
+          # reach them indirectly via the C++ standard library. Disable 64-bit
+          # off_t prior to API 24 so that these uses can work. Since nothing
+          # dependent on the size of off_t should escape gtest’s own API, this
+          # should be safe even in a program that otherwise uses a 64-bit off_t.
+          '_FILE_OFFSET_BITS=64',
+        ],
+      }],
+    ],
   },
 
   'targets': [
@@ -52,6 +67,7 @@
       ],
       'sources': [
         '<(gtest_dir)/include/gtest/gtest-death-test.h',
+        '<(gtest_dir)/include/gtest/gtest-matchers.h',
         '<(gtest_dir)/include/gtest/gtest-message.h',
         '<(gtest_dir)/include/gtest/gtest-param-test.h',
         '<(gtest_dir)/include/gtest/gtest-printers.h',
@@ -67,18 +83,17 @@
         '<(gtest_dir)/include/gtest/internal/gtest-death-test-internal.h',
         '<(gtest_dir)/include/gtest/internal/gtest-filepath.h',
         '<(gtest_dir)/include/gtest/internal/gtest-internal.h',
-        '<(gtest_dir)/include/gtest/internal/gtest-linked_ptr.h',
         '<(gtest_dir)/include/gtest/internal/gtest-param-util-generated.h',
         '<(gtest_dir)/include/gtest/internal/gtest-param-util.h',
         '<(gtest_dir)/include/gtest/internal/gtest-port-arch.h',
         '<(gtest_dir)/include/gtest/internal/gtest-port.h',
         '<(gtest_dir)/include/gtest/internal/gtest-string.h',
-        '<(gtest_dir)/include/gtest/internal/gtest-tuple.h',
         '<(gtest_dir)/include/gtest/internal/gtest-type-util.h',
         '<(gtest_dir)/src/gtest-all.cc',
         '<(gtest_dir)/src/gtest-death-test.cc',
         '<(gtest_dir)/src/gtest-filepath.cc',
         '<(gtest_dir)/src/gtest-internal-inl.h',
+        '<(gtest_dir)/src/gtest-matchers.cc',
         '<(gtest_dir)/src/gtest-port.cc',
         '<(gtest_dir)/src/gtest-printers.cc',
         '<(gtest_dir)/src/gtest-test-part.cc',
@@ -159,6 +174,7 @@
         '<(gtest_dir)/test/gtest_main_unittest.cc',
         '<(gtest_dir)/test/gtest_pred_impl_unittest.cc',
         '<(gtest_dir)/test/gtest_prod_test.cc',
+        '<(gtest_dir)/test/gtest_skip_test.cc',
         '<(gtest_dir)/test/gtest_unittest.cc',
         '<(gtest_dir)/test/production.cc',
         '<(gtest_dir)/test/production.h',
@@ -200,6 +216,26 @@
         '<(gtest_dir)/test/gtest-param-test2_test.cc',
         '<(gtest_dir)/test/gtest-param-test_test.cc',
         '<(gtest_dir)/test/gtest-param-test_test.h',
+      ],
+      'conditions': [
+         ['clang!=0', {
+          # For gtest/googlemock/test/gmock-matchers_test.cc’s
+          # Unstreamable::value_.
+          'conditions': [
+            ['OS=="mac"', {
+              'xcode_settings': {
+                'WARNING_CFLAGS': [
+                  '-Wno-unused-private-field',
+                ],
+              },
+            }],
+            ['OS=="linux" or OS=="android"', {
+              'cflags': [
+                '-Wno-unused-private-field',
+              ],
+            }],
+          ],
+        }],
       ],
     },
     {

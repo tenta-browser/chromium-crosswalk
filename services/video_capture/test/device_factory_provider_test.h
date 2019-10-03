@@ -5,48 +5,24 @@
 #ifndef SERVICES_VIDEO_CAPTURE_VIDEO_CAPTURE_TEST_DEVICE_FACTORY_PROVIDER_TEST_H_
 #define SERVICES_VIDEO_CAPTURE_VIDEO_CAPTURE_TEST_DEVICE_FACTORY_PROVIDER_TEST_H_
 
-#include "base/run_loop.h"
+#include "base/macros.h"
 #include "base/test/mock_callback.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/service_manager/public/cpp/service_test.h"
-#include "services/service_manager/public/interfaces/service_manager.mojom.h"
-#include "services/video_capture/public/interfaces/device_factory_provider.mojom.h"
-#include "testing/gmock/include/gmock/gmock.h"
+#include "base/test/scoped_task_environment.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/service_manager/public/cpp/service_binding.h"
+#include "services/service_manager/public/cpp/test/test_service_manager.h"
+#include "services/video_capture/public/mojom/device_factory.mojom.h"
+#include "services/video_capture/public/mojom/device_factory_provider.mojom.h"
+#include "services/video_capture/public/mojom/virtual_device.mojom.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 namespace video_capture {
 
-class ServiceManagerListenerImpl
-    : public service_manager::mojom::ServiceManagerListener {
- public:
-  ServiceManagerListenerImpl(
-      service_manager::mojom::ServiceManagerListenerRequest request,
-      base::RunLoop* loop);
-  ~ServiceManagerListenerImpl() override;
-
-  // mojom::ServiceManagerListener implementation.
-  void OnInit(std::vector<service_manager::mojom::RunningServiceInfoPtr>
-                  instances) override {
-    loop_->Quit();
-  }
-  void OnServiceCreated(
-      service_manager::mojom::RunningServiceInfoPtr instance) override {}
-  void OnServiceStarted(const service_manager::Identity& identity,
-                        uint32_t pid) override {}
-  void OnServiceFailedToStart(
-      const service_manager::Identity& identity) override {}
-  void OnServicePIDReceived(const service_manager::Identity& identity,
-                            uint32_t pid) override {}
-
-  MOCK_METHOD1(OnServiceStopped,
-               void(const service_manager::Identity& identity));
-
- private:
-  mojo::Binding<service_manager::mojom::ServiceManagerListener> binding_;
-  base::RunLoop* loop_;
-};
+class MockProducer;
 
 // Basic test fixture that sets up a connection to the fake device factory.
-class DeviceFactoryProviderTest : public service_manager::test::ServiceTest {
+class DeviceFactoryProviderTest : public testing::Test {
  public:
   DeviceFactoryProviderTest();
   ~DeviceFactoryProviderTest() override;
@@ -54,11 +30,35 @@ class DeviceFactoryProviderTest : public service_manager::test::ServiceTest {
   void SetUp() override;
 
  protected:
+  struct SharedMemoryVirtualDeviceContext {
+    SharedMemoryVirtualDeviceContext(mojom::ProducerRequest producer_request);
+    ~SharedMemoryVirtualDeviceContext();
+
+    std::unique_ptr<MockProducer> mock_producer;
+    mojom::SharedMemoryVirtualDevicePtr device;
+  };
+
+  std::unique_ptr<SharedMemoryVirtualDeviceContext>
+  AddSharedMemoryVirtualDevice(const std::string& device_id);
+
+  mojom::TextureVirtualDevicePtr AddTextureVirtualDevice(
+      const std::string& device_id);
+
+  service_manager::Connector* connector() {
+    return test_service_binding_.GetConnector();
+  }
+
+  base::test::ScopedTaskEnvironment task_environment_;
+  service_manager::TestServiceManager test_service_manager_;
+  service_manager::Service test_service_;
+  service_manager::ServiceBinding test_service_binding_;
+
   mojom::DeviceFactoryProviderPtr factory_provider_;
   mojom::DeviceFactoryPtr factory_;
   base::MockCallback<mojom::DeviceFactory::GetDeviceInfosCallback>
       device_info_receiver_;
-  std::unique_ptr<ServiceManagerListenerImpl> service_state_observer_;
+
+  DISALLOW_COPY_AND_ASSIGN(DeviceFactoryProviderTest);
 };
 
 }  // namespace video_capture

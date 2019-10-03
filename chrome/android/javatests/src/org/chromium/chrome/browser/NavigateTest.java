@@ -18,7 +18,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
@@ -34,19 +34,19 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
 import org.chromium.chrome.test.util.browser.TabLoadObserver;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
-import org.chromium.content.browser.test.util.KeyUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
-import org.chromium.content.browser.test.util.UiUtils;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.KeyUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.util.TestWebServer;
 import org.chromium.ui.test.util.UiRestriction;
@@ -60,10 +60,7 @@ import java.util.concurrent.TimeUnit;
  * Navigate in UrlBar tests.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class NavigateTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -126,7 +123,7 @@ public class NavigateTest {
             throws Exception {
         final UrlBar urlBar = (UrlBar) mActivityTestRule.getActivity().findViewById(R.id.url_bar);
         Assert.assertNotNull("urlBar is null", urlBar);
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             urlBar.requestFocus();
             urlBar.setText(url);
         });
@@ -240,7 +237,7 @@ public class NavigateTest {
 
         Tab tab = mActivityTestRule.getActivity().getActivityTab();
 
-        DOMUtils.clickNode(tab.getContentViewCore(), "aboutLink");
+        DOMUtils.clickNode(tab.getWebContents(), "aboutLink");
         ChromeTabUtils.waitForTabPageLoaded(tab, url2);
         Assert.assertEquals("Desired Link not open", url2,
                 mActivityTestRule.getActivity().getActivityTab().getUrl());
@@ -253,6 +250,7 @@ public class NavigateTest {
     @Test
     @MediumTest
     @Feature({"Navigation"})
+    @DisabledTest(message = "crbug.com/879153")
     @RetryOnFailure
     public void testRequestDesktopSiteSettingPers() throws Exception {
         String url1 = mTestServer.getURL("/chrome/test/data/android/google.html");
@@ -261,14 +259,19 @@ public class NavigateTest {
         navigateAndObserve(url1, url1);
 
         final Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> tab.setUseDesktopUserAgent(true /* useDesktop */, true /* reloadOnChange */));
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> tab.getWebContents().getNavigationController().setUseDesktopUserAgent(
+                                true /* useDesktop */, true /* reloadOnChange */));
         ChromeTabUtils.waitForTabPageLoaded(tab, url1);
 
-        DOMUtils.clickNode(tab.getContentViewCore(), "aboutLink");
+        DOMUtils.clickNode(tab.getWebContents(), "aboutLink");
         ChromeTabUtils.waitForTabPageLoaded(tab, url2);
         Assert.assertEquals("Request Desktop site setting should stay turned on", true,
-                mActivityTestRule.getActivity().getActivityTab().getUseDesktopUserAgent());
+                mActivityTestRule.getActivity()
+                        .getActivityTab()
+                        .getWebContents()
+                        .getNavigationController()
+                        .getUseDesktopUserAgent());
     }
 
     /**
@@ -295,7 +298,7 @@ public class NavigateTest {
         };
         Tab tab = mActivityTestRule.getActivity().getActivityTab();
         tab.addObserver(onPageLoadStartedObserver);
-        DOMUtils.clickNode(tab.getContentViewCore(), "aboutLink");
+        DOMUtils.clickNode(tab.getWebContents(), "aboutLink");
         ChromeTabUtils.waitForTabPageLoaded(tab, url2);
         Assert.assertEquals("Desired Link not open", url2,
                 mActivityTestRule.getActivity().getActivityTab().getUrl());
@@ -336,11 +339,14 @@ public class NavigateTest {
                 mTestServer.getURL("/chrome/test/data/android/redirect/about.html");
         final String redirectUrl = "intent://non_existent/#Intent;scheme=non_existent;"
                 + "S.browser_fallback_url=" + fallbackUrl + ";end";
-        final String initialUrl = mTestServer.getURL(
-                "/chrome/test/data/android/redirect/js_redirect.html"
-                + "?replace_text="
-                + Base64.encodeToString("PARAM_URL".getBytes("utf-8"), Base64.URL_SAFE) + ":"
-                + Base64.encodeToString(redirectUrl.getBytes("utf-8"), Base64.URL_SAFE));
+        final String initialUrl =
+                mTestServer.getURL("/chrome/test/data/android/redirect/js_redirect.html"
+                        + "?replace_text="
+                        + Base64.encodeToString(
+                                  ApiCompatibilityUtils.getBytesUtf8("PARAM_URL"), Base64.URL_SAFE)
+                        + ":"
+                        + Base64.encodeToString(ApiCompatibilityUtils.getBytesUtf8(redirectUrl),
+                                  Base64.URL_SAFE));
         final String targetUrl =
                 mTestServer.getURL("/chrome/test/data/android/redirect/one.html");
         typeInOmniboxAndNavigate(initialUrl, null);
@@ -483,7 +489,7 @@ public class NavigateTest {
             mActivityTestRule.assertWaitForPageScaleFactorMatch(0.5f);
 
             // Click the page, which triggers the URL load.
-            DOMUtils.clickNode(mActivityTestRule.getActivity().getCurrentContentViewCore(), "body");
+            DOMUtils.clickNode(mActivityTestRule.getActivity().getCurrentWebContents(), "body");
 
             // Wait for the proper URL to be served.
             Assert.assertTrue(urlServedSemaphore.tryAcquire(5, TimeUnit.SECONDS));
@@ -503,7 +509,7 @@ public class NavigateTest {
 
     private String getTabUrlOnUIThread(final Tab tab) {
         try {
-            return ThreadUtils.runOnUiThreadBlocking(() -> tab.getUrl());
+            return TestThreadUtils.runOnUiThreadBlocking(() -> tab.getUrl());
         } catch (ExecutionException ex) {
             assert false : "Unexpected ExecutionException";
         }

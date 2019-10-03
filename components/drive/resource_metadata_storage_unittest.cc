@@ -12,13 +12,13 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/drive/chromeos/drive_test_util.h"
 #include "components/drive/drive.pb.h"
+#include "components/drive/file_system_core_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
@@ -29,8 +29,8 @@ namespace internal {
 
 class ResourceMetadataStorageTest : public testing::Test {
  protected:
-  ResourceMetadataStorageTest() {}
-  ~ResourceMetadataStorageTest() override {}
+  ResourceMetadataStorageTest() = default;
+  ~ResourceMetadataStorageTest() override = default;
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -91,6 +91,14 @@ TEST_F(ResourceMetadataStorageTest, LargestChangestamp) {
   int64_t value = 0;
   EXPECT_EQ(FILE_ERROR_OK, storage_->GetLargestChangestamp(&value));
   EXPECT_EQ(kLargestChangestamp, value);
+}
+
+TEST_F(ResourceMetadataStorageTest, StartPageToken) {
+  constexpr char kStartPageToken[] = "123456";
+  EXPECT_EQ(FILE_ERROR_OK, storage_->SetStartPageToken(kStartPageToken));
+  std::string start_page_token;
+  EXPECT_EQ(FILE_ERROR_OK, storage_->GetStartPageToken(&start_page_token));
+  EXPECT_EQ(kStartPageToken, start_page_token);
 }
 
 TEST_F(ResourceMetadataStorageTest, PutEntry) {
@@ -186,7 +194,7 @@ TEST_F(ResourceMetadataStorageTest, Iterator) {
 
   EXPECT_EQ(keys.size(), found_entries.size());
   for (const std::string& key : keys)
-    EXPECT_TRUE(base::ContainsKey(found_entries, key));
+    EXPECT_TRUE(base::Contains(found_entries, key));
 }
 
 TEST_F(ResourceMetadataStorageTest, GetIdByResourceId) {
@@ -217,7 +225,7 @@ TEST_F(ResourceMetadataStorageTest, GetIdByResourceId) {
 TEST_F(ResourceMetadataStorageTest, GetChildren) {
   const std::string parents_id[] = { "mercury", "venus", "mars", "jupiter",
                                      "saturn" };
-  std::vector<base::StringPairs> children_name_id(arraysize(parents_id));
+  std::vector<base::StringPairs> children_name_id(base::size(parents_id));
   // Skip children_name_id[0/1] here because Mercury and Venus have no moon.
   children_name_id[2].push_back(std::make_pair("phobos", "mars_i"));
   children_name_id[2].push_back(std::make_pair("deimos", "mars_ii"));
@@ -655,6 +663,89 @@ TEST_F(ResourceMetadataStorageTest, CheckValidity) {
   // Remove key1.
   EXPECT_EQ(FILE_ERROR_OK, storage_->RemoveEntry(key1));
   EXPECT_TRUE(CheckValidity());
+}
+
+TEST_F(ResourceMetadataStorageTest, UpgradeDBv15) {
+  constexpr int64_t kLargestChangestamp = 54321;
+  constexpr char kStartPageToken[] = "54322";
+  constexpr int64_t kDirectoryChangestamp = 12345;
+  constexpr char kDirectoryStartpageToken[] = "12346";
+
+  // Construct a v15 DB
+  SetDBVersion(15);
+  EXPECT_EQ(FILE_ERROR_OK,
+            storage_->SetLargestChangestamp(kLargestChangestamp));
+
+  // Add a directory with a changestamp
+  ResourceEntry entry;
+  entry.set_local_id("local_id_1");
+  entry.set_base_name("resource_id_1");
+  entry.mutable_directory_specific_info()->set_changestamp(
+      kDirectoryChangestamp);
+  EXPECT_EQ(FILE_ERROR_OK, storage_->PutEntry(entry));
+
+  // Upgrade and reopen
+  storage_.reset();
+  EXPECT_TRUE(UpgradeOldDB());
+  storage_.reset(new ResourceMetadataStorage(
+      temp_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get()));
+  ASSERT_TRUE(storage_->Initialize());
+
+  int64_t largest_changestamp = 0;
+  EXPECT_EQ(FILE_ERROR_OK,
+            storage_->GetLargestChangestamp(&largest_changestamp));
+  EXPECT_EQ(kLargestChangestamp, largest_changestamp);
+
+  std::string start_page_token;
+  EXPECT_EQ(FILE_ERROR_OK, storage_->GetStartPageToken(&start_page_token));
+  EXPECT_EQ(kStartPageToken, start_page_token);
+
+  EXPECT_EQ(FILE_ERROR_OK, storage_->GetEntry("local_id_1", &entry));
+  EXPECT_EQ(kDirectoryChangestamp,
+            entry.directory_specific_info().changestamp());
+  EXPECT_EQ(kDirectoryStartpageToken,
+            entry.directory_specific_info().start_page_token());
+}
+
+// Test that upgrading from DB version 16 to 17 triggers a full metadata refresh
+// (since this changes alternate_url to be set for directories, which need to
+// be re-fetched).
+TEST_F(ResourceMetadataStorageTest, UpgradeDBv16) {
+  constexpr int64_t kLargestChangestamp = 54321;
+  constexpr char kStartPageToken[] = "54322";
+
+  // Construct a v16 DB.
+  SetDBVersion(16);
+  EXPECT_EQ(FILE_ERROR_OK,
+            storage_->SetLargestChangestamp(kLargestChangestamp));
+  EXPECT_EQ(FILE_ERROR_OK, storage_->SetStartPageToken(kStartPageToken));
+
+  // Add a file.
+  ResourceEntry entry;
+  entry.set_local_id("local_id_1");
+  entry.set_base_name("resource_id_1");
+  EXPECT_EQ(FILE_ERROR_OK, storage_->PutEntry(entry));
+
+  // Upgrade and reopen.
+  storage_.reset();
+  EXPECT_TRUE(UpgradeOldDB());
+  storage_.reset(new ResourceMetadataStorage(
+      temp_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get()));
+  ASSERT_TRUE(storage_->Initialize());
+
+  // Changestamps are reset.
+  int64_t largest_changestamp = 0;
+  EXPECT_EQ(FILE_ERROR_OK,
+            storage_->GetLargestChangestamp(&largest_changestamp));
+  EXPECT_EQ(0, largest_changestamp);
+
+  std::string start_page_token;
+  EXPECT_EQ(FILE_ERROR_OK, storage_->GetStartPageToken(&start_page_token));
+  EXPECT_EQ("", start_page_token);
+
+  // The data is retained.
+  EXPECT_EQ(FILE_ERROR_OK, storage_->GetEntry("local_id_1", &entry));
+  EXPECT_EQ("resource_id_1", entry.base_name());
 }
 
 }  // namespace internal

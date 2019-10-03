@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 
 namespace device {
 namespace {
@@ -27,8 +26,7 @@ class TimeZoneMonitorFuchsia : public TimeZoneMonitor {
 // static
 std::unique_ptr<TimeZoneMonitor> TimeZoneMonitor::Create(
     scoped_refptr<base::SequencedTaskRunner> file_task_runner) {
-  // TODO(fuchsia): Implement this. crbug.com/750934
-  NOTIMPLEMENTED();
+  // TODO(https://crbug.com/750934): Implement a real TimeZoneMonitor.
 
   return std::make_unique<TimeZoneMonitorFuchsia>();
 }

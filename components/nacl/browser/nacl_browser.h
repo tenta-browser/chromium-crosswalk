@@ -14,7 +14,7 @@
 #include "base/containers/mru_cache.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/nacl/browser/nacl_browser_delegate.h"
@@ -51,7 +51,7 @@ class NaClBrowser {
 
   // Enqueues reply() in the message loop when all the resources needed to start
   // a process have been acquired.
-  void WaitForResources(const base::Closure& reply);
+  void WaitForResources(base::OnceClosure reply);
 
   // Asynchronously attempt to get the IRT open.
   // This is entailed by EnsureInitialized.  This method is exposed as part of
@@ -121,7 +121,7 @@ class NaClBrowser {
 
   bool QueryKnownToValidate(const std::string& signature, bool off_the_record);
   void SetKnownToValidate(const std::string& signature, bool off_the_record);
-  void ClearValidationCache(const base::Closure& callback);
+  void ClearValidationCache(base::OnceClosure callback);
 #if defined(OS_WIN)
   // Get path to NaCl loader on the filesystem if possible.
   // |exe_path| does not change if the method fails.
@@ -201,7 +201,7 @@ class NaClBrowser {
   bool has_failed_;
 
   // A list of pending tasks to start NaCl processes.
-  std::vector<base::Closure> waiting_;
+  std::vector<base::OnceClosure> waiting_;
 
   base::circular_deque<base::Time> crash_times_;
 

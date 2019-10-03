@@ -4,33 +4,28 @@
 
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
 
-#include <errno.h>
-#include <stdint.h>
-
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/command_line.h"
-#include "base/compiler_specific.h"
 #include "base/debug/alias.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
-#include "base/location.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/platform_thread.h"
+#include "base/system/sys_info.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "gpu/config/gpu_crash_keys.h"
+#include "ui/gl/shader_tracking.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
 #endif
 
 #if defined(USE_X11)
-#include <X11/Xatom.h>
-#include <X11/Xlib.h>
+#include "ui/gfx/x/x11.h"
 #endif
 
 namespace gpu {
@@ -38,9 +33,12 @@ namespace {
 
 #if defined(CYGPROFILE_INSTRUMENTATION)
 const int kGpuTimeout = 30000;
-#elif defined(OS_WIN)
+#elif defined(OS_WIN) || defined(OS_MACOSX)
 // Use a slightly longer timeout on Windows due to prevalence of slow and
 // infected machines.
+
+// Also use a slightly longer timeout on MacOSX to get rid of GPU process
+// hangs at context creation during startup. See https://crbug.com/918490.
 const int kGpuTimeout = 15000;
 #else
 const int kGpuTimeout = 10000;
@@ -54,9 +52,8 @@ const unsigned char text[20] = "check";
 
 }  // namespace
 
-GpuWatchdogThread::GpuWatchdogThread()
-    : base::Thread("Watchdog"),
-      watched_message_loop_(base::MessageLoop::current()),
+GpuWatchdogThreadImplV1::GpuWatchdogThreadImplV1()
+    : watched_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       timeout_(base::TimeDelta::FromMilliseconds(kGpuTimeout)),
       armed_(false),
       task_observer_(this),
@@ -66,14 +63,15 @@ GpuWatchdogThread::GpuWatchdogThread()
       watched_thread_handle_(0),
       arm_cpu_time_(),
 #endif
-      suspended_(false),
+      suspension_counter_(this)
 #if defined(USE_X11)
-      display_(NULL),
+      ,
+      display_(nullptr),
       window_(0),
-      atom_(None),
-      host_tty_(-1),
+      atom_(x11::None),
+      host_tty_(-1)
 #endif
-      weak_factory_(this) {
+{
   base::subtle::NoBarrier_Store(&awaiting_acknowledge_, false);
 
 #if defined(OS_WIN)
@@ -90,82 +88,162 @@ GpuWatchdogThread::GpuWatchdogThread()
   tty_file_ = base::OpenFile(base::FilePath(kTtyFilePath), "r");
   SetupXServer();
 #endif
-  watched_message_loop_->AddTaskObserver(&task_observer_);
+  base::MessageLoopCurrent::Get()->AddTaskObserver(&task_observer_);
+  GpuWatchdogHistogram(GpuWatchdogThreadEvent::kGpuWatchdogStart);
 }
 
 // static
-std::unique_ptr<GpuWatchdogThread> GpuWatchdogThread::Create() {
-  auto watchdog_thread = base::WrapUnique(new GpuWatchdogThread);
+std::unique_ptr<GpuWatchdogThreadImplV1> GpuWatchdogThreadImplV1::Create(
+    bool start_backgrounded) {
+  auto watchdog_thread = base::WrapUnique(new GpuWatchdogThreadImplV1);
   base::Thread::Options options;
   options.timer_slack = base::TIMER_SLACK_MAXIMUM;
   watchdog_thread->StartWithOptions(options);
+  if (start_backgrounded)
+    watchdog_thread->OnBackgrounded();
   return watchdog_thread;
 }
 
-void GpuWatchdogThread::CheckArmed() {
-  // If the watchdog is |awaiting_acknowledge_|, reset this variable to false
-  // and post an acknowledge task now. No barrier is needed as
-  // |awaiting_acknowledge_| is only ever read from this thread.
-  if (base::subtle::NoBarrier_CompareAndSwap(&awaiting_acknowledge_, true,
-                                             false)) {
-    // Called on the monitored thread. Responds with OnAcknowledge. Cannot use
-    // the method factory. As we stop the task runner before destroying this
-    // class, the unretained reference will always outlive the task.
-    task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&GpuWatchdogThread::OnAcknowledge, base::Unretained(this)));
-  }
+void GpuWatchdogThreadImplV1::CheckArmed() {
+  base::subtle::NoBarrier_Store(&awaiting_acknowledge_, false);
 }
 
-void GpuWatchdogThread::ReportProgress() {
+void GpuWatchdogThreadImplV1::ReportProgress() {
   CheckArmed();
 }
 
-void GpuWatchdogThread::Init() {
+void GpuWatchdogThreadImplV1::OnBackgrounded() {
+  // As we stop the task runner before destroying this class, the unretained
+  // reference will always outlive the task.
+  task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuWatchdogThreadImplV1::OnBackgroundedOnWatchdogThread,
+                     base::Unretained(this)));
+}
+
+void GpuWatchdogThreadImplV1::OnForegrounded() {
+  // As we stop the task runner before destroying this class, the unretained
+  // reference will always outlive the task.
+  task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuWatchdogThreadImplV1::OnForegroundedOnWatchdogThread,
+                     base::Unretained(this)));
+}
+
+void GpuWatchdogThreadImplV1::GpuWatchdogHistogram(
+    GpuWatchdogThreadEvent thread_event) {
+  UMA_HISTOGRAM_ENUMERATION("GPU.WatchdogThread.Event", thread_event);
+}
+
+bool GpuWatchdogThreadImplV1::IsGpuHangDetectedForTesting() {
+  return false;
+}
+
+void GpuWatchdogThreadImplV1::Init() {
   // Schedule the first check.
   OnCheck(false);
 }
 
-void GpuWatchdogThread::CleanUp() {
+void GpuWatchdogThreadImplV1::CleanUp() {
   weak_factory_.InvalidateWeakPtrs();
 }
 
-GpuWatchdogThread::GpuWatchdogTaskObserver::GpuWatchdogTaskObserver(
-    GpuWatchdogThread* watchdog)
+GpuWatchdogThreadImplV1::GpuWatchdogTaskObserver::GpuWatchdogTaskObserver(
+    GpuWatchdogThreadImplV1* watchdog)
     : watchdog_(watchdog) {}
 
-GpuWatchdogThread::GpuWatchdogTaskObserver::~GpuWatchdogTaskObserver() {}
+GpuWatchdogThreadImplV1::GpuWatchdogTaskObserver::~GpuWatchdogTaskObserver() =
+    default;
 
-void GpuWatchdogThread::GpuWatchdogTaskObserver::WillProcessTask(
+void GpuWatchdogThreadImplV1::GpuWatchdogTaskObserver::WillProcessTask(
     const base::PendingTask& pending_task) {
   watchdog_->CheckArmed();
 }
 
-void GpuWatchdogThread::GpuWatchdogTaskObserver::DidProcessTask(
+void GpuWatchdogThreadImplV1::GpuWatchdogTaskObserver::DidProcessTask(
     const base::PendingTask& pending_task) {}
 
-GpuWatchdogThread::~GpuWatchdogThread() {
+GpuWatchdogThreadImplV1::SuspensionCounter::SuspensionCounterRef::
+    SuspensionCounterRef(SuspensionCounter* counter)
+    : counter_(counter) {
+  counter_->OnAddRef();
+}
+
+GpuWatchdogThreadImplV1::SuspensionCounter::SuspensionCounterRef::
+    ~SuspensionCounterRef() {
+  counter_->OnReleaseRef();
+}
+
+GpuWatchdogThreadImplV1::SuspensionCounter::SuspensionCounter(
+    GpuWatchdogThreadImplV1* watchdog_thread)
+    : watchdog_thread_(watchdog_thread) {
+  // This class will only be used on the watchdog thread, but is constructed on
+  // the main thread. Detach.
+  DETACH_FROM_SEQUENCE(watchdog_thread_sequence_checker_);
+}
+
+std::unique_ptr<
+    GpuWatchdogThreadImplV1::SuspensionCounter::SuspensionCounterRef>
+GpuWatchdogThreadImplV1::SuspensionCounter::Take() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(watchdog_thread_sequence_checker_);
+  return std::make_unique<SuspensionCounterRef>(this);
+}
+
+bool GpuWatchdogThreadImplV1::SuspensionCounter::HasRefs() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(watchdog_thread_sequence_checker_);
+  return suspend_count_ > 0;
+}
+
+void GpuWatchdogThreadImplV1::SuspensionCounter::OnWatchdogThreadStopped() {
+  DETACH_FROM_SEQUENCE(watchdog_thread_sequence_checker_);
+
+  // Null the |watchdog_thread_| ptr at shutdown to avoid trying to suspend or
+  // resume after the thread is stopped.
+  watchdog_thread_ = nullptr;
+}
+
+void GpuWatchdogThreadImplV1::SuspensionCounter::OnAddRef() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(watchdog_thread_sequence_checker_);
+  suspend_count_++;
+  if (watchdog_thread_ && suspend_count_ == 1)
+    watchdog_thread_->SuspendStateChanged();
+}
+
+void GpuWatchdogThreadImplV1::SuspensionCounter::OnReleaseRef() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(watchdog_thread_sequence_checker_);
+  DCHECK_GT(suspend_count_, 0u);
+  suspend_count_--;
+  if (watchdog_thread_ && suspend_count_ == 0)
+    watchdog_thread_->SuspendStateChanged();
+}
+
+GpuWatchdogThreadImplV1::~GpuWatchdogThreadImplV1() {
+  DCHECK(watched_task_runner_->BelongsToCurrentThread());
+
   Stop();
+  suspension_counter_.OnWatchdogThreadStopped();
 
 #if defined(OS_WIN)
   CloseHandle(watched_thread_handle_);
 #endif
 
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->RemoveObserver(this);
+  base::PowerMonitor::RemoveObserver(this);
 
 #if defined(USE_X11)
   if (tty_file_)
     fclose(tty_file_);
-  XDestroyWindow(display_, window_);
-  XCloseDisplay(display_);
+  if (display_) {
+    DCHECK(window_);
+    XDestroyWindow(display_, window_);
+    XCloseDisplay(display_);
+  }
 #endif
 
-  watched_message_loop_->RemoveTaskObserver(&task_observer_);
+  base::MessageLoopCurrent::Get()->RemoveTaskObserver(&task_observer_);
+  GpuWatchdogHistogram(GpuWatchdogThreadEvent::kGpuWatchdogEnd);
 }
 
-void GpuWatchdogThread::OnAcknowledge() {
+void GpuWatchdogThreadImplV1::OnAcknowledge() {
   CHECK(base::PlatformThread::CurrentId() == GetThreadId());
 
   // The check has already been acknowledged and another has already been
@@ -179,7 +257,7 @@ void GpuWatchdogThread::OnAcknowledge() {
   weak_factory_.InvalidateWeakPtrs();
   armed_ = false;
 
-  if (suspended_) {
+  if (suspension_counter_.HasRefs()) {
     responsive_acknowledge_count_ = 0;
     return;
   }
@@ -206,17 +284,18 @@ void GpuWatchdogThread::OnAcknowledge() {
 
   // The monitored thread has responded. Post a task to check it again.
   task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(&GpuWatchdogThread::OnCheck,
-                            weak_factory_.GetWeakPtr(), was_suspended),
+      FROM_HERE,
+      base::BindOnce(&GpuWatchdogThreadImplV1::OnCheck,
+                     weak_factory_.GetWeakPtr(), was_suspended),
       0.5 * timeout_);
 }
 
-void GpuWatchdogThread::OnCheck(bool after_suspend) {
+void GpuWatchdogThreadImplV1::OnCheck(bool after_suspend) {
   CHECK(base::PlatformThread::CurrentId() == GetThreadId());
 
   // Do not create any new termination tasks if one has already been created
   // or the system is suspended.
-  if (armed_ || suspended_)
+  if (armed_ || suspension_counter_.HasRefs())
     return;
 
   armed_ = true;
@@ -243,58 +322,39 @@ void GpuWatchdogThread::OnCheck(bool after_suspend) {
   // Post a task to the monitored thread that does nothing but wake up the
   // TaskObserver. Any other tasks that are pending on the watched thread will
   // also wake up the observer. This simply ensures there is at least one.
-  watched_message_loop_->task_runner()->PostTask(FROM_HERE,
-                                                 base::Bind(&base::DoNothing));
+  watched_task_runner_->PostTask(FROM_HERE, base::DoNothing());
 
   // Post a task to the watchdog thread to exit if the monitored thread does
   // not respond in time.
-  task_runner()->PostDelayedTask(FROM_HERE,
-                                 base::Bind(&GpuWatchdogThread::OnCheckTimeout,
-                                            weak_factory_.GetWeakPtr()),
-                                 timeout);
+  task_runner()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&GpuWatchdogThreadImplV1::OnCheckTimeout,
+                     weak_factory_.GetWeakPtr()),
+      timeout);
 }
 
-void GpuWatchdogThread::OnCheckTimeout() {
+void GpuWatchdogThreadImplV1::OnCheckTimeout() {
+  DeliberatelyTerminateToRecoverFromHang();
+}
+
+// Use the --disable-gpu-watchdog command line switch to disable this.
+void GpuWatchdogThreadImplV1::DeliberatelyTerminateToRecoverFromHang() {
   // Should not get here while the system is suspended.
-  DCHECK(!suspended_);
+  DCHECK(!suspension_counter_.HasRefs());
 
   // If the watchdog woke up significantly behind schedule, disarm and reset
   // the watchdog check. This is to prevent the watchdog thread from terminating
   // when a machine wakes up from sleep or hibernation, which would otherwise
   // appear to be a hang.
   if (base::Time::Now() > suspension_timeout_) {
-    armed_ = false;
-    OnCheck(true);
+    OnAcknowledge();
     return;
   }
 
   if (!base::subtle::NoBarrier_Load(&awaiting_acknowledge_)) {
-    // This should be possible only when CheckArmed() has been called but
-    // OnAcknowledge() hasn't.
-    // In this case the watched thread might need more time to finish posting
-    // OnAcknowledge task.
-
-    // Continue with the termination after an additional delay.
-    task_runner()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(&GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang,
-                   weak_factory_.GetWeakPtr()),
-        0.5 * timeout_);
-
-    // Post a task that does nothing on the watched thread to bump its priority
-    // and make it more likely to get scheduled.
-    watched_message_loop_->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&base::DoNothing));
+    OnAcknowledge();
     return;
   }
-
-  DeliberatelyTerminateToRecoverFromHang();
-}
-
-// Use the --disable-gpu-watchdog command line switch to disable this.
-void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
-  // Should not get here while the system is suspended.
-  DCHECK(!suspended_);
 
 #if defined(OS_WIN)
   // Defer termination until a certain amount of CPU time has elapsed on the
@@ -304,54 +364,56 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
   if (use_thread_cpu_time_ && (time_since_arm < timeout_)) {
     task_runner()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang,
-                   weak_factory_.GetWeakPtr()),
+        base::BindOnce(&GpuWatchdogThreadImplV1::OnCheckTimeout,
+                       weak_factory_.GetWeakPtr()),
         timeout_ - time_since_arm);
     return;
   }
 #endif
 
 #if defined(USE_X11)
-  XWindowAttributes attributes;
-  XGetWindowAttributes(display_, window_, &attributes);
+  if (display_) {
+    DCHECK(window_);
+    XWindowAttributes attributes;
+    XGetWindowAttributes(display_, window_, &attributes);
 
-  XSelectInput(display_, window_, PropertyChangeMask);
-  SetupXChangeProp();
+    XSelectInput(display_, window_, PropertyChangeMask);
+    SetupXChangeProp();
 
-  XFlush(display_);
+    XFlush(display_);
 
-  // We wait for the property change event with a timeout. If it arrives we know
-  // that X is responsive and is not the cause of the watchdog trigger, so we
-  // should
-  // terminate. If it times out, it may be due to X taking a long time, but
-  // terminating won't help, so ignore the watchdog trigger.
-  XEvent event_return;
-  base::TimeTicks deadline = base::TimeTicks::Now() + timeout_;
-  while (true) {
-    base::TimeDelta delta = deadline - base::TimeTicks::Now();
-    if (delta < base::TimeDelta()) {
-      return;
-    } else {
-      while (XCheckWindowEvent(display_, window_, PropertyChangeMask,
-                               &event_return)) {
-        if (MatchXEventAtom(&event_return))
-          break;
-      }
-      struct pollfd fds[1];
-      fds[0].fd = XConnectionNumber(display_);
-      fds[0].events = POLLIN;
-      int status = poll(fds, 1, delta.InMilliseconds());
-      if (status == -1) {
-        if (errno == EINTR) {
-          continue;
-        } else {
-          LOG(FATAL) << "Lost X connection, aborting.";
-          break;
-        }
-      } else if (status == 0) {
+    // We wait for the property change event with a timeout. If it arrives we
+    // know that X is responsive and is not the cause of the watchdog trigger,
+    // so we should terminate. If it times out, it may be due to X taking a long
+    // time, but terminating won't help, so ignore the watchdog trigger.
+    XEvent event_return;
+    base::TimeTicks deadline = base::TimeTicks::Now() + timeout_;
+    while (true) {
+      base::TimeDelta delta = deadline - base::TimeTicks::Now();
+      if (delta < base::TimeDelta()) {
         return;
       } else {
-        continue;
+        while (XCheckWindowEvent(display_, window_, PropertyChangeMask,
+                                 &event_return)) {
+          if (MatchXEventAtom(&event_return))
+            break;
+        }
+        struct pollfd fds[1];
+        fds[0].fd = XConnectionNumber(display_);
+        fds[0].events = POLLIN;
+        int status = poll(fds, 1, delta.InMilliseconds());
+        if (status == -1) {
+          if (errno == EINTR) {
+            continue;
+          } else {
+            LOG(FATAL) << "Lost X connection, aborting.";
+            break;
+          }
+        } else if (status == 0) {
+          return;
+        } else {
+          continue;
+        }
       }
     }
   }
@@ -398,11 +460,6 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
   base::debug::Alias(&using_high_res_timer);
 #endif
 
-  base::Time current_time = base::Time::Now();
-  base::TimeTicks current_timeticks = base::TimeTicks::Now();
-  base::debug::Alias(&current_time);
-  base::debug::Alias(&current_timeticks);
-
   int32_t awaiting_acknowledge =
       base::subtle::NoBarrier_Load(&awaiting_acknowledge_);
   base::debug::Alias(&awaiting_acknowledge);
@@ -417,6 +474,32 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
     handler(logging::LOG_ERROR, __FILE__, __LINE__, 0, message);
   DLOG(ERROR) << message;
 
+  base::Time current_time = base::Time::Now();
+  base::TimeTicks current_timeticks = base::TimeTicks::Now();
+  base::debug::Alias(&current_time);
+  base::debug::Alias(&current_timeticks);
+
+  int64_t available_physical_memory =
+      base::SysInfo::AmountOfAvailablePhysicalMemory() >> 20;
+  crash_keys::available_physical_memory_in_mb.Set(
+      base::NumberToString(available_physical_memory));
+
+  gl::ShaderTracking* shader_tracking = gl::ShaderTracking::GetInstance();
+  if (shader_tracking) {
+    std::string shaders[2];
+    shader_tracking->GetShaders(shaders, shaders + 1);
+    crash_keys::current_shader_0.Set(shaders[0]);
+    crash_keys::current_shader_1.Set(shaders[1]);
+  }
+
+  // Check it one last time before crashing.
+  if (!base::subtle::NoBarrier_Load(&awaiting_acknowledge_)) {
+    OnAcknowledge();
+    return;
+  }
+
+  GpuWatchdogHistogram(GpuWatchdogThreadEvent::kGpuWatchdogKill);
+
   // Deliberately crash the process to create a crash dump.
   *((volatile int*)0) = 0x1337;
 
@@ -424,20 +507,24 @@ void GpuWatchdogThread::DeliberatelyTerminateToRecoverFromHang() {
 }
 
 #if defined(USE_X11)
-void GpuWatchdogThread::SetupXServer() {
-  display_ = XOpenDisplay(NULL);
-  window_ = XCreateWindow(display_, DefaultRootWindow(display_), 0, 0, 1, 1, 0,
-                          CopyFromParent, InputOutput, CopyFromParent, 0, NULL);
-  atom_ = XInternAtom(display_, "CHECK", False);
+void GpuWatchdogThreadImplV1::SetupXServer() {
+  display_ = XOpenDisplay(nullptr);
+  if (display_) {
+    window_ =
+        XCreateWindow(display_, DefaultRootWindow(display_), 0, 0, 1, 1, 0,
+                      CopyFromParent, InputOutput, CopyFromParent, 0, nullptr);
+    atom_ = XInternAtom(display_, "CHECK", x11::False);
+  }
   host_tty_ = GetActiveTTY();
 }
 
-void GpuWatchdogThread::SetupXChangeProp() {
+void GpuWatchdogThreadImplV1::SetupXChangeProp() {
+  DCHECK(display_);
   XChangeProperty(display_, window_, atom_, XA_STRING, 8, PropModeReplace, text,
-                  (arraysize(text) - 1));
+                  (base::size(text) - 1));
 }
 
-bool GpuWatchdogThread::MatchXEventAtom(XEvent* event) {
+bool GpuWatchdogThreadImplV1::MatchXEventAtom(XEvent* event) {
   if (event->xproperty.window == window_ && event->type == PropertyNotify &&
       event->xproperty.atom == atom_)
     return true;
@@ -446,40 +533,52 @@ bool GpuWatchdogThread::MatchXEventAtom(XEvent* event) {
 }
 
 #endif
-void GpuWatchdogThread::AddPowerObserver() {
+void GpuWatchdogThreadImplV1::AddPowerObserver() {
   // As we stop the task runner before destroying this class, the unretained
   // reference will always outlive the task.
-  task_runner()->PostTask(FROM_HERE,
-                          base::Bind(&GpuWatchdogThread::OnAddPowerObserver,
-                                     base::Unretained(this)));
+  task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(&GpuWatchdogThreadImplV1::OnAddPowerObserver,
+                                base::Unretained(this)));
 }
 
-void GpuWatchdogThread::OnAddPowerObserver() {
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  DCHECK(power_monitor);
-  power_monitor->AddObserver(this);
+void GpuWatchdogThreadImplV1::OnAddPowerObserver() {
+  DCHECK(base::PowerMonitor::IsInitialized());
+  base::PowerMonitor::AddObserver(this);
 }
 
-void GpuWatchdogThread::OnSuspend() {
-  suspended_ = true;
-  suspend_time_ = base::Time::Now();
-
-  // When suspending force an acknowledgement to cancel any pending termination
-  // tasks.
-  OnAcknowledge();
+void GpuWatchdogThreadImplV1::OnSuspend() {
+  power_suspend_ref_ = suspension_counter_.Take();
 }
 
-void GpuWatchdogThread::OnResume() {
-  suspended_ = false;
-  resume_time_ = base::Time::Now();
+void GpuWatchdogThreadImplV1::OnResume() {
+  power_suspend_ref_.reset();
+}
 
-  // After resuming jump-start the watchdog again.
-  armed_ = false;
-  OnCheck(true);
+void GpuWatchdogThreadImplV1::OnBackgroundedOnWatchdogThread() {
+  background_suspend_ref_ = suspension_counter_.Take();
+}
+
+void GpuWatchdogThreadImplV1::OnForegroundedOnWatchdogThread() {
+  background_suspend_ref_.reset();
+}
+
+void GpuWatchdogThreadImplV1::SuspendStateChanged() {
+  if (suspension_counter_.HasRefs()) {
+    suspend_time_ = base::Time::Now();
+    // When suspending force an acknowledgement to cancel any pending
+    // termination tasks.
+    OnAcknowledge();
+  } else {
+    resume_time_ = base::Time::Now();
+
+    // After resuming jump-start the watchdog again.
+    armed_ = false;
+    OnCheck(true);
+  }
 }
 
 #if defined(OS_WIN)
-base::ThreadTicks GpuWatchdogThread::GetWatchedThreadTime() {
+base::ThreadTicks GpuWatchdogThreadImplV1::GetWatchedThreadTime() {
   if (base::ThreadTicks::IsSupported()) {
     // Convert ThreadTicks::Now() to TimeDelta.
     return base::ThreadTicks::GetForThread(
@@ -517,7 +616,7 @@ base::ThreadTicks GpuWatchdogThread::GetWatchedThreadTime() {
 #endif
 
 #if defined(USE_X11)
-int GpuWatchdogThread::GetActiveTTY() const {
+int GpuWatchdogThreadImplV1::GetActiveTTY() const {
   char tty_string[8] = {0};
   if (tty_file_ && !fseek(tty_file_, 0, SEEK_SET) &&
       fread(tty_string, 1, 7, tty_file_)) {
@@ -529,5 +628,8 @@ int GpuWatchdogThread::GetActiveTTY() const {
   return -1;
 }
 #endif
+
+GpuWatchdogThread::GpuWatchdogThread() : base::Thread("GpuWatchdog") {}
+GpuWatchdogThread::~GpuWatchdogThread() {}
 
 }  // namespace gpu

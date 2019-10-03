@@ -86,7 +86,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
     if (!iter.value().GetAsDictionary(&command)) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           manifest_errors::kInvalidKeyBindingDictionary,
-          base::IntToString(command_index));
+          base::NumberToString(command_index));
       return false;
     }
 
@@ -106,7 +106,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
               extension, APIPermission::kCommandsAccessibility)) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
             manifest_errors::kInvalidKeyBindingTooMany,
-            base::IntToString(kMaxCommandsWithKeybindingPerExtension));
+            base::NumberToString(kMaxCommandsWithKeybindingPerExtension));
         return false;
       }
     }
@@ -147,8 +147,9 @@ void CommandsHandler::MaybeSetBrowserActionDefault(const Extension* extension,
   }
 }
 
-const std::vector<std::string> CommandsHandler::Keys() const {
-  return SingleKey(keys::kCommands);
+base::span<const char* const> CommandsHandler::Keys() const {
+  static constexpr const char* kKeys[] = {keys::kCommands};
+  return kKeys;
 }
 
 }  // namespace extensions

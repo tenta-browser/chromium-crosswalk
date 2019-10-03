@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 #include <memory>
 
+#include "base/cfi_buildflags.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chrome/test/media_router/media_router_integration_browsertest.h"
 #include "content/public/test/test_utils.h"
 #include "net/base/filename_util.h"
@@ -29,7 +31,7 @@ class MediaRouterIntegrationOneUABrowserTest
     // Set up embedded test server to serve offscreen presentation with relative
     // URL "presentation_receiver.html".
     base::FilePath base_dir;
-    CHECK(PathService::Get(base::DIR_MODULE, &base_dir));
+    CHECK(base::PathService::Get(base::DIR_MODULE, &base_dir));
     base::FilePath resource_dir = base_dir.Append(
         FILE_PATH_LITERAL("media_router/browser_test_resources/"));
     embedded_test_server()->ServeFilesFromDirectory(resource_dir);
@@ -37,20 +39,21 @@ class MediaRouterIntegrationOneUABrowserTest
   }
 
   GURL GetTestPageUrl(const base::FilePath& full_path) override {
-    GURL url = embedded_test_server()->GetURL("/basic_test.html");
-    return GURL(url.spec() + "?__oneUA__=true");
+    return embedded_test_server()->GetURL("/basic_test.html?__oneUA__=true");
   }
 };
 
-IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest, MANUAL_Basic) {
+IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest, Basic) {
   RunBasicTest();
 }
 
+// TODO(https://crbug.com/822231): Flaky in Chromium waterfall.
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
                        MANUAL_SendAndOnMessage) {
   RunSendMessageTest("foo");
 }
 
+// TODO(https://crbug.com/822231): Flaky in Chromium waterfall.
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
                        MANUAL_ReceiverCloseConnection) {
   WebContents* web_contents = StartSessionWithTestPageAndChooseSink();
@@ -59,46 +62,55 @@ IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
-                       MANUAL_Fail_SendMessage) {
+                       Fail_SendMessage) {
   RunFailToSendMessageTest();
 }
 
+#if defined(OS_LINUX) &&                                        \
+    (BUILDFLAG(CFI_CAST_CHECK) || BUILDFLAG(CFI_ICALL_CHECK) || \
+     BUILDFLAG(CFI_ENFORCEMENT_TRAP) || BUILDFLAG(CFI_ENFORCEMENT_DIAGNOSTIC))
+// https://crbug.com/966827. Flaky on Linux CFI.
+#define MAYBE_ReconnectSession DISABLED_ReconnectSession
+#else
+#define MAYBE_ReconnectSession ReconnectSession
+#endif
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
-                       MANUAL_ReconnectSession) {
+                       MAYBE_ReconnectSession) {
   RunReconnectSessionTest();
 }
+#undef MAYBE_ReconnectSession
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUABrowserTest,
-                       MANUAL_ReconnectSessionSameTab) {
+                       ReconnectSessionSameTab) {
   RunReconnectSessionSameTabTest();
 }
 
 class MediaRouterIntegrationOneUANoReceiverBrowserTest
-    : public MediaRouterIntegrationBrowserTest {
+    : public MediaRouterIntegrationOneUABrowserTest {
  public:
   GURL GetTestPageUrl(const base::FilePath& full_path) override {
-    GURL url = MediaRouterIntegrationBrowserTest::GetTestPageUrl(full_path);
-    return GURL(url.spec() + "?__oneUANoReceiver__=true");
+    return embedded_test_server()->GetURL(
+        "/basic_test.html?__oneUANoReceiver__=true");
   }
 };
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUANoReceiverBrowserTest,
-                       MANUAL_Basic) {
+                       Basic) {
   RunBasicTest();
 }
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUANoReceiverBrowserTest,
-                       MANUAL_Fail_SendMessage) {
+                       Fail_SendMessage) {
   RunFailToSendMessageTest();
 }
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUANoReceiverBrowserTest,
-                       MANUAL_ReconnectSession) {
+                       ReconnectSession) {
   RunReconnectSessionTest();
 }
 
 IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationOneUANoReceiverBrowserTest,
-                       MANUAL_ReconnectSessionSameTab) {
+                       ReconnectSessionSameTab) {
   RunReconnectSessionSameTabTest();
 }
 

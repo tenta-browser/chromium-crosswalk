@@ -10,10 +10,10 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "content/shell/android/content_shell_jni_headers/ShellManager_jni.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_content_browser_client.h"
-#include "jni/ShellManager_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -48,13 +48,11 @@ void RemoveShellView(const JavaRef<jobject>& shell_view) {
 }
 
 static void JNI_ShellManager_Init(JNIEnv* env,
-                                  const JavaParamRef<jclass>& clazz,
                                   const JavaParamRef<jobject>& obj) {
   g_global_state.Get().j_shell_manager.Reset(obj);
 }
 
 void JNI_ShellManager_LaunchShell(JNIEnv* env,
-                                  const JavaParamRef<jclass>& clazz,
                                   const JavaParamRef<jstring>& jurl) {
   ShellBrowserContext* browserContext =
       ShellContentBrowserClient::Get()->browser_context();
@@ -63,6 +61,11 @@ void JNI_ShellManager_LaunchShell(JNIEnv* env,
                          url,
                          NULL,
                          gfx::Size());
+}
+
+void DestroyShellManager() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_ShellManager_destroy(env, g_global_state.Get().j_shell_manager);
 }
 
 }  // namespace content

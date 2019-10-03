@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <string>
 #include "media/base/media_export.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "ui/gfx/color_space.h"
 
 namespace media {
@@ -79,21 +79,21 @@ enum VideoCodecProfile {
   HEVCPROFILE_MAIN10 = 17,
   HEVCPROFILE_MAIN_STILL_PICTURE = 18,
   HEVCPROFILE_MAX = HEVCPROFILE_MAIN_STILL_PICTURE,
-  DOLBYVISION_MIN = 19,
-  DOLBYVISION_PROFILE0 = DOLBYVISION_MIN,
+  DOLBYVISION_PROFILE0 = 19,
   DOLBYVISION_PROFILE4 = 20,
   DOLBYVISION_PROFILE5 = 21,
   DOLBYVISION_PROFILE7 = 22,
-  DOLBYVISION_MAX = DOLBYVISION_PROFILE7,
   THEORAPROFILE_MIN = 23,
   THEORAPROFILE_ANY = THEORAPROFILE_MIN,
   THEORAPROFILE_MAX = THEORAPROFILE_ANY,
-  // TODO(dalecurtis): AV1 profiles are not finalized, this needs updating
-  // before enabling for release. http://crbug.com/784993
   AV1PROFILE_MIN = 24,
-  AV1PROFILE_PROFILE0 = AV1PROFILE_MIN,
-  AV1PROFILE_MAX = AV1PROFILE_PROFILE0,
-  VIDEO_CODEC_PROFILE_MAX = AV1PROFILE_PROFILE0,
+  AV1PROFILE_PROFILE_MAIN = AV1PROFILE_MIN,
+  AV1PROFILE_PROFILE_HIGH = 25,
+  AV1PROFILE_PROFILE_PRO = 26,
+  AV1PROFILE_MAX = AV1PROFILE_PROFILE_PRO,
+  DOLBYVISION_PROFILE8 = 27,
+  DOLBYVISION_PROFILE9 = 28,
+  VIDEO_CODEC_PROFILE_MAX = DOLBYVISION_PROFILE9,
 };
 
 struct CodecProfileLevel {
@@ -119,6 +119,13 @@ MEDIA_EXPORT bool ParseNewStyleVp9CodecID(const std::string& codec_id,
 MEDIA_EXPORT bool ParseLegacyVp9CodecID(const std::string& codec_id,
                                         VideoCodecProfile* profile,
                                         uint8_t* level_idc);
+
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+MEDIA_EXPORT bool ParseAv1CodecId(const std::string& codec_id,
+                                  VideoCodecProfile* profile,
+                                  uint8_t* level_idc,
+                                  VideoColorSpace* color_space);
+#endif
 
 // Handle parsing AVC/H.264 codec ids as outlined in RFC 6381 and ISO-14496-10.
 MEDIA_EXPORT bool ParseAVCCodecId(const std::string& codec_id,

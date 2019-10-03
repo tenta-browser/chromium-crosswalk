@@ -6,15 +6,18 @@
 #define CHROME_BROWSER_ANDROID_TAB_WEB_CONTENTS_DELEGATE_ANDROID_H_
 
 #include "base/files/file_path.h"
-#include "components/web_contents_delegate_android/web_contents_delegate_android.h"
+#include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "chrome/browser/ui/find_bar/find_result_observer.h"
+#include "chrome/browser/ui/find_bar/find_tab_helper.h"
+#include "components/embedder_support/android/delegate/web_contents_delegate_android.h"
 #include "content/public/browser/bluetooth_chooser.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-
-class FindNotificationDetails;
+#include "printing/buildflags/buildflags.h"
+#include "third_party/blink/public/common/frame/blocked_navigation_types.h"
 
 namespace content {
 struct FileChooserParams;
+class SmsDialog;
 class WebContents;
 }
 
@@ -30,20 +33,26 @@ namespace android {
 // the Chromium Android port but not to be shared with WebView.
 class TabWebContentsDelegateAndroid
     : public web_contents_delegate_android::WebContentsDelegateAndroid,
-      public content::NotificationObserver {
+      public FindResultObserver {
  public:
   TabWebContentsDelegateAndroid(JNIEnv* env, jobject obj);
   ~TabWebContentsDelegateAndroid() override;
 
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
-                      const content::FileChooserParams& params) override;
+                      std::unique_ptr<content::FileSelectListener> listener,
+                      const blink::mojom::FileChooserParams& params) override;
   std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
       content::RenderFrameHost* frame,
       const content::BluetoothChooser::EventHandler& event_handler) override;
+  std::unique_ptr<content::SmsDialog> CreateSmsDialog() override;
+  std::unique_ptr<content::BluetoothScanningPrompt> ShowBluetoothScanningPrompt(
+      content::RenderFrameHost* frame,
+      const content::BluetoothScanningPrompt::EventHandler& event_handler)
+      override;
   void CloseContents(content::WebContents* web_contents) override;
   bool ShouldFocusLocationBarByDefault(content::WebContents* source) override;
   blink::WebDisplayMode GetDisplayMode(
-      const content::WebContents* web_contents) const override;
+      const content::WebContents* web_contents) override;
   void FindReply(content::WebContents* web_contents,
                  int request_id,
                  int number_of_matches,
@@ -56,46 +65,72 @@ class TabWebContentsDelegateAndroid
                            const gfx::RectF& active_rect) override;
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) override;
+  void AdjustPreviewsStateForNavigation(
+      content::WebContents* web_contents,
+      content::PreviewsState* previews_state) override;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) override;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
+      content::MediaResponseCallback callback) override;
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type) override;
+                                  blink::mojom::MediaStreamType type) override;
   void SetOverlayMode(bool use_overlay_mode) override;
-  bool RequestPpapiBrokerPermission(
+  void RequestPpapiBrokerPermission(
       content::WebContents* web_contents,
       const GURL& url,
       const base::FilePath& plugin_path,
-      const base::Callback<void(bool)>& callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params) override;
   bool ShouldResumeRequestsForCreatedWindow() override;
   void AddNewContents(content::WebContents* source,
-                      content::WebContents* new_contents,
+                      std::unique_ptr<content::WebContents> new_contents,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
                       bool user_gesture,
                       bool* was_blocked) override;
-  void RequestAppBannerFromDevTools(
+  blink::WebSecurityStyle GetSecurityStyle(
+      content::WebContents* web_contents,
+      content::SecurityStyleExplanations* security_style_explanations) override;
+  void OnDidBlockNavigation(content::WebContents* web_contents,
+                            const GURL& blocked_url,
+                            const GURL& initiator_url,
+                            blink::NavigationBlockedReason reason) override;
+  void UpdateUserGestureCarryoverInfo(
       content::WebContents* web_contents) override;
-  void OnAudioStateChanged(content::WebContents* web_contents,
-                           bool audible) override;
-  void OnDidBlockFramebust(content::WebContents* web_contents,
-                           const GURL& url) override;
+  content::PictureInPictureResult EnterPictureInPicture(
+      content::WebContents* web_contents,
+      const viz::SurfaceId&,
+      const gfx::Size&) override;
+  void ExitPictureInPicture() override;
+  std::unique_ptr<content::WebContents> SwapWebContents(
+      content::WebContents* old_contents,
+      std::unique_ptr<content::WebContents> new_contents,
+      bool did_start_load,
+      bool did_finish_load) override;
+
+#if BUILDFLAG(ENABLE_PRINTING)
+  void PrintCrossProcessSubframe(
+      content::WebContents* web_contents,
+      const gfx::Rect& rect,
+      int document_cookie,
+      content::RenderFrameHost* subframe_host) const override;
+#endif
+
+  // FindResultObserver:
+  void OnFindResultAvailable(content::WebContents* web_contents) override;
+
+  bool ShouldEnableEmbeddedMediaExperience() const;
+  bool IsPictureInPictureEnabled() const;
+  bool IsNightModeEnabled() const;
+  const GURL GetManifestScope() const;
 
  private:
-  // NotificationObserver implementation.
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  ScopedObserver<FindTabHelper, FindResultObserver> find_result_observer_{this};
 
-  void OnFindResultAvailable(content::WebContents* web_contents,
-                             const FindNotificationDetails* find_result);
-
-  content::NotificationRegistrar notification_registrar_;
+  DISALLOW_COPY_AND_ASSIGN(TabWebContentsDelegateAndroid);
 };
 
 }  // namespace android

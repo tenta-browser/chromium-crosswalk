@@ -8,15 +8,15 @@
 #include <vector>
 
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/proto/audio.pb.h"
 #include "remoting/protocol/fake_audio_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/webrtc/api/mediastreaminterface.h"
-#include "third_party/webrtc/rtc_base/refcount.h"
-#include "third_party/webrtc/rtc_base/refcountedobject.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
+#include "third_party/webrtc/rtc_base/ref_count.h"
+#include "third_party/webrtc/rtc_base/ref_counted_object.h"
 
 namespace remoting {
 namespace protocol {
@@ -61,7 +61,7 @@ class WebrtcAudioSourceAdapterTest : public testing::Test {
  public:
   void SetUp() override {
     audio_source_adapter_ = new rtc::RefCountedObject<WebrtcAudioSourceAdapter>(
-        message_loop_.task_runner());
+        scoped_task_environment_.GetMainThreadTaskRunner());
     audio_source_ = new FakeAudioSource();
     audio_source_adapter_->Start(base::WrapUnique(audio_source_));
     audio_source_adapter_->AddSink(&sink_);
@@ -74,7 +74,7 @@ class WebrtcAudioSourceAdapterTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   FakeAudioSource* audio_source_;
   scoped_refptr<WebrtcAudioSourceAdapter> audio_source_adapter_;
   FakeAudioSink sink_;

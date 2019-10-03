@@ -6,25 +6,20 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
 #include "base/test/simple_test_clock.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
 
 class HostZoomMapTest : public testing::Test {
  public:
-  HostZoomMapTest() : ui_thread_(BrowserThread::UI, &message_loop_) {
-  }
+  HostZoomMapTest() = default;
 
- protected:
-  base::MessageLoop message_loop_;
-  TestBrowserThread ui_thread_;
+ private:
+  TestBrowserThreadBundle test_browser_thread_bundle_;
 };
 
 TEST_F(HostZoomMapTest, GetSetZoomLevel) {
@@ -77,8 +72,8 @@ TEST_F(HostZoomMapTest, GetAllZoomLevels) {
        zoomed},
       {HostZoomMap::ZOOM_CHANGED_FOR_SCHEME_AND_HOST, "zoomed.com", "https",
        zoomed}, };
-  ASSERT_EQ(arraysize(expected), levels.size());
-  for (size_t i = 0; i < arraysize(expected); ++i) {
+  ASSERT_EQ(base::size(expected), levels.size());
+  for (size_t i = 0; i < base::size(expected); ++i) {
     SCOPED_TRACE(testing::Message() << "levels[" << i << "]");
     EXPECT_EQ(expected[i].mode, levels[i].mode);
     EXPECT_EQ(expected[i].scheme, levels[i].scheme);
@@ -90,8 +85,6 @@ TEST_F(HostZoomMapTest, GetAllZoomLevels) {
 
 TEST_F(HostZoomMapTest, LastModifiedTimestamp) {
   HostZoomMapImpl host_zoom_map;
-  host_zoom_map.SetStoreLastModified(true);
-
   base::Time now = base::Time::Now();
   base::SimpleTestClock test_clock;
   host_zoom_map.SetClockForTesting(&test_clock);
@@ -115,8 +108,8 @@ TEST_F(HostZoomMapTest, LastModifiedTimestamp) {
       {HostZoomMap::ZOOM_CHANGED_FOR_SCHEME_AND_HOST, "login", "chrome", 3.0,
        base::Time()},
   };
-  ASSERT_EQ(arraysize(expected), levels.size());
-  for (size_t i = 0; i < arraysize(expected); ++i) {
+  ASSERT_EQ(base::size(expected), levels.size());
+  for (size_t i = 0; i < base::size(expected); ++i) {
     SCOPED_TRACE(testing::Message() << "levels[" << i << "]");
     EXPECT_EQ(expected[i].mode, levels[i].mode);
     EXPECT_EQ(expected[i].scheme, levels[i].scheme);
@@ -128,8 +121,6 @@ TEST_F(HostZoomMapTest, LastModifiedTimestamp) {
 
 TEST_F(HostZoomMapTest, ClearZoomLevels) {
   HostZoomMapImpl host_zoom_map;
-  host_zoom_map.SetStoreLastModified(true);
-
   base::SimpleTestClock test_clock;
   host_zoom_map.SetClockForTesting(&test_clock);
 
@@ -138,11 +129,19 @@ TEST_F(HostZoomMapTest, ClearZoomLevels) {
   host_zoom_map.SetZoomLevelForHost("zoomzoom.com", 3.5);
   test_clock.SetNow(now - base::TimeDelta::FromHours(1));
   host_zoom_map.SetZoomLevelForHost("zoom.com", 1.5);
-  EXPECT_EQ(2u, host_zoom_map.GetAllZoomLevels().size());
+  test_clock.SetNow(now - base::TimeDelta::FromDays(31));
+  host_zoom_map.SetZoomLevelForHost("zoom2.com", 2.5);
+  EXPECT_EQ(3u, host_zoom_map.GetAllZoomLevels().size());
 
   host_zoom_map.ClearZoomLevels(now - base::TimeDelta::FromHours(2),
                                 base::Time::Max());
-  EXPECT_EQ(1u, host_zoom_map.GetAllZoomLevels().size());
+  ASSERT_EQ(2u, host_zoom_map.GetAllZoomLevels().size());
+  EXPECT_EQ("zoom2.com", host_zoom_map.GetAllZoomLevels()[0].host);
+  EXPECT_EQ("zoomzoom.com", host_zoom_map.GetAllZoomLevels()[1].host);
+
+  host_zoom_map.ClearZoomLevels(base::Time(),
+                                now - base::TimeDelta::FromDays(30));
+  ASSERT_EQ(1u, host_zoom_map.GetAllZoomLevels().size());
   EXPECT_EQ("zoomzoom.com", host_zoom_map.GetAllZoomLevels()[0].host);
 
   host_zoom_map.ClearZoomLevels(base::Time(), base::Time::Max());

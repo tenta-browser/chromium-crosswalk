@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -19,6 +20,7 @@
 #include "base/threading/thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
+#include "storage/browser/fileapi/file_stream_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using storage::FileStreamWriter;
@@ -28,8 +30,7 @@ namespace content {
 
 class LocalFileStreamWriterTest : public testing::Test {
  public:
-  LocalFileStreamWriterTest()
-      : file_thread_("FileUtilProxyTestFileThread") {}
+  LocalFileStreamWriterTest() : file_thread_("TestFileThread") {}
 
   void SetUp() override {
     ASSERT_TRUE(file_thread_.Start());
@@ -46,25 +47,6 @@ class LocalFileStreamWriterTest : public testing::Test {
  protected:
   base::FilePath Path(const std::string& name) {
     return temp_dir_.GetPath().AppendASCII(name);
-  }
-
-  int WriteStringToWriter(LocalFileStreamWriter* writer,
-                          const std::string& data) {
-    scoped_refptr<net::StringIOBuffer> buffer(new net::StringIOBuffer(data));
-    scoped_refptr<net::DrainableIOBuffer> drainable(
-        new net::DrainableIOBuffer(buffer.get(), buffer->size()));
-
-    while (drainable->BytesRemaining() > 0) {
-      net::TestCompletionCallback callback;
-      int result = writer->Write(
-          drainable.get(), drainable->BytesRemaining(), callback.callback());
-      if (result == net::ERR_IO_PENDING)
-        result = callback.WaitForResult();
-      if (result <= 0)
-        return result;
-      drainable->DidConsume(result);
-    }
-    return net::OK;
   }
 
   std::string GetFileContent(const base::FilePath& path) {
@@ -145,7 +127,7 @@ TEST_F(LocalFileStreamWriterTest, CancelBeforeOperation) {
   base::FilePath path = Path("file_a");
   std::unique_ptr<LocalFileStreamWriter> writer(CreateWriter(path, 0));
   // Cancel immediately fails when there's no in-flight operation.
-  int cancel_result = writer->Cancel(base::Bind(&NeverCalled));
+  int cancel_result = writer->Cancel(base::BindOnce(&NeverCalled));
   EXPECT_EQ(net::ERR_UNEXPECTED, cancel_result);
 }
 
@@ -155,7 +137,7 @@ TEST_F(LocalFileStreamWriterTest, CancelAfterFinishedOperation) {
   EXPECT_EQ(net::OK, WriteStringToWriter(writer.get(), "foo"));
 
   // Cancel immediately fails when there's no in-flight operation.
-  int cancel_result = writer->Cancel(base::Bind(&NeverCalled));
+  int cancel_result = writer->Cancel(base::BindOnce(&NeverCalled));
   EXPECT_EQ(net::ERR_UNEXPECTED, cancel_result);
 
   writer.reset();
@@ -169,9 +151,10 @@ TEST_F(LocalFileStreamWriterTest, CancelWrite) {
   base::FilePath path = CreateFileWithContent("file_a", "foobar");
   std::unique_ptr<LocalFileStreamWriter> writer(CreateWriter(path, 0));
 
-  scoped_refptr<net::StringIOBuffer> buffer(new net::StringIOBuffer("xxx"));
+  scoped_refptr<net::StringIOBuffer> buffer(
+      base::MakeRefCounted<net::StringIOBuffer>("xxx"));
   int result =
-      writer->Write(buffer.get(), buffer->size(), base::Bind(&NeverCalled));
+      writer->Write(buffer.get(), buffer->size(), base::BindOnce(&NeverCalled));
   ASSERT_EQ(net::ERR_IO_PENDING, result);
 
   net::TestCompletionCallback callback;

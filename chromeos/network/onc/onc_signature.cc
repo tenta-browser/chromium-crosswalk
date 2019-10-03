@@ -138,9 +138,9 @@ const OncFieldSignature openvpn_fields[] = {
     {::onc::openvpn::kStaticChallenge, &kStringSignature},
     {::onc::openvpn::kTLSAuthContents, &kStringSignature},
     {::onc::openvpn::kTLSRemote, &kStringSignature},
+    {::onc::openvpn::kTLSVersionMin, &kStringSignature},
     {::onc::openvpn::kUserAuthenticationType, &kStringSignature},
     {::onc::vpn::kUsername, &kStringSignature},
-    // Not supported, yet.
     {::onc::openvpn::kVerb, &kStringSignature},
     {::onc::openvpn::kVerifyHash, &kStringSignature},
     {::onc::openvpn::kVerifyX509, &kVerifyX509Signature},
@@ -189,6 +189,7 @@ const OncFieldSignature tether_with_state_fields[] = {
     {NULL}};
 
 const OncFieldSignature ipconfig_fields[] = {
+    {::onc::kRecommended, &kRecommendedSignature},
     {::onc::ipconfig::kGateway, &kStringSignature},
     {::onc::ipconfig::kIPAddress, &kStringSignature},
     {::onc::ipconfig::kNameServers, &kStringListSignature},
@@ -225,6 +226,7 @@ const OncFieldSignature wifi_fields[] = {
     {::onc::wifi::kAllowGatewayARPPolling, &kBoolSignature},
     {::onc::wifi::kAutoConnect, &kBoolSignature},
     {::onc::wifi::kEAP, &kEAPSignature},
+    {::onc::wifi::kFTEnabled, &kBoolSignature},
     {::onc::wifi::kHexSSID, &kStringSignature},
     {::onc::wifi::kHiddenSSID, &kBoolSignature},
     {::onc::wifi::kPassphrase, &kStringSignature},
@@ -238,6 +240,7 @@ const OncFieldSignature wifi_with_state_fields[] = {
     {::onc::wifi::kFrequency, &kIntegerSignature},
     {::onc::wifi::kFrequencyList, &kIntegerListSignature},
     {::onc::wifi::kSignalStrength, &kIntegerSignature},
+    {::onc::wifi::kTetheringState, &kStringSignature},
     {NULL}};
 
 const OncFieldSignature wimax_fields[] = {
@@ -267,6 +270,7 @@ const OncFieldSignature cellular_apn_fields[] = {
     {::onc::cellular_apn::kName, &kStringSignature},
     {::onc::cellular_apn::kUsername, &kStringSignature},
     {::onc::cellular_apn::kPassword, &kStringSignature},
+    {::onc::cellular_apn::kAuthentication, &kStringSignature},
     {::onc::cellular_apn::kLocalizedName, &kStringSignature},
     {::onc::cellular_apn::kLanguage, &kStringSignature},
     {NULL}};
@@ -322,7 +326,6 @@ const OncFieldSignature cellular_with_state_fields[] = {
     {::onc::cellular::kSIMLockStatus, &kSIMLockStatusSignature},
     {::onc::cellular::kSIMPresent, &kBoolSignature},
     {::onc::cellular::kSupportNetworkScan, &kBoolSignature},
-    {::onc::cellular::kSupportedCarriers, &kStringListSignature},
     {NULL}};
 
 const OncFieldSignature network_configuration_fields[] = {
@@ -364,6 +367,9 @@ const OncFieldSignature global_network_configuration_fields[] = {
      &kBoolSignature},
     {::onc::global_network_config::kAllowOnlyPolicyNetworksToConnect,
      &kBoolSignature},
+    {::onc::global_network_config::kAllowOnlyPolicyNetworksToConnectIfAvailable,
+     &kBoolSignature},
+    {::onc::global_network_config::kBlacklistedHexSSIDs, &kStringListSignature},
     {::onc::global_network_config::kDisableNetworkTypes, &kStringListSignature},
     {NULL}};
 
@@ -511,6 +517,9 @@ const CredentialEntry credentials[] = {
     {&kOpenVPNSignature, ::onc::openvpn::kTLSAuthContents},
     {&kWiFiSignature, ::onc::wifi::kPassphrase},
     {&kCellularApnSignature, ::onc::cellular_apn::kPassword},
+    // While not really a credential, PKCS12 blobs may contain unencrypted
+    // private keys.
+    {&kCertificateSignature, ::onc::certificate::kPKCS12},
     {NULL}};
 
 }  // namespace

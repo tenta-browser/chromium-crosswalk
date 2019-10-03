@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
@@ -79,7 +78,20 @@ class CustomEventHandler : public ui::test::TestEventHandler {
 
 namespace ash {
 
-using WindowManagerTest = AshTestBase;
+class WindowManagerTest : public AshTestBase {
+ public:
+  WindowManagerTest() = default;
+  ~WindowManagerTest() override = default;
+
+  void SetUp() override {
+    AshTestBase::SetUp();
+
+    // Shell hides the cursor by default; show it for these tests.
+    Shell::Get()->cursor_manager()->ShowCursor();
+  }
+
+  DISALLOW_COPY_AND_ASSIGN(WindowManagerTest);
+};
 
 class NonFocusableDelegate : public aura::test::TestWindowDelegate {
  public:
@@ -317,7 +329,7 @@ TEST_F(WindowManagerTest, ActivateOnMouse) {
     // First set the focus to the child |w11|.
     generator.ClickLeftButton();
     EXPECT_EQ(w11.get(), focus_client->GetFocusedWindow());
-    EXPECT_EQ(w1.get(), wm::GetActiveWindow());
+    EXPECT_EQ(w1.get(), window_util::GetActiveWindow());
 
     // Then click the parent active window. The focus shouldn't move.
     gfx::Point left_top = w1->bounds().origin();
@@ -326,7 +338,7 @@ TEST_F(WindowManagerTest, ActivateOnMouse) {
     generator.MoveMouseTo(left_top);
     generator.ClickLeftButton();
     EXPECT_EQ(w11.get(), focus_client->GetFocusedWindow());
-    EXPECT_EQ(w1.get(), wm::GetActiveWindow());
+    EXPECT_EQ(w1.get(), window_util::GetActiveWindow());
   }
 
   // Clicking on a non-focusable window inside a background window should still
@@ -387,44 +399,6 @@ TEST_F(WindowManagerTest, ActivateOnPointerWindowProperty) {
   // Window2 should become active.
   EXPECT_TRUE(wm::IsActiveWindow(w2.get()));
   EXPECT_FALSE(wm::IsActiveWindow(w1.get()));
-}
-
-TEST_F(WindowManagerTest, PanelActivation) {
-  aura::test::TestWindowDelegate wd;
-  std::unique_ptr<aura::Window> w1(
-      CreateTestWindowInShellWithDelegate(&wd, -1, gfx::Rect(10, 10, 50, 50)));
-  aura::test::TestWindowDelegate pd;
-  std::unique_ptr<aura::Window> p1(CreateTestWindowInShellWithDelegateAndType(
-      &pd, aura::client::WINDOW_TYPE_PANEL, -1, gfx::Rect(10, 10, 50, 50)));
-  aura::client::FocusClient* focus_client =
-      aura::client::GetFocusClient(w1.get());
-
-  // Activate w1.
-  wm::ActivateWindow(w1.get());
-  EXPECT_TRUE(wm::IsActiveWindow(w1.get()));
-
-  // Activate p1.
-  wm::ActivateWindow(p1.get());
-  EXPECT_TRUE(wm::IsActiveWindow(p1.get()));
-  EXPECT_EQ(p1.get(), focus_client->GetFocusedWindow());
-
-  // Activate w1.
-  wm::ActivateWindow(w1.get());
-  EXPECT_TRUE(wm::IsActiveWindow(w1.get()));
-  EXPECT_EQ(w1.get(), focus_client->GetFocusedWindow());
-
-  // Clicking on a non-activatable window should not change the active window.
-  {
-    NonFocusableDelegate nfd;
-    std::unique_ptr<aura::Window> w3(CreateTestWindowInShellWithDelegate(
-        &nfd, -1, gfx::Rect(70, 70, 50, 50)));
-    ui::test::EventGenerator generator3(Shell::GetPrimaryRootWindow(),
-                                        w3.get());
-    wm::ActivateWindow(p1.get());
-    EXPECT_TRUE(wm::IsActiveWindow(p1.get()));
-    generator3.ClickLeftButton();
-    EXPECT_TRUE(wm::IsActiveWindow(p1.get()));
-  }
 }
 
 // Essentially the same as ActivateOnMouse, but for touch events.
@@ -508,10 +482,6 @@ TEST_F(WindowManagerTest, ActivateOnTouch) {
 }
 
 TEST_F(WindowManagerTest, MouseEventCursors) {
-  // TODO: investigate failure in mash. http://crbug.com/698895.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
 
   // Create a window.
@@ -751,91 +721,75 @@ TEST_F(WindowManagerTest, AdditionalFilters) {
 
 // Touch visually hides the cursor.
 TEST_F(WindowManagerTest, UpdateCursorVisibility) {
-  // TODO: mash doesn't support CursorManager. http://crbug.com/631103.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   ::wm::CursorManager* cursor_manager = ash::Shell::Get()->cursor_manager();
 
-  generator.MoveMouseTo(gfx::Point(0, 0));
+  generator->MoveMouseTo(gfx::Point(0, 0));
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
-  generator.PressTouch();
+  generator->PressTouch();
   EXPECT_FALSE(cursor_manager->IsCursorVisible());
   EXPECT_FALSE(cursor_manager->IsMouseEventsEnabled());
-  generator.MoveMouseTo(gfx::Point(0, 0));
+  generator->MoveMouseTo(gfx::Point(0, 0));
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
-  generator.ReleaseTouch();
+  generator->ReleaseTouch();
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
 }
 
 // Tests cursor visibility on key pressed event.
 TEST_F(WindowManagerTest, UpdateCursorVisibilityOnKeyEvent) {
-  // TODO: mash doesn't support CursorManager. http://crbug.com/631103.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   ::wm::CursorManager* cursor_manager = ash::Shell::Get()->cursor_manager();
 
   // Pressing a key hides the cursor but does not disable mouse events.
-  generator.PressKey(ui::VKEY_A, ui::EF_NONE);
+  generator->PressKey(ui::VKEY_A, ui::EF_NONE);
   EXPECT_FALSE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
   // Moving mouse shows the cursor.
-  generator.MoveMouseTo(gfx::Point(0, 0));
+  generator->MoveMouseTo(gfx::Point(0, 0));
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
   // Releasing a key does does not hide the cursor and does not disable mouse
   // events.
-  generator.ReleaseKey(ui::VKEY_A, ui::EF_NONE);
+  generator->ReleaseKey(ui::VKEY_A, ui::EF_NONE);
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
   // Pressing a key with mouse button pressed does not hide the cursor and does
   // not disable mouse events.
-  generator.PressLeftButton();
-  generator.PressKey(ui::VKEY_A, ui::EF_NONE);
-  generator.ReleaseKey(ui::VKEY_A, ui::EF_NONE);
-  generator.ReleaseLeftButton();
+  generator->PressLeftButton();
+  generator->PressKey(ui::VKEY_A, ui::EF_NONE);
+  generator->ReleaseKey(ui::VKEY_A, ui::EF_NONE);
+  generator->ReleaseLeftButton();
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
 }
 
 // Test that pressing an accelerator does not hide the cursor.
 TEST_F(WindowManagerTest, UpdateCursorVisibilityAccelerator) {
-  // TODO: mash doesn't support CursorManager. http://crbug.com/631103.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   ::wm::CursorManager* cursor_manager = Shell::Get()->cursor_manager();
 
   ASSERT_TRUE(cursor_manager->IsCursorVisible());
 
   // Press Ctrl+A, release A first.
-  generator.PressKey(ui::VKEY_CONTROL, ui::EF_CONTROL_DOWN);
-  generator.PressKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
-  generator.ReleaseKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
-  generator.ReleaseKey(ui::VKEY_CONTROL, ui::EF_NONE);
+  generator->PressKey(ui::VKEY_CONTROL, ui::EF_CONTROL_DOWN);
+  generator->PressKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
+  generator->ReleaseKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
+  generator->ReleaseKey(ui::VKEY_CONTROL, ui::EF_NONE);
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
 
   // Press Ctrl+A, release Ctrl first.
-  generator.PressKey(ui::VKEY_CONTROL, ui::EF_CONTROL_DOWN);
-  generator.PressKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
-  generator.ReleaseKey(ui::VKEY_CONTROL, ui::EF_NONE);
-  generator.ReleaseKey(ui::VKEY_A, ui::EF_NONE);
+  generator->PressKey(ui::VKEY_CONTROL, ui::EF_CONTROL_DOWN);
+  generator->PressKey(ui::VKEY_A, ui::EF_CONTROL_DOWN);
+  generator->ReleaseKey(ui::VKEY_CONTROL, ui::EF_NONE);
+  generator->ReleaseKey(ui::VKEY_A, ui::EF_NONE);
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
 }
 
 TEST_F(WindowManagerTest, TestCursorClientObserver) {
-  // TODO: mash doesn't support CursorManager. http://crbug.com/631103.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   ::wm::CursorManager* cursor_manager = ash::Shell::Get()->cursor_manager();
 
   std::unique_ptr<aura::Window> w1(
@@ -860,7 +814,7 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_b.did_cursor_size_change());
 
   // Keypress should hide the cursor.
-  generator.PressKey(ui::VKEY_A, ui::EF_NONE);
+  generator->PressKey(ui::VKEY_A, ui::EF_NONE);
   EXPECT_TRUE(observer_a.did_visibility_change());
   EXPECT_TRUE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
@@ -876,7 +830,7 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   // Mouse move should show the cursor.
   observer_a.reset();
   observer_b.reset();
-  generator.MoveMouseTo(50, 50);
+  generator->MoveMouseTo(50, 50);
   EXPECT_TRUE(observer_a.did_visibility_change());
   EXPECT_TRUE(observer_b.did_visibility_change());
   EXPECT_TRUE(observer_a.is_cursor_visible());
@@ -889,7 +843,7 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   // Gesture tap should hide the cursor.
   observer_a.reset();
   observer_b.reset();
-  generator.GestureTapAt(gfx::Point(25, 25));
+  generator->GestureTapAt(gfx::Point(25, 25));
   EXPECT_TRUE(observer_a.did_visibility_change());
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
@@ -903,7 +857,7 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   // Mouse move should show the cursor.
   observer_a.reset();
   observer_b.reset();
-  generator.MoveMouseTo(50, 50);
+  generator->MoveMouseTo(50, 50);
   EXPECT_TRUE(observer_a.did_visibility_change());
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_TRUE(observer_a.is_cursor_visible());

@@ -11,7 +11,7 @@ namespace {
 
 class SynchronousTaskGraphRunnerTestDelegate {
  public:
-  SynchronousTaskGraphRunnerTestDelegate() {}
+  SynchronousTaskGraphRunnerTestDelegate() = default;
 
   void StartTaskGraphRunner() {}
 
@@ -25,12 +25,12 @@ class SynchronousTaskGraphRunnerTestDelegate {
   SynchronousTaskGraphRunner synchronous_task_graph_runner_;
 };
 
-INSTANTIATE_TYPED_TEST_CASE_P(SynchronousTaskGraphRunner,
-                              TaskGraphRunnerTest,
-                              SynchronousTaskGraphRunnerTestDelegate);
-INSTANTIATE_TYPED_TEST_CASE_P(SynchronousTaskGraphRunner,
-                              SingleThreadTaskGraphRunnerTest,
-                              SynchronousTaskGraphRunnerTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(SynchronousTaskGraphRunner,
+                               TaskGraphRunnerTest,
+                               SynchronousTaskGraphRunnerTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(SynchronousTaskGraphRunner,
+                               SingleThreadTaskGraphRunnerTest,
+                               SynchronousTaskGraphRunnerTestDelegate);
 
 }  // namespace
 }  // namespace cc

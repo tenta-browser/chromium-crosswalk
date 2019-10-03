@@ -11,11 +11,14 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_scanner_results.h"
-#include "chrome/browser/safe_browsing/chrome_cleaner/reporter_runner_win.h"
-#include "components/chrome_cleaner/public/interfaces/chrome_prompt.mojom.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_scanner_results_win.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/sw_reporter_invocation_win.h"
 
 class Profile;
+
+namespace extensions {
+class ExtensionService;
+}
 
 namespace safe_browsing {
 
@@ -47,6 +50,9 @@ class ChromeCleanerController {
     // cleaning attempts. This is also the state the controller will end up in
     // if any errors occur during execution of the Chrome Cleaner process.
     kIdle,
+    // The Software Reporter tool is currently running and there is no pending
+    // action corresponding to a cleaner execution.
+    kReporterRunning,
     // All steps up to and including scanning the machine occur in this
     // state. The steps include downloading the Chrome Cleaner binary, setting
     // up an IPC between Chrome and the Cleaner process, and the actual
@@ -67,12 +73,15 @@ class ChromeCleanerController {
 
   enum class IdleReason {
     kInitial,
+    kReporterFoundNothing,
+    kReporterFailed,
     kScanningFoundNothing,
     kScanningFailed,
     kConnectionLost,
     kUserDeclinedCleanup,
     kCleaningFailed,
     kCleaningSucceeded,
+    kCleanerDownloadFailed,
   };
 
   enum class UserResponse {
@@ -91,14 +100,16 @@ class ChromeCleanerController {
   class Observer {
    public:
     virtual void OnIdle(IdleReason idle_reason) {}
+    virtual void OnReporterRunning() {}
     virtual void OnScanning() {}
     virtual void OnInfected(
+        bool is_powered_by_partner,
         const ChromeCleanerScannerResults& scanner_results) {}
     virtual void OnCleaning(
+        bool is_powered_by_partner,
         const ChromeCleanerScannerResults& scanner_results) {}
     virtual void OnRebootRequired() {}
     virtual void OnRebootFailed() {}
-    virtual void OnLogsEnabledChanged(bool logs_enabled) {}
 
    protected:
     virtual ~Observer() = default;
@@ -107,20 +118,14 @@ class ChromeCleanerController {
   // Returns the global controller object.
   static ChromeCleanerController* GetInstance();
 
-  // Returns whether the Cleanup card in settings should be displayed.
-  virtual bool ShouldShowCleanupInSettingsUI() = 0;
-
-  // Returns whether Cleanup is powered by a partner company.
-  virtual bool IsPoweredByPartner() = 0;
-
   virtual State state() const = 0;
   virtual IdleReason idle_reason() const = 0;
 
   // Called by Chrome Cleaner's UI when the user changes Cleaner logs upload
   // permissions. Observers are notified if |logs_enabled| is different from the
   // current permission state.
-  virtual void SetLogsEnabled(bool logs_enabled) = 0;
-  virtual bool logs_enabled() const = 0;
+  virtual void SetLogsEnabled(Profile* profile, bool logs_enabled) = 0;
+  virtual bool logs_enabled(Profile* profile) const = 0;
 
   // Called by the Chrome Cleaner's UI when the user dismisses the card while
   // in the kIdle state. Does nothing if the current state is not |kIdle|.
@@ -130,6 +135,36 @@ class ChromeCleanerController {
   // by calling the corresponding |On*()| function.
   virtual void AddObserver(Observer* observer) = 0;
   virtual void RemoveObserver(Observer* observer) = 0;
+
+  // Invoked by the reporter runner, notifies the controller that a reporter
+  // sequence started. If there is no pending cleaner action (currently on the
+  // kIdle state), then it will transition to the kReporterRunning state.
+  virtual void OnReporterSequenceStarted() = 0;
+
+  // Invoked by the reporter runner, notifies the controller that a reporter
+  // sequence completed (or has not been scheduled). If there is no pending
+  // cleaner action (currently on kIdle or kReporterRunning state), then it will
+  // transition to either kScanning, if the reporter found removable UwS, or
+  // kIdle otherwise.
+  virtual void OnReporterSequenceDone(SwReporterInvocationResult result) = 0;
+
+  // Attempts to start the reporter runner to scan the system for unwanted
+  // software. Once the reporter runner has started (which may involve
+  // downloading the SwReporter component), |OnReporterSequenceStarted| and
+  // |OnReporterSequenceDone| will be called with the result.
+  //
+  // This can have adverse effects on the component updater subsystem and
+  // should only be called from direct user action.
+  virtual void RequestUserInitiatedScan(Profile* profile) = 0;
+
+  // Calls |MaybeStartSwReporter| with the |invocation_type| of the next
+  // scheduled run, which will be |SwReporterInvocationType::kPeriodicRun|
+  // unless the user has manually requested a reporter run, in which case the
+  // |SwReporterInvocationType::kUserInitiatedWithLogsAllowed| or
+  // |SwReporterInvocationType::kUserInitiatedWithLogsDisallowed| types will be
+  // passed.
+  virtual void OnSwReporterReady(
+      SwReporterInvocationSequence&& invocations) = 0;
 
   // Downloads the Chrome Cleaner binary, executes it and waits for the Cleaner
   // to communicate with Chrome about harmful software found on the
@@ -157,8 +192,10 @@ class ChromeCleanerController {
   // in the kInfected state. This gracefully handles cases where multiple user
   // responses are received, for example if a user manages to click on a
   // "Cleanup" button multiple times.
-  virtual void ReplyWithUserResponse(Profile* profile,
-                                     UserResponse user_response) = 0;
+  virtual void ReplyWithUserResponse(
+      Profile* profile,
+      extensions::ExtensionService* extension_service,
+      UserResponse user_response) = 0;
 
   // If the controller is in the kRebootRequired state, initiates a reboot of
   // the computer. Call this after obtaining permission from the user to
@@ -171,6 +208,12 @@ class ChromeCleanerController {
   // if the system calls to initiate a reboot return success.
   virtual void Reboot() = 0;
 
+  // Returns true if the cleaner is allowed to run by enterprise policy.
+  virtual bool IsAllowedByPolicy() = 0;
+
+  // Returns true if cleaner reporting is managed by enterprise policy.
+  virtual bool IsReportingManagedByPolicy(Profile* profile) = 0;
+
  protected:
   ChromeCleanerController();
   virtual ~ChromeCleanerController();
@@ -178,6 +221,13 @@ class ChromeCleanerController {
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeCleanerController);
 };
+
+//  These are used for debug output in tests.
+std::ostream& operator<<(std::ostream& out,
+                         ChromeCleanerController::State state);
+
+std::ostream& operator<<(std::ostream& out,
+                         ChromeCleanerController::UserResponse response);
 
 }  // namespace safe_browsing
 

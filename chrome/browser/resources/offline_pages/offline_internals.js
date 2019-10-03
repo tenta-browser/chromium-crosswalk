@@ -6,23 +6,14 @@ cr.define('offlineInternals', function() {
   'use strict';
 
   /** @type {!Array<OfflinePage>} */
-  var offlinePages = [];
+  let offlinePages = [];
 
   /** @type {!Array<SavePageRequest>} */
-  var savePageRequests = [];
+  let savePageRequests = [];
 
   /** @type {!offlineInternals.OfflineInternalsBrowserProxy} */
-  var browserProxy =
+  const browserProxy =
       offlineInternals.OfflineInternalsBrowserProxyImpl.getInstance();
-
-  /**
-   * Helper to fill enabled labels based on boolean value.
-   * @param {boolean} enabled Whether the text should show on or off.
-   * @return {string}
-   */
-  function getTextLabel(enabled) {
-    return enabled ? 'On' : 'Off';
-  }
 
   /**
    * Fill stored pages table.
@@ -30,25 +21,34 @@ cr.define('offlineInternals', function() {
    *     stored offline pages.
    */
   function fillStoredPages(pages) {
-    var storedPagesTable = $('stored-pages');
+    const storedPagesTable = $('stored-pages');
     storedPagesTable.textContent = '';
 
-    var template = $('stored-pages-table-row');
-    var td = template.content.querySelectorAll('td');
-    for (let page of pages) {
-      var checkbox = td[0].querySelector('input');
+    const template = $('stored-pages-table-row');
+    const td = template.content.querySelectorAll('td');
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      const page = pages[pageIndex];
+      td[0].textContent = pageIndex + 1;
+      const checkbox = td[1].querySelector('input');
       checkbox.setAttribute('value', page.id);
 
-      var link = td[1].querySelector('a');
+      const link = td[2].querySelector('a');
       link.setAttribute('href', page.onlineUrl);
-      link.textContent = page.onlineUrl;
+      const maxUrlCharsPerLine = 50;
+      if (page.onlineUrl.length > maxUrlCharsPerLine) {
+        link.textContent = '';
+        for (let i = 0; i < page.onlineUrl.length; i += maxUrlCharsPerLine) {
+          link.textContent += page.onlineUrl.slice(i, i + maxUrlCharsPerLine);
+          link.textContent += '\r\n';
+        }
+      } else {
+        link.textContent = page.onlineUrl;
+      }
 
-      td[2].textContent = page.namespace;
-      td[3].textContent = Math.round(page.size / 1024);
-      td[4].textContent = page.isExpired;
-      td[5].textContent = page.requestOrigin;
+      td[3].textContent = page.namespace;
+      td[4].textContent = Math.round(page.size / 1024);
 
-      var row = document.importNode(template.content, true);
+      const row = document.importNode(template.content, true);
       storedPagesTable.appendChild(row);
     }
     offlinePages = pages;
@@ -60,13 +60,13 @@ cr.define('offlineInternals', function() {
    *     the request queue.
    */
   function fillRequestQueue(requests) {
-    var requestQueueTable = $('request-queue');
+    const requestQueueTable = $('request-queue');
     requestQueueTable.textContent = '';
 
-    var template = $('request-queue-table-row');
-    var td = template.content.querySelectorAll('td');
-    for (let request of requests) {
-      var checkbox = td[0].querySelector('input');
+    const template = $('request-queue-table-row');
+    const td = template.content.querySelectorAll('td');
+    for (const request of requests) {
+      const checkbox = td[0].querySelector('input');
       checkbox.setAttribute('value', request.id);
 
       td[1].textContent = request.onlineUrl;
@@ -74,7 +74,7 @@ cr.define('offlineInternals', function() {
       td[3].textContent = request.status;
       td[4].textContent = request.requestOrigin;
 
-      var row = document.importNode(template.content, true);
+      const row = document.importNode(template.content, true);
       requestQueueTable.appendChild(row);
     }
     savePageRequests = requests;
@@ -85,10 +85,10 @@ cr.define('offlineInternals', function() {
    * @param {!Array<string>} logs A list of log strings.
    */
   function fillEventLog(logs) {
-    var element = $('logs');
+    const element = $('logs');
     element.textContent = '';
-    for (let log of logs) {
-      var logItem = document.createElement('li');
+    for (const log of logs) {
+      const logItem = document.createElement('li');
       logItem.textContent = log;
       element.appendChild(logItem);
     }
@@ -103,35 +103,22 @@ cr.define('offlineInternals', function() {
     browserProxy.getNetworkStatus().then(function(networkStatus) {
       $('current-status').textContent = networkStatus;
     });
+    browserProxy.getLimitlessPrefetchingEnabled().then(function(enabled) {
+      $('limitless-prefetching-checkbox').checked = enabled;
+    });
+    browserProxy.getPrefetchTestingHeaderValue().then(function(value) {
+      switch (value) {
+        case 'ForceEnable':
+          $('testing-header-enable').checked = true;
+          break;
+        case 'ForceDisable':
+          $('testing-header-disable').checked = true;
+          break;
+        default:
+          $('testing-header-default').checked = true;
+      }
+    });
     refreshLog();
-  }
-
-  /**
-   * Delete all pages in the offline store.
-   */
-  function deleteAllPages() {
-    var checkboxes = document.getElementsByName('stored');
-    var selectedIds = [];
-
-    for (var i = 0; i < checkboxes.length; i++) {
-      selectedIds.push(checkboxes[i].value);
-    }
-
-    browserProxy.deleteSelectedPages(selectedIds).then(pagesDeleted);
-  }
-
-  /**
-   * Delete all pending SavePageRequest items in the request queue.
-   */
-  function deleteAllRequests() {
-    var checkboxes = document.getElementsByName('requests');
-    var selectedIds = [];
-
-    for (var i = 0; i < checkboxes.length; i++) {
-      selectedIds.push(checkboxes[i].value);
-    }
-
-    browserProxy.deleteSelectedRequests(selectedIds).then(requestsDeleted);
   }
 
   /**
@@ -164,7 +151,7 @@ cr.define('offlineInternals', function() {
    * @param {*} error The error that resulted from the prefetch call.
    */
   function prefetchResultError(error) {
-    var errorText = error && error.message ? error.message : error;
+    const errorText = error && error.message ? error.message : error;
 
     $('prefetch-actions-info').textContent = 'Error: ' + errorText;
   }
@@ -176,7 +163,7 @@ cr.define('offlineInternals', function() {
    * TODO(chili): Create a CSV writer that can abstract out the line joining.
    */
   function dumpAsJson() {
-    var json = JSON.stringify(
+    const json = JSON.stringify(
         {offlinePages: offlinePages, savePageRequests: savePageRequests},
         function(key, value) {
           return key.endsWith('Time') ? new Date(value).toString() : value;
@@ -205,40 +192,35 @@ cr.define('offlineInternals', function() {
    * @param {!IsLogging} logStatus Status of logging.
    */
   function updateLogStatus(logStatus) {
-    $('model-status').textContent = getTextLabel(logStatus.modelIsLogging);
-    $('request-status').textContent = getTextLabel(logStatus.queueIsLogging);
-    $('prefetch-status').textContent =
-        getTextLabel(logStatus.prefetchIsLogging);
+    $('model-checkbox').checked = logStatus.modelIsLogging;
+    $('request-checkbox').checked = logStatus.queueIsLogging;
+    $('prefetch-checkbox').checked = logStatus.prefetchIsLogging;
   }
 
   /**
-   * Delete selected pages from the offline store.
+   * Sets all checkboxes with a specific name to the same checked status as the
+   * provided source checkbox.
+   * @param {HTMLElement} source The checkbox controlling the checked
+   *     status.
+   * @param {string} checkboxesName The name identifying the checkboxes to set.
    */
-  function deleteSelectedPages() {
-    var checkboxes = document.getElementsByName('stored');
-    var selectedIds = [];
-
-    for (var i = 0; i < checkboxes.length; i++) {
-      if (checkboxes[i].checked)
-        selectedIds.push(checkboxes[i].value);
+  function toggleAllCheckboxes(source, checkboxesName) {
+    const checkboxes = document.getElementsByName(checkboxesName);
+    for (const checkbox of checkboxes) {
+      checkbox.checked = source.checked;
     }
-
-    browserProxy.deleteSelectedPages(selectedIds).then(pagesDeleted);
   }
 
   /**
-   * Delete selected SavePageRequest items from the request queue.
+   * Return the item ids for the selected checkboxes with a given name.
+   * @param {string} checkboxesName The name identifying the checkboxes to
+   *     query.
+   * @return {!Array<string>} An array of selected ids.
    */
-  function deleteSelectedRequests() {
-    var checkboxes = document.getElementsByName('requests');
-    var selectedIds = [];
-
-    for (var i = 0; i < checkboxes.length; i++) {
-      if (checkboxes[i].checked)
-        selectedIds.push(checkboxes[i].value);
-    }
-
-    browserProxy.deleteSelectedRequests(selectedIds).then(requestsDeleted);
+  function getSelectedIdsFor(checkboxesName) {
+    const checkboxes = document.querySelectorAll(
+        `input[type="checkbox"][name="${checkboxesName}"]:checked`);
+    return Array.from(checkboxes).map(c => c.value);
   }
 
   /**
@@ -249,58 +231,60 @@ cr.define('offlineInternals', function() {
     browserProxy.getLoggingState().then(updateLogStatus);
   }
 
+  /**
+   * Calls scheduleNwake and indicates how long the scheduled delay will be.
+   */
+  function ensureBackgroundTaskScheduledWithDelay() {
+    browserProxy.scheduleNwake()
+        .then((result) => {
+          // The delays in these messages should correspond to the scheduling
+          // delays defined in PrefetchBackgroundTaskScheduler.java.
+          if ($('limitless-prefetching-checkbox').checked) {
+            setPrefetchResult(
+                result +
+                ' (Limitless mode enabled; background task scheduled to run' +
+                ' in a few seconds.)');
+          } else {
+            setPrefetchResult(
+                result +
+                ' (Limitless mode disabled; background task scheduled to run' +
+                ' in several minutes.)');
+          }
+        })
+        .catch(prefetchResultError);
+  }
+
   function initialize() {
-    /**
-     * @param {boolean} enabled Whether to enable Logging. If the
-     * OfflinePageModlel does not exist in this context, the action is ignored.
-     */
-    function togglePageModelLog(enabled) {
-      browserProxy.setRecordPageModel(enabled);
-      $('model-status').textContent = getTextLabel(enabled);
-    }
-
-    /**
-     * @param {boolean} enabled Whether to enable Logging. If the
-     * OfflinePageModlel does not exist in this context, the action is ignored.
-     */
-    function toggleRequestQueueLog(enabled) {
-      browserProxy.setRecordRequestQueue(enabled);
-      $('request-status').textContent = getTextLabel(enabled);
-    }
-
-    /**
-     * @param {boolean} enabled Whether to enable Logging. If the
-     * OfflinePageModlel does not exist in this context, the action is ignored.
-     */
-    function togglePrefetchServiceLog(enabled) {
-      browserProxy.setRecordPrefetchService(enabled);
-      $('prefetch-status').textContent = getTextLabel(enabled);
-    }
-
-    var incognito = loadTimeData.getBoolean('isIncognito');
-    ['delete-all-pages', 'delete-selected-pages', 'delete-all-requests',
-     'delete-selected-requests', 'log-model-on', 'log-model-off',
-     'log-request-on', 'log-request-off', 'refresh']
+    const incognito = loadTimeData.getBoolean('isIncognito');
+    ['delete-selected-pages', 'delete-selected-requests', 'model-checkbox',
+     'request-checkbox', 'refresh']
         .forEach(el => $(el).disabled = incognito);
 
-    $('delete-all-pages').onclick = deleteAllPages;
-    $('delete-selected-pages').onclick = deleteSelectedPages;
-    $('delete-all-requests').onclick = deleteAllRequests;
-    $('delete-selected-requests').onclick = deleteSelectedRequests;
+    $('delete-selected-pages').onclick = function() {
+      const pageIds = getSelectedIdsFor('stored');
+      browserProxy.deleteSelectedPages(pageIds).then(pagesDeleted);
+    };
+    $('delete-selected-requests').onclick = function() {
+      const requestIds = getSelectedIdsFor('requests');
+      browserProxy.deleteSelectedRequests(requestIds).then(requestsDeleted);
+    };
     $('refresh').onclick = refreshAll;
     $('dump').onclick = dumpAsJson;
     $('close-dump').onclick = closeDump;
     $('copy-to-clipboard').onclick = copyDump;
-    $('log-model-on').onclick = togglePageModelLog.bind(this, true);
-    $('log-model-off').onclick = togglePageModelLog.bind(this, false);
-    $('log-request-on').onclick = toggleRequestQueueLog.bind(this, true);
-    $('log-request-off').onclick = toggleRequestQueueLog.bind(this, false);
-    $('log-prefetch-on').onclick = togglePrefetchServiceLog.bind(this, true);
-    $('log-prefetch-off').onclick = togglePrefetchServiceLog.bind(this, false);
+    $('model-checkbox').onchange = (evt) => {
+      browserProxy.setRecordPageModel(evt.target.checked);
+    };
+    $('request-checkbox').onchange = (evt) => {
+      browserProxy.setRecordRequestQueue(evt.target.checked);
+    };
+    $('prefetch-checkbox').onchange = (evt) => {
+      browserProxy.setRecordPrefetchService(evt.target.checked);
+    };
     $('refresh-logs').onclick = refreshLog;
     $('add-to-queue').onclick = function() {
-      var saveUrls = $('url').value.split(',');
-      var counter = saveUrls.length;
+      const saveUrls = $('url').value.split(',');
+      let counter = saveUrls.length;
       $('save-url-state').textContent = '';
       for (let i = 0; i < saveUrls.length; i++) {
         browserProxy.addToRequestQueue(saveUrls[i]).then(function(state) {
@@ -345,8 +329,29 @@ cr.define('offlineInternals', function() {
     $('download-archive').onclick = function() {
       browserProxy.downloadArchive($('download-name').value);
     };
-    if (!incognito)
+    $('toggle-all-stored').onclick = function() {
+      toggleAllCheckboxes($('toggle-all-stored'), 'stored');
+    };
+    $('toggle-all-requests').onclick = function() {
+      toggleAllCheckboxes($('toggle-all-requests'), 'requests');
+    };
+    $('limitless-prefetching-checkbox').onchange = (evt) => {
+      browserProxy.setLimitlessPrefetchingEnabled(evt.target.checked);
+      if (evt.target.checked) {
+        ensureBackgroundTaskScheduledWithDelay();
+      }
+    };
+    // Helper for setting prefetch testing header from a radio button.
+    const setPrefetchTestingHeader = function(evt) {
+      browserProxy.setPrefetchTestingHeaderValue(evt.target.value);
+      ensureBackgroundTaskScheduledWithDelay();
+    };
+    $('testing-header-default').onchange = setPrefetchTestingHeader;
+    $('testing-header-enable').onchange = setPrefetchTestingHeader;
+    $('testing-header-disable').onchange = setPrefetchTestingHeader;
+    if (!incognito) {
       refreshAll();
+    }
   }
 
   // Return an object with all of the exports.

@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.photo_picker;
 
+import android.net.Uri;
 import android.support.annotation.IntDef;
 
 import org.chromium.base.ApiCompatibilityUtils;
@@ -18,15 +19,17 @@ import java.util.Date;
  */
 public class PickerBitmap implements Comparable<PickerBitmap> {
     // The possible types of tiles involved in the viewer.
-    @IntDef({PICTURE, CAMERA, GALLERY})
+    @IntDef({TileTypes.PICTURE, TileTypes.CAMERA, TileTypes.GALLERY, TileTypes.VIDEO})
     @Retention(RetentionPolicy.SOURCE)
-    public @interface TileTypes {}
-    public static final int PICTURE = 0;
-    public static final int CAMERA = 1;
-    public static final int GALLERY = 2;
+    public @interface TileTypes {
+        int PICTURE = 0;
+        int CAMERA = 1;
+        int GALLERY = 2;
+        int VIDEO = 3;
+    }
 
-    // The file path to the bitmap to show.
-    private String mFilePath;
+    // The URI of the bitmap to show.
+    private Uri mUri;
 
     // When the bitmap was last modified on disk.
     private long mLastModified;
@@ -37,22 +40,22 @@ public class PickerBitmap implements Comparable<PickerBitmap> {
 
     /**
      * The PickerBitmap constructor.
-     * @param filePath The file path to the bitmap to show.
+     * @param uri The URI for the bitmap to show.
      * @param lastModified When the bitmap was last modified on disk.
      * @param type The type of tile involved.
      */
-    public PickerBitmap(String filePath, long lastModified, @TileTypes int type) {
-        mFilePath = filePath;
+    public PickerBitmap(Uri uri, long lastModified, @TileTypes int type) {
+        mUri = uri;
         mLastModified = lastModified;
         mType = type;
     }
 
     /**
-     * Accessor for the filepath.
-     * @return The file path for this PickerBitmap object.
+     * Accessor for the URI.
+     * @return The URI for this PickerBitmap object.
      */
-    public String getFilePath() {
-        return mFilePath;
+    public Uri getUri() {
+        return mUri;
     }
 
     /**
@@ -60,9 +63,10 @@ public class PickerBitmap implements Comparable<PickerBitmap> {
      * @return The filename (without the extension and path).
      */
     public String getFilenameWithoutExtension() {
-        int index = mFilePath.lastIndexOf("/");
-        if (index == -1) return mFilePath;
-        return mFilePath.substring(index + 1, mFilePath.length());
+        String filePath = mUri.getPath();
+        int index = filePath.lastIndexOf("/");
+        if (index == -1) return filePath;
+        return filePath.substring(index + 1, filePath.length());
     }
 
     /**

@@ -7,14 +7,14 @@
 #include <list>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/host/desktop_resizer.h"
 #include "remoting/host/screen_resolution.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -115,12 +115,10 @@ class ResizingHostObserverTest : public testing::Test {
                          bool restore_resolution) {
     current_resolution_ = initial_resolution;
     call_counts_ = FakeDesktopResizer::CallCounts();
-    resizing_host_observer_ = base::MakeUnique<ResizingHostObserver>(
-        base::MakeUnique<FakeDesktopResizer>(exact_size_supported,
-                                             std::move(supported_resolutions),
-                                             &current_resolution_,
-                                             &call_counts_,
-                                             restore_resolution),
+    resizing_host_observer_ = std::make_unique<ResizingHostObserver>(
+        std::make_unique<FakeDesktopResizer>(
+            exact_size_supported, std::move(supported_resolutions),
+            &current_resolution_, &call_counts_, restore_resolution),
         restore_resolution);
     resizing_host_observer_->SetNowFunctionForTesting(
         base::Bind(&ResizingHostObserverTest::GetTimeAndIncrement,
@@ -195,6 +193,20 @@ TEST_F(ResizingHostObserverTest, RestoreFlag) {
   InitDesktopResizer(initial, false, supported_sizes, true);
   VerifySizes(client_sizes, client_sizes);
   resizing_host_observer_.reset();
+  EXPECT_EQ(1, call_counts_.set_resolution);
+  EXPECT_EQ(1, call_counts_.restore_resolution);
+  EXPECT_EQ(MakeResolution(640, 480), current_resolution_);
+}
+
+// Check that the size is restored if an empty ClientResolution is received.
+TEST_F(ResizingHostObserverTest, RestoreOnEmptyClientResolution) {
+  InitDesktopResizer(MakeResolution(640, 480), true,
+                     std::vector<ScreenResolution>(), true);
+  resizing_host_observer_->SetScreenResolution(MakeResolution(200, 100));
+  EXPECT_EQ(1, call_counts_.set_resolution);
+  EXPECT_EQ(0, call_counts_.restore_resolution);
+  EXPECT_EQ(MakeResolution(200, 100), current_resolution_);
+  resizing_host_observer_->SetScreenResolution(MakeResolution(0, 0));
   EXPECT_EQ(1, call_counts_.set_resolution);
   EXPECT_EQ(1, call_counts_.restore_resolution);
   EXPECT_EQ(MakeResolution(640, 480), current_resolution_);
@@ -285,7 +297,7 @@ TEST_F(ResizingHostObserverTest, RateLimited) {
   resizing_host_observer_->SetNowFunctionForTesting(
       base::Bind(&ResizingHostObserverTest::GetTime, base::Unretained(this)));
 
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
 
   EXPECT_EQ(MakeResolution(100, 100),
@@ -303,7 +315,7 @@ TEST_F(ResizingHostObserverTest, RateLimited) {
   // Since it was queued 900 + 99 ms after the first, we need to wait an
   // additional 1ms. However, since RunLoop is not guaranteed to process tasks
   // with the same due time in FIFO order, wait an additional 1ms for safety.
-  message_loop.task_runner()->PostDelayedTask(
+  scoped_task_environment.GetMainThreadTaskRunner()->PostDelayedTask(
       FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromMilliseconds(2));
   run_loop.Run();
 

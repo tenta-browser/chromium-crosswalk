@@ -89,6 +89,14 @@ message DeviceOpenNetworkConfigurationProto {
   optional string open_network_configuration = 1;
 }
 
+message NetworkHostnameProto {
+  // The device hostname template. It might contain following
+  // patterns that would be substituted by the device:
+  // ASSET_ID, SERIAL_NUM, MAC_ADDR, and string after substitution should
+  // be a valid hostname.
+  optional string device_hostname_template = 1;
+}
+
 // Policies to turn on portions of the device status reports.
 message DeviceReportingProto {
   optional bool report_version_info = 1 [default = true];
@@ -101,6 +109,9 @@ message DeviceReportingProto {
   optional bool report_session_status = 8 [default = true];
   optional bool report_os_update_status = 10 [default = false];
   optional bool report_running_kiosk_app = 11 [default = false];
+  optional bool report_power_status = 12 [default = false];
+  optional bool report_storage_status = 13 [default = false];
+  optional bool report_board_status = 14 [default = false];
 
   // Frequency to report device status, default to 3 hours.
   optional int64 device_status_frequency = 9 [default = 10800000];
@@ -163,16 +174,17 @@ message OBSOLETE_ScreenSaverProto {
 
 // Enterprise controls for auto-update behavior of Chrome OS.
 message AutoUpdateSettingsProto {
+  reserved 13;
+
   // True if we don't want the device to auto-update (target_version_prefix is
   // ignored in this case).
   optional bool update_disabled = 1;
 
   // Specifies the prefix of the target version we want the device to
-  // update to, if it's on a older version. If the device is already on
+  // update to, if it's on an older version. If the device is already on
   // a version with the given prefix, then there's no effect. If the device is
-  // on a higher version, it will remain on the higher version as we
-  // don't support rollback yet. The format of this version can be one
-  // of the following:
+  // on a higher version, the behavior depends on |rollback_to_target_version|.
+  // The format of this version can be one of the following:
   // ---------------------------------------------------------------------
   // "" (or not set at all): update to latest version available.
   // 1412.: update to any minor version of 1412 (e.g. 1412.24.34 or 1412.60.2)
@@ -231,6 +243,55 @@ message AutoUpdateSettingsProto {
   // True if AU payloads may be shared with and consumed from other devices
   // on the LAN, using p2p. False otherwise.
   optional bool p2p_enabled = 9 [default = false];
+
+  // The possible types of rollback.
+  enum RollbackToTargetVersion {
+    // No value set. Default is ROLLBACK_DISABLED.
+    ROLLBACK_UNSPECIFIED = 0;
+    // No rollback should happen if |target_version_prefix| specifies an older
+    // version than the currently installed Chrome OS version. If this is the
+    // case, the device will still respect |target_version_prefix|, so it will
+    // not update Chrome OS.
+    ROLLBACK_DISABLED = 1;
+    // If |target_version_prefix| specifies an older version than the currently
+    // installed Chrome OS version, the device should roll back to a Chrome OS
+    // version starting with |target_version_prefix|. The device does a full
+    // powerwash during the rollback, including TPM reset.
+    ROLLBACK_AND_POWERWASH = 2;
+    // If |target_version_prefix| specifies an older version than the currently
+    // installed Chrome OS version, the device should roll back to a Chrome OS
+    // version starting with |target_version_prefix|.
+    // If possible, the device tries to carry over device-level configuration
+    // including network credentials during the rollback process.
+    // If that is not possible, rolls back with a full powerwash.
+    ROLLBACK_AND_RESTORE_IF_POSSIBLE = 3;
+  }
+
+  // Specifies what should happen if |target_version_prefix| specifies an older
+  // version than the currently installed Chrome OS version.
+  optional RollbackToTargetVersion rollback_to_target_version = 10
+      [default = ROLLBACK_DISABLED];
+
+  // Specifies the number of Chrome milestones rollback should be allowed,
+  // starting from the stable version at any time. Setting this policy prevents
+  // firmware and kernel rollback protection to apply for at least this number
+  // of milestones.
+  optional int32 rollback_allowed_milestones = 11 [default = 0];
+
+  // Specifies the time intervals during which the device is not allowed to do
+  // automatic update checks. This is a JSON string, for details see
+  // "DeviceAutoUpdateTimeRestrictions" in policy_templates.json.
+  optional string disallowed_time_intervals = 12;
+
+  // Specifies how much of the fleet to update per day as a json
+  // string that contains a list of pairs <day, percentage>. For more
+  // details and examples, see "DeviceUpdateStagingSchedule" in
+  // policy_templates.json.
+  optional string staging_schedule = 14;
+
+  // This token is forwarded to omaha by update_engine. If it is set, omaha may
+  // serve a quick fix build identified by the token.
+  optional string device_quick_fix_build_token = 15;
 }
 
 message OBSOLETE_StartUpUrlsProto {
@@ -260,7 +321,7 @@ message SystemTimezoneProto {
     IP_ONLY = 2;
     SEND_WIFI_ACCESS_POINTS = 3;
     SEND_ALL_LOCATION_INFO = 4;
-  };
+  }
 
   optional AutomaticTimezoneDetectionType timezone_detection_type = 2;
 }
@@ -342,7 +403,9 @@ message DeviceLocalAccountInfoProto {
     // An account that serves as a container for a single full-screen
     // Android app.
     ACCOUNT_TYPE_KIOSK_ANDROID_APP = 2;
-  };
+    // SAML public session account
+    ACCOUNT_TYPE_SAML_PUBLIC_SESSION = 3;
+  }
 
   // The account type.
   optional AccountType type = 3;
@@ -490,7 +553,7 @@ message AccessibilitySettingsProto {
     SCREEN_MAGNIFIER_TYPE_NONE = 0;
     // Full-screen magnifier enabled.
     SCREEN_MAGNIFIER_TYPE_FULL = 1;
-  };
+  }
 
   // Sets the default type of screen magnifier that is enabled on the login
   // screen. If this policy is set, it controls the type of screen magnifier
@@ -695,8 +758,27 @@ message DisplayRotationDefaultProto {
     ROTATE_90 = 1;
     ROTATE_180 = 2;
     ROTATE_270 = 3;
-  };
+  }
   optional Rotation display_rotation_default = 1;
+}
+
+// This setting is configured by the device policy DeviceDisplayResolution.
+// If |device_display_resolution| contains a value, then it's treated as a JSON
+// object that uses the schema defined for DeviceDisplayResolution policy.
+// Example of the policy value:
+// {
+//   "external_width": 1920,
+//   "external_height": 1080,
+//   "external_scale_percentage": 50,
+//   "internal_scale_percentage": 150,
+//   "recommended": true
+// }
+// It sets a 1920x1080 display mode for any external displays and
+// scales them to 50%, also scales the built-in display to 150%.
+// If "recommended" flag is set to true, user is able to override
+// any settings via the settings page.
+message DeviceDisplayResolutionProto {
+  optional string device_display_resolution = 1;
 }
 
 // Settings that control whether to allow Chrome to be pinned to a specific
@@ -712,7 +794,7 @@ message LoginAuthenticationBehaviorProto {
   enum LoginBehavior {
     GAIA = 0;
     SAML_INTERSTITIAL = 1;
-  };
+  }
 
   optional LoginBehavior login_authentication_behavior = 1 [default = GAIA];
 }
@@ -737,6 +819,11 @@ message AllowBluetoothProto {
   optional bool allow_bluetooth = 1 [default = true];
 }
 
+message DeviceWiFiAllowedProto {
+  // Policy which controls the ability to connect to wireless networks.
+  optional bool device_wifi_allowed = 1 [default = true];
+}
+
 // Settings that control whether a device can download hardware configuration
 // files from the Quirks Server.
 message DeviceQuirksDownloadEnabledProto {
@@ -750,17 +837,23 @@ message LoginVideoCaptureAllowedUrlsProto {
   repeated string urls = 1;
 }
 
+// Settings that control whether a device can connect to a 802.11r enabled
+// WiFi network.
+message DeviceWiFiFastTransitionEnabledProto {
+  optional bool device_wifi_fast_transition_enabled = 1;
+}
+
 message NetworkThrottlingEnabledProto {
   optional bool enabled = 1 [default = false];
   optional int32 upload_rate_kbits = 2 [default = 0];
   optional int32 download_rate_kbits = 3 [default = 0];
 }
 
-// A list of apps to install from the webstore on the login page. It is a list
-// of strings, each string contains an extension ID and an update URL, delimited
-// by a semicolon.
-message DeviceLoginScreenAppInstallListProto {
-  repeated string device_login_screen_app_install_list = 1;
+// A list of apps or extensions to install from the webstore on the login page.
+// It is a list of strings, each string contains an extension ID and an update
+// URL, delimited by a semicolon.
+message DeviceLoginScreenExtensionsProto {
+  repeated string device_login_screen_extensions = 1;
 }
 
 // A list of allowed locales on the login screen.
@@ -773,7 +866,7 @@ message LoginScreenInputMethodsProto {
   repeated string login_screen_input_methods = 1;
 }
 
-// The url and hash that specified in JSON format that can be used to set the
+// The url and hash specified in JSON format that can be used to set the
 // device-level wallpaper on the login screen before any user logs in.
 message DeviceWallpaperImageProto {
   optional string device_wallpaper_image = 1;
@@ -789,7 +882,7 @@ message DeviceEcryptfsMigrationStrategyProto {
     DISALLOW_ARC = 1;
     // The data migration is allowed, opening the possibility to use ARC.
     ALLOW_MIGRATION = 2;
-  };
+  }
 
   optional MigrationStrategy migration_strategy = 1;
 }
@@ -808,7 +901,7 @@ message DeviceSecondFactorAuthenticationProto {
     U2F = 2;
     // U2F plus extensions for individual attestation certificate.
     U2F_EXTENDED = 3;
-  };
+  }
 
   optional U2fMode mode = 1;
 }
@@ -820,7 +913,7 @@ message CastReceiverNameProto {
   optional string name = 1;
 }
 
-// Day of the week and time settings for DeviceOffHoursIntervalProto.
+// Day of the week and time in milliseconds since the start of the day.
 message WeeklyTimeProto {
   enum DayOfWeek {
     DAY_OF_WEEK_UNSPECIFIED = 0;
@@ -834,13 +927,12 @@ message WeeklyTimeProto {
   }
   // Day of week.
   optional DayOfWeek day_of_week = 1;
-  // Time of day in milliseconds from beginning of the day
-  // in timezone that is defined in DeviceOffHoursProto.
+  // Time of day in milliseconds from beginning of the day.
   optional int32 time = 2;
 }
 
-// Start and end interval settings for DeviceOffHoursProto.
-message DeviceOffHoursIntervalProto {
+// Start and end of an interval represented by WeeklyTimes
+message WeeklyTimeIntervalProto {
   optional WeeklyTimeProto start = 1;
   optional WeeklyTimeProto end = 2;
 }
@@ -848,8 +940,9 @@ message DeviceOffHoursIntervalProto {
 // Allow less restricted using of Chromebooks that are managed by school,
 // while the device is not at school ("OffHours").
 message DeviceOffHoursProto {
-  // List of intervals when ignored policies are not applied.
-  repeated DeviceOffHoursIntervalProto intervals = 1;
+  // List of intervals when ignored policies are not applied. These intervals
+  // are in the timezone specified by the timezone string.
+  repeated WeeklyTimeIntervalProto intervals = 1;
   // Timezone in the same format as SystemTimezoneProto.timezone.
   // If timezone isn't set then "GMT" will be used
   optional string timezone = 2;
@@ -860,7 +953,8 @@ message DeviceOffHoursProto {
   // During OffHoursMode default settings of ignored policies are used.
   repeated int32 ignored_policy_proto_tags = 3;
 }
-// The url and hash that specified in JSON format that can be used to retrieve
+
+// The url and hash specified in JSON format that can be used to retrieve
 // the device-level printers configuration file.
 message DeviceNativePrintersProto {
   // External policy blob encoded as JSON.
@@ -896,35 +990,33 @@ message DeviceNativePrintersWhitelistProto {
 
 // Settings to control the behavior of the TPM firmware update functionality.
 message TPMFirmwareUpdateSettingsProto {
-  // Whether the user can invoke the update via powerwash.
+  // Whether the user is allowed to invoke the update via powerwash. This flow
+  // performs a powerwash operation (which implies a TPM clear), followed by
+  // installation of the TPM firmware update. As a result of the powerwash, all
+  // writable data on the device will be cleared.
   optional bool allow_user_initiated_powerwash = 1;
-}
 
-message ForcedReenrollmentProto {
-  // Keep in sync with the backend enum (chrome_service_settings.proto).
-  enum ForcedReenrollmentMode {
-    // Default value if the mode cannot be parsed.
-    FORCED_REENROLLMENT_MODE_UNSPECIFIED = 0;
+  // Whether the user is allowed to invoke a variant of the update flow that
+  // clears the TPM to install the firmware update, but preserves device-wide
+  // state (including enrollment). User data will not be preserved in this flow.
+  optional bool allow_user_initiated_preserve_device_state = 2;
 
-    // Force user to re-enroll into the same domain that the device
-    // was enrolled in before the wipe. The device will use attestation-
-    // based enrollment if possible.
-    FORCED = 1;
-
-    // Suggest user to re-enroll into the same domain the device was
-    // enrolled in before the wipe. User can opt to enroll this device
-    // as consumer device instead, or enroll to another domain.
-    SUGGESTED = 2;
-
-    // No forced re-enrollment.
-    NONE = 3;
+  enum AutoUpdateMode {
+    // No value set. Default is NEVER.
+    AUTO_UPDATE_MODE_UNSPECIFIED = 0;
+    // Don't auto update TPM firmware.
+    NEVER = 1;
+    // Update firmware at the next reboot after user acknowledges the update.
+    USER_ACKNOWLEDGMENT = 2;
+    // Update firmware at the next reboot.
+    WITHOUT_ACKNOWLEDGMENT = 3;
+    // Update firmware after enrollment.
+    ENROLLMENT = 4;
   }
 
-  optional ForcedReenrollmentMode forced_reenrollment_mode = 1;
-
-  // Indicate whether the server needs an enrollment ID for attestation-based
-  // enrollment.
-  optional bool enrollment_id_needed = 2;
+  // Controls how automatic firmware updates are enforced for vulnerable
+  // firmware. All flows preserve local device state.
+  optional AutoUpdateMode auto_update_mode = 3 [default = NEVER];
 }
 
 // Settings to control the minimum version that is allowed to sign in / stay
@@ -949,7 +1041,7 @@ message DeviceLoginScreenAutoSelectCertificateForUrls {
   // CommonName $ISSUER_CN. If $FILTER is the empty dictionary {}, the selection
   // of client certificates is not additionally restricted.
   repeated string login_screen_auto_select_certificate_rules = 1;
-};
+}
 
 // Setting that controls whether unaffiliated users are allowed to use ARC
 // (true by default)
@@ -957,7 +1049,245 @@ message UnaffiliatedArcAllowedProto {
   optional bool unaffiliated_arc_allowed = 1;
 }
 
+// Allowed encryption types for requesting Kerberos tickets from Active
+// Directory servers. Applies to Active Directory management mode only.
+message DeviceKerberosEncryptionTypesProto {
+  enum Types {
+    ENC_TYPES_ALL = 0;     // AES + RC4_HMAC.
+    ENC_TYPES_STRONG = 1;  // AES only.
+    ENC_TYPES_LEGACY = 2;  // RC4_HMAC only.
+    // Next ID to use: 3
+  }
+
+  optional Types types = 1 [default = ENC_TYPES_STRONG];
+}
+
+// Specifies how user policy from device GPOs interacts with user policy from
+// user GPOs. In 'MERGE' mode, device GPOs take preference in case of conflicts.
+// Applies to Active Directory management mode only.
+message DeviceUserPolicyLoopbackProcessingModeProto {
+  enum Mode {
+    USER_POLICY_MODE_DEFAULT = 0;  // Only take user policy from user GPOs.
+    USER_POLICY_MODE_MERGE = 1;    // Merge device GPOs on top of user GPOs.
+    USER_POLICY_MODE_REPLACE = 2;  // Only take user policy from device GPOs.
+    // Next ID to use: 3
+  }
+
+  optional Mode mode = 1 [default = USER_POLICY_MODE_DEFAULT];
+}
+
+// Specifies a list of origins. Each of the specified origins will run in its
+// own process on the sign-in screen.
+message DeviceLoginScreenIsolateOriginsProto {
+  // A comma-separated list of the origins to be run in a separate process on
+  // the sign-in screen.
+  // If the value of this policy does not match the value of the user policy
+  // IsolateOrigins, the chrome process will be restarted on user sign-in to
+  // apply the value specified by the user policy.
+  optional string isolate_origins = 1;
+}
+
+// Specifies if each site should run in its own process on the sign-in screen.
+message DeviceLoginScreenSitePerProcessProto {
+  // If true, each site will run in its own process on the sign-in screen.
+  // If the value of this policy does not match the value of the user policy
+  // SitePerProcess, the chrome process will be restarted on user sign-in to
+  // apply the value specified by the user policy.
+  optional bool site_per_process = 1;
+}
+
+// Setting to control if running virtual machines on Chrome OS is allowed.
+message VirtualMachinesAllowedProto {
+  optional bool virtual_machines_allowed = 1;
+}
+
+// Specifies if and how often Active Directory machine (computer) account
+// passwords are changed in the AuthPolicy daemon in Chrome OS.
+// Applies to Active Directory management mode only.
+message DeviceMachinePasswordChangeRateProto {
+  optional int32 rate_days = 1;
+}
+
+// Specifies how long cached Active Directory Group Policy Objects (GPOs) may be
+// reused until they are re-downloaded (a version change also forces a
+// re-download).
+// Applies to Active Directory management mode only.
+message DeviceGpoCacheLifetimeProto {
+  optional int32 lifetime_hours = 1;
+}
+
+// Specifies how long cached Active Directory authentication data may be reused
+// until it is refreshed. This can significantly speed up user authentication.
+// Applies to Active Directory management mode only.
+message DeviceAuthDataCacheLifetimeProto {
+  optional int32 lifetime_hours = 1;
+}
+
+// Setting to control the authentication type for newly added users which log in
+// via SAML.
+message SamlLoginAuthenticationTypeProto {
+  enum Type {
+    TYPE_DEFAULT = 0;             // Implementation-defined default config.
+    TYPE_CLIENT_CERTIFICATE = 1;  // Client certificate authentication.
+    // Next ID to use: 2
+  }
+
+  optional Type saml_login_authentication_type = 1 [default = TYPE_DEFAULT];
+}
+
+// Setting that controls whether unaffiliated users are allowed to run Crostini
+// (true by default)
+message DeviceUnaffiliatedCrostiniAllowedProto {
+  optional bool device_unaffiliated_crostini_allowed = 1;
+}
+
+// Setting that controls whether PluginVm is allowed to run on this device.
+message PluginVmAllowedProto {
+  optional bool plugin_vm_allowed = 1;
+}
+
+// Setting that specifies PluginVm license key for this device.
+message PluginVmLicenseKeyProto {
+  optional string plugin_vm_license_key = 1;
+}
+
+// Setting that controls whether the device should reboot when user sign out.
+message DeviceRebootOnUserSignoutProto {
+  enum RebootOnSignoutMode {
+    // No value set. Default is NEVER.
+    REBOOT_ON_SIGNOUT_MODE_UNSPECIFIED = 0;
+    // Do not reboot on signout.
+    NEVER = 1;
+    // Reboot on signout if an ARC session was active during the user session.
+    ARC_SESSION = 2;
+    // Always reboot on signout.
+    ALWAYS = 3;
+  }
+
+  optional RebootOnSignoutMode reboot_on_signout_mode = 1 [default = NEVER];
+}
+
+// Setting that controls whether wilco diagnostics and telemetry controller is
+// allowed on this device.
+message DeviceWilcoDtcAllowedProto {
+  optional bool device_wilco_dtc_allowed = 1;
+}
+
+// Setting that specifies wilco diagnostics and telemetry controller
+// configuration for this device.
+message DeviceWilcoDtcConfigurationProto {
+  optional string device_wilco_dtc_configuration = 1;
+}
+
+// Settings that control power peak shift policy.
+message DevicePowerPeakShiftProto {
+  // Setting that controls whether power peak shift is enabled on this device.
+  // For details see "DevicePowerPeakShiftEnabled" in policy_templates.json.
+  optional bool enabled = 1;
+
+  // Setting that controls power peak shift battery threshold on this device.
+  // For details see "DevicePowerPeakShiftBatteryThreshold" in
+  // policy_templates.json.
+  optional int32 battery_threshold = 2;
+
+  // Setting that controls power peak shift day configs on this device.
+  // This is a JSON string, for details see "DevicePowerPeakShiftDayConfig" in
+  // policy_templates.json.
+  optional string day_configs = 3;
+}
+
+// Settings that control boot on AC policy.
+message DeviceBootOnAcProto {
+  // Setting that controls whether boot on AC is enabled on this device.
+  optional bool enabled = 1;
+}
+
+// Settings that control device's dock MAC address source.
+message DeviceDockMacAddressSourceProto {
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    // Device's designated dock MAC address.
+    DEVICE_DOCK_MAC_ADDRESS = 1;
+    // Device's built-in NIC MAC address.
+    DEVICE_NIC_MAC_ADDRESS = 2;
+    // Dock's built-in NIC MAC address.
+    DOCK_NIC_MAC_ADDRESS = 3;
+  }
+  optional Source source = 1;
+}
+
+// Settings that control advanced battery charge mode policy.
+message DeviceAdvancedBatteryChargeModeProto {
+  // Setting that controls whether advanced battery charge mode is enabled on
+  // this device.
+  // For details see "DeviceAdvancedBatteryChargeModeEnabled" in
+  // policy_templates.json.
+  optional bool enabled = 1;
+
+  // Setting that controls advanced battery charge mode day config on this
+  // device.
+  // This is a JSON string, for details see
+  // "DeviceAdvancedBatteryChargeModeDayConfig" in policy_templates.json.
+  optional string day_configs = 2;
+}
+
+// Settings that control battery charge mode policy.
+message DeviceBatteryChargeModeProto {
+  enum BatteryChargeMode {
+    MODE_UNSPECIFIED = 0;
+    STANDARD = 1;
+    EXPRESS_CHARGE = 2;
+    PRIMARILY_AC_USE = 3;
+    ADAPTIVE = 4;
+    CUSTOM = 5;
+  }
+
+  // Setting that controls battery charge mode on this device.
+  // For details see "DeviceBatteryChargeMode" in policy_templates.json.
+  optional BatteryChargeMode battery_charge_mode = 1;
+
+  // Percent at which charging starts when using CUSTOM.
+  // For details see "DeviceBatteryChargeCustomStartCharging" in
+  // policy_templates.json.
+  optional int32 custom_charge_start = 2;
+
+  // Percent at which charging stops when using CUSTOM.
+  // For details see "DeviceBatteryChargeCustomStopCharging" in
+  // policy_templates.json.
+  optional int32 custom_charge_stop = 3;
+}
+
+// Settings that control USB power share policy.
+message DeviceUsbPowerShareProto {
+  // Setting that controls whether USB power share is enabled on this device.
+  optional bool enabled = 1;
+}
+
+// Settings that control when a device will wake up and check for updates. These
+// checks are recurring. In order to disable a set schedule the policy must be
+// removed.
+message DeviceScheduledUpdateCheckProto {
+  // This is a JSON string, for details see "DeviceScheduledUpdateCheck" in
+  // policy_templates.json.
+  optional string device_scheduled_update_check_settings = 1;
+}
+
+// Settings that controls which devices are whitelisted for certain urls to be
+// used via the WebUSB API.
+message DeviceWebUsbAllowDevicesForUrlsProto {
+  // This is a JSON string, for details see "DeviceWebUsbAllowDevicesForUrls" in
+  // policy_templates.json.
+  optional string device_webusb_allow_devices_for_urls = 1;
+}
+
+// Settings that control if the device is allowed to powerwash.
+message DevicePowerwashAllowedProto {
+  // Determines if powerwash is allowed on the device.
+  optional bool device_powerwash_allowed = 1;
+}
+
 message ChromeDeviceSettingsProto {
+  reserved 61;
   optional DevicePolicyRefreshRateProto device_policy_refresh_rate = 1;
   optional UserWhitelistProto user_whitelist = 2;
   optional GuestModeEnabledProto guest_mode_enabled = 3;
@@ -1009,8 +1339,7 @@ message ChromeDeviceSettingsProto {
   optional DeviceQuirksDownloadEnabledProto quirks_download_enabled = 44;
   optional LoginVideoCaptureAllowedUrlsProto login_video_capture_allowed_urls =
       45;
-  optional DeviceLoginScreenAppInstallListProto
-      device_login_screen_app_install_list = 46;
+  optional DeviceLoginScreenExtensionsProto device_login_screen_extensions = 46;
   optional NetworkThrottlingEnabledProto network_throttling = 47;
   optional DeviceWallpaperImageProto device_wallpaper_image = 48;
   optional LoginScreenLocalesProto login_screen_locales = 49;
@@ -1030,8 +1359,45 @@ message ChromeDeviceSettingsProto {
       58;
   optional TPMFirmwareUpdateSettingsProto tpm_firmware_update_settings = 59;
   optional MinimumRequiredVersionProto minimum_required_version = 60;
-  optional ForcedReenrollmentProto forced_reenrollment = 61;
   optional DeviceLoginScreenAutoSelectCertificateForUrls
       device_login_screen_auto_select_certificate_for_urls = 62;
   optional UnaffiliatedArcAllowedProto unaffiliated_arc_allowed = 63;
+  optional NetworkHostnameProto network_hostname = 64;
+  optional DeviceKerberosEncryptionTypesProto device_kerberos_encryption_types =
+      65;
+  optional DeviceUserPolicyLoopbackProcessingModeProto
+      device_user_policy_loopback_processing_mode = 66;
+  optional DeviceLoginScreenIsolateOriginsProto
+      device_login_screen_isolate_origins = 67;
+  optional DeviceLoginScreenSitePerProcessProto
+      device_login_screen_site_per_process = 68;
+  optional VirtualMachinesAllowedProto virtual_machines_allowed = 69;
+  optional DeviceMachinePasswordChangeRateProto
+      device_machine_password_change_rate = 70;
+  optional SamlLoginAuthenticationTypeProto saml_login_authentication_type = 71;
+  optional DeviceUnaffiliatedCrostiniAllowedProto
+      device_unaffiliated_crostini_allowed = 72;
+  optional DeviceWiFiFastTransitionEnabledProto
+      device_wifi_fast_transition_enabled = 73;
+  optional DeviceDisplayResolutionProto device_display_resolution = 74;
+  optional PluginVmAllowedProto plugin_vm_allowed = 75;
+  optional DeviceGpoCacheLifetimeProto device_gpo_cache_lifetime = 76;
+  optional DeviceAuthDataCacheLifetimeProto device_auth_data_cache_lifetime =
+      77;
+  optional PluginVmLicenseKeyProto plugin_vm_license_key = 78;
+  optional DeviceRebootOnUserSignoutProto device_reboot_on_user_signout = 79;
+  optional DeviceWilcoDtcAllowedProto device_wilco_dtc_allowed = 80;
+  optional DeviceWilcoDtcConfigurationProto device_wilco_dtc_configuration = 81;
+  optional DeviceWiFiAllowedProto device_wifi_allowed = 82;
+  optional DevicePowerPeakShiftProto device_power_peak_shift = 83;
+  optional DeviceBootOnAcProto device_boot_on_ac = 84;
+  optional DeviceDockMacAddressSourceProto device_dock_mac_address_source = 85;
+  optional DeviceAdvancedBatteryChargeModeProto
+      device_advanced_battery_charge_mode = 86;
+  optional DeviceBatteryChargeModeProto device_battery_charge_mode = 87;
+  optional DeviceUsbPowerShareProto device_usb_power_share = 88;
+  optional DeviceScheduledUpdateCheckProto device_scheduled_update_check = 89;
+  optional DeviceWebUsbAllowDevicesForUrlsProto
+      device_webusb_allow_devices_for_urls = 90;
+  optional DevicePowerwashAllowedProto device_powerwash_allowed = 91;
 }

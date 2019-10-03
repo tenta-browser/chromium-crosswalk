@@ -5,8 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_DESKTOP_WINDOW_TREE_HOST_WIN_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_DESKTOP_WINDOW_TREE_HOST_WIN_H_
 
-#include <windows.h>
-#include <uxtheme.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 
 #include "base/macros.h"
 #include "chrome/browser/ui/views/frame/browser_desktop_window_tree_host.h"
@@ -41,8 +41,12 @@ class BrowserDesktopWindowTreeHostWin : public BrowserDesktopWindowTreeHost,
   bool UsesNativeSystemMenu() const override;
 
   // Overridden from DesktopWindowTreeHostWin:
+  void Init(const views::Widget::InitParams& params) override;
+  std::string GetWorkspace() const override;
   int GetInitialShowState() const override;
-  bool GetClientAreaInsets(gfx::Insets* insets) const override;
+  bool GetClientAreaInsets(gfx::Insets* insets,
+                           HMONITOR monitor) const override;
+  bool GetDwmFrameInsetsInPixels(gfx::Insets* insets) const override;
   void HandleCreate() override;
   void HandleDestroying() override;
   void HandleFrameChanged() override;
@@ -55,11 +59,8 @@ class BrowserDesktopWindowTreeHostWin : public BrowserDesktopWindowTreeHost,
   views::FrameMode GetFrameMode() const override;
   bool ShouldUseNativeFrame() const override;
   bool ShouldWindowContentsBeTransparent() const override;
-  void FrameTypeChanged() override;
 
-  void UpdateDWMFrame();
-  gfx::Insets GetClientEdgeThicknesses() const;
-  MARGINS GetDWMFrameMargins() const;
+  bool IsOpaqueHostedAppFrame() const;
 
   BrowserView* browser_view_;
   BrowserFrame* browser_frame_;
@@ -72,8 +73,15 @@ class BrowserDesktopWindowTreeHostWin : public BrowserDesktopWindowTreeHost,
   // The wrapped system menu itself.
   std::unique_ptr<views::NativeMenuWin> system_menu_;
 
-  // Necessary to avoid corruption on NC paint in Aero mode.
-  bool did_gdi_clear_;
+  // On Windows10, this is the virtual desktop the browser window was on,
+  // last we checked. This is used to tell if the window has moved to a
+  // different desktop, and notify listeners. It will only be set if
+  // we created |virtual_desktop_manager_|.
+  mutable base::Optional<std::string> workspace_;
+
+  // Only set on Windows10. Set by GetOrCreateVirtualDesktopManager().
+  mutable Microsoft::WRL::ComPtr<IVirtualDesktopManager>
+      virtual_desktop_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserDesktopWindowTreeHostWin);
 };

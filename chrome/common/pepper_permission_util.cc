@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/sha1.h"
+#include "base/hash/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_tokenizer.h"
 #include "extensions/common/constants.h"
@@ -53,9 +53,7 @@ bool IsExtensionOrSharedModuleWhitelisted(
 
   typedef std::vector<SharedModuleInfo::ImportInfo> ImportInfoVector;
   const ImportInfoVector& imports = SharedModuleInfo::GetImports(extension);
-  for (ImportInfoVector::const_iterator it = imports.begin();
-       it != imports.end();
-       ++it) {
+  for (auto it = imports.begin(); it != imports.end(); ++it) {
     const Extension* imported_extension =
         extension_set->GetByID(it->extension_id);
     if (imported_extension &&

@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <memory>
+#include "components/safe_browsing/db/v4_database.h"
 
+#include <memory>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/safe_browsing/db/v4_database.h"
 #include "components/safe_browsing/proto/webui.pb.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -67,9 +69,9 @@ void V4Database::Create(
   const scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner =
       base::ThreadTaskRunnerHandle::Get();
   db_task_runner->PostTask(
-      FROM_HERE, base::Bind(&V4Database::CreateOnTaskRunner, db_task_runner,
-                            base_path, list_infos, callback_task_runner,
-                            new_db_callback, TimeTicks::Now()));
+      FROM_HERE,
+      base::BindOnce(&V4Database::CreateOnTaskRunner, db_task_runner, base_path,
+                     list_infos, callback_task_runner, new_db_callback));
 }
 
 // static
@@ -78,17 +80,16 @@ void V4Database::CreateOnTaskRunner(
     const base::FilePath& base_path,
     const ListInfos& list_infos,
     const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
-    NewDatabaseReadyCallback new_db_callback,
-    const TimeTicks create_start_time) {
+    NewDatabaseReadyCallback new_db_callback) {
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 
   if (!g_store_factory.Get())
-    g_store_factory.Get() = base::MakeUnique<V4StoreFactory>();
+    g_store_factory.Get() = std::make_unique<V4StoreFactory>();
 
   if (!base::CreateDirectory(base_path))
     NOTREACHED();
 
-  std::unique_ptr<StoreMap> store_map = base::MakeUnique<StoreMap>();
+  std::unique_ptr<StoreMap> store_map = std::make_unique<StoreMap>();
   for (const auto& it : list_infos) {
     if (!it.fetch_updates()) {
       // This list doesn't need to be fetched or stored on disk.
@@ -101,7 +102,7 @@ void V4Database::CreateOnTaskRunner(
   }
 
   if (!g_db_factory.Get())
-    g_db_factory.Get() = base::MakeUnique<V4DatabaseFactory>();
+    g_db_factory.Get() = std::make_unique<V4DatabaseFactory>();
 
   std::unique_ptr<V4Database> v4_database =
       g_db_factory.Get()->Create(db_task_runner, std::move(store_map));
@@ -109,10 +110,7 @@ void V4Database::CreateOnTaskRunner(
   // Database is done loading, pass it to the new_db_callback on the caller's
   // thread. This would unblock resource loads.
   callback_task_runner->PostTask(
-      FROM_HERE, base::Bind(new_db_callback, base::Passed(&v4_database)));
-
-  UMA_HISTOGRAM_TIMES("SafeBrowsing.V4DatabaseOpen.Time",
-                      TimeTicks::Now() - create_start_time);
+      FROM_HERE, base::BindOnce(new_db_callback, std::move(v4_database)));
 }
 
 // static
@@ -132,8 +130,7 @@ V4Database::V4Database(
     std::unique_ptr<StoreMap> store_map)
     : store_map_(std::move(store_map)),
       db_task_runner_(db_task_runner),
-      pending_store_updates_(0),
-      weak_factory_on_io_(this) {
+      pending_store_updates_(0) {
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 }
 
@@ -177,10 +174,10 @@ void V4Database::ApplyUpdate(
             base::Bind(&V4Database::UpdatedStoreReady,
                        weak_factory_on_io_.GetWeakPtr(), identifier);
         db_task_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&V4Store::ApplyUpdate, base::Unretained(old_store.get()),
-                       base::Passed(std::move(response)), current_task_runner,
-                       store_ready_callback));
+            FROM_HERE, base::BindOnce(&V4Store::ApplyUpdate,
+                                      base::Unretained(old_store.get()),
+                                      std::move(response), current_task_runner,
+                                      store_ready_callback));
       }
     } else {
       NOTREACHED() << "Got update for unexpected identifier: " << identifier;
@@ -212,7 +209,7 @@ void V4Database::UpdatedStoreReady(ListIdentifier identifier,
 
 std::unique_ptr<StoreStateMap> V4Database::GetStoreStateMap() {
   std::unique_ptr<StoreStateMap> store_state_map =
-      base::MakeUnique<StoreStateMap>();
+      std::make_unique<StoreStateMap>();
   for (const auto& store_map_iter : *store_map_) {
     (*store_state_map)[store_map_iter.first] = store_map_iter.second->state();
   }
@@ -279,22 +276,24 @@ void V4Database::VerifyChecksum(
     stores.push_back(std::make_pair(next_store.first, next_store.second.get()));
   }
 
-  base::PostTaskAndReplyWithResult(db_task_runner_.get(), FROM_HERE,
-                                   base::Bind(&VerifyChecksums, stores),
-                                   db_ready_for_updates_callback);
+  base::PostTaskAndReplyWithResult(
+      db_task_runner_.get(), FROM_HERE, base::Bind(&VerifyChecksums, stores),
+      base::Bind(&V4Database::OnChecksumVerified,
+                 weak_factory_on_io_.GetWeakPtr(),
+                 std::move(db_ready_for_updates_callback)));
+}
+
+void V4Database::OnChecksumVerified(
+    DatabaseReadyForUpdatesCallback db_ready_for_updates_callback,
+    const std::vector<ListIdentifier>& stores_to_reset) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  db_ready_for_updates_callback.Run(stores_to_reset);
 }
 
 bool V4Database::IsStoreAvailable(const ListIdentifier& identifier) const {
   const auto& store_pair = store_map_->find(identifier);
-  if (store_pair == store_map_->end()) {
-    // Store not in our list
-    return false;
-  }
-  if (!store_pair->second->HasValidData()) {
-    // Store never properly populated
-    return false;
-  }
-  return true;
+  return (store_pair != store_map_->end()) &&
+         store_pair->second->HasValidData();
 }
 
 void V4Database::RecordFileSizeHistograms() {
@@ -305,7 +304,7 @@ void V4Database::RecordFileSizeHistograms() {
     db_size += size;
   }
   const int64_t db_size_kilobytes = static_cast<int64_t>(db_size / 1024);
-  UMA_HISTOGRAM_COUNTS(kV4DatabaseSizeMetric, db_size_kilobytes);
+  UMA_HISTOGRAM_COUNTS_1M(kV4DatabaseSizeMetric, db_size_kilobytes);
 }
 
 void V4Database::CollectDatabaseInfo(

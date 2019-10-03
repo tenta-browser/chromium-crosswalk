@@ -16,10 +16,26 @@
 -keep class * extends org.junit.** { *; }
 -keep @**.RunWith class * { *; }
 
+# Keep classes implementing ParameterProvider -- these will be instantiated
+# via reflection.
+-keep class * implements org.chromium.base.test.params.ParameterProvider {
+  *;
+}
+
 # Keep all classes that are in test packages. There is no benefit in testing
 # Proguarding of test classes, but this is as close as we can get to selecting
 # all classes from the test apk.
 -keep class **.test.** { *; }
+
+# These 2 rules together keep all interfaces that are mocked by Mockito, since
+# Mockito generates these mocks at runtime, and the interfaces could get methods
+# stripped out.
+-if class * {
+  @org.mockito.Mock ** *;
+}
+-keep interface <2> {
+  <methods>;
+}
 
 # Keep all enum members since they might be reflectively called by JUnit4 runner
 -keepclassmembers enum * { *; }
@@ -27,6 +43,11 @@
 # Keep any annotation used by tests for instrumentation runner to list out
 # test annotation information
 -keepattributes *Annotation*
+
+# These are Java classes which aren't part of the Android sdk. They are
+# referenced by some test-only libraries.
+-dontwarn java.lang.ClassValue
+-dontwarn java.lang.instrument.ClassFileTransformer
 
 # We have some "library class WebView depends on program class SslCertificate"
 # warnings, and they don't affect us.

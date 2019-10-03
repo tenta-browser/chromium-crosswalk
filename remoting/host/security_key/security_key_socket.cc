@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
-#include "base/macros.h"
+#include "base/bind.h"
+#include "base/stl_util.h"
 #include "base/timer/timer.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/socket/stream_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace remoting {
 
@@ -30,8 +31,9 @@ SecurityKeySocket::SecurityKeySocket(std::unique_ptr<net::StreamSocket> socket,
                                      base::TimeDelta timeout,
                                      const base::Closure& timeout_callback)
     : socket_(std::move(socket)),
-      read_buffer_(new net::IOBufferWithSize(kRequestReadBufferLength)) {
-  timer_.reset(new base::Timer(false, false));
+      read_buffer_(base::MakeRefCounted<net::IOBufferWithSize>(
+          kRequestReadBufferLength)) {
+  timer_.reset(new base::OneShotTimer());
   timer_->Start(FROM_HERE, timeout, timeout_callback);
 }
 
@@ -61,8 +63,9 @@ void SecurityKeySocket::SendResponse(const std::string& response_data) {
   int response_len = response_length_string.size() + response_data.size();
   std::unique_ptr<std::string> response(
       new std::string(response_length_string + response_data));
-  write_buffer_ = new net::DrainableIOBuffer(
-      new net::StringIOBuffer(std::move(response)), response_len);
+  write_buffer_ = base::MakeRefCounted<net::DrainableIOBuffer>(
+      base::MakeRefCounted<net::StringIOBuffer>(std::move(response)),
+      response_len);
 
   DCHECK(write_buffer_->BytesRemaining());
   DoWrite();
@@ -71,7 +74,7 @@ void SecurityKeySocket::SendResponse(const std::string& response_data) {
 void SecurityKeySocket::SendSshError() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  SendResponse(std::string(kSshError, arraysize(kSshError)));
+  SendResponse(std::string(kSshError, base::size(kSshError)));
 }
 
 void SecurityKeySocket::StartReadingRequest(
@@ -107,10 +110,33 @@ void SecurityKeySocket::OnDataWritten(int result) {
 void SecurityKeySocket::DoWrite() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(write_buffer_);
-
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("security_key_socket", R"(
+        semantics {
+          sender: "Security Key Socket"
+          description:
+            "This request performs the communication between processes when "
+            "handling security key (gnubby) authentication."
+          trigger:
+            "Performing an action (such as signing into a website with "
+            "two-factor authentication enabled) that requires a security key "
+            "touch."
+          data: "Security key protocol data."
+          destination: LOCAL
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled in Settings."
+          chrome_policy {
+            RemoteAccessHostAllowGnubbyAuth {
+              RemoteAccessHostAllowGnubbyAuth: false
+            }
+          }
+        })");
   int result = socket_->Write(
       write_buffer_.get(), write_buffer_->BytesRemaining(),
-      base::Bind(&SecurityKeySocket::OnDataWritten, base::Unretained(this)));
+      base::Bind(&SecurityKeySocket::OnDataWritten, base::Unretained(this)),
+      traffic_annotation);
   if (result != net::ERR_IO_PENDING) {
     OnDataWritten(result);
   }
@@ -125,7 +151,7 @@ void SecurityKeySocket::OnDataRead(int result) {
       socket_read_error_ = true;
     }
     waiting_for_request_ = false;
-    base::ResetAndReturn(&request_received_callback_).Run();
+    std::move(request_received_callback_).Run();
     return;
   }
 
@@ -138,7 +164,7 @@ void SecurityKeySocket::OnDataRead(int result) {
                        read_buffer_->data() + result);
   if (IsRequestComplete()) {
     waiting_for_request_ = false;
-    base::ResetAndReturn(&request_received_callback_).Run();
+    std::move(request_received_callback_).Run();
     return;
   }
 

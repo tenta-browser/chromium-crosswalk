@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "ash/public/cpp/login_types.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller_delegate.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
@@ -123,17 +123,17 @@ MultiProfileUserController::GetPrimaryUserPolicy() {
 }
 
 // static
-ash::mojom::MultiProfileUserBehavior
+ash::MultiProfileUserBehavior
 MultiProfileUserController::UserBehaviorStringToEnum(
     const std::string& behavior) {
   if (behavior == kBehaviorPrimaryOnly)
-    return ash::mojom::MultiProfileUserBehavior::PRIMARY_ONLY;
+    return ash::MultiProfileUserBehavior::PRIMARY_ONLY;
   if (behavior == kBehaviorNotAllowed)
-    return ash::mojom::MultiProfileUserBehavior::NOT_ALLOWED;
+    return ash::MultiProfileUserBehavior::NOT_ALLOWED;
   if (behavior == kBehaviorOwnerPrimaryOnly)
-    return ash::mojom::MultiProfileUserBehavior::OWNER_PRIMARY_ONLY;
+    return ash::MultiProfileUserBehavior::OWNER_PRIMARY_ONLY;
 
-  return ash::mojom::MultiProfileUserBehavior::UNRESTRICTED;
+  return ash::MultiProfileUserBehavior::UNRESTRICTED;
 }
 
 bool MultiProfileUserController::IsUserAllowedInSession(

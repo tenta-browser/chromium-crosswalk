@@ -5,21 +5,18 @@
 #include "chrome/browser/ui/webui/chromeos/login/device_disabled_screen_handler.h"
 
 #include "chrome/browser/chromeos/login/oobe_screen.h"
+#include "chrome/browser/chromeos/login/screens/device_disabled_screen.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 
-namespace {
-
-const char kJsScreenPath[] = "login.DeviceDisabledScreen";
-
-}  // namespace
-
 namespace chromeos {
 
-DeviceDisabledScreenHandler::DeviceDisabledScreenHandler()
-    : BaseScreenHandler(kScreenId) {
-  set_call_js_prefix(kJsScreenPath);
+constexpr StaticOobeScreenId DeviceDisabledScreenView::kScreenId;
+
+DeviceDisabledScreenHandler::DeviceDisabledScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {
 }
 
 DeviceDisabledScreenHandler::~DeviceDisabledScreenHandler() {
@@ -34,8 +31,9 @@ void DeviceDisabledScreenHandler::Show() {
   }
 
   if (delegate_) {
-    CallJS("setEnrollmentDomain", delegate_->GetEnrollmentDomain());
-    CallJS("setMessage", delegate_->GetMessage());
+    CallJS("login.DeviceDisabledScreen.setSerialNumberAndEnrollmentDomain",
+           delegate_->GetSerialNumber(), delegate_->GetEnrollmentDomain());
+    CallJS("login.DeviceDisabledScreen.setMessage", delegate_->GetMessage());
   }
   ShowScreen(kScreenId);
 }
@@ -44,7 +42,7 @@ void DeviceDisabledScreenHandler::Hide() {
   show_on_init_ = false;
 }
 
-void DeviceDisabledScreenHandler::SetDelegate(Delegate* delegate) {
+void DeviceDisabledScreenHandler::SetDelegate(DeviceDisabledScreen* delegate) {
   delegate_ = delegate;
   if (page_is_ready())
     Initialize();
@@ -52,7 +50,7 @@ void DeviceDisabledScreenHandler::SetDelegate(Delegate* delegate) {
 
 void DeviceDisabledScreenHandler::UpdateMessage(const std::string& message) {
   if (page_is_ready())
-    CallJS("setMessage", message);
+    CallJS("login.DeviceDisabledScreen.setMessage", message);
 }
 
 void DeviceDisabledScreenHandler::DeclareLocalizedValues(

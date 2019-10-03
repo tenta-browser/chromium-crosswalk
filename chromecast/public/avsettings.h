@@ -7,6 +7,10 @@
 
 #include <stdint.h>
 
+#include <string>
+#include <vector>
+
+#include "chromecast_export.h"
 #include "output_restrictions.h"
 #include "task_runner.h"
 
@@ -37,9 +41,14 @@ class AvSettings {
     DTS_HD = 1 << 2,
     EAC3 = 1 << 3,
     LPCM = 1 << 4,
+    MPEG_H_AUDIO = 1 << 5,
+
+    // All known audio codecs.
+    ALL = AC3 | DTS | DTS_HD | EAC3 | LPCM | MPEG_H_AUDIO
   };
 
   // Defines the type of audio volume control of the device.
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum AudioVolumeControlType {
     UNKNOWN_VOLUME,
 
@@ -54,6 +63,11 @@ class AvSettings {
 
     // FIXED_VOLUME: Devices which have fixed volume, e.g. Nexus Player.
     FIXED_VOLUME,
+  };
+
+  enum class HdmiContentType {
+    NO_DATA_TYPE,
+    GAME_TYPE,
   };
 
   // Defines the status of platform wake-on-cast feature.
@@ -75,15 +89,6 @@ class AvSettings {
     // On this event, GetActiveState() will be called on the thread where
     // Initialize() was called.
     ACTIVE_STATE_CHANGED = 0,
-
-    // DEPRECATED - Prefer to implement volume control in the media shlib using
-    // the VolumeControl API (see chromecast/public/volume_control.h).
-    // This event shall be fired whenever the system volume level or muted state
-    // are changed including when user changed volume via a remote controller,
-    // or after a call to SetAudioVolume() or SetAudioMuted().
-    // On this event, GetAudioVolume() and IsAudioMuted() will be called on
-    // the thread where Initialize() was called.
-    AUDIO_VOLUME_CHANGED = 1,
 
     // This event shall be fired whenever the audio codecs supported by the
     // device (or HDMI sinks connected to the device) are changed.
@@ -131,6 +136,9 @@ class AvSettings {
 
     // This event should be fired when an HDMI error occurs.
     HDMI_ERROR = 102,
+
+    // This event should be fired when the display brightness is changed.
+    DISPLAY_BRIGHTNESS_CHANGED = 200,
   };
 
   // Delegate to inform the caller events. As a subclass of TaskRunner,
@@ -193,6 +201,48 @@ class AvSettings {
   // Returns true if successful.
   virtual bool KeepSystemAwake(int time_ms) = 0;
 
+  // Sets screen (backlight) brightness.
+  // |brightness|: Range is 0.0 (off) to 1.0 (max).
+  // |smooth|: If true, will gradually change brightness in a ramp. If true and
+  // unsupported, returns false and does nothing. If false, sets brightness
+  // immediately. If another ramp is already in progress, it is cancelled and a
+  // new one is started from the current brightness of the display.
+  // If the implementation rounds to discrete values, it should round up so that
+  // non-0 |brightness| values don't turn off the display.
+  // Returns false if set fails. Returns true otherwise.
+  // Not all displays support this function.
+  static bool SetDisplayBrightness(float brightness, bool smooth)
+      __attribute__((weak));
+
+  // Gets the current screen (backlight) brightness.
+  // |brightness|: Range is 0.0 (off) to 1.0 (max).
+  // Returns false and does not modify |brightness| if get fails.
+  // Returns true and sets |brightness| to the current brightness otherwise.
+  // Not all displays support this function.
+  static bool GetDisplayBrightness(float* brightness) __attribute__((weak));
+
+  // Gets the nits output by the display at 100% brightness.
+  // |nits|: The maximum brightness in nits.
+  // Returns false and does not modify |nits| if get fails.
+  // Returns true and sets |nits| on success.
+  // Not all displays support this function.
+  static bool GetDisplayMaxBrightnessNits(float* nits) __attribute__((weak));
+
+  // Set Hdmi content type. Return false if such operation fails. The operation
+  // fails if unexpected errors occur, or if the desired |content_type| is not
+  // supported by Hdmi sink, in which case implementation shall return false
+  // without actually setting the content type.
+  // This function should only be implemented on HDMI platforms.
+  static bool SetHdmiContentType(HdmiContentType content_type)
+      __attribute__((weak));
+
+  // Gets the HDMI latency in microseconds.
+  // Returns valid values when HDMI is connected.
+  // Returns 0 when HDMI is not connected or when the latency cannot be
+  // measured.
+  // This function should only be implemented on HDMI platforms.
+  static int GetHdmiLatencyUs() __attribute__((weak));
+
   // Returns the type of volume control, i.e. MASTER_VOLUME, FIXED_VOLUME or
   // ATTENUATION_VOLUME. For example, normal TVs, devices of CEC audio
   // controls, and audio devices are master volume systems. The counter
@@ -212,32 +262,6 @@ class AvSettings {
   //  - UNKNOWN_VOLUME: 0.01 (1%)
   virtual bool GetAudioVolumeStepInterval(float* step_inteval) = 0;
 
-  // DEPRECATED - Prefer to implement volume control in the media shlib using
-  // the VolumeControl API (see chromecast/public/volume_control.h).
-  // Returns the current volume level, which must be from 0.0 (inclusive) to
-  // 1.0 (inclusive).
-  virtual float GetAudioVolume() = 0;
-
-  // DEPRECATED - Prefer to implement volume control in the media shlib using
-  // the VolumeControl API (see chromecast/public/volume_control.h).
-  // Sets new volume level of the device (or HDMI sinks). |level| is from 0.0
-  // (inclusive) to 1.0 (inclusive).
-  // If successful and the level has changed, it must return true and fire
-  // AUDIO_VOLUME_CHANGED.
-  virtual bool SetAudioVolume(float level) = 0;
-
-  // DEPRECATED - Prefer to implement volume control in the media shlib using
-  // the VolumeControl API (see chromecast/public/volume_control.h).
-  // Whether or not the device (or HDMI sinks) is muted.
-  virtual bool IsAudioMuted() = 0;
-
-  // DEPRECATED - Prefer to implement volume control in the media shlib using
-  // the VolumeControl API (see chromecast/public/volume_control.h).
-  // Sets the device (or HDMI sinks) muted.
-  // If successful and the muted state has changed, it must return true and fire
-  // AUDIO_VOLUME_CHANGED.
-  virtual bool SetAudioMuted(bool muted) = 0;
-
   // Gets audio codecs supported by the device (or HDMI sinks).
   // The result is an integer of OR'ed AudioCodec values.
   virtual int GetAudioCodecsSupported() = 0;
@@ -248,6 +272,13 @@ class AvSettings {
   // Retrieves the resolution of screen of the device (or HDMI sinks).
   // Returns true if it gets resolution successfully.
   virtual bool GetScreenResolution(int* width, int* height) = 0;
+
+  // Retrieves the refresh rate of screen of the device (or HDMI sinks) in
+  // millihertz.
+  // Returns true if it gets refresh rate successfully.
+  // TODO(jiaqih): Update to virtual function in next API update.
+  static CHROMECAST_EXPORT bool GetRefreshRateMillihertz(int* refresh_rate)
+      __attribute__((weak));
 
   // Returns the current HDCP version multiplied by ten (so, for example, for
   // HDCP 2.2 the return value is 22). The return value should by 0 if HDCP is
@@ -344,6 +375,12 @@ class AvSettings {
   // Non-HDMI devices should return false.
   virtual bool IsHdrOutputSupportedByCurrentHdmiVideoMode(
       HdrOutputType output_type) = 0;
+};
+
+// Entrypoint for overridable AvSettings shared library.
+class CHROMECAST_EXPORT AvSettingsShlib {
+ public:
+  static AvSettings* Create(const std::vector<std::string>& argv);
 };
 
 }  // namespace chromecast

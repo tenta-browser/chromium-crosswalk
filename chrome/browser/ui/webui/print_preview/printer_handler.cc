@@ -5,9 +5,10 @@
 #include "chrome/browser/ui/webui/print_preview/printer_handler.h"
 
 #include "build/buildflag.h"
+#include "chrome/browser/ui/webui/print_preview/cloud_printer_handler.h"
 #include "chrome/browser/ui/webui/print_preview/extension_printer_handler.h"
 #include "chrome/browser/ui/webui/print_preview/pdf_printer_handler.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 
 #if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
 #include "chrome/browser/ui/webui/print_preview/privet_printer_handler.h"
@@ -19,19 +20,28 @@
 #include "chrome/browser/ui/webui/print_preview/local_printer_handler_default.h"
 #endif
 
+namespace printing {
+
+// static
+std::unique_ptr<PrinterHandler> PrinterHandler::CreateForCloudPrinters() {
+  return std::make_unique<CloudPrinterHandler>();
+}
+
 // static
 std::unique_ptr<PrinterHandler> PrinterHandler::CreateForExtensionPrinters(
     Profile* profile) {
-  return base::MakeUnique<ExtensionPrinterHandler>(profile);
+  return std::make_unique<ExtensionPrinterHandler>(profile);
 }
 
 // static
 std::unique_ptr<PrinterHandler> PrinterHandler::CreateForLocalPrinters(
+    content::WebContents* preview_web_contents,
     Profile* profile) {
 #if defined(OS_CHROMEOS)
-  return base::MakeUnique<LocalPrinterHandlerChromeos>(profile);
+  return LocalPrinterHandlerChromeos::CreateDefault(profile,
+                                                    preview_web_contents);
 #else
-  return base::MakeUnique<LocalPrinterHandlerDefault>();
+  return std::make_unique<LocalPrinterHandlerDefault>(preview_web_contents);
 #endif
 }
 
@@ -39,8 +49,8 @@ std::unique_ptr<PrinterHandler> PrinterHandler::CreateForLocalPrinters(
 std::unique_ptr<PrinterHandler> PrinterHandler::CreateForPdfPrinter(
     Profile* profile,
     content::WebContents* preview_web_contents,
-    printing::StickySettings* sticky_settings) {
-  return base::MakeUnique<PdfPrinterHandler>(profile, preview_web_contents,
+    StickySettings* sticky_settings) {
+  return std::make_unique<PdfPrinterHandler>(profile, preview_web_contents,
                                              sticky_settings);
 }
 
@@ -48,7 +58,7 @@ std::unique_ptr<PrinterHandler> PrinterHandler::CreateForPdfPrinter(
 // static
 std::unique_ptr<PrinterHandler> PrinterHandler::CreateForPrivetPrinters(
     Profile* profile) {
-  return base::MakeUnique<PrivetPrinterHandler>(profile);
+  return std::make_unique<PrivetPrinterHandler>(profile);
 }
 #endif
 
@@ -60,3 +70,5 @@ void PrinterHandler::StartGrantPrinterAccess(const std::string& printer_id,
                                              GetPrinterInfoCallback callback) {
   NOTREACHED();
 }
+
+}  // namespace printing

@@ -8,7 +8,7 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/wm/root_window_finder.h"
+#include "ash/wm/window_util.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
@@ -16,6 +16,7 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow_controller.h"
+#include "ui/wm/core/shadow_types.h"
 
 namespace ash {
 namespace {
@@ -29,13 +30,10 @@ const float kStartBoundsRatio = 0.85f;
 
 // The elevation of the shadow for the phantom window should match that of an
 // active window.
-constexpr ::wm::ShadowElevation kShadowElevation =
-    ::wm::ShadowController::kActiveNormalShadowElevation;
-
 // The shadow ninebox requires a minimum size to work well. See
-// ui/wm/core/shadow.cc
-constexpr int kMinWidthWithShadow = 2 * static_cast<int>(kShadowElevation);
-constexpr int kMinHeightWithShadow = 4 * static_cast<int>(kShadowElevation);
+// ui/compositor_extra/shadow.cc
+constexpr int kMinWidthWithShadow = 2 * ::wm::kShadowElevationActiveWindow;
+constexpr int kMinHeightWithShadow = 4 * ::wm::kShadowElevationActiveWindow;
 
 }  // namespace
 
@@ -61,9 +59,9 @@ void PhantomWindowController::Show(const gfx::Rect& bounds_in_screen) {
   start_bounds_in_screen.Inset(
       floor((start_bounds_in_screen.width() - start_width) / 2.0f),
       floor((start_bounds_in_screen.height() - start_height) / 2.0f));
-  phantom_widget_ =
-      CreatePhantomWidget(wm::GetRootWindowMatching(target_bounds_in_screen_),
-                          start_bounds_in_screen);
+  phantom_widget_ = CreatePhantomWidget(
+      window_util::GetRootWindowMatching(target_bounds_in_screen_),
+      start_bounds_in_screen);
 }
 
 std::unique_ptr<views::Widget> PhantomWindowController::CreatePhantomWidget(
@@ -75,12 +73,12 @@ std::unique_ptr<views::Widget> PhantomWindowController::CreatePhantomWidget(
   // PhantomWindowController is used by FrameMaximizeButton to highlight the
   // launcher button. Put the phantom in the same window as the launcher so that
   // the phantom is visible.
-  params.keep_on_top = true;
+  params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.name = "PhantomWindow";
   params.layer_type = ui::LAYER_SOLID_COLOR;
   params.shadow_type = views::Widget::InitParams::SHADOW_TYPE_DROP;
-  params.shadow_elevation = ::wm::ShadowElevation::LARGE;
+  params.shadow_elevation = ::wm::kShadowElevationActiveWindow;
   params.parent = root_window->GetChildById(kShellWindowId_ShelfContainer);
   phantom_widget->set_focus_on_creation(false);
   phantom_widget->Init(params);

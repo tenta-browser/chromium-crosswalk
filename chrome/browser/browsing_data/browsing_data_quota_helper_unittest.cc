@@ -9,9 +9,11 @@
 
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browsing_data/browsing_data_quota_helper_impl.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -19,6 +21,7 @@
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/test/mock_storage_client.h"
 
+using blink::mojom::StorageType;
 using content::BrowserThread;
 using content::MockOriginData;
 using content::MockStorageClient;
@@ -28,7 +31,7 @@ class BrowsingDataQuotaHelperTest : public testing::Test {
   typedef BrowsingDataQuotaHelper::QuotaInfo QuotaInfo;
   typedef BrowsingDataQuotaHelper::QuotaInfoArray QuotaInfoArray;
 
-  BrowsingDataQuotaHelperTest() : weak_factory_(this) {}
+  BrowsingDataQuotaHelperTest() {}
 
   ~BrowsingDataQuotaHelperTest() override {}
 
@@ -36,8 +39,8 @@ class BrowsingDataQuotaHelperTest : public testing::Test {
     EXPECT_TRUE(dir_.CreateUniqueTempDir());
     quota_manager_ = new storage::QuotaManager(
         false, dir_.GetPath(),
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get(), nullptr,
-        storage::GetQuotaSettingsFunc());
+        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}).get(),
+        nullptr, storage::GetQuotaSettingsFunc());
     helper_ = new BrowsingDataQuotaHelperImpl(quota_manager_.get());
   }
 
@@ -90,8 +93,9 @@ class BrowsingDataQuotaHelperTest : public testing::Test {
                    weak_factory_.GetWeakPtr()));
   }
 
-  void GotPersistentHostQuota(storage::QuotaStatusCode status, int64_t quota) {
-    EXPECT_EQ(storage::kQuotaStatusOk, status);
+  void GotPersistentHostQuota(blink::mojom::QuotaStatusCode status,
+                              int64_t quota) {
+    EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk, status);
     quota_ = quota;
   }
 
@@ -116,7 +120,7 @@ class BrowsingDataQuotaHelperTest : public testing::Test {
   bool fetching_completed_ = true;
   QuotaInfoArray quota_info_;
   int64_t quota_ = -1;
-  base::WeakPtrFactory<BrowsingDataQuotaHelperTest> weak_factory_;
+  base::WeakPtrFactory<BrowsingDataQuotaHelperTest> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataQuotaHelperTest);
 };
@@ -130,14 +134,14 @@ TEST_F(BrowsingDataQuotaHelperTest, Empty) {
 
 TEST_F(BrowsingDataQuotaHelperTest, FetchData) {
   const MockOriginData kOrigins[] = {
-      {"http://example.com/", storage::kStorageTypeTemporary, 1},
-      {"https://example.com/", storage::kStorageTypeTemporary, 10},
-      {"http://example.com/", storage::kStorageTypePersistent, 100},
-      {"https://example.com/", storage::kStorageTypeSyncable, 1},
-      {"http://example2.com/", storage::kStorageTypeTemporary, 1000},
+      {"http://example.com/", StorageType::kTemporary, 1},
+      {"https://example.com/", StorageType::kTemporary, 10},
+      {"http://example.com/", StorageType::kPersistent, 100},
+      {"https://example.com/", StorageType::kSyncable, 1},
+      {"http://example2.com/", StorageType::kTemporary, 1000},
   };
 
-  RegisterClient(kOrigins, arraysize(kOrigins));
+  RegisterClient(kOrigins, base::size(kOrigins));
   StartFetching();
   content::RunAllTasksUntilIdle();
   EXPECT_TRUE(fetching_completed());
@@ -151,22 +155,22 @@ TEST_F(BrowsingDataQuotaHelperTest, FetchData) {
 
 TEST_F(BrowsingDataQuotaHelperTest, IgnoreExtensionsAndDevTools) {
   const MockOriginData kOrigins[] = {
-      {"http://example.com/", storage::kStorageTypeTemporary, 1},
-      {"https://example.com/", storage::kStorageTypeTemporary, 10},
-      {"http://example.com/", storage::kStorageTypePersistent, 100},
-      {"https://example.com/", storage::kStorageTypeSyncable, 1},
-      {"http://example2.com/", storage::kStorageTypeTemporary, 1000},
+      {"http://example.com/", StorageType::kTemporary, 1},
+      {"https://example.com/", StorageType::kTemporary, 10},
+      {"http://example.com/", StorageType::kPersistent, 100},
+      {"https://example.com/", StorageType::kSyncable, 1},
+      {"http://example2.com/", StorageType::kTemporary, 1000},
       {"chrome-extension://abcdefghijklmnopqrstuvwxyz/",
-       storage::kStorageTypeTemporary, 10000},
+       StorageType::kTemporary, 10000},
       {"chrome-extension://abcdefghijklmnopqrstuvwxyz/",
-       storage::kStorageTypePersistent, 100000},
-      {"chrome-devtools://abcdefghijklmnopqrstuvwxyz/",
-       storage::kStorageTypeTemporary, 10000},
-      {"chrome-devtools://abcdefghijklmnopqrstuvwxyz/",
-       storage::kStorageTypePersistent, 100000},
+       StorageType::kPersistent, 100000},
+      {"devtools://abcdefghijklmnopqrstuvwxyz/", StorageType::kTemporary,
+       10000},
+      {"devtools://abcdefghijklmnopqrstuvwxyz/", StorageType::kPersistent,
+       100000},
   };
 
-  RegisterClient(kOrigins, arraysize(kOrigins));
+  RegisterClient(kOrigins, base::size(kOrigins));
   StartFetching();
   content::RunAllTasksUntilIdle();
   EXPECT_TRUE(fetching_completed());

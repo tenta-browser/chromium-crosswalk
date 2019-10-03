@@ -4,7 +4,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/printing/cloud_print/privet_device_lister_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,15 +35,16 @@ class ServiceDiscoveryMockDelegate {
 class MockServiceWatcher : public ServiceWatcher {
  public:
   MockServiceWatcher(const std::string& service_type,
-                     const ServiceWatcher::UpdatedCallback& callback,
+                     ServiceWatcher::UpdatedCallback callback,
                      ServiceDiscoveryMockDelegate* mock_delegate)
-      : started_(false), service_type_(service_type),  callback_(callback),
-        mock_delegate_(mock_delegate) {
-  }
+      : started_(false),
+        service_type_(service_type),
+        callback_(std::move(callback)),
+        mock_delegate_(mock_delegate) {}
 
   ~MockServiceWatcher() override {}
 
-  virtual void Start() {
+  void Start() override {
     DCHECK(!started_);
     started_ = true;
     mock_delegate_->ServiceWatcherStarted(service_type_, this);
@@ -55,9 +55,7 @@ class MockServiceWatcher : public ServiceWatcher {
   MOCK_METHOD1(SetActivelyRefreshServices, void(
       bool actively_refresh_services));
 
-  virtual std::string GetServiceType() const {
-    return service_type_;
-  }
+  std::string GetServiceType() const override { return service_type_; }
 
   bool started() {
     return started_;
@@ -119,9 +117,9 @@ class MockServiceDiscoveryClient : public ServiceDiscoveryClient {
   // on service type |service_type|.
   std::unique_ptr<ServiceWatcher> CreateServiceWatcher(
       const std::string& service_type,
-      const ServiceWatcher::UpdatedCallback& callback) override {
-    return base::MakeUnique<MockServiceWatcher>(service_type, callback,
-                                                mock_delegate_);
+      ServiceWatcher::UpdatedCallback callback) override {
+    return std::make_unique<MockServiceWatcher>(
+        service_type, std::move(callback), mock_delegate_);
   }
 
   // Create a service resolver object for getting detailed service information
@@ -129,7 +127,7 @@ class MockServiceDiscoveryClient : public ServiceDiscoveryClient {
   std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
       ServiceResolver::ResolveCompleteCallback callback) override {
-    return base::MakeUnique<MockServiceResolver>(
+    return std::make_unique<MockServiceResolver>(
         service_name, std::move(callback), mock_delegate_);
   }
 
@@ -157,7 +155,7 @@ class MockServiceDiscoveryMockDelegate : public ServiceDiscoveryMockDelegate {
 class MockDeviceListerDelegate : public PrivetDeviceLister::Delegate {
  public:
   MockDeviceListerDelegate() {}
-  virtual ~MockDeviceListerDelegate() {}
+  ~MockDeviceListerDelegate() override {}
 
   MOCK_METHOD2(DeviceChanged,
                void(const std::string& name,

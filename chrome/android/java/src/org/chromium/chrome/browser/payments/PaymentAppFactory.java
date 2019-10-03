@@ -38,6 +38,12 @@ public class PaymentAppFactory {
         void onPaymentAppCreated(PaymentApp paymentApp);
 
         /**
+         * Called when an error has occurred.
+         * @param errorMessage Developer facing error message.
+         */
+        void onGetPaymentAppsError(String errorMessage);
+
+        /**
          * Called when the factory is finished creating payment apps.
          */
         void onAllPaymentAppsCreated();
@@ -53,10 +59,11 @@ public class PaymentAppFactory {
          * @param webContents The web contents that invoked PaymentRequest.
          * @param methodData  The methods that the merchant supports, along with the method specific
          *                    data.
+         * @param mayCrawl    Whether crawling for installable payment apps is allowed.
          * @param callback    The callback to invoke when apps are created.
          */
         void create(WebContents webContents, Map<String, PaymentMethodData> methodData,
-                PaymentAppCreatedCallback callback);
+                boolean mayCrawl, PaymentAppCreatedCallback callback);
     }
 
     private PaymentAppFactory() {
@@ -95,10 +102,11 @@ public class PaymentAppFactory {
      * @param webContents The web contents where PaymentRequest was invoked.
      * @param methodData  The methods that the merchant supports, along with the method specific
      *                    data.
+     * @param mayCrawl    Whether crawling for installable payment apps is allowed.
      * @param callback    The callback to invoke when apps are created.
      */
     public void create(WebContents webContents, Map<String, PaymentMethodData> methodData,
-            final PaymentAppCreatedCallback callback) {
+            boolean mayCrawl, final PaymentAppCreatedCallback callback) {
         callback.onPaymentAppCreated(new AutofillPaymentApp(webContents));
 
         if (mAdditionalFactories.isEmpty()) {
@@ -117,12 +125,17 @@ public class PaymentAppFactory {
                 }
 
                 @Override
+                public void onGetPaymentAppsError(String errorMessage) {
+                    callback.onGetPaymentAppsError(errorMessage);
+                }
+
+                @Override
                 public void onAllPaymentAppsCreated() {
                     mPendingTasks.remove(additionalFactory);
                     if (mPendingTasks.isEmpty()) callback.onAllPaymentAppsCreated();
                 }
             };
-            additionalFactory.create(webContents, methodData, cb);
+            additionalFactory.create(webContents, methodData, mayCrawl, cb);
         }
     }
 }

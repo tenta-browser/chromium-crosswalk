@@ -12,14 +12,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/process/process_info.h"
+#include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -39,9 +40,10 @@
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/notification_service.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "services/preferences/public/interfaces/tracked_preference_validation_delegate.mojom.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/preferences/public/mojom/tracked_preference_validation_delegate.mojom.h"
 
 namespace safe_browsing {
 
@@ -98,7 +100,7 @@ void LogIncidentDataType(IncidentDisposition disposition,
       "SBIRS.DiscardedIncident",
       "SBIRS.NoDownloadIncident",
   };
-  static_assert(arraysize(kHistogramNames) == NUM_DISPOSITIONS,
+  static_assert(base::size(kHistogramNames) == NUM_DISPOSITIONS,
                 "Keep kHistogramNames in sync with enum IncidentDisposition.");
   DCHECK_GE(disposition, 0);
   DCHECK_LT(disposition, NUM_DISPOSITIONS);
@@ -132,7 +134,7 @@ base::TaskShutdownBehavior GetShutdownBehavior() {
 
 // Returns a task runner for blocking tasks in the background.
 scoped_refptr<base::TaskRunner> GetBackgroundTaskRunner() {
-  return base::CreateTaskRunnerWithTraits({base::TaskPriority::BACKGROUND,
+  return base::CreateTaskRunnerWithTraits({base::TaskPriority::BEST_EFFORT,
                                            GetShutdownBehavior(),
                                            base::MayBlock()});
 }
@@ -241,7 +243,7 @@ void IncidentReportingService::Receiver::AddIncidentForProcess(
         FROM_HERE,
         base::BindOnce(
             &IncidentReportingService::Receiver::AddIncidentOnMainThread,
-            service_, nullptr, base::Passed(&incident)));
+            service_, nullptr, std::move(incident)));
   }
 }
 
@@ -254,7 +256,7 @@ void IncidentReportingService::Receiver::ClearIncidentForProcess(
         FROM_HERE,
         base::BindOnce(
             &IncidentReportingService::Receiver::ClearIncidentOnMainThread,
-            service_, nullptr, base::Passed(&incident)));
+            service_, nullptr, std::move(incident)));
   }
 }
 
@@ -318,9 +320,9 @@ bool IncidentReportingService::IsEnabledForProfile(Profile* profile) {
 
 IncidentReportingService::IncidentReportingService(
     SafeBrowsingService* safe_browsing_service)
-    : url_request_context_getter_(
-          safe_browsing_service ? safe_browsing_service->url_request_context()
-                                : nullptr),
+    : url_loader_factory_(safe_browsing_service
+                              ? safe_browsing_service->GetURLLoaderFactory()
+                              : nullptr),
       collect_environment_data_fn_(&CollectEnvironmentData),
       environment_collection_task_runner_(GetBackgroundTaskRunner()),
       environment_collection_pending_(),
@@ -331,9 +333,7 @@ IncidentReportingService::IncidentReportingService(
                        &IncidentReportingService::OnCollationTimeout),
       delayed_analysis_callbacks_(
           base::TimeDelta::FromMilliseconds(kDefaultCallbackIntervalMs),
-          GetBackgroundTaskRunner()),
-      receiver_weak_ptr_factory_(this),
-      weak_ptr_factory_(this) {
+          GetBackgroundTaskRunner()) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   notification_registrar_.Add(this,
                               chrome::NOTIFICATION_PROFILE_ADDED,
@@ -367,7 +367,7 @@ IncidentReportingService::~IncidentReportingService() {
 
 std::unique_ptr<IncidentReceiver>
 IncidentReportingService::GetIncidentReceiver() {
-  return base::MakeUnique<Receiver>(receiver_weak_ptr_factory_.GetWeakPtr());
+  return std::make_unique<Receiver>(receiver_weak_ptr_factory_.GetWeakPtr());
 }
 
 std::unique_ptr<prefs::mojom::TrackedPreferenceValidationDelegate>
@@ -376,7 +376,7 @@ IncidentReportingService::CreatePreferenceValidationDelegate(Profile* profile) {
 
   if (profile->IsOffTheRecord())
     return std::unique_ptr<prefs::mojom::TrackedPreferenceValidationDelegate>();
-  return base::MakeUnique<PreferenceValidationDelegate>(profile,
+  return std::make_unique<PreferenceValidationDelegate>(profile,
                                                         GetIncidentReceiver());
 }
 
@@ -403,11 +403,9 @@ void IncidentReportingService::AddDownloadManager(
 
 IncidentReportingService::IncidentReportingService(
     SafeBrowsingService* safe_browsing_service,
-    const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
     base::TimeDelta delayed_task_interval,
     const scoped_refptr<base::TaskRunner>& delayed_task_runner)
-    : url_request_context_getter_(request_context_getter),
-      collect_environment_data_fn_(&CollectEnvironmentData),
+    : collect_environment_data_fn_(&CollectEnvironmentData),
       environment_collection_task_runner_(GetBackgroundTaskRunner()),
       environment_collection_pending_(),
       collation_timeout_pending_(),
@@ -415,9 +413,7 @@ IncidentReportingService::IncidentReportingService(
                        base::TimeDelta::FromMilliseconds(kDefaultUploadDelayMs),
                        this,
                        &IncidentReportingService::OnCollationTimeout),
-      delayed_analysis_callbacks_(delayed_task_interval, delayed_task_runner),
-      receiver_weak_ptr_factory_(this),
-      weak_ptr_factory_(this) {
+      delayed_analysis_callbacks_(delayed_task_interval, delayed_task_runner) {
   notification_registrar_.Add(this,
                               chrome::NOTIFICATION_PROFILE_ADDED,
                               content::NotificationService::AllSources());
@@ -508,10 +504,9 @@ IncidentReportingService::CreateDownloadFinder(
 std::unique_ptr<IncidentReportUploader>
 IncidentReportingService::StartReportUpload(
     const IncidentReportUploader::OnResultCallback& callback,
-    const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
     const ClientIncidentReport& report) {
-  return IncidentReportUploaderImpl::UploadReport(
-      callback, request_context_getter, report);
+  return IncidentReportUploaderImpl::UploadReport(callback, url_loader_factory_,
+                                                  report);
 }
 
 bool IncidentReportingService::IsProcessingReport() const {
@@ -522,7 +517,7 @@ IncidentReportingService::ProfileContext*
 IncidentReportingService::GetOrCreateProfileContext(Profile* profile) {
   std::unique_ptr<ProfileContext>& context = profiles_[profile];
   if (!context)
-    context = base::MakeUnique<ProfileContext>();
+    context = std::make_unique<ProfileContext>();
   return context.get();
 }
 
@@ -691,7 +686,7 @@ void IncidentReportingService::BeginEnvironmentCollection() {
           base::BindOnce(collect_environment_data_fn_, environment_data),
           base::BindOnce(&IncidentReportingService::OnEnvironmentDataCollected,
                          weak_ptr_factory_.GetWeakPtr(),
-                         base::Passed(base::WrapUnique(environment_data))));
+                         base::WrapUnique(environment_data)));
 
   // Posting the task will fail if the runner has been shut down. This should
   // never happen since the blocking pool is shut down after this service.
@@ -716,10 +711,10 @@ void IncidentReportingService::OnEnvironmentDataCollected(
   DCHECK(report_ && !report_->has_environment());
   environment_collection_pending_ = false;
 
-// CurrentProcessInfo::CreationTime() is missing on some platforms.
+// Process::Current().CreationTime() is missing on some platforms.
 #if defined(OS_MACOSX) || defined(OS_WIN) || defined(OS_LINUX)
   base::TimeDelta uptime =
-      first_incident_time_ - base::CurrentProcessInfo::CreationTime();
+      first_incident_time_ - base::Process::Current().CreationTime();
   environment_data->mutable_process()->set_uptime_msec(uptime.InMilliseconds());
 #endif
 
@@ -928,9 +923,6 @@ void IncidentReportingService::ProcessIncidentsIfCollectionComplete() {
     }
     return;
   }
-
-  UMA_HISTOGRAM_COUNTS_100("SBIRS.IncidentCount", count);
-
   // Perform final synchronous collection tasks for the report.
   DoExtensionCollection(report->mutable_extension_data());
 
@@ -964,7 +956,7 @@ void IncidentReportingService::UploadReportIfUploadingEnabled(
   context->uploader = StartReportUpload(
       base::Bind(&IncidentReportingService::OnReportUploadResult,
                  weak_ptr_factory_.GetWeakPtr(), context),
-      url_request_context_getter_, *context->report);
+      *context->report);
   if (!context->uploader) {
     OnReportUploadResult(context,
                          IncidentReportUploader::UPLOAD_INVALID_REQUEST,
@@ -1008,10 +1000,11 @@ void IncidentReportingService::OnReportUploadResult(
 }
 
 void IncidentReportingService::OnClientDownloadRequest(
-    content::DownloadItem* download,
+    download::DownloadItem* download,
     const ClientDownloadRequest* request) {
-  if (download->GetBrowserContext() &&
-      !download->GetBrowserContext()->IsOffTheRecord()) {
+  if (content::DownloadItemUtils::GetBrowserContext(download) &&
+      !content::DownloadItemUtils::GetBrowserContext(download)
+           ->IsOffTheRecord()) {
     download_metadata_manager_.SetRequest(download, request);
   }
 }

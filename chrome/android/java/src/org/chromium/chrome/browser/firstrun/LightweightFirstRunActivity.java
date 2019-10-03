@@ -4,18 +4,18 @@
 
 package org.chromium.chrome.browser.firstrun;
 
+import android.content.res.Resources;
 import android.os.Bundle;
 import android.support.annotation.StringRes;
 import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
-import android.view.View;
-import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.TextView;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.components.signin.ChildAccountStatus;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
 import org.chromium.ui.text.SpanApplier;
@@ -34,7 +34,7 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase {
             "org.chromium.chrome.browser.firstrun.AssociatedAppName";
 
     @Override
-    public void setContentView() {
+    public void triggerLayoutInflation() {
         setFinishOnTouchOutside(true);
 
         mFirstRunFlowSequencer = new FirstRunFlowSequencer(this) {
@@ -45,11 +45,14 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase {
                     return;
                 }
 
-                onChildAccountKnown(
-                        freProperties.getBoolean(AccountFirstRunFragment.IS_CHILD_ACCOUNT));
+                @ChildAccountStatus.Status
+                int childAccountStatus = freProperties.getInt(
+                        SigninFirstRunFragment.CHILD_ACCOUNT_STATUS, ChildAccountStatus.NOT_CHILD);
+                onChildAccountKnown(ChildAccountStatus.isChild(childAccountStatus));
             }
         };
         mFirstRunFlowSequencer.start();
+        onInitialLayoutInflationComplete();
     }
 
     /** Called once it is known whether the device has a child account. */
@@ -57,24 +60,13 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase {
         setContentView(LayoutInflater.from(LightweightFirstRunActivity.this)
                                .inflate(R.layout.lightweight_fre_tos, null));
 
-        NoUnderlineClickableSpan clickableTermsSpan = new NoUnderlineClickableSpan() {
-            @Override
-            public void onClick(View widget) {
-                showInfoPage(R.string.chrome_terms_of_service_url);
-            }
-        };
-        NoUnderlineClickableSpan clickablePrivacySpan = new NoUnderlineClickableSpan() {
-            @Override
-            public void onClick(View widget) {
-                showInfoPage(R.string.chrome_privacy_notice_url);
-            }
-        };
-        NoUnderlineClickableSpan clickableFamilyLinkPrivacySpan = new NoUnderlineClickableSpan() {
-            @Override
-            public void onClick(View widget) {
-                showInfoPage(R.string.family_link_privacy_policy_url);
-            }
-        };
+        final Resources resources = getResources();
+        NoUnderlineClickableSpan clickableTermsSpan = new NoUnderlineClickableSpan(
+                resources, (view) -> showInfoPage(R.string.chrome_terms_of_service_url));
+        NoUnderlineClickableSpan clickablePrivacySpan = new NoUnderlineClickableSpan(
+                resources, (view) -> showInfoPage(R.string.chrome_privacy_notice_url));
+        NoUnderlineClickableSpan clickableFamilyLinkPrivacySpan = new NoUnderlineClickableSpan(
+                resources, (view) -> showInfoPage(R.string.family_link_privacy_policy_url));
         String associatedAppName =
                 IntentUtils.safeGetStringExtra(getIntent(), EXTRA_ASSOCIATED_APP_NAME);
         if (associatedAppName == null) {
@@ -100,21 +92,15 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase {
         tosAndPrivacyTextView.setText(tosAndPrivacyText);
         tosAndPrivacyTextView.setMovementMethod(LinkMovementMethod.getInstance());
 
-        mOkButton = (Button) findViewById(R.id.lightweight_fre_terms_accept);
-        mOkButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                acceptTermsOfService();
-            }
-        });
+        mOkButton = (Button) findViewById(R.id.button_primary);
+        int okButtonHorizontalPadding =
+                getResources().getDimensionPixelSize(R.dimen.fre_button_padding);
+        mOkButton.setPaddingRelative(okButtonHorizontalPadding, mOkButton.getPaddingTop(),
+                okButtonHorizontalPadding, mOkButton.getPaddingBottom());
+        mOkButton.setOnClickListener(view -> acceptTermsOfService());
 
-        ((Button) findViewById(R.id.lightweight_fre_cancel))
-                .setOnClickListener(new OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        abortFirstRunExperience();
-                    }
-                });
+        ((Button) findViewById(R.id.button_secondary))
+                .setOnClickListener(view -> abortFirstRunExperience());
     }
 
     @Override
@@ -133,14 +119,14 @@ public class LightweightFirstRunActivity extends FirstRunActivityBase {
 
     public void abortFirstRunExperience() {
         finish();
-        sendPendingIntentIfNecessary(false);
+        notifyCustomTabCallbackFirstRunIfNecessary(getIntent(), false);
     }
 
     public void completeFirstRunExperience() {
         FirstRunStatus.setLightweightFirstRunFlowComplete(true);
         finish();
 
-        sendPendingIntentIfNecessary(true);
+        sendFirstRunCompletePendingIntent();
     }
 
     private void acceptTermsOfService() {

@@ -4,10 +4,13 @@
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/views/payments/payment_request_browsertest_base.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view_ids.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/payments/core/features.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 
 namespace payments {
@@ -20,7 +23,12 @@ constexpr auto UNKNOWN = ::autofill::CreditCard::CardType::CARD_TYPE_UNKNOWN;
 // Tests for a merchant that requests a debit card.
 class PaymentRequestDebitTest : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestDebitTest() {}
+  PaymentRequestDebitTest() {
+    std::vector<base::Feature> enabled_features = {
+        features::kReturnGooglePayInBasicCard,
+        ::features::kPaymentRequestHasEnrolledInstrument};
+    features_.InitWithFeatures(enabled_features, /*disabled_feautres=*/{});
+  }
 
   const std::string& GetOrCreateBillingAddressId() {
     if (billing_address_id_.empty()) {
@@ -47,7 +55,17 @@ class PaymentRequestDebitTest : public PaymentRequestBrowserTestBase {
     WaitForObservedEvent();
   }
 
+  void CallHasEnrolledInstrument() {
+    ResetEventWaiterForSequence(
+        {DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED,
+         DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED});
+    ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(),
+                                       "hasEnrolledInstrument();"));
+    WaitForObservedEvent();
+  }
+
  private:
+  base::test::ScopedFeatureList features_;
   std::string billing_address_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestDebitTest);
@@ -58,6 +76,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestDebitTest, CanMakePaymentWithDebitCard) {
   AddServerCardWithType(DEBIT);
   CallCanMakePayment();
   ExpectBodyContains({"true"});
+  CallHasEnrolledInstrument();
+  ExpectBodyContains({"true"});
 }
 
 IN_PROC_BROWSER_TEST_F(PaymentRequestDebitTest,
@@ -65,6 +85,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestDebitTest,
   NavigateTo("/payment_request_debit_test.html");
   AddServerCardWithType(UNKNOWN);
   CallCanMakePayment();
+  ExpectBodyContains({"true"});
+  CallHasEnrolledInstrument();
   ExpectBodyContains({"true"});
 }
 
@@ -74,6 +96,8 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestDebitTest,
   AddServerCardWithType(CREDIT);
   AddServerCardWithType(PREPAID);
   CallCanMakePayment();
+  ExpectBodyContains({"true"});
+  CallHasEnrolledInstrument();
   ExpectBodyContains({"false"});
 }
 

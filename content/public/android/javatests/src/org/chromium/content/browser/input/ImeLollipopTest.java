@@ -16,13 +16,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.content.browser.test.ContentJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.Callable;
 
@@ -38,7 +38,7 @@ public class ImeLollipopTest {
 
     @Before
     public void setUp() throws Exception {
-        mRule.setUp();
+        mRule.setUpForUrl(ImeActivityTestRule.INPUT_FORM_HTML);
     }
 
     @Test
@@ -71,12 +71,8 @@ public class ImeLollipopTest {
         Assert.assertNull(info.getCharacterBounds(4));
 
         // In "IMMEDIATE" mode, even when there's no change, we should be notified at least once.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mRule.getInputMethodManagerWrapper().clearLastCursorAnchorInfo();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mRule.getInputMethodManagerWrapper().clearLastCursorAnchorInfo(); });
         requestCursorUpdates(InputConnection.CURSOR_UPDATE_IMMEDIATE);
         waitForUpdateCursorAnchorInfoComposingText("abcd");
 

@@ -31,7 +31,8 @@ class AccountChooserDialogAndroid : public content::WebContentsObserver {
   ~AccountChooserDialogAndroid() override;
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
-  void ShowDialog();
+  // Returns true if the dialog is shown. Otherwise, the instance is deleted.
+  bool ShowDialog();
 
   // Closes the dialog and propagates that no credentials was chosen.
   void CancelDialog(JNIEnv* env,
@@ -49,7 +50,7 @@ class AccountChooserDialogAndroid : public content::WebContentsObserver {
 
   // content::WebContentsObserver overrides:
   void WebContentsDestroyed() override;
-  void WasHidden() override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
 
  private:
   void OnDialogCancel();

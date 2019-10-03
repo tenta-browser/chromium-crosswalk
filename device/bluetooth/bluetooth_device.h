@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/flat_set.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -26,7 +27,7 @@
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace device {
 
@@ -95,7 +96,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   };
 
   typedef std::vector<BluetoothUUID> UUIDList;
-  typedef std::unordered_set<BluetoothUUID, BluetoothUUIDHash> UUIDSet;
+  typedef base::flat_set<BluetoothUUID> UUIDSet;
   typedef std::unordered_map<BluetoothUUID,
                              std::vector<uint8_t>,
                              BluetoothUUIDHash>
@@ -251,7 +252,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // of, by decoding the bluetooth class information for Classic devices or
   // by decoding the device's appearance for LE devices. For example,
   // Microsoft Universal Foldable Keyboard only advertises the appearance.
-  BluetoothDeviceType GetDeviceType() const;
+  virtual BluetoothDeviceType GetDeviceType() const;
 
   // Indicates whether the device is known to support pairing based on its
   // device class and address.
@@ -284,13 +285,15 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns the set of UUIDs that this device supports.
   //  * For classic Bluetooth devices this data is collected from both the EIR
   //    data and SDP tables.
-  //  * For non-connected Low Energy Devices this returns the latest advertised
-  //    UUIDs.
-  //  * For connected Low Energy Devices for which services have not been
-  //    discovered returns an empty list.
+  //  * For non-connected and connected Low Energy Devices for which services
+  //    have not been discovered returns the latest advertised UUIDs.
   //  * For connected Low Energy Devices for which services have been discovered
-  //    returns the UUIDs of the device's services.
+  //    returns the UUIDs of the device's services and the latest advertised
+  //    UUIDs.
   //  * For dual mode devices this may be collected from both.
+  //
+  // Note: On Android, Mac and WinRT advertised UUIDs are cleared when the
+  // adapter stops discovering, as otherwise stale data might be returned.
   //
   // Note: On ChromeOS and Linux, BlueZ persists all services meaning if
   // a device stops advertising a service this function will still return
@@ -354,8 +357,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns Advertising Data Flags.
   // Returns cached value if the adapter is not discovering.
   //
-  // TODO(crbug.com/661814) Support this on platforms that don't use BlueZ.
-  // Only Chrome OS supports this now. Upstream BlueZ has this feature
+  // Only Chrome OS and WinRT support this now. Upstream BlueZ has this feature
   // as experimental. This method returns base::nullopt on platforms that don't
   // support this feature.
   base::Optional<uint8_t> GetAdvertisingDataFlags() const;
@@ -426,7 +428,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // ignores the |IsPaired()| value.
   //
   // In most cases |Connect()| should be preferred. This method is only
-  // implemented on ChromeOS and Linux.
+  // implemented on ChromeOS, Linux and Windows 10. On Windows, only pairing
+  // with a pin code is currently supported.
   virtual void Pair(PairingDelegate* pairing_delegate,
                     const base::Closure& callback,
                     const ConnectErrorCallback& error_callback);
@@ -543,11 +546,15 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   virtual base::Time GetLastUpdateTime() const;
 
   // Called by BluetoothAdapter when a new Advertisement is seen for this
-  // device. This replaces previously seen Advertisement Data.
+  // device. This replaces previously seen Advertisement Data. The order of
+  // arguments matches the order of their corresponding Data Type specified in
+  // https://www.bluetooth.com/specifications/assigned-numbers/generic-access-profile.
   void UpdateAdvertisementData(int8_t rssi,
+                               base::Optional<uint8_t> flags,
                                UUIDList advertised_uuids,
+                               base::Optional<int8_t> tx_power,
                                ServiceDataMap service_data,
-                               const int8_t* tx_power);
+                               ManufacturerDataMap manufacturer_data);
 
   // Called by BluetoothAdapter when it stops discoverying.
   void ClearAdvertisementData();
@@ -559,6 +566,43 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
 
   std::vector<BluetoothRemoteGattService*> GetPrimaryServicesByUUID(
       const BluetoothUUID& service_uuid);
+
+#if defined(OS_CHROMEOS)
+  typedef base::Callback<void(device::BluetoothGattService::GattErrorCode)>
+      ExecuteWriteErrorCallback;
+  typedef base::Callback<void(device::BluetoothGattService::GattErrorCode)>
+      AbortWriteErrorCallback;
+  // Executes all the previous prepare writes in a reliable write session.
+  virtual void ExecuteWrite(
+      const base::Closure& callback,
+      const ExecuteWriteErrorCallback& error_callback) = 0;
+  // Aborts all the previous prepare writes in a reliable write session.
+  virtual void AbortWrite(const base::Closure& callback,
+                          const AbortWriteErrorCallback& error_callback) = 0;
+#endif
+
+  // Set the remaining battery of the device to show in the UI. This value must
+  // be between 0 and 100, inclusive.
+  // TODO(https://crbug.com/973237): Battery percentage is populated by
+  // ash::GattBatteryPoller and used only by Chrome OS. In the future, when
+  // there is a unified Mojo service, this logic will be moved to
+  // BluetoothDeviceInfo.
+  void set_battery_percentage(base::Optional<uint8_t> battery_percentage) {
+    if (battery_percentage) {
+      DCHECK(battery_percentage.value() >= 0 &&
+             battery_percentage.value() <= 100);
+    }
+    battery_percentage_ = battery_percentage;
+  }
+
+  // Returns the remaining battery for the device.
+  // TODO(https://crbug.com/973237): Battery percentage is populated by
+  // ash::GattBatteryPoller and used only by Chrome OS. In the future, when
+  // there is a unified Mojo service, this logic will be moved to
+  // BluetoothDeviceInfo.
+  const base::Optional<uint8_t>& battery_percentage() const {
+    return battery_percentage_;
+  }
 
  protected:
   // BluetoothGattConnection is a friend to call Add/RemoveGattConnection.
@@ -577,9 +621,20 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   FRIEND_TEST_ALL_PREFIXES(BluetoothTest, RemoveOutdatedDevices);
   FRIEND_TEST_ALL_PREFIXES(BluetoothTest, RemoveOutdatedDeviceGattConnect);
 
+  FRIEND_TEST_ALL_PREFIXES(
+      BluetoothTestWinrtOnly,
+      BluetoothGattConnection_DisconnectGatt_SimulateConnect);
+  FRIEND_TEST_ALL_PREFIXES(
+      BluetoothTestWinrtOnly,
+      BluetoothGattConnection_DisconnectGatt_SimulateDisconnect);
+  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrtOnly,
+                           BluetoothGattConnection_ErrorAfterConnection);
+  FRIEND_TEST_ALL_PREFIXES(BluetoothTestWinrtOnly,
+                           BluetoothGattConnection_DisconnectGatt_Cleanup);
+
   // Helper class to easily update the sets of UUIDs and keep them in sync with
   // the set of all the device's UUIDs.
-  class DeviceUUIDs {
+  class DEVICE_BLUETOOTH_EXPORT DeviceUUIDs {
    public:
     DeviceUUIDs();
     ~DeviceUUIDs();
@@ -659,11 +714,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Received Signal Strength Indicator of the advertisement received.
   base::Optional<int8_t> inquiry_rssi_;
 
-  // Tx Power advertised by the device.
-  base::Optional<int8_t> inquiry_tx_power_;
-
   // Advertising Data flags of the device.
   base::Optional<uint8_t> advertising_data_flags_;
+
+  // Tx Power advertised by the device.
+  base::Optional<int8_t> inquiry_tx_power_;
 
   // Class that holds the union of Advertised UUIDs and Service UUIDs.
   DeviceUUIDs device_uuids_;
@@ -681,6 +736,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDevice {
   // Returns a localized string containing the device's bluetooth address and
   // a device type for display when |name_| is empty.
   base::string16 GetAddressWithLocalizedDeviceTypeName() const;
+
+  // Remaining battery level of the device.
+  // TODO(https://crbug.com/973237): This field is populated by
+  // ash::GattBatteryPoller and used only by Chrome OS. This field is different
+  // from others because it is not filled by the platform. In the future, when
+  // there is a unified Mojo service, this field will be moved to
+  // BluetoothDeviceInfo.
+  base::Optional<uint8_t> battery_percentage_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothDevice);
 };

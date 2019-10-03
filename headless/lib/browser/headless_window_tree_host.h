@@ -21,13 +21,18 @@ class WindowParentingClient;
 }
 }
 
+namespace ui {
+enum class DomCode;
+}
+
 namespace headless {
 
 class HeadlessWindowTreeHost : public aura::WindowTreeHost,
                                public ui::PlatformEventDispatcher {
  public:
-  HeadlessWindowTreeHost(const gfx::Rect& bounds,
-                         bool external_begin_frames_enabled);
+  HeadlessWindowTreeHost(
+      const gfx::Rect& bounds,
+      ui::ExternalBeginFrameClient* external_begin_frame_client);
   ~HeadlessWindowTreeHost() override;
 
   void SetParentWindow(gfx::NativeWindow window);
@@ -46,6 +51,11 @@ class HeadlessWindowTreeHost : public aura::WindowTreeHost,
   gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
+  bool CaptureSystemKeyEventsImpl(
+      base::Optional<base::flat_set<ui::DomCode>> codes) override;
+  void ReleaseSystemKeyEventCapture() override;
+  bool IsKeyLocked(ui::DomCode dom_code) override;
+  base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
   void SetCursorNative(gfx::NativeCursor cursor_type) override;
   void MoveCursorToScreenLocationInPixels(const gfx::Point& location) override;
   void OnCursorVisibilityChangedNative(bool show) override;

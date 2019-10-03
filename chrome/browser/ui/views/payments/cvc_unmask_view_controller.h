@@ -8,14 +8,13 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
-#include "chrome/browser/ui/autofill/autofill_dialog_models.h"
+#include "chrome/browser/ui/autofill/payments/autofill_dialog_models.h"
 #include "chrome/browser/ui/views/payments/payment_request_sheet_controller.h"
 #include "components/autofill/core/browser/payments/full_card_request.h"
 #include "components/autofill/core/browser/payments/payments_client.h"
-#include "components/autofill/core/browser/risk_data_loader.h"
+#include "components/autofill/core/browser/payments/risk_data_loader.h"
 #include "ui/views/controls/combobox/combobox_listener.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 
@@ -40,7 +39,6 @@ class PaymentRequestDialogView;
 class CvcUnmaskViewController
     : public PaymentRequestSheetController,
       public autofill::RiskDataLoader,
-      public autofill::payments::PaymentsClientUnmaskDelegate,
       public autofill::payments::FullCardRequest::UIDelegate,
       public views::ComboboxListener,
       public views::TextfieldController {
@@ -55,13 +53,9 @@ class CvcUnmaskViewController
       content::WebContents* web_contents);
   ~CvcUnmaskViewController() override;
 
-  // autofill::payments::PaymentsClientUnmaskDelegate:
-  void OnDidGetRealPan(autofill::AutofillClient::PaymentsRpcResult result,
-                       const std::string& real_pan) override;
-
   // autofill::RiskDataLoader:
   void LoadRiskData(
-      const base::Callback<void(const std::string&)>& callback) override;
+      base::OnceCallback<void(const std::string&)> callback) override;
 
   // autofill::payments::FullCardRequest::UIDelegate:
   void ShowUnmaskPrompt(
@@ -76,6 +70,7 @@ class CvcUnmaskViewController
   base::string16 GetSheetTitle() override;
   void FillContentView(views::View* content_view) override;
   std::unique_ptr<views::Button> CreatePrimaryButton() override;
+  bool ShouldShowSecondaryButton() override;
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
  private:
@@ -104,13 +99,11 @@ class CvcUnmaskViewController
   views::Textfield* cvc_field_;  // owned by the view hierarchy, outlives this.
   autofill::CreditCard credit_card_;
   content::WebContents* web_contents_;
-  // The identity provider, used for Payments integration.
-  std::unique_ptr<IdentityProvider> identity_provider_;
   autofill::payments::PaymentsClient payments_client_;
   autofill::payments::FullCardRequest full_card_request_;
   base::WeakPtr<autofill::CardUnmaskDelegate> unmask_delegate_;
 
-  base::WeakPtrFactory<CvcUnmaskViewController> weak_ptr_factory_;
+  base::WeakPtrFactory<CvcUnmaskViewController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CvcUnmaskViewController);
 };

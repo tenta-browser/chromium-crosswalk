@@ -5,8 +5,16 @@
 #ifndef CHROMEOS_COMPONENTS_TETHER_HOST_CONNECTION_METRICS_LOGGER_H_
 #define CHROMEOS_COMPONENTS_TETHER_HOST_CONNECTION_METRICS_LOGGER_H_
 
+#include <map>
+#include <string>
+
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "chromeos/components/tether/active_host.h"
+
+namespace base {
+class Clock;
+}
 
 namespace chromeos {
 
@@ -15,7 +23,7 @@ namespace tether {
 // Wrapper around metrics reporting for host connection results. Clients are
 // expected to report the result of a host connection attempt once it has
 // concluded.
-class HostConnectionMetricsLogger {
+class HostConnectionMetricsLogger : public ActiveHost::Observer {
  public:
   enum ConnectionToHostResult {
     CONNECTION_RESULT_PROVISIONING_FAILED,
@@ -25,14 +33,28 @@ class HostConnectionMetricsLogger {
     CONNECTION_RESULT_FAILURE_CLIENT_CONNECTION_CANCELED_BY_USER,
     CONNECTION_RESULT_FAILURE_CLIENT_CONNECTION_INTERNAL_ERROR,
     CONNECTION_RESULT_FAILURE_TETHERING_TIMED_OUT_FIRST_TIME_SETUP_WAS_REQUIRED,
-    CONNECTION_RESULT_FAILURE_TETHERING_TIMED_OUT_FIRST_TIME_SETUP_WAS_NOT_REQUIRED
+    CONNECTION_RESULT_FAILURE_TETHERING_TIMED_OUT_FIRST_TIME_SETUP_WAS_NOT_REQUIRED,
+    CONNECTION_RESULT_FAILURE_TETHERING_UNSUPPORTED,
+    CONNECTION_RESULT_FAILURE_NO_CELL_DATA,
+    CONNECTION_RESULT_FAILURE_ENABLING_HOTSPOT_FAILED,
+    CONNECTION_RESULT_FAILURE_ENABLING_HOTSPOT_TIMEOUT,
+    CONNECTION_RESULT_FAILURE_NO_RESPONSE,
+    CONNECTION_RESULT_FAILURE_INVALID_HOTSPOT_CREDENTIALS,
+    CONNECTION_RESULT_FAILURE_SUCCESSFUL_REQUEST_BUT_NO_RESPONSE,
+    CONNECTION_RESULT_FAILURE_UNRECOGNIZED_RESPONSE_ERROR,
   };
 
   // Record the result of an attempted host connection.
-  virtual void RecordConnectionToHostResult(ConnectionToHostResult result);
+  virtual void RecordConnectionToHostResult(ConnectionToHostResult result,
+                                            const std::string& device_id);
 
-  HostConnectionMetricsLogger();
+  HostConnectionMetricsLogger(ActiveHost* active_host);
   virtual ~HostConnectionMetricsLogger();
+
+ protected:
+  // ActiveHost::Observer:
+  void OnActiveHostChanged(
+      const ActiveHost::ActiveHostChangeInfo& change_info) override;
 
  private:
   friend class HostConnectionMetricsLoggerTest;
@@ -41,7 +63,21 @@ class HostConnectionMetricsLogger {
   FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
                            RecordConnectionResultSuccess);
   FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultSuccess_Background);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultSuccess_MultiDeviceApiEnabled);
+  FRIEND_TEST_ALL_PREFIXES(
+      HostConnectionMetricsLoggerTest,
+      RecordConnectionResultSuccess_Background_DifferentDevice);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
                            RecordConnectionResultFailure);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailure_Background);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailure_MultiDeviceApiEnabled);
+  FRIEND_TEST_ALL_PREFIXES(
+      HostConnectionMetricsLoggerTest,
+      RecordConnectionResultFailure_Background_DifferentDevice);
   FRIEND_TEST_ALL_PREFIXES(
       HostConnectionMetricsLoggerTest,
       RecordConnectionResultFailureClientConnection_Timeout);
@@ -57,6 +93,25 @@ class HostConnectionMetricsLogger {
   FRIEND_TEST_ALL_PREFIXES(
       HostConnectionMetricsLoggerTest,
       RecordConnectionResultFailureTetheringTimeout_SetupNotRequired);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailureTetheringUnsupported);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailureNoCellData);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailureEnablingHotspotFailed);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailureEnablingHotspotTimeout);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectToHostDuration);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectToHostDuration_Background);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectToHostDuration_MultiDeviceApiEnabled);
+  FRIEND_TEST_ALL_PREFIXES(HostConnectionMetricsLoggerTest,
+                           RecordConnectionResultFailureNoResponse);
+  FRIEND_TEST_ALL_PREFIXES(
+      HostConnectionMetricsLoggerTest,
+      RecordConnectionResultFailureInvalidHotspotCredentials);
 
   // An Instant Tethering connection can fail for several different reasons.
   // Though traditionally success and each failure case would be logged to a
@@ -88,6 +143,14 @@ class HostConnectionMetricsLogger {
     UNKNOWN_ERROR = 0,
     TETHERING_TIMED_OUT = 1,
     CLIENT_CONNECTION_ERROR = 2,
+    TETHERING_UNSUPPORTED = 3,
+    NO_CELL_DATA = 4,
+    ENABLING_HOTSPOT_FAILED = 5,
+    ENABLING_HOTSPOT_TIMEOUT = 6,
+    NO_RESPONSE = 7,
+    INVALID_HOTSPOT_CREDENTIALS = 8,
+    SUCCESSFUL_REQUEST_BUT_NO_RESPONSE = 9,
+    UNRECOGNIZED_RESPONSE_ERROR = 10,
     FAILURE_MAX
   };
 
@@ -129,6 +192,16 @@ class HostConnectionMetricsLogger {
   // the host timing out during tethering.
   void RecordConnectionResultFailureTetheringTimeout(
       ConnectionToHostResult_FailureTetheringTimeoutEventType event_type);
+
+  void RecordConnectToHostDuration(const std::string device_id);
+
+  void SetClockForTesting(base::Clock* test_clock);
+
+  ActiveHost* active_host_;
+  base::Clock* clock_;
+
+  base::Time connect_to_host_start_time_;
+  std::string active_host_device_id_;
 
   DISALLOW_COPY_AND_ASSIGN(HostConnectionMetricsLogger);
 };

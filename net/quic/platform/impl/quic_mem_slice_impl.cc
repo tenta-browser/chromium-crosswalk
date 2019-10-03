@@ -4,19 +4,19 @@
 
 #include "net/quic/platform/impl/quic_mem_slice_impl.h"
 
-#include "net/quic/core/quic_buffer_allocator.h"
+#include "net/third_party/quiche/src/quic/core/quic_buffer_allocator.h"
 
-namespace net {
+namespace quic {
 
 QuicMemSliceImpl::QuicMemSliceImpl() = default;
 
 QuicMemSliceImpl::QuicMemSliceImpl(QuicBufferAllocator* /*allocator*/,
                                    size_t length) {
-  io_buffer_ = new IOBuffer(length);
+  io_buffer_ = base::MakeRefCounted<net::IOBuffer>(length);
   length_ = length;
 }
 
-QuicMemSliceImpl::QuicMemSliceImpl(scoped_refptr<IOBuffer> io_buffer,
+QuicMemSliceImpl::QuicMemSliceImpl(scoped_refptr<net::IOBuffer> io_buffer,
                                    size_t length)
     : io_buffer_(std::move(io_buffer)), length_(length) {}
 
@@ -34,6 +34,11 @@ QuicMemSliceImpl& QuicMemSliceImpl::operator=(QuicMemSliceImpl&& other) {
 
 QuicMemSliceImpl::~QuicMemSliceImpl() = default;
 
+void QuicMemSliceImpl::Reset() {
+  io_buffer_ = nullptr;
+  length_ = 0;
+}
+
 const char* QuicMemSliceImpl::data() const {
   if (io_buffer_ == nullptr) {
     return nullptr;
@@ -41,4 +46,4 @@ const char* QuicMemSliceImpl::data() const {
   return io_buffer_->data();
 }
 
-}  // namespace net
+}  // namespace quic

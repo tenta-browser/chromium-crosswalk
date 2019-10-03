@@ -4,16 +4,17 @@
 
 #include "chrome/browser/android/webapk/webapk_install_service.h"
 
+#include <utility>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
+#include "chrome/android/chrome_jni_headers/WebApkInstallService_jni.h"
 #include "chrome/browser/android/shortcut_helper.h"
 #include "chrome/browser/android/shortcut_info.h"
 #include "chrome/browser/android/webapk/webapk_install_service_factory.h"
 #include "chrome/browser/android/webapk/webapk_installer.h"
-#include "jni/WebApkInstallService_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
 
 // static
@@ -36,24 +37,26 @@ bool WebApkInstallService::IsInstallInProgress(const GURL& web_manifest_url) {
 void WebApkInstallService::InstallAsync(content::WebContents* web_contents,
                                         const ShortcutInfo& shortcut_info,
                                         const SkBitmap& primary_icon,
+                                        bool is_primary_icon_maskable,
                                         const SkBitmap& badge_icon,
-                                        webapk::InstallSource install_source) {
+                                        WebappInstallSource install_source) {
   if (IsInstallInProgress(shortcut_info.manifest_url)) {
     ShortcutHelper::ShowWebApkInstallInProgressToast();
     return;
   }
 
   installs_.insert(shortcut_info.manifest_url);
-  webapk::TrackInstallSource(install_source);
+  InstallableMetrics::TrackInstallEvent(install_source);
 
   ShowInstallInProgressNotification(shortcut_info, primary_icon);
 
   // We pass an observer which wraps the WebContents to the callback, since the
   // installation may take more than 10 seconds so there is a chance that the
   // WebContents has been destroyed before the install is finished.
-  auto observer = base::MakeUnique<LifetimeObserver>(web_contents);
+  auto observer = std::make_unique<LifetimeObserver>(web_contents);
   WebApkInstaller::InstallAsync(
-      browser_context_, shortcut_info, primary_icon, badge_icon,
+      browser_context_, shortcut_info, primary_icon, is_primary_icon_maskable,
+      badge_icon,
       base::Bind(&WebApkInstallService::OnFinishedInstall,
                  weak_ptr_factory_.GetWeakPtr(), base::Passed(&observer),
                  shortcut_info, primary_icon));
@@ -61,9 +64,9 @@ void WebApkInstallService::InstallAsync(content::WebContents* web_contents,
 
 void WebApkInstallService::UpdateAsync(
     const base::FilePath& update_request_path,
-    const FinishCallback& finish_callback) {
+    FinishCallback finish_callback) {
   WebApkInstaller::UpdateAsync(browser_context_, update_request_path,
-                               finish_callback);
+                               std::move(finish_callback));
 }
 
 void WebApkInstallService::OnFinishedInstall(
@@ -94,8 +97,10 @@ void WebApkInstallService::OnFinishedInstall(
     if (!web_contents)
       return;
 
+    // TODO(https://crbug.com/861643): Support maskable icons here.
     ShortcutHelper::AddToLauncherWithSkBitmap(web_contents, shortcut_info,
-                                              primary_icon);
+                                              primary_icon,
+                                              /*is_icon_maskable=*/false);
   }
 }
 

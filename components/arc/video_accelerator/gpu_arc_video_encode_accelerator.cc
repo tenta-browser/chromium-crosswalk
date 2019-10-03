@@ -6,36 +6,26 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
+#include "components/arc/video_accelerator/arc_video_accelerator_util.h"
 #include "media/base/video_types.h"
 #include "media/gpu/gpu_video_encode_accelerator_factory.h"
+#include "media/gpu/macros.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
-#define DVLOGF(x) DVLOG(x) << __func__ << "(): "
-
 namespace arc {
-
-namespace {
-
-// Helper class to notify client about the end of processing a video frame.
-class VideoFrameDoneNotifier {
- public:
-  explicit VideoFrameDoneNotifier(base::OnceClosure notify_closure)
-      : notify_closure_(std::move(notify_closure)) {}
-  ~VideoFrameDoneNotifier() { std::move(notify_closure_).Run(); }
-
- private:
-  base::OnceClosure notify_closure_;
-};
-
-}  // namespace
 
 GpuArcVideoEncodeAccelerator::GpuArcVideoEncodeAccelerator(
     const gpu::GpuPreferences& gpu_preferences)
-    : gpu_preferences_(gpu_preferences) {}
+    : gpu_preferences_(gpu_preferences),
+      input_storage_type_(
+          media::VideoEncodeAccelerator::Config::StorageType::kShmem),
+      bitstream_buffer_serial_(0) {}
 
 GpuArcVideoEncodeAccelerator::~GpuArcVideoEncodeAccelerator() = default;
 
@@ -54,15 +44,14 @@ void GpuArcVideoEncodeAccelerator::RequireBitstreamBuffers(
 
 void GpuArcVideoEncodeAccelerator::BitstreamBufferReady(
     int32_t bitstream_buffer_id,
-    size_t payload_size,
-    bool key_frame,
-    base::TimeDelta timestamp) {
+    const media::BitstreamBufferMetadata& metadata) {
   DVLOGF(2) << "id=" << bitstream_buffer_id;
   DCHECK(client_);
   auto iter = use_bitstream_cbs_.find(bitstream_buffer_id);
   DCHECK(iter != use_bitstream_cbs_.end());
   std::move(iter->second)
-      .Run(payload_size, key_frame, timestamp.InMicroseconds());
+      .Run(metadata.payload_size_bytes, metadata.key_frame,
+           metadata.timestamp.InMicroseconds());
   use_bitstream_cbs_.erase(iter);
 }
 
@@ -81,21 +70,20 @@ void GpuArcVideoEncodeAccelerator::GetSupportedProfiles(
 }
 
 void GpuArcVideoEncodeAccelerator::Initialize(
-    VideoPixelFormat input_format,
-    const gfx::Size& visible_size,
-    VideoEncodeAccelerator::StorageType input_storage,
-    VideoCodecProfile output_profile,
-    uint32_t initial_bitrate,
+    const media::VideoEncodeAccelerator::Config& config,
     VideoEncodeClientPtr client,
     InitializeCallback callback) {
-  DVLOGF(2) << "visible_size=" << visible_size.ToString()
-            << ", profile=" << output_profile;
-
-  input_pixel_format_ = input_format;
-  visible_size_ = visible_size;
+  DVLOGF(2) << config.AsHumanReadableString();
+  if (!config.storage_type.has_value()) {
+    DLOG(ERROR) << "storage type must be specified";
+    std::move(callback).Run(false);
+    return;
+  }
+  input_pixel_format_ = config.input_format;
+  input_storage_type_ = *config.storage_type;
+  visible_size_ = config.input_visible_size;
   accelerator_ = media::GpuVideoEncodeAcceleratorFactory::CreateVEA(
-      input_pixel_format_, visible_size_, output_profile, initial_bitrate, this,
-      gpu_preferences_);
+      config, this, gpu_preferences_);
   if (accelerator_ == nullptr) {
     DLOG(ERROR) << "Failed to create a VideoEncodeAccelerator.";
     std::move(callback).Run(false);
@@ -105,13 +93,8 @@ void GpuArcVideoEncodeAccelerator::Initialize(
   std::move(callback).Run(true);
 }
 
-static void DropShareMemoryAndVideoFrameDoneNotifier(
-    std::unique_ptr<base::SharedMemory> shm,
-    std::unique_ptr<VideoFrameDoneNotifier> notifier) {
-  // Just let |shm| and |notifier| fall out of scope.
-}
-
 void GpuArcVideoEncodeAccelerator::Encode(
+    media::VideoPixelFormat format,
     mojo::ScopedHandle handle,
     std::vector<::arc::VideoFramePlane> planes,
     int64_t timestamp,
@@ -123,20 +106,53 @@ void GpuArcVideoEncodeAccelerator::Encode(
     return;
   }
 
-  auto notifier = std::make_unique<VideoFrameDoneNotifier>(std::move(callback));
-
   if (planes.empty()) {  // EOS
     accelerator_->Encode(media::VideoFrame::CreateEOSFrame(), force_keyframe);
     return;
   }
 
   base::ScopedFD fd = UnwrapFdFromMojoHandle(std::move(handle));
-  if (!fd.is_valid())
+  if (!fd.is_valid()) {
+    client_->NotifyError(Error::kPlatformFailureError);
     return;
+  }
+
+  if (input_storage_type_ ==
+      media::VideoEncodeAccelerator::Config::StorageType::kShmem) {
+    EncodeSharedMemory(std::move(fd), format, planes, timestamp, force_keyframe,
+                       std::move(callback));
+  } else {
+    EncodeDmabuf(std::move(fd), format, planes, timestamp, force_keyframe,
+                 std::move(callback));
+  }
+}
+
+void GpuArcVideoEncodeAccelerator::EncodeDmabuf(
+    base::ScopedFD fd,
+    media::VideoPixelFormat format,
+    const std::vector<::arc::VideoFramePlane>& planes,
+    int64_t timestamp,
+    bool force_keyframe,
+    EncodeCallback callback) {
+  client_->NotifyError(Error::kInvalidArgumentError);
+  NOTIMPLEMENTED();
+}
+
+void GpuArcVideoEncodeAccelerator::EncodeSharedMemory(
+    base::ScopedFD fd,
+    media::VideoPixelFormat format,
+    const std::vector<::arc::VideoFramePlane>& planes,
+    int64_t timestamp,
+    bool force_keyframe,
+    EncodeCallback callback) {
+  if (format != media::PIXEL_FORMAT_I420) {
+    DLOG(ERROR) << "Formats other than I420 are unsupported. format=" << format;
+    client_->NotifyError(Error::kInvalidArgumentError);
+    return;
+  }
 
   size_t allocation_size =
-      media::VideoFrame::AllocationSize(input_pixel_format_, coded_size_);
-
+      media::VideoFrame::AllocationSize(format, coded_size_);
   // TODO(rockot): Pass GUIDs through Mojo. https://crbug.com/713763.
   // TODO(rockot): This fd comes from a mojo::ScopedHandle in
   // GpuArcVideoService::BindSharedMemory. That should be passed through,
@@ -167,18 +183,17 @@ void GpuArcVideoEncodeAccelerator::Encode(
 
   uint8_t* shm_memory = reinterpret_cast<uint8_t*>(shm->memory());
   auto frame = media::VideoFrame::WrapExternalSharedMemory(
-      input_pixel_format_, coded_size_, gfx::Rect(visible_size_), visible_size_,
+      format, coded_size_, gfx::Rect(visible_size_), visible_size_,
       shm_memory + aligned_offset, allocation_size, shm_handle,
       planes[0].offset, base::TimeDelta::FromMicroseconds(timestamp));
 
-  // Wrap |shm| and |notifier| in a callback and add it as a destruction
-  // observer. When the |frame| goes out of scope, it unmaps and releases
-  // the shared memory as well as notifies |client_| about the end of processing
-  // the |frame|.
-  frame->AddDestructionObserver(
-      base::Bind(&DropShareMemoryAndVideoFrameDoneNotifier, base::Passed(&shm),
-                 base::Passed(&notifier)));
-
+  // Add the function to relase |shm| and |callback| to |frame|'s  destruction
+  // observer. When the |frame| goes out of scope, it unmaps and releases the
+  // shared memory as well as executes |callback|.
+  frame->AddDestructionObserver(base::BindOnce(
+      base::DoNothing::Once<std::unique_ptr<base::SharedMemory>>(),
+      std::move(shm)));
+  frame->AddDestructionObserver(std::move(callback));
   accelerator_->Encode(frame, force_keyframe);
 }
 
@@ -194,8 +209,16 @@ void GpuArcVideoEncodeAccelerator::UseBitstreamBuffer(
   }
 
   base::ScopedFD fd = UnwrapFdFromMojoHandle(std::move(shmem_fd));
-  if (!fd.is_valid())
+  if (!fd.is_valid()) {
+    client_->NotifyError(Error::kPlatformFailureError);
     return;
+  }
+
+  size_t shmem_size;
+  if (!GetFileSize(fd.get(), &shmem_size)) {
+    client_->NotifyError(Error::kInvalidArgumentError);
+    return;
+  }
 
   // TODO(rockot): Pass GUIDs through Mojo. https://crbug.com/713763.
   // TODO(rockot): This fd comes from a mojo::ScopedHandle in
@@ -204,10 +227,17 @@ void GpuArcVideoEncodeAccelerator::UseBitstreamBuffer(
   // TODO(rockot): Pass through a real size rather than |0|.
   base::UnguessableToken guid = base::UnguessableToken::Create();
   base::SharedMemoryHandle shm_handle(base::FileDescriptor(fd.release(), true),
-                                      0u, guid);
+                                      shmem_size, guid);
   use_bitstream_cbs_.emplace(bitstream_buffer_serial_, std::move(callback));
-  accelerator_->UseOutputBitstreamBuffer(media::BitstreamBuffer(
-      bitstream_buffer_serial_, shm_handle, size, offset));
+  accelerator_->UseOutputBitstreamBuffer(
+      media::BitstreamBuffer(bitstream_buffer_serial_, shm_handle,
+                             false /* read_only */, size, offset));
+
+  // Close |shm_handle| because it is actually duplicated on the ctor of
+  // media::BitstreamBuffer and it will not close itself on the dtor.
+  if (shm_handle.IsValid()) {
+    shm_handle.Close();
+  }
 
   // Mask against 30 bits to avoid (undefined) wraparound on signed integer.
   bitstream_buffer_serial_ = (bitstream_buffer_serial_ + 1) & 0x3FFFFFFF;
@@ -231,27 +261,6 @@ void GpuArcVideoEncodeAccelerator::Flush(FlushCallback callback) {
     return;
   }
   accelerator_->Flush(std::move(callback));
-}
-
-base::ScopedFD GpuArcVideoEncodeAccelerator::UnwrapFdFromMojoHandle(
-    mojo::ScopedHandle handle) {
-  DCHECK(client_);
-  if (!handle.is_valid()) {
-    DLOG(ERROR) << "handle is invalid.";
-    client_->NotifyError(Error::kInvalidArgumentError);
-    return base::ScopedFD();
-  }
-
-  base::PlatformFile platform_file;
-  MojoResult mojo_result =
-      mojo::UnwrapPlatformFile(std::move(handle), &platform_file);
-  if (mojo_result != MOJO_RESULT_OK) {
-    DLOG(ERROR) << "UnwrapPlatformFile failed: " << mojo_result;
-    client_->NotifyError(Error::kPlatformFailureError);
-    return base::ScopedFD();
-  }
-
-  return base::ScopedFD(platform_file);
 }
 
 }  // namespace arc

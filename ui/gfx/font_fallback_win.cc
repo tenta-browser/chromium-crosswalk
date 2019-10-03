@@ -16,15 +16,17 @@
 #include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/win/registry.h"
+#include "base/win/scoped_gdi_object.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_fallback.h"
-#include "ui/gfx/platform_font_win.h"
-#include "ui/gfx/win/direct_write.h"
-#include "ui/gfx/win/text_analysis_source.h"
+#include "ui/gfx/font_fallback_skia_impl.h"
 
 namespace gfx {
 
@@ -76,6 +78,7 @@ void AppendFont(const std::string& name, int size, std::vector<Font>* fonts) {
 void QueryLinkedFontsFromRegistry(const Font& font,
                                   std::map<std::string, std::string>* font_map,
                                   std::vector<Font>* linked_fonts) {
+  std::string logging_str;
   const wchar_t* kSystemLink =
       L"Software\\Microsoft\\Windows NT\\CurrentVersion\\FontLink\\SystemLink";
 
@@ -90,24 +93,38 @@ void QueryLinkedFontsFromRegistry(const Font& font,
     return;
   }
 
+  base::StringAppendF(&logging_str, "Original font: %s\n",
+                      font.GetFontName().c_str());
+
   std::string filename;
   std::string font_name;
   for (size_t i = 0; i < values.size(); ++i) {
     internal::ParseFontLinkEntry(
         base::WideToUTF8(values[i]), &filename, &font_name);
+
+    base::StringAppendF(&logging_str, "fallback: '%s' '%s'\n",
+                        font_name.c_str(), filename.c_str());
+
     // If the font name is present, add that directly, otherwise add the
     // font names corresponding to the filename.
     if (!font_name.empty()) {
       AppendFont(font_name, font.GetFontSize(), linked_fonts);
     } else if (!filename.empty()) {
-      std::vector<std::string> font_names;
-      GetFontNamesFromFilename(filename, font_map, &font_names);
-      for (size_t i = 0; i < font_names.size(); ++i)
-        AppendFont(font_names[i], font.GetFontSize(), linked_fonts);
+      std::vector<std::string> filename_fonts;
+      GetFontNamesFromFilename(filename, font_map, &filename_fonts);
+      for (const std::string& filename_font : filename_fonts)
+        AppendFont(filename_font, font.GetFontSize(), linked_fonts);
     }
   }
 
   key.Close();
+
+  for (const auto& resolved_font : *linked_fonts) {
+    base::StringAppendF(&logging_str, "resolved: '%s'\n",
+                        resolved_font.GetFontName().c_str());
+  }
+
+  TRACE_EVENT1("fonts", "QueryLinkedFontsFromRegistry", "results", logging_str);
 }
 
 // CachedFontLinkSettings is a singleton cache of the Windows font settings
@@ -145,16 +162,22 @@ CachedFontLinkSettings* CachedFontLinkSettings::GetInstance() {
 
 const std::vector<Font>* CachedFontLinkSettings::GetLinkedFonts(
     const Font& font) {
+  SCOPED_UMA_HISTOGRAM_LONG_TIMER("FontFallback.GetLinkedFonts.Timing");
   const std::string& font_name = font.GetFontName();
   std::map<std::string, std::vector<Font> >::const_iterator it =
       cached_linked_fonts_.find(font_name);
   if (it != cached_linked_fonts_.end())
     return &it->second;
 
-  cached_linked_fonts_[font_name] = std::vector<Font>();
-  std::vector<Font>* linked_fonts = &cached_linked_fonts_[font_name];
+  TRACE_EVENT1("fonts", "CachedFontLinkSettings::GetLinkedFonts", "font_name",
+               font_name);
 
+  SCOPED_UMA_HISTOGRAM_LONG_TIMER(
+      "FontFallback.GetLinkedFonts.CacheMissTiming");
+  std::vector<Font>* linked_fonts = &cached_linked_fonts_[font_name];
   QueryLinkedFontsFromRegistry(font, &cached_system_fonts_, linked_fonts);
+  UMA_HISTOGRAM_COUNTS_100("FontFallback.GetLinkedFonts.FontCount",
+                           linked_fonts->size());
   return linked_fonts;
 }
 
@@ -162,69 +185,6 @@ CachedFontLinkSettings::CachedFontLinkSettings() {
 }
 
 CachedFontLinkSettings::~CachedFontLinkSettings() {
-}
-
-// Callback to |EnumEnhMetaFile()| to intercept font creation.
-int CALLBACK MetaFileEnumProc(HDC hdc,
-                              HANDLETABLE* table,
-                              CONST ENHMETARECORD* record,
-                              int table_entries,
-                              LPARAM log_font) {
-  if (record->iType == EMR_EXTCREATEFONTINDIRECTW) {
-    const EMREXTCREATEFONTINDIRECTW* create_font_record =
-        reinterpret_cast<const EMREXTCREATEFONTINDIRECTW*>(record);
-    *reinterpret_cast<LOGFONT*>(log_font) = create_font_record->elfw.elfLogFont;
-  }
-  return 1;
-}
-
-bool GetUniscribeFallbackFont(const Font& font,
-                              const wchar_t* text,
-                              int text_length,
-                              Font* result) {
-  // Adapted from WebKit's |FontCache::GetFontDataForCharacters()|.
-  // Uniscribe doesn't expose a method to query fallback fonts, so this works by
-  // drawing the text to an EMF object with Uniscribe's ScriptStringOut and then
-  // inspecting the EMF object to figure out which font Uniscribe used.
-  //
-  // DirectWrite in Windows 8.1 provides a cleaner alternative:
-  // http://msdn.microsoft.com/en-us/library/windows/desktop/dn280480.aspx
-
-  static HDC hdc = CreateCompatibleDC(NULL);
-
-  // Use a meta file to intercept the fallback font chosen by Uniscribe.
-  HDC meta_file_dc = CreateEnhMetaFile(hdc, NULL, NULL, NULL);
-  if (!meta_file_dc)
-    return false;
-
-  SelectObject(meta_file_dc, font.GetNativeFont());
-
-  SCRIPT_STRING_ANALYSIS script_analysis;
-  HRESULT hresult =
-      ScriptStringAnalyse(meta_file_dc, text, text_length, 0, -1,
-                          SSA_METAFILE | SSA_FALLBACK | SSA_GLYPHS | SSA_LINK,
-                          0, NULL, NULL, NULL, NULL, NULL, &script_analysis);
-
-  if (SUCCEEDED(hresult)) {
-    hresult = ScriptStringOut(script_analysis, 0, 0, 0, NULL, 0, 0, FALSE);
-    ScriptStringFree(&script_analysis);
-  }
-
-  bool found_fallback = false;
-  HENHMETAFILE meta_file = CloseEnhMetaFile(meta_file_dc);
-  if (SUCCEEDED(hresult)) {
-    LOGFONT log_font;
-    log_font.lfFaceName[0] = 0;
-    EnumEnhMetaFile(0, meta_file, MetaFileEnumProc, &log_font, NULL);
-    if (log_font.lfFaceName[0]) {
-      *result =
-          Font(base::UTF16ToUTF8(log_font.lfFaceName), font.GetFontSize());
-      found_fallback = true;
-    }
-  }
-  DeleteEnhMetaFile(meta_file);
-
-  return found_fallback;
 }
 
 }  // namespace
@@ -253,8 +213,8 @@ void ParseFontFamilyString(const std::string& family,
   // followed optionally by the font family name and a pair of integer scaling
   // factors.
   // TODO(asvitkine): Should we support these scaling factors?
-  *font_names = base::SplitString(
-      family, "&", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  *font_names = base::SplitString(family, "&", base::TRIM_WHITESPACE,
+                                  base::SPLIT_WANT_ALL);
   if (!font_names->empty()) {
     const size_t index = font_names->back().find('(');
     if (index != std::string::npos) {
@@ -265,145 +225,46 @@ void ParseFontFamilyString(const std::string& family,
   }
 }
 
-LinkedFontsIterator::LinkedFontsIterator(Font font)
-    : original_font_(font),
-      next_font_set_(false),
-      linked_fonts_(NULL),
-      linked_font_index_(0) {
-  SetNextFont(original_font_);
-}
-
-LinkedFontsIterator::~LinkedFontsIterator() {
-}
-
-void LinkedFontsIterator::SetNextFont(Font font) {
-  next_font_ = font;
-  next_font_set_ = true;
-}
-
-bool LinkedFontsIterator::NextFont(Font* font) {
-  if (next_font_set_) {
-    next_font_set_ = false;
-    current_font_ = next_font_;
-    *font = current_font_;
-    return true;
-  }
-
-  // First time through, get the linked fonts list.
-  if (linked_fonts_ == NULL)
-    linked_fonts_ = GetLinkedFonts();
-
-  if (linked_font_index_ == linked_fonts_->size())
-    return false;
-
-  current_font_ = linked_fonts_->at(linked_font_index_++);
-  *font = current_font_;
-  return true;
-}
-
-const std::vector<Font>* LinkedFontsIterator::GetLinkedFonts() const {
-  CachedFontLinkSettings* font_link = CachedFontLinkSettings::GetInstance();
-
-  // First, try to get the list for the original font.
-  const std::vector<Font>* fonts = font_link->GetLinkedFonts(original_font_);
-
-  // If there are no linked fonts for the original font, try querying the
-  // ones for the current font. This may happen if the first font is a custom
-  // font that has no linked fonts in the registry.
-  //
-  // Note: One possibility would be to always merge both lists of fonts,
-  //       but it is not clear whether there are any real world scenarios
-  //       where this would actually help.
-  if (fonts->empty())
-    fonts = font_link->GetLinkedFonts(current_font_);
-
-  return fonts;
-}
-
 }  // namespace internal
 
 std::vector<Font> GetFallbackFonts(const Font& font) {
+  TRACE_EVENT0("fonts", "gfx::GetFallbackFonts");
   std::string font_family = font.GetFontName();
-
-  // LinkedFontsIterator doesn't care about the font size, so we always pass 10.
-  internal::LinkedFontsIterator linked_fonts(Font(font_family, 10));
-  std::vector<Font> fallback_fonts;
-  Font current;
-  while (linked_fonts.NextFont(&current))
-    fallback_fonts.push_back(current);
-  return fallback_fonts;
+  CachedFontLinkSettings* font_link = CachedFontLinkSettings::GetInstance();
+  // GetLinkedFonts doesn't care about the font size, so we always pass 10.
+  return *font_link->GetLinkedFonts(Font(font_family, 10));
 }
 
 bool GetFallbackFont(const Font& font,
-                     const base::char16* text,
-                     int text_length,
+                     const std::string& locale,
+                     base::StringPiece16 text,
                      Font* result) {
+  TRACE_EVENT0("fonts", "gfx::GetFallbackFont");
   // Creating a DirectWrite font fallback can be expensive. It's ok in the
   // browser process because we can use the shared system fallback, but in the
   // renderer this can cause hangs. Code that needs font fallback in the
   // renderer should instead use the font proxy.
-  DCHECK(base::MessageLoopForUI::IsCurrent());
+  DCHECK(base::MessageLoopCurrentForUI::IsSet());
+
+  // The text passed must be at least length 1.
+  if (text.empty())
+    return false;
 
   // Check that we have at least as much text as was claimed. If we have less
   // text than expected then DirectWrite will become confused and crash. This
   // shouldn't happen, but crbug.com/624905 shows that it happens sometimes.
-  DCHECK_GE(wcslen(text), static_cast<size_t>(text_length));
-  text_length = std::min(wcslen(text), static_cast<size_t>(text_length));
-
-  Microsoft::WRL::ComPtr<IDWriteFactory> factory;
-  gfx::win::CreateDWriteFactory(factory.GetAddressOf());
-  Microsoft::WRL::ComPtr<IDWriteFactory2> factory2;
-  factory.CopyTo(factory2.GetAddressOf());
-  if (!factory2) {
-    // IDWriteFactory2 is not available before Win8.1
-    return GetUniscribeFallbackFont(font, text, text_length, result);
-  }
-
-  Microsoft::WRL::ComPtr<IDWriteFontFallback> fallback;
-  if (FAILED(factory2->GetSystemFontFallback(fallback.GetAddressOf())))
+  constexpr base::char16 kNulCharacter = '\0';
+  if (text.find(kNulCharacter) != base::StringPiece16::npos)
     return false;
 
-  base::string16 locale = base::UTF8ToUTF16(base::i18n::GetConfiguredLocale());
+  std::string skia_fallback_family =
+      GetFallbackFontFamilyNameSkia(font, locale, text);
 
-  Microsoft::WRL::ComPtr<IDWriteNumberSubstitution> number_substitution;
-  if (FAILED(factory2->CreateNumberSubstitution(
-          DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE, locale.c_str(),
-          true /* ignoreUserOverride */, number_substitution.GetAddressOf()))) {
+  if (skia_fallback_family.empty())
     return false;
-  }
 
-  uint32_t mapped_length = 0;
-  Microsoft::WRL::ComPtr<IDWriteFont> mapped_font;
-  float scale = 0;
-  Microsoft::WRL::ComPtr<IDWriteTextAnalysisSource> text_analysis;
-  DWRITE_READING_DIRECTION reading_direction =
-      base::i18n::IsRTL() ? DWRITE_READING_DIRECTION_RIGHT_TO_LEFT
-                          : DWRITE_READING_DIRECTION_LEFT_TO_RIGHT;
-  if (FAILED(gfx::win::TextAnalysisSource::Create(
-          text_analysis.GetAddressOf(), text, locale.c_str(),
-          number_substitution.Get(), reading_direction))) {
-    return false;
-  }
-  base::string16 original_name = base::UTF8ToUTF16(font.GetFontName());
-  DWRITE_FONT_STYLE font_style = DWRITE_FONT_STYLE_NORMAL;
-  if (font.GetStyle() & Font::ITALIC)
-    font_style = DWRITE_FONT_STYLE_ITALIC;
-  if (FAILED(fallback->MapCharacters(
-          text_analysis.Get(), 0, text_length, nullptr, original_name.c_str(),
-          static_cast<DWRITE_FONT_WEIGHT>(font.GetWeight()), font_style,
-          DWRITE_FONT_STRETCH_NORMAL, &mapped_length,
-          mapped_font.GetAddressOf(), &scale))) {
-    return false;
-  }
-
-  if (mapped_font) {
-    base::string16 name;
-    if (FAILED(GetFamilyNameFromDirectWriteFont(mapped_font.Get(), &name)))
-      return false;
-    *result = Font(base::UTF16ToUTF8(name), font.GetFontSize() * scale);
-    return true;
-  }
-  return false;
+  *result = Font(skia_fallback_family, font.GetFontSize());
+  return true;
 }
 
 }  // namespace gfx

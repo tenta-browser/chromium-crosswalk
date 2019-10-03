@@ -4,21 +4,18 @@
 
 #include "chrome/child/pdf_child_init.h"
 
-#include "base/files/file_path.h"
-#include "base/files/file_util.h"
-#include "base/path_service.h"
 #include "build/build_config.h"
-#include "chrome/common/chrome_paths.h"
-#include "content/public/child/child_thread.h"
 
 #if defined(OS_WIN)
+#include "base/no_destructor.h"
 #include "base/win/current_module.h"
 #include "base/win/iat_patch_function.h"
+#include "content/public/child/child_thread.h"
 #endif
 
 namespace {
+
 #if defined(OS_WIN)
-static base::win::IATPatchFunction g_iat_patch_createdca;
 HDC WINAPI CreateDCAPatch(LPCSTR driver_name,
                           LPCSTR device_name,
                           LPCSTR output,
@@ -37,8 +34,9 @@ typedef DWORD (WINAPI* GetFontDataPtr) (HDC hdc,
                                         DWORD offset,
                                         LPVOID buffer,
                                         DWORD length);
-GetFontDataPtr g_original_get_font_data = NULL;
-static base::win::IATPatchFunction g_iat_patch_get_font_data;
+GetFontDataPtr g_original_get_font_data = nullptr;
+
+
 DWORD WINAPI GetFontDataPatch(HDC hdc,
                               DWORD table,
                               DWORD offset,
@@ -50,7 +48,6 @@ DWORD WINAPI GetFontDataPatch(HDC hdc,
 
     LOGFONT logfont;
     if (GetObject(font, sizeof(LOGFONT), &logfont)) {
-      std::vector<char> font_data;
       if (content::ChildThread::Get())
         content::ChildThread::Get()->PreCacheFont(logfont);
       rv = g_original_get_font_data(hdc, table, offset, buffer, length);
@@ -60,21 +57,31 @@ DWORD WINAPI GetFontDataPatch(HDC hdc,
   }
   return rv;
 }
-#endif  // OS_WIN
+#endif  // defined(OS_WIN)
 
 }  // namespace
 
 void InitializePDF() {
 #if defined(OS_WIN)
   // Need to patch a few functions for font loading to work correctly. This can
-  // be removed once we switch PDF to use Skia.
-  HMODULE current_module = CURRENT_MODULE();
-  g_iat_patch_createdca.PatchFromModule(current_module, "gdi32.dll",
-                                        "CreateDCA", CreateDCAPatch);
-  g_iat_patch_get_font_data.PatchFromModule(current_module, "gdi32.dll",
-                                            "GetFontData", GetFontDataPatch);
-  g_original_get_font_data = reinterpret_cast<GetFontDataPtr>(
-      g_iat_patch_get_font_data.original_function());
-#endif  // OS_WIN
-}
+  // be removed once we switch PDF to use Skia
+  // (https://bugs.chromium.org/p/pdfium/issues/detail?id=11).
+#if defined(COMPONENT_BUILD)
+  HMODULE module = ::GetModuleHandleA("pdfium.dll");
+  DCHECK(module);
+#else
+  HMODULE module = CURRENT_MODULE();
+#endif  // defined(COMPONENT_BUILD)
 
+  static base::NoDestructor<base::win::IATPatchFunction> patch_createdca;
+  patch_createdca->PatchFromModule(module, "gdi32.dll", "CreateDCA",
+                                   reinterpret_cast<void*>(CreateDCAPatch));
+
+  static base::NoDestructor<base::win::IATPatchFunction> patch_get_font_data;
+  patch_get_font_data->PatchFromModule(
+      module, "gdi32.dll", "GetFontData",
+      reinterpret_cast<void*>(GetFontDataPatch));
+  g_original_get_font_data = reinterpret_cast<GetFontDataPtr>(
+      patch_get_font_data->original_function());
+#endif  // defined(OS_WIN)
+}

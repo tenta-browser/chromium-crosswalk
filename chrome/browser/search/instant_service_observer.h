@@ -7,7 +7,13 @@
 
 #include <vector>
 
-struct InstantMostVisitedItem;
+#include "build/build_config.h"
+
+#if defined(OS_ANDROID)
+#error "Instant is only used on desktop";
+#endif
+
+struct InstantMostVisitedInfo;
 struct ThemeBackgroundInfo;
 
 // InstantServiceObserver defines the observer interface for InstantService.
@@ -16,9 +22,8 @@ class InstantServiceObserver {
   // Indicates that the user's custom theme has changed in some way.
   virtual void ThemeInfoChanged(const ThemeBackgroundInfo&);
 
-  // Indicates that the most visited items has changed.
-  virtual void MostVisitedItemsChanged(
-      const std::vector<InstantMostVisitedItem>&);
+  // Indicates that the most visited items have changed in some way.
+  virtual void MostVisitedInfoChanged(const InstantMostVisitedInfo&);
 
  protected:
   virtual ~InstantServiceObserver() {}

@@ -4,9 +4,11 @@
 
 #include "chrome/browser/ui/webui/theme_source.h"
 
+#include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resources_util.h"
 #include "chrome/browser/search/instant_io_context.h"
@@ -20,6 +22,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/url_request/url_request.h"
 #include "ui/base/layout.h"
@@ -50,7 +53,7 @@ void ProcessImageOnUiThread(const gfx::ImageSkia& image,
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   const gfx::ImageSkiaRep& rep = image.GetRepresentation(scale);
   gfx::PNGCodec::EncodeBGRASkBitmap(
-      rep.sk_bitmap(), false /* discard transparency */, &data->data());
+      rep.GetBitmap(), false /* discard transparency */, &data->data());
 }
 
 void ProcessResourceOnUiThread(int resource_id,
@@ -71,7 +74,7 @@ ThemeSource::ThemeSource(Profile* profile) : profile_(profile) {}
 
 ThemeSource::~ThemeSource() = default;
 
-std::string ThemeSource::GetSource() const {
+std::string ThemeSource::GetSource() {
   return chrome::kChromeUIThemeHost;
 }
 
@@ -98,7 +101,7 @@ void ThemeSource::StartDataRequest(
   int resource_id = -1;
   if (parsed_path == "current-channel-logo") {
     switch (chrome::GetChannel()) {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       case version_info::Channel::CANARY:
         resource_id = IDR_PRODUCT_LOGO_32_CANARY;
         break;
@@ -117,6 +120,7 @@ void ThemeSource::StartDataRequest(
       case version_info::Channel::BETA:
       case version_info::Channel::STABLE:
         NOTREACHED();
+        FALLTHROUGH;
 #endif
       case version_info::Channel::UNKNOWN:
         resource_id = IDR_PRODUCT_LOGO_32;
@@ -154,14 +158,14 @@ void ThemeSource::StartDataRequest(
   }
 }
 
-std::string ThemeSource::GetMimeType(const std::string& path) const {
+std::string ThemeSource::GetMimeType(const std::string& path) {
   std::string parsed_path;
   webui::ParsePathAndScale(GetThemeUrl(path), &parsed_path, nullptr);
   return IsNewTabCssPath(parsed_path) ? "text/css" : "image/png";
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
-ThemeSource::TaskRunnerForRequestPath(const std::string& path) const {
+ThemeSource::TaskRunnerForRequestPath(const std::string& path) {
   std::string parsed_path;
   webui::ParsePathAndScale(GetThemeUrl(path), &parsed_path, nullptr);
 
@@ -178,14 +182,14 @@ ThemeSource::TaskRunnerForRequestPath(const std::string& path) const {
              : nullptr;
 }
 
-bool ThemeSource::AllowCaching() const {
+bool ThemeSource::AllowCaching() {
   return false;
 }
 
 bool ThemeSource::ShouldServiceRequest(
     const GURL& url,
     content::ResourceContext* resource_context,
-    int render_process_id) const {
+    int render_process_id) {
   return url.SchemeIs(chrome::kChromeSearchScheme)
              ? InstantIOContext::ShouldServiceRequest(url, resource_context,
                                                       render_process_id)
@@ -229,8 +233,8 @@ void ThemeSource::SendThemeImage(
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
     // Fetching image data in ResourceBundle should happen on the UI thread. See
     // crbug.com/449277
-    content::BrowserThread::PostTaskAndReply(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraitsAndReply(
+        FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(&ProcessResourceOnUiThread, resource_id, scale, data),
         base::BindOnce(callback, data));
   }

@@ -13,10 +13,12 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/field_types.h"
+#include "components/payments/content/initialization_task.h"
 #include "components/payments/core/currency_formatter.h"
 #include "components/payments/core/payment_options_provider.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 #include "url/gurl.h"
 
 namespace payments {
@@ -32,14 +34,25 @@ extern const char kAndroidPayMethodName[];
 // The spec contains all the options that the merchant has specified about this
 // Payment Request. It's a (mostly) read-only view, which can be updated in
 // certain occasions by the merchant (see API).
-class PaymentRequestSpec : public PaymentOptionsProvider {
+//
+// The spec starts out completely initialized when a PaymentRequest object is
+// created, but can be placed into uninitialized state if PaymentRequest.show()
+// was called with a promise. This allows for asynchronous calculation of the
+// shopping cart contents, the total, the shipping options, and the modifiers.
+//
+// The initialization state is observed by PaymentRequestDialogView for showing
+// a "Loading..." spinner.
+class PaymentRequestSpec : public PaymentOptionsProvider,
+                           public InitializationTask {
  public:
   // This enum represents which bit of information was changed to trigger an
   // update roundtrip with the website.
   enum class UpdateReason {
     NONE,
+    INITIAL_PAYMENT_DETAILS,
     SHIPPING_OPTION,
     SHIPPING_ADDRESS,
+    RETRY,
   };
 
   // Any class call add itself as Observer via AddObserver() and receive
@@ -69,11 +82,41 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   // state that depends on |details|.
   void UpdateWith(mojom::PaymentDetailsPtr details);
 
+  // Called when the merchant calls retry().
+  void Retry(mojom::PaymentValidationErrorsPtr validation_errors);
+
+  // Gets the display string for the general retry error message.
+  const base::string16& retry_error_message() const {
+    return retry_error_message_;
+  }
+
+  // Reset the display string for the general retry error message. This method
+  // is called in PaymentSheetViewController::ButtonPressed when the user
+  // interacts. That is, the retry error message is displayed  on UI until user
+  // interaction happens since retry() called.
+  void reset_retry_error_message() { retry_error_message_.clear(); }
+
+  // Gets the display string for the shipping address error for the given
+  // |type|.
+  base::string16 GetShippingAddressError(autofill::ServerFieldType type);
+
+  // Gets the display string for the payer error for the given |type|.
+  base::string16 GetPayerError(autofill::ServerFieldType type);
+
+  // Returns whether there is a shipping address error message set by merchant.
+  bool has_shipping_address_error() const;
+
+  // Returns whether there is a payer error message set by merchant.
+  bool has_payer_error() const;
+
   // Recomputes spec based on details.
   void RecomputeSpecForDetails();
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
+
+  // InitializationTask:
+  bool IsInitialized() const override;
 
   // PaymentOptionsProvider:
   bool request_shipping() const override;
@@ -81,6 +124,8 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   bool request_payer_phone() const override;
   bool request_payer_email() const override;
   PaymentShippingType shipping_type() const override;
+
+  bool supports_basic_card() const { return !supported_card_networks_.empty(); }
 
   const std::vector<std::string>& supported_card_networks() const {
     return supported_card_networks_;
@@ -127,7 +172,11 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
     return selected_shipping_option_error_;
   }
 
+  // Notifies observers that spec is going to be updated due to |reason|. This
+  // shows a spinner in UI that goes away when merchant calls updateWith() or
+  // ignores the shipping*change event.
   void StartWaitingForUpdateWith(UpdateReason reason);
+
   bool IsMixedCurrency() const;
 
   UpdateReason current_update_reason() const { return current_update_reason_; }
@@ -149,10 +198,6 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
     return method_data_;
   }
 
-  // Returns whether any of the payment method names are "basic-card" or one of
-  // the networks ("visa", "amex", "mastercard", etc).
-  bool HasBasicCardMethodName() const;
-
  private:
   // Returns the first applicable modifier in the Payment Request for the
   // |selected_instrument|.
@@ -161,8 +206,9 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
 
   // Updates the |selected_shipping_option| based on the data passed to this
   // payment request by the website. This will set selected_shipping_option_ to
-  // the last option marked selected in the options array. If no options are
-  // provided and this method is called |after_update|, it means the merchant
+  // the last option marked selected in the options array. If merchants provides
+  // no options or an error message this method is called |after_update| (after
+  // user changed their shipping address selection), it means the merchant
   // doesn't ship to this location. In this case,
   // |selected_shipping_option_error_| will be set.
   void UpdateSelectedShippingOption(bool after_update);
@@ -176,7 +222,6 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   // the CurrencyFormatter is cached here.
   CurrencyFormatter* GetOrCreateCurrencyFormatter(
       const std::string& currency_code,
-      const std::string& currency_system,
       const std::string& locale_name);
 
   mojom::PaymentOptionsPtr options_;
@@ -220,7 +265,10 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
 
   // The |observer_for_testing_| will fire after all the |observers_| have been
   // notified.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
+
+  base::string16 retry_error_message_;
+  mojom::PayerErrorsPtr payer_errors_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestSpec);
 };

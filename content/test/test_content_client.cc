@@ -28,11 +28,12 @@ TestContentClient::TestContentClient() {
 
 #if defined(OS_ANDROID)
   // on Android all pak files are inside the paks folder.
-  PathService::Get(base::DIR_ANDROID_APP_DATA, &content_shell_pack_path);
+  CHECK(base::PathService::Get(base::DIR_ANDROID_APP_DATA,
+                               &content_shell_pack_path));
   content_shell_pack_path = content_shell_pack_path.Append(
       FILE_PATH_LITERAL("paks"));
 #else
-  PathService::Get(base::DIR_MODULE, &content_shell_pack_path);
+  CHECK(base::PathService::Get(base::DIR_ASSETS, &content_shell_pack_path));
 #endif  // defined(OS_ANDROID)
 
   // Add the content_shell main pak file.
@@ -43,7 +44,7 @@ TestContentClient::TestContentClient() {
 #if defined(OS_ANDROID)
     ui::ResourceBundle::InitSharedInstanceWithLocale(
         base::android::GetDefaultLocaleString(), NULL,
-        ui::ResourceBundle::LOAD_COMMON_RESOURCES);
+        ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
 
     ui::LoadMainAndroidPackFile("assets/content_shell.pak",
                                 content_shell_pack_path);
@@ -56,13 +57,9 @@ TestContentClient::TestContentClient() {
 TestContentClient::~TestContentClient() {
 }
 
-std::string TestContentClient::GetUserAgent() const {
-  return std::string("TestContentClient");
-}
-
 base::StringPiece TestContentClient::GetDataResource(
     int resource_id,
-    ui::ScaleFactor scale_factor) const {
+    ui::ScaleFactor scale_factor) {
   return ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
       resource_id, scale_factor);
 }

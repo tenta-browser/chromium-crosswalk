@@ -7,10 +7,11 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
+#include "components/autofill/core/browser/logging/stub_log_manager.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_metrics_recorder.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/stub_credentials_filter.h"
-#include "components/password_manager/core/browser/stub_log_manager.h"
 
 namespace password_manager {
 
@@ -24,13 +25,16 @@ class StubPasswordManagerClient : public PasswordManagerClient {
 
   // PasswordManagerClient:
   bool PromptUserToSaveOrUpdatePassword(
-      std::unique_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool update_password) override;
   void ShowManualFallbackForSaving(
-      std::unique_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool has_generated_password,
       bool update_password) override;
   void HideManualFallbackForSaving() override;
+  void FocusedInputChanged(
+      password_manager::PasswordManagerDriver* driver,
+      autofill::mojom::FocusedFieldType focused_field_type) override;
   bool PromptUserToChooseCredentials(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
@@ -44,30 +48,32 @@ class StubPasswordManagerClient : public PasswordManagerClient {
       const autofill::PasswordForm& form) override;
   void NotifyStorePasswordCalled() override;
   void AutomaticPasswordSave(
-      std::unique_ptr<PasswordFormManager> saved_manager) override;
-  PrefService* GetPrefs() override;
+      std::unique_ptr<PasswordFormManagerForUI> saved_manager) override;
+  PrefService* GetPrefs() const override;
   PasswordStore* GetPasswordStore() const override;
   const GURL& GetLastCommittedEntryURL() const override;
   const CredentialsFilter* GetStoreResultFilter() const override;
-  const LogManager* GetLogManager() const override;
-#if defined(SAFE_BROWSING_DB_LOCAL)
+  const autofill::LogManager* GetLogManager() const override;
+#if defined(FULL_SAFE_BROWSING)
   safe_browsing::PasswordProtectionService* GetPasswordProtectionService()
       const override;
   void CheckSafeBrowsingReputation(const GURL& form_action,
                                    const GURL& frame_url) override;
   void CheckProtectedPasswordEntry(
-      bool matches_sync_password,
+      metrics_util::PasswordType reused_password_type,
+      const std::string& username,
       const std::vector<std::string>& matching_domains,
       bool password_field_exists) override;
   void LogPasswordReuseDetectedEvent() override;
 #endif
-  ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
-  PasswordManagerMetricsRecorder& GetMetricsRecorder() override;
+  PasswordManagerMetricsRecorder* GetMetricsRecorder() override;
+  bool IsIsolationForPasswordSitesEnabled() const override;
+  bool IsNewTabPage() const override;
 
  private:
   const StubCredentialsFilter credentials_filter_;
-  StubLogManager log_manager_;
+  autofill::StubLogManager log_manager_;
   ukm::SourceId ukm_source_id_;
   base::Optional<PasswordManagerMetricsRecorder> metrics_recorder_;
 

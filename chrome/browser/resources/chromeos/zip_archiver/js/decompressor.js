@@ -48,7 +48,23 @@ unpacker.Decompressor = function(
    * @const
    */
   this.requestsInProgress = {};
+
+  /**
+   * Number of consecutive times the user has canceled passphrase input.
+   *
+   * @private {Number}
+   */
+  this.passphraseCancels_ = 0;
 };
+
+/**
+ * Maximum number of times the passphrase dialog box is canceled consecutively
+ * before no longer requesting a passphrase.
+ *
+ * @private {Number}
+ * @const
+ */
+unpacker.Decompressor.MAX_PASSPHRASE_CANCEL_THRESHOLD = 2;
 
 /**
  * @return {boolean} True if there is any request in progress.
@@ -236,7 +252,9 @@ unpacker.Decompressor.prototype.processMessage = function(
     default:
       console.error('Invalid NaCl operation: ' + operation + '.');
       requestInProgress.onError('FAILED');
+      break;
   }
+
   delete this.requestsInProgress[requestId];
 };
 
@@ -294,10 +312,16 @@ unpacker.Decompressor.prototype.readChunk_ = function(data, requestId) {
  * @private
  */
 unpacker.Decompressor.prototype.readPassphrase_ = function(data, requestId) {
+  if (this.passphraseCancels_ >=
+      unpacker.Decompressor.MAX_PASSPHRASE_CANCEL_THRESHOLD) {
+    this.naclModule_.postMessage(
+        unpacker.request.createReadPassphraseErrorResponse(
+            this.fileSystemId_, requestId));
+    return;
+  }
   this.passphraseManager.getPassphrase()
       .then(function(passphrase) {
-        // Update remembered password
-        unpacker.app.updateState([this.fileSystemId_]);
+        this.passphraseCancels_ = 0;
         this.naclModule_.postMessage(
             unpacker.request.createReadPassphraseDoneResponse(
                 this.fileSystemId_, requestId, passphrase));
@@ -307,9 +331,6 @@ unpacker.Decompressor.prototype.readPassphrase_ = function(data, requestId) {
         this.naclModule_.postMessage(
             unpacker.request.createReadPassphraseErrorResponse(
                 this.fileSystemId_, requestId));
-        // TODO(mtomasz): Instead of unmounting just let the current operation
-        // fail and ask for password for another files. This is however
-        // impossible for now due to a bug in minizip.
-        unpacker.app.unmountVolume(this.fileSystemId_, true);
+        this.passphraseCancels_++;
       }.bind(this));
 };

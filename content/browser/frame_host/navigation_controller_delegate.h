@@ -11,6 +11,7 @@
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_details.h"
+#include "content/public/common/previews_state.h"
 
 namespace content {
 
@@ -31,12 +32,12 @@ class NavigationControllerDelegate {
   virtual ~NavigationControllerDelegate() {}
 
   // Duplicates of WebContents methods.
-  virtual RenderViewHost* GetRenderViewHost() const = 0;
-  virtual InterstitialPage* GetInterstitialPage() const = 0;
-  virtual const std::string& GetContentsMimeType() const = 0;
+  virtual RenderViewHost* GetRenderViewHost() = 0;
+  virtual InterstitialPage* GetInterstitialPage() = 0;
+  virtual const std::string& GetContentsMimeType() = 0;
   virtual void NotifyNavigationStateChanged(InvalidateTypes changed_flags) = 0;
   virtual void Stop() = 0;
-  virtual bool IsBeingDestroyed() const = 0;
+  virtual bool IsBeingDestroyed() = 0;
   virtual bool CanOverscrollContent() const = 0;
 
   // Methods from WebContentsImpl that NavigationControllerImpl needs to
@@ -49,10 +50,15 @@ class NavigationControllerDelegate {
       const EntryChangedDetails& change_details) = 0;
   virtual void NotifyNavigationListPruned(
       const PrunedDetails& pruned_details) = 0;
+  virtual void NotifyNavigationEntriesDeleted() = 0;
   virtual void SetHistoryOffsetAndLength(int history_offset,
                                          int history_length) = 0;
   virtual void ActivateAndShowRepostFormWarningDialog() = 0;
   virtual bool HasAccessedInitialDocument() = 0;
+
+  // TODO(crbug.com/934637): Remove when pdf and any inner web contents user
+  // gesture is properly propagated.
+  virtual bool HadInnerWebContents() = 0;
 
   // This method is needed, since we are no longer guaranteed that the
   // embedder for NavigationController will be a WebContents object.

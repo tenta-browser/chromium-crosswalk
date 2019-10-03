@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//mojo/public/tools/bindings/mojom.gni")
+import("//third_party/protobuf/proto_library.gni")
 
 mojom("mojo_bindings") {
   sources = [
@@ -10,7 +11,15 @@ mojom("mojo_bindings") {
   ]
 
   public_deps = [
-    "//mojo/common:common_custom_types",
-    "//url/mojo:url_mojom_gurl",
+    "//url/mojom:url_mojom_origin",
+  ]
+
+  # TODO(https://crbug.com/968369): Change to use new names.
+  use_old_js_lite_bindings_names = true
+}
+
+proto_library("media_engagement_preload_proto") {
+  sources = [
+    "media_engagement_preload.proto",
   ]
 }

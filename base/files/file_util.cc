@@ -19,6 +19,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
 
 namespace base {
@@ -53,10 +54,15 @@ bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
   // We open the file in binary format even if they are text files because
   // we are just comparing that bytes are exactly same in both files and not
   // doing anything smart with text formatting.
-  std::ifstream file1(filename1.value().c_str(),
+#if defined(OS_WIN)
+  std::ifstream file1(as_wcstr(filename1.value()),
                       std::ios::in | std::ios::binary);
-  std::ifstream file2(filename2.value().c_str(),
+  std::ifstream file2(as_wcstr(filename2.value()),
                       std::ios::in | std::ios::binary);
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  std::ifstream file1(filename1.value(), std::ios::in | std::ios::binary);
+  std::ifstream file2(filename2.value(), std::ios::in | std::ios::binary);
+#endif  // OS_WIN
 
   // Even if both files aren't openable (and thus, in some sense, "equal"),
   // any unusable file yields a result of "false".
@@ -84,8 +90,13 @@ bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
 }
 
 bool TextContentsEqual(const FilePath& filename1, const FilePath& filename2) {
-  std::ifstream file1(filename1.value().c_str(), std::ios::in);
-  std::ifstream file2(filename2.value().c_str(), std::ios::in);
+#if defined(OS_WIN)
+  std::ifstream file1(as_wcstr(filename1.value()), std::ios::in);
+  std::ifstream file2(as_wcstr(filename2.value()), std::ios::in);
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  std::ifstream file1(filename1.value(), std::ios::in);
+  std::ifstream file2(filename2.value(), std::ios::in);
+#endif  // OS_WIN
 
   // Even if both files aren't openable (and thus, in some sense, "equal"),
   // any unusable file yields a result of "false".
@@ -136,27 +147,53 @@ bool ReadFileToStringWithMaxSize(const FilePath& path,
     return false;
   }
 
-  const size_t kBufferSize = 1 << 16;
-  std::unique_ptr<char[]> buf(new char[kBufferSize]);
-  size_t len;
-  size_t size = 0;
-  bool read_status = true;
-
   // Many files supplied in |path| have incorrect size (proc files etc).
-  // Hence, the file is read sequentially as opposed to a one-shot read.
-  while ((len = fread(buf.get(), 1, kBufferSize, file)) > 0) {
-    if (contents)
-      contents->append(buf.get(), std::min(len, max_size - size));
+  // Hence, the file is read sequentially as opposed to a one-shot read, using
+  // file size as a hint for chunk size if available.
+  constexpr int64_t kDefaultChunkSize = 1 << 16;
+  int64_t chunk_size;
+#if !defined(OS_NACL_NONSFI)
+  if (!GetFileSize(path, &chunk_size) || chunk_size <= 0)
+    chunk_size = kDefaultChunkSize - 1;
+  // We need to attempt to read at EOF for feof flag to be set so here we
+  // use |chunk_size| + 1.
+  chunk_size = std::min<uint64_t>(chunk_size, max_size) + 1;
+#else
+  chunk_size = kDefaultChunkSize;
+#endif  // !defined(OS_NACL_NONSFI)
+  size_t bytes_read_this_pass;
+  size_t bytes_read_so_far = 0;
+  bool read_status = true;
+  std::string local_contents;
+  local_contents.resize(chunk_size);
 
-    if ((max_size - size) < len) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  while ((bytes_read_this_pass = fread(&local_contents[bytes_read_so_far], 1,
+                                       chunk_size, file)) > 0) {
+    if ((max_size - bytes_read_so_far) < bytes_read_this_pass) {
+      // Read more than max_size bytes, bail out.
+      bytes_read_so_far = max_size;
       read_status = false;
       break;
     }
+    // In case EOF was not reached, iterate again but revert to the default
+    // chunk size.
+    if (bytes_read_so_far == 0)
+      chunk_size = kDefaultChunkSize;
 
-    size += len;
+    bytes_read_so_far += bytes_read_this_pass;
+    // Last fread syscall (after EOF) can be avoided via feof, which is just a
+    // flag check.
+    if (feof(file))
+      break;
+    local_contents.resize(bytes_read_so_far + chunk_size);
   }
   read_status = read_status && !ferror(file);
   CloseFile(file);
+  if (contents) {
+    contents->swap(local_contents);
+    contents->resize(bytes_read_so_far);
+  }
 
   return read_status;
 }
@@ -204,7 +241,11 @@ bool TouchFile(const FilePath& path,
   // On Windows, FILE_FLAG_BACKUP_SEMANTICS is needed to open a directory.
   if (DirectoryExists(path))
     flags |= File::FLAG_BACKUP_SEMANTICS;
-#endif  // OS_WIN
+#elif defined(OS_FUCHSIA)
+  // On Fuchsia, we need O_RDONLY for directories, or O_WRONLY for files.
+  // TODO(https://crbug.com/947802): Find a cleaner workaround for this.
+  flags |= (DirectoryExists(path) ? File::FLAG_READ : File::FLAG_WRITE);
+#endif
 
   File file(path, flags);
   if (!file.IsValid())
@@ -257,6 +298,16 @@ int GetUniquePathNumber(const FilePath& path,
   }
 
   return -1;
+}
+
+FilePath GetUniquePath(const FilePath& path) {
+  FilePath unique_path = path;
+  int uniquifier = GetUniquePathNumber(path, FilePath::StringType());
+  if (uniquifier > 0) {
+    unique_path = unique_path.InsertBeforeExtensionASCII(
+        StringPrintf(" (%d)", uniquifier));
+  }
+  return unique_path;
 }
 #endif  // !defined(OS_NACL_NONSFI)
 

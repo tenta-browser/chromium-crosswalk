@@ -6,7 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -15,8 +15,6 @@
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
-
-namespace chrome {
 
 ////////////////////////////////////////////////////////////////////////////////
 // CryptoModulePasswordDialogView, public:
@@ -90,68 +88,70 @@ void CryptoModulePasswordDialogView::Init(const std::string& hostname,
   const base::string16& hostname16 = base::UTF8ToUTF16(hostname);
   const base::string16& slot16 = base::UTF8ToUTF16(slot_name);
   switch (reason) {
-    case chrome::kCryptoModulePasswordCertEnrollment:
+    case kCryptoModulePasswordCertEnrollment:
       text = l10n_util::GetStringFUTF8(
           IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CERT_ENROLLMENT,
           slot16,
           hostname16);
       break;
-    case chrome::kCryptoModulePasswordClientAuth:
+    case kCryptoModulePasswordClientAuth:
       text = l10n_util::GetStringFUTF8(
           IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CLIENT_AUTH, slot16, hostname16);
       break;
-    case chrome::kCryptoModulePasswordListCerts:
+    case kCryptoModulePasswordListCerts:
       text = l10n_util::GetStringFUTF8(
           IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_LIST_CERTS, slot16);
       break;
-    case chrome::kCryptoModulePasswordCertImport:
+    case kCryptoModulePasswordCertImport:
       text = l10n_util::GetStringFUTF8(
           IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CERT_IMPORT, slot16);
       break;
-    case chrome::kCryptoModulePasswordCertExport:
+    case kCryptoModulePasswordCertExport:
       text = l10n_util::GetStringFUTF8(
           IDS_CRYPTO_MODULE_AUTH_DIALOG_TEXT_CERT_EXPORT, slot16);
       break;
     default:
       NOTREACHED();
   }
-  reason_label_ = new views::Label(base::UTF8ToUTF16(text));
-  reason_label_->SetMultiLine(true);
+  auto reason_label = std::make_unique<views::Label>(base::UTF8ToUTF16(text));
+  reason_label->SetMultiLine(true);
 
-  password_label_ = new views::Label(l10n_util::GetStringUTF16(
-      IDS_CRYPTO_MODULE_AUTH_DIALOG_PASSWORD_FIELD));
+  auto password_label = std::make_unique<views::Label>(
+      l10n_util::GetStringUTF16(IDS_CRYPTO_MODULE_AUTH_DIALOG_PASSWORD_FIELD));
 
-  password_entry_ = new views::Textfield();
-  password_entry_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
-  password_entry_->set_controller(this);
+  auto password_entry = std::make_unique<views::Textfield>();
+  password_entry->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
+  password_entry->set_controller(this);
 
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
 
   views::ColumnSet* reason_column_set = layout->AddColumnSet(0);
-  reason_column_set->AddColumn(
-      views::GridLayout::LEADING, views::GridLayout::LEADING, 1,
-      views::GridLayout::USE_PREF, 0, 0);
+  reason_column_set->AddColumn(views::GridLayout::LEADING,
+                               views::GridLayout::LEADING, 1.0,
+                               views::GridLayout::USE_PREF, 0, 0);
 
   views::ColumnSet* column_set = layout->AddColumnSet(1);
-  column_set->AddColumn(views::GridLayout::LEADING,
-                        views::GridLayout::LEADING, 0,
+  column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::LEADING,
+                        views::GridLayout::kFixedSize,
                         views::GridLayout::USE_PREF, 0, 0);
   column_set->AddPaddingColumn(
-      0,
+      views::GridLayout::kFixedSize,
       provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_HORIZONTAL_LARGE));
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1,
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1.0,
                         views::GridLayout::USE_PREF, 0, 0);
 
-  layout->StartRow(0, 0);
-  layout->AddView(reason_label_);
-  layout->AddPaddingRow(0, provider->GetDistanceMetric(
-                               views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
+  layout->StartRow(views::GridLayout::kFixedSize, 0);
+  reason_label_ = layout->AddView(std::move(reason_label));
+  layout->AddPaddingRow(
+      views::GridLayout::kFixedSize,
+      provider->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
 
-  layout->StartRow(0, 1);
-  layout->AddView(password_label_);
-  layout->AddView(password_entry_);
+  layout->StartRow(views::GridLayout::kFixedSize, 1);
+  password_label_ = layout->AddView(std::move(password_label));
+  password_entry_ = layout->AddView(std::move(password_entry));
 }
 
 void ShowCryptoModulePasswordDialog(
@@ -165,5 +165,3 @@ void ShowCryptoModulePasswordDialog(
       new CryptoModulePasswordDialogView(slot_name, reason, hostname, callback);
   views::DialogDelegate::CreateDialogWidget(dialog, NULL, parent)->Show();
 }
-
-}  // namespace chrome

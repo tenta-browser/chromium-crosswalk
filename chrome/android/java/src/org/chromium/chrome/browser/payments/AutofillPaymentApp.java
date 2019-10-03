@@ -5,9 +5,11 @@
 package org.chromium.chrome.browser.payments;
 
 import android.os.Handler;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
@@ -28,6 +30,8 @@ import java.util.Set;
 public class AutofillPaymentApp implements PaymentApp {
     private final WebContents mWebContents;
     private Set<Integer> mBasicCardTypes;
+    private Set<String> mBasicCardSupportedNetworks;
+    private Set<String> mSupportedMethods;
 
     /**
      * Builds a payment app backed by autofill cards.
@@ -39,16 +43,28 @@ public class AutofillPaymentApp implements PaymentApp {
     }
 
     @Override
-    public void getInstruments(Map<String, PaymentMethodData> methodDataMap, String unusedOrigin,
-            String unusedIFRameOrigin, byte[][] unusedCertificateChain,
-            Map<String, PaymentDetailsModifier> modifiers, final InstrumentsCallback callback) {
-        PersonalDataManager pdm = PersonalDataManager.getInstance();
-        List<CreditCard> cards = pdm.getCreditCardsToSuggest();
-        final List<PaymentInstrument> instruments = new ArrayList<>(cards.size());
+    public void getInstruments(String unusedId, Map<String, PaymentMethodData> methodDataMap,
+            String unusedOrigin, String unusedIFRameOrigin, byte[][] unusedCertificateChain,
+            Map<String, PaymentDetailsModifier> unusedModifiers,
+            final InstrumentsCallback callback) {
+        new Handler().post(
+                ()
+                        -> callback.onInstrumentsReady(AutofillPaymentApp.this,
+                                getInstruments(methodDataMap, /*forceReturnServerCards=*/false)));
+    }
 
-        Set<String> basicCardSupportedNetworks = null;
+    /** Method to get instruments synchronously. */
+    public List<PaymentInstrument> getInstruments(
+            Map<String, PaymentMethodData> methodDataMap, boolean forceReturnServerCards) {
+        PersonalDataManager pdm = PersonalDataManager.getInstance();
+        List<CreditCard> cards = pdm.getCreditCardsToSuggest(
+                /*includeServerCards=*/forceReturnServerCards
+                || ChromeFeatureList.isEnabled(
+                           ChromeFeatureList.WEB_PAYMENTS_RETURN_GOOGLE_PAY_IN_BASIC_CARD));
+        List<PaymentInstrument> instruments = new ArrayList<>(cards.size());
+
         if (methodDataMap.containsKey(BasicCardUtils.BASIC_CARD_METHOD_NAME)) {
-            basicCardSupportedNetworks = BasicCardUtils.convertBasicCardToNetworks(
+            mBasicCardSupportedNetworks = BasicCardUtils.convertBasicCardToNetworks(
                     methodDataMap.get(BasicCardUtils.BASIC_CARD_METHOD_NAME));
             mBasicCardTypes = BasicCardUtils.convertBasicCardToTypes(
                     methodDataMap.get(BasicCardUtils.BASIC_CARD_METHOD_NAME));
@@ -56,46 +72,63 @@ public class AutofillPaymentApp implements PaymentApp {
             mBasicCardTypes = new HashSet<>(BasicCardUtils.getCardTypes().values());
             mBasicCardTypes.add(CardType.UNKNOWN);
         }
+        mSupportedMethods = new HashSet<>(methodDataMap.keySet());
 
         for (int i = 0; i < cards.size(); i++) {
-            CreditCard card = cards.get(i);
-            AutofillProfile billingAddress = TextUtils.isEmpty(card.getBillingAddressId())
-                    ? null
-                    : pdm.getProfile(card.getBillingAddressId());
-
-            if (billingAddress != null
-                    && AutofillAddress.checkAddressCompletionStatus(
-                               billingAddress, AutofillAddress.IGNORE_PHONE_COMPLETENESS_CHECK)
-                            != AutofillAddress.COMPLETE) {
-                billingAddress = null;
-            }
-
-            if (billingAddress == null) card.setBillingAddressId(null);
-
-            String methodName = null;
-            if (basicCardSupportedNetworks != null
-                    && basicCardSupportedNetworks.contains(card.getBasicCardIssuerNetwork())) {
-                methodName = BasicCardUtils.BASIC_CARD_METHOD_NAME;
-            } else if (methodDataMap.containsKey(card.getBasicCardIssuerNetwork())) {
-                methodName = card.getBasicCardIssuerNetwork();
-            }
-
-            if (methodName != null && mBasicCardTypes.contains(card.getCardType())) {
-                // Whether this card matches the card type (credit, debit, prepaid) exactly. If the
-                // merchant requests all card types, then this is always true. If the merchant
-                // requests only a subset of card types, then this is false for "unknown" card
-                // types. The "unknown" card types is where Chrome is unable to determine the type
-                // of card. Cards that don't match the card type exactly cannot be pre-selected in
-                // the UI.
-                boolean matchesMerchantCardTypeExactly = card.getCardType() != CardType.UNKNOWN
-                        || mBasicCardTypes.size() == BasicCardUtils.TOTAL_NUMBER_OF_CARD_TYPES;
-
-                instruments.add(new AutofillPaymentInstrument(mWebContents, card, billingAddress,
-                        methodName, matchesMerchantCardTypeExactly));
-            }
+            PaymentInstrument instrument = getInstrumentForCard(cards.get(i));
+            if (instrument != null) instruments.add(instrument);
         }
 
-        new Handler().post(() -> callback.onInstrumentsReady(AutofillPaymentApp.this, instruments));
+        return instruments;
+    }
+
+    /**
+     * Creates a payment instrument object for the given card if it is usable for the
+     * payment request. This interface must be called after getInstruments.
+     *
+     * @param card The given card.
+     */
+    @Nullable
+    public PaymentInstrument getInstrumentForCard(CreditCard card) {
+        if (mSupportedMethods == null) return null;
+
+        PersonalDataManager pdm = PersonalDataManager.getInstance();
+        AutofillProfile billingAddress = TextUtils.isEmpty(card.getBillingAddressId())
+                ? null
+                : pdm.getProfile(card.getBillingAddressId());
+
+        if (billingAddress != null
+                && AutofillAddress.checkAddressCompletionStatus(
+                           billingAddress, AutofillAddress.CompletenessCheckType.IGNORE_PHONE)
+                        != AutofillAddress.CompletionStatus.COMPLETE) {
+            billingAddress = null;
+        }
+
+        if (billingAddress == null) card.setBillingAddressId(null);
+
+        String methodName = null;
+        if (mBasicCardSupportedNetworks != null
+                && mBasicCardSupportedNetworks.contains(card.getBasicCardIssuerNetwork())) {
+            methodName = BasicCardUtils.BASIC_CARD_METHOD_NAME;
+        } else if (mSupportedMethods.contains(card.getBasicCardIssuerNetwork())) {
+            methodName = card.getBasicCardIssuerNetwork();
+        }
+
+        if (methodName != null && mBasicCardTypes.contains(card.getCardType())) {
+            // Whether this card matches the card type (credit, debit, prepaid) exactly. If the
+            // merchant requests all card types, then this is always true. If the merchant
+            // requests only a subset of card types, then this is false for "unknown" card
+            // types. The "unknown" card types is where Chrome is unable to determine the type
+            // of card. Cards that don't match the card type exactly cannot be pre-selected in
+            // the UI.
+            boolean matchesMerchantCardTypeExactly = card.getCardType() != CardType.UNKNOWN
+                    || mBasicCardTypes.size() == BasicCardUtils.TOTAL_NUMBER_OF_CARD_TYPES;
+
+            return new AutofillPaymentInstrument(
+                    mWebContents, card, billingAddress, methodName, matchesMerchantCardTypeExactly);
+        }
+
+        return null;
     }
 
     @Override

@@ -10,16 +10,18 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/grit/chromium_strings.h"
 #include "components/crash/content/app/breakpad_linux.h"
 #include "components/metrics/metrics_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
-#include "device/bluetooth/dbus/dbus_thread_manager_linux.h"
+#include "device/bluetooth/dbus/bluez_dbus_thread_manager.h"
 #include "media/audio/audio_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -34,9 +36,9 @@
 #endif
 
 ChromeBrowserMainPartsLinux::ChromeBrowserMainPartsLinux(
-    const content::MainFunctionParams& parameters)
-    : ChromeBrowserMainPartsPosix(parameters) {
-}
+    const content::MainFunctionParams& parameters,
+    StartupData* startup_data)
+    : ChromeBrowserMainPartsPosix(parameters, startup_data) {}
 
 ChromeBrowserMainPartsLinux::~ChromeBrowserMainPartsLinux() {
 }
@@ -56,7 +58,7 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
   // g_browser_process.  This happens in PreCreateThreads.
   // base::GetLinuxDistro() will initialize its value if needed.
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(base::IgnoreResult(&base::GetLinuxDistro)));
 #endif
 
@@ -64,6 +66,8 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
       l10n_util::GetStringUTF8(IDS_SHORT_PRODUCT_NAME));
 
 #if !defined(OS_CHROMEOS)
+  // Set up crypt config. This should be kept in sync with the OSCrypt parts of
+  // SystemNetworkContextManager::OnNetworkServiceCreated.
   std::unique_ptr<os_crypt::Config> config(new os_crypt::Config());
   // Forward to os_crypt the flag to use a specific password store.
   config->store =
@@ -71,8 +75,8 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
   // Forward the product name
   config->product_name = l10n_util::GetStringUTF8(IDS_PRODUCT_NAME);
   // OSCrypt may target keyring, which requires calls from the main thread.
-  config->main_thread_runner = content::BrowserThread::GetTaskRunnerForThread(
-      content::BrowserThread::UI);
+  config->main_thread_runner = base::CreateSingleThreadTaskRunnerWithTraits(
+      {content::BrowserThread::UI});
   // OSCrypt can be disabled in a special settings file.
   config->should_use_preference =
       parsed_command_line().HasSwitch(switches::kEnableEncryptionSelection);
@@ -92,9 +96,7 @@ void ChromeBrowserMainPartsLinux::PostProfileInit() {
 
 void ChromeBrowserMainPartsLinux::PostMainMessageLoopStart() {
 #if !defined(OS_CHROMEOS)
-  bluez::DBusThreadManagerLinux::Initialize();
-  bluez::BluezDBusManager::Initialize(
-      bluez::DBusThreadManagerLinux::Get()->GetSystemBus(), false);
+  bluez::BluezDBusManager::Initialize(nullptr /* system_bus */);
 #endif
 
   ChromeBrowserMainPartsPosix::PostMainMessageLoopStart();
@@ -103,7 +105,7 @@ void ChromeBrowserMainPartsLinux::PostMainMessageLoopStart() {
 void ChromeBrowserMainPartsLinux::PostDestroyThreads() {
 #if !defined(OS_CHROMEOS)
   bluez::BluezDBusManager::Shutdown();
-  bluez::DBusThreadManagerLinux::Shutdown();
+  bluez::BluezDBusThreadManager::Shutdown();
 #endif
 
   ChromeBrowserMainPartsPosix::PostDestroyThreads();

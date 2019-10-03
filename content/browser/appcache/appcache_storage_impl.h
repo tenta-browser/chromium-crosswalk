@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -32,6 +33,7 @@ namespace content {
 class AppCacheStorageImplTest;
 class ChromeAppCacheServiceTest;
 
+// Task scheduler for database read/write operations.
 class AppCacheStorageImpl : public AppCacheStorage {
  public:
   explicit AppCacheStorageImpl(AppCacheServiceImpl* service);
@@ -63,11 +65,12 @@ class AppCacheStorageImpl : public AppCacheStorage {
                          Delegate* delegate,
                          int response_code) override;
   void StoreEvictionTimes(AppCacheGroup* group) override;
-  AppCacheResponseReader* CreateResponseReader(const GURL& manifest_url,
-                                               int64_t response_id) override;
-  AppCacheResponseWriter* CreateResponseWriter(
+  std::unique_ptr<AppCacheResponseReader> CreateResponseReader(
+      const GURL& manifest_url,
+      int64_t response_id) override;
+  std::unique_ptr<AppCacheResponseWriter> CreateResponseWriter(
       const GURL& manifest_url) override;
-  AppCacheResponseMetadataWriter* CreateResponseMetadataWriter(
+  std::unique_ptr<AppCacheResponseMetadataWriter> CreateResponseMetadataWriter(
       int64_t response_id) override;
   void DoomResponses(const GURL& manifest_url,
                      const std::vector<int64_t>& response_ids) override;
@@ -109,8 +112,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
 
   CacheLoadTask* GetPendingCacheLoadTask(int64_t cache_id);
   GroupLoadTask* GetPendingGroupLoadTask(const GURL& manifest_url);
-  void GetPendingForeignMarkingsForCache(int64_t cache_id,
-                                         std::vector<GURL>* urls);
+  std::vector<GURL> GetPendingForeignMarkingsForCache(int64_t cache_id);
 
   void ScheduleSimpleTask(base::OnceClosure task);
   void RunOnePendingSimpleTask();
@@ -128,8 +130,10 @@ class AppCacheStorageImpl : public AppCacheStorage {
   void LazilyCommitLastAccessTimes();
   void OnLazyCommitTimer();
 
+  // If there is appcache data to be deleted (|force_keep_session_state| is
+  // false), deletes session-only appcache data.
   static void ClearSessionOnlyOrigins(
-      AppCacheDatabase* database,
+      std::unique_ptr<AppCacheDatabase> database,
       scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy,
       bool force_keep_session_state);
 
@@ -143,14 +147,15 @@ class AppCacheStorageImpl : public AppCacheStorage {
       scoped_refptr<AppCache> newest_cache,
       scoped_refptr<DelegateReference> delegate_ref);
 
-  void CallOnMainResponseFound(DelegateReferenceVector* delegates,
-                               const GURL& url,
-                               const AppCacheEntry& entry,
-                               const GURL& namespace_entry_url,
-                               const AppCacheEntry& fallback_entry,
-                               int64_t cache_id,
-                               int64_t group_id,
-                               const GURL& manifest_url);
+  void CallOnMainResponseFound(
+      std::vector<scoped_refptr<DelegateReference>>* delegates,
+      const GURL& url,
+      const AppCacheEntry& entry,
+      const GURL& namespace_entry_url,
+      const AppCacheEntry& fallback_entry,
+      int64_t cache_id,
+      int64_t group_id,
+      const GURL& manifest_url);
 
   // Don't call this when |is_disabled_| is true.
   CONTENT_EXPORT AppCacheDiskCache* disk_cache();
@@ -178,7 +183,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
   int64_t last_deletable_response_rowid_;
 
   // Created on the IO thread, but only used on the DB thread.
-  AppCacheDatabase* database_;
+  std::unique_ptr<AppCacheDatabase> database_;
 
   // Set if we discover a fatal error like a corrupt SQL database or
   // disk cache and cannot continue.
@@ -198,7 +203,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
   // Used to short-circuit certain operations without having to schedule
   // any tasks on the background database thread.
   base::circular_deque<base::OnceClosure> pending_simple_tasks_;
-  base::WeakPtrFactory<AppCacheStorageImpl> weak_factory_;
+  base::WeakPtrFactory<AppCacheStorageImpl> weak_factory_{this};
 
   friend class content::AppCacheStorageImplTest;
   friend class content::ChromeAppCacheServiceTest;

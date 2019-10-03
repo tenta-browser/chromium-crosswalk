@@ -16,7 +16,7 @@
 #include "build/build_config.h"
 #include "components/history/core/browser/thumbnail_database.h"
 #include "components/history/core/test/database_test_utils.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/recovery.h"
 #include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
@@ -63,7 +63,7 @@ const gfx::Size kLargeSize = gfx::Size(32, 32);
 // should be there are, but do not check if extraneous items are
 // present.  Any extraneous items have the potential to interact
 // negatively with future schema changes.
-void VerifyTablesAndColumns(sql::Connection* db) {
+void VerifyTablesAndColumns(sql::Database* db) {
   // [meta], [favicons], [favicon_bitmaps], and [icon_mapping].
   EXPECT_EQ(4u, sql::test::CountSQLTables(db));
 
@@ -99,7 +99,7 @@ void AddAndMapFaviconSimple(ThumbnailDatabase* db,
   db->AddIconMapping(page_url, favicon_id);
 }
 
-void VerifyDatabaseEmpty(sql::Connection* db) {
+void VerifyDatabaseEmpty(sql::Database* db) {
   size_t rows = 0;
   EXPECT_TRUE(sql::test::CountTableRows(db, "favicons", &rows));
   EXPECT_EQ(0u, rows);
@@ -288,6 +288,49 @@ TEST_F(ThumbnailDatabaseTest, AddFaviconBitmapCreatesCorrectTimestamps) {
                                   nullptr, nullptr));
   EXPECT_EQ(add_time, last_updated);
   EXPECT_EQ(base::Time(), last_requested);
+}
+
+TEST_F(ThumbnailDatabaseTest,
+       GetFaviconLastUpdatedTimeReturnsFalseForNoBitmaps) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  GURL url("http://google.com");
+  favicon_base::FaviconID icon =
+      db.AddFavicon(url, favicon_base::IconType::kFavicon);
+  ASSERT_NE(0, icon);
+
+  base::Time last_updated;
+  ASSERT_FALSE(db.GetFaviconLastUpdatedTime(icon, &last_updated));
+}
+
+TEST_F(ThumbnailDatabaseTest, GetFaviconLastUpdatedTimeReturnsMaxTime) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  base::Time add_time1;
+  ASSERT_TRUE(
+      base::Time::FromUTCExploded({2017, 5, 0, 1, 0, 0, 0, 0}, &add_time1));
+  base::Time add_time2 = add_time1 - base::TimeDelta::FromSeconds(1);
+  std::vector<unsigned char> data(kBlob1, kBlob1 + sizeof(kBlob1));
+  scoped_refptr<base::RefCountedBytes> favicon(new base::RefCountedBytes(data));
+
+  GURL url("http://google.com");
+  favicon_base::FaviconID icon =
+      db.AddFavicon(url, favicon_base::IconType::kFavicon);
+  ASSERT_NE(0, icon);
+  FaviconBitmapID bitmap1 = db.AddFaviconBitmap(
+      icon, favicon, FaviconBitmapType::ON_VISIT, add_time1, gfx::Size());
+  ASSERT_NE(0, bitmap1);
+  FaviconBitmapID bitmap2 = db.AddFaviconBitmap(
+      icon, favicon, FaviconBitmapType::ON_VISIT, add_time2, gfx::Size());
+  ASSERT_NE(0, bitmap2);
+
+  base::Time last_updated;
+  ASSERT_TRUE(db.GetFaviconLastUpdatedTime(icon, &last_updated));
+  EXPECT_EQ(add_time1, last_updated);
 }
 
 TEST_F(ThumbnailDatabaseTest, TouchUpdatesOnDemandFavicons) {
@@ -785,6 +828,58 @@ TEST_F(ThumbnailDatabaseTest, GetIconMappingsForPageURLWithIconTypes) {
   EXPECT_EQ(kIconUrl2, icon_mappings[2].icon_url);
 }
 
+TEST_F(ThumbnailDatabaseTest, FindFirstPageURLForHost) {
+  ThumbnailDatabase db(nullptr);
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
+  db.BeginTransaction();
+
+  const GURL kPageUrlHttp("http://www.google.com");
+  const GURL kPageUrlHttps("https://www.google.com");
+  const GURL kPageUrlHttpsSamePrefix("https://www.google.com.au");
+  const GURL kPageUrlHttpsSameSuffix("https://m.www.google.com");
+  const GURL kPageUrlInPath("https://www.example.com/www.google.com/");
+
+  EXPECT_FALSE(db.FindFirstPageURLForHost(
+      kPageUrlHttps,
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon}));
+
+  AddAndMapFaviconSimple(&db, kPageUrlHttpsSamePrefix, kIconUrl1,
+                         favicon_base::IconType::kFavicon);
+  AddAndMapFaviconSimple(&db, kPageUrlHttpsSameSuffix, kIconUrl2,
+                         favicon_base::IconType::kFavicon);
+  AddAndMapFaviconSimple(&db, kPageUrlInPath, kIconUrl3,
+                         favicon_base::IconType::kTouchIcon);
+
+  // There should be no matching host for www.google.com when no matching host
+  // exists with the required icon types.
+  EXPECT_FALSE(db.FindFirstPageURLForHost(kPageUrlHttps,
+                                          {favicon_base::IconType::kFavicon}));
+
+  // Register the HTTP url in the database as a touch icon.
+  AddAndMapFaviconSimple(&db, kPageUrlHttp, kIconUrl5,
+                         favicon_base::IconType::kTouchIcon);
+
+  EXPECT_FALSE(db.FindFirstPageURLForHost(kPageUrlHttps,
+                                          {favicon_base::IconType::kFavicon}));
+
+  // Expect a match when we search for a TouchIcon.
+  base::Optional<GURL> result = db.FindFirstPageURLForHost(
+      kPageUrlHttps,
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon});
+
+  EXPECT_EQ(kPageUrlHttp, result.value());
+
+  // Expect that when we query for icon mappings with the result, we retrieve
+  // the correct icon URL.
+  std::vector<IconMapping> icon_mappings;
+  EXPECT_TRUE(db.GetIconMappingsForPageURL(
+      result.value(),
+      {favicon_base::IconType::kFavicon, favicon_base::IconType::kTouchIcon},
+      &icon_mappings));
+  ASSERT_EQ(1u, icon_mappings.size());
+  EXPECT_EQ(kIconUrl5, icon_mappings[0].icon_url);
+}
+
 TEST_F(ThumbnailDatabaseTest, HasMappingFor) {
   ThumbnailDatabase db(nullptr);
   ASSERT_EQ(sql::INIT_OK, db.Init(file_name_));
@@ -833,7 +928,7 @@ TEST_F(ThumbnailDatabaseTest, HasMappingFor) {
 // Test loading version 3 database.
 TEST_F(ThumbnailDatabaseTest, Version3) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v3.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   // Version 3 is deprecated, the data should all be gone.
@@ -843,7 +938,7 @@ TEST_F(ThumbnailDatabaseTest, Version3) {
 // Test loading version 4 database.
 TEST_F(ThumbnailDatabaseTest, Version4) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v4.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   // Version 4 is deprecated, the data should all be gone.
@@ -853,7 +948,7 @@ TEST_F(ThumbnailDatabaseTest, Version4) {
 // Test loading version 5 database.
 TEST_F(ThumbnailDatabaseTest, Version5) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v5.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   // Version 5 is deprecated, the data should all be gone.
@@ -863,7 +958,7 @@ TEST_F(ThumbnailDatabaseTest, Version5) {
 // Test loading version 6 database.
 TEST_F(ThumbnailDatabaseTest, Version6) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v6.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   // Version 6 is deprecated, the data should all be gone.
@@ -873,7 +968,7 @@ TEST_F(ThumbnailDatabaseTest, Version6) {
 // Test loading version 7 database.
 TEST_F(ThumbnailDatabaseTest, Version7) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v7.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   EXPECT_TRUE(CheckPageHasIcon(db.get(), kPageUrl1,
@@ -893,7 +988,7 @@ TEST_F(ThumbnailDatabaseTest, Version7) {
 // Test loading version 8 database.
 TEST_F(ThumbnailDatabaseTest, Version8) {
   std::unique_ptr<ThumbnailDatabase> db = LoadFromGolden("Favicons.v8.sql");
-  ASSERT_TRUE(db.get() != nullptr);
+  ASSERT_TRUE(db);
   VerifyTablesAndColumns(&db->db_);
 
   EXPECT_TRUE(CheckPageHasIcon(db.get(), kPageUrl1,
@@ -911,20 +1006,11 @@ TEST_F(ThumbnailDatabaseTest, Version8) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery) {
-  // This code tests the recovery module in concert with Chromium's
-  // custom recover virtual table.  Under USE_SYSTEM_SQLITE, this is
-  // not available.  This is detected dynamically because corrupt
-  // databases still need to be handled, perhaps by Raze(), and the
-  // recovery module is an obvious layer to abstract that to.
-  // TODO(shess): Handle that case for real!
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database.
   {
     EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v8.sql"));
 
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     VerifyTablesAndColumns(&raw_db);
   }
@@ -945,19 +1031,19 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
   // Corrupt the |icon_mapping.page_url| index by deleting an element
   // from the backing table but not the index.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
   }
-  const char kIndexName[] = "icon_mapping_page_url_idx";
-  const char kDeleteSql[] =
+  static const char kIndexName[] = "icon_mapping_page_url_idx";
+  static const char kDeleteSql[] =
       "DELETE FROM icon_mapping WHERE page_url = 'http://yahoo.com/'";
   EXPECT_TRUE(
       sql::test::CorruptTableOrIndex(file_name_, kIndexName, kDeleteSql));
 
   // Database should be corrupt at the SQLite level.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_NE("ok", sql::test::IntegrityCheck(&raw_db));
   }
@@ -980,7 +1066,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
 
   // Check that the database is recovered at the SQLite level.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
 
@@ -1009,7 +1095,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
   {
     sql::test::ScopedErrorExpecter expecter;
     expecter.ExpectError(SQLITE_CORRUPT);
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
     ASSERT_TRUE(expecter.SawExpectedErrors());
@@ -1032,15 +1118,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery7) {
-  // This code tests the recovery module in concert with Chromium's
-  // custom recover virtual table.  Under USE_SYSTEM_SQLITE, this is
-  // not available.  This is detected dynamically because corrupt
-  // databases still need to be handled, perhaps by Raze(), and the
-  // recovery module is an obvious layer to abstract that to.
-  // TODO(shess): Handle that case for real!
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v7.sql"));
@@ -1048,19 +1125,19 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
   // Corrupt the |icon_mapping.page_url| index by deleting an element
   // from the backing table but not the index.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
   }
-  const char kIndexName[] = "icon_mapping_page_url_idx";
-  const char kDeleteSql[] =
+  static const char kIndexName[] = "icon_mapping_page_url_idx";
+  static const char kDeleteSql[] =
       "DELETE FROM icon_mapping WHERE page_url = 'http://yahoo.com/'";
   EXPECT_TRUE(
       sql::test::CorruptTableOrIndex(file_name_, kIndexName, kDeleteSql));
 
   // Database should be corrupt at the SQLite level.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_NE("ok", sql::test::IntegrityCheck(&raw_db));
   }
@@ -1084,7 +1161,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
 
   // Check that the database is recovered at the SQLite level.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
 
@@ -1113,7 +1190,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
   {
     sql::test::ScopedErrorExpecter expecter;
     expecter.ExpectError(SQLITE_CORRUPT);
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
     ASSERT_TRUE(expecter.SawExpectedErrors());
@@ -1136,10 +1213,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery7) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery6) {
-  // TODO(shess): See comment at top of Recovery test.
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v6.sql"));
@@ -1153,7 +1226,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery6) {
   {
     sql::test::ScopedErrorExpecter expecter;
     expecter.ExpectError(SQLITE_CORRUPT);
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
     ASSERT_TRUE(expecter.SawExpectedErrors());
@@ -1171,7 +1244,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery6) {
   // The database should be usable at the SQLite level, with a current schema
   // and no data.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
 
@@ -1184,10 +1257,6 @@ TEST_F(ThumbnailDatabaseTest, Recovery6) {
 }
 
 TEST_F(ThumbnailDatabaseTest, Recovery5) {
-  // TODO(shess): See comment at top of Recovery test.
-  if (!sql::Recovery::FullRecoverySupported())
-    return;
-
   // Create an example database without loading into ThumbnailDatabase
   // (which would upgrade it).
   EXPECT_TRUE(CreateDatabaseFromSQL(file_name_, "Favicons.v5.sql"));
@@ -1201,7 +1270,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery5) {
   {
     sql::test::ScopedErrorExpecter expecter;
     expecter.ExpectError(SQLITE_CORRUPT);
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     EXPECT_FALSE(raw_db.IsSQLValid("PRAGMA integrity_check"));
     ASSERT_TRUE(expecter.SawExpectedErrors());
@@ -1219,7 +1288,7 @@ TEST_F(ThumbnailDatabaseTest, Recovery5) {
   // The database should be usable at the SQLite level, with a current schema
   // and no data.
   {
-    sql::Connection raw_db;
+    sql::Database raw_db;
     EXPECT_TRUE(raw_db.Open(file_name_));
     ASSERT_EQ("ok", sql::test::IntegrityCheck(&raw_db));
 

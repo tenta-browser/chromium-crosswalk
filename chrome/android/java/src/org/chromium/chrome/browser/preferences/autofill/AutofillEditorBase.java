@@ -5,9 +5,9 @@
 package org.chromium.chrome.browser.preferences.autofill;
 
 import android.annotation.SuppressLint;
-import android.app.Fragment;
 import android.content.Context;
 import android.os.Bundle;
+import android.support.v4.app.Fragment;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
@@ -26,8 +26,10 @@ import android.widget.LinearLayout;
 import android.widget.Spinner;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.payments.ui.EditorDialog;
+import org.chromium.chrome.browser.preferences.MainPreferences;
+import org.chromium.chrome.browser.preferences.PreferenceUtils;
 import org.chromium.chrome.browser.widget.FadingEdgeScrollView;
+import org.chromium.chrome.browser.widget.prefeditor.EditorDialog;
 
 /** Base class for Autofill editors (e.g. credit cards and profiles). */
 public abstract class AutofillEditorBase
@@ -50,10 +52,10 @@ public abstract class AutofillEditorBase
         mContext = container.getContext();
 
         // We know which profile to edit based on the GUID stuffed in
-        // our extras by AutofillAndPaymentsPreferences.
+        // our extras by MainPreferences.
         Bundle extras = getArguments();
         if (extras != null) {
-            mGUID = extras.getString(AutofillAndPaymentsPreferences.AUTOFILL_GUID);
+            mGUID = extras.getString(MainPreferences.AUTOFILL_GUID);
         }
         if (mGUID == null) {
             mGUID = "";
@@ -63,18 +65,22 @@ public abstract class AutofillEditorBase
         }
         getActivity().setTitle(getTitleResourceId(mIsNewEntry));
 
-        // Hide the top shadow on the ScrollView because the toolbar draws one.
-        FadingEdgeScrollView scrollView = (FadingEdgeScrollView) inflater.inflate(
-                R.layout.autofill_editor_base, container, false);
-        scrollView.setEdgeVisibility(
-                FadingEdgeScrollView.DRAW_NO_EDGE, FadingEdgeScrollView.DRAW_FADING_EDGE);
+        View baseView = inflater.inflate(R.layout.autofill_editor_base, container, false);
 
+        // Hide the top shadow on the ScrollView because the toolbar draws one.
+        FadingEdgeScrollView scrollView =
+                (FadingEdgeScrollView) baseView.findViewById(R.id.scroll_view);
+        scrollView.setEdgeVisibility(
+                FadingEdgeScrollView.EdgeType.NONE, FadingEdgeScrollView.EdgeType.FADING);
+        scrollView.getViewTreeObserver().addOnScrollChangedListener(
+                PreferenceUtils.getShowShadowOnScrollListener(
+                        scrollView, baseView.findViewById(R.id.shadow)));
         // Inflate the editor and buttons into the "content" LinearLayout.
         LinearLayout contentLayout = (LinearLayout) scrollView.findViewById(R.id.content);
         inflater.inflate(getLayoutId(), contentLayout, true);
         inflater.inflate(R.layout.autofill_editor_base_buttons, contentLayout, true);
 
-        return scrollView;
+        return baseView;
     }
 
     @Override
@@ -106,7 +112,7 @@ public abstract class AutofillEditorBase
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         menu.clear();
-        inflater.inflate(R.menu.payments_editor_menu, menu);
+        inflater.inflate(R.menu.prefeditor_editor_menu, menu);
 
         MenuItem deleteItem = menu.findItem(R.id.delete_menu_id);
         if (deleteItem != null) deleteItem.setVisible(!mIsNewEntry && getIsDeletable());

@@ -7,17 +7,12 @@
 #include <zircon/syscalls.h>
 #include <zircon/types.h>
 
+#include "base/fuchsia/fuchsia_logging.h"
+
 namespace IPC {
 namespace internal {
 
-HandleAttachmentFuchsia::HandleAttachmentFuchsia(const zx_handle_t& handle) {
-  zx_status_t result =
-      zx_handle_duplicate(handle, ZX_RIGHT_SAME_RIGHTS, handle_.receive());
-  DLOG_IF(ERROR, result != ZX_OK)
-      << "zx_handle_duplicate: " << zx_status_get_string(result);
-}
-
-HandleAttachmentFuchsia::HandleAttachmentFuchsia(base::ScopedZxHandle handle)
+HandleAttachmentFuchsia::HandleAttachmentFuchsia(zx::handle handle)
     : handle_(std::move(handle)) {}
 
 HandleAttachmentFuchsia::~HandleAttachmentFuchsia() {}

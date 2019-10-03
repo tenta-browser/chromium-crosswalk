@@ -27,9 +27,17 @@ bool LeakyBucket::RefillOrSpill(int drops, base::TimeTicks now) {
 }
 
 base::TimeTicks LeakyBucket::GetEmptyTime() {
-  return level_updated_time_ +
-         base::TimeDelta::FromMicroseconds(
-             base::TimeTicks::kMicrosecondsPerSecond * current_level_ / rate_);
+  // To avoid unnecessary complexity in WebrtcFrameSchedulerSimple, we return
+  // a fairly large value (1 minute) here if the b/w estimate is 0 (which means
+  // that the video stream should be paused). This means that
+  // WebrtcFrameSchedulerSimple does not need to handle any overflow isssues
+  // caused by returning TimeDelta::Max().
+  base::TimeDelta time_to_empty =
+      (rate_ != 0) ? base::TimeDelta::FromMicroseconds(
+                         base::TimeTicks::kMicrosecondsPerSecond *
+                         current_level_ / rate_)
+                   : base::TimeDelta::FromMinutes(1);
+  return level_updated_time_ + time_to_empty;
 }
 
 void LeakyBucket::UpdateRate(int new_rate, base::TimeTicks now) {
@@ -38,10 +46,14 @@ void LeakyBucket::UpdateRate(int new_rate, base::TimeTicks now) {
 }
 
 void LeakyBucket::UpdateLevel(base::TimeTicks now) {
-  current_level_ -= rate_ * (now - level_updated_time_).InMicroseconds() /
-            base::TimeTicks::kMicrosecondsPerSecond;
-  if (current_level_ < 0)
+  int64_t drainage_amount = rate_ *
+                            (now - level_updated_time_).InMicroseconds() /
+                            base::TimeTicks::kMicrosecondsPerSecond;
+  if (current_level_ < drainage_amount) {
     current_level_ = 0;
+  } else {
+    current_level_ -= drainage_amount;
+  }
   level_updated_time_ = now;
 }
 

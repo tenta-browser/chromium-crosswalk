@@ -26,8 +26,8 @@
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
@@ -42,8 +42,9 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "services/data_decoder/public/cpp/json_sanitizer.h"
 
 namespace component_updater {
@@ -67,7 +68,7 @@ const char kExtensionIcons[] = "icons";
 const char kExtensionLargeIcon[] = "128";
 
 constexpr base::TaskTraits kTaskTraits = {
-    base::MayBlock(), base::TaskPriority::BACKGROUND,
+    base::MayBlock(), base::TaskPriority::BEST_EFFORT,
     base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN};
 
 base::string16 GetWhitelistTitle(const base::DictionaryValue& manifest) {
@@ -113,14 +114,15 @@ base::FilePath GetRawWhitelistPath(const base::DictionaryValue& manifest,
 
 base::FilePath GetSanitizedWhitelistPath(const std::string& crx_id) {
   base::FilePath base_dir;
-  PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS, &base_dir);
+  base::PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
+                         &base_dir);
   return base_dir.empty()
              ? base::FilePath()
              : base_dir.AppendASCII(crx_id + kSanitizedWhitelistExtension);
 }
 
 void RecordUncleanUninstall() {
-  content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
+  base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::UI})
       ->PostTask(
           FROM_HERE,
           base::BindOnce(&base::RecordAction,
@@ -140,7 +142,7 @@ void DeleteFileOnTaskRunner(const base::FilePath& path) {
 
 void OnWhitelistSanitizationResult(
     const std::string& crx_id,
-    const scoped_refptr<base::SequencedTaskRunner>& task_runner,
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
     base::OnceClosure callback,
     const std::string& result) {
   const base::FilePath sanitized_whitelist_path =
@@ -164,7 +166,7 @@ void OnWhitelistSanitizationResult(
 void CheckForSanitizedWhitelistOnTaskRunner(
     const std::string& crx_id,
     const base::FilePath& whitelist_path,
-    const scoped_refptr<base::SequencedTaskRunner>& task_runner,
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::Closure& callback) {
   if (base::PathExists(GetSanitizedWhitelistPath(crx_id))) {
     task_runner->PostTask(FROM_HERE, callback);
@@ -178,16 +180,16 @@ void CheckForSanitizedWhitelistOnTaskRunner(
   }
 
   data_decoder::JsonSanitizer::Sanitize(
-      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
-      unsafe_json,
-      base::Bind(&OnWhitelistSanitizationResult, crx_id, task_runner, callback),
-      base::Bind(&OnWhitelistSanitizationError, whitelist_path));
+      content::GetSystemConnector(), unsafe_json,
+      base::BindOnce(&OnWhitelistSanitizationResult, crx_id, task_runner,
+                     callback),
+      base::BindOnce(&OnWhitelistSanitizationError, whitelist_path));
 }
 
 void RemoveUnregisteredWhitelistsOnTaskRunner(
     const std::set<std::string>& registered_whitelists) {
   base::FilePath base_dir;
-  PathService::Get(DIR_SUPERVISED_USER_WHITELISTS, &base_dir);
+  base::PathService::Get(DIR_SUPERVISED_USER_WHITELISTS, &base_dir);
   if (!base_dir.empty()) {
     base::FileEnumerator file_enumerator(base_dir, false,
                                          base::FileEnumerator::DIRECTORIES);
@@ -201,7 +203,7 @@ void RemoveUnregisteredWhitelistsOnTaskRunner(
         continue;
 
       // Ignore folders that correspond to registered whitelists.
-      if (registered_whitelists.count(crx_id) > 0)
+      if (base::Contains(registered_whitelists, crx_id))
         continue;
 
       RecordUncleanUninstall();
@@ -210,7 +212,8 @@ void RemoveUnregisteredWhitelistsOnTaskRunner(
     }
   }
 
-  PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS, &base_dir);
+  base::PathService::Get(chrome::DIR_SUPERVISED_USER_INSTALLED_WHITELISTS,
+                         &base_dir);
   if (!base_dir.empty()) {
     base::FilePath pattern(FILE_PATH_LITERAL("*"));
     pattern = pattern.AppendASCII(kSanitizedWhitelistExtension);
@@ -231,7 +234,7 @@ void RemoveUnregisteredWhitelistsOnTaskRunner(
         continue;
 
       // Ignore files that correspond to registered whitelists.
-      if (registered_whitelists.count(crx_id) > 0)
+      if (base::Contains(registered_whitelists, crx_id))
         continue;
 
       RecordUncleanUninstall();
@@ -318,9 +321,9 @@ void SupervisedUserWhitelistComponentInstallerPolicy::ComponentReady(
     const base::Version& version,
     const base::FilePath& install_dir,
     std::unique_ptr<base::DictionaryValue> manifest) {
-  // TODO(treib): Before getting the title, we should localize the manifest
-  // using extension_l10n_util::LocalizeExtension, but that doesn't exist on
-  // Android. crbug.com/558387
+  // TODO(crbug.com/558387): Before getting the title, we should localize the
+  // manifest using extension_l10n_util::LocalizeExtension, but that doesn't
+  // exist on Android.
   callback_.Run(GetWhitelistTitle(*manifest),
                 GetLargeIconPath(*manifest, install_dir),
                 GetRawWhitelistPath(*manifest, install_dir));
@@ -402,7 +405,8 @@ class SupervisedUserWhitelistInstallerImpl
   scoped_refptr<base::SequencedTaskRunner> sequenced_task_runner_ =
       base::CreateSequencedTaskRunnerWithTraits(kTaskTraits);
 
-  base::WeakPtrFactory<SupervisedUserWhitelistInstallerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<SupervisedUserWhitelistInstallerImpl> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserWhitelistInstallerImpl);
 };
@@ -411,10 +415,7 @@ SupervisedUserWhitelistInstallerImpl::SupervisedUserWhitelistInstallerImpl(
     ComponentUpdateService* cus,
     ProfileAttributesStorage* profile_attributes_storage,
     PrefService* local_state)
-    : cus_(cus),
-      local_state_(local_state),
-      observer_(this),
-      weak_ptr_factory_(this) {
+    : cus_(cus), local_state_(local_state), observer_(this) {
   DCHECK(cus);
   DCHECK(local_state);
   observer_.Add(profile_attributes_storage);
@@ -516,7 +517,7 @@ void SupervisedUserWhitelistInstallerImpl::RegisterComponents() {
     // previously registered on the command line but isn't anymore.
     const base::ListValue* clients = nullptr;
     if ((!dict->GetList(kClients, &clients) || clients->empty()) &&
-        command_line_whitelists.count(id) == 0) {
+        !base::Contains(command_line_whitelists, id)) {
       stale_whitelists.insert(id);
       continue;
     }
@@ -569,7 +570,7 @@ void SupervisedUserWhitelistInstallerImpl::RegisterWhitelist(
     }
 
     base::Value client(client_id);
-    DCHECK(!base::ContainsValue(clients->GetList(), client));
+    DCHECK(!base::Contains(clients->GetList(), client));
     clients->GetList().push_back(std::move(client));
   }
 
@@ -667,7 +668,8 @@ void SupervisedUserWhitelistInstaller::TriggerComponentUpdate(
     OnDemandUpdater* updater,
     const std::string& crx_id) {
   // TODO(sorin): use a callback to check the result (crbug.com/639189).
-  updater->OnDemandUpdate(crx_id, component_updater::Callback());
+  updater->OnDemandUpdate(crx_id, OnDemandUpdater::Priority::FOREGROUND,
+                          component_updater::Callback());
 }
 
 }  // namespace component_updater

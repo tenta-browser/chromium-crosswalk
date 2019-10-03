@@ -14,9 +14,6 @@
 // support immersive mode yet.
 class ImmersiveModeControllerStub : public ImmersiveModeController {
  public:
-  ImmersiveModeControllerStub();
-  ~ImmersiveModeControllerStub() override;
-
   // ImmersiveModeController overrides:
   void Init(BrowserView* browser_view) override;
   void SetEnabled(bool enabled) override;
@@ -30,11 +27,7 @@ class ImmersiveModeControllerStub : public ImmersiveModeController {
   void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds_in_screen) override;
   bool ShouldStayImmersiveAfterExitingFullscreen() override;
-  views::Widget* GetRevealWidget() override;
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ImmersiveModeControllerStub);
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_FRAME_IMMERSIVE_MODE_CONTROLLER_STUB_H_

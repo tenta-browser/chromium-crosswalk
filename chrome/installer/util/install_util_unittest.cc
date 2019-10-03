@@ -4,6 +4,8 @@
 
 #include "chrome/installer/util/install_util.h"
 
+#include <Aclapi.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -13,16 +15,16 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/version.h"
 #include "base/win/registry.h"
+#include "chrome/install_static/install_util.h"
+#include "chrome/install_static/test/scoped_install_details.h"
 #include "chrome/installer/util/google_update_constants.h"
-#include "chrome/installer/util/test_app_registration_data.h"
 #include "chrome/installer/util/work_item.h"
 #include "chrome/installer/util/work_item_list.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -33,15 +35,70 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::StrEq;
 
+namespace {
+
+struct ScopedSecurityData {
+  ~ScopedSecurityData() {
+    if (everyone_sid)
+      FreeSid(everyone_sid);
+    if (acl)
+      LocalFree(acl);
+    if (sec_descr)
+      LocalFree(sec_descr);
+  }
+  PSID everyone_sid = nullptr;
+  PACL acl = nullptr;
+  PSECURITY_DESCRIPTOR sec_descr = nullptr;
+};
+
+void CreateDeleteOnlySecurity(ScopedSecurityData* sec_data,
+                              SECURITY_ATTRIBUTES* sa) {
+  // Create a well-known SID for the Everyone group.
+  SID_IDENTIFIER_AUTHORITY SIDAuthWorld{SECURITY_WORLD_SID_AUTHORITY};
+  ASSERT_TRUE(AllocateAndInitializeSid(&SIDAuthWorld, 1, SECURITY_WORLD_RID, 0,
+                                       0, 0, 0, 0, 0, 0,
+                                       &sec_data->everyone_sid));
+
+  // Initialize an EXPLICIT_ACCESS structure for an ACE.
+  // The ACE will allow Everyone DELETE access to the key.
+  EXPLICIT_ACCESS ea;
+  ZeroMemory(&ea, sizeof(ea));
+  ea.grfAccessPermissions = DELETE;
+  ea.grfAccessMode = SET_ACCESS;
+  ea.grfInheritance = NO_INHERITANCE;
+  ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+  ea.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+  ea.Trustee.ptstrName = static_cast<LPTSTR>(sec_data->everyone_sid);
+
+  // Create a new ACL that contains the ACE.
+  ASSERT_EQ(static_cast<DWORD>(ERROR_SUCCESS),
+            SetEntriesInAcl(1, &ea, nullptr, &sec_data->acl));
+
+  // Initialize a security descriptor.
+  sec_data->sec_descr = static_cast<PSECURITY_DESCRIPTOR>(
+      LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH));
+  ASSERT_TRUE(sec_data->sec_descr);
+
+  ASSERT_TRUE(InitializeSecurityDescriptor(sec_data->sec_descr,
+                                           SECURITY_DESCRIPTOR_REVISION));
+
+  // Add the ACL to the security descriptor.
+  ASSERT_TRUE(SetSecurityDescriptorDacl(sec_data->sec_descr,
+                                        TRUE,  // bDaclPresent flag
+                                        sec_data->acl,
+                                        FALSE));  // not a default DACL
+
+  // Initialize a security attributes structure.
+  sa->nLength = sizeof(*sa);
+  sa->lpSecurityDescriptor = sec_data->sec_descr;
+  sa->bInheritHandle = FALSE;
+}
+
+}  // namespace
+
 class MockRegistryValuePredicate : public InstallUtil::RegistryValuePredicate {
  public:
   MOCK_CONST_METHOD1(Evaluate, bool(const std::wstring&));
-};
-
-class TestBrowserDistribution : public BrowserDistribution {
- public:
-  TestBrowserDistribution()
-      : BrowserDistribution(base::MakeUnique<TestAppRegistrationData>()) {}
 };
 
 class InstallUtilTest : public testing::Test {
@@ -345,7 +402,7 @@ TEST_F(InstallUtilTest, ProgramCompare) {
   // Tests where the expected file exists.
   static const char data[] = "data";
   ASSERT_TRUE(base::CreateDirectory(some_long_dir));
-  ASSERT_NE(-1, base::WriteFile(expect, data, arraysize(data) - 1));
+  ASSERT_NE(-1, base::WriteFile(expect, data, base::size(data) - 1));
   // Paths don't match.
   EXPECT_FALSE(InstallUtil::ProgramCompare(expect).Evaluate(
       L"\"" + other.value() + L"\""));
@@ -371,9 +428,9 @@ TEST_F(InstallUtilTest, ProgramCompare) {
 }
 
 TEST_F(InstallUtilTest, AddDowngradeVersion) {
-  TestBrowserDistribution dist;
-  bool system_install = true;
-  RegKey(HKEY_LOCAL_MACHINE, dist.GetStateKey().c_str(),
+  install_static::ScopedInstallDetails system_install(true);
+  const HKEY kRoot = HKEY_LOCAL_MACHINE;
+  RegKey(kRoot, install_static::GetClientStateKeyPath().c_str(),
          KEY_SET_VALUE | KEY_WOW64_32KEY);
   std::unique_ptr<WorkItemList> list;
 
@@ -382,39 +439,34 @@ TEST_F(InstallUtilTest, AddDowngradeVersion) {
   base::Version lower_new_version_1("1.1.1.0");
   base::Version lower_new_version_2("1.1.0.0");
 
-  ASSERT_FALSE(
-      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+  ASSERT_FALSE(InstallUtil::GetDowngradeVersion());
 
   // Upgrade should not create the value.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &current_version, higer_new_version, &dist, list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &current_version,
+                                             higer_new_version, list.get());
   ASSERT_TRUE(list->Do());
-  ASSERT_FALSE(
-      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+  ASSERT_FALSE(InstallUtil::GetDowngradeVersion());
 
   // Downgrade should create the value.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &current_version, lower_new_version_1, &dist, list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &current_version,
+                                             lower_new_version_1, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
 
   // Multiple downgrades should not change the value.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &lower_new_version_1, lower_new_version_2, &dist,
-      list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &lower_new_version_1,
+                                             lower_new_version_2, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
 }
 
 TEST_F(InstallUtilTest, DeleteDowngradeVersion) {
-  TestBrowserDistribution dist;
-  bool system_install = true;
-  RegKey(HKEY_LOCAL_MACHINE, dist.GetStateKey().c_str(),
+  install_static::ScopedInstallDetails system_install(true);
+  const HKEY kRoot = HKEY_LOCAL_MACHINE;
+  RegKey(kRoot, install_static::GetClientStateKeyPath().c_str(),
          KEY_SET_VALUE | KEY_WOW64_32KEY);
   std::unique_ptr<WorkItemList> list;
 
@@ -424,51 +476,85 @@ TEST_F(InstallUtilTest, DeleteDowngradeVersion) {
   base::Version lower_new_version_2("1.1.0.0");
 
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &current_version, lower_new_version_2, &dist, list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &current_version,
+                                             lower_new_version_2, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
 
   // Upgrade should not delete the value if it still lower than the version that
   // downgrade from.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &lower_new_version_2, lower_new_version_1, &dist,
-      list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &lower_new_version_2,
+                                             lower_new_version_1, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
 
   // Repair should not delete the value.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &lower_new_version_1, lower_new_version_1, &dist,
-      list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &lower_new_version_1,
+                                             lower_new_version_1, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
 
   // Fully upgrade should delete the value.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &lower_new_version_1, higer_new_version, &dist,
-      list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &lower_new_version_1,
+                                             higer_new_version, list.get());
   ASSERT_TRUE(list->Do());
-  ASSERT_FALSE(
-      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+  ASSERT_FALSE(InstallUtil::GetDowngradeVersion());
 
   // Fresh install should delete the value if it exists.
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, &current_version, lower_new_version_2, &dist, list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, &current_version,
+                                             lower_new_version_2, list.get());
   ASSERT_TRUE(list->Do());
-  EXPECT_EQ(current_version,
-            InstallUtil::GetDowngradeVersion(system_install, &dist));
+  EXPECT_EQ(current_version, InstallUtil::GetDowngradeVersion());
   list.reset(WorkItem::CreateWorkItemList());
-  InstallUtil::AddUpdateDowngradeVersionItem(
-      system_install, nullptr, lower_new_version_1, &dist, list.get());
+  InstallUtil::AddUpdateDowngradeVersionItem(kRoot, nullptr,
+                                             lower_new_version_1, list.get());
   ASSERT_TRUE(list->Do());
-  ASSERT_FALSE(
-      InstallUtil::GetDowngradeVersion(system_install, &dist).IsValid());
+  ASSERT_FALSE(InstallUtil::GetDowngradeVersion());
+}
+
+TEST(DeleteRegistryKeyTest, DeleteAccessRightIsEnoughToDelete) {
+  registry_util::RegistryOverrideManager registry_override_manager;
+  ASSERT_NO_FATAL_FAILURE(
+      registry_override_manager.OverrideRegistry(HKEY_CURRENT_USER));
+
+  ScopedSecurityData sec_data;
+  SECURITY_ATTRIBUTES sa;
+  ASSERT_NO_FATAL_FAILURE(CreateDeleteOnlySecurity(&sec_data, &sa));
+
+  HKEY sub_key = nullptr;
+  ASSERT_EQ(ERROR_SUCCESS, RegCreateKeyEx(HKEY_CURRENT_USER, L"TestKey", 0,
+                                          nullptr, REG_OPTION_NON_VOLATILE,
+                                          DELETE | WorkItem::kWow64Default, &sa,
+                                          &sub_key, nullptr));
+  RegCloseKey(sub_key);
+
+  EXPECT_TRUE(InstallUtil::DeleteRegistryKey(HKEY_CURRENT_USER, L"TestKey",
+                                             WorkItem::kWow64Default));
+}
+
+TEST_F(InstallUtilTest, GetToastActivatorRegistryPath) {
+  base::string16 toast_activator_reg_path =
+      InstallUtil::GetToastActivatorRegistryPath();
+  EXPECT_FALSE(toast_activator_reg_path.empty());
+
+  // Confirm that the string is a path followed by a GUID.
+  size_t guid_begin = toast_activator_reg_path.find('{');
+  EXPECT_NE(std::wstring::npos, guid_begin);
+  ASSERT_GE(guid_begin, 1u);
+  EXPECT_EQ(L'\\', toast_activator_reg_path[guid_begin - 1]);
+
+  // A GUID has the form "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}".
+  constexpr size_t kGuidLength = 38;
+  EXPECT_EQ(kGuidLength, toast_activator_reg_path.length() - guid_begin);
+
+  EXPECT_EQ('}', toast_activator_reg_path.back());
+}
+
+TEST_F(InstallUtilTest, GuidToSquid) {
+  ASSERT_EQ(InstallUtil::GuidToSquid(L"EDA620E3-AA98-3846-B81E-3493CB2E0E02"),
+            L"3E026ADE89AA64838BE14339BCE2E020");
 }

@@ -116,7 +116,9 @@ TEST(GoogleNewLogoApiTest, RequiresHttpsForContainedUrls) {
   "ddljson": {
     "doodle_type": "INTERACTIVE",
     "target_url": "http://www.doodle.com/target",
-    "fullpage_interactive_url": "http://www.doodle.com/interactive"
+    "fullpage_interactive_url": "http://www.doodle.com/interactive",
+    "iframe_width_px": 500,
+    "iframe_height_px": 200
   }
 })json";
 
@@ -139,7 +141,9 @@ TEST(GoogleNewLogoApiTest, AcceptsHttpForContainedUrlsIfBaseInsecure) {
   "ddljson": {
     "doodle_type": "INTERACTIVE",
     "target_url": "http://www.doodle.com/target",
-    "fullpage_interactive_url": "http://www.doodle.com/interactive"
+    "fullpage_interactive_url": "http://www.doodle.com/interactive",
+    "iframe_width_px": 500,
+    "iframe_height_px": 200
   }
 })json";
 
@@ -159,11 +163,50 @@ TEST(GoogleNewLogoApiTest, AcceptsHttpForContainedUrlsIfBaseInsecure) {
 TEST(GoogleNewLogoApiTest, ParsesStaticImage) {
   const GURL base_url("https://base.doo/");
   // Note: The base64 encoding of "abc" is "YWJj".
+  // Note: The base64 encoding of "xyz" is "eHl6".
   const std::string json = R"json()]}'
 {
   "ddljson": {
     "target_url": "/target",
-    "data_uri": "data:image/png;base64,YWJj"
+    "data_uri": "data:image/png;base64,YWJj",
+    "dark_data_uri": "data:image/png;base64,eHl6"
+  }
+})json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("xyz", logo->dark_encoded_image->data());
+  EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesShareButtonForSimpleDoodle) {
+  const GURL base_url("https://base.doo/");
+  // Note: The base64 encoding of "abc" is "YWJj".
+  const std::string json = R"json()]}'
+{
+  "ddljson": {
+    "doodle_type": "SIMPLE",
+    "data_uri": "data:image/png;base64,YWJj",
+    "short_link": "//g.co",
+    "share_button": {
+      "background_color": "#fe8080",
+      "icon_image": "test_img",
+      "offset_x": 111,
+      "offset_y": 222,
+      "opacity": 0.5
+    },
+    "dark_share_button": {
+      "background_color": "#ee22bb",
+      "icon_image": "dark_test_img",
+      "offset_x": 99,
+      "offset_y": 191,
+      "opacity": 0.7
+    }
   }
 })json";
 
@@ -175,9 +218,111 @@ TEST(GoogleNewLogoApiTest, ParsesStaticImage) {
   ASSERT_TRUE(logo);
   EXPECT_EQ("abc", logo->encoded_image->data());
   EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
+  EXPECT_EQ("https://g.co/", logo->metadata.short_link);
+
+  EXPECT_EQ("#fe8080", logo->metadata.share_button_bg);
+  EXPECT_EQ("test_img", logo->metadata.share_button_icon);
+  EXPECT_EQ(111, logo->metadata.share_button_x);
+  EXPECT_EQ(222, logo->metadata.share_button_y);
+  EXPECT_EQ(0.5, logo->metadata.share_button_opacity);
+  EXPECT_EQ("#ee22bb", logo->metadata.dark_share_button_bg);
+  EXPECT_EQ("dark_test_img", logo->metadata.dark_share_button_icon);
+  EXPECT_EQ(99, logo->metadata.dark_share_button_x);
+  EXPECT_EQ(191, logo->metadata.dark_share_button_y);
+  EXPECT_EQ(0.7, logo->metadata.dark_share_button_opacity);
 }
 
-TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
+TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfWrongShortLinkFormat) {
+  const GURL base_url("https://base.doo/");
+  // Note: The base64 encoding of "abc" is "YWJj".
+  const std::string json = R"json()]}'
+{
+  "ddljson": {
+    "doodle_type": "SIMPLE",
+    "data_uri": "data:image/png;base64,YWJj",
+    "short_link": "www.//g.co",
+    "share_button": {
+      "background_color": "#fe8080",
+      "icon_image": "test_img",
+      "offset_x": 111,
+      "offset_y": 222,
+      "opacity": 0.5
+    },
+    "dark_share_button": {
+      "background_color": "#ee22bb",
+      "icon_image": "dark_test_img",
+      "offset_x": 99,
+      "offset_y": 191,
+      "opacity": 0.7
+    }
+  }
+})json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
+  ASSERT_TRUE(logo->metadata.short_link.is_empty());
+  ASSERT_TRUE(logo->metadata.share_button_icon.empty());
+  EXPECT_EQ(-1, logo->metadata.share_button_x);
+  EXPECT_EQ(-1, logo->metadata.share_button_y);
+  EXPECT_EQ(0, logo->metadata.share_button_opacity);
+  ASSERT_TRUE(logo->metadata.dark_share_button_icon.empty());
+  EXPECT_EQ(-1, logo->metadata.dark_share_button_x);
+  EXPECT_EQ(-1, logo->metadata.dark_share_button_y);
+  EXPECT_EQ(0, logo->metadata.dark_share_button_opacity);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesNoShareButtonIfShortLinkInvalid) {
+  const GURL base_url("https://base.doo/");
+  // Note: The base64 encoding of "abc" is "YWJj".
+  const std::string json = R"json()]}'
+{
+  "ddljson": {
+    "doodle_type": "SIMPLE",
+    "data_uri": "data:image/png;base64,YWJj",
+    "short_link": "//dsdjf2(*&^%&",
+    "share_button": {
+      "background_color": "#fe8080",
+      "icon_image": "test_img",
+      "offset_x": 111,
+      "offset_y": 222,
+      "opacity": 0.5
+    },
+    "dark_share_button": {
+      "background_color": "#ee22bb",
+      "icon_image": "dark_test_img",
+      "offset_x": 99,
+      "offset_y": 191,
+      "opacity": 0.7
+    }
+  }
+})json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
+  ASSERT_FALSE(logo->metadata.short_link.is_valid());
+  ASSERT_TRUE(logo->metadata.share_button_icon.empty());
+  EXPECT_EQ(-1, logo->metadata.share_button_x);
+  EXPECT_EQ(-1, logo->metadata.share_button_y);
+  EXPECT_EQ(0, logo->metadata.share_button_opacity);
+  ASSERT_TRUE(logo->metadata.dark_share_button_icon.empty());
+  EXPECT_EQ(-1, logo->metadata.dark_share_button_x);
+  EXPECT_EQ(-1, logo->metadata.dark_share_button_y);
+  EXPECT_EQ(0, logo->metadata.dark_share_button_opacity);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesShareButtonForAnimatedDoodle) {
   const GURL base_url("https://base.doo/");
   // Note: The base64 encoding of "abc" is "YWJj".
   const std::string json = R"json()]}'
@@ -189,7 +334,22 @@ TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
       "is_animated_gif": true,
       "url": "https://www.doodle.com/image.gif"
     },
-    "cta_data_uri": "data:image/png;base64,YWJj"
+    "short_link": "//g.co",
+    "cta_data_uri": "data:image/png;base64,YWJj",
+    "share_button": {
+      "background_color": "#fe8080",
+      "icon_image": "test_img",
+      "offset_x": 111,
+      "offset_y": 222,
+      "opacity": 0.5
+    },
+    "dark_share_button": {
+      "background_color": "#ee22bb",
+      "icon_image": "dark_test_img",
+      "offset_x": 99,
+      "offset_y": 191,
+      "opacity": 0.7
+    }
   }
 })json";
 
@@ -203,6 +363,81 @@ TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
             logo->metadata.animated_url);
   EXPECT_EQ("abc", logo->encoded_image->data());
   EXPECT_EQ(LogoType::ANIMATED, logo->metadata.type);
+  EXPECT_EQ("https://g.co/", logo->metadata.short_link);
+
+  EXPECT_EQ("#fe8080", logo->metadata.share_button_bg);
+  EXPECT_EQ("test_img", logo->metadata.share_button_icon);
+  EXPECT_EQ(111, logo->metadata.share_button_x);
+  EXPECT_EQ(222, logo->metadata.share_button_y);
+  EXPECT_EQ(0.5, logo->metadata.share_button_opacity);
+  EXPECT_EQ("#ee22bb", logo->metadata.dark_share_button_bg);
+  EXPECT_EQ("dark_test_img", logo->metadata.dark_share_button_icon);
+  EXPECT_EQ(99, logo->metadata.dark_share_button_x);
+  EXPECT_EQ(191, logo->metadata.dark_share_button_y);
+  EXPECT_EQ(0.7, logo->metadata.dark_share_button_opacity);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesAnimatedImage) {
+  const GURL base_url("https://base.doo/");
+  // Note: The base64 encoding of "abc" is "YWJj".
+  // Note: The base64 encoding of "xyz" is "eHl6".
+  const std::string json = R"json()]}'
+{
+  "ddljson": {
+    "doodle_type": "ANIMATED",
+    "target_url": "/target",
+    "large_image": {
+      "is_animated_gif": true,
+      "url": "https://www.doodle.com/image.gif"
+    },
+    "dark_large_image": {
+      "is_animated_gif": true,
+      "url": "https://www.doodle.com/dark_image.gif"
+    },
+    "cta_data_uri": "data:image/png;base64,YWJj",
+    "dark_cta_data_uri": "data:image/png;base64,eHl6"
+  }
+})json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ(GURL("https://www.doodle.com/image.gif"),
+            logo->metadata.animated_url);
+  EXPECT_EQ(GURL("https://www.doodle.com/dark_image.gif"),
+            logo->metadata.dark_animated_url);
+  EXPECT_EQ("abc", logo->encoded_image->data());
+  EXPECT_EQ("xyz", logo->dark_encoded_image->data());
+  EXPECT_EQ(LogoType::ANIMATED, logo->metadata.type);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesLoggingUrls) {
+  const GURL base_url("https://base.doo/");
+  const std::string json = R"json()]}'
+{
+  "ddljson": {
+    "doodle_type": "ANIMATED",
+    "target_url": "/target",
+    "large_image": {
+      "is_animated_gif": true,
+      "url": "https://www.doodle.com/image.gif"
+    },
+    "log_url": "/log?a=b",
+    "cta_log_url": "/ctalog?c=d"
+  }
+})json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ(GURL("https://base.doo/log?a=b"), logo->metadata.log_url);
+  EXPECT_EQ(GURL("https://base.doo/ctalog?c=d"), logo->metadata.cta_log_url);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodle) {
@@ -212,7 +447,9 @@ TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodle) {
   "ddljson": {
     "doodle_type": "INTERACTIVE",
     "fullpage_interactive_url": "/fullpage",
-    "target_url": "/target"
+    "target_url": "/target",
+    "iframe_width_px": 500,
+    "iframe_height_px": 200
   }
 })json";
 
@@ -224,13 +461,69 @@ TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodle) {
   ASSERT_TRUE(logo);
   EXPECT_EQ(GURL("https://base.doo/fullpage"), logo->metadata.full_page_url);
   EXPECT_EQ(LogoType::INTERACTIVE, logo->metadata.type);
+  EXPECT_EQ(500, logo->metadata.iframe_width_px);
+  EXPECT_EQ(200, logo->metadata.iframe_height_px);
+  EXPECT_EQ(nullptr, logo->encoded_image);
+}
+
+TEST(GoogleNewLogoApiTest, ParsesInteractiveDoodleWithNewWindowAsSimple) {
+  const GURL base_url("https://base.doo/");
+  // Note: The base64 encoding of "abc" is "YWJj".
+  const std::string json = R"json()]}'
+    {
+      "ddljson": {
+        "doodle_type": "INTERACTIVE",
+        "target_url": "/search?q=interactive",
+        "fullpage_interactive_url": "/play",
+        "launch_interactive_behavior": "NEW_WINDOW",
+        "data_uri": "data:image/png;base64,YWJj",
+        "iframe_width_px": 500,
+        "iframe_height_px": 200
+      }
+    })json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ(LogoType::SIMPLE, logo->metadata.type);
+  EXPECT_EQ(GURL("https://base.doo/play"), logo->metadata.on_click_url);
+  EXPECT_EQ(GURL("https://base.doo/play"), logo->metadata.full_page_url);
+  EXPECT_EQ(0, logo->metadata.iframe_width_px);
+  EXPECT_EQ(0, logo->metadata.iframe_height_px);
+  EXPECT_EQ("abc", logo->encoded_image->data());
+}
+
+TEST(GoogleNewLogoApiTest, DefaultsInteractiveIframeSize) {
+  const GURL base_url("https://base.doo/");
+  const std::string json = R"json()]}'
+    {
+      "ddljson": {
+        "doodle_type": "INTERACTIVE",
+        "target_url": "/search?q=interactive",
+        "fullpage_interactive_url": "/play"
+      }
+    })json";
+
+  bool failed = false;
+  std::unique_ptr<EncodedLogo> logo = ParseDoodleLogoResponse(
+      base_url, std::make_unique<std::string>(json), base::Time(), &failed);
+
+  ASSERT_FALSE(failed);
+  ASSERT_TRUE(logo);
+  EXPECT_EQ(LogoType::INTERACTIVE, logo->metadata.type);
+  EXPECT_EQ(GURL("https://base.doo/play"), logo->metadata.full_page_url);
+  EXPECT_EQ(500, logo->metadata.iframe_width_px);
+  EXPECT_EQ(200, logo->metadata.iframe_height_px);
 }
 
 TEST(GoogleNewLogoApiTest, ParsesCapturedApiResult) {
   const GURL base_url("https://base.doo/");
 
   base::FilePath test_data_dir;
-  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
   test_data_dir = test_data_dir.AppendASCII("components")
                       .AppendASCII("test")
                       .AppendASCII("data")

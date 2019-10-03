@@ -8,11 +8,11 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
 #include <set>
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "components/favicon_base/favicon_util.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -123,9 +123,7 @@ void GetCandidateIndicesWithBestScores(
     return;
   }
 
-  std::vector<int>::const_iterator zero_size_it =
-      std::find(desired_sizes.begin(), desired_sizes.end(), 0);
-  if (zero_size_it != desired_sizes.end()) {
+  if (base::Contains(desired_sizes, 0)) {
     // Just return the biggest image available.
     SelectionResult result;
     result.index = BiggestCandidate(candidate_sizes);
@@ -225,8 +223,8 @@ gfx::ImageSkia CreateFaviconImageSkia(
   if (desired_size_in_dip == 0) {
     desired_sizes.push_back(0);
   } else {
-    for (std::vector<float>::const_iterator iter = favicon_scales.begin();
-         iter != favicon_scales.end(); ++iter) {
+    for (auto iter = favicon_scales.begin(); iter != favicon_scales.end();
+         ++iter) {
       desired_sizes.push_back(
           static_cast<int>(ceil(desired_size_in_dip * (*iter))));
     }
@@ -245,7 +243,7 @@ gfx::ImageSkia CreateFaviconImageSkia(
     return gfx::ImageSkia(gfx::ImageSkiaRep(bitmaps[index], 1.0f));
   }
 
-  auto image_source = base::MakeUnique<FaviconImageSource>();
+  auto image_source = std::make_unique<FaviconImageSource>();
 
   for (size_t i = 0; i < results.size(); ++i) {
     size_t index = results[i].index;

@@ -10,8 +10,10 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/task/post_task.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/safe_browsing/browser/threat_details.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -44,8 +46,8 @@ void ThreatDetailsRedirectsCollector::StartHistoryCollection(
     return;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&ThreatDetailsRedirectsCollector::StartGetRedirects, this,
                      urls));
 }
@@ -82,18 +84,18 @@ void ThreatDetailsRedirectsCollector::GetRedirects(const GURL& url) {
 
   history_service_->QueryRedirectsTo(
       url,
-      base::Bind(&ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo,
-                 base::Unretained(this), url),
+      base::BindOnce(&ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo,
+                     base::Unretained(this), url),
       &request_tracker_);
 }
 
 void ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo(
     const GURL& url,
-    const history::RedirectList* redirect_list) {
-  if (!redirect_list->empty()) {
+    history::RedirectList redirect_list) {
+  if (!redirect_list.empty()) {
     std::vector<GURL> urllist;
     urllist.push_back(url);
-    urllist.insert(urllist.end(), redirect_list->begin(), redirect_list->end());
+    urllist.insert(urllist.end(), redirect_list.begin(), redirect_list.end());
     redirects_urls_.push_back(urllist);
   }
 
@@ -110,7 +112,7 @@ void ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo(
 
 void ThreatDetailsRedirectsCollector::AllDone() {
   DVLOG(1) << "AllDone";
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, callback_);
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, callback_);
   callback_.Reset();
 }
 

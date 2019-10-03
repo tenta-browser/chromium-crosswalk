@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/optional.h"
 
 {%- for struct in structs %}
 {%- set struct_name = struct|get_name_for_kind %}
@@ -32,20 +33,24 @@
 struct {{struct_name}} {
  public:
   {{struct_name}}();
+  explicit {{struct_name}}(const {{struct_name}}&from);
+  explicit {{struct_name}}({{struct_name}}&&from);
   ~{{struct_name}}();
 
 {% for packed_field in struct.packed.packed_fields_in_ordinal_order %}
 {%-  set kind = packed_field.field.kind %}
 {%-  if kind|is_array_kind %}
 std::vector<{{kind.kind|cpp_wrapper_type}}> {{packed_field.field.name}};
+{%-  elif kind|is_struct_kind %}
+base::Optional<{{kind|cpp_wrapper_type}}> {{packed_field.field.name}};
 {%-  else %}
 {{packed_field.field.kind|cpp_wrapper_type}} {{packed_field.field.name}}
-{%-    if packed_field.field.default %} = {{packed_field.field|default_value}} {%- endif %};
+{%-    if packed_field.field.default %} = {{packed_field.field|default_value}} {%- endif %}
+{%-    if packed_field.field.kind|is_any_interface_kind %} = nullptr {%- endif %};
 {%- endif %}
 {%- endfor %}
-
  private:
-  DISALLOW_COPY_AND_ASSIGN({{struct_name}});
+  DISALLOW_ASSIGN({{struct_name}});
 };
 {%- endfor %}
 

@@ -7,6 +7,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,7 +18,7 @@ typedef TextInputTestBase TextInput_SurroundingTextChangedTest;
 
 IN_PROC_BROWSER_TEST_F(TextInput_SurroundingTextChangedTest,
                        SurroundingTextChangedWithInsertText) {
-  TextInputTestHelper helper;
+  TextInputTestHelper helper(GetInputMethod());
   GURL url = ui_test_utils::GetTestUrl(
       base::FilePath(FILE_PATH_LITERAL("textinput")),
       base::FilePath(FILE_PATH_LITERAL("simple_textarea.html")));
@@ -54,7 +55,7 @@ IN_PROC_BROWSER_TEST_F(TextInput_SurroundingTextChangedTest,
 
 IN_PROC_BROWSER_TEST_F(TextInput_SurroundingTextChangedTest,
                        SurroundingTextChangedWithComposition) {
-  TextInputTestHelper helper;
+  TextInputTestHelper helper(GetInputMethod());
   GURL url = ui_test_utils::GetTestUrl(
       base::FilePath(FILE_PATH_LITERAL("textinput")),
       base::FilePath(FILE_PATH_LITERAL("simple_textarea.html")));
@@ -93,7 +94,7 @@ IN_PROC_BROWSER_TEST_F(TextInput_SurroundingTextChangedTest,
 
 IN_PROC_BROWSER_TEST_F(TextInput_SurroundingTextChangedTest,
                        FocusToTextContainingTextAreaByClickingCase) {
-  TextInputTestHelper helper;
+  TextInputTestHelper helper(GetInputMethod());
   GURL url = ui_test_utils::GetTestUrl(
       base::FilePath(FILE_PATH_LITERAL("textinput")),
       base::FilePath(FILE_PATH_LITERAL("textarea_with_preset_text.html")));

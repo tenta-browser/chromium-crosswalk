@@ -8,16 +8,16 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/signin/fake_signin_manager_builder.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/sync/bubble_sync_promo_delegate.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 
 using bookmarks::BookmarkModel;
 
@@ -27,7 +27,13 @@ const char kTestBookmarkURL[] = "http://www.google.com";
 
 class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
  public:
-  BookmarkBubbleViewTest() {}
+  // The test executes the UI code for displaying a window that should be
+  // executed on the UI thread. The test also hits the networking code that
+  // fails without the IO thread. We pass the REAL_IO_THREAD option to run UI
+  // and IO tasks on separate threads.
+  BookmarkBubbleViewTest()
+      : BrowserWithTestWindowTest(
+            content::TestBrowserThreadBundle::REAL_IO_THREAD) {}
 
   // testing::Test:
   void SetUp() override {
@@ -49,11 +55,6 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
     BrowserWithTestWindowTest::TearDown();
   }
 
-  // BrowserWithTestWindowTest:
-  TestingProfile::TestingFactories GetTestingFactories() override {
-    return {{SigninManagerFactory::GetInstance(), BuildFakeSigninManagerBase}};
-  }
-
  protected:
   // Creates a bookmark bubble view.
   void CreateBubbleView() {
@@ -65,17 +66,7 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
   }
 
   std::unique_ptr<views::View> CreateFootnoteView() {
-    return base::WrapUnique(bubble_->CreateFootnoteView());
-  }
-
-  void SetUpSigninManager(const std::string& username) {
-    if (username.empty())
-      return;
-
-    SigninManagerBase* signin_manager = static_cast<SigninManagerBase*>(
-        SigninManagerFactory::GetForProfile(profile()));
-    ASSERT_TRUE(signin_manager);
-    signin_manager->SetAuthenticatedAccountInfo(username, username);
+    return bubble_->CreateFootnoteView();
   }
 
   std::unique_ptr<BookmarkBubbleView> bubble_;
@@ -86,7 +77,8 @@ class BookmarkBubbleViewTest : public BrowserWithTestWindowTest {
 
 // Verifies that the sync promo is not displayed for a signed in user.
 TEST_F(BookmarkBubbleViewTest, SyncPromoSignedIn) {
-  SetUpSigninManager("fake_username");
+  signin::MakePrimaryAccountAvailable(
+      IdentityManagerFactory::GetForProfile(profile()), "fake_username");
   CreateBubbleView();
   std::unique_ptr<views::View> footnote = CreateFootnoteView();
   EXPECT_FALSE(footnote);

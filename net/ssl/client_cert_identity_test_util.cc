@@ -5,6 +5,7 @@
 #include "net/ssl/client_cert_identity_test_util.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -52,14 +53,28 @@ FakeClientCertIdentity::CreateFromCertAndKeyFiles(
   return std::make_unique<FakeClientCertIdentity>(cert, ssl_private_key);
 }
 
+// static
+std::unique_ptr<FakeClientCertIdentity>
+FakeClientCertIdentity::CreateFromCertAndFailSigning(
+    const base::FilePath& dir,
+    const std::string& cert_filename) {
+  scoped_refptr<X509Certificate> cert =
+      net::ImportCertFromFile(dir, cert_filename);
+  if (!cert)
+    return nullptr;
+
+  return std::make_unique<FakeClientCertIdentity>(
+      cert, CreateFailSigningSSLPrivateKey());
+}
+
 std::unique_ptr<FakeClientCertIdentity> FakeClientCertIdentity::Copy() {
   return std::make_unique<FakeClientCertIdentity>(certificate(), key_);
 }
 
 void FakeClientCertIdentity::AcquirePrivateKey(
-    const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
+    base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
         private_key_callback) {
-  private_key_callback.Run(key_);
+  std::move(private_key_callback).Run(key_);
 }
 
 #if defined(OS_MACOSX)

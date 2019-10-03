@@ -9,6 +9,7 @@
 
 #include "ash/system/tray/actionable_view.h"
 #include "ash/system/tray/tray_popup_item_style.h"
+#include "base/bind.h"
 #include "base/macros.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/text_constants.h"
@@ -38,7 +39,9 @@ class HoverHighlightView : public ActionableView {
   };
 
   // If |listener| is null then no action is taken on click.
+  // The former uses default for |use_unified_theme|.
   explicit HoverHighlightView(ViewClickListener* listener);
+  HoverHighlightView(ViewClickListener* listener, bool use_unified_theme);
   ~HoverHighlightView() override;
 
   // Convenience function for populating the view with an icon and a label. This
@@ -94,10 +97,15 @@ class HoverHighlightView : public ActionableView {
   views::Label* text_label() { return text_label_; }
   views::Label* sub_text_label() { return sub_text_label_; }
   views::ImageView* left_icon() { return left_icon_; }
+  views::View* right_view() { return right_view_; }
 
  protected:
+  // Override from Button to also set the tooltip for all child elements.
+  void OnSetTooltipText(const base::string16& tooltip_text) override;
+
   // views::View:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  const char* GetClassName() const override;
 
   TriView* tri_view() { return tri_view_; }
 
@@ -122,8 +130,9 @@ class HoverHighlightView : public ActionableView {
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int width) const override;
-  void OnEnabledChanged() override;
   void OnFocus() override;
+
+  void OnEnabledChanged();
 
   // Determines whether the view is populated or not. If it is, Reset() should
   // be called before re-populating the view.
@@ -136,7 +145,12 @@ class HoverHighlightView : public ActionableView {
   views::View* right_view_ = nullptr;
   TriView* tri_view_ = nullptr;
   bool expandable_ = false;
+  const bool use_unified_theme_;
   AccessibilityState accessibility_state_ = AccessibilityState::DEFAULT;
+  views::PropertyChangedSubscription enabled_changed_subscription_ =
+      AddEnabledChangedCallback(
+          base::BindRepeating(&HoverHighlightView::OnEnabledChanged,
+                              base::Unretained(this)));
 
   DISALLOW_COPY_AND_ASSIGN(HoverHighlightView);
 };

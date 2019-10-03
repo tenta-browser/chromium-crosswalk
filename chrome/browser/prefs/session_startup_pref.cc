@@ -8,7 +8,6 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -91,7 +90,7 @@ void SessionStartupPref::SetStartupPref(PrefService* prefs,
     url_pref_list->Clear();
     for (size_t i = 0; i < pref.urls.size(); ++i) {
       url_pref_list->Set(static_cast<int>(i),
-                         base::MakeUnique<base::Value>(pref.urls[i].spec()));
+                         std::make_unique<base::Value>(pref.urls[i].spec()));
     }
   }
 }
@@ -133,21 +132,21 @@ bool SessionStartupPref::TypeIsManaged(PrefService* prefs) {
 }
 
 // static
-bool SessionStartupPref::TypeIsRecommended(PrefService* prefs) {
-  DCHECK(prefs);
-  const PrefService::Preference* pref_restore =
-      prefs->FindPreference(prefs::kRestoreOnStartup);
-  DCHECK(pref_restore);
-  return pref_restore->IsRecommended();
-}
-
-// static
 bool SessionStartupPref::URLsAreManaged(PrefService* prefs) {
   DCHECK(prefs);
   const PrefService::Preference* pref_urls =
       prefs->FindPreference(prefs::kURLsToRestoreOnStartup);
   DCHECK(pref_urls);
   return pref_urls->IsManaged();
+}
+
+// static
+bool SessionStartupPref::TypeHasRecommendedValue(PrefService* prefs) {
+  DCHECK(prefs);
+  const PrefService::Preference* pref_restore =
+      prefs->FindPreference(prefs::kRestoreOnStartup);
+  DCHECK(pref_restore);
+  return pref_restore->GetRecommendedValue() != nullptr;
 }
 
 // static

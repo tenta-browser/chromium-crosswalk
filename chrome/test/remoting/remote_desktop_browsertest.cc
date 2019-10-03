@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
@@ -17,8 +18,10 @@
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/webui/signin/login_ui_test_utils.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/remoting/key_code_conv.h"
 #include "chrome/test/remoting/page_load_notification_observer.h"
+#include "chrome/test/remoting/remote_test_helper.h"
 #include "chrome/test/remoting/waiter.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/render_view_host.h"
@@ -29,10 +32,32 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/switches.h"
+#include "net/dns/mock_host_resolver.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
+using extensions::Extension;
+
 namespace remoting {
+
+namespace {
+
+// Command line arguments specific to the chromoting browser tests.
+const char kOverrideUserDataDir[] = "override-user-data-dir";
+const char kNoCleanup[] = "no-cleanup";
+const char kNoInstall[] = "no-install";
+const char kWebAppCrx[] = "webapp-crx";
+const char kWebAppUnpacked[] = "webapp-unpacked";
+const char kUserName[] = "username";
+const char kUserPassword[] = "password";
+const char kAccountsFile[] = "accounts-file";
+const char kAccountType[] = "account-type";
+const char kMe2MePin[] = "me2me-pin";
+const char kRemoteHostName[] = "remote-host-name";
+const char kExtensionName[] = "extension-name";
+const char kHttpServer[] = "http-server";
+
+}  // namespace
 
 RemoteDesktopBrowserTest::RemoteDesktopBrowserTest()
     : remote_test_helper_(nullptr), extension_(nullptr) {
@@ -197,12 +222,11 @@ content::WebContents* RemoteDesktopBrowserTest::LaunchChromotingApp(
     window_open_disposition = WindowOpenDisposition::NEW_WINDOW;
   }
 
-  OpenApplication(AppLaunchParams(browser()->profile(), extension_,
-                                  is_platform_app()
-                                      ? extensions::LAUNCH_CONTAINER_NONE
-                                      : extensions::LAUNCH_CONTAINER_TAB,
-                                  window_open_disposition,
-                                  extensions::SOURCE_TEST));
+  OpenApplication(AppLaunchParams(
+      browser()->profile(), extension_->id(),
+      is_platform_app() ? extensions::LaunchContainer::kLaunchContainerNone
+                        : extensions::LaunchContainer::kLaunchContainerTab,
+      window_open_disposition, extensions::AppLaunchSource::kSourceTest));
 
   observer.Wait();
 
@@ -711,13 +735,35 @@ void RemoteDesktopBrowserTest::ExecuteScriptAndWaitForAnyPageLoad(
   observer.Wait();
 }
 
+bool RemoteDesktopBrowserTest::ExecuteScriptAndExtractBool(
+    const std::string& script) {
+  return RemoteTestHelper::ExecuteScriptAndExtractBool(active_web_contents(),
+                                                       script);
+}
+
+// Helper to execute a JavaScript code snippet in the active WebContents
+// and extract the int result.
+int RemoteDesktopBrowserTest::ExecuteScriptAndExtractInt(
+    const std::string& script) {
+  return RemoteTestHelper::ExecuteScriptAndExtractInt(active_web_contents(),
+                                                      script);
+}
+
+// Helper to execute a JavaScript code snippet in the active WebContents
+// and extract the string result.
+std::string RemoteDesktopBrowserTest::ExecuteScriptAndExtractString(
+    const std::string& script) {
+  return RemoteTestHelper::ExecuteScriptAndExtractString(active_web_contents(),
+                                                         script);
+}
+
 // static
 bool RemoteDesktopBrowserTest::LoadScript(
     content::WebContents* web_contents,
     const base::FilePath::StringType& path) {
   std::string script;
   base::FilePath src_dir;
-  _ASSERT_TRUE(PathService::Get(base::DIR_EXE, &src_dir));
+  _ASSERT_TRUE(base::PathService::Get(base::DIR_EXE, &src_dir));
   base::FilePath script_path =
       src_dir.Append(FILE_PATH_LITERAL("remoting/browser_test_resources/"));
   script_path = script_path.Append(path);
@@ -745,9 +791,9 @@ void RemoteDesktopBrowserTest::RunJavaScriptTest(
       content::ExecuteScriptAndExtractString(web_contents, script, &result));
 
   // Read in the JSON
-  base::JSONReader reader;
-  std::unique_ptr<base::Value> value =
-      reader.Read(result, base::JSON_ALLOW_TRAILING_COMMAS);
+  base::Optional<base::Value> value =
+      base::JSONReader::Read(result, base::JSON_ALLOW_TRAILING_COMMAS);
+  ASSERT_TRUE(value);
 
   // Convert to dictionary
   base::DictionaryValue* dict_value = NULL;
@@ -835,10 +881,9 @@ void RemoteDesktopBrowserTest::WaitForConnection() {
 }
 
 bool RemoteDesktopBrowserTest::IsHostOnline(const std::string& host_id) {
-
   ExecuteScript("remoting.hostList.refreshAndDisplay()");
 
- // Verify the host is online.
+  // Verify the host is online.
   std::string element_id = "host_" + host_id;
   std::string host_div_class = ExecuteScriptAndExtractString(
       "document.getElementById('" + element_id + "').parentNode.className");
@@ -889,11 +934,12 @@ void RemoteDesktopBrowserTest::SetUserNameAndPassword(
   ASSERT_TRUE(base::ReadFileToString(absolute_path, &accounts_info));
 
   // Get the root dictionary from the input json file contents.
-  std::unique_ptr<base::Value> root =
+  base::Optional<base::Value> root =
       base::JSONReader::Read(accounts_info, base::JSON_ALLOW_TRAILING_COMMAS);
 
   const base::DictionaryValue* root_dict = NULL;
-  ASSERT_TRUE(root.get() && root->GetAsDictionary(&root_dict));
+  ASSERT_TRUE(root);
+  ASSERT_TRUE(root->GetAsDictionary(&root_dict));
 
   // Now get the dictionary for the specified account type.
   const base::DictionaryValue* account_dict = NULL;

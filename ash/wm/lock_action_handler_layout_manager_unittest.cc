@@ -7,9 +7,15 @@
 #include <memory>
 #include <utility>
 
+#include "ash/keyboard/keyboard_controller_impl.h"
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
 #include "ash/lock_screen_action/lock_screen_action_background_controller.h"
 #include "ash/lock_screen_action/lock_screen_action_background_controller_stub.h"
 #include "ash/lock_screen_action/test_lock_screen_action_background_controller.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/interfaces/tray_action.mojom.h"
 #include "ash/root_window_controller.h"
@@ -27,22 +33,14 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_switches.h"
-#include "ui/keyboard/keyboard_test_util.h"
-#include "ui/keyboard/keyboard_ui.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
 namespace ash {
 
 namespace {
-
-constexpr int kVirtualKeyboardHeight = 100;
 
 aura::Window* GetContainer(ShellWindowId container_id) {
   return Shell::GetPrimaryRootWindowController()->GetContainer(container_id);
@@ -99,8 +97,6 @@ class LockActionHandlerLayoutManagerTest : public AshTestBase {
   }
 
   void TearDown() override {
-    Shell::GetPrimaryRootWindowController()->DeactivateKeyboard(
-        keyboard::KeyboardController::GetInstance());
     lock_window_.reset();
     AshTestBase::TearDown();
     LockScreenActionBackgroundController::SetFactoryCallbackForTesting(nullptr);
@@ -123,22 +119,19 @@ class LockActionHandlerLayoutManagerTest : public AshTestBase {
 
   // Show or hide the keyboard.
   void ShowKeyboard(bool show) {
-    keyboard::KeyboardController* keyboard =
-        keyboard::KeyboardController::GetInstance();
-    ASSERT_TRUE(keyboard);
-    if (show == keyboard->keyboard_visible())
+    auto* keyboard = keyboard::KeyboardUIController::Get();
+    ASSERT_TRUE(keyboard->IsEnabled());
+    if (show == keyboard->IsKeyboardVisible())
       return;
 
     if (show) {
       keyboard->ShowKeyboard(true);
-      keyboard->ui()->GetContentsWindow()->SetBounds(
-          keyboard::KeyboardBoundsFromRootBounds(
-              Shell::GetPrimaryRootWindow()->bounds(), kVirtualKeyboardHeight));
+      ASSERT_TRUE(keyboard::WaitUntilShown());
     } else {
-      keyboard->HideKeyboard(keyboard::KeyboardController::HIDE_REASON_MANUAL);
+      keyboard->HideKeyboardByUser();
     }
 
-    DCHECK_EQ(show, keyboard->keyboard_visible());
+    DCHECK_EQ(show, keyboard->IsKeyboardVisible());
   }
 
   void SetUpTrayActionClientAndLockSession(mojom::TrayActionState state) {
@@ -214,7 +207,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, PreserveNormalWindowBounds) {
   EXPECT_EQ(bounds.ToString(), window->GetBoundsInScreen().ToString());
 
   gfx::Rect work_area =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(window.get());
+      screen_util::GetDisplayWorkAreaBoundsInParent(window.get());
   window->SetBounds(work_area);
 
   EXPECT_EQ(work_area.ToString(), window->GetBoundsInScreen().ToString());
@@ -244,7 +237,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, MaximizedWindowBounds) {
   gfx::Rect target_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
+                      ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 }
 
@@ -268,7 +261,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, FullscreenWindowBounds) {
   gfx::Rect target_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
+                      ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 }
 
@@ -287,7 +280,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, MaximizeResizableWindow) {
   gfx::Rect target_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
+                      ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 }
 
@@ -295,7 +288,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, KeyboardBounds) {
   gfx::Rect initial_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   initial_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                       kShelfSize /* bottom */);
+                       ShelfConstants::shelf_size() /* bottom */);
 
   SetUpTrayActionClientAndLockSession(mojom::TrayActionState::kActive);
 
@@ -310,8 +303,8 @@ TEST_F(LockActionHandlerLayoutManagerTest, KeyboardBounds) {
   ShowKeyboard(true);
 
   gfx::Rect keyboard_bounds =
-      keyboard::KeyboardController::GetInstance()->current_keyboard_bounds();
-  // Sanity check that the keyboard intersects woth original window bounds - if
+      keyboard::KeyboardUIController::Get()->GetVisualBoundsInScreen();
+  // Sanity check that the keyboard intersects with original window bounds - if
   // this is not true, the window bounds would remain unchanged.
   ASSERT_TRUE(keyboard_bounds.Intersects(initial_bounds));
 
@@ -327,10 +320,12 @@ TEST_F(LockActionHandlerLayoutManagerTest, KeyboardBounds) {
       GetPrimaryShelf()->shelf_layout_manager();
   ASSERT_TRUE(shelf_layout_manager);
 
-  const int chromevox_panel_height = 45;
-  shelf_layout_manager->SetChromeVoxPanelHeight(chromevox_panel_height);
+  const int kAccessibilityPanelHeight = 45;
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(nullptr, kShellWindowId_AccessibilityPanelContainer);
+  SetAccessibilityPanelHeight(kAccessibilityPanelHeight);
 
-  target_bounds.Inset(0 /* left */, chromevox_panel_height /* top */,
+  target_bounds.Inset(0 /* left */, kAccessibilityPanelHeight /* top */,
                       0 /* right */, 0 /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 
@@ -455,12 +450,12 @@ TEST_F(LockActionHandlerLayoutManagerTest, MultipleMonitors) {
   gfx::Rect target_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
+                      ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 
   EXPECT_EQ(root_windows[0], window->GetRootWindow());
 
-  wm::WindowState* window_state = wm::GetWindowState(window.get());
+  WindowState* window_state = WindowState::Get(window.get());
   window_state->SetRestoreBoundsInScreen(gfx::Rect(400, 0, 30, 40));
   window_state->Maximize();
 
@@ -469,7 +464,7 @@ TEST_F(LockActionHandlerLayoutManagerTest, MultipleMonitors) {
   EXPECT_EQ(root_windows[0], window->GetRootWindow());
   target_bounds = gfx::Rect(300, 400);
   target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
+                      ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
 
   window_state->Restore();
@@ -487,8 +482,6 @@ TEST_F(LockActionHandlerLayoutManagerTest, MultipleMonitors) {
 
   window->SetBoundsInScreen(gfx::Rect(0, 0, 30, 40), GetSecondaryDisplay());
   target_bounds = gfx::Rect(400, 500);
-  target_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                      kShelfSize /* bottom */);
   target_bounds.Offset(300, 0);
   EXPECT_EQ(root_windows[1], window->GetRootWindow());
   EXPECT_EQ(target_bounds.ToString(), window->GetBoundsInScreen().ToString());
@@ -719,7 +712,7 @@ TEST_F(LockActionHandlerLayoutManagerTestWithTestBackgroundController,
   gfx::Rect target_app_window_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   target_app_window_bounds.Inset(0 /* left */, 0 /* top */, 0 /* right */,
-                                 kShelfSize /* bottom */);
+                                 ShelfConstants::shelf_size() /* bottom */);
   EXPECT_EQ(target_app_window_bounds, window->GetBoundsInScreen());
 
   EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().bounds(),

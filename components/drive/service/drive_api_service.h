@@ -23,7 +23,6 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 class GURL;
-class OAuth2TokenService;
 
 namespace base {
 class FilePath;
@@ -38,9 +37,13 @@ class BatchUploadRequest;
 }  // namespace drive
 }  // namespace google_apis
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace signin {
+class IdentityManager;
+}
+
+namespace network {
+class SharedURLLoaderFactory;
+}
 
 namespace drive {
 
@@ -93,8 +96,10 @@ class BatchRequestConfigurator : public BatchRequestConfiguratorInterface {
 class DriveAPIService : public DriveServiceInterface,
                         public google_apis::AuthServiceObserver {
  public:
-  // |oauth2_token_service| is used for obtaining OAuth2 access tokens.
+  // |identity_manager| is used for interacting with the identity service.
   // |url_request_context_getter| is used to initialize URLFetcher.
+  // |url_loader_factory| is used to create SimpleURLLoaders used to create
+  // OAuth tokens.
   // |blocking_task_runner| is used to run blocking tasks (like parsing JSON).
   // |base_url| is used to generate URLs for communication with the drive API.
   // |base_thumbnail_url| is used to generate URLs for downloading thumbnail
@@ -103,13 +108,14 @@ class DriveAPIService : public DriveServiceInterface,
   // requests issues through the service if the value is not empty.
   // |traffic_annotation| will be used to annotate the network request that will
   // be created to perform this service.
-  DriveAPIService(OAuth2TokenService* oauth2_token_service,
-                  net::URLRequestContextGetter* url_request_context_getter,
-                  base::SequencedTaskRunner* blocking_task_runner,
-                  const GURL& base_url,
-                  const GURL& base_thumbnail_url,
-                  const std::string& custom_user_agent,
-                  const net::NetworkTrafficAnnotationTag& traffic_annotation);
+  DriveAPIService(
+      signin::IdentityManager* identity_manager,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      base::SequencedTaskRunner* blocking_task_runner,
+      const GURL& base_url,
+      const GURL& base_thumbnail_url,
+      const std::string& custom_user_agent,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
   ~DriveAPIService() override;
 
   // DriveServiceInterface Overrides
@@ -127,6 +133,7 @@ class DriveAPIService : public DriveServiceInterface,
   google_apis::CancelCallback GetAllTeamDriveList(
       const google_apis::TeamDriveListCallback& callback) override;
   google_apis::CancelCallback GetAllFileList(
+      const std::string& team_drive_id,
       const google_apis::FileListCallback& callback) override;
   google_apis::CancelCallback GetFileListInDirectory(
       const std::string& directory_resource_id,
@@ -141,6 +148,10 @@ class DriveAPIService : public DriveServiceInterface,
   google_apis::CancelCallback GetChangeList(
       int64_t start_changestamp,
       const google_apis::ChangeListCallback& callback) override;
+  google_apis::CancelCallback GetChangeListByToken(
+      const std::string& team_drive_id,
+      const std::string& start_page_token,
+      const google_apis::ChangeListCallback& callback) override;
   google_apis::CancelCallback GetRemainingTeamDriveList(
       const std::string& page_token,
       const google_apis::TeamDriveListCallback& callback) override;
@@ -153,14 +164,11 @@ class DriveAPIService : public DriveServiceInterface,
   google_apis::CancelCallback GetFileResource(
       const std::string& resource_id,
       const google_apis::FileResourceCallback& callback) override;
-  google_apis::CancelCallback GetShareUrl(
-      const std::string& resource_id,
-      const GURL& embed_origin,
-      const google_apis::GetShareUrlCallback& callback) override;
   google_apis::CancelCallback GetAboutResource(
       const google_apis::AboutResourceCallback& callback) override;
-  google_apis::CancelCallback GetAppList(
-      const google_apis::AppListCallback& callback) override;
+  google_apis::CancelCallback GetStartPageToken(
+      const std::string& team_drive_id,
+      const google_apis::StartPageTokenCallback& callback) override;
   google_apis::CancelCallback DeleteResource(
       const std::string& resource_id,
       const std::string& etag,
@@ -244,13 +252,6 @@ class DriveAPIService : public DriveServiceInterface,
       const drive::UploadExistingFileOptions& options,
       const google_apis::FileResourceCallback& callback,
       const google_apis::ProgressCallback& progress_callback) override;
-  google_apis::CancelCallback AuthorizeApp(
-      const std::string& resource_id,
-      const std::string& app_id,
-      const google_apis::AuthorizeAppCallback& callback) override;
-  google_apis::CancelCallback UninstallApp(
-      const std::string& app_id,
-      const google_apis::EntryActionCallback& callback) override;
   google_apis::CancelCallback AddPermission(
       const std::string& resource_id,
       const std::string& email,
@@ -266,13 +267,13 @@ class DriveAPIService : public DriveServiceInterface,
   // The class is expected to run on UI thread.
   base::ThreadChecker thread_checker_;
 
-  OAuth2TokenService* oauth2_token_service_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
+  signin::IdentityManager* identity_manager_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   std::unique_ptr<google_apis::RequestSender> sender_;
   std::unique_ptr<google_apis::FilesListRequestRunner>
       files_list_request_runner_;
-  base::ObserverList<DriveServiceObserver> observers_;
+  base::ObserverList<DriveServiceObserver>::Unchecked observers_;
   google_apis::DriveApiUrlGenerator url_generator_;
   const std::string custom_user_agent_;
   const net::NetworkTrafficAnnotationTag traffic_annotation_;

@@ -12,6 +12,7 @@
 #include "base/observer_list.h"
 #include "chrome/common/media_router/media_route.h"
 #include "chrome/common/media_router/mojo/media_controller.mojom.h"
+#include "chrome/common/media_router/mojo/media_status.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
 class PrefService;
@@ -91,13 +92,15 @@ class MediaRouteController
   // The second item is a bound MediaStatusObserverPtr whose binding is owned
   // by |this|.
   using InitMojoResult =
-      std::pair<mojom::MediaControllerRequest, mojom::MediaStatusObserverPtr>;
+      std::pair<mojo::PendingReceiver<mojom::MediaController>,
+                mojom::MediaStatusObserverPtr>;
 
   // Constructs a MediaRouteController that forwards media commands to
   // |mojo_media_controller_|. |media_router_| will be notified when the
   // MediaRouteController is destroyed via DetachRouteController().
   MediaRouteController(const MediaRoute::Id& route_id,
-                       content::BrowserContext* context);
+                       content::BrowserContext* context,
+                       MediaRouter* router);
 
   // Initializes the Mojo interfaces/bindings in this MediaRouteController.
   // This should only be called when the Mojo interfaces/bindings are not bound.
@@ -180,7 +183,7 @@ class MediaRouteController
 
   // Observers that are notified of status updates. The observers share the
   // ownership of the controller through scoped_refptr.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   // This becomes false when |Invalidate()| is called on the controller.
   // TODO(imcheng): We need the |is_valid_| bit and make have the dtor depend on
@@ -196,34 +199,6 @@ class MediaRouteController
   DISALLOW_COPY_AND_ASSIGN(MediaRouteController);
 };
 
-class HangoutsMediaRouteController : public MediaRouteController {
- public:
-  // Casts |controller| to a HangoutsMediaRouteController if its
-  // RouteControllerType is HANGOUTS. Returns nullptr otherwise.
-  static HangoutsMediaRouteController* From(MediaRouteController* controller);
-
-  HangoutsMediaRouteController(const MediaRoute::Id& route_id,
-                               content::BrowserContext* context);
-
-  // MediaRouteController
-  RouteControllerType GetType() const override;
-
-  void SetLocalPresent(bool local_present);
-
- protected:
-  ~HangoutsMediaRouteController() override;
-
- private:
-  // MediaRouteController
-  void InitAdditionalMojoConnections() override;
-  void OnMojoConnectionError() override;
-  void InvalidateInternal() override;
-
-  mojom::HangoutsMediaRouteControllerPtr mojo_hangouts_controller_;
-
-  DISALLOW_COPY_AND_ASSIGN(HangoutsMediaRouteController);
-};
-
 // Controller subclass for Cast streaming mirroring routes. Responsible for:
 // (1) updating the media remoting pref according to user input
 // (2) augmenting the MediaStatus update sent by the MRP with the value from the
@@ -235,7 +210,8 @@ class MirroringMediaRouteController : public MediaRouteController {
   static MirroringMediaRouteController* From(MediaRouteController* controller);
 
   MirroringMediaRouteController(const MediaRoute::Id& route_id,
-                                content::BrowserContext* context);
+                                content::BrowserContext* context,
+                                MediaRouter* router);
 
   // MediaRouteController
   RouteControllerType GetType() const override;

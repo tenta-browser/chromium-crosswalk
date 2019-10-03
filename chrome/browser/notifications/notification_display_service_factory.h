@@ -7,10 +7,10 @@
 
 #include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "chrome/browser/notifications/notification_display_service.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
 class NotificationDisplayService;
+class Profile;
 
 class NotificationDisplayServiceFactory
     : public BrowserContextKeyedServiceFactory {
@@ -23,7 +23,7 @@ class NotificationDisplayServiceFactory
 
   NotificationDisplayServiceFactory();
 
-  // BrowserContextKeyedBaseFactory implementation.
+  // BrowserContextKeyedServiceFactory implementation.
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* context) const override;
   content::BrowserContext* GetBrowserContextToUse(

@@ -15,7 +15,6 @@ void ParamTraits<gfx::ColorSpace>::Write(base::Pickle* m,
   WriteParam(m, p.transfer_);
   WriteParam(m, p.matrix_);
   WriteParam(m, p.range_);
-  WriteParam(m, p.icc_profile_id_);
   if (p.primaries_ == gfx::ColorSpace::PrimaryID::CUSTOM) {
     m->WriteBytes(reinterpret_cast<const char*>(p.custom_primary_matrix_),
                   sizeof(p.custom_primary_matrix_));
@@ -37,8 +36,6 @@ bool ParamTraits<gfx::ColorSpace>::Read(const base::Pickle* m,
     return false;
   if (!ReadParam(m, iter, &r->range_))
     return false;
-  if (!ReadParam(m, iter, &r->icc_profile_id_))
-    return false;
   if (r->primaries_ == gfx::ColorSpace::PrimaryID::CUSTOM) {
     const char* data = nullptr;
     if (!iter->ReadBytes(&data, sizeof(r->custom_primary_matrix_)))
@@ -58,37 +55,6 @@ bool ParamTraits<gfx::ColorSpace>::Read(const base::Pickle* m,
 void ParamTraits<gfx::ColorSpace>::Log(const gfx::ColorSpace& p,
                                        std::string* l) {
   l->append("<gfx::ColorSpace>");
-}
-
-void ParamTraits<gfx::ICCProfile>::Write(base::Pickle* m,
-                                         const gfx::ICCProfile& p) {
-  if (p.internals_) {
-    WriteParam(m, p.internals_->id_);
-    WriteParam(m, p.internals_->data_);
-  } else {
-    uint64_t id = 0;
-    std::vector<char> data;
-    WriteParam(m, id);
-    WriteParam(m, data);
-  }
-}
-
-bool ParamTraits<gfx::ICCProfile>::Read(const base::Pickle* m,
-                                        base::PickleIterator* iter,
-                                        gfx::ICCProfile* r) {
-  uint64_t id;
-  std::vector<char> data;
-  if (!ReadParam(m, iter, &id))
-    return false;
-  if (!ReadParam(m, iter, &data))
-    return false;
-  *r = gfx::ICCProfile::FromDataWithId(data.data(), data.size(), id);
-  return true;
-}
-
-void ParamTraits<gfx::ICCProfile>::Log(const gfx::ICCProfile& p,
-                                       std::string* l) {
-  l->append("<gfx::ICCProfile>");
 }
 
 }  // namespace IPC

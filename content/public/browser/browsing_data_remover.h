@@ -12,10 +12,12 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 
-class GURL;
-
 namespace storage {
 class SpecialStoragePolicy;
+}
+
+namespace url {
+class Origin;
 }
 
 namespace content {
@@ -70,6 +72,8 @@ class BrowsingDataRemover {
     DATA_TYPE_WEB_SQL = 1 << 4,
     DATA_TYPE_SERVICE_WORKERS = 1 << 5,
     DATA_TYPE_CACHE_STORAGE = 1 << 6,
+    // This is also persisted, keep with storage datatypes.
+    DATA_TYPE_BACKGROUND_FETCH = 1 << 14,
 
     // Used to request the deletion of embedder-specific storage datatypes.
     DATA_TYPE_EMBEDDER_DOM_STORAGE = 1 << 7,
@@ -77,17 +81,14 @@ class BrowsingDataRemover {
     // DOM-accessible storage (https://www.w3.org/TR/clear-site-data/#storage).
     // Has the same effect as selecting all storage datatypes listed above
     // and ones defined by the embedder.
-    DATA_TYPE_DOM_STORAGE = DATA_TYPE_APP_CACHE | DATA_TYPE_FILE_SYSTEMS |
-                            DATA_TYPE_INDEXED_DB |
-                            DATA_TYPE_LOCAL_STORAGE |
-                            DATA_TYPE_WEB_SQL |
-                            DATA_TYPE_SERVICE_WORKERS |
-                            DATA_TYPE_CACHE_STORAGE |
-                            DATA_TYPE_EMBEDDER_DOM_STORAGE,
+    DATA_TYPE_DOM_STORAGE =
+        DATA_TYPE_APP_CACHE | DATA_TYPE_FILE_SYSTEMS | DATA_TYPE_INDEXED_DB |
+        DATA_TYPE_LOCAL_STORAGE | DATA_TYPE_WEB_SQL |
+        DATA_TYPE_SERVICE_WORKERS | DATA_TYPE_CACHE_STORAGE |
+        DATA_TYPE_EMBEDDER_DOM_STORAGE | DATA_TYPE_BACKGROUND_FETCH,
 
     // Other datatypes.
     DATA_TYPE_COOKIES = 1 << 8,
-    DATA_TYPE_CHANNEL_IDS = 1 << 9,
     DATA_TYPE_CACHE = 1 << 10,
     DATA_TYPE_DOWNLOADS = 1 << 11,
     DATA_TYPE_MEDIA_LICENSES = 1 << 12,
@@ -96,8 +97,14 @@ class BrowsingDataRemover {
     // prohibited from deleting history or downloads.
     DATA_TYPE_NO_CHECKS = 1 << 13,
 
+    // AVOID_CLOSING_CONNECTIONS is a pseudo-datatype indicating that when
+    // deleting COOKIES, BrowsingDataRemover should skip
+    // storage backends whose deletion would cause closing network connections.
+    // TODO(crbug.com/798760): Remove when fixed.
+    DATA_TYPE_AVOID_CLOSING_CONNECTIONS = 1 << 15,
+
     // Embedders can add more datatypes beyond this point.
-    DATA_TYPE_CONTENT_END = DATA_TYPE_NO_CHECKS,
+    DATA_TYPE_CONTENT_END = DATA_TYPE_AVOID_CLOSING_CONNECTIONS,
   };
 
   enum OriginType {
@@ -115,6 +122,9 @@ class BrowsingDataRemover {
 
   // A helper enum to report the deletion of cookies and/or cache. Do not
   // reorder the entries, as this enum is passed to UMA.
+  // A Java counterpart will be generated for this enum so that it can be
+  // logged on Android.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.browsing_data
   enum CookieOrCacheDeletionChoice {
     NEITHER_COOKIES_NOR_CACHE,
     ONLY_COOKIES,
@@ -142,8 +152,8 @@ class BrowsingDataRemover {
   // the |special_storage_policy|.
   virtual bool DoesOriginMatchMask(
       int origin_type_mask,
-      const GURL& origin,
-      storage::SpecialStoragePolicy* special_storage_policy) const = 0;
+      const url::Origin& origin,
+      storage::SpecialStoragePolicy* special_storage_policy) = 0;
 
   // Removes browsing data within the given |time_range|, with datatypes being
   // specified by |remove_mask| and origin types by |origin_type_mask|.
@@ -162,7 +172,7 @@ class BrowsingDataRemover {
 
   // Like Remove(), but in case of URL-keyed only removes data whose URL match
   // |filter_builder| (e.g. are on certain origin or domain).
-  // RemoveWithFilter() currently only works with FILTERABLE_DATATYPES.
+  // RemoveWithFilter() currently only works with FILTERABLE_DATA_TYPES.
   virtual void RemoveWithFilter(
       const base::Time& delete_begin,
       const base::Time& delete_end,

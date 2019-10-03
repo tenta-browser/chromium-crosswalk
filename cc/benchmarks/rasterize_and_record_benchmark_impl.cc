@@ -9,8 +9,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "base/timer/lap_timer.h"
 #include "base/values.h"
-#include "cc/base/lap_timer.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/picture_layer_impl.h"
 #include "cc/raster/playback_image_provider.h"
@@ -34,7 +34,7 @@ void RunBenchmark(RasterSource* raster_source,
                   size_t repeat_count,
                   base::TimeDelta* min_time,
                   bool* is_solid_color) {
-  // Parameters for LapTimer.
+  // Parameters for base::LapTimer.
   const int kTimeLimitMillis = 1;
   const int kWarmupRuns = 0;
   const int kTimeCheckInterval = 1;
@@ -43,9 +43,9 @@ void RunBenchmark(RasterSource* raster_source,
   for (size_t i = 0; i < repeat_count; ++i) {
     // Run for a minimum amount of time to avoid problems with timer
     // quantization when the layer is very small.
-    LapTimer timer(kWarmupRuns,
-                   base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
-                   kTimeCheckInterval);
+    base::LapTimer timer(kWarmupRuns,
+                         base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
+                         kTimeCheckInterval);
     SkColor color = SK_ColorTRANSPARENT;
     gfx::Rect layer_rect =
         gfx::ScaleToEnclosingRect(content_rect, 1.f / contents_scale);
@@ -63,7 +63,6 @@ void RunBenchmark(RasterSource* raster_source,
       base::Optional<PlaybackImageProvider::Settings> image_settings;
       image_settings.emplace();
       image_settings->images_to_skip = {};
-      image_settings->at_raster_images = {};
       image_settings->image_to_current_frame_index = {};
 
       PlaybackImageProvider image_provider(
@@ -72,13 +71,13 @@ void RunBenchmark(RasterSource* raster_source,
       settings.image_provider = &image_provider;
 
       raster_source->PlaybackToCanvas(
-          &canvas, gfx::ColorSpace(), content_rect, content_rect,
-          gfx::AxisTransform2d(contents_scale, gfx::Vector2dF()), settings);
+          &canvas, raster_source->GetContentSize(contents_scale), content_rect,
+          content_rect, gfx::AxisTransform2d(contents_scale, gfx::Vector2dF()),
+          settings);
 
       timer.NextLap();
     } while (!timer.HasTimeLimitExpired());
-    base::TimeDelta duration =
-        base::TimeDelta::FromMillisecondsD(timer.MsPerLap());
+    base::TimeDelta duration = timer.TimePerLap();
     if (duration < *min_time)
       *min_time = duration;
   }
@@ -96,7 +95,7 @@ class FixedInvalidationPictureLayerTilingClient
     return base_client_->CreateTile(info);
   }
 
-  gfx::Size CalculateTileSize(const gfx::Size& content_bounds) const override {
+  gfx::Size CalculateTileSize(const gfx::Size& content_bounds) override {
     return base_client_->CalculateTileSize(content_bounds);
   }
 
@@ -117,6 +116,10 @@ class FixedInvalidationPictureLayerTilingClient
     return base_client_->RequiresHighResToDraw();
   }
 
+  const PaintWorkletRecordMap& GetPaintWorkletRecords() const override {
+    return base_client_->GetPaintWorkletRecords();
+  }
+
  private:
   PictureLayerTilingClient* base_client_;
   Region invalidation_;
@@ -127,8 +130,8 @@ class FixedInvalidationPictureLayerTilingClient
 RasterizeAndRecordBenchmarkImpl::RasterizeAndRecordBenchmarkImpl(
     scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner,
     base::Value* value,
-    const MicroBenchmarkImpl::DoneCallback& callback)
-    : MicroBenchmarkImpl(callback, origin_task_runner),
+    MicroBenchmarkImpl::DoneCallback callback)
+    : MicroBenchmarkImpl(std::move(callback), origin_task_runner),
       rasterize_repeat_count_(kDefaultRasterizeRepeatCount) {
   base::DictionaryValue* settings = nullptr;
   value->GetAsDictionary(&settings);
@@ -139,7 +142,7 @@ RasterizeAndRecordBenchmarkImpl::RasterizeAndRecordBenchmarkImpl(
     settings->GetInteger("rasterize_repeat_count", &rasterize_repeat_count_);
 }
 
-RasterizeAndRecordBenchmarkImpl::~RasterizeAndRecordBenchmarkImpl() {}
+RasterizeAndRecordBenchmarkImpl::~RasterizeAndRecordBenchmarkImpl() = default;
 
 void RasterizeAndRecordBenchmarkImpl::DidCompleteCommit(
     LayerTreeHostImpl* host) {
@@ -152,8 +155,6 @@ void RasterizeAndRecordBenchmarkImpl::DidCompleteCommit(
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->SetDouble("rasterize_time_ms",
                     rasterize_results_.total_best_time.InMillisecondsF());
-  result->SetDouble("total_pictures_in_pile_size",
-                    static_cast<int>(rasterize_results_.total_memory_usage));
   result->SetInteger("pixels_rasterized", rasterize_results_.pixels_rasterized);
   result->SetInteger("pixels_rasterized_with_non_solid_color",
                      rasterize_results_.pixels_rasterized_with_non_solid_color);
@@ -190,7 +191,8 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
   const LayerTreeSettings& settings = layer->layer_tree_impl()->settings();
   std::unique_ptr<PictureLayerTilingSet> tiling_set =
       PictureLayerTilingSet::Create(
-          layer->GetTree(), &client, settings.tiling_interest_area_padding,
+          layer->IsActive() ? ACTIVE_TREE : PENDING_TREE, &client,
+          settings.tiling_interest_area_padding,
           settings.skewport_target_time_in_seconds,
           settings.skewport_extrapolation_limit_in_screen_pixels,
           settings.max_preraster_distance_in_screen_pixels);
@@ -224,22 +226,18 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
     rasterize_results_.pixels_rasterized += tile_size;
     rasterize_results_.total_best_time += min_time;
   }
-
-  const RasterSource* layer_raster_source = layer->GetRasterSource();
-  rasterize_results_.total_memory_usage +=
-      layer_raster_source->GetMemoryUsage();
 }
 
 RasterizeAndRecordBenchmarkImpl::RasterizeResults::RasterizeResults()
     : pixels_rasterized(0),
       pixels_rasterized_with_non_solid_color(0),
       pixels_rasterized_as_opaque(0),
-      total_memory_usage(0),
       total_layers(0),
       total_picture_layers(0),
       total_picture_layers_with_no_content(0),
       total_picture_layers_off_screen(0) {}
 
-RasterizeAndRecordBenchmarkImpl::RasterizeResults::~RasterizeResults() {}
+RasterizeAndRecordBenchmarkImpl::RasterizeResults::~RasterizeResults() =
+    default;
 
 }  // namespace cc

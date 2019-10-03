@@ -4,10 +4,12 @@
 
 #include "cc/paint/transfer_cache_entry.h"
 
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "cc/paint/image_transfer_cache_entry.h"
 #include "cc/paint/raw_memory_transfer_cache_entry.h"
+#include "cc/paint/shader_transfer_cache_entry.h"
 
 namespace cc {
 
@@ -15,12 +17,15 @@ std::unique_ptr<ServiceTransferCacheEntry> ServiceTransferCacheEntry::Create(
     TransferCacheEntryType type) {
   switch (type) {
     case TransferCacheEntryType::kRawMemory:
-      return base::MakeUnique<ServiceRawMemoryTransferCacheEntry>();
+      return std::make_unique<ServiceRawMemoryTransferCacheEntry>();
     case TransferCacheEntryType::kImage:
-      return base::MakeUnique<ServiceImageTransferCacheEntry>();
+      return std::make_unique<ServiceImageTransferCacheEntry>();
+    case TransferCacheEntryType::kShader:
+      // ServiceShader/TextBlobTransferCache is only created via
+      // CreateLocalEntry and is never serialized/deserialized.
+      return nullptr;
   }
 
-  NOTREACHED();
   return nullptr;
 }
 
@@ -31,6 +36,20 @@ bool ServiceTransferCacheEntry::SafeConvertToType(
     return false;
 
   *type = static_cast<TransferCacheEntryType>(raw_type);
+  return true;
+}
+
+// static
+bool ServiceTransferCacheEntry::UsesGrContext(TransferCacheEntryType type) {
+  switch (type) {
+    case TransferCacheEntryType::kRawMemory:
+    case TransferCacheEntryType::kShader:
+      return false;
+    case TransferCacheEntryType::kImage:
+      return true;
+  }
+
+  NOTREACHED();
   return true;
 }
 

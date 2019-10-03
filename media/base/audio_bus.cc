@@ -8,12 +8,12 @@
 #include <stdint.h>
 
 #include <limits>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "media/base/audio_parameters.h"
-#include "media/base/audio_sample_types.h"
 #include "media/base/limits.h"
 #include "media/base/vector_math.h"
 
@@ -146,6 +146,26 @@ std::unique_ptr<AudioBus> AudioBus::WrapMemory(const AudioParameters& params,
   return base::WrapUnique(new AudioBus(params.channels(),
                                        params.frames_per_buffer(),
                                        static_cast<float*>(data)));
+}
+
+std::unique_ptr<const AudioBus> AudioBus::WrapReadOnlyMemory(int channels,
+                                                             int frames,
+                                                             const void* data) {
+  // Note: const_cast is generally dangerous but is used in this case since
+  // AudioBus accomodates both read-only and read/write use cases. A const
+  // AudioBus object is returned to ensure no one accidentally writes to the
+  // read-only data.
+  return WrapMemory(channels, frames, const_cast<void*>(data));
+}
+
+std::unique_ptr<const AudioBus> AudioBus::WrapReadOnlyMemory(
+    const AudioParameters& params,
+    const void* data) {
+  // Note: const_cast is generally dangerous but is used in this case since
+  // AudioBus accomodates both read-only and read/write use cases. A const
+  // AudioBus object is returned to ensure no one accidentally writes to the
+  // read-only data.
+  return WrapMemory(params, const_cast<void*>(data));
 }
 
 void AudioBus::SetChannelData(int channel, float* data) {
@@ -326,31 +346,6 @@ void AudioBus::ToInterleaved(int frames,
   }
 }
 
-// Forwards to non-deprecated version.
-void AudioBus::ToInterleavedPartial(int start_frame,
-                                    int frames,
-                                    int bytes_per_sample,
-                                    void* dest) const {
-  DCHECK(!is_bitstream_format_);
-  switch (bytes_per_sample) {
-    case 1:
-      ToInterleavedPartial<UnsignedInt8SampleTypeTraits>(
-          start_frame, frames, reinterpret_cast<uint8_t*>(dest));
-      break;
-    case 2:
-      ToInterleavedPartial<SignedInt16SampleTypeTraits>(
-          start_frame, frames, reinterpret_cast<int16_t*>(dest));
-      break;
-    case 4:
-      ToInterleavedPartial<SignedInt32SampleTypeTraits>(
-          start_frame, frames, reinterpret_cast<int32_t*>(dest));
-      break;
-    default:
-      NOTREACHED() << "Unsupported bytes per sample encountered: "
-                   << bytes_per_sample;
-  }
-}
-
 void AudioBus::CopyTo(AudioBus* dest) const {
   dest->set_is_bitstream_format(is_bitstream_format());
   if (is_bitstream_format()) {
@@ -361,6 +356,18 @@ void AudioBus::CopyTo(AudioBus* dest) const {
   }
 
   CopyPartialFramesTo(0, frames(), 0, dest);
+}
+
+void AudioBus::CopyAndClipTo(AudioBus* dest) const {
+  DCHECK(!is_bitstream_format_);
+  CHECK_EQ(channels(), dest->channels());
+  CHECK_LE(frames(), dest->frames());
+  for (int i = 0; i < channels(); ++i) {
+    float* dest_ptr = dest->channel(i);
+    const float* source_ptr = channel(i);
+    for (int j = 0; j < frames(); ++j)
+      dest_ptr[j] = Float32SampleTypeTraits::FromFloat(source_ptr[j]);
+  }
 }
 
 void AudioBus::CopyPartialFramesTo(int source_start_frame,

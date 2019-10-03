@@ -5,6 +5,8 @@
 #include "chromecast/media/cma/backend/alsa/mixer_output_stream_alsa.h"
 
 #include "base/command_line.h"
+#include "base/stl_util.h"
+#include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/media/cma/backend/alsa/alsa_wrapper.h"
@@ -77,7 +79,7 @@ constexpr int64_t kNoTimestamp = std::numeric_limits<int64_t>::min();
 constexpr char kOutputDeviceDefaultName[] = "default";
 
 constexpr bool kPcmRecoverIsSilent = false;
-constexpr int kDefaultOutputBufferSizeFrames = 4096;
+constexpr int kDefaultOutputBufferSizeFrames = 1024;
 
 // A list of supported sample rates.
 // TODO(jyw): move this up into chromecast/public for 1) documentation and
@@ -103,6 +105,12 @@ constexpr unsigned int kFallbackSampleRateHiRes = 96000;
 // the direction explicitly.
 constexpr int* kAlsaDirDontCare = nullptr;
 
+// The snd_pcm_resume function can return EAGAIN error code, so call should be
+// retried. Below constants define retries params.
+constexpr int kRestoreAfterSuspensionAttempts = 10;
+constexpr base::TimeDelta kRestoreAfterSuspensionAttemptDelay =
+    base::TimeDelta::FromMilliseconds(20);
+
 // These sample formats will be tried in order. 32 bit samples is ideal, but
 // some devices do not support 32 bit samples.
 constexpr snd_pcm_format_t kPreferredSampleFormats[] = {
@@ -126,25 +134,13 @@ MixerOutputStreamAlsa::MixerOutputStreamAlsa() {
 }
 
 MixerOutputStreamAlsa::~MixerOutputStreamAlsa() {
-  if (pcm_) {
-    LOG(INFO) << "snd_pcm_close: handle=" << pcm_;
-    int err = alsa_->PcmClose(pcm_);
-    if (err < 0) {
-      LOG(ERROR) << "snd_pcm_close error, leaking handle: "
-                 << alsa_->StrError(err);
-    }
-    pcm_ = nullptr;
-  }
+  Stop();
 }
 
 void MixerOutputStreamAlsa::SetAlsaWrapperForTest(
     std::unique_ptr<AlsaWrapper> alsa) {
   DCHECK(!alsa_);
   alsa_ = std::move(alsa);
-}
-
-bool MixerOutputStreamAlsa::IsFixedSampleRate() {
-  return fixed_sample_rate_ != kInvalidSampleRate;
 }
 
 bool MixerOutputStreamAlsa::Start(int sample_rate, int channels) {
@@ -200,22 +196,9 @@ MixerOutputStreamAlsa::GetRenderingDelay() {
   return rendering_delay_;
 }
 
-bool MixerOutputStreamAlsa::GetTimeUntilUnderrun(base::TimeDelta* result) {
+int MixerOutputStreamAlsa::OptimalWriteFramesCount() {
   CHECK_PCM_INITIALIZED();
-  if (alsa_->PcmStatus(pcm_, pcm_status_) != 0) {
-    LOG(ERROR) << "Failed to get status";
-    return false;
-  }
-  if (alsa_->PcmStatusGetState(pcm_status_) == SND_PCM_STATE_XRUN) {
-    // Underrun already happened.
-    *result = base::TimeDelta();
-    return true;
-  }
-
-  int frames_in_buffer =
-      alsa_buffer_size_ - alsa_->PcmStatusGetAvail(pcm_status_);
-  *result = base::TimeDelta::FromSeconds(1) * frames_in_buffer / sample_rate_;
-  return true;
+  return alsa_period_size_;
 }
 
 bool MixerOutputStreamAlsa::Write(const float* data,
@@ -250,6 +233,11 @@ bool MixerOutputStreamAlsa::Write(const float* data,
     while ((frames_or_error =
                 alsa_->PcmWritei(pcm_, output_data, frames_left)) < 0) {
       *out_playback_interrupted = true;
+      if (frames_or_error == -EBADFD &&
+          MaybeRecoverDeviceFromSuspendedState()) {
+        // Write data again, if recovered.
+        continue;
+      }
       RETURN_FALSE_ON_ERROR(PcmRecover, pcm_, frames_or_error,
                             kPcmRecoverIsSilent);
     }
@@ -257,7 +245,7 @@ bool MixerOutputStreamAlsa::Write(const float* data,
     DCHECK_GE(frames_left, 0);
     output_data += frames_or_error * num_output_channels_ * bytes_per_sample;
   }
-  UpdateRenderingDelay(frames);
+  UpdateRenderingDelay();
 
   return true;
 }
@@ -287,6 +275,14 @@ void MixerOutputStreamAlsa::Stop() {
       LOG(ERROR) << "snd_pcm_drop error: " << alsa_->StrError(err);
     }
   }
+
+  LOG(INFO) << "snd_pcm_close: handle=" << pcm_;
+  int err = alsa_->PcmClose(pcm_);
+  if (err < 0) {
+    LOG(ERROR) << "snd_pcm_close error, leaking handle: "
+               << alsa_->StrError(err);
+  }
+  pcm_ = nullptr;
 }
 
 int MixerOutputStreamAlsa::SetAlsaPlaybackParams(int requested_sample_rate) {
@@ -399,19 +395,33 @@ int MixerOutputStreamAlsa::SetAlsaPlaybackParams(int requested_sample_rate) {
 
 void MixerOutputStreamAlsa::DefineAlsaParameters() {
   // Get the ALSA output configuration from the command line.
-  alsa_buffer_size_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaOutputBufferSize, kDefaultOutputBufferSizeFrames);
 
-  alsa_period_size_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaOutputPeriodSize, alsa_buffer_size_ / 16);
+  if (base::CommandLine::InitializedForCurrentProcess()) {
+    alsa_buffer_size_ = GetSwitchValueNonNegativeInt(
+        switches::kAlsaOutputBufferSize, kDefaultOutputBufferSizeFrames);
+    alsa_period_size_ = GetSwitchValueNonNegativeInt(
+        switches::kAlsaOutputPeriodSize, alsa_buffer_size_ / 2);
+  } else {
+    alsa_buffer_size_ = kDefaultOutputBufferSizeFrames;
+    alsa_period_size_ = alsa_buffer_size_ / 2;
+  }
+
   if (alsa_period_size_ >= alsa_buffer_size_) {
     LOG(DFATAL) << "ALSA period size must be smaller than the buffer size";
     alsa_period_size_ = alsa_buffer_size_ / 2;
   }
 
-  alsa_start_threshold_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaOutputStartThreshold,
-      (alsa_buffer_size_ / alsa_period_size_) * alsa_period_size_);
+  LOG(INFO) << "ALSA buffer = " << alsa_buffer_size_
+            << ", period = " << alsa_period_size_;
+
+  if (base::CommandLine::InitializedForCurrentProcess()) {
+    alsa_start_threshold_ = GetSwitchValueNonNegativeInt(
+        switches::kAlsaOutputStartThreshold,
+        (alsa_buffer_size_ / alsa_period_size_) * alsa_period_size_);
+  } else {
+    alsa_start_threshold_ =
+        (alsa_buffer_size_ / alsa_period_size_) * alsa_period_size_;
+  }
   if (alsa_start_threshold_ > alsa_buffer_size_) {
     LOG(DFATAL) << "ALSA start threshold must be no larger than "
                 << "the buffer size";
@@ -421,28 +431,19 @@ void MixerOutputStreamAlsa::DefineAlsaParameters() {
 
   // By default, allow the transfer when at least period_size samples can be
   // processed.
-  alsa_avail_min_ = GetSwitchValueNonNegativeInt(switches::kAlsaOutputAvailMin,
-                                                 alsa_period_size_);
+  if (base::CommandLine::InitializedForCurrentProcess()) {
+    alsa_avail_min_ = GetSwitchValueNonNegativeInt(
+        switches::kAlsaOutputAvailMin, alsa_period_size_);
+  } else {
+    alsa_avail_min_ = alsa_period_size_;
+  }
   if (alsa_avail_min_ > alsa_buffer_size_) {
     LOG(DFATAL) << "ALSA avail min must be no larger than the buffer size";
     alsa_avail_min_ = alsa_period_size_;
   }
-
-  fixed_sample_rate_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaFixedOutputSampleRate, kInvalidSampleRate);
-  if (fixed_sample_rate_ != kInvalidSampleRate) {
-    LOG(INFO) << "Setting fixed sample rate to " << fixed_sample_rate_;
-  }
 }
 
 int MixerOutputStreamAlsa::DetermineOutputRate(int requested_sample_rate) {
-  if (fixed_sample_rate_ != kInvalidSampleRate) {
-    LOG(INFO) << "Requested output rate is " << requested_sample_rate;
-    LOG(INFO) << "Cannot change rate since it is fixed to "
-              << fixed_sample_rate_;
-    return fixed_sample_rate_;
-  }
-
   unsigned int unsigned_output_sample_rate = requested_sample_rate;
 
   // Try the requested sample rate. If the ALSA driver doesn't know how to deal
@@ -451,7 +452,7 @@ int MixerOutputStreamAlsa::DetermineOutputRate(int requested_sample_rate) {
   // doesn't always choose a rate that's actually near the given input sample
   // rate when the input sample rate is not supported.
   const int* kSupportedSampleRatesEnd =
-      kSupportedSampleRates + arraysize(kSupportedSampleRates);
+      kSupportedSampleRates + base::size(kSupportedSampleRates);
   auto* nearest_sample_rate =
       std::min_element(kSupportedSampleRates, kSupportedSampleRatesEnd,
                        [requested_sample_rate](int r1, int r2) -> bool {
@@ -479,8 +480,7 @@ int MixerOutputStreamAlsa::DetermineOutputRate(int requested_sample_rate) {
   return unsigned_output_sample_rate;
 }
 
-void MixerOutputStreamAlsa::UpdateRenderingDelay(int newly_pushed_frames) {
-  // TODO(bshaya): Add rendering delay from post-processors.
+void MixerOutputStreamAlsa::UpdateRenderingDelay() {
   if (alsa_->PcmStatus(pcm_, pcm_status_) != 0 ||
       alsa_->PcmStatusGetState(pcm_status_) != SND_PCM_STATE_RUNNING) {
     rendering_delay_.timestamp_microseconds = kNoTimestamp;
@@ -490,12 +490,47 @@ void MixerOutputStreamAlsa::UpdateRenderingDelay(int newly_pushed_frames) {
 
   snd_htimestamp_t status_timestamp = {};
   alsa_->PcmStatusGetHtstamp(pcm_status_, &status_timestamp);
+  if (status_timestamp.tv_sec == 0 && status_timestamp.tv_nsec == 0) {
+    // ALSA didn't actually give us a timestamp.
+    rendering_delay_.timestamp_microseconds = kNoTimestamp;
+    rendering_delay_.delay_microseconds = 0;
+    return;
+  }
+
   rendering_delay_.timestamp_microseconds =
       TimespecToMicroseconds(status_timestamp);
   snd_pcm_sframes_t delay_frames = alsa_->PcmStatusGetDelay(pcm_status_);
   rendering_delay_.delay_microseconds = static_cast<int64_t>(delay_frames) *
                                         base::Time::kMicrosecondsPerSecond /
                                         sample_rate_;
+}
+
+bool MixerOutputStreamAlsa::MaybeRecoverDeviceFromSuspendedState() {
+  if (alsa_->PcmState(pcm_) != SND_PCM_STATE_SUSPENDED) {
+    LOG(WARNING) << "Alsa output is not suspended";
+    return false;
+  }
+  if (alsa_->PcmHwParamsCanResume(pcm_hw_params_)) {
+    LOG(INFO) << "Trying to resume output";
+    for (int attempt = 0; attempt < kRestoreAfterSuspensionAttempts;
+         ++attempt) {
+      int err = alsa_->PcmResume(pcm_);
+      if (err == 0) {
+        LOG(INFO) << "ALSA output is resumed from suspended state";
+        return true;
+      }
+      if (err != -EAGAIN) {
+        // If PcmResume failed or device doesn't support resume, try to use
+        // PcmPrepare.
+        err = alsa_->PcmPrepare(pcm_);
+        LOG_IF(INFO, err == 0)
+            << "ALSA output is recovered from suspended state";
+        return err == 0;
+      }
+      base::PlatformThread::Sleep(kRestoreAfterSuspensionAttemptDelay);
+    }
+  }
+  return false;
 }
 
 }  // namespace media

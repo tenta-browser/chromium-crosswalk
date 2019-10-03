@@ -12,6 +12,7 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon_base/favicon_callback.h"
 #include "components/favicon_base/favicon_types.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
@@ -65,9 +66,8 @@ class TabUIHelper : public content::WebContentsObserver,
   // new tab is opened in the background and its initial navigation is delayed.
   bool ShouldUseFaviconFromHistory() const;
 
-  void FetchFaviconFromHistory(
-      const GURL& url,
-      const favicon_base::FaviconImageCallback& callback);
+  void FetchFaviconFromHistory(const GURL& url,
+                               favicon_base::FaviconImageCallback callback);
   void OnURLFaviconFetched(const favicon_base::FaviconImageResult& favicon);
   void OnHostFaviconFetched(const favicon_base::FaviconImageResult& favicon);
   void UpdateFavicon(const favicon_base::FaviconImageResult& favicon);
@@ -80,7 +80,9 @@ class TabUIHelper : public content::WebContentsObserver,
   // navigation when the tab is opened in background.
   std::unique_ptr<TabUIData> tab_ui_data_;
   base::CancelableTaskTracker favicon_tracker_;
-  base::WeakPtrFactory<TabUIHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<TabUIHelper> weak_ptr_factory_{this};
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(TabUIHelper);
 };

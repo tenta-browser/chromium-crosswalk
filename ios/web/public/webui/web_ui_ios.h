@@ -48,7 +48,7 @@ class WebUIIOS {
 
   // Used by WebUIIOSMessageHandlers. If the given message is already
   // registered, the call has no effect.
-  typedef base::Callback<void(const base::ListValue*)> MessageCallback;
+  using MessageCallback = base::RepeatingCallback<void(const base::ListValue*)>;
   virtual void RegisterMessageCallback(const std::string& message,
                                        const MessageCallback& callback) = 0;
 
@@ -62,25 +62,22 @@ class WebUIIOS {
   // Call a Javascript function.  This is asynchronous; there's no way to get
   // the result of the call, and should be thought of more like sending a
   // message to the page.  All function names in WebUI must consist of only
-  // ASCII characters.  There are variants for calls with more arguments.
-  virtual void CallJavascriptFunction(const std::string& function_name) = 0;
-  virtual void CallJavascriptFunction(const std::string& function_name,
-                                      const base::Value& arg) = 0;
-  virtual void CallJavascriptFunction(const std::string& function_name,
-                                      const base::Value& arg1,
-                                      const base::Value& arg2) = 0;
-  virtual void CallJavascriptFunction(const std::string& function_name,
-                                      const base::Value& arg1,
-                                      const base::Value& arg2,
-                                      const base::Value& arg3) = 0;
-  virtual void CallJavascriptFunction(const std::string& function_name,
-                                      const base::Value& arg1,
-                                      const base::Value& arg2,
-                                      const base::Value& arg3,
-                                      const base::Value& arg4) = 0;
+  // ASCII characters.
   virtual void CallJavascriptFunction(
       const std::string& function_name,
       const std::vector<const base::Value*>& args) = 0;
+
+  // Helper method for responding to Javascript requests initiated with
+  // cr.sendWithPromise() (defined in cr.js) for the case where the returned
+  // promise should be resolved (request succeeded).
+  virtual void ResolveJavascriptCallback(const base::Value& callback_id,
+                                         const base::Value& response) = 0;
+
+  // Helper method for responding to Javascript requests initiated with
+  // cr.sendWithPromise() (defined in cr.js), for the case where the returned
+  // promise should be rejected (request failed).
+  virtual void RejectJavascriptCallback(const base::Value& callback_id,
+                                        const base::Value& response) = 0;
 };
 
 }  // namespace web

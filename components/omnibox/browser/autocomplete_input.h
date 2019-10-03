@@ -93,11 +93,13 @@ class AutocompleteInput {
   // formatted string with the same meaning as the original URL (i.e. it will
   // re-append a slash if necessary).  Because this uses Parse() under the hood
   // to determine the meaning of the different strings, callers need to supply a
-  // |scheme_classifier| to pass to Parse().
+  // |scheme_classifier| to pass to Parse(). If |offset| is non-null, it will
+  // be updated with any changes that shift it.
   static base::string16 FormattedStringWithEquivalentMeaning(
       const GURL& url,
       const base::string16& formatted_url,
-      const AutocompleteSchemeClassifier& scheme_classifier);
+      const AutocompleteSchemeClassifier& scheme_classifier,
+      size_t* offset);
 
   // Returns the number of non-empty components in |parts| besides the host.
   static int NumNonHostComponents(const url::Parsed& parts);
@@ -192,6 +194,20 @@ class AutocompleteInput {
     allow_exact_keyword_match_ = allow_exact_keyword_match;
   }
 
+  // Provides public read-only access to the method that the user used to
+  // get into keyword mode (which includes INVALID if they didn't enter it.)
+  metrics::OmniboxEventProto::KeywordModeEntryMethod keyword_mode_entry_method()
+      const {
+    return keyword_mode_entry_method_;
+  }
+
+  // Used by code handling keyword entry to set the method by which the user
+  // used to enter it.
+  void set_keyword_mode_entry_method(
+      metrics::OmniboxEventProto::KeywordModeEntryMethod entry_method) {
+    keyword_mode_entry_method_ = entry_method;
+  }
+
   // Returns whether providers should be allowed to make asynchronous requests
   // when processing this input.
   bool want_asynchronous_matches() const { return want_asynchronous_matches_; }
@@ -226,6 +242,10 @@ class AutocompleteInput {
   // Resets all internal variables to the null-constructed state.
   void Clear();
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
+
  private:
   friend class AutocompleteProviderTest;
 
@@ -250,6 +270,7 @@ class AutocompleteInput {
   bool prevent_inline_autocomplete_;
   bool prefer_keyword_;
   bool allow_exact_keyword_match_;
+  metrics::OmniboxEventProto::KeywordModeEntryMethod keyword_mode_entry_method_;
   bool want_asynchronous_matches_;
   bool from_omnibox_focus_;
   std::vector<base::string16> terms_prefixed_by_http_or_https_;

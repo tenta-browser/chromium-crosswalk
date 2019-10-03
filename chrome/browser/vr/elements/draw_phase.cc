@@ -4,19 +4,19 @@
 
 #include "chrome/browser/vr/elements/draw_phase.h"
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 
 namespace vr {
 
 namespace {
 
 static const char* g_draw_phase_strings[] = {
-    "kPhaseNone",         "kPhaseBackground", "kPhaseOverlayBackground",
-    "kPhaseFloorCeiling", "kPhaseForeground", "kPhaseOverlayForeground",
+    "kPhaseNone",       "kPhaseBackground",        "kPhaseBackplanes",
+    "kPhaseForeground", "kPhaseOverlayForeground",
 };
 
 static_assert(
-    kNumDrawPhases + 1 == arraysize(g_draw_phase_strings),
+    kNumDrawPhases + 1 == base::size(g_draw_phase_strings),
     "Mismatch between the DrawPhase enum and the corresponding strings");
 
 }  // namespace

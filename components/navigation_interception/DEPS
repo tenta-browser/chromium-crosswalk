@@ -1,6 +1,5 @@
 include_rules = [
-  "+jni",
-  "+net",
+  "+components/navigation_interception/jni_headers",
   "+ui/base",
 
   "+content/public/browser",

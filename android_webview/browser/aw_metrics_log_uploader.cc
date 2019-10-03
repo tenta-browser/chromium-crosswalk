@@ -4,7 +4,7 @@
 
 #include "android_webview/browser/aw_metrics_log_uploader.h"
 
-#include "android_webview/jni/AwMetricsLogUploader_jni.h"
+#include "android_webview/native_jni/AwMetricsLogUploader_jni.h"
 #include "base/android/jni_array.h"
 #include "components/metrics/log_decoder.h"
 
@@ -21,7 +21,8 @@ AwMetricsLogUploader::~AwMetricsLogUploader() {}
 
 void AwMetricsLogUploader::UploadLog(
     const std::string& compressed_log_data,
-    const std::string& log_hash,
+    const std::string& /*log_hash*/,
+    const std::string& /*log_signature*/,
     const metrics::ReportingInfo& reporting_info) {
   // WebView uses the platform logging mechanism instead of the normal UMA
   // server. The platform mechanism does its own compression, so undo the

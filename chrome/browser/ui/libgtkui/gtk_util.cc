@@ -8,6 +8,7 @@
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
 #include <gtk/gtk.h>
+#include <locale.h>
 #include <stddef.h>
 
 #include <memory>
@@ -15,9 +16,12 @@
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/environment.h"
+#include "base/memory/protected_memory.h"
+#include "base/memory/protected_memory_cfi.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "build/branding_buildflags.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -25,13 +29,23 @@
 #include "ui/events/keycodes/keyboard_code_conversion_x.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/linux_ui/linux_ui.h"
 
 namespace {
 
 const char kAuraTransientParent[] = "aura-transient-parent";
 
-void CommonInitFromCommandLine(const base::CommandLine& command_line,
-                               void (*init_func)(gint*, gchar***)) {
+void CommonInitFromCommandLine(const base::CommandLine& command_line) {
+  // Callers should have already called setlocale(LC_ALL, "") and
+  // setlocale(LC_NUMERIC, "C") by now. Chrome does this in
+  // service_manager::Main.
+  DCHECK_EQ(strcmp(setlocale(LC_NUMERIC, NULL), "C"), 0);
+  // This prevent GTK from calling setlocale(LC_ALL, ""), which potentially
+  // overwrites the LC_NUMERIC locale to something other than "C".
+  gtk_disable_setlocale();
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_init();
+#else
   const std::vector<std::string>& args = command_line.argv();
   int argc = args.size();
   std::unique_ptr<char* []> argv(new char*[argc + 1]);
@@ -46,80 +60,34 @@ void CommonInitFromCommandLine(const base::CommandLine& command_line,
   {
     // http://crbug.com/423873
     ANNOTATE_SCOPED_MEMORY_LEAK;
-    init_func(&argc, &argv_pointer);
+    gtk_init(&argc, &argv_pointer);
   }
   for (size_t i = 0; i < args.size(); ++i) {
     free(argv[i]);
   }
+#endif
 }
 
 }  // namespace
 
 namespace libgtkui {
 
-// TODO(erg): ThemeService has a whole interface just for reading default
-// constants. Figure out what to do with that more long term; for now, just
-// copy the constants themselves here.
+// TODO(thomasanderson): ThemeService has a whole interface just for reading
+// default constants. Figure out what to do with that more long term; for now,
+// just copy the constant itself here.
 const color_utils::HSL kDefaultTintFrameIncognito = {-1, 0.2f, 0.35f};
-const color_utils::HSL kDefaultTintFrameIncognitoInactive = {-1, 0.3f, 0.6f};
-
-// Theme colors returned by GetSystemColor().
-const SkColor kInvalidColorIdColor = SkColorSetRGB(255, 0, 128);
-const SkColor kURLTextColor = SkColorSetRGB(0x0b, 0x80, 0x43);
-
-SkColor NormalURLColor(SkColor foreground) {
-  color_utils::HSL fg_hsl, hue_hsl;
-  color_utils::SkColorToHSL(foreground, &fg_hsl);
-  color_utils::SkColorToHSL(kURLTextColor, &hue_hsl);
-
-  // Only allow colors that have a fair amount of saturation in them (color vs
-  // white). This means that our output color will always be fairly green.
-  double s = std::max(0.5, fg_hsl.s);
-
-  // Make sure the luminance is at least as bright as the |kURLTextColor| green
-  // would be if we were to use that.
-  double l;
-  if (fg_hsl.l < hue_hsl.l)
-    l = hue_hsl.l;
-  else
-    l = (fg_hsl.l + hue_hsl.l) / 2;
-
-  color_utils::HSL output = {hue_hsl.h, s, l};
-  return color_utils::HSLToSkColor(output, 255);
-}
-
-SkColor SelectedURLColor(SkColor foreground, SkColor background) {
-  color_utils::HSL fg_hsl, bg_hsl, hue_hsl;
-  color_utils::SkColorToHSL(foreground, &fg_hsl);
-  color_utils::SkColorToHSL(background, &bg_hsl);
-  color_utils::SkColorToHSL(kURLTextColor, &hue_hsl);
-
-  // The saturation of the text should be opposite of the background, clamped
-  // to 0.2-0.8. We make sure it's greater than 0.2 so there's some color, but
-  // less than 0.8 so it's not the oversaturated neon-color.
-  double opposite_s = 1 - bg_hsl.s;
-  double s = std::max(0.2, std::min(0.8, opposite_s));
-
-  // The luminance should match the luminance of the foreground text.  Again,
-  // we clamp so as to have at some amount of color (green) in the text.
-  double opposite_l = fg_hsl.l;
-  double l = std::max(0.1, std::min(0.9, opposite_l));
-
-  color_utils::HSL output = {hue_hsl.h, s, l};
-  return color_utils::HSLToSkColor(output, 255);
-}
 
 void GtkInitFromCommandLine(const base::CommandLine& command_line) {
-  CommonInitFromCommandLine(command_line, gtk_init);
+  CommonInitFromCommandLine(command_line);
 }
 
 // TODO(erg): This method was copied out of shell_integration_linux.cc. Because
 // of how this library is structured as a stand alone .so, we can't call code
 // from browser and above.
 std::string GetDesktopName(base::Environment* env) {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return "google-chrome.desktop";
-#else  // CHROMIUM_BUILD
+#else  // BUILDFLAG(CHROMIUM_BRANDING)
   // Allow $CHROME_DESKTOP to override the built-in value, so that development
   // versions can set themselves as the default without interfering with
   // non-official, packaged versions using the built-in value.
@@ -163,12 +131,8 @@ int EventFlagsFromGdkState(guint state) {
 }
 
 void TurnButtonBlue(GtkWidget* button) {
-#if GTK_MAJOR_VERSION == 2
-  gtk_widget_set_can_default(button, true);
-#else
   gtk_style_context_add_class(gtk_widget_get_style_context(button),
                               "suggested-action");
-#endif
 }
 
 void SetGtkTransientForAura(GtkWidget* dialog, aura::Window* parent) {
@@ -214,19 +178,35 @@ void ParseButtonLayout(const std::string& button_string,
       base::StringPiece token = tokenizer.token_piece();
       if (token == "minimize") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_MINIMIZE);
+            ->push_back(views::FrameButton::kMinimize);
       } else if (token == "maximize") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_MAXIMIZE);
+            ->push_back(views::FrameButton::kMaximize);
       } else if (token == "close") {
         (left_side ? leading_buttons : trailing_buttons)
-            ->push_back(views::FRAME_BUTTON_CLOSE);
+            ->push_back(views::FrameButton::kClose);
       }
     }
   }
 }
 
-#if GTK_MAJOR_VERSION > 2
+namespace {
+
+float GetDeviceScaleFactor() {
+  views::LinuxUI* linux_ui = views::LinuxUI::instance();
+  return linux_ui ? linux_ui->GetDeviceScaleFactor() : 1;
+}
+
+using GtkSetState = void (*)(GtkWidgetPath*, gint, GtkStateFlags);
+PROTECTED_MEMORY_SECTION base::ProtectedMemory<GtkSetState>
+    _gtk_widget_path_iter_set_state;
+
+using GtkSetObjectName = void (*)(GtkWidgetPath*, gint, const char*);
+PROTECTED_MEMORY_SECTION base::ProtectedMemory<GtkSetObjectName>
+    _gtk_widget_path_iter_set_object_name;
+
+}  // namespace
+
 void* GetGdkSharedLibrary() {
   std::string lib_name =
       "libgdk-" + std::to_string(GTK_MAJOR_VERSION) + ".so.0";
@@ -381,13 +361,15 @@ ScopedStyleContext AppendCssNodeToStyleContext(GtkStyleContext* context,
           NOTREACHED();
       }
     } else {
-      static auto* _gtk_widget_path_iter_set_object_name =
-          reinterpret_cast<void (*)(GtkWidgetPath*, gint, const char*)>(dlsym(
-              GetGtkSharedLibrary(), "gtk_widget_path_iter_set_object_name"));
+      static base::ProtectedMemory<GtkSetObjectName>::Initializer init(
+          &_gtk_widget_path_iter_set_object_name,
+          reinterpret_cast<GtkSetObjectName>(dlsym(
+              GetGtkSharedLibrary(), "gtk_widget_path_iter_set_object_name")));
       switch (part_type) {
         case CSS_NAME: {
           if (GtkVersionCheck(3, 20)) {
-            _gtk_widget_path_iter_set_object_name(path, -1, t.token().c_str());
+            base::UnsanitizedCfiCall(_gtk_widget_path_iter_set_object_name)(
+                path, -1, t.token().c_str());
           } else {
             gtk_widget_path_iter_add_class(path, -1, t.token().c_str());
           }
@@ -399,7 +381,8 @@ ScopedStyleContext AppendCssNodeToStyleContext(GtkStyleContext* context,
           gtk_widget_path_append_type(path, type);
           if (GtkVersionCheck(3, 20)) {
             if (t.token() == "GtkLabel")
-              _gtk_widget_path_iter_set_object_name(path, -1, "label");
+              base::UnsanitizedCfiCall(_gtk_widget_path_iter_set_object_name)(
+                  path, -1, "label");
           }
           break;
         }
@@ -427,11 +410,12 @@ ScopedStyleContext AppendCssNodeToStyleContext(GtkStyleContext* context,
   gtk_widget_path_iter_add_class(path, -1, "chromium");
 
   if (GtkVersionCheck(3, 14)) {
-    static auto* _gtk_widget_path_iter_set_state =
-        reinterpret_cast<void (*)(GtkWidgetPath*, gint, GtkStateFlags)>(
-            dlsym(GetGtkSharedLibrary(), "gtk_widget_path_iter_set_state"));
-    DCHECK(_gtk_widget_path_iter_set_state);
-    _gtk_widget_path_iter_set_state(path, -1, state);
+    static base::ProtectedMemory<GtkSetState>::Initializer init(
+        &_gtk_widget_path_iter_set_state,
+        reinterpret_cast<GtkSetState>(
+            dlsym(GetGtkSharedLibrary(), "gtk_widget_path_iter_set_state")));
+    DCHECK(*_gtk_widget_path_iter_set_state);
+    base::UnsanitizedCfiCall(_gtk_widget_path_iter_set_state)(path, -1, state);
   }
 
   ScopedStyleContext child_context(gtk_style_context_new());
@@ -446,6 +430,7 @@ ScopedStyleContext AppendCssNodeToStyleContext(GtkStyleContext* context,
     }
     gtk_style_context_set_state(child_context, child_state);
   }
+  gtk_style_context_set_scale(child_context, std::ceil(GetDeviceScaleFactor()));
   gtk_style_context_set_parent(child_context, context);
   gtk_widget_path_unref(path);
   return child_context;
@@ -472,8 +457,12 @@ SkColor GdkRgbaToSkColor(const GdkRGBA& color) {
 
 SkColor GetFgColorFromStyleContext(GtkStyleContext* context) {
   GdkRGBA color;
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_style_context_get_color(context, &color);
+#else
   gtk_style_context_get_color(context, gtk_style_context_get_state(context),
                               &color);
+#endif
   return GdkRgbaToSkColor(color);
 }
 
@@ -502,9 +491,13 @@ SkColor GetFgColor(const std::string& css_selector) {
 
 ScopedCssProvider GetCssProvider(const std::string& css) {
   GtkCssProvider* provider = gtk_css_provider_new();
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_css_provider_load_from_data(provider, css.c_str(), -1);
+#else
   GError* error = nullptr;
   gtk_css_provider_load_from_data(provider, css.c_str(), -1, &error);
   DCHECK(!error);
+#endif
   return ScopedCssProvider(provider);
 }
 
@@ -552,8 +545,12 @@ SkColor GetSelectionBgColor(const std::string& css_selector) {
   // This is verbatim how Gtk gets the selection color on versions before 3.20.
   GdkRGBA selection_color;
   G_GNUC_BEGIN_IGNORE_DEPRECATIONS;
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_style_context_get_background_color(context, &selection_color);
+#else
   gtk_style_context_get_background_color(
       context, gtk_style_context_get_state(context), &selection_color);
+#endif
   G_GNUC_END_IGNORE_DEPRECATIONS;
   return GdkRgbaToSkColor(selection_color);
 }
@@ -570,12 +567,18 @@ SkColor GetSeparatorColor(const std::string& css_selector) {
 
   auto context = GetStyleContextFromCss(css_selector);
   int w = 1, h = 1;
+  GtkBorder border, padding;
+#if GTK_CHECK_VERSION(3, 90, 0)
+  gtk_style_context_get(context, "min-width", &w, "min-height", &h, nullptr);
+  gtk_style_context_get_border(context, &border);
+  gtk_style_context_get_padding(context, &padding);
+#else
   gtk_style_context_get(context, gtk_style_context_get_state(context),
                         "min-width", &w, "min-height", &h, nullptr);
-  GtkBorder border, padding;
   GtkStateFlags state = gtk_style_context_get_state(context);
   gtk_style_context_get_border(context, state, &border);
   gtk_style_context_get_padding(context, state, &padding);
+#endif
   w += border.left + padding.left + padding.right + border.right;
   h += border.top + padding.top + padding.bottom + border.bottom;
 
@@ -594,6 +597,16 @@ SkColor GetSeparatorColor(const std::string& css_selector) {
   gtk_render_frame(context, surface.cairo(), 0, 0, w, h);
   return surface.GetAveragePixelValue(false);
 }
-#endif
+
+std::string GetGtkSettingsStringProperty(GtkSettings* settings,
+                                         const gchar* prop_name) {
+  GValue layout = G_VALUE_INIT;
+  g_value_init(&layout, G_TYPE_STRING);
+  g_object_get_property(G_OBJECT(settings), prop_name, &layout);
+  DCHECK(G_VALUE_HOLDS_STRING(&layout));
+  std::string prop_value(g_value_get_string(&layout));
+  g_value_unset(&layout);
+  return prop_value;
+}
 
 }  // namespace libgtkui

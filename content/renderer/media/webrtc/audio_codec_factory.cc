@@ -17,7 +17,9 @@
 #include "third_party/webrtc/api/audio_codecs/g722/audio_encoder_g722.h"
 #include "third_party/webrtc/api/audio_codecs/isac/audio_decoder_isac.h"
 #include "third_party/webrtc/api/audio_codecs/isac/audio_encoder_isac.h"
+#include "third_party/webrtc/api/audio_codecs/opus/audio_decoder_multi_channel_opus.h"
 #include "third_party/webrtc/api/audio_codecs/opus/audio_decoder_opus.h"
+#include "third_party/webrtc/api/audio_codecs/opus/audio_encoder_multi_channel_opus.h"
 #include "third_party/webrtc/api/audio_codecs/opus/audio_encoder_opus.h"
 
 namespace content {
@@ -28,7 +30,7 @@ namespace {
 template <typename T>
 struct NotAdvertisedEncoder {
   using Config = typename T::Config;
-  static rtc::Optional<Config> SdpToConfig(
+  static absl::optional<Config> SdpToConfig(
       const webrtc::SdpAudioFormat& audio_format) {
     return T::SdpToConfig(audio_format);
   }
@@ -41,8 +43,9 @@ struct NotAdvertisedEncoder {
   }
   static std::unique_ptr<webrtc::AudioEncoder> MakeAudioEncoder(
       const Config& config,
-      int payload_type) {
-    return T::MakeAudioEncoder(config, payload_type);
+      int payload_type,
+      absl::optional<webrtc::AudioCodecPairId> codec_pair_id) {
+    return T::MakeAudioEncoder(config, payload_type, codec_pair_id);
   }
 };
 
@@ -50,7 +53,7 @@ struct NotAdvertisedEncoder {
 template <typename T>
 struct NotAdvertisedDecoder {
   using Config = typename T::Config;
-  static rtc::Optional<Config> SdpToConfig(
+  static absl::optional<Config> SdpToConfig(
       const webrtc::SdpAudioFormat& audio_format) {
     return T::SdpToConfig(audio_format);
   }
@@ -59,8 +62,9 @@ struct NotAdvertisedDecoder {
     // Don't advertise support for anything.
   }
   static std::unique_ptr<webrtc::AudioDecoder> MakeAudioDecoder(
-      const Config& config) {
-    return T::MakeAudioDecoder(config);
+      const Config& config,
+      absl::optional<webrtc::AudioCodecPairId> codec_pair_id) {
+    return T::MakeAudioDecoder(config, codec_pair_id);
   }
 };
 
@@ -71,7 +75,8 @@ CreateWebrtcAudioEncoderFactory() {
   return webrtc::CreateAudioEncoderFactory<
       webrtc::AudioEncoderOpus, webrtc::AudioEncoderIsac,
       webrtc::AudioEncoderG722, webrtc::AudioEncoderG711,
-      NotAdvertisedEncoder<webrtc::AudioEncoderL16>>();
+      NotAdvertisedEncoder<webrtc::AudioEncoderL16>,
+      NotAdvertisedEncoder<webrtc::AudioEncoderMultiChannelOpus>>();
 }
 
 rtc::scoped_refptr<webrtc::AudioDecoderFactory>
@@ -79,7 +84,8 @@ CreateWebrtcAudioDecoderFactory() {
   return webrtc::CreateAudioDecoderFactory<
       webrtc::AudioDecoderOpus, webrtc::AudioDecoderIsac,
       webrtc::AudioDecoderG722, webrtc::AudioDecoderG711,
-      NotAdvertisedDecoder<webrtc::AudioDecoderL16>>();
+      NotAdvertisedDecoder<webrtc::AudioDecoderL16>,
+      NotAdvertisedDecoder<webrtc::AudioDecoderMultiChannelOpus>>();
 }
 
 }  // namespace content

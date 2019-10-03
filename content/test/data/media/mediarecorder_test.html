@@ -25,7 +25,7 @@ const SAMPLING_RATE = 48000;
 const NUM_SAMPLES = 2 * SAMPLING_RATE;
 
 // Function assert_throws inspired from Blink's
-// LayoutTests/resources/testharness.js
+// web_tests/resources/testharness.js
 
 function assertThrows(func, description) {
   try {
@@ -65,8 +65,7 @@ function setupPeerConnection(stream) {
       }
     };
     remotePeerConnection.onaddstream = function(event) {
-      document.getElementById('remoteVideo').src = URL.createObjectURL(
-          event.stream);
+      document.getElementById('remoteVideo').srcObject = event.stream;
       resolve(event.stream);
     };
 
@@ -78,14 +77,13 @@ function setupPeerConnection(stream) {
       createAnswer(description);
     }, function(error) { failTest(error.toString()); });
 
-    document.getElementById('video').src = URL.createObjectURL(
-        localStream);
+    document.getElementById('video').srcObject = localStream;
   });
 }
 
 function createAndStartMediaRecorder(stream, mimeType, slice) {
   return new Promise(function(resolve, reject) {
-    document.getElementById('video').src = URL.createObjectURL(stream);
+    document.getElementById('video').srcObject = stream;
     var recorder = new MediaRecorder(stream, {'mimeType' : mimeType});
     console.log('Recorder object created, mimeType = ' + mimeType);
     if (slice != undefined) {
@@ -503,7 +501,7 @@ function testIllegalStartInPausedStateThrowsDOMError() {
 // Tests that MediaRecorder can record a 2 Channel audio stream.
 function testTwoChannelAudio() {
   var audioSize = 0;
-  var context = new OfflineAudioContext(2, NUM_SAMPLES, SAMPLING_RATE);
+  var context = new AudioContext();
   var oscillator = context.createOscillator();
   oscillator.type = 'sine';
   oscillator.frequency.value = FREQUENCY;
@@ -521,7 +519,6 @@ function testTwoChannelAudio() {
         };
         recorder.start(0);
         oscillator.start();
-        context.startRendering();
       })
       .then(function() {
         return waitFor('Make sure the recording has data',

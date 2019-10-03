@@ -18,6 +18,7 @@
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/browser/appcache/appcache_service_impl.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 
 // This is a quick and easy 'mock' implementation of the storage interface
 // that doesn't put anything to disk.
@@ -37,20 +38,18 @@ MockAppCacheStorage::MockAppCacheStorage(AppCacheServiceImpl* service)
       simulate_store_group_and_newest_cache_failure_(false),
       simulate_find_main_resource_(false),
       simulate_find_sub_resource_(false),
-      simulated_found_cache_id_(kAppCacheNoCacheId),
+      simulated_found_cache_id_(blink::mojom::kAppCacheNoCacheId),
       simulated_found_group_id_(0),
-      simulated_found_network_namespace_(false),
-      weak_factory_(this) {
+      simulated_found_network_namespace_(false) {
   last_cache_id_ = 0;
   last_group_id_ = 0;
   last_response_id_ = 0;
 }
 
-MockAppCacheStorage::~MockAppCacheStorage() {
-}
+MockAppCacheStorage::~MockAppCacheStorage() = default;
 
 void MockAppCacheStorage::GetAllInfo(Delegate* delegate) {
-  ScheduleTask(base::Bind(
+  ScheduleTask(base::BindOnce(
       &MockAppCacheStorage::ProcessGetAllInfo, weak_factory_.GetWeakPtr(),
       base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
 }
@@ -59,7 +58,7 @@ void MockAppCacheStorage::LoadCache(int64_t id, Delegate* delegate) {
   DCHECK(delegate);
   AppCache* cache = working_set_.GetCache(id);
   if (ShouldCacheLoadAppearAsync(cache)) {
-    ScheduleTask(base::Bind(
+    ScheduleTask(base::BindOnce(
         &MockAppCacheStorage::ProcessLoadCache, weak_factory_.GetWeakPtr(), id,
         base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
     return;
@@ -72,7 +71,7 @@ void MockAppCacheStorage::LoadOrCreateGroup(
   DCHECK(delegate);
   AppCacheGroup* group = working_set_.GetGroup(manifest_url);
   if (ShouldGroupLoadAppearAsync(group)) {
-    ScheduleTask(base::Bind(
+    ScheduleTask(base::BindOnce(
         &MockAppCacheStorage::ProcessLoadOrCreateGroup,
         weak_factory_.GetWeakPtr(), manifest_url,
         base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
@@ -87,11 +86,11 @@ void MockAppCacheStorage::StoreGroupAndNewestCache(
   DCHECK(group && delegate && newest_cache);
 
   // Always make this operation look async.
-  ScheduleTask(
-      base::Bind(&MockAppCacheStorage::ProcessStoreGroupAndNewestCache,
-                 weak_factory_.GetWeakPtr(), base::WrapRefCounted(group),
-                 base::WrapRefCounted(newest_cache),
-                 base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
+  ScheduleTask(base::BindOnce(
+      &MockAppCacheStorage::ProcessStoreGroupAndNewestCache,
+      weak_factory_.GetWeakPtr(), base::WrapRefCounted(group),
+      base::WrapRefCounted(newest_cache),
+      base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
 }
 
 void MockAppCacheStorage::FindResponseForMainRequest(
@@ -101,10 +100,10 @@ void MockAppCacheStorage::FindResponseForMainRequest(
   // Note: MockAppCacheStorage does not respect the preferred_manifest_url.
 
   // Always make this operation look async.
-  ScheduleTask(
-      base::Bind(&MockAppCacheStorage::ProcessFindResponseForMainRequest,
-                 weak_factory_.GetWeakPtr(), url,
-                 base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
+  ScheduleTask(base::BindOnce(
+      &MockAppCacheStorage::ProcessFindResponseForMainRequest,
+      weak_factory_.GetWeakPtr(), url,
+      base::WrapRefCounted(GetOrCreateDelegateReference(delegate))));
 }
 
 void MockAppCacheStorage::FindResponseForSubRequest(
@@ -147,11 +146,11 @@ void MockAppCacheStorage::MakeGroupObsolete(AppCacheGroup* group,
   DCHECK(group && delegate);
 
   // Always make this method look async.
-  ScheduleTask(
-      base::Bind(&MockAppCacheStorage::ProcessMakeGroupObsolete,
-                 weak_factory_.GetWeakPtr(), base::WrapRefCounted(group),
-                 base::WrapRefCounted(GetOrCreateDelegateReference(delegate)),
-                 response_code));
+  ScheduleTask(base::BindOnce(
+      &MockAppCacheStorage::ProcessMakeGroupObsolete,
+      weak_factory_.GetWeakPtr(), base::WrapRefCounted(group),
+      base::WrapRefCounted(GetOrCreateDelegateReference(delegate)),
+      response_code));
 }
 
 void MockAppCacheStorage::StoreEvictionTimes(AppCacheGroup* group) {
@@ -160,24 +159,25 @@ void MockAppCacheStorage::StoreEvictionTimes(AppCacheGroup* group) {
                      group->first_evictable_error_time());
 }
 
-AppCacheResponseReader* MockAppCacheStorage::CreateResponseReader(
-    const GURL& manifest_url,
-    int64_t response_id) {
+std::unique_ptr<AppCacheResponseReader>
+MockAppCacheStorage::CreateResponseReader(const GURL& manifest_url,
+                                          int64_t response_id) {
   if (simulated_reader_)
-    return simulated_reader_.release();
-  return new AppCacheResponseReader(response_id, disk_cache()->GetWeakPtr());
+    return std::move(simulated_reader_);
+  return std::make_unique<AppCacheResponseReader>(response_id,
+                                                  disk_cache()->GetWeakPtr());
 }
 
-AppCacheResponseWriter* MockAppCacheStorage::CreateResponseWriter(
-    const GURL& manifest_url) {
-  return new AppCacheResponseWriter(NewResponseId(),
-                                    disk_cache()->GetWeakPtr());
+std::unique_ptr<AppCacheResponseWriter>
+MockAppCacheStorage::CreateResponseWriter(const GURL& manifest_url) {
+  return std::make_unique<AppCacheResponseWriter>(NewResponseId(),
+                                                  disk_cache()->GetWeakPtr());
 }
 
-AppCacheResponseMetadataWriter*
+std::unique_ptr<AppCacheResponseMetadataWriter>
 MockAppCacheStorage::CreateResponseMetadataWriter(int64_t response_id) {
-  return new AppCacheResponseMetadataWriter(response_id,
-                                            disk_cache()->GetWeakPtr());
+  return std::make_unique<AppCacheResponseMetadataWriter>(
+      response_id, disk_cache()->GetWeakPtr());
 }
 
 void MockAppCacheStorage::DoomResponses(
@@ -191,11 +191,8 @@ void MockAppCacheStorage::DeleteResponses(
     const std::vector<int64_t>& response_ids) {
   // We don't bother with actually removing responses from the disk-cache,
   // just keep track of which ids have been doomed or deleted
-  std::vector<int64_t>::const_iterator it = response_ids.begin();
-  while (it != response_ids.end()) {
-    doomed_response_ids_.insert(*it);
-    ++it;
-  }
+  for (const auto& id : response_ids)
+    doomed_response_ids_.insert(id);
 }
 
 bool MockAppCacheStorage::IsInitialized() {
@@ -222,8 +219,10 @@ void MockAppCacheStorage::ProcessLoadOrCreateGroup(
 
   // Newly created groups are not put in the stored_groups collection
   // until StoreGroupAndNewestCache is called.
-  if (!group.get())
-    group = new AppCacheGroup(service_->storage(), manifest_url, NewGroupId());
+  if (!group.get()) {
+    group = base::MakeRefCounted<AppCacheGroup>(service_->storage(),
+                                                manifest_url, NewGroupId());
+  }
 
   if (delegate_ref->delegate)
     delegate_ref->delegate->OnGroupLoaded(group.get(), manifest_url);
@@ -249,7 +248,7 @@ void MockAppCacheStorage::ProcessStoreGroupAndNewestCache(
 
     // Copy the collection prior to removal, on final release
     // of a cache the group's collection will change.
-    AppCacheGroup::Caches copy = group->old_caches();
+    std::vector<AppCache*> copy = group->old_caches();
     RemoveStoredCaches(copy);
   }
 
@@ -269,7 +268,9 @@ struct FoundCandidate {
   bool is_cache_in_use;
 
   FoundCandidate()
-      : cache_id(kAppCacheNoCacheId), group_id(0), is_cache_in_use(false) {}
+      : cache_id(blink::mojom::kAppCacheNoCacheId),
+        group_id(0),
+        is_cache_in_use(false) {}
 };
 
 void MaybeTakeNewNamespaceEntry(
@@ -353,9 +354,8 @@ void MockAppCacheStorage::ProcessFindResponseForMainRequest(
   FoundCandidate found_fallback_candidate;
   GURL found_fallback_candidate_namespace;
 
-  for (StoredGroupMap::const_iterator it = stored_groups_.begin();
-       it != stored_groups_.end(); ++it) {
-    AppCacheGroup* group = it->second.get();
+  for (const auto& pair : stored_groups_) {
+    AppCacheGroup* group = pair.second.get();
     AppCache* cache = group->newest_complete_cache();
     if (group->is_obsolete() || !cache ||
         (url.GetOrigin() != group->manifest_url().GetOrigin())) {
@@ -435,8 +435,8 @@ void MockAppCacheStorage::ProcessFindResponseForMainRequest(
 
   // Didn't find anything.
   delegate_ref->delegate->OnMainResponseFound(
-      url, AppCacheEntry(), GURL(), AppCacheEntry(), kAppCacheNoCacheId, 0,
-      GURL());
+      url, AppCacheEntry(), GURL(), AppCacheEntry(),
+      blink::mojom::kAppCacheNoCacheId, 0, GURL());
 }
 
 void MockAppCacheStorage::ProcessMakeGroupObsolete(
@@ -456,7 +456,7 @@ void MockAppCacheStorage::ProcessMakeGroupObsolete(
 
   // Copy the collection prior to removal, on final release
   // of a cache the group's collection will change.
-  AppCacheGroup::Caches copy = group->old_caches();
+  std::vector<AppCache*> copy = group->old_caches();
   RemoveStoredCaches(copy);
 
   group->set_obsolete(true);
@@ -500,12 +500,9 @@ void MockAppCacheStorage::RemoveStoredCache(AppCache* cache) {
 }
 
 void MockAppCacheStorage::RemoveStoredCaches(
-    const AppCacheGroup::Caches& caches) {
-  AppCacheGroup::Caches::const_iterator it = caches.begin();
-  while (it != caches.end()) {
-    RemoveStoredCache(*it);
-    ++it;
-  }
+    const std::vector<AppCache*>& caches) {
+  for (AppCache* cache : caches)
+    RemoveStoredCache(cache);
 }
 
 void MockAppCacheStorage::AddStoredGroup(AppCacheGroup* group) {
@@ -541,13 +538,10 @@ bool MockAppCacheStorage::ShouldGroupLoadAppearAsync(
 
   // If any of the old caches are "in use", then the group must also
   // be memory resident and not require async loading.
-  const AppCacheGroup::Caches& old_caches = group->old_caches();
-  AppCacheGroup::Caches::const_iterator it = old_caches.begin();
-  while (it != old_caches.end()) {
+  for (const AppCache* cache : group->old_caches()) {
     // "in use" caches don't require async loading
-    if (!ShouldCacheLoadAppearAsync(*it))
+    if (!ShouldCacheLoadAppearAsync(cache))
       return false;
-    ++it;
   }
 
   return true;

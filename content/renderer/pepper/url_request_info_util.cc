@@ -9,7 +9,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "content/common/fileapi/file_system_messages.h"
+#include "content/public/common/service_names.mojom.h"
 #include "content/renderer/loader/request_extra_data.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_file_ref_renderer_host.h"
@@ -24,13 +24,16 @@
 #include "ppapi/shared_impl/url_request_info_data.h"
 #include "ppapi/shared_impl/var.h"
 #include "ppapi/thunk/enter.h"
-#include "third_party/WebKit/public/platform/FilePathConversion.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebHTTPBody.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "third_party/blink/public/mojom/filesystem/file_system.mojom.h"
+#include "third_party/blink/public/mojom/web_feature/web_feature.mojom.h"
+#include "third_party/blink/public/platform/file_path_conversion.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_http_body.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
 
@@ -47,6 +50,13 @@ using blink::WebURLRequest;
 namespace content {
 
 namespace {
+
+blink::mojom::FileSystemManagerPtr GetFileSystemManager() {
+  blink::mojom::FileSystemManagerPtr file_system_manager_ptr;
+  ChildThreadImpl::current()->GetConnector()->BindInterface(
+      mojom::kBrowserServiceName, mojo::MakeRequest(&file_system_manager_ptr));
+  return file_system_manager_ptr;
+}
 
 // Appends the file ref given the Resource pointer associated with it to the
 // given HTTP body, returning true on success.
@@ -77,9 +87,8 @@ bool AppendFileRefToBody(PP_Instance instance,
     case PP_FILESYSTEMTYPE_LOCALPERSISTENT:
       // TODO(kinuko): remove this sync IPC when we fully support
       // AppendURLRange for FileSystem URL.
-      RenderThreadImpl::current()->Send(
-          new FileSystemHostMsg_SyncGetPlatformPath(
-              file_ref_host->GetFileSystemURL(), &platform_path));
+      GetFileSystemManager()->GetPlatformPath(file_ref_host->GetFileSystemURL(),
+                                              &platform_path);
       break;
     case PP_FILESYSTEMTYPE_EXTERNAL:
       platform_path = file_ref_host->GetExternalFilePath();
@@ -168,21 +177,26 @@ bool CreateWebURLRequest(PP_Instance instance,
     name_version = "internal_testing_only";
   }
 
-  dest->SetURL(
+  dest->SetUrl(
       frame->GetDocument().CompleteURL(WebString::FromUTF8(data->url)));
-  dest->SetDownloadToFile(data->stream_to_file);
   dest->SetReportUploadProgress(data->record_upload_progress);
 
   if (!data->method.empty())
-    dest->SetHTTPMethod(WebString::FromUTF8(data->method));
+    dest->SetHttpMethod(WebString::FromUTF8(data->method));
 
   dest->SetSiteForCookies(frame->GetDocument().SiteForCookies());
+
+  // Plug-ins should not load via service workers as plug-ins may have their own
+  // origin checking logic that may get confused if service workers respond with
+  // resources from another origin.
+  // https://w3c.github.io/ServiceWorker/#implementer-concerns
+  dest->SetSkipServiceWorker(true);
 
   const std::string& headers = data->headers;
   if (!headers.empty()) {
     net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n\r");
     while (it.GetNext()) {
-      dest->AddHTTPHeaderField(WebString::FromUTF8(it.name()),
+      dest->AddHttpHeaderField(WebString::FromUTF8(it.name()),
                                WebString::FromUTF8(it.values()));
     }
   }
@@ -208,7 +222,7 @@ bool CreateWebURLRequest(PP_Instance instance,
         http_body.AppendData(WebData(item.data));
       }
     }
-    dest->SetHTTPBody(http_body);
+    dest->SetHttpBody(http_body);
   }
 
   // Add the "Referer" header if there is a custom referrer. Such requests
@@ -219,21 +233,19 @@ bool CreateWebURLRequest(PP_Instance instance,
 
   if (data->has_custom_content_transfer_encoding &&
       !data->custom_content_transfer_encoding.empty()) {
-    dest->AddHTTPHeaderField(
+    dest->AddHttpHeaderField(
         WebString::FromUTF8("Content-Transfer-Encoding"),
         WebString::FromUTF8(data->custom_content_transfer_encoding));
   }
 
-  if (data->has_custom_user_agent || !name_version.empty()) {
-    RequestExtraData* extra_data = new RequestExtraData();
-    if (data->has_custom_user_agent) {
-      extra_data->set_custom_user_agent(
-          WebString::FromUTF8(data->custom_user_agent));
-    }
-    if (!name_version.empty()) {
-      extra_data->set_requested_with(WebString::FromUTF8(name_version));
-    }
-    dest->SetExtraData(extra_data);
+  if (!name_version.empty())
+    dest->SetRequestedWithHeader(WebString::FromUTF8(name_version));
+
+  if (data->has_custom_user_agent) {
+    auto extra_data = std::make_unique<RequestExtraData>();
+    extra_data->set_custom_user_agent(
+        WebString::FromUTF8(data->custom_user_agent));
+    dest->SetExtraData(std::move(extra_data));
   }
 
   return true;

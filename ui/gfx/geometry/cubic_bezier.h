@@ -6,11 +6,13 @@
 #define UI_GFX_GEOMETRY_CUBIC_BEZIER_H_
 
 #include "base/macros.h"
-#include "ui/gfx/gfx_export.h"
+#include "ui/gfx/geometry/geometry_export.h"
 
 namespace gfx {
 
-class GFX_EXPORT CubicBezier {
+#define CUBIC_BEZIER_SPLINE_SAMPLES 11
+
+class GEOMETRY_EXPORT CubicBezier {
  public:
   CubicBezier(double p1x, double p1y, double p2x, double p2y);
   CubicBezier(const CubicBezier& other);
@@ -73,6 +75,7 @@ class GFX_EXPORT CubicBezier {
   void InitCoefficients(double p1x, double p1y, double p2x, double p2y);
   void InitGradients(double p1x, double p1y, double p2x, double p2y);
   void InitRange(double p1y, double p2y);
+  void InitSpline();
 
   double ax_;
   double bx_;
@@ -87,6 +90,14 @@ class GFX_EXPORT CubicBezier {
 
   double range_min_;
   double range_max_;
+
+  double spline_samples_[CUBIC_BEZIER_SPLINE_SAMPLES];
+
+#ifndef NDEBUG
+  // Guard against attempted to solve for t given x in the event that the curve
+  // may have multiple values for t for some values of x in [0, 1].
+  bool monotonically_increasing_;
+#endif
 
   DISALLOW_ASSIGN(CubicBezier);
 };

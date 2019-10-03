@@ -14,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/policy/policy_constants.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/auto_thread.h"
@@ -28,7 +29,6 @@
 #include "remoting/host/host_status_logger.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/it2me_desktop_environment.h"
-#include "remoting/host/register_support_host_request.h"
 #include "remoting/protocol/auth_util.h"
 #include "remoting/protocol/chromium_port_allocator_factory.h"
 #include "remoting/protocol/ice_transport.h"
@@ -38,7 +38,8 @@
 #include "remoting/protocol/transport_context.h"
 #include "remoting/protocol/validating_authenticator.h"
 #include "remoting/signaling/jid_util.h"
-#include "remoting/signaling/server_log_entry.h"
+#include "remoting/signaling/log_to_server.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace remoting {
 
@@ -64,10 +65,29 @@ It2MeHost::~It2MeHost() {
   DCHECK(!desktop_environment_factory_.get());
 }
 
+void It2MeHost::set_enable_dialogs(bool enable) {
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
+  enable_dialogs_ = enable;
+#else
+  NOTREACHED() << "It2MeHost::set_enable_dialogs is only supported on ChromeOS";
+#endif
+}
+
+void It2MeHost::set_terminate_upon_input(bool terminate_upon_input) {
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
+  terminate_upon_input_ = terminate_upon_input;
+#else
+  NOTREACHED()
+      << "It2MeHost::set_terminate_upon_input is only supported on ChromeOS";
+#endif
+}
+
 void It2MeHost::Connect(
     std::unique_ptr<ChromotingHostContext> host_context,
     std::unique_ptr<base::DictionaryValue> policies,
     std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+    std::unique_ptr<RegisterSupportHostRequest> register_request,
+    std::unique_ptr<LogToServer> log_to_server,
     base::WeakPtr<It2MeHost::Observer> observer,
     std::unique_ptr<SignalStrategy> signal_strategy,
     const std::string& username,
@@ -79,30 +99,33 @@ void It2MeHost::Connect(
   observer_ = std::move(observer);
   confirmation_dialog_factory_ = std::move(dialog_factory);
   signal_strategy_ = std::move(signal_strategy);
+  log_to_server_ = std::move(log_to_server);
 
   OnPolicyUpdate(std::move(policies));
 
   desktop_environment_factory_.reset(new It2MeDesktopEnvironmentFactory(
       host_context_->network_task_runner(),
       host_context_->video_capture_task_runner(),
-      host_context_->input_task_runner(), host_context_->ui_task_runner(),
-      host_context_->system_input_injector_factory()));
+      host_context_->input_task_runner(), host_context_->ui_task_runner()));
 
   // Switch to the network thread to start the actual connection.
   host_context_->network_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::ConnectOnNetworkThread, this, username,
-                            directory_bot_jid, ice_config));
+      FROM_HERE, base::BindOnce(&It2MeHost::ConnectOnNetworkThread, this,
+                                username, directory_bot_jid, ice_config,
+                                std::move(register_request)));
 }
 
 void It2MeHost::Disconnect() {
   DCHECK(host_context_->ui_task_runner()->BelongsToCurrentThread());
   host_context_->network_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::DisconnectOnNetworkThread, this));
+      FROM_HERE, base::BindOnce(&It2MeHost::DisconnectOnNetworkThread, this));
 }
 
-void It2MeHost::ConnectOnNetworkThread(const std::string& username,
-                                       const std::string& directory_bot_jid,
-                                       const protocol::IceConfig& ice_config) {
+void It2MeHost::ConnectOnNetworkThread(
+    const std::string& username,
+    const std::string& directory_bot_jid,
+    const protocol::IceConfig& ice_config,
+    std::unique_ptr<RegisterSupportHostRequest> register_request) {
   DCHECK(host_context_->network_task_runner()->BelongsToCurrentThread());
   DCHECK_EQ(kDisconnected, state_);
 
@@ -129,11 +152,9 @@ void It2MeHost::ConnectOnNetworkThread(const std::string& username,
   host_key_pair_ = RsaKeyPair::Generate();
 
   // Request registration of the host for support.
-  std::unique_ptr<RegisterSupportHostRequest> register_request(
-      new RegisterSupportHostRequest(
-          signal_strategy_.get(), host_key_pair_, directory_bot_jid,
-          base::Bind(&It2MeHost::OnReceivedSupportID, base::Unretained(this))));
-
+  register_request->StartRequest(
+      signal_strategy_.get(), host_key_pair_,
+      base::BindOnce(&It2MeHost::OnReceivedSupportID, base::Unretained(this)));
   // Beyond this point nothing can fail, so save the config and request.
   register_request_ = std::move(register_request);
 
@@ -158,10 +179,9 @@ void It2MeHost::ConnectOnNetworkThread(const std::string& username,
 
   scoped_refptr<protocol::TransportContext> transport_context =
       new protocol::TransportContext(
-          signal_strategy_.get(),
           base::WrapUnique(new protocol::ChromiumPortAllocatorFactory()),
           base::WrapUnique(new ChromiumUrlRequestFactory(
-              host_context_->url_request_context_getter())),
+              host_context_->url_loader_factory())),
           network_settings, protocol::TransportRole::SERVER);
   transport_context->set_turn_ice_config(ice_config);
 
@@ -177,15 +197,16 @@ void It2MeHost::ConnectOnNetworkThread(const std::string& username,
   session_manager->set_protocol_config(std::move(protocol_config));
 
   // Create the host.
-  host_.reset(new ChromotingHost(desktop_environment_factory_.get(),
-                                 std::move(session_manager), transport_context,
-                                 host_context_->audio_task_runner(),
-                                 host_context_->video_encode_task_runner(),
-                                 DesktopEnvironmentOptions::CreateDefault()));
+  DesktopEnvironmentOptions options(DesktopEnvironmentOptions::CreateDefault());
+  options.set_enable_user_interface(enable_dialogs_);
+  options.set_terminate_upon_input(terminate_upon_input_);
+  host_.reset(new ChromotingHost(
+      desktop_environment_factory_.get(), std::move(session_manager),
+      transport_context, host_context_->audio_task_runner(),
+      host_context_->video_encode_task_runner(), options));
   host_->status_monitor()->AddStatusObserver(this);
   host_status_logger_.reset(
-      new HostStatusLogger(host_->status_monitor(), ServerLogEntry::IT2ME,
-                           signal_strategy_.get(), directory_bot_jid));
+      new HostStatusLogger(host_->status_monitor(), log_to_server_.get()));
 
   // Create event logger.
   host_event_logger_ =
@@ -205,7 +226,7 @@ void It2MeHost::OnAccessDenied(const std::string& jid) {
   ++failed_login_attempts_;
   if (failed_login_attempts_ == kMaxLoginAttempts) {
     DisconnectOnNetworkThread();
-  } else if (connecting_jid_ == jid) {
+  } else if (connecting_jid_ == NormalizeJid(jid)) {
     DCHECK_EQ(state_, kConnecting);
     connecting_jid_.clear();
     confirmation_dialog_proxy_.reset();
@@ -230,8 +251,8 @@ void It2MeHost::OnClientConnected(const std::string& jid) {
 
   // Pass the client user name to the script object before changing state.
   host_context_->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnClientAuthenticated,
-                            observer_, client_username));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnClientAuthenticated,
+                                observer_, client_username));
 
   SetState(kConnected, ErrorCode::OK);
 }
@@ -253,7 +274,7 @@ void It2MeHost::OnPolicyUpdate(
   if (!host_context_->network_task_runner()->BelongsToCurrentThread()) {
     host_context_->network_task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&It2MeHost::OnPolicyUpdate, this, base::Passed(&policies)));
+        base::BindOnce(&It2MeHost::OnPolicyUpdate, this, std::move(policies)));
     return;
   }
 
@@ -303,8 +324,8 @@ void It2MeHost::UpdateNatPolicy(bool nat_traversal_enabled) {
 
   // Notify the web-app of the policy setting.
   host_context_->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnNatPolicyChanged, observer_,
-                            nat_traversal_enabled_));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnNatPolicyChanged,
+                                observer_, nat_traversal_enabled_));
 }
 
 void It2MeHost::UpdateHostDomainListPolicy(
@@ -398,8 +419,8 @@ void It2MeHost::SetState(It2MeHostState state, ErrorCode error_code) {
 
   // Post a state-change notification to the web-app.
   host_context_->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnStateChanged, observer_,
-                            state, error_code));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnStateChanged, observer_,
+                                state, error_code));
 }
 
 bool It2MeHost::IsRunning() const {
@@ -440,8 +461,8 @@ void It2MeHost::OnReceivedSupportID(const std::string& support_id,
 
   // Pass the Access Code to the script object before changing state.
   host_context_->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnStoreAccessCode, observer_,
-                            access_code, lifetime));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnStoreAccessCode,
+                                observer_, access_code, lifetime));
 
   SetState(kReceivedAccessCode, ErrorCode::OK);
 }
@@ -464,6 +485,7 @@ void It2MeHost::DisconnectOnNetworkThread() {
 
   register_request_ = nullptr;
   host_status_logger_ = nullptr;
+  log_to_server_ = nullptr;
   signal_strategy_ = nullptr;
   host_event_logger_ = nullptr;
 
@@ -475,20 +497,22 @@ void It2MeHost::DisconnectOnNetworkThread() {
 }
 
 void It2MeHost::ValidateConnectionDetails(
-    const std::string& remote_jid,
+    const std::string& original_remote_jid,
     const ValidationResultCallback& result_callback) {
   DCHECK(host_context_->network_task_runner()->BelongsToCurrentThread());
 
   // First ensure the JID we received is valid.
   std::string client_username;
-  if (!SplitJidResource(remote_jid, &client_username, /*resource=*/nullptr)) {
-    LOG(ERROR) << "Rejecting incoming connection from " << remote_jid
+  if (!SplitJidResource(original_remote_jid, &client_username,
+                        /*resource=*/nullptr)) {
+    LOG(ERROR) << "Rejecting incoming connection from " << original_remote_jid
                << ": Invalid JID.";
     result_callback.Run(
         protocol::ValidatingAuthenticator::Result::ERROR_INVALID_ACCOUNT);
     DisconnectOnNetworkThread();
     return;
   }
+  std::string remote_jid = NormalizeJid(original_remote_jid);
 
   if (client_username.empty()) {
     LOG(ERROR) << "Invalid user name passed in: " << remote_jid;
@@ -532,12 +556,19 @@ void It2MeHost::ValidateConnectionDetails(
   SetState(kConnecting, ErrorCode::OK);
 
   // Show a confirmation dialog to the user to allow them to confirm/reject it.
-  confirmation_dialog_proxy_.reset(new It2MeConfirmationDialogProxy(
-      host_context_->ui_task_runner(), confirmation_dialog_factory_->Create()));
-
-  confirmation_dialog_proxy_->Show(
-      client_username, base::Bind(&It2MeHost::OnConfirmationResult,
-                                  base::Unretained(this), result_callback));
+  // If dialogs are suppressed, just call the callback directly.
+  if (enable_dialogs_) {
+    confirmation_dialog_proxy_.reset(new It2MeConfirmationDialogProxy(
+        host_context_->ui_task_runner(),
+        confirmation_dialog_factory_->Create()));
+    confirmation_dialog_proxy_->Show(
+        client_username, base::Bind(&It2MeHost::OnConfirmationResult,
+                                    base::Unretained(this), result_callback));
+  } else {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(result_callback, ValidationResult::SUCCESS));
+  }
 }
 
 void It2MeHost::OnConfirmationResult(

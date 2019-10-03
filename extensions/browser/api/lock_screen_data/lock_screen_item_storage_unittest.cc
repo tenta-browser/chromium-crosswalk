@@ -10,25 +10,24 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/api/lock_screen_data/data_item.h"
 #include "extensions/browser/api/lock_screen_data/lock_screen_value_store_migrator.h"
 #include "extensions/browser/api/lock_screen_data/operation_result.h"
@@ -452,8 +451,7 @@ class TestLockScreenValueStoreMigrator : public LockScreenValueStoreMigrator {
 
 class LockScreenItemStorageTest : public ExtensionsTest {
  public:
-  LockScreenItemStorageTest()
-      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
+  LockScreenItemStorageTest() = default;
   ~LockScreenItemStorageTest() override = default;
 
   void SetUp() override {
@@ -659,7 +657,7 @@ class LockScreenItemStorageTest : public ExtensionsTest {
     ListBuilder app_handlers_builder;
     app_handlers_builder.Append(DictionaryBuilder()
                                     .Set("action", "new_note")
-                                    .SetBoolean("enabled_on_lock_screen", true)
+                                    .Set("enabled_on_lock_screen", true)
                                     .Build());
     scoped_refptr<const Extension> extension =
         ExtensionBuilder()
@@ -706,7 +704,7 @@ class LockScreenItemStorageTest : public ExtensionsTest {
       allowed_paths.push_back(
           test_dir_.GetPath().AppendASCII("deprecated_value_store"));
     }
-    EXPECT_TRUE(base::ContainsValue(allowed_paths, root))
+    EXPECT_TRUE(base::Contains(allowed_paths, root))
         << "Unexpected value store path " << root.value();
 
     return std::make_unique<LocalValueStoreCache>(
@@ -1058,7 +1056,8 @@ TEST_F(LockScreenItemStorageTest, HandleFailure) {
 TEST_F(LockScreenItemStorageTest, DataItemsAvailableEventOnUnlock) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   EXPECT_TRUE(event_router->was_locked_values().empty());
@@ -1117,7 +1116,8 @@ TEST_F(LockScreenItemStorageTest,
        NoDataItemsAvailableEventAfterFailedCreation) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   lock_screen_item_storage()->SetSessionLocked(true);
@@ -1139,7 +1139,8 @@ TEST_F(LockScreenItemStorageTest,
 TEST_F(LockScreenItemStorageTest, DataItemsAvailableEventOnRestart) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   EXPECT_TRUE(event_router->was_locked_values().empty());
@@ -1200,7 +1201,8 @@ TEST_F(LockScreenItemStorageTest,
        ClearOnUninstallWhileLockScreenItemStorageNotSet) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   const DataItem* item = CreateItemWithContent({'x'});
@@ -1326,13 +1328,13 @@ TEST_F(LockScreenItemStorageTest, OperationsBlockedOnMigration) {
   EXPECT_TRUE(new_item);
 
   EXPECT_EQ(2u, items.size());
-  EXPECT_TRUE(base::ContainsValue(items, migrated_item_id));
-  EXPECT_TRUE(base::ContainsValue(items, initial_item_id));
+  EXPECT_TRUE(base::Contains(items, migrated_item_id));
+  EXPECT_TRUE(base::Contains(items, initial_item_id));
 
   GetAllItems(&items);
   ASSERT_EQ(2u, items.size());
-  EXPECT_TRUE(base::ContainsValue(items, migrated_item_id));
-  EXPECT_TRUE(base::ContainsValue(items, new_item->id()));
+  EXPECT_TRUE(base::Contains(items, migrated_item_id));
+  EXPECT_TRUE(base::Contains(items, new_item->id()));
 }
 
 TEST_F(LockScreenItemStorageTest,
@@ -1404,7 +1406,8 @@ TEST_F(LockScreenItemStorageTest,
        MigrationNotReAttemptedAfterSuccess_NoItemsMigrated) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   EXPECT_FALSE(value_store_migrator());
@@ -1484,7 +1487,8 @@ TEST_F(LockScreenItemStorageTest,
        ItemAvailableEventNotSentIfItemsLostDuringMigration) {
   TestEventRouter* event_router = static_cast<TestEventRouter*>(
       extensions::EventRouterFactory::GetInstance()->SetTestingFactoryAndUse(
-          browser_context(), &TestEventRouterFactoryFunction));
+          browser_context(),
+          base::BindRepeating(&TestEventRouterFactoryFunction)));
   ASSERT_TRUE(event_router);
 
   EXPECT_FALSE(value_store_migrator());
@@ -1520,7 +1524,7 @@ TEST_F(LockScreenItemStorageTest, AttemptMigrationEvenWhenNoDataRecorded) {
 
   // Update the local state so it seems that lock screen notes have previously
   // been used by the extension, but currently, no items are recorded to exist
-  // for the extnesion.
+  // for the extension.
   InitExtensionLocalState(
       {{extension()->id(), 1 /*storage_version*/, 0 /*item_count*/}});
 

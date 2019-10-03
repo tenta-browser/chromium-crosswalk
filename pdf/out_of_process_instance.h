@@ -19,13 +19,9 @@
 #include "pdf/paint_manager.h"
 #include "pdf/pdf_engine.h"
 #include "pdf/preview_mode_client.h"
-#include "ppapi/c/private/ppb_pdf.h"
 #include "ppapi/c/private/ppp_pdf.h"
 #include "ppapi/cpp/dev/printing_dev.h"
-#include "ppapi/cpp/dev/scriptable_object_deprecated.h"
-#include "ppapi/cpp/graphics_2d.h"
 #include "ppapi/cpp/image_data.h"
-#include "ppapi/cpp/input_event.h"
 #include "ppapi/cpp/instance.h"
 #include "ppapi/cpp/private/find_private.h"
 #include "ppapi/cpp/private/uma_private.h"
@@ -82,15 +78,18 @@ class OutOfProcessInstance : public pp::Instance,
   void SetSelectionBounds(const pp::FloatPoint& base,
                           const pp::FloatPoint& extent);
   bool CanEditText();
+  bool HasEditableText();
   void ReplaceSelection(const std::string& text);
+  bool CanUndo();
+  bool CanRedo();
+  void Undo();
+  void Redo();
+  int32_t PdfPrintBegin(const PP_PrintSettings_Dev* print_settings,
+                        const PP_PdfPrintSettings_Dev* pdf_print_settings);
 
   void FlushCallback(int32_t result);
   void DidOpen(int32_t result);
   void DidOpenPreview(int32_t result);
-
-  // Called when the timer is fired.
-  void OnClientTimerFired(int32_t id);
-  void OnClientTouchTimerFired(int32_t id);
 
   // Called to print without re-entrancy issues.
   void OnPrint(int32_t);
@@ -98,9 +97,10 @@ class OutOfProcessInstance : public pp::Instance,
   // PDFEngine::Client implementation.
   void DocumentSizeUpdated(const pp::Size& size) override;
   void Invalidate(const pp::Rect& rect) override;
-  void Scroll(const pp::Point& point) override;
+  void DidScroll(const pp::Point& point) override;
   void ScrollToX(int x_in_screen_coords) override;
   void ScrollToY(int y_in_screen_coords, bool compensate_for_toolbar) override;
+  void ScrollBy(const pp::Point& point) override;
   void ScrollToPage(int page) override;
   void NavigateTo(const std::string& url,
                   WindowOpenDisposition disposition) override;
@@ -112,6 +112,7 @@ class OutOfProcessInstance : public pp::Instance,
       const PDFEngine::PageFeatures* page_features) override;
   void GetDocumentPassword(
       pp::CompletionCallbackWithOutput<pp::Var> callback) override;
+  void Beep() override;
   void Alert(const std::string& message) override;
   bool Confirm(const std::string& message) override;
   std::string Prompt(const std::string& question,
@@ -127,26 +128,22 @@ class OutOfProcessInstance : public pp::Instance,
                   const void* data,
                   int length) override;
   pp::URLLoader CreateURLLoader() override;
-  void ScheduleCallback(int id, base::TimeDelta delay) override;
-  void ScheduleTouchTimerCallback(int id, base::TimeDelta delay) override;
   std::vector<SearchStringResult> SearchString(const base::char16* string,
                                                const base::char16* term,
                                                bool case_sensitive) override;
-  void DocumentPaintOccurred() override;
   void DocumentLoadComplete(
       const PDFEngine::DocumentFeatures& document_features) override;
   void DocumentLoadFailed() override;
-  void FontSubstituted() override;
   pp::Instance* GetPluginInstance() override;
   void DocumentHasUnsupportedFeature(const std::string& feature) override;
   void DocumentLoadProgress(uint32_t available, uint32_t doc_size) override;
   void FormTextFieldFocusChange(bool in_focus) override;
   bool IsPrintPreview() override;
   uint32_t GetBackgroundColor() override;
-  void CancelBrowserDownload() override;
   void IsSelectingChanged(bool is_selecting) override;
   void SelectionChanged(const pp::Rect& left, const pp::Rect& right) override;
   void IsEditModeChanged(bool is_edit_mode) override;
+  float GetToolbarHeightInScreenCoords() override;
 
   // PreviewModeClient::Client implementation.
   void PreviewDocumentLoadComplete() override;
@@ -155,6 +152,10 @@ class OutOfProcessInstance : public pp::Instance,
   // Helper functions for implementing PPP_PDF.
   void RotateClockwise();
   void RotateCounterclockwise();
+
+  // Creates a file name for saving a PDF file, given the source URL. Exposed
+  // for testing.
+  static std::string GetFileNameFromUrl(const std::string& url);
 
  private:
   void ResetRecentlySentFindUpdate(int32_t);
@@ -180,6 +181,11 @@ class OutOfProcessInstance : public pp::Instance,
   // Creates a URL loader and allows it to access all urls, i.e. not just the
   // frame's origin.
   pp::URLLoader CreateURLLoaderInternal();
+
+  bool ShouldSaveEdits() const;
+  void SaveToFile(const std::string& token);
+  void SaveToBuffer(const std::string& token);
+  void ConsumeSaveToken(const std::string& token);
 
   void FormDidOpen(int32_t result);
 
@@ -239,10 +245,6 @@ class OutOfProcessInstance : public pp::Instance,
                             int32_t sample,
                             int32_t boundary_value);
 
-  // Wrapper for |uma_| so PrintPreview.PdfAction histogram reporting only
-  // occurs when the PDF Viewer is being used inside print preview.
-  void PrintPreviewHistogramEnumeration(int32_t sample);
-
   pp::ImageData image_data_;
   // Used when the plugin is embedded in a page and we have to create the loader
   // ourself.
@@ -301,18 +303,22 @@ class OutOfProcessInstance : public pp::Instance,
 
   struct PrintSettings {
     PrintSettings() { Clear(); }
-    void Clear() {
-      is_printing = false;
-      print_pages_called_ = false;
-      memset(&pepper_print_settings, 0, sizeof(pepper_print_settings));
-    }
-    // This is set to true when PrintBegin is called and false when PrintEnd is
-    // called.
+
+    void Clear();
+
+    // This is set to true when PdfPrintBegin() is called and false when
+    // PrintEnd() is called.
     bool is_printing;
+
     // To know whether this was an actual print operation, so we don't double
     // count UMA logging.
-    bool print_pages_called_;
+    bool print_pages_called;
+
+    // Generic print settings.
     PP_PrintSettings_Dev pepper_print_settings;
+
+    // PDF-specific print settings.
+    PP_PdfPrintSettings_Dev pdf_print_settings;
   };
 
   PrintSettings print_settings_;
@@ -354,10 +360,6 @@ class OutOfProcessInstance : public pp::Instance,
   // Keeps track of which unsupported features we reported, so we avoid spamming
   // the stats if a feature shows up many times per document.
   std::set<std::string> unsupported_features_reported_;
-
-  // Keeps track of whether font substitution has been reported, so we avoid
-  // spamming the stats if a document requested multiple substitutes.
-  bool font_substitution_reported_;
 
   // Number of pages in print preview mode for non-PDF source, 0 if print
   // previewing a PDF, and -1 if not in print preview mode.
@@ -418,6 +420,8 @@ class OutOfProcessInstance : public pp::Instance,
   // Annotation types that were already counted for this document.
   std::set<int> annotation_types_counted_;
 
+  bool edit_mode_ = false;
+
   // The current state of accessibility: either off, enabled but waiting
   // for the document to load, or fully loaded.
   enum AccessibilityState {
@@ -428,18 +432,6 @@ class OutOfProcessInstance : public pp::Instance,
 
   // True if the plugin is loaded in print preview, otherwise false.
   bool is_print_preview_;
-
-  // Used for UMA. Do not delete entries, and keep in sync with histograms.xml.
-  enum PdfActionBuckets {
-    PRINT_PREVIEW_SHOWN = 0,
-    ROTATE = 1,
-    SELECT_TEXT = 2,
-    UPDATE_ZOOM = 3,
-    PDFACTION_BUCKET_BOUNDARY,
-  };
-
-  // Array indicating what events have been recorded for print preview metrics.
-  bool preview_action_recorded_[PDFACTION_BUCKET_BOUNDARY];
 
   DISALLOW_COPY_AND_ASSIGN(OutOfProcessInstance);
 };

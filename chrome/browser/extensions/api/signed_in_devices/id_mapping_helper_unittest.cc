@@ -8,19 +8,18 @@
 #include <string>
 
 #include "base/guid.h"
-#include "base/memory/ptr_util.h"
+#include "base/time/time.h"
 #include "base/values.h"
-#include "components/sync/device_info/device_info.h"
+#include "components/sync_device_info/device_info.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using syncer::DeviceInfo;
 
 namespace extensions {
-bool VerifyDictionary(
-    const std::string& path,
-    const std::string& expected_value,
-    const base::DictionaryValue& dictionary) {
+bool VerifyDictionary(const std::string& path,
+                      const std::string& expected_value,
+                      const base::DictionaryValue& dictionary) {
   std::string out;
   if (dictionary.GetString(path, &out)) {
     return (out == expected_value);
@@ -32,13 +31,15 @@ bool VerifyDictionary(
 TEST(IdMappingHelperTest, SetIdsForDevices) {
   std::vector<std::unique_ptr<DeviceInfo>> devices;
 
-  devices.push_back(base::MakeUnique<DeviceInfo>(
+  devices.push_back(std::make_unique<DeviceInfo>(
       base::GenerateGUID(), "abc Device", "XYZ v1", "XYZ SyncAgent v1",
-      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id1"));
+      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id1", base::Time(),
+      /*send_tab_to_self_receiving_enabled=*/true));
 
-  devices.push_back(base::MakeUnique<DeviceInfo>(
+  devices.push_back(std::make_unique<DeviceInfo>(
       base::GenerateGUID(), "def Device", "XYZ v1", "XYZ SyncAgent v1",
-      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id2"));
+      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id2", base::Time(),
+      /*send_tab_to_self_receiving_enabled=*/true));
 
   base::DictionaryValue dictionary;
 
@@ -53,9 +54,10 @@ TEST(IdMappingHelperTest, SetIdsForDevices) {
   EXPECT_NE(public_id1, public_id2);
 
   // Now add a third device.
-  devices.push_back(base::MakeUnique<DeviceInfo>(
+  devices.push_back(std::make_unique<DeviceInfo>(
       base::GenerateGUID(), "ghi Device", "XYZ v1", "XYZ SyncAgent v1",
-      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id3"));
+      sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id3", base::Time(),
+      /*send_tab_to_self_receiving_enabled=*/true));
 
   CreateMappingForUnmappedDevices(devices, &dictionary);
 

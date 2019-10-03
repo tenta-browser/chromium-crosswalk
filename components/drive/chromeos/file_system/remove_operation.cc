@@ -4,6 +4,7 @@
 
 #include "components/drive/chromeos/file_system/remove_operation.h"
 
+#include "base/bind.h"
 #include "base/sequenced_task_runner.h"
 #include "components/drive/chromeos/file_cache.h"
 #include "components/drive/chromeos/file_system/operation_delegate.h"
@@ -70,14 +71,14 @@ RemoveOperation::RemoveOperation(
 }
 
 RemoveOperation::~RemoveOperation() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
 void RemoveOperation::Remove(const base::FilePath& path,
                              bool is_recursive,
                              const FileOperationCallback& callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!callback.is_null());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK(callback);
 
   std::string* local_id = new std::string;
   base::FilePath* changed_path = new base::FilePath;
@@ -107,8 +108,8 @@ void RemoveOperation::RemoveAfterUpdateLocalState(
     const ResourceEntry* entry,
     const base::FilePath* changed_path,
     FileError error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!callback.is_null());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK(callback);
 
   if (!changed_path->empty()) {
     FileChange changed_file;

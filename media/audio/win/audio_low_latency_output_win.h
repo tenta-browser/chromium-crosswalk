@@ -138,6 +138,7 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   void Start(AudioSourceCallback* callback) override;
   void Stop() override;
   void Close() override;
+  void Flush() override;
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
 
@@ -170,6 +171,9 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   // |source_| is set to NULL.
   void StopThread();
 
+  // Reports audio stream glitch stats and resets them to their initial values.
+  void ReportAndResetStats();
+
   // Contains the thread ID of the creating thread.
   const base::PlatformThreadId creating_thread_id_;
 
@@ -196,6 +200,10 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   // in each OnMoreData() callback.
   size_t packet_size_frames_;
 
+  // If requesting an explicitly-lower frame size using the IAudioClient3
+  // interface this is the requested size.
+  size_t requested_iaudioclient3_buffer_size_;
+
   // Size in bytes of each audio packet.
   size_t packet_size_bytes_;
 
@@ -215,6 +223,21 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
 
   // Counts the number of audio frames written to the endpoint buffer.
   UINT64 num_written_frames_;
+
+  // The position read during the last call to RenderAudioFromSource
+  UINT64 last_position_ = 0;
+
+  // The performance counter read during the last call to RenderAudioFromSource
+  UINT64 last_qpc_position_ = 0;
+
+  // The number of glitches detected while this stream was active.
+  int num_glitches_detected_ = 0;
+
+  // The approximate amount of audio lost due to glitches.
+  base::TimeDelta cumulative_audio_lost_;
+
+  // The largest single glitch recorded.
+  base::TimeDelta largest_glitch_;
 
   // Pointer to the client that will deliver audio samples to be played out.
   AudioSourceCallback* source_;

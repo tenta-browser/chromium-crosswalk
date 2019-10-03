@@ -11,6 +11,16 @@
 namespace mojo {
 
 template <>
+struct EnumTraits<arc::mojom::VideoFrameStorageType,
+                  media::VideoEncodeAccelerator::Config::StorageType> {
+  static arc::mojom::VideoFrameStorageType ToMojom(
+      media::VideoEncodeAccelerator::Config::StorageType input);
+  static bool FromMojom(
+      arc::mojom::VideoFrameStorageType input,
+      media::VideoEncodeAccelerator::Config::StorageType* output);
+};
+
+template <>
 struct EnumTraits<arc::mojom::VideoEncodeAccelerator::Error,
                   media::VideoEncodeAccelerator::Error> {
   static arc::mojom::VideoEncodeAccelerator::Error ToMojom(
@@ -18,22 +28,6 @@ struct EnumTraits<arc::mojom::VideoEncodeAccelerator::Error,
 
   static bool FromMojom(arc::mojom::VideoEncodeAccelerator::Error input,
                         media::VideoEncodeAccelerator::Error* output);
-};
-
-template <>
-struct EnumTraits<arc::mojom::VideoPixelFormat, media::VideoPixelFormat> {
-  static arc::mojom::VideoPixelFormat ToMojom(media::VideoPixelFormat input);
-
-  static bool FromMojom(arc::mojom::VideoPixelFormat input,
-                        media::VideoPixelFormat* output);
-};
-
-template <>
-struct EnumTraits<arc::mojom::VideoCodecProfile, media::VideoCodecProfile> {
-  static arc::mojom::VideoCodecProfile ToMojom(media::VideoCodecProfile input);
-
-  static bool FromMojom(arc::mojom::VideoCodecProfile input,
-                        media::VideoCodecProfile* output);
 };
 
 template <>
@@ -61,6 +55,75 @@ struct StructTraits<arc::mojom::VideoEncodeProfileDataView,
     NOTIMPLEMENTED();
     return false;
   }
+};
+
+template <>
+struct StructTraits<arc::mojom::VideoEncodeAcceleratorConfigDataView,
+                    media::VideoEncodeAccelerator::Config> {
+  static media::VideoPixelFormat input_format(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.input_format;
+  }
+
+  static const gfx::Size& input_visible_size(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.input_visible_size;
+  }
+
+  static media::VideoCodecProfile output_profile(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.output_profile;
+  }
+
+  static uint32_t initial_bitrate(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.initial_bitrate;
+  }
+
+  static uint32_t initial_framerate(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.initial_framerate.value_or(0);
+  }
+
+  static bool has_initial_framerate(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.initial_framerate.has_value();
+  }
+
+  static uint32_t gop_length(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.gop_length.value_or(0);
+  }
+
+  static bool has_gop_length(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.gop_length.has_value();
+  }
+
+  static uint8_t h264_output_level(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.h264_output_level.value_or(0);
+  }
+
+  static bool has_h264_output_level(
+      const media::VideoEncodeAccelerator::Config& input) {
+    return input.h264_output_level.has_value();
+  }
+
+  static arc::mojom::VideoFrameStorageType storage_type(
+      const media::VideoEncodeAccelerator::Config& input) {
+    auto storage_type = input.storage_type.value_or(
+        media::VideoEncodeAccelerator::Config::StorageType::kShmem);
+    switch (storage_type) {
+      case media::VideoEncodeAccelerator::Config::StorageType::kShmem:
+        return arc::mojom::VideoFrameStorageType::SHMEM;
+      case media::VideoEncodeAccelerator::Config::StorageType::kDmabuf:
+        return arc::mojom::VideoFrameStorageType::DMABUF;
+    }
+  }
+
+  static bool Read(arc::mojom::VideoEncodeAcceleratorConfigDataView input,
+                   media::VideoEncodeAccelerator::Config* output);
 };
 
 }  // namespace mojo

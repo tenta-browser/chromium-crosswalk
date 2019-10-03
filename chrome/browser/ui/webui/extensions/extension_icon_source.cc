@@ -6,9 +6,10 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -101,11 +102,11 @@ SkBitmap* ExtensionIconSource::LoadImageByResourceId(int resource_id) {
   return ToBitmap(data, contents.length());
 }
 
-std::string ExtensionIconSource::GetSource() const {
+std::string ExtensionIconSource::GetSource() {
   return chrome::kChromeUIExtensionIconHost;
 }
 
-std::string ExtensionIconSource::GetMimeType(const std::string&) const {
+std::string ExtensionIconSource::GetMimeType(const std::string&) {
   // We need to explicitly return a mime type, otherwise if the user tries to
   // drag the image they get no extension.
   return "image/png";
@@ -138,7 +139,7 @@ void ExtensionIconSource::StartDataRequest(
   }
 }
 
-bool ExtensionIconSource::AllowCaching() const {
+bool ExtensionIconSource::AllowCaching() {
   // Should not be cached to reflect the latest contents that may be updated by
   // Extensions.
   return false;
@@ -202,10 +203,9 @@ void ExtensionIconSource::LoadExtensionImage(const ExtensionResource& icon,
                                              int request_id) {
   ExtensionIconRequest* request = GetData(request_id);
   ImageLoader::Get(profile_)->LoadImageAsync(
-      request->extension.get(),
-      icon,
-      gfx::Size(request->size, request->size),
-      base::Bind(&ExtensionIconSource::OnImageLoaded, AsWeakPtr(), request_id));
+      request->extension.get(), icon, gfx::Size(request->size, request->size),
+      base::BindOnce(&ExtensionIconSource::OnImageLoaded, AsWeakPtr(),
+                     request_id));
 }
 
 void ExtensionIconSource::LoadFaviconImage(int request_id) {
@@ -222,6 +222,7 @@ void ExtensionIconSource::LoadFaviconImage(int request_id) {
       AppLaunchInfo::GetFullLaunchURL(GetData(request_id)->extension.get());
   favicon_service->GetRawFaviconForPageURL(
       favicon_url, {favicon_base::IconType::kFavicon}, gfx::kFaviconSize,
+      /*fallback_to_host=*/false,
       base::Bind(&ExtensionIconSource::OnFaviconDataAvailable,
                  base::Unretained(this), request_id),
       &cancelable_task_tracker_);
@@ -320,7 +321,7 @@ void ExtensionIconSource::SetData(
     int size,
     ExtensionIconSet::MatchType match) {
   std::unique_ptr<ExtensionIconRequest> request =
-      base::MakeUnique<ExtensionIconRequest>();
+      std::make_unique<ExtensionIconRequest>();
   request->callback = callback;
   request->extension = extension;
   request->grayscale = grayscale;

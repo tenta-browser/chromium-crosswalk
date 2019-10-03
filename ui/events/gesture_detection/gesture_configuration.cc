@@ -63,11 +63,15 @@ GestureConfiguration::GestureConfiguration()
 #endif
       semi_long_press_time_in_ms_(400),
       show_press_delay_in_ms_(150),
+#if defined(OS_CHROMEOS)
+      single_pointer_cancel_enabled_(true),
+#else
+      single_pointer_cancel_enabled_(false),
+#endif
       // The default value of span_slop_ is
       // 2 * max_touch_move_in_pixels_for_click_.
       span_slop_(30),
       swipe_enabled_(false),
-      tab_scrub_activation_delay_in_ms_(200),
       two_finger_tap_enabled_(false),
       velocity_tracker_strategy_(VelocityTracker::Strategy::STRATEGY_DEFAULT) {
 }

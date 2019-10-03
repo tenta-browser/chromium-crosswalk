@@ -3,22 +3,24 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/compositor/image_transport_factory.h"
 #include "content/browser/gpu/gpu_process_host.h"
-#include "content/common/gpu_stream_constants.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/gpu_utils.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/gpu_stream_constants.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/test/gpu_browsertest_helpers.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
-#include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
 #include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
+#include "services/viz/public/cpp/gpu/context_provider_command_buffer.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -26,47 +28,6 @@
 #include "ui/gl/gl_switches.h"
 
 namespace {
-
-scoped_refptr<ui::ContextProviderCommandBuffer> CreateContext(
-    scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
-  // This is for an offscreen context, so the default framebuffer doesn't need
-  // any alpha, depth, stencil, antialiasing.
-  gpu::gles2::ContextCreationAttribHelper attributes;
-  attributes.alpha_size = -1;
-  attributes.depth_size = 0;
-  attributes.stencil_size = 0;
-  attributes.samples = 0;
-  attributes.sample_buffers = 0;
-  attributes.bind_generates_resource = false;
-  constexpr bool automatic_flushes = false;
-  constexpr bool support_locking = false;
-  return base::MakeRefCounted<ui::ContextProviderCommandBuffer>(
-      std::move(gpu_channel_host), content::kGpuStreamIdDefault,
-      content::kGpuStreamPriorityDefault, gpu::kNullSurfaceHandle, GURL(),
-      automatic_flushes, support_locking, gpu::SharedMemoryLimits(), attributes,
-      nullptr, ui::command_buffer_metrics::OFFSCREEN_CONTEXT_FOR_TESTING);
-}
-
-void OnEstablishedGpuChannel(
-    const base::Closure& quit_closure,
-    scoped_refptr<gpu::GpuChannelHost>* retvalue,
-    scoped_refptr<gpu::GpuChannelHost> established_host) {
-  if (retvalue)
-    *retvalue = std::move(established_host);
-  quit_closure.Run();
-}
-
-scoped_refptr<gpu::GpuChannelHost> EstablishGpuChannelSyncRunLoop() {
-  gpu::GpuChannelEstablishFactory* factory =
-      content::BrowserMainLoop::GetInstance()->gpu_channel_establish_factory();
-  CHECK(factory);
-  base::RunLoop run_loop;
-  scoped_refptr<gpu::GpuChannelHost> gpu_channel_host;
-  factory->EstablishGpuChannel(base::Bind(
-      &OnEstablishedGpuChannel, run_loop.QuitClosure(), &gpu_channel_host));
-  run_loop.Run();
-  return gpu_channel_host;
-}
 
 // RunLoop implementation that runs until it observes OnContextLost().
 class ContextLostRunLoop : public viz::ContextLostObserver {
@@ -98,10 +59,11 @@ class ContextTestBase : public content::ContentBrowserTest {
       return;
 
     scoped_refptr<gpu::GpuChannelHost> gpu_channel_host =
-        EstablishGpuChannelSyncRunLoop();
+        content::GpuBrowsertestEstablishGpuChannelSyncRunLoop();
     CHECK(gpu_channel_host);
 
-    provider_ = CreateContext(std::move(gpu_channel_host));
+    provider_ =
+        content::GpuBrowsertestCreateContext(std::move(gpu_channel_host));
     auto result = provider_->BindToCurrentThread();
     CHECK_EQ(result, gpu::ContextResult::kSuccess);
     gl_ = provider_->ContextGL();
@@ -121,13 +83,15 @@ class ContextTestBase : public content::ContentBrowserTest {
   gpu::ContextSupport* context_support_ = nullptr;
 
  private:
-  scoped_refptr<ui::ContextProviderCommandBuffer> provider_;
+  scoped_refptr<viz::ContextProviderCommandBuffer> provider_;
 };
 
 }  // namespace
 
 // Include the shared tests.
 #define CONTEXT_TEST_F IN_PROC_BROWSER_TEST_F
+#include "base/bind.h"
+#include "content/public/browser/browser_thread.h"
 #include "gpu/ipc/client/gpu_context_tests.h"
 
 namespace content {
@@ -147,16 +111,18 @@ class BrowserGpuChannelHostFactoryTest : public ContentBrowserTest {
     command_line->AppendSwitch(switches::kDisableGpuEarlyInit);
   }
 
-  void OnContextLost(const base::Closure callback, int* counter) {
-    (*counter)++;
-    callback.Run();
-  }
-
   void Signal(bool* event,
               scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
     CHECK_EQ(*event, false);
     *event = true;
     gpu_channel_host_ = std::move(gpu_channel_host);
+  }
+
+  void SignalAndQuitLoop(bool* event,
+                         base::RunLoop* run_loop,
+                         scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
+    Signal(event, std::move(gpu_channel_host));
+    run_loop->Quit();
   }
 
  protected:
@@ -169,7 +135,7 @@ class BrowserGpuChannelHostFactoryTest : public ContentBrowserTest {
   }
 
   void EstablishAndWait() {
-    gpu_channel_host_ = EstablishGpuChannelSyncRunLoop();
+    gpu_channel_host_ = content::GpuBrowsertestEstablishGpuChannelSyncRunLoop();
   }
 
   gpu::GpuChannelHost* GetGpuChannel() { return gpu_channel_host_.get(); }
@@ -202,13 +168,13 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
                        MAYBE_AlreadyEstablished) {
   DCHECK(!IsChannelEstablished());
   scoped_refptr<gpu::GpuChannelHost> gpu_channel =
-      GetFactory()->EstablishGpuChannelSync(nullptr);
+      GetFactory()->EstablishGpuChannelSync();
 
   // Expect established callback immediately.
   bool event = false;
   GetFactory()->EstablishGpuChannel(
-      base::Bind(&BrowserGpuChannelHostFactoryTest::Signal,
-                 base::Unretained(this), &event));
+      base::BindOnce(&BrowserGpuChannelHostFactoryTest::Signal,
+                     base::Unretained(this), &event));
   EXPECT_TRUE(event);
   EXPECT_EQ(gpu_channel.get(), GetGpuChannel());
 }
@@ -225,7 +191,7 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
                        MAYBE_GrContextKeepsGpuChannelAlive) {
   // Test for crbug.com/551143
   // This test verifies that holding a reference to the GrContext created by
-  // a ui::ContextProviderCommandBuffer will keep the gpu channel alive after
+  // a viz::ContextProviderCommandBuffer will keep the gpu channel alive after
   // the
   // provider has been destroyed. Without this behavior, user code would have
   // to be careful to destroy objects in the right order to avoid using freed
@@ -235,8 +201,8 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
 
   // Step 2: verify that holding onto the provider's GrContext will
   // retain the host after provider is destroyed.
-  scoped_refptr<ui::ContextProviderCommandBuffer> provider =
-      CreateContext(GetGpuChannel());
+  scoped_refptr<viz::ContextProviderCommandBuffer> provider =
+      content::GpuBrowsertestCreateContext(GetGpuChannel());
   ASSERT_EQ(provider->BindToCurrentThread(), gpu::ContextResult::kSuccess);
 
   sk_sp<GrContext> gr_context = sk_ref_sp(provider->GrContext());
@@ -282,13 +248,12 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest,
   EstablishAndWait();
   scoped_refptr<gpu::GpuChannelHost> host = GetGpuChannel();
 
-  scoped_refptr<ui::ContextProviderCommandBuffer> provider =
-      CreateContext(GetGpuChannel());
+  scoped_refptr<viz::ContextProviderCommandBuffer> provider =
+      content::GpuBrowsertestCreateContext(GetGpuChannel());
   ContextLostRunLoop run_loop(provider.get());
   ASSERT_EQ(provider->BindToCurrentThread(), gpu::ContextResult::kSuccess);
-  GpuProcessHost::CallOnIO(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED,
-                           false /* force_create */,
-                           base::Bind([](GpuProcessHost* host) {
+  GpuProcessHost::CallOnIO(GPU_PROCESS_KIND_SANDBOXED, false /* force_create */,
+                           base::BindOnce([](GpuProcessHost* host) {
                              if (host)
                                host->gpu_service()->Crash();
                            }));
@@ -317,7 +282,7 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, CreateTransferBuffer) {
 
   // This is for an offscreen context, so the default framebuffer doesn't need
   // any alpha, depth, stencil, antialiasing.
-  gpu::gles2::ContextCreationAttribHelper attributes;
+  gpu::ContextCreationAttribs attributes;
   attributes.alpha_size = -1;
   attributes.depth_size = 0;
   attributes.stencil_size = 0;
@@ -326,8 +291,8 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, CreateTransferBuffer) {
   attributes.bind_generates_resource = false;
 
   auto impl = std::make_unique<gpu::CommandBufferProxyImpl>(
-      GetGpuChannel(), content::kGpuStreamIdDefault,
-      base::ThreadTaskRunnerHandle::Get());
+      GetGpuChannel(), GetFactory()->GetGpuMemoryBufferManager(),
+      content::kGpuStreamIdDefault, base::ThreadTaskRunnerHandle::Get());
   ASSERT_EQ(
       impl->Initialize(gpu::kNullSurfaceHandle, nullptr,
                        content::kGpuStreamPriorityDefault, attributes, GURL()),
@@ -353,7 +318,7 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, CreateTransferBuffer) {
   // channel on the IO thread, which then notifies the main thread about the
   // error state.
   base::RunLoop wait_for_io_run_loop;
-  BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)
+  base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO})
       ->PostTask(FROM_HERE, wait_for_io_run_loop.QuitClosure());
   // Waits for the IO thread to run.
   wait_for_io_run_loop.Run();
@@ -368,6 +333,26 @@ IN_PROC_BROWSER_TEST_F(BrowserGpuChannelHostFactoryTest, CreateTransferBuffer) {
   buffer = impl->CreateTransferBuffer(100, &id);
   EXPECT_TRUE(buffer);
   EXPECT_GE(id, 0);
+}
+#endif
+
+class GpuProcessHostDisableGLBrowserTest : public GpuProcessHostBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    GpuProcessHostBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(switches::kUseGL,
+                                    gl::kGLImplementationDisabledName);
+  }
+};
+
+// Android and CrOS don't support disabling GL.
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(GpuProcessHostDisableGLBrowserTest, CreateAndDestroy) {
+  DCHECK(!IsChannelEstablished());
+  EstablishAndWait();
+  base::RunLoop run_loop;
+  StopGpuProcess(run_loop.QuitClosure());
+  run_loop.Run();
 }
 #endif
 

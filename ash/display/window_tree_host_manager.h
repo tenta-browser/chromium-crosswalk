@@ -23,6 +23,7 @@
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/input_method_delegate.h"
 #include "ui/display/display_observer.h"
+#include "ui/display/manager/content_protection_manager.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/gfx/geometry/point.h"
 
@@ -47,6 +48,7 @@ class RootWindowController;
 class ASH_EXPORT WindowTreeHostManager
     : public display::DisplayObserver,
       public aura::WindowTreeHostObserver,
+      public display::ContentProtectionManager::Observer,
       public display::DisplayManager::Delegate,
       public ui::internal::InputMethodDelegate {
  public:
@@ -100,6 +102,9 @@ class ASH_EXPORT WindowTreeHostManager
   // TODO(oshima): Move this out from WindowTreeHostManager;
   static int64_t GetPrimaryDisplayId();
 
+  // Returns true if the current primary display ID is valid.
+  static bool HasValidPrimaryDisplayId();
+
   CursorWindowController* cursor_window_controller() {
     return cursor_window_controller_.get();
   }
@@ -125,13 +130,9 @@ class ASH_EXPORT WindowTreeHostManager
   // Returns the root window for |display_id|.
   aura::Window* GetRootWindowForDisplayId(int64_t id);
 
-  // Returns AshWTH for given display |id|. Call results in CHECK failure
-  // if the WTH does not exist.
+  // Returns AshWTH for given display |id|. Returns nullptr if the WTH does not
+  // exist.
   AshWindowTreeHost* GetAshWindowTreeHostForDisplayId(int64_t id);
-
-  // Sets the primary display by display id. This re-assigns the current primary
-  // root window host to to new primary display.
-  void SetPrimaryDisplayId(int64_t id);
 
   // Returns all root windows. In non extended desktop mode, this
   // returns the primary root window only.
@@ -165,13 +166,16 @@ class ASH_EXPORT WindowTreeHostManager
   // aura::WindowTreeHostObserver overrides:
   void OnHostResized(aura::WindowTreeHost* host) override;
 
+  // display::ContentProtectionManager::Observer overrides:
+  void OnDisplaySecurityChanged(int64_t display_id, bool secure) override;
+
   // display::DisplayManager::Delegate overrides:
   void CreateOrUpdateMirroringDisplay(
       const display::DisplayInfoList& info_list) override;
   void CloseMirroringDisplayIfNotNecessary() override;
+  void SetPrimaryDisplayId(int64_t id) override;
   void PreDisplayConfigurationChange(bool clear_focus) override;
   void PostDisplayConfigurationChange() override;
-  display::DisplayConfigurator* display_configurator() override;
 
   // ui::internal::InputMethodDelegate overrides:
   ui::EventDispatchDetails DispatchKeyEventPostIME(
@@ -196,7 +200,7 @@ class ASH_EXPORT WindowTreeHostManager
   // The mapping from display ID to its window tree host.
   WindowTreeHostMap window_tree_hosts_;
 
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
 
   // Store the primary window tree host temporarily while replacing
   // display.

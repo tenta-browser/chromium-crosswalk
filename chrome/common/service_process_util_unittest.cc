@@ -10,13 +10,14 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 
 #if !defined(OS_MACOSX)
@@ -141,7 +142,7 @@ TEST_F(ServiceProcessStateTest, AutoRun) {
 #elif defined(OS_POSIX) && !defined(OS_MACOSX)
 #if defined(GOOGLE_CHROME_BUILD)
   std::string base_desktop_name = "google-chrome-service.desktop";
-#else  // CHROMIUM_BUILD
+#else  // BUILDFLAG(CHROMIUM_BRANDING)
   std::string base_desktop_name = "chromium-service.desktop";
 #endif
   std::string exec_value;
@@ -177,21 +178,20 @@ TEST_F(ServiceProcessStateTest, AutoRun) {
 #endif  // defined(OS_WIN)
 }
 
-// http://crbug.com/396390
-TEST_F(ServiceProcessStateTest, DISABLED_SharedMem) {
+TEST_F(ServiceProcessStateTest, SharedMem) {
   std::string version;
   base::ProcessId pid;
-#if defined(OS_WIN)
-  // On Posix, named shared memory uses a file on disk. This file
-  // could be lying around from previous crashes which could cause
-  // GetServiceProcessPid to lie. On Windows, we use a named event so we
-  // don't have this issue. Until we have a more stable shared memory
-  // implementation on Posix, this check will only execute on Windows.
-  ASSERT_FALSE(GetServiceProcessData(&version, &pid));
-#endif  // defined(OS_WIN)
+#if defined(OS_POSIX)
+  // On Posix, named shared memory uses a file on disk. This file could be lying
+  // around from previous crashes which could cause GetServiceProcessPid to lie,
+  // so we aggressively delete it before testing. On Windows, we use a named
+  // event so we don't have this issue.
+  ServiceProcessState::DeleteServiceProcessDataRegion();
+#endif  // defined(OS_POSIX)
+  ASSERT_FALSE(ServiceProcessState::GetServiceProcessData(&version, &pid));
   ServiceProcessState state;
   ASSERT_TRUE(state.Initialize());
-  ASSERT_TRUE(GetServiceProcessData(&version, &pid));
+  ASSERT_TRUE(ServiceProcessState::GetServiceProcessData(&version, &pid));
   ASSERT_EQ(base::GetCurrentProcId(), pid);
 }
 
@@ -204,7 +204,7 @@ TEST_F(ServiceProcessStateTest, MAYBE_ForceShutdown) {
   ASSERT_TRUE(CheckServiceProcessReady());
   std::string version;
   base::ProcessId pid;
-  ASSERT_TRUE(GetServiceProcessData(&version, &pid));
+  ASSERT_TRUE(ServiceProcessState::GetServiceProcessData(&version, &pid));
   ASSERT_TRUE(ForceServiceProcessShutdown(version, pid));
   int exit_code = 0;
   ASSERT_TRUE(process.WaitForExitWithTimeout(TestTimeouts::action_max_timeout(),
@@ -230,7 +230,7 @@ MULTIPROCESS_TEST_MAIN(ServiceProcessStateTestReadyFalse) {
 
 MULTIPROCESS_TEST_MAIN(ServiceProcessStateTestShutdown) {
   base::PlatformThread::SetName("ServiceProcessStateTestShutdownMainThread");
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   base::Thread io_thread_("ServiceProcessStateTestShutdownIOThread");
   base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
@@ -239,7 +239,7 @@ MULTIPROCESS_TEST_MAIN(ServiceProcessStateTestShutdown) {
   EXPECT_TRUE(state.Initialize());
   EXPECT_TRUE(state.SignalReady(io_thread_.task_runner().get(),
                                 base::Bind(&ShutdownTask, &run_loop)));
-  message_loop.task_runner()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, run_loop.QuitWhenIdleClosure(),
       TestTimeouts::action_max_timeout());
   EXPECT_FALSE(g_good_shutdown);

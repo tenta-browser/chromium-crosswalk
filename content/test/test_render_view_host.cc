@@ -6,14 +6,18 @@
 
 #include <memory>
 
+#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/compositor/image_transport_factory.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/browser/renderer_host/input/synthetic_gesture_target.h"
+#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "content/common/frame_messages.h"
@@ -51,29 +55,28 @@ void InitNavigateParams(FrameHostMsg_DidCommitProvisionalLoad_Params* params,
   params->transition = transition;
   params->redirects = std::vector<GURL>();
   params->should_update_history = false;
-  params->searchable_form_url = GURL();
-  params->searchable_form_encoding = std::string();
   params->did_create_new_entry = did_create_new_entry;
   params->gesture = NavigationGestureUser;
-  params->was_within_same_document = false;
   params->method = "GET";
   params->page_state = PageState::CreateFromURL(url);
 }
 
 TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
-    : rwh_(RenderWidgetHostImpl::From(rwh)),
+    : RenderWidgetHostViewBase(rwh),
       is_showing_(false),
       is_occluded_(false),
-      did_swap_compositor_frame_(false),
-      background_color_(SK_ColorWHITE) {
+      did_swap_compositor_frame_(false) {
 #if defined(OS_ANDROID)
   frame_sink_id_ = AllocateFrameSinkId();
-  GetHostFrameSinkManager()->RegisterFrameSinkId(frame_sink_id_, this);
+  GetHostFrameSinkManager()->RegisterFrameSinkId(
+      frame_sink_id_, this, viz::ReportFirstSurfaceActivation::kYes);
 #else
+  default_background_color_ = SK_ColorWHITE;
   // Not all tests initialize or need an image transport factory.
   if (ImageTransportFactory::GetInstance()) {
     frame_sink_id_ = AllocateFrameSinkId();
-    GetHostFrameSinkManager()->RegisterFrameSinkId(frame_sink_id_, this);
+    GetHostFrameSinkManager()->RegisterFrameSinkId(
+        frame_sink_id_, this, viz::ReportFirstSurfaceActivation::kYes);
 #if DCHECK_IS_ON()
     GetHostFrameSinkManager()->SetFrameSinkDebugLabel(
         frame_sink_id_, "TestRenderWidgetHostView");
@@ -81,7 +84,13 @@ TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
   }
 #endif
 
-  rwh_->SetView(this);
+  host()->SetView(this);
+
+  if (host()->delegate() && host()->delegate()->GetInputEventRouter() &&
+      GetFrameSinkId().is_valid()) {
+    host()->delegate()->GetInputEventRouter()->AddFrameSinkIdOwner(
+        GetFrameSinkId(), this);
+  }
 
 #if defined(USE_AURA)
   window_.reset(new aura::Window(
@@ -97,15 +106,7 @@ TestRenderWidgetHostView::~TestRenderWidgetHostView() {
     manager->InvalidateFrameSinkId(frame_sink_id_);
 }
 
-RenderWidgetHost* TestRenderWidgetHostView::GetRenderWidgetHost() const {
-  return rwh_;
-}
-
-gfx::Vector2dF TestRenderWidgetHostView::GetLastScrollOffset() const {
-  return gfx::Vector2dF();
-}
-
-gfx::NativeView TestRenderWidgetHostView::GetNativeView() const {
+gfx::NativeView TestRenderWidgetHostView::GetNativeView() {
 #if defined(USE_AURA)
   return window_.get();
 #else
@@ -121,7 +122,7 @@ ui::TextInputClient* TestRenderWidgetHostView::GetTextInputClient() {
   return &text_input_client_;
 }
 
-bool TestRenderWidgetHostView::HasFocus() const {
+bool TestRenderWidgetHostView::HasFocus() {
   return true;
 }
 
@@ -146,54 +147,23 @@ void TestRenderWidgetHostView::WasOccluded() {
   is_occluded_ = true;
 }
 
-void TestRenderWidgetHostView::RenderProcessGone(base::TerminationStatus status,
-                                                 int error_code) {
+void TestRenderWidgetHostView::RenderProcessGone() {
   delete this;
 }
 
 void TestRenderWidgetHostView::Destroy() { delete this; }
 
-gfx::Rect TestRenderWidgetHostView::GetViewBounds() const {
+gfx::Rect TestRenderWidgetHostView::GetViewBounds() {
   return gfx::Rect();
 }
 
-void TestRenderWidgetHostView::SetBackgroundColor(SkColor color) {
-  background_color_ = color;
-}
-
-SkColor TestRenderWidgetHostView::background_color() const {
-  return background_color_;
-}
-
-bool TestRenderWidgetHostView::HasAcceleratedSurface(
-      const gfx::Size& desired_size) {
-  return false;
-}
-
 #if defined(OS_MACOSX)
-
-ui::AcceleratedWidgetMac* TestRenderWidgetHostView::GetAcceleratedWidgetMac()
-    const {
-  return nullptr;
-}
-
 void TestRenderWidgetHostView::SetActive(bool active) {
   // <viettrungluu@gmail.com>: Do I need to do anything here?
 }
 
-bool TestRenderWidgetHostView::SupportsSpeech() const {
-  return false;
-}
-
 void TestRenderWidgetHostView::SpeakSelection() {
 }
-
-bool TestRenderWidgetHostView::IsSpeaking() const {
-  return false;
-}
-
-void TestRenderWidgetHostView::StopSpeaking() {}
-
 #endif
 
 gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
@@ -208,11 +178,17 @@ void TestRenderWidgetHostView::DidCreateNewRendererCompositorFrameSink(
 void TestRenderWidgetHostView::SubmitCompositorFrame(
     const viz::LocalSurfaceId& local_surface_id,
     viz::CompositorFrame frame,
-    viz::mojom::HitTestRegionListPtr hit_test_region_list) {
+    base::Optional<viz::HitTestRegionList> hit_test_region_list) {
   did_swap_compositor_frame_ = true;
-  uint32_t frame_token = frame.metadata.frame_token;
-  if (frame_token)
-    OnFrameTokenChanged(frame_token);
+  if (frame.metadata.send_frame_token_to_embedder)
+    OnFrameTokenChanged(frame.metadata.frame_token);
+}
+
+void TestRenderWidgetHostView::TakeFallbackContentFrom(
+    RenderWidgetHostView* view) {
+  base::Optional<SkColor> color = view->GetBackgroundColor();
+  if (color)
+    SetBackgroundColor(*color);
 }
 
 bool TestRenderWidgetHostView::LockMouse() {
@@ -222,8 +198,17 @@ bool TestRenderWidgetHostView::LockMouse() {
 void TestRenderWidgetHostView::UnlockMouse() {
 }
 
-viz::FrameSinkId TestRenderWidgetHostView::GetFrameSinkId() {
+const viz::FrameSinkId& TestRenderWidgetHostView::GetFrameSinkId() const {
   return frame_sink_id_;
+}
+
+const viz::LocalSurfaceIdAllocation&
+TestRenderWidgetHostView::GetLocalSurfaceIdAllocation() const {
+  return viz::ParentLocalSurfaceIdAllocator::InvalidLocalSurfaceIdAllocation();
+}
+
+viz::SurfaceId TestRenderWidgetHostView::GetCurrentSurfaceId() const {
+  return viz::SurfaceId();
 }
 
 void TestRenderWidgetHostView::OnFirstSurfaceActivation(
@@ -236,15 +221,25 @@ void TestRenderWidgetHostView::OnFrameTokenChanged(uint32_t frame_token) {
   OnFrameTokenChangedForView(frame_token);
 }
 
+std::unique_ptr<SyntheticGestureTarget>
+TestRenderWidgetHostView::CreateSyntheticGestureTarget() {
+  NOTIMPLEMENTED();
+  return nullptr;
+}
+
+void TestRenderWidgetHostView::UpdateBackgroundColor() {}
+
 TestRenderViewHost::TestRenderViewHost(
     SiteInstance* instance,
     std::unique_ptr<RenderWidgetHostImpl> widget,
     RenderViewHostDelegate* delegate,
+    int32_t routing_id,
     int32_t main_frame_routing_id,
     bool swapped_out)
     : RenderViewHostImpl(instance,
                          std::move(widget),
                          delegate,
+                         routing_id,
                          main_frame_routing_id,
                          swapped_out,
                          false /* has_initialized_audio_host */),
@@ -297,7 +292,7 @@ bool TestRenderViewHost::CreateRenderView(
   return true;
 }
 
-MockRenderProcessHost* TestRenderViewHost::GetProcess() const {
+MockRenderProcessHost* TestRenderViewHost::GetProcess() {
   return static_cast<MockRenderProcessHost*>(RenderViewHostImpl::GetProcess());
 }
 
@@ -306,17 +301,21 @@ void TestRenderViewHost::SimulateWasHidden() {
 }
 
 void TestRenderViewHost::SimulateWasShown() {
-  GetWidget()->WasShown(ui::LatencyInfo());
+  GetWidget()->WasShown(base::nullopt /* record_tab_switch_time_request */);
 }
 
-WebPreferences TestRenderViewHost::TestComputeWebkitPrefs() {
-  return ComputeWebkitPrefs();
+WebPreferences TestRenderViewHost::TestComputeWebPreferences() {
+  return ComputeWebPreferences();
 }
 
 void TestRenderViewHost::OnWebkitPreferencesChanged() {
   RenderViewHostImpl::OnWebkitPreferencesChanged();
   if (webkit_preferences_changed_counter_)
     ++*webkit_preferences_changed_counter_;
+}
+
+bool TestRenderViewHost::IsTestRenderViewHost() const {
+  return true;
 }
 
 void TestRenderViewHost::TestOnStartDragging(

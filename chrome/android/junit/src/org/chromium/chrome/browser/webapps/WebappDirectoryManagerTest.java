@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -20,16 +21,16 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowApplication;
 import org.robolectric.shadows.ShadowLooper;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
 import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.test.ShadowRecordHistogram;
+import org.chromium.base.task.test.CustomShadowAsyncTask;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.CustomShadowAsyncTask;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 import org.chromium.webapk.lib.common.WebApkConstants;
+import org.chromium.webapk.test.WebApkTestHelper;
 
 import java.io.File;
 import java.util.HashSet;
@@ -39,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Tests that directories for WebappActivities are managed correctly.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE,
         shadows = {CustomShadowAsyncTask.class, ShadowRecordHistogram.class})
 public class WebappDirectoryManagerTest {
@@ -49,9 +50,15 @@ public class WebappDirectoryManagerTest {
     private static final String WEBAPP_ID_1 = "webapp_1";
     private static final String WEBAPP_ID_2 = "webapp_2";
     private static final String WEBAPP_ID_3 = "webapp_3";
-    private static final String WEBAPK_ID_1 = WebApkConstants.WEBAPK_ID_PREFIX + "webapp_1";
-    private static final String WEBAPK_ID_2 = WebApkConstants.WEBAPK_ID_PREFIX + "webapp_2";
-    private static final String WEBAPK_ID_3 = WebApkConstants.WEBAPK_ID_PREFIX + "webapp_3";
+    private static final String WEBAPK_PACKAGE_NAME_1 = "webapk_1";
+    private static final String WEBAPK_PACKAGE_NAME_2 = "webapk_2";
+    private static final String WEBAPK_PACKAGE_NAME_3 = "webapk_3";
+    private static final String WEBAPK_ID_1 =
+            WebApkConstants.WEBAPK_ID_PREFIX + WEBAPK_PACKAGE_NAME_1;
+    private static final String WEBAPK_ID_2 =
+            WebApkConstants.WEBAPK_ID_PREFIX + WEBAPK_PACKAGE_NAME_2;
+    private static final String WEBAPK_ID_3 =
+            WebApkConstants.WEBAPK_ID_PREFIX + WEBAPK_PACKAGE_NAME_3;
 
     private static class TestWebappDirectoryManager extends WebappDirectoryManager {
         private Set<Intent> mBaseIntents = new HashSet<Intent>();
@@ -74,7 +81,6 @@ public class WebappDirectoryManagerTest {
     @Before
     public void setUp() throws Exception {
         mContext = RuntimeEnvironment.application;
-        ContextUtils.initApplicationContextForTests(mContext);
         ThreadUtils.setThreadAssertsDisabledForTesting(true);
         PathUtils.setPrivateDataDirectorySuffix("chrome");
         mWebappDirectoryManager = new TestWebappDirectoryManager();
@@ -154,12 +160,14 @@ public class WebappDirectoryManagerTest {
 
     /**
      * On Lollipop and higher, the {@link WebappDirectoryManager} also deletes directories for
-     * *WebApks* that no longer correspond to tasks in Recents.
+     * *WebApks* that are no longer installed.
      */
     @Test
     @Feature({"Webapps"})
-    public void testDeletesDirectoriesForDeadWebApkTasks() throws Exception {
+    public void testDeletesDirectoriesForUninstalledWebApks() throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return;
+
+        WebApkTestHelper.registerWebApkWithMetaData(WEBAPK_PACKAGE_NAME_2, new Bundle(), null);
 
         // Track the three web app directories.
         File directory1 =
@@ -174,12 +182,7 @@ public class WebappDirectoryManagerTest {
         Assert.assertTrue(directory2.mkdirs());
         Assert.assertTrue(directory3.mkdirs());
 
-        // Indicate that another of the web apps is listed in Recents; in real usage this web app
-        // would not be in the foreground and would have persisted its state.
-        mWebappDirectoryManager.mBaseIntents.add(
-                new Intent(Intent.ACTION_VIEW, Uri.parse("webapp://webapk-webapp_2")));
-
-        // Only the directory for the background web app should survive.
+        // Only the directory for the still installed WebAPK should survive.
         runCleanup();
         Assert.assertFalse(directory1.exists());
         Assert.assertTrue(directory2.exists());
@@ -235,7 +238,7 @@ public class WebappDirectoryManagerTest {
     @Test
     @Feature({"Webapps"})
     public void testCountsOldWebApkUpdateFiles() throws Exception {
-        File directory = new File(mWebappDirectoryManager.getWebApkUpdateDirectory(), WEBAPK_ID_1);
+        File directory = new File(WebappDirectoryManager.getWebApkUpdateDirectory(), WEBAPK_ID_1);
         directory.mkdirs();
         registerWebapp(WEBAPK_ID_1);
         WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(WEBAPK_ID_1);
@@ -256,7 +259,7 @@ public class WebappDirectoryManagerTest {
     @Test
     @Feature({"Webapps"})
     public void testDoesNotCountFilesForNewlyScheduledUpdates() throws Exception {
-        File directory = new File(mWebappDirectoryManager.getWebApkUpdateDirectory(), WEBAPK_ID_1);
+        File directory = new File(WebappDirectoryManager.getWebApkUpdateDirectory(), WEBAPK_ID_1);
         directory.mkdirs();
         registerWebapp(WEBAPK_ID_1);
         WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(WEBAPK_ID_1);

@@ -10,7 +10,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_context_menu.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
@@ -67,7 +67,7 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
   void Init(views::MenuDelegate* real_delegate,
             views::MenuItemView* parent,
             const bookmarks::BookmarkNode* node,
-            int start_child_index,
+            size_t start_child_index,
             ShowOptions show_options,
             BookmarkLaunchLocation location);
 
@@ -79,7 +79,7 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
 
   // Makes the menu for |node| the active menu. |start_index| is the index of
   // the first child of |node| to show in the menu.
-  void SetActiveMenu(const bookmarks::BookmarkNode* node, int start_index);
+  void SetActiveMenu(const bookmarks::BookmarkNode* node, size_t start_index);
 
   bookmarks::BookmarkModel* GetBookmarkModel() {
     return const_cast<bookmarks::BookmarkModel*>(
@@ -109,10 +109,9 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
                           const ui::Event& e);
   void ExecuteCommand(int id, int mouse_event_flags);
   bool ShouldExecuteCommandWithoutClosingMenu(int id, const ui::Event& e);
-  bool GetDropFormats(
-      views::MenuItemView* menu,
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types);
+  bool GetDropFormats(views::MenuItemView* menu,
+                      int* formats,
+                      std::set<ui::ClipboardFormatType>* format_types);
   bool AreDropTypesRequired(views::MenuItemView* menu);
   bool CanDrop(views::MenuItemView* menu, const ui::OSExchangeData& data);
   int GetDropOperation(views::MenuItemView* item,
@@ -154,7 +153,7 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
 
   // Creates a menu. This uses BuildMenu() to recursively populate the menu.
   views::MenuItemView* CreateMenu(const bookmarks::BookmarkNode* parent,
-                                  int start_child_index,
+                                  size_t start_child_index,
                                   ShowOptions show_options);
 
   // Invokes BuildMenuForPermanentNode() for the permanent nodes (excluding
@@ -175,12 +174,16 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
   // Creates an entry in menu for each child node of |parent| starting at
   // |start_child_index|.
   void BuildMenu(const bookmarks::BookmarkNode* parent,
-                 int start_child_index,
+                 size_t start_child_index,
                  views::MenuItemView* menu);
 
   // Registers the necessary mappings for |menu| and |node|.
   void AddMenuToMaps(views::MenuItemView* menu,
                      const bookmarks::BookmarkNode* node);
+
+  // Escapes ampersands within |title| if necessary, depending on
+  // |menu_uses_mnemonics_|.
+  base::string16 MaybeEscapeLabel(const base::string16& title);
 
   Browser* const browser_;
   Profile* profile_;
@@ -218,6 +221,10 @@ class BookmarkMenuDelegate : public bookmarks::BaseBookmarkModelObserver,
 
   // The location where this bookmark menu will be displayed (for UMA).
   BookmarkLaunchLocation location_;
+
+  // Whether the involved menu uses mnemonics or not. If it does, ampersands
+  // inside bookmark titles need to be escaped.
+  bool menu_uses_mnemonics_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkMenuDelegate);
 };

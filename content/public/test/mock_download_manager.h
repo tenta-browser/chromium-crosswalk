@@ -10,9 +10,10 @@
 #include <string>
 #include <vector>
 
+#include "base/optional.h"
+#include "components/download/public/common/download_url_parameters.h"
+#include "components/download/public/common/input_stream.h"
 #include "content/public/browser/download_manager.h"
-#include "content/public/browser/download_save_info.h"
-#include "content/public/browser/download_url_parameters.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -39,6 +40,7 @@ class MockDownloadManager : public DownloadManager {
     GURL site_url;
     GURL tab_url;
     GURL tab_referrer_url;
+    base::Optional<url::Origin> request_initiator;
     std::string mime_type;
     std::string original_mime_type;
     base::Time start_time;
@@ -48,13 +50,13 @@ class MockDownloadManager : public DownloadManager {
     int64_t received_bytes;
     int64_t total_bytes;
     std::string hash;
-    DownloadItem::DownloadState state;
-    DownloadDangerType danger_type;
-    DownloadInterruptReason interrupt_reason;
+    download::DownloadItem::DownloadState state;
+    download::DownloadDangerType danger_type;
+    download::DownloadInterruptReason interrupt_reason;
     bool opened;
     base::Time last_access_time;
     bool transient;
-    std::vector<DownloadItem::ReceivedSlice> received_slices;
+    std::vector<download::DownloadItem::ReceivedSlice> received_slices;
 
     CreateDownloadItemAdapter(
         const std::string& guid,
@@ -66,6 +68,7 @@ class MockDownloadManager : public DownloadManager {
         const GURL& site_url,
         const GURL& tab_url,
         const GURL& tab_refererr_url,
+        const base::Optional<url::Origin>& request_initiator,
         const std::string& mime_type,
         const std::string& original_mime_type,
         base::Time start_time,
@@ -75,13 +78,14 @@ class MockDownloadManager : public DownloadManager {
         int64_t received_bytes,
         int64_t total_bytes,
         const std::string& hash,
-        DownloadItem::DownloadState state,
-        DownloadDangerType danger_type,
-        DownloadInterruptReason interrupt_reason,
+        download::DownloadItem::DownloadState state,
+        download::DownloadDangerType danger_type,
+        download::DownloadInterruptReason interrupt_reason,
         bool opened,
         base::Time last_access_time,
         bool transient,
-        const std::vector<DownloadItem::ReceivedSlice>& received_slices);
+        const std::vector<download::DownloadItem::ReceivedSlice>&
+            received_slices);
     // Required by clang compiler.
     CreateDownloadItemAdapter(const CreateDownloadItemAdapter& rhs);
     ~CreateDownloadItemAdapter();
@@ -94,32 +98,41 @@ class MockDownloadManager : public DownloadManager {
 
   // DownloadManager:
   MOCK_METHOD1(SetDelegate, void(DownloadManagerDelegate* delegate));
-  MOCK_CONST_METHOD0(GetDelegate, DownloadManagerDelegate*());
+  MOCK_METHOD0(GetDelegate, DownloadManagerDelegate*());
   MOCK_METHOD0(Shutdown, void());
   MOCK_METHOD1(GetAllDownloads, void(DownloadVector* downloads));
   MOCK_METHOD1(Init, bool(BrowserContext* browser_context));
 
   // Gasket for handling scoped_ptr arguments.
-  void StartDownload(
-      std::unique_ptr<DownloadCreateInfo> info,
-      std::unique_ptr<DownloadManager::InputStream> stream,
-      const DownloadUrlParameters::OnStartedCallback& callback) override;
+  void StartDownload(std::unique_ptr<download::DownloadCreateInfo> info,
+                     std::unique_ptr<download::InputStream> stream,
+                     scoped_refptr<download::DownloadURLLoaderFactoryGetter>
+                         url_loader_factory_getter,
+                     const download::DownloadUrlParameters::OnStartedCallback&
+                         callback) override;
 
   MOCK_METHOD2(MockStartDownload,
-               void(DownloadCreateInfo*, DownloadManager::InputStream*));
+               void(download::DownloadCreateInfo*, download::InputStream*));
   MOCK_METHOD3(RemoveDownloadsByURLAndTime,
                int(const base::Callback<bool(const GURL&)>& url_filter,
                    base::Time remove_begin,
                    base::Time remove_end));
-  MOCK_METHOD1(DownloadUrlMock, void(DownloadUrlParameters*));
-  void DownloadUrl(std::unique_ptr<DownloadUrlParameters> params) override {
+  MOCK_METHOD1(DownloadUrlMock, void(download::DownloadUrlParameters*));
+  void DownloadUrl(
+      std::unique_ptr<download::DownloadUrlParameters> params) override {
+    DownloadUrl(std::move(params), nullptr, nullptr);
+  }
+  void DownloadUrl(std::unique_ptr<download::DownloadUrlParameters> params,
+                   std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
+                   scoped_refptr<network::SharedURLLoaderFactory>
+                       blob_url_loader_factory) override {
     DownloadUrlMock(params.get());
   }
   MOCK_METHOD1(AddObserver, void(Observer* observer));
   MOCK_METHOD1(RemoveObserver, void(Observer* observer));
 
   // Redirects to mock method to get around gmock 10 argument limit.
-  DownloadItem* CreateDownloadItem(
+  download::DownloadItem* CreateDownloadItem(
       const std::string& guid,
       uint32_t id,
       const base::FilePath& current_path,
@@ -129,6 +142,7 @@ class MockDownloadManager : public DownloadManager {
       const GURL& site_url,
       const GURL& tab_url,
       const GURL& tab_refererr_url,
+      const base::Optional<url::Origin>& request_initiator,
       const std::string& mime_type,
       const std::string& original_mime_type,
       base::Time start_time,
@@ -138,24 +152,31 @@ class MockDownloadManager : public DownloadManager {
       int64_t received_bytes,
       int64_t total_bytes,
       const std::string& hash,
-      DownloadItem::DownloadState state,
-      DownloadDangerType danger_type,
-      DownloadInterruptReason interrupt_reason,
+      download::DownloadItem::DownloadState state,
+      download::DownloadDangerType danger_type,
+      download::DownloadInterruptReason interrupt_reason,
       bool opened,
       base::Time last_access_time,
       bool transient,
-      const std::vector<DownloadItem::ReceivedSlice>& received_slices) override;
+      const std::vector<download::DownloadItem::ReceivedSlice>& received_slices)
+      override;
 
   MOCK_METHOD1(MockCreateDownloadItem,
-               DownloadItem*(CreateDownloadItemAdapter adapter));
-  MOCK_METHOD0(PostInitialization, void());
-  MOCK_CONST_METHOD0(IsManagerInitialized, bool());
-  MOCK_CONST_METHOD0(InProgressCount, int());
-  MOCK_CONST_METHOD0(NonMaliciousInProgressCount, int());
-  MOCK_CONST_METHOD0(GetBrowserContext, BrowserContext*());
+               download::DownloadItem*(CreateDownloadItemAdapter adapter));
+  MOCK_METHOD1(PostInitialization,
+               void(DownloadInitializationDependency dependency));
+  MOCK_METHOD0(IsManagerInitialized, bool());
+  MOCK_METHOD0(InProgressCount, int());
+  MOCK_METHOD0(NonMaliciousInProgressCount, int());
+  MOCK_METHOD0(GetBrowserContext, BrowserContext*());
   MOCK_METHOD0(CheckForHistoryFilesRemoval, void());
-  MOCK_METHOD1(GetDownload, DownloadItem*(uint32_t id));
-  MOCK_METHOD1(GetDownloadByGuid, DownloadItem*(const std::string&));
+  MOCK_METHOD1(GetDownload, download::DownloadItem*(uint32_t id));
+  MOCK_METHOD1(GetDownloadByGuid, download::DownloadItem*(const std::string&));
+  MOCK_METHOD1(GetNextId, void(base::OnceCallback<void(uint32_t)>));
+  MOCK_METHOD1(CanDownload, bool(download::DownloadUrlParameters*));
+
+  void OnHistoryQueryComplete(
+      base::OnceClosure load_history_downloads_cb) override;
 };
 
 }  // namespace content

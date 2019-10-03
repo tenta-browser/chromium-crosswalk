@@ -7,10 +7,10 @@ cr.define('cr_toolbar_search_field', function() {
   function registerTests() {
     suite('cr-toolbar-search-field', function() {
       /** @type {?CrToolbarSearchFieldElement} */
-      var field = null;
+      let field = null;
 
       /** @type {?Array<string>} */
-      var searches = null;
+      let searches = null;
 
       /** @param {string} term */
       function simulateSearch(term) {
@@ -38,8 +38,10 @@ cr.define('cr_toolbar_search_field', function() {
       // Test that no initial 'search-changed' event is fired during
       // construction and initialization of the cr-toolbar-search-field element.
       test('no initial search-changed event', function() {
-        var didFire = false;
-        var onSearchChanged = function () { didFire = true; };
+        let didFire = false;
+        const onSearchChanged = function() {
+          didFire = true;
+        };
 
         // Need to attach listener event before the element is created, to catch
         // the unnecessary initial event.
@@ -54,14 +56,14 @@ cr.define('cr_toolbar_search_field', function() {
 
       test('opens and closes correctly', function() {
         assertFalse(field.showingSearch);
-        MockInteractions.tap(field);
+        field.click();
         assertTrue(field.showingSearch);
         assertEquals(field.$.searchInput, field.root.activeElement);
 
         MockInteractions.blur(field.$.searchInput);
         assertFalse(field.showingSearch);
 
-        MockInteractions.tap(field);
+        field.click();
         assertEquals(field.$.searchInput, field.root.activeElement);
 
         MockInteractions.pressAndReleaseKeyOn(
@@ -71,12 +73,12 @@ cr.define('cr_toolbar_search_field', function() {
       });
 
       test('clear search button clears and refocuses input', function() {
-        MockInteractions.tap(field);
+        field.click();
         simulateSearch('query1');
         Polymer.dom.flush();
         assertTrue(field.hasSearchText);
 
-        var clearSearch = field.$$('#clearSearch');
+        const clearSearch = field.$$('#clearSearch');
         clearSearch.focus();
         MockInteractions.tap(clearSearch);
         assertTrue(field.showingSearch);
@@ -86,7 +88,7 @@ cr.define('cr_toolbar_search_field', function() {
       });
 
       test('notifies on new searches', function() {
-        MockInteractions.tap(field);
+        field.click();
         simulateSearch('query1');
         Polymer.dom.flush();
         assertEquals('query1', field.getValue());
@@ -99,32 +101,80 @@ cr.define('cr_toolbar_search_field', function() {
         // Expecting identical query to be ignored.
         simulateSearch('query2');
 
-        assertEquals(['query1', '', 'query2'].join(), searches.join());
+        assertDeepEquals(['query1', '', 'query2'], searches);
       });
 
       test('notifies on setValue', function() {
-        MockInteractions.tap(field);
+        field.click();
         field.setValue('foo');
         field.setValue('');
         field.setValue('bar');
         // Expecting identical query to be ignored.
         field.setValue('bar');
         field.setValue('baz');
-        assertEquals(['foo', '', 'bar', 'baz'].join(), searches.join());
+        assertDeepEquals(['foo', '', 'bar', 'baz'], searches);
       });
 
       test('does not notify on setValue with noEvent=true', function() {
-        MockInteractions.tap(field);
+        field.click();
         field.setValue('foo', true);
         field.setValue('bar');
         field.setValue('baz', true);
-        assertEquals(['bar'].join(), searches.join());
+        assertDeepEquals(['bar'], searches);
+      });
+
+      test('treat consecutive whitespace as single space', function() {
+        field.click();
+        const query = 'foo        bar     baz';
+        simulateSearch(query);
+        Polymer.dom.flush();
+        assertEquals(query, field.getValue());
+
+        // Expecting effectively the same query to be ignored.
+        const effectivelySameQuery = 'foo   bar    baz';
+        simulateSearch(effectivelySameQuery);
+        Polymer.dom.flush();
+        assertEquals(effectivelySameQuery, field.getValue());
+
+        assertDeepEquals(['foo bar baz'], searches);
+      });
+
+      test('ignore leading whitespace', () => {
+        field.click();
+        const query = ' foo';
+        simulateSearch(query);
+        Polymer.dom.flush();
+        assertEquals(query, field.getValue());
+
+        // Expecting effectively the same query to be ignored.
+        const effectivelySameQuery = '     foo';
+        simulateSearch(effectivelySameQuery);
+        Polymer.dom.flush();
+        assertEquals(effectivelySameQuery, field.getValue());
+
+        assertDeepEquals(['foo'], searches);
+      });
+
+      test('when there is trailing whitespace, replace with one space', () => {
+        field.click();
+        const query = 'foo  ';
+        simulateSearch(query);
+        Polymer.dom.flush();
+        assertEquals(query, field.getValue());
+
+        // Expecting effectively the same query to be ignored.
+        const effectivelySameQuery = 'foo        ';
+        simulateSearch(effectivelySameQuery);
+        Polymer.dom.flush();
+        assertEquals(effectivelySameQuery, field.getValue());
+
+        assertDeepEquals(['foo '], searches);
       });
 
       // Tests that calling setValue() from within a 'search-changed' callback
       // does not result in an infinite loop.
       test('no infinite loop', function() {
-        var counter = 0;
+        let counter = 0;
         field.addEventListener('search-changed', function(event) {
           counter++;
           // Calling setValue() with the already existing value should not
@@ -132,14 +182,14 @@ cr.define('cr_toolbar_search_field', function() {
           field.setValue(event.detail);
         });
 
-        MockInteractions.tap(field);
+        field.click();
         field.setValue('bar');
         assertEquals(1, counter);
-        assertEquals(['bar'].join(), searches.join());
+        assertDeepEquals(['bar'], searches);
       });
 
       test('blur does not close field when a search is active', function() {
-        MockInteractions.tap(field);
+        field.click();
         simulateSearch('test');
         MockInteractions.blur(field.$.searchInput);
 
@@ -155,7 +205,7 @@ cr.define('cr_toolbar_search_field', function() {
         assertTrue(field.hasSearchText);
         Polymer.dom.flush();
 
-        var clearSearch = field.$$('#clearSearch');
+        const clearSearch = field.$$('#clearSearch');
         assertFalse(clearSearch.hidden);
         assertTrue(field.showingSearch);
       });

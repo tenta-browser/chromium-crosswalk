@@ -12,12 +12,15 @@
 #include "base/timer/timer.h"
 
 #include "components/sync/base/weak_handle.h"
+#include "components/sync/driver/configure_context.h"
+#include "components/sync/driver/data_type_controller.h"
 #include "components/sync/driver/data_type_manager.h"
 #include "components/sync/engine/data_type_association_stats.h"
+#include "components/sync/engine/shutdown_reason.h"
 
 namespace syncer {
 
-class DataTypeController;
+struct ConfigureContext;
 
 // |ModelAssociationManager| does the heavy lifting for doing the actual model
 // association. It instructs DataTypeControllers to load models, start
@@ -83,16 +86,26 @@ class ModelAssociationManager {
   // of Initialize is only allowed if the ModelAssociationManager has invoked
   // |OnModelAssociationDone| on the |ModelAssociationManagerDelegate|. After
   // this call, there should be several calls to StartAssociationAsync()
-  // to associate subset of |desired_types|.
-  void Initialize(ModelTypeSet desired_types);
+  // to associate subset of |desired_types| which must be a subset of
+  // |preferred_types|.
+  // |preferred_types| contains types selected by user.
+  void Initialize(ModelTypeSet desired_types,
+                  ModelTypeSet preferred_types,
+                  const ConfigureContext& context);
 
   // Can be called at any time. Synchronously stops all datatypes.
-  void Stop();
+  void Stop(ShutdownReason shutdown_reason);
 
   // Should only be called after Initialize to start the actual association.
   // |types_to_associate| should be subset of |desired_types| in Initialize().
   // When this is completed, |OnModelAssociationDone| will be invoked.
   void StartAssociationAsync(const ModelTypeSet& types_to_associate);
+
+  // Stops an individual datatype |type| for |shutdown_reason|. |error| must be
+  // an actual error (i.e. not UNSET).
+  void StopDatatype(ModelType type,
+                    ShutdownReason shutdown_reason,
+                    SyncError error);
 
   // This is used for TESTING PURPOSE ONLY. The test case can inspect
   // and modify the timer.
@@ -106,9 +119,6 @@ class ModelAssociationManager {
   // Called at the end of association to reset state to prepare for next
   // round of association.
   void ResetForNextAssociation();
-
-  // Called by Initialize() to stop types that are not in |desired_types_|.
-  void StopDisabledTypes();
 
   // Start loading non-running types that are in |desired_types_|.
   void LoadEnabledTypes();
@@ -131,7 +141,10 @@ class ModelAssociationManager {
   void ModelAssociationDone(State new_state);
 
   // A helper to stop an individual datatype.
-  void StopDatatype(const SyncError& error, DataTypeController* dtc);
+  void StopDatatypeImpl(const SyncError& error,
+                        ShutdownReason shutdown_reason,
+                        DataTypeController* dtc,
+                        DataTypeController::StopCallback callback);
 
   // Calls delegate's OnAllDataTypesReadyForConfigure when all datatypes from
   // desired_types_ are ready for configure. Ensures that for every call to
@@ -141,6 +154,8 @@ class ModelAssociationManager {
   void NotifyDelegateIfReadyForConfigure();
 
   State state_;
+
+  ConfigureContext configure_context_;
 
   // Data types that are enabled.
   ModelTypeSet desired_types_;
@@ -176,7 +191,7 @@ class ModelAssociationManager {
 
   bool notified_about_ready_for_configure_;
 
-  base::WeakPtrFactory<ModelAssociationManager> weak_ptr_factory_;
+  base::WeakPtrFactory<ModelAssociationManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ModelAssociationManager);
 };

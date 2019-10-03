@@ -16,7 +16,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/command_buffer.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
+#include "gpu/config/gpu_preferences.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "ipc/ipc_message_macros.h"
@@ -34,23 +34,23 @@ namespace media {
 
 namespace {
 static gl::GLContext* GetGLContext(
-    const base::WeakPtr<gpu::GpuCommandBufferStub>& stub) {
+    const base::WeakPtr<gpu::CommandBufferStub>& stub) {
   if (!stub) {
     DLOG(ERROR) << "Stub is gone; no GLContext.";
     return nullptr;
   }
 
-  return stub->decoder()->GetGLContext();
+  return stub->decoder_context()->GetGLContext();
 }
 
 static bool MakeDecoderContextCurrent(
-    const base::WeakPtr<gpu::GpuCommandBufferStub>& stub) {
+    const base::WeakPtr<gpu::CommandBufferStub>& stub) {
   if (!stub) {
     DLOG(ERROR) << "Stub is gone; won't MakeCurrent().";
     return false;
   }
 
-  if (!stub->decoder()->MakeCurrent()) {
+  if (!stub->decoder_context()->MakeCurrent()) {
     DLOG(ERROR) << "Failed to MakeCurrent()";
     return false;
   }
@@ -58,7 +58,7 @@ static bool MakeDecoderContextCurrent(
   return true;
 }
 
-static bool BindImage(const base::WeakPtr<gpu::GpuCommandBufferStub>& stub,
+static bool BindImage(const base::WeakPtr<gpu::CommandBufferStub>& stub,
                       uint32_t client_texture_id,
                       uint32_t texture_target,
                       const scoped_refptr<gl::GLImage>& image,
@@ -68,21 +68,41 @@ static bool BindImage(const base::WeakPtr<gpu::GpuCommandBufferStub>& stub,
     return false;
   }
 
-  gpu::gles2::GLES2Decoder* command_decoder = stub->decoder();
+  gpu::DecoderContext* command_decoder = stub->decoder_context();
   command_decoder->BindImage(client_texture_id, texture_target, image.get(),
                              can_bind_to_sampler);
   return true;
 }
 
-static base::WeakPtr<gpu::gles2::GLES2Decoder> GetGLES2Decoder(
-    const base::WeakPtr<gpu::GpuCommandBufferStub>& stub) {
+static gpu::gles2::ContextGroup* GetContextGroup(
+    const base::WeakPtr<gpu::CommandBufferStub>& stub) {
   if (!stub) {
-    DLOG(ERROR) << "Stub is gone; no GLES2Decoder.";
-    return base::WeakPtr<gpu::gles2::GLES2Decoder>();
+    DLOG(ERROR) << "Stub is gone; no DecoderContext.";
+    return nullptr;
   }
 
-  return stub->decoder()->AsWeakPtr();
+  return stub->decoder_context()->GetContextGroup();
 }
+
+static std::unique_ptr<gpu::gles2::AbstractTexture> CreateAbstractTexture(
+    const base::WeakPtr<gpu::CommandBufferStub>& stub,
+    GLenum target,
+    GLenum internal_format,
+    GLsizei width,
+    GLsizei height,
+    GLsizei depth,
+    GLint border,
+    GLenum format,
+    GLenum type) {
+  if (!stub) {
+    DLOG(ERROR) << "Stub is gone; no DecoderContext.";
+    return nullptr;
+  }
+
+  return stub->decoder_context()->CreateAbstractTexture(
+      target, internal_format, width, height, depth, border, format, type);
+}
+
 }  // anonymous namespace
 
 // DebugAutoLock works like AutoLock but only acquires the lock when
@@ -145,7 +165,7 @@ class GpuVideoDecodeAccelerator::MessageFilter : public IPC::MessageFilter {
 
 GpuVideoDecodeAccelerator::GpuVideoDecodeAccelerator(
     int32_t host_route_id,
-    gpu::GpuCommandBufferStub* stub,
+    gpu::CommandBufferStub* stub,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const AndroidOverlayMojoFactoryCB& overlay_factory_cb)
     : host_route_id_(host_route_id),
@@ -157,15 +177,17 @@ GpuVideoDecodeAccelerator::GpuVideoDecodeAccelerator(
                       base::WaitableEvent::InitialState::NOT_SIGNALED),
       child_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_task_runner_(io_task_runner),
-      overlay_factory_cb_(overlay_factory_cb),
-      weak_factory_for_io_(this) {
+      overlay_factory_cb_(overlay_factory_cb) {
   DCHECK(stub_);
   stub_->AddDestructionObserver(this);
-  get_gl_context_cb_ = base::Bind(&GetGLContext, stub_->AsWeakPtr());
+  get_gl_context_cb_ = base::BindRepeating(&GetGLContext, stub_->AsWeakPtr());
   make_context_current_cb_ =
-      base::Bind(&MakeDecoderContextCurrent, stub_->AsWeakPtr());
-  bind_image_cb_ = base::Bind(&BindImage, stub_->AsWeakPtr());
-  get_gles2_decoder_cb_ = base::Bind(&GetGLES2Decoder, stub_->AsWeakPtr());
+      base::BindRepeating(&MakeDecoderContextCurrent, stub_->AsWeakPtr());
+  bind_image_cb_ = base::BindRepeating(&BindImage, stub_->AsWeakPtr());
+  get_context_group_cb_ =
+      base::BindRepeating(&GetContextGroup, stub_->AsWeakPtr());
+  create_abstract_texture_cb_ =
+      base::BindRepeating(&CreateAbstractTexture, stub_->AsWeakPtr());
 }
 
 GpuVideoDecodeAccelerator::~GpuVideoDecodeAccelerator() {
@@ -265,8 +287,9 @@ void GpuVideoDecodeAccelerator::PictureReady(const Picture& picture) {
   params.visible_rect = picture.visible_rect();
   params.color_space = picture.color_space();
   params.allow_overlay = picture.allow_overlay();
+  params.read_lock_fences_enabled = picture.read_lock_fences_enabled();
   params.size_changed = picture.size_changed();
-  params.surface_texture = picture.surface_texture();
+  params.surface_texture = picture.texture_owner();
   params.wants_promotion_hint = picture.wants_promotion_hint();
   if (!Send(new AcceleratedVideoDecoderHostMsg_PictureReady(host_route_id_,
                                                             params))) {
@@ -303,7 +326,7 @@ void GpuVideoDecodeAccelerator::NotifyError(
   }
 }
 
-void GpuVideoDecodeAccelerator::OnWillDestroyStub() {
+void GpuVideoDecodeAccelerator::OnWillDestroyStub(bool have_context) {
   // The stub is going away, so we have to stop and destroy VDA here, before
   // returning, because the VDA may need the GL context to run and/or do its
   // cleanup. We cannot destroy the VDA before the IO thread message filter is
@@ -350,7 +373,8 @@ bool GpuVideoDecodeAccelerator::Initialize(
   std::unique_ptr<GpuVideoDecodeAcceleratorFactory> vda_factory =
       GpuVideoDecodeAcceleratorFactory::CreateWithGLES2Decoder(
           get_gl_context_cb_, make_context_current_cb_, bind_image_cb_,
-          get_gles2_decoder_cb_, overlay_factory_cb_);
+          get_context_group_cb_, overlay_factory_cb_,
+          create_abstract_texture_cb_);
 
   if (!vda_factory) {
     LOG(ERROR) << "Failed creating the VDA factory";
@@ -383,10 +407,9 @@ bool GpuVideoDecodeAccelerator::Initialize(
 
 // Runs on IO thread if VDA::TryToSetupDecodeOnSeparateThread() succeeded,
 // otherwise on the main thread.
-void GpuVideoDecodeAccelerator::OnDecode(
-    const BitstreamBuffer& bitstream_buffer) {
+void GpuVideoDecodeAccelerator::OnDecode(BitstreamBuffer bitstream_buffer) {
   DCHECK(video_decode_accelerator_);
-  video_decode_accelerator_->Decode(bitstream_buffer);
+  video_decode_accelerator_->Decode(std::move(bitstream_buffer));
 }
 
 void GpuVideoDecodeAccelerator::OnAssignPictureBuffers(
@@ -397,9 +420,9 @@ void GpuVideoDecodeAccelerator::OnAssignPictureBuffers(
     return;
   }
 
-  gpu::gles2::GLES2Decoder* command_decoder = stub_->decoder();
+  gpu::DecoderContext* decoder_context = stub_->decoder_context();
   gpu::gles2::TextureManager* texture_manager =
-      command_decoder->GetContextGroup()->texture_manager();
+      stub_->decoder_context()->GetContextGroup()->texture_manager();
 
   std::vector<PictureBuffer> buffers;
   std::vector<std::vector<scoped_refptr<gpu::gles2::TextureRef>>> textures;
@@ -420,8 +443,8 @@ void GpuVideoDecodeAccelerator::OnAssignPictureBuffers(
       return;
     }
     for (size_t j = 0; j < textures_per_buffer_; j++) {
-      gpu::gles2::TextureBase* texture_base =
-          command_decoder->GetTextureBase(buffer_texture_ids[j]);
+      gpu::TextureBase* texture_base =
+          decoder_context->GetTextureBase(buffer_texture_ids[j]);
       if (!texture_base) {
         DLOG(ERROR) << "Failed to find texture id " << buffer_texture_ids[j];
         NotifyError(VideoDecodeAccelerator::INVALID_ARGUMENT);
@@ -460,9 +483,9 @@ void GpuVideoDecodeAccelerator::OnAssignPictureBuffers(
             return;
           }
 
-          // TODO(dshwang): after moving to D3D11, remove this. crbug.com/438691
-          GLenum format =
-              video_decode_accelerator_.get()->GetSurfaceInternalFormat();
+          // TODO(dshwang): after moving to D3D11, remove this.
+          // https://crbug.com/438691
+          GLenum format = video_decode_accelerator_->GetSurfaceInternalFormat();
           if (format != GL_RGBA) {
             DCHECK(format == GL_BGRA_EXT);
             texture_manager->SetLevelInfo(texture_ref, texture_target_, 0,
@@ -511,7 +534,7 @@ void GpuVideoDecodeAccelerator::OnSetOverlayInfo(
 
 void GpuVideoDecodeAccelerator::OnDestroy() {
   DCHECK(video_decode_accelerator_);
-  OnWillDestroyStub();
+  OnWillDestroyStub(false);
 }
 
 void GpuVideoDecodeAccelerator::OnFilterRemoved() {
@@ -530,7 +553,7 @@ void GpuVideoDecodeAccelerator::SetTextureCleared(const Picture& picture) {
   for (auto texture_ref : it->second) {
     GLenum target = texture_ref->texture()->target();
     gpu::gles2::TextureManager* texture_manager =
-        stub_->decoder()->GetContextGroup()->texture_manager();
+        stub_->decoder_context()->GetContextGroup()->texture_manager();
     texture_manager->SetLevelCleared(texture_ref.get(), target, 0, true);
   }
   uncleared_textures_.erase(it);

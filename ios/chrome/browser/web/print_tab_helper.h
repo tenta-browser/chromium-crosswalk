@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "ios/web/public/web_state/web_state_observer.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#import "ios/web/public/web_state/web_state_user_data.h"
 
 @protocol WebStatePrinter;
 class GURL;
@@ -20,26 +20,31 @@ class DictionaryValue;
 class PrintTabHelper : public web::WebStateObserver,
                        public web::WebStateUserData<PrintTabHelper> {
  public:
+  explicit PrintTabHelper(web::WebState* web_state);
   ~PrintTabHelper() override;
 
-  // Creates a PrintTabHelper and attaches it to |web_state|. The |printer|
-  // must be non-nil.
-  static void CreateForWebState(web::WebState* web_state,
-                                id<WebStatePrinter> printer);
+  // Sets the |printer|, which is held weakly by this object.
+  void set_printer(id<WebStatePrinter> printer);
 
  private:
-  PrintTabHelper(web::WebState* web_state, id<WebStatePrinter> printer);
+  friend class web::WebStateUserData<PrintTabHelper>;
 
   // web::WebStateObserver overrides:
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // Called when print message is sent by the web page.
-  bool OnPrintCommand(web::WebState* web_state,
+  void OnPrintCommand(web::WebState* web_state,
                       const base::DictionaryValue& command,
                       const GURL& page_url,
-                      bool user_initiated);
+                      bool user_initiated,
+                      web::WebFrame* sender_frame);
 
   __weak id<WebStatePrinter> printer_;
+
+  // Subscription for JS message.
+  std::unique_ptr<web::WebState::ScriptCommandSubscription> subscription_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(PrintTabHelper);
 };

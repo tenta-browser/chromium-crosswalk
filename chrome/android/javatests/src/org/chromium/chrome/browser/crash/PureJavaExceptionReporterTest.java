@@ -12,7 +12,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.components.crash.CrashKeyIndex;
+import org.chromium.components.crash.CrashKeys;
 import org.chromium.components.minidump_uploader.CrashTestRule;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -52,11 +55,13 @@ public class PureJavaExceptionReporterTest {
     private static final String[] REPORT_FIELDS = {PureJavaExceptionReporter.CHANNEL,
             PureJavaExceptionReporter.VERSION, PureJavaExceptionReporter.PRODUCT,
             PureJavaExceptionReporter.ANDROID_BUILD_ID, PureJavaExceptionReporter.ANDROID_BUILD_FP,
-            PureJavaExceptionReporter.DEVICE, PureJavaExceptionReporter.GMS_CORE_VERSION,
+            PureJavaExceptionReporter.SDK, PureJavaExceptionReporter.DEVICE,
+            PureJavaExceptionReporter.GMS_CORE_VERSION,
             PureJavaExceptionReporter.INSTALLER_PACKAGE_NAME, PureJavaExceptionReporter.ABI_NAME,
             PureJavaExceptionReporter.PACKAGE, PureJavaExceptionReporter.MODEL,
-            PureJavaExceptionReporter.BRAND, PureJavaExceptionReporter.EXCEPTION_INFO,
-            PureJavaExceptionReporter.PROCESS_TYPE, PureJavaExceptionReporter.EARLY_JAVA_EXCEPTION};
+            PureJavaExceptionReporter.BRAND, PureJavaExceptionReporter.BOARD,
+            PureJavaExceptionReporter.EXCEPTION_INFO, PureJavaExceptionReporter.PROCESS_TYPE,
+            PureJavaExceptionReporter.EARLY_JAVA_EXCEPTION};
 
     private String readFileToString(File file) {
         StringBuilder sb = new StringBuilder();
@@ -70,6 +75,13 @@ public class PureJavaExceptionReporterTest {
         return sb.toString();
     }
 
+    private void verifyField(String minidumpString, String field) {
+        Assert.assertTrue("Report field \"" + field
+                        + "\" is not included in the report. Minidump string is \"" + minidumpString
+                        + "\"",
+                minidumpString.contains(field));
+    }
+
     @Test
     @SmallTest
     public void verifyMinidumpContentAndUpload() {
@@ -79,11 +91,9 @@ public class PureJavaExceptionReporterTest {
         String minidumpString = readFileToString(reporter.getMinidumpFile());
 
         for (String field : REPORT_FIELDS) {
-            Assert.assertTrue("Report field \"" + field
-                            + "\" is not included in the report. Minidump string is \""
-                            + minidumpString + "\"",
-                    minidumpString.contains(field));
+            verifyField(minidumpString, field);
         }
+
         // Exception string should be included in the stack trace.
         Assert.assertTrue(minidumpString.contains(EXCEPTION_NAME));
 
@@ -91,5 +101,21 @@ public class PureJavaExceptionReporterTest {
         Assert.assertTrue(minidumpString.contains("verifyMinidumpContentAndUpload"));
 
         Assert.assertTrue(reporter.reportUploaded());
+    }
+
+    @Test
+    @SmallTest
+    public void verifyCrashKeys() {
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { CrashKeys.getInstance().set(CrashKeyIndex.LOADED_DYNAMIC_MODULE, "foo"); });
+
+        TestPureJavaExceptionReporter reporter = new TestPureJavaExceptionReporter();
+        reporter.createAndUploadReport(new RuntimeException());
+        String minidumpString = readFileToString(reporter.getMinidumpFile());
+
+        Assert.assertTrue(
+                minidumpString.contains(CrashKeys.getKey(CrashKeyIndex.LOADED_DYNAMIC_MODULE)));
+        Assert.assertFalse(
+                minidumpString.contains(CrashKeys.getKey(CrashKeyIndex.ACTIVE_DYNAMIC_MODULE)));
     }
 }

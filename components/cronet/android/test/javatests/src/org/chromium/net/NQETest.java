@@ -13,6 +13,7 @@ import static org.chromium.net.CronetTestRule.getTestStorage;
 
 import android.os.StrictMode;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.json.JSONObject;
 import org.junit.After;
@@ -22,7 +23,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Log;
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.MetricsUtils.HistogramDelta;
 import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
@@ -40,7 +41,7 @@ import java.util.concurrent.ThreadFactory;
 /**
  * Test Network Quality Estimator.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class NQETest {
     private static final String TAG = NQETest.class.getSimpleName();
 
@@ -163,10 +164,11 @@ public class NQETest {
     @SmallTest
     @Feature({"Cronet"})
     @OnlyRunNativeCronet
+    @DisabledTest(message = "crbug.com/796260")
     public void testQuicDisabled() throws Exception {
         ExperimentalCronetEngine.Builder cronetEngineBuilder =
                 new ExperimentalCronetEngine.Builder(getContext());
-        assert RttThroughputValues.INVALID_RTT_THROUGHPUT < 0;
+        assertTrue(RttThroughputValues.INVALID_RTT_THROUGHPUT < 0);
         Executor listenersExecutor = Executors.newSingleThreadExecutor(new ExecutorThreadFactory());
         TestNetworkQualityRttListener rttListener =
                 new TestNetworkQualityRttListener(listenersExecutor);
@@ -273,7 +275,7 @@ public class NQETest {
         for (int i = 0; i <= 1; ++i) {
             ExperimentalCronetEngine.Builder cronetEngineBuilder =
                     new ExperimentalCronetEngine.Builder(getContext());
-            assert RttThroughputValues.INVALID_RTT_THROUGHPUT < 0;
+            assertTrue(RttThroughputValues.INVALID_RTT_THROUGHPUT < 0);
             Executor listenersExecutor =
                     Executors.newSingleThreadExecutor(new ExecutorThreadFactory());
             TestNetworkQualityRttListener rttListener =
@@ -353,6 +355,7 @@ public class NQETest {
     @SmallTest
     @Feature({"Cronet"})
     @OnlyRunNativeCronet
+    @DisabledTest(message = "crbug.com/796260")
     public void testQuicDisabledWithParams() throws Exception {
         ExperimentalCronetEngine.Builder cronetEngineBuilder =
                 new ExperimentalCronetEngine.Builder(getContext());

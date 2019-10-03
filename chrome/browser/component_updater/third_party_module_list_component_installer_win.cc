@@ -4,52 +4,83 @@
 
 #include "chrome/browser/component_updater/third_party_module_list_component_installer_win.h"
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/files/file_enumerator.h"
-#include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/path_service.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "base/version.h"
-#include "chrome/browser/conflicts/module_database_win.h"
-#include "components/component_updater/component_updater_paths.h"
-#include "content/public/browser/browser_thread.h"
+#include "chrome/browser/win/conflicts/module_blacklist_cache_util.h"
+#include "chrome/browser/win/conflicts/module_database.h"
+#include "chrome/browser/win/conflicts/third_party_conflicts_manager.h"
 
-using component_updater::ComponentUpdateService;
+namespace component_updater {
 
 namespace {
 
 // The relative path of the expected module list file inside of an installation
 // of this component.
-const wchar_t kRelativeModuleListPath[] = L"module_list_proto";
+constexpr base::FilePath::CharType kRelativeModuleListPath[] =
+    FILE_PATH_LITERAL("module_list_proto");
+
+constexpr char kComponentId[] = "ehgidpndbllacpjalkiimkbadgjfnnmc";
+
+base::Version GetComponentVersion(
+    const ComponentUpdateService* component_update_service) {
+  DCHECK(component_update_service);
+
+  auto components = component_update_service->GetComponents();
+  auto iter = std::find_if(
+      components.begin(), components.end(),
+      [](const auto& component) { return component.id == kComponentId; });
+  DCHECK(iter != components.end());
+
+  return iter->version;
+}
+
+void OnModuleListComponentReady(const base::FilePath& module_list_path) {
+  DCHECK(ModuleDatabase::GetTaskRunner()->RunsTasksInCurrentSequence());
+
+  ThirdPartyConflictsManager* manager =
+      ModuleDatabase::GetInstance()->third_party_conflicts_manager();
+  if (!manager)
+    return;
+
+  manager->LoadModuleList(module_list_path);
+}
+
+void OnModuleListComponentRegistered(const base::Version& component_version) {
+  DCHECK(ModuleDatabase::GetTaskRunner()->RunsTasksInCurrentSequence());
+
+  // Notify the ThirdPartyConflictsManager.
+  ThirdPartyConflictsManager* manager =
+      ModuleDatabase::GetInstance()->third_party_conflicts_manager();
+  if (!manager)
+    return;
+
+  manager->OnModuleListComponentRegistered(kComponentId, component_version);
+}
 
 }  // namespace
 
-namespace component_updater {
-
 // The SHA256 of the SubjectPublicKeyInfo used to sign the component.
-// The component id is: EHGIDPNDBLLACPJALKIIMKBADGJFNNMC
-const uint8_t kPublicKeySHA256[32] = {
+constexpr uint8_t kThirdPartyModuleListPublicKeySHA256[32] = {
     0x47, 0x68, 0x3f, 0xd3, 0x1b, 0xb0, 0x2f, 0x90, 0xba, 0x88, 0xca,
     0x10, 0x36, 0x95, 0xdd, 0xc2, 0x29, 0xd1, 0x4f, 0x38, 0xf2, 0x9d,
     0x6c, 0x9c, 0x68, 0x6c, 0xa2, 0xa4, 0xa2, 0x8e, 0xa5, 0x5c};
 
 // The name of the component. This is used in the chrome://components page.
-const char kThirdPartyModuleListName[] = "Third Party Module List";
+constexpr char kThirdPartyModuleListName[] = "Third Party Module List";
 
 ThirdPartyModuleListComponentInstallerPolicy::
-    ThirdPartyModuleListComponentInstallerPolicy(ModuleListManager* manager)
-    : manager_(manager) {}
+    ThirdPartyModuleListComponentInstallerPolicy() = default;
 
 ThirdPartyModuleListComponentInstallerPolicy::
-    ~ThirdPartyModuleListComponentInstallerPolicy() {}
+    ~ThirdPartyModuleListComponentInstallerPolicy() = default;
 
 bool ThirdPartyModuleListComponentInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {
@@ -78,10 +109,12 @@ void ThirdPartyModuleListComponentInstallerPolicy::ComponentReady(
     const base::Version& version,
     const base::FilePath& install_dir,
     std::unique_ptr<base::DictionaryValue> manifest) {
-  // Forward the notification to the ModuleListManager on the current (UI)
-  // thread. The manager is responsible for the work of actually loading the
-  // module list, etc, on background threads.
-  manager_->LoadModuleList(version, GetModuleListPath(install_dir));
+  // Forward the notification to the ThirdPartyConflictsManager on the
+  // ModuleDatabase task runner. The manager is responsible for the work of
+  // actually loading the module list, etc, on background threads.
+  ModuleDatabase::GetTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&OnModuleListComponentReady,
+                                GetModuleListPath(install_dir)));
 }
 
 bool ThirdPartyModuleListComponentInstallerPolicy::VerifyInstallation(
@@ -95,14 +128,13 @@ bool ThirdPartyModuleListComponentInstallerPolicy::VerifyInstallation(
 
 base::FilePath
 ThirdPartyModuleListComponentInstallerPolicy::GetRelativeInstallDir() const {
-  // The same path is used for installation and for the registry key to keep
-  // things consistent.
-  return base::FilePath(ModuleListManager::kModuleListRegistryKeyPath);
+  return base::FilePath(kModuleListComponentRelativePath);
 }
 
 void ThirdPartyModuleListComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(std::begin(kPublicKeySHA256), std::end(kPublicKeySHA256));
+  hash->assign(std::begin(kThirdPartyModuleListPublicKeySHA256),
+               std::end(kThirdPartyModuleListPublicKeySHA256));
 }
 
 std::string ThirdPartyModuleListComponentInstallerPolicy::GetName() const {
@@ -125,18 +157,22 @@ base::FilePath ThirdPartyModuleListComponentInstallerPolicy::GetModuleListPath(
   return install_dir.Append(kRelativeModuleListPath);
 }
 
-void RegisterThirdPartyModuleListComponent(ComponentUpdateService* cus) {
+void RegisterThirdPartyModuleListComponent(
+    ComponentUpdateService* component_update_service) {
   DVLOG(1) << "Registering Third Party Module List component.";
 
-  // Get a handle to the manager. This will only exist if the corresponding
-  // feature is enabled.
-  ModuleDatabase* database = ModuleDatabase::GetInstance();
-  if (!database)
-    return;
-  ModuleListManager* manager = &database->module_list_manager();
   auto installer = base::MakeRefCounted<ComponentInstaller>(
-      std::make_unique<ThirdPartyModuleListComponentInstallerPolicy>(manager));
-  installer->Register(cus, base::OnceClosure());
+      std::make_unique<ThirdPartyModuleListComponentInstallerPolicy>());
+  installer->Register(
+      component_update_service,
+      base::BindOnce(
+          [](ComponentUpdateService* component_update_service) {
+            ModuleDatabase::GetTaskRunner()->PostTask(
+                FROM_HERE,
+                base::BindOnce(&OnModuleListComponentRegistered,
+                               GetComponentVersion(component_update_service)));
+          },
+          component_update_service));
 }
 
 }  // namespace component_updater

@@ -10,10 +10,13 @@
 #define CHROME_BROWSER_EXTENSIONS_API_BROWSING_DATA_BROWSING_DATA_API_H_
 
 #include <string>
+#include <vector>
 
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
+#include "components/signin/core/browser/account_reconcilor.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
 
 class PluginPrefs;
@@ -52,6 +55,9 @@ extern const char kUnprotectedWebKey[];
 // Errors!
 extern const char kBadDataTypeDetails[];
 extern const char kDeleteProhibitedError[];
+extern const char kNonFilterableError[];
+extern const char kIncompatibleFilterError[];
+extern const char kInvalidOriginError[];
 
 }  // namespace extension_browsing_data_api_constants
 
@@ -104,13 +110,19 @@ class BrowsingDataRemoverFunction
  protected:
   ~BrowsingDataRemoverFunction() override;
 
+ private:
   // Children should override this method to provide the proper removal mask
   // based on the API call they represent.
   // Returns whether or not removal mask retrieval was successful.
   // |removal_mask| is populated with the result, if successful.
   virtual bool GetRemovalMask(int* removal_mask) = 0;
 
- private:
+  // Returns true if the data removal is allowed to pause Sync. Returns true by
+  // default. Subclasses can override it to return false and prevent Sync from
+  // being paused. This is important when synced data is being removed, and
+  // pausing Sync would prevent the data from being deleted on the server.
+  virtual bool IsPauseSyncAllowed();
+
   // Updates the removal bitmask according to whether removing plugin data is
   // supported or not.
   void CheckRemovingPluginDataSupported(
@@ -122,15 +134,30 @@ class BrowsingDataRemoverFunction
   bool ParseOriginTypeMask(const base::DictionaryValue& options,
                            int* origin_type_mask);
 
+  // Parse the developer-provided list of origins into |result|.
+  // Returns true if parsing was successful.
+  bool ParseOrigins(const base::Value& list_value,
+                    std::vector<url::Origin>* result);
+
   // Called when we're ready to start removing data.
   void StartRemoving();
 
+  // Called when a task is finished. Will finish the extension call when
+  // |pending_tasks_| reaches zero.
+  void OnTaskFinished();
+
   base::Time remove_since_;
-  int removal_mask_;
-  int origin_type_mask_;
+  int removal_mask_ = 0;
+  int origin_type_mask_ = 0;
+  std::vector<url::Origin> origins_;
+  content::BrowsingDataFilterBuilder::Mode mode_ =
+      content::BrowsingDataFilterBuilder::Mode::BLACKLIST;
+  int pending_tasks_ = 0;
   ScopedObserver<content::BrowsingDataRemover,
                  content::BrowsingDataRemover::Observer>
       observer_;
+  std::unique_ptr<AccountReconcilor::ScopedSyncedDataDeletion>
+      synced_data_deletion_;
 };
 
 class BrowsingDataRemoveAppcacheFunction : public BrowsingDataRemoverFunction {
@@ -154,6 +181,7 @@ class BrowsingDataRemoveFunction : public BrowsingDataRemoverFunction {
 
   // BrowsingDataRemoverFunction:
   bool GetRemovalMask(int* removal_mask) override;
+  bool IsPauseSyncAllowed() override;
 };
 
 class BrowsingDataRemoveCacheFunction : public BrowsingDataRemoverFunction {

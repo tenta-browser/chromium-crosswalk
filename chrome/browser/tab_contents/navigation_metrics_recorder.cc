@@ -4,19 +4,20 @@
 
 #include "chrome/browser/tab_contents/navigation_metrics_recorder.h"
 
-#include "base/feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_metrics.h"
 #include "components/navigation_metrics/navigation_metrics.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
-#include "content/public/common/content_features.h"
-#include "google_apis/gaia/gaia_urls.h"
+#include "content/public/browser/site_instance.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -24,13 +25,23 @@
 #include "base/win/windows_version.h"
 #endif
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(NavigationMetricsRecorder);
-
 NavigationMetricsRecorder::NavigationMetricsRecorder(
     content::WebContents* web_contents)
-    : content::WebContentsObserver(web_contents) {}
+    : content::WebContentsObserver(web_contents) {
+#if defined(OS_ANDROID)
+  // The site isolation synthetic field trial is only needed on Android, as on
+  // desktop it would be unnecessarily set for all users.
+  is_synthetic_isolation_trial_enabled_ = true;
+#else
+  is_synthetic_isolation_trial_enabled_ = false;
+#endif
+}
 
 NavigationMetricsRecorder::~NavigationMetricsRecorder() {
+}
+
+void NavigationMetricsRecorder::EnableSiteIsolationSyntheticTrialForTesting() {
+  is_synthetic_isolation_trial_enabled_ = true;
 }
 
 void NavigationMetricsRecorder::DidFinishNavigation(
@@ -39,14 +50,24 @@ void NavigationMetricsRecorder::DidFinishNavigation(
   if (!navigation_handle->HasCommitted())
     return;
 
-  // This needs to go before the IsInMainFrame() check, as we want to register
-  // committed navigations to the sign-in URL from both main frames and
-  // subframes.
-  //
-  // TODO(alexmos): See if there's a better place for this check.
-  if (url::Origin::Create(navigation_handle->GetURL()) ==
-      url::Origin::Create(GaiaUrls::GetInstance()->gaia_url())) {
-    RegisterSyntheticSigninIsolationTrial();
+  // See if the navigation committed for a site that required a dedicated
+  // process and register a synthetic field trial if so.  Note that this needs
+  // to go before the IsInMainFrame() check, as we want to register navigations
+  // to isolated sites from both main frames and subframes.
+  if (is_synthetic_isolation_trial_enabled_ &&
+      navigation_handle->GetRenderFrameHost()
+          ->GetSiteInstance()
+          ->RequiresDedicatedProcess()) {
+    ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+        "SiteIsolationActive", "Enabled");
+  }
+
+  // Also register a synthetic field trial when we encounter a navigation to an
+  // OOPIF.
+  if (is_synthetic_isolation_trial_enabled_ &&
+      navigation_handle->GetRenderFrameHost()->IsCrossProcessSubframe()) {
+    ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+        "OutOfProcessIframesActive", "Enabled");
   }
 
   if (!navigation_handle->IsInMainFrame())
@@ -56,37 +77,11 @@ void NavigationMetricsRecorder::DidFinishNavigation(
   content::NavigationEntry* last_committed_entry =
       web_contents()->GetController().GetLastCommittedEntry();
 
+  Profile* profile = Profile::FromBrowserContext(context);
   navigation_metrics::RecordMainFrameNavigation(
       last_committed_entry->GetVirtualURL(),
-      navigation_handle->IsSameDocument(), context->IsOffTheRecord());
+      navigation_handle->IsSameDocument(), profile->IsOffTheRecord(),
+      ProfileMetrics::GetBrowserProfileType(profile));
 }
 
-void NavigationMetricsRecorder::RegisterSyntheticSigninIsolationTrial() {
-  // For navigations to the sign-in URL, register a synthetic field trial for
-  // this client. This will indicate whether the sign-in process isolation is
-  // active, and whether or not it was activated manually via a command-line
-  // flag.
-  //
-  // TODO(alexmos): Remove this after the field trial for sign-in isolation.
-  if (base::FeatureList::IsEnabled(features::kSignInProcessIsolation)) {
-    if (base::FeatureList::GetInstance()->IsFeatureOverriddenFromCommandLine(
-            features::kSignInProcessIsolation.name,
-            base::FeatureList::OVERRIDE_ENABLE_FEATURE)) {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SignInProcessIsolationActive", "ForceEnabled");
-    } else {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SignInProcessIsolationActive", "Enabled");
-    }
-  } else {
-    if (base::FeatureList::GetInstance()->IsFeatureOverriddenFromCommandLine(
-            ::features::kSignInProcessIsolation.name,
-            base::FeatureList::OVERRIDE_DISABLE_FEATURE)) {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SignInProcessIsolationActive", "ForceDisabled");
-    } else {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SignInProcessIsolationActive", "Disabled");
-    }
-  }
-}
+WEB_CONTENTS_USER_DATA_KEY_IMPL(NavigationMetricsRecorder)

@@ -18,13 +18,17 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "chrome/test/chromedriver/net/url_request_context_getter.h"
+#include "mojo/core/embedder/embedder.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_source.h"
 #include "net/server/http_server.h"
 #include "net/server/http_server_request_info.h"
 #include "net/socket/tcp_server_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/transitional_url_loader_factory_owner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -39,12 +43,15 @@ class FetchUrlTest : public testing::Test,
             base::test::ScopedTaskEnvironment::MainThreadType::IO) {
     base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
     CHECK(io_thread_.StartWithOptions(options));
-    context_getter_ = new URLRequestContextGetter(io_thread_.task_runner());
+
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
     io_thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&FetchUrlTest::InitOnIO,
                                   base::Unretained(this), &event));
+
+    mojo::core::Init();
+
     event.Wait();
   }
 
@@ -58,6 +65,14 @@ class FetchUrlTest : public testing::Test,
   }
 
   void InitOnIO(base::WaitableEvent* event) {
+    scoped_refptr<URLRequestContextGetter> context_getter =
+        new URLRequestContextGetter(io_thread_.task_runner());
+    url_loader_factory_owner_ =
+        std::make_unique<network::TransitionalURLLoaderFactoryOwner>(
+            context_getter);
+    url_loader_factory_ =
+        url_loader_factory_owner_->GetURLLoaderFactory().get();
+
     std::unique_ptr<net::ServerSocket> server_socket(
         new net::TCPServerSocket(NULL, net::NetLogSource()));
     server_socket->ListenWithAddressAndPort("127.0.0.1", 0, 1);
@@ -69,6 +84,7 @@ class FetchUrlTest : public testing::Test,
   }
 
   void DestroyServerOnIO(base::WaitableEvent* event) {
+    url_loader_factory_owner_.reset();
     server_.reset(NULL);
     event->Signal();
   }
@@ -80,10 +96,11 @@ class FetchUrlTest : public testing::Test,
                      const net::HttpServerRequestInfo& info) override {
     switch (response_) {
       case kSendHello:
-        server_->Send200(connection_id, "hello", "text/plain");
+        server_->Send200(connection_id, "hello", "text/plain",
+                         TRAFFIC_ANNOTATION_FOR_TESTS);
         break;
       case kSend404:
-        server_->Send404(connection_id);
+        server_->Send404(connection_id, TRAFFIC_ANNOTATION_FOR_TESTS);
         break;
       case kClose:
         server_->Close(connection_id);
@@ -93,10 +110,14 @@ class FetchUrlTest : public testing::Test,
     }
   }
 
+  bool DoFetchURL(const std::string& server_url, std::string* response) {
+    SetIOCapableTaskRunnerForTest(io_thread_.task_runner());
+    return FetchUrl(server_url, url_loader_factory_, response);
+  }
+
   void OnWebSocketRequest(int connection_id,
                           const net::HttpServerRequestInfo& info) override {}
-  void OnWebSocketMessage(int connection_id, const std::string& data) override {
-  }
+  void OnWebSocketMessage(int connection_id, std::string data) override {}
   void OnClose(int connection_id) override {}
 
  protected:
@@ -109,36 +130,45 @@ class FetchUrlTest : public testing::Test,
   base::Thread io_thread_;
   ServerResponse response_;
   std::unique_ptr<net::HttpServer> server_;
-  scoped_refptr<URLRequestContextGetter> context_getter_;
+  std::unique_ptr<network::TransitionalURLLoaderFactoryOwner>
+      url_loader_factory_owner_;
+  network::mojom::URLLoaderFactory* url_loader_factory_;
   std::string server_url_;
   base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 }  // namespace
 
+#if !defined(THREAD_SANITIZER)
 TEST_F(FetchUrlTest, Http200) {
   std::string response("stuff");
-  ASSERT_TRUE(FetchUrl(server_url_, context_getter_.get(), &response));
+  ASSERT_TRUE(DoFetchURL(server_url_, &response));
   ASSERT_STREQ("hello", response.c_str());
 }
+#endif
 
+#if !defined(THREAD_SANITIZER)
 TEST_F(FetchUrlTest, HttpNon200) {
   response_ = kSend404;
   std::string response("stuff");
-  ASSERT_FALSE(FetchUrl(server_url_, context_getter_.get(), &response));
+  ASSERT_FALSE(DoFetchURL(server_url_, &response));
   ASSERT_STREQ("stuff", response.c_str());
 }
+#endif
 
+#if !defined(THREAD_SANITIZER)
 TEST_F(FetchUrlTest, ConnectionClose) {
   response_ = kClose;
   std::string response("stuff");
-  ASSERT_FALSE(FetchUrl(server_url_, context_getter_.get(), &response));
+  ASSERT_FALSE(DoFetchURL(server_url_, &response));
   ASSERT_STREQ("stuff", response.c_str());
 }
+#endif
 
+#if !defined(THREAD_SANITIZER)
 TEST_F(FetchUrlTest, NoServer) {
   std::string response("stuff");
-  ASSERT_FALSE(
-      FetchUrl("http://localhost:33333", context_getter_.get(), &response));
+  ASSERT_FALSE(DoFetchURL("http://localhost:33333", &response));
   ASSERT_STREQ("stuff", response.c_str());
 }
+#endif

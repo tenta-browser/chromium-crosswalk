@@ -6,11 +6,10 @@
 
 #include <vector>
 
-#include "ash/resources/grit/ash_resources.h"
+#include "ash/public/cpp/notification_utils.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/system/system_notifier.h"
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -18,17 +17,16 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 
 namespace ash {
 
@@ -42,10 +40,12 @@ const int kLowBatteryLevel = 15;
 constexpr base::TimeDelta kNotificationInterval =
     base::TimeDelta::FromSeconds(60);
 
+const char kNotifierStylusBattery[] = "ash.stylus-battery";
+
 // TODO(sammiequon): Add a notification url to chrome://settings/stylus once
 // battery related information is shown there.
 const char kNotificationOriginUrl[] = "chrome://peripheral-battery";
-const char kNotifierId[] = "power.peripheral-battery";
+const char kNotifierNonStylusBattery[] = "power.peripheral-battery";
 
 // HID device's battery sysfs entry path looks like
 // /sys/class/power_supply/hid-{AA:BB:CC:DD:EE:FF|AAAA:BBBB:CCCC.DDDD}-battery.
@@ -107,7 +107,7 @@ std::string ExtractBluetoothAddressFromPath(const std::string& path) {
 bool IsStylusDevice(const std::string& path, const std::string& model_name) {
   std::string identifier = ExtractIdentifier(path);
   for (const ui::TouchscreenDevice& device :
-       ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices()) {
+       ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices()) {
     if (device.has_stylus &&
         (device.name == model_name ||
          device.name.find(model_name) != std::string::npos) &&
@@ -125,7 +125,6 @@ struct NotificationParams {
   std::string id;
   base::string16 title;
   base::string16 message;
-  int image_id;
   std::string notifier_name;
   GURL url;
   const gfx::VectorIcon* icon;
@@ -140,8 +139,7 @@ NotificationParams GetNonStylusNotificationParams(const std::string& address,
       base::ASCIIToUTF16(name),
       l10n_util::GetStringFUTF16Int(
           IDS_ASH_LOW_PERIPHERAL_BATTERY_NOTIFICATION_TEXT, battery_level),
-      IDR_AURA_NOTIFICATION_PERIPHERAL_BATTERY_LOW,
-      kNotifierId,
+      kNotifierNonStylusBattery,
       GURL(kNotificationOriginUrl),
       is_bluetooth ? &kNotificationBluetoothBatteryWarningIcon
                    : &kNotificationBatteryCriticalIcon};
@@ -152,8 +150,7 @@ NotificationParams GetStylusNotificationParams() {
       PeripheralBatteryNotifier::kStylusNotificationId,
       l10n_util::GetStringUTF16(IDS_ASH_LOW_STYLUS_BATTERY_NOTIFICATION_TITLE),
       l10n_util::GetStringUTF16(IDS_ASH_LOW_STYLUS_BATTERY_NOTIFICATION_BODY),
-      IDR_AURA_NOTIFICATION_STYLUS_BATTERY_LOW,
-      system_notifier::kNotifierStylusBattery,
+      kNotifierStylusBattery,
       GURL(),
       &kNotificationStylusBatteryWarningIcon};
 }
@@ -166,18 +163,16 @@ const char PeripheralBatteryNotifier::kStylusNotificationId[] =
 PeripheralBatteryNotifier::PeripheralBatteryNotifier()
     : weakptr_factory_(
           new base::WeakPtrFactory<PeripheralBatteryNotifier>(this)) {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
   device::BluetoothAdapterFactory::GetAdapter(
-      base::Bind(&PeripheralBatteryNotifier::InitializeOnBluetoothReady,
-                 weakptr_factory_->GetWeakPtr()));
+      base::BindOnce(&PeripheralBatteryNotifier::InitializeOnBluetoothReady,
+                     weakptr_factory_->GetWeakPtr()));
 }
 
 PeripheralBatteryNotifier::~PeripheralBatteryNotifier() {
   if (bluetooth_adapter_.get())
     bluetooth_adapter_->RemoveObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 void PeripheralBatteryNotifier::PeripheralBatteryStatusReceived(
@@ -281,12 +276,10 @@ bool PeripheralBatteryNotifier::PostNotification(const std::string& path,
           : GetNonStylusNotificationParams(path, battery.name, battery.level,
                                            !battery.bluetooth_address.empty());
 
-  auto notification = system_notifier::CreateSystemNotification(
+  auto notification = ash::CreateSystemNotification(
       message_center::NOTIFICATION_TYPE_SIMPLE, params.id, params.title,
-      params.message,
-      ui::ResourceBundle::GetSharedInstance().GetImageNamed(params.image_id),
-      base::string16(), params.url,
-      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
+      params.message, base::string16(), params.url,
+      message_center::NotifierId(message_center::NotifierType::SYSTEM_COMPONENT,
                                  params.notifier_name),
       message_center::RichNotificationData(), nullptr, *params.icon,
       message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);

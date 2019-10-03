@@ -7,14 +7,16 @@
 #import "ios/web_view/public/cwv_web_view.h"
 #import "ios/web_view/public/cwv_web_view_configuration.h"
 
-#import "ios/testing/wait_util.h"
+#import "base/test/ios/wait_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForJSCompletionTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForPageLoadTimeout;
+using base::test::ios::kWaitForJSCompletionTimeout;
+using base::test::ios::kWaitForUIElementTimeout;
 
 namespace ios_web_view {
 namespace test {
@@ -32,7 +34,6 @@ bool LoadUrl(CWVWebView* web_view, NSURL* url) {
 }
 
 bool TapWebViewElementWithId(CWVWebView* web_view, NSString* element_id) {
-  // TODO(crbug.com/725524): Share this script with Chrome.
   NSString* script = [NSString
       stringWithFormat:@"(function() {"
                         "  var element = document.getElementById('%@');"
@@ -69,7 +70,7 @@ id EvaluateJavaScript(CWVWebView* web_view, NSString* script, NSError** error) {
 
 bool WaitForWebViewContainingTextOrTimeout(CWVWebView* web_view,
                                            NSString* text) {
-  return WaitUntilConditionOrTimeout(testing::kWaitForUIElementTimeout, ^{
+  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
     id body = ios_web_view::test::EvaluateJavaScript(
         web_view, @"document.body ? document.body.textContent : null", nil);
     return [body isKindOfClass:[NSString class]] && [body containsString:text];
@@ -77,9 +78,22 @@ bool WaitForWebViewContainingTextOrTimeout(CWVWebView* web_view,
 }
 
 bool WaitForWebViewLoadCompletionOrTimeout(CWVWebView* web_view) {
-  return WaitUntilConditionOrTimeout(testing::kWaitForPageLoadTimeout, ^{
+  return WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
     return !web_view.loading;
   });
+}
+
+void CopyWebViewState(CWVWebView* source_web_view,
+                      CWVWebView* destination_web_view) {
+  NSKeyedArchiver* archiver =
+      [[NSKeyedArchiver alloc] initRequiringSecureCoding:NO];
+  [source_web_view encodeRestorableStateWithCoder:archiver];
+
+  NSKeyedUnarchiver* unarchiver =
+      [[NSKeyedUnarchiver alloc] initForReadingFromData:[archiver encodedData]
+                                                  error:nil];
+  unarchiver.requiresSecureCoding = NO;
+  [destination_web_view decodeRestorableStateWithCoder:unarchiver];
 }
 
 }  // namespace test

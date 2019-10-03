@@ -4,18 +4,21 @@
 
 #include "chrome/browser/chromeos/login/app_launch_signin_screen.h"
 
+#include <memory>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
 #include "chrome/browser/chromeos/login/screens/user_selection_screen.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/components/proximity_auth/screenlock_bridge.h"
 #include "chromeos/login/auth/user_context.h"
-#include "components/proximity_auth/screenlock_bridge.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -67,15 +70,7 @@ user_manager::UserManager* AppLaunchSigninScreen::GetUserManager() {
                             : user_manager::UserManager::Get();
 }
 
-void AppLaunchSigninScreen::CancelPasswordChangedFlow() {
-  NOTREACHED();
-}
-
 void AppLaunchSigninScreen::CancelUserAdding() {
-  NOTREACHED();
-}
-
-void AppLaunchSigninScreen::CompleteLogin(const UserContext& user_context) {
   NOTREACHED();
 }
 
@@ -84,29 +79,14 @@ void AppLaunchSigninScreen::Login(const UserContext& user_context,
   // Note: CreateAuthenticator doesn't necessarily create
   // a new Authenticator object, and could reuse an existing one.
   authenticator_ = UserSessionManager::GetInstance()->CreateAuthenticator(this);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&Authenticator::AuthenticateToUnlock, authenticator_.get(),
-                     user_context));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                           base::BindOnce(&Authenticator::AuthenticateToUnlock,
+                                          authenticator_.get(), user_context));
 }
-
-void AppLaunchSigninScreen::MigrateUserData(const std::string& old_password) {
-  NOTREACHED();
-}
-
-void AppLaunchSigninScreen::LoadWallpaper(const AccountId& account_id) {}
-
-void AppLaunchSigninScreen::LoadSigninWallpaper() {}
 
 void AppLaunchSigninScreen::OnSigninScreenReady() {}
 
-void AppLaunchSigninScreen::OnGaiaScreenReady() {}
-
 void AppLaunchSigninScreen::RemoveUser(const AccountId& account_id) {
-  NOTREACHED();
-}
-
-void AppLaunchSigninScreen::ResyncUserData() {
   NOTREACHED();
 }
 
@@ -123,6 +103,10 @@ void AppLaunchSigninScreen::ShowKioskEnableScreen() {
 }
 
 void AppLaunchSigninScreen::ShowKioskAutolaunchScreen() {
+  NOTREACHED();
+}
+
+void AppLaunchSigninScreen::ShowUpdateRequiredScreen() {
   NOTREACHED();
 }
 
@@ -171,16 +155,6 @@ bool AppLaunchSigninScreen::IsUserSigninCompleted() const {
   return false;
 }
 
-void AppLaunchSigninScreen::SetDisplayEmail(const std::string& email) {
-  return;
-}
-
-void AppLaunchSigninScreen::SetDisplayAndGivenName(
-    const std::string& display_name,
-    const std::string& given_name) {
-  NOTREACHED();
-}
-
 void AppLaunchSigninScreen::Signout() {
   NOTREACHED();
 }
@@ -207,7 +181,7 @@ void AppLaunchSigninScreen::HandleGetUsers() {
         UserSelectionScreen::ShouldForceOnlineSignIn(*it)
             ? proximity_auth::mojom::AuthType::ONLINE_SIGN_IN
             : proximity_auth::mojom::AuthType::OFFLINE_PASSWORD;
-    auto user_dict = base::MakeUnique<base::DictionaryValue>();
+    auto user_dict = std::make_unique<base::DictionaryValue>();
     UserSelectionScreen::FillUserDictionary(
         *it, true,               /* is_owner */
         false,                   /* is_signin_to_add */
@@ -220,10 +194,5 @@ void AppLaunchSigninScreen::HandleGetUsers() {
 }
 
 void AppLaunchSigninScreen::CheckUserStatus(const AccountId& account_id) {}
-
-bool AppLaunchSigninScreen::IsUserWhitelisted(const AccountId& account_id) {
-  NOTREACHED();
-  return true;
-}
 
 }  // namespace chromeos

@@ -11,15 +11,17 @@
 #include <utility>
 
 #include "base/json/json_string_value_serializer.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/no_destructor.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/process/process_handle.h"
+#include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
@@ -38,6 +40,8 @@ std::string HistogramTypeToString(HistogramType type) {
       return "CUSTOM_HISTOGRAM";
     case SPARSE_HISTOGRAM:
       return "SPARSE_HISTOGRAM";
+    case DUMMY_HISTOGRAM:
+      return "DUMMY_HISTOGRAM";
   }
   NOTREACHED();
   return "UNKNOWN";
@@ -85,8 +89,40 @@ void HistogramBase::ClearFlags(int32_t flags) {
   subtle::NoBarrier_Store(&flags_, old_flags & ~flags);
 }
 
-void HistogramBase::AddTime(const TimeDelta& time) {
-  Add(static_cast<Sample>(time.InMilliseconds()));
+void HistogramBase::AddScaled(Sample value, int count, int scale) {
+  DCHECK_LT(0, scale);
+
+  // Convert raw count and probabilistically round up/down if the remainder
+  // is more than a random number [0, scale). This gives a more accurate
+  // count when there are a large number of records. RandInt is "inclusive",
+  // hence the -1 for the max value.
+  int64_t count_scaled = count / scale;
+  if (count - (count_scaled * scale) > base::RandInt(0, scale - 1))
+    count_scaled += 1;
+  if (count_scaled == 0)
+    return;
+
+  AddCount(value, count_scaled);
+}
+
+void HistogramBase::AddKilo(Sample value, int count) {
+  AddScaled(value, count, 1000);
+}
+
+void HistogramBase::AddKiB(Sample value, int count) {
+  AddScaled(value, count, 1024);
+}
+
+void HistogramBase::AddTimeMillisecondsGranularity(const TimeDelta& time) {
+  Add(saturated_cast<Sample>(time.InMilliseconds()));
+}
+
+void HistogramBase::AddTimeMicrosecondsGranularity(const TimeDelta& time) {
+  // Intentionally drop high-resolution reports on clients with low-resolution
+  // clocks. High-resolution metrics cannot make use of low-resolution data and
+  // reporting it merely adds noise to the metric. https://crbug.com/807615#c16
+  if (TimeTicks::IsHighResolution())
+    Add(saturated_cast<Sample>(time.InMicroseconds()));
 }
 
 void HistogramBase::AddBoolean(bool value) {
@@ -103,15 +139,12 @@ uint32_t HistogramBase::FindCorruption(const HistogramSamples& samples) const {
   return NO_INCONSISTENCIES;
 }
 
-bool HistogramBase::ValidateHistogramContents(bool crash_if_invalid,
-                                              int corrupted_count) const {
-  return true;
-}
+void HistogramBase::ValidateHistogramContents() const {}
 
 void HistogramBase::WriteJSON(std::string* output,
                               JSONVerbosityLevel verbosity_level) const {
-  Count count;
-  int64_t sum;
+  Count count = 0;
+  int64_t sum = 0;
   std::unique_ptr<ListValue> buckets(new ListValue());
   GetCountAndBucketData(&count, &sum, buckets.get());
   std::unique_ptr<DictionaryValue> parameters(new DictionaryValue());
@@ -119,14 +152,14 @@ void HistogramBase::WriteJSON(std::string* output,
 
   JSONStringValueSerializer serializer(output);
   DictionaryValue root;
-  root.SetString("name", histogram_name());
-  root.SetInteger("count", count);
-  root.SetDouble("sum", static_cast<double>(sum));
-  root.SetInteger("flags", flags());
+  root.SetStringKey("name", histogram_name());
+  root.SetIntKey("count", count);
+  root.SetDoubleKey("sum", static_cast<double>(sum));
+  root.SetIntKey("flags", flags());
   root.Set("params", std::move(parameters));
   if (verbosity_level != JSON_VERBOSITY_LEVEL_OMIT_BUCKETS)
     root.Set("buckets", std::move(buckets));
-  root.SetInteger("pid", GetUniqueIdForProcess());
+  root.SetIntKey("pid", GetUniqueIdForProcess());
   serializer.Serialize(root);
 }
 
@@ -171,11 +204,11 @@ char const* HistogramBase::GetPermanentName(const std::string& name) {
   // A set of histogram names that provides the "permanent" lifetime required
   // by histogram objects for those strings that are not already code constants
   // or held in persistent memory.
-  static LazyInstance<std::set<std::string>>::Leaky permanent_names;
-  static LazyInstance<Lock>::Leaky permanent_names_lock;
+  static base::NoDestructor<std::set<std::string>> permanent_names;
+  static base::NoDestructor<Lock> permanent_names_lock;
 
-  AutoLock lock(permanent_names_lock.Get());
-  auto result = permanent_names.Get().insert(name);
+  AutoLock lock(*permanent_names_lock);
+  auto result = permanent_names->insert(name);
   return result.first->c_str();
 }
 

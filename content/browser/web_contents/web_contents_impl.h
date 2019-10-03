@@ -16,12 +16,17 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/process/process.h"
+#include "base/scoped_observer.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "components/download/public/common/download_url_parameters.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/interstitial_page_impl.h"
@@ -31,56 +36,71 @@
 #include "content/browser/frame_host/render_frame_host_delegate.h"
 #include "content/browser/frame_host/render_frame_host_manager.h"
 #include "content/browser/media/audio_stream_monitor.h"
+#include "content/browser/media/forwarding_audio_stream_factory.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/wake_lock/wake_lock_context_host.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/color_chooser.h"
-#include "content/public/browser/download_url_parameters.h"
+#include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_binding_set.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/page_importance_signals.h"
-#include "content/public/common/renderer_preferences.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/common/three_d_api_types.h"
-#include "device/geolocation/public/interfaces/geolocation_context.mojom.h"
 #include "net/base/load_states.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/http/http_response_headers.h"
-#include "ppapi/features/features.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
-#include "third_party/WebKit/public/platform/WebDragOperation.h"
-#include "ui/accessibility/ax_modes.h"
+#include "third_party/blink/public/common/frame/blocked_navigation_types.h"
+#include "third_party/blink/public/mojom/choosers/color_chooser.mojom.h"
+#include "third_party/blink/public/mojom/page/display_cutout.mojom.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
+#include "third_party/blink/public/platform/web_drag_operation.h"
+#include "third_party/blink/public/platform/web_text_autosizer_page_info.h"
+#include "ui/accessibility/ax_mode.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/native_theme/native_theme.h"
+#include "ui/native_theme/native_theme_observer.h"
 
 #if defined(OS_ANDROID)
 #include "content/browser/android/nfc_host.h"
 #include "content/public/browser/android/child_process_importance.h"
 #endif
 
-struct ViewHostMsg_DateTimeDialogValue_Params;
+namespace base {
+class FilePath;
+}
 
 namespace service_manager {
 class InterfaceProvider;
 }
 
 namespace content {
+enum class PictureInPictureResult;
 class BrowserPluginEmbedder;
 class BrowserPluginGuest;
 class DateTimeChooserAndroid;
+class DisplayCutoutHostImpl;
 class FindRequestManager;
 class InterstitialPageImpl;
 class JavaScriptDialogManager;
+class JavaScriptDialogNavigationDeferrer;
 class LoaderIOThreadNotifier;
 class ManifestManagerHost;
 class MediaWebContentsObserver;
 class PluginContentOriginWhitelist;
+class Portal;
+class RenderFrameHost;
 class RenderViewHost;
 class RenderViewHostDelegateView;
 class RenderWidgetHostImpl;
@@ -88,6 +108,9 @@ class RenderWidgetHostInputEventRouter;
 class SavePackage;
 class ScreenOrientationProvider;
 class SiteInstance;
+class BeforeUnloadBlockingDelegate;  // content_browser_test_utils_internal.h
+class
+    TestWCDelegateForDialogsAndFullscreen;  // web_contents_impl_browsertest.cc
 class TestWebContents;
 class TextInputManager;
 class WebContentsAudioMuter;
@@ -96,11 +119,9 @@ class WebContentsImpl;
 class WebContentsView;
 class WebContentsViewDelegate;
 struct AXEventNotificationDetails;
-struct ColorSuggestion;
 struct FaviconURL;
 struct LoadNotificationDetails;
 struct MHTMLGenerationParams;
-struct ResourceRequestDetails;
 
 namespace mojom {
 class CreateNewWindowParams;
@@ -128,15 +149,17 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                        public RenderViewHostDelegate,
                                        public RenderWidgetHostDelegate,
                                        public RenderFrameHostManager::Delegate,
+                                       public blink::mojom::ColorChooserFactory,
                                        public NotificationObserver,
                                        public NavigationControllerDelegate,
-                                       public NavigatorDelegate {
+                                       public NavigatorDelegate,
+                                       public ui::NativeThemeObserver {
  public:
   class FriendWrapper;
 
   ~WebContentsImpl() override;
 
-  static WebContentsImpl* CreateWithOpener(
+  static std::unique_ptr<WebContentsImpl> CreateWithOpener(
       const WebContents::CreateParams& params,
       RenderFrameHostImpl* opener_rfh);
 
@@ -170,23 +193,18 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // TODO(creis): Remove this now that we can get to it via FrameTreeNode.
   RenderFrameHostManager* GetRenderManagerForTesting();
 
-  // Returns the outer WebContents of this WebContents if any.
-  // Note that without --site-per-process, this will return the WebContents
-  // of the BrowserPluginEmbedder, if |this| is a guest.
-  WebContentsImpl* GetOuterWebContents();
-
-  // Returns guest browser plugin object, or NULL if this WebContents is not a
-  // guest.
-  BrowserPluginGuest* GetBrowserPluginGuest() const;
-
   // Sets a BrowserPluginGuest object for this WebContents. If this WebContents
   // has a BrowserPluginGuest then that implies that it is being hosted by
   // a BrowserPlugin object in an embedder renderer process.
-  void SetBrowserPluginGuest(BrowserPluginGuest* guest);
+  void SetBrowserPluginGuest(std::unique_ptr<BrowserPluginGuest> guest);
 
   // Returns embedder browser plugin object, or NULL if this WebContents is not
   // an embedder.
   BrowserPluginEmbedder* GetBrowserPluginEmbedder() const;
+
+  // Returns guest browser plugin object, or nullptr if this WebContents is not
+  // for guest.
+  BrowserPluginGuest* GetBrowserPluginGuest() const;
 
   // Creates a BrowserPluginEmbedder object for this WebContents if one doesn't
   // already exist.
@@ -206,14 +224,13 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                          RenderWidgetHost* source_rwh);
 
   // Notification that the RenderViewHost's load state changed.
-  void LoadStateChanged(const GURL& url,
+  void LoadStateChanged(const std::string& host,
                         const net::LoadStateWithParam& load_state,
                         uint64_t upload_position,
                         uint64_t upload_size);
 
-  // A response has been received for a resource request.
-  void DidGetResourceResponseStart(
-      const ResourceRequestDetails& details);
+  // Set the visibility to |visibility| and notifies observers.
+  void SetVisibility(Visibility visibility);
 
   // Notify observers that the web contents has been focused.
   void NotifyWebContentsFocused(RenderWidgetHost* render_widget_host);
@@ -229,30 +246,20 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
     return screen_orientation_provider_.get();
   }
 
-  bool should_normally_be_visible() { return should_normally_be_visible_; }
-
-  // Broadcasts the mode change to all frames.
-  void SetAccessibilityMode(ui::AXMode mode);
-
   // Adds the given accessibility mode to the current accessibility mode
   // bitmap.
   void AddAccessibilityMode(ui::AXMode mode);
 
 #if !defined(OS_ANDROID)
-  // Set a temporary zoom level for the frames associated with this WebContents.
-  // If |is_temporary| is true, we are setting a new temporary zoom level,
-  // otherwise we are clearing a previously set temporary zoom level.
-  void SetTemporaryZoomLevel(double level, bool temporary_zoom_enabled);
-
   // Sets the zoom level for frames associated with this WebContents.
-  void UpdateZoom(double level);
+  void UpdateZoom();
 
   // Sets the zoom level for frames associated with this WebContents if it
   // matches |host| and (if non-empty) |scheme|. Matching is done on the
   // last committed entry.
   void UpdateZoomIfNecessary(const std::string& scheme,
-                             const std::string& host,
-                             double level);
+                             const std::string& host);
+
 #endif  // !defined(OS_ANDROID)
 
   // Adds a new binding set to the WebContents. Returns a closure which may be
@@ -275,102 +282,117 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // frame. Otherwise, returns this WebContents.
   WebContentsImpl* GetFocusedWebContents();
 
-  // TODO(paulmeyer): Once GuestViews are no longer implemented as
-  // BrowserPluginGuests, frame traversal across WebContents should be moved to
-  // be handled by FrameTreeNode, and |GetInnerWebContents| and
-  // |GetWebContentsAndAllInner| can be removed.
-
-  // Returns a vector to the inner WebContents within this WebContents.
-  std::vector<WebContentsImpl*> GetInnerWebContents();
-
   // Returns a vector containing this WebContents and all inner WebContents
   // within it (recursively).
   std::vector<WebContentsImpl*> GetWebContentsAndAllInner();
 
   void NotifyManifestUrlChanged(const base::Optional<GURL>& manifest_url);
 
+  ManifestManagerHost* GetManifestManagerHost() const {
+    return manifest_manager_host_.get();
+  }
+
 #if defined(OS_ANDROID)
-  std::set<RenderWidgetHostImpl*> GetAllRenderWidgetHosts();
-  void SetImportance(ChildProcessImportance importance);
+  void SetMainFrameImportance(ChildProcessImportance importance);
 #endif
 
   // WebContents ------------------------------------------------------
   WebContentsDelegate* GetDelegate() override;
   void SetDelegate(WebContentsDelegate* delegate) override;
   NavigationControllerImpl& GetController() override;
-  const NavigationControllerImpl& GetController() const override;
-  BrowserContext* GetBrowserContext() const override;
-  const GURL& GetURL() const override;
-  const GURL& GetVisibleURL() const override;
-  const GURL& GetLastCommittedURL() const override;
-  RenderFrameHostImpl* GetMainFrame() const override;
+  BrowserContext* GetBrowserContext() override;
+  const GURL& GetURL() override;
+  const GURL& GetVisibleURL() override;
+  const GURL& GetLastCommittedURL() override;
+  RenderFrameHostImpl* GetMainFrame() override;
   RenderFrameHostImpl* GetFocusedFrame() override;
   RenderFrameHostImpl* FindFrameByFrameTreeNodeId(int frame_tree_node_id,
                                                   int process_id) override;
   RenderFrameHostImpl* UnsafeFindFrameByFrameTreeNodeId(
       int frame_tree_node_id) override;
   void ForEachFrame(
-      const base::Callback<void(RenderFrameHost*)>& on_frame) override;
+      const base::RepeatingCallback<void(RenderFrameHost*)>& on_frame) override;
   std::vector<RenderFrameHost*> GetAllFrames() override;
   int SendToAllFrames(IPC::Message* message) override;
-  RenderViewHostImpl* GetRenderViewHost() const override;
-  RenderWidgetHostView* GetRenderWidgetHostView() const override;
+  RenderViewHostImpl* GetRenderViewHost() override;
+  RenderWidgetHostView* GetRenderWidgetHostView() override;
   RenderWidgetHostView* GetTopLevelRenderWidgetHostView() override;
   void ClosePage() override;
-  RenderWidgetHostView* GetFullscreenRenderWidgetHostView() const override;
-  SkColor GetThemeColor() const override;
-  WebUI* GetWebUI() const override;
-  WebUI* GetCommittedWebUI() const override;
-  void SetUserAgentOverride(const std::string& override) override;
-  const std::string& GetUserAgentOverride() const override;
+  RenderWidgetHostView* GetFullscreenRenderWidgetHostView() override;
+  base::Optional<SkColor> GetThemeColor() override;
+  WebUI* GetWebUI() override;
+  WebUI* GetCommittedWebUI() override;
+  void SetUserAgentOverride(const std::string& override,
+                            bool override_in_new_tabs) override;
+  const std::string& GetUserAgentOverride() override;
+  bool ShouldOverrideUserAgentInNewTabs() override;
   void EnableWebContentsOnlyAccessibilityMode() override;
-  bool IsWebContentsOnlyAccessibilityModeForTesting() const override;
-  bool IsFullAccessibilityModeForTesting() const override;
-  const PageImportanceSignals& GetPageImportanceSignals() const override;
-  const base::string16& GetTitle() const override;
+  bool IsWebContentsOnlyAccessibilityModeForTesting() override;
+  bool IsFullAccessibilityModeForTesting() override;
+  const PageImportanceSignals& GetPageImportanceSignals() override;
+  const base::string16& GetTitle() override;
   void UpdateTitleForEntry(NavigationEntry* entry,
                            const base::string16& title) override;
-  SiteInstanceImpl* GetSiteInstance() const override;
-  SiteInstanceImpl* GetPendingSiteInstance() const override;
-  bool IsLoading() const override;
-  bool IsLoadingToDifferentDocument() const override;
-  bool IsWaitingForResponse() const override;
-  const net::LoadStateWithParam& GetLoadState() const override;
-  const base::string16& GetLoadStateHost() const override;
-  void RequestAXTreeSnapshot(const AXTreeSnapshotCallback& callback) override;
-  uint64_t GetUploadSize() const override;
-  uint64_t GetUploadPosition() const override;
-  const std::string& GetEncoding() const override;
+  SiteInstanceImpl* GetSiteInstance() override;
+  bool IsLoading() override;
+  double GetLoadProgress() override;
+  bool IsLoadingToDifferentDocument() override;
+  bool IsWaitingForResponse() override;
+  const net::LoadStateWithParam& GetLoadState() override;
+  const base::string16& GetLoadStateHost() override;
+  void RequestAXTreeSnapshot(AXTreeSnapshotCallback callback,
+                             ui::AXMode ax_mode) override;
+  uint64_t GetUploadSize() override;
+  uint64_t GetUploadPosition() override;
+  const std::string& GetEncoding() override;
+  bool WasDiscarded() override;
+  void SetWasDiscarded(bool was_discarded) override;
   void IncrementCapturerCount(const gfx::Size& capture_size) override;
   void DecrementCapturerCount() override;
-  int GetCapturerCount() const override;
-  bool IsAudioMuted() const override;
+  bool IsBeingCaptured() override;
+  bool IsAudioMuted() override;
   void SetAudioMuted(bool mute) override;
   bool IsCurrentlyAudible() override;
-  bool IsConnectedToBluetoothDevice() const override;
-  bool IsCrashed() const override;
+  bool IsConnectedToBluetoothDevice() override;
+  bool IsConnectedToSerialPort() override;
+  bool HasNativeFileSystemDirectoryHandles() override;
+  std::vector<base::FilePath> GetNativeFileSystemDirectoryHandles() override;
+  bool HasWritableNativeFileSystemHandles() override;
+  bool HasPictureInPictureVideo() override;
+  bool IsCrashed() override;
   void SetIsCrashed(base::TerminationStatus status, int error_code) override;
-  base::TerminationStatus GetCrashedStatus() const override;
-  int GetCrashedErrorCode() const override;
-  bool IsBeingDestroyed() const override;
+  base::TerminationStatus GetCrashedStatus() override;
+  int GetCrashedErrorCode() override;
+  bool IsBeingDestroyed() override;
   void NotifyNavigationStateChanged(InvalidateTypes changed_flags) override;
-  void OnAudioStateChanged(bool is_audible) override;
-  base::TimeTicks GetLastActiveTime() const override;
-  void SetLastActiveTime(base::TimeTicks last_active_time) override;
-  base::TimeTicks GetLastHiddenTime() const override;
+  void OnAudioStateChanged() override;
+  base::TimeTicks GetLastActiveTime() override;
   void WasShown() override;
   void WasHidden() override;
-  bool IsVisible() const override;
   void WasOccluded() override;
-  void WasUnOccluded() override;
+  Visibility GetVisibility() override;
   bool NeedToFireBeforeUnload() override;
-  void DispatchBeforeUnload() override;
-  void AttachToOuterWebContentsFrame(
-      WebContents* outer_web_contents,
-      RenderFrameHost* outer_contents_frame) override;
+  void DispatchBeforeUnload(bool auto_cancel) override;
+  void AttachInnerWebContents(std::unique_ptr<WebContents> inner_web_contents,
+                              RenderFrameHost* render_frame_host) override;
+  RenderFrameHostImpl* GetOuterWebContentsFrame() override;
+  WebContentsImpl* GetOuterWebContents() override;
+  WebContentsImpl* GetOutermostWebContents() override;
+  std::vector<WebContents*> GetInnerWebContents() override;
   void DidChangeVisibleSecurityState() override;
+  void NotifyPreferencesChanged() override;
+  void OnCookiesRead(const GURL& url,
+                     const GURL& first_party_url,
+                     const net::CookieList& cookie_list,
+                     bool blocked_by_policy) override;
+  void OnCookieChange(const GURL& url,
+                      const GURL& first_party_url,
+                      const net::CanonicalCookie& cookie,
+                      bool blocked_by_policy) override;
+
   void Stop() override;
-  WebContents* Clone() override;
+  void SetPageFrozen(bool frozen) override;
+  std::unique_ptr<WebContents> Clone() override;
   void ReloadFocusedFrame(bool bypass_cache) override;
   void Undo() override;
   void Redo() override;
@@ -387,6 +409,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void NotifyContextMenuClosed(
       const CustomContextMenuContext& context) override;
   void ReloadLoFiImages() override;
+  std::vector<blink::mojom::PauseSubresourceLoadingHandlePtr>
+  PauseSubresourceLoading() override;
   void ExecuteCustomContextMenuCommand(
       int action,
       const CustomContextMenuContext& context) override;
@@ -401,9 +425,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void StoreFocus() override;
   void RestoreFocus() override;
   void FocusThroughTabTraversal(bool reverse) override;
-  bool ShowingInterstitialPage() const override;
-  void AdjustPreviewsStateForNavigation(PreviewsState* previews_state) override;
-  InterstitialPageImpl* GetInterstitialPage() const override;
+  bool ShowingInterstitialPage() override;
+  InterstitialPageImpl* GetInterstitialPage() override;
   bool IsSavable() override;
   void OnSavePage() override;
   bool SavePage(const base::FilePath& main_file,
@@ -412,61 +435,66 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void SaveFrame(const GURL& url, const Referrer& referrer) override;
   void SaveFrameWithHeaders(const GURL& url,
                             const Referrer& referrer,
-                            const std::string& headers) override;
+                            const std::string& headers,
+                            const base::string16& suggested_filename) override;
   void GenerateMHTML(const MHTMLGenerationParams& params,
-                     const base::Callback<void(int64_t)>& callback) override;
-  const std::string& GetContentsMimeType() const override;
-  bool WillNotifyDisconnection() const override;
-  RendererPreferences* GetMutableRendererPrefs() override;
+                     base::OnceCallback<void(int64_t)> callback) override;
+  const std::string& GetContentsMimeType() override;
+  bool WillNotifyDisconnection() override;
+  blink::mojom::RendererPreferences* GetMutableRendererPrefs() override;
   void Close() override;
   void SystemDragEnded(RenderWidgetHost* source_rwh) override;
-  void UserGestureDone() override;
+  void NavigatedByUser() override;
   void SetClosedByUserGesture(bool value) override;
-  bool GetClosedByUserGesture() const override;
-  int GetMinimumZoomPercent() const override;
-  int GetMaximumZoomPercent() const override;
+  bool GetClosedByUserGesture() override;
+  int GetMinimumZoomPercent() override;
+  int GetMaximumZoomPercent() override;
   void SetPageScale(float page_scale_factor) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size GetPreferredSize() override;
   bool GotResponseToLockMouseRequest(bool allowed) override;
-  bool HasOpener() const override;
-  RenderFrameHostImpl* GetOpener() const override;
-  bool HasOriginalOpener() const override;
-  RenderFrameHostImpl* GetOriginalOpener() const override;
+  bool GotResponseToKeyboardLockRequest(bool allowed) override;
+  bool HasOpener() override;
+  RenderFrameHostImpl* GetOpener() override;
+  bool HasOriginalOpener() override;
+  RenderFrameHostImpl* GetOriginalOpener() override;
   void DidChooseColorInColorChooser(SkColor color) override;
   void DidEndColorChooser() override;
   int DownloadImage(const GURL& url,
                     bool is_favicon,
                     uint32_t max_bitmap_size,
                     bool bypass_cache,
-                    const ImageDownloadCallback& callback) override;
-  bool IsSubframe() const override;
+                    ImageDownloadCallback callback) override;
   void Find(int request_id,
             const base::string16& search_text,
-            const blink::WebFindOptions& options) override;
+            blink::mojom::FindOptionsPtr options) override;
   void StopFinding(StopFindAction action) override;
-  bool WasRecentlyAudible() override;
   bool WasEverAudible() override;
-  void GetManifest(const GetManifestCallback& callback) override;
-  bool IsFullscreenForCurrentTab() const override;
+  void GetManifest(GetManifestCallback callback) override;
+  bool IsFullscreenForCurrentTab() override;
+  bool ShouldShowStaleContentOnEviction() override;
   void ExitFullscreen(bool will_cause_resize) override;
+  void ForSecurityDropFullscreen() override;
   void ResumeLoadingCreatedWebContents() override;
   void SetIsOverlayContent(bool is_overlay_content) override;
   bool IsFocusedElementEditable() override;
   void ClearFocusedElement() override;
-  bool IsShowingContextMenu() const override;
+  bool IsShowingContextMenu() override;
   void SetShowingContextMenu(bool showing) override;
+  base::UnguessableToken GetAudioGroupId() override;
+  bool CompletedFirstVisuallyNonEmptyPaint() override;
+  ukm::SourceId GetLastCommittedSourceId() override;
 
 #if defined(OS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetJavaWebContents() override;
-  virtual WebContentsAndroid* GetWebContentsAndroid();
+  WebContentsAndroid* GetWebContentsAndroid();
+  void ClearWebContentsAndroid();
   void ActivateNearestFindResult(float x, float y) override;
   void RequestFindMatchRects(int current_version) override;
   service_manager::InterfaceProvider* GetJavaInterfaces() override;
-#elif defined(OS_MACOSX)
-  void SetAllowOtherViews(bool allow) override;
-  bool GetAllowOtherViews() override;
-  bool CompletedFirstVisuallyNonEmptyPaint() const override;
 #endif
+
+  bool HasRecentInteractiveInputEvent() override;
+  void SetIgnoreInputEvents(bool ignore_input_events) override;
 
   // Implementation of PageNavigator.
   WebContents* OpenURL(const OpenURLParams& params) override;
@@ -482,8 +510,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       RenderFrameHost* render_frame_host,
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle* interface_pipe) override;
-  void OnDidBlockFramebust(const GURL& url) override;
-  const GURL& GetMainFrameLastCommittedURL() const override;
+  void OnDidBlockNavigation(const GURL& blocked_url,
+                            const GURL& initiator_url,
+                            blink::NavigationBlockedReason reason) override;
+  const GURL& GetMainFrameLastCommittedURL() override;
   void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
   void RenderFrameDeleted(RenderFrameHost* render_frame_host) override;
   void ShowContextMenu(RenderFrameHost* render_frame_host,
@@ -491,18 +521,27 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void RunJavaScriptDialog(RenderFrameHost* render_frame_host,
                            const base::string16& message,
                            const base::string16& default_prompt,
-                           const GURL& frame_url,
                            JavaScriptDialogType dialog_type,
                            IPC::Message* reply_msg) override;
   void RunBeforeUnloadConfirm(RenderFrameHost* render_frame_host,
                               bool is_reload,
                               IPC::Message* reply_msg) override;
   void RunFileChooser(RenderFrameHost* render_frame_host,
-                      const FileChooserParams& params) override;
+                      std::unique_ptr<content::FileSelectListener> listener,
+                      const blink::mojom::FileChooserParams& params) override;
+  void EnumerateDirectory(RenderFrameHost* render_frame_host,
+                          std::unique_ptr<FileSelectListener> listener,
+                          const base::FilePath& directory_path) override;
   void DidCancelLoading() override;
   void DidAccessInitialDocument() override;
   void DidChangeName(RenderFrameHost* render_frame_host,
                      const std::string& name) override;
+  void DidReceiveFirstUserActivation(
+      RenderFrameHost* render_frame_host) override;
+  void DidChangeDisplayState(RenderFrameHost* render_frame_host,
+                             bool is_display_none) override;
+  void FrameSizeChanged(RenderFrameHost* render_frame_host,
+                        const gfx::Size& frame_size) override;
   void DocumentOnLoadCompleted(RenderFrameHost* render_frame_host) override;
   void UpdateStateForFrame(RenderFrameHost* render_frame_host,
                            const PageState& page_state) override;
@@ -513,22 +552,30 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                       const std::string& encoding) override;
   WebContents* GetAsWebContents() override;
   bool IsNeverVisible() override;
-  ui::AXMode GetAccessibilityMode() const override;
+  ui::AXMode GetAccessibilityMode() override;
+  // Broadcasts the mode change to all frames.
+  void SetAccessibilityMode(ui::AXMode mode) override;
   void AccessibilityEventReceived(
-      const std::vector<AXEventNotificationDetails>& details) override;
+      const AXEventNotificationDetails& details) override;
   void AccessibilityLocationChangesReceived(
       const std::vector<AXLocationChangeNotificationDetails>& details) override;
+  base::string16 DumpAccessibilityTree(bool internal) override;
   RenderFrameHost* GetGuestByInstanceID(
       RenderFrameHost* render_frame_host,
       int browser_plugin_instance_id) override;
   device::mojom::GeolocationContext* GetGeolocationContext() override;
   device::mojom::WakeLockContext* GetWakeLockContext() override;
-  device::mojom::WakeLock* GetRendererWakeLock() override;
 #if defined(OS_ANDROID)
   void GetNFC(device::mojom::NFCRequest request) override;
 #endif
-  void EnterFullscreenMode(const GURL& origin) override;
+  void EnterFullscreenMode(const GURL& origin,
+                           const blink::WebFullscreenOptions& options) override;
   void ExitFullscreenMode(bool will_cause_resize) override;
+  void FullscreenStateChanged(RenderFrameHost* rfh,
+                              bool is_fullscreen) override;
+#if defined(OS_ANDROID)
+  void UpdateUserGestureCarryoverInfo() override;
+#endif
   bool ShouldRouteMessageEvent(
       RenderFrameHost* target_rfh,
       SiteInstance* source_site_instance) const override;
@@ -536,6 +583,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   std::unique_ptr<WebUIImpl> CreateWebUIForRenderFrameHost(
       const GURL& url) override;
   void SetFocusedFrame(FrameTreeNode* node, SiteInstance* source) override;
+  void DidCallFocus() override;
   RenderFrameHost* GetFocusedFrameIncludingInnerWebContents() override;
   void OnFocusedElementChangedInFrame(
       RenderFrameHostImpl* frame,
@@ -547,6 +595,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       const mojom::CreateNewWindowParams& params,
+      bool has_user_gesture,
       SessionStorageNamespace* session_storage_namespace) override;
   void ShowCreatedWindow(int process_id,
                          int main_frame_widget_route_id,
@@ -562,10 +611,28 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                          const url::Origin& origin,
                                          const GURL& resource_url) override;
   void ViewSource(RenderFrameHostImpl* frame) override;
+  void PrintCrossProcessSubframe(const gfx::Rect& rect,
+                                 int document_cookie,
+                                 RenderFrameHost* render_frame_host) override;
 #if defined(OS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetJavaRenderFrameHostDelegate()
       override;
 #endif
+  void SubresourceResponseStarted(const GURL& url,
+                                  net::CertStatus cert_status) override;
+  void ResourceLoadComplete(
+      RenderFrameHost* render_frame_host,
+      const GlobalRequestID& request_id,
+      mojom::ResourceLoadInfoPtr resource_load_information) override;
+
+  // Called when WebAudio starts or stops playing audible audio in an
+  // AudioContext.
+  void AudioContextPlaybackStarted(RenderFrameHost* host,
+                                   int context_id) override;
+  void AudioContextPlaybackStopped(RenderFrameHost* host,
+                                   int context_id) override;
+  RenderFrameHostImpl* GetMainFrameForInnerDelegate(
+      FrameTreeNode* frame_tree_node) override;
 
   // RenderViewHostDelegate ----------------------------------------------------
   RenderViewHostDelegateView* GetDelegateView() override;
@@ -583,50 +650,53 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void UpdateTargetURL(RenderViewHost* render_view_host,
                        const GURL& url) override;
   void Close(RenderViewHost* render_view_host) override;
-  void RequestMove(const gfx::Rect& new_bounds) override;
+  void RequestSetBounds(const gfx::Rect& new_bounds) override;
   void DocumentAvailableInMainFrame(RenderViewHost* render_view_host) override;
   void RouteCloseEvent(RenderViewHost* rvh) override;
-  bool DidAddMessageToConsole(int32_t level,
+  bool DidAddMessageToConsole(blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
-  RendererPreferences GetRendererPrefs(
+  blink::mojom::RendererPreferences GetRendererPrefs(
       BrowserContext* browser_context) const override;
-  void OnUserInteraction(RenderWidgetHostImpl* render_widget_host,
-                         const blink::WebInputEvent::Type type) override;
+  void DidReceiveInputEvent(RenderWidgetHostImpl* render_widget_host,
+                            const blink::WebInputEvent::Type type) override;
+  bool ShouldIgnoreInputEvents() override;
   void OnIgnoredUIEvent() override;
   void Activate() override;
   void UpdatePreferredSize(const gfx::Size& pref_size) override;
   void CreateNewWidget(int32_t render_process_id,
                        int32_t route_id,
-                       mojom::WidgetPtr widget,
-                       blink::WebPopupType popup_type) override;
+                       mojom::WidgetPtr widget) override;
   void CreateNewFullscreenWidget(int32_t render_process_id,
-                                 int32_t route_id,
+                                 int32_t widget_route_id,
                                  mojom::WidgetPtr widget) override;
   void ShowCreatedWidget(int process_id,
-                         int route_id,
+                         int widget_route_id,
                          const gfx::Rect& initial_rect) override;
-  void ShowCreatedFullscreenWidget(int process_id, int route_id) override;
-  void RequestMediaAccessPermission(
-      const MediaStreamRequest& request,
-      const MediaResponseCallback& callback) override;
-  bool CheckMediaAccessPermission(const url::Origin& security_origin,
-                                  MediaStreamType type) override;
-  std::string GetDefaultMediaDeviceID(MediaStreamType type) override;
+  void ShowCreatedFullscreenWidget(int process_id,
+                                   int widget_route_id) override;
+  void RequestMediaAccessPermission(const MediaStreamRequest& request,
+                                    MediaResponseCallback callback) override;
+  bool CheckMediaAccessPermission(RenderFrameHost* render_frame_host,
+                                  const url::Origin& security_origin,
+                                  blink::mojom::MediaStreamType type) override;
+  std::string GetDefaultMediaDeviceID(
+      blink::mojom::MediaStreamType type) override;
   SessionStorageNamespace* GetSessionStorageNamespace(
       SiteInstance* instance) override;
   SessionStorageNamespaceMap GetSessionStorageNamespaceMap() override;
-#if !defined(OS_ANDROID)
-  double GetPendingPageZoomLevel() override;
-#endif  // !defined(OS_ANDROID)
   FrameTree* GetFrameTree() override;
   bool IsOverridingUserAgent() override;
   bool IsJavaScriptDialogShowing() const override;
   bool ShouldIgnoreUnresponsiveRenderer() override;
   bool HideDownloadUI() const override;
   bool HasPersistentVideo() const override;
+  bool IsSpatialNavigationDisabled() const override;
   RenderFrameHost* GetPendingMainFrame() override;
+  void DidFirstVisuallyNonEmptyPaint(RenderViewHostImpl* source) override;
+  void DidCommitAndDrawCompositorFrame(RenderViewHostImpl* source) override;
+  bool IsPortal() const override;
 
   // NavigatorDelegate ---------------------------------------------------------
 
@@ -665,21 +735,33 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // RenderWidgetHostDelegate --------------------------------------------------
 
+  ukm::SourceId GetUkmSourceIdForLastCommittedSource() const override;
+  void SetTopControlsShownRatio(RenderWidgetHostImpl* render_widget_host,
+                                float ratio) override;
+  void SetTopControlsGestureScrollInProgress(bool in_progress) override;
   void RenderWidgetCreated(RenderWidgetHostImpl* render_widget_host) override;
   void RenderWidgetDeleted(RenderWidgetHostImpl* render_widget_host) override;
   void RenderWidgetGotFocus(RenderWidgetHostImpl* render_widget_host) override;
   void RenderWidgetLostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void RenderWidgetWasResized(RenderWidgetHostImpl* render_widget_host,
+                              const ScreenInfo& screen_info,
                               bool width_changed) override;
   void ResizeDueToAutoResize(RenderWidgetHostImpl* render_widget_host,
-                             const gfx::Size& new_size,
-                             uint64_t sequence_number) override;
+                             const gfx::Size& new_size) override;
   gfx::Size GetAutoResizeSize() override;
   void ResetAutoResizeSize() override;
-  void GetScreenInfo(ScreenInfo* screen_info) override;
+  InputEventShim* GetInputEventShim() const override;
+  void NotifyVisibleViewportSizeChanged(
+      const gfx::Size& visible_viewport_size) override;
+  RenderFrameHostImpl* GetFocusedFrameFromFocusedDelegate() override;
+
+#if !defined(OS_ANDROID)
+  double GetPendingPageZoomLevel() override;
+#endif  // !defined(OS_ANDROID)
+
   KeyboardEventProcessingResult PreHandleKeyboardEvent(
       const NativeWebKeyboardEvent& event) override;
-  void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
   bool HandleWheelEvent(const blink::WebMouseWheelEvent& event) override;
   bool PreHandleGestureEvent(const blink::WebGestureEvent& event) override;
   BrowserAccessibilityManager* GetRootBrowserAccessibilityManager() override;
@@ -705,12 +787,19 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   RenderWidgetHostImpl* GetRenderWidgetHostWithPageFocus() override;
   void FocusOwningWebContents(
       RenderWidgetHostImpl* render_widget_host) override;
-  void RendererUnresponsive(RenderWidgetHostImpl* render_widget_host) override;
+  void RendererUnresponsive(
+      RenderWidgetHostImpl* render_widget_host,
+      base::RepeatingClosure hang_monitor_restarter) override;
   void RendererResponsive(RenderWidgetHostImpl* render_widget_host) override;
+  void SubframeCrashed(blink::mojom::FrameVisibility visibility) override;
   void RequestToLockMouse(RenderWidgetHostImpl* render_widget_host,
                           bool user_gesture,
                           bool last_unlocked_by_target,
                           bool privileged) override;
+  bool RequestKeyboardLock(RenderWidgetHostImpl* render_widget_host,
+                           bool esc_key_locked) override;
+  void CancelKeyboardLock(RenderWidgetHostImpl* render_widget_host) override;
+  RenderWidgetHostImpl* GetKeyboardLockWidget() override;
   // The following function is already listed under WebContents overrides:
   // bool IsFullscreenForCurrentTab() const override;
   blink::WebDisplayMode GetDisplayMode(
@@ -719,16 +808,14 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void LostMouseLock(RenderWidgetHostImpl* render_widget_host) override;
   bool HasMouseLock(RenderWidgetHostImpl* render_widget_host) override;
   RenderWidgetHostImpl* GetMouseLockWidget() override;
-  void OnRenderFrameProxyVisibilityChanged(bool visible) override;
+  void OnRenderFrameProxyVisibilityChanged(
+      blink::mojom::FrameVisibility visibility) override;
   void SendScreenRects() override;
   TextInputManager* GetTextInputManager() override;
   bool OnUpdateDragCursor() override;
   bool IsWidgetForMainFrame(RenderWidgetHostImpl* render_widget_host) override;
   bool AddDomainInfoToRapporSample(rappor::Sample* sample) override;
-  void UpdateUrlForUkmSource(ukm::UkmRecorder* service,
-                             ukm::SourceId ukm_source_id) override;
   void FocusedNodeTouched(bool editable) override;
-  void DidReceiveCompositorFrame() override;
   bool IsShowingContextMenuOnPage() const override;
 
   // RenderFrameHostManager::Delegate ------------------------------------------
@@ -743,7 +830,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       RenderViewHost* render_view_host) override;
   bool CreateRenderFrameForRenderManager(
       RenderFrameHost* render_frame_host,
-      int proxy_routing_id,
+      int previous_routing_id,
       int opener_routing_id,
       int parent_routing_id,
       int previous_sibling_routing_id) override;
@@ -753,22 +840,32 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
       bool* proceed_to_fire_unload) override;
   void RenderProcessGoneFromRenderManager(
       RenderViewHost* render_view_host) override;
-  void UpdateRenderViewSizeForRenderManager() override;
+  void UpdateRenderViewSizeForRenderManager(bool is_main_frame) override;
   void CancelModalDialogsForRenderManager() override;
   void NotifySwappedFromRenderManager(RenderFrameHost* old_host,
                                       RenderFrameHost* new_host,
                                       bool is_main_frame) override;
   void NotifyMainFrameSwappedFromRenderManager(
-      RenderViewHost* old_host,
-      RenderViewHost* new_host) override;
+      RenderFrameHost* old_host,
+      RenderFrameHost* new_host) override;
   NavigationControllerImpl& GetControllerForRenderManager() override;
   NavigationEntry* GetLastCommittedNavigationEntryForRenderManager() override;
   InterstitialPageImpl* GetInterstitialForRenderManager() override;
   bool FocusLocationBarByDefault() override;
-  void SetFocusToLocationBar(bool select_all) override;
+  void SetFocusToLocationBar() override;
   bool IsHidden() override;
   int GetOuterDelegateFrameTreeNodeId() override;
   RenderWidgetHostImpl* GetFullscreenRenderWidgetHost() const override;
+
+  // blink::mojom::ColorChooserFactory ---------------------------------------
+
+  void OnColorChooserFactoryRequest(
+      blink::mojom::ColorChooserFactoryRequest request);
+  void OpenColorChooser(
+      blink::mojom::ColorChooserRequest chooser,
+      blink::mojom::ColorChooserClientPtr client,
+      SkColor color,
+      std::vector<blink::mojom::ColorSuggestionPtr> suggestions) override;
 
   // NotificationObserver ------------------------------------------------------
 
@@ -784,6 +881,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void NotifyNavigationEntryChanged(
       const EntryChangedDetails& change_details) override;
   void NotifyNavigationListPruned(const PrunedDetails& pruned_details) override;
+  void NotifyNavigationEntriesDeleted() override;
 
   // Invoked before a form repost warning is shown.
   void NotifyBeforeFormRepostWarningShow() override;
@@ -810,8 +908,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // No interstitial page should already be attached.
   void AttachInterstitialPage(InterstitialPageImpl* interstitial_page) override;
 
-  void MediaMutedStatusChanged(const WebContentsObserver::MediaPlayerId& id,
-                               bool muted);
+  void MediaMutedStatusChanged(const MediaPlayerId& id, bool muted);
 
   // Unsets the currently showing interstitial.
   void DetachInterstitialPage(bool has_focus) override;
@@ -821,28 +918,34 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Unpause the throbber if it was paused.
   void DidProceedOnInterstitial() override;
 
-  typedef base::Callback<void(WebContents*)> CreatedCallback;
+  bool HadInnerWebContents() override;
 
   // Forces overscroll to be disabled (used by touch emulation).
   void SetForceDisableOverscrollContent(bool force_disable);
+
+  // Override the render view/widget size of the main frame, return whether the
+  // size changed.
+  bool SetDeviceEmulationSize(const gfx::Size& new_size);
+  void ClearDeviceEmulationSize();
 
   AudioStreamMonitor* audio_stream_monitor() {
     return &audio_stream_monitor_;
   }
 
+  ForwardingAudioStreamFactory* GetAudioStreamFactory();
+
   // Called by MediaWebContentsObserver when playback starts or stops.  See the
   // WebContentsObserver function stubs for more details.
   void MediaStartedPlaying(
       const WebContentsObserver::MediaPlayerInfo& media_info,
-      const WebContentsObserver::MediaPlayerId& id);
+      const MediaPlayerId& id);
   void MediaStoppedPlaying(
       const WebContentsObserver::MediaPlayerInfo& media_info,
-      const WebContentsObserver::MediaPlayerId& id,
+      const MediaPlayerId& id,
       WebContentsObserver::MediaStoppedReason reason);
   // This will be called before playback is started, check
   // GetCurrentlyPlayingVideoCount if you need this when playback starts.
-  void MediaResized(const gfx::Size& size,
-                    const WebContentsObserver::MediaPlayerId& id);
+  void MediaResized(const gfx::Size& size, const MediaPlayerId& id);
   void MediaEffectivelyFullscreenChanged(bool is_fullscreen);
 
   int GetCurrentlyPlayingVideoCount() override;
@@ -854,7 +957,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   }
 
   // Update the web contents visibility.
-  void UpdateWebContentsVisibility(bool visible);
+  void UpdateWebContentsVisibility(Visibility visibility);
 
   // Called by FindRequestManager when find replies come in from a renderer
   // process.
@@ -868,6 +971,22 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void IncrementBluetoothConnectedDeviceCount();
   void DecrementBluetoothConnectedDeviceCount();
 
+  // Modify the counter of frames in this WebContents actively using serial
+  // ports.
+  void IncrementSerialActiveFrameCount();
+  void DecrementSerialActiveFrameCount();
+
+  // Add and remove a reference for a native file system directory handle for a
+  // certain |path|. Multiple Add calls should be balanced by the same number of
+  // Remove calls for the same |path|.
+  void AddNativeFileSystemDirectoryHandle(const base::FilePath& path);
+  void RemoveNativeFileSystemDirectoryHandle(const base::FilePath& path);
+
+  // Modify the counter of native file system handles with write access for this
+  // WebContents.
+  void IncrementWritableNativeFileSystemHandleCount();
+  void DecrementWritableNativeFileSystemHandleCount();
+
   // Called when the WebContents gains or loses a persistent video.
   void SetHasPersistentVideo(bool has_persistent_video);
 
@@ -877,6 +996,11 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // controls).
   // |IsFullscreen| must return |true| when this method is called.
   bool HasActiveEffectivelyFullscreenVideo() const;
+
+  // Whether the WebContents effectively fullscreen active player allows
+  // Picture-in-Picture.
+  // |IsFullscreen| must return |true| when this method is called.
+  bool IsPictureInPictureAllowedForFullscreenVideo() const;
 
   // When inner or outer WebContents are present, become the focused
   // WebContentsImpl. This will activate this content's main frame RenderWidget
@@ -890,6 +1014,23 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // that the guest will be detached.
   void BrowserPluginGuestWillDetach();
 
+  // Notifies the Picture-in-Picture controller that there is a new player
+  // entering Picture-in-Picture.
+  // Returns the result of the enter request.
+  PictureInPictureResult EnterPictureInPicture(const viz::SurfaceId&,
+                                               const gfx::Size& natural_size);
+
+  // Updates the Picture-in-Picture controller with a signal that
+  // Picture-in-Picture mode has ended.
+  void ExitPictureInPicture();
+
+  // Updates the tracking information for |this| to know if there is
+  // a video currently in Picture-in-Picture mode.
+  void SetHasPictureInPictureVideo(bool has_picture_in_picture_video);
+
+  // Sets the spatial navigation state.
+  void SetSpatialNavigationDisabled(bool disabled);
+
 #if defined(OS_ANDROID)
   // Called by FindRequestManager when all of the find match rects are in.
   void NotifyFindMatchRectsReply(int version,
@@ -897,9 +1038,55 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                  const gfx::RectF& active_rect);
 #endif
 
+  // Returns a base salt used to generate group IDs for media-device
+  // enumerations.
+  const std::string& GetMediaDeviceGroupIDSaltBase() const;
+
+#if defined(OS_ANDROID)
+  // Called by WebContentsAndroid to send the Display Cutout safe area to
+  // DisplayCutoutHostImpl.
+  void SetDisplayCutoutSafeArea(gfx::Insets insets);
+#endif
+
+  // Notify observers that the viewport fit value changed. This is called by
+  // |DisplayCutoutHostImpl|.
+  void NotifyViewportFitChanged(blink::mojom::ViewportFit value);
+
+  // Returns the current FindRequestManager associated with the WebContents;
+  // this won't create one if none exists.
+  FindRequestManager* GetFindRequestManagerForTesting();
+
+  // Detaches this WebContents from its outer WebContents.
+  std::unique_ptr<WebContents> DetachFromOuterWebContents();
+
+  // Reattaches this inner WebContents to its outer WebContents.
+  void ReattachToOuterWebContentsFrame();
+
+  // Getter/setter for the Portal associated with this WebContents. If non-null
+  // then this WebContents is embedded in a portal and its outer WebContents can
+  // be found by using GetOuterWebContents().
+  void set_portal(Portal* portal) { portal_ = portal; }
+  Portal* portal() const { return portal_; }
+
+  // Notifies observers that AppCache was accessed. Public so AppCache code can
+  // call this directly.
+  void OnAppCacheAccessed(const GURL& manifest_url, bool blocked_by_policy);
+
+  JavaScriptDialogNavigationDeferrer* GetJavaScriptDialogNavigationDeferrer() {
+    return javascript_dialog_navigation_deferrer_.get();
+  }
+
+  // Returns the focused frame's input handler.
+  mojom::FrameInputHandler* GetFocusedFrameInputHandler();
+
  private:
   friend class WebContentsObserver;
   friend class WebContents;  // To implement factory methods.
+
+  friend class RenderFrameHostImplBeforeUnloadBrowserTest;
+  friend class WebContentsImplBrowserTest;
+  friend class BeforeUnloadBlockingDelegate;
+  friend class TestWCDelegateForDialogsAndFullscreen;
 
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest, NoJSMessageOnInterstitials);
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest, UpdateTitle);
@@ -917,6 +1104,14 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest,
                            ResetJavaScriptDialogOnUserNavigate);
   FRIEND_TEST_ALL_PREFIXES(WebContentsImplTest, ParseDownloadHeaders);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
+                           NotifyFullscreenAcquired);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
+                           NotifyFullscreenAcquired_Navigate);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
+                           NotifyFullscreenAcquired_SameOrigin);
+  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
+                           FullscreenAfterFrameSwap);
   FRIEND_TEST_ALL_PREFIXES(FormStructureBrowserTest, HTMLFiles);
   FRIEND_TEST_ALL_PREFIXES(NavigationControllerTest, HistoryNavigate);
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostManagerTest, PageDoesBackAndReload);
@@ -927,24 +1122,25 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                            TwoSubframesCreatePopupMenuWidgetsSimultaneously);
   FRIEND_TEST_ALL_PREFIXES(SitePerProcessAccessibilityBrowserTest,
                            CrossSiteIframeAccessibility);
-  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
-                           JavaScriptDialogsInMainAndSubframes);
-  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
-                           DialogsFromJavaScriptEndFullscreen);
-  FRIEND_TEST_ALL_PREFIXES(WebContentsImplBrowserTest,
-                           PopupsFromJavaScriptEndFullscreen);
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest,
                            IframeBeforeUnloadParentHang);
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest,
                            BeforeUnloadDialogRequiresGesture);
   FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest,
                            CancelBeforeUnloadResetsURL);
+  FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest,
+                           BeforeUnloadDialogSuppressedForDiscard);
+  FRIEND_TEST_ALL_PREFIXES(RenderFrameHostImplBrowserTest,
+                           PendingDialogMakesDiscardUnloadReturnFalse);
   FRIEND_TEST_ALL_PREFIXES(DevToolsProtocolTest, JavaScriptDialogNotifications);
   FRIEND_TEST_ALL_PREFIXES(DevToolsProtocolTest, JavaScriptDialogInterop);
   FRIEND_TEST_ALL_PREFIXES(DevToolsProtocolTest, BeforeUnloadDialog);
   FRIEND_TEST_ALL_PREFIXES(DevToolsProtocolTest, PageDisableWithOpenedDialog);
   FRIEND_TEST_ALL_PREFIXES(DevToolsProtocolTest,
                            PageDisableWithNoDialogManager);
+  FRIEND_TEST_ALL_PREFIXES(PointerLockBrowserTest,
+                           PointerLockInnerContentsCrashes);
+  FRIEND_TEST_ALL_PREFIXES(PointerLockBrowserTest, PointerLockOopifCrashes);
 
   // So |find_request_manager_| can be accessed for testing.
   friend class FindRequestManagerTest;
@@ -968,8 +1164,19 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
     explicit WebContentsTreeNode(WebContentsImpl* current_web_contents);
     ~WebContentsTreeNode() final;
 
-    void ConnectToOuterWebContents(WebContentsImpl* outer_web_contents,
-                                   RenderFrameHostImpl* outer_contents_frame);
+    // Attaches |inner_web_contents| to the |render_frame_host| within this
+    // WebContents.
+    void AttachInnerWebContents(std::unique_ptr<WebContents> inner_web_contents,
+                                RenderFrameHostImpl* render_frame_host);
+
+    // Disconnects the current WebContents from its outer WebContents, and
+    // returns ownership to the caller. This is used when activating a portal,
+    // which causes the WebContents to transition from an inner WebContents to
+    // an outer WebContents.
+    // TODO(lfg): Activating a nested portal currently replaces the outermost
+    // WebContents with the portal. We should allow replacing only the inner
+    // WebContents with the nested portal.
+    std::unique_ptr<WebContents> DisconnectFromOuterWebContents();
 
     WebContentsImpl* outer_web_contents() const { return outer_web_contents_; }
     int outer_contents_frame_tree_node_id() const {
@@ -984,11 +1191,11 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
     // otherwise.
     WebContentsImpl* GetInnerWebContentsInFrame(const FrameTreeNode* frame);
 
-    const std::vector<WebContentsImpl*>& inner_web_contents() const;
+    std::vector<WebContentsImpl*> GetInnerWebContents() const;
 
    private:
-    void AttachInnerWebContents(WebContentsImpl* inner_web_contents);
-    void DetachInnerWebContents(WebContentsImpl* inner_web_contents);
+    std::unique_ptr<WebContents> DetachInnerWebContents(
+        WebContentsImpl* inner_web_contents);
 
     // FrameTreeNode::Observer implementation.
     void OnFrameTreeNodeDestroyed(FrameTreeNode* node) final;
@@ -1004,8 +1211,9 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
     // |current_web_contents_| as an inner WebContents.
     int outer_contents_frame_tree_node_id_;
 
-    // List of inner WebContents that we host.
-    std::vector<WebContentsImpl*> inner_web_contents_;
+    // List of inner WebContents that we host. The outer WebContents owns the
+    // inner WebContents.
+    std::vector<std::unique_ptr<WebContents>> inner_web_contents_;
 
     // Only the root node should have this set. This indicates the WebContents
     // whose frame tree has the focused frame. The WebContents tree could be
@@ -1037,11 +1245,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // all the unique RenderWidgetHostViews.
   std::set<RenderWidgetHostView*> GetRenderWidgetHostViewsInTree();
 
-  // Calls WasUnOccluded() on all RenderWidgetHostViews in the frame tree.
-  void DoWasUnOccluded();
-
   // Called with the result of a DownloadImage() request.
-  void OnDidDownloadImage(const ImageDownloadCallback& callback,
+  void OnDidDownloadImage(ImageDownloadCallback callback,
                           int id,
                           const GURL& image_url,
                           int32_t http_status_code,
@@ -1059,32 +1264,35 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                       const base::string16& user_input);
 
   // IPC message handlers.
-  void OnThemeColorChanged(RenderFrameHostImpl* source, SkColor theme_color);
-  void OnDidLoadResourceFromMemoryCache(RenderFrameHostImpl* source,
-                                        const GURL& url,
-                                        const std::string& http_request,
-                                        const std::string& mime_type,
-                                        ResourceType resource_type);
+  void OnThemeColorChanged(RenderFrameHostImpl* source,
+                           base::Optional<SkColor> theme_color);
+  void OnDidLoadResourceFromMemoryCache(
+      RenderFrameHostImpl* source,
+      const GURL& url,
+      const std::string& http_request,
+      const std::string& mime_type,
+      const base::Optional<url::Origin>& top_frame_origin,
+      ResourceType resource_type);
   void OnDidDisplayInsecureContent(RenderFrameHostImpl* source);
   void OnDidContainInsecureFormAction(RenderFrameHostImpl* source);
   void OnDidRunInsecureContent(RenderFrameHostImpl* source,
                                const GURL& security_origin,
                                const GURL& target_url);
-  void OnDidDisplayContentWithCertificateErrors(RenderFrameHostImpl* source,
-                                                const GURL& url);
-  void OnDidRunContentWithCertificateErrors(RenderFrameHostImpl* source,
-                                            const GURL& url);
+  void OnDidDisplayContentWithCertificateErrors(RenderFrameHostImpl* source);
+  void OnDidRunContentWithCertificateErrors(RenderFrameHostImpl* source);
   void OnDocumentLoadedInFrame(RenderFrameHostImpl* source);
   void OnDidFinishLoad(RenderFrameHostImpl* source, const GURL& url);
-  void OnGoToEntryAtOffset(RenderViewHostImpl* source, int offset);
+  void OnGoToEntryAtOffset(RenderFrameHostImpl* source,
+                           int offset,
+                           bool has_user_gesture);
   void OnUpdateZoomLimits(RenderViewHostImpl* source,
                           int minimum_percent,
                           int maximum_percent);
   void OnPageScaleFactorChanged(RenderViewHostImpl* source,
                                 float page_scale_factor);
-  void OnEnumerateDirectory(RenderViewHostImpl* source,
-                            int request_id,
-                            const base::FilePath& path);
+  void OnTextAutosizerPageInfoChanged(
+      RenderViewHostImpl* source,
+      const blink::WebTextAutosizerPageInfo& page_info);
 
   void OnRegisterProtocolHandler(RenderFrameHostImpl* source,
                                  const std::string& protocol,
@@ -1095,37 +1303,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
                                    const std::string& protocol,
                                    const GURL& url,
                                    bool user_gesture);
-  void OnFindReply(RenderFrameHostImpl* source,
-                   int request_id,
-                   int number_of_matches,
-                   const gfx::Rect& selection_rect,
-                   int active_match_ordinal,
-                   bool final_update);
-#if defined(OS_ANDROID)
-  void OnFindMatchRectsReply(RenderFrameHostImpl* source,
-                             int version,
-                             const std::vector<gfx::RectF>& rects,
-                             const gfx::RectF& active_rect);
-  void OnGetNearestFindResultReply(RenderFrameHostImpl* source,
-                                   int request_id,
-                                   float distance);
-  void OnOpenDateTimeDialog(
-      RenderViewHostImpl* source,
-      const ViewHostMsg_DateTimeDialogValue_Params& value);
-#endif
   void OnDomOperationResponse(RenderFrameHostImpl* source,
                               const std::string& json_string);
-  void OnAppCacheAccessed(RenderViewHostImpl* source,
-                          const GURL& manifest_url,
-                          bool blocked_by_policy);
-  void OnOpenColorChooser(RenderFrameHostImpl* source,
-                          int color_chooser_id,
-                          SkColor color,
-                          const std::vector<ColorSuggestion>& suggestions);
-  void OnEndColorChooser(RenderFrameHostImpl* source, int color_chooser_id);
-  void OnSetSelectedColorInColorChooser(RenderFrameHostImpl* source,
-                                        int color_chooser_id,
-                                        SkColor color);
   void OnUpdatePageImportanceSignals(RenderFrameHostImpl* source,
                                      const PageImportanceSignals& signals);
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -1158,7 +1337,6 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
   void OnUpdateFaviconURL(RenderFrameHostImpl* source,
                           const std::vector<FaviconURL>& candidates);
-  void OnFirstVisuallyNonEmptyPaint(RenderViewHostImpl* source);
   void OnShowValidationMessage(RenderViewHostImpl* source,
                                const gfx::Rect& anchor_in_root_view,
                                const base::string16& main_text,
@@ -1177,6 +1355,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // These functions are helpers in managing a hierarchy of WebContents
   // involved in rendering inner WebContents.
 
+  // Registers FrameSinkIds for all WebContents in the subtree of
+  // WebContentsTree, rooted at |contents|.
+  void RecursivelyRegisterFrameSinkIds();
+
   // When multiple WebContents are present within a tab or window, a single one
   // is focused and will route keyboard events in most cases to a RenderWidget
   // contained within it. |GetFocusedWebContents()|'s main frame widget will
@@ -1187,12 +1369,14 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // focused WebContents.
   bool ContainsOrIsFocusedWebContents();
 
-  // Returns the root of the WebContents tree.
-  WebContentsImpl* GetOutermostWebContents();
-
   // Walks up the outer WebContents chain and focuses the FrameTreeNode where
   // each inner WebContents is attached.
   void FocusOuterAttachmentFrameChain();
+
+  // Convenience method to notify observers that an inner WebContents was
+  // created with |this| WebContents as its owner. This does *not* immediately
+  // guarantee that |inner_web_contents| has been added to the WebContents tree.
+  void InnerWebContentsCreated(WebContents* inner_web_contents);
 
   // Navigation helpers --------------------------------------------------------
   //
@@ -1207,8 +1391,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void CreateNewWidget(int32_t render_process_id,
                        int32_t route_id,
                        bool is_fullscreen,
-                       mojom::WidgetPtr widget,
-                       blink::WebPopupType popup_type);
+                       mojom::WidgetPtr widget);
 
   // Helper for ShowCreatedWidget/ShowCreatedFullscreenWidget.
   void ShowCreatedWidget(int process_id,
@@ -1223,8 +1406,9 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Finds the new WebContentsImpl by |main_frame_widget_route_id|, initializes
   // it for renderer-initiated creation, and returns it. Note that this can only
   // be called once as this call also removes it from the internal map.
-  WebContentsImpl* GetCreatedWindow(int process_id,
-                                    int main_frame_widget_route_id);
+  std::unique_ptr<WebContentsImpl> GetCreatedWindow(
+      int process_id,
+      int main_frame_widget_route_id);
 
   // Sends a Page message IPC.
   void SendPageMessage(IPC::Message* msg);
@@ -1258,7 +1442,9 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // Helper functions for sending notifications.
   void NotifyViewSwapped(RenderViewHost* old_host, RenderViewHost* new_host);
-  void NotifyFrameSwapped(RenderFrameHost* old_host, RenderFrameHost* new_host);
+  void NotifyFrameSwapped(RenderFrameHost* old_host,
+                          RenderFrameHost* new_host,
+                          bool is_main_frame);
   void NotifyDisconnected();
 
   void SetEncoding(const std::string& encoding);
@@ -1271,7 +1457,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   void RemoveBrowserPluginEmbedder();
 
   // Helper function to invoke WebContentsDelegate::GetSizeForNewRenderView().
-  gfx::Size GetSizeForNewRenderView();
+  gfx::Size GetSizeForNewRenderView(bool is_main_frame);
 
   void OnFrameRemoved(RenderFrameHost* render_frame_host);
 
@@ -1279,6 +1465,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // |preferred_size_for_capture_| changes, to propagate the new value to the
   // |delegate_|.
   void OnPreferredSizeChanged(const gfx::Size& old_size);
+
+  void SendUserGestureForResourceDispatchHost();
 
   // Internal helper to create WebUI objects associated with |this|. |url| is
   // used to determine which WebUI should be created (if any).
@@ -1290,8 +1478,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Returns the FindRequestManager, which may be found in an outer WebContents.
   FindRequestManager* GetFindRequestManager();
 
-  // Returns the FindRequestManager, or creates one if it doesn't already
-  // exist. The FindRequestManager may be found in an outer WebContents.
+  // Returns the FindRequestManager, or tries to create one if it doesn't
+  //  already exist. The FindRequestManager may be found in an outer
+  // WebContents. If this is an inner WebContents which is not yet attached to
+  // an outer WebContents the method will return nullptr.
   FindRequestManager* GetOrCreateFindRequestManager();
 
   // Removes a registered WebContentsBindingSet by interface name.
@@ -1301,21 +1491,30 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // certificate via --allow-insecure-localhost.
   void ShowInsecureLocalhostWarningIfNeeded();
 
-  // Notify this WebContents that the preferences have changed. This will send
-  // an IPC to all the renderer process associated with this WebContents.
-  void NotifyPreferencesChanged();
-
   // Format of |headers| is a new line separated list of key value pairs:
   // "<key1>: <value1>\r\n<key2>: <value2>".
-  static DownloadUrlParameters::RequestHeadersType ParseDownloadHeaders(
-      const std::string& headers);
+  static download::DownloadUrlParameters::RequestHeadersType
+  ParseDownloadHeaders(const std::string& headers);
 
   // Sets the visibility of immediate child views, i.e. views whose parent view
   // is that of the main frame.
   void SetVisibilityForChildViews(bool visible);
 
-  // Reattaches this inner WebContents to its outer WebContents.
-  void ReattachToOuterWebContentsFrame();
+  // A helper for clearing the link status bubble after navigating away.
+  // See also UpdateTargetURL.
+  void ClearTargetURL();
+
+  class AXTreeSnapshotCombiner;
+  void RecursiveRequestAXTreeSnapshotOnFrame(FrameTreeNode* root_node,
+                                             AXTreeSnapshotCombiner* combiner,
+                                             ui::AXMode ax_mode);
+
+  // Called each time |fullscreen_frames_| is updated. Find the new
+  // |current_fullscreen_frame_| and notify observers whenever it changes.
+  void FullscreenFrameSetUpdated();
+
+  // ui::NativeThemeObserver:
+  void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
 
   // Data for core operation ---------------------------------------------------
 
@@ -1335,12 +1534,11 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // Tracks created WebContentsImpl objects that have not been shown yet. They
   // are identified by the process ID and routing ID passed to CreateNewWindow.
-  typedef std::pair<int, int> ProcessRoutingIdPair;
-  std::map<ProcessRoutingIdPair, WebContentsImpl*> pending_contents_;
+  std::map<GlobalRoutingID, std::unique_ptr<WebContentsImpl>> pending_contents_;
 
   // This map holds widgets that were created on behalf of the renderer but
   // haven't been shown yet.
-  std::map<ProcessRoutingIdPair, RenderWidgetHostView*> pending_widget_views_;
+  std::map<GlobalRoutingID, RenderWidgetHostView*> pending_widget_views_;
 
   std::map<WebContentsImpl*, std::unique_ptr<DestructionObserver>>
       destruction_observers_;
@@ -1349,7 +1547,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // This MUST be listed above frame_tree_ since at destruction time the
   // latter might cause RenderViewHost's destructor to call us and we might use
   // the observer list then.
-  base::ObserverList<WebContentsObserver> observers_;
+  base::ObserverList<WebContentsObserver>::Unchecked observers_;
 
   // Associated interface binding sets attached to this WebContents.
   std::map<std::string, WebContentsBindingSet*> binding_sets_;
@@ -1358,13 +1556,17 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // is closed.
   bool created_with_opener_;
 
-  // Helper classes ------------------------------------------------------------
+#if defined(OS_ANDROID)
+  std::unique_ptr<WebContentsAndroid> web_contents_android_;
+#endif
 
-  // Manages the frame tree of the page and process swaps in each node.
-  FrameTree frame_tree_;
+  // Helper classes ------------------------------------------------------------
 
   // Contains information about the WebContents tree structure.
   WebContentsTreeNode node_;
+
+  // Manages the frame tree of the page and process swaps in each node.
+  FrameTree frame_tree_;
 
   // SavePackage, lazily created.
   scoped_refptr<SavePackage> save_package_;
@@ -1376,6 +1578,7 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // Indicates whether the current load is to a different document. Only valid
   // if |is_loading_| is true and only tracks loads in the main frame.
+  // TODO(pbos): Check navigation requests and handles instead of caching this.
   bool is_load_to_different_document_;
 
   // Indicates if the tab is considered crashed.
@@ -1430,13 +1633,16 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // The theme color for the underlying document as specified
   // by theme-color meta tag.
-  SkColor theme_color_;
+  base::Optional<SkColor> theme_color_;
 
   // The last published theme color.
-  SkColor last_sent_theme_color_;
+  base::Optional<SkColor> last_sent_theme_color_;
 
   // Whether the first visually non-empty paint has occurred.
   bool did_first_visually_non_empty_paint_;
+
+  // SourceId for current page.
+  ukm::SourceId last_committed_source_id_ = ukm::kInvalidSourceId;
 
   // Data for misc internal state ----------------------------------------------
 
@@ -1445,17 +1651,13 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // be told it is hidden.
   int capturer_count_;
 
-  // Tracks whether RWHV should be visible once capturer_count_ becomes zero.
-  bool should_normally_be_visible_;
+  // The visibility of the WebContents. Initialized from
+  // |CreateParams::initially_hidden|. Updated from
+  // UpdateWebContentsVisibility(), WasShown(), WasHidden(), WasOccluded().
+  Visibility visibility_ = Visibility::VISIBLE;
 
-  // Tracks whether RWHV should be occluded once |capturer_count_| becomes zero.
-  bool should_normally_be_occluded_;
-
-  // Tracks whether this WebContents was ever set to be visible. Used to
-  // facilitate WebContents being loaded in the background by setting
-  // |should_normally_be_visible_|. Ensures WasShown() will trigger when first
-  // becoming visible to the user, and prevents premature unloading.
-  bool did_first_set_visible_;
+  // Whether there has been a call to UpdateWebContentsVisibility(VISIBLE).
+  bool did_first_set_visible_ = false;
 
   // See getter above.
   bool is_being_destroyed_;
@@ -1470,6 +1672,9 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // once.
   bool notify_disconnection_;
 
+  // Set to true if we shouldn't send input events.
+  bool ignore_input_events_ = false;
+
   // Pointer to the JavaScript dialog manager, lazily assigned. Used because the
   // delegate of this WebContentsImpl is nulled before its destructor is called.
   JavaScriptDialogManager* dialog_manager_;
@@ -1483,15 +1688,16 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   bool is_showing_before_unload_dialog_;
 
   // Settings that get passed to the renderer process.
-  RendererPreferences renderer_preferences_;
+  blink::mojom::RendererPreferences renderer_preferences_;
 
   // The time that this WebContents was last made active. The initial value is
   // the WebContents creation time.
   base::TimeTicks last_active_time_;
 
-  // The time that this WebContents was last made hidden. The initial value is
-  // zero.
-  base::TimeTicks last_hidden_time_;
+  // The time that this WebContents last received an 'interactive' input event
+  // from the user. Interactive input events are things like mouse clicks and
+  // keyboard input, but not mouse wheel scrolling or mouse moves.
+  base::TimeTicks last_interactive_input_event_time_;
 
   // See description above setter.
   bool closed_by_user_gesture_;
@@ -1514,6 +1720,11 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // out-of-process iframes for their visible viewport size.
   gfx::Size auto_resize_size_;
 
+  // When device emulation is enabled, override the size of current and newly
+  // created render views/widgets.
+  gfx::Size device_emulation_size_;
+  gfx::Size view_size_before_emulation_;
+
 #if defined(OS_ANDROID)
   // Date time chooser opened by this tab.
   // Only used in Android since all other platforms use a multi field UI.
@@ -1521,32 +1732,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 #endif
 
   // Holds information about a current color chooser dialog, if one is visible.
-  struct ColorChooserInfo {
-    ColorChooserInfo(int render_process_id,
-                     int render_frame_id,
-                     ColorChooser* chooser,
-                     int identifier);
-    ~ColorChooserInfo();
-
-    bool Matches(RenderFrameHostImpl* render_frame_host, int color_chooser_id);
-
-    int render_process_id;
-    int render_frame_id;
-
-    // Color chooser that was opened by this tab.
-    std::unique_ptr<ColorChooser> chooser;
-
-    // A unique identifier for the current color chooser.  Identifiers are
-    // unique across a renderer process.  This avoids race conditions in
-    // synchronizing the browser and renderer processes.  For example, if a
-    // renderer closes one chooser and opens another, and simultaneously the
-    // user picks a color in the first chooser, the IDs can be used to drop the
-    // "chose a color" message rather than erroneously tell the renderer that
-    // the user picked a color in the second chooser.
-    int identifier;
-  };
-
-  std::unique_ptr<ColorChooserInfo> color_chooser_info_;
+  class ColorChooser;
+  std::unique_ptr<ColorChooser> color_chooser_;
 
   // Manages the embedder state for browser plugins, if this WebContents is an
   // embedder; NULL otherwise.
@@ -1582,13 +1769,14 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // completed making layout changes to effect an exit from fullscreen mode.
   bool fullscreen_widget_had_focus_at_shutdown_;
 
-  // Whether this WebContents is responsible for displaying a subframe in a
-  // different process from its parent page.
-  bool is_subframe_;
-
   // When a new tab is created asynchronously, stores the OpenURLParams needed
   // to continue loading the page once the tab is ready.
   std::unique_ptr<OpenURLParams> delayed_open_url_params_;
+
+  // When a new tab is created with window.open(), navigation can be deferred
+  // to execute asynchronously. In such case, the parameters need to be saved
+  // for the navigation to be started at a later point.
+  std::unique_ptr<NavigationController::LoadURLParams> delayed_load_url_params_;
 
   // Whether overscroll should be unconditionally disabled.
   bool force_disable_overscroll_content_;
@@ -1600,7 +1788,10 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   std::unique_ptr<WakeLockContextHost> wake_lock_context_host_;
 
-  device::mojom::WakeLockPtr renderer_wake_lock_;
+  service_manager::BinderRegistry registry_;
+
+  mojo::BindingSet<blink::mojom::ColorChooserFactory>
+      color_chooser_factory_bindings_;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<NFCHost> nfc_host_;
@@ -1617,10 +1808,19 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   // Monitors power levels for audio streams associated with this WebContents.
   AudioStreamMonitor audio_stream_monitor_;
 
+  // Coordinates all the audio streams for this WebContents. Lazily initialized.
+  base::Optional<ForwardingAudioStreamFactory> audio_stream_factory_;
+
   // Created on-demand to mute all audio output from this WebContents.
   std::unique_ptr<WebContentsAudioMuter> audio_muter_;
 
-  size_t bluetooth_connected_device_count_;
+  size_t bluetooth_connected_device_count_ = 0;
+  size_t serial_active_frame_count_ = 0;
+
+  std::map<base::FilePath, size_t> native_file_system_directory_handles_;
+  size_t native_file_system_writable_handle_count_ = 0;
+
+  bool has_picture_in_picture_video_ = false;
 
   // Notifies ResourceDispatcherHostImpl of various events related to loading.
   std::unique_ptr<LoaderIOThreadNotifier> loader_io_thread_notifier_;
@@ -1641,6 +1841,8 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   PageImportanceSignals page_importance_signals_;
 
+  std::string media_device_group_id_salt_base_;
+
 #if !defined(OS_ANDROID)
   bool page_scale_factor_is_one_;
 #endif  // !defined(OS_ANDROID)
@@ -1655,7 +1857,16 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 
   // Stores the RenderWidgetHost that currently holds a mouse lock or nullptr if
   // there's no RenderWidgetHost holding a lock.
-  RenderWidgetHostImpl* mouse_lock_widget_;
+  RenderWidgetHostImpl* mouse_lock_widget_ = nullptr;
+
+  // Stores the RenderWidgetHost that currently holds a keyboard lock or nullptr
+  // if no RenderWidgetHost has the keyboard locked.
+  RenderWidgetHostImpl* keyboard_lock_widget_ = nullptr;
+
+  // Indicates whether the escape key is one of the requested keys to be locked.
+  // This information is used to drive the browser UI so the correct exit
+  // instructions are displayed to the user in fullscreen mode.
+  bool esc_key_locked_ = false;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<service_manager::InterfaceProvider> java_interfaces_;
@@ -1667,14 +1878,68 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
   bool showing_context_menu_;
 
   int currently_playing_video_count_ = 0;
-  VideoSizeMap cached_video_sizes_;
+  base::flat_map<MediaPlayerId, gfx::Size> cached_video_sizes_;
 
   bool has_persistent_video_ = false;
 
+  bool is_spatial_navigation_disabled_ = false;
+
+  bool is_currently_audible_ = false;
   bool was_ever_audible_ = false;
 
-  base::WeakPtrFactory<WebContentsImpl> loading_weak_factory_;
-  base::WeakPtrFactory<WebContentsImpl> weak_factory_;
+  // Helper variable for resolving races in UpdateTargetURL / ClearTargetURL.
+  RenderViewHost* view_that_set_last_target_url_ = nullptr;
+
+  // Whether we should override user agent in new tabs.
+  bool should_override_user_agent_in_new_tabs_ = false;
+
+  // Gets notified about changes in viewport fit events.
+  std::unique_ptr<DisplayCutoutHostImpl> display_cutout_host_impl_;
+
+  // Stores a set of frames that are fullscreen.
+  // See https://fullscreen.spec.whatwg.org.
+  std::set<RenderFrameHostImpl*> fullscreen_frames_;
+
+  // Store the frame that is currently fullscreen, nullptr if there is none.
+  RenderFrameHostImpl* current_fullscreen_frame_ = nullptr;
+
+  // Whether location bar should be focused by default. This is computed in
+  // DidStartNavigation/DidFinishNavigation and only set for an initial
+  // navigation triggered by the browser going to about:blank.
+  bool should_focus_location_bar_by_default_ = false;
+
+  // Stores the Portal object associated with this WebContents, if there is one.
+  // If non-null then this WebContents is embedded in a portal and its outer
+  // WebContents can be found by using GetOuterWebContents().
+  Portal* portal_ = nullptr;
+
+  // Stores information from the main frame's renderer that needs to be shared
+  // with OOPIF renderers.
+  blink::WebTextAutosizerPageInfo text_autosizer_page_info_;
+
+  // Observe native theme for changes to dark mode, high contrast and preferred
+  // color scheme. Used to notify the renderer of preferred color scheme and
+  // forced colors changes.
+  ScopedObserver<ui::NativeTheme, ui::NativeThemeObserver>
+      native_theme_observer_;
+
+  bool in_high_contrast_ = false;
+  bool in_dark_mode_ = false;
+  ui::NativeTheme::PreferredColorScheme preferred_color_scheme_ =
+      ui::NativeTheme::PreferredColorScheme::kNoPreference;
+
+  // TODO(crbug.com/934637): Remove this field when pdf/any inner web contents
+  // user gesture is properly propagated. This is a temporary fix for history
+  // intervention to be disabled for pdfs (crbug.com/965434).
+  bool had_inner_webcontents_;
+
+  // Prevents navigations in this contents while a javascript modal dialog is
+  // showing.
+  std::unique_ptr<JavaScriptDialogNavigationDeferrer>
+      javascript_dialog_navigation_deferrer_;
+
+  base::WeakPtrFactory<WebContentsImpl> loading_weak_factory_{this};
+  base::WeakPtrFactory<WebContentsImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsImpl);
 };
@@ -1682,6 +1947,9 @@ class CONTENT_EXPORT WebContentsImpl : public WebContents,
 // Dangerous methods which should never be made part of the public API, so we
 // grant their use only to an explicit friend list (c++ attorney/client idiom).
 class CONTENT_EXPORT WebContentsImpl::FriendWrapper {
+ public:
+  using CreatedCallback = base::RepeatingCallback<void(WebContents*)>;
+
  private:
   friend class TestNavigationObserver;
   friend class WebContentsAddedObserver;

@@ -30,11 +30,14 @@ PaymentDetailsModifier::PaymentDetailsModifier(
 PaymentDetailsModifier& PaymentDetailsModifier::operator=(
     const PaymentDetailsModifier& other) {
   method_data = other.method_data;
-  if (other.total)
+  if (other.total) {
     total = std::make_unique<PaymentItem>(*other.total);
-  else
+  } else {
     total.reset(nullptr);
-  additional_display_items = other.additional_display_items;
+  }
+  additional_display_items = std::vector<PaymentItem>();
+  for (const auto& item : other.additional_display_items)
+    additional_display_items.emplace_back(item);
   return *this;
 }
 
@@ -54,13 +57,8 @@ bool PaymentDetailsModifier::operator!=(
 std::unique_ptr<base::DictionaryValue>
 PaymentDetailsModifier::ToDictionaryValue() const {
   auto result = std::make_unique<base::DictionaryValue>();
-  std::unique_ptr<base::ListValue> methods =
-      std::make_unique<base::ListValue>();
-  size_t numMethods = method_data.supported_methods.size();
-  for (size_t i = 0; i < numMethods; i++) {
-    methods->GetList().emplace_back(method_data.supported_methods[i]);
-  }
-  result->SetList(kPaymentDetailsModifierSupportedMethods, std::move(methods));
+  result->SetString(kPaymentDetailsModifierSupportedMethods,
+                    method_data.supported_method);
   result->SetString(kPaymentDetailsModifierData, method_data.data);
   if (total) {
     result->SetDictionary(kPaymentDetailsModifierTotal,

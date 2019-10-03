@@ -132,6 +132,9 @@ std::ostream& operator<<(std::ostream& os,
   return os;
 }
 
+static const SampleFormat kSampleFormat = kSampleFormatS16;
+static const snd_pcm_format_t kAlsaSampleFormat = SND_PCM_FORMAT_S16;
+
 const char AlsaPcmOutputStream::kDefaultDevice[] = "default";
 const char AlsaPcmOutputStream::kAutoSelectDevice[] = "";
 const char AlsaPcmOutputStream::kPlugPrefix[] = "plug:";
@@ -145,13 +148,13 @@ AlsaPcmOutputStream::AlsaPcmOutputStream(const std::string& device_name,
                                          AlsaWrapper* wrapper,
                                          AudioManagerBase* manager)
     : requested_device_name_(device_name),
-      pcm_format_(alsa_util::BitsToFormat(params.bits_per_sample())),
+      pcm_format_(kAlsaSampleFormat),
       channels_(params.channels()),
       channel_layout_(params.channel_layout()),
       sample_rate_(params.sample_rate()),
-      bytes_per_sample_(params.bits_per_sample() / 8),
-      bytes_per_frame_(params.GetBytesPerFrame()),
-      packet_size_(params.GetBytesPerBuffer()),
+      bytes_per_sample_(SampleFormatToBytesPerChannel(kSampleFormat)),
+      bytes_per_frame_(params.GetBytesPerFrame(kSampleFormat)),
+      packet_size_(params.GetBytesPerBuffer(kSampleFormat)),
       latency_(std::max(
           base::TimeDelta::FromMicroseconds(kMinLatencyMicros),
           AudioTimestampHelper::FramesToTime(params.frames_per_buffer() * 2,
@@ -168,19 +171,13 @@ AlsaPcmOutputStream::AlsaPcmOutputStream(const std::string& device_name,
       volume_(1.0f),
       source_callback_(NULL),
       audio_bus_(AudioBus::Create(params)),
-      tick_clock_(new base::DefaultTickClock()),
-      weak_factory_(this) {
+      tick_clock_(base::DefaultTickClock::GetInstance()) {
   DCHECK(manager_->GetTaskRunner()->BelongsToCurrentThread());
   DCHECK_EQ(audio_bus_->frames() * bytes_per_frame_, packet_size_);
 
   // Sanity check input values.
   if (!params.IsValid()) {
     LOG(WARNING) << "Unsupported audio parameters.";
-    TransitionTo(kInError);
-  }
-
-  if (pcm_format_ == SND_PCM_FORMAT_UNKNOWN) {
-    LOG(WARNING) << "Unsupported bits per sample: " << params.bits_per_sample();
     TransitionTo(kInError);
   }
 }
@@ -339,6 +336,10 @@ void AlsaPcmOutputStream::Stop() {
   TransitionTo(kIsStopped);
 }
 
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void AlsaPcmOutputStream::Flush() {}
+
 void AlsaPcmOutputStream::SetVolume(double volume) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -352,9 +353,9 @@ void AlsaPcmOutputStream::GetVolume(double* volume) {
 }
 
 void AlsaPcmOutputStream::SetTickClockForTesting(
-    std::unique_ptr<base::TickClock> tick_clock) {
+    const base::TickClock* tick_clock) {
   DCHECK(tick_clock);
-  tick_clock_ = std::move(tick_clock);
+  tick_clock_ = tick_clock;
 }
 
 void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
@@ -418,8 +419,8 @@ void AlsaPcmOutputStream::BufferPacket(bool* source_exhausted) {
     // Note: If this ever changes to output raw float the data must be clipped
     // and sanitized since it may come from an untrusted source such as NaCl.
     output_bus->Scale(volume_);
-    output_bus->ToInterleaved(
-        frames_filled, bytes_per_sample_, packet->writable_data());
+    output_bus->ToInterleaved<SignedInt16SampleTypeTraits>(
+        frames_filled, reinterpret_cast<int16_t*>(packet->writable_data()));
 
     if (packet_size > 0) {
       packet->set_data_size(packet_size);
@@ -540,10 +541,10 @@ void AlsaPcmOutputStream::ScheduleNextWrite(bool source_exhausted) {
     next_fill_time = base::TimeDelta::FromMilliseconds(10);
   }
 
-  task_runner_->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&AlsaPcmOutputStream::WriteTask, weak_factory_.GetWeakPtr()),
-      next_fill_time);
+  task_runner_->PostDelayedTask(FROM_HERE,
+                                base::BindOnce(&AlsaPcmOutputStream::WriteTask,
+                                               weak_factory_.GetWeakPtr()),
+                                next_fill_time);
 }
 
 std::string AlsaPcmOutputStream::FindDeviceForChannels(uint32_t channels) {

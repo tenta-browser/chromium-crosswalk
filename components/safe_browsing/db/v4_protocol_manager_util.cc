@@ -5,13 +5,15 @@
 #include "components/safe_browsing/db/v4_protocol_manager_util.h"
 
 #include "base/base64.h"
-#include "base/hash.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/hash/hash.h"
+#include "base/hash/sha1.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
-#include "base/sha1.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "components/version_info/version_info.h"
 #include "crypto/sha2.h"
+#include "google_apis/google_api_keys.h"
 #include "net/base/escape.h"
 #include "net/base/ip_address.h"
 #include "net/http/http_request_headers.h"
@@ -31,6 +33,11 @@ const base::FilePath::CharType kStoreSuffix[] = FILE_PATH_LITERAL(".store");
 
 namespace {
 
+// The default URL prefix where browser reports safe browsing hits and malware
+// details.
+const char kSbReportsURLPrefix[] =
+    "https://safebrowsing.google.com/safebrowsing";
+
 std::string Unescape(const std::string& url) {
   std::string unescaped_str(url);
   const int kMaxLoopIterations = 1024;
@@ -38,11 +45,7 @@ std::string Unescape(const std::string& url) {
   int loop_var = 0;
   do {
     old_size = unescaped_str.size();
-    unescaped_str = net::UnescapeURLComponent(
-        unescaped_str,
-        net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS |
-            net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
-            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
+    unescaped_str = net::UnescapeBinaryURLComponent(unescaped_str);
   } while (old_size != unescaped_str.size() &&
            ++loop_var <= kMaxLoopIterations);
 
@@ -71,8 +74,31 @@ std::string Escape(const std::string& url) {
 
 }  // namespace
 
+V4ProtocolConfig GetV4ProtocolConfig(const std::string& client_name,
+                                     bool disable_auto_update) {
+  return V4ProtocolConfig(client_name, disable_auto_update,
+                          google_apis::GetAPIKey(),
+                          version_info::GetVersionNumber());
+}
+
 void SetSbV4UrlPrefixForTesting(const char* url_prefix) {
   g_sbv4_url_prefix_for_testing = url_prefix;
+}
+
+std::string GetReportUrl(const V4ProtocolConfig& config,
+                         const std::string& method,
+                         const ExtendedReportingLevel* reporting_level) {
+  std::string url = base::StringPrintf(
+      "%s/%s?client=%s&appver=%s&pver=4.0", kSbReportsURLPrefix, method.c_str(),
+      config.client_name.c_str(), config.version.c_str());
+  std::string api_key = google_apis::GetAPIKey();
+  if (!api_key.empty()) {
+    base::StringAppendF(&url, "&key=%s",
+                        net::EscapeQueryParamValue(api_key, true).c_str());
+  }
+  if (reporting_level)
+    url.append(base::StringPrintf("&ext=%d", *reporting_level));
+  return url;
 }
 
 std::ostream& operator<<(std::ostream& os, const ListIdentifier& id) {
@@ -119,12 +145,21 @@ ListIdentifier GetIpMalwareId() {
   return ListIdentifier(GetCurrentPlatformType(), IP_RANGE, MALWARE_THREAT);
 }
 
+ListIdentifier GetUrlBillingId() {
+  return ListIdentifier(GetCurrentPlatformType(), URL, BILLING);
+}
+
 ListIdentifier GetUrlCsdDownloadWhitelistId() {
   return ListIdentifier(GetCurrentPlatformType(), URL, CSD_DOWNLOAD_WHITELIST);
 }
 
 ListIdentifier GetUrlCsdWhitelistId() {
   return ListIdentifier(GetCurrentPlatformType(), URL, CSD_WHITELIST);
+}
+
+ListIdentifier GetUrlHighConfidenceAllowlistId() {
+  return ListIdentifier(GetCurrentPlatformType(), URL,
+                        HIGH_CONFIDENCE_ALLOWLIST);
 }
 
 ListIdentifier GetUrlMalwareId() {
@@ -143,6 +178,10 @@ ListIdentifier GetUrlSubresourceFilterId() {
   return ListIdentifier(GetCurrentPlatformType(), URL, SUBRESOURCE_FILTER);
 }
 
+ListIdentifier GetUrlSuspiciousSiteId() {
+  return ListIdentifier(GetCurrentPlatformType(), URL, SUSPICIOUS);
+}
+
 ListIdentifier GetUrlUwsId() {
   return ListIdentifier(GetCurrentPlatformType(), URL, UNWANTED_SOFTWARE);
 }
@@ -150,7 +189,7 @@ ListIdentifier GetUrlUwsId() {
 std::string GetUmaSuffixForStore(const base::FilePath& file_path) {
   DCHECK_EQ(kStoreSuffix, file_path.BaseName().Extension());
   return base::StringPrintf(
-      ".%" PRIsFP, file_path.BaseName().RemoveExtension().value().c_str());
+      ".%" PRFilePath, file_path.BaseName().RemoveExtension().value().c_str());
 }
 
 StoreAndHashPrefix::StoreAndHashPrefix(ListIdentifier list_id,
@@ -180,6 +219,8 @@ bool SBThreatTypeSetIsValidForCheckBrowseUrl(const SBThreatTypeSet& set) {
       case SB_THREAT_TYPE_URL_PHISHING:
       case SB_THREAT_TYPE_URL_MALWARE:
       case SB_THREAT_TYPE_URL_UNWANTED:
+      case SB_THREAT_TYPE_SUSPICIOUS_SITE:
+      case SB_THREAT_TYPE_BILLING:
         break;
 
       default:
@@ -257,10 +298,10 @@ base::TimeDelta V4ProtocolManagerUtil::GetNextBackOffInterval(
 // static
 void V4ProtocolManagerUtil::RecordHttpResponseOrErrorCode(
     const char* metric_name,
-    const net::URLRequestStatus& status,
+    int net_error,
     int response_code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      metric_name, status.is_success() ? response_code : status.error());
+  base::UmaHistogramSparse(metric_name,
+                           net_error == net::OK ? response_code : net_error);
 }
 
 // static
@@ -386,6 +427,15 @@ void V4ProtocolManagerUtil::GeneratePatternsToCheck(
       urls->push_back(hosts[h] + paths[p]);
     }
   }
+}
+
+// static
+FullHash V4ProtocolManagerUtil::GetFullHash(const GURL& url) {
+  std::string host;
+  std::string path;
+  CanonicalizeUrl(url, &host, &path, nullptr);
+
+  return crypto::SHA256HashString(host + path);
 }
 
 // static

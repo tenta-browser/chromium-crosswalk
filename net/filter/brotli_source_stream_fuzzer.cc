@@ -6,25 +6,25 @@
 
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/test/fuzzed_data_provider.h"
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
 #include "net/filter/fuzzed_source_stream.h"
 #include "net/filter/source_stream.h"
+#include "third_party/libFuzzer/src/utils/FuzzedDataProvider.h"
 
 // Fuzzer for BrotliSourceStream.
 //
 // |data| is used to create a FuzzedSourceStream.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::TestCompletionCallback callback;
-  base::FuzzedDataProvider data_provider(data, size);
+  FuzzedDataProvider data_provider(data, size);
   std::unique_ptr<net::FuzzedSourceStream> fuzzed_source_stream(
       new net::FuzzedSourceStream(&data_provider));
   std::unique_ptr<net::SourceStream> brotli_stream =
       net::CreateBrotliSourceStream(std::move(fuzzed_source_stream));
   while (true) {
-    scoped_refptr<net::IOBufferWithSize> io_buffer(
-        new net::IOBufferWithSize(64));
+    scoped_refptr<net::IOBufferWithSize> io_buffer =
+        base::MakeRefCounted<net::IOBufferWithSize>(64);
     int result = brotli_stream->Read(io_buffer.get(), io_buffer->size(),
                                      callback.callback());
     // Releasing the pointer to IOBuffer immediately is more likely to lead to a

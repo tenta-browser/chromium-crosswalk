@@ -11,35 +11,33 @@
 #include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "content/public/browser/permission_manager.h"
+#include "content/public/browser/permission_controller_delegate.h"
 
 namespace android_webview {
 
 class AwBrowserPermissionRequestDelegate;
 class LastRequestResultCache;
 
-class AwPermissionManager : public content::PermissionManager {
+class AwPermissionManager : public content::PermissionControllerDelegate {
  public:
   AwPermissionManager();
   ~AwPermissionManager() override;
 
-  // PermissionManager implementation.
-  int RequestPermission(
-      content::PermissionType permission,
-      content::RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin,
-      bool user_gesture,
-      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
-      override;
+  // PermissionControllerDelegate implementation.
+  int RequestPermission(content::PermissionType permission,
+                        content::RenderFrameHost* render_frame_host,
+                        const GURL& requesting_origin,
+                        bool user_gesture,
+                        base::OnceCallback<void(blink::mojom::PermissionStatus)>
+                            callback) override;
   int RequestPermissions(
       const std::vector<content::PermissionType>& permissions,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<
-          void(const std::vector<blink::mojom::PermissionStatus>&)>& callback)
+      base::OnceCallback<
+          void(const std::vector<blink::mojom::PermissionStatus>&)> callback)
       override;
-  void CancelPermissionRequest(int request_id) override;
   void ResetPermission(content::PermissionType permission,
                        const GURL& requesting_origin,
                        const GURL& embedding_origin) override;
@@ -47,15 +45,20 @@ class AwPermissionManager : public content::PermissionManager {
       content::PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin) override;
+  blink::mojom::PermissionStatus GetPermissionStatusForFrame(
+      content::PermissionType permission,
+      content::RenderFrameHost* render_frame_host,
+      const GURL& requesting_origin) override;
   int SubscribePermissionStatusChange(
       content::PermissionType permission,
+      content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
-      const GURL& embedding_origin,
-      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback)
       override;
   void UnsubscribePermissionStatusChange(int subscription_id) override;
 
  protected:
+  void CancelPermissionRequest(int request_id);
   void CancelPermissionRequests();
 
  private:

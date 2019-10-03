@@ -4,14 +4,14 @@
 
 #include "ash/system/power/power_button_display_controller.h"
 
-#include "ash/accessibility/accessibility_controller.h"
-#include "ash/media_controller.h"
+#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/media/media_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/power/scoped_backlights_forced_off.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/time/tick_clock.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/stylus_state.h"
 #include "ui/events/event.h"
 
@@ -23,32 +23,29 @@ namespace {
 bool IsTabletModeActive() {
   TabletModeController* tablet_mode_controller =
       Shell::Get()->tablet_mode_controller();
-  return tablet_mode_controller &&
-         tablet_mode_controller->IsTabletModeWindowManagerEnabled();
+  return tablet_mode_controller && tablet_mode_controller->InTabletMode();
 }
 
 }  // namespace
 
 PowerButtonDisplayController::PowerButtonDisplayController(
     BacklightsForcedOffSetter* backlights_forced_off_setter,
-    base::TickClock* tick_clock)
+    const base::TickClock* tick_clock)
     : backlights_forced_off_setter_(backlights_forced_off_setter),
       backlights_forced_off_observer_(this),
       tick_clock_(tick_clock),
       weak_ptr_factory_(this) {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
-  ui::InputDeviceManager::GetInstance()->AddObserver(this);
-  Shell::Get()->PrependPreTargetHandler(this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
+  ui::DeviceDataManager::GetInstance()->AddObserver(this);
+  Shell::Get()->AddPreTargetHandler(this, ui::EventTarget::Priority::kSystem);
 
   backlights_forced_off_observer_.Add(backlights_forced_off_setter_);
 }
 
 PowerButtonDisplayController::~PowerButtonDisplayController() {
   Shell::Get()->RemovePreTargetHandler(this);
-  ui::InputDeviceManager::GetInstance()->RemoveObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 bool PowerButtonDisplayController::IsScreenOn() const {
@@ -69,6 +66,11 @@ void PowerButtonDisplayController::SetBacklightsForcedOff(bool forced_off) {
     backlights_forced_off_.reset();
   }
 
+  // Let PowerPolicyController update inactivity delays:
+  // https://crbug.com/812504
+  chromeos::PowerPolicyController::Get()
+      ->HandleBacklightsForcedOffForPowerButton(forced_off);
+
   if (forced_off)
     Shell::Get()->media_controller()->SuspendMediaSessions();
 }
@@ -77,8 +79,8 @@ void PowerButtonDisplayController::OnBacklightsForcedOffChanged(
     bool forced_off) {
   if (send_accessibility_alert_on_backlights_forced_off_change_) {
     Shell::Get()->accessibility_controller()->TriggerAccessibilityAlert(
-        forced_off ? mojom::AccessibilityAlert::SCREEN_OFF
-                   : mojom::AccessibilityAlert::SCREEN_ON);
+        forced_off ? AccessibilityAlert::SCREEN_OFF
+                   : AccessibilityAlert::SCREEN_ON);
   }
   send_accessibility_alert_on_backlights_forced_off_change_ = false;
 }

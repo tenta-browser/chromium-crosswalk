@@ -17,6 +17,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.hardware.Sensor;
@@ -35,10 +36,10 @@ import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.device.mojom.ReportingMode;
 import org.chromium.device.mojom.SensorType;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -48,7 +49,7 @@ import java.util.List;
 /**
  * Unit tests for PlatformSensor and PlatformSensorProvider.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class PlatformSensorAndProviderTest {
     @Mock
@@ -239,6 +240,27 @@ public class PlatformSensorAndProviderTest {
     }
 
     /**
+     * Same as the above except instead of a clean failure an exception is thrown.
+     */
+    @Test
+    @Feature({"PlatformSensor"})
+    public void testSensorStartFailsWithException() {
+        addMockSensor(50000, Sensor.TYPE_ACCELEROMETER, Sensor.REPORTING_MODE_CONTINUOUS);
+        PlatformSensor sensor =
+                PlatformSensor.create(Sensor.TYPE_ACCELEROMETER, 3, mPlatformSensorProvider);
+        assertNotNull(sensor);
+
+        when(mSensorManager.registerListener(any(SensorEventListener.class), any(Sensor.class),
+                     anyInt(), any(Handler.class)))
+                .thenThrow(RuntimeException.class);
+
+        sensor.startSensor(5);
+        verify(mPlatformSensorProvider, times(1)).sensorStarted(sensor);
+        verify(mPlatformSensorProvider, times(1)).sensorStopped(sensor);
+        verify(mPlatformSensorProvider, times(1)).getHandler();
+    }
+
+    /**
      * Test that PlatformSensor correctly checks supported configuration.
      */
     @Test
@@ -296,6 +318,28 @@ public class PlatformSensorAndProviderTest {
 
         verify(spySensor, times(1))
                 .updateSensorReading(timestamp, getFakeReadingValue(1), 0.0, 0.0, 0.0);
+    }
+
+    /**
+     * Test that shared buffer is correctly populated from SensorEvent for sensors with more
+     * than one value.
+     */
+    @Test
+    @Feature({"PlatformSensor"})
+    public void testSensorReadingFromEventMoreValues() {
+        TestPlatformSensor sensor = createTestPlatformSensor(
+                50000, Sensor.TYPE_ROTATION_VECTOR, 4, Sensor.REPORTING_MODE_ON_CHANGE);
+        initPlatformSensor(sensor);
+        TestPlatformSensor spySensor = spy(sensor);
+        SensorEvent event = createFakeEvent(4);
+        assertNotNull(event);
+        spySensor.onSensorChanged(event);
+
+        double timestamp = PLATFORM_SENSOR_TIMESTAMP * SECONDS_IN_NANOSECOND;
+
+        verify(spySensor, times(1))
+                .updateSensorReading(timestamp, getFakeReadingValue(1), getFakeReadingValue(2),
+                        getFakeReadingValue(3), getFakeReadingValue(4));
     }
 
     /**

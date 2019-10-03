@@ -118,6 +118,21 @@ def ChromeVersionEqualOrAfterM(milestone):
     return wrapper
   return puesdo_wrapper
 
+def ChromeVersionBetweenInclusiveM(after, before):
+  def puesdo_wrapper(func):
+    def wrapper(*args, **kwargs):
+      global chrome_version
+      if chrome_version == None:
+        chrome_version = GetChromeVersion()
+      if chrome_version <= before and chrome_version >= after:
+        func(*args, **kwargs)
+      else:
+        args[0].skipTest('This test only runs between M%d and M%d (inclusive).'
+          % (after, before))
+    return wrapper
+  return puesdo_wrapper
+
+
 def Slow(func):
   def wrapper(*args, **kwargs):
     if ParseFlags().skip_slow:
@@ -125,3 +140,12 @@ def Slow(func):
     else:
       func(*args, **kwargs)
   return wrapper
+
+def SkipIfForcedBrowserArg(arg):
+  def puesdo_wrapper(func):
+    def wrapper(*args, **kwargs):
+      if ParseFlags().browser_args and arg in ParseFlags().browser_args:
+        args[0].skipTest(
+          'Test skipped because "%s" was given on the command line' % arg)
+    return wrapper
+  return puesdo_wrapper

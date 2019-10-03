@@ -12,14 +12,15 @@ import static org.chromium.net.CronetTestRule.getContext;
 
 import android.os.ConditionVariable;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule.CronetTestFramework;
 import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
@@ -37,15 +38,17 @@ import java.util.concurrent.Executors;
  * Tests that {@link org.chromium.net.impl.CronetUrlRequest#getStatus(StatusListener)} works as
  * expected.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class GetStatusTest {
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
+    @Rule
+    public ExpectedException thrown = ExpectedException.none();
 
     private CronetTestFramework mTestFramework;
 
     private static class TestStatusListener extends StatusListener {
-        boolean mOnStatusCalled = false;
+        boolean mOnStatusCalled;
         int mStatus = Integer.MAX_VALUE;
         private final ConditionVariable mBlock = new ConditionVariable();
 
@@ -143,25 +146,9 @@ public class GetStatusTest {
             // Expected because LoadState.WAITING_FOR_APPCACHE is not mapped.
         }
 
-        try {
-            UrlRequestBase.convertLoadState(-1);
-            fail();
-        } catch (AssertionError e) {
-            // Expected.
-        } catch (IllegalArgumentException e) {
-            // If assertions are disabled, an IllegalArgumentException should be thrown.
-            assertEquals("No request status found.", e.getMessage());
-        }
-
-        try {
-            UrlRequestBase.convertLoadState(16);
-            fail();
-        } catch (AssertionError e) {
-            // Expected.
-        } catch (IllegalArgumentException e) {
-            // If assertions are disabled, an IllegalArgumentException should be thrown.
-            assertEquals("No request status found.", e.getMessage());
-        }
+        thrown.expect(Throwable.class);
+        UrlRequestBase.convertLoadState(-1);
+        UrlRequestBase.convertLoadState(16);
     }
 
     @Test

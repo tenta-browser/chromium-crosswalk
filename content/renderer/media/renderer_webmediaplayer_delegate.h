@@ -18,11 +18,15 @@
 #include "base/timer/timer.h"
 #include "content/common/content_export.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "media/blink/webmediaplayer_delegate.h"
+#include "third_party/blink/public/platform/media/webmediaplayer_delegate.h"
 
 #if defined(OS_ANDROID)
 #include "base/time/time.h"
 #endif  // OS_ANDROID
+
+namespace blink {
+enum class WebFullscreenVideoStatus;
+}
 
 namespace media {
 
@@ -32,7 +36,7 @@ enum class MediaContentType;
 // the MediaPlayerDelegateHost.
 class CONTENT_EXPORT RendererWebMediaPlayerDelegate
     : public content::RenderFrameObserver,
-      public WebMediaPlayerDelegate,
+      public blink::WebMediaPlayerDelegate,
       public base::SupportsWeakPtr<RendererWebMediaPlayerDelegate> {
  public:
   explicit RendererWebMediaPlayerDelegate(content::RenderFrame* render_frame);
@@ -41,7 +45,7 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // Returns true if this RenderFrame has ever seen media playback before.
   bool has_played_media() const { return has_played_media_; }
 
-  // WebMediaPlayerDelegate implementation.
+  // blink::WebMediaPlayerDelegate implementation.
   bool IsFrameHidden() override;
   bool IsFrameClosed() override;
   int AddObserver(Observer* observer) override;
@@ -56,9 +60,14 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   bool IsIdle(int player_id) override;
   void ClearStaleFlag(int player_id) override;
   bool IsStale(int player_id) override;
-  void SetIsEffectivelyFullscreen(int player_id, bool is_fullscreen) override;
+  void SetIsEffectivelyFullscreen(
+      int player_id,
+      blink::WebFullscreenVideoStatus fullscreen_video_status) override;
   void DidPlayerSizeChange(int delegate_id, const gfx::Size& size) override;
   void DidPlayerMutedStatusChange(int delegate_id, bool muted) override;
+  void DidPlayerMediaPositionStateChange(
+      int delegate_id,
+      const media_session::MediaPosition& position) override;
 
   // content::RenderFrameObserver overrides.
   void WasHidden() override;
@@ -67,12 +76,12 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   void OnDestruct() override;
 
   // Zeros out |idle_cleanup_interval_|, sets |idle_timeout_| to |idle_timeout|,
-  // and |is_jelly_bean_| to |is_jelly_bean|. A zero cleanup interval
+  // and |is_low_end_| to |is_low_end|. A zero cleanup interval
   // will cause the idle timer to run with each run of the message loop.
   void SetIdleCleanupParamsForTesting(base::TimeDelta idle_timeout,
                                       base::TimeDelta idle_cleanup_interval,
-                                      base::TickClock* tick_clock,
-                                      bool is_jelly_bean);
+                                      const base::TickClock* tick_clock,
+                                      bool is_low_end);
   bool IsIdleCleanupTimerRunningForTesting() const;
 
   // Note: Does not call OnFrameHidden()/OnFrameShown().
@@ -81,8 +90,9 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   friend class RendererWebMediaPlayerDelegateTest;
 
  private:
-  void OnMediaDelegatePause(int player_id);
+  void OnMediaDelegatePause(int player_id, bool triggered_by_user);
   void OnMediaDelegatePlay(int player_id);
+  void OnMediaDelegateMuted(int player_id, bool muted);
   void OnMediaDelegateSeekForward(int player_id, base::TimeDelta seek_time);
   void OnMediaDelegateSeekBackward(int player_id, base::TimeDelta seek_time);
   void OnMediaDelegateSuspendAllMediaPlayers();
@@ -136,7 +146,7 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
 
   // Clock used for calculating when players have become stale. May be
   // overridden for testing.
-  base::TickClock* tick_clock_;
+  const base::TickClock* tick_clock_;
 
 #if defined(OS_ANDROID)
   bool was_playing_background_video_ = false;
@@ -152,7 +162,7 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
 
   // Determined at construction time based on system information; determines
   // when the idle cleanup timer should be fired more aggressively.
-  bool is_jelly_bean_;
+  bool is_low_end_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererWebMediaPlayerDelegate);
 };

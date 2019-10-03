@@ -7,7 +7,7 @@
 #import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/material_components/activity_indicator.h"
-#import "ios/chrome/browser/ui/rtl_geometry.h"
+#import "ios/chrome/browser/ui/util/rtl_geometry.h"
 #import "ios/third_party/material_components_ios/src/components/ActivityIndicator/src/MaterialActivityIndicator.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
 
@@ -24,11 +24,6 @@
 
 @synthesize activityIndicator = _activityIndicator;
 @synthesize animateOutCompletionBlock = _animateOutCompletionBlock;
-
-- (instancetype)initWithFrame:(CGRect)frame {
-  return [self initWithFrame:frame
-             backgroundColor:bookmark_utils_ios::mainBackgroundColor()];
-}
 
 - (instancetype)initWithFrame:(CGRect)frame backgroundColor:(UIColor*)color {
   self = [super initWithFrame:frame];

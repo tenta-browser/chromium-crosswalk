@@ -6,6 +6,8 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
+#include "ash/wm/desks/desks_util.h"
+#include "base/bind.h"
 #include "chrome/grit/generated_resources.h"
 #include "media/base/video_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -17,13 +19,13 @@ using content::DesktopMediaID;
 namespace {
 
 // Update the list twice per second.
-const int kDefaultUpdatePeriod = 500;
+const int kDefaultDesktopMediaListUpdatePeriod = 500;
 
 }  // namespace
 
 DesktopMediaListAsh::DesktopMediaListAsh(content::DesktopMediaID::Type type)
-    : DesktopMediaListBase(
-          base::TimeDelta::FromMilliseconds(kDefaultUpdatePeriod)),
+    : DesktopMediaListBase(base::TimeDelta::FromMilliseconds(
+          kDefaultDesktopMediaListUpdatePeriod)),
       weak_factory_(this) {
   DCHECK(type == content::DesktopMediaID::TYPE_SCREEN ||
          type == content::DesktopMediaID::TYPE_WINDOW);
@@ -52,13 +54,17 @@ void DesktopMediaListAsh::EnumerateWindowsForRoot(
   aura::Window* container = ash::Shell::GetContainer(root_window, container_id);
   if (!container)
     return;
-  for (aura::Window::Windows::const_iterator it = container->children().begin();
-       it != container->children().end(); ++it) {
+  // The |container| has all the top-level windows in reverse order, e.g. the
+  // most top-level window is at the end. So iterate children reversely to make
+  // sure |sources| is in the expected order.
+  for (aura::Window::Windows::const_reverse_iterator it =
+           container->children().rbegin();
+       it != container->children().rend(); ++it) {
     if (!(*it)->IsVisible() || !(*it)->CanFocus())
       continue;
-    content::DesktopMediaID id = content::DesktopMediaID::RegisterAuraWindow(
+    content::DesktopMediaID id = content::DesktopMediaID::RegisterNativeWindow(
         content::DesktopMediaID::TYPE_WINDOW, *it);
-    if (id.aura_id == view_dialog_id_.aura_id)
+    if (id.window_id == view_dialog_id_.window_id)
       continue;
     SourceDescription window_source(id, (*it)->GetTitle());
     sources->push_back(window_source);
@@ -76,7 +82,7 @@ void DesktopMediaListAsh::EnumerateSources(
   for (size_t i = 0; i < root_windows.size(); ++i) {
     if (type_ == content::DesktopMediaID::TYPE_SCREEN) {
       SourceDescription screen_source(
-          content::DesktopMediaID::RegisterAuraWindow(
+          content::DesktopMediaID::RegisterNativeWindow(
               content::DesktopMediaID::TYPE_SCREEN, root_windows[i]),
           root_windows[i]->GetTitle());
 
@@ -103,10 +109,15 @@ void DesktopMediaListAsh::EnumerateSources(
 
       CaptureThumbnail(screen_source.id, root_windows[i]);
     } else {
-      EnumerateWindowsForRoot(
-          sources, root_windows[i], ash::kShellWindowId_DefaultContainer);
-      EnumerateWindowsForRoot(
-          sources, root_windows[i], ash::kShellWindowId_AlwaysOnTopContainer);
+      // The list of desks containers depends on whether the Virtual Desks
+      // feature is enabled or not.
+      for (int desk_id : ash::desks_util::GetDesksContainersIds())
+        EnumerateWindowsForRoot(sources, root_windows[i], desk_id);
+
+      EnumerateWindowsForRoot(sources, root_windows[i],
+                              ash::kShellWindowId_AlwaysOnTopContainer);
+      EnumerateWindowsForRoot(sources, root_windows[i],
+                              ash::kShellWindowId_PipContainer);
     }
   }
 }

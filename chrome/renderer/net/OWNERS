@@ -1,5 +1,10 @@
-jar@chromium.org
+# Preferred net owner.
 mmenke@chromium.org
-juliatuttle@chromium.org
+
+# Offline owners.
+chili@chromium.org
+jianli@chromium.org
+
+file://net/OWNERS
 
 # COMPONENT: Internals>Network

@@ -5,41 +5,55 @@
 #include "chromecast/browser/cast_web_contents_manager.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
+#include "chromecast/browser/cast_web_view_default.h"
+#include "chromecast/browser/cast_web_view_factory.h"
+#include "chromecast/chromecast_buildflags.h"
 #include "content/public/browser/media_session.h"
+#include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 
 namespace chromecast {
 
 CastWebContentsManager::CastWebContentsManager(
-    content::BrowserContext* browser_context)
+    content::BrowserContext* browser_context,
+    CastWebViewFactory* web_view_factory)
     : browser_context_(browser_context),
+      web_view_factory_(web_view_factory),
       task_runner_(base::SequencedTaskRunnerHandle::Get()),
       weak_factory_(this) {
   DCHECK(browser_context_);
+  DCHECK(web_view_factory_);
   DCHECK(task_runner_);
 }
 
 CastWebContentsManager::~CastWebContentsManager() = default;
 
 std::unique_ptr<CastWebView> CastWebContentsManager::CreateWebView(
-    CastWebView::Delegate* delegate,
+    const CastWebView::CreateParams& params,
     scoped_refptr<content::SiteInstance> site_instance,
-    bool transparent,
-    bool allow_media_access,
-    bool is_headless) {
+    const GURL& initial_url) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return base::MakeUnique<CastWebView>(delegate, this, browser_context_,
-                                       site_instance, transparent,
-                                       allow_media_access, is_headless);
+  return web_view_factory_->CreateWebView(
+      params, this, std::move(site_instance), initial_url);
+}
+
+std::unique_ptr<CastWebView> CastWebContentsManager::CreateWebView(
+    const CastWebView::CreateParams& params,
+    const GURL& initial_url) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return web_view_factory_->CreateWebView(
+      params, this,
+      content::SiteInstance::CreateForURL(browser_context_, initial_url),
+      initial_url);
 }
 
 void CastWebContentsManager::DelayWebContentsDeletion(
@@ -56,7 +70,7 @@ void CastWebContentsManager::DelayWebContentsDeletion(
   // Suspend the MediaSession to free up media resources for the next content
   // window.
   content::MediaSession::Get(web_contents_ptr)
-      ->Suspend(content::MediaSession::SuspendType::SYSTEM);
+      ->Suspend(content::MediaSession::SuspendType::kSystem);
   LOG(INFO) << "WebContents for " << web_contents->GetVisibleURL()
             << " will be deleted in " << time_delta.InMilliseconds()
             << " milliseconds.";

@@ -37,6 +37,8 @@ def main(argv):
   parser.add_argument(
       '--isolated-script-test-filter', type=str,
       required=False)
+  parser.add_argument(
+      '--platform', type=str, default=sys.platform, required=False)
 
   args = parser.parse_args(argv)
 
@@ -46,15 +48,29 @@ def main(argv):
   # all the time on Linux.
   env[CHROME_SANDBOX_ENV] = CHROME_SANDBOX_PATH
 
-  if sys.platform == 'win32':
+  additional_args = []
+  if args.platform == 'win32':
     exe = os.path.join('.', 'content_shell.exe')
-  elif sys.platform == 'darwin':
+  elif args.platform == 'darwin':
     exe = os.path.join('.', 'Content Shell.app', 'Contents', 'MacOS',
                        'Content Shell')
+    # The Content Shell binary does not directly link against
+    # the Content Shell Framework (it is loaded at runtime). Ensure that
+    # symbols are dumped for the Framework too.
+    additional_args = [
+        '--additional-binary',
+        os.path.join('.', 'Content Shell.app', 'Contents', 'Frameworks',
+                     'Content Shell Framework.framework', 'Versions',
+                     'Current', 'Content Shell Framework')
+    ]
+  elif args.platform == 'android':
+    exe = os.path.join('.', 'lib.unstripped',
+                       'libcontent_shell_content_view.so')
   else:
     exe = os.path.join('.', 'content_shell')
 
   with common.temporary_file() as tempfile_path:
+    env['CHROME_HEADLESS'] = '1'
     rc = xvfb.run_executable([
         sys.executable,
         os.path.join(common.SRC_DIR, 'content', 'shell', 'tools',
@@ -62,8 +78,9 @@ def main(argv):
         '--verbose',
         '--build-dir', '.',
         '--binary', exe,
-        '--json', tempfile_path
-    ], env)
+        '--json', tempfile_path,
+        '--platform', args.platform,
+    ] + additional_args, env)
 
     with open(tempfile_path) as f:
       failures = json.load(f)

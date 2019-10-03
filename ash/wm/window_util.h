@@ -6,9 +6,11 @@
 #define ASH_WM_WINDOW_UTIL_H_
 
 #include <stdint.h>
+#include <vector>
 
 #include "ash/ash_export.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/wm/core/window_util.h"
 
 namespace aura {
 class Window;
@@ -16,34 +18,17 @@ class Window;
 
 namespace gfx {
 class Point;
-}
-
-namespace ui {
-class Event;
-class EventHandler;
+class Rect;
 }
 
 namespace ash {
 
-class ImmersiveFullscreenController;
+namespace window_util {
 
-namespace wm {
-
-// Utility functions for window activation.
-// DEPRECATED: Prefer the functions in ui/wm/core/window_util.h.
-ASH_EXPORT void ActivateWindow(aura::Window* window);
-ASH_EXPORT void DeactivateWindow(aura::Window* window);
-ASH_EXPORT bool IsActiveWindow(aura::Window* window);
+// See ui/wm/core/window_util.h for ActivateWindow(), DeactivateWindow(),
+// IsActiveWindow() and CanActivateWindow().
 ASH_EXPORT aura::Window* GetActiveWindow();
-ASH_EXPORT bool CanActivateWindow(aura::Window* window);
 ASH_EXPORT aura::Window* GetFocusedWindow();
-
-// Retrieves the activatable window for |window|. If |window| is activatable,
-// this will just return it, otherwise it will climb the parent/transient parent
-// chain looking for a window that is activatable, per the ActivationController.
-// If you're looking for a function to get the activatable "top level" window,
-// this is probably what you're looking for.
-ASH_EXPORT aura::Window* GetActivatableWindow(aura::Window* window);
 
 // Returns the window with capture, null if no window currently has capture.
 ASH_EXPORT aura::Window* GetCaptureWindow();
@@ -74,19 +59,6 @@ ASH_EXPORT void SetAutoHideShelf(aura::Window* window, bool autohide);
 // already in the same root window. Returns true if |window| was moved.
 ASH_EXPORT bool MoveWindowToDisplay(aura::Window* window, int64_t display_id);
 
-// Moves |window| to the root window where the |event| occurred, if it is not
-// already in the same root window. Returns true if |window| was moved.
-ASH_EXPORT bool MoveWindowToEventRoot(aura::Window* window,
-                                      const ui::Event& event);
-
-// Snap the window's layer to physical pixel boundary.
-ASH_EXPORT void SnapWindowToPixelBoundary(aura::Window* window);
-
-// Mark the container window so that InstallSnapLayoutManagerToContainers
-// installs the SnapToPixelLayoutManager.
-ASH_EXPORT void SetSnapsChildrenToPhysicalPixelBoundary(
-    aura::Window* container);
-
 // Convenience for window->delegate()->GetNonClientComponent(location) that
 // returns HTNOWHERE if window->delegate() is null.
 ASH_EXPORT int GetNonClientComponent(aura::Window* window,
@@ -100,26 +72,41 @@ ASH_EXPORT void SetChildrenUseExtendedHitRegionForWindow(aura::Window* window);
 // forward to an associated widget.
 ASH_EXPORT void CloseWidgetForWindow(aura::Window* window);
 
-// Adds or removes a handler to receive events targeted at this window, before
-// this window handles the events itself; the handler does not receive events
-// from embedded windows. This only supports windows with internal widgets;
-// see ash::GetInternalWidgetForWindow(). Ownership of the handler is not
-// transferred.
-//
-// Also note that the target of these events is always an aura::Window.
-ASH_EXPORT void AddLimitedPreTargetHandlerForWindow(ui::EventHandler* handler,
-                                                    aura::Window* window);
-ASH_EXPORT void RemoveLimitedPreTargetHandlerForWindow(
-    ui::EventHandler* handler,
+// Installs a resize handler on the window that makes it easier to resize
+// the window.
+ASH_EXPORT void InstallResizeHandleWindowTargeterForWindow(
     aura::Window* window);
 
-// Installs a resize handler on the window that makes it easier to resize
-// the window. See ResizeHandleWindowTargeter for the specifics.
-ASH_EXPORT void InstallResizeHandleWindowTargeterForWindow(
-    aura::Window* window,
-    ImmersiveFullscreenController* immersive_fullscreen_controller);
+// Returns true if |window| is currently in tab-dragging process.
+ASH_EXPORT bool IsDraggingTabs(const aura::Window* window);
 
-}  // namespace wm
+// Returns true if |window| should be excluded from the cycle list and/or
+// overview.
+ASH_EXPORT bool ShouldExcludeForCycleList(const aura::Window* window);
+ASH_EXPORT bool ShouldExcludeForOverview(const aura::Window* window);
+
+// Removes all windows in |out_window_list| whose transient root is also in
+// |out_window_list|. This is used by overview and window cycler to avoid
+// showing multiple previews for windows linked by transient.
+ASH_EXPORT void RemoveTransientDescendants(
+    std::vector<aura::Window*>* out_window_list);
+
+// Hides a list of |windows| without any animations, in case users wants to hide
+// them right away or apply their own animations. Setting |minimize| to true
+// will result in also setting the window states to minimized.
+ASH_EXPORT void HideAndMaybeMinimizeWithoutAnimation(
+    std::vector<aura::Window*> windows,
+    bool minimize);
+
+// Returns the RootWindow at |point_in_screen| in virtual screen coordinates.
+// Returns nullptr if the root window does not exist at the given point.
+ASH_EXPORT aura::Window* GetRootWindowAt(const gfx::Point& point_in_screen);
+
+// Returns the RootWindow that shares the most area with |rect_in_screen| in
+// virtual screen coordinates.
+ASH_EXPORT aura::Window* GetRootWindowMatching(const gfx::Rect& rect_in_screen);
+
+}  // namespace window_util
 }  // namespace ash
 
 #endif  // ASH_WM_WINDOW_UTIL_H_

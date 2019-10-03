@@ -7,16 +7,19 @@
 #include <algorithm>
 
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
-#include "components/autofill/core/browser/credit_card.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/browser/suggestion.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/grit/components_scaled_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
@@ -28,7 +31,7 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/app/vector_icons/vector_icons.h"
-#include "components/toolbar/vector_icons.h"  // nogncheck
+#include "components/omnibox/browser/vector_icons.h"  // nogncheck
 #endif
 
 namespace autofill {
@@ -46,27 +49,42 @@ const size_t kSeparatorHeight = 1;
 const int kSmallerFontSizeDelta = -1;
 #endif
 
+// Used in the IDS_ space as a placeholder for resources that don't exist.
+constexpr int kResourceNotFoundId = 0;
+
 const struct {
   const char* name;
-  int id;
+  int icon_id;
+  int accessible_string_id;
 } kDataResources[] = {
-    {autofill::kAmericanExpressCard, IDR_AUTOFILL_CC_AMEX},
-    {autofill::kDinersCard, IDR_AUTOFILL_CC_DINERS},
-    {autofill::kDiscoverCard, IDR_AUTOFILL_CC_DISCOVER},
-    {autofill::kEloCard, IDR_AUTOFILL_CC_ELO},
-    {autofill::kGenericCard, IDR_AUTOFILL_CC_GENERIC},
-    {autofill::kJCBCard, IDR_AUTOFILL_CC_JCB},
-    {autofill::kMasterCard, IDR_AUTOFILL_CC_MASTERCARD},
-    {autofill::kMirCard, IDR_AUTOFILL_CC_MIR},
-    {autofill::kUnionPay, IDR_AUTOFILL_CC_UNIONPAY},
-    {autofill::kVisaCard, IDR_AUTOFILL_CC_VISA},
+    {autofill::kAmericanExpressCard, IDR_AUTOFILL_CC_AMEX,
+     IDS_AUTOFILL_CC_AMEX},
+    {autofill::kDinersCard, IDR_AUTOFILL_CC_DINERS, IDS_AUTOFILL_CC_DINERS},
+    {autofill::kDiscoverCard, IDR_AUTOFILL_CC_DISCOVER,
+     IDS_AUTOFILL_CC_DISCOVER},
+    {autofill::kEloCard, IDR_AUTOFILL_CC_ELO, IDS_AUTOFILL_CC_ELO},
+    {autofill::kGenericCard, IDR_AUTOFILL_CC_GENERIC, kResourceNotFoundId},
+    {autofill::kJCBCard, IDR_AUTOFILL_CC_JCB, IDS_AUTOFILL_CC_JCB},
+    {autofill::kMasterCard, IDR_AUTOFILL_CC_MASTERCARD,
+     IDS_AUTOFILL_CC_MASTERCARD},
+    {autofill::kMirCard, IDR_AUTOFILL_CC_MIR, IDS_AUTOFILL_CC_MIR},
+    {autofill::kUnionPay, IDR_AUTOFILL_CC_UNIONPAY, IDS_AUTOFILL_CC_UNION_PAY},
+    {autofill::kVisaCard, IDR_AUTOFILL_CC_VISA, IDS_AUTOFILL_CC_VISA},
 #if defined(OS_ANDROID)
-    {"httpWarning", IDR_AUTOFILL_HTTP_WARNING},
-    {"httpsInvalid", IDR_AUTOFILL_HTTPS_INVALID_WARNING},
-    {"scanCreditCardIcon", IDR_AUTOFILL_CC_SCAN_NEW},
-    {"settings", IDR_AUTOFILL_SETTINGS},
-    {"create", IDR_AUTOFILL_CREATE},
-#endif
+    {"httpWarning", IDR_ANDROID_AUTOFILL_HTTP_WARNING, kResourceNotFoundId},
+    {"httpsInvalid", IDR_ANDROID_AUTOFILL_HTTPS_INVALID_WARNING,
+     kResourceNotFoundId},
+    {"scanCreditCardIcon", IDR_ANDROID_AUTOFILL_CC_SCAN_NEW,
+     kResourceNotFoundId},
+    {"settings", IDR_ANDROID_AUTOFILL_SETTINGS, kResourceNotFoundId},
+    {"create", IDR_ANDROID_AUTOFILL_CREATE, kResourceNotFoundId},
+#if defined(GOOGLE_CHROME_BUILD)
+    {"googlePay", IDR_ANDROID_AUTOFILL_GOOGLE_PAY, kResourceNotFoundId},
+#endif  // GOOGLE_CHROME_BUILD
+#elif defined(GOOGLE_CHROME_BUILD)
+    {"googlePay", IDR_AUTOFILL_GOOGLE_PAY, kResourceNotFoundId},
+    {"googlePayDark", IDR_AUTOFILL_GOOGLE_PAY_DARK, kResourceNotFoundId},
+#endif  // GOOGLE_CHROME_BUILD
 };
 
 int GetRowHeightFromId(int identifier) {
@@ -85,6 +103,7 @@ AutofillPopupLayoutModel::AutofillPopupLayoutModel(
   smaller_font_list_ =
       normal_font_list_.DeriveWithSizeDelta(kSmallerFontSizeDelta);
   bold_font_list_ = normal_font_list_.DeriveWithWeight(gfx::Font::Weight::BOLD);
+  view_common_ = std::make_unique<PopupViewCommon>();
 #endif
 }
 
@@ -121,18 +140,14 @@ int AutofillPopupLayoutModel::GetDesiredPopupWidth() const {
 int AutofillPopupLayoutModel::RowWidthWithoutText(int row,
                                                   bool has_subtext) const {
   std::vector<autofill::Suggestion> suggestions = delegate_->GetSuggestions();
-  const bool is_warning_message =
-      (suggestions[row].frontend_id ==
-       POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE);
   int row_size = 2 * (kEndPadding + kPopupBorderThickness);
   if (has_subtext)
-    row_size += is_warning_message ? kHttpWarningNamePadding : kNamePadding;
+    row_size += kNamePadding;
 
   // Add the Autofill icon size, if required.
-  const base::string16& icon = suggestions[row].icon;
+  const std::string& icon = suggestions[row].icon;
   if (!icon.empty()) {
-    row_size += GetIconImage(row).width() +
-                (is_warning_message ? kPaddingAfterLeadingIcon : kIconPadding);
+    row_size += GetIconImage(row).width() + kIconPadding;
   }
   return row_size;
 }
@@ -146,7 +161,7 @@ void AutofillPopupLayoutModel::UpdatePopupBounds() {
   int popup_width = GetDesiredPopupWidth();
   int popup_height = GetDesiredPopupHeight();
 
-  popup_bounds_ = view_common_.CalculatePopupBounds(
+  popup_bounds_ = view_common_->CalculatePopupBounds(
       popup_width, popup_height, RoundedElementBounds(),
       delegate_->container_view(), delegate_->IsRTL());
 }
@@ -169,11 +184,12 @@ const gfx::FontList& AutofillPopupLayoutModel::GetValueFontListForRow(
     case POPUP_ITEM_ID_CREATE_HINT:
     case POPUP_ITEM_ID_SCAN_CREDIT_CARD:
     case POPUP_ITEM_ID_SEPARATOR:
-    case POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE:
     case POPUP_ITEM_ID_TITLE:
     case POPUP_ITEM_ID_PASSWORD_ENTRY:
     case POPUP_ITEM_ID_ALL_SAVED_PASSWORDS_ENTRY:
     case POPUP_ITEM_ID_GENERATE_PASSWORD_ENTRY:
+    case POPUP_ITEM_ID_GOOGLE_PAY_BRANDING:
+    case POPUP_ITEM_ID_SHOW_ACCOUNT_CARDS:
       return normal_font_list_;
     case POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY:
     case POPUP_ITEM_ID_DATALIST_ENTRY:
@@ -186,46 +202,53 @@ const gfx::FontList& AutofillPopupLayoutModel::GetValueFontListForRow(
 
 const gfx::FontList& AutofillPopupLayoutModel::GetLabelFontListForRow(
     size_t index) const {
-  std::vector<autofill::Suggestion> suggestions = delegate_->GetSuggestions();
-  if (suggestions[index].frontend_id ==
-      POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE)
-    return normal_font_list_;
-
   return smaller_font_list_;
-}
-
-ui::NativeTheme::ColorId AutofillPopupLayoutModel::GetValueFontColorIDForRow(
-    size_t index) const {
-  std::vector<autofill::Suggestion> suggestions = delegate_->GetSuggestions();
-  switch (suggestions[index].frontend_id) {
-    case POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE:
-      return ui::NativeTheme::kColorId_AlertSeverityHigh;
-    case POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE:
-      return ui::NativeTheme::kColorId_ResultsTableNormalDimmedText;
-    default:
-      return ui::NativeTheme::kColorId_ResultsTableNormalText;
-  }
 }
 
 gfx::ImageSkia AutofillPopupLayoutModel::GetIconImage(size_t index) const {
   std::vector<autofill::Suggestion> suggestions = delegate_->GetSuggestions();
-  const base::string16& icon_str = suggestions[index].icon;
+  if (!suggestions[index].custom_icon.IsEmpty())
+    return suggestions[index].custom_icon.AsImageSkia();
+
+  const std::string& icon_str = suggestions[index].icon;
+  if (icon_str.empty())
+    return gfx::ImageSkia();
+
   constexpr int kIconSize = 16;
 
   // For http warning message, get icon images from VectorIcon, which is the
   // same as security indicator icons in location bar.
-  if (icon_str == base::ASCIIToUTF16("httpWarning")) {
-    return gfx::CreateVectorIcon(toolbar::kHttpIcon, kIconSize,
+  if (icon_str == "httpWarning") {
+    return gfx::CreateVectorIcon(omnibox::kHttpIcon, kIconSize,
                                  gfx::kChromeIconGrey);
   }
-  if (icon_str == base::ASCIIToUTF16("httpsInvalid")) {
-    return gfx::CreateVectorIcon(toolbar::kHttpsInvalidIcon, kIconSize,
+  if (icon_str == "httpsInvalid") {
+    return gfx::CreateVectorIcon(omnibox::kHttpsInvalidIcon, kIconSize,
                                  gfx::kGoogleRed700);
   }
+  if (icon_str == "keyIcon") {
+    return gfx::CreateVectorIcon(kKeyIcon, kIconSize, gfx::kChromeIconGrey);
+  }
+  if (icon_str == "globeIcon") {
+    return gfx::CreateVectorIcon(kGlobeIcon, kIconSize, gfx::kChromeIconGrey);
+  }
+  if (icon_str == "google") {
+#if defined(GOOGLE_CHROME_BUILD)
+    return gfx::CreateVectorIcon(kGoogleGLogoIcon, kIconSize,
+                                 gfx::kPlaceholderColor);
+#else
+    return gfx::ImageSkia();
+#endif
+  }
 
+#if !defined(GOOGLE_CHROME_BUILD)
+  if (icon_str == "googlePay" || icon_str == "googlePayDark") {
+    return gfx::ImageSkia();
+  }
+#endif
   // For other suggestion entries, get icon from PNG files.
   int icon_id = GetIconResourceID(icon_str);
-  DCHECK_NE(-1, icon_id);
+  DCHECK_NE(kResourceNotFoundId, icon_id);
   return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(icon_id);
 }
 #endif  // !defined(OS_ANDROID)
@@ -259,11 +282,16 @@ gfx::Rect AutofillPopupLayoutModel::GetRowBounds(size_t index) const {
 }
 
 int AutofillPopupLayoutModel::GetIconResourceID(
-    const base::string16& resource_name) const {
-  int result = -1;
-  for (size_t i = 0; i < arraysize(kDataResources); ++i) {
-    if (resource_name == base::ASCIIToUTF16(kDataResources[i].name)) {
-      result = kDataResources[i].id;
+    const std::string& resource_name) const {
+#if !defined(GOOGLE_CHROME_BUILD)
+  if (resource_name == "googlePay" || resource_name == "googlePayDark") {
+    return 0;
+  }
+#endif
+  int result = kResourceNotFoundId;
+  for (size_t i = 0; i < base::size(kDataResources); ++i) {
+    if (resource_name == kDataResources[i].name) {
+      result = kDataResources[i].icon_id;
       break;
     }
   }
@@ -271,36 +299,22 @@ int AutofillPopupLayoutModel::GetIconResourceID(
   return result;
 }
 
-const gfx::Rect AutofillPopupLayoutModel::RoundedElementBounds() const {
+int AutofillPopupLayoutModel::GetIconAccessibleNameResourceId(
+    const std::string& resource_name) const {
+  for (size_t i = 0; i < base::size(kDataResources); ++i) {
+    if (resource_name == kDataResources[i].name)
+      return kDataResources[i].accessible_string_id;
+  }
+  return kResourceNotFoundId;
+}
+
+void AutofillPopupLayoutModel::SetUpForTesting(
+    std::unique_ptr<PopupViewCommon> view_common) {
+  view_common_ = std::move(view_common);
+}
+
+gfx::Rect AutofillPopupLayoutModel::RoundedElementBounds() const {
   return gfx::ToEnclosingRect(delegate_->element_bounds());
-}
-
-bool AutofillPopupLayoutModel::IsPopupLayoutExperimentEnabled() const {
-  return is_credit_card_popup_ &&
-      IsAutofillCreditCardPopupLayoutExperimentEnabled();
-}
-
-SkColor AutofillPopupLayoutModel::GetBackgroundColor() const {
-  return is_credit_card_popup_ ?
-      GetCreditCardPopupBackgroundColor() : SK_ColorTRANSPARENT;
-}
-
-SkColor AutofillPopupLayoutModel::GetDividerColor() const {
-  return is_credit_card_popup_ ?
-      GetCreditCardPopupDividerColor() : SK_ColorTRANSPARENT;
-}
-
-unsigned int AutofillPopupLayoutModel::GetDropdownItemHeight() const {
-  return GetPopupDropdownItemHeight();
-}
-
-bool AutofillPopupLayoutModel::IsIconAtStart(int frontend_id) const {
-  return frontend_id == POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE ||
-      (is_credit_card_popup_ && IsIconInCreditCardPopupAtStart());
-}
-
-unsigned int AutofillPopupLayoutModel::GetMargin() const {
-  return GetPopupMargin();
 }
 
 }  // namespace autofill

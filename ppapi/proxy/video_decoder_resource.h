@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -22,7 +22,6 @@
 #include "ppapi/thunk/ppb_video_decoder_api.h"
 
 namespace gpu {
-struct Mailbox;
 namespace gles2 {
 class GLES2Implementation;
 }
@@ -84,13 +83,12 @@ class PPAPI_PROXY_EXPORT VideoDecoderResource
  private:
   // Struct to hold a shared memory buffer.
   struct ShmBuffer {
-    ShmBuffer(std::unique_ptr<base::SharedMemory> shm,
-              uint32_t size,
-              uint32_t shm_id);
+    ShmBuffer(base::UnsafeSharedMemoryRegion region, uint32_t shm_id);
     ~ShmBuffer();
 
-    const std::unique_ptr<base::SharedMemory> shm;
-    void* addr;
+    base::UnsafeSharedMemoryRegion region;
+    base::WritableSharedMemoryMapping mapping;
+    void* addr = nullptr;
     // Index into shm_buffers_ vector, used as an id. This should map 1:1 to
     // the index on the host side of the proxy.
     const uint32_t shm_id;
@@ -121,8 +119,7 @@ class PPAPI_PROXY_EXPORT VideoDecoderResource
   void OnPluginMsgRequestTextures(const ResourceMessageReplyParams& params,
                                   uint32_t num_textures,
                                   const PP_Size& size,
-                                  uint32_t texture_target,
-                                  const std::vector<gpu::Mailbox>& mailboxes);
+                                  uint32_t texture_target);
   void OnPluginMsgPictureReady(const ResourceMessageReplyParams& params,
                                int32_t decode_id,
                                uint32_t texture_id,
@@ -151,7 +148,7 @@ class PPAPI_PROXY_EXPORT VideoDecoderResource
   ShmBufferList available_shm_buffers_;
 
   // Map of GL texture id to texture info.
-  using TextureMap = base::hash_map<uint32_t, Texture>;
+  using TextureMap = std::unordered_map<uint32_t, Texture>;
   TextureMap textures_;
 
   // Queue of received pictures.

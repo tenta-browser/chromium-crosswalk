@@ -8,6 +8,7 @@
 #import <UIKit/UIKit.h>
 
 #include "base/strings/string16.h"
+#import "ios/chrome/browser/ui/commands/omnibox_suggestion_commands.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_delegate.h"
 
 // Enum type specifying the direction of fade animations.
@@ -19,19 +20,13 @@ typedef enum {
 // UITextField subclass to allow for adjusting borders.
 @interface OmniboxTextFieldIOS : UITextField
 
-// Initialize the omnibox with the given frame, font, text color, and tint
-// color.
+// Initialize the omnibox with the given frame, text color, and tint color.
 - (instancetype)initWithFrame:(CGRect)frame
-                         font:(UIFont*)font
                     textColor:(UIColor*)textColor
                     tintColor:(UIColor*)tintColor NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)initWithCoder:(NSCoder*)aDecoder NS_UNAVAILABLE;
 
-// Delegate getter and setter.  Overridden to use OmniboxTextFieldDelegate
-// instead of UITextFieldDelegate.
-- (id<OmniboxTextFieldDelegate>)delegate;
-- (void)setDelegate:(id<OmniboxTextFieldDelegate>)delegate;
 
 // Sets the field's text to |text|.  If |userTextLength| is less than the length
 // of |text|, the excess is displayed as inline autocompleted text.  When the
@@ -64,21 +59,17 @@ typedef enum {
 // on older version of iOS.
 - (NSString*)markedText;
 
-// Initial touch on the Omnibox triggers a "pre-edit" state. The current
-// URL is shown without any insertion point. First character typed replaces
-// the URL. A second touch turns on the insertion point. |preEditStaticLabel|
-// is normally hidden. In pre-edit state, |preEditStaticLabel| is unhidden
-// and displays the URL that will be edited on the second touch.
-- (void)enterPreEditState;
-- (void)exitPreEditState;
-- (BOOL)isPreEditing;
-
 // Returns the current selected text range as an NSRange.
 - (NSRange)selectedNSRange;
 
 // Returns the most likely text alignment, Left or Right, based on the best
 // language match for |self.text|.
 - (NSTextAlignment)bestTextAlignment;
+
+// Returns the most likely semantic content attribute -- right to left, left to
+// right or unspecified -- based on the first character of |self.text| and the
+// device's current locale.
+- (UISemanticContentAttribute)bestSemanticContentAttribute;
 
 // Checks if direction of the omnibox text changed, and updates the UITextField.
 // alignment if necessary.
@@ -93,20 +84,35 @@ typedef enum {
 // Called when animations added by |-animateFadeWithStyle:| can be removed.
 - (void)cleanUpFadeAnimations;
 
-// Redeclare the delegate property to be the more specific
-// OmniboxTextFieldDelegate.
+// Returns an x offset for a given string. If no such string is found, returns
+// some default offset.
+// Used for focus/defocus animation.
+- (CGFloat)offsetForString:(NSString*)string;
+
+// Initial touch on the Omnibox triggers a "pre-edit" state. The current
+// URL is shown without any insertion point. First character typed replaces
+// the URL. A second touch turns on the insertion point. |preEditStaticLabel|
+// is normally hidden. In pre-edit state, |preEditStaticLabel| is unhidden
+// and displays the URL that will be edited on the second touch.
+- (void)enterPreEditState;
+- (void)exitPreEditState;
+- (BOOL)isPreEditing;
+
+// The delegate for this textfield.  Overridden to use OmniboxTextFieldDelegate
+// instead of UITextFieldDelegate.
 @property(nonatomic, weak) id<OmniboxTextFieldDelegate> delegate;
 
+// The object handling suggestion commands.
+@property(nonatomic, weak) id<OmniboxSuggestionCommands>
+    suggestionCommandsEndpoint;
+
+// Text displayed when in pre-edit state.
 @property(nonatomic, strong) NSString* preEditText;
+
 @property(nonatomic) BOOL clearingPreEditText;
-@property(nonatomic, strong) UIColor* selectedTextBackgroundColor;
+@property(nonatomic, readonly, strong) UIColor* selectedTextBackgroundColor;
 @property(nonatomic, strong) UIColor* placeholderTextColor;
 @property(nonatomic, assign) BOOL incognito;
-
-- (void)addExpandOmniboxAnimations:(UIViewPropertyAnimator*)animator
-    API_AVAILABLE(ios(10.0));
-- (void)addContractOmniboxAnimations:(UIViewPropertyAnimator*)animator
-    API_AVAILABLE(ios(10.0));
 
 @end
 

@@ -10,7 +10,7 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tab_dialogs.h"
 #include "chrome/common/url_constants.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 
 // The URL for when the user clicks "learn more" on the mixed scripting page
@@ -19,12 +19,11 @@ const char kInsecureScriptHelpUrl[] =
     "https://support.google.com/chrome/?p=unauthenticated";
 
 BrowserContentSettingBubbleModelDelegate::
-BrowserContentSettingBubbleModelDelegate(Browser* browser) : browser_(browser) {
-}
+    BrowserContentSettingBubbleModelDelegate(Browser* browser)
+    : browser_(browser) {}
 
 BrowserContentSettingBubbleModelDelegate::
-~BrowserContentSettingBubbleModelDelegate() {
-}
+    ~BrowserContentSettingBubbleModelDelegate() {}
 
 void BrowserContentSettingBubbleModelDelegate::ShowCollectedCookiesDialog(
     content::WebContents* web_contents) {
@@ -34,8 +33,7 @@ void BrowserContentSettingBubbleModelDelegate::ShowCollectedCookiesDialog(
 void BrowserContentSettingBubbleModelDelegate::ShowMediaSettingsPage() {
   // Microphone and camera settings appear in the content settings menu right
   // next to each other, the microphone section is first.
-  chrome::ShowContentSettings(
-          browser_, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+  chrome::ShowContentSettings(browser_, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
 }
 
 void BrowserContentSettingBubbleModelDelegate::ShowContentSettingsPage(

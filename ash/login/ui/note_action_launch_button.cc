@@ -44,7 +44,7 @@ constexpr int kLargeBubbleRadiusDp = 56;
 constexpr float kLargeBubbleOpacity = 0.46;
 
 // The note action background color.
-constexpr int kBubbleColor = SkColorSetARGBMacro(0x9E, 0x9E, 0x9E, 0xFF);
+constexpr int kBubbleColor = SkColorSetRGB(0x9E, 0x9E, 0x9E);
 
 // The note action icon size.
 constexpr int kIconSizeDp = 16;
@@ -161,7 +161,7 @@ class BubbleTargeterDelegate : public views::MaskedTargeterDelegate {
       : view_width_(view_width), circle_radius_(circle_radius) {}
   ~BubbleTargeterDelegate() override = default;
 
-  bool GetHitTestMask(gfx::Path* mask) const override {
+  bool GetHitTestMask(SkPath* mask) const override {
     int center_x = base::i18n::IsRTL() ? 0 : view_width_;
     mask->addCircle(SkIntToScalar(center_x), SkIntToScalar(0),
                     SkIntToScalar(circle_radius_));
@@ -270,9 +270,8 @@ class NoteActionLaunchButton::ActionButton : public views::ImageButton,
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override {
-    UserMetricsRecorder::RecordUserClick(
-        LoginMetricsRecorder::LockScreenUserClickTarget::
-            kLockScreenNoteActionButton);
+    UserMetricsRecorder::RecordUserClickOnTray(
+        LoginMetricsRecorder::TrayClickTarget::kTrayActionNoteButton);
     if (event.IsKeyEvent()) {
       Shell::Get()->tray_action()->RequestNewLockScreenNote(
           mojom::LockScreenNoteOrigin::kLockScreenButtonKeyboard);
@@ -343,7 +342,7 @@ const views::View* NoteActionLaunchButton::TestApi::BackgroundView() const {
 
 NoteActionLaunchButton::NoteActionLaunchButton(
     mojom::TrayActionState initial_note_action_state) {
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   background_ = new BackgroundView();
   AddChildView(background_);

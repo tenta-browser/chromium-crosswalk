@@ -4,34 +4,39 @@
 
 #include "chrome/browser/generic_sensor/sensor_permission_context.h"
 
+#include "base/feature_list.h"
+#include "chrome/browser/content_settings/tab_specific_content_settings.h"
+#include "chrome/browser/permissions/permission_request_id.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
+#include "services/device/public/cpp/device_features.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom.h"
 #include "url/gurl.h"
 
 SensorPermissionContext::SensorPermissionContext(Profile* profile)
     : PermissionContextBase(profile,
                             CONTENT_SETTINGS_TYPE_SENSORS,
-                            blink::FeaturePolicyFeature::kNotFound) {}
+                            blink::mojom::FeaturePolicyFeature::kNotFound) {}
 
 SensorPermissionContext::~SensorPermissionContext() {}
 
-ContentSetting SensorPermissionContext::GetPermissionStatusInternal(
-    content::RenderFrameHost* render_frame_host,
-    const GURL& requesting_origin,
-    const GURL& embedding_origin) const {
-  // TODO(juncai): We may need to add cross-origin iframes check here when we
-  // can grant permission for certain sensor types. Currently this function
-  // doesn't have any information of which sensor type requests permission.
-  // The Generic Sensor API is not allowed in cross-origin iframes and
-  // this is enforced by the renderer.
-  // https://crbug.com/787019
+void SensorPermissionContext::UpdateTabContext(const PermissionRequestID& id,
+                                               const GURL& requesting_frame,
+                                               bool allowed) {
+  // Show location bar indicator only when the features::kSensorContentSetting
+  // feature is enabled.
+  if (!base::FeatureList::IsEnabled(features::kSensorContentSetting))
+    return;
 
-  // This is to allow DeviceMotion and DeviceOrientation Event to be
-  // able to access sensors (which are provided by generic sensor) in
-  // cross-origin iframes. The Generic Sensor API is not allowed in
-  // cross-origin iframes and this is enforced by the renderer.
-  return CONTENT_SETTING_ALLOW;
+  auto* content_settings = TabSpecificContentSettings::GetForFrame(
+      id.render_process_id(), id.render_frame_id());
+  if (!content_settings)
+    return;
+
+  if (allowed)
+    content_settings->OnContentAllowed(CONTENT_SETTINGS_TYPE_SENSORS);
+  else
+    content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_SENSORS);
 }
 
 bool SensorPermissionContext::IsRestrictedToSecureOrigins() const {

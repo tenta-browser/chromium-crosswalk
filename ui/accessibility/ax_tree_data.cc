@@ -10,40 +10,25 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ui/accessibility/ax_enum_util.h"
 
 namespace ui {
 
-AXTreeData::AXTreeData()
-    : tree_id(-1),
-      parent_tree_id(-1),
-      focused_tree_id(-1),
-      loaded(false),
-      loading_progress(0.0),
-      focus_id(-1),
-      sel_anchor_object_id(-1),
-      sel_anchor_offset(-1),
-      sel_anchor_affinity(AX_TEXT_AFFINITY_UPSTREAM),
-      sel_focus_object_id(-1),
-      sel_focus_offset(-1),
-      sel_focus_affinity(AX_TEXT_AFFINITY_DOWNSTREAM) {
-}
-
+AXTreeData::AXTreeData() = default;
 AXTreeData::AXTreeData(const AXTreeData& other) = default;
-
-AXTreeData::~AXTreeData() {
-}
+AXTreeData::~AXTreeData() = default;
 
 // Note that this includes an initial space character if nonempty, but
 // that works fine because this is normally printed by AXTree::ToString.
 std::string AXTreeData::ToString() const {
   std::string result;
 
-  if (tree_id != -1)
-    result += " tree_id=" + base::NumberToString(tree_id);
-  if (parent_tree_id != -1)
-    result += " parent_tree_id=" + base::NumberToString(parent_tree_id);
-  if (focused_tree_id != -1)
-    result += " focused_tree_id=" + base::NumberToString(focused_tree_id);
+  if (tree_id != AXTreeIDUnknown())
+    result += " tree_id=" + tree_id.ToString().substr(0, 8);
+  if (parent_tree_id != AXTreeIDUnknown())
+    result += " parent_tree_id=" + parent_tree_id.ToString().substr(0, 8);
+  if (focused_tree_id != AXTreeIDUnknown())
+    result += " focused_tree_id=" + focused_tree_id.ToString().substr(0, 8);
 
   if (!doctype.empty())
     result += " doctype=" + doctype;
@@ -62,6 +47,8 @@ std::string AXTreeData::ToString() const {
     result += " focus_id=" + base::NumberToString(focus_id);
 
   if (sel_anchor_object_id != -1) {
+    result +=
+        (sel_is_backward ? " sel_is_backward=true" : " sel_is_backward=false");
     result +=
         " sel_anchor_object_id=" + base::NumberToString(sel_anchor_object_id);
     result += " sel_anchor_offset=" + base::NumberToString(sel_anchor_offset);

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +5,7 @@
 ''' Base class for postprocessing of RC files.
 '''
 
+from __future__ import print_function
 
 class PostProcessor(object):
   ''' Base class for postprocessing of the RC file data before being
@@ -27,6 +27,3 @@ class PostProcessor(object):
       The root node of the processed GRD tree.
     '''
     raise NotImplementedError()
-
-
-

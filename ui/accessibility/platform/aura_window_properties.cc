@@ -4,16 +4,17 @@
 
 #include "ui/accessibility/platform/aura_window_properties.h"
 
+#include "ui/accessibility/ax_tree_id.h"
 #include "ui/base/class_property.h"
 
-DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AX_EXPORT, AXRole)
+DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AX_EXPORT, ax::mojom::Role)
 
 namespace ui {
 
-DEFINE_UI_CLASS_PROPERTY_KEY(AXTreeIDRegistry::AXTreeID,
-                             kChildAXTreeID,
-                             AXTreeIDRegistry::kNoAXTreeID);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kChildAXTreeID, nullptr)
 
-DEFINE_UI_CLASS_PROPERTY_KEY(AXRole, kAXRoleOverride, ui::AX_ROLE_NONE);
+DEFINE_UI_CLASS_PROPERTY_KEY(ax::mojom::Role,
+                             kAXRoleOverride,
+                             ax::mojom::Role::kNone)
 
 }  // namespace ui

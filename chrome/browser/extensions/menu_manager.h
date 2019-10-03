@@ -178,7 +178,6 @@ class MenuItem {
   const OwnedList& children() { return children_; }
   const Id& id() const { return id_; }
   Id* parent_id() const { return parent_id_.get(); }
-  int child_count() const { return children_.size(); }
   const ContextList& contexts() const { return contexts_; }
   Type type() const { return type_; }
   bool checked() const { return checked_; }
@@ -198,10 +197,10 @@ class MenuItem {
   void set_visible(bool visible) { visible_ = visible; }
   void set_enabled(bool enabled) { enabled_ = enabled; }
   void set_document_url_patterns(const URLPatternSet& patterns) {
-    document_url_patterns_ = patterns;
+    document_url_patterns_ = patterns.Clone();
   }
   void set_target_url_patterns(const URLPatternSet& patterns) {
-    target_url_patterns_ = patterns;
+    target_url_patterns_ = patterns.Clone();
   }
 
   // Returns the title with any instances of %s replaced by |selection|. The

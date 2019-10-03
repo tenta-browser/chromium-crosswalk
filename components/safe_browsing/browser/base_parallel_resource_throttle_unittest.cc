@@ -117,6 +117,18 @@ class TestUrlCheckerDelegate : public UrlCheckerDelegate {
 
   bool IsUrlWhitelisted(const GURL& url) override { return false; }
 
+  bool ShouldSkipRequestCheck(content::ResourceContext* resource_context,
+                              const GURL& original_url,
+                              int frame_tree_node_id,
+                              int render_process_id,
+                              int render_frame_id,
+                              bool originated_from_service_worker) override {
+    return false;
+  }
+
+  void NotifySuspiciousSiteDetected(
+      const base::RepeatingCallback<content::WebContents*()>&
+          web_contents_getter) override {}
   const SBThreatTypeSet& GetThreatTypes() override { return threat_types_; }
   SafeBrowsingDatabaseManager* GetDatabaseManager() override {
     return database_manager_.get();
@@ -165,13 +177,14 @@ class BaseParallelResourceThrottleTest : public testing::Test {
                                               net::MEDIUM, &request_delegate_,
                                               TRAFFIC_ANNOTATION_FOR_TESTS);
     content::ResourceRequestInfo::AllocateForTesting(
-        request_.get(), content::RESOURCE_TYPE_MAIN_FRAME, nullptr, -1, -1, -1,
-        true, true, true, content::PREVIEWS_OFF, nullptr);
+        request_.get(), content::ResourceType::kMainFrame, nullptr, -1, -1, -1,
+        true, content::ResourceInterceptPolicy::kAllowAll, true,
+        content::PREVIEWS_OFF, nullptr);
 
     database_manager_ = new TestDatabaseManager();
     url_checker_delegate_ = new TestUrlCheckerDelegate(database_manager_);
     throttle_ = std::make_unique<TestParallelResourceThrottle>(
-        request_.get(), content::RESOURCE_TYPE_MAIN_FRAME,
+        request_.get(), content::ResourceType::kMainFrame,
         url_checker_delegate_);
     throttle_->set_delegate_for_testing(&resource_throttle_delegate_);
   }

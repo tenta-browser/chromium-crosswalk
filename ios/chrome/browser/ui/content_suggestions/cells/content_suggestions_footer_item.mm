@@ -5,7 +5,9 @@
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_footer_item.h"
 
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #import "ios/third_party/material_components_ios/src/components/ActivityIndicator/src/MaterialActivityIndicator.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -13,7 +15,6 @@
 #endif
 
 namespace {
-const CGFloat kButtonMargin = 2;
 const CGFloat kButtonPadding = 16;
 }
 
@@ -84,10 +85,13 @@ const CGFloat kButtonPadding = 16;
   self = [super initWithFrame:frame];
   if (self) {
     _activityIndicator = [[MDCActivityIndicator alloc] init];
-    _activityIndicator.cycleColors = @[ [[MDCPalette cr_bluePalette] tint500] ];
+    _activityIndicator.cycleColors = @[ [UIColor colorNamed:kTintColor] ];
     _activityIndicator.translatesAutoresizingMaskIntoConstraints = NO;
     _button = [UIButton buttonWithType:UIButtonTypeSystem];
+    _button.tintColor = [UIColor colorNamed:kTintColor];
     _button.translatesAutoresizingMaskIntoConstraints = NO;
+    _button.titleLabel.font =
+        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     _button.contentEdgeInsets =
         UIEdgeInsetsMake(0, kButtonPadding, 0, kButtonPadding);
     [_button addTarget:self
@@ -98,10 +102,7 @@ const CGFloat kButtonPadding = 16;
     [self.contentView addSubview:_activityIndicator];
 
     AddSameConstraints(self.contentView, _activityIndicator);
-    ApplyVisualConstraintsWithMetrics(
-        @[ @"V:|-(margin)-[button]-(margin)-|", @"H:|-(margin)-[button]" ],
-        @{@"button" : _button},
-        @{ @"margin" : @(kButtonMargin) });
+    AddSameConstraints(self.contentView, _button);
   }
   return self;
 }

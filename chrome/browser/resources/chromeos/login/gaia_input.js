@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-Polymer((function() {
-  var INPUT_EMAIL_PATTERN = '^[a-zA-Z0-9.!#$%&\'*+=?^_`{|}~-]+(@[^\\s@]+)?$';
+{
+  const INPUT_EMAIL_PATTERN = '^[a-zA-Z0-9.!#$%&\'*+=?^_`{|}~-]+(@[^\\s@]+)?$';
 
-  return {
+  Polymer({
     is: 'gaia-input',
 
     properties: {
-      label: String,
       value: {notify: true, observer: 'updateDomainVisibility_', type: String},
 
       type: {observer: 'typeChanged_', type: String},
@@ -20,11 +19,12 @@ Polymer((function() {
 
       required: Boolean,
 
-      error: String,
+      isInvalid: {type: Boolean, notify: true},
 
-      isInvalid: Boolean
+      pattern: String
     },
 
+    /** @override */
     attached: function() {
       this.typeChanged_();
     },
@@ -33,6 +33,7 @@ Polymer((function() {
       this.isInvalid = false;
     },
 
+    /** @private */
     updateDomainVisibility_: function() {
       this.$.domainLabel.hidden = (this.type !== 'email') || !this.domain ||
           (this.value && this.value.indexOf('@') !== -1);
@@ -46,21 +47,27 @@ Polymer((function() {
       this.$.input.focus();
     },
 
+    /** @return {!boolean} */
     checkValidity: function() {
-      var valid = this.$.input.validate();
+      var valid = this.$.ironInput.validate();
       this.isInvalid = !valid;
       return valid;
     },
 
+    /** @private */
     typeChanged_: function() {
       if (this.type == 'email') {
         this.$.input.pattern = INPUT_EMAIL_PATTERN;
         this.$.input.type = 'text';
       } else {
-        this.$.input.removeAttribute('pattern');
         this.$.input.type = this.type;
+        if (this.pattern) {
+          this.$.input.pattern = this.pattern;
+        } else {
+          this.$.input.removeAttribute('pattern');
+        }
       }
       this.updateDomainVisibility_();
-    }
-  };
-})());
+    },
+  });
+}

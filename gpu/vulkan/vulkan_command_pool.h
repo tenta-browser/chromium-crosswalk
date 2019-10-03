@@ -10,18 +10,20 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "gpu/vulkan/vulkan_export.h"
 
 namespace gpu {
 
 class VulkanCommandBuffer;
 class VulkanDeviceQueue;
 
-class VulkanCommandPool {
+class VULKAN_EXPORT VulkanCommandPool {
  public:
   explicit VulkanCommandPool(VulkanDeviceQueue* device_queue);
   ~VulkanCommandPool();
 
   bool Initialize();
+  // Destroy() should be called when all related GPU tasks have been finished.
   void Destroy();
 
   std::unique_ptr<VulkanCommandBuffer> CreatePrimaryCommandBuffer();

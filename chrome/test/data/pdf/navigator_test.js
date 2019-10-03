@@ -75,10 +75,9 @@ function doNavigationUrlTests(originalUrl, url, expectedResultUrl) {
   var mockWindow = new MockWindow(100, 100);
   var mockSizer = new MockSizer();
   var mockViewportChangedCallback = new MockViewportChangedCallback();
-  var viewport = new Viewport(mockWindow, mockSizer,
-                              mockViewportChangedCallback.callback,
-                              function() {}, function() {}, function() {},
-                              0, 1, 0);
+  var viewport = new ViewportImpl(
+      mockWindow, mockSizer, mockViewportChangedCallback.callback,
+      function() {}, function() {}, function() {}, 0, 1, 0);
 
   var paramsParser = new OpenPDFParamsParser(function(name) {
     paramsParser.onNamedDestinationReceived(-1);
@@ -108,14 +107,14 @@ var tests = [
     var mockWindow = new MockWindow(100, 100);
     var mockSizer = new MockSizer();
     var mockCallback = new MockViewportChangedCallback();
-    var viewport = new Viewport(mockWindow, mockSizer, mockCallback.callback,
-                                function() {}, function() {}, function() {},
-                                0, 1, 0);
+    var viewport = new ViewportImpl(
+        mockWindow, mockSizer, mockCallback.callback, function() {},
+        function() {}, function() {}, 0, 1, 0);
 
-    var paramsParser = new OpenPDFParamsParser(function(name) {
-      if (name == 'US')
+    var paramsParser = new OpenPDFParamsParser(function(message) {
+      if (message.namedDestination == 'US')
         paramsParser.onNamedDestinationReceived(0);
-      else if (name == 'UY')
+      else if (message.namedDestination == 'UY')
         paramsParser.onNamedDestinationReceived(2);
       else
         paramsParser.onNamedDestinationReceived(-1);

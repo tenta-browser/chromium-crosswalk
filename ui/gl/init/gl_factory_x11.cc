@@ -8,7 +8,6 @@
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_context_egl.h"
 #include "ui/gl/gl_context_glx.h"
-#include "ui/gl/gl_context_osmesa.h"
 #include "ui/gl/gl_context_stub.h"
 #include "ui/gl/gl_egl_api_implementation.h"
 #include "ui/gl/gl_glx_api_implementation.h"
@@ -19,8 +18,6 @@
 #include "ui/gl/gl_surface_egl_x11.h"
 #include "ui/gl/gl_surface_glx.h"
 #include "ui/gl/gl_surface_glx_x11.h"
-#include "ui/gl/gl_surface_osmesa.h"
-#include "ui/gl/gl_surface_osmesa_x11.h"
 #include "ui/gl/gl_surface_stub.h"
 
 namespace gl {
@@ -30,16 +27,18 @@ std::vector<GLImplementation> GetAllowedGLImplementations() {
   std::vector<GLImplementation> impls;
   impls.push_back(kGLImplementationDesktopGL);
   impls.push_back(kGLImplementationEGLGLES2);
-  impls.push_back(kGLImplementationOSMesaGL);
+  impls.push_back(kGLImplementationEGLANGLE);
   impls.push_back(kGLImplementationSwiftShaderGL);
   return impls;
 }
 
-bool GetGLWindowSystemBindingInfo(GLWindowSystemBindingInfo* info) {
+bool GetGLWindowSystemBindingInfo(const GLVersionInfo& gl_info,
+                                  GLWindowSystemBindingInfo* info) {
   switch (GetGLImplementation()) {
     case kGLImplementationDesktopGL:
-      return GetGLWindowSystemBindingInfoGLX(info);
+      return GetGLWindowSystemBindingInfoGLX(gl_info, info);
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return GetGLWindowSystemBindingInfoEGL(info);
     default:
       return false;
@@ -51,14 +50,12 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
                                          const GLContextAttribs& attribs) {
   TRACE_EVENT0("gpu", "gl::init::CreateGLContext");
   switch (GetGLImplementation()) {
-    case kGLImplementationOSMesaGL:
-      return InitializeGLContext(new GLContextOSMesa(share_group),
-                                 compatible_surface, attribs);
     case kGLImplementationDesktopGL:
       return InitializeGLContext(new GLContextGLX(share_group),
                                  compatible_surface, attribs);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return InitializeGLContext(new GLContextEGL(share_group),
                                  compatible_surface, attribs);
     case kGLImplementationMockGL:
@@ -78,12 +75,11 @@ scoped_refptr<GLContext> CreateGLContext(GLShareGroup* share_group,
 scoped_refptr<GLSurface> CreateViewGLSurface(gfx::AcceleratedWidget window) {
   TRACE_EVENT0("gpu", "gl::init::CreateViewGLSurface");
   switch (GetGLImplementation()) {
-    case kGLImplementationOSMesaGL:
-      return InitializeGLSurface(new GLSurfaceOSMesaX11(window));
     case kGLImplementationDesktopGL:
       return InitializeGLSurface(new GLSurfaceGLXX11(window));
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       DCHECK(window != gfx::kNullAcceleratedWidget);
       return InitializeGLSurface(new NativeViewGLSurfaceEGLX11(window));
     case kGLImplementationMockGL:
@@ -99,15 +95,12 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
     const gfx::Size& size, GLSurfaceFormat format) {
   TRACE_EVENT0("gpu", "gl::init::CreateOffscreenGLSurface");
   switch (GetGLImplementation()) {
-    case kGLImplementationOSMesaGL:
-      format.SetDefaultPixelLayout(GLSurfaceFormat::PIXEL_LAYOUT_RGBA);
-      return InitializeGLSurfaceWithFormat(
-          new GLSurfaceOSMesa(format, size), format);
     case kGLImplementationDesktopGL:
       return InitializeGLSurfaceWithFormat(
           new UnmappedNativeViewGLSurfaceGLX(size), format);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
           size.width() == 0 && size.height() == 0) {
         return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
@@ -132,10 +125,10 @@ void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
       SetDisabledExtensionsGLX(disabled_extensions);
       break;
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       SetDisabledExtensionsEGL(disabled_extensions);
       break;
     case kGLImplementationSwiftShaderGL:
-    case kGLImplementationOSMesaGL:
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       break;
@@ -151,9 +144,9 @@ bool InitializeExtensionSettingsOneOffPlatform() {
     case kGLImplementationDesktopGL:
       return InitializeExtensionSettingsOneOffGLX();
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       return InitializeExtensionSettingsOneOffEGL();
     case kGLImplementationSwiftShaderGL:
-    case kGLImplementationOSMesaGL:
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       return true;

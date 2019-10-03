@@ -11,23 +11,36 @@
 namespace views {
 
 // static
-const char Separator::kViewClassName[] = "Separator";
-
-// static
 const int Separator::kThickness = 1;
 
-Separator::Separator() {}
+Separator::Separator() = default;
 
-Separator::~Separator() {}
+Separator::~Separator() = default;
+
+SkColor Separator::GetColor() const {
+  if (overridden_color_ == true)
+    return overridden_color_.value();
+  return 0;
+}
 
 void Separator::SetColor(SkColor color) {
+  if (overridden_color_ == color)
+    return;
+
   overridden_color_ = color;
-  SchedulePaint();
+  OnPropertyChanged(&overridden_color_, kPropertyEffectsPaint);
+}
+
+int Separator::GetPreferredHeight() const {
+  return preferred_height_;
 }
 
 void Separator::SetPreferredHeight(int height) {
+  if (preferred_height_ == height)
+    return;
+
   preferred_height_ = height;
-  PreferredSizeChanged();
+  OnPropertyChanged(&preferred_height_, kPropertyEffectsPreferredSizeChanged);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -41,7 +54,7 @@ gfx::Size Separator::CalculatePreferredSize() const {
 }
 
 void Separator::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_SPLITTER;
+  node_data->role = ax::mojom::Role::kSplitter;
 }
 
 void Separator::OnPaint(gfx::Canvas* canvas) {
@@ -50,16 +63,23 @@ void Separator::OnPaint(gfx::Canvas* canvas) {
                       : GetNativeTheme()->GetSystemColor(
                             ui::NativeTheme::kColorId_SeparatorColor);
 
-  // The separator fills its bounds, but avoid filling partial pixels.
   float dsf = canvas->UndoDeviceScaleFactor();
-  gfx::RectF contents = gfx::ScaleRect(gfx::RectF(GetContentsBounds()), dsf);
-  canvas->FillRect(gfx::ToEnclosedRect(contents), color);
+
+  // The separator fills its bounds, but avoid filling partial pixels.
+  gfx::Rect aligned = gfx::ScaleToEnclosedRect(GetContentsBounds(), dsf, dsf);
+
+  // At least 1 pixel should be drawn to make the separator visible.
+  aligned.set_width(std::max(1, aligned.width()));
+  aligned.set_height(std::max(1, aligned.height()));
+  canvas->FillRect(aligned, color);
 
   View::OnPaint(canvas);
 }
 
-const char* Separator::GetClassName() const {
-  return kViewClassName;
-}
+BEGIN_METADATA(Separator)
+METADATA_PARENT_CLASS(View)
+ADD_PROPERTY_METADATA(Separator, SkColor, Color)
+ADD_PROPERTY_METADATA(Separator, int, PreferredHeight)
+END_METADATA()
 
 }  // namespace views

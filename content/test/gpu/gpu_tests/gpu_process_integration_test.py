@@ -6,7 +6,6 @@ import os
 import sys
 
 from gpu_tests import gpu_integration_test
-from gpu_tests import gpu_process_expectations
 from gpu_tests import path_util
 
 data_path = os.path.join(
@@ -15,8 +14,14 @@ data_path = os.path.join(
 test_harness_script = r"""
   var domAutomationController = {};
   domAutomationController._finished = false;
+  domAutomationController._succeeded = false;
   domAutomationController.send = function(msg) {
     domAutomationController._finished = true;
+    if (msg.toLowerCase() == "finished") {
+      domAutomationController._succeeded = true;
+    } else {
+      domAutomationController._succeeded = false;
+    }
   }
 
   window.domAutomationController = domAutomationController;
@@ -54,10 +59,6 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       '--no-first-run'] + browser_args
 
   @classmethod
-  def _CreateExpectations(cls):
-    return gpu_process_expectations.GpuProcessExpectations()
-
-  @classmethod
   def GenerateGpuTests(cls, options):
     # The browser test runner synthesizes methods with the exact name
     # given in GenerateGpuTests, so in order to hand-write our tests but
@@ -71,19 +72,18 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
              ('GpuProcess_webgl', 'gpu/functional_webgl.html'),
              ('GpuProcess_video', 'gpu/functional_video.html'),
              ('GpuProcess_gpu_info_complete', 'gpu/functional_3d_css.html'),
-             ('GpuProcess_no_gpu_process', 'about:blank'),
              ('GpuProcess_driver_bug_workarounds_in_gpu_process', 'chrome:gpu'),
              ('GpuProcess_readback_webgl_gpu_process', 'chrome:gpu'),
-             ('GpuProcess_driver_bug_workarounds_upon_gl_renderer',
-              'chrome:gpu'),
-             ('GpuProcess_only_one_workaround', 'chrome:gpu'),
-             ('GpuProcess_skip_gpu_process', 'gpu/functional_webgl.html'),
-             ('GpuProcess_identify_active_gpu1', 'chrome:gpu'),
-             ('GpuProcess_identify_active_gpu2', 'chrome:gpu'),
-             ('GpuProcess_identify_active_gpu3', 'chrome:gpu'),
-             ('GpuProcess_identify_active_gpu4', 'chrome:gpu'),
+             ('GpuProcess_feature_status_under_swiftshader', 'chrome:gpu'),
+             ('GpuProcess_one_extra_workaround', 'chrome:gpu'),
+             ('GpuProcess_disable_gpu', 'gpu/functional_webgl.html'),
+             ('GpuProcess_disable_gpu_and_swiftshader',
+              'gpu/functional_webgl.html'),
+             ('GpuProcess_disable_swiftshader', 'gpu/functional_webgl.html'),
              ('GpuProcess_disabling_workarounds_works', 'chrome:gpu'),
-             ('GpuProcess_swiftshader_for_webgl', 'gpu/functional_webgl.html'))
+             ('GpuProcess_swiftshader_for_webgl', 'gpu/functional_webgl.html'),
+             ('GpuProcess_webgl_disabled_extension',
+              'gpu/functional_webgl_disabled_extension.html'))
 
     # The earlier has_transparent_visuals_gpu_process and
     # no_transparent_visuals_gpu_process tests became no-ops in
@@ -110,8 +110,11 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
 
   def _NavigateAndWait(self, test_path):
     self._Navigate(test_path)
-    self.tab.action_runner.WaitForJavaScriptCondition(
+    tab = self.tab
+    tab.action_runner.WaitForJavaScriptCondition(
       'window.domAutomationController._finished', timeout=10)
+    if not tab.EvaluateJavaScript('window.domAutomationController._succeeded'):
+      self.fail('Test reported that it failed')
 
   def _VerifyGpuProcessPresent(self):
     tab = self.tab
@@ -153,6 +156,34 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     options = self.__class__._original_finder_options.browser_options
     return options.browser_type.startswith('android')
 
+  def _SupportsSwiftShader(self):
+    # Currently we enable SwiftShader on Windows, Linux and MacOS.
+    return (sys.platform in ('cygwin', 'win32', 'darwin') or
+            (sys.platform.startswith('linux') and
+             not self._RunningOnAndroid()))
+
+  def _AlwaysRunsGpuProcess(self):
+    # With VizDisplayCompositor enabled we always run a GPU process for the
+    # display compositor, except on Windows where the display compositor will
+    # run in the browser process if GPU and SwiftShader are disabled.
+    system_info = self.browser.GetSystemInfo()
+    if not system_info:
+      self.fail("Browser doesn't support GetSystemInfo")
+
+    viz_status = system_info.gpu.feature_status.get('viz_display_compositor')
+    return viz_status == 'enabled_on' and sys.platform != 'win32'
+
+  @staticmethod
+  def _Filterer(workaround):
+    # Filter all entries starting with "disabled_extension_" and
+    # "disabled_webgl_extension_", as these are synthetic entries
+    # added to make it easier to read the logs.
+    banned_prefixes = ['disabled_extension_', 'disabled_webgl_extension_']
+    for p in banned_prefixes:
+      if workaround.startswith(p):
+        return False
+    return True
+
   def _CompareAndCaptureDriverBugWorkarounds(self):
     tab = self.tab
     if not tab.EvaluateJavaScript('chrome.gpuBenchmarking.hasGpuProcess()'):
@@ -161,19 +192,21 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     if not tab.EvaluateJavaScript('chrome.gpuBenchmarking.hasGpuChannel()'):
       self.fail('No GPU channel detected')
 
-    browser_list = tab.EvaluateJavaScript('GetDriverBugWorkarounds()')
-    gpu_list = tab.EvaluateJavaScript(
-      'chrome.gpuBenchmarking.getGpuDriverBugWorkarounds()')
+    browser_list = [
+      x for x in tab.EvaluateJavaScript('GetDriverBugWorkarounds()')
+      if self._Filterer(x)]
+    gpu_list = [
+      x for x in tab.EvaluateJavaScript(
+        'chrome.gpuBenchmarking.getGpuDriverBugWorkarounds()')
+      if self._Filterer(x)]
 
     diff = set(browser_list).symmetric_difference(set(gpu_list))
     if len(diff) > 0:
-      print 'Test failed. Printing page contents:'
-      print tab.EvaluateJavaScript('document.body.innerHTML')
       self.fail('Browser and GPU process list of driver bug'
                 'workarounds are not equal: %s != %s, diff: %s' %
                 (browser_list, gpu_list, list(diff)))
 
-    basic_infos = tab.EvaluateJavaScript('browserBridge.gpuInfo.basic_info')
+    basic_infos = tab.EvaluateJavaScript('browserBridge.gpuInfo.basicInfo')
     disabled_gl_extensions = None
     for info in basic_infos:
       if info['description'].startswith('Disabled Extensions'):
@@ -181,27 +214,6 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         break
 
     return gpu_list, disabled_gl_extensions
-
-  def _VerifyActiveAndInactiveGPUs(
-      self, expected_active_gpu, expected_inactive_gpus):
-    tab = self.tab
-    basic_infos = tab.EvaluateJavaScript('browserBridge.gpuInfo.basic_info')
-    active_gpu = []
-    inactive_gpus = []
-    index = 0
-    for info in basic_infos:
-      description = info['description']
-      value = info['value']
-      if description.startswith('GPU%d' % index) and value.startswith('VENDOR'):
-        if value.endswith('*ACTIVE*'):
-          active_gpu.append(value)
-        else:
-          inactive_gpus.append(value)
-        index += 1
-    if active_gpu != expected_active_gpu:
-      self.fail('Active GPU field is wrong %s' % active_gpu)
-    if inactive_gpus != expected_inactive_gpus:
-      self.fail('Inactive GPU field is wrong %s' % inactive_gpus)
 
   ######################################
   # The actual tests
@@ -231,50 +243,19 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     self.RestartBrowserIfNecessaryWithArgs([])
     self._NavigateAndWait(test_path)
     tab = self.tab
-    if not tab.browser.supports_system_info:
-      self.fail('Browser must support system info')
     system_info = tab.browser.GetSystemInfo()
+    if not system_info:
+      self.fail('Browser must support system info')
     if not system_info.gpu:
       self.fail('Target machine must have a GPU')
     if not system_info.gpu.aux_attributes:
       self.fail('Browser must support GPU aux attributes')
     if not 'gl_renderer' in system_info.gpu.aux_attributes:
       self.fail('Browser must have gl_renderer in aux attribs')
-    if len(system_info.gpu.aux_attributes['gl_renderer']) <= 0:
+    if (sys.platform != 'darwin' and
+        len(system_info.gpu.aux_attributes['gl_renderer']) <= 0):
+      # On MacOSX we don't create a context to collect GL strings.1
       self.fail('Must have a non-empty gl_renderer string')
-
-  def _GpuProcess_no_gpu_process(self, test_path):
-    options = self.__class__._original_finder_options.browser_options
-    if options.browser_type.startswith('android'):
-      # Android doesn't support starting up the browser without any
-      # GPU process. This test is skipped on Android in
-      # gpu_process_expectations.py, but we must at least be able to
-      # bring up the browser in order to detect that the test
-      # shouldn't run. Faking a vendor and device ID can get the
-      # browser into a state where it won't launch.
-      return
-    elif sys.platform in ('cygwin', 'win32'):
-      # Hit id 34 from kSoftwareRenderingListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-vendor-id=0x5333',
-        '--gpu-testing-device-id=0x8811'])
-    elif sys.platform.startswith('linux'):
-      # Hit id 50 from kSoftwareRenderingListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-no-complete-info-collection',
-        '--gpu-testing-vendor-id=0x10de',
-        '--gpu-testing-device-id=0x0de1',
-        '--gpu-testing-gl-vendor=VMware',
-        '--gpu-testing-gl-renderer=softpipe',
-        '--gpu-testing-gl-version="2.1 Mesa 10.1"'])
-    elif sys.platform == 'darwin':
-      # Hit id 112 from kSoftwareRenderingListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-vendor-id=0x8086',
-        '--gpu-testing-device-id=0x0116'])
-    self._Navigate(test_path)
-    if self.tab.EvaluateJavaScript('chrome.gpuBenchmarking.hasGpuProcess()'):
-      self.fail('GPU process detected')
 
   def _GpuProcess_driver_bug_workarounds_in_gpu_process(self, test_path):
     self.RestartBrowserIfNecessaryWithArgs([
@@ -284,79 +265,61 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       'use_gpu_driver_workaround_for_testing', None)
 
   def _GpuProcess_readback_webgl_gpu_process(self, test_path):
-    # This test was designed to only run on desktop Linux.
-    options = self.__class__._original_finder_options.browser_options
-    is_platform_android = options.browser_type.startswith('android')
-    if sys.platform.startswith('linux') and not is_platform_android:
-      # Hit id 110 from kSoftwareRenderingListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-vendor-id=0x10de',
-        '--gpu-testing-device-id=0x0de1',
-        '--gpu-testing-gl-vendor=VMware',
-        '--gpu-testing-gl-renderer=Gallium 0.4 ' \
-        'on llvmpipe (LLVM 3.4, 256 bits)',
-        '--gpu-testing-gl-version="3.0 Mesa 11.2"'])
-      self._Navigate(test_path)
-      feature_status_list = self.tab.EvaluateJavaScript(
-          'browserBridge.gpuInfo.featureStatus.featureStatus')
-      result = True
-      for name, status in feature_status_list.items():
-        if name == 'multiple_raster_threads':
-          result = result and status == 'enabled_on'
-        elif name == 'native_gpu_memory_buffers':
-          result = result and status == 'disabled_software'
-        elif name == 'webgl':
-          result = result and status == 'enabled_readback'
-        elif name == 'webgl2':
-          result = result and status == 'unavailable_software'
-        elif name == 'checker_imaging':
-          pass
-        else:
-          result = result and status == 'unavailable_software'
-      if not result:
-        self.fail('WebGL readback setup failed: %s' % feature_status_list)
-
-  def _GpuProcess_driver_bug_workarounds_upon_gl_renderer(self, test_path):
-    is_platform_android = self._RunningOnAndroid()
-    if is_platform_android:
-      # Hit id 108 from kGpuDriverBugListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-gl-vendor=NVIDIA Corporation',
-        '--gpu-testing-gl-renderer=NVIDIA Tegra',
-        '--gpu-testing-gl-version=OpenGL ES 3.1 NVIDIA 343.00'])
-    elif sys.platform in ('cygwin', 'win32'):
-      # Hit id 51 and 87 from kGpuDriverBugListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-vendor-id=0x1002',
-        '--gpu-testing-device-id=0x6779',
-        '--gpu-testing-driver-date=11-20-2014',
-        '--gpu-testing-gl-vendor=Google Inc.',
-        '--gpu-testing-gl-renderer=ANGLE ' \
-        '(AMD Radeon HD 6450 Direct3D11 vs_5_0 ps_5_0)',
-        '--gpu-testing-gl-version=OpenGL ES 2.0 (ANGLE 2.1.0.0c0d8006a9dd)'])
-    elif sys.platform.startswith('linux'):
-      # Hit id 40 from kGpuDriverBugListEntries.
-      self.RestartBrowserIfNecessaryWithArgs([
-        '--gpu-testing-vendor-id=0x0101',
-        '--gpu-testing-device-id=0x0102',
-        '--gpu-testing-gl-vendor=ARM',
-        '--gpu-testing-gl-renderer=Mali-400 MP'])
-    elif sys.platform == 'darwin':
-      # Currently on osx no workaround relies on gl-renderer.
-      return
+    # Hit test group 1 with entry 152 from kSoftwareRenderingListEntries.
+    self.RestartBrowserIfNecessaryWithArgs([
+      '--gpu-blacklist-test-group=1'])
     self._Navigate(test_path)
-    if is_platform_android:
-      self._ValidateDriverBugWorkarounds(
-        'unpack_overlapping_rows_separately_unpack_buffer', None)
-    elif sys.platform in ('cygwin', 'win32'):
-      self._ValidateDriverBugWorkarounds(
-        'texsubimage_faster_than_teximage', 'disable_d3d11')
-    elif sys.platform.startswith('linux'):
-      self._ValidateDriverBugWorkarounds('disable_discard_framebuffer', None)
-    else:
-      self.fail('Unexpected platform ' + sys.platform)
+    feature_status_list = self.tab.EvaluateJavaScript(
+        'browserBridge.gpuInfo.featureStatus.featureStatus')
+    result = True
+    for name, status in feature_status_list.items():
+      if name == 'webgl':
+        result = result and status == 'enabled_readback'
+      elif name == 'webgl2':
+        result = result and status == 'unavailable_off'
+      else:
+        pass
+    if not result:
+      self.fail('WebGL readback setup failed: %s' % feature_status_list)
 
-  def _GpuProcess_only_one_workaround(self, test_path):
+  def _GpuProcess_feature_status_under_swiftshader(self, test_path):
+    if not self._SupportsSwiftShader():
+      return
+    # Hit test group 2 with entry 153 from kSoftwareRenderingListEntries.
+    self.RestartBrowserIfNecessaryWithArgs([
+      '--gpu-blacklist-test-group=2'])
+    self._Navigate(test_path)
+    feature_status_list = self.tab.EvaluateJavaScript(
+        'browserBridge.gpuInfo.featureStatus.featureStatus')
+    for name, status in feature_status_list.items():
+      if name == 'webgl':
+        if status != 'unavailable_software':
+          self.fail('WebGL status for SwiftShader failed: %s' % status)
+          return
+      elif name == '2d_canvas':
+        if status != 'unavailable_software':
+          self.fail('2D Canvas status for SwiftShader failed: %s' % status)
+          return
+      else:
+        pass
+    if not sys.platform.startswith('linux'):
+      # On Linux we relaunch GPU process to fallback to SwiftShader, therefore
+      # featureStatusForHardwareGpu isn't available.
+      feature_status_for_hardware_gpu_list = self.tab.EvaluateJavaScript(
+          'browserBridge.gpuInfo.featureStatusForHardwareGpu.featureStatus')
+      for name, status in feature_status_for_hardware_gpu_list.items():
+        if name == 'webgl':
+          if status != 'unavailable_off':
+            self.fail('WebGL status for hardware GPU failed: %s' % status)
+            return
+        elif name == '2d_canvas':
+          if status != 'enabled':
+            self.fail('2D Canvas status for hardware GPU failed: %s' % status)
+            return
+        else:
+          pass
+
+  def _GpuProcess_one_extra_workaround(self, test_path):
     # Start this test by launching the browser with no command line
     # arguments.
     self.RestartBrowserIfNecessaryWithArgs([])
@@ -364,25 +327,11 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     self._VerifyGpuProcessPresent()
     recorded_workarounds, recorded_disabled_gl_extensions = (
       self._CompareAndCaptureDriverBugWorkarounds())
+    # Relaunch the browser enabling test group 1 with entry 215, where
+    # use_gpu_driver_workaround_for_testing is enabled.
+    browser_args = ['--gpu-driver-bug-list-test-group=1']
     # Add the testing workaround to the recorded workarounds.
     recorded_workarounds.append('use_gpu_driver_workaround_for_testing')
-    # Relaunch the browser with OS-specific command line arguments.
-    browser_args = ['--use_gpu_driver_workaround_for_testing',
-                    '--disable-gpu-driver-bug-workarounds']
-    # Inject some info to make sure the flags above are effective.
-    if sys.platform == 'darwin':
-      # Hit id 33 from kGpuDriverBugListEntries.
-      browser_args.extend(['--gpu-testing-gl-vendor=Imagination'])
-    else:
-      # Hit id 5 from kGpuDriverBugListEntries.
-      browser_args.extend(['--gpu-testing-vendor-id=0x10de',
-                           '--gpu-testing-device-id=0x0001'])
-      # no multi gpu on Android.
-      if not self._RunningOnAndroid():
-        browser_args.extend(['--gpu-testing-secondary-vendor-ids=',
-                             '--gpu-testing-secondary-device-ids='])
-    for workaround in recorded_workarounds:
-      browser_args.append('--' + workaround)
     browser_args.append('--disable-gl-extensions=' +
                         recorded_disabled_gl_extensions)
     self.RestartBrowserIfNecessaryWithArgs(browser_args)
@@ -407,82 +356,56 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         'incorrect: %s != %s:' %
         (recorded_disabled_gl_extensions, new_disabled_gl_extensions))
 
-  def _GpuProcess_skip_gpu_process(self, test_path):
+  def _GpuProcess_disable_gpu(self, test_path):
     # This test loads functional_webgl.html so that there is a
     # deliberate attempt to use an API which would start the GPU
-    # process. On platforms where SwiftShader is used, this test
-    # should be skipped. Once SwiftShader is enabled on all platforms,
-    # this test should be removed.
+    # process.
+    if self._RunningOnAndroid():
+      # Chrome on Android doesn't support software fallback, skip it.
+      # TODO(zmo): If this test runs on ChromeOS, we also need to skip it.
+      return
+    self.RestartBrowserIfNecessaryWithArgs(['--disable-gpu'])
+    self._NavigateAndWait(test_path)
+    # On Windows, Linux or MacOS, SwiftShader is enabled, so GPU process
+    # will still launch with SwiftShader.
+    supports_swiftshader = self._SupportsSwiftShader()
+    has_gpu_process = self.tab.EvaluateJavaScript(
+        'chrome.gpuBenchmarking.hasGpuProcess()')
+    if supports_swiftshader and not has_gpu_process:
+      self.fail('GPU process not detected')
+    elif not supports_swiftshader and has_gpu_process:
+      self.fail('GPU process detected')
+
+  def _GpuProcess_disable_gpu_and_swiftshader(self, test_path):
+    # Disable SwiftShader, so GPU process should not launch anywhere.
+    if self._RunningOnAndroid():
+      # Chrome on Android doesn't support software fallback, skip it.
+      # TODO(zmo): If this test runs on ChromeOS, we also need to skip it.
+      return
+
+    if self._AlwaysRunsGpuProcess():
+      # The current configuration will always launch a GPU process, skip test.
+      return
+
     self.RestartBrowserIfNecessaryWithArgs([
       '--disable-gpu',
-      '--skip-gpu-data-loading'])
+      '--disable-software-rasterizer'])
     self._NavigateAndWait(test_path)
     if self.tab.EvaluateJavaScript('chrome.gpuBenchmarking.hasGpuProcess()'):
       self.fail('GPU process detected')
 
-  def _GpuProcess_identify_active_gpu1(self, test_path):
-    self.RestartBrowserIfNecessaryWithArgs([
-      '--gpu-testing-vendor-id=0x8086',
-      '--gpu-testing-device-id=0x040a',
-      '--gpu-testing-secondary-vendor-ids=0x10de',
-      '--gpu-testing-secondary-device-ids=0x0de1',
-      '--gpu-testing-gl-vendor=nouveau',
-      '--disable-software-rasterizer'])
-    self._Navigate(test_path)
-    self._VerifyActiveAndInactiveGPUs(
-      ['VENDOR = 0x10de, DEVICE= 0x0de1 *ACTIVE*'],
-      ['VENDOR = 0x8086, DEVICE= 0x040a'])
-
-  def _GpuProcess_identify_active_gpu2(self, test_path):
-    self.RestartBrowserIfNecessaryWithArgs([
-      '--gpu-testing-vendor-id=0x8086',
-      '--gpu-testing-device-id=0x040a',
-      '--gpu-testing-secondary-vendor-ids=0x10de',
-      '--gpu-testing-secondary-device-ids=0x0de1',
-      '--gpu-testing-gl-vendor=Intel',
-      '--disable-software-rasterizer'])
-    self._Navigate(test_path)
-    self._VerifyActiveAndInactiveGPUs(
-      ['VENDOR = 0x8086, DEVICE= 0x040a *ACTIVE*'],
-      ['VENDOR = 0x10de, DEVICE= 0x0de1'])
-
-  def _GpuProcess_identify_active_gpu3(self, test_path):
-    self.RestartBrowserIfNecessaryWithArgs([
-      '--gpu-testing-vendor-id=0x8086',
-      '--gpu-testing-device-id=0x040a',
-      '--gpu-testing-secondary-vendor-ids=0x10de;0x1002',
-      '--gpu-testing-secondary-device-ids=0x0de1;0x6779',
-      '--gpu-testing-gl-vendor=X.Org',
-      '--gpu-testing-gl-renderer=AMD R600',
-      '--disable-software-rasterizer'])
-    self._Navigate(test_path)
-    self._VerifyActiveAndInactiveGPUs(
-      ['VENDOR = 0x1002, DEVICE= 0x6779 *ACTIVE*'],
-      ['VENDOR = 0x8086, DEVICE= 0x040a',
-       'VENDOR = 0x10de, DEVICE= 0x0de1'])
-
-  def _GpuProcess_identify_active_gpu4(self, test_path):
-    self.RestartBrowserIfNecessaryWithArgs([
-      '--gpu-testing-vendor-id=0x10de',
-      '--gpu-testing-device-id=0x0de1',
-      '--gpu-testing-secondary-vendor-ids=',
-      '--gpu-testing-secondary-device-ids=',
-      '--gpu-testing-gl-vendor=nouveau',
-      '--disable-software-rasterizer'])
-    self._Navigate(test_path)
-    self._VerifyActiveAndInactiveGPUs(
-      ['VENDOR = 0x10de, DEVICE= 0x0de1 *ACTIVE*'],
-      [])
+  def _GpuProcess_disable_swiftshader(self, test_path):
+    # Disable SwiftShader, GPU process should be able to launch.
+    self.RestartBrowserIfNecessaryWithArgs(['--disable-software-rasterizer'])
+    self._NavigateAndWait(test_path)
+    if not self.tab.EvaluateJavaScript(
+        'chrome.gpuBenchmarking.hasGpuProcess()'):
+      self.fail('GPU process not detected')
 
   def _GpuProcess_disabling_workarounds_works(self, test_path):
     # Hit exception from id 215 from kGpuDriverBugListEntries.
     self.RestartBrowserIfNecessaryWithArgs([
-      '--gpu-testing-vendor-id=0xbad9',
-      '--gpu-testing-device-id=0xbad9',
-      '--gpu-testing-secondary-vendor-ids=',
-      '--gpu-testing-secondary-device-ids=',
-      '--gpu-testing-gl-vendor=FakeVendor',
-      '--gpu-testing-gl-renderer=FakeRenderer',
+      '--gpu-driver-bug-list-test-group=1',
       '--use_gpu_driver_workaround_for_testing=0'])
     self._Navigate(test_path)
     workarounds, _ = (
@@ -491,17 +414,16 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       self.fail('use_gpu_driver_workaround_for_testing erroneously present')
 
   def _GpuProcess_swiftshader_for_webgl(self, test_path):
-    # This test loads functional_webgl.html so that there is a
-    # deliberate attempt to use an API which would start the GPU
-    # process. On Windows, and eventually on other platforms where
-    # SwiftShader is used, this test should pass.
-    #
-    args_list = ([
-      # Hit id 4 from kSoftwareRenderingListEntries.
-      '--gpu-testing-vendor-id=0x8086',
-      '--gpu-testing-device-id=0x27A2'],
+    # This test loads functional_webgl.html so that there is a deliberate
+    # attempt to use an API which would start the GPU process.
+    # On platforms where SwiftShader is not supported, skip this test.
+    if not self._SupportsSwiftShader():
+      return
+    args_list = (
+      # Triggering test_group 2 where WebGL is blacklisted.
+      ['--gpu-blacklist-test-group=2'],
       # Explicitly disable GPU access.
-     ['--disable-gpu'])
+      ['--disable-gpu'])
     for args in args_list:
       self.RestartBrowserIfNecessaryWithArgs(args)
       self._NavigateAndWait(test_path)
@@ -512,9 +434,10 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       if 'SwiftShader' not in renderer:
         self.fail('Expected SwiftShader renderer; instead got ' + renderer)
       # Validate GPU info.
-      if not self.browser.supports_system_info:
+      system_info = self.browser.GetSystemInfo()
+      if not system_info:
         self.fail("Browser doesn't support GetSystemInfo")
-      gpu = self.browser.GetSystemInfo().gpu
+      gpu = system_info.gpu
       if not gpu:
         self.fail('Target machine must have a GPU')
       if not gpu.aux_attributes:
@@ -554,6 +477,20 @@ class GpuProcessIntegrationTest(gpu_integration_test.GpuIntegrationTest):
       for ext in ext_list:
         if tab.EvaluateJavaScript('!gl_context.getExtension("' + ext + '")'):
           self.fail("Expected " + ext + " support")
+
+  def _GpuProcess_webgl_disabled_extension(self, test_path):
+    # Hit exception from id 257 from kGpuDriverBugListEntries.
+    self.RestartBrowserIfNecessaryWithArgs([
+      '--gpu-driver-bug-list-test-group=2',
+    ])
+    self._NavigateAndWait(test_path)
+
+  @classmethod
+  def ExpectationsFiles(cls):
+    return [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'test_expectations',
+                     'gpu_process_expectations.txt')]
 
 def load_tests(loader, tests, pattern):
   del loader, tests, pattern  # Unused.

@@ -4,9 +4,11 @@
 
 #include "chrome/browser/ui/views/bubble_anchor_util_views.h"
 
-#include "chrome/browser/ui/browser.h"
+#include "build/build_config.h"
+#include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "chrome/browser/ui/views/location_bar/location_icon_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 
 // This file contains the bubble_anchor_util implementation for a Views
@@ -14,17 +16,32 @@
 
 namespace bubble_anchor_util {
 
-views::View* GetPageInfoAnchorView(Browser* browser) {
-  if (!browser->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR))
-    return nullptr;  // Fall back to GetAnchorPoint().
-
+AnchorConfiguration GetPageInfoAnchorConfiguration(Browser* browser,
+                                                   Anchor anchor) {
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
-  return browser_view->GetLocationBarView()->GetSecurityBubbleAnchorView();
+
+  if (anchor == kLocationBar && browser_view->GetLocationBarView()->IsDrawn())
+    return {browser_view->GetLocationBarView(),
+            browser_view->GetLocationBarView()->location_icon_view(),
+            views::BubbleBorder::TOP_LEFT};
+
+  if (anchor == kCustomTabBar && browser_view->toolbar()->custom_tab_bar())
+    return {browser_view->toolbar()->custom_tab_bar(),
+            browser_view->toolbar()->custom_tab_bar()->location_icon_view(),
+            views::BubbleBorder::TOP_LEFT};
+
+  // Fall back to menu button.
+  views::Button* app_menu_button =
+      browser_view->toolbar_button_provider()->GetAppMenuButton();
+  if (app_menu_button && app_menu_button->IsDrawn())
+    return {app_menu_button, app_menu_button, views::BubbleBorder::TOP_RIGHT};
+  return {};
 }
 
 gfx::Rect GetPageInfoAnchorRect(Browser* browser) {
-  // GetPageInfoAnchorView() should be preferred when there is a location bar.
-  DCHECK(!browser->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR));
+  // GetPageInfoAnchorConfiguration()'s anchor_view should be preferred if
+  // available.
+  DCHECK_EQ(GetPageInfoAnchorConfiguration(browser).anchor_view, nullptr);
 
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   // Get position in view (taking RTL UI into account).

@@ -4,16 +4,16 @@
 
 #import "ios/chrome/browser/ui/payments/contact_info_edit_coordinator.h"
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/ios/wait_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#import "base/test/ios/wait_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/geo/test_region_data_loader.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
-#include "components/autofill/core/browser/test_region_data_loader.h"
-#include "components/payments/core/payments_profile_comparator.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #include "ios/chrome/browser/payments/payment_request_unittest_base.h"
 #include "ios/chrome/browser/payments/test_payment_request.h"
@@ -32,21 +32,8 @@
 #endif
 
 namespace {
-class MockTestPersonalDataManager : public autofill::TestPersonalDataManager {
- public:
-  MockTestPersonalDataManager() : TestPersonalDataManager() {}
-  MOCK_METHOD1(AddProfile, void(const autofill::AutofillProfile&));
-  MOCK_METHOD1(UpdateProfile, void(const autofill::AutofillProfile&));
-};
 
-class MockPaymentsProfileComparator
-    : public payments::PaymentsProfileComparator {
- public:
-  MockPaymentsProfileComparator(const std::string& app_locale,
-                                const payments::PaymentOptionsProvider& options)
-      : PaymentsProfileComparator(app_locale, options) {}
-  MOCK_METHOD1(Invalidate, void(const autofill::AutofillProfile&));
-};
+using ::testing::_;
 
 class MockTestPaymentRequest : public payments::TestPaymentRequest {
  public:
@@ -60,6 +47,7 @@ class MockTestPaymentRequest : public payments::TestPaymentRequest {
                                      personal_data_manager) {}
   MOCK_METHOD1(AddAutofillProfile,
                autofill::AutofillProfile*(const autofill::AutofillProfile&));
+  MOCK_METHOD1(UpdateAutofillProfile, void(const autofill::AutofillProfile&));
 };
 
 MATCHER_P3(ProfileMatches, name, email, phone_number, "") {
@@ -90,8 +78,6 @@ NSArray<EditorField*>* GetEditorFields() {
                       required:YES],
   ];
 }
-
-using ::testing::_;
 }  // namespace
 
 class PaymentRequestContactInfoEditCoordinatorTest
@@ -100,32 +86,31 @@ class PaymentRequestContactInfoEditCoordinatorTest
  protected:
   PaymentRequestContactInfoEditCoordinatorTest() {}
 
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
-    personal_data_manager_.SetTestingPrefService(pref_service());
+    personal_data_manager_.SetPrefService(pref_service());
 
-    payment_request_ = base::MakeUnique<MockTestPaymentRequest>(
+    payment_request_ = std::make_unique<MockTestPaymentRequest>(
         payment_request_test_util::CreateTestWebPaymentRequest(),
         browser_state(), web_state(), &personal_data_manager_);
-
-    profile_comparator_ = base::MakeUnique<MockPaymentsProfileComparator>(
-        payment_request_->GetApplicationLocale(), *payment_request_.get());
-    payment_request_->SetProfileComparator(profile_comparator_.get());
 
     test_region_data_loader_.set_synchronous_callback(true);
     payment_request_->SetRegionDataLoader(&test_region_data_loader_);
   }
 
+  // PlatformTest:
   void TearDown() override {
-    personal_data_manager_.SetTestingPrefService(nullptr);
+    personal_data_manager_.SetPrefService(nullptr);
 
-    PaymentRequestUnitTestBase::TearDown();
+    DoTearDown();
+    PlatformTest::TearDown();
   }
 
-  MockTestPersonalDataManager personal_data_manager_;
+  autofill::TestPersonalDataManager personal_data_manager_;
   autofill::TestRegionDataLoader test_region_data_loader_;
-  std::unique_ptr<MockPaymentsProfileComparator> profile_comparator_;
   std::unique_ptr<MockTestPaymentRequest> payment_request_;
 };
 
@@ -197,15 +182,8 @@ TEST_F(PaymentRequestContactInfoEditCoordinatorTest, DidFinishCreating) {
               AddAutofillProfile(
                   ProfileMatches("John Doe", "john@doe.com", "1 650-211-1111")))
       .Times(1);
-  // Expect an autofill profile to be added to the PersonalDataManager.
-  EXPECT_CALL(
-      personal_data_manager_,
-      AddProfile(ProfileMatches("John Doe", "john@doe.com", "1 650-211-1111")))
-      .Times(1);
-  // No autofill profile should get updated in the PersonalDataManager.
-  EXPECT_CALL(personal_data_manager_, UpdateProfile(_)).Times(0);
-  // No autofill profile should get invalidated in PaymentsProfileComparator.
-  EXPECT_CALL(*profile_comparator_, Invalidate(_)).Times(0);
+  // No autofill profile should get updated in the PaymentRequest.
+  EXPECT_CALL(*payment_request_, UpdateAutofillProfile(_)).Times(0);
 
   // Call the controller delegate method.
   EXPECT_TRUE([base_view_controller.presentedViewController
@@ -258,17 +236,10 @@ TEST_F(PaymentRequestContactInfoEditCoordinatorTest, DidFinishEditing) {
 
   // No autofill profile should get added to the PaymentRequest.
   EXPECT_CALL(*payment_request_, AddAutofillProfile(_)).Times(0);
-  // No autofill profile should get added to the PersonalDataManager.
-  EXPECT_CALL(personal_data_manager_, AddProfile(_)).Times(0);
-  // Expect an autofill profile to be updated in the PersonalDataManager.
-  EXPECT_CALL(personal_data_manager_,
-              UpdateProfile(
+  // Expect an autofill profile to be updated in the PaymentRequest.
+  EXPECT_CALL(*payment_request_,
+              UpdateAutofillProfile(
                   ProfileMatches("John Doe", "john@doe.com", "1 650-211-1111")))
-      .Times(1);
-  // Expect an autofill profile to be invalidated in PaymentsProfileComparator.
-  EXPECT_CALL(
-      *profile_comparator_,
-      Invalidate(ProfileMatches("John Doe", "john@doe.com", "1 650-211-1111")))
       .Times(1);
 
   // Call the controller delegate method.

@@ -8,7 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/system_monitor/system_monitor.h"
+#include "base/single_thread_task_runner.h"
+#include "base/system/system_monitor.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/media_export.h"
 
@@ -18,7 +19,7 @@ class DeviceMonitorMacImpl;
 
 namespace media {
 
-// Class to track audio/video devices removal or addition via callback to
+// Class to track video devices removal or addition via callback to
 // base::SystemMonitor ProcessDevicesChanged(). A single object of this class
 // is created from the browser main process and lives as long as this one.
 class MEDIA_EXPORT DeviceMonitorMac {
@@ -29,7 +30,7 @@ class MEDIA_EXPORT DeviceMonitorMac {
       scoped_refptr<base::SingleThreadTaskRunner> device_task_runner);
   ~DeviceMonitorMac();
 
-  // Registers the observers for the audio/video device removal, connection and
+  // Registers the observers for the video device removal, connection and
   // suspension. The AVFoundation library is also loaded and initialised if the
   // OS supports it.
   void StartMonitoring();
@@ -50,6 +51,6 @@ class MEDIA_EXPORT DeviceMonitorMac {
   DISALLOW_COPY_AND_ASSIGN(DeviceMonitorMac);
 };
 
-}  // namespace content
+}  // namespace media
 
 #endif  // MEDIA_DEVICE_MONITORS_DEVICE_MONITOR_MAC_H_

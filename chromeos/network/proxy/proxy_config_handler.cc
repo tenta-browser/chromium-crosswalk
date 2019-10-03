@@ -11,8 +11,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/values.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_service_client.h"
+#include "chromeos/dbus/shill/shill_service_client.h"
 #include "chromeos/network/network_handler_callbacks.h"
 #include "chromeos/network/network_profile.h"
 #include "chromeos/network/network_profile_handler.h"
@@ -57,23 +56,22 @@ std::unique_ptr<ProxyConfigDictionary> GetProxyConfigForNetwork(
     if (!proxy_policy) {
       // This policy doesn't set a proxy for this network. Nonetheless, this
       // disallows changes by the user.
-      return std::unique_ptr<ProxyConfigDictionary>();
+      return nullptr;
     }
 
-    std::unique_ptr<base::DictionaryValue> proxy_dict =
-        onc::ConvertOncProxySettingsToProxyConfig(*proxy_policy);
-    return std::make_unique<ProxyConfigDictionary>(std::move(proxy_dict));
+    return std::make_unique<ProxyConfigDictionary>(
+        onc::ConvertOncProxySettingsToProxyConfig(*proxy_policy));
   }
 
   if (network.profile_path().empty())
-    return std::unique_ptr<ProxyConfigDictionary>();
+    return nullptr;
 
   const NetworkProfile* profile =
       NetworkHandler::Get()->network_profile_handler()->GetProfileForPath(
           network.profile_path());
   if (!profile) {
     VLOG(1) << "Unknown profile_path '" << network.profile_path() << "'.";
-    return std::unique_ptr<ProxyConfigDictionary>();
+    return nullptr;
   }
   if (!profile_prefs && profile->type() == NetworkProfile::TYPE_USER) {
     // This case occurs, for example, if called from the proxy config tracker
@@ -82,31 +80,28 @@ std::unique_ptr<ProxyConfigDictionary> GetProxyConfigForNetwork(
     // settings.
     VLOG(1)
         << "Don't use unshared settings for system context or signin screen.";
-    return std::unique_ptr<ProxyConfigDictionary>();
+    return nullptr;
   }
 
   // No policy set for this network, read instead the user's (shared or
   // unshared) configuration.
   // The user's proxy setting is not stored in the Chrome preference yet. We
   // still rely on Shill storing it.
-  const base::DictionaryValue& value = network.proxy_config();
-  if (value.empty())
-    return std::unique_ptr<ProxyConfigDictionary>();
-  return std::make_unique<ProxyConfigDictionary>(value.CreateDeepCopy());
+  const base::Value* value = network.proxy_config();
+  if (!value)
+    return nullptr;
+  return std::make_unique<ProxyConfigDictionary>(value->Clone());
 }
 
 void SetProxyConfigForNetwork(const ProxyConfigDictionary& proxy_config,
                               const NetworkState& network) {
-  chromeos::ShillServiceClient* shill_service_client =
-      DBusThreadManager::Get()->GetShillServiceClient();
-
   // The user's proxy setting is not stored in the Chrome preference yet. We
   // still rely on Shill storing it.
   ProxyPrefs::ProxyMode mode;
   if (!proxy_config.GetMode(&mode) || mode == ProxyPrefs::MODE_DIRECT) {
     // Return empty string for direct mode for portal check to work correctly.
     // TODO(pneubeck): Consider removing this legacy code.
-    shill_service_client->ClearProperty(
+    ShillServiceClient::Get()->ClearProperty(
         dbus::ObjectPath(network.path()), shill::kProxyConfigProperty,
         base::Bind(&NotifyNetworkStateHandler, network.path()),
         base::Bind(&network_handler::ShillErrorCallbackFunction,
@@ -115,7 +110,7 @@ void SetProxyConfigForNetwork(const ProxyConfigDictionary& proxy_config,
   } else {
     std::string proxy_config_str;
     base::JSONWriter::Write(proxy_config.GetDictionary(), &proxy_config_str);
-    shill_service_client->SetProperty(
+    ShillServiceClient::Get()->SetProperty(
         dbus::ObjectPath(network.path()), shill::kProxyConfigProperty,
         base::Value(proxy_config_str),
         base::Bind(&NotifyNetworkStateHandler, network.path()),

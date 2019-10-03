@@ -12,6 +12,7 @@
 
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -23,7 +24,8 @@ class DeviceMonitorMessageWindow;
 
 namespace {
 
-const wchar_t kWindowClassName[] = L"DeviceMonitorMessageWindow";
+const base::char16 kWindowClassName[] =
+    STRING16_LITERAL("DeviceMonitorMessageWindow");
 DeviceMonitorMessageWindow* g_message_window;
 
 // Provides basic comparability for GUIDs so that they can be used as keys to an

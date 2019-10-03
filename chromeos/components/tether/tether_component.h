@@ -25,6 +25,18 @@ class TetherComponent {
 
   enum class Status { ACTIVE, SHUTTING_DOWN, SHUT_DOWN };
 
+  enum class ShutdownReason {
+    OTHER = 0,
+    USER_LOGGED_OUT = 3,
+    USER_CLOSED_LID = 4,
+    PREF_DISABLED = 5,
+    BLUETOOTH_DISABLED = 6,
+    CELLULAR_DISABLED = 7,
+    BLUETOOTH_CONTROLLER_DISAPPEARED = 8,
+    MULTIDEVICE_HOST_UNVERIFIED = 9,
+    BETTER_TOGETHER_SUITE_DISABLED = 10
+  };
+
   TetherComponent();
   virtual ~TetherComponent();
 
@@ -34,7 +46,7 @@ class TetherComponent {
   // asynchronous shutdown, the class transitions to the SHUTTING_DOWN status;
   // once an asynchronous shutdown completes, TetherComponent transitions to the
   // SHUT_DOWN status and notifies observers.
-  virtual void RequestShutdown() = 0;
+  virtual void RequestShutdown(const ShutdownReason& shutdown_reason) = 0;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -44,7 +56,7 @@ class TetherComponent {
 
  private:
   Status status_ = Status::ACTIVE;
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(TetherComponent);
 };

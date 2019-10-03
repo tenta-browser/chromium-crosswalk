@@ -4,8 +4,9 @@
 
 #include "remoting/protocol/webrtc_audio_module.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -143,8 +144,8 @@ int32_t WebrtcAudioModule::StartPlayout() {
   base::AutoLock auto_lock(lock_);
   if (!playing_ && audio_task_runner_) {
     audio_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&WebrtcAudioModule::StartPlayoutOnAudioThread, this));
+        FROM_HERE, base::BindOnce(&WebrtcAudioModule::StartPlayoutOnAudioThread,
+                                  rtc::scoped_refptr<WebrtcAudioModule>(this)));
     playing_ = true;
   }
   return 0;
@@ -154,8 +155,8 @@ int32_t WebrtcAudioModule::StopPlayout() {
   base::AutoLock auto_lock(lock_);
   if (playing_) {
     audio_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&WebrtcAudioModule::StopPlayoutOnAudioThread, this));
+        FROM_HERE, base::BindOnce(&WebrtcAudioModule::StopPlayoutOnAudioThread,
+                                  rtc::scoped_refptr<WebrtcAudioModule>(this)));
     playing_ = false;
   }
   return 0;
@@ -175,15 +176,6 @@ int32_t WebrtcAudioModule::StopRecording() {
 }
 
 bool WebrtcAudioModule::Recording() const {
-  return false;
-}
-
-int32_t WebrtcAudioModule::SetAGC(bool enable) {
-  return 0;
-}
-
-bool WebrtcAudioModule::AGC() const {
-  NOTREACHED();
   return false;
 }
 
@@ -360,10 +352,10 @@ int WebrtcAudioModule::GetRecordAudioParameters(
 
 void WebrtcAudioModule::StartPlayoutOnAudioThread() {
   DCHECK(audio_task_runner_->BelongsToCurrentThread());
-  poll_timer_ = base::MakeUnique<base::RepeatingTimer>();
-  poll_timer_->Start(
-      FROM_HERE, kPollInterval,
-      base::Bind(&WebrtcAudioModule::PollFromSource, base::Unretained(this)));
+  poll_timer_ = std::make_unique<base::RepeatingTimer>();
+  poll_timer_->Start(FROM_HERE, kPollInterval,
+                     base::BindRepeating(&WebrtcAudioModule::PollFromSource,
+                                         base::Unretained(this)));
 }
 
 void WebrtcAudioModule::StopPlayoutOnAudioThread() {

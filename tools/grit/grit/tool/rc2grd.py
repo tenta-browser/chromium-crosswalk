@@ -1,15 +1,16 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 '''The 'grit rc2grd' tool.'''
 
+from __future__ import print_function
 
 import os.path
 import getopt
 import re
 import StringIO
+import sys
 import types
 
 import grit.node.empty
@@ -157,11 +158,12 @@ C preprocessor on the .rc file or manually edit it before using this tool.
     self.pre_process = None
     self.post_process = None
 
-  def ParseOptions(self, args):
+  def ParseOptions(self, args, help_func=None):
     '''Given a list of arguments, set this object's options and return
     all non-option arguments.
     '''
-    (own_opts, args) = getopt.getopt(args, 'e:h:u:n:r', ['pre=', 'post='])
+    (own_opts, args) = getopt.getopt(args, 'e:h:u:n:r',
+                                     ('help', 'pre=', 'post='))
     for (key, val) in own_opts:
       if key == '-e':
         self.input_encoding = val
@@ -177,13 +179,19 @@ C preprocessor on the .rc file or manually edit it before using this tool.
         self.pre_process = val
       elif key == '--post':
         self.post_process = val
+      elif key == '--help':
+        if help_func is None:
+          self.ShowUsage()
+        else:
+          help_func()
+        sys.exit(0)
     return args
 
   def Run(self, opts, args):
     args = self.ParseOptions(args)
     if len(args) != 1:
-      print ('This tool takes a single tool-specific argument, the path to the\n'
-             '.rc file to process.')
+      print('This tool takes a single tool-specific argument, the path to the\n'
+            '.rc file to process.')
       return 2
     self.SetOptions(opts)
 
@@ -196,7 +204,8 @@ C preprocessor on the .rc file or manually edit it before using this tool.
     with util.WrapOutputStream(file(out_path, 'w'), 'utf-8') as outfile:
       outfile.write(grd_text)
 
-    print 'Wrote output file %s.\nPlease check for TODO items in the file.' % out_path
+    print('Wrote output file %s.\nPlease check for TODO items in the file.' %
+          (out_path,))
 
 
   def Process(self, rctext, rc_path):
@@ -404,6 +413,5 @@ C preprocessor on the .rc file or manually edit it before using this tool.
 
       return msg
     except:
-      print 'Exception processing message with text "%s"' % text
+      print('Exception processing message with text "%s"' % text)
       raise
-

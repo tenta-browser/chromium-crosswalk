@@ -12,7 +12,7 @@
 #include "components/history/core/browser/history_context.h"
 #include "components/history/core/browser/history_types.h"
 #include "ios/web/public/web_state/web_state_observer.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#import "ios/web/public/web_state/web_state_user_data.h"
 
 namespace history {
 class HistoryService;
@@ -51,6 +51,9 @@ class HistoryTabHelper : public history::Context,
   // web::WebStateObserver implementation.
   void DidFinishNavigation(web::WebState* web_state,
                            web::NavigationContext* navigation_context) override;
+  void PageLoaded(
+      web::WebState* web_state,
+      web::PageLoadCompletionStatus load_completion_status) override;
   void TitleWasSet(web::WebState* web_state) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
@@ -71,6 +74,16 @@ class HistoryTabHelper : public history::Context,
   // they happen or delayed. If delayed, then they will be sent when the flag
   // is set to false.
   bool delay_notification_ = false;
+
+  // Number of title changes since the loading of the navigation started.
+  int num_title_changes_;
+
+  // The time that the current page finished loading. Only title changes within
+  // a certain time period after the page load is complete will be saved to the
+  // history system. Only applies to the main frame of the page.
+  base::TimeTicks last_load_completion_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(HistoryTabHelper);
 };

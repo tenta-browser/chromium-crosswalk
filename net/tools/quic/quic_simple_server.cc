@@ -6,20 +6,21 @@
 
 #include <string.h>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_source.h"
-#include "net/quic/core/crypto/crypto_handshake.h"
-#include "net/quic/core/crypto/quic_random.h"
-#include "net/quic/core/quic_crypto_stream.h"
-#include "net/quic/core/quic_data_reader.h"
-#include "net/quic/core/quic_packets.h"
+#include "net/quic/address_utils.h"
 #include "net/socket/udp_server_socket.h"
-#include "net/tools/quic/quic_simple_dispatcher.h"
-#include "net/tools/quic/quic_simple_per_connection_packet_writer.h"
+#include "net/third_party/quiche/src/quic/core/crypto/crypto_handshake.h"
+#include "net/third_party/quiche/src/quic/core/crypto/quic_random.h"
+#include "net/third_party/quiche/src/quic/core/quic_crypto_stream.h"
+#include "net/third_party/quiche/src/quic/core/quic_data_reader.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/tools/quic_simple_dispatcher.h"
 #include "net/tools/quic/quic_simple_server_packet_writer.h"
 #include "net/tools/quic/quic_simple_server_session_helper.h"
 
@@ -32,32 +33,34 @@ const size_t kNumSessionsToCreatePerSocketEvent = 16;
 
 // Allocate some extra space so we can send an error if the client goes over
 // the limit.
-const int kReadBufferSize = 2 * kMaxPacketSize;
+const int kReadBufferSize = 2 * quic::kMaxOutgoingPacketSize;
 
 }  // namespace
 
 QuicSimpleServer::QuicSimpleServer(
-    std::unique_ptr<ProofSource> proof_source,
-    const QuicConfig& config,
-    const QuicCryptoServerConfig::ConfigOptions& crypto_config_options,
-    const QuicTransportVersionVector& supported_versions,
-    QuicHttpResponseCache* response_cache)
+    std::unique_ptr<quic::ProofSource> proof_source,
+    const quic::QuicConfig& config,
+    const quic::QuicCryptoServerConfig::ConfigOptions& crypto_config_options,
+    const quic::ParsedQuicVersionVector& supported_versions,
+    quic::QuicSimpleServerBackend* quic_simple_server_backend)
     : version_manager_(supported_versions),
       helper_(
-          new QuicChromiumConnectionHelper(&clock_, QuicRandom::GetInstance())),
+          new QuicChromiumConnectionHelper(&clock_,
+                                           quic::QuicRandom::GetInstance())),
       alarm_factory_(new QuicChromiumAlarmFactory(
           base::ThreadTaskRunnerHandle::Get().get(),
           &clock_)),
       config_(config),
       crypto_config_options_(crypto_config_options),
       crypto_config_(kSourceAddressTokenSecret,
-                     QuicRandom::GetInstance(),
-                     std::move(proof_source)),
+                     quic::QuicRandom::GetInstance(),
+                     std::move(proof_source),
+                     quic::KeyExchangeSource::Default()),
       read_pending_(false),
       synchronous_read_count_(0),
-      read_buffer_(new IOBufferWithSize(kReadBufferSize)),
-      response_cache_(response_cache),
-      weak_factory_(this) {
+      read_buffer_(base::MakeRefCounted<IOBufferWithSize>(kReadBufferSize)),
+      quic_simple_server_backend_(quic_simple_server_backend) {
+  DCHECK(quic_simple_server_backend);
   Initialize();
 }
 
@@ -71,26 +74,27 @@ void QuicSimpleServer::Initialize() {
   const uint32_t kInitialSessionFlowControlWindow = 1 * 1024 * 1024;  // 1 MB
   const uint32_t kInitialStreamFlowControlWindow = 64 * 1024;         // 64 KB
   if (config_.GetInitialStreamFlowControlWindowToSend() ==
-      kMinimumFlowControlSendWindow) {
+      quic::kMinimumFlowControlSendWindow) {
     config_.SetInitialStreamFlowControlWindowToSend(
         kInitialStreamFlowControlWindow);
   }
   if (config_.GetInitialSessionFlowControlWindowToSend() ==
-      kMinimumFlowControlSendWindow) {
+      quic::kMinimumFlowControlSendWindow) {
     config_.SetInitialSessionFlowControlWindowToSend(
         kInitialSessionFlowControlWindow);
   }
 
-  std::unique_ptr<CryptoHandshakeMessage> scfg(crypto_config_.AddDefaultConfig(
-      helper_->GetRandomGenerator(), helper_->GetClock(),
-      crypto_config_options_));
+  std::unique_ptr<quic::CryptoHandshakeMessage> scfg(
+      crypto_config_.AddDefaultConfig(helper_->GetRandomGenerator(),
+                                      helper_->GetClock(),
+                                      crypto_config_options_));
 }
 
 QuicSimpleServer::~QuicSimpleServer() = default;
 
 int QuicSimpleServer::Listen(const IPEndPoint& address) {
   std::unique_ptr<UDPServerSocket> socket(
-      new UDPServerSocket(&net_log_, NetLogSource()));
+      new UDPServerSocket(nullptr, NetLogSource()));
 
   socket->AllowAddressReuse();
 
@@ -104,13 +108,13 @@ int QuicSimpleServer::Listen(const IPEndPoint& address) {
   // because the default usage of QuicSimpleServer is as a test server with
   // one or two clients.  Adjust higher for use with many clients.
   rc = socket->SetReceiveBufferSize(
-      static_cast<int32_t>(kDefaultSocketReceiveBuffer));
+      static_cast<int32_t>(quic::kDefaultSocketReceiveBuffer));
   if (rc < 0) {
     LOG(ERROR) << "SetReceiveBufferSize() failed: " << ErrorToString(rc);
     return rc;
   }
 
-  rc = socket->SetSendBufferSize(20 * kMaxPacketSize);
+  rc = socket->SetSendBufferSize(20 * quic::kMaxOutgoingPacketSize);
   if (rc < 0) {
     LOG(ERROR) << "SetSendBufferSize() failed: " << ErrorToString(rc);
     return rc;
@@ -126,12 +130,13 @@ int QuicSimpleServer::Listen(const IPEndPoint& address) {
 
   socket_.swap(socket);
 
-  dispatcher_.reset(new QuicSimpleDispatcher(
-      config_, &crypto_config_, &version_manager_,
-      std::unique_ptr<QuicConnectionHelperInterface>(helper_),
-      std::unique_ptr<QuicCryptoServerStream::Helper>(
-          new QuicSimpleServerSessionHelper(QuicRandom::GetInstance())),
-      std::unique_ptr<QuicAlarmFactory>(alarm_factory_), response_cache_));
+  dispatcher_.reset(new quic::QuicSimpleDispatcher(
+      &config_, &crypto_config_, &version_manager_,
+      std::unique_ptr<quic::QuicConnectionHelperInterface>(helper_),
+      std::unique_ptr<quic::QuicCryptoServerStream::Helper>(
+          new QuicSimpleServerSessionHelper(quic::QuicRandom::GetInstance())),
+      std::unique_ptr<quic::QuicAlarmFactory>(alarm_factory_),
+      quic_simple_server_backend_, quic::kQuicDefaultConnectionIdLength));
   QuicSimpleServerPacketWriter* writer =
       new QuicSimpleServerPacketWriter(socket_.get(), dispatcher_.get());
   dispatcher_->InitializeWithWriter(writer);
@@ -146,6 +151,9 @@ void QuicSimpleServer::Shutdown() {
   // notify clients that they're closing.
   dispatcher_->Shutdown();
 
+  if (!socket_) {
+    return;
+  }
   socket_->Close();
   socket_.reset();
 }
@@ -170,8 +178,8 @@ void QuicSimpleServer::StartReading() {
     if (dispatcher_->HasChlosBuffered()) {
       // No more packets to read, so yield before processing buffered packets.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&QuicSimpleServer::StartReading,
-                                weak_factory_.GetWeakPtr()));
+          FROM_HERE, base::BindOnce(&QuicSimpleServer::StartReading,
+                                    weak_factory_.GetWeakPtr()));
     }
     return;
   }
@@ -181,8 +189,8 @@ void QuicSimpleServer::StartReading() {
     // Schedule the processing through the message loop to 1) prevent infinite
     // recursion and 2) avoid blocking the thread for too long.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&QuicSimpleServer::OnReadComplete,
-                              weak_factory_.GetWeakPtr(), result));
+        FROM_HERE, base::BindOnce(&QuicSimpleServer::OnReadComplete,
+                                  weak_factory_.GetWeakPtr(), result));
   } else {
     OnReadComplete(result);
   }
@@ -199,11 +207,10 @@ void QuicSimpleServer::OnReadComplete(int result) {
     return;
   }
 
-  QuicReceivedPacket packet(read_buffer_->data(), result,
-                            helper_->GetClock()->Now(), false);
-  dispatcher_->ProcessPacket(
-      QuicSocketAddress(QuicSocketAddressImpl(server_address_)),
-      QuicSocketAddress(QuicSocketAddressImpl(client_address_)), packet);
+  quic::QuicReceivedPacket packet(read_buffer_->data(), result,
+                                  helper_->GetClock()->Now(), false);
+  dispatcher_->ProcessPacket(ToQuicSocketAddress(server_address_),
+                             ToQuicSocketAddress(client_address_), packet);
 
   StartReading();
 }

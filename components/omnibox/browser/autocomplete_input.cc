@@ -6,10 +6,11 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/url_formatter/url_fixer.h"
@@ -17,6 +18,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "url/url_canon_ip.h"
 #include "url/url_util.h"
 
@@ -24,6 +26,7 @@ namespace {
 
 // Hardcode constant to avoid any dependencies on content/.
 const char kViewSourceScheme[] = "view-source";
+const char kDevToolsScheme[] = "devtools";
 
 void AdjustCursorPositionIfNecessary(size_t num_leading_chars_removed,
                                      size_t* cursor_position) {
@@ -69,10 +72,11 @@ void PopulateTermsPrefixedByHttpOrHttps(
 AutocompleteInput::AutocompleteInput()
     : cursor_position_(base::string16::npos),
       current_page_classification_(metrics::OmniboxEventProto::INVALID_SPEC),
-      type_(metrics::OmniboxInputType::INVALID),
+      type_(metrics::OmniboxInputType::EMPTY),
       prevent_inline_autocomplete_(false),
       prefer_keyword_(false),
       allow_exact_keyword_match_(true),
+      keyword_mode_entry_method_(metrics::OmniboxEventProto::INVALID),
       want_asynchronous_matches_(true),
       from_omnibox_focus_(false) {}
 
@@ -80,30 +84,21 @@ AutocompleteInput::AutocompleteInput(
     const base::string16& text,
     metrics::OmniboxEventProto::PageClassification current_page_classification,
     const AutocompleteSchemeClassifier& scheme_classifier)
-    : cursor_position_(std::string::npos),
-      current_page_classification_(current_page_classification),
-      prevent_inline_autocomplete_(false),
-      prefer_keyword_(false),
-      allow_exact_keyword_match_(true),
-      want_asynchronous_matches_(true),
-      from_omnibox_focus_(false) {
-  Init(text, scheme_classifier);
-}
+    : AutocompleteInput(text,
+                        std::string::npos,
+                        current_page_classification,
+                        scheme_classifier) {}
 
 AutocompleteInput::AutocompleteInput(
     const base::string16& text,
     size_t cursor_position,
     metrics::OmniboxEventProto::PageClassification current_page_classification,
     const AutocompleteSchemeClassifier& scheme_classifier)
-    : cursor_position_(cursor_position),
-      current_page_classification_(current_page_classification),
-      prevent_inline_autocomplete_(false),
-      prefer_keyword_(false),
-      allow_exact_keyword_match_(true),
-      want_asynchronous_matches_(true),
-      from_omnibox_focus_(false) {
-  Init(text, scheme_classifier);
-}
+    : AutocompleteInput(text,
+                        cursor_position,
+                        "",
+                        current_page_classification,
+                        scheme_classifier) {}
 
 AutocompleteInput::AutocompleteInput(
     const base::string16& text,
@@ -111,14 +106,10 @@ AutocompleteInput::AutocompleteInput(
     const std::string& desired_tld,
     metrics::OmniboxEventProto::PageClassification current_page_classification,
     const AutocompleteSchemeClassifier& scheme_classifier)
-    : cursor_position_(cursor_position),
-      current_page_classification_(current_page_classification),
-      desired_tld_(desired_tld),
-      prevent_inline_autocomplete_(false),
-      prefer_keyword_(false),
-      allow_exact_keyword_match_(true),
-      want_asynchronous_matches_(true),
-      from_omnibox_focus_(false) {
+    : AutocompleteInput() {
+  cursor_position_ = cursor_position;
+  current_page_classification_ = current_page_classification;
+  desired_tld_ = desired_tld;
   Init(text, scheme_classifier);
 }
 
@@ -157,7 +148,7 @@ AutocompleteInput::~AutocompleteInput() {
 // static
 std::string AutocompleteInput::TypeToString(metrics::OmniboxInputType type) {
   switch (type) {
-    case metrics::OmniboxInputType::INVALID:
+    case metrics::OmniboxInputType::EMPTY:
       return "invalid";
     case metrics::OmniboxInputType::UNKNOWN:
       return "unknown";
@@ -183,7 +174,7 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
     GURL* canonicalized_url) {
   size_t first_non_white = text.find_first_not_of(base::kWhitespaceUTF16, 0);
   if (first_non_white == base::string16::npos)
-    return metrics::OmniboxInputType::INVALID;  // All whitespace.
+    return metrics::OmniboxInputType::EMPTY;  // All whitespace.
 
   // Ask our parsing back-end to help us understand what the user typed.  We
   // use the URLFixerUpper here because we want to be smart about what we
@@ -215,6 +206,20 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
     return metrics::OmniboxInputType::URL;
   }
 
+  if (base::LowerCaseEqualsASCII(parsed_scheme_utf8, kDevToolsScheme)) {
+    // A user might type in the fallback url when using devtools.  In
+    // this case, |parsed_scheme_utf8| will tell us that this is a devtools URL,
+    // but |parts->scheme| might be empty.e.g. if the user typed
+    // "chrome-devtools://".
+    return metrics::OmniboxInputType::URL;
+  }
+
+  // Treat javascript: scheme queries followed by things that are unlikely to
+  // be code as UNKNOWN, rather than script to execute (URL).
+  if (RE2::FullMatch(base::UTF16ToUTF8(text), "(?i)javascript:([^;=().\"]*)")) {
+    return metrics::OmniboxInputType::UNKNOWN;
+  }
+
   // If the user typed a scheme, and it's HTTP or HTTPS, we know how to parse it
   // well enough that we can fall through to the heuristics below.  If it's
   // something else, we can just determine our action based on what we do with
@@ -226,7 +231,7 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
       !base::LowerCaseEqualsASCII(parsed_scheme_utf8, url::kHttpsScheme)) {
     metrics::OmniboxInputType type =
         scheme_classifier.GetInputTypeForScheme(parsed_scheme_utf8);
-    if (type != metrics::OmniboxInputType::INVALID)
+    if (type != metrics::OmniboxInputType::EMPTY)
       return type;
 
     // We don't know about this scheme.  It might be that the user typed a
@@ -258,7 +263,7 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
         &http_parts.query,
         &http_parts.ref,
       };
-      for (size_t i = 0; i < arraysize(components); ++i) {
+      for (size_t i = 0; i < base::size(components); ++i) {
         url_formatter::OffsetComponent(
             -static_cast<int>(http_scheme_prefix.length()), components[i]);
       }
@@ -306,10 +311,16 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
   // many other characters (perhaps for weird intranet machines), it's extremely
   // unlikely that a user would be trying to type those in for anything other
   // than a search query.
+  //
+  // Per https://tools.ietf.org/html/rfc6761, the .invalid TLD is considered
+  // non-navigable and thus is treated like a non-compliant hostname. (Though
+  // just the word "invalid" is not a hostname).
   const base::string16 original_host(
       text.substr(parts->host.begin, parts->host.len));
-  if ((host_info.family == url::CanonHostInfo::NEUTRAL) &&
-      !net::IsCanonicalizedHostCompliant(canonicalized_url->host())) {
+  if (text != base::ASCIIToUTF16("invalid") &&
+      (host_info.family == url::CanonHostInfo::NEUTRAL) &&
+      (!net::IsCanonicalizedHostCompliant(canonicalized_url->host()) ||
+       canonicalized_url->DomainIs("invalid"))) {
     // Invalid hostname.  There are several possible cases:
     // * The user is typing a multi-word query.  If we see a space anywhere in
     //   the input host we assume this is a search and return QUERY.  (We check
@@ -435,11 +446,21 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
   if (canonicalized_url->has_username() && desired_tld.empty())
     return metrics::OmniboxInputType::UNKNOWN;
 
-  // If the host has a known TLD or a port, it's probably a URL.  Note that we
-  // special-case "localhost" as a known hostname.
-  if (has_known_tld || (canonicalized_url->host() == "localhost") ||
+  // If the host has a known TLD or a port, it's probably a URL. Just localhost
+  // is considered a valid host name due to https://tools.ietf.org/html/rfc6761.
+  if (has_known_tld || canonicalized_url->DomainIs("localhost") ||
       canonicalized_url->has_port())
     return metrics::OmniboxInputType::URL;
+
+  // The .example and .test TLDs are special-cased as known TLDs due to
+  // https://tools.ietf.org/html/rfc6761. Unlike localhost, these are not valid
+  // host names, so they must have at least one subdomain to be a URL.
+  for (const base::StringPiece domain : {"example", "test"}) {
+    // The +1 accounts for a possible trailing period.
+    if (canonicalized_url->DomainIs(domain) &&
+        (canonicalized_url->host().length() > (domain.length() + 1)))
+      return metrics::OmniboxInputType::URL;
+  }
 
   // No scheme, username, port, and no known TLD on the host.
   // This could be:
@@ -472,11 +493,12 @@ void AutocompleteInput::ParseForEmphasizeComponents(
   *host = parts.host;
 
   int after_scheme_and_colon = parts.scheme.end() + 1;
-  // For the view-source scheme, we should emphasize the scheme and host of the
-  // URL qualified by the view-source prefix.
-  if (base::LowerCaseEqualsASCII(scheme_str, kViewSourceScheme) &&
+  // For the view-source and blob schemes, we should emphasize the host of the
+  // URL qualified by the view-source or blob prefix.
+  if ((base::LowerCaseEqualsASCII(scheme_str, kViewSourceScheme) ||
+       base::LowerCaseEqualsASCII(scheme_str, url::kBlobScheme)) &&
       (static_cast<int>(text.length()) > after_scheme_and_colon)) {
-    // Obtain the URL prefixed by view-source and parse it.
+    // Obtain the URL prefixed by view-source or blob and parse it.
     base::string16 real_url(text.substr(after_scheme_and_colon));
     url::Parsed real_parts;
     AutocompleteInput::Parse(real_url, std::string(), scheme_classifier,
@@ -506,17 +528,21 @@ void AutocompleteInput::ParseForEmphasizeComponents(
 base::string16 AutocompleteInput::FormattedStringWithEquivalentMeaning(
     const GURL& url,
     const base::string16& formatted_url,
-    const AutocompleteSchemeClassifier& scheme_classifier) {
+    const AutocompleteSchemeClassifier& scheme_classifier,
+    size_t* offset) {
   if (!url_formatter::CanStripTrailingSlash(url))
     return formatted_url;
   const base::string16 url_with_path(formatted_url + base::char16('/'));
-  return (AutocompleteInput::Parse(
-              formatted_url, std::string(), scheme_classifier, nullptr, nullptr,
-              nullptr) == AutocompleteInput::Parse(url_with_path, std::string(),
-                                                   scheme_classifier, nullptr,
-                                                   nullptr, nullptr))
-             ? formatted_url
-             : url_with_path;
+  if (AutocompleteInput::Parse(formatted_url, std::string(), scheme_classifier,
+                               nullptr, nullptr, nullptr) ==
+      AutocompleteInput::Parse(url_with_path, std::string(), scheme_classifier,
+                               nullptr, nullptr, nullptr)) {
+    return formatted_url;
+  }
+  // If offset is past the addition, shift it.
+  if (offset && *offset == formatted_url.size())
+    ++(*offset);
+  return url_with_path;
 }
 
 // static
@@ -566,7 +592,7 @@ void AutocompleteInput::Clear() {
   current_url_ = GURL();
   current_title_.clear();
   current_page_classification_ = metrics::OmniboxEventProto::INVALID_SPEC;
-  type_ = metrics::OmniboxInputType::INVALID;
+  type_ = metrics::OmniboxInputType::EMPTY;
   parts_ = url::Parsed();
   scheme_.clear();
   canonicalized_url_ = GURL();
@@ -576,4 +602,19 @@ void AutocompleteInput::Clear() {
   want_asynchronous_matches_ = true;
   from_omnibox_focus_ = false;
   terms_prefixed_by_http_or_https_.clear();
+}
+
+size_t AutocompleteInput::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(text_);
+  res += base::trace_event::EstimateMemoryUsage(current_url_);
+  res += base::trace_event::EstimateMemoryUsage(current_title_);
+  res += base::trace_event::EstimateMemoryUsage(scheme_);
+  res += base::trace_event::EstimateMemoryUsage(canonicalized_url_);
+  res += base::trace_event::EstimateMemoryUsage(desired_tld_);
+  res +=
+      base::trace_event::EstimateMemoryUsage(terms_prefixed_by_http_or_https_);
+
+  return res;
 }

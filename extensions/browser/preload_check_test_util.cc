@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -58,7 +57,7 @@ void PreloadCheckRunner::OnCheckComplete(const PreloadCheck::Errors& errors) {
 
 // PreloadCheckStub:
 PreloadCheckStub::PreloadCheckStub(const Errors& errors)
-    : PreloadCheck(nullptr), errors_(errors), weak_ptr_factory_(this) {}
+    : PreloadCheck(nullptr), errors_(errors) {}
 
 PreloadCheckStub::~PreloadCheckStub() {}
 
@@ -70,8 +69,8 @@ void PreloadCheckStub::Start(ResultCallback callback) {
     // once crbug.com/704027 is addressed.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&PreloadCheckStub::RunCallback,
-                   weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback)));
+        base::BindOnce(&PreloadCheckStub::RunCallback,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   } else {
     std::move(callback).Run(errors_);
   }

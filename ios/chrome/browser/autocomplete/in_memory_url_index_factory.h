@@ -8,12 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 class InMemoryURLIndex;
 
@@ -29,13 +25,12 @@ class InMemoryURLIndexFactory : public BrowserStateKeyedServiceFactory {
       ios::ChromeBrowserState* browser_state);
   static InMemoryURLIndexFactory* GetInstance();
 
-  // Returns the default factory used to build InMemoryURLIndex. Can be
-  // registered with SetTestingFactory to use the InMemoryURLIndex instance
-  // during testing.
-  static TestingFactoryFunction GetDefaultFactory();
+  // Returns the default factory used to build InMemoryURLIndexs. Can be
+  // registered with SetTestingFactory to use real instances during testing.
+  static TestingFactory GetDefaultFactory();
 
  private:
-  friend struct base::DefaultSingletonTraits<InMemoryURLIndexFactory>;
+  friend class base::NoDestructor<InMemoryURLIndexFactory>;
 
   InMemoryURLIndexFactory();
   ~InMemoryURLIndexFactory() override;

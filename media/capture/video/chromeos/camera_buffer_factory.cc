@@ -22,15 +22,14 @@ CameraBufferFactory::CreateGpuMemoryBuffer(const gfx::Size& size,
     return std::unique_ptr<gfx::GpuMemoryBuffer>();
   }
   return buf_manager->CreateGpuMemoryBuffer(
-      size, format, gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE,
-      gpu::kNullSurfaceHandle);
+      size, format, GetBufferUsage(format), gpu::kNullSurfaceHandle);
 }
 
 // There's no good way to resolve the HAL pixel format to the platform-specific
 // DRM format, other than to actually allocate the buffer and see if the
 // allocation succeeds.
 ChromiumPixelFormat CameraBufferFactory::ResolveStreamBufferFormat(
-    arc::mojom::HalPixelFormat hal_format) {
+    cros::mojom::HalPixelFormat hal_format) {
   if (resolved_hal_formats_.find(hal_format) != resolved_hal_formats_.end()) {
     return resolved_hal_formats_[hal_format];
   }
@@ -52,6 +51,18 @@ ChromiumPixelFormat CameraBufferFactory::ResolveStreamBufferFormat(
     }
   }
   return kUnsupportedFormat;
+}
+
+// static
+gfx::BufferUsage CameraBufferFactory::GetBufferUsage(gfx::BufferFormat format) {
+  switch (format) {
+    case gfx::BufferFormat::R_8:
+      // Usage for JPEG capture buffer backed by R8 pixel buffer.
+      return gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE;
+    default:
+      // Default usage for YUV camera buffer.
+      return gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE;
+  }
 }
 
 }  // namespace media

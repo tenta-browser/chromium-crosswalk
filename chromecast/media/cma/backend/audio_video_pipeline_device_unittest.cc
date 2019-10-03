@@ -16,7 +16,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -26,12 +25,18 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chromecast/base/task_runner_impl.h"
+#if defined(ENABLE_VIDEO_WITH_MIXED_AUDIO)
+#include "chromecast/media/cma/backend/audio_decoder_for_mixer.h"  // nogncheck
+#include "chromecast/media/cma/backend/media_pipeline_backend_for_mixer.h"  // nogncheck
+#include "chromecast/media/cma/backend/video_decoder_for_mixer.h"  // nogncheck
+#endif
 #include "chromecast/media/cma/base/decoder_buffer_adapter.h"
 #include "chromecast/media/cma/base/decoder_config_adapter.h"
 #include "chromecast/media/cma/test/frame_segmenter_for_test.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/public/media/cast_decoder_buffer.h"
 #include "chromecast/public/media/decoder_config.h"
+#include "chromecast/public/media/media_capabilities_shlib.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
 #include "chromecast/public/media/media_pipeline_device_params.h"
 #include "chromecast/public/volume_control.h"
@@ -51,10 +56,11 @@ class AudioVideoPipelineDeviceTest;
 namespace {
 
 const base::TimeDelta kMonitorLoopDelay = base::TimeDelta::FromMilliseconds(20);
-// Call Start() with an initial PTS of 1 second, to test the behaviour if
+// Call Start() with an initial PTS of 0.5 seconds, to test the behaviour if
 // we push buffers with a PTS before the start PTS. In this case the backend
 // should report the PTS as no later than the last pushed buffers.
-const int64_t kStartPts = 1000 * 1000;
+const int64_t kStartPts = 500 * 1000;
+
 // Amount that PTS is allowed to progress past the time that Pause() was called.
 const int kPausePtsSlackMs = 75;
 // Number of effects streams to open simultaneously when also playing a
@@ -66,6 +72,7 @@ void IgnoreEos() {}
 AudioConfig DefaultAudioConfig() {
   AudioConfig default_config;
   default_config.codec = kCodecPCM;
+  default_config.channel_layout = ChannelLayout::STEREO;
   default_config.sample_format = kSampleFormatS16;
   default_config.channel_number = 2;
   default_config.bytes_per_channel = 2;
@@ -78,17 +85,18 @@ VideoConfig DefaultVideoConfig() {
   default_config.codec = kCodecH264;
   default_config.profile = kH264Main;
   default_config.additional_config = nullptr;
-  default_config.encryption_scheme = Unencrypted();
+  default_config.encryption_scheme = EncryptionScheme::kUnencrypted;
   return default_config;
 }
 
 base::FilePath GetTestDataFilePath(const std::string& name) {
   base::FilePath file_path;
-  CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &file_path));
+  CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &file_path));
 
   file_path = file_path.Append(FILE_PATH_LITERAL("media"))
-      .Append(FILE_PATH_LITERAL("test")).Append(FILE_PATH_LITERAL("data"))
-      .AppendASCII(name);
+                  .Append(FILE_PATH_LITERAL("test"))
+                  .Append(FILE_PATH_LITERAL("data"))
+                  .AppendASCII(name);
   return file_path;
 }
 
@@ -189,18 +197,14 @@ class AudioVideoPipelineDeviceTest : public testing::Test {
   void SetUp() override {
     CastMediaShlib::Initialize(
         base::CommandLine::ForCurrentProcess()->argv());
-    if (VolumeControl::Initialize) {
-      VolumeControl::Initialize(base::CommandLine::ForCurrentProcess()->argv());
-    }
+    VolumeControl::Initialize(base::CommandLine::ForCurrentProcess()->argv());
   }
 
   void TearDown() override {
     // Pipeline must be destroyed before finalizing media shlib.
     backend_.reset();
     effects_backends_.clear();
-    if (VolumeControl::Finalize) {
-      VolumeControl::Finalize();
-    }
+    VolumeControl::Finalize();
     CastMediaShlib::Finalize();
   }
 
@@ -259,7 +263,7 @@ class AudioVideoPipelineDeviceTest : public testing::Test {
 
   // Pause settings
   std::vector<PauseInfo> pause_pattern_;
-  int pause_pattern_idx_;
+  size_t pause_pattern_idx_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioVideoPipelineDeviceTest);
 };
@@ -309,7 +313,8 @@ void BufferFeeder::Start() {
   last_pushed_pts_ = std::numeric_limits<int64_t>::min();
   buffers_copy_ = buffers_;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&BufferFeeder::FeedBuffer, base::Unretained(this)));
+      FROM_HERE,
+      base::BindOnce(&BufferFeeder::FeedBuffer, base::Unretained(this)));
 }
 
 void BufferFeeder::Stop() {
@@ -317,6 +322,13 @@ void BufferFeeder::Stop() {
 }
 
 void BufferFeeder::ScheduleConfigTest() {
+#if defined(ENABLE_VIDEO_WITH_MIXED_AUDIO)
+  // On mixer backends, the config test causes the mixer to remove/add the
+  // mixer input, which causes it to return invalid PTS to AV sync. Disable for
+  // now.
+  // TODO(almasrymina): re-enable this. b/110961816.
+  return;
+#endif
   if (expecting_buffer_complete_) {
     test_config_after_next_push_ = true;
   } else {
@@ -418,7 +430,8 @@ void BufferFeeder::OnPushBufferComplete(BufferStatus status) {
     return;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&BufferFeeder::FeedBuffer, base::Unretained(this)));
+      FROM_HERE,
+      base::BindOnce(&BufferFeeder::FeedBuffer, base::Unretained(this)));
 }
 
 void BufferFeeder::OnDecoderError() {
@@ -454,6 +467,7 @@ void BufferFeeder::TestAudioConfigs() {
   AudioConfig config;
   // First, make sure that kAudioCodecUnknown is not accepted.
   config.codec = kAudioCodecUnknown;
+  config.channel_layout = ChannelLayout::STEREO;
   config.sample_format = kSampleFormatS16;
   config.channel_number = 2;
   config.bytes_per_channel = 2;
@@ -477,30 +491,18 @@ void BufferFeeder::TestAudioConfigs() {
   // TODO(kmackay) Determine required sample formats/channel numbers.
   config.sample_format = kSampleFormatS16;
   config.bytes_per_channel = 2;
+  config.codec = kCodecPCM;
+  EXPECT_TRUE(audio_decoder->SetConfig(config))
+      << "Audio decoder does not accept kCodecPCM";
+  config.codec = kCodecPCM_S16BE;
+  EXPECT_TRUE(audio_decoder->SetConfig(config))
+      << "Audio decoder does not accept kCodecPCM_S16BE";
   config.codec = kCodecAAC;
   EXPECT_TRUE(audio_decoder->SetConfig(config))
       << "Audio decoder does not accept kCodecAAC";
   config.codec = kCodecMP3;
   EXPECT_TRUE(audio_decoder->SetConfig(config))
       << "Audio decoder does not accept kCodecMP3";
-
-  // Test optional codecs.
-  // TODO(kmackay) Make sure other parts of config are correct for each codec.
-  config.codec = kCodecPCM_S16BE;
-  if (!audio_decoder->SetConfig(config))
-    LOG(INFO) << "Audio decoder does not accept kCodecPCM_S16BE";
-  config.codec = kCodecOpus;
-  if (!audio_decoder->SetConfig(config))
-    LOG(INFO) << "Audio decoder does not accept kCodecOpus";
-  config.codec = kCodecEAC3;
-  if (!audio_decoder->SetConfig(config))
-    LOG(INFO) << "Audio decoder does not accept kCodecEAC3";
-  config.codec = kCodecAC3;
-  if (!audio_decoder->SetConfig(config))
-    LOG(INFO) << "Audio decoder does not accept kCodecAC3";
-  config.codec = kCodecFLAC;
-  if (!audio_decoder->SetConfig(config))
-    LOG(INFO) << "Audio decoder does not accept kCodecFLAC";
 
   // Test supported sample rates.
   const int kRequiredSampleRates[] = {8000,  11025, 12000, 16000, 22050,
@@ -534,11 +536,12 @@ void BufferFeeder::TestAudioVolume() {
 void BufferFeeder::TestVideoConfigs() {
   MediaPipelineBackend::VideoDecoder* video_decoder =
       static_cast<MediaPipelineBackend::VideoDecoder*>(decoder_);
-  VideoConfig config;
-  config.codec = kVideoCodecUnknown;
   // Set invalid config first, to test that the decoder still accepts valid
   // config after an invalid config.
+  VideoConfig config;
+  config.codec = kVideoCodecUnknown;
   video_decoder->SetConfig(config);
+
   EXPECT_TRUE(video_decoder->SetConfig(video_config_));
 }
 
@@ -558,7 +561,7 @@ std::unique_ptr<BufferFeeder> BufferFeeder::LoadAudio(
   bool success = decoder->SetConfig(config);
   CHECK(success);
 
-  VLOG(2) << "Got " << demux_result.frames.size() << " audio input frames";
+  LOG(INFO) << "Got " << demux_result.frames.size() << " audio input frames";
   std::unique_ptr<BufferFeeder> feeder(new BufferFeeder(eos_cb));
   feeder->audio_config_ = config;
   feeder->Initialize(backend, decoder, demux_result.frames);
@@ -586,7 +589,7 @@ std::unique_ptr<BufferFeeder> BufferFeeder::LoadVideo(
     video_config.codec = kCodecH264;
     video_config.profile = kH264Main;
     video_config.additional_config = nullptr;
-    video_config.encryption_scheme = Unencrypted();
+    video_config.encryption_scheme = EncryptionScheme::kUnencrypted;
   } else {
     base::FilePath file_path = GetTestDataFilePath(filename);
     DemuxResult demux_result = FFmpegDemuxForTest(file_path, false /* audio */);
@@ -601,7 +604,7 @@ std::unique_ptr<BufferFeeder> BufferFeeder::LoadVideo(
   bool success = decoder->SetConfig(video_config);
   CHECK(success);
 
-  VLOG(2) << "Got " << buffers.size() << " video input frames";
+  LOG(INFO) << "Got " << buffers.size() << " video input frames";
   std::unique_ptr<BufferFeeder> feeder(new BufferFeeder(eos_cb));
   feeder->video_config_ = video_config;
   feeder->Initialize(backend, decoder, buffers);
@@ -621,6 +624,10 @@ AudioVideoPipelineDeviceTest::AudioVideoPipelineDeviceTest()
 AudioVideoPipelineDeviceTest::~AudioVideoPipelineDeviceTest() {}
 
 void AudioVideoPipelineDeviceTest::Initialize() {
+#if defined(ENABLE_VIDEO_WITH_MIXED_AUDIO)
+  VideoDecoderForMixer::InitializeGraphicsForTesting();
+#endif
+
   // Create the media device.
   task_runner_.reset(new TaskRunnerImpl());
   MediaPipelineDeviceParams params(
@@ -727,14 +734,20 @@ void AudioVideoPipelineDeviceTest::Start() {
   RunStoppedChecks();
 
   backend_->Start(kStartPts);
+  // The buffering logic in the media pipeline always starts playback in a
+  // paused state. For AV sync reasons, the AV sync media backend now depends on
+  // this behavior and doesn't start playback without it, so it needs to be
+  // added to the test.
+  backend_->Pause();
+  backend_->Resume();
   int64_t current_pts = backend()->GetCurrentPts();
   EXPECT_TRUE(current_pts == kStartPts ||
               current_pts == std::numeric_limits<int64_t>::min());
   last_pts_ = current_pts;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&AudioVideoPipelineDeviceTest::MonitorLoop,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&AudioVideoPipelineDeviceTest::MonitorLoop,
+                                base::Unretained(this)));
 }
 
 void AudioVideoPipelineDeviceTest::RunStoppedChecks() {
@@ -815,7 +828,59 @@ void AudioVideoPipelineDeviceTest::MonitorLoop() {
     last_pts_ = pts;
   }
 
-  if (!pause_pattern_.empty() &&
+#if defined(ENABLE_VIDEO_WITH_MIXED_AUDIO)
+  // Do AV sync checks.
+  MediaPipelineBackendForMixer* backend_for_mixer =
+      static_cast<MediaPipelineBackendForMixer*>(backend_.get());
+  DCHECK(backend_for_mixer);
+
+  int64_t playback_start_time =
+      backend_for_mixer->GetPlaybackStartTimeForTesting();
+
+  // The playback start time will be INT64_MIN until the audio and video are
+  // ready for playback, so just defer all the AV sync checks till then.
+  if (playback_start_time == INT64_MIN) {
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&AudioVideoPipelineDeviceTest::MonitorLoop,
+                       base::Unretained(this)),
+        kMonitorLoopDelay);
+    return;
+  }
+
+  int64_t playback_start_pts =
+      backend_for_mixer->GetPlaybackStartPtsForTesting();
+
+  if (backend_for_mixer->audio_decoder() &&
+      backend_for_mixer->video_decoder() &&
+      backend_for_mixer->MonotonicClockNow() > playback_start_time + 50000) {
+    int64_t vpts = 0;
+    int64_t vpts_timestamp = 0;
+    EXPECT_TRUE(backend_for_mixer->video_decoder()->GetCurrentPts(
+        &vpts_timestamp, &vpts))
+        << "Getting VPTS failed at current time="
+        << backend_for_mixer->MonotonicClockNow()
+        << " playback should have started at=" << playback_start_time;
+
+    // Check video started at the correct time.
+    EXPECT_LT(abs((vpts_timestamp - vpts) -
+                  (playback_start_time - playback_start_pts)),
+              16000);
+
+    // Check AV sync.
+    int64_t apts = 0;
+    int64_t apts_timestamp = 0;
+    if (backend_for_mixer->audio_decoder()->GetTimestampedPts(&apts_timestamp,
+                                                              &apts)) {
+      int64_t av_sync_difference =
+          (apts - apts_timestamp) - (vpts - vpts_timestamp);
+
+      EXPECT_LT(abs(av_sync_difference), 16000);
+    }
+  }
+#endif
+
+  if (!pause_pattern_.empty() && pause_pattern_idx_ < pause_pattern_.size() &&
       pause_pattern_[pause_pattern_idx_].delay >= base::TimeDelta() &&
       media_time >= pause_time_ + pause_pattern_[pause_pattern_idx_].delay) {
     // Do Pause
@@ -823,21 +888,24 @@ void AudioVideoPipelineDeviceTest::MonitorLoop() {
     pause_time_ = base::TimeDelta::FromMicroseconds(backend_->GetCurrentPts());
     RunPlaybackChecks();
 
-    VLOG(2) << "Pausing at " << pause_time_.InMilliseconds() << "ms for " <<
-        pause_pattern_[pause_pattern_idx_].length.InMilliseconds() << "ms";
+    LOG(INFO) << "Pausing at " << pause_time_.InMilliseconds() << "ms for "
+              << pause_pattern_[pause_pattern_idx_].length.InMilliseconds()
+              << "ms";
 
     // Wait for pause finish
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&AudioVideoPipelineDeviceTest::OnPauseCompleted,
-                              base::Unretained(this)),
+        FROM_HERE,
+        base::BindOnce(&AudioVideoPipelineDeviceTest::OnPauseCompleted,
+                       base::Unretained(this)),
         pause_pattern_[pause_pattern_idx_].length);
     return;
   }
 
   // Check state again in a little while
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&AudioVideoPipelineDeviceTest::MonitorLoop,
-                            base::Unretained(this)),
+      FROM_HERE,
+      base::BindOnce(&AudioVideoPipelineDeviceTest::MonitorLoop,
+                     base::Unretained(this)),
       kMonitorLoopDelay);
 }
 
@@ -850,10 +918,44 @@ void AudioVideoPipelineDeviceTest::OnPauseCompleted() {
   EXPECT_LT(media_time,
             pause_time_ + base::TimeDelta::FromMilliseconds(kPausePtsSlackMs));
 
-  pause_time_ = media_time;
-  pause_pattern_idx_ = (pause_pattern_idx_ + 1) % pause_pattern_.size();
+#if defined(ENABLE_VIDEO_WITH_MIXED_AUDIO)
+  // Do AV sync checks.
+  MediaPipelineBackendForMixer* backend_for_mixer =
+      static_cast<MediaPipelineBackendForMixer*>(backend_.get());
+  DCHECK(backend_for_mixer);
 
-  VLOG(2) << "Pause complete, restarting media clock";
+  int64_t playback_start_time =
+      backend_for_mixer->GetPlaybackStartTimeForTesting();
+
+  if (backend_for_mixer->audio_decoder() &&
+      backend_for_mixer->video_decoder() &&
+      backend_for_mixer->MonotonicClockNow() > playback_start_time + 50000) {
+    // Check the audio time.
+    base::TimeDelta audio_time = base::TimeDelta::FromMicroseconds(
+        backend_for_mixer->audio_decoder()->GetCurrentPts());
+    EXPECT_LT(audio_time, pause_time_ + base::TimeDelta::FromMilliseconds(
+                                            kPausePtsSlackMs));
+
+    // Check the video time.
+    int64_t timestamp = 0;
+    int64_t pts = 0;
+    EXPECT_TRUE(
+        backend_for_mixer->video_decoder()->GetCurrentPts(&timestamp, &pts))
+        << "Getting VPTS failed at current time="
+        << backend_for_mixer->MonotonicClockNow()
+        << " playback should have started at=" << playback_start_time;
+
+    base::TimeDelta video_time = base::TimeDelta::FromMicroseconds(pts);
+
+    EXPECT_LT(video_time, pause_time_ + base::TimeDelta::FromMilliseconds(
+                                            kPausePtsSlackMs));
+  }
+#endif
+
+  pause_time_ = media_time;
+  ++pause_pattern_idx_;
+
+  LOG(INFO) << "Pause complete, restarting media clock";
   RunPlaybackChecks();
 
   // Resume playback and frame feeding.
@@ -900,13 +1002,11 @@ void AudioVideoPipelineDeviceTest::StartImmediateEosTest() {
 }
 
 void AudioVideoPipelineDeviceTest::EndImmediateEosTest() {
-  EXPECT_EQ(kStartPts, backend_->GetCurrentPts());
   RunPlaybackChecks();
 
   ASSERT_TRUE(backend_->Pause());
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_EQ(kStartPts, backend_->GetCurrentPts());
   RunPlaybackChecks();
 
   backend_->Stop();
@@ -950,22 +1050,6 @@ TEST_F(AudioVideoPipelineDeviceTest, VorbisPlayback) {
 
 // TODO(kmackay) FFmpegDemuxForTest can't handle AC3 or EAC3.
 
-TEST_F(AudioVideoPipelineDeviceTest, OpusPlayback_Optional) {
-  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
-  ConfigureForAudioOnly("bear-opus.ogg");
-  PauseBeforeEos();
-  Start();
-  base::RunLoop().Run();
-}
-
-TEST_F(AudioVideoPipelineDeviceTest, FlacPlayback_Optional) {
-  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
-  ConfigureForAudioOnly("bear.flac");
-  PauseBeforeEos();
-  Start();
-  base::RunLoop().Run();
-}
-
 TEST_F(AudioVideoPipelineDeviceTest, H264Playback) {
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear.h264", true /* raw_h264 */);
@@ -975,6 +1059,9 @@ TEST_F(AudioVideoPipelineDeviceTest, H264Playback) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   // Setup to pause for 100ms every 500ms
   AddPause(base::TimeDelta::FromMilliseconds(500),
@@ -986,6 +1073,9 @@ TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear-vp8a.webm", false /* raw_h264 */);
   Start();
@@ -993,6 +1083,9 @@ TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlayback) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForFile("bear-640x360.webm");
   PauseBeforeEos();
@@ -1063,6 +1156,7 @@ TEST_F(AudioVideoPipelineDeviceTest, AudioImmediateEos) {
   feeder->SetAudioConfig(DefaultAudioConfig());
   SetAudioFeeder(std::move(feeder));
 
+  ASSERT_TRUE(audio_decoder->SetConfig(DefaultAudioConfig()));
   StartImmediateEosTest();
   base::RunLoop().RunUntilIdle();
 }
@@ -1086,6 +1180,8 @@ TEST_F(AudioVideoPipelineDeviceTest, VideoImmediateEos) {
   audio_feeder->SetAudioConfig(DefaultAudioConfig());
   SetAudioFeeder(std::move(audio_feeder));
 
+  ASSERT_TRUE(audio_decoder->SetConfig(DefaultAudioConfig()));
+  ASSERT_TRUE(video_decoder->SetConfig(DefaultVideoConfig()));
   StartImmediateEosTest();
   base::RunLoop().RunUntilIdle();
 }
@@ -1118,24 +1214,6 @@ TEST_F(AudioVideoPipelineDeviceTest, VorbisPlayback_WithEffectsStreams) {
 
 // TODO(kmackay) FFmpegDemuxForTest can't handle AC3 or EAC3.
 
-TEST_F(AudioVideoPipelineDeviceTest, OpusPlayback_WithEffectsStreams_Optional) {
-  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
-  ConfigureForAudioOnly("bear-opus.ogg");
-  PauseBeforeEos();
-  AddEffectsStreams();
-  Start();
-  base::RunLoop().Run();
-}
-
-TEST_F(AudioVideoPipelineDeviceTest, FlacPlayback_WithEffectsStreams_Optional) {
-  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
-  ConfigureForAudioOnly("bear.flac");
-  PauseBeforeEos();
-  AddEffectsStreams();
-  Start();
-  base::RunLoop().Run();
-}
-
 TEST_F(AudioVideoPipelineDeviceTest, H264Playback_WithEffectsStreams) {
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear.h264", true /* raw_h264 */);
@@ -1146,6 +1224,9 @@ TEST_F(AudioVideoPipelineDeviceTest, H264Playback_WithEffectsStreams) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause_WithEffectsStreams) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   // Setup to pause for 100ms every 500ms
   AddPause(base::TimeDelta::FromMilliseconds(500),
@@ -1158,6 +1239,9 @@ TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause_WithEffectsStreams) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback_WithEffectsStreams) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear-vp8a.webm", false /* raw_h264 */);
   AddEffectsStreams();
@@ -1166,10 +1250,20 @@ TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback_WithEffectsStreams) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlayback_WithEffectsStreams) {
+  if (!MediaCapabilitiesShlib::IsSupportedVideoConfig(kCodecVP8,
+                                                      kVideoProfileUnknown, 1))
+    return;
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForFile("bear-640x360.webm");
   PauseBeforeEos();
   AddEffectsStreams();
+  Start();
+  base::RunLoop().Run();
+}
+
+TEST_F(AudioVideoPipelineDeviceTest, Mp4Playback) {
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
+  ConfigureForFile("bear.mp4");
   Start();
   base::RunLoop().Run();
 }

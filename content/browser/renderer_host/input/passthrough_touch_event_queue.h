@@ -5,13 +5,42 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_PASSTHROUGH_TOUCH_EVENT_QUEUE_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_PASSTHROUGH_TOUCH_EVENT_QUEUE_H_
 
-#include "content/browser/renderer_host/input/touch_event_queue.h"
-
 #include <set>
+#include <string>
+
+#include "base/feature_list.h"
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/time/time.h"
+#include "content/browser/renderer_host/event_with_latency_info.h"
+#include "content/common/content_export.h"
+#include "content/public/common/input_event_ack_source.h"
+#include "content/public/common/input_event_ack_state.h"
+#include "ui/events/blink/blink_features.h"
 
 namespace content {
 
 class TouchTimeoutHandler;
+
+// Interface with which PassthroughTouchEventQueue can forward touch events, and
+// dispatch touch event responses.
+class CONTENT_EXPORT PassthroughTouchEventQueueClient {
+ public:
+  virtual ~PassthroughTouchEventQueueClient() {}
+
+  virtual void SendTouchEventImmediately(
+      const TouchEventWithLatencyInfo& event) = 0;
+
+  virtual void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
+                               InputEventAckSource ack_source,
+                               InputEventAckState ack_result) = 0;
+
+  virtual void OnFilteringTouchEvent(
+      const blink::WebTouchEvent& touch_event) = 0;
+
+  virtual void FlushDeferredGestureQueue() = 0;
+};
 
 // A queue that processes a touch-event and forwards it on to the
 // renderer process immediately. This class assumes that queueing will
@@ -21,51 +50,120 @@ class TouchTimeoutHandler;
 // model of the renderer it is possible that an ack for a touchend can
 // be sent before the corresponding ack for the touchstart. This class
 // corrects that state.
-class CONTENT_EXPORT PassthroughTouchEventQueue : public TouchEventQueue {
+//
+// This class also performs filtering over the sequence of touch-events to, for
+// example, avoid sending events to the renderer that would have no effect. By
+// default, we always forward touchstart and touchend but, if there are no
+// handlers, touchmoves are filtered out of the sequence. The filtering logic
+// is implemented in |FilterBeforeForwarding|.
+class CONTENT_EXPORT PassthroughTouchEventQueue {
  public:
-  PassthroughTouchEventQueue(TouchEventQueueClient* client,
+  struct CONTENT_EXPORT Config {
+    Config()
+        : desktop_touch_ack_timeout_delay(
+              base::TimeDelta::FromMilliseconds(200)),
+          mobile_touch_ack_timeout_delay(
+              base::TimeDelta::FromMilliseconds(1000)),
+          touch_ack_timeout_supported(false),
+          skip_touch_filter(
+              base::FeatureList::IsEnabled(features::kSkipTouchEventFilter)),
+          events_to_always_forward(kSkipTouchEventFilterType.Get()) {}
+
+    // Touch ack timeout delay for desktop sites. If zero, timeout behavior
+    // is disabled for such sites. Defaults to 200ms.
+    base::TimeDelta desktop_touch_ack_timeout_delay;
+
+    // Touch ack timeout delay for mobile sites. If zero, timeout behavior
+    // is disabled for such sites. Defaults to 1000ms.
+    base::TimeDelta mobile_touch_ack_timeout_delay;
+
+    // Whether the platform supports touch ack timeout behavior.
+    // Defaults to false (disabled).
+    bool touch_ack_timeout_supported;
+
+    // Whether we should allow events to bypass normal queue filter rules.
+    bool skip_touch_filter;
+    // What events types are allowed to bypass the filter.
+    std::string events_to_always_forward;
+  };
+
+  PassthroughTouchEventQueue(PassthroughTouchEventQueueClient* client,
                              const Config& config);
 
-  ~PassthroughTouchEventQueue() override;
+  ~PassthroughTouchEventQueue();
 
-  // TouchEventQueue overrides.
-  void QueueEvent(const TouchEventWithLatencyInfo& event) override;
+  void QueueEvent(const TouchEventWithLatencyInfo& event);
 
-  void PrependTouchScrollNotification() override;
+  void PrependTouchScrollNotification();
 
   void ProcessTouchAck(InputEventAckSource ack_source,
                        InputEventAckState ack_result,
                        const ui::LatencyInfo& latency_info,
-                       const uint32_t unique_touch_event_id) override;
-  void OnGestureScrollEvent(
-      const GestureEventWithLatencyInfo& gesture_event) override;
+                       const uint32_t unique_touch_event_id,
+                       bool should_stop_timeout_monitor);
+  void OnGestureScrollEvent(const GestureEventWithLatencyInfo& gesture_event);
 
   void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
-                         InputEventAckState ack_result) override;
+                         InputEventAckState ack_result);
 
-  void OnHasTouchEventHandlers(bool has_handlers) override;
+  void OnHasTouchEventHandlers(bool has_handlers);
 
-  bool IsPendingAckTouchStart() const override;
+  bool IsPendingAckTouchStart() const;
 
-  void SetAckTimeoutEnabled(bool enabled) override;
+  void SetAckTimeoutEnabled(bool enabled);
 
-  void SetIsMobileOptimizedSite(bool mobile_optimized_site) override;
+  void SetIsMobileOptimizedSite(bool mobile_optimized_site);
 
-  bool IsAckTimeoutEnabled() const override;
+  bool IsAckTimeoutEnabled() const;
 
-  bool Empty() const override;
+  bool Empty() const;
+
+  void StopTimeoutMonitor();
 
  protected:
   void SendTouchCancelEventForTouchEvent(
-      const TouchEventWithLatencyInfo& event_to_cancel) override;
+      const TouchEventWithLatencyInfo& event_to_cancel);
   void UpdateTouchConsumerStates(const blink::WebTouchEvent& event,
-                                 InputEventAckState ack_result) override;
+                                 InputEventAckState ack_result);
   // Empties the queue of touch events. This may result in any number of gesture
   // events being sent to the renderer.
-  void FlushQueue() override;
+  void FlushQueue();
 
  private:
+  friend class InputRouterImplTestBase;
   friend class PassthroughTouchEventQueueTest;
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchScrollStartedUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchStartWithoutPageHandlersUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchStartWithPageHandlersUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveFilteredAfterTimeout);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveWithoutPageHandlersUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           StationaryTouchMoveFiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           StationaryTouchMoveWithActualTouchMoveUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           NonTouchMoveUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveWithNonTouchMoveUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveWithoutSequenceHandlerUnfiltered);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveWithoutPageHandlersUnfilteredWithSkipFlag);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchStartUnfilteredWithForwardDiscrete);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveFilteredWithForwardDiscrete);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchStartUnfilteredWithForwardAll);
+  FRIEND_TEST_ALL_PREFIXES(PassthroughTouchEventQueueTest,
+                           TouchMoveUnfilteredWithForwardAll);
+
+  friend class TouchTimeoutHandler;
 
   class TouchEventWithLatencyInfoAndAckState
       : public TouchEventWithLatencyInfo {
@@ -84,14 +182,23 @@ class CONTENT_EXPORT PassthroughTouchEventQueue : public TouchEventQueue {
     InputEventAckState ack_state_;
   };
 
-  enum PreFilterResult {
-    ACK_WITH_NO_CONSUMER_EXISTS,
-    ACK_WITH_NOT_CONSUMED,
-    FORWARD_TO_RENDERER,
+  // These values are logged to UMA. Entries should not be renumbered and
+  // numeric values should never be reused. Please keep in sync with
+  // "EventPreFilterResult" in src/tools/metrics/histograms/enums.xml.
+  enum class PreFilterResult {
+    kUnfiltered = 0,
+    kFilteredNoPageHandlers = 1,
+    kFilteredTimeout = 2,
+    kFilteredNoNonstationaryPointers = 3,
+    kFilteredNoHandlerForSequence = 4,
+    kMaxValue = kFilteredNoHandlerForSequence,
   };
+
   // Filter touches prior to forwarding to the renderer, e.g., if the renderer
   // has no touch handler.
   PreFilterResult FilterBeforeForwarding(const blink::WebTouchEvent& event);
+  PreFilterResult FilterBeforeForwardingImpl(const blink::WebTouchEvent& event);
+  bool ShouldFilterForEvent(const blink::WebTouchEvent& event);
 
   void AckTouchEventToClient(const TouchEventWithLatencyInfo& acked_event,
                              InputEventAckSource ack_source,
@@ -103,11 +210,10 @@ class CONTENT_EXPORT PassthroughTouchEventQueue : public TouchEventQueue {
   void AckCompletedEvents();
 
   bool IsTimeoutRunningForTesting() const;
-  const TouchEventWithLatencyInfo& GetLatestEventForTesting() const;
   size_t SizeForTesting() const;
 
   // Handles touch event forwarding and ack'ed event dispatch.
-  TouchEventQueueClient* client_;
+  PassthroughTouchEventQueueClient* client_;
 
   // Whether the renderer has at least one touch handler.
   bool has_handlers_;
@@ -137,6 +243,12 @@ class CONTENT_EXPORT PassthroughTouchEventQueue : public TouchEventQueue {
   // not yet been ack'd by the renderer. The set is explicitly ordered based
   // on the unique touch event id.
   std::set<TouchEventWithLatencyInfoAndAckState> outstanding_touches_;
+
+  // Whether we should allow events to bypass normal queue filter rules.
+  const bool skip_touch_filter_;
+  // What events types are allowed to bypass the filter.
+  const std::string events_to_always_forward_;
+  static const base::FeatureParam<std::string> kSkipTouchEventFilterType;
 
   DISALLOW_COPY_AND_ASSIGN(PassthroughTouchEventQueue);
 };

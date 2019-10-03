@@ -6,72 +6,185 @@
 #define CHROME_BROWSER_CHROMEOS_FILE_MANAGER_FILE_MANAGER_BROWSERTEST_BASE_H_
 
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/metrics/user_action_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 
-// Slow tests are disabled on debug build. http://crbug.com/327719
-// Disabled under MSAN, ASAN, and LSAN as well. http://crbug.com/468980.
-#if !defined(NDEBUG) || defined(MEMORY_SANITIZER) || \
-    defined(ADDRESS_SANITIZER) || defined(LEAK_SANITIZER)
-#define DISABLE_SLOW_FILESAPP_TESTS
-#endif
+class NotificationDisplayServiceTester;
+class SelectFileDialogExtensionTestFactory;
+
+namespace arc {
+class FakeFileSystemInstance;
+}  // namespace arc
 
 namespace file_manager {
 
 enum GuestMode { NOT_IN_GUEST_MODE, IN_GUEST_MODE, IN_INCOGNITO };
 
-class LocalTestVolume;
 class DriveTestVolume;
 class FakeTestVolume;
+class DownloadsTestVolume;
+class CrostiniTestVolume;
+class AndroidFilesTestVolume;
+class RemovableTestVolume;
+class DocumentsProviderTestVolume;
+class MediaViewTestVolume;
 
-// The base test class.
-class FileManagerBrowserTestBase : public ExtensionApiTest {
+class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
  protected:
   FileManagerBrowserTestBase();
   ~FileManagerBrowserTestBase() override;
 
+  // extensions::ExtensionApiTest:
   void SetUp() override;
-
-  void SetUpInProcessBrowserTestFixture() override;
-
-  void SetUpOnMainThread() override;
-
-  // Adds an incognito and guest-mode flags for tests in the guest mode.
   void SetUpCommandLine(base::CommandLine* command_line) override;
+  bool SetUpUserDataDirectory() override;
+  void SetUpInProcessBrowserTestFixture() override;
+  void SetUpOnMainThread() override;
+  void TearDownOnMainThread() override;
 
-  // Installs an extension at the specified |path| using the |manifest_name|
-  // manifest.
-  void InstallExtension(const base::FilePath& path, const char* manifest_name);
-  // Loads our testing extension and sends it a string identifying the current
-  // test.
-  virtual void StartTest();
-  void RunTestMessageLoop();
+  // Mandatory overrides for each File Manager test extension type.
+  virtual GuestMode GetGuestMode() const = 0;
+  virtual const char* GetTestCaseName() const = 0;
+  virtual std::string GetFullTestCaseName() const = 0;
+  virtual const char* GetTestExtensionManifestName() const = 0;
 
-  // Overriding point for test configurations.
-  virtual const char* GetTestManifestName() const = 0;
-  virtual GuestMode GetGuestModeParam() const = 0;
-  virtual const char* GetTestCaseNameParam() const = 0;
-  virtual void OnMessage(const std::string& name,
-                         const base::DictionaryValue& value,
-                         std::string* output);
+  // Optional overrides for each File Manager test extension type.
+  virtual bool GetTabletMode() const;
+  virtual bool GetEnableDriveFs() const;
+  virtual bool GetEnableMyFilesVolume() const;
+  virtual bool GetEnableDocumentsProvider() const;
+  virtual bool GetEnableArc() const;
+  virtual bool GetEnableFormatDialog() const;
+  virtual bool GetRequiresStartupBrowser() const;
+  virtual bool GetNeedsZipSupport() const;
+  virtual bool GetIsOffline() const;
+  virtual bool GetEnableNativeSmb() const;
+  virtual bool GetStartWithNoVolumesMounted() const;
 
-  std::unique_ptr<LocalTestVolume> local_volume_;
-  linked_ptr<DriveTestVolume> drive_volume_;
-  std::map<Profile*, linked_ptr<DriveTestVolume>> drive_volumes_;
-  std::unique_ptr<FakeTestVolume> usb_volume_;
-  std::unique_ptr<FakeTestVolume> mtp_volume_;
+  // Launches the test extension from GetTestExtensionManifestName() and uses
+  // it to drive the testing the actual FileManager component extension under
+  // test by calling RunTestMessageLoop().
+  void StartTest();
 
  private:
+  class MockFileTasksObserver;
+
+  // Returns true if the test requires incognito mode.
+  bool IsIncognitoModeTest() const { return GetGuestMode() == IN_INCOGNITO; }
+
+  // Returns true if the test requires in guest mode.
+  bool IsGuestModeTest() const { return GetGuestMode() == IN_GUEST_MODE; }
+
+  // Returns true if the test runs in tablet mode.
+  bool IsTabletModeTest() const { return GetTabletMode(); }
+
+  // Returns true if the test requires DriveFS.
+  bool IsDriveFsTest() const { return GetEnableDriveFs(); }
+
+  // Returns true if the test requires Android documents providers.
+  bool IsDocumentsProviderTest() const { return GetEnableDocumentsProvider(); }
+
+  // Returns true if the test requires the FormatDialog feature enabled.
+  bool IsFormatDialogTest() const { return GetEnableFormatDialog(); }
+
+  // Returns true if the test requires ARC++.
+  bool IsArcTest() const { return GetEnableArc(); }
+
+  // Returns true if the test MyFilesVolume feature is enabled.
+  bool IsMyFilesVolume() const { return GetEnableMyFilesVolume(); }
+
+  // Returns true if the test requires zip/unzip support.
+  bool IsZipTest() const { return GetNeedsZipSupport(); }
+
+  // Returns true if Drive should act as if offline.
+  bool IsOfflineTest() const { return GetIsOffline(); }
+
+  // Returns true if the test needs a native SMB file system provider.
+  bool IsNativeSmbTest() const { return GetEnableNativeSmb(); }
+
+  // Returns true if FilesApp should start with no volumes mounted.
+  bool DoesTestStartWithNoVolumesMounted() const {
+    return GetStartWithNoVolumesMounted();
+  }
+
+  // Launches the test extension with manifest |manifest_name|. The extension
+  // manifest_name file should reside in the specified |path| relative to the
+  // Chromium src directory.
+  void LaunchExtension(const base::FilePath& path, const char* manifest_name);
+
+  // Runs the test: awaits chrome.test messsage commands and chrome.test PASS
+  // or FAIL messsages to process. |OnCommand| is used to handle the commands
+  // sent from the test extension. Returns on test PASS or FAIL.
+  void RunTestMessageLoop();
+
+  // Process test extension command |name|, with arguments |value|. Write the
+  // results to |output|.
+  void OnCommand(const std::string& name,
+                 const base::DictionaryValue& value,
+                 std::string* output);
+
+  // Called during setup if needed, to create a drive integration service for
+  // the given |profile|. Caller owns the return result.
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile);
+
+  // Called during tests if needed to mount a crostini volume, and return the
+  // mount path of the volume.
+  base::FilePath MaybeMountCrostini(
+      const std::string& source_path,
+      const std::vector<std::string>& mount_options);
+
+  // Called during tablet mode test setup to enable the Ash virtual keyboard.
+  void EnableVirtualKeyboard();
+
+  // Called during tests to determine if SMB file shares is enabled.
+  bool IsSmbEnabled() const;
+
+  // Creates ARC services for testing that are keyed to the current |profile()|.
+  void CreateArcServices();
+
+  base::test::ScopedFeatureList feature_list_;
+
+  std::unique_ptr<DownloadsTestVolume> local_volume_;
+  std::unique_ptr<CrostiniTestVolume> crostini_volume_;
+  std::unique_ptr<AndroidFilesTestVolume> android_files_volume_;
+  std::map<Profile*, std::unique_ptr<DriveTestVolume>> drive_volumes_;
+  DriveTestVolume* drive_volume_ = nullptr;
+  std::unique_ptr<FakeTestVolume> usb_volume_;
+  std::unique_ptr<FakeTestVolume> mtp_volume_;
+  std::unique_ptr<RemovableTestVolume> partition_1_;
+  std::unique_ptr<RemovableTestVolume> partition_2_;
+  std::unique_ptr<DocumentsProviderTestVolume> documents_provider_volume_;
+  std::unique_ptr<MediaViewTestVolume> media_view_images_;
+  std::unique_ptr<MediaViewTestVolume> media_view_videos_;
+  std::unique_ptr<MediaViewTestVolume> media_view_audio_;
+
   drive::DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;
   std::unique_ptr<drive::DriveIntegrationServiceFactory::ScopedFactoryForTest>
       service_factory_for_test_;
+
+  std::unique_ptr<NotificationDisplayServiceTester> display_service_;
+  std::unique_ptr<arc::FakeFileSystemInstance> arc_file_system_instance_;
+
+  std::unique_ptr<MockFileTasksObserver> file_tasks_observer_;
+
+  base::HistogramTester histograms_;
+  base::UserActionTester user_actions_;
+
+  // Not owned.
+  SelectFileDialogExtensionTestFactory* select_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(FileManagerBrowserTestBase);
 };
 
 }  // namespace file_manager

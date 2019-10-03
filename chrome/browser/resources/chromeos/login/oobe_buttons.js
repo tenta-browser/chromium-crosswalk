@@ -8,7 +8,10 @@ Polymer({
   properties: {
     disabled: {type: Boolean, value: false, reflectToAttribute: true},
 
-    inverse: Boolean,
+    inverse: {
+      type: Boolean,
+      observer: 'onInverseChanged_',
+    },
 
     border: Boolean,
 
@@ -28,14 +31,22 @@ Polymer({
   onClick_: function(e) {
     if (this.disabled)
       e.stopPropagation();
-  }
+  },
+
+  onInverseChanged_: function() {
+    this.$.textButton.classList.toggle('action-button', this.inverse);
+  },
 });
 
 Polymer({
   is: 'oobe-back-button',
 
   properties: {
-    disabled: {type: Boolean, value: false, reflectToAttribute: true},
+    disabled: {
+      type: Boolean,
+      value: false,
+      reflectToAttribute: true,
+    },
 
     /* Note that we are not using "aria-label" property here, because
      * we want to pass the label value but not actually declare it as an
@@ -48,10 +59,15 @@ Polymer({
     this.$.button.focus();
   },
 
+  /**
+   * @param {!Event} e
+   * @private
+   */
   onClick_: function(e) {
-    if (this.disabled)
+    if (this.disabled) {
       e.stopPropagation();
-  }
+    }
+  },
 });
 
 Polymer({
@@ -91,5 +107,9 @@ Polymer({
 
   updateIconVisibility_: function() {
     this.$.icon.hidden = (this.icon1x === undefined || this.icon1x.length == 0);
+  },
+
+  click: function() {
+    this.$.button.click();
   },
 });

@@ -17,10 +17,9 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 
 namespace content {
 namespace {
@@ -28,7 +27,8 @@ namespace {
 std::unique_ptr<FontLoader::ResultInternal> LoadFontOnFileThread(
     const base::string16& font_name,
     const float font_point_size) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   NSString* font_name_ns = base::SysUTF16ToNSString(font_name);
   NSFont* font_to_encode =
@@ -95,8 +95,6 @@ std::unique_ptr<FontLoader::ResultInternal> LoadFontOnFileThread(
     return nullptr;
   }
 
-  result->font_data_size = font_file_size_32;
-
   // Font loading used to call ATSFontGetContainer() and used that as font id.
   // ATS is deprecated. CoreText offers up the ATSFontRef typeface ID via
   // CTFontGetPlatformFont.
@@ -112,15 +110,12 @@ std::unique_ptr<FontLoader::ResultInternal> LoadFontOnFileThread(
 void ReplyOnUIThread(FontLoader::LoadedCallback callback,
                      std::unique_ptr<FontLoader::ResultInternal> result) {
   if (!result) {
-    std::move(callback).Run(0, mojo::ScopedSharedBufferHandle(), 0);
+    std::move(callback).Run(mojo::ScopedSharedBufferHandle(), 0);
     return;
   }
 
-  DCHECK_NE(0u, result->font_data_size);
   DCHECK_NE(0u, result->font_id);
-
-  std::move(callback).Run(result->font_data_size, std::move(result->font_data),
-                          result->font_id);
+  std::move(callback).Run(std::move(result->font_data), result->font_id);
 }
 
 }  // namespace

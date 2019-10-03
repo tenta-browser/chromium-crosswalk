@@ -20,9 +20,9 @@ public interface ChromiumBaseInputConnection extends InputConnection {
      * A factory class to create or reuse ChromiumBaseInputConnection.
      */
     public interface Factory {
-        ChromiumBaseInputConnection initializeAndGet(View view, ImeAdapter imeAdapter,
-                int inputType, int inputFlags, int inputMode, int selectionStart, int selectionEnd,
-                EditorInfo outAttrs);
+        ChromiumBaseInputConnection initializeAndGet(View view, ImeAdapterImpl imeAdapter,
+                int inputType, int inputFlags, int inputMode, int inputAction, int selectionStart,
+                int selectionEnd, EditorInfo outAttrs);
 
         @VisibleForTesting
         Handler getHandler();
@@ -31,6 +31,7 @@ public interface ChromiumBaseInputConnection extends InputConnection {
         void onViewFocusChanged(boolean gainFocus);
         void onViewAttachedToWindow();
         void onViewDetachedFromWindow();
+        void setTriggerDelayedOnCreateInputConnection(boolean trigger);
     }
 
     /**

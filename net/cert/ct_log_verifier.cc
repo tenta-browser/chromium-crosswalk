@@ -50,7 +50,7 @@ const EVP_MD* GetEvpAlg(ct::DigitallySigned::HashAlgorithm alg) {
     case ct::DigitallySigned::HASH_ALGO_NONE:
     default:
       NOTREACHED();
-      return NULL;
+      return nullptr;
   }
 }
 
@@ -59,31 +59,19 @@ const EVP_MD* GetEvpAlg(ct::DigitallySigned::HashAlgorithm alg) {
 // static
 scoped_refptr<const CTLogVerifier> CTLogVerifier::Create(
     const base::StringPiece& public_key,
-    const base::StringPiece& description,
-    const base::StringPiece& url,
-    const base::StringPiece& dns_domain) {
-  GURL log_url(url);
-  if (!log_url.is_valid())
-    return nullptr;
+    std::string description) {
   scoped_refptr<CTLogVerifier> result(
-      new CTLogVerifier(description, log_url, dns_domain));
+      new CTLogVerifier(std::move(description)));
   if (!result->Init(public_key))
     return nullptr;
   return result;
 }
 
-CTLogVerifier::CTLogVerifier(const base::StringPiece& description,
-                             const GURL& url,
-                             const base::StringPiece& dns_domain)
-    : description_(description.as_string()),
-      url_(url),
-      dns_domain_(dns_domain.as_string()),
+CTLogVerifier::CTLogVerifier(std::string description)
+    : description_(std::move(description)),
       hash_algorithm_(ct::DigitallySigned::HASH_ALGO_NONE),
       signature_algorithm_(ct::DigitallySigned::SIG_ALGO_ANONYMOUS),
-      public_key_(NULL) {
-  DCHECK(url_.is_valid());
-  DCHECK(!dns_domain_.empty());
-}
+      public_key_(nullptr) {}
 
 bool CTLogVerifier::Verify(const ct::SignedEntryData& entry,
                            const ct::SignedCertificateTimestamp& sct) const {
@@ -116,7 +104,9 @@ bool CTLogVerifier::VerifySignedTreeHead(
     return false;
 
   std::string serialized_data;
-  ct::EncodeTreeHeadSignature(signed_tree_head, &serialized_data);
+  if (!ct::EncodeTreeHeadSignature(signed_tree_head, &serialized_data))
+    return false;
+
   if (VerifySignature(serialized_data,
                       signed_tree_head.signature.signature_data)) {
     if (signed_tree_head.tree_size == 0) {
@@ -185,7 +175,7 @@ bool CTLogVerifier::VerifyConsistencyProof(
   // 1. If "first" is an exact power of 2, then prepend "first_hash" to the
   // "consistency_path" array.
   base::StringPiece first_proof_node = old_tree_hash;
-  std::vector<std::string>::const_iterator iter = proof.nodes.begin();
+  auto iter = proof.nodes.begin();
   if (!IsPowerOfTwo(proof.first_tree_size)) {
     if (iter == proof.nodes.end())
       return false;
@@ -351,11 +341,12 @@ bool CTLogVerifier::VerifySignature(const base::StringPiece& data_to_sign,
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
   const EVP_MD* hash_alg = GetEvpAlg(hash_algorithm_);
-  if (hash_alg == NULL)
+  if (hash_alg == nullptr)
     return false;
 
   bssl::ScopedEVP_MD_CTX ctx;
-  return EVP_DigestVerifyInit(ctx.get(), NULL, hash_alg, NULL, public_key_) &&
+  return EVP_DigestVerifyInit(ctx.get(), nullptr, hash_alg, nullptr,
+                              public_key_) &&
          EVP_DigestVerifyUpdate(ctx.get(), data_to_sign.data(),
                                 data_to_sign.size()) &&
          EVP_DigestVerifyFinal(

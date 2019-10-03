@@ -37,15 +37,12 @@
 #include "base/mac/foundation_util.h"
 #endif
 
+#if defined(OS_FUCHSIA)
+#include "base/base_paths_fuchsia.h"
+#endif
+
 namespace base {
 namespace i18n {
-
-#if ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_SHARED
-#define ICU_UTIL_DATA_SYMBOL "icudt" U_ICU_VERSION_SHORT "_dat"
-#if defined(OS_WIN)
-#define ICU_UTIL_DATA_SHARED_MODULE_NAME "icudt.dll"
-#endif
-#endif
 
 namespace {
 #if !defined(OS_NACL)
@@ -88,8 +85,8 @@ void LazyInitIcuDataFile() {
     return;
   }
 #if defined(OS_ANDROID)
-  int fd = base::android::OpenApkAsset(kAndroidAssetsIcuDataFileName,
-                                       &g_icudtl_region);
+  int fd =
+      android::OpenApkAsset(kAndroidAssetsIcuDataFileName, &g_icudtl_region);
   g_icudtl_pf = fd;
   if (fd != -1) {
     return;
@@ -98,38 +95,32 @@ void LazyInitIcuDataFile() {
 #endif  // defined(OS_ANDROID)
 #if !defined(OS_MACOSX)
   FilePath data_path;
+  if (!PathService::Get(DIR_ASSETS, &data_path)) {
+    LOG(ERROR) << "Can't find " << kIcuDataFileName;
+    return;
+  }
 #if defined(OS_WIN)
-  // The data file will be in the same directory as the current module.
-  bool path_ok = PathService::Get(DIR_MODULE, &data_path);
+  // TODO(brucedawson): http://crbug.com/445616
   wchar_t tmp_buffer[_MAX_PATH] = {0};
-  wcscpy_s(tmp_buffer, data_path.value().c_str());
+  wcscpy_s(tmp_buffer, as_wcstr(data_path.value()));
   debug::Alias(tmp_buffer);
-  CHECK(path_ok);  // TODO(scottmg): http://crbug.com/445616
-#elif defined(OS_ANDROID)
-  bool path_ok = PathService::Get(DIR_ANDROID_APP_DATA, &data_path);
-#else
-  // For now, expect the data file to be alongside the executable.
-  // This is sufficient while we work on unit tests, but will eventually
-  // likely live in a data directory.
-  bool path_ok = PathService::Get(DIR_EXE, &data_path);
 #endif
-  DCHECK(path_ok);
   data_path = data_path.AppendASCII(kIcuDataFileName);
 
 #if defined(OS_WIN)
-  // TODO(scottmg): http://crbug.com/445616
+  // TODO(brucedawson): http://crbug.com/445616
   wchar_t tmp_buffer2[_MAX_PATH] = {0};
-  wcscpy_s(tmp_buffer2, data_path.value().c_str());
+  wcscpy_s(tmp_buffer2, as_wcstr(data_path.value()));
   debug::Alias(tmp_buffer2);
 #endif
 
-#else
+#else  // !defined(OS_MACOSX)
   // Assume it is in the framework bundle's Resources directory.
   ScopedCFTypeRef<CFStringRef> data_file_name(
       SysUTF8ToCFStringRef(kIcuDataFileName));
   FilePath data_path = mac::PathForFrameworkBundleResource(data_file_name);
 #if defined(OS_IOS)
-  FilePath override_data_path = base::ios::FilePathOfEmbeddedICU();
+  FilePath override_data_path = ios::FilePathOfEmbeddedICU();
   if (!override_data_path.empty()) {
     data_path = override_data_path;
   }
@@ -141,7 +132,7 @@ void LazyInitIcuDataFile() {
 #endif  // !defined(OS_MACOSX)
   File file(data_path, File::FLAG_OPEN | File::FLAG_READ);
   if (file.IsValid()) {
-    // TODO(scottmg): http://crbug.com/445616.
+    // TODO(brucedawson): http://crbug.com/445616.
     g_debug_icu_pf_last_error = 0;
     g_debug_icu_pf_error_details = 0;
 #if defined(OS_WIN)
@@ -153,10 +144,10 @@ void LazyInitIcuDataFile() {
   }
 #if defined(OS_WIN)
   else {
-    // TODO(scottmg): http://crbug.com/445616.
+    // TODO(brucedawson): http://crbug.com/445616.
     g_debug_icu_pf_last_error = ::GetLastError();
     g_debug_icu_pf_error_details = file.error_details();
-    wcscpy_s(g_debug_icu_pf_filename, data_path.value().c_str());
+    wcscpy_s(g_debug_icu_pf_filename, as_wcstr(data_path.value()));
   }
 #endif  // OS_WIN
 }
@@ -197,11 +188,13 @@ bool InitializeICUWithFileDescriptorInternal(
     // timezone and set the ICU default timezone accordingly in advance of
     // actual use. See crbug.com/722821 and
     // https://ssl.icu-project.org/trac/ticket/13208 .
-    base::string16 timezone_id = base::android::GetDefaultTimeZoneId();
+    string16 timezone_id = android::GetDefaultTimeZoneId();
     icu::TimeZone::adoptDefault(icu::TimeZone::createTimeZone(
         icu::UnicodeString(FALSE, timezone_id.data(), timezone_id.length())));
   }
 #endif
+  // Never try to load ICU data from files.
+  udata_setFileAccess(UDATA_ONLY_PACKAGES, &err);
   return err == U_ZERO_ERROR;
 }
 #endif  // ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
@@ -243,6 +236,8 @@ bool InitializeICUFromRawMemory(const uint8_t* raw_memory) {
 
   UErrorCode err = U_ZERO_ERROR;
   udata_setCommonData(const_cast<uint8_t*>(raw_memory), &err);
+  // Never try to load ICU data from files.
+  udata_setFileAccess(UDATA_ONLY_PACKAGES, &err);
   return err == U_ZERO_ERROR;
 #else
   return true;
@@ -258,29 +253,7 @@ bool InitializeICU() {
 #endif
 
   bool result;
-#if (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_SHARED)
-  // We expect to find the ICU data module alongside the current module.
-  FilePath data_path;
-  PathService::Get(DIR_MODULE, &data_path);
-  data_path = data_path.AppendASCII(ICU_UTIL_DATA_SHARED_MODULE_NAME);
-
-  HMODULE module = LoadLibrary(data_path.value().c_str());
-  if (!module) {
-    LOG(ERROR) << "Failed to load " << ICU_UTIL_DATA_SHARED_MODULE_NAME;
-    return false;
-  }
-
-  FARPROC addr = GetProcAddress(module, ICU_UTIL_DATA_SYMBOL);
-  if (!addr) {
-    LOG(ERROR) << ICU_UTIL_DATA_SYMBOL << ": not found in "
-               << ICU_UTIL_DATA_SHARED_MODULE_NAME;
-    return false;
-  }
-
-  UErrorCode err = U_ZERO_ERROR;
-  udata_setCommonData(reinterpret_cast<void*>(addr), &err);
-  result = (err == U_ZERO_ERROR);
-#elif (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_STATIC)
+#if (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_STATIC)
   // The ICU data is statically linked.
   result = true;
 #elif (ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE)
@@ -303,7 +276,7 @@ bool InitializeICU() {
   wchar_t debug_icu_pf_filename[_MAX_PATH] = {0};
   wcscpy_s(debug_icu_pf_filename, g_debug_icu_pf_filename);
   debug::Alias(&debug_icu_pf_filename);
-  CHECK(result);  // TODO(scottmg): http://crbug.com/445616
+  CHECK(result);  // TODO(brucedawson): http://crbug.com/445616
 #endif
 #endif
 

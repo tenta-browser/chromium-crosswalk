@@ -100,12 +100,12 @@ class BackFwdMenuModelTest : public ChromeRenderViewHostTestHarness {
 };
 
 TEST_F(BackFwdMenuModelTest, BasicCase) {
-  std::unique_ptr<BackForwardMenuModel> back_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::BACKWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> back_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kBackward));
   back_model->set_test_web_contents(web_contents());
 
-  std::unique_ptr<BackForwardMenuModel> forward_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::FORWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> forward_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kForward));
   forward_model->set_test_web_contents(web_contents());
 
   EXPECT_EQ(0, back_model->GetItemCount());
@@ -168,12 +168,12 @@ TEST_F(BackFwdMenuModelTest, BasicCase) {
 }
 
 TEST_F(BackFwdMenuModelTest, MaxItemsTest) {
-  std::unique_ptr<BackForwardMenuModel> back_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::BACKWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> back_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kBackward));
   back_model->set_test_web_contents(web_contents());
 
-  std::unique_ptr<BackForwardMenuModel> forward_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::FORWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> forward_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kForward));
   forward_model->set_test_web_contents(web_contents());
 
   // Seed the controller with 32 URLs
@@ -250,12 +250,12 @@ TEST_F(BackFwdMenuModelTest, MaxItemsTest) {
 }
 
 TEST_F(BackFwdMenuModelTest, ChapterStops) {
-  std::unique_ptr<BackForwardMenuModel> back_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::BACKWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> back_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kBackward));
   back_model->set_test_web_contents(web_contents());
 
-  std::unique_ptr<BackForwardMenuModel> forward_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::FORWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> forward_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kForward));
   forward_model->set_test_web_contents(web_contents());
 
   // Seed the controller with 32 URLs.
@@ -461,33 +461,34 @@ TEST_F(BackFwdMenuModelTest, ChapterStops) {
 }
 
 TEST_F(BackFwdMenuModelTest, EscapeLabel) {
-  std::unique_ptr<BackForwardMenuModel> back_model(
-      new BackForwardMenuModel(NULL, BackForwardMenuModel::BACKWARD_MENU));
+  std::unique_ptr<BackForwardMenuModel> back_model(new BackForwardMenuModel(
+      nullptr, BackForwardMenuModel::ModelType::kBackward));
   back_model->set_test_web_contents(web_contents());
 
   EXPECT_EQ(0, back_model->GetItemCount());
   EXPECT_FALSE(back_model->ItemHasCommand(1));
 
+  // Note: Multiple navigations to the same URL in a row have to be
+  // renderer-initiated.  If they were browser-initiated, the
+  // NavigationController would treat them as reloads.
   LoadURLAndUpdateState("http://www.a.com/1", "A B");
-  LoadURLAndUpdateState("http://www.a.com/1", "A & B");
+  NavigationSimulator::NavigateAndCommitFromDocument(GURL("http://www.a.com/1"),
+                                                     main_rfh());
+  web_contents()->UpdateTitleForEntry(controller().GetLastCommittedEntry(),
+                                      base::UTF8ToUTF16("A & B"));
   LoadURLAndUpdateState("http://www.a.com/2", "A && B");
-  LoadURLAndUpdateState("http://www.a.com/2", "A &&& B");
+  NavigationSimulator::NavigateAndCommitFromDocument(GURL("http://www.a.com/2"),
+                                                     main_rfh());
+  web_contents()->UpdateTitleForEntry(controller().GetLastCommittedEntry(),
+                                      base::UTF8ToUTF16("A &&& B"));
   LoadURLAndUpdateState("http://www.a.com/3", "");
 
   EXPECT_EQ(6, back_model->GetItemCount());
 
-  // On Mac ui::MenuModel::GetLabelAt should return unescaped strings.
-#if defined(OS_MACOSX)
-  EXPECT_EQ(ASCIIToUTF16("A B"), back_model->GetLabelAt(3));
-  EXPECT_EQ(ASCIIToUTF16("A & B"), back_model->GetLabelAt(2));
-  EXPECT_EQ(ASCIIToUTF16("A && B"), back_model->GetLabelAt(1));
-  EXPECT_EQ(ASCIIToUTF16("A &&& B"), back_model->GetLabelAt(0));
-#else
   EXPECT_EQ(ASCIIToUTF16("A B"), back_model->GetLabelAt(3));
   EXPECT_EQ(ASCIIToUTF16("A && B"), back_model->GetLabelAt(2));
   EXPECT_EQ(ASCIIToUTF16("A &&&& B"), back_model->GetLabelAt(1));
   EXPECT_EQ(ASCIIToUTF16("A &&&&&& B"), back_model->GetLabelAt(0));
-#endif // defined(OS_MACOSX)
 }
 
 // Test asynchronous loading of favicon from history service.
@@ -499,8 +500,8 @@ TEST_F(BackFwdMenuModelTest, FaviconLoadTest) {
       CreateBrowserWithTestWindowForParams(&native_params));
   FaviconDelegate favicon_delegate;
 
-  BackForwardMenuModel back_model(
-      browser.get(), BackForwardMenuModel::BACKWARD_MENU);
+  BackForwardMenuModel back_model(browser.get(),
+                                  BackForwardMenuModel::ModelType::kBackward);
   back_model.set_test_web_contents(controller().GetWebContents());
   back_model.SetMenuModelDelegate(&favicon_delegate);
 

@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_ANIMATION_INK_DROP_RIPPLE_H_
 #define UI_VIEWS_ANIMATION_INK_DROP_RIPPLE_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
@@ -31,17 +33,6 @@ class InkDropRippleTestApi;
 // the doc here.
 class VIEWS_EXPORT InkDropRipple {
  public:
-  // TODO(bruthig): Remove UseFastAnimations() and kSlowAnimationDurationFactor.
-  // See http://crbug.com/584681
-
-  // Checks CommandLine switches to determine if the visual feedback should have
-  // a fast animations speed.
-  static bool UseFastAnimations();
-
-  // The factor at which to increase the animation durations if
-  // UseFastAnimations() returns true.
-  static const double kSlowAnimationDurationFactor;
-
   // The opacity of the ink drop when it is not visible.
   static const float kHiddenOpacity;
 
@@ -54,15 +45,14 @@ class VIEWS_EXPORT InkDropRipple {
   // AnimationStarted(s2).
   void set_observer(InkDropRippleObserver* observer) { observer_ = observer; }
 
-  // Called by ink drop whenever its host's size is changed in order to give the
-  // ripple an opportunity to handle dynamic host resizes.
-  virtual void HostSizeChanged(const gfx::Size& new_size);
-
   // Animates from the current InkDropState to the new |ink_drop_state|.
   //
   // NOTE: GetTargetInkDropState() should return the new |ink_drop_state| value
   // to any observers being notified as a result of the call.
   void AnimateToState(InkDropState ink_drop_state);
+
+  // Snaps from the current InkDropState to the new |ink_drop_state|.
+  void SnapToState(InkDropState ink_drop_state);
 
   InkDropState target_ink_drop_state() const { return target_ink_drop_state_; }
 
@@ -70,7 +60,7 @@ class VIEWS_EXPORT InkDropRipple {
   //
   // NOTE: This will NOT raise Animation(Started|Ended) events for the state
   // transition to HIDDEN!
-  void HideImmediately();
+  void SnapToHidden();
 
   // Immediately snaps the ink drop to the ACTIVATED target state. All pending
   // animations are aborted. Events will be raised for the pending animations
@@ -118,10 +108,17 @@ class VIEWS_EXPORT InkDropRipple {
       InkDropState ink_drop_state,
       const ui::CallbackLayerAnimationObserver& observer);
 
-  // The target InkDropState.
-  InkDropState target_ink_drop_state_;
+  // Creates a new animation observer bound to AnimationStartedCallback() and
+  // AnimationEndedCallback().
+  std::unique_ptr<ui::CallbackLayerAnimationObserver> CreateAnimationObserver(
+      InkDropState ink_drop_state);
 
-  InkDropRippleObserver* observer_;
+  // The target InkDropState.
+  InkDropState target_ink_drop_state_ = InkDropState::HIDDEN;
+
+  InkDropRippleObserver* observer_ = nullptr;
+
+  std::unique_ptr<ui::CallbackLayerAnimationObserver> animation_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(InkDropRipple);
 };

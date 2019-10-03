@@ -170,6 +170,16 @@ class DaemonProcess
   void OnProcessStats(
       const protocol::AggregatedProcessResourceUsage& usage) override;
 
+  // Gets the location of the config file.
+  base::FilePath GetConfigPath();
+
+  // Updates the config file, replacing the current OAuth refresh token with the
+  // one provided.
+  void UpdateConfigRefreshToken(const std::string& token);
+  static void UpdateConfigRefreshTokenOnIoThread(
+      const base::FilePath& config_file,
+      const std::string& token);
+
   // Task runner on which public methods of this class must be called.
   scoped_refptr<AutoThreadTaskRunner> caller_task_runner_;
 
@@ -188,7 +198,7 @@ class DaemonProcess
   int next_terminal_id_;
 
   // Keeps track of observers receiving host status notifications.
-  base::ObserverList<HostStatusObserver> status_observers_;
+  base::ObserverList<HostStatusObserver>::Unchecked status_observers_;
 
   // Invoked to ask the owner to delete |this|.
   base::Closure stopped_callback_;

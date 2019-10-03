@@ -29,46 +29,10 @@ public final class EventConstants {
     public static final String DOWNLOAD_HOME_OPENED = "download_home_opened";
 
     /**
-     * The bottom sheet was expanded by the user.
-     */
-    public static final String BOTTOM_SHEET_EXPANDED = "bottom_sheet_expanded";
-
-    /**
-     * The bottom sheet was expanded by the user swiping on the toolbar.
-     */
-    public static final String BOTTOM_SHEET_EXPANDED_FROM_SWIPE =
-            "bottom_sheet_expanded_from_swipe";
-
-    /**
-     * The bottom sheet was expanded by the user tapping the expand button.
-     */
-    public static final String BOTTOM_SHEET_EXPANDED_FROM_BUTTON =
-            "bottom_sheet_expanded_from_button";
-
-    /**
-     * The bottom sheet was expanded by the user focusing the omnibox.
-     */
-    public static final String BOTTOM_SHEET_EXPANDED_FROM_OMNIBOX_FOCUS =
-            "bottom_sheet_expanded_from_omnibox_focus";
-
-    /**
      * The user triggered pull to refresh. Used to help determine when to show the Chrome Home
      * in-product help.
      */
     public static final String PULL_TO_REFRESH = "pull_to_refresh";
-
-    /**
-     * The user clicked the Chrome Home menu header.
-     */
-    public static final String CHROME_HOME_MENU_HEADER_CLICKED = "chrome_home_menu_header_clicked";
-
-    /**
-     * Either bookmarks, downloads or history were shown in the Chrome Home bottom sheet.
-     * This may be triggered either by the user clicking an item in the navigation bar or by the
-     * user triggering panel contents through other means (e.g. download notification).
-     */
-    public static final String CHROME_HOME_NON_HOME_CONTENT_SHOWN =
-            "chrome_home_non_home_content_shown";
 
     /**
      * Screenshot is taken with Chrome in the foreground.
@@ -98,9 +62,19 @@ public final class EventConstants {
     public static final String DATA_SAVER_DETAIL_OPENED = "data_saver_overview_opened";
 
     /**
-     * The download button for a media element was displayed.
+     * The data saver milestone promo was used (tapped).
      */
-    public static final String MEDIA_DOWNLOAD_BUTTON_DISPLAYED = "media_download_button_displayed";
+    public static final String DATA_SAVER_MILESTONE_PROMO_OPENED = "data_saver_milestone_promo";
+
+    /**
+     * The previews verbose status view was opened.
+     */
+    public static final String PREVIEWS_VERBOSE_STATUS_OPENED = "previews_verbose_status_opened";
+
+    /**
+     * A page load used a preview.
+     */
+    public static final String PREVIEWS_PAGE_LOADED = "preview_page_load";
 
     /**
      * Contextual Search panel was opened.
@@ -146,6 +120,45 @@ public final class EventConstants {
      */
     public static final String CONTEXTUAL_SEARCH_TRIGGERED_BY_LONGPRESS =
             "contextual_search_triggered_by_longpress";
+
+    /**
+     * The partner homepage was pressed.
+     */
+    public static final String PARTNER_HOME_PAGE_BUTTON_PRESSED =
+            "partner_home_page_button_pressed";
+
+    /** The user used a button in the bottom toolbar. */
+    public static final String CHROME_DUET_USED_BOTTOM_TOOLBAR = "chrome_duet_used_bottom_toolbar";
+
+    /** The homepage button in the toolbar was clicked. */
+    public static final String HOMEPAGE_BUTTON_CLICKED = "homepage_button_clicked";
+
+    /** The clear tab button in the toolbar was clicked. */
+    public static final String CLEAR_TAB_BUTTON_CLICKED = "clear_tab_button_clicked";
+
+    /** The pinned homepage tile in MV tiles was clicked. */
+    public static final String HOMEPAGE_TILE_CLICKED = "homepage_tile_clicked";
+
+    /** The `Translate` app menu button was clicked. */
+    public static final String TRANSLATE_MENU_BUTTON_CLICKED = "translate_menu_button_clicked";
+
+    /** The keyboard accessory was used to fill address data into a form. */
+    public static final String KEYBOARD_ACCESSORY_ADDRESS_AUTOFILLED =
+            "keyboard_accessory_address_suggestion_accepted";
+
+    /** The keyboard accessory was used to fill a password form. */
+    public static final String KEYBOARD_ACCESSORY_PASSWORD_AUTOFILLED =
+            "keyboard_accessory_password_suggestion_accepted";
+
+    /** The keyboard accessory was used to fill payment data into a form. */
+    public static final String KEYBOARD_ACCESSORY_PAYMENT_AUTOFILLED =
+            "keyboard_accessory_payment_suggestion_accepted";
+
+    /** The Explore Sites tile was tapped. */
+    public static final String EXPLORE_SITES_TILE_TAPPED = "explore_sites_tile_tapped";
+
+    /** User has finished drop-to-merge to create a group. */
+    public static final String TAB_DRAG_AND_DROP_TO_GROUP = "tab_drag_and_drop_to_group";
 
     /**
      * Do not instantiate.

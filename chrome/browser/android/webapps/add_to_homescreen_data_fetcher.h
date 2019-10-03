@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/android/shortcut_info.h"
+#include "chrome/common/chrome_render_frame.mojom.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -31,15 +32,11 @@ class AddToHomescreenDataFetcher : public content::WebContentsObserver {
  public:
   class Observer {
    public:
-    // Called when the installable check is complete.
-    virtual void OnDidDetermineWebApkCompatibility(
-        bool is_webapk_compatible) = 0;
-
     // Called when the homescreen icon title (and possibly information from the
-    // web manifest) is available. Will be called after
-    // OnDidDetermineWebApkCompatibility.
+    // web manifest) is available.
     virtual void OnUserTitleAvailable(const base::string16& title,
-                                      const GURL& url) = 0;
+                                      const GURL& url,
+                                      bool is_webapk_compatible) = 0;
 
     // Called when all the data needed to create a shortcut is available.
     virtual void OnDataAvailable(const ShortcutInfo& info,
@@ -56,24 +53,22 @@ class AddToHomescreenDataFetcher : public content::WebContentsObserver {
   // |observer| must outlive AddToHomescreenDataFetcher.
   AddToHomescreenDataFetcher(content::WebContents* web_contents,
                              int data_timeout_ms,
-                             bool check_webapk_compatible,
                              Observer* observer);
 
   ~AddToHomescreenDataFetcher() override;
 
   // IPC message received when the initialization is finished.
-  void OnDidGetWebApplicationInfo(const WebApplicationInfo& web_app_info);
+  void OnDidGetWebApplicationInfo(
+      chrome::mojom::ChromeRenderFrameAssociatedPtr chrome_render_frame,
+      const WebApplicationInfo& web_app_info);
 
   // Accessors, etc.
   const SkBitmap& badge_icon() const { return badge_icon_; }
   const SkBitmap& primary_icon() const { return primary_icon_; }
   ShortcutInfo& shortcut_info() { return shortcut_info_; }
+  bool has_maskable_primary_icon() const { return has_maskable_primary_icon_; }
 
  private:
-  // WebContentsObserver:
-  bool OnMessageReceived(const IPC::Message& message,
-                         content::RenderFrameHost* sender) override;
-
   // Called to stop the timeout timer.
   void StopTimer();
 
@@ -105,6 +100,7 @@ class AddToHomescreenDataFetcher : public content::WebContentsObserver {
   SkBitmap badge_icon_;
   SkBitmap primary_icon_;
   ShortcutInfo shortcut_info_;
+  bool has_maskable_primary_icon_;
 
   base::CancelableTaskTracker favicon_task_tracker_;
   base::OneShotTimer data_timeout_timer_;
@@ -112,9 +108,6 @@ class AddToHomescreenDataFetcher : public content::WebContentsObserver {
 
   const base::TimeDelta data_timeout_ms_;
 
-  // Indicates whether to check WebAPK compatibility.
-  bool check_webapk_compatibility_;
-  bool is_waiting_for_web_application_info_;
   bool is_waiting_for_manifest_;
 
   base::WeakPtrFactory<AddToHomescreenDataFetcher> weak_ptr_factory_;

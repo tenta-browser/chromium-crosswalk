@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "content/public/common/simple_url_loader.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 namespace content {
 
@@ -25,7 +25,7 @@ class SimpleURLLoaderTestHelper {
 
   // Returns a BodyAsStringCallback for use with a SimpleURLLoader. May be
   // called only once.
-  SimpleURLLoader::BodyAsStringCallback GetCallback();
+  network::SimpleURLLoader::BodyAsStringCallback GetCallback();
 
   // Waits until the callback returned by GetCallback() is invoked.
   void WaitForCallback();
@@ -48,7 +48,7 @@ class SimpleURLLoaderTestHelper {
 
   std::unique_ptr<std::string> response_body_;
 
-  base::WeakPtrFactory<SimpleURLLoaderTestHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<SimpleURLLoaderTestHelper> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SimpleURLLoaderTestHelper);
 };

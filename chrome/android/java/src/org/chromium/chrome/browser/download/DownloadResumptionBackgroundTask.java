@@ -8,25 +8,26 @@ import android.content.Context;
 import android.os.Handler;
 
 import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 
 /**
  * An implementation of BackgroundTask that is responsible for resuming any in-progress downloads.
  * This class currently just starts the {@link DownloadNotificationService} or calls
- * {@link DownloadNotificationService2}, which handles the actual resumption.
+ * {@link DownloadNotificationService}, which handles the actual resumption.
  */
 public class DownloadResumptionBackgroundTask extends NativeBackgroundTask {
     // NativeBackgroundTask implementation.
     @Override
-    protected int onStartTaskBeforeNativeLoaded(
+    protected @StartBeforeNativeResult int onStartTaskBeforeNativeLoaded(
             Context context, TaskParameters taskParameters, TaskFinishedCallback callback) {
-        return NativeBackgroundTask.LOAD_NATIVE;
+        return StartBeforeNativeResult.LOAD_NATIVE;
     }
 
     @Override
     protected void onStartTaskWithNative(
             Context context, TaskParameters taskParameters, final TaskFinishedCallback callback) {
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(context).resume();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().resume();
         new Handler().post(() -> callback.taskFinished(false));
     }
 
@@ -43,7 +44,12 @@ public class DownloadResumptionBackgroundTask extends NativeBackgroundTask {
     }
 
     @Override
+    protected boolean supportsServiceManagerOnly() {
+        return FeatureUtilities.isServiceManagerForDownloadResumptionEnabled();
+    }
+
+    @Override
     public void reschedule(Context context) {
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(context).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
     }
 }

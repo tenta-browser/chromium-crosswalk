@@ -10,14 +10,23 @@
  *   ABOUT_ABOUT: (undefined|!settings.Route),
  *   ACCESSIBILITY: (undefined|!settings.Route),
  *   ACCOUNTS: (undefined|!settings.Route),
+ *   ACCOUNT_MANAGER: (undefined|!settings.Route),
  *   ADVANCED: (undefined|!settings.Route),
+ *   ADDRESSES: (undefined|!settings.Route),
+ *   APPS: (undefined|!settings.Route),
  *   ANDROID_APPS: (undefined|!settings.Route),
  *   ANDROID_APPS_DETAILS: (undefined|!settings.Route),
+ *   CROSTINI: (undefined|!settings.Route),
+ *   CROSTINI_DETAILS: (undefined|!settings.Route),
+ *   CROSTINI_EXPORT_IMPORT: (undefined|!settings.Route),
+ *   CROSTINI_SHARED_PATHS: (undefined|!settings.Route),
+ *   CROSTINI_SHARED_USB_DEVICES: (undefined|!settings.Route),
  *   APPEARANCE: (undefined|!settings.Route),
  *   AUTOFILL: (undefined|!settings.Route),
  *   BASIC: (undefined|!settings.Route),
  *   BLUETOOTH: (undefined|!settings.Route),
  *   BLUETOOTH_DEVICES: (undefined|!settings.Route),
+ *   CAPTIONS: (undefined|!settings.Route),
  *   CERTIFICATES: (undefined|!settings.Route),
  *   CHANGE_PICTURE: (undefined|!settings.Route),
  *   CHROME_CLEANUP: (undefined|!settings.Route),
@@ -32,25 +41,37 @@
  *   DISPLAY: (undefined|!settings.Route),
  *   DOWNLOADS: (undefined|!settings.Route),
  *   EDIT_DICTIONARY: (undefined|!settings.Route),
+ *   EXTERNAL_STORAGE_PREFERENCES: (undefined|!settings.Route),
  *   FINGERPRINT: (undefined|!settings.Route),
+ *   FILES: (undefined|!settings.Route),
  *   FONTS: (undefined|!settings.Route),
  *   GOOGLE_ASSISTANT: (undefined|!settings.Route),
  *   IMPORT_DATA: (undefined|!settings.Route),
+ *   INCOMPATIBLE_APPLICATIONS: (undefined|!settings.Route),
  *   INPUT_METHODS: (undefined|!settings.Route),
  *   INTERNET: (undefined|!settings.Route),
  *   INTERNET_NETWORKS: (undefined|!settings.Route),
+ *   KERBEROS_ACCOUNTS: (undefined|!settings.Route),
  *   KEYBOARD: (undefined|!settings.Route),
  *   KNOWN_NETWORKS: (undefined|!settings.Route),
  *   LANGUAGES: (undefined|!settings.Route),
+ *   LANGUAGES_DETAILS: (undefined|!settings.Route),
  *   LOCK_SCREEN: (undefined|!settings.Route),
  *   MANAGE_ACCESSIBILITY: (undefined|!settings.Route),
- *   MANAGE_PASSWORDS: (undefined|!settings.Route),
  *   MANAGE_PROFILE: (undefined|!settings.Route),
+ *   MANAGE_SWITCH_ACCESS_SETTINGS: (undefined|!settings.Route),
+ *   MANAGE_TTS_SETTINGS: (undefined|!settings.Route),
  *   MULTIDEVICE: (undefined|!settings.Route),
+ *   MULTIDEVICE_FEATURES: (undefined|!settings.Route),
  *   NETWORK_DETAIL: (undefined|!settings.Route),
  *   ON_STARTUP: (undefined|!settings.Route),
  *   PASSWORDS: (undefined|!settings.Route),
+ *   PAYMENTS: (undefined|!settings.Route),
  *   PEOPLE: (undefined|!settings.Route),
+ *   PERSONALIZATION: (undefined|!settings.Route),
+ *   PLUGIN_VM: (undefined|!settings.Route),
+ *   PLUGIN_VM_DETAILS: (undefined|!settings.Route),
+ *   PLUGIN_VM_SHARED_PATHS: (undefined|!settings.Route),
  *   POINTERS: (undefined|!settings.Route),
  *   POWER: (undefined|!settings.Route),
  *   PRINTING: (undefined|!settings.Route),
@@ -59,12 +80,14 @@
  *   RESET_DIALOG: (undefined|!settings.Route),
  *   SEARCH: (undefined|!settings.Route),
  *   SEARCH_ENGINES: (undefined|!settings.Route),
+ *   SECURITY_KEYS: (undefined|!settings.Route),
  *   SIGN_OUT: (undefined|!settings.Route),
  *   SITE_SETTINGS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ADS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ALL: (undefined|!settings.Route),
  *   SITE_SETTINGS_AUTOMATIC_DOWNLOADS: (undefined|!settings.Route),
  *   SITE_SETTINGS_BACKGROUND_SYNC: (undefined|!settings.Route),
+ *   SITE_SETTINGS_BLUETOOTH_SCANNING: (undefined|!settings.Route),
  *   SITE_SETTINGS_CAMERA: (undefined|!settings.Route),
  *   SITE_SETTINGS_CLIPBOARD: (undefined|!settings.Route),
  *   SITE_SETTINGS_COOKIES: (undefined|!settings.Route),
@@ -73,11 +96,13 @@
  *   SITE_SETTINGS_HANDLERS: (undefined|!settings.Route),
  *   SITE_SETTINGS_IMAGES: (undefined|!settings.Route),
  *   SITE_SETTINGS_JAVASCRIPT: (undefined|!settings.Route),
+ *   SITE_SETTINGS_SENSORS: (undefined|!settings.Route),
  *   SITE_SETTINGS_SOUND: (undefined|!settings.Route),
  *   SITE_SETTINGS_LOCATION: (undefined|!settings.Route),
  *   SITE_SETTINGS_MICROPHONE: (undefined|!settings.Route),
  *   SITE_SETTINGS_MIDI_DEVICES: (undefined|!settings.Route),
  *   SITE_SETTINGS_NOTIFICATIONS: (undefined|!settings.Route),
+ *   SITE_SETTINGS_PAYMENT_HANDLER: (undefined|!settings.Route),
  *   SITE_SETTINGS_PDF_DOCUMENTS: (undefined|!settings.Route),
  *   SITE_SETTINGS_POPUPS: (undefined|!settings.Route),
  *   SITE_SETTINGS_PROTECTED_CONTENT: (undefined|!settings.Route),
@@ -85,15 +110,19 @@
  *   SITE_SETTINGS_SITE_DETAILS: (undefined|!settings.Route),
  *   SITE_SETTINGS_UNSANDBOXED_PLUGINS: (undefined|!settings.Route),
  *   SITE_SETTINGS_USB_DEVICES: (undefined|!settings.Route),
+ *   SITE_SETTINGS_SERIAL_PORTS: (undefined|!settings.Route),
  *   SITE_SETTINGS_ZOOM_LEVELS: (undefined|!settings.Route),
+ *   SMART_LOCK: (undefined|!settings.Route),
+ *   SMB_SHARES: (undefined|!settings.Route),
  *   STORAGE: (undefined|!settings.Route),
  *   STYLUS: (undefined|!settings.Route),
  *   SYNC: (undefined|!settings.Route),
+ *   SYNC_ADVANCED: (undefined|!settings.Route),
  *   SYSTEM: (undefined|!settings.Route),
  *   TRIGGERED_RESET_DIALOG: (undefined|!settings.Route),
  * }}
  */
-var SettingsRoutes;
+let SettingsRoutes;
 
 cr.define('settings', function() {
 
@@ -137,9 +166,9 @@ cr.define('settings', function() {
 
       // |path| extends this route's path if it doesn't have a leading slash.
       // If it does have a leading slash, it's just set as the new route's URL.
-      var newUrl = path[0] == '/' ? path : `${this.path}/${path}`;
+      const newUrl = path[0] == '/' ? path : `${this.path}/${path}`;
 
-      var route = new Route(newUrl);
+      const route = new Route(newUrl);
       route.parent = this;
       route.section = this.section;
       route.depth = this.depth + 1;
@@ -156,7 +185,7 @@ cr.define('settings', function() {
      * @private
      */
     createSection(path, section) {
-      var route = this.createChild(path);
+      const route = this.createChild(path);
       route.section = section;
       return route;
     }
@@ -176,9 +205,10 @@ cr.define('settings', function() {
      * @return {boolean}
      */
     contains(route) {
-      for (var r = route; r != null; r = r.parent) {
-        if (this == r)
+      for (let r = route; r != null; r = r.parent) {
+        if (this == r) {
           return true;
+        }
       }
       return false;
     }
@@ -197,11 +227,11 @@ cr.define('settings', function() {
    * Computes and return all available routes based on settings.pageVisibility.
    * @return {!SettingsRoutes}
    */
-  var computeAvailableRoutes = function() {
-    var pageVisibility = settings.pageVisibility || {};
+  const computeAvailableRoutes = function() {
+    const pageVisibility = settings.pageVisibility || {};
 
     /** @type {!SettingsRoutes} */
-    var r = {};
+    const r = {};
 
     // Root pages.
     r.BASIC = new Route('/');
@@ -222,11 +252,24 @@ cr.define('settings', function() {
     r.KNOWN_NETWORKS = r.INTERNET.createChild('/knownNetworks');
     r.BLUETOOTH = r.BASIC.createSection('/bluetooth', 'bluetooth');
     r.BLUETOOTH_DEVICES = r.BLUETOOTH.createChild('/bluetoothDevices');
+
+    r.MULTIDEVICE = r.BASIC.createSection('/multidevice', 'multidevice');
+    r.MULTIDEVICE_FEATURES = r.MULTIDEVICE.createChild('/multidevice/features');
+    r.SMART_LOCK =
+        r.MULTIDEVICE_FEATURES.createChild('/multidevice/features/smartLock');
+
     // </if>
 
     if (pageVisibility.appearance !== false) {
       r.APPEARANCE = r.BASIC.createSection('/appearance', 'appearance');
       r.FONTS = r.APPEARANCE.createChild('/fonts');
+    }
+
+    if (pageVisibility.autofill !== false) {
+      r.AUTOFILL = r.BASIC.createSection('/autofill', 'autofill');
+      r.PASSWORDS = r.AUTOFILL.createChild('/passwords');
+      r.PAYMENTS = r.AUTOFILL.createChild('/payments');
+      r.ADDRESSES = r.AUTOFILL.createChild('/addresses');
     }
 
     if (pageVisibility.defaultBrowser !== false) {
@@ -237,12 +280,38 @@ cr.define('settings', function() {
     r.SEARCH = r.BASIC.createSection('/search', 'search');
     r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
     // <if expr="chromeos">
-    r.GOOGLE_ASSISTANT = r.SEARCH.createChild('/googleAssistant');
-    // </if>
+    if (loadTimeData.valueExists('assistantEnabled') &&
+        loadTimeData.getBoolean('assistantEnabled')) {
+      r.GOOGLE_ASSISTANT = r.SEARCH.createChild('/googleAssistant');
+    }
 
-    // <if expr="chromeos">
+    if (loadTimeData.valueExists('showApps') &&
+        loadTimeData.getBoolean('showApps')) {
+      r.APPS = r.BASIC.createSection('/apps', 'apps');
+    }
+
     r.ANDROID_APPS = r.BASIC.createSection('/androidApps', 'androidApps');
     r.ANDROID_APPS_DETAILS = r.ANDROID_APPS.createChild('/androidApps/details');
+
+    if (loadTimeData.valueExists('showCrostini') &&
+        loadTimeData.getBoolean('showCrostini')) {
+      r.CROSTINI = r.BASIC.createSection('/crostini', 'crostini');
+      r.CROSTINI_DETAILS = r.CROSTINI.createChild('/crostini/details');
+      r.CROSTINI_EXPORT_IMPORT =
+          r.CROSTINI_DETAILS.createChild('/crostini/exportImport');
+      r.CROSTINI_SHARED_PATHS =
+          r.CROSTINI_DETAILS.createChild('/crostini/sharedPaths');
+      r.CROSTINI_SHARED_USB_DEVICES =
+          r.CROSTINI_DETAILS.createChild('/crostini/sharedUsbDevices');
+    }
+
+    if (loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm')) {
+      r.PLUGIN_VM = r.BASIC.createSection('/pluginVm', 'pluginVm');
+      r.PLUGIN_VM_DETAILS = r.PLUGIN_VM.createChild('/pluginVm/details');
+      r.PLUGIN_VM_SHARED_PATHS =
+          r.PLUGIN_VM.createChild('/pluginVm/sharedPaths');
+    }
     // </if>
 
     if (pageVisibility.onStartup !== false) {
@@ -253,12 +322,22 @@ cr.define('settings', function() {
     if (pageVisibility.people !== false) {
       r.PEOPLE = r.BASIC.createSection('/people', 'people');
       r.SYNC = r.PEOPLE.createChild('/syncSetup');
+      r.SYNC_ADVANCED = r.SYNC.createChild('/syncSetup/advanced');
       // <if expr="not chromeos">
       r.MANAGE_PROFILE = r.PEOPLE.createChild('/manageProfile');
       // </if>
       // <if expr="chromeos">
-      r.CHANGE_PICTURE = r.PEOPLE.createChild('/changePicture');
+      // TODO(crbug.com/950007): Remove when SplitSettings is the default.
+      if (loadTimeData.getBoolean('isOSSettings')) {
+        r.PERSONALIZATION =
+            r.BASIC.createSection('/personalization', 'personalization');
+        r.CHANGE_PICTURE = r.PERSONALIZATION.createChild('/changePicture');
+      } else {
+        r.CHANGE_PICTURE = r.PEOPLE.createChild('/changePicture');
+      }
       r.ACCOUNTS = r.PEOPLE.createChild('/accounts');
+      r.ACCOUNT_MANAGER = r.PEOPLE.createChild('/accountManager');
+      r.KERBEROS_ACCOUNTS = r.PEOPLE.createChild('/kerberosAccounts');
       r.LOCK_SCREEN = r.PEOPLE.createChild('/lockScreen');
       r.FINGERPRINT = r.LOCK_SCREEN.createChild('/lockScreen/fingerprint');
       // </if>
@@ -271,6 +350,8 @@ cr.define('settings', function() {
     r.STYLUS = r.DEVICE.createChild('/stylus');
     r.DISPLAY = r.DEVICE.createChild('/display');
     r.STORAGE = r.DEVICE.createChild('/storage');
+    r.EXTERNAL_STORAGE_PREFERENCES =
+        r.DEVICE.createChild('/storage/externalStoragePreferences');
     r.POWER = r.DEVICE.createChild('/power');
     // </if>
 
@@ -285,18 +366,14 @@ cr.define('settings', function() {
         r.PRIVACY = r.ADVANCED.createSection('/privacy', 'privacy');
         r.CERTIFICATES = r.PRIVACY.createChild('/certificates');
         r.SITE_SETTINGS = r.PRIVACY.createChild('/content');
+        if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
+          r.SECURITY_KEYS = r.PRIVACY.createChild('/securityKeys');
+        }
       }
 
-      if (loadTimeData.getBoolean('enableSiteSettings')) {
-        r.SITE_SETTINGS_ALL = r.SITE_SETTINGS.createChild('all');
-        r.SITE_SETTINGS_SITE_DETAILS =
-            r.SITE_SETTINGS_ALL.createChild('/content/siteDetails');
-      } else {
-        // When there is no "All Sites", pressing 'back' from "Site Details"
-        // should return to "Content Settings".
-        r.SITE_SETTINGS_SITE_DETAILS =
-            r.SITE_SETTINGS.createChild('/content/siteDetails');
-      }
+      r.SITE_SETTINGS_ALL = r.SITE_SETTINGS.createChild('all');
+      r.SITE_SETTINGS_SITE_DETAILS =
+          r.SITE_SETTINGS_ALL.createChild('/content/siteDetails');
 
       r.SITE_SETTINGS_HANDLERS = r.SITE_SETTINGS.createChild('/handlers');
 
@@ -317,6 +394,7 @@ cr.define('settings', function() {
       r.SITE_SETTINGS_IMAGES = r.SITE_SETTINGS.createChild('images');
       r.SITE_SETTINGS_JAVASCRIPT = r.SITE_SETTINGS.createChild('javascript');
       r.SITE_SETTINGS_SOUND = r.SITE_SETTINGS.createChild('sound');
+      r.SITE_SETTINGS_SENSORS = r.SITE_SETTINGS.createChild('sensors');
       r.SITE_SETTINGS_LOCATION = r.SITE_SETTINGS.createChild('location');
       r.SITE_SETTINGS_MICROPHONE = r.SITE_SETTINGS.createChild('microphone');
       r.SITE_SETTINGS_NOTIFICATIONS =
@@ -327,11 +405,23 @@ cr.define('settings', function() {
           r.SITE_SETTINGS.createChild('unsandboxedPlugins');
       r.SITE_SETTINGS_MIDI_DEVICES = r.SITE_SETTINGS.createChild('midiDevices');
       r.SITE_SETTINGS_USB_DEVICES = r.SITE_SETTINGS.createChild('usbDevices');
+      if (loadTimeData.getBoolean('enableExperimentalWebPlatformFeatures')) {
+        r.SITE_SETTINGS_SERIAL_PORTS =
+            r.SITE_SETTINGS.createChild('serialPorts');
+      }
       r.SITE_SETTINGS_ZOOM_LEVELS = r.SITE_SETTINGS.createChild('zoomLevels');
       r.SITE_SETTINGS_PDF_DOCUMENTS =
           r.SITE_SETTINGS.createChild('pdfDocuments');
       r.SITE_SETTINGS_PROTECTED_CONTENT =
           r.SITE_SETTINGS.createChild('protectedContent');
+      if (loadTimeData.getBoolean('enablePaymentHandlerContentSetting')) {
+        r.SITE_SETTINGS_PAYMENT_HANDLER =
+            r.SITE_SETTINGS.createChild('paymentHandler');
+      }
+      if (loadTimeData.getBoolean('enableBluetoothScanningContentSetting')) {
+        r.SITE_SETTINGS_BLUETOOTH_SCANNING =
+            r.SITE_SETTINGS.createChild('bluetoothScanning');
+      }
 
       // <if expr="chromeos">
       if (pageVisibility.dateTime !== false) {
@@ -341,16 +431,15 @@ cr.define('settings', function() {
       }
       // </if>
 
-      if (pageVisibility.passwordsAndForms !== false) {
-        r.PASSWORDS =
-            r.ADVANCED.createSection('/passwordsAndForms', 'passwordsAndForms');
-        r.AUTOFILL = r.PASSWORDS.createChild('/autofill');
-        r.MANAGE_PASSWORDS = r.PASSWORDS.createChild('/passwords');
-      }
-
       r.LANGUAGES = r.ADVANCED.createSection('/languages', 'languages');
       // <if expr="chromeos">
-      r.INPUT_METHODS = r.LANGUAGES.createChild('/inputMethods');
+      if (loadTimeData.getBoolean('isOSSettings')) {
+        r.LANGUAGES_DETAILS = r.LANGUAGES.createChild('/languages/details');
+        r.INPUT_METHODS =
+            r.LANGUAGES_DETAILS.createChild('/languages/inputMethods');
+      } else {
+        r.INPUT_METHODS = r.LANGUAGES.createChild('/inputMethods');
+      }
       // </if>
       // <if expr="not is_macosx">
       r.EDIT_DICTIONARY = r.LANGUAGES.createChild('/editDictionary');
@@ -358,20 +447,49 @@ cr.define('settings', function() {
 
       if (pageVisibility.downloads !== false) {
         r.DOWNLOADS = r.ADVANCED.createSection('/downloads', 'downloads');
+        // <if expr="chromeos">
+        // TODO(crbug.com/950007): Make unconditional and remove 'else' block
+        //     when SplitSettings is the default.
+        if (loadTimeData.getBoolean('isOSSettings')) {
+          r.FILES = r.ADVANCED.createSection('/files', 'files');
+          r.SMB_SHARES = r.FILES.createChild('/smbShares');
+        } else {
+          r.SMB_SHARES = r.DOWNLOADS.createChild('/smbShares');
+        }
+        // </if>
       }
 
       r.PRINTING = r.ADVANCED.createSection('/printing', 'printing');
       r.CLOUD_PRINTERS = r.PRINTING.createChild('/cloudPrinters');
       // <if expr="chromeos">
       r.CUPS_PRINTERS = r.PRINTING.createChild('/cupsPrinters');
-
-      r.MULTIDEVICE = r.ADVANCED.createSection('/multidevice', 'multidevice');
       // </if>
 
       r.ACCESSIBILITY = r.ADVANCED.createSection('/accessibility', 'a11y');
+
+      // <if expr="chromeos or is_linux">
+      if (loadTimeData.getBoolean('enableCaptionSettings')) {
+        r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
+      }
+      // </if>
+
+      // <if expr="is_win">
+      if (loadTimeData.getBoolean('enableCaptionSettings') &&
+          !loadTimeData.getBoolean('isWindows10OrNewer')) {
+        r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
+      }
+      // </if>
+
       // <if expr="chromeos">
       r.MANAGE_ACCESSIBILITY =
           r.ACCESSIBILITY.createChild('/manageAccessibility');
+      if (loadTimeData.getBoolean(
+              'showExperimentalAccessibilitySwitchAccess')) {
+        r.MANAGE_SWITCH_ACCESS_SETTINGS = r.MANAGE_ACCESSIBILITY.createChild(
+            '/manageAccessibility/switchAccess');
+      }
+      r.MANAGE_TTS_SETTINGS =
+          r.MANAGE_ACCESSIBILITY.createChild('/manageAccessibility/tts');
       // </if>
 
       r.SYSTEM = r.ADVANCED.createSection('/system', 'system');
@@ -384,9 +502,10 @@ cr.define('settings', function() {
             r.ADVANCED.createChild('/triggeredResetProfileSettings');
         r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
         // <if expr="_google_chrome and is_win">
-        // This should only be added if the feature is enabled.
-        if (loadTimeData.getBoolean('userInitiatedCleanupsEnabled')) {
-          r.CHROME_CLEANUP = r.RESET.createChild('/cleanup');
+        r.CHROME_CLEANUP = r.RESET.createChild('/cleanup');
+        if (loadTimeData.getBoolean('showIncompatibleApplications')) {
+          r.INCOMPATIBLE_APPLICATIONS =
+              r.RESET.createChild('/incompatibleApplications');
         }
         // </if>
       }
@@ -396,7 +515,10 @@ cr.define('settings', function() {
     // "About" is the only section in About, but we still need to create the
     // route in order to show the subpage on Chrome OS.
     r.ABOUT_ABOUT = r.ABOUT.createSection('/help/about', 'about');
-    r.DETAILED_BUILD_INFO = r.ABOUT_ABOUT.createChild('/help/details');
+    // TODO(aee): Remove once this file is forked.
+    if (loadTimeData.getBoolean('showOSSettings')) {
+      r.DETAILED_BUILD_INFO = r.ABOUT_ABOUT.createChild('/help/details');
+    }
     // </if>
 
     return r;
@@ -451,7 +573,7 @@ cr.define('settings', function() {
     setCurrentRoute(route, queryParameters, isPopstate) {
       this.recordMetrics(route.path);
 
-      var oldRoute = this.currentRoute;
+      const oldRoute = this.currentRoute;
       this.currentRoute = route;
       this.currentQueryParameters_ = queryParameters;
       this.wasLastRouteChangePopstate_ = isPopstate;
@@ -483,14 +605,14 @@ cr.define('settings', function() {
      */
     getRouteForPath(path) {
       // Allow trailing slash in paths.
-      var canonicalPath = path.replace(CANONICAL_PATH_REGEX, '$1$2');
+      const canonicalPath = path.replace(CANONICAL_PATH_REGEX, '$1$2');
 
       // TODO(tommycli): Use Object.values once Closure compilation supports it.
-      var matchingKey =
+      const matchingKey =
           Object.keys(this.routes_)
               .find((key) => this.routes_[key].path == canonicalPath);
 
-      return !!matchingKey ? this.routes_[matchingKey] : null;
+      return matchingKey ? this.routes_[matchingKey] : null;
     }
 
     /**
@@ -504,22 +626,25 @@ cr.define('settings', function() {
     navigateTo(route, opt_dynamicParameters, opt_removeSearch) {
       // The ADVANCED route only serves as a parent of subpages, and should not
       // be possible to navigate to it directly.
-      if (route == this.routes_.ADVANCED)
+      if (route == this.routes_.ADVANCED) {
         route = /** @type {!settings.Route} */ (this.routes_.BASIC);
+      }
 
-      var params = opt_dynamicParameters || new URLSearchParams();
-      var removeSearch = !!opt_removeSearch;
+      const params = opt_dynamicParameters || new URLSearchParams();
+      const removeSearch = !!opt_removeSearch;
 
-      var oldSearchParam = this.getQueryParameters().get('search') || '';
-      var newSearchParam = params.get('search') || '';
+      const oldSearchParam = this.getQueryParameters().get('search') || '';
+      const newSearchParam = params.get('search') || '';
 
-      if (!removeSearch && oldSearchParam && !newSearchParam)
+      if (!removeSearch && oldSearchParam && !newSearchParam) {
         params.append('search', oldSearchParam);
+      }
 
-      var url = route.path;
-      var queryString = params.toString();
-      if (queryString)
+      let url = route.path;
+      const queryString = params.toString();
+      if (queryString) {
         url += '?' + queryString;
+      }
 
       // History serializes the state, so we don't push the actual route object.
       window.history.pushState(this.currentRoute.path, '', url);
@@ -532,16 +657,17 @@ cr.define('settings', function() {
      * this navigates to the immediate parent. This will never exit Settings.
      */
     navigateToPreviousRoute() {
-      var previousRoute = window.history.state &&
+      const previousRoute = window.history.state &&
           assert(this.getRouteForPath(
               /** @type {string} */ (window.history.state)));
 
-      if (previousRoute && previousRoute.depth <= this.currentRoute.depth)
+      if (previousRoute && previousRoute.depth <= this.currentRoute.depth) {
         window.history.back();
-      else
+      } else {
         this.navigateTo(
             this.currentRoute.parent ||
             /** @type {!settings.Route} */ (this.routes_.BASIC));
+      }
     }
 
     /**
@@ -553,7 +679,7 @@ cr.define('settings', function() {
       assert(!this.initializeRouteFromUrlCalled_);
       this.initializeRouteFromUrlCalled_ = true;
 
-      var route = this.getRouteForPath(window.location.pathname);
+      const route = this.getRouteForPath(window.location.pathname);
       // Never allow direct navigation to ADVANCED.
       if (route && route != this.routes_.ADVANCED) {
         this.currentRoute = route;
@@ -584,12 +710,12 @@ cr.define('settings', function() {
     }
   }
 
-  var routerInstance = new Router();
+  const routerInstance = new Router();
 
-  var routeObservers = new Set();
+  const routeObservers = new Set();
 
   /** @polymerBehavior */
-  var RouteObserverBehavior = {
+  const RouteObserverBehavior = {
     /** @override */
     attached: function() {
       assert(!routeObservers.has(this));
@@ -617,9 +743,9 @@ cr.define('settings', function() {
   /**
    * Regular expression that captures the leading slash, the content and the
    * trailing slash in three different groups.
-   * @const {!RegExp}
+   * @type {!RegExp}
    */
-  var CANONICAL_PATH_REGEX = /(^\/)([\/-\w]+)(\/$)/;
+  const CANONICAL_PATH_REGEX = /(^\/)([\/-\w]+)(\/$)/;
 
   window.addEventListener('popstate', function(event) {
     // On pop state, do not push the state onto the window.history again.
@@ -630,24 +756,24 @@ cr.define('settings', function() {
         new URLSearchParams(window.location.search), true);
   });
 
-  // TODO(scottchen): Change to 'get routes() {}' in export when we fix a bug in
+  // TODO(dpapad): Change to 'get routes() {}' in export when we fix a bug in
   // ChromePass that limits the syntax of what can be returned from cr.define().
-  var routes = routerInstance.getRoutes();
+  const routes = routerInstance.getRoutes();
 
-  // TODO(scottchen): Stop exposing all those methods directly on settings.*,
+  // TODO(dpapad): Stop exposing all those methods directly on settings.*,
   // and instead update all clients to use the singleton instance directly
-  var getCurrentRoute = routerInstance.getCurrentRoute.bind(routerInstance);
-  var getRouteForPath = routerInstance.getRouteForPath.bind(routerInstance);
-  var initializeRouteFromUrl =
+  const getCurrentRoute = routerInstance.getCurrentRoute.bind(routerInstance);
+  const getRouteForPath = routerInstance.getRouteForPath.bind(routerInstance);
+  const initializeRouteFromUrl =
       routerInstance.initializeRouteFromUrl.bind(routerInstance);
-  var resetRouteForTesting =
+  const resetRouteForTesting =
       routerInstance.resetRouteForTesting.bind(routerInstance);
-  var getQueryParameters =
+  const getQueryParameters =
       routerInstance.getQueryParameters.bind(routerInstance);
-  var lastRouteChangeWasPopstate =
+  const lastRouteChangeWasPopstate =
       routerInstance.lastRouteChangeWasPopstate.bind(routerInstance);
-  var navigateTo = routerInstance.navigateTo.bind(routerInstance);
-  var navigateToPreviousRoute =
+  const navigateTo = routerInstance.navigateTo.bind(routerInstance);
+  const navigateToPreviousRoute =
       routerInstance.navigateToPreviousRoute.bind(routerInstance);
 
   return {

@@ -4,6 +4,7 @@
 
 // Event management for WebView.
 
+var $Document = require('safeMethods').SafeMethods.$Document;
 var CreateEvent = require('guestViewEvents').CreateEvent;
 var DCHECK = requireNative('logging').DCHECK;
 var DeclarativeWebRequestSchema =
@@ -20,41 +21,16 @@ var WebViewActionRequests =
 var WebRequestMessageEvent = CreateEvent('webViewInternal.onMessage');
 
 function WebViewEvents(webViewImpl) {
-  GuestViewEvents.call(this, webViewImpl);
+  $Function.call(GuestViewEvents, this, webViewImpl);
 
   this.setupWebRequestEvents();
-  this.view.maybeSetupContextMenus();
-}
-
-var jsEvent;
-function createCustomDeclarativeEvent(name, schema, options, webviewId) {
-  if (bindingUtil) {
-    return bindingUtil.createCustomDeclarativeEvent(
-        name, options.actions, options.conditions, webviewId || 0);
-  }
-  if (!jsEvent)
-    jsEvent = require('event_bindings').Event;
-  return new jsEvent(name, schema, options, webviewId);
-}
-
-function createCustomEvent(name, schema, options) {
-  var supportsLazyListeners = false;
-  if (bindingUtil) {
-    return bindingUtil.createCustomEvent(name, undefined, false,
-                                         supportsLazyListeners);
-  }
-  if (!jsEvent)
-    jsEvent = require('event_bindings').Event;
-
-  if (!options)
-    options = {__proto__: null, supportsLazyListeners: false};
-  DCHECK(!options.supportsLazyListeners);
-  return new jsEvent(name, schema, options);
 }
 
 function createOnMessageEvent(name, schema, options, webviewId) {
   var subEventName = name + '/' + IdGenerator.GetNextId();
-  var newEvent = createCustomEvent(subEventName, schema, options);
+  var newEvent = bindingUtil.createCustomEvent(
+      subEventName, false /* supports filters */,
+      false /* supports lazy listeners */);
 
   var view = GuestViewInternalNatives.GetViewFromID(webviewId || 0);
   if (view) {
@@ -197,6 +173,11 @@ WebViewEvents.EVENTS = {
   }
 };
 
+WebViewEvents.EVENTS.__proto__ = null;
+for (var eventName in WebViewEvents.EVENTS) {
+  WebViewEvents.EVENTS[eventName].__proto__ = null;
+}
+
 WebViewEvents.prototype.setupWebRequestEvents = function() {
   var request = {};
   var createWebRequestEvent = $Function.bind(function(webRequestEvent) {
@@ -229,11 +210,10 @@ WebViewEvents.prototype.setupWebRequestEvents = function() {
                                           webRequestEvent.options,
                                           this.view.viewInstanceId);
         } else {
-          newEvent =
-              createCustomDeclarativeEvent(eventName,
-                                           webRequestEvent.parameters,
-                                           webRequestEvent.options,
-                                           this.view.viewInstanceId);
+          newEvent = bindingUtil.createCustomDeclarativeEvent(
+              eventName, webRequestEvent.options.actions,
+              webRequestEvent.options.conditions,
+              this.view.viewInstanceId || 0);
         }
         this[webRequestEvent.name] = newEvent;
       }
@@ -244,27 +224,21 @@ WebViewEvents.prototype.setupWebRequestEvents = function() {
   for (var i = 0; i < DeclarativeWebRequestSchema.events.length; ++i) {
     var eventSchema = DeclarativeWebRequestSchema.events[i];
     var webRequestEvent = createDeclarativeWebRequestEvent(eventSchema);
-    Object.defineProperty(
-        request,
-        eventSchema.name,
-        {
-          get: webRequestEvent,
-          enumerable: true
-        }
-        );
+    $Object.defineProperty(
+        request, eventSchema.name, {get: webRequestEvent, enumerable: true});
   }
 
   // Populate the WebRequest events from the API definition.
   for (var i = 0; i < WebRequestSchema.events.length; ++i) {
-    var webRequestEvent = createWebRequestEvent(WebRequestSchema.events[i]);
-    Object.defineProperty(
-        request,
-        WebRequestSchema.events[i].name,
-        {
-          get: webRequestEvent,
-          enumerable: true
-        }
-        );
+    var eventSchema = WebRequestSchema.events[i];
+
+    // Skip "onActionIgnored" which is not relevant for webviews.
+    if (eventSchema.name === 'onActionIgnored')
+      continue;
+
+    var webRequestEvent = createWebRequestEvent(eventSchema);
+    $Object.defineProperty(
+        request, eventSchema.name, {get: webRequestEvent, enumerable: true});
   }
 
   this.view.setRequestPropertyOnWebViewElement(request);
@@ -284,15 +258,15 @@ WebViewEvents.prototype.handleFrameNameChangedEvent = function(event) {
 };
 
 WebViewEvents.prototype.handleFullscreenExitEvent = function(event, eventName) {
-  document.webkitCancelFullScreen();
+  $Document.webkitCancelFullScreen(document);
 };
 
 WebViewEvents.prototype.handleLoadAbortEvent = function(event, eventName) {
   var showWarningMessage = function(code, reason) {
     var WARNING_MSG_LOAD_ABORTED = '<webview>: ' +
         'The load has aborted with error %1: %2.';
-    window.console.warn(
-        WARNING_MSG_LOAD_ABORTED.replace('%1', code).replace('%2', reason));
+    window.console.warn($String.replace(
+        $String.replace(WARNING_MSG_LOAD_ABORTED, '%1', code), '%2', reason));
   };
   var webViewEvent = this.makeDomEvent(event, eventName);
   if (this.view.dispatchEvent(webViewEvent)) {

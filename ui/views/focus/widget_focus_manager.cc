@@ -4,16 +4,17 @@
 
 #include "ui/views/focus/widget_focus_manager.h"
 
-#include "base/memory/singleton.h"
-
 namespace views {
 
 // WidgetFocusManager ----------------------------------------------------------
 
 // static
 WidgetFocusManager* WidgetFocusManager::GetInstance() {
-  return base::Singleton<WidgetFocusManager>::get();
+  static base::NoDestructor<WidgetFocusManager> instance;
+  return instance.get();
 }
+
+WidgetFocusManager::~WidgetFocusManager() = default;
 
 void WidgetFocusManager::AddFocusChangeListener(
     WidgetFocusChangeListener* listener) {
@@ -32,9 +33,7 @@ void WidgetFocusManager::OnNativeFocusChanged(gfx::NativeView focused_now) {
   }
 }
 
-WidgetFocusManager::WidgetFocusManager() : enabled_(true) {}
-
-WidgetFocusManager::~WidgetFocusManager() {}
+WidgetFocusManager::WidgetFocusManager() = default;
 
 // AutoNativeNotificationDisabler ----------------------------------------------
 

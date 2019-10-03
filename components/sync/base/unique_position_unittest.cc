@@ -10,9 +10,9 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/hash/sha1.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/sha1.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/sync/protocol/unique_position.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,6 +20,14 @@
 namespace syncer {
 
 namespace {
+
+// This function exploits internal knowledge of how the protobufs are serialized
+// to help us build UniquePositions from strings described in this file.
+static UniquePosition FromBytes(const std::string& bytes) {
+  sync_pb::UniquePosition proto;
+  proto.set_value(bytes);
+  return UniquePosition::FromProto(proto);
+}
 
 class UniquePositionTest : public ::testing::Test {
  protected:
@@ -31,19 +39,8 @@ class UniquePositionTest : public ::testing::Test {
   // so you can see how well the algorithm performs in various insertion
   // scenarios.
   size_t GetLength(const UniquePosition& pos) {
-    sync_pb::UniquePosition proto;
-    pos.ToProto(&proto);
-    return proto.ByteSize();
+    return pos.ToProto().ByteSize();
   }
-};
-
-// This function exploits internal knowledge of how the protobufs are serialized
-// to help us build UniquePositions from strings described in this file.
-static UniquePosition FromBytes(const std::string& bytes) {
-  sync_pb::UniquePosition proto;
-  proto.set_value(bytes);
-  return UniquePosition::FromProto(proto);
-}
 
 const size_t kMinLength = UniquePosition::kSuffixLength;
 const size_t kGenericPredecessorLength = kMinLength + 2;
@@ -70,12 +67,45 @@ const UniquePosition kSmallPositionPlusOne =
 const UniquePosition kHugePosition = FromBytes(
     std::string(UniquePosition::kCompressBytesThreshold, '\xFF') + '\xAB');
 
-const std::string kMinSuffix =
-    std::string(UniquePosition::kSuffixLength - 1, '\x00') + '\x01';
-const std::string kMaxSuffix(UniquePosition::kSuffixLength, '\xFF');
-const std::string kNormalSuffix(
-    "\x68\x44\x6C\x6B\x32\x58\x78\x34\x69\x70\x46\x34\x79\x49"
-    "\x44\x4F\x66\x4C\x58\x41\x31\x34\x68\x59\x56\x43\x6F\x3D");
+const UniquePosition kPositionArray[7] = {
+    kGenericPredecessor,   kGenericSuccessor, kBigPosition,
+    kBigPositionLessTwo,   kBiggerPosition,   kSmallPosition,
+    kSmallPositionPlusOne,
+};
+
+const UniquePosition kSortedPositionArray[7] = {
+    kSmallPosition,    kSmallPositionPlusOne, kGenericPredecessor,
+    kGenericSuccessor, kBigPositionLessTwo,   kBigPosition,
+    kBiggerPosition,
+};
+
+const size_t kNumPositions = base::size(kPositionArray);
+const size_t kNumSortedPositions = base::size(kSortedPositionArray);
+};
+
+static constexpr char kMinSuffix[] = {
+    '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+    '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+    '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+    '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x01'};
+static_assert(base::size(kMinSuffix) == UniquePosition::kSuffixLength,
+              "Wrong size of kMinSuffix.");
+
+static constexpr char kMaxSuffix[] = {
+    '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF',
+    '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF',
+    '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF',
+    '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF', '\xFF'};
+static_assert(base::size(kMaxSuffix) == UniquePosition::kSuffixLength,
+              "Wrong size of kMaxSuffix.");
+
+static constexpr char kNormalSuffix[] = {
+    '\x68', '\x44', '\x6C', '\x6B', '\x32', '\x58', '\x78',
+    '\x34', '\x69', '\x70', '\x46', '\x34', '\x79', '\x49',
+    '\x44', '\x4F', '\x66', '\x4C', '\x58', '\x41', '\x31',
+    '\x34', '\x68', '\x59', '\x56', '\x43', '\x6F', '\x3D'};
+static_assert(base::size(kNormalSuffix) == UniquePosition::kSuffixLength,
+              "Wrong size of kNormalSuffix.");
 
 ::testing::AssertionResult LessThan(const char* m_expr,
                                     const char* n_expr,
@@ -149,21 +179,6 @@ TEST_F(UniquePositionTest, DeserializeObsoleteGzippedPosition) {
 
 class RelativePositioningTest : public UniquePositionTest {};
 
-const UniquePosition kPositionArray[] = {
-    kGenericPredecessor,   kGenericSuccessor, kBigPosition,
-    kBigPositionLessTwo,   kBiggerPosition,   kSmallPosition,
-    kSmallPositionPlusOne,
-};
-
-const UniquePosition kSortedPositionArray[] = {
-    kSmallPosition,    kSmallPositionPlusOne, kGenericPredecessor,
-    kGenericSuccessor, kBigPositionLessTwo,   kBigPosition,
-    kBiggerPosition,
-};
-
-static const size_t kNumPositions = arraysize(kPositionArray);
-static const size_t kNumSortedPositions = arraysize(kSortedPositionArray);
-
 struct PositionLessThan {
   bool operator()(const UniquePosition& a, const UniquePosition& b) {
     return a.LessThan(b);
@@ -200,7 +215,7 @@ TEST_F(RelativePositioningTest, ComparisonSanityTest2) {
 // Exercise comparision functions by sorting and re-sorting the list.
 TEST_F(RelativePositioningTest, SortPositions) {
   ASSERT_EQ(kNumPositions, kNumSortedPositions);
-  UniquePosition positions[arraysize(kPositionArray)];
+  UniquePosition positions[base::size(kPositionArray)];
   for (size_t i = 0; i < kNumPositions; ++i) {
     positions[i] = kPositionArray[i];
   }
@@ -216,7 +231,7 @@ TEST_F(RelativePositioningTest, SortPositions) {
 // Some more exercise for the comparison function.
 TEST_F(RelativePositioningTest, ReverseSortPositions) {
   ASSERT_EQ(kNumPositions, kNumSortedPositions);
-  UniquePosition positions[arraysize(kPositionArray)];
+  UniquePosition positions[base::size(kPositionArray)];
   for (size_t i = 0; i < kNumPositions; ++i) {
     positions[i] = kPositionArray[i];
   }
@@ -377,7 +392,7 @@ class SuffixGenerator {
     // This is not entirely realistic, but that should be OK.  The current
     // suffix format is a base64'ed SHA1 hash, which should be fairly close to
     // random anyway.
-    std::string input = cache_guid_ + base::Int64ToString(next_id_--);
+    std::string input = cache_guid_ + base::NumberToString(next_id_--);
     std::string output;
     base::Base64Encode(base::SHA1HashString(input), &output);
     return output;
@@ -395,9 +410,10 @@ static const char kCacheGuidStr2[] = "yaKb7zHtY06aue9a0vlZgw==";
 class PositionScenariosTest : public UniquePositionTest {
  public:
   PositionScenariosTest()
-      : generator1_(std::string(kCacheGuidStr1, arraysize(kCacheGuidStr1) - 1)),
+      : generator1_(
+            std::string(kCacheGuidStr1, base::size(kCacheGuidStr1) - 1)),
         generator2_(
-            std::string(kCacheGuidStr2, arraysize(kCacheGuidStr2) - 1)) {}
+            std::string(kCacheGuidStr2, base::size(kCacheGuidStr2) - 1)) {}
 
   std::string NextClient1Suffix() { return generator1_.NextSuffix(); }
 
@@ -467,21 +483,24 @@ TEST_F(PositionScenariosTest, TwoClientsInsertAtEnd_B) {
   EXPECT_LT(GetLength(pos), 500U);
 }
 
-INSTANTIATE_TEST_CASE_P(MinSuffix,
-                        PositionInsertTest,
-                        ::testing::Values(kMinSuffix));
-INSTANTIATE_TEST_CASE_P(MaxSuffix,
-                        PositionInsertTest,
-                        ::testing::Values(kMaxSuffix));
-INSTANTIATE_TEST_CASE_P(NormalSuffix,
-                        PositionInsertTest,
-                        ::testing::Values(kNormalSuffix));
+INSTANTIATE_TEST_SUITE_P(
+    MinSuffix,
+    PositionInsertTest,
+    ::testing::Values(std::string(kMinSuffix, base::size(kMinSuffix))));
+INSTANTIATE_TEST_SUITE_P(
+    MaxSuffix,
+    PositionInsertTest,
+    ::testing::Values(std::string(kMaxSuffix, base::size(kMaxSuffix))));
+INSTANTIATE_TEST_SUITE_P(
+    NormalSuffix,
+    PositionInsertTest,
+    ::testing::Values(std::string(kNormalSuffix, base::size(kNormalSuffix))));
 
 class PositionFromIntTest : public UniquePositionTest {
  public:
   PositionFromIntTest()
-      : generator_(std::string(kCacheGuidStr1, arraysize(kCacheGuidStr1) - 1)) {
-  }
+      : generator_(
+            std::string(kCacheGuidStr1, base::size(kCacheGuidStr1) - 1)) {}
 
  protected:
   static const int64_t kTestValues[];
@@ -536,7 +555,7 @@ const int64_t PositionFromIntTest::kTestValues[] = {0LL,
                                                     INT64_MAX - 1};
 
 const size_t PositionFromIntTest::kNumTestValues =
-    arraysize(PositionFromIntTest::kTestValues);
+    base::size(PositionFromIntTest::kTestValues);
 
 TEST_F(PositionFromIntTest, IsValid) {
   for (size_t i = 0; i < kNumTestValues; ++i) {
@@ -650,9 +669,7 @@ TEST_F(CompressedPositionTest, SerializeAndDeserialize) {
        it != positions_.end(); ++it) {
     SCOPED_TRACE("iteration: " + it->ToDebugString());
 
-    sync_pb::UniquePosition proto;
-    it->ToProto(&proto);
-    UniquePosition deserialized = UniquePosition::FromProto(proto);
+    UniquePosition deserialized = UniquePosition::FromProto(it->ToProto());
 
     EXPECT_PRED_FORMAT2(Equals, *it, deserialized);
   }

@@ -4,20 +4,22 @@
 
 #include "ui/views/test/menu_test_utils.h"
 
+#include "base/run_loop.h"
+#include "build/build_config.h"
 #include "ui/views/controls/menu/menu_controller.h"
+
+#if defined(OS_MACOSX)
+#include "ui/views/controls/menu/menu_closure_animation_mac.h"
+#endif
 
 namespace views {
 namespace test {
 
 // TestMenuDelegate -----------------------------------------------------------
 
-TestMenuDelegate::TestMenuDelegate()
-    : execute_command_id_(0),
-      on_menu_closed_called_count_(0),
-      on_menu_closed_menu_(nullptr),
-      on_perform_drop_called_(false) {}
+TestMenuDelegate::TestMenuDelegate() = default;
 
-TestMenuDelegate::~TestMenuDelegate() {}
+TestMenuDelegate::~TestMenuDelegate() = default;
 
 bool TestMenuDelegate::ShowContextMenu(MenuItemView* source,
                                        int id,
@@ -61,7 +63,7 @@ void TestMenuDelegate::WillHideMenu(MenuItemView* menu) {
 MenuControllerTestApi::MenuControllerTestApi()
     : controller_(MenuController::GetActiveInstance()->AsWeakPtr()) {}
 
-MenuControllerTestApi::~MenuControllerTestApi() {}
+MenuControllerTestApi::~MenuControllerTestApi() = default;
 
 void MenuControllerTestApi::ClearState() {
   if (!controller_)
@@ -73,6 +75,19 @@ void MenuControllerTestApi::SetShowing(bool showing) {
   if (!controller_)
     return;
   controller_->showing_ = showing;
+}
+
+void DisableMenuClosureAnimations() {
+#if defined(OS_MACOSX)
+  MenuClosureAnimationMac::DisableAnimationsForTesting();
+#endif
+}
+
+void WaitForMenuClosureAnimation() {
+#if defined(OS_MACOSX)
+  // TODO(https://crbug.com/982815): Replace this with Quit+Run.
+  base::RunLoop().RunUntilIdle();
+#endif
 }
 
 }  // namespace test

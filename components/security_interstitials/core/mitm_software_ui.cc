@@ -5,7 +5,6 @@
 #include "components/security_interstitials/core/mitm_software_ui.h"
 
 #include "base/i18n/time_formatting.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/security_interstitials/core/common_string_util.h"
@@ -45,6 +44,7 @@ void MITMSoftwareUI::PopulateStringsForHTML(
   common_string_util::PopulateSSLLayoutStrings(cert_error_, load_time_data);
   common_string_util::PopulateSSLDebuggingStrings(
       ssl_info_, base::Time::NowFromSystemTime(), load_time_data);
+  common_string_util::PopulateDarkModeDisplaySetting(load_time_data);
 
   // Set display booleans.
   load_time_data->SetBoolean("overridable", false);
@@ -96,6 +96,7 @@ void MITMSoftwareUI::HandleCommand(SecurityInterstitialCommand command) {
     case CMD_REPORT_PHISHING_ERROR:
       // Not supported by the SSL error page.
       NOTREACHED() << "Unsupported command: " << command;
+      break;
     case CMD_ERROR:
     case CMD_TEXT_FOUND:
     case CMD_TEXT_NOT_FOUND:

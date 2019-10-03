@@ -9,12 +9,13 @@
 #include <map>
 #include <set>
 
+#include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
-#include "components/tracing/child/child_trace_message_filter.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/ipc_message.h"
@@ -53,7 +54,6 @@ PpapiDispatcher::PpapiDispatcher(
   channel_->AddFilter(plugin_filter.get());
   globals->RegisterResourceMessageFilters(plugin_filter.get());
 
-  channel_->AddFilter(new tracing::ChildTraceMessageFilter(task_runner_.get()));
   channel_->Init(browser_ipc_handle, IPC::Channel::MODE_SERVER, true);
 }
 
@@ -76,6 +76,20 @@ base::SharedMemoryHandle PpapiDispatcher::ShareSharedMemoryHandleWithRemote(
     const base::SharedMemoryHandle& handle,
     base::ProcessId remote_pid) {
   return base::SharedMemoryHandle();
+}
+
+base::UnsafeSharedMemoryRegion
+PpapiDispatcher::ShareUnsafeSharedMemoryRegionWithRemote(
+    const base::UnsafeSharedMemoryRegion& region,
+    base::ProcessId remote_pid) {
+  return base::UnsafeSharedMemoryRegion();
+}
+
+base::ReadOnlySharedMemoryRegion
+PpapiDispatcher::ShareReadOnlySharedMemoryRegionWithRemote(
+    const base::ReadOnlySharedMemoryRegion& region,
+    base::ProcessId remote_pid) {
+  return base::ReadOnlySharedMemoryRegion();
 }
 
 std::set<PP_Instance>* PpapiDispatcher::GetGloballySeenInstanceIDSet() {
@@ -163,8 +177,16 @@ void PpapiDispatcher::OnMsgInitializeNaClDispatcher(
         args.switch_names[i], args.switch_values[i]);
   }
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
+
+  base::FeatureList::ClearInstanceForTesting();
+  base::FeatureList::InitializeInstance(
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kEnableFeatures),
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kDisableFeatures));
 
   // Tell the process-global GetInterface which interfaces it can return to the
   // plugin.

@@ -30,11 +30,17 @@ void StatusAreaLayoutManager::OnWindowResized() {
 void StatusAreaLayoutManager::SetChildBounds(
     aura::Window* child,
     const gfx::Rect& requested_bounds) {
+  // Don't adjust children during StatusAreaWidget teardown. It's not clear if
+  // this check is still necessary, but |this| is definitely destroyed after
+  // StatusAreaWidget. http://crbug.com/700122.
+  if (!shelf_widget_->status_area_widget())
+    return;
+
   // Only need to have the shelf do a layout if the child changing is the status
   // area and the shelf isn't in the process of doing a layout.
   if (child != shelf_widget_->status_area_widget()->GetNativeWindow() ||
       in_layout_) {
-    wm::WmSnapToPixelLayoutManager::SetChildBounds(child, requested_bounds);
+    WmDefaultLayoutManager::SetChildBounds(child, requested_bounds);
     return;
   }
 
@@ -43,7 +49,7 @@ void StatusAreaLayoutManager::SetChildBounds(
   if (requested_bounds == child->GetTargetBounds())
     return;
 
-  wm::WmSnapToPixelLayoutManager::SetChildBounds(child, requested_bounds);
+  WmDefaultLayoutManager::SetChildBounds(child, requested_bounds);
   LayoutStatusArea();
 }
 

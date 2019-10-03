@@ -4,15 +4,18 @@
 
 #include "chrome/browser/sync/sessions/sync_sessions_router_tab_helper.h"
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/sync/sessions/sync_sessions_web_contents_router.h"
+#include "components/favicon/content/content_favicon_driver.h"
+#include "components/favicon/core/features.h"
+#include "components/language/core/common/language_experiments.h"
 #include "components/sync_sessions/synced_tab_delegate.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(sync_sessions::SyncSessionsRouterTabHelper);
+#include "ui/gfx/image/image_skia.h"
 
 namespace sync_sessions {
 
@@ -33,7 +36,18 @@ SyncSessionsRouterTabHelper::SyncSessionsRouterTabHelper(
     SyncSessionsWebContentsRouter* router)
     : content::WebContentsObserver(web_contents),
       router_(router),
-      source_tab_id_(kInvalidTabID) {}
+      source_tab_id_(SessionID::InvalidValue()) {
+  chrome_translate_client_ =
+      ChromeTranslateClient::FromWebContents(web_contents);
+  // A translate client is not always attached to web contents (e.g. tests).
+  if (chrome_translate_client_)
+    chrome_translate_client_->translate_driver().AddObserver(this);
+
+  favicon_driver_ =
+      favicon::ContentFaviconDriver::FromWebContents(web_contents);
+  if (favicon_driver_)
+    favicon_driver_->AddObserver(this);
+}
 
 SyncSessionsRouterTabHelper::~SyncSessionsRouterTabHelper() {}
 
@@ -49,6 +63,10 @@ void SyncSessionsRouterTabHelper::TitleWasSet(content::NavigationEntry* entry) {
 
 void SyncSessionsRouterTabHelper::WebContentsDestroyed() {
   NotifyRouter();
+  if (chrome_translate_client_)
+    chrome_translate_client_->translate_driver().RemoveObserver(this);
+  if (favicon_driver_)
+    favicon_driver_->RemoveObserver(this);
 }
 
 void SyncSessionsRouterTabHelper::DidFinishLoad(
@@ -69,11 +87,22 @@ void SyncSessionsRouterTabHelper::DidOpenRequestedURL(
     ui::PageTransition transition,
     bool started_from_context_menu,
     bool renderer_initiated) {
-  SessionID::id_type source_tab_id = SessionTabHelper::IdForTab(web_contents());
-  if (new_contents &&
-      SyncSessionsRouterTabHelper::FromWebContents(new_contents) &&
-      new_contents != web_contents() && source_tab_id != kInvalidTabID) {
-    SyncSessionsRouterTabHelper::FromWebContents(new_contents)
+  SetSourceTabIdForChild(new_contents);
+}
+
+void SyncSessionsRouterTabHelper::OnLanguageDetermined(
+    const translate::LanguageDetectionDetails& details) {
+  if (base::FeatureList::IsEnabled(language::kNotifySyncOnLanguageDetermined))
+    NotifyRouter();
+}
+
+void SyncSessionsRouterTabHelper::SetSourceTabIdForChild(
+    content::WebContents* child_contents) {
+  SessionID source_tab_id = SessionTabHelper::IdForTab(web_contents());
+  if (child_contents &&
+      SyncSessionsRouterTabHelper::FromWebContents(child_contents) &&
+      child_contents != web_contents() && source_tab_id.is_valid()) {
+    SyncSessionsRouterTabHelper::FromWebContents(child_contents)
         ->set_source_tab_id(source_tab_id);
   }
   NotifyRouter();
@@ -83,5 +112,20 @@ void SyncSessionsRouterTabHelper::NotifyRouter(bool page_load_completed) {
   if (router_)
     router_->NotifyTabModified(web_contents(), page_load_completed);
 }
+
+void SyncSessionsRouterTabHelper::OnFaviconUpdated(
+    favicon::FaviconDriver* favicon_driver,
+    FaviconDriverObserver::NotificationIconType notification_icon_type,
+    const GURL& icon_url,
+    bool icon_url_changed,
+    const gfx::Image& image) {
+  if (icon_url_changed &&
+      base::FeatureList::IsEnabled(
+          favicon::kNotifySessionsOfMostRecentIconUrlChange)) {
+    NotifyRouter();
+  }
+}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SyncSessionsRouterTabHelper)
 
 }  // namespace sync_sessions

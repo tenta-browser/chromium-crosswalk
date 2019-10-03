@@ -14,9 +14,9 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.TextView;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
-import org.chromium.chrome.browser.compositor.animation.CompositorAnimator.AnimatorUpdateListener;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelAnimation;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelInflater;
@@ -33,64 +33,43 @@ import org.chromium.ui.text.SpanApplier;
  * Controls the Search Promo.
  */
 public class ContextualSearchPromoControl extends OverlayPanelInflater {
-    /**
-     * The pixel density.
-     */
+    /** The interface used to talk to the Panel. */
+    private final ContextualSearchPromoHost mHost;
+
+    /** The pixel density. */
     private final float mDpToPx;
 
-    /**
-     * Whether the Promo is visible.
-     */
+    /** The background color of the promo. */
+    private final int mBackgroundColor;
+
+    /** Whether the Promo is visible. */
     private boolean mIsVisible;
 
-    /**
-     * Whether the Promo is mandatory.
-     */
+    /** Whether the Promo is mandatory. */
     private boolean mIsMandatory;
 
-    /**
-     * The opacity of the Promo.
-     */
+    /** The opacity of the Promo. */
     private float mOpacity;
 
-    /**
-     * The height of the Promo in pixels.
-     */
+    /** The height of the Promo in pixels. */
     private float mHeightPx;
 
-    /**
-     * The height of the Promo content in pixels.
-     */
+    /** The height of the Promo content in pixels. */
     private float mContentHeightPx;
 
-    /**
-     * Whether the Promo View is showing.
-     */
+    /** Whether the Promo View is showing. */
     private boolean mIsShowingView;
 
-    /**
-     * The Y position of the Promo View.
-     */
+    /** The Y position of the Promo View. */
     private float mPromoViewY;
 
-    /**
-     * Whether the Promo was in a state that could be interacted.
-     */
+    /** Whether the Promo was in a state that could be interacted. */
     private boolean mWasInteractive;
 
-    /**
-     * Whether the user's choice has been handled.
-     */
+    /** Whether the user's choice has been handled. */
     private boolean mHasHandledChoice;
 
-    /**
-     * The interface used to talk to the Panel.
-     */
-    private ContextualSearchPromoHost mHost;
-
-    /**
-     * The delegate that is used to communicate with the Panel.
-     */
+    /** The delegate that is used to communicate with the Panel. */
     public interface ContextualSearchPromoHost {
         /**
          * Notifies that the user has opted in.
@@ -124,6 +103,8 @@ public class ContextualSearchPromoControl extends OverlayPanelInflater {
                 R.id.contextual_search_promo, context, container, resourceLoader);
 
         mDpToPx = context.getResources().getDisplayMetrics().density;
+        mBackgroundColor = ApiCompatibilityUtils.getColor(
+                context.getResources(), R.color.contextual_search_promo_background_color);
 
         mHost = host;
     }
@@ -222,6 +203,13 @@ public class ContextualSearchPromoControl extends OverlayPanelInflater {
         return mOpacity;
     }
 
+    /**
+     * @return The background color for the promo, which controls areas outside the content.
+     */
+    public int getBackgroundColor() {
+        return mBackgroundColor;
+    }
+
     // ============================================================================================
     // Panel Animation
     // ============================================================================================
@@ -291,12 +279,7 @@ public class ContextualSearchPromoControl extends OverlayPanelInflater {
                 CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(), 1.f, 0.f,
                         OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
 
-        collapse.addUpdateListener(new AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(CompositorAnimator animator) {
-                updateAppearance(animator.getAnimatedValue());
-            }
-        });
+        collapse.addUpdateListener(animator -> updateAppearance(animator.getAnimatedValue()));
 
         collapse.addListener(new AnimatorListenerAdapter() {
             @Override
@@ -354,31 +337,19 @@ public class ContextualSearchPromoControl extends OverlayPanelInflater {
 
         // "Allow" button.
         Button allowButton = (Button) view.findViewById(R.id.contextual_search_allow_button);
-        allowButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                ContextualSearchPromoControl.this.handlePromoChoice(true);
-            }
-        });
+        allowButton.setOnClickListener(
+                v -> ContextualSearchPromoControl.this.handlePromoChoice(true));
 
         // "No thanks" button.
         Button noThanksButton = (Button) view.findViewById(R.id.contextual_search_no_thanks_button);
-        noThanksButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                ContextualSearchPromoControl.this.handlePromoChoice(false);
-            }
-        });
+        noThanksButton.setOnClickListener(
+                v -> ContextualSearchPromoControl.this.handlePromoChoice(false));
 
         // Fill in text with link to Settings.
         TextView promoText = (TextView) view.findViewById(R.id.contextual_search_promo_text);
 
-        NoUnderlineClickableSpan settingsLink = new NoUnderlineClickableSpan() {
-            @Override
-            public void onClick(View view) {
-                ContextualSearchPromoControl.this.handleClickSettingsLink();
-            }
-        };
+        NoUnderlineClickableSpan settingsLink = new NoUnderlineClickableSpan(view.getResources(),
+                (View ignored) -> ContextualSearchPromoControl.this.handleClickSettingsLink());
 
         promoText.setText(SpanApplier.applySpans(
                 view.getResources().getString(R.string.contextual_search_short_description),
@@ -415,8 +386,8 @@ public class ContextualSearchPromoControl extends OverlayPanelInflater {
         new Handler().post(new Runnable() {
             @Override
             public void run() {
-                PreferencesLauncher.launchSettingsPage(getContext(),
-                        ContextualSearchPreferenceFragment.class.getName());
+                PreferencesLauncher.launchSettingsPageCompat(
+                        getContext(), ContextualSearchPreferenceFragment.class);
             }
         });
     }

@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <set>
 #include <string>
 
@@ -14,7 +15,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/test/base/testing_profile.h"
@@ -59,14 +59,15 @@ class ExtensionUserScriptLoaderTest : public testing::Test,
                const content::NotificationDetails& details) override {
     DCHECK(type == extensions::NOTIFICATION_USER_SCRIPTS_UPDATED);
 
-    shared_memory_ = content::Details<base::SharedMemory>(details).ptr();
+    shared_memory_ =
+        content::Details<base::ReadOnlySharedMemoryRegion>(details).ptr();
   }
 
   // Directory containing user scripts.
   base::ScopedTempDir temp_dir_;
 
   // Updated to the script shared memory when we get notified.
-  base::SharedMemory* shared_memory_;
+  base::ReadOnlySharedMemoryRegion* shared_memory_;
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
@@ -85,7 +86,7 @@ TEST_F(ExtensionUserScriptLoaderTest, NoScripts) {
   loader.StartLoad();
   content::RunAllTasksUntilIdle();
 
-  ASSERT_TRUE(shared_memory_ != NULL);
+  ASSERT_TRUE(shared_memory_ != nullptr && shared_memory_->IsValid());
 }
 
 TEST_F(ExtensionUserScriptLoaderTest, Parse1) {
@@ -219,7 +220,7 @@ TEST_F(ExtensionUserScriptLoaderTest, SkipBOMAtTheBeginning) {
   ASSERT_EQ(written, content.size());
 
   std::unique_ptr<UserScript> user_script(new UserScript());
-  user_script->js_scripts().push_back(base::MakeUnique<UserScript::File>(
+  user_script->js_scripts().push_back(std::make_unique<UserScript::File>(
       temp_dir_.GetPath(), path.BaseName(), GURL()));
 
   UserScriptList user_scripts;
@@ -243,7 +244,7 @@ TEST_F(ExtensionUserScriptLoaderTest, LeaveBOMNotAtTheBeginning) {
   ASSERT_EQ(written, content.size());
 
   std::unique_ptr<UserScript> user_script(new UserScript());
-  user_script->js_scripts().push_back(base::MakeUnique<UserScript::File>(
+  user_script->js_scripts().push_back(std::make_unique<UserScript::File>(
       temp_dir_.GetPath(), path.BaseName(), GURL()));
 
   UserScriptList user_scripts;

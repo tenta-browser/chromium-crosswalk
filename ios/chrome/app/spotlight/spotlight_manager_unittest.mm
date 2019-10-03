@@ -14,7 +14,7 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
-#include "components/favicon/core/large_icon_service.h"
+#include "components/favicon/core/large_icon_service_impl.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
 #include "components/favicon_base/fallback_icon_style.h"
 #import "ios/chrome/app/spotlight/bookmarks_spotlight_manager.h"
@@ -33,7 +33,6 @@
 #error "This file requires ARC support."
 #endif
 
-using favicon::PostReply;
 using testing::_;
 
 const char kDummyIconUrl[] = "http://www.example.com/touch_icon.png";
@@ -65,7 +64,7 @@ class SpotlightManagerTest : public PlatformTest {
  protected:
   SpotlightManagerTest() {
     model_ = bookmarks::TestBookmarkClient::CreateModel();
-    large_icon_service_.reset(new favicon::LargeIconService(
+    large_icon_service_.reset(new favicon::LargeIconServiceImpl(
         &mock_favicon_service_, /*image_fetcher=*/nullptr));
     bookmarksSpotlightManager_ = [[BookmarksSpotlightManager alloc]
         initWithLargeIconService:large_icon_service_.get()
@@ -73,14 +72,20 @@ class SpotlightManagerTest : public PlatformTest {
 
     EXPECT_CALL(mock_favicon_service_,
                 GetLargestRawFaviconForPageURL(_, _, _, _, _))
-        .WillRepeatedly(PostReply<5>(CreateTestBitmap(24, 24)));
+        .WillRepeatedly([](auto, auto, auto,
+                           favicon_base::FaviconRawBitmapCallback callback,
+                           base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(std::move(callback), CreateTestBitmap(24, 24)));
+        });
   }
 
   ~SpotlightManagerTest() override { [bookmarksSpotlightManager_ shutdown]; }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   testing::StrictMock<favicon::MockFaviconService> mock_favicon_service_;
-  std::unique_ptr<favicon::LargeIconService> large_icon_service_;
+  std::unique_ptr<favicon::LargeIconServiceImpl> large_icon_service_;
   base::CancelableTaskTracker cancelable_task_tracker_;
   std::unique_ptr<bookmarks::BookmarkModel> model_;
   BookmarksSpotlightManager* bookmarksSpotlightManager_;
@@ -105,7 +110,7 @@ TEST_F(SpotlightManagerTest, testParentKeywordsForNode) {
   static const std::string model_string("a 1:[ b c ] d 2:[ 21:[ e ] f g ] h");
   bookmarks::test::AddNodesFromModelString(model_.get(), root, model_string);
   const bookmarks::BookmarkNode* eNode =
-      root->GetChild(3)->GetChild(0)->GetChild(0);
+      root->children()[3]->children().front()->children().front().get();
   NSMutableArray* keywords = [[NSMutableArray alloc] init];
   [bookmarksSpotlightManager_ getParentKeywordsForNode:eNode inArray:keywords];
   EXPECT_EQ([keywords count], 2u);
@@ -122,7 +127,7 @@ TEST_F(SpotlightManagerTest, testBookmarksCreateSpotlightItemsWithUrl) {
   static const std::string model_string("a 1:[ b c ] d 2:[ 21:[ e ] f g ] h");
   bookmarks::test::AddNodesFromModelString(model_.get(), root, model_string);
   const bookmarks::BookmarkNode* eNode =
-      root->GetChild(3)->GetChild(0)->GetChild(0);
+      root->children()[3]->children().front()->children().front().get();
 
   NSString* spotlightID = [bookmarksSpotlightManager_
       spotlightIDForURL:eNode->url()
@@ -157,7 +162,7 @@ TEST_F(SpotlightManagerTest, testDefaultKeywordsExist) {
   const bookmarks::BookmarkNode* root = model_->bookmark_bar_node();
   static const std::string model_string("a 1:[ b c ] d 2:[ 21:[ e ] f g ] h");
   bookmarks::test::AddNodesFromModelString(model_.get(), root, model_string);
-  const bookmarks::BookmarkNode* aNode = root->GetChild(0);
+  const bookmarks::BookmarkNode* aNode = root->children().front().get();
   NSArray* items = [bookmarksSpotlightManager_
       spotlightItemsWithURL:aNode->url()
                     favicon:nil

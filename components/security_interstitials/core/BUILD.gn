@@ -12,6 +12,8 @@ static_library("core") {
     "common_string_util.h",
     "controller_client.cc",
     "controller_client.h",
+    "features.cc",
+    "features.h",
     "metrics_helper.cc",
     "metrics_helper.h",
     "mitm_software_ui.cc",
@@ -22,8 +24,6 @@ static_library("core") {
     "safe_browsing_quiet_error_ui.h",
     "ssl_error_ui.cc",
     "ssl_error_ui.h",
-    "superfish_error_ui.cc",
-    "superfish_error_ui.h",
     "urls.cc",
     "urls.h",
   ]
@@ -47,6 +47,11 @@ static_library("core") {
     "//components/strings",
     "//components/url_formatter",
     "//net",
+    "//third_party/zlib/google:compression_utils",
     "//ui/base",
+  ]
+
+  public_deps = [
+    "//components/security_interstitials/core/common/mojom",
   ]
 }

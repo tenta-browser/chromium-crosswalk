@@ -10,15 +10,15 @@
 
 #include "chrome/browser/extensions/api/input_ime/input_ime_api.h"
 
-#include "base/command_line.h"
+#include <memory>
+
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/input_method/input_method_engine.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/input_ime.h"
 #include "extensions/browser/extension_prefs.h"
 #include "ui/base/ime/ime_bridge.h"
@@ -35,8 +35,6 @@ namespace input_ime = extensions::api::input_ime;
 
 namespace {
 
-const char kErrorAPIDisabled[] =
-    "The chrome.input.ime API is not supported on the current platform";
 const char kErrorNoActiveEngine[] = "The extension has not been activated.";
 const char kErrorPermissionDenied[] = "User denied permission.";
 const char kErrorCouldNotFindActiveBrowser[] =
@@ -57,10 +55,20 @@ const char kPrefNeverActivatedSinceLoaded[] = "never_activated_since_loaded";
 // A preference to see whether the extension is the last active extension.
 const char kPrefLastActiveEngine[] = "last_activated_ime_engine";
 
-bool IsInputImeEnabled() {
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableInputImeAPI);
-}
+class ImeBridgeObserver : public ui::IMEBridgeObserver {
+ public:
+  void OnRequestSwitchEngine() override {
+    Browser* browser = chrome::FindLastActive();
+    if (!browser)
+      return;
+    extensions::InputImeEventRouter* router =
+        extensions::GetInputImeEventRouter(browser->profile());
+    if (!router)
+      return;
+    ui::IMEBridge::Get()->SetCurrentEngineHandler(router->active_engine());
+  }
+  void OnInputContextHandlerChanged() override {}
+};
 
 class ImeObserverNonChromeOS : public ui::ImeObserver {
  public:
@@ -93,28 +101,13 @@ class ImeObserverNonChromeOS : public ui::ImeObserver {
         OnCompositionBoundsChanged::kEventName, std::move(args));
   }
 
-  void OnRequestEngineSwitch() override {
-    Browser* browser = chrome::FindLastActive();
-    if (!browser)
-      return;
-    extensions::InputImeEventRouter* router =
-        extensions::GetInputImeEventRouter(browser->profile());
-    if (!router)
-      return;
-    ui::IMEBridge::Get()->SetCurrentEngineHandler(router->active_engine());
-  }
-
  private:
   // ImeObserver overrides.
   void DispatchEventToExtension(
       extensions::events::HistogramValue histogram_value,
       const std::string& event_name,
       std::unique_ptr<base::ListValue> args) override {
-    if (!IsInputImeEnabled()) {
-      return;
-    }
-
-    auto event = base::MakeUnique<extensions::Event>(
+    auto event = std::make_unique<extensions::Event>(
         histogram_value, event_name, std::move(args), profile_);
     extensions::EventRouter::Get(profile_)
         ->DispatchEventToExtension(extension_id_, std::move(event));
@@ -144,13 +137,17 @@ void InputImeAPI::OnExtensionLoaded(content::BrowserContext* browser_context,
                                     const Extension* extension) {
   // No-op if called multiple times.
   ui::IMEBridge::Initialize();
+  if (!observer_) {
+    observer_ = std::make_unique<ImeBridgeObserver>();
+    ui::IMEBridge::Get()->AddObserver(observer_.get());
+  }
 
   // Set the preference kPrefNeverActivatedSinceLoaded true to indicate
   // input.ime.activate API has been never called since loaded.
   Profile* profile = Profile::FromBrowserContext(browser_context);
   ExtensionPrefs::Get(profile)->UpdateExtensionPref(
       extension->id(), kPrefNeverActivatedSinceLoaded,
-      base::MakeUnique<base::Value>(true));
+      std::make_unique<base::Value>(true));
 }
 
 void InputImeAPI::OnExtensionUnloaded(content::BrowserContext* browser_context,
@@ -162,7 +159,7 @@ void InputImeAPI::OnExtensionUnloaded(content::BrowserContext* browser_context,
     // Records the extension is not the last active IME engine.
     ExtensionPrefs::Get(Profile::FromBrowserContext(browser_context))
         ->UpdateExtensionPref(extension->id(), kPrefLastActiveEngine,
-                              base::MakeUnique<base::Value>(false));
+                              std::make_unique<base::Value>(false));
     event_router->DeleteInputMethodEngine(extension->id());
   }
 }
@@ -190,7 +187,7 @@ void InputImeEventRouter::SetActiveEngine(const std::string& extension_id) {
   // Records the extension is the last active IME engine.
   ExtensionPrefs::Get(GetProfile())
       ->UpdateExtensionPref(extension_id, kPrefLastActiveEngine,
-                            base::MakeUnique<base::Value>(true));
+                            std::make_unique<base::Value>(true));
   if (active_engine_) {
     if (active_engine_->GetExtensionId() == extension_id) {
       active_engine_->Enable(std::string());
@@ -201,7 +198,7 @@ void InputImeEventRouter::SetActiveEngine(const std::string& extension_id) {
     ExtensionPrefs::Get(GetProfile())
         ->UpdateExtensionPref(active_engine_->GetExtensionId(),
                               kPrefLastActiveEngine,
-                              base::MakeUnique<base::Value>(false));
+                              std::make_unique<base::Value>(false));
     DeleteInputMethodEngine(active_engine_->GetExtensionId());
   }
 
@@ -229,8 +226,6 @@ void InputImeEventRouter::DeleteInputMethodEngine(
 bool InputImeActivateFunction::disable_bubble_for_testing_ = false;
 
 ExtensionFunction::ResponseAction InputImeActivateFunction::Run() {
-  if (!IsInputImeEnabled())
-    return RespondNow(Error(kErrorAPIDisabled));
   Profile* profile = Profile::FromBrowserContext(browser_context());
   InputImeEventRouter* event_router = GetInputImeEventRouter(profile);
   if (!event_router)
@@ -253,13 +248,13 @@ ExtensionFunction::ResponseAction InputImeActivateFunction::Run() {
     event_router->SetActiveEngine(extension_id());
     ExtensionPrefs::Get(profile)->UpdateExtensionPref(
         extension_id(), kPrefNeverActivatedSinceLoaded,
-        base::MakeUnique<base::Value>(false));
+        std::make_unique<base::Value>(false));
     return RespondNow(NoArguments());
   }
   // The API has already been called at least once.
   ExtensionPrefs::Get(profile)->UpdateExtensionPref(
       extension_id(), kPrefNeverActivatedSinceLoaded,
-      base::MakeUnique<base::Value>(false));
+      std::make_unique<base::Value>(false));
 
   // Otherwise, this API is only allowed to be called from a user action.
   if (!user_gesture())
@@ -321,16 +316,13 @@ void InputImeActivateFunction::OnPermissionBubbleFinished(
     // again' check box. So we can activate the extension directly next time.
     ExtensionPrefs::Get(profile)->UpdateExtensionPref(
         extension_id(), kPrefWarningBubbleNeverShow,
-        base::MakeUnique<base::Value>(true));
+        std::make_unique<base::Value>(true));
   }
 
   Respond(NoArguments());
 }
 
 ExtensionFunction::ResponseAction InputImeDeactivateFunction::Run() {
-  if (!IsInputImeEnabled())
-    return RespondNow(Error(kErrorAPIDisabled));
-
   InputMethodEngine* engine =
       GetActiveEngine(browser_context(), extension_id());
   ui::IMEBridge::Get()->SetCurrentEngineHandler(nullptr);
@@ -340,9 +332,6 @@ ExtensionFunction::ResponseAction InputImeDeactivateFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction InputImeCreateWindowFunction::Run() {
-  if (!IsInputImeEnabled())
-    return RespondNow(Error(kErrorAPIDisabled));
-
   // Using input_ime::CreateWindow::Params::Create() causes the link errors on
   // Windows, only if the method name is 'createWindow'.
   // So doing the by-hand parameter unpacking here.
@@ -379,15 +368,12 @@ ExtensionFunction::ResponseAction InputImeCreateWindowFunction::Run() {
     return RespondNow(Error(error));
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
-  result->Set("frameId", base::MakeUnique<base::Value>(frame_id));
+  result->Set("frameId", std::make_unique<base::Value>(frame_id));
 
   return RespondNow(OneArgument(std::move(result)));
 }
 
 ExtensionFunction::ResponseAction InputImeShowWindowFunction::Run() {
-  if (!IsInputImeEnabled())
-    return RespondNow(Error(kErrorAPIDisabled));
-
   InputMethodEngine* engine =
       GetActiveEngine(browser_context(), extension_id());
   if (!engine)
@@ -401,9 +387,6 @@ ExtensionFunction::ResponseAction InputImeShowWindowFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction InputImeHideWindowFunction::Run() {
-  if (!IsInputImeEnabled())
-    return RespondNow(Error(kErrorAPIDisabled));
-
   InputMethodEngine* engine =
       GetActiveEngine(browser_context(), extension_id());
   if (!engine)

@@ -13,21 +13,22 @@ namespace ui {
 
 class PlatformEventWaiter : public PlatformEventObserver {
  public:
-  typedef base::Callback<bool(const PlatformEvent&)> PlatformEventMatcher;
+  using PlatformEventMatcher =
+      base::RepeatingCallback<bool(const PlatformEvent&)>;
 
-  static PlatformEventWaiter* Create(const base::Closure& success_callback,
-                                     const PlatformEventMatcher& event_matcher);
+  static PlatformEventWaiter* Create(base::OnceClosure success_callback,
+                                     PlatformEventMatcher event_matcher);
 
  private:
-  PlatformEventWaiter(const base::Closure& success_callback,
-                      const PlatformEventMatcher& event_matcher);
+  PlatformEventWaiter(base::OnceClosure success_callback,
+                      PlatformEventMatcher event_matcher);
   ~PlatformEventWaiter() override;
 
   // PlatformEventObserver:
   void WillProcessEvent(const PlatformEvent& event) override;
   void DidProcessEvent(const PlatformEvent& event) override;
 
-  base::Closure success_callback_;
+  base::OnceClosure success_callback_;
   PlatformEventMatcher event_matcher_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformEventWaiter);

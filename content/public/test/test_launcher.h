@@ -9,11 +9,12 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/test/launcher/test_launcher.h"
+#include "build/build_config.h"
 
 namespace base {
 class CommandLine;
 class FilePath;
+struct TestResult;
 }
 
 namespace content {
@@ -29,16 +30,8 @@ extern const char kSingleProcessTestsFlag[];
 // Flag that causes only the kEmptyTestName test to be run.
 extern const char kWarmupFlag[];
 
-// See details in PreRunTest().
-class TestState {
- public:
-  virtual ~TestState() {}
-
-  // Called once test process has launched (and is still running).
-  // NOTE: this is called on a background thread.
-  virtual void ChildProcessLaunched(base::ProcessHandle handle,
-                                    base::ProcessId pid) = 0;
-};
+// Flag used by WebUI test runners to wait for debugger to be attached.
+extern const char kWaitForDebuggerWebUI[];
 
 class TestLauncherDelegate {
  public:
@@ -46,17 +39,22 @@ class TestLauncherDelegate {
   virtual bool AdjustChildProcessCommandLine(
       base::CommandLine* command_line,
       const base::FilePath& temp_data_dir) = 0;
+#if !defined(OS_ANDROID)
+  // Android browser tests set the ContentMainDelegate itself for the test
+  // harness to use, and do not go through ContentMain() in TestLauncher.
   virtual ContentMainDelegate* CreateContentMainDelegate() = 0;
+#endif
 
-  // Called prior to running each test. The delegate may alter the CommandLine
-  // and options used to launch the subprocess. Additionally the client may
-  // return a TestState that is destroyed once the test completes as well as
-  // once the test process is launched.
+  // Called prior to running each test.
   //
   // NOTE: this is not called if --single_process is supplied.
-  virtual std::unique_ptr<TestState> PreRunTest(
-      base::CommandLine* command_line,
-      base::TestLauncher::LaunchOptions* test_launch_options);
+  virtual void PreRunTest() {}
+
+  // Called after running each test. Can modify test result.
+  //
+  // NOTE: Just like PreRunTest, this is not called when --single_process is
+  // supplied.
+  virtual void PostRunTest(base::TestResult* result) {}
 
   // Allows a TestLauncherDelegate to do work before the launcher shards test
   // jobs.
@@ -83,7 +81,12 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
                 char** argv) WARN_UNUSED_RESULT;
 
 TestLauncherDelegate* GetCurrentTestLauncherDelegate();
+
+#if !defined(OS_ANDROID)
+// ContentMain is not run on Android in the test process, and is run via
+// java for child processes. So ContentMainParams does not exist there.
 ContentMainParams* GetContentMainParams();
+#endif
 
 // Returns true if the currently running test has a prefix that indicates it
 // should run before a test of the same name without the prefix.

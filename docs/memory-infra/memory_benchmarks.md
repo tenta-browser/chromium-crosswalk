@@ -34,15 +34,12 @@ System health memory benchmarks are:
 *   [system_health.memory_desktop][system_health] -
     user stories running on desktop platforms.
 
-These benchmarks are run continuously on the [chromium.perf][] waterfall,
+These benchmarks are run continuously on the [chrome.perf][] waterfall,
 collecting and reporting results on the
 [Chrome Performance Dashboard][chromeperf].
 
-Other benchmarks maintained by the memory-infra team are discussed in the
-[appendix](#Other-benchmarks).
-
 [system_health]: https://chromium.googlesource.com/chromium/src/+/master/tools/perf/page_sets/system_health/
-[chromium.perf]: https://build.chromium.org/p/chromium.perf/waterfall
+[chrome.perf]: https://ci.chromium.org/p/chrome/g/chrome.perf/console
 [chromeperf]: https://chromeperf.appspot.com/report
 
 ### User stories
@@ -103,7 +100,42 @@ buildbot output and a link to the trace file taken during the buildbot run.
 
 ## How to run the benchmarks
 
-Benchmarks may be run on a local platform/device or remotely on a try job.
+Benchmarks may be run on a local platform/device or remotely on a pinpoint
+try job.
+
+### How to run a pinpoint try job
+
+Given a patch already uploaded to code review, try jobs provide a convenient
+way to evaluate its memory implications on devices or platforms which
+may not be immediately available to developers.
+
+![New pinpoint try job dialog](https://storage.googleapis.com/chromium-docs.appspot.com/yHRMmUqraqJ.png)
+
+To start a try job go to the [pinpoint][] website, click on the `+` button to
+create a new job, and fill in the required details:
+
+[pinpoint]: https://pinpoint-dot-chromeperf.appspot.com/
+
+* **Bug ID** (optional): The id of a crbug.com issue where pinpoint can post
+  updates when the job finishes.
+* **Gerrit URL**: URL to the patch you want to test. Note that your patch can
+  live in chromium or any of its sub-repositories!
+* **Bot**: Select a suitable device/platform from the drop-down menu on which
+  to run your job.
+* **Benchmark**: The name of the benchmark to run. If you are interested in
+  memory try `system_health.memory_mobile` or `system_health.memory_desktop`
+  as appropriate.
+* **Story** (optional): A pattern passed to Telemetry's `--story-filter`
+  option to only run stories that match the pattern.
+* **Extra Test Arguments** (optional): Additional command line arguments for
+  Telemetry's `run_benchmark`. Of note, if you are interested in running a
+  small but representative sample of system health stories you can pass
+  `--story-tag-filter health_check`.
+
+If you have more specific needs, or need to automate the creation of jobs, you
+can also consider using [pinpoint_cli][].
+
+[pinpoint_cli]: https://cs.chromium.org/chromium/src/tools/perf/pinpoint_cli
 
 ### How to run locally
 
@@ -118,7 +150,9 @@ $SRC/tools/perf/run_benchmark run system_health.memory_mobile \
 This will run the story with a default of 3 repetitions and produce a
 `results.html` file comparing results from this and any previous benchmark
 runs. In addition, you'll also get individual [trace files][memory-infra]
-for each story run by the benchmark.
+for each story run by the benchmark. **Note:** by default only high level
+metrics are shown, you may need to tick the "Show all" check box in order to
+view some of the lower level memory metrics.
 
 ![Example results.html file](https://storage.googleapis.com/chromium-docs.appspot.com/ea60207d9bb4809178fe75923d6d1a2b241170ef.png)
 
@@ -135,31 +169,6 @@ on your device and use `--browser android-webview`.
 
 [memory-infra]: /docs/memory-infra/README.md
 [webview_install]: https://www.chromium.org/developers/how-tos/build-instructions-android-webview
-
-### How to run a try job
-
-Given a patch on a chromium checkout, try jobs provide a convenient way to
-evaluate its memory implications on devices or platforms which
-may not be immediately available to developers.
-
-To start a try job [upload a CL][contributing] and run the command, e.g.:
-
-```
-$SRC/tools/perf/run_benchmark try android-nexus5 system_health.memory_mobile
-```
-
-This will run all of the system health stories for you, and conveniently
-provide a `results.html` file comparing measurements with/without your patch.
-Options like `--story-filter` and `--pageset-repeat` may also be passed to
-this command.
-
-To see the full list of available try bots run the command:
-
-```
-$SRC/tools/perf/run_benchmark try list
-```
-
-[contributing]: https://www.chromium.org/developers/contributing-code
 
 ## Understanding memory metrics
 
@@ -192,61 +201,3 @@ where:
     `private_dirty_size`).
 
 [memory-infra]: /docs/memory-infra/README.md
-
-## Appendix
-
-There are a few other benchmarks maintained by the memory-infra team.
-These also use the same set of metrics as system health, but have differences
-on the kind of stories that they run.
-
-### memory.top_10_mobile
-
-The [memory.top_10_mobile][memory_py] benchmark is in the process of being deprecated
-in favor of system health benchmarks. This process, however, hasn't been
-finalized and currently they are still the reference benchmark used for
-decision making in the Android release process. Therefore, **it is important
-to diagnose and fix regressions caught by this benchmark**.
-
-The benchmark's work flow is:
-
-- Cycle between:
-
-  - load a page on Chrome, wait for it to load, [force garbage collection
-    and measure memory][measure];
-  - push Chrome to the background, force garbage collection and measure
-    memory again.
-
-- Repeat for each of 10 pages *without closing the browser*.
-
-- Close the browser, re-open and repeat the full page set a total of 5 times.
-
-- Story groups are either `foreground` or `background` depending on the state
-  of the browser at the time of measurement.
-
-The main difference to watch out between this and system health benchmarks is
-that, since a single browser instance is kept open and shared by many
-individual stories, they are not independent of each other. In particular, **do
-not use the `--story-filter` argument when trying to reproduce regressions**
-on these benchmarks, as doing so will affect the results.
-
-[memory_py]: https://cs.chromium.org/chromium/src/tools/perf/benchmarks/memory.py
-[measure]: https://github.com/catapult-project/catapult/blob/master/telemetry/telemetry/internal/actions/action_runner.py#L133
-
-### Dual browser benchmarks
-
-Dual browser benchmarks are intended to assess the memory implications of
-shared resources between Chrome and WebView.
-
-*   [memory.dual_browser_test][memory_extra_py] - cycle between doing Google
-    searches on a WebView-based browser (a stand-in for the Google Search app)
-    and loading pages on Chrome. Runs on Android devices only.
-
-    Story groups are either `on_chrome` or `on_webview`, indicating the browser
-    in foreground at the moment when the memory measurement was made.
-
-*   [memory.long_running_dual_browser_test][memory_extra_py] - same as above,
-    but the test is run for 60 iterations keeping both browsers alive for the
-    whole duration of the test and without forcing garbage collection. Intended
-    as a last-resort net to catch memory leaks not apparent on shorter tests.
-
-[memory_extra_py]: https://cs.chromium.org/chromium/src/tools/perf/contrib/memory_extras/memory_extras.py

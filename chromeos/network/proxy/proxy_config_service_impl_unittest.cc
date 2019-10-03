@@ -9,13 +9,13 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/shill/shill_clients.h"
 #include "chromeos/network/network_handler.h"
-#include "chromeos/network/network_state_test.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -34,8 +34,9 @@ class TestProxyConfigService : public net::ProxyConfigService {
   void RemoveObserver(net::ProxyConfigService::Observer* observer) override {}
 
   net::ProxyConfigService::ConfigAvailability GetLatestProxyConfig(
-      net::ProxyConfig* config) override {
-    *config = config_;
+      net::ProxyConfigWithAnnotation* config) override {
+    *config =
+        net::ProxyConfigWithAnnotation(config_, TRAFFIC_ANNOTATION_FOR_TESTS);
     return availability_;
   }
 
@@ -45,17 +46,16 @@ class TestProxyConfigService : public net::ProxyConfigService {
 
 }  // namespace
 
-class ProxyConfigServiceImplTest : public NetworkStateTest {
+class ProxyConfigServiceImplTest : public testing::Test {
   void SetUp() override {
-    DBusThreadManager::Initialize();
+    shill_clients::InitializeFakes();
     chromeos::NetworkHandler::Initialize();
-    NetworkStateTest::SetUp();
+    base::RunLoop().RunUntilIdle();
   }
 
   void TearDown() override {
-    NetworkStateTest::TearDown();
     chromeos::NetworkHandler::Shutdown();
-    DBusThreadManager::Shutdown();
+    shill_clients::Shutdown();
   }
 
  protected:
@@ -78,18 +78,18 @@ TEST_F(ProxyConfigServiceImplTest, IgnoresNestedProxyConfigServiceByDefault) {
   ProxyConfigServiceImpl proxy_tracker(&profile_prefs, &local_state_prefs,
                                        base::ThreadTaskRunnerHandle::Get());
 
-  std::unique_ptr<net::ProxyConfigService> proxy_service =
+  std::unique_ptr<net::ProxyConfigService> proxy_resolution_service =
       proxy_tracker.CreateTrackingProxyConfigService(std::move(nested_service));
 
-  net::ProxyConfig config;
+  net::ProxyConfigWithAnnotation config;
   EXPECT_EQ(net::ProxyConfigService::CONFIG_VALID,
-            proxy_service->GetLatestProxyConfig(&config));
-  EXPECT_TRUE(config.Equals(net::ProxyConfig::CreateDirect()));
+            proxy_resolution_service->GetLatestProxyConfig(&config));
+  EXPECT_TRUE(config.value().Equals(net::ProxyConfig::CreateDirect()));
 
   environment_.RunUntilIdle();
   EXPECT_EQ(net::ProxyConfigService::CONFIG_VALID,
-            proxy_service->GetLatestProxyConfig(&config));
-  EXPECT_TRUE(config.Equals(net::ProxyConfig::CreateDirect()));
+            proxy_resolution_service->GetLatestProxyConfig(&config));
+  EXPECT_TRUE(config.value().Equals(net::ProxyConfig::CreateDirect()));
 
   proxy_tracker.DetachFromPrefService();
 }
@@ -112,18 +112,18 @@ TEST_F(ProxyConfigServiceImplTest, UsesNestedProxyConfigService) {
   ProxyConfigServiceImpl proxy_tracker(&profile_prefs, &local_state_prefs,
                                        base::ThreadTaskRunnerHandle::Get());
 
-  std::unique_ptr<net::ProxyConfigService> proxy_service =
+  std::unique_ptr<net::ProxyConfigService> proxy_resolution_service =
       proxy_tracker.CreateTrackingProxyConfigService(std::move(nested_service));
 
-  net::ProxyConfig config;
+  net::ProxyConfigWithAnnotation config;
   EXPECT_EQ(net::ProxyConfigService::CONFIG_VALID,
-            proxy_service->GetLatestProxyConfig(&config));
-  EXPECT_TRUE(config.Equals(fixed_config));
+            proxy_resolution_service->GetLatestProxyConfig(&config));
+  EXPECT_TRUE(config.value().Equals(fixed_config));
 
   environment_.RunUntilIdle();
   EXPECT_EQ(net::ProxyConfigService::CONFIG_VALID,
-            proxy_service->GetLatestProxyConfig(&config));
-  EXPECT_TRUE(config.Equals(fixed_config));
+            proxy_resolution_service->GetLatestProxyConfig(&config));
+  EXPECT_TRUE(config.value().Equals(fixed_config));
 
   proxy_tracker.DetachFromPrefService();
 }

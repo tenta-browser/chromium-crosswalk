@@ -9,10 +9,10 @@
 
 #include <map>
 #include <string>
-#include <unordered_set>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/values.h"
 #include "content/browser/webui/url_data_manager.h"
@@ -29,26 +29,30 @@ namespace content {
 class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
                                            public WebUIDataSource {
  public:
-  // WebUIDataSource implementation:
-  void AddString(const std::string& name, const base::string16& value) override;
-  void AddString(const std::string& name, const std::string& value) override;
-  void AddLocalizedString(const std::string& name, int ids) override;
+  // WebUIDataSource:
+  void AddString(base::StringPiece name, const base::string16& value) override;
+  void AddString(base::StringPiece name, const std::string& value) override;
+  void AddLocalizedString(base::StringPiece name, int ids) override;
   void AddLocalizedStrings(
       const base::DictionaryValue& localized_strings) override;
-  void AddBoolean(const std::string& name, bool value) override;
-  void AddInteger(const std::string& name, int32_t value) override;
-  void SetJsonPath(const std::string& path) override;
-  void AddResourcePath(const std::string& path, int resource_id) override;
+  void AddBoolean(base::StringPiece name, bool value) override;
+  void AddInteger(base::StringPiece name, int32_t value) override;
+  void SetJsonPath(base::StringPiece path) override;
+  void AddResourcePath(base::StringPiece path, int resource_id) override;
   void SetDefaultResource(int resource_id) override;
-  void SetRequestFilter(
-      const WebUIDataSource::HandleRequestCallback& callback) override;
+  void SetRequestFilter(const WebUIDataSource::ShouldHandleRequestCallback&
+                            should_handle_request_callback,
+                        const WebUIDataSource::HandleRequestCallback&
+                            handle_request_callback) override;
   void DisableReplaceExistingSource() override;
   void DisableContentSecurityPolicy() override;
   void OverrideContentSecurityPolicyScriptSrc(const std::string& data) override;
   void OverrideContentSecurityPolicyObjectSrc(const std::string& data) override;
   void OverrideContentSecurityPolicyChildSrc(const std::string& data) override;
   void DisableDenyXFrameOptions() override;
-  void UseGzip(const std::vector<std::string>& excluded_paths) override;
+  std::string GetSource() override;
+
+  // URLDataSourceImpl:
   const ui::TemplateReplacements* GetReplacements() const override;
 
   // Add the locale to the load time data defaults. May be called repeatedly.
@@ -57,11 +61,15 @@ class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
   bool IsWebUIDataSourceImpl() const override;
 
  protected:
+  explicit WebUIDataSourceImpl(const std::string& source_name);
   ~WebUIDataSourceImpl() override;
 
   // Completes a request by sending our dictionary of localized strings.
   void SendLocalizedStringsAsJSON(
       const URLDataSource::GotDataCallback& callback);
+
+  // Protected for testing.
+  virtual const base::DictionaryValue* GetLocalizedStrings() const;
 
  private:
   class InternalDataSource;
@@ -69,21 +77,26 @@ class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
   friend class WebUIDataSource;
   friend class WebUIDataSourceTest;
 
-  explicit WebUIDataSourceImpl(const std::string& source_name);
+  FRIEND_TEST_ALL_PREFIXES(WebUIDataSourceTest, IsGzipped);
+  FRIEND_TEST_ALL_PREFIXES(WebUIDataSourceTest, IsGzippedNoDefaultResource);
+  FRIEND_TEST_ALL_PREFIXES(WebUIDataSourceTest, IsGzippedWithRequestFiltering);
 
   // Methods that match URLDataSource which are called by
   // InternalDataSource.
-  std::string GetSource() const;
   std::string GetMimeType(const std::string& path) const;
   void StartDataRequest(
       const std::string& path,
       const ResourceRequestInfo::WebContentsGetter& wc_getter,
       const URLDataSource::GotDataCallback& callback);
 
+  int PathToIdrOrDefault(const std::string& path) const;
+
   // Note: this must be called before StartDataRequest() to have an effect.
   void disable_load_time_data_defaults_for_testing() {
     add_load_time_data_defaults_ = false;
   }
+
+  bool IsGzipped(const std::string& path) const;
 
   // The name of this source.
   // E.g., for favicons, this could be "favicon", which results in paths for
@@ -92,7 +105,6 @@ class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
   int default_resource_;
   std::string json_path_;
   std::map<std::string, int> path_to_idr_map_;
-  std::unordered_set<std::string> excluded_paths_;
   // The replacements are initiallized in the main thread and then used in the
   // IO thread. The map is safe to read from multiple threads as long as no
   // futher changes are made to it after initialization.
@@ -102,6 +114,8 @@ class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
   // to |load_time_flags_| if the usage is reduced to storing flags only).
   base::DictionaryValue localized_strings_;
   WebUIDataSource::HandleRequestCallback filter_callback_;
+  WebUIDataSource::ShouldHandleRequestCallback should_handle_request_callback_;
+
   bool add_csp_;
   bool script_src_set_;
   std::string script_src_;
@@ -112,7 +126,6 @@ class CONTENT_EXPORT WebUIDataSourceImpl : public URLDataSourceImpl,
   bool deny_xframe_options_;
   bool add_load_time_data_defaults_;
   bool replace_existing_source_;
-  bool use_gzip_;
 
   DISALLOW_COPY_AND_ASSIGN(WebUIDataSourceImpl);
 };

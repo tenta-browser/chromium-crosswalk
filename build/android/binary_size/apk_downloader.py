@@ -3,6 +3,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import print_function
+
 import argparse
 import os
 import sys
@@ -15,12 +17,12 @@ from pylib.constants import host_paths
 sys.path.append(os.path.join(_BUILD_ANDROID, 'gyp'))
 from util import build_utils
 
-sys.path.append(os.path.join(host_paths.DIR_SOURCE_ROOT, 'build'))
-import find_depot_tools  # pylint: disable=import-error,unused-import
+sys.path.append(
+    os.path.join(host_paths.DIR_SOURCE_ROOT, 'third_party', 'depot_tools'))
 import download_from_google_storage
 import upload_to_google_storage
 
-CURRENT_MILESTONE = '63'
+CURRENT_MILESTONE = '67'
 DEFAULT_BUCKET = 'gs://chromium-android-tools/apks'
 DEFAULT_DOWNLOAD_PATH = os.path.join(os.path.dirname(__file__), 'apks')
 DEFAULT_BUILDER = 'Android_Builder'
@@ -38,10 +40,10 @@ def MaybeDownloadApk(builder, milestone, apk, download_path, bucket):
   sha1_path = apk_path + '.sha1'
   base_url = os.path.join(bucket, builder, milestone)
   if os.path.exists(apk_path):
-    print '%s already exists' % apk_path
+    print('%s already exists' % apk_path)
     return apk_path
   elif not os.path.exists(sha1_path):
-    print 'Skipping %s, file not found' % sha1_path
+    print('Skipping %s, file not found' % sha1_path)
     return None
   else:
     download_from_google_storage.download_from_google_storage(

@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/api_definitions_natives.h"
 
+#include "base/bind.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/renderer/dispatcher.h"
@@ -13,11 +14,14 @@ namespace extensions {
 
 ApiDefinitionsNatives::ApiDefinitionsNatives(Dispatcher* dispatcher,
                                              ScriptContext* context)
-    : ObjectBackedNativeHandler(context), dispatcher_(dispatcher) {
-  RouteFunction(
+    : ObjectBackedNativeHandler(context), dispatcher_(dispatcher) {}
+
+void ApiDefinitionsNatives::AddRoutes() {
+  RouteHandlerFunction(
       "GetExtensionAPIDefinitionsForTest", "test",
-      base::Bind(&ApiDefinitionsNatives::GetExtensionAPIDefinitionsForTest,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &ApiDefinitionsNatives::GetExtensionAPIDefinitionsForTest,
+          base::Unretained(this)));
 }
 
 void ApiDefinitionsNatives::GetExtensionAPIDefinitionsForTest(

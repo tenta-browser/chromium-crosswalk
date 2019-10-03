@@ -9,14 +9,13 @@
 
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/set_disjunction_permission.h"
 #include "extensions/common/permissions/usb_device_permission_data.h"
-
-namespace device {
-class UsbDevice;
-}
+#include "services/device/public/mojom/usb_device.mojom.h"
 
 namespace extensions {
 
@@ -29,7 +28,7 @@ class UsbDevicePermission
   struct CheckParam : public APIPermission::CheckParam {
     static std::unique_ptr<CheckParam> ForUsbDevice(
         const Extension* extension,
-        const device::UsbDevice* device);
+        const device::mojom::UsbDeviceInfo& device_info);
     // Creates check param that only checks vendor, product and interface ID
     // permission properties. It will accept all interfaceClass properties. For
     // example, created param would always accept {"intefaceClass": 3}
@@ -50,7 +49,7 @@ class UsbDevicePermission
         int interface_id);
     static std::unique_ptr<CheckParam> ForUsbDeviceAndInterface(
         const Extension* extension,
-        const device::UsbDevice* device,
+        const device::mojom::UsbDeviceInfo& device_info,
         int interface_id);
     static std::unique_ptr<CheckParam> ForHidDevice(const Extension* extension,
                                                     uint16_t vendor_id,

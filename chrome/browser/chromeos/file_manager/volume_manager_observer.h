@@ -8,7 +8,12 @@
 #include <string>
 
 #include "chromeos/dbus/cros_disks_client.h"
-#include "chromeos/disks/disk_mount_manager.h"
+
+namespace chromeos {
+namespace disks {
+class Disk;
+}  // namespace disks
+}  // namespace chromeos
 
 namespace file_manager {
 
@@ -17,45 +22,41 @@ class Volume;
 // Observer interface of volume related events.
 class VolumeManagerObserver {
  public:
-  virtual ~VolumeManagerObserver() {}
+  virtual ~VolumeManagerObserver() = default;
 
   // Fired when a new disk is added.
-  virtual void OnDiskAdded(
-      const chromeos::disks::DiskMountManager::Disk& disk, bool mounting) = 0;
+  virtual void OnDiskAdded(const chromeos::disks::Disk& disk, bool mounting) {}
 
   // Fired when a disk is removed.
-  virtual void OnDiskRemoved(
-      const chromeos::disks::DiskMountManager::Disk& disk) = 0;
+  virtual void OnDiskRemoved(const chromeos::disks::Disk& disk) {}
 
   // Fired when a new device is added.
-  virtual void OnDeviceAdded(const std::string& device_path) = 0;
+  virtual void OnDeviceAdded(const std::string& device_path) {}
 
   // Fired when a device is removed.
-  virtual void OnDeviceRemoved(const std::string& device_path) = 0;
+  virtual void OnDeviceRemoved(const std::string& device_path) {}
 
   // Fired when a volume is mounted.
   virtual void OnVolumeMounted(chromeos::MountError error_code,
-                               const Volume& volume) = 0;
+                               const Volume& volume) {}
 
   // Fired when a volume is unmounted.
   virtual void OnVolumeUnmounted(chromeos::MountError error_code,
-                                 const Volume& volume) = 0;
+                                 const Volume& volume) {}
 
   // Fired when formatting a device is started (or failed to start).
-  virtual void OnFormatStarted(
-      const std::string& device_path, bool success) = 0;
+  virtual void OnFormatStarted(const std::string& device_path, bool success) {}
 
   // Fired when formatting a device is completed (or terminated on error).
-  virtual void OnFormatCompleted(
-      const std::string& device_path, bool success) = 0;
+  virtual void OnFormatCompleted(const std::string& device_path, bool success) {
+  }
 
   // Fired when renaming a device is started (or failed to start).
-  virtual void OnRenameStarted(const std::string& device_path,
-                               bool success) = 0;
+  virtual void OnRenameStarted(const std::string& device_path, bool success) {}
 
   // Fired when renaming a device is completed (or terminated on error).
-  virtual void OnRenameCompleted(const std::string& device_path,
-                                 bool success) = 0;
+  virtual void OnRenameCompleted(const std::string& device_path, bool success) {
+  }
 };
 
 }  // namespace file_manager

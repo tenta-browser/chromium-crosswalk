@@ -5,28 +5,62 @@
 #include "cc/animation/animation_host.h"
 
 #include <algorithm>
+#include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
+#include "cc/animation/animation.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/animation_events.h"
 #include "cc/animation/animation_id_provider.h"
-#include "cc/animation/animation_player.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
+#include "cc/animation/keyframe_effect.h"
 #include "cc/animation/scroll_offset_animation_curve.h"
 #include "cc/animation/scroll_offset_animations.h"
 #include "cc/animation/scroll_offset_animations_impl.h"
 #include "cc/animation/scroll_timeline.h"
 #include "cc/animation/timing_function.h"
-#include "cc/animation/worklet_animation_player.h"
+#include "cc/animation/worklet_animation.h"
 #include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/scroll_offset.h"
 
 namespace cc {
+
+namespace {
+
+AnimationWorkletMutationState ToAnimationWorkletMutationState(
+    MutateStatus status) {
+  switch (status) {
+    case MutateStatus::kCompletedWithUpdate:
+      return AnimationWorkletMutationState::COMPLETED_WITH_UPDATE;
+
+    case MutateStatus::kCompletedNoUpdate:
+      return AnimationWorkletMutationState::COMPLETED_NO_UPDATE;
+
+    case MutateStatus::kCanceled:
+      return AnimationWorkletMutationState::CANCELED;
+  }
+}
+
+bool TickAnimationsIf(AnimationHost::AnimationsList animations,
+                      base::TimeTicks monotonic_time,
+                      bool (*predicate)(const Animation&)) {
+  bool did_tick = false;
+  for (auto& it : animations) {
+    if (predicate(*it)) {
+      it->Tick(monotonic_time);
+      did_tick = true;
+    }
+  }
+  return did_tick;
+}
+
+}  // namespace
 
 std::unique_ptr<AnimationHost> AnimationHost::CreateMainInstance() {
   return base::WrapUnique(new AnimationHost(ThreadInstance::MAIN));
@@ -86,7 +120,7 @@ void AnimationHost::ClearMutators() {
 }
 
 void AnimationHost::EraseTimeline(scoped_refptr<AnimationTimeline> timeline) {
-  timeline->ClearPlayers();
+  timeline->ClearAnimations();
   timeline->SetAnimationHost(nullptr);
 }
 
@@ -107,61 +141,79 @@ void AnimationHost::RemoveAnimationTimeline(
   SetNeedsPushProperties();
 }
 
-void AnimationHost::RegisterElement(ElementId element_id,
-                                    ElementListType list_type) {
-  scoped_refptr<ElementAnimations> element_animations =
-      GetElementAnimationsForElementId(element_id);
-  if (element_animations)
-    element_animations->ElementRegistered(element_id, list_type);
+void AnimationHost::UpdateRegisteredElementIds(ElementListType changed_list) {
+  for (auto map_entry : element_to_animations_map_) {
+    if (mutator_host_client()->IsElementInPropertyTrees(map_entry.first,
+                                                        changed_list))
+      map_entry.second->ElementIdRegistered(map_entry.first, changed_list);
+    else
+      map_entry.second->ElementIdUnregistered(map_entry.first, changed_list);
+  }
 }
 
-void AnimationHost::UnregisterElement(ElementId element_id,
+void AnimationHost::InitClientAnimationState() {
+  for (auto map_entry : element_to_animations_map_)
+    map_entry.second->InitClientAnimationState();
+}
+
+void AnimationHost::RegisterElementId(ElementId element_id,
                                       ElementListType list_type) {
   scoped_refptr<ElementAnimations> element_animations =
       GetElementAnimationsForElementId(element_id);
   if (element_animations)
-    element_animations->ElementUnregistered(element_id, list_type);
+    element_animations->ElementIdRegistered(element_id, list_type);
 }
 
-void AnimationHost::RegisterPlayerForElement(ElementId element_id,
-                                             AnimationPlayer* player) {
+void AnimationHost::UnregisterElementId(ElementId element_id,
+                                        ElementListType list_type) {
+  scoped_refptr<ElementAnimations> element_animations =
+      GetElementAnimationsForElementId(element_id);
+  if (element_animations)
+    element_animations->ElementIdUnregistered(element_id, list_type);
+}
+
+void AnimationHost::RegisterKeyframeEffectForElement(
+    ElementId element_id,
+    KeyframeEffect* keyframe_effect) {
   DCHECK(element_id);
-  DCHECK(player);
+  DCHECK(keyframe_effect);
 
   scoped_refptr<ElementAnimations> element_animations =
       GetElementAnimationsForElementId(element_id);
   if (!element_animations) {
-    element_animations = ElementAnimations::Create();
-    element_animations->SetElementId(element_id);
+    element_animations = ElementAnimations::Create(this, element_id);
     element_to_animations_map_[element_animations->element_id()] =
         element_animations;
   }
 
-  if (element_animations->animation_host() != this) {
-    element_animations->SetAnimationHost(this);
-    element_animations->InitAffectedElementTypes();
-  }
+  DCHECK(element_animations->AnimationHostIs(this));
 
-  element_animations->AddTicker(player->animation_ticker());
+  element_animations->AddKeyframeEffect(keyframe_effect);
 }
 
-void AnimationHost::UnregisterPlayerForElement(ElementId element_id,
-                                               AnimationPlayer* player) {
+void AnimationHost::UnregisterKeyframeEffectForElement(
+    ElementId element_id,
+    KeyframeEffect* keyframe_effect) {
   DCHECK(element_id);
-  DCHECK(player);
+  DCHECK(keyframe_effect);
 
   scoped_refptr<ElementAnimations> element_animations =
       GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
-  element_animations->RemoveTicker(player->animation_ticker());
+
+  // |ClearAffectedElementTypes| requires an ElementId map in order to update
+  // the property trees. Generating that map requires walking the keyframe
+  // effects, so we have to do it before removing this one.
+  PropertyToElementIdMap element_id_map =
+      element_animations->GetPropertyToElementIdMap();
+
+  element_animations->RemoveKeyframeEffect(keyframe_effect);
 
   if (element_animations->IsEmpty()) {
-    element_animations->ClearAffectedElementTypes();
+    element_animations->ClearAffectedElementTypes(element_id_map);
     element_to_animations_map_.erase(element_animations->element_id());
-    element_animations->SetAnimationHost(nullptr);
+    element_animations->ClearAnimationHost();
   }
-
-  RemoveFromTicking(player);
 }
 
 void AnimationHost::SetMutatorHostClient(MutatorHostClient* client) {
@@ -169,6 +221,8 @@ void AnimationHost::SetMutatorHostClient(MutatorHostClient* client) {
     return;
 
   mutator_host_client_ = client;
+  if (mutator_host_client_ && needs_push_properties_)
+    mutator_host_client_->SetMutatorsNeedCommit();
 }
 
 void AnimationHost::SetNeedsCommit() {
@@ -180,6 +234,8 @@ void AnimationHost::SetNeedsCommit() {
 
 void AnimationHost::SetNeedsPushProperties() {
   needs_push_properties_ = true;
+  if (mutator_host_client_)
+    mutator_host_client_->SetMutatorsNeedCommit();
 }
 
 void AnimationHost::PushPropertiesTo(MutatorHost* mutator_host_impl) {
@@ -225,8 +281,8 @@ void AnimationHost::RemoveTimelinesFromImplThread(
 }
 
 void AnimationHost::PushPropertiesToImplThread(AnimationHost* host_impl) {
-  // Sync all players with impl thread to create ElementAnimations. This needs
-  // to happen before the element animations are synced below.
+  // Sync all animations with impl thread to create ElementAnimations. This
+  // needs to happen before the element animations are synced below.
   for (auto& kv : id_to_timeline_map_) {
     AnimationTimeline* timeline = kv.second.get();
     if (AnimationTimeline* timeline_impl =
@@ -248,8 +304,8 @@ void AnimationHost::PushPropertiesToImplThread(AnimationHost* host_impl) {
   scroll_offset_animations_->PushPropertiesTo(
       host_impl->scroll_offset_animations_impl_.get());
   host_impl->main_thread_animations_count_ = main_thread_animations_count_;
-  host_impl->main_thread_compositable_animations_count_ =
-      main_thread_compositable_animations_count_;
+  host_impl->current_frame_had_raf_ = current_frame_had_raf_;
+  host_impl->next_frame_has_pending_raf_ = next_frame_has_pending_raf_;
 }
 
 scoped_refptr<ElementAnimations>
@@ -265,90 +321,138 @@ void AnimationHost::SetSupportsScrollAnimations(
   supports_scroll_animations_ = supports_scroll_animations;
 }
 
+void AnimationHost::SetScrollAnimationDurationForTesting(
+    base::TimeDelta duration) {
+  ScrollOffsetAnimationCurve::SetAnimationDurationForTesting(duration);
+}
+
 bool AnimationHost::SupportsScrollAnimations() const {
   return supports_scroll_animations_;
 }
 
 bool AnimationHost::NeedsTickAnimations() const {
-  return NeedsTickAnimationPlayers() || NeedsTickMutator();
+  return !ticking_animations_.empty();
 }
 
-bool AnimationHost::NeedsTickMutator() const {
-  return mutator_ && mutator_->HasAnimators();
+void AnimationHost::TickMutator(base::TimeTicks monotonic_time,
+                                const ScrollTree& scroll_tree,
+                                bool is_active_tree) {
+  if (!mutator_ || !mutator_->HasMutators())
+    return;
+
+  std::unique_ptr<MutatorInputState> state = CollectWorkletAnimationsState(
+      monotonic_time, scroll_tree, is_active_tree);
+  if (state->IsEmpty())
+    return;
+
+  ElementListType tree_type =
+      is_active_tree ? ElementListType::ACTIVE : ElementListType::PENDING;
+
+  auto on_done = base::BindOnce(
+      [](base::WeakPtr<AnimationHost> animation_host, ElementListType tree_type,
+         MutateStatus status) {
+        if (animation_host->mutator_host_client_) {
+          animation_host->mutator_host_client_
+              ->NotifyAnimationWorkletStateChange(
+                  ToAnimationWorkletMutationState(status), tree_type);
+        }
+      },
+      weak_factory_.GetWeakPtr(), tree_type);
+
+  MutateQueuingStrategy queuing_strategy =
+      is_active_tree ? MutateQueuingStrategy::kQueueAndReplaceNormalPriority
+                     : MutateQueuingStrategy::kQueueHighPriority;
+  if (mutator_->Mutate(std::move(state), queuing_strategy,
+                       std::move(on_done))) {
+    mutator_host_client_->NotifyAnimationWorkletStateChange(
+        AnimationWorkletMutationState::STARTED, tree_type);
+  }
+  return;
 }
 
-bool AnimationHost::NeedsTickAnimationPlayers() const {
-  return !ticking_players_.empty();
-}
-
-bool AnimationHost::ActivateAnimations() {
-  if (!NeedsTickAnimationPlayers())
+bool AnimationHost::ActivateAnimations(MutatorEvents* mutator_events) {
+  if (!NeedsTickAnimations())
     return false;
 
+  auto* animation_events = static_cast<AnimationEvents*>(mutator_events);
+
   TRACE_EVENT0("cc", "AnimationHost::ActivateAnimations");
-  PlayersList ticking_players_copy = ticking_players_;
-  for (auto& it : ticking_players_copy)
-    it->ActivateAnimations();
+  AnimationsList ticking_animations_copy = ticking_animations_;
+  for (auto& it : ticking_animations_copy) {
+    it->ActivateKeyframeEffects();
+    // Finish animations which no longer affect active or pending elements.
+    it->UpdateState(false, animation_events);
+  }
 
   return true;
 }
 
 bool AnimationHost::TickAnimations(base::TimeTicks monotonic_time,
-                                   const ScrollTree& scroll_tree) {
+                                   const ScrollTree& scroll_tree,
+                                   bool is_active_tree) {
   TRACE_EVENT0("cc", "AnimationHost::TickAnimations");
-  bool did_animate = false;
+  // We tick animations in the following order:
+  // 1. regular animations 2. mutator 3. worklet animations
+  //
+  // Mutator may depend on scroll offset as its time input e.g., when there is
+  // a worklet animation attached to a scroll timeline.
+  // This ordering ensures we use the latest scroll offset as the input to the
+  // mutator even if there are active scroll animations.
+  // The ticking of worklet animations is deferred until draw to ensure that
+  // mutator output takes effect in the same impl frame that it was mutated.
+  if (!NeedsTickAnimations())
+    return false;
 
-  if (NeedsTickAnimationPlayers()) {
-    PlayersList ticking_players_copy = ticking_players_;
-    for (auto& it : ticking_players_copy)
-      it->Tick(monotonic_time);
+  TRACE_EVENT_INSTANT0("cc", "NeedsTickAnimations", TRACE_EVENT_SCOPE_THREAD);
 
-    did_animate = true;
-  }
-  if (NeedsTickMutator()) {
-    // TODO(majidvp): At the moment we call this for both active and pending
-    // trees similar to other animations. However our final goal is to only call
-    // it once, ideally after activation, and only when the input
-    // to an active timeline has changed. http://crbug.com/767210
-    mutator_->Mutate(CollectAnimatorsState(monotonic_time, scroll_tree));
-    did_animate = true;
-  }
+  // Worklet animations are ticked at a later stage. See above comment for
+  // details.
+  bool animated = TickAnimationsIf(ticking_animations_, monotonic_time,
+                                   [](const Animation& animation) {
+                                     return !animation.IsWorkletAnimation();
+                                   });
 
-  return did_animate;
+  // TODO(majidvp): At the moment we call this for both active and pending
+  // trees similar to other animations. However our final goal is to only call
+  // it once, ideally after activation, and only when the input
+  // to an active timeline has changed. http://crbug.com/767210
+  // Note that the TickMutator does not set the animated flag since these
+  // mutations are processed asynchronously. Additional actions required to
+  // handle these mutations are performed on receiving the asynchronous results.
+  TickMutator(monotonic_time, scroll_tree, is_active_tree);
+
+  return animated;
 }
 
 void AnimationHost::TickScrollAnimations(base::TimeTicks monotonic_time,
                                          const ScrollTree& scroll_tree) {
-  // TODO(majidvp) For now the logic simply assumes all AnimationWorklet
-  // animations depend on scroll offset but this is inefficient. We need a more
-  // fine-grained approach based on invalidating individual ScrollTimelines and
-  // then ticking the animation players attached to those timelines. To make
-  // this happen we probably need to move "ticking" players to timeline.
-
   // TODO(majidvp): We need to return a boolean here so that LTHI knows
   // whether it needs to schedule another frame.
-  if (mutator_)
-    mutator_->Mutate(CollectAnimatorsState(monotonic_time, scroll_tree));
+  TickMutator(monotonic_time, scroll_tree, true /* is_active_tree */);
 }
 
-std::unique_ptr<MutatorInputState> AnimationHost::CollectAnimatorsState(
-    base::TimeTicks monotonic_time,
-    const ScrollTree& scroll_tree) {
-  TRACE_EVENT0("cc", "AnimationHost::CollectAnimatorsState");
-  std::unique_ptr<MutatorInputState> result =
-      base::MakeUnique<MutatorInputState>();
+void AnimationHost::TickWorkletAnimations() {
+  TickAnimationsIf(ticking_animations_, base::TimeTicks(),
+                   [](const Animation& animation) {
+                     return animation.IsWorkletAnimation();
+                   });
+}
 
-  for (auto& player : ticking_players_) {
-    if (!player->IsWorkletAnimationPlayer())
+std::unique_ptr<MutatorInputState> AnimationHost::CollectWorkletAnimationsState(
+    base::TimeTicks monotonic_time,
+    const ScrollTree& scroll_tree,
+    bool is_active_tree) {
+  TRACE_EVENT0("cc", "AnimationHost::CollectWorkletAnimationsState");
+  std::unique_ptr<MutatorInputState> result =
+      std::make_unique<MutatorInputState>();
+
+  for (auto& animation : ticking_animations_) {
+    if (!animation->IsWorkletAnimation())
       continue;
 
-    WorkletAnimationPlayer* worklet_player =
-        static_cast<WorkletAnimationPlayer*>(player.get());
-    MutatorInputState::AnimationState state{
-        worklet_player->id(), worklet_player->name(),
-        worklet_player->CurrentTime(monotonic_time, scroll_tree)};
-
-    result->animations.push_back(std::move(state));
+    ToWorkletAnimation(animation.get())
+        ->UpdateInputState(result.get(), monotonic_time, scroll_tree,
+                           is_active_tree);
   }
 
   return result;
@@ -356,17 +460,23 @@ std::unique_ptr<MutatorInputState> AnimationHost::CollectAnimatorsState(
 
 bool AnimationHost::UpdateAnimationState(bool start_ready_animations,
                                          MutatorEvents* mutator_events) {
-  if (!NeedsTickAnimationPlayers())
+  if (!NeedsTickAnimations())
     return false;
 
   auto* animation_events = static_cast<AnimationEvents*>(mutator_events);
 
   TRACE_EVENT0("cc", "AnimationHost::UpdateAnimationState");
-  PlayersList ticking_players_copy = ticking_players_;
-  for (auto& it : ticking_players_copy)
+  AnimationsList ticking_animations_copy = ticking_animations_;
+  for (auto& it : ticking_animations_copy)
     it->UpdateState(start_ready_animations, animation_events);
 
   return true;
+}
+
+void AnimationHost::PromoteScrollTimelinesPendingToActive() {
+  for (auto& animation : ticking_animations_) {
+    animation->PromoteScrollTimelinePendingToActive();
+  }
 }
 
 std::unique_ptr<MutatorEvents> AnimationHost::CreateEvents() {
@@ -382,8 +492,8 @@ void AnimationHost::SetAnimationEvents(
        ++event_index) {
     ElementId element_id = events->events_[event_index].element_id;
 
-    // Use the map of all ElementAnimations, not just ticking players, since
-    // non-ticking Players may still receive events for impl-only animations.
+    // Use the map of all ElementAnimations, not just ticking animations, since
+    // non-ticking animations may still receive events for impl-only animations.
     const ElementToAnimationsMap& all_element_animations =
         element_to_animations_map_;
     auto iter = all_element_animations.find(element_id);
@@ -426,6 +536,15 @@ bool AnimationHost::IsAnimatingFilterProperty(ElementId element_id,
              : false;
 }
 
+bool AnimationHost::IsAnimatingBackdropFilterProperty(
+    ElementId element_id,
+    ElementListType list_type) const {
+  auto element_animations = GetElementAnimationsForElementId(element_id);
+  return element_animations ? element_animations->IsCurrentlyAnimatingProperty(
+                                  TargetProperty::BACKDROP_FILTER, list_type)
+                            : false;
+}
+
 bool AnimationHost::IsAnimatingOpacityProperty(
     ElementId element_id,
     ElementListType list_type) const {
@@ -453,6 +572,16 @@ bool AnimationHost::HasPotentiallyRunningFilterAnimation(
   return element_animations
              ? element_animations->IsPotentiallyAnimatingProperty(
                    TargetProperty::FILTER, list_type)
+             : false;
+}
+
+bool AnimationHost::HasPotentiallyRunningBackdropFilterAnimation(
+    ElementId element_id,
+    ElementListType list_type) const {
+  auto element_animations = GetElementAnimationsForElementId(element_id);
+  return element_animations
+             ? element_animations->IsPotentiallyAnimatingProperty(
+                   TargetProperty::BACKDROP_FILTER, list_type)
              : false;
 }
 
@@ -486,15 +615,6 @@ bool AnimationHost::HasAnyAnimationTargetingProperty(
   return element_animations->HasAnyAnimationTargetingProperty(property);
 }
 
-bool AnimationHost::HasOnlyTranslationTransforms(
-    ElementId element_id,
-    ElementListType list_type) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->HasOnlyTranslationTransforms(list_type)
-             : true;
-}
-
 bool AnimationHost::AnimationsPreserveAxisAlignment(
     ElementId element_id) const {
   auto element_animations = GetElementAnimationsForElementId(element_id);
@@ -503,34 +623,41 @@ bool AnimationHost::AnimationsPreserveAxisAlignment(
              : true;
 }
 
-bool AnimationHost::MaximumTargetScale(ElementId element_id,
+void AnimationHost::GetAnimationScales(ElementId element_id,
                                        ElementListType list_type,
-                                       float* max_scale) const {
-  *max_scale = 0.f;
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->MaximumTargetScale(list_type, max_scale)
-             : true;
+                                       float* maximum_scale,
+                                       float* starting_scale) const {
+  if (auto element_animations = GetElementAnimationsForElementId(element_id)) {
+    element_animations->GetAnimationScales(list_type, maximum_scale,
+                                           starting_scale);
+    return;
+  }
+  *maximum_scale = kNotScaled;
+  *starting_scale = kNotScaled;
 }
 
-bool AnimationHost::AnimationStartScale(ElementId element_id,
-                                        ElementListType list_type,
-                                        float* start_scale) const {
-  *start_scale = 0.f;
+bool AnimationHost::IsElementAnimating(ElementId element_id) const {
   auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->AnimationStartScale(list_type, start_scale)
-             : true;
+  return element_animations ? element_animations->HasAnyKeyframeModel() : false;
 }
 
-bool AnimationHost::HasAnyAnimation(ElementId element_id) const {
+bool AnimationHost::HasTickingKeyframeModelForTesting(
+    ElementId element_id) const {
   auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations ? element_animations->HasAnyAnimation() : false;
+  return element_animations ? element_animations->HasTickingKeyframeEffect()
+                            : false;
 }
 
-bool AnimationHost::HasTickingAnimationForTesting(ElementId element_id) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations ? element_animations->HasTickingAnimation() : false;
+void AnimationHost::ImplOnlyAutoScrollAnimationCreate(
+    ElementId element_id,
+    const gfx::ScrollOffset& target_offset,
+    const gfx::ScrollOffset& current_offset,
+    float autoscroll_velocity,
+    base::TimeDelta animation_start_offset) {
+  DCHECK(scroll_offset_animations_impl_);
+  scroll_offset_animations_impl_->AutoScrollAnimationCreate(
+      element_id, target_offset, current_offset, autoscroll_velocity,
+      animation_start_offset);
 }
 
 void AnimationHost::ImplOnlyScrollAnimationCreate(
@@ -568,22 +695,26 @@ void AnimationHost::ScrollAnimationAbort() {
       false /* needs_completion */);
 }
 
-void AnimationHost::AddToTicking(scoped_refptr<AnimationPlayer> player) {
-  DCHECK(std::find(ticking_players_.begin(), ticking_players_.end(), player) ==
-         ticking_players_.end());
-  ticking_players_.push_back(player);
+bool AnimationHost::IsImplOnlyScrollAnimating() const {
+  DCHECK(scroll_offset_animations_impl_);
+  return scroll_offset_animations_impl_->IsAnimating();
 }
 
-void AnimationHost::RemoveFromTicking(scoped_refptr<AnimationPlayer> player) {
-  auto to_erase =
-      std::find(ticking_players_.begin(), ticking_players_.end(), player);
-  if (to_erase != ticking_players_.end())
-    ticking_players_.erase(to_erase);
+void AnimationHost::AddToTicking(scoped_refptr<Animation> animation) {
+  DCHECK(!base::Contains(ticking_animations_, animation));
+  ticking_animations_.push_back(animation);
 }
 
-const AnimationHost::PlayersList& AnimationHost::ticking_players_for_testing()
-    const {
-  return ticking_players_;
+void AnimationHost::RemoveFromTicking(scoped_refptr<Animation> animation) {
+  auto to_erase = std::find(ticking_animations_.begin(),
+                            ticking_animations_.end(), animation);
+  if (to_erase != ticking_animations_.end())
+    ticking_animations_.erase(to_erase);
+}
+
+const AnimationHost::AnimationsList&
+AnimationHost::ticking_animations_for_testing() const {
+  return ticking_animations_;
 }
 
 const AnimationHost::ElementToAnimationsMap&
@@ -606,58 +737,65 @@ void AnimationHost::SetMutationUpdate(
 
   TRACE_EVENT0("cc", "AnimationHost::SetMutationUpdate");
   for (auto& animation_state : output_state->animations) {
-    int id = animation_state.animation_player_id;
+    WorkletAnimationId id = animation_state.worklet_animation_id;
 
     // TODO(majidvp): Use a map to make lookup O(1)
-    auto to_update =
-        std::find_if(ticking_players_.begin(), ticking_players_.end(),
-                     [id](auto& it) { return it->id() == id; });
+    auto to_update = std::find_if(
+        ticking_animations_.begin(), ticking_animations_.end(), [id](auto& it) {
+          return it->IsWorkletAnimation() &&
+                 ToWorkletAnimation(it.get())->worklet_animation_id() == id;
+        });
 
-    if (to_update == ticking_players_.end())
+    if (to_update == ticking_animations_.end())
       continue;
 
-    DCHECK(to_update->get()->IsWorkletAnimationPlayer());
-    WorkletAnimationPlayer* worklet_player_to_update =
-        static_cast<WorkletAnimationPlayer*>(to_update->get());
-
-    worklet_player_to_update->SetLocalTime(animation_state.local_time);
+    ToWorkletAnimation(to_update->get())->SetOutputState(animation_state);
   }
 }
 
 size_t AnimationHost::CompositedAnimationsCount() const {
   size_t composited_animations_count = 0;
-  for (const auto& it : ticking_players_)
-    composited_animations_count += it->TickingAnimationsCount();
+  for (const auto& it : ticking_animations_)
+    composited_animations_count += it->TickingKeyframeModelsCount();
   return composited_animations_count;
 }
 
 void AnimationHost::SetAnimationCounts(
     size_t total_animations_count,
-    size_t main_thread_compositable_animations_count) {
-  size_t composited_animations_count = CompositedAnimationsCount();
+    bool current_frame_had_raf,
+    bool next_frame_has_pending_raf) {
+  // If an animation is being run on the compositor, it will have a ticking
+  // Animation (which will have a corresponding impl-thread version). Therefore
+  // to find the count of main-only animations, we can simply subtract the
+  // number of ticking animations from the total count.
+  size_t ticking_animations_count = ticking_animations_.size();
   if (main_thread_animations_count_ !=
-      total_animations_count - composited_animations_count) {
+      total_animations_count - ticking_animations_count) {
     main_thread_animations_count_ =
-        total_animations_count - composited_animations_count;
+        total_animations_count - ticking_animations_count;
     DCHECK_GE(main_thread_animations_count_, 0u);
     SetNeedsPushProperties();
   }
-  if (main_thread_compositable_animations_count_ !=
-      main_thread_compositable_animations_count) {
-    main_thread_compositable_animations_count_ =
-        main_thread_compositable_animations_count;
+  if (current_frame_had_raf != current_frame_had_raf_) {
+    current_frame_had_raf_ = current_frame_had_raf;
     SetNeedsPushProperties();
   }
-  DCHECK_GE(main_thread_animations_count_,
-            main_thread_compositable_animations_count_);
+  if (next_frame_has_pending_raf != next_frame_has_pending_raf_) {
+    next_frame_has_pending_raf_ = next_frame_has_pending_raf;
+    SetNeedsPushProperties();
+  }
 }
 
 size_t AnimationHost::MainThreadAnimationsCount() const {
   return main_thread_animations_count_;
 }
 
-size_t AnimationHost::MainThreadCompositableAnimationsCount() const {
-  return main_thread_compositable_animations_count_;
+bool AnimationHost::CurrentFrameHadRAF() const {
+  return current_frame_had_raf_;
+}
+
+bool AnimationHost::NextFrameHasPendingRAF() const {
+  return next_frame_has_pending_raf_;
 }
 
 }  // namespace cc

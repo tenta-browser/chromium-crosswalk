@@ -10,8 +10,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/proto/internal.pb.h"
@@ -67,13 +66,14 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
   // read pattern.
   std::list<std::unique_ptr<EventMessage>> message_list;
   for (int pos = 0; pos < size;) {
-    SCOPED_TRACE("Input position: " + base::IntToString(pos));
+    SCOPED_TRACE("Input position: " + base::NumberToString(pos));
 
     // First generate the amount to feed the decoder.
     int read = std::min(size - pos, read_sequence[pos % sequence_size]);
 
     // And then prepare an IOBuffer for feeding it.
-    scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(read));
+    scoped_refptr<net::IOBuffer> buffer =
+        base::MakeRefCounted<net::IOBuffer>(read);
     memcpy(buffer->data(), test_data + pos, read);
     decoder.AddData(buffer, read);
     while (true) {
@@ -81,7 +81,7 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
       if (!message.get())
         break;
 
-      std::unique_ptr<EventMessage> event = base::MakeUnique<EventMessage>();
+      std::unique_ptr<EventMessage> event = std::make_unique<EventMessage>();
       CompoundBufferInputStream stream(message.get());
       ASSERT_TRUE(event->ParseFromZeroCopyStream(&stream));
       message_list.push_back(std::move(event));
@@ -94,7 +94,7 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
 
   unsigned int index = 0;
   for (const auto& message : message_list) {
-    SCOPED_TRACE("Message " + base::UintToString(index));
+    SCOPED_TRACE("Message " + base::NumberToString(index));
 
     // Partial update stream.
     EXPECT_TRUE(message->has_key_event());
@@ -109,17 +109,17 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
 
 TEST(MessageDecoderTest, SmallReads) {
   const int kReads[] = {1, 2, 3, 1};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 TEST(MessageDecoderTest, LargeReads) {
   const int kReads[] = {50, 50, 5};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 TEST(MessageDecoderTest, EmptyReads) {
   const int kReads[] = {4, 0, 50, 0};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 }  // namespace protocol

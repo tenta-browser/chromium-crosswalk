@@ -5,7 +5,7 @@
 #include "chrome/browser/android/app_hooks.h"
 
 #include "base/android/jni_android.h"
-#include "jni/AppHooks_jni.h"
+#include "chrome/android/chrome_jni_headers/AppHooks_jni.h"
 
 using base::android::ScopedJavaLocalRef;
 
@@ -15,13 +15,6 @@ namespace android {
 AppHooks::AppHooks() = default;
 
 AppHooks::~AppHooks() = default;
-
-bool AppHooks::ShouldDetectVideoFullscreen() {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> app_hooks_obj = Java_AppHooks_get(env);
-
-  return Java_AppHooks_shouldDetectVideoFullscreen(env, app_hooks_obj);
-}
 
 ScopedJavaLocalRef<jobject> AppHooks::GetOfflinePagesCCTRequestDoneCallback() {
   JNIEnv* env = base::android::AttachCurrentThread();

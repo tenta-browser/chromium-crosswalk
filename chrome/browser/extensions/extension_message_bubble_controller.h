@@ -18,15 +18,15 @@
 
 class Browser;
 class BrowserList;
-class ExtensionService;
 class ToolbarActionsModel;
 class Profile;
 
 namespace extensions {
 
 class ExtensionRegistry;
+class ExtensionService;
 
-class ExtensionMessageBubbleController : public chrome::BrowserListObserver,
+class ExtensionMessageBubbleController : public BrowserListObserver,
                                          public ExtensionRegistryObserver {
  public:
   // UMA histogram constants.

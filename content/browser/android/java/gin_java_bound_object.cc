@@ -5,31 +5,16 @@
 #include "content/browser/android/java/gin_java_bound_object.h"
 
 #include "base/android/jni_android.h"
-#include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/strings/utf_string_conversions.h"
-#include "content/browser/android/java/jni_helper.h"
+#include "content/browser/android/java/jni_reflect.h"
+
+#include "content/browser/reflection_jni_headers/Object_jni.h"
 
 using base::android::AttachCurrentThread;
+using base::android::JavaObjectArrayReader;
 using base::android::ScopedJavaLocalRef;
 
 namespace content {
-
-namespace {
-
-const char kJavaLangClass[] = "java/lang/Class";
-const char kJavaLangObject[] = "java/lang/Object";
-const char kJavaLangReflectMethod[] = "java/lang/reflect/Method";
-const char kGetClass[] = "getClass";
-const char kGetMethods[] = "getMethods";
-const char kIsAnnotationPresent[] = "isAnnotationPresent";
-const char kReturningJavaLangClass[] = "()Ljava/lang/Class;";
-const char kReturningJavaLangReflectMethodArray[] =
-    "()[Ljava/lang/reflect/Method;";
-const char kTakesJavaLangClassReturningBoolean[] = "(Ljava/lang/Class;)Z";
-
-}  // namespace
-
 
 // static
 GinJavaBoundObject* GinJavaBoundObject::CreateNamed(
@@ -53,7 +38,6 @@ GinJavaBoundObject::GinJavaBoundObject(
     const base::android::JavaRef<jclass>& safe_annotation_clazz)
     : ref_(ref),
       names_count_(1),
-      object_get_class_method_id_(NULL),
       are_methods_set_up_(false),
       safe_annotation_clazz_(safe_annotation_clazz) {
 }
@@ -65,7 +49,6 @@ GinJavaBoundObject::GinJavaBoundObject(
     : ref_(ref),
       names_count_(0),
       holders_(holders),
-      object_get_class_method_id_(NULL),
       are_methods_set_up_(false),
       safe_annotation_clazz_(safe_annotation_clazz) {}
 
@@ -117,7 +100,12 @@ bool GinJavaBoundObject::IsObjectGetClassMethod(const JavaMethod* method) {
   EnsureMethodsAreSetUp();
   // As java.lang.Object.getClass is declared to be final, it is sufficient to
   // compare methodIDs.
-  return method->id() == object_get_class_method_id_;
+  JNIEnv* env = AttachCurrentThread();
+  jmethodID get_class_method_id =
+      base::android::MethodID::LazyGet<base::android::MethodID::TYPE_INSTANCE>(
+          env, java_lang_Object_clazz(env), "getClass", "()Ljava/lang/Class;",
+          &JNI_Object::g_java_lang_Object_getClass);
+  return method->id() == get_class_method_id;
 }
 
 const base::android::JavaRef<jclass>&
@@ -127,16 +115,9 @@ GinJavaBoundObject::GetSafeAnnotationClass() {
 
 base::android::ScopedJavaLocalRef<jclass> GinJavaBoundObject::GetLocalClassRef(
     JNIEnv* env) {
-  if (!object_get_class_method_id_) {
-    object_get_class_method_id_ = GetMethodIDFromClassName(
-        env, kJavaLangObject, kGetClass, kReturningJavaLangClass);
-  }
   ScopedJavaLocalRef<jobject> obj = GetLocalRef(env);
   if (obj.obj()) {
-    return base::android::ScopedJavaLocalRef<jclass>(
-        env,
-        static_cast<jclass>(
-            env->CallObjectMethod(obj.obj(), object_get_class_method_id_)));
+    return JNI_Object::Java_Object_getClass(env, obj);
   } else {
     return base::android::ScopedJavaLocalRef<jclass>();
   }
@@ -154,32 +135,13 @@ void GinJavaBoundObject::EnsureMethodsAreSetUp() {
     return;
   }
 
-  ScopedJavaLocalRef<jobjectArray> methods(env, static_cast<jobjectArray>(
-      env->CallObjectMethod(clazz.obj(), GetMethodIDFromClassName(
-          env,
-          kJavaLangClass,
-          kGetMethods,
-          kReturningJavaLangReflectMethodArray))));
-
-  size_t num_methods = env->GetArrayLength(methods.obj());
+  JavaObjectArrayReader<jobject> methods(GetClassMethods(env, clazz));
   // Java objects always have public methods.
-  DCHECK(num_methods);
+  DCHECK_GT(methods.size(), 0);
 
-  for (size_t i = 0; i < num_methods; ++i) {
-    ScopedJavaLocalRef<jobject> java_method(
-        env,
-        env->GetObjectArrayElement(methods.obj(), i));
-
+  for (auto java_method : methods) {
     if (!safe_annotation_clazz_.is_null()) {
-      jboolean safe = env->CallBooleanMethod(java_method.obj(),
-          GetMethodIDFromClassName(
-              env,
-              kJavaLangReflectMethod,
-              kIsAnnotationPresent,
-              kTakesJavaLangClassReturningBoolean),
-          safe_annotation_clazz_.obj());
-
-      if (!safe)
+      if (!IsAnnotationPresent(env, java_method, safe_annotation_clazz_))
         continue;
     }
 

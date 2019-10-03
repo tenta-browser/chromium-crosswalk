@@ -11,7 +11,6 @@
 
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "components/keyed_service/core/keyed_service.h"
 
 namespace user_manager {
 class User;
@@ -23,12 +22,16 @@ class CloudPolicyStore;
 class ConfigurationPolicyProvider;
 class PolicyService;
 class SchemaRegistry;
+class ChromeBrowserPolicyConnector;
 
-// A KeyedService that creates and manages the per-Profile policy components.
-class ProfilePolicyConnector : public KeyedService {
+// The ProfilePolicyConnector creates and manages the per-Profile policy
+// components. Since the ProfilePolicyConnector instance is accessed from
+// Profile, not from a KeyedServiceFactory anymore, the ProfilePolicyConnector
+// no longer needs to be a KeyedService.
+class ProfilePolicyConnector final {
  public:
   ProfilePolicyConnector();
-  ~ProfilePolicyConnector() override;
+  ~ProfilePolicyConnector();
 
   // |user| is only used in Chrome OS builds and should be set to nullptr
   // otherwise.  |configuration_policy_provider| and |policy_store| are nullptr
@@ -39,13 +42,13 @@ class ProfilePolicyConnector : public KeyedService {
             SchemaRegistry* schema_registry,
             ConfigurationPolicyProvider* configuration_policy_provider,
             const CloudPolicyStore* policy_store,
+            policy::ChromeBrowserPolicyConnector* browser_policy_connector,
             bool force_immediate_load);
 
   void InitForTesting(std::unique_ptr<PolicyService> service);
   void OverrideIsManagedForTesting(bool is_managed);
 
-  // KeyedService:
-  void Shutdown() override;
+  void Shutdown();
 
   // This is never NULL.
   PolicyService* policy_service() const { return policy_service_.get(); }
@@ -54,10 +57,6 @@ class ProfilePolicyConnector : public KeyedService {
   // must call this method only when the policies system is fully initialized.
   bool IsManaged() const;
 
-  // Returns the cloud policy management domain or the Active Directory realm
-  // for managed Profiles or an empty string for unmanaged Profiles. You must
-  // call this method only when the policies system is fully initialized.
-  std::string GetManagementDomain() const;
 
   // Returns true if the |policy_key| user policy is currently set via the
   // |configuration_policy_provider_| and isn't being overridden by a
@@ -83,9 +82,6 @@ class ProfilePolicyConnector : public KeyedService {
   bool is_primary_user_ = false;
 
   std::unique_ptr<ConfigurationPolicyProvider> special_user_policy_provider_;
-
-  // Management realm for Active Directory users. Empty for other users.
-  std::string management_realm_;
 #endif  // defined(OS_CHROMEOS)
 
   std::unique_ptr<ConfigurationPolicyProvider>

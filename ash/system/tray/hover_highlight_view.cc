@@ -20,10 +20,15 @@
 namespace ash {
 
 HoverHighlightView::HoverHighlightView(ViewClickListener* listener)
-    : ActionableView(nullptr, TrayPopupInkDropStyle::FILL_BOUNDS),
-      listener_(listener) {
+    : HoverHighlightView(listener, true) {}
+
+HoverHighlightView::HoverHighlightView(ViewClickListener* listener,
+                                       bool use_unified_theme)
+    : ActionableView(TrayPopupInkDropStyle::FILL_BOUNDS),
+      listener_(listener),
+      use_unified_theme_(use_unified_theme) {
   set_notify_enter_exit_on_child(true);
-  SetInkDropMode(InkDropHostView::InkDropMode::ON);
+  SetInkDropMode(InkDropMode::ON);
 }
 
 HoverHighlightView::~HoverHighlightView() = default;
@@ -51,7 +56,7 @@ void HoverHighlightView::AddRightView(views::View* view,
     tri_view_->SetContainerBorder(TriView::Container::END, std::move(border));
 
   right_view_ = view;
-  right_view_->SetEnabled(enabled());
+  right_view_->SetEnabled(GetEnabled());
   tri_view_->AddView(TriView::Container::END, right_view_);
   tri_view_->SetContainerVisible(TriView::Container::END, true);
 }
@@ -76,7 +81,8 @@ void HoverHighlightView::SetSubText(const base::string16& sub_text) {
     tri_view_->AddView(TriView::Container::CENTER, sub_text_label_);
   }
 
-  TrayPopupItemStyle sub_style(TrayPopupItemStyle::FontStyle::CAPTION);
+  TrayPopupItemStyle sub_style(TrayPopupItemStyle::FontStyle::CAPTION,
+                               use_unified_theme_);
   sub_style.set_color_style(TrayPopupItemStyle::ColorStyle::INACTIVE);
   sub_style.SetupLabel(sub_text_label_);
   sub_text_label_->SetText(sub_text);
@@ -118,19 +124,19 @@ void HoverHighlightView::DoAddIconAndLabels(
   DCHECK(!is_populated_);
   is_populated_ = true;
 
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   tri_view_ = TrayPopupUtils::CreateDefaultRowView();
   AddChildView(tri_view_);
 
   left_icon_ = TrayPopupUtils::CreateMainImageView();
   left_icon_->SetImage(image);
-  left_icon_->SetEnabled(enabled());
+  left_icon_->SetEnabled(GetEnabled());
   tri_view_->AddView(TriView::Container::START, left_icon_);
 
   text_label_ = TrayPopupUtils::CreateDefaultLabel();
   text_label_->SetText(text);
-  text_label_->SetEnabled(enabled());
-  TrayPopupItemStyle style(font_style);
+  text_label_->SetEnabled(GetEnabled());
+  TrayPopupItemStyle style(font_style, use_unified_theme_);
   style.SetupLabel(text_label_);
   tri_view_->AddView(TriView::Container::CENTER, text_label_);
   // By default, END container is invisible, so labels in the CENTER should have
@@ -151,14 +157,15 @@ void HoverHighlightView::AddLabelRow(const base::string16& text) {
   DCHECK(!is_populated_);
   is_populated_ = true;
 
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   tri_view_ = TrayPopupUtils::CreateDefaultRowView();
   AddChildView(tri_view_);
 
   text_label_ = TrayPopupUtils::CreateDefaultLabel();
   text_label_->SetText(text);
 
-  TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::DETAILED_VIEW_LABEL);
+  TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::DETAILED_VIEW_LABEL,
+                           use_unified_theme_);
   style.SetupLabel(text_label_);
   tri_view_->AddView(TriView::Container::CENTER, text_label_);
 
@@ -176,7 +183,7 @@ void HoverHighlightView::SetAccessiblityState(
     AccessibilityState accessibility_state) {
   accessibility_state_ = accessibility_state;
   if (accessibility_state_ != AccessibilityState::DEFAULT)
-    NotifyAccessibilityEvent(ui::AX_EVENT_CHECKED_STATE_CHANGED, true);
+    NotifyAccessibilityEvent(ax::mojom::Event::kCheckedStateChanged, true);
 }
 
 void HoverHighlightView::Reset() {
@@ -189,6 +196,15 @@ void HoverHighlightView::Reset() {
   is_populated_ = false;
 }
 
+void HoverHighlightView::OnSetTooltipText(const base::string16& tooltip_text) {
+  if (text_label_)
+    text_label_->SetTooltipText(tooltip_text);
+  if (sub_text_label_)
+    sub_text_label_->SetTooltipText(tooltip_text);
+  if (left_icon_)
+    left_icon_->set_tooltip_text(tooltip_text);
+}
+
 bool HoverHighlightView::PerformAction(const ui::Event& event) {
   if (!listener_)
     return false;
@@ -199,18 +215,22 @@ bool HoverHighlightView::PerformAction(const ui::Event& event) {
 void HoverHighlightView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ActionableView::GetAccessibleNodeData(node_data);
 
-  ui::AXCheckedState checked_state;
+  ax::mojom::CheckedState checked_state;
 
   if (accessibility_state_ == AccessibilityState::CHECKED_CHECKBOX)
-    checked_state = ui::AX_CHECKED_STATE_TRUE;
+    checked_state = ax::mojom::CheckedState::kTrue;
   else if (accessibility_state_ == AccessibilityState::UNCHECKED_CHECKBOX)
-    checked_state = ui::AX_CHECKED_STATE_FALSE;
+    checked_state = ax::mojom::CheckedState::kFalse;
   else
     return;  // Not a checkbox
 
   // Checkbox
-  node_data->role = ui::AX_ROLE_CHECK_BOX;
-  node_data->AddIntAttribute(ui::AX_ATTR_CHECKED_STATE, checked_state);
+  node_data->role = ax::mojom::Role::kCheckBox;
+  node_data->SetCheckedState(checked_state);
+}
+
+const char* HoverHighlightView::GetClassName() const {
+  return "HoverHighlightView";
 }
 
 gfx::Size HoverHighlightView::CalculatePreferredSize() const {
@@ -226,18 +246,18 @@ int HoverHighlightView::GetHeightForWidth(int width) const {
   return GetPreferredSize().height();
 }
 
-void HoverHighlightView::OnEnabledChanged() {
-  if (left_icon_)
-    left_icon_->SetEnabled(enabled());
-  if (text_label_)
-    text_label_->SetEnabled(enabled());
-  if (right_view_)
-    right_view_->SetEnabled(enabled());
-}
-
 void HoverHighlightView::OnFocus() {
   ScrollRectToVisible(gfx::Rect(gfx::Point(), size()));
   ActionableView::OnFocus();
+}
+
+void HoverHighlightView::OnEnabledChanged() {
+  if (left_icon_)
+    left_icon_->SetEnabled(GetEnabled());
+  if (text_label_)
+    text_label_->SetEnabled(GetEnabled());
+  if (right_view_)
+    right_view_->SetEnabled(GetEnabled());
 }
 
 }  // namespace ash

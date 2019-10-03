@@ -16,16 +16,16 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file.h"
 #include "base/location.h"
 #include "base/memory/free_deleter.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
-#include "net/base/io_buffer.h"
 #include "services/device/hid/hid_connection_win.h"
 #include "services/device/hid/hid_device_info.h"
 
@@ -51,7 +51,7 @@ HidServiceWin::~HidServiceWin() {}
 
 void HidServiceWin::Connect(const std::string& device_guid,
                             const ConnectCallback& callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const auto& map_entry = devices().find(device_guid);
   if (map_entry == devices().end()) {
     task_runner_->PostTask(FROM_HERE, base::BindOnce(callback, nullptr));
@@ -67,9 +67,8 @@ void HidServiceWin::Connect(const std::string& device_guid,
   }
 
   task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(callback, base::MakeRefCounted<HidConnectionWin>(
-                                   device_info, std::move(file))));
+      FROM_HERE, base::BindOnce(callback, HidConnectionWin::Create(
+                                              device_info, std::move(file))));
 }
 
 base::WeakPtr<HidService> HidServiceWin::GetWeakPtr() {
@@ -278,7 +277,7 @@ void HidServiceWin::OnDeviceRemoved(const GUID& class_guid,
   // Execute a no-op closure on the file task runner to synchronize with any
   // devices that are still being enumerated.
   blocking_task_runner_->PostTaskAndReply(
-      FROM_HERE, base::BindOnce(&base::DoNothing),
+      FROM_HERE, base::DoNothing(),
       base::BindOnce(&HidServiceWin::RemoveDevice, weak_factory_.GetWeakPtr(),
                      device_path));
 }

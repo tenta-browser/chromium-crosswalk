@@ -10,7 +10,6 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 
 namespace remoting {
@@ -102,7 +101,7 @@ void DualBufferFrameConsumer::RequestFullDesktopFrame() {
   }
   full_frame->mutable_updated_region()->SetRect(desktop_rect);
 
-  RunRenderCallback(std::move(full_frame), base::Bind(&base::DoNothing));
+  RunRenderCallback(std::move(full_frame), base::DoNothing());
 }
 
 std::unique_ptr<webrtc::DesktopFrame> DualBufferFrameConsumer::AllocateFrame(
@@ -112,9 +111,9 @@ std::unique_ptr<webrtc::DesktopFrame> DualBufferFrameConsumer::AllocateFrame(
   // Both buffers are reallocated whenever screen size changes.
   if (!buffers_[0] || !buffers_[0]->size().equals(size)) {
     buffers_[0] = webrtc::SharedDesktopFrame::Wrap(
-        base::MakeUnique<PaddedDesktopFrame>(size));
+        std::make_unique<PaddedDesktopFrame>(size));
     buffers_[1] = webrtc::SharedDesktopFrame::Wrap(
-        base::MakeUnique<PaddedDesktopFrame>(size));
+        std::make_unique<PaddedDesktopFrame>(size));
     buffer_1_mask_.Clear();
     current_buffer_ = 0;
   } else {
@@ -156,9 +155,11 @@ void DualBufferFrameConsumer::RunRenderCallback(
   }
 
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback_, base::Passed(&frame), base::Bind(
-          base::IgnoreResult(&base::TaskRunner::PostTask),
-          base::ThreadTaskRunnerHandle::Get(), FROM_HERE, done)));
+      FROM_HERE,
+      base::BindOnce(
+          callback_, std::move(frame),
+          base::Bind(base::IgnoreResult(&base::TaskRunner::PostTask),
+                     base::ThreadTaskRunnerHandle::Get(), FROM_HERE, done)));
 }
 
 }  // namespace remoting

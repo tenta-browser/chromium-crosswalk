@@ -13,15 +13,15 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/callback_list.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
-#include "ios/web/public/referrer.h"
-#include "ios/web/public/web_state/url_verification_constants.h"
+#include "ios/web/public/deprecated/url_verification_constants.h"
+#include "ios/web/public/navigation/referrer.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
 class GURL;
@@ -41,6 +41,7 @@ class Value;
 
 namespace gfx {
 class Image;
+class RectF;
 }
 
 namespace web {
@@ -48,12 +49,13 @@ namespace web {
 class BrowserState;
 class NavigationManager;
 class SessionCertificatePolicyCache;
+class WebFrame;
+class WebFramesManager;
 class WebInterstitial;
 class WebStateDelegate;
 class WebStateInterfaceProvider;
 class WebStateObserver;
 class WebStatePolicyDecider;
-class WebStateWeakPtrFactory;
 
 // Core interface for interaction with the web.
 class WebState : public base::SupportsUserData {
@@ -75,14 +77,22 @@ class WebState : public base::SupportsUserData {
   // Parameters for the OpenURL() method.
   struct OpenURLParams {
     OpenURLParams(const GURL& url,
+                  const GURL& virtual_url,
                   const Referrer& referrer,
                   WindowOpenDisposition disposition,
                   ui::PageTransition transition,
                   bool is_renderer_initiated);
+    OpenURLParams(const GURL& url,
+                  const Referrer& referrer,
+                  WindowOpenDisposition disposition,
+                  ui::PageTransition transition,
+                  bool is_renderer_initiated);
+    OpenURLParams(const OpenURLParams& params);
     ~OpenURLParams();
 
-    // The URL/referrer to be opened.
+    // The URL/virtualURL/referrer to be opened.
     GURL url;
+    GURL virtual_url;
     Referrer referrer;
 
     // The disposition requested by the navigation source.
@@ -115,12 +125,6 @@ class WebState : public base::SupportsUserData {
   virtual bool IsWebUsageEnabled() const = 0;
   virtual void SetWebUsageEnabled(bool enabled) = 0;
 
-  // Whether or not JavaScript dialogs and window open requests
-  // should be suppressed. Default is false. When dialog is suppressed
-  // |WebStateObserver::DidSuppressDialog| will be called.
-  virtual bool ShouldSuppressDialogs() const = 0;
-  virtual void SetShouldSuppressDialogs(bool should_suppress) = 0;
-
   // The view containing the contents of the current web page. If the view has
   // been purged due to low memory, this will recreate it. It is up to the
   // caller to size the view.
@@ -129,6 +133,11 @@ class WebState : public base::SupportsUserData {
   // Must be called when the WebState becomes shown/hidden.
   virtual void WasShown() = 0;
   virtual void WasHidden() = 0;
+
+  // When |true|, attempt to prevent the WebProcess from suspending. Embedder
+  // must override WebClient::GetWindowedContainer to maintain this
+  // functionality.
+  virtual void SetKeepRenderProcessAlive(bool keep_alive) = 0;
 
   // Gets the BrowserState associated with this WebState. Can never return null.
   virtual BrowserState* GetBrowserState() const = 0;
@@ -145,6 +154,11 @@ class WebState : public base::SupportsUserData {
   virtual const NavigationManager* GetNavigationManager() const = 0;
   virtual NavigationManager* GetNavigationManager() = 0;
 
+  // Gets the WebFramesManager associated with this WebState. Can never return
+  // null.
+  virtual const WebFramesManager* GetWebFramesManager() const = 0;
+  virtual WebFramesManager* GetWebFramesManager() = 0;
+
   // Gets the SessionCertificatePolicyCache for this WebState.  Can never return
   // null.
   virtual const SessionCertificatePolicyCache*
@@ -158,15 +172,24 @@ class WebState : public base::SupportsUserData {
   // Gets the CRWJSInjectionReceiver associated with this WebState.
   virtual CRWJSInjectionReceiver* GetJSInjectionReceiver() const = 0;
 
+  // Loads |data| of type |mime_type| and replaces last committed URL with the
+  // given |url|.
+  virtual void LoadData(NSData* data, NSString* mime_type, const GURL& url) = 0;
+
+  // DISCOURAGED. Prefer using |WebFrame CallJavaScriptFunction| instead because
+  // it restricts JavaScript execution to functions within __gCrWeb and can also
+  // call those functions on any frame in the page. ExecuteJavaScript here can
+  // execute arbitrary JavaScript code, which is not as safe and is retricted to
+  // executing only on the main frame.
   // Runs JavaScript in the main frame's context. If a callback is provided, it
   // will be used to return the result, when the result is available or script
   // execution has failed due to an error.
   // NOTE: Integer values will be returned as Type::DOUBLE because of underlying
   // library limitation.
-  typedef base::Callback<void(const base::Value*)> JavaScriptResultCallback;
+  typedef base::OnceCallback<void(const base::Value*)> JavaScriptResultCallback;
   virtual void ExecuteJavaScript(const base::string16& javascript) = 0;
   virtual void ExecuteJavaScript(const base::string16& javascript,
-                                 const JavaScriptResultCallback& callback) = 0;
+                                 JavaScriptResultCallback callback) = 0;
 
   // Asynchronously executes |javaScript| in the main frame's context,
   // registering user interaction.
@@ -221,14 +244,10 @@ class WebState : public base::SupportsUserData {
   // Returns the WebState view of the current URL. Moreover, this method
   // will set the trustLevel enum to the appropriate level from a security point
   // of view. The caller has to handle the case where |trust_level| is not
-  // appropriate.
+  // appropriate.  Passing |null| will skip the trust check.
   // TODO(stuartmorgan): Figure out a clean API for this.
   // See http://crbug.com/457679
   virtual GURL GetCurrentURL(URLVerificationTrustLevel* trust_level) const = 0;
-
-  // Resizes |content_view| to the content area's size and adds it to the
-  // hierarchy.  A navigation will remove the view from the hierarchy.
-  virtual void ShowTransientContentView(CRWContentView* content_view) = 0;
 
   // Returns true if a WebInterstitial is currently displayed.
   virtual bool IsShowingWebInterstitial() const = 0;
@@ -236,25 +255,29 @@ class WebState : public base::SupportsUserData {
   // Returns the currently visible WebInterstitial if one is shown.
   virtual WebInterstitial* GetWebInterstitial() const = 0;
 
-  // Callback used to handle script commands.
-  // The callback must return true if the command was handled, and false
-  // otherwise.
-  // In particular the callback must return false if the command is unexpected
-  // or ill-formatted.
-  // The first parameter is the content of the command, the second parameter is
-  // the URL of the page, and the third parameter is a bool indicating if the
-  // user is currently interacting with the page.
-  typedef base::Callback<bool(const base::DictionaryValue&, const GURL&, bool)>
-      ScriptCommandCallback;
-
-  // Registers a callback that will be called when a command matching
-  // |command_prefix| is received.
-  virtual void AddScriptCommandCallback(const ScriptCommandCallback& callback,
-                                        const std::string& command_prefix) = 0;
-
-  // Removes the callback associated with |command_prefix|.
-  virtual void RemoveScriptCommandCallback(
-      const std::string& command_prefix) = 0;
+  // Callback used to handle script commands. |message| is the JS message sent
+  // from the |sender_frame| in the page, |page_url| is the URL of page's main
+  // frame, |user_is_interacting| indicates if the user is interacting with the
+  // page.
+  // TODO(crbug.com/881813): remove |page_url|.
+  using ScriptCommandCallbackSignature =
+      void(const base::DictionaryValue& message,
+           const GURL& page_url,
+           bool user_is_interacting,
+           web::WebFrame* sender_frame);
+  using ScriptCommandCallback =
+      base::RepeatingCallback<ScriptCommandCallbackSignature>;
+  using ScriptCommandSubscription =
+      base::CallbackList<ScriptCommandCallbackSignature>::Subscription;
+  // Registers |callback| for JS message whose 'command' matches
+  // |command_prefix|. The returned ScriptCommandSubscription should be stored
+  // by the caller. When the description object is destroyed, it will unregister
+  // |callback| if this WebState is still alive, and do nothing if this WebState
+  // is already destroyed. Therefore if the caller want to stop receiving JS
+  // messages it can just destroy the subscription object.
+  virtual std::unique_ptr<ScriptCommandSubscription> AddScriptCommandCallback(
+      const ScriptCommandCallback& callback,
+      const std::string& command_prefix) WARN_UNUSED_RESULT = 0;
 
   // Returns the current CRWWebViewProxy object.
   virtual CRWWebViewProxyType GetWebViewProxy() const = 0;
@@ -295,12 +318,19 @@ class WebState : public base::SupportsUserData {
   virtual void SetHasOpener(bool has_opener) = 0;
 
   // Callback used to handle snapshots. The parameter is the snapshot image.
-  typedef base::Callback<void(const gfx::Image&)> SnapshotCallback;
+  typedef base::RepeatingCallback<void(const gfx::Image&)> SnapshotCallback;
 
-  // Takes a snapshot of this WebState with |target_size|. |callback| is
-  // asynchronously invoked after performing the snapshot.
-  virtual void TakeSnapshot(const SnapshotCallback& callback,
-                            CGSize target_size) const = 0;
+  // Returns whether TakeSnapshot() can be executed.  The API may be disabled if
+  // the WKWebView IPC mechanism is blocked due to an outstanding JavaScript
+  // dialog.
+  virtual bool CanTakeSnapshot() const = 0;
+
+  // Takes a snapshot of this WebState with |rect|. |rect| should be specified
+  // in the coordinate system of the view returned by GetView(). |callback| is
+  // asynchronously invoked after performing the snapshot. Prior to iOS 11, the
+  // callback is invoked with a nil snapshot.
+  virtual void TakeSnapshot(const gfx::RectF& rect,
+                            SnapshotCallback callback) = 0;
 
   // Adds and removes observers for page navigation notifications. The order in
   // which notifications are sent to observers is undefined. Clients must be
@@ -321,13 +351,6 @@ class WebState : public base::SupportsUserData {
   WebState() {}
 
  private:
-  friend class WebStateWeakPtrFactory;  // For AsWeakPtr.
-
-  // Returns a WeakPtr<WebState> to the current WebState. Must remain private
-  // and only call must be in WebStateWeakPtrFactory. Please consult that class
-  // for more details. Remove as part of http://crbug.com/556736.
-  virtual base::WeakPtr<WebState> AsWeakPtr() = 0;
-
   DISALLOW_COPY_AND_ASSIGN(WebState);
 };
 

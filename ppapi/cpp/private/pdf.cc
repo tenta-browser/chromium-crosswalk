@@ -99,6 +99,34 @@ void PDF::HasUnsupportedFeature(const InstanceHandle& instance) {
 }
 
 // static
+void PDF::ShowAlertDialog(const InstanceHandle& instance, const char* message) {
+  if (has_interface<PPB_PDF>())
+    get_interface<PPB_PDF>()->ShowAlertDialog(instance.pp_instance(), message);
+}
+
+// static
+bool PDF::ShowConfirmDialog(const InstanceHandle& instance,
+                            const char* message) {
+  if (has_interface<PPB_PDF>()) {
+    return get_interface<PPB_PDF>()->ShowConfirmDialog(instance.pp_instance(),
+                                                       message);
+  }
+  return false;
+}
+
+// static
+pp::Var PDF::ShowPromptDialog(const InstanceHandle& instance,
+                              const char* message,
+                              const char* default_answer) {
+  if (has_interface<PPB_PDF>()) {
+    return pp::Var(PASS_REF,
+                   get_interface<PPB_PDF>()->ShowPromptDialog(
+                       instance.pp_instance(), message, default_answer));
+  }
+  return pp::Var();
+}
+
+// static
 void PDF::SaveAs(const InstanceHandle& instance) {
   if (has_interface<PPB_PDF>())
     get_interface<PPB_PDF>()->SaveAs(instance.pp_instance());
@@ -206,9 +234,10 @@ void PDF::SelectionChanged(const InstanceHandle& instance,
 }
 
 // static
-void PDF::DidScroll(const InstanceHandle& instance) {
+void PDF::SetPluginCanSave(const InstanceHandle& instance, bool can_save) {
   if (has_interface<PPB_PDF>()) {
-    get_interface<PPB_PDF>()->DidScroll(instance.pp_instance());
+    get_interface<PPB_PDF>()->SetPluginCanSave(instance.pp_instance(),
+                                               can_save);
   }
 }
 

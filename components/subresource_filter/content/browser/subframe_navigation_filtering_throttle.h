@@ -14,6 +14,7 @@
 
 namespace content {
 class NavigationHandle;
+class RenderFrameHost;
 }  // namespace content
 
 namespace subresource_filter {
@@ -28,11 +29,33 @@ class AsyncDocumentSubresourceFilter;
 // The throttle should only be instantiated for navigations occuring in
 // subframes owned by documents which already have filtering activated, and
 // therefore an associated (Async)DocumentSubresourceFilter.
+//
+// TODO(https://crbug.com/984562): With AdTagging enabled, this throttle delays
+// almost all subframe navigations. This delay is necessary in blocking mode due
+// to logic related to BLOCK_REQUEST_AND_COLLAPSE. However, there may be room
+// for optimization during AdTagging, or migrating BLOCK_REQUEST_AND_COLLAPSE to
+// be allowed during WillProcessResponse.
 class SubframeNavigationFilteringThrottle : public content::NavigationThrottle {
  public:
+  class Delegate {
+   public:
+    // Given what is known about the frame's load policy, its parent frame, and
+    // what it's learned from ad tagging, determine if it's an ad subframe.
+    virtual bool CalculateIsAdSubframe(content::RenderFrameHost* frame_host,
+                                       LoadPolicy load_policy) = 0;
+
+   protected:
+    Delegate() = default;
+    virtual ~Delegate() = default;
+
+    DISALLOW_COPY_AND_ASSIGN(Delegate);
+  };
+
+  // |delegate| must outlive this object.
   SubframeNavigationFilteringThrottle(
       content::NavigationHandle* handle,
-      AsyncDocumentSubresourceFilter* parent_frame_filter);
+      AsyncDocumentSubresourceFilter* parent_frame_filter,
+      Delegate* delegate);
   ~SubframeNavigationFilteringThrottle() override;
 
   // content::NavigationThrottle:
@@ -44,11 +67,8 @@ class SubframeNavigationFilteringThrottle : public content::NavigationThrottle {
   const char* GetNameForLogging() override;
 
  private:
-  enum class ThrottlingStage { WillStartRequest, WillRedirectRequest };
-
-  content::NavigationThrottle::ThrottleCheckResult DeferToCalculateLoadPolicy(
-      ThrottlingStage stage);
-  void OnCalculatedLoadPolicy(ThrottlingStage stage, LoadPolicy policy);
+  content::NavigationThrottle::ThrottleCheckResult DeferToCalculateLoadPolicy();
+  void OnCalculatedLoadPolicy(LoadPolicy policy);
 
   void NotifyLoadPolicy() const;
 
@@ -59,7 +79,12 @@ class SubframeNavigationFilteringThrottle : public content::NavigationThrottle {
   base::TimeDelta total_defer_time_;
   LoadPolicy load_policy_ = LoadPolicy::ALLOW;
 
-  base::WeakPtrFactory<SubframeNavigationFilteringThrottle> weak_ptr_factory_;
+  // As specified in the constructor comment, |delegate_| must outlive this
+  // object.
+  Delegate* delegate_;
+
+  base::WeakPtrFactory<SubframeNavigationFilteringThrottle> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(SubframeNavigationFilteringThrottle);
 };

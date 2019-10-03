@@ -5,12 +5,15 @@
 #include "components/ukm/ukm_service.h"
 
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
-#include "base/hash.h"
+#include "base/bind.h"
+#include "base/hash/hash.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
@@ -20,12 +23,13 @@
 #include "components/metrics/test_metrics_provider.h"
 #include "components/metrics/test_metrics_service_client.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/ukm/persisted_logs_metrics_impl.h"
 #include "components/ukm/ukm_pref_names.h"
-#include "components/ukm/ukm_source.h"
-#include "components/variations/variations_associated_data.h"
+#include "components/ukm/ukm_recorder_impl.h"
+#include "components/ukm/ukm_service.h"
+#include "components/ukm/unsent_log_store_metrics_impl.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_entry_builder.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
 #include "third_party/metrics_proto/ukm/source.pb.h"
@@ -33,18 +37,38 @@
 
 namespace ukm {
 
+// Some arbitrary events used in tests.
+using TestEvent1 = ukm::builders::PageLoad;
+const char* kTestEvent1Metric1 =
+    TestEvent1::kPaintTiming_NavigationToFirstContentfulPaintName;
+const char* kTestEvent1Metric2 = TestEvent1::kNet_CacheBytesName;
+using TestEvent2 = ukm::builders::Memory_Experimental;
+const char* kTestEvent2Metric1 = TestEvent2::kArrayBufferName;
+const char* kTestEvent2Metric2 = TestEvent2::kBlinkGCName;
+using TestEvent3 = ukm::builders::Previews;
+
+std::string Entry1And2Whitelist() {
+  return std::string(TestEvent1::kEntryName) + ',' + TestEvent2::kEntryName;
+}
+
 // A small shim exposing UkmRecorder methods to tests.
 class TestRecordingHelper {
  public:
-  explicit TestRecordingHelper(UkmRecorder* recorder) : recorder_(recorder) {}
+  explicit TestRecordingHelper(UkmRecorder* recorder) : recorder_(recorder) {
+    recorder_->DisableSamplingForTesting();
+  }
 
   void UpdateSourceURL(SourceId source_id, const GURL& url) {
     recorder_->UpdateSourceURL(source_id, url);
   }
 
-  std::unique_ptr<UkmEntryBuilder> GetEntryBuilder(SourceId source_id,
-                                                   const char* event_name) {
-    return recorder_->GetEntryBuilder(source_id, event_name);
+  void RecordNavigation(SourceId source_id,
+                        const UkmSource::NavigationData& navigation_data) {
+    recorder_->RecordNavigation(source_id, navigation_data);
+  }
+
+  void MarkSourceForDeletion(SourceId source_id) {
+    recorder_->MarkSourceForDeletion(source_id);
   }
 
  private:
@@ -55,44 +79,18 @@ class TestRecordingHelper {
 
 namespace {
 
-// TODO(rkaplow): consider making this a generic testing class in
-// components/variations.
+bool TestIsWebstoreExtension(base::StringPiece id) {
+  return (id == "bhcnanendmgjjeghamaccjnochlnhcgj");
+}
+
 class ScopedUkmFeatureParams {
  public:
-  ScopedUkmFeatureParams(
-      base::FeatureList::OverrideState feature_state,
-      const std::map<std::string, std::string>& variation_params) {
-    static const char kTestFieldTrialName[] = "TestTrial";
-    static const char kTestExperimentGroupName[] = "TestGroup";
-
-    variations::testing::ClearAllVariationParams();
-
-    EXPECT_TRUE(variations::AssociateVariationParams(
-        kTestFieldTrialName, kTestExperimentGroupName, variation_params));
-
-    base::FieldTrial* field_trial = base::FieldTrialList::CreateFieldTrial(
-        kTestFieldTrialName, kTestExperimentGroupName);
-
-    std::unique_ptr<base::FeatureList> feature_list(new base::FeatureList);
-    feature_list->RegisterFieldTrialOverride(kUkmFeature.name, feature_state,
-                                             field_trial);
-
-    // Since we are adding a scoped feature list after browser start, copy over
-    // the existing feature list to prevent inconsistency.
-    base::FeatureList* existing_feature_list = base::FeatureList::GetInstance();
-    if (existing_feature_list) {
-      std::string enabled_features;
-      std::string disabled_features;
-      base::FeatureList::GetInstance()->GetFeatureOverrides(&enabled_features,
-                                                            &disabled_features);
-      feature_list->InitializeFromCommandLine(enabled_features,
-                                              disabled_features);
-    }
-
-    scoped_feature_list_.InitWithFeatureList(std::move(feature_list));
+  explicit ScopedUkmFeatureParams(const base::FieldTrialParams& params) {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(kUkmFeature,
+                                                            params);
   }
 
-  ~ScopedUkmFeatureParams() { variations::testing::ClearAllVariationParams(); }
+  ~ScopedUkmFeatureParams() {}
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -112,30 +110,30 @@ class UkmServiceTest : public testing::Test {
   void ClearPrefs() {
     prefs_.ClearPref(prefs::kUkmClientId);
     prefs_.ClearPref(prefs::kUkmSessionId);
-    prefs_.ClearPref(prefs::kUkmPersistedLogs);
+    prefs_.ClearPref(prefs::kUkmUnsentLogStore);
   }
 
   int GetPersistedLogCount() {
     const base::ListValue* list_value =
-        prefs_.GetList(prefs::kUkmPersistedLogs);
+        prefs_.GetList(prefs::kUkmUnsentLogStore);
     return list_value->GetSize();
   }
 
   Report GetPersistedReport() {
     EXPECT_GE(GetPersistedLogCount(), 1);
-    metrics::PersistedLogs result_persisted_logs(
-        base::MakeUnique<ukm::PersistedLogsMetricsImpl>(), &prefs_,
-        prefs::kUkmPersistedLogs,
+    metrics::UnsentLogStore result_unsent_log_store(
+        std::make_unique<ukm::UnsentLogStoreMetricsImpl>(), &prefs_,
+        prefs::kUkmUnsentLogStore,
         3,     // log count limit
         1000,  // byte limit
-        0);
+        0, std::string());
 
-    result_persisted_logs.LoadPersistedUnsentLogs();
-    result_persisted_logs.StageNextLog();
+    result_unsent_log_store.LoadPersistedUnsentLogs();
+    result_unsent_log_store.StageNextLog();
 
     std::string uncompressed_log_data;
-    EXPECT_TRUE(compression::GzipUncompress(result_persisted_logs.staged_log(),
-                                            &uncompressed_log_data));
+    EXPECT_TRUE(compression::GzipUncompress(
+      result_unsent_log_store.staged_log(), &uncompressed_log_data));
 
     Report report;
     EXPECT_TRUE(report.ParseFromString(uncompressed_log_data));
@@ -163,14 +161,23 @@ class UkmServiceTest : public testing::Test {
 
 }  // namespace
 
+TEST_F(UkmServiceTest, ClientIdMigration) {
+  prefs_.SetInt64(prefs::kUkmClientId, -1);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
+  service.Initialize();
+  uint64_t migrated_id = prefs_.GetUint64(prefs::kUkmClientId);
+  // -1 migrates to the max UInt 64 value.
+  EXPECT_EQ(migrated_id, 18446744073709551615ULL);
+}
+
 TEST_F(UkmServiceTest, EnableDisableSchedule) {
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   EXPECT_FALSE(task_runner_->HasPendingTask());
   service.Initialize();
-  EXPECT_TRUE(task_runner_->HasPendingTask());
-  // Allow initialization to complete.
-  task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
   EXPECT_TRUE(task_runner_->HasPendingTask());
   service.DisableReporting();
@@ -179,12 +186,16 @@ TEST_F(UkmServiceTest, EnableDisableSchedule) {
 }
 
 TEST_F(UkmServiceTest, PersistAndPurge) {
-  UkmService service(&prefs_, &client_);
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
+
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(GetPersistedLogCount(), 0);
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   SourceId id = GetWhitelistedSourceId(0);
@@ -193,30 +204,50 @@ TEST_F(UkmServiceTest, PersistAndPurge) {
   task_runner_->RunPendingTasks();
   EXPECT_TRUE(client_.uploader()->is_uploading());
   // Flushes the generated log to disk and generates a new entry.
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        recorder.GetEntryBuilder(id, "PageLoad");
-    builder->AddMetric("FirstContentfulPaint", 300);
-  }
+  TestEvent1(id).Record(&service);
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 2);
   service.Purge();
   EXPECT_EQ(GetPersistedLogCount(), 0);
 }
 
-TEST_F(UkmServiceTest, SourceSerialization) {
-  UkmService service(&prefs_, &client_);
+TEST_F(UkmServiceTest, Purge) {
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(GetPersistedLogCount(), 0);
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
+  // Record some data
+  auto id = GetWhitelistedSourceId(0);
+  recorder.UpdateSourceURL(id, GURL("https://google.com/foobar1"));
+  TestEvent1(id).Record(&service);
+
+  // Purge should delete data, so there shouldn't be anything left to upload.
+  service.Purge();
+  service.Flush();
+  EXPECT_EQ(0, GetPersistedLogCount());
+}
+
+TEST_F(UkmServiceTest, SourceSerialization) {
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(GetPersistedLogCount(), 0);
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
+
+  UkmSource::NavigationData navigation_data;
+  navigation_data.urls = {GURL("https://google.com/initial"),
+                          GURL("https://google.com/final")};
+
   ukm::SourceId id = GetWhitelistedSourceId(0);
-  recorder.UpdateSourceURL(id, GURL("https://google.com/initial"));
-  recorder.UpdateSourceURL(id, GURL("https://google.com/intermediate"));
-  recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
+  recorder.RecordNavigation(id, navigation_data);
 
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 1);
@@ -227,95 +258,39 @@ TEST_F(UkmServiceTest, SourceSerialization) {
   const Source& proto_source = proto_report.sources(0);
 
   EXPECT_EQ(id, proto_source.id());
-  EXPECT_EQ(GURL("https://google.com/foobar").spec(), proto_source.url());
-  EXPECT_FALSE(proto_source.has_initial_url());
-}
-
-TEST_F(UkmServiceTest, EntryBuilderAndSerialization) {
-  UkmService service(&prefs_, &client_);
-  TestRecordingHelper recorder(&service);
-  EXPECT_EQ(0, GetPersistedLogCount());
-  service.Initialize();
-  task_runner_->RunUntilIdle();
-  service.EnableRecording();
-  service.EnableReporting();
-
-  ukm::SourceId id = GetWhitelistedSourceId(0);
-  recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
-  {
-    std::unique_ptr<UkmEntryBuilder> foo_builder =
-        service.GetEntryBuilder(id, "foo");
-    foo_builder->AddMetric("foo_start", 0);
-    foo_builder->AddMetric("foo_end", 10);
-
-    std::unique_ptr<UkmEntryBuilder> bar_builder =
-        service.GetEntryBuilder(id, "bar");
-    bar_builder->AddMetric("bar_start", 5);
-    bar_builder->AddMetric("bar_end", 15);
-  }
-
-  service.Flush();
-  EXPECT_EQ(1, GetPersistedLogCount());
-
-  Report proto_report = GetPersistedReport();
-
-  EXPECT_EQ(1, proto_report.sources_size());
-  const Source& proto_source = proto_report.sources(0);
-  EXPECT_EQ(GURL("https://google.com/foobar").spec(), proto_source.url());
-  EXPECT_EQ(id, proto_source.id());
-
-  EXPECT_EQ(2, proto_report.entries_size());
-
-  // Bar entry is the 0th entry here because bar_builder is destructed before
-  // foo_builder: the reverse order as they are constructed. To have the same
-  // ordering as the builders are constructed, one can achieve that by putting
-  // builders in separate scopes.
-  const Entry& proto_entry_bar = proto_report.entries(0);
-  EXPECT_EQ(id, proto_entry_bar.source_id());
-  EXPECT_EQ(base::HashMetricName("bar"), proto_entry_bar.event_hash());
-  EXPECT_EQ(2, proto_entry_bar.metrics_size());
-  const Entry::Metric proto_entry_bar_start = proto_entry_bar.metrics(0);
-  EXPECT_EQ(base::HashMetricName("bar_start"),
-            proto_entry_bar_start.metric_hash());
-  EXPECT_EQ(5, proto_entry_bar_start.value());
-  const Entry::Metric proto_entry_bar_end = proto_entry_bar.metrics(1);
-  EXPECT_EQ(base::HashMetricName("bar_end"), proto_entry_bar_end.metric_hash());
-  EXPECT_EQ(15, proto_entry_bar_end.value());
-
-  const Entry& proto_entry_foo = proto_report.entries(1);
-  EXPECT_EQ(id, proto_entry_foo.source_id());
-  EXPECT_EQ(base::HashMetricName("foo"), proto_entry_foo.event_hash());
-  EXPECT_EQ(2, proto_entry_foo.metrics_size());
-  const Entry::Metric proto_entry_foo_start = proto_entry_foo.metrics(0);
-  EXPECT_EQ(base::HashMetricName("foo_start"),
-            proto_entry_foo_start.metric_hash());
-  EXPECT_EQ(0, proto_entry_foo_start.value());
-  const Entry::Metric proto_entry_foo_end = proto_entry_foo.metrics(1);
-  EXPECT_EQ(base::HashMetricName("foo_end"), proto_entry_foo_end.metric_hash());
-  EXPECT_EQ(10, proto_entry_foo_end.value());
+  EXPECT_EQ(GURL("https://google.com/final").spec(), proto_source.url());
+  EXPECT_TRUE(proto_source.has_initial_url());
 }
 
 TEST_F(UkmServiceTest, AddEntryWithEmptyMetrics) {
-  UkmService service(&prefs_, &client_);
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
+
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
-  EXPECT_EQ(0, GetPersistedLogCount());
+  ASSERT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   ukm::SourceId id = GetWhitelistedSourceId(0);
   recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
 
-  { ::ukm::builders::PageLoad(id).Record(&service); }
+  TestEvent1(id).Record(&service);
   service.Flush();
-  EXPECT_EQ(1, GetPersistedLogCount());
+  ASSERT_EQ(1, GetPersistedLogCount());
   Report proto_report = GetPersistedReport();
   EXPECT_EQ(1, proto_report.entries_size());
 }
 
 TEST_F(UkmServiceTest, MetricsProviderTest) {
-  UkmService service(&prefs_, &client_);
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
+
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
 
   metrics::TestMetricsProvider* provider = new metrics::TestMetricsProvider();
@@ -328,16 +303,12 @@ TEST_F(UkmServiceTest, MetricsProviderTest) {
   EXPECT_FALSE(provider->provide_system_profile_metrics_called());
 
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   ukm::SourceId id = GetWhitelistedSourceId(0);
   recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
-  {
-    ::ukm::builders::PageLoad(id)
-        .SetPaintTiming_NavigationToFirstContentfulPaint(300)
-        .Record(&service);
-  }
+  TestEvent1(id).Record(&service);
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 1);
 
@@ -349,13 +320,59 @@ TEST_F(UkmServiceTest, MetricsProviderTest) {
   EXPECT_TRUE(provider->provide_system_profile_metrics_called());
 }
 
-TEST_F(UkmServiceTest, LogsUploadedOnlyWhenHavingSourcesOrEntries) {
-  UkmService service(&prefs_, &client_);
+TEST_F(UkmServiceTest, LogsRotation) {
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(GetPersistedLogCount(), 0);
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
+
+  EXPECT_EQ(0, service.report_count());
+
+  // Log rotation should generate a log.
+  const ukm::SourceId id = GetWhitelistedSourceId(0);
+  recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
+  task_runner_->RunPendingTasks();
+  EXPECT_EQ(1, service.report_count());
+  EXPECT_TRUE(client_.uploader()->is_uploading());
+
+  // Rotation shouldn't generate a log due to one being pending.
+  recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
+  task_runner_->RunPendingTasks();
+  EXPECT_EQ(1, service.report_count());
+  EXPECT_TRUE(client_.uploader()->is_uploading());
+
+  // Completing the upload should clear pending log, then log rotation should
+  // generate another log.
+  client_.uploader()->CompleteUpload(200);
+  task_runner_->RunPendingTasks();
+  EXPECT_EQ(2, service.report_count());
+
+  // Check that rotations keep working.
+  for (int i = 3; i < 6; i++) {
+    task_runner_->RunPendingTasks();
+    client_.uploader()->CompleteUpload(200);
+    recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
+    task_runner_->RunPendingTasks();
+    EXPECT_EQ(i, service.report_count());
+  }
+}
+
+TEST_F(UkmServiceTest, LogsUploadedOnlyWhenHavingSourcesOrEntries) {
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  // Testing two whitelisted Entries.
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
+
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(GetPersistedLogCount(), 0);
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   EXPECT_TRUE(task_runner_->HasPendingTask());
@@ -370,26 +387,20 @@ TEST_F(UkmServiceTest, LogsUploadedOnlyWhenHavingSourcesOrEntries) {
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 1);
 
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        service.GetEntryBuilder(id, "PageLoad");
-    builder->AddMetric("FirstPaint", 300);
-  }
+  TestEvent1(id).Record(&service);
   // Includes an Entry, so will persist.
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 2);
 
   recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        service.GetEntryBuilder(id, "PageLoad");
-    builder->AddMetric("FirstContentfulPaint", 300);
-  }
+  TestEvent1(id).Record(&service);
+  // Do not keep the source in the recorder after the current log.
+  recorder.MarkSourceForDeletion(id);
   // Includes a Source and an Entry, so will persist.
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 3);
 
-  // Current log has no Sources.
+  // The recorder contains no Sources or Entries thus will not create a new log.
   service.Flush();
   EXPECT_EQ(GetPersistedLogCount(), 3);
 }
@@ -404,100 +415,96 @@ TEST_F(UkmServiceTest, GetNewSourceID) {
 }
 
 TEST_F(UkmServiceTest, RecordInitialUrl) {
-  for (bool should_record_initial_url : {true, false}) {
-    base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-    ScopedUkmFeatureParams params(
-        base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-        {{"RecordInitialUrl", should_record_initial_url ? "true" : "false"}});
+  ClearPrefs();
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(GetPersistedLogCount(), 0);
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
 
-    ClearPrefs();
-    UkmService service(&prefs_, &client_);
-    TestRecordingHelper recorder(&service);
-    EXPECT_EQ(GetPersistedLogCount(), 0);
-    service.Initialize();
-    task_runner_->RunUntilIdle();
-    service.EnableRecording();
-    service.EnableReporting();
+  ukm::SourceId id = GetWhitelistedSourceId(0);
+  UkmSource::NavigationData navigation_data;
+  navigation_data.urls = {GURL("https://google.com/initial"),
+                          GURL("https://google.com/final")};
+  recorder.RecordNavigation(id, navigation_data);
 
-    ukm::SourceId id = GetWhitelistedSourceId(0);
-    recorder.UpdateSourceURL(id, GURL("https://google.com/initial"));
-    recorder.UpdateSourceURL(id, GURL("https://google.com/intermediate"));
-    recorder.UpdateSourceURL(id, GURL("https://google.com/foobar"));
+  service.Flush();
+  EXPECT_EQ(GetPersistedLogCount(), 1);
 
-    service.Flush();
-    EXPECT_EQ(GetPersistedLogCount(), 1);
+  Report proto_report = GetPersistedReport();
+  EXPECT_EQ(1, proto_report.sources_size());
+  const Source& proto_source = proto_report.sources(0);
 
-    Report proto_report = GetPersistedReport();
-    EXPECT_EQ(1, proto_report.sources_size());
-    const Source& proto_source = proto_report.sources(0);
-
-    EXPECT_EQ(id, proto_source.id());
-    EXPECT_EQ(GURL("https://google.com/foobar").spec(), proto_source.url());
-    EXPECT_EQ(should_record_initial_url, proto_source.has_initial_url());
-    if (should_record_initial_url) {
-      EXPECT_EQ(GURL("https://google.com/initial").spec(),
-                proto_source.initial_url());
-    }
-  }
+  EXPECT_EQ(id, proto_source.id());
+  EXPECT_EQ(GURL("https://google.com/final").spec(), proto_source.url());
+  EXPECT_TRUE(proto_source.has_initial_url());
+  EXPECT_EQ(GURL("https://google.com/initial").spec(),
+            proto_source.initial_url());
 }
 
 TEST_F(UkmServiceTest, RestrictToWhitelistedSourceIds) {
+  const GURL kURL = GURL("https://example.com/");
   for (bool restrict_to_whitelisted_source_ids : {true, false}) {
     base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
     ScopedUkmFeatureParams params(
-        base::FeatureList::OVERRIDE_ENABLE_FEATURE,
         {{"RestrictToWhitelistedSourceIds",
-          restrict_to_whitelisted_source_ids ? "true" : "false"}});
+          restrict_to_whitelisted_source_ids ? "true" : "false"},
+         {"WhitelistEntries", Entry1And2Whitelist()}});
 
     ClearPrefs();
-    UkmService service(&prefs_, &client_);
+    UkmService service(&prefs_, &client_,
+                       true /* restrict_to_whitelisted_entries */);
     TestRecordingHelper recorder(&service);
     EXPECT_EQ(GetPersistedLogCount(), 0);
     service.Initialize();
     task_runner_->RunUntilIdle();
-    service.EnableRecording();
+    service.EnableRecording(/*extensions=*/false);
     service.EnableReporting();
 
     ukm::SourceId id1 = GetWhitelistedSourceId(0);
-    recorder.UpdateSourceURL(id1, GURL("https://other.com/"));
-    recorder.GetEntryBuilder(id1, "FakeEntry");
+    recorder.UpdateSourceURL(id1, kURL);
+    TestEvent1(id1).Record(&service);
 
     // Create a non-navigation-based sourceid, which should not be whitelisted.
-    ukm::SourceId id2 = UkmRecorder::GetNewSourceID();
-    recorder.UpdateSourceURL(id2, GURL("https://example.com/"));
-    recorder.GetEntryBuilder(id2, "FakeEntry");
+    ukm::SourceId id2 = GetNonWhitelistedSourceId(1);
+    recorder.UpdateSourceURL(id2, kURL);
+    TestEvent1(id2).Record(&service);
 
     service.Flush();
-    EXPECT_EQ(GetPersistedLogCount(), 1);
+    ASSERT_EQ(GetPersistedLogCount(), 1);
     Report proto_report = GetPersistedReport();
-    EXPECT_GE(proto_report.sources_size(), 1);
+    ASSERT_GE(proto_report.sources_size(), 1);
 
     // The whitelisted source should always be recorded.
     const Source& proto_source1 = proto_report.sources(0);
     EXPECT_EQ(id1, proto_source1.id());
-    EXPECT_EQ(GURL("https://other.com/").spec(), proto_source1.url());
+    EXPECT_EQ(kURL.spec(), proto_source1.url());
 
     // The non-whitelisted source should only be recorded if we aren't
     // restricted to whitelisted source ids.
     if (restrict_to_whitelisted_source_ids) {
-      EXPECT_EQ(1, proto_report.sources_size());
+      ASSERT_EQ(1, proto_report.sources_size());
     } else {
-      EXPECT_EQ(2, proto_report.sources_size());
+      ASSERT_EQ(2, proto_report.sources_size());
       const Source& proto_source2 = proto_report.sources(1);
       EXPECT_EQ(id2, proto_source2.id());
-      EXPECT_EQ(GURL("https://example.com/").spec(), proto_source2.url());
+      EXPECT_EQ(kURL.spec(), proto_source2.url());
     }
   }
 }
 
 TEST_F(UkmServiceTest, RecordSessionId) {
   ClearPrefs();
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   auto id = GetWhitelistedSourceId(0);
@@ -514,16 +521,16 @@ TEST_F(UkmServiceTest, RecordSessionId) {
 TEST_F(UkmServiceTest, SourceSize) {
   base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
   // Set a threshold of number of Sources via Feature Params.
-  ScopedUkmFeatureParams params(base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-                                {{"MaxSources", "2"}});
+  ScopedUkmFeatureParams params({{"MaxSources", "2"}});
 
   ClearPrefs();
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   auto id = GetWhitelistedSourceId(0);
@@ -543,13 +550,15 @@ TEST_F(UkmServiceTest, SourceSize) {
 }
 
 TEST_F(UkmServiceTest, PurgeMidUpload) {
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(GetPersistedLogCount(), 0);
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
+
   auto id = GetWhitelistedSourceId(0);
   recorder.UpdateSourceURL(id, GURL("https://google.com/foobar1"));
   // Should init, generate a log, and start an upload.
@@ -566,37 +575,25 @@ TEST_F(UkmServiceTest, PurgeMidUpload) {
 TEST_F(UkmServiceTest, WhitelistEntryTest) {
   base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
   // Testing two whitelisted Entries.
-  ScopedUkmFeatureParams params(base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-                                {{"WhitelistEntries", "EntryA,EntryB"}});
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
 
   ClearPrefs();
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   auto id = GetWhitelistedSourceId(0);
   recorder.UpdateSourceURL(id, GURL("https://google.com/foobar1"));
 
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        service.GetEntryBuilder(id, "EntryA");
-    builder->AddMetric("MetricA", 300);
-  }
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        service.GetEntryBuilder(id, "EntryB");
-    builder->AddMetric("MetricB", 400);
-  }
+  TestEvent1(id).Record(&service);
+  TestEvent2(id).Record(&service);
   // Note that this third entry is not in the whitelist.
-  {
-    std::unique_ptr<UkmEntryBuilder> builder =
-        service.GetEntryBuilder(id, "EntryC");
-    builder->AddMetric("MetricC", 500);
-  }
+  TestEvent3(id).Record(&service);
 
   service.Flush();
   EXPECT_EQ(1, GetPersistedLogCount());
@@ -608,26 +605,30 @@ TEST_F(UkmServiceTest, WhitelistEntryTest) {
 
   const Entry& proto_entry_a = proto_report.entries(0);
   EXPECT_EQ(id, proto_entry_a.source_id());
-  EXPECT_EQ(base::HashMetricName("EntryA"), proto_entry_a.event_hash());
+  EXPECT_EQ(base::HashMetricName(TestEvent1::kEntryName),
+            proto_entry_a.event_hash());
 
   const Entry& proto_entry_b = proto_report.entries(1);
   EXPECT_EQ(id, proto_entry_b.source_id());
-  EXPECT_EQ(base::HashMetricName("EntryB"), proto_entry_b.event_hash());
+  EXPECT_EQ(base::HashMetricName(TestEvent2::kEntryName),
+            proto_entry_b.event_hash());
 }
 
 TEST_F(UkmServiceTest, SourceURLLength) {
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   auto id = GetWhitelistedSourceId(0);
 
   // This URL is too long to be recorded fully.
-  const std::string long_string = "https://" + std::string(10000, 'a');
+  const std::string long_string =
+      "https://example.com/" + std::string(10000, 'a');
   recorder.UpdateSourceURL(id, GURL(long_string));
 
   service.Flush();
@@ -640,24 +641,30 @@ TEST_F(UkmServiceTest, SourceURLLength) {
 }
 
 TEST_F(UkmServiceTest, UnreferencedNonWhitelistedSources) {
+  const GURL kURL("https://google.com/foobar");
   for (bool restrict_to_whitelisted_source_ids : {true, false}) {
     base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
     // Set a threshold of number of Sources via Feature Params.
     ScopedUkmFeatureParams params(
-        base::FeatureList::OVERRIDE_ENABLE_FEATURE,
         {{"MaxKeptSources", "3"},
-         {"WhitelistEntries", "EntryA,EntryB"},
+         {"WhitelistEntries", Entry1And2Whitelist()},
          {"RestrictToWhitelistedSourceIds",
           restrict_to_whitelisted_source_ids ? "true" : "false"}});
 
     ClearPrefs();
-    UkmService service(&prefs_, &client_);
+    UkmService service(&prefs_, &client_,
+                       true /* restrict_to_whitelisted_entries */);
     TestRecordingHelper recorder(&service);
     EXPECT_EQ(0, GetPersistedLogCount());
     service.Initialize();
     task_runner_->RunUntilIdle();
-    service.EnableRecording();
+    service.EnableRecording(/*extensions=*/false);
     service.EnableReporting();
+
+    // Record with whitelisted ID to whitelist the URL.
+    // Use a larger ID to make it last in the proto.
+    ukm::SourceId whitelisted_id = GetWhitelistedSourceId(100);
+    recorder.UpdateSourceURL(whitelisted_id, kURL);
 
     std::vector<SourceId> ids;
     base::TimeTicks last_time = base::TimeTicks::Now();
@@ -670,59 +677,186 @@ TEST_F(UkmServiceTest, UnreferencedNonWhitelistedSources) {
       }
 
       ids.push_back(GetNonWhitelistedSourceId(i));
-      recorder.UpdateSourceURL(ids.back(), GURL("https://google.com/foobar" +
-                                                base::NumberToString(i)));
+      recorder.UpdateSourceURL(ids.back(), kURL);
       last_time = base::TimeTicks::Now();
     }
 
     // Add whitelisted entries for 0, 2 and non-whitelisted entries for 2, 3.
-    recorder.GetEntryBuilder(ids[0], "EntryA")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[2], "EntryB")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[2], "EntryC")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[3], "EntryC")->AddMetric("Metric", 500);
+    TestEvent1(ids[0]).Record(&service);
+    TestEvent2(ids[2]).Record(&service);
+    TestEvent3(ids[2]).Record(&service);
+    TestEvent3(ids[3]).Record(&service);
 
     service.Flush();
     EXPECT_EQ(1, GetPersistedLogCount());
     auto proto_report = GetPersistedReport();
 
+    // The non-whitelisted source should only be recorded if we aren't
+    // restricted to whitelisted source ids.
     if (restrict_to_whitelisted_source_ids) {
-      ASSERT_EQ(0, proto_report.sources_size());
-    } else {
-      ASSERT_EQ(2, proto_report.sources_size());
-      EXPECT_EQ(ids[0], proto_report.sources(0).id());
-      EXPECT_EQ("https://google.com/foobar0", proto_report.sources(0).url());
-      EXPECT_EQ(ids[2], proto_report.sources(1).id());
-      EXPECT_EQ("https://google.com/foobar2", proto_report.sources(1).url());
-    }
+      // Only the one whitelisted source (whitelisted_id) is recorded.
+      EXPECT_EQ(1, proto_report.source_counts().observed());
+      // The one whitelisted source is of navigation type.
+      EXPECT_EQ(1, proto_report.source_counts().navigation_sources());
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      // The one whitelisted source is also deferred for inclusion in future
+      // reports.
+      EXPECT_EQ(1, proto_report.source_counts().deferred_sources());
+      EXPECT_EQ(0, proto_report.source_counts().carryover_sources());
 
+      ASSERT_EQ(1, proto_report.sources_size());
+    } else {
+      // 1 whitelisted source and 6 non-whitelisted source.
+      EXPECT_EQ(7, proto_report.source_counts().observed());
+      // The one whitelisted source is of navigation type.
+      EXPECT_EQ(1, proto_report.source_counts().navigation_sources());
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      // Only the navigation type source is deferred.
+      EXPECT_EQ(1, proto_report.source_counts().deferred_sources());
+      EXPECT_EQ(0, proto_report.source_counts().carryover_sources());
+
+      ASSERT_EQ(3, proto_report.sources_size());
+      EXPECT_EQ(ids[0], proto_report.sources(0).id());
+      EXPECT_EQ(kURL.spec(), proto_report.sources(0).url());
+      EXPECT_EQ(ids[2], proto_report.sources(1).id());
+      EXPECT_EQ(kURL.spec(), proto_report.sources(1).url());
+    }
     // Since MaxKeptSources is 3, only Sources 5, 4, 3 should be retained.
     // Log entries under 0, 1, 3 and 4. Log them in reverse order - which
     // shouldn't affect source ordering in the output.
     //  - Source 0 should not be re-transmitted since it was sent before.
     //  - Source 1 should not be transmitted due to MaxKeptSources param.
     //  - Sources 3 and 4 should be transmitted since they were not sent before.
-    recorder.GetEntryBuilder(ids[4], "EntryA")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[3], "EntryA")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[1], "EntryA")->AddMetric("Metric", 500);
-    recorder.GetEntryBuilder(ids[0], "EntryA")->AddMetric("Metric", 500);
+    TestEvent1(ids[4]).Record(&service);
+    TestEvent1(ids[3]).Record(&service);
+    TestEvent1(ids[1]).Record(&service);
+    TestEvent1(ids[0]).Record(&service);
 
     service.Flush();
     EXPECT_EQ(2, GetPersistedLogCount());
     proto_report = GetPersistedReport();
 
+    // The non-whitelisted source should only be recorded if we aren't
+    // restricted to whitelisted source ids.
     if (restrict_to_whitelisted_source_ids) {
-      ASSERT_EQ(0, proto_report.sources_size());
+      EXPECT_EQ(0, proto_report.source_counts().observed());
+      EXPECT_EQ(0, proto_report.source_counts().navigation_sources());
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      // The one whitelisted source is deferred again in future reports.
+      EXPECT_EQ(1, proto_report.source_counts().deferred_sources());
+      // Number of sources carried over from the previous report to this report.
+      EXPECT_EQ(1, proto_report.source_counts().carryover_sources());
+      // Only the navigation source is again included in current report and
+      // there is a new entry associated to it.
+      ASSERT_EQ(1, proto_report.sources_size());
     } else {
-      ASSERT_EQ(2, proto_report.sources_size());
-      EXPECT_EQ(ids[3], proto_report.sources(0).id());
-      EXPECT_EQ("https://google.com/foobar3", proto_report.sources(0).url());
-      EXPECT_EQ(ids[4], proto_report.sources(1).id());
-      EXPECT_EQ("https://google.com/foobar4", proto_report.sources(1).url());
+      EXPECT_EQ(0, proto_report.source_counts().observed());
+      EXPECT_EQ(0, proto_report.source_counts().navigation_sources());
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      // Only the navigation type source is deferred.
+      EXPECT_EQ(1, proto_report.source_counts().deferred_sources());
+      // Number of sources carried over from the previous report to this report.
+      EXPECT_EQ(1, proto_report.source_counts().carryover_sources());
+      // Only the navigation source is again included in current report and
+      // there is a new entry associated to it.
+      ASSERT_EQ(1, proto_report.sources_size());
+      EXPECT_EQ(whitelisted_id, proto_report.sources(0).id());
+      EXPECT_EQ(kURL.spec(), proto_report.sources(0).url());
     }
   }
 }
 
-TEST_F(UkmServiceTest, UnsupportedSchemes) {
+TEST_F(UkmServiceTest, NonWhitelistedUrls) {
+  // URL to be manually whitelisted using whitelisted source type.
+  const GURL kURL("https://google.com/foobar");
+  struct {
+    GURL url;
+    bool expect_in_report;
+  } test_cases[] = {
+      {GURL("https://google.com/foobar"), true},
+      // For origin-only URLs, only the origin needs to be matched.
+      {GURL("https://google.com"), true},
+      {GURL("https://google.com/foobar2"), false},
+      {GURL("https://other.com"), false},
+  };
+
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  ScopedUkmFeatureParams params({{"WhitelistEntries", Entry1And2Whitelist()}});
+
+  for (const auto& test : test_cases) {
+    ClearPrefs();
+    UkmService service(&prefs_, &client_,
+                       true /* restrict_to_whitelisted_entries */);
+    TestRecordingHelper recorder(&service);
+
+    ASSERT_EQ(GetPersistedLogCount(), 0);
+    service.Initialize();
+    task_runner_->RunUntilIdle();
+    service.EnableRecording(/*extensions=*/false);
+    service.EnableReporting();
+
+    // Record with whitelisted ID to whitelist the URL.
+    ukm::SourceId whitelist_id = GetWhitelistedSourceId(1);
+    recorder.UpdateSourceURL(whitelist_id, kURL);
+
+    // Record non whitelisted ID with an entry.
+    ukm::SourceId nonwhitelist_id = GetNonWhitelistedSourceId(100);
+    recorder.UpdateSourceURL(nonwhitelist_id, test.url);
+    TestEvent1(nonwhitelist_id).Record(&service);
+
+    service.Flush();
+    ASSERT_EQ(1, GetPersistedLogCount());
+    auto proto_report = GetPersistedReport();
+
+    EXPECT_EQ(2, proto_report.source_counts().observed());
+    EXPECT_EQ(1, proto_report.source_counts().navigation_sources());
+
+    // If the source id is not whitelisted, don't send it unless it has
+    // associated entries and the URL matches that of the whitelisted source.
+    if (test.expect_in_report) {
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      ASSERT_EQ(2, proto_report.sources_size());
+      EXPECT_EQ(whitelist_id, proto_report.sources(0).id());
+      EXPECT_EQ(kURL, proto_report.sources(0).url());
+      EXPECT_EQ(nonwhitelist_id, proto_report.sources(1).id());
+      EXPECT_EQ(test.url, proto_report.sources(1).url());
+    } else {
+      EXPECT_EQ(1, proto_report.source_counts().unmatched_sources());
+      ASSERT_EQ(1, proto_report.sources_size());
+      EXPECT_EQ(whitelist_id, proto_report.sources(0).id());
+      EXPECT_EQ(kURL, proto_report.sources(0).url());
+    }
+
+    // Do a log rotation again, with the same test URL associated to a new
+    // source id. Since the previous source id of the test case is of
+    // non-whitelisted type, the carryover URLs list is expected to remain
+    // be unchanged, thus the the report should still contain the same numbers
+    // of sources as before, that is, non-whitelisted URLs should not have
+    // whitelisted themselves during the previous log rotation.
+    ukm::SourceId nonwhitelist_id2 = GetNonWhitelistedSourceId(101);
+    recorder.UpdateSourceURL(nonwhitelist_id2, test.url);
+    TestEvent1(nonwhitelist_id2).Record(&service);
+    service.Flush();
+    ASSERT_EQ(2, GetPersistedLogCount());
+    proto_report = GetPersistedReport();
+
+    if (test.expect_in_report) {
+      EXPECT_EQ(0, proto_report.source_counts().unmatched_sources());
+      ASSERT_EQ(2, proto_report.sources_size());
+      EXPECT_EQ(whitelist_id, proto_report.sources(0).id());
+      EXPECT_EQ(kURL, proto_report.sources(0).url());
+      EXPECT_EQ(nonwhitelist_id2, proto_report.sources(1).id());
+      EXPECT_EQ(test.url, proto_report.sources(1).url());
+    } else {
+      EXPECT_EQ(1, proto_report.source_counts().unmatched_sources());
+      ASSERT_EQ(1, proto_report.sources_size());
+      EXPECT_EQ(whitelist_id, proto_report.sources(0).id());
+      EXPECT_EQ(kURL, proto_report.sources(0).url());
+    }
+  }
+}
+
+TEST_F(UkmServiceTest, SupportedSchemes) {
   struct {
     const char* url;
     bool expected_kept;
@@ -732,21 +866,27 @@ TEST_F(UkmServiceTest, UnsupportedSchemes) {
       {"ftp://google.ca/", true},
       {"about:blank", true},
       {"chrome://version/", true},
+      {"app://play/abcdefghijklmnopqrstuvwxyzabcdef/", true},
+      // chrome-extension are controlled by TestIsWebstoreExtension, above.
+      {"chrome-extension://bhcnanendmgjjeghamaccjnochlnhcgj/", true},
+      {"chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/", false},
       {"file:///tmp/", false},
-      {"chrome-extension://bhcnanendmgjjeghamaccjnochlnhcgj", false},
       {"abc://google.ca/", false},
       {"www.google.ca/", false},
   };
 
   base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-  ScopedUkmFeatureParams params(base::FeatureList::OVERRIDE_ENABLE_FEATURE, {});
-  UkmService service(&prefs_, &client_);
+  ScopedUkmFeatureParams params({});
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
+  service.SetIsWebstoreExtensionCallback(
+      base::BindRepeating(&TestIsWebstoreExtension));
 
   EXPECT_EQ(GetPersistedLogCount(), 0);
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/true);
   service.EnableReporting();
 
   int64_t id_counter = 1;
@@ -754,7 +894,64 @@ TEST_F(UkmServiceTest, UnsupportedSchemes) {
   for (const auto& test : test_cases) {
     auto source_id = GetWhitelistedSourceId(id_counter++);
     recorder.UpdateSourceURL(source_id, GURL(test.url));
-    recorder.GetEntryBuilder(source_id, "FakeEntry");
+    TestEvent1(source_id).Record(&service);
+    if (test.expected_kept)
+      ++expected_kept_count;
+  }
+
+  service.Flush();
+  EXPECT_EQ(GetPersistedLogCount(), 1);
+  Report proto_report = GetPersistedReport();
+
+  EXPECT_EQ(expected_kept_count, proto_report.sources_size());
+  for (const auto& test : test_cases) {
+    bool found = false;
+    for (int i = 0; i < proto_report.sources_size(); ++i) {
+      if (proto_report.sources(i).url() == test.url) {
+        found = true;
+        break;
+      }
+    }
+    EXPECT_EQ(test.expected_kept, found) << test.url;
+  }
+}
+
+TEST_F(UkmServiceTest, SupportedSchemesNoExtensions) {
+  struct {
+    const char* url;
+    bool expected_kept;
+  } test_cases[] = {
+      {"http://google.ca/", true},
+      {"https://google.ca/", true},
+      {"ftp://google.ca/", true},
+      {"about:blank", true},
+      {"chrome://version/", true},
+      {"app://play/abcdefghijklmnopqrstuvwxyzabcdef/", true},
+      {"chrome-extension://bhcnanendmgjjeghamaccjnochlnhcgj/", false},
+      {"chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/", false},
+      {"file:///tmp/", false},
+      {"abc://google.ca/", false},
+      {"www.google.ca/", false},
+  };
+
+  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
+  ScopedUkmFeatureParams params({});
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
+  TestRecordingHelper recorder(&service);
+
+  EXPECT_EQ(GetPersistedLogCount(), 0);
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
+
+  int64_t id_counter = 1;
+  int expected_kept_count = 0;
+  for (const auto& test : test_cases) {
+    auto source_id = GetWhitelistedSourceId(id_counter++);
+    recorder.UpdateSourceURL(source_id, GURL(test.url));
+    TestEvent1(source_id).Record(&service);
     if (test.expected_kept)
       ++expected_kept_count;
   }
@@ -777,12 +974,13 @@ TEST_F(UkmServiceTest, UnsupportedSchemes) {
 }
 
 TEST_F(UkmServiceTest, SanitizeUrlAuthParams) {
-  UkmService service(&prefs_, &client_);
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelisted_entries */);
   TestRecordingHelper recorder(&service);
   EXPECT_EQ(0, GetPersistedLogCount());
   service.Initialize();
   task_runner_->RunUntilIdle();
-  service.EnableRecording();
+  service.EnableRecording(/*extensions=*/false);
   service.EnableReporting();
 
   auto id = GetWhitelistedSourceId(0);
@@ -808,17 +1006,23 @@ TEST_F(UkmServiceTest, SanitizeChromeUrlParams) {
       {"http://google.ca/?foo=bar", "http://google.ca/?foo=bar"},
       {"https://google.ca/?foo=bar", "https://google.ca/?foo=bar"},
       {"ftp://google.ca/?foo=bar", "ftp://google.ca/?foo=bar"},
+      {"chrome-extension://bhcnanendmgjjeghamaccjnochlnhcgj/foo.html?a=b",
+       "chrome-extension://bhcnanendmgjjeghamaccjnochlnhcgj/"},
   };
 
   for (const auto& test : test_cases) {
     ClearPrefs();
 
-    UkmService service(&prefs_, &client_);
+    UkmService service(&prefs_, &client_,
+                       true /* restrict_to_whitelisted_entries */);
     TestRecordingHelper recorder(&service);
+    service.SetIsWebstoreExtensionCallback(
+        base::BindRepeating(&TestIsWebstoreExtension));
+
     EXPECT_EQ(0, GetPersistedLogCount());
     service.Initialize();
     task_runner_->RunUntilIdle();
-    service.EnableRecording();
+    service.EnableRecording(/*extensions=*/true);
     service.EnableReporting();
 
     auto id = GetWhitelistedSourceId(0);
@@ -832,6 +1036,95 @@ TEST_F(UkmServiceTest, SanitizeChromeUrlParams) {
     const Source& proto_source = proto_report.sources(0);
     EXPECT_EQ(test.expected_url, proto_source.url());
   }
+}
+
+TEST_F(UkmServiceTest, MarkSourceForDeletion) {
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelist_entries */);
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(0, GetPersistedLogCount());
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
+
+  // Seed some dummy sources.
+  SourceId id0 = GetWhitelistedSourceId(0);
+  recorder.UpdateSourceURL(id0, GURL("https://www.example0.com/"));
+  SourceId id1 = GetWhitelistedSourceId(1);
+  recorder.UpdateSourceURL(id1, GURL("https://www.example1.com/"));
+  SourceId id2 = GetWhitelistedSourceId(2);
+  recorder.UpdateSourceURL(id2, GURL("https://www.example2.com/"));
+
+  service.Flush();
+  int logs_count = 0;
+  EXPECT_EQ(++logs_count, GetPersistedLogCount());
+
+  // All sources are present in the report.
+  Report proto_report = GetPersistedReport();
+  ASSERT_EQ(3, proto_report.sources_size());
+  EXPECT_EQ(id0, proto_report.sources(0).id());
+  EXPECT_EQ(id1, proto_report.sources(1).id());
+  EXPECT_EQ(id2, proto_report.sources(2).id());
+
+  // Mark source 1 for deletion. Next report will still contain source 1 because
+  // we might have associated entries. It will no longer be in further report at
+  // the following cycle.
+  service.MarkSourceForDeletion(id1);
+  service.Flush();
+  EXPECT_EQ(++logs_count, GetPersistedLogCount());
+
+  proto_report = GetPersistedReport();
+  ASSERT_EQ(3, proto_report.sources_size());
+
+  service.Flush();
+  EXPECT_EQ(++logs_count, GetPersistedLogCount());
+
+  proto_report = GetPersistedReport();
+  ASSERT_EQ(2, proto_report.sources_size());
+  EXPECT_EQ(id0, proto_report.sources(0).id());
+  EXPECT_EQ(id2, proto_report.sources(1).id());
+}
+
+TEST_F(UkmServiceTest, PurgeNonNavigationSources) {
+  UkmService service(&prefs_, &client_,
+                     true /* restrict_to_whitelist_entries */);
+  TestRecordingHelper recorder(&service);
+  EXPECT_EQ(0, GetPersistedLogCount());
+  service.Initialize();
+  task_runner_->RunUntilIdle();
+  service.EnableRecording(/*extensions=*/false);
+  service.EnableReporting();
+
+  // Seed some dummy sources.
+  SourceId id0 = ConvertToSourceId(0, SourceIdType::UKM);
+  recorder.UpdateSourceURL(id0, GURL("https://www.example0.com/"));
+  SourceId id1 = ConvertToSourceId(1, SourceIdType::NAVIGATION_ID);
+  recorder.UpdateSourceURL(id1, GURL("https://www.example1.com/"));
+  SourceId id2 = ConvertToSourceId(2, SourceIdType::APP_ID);
+  recorder.UpdateSourceURL(id2, GURL("https://www.example2.com/"));
+  SourceId id3 = ConvertToSourceId(3, SourceIdType::HISTORY_ID);
+  recorder.UpdateSourceURL(id3, GURL("https://www.example3.com/"));
+
+  service.Flush();
+  int logs_count = 0;
+  EXPECT_EQ(++logs_count, GetPersistedLogCount());
+
+  // All sources are present except id0 of non-whitelisted UKM type.
+  Report proto_report = GetPersistedReport();
+  ASSERT_EQ(3, proto_report.sources_size());
+  EXPECT_EQ(id1, proto_report.sources(0).id());
+  EXPECT_EQ(id2, proto_report.sources(1).id());
+  EXPECT_EQ(id3, proto_report.sources(2).id());
+
+  service.Flush();
+  EXPECT_EQ(++logs_count, GetPersistedLogCount());
+
+  // Sources of APP_ID and HISTORY_ID types are not kept between reporting
+  // cycles, thus only 1 navigation type source remains.
+  proto_report = GetPersistedReport();
+  ASSERT_EQ(1, proto_report.sources_size());
+  EXPECT_EQ(id1, proto_report.sources(0).id());
 }
 
 }  // namespace ukm

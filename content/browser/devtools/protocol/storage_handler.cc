@@ -9,88 +9,93 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/strings/string_split.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "content/browser/cache_storage/cache_storage_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/quota/quota_manager.h"
-#include "storage/common/quota/quota_status_code.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace content {
 namespace protocol {
 
-namespace {
-Storage::StorageType GetTypeName(storage::QuotaClient::ID id) {
-  switch (id) {
-    case storage::QuotaClient::kFileSystem:
-      return Storage::StorageTypeEnum::File_systems;
-    case storage::QuotaClient::kDatabase:
-      return Storage::StorageTypeEnum::Websql;
-    case storage::QuotaClient::kAppcache:
-      return Storage::StorageTypeEnum::Appcache;
-    case storage::QuotaClient::kIndexedDatabase:
-      return Storage::StorageTypeEnum::Indexeddb;
-    case storage::QuotaClient::kServiceWorkerCache:
-      return Storage::StorageTypeEnum::Cache_storage;
-    case storage::QuotaClient::kServiceWorker:
-      return Storage::StorageTypeEnum::Service_workers;
-    default:
-      return Storage::StorageTypeEnum::Other;
-  }
-}
+struct UsageListInitializer {
+  const char* type;
+  int64_t blink::mojom::UsageBreakdown::*usage_member;
+};
 
+UsageListInitializer initializers[] = {
+    {Storage::StorageTypeEnum::File_systems,
+     &blink::mojom::UsageBreakdown::fileSystem},
+    {Storage::StorageTypeEnum::Websql, &blink::mojom::UsageBreakdown::webSql},
+    {Storage::StorageTypeEnum::Appcache,
+     &blink::mojom::UsageBreakdown::appcache},
+    {Storage::StorageTypeEnum::Indexeddb,
+     &blink::mojom::UsageBreakdown::indexedDatabase},
+    {Storage::StorageTypeEnum::Cache_storage,
+     &blink::mojom::UsageBreakdown::serviceWorkerCache},
+    {Storage::StorageTypeEnum::Service_workers,
+     &blink::mojom::UsageBreakdown::serviceWorker},
+};
+
+namespace {
 void ReportUsageAndQuotaDataOnUIThread(
     std::unique_ptr<StorageHandler::GetUsageAndQuotaCallback> callback,
-    storage::QuotaStatusCode code,
+    blink::mojom::QuotaStatusCode code,
     int64_t usage,
     int64_t quota,
-    base::flat_map<storage::QuotaClient::ID, int64_t> usage_breakdown) {
+    blink::mojom::UsageBreakdownPtr usage_breakdown) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (code != storage::kQuotaStatusOk) {
+  if (code != blink::mojom::QuotaStatusCode::kOk) {
     return callback->sendFailure(
         Response::Error("Quota information is not available"));
   }
 
-  std::unique_ptr<Array<Storage::UsageForType>> usageList =
-      Array<Storage::UsageForType>::create();
-  for (const auto& usage : usage_breakdown) {
+  auto usageList = std::make_unique<Array<Storage::UsageForType>>();
+
+  blink::mojom::UsageBreakdown* breakdown_ptr = usage_breakdown.get();
+  for (const auto initializer : initializers) {
     std::unique_ptr<Storage::UsageForType> entry =
         Storage::UsageForType::Create()
-            .SetStorageType(GetTypeName(usage.first))
-            .SetUsage(usage.second)
+            .SetStorageType(initializer.type)
+            .SetUsage(breakdown_ptr->*(initializer.usage_member))
             .Build();
-    usageList->addItem(std::move(entry));
+    usageList->emplace_back(std::move(entry));
   }
+
   callback->sendSuccess(usage, quota, std::move(usageList));
 }
 
 void GotUsageAndQuotaDataCallback(
     std::unique_ptr<StorageHandler::GetUsageAndQuotaCallback> callback,
-    storage::QuotaStatusCode code,
+    blink::mojom::QuotaStatusCode code,
     int64_t usage,
     int64_t quota,
-    base::flat_map<storage::QuotaClient::ID, int64_t> usage_breakdown) {
+    blink::mojom::UsageBreakdownPtr usage_breakdown) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(ReportUsageAndQuotaDataOnUIThread,
-                     base::Passed(std::move(callback)), code, usage, quota,
-                     std::move(usage_breakdown)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(ReportUsageAndQuotaDataOnUIThread, std::move(callback),
+                     code, usage, quota, std::move(usage_breakdown)));
 }
 
 void GetUsageAndQuotaOnIOThread(
     storage::QuotaManager* manager,
-    const GURL& url,
+    const url::Origin& origin,
     std::unique_ptr<StorageHandler::GetUsageAndQuotaCallback> callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   manager->GetUsageAndQuotaWithBreakdown(
-      url, storage::kStorageTypeTemporary,
-      base::Bind(&GotUsageAndQuotaDataCallback,
-                 base::Passed(std::move(callback))));
+      origin, blink::mojom::StorageType::kTemporary,
+      base::BindOnce(&GotUsageAndQuotaDataCallback, std::move(callback)));
 }
 }  // namespace
 
@@ -104,55 +109,44 @@ class StorageHandler::CacheStorageObserver : CacheStorageContextImpl::Observer {
   CacheStorageObserver(base::WeakPtr<StorageHandler> owner_storage_handler,
                        CacheStorageContextImpl* cache_storage_context)
       : owner_(owner_storage_handler), context_(cache_storage_context) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&CacheStorageObserver::AddObserverOnIOThread,
-                       base::Unretained(this)));
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    context_->AddObserver(this);
   }
 
   ~CacheStorageObserver() override {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
     context_->RemoveObserver(this);
   }
 
-  void TrackOriginOnIOThread(const url::Origin& origin) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  void TrackOrigin(const url::Origin& origin) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (origins_.find(origin) != origins_.end())
       return;
     origins_.insert(origin);
   }
 
-  void UntrackOriginOnIOThread(const url::Origin& origin) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  void UntrackOrigin(const url::Origin& origin) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
     origins_.erase(origin);
   }
 
   void OnCacheListChanged(const url::Origin& origin) override {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
     auto found = origins_.find(origin);
     if (found == origins_.end())
       return;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&StorageHandler::NotifyCacheStorageListChanged, owner_,
-                       origin.Serialize()));
+    owner_->NotifyCacheStorageListChanged(origin.Serialize());
   }
 
   void OnCacheContentChanged(const url::Origin& origin,
                              const std::string& cache_name) override {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (origins_.find(origin) == origins_.end())
       return;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&StorageHandler::NotifyCacheStorageContentChanged,
-                       owner_, origin.Serialize(), cache_name));
+    owner_->NotifyCacheStorageContentChanged(origin.Serialize(), cache_name);
   }
 
  private:
-  void AddObserverOnIOThread() {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    context_->AddObserver(this);
-  }
-
   // Maintained on the IO thread to avoid thread contention.
   base::flat_set<url::Origin> origins_;
 
@@ -199,8 +193,8 @@ class StorageHandler::IndexedDBObserver : IndexedDBContextImpl::Observer {
     auto found = origins_.find(origin);
     if (found == origins_.end())
       return;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&StorageHandler::NotifyIndexedDBListChanged, owner_,
                        origin.Serialize()));
   }
@@ -212,8 +206,8 @@ class StorageHandler::IndexedDBObserver : IndexedDBContextImpl::Observer {
     auto found = origins_.find(origin);
     if (found == origins_.end())
       return;
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&StorageHandler::NotifyIndexedDBContentChanged, owner_,
                        origin.Serialize(), database_name, object_store_name));
   }
@@ -239,8 +233,7 @@ class StorageHandler::IndexedDBObserver : IndexedDBContextImpl::Observer {
 
 StorageHandler::StorageHandler()
     : DevToolsDomainHandler(Storage::Metainfo::domainName),
-      process_(nullptr),
-      weak_ptr_factory_(this) {}
+      storage_partition_(nullptr) {}
 
 StorageHandler::~StorageHandler() {
   DCHECK(!cache_storage_observer_);
@@ -252,31 +245,31 @@ void StorageHandler::Wire(UberDispatcher* dispatcher) {
   Storage::Dispatcher::wire(dispatcher, this);
 }
 
-void StorageHandler::SetRenderer(RenderProcessHost* process_host,
+void StorageHandler::SetRenderer(int process_host_id,
                                  RenderFrameHostImpl* frame_host) {
-  process_ = process_host;
+  RenderProcessHost* process = RenderProcessHost::FromID(process_host_id);
+  storage_partition_ = process ? process->GetStoragePartition() : nullptr;
 }
 
 Response StorageHandler::Disable() {
-  if (cache_storage_observer_) {
-    BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
-                              cache_storage_observer_.release());
-  }
+  cache_storage_observer_.reset();
   if (indexed_db_observer_) {
-    indexed_db_observer_->TaskRunner()->DeleteSoon(
-        FROM_HERE, std::move(indexed_db_observer_));
+    scoped_refptr<base::SequencedTaskRunner> observer_task_runner =
+        indexed_db_observer_->TaskRunner();
+    observer_task_runner->DeleteSoon(FROM_HERE,
+                                     std::move(indexed_db_observer_));
   }
 
   return Response::OK();
 }
 
-Response StorageHandler::ClearDataForOrigin(
+void StorageHandler::ClearDataForOrigin(
     const std::string& origin,
-    const std::string& storage_types) {
-  if (!process_)
-    return Response::InternalError();
+    const std::string& storage_types,
+    std::unique_ptr<ClearDataForOriginCallback> callback) {
+  if (!storage_partition_)
+    return callback->sendFailure(Response::InternalError());
 
-  StoragePartition* partition = process_->GetStoragePartition();
   std::vector<std::string> types = base::SplitString(
       storage_types, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   std::unordered_set<std::string> set(types.begin(), types.end());
@@ -302,19 +295,22 @@ Response StorageHandler::ClearDataForOrigin(
   if (set.count(Storage::StorageTypeEnum::All))
     remove_mask |= StoragePartition::REMOVE_DATA_MASK_ALL;
 
-  if (!remove_mask)
-    return Response::InvalidParams("No valid storage type specified");
+  if (!remove_mask) {
+    return callback->sendFailure(
+        Response::InvalidParams("No valid storage type specified"));
+  }
 
-  partition->ClearDataForOrigin(
+  storage_partition_->ClearData(
       remove_mask, StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
-      GURL(origin), partition->GetURLRequestContext());
-  return Response::OK();
+      GURL(origin), base::Time(), base::Time::Max(),
+      base::BindOnce(&ClearDataForOriginCallback::sendSuccess,
+                     std::move(callback)));
 }
 
 void StorageHandler::GetUsageAndQuota(
     const String& origin,
     std::unique_ptr<GetUsageAndQuotaCallback> callback) {
-  if (!process_)
+  if (!storage_partition_)
     return callback->sendFailure(Response::InternalError());
 
   GURL origin_url(origin);
@@ -323,49 +319,40 @@ void StorageHandler::GetUsageAndQuota(
         Response::Error(origin + " is not a valid URL"));
   }
 
-  storage::QuotaManager* manager =
-      process_->GetStoragePartition()->GetQuotaManager();
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  storage::QuotaManager* manager = storage_partition_->GetQuotaManager();
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&GetUsageAndQuotaOnIOThread, base::RetainedRef(manager),
-                     origin_url, base::Passed(std::move(callback))));
+                     url::Origin::Create(origin_url), std::move(callback)));
 }
 
 Response StorageHandler::TrackCacheStorageForOrigin(const std::string& origin) {
-  if (!process_)
+  if (!storage_partition_)
     return Response::InternalError();
 
   GURL origin_url(origin);
   if (!origin_url.is_valid())
     return Response::InvalidParams(origin + " is not a valid URL");
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&CacheStorageObserver::TrackOriginOnIOThread,
-                     base::Unretained(GetCacheStorageObserver()),
-                     url::Origin::Create(origin_url)));
+  GetCacheStorageObserver()->TrackOrigin(url::Origin::Create(origin_url));
   return Response::OK();
 }
 
 Response StorageHandler::UntrackCacheStorageForOrigin(
     const std::string& origin) {
-  if (!process_)
+  if (!storage_partition_)
     return Response::InternalError();
 
   GURL origin_url(origin);
   if (!origin_url.is_valid())
     return Response::InvalidParams(origin + " is not a valid URL");
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&CacheStorageObserver::UntrackOriginOnIOThread,
-                     base::Unretained(GetCacheStorageObserver()),
-                     url::Origin::Create(origin_url)));
+  GetCacheStorageObserver()->UntrackOrigin(url::Origin::Create(origin_url));
   return Response::OK();
 }
 
 Response StorageHandler::TrackIndexedDBForOrigin(const std::string& origin) {
-  if (!process_)
+  if (!storage_partition_)
     return Response::InternalError();
 
   GURL origin_url(origin);
@@ -380,7 +367,7 @@ Response StorageHandler::TrackIndexedDBForOrigin(const std::string& origin) {
 }
 
 Response StorageHandler::UntrackIndexedDBForOrigin(const std::string& origin) {
-  if (!process_)
+  if (!storage_partition_)
     return Response::InternalError();
 
   GURL origin_url(origin);
@@ -401,7 +388,7 @@ StorageHandler::GetCacheStorageObserver() {
     cache_storage_observer_ = std::make_unique<CacheStorageObserver>(
         weak_ptr_factory_.GetWeakPtr(),
         static_cast<CacheStorageContextImpl*>(
-            process_->GetStoragePartition()->GetCacheStorageContext()));
+            storage_partition_->GetCacheStorageContext()));
   }
   return cache_storage_observer_.get();
 }
@@ -412,7 +399,7 @@ StorageHandler::IndexedDBObserver* StorageHandler::GetIndexedDBObserver() {
     indexed_db_observer_ = std::make_unique<IndexedDBObserver>(
         weak_ptr_factory_.GetWeakPtr(),
         static_cast<IndexedDBContextImpl*>(
-            process_->GetStoragePartition()->GetIndexedDBContext()));
+            storage_partition_->GetIndexedDBContext()));
   }
   return indexed_db_observer_.get();
 }

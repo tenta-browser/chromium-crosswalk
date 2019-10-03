@@ -16,13 +16,12 @@
 #include "base/single_thread_task_runner.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
-#include "services/device/public/interfaces/sensor.mojom.h"
+#include "services/device/public/mojom/sensor.mojom.h"
 
 namespace device {
 
 class PlatformSensorProvider;
 class PlatformSensorConfiguration;
-class SensorReadingSharedBufferReader;
 
 // Base class for the sensors provided by the platform. Concrete instances of
 // this class are created by platform specific PlatformSensorProvider.
@@ -78,7 +77,7 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
  protected:
   virtual ~PlatformSensor();
   PlatformSensor(mojom::SensorType type,
-                 mojo::ScopedSharedBufferMapping mapping,
+                 SensorReadingSharedBuffer* reading_buffer,
                  PlatformSensorProvider* provider);
 
   using ReadingBuffer = SensorReadingSharedBuffer;
@@ -102,17 +101,16 @@ class PlatformSensor : public base::RefCountedThreadSafe<PlatformSensor> {
   // If platfrom sensor events are processed on a different
   // thread, notifications are forwarded to |task_runner_|.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  base::ObserverList<Client, true> clients_;
+  base::ObserverList<Client, true>::Unchecked clients_;
 
  private:
   friend class base::RefCountedThreadSafe<PlatformSensor>;
-  const mojo::ScopedSharedBufferMapping shared_buffer_mapping_;
-  std::unique_ptr<SensorReadingSharedBufferReader> shared_buffer_reader_;
+  SensorReadingSharedBuffer* reading_buffer_;  // NOTE: Owned by |provider_|.
   mojom::SensorType type_;
   ConfigMap config_map_;
   PlatformSensorProvider* provider_;
   bool is_active_ = false;
-  base::WeakPtrFactory<PlatformSensor> weak_factory_;
+  base::WeakPtrFactory<PlatformSensor> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(PlatformSensor);
 };
 

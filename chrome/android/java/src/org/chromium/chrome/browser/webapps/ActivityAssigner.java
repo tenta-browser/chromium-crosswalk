@@ -6,14 +6,12 @@ package org.chromium.chrome.browser.webapps;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.util.Log;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.metrics.RecordHistogram;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -21,7 +19,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Before Lollipop, the only way to create multiple retargetable instances of the same Activity
@@ -95,24 +92,20 @@ public class ActivityAssigner {
 
     static final int INVALID_ACTIVITY_INDEX = -1;
 
+    @IntDef({ActivityAssignerNamespace.WEBAPP_NAMESPACE, ActivityAssignerNamespace.WEBAPK_NAMESPACE,
+            ActivityAssignerNamespace.SEPARATE_TASK_CCT_NAMESPACE})
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef({
-        WEBAPP_NAMESPACE,
-        WEBAPK_NAMESPACE,
-        SEPARATE_TASK_CCT_NAMESPACE
-    })
-    private @interface ActivityAssignerNamespace {}
-    public static final int WEBAPP_NAMESPACE = 0;
-    public static final int WEBAPK_NAMESPACE = 1;
-    public static final int SEPARATE_TASK_CCT_NAMESPACE = 2;
-    static final int NAMESPACE_COUNT = 3;
+    public @interface ActivityAssignerNamespace {
+        int WEBAPP_NAMESPACE = 0;
+        int WEBAPK_NAMESPACE = 1;
+        int SEPARATE_TASK_CCT_NAMESPACE = 2;
+        int NUM_ENTRIES = 3;
+    }
 
     private static final Object LOCK = new Object();
     private static List<ActivityAssigner> sInstances;
 
-    private final Context mContext;
     private final List<ActivityEntry> mActivityList;
-
     private final String mPrefPackage;
     private final String mPrefNumSavedEntries;
     private final String mPrefActivityIndex;
@@ -122,8 +115,9 @@ public class ActivityAssigner {
      * Pre-load shared prefs to avoid being blocked on the
      * disk access async task in the future.
      */
-    public static void warmUpSharedPrefs(Context context) {
-        for (int i = 0; i < NAMESPACE_COUNT; ++i) {
+    public static void warmUpSharedPrefs() {
+        Context context = ContextUtils.getApplicationContext();
+        for (int i = 0; i < ActivityAssignerNamespace.NUM_ENTRIES; ++i) {
             context.getSharedPreferences(PREF_PACKAGE[i], Context.MODE_PRIVATE);
         }
     }
@@ -146,8 +140,8 @@ public class ActivityAssigner {
         ThreadUtils.assertOnUiThread();
         synchronized (LOCK) {
             if (sInstances == null) {
-                sInstances = new ArrayList<ActivityAssigner>(NAMESPACE_COUNT);
-                for (int i = 0; i < NAMESPACE_COUNT; ++i) {
+                sInstances = new ArrayList<ActivityAssigner>(ActivityAssignerNamespace.NUM_ENTRIES);
+                for (int i = 0; i < ActivityAssignerNamespace.NUM_ENTRIES; ++i) {
                     sInstances.add(new ActivityAssigner(i));
                 }
             }
@@ -156,8 +150,6 @@ public class ActivityAssigner {
     }
 
     private ActivityAssigner(int activityTypeIndex) {
-        mContext = ContextUtils.getApplicationContext();
-
         mPrefPackage = PREF_PACKAGE[activityTypeIndex];
         mPrefNumSavedEntries = PREF_NUM_SAVED_ENTRIES[activityTypeIndex];
         mPrefActivityIndex = PREF_ACTIVITY_INDEX[activityTypeIndex];
@@ -276,16 +268,10 @@ public class ActivityAssigner {
 
         // Restore any entries that were previously saved.  If it seems that the preferences have
         // been corrupted somehow, just discard the whole map.
-        SharedPreferences prefs = mContext.getSharedPreferences(mPrefPackage, Context.MODE_PRIVATE);
+        SharedPreferences prefs = ContextUtils.getApplicationContext().getSharedPreferences(
+                mPrefPackage, Context.MODE_PRIVATE);
         try {
-            long time = SystemClock.elapsedRealtime();
             final int numSavedEntries = prefs.getInt(mPrefNumSavedEntries, 0);
-            try {
-                RecordHistogram.recordTimesHistogram("Android.StrictMode.WebappSharedPrefs",
-                        SystemClock.elapsedRealtime() - time, TimeUnit.MILLISECONDS);
-            } catch (UnsatisfiedLinkError error) {
-                // Intentionally ignored - it's ok to miss recording the metric occasionally.
-            }
             if (numSavedEntries <= NUM_WEBAPP_ACTIVITIES) {
                 for (int i = 0; i < numSavedEntries; ++i) {
                     String currentActivityIndexPref = mPrefActivityIndex + i;
@@ -330,7 +316,8 @@ public class ActivityAssigner {
      * Saves the mapping between apps and Activities.
      */
     private void storeActivityList() {
-        SharedPreferences prefs = mContext.getSharedPreferences(mPrefPackage, Context.MODE_PRIVATE);
+        SharedPreferences prefs = ContextUtils.getApplicationContext().getSharedPreferences(
+                mPrefPackage, Context.MODE_PRIVATE);
         SharedPreferences.Editor editor = prefs.edit();
         editor.clear();
         editor.putInt(mPrefNumSavedEntries, mActivityList.size());

@@ -9,14 +9,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
@@ -37,10 +37,9 @@ namespace {
 const char kDefaultDeviceManagementServerUrl[] =
     "https://m.google.com/devicemanagement/data/api";
 
-
-void ReportRegexSuccessMetric(bool success) {
-  UMA_HISTOGRAM_BOOLEAN("Enterprise.DomainWhitelistRegexSuccess", success);
-}
+// The URL for the realtime reporting server.
+const char kDefaultRealtimeReportingServerUrl[] =
+    "https://chromereporting-pa.googleapis.com/v1/events";
 
 // Regexes that match many of the larger public email providers as we know
 // these users are not from hosted enterprise domains.
@@ -65,6 +64,8 @@ const wchar_t* const kNonManagedDomainPatterns[] = {
   L"consumer\\.example\\.com",
 };
 
+const char* non_managed_domain_for_testing = nullptr;
+
 // Returns true if |domain| matches the regex |pattern|.
 bool MatchDomain(const base::string16& domain, const base::string16& pattern,
                  size_t index) {
@@ -79,14 +80,8 @@ bool MatchDomain(const base::string16& domain, const base::string16& pattern,
     // optimization than crash.
     DLOG(ERROR) << "Possible invalid domain pattern: " << pattern
                 << " - Error: " << status;
-    ReportRegexSuccessMetric(false);
-    UMA_HISTOGRAM_ENUMERATION("Enterprise.DomainWhitelistRegexFailure",
-                              index, arraysize(kNonManagedDomainPatterns));
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Enterprise.DomainWhitelistRegexFailureStatus",
-                                status);
     return false;
   }
-  ReportRegexSuccessMetric(true);
   icu::UnicodeString icu_input(domain.data(), domain.length());
   matcher.reset(icu_input);
   status = U_ZERO_ERROR;
@@ -108,16 +103,12 @@ BrowserPolicyConnector::~BrowserPolicyConnector() {
 void BrowserPolicyConnector::InitInternal(
     PrefService* local_state,
     std::unique_ptr<DeviceManagementService> device_management_service) {
-  DCHECK(!is_initialized());
-
   device_management_service_ = std::move(device_management_service);
 
   policy_statistics_collector_.reset(new policy::PolicyStatisticsCollector(
       base::Bind(&GetChromePolicyDetails), GetChromeSchema(),
       GetPolicyService(), local_state, base::ThreadTaskRunnerHandle::Get()));
   policy_statistics_collector_->Initialize();
-
-  InitPolicyProviders();
 }
 
 void BrowserPolicyConnector::Shutdown() {
@@ -135,6 +126,7 @@ void BrowserPolicyConnector::ScheduleServiceInitialization(
 
 // static
 bool BrowserPolicyConnector::IsNonEnterpriseUser(const std::string& username) {
+  TRACE_EVENT0("browser", "BrowserPolicyConnector::IsNonEnterpriseUser");
   if (username.empty() || username.find('@') == std::string::npos) {
     // An empty username means incognito user in case of ChromiumOS and
     // no logged-in user in case of Chromium (SigninService). Many tests use
@@ -144,12 +136,22 @@ bool BrowserPolicyConnector::IsNonEnterpriseUser(const std::string& username) {
   }
   const base::string16 domain = base::UTF8ToUTF16(
       gaia::ExtractDomainName(gaia::CanonicalizeEmail(username)));
-  for (size_t i = 0; i < arraysize(kNonManagedDomainPatterns); i++) {
+  for (size_t i = 0; i < base::size(kNonManagedDomainPatterns); i++) {
     base::string16 pattern = base::WideToUTF16(kNonManagedDomainPatterns[i]);
     if (MatchDomain(domain, pattern, i))
       return true;
   }
+  if (non_managed_domain_for_testing &&
+      domain == base::UTF8ToUTF16(non_managed_domain_for_testing)) {
+    return true;
+  }
   return false;
+}
+
+// static
+void BrowserPolicyConnector::SetNonEnterpriseDomainForTesting(
+    const char* domain) {
+  non_managed_domain_for_testing = domain;
 }
 
 // static
@@ -162,11 +164,25 @@ std::string BrowserPolicyConnector::GetDeviceManagementUrl() {
 }
 
 // static
+std::string BrowserPolicyConnector::GetRealtimeReportingUrl() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kRealtimeReportingUrl))
+    return command_line->GetSwitchValueASCII(switches::kRealtimeReportingUrl);
+  else
+    return kDefaultRealtimeReportingServerUrl;
+}
+
+// static
 void BrowserPolicyConnector::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(
       policy_prefs::kUserPolicyRefreshRate,
       CloudPolicyRefreshScheduler::kDefaultRefreshDelayMs);
+  registry->RegisterStringPref(
+      policy_prefs::kMachineLevelUserCloudPolicyEnrollmentToken, std::string());
+  registry->RegisterBooleanPref(
+      policy_prefs::kCloudManagementEnrollmentMandatory, false);
+  registry->RegisterBooleanPref(
+      policy_prefs::kCloudPolicyOverridesPlatformPolicy, false);
 }
-
 
 }  // namespace policy

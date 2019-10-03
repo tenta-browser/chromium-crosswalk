@@ -6,8 +6,8 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
-#include "base/strings/stringprintf.h"
+#include "base/stl_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/radio_button.h"
@@ -17,40 +17,39 @@
 namespace views {
 namespace examples {
 
-RadioButtonExample::RadioButtonExample()
-    : ExampleBase("Radio Button"),
-      count_(0) {
+namespace {
+
+const char* BoolToOnOff(bool value) {
+  return value ? "on" : "off";
 }
 
-RadioButtonExample::~RadioButtonExample() {
-}
+}  // namespace
+
+RadioButtonExample::RadioButtonExample() : ExampleBase("Radio Button") {}
+
+RadioButtonExample::~RadioButtonExample() = default;
 
 void RadioButtonExample::CreateExampleView(View* container) {
-  select_ = new LabelButton(this, base::ASCIIToUTF16("Select"));
-  status_ = new LabelButton(this, base::ASCIIToUTF16("Show Status"));
-
-  int group = 1;
-  for (size_t i = 0; i < arraysize(radio_buttons_); ++i) {
-    radio_buttons_[i] = new RadioButton(
-        base::UTF8ToUTF16(base::StringPrintf(
-            "Radio %d in group %d", static_cast<int>(i) + 1, group)),
-        group);
-    radio_buttons_[i]->set_listener(this);
-  }
-
-  GridLayout* layout = GridLayout::CreateAndInstall(container);
-
+  GridLayout* layout =
+      container->SetLayoutManager(std::make_unique<views::GridLayout>());
   ColumnSet* column_set = layout->AddColumnSet(0);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL,
                         1.0f, GridLayout::USE_PREF, 0, 0);
-  for (size_t i = 0; i < arraysize(radio_buttons_); ++i) {
+  const int group = 1;
+  for (size_t i = 0; i < 3; ++i) {
     layout->StartRow(0, 0);
-    layout->AddView(radio_buttons_[i]);
+    radio_buttons_.push_back(layout->AddView(std::make_unique<RadioButton>(
+        base::UTF8ToUTF16(base::StringPrintf("Radio %d in group %d",
+                                             static_cast<int>(i) + 1, group)),
+        group)));
   }
+
   layout->StartRow(0, 0);
-  layout->AddView(select_);
+  select_ = layout->AddView(
+      std::make_unique<LabelButton>(this, base::ASCIIToUTF16("Select")));
   layout->StartRow(0, 0);
-  layout->AddView(status_);
+  status_ = layout->AddView(
+      std::make_unique<LabelButton>(this, base::ASCIIToUTF16("Show Status")));
 }
 
 void RadioButtonExample::ButtonPressed(Button* sender, const ui::Event& event) {
@@ -59,11 +58,9 @@ void RadioButtonExample::ButtonPressed(Button* sender, const ui::Event& event) {
   } else if (sender == status_) {
     // Show the state of radio buttons.
     PrintStatus("Group: 1:%s, 2:%s, 3:%s",
-                BoolToOnOff(radio_buttons_[0]->checked()),
-                BoolToOnOff(radio_buttons_[1]->checked()),
-                BoolToOnOff(radio_buttons_[2]->checked()));
-  } else {
-    PrintStatus("Pressed! count:%d", ++count_);
+                BoolToOnOff(radio_buttons_[0]->GetChecked()),
+                BoolToOnOff(radio_buttons_[1]->GetChecked()),
+                BoolToOnOff(radio_buttons_[2]->GetChecked()));
   }
 }
 

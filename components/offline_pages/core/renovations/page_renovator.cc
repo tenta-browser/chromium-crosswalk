@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/values.h"
 
 namespace offline_pages {
 
@@ -24,16 +25,16 @@ PageRenovator::PageRenovator(PageRenovationLoader* renovation_loader,
 
 PageRenovator::~PageRenovator() {}
 
-void PageRenovator::RunRenovations(base::Closure callback) {
+void PageRenovator::RunRenovations(CompletionCallback callback) {
   // Prepare callback and inject combined script.
-  base::RepeatingCallback<void(const base::Value&)> cb = base::Bind(
-      [](base::Closure callback, const base::Value&) {
+  base::OnceCallback<void(base::Value)> cb = base::BindOnce(
+      [](base::OnceClosure callback, base::Value) {
         if (callback)
-          callback.Run();
+          std::move(callback).Run();
       },
       std::move(callback));
 
-  script_injector_->Inject(script_, cb);
+  script_injector_->Inject(script_, std::move(cb));
 }
 
 void PageRenovator::PrepareScript(const GURL& url) {

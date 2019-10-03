@@ -5,90 +5,50 @@
 #include "components/viz/service/surfaces/surface_dependency_deadline.h"
 
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/time/tick_clock.h"
+#include "components/viz/common/quads/frame_deadline.h"
 
 namespace viz {
 
 SurfaceDependencyDeadline::SurfaceDependencyDeadline(
-    SurfaceDeadlineClient* client,
-    BeginFrameSource* begin_frame_source)
-    : client_(client), begin_frame_source_(begin_frame_source) {
-  DCHECK(client_);
-  DCHECK(begin_frame_source_);
+    const base::TickClock* tick_clock)
+    : tick_clock_(tick_clock) {
+  DCHECK(tick_clock_);
 }
 
 SurfaceDependencyDeadline::~SurfaceDependencyDeadline() {
   // The deadline must be canceled before destruction.
-  DCHECK(!number_of_frames_to_deadline_);
+  DCHECK(!deadline_);
 }
 
-void SurfaceDependencyDeadline::Set(uint32_t number_of_frames_to_deadline) {
-  DCHECK_GT(number_of_frames_to_deadline, 0u);
-  DCHECK(!number_of_frames_to_deadline_);
-  number_of_frames_to_deadline_ = number_of_frames_to_deadline;
-  start_time_ = base::TimeTicks::Now();
-  begin_frame_source_->AddObserver(this);
+void SurfaceDependencyDeadline::Set(const FrameDeadline& frame_deadline) {
+  Cancel();
+  start_time_ = frame_deadline.frame_start_time();
+  deadline_ = frame_deadline.ToWallTime();
 }
 
-void SurfaceDependencyDeadline::Cancel() {
-  CancelInternal(false);
+bool SurfaceDependencyDeadline::HasDeadlinePassed() const {
+  return tick_clock_->NowTicks() >= deadline_;
 }
 
-bool SurfaceDependencyDeadline::InheritFrom(
-    const SurfaceDependencyDeadline& other) {
-  if (*this == other)
-    return false;
+base::Optional<base::TimeDelta> SurfaceDependencyDeadline::Cancel() {
+  if (!deadline_)
+    return base::nullopt;
 
-  CancelInternal(false);
-  last_begin_frame_args_ = other.last_begin_frame_args_;
-  begin_frame_source_ = other.begin_frame_source_;
-  number_of_frames_to_deadline_ = other.number_of_frames_to_deadline_;
-  if (number_of_frames_to_deadline_) {
-    start_time_ = base::TimeTicks::Now();
-    begin_frame_source_->AddObserver(this);
-  }
-  return true;
+  deadline_.reset();
+
+  base::TimeDelta duration = tick_clock_->NowTicks() - start_time_;
+
+  UMA_HISTOGRAM_TIMES("Compositing.SurfaceDependencyDeadline.Duration",
+                      duration);
+
+  return duration;
 }
 
 bool SurfaceDependencyDeadline::operator==(
-    const SurfaceDependencyDeadline& other) {
-  return begin_frame_source_ == other.begin_frame_source_ &&
-         number_of_frames_to_deadline_ == other.number_of_frames_to_deadline_;
-}
-
-// BeginFrameObserver implementation.
-void SurfaceDependencyDeadline::OnBeginFrame(const BeginFrameArgs& args) {
-  last_begin_frame_args_ = args;
-  // OnBeginFrame might get called immediately after cancellation if some other
-  // deadline triggered this deadline to be canceled.
-  if (!number_of_frames_to_deadline_ || args.type == BeginFrameArgs::MISSED)
-    return;
-
-  if (--(*number_of_frames_to_deadline_) > 0)
-    return;
-
-  CancelInternal(true);
-
-  client_->OnDeadline();
-}
-
-const BeginFrameArgs& SurfaceDependencyDeadline::LastUsedBeginFrameArgs()
-    const {
-  return last_begin_frame_args_;
-}
-
-void SurfaceDependencyDeadline::OnBeginFrameSourcePausedChanged(bool paused) {}
-
-void SurfaceDependencyDeadline::CancelInternal(bool deadline) {
-  if (!number_of_frames_to_deadline_)
-    return;
-  begin_frame_source_->RemoveObserver(this);
-  number_of_frames_to_deadline_.reset();
-
-  UMA_HISTOGRAM_TIMES("Compositing.SurfaceDependencyDeadline.Duration",
-                      base::TimeTicks::Now() - start_time_);
-
-  UMA_HISTOGRAM_BOOLEAN("Compositing.SurfaceDependencyDeadline.DeadlineHit",
-                        deadline);
+    const SurfaceDependencyDeadline& other) const {
+  return deadline_ == other.deadline_;
 }
 
 }  // namespace viz

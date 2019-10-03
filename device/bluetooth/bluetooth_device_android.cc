@@ -6,12 +6,12 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "device/bluetooth/bluetooth_adapter_android.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service_android.h"
-#include "jni/ChromeBluetoothDevice_jni.h"
+#include "device/bluetooth/jni_headers/ChromeBluetoothDevice_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -20,15 +20,15 @@ using base::android::JavaRef;
 namespace device {
 namespace {
 void RecordConnectionSuccessResult(int32_t status) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Android.GATTConnection.Success.Result",
-                              status);
+  base::UmaHistogramSparse("Bluetooth.Android.GATTConnection.Success.Result",
+                           status);
 }
 void RecordConnectionFailureResult(int32_t status) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Bluetooth.Android.GATTConnection.Failure.Result",
-                              status);
+  base::UmaHistogramSparse("Bluetooth.Android.GATTConnection.Failure.Result",
+                           status);
 }
 void RecordConnectionTerminatedResult(int32_t status) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  base::UmaHistogramSparse(
       "Bluetooth.Android.GATTConnection.Disconnected.Result", status);
 }
 }  // namespace
@@ -249,7 +249,7 @@ void BluetoothDeviceAndroid::CreateGattRemoteService(
   std::string instance_id_string =
       base::android::ConvertJavaStringToUTF8(env, instance_id);
 
-  if (base::ContainsKey(gatt_services_, instance_id_string))
+  if (base::Contains(gatt_services_, instance_id_string))
     return;
 
   std::unique_ptr<BluetoothRemoteGattServiceAndroid> service =

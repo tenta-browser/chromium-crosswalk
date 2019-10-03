@@ -4,13 +4,20 @@
 
 #import "ios/web/public/test/fakes/test_web_state.h"
 
+#import <Foundation/Foundation.h>
 #include <stdint.h>
 
 #include "base/bind.h"
 #include "base/callback.h"
+#import "base/strings/sys_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#import "ios/web/public/web_state/ui/crw_content_view.h"
-#include "ios/web/public/web_state/web_state_observer.h"
+#import "ios/web/common/crw_content_view.h"
+#include "ios/web/js_messaging/web_frames_manager_impl.h"
+#include "ios/web/public/js_messaging/web_frame.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
+#import "ios/web/public/session/serializable_user_data_manager.h"
 #include "ui/gfx/image/image.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -35,6 +42,7 @@ TestWebState::TestWebState()
       is_crashed_(false),
       is_evicted_(false),
       has_opener_(false),
+      can_take_snapshot_(false),
       trust_level_(kAbsolute),
       content_is_html_(true),
       web_view_proxy_(nil) {}
@@ -42,7 +50,11 @@ TestWebState::TestWebState()
 TestWebState::~TestWebState() {
   for (auto& observer : observers_)
     observer.WebStateDestroyed(this);
-};
+  for (auto& observer : policy_deciders_)
+    observer.WebStateDestroyed();
+  for (auto& observer : policy_deciders_)
+    observer.ResetWebState();
+}
 
 WebStateDelegate* TestWebState::GetDelegate() {
   return nil;
@@ -64,12 +76,6 @@ void TestWebState::SetWebUsageEnabled(bool enabled) {
     SetIsEvicted(true);
 }
 
-bool TestWebState::ShouldSuppressDialogs() const {
-  return false;
-}
-
-void TestWebState::SetShouldSuppressDialogs(bool should_suppress) {}
-
 UIView* TestWebState::GetView() {
   return view_;
 }
@@ -86,12 +92,22 @@ void TestWebState::WasHidden() {
     observer.WasHidden(this);
 }
 
+void TestWebState::SetKeepRenderProcessAlive(bool keep_alive) {}
+
 const NavigationManager* TestWebState::GetNavigationManager() const {
   return navigation_manager_.get();
 }
 
 NavigationManager* TestWebState::GetNavigationManager() {
   return navigation_manager_.get();
+}
+
+const WebFramesManager* TestWebState::GetWebFramesManager() const {
+  return web_frames_manager_.get();
+}
+
+WebFramesManager* TestWebState::GetWebFramesManager() {
+  return web_frames_manager_.get();
 }
 
 const SessionCertificatePolicyCache*
@@ -105,12 +121,23 @@ TestWebState::GetSessionCertificatePolicyCache() {
 }
 
 CRWSessionStorage* TestWebState::BuildSessionStorage() {
-  return nil;
+  std::unique_ptr<web::SerializableUserData> serializable_user_data =
+      web::SerializableUserDataManager::FromWebState(this)
+          ->CreateSerializableUserData();
+  CRWSessionStorage* session_storage = [[CRWSessionStorage alloc] init];
+  [session_storage setSerializableUserData:std::move(serializable_user_data)];
+  session_storage.itemStorages = @[ [[CRWNavigationItemStorage alloc] init] ];
+  return session_storage;
 }
 
 void TestWebState::SetNavigationManager(
     std::unique_ptr<NavigationManager> navigation_manager) {
   navigation_manager_ = std::move(navigation_manager);
+}
+
+void TestWebState::SetWebFramesManager(
+    std::unique_ptr<WebFramesManager> web_frames_manager) {
+  web_frames_manager_ = std::move(web_frames_manager);
 }
 
 void TestWebState::SetView(UIView* view) {
@@ -135,11 +162,24 @@ CRWJSInjectionReceiver* TestWebState::GetJSInjectionReceiver() const {
   return injection_receiver_;
 }
 
-void TestWebState::ExecuteJavaScript(const base::string16& javascript) {}
+void TestWebState::LoadData(NSData* data,
+                            NSString* mime_type,
+                            const GURL& url) {
+  SetCurrentURL(url);
+  mime_type_ = base::SysNSStringToUTF8(mime_type);
+  last_loaded_data_ = data;
+  // Load Data is always a success. Send the event accordingly.
+  OnPageLoaded(web::PageLoadCompletionStatus::SUCCESS);
+}
+
+void TestWebState::ExecuteJavaScript(const base::string16& javascript) {
+  last_executed_javascript_ = javascript;
+}
 
 void TestWebState::ExecuteJavaScript(const base::string16& javascript,
-                                     const JavaScriptResultCallback& callback) {
-  callback.Run(nullptr);
+                                     JavaScriptResultCallback callback) {
+  last_executed_javascript_ = javascript;
+  std::move(callback).Run(nullptr);
 }
 
 void TestWebState::ExecuteUserJavaScript(NSString* javaScript) {}
@@ -165,6 +205,12 @@ GURL TestWebState::GetCurrentURL(URLVerificationTrustLevel* trust_level) const {
   return url_;
 }
 
+std::unique_ptr<WebState::ScriptCommandSubscription>
+TestWebState::AddScriptCommandCallback(const ScriptCommandCallback& callback,
+                                       const std::string& command_prefix) {
+  return callback_list_.Add(callback);
+}
+
 bool TestWebState::IsShowingWebInterstitial() const {
   return false;
 }
@@ -184,6 +230,10 @@ void TestWebState::SetJSInjectionReceiver(
 
 void TestWebState::SetContentIsHTML(bool content_is_html) {
   content_is_html_ = content_is_html;
+}
+
+void TestWebState::SetTitle(const base::string16& title) {
+  title_ = title;
 }
 
 const base::string16& TestWebState::GetTitle() const {
@@ -250,16 +300,9 @@ void TestWebState::OnRenderProcessGone() {
     observer.RenderProcessGone(this);
 }
 
-void TestWebState::OnFormActivity(const FormActivityParams& params) {
+void TestWebState::OnBackForwardStateChanged() {
   for (auto& observer : observers_) {
-    observer.FormActivityRegistered(this, params);
-  }
-}
-
-void TestWebState::OnDocumentSubmitted(const std::string& form_name,
-                                       bool user_initiated) {
-  for (auto& observer : observers_) {
-    observer.DocumentSubmitted(this, form_name, user_initiated);
+    observer.DidChangeBackForwardState(this);
   }
 }
 
@@ -269,18 +312,43 @@ void TestWebState::OnVisibleSecurityStateChanged() {
   }
 }
 
-void TestWebState::ShowTransientContentView(CRWContentView* content_view) {
-  if (content_view) {
-    transient_content_view_ = content_view;
+void TestWebState::OnWebFrameDidBecomeAvailable(WebFrame* frame) {
+  for (auto& observer : observers_) {
+    observer.WebFrameDidBecomeAvailable(this, frame);
   }
 }
 
-void TestWebState::ClearTransientContentView() {
-  transient_content_view_ = nil;
+void TestWebState::OnWebFrameWillBecomeUnavailable(WebFrame* frame) {
+  for (auto& observer : observers_) {
+    observer.WebFrameWillBecomeUnavailable(this, frame);
+  }
 }
 
-CRWContentView* TestWebState::GetTransientContentView() {
-  return transient_content_view_;
+bool TestWebState::ShouldAllowRequest(
+    NSURLRequest* request,
+    const WebStatePolicyDecider::RequestInfo& request_info) {
+  for (auto& policy_decider : policy_deciders_) {
+    if (!policy_decider.ShouldAllowRequest(request, request_info))
+      return false;
+  }
+  return true;
+}
+
+bool TestWebState::ShouldAllowResponse(NSURLResponse* response,
+                                       bool for_main_frame) {
+  for (auto& policy_decider : policy_deciders_) {
+    if (!policy_decider.ShouldAllowResponse(response, for_main_frame))
+      return false;
+  }
+  return true;
+}
+
+base::string16 TestWebState::GetLastExecutedJavascript() const {
+  return last_executed_javascript_;
+}
+
+NSData* TestWebState::GetLastLoadedData() const {
+  return last_loaded_data_;
 }
 
 void TestWebState::SetCurrentURL(const GURL& url) {
@@ -295,8 +363,24 @@ void TestWebState::SetTrustLevel(URLVerificationTrustLevel trust_level) {
   trust_level_ = trust_level;
 }
 
+void TestWebState::ClearLastExecutedJavascript() {
+  last_executed_javascript_.clear();
+}
+
+void TestWebState::SetCanTakeSnapshot(bool can_take_snapshot) {
+  can_take_snapshot_ = can_take_snapshot;
+}
+
 CRWWebViewProxyType TestWebState::GetWebViewProxy() const {
   return web_view_proxy_;
+}
+
+void TestWebState::AddPolicyDecider(WebStatePolicyDecider* decider) {
+  policy_deciders_.AddObserver(decider);
+}
+
+void TestWebState::RemovePolicyDecider(WebStatePolicyDecider* decider) {
+  policy_deciders_.RemoveObserver(decider);
 }
 
 WebStateInterfaceProvider* TestWebState::GetWebStateInterfaceProvider() {
@@ -311,14 +395,13 @@ void TestWebState::SetHasOpener(bool has_opener) {
   has_opener_ = has_opener;
 }
 
-void TestWebState::TakeSnapshot(const SnapshotCallback& callback,
-                                CGSize target_size) const {
-  callback.Run(gfx::Image([[UIImage alloc] init]));
+bool TestWebState::CanTakeSnapshot() const {
+  return can_take_snapshot_;
 }
 
-base::WeakPtr<WebState> TestWebState::AsWeakPtr() {
-  NOTREACHED();
-  return base::WeakPtr<WebState>();
+void TestWebState::TakeSnapshot(const gfx::RectF& rect,
+                                SnapshotCallback callback) {
+  std::move(callback).Run(gfx::Image([[UIImage alloc] init]));
 }
 
 }  // namespace web

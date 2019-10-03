@@ -42,15 +42,21 @@ OfflineItem::OfflineItem()
     : filter(OfflineItemFilter::FILTER_OTHER),
       is_transient(false),
       is_suggested(false),
+      is_accelerated(false),
+      promote_origin(false),
+      can_rename(false),
       total_size_bytes(0),
       externally_removed(false),
       is_openable(false),
       is_off_the_record(false),
       state(OfflineItemState::COMPLETE),
+      fail_state(FailState::NO_FAILURE),
+      pending_state(PendingState::NOT_PENDING),
       is_resumable(false),
       allow_metered(false),
       received_bytes(0),
-      time_remaining_ms(0) {}
+      time_remaining_ms(0),
+      is_dangerous(false) {}
 
 OfflineItem::OfflineItem(const OfflineItem& other) = default;
 
@@ -66,9 +72,13 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          filter == offline_item.filter &&
          is_transient == offline_item.is_transient &&
          is_suggested == offline_item.is_suggested &&
+         is_accelerated == offline_item.is_accelerated &&
+         promote_origin == offline_item.promote_origin &&
+         can_rename == offline_item.can_rename &&
          total_size_bytes == offline_item.total_size_bytes &&
          externally_removed == offline_item.externally_removed &&
          creation_time == offline_item.creation_time &&
+         completion_time == offline_item.completion_time &&
          last_accessed_time == offline_item.last_accessed_time &&
          is_openable == offline_item.is_openable &&
          file_path == offline_item.file_path &&
@@ -76,17 +86,28 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          page_url == offline_item.page_url &&
          original_url == offline_item.original_url &&
          is_off_the_record == offline_item.is_off_the_record &&
-         state == offline_item.state &&
+         attribution == offline_item.attribution &&
+         state == offline_item.state && fail_state == offline_item.fail_state &&
+         pending_state == offline_item.pending_state &&
          is_resumable == offline_item.is_resumable &&
          allow_metered == offline_item.allow_metered &&
          received_bytes == offline_item.received_bytes &&
          progress == offline_item.progress &&
-         time_remaining_ms == offline_item.time_remaining_ms;
+         time_remaining_ms == offline_item.time_remaining_ms &&
+         is_dangerous == offline_item.is_dangerous;
 }
 
 OfflineItemVisuals::OfflineItemVisuals() = default;
+OfflineItemVisuals::OfflineItemVisuals(const gfx::Image& icon,
+                                       const gfx::Image& custom_favicon)
+    : icon(icon), custom_favicon(custom_favicon) {}
 OfflineItemVisuals::OfflineItemVisuals(const OfflineItemVisuals& other) =
     default;
 OfflineItemVisuals::~OfflineItemVisuals() = default;
+
+OfflineItemShareInfo::OfflineItemShareInfo() = default;
+OfflineItemShareInfo::OfflineItemShareInfo(const OfflineItemShareInfo& other) =
+    default;
+OfflineItemShareInfo::~OfflineItemShareInfo() = default;
 
 }  // namespace offline_items_collection

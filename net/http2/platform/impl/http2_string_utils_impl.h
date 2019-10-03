@@ -11,12 +11,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "net/base/escape.h"
 #include "net/base/hex_utils.h"
-#include "net/http2/platform/api/http2_export.h"
-#include "net/http2/platform/api/http2_string.h"
-#include "net/http2/platform/api/http2_string_piece.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_export.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_string.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_string_piece.h"
 
-namespace net {
+namespace http2 {
 
 template <typename... Args>
 inline Http2String Http2StrCatImpl(const Args&... args) {
@@ -41,13 +42,24 @@ inline Http2String Http2HexEncodeImpl(const void* bytes, size_t size) {
 }
 
 inline Http2String Http2HexDecodeImpl(Http2StringPiece data) {
-  return HexDecode(data);
+  return net::HexDecode(data);
 }
 
 inline Http2String Http2HexDumpImpl(Http2StringPiece data) {
-  return HexDump(data);
+  return net::HexDump(data);
 }
 
-}  // namespace net
+inline Http2String Http2HexEscapeImpl(Http2StringPiece data) {
+  return net::EscapeQueryParamValue(data, false);
+}
+
+template <typename Number>
+inline Http2String Http2HexImpl(Number number) {
+  std::stringstream str;
+  str << std::hex << number;
+  return str.str();
+}
+
+}  // namespace http2
 
 #endif  // NET_HTTP2_PLATFORM_IMPL_HTTP2_STRING_UTILS_IMPL_H_

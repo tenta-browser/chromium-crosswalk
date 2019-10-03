@@ -17,9 +17,9 @@
 #include "base/strings/stringprintf.h"
 #include "net/base/hex_utils.h"
 #include "net/base/parse_number.h"
-#include "net/quic/platform/api/quic_string_piece.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_string_piece.h"
 
-namespace net {
+namespace quic {
 
 // google3 implementation of QuicTextUtils.
 class QuicTextUtilsImpl {
@@ -59,7 +59,7 @@ class QuicTextUtilsImpl {
   // Returns true if |in| represents a valid uint32, and stores that value in
   // |out|.
   static bool StringToUint32(QuicStringPiece in, uint32_t* out) {
-    return ParseUint32(in, out, nullptr);
+    return net::ParseUint32(in, out, nullptr);
   }
 
   // Returns true if |in| represents a valid size_t, and stores that value in
@@ -70,7 +70,7 @@ class QuicTextUtilsImpl {
 
   // Returns a new std::string representing |in|.
   static std::string Uint64ToString(uint64_t in) {
-    return base::Uint64ToString(in);
+    return base::NumberToString(in);
   }
 
   // This converts |length| bytes of binary to a 2*|length|-character
@@ -132,6 +132,6 @@ class QuicTextUtilsImpl {
   }
 };
 
-}  // namespace net
+}  // namespace quic
 
 #endif  // NET_QUIC_PLATFORM_IMPL_QUIC_TEXT_UTILS_IMPL_H_

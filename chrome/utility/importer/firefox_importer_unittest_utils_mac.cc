@@ -11,25 +11,26 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/posix/global_descriptors.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
+#include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/common/importer/firefox_importer_utils.h"
 #include "chrome/utility/importer/firefox_importer_unittest_utils_mac.mojom.h"
 #include "content/public/common/content_descriptors.h"
-#include "content/public/common/mojo_channel_switches.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/incoming_broker_client_invitation.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel_endpoint.h"
+#include "mojo/public/cpp/platform/platform_handle.h"
+#include "mojo/public/cpp/system/invitation.h"
+#include "services/service_manager/embedder/descriptors.h"
 #include "testing/multiprocess_func_list.h"
 
 namespace {
@@ -38,11 +39,11 @@ constexpr char kMojoChannelToken[] = "mojo-channel-token";
 
 // Launch the child process:
 // |nss_path| - path to the NSS directory holding the decryption libraries.
-// |mojo_handle| - platform handle for Mojo transport.
+// |mojo_channel_fd| - FD of the Mojo invitation transport to inherit.
 // |mojo_channel_token| - token for creating the Mojo pipe.
 base::Process LaunchNSSDecrypterChildProcess(
     const base::FilePath& nss_path,
-    mojo::edk::ScopedPlatformHandle mojo_handle,
+    mojo::PlatformChannel* channel,
     const std::string& mojo_channel_token) {
   base::CommandLine cl(*base::CommandLine::ForCurrentProcess());
   cl.AppendSwitchASCII(switches::kTestChildProcess, "NSSDecrypterChildProcess");
@@ -52,10 +53,8 @@ base::Process LaunchNSSDecrypterChildProcess(
   // See "chrome/utility/importer/nss_decryptor_mac.mm" for an explanation of
   // why we need this.
   base::LaunchOptions options;
-  options.environ["DYLD_FALLBACK_LIBRARY_PATH"] = nss_path.value();
-  options.fds_to_remap.push_back(std::pair<int, int>(
-      mojo_handle.get().handle,
-      kMojoIPCChannel + base::GlobalDescriptors::kBaseDescriptor));
+  options.environment["DYLD_FALLBACK_LIBRARY_PATH"] = nss_path.value();
+  channel->PrepareToPassRemoteEndpoint(&options, &cl);
 
   return base::LaunchProcess(cl.argv(), options);
 }
@@ -181,11 +180,12 @@ FFUnitTestDecryptorProxy::FFUnitTestDecryptorProxy() {
 }
 
 bool FFUnitTestDecryptorProxy::Setup(const base::FilePath& nss_path) {
-  // Create a new message loop and spawn the child process.
-  message_loop_ = std::make_unique<base::MessageLoopForIO>();
+  // Create a new task executor and spawn the child process.
+  main_task_executor_ = std::make_unique<base::SingleThreadTaskExecutor>(
+      base::MessagePump::Type::IO);
 
-  mojo::edk::OutgoingBrokerClientInvitation invitation;
-  std::string token = mojo::edk::GenerateRandomToken();
+  mojo::OutgoingInvitation invitation;
+  std::string token = base::NumberToString(base::RandUint64());
   mojo::ScopedMessagePipeHandle parent_pipe =
       invitation.AttachMessagePipe(token);
   firefox_importer_unittest_utils_mac::mojom::FirefoxDecryptorPtr decryptor(
@@ -195,14 +195,13 @@ bool FFUnitTestDecryptorProxy::Setup(const base::FilePath& nss_path) {
       std::make_unique<FFDecryptorServerChannelListener>(std::move(decryptor));
 
   // Spawn child and set up mojo connection.
-  mojo::edk::PlatformChannelPair channel_pair;
-  child_process_ = LaunchNSSDecrypterChildProcess(
-      nss_path, channel_pair.PassClientHandle(), token);
+  mojo::PlatformChannel channel;
+  child_process_ = LaunchNSSDecrypterChildProcess(nss_path, &channel, token);
+  channel.RemoteProcessLaunchAttempted();
   if (child_process_.IsValid()) {
-    invitation.Send(
-        child_process_.Handle(),
-        mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                    channel_pair.PassServerHandle()));
+    mojo::OutgoingInvitation::Send(std::move(invitation),
+                                   child_process_.Handle(),
+                                   channel.TakeLocalEndpoint());
   }
   return child_process_.IsValid();
 }
@@ -242,19 +241,17 @@ std::vector<autofill::PasswordForm> FFUnitTestDecryptorProxy::ParseSignons(
 
 // Entry function in child process.
 MULTIPROCESS_TEST_MAIN(NSSDecrypterChildProcess) {
-  base::MessageLoopForIO main_message_loop;
+  base::SingleThreadTaskExecutor io_task_executor(base::MessagePump::Type::IO);
 
-  auto invitation = mojo::edk::IncomingBrokerClientInvitation::Accept(
-      mojo::edk::ConnectionParams(
-          mojo::edk::TransportProtocol::kLegacy,
-          mojo::edk::ScopedPlatformHandle(mojo::edk::PlatformHandle(
-              kMojoIPCChannel + base::GlobalDescriptors::kBaseDescriptor))));
-  mojo::ScopedMessagePipeHandle mojo_handle = invitation->ExtractMessagePipe(
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          kMojoChannelToken));
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  auto endpoint = mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(
+      *command_line);
+  auto invitation = mojo::IncomingInvitation::Accept(std::move(endpoint));
+  mojo::ScopedMessagePipeHandle request_pipe = invitation.ExtractMessagePipe(
+      command_line->GetSwitchValueASCII(kMojoChannelToken));
 
   firefox_importer_unittest_utils_mac::mojom::FirefoxDecryptorRequest request(
-      std::move(mojo_handle));
+      std::move(request_pipe));
   FFDecryptorClientListener listener(std::move(request));
   base::RunLoop run_loop;
   listener.SetQuitClosure(run_loop.QuitClosure());

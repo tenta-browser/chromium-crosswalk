@@ -7,7 +7,6 @@
 <!-- Layout used to present a set of default search engines to the user. -->
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:chrome="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/signin_body_background"
@@ -43,10 +42,10 @@
                     android:paddingBottom="@dimen/signin_chooser_padding"
                     android:background="@color/signin_head_background"
                     android:importantForAccessibility="no"
-                    android:textAppearance="@style/BlackHeadline1"
+                    android:textAppearance="@style/TextAppearance.BlackHeadline"
                     android:text="@string/search_engine_dialog_title" />
 
-                <View style="@style/Divider" />
+                <View style="@style/HorizontalDivider" />
 
                 <org.chromium.chrome.browser.widget.RadioButtonLayout
                     android:id="@+id/default_search_engine_dialog_options"
@@ -63,26 +62,21 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/search_engine_dialog_footer"
-        android:textColor="@color/descriptive_text_color"
-        android:textSize="@dimen/text_size_medium"
+        android:textAppearance="@style/TextAppearance.BlackBody"
         android:padding="@dimen/signin_chooser_padding" />
 
     <!--suppress ButtonStyle -->
     <org.chromium.ui.widget.ButtonCompat
         android:id="@+id/button_primary"
         android:layout_width="wrap_content"
-        android:layout_height="36dp"
+        android:layout_height="wrap_content"
         android:layout_gravity="end"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="10dp"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="22dp"
         android:paddingStart="@dimen/fre_button_padding"
         android:paddingEnd="@dimen/fre_button_padding"
         android:text="@string/ok"
-        android:textAllCaps="true"
-        android:textColor="@android:color/white"
-        android:textSize="14sp"
-        chrome:buttonColor="@color/light_active_color"
-        chrome:buttonRaised="false" />
+        style="@style/FilledButton.Flat" />
 
 </LinearLayout>

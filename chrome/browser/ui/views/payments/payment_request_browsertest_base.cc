@@ -14,27 +14,28 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
+#include "chrome/browser/payments/payment_request_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/views/autofill/dialog_event_waiter.h"
 #include "chrome/browser/ui/views/payments/editor_view_controller.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view_ids.h"
 #include "chrome/browser/ui/views/payments/validating_combobox.h"
 #include "chrome/browser/ui/views/payments/validating_textfield.h"
 #include "chrome/browser/ui/views/payments/view_stack.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/core/browser/address_combobox_model.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/ui/address_combobox_model.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/payments/content/payment_request.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
+#include "components/payments/core/payment_prefs.h"
+#include "components/prefs/pref_service.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -72,27 +73,23 @@ void SelectComboboxRowForValue(views::Combobox* combobox,
 
 }  // namespace
 
-PersonalDataLoadedObserverMock::PersonalDataLoadedObserverMock() {}
-PersonalDataLoadedObserverMock::~PersonalDataLoadedObserverMock() {}
+PersonalDataLoadedObserverMock::PersonalDataLoadedObserverMock() = default;
+PersonalDataLoadedObserverMock::~PersonalDataLoadedObserverMock() = default;
 
-PaymentRequestBrowserTestBase::PaymentRequestBrowserTestBase()
-    : delegate_(nullptr),
-      is_incognito_(false),
-      is_valid_ssl_(true),
-      is_browser_window_active_(true) {}
-
-PaymentRequestBrowserTestBase::~PaymentRequestBrowserTestBase() {}
+PaymentRequestBrowserTestBase::PaymentRequestBrowserTestBase() = default;
+PaymentRequestBrowserTestBase::~PaymentRequestBrowserTestBase() = default;
 
 void PaymentRequestBrowserTestBase::SetUpCommandLine(
     base::CommandLine* command_line) {
   // HTTPS server only serves a valid cert for localhost, so this is needed to
   // load pages from "a.com" without an interstitial.
   command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
+  command_line->AppendSwitch(switches::kEnableExperimentalWebPlatformFeatures);
 }
 
 void PaymentRequestBrowserTestBase::SetUpOnMainThread() {
   // Setup the https server.
-  https_server_ = base::MakeUnique<net::EmbeddedTestServer>(
+  https_server_ = std::make_unique<net::EmbeddedTestServer>(
       net::EmbeddedTestServer::TYPE_HTTPS);
   host_resolver()->AddRule("a.com", "127.0.0.1");
   host_resolver()->AddRule("b.com", "127.0.0.1");
@@ -100,13 +97,20 @@ void PaymentRequestBrowserTestBase::SetUpOnMainThread() {
   https_server_->ServeFilesFromSourceDirectory("components/test/data/payments");
   https_server_->StartAcceptingConnections();
 
+  Observe(GetActiveWebContents());
+
   // Starting now, PaymentRequest Mojo messages sent by the renderer will
   // create PaymentRequest objects via this test's CreatePaymentRequestForTest,
   // allowing the test to inject itself as a dialog observer.
-  Observe(GetActiveWebContents());
-  registry_.AddInterface<payments::mojom::PaymentRequest>(
-      base::Bind(&PaymentRequestBrowserTestBase::CreatePaymentRequestForTest,
-                 base::Unretained(this)));
+  payments::SetPaymentRequestFactoryForTesting(base::BindRepeating(
+      &PaymentRequestBrowserTestBase::CreatePaymentRequestForTest,
+      base::Unretained(this)));
+
+  // Set a test sync service so that all types of cards work.
+  GetDataManager()->SetSyncServiceForTest(&sync_service_);
+
+  // Register all prefs with our pref testing service.
+  payments::RegisterProfilePrefs(prefs_.registry());
 }
 
 void PaymentRequestBrowserTestBase::NavigateTo(const std::string& file_path) {
@@ -130,6 +134,10 @@ void PaymentRequestBrowserTestBase::SetBrowserWindowInactive() {
   is_browser_window_active_ = false;
 }
 
+void PaymentRequestBrowserTestBase::SetSkipUiForForBasicCard() {
+  skip_ui_for_basic_card_ = true;
+}
+
 void PaymentRequestBrowserTestBase::OnCanMakePaymentCalled() {
   if (event_waiter_)
     event_waiter_->OnEvent(DialogEvent::CAN_MAKE_PAYMENT_CALLED);
@@ -138,6 +146,16 @@ void PaymentRequestBrowserTestBase::OnCanMakePaymentCalled() {
 void PaymentRequestBrowserTestBase::OnCanMakePaymentReturned() {
   if (event_waiter_)
     event_waiter_->OnEvent(DialogEvent::CAN_MAKE_PAYMENT_RETURNED);
+}
+
+void PaymentRequestBrowserTestBase::OnHasEnrolledInstrumentCalled() {
+  if (event_waiter_)
+    event_waiter_->OnEvent(DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED);
+}
+
+void PaymentRequestBrowserTestBase::OnHasEnrolledInstrumentReturned() {
+  if (event_waiter_)
+    event_waiter_->OnEvent(DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED);
 }
 
 void PaymentRequestBrowserTestBase::OnNotSupportedError() {
@@ -230,6 +248,16 @@ void PaymentRequestBrowserTestBase::OnCvcPromptShown() {
     event_waiter_->OnEvent(DialogEvent::CVC_PROMPT_SHOWN);
 }
 
+void PaymentRequestBrowserTestBase::OnProcessingSpinnerShown() {
+  if (event_waiter_)
+    event_waiter_->OnEvent(DialogEvent::PROCESSING_SPINNER_SHOWN);
+}
+
+void PaymentRequestBrowserTestBase::OnProcessingSpinnerHidden() {
+  if (event_waiter_)
+    event_waiter_->OnEvent(DialogEvent::PROCESSING_SPINNER_HIDDEN);
+}
+
 void PaymentRequestBrowserTestBase::OnInterfaceRequestFromFrame(
     content::RenderFrameHost* render_frame_host,
     const std::string& interface_name,
@@ -238,7 +266,7 @@ void PaymentRequestBrowserTestBase::OnInterfaceRequestFromFrame(
 }
 
 void PaymentRequestBrowserTestBase::InvokePaymentRequestUI() {
-  ResetEventWaiter(DialogEvent::DIALOG_OPENED);
+  ResetEventWaiterForDialogOpened();
 
   content::WebContents* web_contents = GetActiveWebContents();
   const std::string click_buy_button_js =
@@ -268,15 +296,6 @@ void PaymentRequestBrowserTestBase::ExpectBodyContains(
         << "String \"" << expected_string
         << "\" is not present in the content \"" << contents << "\"";
   }
-}
-
-void PaymentRequestBrowserTestBase::ExpectBodyContains(
-    const std::vector<base::string16>& expected_strings) {
-  std::vector<std::string> converted(expected_strings.size());
-  std::transform(expected_strings.begin(), expected_strings.end(),
-                 converted.begin(),
-                 [](const base::string16& s) { return base::UTF16ToUTF8(s); });
-  ExpectBodyContains(converted);
 }
 
 void PaymentRequestBrowserTestBase::OpenOrderSummaryScreen() {
@@ -429,8 +448,10 @@ void PaymentRequestBrowserTestBase::AddAutofillProfile(
   PersonalDataLoadedObserverMock personal_data_observer;
   personal_data_manager->AddObserver(&personal_data_observer);
   base::RunLoop data_loop;
-  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
       .WillOnce(QuitMessageLoop(&data_loop));
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+      .Times(testing::AnyNumber());
   personal_data_manager->AddProfile(profile);
   data_loop.Run();
 
@@ -443,7 +464,7 @@ void PaymentRequestBrowserTestBase::AddCreditCard(
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
   if (card.record_type() != autofill::CreditCard::LOCAL_CARD) {
     personal_data_manager->AddServerCreditCardForTest(
-        base::MakeUnique<autofill::CreditCard>(card));
+        std::make_unique<autofill::CreditCard>(card));
     return;
   }
   size_t card_count = personal_data_manager->GetCreditCards().size();
@@ -451,13 +472,28 @@ void PaymentRequestBrowserTestBase::AddCreditCard(
   PersonalDataLoadedObserverMock personal_data_observer;
   personal_data_manager->AddObserver(&personal_data_observer);
   base::RunLoop data_loop;
-  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
       .WillOnce(QuitMessageLoop(&data_loop));
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+      .Times(testing::AnyNumber());
+
   personal_data_manager->AddCreditCard(card);
   data_loop.Run();
 
   personal_data_manager->RemoveObserver(&personal_data_observer);
   EXPECT_EQ(card_count + 1, personal_data_manager->GetCreditCards().size());
+}
+
+void PaymentRequestBrowserTestBase::WaitForOnPersonalDataChanged() {
+  autofill::PersonalDataManager* personal_data_manager = GetDataManager();
+  PersonalDataLoadedObserverMock personal_data_observer;
+  personal_data_manager->AddObserver(&personal_data_observer);
+  base::RunLoop run_loop;
+  EXPECT_CALL(personal_data_observer, OnPersonalDataFinishedProfileTasks())
+      .WillOnce(QuitMessageLoop(&run_loop));
+  EXPECT_CALL(personal_data_observer, OnPersonalDataChanged())
+      .Times(testing::AnyNumber());
+  run_loop.Run();
 }
 
 void PaymentRequestBrowserTestBase::CreatePaymentRequestForTest(
@@ -467,9 +503,9 @@ void PaymentRequestBrowserTestBase::CreatePaymentRequestForTest(
       content::WebContents::FromRenderFrameHost(render_frame_host);
   DCHECK(web_contents);
   std::unique_ptr<TestChromePaymentRequestDelegate> delegate =
-      base::MakeUnique<TestChromePaymentRequestDelegate>(
-          web_contents, this /* observer */, is_incognito_, is_valid_ssl_,
-          is_browser_window_active_);
+      std::make_unique<TestChromePaymentRequestDelegate>(
+          web_contents, this /* observer */, &prefs_, is_incognito_,
+          is_valid_ssl_, is_browser_window_active_, skip_ui_for_basic_card_);
   delegate_ = delegate.get();
   PaymentRequestWebContentsManager::GetOrCreateForWebContents(web_contents)
       ->CreatePaymentRequest(web_contents->GetMainFrame(), web_contents,
@@ -519,15 +555,15 @@ void PaymentRequestBrowserTestBase::ClickOnDialogViewAndWait(
 }
 
 void PaymentRequestBrowserTestBase::ClickOnChildInListViewAndWait(
-    int child_index,
-    int total_num_children,
+    size_t child_index,
+    size_t total_num_children,
     DialogViewID list_view_id,
     bool wait_for_animation) {
   views::View* list_view =
       dialog_view()->GetViewByID(static_cast<int>(list_view_id));
   EXPECT_TRUE(list_view);
-  EXPECT_EQ(total_num_children, list_view->child_count());
-  ClickOnDialogViewAndWait(list_view->child_at(child_index),
+  EXPECT_EQ(total_num_children, list_view->children().size());
+  ClickOnDialogViewAndWait(list_view->children()[child_index],
                            wait_for_animation);
 }
 
@@ -542,19 +578,19 @@ PaymentRequestBrowserTestBase::GetProfileLabelValues(
   views::View* view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::PROFILE_LABEL_LINE_1));
   if (view)
-    line_labels.push_back(static_cast<views::Label*>(view)->text());
+    line_labels.push_back(static_cast<views::Label*>(view)->GetText());
   view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::PROFILE_LABEL_LINE_2));
   if (view)
-    line_labels.push_back(static_cast<views::Label*>(view)->text());
+    line_labels.push_back(static_cast<views::Label*>(view)->GetText());
   view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::PROFILE_LABEL_LINE_3));
   if (view)
-    line_labels.push_back(static_cast<views::Label*>(view)->text());
+    line_labels.push_back(static_cast<views::Label*>(view)->GetText());
   view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::PROFILE_LABEL_ERROR));
   if (view)
-    line_labels.push_back(static_cast<views::Label*>(view)->text());
+    line_labels.push_back(static_cast<views::Label*>(view)->GetText());
 
   return line_labels;
 }
@@ -570,11 +606,11 @@ PaymentRequestBrowserTestBase::GetShippingOptionLabelValues(
   views::View* view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::SHIPPING_OPTION_DESCRIPTION));
   DCHECK(view);
-  labels.push_back(static_cast<views::Label*>(view)->text());
+  labels.push_back(static_cast<views::Label*>(view)->GetText());
   view = parent_view->GetViewByID(
       static_cast<int>(DialogViewID::SHIPPING_OPTION_AMOUNT));
   DCHECK(view);
-  labels.push_back(static_cast<views::Label*>(view)->text());
+  labels.push_back(static_cast<views::Label*>(view)->GetText());
   return labels;
 }
 
@@ -605,9 +641,50 @@ void PaymentRequestBrowserTestBase::PayWithCreditCardAndWait(
     PaymentRequestDialogView* dialog_view) {
   OpenCVCPromptWithCVC(cvc, dialog_view);
 
-  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
+  ResetEventWaiterForSequence(
+      {DialogEvent::PROCESSING_SPINNER_SHOWN, DialogEvent::DIALOG_CLOSED});
   ClickOnDialogViewAndWait(DialogViewID::CVC_PROMPT_CONFIRM_BUTTON,
                            dialog_view);
+}
+
+void PaymentRequestBrowserTestBase::PayWithCreditCard(
+    const base::string16& cvc) {
+  OpenCVCPromptWithCVC(cvc, delegate_->dialog_view());
+
+  ResetEventWaiter(DialogEvent::PROCESSING_SPINNER_SHOWN);
+  ClickOnDialogViewAndWait(DialogViewID::CVC_PROMPT_CONFIRM_BUTTON,
+                           delegate_->dialog_view());
+}
+
+void PaymentRequestBrowserTestBase::RetryPaymentRequest(
+    const std::string& validation_errors,
+    PaymentRequestDialogView* dialog_view) {
+  EXPECT_EQ(2U, dialog_view->view_stack_for_testing()->size());
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_HIDDEN,
+                               DialogEvent::SPEC_DONE_UPDATING,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION});
+
+  ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(),
+                                     "retry(" + validation_errors + ");"));
+
+  WaitForObservedEvent();
+}
+
+void PaymentRequestBrowserTestBase::RetryPaymentRequest(
+    const std::string& validation_errors,
+    const DialogEvent& dialog_event,
+    PaymentRequestDialogView* dialog_view) {
+  EXPECT_EQ(2U, dialog_view->view_stack_for_testing()->size());
+  ResetEventWaiterForSequence(
+      {DialogEvent::PROCESSING_SPINNER_HIDDEN, DialogEvent::SPEC_DONE_UPDATING,
+       DialogEvent::PROCESSING_SPINNER_HIDDEN,
+       DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION, dialog_event});
+
+  ASSERT_TRUE(content::ExecuteScript(GetActiveWebContents(),
+                                     "retry(" + validation_errors + ");"));
+
+  WaitForObservedEvent();
 }
 
 base::string16 PaymentRequestBrowserTestBase::GetEditorTextfieldValue(
@@ -637,7 +714,7 @@ base::string16 PaymentRequestBrowserTestBase::GetComboboxValue(
       static_cast<ValidatingCombobox*>(delegate_->dialog_view()->GetViewByID(
           EditorViewController::GetInputFieldViewId(type)));
   DCHECK(combobox);
-  return combobox->model()->GetItemAt(combobox->selected_index());
+  return combobox->model()->GetItemAt(combobox->GetSelectedIndex());
 }
 
 void PaymentRequestBrowserTestBase::SetComboboxValue(
@@ -679,7 +756,7 @@ bool PaymentRequestBrowserTestBase::IsEditorComboboxInvalid(
       static_cast<ValidatingCombobox*>(delegate_->dialog_view()->GetViewByID(
           EditorViewController::GetInputFieldViewId(type)));
   DCHECK(combobox);
-  return combobox->invalid();
+  return combobox->GetInvalid();
 }
 
 bool PaymentRequestBrowserTestBase::IsPayButtonEnabled() {
@@ -687,7 +764,7 @@ bool PaymentRequestBrowserTestBase::IsPayButtonEnabled() {
       static_cast<views::Button*>(delegate_->dialog_view()->GetViewByID(
           static_cast<int>(DialogViewID::PAY_BUTTON)));
   DCHECK(button);
-  return button->enabled();
+  return button->GetEnabled();
 }
 
 void PaymentRequestBrowserTestBase::WaitForAnimation() {
@@ -716,14 +793,14 @@ const base::string16& PaymentRequestBrowserTestBase::GetLabelText(
     DialogViewID view_id) {
   views::View* view = dialog_view()->GetViewByID(static_cast<int>(view_id));
   DCHECK(view);
-  return static_cast<views::Label*>(view)->text();
+  return static_cast<views::Label*>(view)->GetText();
 }
 
 const base::string16& PaymentRequestBrowserTestBase::GetStyledLabelText(
     DialogViewID view_id) {
   views::View* view = dialog_view()->GetViewByID(static_cast<int>(view_id));
   DCHECK(view);
-  return static_cast<views::StyledLabel*>(view)->text();
+  return static_cast<views::StyledLabel*>(view)->GetText();
 }
 
 const base::string16& PaymentRequestBrowserTestBase::GetErrorLabelForType(
@@ -731,18 +808,29 @@ const base::string16& PaymentRequestBrowserTestBase::GetErrorLabelForType(
   views::View* view = dialog_view()->GetViewByID(
       static_cast<int>(DialogViewID::ERROR_LABEL_OFFSET) + type);
   DCHECK(view);
-  return static_cast<views::Label*>(view)->text();
+  return static_cast<views::Label*>(view)->GetText();
+}
+
+void PaymentRequestBrowserTestBase::SetCanMakePaymentEnabledPref(
+    bool can_make_payment_enabled) {
+  prefs_.SetBoolean(kCanMakePaymentEnabled, can_make_payment_enabled);
 }
 
 void PaymentRequestBrowserTestBase::ResetEventWaiter(DialogEvent event) {
-  event_waiter_ = std::make_unique<DialogEventWaiter<DialogEvent>>(
+  event_waiter_ = std::make_unique<autofill::EventWaiter<DialogEvent>>(
       std::list<DialogEvent>{event});
 }
 
 void PaymentRequestBrowserTestBase::ResetEventWaiterForSequence(
     std::list<DialogEvent> event_sequence) {
-  event_waiter_ = std::make_unique<DialogEventWaiter<DialogEvent>>(
+  event_waiter_ = std::make_unique<autofill::EventWaiter<DialogEvent>>(
       std::move(event_sequence));
+}
+
+void PaymentRequestBrowserTestBase::ResetEventWaiterForDialogOpened() {
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN,
+                               DialogEvent::DIALOG_OPENED});
 }
 
 void PaymentRequestBrowserTestBase::WaitForObservedEvent() {
@@ -801,6 +889,12 @@ std::ostream& operator<<(
     case DialogEvent::CAN_MAKE_PAYMENT_RETURNED:
       out << "CAN_MAKE_PAYMENT_RETURNED";
       break;
+    case DialogEvent::HAS_ENROLLED_INSTRUMENT_CALLED:
+      out << "HAS_ENROLLED_INSTRUMENT_CALLED";
+      break;
+    case DialogEvent::HAS_ENROLLED_INSTRUMENT_RETURNED:
+      out << "HAS_ENROLLED_INSTRUMENT_RETURNED";
+      break;
     case DialogEvent::ERROR_MESSAGE_SHOWN:
       out << "ERROR_MESSAGE_SHOWN";
       break;
@@ -815,6 +909,12 @@ std::ostream& operator<<(
       break;
     case DialogEvent::ABORT_CALLED:
       out << "ABORT_CALLED";
+      break;
+    case DialogEvent::PROCESSING_SPINNER_SHOWN:
+      out << "PROCESSING_SPINNER_SHOWN";
+      break;
+    case DialogEvent::PROCESSING_SPINNER_HIDDEN:
+      out << "PROCESSING_SPINNER_HIDDEN";
       break;
   }
   return out;

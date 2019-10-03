@@ -7,10 +7,10 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "components/infobars/core/infobar.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -24,18 +24,13 @@ PageInfoInfoBarDelegate::PageInfoInfoBarDelegate() : ConfirmInfoBarDelegate() {}
 
 PageInfoInfoBarDelegate::~PageInfoInfoBarDelegate() {}
 
-infobars::InfoBarDelegate::Type PageInfoInfoBarDelegate::GetInfoBarType()
-    const {
-  return PAGE_ACTION_TYPE;
-}
-
 infobars::InfoBarDelegate::InfoBarIdentifier
 PageInfoInfoBarDelegate::GetIdentifier() const {
   return PAGE_INFO_INFOBAR_DELEGATE;
 }
 
 const gfx::VectorIcon& PageInfoInfoBarDelegate::GetVectorIcon() const {
-  return kSettingsIcon;
+  return vector_icons::kSettingsIcon;
 }
 
 base::string16 PageInfoInfoBarDelegate::GetMessageText() const {

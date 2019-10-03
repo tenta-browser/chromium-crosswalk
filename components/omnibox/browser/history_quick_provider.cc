@@ -15,16 +15,17 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/omnibox/browser/autocomplete_match_classification.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/history_url_provider.h"
 #include "components/omnibox/browser/in_memory_url_index.h"
-#include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/url_prefix.h"
 #include "components/prefs/pref_service.h"
@@ -50,7 +51,7 @@ void HistoryQuickProvider::Start(const AutocompleteInput& input,
     return;
 
   // Don't bother with INVALID.
-  if ((input.type() == metrics::OmniboxInputType::INVALID))
+  if ((input.type() == metrics::OmniboxInputType::EMPTY))
     return;
 
   autocomplete_input_ = input;
@@ -63,6 +64,14 @@ void HistoryQuickProvider::Start(const AutocompleteInput& input,
   }
 }
 
+size_t HistoryQuickProvider::EstimateMemoryUsage() const {
+  size_t res = HistoryProvider::EstimateMemoryUsage();
+
+  res += base::trace_event::EstimateMemoryUsage(autocomplete_input_);
+
+  return res;
+}
+
 HistoryQuickProvider::~HistoryQuickProvider() {
 }
 
@@ -70,7 +79,7 @@ void HistoryQuickProvider::DoAutocomplete() {
   // Get the matching URLs from the DB.
   ScoredHistoryMatches matches = in_memory_url_index_->HistoryItemsForTerms(
       autocomplete_input_.text(), autocomplete_input_.cursor_position(),
-      AutocompleteProvider::kMaxMatches);
+      provider_max_matches_);
   if (matches.empty())
     return;
 
@@ -88,8 +97,6 @@ void HistoryQuickProvider::DoAutocomplete() {
     // Mark this max_match_score as being used.
     max_match_score--;
   }
-  if (base::FeatureList::IsEnabled(omnibox::kOmniboxTabSwitchSuggestions))
-    ConvertOpenTabMatches();
 }
 
 int HistoryQuickProvider::FindMaxMatchScore(
@@ -220,44 +227,54 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
           url_formatter::FormatUrl(info.url(), fill_into_edit_format_types,
                                    net::UnescapeRule::SPACES, nullptr, nullptr,
                                    &inline_autocomplete_offset),
-          client()->GetSchemeClassifier());
+          client()->GetSchemeClassifier(), &inline_autocomplete_offset);
 
   // Set |inline_autocompletion| and |allowed_to_be_default_match| if possible.
   if (inline_autocomplete_offset != base::string16::npos) {
-    // |inline_autocomplete_offset| may be beyond the end of the
-    // |match.fill_into_edit| if the user has typed an URL with a scheme and the
-    // last character typed is a slash.  That slash is removed by the
-    // FormatUrlWithOffsets call above.
-    if (inline_autocomplete_offset < match.fill_into_edit.length()) {
-      match.inline_autocompletion =
-          match.fill_into_edit.substr(inline_autocomplete_offset);
-    }
+    match.inline_autocompletion =
+        match.fill_into_edit.substr(inline_autocomplete_offset);
     match.allowed_to_be_default_match = match.inline_autocompletion.empty() ||
         !PreventInlineAutocomplete(autocomplete_input_);
   }
-  match.EnsureUWYTIsAllowedToBeDefault(autocomplete_input_,
-                                       client()->GetTemplateURLService());
 
-  // The term match offsets should be adjusted based on the formatting
-  // applied to the suggestion contents displayed in the dropdown.
-  std::vector<size_t> offsets =
-      OffsetsFromTermMatches(history_match.url_matches);
-  match.contents = url_formatter::FormatUrlWithOffsets(
+  // HistoryQuick classification diverges from relevance scoring. Specifically,
+  // 1) All occurrences of the input contribute to relevance; e.g. for the input
+  // 'pre', the suggestion 'pre prefix' will be scored higher than 'pre suffix'.
+  // For classification though, if the input is a prefix of the suggestion text,
+  // only the prefix will be bolded; e.g. the 1st suggestion will display '[pre]
+  // prefix' as opposed to '[pre] [pre]fix'. This divergence allows consistency
+  // with other providers' and google.com's bolding.
+  // 2) Mid-word occurrences of the input within the suggestion URL contribute
+  // to relevance; e.g. for the input 'mail', the suggestion 'mail - gmail.com'
+  // will be scored higher than 'mail - outlook.live.com'. Mid-word matches only
+  // in the domain affect scoring. For classification though, mid-word matches
+  // are not bolded; e.g. the 1st suggestion will display '[mail] - gmail.com'.
+  // 3) User input is not broken on symbols for relevance calculations; e.g. for
+  // the input '#yolo', the suggestion 'how-to-yolo - yolo.com/#yolo' would be
+  // scored the same as 'how-to-tie-a-tie - yolo.com/#yolo/tie'. For
+  // classification though, user input is broken on symbols; e.g. the 1st
+  // suggestion will display 'how-to-[yolo] - [yolo].com/#[yolo]'.
+
+  match.contents = url_formatter::FormatUrl(
       info.url(),
-      AutocompleteMatch::GetFormatTypes(history_match.match_in_scheme,
-                                        history_match.match_in_subdomain,
-                                        history_match.match_after_host),
-      net::UnescapeRule::SPACES, nullptr, nullptr, &offsets);
+      AutocompleteMatch::GetFormatTypes(
+          autocomplete_input_.parts().scheme.len > 0 ||
+              history_match.match_in_scheme,
+          history_match.match_in_subdomain),
+      net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
+  auto contents_terms =
+      FindTermMatches(autocomplete_input_.text(), match.contents);
+  match.contents_class = ClassifyTermMatches(
+      contents_terms, match.contents.size(),
+      ACMatchClassification::MATCH | ACMatchClassification::URL,
+      ACMatchClassification::URL);
 
-  TermMatches new_matches =
-      ReplaceOffsetsInTermMatches(history_match.url_matches, offsets);
-  match.contents_class =
-      SpansFromTermMatch(new_matches, match.contents.length(), true);
-
-  // Format the description autocomplete presentation.
   match.description = info.title();
-  match.description_class = SpansFromTermMatch(
-      history_match.title_matches, match.description.length(), false);
+  auto description_terms =
+      FindTermMatches(autocomplete_input_.text(), match.description);
+  match.description_class = ClassifyTermMatches(
+      description_terms, match.description.size(), ACMatchClassification::MATCH,
+      ACMatchClassification::NONE);
 
   match.RecordAdditionalInfo("typed count", info.typed_count());
   match.RecordAdditionalInfo("visit count", info.visit_count());

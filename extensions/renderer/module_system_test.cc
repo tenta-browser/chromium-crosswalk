@@ -11,18 +11,16 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_piece.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/extension_features.h"
 #include "extensions/common/extension_paths.h"
 #include "extensions/common/value_builder.h"
 #include "extensions/renderer/ipc_message_sender.h"
@@ -52,16 +50,19 @@ class GetAPINatives : public ObjectBackedNativeHandler {
  public:
   GetAPINatives(ScriptContext* context,
                 NativeExtensionBindingsSystem* bindings_system)
-      : ObjectBackedNativeHandler(context) {
-    DCHECK_EQ(base::FeatureList::IsEnabled(features::kNativeCrxBindings),
-              !!bindings_system);
+      : ObjectBackedNativeHandler(context), bindings_system_(bindings_system) {
+    DCHECK(bindings_system_);
+  }
+  ~GetAPINatives() override {}
 
+  // ObjectBackedNativeHandler:
+  void AddRoutes() override {
     auto get_api = [](ScriptContext* context,
                       NativeExtensionBindingsSystem* bindings_system,
                       const v8::FunctionCallbackInfo<v8::Value>& args) {
       CHECK_EQ(1, args.Length());
       CHECK(args[0]->IsString());
-      std::string api_name = gin::V8ToString(args[0]);
+      std::string api_name = gin::V8ToString(context->isolate(), args[0]);
       v8::Local<v8::Object> api;
       if (bindings_system) {
         api = bindings_system->GetAPIObjectForTesting(context, api_name);
@@ -82,8 +83,14 @@ class GetAPINatives : public ObjectBackedNativeHandler {
       args.GetReturnValue().Set(api);
     };
 
-    RouteFunction("get", base::Bind(get_api, context, bindings_system));
+    RouteHandlerFunction(
+        "get", base::BindRepeating(get_api, context(), bindings_system_));
   }
+
+ private:
+  NativeExtensionBindingsSystem* bindings_system_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(GetAPINatives);
 };
 
 }  // namespace
@@ -95,13 +102,16 @@ class ModuleSystemTestEnvironment::AssertNatives
   explicit AssertNatives(ScriptContext* context)
       : ObjectBackedNativeHandler(context),
         assertion_made_(false),
-        failed_(false) {
-    RouteFunction(
-        "AssertTrue",
-        base::Bind(&AssertNatives::AssertTrue, base::Unretained(this)));
-    RouteFunction(
-        "AssertFalse",
-        base::Bind(&AssertNatives::AssertFalse, base::Unretained(this)));
+        failed_(false) {}
+
+  // ObjectBackedNativeHandler:
+  void AddRoutes() override {
+    RouteHandlerFunction("AssertTrue",
+                         base::BindRepeating(&AssertNatives::AssertTrue,
+                                             base::Unretained(this)));
+    RouteHandlerFunction("AssertFalse",
+                         base::BindRepeating(&AssertNatives::AssertFalse,
+                                             base::Unretained(this)));
   }
 
   bool assertion_made() { return assertion_made_; }
@@ -150,13 +160,12 @@ ModuleSystemTestEnvironment::ModuleSystemTestEnvironment(
   context_->v8_context()->Enter();
   assert_natives_ = new AssertNatives(context_);
 
-  if (base::FeatureList::IsEnabled(features::kNativeCrxBindings))
-    bindings_system_ = std::make_unique<NativeExtensionBindingsSystem>(nullptr);
+  bindings_system_ = std::make_unique<NativeExtensionBindingsSystem>(nullptr);
 
   {
     std::unique_ptr<ModuleSystem> module_system(
         new ModuleSystem(context_, source_map_.get()));
-    context_->set_module_system(std::move(module_system));
+    context_->SetModuleSystem(std::move(module_system));
   }
   ModuleSystem* module_system = context_->module_system();
   module_system->RegisterNativeHandler(
@@ -173,10 +182,8 @@ ModuleSystemTestEnvironment::ModuleSystemTestEnvironment(
   module_system->SetExceptionHandlerForTest(
       std::unique_ptr<ModuleSystem::ExceptionHandler>(new FailsOnException));
 
-  if (bindings_system_) {
-    bindings_system_->DidCreateScriptContext(context_);
-    bindings_system_->UpdateBindingsForContext(context_);
-  }
+  bindings_system_->DidCreateScriptContext(context_);
+  bindings_system_->UpdateBindingsForContext(context_);
 }
 
 ModuleSystemTestEnvironment::~ModuleSystemTestEnvironment() {
@@ -209,7 +216,7 @@ void ModuleSystemTestEnvironment::RegisterTestFile(
     const std::string& module_name,
     const std::string& file_name) {
   base::FilePath test_js_file_path;
-  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &test_js_file_path));
+  ASSERT_TRUE(base::PathService::Get(DIR_TEST_DATA, &test_js_file_path));
   test_js_file_path = test_js_file_path.AppendASCII(file_name);
   std::string test_js;
   ASSERT_TRUE(base::ReadFileToString(test_js_file_path, &test_js));
@@ -233,8 +240,14 @@ v8::Local<v8::Object> ModuleSystemTestEnvironment::CreateGlobal(
     const std::string& name) {
   v8::EscapableHandleScope handle_scope(isolate_);
   v8::Local<v8::Object> object = v8::Object::New(isolate_);
-  isolate_->GetCurrentContext()->Global()->Set(
-      v8::String::NewFromUtf8(isolate_, name.c_str()), object);
+  isolate_->GetCurrentContext()
+      ->Global()
+      ->Set(context_->v8_context(),
+            v8::String::NewFromUtf8(isolate_, name.c_str(),
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked(),
+            object)
+      .ToChecked();
   return handle_scope.Escape(object);
 }
 

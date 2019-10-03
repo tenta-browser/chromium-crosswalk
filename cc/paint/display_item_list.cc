@@ -8,9 +8,8 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "cc/base/math_util.h"
 #include "cc/debug/picture_debug_util.h"
 #include "cc/paint/solid_color_analyzer.h"
@@ -32,6 +31,31 @@ bool GetCanvasClipBounds(SkCanvas* canvas, gfx::Rect* clip_bounds) {
   return true;
 }
 
+void FillTextContent(const PaintOpBuffer* buffer,
+                     std::vector<NodeId>* content) {
+  for (auto* op : PaintOpBuffer::Iterator(buffer)) {
+    if (op->GetType() == PaintOpType::DrawTextBlob) {
+      content->push_back(static_cast<DrawTextBlobOp*>(op)->node_id);
+    } else if (op->GetType() == PaintOpType::DrawRecord) {
+      FillTextContent(static_cast<DrawRecordOp*>(op)->record.get(), content);
+    }
+  }
+}
+
+void FillTextContentByOffsets(const PaintOpBuffer* buffer,
+                              const std::vector<size_t>& offsets,
+                              std::vector<NodeId>* content) {
+  if (!buffer)
+    return;
+  for (auto* op : PaintOpBuffer::OffsetIterator(buffer, &offsets)) {
+    if (op->GetType() == PaintOpType::DrawTextBlob) {
+      content->push_back(static_cast<DrawTextBlobOp*>(op)->node_id);
+    } else if (op->GetType() == PaintOpType::DrawRecord) {
+      FillTextContent(static_cast<DrawRecordOp*>(op)->record.get(), content);
+    }
+  }
+}
+
 }  // namespace
 
 DisplayItemList::DisplayItemList(UsageHint usage_hint)
@@ -46,32 +70,35 @@ DisplayItemList::DisplayItemList(UsageHint usage_hint)
 DisplayItemList::~DisplayItemList() = default;
 
 void DisplayItemList::Raster(SkCanvas* canvas,
-                             ImageProvider* image_provider,
-                             SkPicture::AbortCallback* callback) const {
+                             ImageProvider* image_provider) const {
   DCHECK(usage_hint_ == kTopLevelDisplayItemList);
   gfx::Rect canvas_playback_rect;
   if (!GetCanvasClipBounds(canvas, &canvas_playback_rect))
     return;
 
-  std::vector<size_t> offsets = rtree_.Search(canvas_playback_rect);
-  paint_op_buffer_.Playback(canvas, image_provider, callback, &offsets);
+  std::vector<size_t> offsets;
+  rtree_.Search(canvas_playback_rect, &offsets);
+  paint_op_buffer_.Playback(canvas, PlaybackParams(image_provider), &offsets);
 }
 
-void DisplayItemList::GrowCurrentBeginItemVisualRect(
-    const gfx::Rect& visual_rect) {
-  DCHECK(usage_hint_ == kTopLevelDisplayItemList);
-  if (!begin_paired_indices_.empty())
-    visual_rects_[begin_paired_indices_.back().first].Union(visual_rect);
+void DisplayItemList::CaptureContent(const gfx::Rect& rect,
+                                     std::vector<NodeId>* content) const {
+  std::vector<size_t> offsets;
+  rtree_.Search(rect, &offsets);
+  FillTextContentByOffsets(&paint_op_buffer_, offsets, content);
 }
 
 void DisplayItemList::Finalize() {
-  TRACE_EVENT0("cc", "DisplayItemList::Finalize");
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
+               "DisplayItemList::Finalize");
+#if DCHECK_IS_ON()
   // If this fails a call to StartPaint() was not ended.
-  DCHECK(!in_painting_);
+  DCHECK(!IsPainting());
   // If this fails we had more calls to EndPaintOfPairedBegin() than
   // to EndPaintOfPairedEnd().
-  DCHECK_EQ(0, in_paired_begin_count_);
+  DCHECK(begin_paired_indices_.empty());
   DCHECK_EQ(visual_rects_.size(), offsets_.size());
+#endif
 
   if (usage_hint_ == kTopLevelDisplayItemList) {
     rtree_.Build(visual_rects_,
@@ -121,8 +148,15 @@ DisplayItemList::CreateTracedValue(bool include_items) const {
     state->BeginArray("items");
 
     PlaybackParams params(nullptr, SkMatrix::I());
+    std::map<size_t, gfx::Rect> visual_rects = rtree_.GetAllBoundsForTracing();
     for (const PaintOp* op : PaintOpBuffer::Iterator(&paint_op_buffer_)) {
       state->BeginDictionary();
+      state->SetString("name", PaintOpTypeToString(op->GetType()));
+
+      MathUtil::AddToTracedValue(
+          "visual_rect",
+          visual_rects[paint_op_buffer_.GetOpOffsetForTracing(op)],
+          state.get());
 
       SkPictureRecorder recorder;
       SkCanvas* canvas =
@@ -130,9 +164,11 @@ DisplayItemList::CreateTracedValue(bool include_items) const {
       op->Raster(canvas, params);
       sk_sp<SkPicture> picture = recorder.finishRecordingAsPicture();
 
-      std::string b64_picture;
-      PictureDebugUtil::SerializeAsBase64(picture.get(), &b64_picture);
-      state->SetString("skp64", b64_picture);
+      if (picture->approximateOpCount()) {
+        std::string b64_picture;
+        PictureDebugUtil::SerializeAsBase64(picture.get(), &b64_picture);
+        state->SetString("skp64", b64_picture);
+      }
 
       state->EndDictionary();
     }
@@ -165,8 +201,10 @@ void DisplayItemList::GenerateDiscardableImagesMetadata() {
 }
 
 void DisplayItemList::Reset() {
-  DCHECK(!in_painting_);
-  DCHECK_EQ(0, in_paired_begin_count_);
+#if DCHECK_IS_ON()
+  DCHECK(!IsPainting());
+  DCHECK(begin_paired_indices_.empty());
+#endif
 
   rtree_.Reset();
   image_map_.Reset();
@@ -177,9 +215,6 @@ void DisplayItemList::Reset() {
   offsets_.shrink_to_fit();
   begin_paired_indices_.clear();
   begin_paired_indices_.shrink_to_fit();
-  current_range_start_ = 0;
-  in_paired_begin_count_ = 0;
-  in_painting_ = false;
 }
 
 sk_sp<PaintRecord> DisplayItemList::ReleaseAsRecord() {
@@ -197,7 +232,7 @@ bool DisplayItemList::GetColorIfSolidInRect(const gfx::Rect& rect,
   std::vector<size_t>* offsets_to_use = nullptr;
   std::vector<size_t> offsets;
   if (!rect.Contains(rtree_.GetBounds())) {
-    offsets = rtree_.Search(rect);
+    rtree_.Search(rect, &offsets);
     offsets_to_use = &offsets;
   }
 

@@ -10,13 +10,6 @@
 #include "gpu/config/gpu_switches.h"
 #include "gpu/gpu_export.h"
 
-namespace gpu {
-
-// The command decoder names that can be passed to --use-cmd-decoder.
-extern const char kCmdDecoderValidatingName[];
-extern const char kCmdDecoderPassthroughName[];
-}  // namespace gpu
-
 namespace switches {
 
 GPU_EXPORT extern const char kCompileShaderAlwaysSucceeds[];
@@ -35,8 +28,11 @@ GPU_EXPORT extern const char kDisableGpuShaderDiskCache[];
 GPU_EXPORT extern const char kEnableThreadedTextureMailboxes[];
 GPU_EXPORT extern const char kGLShaderIntermOutput[];
 GPU_EXPORT extern const char kEmulateShaderPrecision[];
-GPU_EXPORT extern const char kUseCmdDecoder[];
-GPU_EXPORT extern const char kEnableRasterDecoder[];
+GPU_EXPORT extern const char kUseVulkan[];
+GPU_EXPORT extern const char kVulkanImplementationNameNative[];
+GPU_EXPORT extern const char kVulkanImplementationNameSwiftshader[];
+GPU_EXPORT extern const char kDisableVulkanSurface[];
+GPU_EXPORT extern const char kDisableVulkanFallbackToGLForTesting[];
 
 }  // namespace switches
 

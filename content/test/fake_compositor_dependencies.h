@@ -8,9 +8,8 @@
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "cc/test/test_task_graph_runner.h"
-#include "components/viz/common/resources/buffer_to_texture_target_map.h"
-#include "content/renderer/gpu/compositor_dependencies.h"
-#include "third_party/WebKit/public/platform/scheduler/test/fake_renderer_scheduler.h"
+#include "content/renderer/compositor/compositor_dependencies.h"
+#include "third_party/blink/public/platform/scheduler/test/web_fake_thread_scheduler.h"
 
 namespace content {
 
@@ -21,29 +20,42 @@ class FakeCompositorDependencies : public CompositorDependencies {
 
   // CompositorDependencies implementation.
   bool IsGpuRasterizationForced() override;
-  bool IsAsyncWorkerContextEnabled() override;
   int GetGpuRasterizationMSAASampleCount() override;
   bool IsLcdTextEnabled() override;
-  bool IsDistanceFieldTextEnabled() override;
   bool IsZeroCopyEnabled() override;
   bool IsPartialRasterEnabled() override;
   bool IsGpuMemoryBufferCompositorResourcesEnabled() override;
   bool IsElasticOverscrollEnabled() override;
-  const viz::BufferToTextureTargetMap& GetBufferToTextureTargetMap() override;
+  bool IsUseZoomForDSFEnabled() override;
   scoped_refptr<base::SingleThreadTaskRunner>
   GetCompositorMainThreadTaskRunner() override;
   scoped_refptr<base::SingleThreadTaskRunner>
   GetCompositorImplThreadTaskRunner() override;
-  blink::scheduler::RendererScheduler* GetRendererScheduler() override;
+  blink::scheduler::WebThreadScheduler* GetWebMainThreadScheduler() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
-  bool IsThreadedAnimationEnabled() override;
   bool IsScrollAnimatorEnabled() override;
   std::unique_ptr<cc::UkmRecorderFactory> CreateUkmRecorderFactory() override;
+  void RequestNewLayerTreeFrameSink(
+      int widget_routing_id,
+      scoped_refptr<FrameSwapMessageQueue> frame_swap_message_queue,
+      const GURL& url,
+      LayerTreeFrameSinkCallback callback,
+      mojom::RenderFrameMetadataObserverClientRequest
+          render_frame_metadata_observer_client_request,
+      mojom::RenderFrameMetadataObserverPtr render_frame_metadata_observer_ptr,
+      const char* client_name) override;
+#ifdef OS_ANDROID
+  bool UsingSynchronousCompositing() override;
+#endif
+
+  void set_use_zoom_for_dsf_enabled(bool enabled) {
+    use_zoom_for_dsf_ = enabled;
+  }
 
  private:
   cc::TestTaskGraphRunner task_graph_runner_;
-  blink::scheduler::FakeRendererScheduler renderer_scheduler_;
-  viz::BufferToTextureTargetMap buffer_to_texture_target_map_;
+  blink::scheduler::WebFakeThreadScheduler main_thread_scheduler_;
+  bool use_zoom_for_dsf_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FakeCompositorDependencies);
 };

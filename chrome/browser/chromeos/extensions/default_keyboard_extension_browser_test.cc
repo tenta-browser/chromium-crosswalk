@@ -7,8 +7,11 @@
 
 #include <vector>
 
-#include "ash/shell.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "base/command_line.h"
+#include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
+#include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -22,7 +25,6 @@
 #include "extensions/common/extension.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/input_method.h"
-#include "ui/keyboard/keyboard_switches.h"
 
 namespace {
 const base::FilePath::CharType kWebuiTestDir[] = FILE_PATH_LITERAL("webui");
@@ -76,9 +78,9 @@ void DefaultKeyboardExtensionBrowserTest::RunTest(
   InjectJavascript(base::FilePath(kWebuiTestDir),
                    base::FilePath(kMockController));
   InjectJavascript(base::FilePath(kWebuiTestDir), base::FilePath(kMockTimer));
-  InjectJavascript(base::FilePath(FILE_PATH_LITERAL(config.test_dir_)),
-                   base::FilePath(FILE_PATH_LITERAL(config.base_framework_)));
-  InjectJavascript(base::FilePath(FILE_PATH_LITERAL(config.test_dir_)), file);
+  InjectJavascript(base::FilePath(config.test_dir_),
+                   base::FilePath(config.base_framework_));
+  InjectJavascript(base::FilePath(config.test_dir_), file);
 
   ASSERT_TRUE(content::ExecuteScript(web_contents, utf8_content_));
 
@@ -87,17 +89,14 @@ void DefaultKeyboardExtensionBrowserTest::RunTest(
   EXPECT_TRUE(ExecuteWebUIResourceTest(web_contents, resource_ids));
 }
 
-void DefaultKeyboardExtensionBrowserTest::ShowVirtualKeyboard() {
-  aura::Window* window = ash::Shell::GetPrimaryRootWindow();
-  ui::InputMethod* input_method = window->GetHost()->GetInputMethod();
-  ASSERT_TRUE(input_method);
-  input_method->ShowImeIfNeeded();
-}
-
-content::RenderViewHost*
-DefaultKeyboardExtensionBrowserTest::GetKeyboardRenderViewHost(
+content::WebContents*
+DefaultKeyboardExtensionBrowserTest::GetKeyboardWebContents(
     const std::string& id) {
-  ShowVirtualKeyboard();
+  // Ensure the keyboard is shown.
+  auto* client = ChromeKeyboardControllerClient::Get();
+  client->SetEnableFlag(keyboard::KeyboardEnableFlag::kExtensionEnabled);
+  client->ShowKeyboard();
+
   GURL url = extensions::Extension::GetBaseURLFromExtensionId(id);
   std::unique_ptr<content::RenderWidgetHostIterator> widgets(
       content::RenderWidgetHost::GetRenderWidgetHosts());
@@ -107,11 +106,11 @@ DefaultKeyboardExtensionBrowserTest::GetKeyboardRenderViewHost(
       content::WebContents* wc = content::WebContents::FromRenderViewHost(view);
       // Waits for virtual keyboard to load.
       EXPECT_TRUE(content::WaitForLoadStop(wc));
-      return view;
+      return wc;
     }
   }
   LOG(ERROR) << "Extension not found:" << url;
-  return NULL;
+  return nullptr;
 }
 
 void DefaultKeyboardExtensionBrowserTest::InjectJavascript(
@@ -119,7 +118,10 @@ void DefaultKeyboardExtensionBrowserTest::InjectJavascript(
     const base::FilePath& file) {
   base::FilePath path = ui_test_utils::GetTestFilePath(dir, file);
   std::string library_content;
-  ASSERT_TRUE(base::ReadFileToString(path, &library_content)) << path.value();
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    ASSERT_TRUE(base::ReadFileToString(path, &library_content)) << path.value();
+  }
   utf8_content_.append(library_content);
   utf8_content_.append(";\n");
 }
@@ -146,30 +148,26 @@ IN_PROC_BROWSER_TEST_F(DefaultKeyboardExtensionBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DefaultKeyboardExtensionBrowserTest, IsKeyboardLoaded) {
-  content::RenderViewHost* keyboard_rvh =
-      GetKeyboardRenderViewHost(kExtensionId);
-  ASSERT_TRUE(keyboard_rvh);
+  content::WebContents* keyboard_wc = GetKeyboardWebContents(kExtensionId);
+  ASSERT_TRUE(keyboard_wc);
   bool loaded = false;
   std::string script = "!!chrome.virtualKeyboardPrivate";
   EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
-      keyboard_rvh, "window.domAutomationController.send(" + script + ");",
+      keyboard_wc, "window.domAutomationController.send(" + script + ");",
       &loaded));
   // Catches the regression in crbug.com/308653.
   ASSERT_TRUE(loaded);
 }
 
-// Disabled; http://crbug.com/515596
-IN_PROC_BROWSER_TEST_F(DefaultKeyboardExtensionBrowserTest,
-                       DISABLED_EndToEndTest) {
-  // Get the virtual keyboard's render view host.
-  content::RenderViewHost* keyboard_rvh =
-      GetKeyboardRenderViewHost(kExtensionId);
-  ASSERT_TRUE(keyboard_rvh);
+IN_PROC_BROWSER_TEST_F(DefaultKeyboardExtensionBrowserTest, EndToEndTest) {
+  // Get the virtual keyboard's WebContents.
+  content::WebContents* keyboard_wc = GetKeyboardWebContents(kExtensionId);
+  ASSERT_TRUE(keyboard_wc);
 
-  // Get the test page's render view host.
-  content::RenderViewHost* browser_rvh =
-      browser()->tab_strip_model()->GetActiveWebContents()->GetRenderViewHost();
-  ASSERT_TRUE(browser_rvh);
+  // Get the test page's WebContents.
+  content::WebContents* browser_wc =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(browser_wc);
 
   // Set up the test page.
   GURL url = ui_test_utils::GetTestUrl(
@@ -180,16 +178,18 @@ IN_PROC_BROWSER_TEST_F(DefaultKeyboardExtensionBrowserTest,
 
   // Press 'a' on keyboard.
   base::FilePath path = ui_test_utils::GetTestFilePath(
-      base::FilePath(FILE_PATH_LITERAL(kVirtualKeyboardExtensionTestDir)),
+      base::FilePath(kVirtualKeyboardExtensionTestDir),
       base::FilePath(FILE_PATH_LITERAL("end_to_end_test.js")));
   std::string script;
-  ASSERT_TRUE(base::ReadFileToString(path, &script));
-  EXPECT_TRUE(content::ExecuteScript(keyboard_rvh, script));
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    ASSERT_TRUE(base::ReadFileToString(path, &script));
+  }
+  EXPECT_TRUE(content::ExecuteScript(keyboard_wc, script));
   // Verify 'a' appeared on test page.
   bool success = false;
   EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
-      browser_rvh, "success ? verifyInput('a') : waitForInput('a');",
-      &success));
+      browser_wc, "success ? verifyInput('a') : waitForInput('a');", &success));
   ASSERT_TRUE(success);
 }
 

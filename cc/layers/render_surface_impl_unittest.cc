@@ -76,7 +76,6 @@ static std::unique_ptr<viz::RenderPass> DoAppendQuadsWithScaledMask(
       FakeRasterSource::CreateFilledSolidColor(layer_size);
 
   LayerTreeSettings settings;
-  settings.layer_transforms_should_scale_layer_contents = true;
   LayerTestCommon::LayerImplTest impl(settings);
   std::unique_ptr<LayerImpl> root =
       LayerImpl::Create(impl.host_impl()->active_tree(), 2);
@@ -107,7 +106,7 @@ static std::unique_ptr<viz::RenderPass> DoAppendQuadsWithScaledMask(
   impl.host_impl()->active_tree()->SetRootLayerForTesting(std::move(root));
 
   impl.host_impl()->active_tree()->SetDeviceScaleFactor(device_scale_factor);
-  impl.host_impl()->SetViewportSize(viewport_size);
+  impl.host_impl()->active_tree()->SetDeviceViewportSize(viewport_size);
   impl.host_impl()->active_tree()->BuildLayerListAndPropertyTreesForTesting();
   impl.host_impl()->active_tree()->UpdateDrawProperties();
 
@@ -147,14 +146,17 @@ TEST(RenderSurfaceLayerImplTest, ResourcelessAppendQuadsSkipMask) {
 TEST(RenderSurfaceLayerImplTest,
      AppendQuadsWithSolidColorMaskAndDeviceScaleFactor) {
   std::unique_ptr<viz::RenderPass> render_pass = DoAppendQuadsWithScaledMask(
-      DRAW_MODE_HARDWARE, 2.f, Layer::LayerMaskType::MULTI_TEXTURE_MASK);
+      DRAW_MODE_HARDWARE, 2.f, Layer::LayerMaskType::SINGLE_TEXTURE_MASK);
   DCHECK(render_pass->quad_list.front());
   const viz::RenderPassDrawQuad* quad =
       viz::RenderPassDrawQuad::MaterialCast(render_pass->quad_list.front());
   EXPECT_EQ(gfx::Transform(),
             quad->shared_quad_state->quad_to_target_transform);
+  // With tiled mask layer, we only generate mask quads for visible rect. In
+  // this case |quad_layer_rect| is not fully covered, but
+  // |visible_quad_layer_rect| is fully covered.
   LayerTestCommon::VerifyQuadsExactlyCoverRect(
-      render_pass->quad_list, quad->shared_quad_state->quad_layer_rect);
+      render_pass->quad_list, quad->shared_quad_state->visible_quad_layer_rect);
 }
 
 }  // namespace

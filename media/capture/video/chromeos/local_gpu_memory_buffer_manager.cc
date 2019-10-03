@@ -5,9 +5,19 @@
 #include "media/capture/video/chromeos/local_gpu_memory_buffer_manager.h"
 
 #include <drm_fourcc.h>
+#include <gbm.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <xf86drm.h>
 
-#include "base/memory/ptr_util.h"
+#include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/trace_event/memory_allocator_dump_guid.h"
+#include "base/trace_event/process_memory_dump.h"
+#include "ui/gfx/buffer_format_util.h"
+#include "ui/gfx/buffer_usage_util.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/native_pixmap_handle.h"
 
 namespace media {
 
@@ -52,6 +62,10 @@ gbm_device* CreateGbmDevice() {
 
 uint32_t GetDrmFormat(gfx::BufferFormat gfx_format) {
   switch (gfx_format) {
+    case gfx::BufferFormat::R_8:
+      return DRM_FORMAT_R8;
+    case gfx::BufferFormat::YVU_420:
+      return DRM_FORMAT_YVU420;
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return DRM_FORMAT_NV12;
     // Add more formats when needed.
@@ -67,14 +81,12 @@ class GpuMemoryBufferImplGbm : public gfx::GpuMemoryBuffer {
     handle_.type = gfx::NATIVE_PIXMAP;
     // Set a dummy id since this is for testing only.
     handle_.id = gfx::GpuMemoryBufferId(0);
-    handle_.native_pixmap_handle.fds.push_back(
-        base::FileDescriptor(gbm_bo_get_fd(buffer_object), false));
-    for (size_t i = 0; i < gbm_bo_get_num_planes(buffer_object); ++i) {
+    for (size_t i = 0; i < gbm_bo_get_plane_count(buffer_object); ++i) {
       handle_.native_pixmap_handle.planes.push_back(gfx::NativePixmapPlane(
-          gbm_bo_get_plane_stride(buffer_object, i),
-          gbm_bo_get_plane_offset(buffer_object, i),
+          gbm_bo_get_stride_for_plane(buffer_object, i),
+          gbm_bo_get_offset(buffer_object, i),
           gbm_bo_get_plane_size(buffer_object, i),
-          gbm_bo_get_plane_format_modifier(buffer_object, i)));
+          base::ScopedFD(gbm_bo_get_plane_fd(buffer_object, i))));
     }
   }
 
@@ -82,7 +94,7 @@ class GpuMemoryBufferImplGbm : public gfx::GpuMemoryBuffer {
     if (mapped_) {
       Unmap();
     }
-    close(gbm_bo_get_fd(buffer_object_));
+
     gbm_bo_destroy(buffer_object_);
   }
 
@@ -90,7 +102,7 @@ class GpuMemoryBufferImplGbm : public gfx::GpuMemoryBuffer {
     if (mapped_) {
       return true;
     }
-    size_t num_planes = gbm_bo_get_num_planes(buffer_object_);
+    size_t num_planes = gbm_bo_get_plane_count(buffer_object_);
     uint32_t stride;
     mapped_planes_.resize(num_planes);
     for (size_t i = 0; i < num_planes; ++i) {
@@ -109,7 +121,7 @@ class GpuMemoryBufferImplGbm : public gfx::GpuMemoryBuffer {
     }
     mapped_ = true;
     return true;
-  };
+  }
 
   void* memory(size_t plane) override {
     if (!mapped_) {
@@ -143,17 +155,40 @@ class GpuMemoryBufferImplGbm : public gfx::GpuMemoryBuffer {
   gfx::BufferFormat GetFormat() const override { return format_; }
 
   int stride(size_t plane) const override {
-    return gbm_bo_get_plane_stride(buffer_object_, plane);
+    return gbm_bo_get_stride_for_plane(buffer_object_, plane);
   }
 
   void SetColorSpace(const gfx::ColorSpace& color_space) override {}
 
   gfx::GpuMemoryBufferId GetId() const override { return handle_.id; }
 
-  gfx::GpuMemoryBufferHandle GetHandle() const override { return handle_; }
+  gfx::GpuMemoryBufferType GetType() const override {
+    return gfx::NATIVE_PIXMAP;
+  }
+
+  gfx::GpuMemoryBufferHandle CloneHandle() const override {
+    DCHECK_EQ(handle_.type, gfx::NATIVE_PIXMAP);
+    gfx::GpuMemoryBufferHandle handle;
+    handle.type = gfx::NATIVE_PIXMAP;
+    handle.id = handle_.id;
+    handle.native_pixmap_handle =
+        gfx::CloneHandleForIPC(handle_.native_pixmap_handle);
+    return handle;
+  }
 
   ClientBuffer AsClientBuffer() override {
     return reinterpret_cast<ClientBuffer>(this);
+  }
+
+  void OnMemoryDump(
+      base::trace_event::ProcessMemoryDump* pmd,
+      const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
+      uint64_t tracing_process_id,
+      int importance) const override {
+    auto shared_buffer_guid = gfx::GetGenericSharedGpuMemoryGUIDForTracing(
+        tracing_process_id, GetId());
+    pmd->CreateSharedGlobalAllocatorDump(shared_buffer_guid);
+    pmd->AddOwnershipEdge(buffer_dump_guid, shared_buffer_guid, importance);
   }
 
  private:
@@ -188,8 +223,9 @@ LocalGpuMemoryBufferManager::CreateGpuMemoryBuffer(
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     gpu::SurfaceHandle surface_handle) {
-  if (usage != gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE) {
-    LOG(ERROR) << "Unsupported gfx::BufferUsage" << static_cast<int>(usage);
+  if (usage != gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE &&
+      usage != gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE) {
+    LOG(ERROR) << "Unsupported usage " << gfx::BufferUsageToString(usage);
     return std::unique_ptr<gfx::GpuMemoryBuffer>();
   }
   if (!gbm_device_) {
@@ -218,11 +254,55 @@ LocalGpuMemoryBufferManager::CreateGpuMemoryBuffer(
     return std::unique_ptr<gfx::GpuMemoryBuffer>();
   }
 
-  return base::MakeUnique<GpuMemoryBufferImplGbm>(format, buffer_object);
+  return std::make_unique<GpuMemoryBufferImplGbm>(format, buffer_object);
 }
 
 void LocalGpuMemoryBufferManager::SetDestructionSyncToken(
     gfx::GpuMemoryBuffer* buffer,
     const gpu::SyncToken& sync_token) {}
+
+std::unique_ptr<gfx::GpuMemoryBuffer> LocalGpuMemoryBufferManager::ImportDmaBuf(
+    const gfx::NativePixmapHandle& handle,
+    const gfx::Size& size,
+    gfx::BufferFormat format) {
+  if (handle.planes.size() !=
+      gfx::NumberOfPlanesForLinearBufferFormat(format)) {
+    // This could happen if e.g., we get a compressed RGBA buffer where one
+    // plane is for metadata. We don't support this case.
+    LOG(ERROR) << "Cannot import " << gfx::BufferFormatToString(format)
+               << " with " << handle.planes.size() << " plane(s) (expected "
+               << gfx::NumberOfPlanesForLinearBufferFormat(format)
+               << " plane(s))";
+    return nullptr;
+  }
+  const uint32_t drm_format = GetDrmFormat(format);
+  if (!drm_format) {
+    LOG(ERROR) << "Unsupported format " << gfx::BufferFormatToString(format);
+    return nullptr;
+  }
+  gbm_import_fd_modifier_data import_data{
+      base::checked_cast<uint32_t>(size.width()),
+      base::checked_cast<uint32_t>(size.height()), drm_format,
+      base::checked_cast<uint32_t>(handle.planes.size())};
+  for (size_t plane = 0; plane < handle.planes.size(); plane++) {
+    if (!handle.planes[plane].fd.is_valid()) {
+      LOG(ERROR) << "Invalid file descriptor for plane " << plane;
+      return nullptr;
+    }
+    import_data.fds[plane] = handle.planes[plane].fd.get();
+    import_data.strides[plane] =
+        base::checked_cast<int>(handle.planes[plane].stride);
+    import_data.offsets[plane] =
+        base::checked_cast<int>(handle.planes[plane].offset);
+  }
+  import_data.modifier = handle.modifier;
+  gbm_bo* buffer_object = gbm_bo_import(gbm_device_, GBM_BO_IMPORT_FD_MODIFIER,
+                                        &import_data, GBM_BO_USE_SW_READ_OFTEN);
+  if (!buffer_object) {
+    PLOG(ERROR) << "Could not import the DmaBuf into gbm";
+    return nullptr;
+  }
+  return std::make_unique<GpuMemoryBufferImplGbm>(format, buffer_object);
+}
 
 }  // namespace media

@@ -4,6 +4,7 @@
 
 #include <tuple>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
@@ -12,7 +13,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/content/common/autofill_driver.mojom.h"
+#include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
 #include "components/autofill/content/renderer/autofill_agent.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_data.h"
@@ -20,17 +21,17 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_form_element.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 
 using autofill::features::kAutofillEnforceMinRequiredFieldsForHeuristics;
 using autofill::features::kAutofillEnforceMinRequiredFieldsForQuery;
@@ -55,7 +56,7 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   FakeContentAutofillDriver() : called_field_change_(false) {}
   ~FakeContentAutofillDriver() override {}
 
-  void BindRequest(mojom::AutofillDriverRequest request) {
+  void BindRequest(mojom::AutofillDriverAssociatedRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -76,10 +77,9 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
       forms_.reset(new std::vector<FormData>(forms));
   }
 
-  void WillSubmitForm(const FormData& form,
-                      base::TimeTicks timestamp) override {}
-
-  void FormSubmitted(const FormData& form) override {}
+  void FormSubmitted(const FormData& form,
+                     bool known_success,
+                     mojom::SubmissionSource source) override {}
 
   void TextFieldDidChange(const FormData& form,
                           const FormFieldData& field,
@@ -92,10 +92,15 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
                           const FormFieldData& field,
                           const gfx::RectF& bounding_box) override {}
 
+  void SelectControlDidChange(const FormData& form,
+                              const FormFieldData& field,
+                              const gfx::RectF& bounding_box) override {}
+
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
                               const FormFieldData& field,
-                              const gfx::RectF& bounding_box) override {}
+                              const gfx::RectF& bounding_box,
+                              bool autoselect_first_suggestion) override {}
 
   void HidePopup() override {}
 
@@ -115,12 +120,14 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override {}
 
+  void SelectFieldOptionsDidChange(const autofill::FormData& form) override {}
+
   // Records whether TextFieldDidChange() get called.
   bool called_field_change_;
   // Records data received via FormSeen() call.
   std::unique_ptr<std::vector<FormData>> forms_;
 
-  mojo::BindingSet<mojom::AutofillDriver> bindings_;
+  mojo::AssociatedBindingSet<mojom::AutofillDriver> bindings_;
 };
 
 }  // namespace
@@ -140,17 +147,17 @@ class AutofillRendererTest : public ChromeRenderViewTest {
 
     // We only use the fake driver for main frame
     // because our test cases only involve the main frame.
-    service_manager::InterfaceProvider* remote_interfaces =
-        view_->GetMainRenderFrame()->GetRemoteInterfaces();
-    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
-    test_api.SetBinderForName(
+    blink::AssociatedInterfaceProvider* remote_interfaces =
+        view_->GetMainRenderFrame()->GetRemoteAssociatedInterfaces();
+    remote_interfaces->OverrideBinderForTesting(
         mojom::AutofillDriver::Name_,
-        base::Bind(&AutofillRendererTest::BindAutofillDriver,
-                   base::Unretained(this)));
+        base::BindRepeating(&AutofillRendererTest::BindAutofillDriver,
+                            base::Unretained(this)));
   }
 
-  void BindAutofillDriver(mojo::ScopedMessagePipeHandle handle) {
-    fake_driver_.BindRequest(mojom::AutofillDriverRequest(std::move(handle)));
+  void BindAutofillDriver(mojo::ScopedInterfaceEndpointHandle handle) {
+    fake_driver_.BindRequest(
+        mojom::AutofillDriverAssociatedRequest(std::move(handle)));
   }
 
   FakeContentAutofillDriver fake_driver_;
@@ -182,19 +189,22 @@ TEST_F(AutofillRendererTest, SendForms) {
 
   FormFieldData expected;
 
-  expected.name = ASCIIToUTF16("firstname");
+  expected.id_attribute = ASCIIToUTF16("firstname");
+  expected.name = expected.id_attribute;
   expected.value = base::string16();
   expected.form_control_type = "text";
   expected.max_length = WebInputElement::DefaultMaxLength();
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[0]);
 
-  expected.name = ASCIIToUTF16("middlename");
+  expected.id_attribute = ASCIIToUTF16("middlename");
+  expected.name = expected.id_attribute;
   expected.value = base::string16();
   expected.form_control_type = "text";
   expected.max_length = WebInputElement::DefaultMaxLength();
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[1]);
 
-  expected.name = ASCIIToUTF16("lastname");
+  expected.id_attribute = ASCIIToUTF16("lastname");
+  expected.name = expected.id_attribute;
   expected.value = base::string16();
   expected.form_control_type = "text";
   expected.autocomplete_attribute = "off";
@@ -202,7 +212,8 @@ TEST_F(AutofillRendererTest, SendForms) {
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[2]);
   expected.autocomplete_attribute = std::string();  // reset
 
-  expected.name = ASCIIToUTF16("state");
+  expected.id_attribute = ASCIIToUTF16("state");
+  expected.name = expected.id_attribute;
   expected.value = ASCIIToUTF16("?");
   expected.form_control_type = "select-one";
   expected.max_length = 0;
@@ -243,15 +254,18 @@ TEST_F(AutofillRendererTest, SendForms) {
   expected.form_control_type = "text";
   expected.max_length = WebInputElement::DefaultMaxLength();
 
-  expected.name = ASCIIToUTF16("second_firstname");
+  expected.id_attribute = ASCIIToUTF16("second_firstname");
+  expected.name = expected.id_attribute;
   expected.value = ASCIIToUTF16("Bob");
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[0]);
 
-  expected.name = ASCIIToUTF16("second_lastname");
+  expected.id_attribute = ASCIIToUTF16("second_lastname");
+  expected.name = expected.id_attribute;
   expected.value = ASCIIToUTF16("Hope");
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[1]);
 
-  expected.name = ASCIIToUTF16("second_email");
+  expected.id_attribute = ASCIIToUTF16("second_email");
+  expected.name = expected.id_attribute;
   expected.value = ASCIIToUTF16("bobhope@example.com");
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[2]);
 }
@@ -345,13 +359,15 @@ TEST_F(AutofillRendererTest, DynamicallyAddedUnownedFormElements) {
 
   FormFieldData expected;
 
-  expected.name = ASCIIToUTF16("EMAIL_ADDRESS");
+  expected.id_attribute = ASCIIToUTF16("EMAIL_ADDRESS");
+  expected.name = expected.id_attribute;
   expected.value.clear();
   expected.form_control_type = "text";
   expected.max_length = WebInputElement::DefaultMaxLength();
   EXPECT_FORM_FIELD_DATA_EQUALS(expected, forms[0].fields[7]);
 
-  expected.name = ASCIIToUTF16("PHONE_HOME_WHOLE_NUMBER");
+  expected.id_attribute = ASCIIToUTF16("PHONE_HOME_WHOLE_NUMBER");
+  expected.name = expected.id_attribute;
   expected.value.clear();
   expected.form_control_type = "text";
   expected.max_length = WebInputElement::DefaultMaxLength();

@@ -9,20 +9,22 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
+#include "chrome/browser/ui/find_bar/find_types.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/find_bar_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/location_bar/background_with_1_px_border.h"
-#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/border.h"
 #include "ui/views/focus/external_focus_tracker.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 
 using content::NativeWebKeyboardEvent;
 
@@ -52,7 +54,7 @@ bool FindBarHost::MaybeForwardKeyEventToWebpage(
     case ui::VKEY_END:
       if (key_event.IsControlDown())
         break;
-    // Fall through.
+      FALLTHROUGH;
     default:
       return false;
   }
@@ -170,7 +172,11 @@ void FindBarHost::RestoreSavedFocus() {
 }
 
 bool FindBarHost::HasGlobalFindPasteboard() {
+#if defined(OS_MACOSX)
+  return true;
+#else
   return false;
+#endif
 }
 
 void FindBarHost::UpdateFindBarForChangedWebContents() {
@@ -187,17 +193,15 @@ bool FindBarHost::AcceleratorPressed(const ui::Accelerator& accelerator) {
   ui::KeyboardCode key = accelerator.key_code();
   if (key == ui::VKEY_RETURN && accelerator.IsCtrlDown()) {
     // Ctrl+Enter closes the Find session and navigates any link that is active.
-    find_bar_controller_->EndFindSession(
-        FindBarController::kActivateSelectionOnPage,
-        FindBarController::kClearResultsInFindBox);
+    find_bar_controller_->EndFindSession(FindOnPageSelectionAction::kActivate,
+                                         FindBoxResultAction::kClear);
     return true;
   } else if (key == ui::VKEY_ESCAPE) {
     // This will end the Find session and hide the window, causing it to loose
     // focus and in the process unregister us as the handler for the Escape
     // accelerator through the OnWillChangeFocus event.
-    find_bar_controller_->EndFindSession(
-        FindBarController::kKeepSelectionOnPage,
-        FindBarController::kKeepResultsInFindBox);
+    find_bar_controller_->EndFindSession(FindOnPageSelectionAction::kKeep,
+                                         FindBoxResultAction::kKeep);
     return true;
   } else {
     NOTREACHED() << "Unknown accelerator";
@@ -265,10 +269,6 @@ gfx::Rect FindBarHost::GetDialogPosition(gfx::Rect avoid_overlapping_rect) {
   if (widget_bounds.IsEmpty())
     return gfx::Rect();
 
-  gfx::Insets insets =
-      view()->border()->GetInsets() -
-      gfx::Insets(0, BackgroundWith1PxBorder::kLocationBarBorderThicknessDip);
-
   // Ask the view how large an area it needs to draw on.
   gfx::Size prefsize = view()->GetPreferredSize();
 
@@ -283,12 +283,12 @@ gfx::Rect FindBarHost::GetDialogPosition(gfx::Rect avoid_overlapping_rect) {
   // Place the view in the top right corner of the widget boundaries (top left
   // for RTL languages). Adjust for the view insets to ensure the border lines
   // up with the location bar.
-  gfx::Rect view_location;
+  gfx::Insets insets = view()->border()->GetInsets();
   int x = widget_bounds.x() - insets.left();
   if (!base::i18n::IsRTL())
     x += widget_bounds.width() - prefsize.width() + insets.width();
   int y = widget_bounds.y() - insets.top();
-  view_location.SetRect(x, y, prefsize.width(), prefsize.height());
+  const gfx::Rect view_location(x, y, prefsize.width(), prefsize.height());
 
   // When we get Find results back, we specify a selection rect, which we
   // should strive to avoid overlapping. But first, we need to offset the
@@ -356,6 +356,22 @@ void FindBarHost::OnVisibilityChanged() {
       visible_bounds);
 
   find_bar_controller_->FindBarVisibilityChanged();
+}
+
+ax::mojom::Role FindBarHost::GetAccessibleWindowRole() {
+  return ax::mojom::Role::kDialog;
+}
+
+base::string16 FindBarHost::GetAccessibleWindowTitle() const {
+  // This can be called in tests by AccessibilityChecker before the controller
+  // is registered with this object. So to handle that case, we need to bail out
+  // if there is no controller.
+  const FindBarController* const controller = GetFindBarController();
+  if (!controller)
+    return base::string16();
+  return l10n_util::GetStringFUTF16(
+      IDS_FIND_IN_PAGE_ACCESSIBLE_TITLE,
+      controller->browser()->GetWindowTitleForCurrentTab(false));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

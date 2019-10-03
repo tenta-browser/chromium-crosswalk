@@ -4,16 +4,14 @@
 
 #include "chrome/browser/password_manager/password_store_signin_notifier_impl.h"
 
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 namespace password_manager {
 
 PasswordStoreSigninNotifierImpl::PasswordStoreSigninNotifierImpl(
-    Profile* profile)
-    : profile_(profile) {
-  DCHECK(profile);
+    signin::IdentityManager* identity_manager)
+    : identity_manager_(identity_manager) {
+  DCHECK(identity_manager_);
 }
 
 PasswordStoreSigninNotifierImpl::~PasswordStoreSigninNotifierImpl() {}
@@ -21,24 +19,25 @@ PasswordStoreSigninNotifierImpl::~PasswordStoreSigninNotifierImpl() {}
 void PasswordStoreSigninNotifierImpl::SubscribeToSigninEvents(
     PasswordStore* store) {
   set_store(store);
-  SigninManagerFactory::GetForProfile(profile_)->AddObserver(this);
+  identity_manager_->AddObserver(this);
 }
 
 void PasswordStoreSigninNotifierImpl::UnsubscribeFromSigninEvents() {
-  SigninManagerFactory::GetForProfile(profile_)->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
 }
 
-void PasswordStoreSigninNotifierImpl::GoogleSigninSucceededWithPassword(
-    const std::string& account_id,
-    const std::string& username,
-    const std::string& password) {
-  NotifySignin(password);
+void PasswordStoreSigninNotifierImpl::OnPrimaryAccountCleared(
+    const CoreAccountInfo& account_info) {
+  NotifySignedOut(account_info.email, /* primary_account= */ true);
 }
 
-void PasswordStoreSigninNotifierImpl::GoogleSignedOut(
-    const std::string& account_id,
-    const std::string& username) {
-  NotifySignedOut();
+// IdentityManager::Observer implementations.
+void PasswordStoreSigninNotifierImpl::OnExtendedAccountInfoRemoved(
+    const AccountInfo& info) {
+  // Only reacts to content area (non-primary) Gaia account sign-out event.
+  if (info.account_id != identity_manager_->GetPrimaryAccountId()) {
+    NotifySignedOut(info.email, /* primary_account= */ false);
+  }
 }
 
 }  // namespace password_manager

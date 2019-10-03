@@ -41,5 +41,13 @@ void FuchsiaVolumeControl::SetMuted(bool muted) {
   NOTIMPLEMENTED();
 }
 
+void FuchsiaVolumeControl::SetPowerSave(bool power_save_on) {
+  NOTIMPLEMENTED();
+}
+
+void FuchsiaVolumeControl::SetLimit(float limit) {
+  NOTIMPLEMENTED();
+}
+
 }  // namespace media
 }  // namespace chromecast

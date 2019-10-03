@@ -11,21 +11,16 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "content/browser/service_worker/service_worker_context_request_handler.h"
 #include "content/browser/service_worker/service_worker_database.h"
-#include "content/browser/service_worker/service_worker_installed_scripts_sender.h"
-#include "content/common/service_worker/embedded_worker.mojom.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/service_worker_context.h"
-#include "content/public/common/service_worker_modes.h"
-#include "services/network/public/interfaces/fetch_api.mojom.h"
+#include "content/public/common/resource_type.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/embedded_worker.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
 
 namespace content {
-
-enum class EmbeddedWorkerStatus;
 
 class ServiceWorkerMetrics {
  public:
@@ -54,38 +49,12 @@ class ServiceWorkerMetrics {
   };
 
   // Used for UMA. Append-only.
-  enum URLRequestJobResult {
-    REQUEST_JOB_FALLBACK_RESPONSE,
-    REQUEST_JOB_FALLBACK_FOR_CORS,
-    REQUEST_JOB_HEADERS_ONLY_RESPONSE,
-    REQUEST_JOB_STREAM_RESPONSE,
-    REQUEST_JOB_BLOB_RESPONSE,
-    REQUEST_JOB_ERROR_RESPONSE_STATUS_ZERO,
-    REQUEST_JOB_ERROR_BAD_BLOB,
-    REQUEST_JOB_ERROR_NO_PROVIDER_HOST,
-    REQUEST_JOB_ERROR_NO_ACTIVE_VERSION,
-    REQUEST_JOB_ERROR_NO_REQUEST,
-    REQUEST_JOB_ERROR_FETCH_EVENT_DISPATCH,
-    REQUEST_JOB_ERROR_BLOB_READ,
-    REQUEST_JOB_ERROR_STREAM_ABORTED,
-    REQUEST_JOB_ERROR_KILLED,
-    REQUEST_JOB_ERROR_KILLED_WITH_BLOB,
-    REQUEST_JOB_ERROR_KILLED_WITH_STREAM,
-    REQUEST_JOB_ERROR_DESTROYED,
-    REQUEST_JOB_ERROR_DESTROYED_WITH_BLOB,
-    REQUEST_JOB_ERROR_DESTROYED_WITH_STREAM,
-    REQUEST_JOB_ERROR_BAD_DELEGATE,
-    REQUEST_JOB_ERROR_REQUEST_BODY_BLOB_FAILED,
-    NUM_REQUEST_JOB_RESULT_TYPES,
-  };
-
-  // Used for UMA. Append-only.
   enum class StopStatus {
     NORMAL,
     DETACH_BY_REGISTRY,
     TIMEOUT,
     // Add new types here.
-    NUM_TYPES
+    kMaxValue = TIMEOUT,
   };
 
   // Used for UMA. Append-only.
@@ -125,12 +94,17 @@ class ServiceWorkerMetrics {
     BACKGROUND_FETCH_ABORT = 23,
     BACKGROUND_FETCH_CLICK = 24,
     BACKGROUND_FETCH_FAIL = 25,
-    BACKGROUND_FETCHED = 26,
+    // BACKGROUND_FETCHED = 26,  // Obsolete
     NAVIGATION_HINT = 27,
     CAN_MAKE_PAYMENT = 28,
     ABORT_PAYMENT = 29,
+    COOKIE_CHANGE = 30,
+    LONG_RUNNING_MESSAGE = 31,
+    BACKGROUND_FETCH_SUCCESS = 32,
+    PERIODIC_SYNC = 33,
+    CONTENT_DELETE = 34,
     // Add new events to record here.
-    NUM_TYPES
+    kMaxValue = CONTENT_DELETE,
   };
 
   // Used for UMA. Append only.
@@ -143,7 +117,7 @@ class ServiceWorkerMetrics {
     PLUS,
     INBOX,
     DOCS,
-    NUM_TYPES
+    kMaxValue = DOCS,
   };
 
   // Not used for UMA.
@@ -163,71 +137,38 @@ class ServiceWorkerMetrics {
   };
 
   // Used for UMA. Append only.
-  // This enum describes how an activated worker was found and prepared (i.e.,
-  // reached the RUNNING status) in order to dispatch a fetch event to.
-  enum class WorkerPreparationType {
-    UNKNOWN = 0,
-    // The worker was already starting up. We waited for it to finish.
-    STARTING = 1,
-    // The worker was already running.
-    RUNNING = 2,
-    // The worker was stopping. We waited for it to stop, and then started it
-    // up.
-    STOPPING = 3,
-    // The worker was in the stopped state. We started it up, and startup
-    // required a new process to be created.
-    START_IN_NEW_PROCESS = 4,
-    // Deprecated 07/2017; replaced by START_IN_EXISTING_UNREADY_PROCESS and
-    // START_IN_EXISTING_READY_PROCESS.
-    //   START_IN_EXISTING_PROCESS = 5,
-    // The worker was in the stopped state. We started it up, and this occurred
-    // during browser startup.
-    START_DURING_STARTUP = 6,
-    // The worker was in the stopped state. We started it up, and it used an
-    // existing unready process.
-    START_IN_EXISTING_UNREADY_PROCESS = 7,
-    // The worker was in the stopped state. We started it up, and it used an
-    // existing ready process.
-    START_IN_EXISTING_READY_PROCESS = 8,
-    // Add new types here.
-    NUM_TYPES
-  };
-
-  // Used for UMA. Append only.
   // Describes the outcome of a time measurement taken between processes.
   enum class CrossProcessTimeDelta {
     NORMAL,
     NEGATIVE,
     INACCURATE_CLOCK,
     // Add new types here.
-    NUM_TYPES
+    kMaxValue = INACCURATE_CLOCK,
   };
 
-  // Not used for UMA.
-  enum class LoadSource { NETWORK, HTTP_CACHE, SERVICE_WORKER_STORAGE };
+  // These are prefixed with "local" or "remote" to indicate whether the browser
+  // process or renderer process recorded the timing (browser is local).
+  struct StartTimes {
+    // The browser started the service worker startup sequence.
+    base::TimeTicks local_start;
 
-  class ScopedEventRecorder {
-   public:
-    explicit ScopedEventRecorder(EventType start_worker_purpose);
-    ~ScopedEventRecorder();
+    // The browser sent the start worker IPC to the renderer.
+    base::TimeTicks local_start_worker_sent;
 
-    void RecordEventHandledStatus(EventType event, bool handled);
+    // The renderer received the start worker IPC.
+    base::TimeTicks remote_start_worker_received;
 
-   private:
-    struct EventStat {
-      size_t fired_events = 0;
-      size_t handled_events = 0;
-    };
+    // The renderer started script evaluation on the worker thread.
+    base::TimeTicks remote_script_evaluation_start;
 
-    // Records how much of dispatched events are handled.
-    static void RecordEventHandledRatio(EventType event,
-                                        size_t handled_events,
-                                        size_t fired_events);
+    // The renderer finished script evaluation on the worker thread.
+    base::TimeTicks remote_script_evaluation_end;
 
-    std::map<EventType, EventStat> event_stats_;
-    const EventType start_worker_purpose_;
+    // The browser received the worker started IPC.
+    base::TimeTicks local_end;
 
-    DISALLOW_COPY_AND_ASSIGN(ScopedEventRecorder);
+    // Counts the time overhead of UI/IO thread hops during startup.
+    base::TimeDelta thread_hop_time;
   };
 
   // Converts an event type to a string. Used for tracing.
@@ -262,35 +203,21 @@ class ServiceWorkerMetrics {
   // Counts the number of page loads controlled by a Service Worker.
   static void CountControlledPageLoad(Site site,
                                       const GURL& url,
-                                      bool is_main_frame_load,
-                                      ui::PageTransition page_transition,
-                                      size_t redirect_chain_length);
+                                      bool is_main_frame_load);
 
-  // Records the result of trying to start a worker. |is_installed| indicates
-  // whether the version has been installed.
-  static void RecordStartWorkerStatus(ServiceWorkerStatusCode status,
-                                      EventType purpose,
-                                      bool is_installed);
-
-  // Records the result of sending installed scripts to the renderer.
-  static void RecordInstalledScriptsSenderStatus(
-      ServiceWorkerInstalledScriptsSender::FinishedReason reason);
+  // Records the result of trying to start an installed worker.
+  static void RecordStartInstalledWorkerStatus(
+      blink::ServiceWorkerStatusCode status,
+      EventType purpose);
 
   // Records the time taken to successfully start a worker. |is_installed|
   // indicates whether the version has been installed.
+  //
+  // TODO(crbug.com/855952): Replace this with RecordStartWorkerTiming().
   static void RecordStartWorkerTime(base::TimeDelta time,
                                     bool is_installed,
                                     StartSituation start_situation,
                                     EventType purpose);
-
-  // Records metrics for the preparation of an activated Service Worker for a
-  // main frame navigation.
-  CONTENT_EXPORT static void RecordActivatedWorkerPreparationForMainFrame(
-      base::TimeDelta time,
-      EmbeddedWorkerStatus initial_worker_status,
-      StartSituation start_situation,
-      bool did_navigation_preload,
-      const GURL& url);
 
   // Records the result of trying to stop a worker.
   static void RecordWorkerStopped(StopStatus status);
@@ -298,112 +225,37 @@ class ServiceWorkerMetrics {
   // Records the time taken to successfully stop a worker.
   static void RecordStopWorkerTime(base::TimeDelta time);
 
-  static void RecordActivateEventStatus(ServiceWorkerStatusCode status,
+  static void RecordActivateEventStatus(blink::ServiceWorkerStatusCode status,
                                         bool is_shutdown);
-  static void RecordInstallEventStatus(ServiceWorkerStatusCode status);
-
-  static void RecordForeignFetchRegistrationCount(size_t scope_count,
-                                                  size_t origin_count);
-
-  // Records how often a dispatched event times out.
-  static void RecordEventTimeout(EventType event);
+  static void RecordInstallEventStatus(blink::ServiceWorkerStatusCode status);
 
   // Records the amount of time spent handling an event.
   static void RecordEventDuration(EventType event,
                                   base::TimeDelta time,
                                   bool was_handled);
 
-  // Records the time taken between sending an event IPC from the browser
-  // process to a Service Worker and executing the event handler in the Service
-  // Worker.
-  static void RecordEventDispatchingDelay(EventType event,
-                                          base::TimeDelta time,
-                                          Site site_for_metrics);
-
   // Records the result of dispatching a fetch event to a service worker.
   static void RecordFetchEventStatus(bool is_main_resource,
-                                     ServiceWorkerStatusCode status);
+                                     blink::ServiceWorkerStatusCode status);
 
-  // Records result of a ServiceWorkerURLRequestJob that was forwarded to
-  // the service worker.
-  static void RecordURLRequestJobResult(bool is_main_resource,
-                                        URLRequestJobResult result);
-
-  // Records the error code provided when the renderer returns a response with
-  // status zero to a fetch request.
-  static void RecordStatusZeroResponseError(
-      bool is_main_resource,
-      blink::mojom::ServiceWorkerResponseError error);
-
-  // Records the mode of request that was fallbacked to the network.
-  static void RecordFallbackedRequestMode(
-      network::mojom::FetchRequestMode mode);
-
-  // Called at the beginning of each ServiceWorkerVersion::Dispatch*Event
-  // function. Records the time elapsed since idle (generally the time since the
-  // previous event ended).
-  static void RecordTimeBetweenEvents(base::TimeDelta time);
-
-  // The following record steps of EmbeddedWorkerInstance's start sequence.
   static void RecordProcessCreated(bool is_new_process);
-  static void RecordTimeToSendStartWorker(base::TimeDelta duration,
-                                          StartSituation start_situation);
-  static void RecordTimeToURLJob(base::TimeDelta duration,
-                                 StartSituation start_situation);
-  static void RecordTimeToLoad(base::TimeDelta duration,
-                               LoadSource source,
-                               StartSituation start_situation);
-  static void RecordTimeToStartThread(base::TimeDelta duration,
-                                      StartSituation start_situation);
-  static void RecordTimeToEvaluateScript(base::TimeDelta duration,
-                                         StartSituation start_situation);
-  static void RecordStartMessageLatencyType(CrossProcessTimeDelta type);
-  static void RecordWaitedForRendererSetup(bool waited);
-  CONTENT_EXPORT static void RecordEmbeddedWorkerStartTiming(
-      mojom::EmbeddedWorkerStartTimingPtr start_timing,
-      base::TimeTicks start_worker_sent_time,
-      StartSituation start_situation);
 
-  static const char* LoadSourceToString(LoadSource source);
+  CONTENT_EXPORT static void RecordStartWorkerTiming(const StartTimes& times,
+                                                     StartSituation situation);
+  static void RecordStartWorkerTimingClockConsistency(
+      CrossProcessTimeDelta type);
 
   // Records the result of a start attempt that occurred after the worker had
   // failed |failure_count| consecutive times.
-  static void RecordStartStatusAfterFailure(int failure_count,
-                                            ServiceWorkerStatusCode status);
+  static void RecordStartStatusAfterFailure(
+      int failure_count,
+      blink::ServiceWorkerStatusCode status);
 
   // Records the size of Service-Worker-Navigation-Preload header when the
   // navigation preload request is to be sent.
   static void RecordNavigationPreloadRequestHeaderSize(size_t size);
 
-  // Records timings for the navigation preload response and how
-  // it compares to starting the worker.
-  // |worker_start| is the time it took to prepare an activated and running
-  // worker to receive the fetch event. |initial_worker_status| and
-  // |start_situation| describe the preparation needed.
-  // |response_start| is the time it took until the navigation preload response
-  // started.
-  // |resource_type| must be RESOURCE_TYPE_MAIN_FRAME or
-  // RESOURCE_TYPE_SUB_FRAME.
-  CONTENT_EXPORT static void RecordNavigationPreloadResponse(
-      base::TimeDelta worker_start,
-      base::TimeDelta response_start,
-      EmbeddedWorkerStatus initial_worker_status,
-      StartSituation start_situation,
-      ResourceType resource_type);
-
-  // Records the result of trying to handle a request for a service worker
-  // script.
-  static void RecordContextRequestHandlerStatus(
-      ServiceWorkerContextRequestHandler::CreateJobStatus status,
-      bool is_installed,
-      bool is_main_script);
-
   static void RecordRuntime(base::TimeDelta time);
-
-  // Records when an installed service worker imports a script that was not
-  // previously installed.
-  // TODO(falken): Remove after this is deprecated. https://crbug.com/737044
-  static void RecordUninstalledScriptImport(const GURL& url);
 
   // Records the result of starting service worker for a navigation hint.
   static void RecordStartServiceWorkerForNavigationHintResult(
@@ -411,6 +263,23 @@ class ServiceWorkerMetrics {
 
   // Records the number of origins with a registered service worker.
   static void RecordRegisteredOriginCount(size_t origin_count);
+
+  // Records the duration of looking up an existing registration.
+  // |status| is the result of lookup. The records for the cases where
+  // the registration is found (kOk), not found (kErrorNotFound), or an error
+  // happens (other errors) are saved separately into a relevant suffixed
+  // histogram.
+  static void RecordLookupRegistrationTime(
+      blink::ServiceWorkerStatusCode status,
+      base::TimeDelta duration);
+
+  // Records the result of byte-for-byte update checking.
+  // |has_found_update| should be true when the update checking finds update of
+  // the script. It's recorded only when |status| is kOk.
+  // This is used only when ServiceWorkerImportedScriptUpdateCheck is enabled.
+  static void RecordByteForByteUpdateCheckStatus(
+      blink::ServiceWorkerStatusCode status,
+      bool has_found_update);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ServiceWorkerMetrics);

@@ -21,13 +21,13 @@ WebSocketDeflater::WebSocketDeflater(ContextTakeOverMode mode)
 WebSocketDeflater::~WebSocketDeflater() {
   if (stream_) {
     deflateEnd(stream_.get());
-    stream_.reset(NULL);
+    stream_.reset(nullptr);
   }
 }
 
 bool WebSocketDeflater::Initialize(int window_bits) {
   DCHECK(!stream_);
-  stream_.reset(new z_stream);
+  stream_ = std::make_unique<z_stream>();
 
   DCHECK_LE(8, window_bits);
   DCHECK_GE(15, window_bits);
@@ -92,7 +92,7 @@ bool WebSocketDeflater::Finish() {
     ResetContext();
     return true;
   }
-  stream_->next_in = NULL;
+  stream_->next_in = nullptr;
   stream_->avail_in = 0;
 
   int result = Deflate(Z_SYNC_FLUSH);
@@ -123,7 +123,7 @@ scoped_refptr<IOBufferWithSize> WebSocketDeflater::GetOutput(size_t size) {
   base::circular_deque<char>::iterator begin = buffer_.begin();
   base::circular_deque<char>::iterator end = begin + length_to_copy;
 
-  scoped_refptr<IOBufferWithSize> result = new IOBufferWithSize(length_to_copy);
+  auto result = base::MakeRefCounted<IOBufferWithSize>(length_to_copy);
   std::copy(begin, end, result->data());
   buffer_.erase(begin, end);
   return result;

@@ -23,7 +23,7 @@
 
 #include "base/macros.h"
 #include "snapshot/mac/mach_o_image_segment_reader.h"
-#include "snapshot/mac/process_reader.h"
+#include "snapshot/mac/process_reader_mac.h"
 #include "snapshot/mac/process_types.h"
 #include "util/misc/initialization_state_dcheck.h"
 
@@ -58,7 +58,7 @@ class MachOImageSymbolTableReader {
   // there aren’t expected to be very many of those that performance would
   // become a problem. In reality, std::unordered_map does not appear to provide
   // a performance advantage. It appears that the memory copies currently done
-  // by TaskMemory::Read() have substantially more impact on symbol table
+  // by ProcessMemoryMac::Read() have substantially more impact on symbol table
   // operations.
   //
   // This is public so that the type is available to
@@ -92,7 +92,7 @@ class MachOImageSymbolTableReader {
   //!
   //! \return `true` if the symbol table was read successfully. `false`
   //!     otherwise, with an appropriate message logged.
-  bool Initialize(ProcessReader* process_reader,
+  bool Initialize(ProcessReaderMac* process_reader,
                   const process_types::symtab_command* symtab_command,
                   const process_types::dysymtab_command* dysymtab_command,
                   const MachOImageSegmentReader* linkedit_segment,

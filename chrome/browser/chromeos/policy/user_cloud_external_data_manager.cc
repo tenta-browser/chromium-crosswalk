@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
+#include "base/optional.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/chromeos/policy/cloud_external_data_store.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
@@ -24,15 +24,14 @@ const char kCacheKey[] = "data";
 UserCloudExternalDataManager::UserCloudExternalDataManager(
     const GetChromePolicyDetailsCallback& get_policy_details,
     scoped_refptr<base::SequencedTaskRunner> backend_task_runner,
-    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     const base::FilePath& cache_path,
     CloudPolicyStore* policy_store)
-    : CloudExternalDataManagerBase(get_policy_details,
-                                   backend_task_runner,
-                                   io_task_runner),
-      resource_cache_(new ResourceCache(cache_path, backend_task_runner)) {
+    : CloudExternalDataManagerBase(get_policy_details, backend_task_runner),
+      resource_cache_(new ResourceCache(cache_path,
+                                        backend_task_runner,
+                                        /* max_cache_size */ base::nullopt)) {
   SetPolicyStore(policy_store);
-  SetExternalDataStore(base::MakeUnique<CloudExternalDataStore>(
+  SetExternalDataStore(std::make_unique<CloudExternalDataStore>(
       kCacheKey, backend_task_runner, resource_cache_));
 }
 

@@ -5,6 +5,7 @@
 #include "chrome/browser/android/recently_closed_tabs_bridge.h"
 
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/RecentlyClosedBridge_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
@@ -14,7 +15,6 @@
 #include "components/sessions/core/live_tab.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/RecentlyClosedBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF16ToJavaString;
@@ -32,7 +32,7 @@ void JNI_RecentlyClosedBridge_AddTabToList(
   const sessions::SerializedNavigationEntry& current_navigation =
       tab.navigations.at(tab.current_navigation_index);
   Java_RecentlyClosedBridge_pushTab(
-      env, jtabs_list, tab.id,
+      env, jtabs_list, tab.id.id(),
       ConvertUTF16ToJavaString(env, current_navigation.title()),
       ConvertUTF8ToJavaString(env, current_navigation.virtual_url().spec()));
 }
@@ -99,7 +99,8 @@ jboolean RecentlyClosedTabsBridge::OpenRecentlyClosedTab(
   // Find and remove the corresponding tab entry from TabRestoreService.
   // We take ownership of the returned tab.
   std::unique_ptr<sessions::TabRestoreService::Tab> tab_entry(
-      tab_restore_service_->RemoveTabEntryById(recent_tab_id));
+      tab_restore_service_->RemoveTabEntryById(
+          SessionID::FromSerializedValue(recent_tab_id)));
   if (!tab_entry)
     return false;
 

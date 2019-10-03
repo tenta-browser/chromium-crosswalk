@@ -8,24 +8,45 @@
 
 namespace media_router {
 
-TEST(MediaSinkTest, Equals) {
-  MediaSink sink1("sinkId", "Sink", SinkIconType::CAST);
+TEST(MediaSinkTest, IsMaybeCloudSink) {
+  MediaSink meeting("sinkId", "Sink", SinkIconType::MEETING,
+                    MediaRouteProviderId::EXTENSION);
+  MediaSink eduReceiver("sinkId2", "Sink", SinkIconType::EDUCATION,
+                        MediaRouteProviderId::EXTENSION);
+  MediaSink chromeCast("sinkId3", "Sink", SinkIconType::CAST,
+                       MediaRouteProviderId::EXTENSION);
 
-  // No name, same as sink1.
-  MediaSink sink2("sinkId", "", SinkIconType::CAST);
-  EXPECT_TRUE(sink1.Equals(sink2));
+  EXPECT_TRUE(meeting.IsMaybeCloudSink());
+  EXPECT_TRUE(eduReceiver.IsMaybeCloudSink());
+  EXPECT_FALSE(chromeCast.IsMaybeCloudSink());
+}
+
+TEST(MediaSinkTest, TestEquals) {
+  MediaSink sink1("sinkId", "Sink", SinkIconType::CAST,
+                  MediaRouteProviderId::EXTENSION);
+
+  MediaSink sink1_copy(sink1);
+  EXPECT_EQ(sink1, sink1_copy);
+
+  // No name.
+  MediaSink sink2("sinkId", "", SinkIconType::CAST,
+                  MediaRouteProviderId::EXTENSION);
+  EXPECT_FALSE(sink1 == sink2);
 
   // Sink name is different from sink1's.
-  MediaSink sink3("sinkId", "Other Sink", SinkIconType::CAST);
-  EXPECT_TRUE(sink1.Equals(sink3));
+  MediaSink sink3("sinkId", "Other Sink", SinkIconType::CAST,
+                  MediaRouteProviderId::EXTENSION);
+  EXPECT_FALSE(sink1 == sink3);
 
   // Sink ID is diffrent from sink1's.
-  MediaSink sink4("otherSinkId", "Sink", SinkIconType::CAST);
-  EXPECT_FALSE(sink1.Equals(sink4));
+  MediaSink sink4("otherSinkId", "Sink", SinkIconType::CAST,
+                  MediaRouteProviderId::EXTENSION);
+  EXPECT_FALSE(sink1 == sink4);
 
   // Sink icon type is diffrent from sink1's.
-  MediaSink sink5("otherSinkId", "Sink", SinkIconType::GENERIC);
-  EXPECT_FALSE(sink1.Equals(sink5));
+  MediaSink sink5("otherSinkId", "Sink", SinkIconType::GENERIC,
+                  MediaRouteProviderId::EXTENSION);
+  EXPECT_FALSE(sink1 == sink5);
 }
 
 }  // namespace media_router

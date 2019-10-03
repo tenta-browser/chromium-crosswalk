@@ -7,14 +7,15 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
+#include "chromeos/dbus/dbus_method_call_status.h"
 
 namespace base {
 class FilePath;
@@ -35,6 +36,7 @@ enum MountType {
   MOUNT_TYPE_INVALID,
   MOUNT_TYPE_DEVICE,
   MOUNT_TYPE_ARCHIVE,
+  MOUNT_TYPE_NETWORK_STORAGE,
 };
 
 // Type of device.
@@ -48,28 +50,28 @@ enum DeviceType {
 };
 
 // Mount error code used by cros-disks.
+// These values are not the same as cros_disks::MountErrorType.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum MountError {
-  MOUNT_ERROR_NONE = 0,
-  MOUNT_ERROR_UNKNOWN = 1,
-  MOUNT_ERROR_INTERNAL = 2,
-  MOUNT_ERROR_INVALID_ARGUMENT = 3,
-  MOUNT_ERROR_INVALID_PATH = 4,
-  MOUNT_ERROR_PATH_ALREADY_MOUNTED = 5,
-  MOUNT_ERROR_PATH_NOT_MOUNTED = 6,
-  MOUNT_ERROR_DIRECTORY_CREATION_FAILED = 7,
-  MOUNT_ERROR_INVALID_MOUNT_OPTIONS = 8,
-  MOUNT_ERROR_INVALID_UNMOUNT_OPTIONS = 9,
-  MOUNT_ERROR_INSUFFICIENT_PERMISSIONS = 10,
-  MOUNT_ERROR_MOUNT_PROGRAM_NOT_FOUND = 11,
-  MOUNT_ERROR_MOUNT_PROGRAM_FAILED = 12,
-  MOUNT_ERROR_INVALID_DEVICE_PATH = 100,
-  MOUNT_ERROR_UNKNOWN_FILESYSTEM = 101,
-  MOUNT_ERROR_UNSUPPORTED_FILESYSTEM = 102,
-  MOUNT_ERROR_INVALID_ARCHIVE = 201,
-  MOUNT_ERROR_NOT_AUTHENTICATED = 601,
-  MOUNT_ERROR_PATH_UNMOUNTED = 901,
-  // TODO(tbarzic): Add more error codes as they get added to cros-disks and
-  // consider doing explicit translation from cros-disks error_types.
+  MOUNT_ERROR_NONE,
+  MOUNT_ERROR_UNKNOWN,
+  MOUNT_ERROR_INTERNAL,
+  MOUNT_ERROR_INVALID_ARGUMENT,
+  MOUNT_ERROR_INVALID_PATH,
+  MOUNT_ERROR_PATH_ALREADY_MOUNTED,
+  MOUNT_ERROR_PATH_NOT_MOUNTED,
+  MOUNT_ERROR_DIRECTORY_CREATION_FAILED,
+  MOUNT_ERROR_INVALID_MOUNT_OPTIONS,
+  MOUNT_ERROR_INVALID_UNMOUNT_OPTIONS,
+  MOUNT_ERROR_INSUFFICIENT_PERMISSIONS,
+  MOUNT_ERROR_MOUNT_PROGRAM_NOT_FOUND,
+  MOUNT_ERROR_MOUNT_PROGRAM_FAILED,
+  MOUNT_ERROR_INVALID_DEVICE_PATH,
+  MOUNT_ERROR_UNKNOWN_FILESYSTEM,
+  MOUNT_ERROR_UNSUPPORTED_FILESYSTEM,
+  MOUNT_ERROR_INVALID_ARCHIVE,
+  MOUNT_ERROR_COUNT,
 };
 
 // Rename error reported by cros-disks.
@@ -88,6 +90,8 @@ enum RenameError {
 };
 
 // Format error reported by cros-disks.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum FormatError {
   FORMAT_ERROR_NONE,
   FORMAT_ERROR_UNKNOWN,
@@ -98,6 +102,10 @@ enum FormatError {
   FORMAT_ERROR_FORMAT_PROGRAM_NOT_FOUND,
   FORMAT_ERROR_FORMAT_PROGRAM_FAILED,
   FORMAT_ERROR_DEVICE_NOT_ALLOWED,
+  FORMAT_ERROR_INVALID_OPTIONS,
+  FORMAT_ERROR_LONG_NAME,
+  FORMAT_ERROR_INVALID_CHARACTER,
+  FORMAT_ERROR_COUNT,
 };
 
 // Event type each corresponding to a signal sent from cros-disks.
@@ -135,7 +143,7 @@ enum RemountOption {
 };
 
 // A class to represent information about a disk sent from cros-disks.
-class CHROMEOS_EXPORT DiskInfo {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) DiskInfo {
  public:
   DiskInfo(const std::string& device_path, dbus::Response* response);
   ~DiskInfo();
@@ -146,9 +154,11 @@ class CHROMEOS_EXPORT DiskInfo {
   // Disk mount path. (e.g. /media/removable/VOLUME)
   const std::string& mount_path() const { return mount_path_; }
 
-  // Disk system path given by udev.
-  // (e.g. /sys/devices/pci0000:00/.../8:0:0:0/block/sdb/sdb1)
-  const std::string& system_path() const { return system_path_; }
+  // Path of the scsi/mmc/nvme storage device that this disk is a part of.
+  // (e.g. /sys/devices/pci0000:00/.../mmc_host/mmc0/mmc0:0002)
+  const std::string& storage_device_path() const {
+    return storage_device_path_;
+  }
 
   // Is a drive or not. (i.e. true with /dev/sdb, false with /dev/sdb1)
   bool is_drive() const { return is_drive_; }
@@ -161,6 +171,18 @@ class CHROMEOS_EXPORT DiskInfo {
 
   // Is the disk on a removable device.
   bool on_removable_device() const { return on_removable_device_; }
+
+  // Is the device read-only.
+  bool is_read_only() const { return is_read_only_; }
+
+  // Returns true if the device should be hidden from the file browser.
+  bool is_hidden() const { return is_hidden_; }
+
+  // Is the disk virtual.
+  bool is_virtual() const { return is_virtual_; }
+
+  // Is the disk auto-mountable.
+  bool is_auto_mountable() const { return is_auto_mountable_; }
 
   // Disk file path (e.g. /dev/sdb).
   const std::string& file_path() const { return file_path_; }
@@ -189,12 +211,6 @@ class CHROMEOS_EXPORT DiskInfo {
   // Total size of the disk in bytes.
   uint64_t total_size_in_bytes() const { return total_size_in_bytes_; }
 
-  // Is the device read-only.
-  bool is_read_only() const { return is_read_only_; }
-
-  // Returns true if the device should be hidden from the file browser.
-  bool is_hidden() const { return is_hidden_; }
-
   // Returns file system uuid.
   const std::string& uuid() const { return uuid_; }
 
@@ -206,11 +222,15 @@ class CHROMEOS_EXPORT DiskInfo {
 
   std::string device_path_;
   std::string mount_path_;
-  std::string system_path_;
+  std::string storage_device_path_;
   bool is_drive_;
   bool has_media_;
   bool on_boot_device_;
   bool on_removable_device_;
+  bool is_read_only_;
+  bool is_hidden_;
+  bool is_virtual_;
+  bool is_auto_mountable_;
 
   std::string file_path_;
   std::string label_;
@@ -221,14 +241,12 @@ class CHROMEOS_EXPORT DiskInfo {
   std::string drive_model_;
   DeviceType device_type_;
   uint64_t total_size_in_bytes_;
-  bool is_read_only_;
-  bool is_hidden_;
   std::string uuid_;
   std::string file_system_type_;
 };
 
 // A struct to represent information about a mount point sent from cros-disks.
-struct CHROMEOS_EXPORT MountEntry {
+struct COMPONENT_EXPORT(CHROMEOS_DBUS) MountEntry {
  public:
   MountEntry()
       : error_code_(MOUNT_ERROR_UNKNOWN), mount_type_(MOUNT_TYPE_INVALID) {
@@ -259,51 +277,58 @@ struct CHROMEOS_EXPORT MountEntry {
 // A class to make the actual DBus calls for cros-disks service.
 // This class only makes calls, result/error handling should be done
 // by callbacks.
-class CHROMEOS_EXPORT CrosDisksClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) CrosDisksClient : public DBusClient {
  public:
-  // A callback to handle the result of EnumerateAutoMountableDevices.
+  // A callback to handle the result of EnumerateDevices.
   // The argument is the enumerated device paths.
-  typedef base::Callback<void(const std::vector<std::string>& device_paths)>
-      EnumerateAutoMountableDevicesCallback;
+  typedef base::OnceCallback<void(const std::vector<std::string>& device_paths)>
+      EnumerateDevicesCallback;
 
   // A callback to handle the result of EnumerateMountEntries.
   // The argument is the enumerated mount entries.
-  typedef base::Callback<void(const std::vector<MountEntry>& entries)>
+  typedef base::OnceCallback<void(const std::vector<MountEntry>& entries)>
       EnumerateMountEntriesCallback;
 
   // A callback to handle the result of GetDeviceProperties.
   // The argument is the information about the specified device.
-  typedef base::Callback<void(const DiskInfo& disk_info)>
+  typedef base::OnceCallback<void(const DiskInfo& disk_info)>
       GetDevicePropertiesCallback;
 
-  // A callback to handle MountCompleted signal.
-  typedef base::Callback<void(const MountEntry& entry)> MountCompletedHandler;
+  // A callback to handle the result of Unmount.
+  // The argument is the unmount error code.
+  typedef base::OnceCallback<void(MountError error_code)> UnmountCallback;
 
-  // A callback to handle FormatCompleted signal.
-  // The first argument is the error code.
-  // The second argument is the device path.
-  typedef base::Callback<void(FormatError error_code,
-                              const std::string& device_path)>
-      FormatCompletedHandler;
+  class Observer {
+   public:
+    // Called when a mount event signal is received.
+    virtual void OnMountEvent(MountEventType event_type,
+                              const std::string& device_path) = 0;
 
-  // A callback to handle RenameCompleted signal.
-  // The first argument is the error code.
-  // The second argument is the device path.
-  typedef base::Callback<void(RenameError error_code,
-                              const std::string& device_path)>
-      RenameCompletedHandler;
+    // Called when a MountCompleted signal is received.
+    virtual void OnMountCompleted(const MountEntry& entry) = 0;
 
-  // A callback to handle mount events.
-  // The first argument is the event type.
-  // The second argument is the device path.
-  typedef base::Callback<void(MountEventType event_type,
-                              const std::string& device_path)>
-      MountEventHandler;
+    // Called when a FormatCompleted signal is received.
+    virtual void OnFormatCompleted(FormatError error_code,
+                                   const std::string& device_path) = 0;
+
+    // Called when a RenameCompleted signal is received.
+    virtual void OnRenameCompleted(RenameError error_code,
+                                   const std::string& device_path) = 0;
+
+   protected:
+    virtual ~Observer() = default;
+  };
 
   ~CrosDisksClient() override;
 
-  // Calls Mount method.  |callback| is called after the method call succeeds,
-  // otherwise, |error_callback| is called.
+  // Registers the given |observer| to listen D-Bus signals.
+  virtual void AddObserver(Observer* observer) = 0;
+
+  // Unregisters the |observer| from this instance.
+  virtual void RemoveObserver(Observer* observer) = 0;
+
+  // Calls Mount method.  On method call completion, |callback| is called with
+  // |true| on success, or with |false| otherwise.
   // When mounting an archive, caller may set two optional arguments:
   // - The |source_format| argument passes the file extension (with the leading
   //   dot, for example ".zip"). If |source_format| is empty then the source
@@ -314,73 +339,49 @@ class CHROMEOS_EXPORT CrosDisksClient : public DBusClient {
   virtual void Mount(const std::string& source_path,
                      const std::string& source_format,
                      const std::string& mount_label,
+                     const std::vector<std::string>& mount_options,
                      MountAccessMode access_mode,
                      RemountOption remount,
-                     const base::Closure& callback,
-                     const base::Closure& error_callback) = 0;
+                     VoidDBusMethodCallback callback) = 0;
 
-  // Calls Unmount method.  |callback| is called after the method call succeeds,
-  // otherwise, |error_callback| is called.
+  // Calls Unmount method.  On method call completion, |callback| is called
+  // with the error code.
   virtual void Unmount(const std::string& device_path,
                        UnmountOptions options,
-                       const base::Closure& callback,
-                       const base::Closure& error_callback) = 0;
+                       UnmountCallback callback) = 0;
 
-  // Calls EnumerateAutoMountableDevices method.  |callback| is called after the
+  // Calls EnumerateDevices method.  |callback| is called after the
   // method call succeeds, otherwise, |error_callback| is called.
-  virtual void EnumerateAutoMountableDevices(
-      const EnumerateAutoMountableDevicesCallback& callback,
-      const base::Closure& error_callback) = 0;
+  virtual void EnumerateDevices(EnumerateDevicesCallback callback,
+                                base::OnceClosure error_callback) = 0;
 
   // Calls EnumerateMountEntries.  |callback| is called after the
   // method call succeeds, otherwise, |error_callback| is called.
-  virtual void EnumerateMountEntries(
-      const EnumerateMountEntriesCallback& callback,
-      const base::Closure& error_callback) = 0;
+  virtual void EnumerateMountEntries(EnumerateMountEntriesCallback callback,
+                                     base::OnceClosure error_callback) = 0;
 
-  // Calls Format method.  |callback| is called after the method call succeeds,
-  // otherwise, |error_callback| is called.
+  // Calls Format method. On completion, |callback| is called, with |true| on
+  // success, or with |false| otherwise.
   virtual void Format(const std::string& device_path,
                       const std::string& filesystem,
-                      const base::Closure& callback,
-                      const base::Closure& error_callback) = 0;
+                      const std::string& label,
+                      VoidDBusMethodCallback callback) = 0;
 
-  // Calls Rename method. |callback| is called after the method call succeeds,
-  // otherwise, |error_callback| is called.
+  // Calls Rename method. On completion, |callback| is called, with |true| on
+  // success, or with |false| otherwise.
   virtual void Rename(const std::string& device_path,
                       const std::string& volume_name,
-                      const base::Closure& callback,
-                      const base::Closure& error_callback) = 0;
+                      VoidDBusMethodCallback callback) = 0;
 
   // Calls GetDeviceProperties method.  |callback| is called after the method
   // call succeeds, otherwise, |error_callback| is called.
   virtual void GetDeviceProperties(const std::string& device_path,
-                                   const GetDevicePropertiesCallback& callback,
-                                   const base::Closure& error_callback) = 0;
-
-  // Registers |mount_event_handler| as a callback to be invoked when a mount
-  // event signal is received.
-  virtual void SetMountEventHandler(
-      const MountEventHandler& mount_event_handler) = 0;
-
-  // Registers |mount_completed_handler| as a callback to be invoked when a
-  // MountCompleted signal is received.
-  virtual void SetMountCompletedHandler(
-      const MountCompletedHandler& mount_completed_handler) = 0;
-
-  // Registers |format_completed_handler| as a callback to be invoked when a
-  // FormatCompleted signal is received.
-  virtual void SetFormatCompletedHandler(
-      const FormatCompletedHandler& format_completed_handler) = 0;
-
-  // Registers |rename_completed_handler| as a callback to be invoked when a
-  // RenameCompleted signal is received.
-  virtual void SetRenameCompletedHandler(
-      const RenameCompletedHandler& rename_completed_handler) = 0;
+                                   GetDevicePropertiesCallback callback,
+                                   base::OnceClosure error_callback) = 0;
 
   // Factory function, creates a new instance and returns ownership.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static CrosDisksClient* Create(DBusClientImplementationType type);
+  static std::unique_ptr<CrosDisksClient> Create();
 
   // Returns the path of the mount point for archive files.
   static base::FilePath GetArchiveMountPoint();
@@ -390,6 +391,7 @@ class CHROMEOS_EXPORT CrosDisksClient : public DBusClient {
 
   // Composes a list of mount options.
   static std::vector<std::string> ComposeMountOptions(
+      const std::vector<std::string>& options,
       const std::string& mount_label,
       MountAccessMode access_mode,
       RemountOption remount);

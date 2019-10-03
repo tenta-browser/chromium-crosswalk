@@ -11,94 +11,62 @@
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_util.h"
+#include "base/task/task_features.h"
 #include "build/build_config.h"
 #include "content/common/content_switches_internal.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "gpu/config/gpu_switches.h"
 #include "media/base/media_switches.h"
 #include "services/device/public/cpp/device_features.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
+#include "services/network/public/cpp/features.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/events/blink/blink_features.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/native_theme/native_theme_features.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
+
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#endif
+
 using blink::WebRuntimeFeatures;
 
-namespace content {
+namespace {
 
-static void SetRuntimeFeatureDefaultsForPlatform() {
-#if defined(OS_ANDROID)
-  // Android does not have support for PagePopup
-  WebRuntimeFeatures::EnablePagePopup(false);
-  // No plan to support complex UI for date/time INPUT types.
-  WebRuntimeFeatures::EnableInputMultipleFieldsUI(false);
-  // Android does not yet support SharedWorker. crbug.com/154571
-  WebRuntimeFeatures::EnableSharedWorker(false);
-  // Android does not yet support NavigatorContentUtils.
-  WebRuntimeFeatures::EnableNavigatorContentUtils(false);
-  WebRuntimeFeatures::EnableOrientationEvent(true);
-  WebRuntimeFeatures::EnableFastMobileScrolling(true);
-  WebRuntimeFeatures::EnableMediaCapture(true);
-  // Android won't be able to reliably support non-persistent notifications, the
-  // intended behavior for which is in flux by itself.
-  WebRuntimeFeatures::EnableNotificationConstructor(false);
-  // Android does not yet support switching of audio output devices
-  WebRuntimeFeatures::EnableAudioOutputDevices(false);
-  WebRuntimeFeatures::EnableAutoplayMutedVideos(true);
-  // Android does not yet support SystemMonitor.
-  WebRuntimeFeatures::EnableOnDeviceChange(false);
-  WebRuntimeFeatures::EnableMediaSession(true);
-  WebRuntimeFeatures::EnableMediaControlsOverlayPlayButton(true);
-  WebRuntimeFeatures::EnableRemotePlaybackBackend(true);
-#else  // defined(OS_ANDROID)
-  WebRuntimeFeatures::EnableNavigatorContentUtils(true);
-  // Tracking bug for the implementation: https://crbug.com/728609
-  WebRuntimeFeatures::EnableRemotePlaybackBackend(false);
-#endif  // defined(OS_ANDROID)
+void SetRuntimeFeatureDefaultsForPlatform() {
+  // Please consider setting up feature defaults for different platforms
+  // in runtime_enabled_features.json5 instead of here
 
-#if defined(OS_ANDROID) || defined(USE_AURA)
+#if defined(USE_AURA)
   WebRuntimeFeatures::EnableCompositedSelectionUpdate(true);
 #endif
 
-#if !(defined OS_ANDROID || defined OS_CHROMEOS)
-  // Only Android, ChromeOS support NetInfo downlinkMax, type and ontypechange
-  // now.
-  WebRuntimeFeatures::EnableNetInfoDownlinkMax(false);
-#endif
-
-// Web Bluetooth is shipped on Android, ChromeOS & MacOS, experimental
-// otherwise.
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID) || defined(OS_MACOSX)
-  WebRuntimeFeatures::EnableWebBluetooth(true);
-#endif
-
-#if defined(OS_CHROMEOS)
-  WebRuntimeFeatures::EnableForceTallerSelectPopup(true);
-#endif
-
-// The Notification Center on Mac OS X does not support content images.
-#if !defined(OS_MACOSX)
-  WebRuntimeFeatures::EnableNotificationContentImage(true);
+#if defined(OS_WIN)
+  if (base::win::GetVersion() >= base::win::Version::WIN10)
+    WebRuntimeFeatures::EnableWebBluetooth(true);
 #endif
 }
 
-void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
-    const base::CommandLine& command_line) {
-  bool enableExperimentalWebPlatformFeatures = command_line.HasSwitch(
-      switches::kEnableExperimentalWebPlatformFeatures);
-  if (enableExperimentalWebPlatformFeatures)
-    WebRuntimeFeatures::EnableExperimentalFeatures(true);
-
+void SetIndividualRuntimeFeatures(
+    const base::CommandLine& command_line,
+    bool enable_experimental_web_platform_features) {
   WebRuntimeFeatures::EnableOriginTrials(
       base::FeatureList::IsEnabled(features::kOriginTrials));
-
-  WebRuntimeFeatures::EnableFeaturePolicy(
-      base::FeatureList::IsEnabled(features::kFeaturePolicy));
 
   if (!base::FeatureList::IsEnabled(features::kWebUsb))
     WebRuntimeFeatures::EnableWebUsb(false);
 
-  SetRuntimeFeatureDefaultsForPlatform();
+  if (base::FeatureList::IsEnabled(
+          blink::features::kBlockingFocusWithoutUserActivation)) {
+    WebRuntimeFeatures::EnableBlockingFocusWithoutUserActivation(true);
+  }
 
   if (command_line.HasSwitch(switches::kDisableDatabases))
     WebRuntimeFeatures::EnableDatabase(false);
@@ -113,35 +81,36 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (!base::FeatureList::IsEnabled(features::kNotificationContentImage))
     WebRuntimeFeatures::EnableNotificationContentImage(false);
 
-  WebRuntimeFeatures::EnableWebAssemblyStreaming(
-      base::FeatureList::IsEnabled(features::kWebAssemblyStreaming));
-
   WebRuntimeFeatures::EnableSharedArrayBuffer(
-      base::FeatureList::IsEnabled(features::kSharedArrayBuffer));
+      base::FeatureList::IsEnabled(features::kSharedArrayBuffer) ||
+      base::FeatureList::IsEnabled(features::kWebAssemblyThreads));
 
   if (command_line.HasSwitch(switches::kDisableSharedWorkers))
     WebRuntimeFeatures::EnableSharedWorker(false);
 
-  if (command_line.HasSwitch(switches::kDisableSpeechAPI))
-    WebRuntimeFeatures::EnableScriptedSpeech(false);
+  if (command_line.HasSwitch(switches::kDisableSpeechAPI)) {
+    WebRuntimeFeatures::EnableScriptedSpeechRecognition(false);
+    WebRuntimeFeatures::EnableScriptedSpeechSynthesis(false);
+  }
+
+  if (command_line.HasSwitch(switches::kDisableSpeechSynthesisAPI)) {
+    WebRuntimeFeatures::EnableScriptedSpeechSynthesis(false);
+  }
 
   if (command_line.HasSwitch(switches::kDisableFileSystem))
     WebRuntimeFeatures::EnableFileSystem(false);
 
-  if (command_line.HasSwitch(switches::kEnableExperimentalCanvasFeatures))
-    WebRuntimeFeatures::EnableExperimentalCanvasFeatures(true);
+  if (!command_line.HasSwitch(switches::kDisableYUVImageDecoding) &&
+      base::FeatureList::IsEnabled(
+          blink::features::kDecodeLossyWebPImagesToYUV)) {
+    WebRuntimeFeatures::EnableDecodeLossyWebPImagesToYUV(true);
+  }
 
-  if (!command_line.HasSwitch(switches::kDisableAcceleratedJpegDecoding))
-    WebRuntimeFeatures::EnableDecodeToYUV(true);
-
-  if (command_line.HasSwitch(switches::kEnableDisplayList2dCanvas))
-    WebRuntimeFeatures::EnableDisplayList2dCanvas(true);
-
-  if (command_line.HasSwitch(switches::kDisableDisplayList2dCanvas))
-    WebRuntimeFeatures::EnableDisplayList2dCanvas(false);
-
-  if (command_line.HasSwitch(switches::kForceDisplayList2dCanvas))
-    WebRuntimeFeatures::ForceDisplayList2dCanvas(true);
+#if defined(SUPPORT_WEBGL2_COMPUTE_CONTEXT)
+  if (command_line.HasSwitch(switches::kEnableWebGL2ComputeContext)) {
+    WebRuntimeFeatures::EnableWebGL2ComputeContext(true);
+  }
+#endif
 
   if (command_line.HasSwitch(switches::kEnableWebGLDraftExtensions))
     WebRuntimeFeatures::EnableWebGLDraftExtensions(true);
@@ -151,34 +120,31 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableAutomationControlled(true);
   }
 
-#if defined(OS_MACOSX)
-  bool enable_canvas_2d_image_chromium = command_line.HasSwitch(
-      switches::kEnableGpuMemoryBufferCompositorResources) &&
-      !command_line.HasSwitch(switches::kDisable2dCanvasImageChromium) &&
-      !command_line.HasSwitch(switches::kDisableGpu);
+  if (command_line.HasSwitch(switches::kEnableWebBluetoothScanning))
+    WebRuntimeFeatures::EnableWebBluetoothScanning(true);
 
-  if (enable_canvas_2d_image_chromium) {
-    enable_canvas_2d_image_chromium =
-        base::FeatureList::IsEnabled(features::kCanvas2DImageChromium);
-  }
+#if defined(OS_MACOSX)
+  const bool enable_canvas_2d_image_chromium =
+      command_line.HasSwitch(
+          switches::kEnableGpuMemoryBufferCompositorResources) &&
+      !command_line.HasSwitch(switches::kDisable2dCanvasImageChromium) &&
+      !command_line.HasSwitch(switches::kDisableGpu) &&
+      base::FeatureList::IsEnabled(features::kCanvas2DImageChromium);
 #else
-  bool enable_canvas_2d_image_chromium = false;
+  constexpr bool enable_canvas_2d_image_chromium = false;
 #endif
   WebRuntimeFeatures::EnableCanvas2dImageChromium(
       enable_canvas_2d_image_chromium);
 
 #if defined(OS_MACOSX)
-  bool enable_web_gl_image_chromium = command_line.HasSwitch(
-      switches::kEnableGpuMemoryBufferCompositorResources) &&
+  const bool enable_web_gl_image_chromium =
+      command_line.HasSwitch(
+          switches::kEnableGpuMemoryBufferCompositorResources) &&
       !command_line.HasSwitch(switches::kDisableWebGLImageChromium) &&
-      !command_line.HasSwitch(switches::kDisableGpu);
-
-  if (enable_web_gl_image_chromium) {
-    enable_web_gl_image_chromium =
-        base::FeatureList::IsEnabled(features::kWebGLImageChromium);
-  }
+      !command_line.HasSwitch(switches::kDisableGpu) &&
+      base::FeatureList::IsEnabled(features::kWebGLImageChromium);
 #else
-  bool enable_web_gl_image_chromium =
+  const bool enable_web_gl_image_chromium =
       command_line.HasSwitch(switches::kEnableWebGLImageChromium);
 #endif
   WebRuntimeFeatures::EnableWebGLImageChromium(enable_web_gl_image_chromium);
@@ -195,16 +161,18 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnablePrintBrowser))
     WebRuntimeFeatures::EnablePrintBrowser(true);
 
+  // TODO(yashard): Remove |enable_experimental_web_platform_features| flag
+  // since the feature should have been enabled when it is set to experimental
   if (command_line.HasSwitch(switches::kEnableNetworkInformationDownlinkMax) ||
-      enableExperimentalWebPlatformFeatures) {
+      enable_experimental_web_platform_features) {
     WebRuntimeFeatures::EnableNetInfoDownlinkMax(true);
   }
 
-  if (command_line.HasSwitch(switches::kReducedReferrerGranularity))
-    WebRuntimeFeatures::EnableReducedReferrerGranularity(true);
+  WebRuntimeFeatures::EnableReducedReferrerGranularity(
+      base::FeatureList::IsEnabled(features::kReducedReferrerGranularity));
 
-  if (command_line.HasSwitch(switches::kRootLayerScrolls))
-    WebRuntimeFeatures::EnableRootLayerScrolling(true);
+  if (base::FeatureList::IsEnabled(features::kPeriodicBackgroundSync))
+    WebRuntimeFeatures::EnablePeriodicBackgroundSync(true);
 
   if (command_line.HasSwitch(switches::kDisablePermissionsAPI))
     WebRuntimeFeatures::EnablePermissionsAPI(false);
@@ -214,11 +182,23 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   else
     WebRuntimeFeatures::EnableV8IdleTasks(true);
 
+  if (command_line.HasSwitch(switches::kEnableUnsafeWebGPU))
+    WebRuntimeFeatures::EnableWebGPU(true);
+
+  if (command_line.HasSwitch(switches::kEnableWebGLSwapChain))
+    WebRuntimeFeatures::EnableWebGLSwapChain(true);
+
   if (command_line.HasSwitch(switches::kEnableWebVR))
     WebRuntimeFeatures::EnableWebVR(true);
 
-  WebRuntimeFeatures::EnableWebVRExperimentalRendering(
-      base::FeatureList::IsEnabled(features::kWebVrExperimentalRendering));
+  if (base::FeatureList::IsEnabled(features::kWebXr))
+    WebRuntimeFeatures::EnableWebXR(true);
+
+  if (base::FeatureList::IsEnabled(features::kWebXrHitTest))
+    WebRuntimeFeatures::EnableWebXRHitTest(true);
+
+  if (base::FeatureList::IsEnabled(features::kWebXrPlaneDetection))
+    WebRuntimeFeatures::EnableWebXRPlaneDetection(true);
 
   if (command_line.HasSwitch(switches::kDisablePresentationAPI))
     WebRuntimeFeatures::EnablePresentationAPI(false);
@@ -226,36 +206,59 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kDisableRemotePlaybackAPI))
     WebRuntimeFeatures::EnableRemotePlaybackAPI(false);
 
-  WebRuntimeFeatures::EnableScrollAnchoring(
-      base::FeatureList::IsEnabled(features::kScrollAnchoring) ||
-      enableExperimentalWebPlatformFeatures);
+  // TODO(yashard): Remove |enable_experimental_web_platform_features| flag
+  // since the feature should have been enabled when it is set to experimental
+  WebRuntimeFeatures::EnableFetchMetadata(
+      base::FeatureList::IsEnabled(network::features::kFetchMetadata) ||
+      enable_experimental_web_platform_features);
+  WebRuntimeFeatures::EnableFetchMetadataDestination(
+      base::FeatureList::IsEnabled(
+          network::features::kFetchMetadataDestination) ||
+      enable_experimental_web_platform_features);
+
+  WebRuntimeFeatures::EnableUserActivationPostMessageTransfer(
+      base::FeatureList::IsEnabled(
+          features::kUserActivationPostMessageTransfer));
+
+  WebRuntimeFeatures::EnableUserActivationSameOriginVisibility(
+      base::FeatureList::IsEnabled(
+          features::kUserActivationSameOriginVisibility));
 
   WebRuntimeFeatures::EnableUserActivationV2(
       base::FeatureList::IsEnabled(features::kUserActivationV2));
 
-  if (command_line.HasSwitch(switches::kEnableSlimmingPaintV175))
-    WebRuntimeFeatures::EnableFeatureFromString("SlimmingPaintV175", true);
-  if (command_line.HasSwitch(switches::kEnableSlimmingPaintV2))
-    WebRuntimeFeatures::EnableSlimmingPaintV2(true);
+  if (base::FeatureList::IsEnabled(features::kScrollAnchorSerialization))
+    WebRuntimeFeatures::EnableScrollAnchorSerialization(true);
 
-  if (base::FeatureList::IsEnabled(features::kLazyParseCSS))
-    WebRuntimeFeatures::EnableLazyParseCSS(true);
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "BlinkGenPropertyTrees",
+      base::FeatureList::IsEnabled(blink::features::kBlinkGenPropertyTrees) ||
+          enable_experimental_web_platform_features);
+
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "CSSBackdropFilter",
+      base::FeatureList::IsEnabled(blink::features::kCSSBackdropFilter) ||
+          enable_experimental_web_platform_features);
+
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "FastBorderRadius",
+      base::FeatureList::IsEnabled(blink::features::kFastBorderRadius) ||
+          enable_experimental_web_platform_features);
 
   WebRuntimeFeatures::EnablePassiveDocumentEventListeners(
       base::FeatureList::IsEnabled(features::kPassiveDocumentEventListeners));
 
-  WebRuntimeFeatures::EnableFeatureFromString(
-      "FontCacheScaling",
-      base::FeatureList::IsEnabled(features::kFontCacheScaling));
-
-  WebRuntimeFeatures::EnableFeatureFromString(
-      "FramebustingNeedsSameOriginOrUserGesture",
+  WebRuntimeFeatures::EnablePassiveDocumentWheelEventListeners(
       base::FeatureList::IsEnabled(
-          features::kFramebustingNeedsSameOriginOrUserGesture));
+          features::kPassiveDocumentWheelEventListeners));
 
   WebRuntimeFeatures::EnableFeatureFromString(
-      "VibrateRequiresUserGesture",
-      base::FeatureList::IsEnabled(features::kVibrateRequiresUserGesture));
+      "FontSrcLocalMatching",
+      base::FeatureList::IsEnabled(features::kFontSrcLocalMatching));
+
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "LegacyWindowsDWriteFontFallback",
+      base::FeatureList::IsEnabled(features::kLegacyWindowsDWriteFontFallback));
 
   if (command_line.HasSwitch(switches::kDisableBackgroundTimerThrottling))
     WebRuntimeFeatures::EnableTimerThrottlingForBackgroundTabs(false);
@@ -264,17 +267,11 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
       base::FeatureList::IsEnabled(
           features::kExpensiveBackgroundTimerThrottling));
 
-  if (base::FeatureList::IsEnabled(features::kHeapCompaction))
-    WebRuntimeFeatures::EnableHeapCompaction(true);
-
   WebRuntimeFeatures::EnableRenderingPipelineThrottling(
       base::FeatureList::IsEnabled(features::kRenderingPipelineThrottling));
 
   WebRuntimeFeatures::EnableTimerThrottlingForHiddenFrames(
       base::FeatureList::IsEnabled(features::kTimerThrottlingForHiddenFrames));
-
-  WebRuntimeFeatures::EnableTouchpadAndWheelScrollLatching(
-      base::FeatureList::IsEnabled(features::kTouchpadAndWheelScrollLatching));
 
   if (base::FeatureList::IsEnabled(
           features::kSendBeaconThrowForBlobWithNonSimpleType))
@@ -288,26 +285,15 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   WebRuntimeFeatures::EnablePaymentRequest(
       base::FeatureList::IsEnabled(features::kWebPayments));
 
+  WebRuntimeFeatures::EnablePaymentRequestHasEnrolledInstrument(
+      base::FeatureList::IsEnabled(
+          features::kPaymentRequestHasEnrolledInstrument));
+
   if (base::FeatureList::IsEnabled(features::kServiceWorkerPaymentApps))
     WebRuntimeFeatures::EnablePaymentApp(true);
 
-  WebRuntimeFeatures::EnableServiceWorkerScriptStreaming(
-      base::FeatureList::IsEnabled(features::kServiceWorkerScriptStreaming));
-
-  WebRuntimeFeatures::EnableServiceWorkerScriptFullCodeCache(
-      base::FeatureList::IsEnabled(
-          features::kServiceWorkerScriptFullCodeCache));
-
-  WebRuntimeFeatures::EnableOffMainThreadFetch(
-      base::FeatureList::IsEnabled(features::kOffMainThreadFetch));
-
-  WebRuntimeFeatures::EnableMojoBlobs(features::IsMojoBlobsEnabled());
-
   WebRuntimeFeatures::EnableNetworkService(
-      base::FeatureList::IsEnabled(features::kNetworkService));
-
-  if (base::FeatureList::IsEnabled(features::kGamepadExtensions))
-    WebRuntimeFeatures::EnableGamepadExtensions(true);
+      base::FeatureList::IsEnabled(network::features::kNetworkService));
 
   if (base::FeatureList::IsEnabled(features::kCompositeOpaqueFixedPosition))
     WebRuntimeFeatures::EnableFeatureFromString("CompositeOpaqueFixedPosition",
@@ -319,27 +305,14 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (base::FeatureList::IsEnabled(features::kCompositorTouchAction))
     WebRuntimeFeatures::EnableCompositorTouchAction(true);
 
-  WebRuntimeFeatures::EnablePreventLayerSquashing(
-      base::FeatureList::IsEnabled(features::kEnablePreventLayerSquashing));
+  if (!base::FeatureList::IsEnabled(features::kGenericSensor))
+    WebRuntimeFeatures::EnableGenericSensor(false);
 
-  if (base::FeatureList::IsEnabled(features::kGenericSensor)) {
-    WebRuntimeFeatures::EnableGenericSensor(true);
-    if (base::FeatureList::IsEnabled(features::kGenericSensorExtraClasses))
-      WebRuntimeFeatures::EnableGenericSensorExtraClasses(true);
-  }
+  if (base::FeatureList::IsEnabled(features::kGenericSensorExtraClasses))
+    WebRuntimeFeatures::EnableGenericSensorExtraClasses(true);
 
-  if (base::FeatureList::IsEnabled(features::kLoadingWithMojo) ||
-      base::FeatureList::IsEnabled(features::kNetworkService))
-    WebRuntimeFeatures::EnableLoadingWithMojo(true);
-
-  if (base::FeatureList::IsEnabled(features::kNotificationsWithMojo))
-    WebRuntimeFeatures::EnableNotificationsWithMojo(true);
-
-  if (base::FeatureList::IsEnabled(features::kOutOfBlinkCORS))
-    WebRuntimeFeatures::EnableOutOfBlinkCORS(true);
-
-  if (base::FeatureList::IsEnabled(features::kOriginManifest))
-    WebRuntimeFeatures::EnableOriginManifest(true);
+  if (network::features::ShouldEnableOutOfBlinkCors())
+    WebRuntimeFeatures::EnableOutOfBlinkCors(true);
 
   WebRuntimeFeatures::EnableMediaCastOverlayButton(
       base::FeatureList::IsEnabled(media::kMediaCastOverlayButton));
@@ -348,6 +321,9 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableFeatureFromString("BlockCredentialedSubresources",
                                                 false);
   }
+
+  if (base::FeatureList::IsEnabled(features::kRasterInducingScroll))
+    WebRuntimeFeatures::EnableRasterInducingScroll(true);
 
   WebRuntimeFeatures::EnableFeatureFromString(
       "AllowContentInitiatedDataUrlNavigations",
@@ -359,26 +335,35 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::EnableWebNfc(true);
 #endif
 
-  if (media::GetEffectiveAutoplayPolicy(command_line) !=
-      switches::autoplay::kNoUserGestureRequiredPolicy) {
-    WebRuntimeFeatures::EnableAutoplayMutedVideos(true);
-  }
-
-  if (!base::FeatureList::IsEnabled(features::kWebAuth) &&
-      !enableExperimentalWebPlatformFeatures)
-    WebRuntimeFeatures::EnableWebAuth(false);
+#if defined(OS_ANDROID)
+  // APIs for Web Authentication are not available prior to N.
+  WebRuntimeFeatures::EnableWebAuth(
+      base::FeatureList::IsEnabled(features::kWebAuth) &&
+      base::android::BuildInfo::GetInstance()->sdk_int() >=
+          base::android::SDK_VERSION_NOUGAT);
+#else
+  WebRuntimeFeatures::EnableWebAuth(
+      base::FeatureList::IsEnabled(features::kWebAuth));
+#endif
 
   WebRuntimeFeatures::EnableClientPlaceholdersForServerLoFi(
       base::GetFieldTrialParamValue("PreviewsClientLoFi",
-                                    "replace_server_placeholders") == "true");
+                                    "replace_server_placeholders") != "false");
 
   WebRuntimeFeatures::EnableResourceLoadScheduler(
       base::FeatureList::IsEnabled(features::kResourceLoadScheduler));
 
-  if (command_line.HasSwitch(
-          switches::kDisableOriginTrialControlledBlinkFeatures)) {
-    WebRuntimeFeatures::EnableOriginTrialControlledFeatures(false);
-  }
+  if (base::FeatureList::IsEnabled(features::kBuiltInModuleAll))
+    WebRuntimeFeatures::EnableBuiltInModuleAll(true);
+
+  if (base::FeatureList::IsEnabled(features::kBuiltInModuleInfra))
+    WebRuntimeFeatures::EnableBuiltInModuleInfra(true);
+
+  if (base::FeatureList::IsEnabled(features::kBuiltInModuleKvStorage))
+    WebRuntimeFeatures::EnableBuiltInModuleKvStorage(true);
+
+  WebRuntimeFeatures::EnableFeatureFromString(
+      "LayoutNG", base::FeatureList::IsEnabled(blink::features::kLayoutNG));
 
   WebRuntimeFeatures::EnableLazyInitializeMediaControls(
       base::FeatureList::IsEnabled(features::kLazyInitializeMediaControls));
@@ -387,27 +372,216 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
       base::FeatureList::IsEnabled(
           media::kMediaEngagementBypassAutoplayPolicies));
 
-  WebRuntimeFeatures::EnableModuleScriptsDynamicImport(
-      base::FeatureList::IsEnabled(features::kModuleScriptsDynamicImport));
-
-  WebRuntimeFeatures::EnableModuleScriptsImportMetaUrl(
-      base::FeatureList::IsEnabled(features::kModuleScriptsImportMetaUrl));
-
   WebRuntimeFeatures::EnableOverflowIconsForMediaControls(
       base::FeatureList::IsEnabled(media::kOverflowIconsForMediaControls));
 
   WebRuntimeFeatures::EnableAllowActivationDelegationAttr(
       base::FeatureList::IsEnabled(features::kAllowActivationDelegationAttr));
 
-  WebRuntimeFeatures::EnableModernMediaControls(
-      base::FeatureList::IsEnabled(media::kUseModernMediaControls));
+  WebRuntimeFeatures::EnableScriptStreamingOnPreload(
+      base::FeatureList::IsEnabled(features::kScriptStreamingOnPreload));
 
-  WebRuntimeFeatures::EnableWorkStealingInScriptRunner(
-      base::FeatureList::IsEnabled(features::kWorkStealingInScriptRunner));
+  WebRuntimeFeatures::EnableMergeBlockingNonBlockingPools(
+      base::FeatureList::IsEnabled(base::kMergeBlockingNonBlockingPools));
 
-  WebRuntimeFeatures::EnableFeatureFromString(
-      "FeaturePolicyForPermissions",
-      base::FeatureList::IsEnabled(features::kUseFeaturePolicyForPermissions));
+  WebRuntimeFeatures::EnableLazyFrameLoading(
+      base::FeatureList::IsEnabled(features::kLazyFrameLoading));
+  WebRuntimeFeatures::EnableLazyFrameVisibleLoadTimeMetrics(
+      base::FeatureList::IsEnabled(features::kLazyFrameVisibleLoadTimeMetrics));
+  WebRuntimeFeatures::EnableLazyImageLoading(
+      base::FeatureList::IsEnabled(features::kLazyImageLoading));
+  WebRuntimeFeatures::EnableLazyImageVisibleLoadTimeMetrics(
+      base::FeatureList::IsEnabled(features::kLazyImageVisibleLoadTimeMetrics));
+
+  WebRuntimeFeatures::EnableAutomaticLazyFrameLoading(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyFrameLoading, "automatic-lazy-load-frames-enabled",
+          false));
+  WebRuntimeFeatures::EnableRestrictAutomaticLazyFrameLoadingToDataSaver(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyFrameLoading,
+          "restrict-lazy-load-frames-to-data-saver-only", true));
+  WebRuntimeFeatures::EnableAutoLazyLoadOnReloads(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyFrameLoading, "enable-lazy-load-on-reload", false));
+
+  WebRuntimeFeatures::EnableAutomaticLazyImageLoading(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyImageLoading, "automatic-lazy-load-images-enabled",
+          false));
+  WebRuntimeFeatures::EnableRestrictAutomaticLazyImageLoadingToDataSaver(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyImageLoading,
+          "restrict-lazy-load-images-to-data-saver-only", true));
+  WebRuntimeFeatures::EnableLazyImageLoadingMetadataFetch(
+      base::GetFieldTrialParamByFeatureAsBool(
+          features::kLazyImageLoading, "enable-lazy-load-images-metadata-fetch",
+          false));
+
+  WebRuntimeFeatures::EnablePictureInPicture(
+      base::FeatureList::IsEnabled(media::kPictureInPicture));
+
+#if defined(OS_ANDROID)
+  WebRuntimeFeatures::EnablePictureInPictureAPI(
+      base::FeatureList::IsEnabled(media::kPictureInPictureAPI));
+#endif
+
+  WebRuntimeFeatures::EnableCacheInlineScriptCode(
+      base::FeatureList::IsEnabled(features::kCacheInlineScriptCode));
+
+  WebRuntimeFeatures::EnableWasmCodeCache(
+      base::FeatureList::IsEnabled(blink::features::kWasmCodeCache));
+
+  if (base::FeatureList::IsEnabled(
+          features::kExperimentalProductivityFeatures)) {
+    WebRuntimeFeatures::EnableExperimentalProductivityFeatures(true);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kFeaturePolicyForSandbox))
+    WebRuntimeFeatures::EnableFeaturePolicyForSandbox(true);
+
+#if defined(OS_ANDROID)
+  if (base::android::BuildInfo::GetInstance()->sdk_int() >=
+      base::android::SDK_VERSION_P) {
+    // Display Cutout is limited to Android P+.
+    WebRuntimeFeatures::EnableDisplayCutoutAPI(true);
+  }
+#endif
+
+  if (command_line.HasSwitch(switches::kEnableAccessibilityObjectModel))
+    WebRuntimeFeatures::EnableAccessibilityObjectModel(true);
+
+  if (base::FeatureList::IsEnabled(blink::features::kNativeFileSystemAPI)) {
+    WebRuntimeFeatures::EnableFeatureFromString("NativeFileSystem", true);
+    if (base::FeatureList::IsEnabled(blink::features::kFileHandlingAPI))
+      WebRuntimeFeatures::EnableFeatureFromString("FileHandling", true);
+  }
+
+  if (base::FeatureList::IsEnabled(
+          blink::features::kForbidSyncXHRInPageDismissal)) {
+    WebRuntimeFeatures::EnableForbidSyncXHRInPageDismissal(true);
+  }
+
+  WebRuntimeFeatures::EnableAutoplayIgnoresWebAudio(
+      base::FeatureList::IsEnabled(media::kAutoplayIgnoreWebAudio));
+
+#if defined(OS_ANDROID)
+  WebRuntimeFeatures::EnableMediaControlsExpandGesture(
+      base::FeatureList::IsEnabled(media::kMediaControlsExpandGesture));
+#endif
+
+  WebRuntimeFeatures::EnablePortals(
+      base::FeatureList::IsEnabled(blink::features::kPortals));
+
+  WebRuntimeFeatures::EnableImplicitRootScroller(
+      base::FeatureList::IsEnabled(blink::features::kImplicitRootScroller));
+
+  WebRuntimeFeatures::EnableTextFragmentAnchor(
+      base::FeatureList::IsEnabled(blink::features::kTextFragmentAnchor));
+
+  if (!base::FeatureList::IsEnabled(features::kBackgroundFetch))
+    WebRuntimeFeatures::EnableBackgroundFetch(false);
+
+  WebRuntimeFeatures::EnableUpdateHoverAtBeginFrame(
+      base::FeatureList::IsEnabled(features::kUpdateHoverAtBeginFrame));
+
+  // TODO(yashard): Remove |enable_experimental_web_platform_features| flag
+  // since the feature should have been enabled when it is set to experimental
+  WebRuntimeFeatures::EnableJankTrackingSweepLine(
+      base::FeatureList::IsEnabled(blink::features::kJankTrackingSweepLine) ||
+      enable_experimental_web_platform_features);
+
+  WebRuntimeFeatures::EnableFirstContentfulPaintPlusPlus(
+      base::FeatureList::IsEnabled(
+          blink::features::kFirstContentfulPaintPlusPlus));
+
+  WebRuntimeFeatures::EnableGetDisplayMedia(
+      base::FeatureList::IsEnabled(blink::features::kRTCGetDisplayMedia));
+
+  WebRuntimeFeatures::EnableMimeHandlerViewInCrossProcessFrame(
+      base::FeatureList::IsEnabled(
+          features::kMimeHandlerViewInCrossProcessFrame));
+
+  WebRuntimeFeatures::EnableFallbackCursorMode(
+      base::FeatureList::IsEnabled(features::kFallbackCursorMode));
+
+  if (base::FeatureList::IsEnabled(features::kUserAgentClientHint))
+    WebRuntimeFeatures::EnableFeatureFromString("UserAgentClientHint", true);
+
+  WebRuntimeFeatures::EnableSignedExchangePrefetchCacheForNavigations(
+      base::FeatureList::IsEnabled(
+          features::kSignedExchangePrefetchCacheForNavigations));
+  WebRuntimeFeatures::EnableSignedExchangeSubresourcePrefetch(
+      base::FeatureList::IsEnabled(
+          features::kSignedExchangeSubresourcePrefetch));
+
+  if (!base::FeatureList::IsEnabled(features::kIdleDetection))
+    WebRuntimeFeatures::EnableIdleDetection(false);
+
+  WebRuntimeFeatures::EnableSkipTouchEventFilter(
+      base::FeatureList::IsEnabled(features::kSkipTouchEventFilter));
+
+  WebRuntimeFeatures::EnableStaleWhileRevalidate(
+      base::FeatureList::IsEnabled(features::kStaleWhileRevalidate));
+
+  if (!base::FeatureList::IsEnabled(features::kSmsReceiver))
+    WebRuntimeFeatures::EnableSmsReceiver(false);
+
+  WebRuntimeFeatures::EnableDisplayLocking(
+      base::FeatureList::IsEnabled(blink::features::kDisplayLocking) ||
+      enable_experimental_web_platform_features);
+
+  WebRuntimeFeatures::EnableFormControlsRefresh(
+      features::IsFormControlsRefreshEnabled());
+
+  if (base::FeatureList::IsEnabled(
+      blink::features::kAudioWorkletRealtimeThread)) {
+    WebRuntimeFeatures::EnableFeatureFromString(
+        "AudioWorkletRealtimeThread", true);
+  }
+
+  if (!base::FeatureList::IsEnabled(
+          features::kPauseExecutionContextOnBackgroundFreeze)) {
+    WebRuntimeFeatures::EnablePauseExecutionContextOnBackgroundFreeze(false);
+  }
+
+  WebRuntimeFeatures::EnableConsolidatedMovementXY(
+      base::FeatureList::IsEnabled(features::kConsolidatedMovementXY));
+
+  WebRuntimeFeatures::EnableStreamsNative(
+      base::FeatureList::IsEnabled(blink::features::kStreamsNative));
+
+  WebRuntimeFeatures::EnableMouseSubframeNoImplicitCapture(
+      base::FeatureList::IsEnabled(features::kMouseSubframeNoImplicitCapture));
+
+  if (base::FeatureList::IsEnabled(features::kTrustedDOMTypes))
+    WebRuntimeFeatures::EnableFeatureFromString("TrustedDOMTypes", true);
+}
+
+}  // namespace
+
+namespace content {
+
+void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
+    const base::CommandLine& command_line) {
+  // Set experimental features
+  bool enable_experimental_web_platform_features =
+      command_line.HasSwitch(switches::kEnableExperimentalWebPlatformFeatures);
+  if (enable_experimental_web_platform_features)
+    WebRuntimeFeatures::EnableExperimentalFeatures(true);
+
+  SetRuntimeFeatureDefaultsForPlatform();
+
+  // Set origin trial features
+  if (command_line.HasSwitch(
+          switches::kDisableOriginTrialControlledBlinkFeatures)) {
+    WebRuntimeFeatures::EnableOriginTrialControlledFeatures(false);
+  }
+
+  // TODO(yashard): Remove |enable_experimental_web_platform_features|
+  // flag since no individual feature should need it
+  SetIndividualRuntimeFeatures(command_line,
+                               enable_experimental_web_platform_features);
 
   // Enable explicitly enabled features, and then disable explicitly disabled
   // ones.
@@ -419,18 +593,6 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
        FeaturesFromSwitch(command_line, switches::kDisableBlinkFeatures)) {
     WebRuntimeFeatures::EnableFeatureFromString(feature, false);
   }
-
-  if (base::FeatureList::IsEnabled(features::kV8ContextSnapshot))
-    WebRuntimeFeatures::EnableV8ContextSnapshot(true);
-
-  if (base::FeatureList::IsEnabled(features::kStopLoadingInBackground))
-    WebRuntimeFeatures::EnableStopLoadingInBackgroundAndroid(true);
-
-  WebRuntimeFeatures::EnablePWAFullCodeCache(
-      base::FeatureList::IsEnabled(features::kPWAFullCodeCache));
-
-  WebRuntimeFeatures::EnableRequireCSSExtensionForFile(
-      base::FeatureList::IsEnabled(features::kRequireCSSExtensionForFile));
-};
+}
 
 }  // namespace content

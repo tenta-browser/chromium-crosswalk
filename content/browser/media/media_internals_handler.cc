@@ -27,9 +27,10 @@ void MediaInternalsMessageHandler::RegisterMessages() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   proxy_->Attach(this);
 
-  web_ui()->RegisterMessageCallback("getEverything",
-      base::Bind(&MediaInternalsMessageHandler::OnGetEverything,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getEverything",
+      base::BindRepeating(&MediaInternalsMessageHandler::OnGetEverything,
+                          base::Unretained(this)));
 }
 
 void MediaInternalsMessageHandler::OnGetEverything(
@@ -43,7 +44,7 @@ void MediaInternalsMessageHandler::OnUpdate(const base::string16& update) {
   // if the chrome://media-internals page hasn't finished loading.
   RenderFrameHost* host = web_ui()->GetWebContents()->GetMainFrame();
   if (host && page_load_complete_)
-    host->ExecuteJavaScript(update);
+    host->ExecuteJavaScript(update, base::NullCallback());
 }
 
 }  // namespace content

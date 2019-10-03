@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/callback_forward.h"
 #include "components/sync/engine/non_blocking_sync_common.h"
 #include "components/sync/protocol/model_type_state.pb.h"
 
@@ -33,9 +34,10 @@ class ModelTypeProcessor {
   // Sync engine calls GetLocalChanges to request local entities to be committed
   // to server. Processor should call callback passing local entites when they
   // are ready. Processor should not pass more than |max_entities|.
-  using GetLocalChangesCallback = base::Callback<void(CommitRequestDataList&&)>;
+  using GetLocalChangesCallback =
+      base::OnceCallback<void(CommitRequestDataList&&)>;
   virtual void GetLocalChanges(size_t max_entries,
-                               const GetLocalChangesCallback& callback) = 0;
+                               GetLocalChangesCallback callback) = 0;
 
   // Informs this object that some of its commit requests have been
   // successfully serviced.
@@ -46,7 +48,7 @@ class ModelTypeProcessor {
   // Informs this object that there are some incoming updates it should
   // handle.
   virtual void OnUpdateReceived(const sync_pb::ModelTypeState& type_state,
-                                const UpdateResponseDataList& updates) = 0;
+                                UpdateResponseDataList updates) = 0;
 };
 
 }  // namespace syncer

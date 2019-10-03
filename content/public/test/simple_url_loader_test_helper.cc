@@ -10,17 +10,17 @@
 
 namespace content {
 
-SimpleURLLoaderTestHelper::SimpleURLLoaderTestHelper()
-    : weak_ptr_factory_(this) {}
+SimpleURLLoaderTestHelper::SimpleURLLoaderTestHelper() {}
 
 SimpleURLLoaderTestHelper::~SimpleURLLoaderTestHelper() {}
 
-SimpleURLLoader::BodyAsStringCallback SimpleURLLoaderTestHelper::GetCallback() {
+network::SimpleURLLoader::BodyAsStringCallback
+SimpleURLLoaderTestHelper::GetCallback() {
   DCHECK(!callback_created_);
   callback_created_ = true;
 
-  return base::Bind(&SimpleURLLoaderTestHelper::OnCompleteCallback,
-                    weak_ptr_factory_.GetWeakPtr());
+  return base::BindOnce(&SimpleURLLoaderTestHelper::OnCompleteCallback,
+                        weak_ptr_factory_.GetWeakPtr());
 }
 
 void SimpleURLLoaderTestHelper::WaitForCallback() {
@@ -34,6 +34,7 @@ void SimpleURLLoaderTestHelper::OnCompleteCallback(
   DCHECK(!response_body_);
 
   response_body_ = std::move(response_body);
+
   run_loop_.Quit();
 }
 

@@ -29,8 +29,20 @@ bool ManagementPolicy::Provider::UserMayLoad(const Extension* extension,
   return true;
 }
 
+bool ManagementPolicy::Provider::UserMayInstall(const Extension* extension,
+                                                base::string16* error) const {
+  return UserMayLoad(extension, error);
+}
+
 bool ManagementPolicy::Provider::UserMayModifySettings(
     const Extension* extension, base::string16* error) const {
+  return true;
+}
+
+bool ManagementPolicy::Provider::ExtensionMayModifySettings(
+    const Extension* source_extension,
+    const Extension* extension,
+    base::string16* error) const {
   return true;
 }
 
@@ -48,6 +60,12 @@ bool ManagementPolicy::Provider::MustRemainDisabled(
 }
 
 bool ManagementPolicy::Provider::MustRemainInstalled(
+    const Extension* extension,
+    base::string16* error) const {
+  return false;
+}
+
+bool ManagementPolicy::Provider::ShouldForceUninstall(
     const Extension* extension,
     base::string16* error) const {
   return false;
@@ -73,10 +91,34 @@ bool ManagementPolicy::UserMayLoad(const Extension* extension,
       &Provider::UserMayLoad, "Installation", true, extension, error);
 }
 
+bool ManagementPolicy::UserMayInstall(const Extension* extension,
+                                      base::string16* error) const {
+  return ApplyToProviderList(&Provider::UserMayInstall, "Installation", true,
+                             extension, error);
+}
+
 bool ManagementPolicy::UserMayModifySettings(const Extension* extension,
                                              base::string16* error) const {
   return ApplyToProviderList(
       &Provider::UserMayModifySettings, "Modification", true, extension, error);
+}
+
+bool ManagementPolicy::ExtensionMayModifySettings(
+    const Extension* source_extension,
+    const Extension* extension,
+    base::string16* error) const {
+  for (const Provider* provider : providers_) {
+    if (!provider->ExtensionMayModifySettings(source_extension, extension,
+                                              error)) {
+      std::string id;
+      std::string name;
+      GetExtensionNameAndId(extension, &name, &id);
+      DVLOG(1) << "Modification of extension " << name << " (" << id << ")"
+               << " prohibited by " << provider->GetDebugPolicyProviderName();
+      return false;
+    }
+  }
+  return true;
 }
 
 bool ManagementPolicy::MustRemainEnabled(const Extension* extension,
@@ -94,8 +136,7 @@ bool ManagementPolicy::MustRemainDisabled(const Extension* extension,
     return true;
   }
 
-  for (ProviderList::const_iterator it = providers_.begin();
-       it != providers_.end(); ++it)
+  for (auto it = providers_.cbegin(); it != providers_.cend(); ++it)
     if ((*it)->MustRemainDisabled(extension, reason, error))
       return true;
 
@@ -106,6 +147,17 @@ bool ManagementPolicy::MustRemainInstalled(const Extension* extension,
                                            base::string16* error) const {
   return ApplyToProviderList(
       &Provider::MustRemainInstalled, "Removing", false, extension, error);
+}
+
+bool ManagementPolicy::ShouldForceUninstall(const Extension* extension,
+                                            base::string16* error) const {
+  return ApplyToProviderList(&Provider::ShouldForceUninstall, "Uninstalling",
+                             false, extension, error);
+}
+
+bool ManagementPolicy::ShouldRepairIfCorrupted(const Extension* extension) {
+  return MustRemainEnabled(extension, nullptr) ||
+         MustRemainInstalled(extension, nullptr);
 }
 
 void ManagementPolicy::UnregisterAllProviders() {
@@ -121,9 +173,7 @@ bool ManagementPolicy::ApplyToProviderList(ProviderFunction function,
                                            bool normal_result,
                                            const Extension* extension,
                                            base::string16* error) const {
-  for (ProviderList::const_iterator it = providers_.begin();
-       it != providers_.end(); ++it) {
-    const Provider* provider = *it;
+  for (const Provider* provider : providers_) {
     bool result = (provider->*function)(extension, error);
     if (result != normal_result) {
       std::string id;

@@ -16,15 +16,18 @@
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 #include "chromeos/login/auth/login_performer.h"
+#include "chromeos/network/network_connection_observer.h"
+#include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 
 namespace chromeos {
 
-class BaseScreenDelegate;
 class CaptivePortalWindowProxy;
-class NetworkErrorView;
+class ErrorScreenView;
 
 // Controller for the error screen.
-class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
+class ErrorScreen : public BaseScreen,
+                    public LoginPerformer::Delegate,
+                    public NetworkConnectionObserver {
  public:
   using ConnectRequestCallbackSubscription =
       std::unique_ptr<base::CallbackList<void()>::Subscription>;
@@ -37,10 +40,14 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   static const char kUserActionLocalStateErrorPowerwashButtonClicked[];
   static const char kUserActionRebootButtonClicked[];
   static const char kUserActionShowCaptivePortalClicked[];
-  static const char kUserActionConnectRequested[];
+  static const char kUserActionNetworkConnected[];
 
-  ErrorScreen(BaseScreenDelegate* base_screen_delegate, NetworkErrorView* view);
+  explicit ErrorScreen(ErrorScreenView* view);
   ~ErrorScreen() override;
+
+  CaptivePortalWindowProxy* captive_portal_window_proxy() {
+    return captive_portal_window_proxy_.get();
+  }
 
   // Toggles the guest sign-in prompt.
   void AllowGuestSignin(bool allowed);
@@ -57,14 +64,14 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   // Returns id of the screen behind error screen ("caller" screen).
   // Returns OobeScreen::SCREEN_UNKNOWN if error screen isn't the current
   // screen.
-  OobeScreen GetParentScreen() const;
+  OobeScreenId GetParentScreen() const;
 
   // Called when we're asked to hide captive portal dialog.
   void HideCaptivePortal();
 
   // This method is called, when view is being destroyed. Note, if model
   // is destroyed earlier then it has to call Unbind().
-  void OnViewDestroyed(NetworkErrorView* view);
+  void OnViewDestroyed(ErrorScreenView* view);
 
   // Sets current UI state.
   virtual void SetUIState(NetworkError::UIState ui_state);
@@ -76,7 +83,7 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
 
   // Sets "parent screen" i.e. one that has initiated this network error screen
   // instance.
-  void SetParentScreen(OobeScreen parent_screen);
+  void SetParentScreen(OobeScreenId parent_screen);
 
   // Sets callback that is called on hide.
   void SetHideCallback(const base::Closure& on_hide);
@@ -92,11 +99,19 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   ConnectRequestCallbackSubscription RegisterConnectRequestCallback(
       const base::Closure& callback);
 
+  // Creates an instance of CaptivePortalWindowProxy, if one has not already
+  // been created.
+  void MaybeInitCaptivePortalWindowProxy(content::WebContents* web_contents);
+
+  // Actually show or hide the screen. These are called by ErrorScreenHandler;
+  // having two show methods (Show/Hide from BaseScreen below) is confusing
+  // and this should be cleaned up.
+  void DoShow();
+  void DoHide();
+
   // BaseScreen overrides:
   void Show() override;
   void Hide() override;
-  void OnShow() override;
-  void OnHide() override;
   void OnUserAction(const std::string& action_id) override;
 
  private:
@@ -108,6 +123,9 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   void WhiteListCheckFailed(const std::string& email) override;
   void PolicyLoadFailed() override;
   void SetAuthFlowOffline(bool offline) override;
+
+  // NetworkConnectionObserver overrides:
+  void ConnectToNetworkRequested(const std::string& service_path) override;
 
   // Default hide_closure for Hide().
   void DefaultHideCallback();
@@ -128,15 +146,12 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   // Handle uses action to reboot device.
   void OnRebootButtonClicked();
 
-  // The user indicated to make an attempt to connect to the network.
-  void OnConnectRequested();
-
   // Handles the response of an ownership check and starts the guest session if
   // applicable.
   void StartGuestSessionAfterOwnershipCheck(
       DeviceSettingsService::OwnershipStatus ownership_status);
 
-  NetworkErrorView* view_ = nullptr;
+  ErrorScreenView* view_ = nullptr;
 
   std::unique_ptr<LoginPerformer> guest_login_performer_;
 
@@ -149,7 +164,7 @@ class ErrorScreen : public BaseScreen, public LoginPerformer::Delegate {
   NetworkError::UIState ui_state_ = NetworkError::UI_STATE_UNKNOWN;
   NetworkError::ErrorState error_state_ = NetworkError::ERROR_STATE_UNKNOWN;
 
-  OobeScreen parent_screen_ = OobeScreen::SCREEN_UNKNOWN;
+  OobeScreenId parent_screen_ = OobeScreen::SCREEN_UNKNOWN;
 
   // Optional callback that is called when NetworkError screen is hidden.
   std::unique_ptr<base::Closure> on_hide_callback_;

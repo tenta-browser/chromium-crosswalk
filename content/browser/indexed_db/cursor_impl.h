@@ -8,7 +8,10 @@
 #include <memory>
 
 #include "base/memory/ref_counted.h"
-#include "content/common/indexed_db/indexed_db.mojom.h"
+#include "base/sequence_checker.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -18,10 +21,8 @@ namespace content {
 
 class IndexedDBCursor;
 class IndexedDBDispatcherHost;
-class IndexedDBKey;
 
-// Expected to be constructed, called, and destructed on the IO thread.
-class CursorImpl : public ::indexed_db::mojom::Cursor {
+class CursorImpl : public blink::mojom::IDBCursor {
  public:
   CursorImpl(std::unique_ptr<IndexedDBCursor> cursor,
              const url::Origin& origin,
@@ -29,31 +30,29 @@ class CursorImpl : public ::indexed_db::mojom::Cursor {
              scoped_refptr<base::SequencedTaskRunner> idb_runner);
   ~CursorImpl() override;
 
-  // ::indexed_db::mojom::Cursor implementation
-  void Advance(
-      uint32_t count,
-      ::indexed_db::mojom::CallbacksAssociatedPtrInfo callbacks) override;
-  void Continue(
-      const IndexedDBKey& key,
-      const IndexedDBKey& primary_key,
-      ::indexed_db::mojom::CallbacksAssociatedPtrInfo callbacks) override;
-  void Prefetch(
-      int32_t count,
-      ::indexed_db::mojom::CallbacksAssociatedPtrInfo callbacks) override;
-  void PrefetchReset(
-      int32_t used_prefetches,
-      int32_t unused_prefetches,
-      const std::vector<std::string>& unused_blob_uuids) override;
+  // blink::mojom::IDBCursor implementation
+  void Advance(uint32_t count,
+               blink::mojom::IDBCursor::AdvanceCallback callback) override;
+  void CursorContinue(
+      const blink::IndexedDBKey& key,
+      const blink::IndexedDBKey& primary_key,
+      blink::mojom::IDBCursor::CursorContinueCallback callback) override;
+  void Prefetch(int32_t count,
+                blink::mojom::IDBCursor::PrefetchCallback callback) override;
+  void PrefetchReset(int32_t used_prefetches,
+                     int32_t unused_prefetches) override;
+
+  void OnRemoveBinding(base::OnceClosure remove_binding_cb);
 
  private:
-  class IDBSequenceHelper;
-
-  IDBSequenceHelper* helper_;
   // This raw pointer is safe because all CursorImpl instances are owned by an
   // IndexedDBDispatcherHost.
   IndexedDBDispatcherHost* dispatcher_host_;
   const url::Origin origin_;
   scoped_refptr<base::SequencedTaskRunner> idb_runner_;
+  std::unique_ptr<IndexedDBCursor> cursor_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(CursorImpl);
 };

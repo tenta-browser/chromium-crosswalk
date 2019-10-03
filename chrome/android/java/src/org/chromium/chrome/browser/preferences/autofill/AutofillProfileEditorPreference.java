@@ -5,15 +5,18 @@
 package org.chromium.chrome.browser.preferences.autofill;
 
 import android.app.Activity;
+import android.content.Context;
 import android.os.Bundle;
-import android.preference.Preference;
+import android.support.v7.preference.Preference;
 
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.payments.AddressEditor;
 import org.chromium.chrome.browser.payments.AutofillAddress;
-import org.chromium.chrome.browser.payments.ui.EditorDialog;
-import org.chromium.chrome.browser.payments.ui.EditorObserverForTest;
+import org.chromium.chrome.browser.payments.SettingsAutofillAndPaymentsObserver;
+import org.chromium.chrome.browser.preferences.MainPreferences;
+import org.chromium.chrome.browser.widget.prefeditor.EditorDialog;
+import org.chromium.chrome.browser.widget.prefeditor.EditorObserverForTest;
 
 /**
  * Launches the UI to edit, create or delete an Autofill profile entry.
@@ -25,9 +28,10 @@ public class AutofillProfileEditorPreference extends Preference {
     private AutofillAddress mAutofillAddress;
     private String mGUID;
 
+    // TODO(crbug.com/982338): Remove Activity usage for Support Library migration.
     public AutofillProfileEditorPreference(
-            Activity activity, EditorObserverForTest observerForTest) {
-        super(activity);
+            Activity activity, Context styledContext, EditorObserverForTest observerForTest) {
+        super(styledContext);
         mActivity = activity;
         mObserverForTest = observerForTest;
     }
@@ -40,14 +44,15 @@ public class AutofillProfileEditorPreference extends Preference {
     protected void onClick() {
         Bundle extras = getExtras();
         // We know which profile to edit based on the GUID stuffed in our extras
-        // by AutofillAndPaymentsPreferences.
-        mGUID = extras.getString(AutofillAndPaymentsPreferences.AUTOFILL_GUID);
+        // by MainPreferences.
+        mGUID = extras.getString(MainPreferences.AUTOFILL_GUID);
         prepareEditorDialog();
         prepareAddressEditor();
     }
 
     private void prepareAddressEditor() {
-        AddressEditor addressEditor = new AddressEditor(/*emailIncluded=*/true);
+        AddressEditor addressEditor =
+                new AddressEditor(AddressEditor.Purpose.AUTOFILL_SETTINGS, /*saveToDisk=*/true);
         addressEditor.setEditorDialog(mEditorDialog);
 
         addressEditor.edit(mAutofillAddress, new Callback<AutofillAddress>() {
@@ -64,6 +69,8 @@ public class AutofillProfileEditorPreference extends Preference {
             public void onResult(AutofillAddress address) {
                 if (address != null) {
                     PersonalDataManager.getInstance().setProfile(address.getProfile());
+                    SettingsAutofillAndPaymentsObserver.getInstance().notifyOnAddressUpdated(
+                            address);
                 }
                 if (mObserverForTest != null) {
                     mObserverForTest.onEditorReadyToEdit();
@@ -78,15 +85,14 @@ public class AutofillProfileEditorPreference extends Preference {
         if (mGUID != null) {
             mAutofillAddress = new AutofillAddress(
                     mActivity, PersonalDataManager.getInstance().getProfile(mGUID));
-            runnable = new Runnable() {
-                @Override
-                public void run() {
-                    if (mGUID != null) {
-                        PersonalDataManager.getInstance().deleteProfile(mGUID);
-                    }
-                    if (mObserverForTest != null) {
-                        mObserverForTest.onEditorReadyToEdit();
-                    }
+            runnable = () -> {
+                if (mGUID != null) {
+                    PersonalDataManager.getInstance().deleteProfile(mGUID);
+                    SettingsAutofillAndPaymentsObserver.getInstance().notifyOnAddressDeleted(
+                            mGUID);
+                }
+                if (mObserverForTest != null) {
+                    mObserverForTest.onEditorReadyToEdit();
                 }
             };
         }

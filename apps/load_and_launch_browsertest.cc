@@ -8,11 +8,12 @@
 
 #include "apps/switches.h"
 #include "base/process/launch.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
-#include "chrome/browser/apps/app_browsertest_util.h"
+#include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/extension_error_reporter.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/simple_message_box_internal.h"
 #include "chrome/common/chrome_switches.h"
@@ -20,6 +21,7 @@
 #include "content/public/test/test_launcher.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/test/extension_test_message_listener.h"
+#include "services/service_manager/sandbox/switches.h"
 
 using extensions::PlatformAppBrowserTest;
 
@@ -28,8 +30,7 @@ namespace apps {
 namespace {
 
 const char* kSwitchesToCopy[] = {
-    switches::kUserDataDir,
-    switches::kNoSandbox,
+    service_manager::switches::kNoSandbox, switches::kUserDataDir,
 };
 
 constexpr char kTestExtensionId[] = "behllobkkfkfnphdnhnkndlbkcpglgmj";
@@ -53,7 +54,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
   const base::CommandLine& cmdline = *base::CommandLine::ForCurrentProcess();
   base::CommandLine new_cmdline(cmdline.GetProgram());
   new_cmdline.CopySwitchesFrom(cmdline, kSwitchesToCopy,
-                               arraysize(kSwitchesToCopy));
+                               base::size(kSwitchesToCopy));
 
   base::FilePath app_path = test_data_dir_
       .AppendASCII("platform_apps")
@@ -89,7 +90,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
   const base::CommandLine& cmdline = *base::CommandLine::ForCurrentProcess();
   base::CommandLine new_cmdline(cmdline.GetProgram());
   new_cmdline.CopySwitchesFrom(cmdline, kSwitchesToCopy,
-                               arraysize(kSwitchesToCopy));
+                               base::size(kSwitchesToCopy));
 
   base::FilePath app_path = test_data_dir_
       .AppendASCII("platform_apps")
@@ -180,7 +181,7 @@ IN_PROC_BROWSER_TEST_F(LoadAndLaunchPlatformAppBrowserTest,
 IN_PROC_BROWSER_TEST_F(LoadAndLaunchExtensionBrowserTest,
                        LoadAndLaunchExtension) {
   const std::vector<base::string16>* errors =
-      ExtensionErrorReporter::GetInstance()->GetErrors();
+      extensions::LoadErrorReporter::GetInstance()->GetErrors();
 
 #if defined(GOOGLE_CHROME_BUILD)
   // The error is skipped on official builds.

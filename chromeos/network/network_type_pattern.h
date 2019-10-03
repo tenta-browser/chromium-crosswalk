@@ -7,12 +7,15 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 
 namespace chromeos {
 
-class CHROMEOS_EXPORT NetworkTypePattern {
+// Class to convert Shill network type names to explicit types and do pattern
+// matching for grouped types (e.g. Wireless). Grouped type matching is also
+// implemented for mojo types in cros_network_config_util.cc.
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkTypePattern {
  public:
   // Matches any network.
   static NetworkTypePattern Default();
@@ -23,7 +26,10 @@ class CHROMEOS_EXPORT NetworkTypePattern {
   // Matches Cellular, WiMAX, or Tether networks.
   static NetworkTypePattern Mobile();
 
-  // Matches non virtual networks.
+  // Matches Physical networks (i.e. excludes Tether and VPN).
+  static NetworkTypePattern Physical();
+
+  // Excludes virtual networks and EthernetEAP.
   static NetworkTypePattern NonVirtual();
 
   // Matches ethernet networks.
@@ -54,6 +60,8 @@ class CHROMEOS_EXPORT NetworkTypePattern {
   // symmetric and reflexive but not transitive.
   // See the unit test for examples.
   bool MatchesPattern(const NetworkTypePattern& other_pattern) const;
+
+  NetworkTypePattern operator|(const NetworkTypePattern& other) const;
 
   std::string ToDebugString() const;
 

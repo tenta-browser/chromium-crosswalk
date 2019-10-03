@@ -7,16 +7,18 @@
 #include <stdint.h>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics_action.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "content/common/media/media_player_delegate_messages.h"
 #include "content/public/common/content_client.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
-#include "third_party/WebKit/public/platform/WebMediaPlayer.h"
-#include "third_party/WebKit/public/web/WebScopedUserGesture.h"
+#include "third_party/blink/public/platform/web_fullscreen_video_status.h"
+#include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/web/web_scoped_user_gesture.h"
 #include "ui/gfx/geometry/size.h"
 
 #if defined(OS_ANDROID)
@@ -37,18 +39,14 @@ RendererWebMediaPlayerDelegate::RendererWebMediaPlayerDelegate(
     content::RenderFrame* render_frame)
     : RenderFrameObserver(render_frame),
       allow_idle_cleanup_(
-          content::GetContentClient()->renderer()->AllowIdleMediaSuspend()),
+          content::GetContentClient()->renderer()->IsIdleMediaSuspendEnabled()),
       tick_clock_(base::DefaultTickClock::GetInstance()) {
   idle_cleanup_interval_ = base::TimeDelta::FromSeconds(5);
   idle_timeout_ = base::TimeDelta::FromSeconds(15);
 
-  is_jelly_bean_ = false;
-
-#if defined(OS_ANDROID)
-  // On Android, due to the instability of the OS level media components, we
-  // consider all pre-KitKat devices to be potentially buggy.
-  is_jelly_bean_ |= base::android::BuildInfo::GetInstance()->sdk_int() <= 18;
-#endif
+  is_low_end_ = base::SysInfo::IsLowEndDevice();
+  idle_cleanup_timer_.SetTaskRunner(
+      render_frame->GetTaskRunner(blink::TaskType::kInternalMedia));
 }
 
 RendererWebMediaPlayerDelegate::~RendererWebMediaPlayerDelegate() {}
@@ -113,6 +111,13 @@ void RendererWebMediaPlayerDelegate::DidPlayerMutedStatusChange(int delegate_id,
                                                            delegate_id, muted));
 }
 
+void RendererWebMediaPlayerDelegate::DidPlayerMediaPositionStateChange(
+    int delegate_id,
+    const media_session::MediaPosition& position) {
+  Send(new MediaPlayerDelegateHostMsg_OnMediaPositionStateChanged(
+      routing_id(), delegate_id, position));
+}
+
 void RendererWebMediaPlayerDelegate::DidPause(int player_id) {
   DVLOG(2) << __func__ << "(" << player_id << ")";
   DCHECK(id_map_.Lookup(player_id));
@@ -172,8 +177,8 @@ void RendererWebMediaPlayerDelegate::ClearStaleFlag(int player_id) {
   if (!idle_cleanup_timer_.IsRunning() && !pending_update_task_) {
     idle_cleanup_timer_.Start(
         FROM_HERE, idle_cleanup_interval_,
-        base::Bind(&RendererWebMediaPlayerDelegate::UpdateTask,
-                   base::Unretained(this)));
+        base::BindOnce(&RendererWebMediaPlayerDelegate::UpdateTask,
+                       base::Unretained(this)));
   }
 }
 
@@ -183,9 +188,9 @@ bool RendererWebMediaPlayerDelegate::IsStale(int player_id) {
 
 void RendererWebMediaPlayerDelegate::SetIsEffectivelyFullscreen(
     int player_id,
-    bool is_fullscreen) {
+    blink::WebFullscreenVideoStatus fullscreen_video_status) {
   Send(new MediaPlayerDelegateHostMsg_OnMediaEffectivelyFullscreenChanged(
-      routing_id(), player_id, is_fullscreen));
+      routing_id(), player_id, fullscreen_video_status));
 }
 
 void RendererWebMediaPlayerDelegate::DidPlayerSizeChange(
@@ -221,6 +226,7 @@ bool RendererWebMediaPlayerDelegate::OnMessageReceived(
   IPC_BEGIN_MESSAGE_MAP(RendererWebMediaPlayerDelegate, msg)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Pause, OnMediaDelegatePause)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Play, OnMediaDelegatePlay)
+    IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_Muted, OnMediaDelegateMuted)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_SeekForward,
                         OnMediaDelegateSeekForward)
     IPC_MESSAGE_HANDLER(MediaPlayerDelegateMsg_SeekBackward,
@@ -239,12 +245,12 @@ bool RendererWebMediaPlayerDelegate::OnMessageReceived(
 void RendererWebMediaPlayerDelegate::SetIdleCleanupParamsForTesting(
     base::TimeDelta idle_timeout,
     base::TimeDelta idle_cleanup_interval,
-    base::TickClock* tick_clock,
-    bool is_jelly_bean) {
+    const base::TickClock* tick_clock,
+    bool is_low_end) {
   idle_cleanup_interval_ = idle_cleanup_interval;
   idle_timeout_ = idle_timeout;
   tick_clock_ = tick_clock;
-  is_jelly_bean_ = is_jelly_bean;
+  is_low_end_ = is_low_end;
 }
 
 bool RendererWebMediaPlayerDelegate::IsIdleCleanupTimerRunningForTesting()
@@ -261,17 +267,21 @@ void RendererWebMediaPlayerDelegate::SetFrameHiddenForTesting(bool is_hidden) {
   ScheduleUpdateTask();
 }
 
-void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(int player_id) {
+void RendererWebMediaPlayerDelegate::OnMediaDelegatePause(
+    int player_id,
+    bool triggered_by_user) {
   RecordAction(base::UserMetricsAction("Media.Controls.RemotePause"));
 
   Observer* observer = id_map_.Lookup(player_id);
   if (observer) {
-    // TODO(avayvod): remove when default play/pause is handled via
-    // the MediaSession code path.
-    std::unique_ptr<blink::WebScopedUserGesture> gesture(
-        render_frame()
-            ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
-            : nullptr);
+    if (triggered_by_user) {
+      // TODO(avayvod): remove when default play/pause is handled via
+      // the MediaSession code path.
+      std::unique_ptr<blink::WebScopedUserGesture> gesture(
+          render_frame()
+              ? new blink::WebScopedUserGesture(render_frame()->GetWebFrame())
+              : nullptr);
+    }
     observer->OnPause();
   }
 }
@@ -289,6 +299,13 @@ void RendererWebMediaPlayerDelegate::OnMediaDelegatePlay(int player_id) {
             : nullptr);
     observer->OnPlay();
   }
+}
+
+void RendererWebMediaPlayerDelegate::OnMediaDelegateMuted(int player_id,
+                                                          bool muted) {
+  Observer* observer = id_map_.Lookup(player_id);
+  if (observer)
+    observer->OnMuted(muted);
 }
 
 void RendererWebMediaPlayerDelegate::OnMediaDelegateSeekForward(
@@ -366,12 +383,12 @@ void RendererWebMediaPlayerDelegate::UpdateTask() {
   // When we reach the maximum number of idle players, clean them up
   // aggressively. Values chosen after testing on a Galaxy Nexus device for
   // http://crbug.com/612909.
-  if (idle_player_map_.size() > (is_jelly_bean_ ? 2u : 8u))
+  if (idle_player_map_.size() > (is_low_end_ ? 2u : 8u))
     aggressive_cleanup = true;
 
   // When a player plays on a buggy old device, clean up idle players
   // aggressively.
-  if (has_played_video_since_last_update_task && is_jelly_bean_)
+  if (has_played_video_since_last_update_task && is_low_end_)
     aggressive_cleanup = true;
 
   CleanUpIdlePlayers(aggressive_cleanup ? base::TimeDelta() : idle_timeout_);
@@ -383,8 +400,8 @@ void RendererWebMediaPlayerDelegate::UpdateTask() {
   if (!idle_player_map_.empty()) {
     idle_cleanup_timer_.Start(
         FROM_HERE, idle_cleanup_interval_,
-        base::Bind(&RendererWebMediaPlayerDelegate::UpdateTask,
-                   base::Unretained(this)));
+        base::BindOnce(&RendererWebMediaPlayerDelegate::UpdateTask,
+                       base::Unretained(this)));
   }
 }
 

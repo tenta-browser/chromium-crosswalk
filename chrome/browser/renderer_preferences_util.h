@@ -7,17 +7,17 @@
 
 class Profile;
 
-namespace content {
-struct RendererPreferences;
-class WebContents;
+namespace blink {
+namespace mojom {
+class RendererPreferences;
 }
+}  // namespace blink
 
 namespace renderer_preferences_util {
 
 // Copies system configuration preferences into |prefs|.
-void UpdateFromSystemSettings(content::RendererPreferences* prefs,
-                              Profile* profile,
-                              content::WebContents* web_contents);
+void UpdateFromSystemSettings(blink::mojom::RendererPreferences* prefs,
+                              Profile* profile);
 
 }  // namespace renderer_preferences_util
 

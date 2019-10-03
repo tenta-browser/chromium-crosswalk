@@ -8,8 +8,9 @@
 #define CHROME_BROWSER_SAFE_BROWSING_DOWNLOAD_PROTECTION_DOWNLOAD_PROTECTION_UTIL_H_
 
 #include "base/callback_list.h"
+#include "components/download/public/common/download_item.h"
 #include "components/safe_browsing/proto/csd.pb.h"
-#include "content/public/browser/download_item.h"
+#include "net/cert/x509_certificate.h"
 
 namespace safe_browsing {
 
@@ -19,7 +20,10 @@ enum class DownloadCheckResult {
   DANGEROUS,
   UNCOMMON,
   DANGEROUS_HOST,
-  POTENTIALLY_UNWANTED
+  POTENTIALLY_UNWANTED,
+  WHITELISTED_BY_POLICY,
+  ASYNC_SCANNING,
+  BLOCKED_PASSWORD_PROTECTED,
 };
 
 // Enum to keep track why a particular download verdict was chosen.
@@ -53,6 +57,8 @@ enum DownloadCheckResultReason {
   REASON_REMOTE_FILE = 25,
   REASON_SAMPLED_UNSUPPORTED_FILE = 26,
   REASON_VERDICT_UNKNOWN = 27,
+  REASON_DOWNLOAD_DESTROYED = 28,
+  REASON_BLOCKED_PASSWORD_PROTECTED = 29,
   REASON_MAX  // Always add new values before this one.
 };
 
@@ -85,12 +91,12 @@ typedef base::Callback<void(DownloadCheckResult)> CheckDownloadCallback;
 // A type of callback run on the main thread when a ClientDownloadRequest has
 // been formed for a download, or when one has not been formed for a supported
 // download.
-typedef base::Callback<void(content::DownloadItem*,
+typedef base::Callback<void(download::DownloadItem*,
                             const ClientDownloadRequest*)>
     ClientDownloadRequestCallback;
 
 // A list of ClientDownloadRequest callbacks.
-typedef base::CallbackList<void(content::DownloadItem*,
+typedef base::CallbackList<void(download::DownloadItem*,
                                 const ClientDownloadRequest*)>
     ClientDownloadRequestCallbackList;
 
@@ -112,6 +118,14 @@ typedef std::unique_ptr<PPAPIDownloadRequestCallbackList::Subscription>
     PPAPIDownloadRequestSubscription;
 
 void RecordCountOfWhitelistedDownload(WhitelistType type);
+
+// Given a certificate and its immediate issuer certificate, generates the
+// list of strings that need to be checked against the download whitelist to
+// determine whether the certificate is whitelisted.
+void GetCertificateWhitelistStrings(
+    const net::X509Certificate& certificate,
+    const net::X509Certificate& issuer,
+    std::vector<std::string>* whitelist_strings);
 
 }  // namespace safe_browsing
 

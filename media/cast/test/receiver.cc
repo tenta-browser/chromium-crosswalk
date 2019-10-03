@@ -16,14 +16,15 @@
 #include <utility>
 
 #include "base/at_exit.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/containers/circular_deque.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
@@ -41,7 +42,6 @@
 #include "media/cast/cast_environment.h"
 #include "media/cast/cast_receiver.h"
 #include "media/cast/logging/logging_defines.h"
-#include "media/cast/net/udp_transport.h"
 #include "media/cast/test/utility/audio_utility.h"
 #include "media/cast/test/utility/barcode.h"
 #include "media/cast/test/utility/default_config.h"
@@ -165,7 +165,7 @@ AudioParameters ToAudioParameters(const FrameReceiverConfig& config) {
   const int samples_in_10ms = config.rtp_timebase / 100;
   return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                          GuessChannelLayout(config.channels),
-                         config.rtp_timebase, 32, samples_in_10ms);
+                         config.rtp_timebase, samples_in_10ms);
 }
 
 // An InProcessReceiver that renders video frames to a LinuxOutputWindow and
@@ -217,8 +217,8 @@ class NaivePlayer : public InProcessReceiver,
   void Start() final {
     AudioManager::Get()->GetTaskRunner()->PostTask(
         FROM_HERE,
-        base::Bind(&NaivePlayer::StartAudioOutputOnAudioManagerThread,
-                   base::Unretained(this)));
+        base::BindOnce(&NaivePlayer::StartAudioOutputOnAudioManagerThread,
+                       base::Unretained(this)));
     // Note: No need to wait for audio polling to start since the push-and-pull
     // mechanism is synchronized via the |audio_playout_queue_|.
     InProcessReceiver::Start();
@@ -231,9 +231,8 @@ class NaivePlayer : public InProcessReceiver,
     DCHECK(!AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread());
     AudioManager::Get()->GetTaskRunner()->PostTask(
         FROM_HERE,
-        base::Bind(&NaivePlayer::StopAudioOutputOnAudioManagerThread,
-                   base::Unretained(this),
-                   &done));
+        base::BindOnce(&NaivePlayer::StopAudioOutputOnAudioManagerThread,
+                       base::Unretained(this), &done));
     done.Wait();
 
     // Now, stop receiving new frames.
@@ -276,8 +275,8 @@ class NaivePlayer : public InProcessReceiver,
   ////////////////////////////////////////////////////////////////////
   // InProcessReceiver finals.
 
-  void OnVideoFrame(const scoped_refptr<VideoFrame>& video_frame,
-                    const base::TimeTicks& playout_time,
+  void OnVideoFrame(scoped_refptr<VideoFrame> video_frame,
+                    base::TimeTicks playout_time,
                     bool is_continuous) final {
     DCHECK(cast_env()->CurrentlyOn(CastEnvironment::MAIN));
     LOG_IF(WARNING, !is_continuous)
@@ -285,7 +284,7 @@ class NaivePlayer : public InProcessReceiver,
     video_playout_queue_.push_back(std::make_pair(playout_time, video_frame));
     ScheduleVideoPlayout();
     uint16_t frame_no;
-    if (media::cast::test::DecodeBarcode(video_frame, &frame_no)) {
+    if (media::cast::test::DecodeBarcode(*video_frame, &frame_no)) {
       video_play_times_.insert(
           std::pair<uint16_t, base::TimeTicks>(frame_no, playout_time));
     } else {
@@ -294,7 +293,7 @@ class NaivePlayer : public InProcessReceiver,
   }
 
   void OnAudioFrame(std::unique_ptr<AudioBus> audio_frame,
-                    const base::TimeTicks& playout_time,
+                    base::TimeTicks playout_time,
                     bool is_continuous) final {
     DCHECK(cast_env()->CurrentlyOn(CastEnvironment::MAIN));
     LOG_IF(WARNING, !is_continuous)
@@ -426,7 +425,7 @@ class NaivePlayer : public InProcessReceiver,
     if (!video_playout_queue_.empty()) {
       const scoped_refptr<VideoFrame> video_frame = PopOneVideoFrame(false);
 #if defined(USE_X11)
-      render_.RenderFrame(video_frame);
+      render_.RenderFrame(*video_frame);
 #endif  // defined(USE_X11)
     }
     ScheduleVideoPlayout();
@@ -556,14 +555,14 @@ int main(int argc, char** argv) {
   base::AtExitManager at_exit;
   base::CommandLine::Init(argc, argv);
   InitLogging(logging::LoggingSettings());
-  base::MessageLoop message_loop;
+  base::SingleThreadTaskExecutor main_task_executor;
 
   scoped_refptr<media::cast::CastEnvironment> cast_environment(
       new media::cast::StandaloneCastEnvironment);
 
   // Start up Chromium audio system.
   auto audio_manager = media::AudioManager::CreateForTesting(
-      base::MakeUnique<media::TestAudioThread>());
+      std::make_unique<media::TestAudioThread>());
   CHECK(media::AudioManager::Get());
 
   media::cast::FrameReceiverConfig audio_config =

@@ -8,53 +8,48 @@
 #include "chrome/browser/ui/views/sad_tab_view.h"
 #include "chrome/browser/ui/views/tab_contents/chrome_web_contents_view_focus_helper.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/base/ui_features.h"
 #include "ui/views/widget/widget.h"
 
 ChromeWebContentsViewDelegateViewsMac::ChromeWebContentsViewDelegateViewsMac(
     content::WebContents* web_contents)
     : ChromeWebContentsViewDelegateMac(web_contents),
-      focus_helper_(
-          std::make_unique<ChromeWebContentsViewFocusHelper>(web_contents)) {}
+      web_contents_(web_contents) {
+  ChromeWebContentsViewFocusHelper::CreateForWebContents(web_contents);
+}
 
 ChromeWebContentsViewDelegateViewsMac::
     ~ChromeWebContentsViewDelegateViewsMac() {
 }
 
+ChromeWebContentsViewFocusHelper*
+ChromeWebContentsViewDelegateViewsMac::GetFocusHelper() const {
+  ChromeWebContentsViewFocusHelper* helper =
+      ChromeWebContentsViewFocusHelper::FromWebContents(web_contents_);
+  DCHECK(helper);
+  return helper;
+}
+
 void ChromeWebContentsViewDelegateViewsMac::StoreFocus() {
-  focus_helper_->StoreFocus();
+  GetFocusHelper()->StoreFocus();
 }
 
 bool ChromeWebContentsViewDelegateViewsMac::RestoreFocus() {
-  return focus_helper_->RestoreFocus();
+  return GetFocusHelper()->RestoreFocus();
 }
 
 void ChromeWebContentsViewDelegateViewsMac::ResetStoredFocus() {
-  focus_helper_->ResetStoredFocus();
+  GetFocusHelper()->ResetStoredFocus();
 }
 
 bool ChromeWebContentsViewDelegateViewsMac::Focus() {
-  return focus_helper_->Focus();
+  return GetFocusHelper()->Focus();
 }
 
 bool ChromeWebContentsViewDelegateViewsMac::TakeFocus(bool reverse) {
-  return focus_helper_->TakeFocus(reverse);
+  return GetFocusHelper()->TakeFocus(reverse);
 }
-
-void ChromeWebContentsViewDelegateViewsMac::SizeChanged(const gfx::Size& size) {
-  SadTabHelper* sad_tab_helper = SadTabHelper::FromWebContents(web_contents());
-  if (!sad_tab_helper)
-    return;
-  SadTabView* sad_tab = static_cast<SadTabView*>(sad_tab_helper->sad_tab());
-  if (sad_tab)
-    sad_tab->GetWidget()->SetBounds(gfx::Rect(size));
-}
-
-#if BUILDFLAG(MAC_VIEWS_BROWSER)
 
 content::WebContentsViewDelegate* CreateWebContentsViewDelegate(
     content::WebContents* web_contents) {
   return new ChromeWebContentsViewDelegateViewsMac(web_contents);
 }
-
-#endif  // MAC_VIEWS_BROWSER

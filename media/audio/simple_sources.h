@@ -11,6 +11,7 @@
 
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "media/audio/audio_io.h"
 #include "media/base/audio_converter.h"
@@ -35,6 +36,14 @@ class MEDIA_EXPORT SineWaveAudioSource
   void CapSamples(int cap);
   void Reset();
 
+  // Sets a callback to be called in OnMoreData(). The callback should be set
+  // only once before SineWaveAudioSource is passed to AudioOutputStream. It
+  // will be called on the same thread on which the stream calls OnMoreData(),
+  // which is usually different from the thread where the source is created.
+  void set_on_more_data_callback(base::RepeatingClosure on_more_data_callback) {
+    on_more_data_callback_ = on_more_data_callback;
+  }
+
   // Implementation of AudioSourceCallback.
   int OnMoreData(base::TimeDelta delay,
                  base::TimeTicks timestamp,
@@ -43,17 +52,27 @@ class MEDIA_EXPORT SineWaveAudioSource
   void OnError() override;
 
   // The number of OnMoreData() and OnError() calls respectively.
-  int callbacks() { return callbacks_; }
+  int callbacks() {
+    base::AutoLock auto_lock(lock_);
+    return callbacks_;
+  }
+  int pos_samples() {
+    base::AutoLock auto_lock(lock_);
+    return pos_samples_;
+  }
   int errors() { return errors_; }
 
  protected:
-  int channels_;
-  double f_;
-  int time_state_;
-  int cap_;
-  int callbacks_;
-  int errors_;
-  base::Lock time_lock_;
+  const int channels_;
+  const double f_;
+
+  base::RepeatingClosure on_more_data_callback_;
+
+  base::Lock lock_;
+  int pos_samples_ GUARDED_BY(lock_) = 0;
+  int cap_ GUARDED_BY(lock_) = 0;
+  int callbacks_ GUARDED_BY(lock_) = 0;
+  int errors_ = 0;
 };
 
 class MEDIA_EXPORT FileSource : public AudioOutputStream::AudioSourceCallback,

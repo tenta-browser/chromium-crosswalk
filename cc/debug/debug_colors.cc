@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/logging.h"
-#include "base/macros.h"
 
 #include "cc/debug/debug_colors.h"
 
@@ -137,17 +136,20 @@ int DebugColors::DirectPictureBorderWidth(float device_scale_factor) {
   return Scale(1, device_scale_factor);
 }
 
-// Borders added to GL composited draw quads. This is useful to debug HW
-// overlays. When the border disappears, it means we're using an overlay.
-// We draw borders in different colors to be able to distinguish neighboring
-// quads (often shadows).
-SkColor DebugColors::GLCompositedTextureQuadBorderColor(int index) {
-  const SkColor kColors[] = {SK_ColorBLUE,   SK_ColorGREEN, SK_ColorRED,
-                             SK_ColorYELLOW, SK_ColorCYAN,  SK_ColorMAGENTA};
-  return kColors[index % arraysize(kColors)];
-}
-int DebugColors::GLCompositedTextureQuadBoderWidth() {
-  return 6;
+// Returns a color transform that shifts color toward red.
+base::span<const float>
+DebugColors::TintCompositedContentColorTransformMatrix() {
+  // The new colors are:
+  // new_R = R + 0.3 G + 0.3 B
+  // new_G =     0.7 G
+  // new_B =             0.7 B
+  // clang-format off
+  static constexpr float kColorTransform[] = {1.0f, 0.0f, 0.0f, 0.0f,
+                                              0.3f, 0.7f, 0.0f, 0.0f,
+                                              0.3f, 0.0f, 0.7f, 0.0f,
+                                              0.0f, 0.0f, 0.0f, 1.0f};
+  // clang-format on
+  return base::span<const float>(kColorTransform, sizeof(kColorTransform));
 }
 
 // Compressed tile borders are blue.
@@ -190,6 +192,25 @@ SkColor DebugColors::PaintRectBorderColor(int step) {
 int DebugColors::PaintRectBorderWidth() { return 2; }
 SkColor DebugColors::PaintRectFillColor(int step) {
   return FadedGreen(60, step);
+}
+
+static SkColor FadedBlue(int initial_value, int step) {
+  DCHECK_GE(step, 0);
+  DCHECK_LE(step, DebugColors::kFadeSteps);
+  int value = step * initial_value / DebugColors::kFadeSteps;
+  return SkColorSetARGB(value, 0, 0, 255);
+}
+/// Layout Shift rects in blue.
+SkColor DebugColors::LayoutShiftRectBorderColor() {
+  return SkColorSetARGB(0, 0, 0, 255);
+}
+int DebugColors::LayoutShiftRectBorderWidth() {
+  // We don't want any border showing for the layout shift debug rects so we set
+  // the border width to be equal to 0.
+  return 0;
+}
+SkColor DebugColors::LayoutShiftRectFillColor(int step) {
+  return FadedBlue(60, step);
 }
 
 // Property-changed rects in blue.
@@ -262,17 +283,6 @@ SkColor DebugColors::LayerAnimationBoundsBorderColor() {
 int DebugColors::LayerAnimationBoundsBorderWidth() { return 2; }
 SkColor DebugColors::LayerAnimationBoundsFillColor() {
   return SkColorSetARGB(30, 112, 229, 0);
-}
-
-// Non-Painted rects in cyan.
-SkColor DebugColors::NonPaintedFillColor() { return SK_ColorCYAN; }
-
-// Missing picture rects in magenta.
-SkColor DebugColors::MissingPictureFillColor() { return SK_ColorMAGENTA; }
-
-// Missing resize invalidations are in salmon pink.
-SkColor DebugColors::MissingResizeInvalidations() {
-  return SkColorSetARGB(255, 255, 155, 170);
 }
 
 // Picture borders in transparent blue.

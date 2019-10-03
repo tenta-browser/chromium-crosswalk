@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/supervised/supervised_user_login_flow.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -12,7 +13,6 @@
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_constants.h"
-#include "chrome/browser/chromeos/login/supervised/supervised_user_creation_screen.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
@@ -63,10 +63,6 @@ bool SupervisedUserLoginFlow::SupportsEarlyRestartToApplyFlags() {
 }
 
 bool SupervisedUserLoginFlow::HandleLoginFailure(const AuthFailure& failure) {
-  return false;
-}
-
-bool SupervisedUserLoginFlow::HandlePasswordChangeDetected() {
   return false;
 }
 
@@ -141,8 +137,9 @@ void SupervisedUserLoginFlow::OnPasswordChangeDataLoaded(
   }
   base::Base64Decode(base64_signature, &signature);
   std::unique_ptr<base::DictionaryValue> data_copy(password_data->DeepCopy());
-  cryptohome::KeyDefinition key(password, kCryptohomeSupervisedUserKeyLabel,
-                                kCryptohomeSupervisedUserKeyPrivileges);
+  auto key = cryptohome::KeyDefinition::CreateForPassword(
+      password, kCryptohomeSupervisedUserKeyLabel,
+      kCryptohomeSupervisedUserKeyPrivileges);
 
   authenticator_ = ExtendedAuthenticator::Create(this);
   SupervisedUserAuthentication::Schema current_schema =

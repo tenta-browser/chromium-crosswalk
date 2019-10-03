@@ -25,8 +25,8 @@ namespace cmd {
 }  // namespace cmd
 
 // Pack & unpack Command cmd_flags
-#define CMD_FLAG_SET_TRACE_LEVEL(level)     ((level & 3) << 0)
-#define CMD_FLAG_GET_TRACE_LEVEL(cmd_flags) ((cmd_flags >> 0) & 3)
+#define CMD_FLAG_SET_TRACE_LEVEL(level)     (level & 3)
+#define CMD_FLAG_GET_TRACE_LEVEL(cmd_flags) (cmd_flags & 3)
 
 // Computes the number of command buffer entries needed for a certain size. In
 // other words it rounds up to a multiple of entries.
@@ -171,13 +171,14 @@ namespace cmd {
 //
 // NOTE: THE ORDER OF THESE MUST NOT CHANGE (their id is derived by order)
 #define COMMON_COMMAND_BUFFER_CMDS(OP) \
-  OP(Noop)                          /*  0 */ \
-  OP(SetToken)                      /*  1 */ \
-  OP(SetBucketSize)                 /*  2 */ \
-  OP(SetBucketData)                 /*  3 */ \
-  OP(SetBucketDataImmediate)        /*  4 */ \
-  OP(GetBucketStart)                /*  5 */ \
-  OP(GetBucketData)                 /*  6 */ \
+  OP(Noop)                   /*  0 */  \
+  OP(SetToken)               /*  1 */  \
+  OP(SetBucketSize)          /*  2 */  \
+  OP(SetBucketData)          /*  3 */  \
+  OP(SetBucketDataImmediate) /*  4 */  \
+  OP(GetBucketStart)         /*  5 */  \
+  OP(GetBucketData)          /*  6 */  \
+  OP(InsertFenceSync)        /*  7 */
 
 // Common commands.
 enum CommandId {
@@ -373,9 +374,7 @@ struct SetBucketDataImmediate {
   static const cmd::ArgFlags kArgFlags = cmd::kAtLeastN;
   static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
 
-  void SetHeader(uint32_t size) {
-    header.SetCmdBySize<ValueType>(size);
-  }
+  void SetHeader(uint32_t _size) { header.SetCmdBySize<ValueType>(_size); }
 
   void Init(uint32_t _bucket_id,
             uint32_t _offset,
@@ -554,6 +553,45 @@ static_assert(offsetof(GetBucketData, shared_memory_id) == 16,
 static_assert(offsetof(GetBucketData, shared_memory_offset) == 20,
               "offset of GetBucketData.shared_memory_offset should be 20");
 
+struct InsertFenceSync {
+  typedef InsertFenceSync ValueType;
+  static const CommandId kCmdId = kInsertFenceSync;
+  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
+  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(1);
+
+  void SetHeader() { header.SetCmd<ValueType>(); }
+
+  void Init(uint64_t _release_count) {
+    SetHeader();
+    release_count_0 = static_cast<uint32_t>(_release_count & 0xFFFFFFFF);
+    release_count_1 =
+        static_cast<uint32_t>((_release_count >> 32) & 0xFFFFFFFF);
+  }
+
+  void* Set(void* cmd, uint64_t _release_count) {
+    static_cast<ValueType*>(cmd)->Init(_release_count);
+    return NextCmdAddress<ValueType>(cmd);
+  }
+
+  uint64_t release_count() const volatile {
+    return (static_cast<uint64_t>(release_count_1) << 32) +
+           static_cast<uint64_t>(release_count_0);
+  }
+
+  gpu::CommandHeader header;
+  uint32_t release_count_0;
+  uint32_t release_count_1;
+};
+
+static_assert(sizeof(InsertFenceSync) == 12,
+              "size of InsertFenceSync should be 12");
+static_assert(offsetof(InsertFenceSync, header) == 0,
+              "offset of InsertFenceSync header should be 0");
+static_assert(offsetof(InsertFenceSync, release_count_0) == 4,
+              "offset of InsertFenceSync release_count_0 should be 4");
+static_assert(offsetof(InsertFenceSync, release_count_1) == 8,
+              "offset of InsertFenceSync release_count_1 should be 8");
+
 }  // namespace cmd
 
 #pragma pack(pop)
@@ -561,4 +599,3 @@ static_assert(offsetof(GetBucketData, shared_memory_offset) == 20,
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_COMMON_CMD_BUFFER_COMMON_H_
-

@@ -6,13 +6,38 @@
 
 #include <notify.h>
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/mac/mac_util.h"
 #include "base/posix/eintr_wrapper.h"
 
 namespace net {
 
-NotifyWatcherMac::NotifyWatcherMac()
-    : notify_fd_(-1), notify_token_(-1), watcher_(FROM_HERE) {}
+namespace {
+
+// Registers a dummy file descriptor to workaround a bug in libnotify
+// in macOS 10.12
+// See https://bugs.chromium.org/p/chromium/issues/detail?id=783148.
+class NotifyFileDescriptorsGlobalsHolder {
+ public:
+  NotifyFileDescriptorsGlobalsHolder() {
+    int notify_fd = -1;
+    int notify_token = -1;
+    notify_register_file_descriptor("notify_file_descriptor_holder", &notify_fd,
+                                    0, &notify_token);
+  }
+};
+
+void HoldNotifyFileDescriptorsGlobals() {
+  if (base::mac::IsAtMostOS10_12()) {
+    static NotifyFileDescriptorsGlobalsHolder holder;
+  }
+}
+}  // namespace
+
+NotifyWatcherMac::NotifyWatcherMac() : notify_fd_(-1), notify_token_(-1) {
+  HoldNotifyFileDescriptorsGlobals();
+}
 
 NotifyWatcherMac::~NotifyWatcherMac() {
   Cancel();
@@ -27,15 +52,10 @@ bool NotifyWatcherMac::Watch(const char* key, const CallbackType& callback) {
   if (status != NOTIFY_STATUS_OK)
     return false;
   DCHECK_GE(notify_fd_, 0);
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          notify_fd_,
-          true,
-          base::MessageLoopForIO::WATCH_READ,
-          &watcher_,
-          this)) {
-    Cancel();
-    return false;
-  }
+  watcher_ = base::FileDescriptorWatcher::WatchReadable(
+      notify_fd_,
+      base::BindRepeating(&NotifyWatcherMac::OnFileCanReadWithoutBlocking,
+                          base::Unretained(this)));
   callback_ = callback;
   return true;
 }
@@ -45,11 +65,11 @@ void NotifyWatcherMac::Cancel() {
     notify_cancel(notify_token_);  // Also closes |notify_fd_|.
     notify_fd_ = -1;
     callback_.Reset();
-    watcher_.StopWatchingFileDescriptor();
+    watcher_.reset();
   }
 }
 
-void NotifyWatcherMac::OnFileCanReadWithoutBlocking(int fd) {
+void NotifyWatcherMac::OnFileCanReadWithoutBlocking() {
   int token;
   int status = HANDLE_EINTR(read(notify_fd_, &token, sizeof(token)));
   if (status != sizeof(token)) {

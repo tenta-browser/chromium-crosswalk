@@ -37,7 +37,7 @@ views::Widget* ToplevelWindow::CreateToplevelWindow(
   views::Widget* widget = views::Widget::CreateWindowWithContext(
       new ToplevelWindow(params), Shell::GetPrimaryRootWindow());
   widget->GetNativeView()->SetName("Examples:ToplevelWindow");
-  wm::WindowState* window_state = wm::GetWindowState(widget->GetNativeView());
+  WindowState* window_state = WindowState::Get(widget->GetNativeView());
   window_state->SetWindowPositionManaged(true);
   widget->Show();
   return widget;
@@ -82,7 +82,7 @@ bool ToplevelWindow::GetSavedWindowPlacement(
     bounds->SetRect(10, 150, 300, 300);
   }
   WindowPositioner::GetBoundsAndShowStateForNewWindow(
-      nullptr, is_saved_bounds, *show_state, bounds, show_state);
+      is_saved_bounds, *show_state, bounds, show_state);
   return true;
 }
 

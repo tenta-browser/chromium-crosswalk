@@ -5,24 +5,38 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_CLIENT_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_CLIENT_H_
 
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
+#include "components/password_manager/core/browser/hsts_query.h"
+#include "components/password_manager/core/browser/http_auth_manager.h"
+#include "components/password_manager/core/browser/manage_passwords_referrer.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_store.h"
+#include "net/cert/cert_status_flags.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
 class PrefService;
 
 namespace autofill {
-class AutofillManager;
+class AutofillDownloadManager;
+class LogManager;
+}
+
+namespace favicon {
+class FaviconService;
 }
 
 class GURL;
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+#if defined(FULL_SAFE_BROWSING)
 namespace safe_browsing {
 class PasswordProtectionService;
 }
@@ -30,14 +44,16 @@ class PasswordProtectionService;
 
 namespace password_manager {
 
-class LogManager;
-class PasswordFormManager;
+class PasswordFormManagerForUI;
 class PasswordManager;
+class PasswordManagerDriver;
 class PasswordManagerMetricsRecorder;
+class HttpAuthManager;
+class PasswordRequirementsService;
 class PasswordStore;
 
-enum PasswordSyncState {
-  NOT_SYNCING_PASSWORDS,
+enum SyncState {
+  NOT_SYNCING,
   SYNCING_NORMAL_ENCRYPTION,
   SYNCING_WITH_CUSTOM_PASSPHRASE
 };
@@ -46,7 +62,6 @@ enum PasswordSyncState {
 // environment.
 class PasswordManagerClient {
  public:
-  using HSTSCallback = base::Callback<void(bool)>;
   using CredentialsCallback =
       base::Callback<void(const autofill::PasswordForm*)>;
 
@@ -55,28 +70,33 @@ class PasswordManagerClient {
 
   // Is saving new data for password autofill and filling of saved data enabled
   // for the current profile and page? For example, saving is disabled in
-  // Incognito mode.
-  virtual bool IsSavingAndFillingEnabledForCurrentPage() const;
+  // Incognito mode. |url| describes the URL to save the password for. It is not
+  // necessary the URL of the current page but can be a URL of a proxy or the
+  // page that hosted the form.
+  virtual bool IsSavingAndFillingEnabled(const GURL& url) const;
 
-  // Checks if filling is enabled for the current page. Filling is disabled when
-  // password manager is disabled, or in the presence of SSL errors on a page.
-  virtual bool IsFillingEnabledForCurrentPage() const;
+  // Checks if filling is enabled on the current page. Filling is disabled in
+  // the presence of SSL errors on a page. |url| describes the URL to fill the
+  // password for. It is not necessary the URL of the current page but can be a
+  // URL of a proxy or subframe.
+  virtual bool IsFillingEnabled(const GURL& url) const;
 
-  // Checks if manual filling fallback is enabled for the current page.
-  virtual bool IsFillingFallbackEnabledForCurrentPage() const;
+  // Checks if manual filling fallback is enabled for the page that has |url|
+  // address.
+  virtual bool IsFillingFallbackEnabled(const GURL& url) const;
 
   // Checks asynchronously whether HTTP Strict Transport Security (HSTS) is
   // active for the host of the given origin. Notifies |callback| with the
   // result on the calling thread.
   virtual void PostHSTSQueryForHost(const GURL& origin,
-                                    const HSTSCallback& callback) const;
+                                    HSTSCallback callback) const;
 
   // Checks if the Credential Manager API is allowed to run on the page. It's
   // not allowed while prerendering and the pre-rendered WebContents will be
   // destroyed in this case.
   // Even if the method returns true the API may still be disabled or limited
-  // depending on the method called because IsFillingEnabledForCurrentPage() and
-  // IsSavingAndFillingEnabledForCurrentPage are respected.
+  // depending on the method called because IsFillingEnabled() and
+  // IsSavingAndFillingEnabled are respected.
   virtual bool OnCredentialManagerUsed();
 
   // Informs the embedder of a password form that can be saved or updated in
@@ -85,30 +105,36 @@ class PasswordManagerClient {
   // updated. Returns true if the prompt was indeed displayed.
   // There are 3 different cases when |update_password| == true:
   // 1.A change password form was submitted and the user has only one stored
-  // credential. Then form_to_save.pending_credentials() should correspond to
+  // credential. Then form_to_save.GetPendingCredentials() should correspond to
   // the unique element from |form_to_save.best_matches_|.
   // 2.A change password form was submitted and the user has more than one
   // stored credential. Then we shouldn't expect anything from
-  // form_to_save.pending_credentials() except correct origin, since we don't
+  // form_to_save.GetPendingCredentials() except correct origin, since we don't
   // know which credentials should be updated.
   // 3.A sign-in password form was submitted with a password different from
-  // the stored one. In this case form_to_save.password_overridden() == true
-  // and form_to_save.pending_credentials() should correspond to the credential
-  // that was overidden.
+  // the stored one. In this case form_to_save.IsPasswordOverridden() == true
+  // and form_to_save.GetPendingCredentials() should correspond to the
+  // credential that was overidden.
   virtual bool PromptUserToSaveOrUpdatePassword(
-      std::unique_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool is_update) = 0;
 
   // Informs the embedder that the user started typing a password and a password
   // prompt should be available on click on the omnibox icon.
   virtual void ShowManualFallbackForSaving(
-      std::unique_ptr<PasswordFormManager> form_to_save,
+      std::unique_ptr<PasswordFormManagerForUI> form_to_save,
       bool has_generated_password,
       bool is_update) = 0;
 
   // Informs the embedder that the user cleared the password field and the
   // fallback for password saving should be not available.
   virtual void HideManualFallbackForSaving() = 0;
+
+  // Informs the embedder that the focus changed to a different input in the
+  // same frame (e.g. tabbed from email to password field).
+  virtual void FocusedInputChanged(
+      password_manager::PasswordManagerDriver* driver,
+      autofill::mojom::FocusedFieldType focused_field_type) = 0;
 
   // Informs the embedder of a password forms that the user should choose from.
   // Returns true if the prompt is indeed displayed. If the prompt is not
@@ -118,10 +144,6 @@ class PasswordManagerClient {
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
       const CredentialsCallback& callback) = 0;
-
-  // Informs the embedder that the user has manually requested to save the
-  // password in the focused password field.
-  virtual void ForceSavePassword();
 
   // Informs the embedder that the user has manually requested to generate a
   // password in the focused password field.
@@ -152,7 +174,7 @@ class PasswordManagerClient {
   // Called when a password is saved in an automated fashion. Embedder may
   // inform the user that this save has occured.
   virtual void AutomaticPasswordSave(
-      std::unique_ptr<PasswordFormManager> saved_form_manager) = 0;
+      std::unique_ptr<PasswordFormManagerForUI> saved_form_manager) = 0;
 
   // Called when a password is autofilled. |best_matches| contains the
   // PasswordForm into which a password was filled: the client may choose to
@@ -165,26 +187,28 @@ class PasswordManagerClient {
       const std::map<base::string16, const autofill::PasswordForm*>&
           best_matches,
       const GURL& origin,
-      const std::vector<const autofill::PasswordForm*>* federated_matches)
-      const;
+      const std::vector<const autofill::PasswordForm*>* federated_matches);
+
+  // Sends username/password from |preferred_match| for filling in the http auth
+  // prompt.
+  virtual void AutofillHttpAuth(const autofill::PasswordForm& preferred_match,
+                                const PasswordFormManagerForUI* form_manager);
 
   // Gets prefs associated with this embedder.
-  virtual PrefService* GetPrefs() = 0;
+  virtual PrefService* GetPrefs() const = 0;
 
   // Returns the PasswordStore associated with this instance.
   virtual PasswordStore* GetPasswordStore() const = 0;
 
   // Reports whether and how passwords are synced in the embedder. The default
-  // implementation always returns NOT_SYNCING_PASSWORDS.
-  // TODO(vabr): Factor this out of the client to the sync layer.
-  virtual PasswordSyncState GetPasswordSyncState() const;
+  // implementation always returns NOT_SYNCING.
+  virtual SyncState GetPasswordSyncState() const;
 
   // Returns true if last navigation page had HTTP error i.e 5XX or 4XX
   virtual bool WasLastNavigationHTTPError() const;
 
-  // Returns whether any SSL certificate errors were encountered as a result of
-  // the last page load.
-  virtual bool DidLastPageLoadEncounterSSLErrors() const;
+  // Obtains the cert status for the main frame.
+  virtual net::CertStatus GetMainFrameCertStatus() const;
 
   // If this browsing session should not be persisted.
   virtual bool IsIncognito() const;
@@ -194,8 +218,11 @@ class PasswordManagerClient {
   PasswordManager* GetPasswordManager();
   virtual const PasswordManager* GetPasswordManager() const;
 
-  // Returns the AutofillManager for the main frame.
-  virtual autofill::AutofillManager* GetAutofillManagerForMainFrame();
+  // Returns the HttpAuthManager associated with this client.
+  virtual HttpAuthManager* GetHttpAuthManager();
+
+  // Returns the AutofillDownloadManager for votes uploading.
+  virtual autofill::AutofillDownloadManager* GetAutofillDownloadManager();
 
   // Returns the main frame URL.
   virtual const GURL& GetMainFrameURL() const;
@@ -209,12 +236,15 @@ class PasswordManagerClient {
   virtual const CredentialsFilter* GetStoreResultFilter() const = 0;
 
   // Returns a LogManager instance.
-  virtual const LogManager* GetLogManager() const;
+  virtual const autofill::LogManager* GetLogManager() const;
 
   // Record that we saw a password field on this page.
   virtual void AnnotateNavigationEntry(bool has_password_field);
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
+  // Returns the current best guess as to the page's display language.
+  virtual std::string GetPageLanguage() const;
+
+#if defined(FULL_SAFE_BROWSING)
   // Return the PasswordProtectionService associated with this instance.
   virtual safe_browsing::PasswordProtectionService*
   GetPasswordProtectionService() const = 0;
@@ -226,11 +256,15 @@ class PasswordManagerClient {
                                            const GURL& frame_url) = 0;
 
   // Checks the safe browsing reputation of the webpage where password reuse
-  // happens. This is called by the PasswordReuseDetectionManager when either
-  // the sync password or a saved password is typed on the wrong domain.
-  // This may trigger a warning dialog if it looks like the page is phishy.
+  // happens. This is called by the PasswordReuseDetectionManager when a
+  // protected password is typed on the wrong domain. This may trigger a
+  // warning dialog if it looks like the page is phishy.
+  // The |username| is the user name of the reused password. The user name
+  // can be an email or a username for a non-GAIA or saved-password reuse. No
+  // validation has been done on it.
   virtual void CheckProtectedPasswordEntry(
-      bool matches_sync_password,
+      metrics_util::PasswordType reused_password_type,
+      const std::string& username,
       const std::vector<std::string>& matching_domains,
       bool password_field_exists) = 0;
 
@@ -238,19 +272,43 @@ class PasswordManagerClient {
   virtual void LogPasswordReuseDetectedEvent() = 0;
 #endif
 
-  // Gets the UKM service associated with this client (for metrics).
-  virtual ukm::UkmRecorder* GetUkmRecorder() = 0;
-
   // Gets a ukm::SourceId that is associated with the WebContents object
-  // and its last committed main frame navigation. Note that the URL binding
-  // has to happen by the caller at a later point.
+  // and its last committed main frame navigation.
   virtual ukm::SourceId GetUkmSourceId() = 0;
 
   // Gets a metrics recorder for the currently committed navigation.
   // As PasswordManagerMetricsRecorder submits metrics on destruction, a new
   // instance will be returned for each committed navigation. A caller must not
-  // hold on to the pointer.
-  virtual PasswordManagerMetricsRecorder& GetMetricsRecorder() = 0;
+  // hold on to the pointer. This method returns a nullptr if the client
+  // does not support metrics recording.
+  virtual PasswordManagerMetricsRecorder* GetMetricsRecorder() = 0;
+
+  // Gets the PasswordRequirementsService associated with the client. It is
+  // valid that this method returns a nullptr if the PasswordRequirementsService
+  // has not been implemented for a specific platform or the context is an
+  // incognito context. Callers should guard against this.
+  virtual PasswordRequirementsService* GetPasswordRequirementsService();
+
+  // Returns the favicon service used to retrieve icons for an origin.
+  virtual favicon::FaviconService* GetFaviconService();
+
+  // Whether the primary account of the current profile is under Advanced
+  // Protection - a type of Google Account that helps protect our most at-risk
+  // users.
+  virtual bool IsUnderAdvancedProtection() const;
+
+  // Causes all live PasswordFormManager objects to query the password store
+  // again. Results in updating the fill information on the page.
+  virtual void UpdateFormManagers() {}
+
+  // Causes a navigation to the manage passwords page.
+  virtual void NavigateToManagePasswordsPage(ManagePasswordsReferrer referrer) {
+  }
+
+  virtual bool IsIsolationForPasswordSitesEnabled() const = 0;
+
+  // Returns true if the current page is to the new tab page.
+  virtual bool IsNewTabPage() const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PasswordManagerClient);

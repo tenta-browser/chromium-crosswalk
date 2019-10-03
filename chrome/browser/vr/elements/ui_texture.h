@@ -10,7 +10,6 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
-#include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -20,9 +19,7 @@ class SkCanvas;
 
 namespace gfx {
 
-class FontList;
 class PointF;
-class RenderText;
 
 }  // namespace gfx
 
@@ -33,11 +30,17 @@ class UiTexture {
   UiTexture();
   virtual ~UiTexture();
 
-  void DrawAndLayout(SkCanvas* canvas, const gfx::Size& texture_size);
-  virtual gfx::Size GetPreferredTextureSize(int maximum_width) const = 0;
-  virtual gfx::SizeF GetDrawnSize() const = 0;
-  virtual bool HitTest(const gfx::PointF& point) const;
+  void DrawTexture(SkCanvas* canvas, const gfx::Size& texture_size);
 
+  // Marks the texture as drawn, when there isn't anything to draw.  For
+  // example, a text element with no text in it.
+  void DrawEmptyTexture();
+
+  virtual void Draw(SkCanvas* canvas, const gfx::Size& texture_size) = 0;
+
+  virtual bool LocalHitTest(const gfx::PointF& point) const;
+
+  bool measured() const { return measured_; }
   bool dirty() const { return dirty_; }
 
   void OnInitialized();
@@ -47,37 +50,7 @@ class UiTexture {
   void SetForegroundColor(SkColor color);
   void SetBackgroundColor(SkColor color);
 
-  // This function sets |font_list| to a list of available fonts for |text|. If
-  // no font supports |text|, it returns false and leave |font_list| untouched.
-  static bool GetDefaultFontList(int font_size,
-                                 base::string16 text,
-                                 gfx::FontList* font_list);
-
-  // This function sets |font_list| to a list of available fonts for |text|. If
-  // the font with |preferred_font_name| is available and supports |text|,
-  // |font_list| will be configured to use the preferred font instead of default
-  // font. If no font supports |text|, it returns false and leave |font_list|
-  // untouched.
-  static bool GetFontList(const std::string& preferred_font_name,
-                          int font_size,
-                          base::string16 text,
-                          gfx::FontList* font_list);
-
-  enum TextAlignment {
-    kTextAlignmentNone,
-    kTextAlignmentLeft,
-    kTextAlignmentCenter,
-    kTextAlignmentRight,
-  };
-
-  enum WrappingBehavior {
-    kWrappingBehaviorWrap,
-    kWrappingBehaviorNoWrap,
-  };
-
  protected:
-  virtual void Draw(SkCanvas* canvas, const gfx::Size& texture_size) = 0;
-
   template <typename T>
   void SetAndDirty(T* target, const T& value) {
     if (*target != value)
@@ -85,36 +58,20 @@ class UiTexture {
     *target = value;
   }
 
-  // Prepares a set of RenderText objects with the given color and fonts.
-  // Attempts to fit the text within the provided size. |flags| specifies how
-  // the text should be rendered. If multiline is requested and provided height
-  // is 0, it will be set to the minimum needed to fit the whole text. If
-  // multiline is not requested and provided width is 0, it will be set to the
-  // minimum needed to fit the whole text.
-  static std::vector<std::unique_ptr<gfx::RenderText>> PrepareDrawStringRect(
-      const base::string16& text,
-      const gfx::FontList& font_list,
-      SkColor color,
-      gfx::Rect* bounds,
-      TextAlignment text_alignment,
-      WrappingBehavior wrapping_behavior);
+  void set_dirty() {
+    measured_ = false;
+    dirty_ = true;
+  }
 
-  static std::unique_ptr<gfx::RenderText> CreateRenderText();
+  // Textures that depend on measurement to draw must call this when they
+  // complete measurement work.
+  void set_measured() { measured_ = true; }
 
-  static std::unique_ptr<gfx::RenderText> CreateConfiguredRenderText(
-      const base::string16& text,
-      const gfx::FontList& font_list,
-      SkColor color,
-      TextAlignment text_alignment);
-
-  static bool IsRTL();
-  static void SetForceFontFallbackFailureForTesting(bool force);
-
-  void set_dirty() { dirty_ = true; }
   SkColor foreground_color() const;
   SkColor background_color() const;
 
  private:
+  bool measured_ = false;
   bool dirty_ = true;
   base::Optional<SkColor> foreground_color_;
   base::Optional<SkColor> background_color_;

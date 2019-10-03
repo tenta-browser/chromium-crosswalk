@@ -5,9 +5,9 @@
 #include "net/ssl/openssl_ssl_util.h"
 
 #include <errno.h>
+
 #include <utility>
 
-#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -16,6 +16,7 @@
 #include "crypto/openssl_util.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_util.h"
+#include "net/log/net_log_with_source.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "third_party/boringssl/src/include/openssl/err.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
@@ -104,6 +105,10 @@ int MapOpenSSLErrorSSL(uint32_t error_code) {
       return ERR_SSL_WEAK_SERVER_EPHEMERAL_DH_KEY;
     case SSL_R_SERVER_CERT_CHANGED:
       return ERR_SSL_SERVER_CERT_CHANGED;
+    case SSL_R_WRONG_VERSION_ON_EARLY_DATA:
+      return ERR_WRONG_VERSION_ON_EARLY_DATA;
+    case SSL_R_TLS13_DOWNGRADE:
+      return ERR_TLS13_DOWNGRADE_DETECTED;
     // SSL_R_SSLV3_ALERT_HANDSHAKE_FAILURE may be returned from the server after
     // receiving ClientHello if there's no common supported cipher. Map that
     // specific case to ERR_SSL_VERSION_OR_CIPHER_MISMATCH to match the NSS
@@ -116,27 +121,27 @@ int MapOpenSSLErrorSSL(uint32_t error_code) {
       }
       return ERR_SSL_PROTOCOL_ERROR;
     }
+    case SSL_R_KEY_USAGE_BIT_INCORRECT:
+      return ERR_SSL_KEY_USAGE_INCOMPATIBLE;
     default:
       return ERR_SSL_PROTOCOL_ERROR;
   }
 }
 
-std::unique_ptr<base::Value> NetLogOpenSSLErrorCallback(
-    int net_error,
-    int ssl_error,
-    const OpenSSLErrorInfo& error_info,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("net_error", net_error);
-  dict->SetInteger("ssl_error", ssl_error);
+base::Value NetLogOpenSSLErrorParams(int net_error,
+                                     int ssl_error,
+                                     const OpenSSLErrorInfo& error_info) {
+  base::DictionaryValue dict;
+  dict.SetInteger("net_error", net_error);
+  dict.SetInteger("ssl_error", ssl_error);
   if (error_info.error_code != 0) {
-    dict->SetInteger("error_lib", ERR_GET_LIB(error_info.error_code));
-    dict->SetInteger("error_reason", ERR_GET_REASON(error_info.error_code));
+    dict.SetInteger("error_lib", ERR_GET_LIB(error_info.error_code));
+    dict.SetInteger("error_reason", ERR_GET_REASON(error_info.error_code));
   }
-  if (error_info.file != NULL)
-    dict->SetString("file", error_info.file);
+  if (error_info.file != nullptr)
+    dict.SetString("file", error_info.file);
   if (error_info.line != 0)
-    dict->SetInteger("line", error_info.line);
+    dict.SetInteger("line", error_info.line);
   return std::move(dict);
 }
 
@@ -168,10 +173,12 @@ int MapOpenSSLErrorWithDetails(int err,
     case SSL_ERROR_WANT_READ:
     case SSL_ERROR_WANT_WRITE:
       return ERR_IO_PENDING;
+    case SSL_ERROR_EARLY_DATA_REJECTED:
+      return ERR_EARLY_DATA_REJECTED;
     case SSL_ERROR_SYSCALL:
-      LOG(ERROR) << "OpenSSL SYSCALL error, earliest error code in "
-                    "error queue: " << ERR_peek_error() << ", errno: "
-                 << errno;
+      PLOG(ERROR) << "OpenSSL SYSCALL error, earliest error code in "
+                     "error queue: "
+                  << ERR_peek_error();
       return ERR_FAILED;
     case SSL_ERROR_SSL:
       // Walk down the error stack to find an SSL or net error.
@@ -202,12 +209,14 @@ int MapOpenSSLErrorWithDetails(int err,
   }
 }
 
-NetLogParametersCallback CreateNetLogOpenSSLErrorCallback(
-    int net_error,
-    int ssl_error,
-    const OpenSSLErrorInfo& error_info) {
-  return base::Bind(&NetLogOpenSSLErrorCallback,
-                    net_error, ssl_error, error_info);
+void NetLogOpenSSLError(const NetLogWithSource& net_log,
+                        NetLogEventType type,
+                        int net_error,
+                        int ssl_error,
+                        const OpenSSLErrorInfo& error_info) {
+  net_log.AddEvent(type, [&] {
+    return NetLogOpenSSLErrorParams(net_error, ssl_error, error_info);
+  });
 }
 
 int GetNetSSLVersion(SSL* ssl) {
@@ -231,11 +240,10 @@ bool SetSSLChainAndKey(SSL* ssl,
                        EVP_PKEY* pkey,
                        const SSL_PRIVATE_KEY_METHOD* custom_key) {
   std::vector<CRYPTO_BUFFER*> chain_raw;
-  chain_raw.push_back(cert->os_cert_handle());
-  for (X509Certificate::OSCertHandle handle :
-       cert->GetIntermediateCertificates()) {
-    chain_raw.push_back(handle);
-  }
+  chain_raw.reserve(1 + cert->intermediate_buffers().size());
+  chain_raw.push_back(cert->cert_buffer());
+  for (const auto& handle : cert->intermediate_buffers())
+    chain_raw.push_back(handle.get());
 
   if (!SSL_set_chain_and_key(ssl, chain_raw.data(), chain_raw.size(), pkey,
                              custom_key)) {

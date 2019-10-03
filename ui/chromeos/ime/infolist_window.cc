@@ -57,10 +57,8 @@ class InfolistBorder : public views::BubbleBorder {
 
 InfolistBorder::InfolistBorder()
     : views::BubbleBorder(views::BubbleBorder::LEFT_CENTER,
-                          views::BubbleBorder::NO_SHADOW,
-                          SK_ColorTRANSPARENT) {
-  set_paint_arrow(views::BubbleBorder::PAINT_NONE);
-}
+                          views::BubbleBorder::BIG_SHADOW,
+                          SK_ColorTRANSPARENT) {}
 
 InfolistBorder::~InfolistBorder() {}
 
@@ -73,8 +71,7 @@ gfx::Rect InfolistBorder::GetBounds(const gfx::Rect& anchor_rect,
   // although it doesn't draw the arrow. The arrow offset is the half of
   // |contents_size| by default but can be modified through the off-screen logic
   // in BubbleFrameView.
-  bounds.set_y(anchor_rect.y() + contents_size.height() / 2 -
-               GetArrowOffset(contents_size));
+  bounds.set_y(anchor_rect.y() + contents_size.height() / 2);
   return bounds;
 }
 
@@ -117,7 +114,8 @@ InfolistEntryView::InfolistEntryView(const ui::InfolistEntry& entry,
                                      const gfx::FontList& title_font_list,
                                      const gfx::FontList& description_font_list)
     : entry_(entry) {
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kVertical));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
 
   title_label_ = new views::Label(entry.title, {title_font_list});
   title_label_->SetPosition(gfx::Point(0, 0));
@@ -175,7 +173,7 @@ InfolistWindow::InfolistWindow(views::View* candidate_window,
       title_font_list_(gfx::Font(kJapaneseFontName, kFontSizeDelta + 15)),
       description_font_list_(
           gfx::Font(kJapaneseFontName, kFontSizeDelta + 11)) {
-  set_can_activate(false);
+  SetCanActivate(false);
   set_accept_events(false);
   set_margins(gfx::Insets());
 
@@ -185,7 +183,8 @@ InfolistWindow::InfolistWindow(views::View* candidate_window,
       1, GetNativeTheme()->GetSystemColor(
              ui::NativeTheme::kColorId_MenuBorderColor)));
 
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kVertical));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
 
   views::Label* caption_label = new views::Label(
       l10n_util::GetStringUTF16(IDS_CHROMEOS_IME_INFOLIST_WINDOW_TITLE));
@@ -197,7 +196,7 @@ InfolistWindow::InfolistWindow(views::View* candidate_window,
       color_utils::AlphaBlend(SK_ColorBLACK,
                               GetNativeTheme()->GetSystemColor(
                                   ui::NativeTheme::kColorId_WindowBackground),
-                              0x10)));
+                              0.0625f)));
 
   AddChildView(caption_label);
 
@@ -243,7 +242,6 @@ void InfolistWindow::Relayout(const std::vector<ui::InfolistEntry>& entries) {
   }
 
   Layout();
-  GetBubbleFrameView()->bubble_border()->set_arrow_offset(0);
   SizeToContents();
 }
 

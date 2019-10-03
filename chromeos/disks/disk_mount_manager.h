@@ -11,12 +11,14 @@
 #include <memory>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/files/file_path.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/cros_disks_client.h"
 
 namespace chromeos {
 namespace disks {
+
+class Disk;
 
 // Condition of mounted filesystem.
 enum MountCondition {
@@ -25,9 +27,20 @@ enum MountCondition {
   MOUNT_CONDITION_UNSUPPORTED_FILESYSTEM,
 };
 
+// Possible filesystem types that can be passed to FormatMountedDevice.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class FormatFileSystemType {
+  kUnknown = 0,
+  kVfat = 1,
+  kExfat = 2,
+  kNtfs = 3,
+  kMaxValue = kNtfs,
+};
+
 // This class handles the interaction with cros-disks.
 // Other classes can add themselves as observers.
-class CHROMEOS_EXPORT DiskMountManager {
+class COMPONENT_EXPORT(CHROMEOS_DISKS) DiskMountManager {
  public:
   // Event types passed to the observers.
   enum DiskEvent {
@@ -54,159 +67,6 @@ class CHROMEOS_EXPORT DiskMountManager {
 
   enum RenameEvent { RENAME_STARTED, RENAME_COMPLETED };
 
-  // Used to house an instance of each found mount device.
-  class Disk {
-   public:
-    Disk(const std::string& device_path,
-         // The path to the mount point of this device. Empty if not mounted.
-         // (e.g. /media/removable/VOLUME)
-         const std::string& mount_path,
-         // Whether the device is mounted in read-only mode by the policy.
-         // Valid only when the device mounted and mount_path_ is non-empty.
-         bool write_disabled_by_policy,
-         const std::string& system_path,
-         const std::string& file_path,
-         const std::string& device_label,
-         const std::string& drive_label,
-         const std::string& vendor_id,
-         const std::string& vendor_name,
-         const std::string& product_id,
-         const std::string& product_name,
-         const std::string& fs_uuid,
-         const std::string& system_path_prefix,
-         DeviceType device_type,
-         uint64_t total_size_in_bytes,
-         bool is_parent,
-         bool is_read_only_hardware,
-         bool has_media,
-         bool on_boot_device,
-         bool on_removable_device,
-         bool is_hidden,
-         const std::string& file_system_type,
-         const std::string& base_mount_path);
-    Disk(const Disk& other);
-    ~Disk();
-
-    // The path of the device, used by devicekit-disks.
-    // (e.g. /sys/devices/pci0000:00/.../8:0:0:0/block/sdb/sdb1)
-    const std::string& device_path() const { return device_path_; }
-
-    // The path to the mount point of this device. Will be empty if not mounted.
-    // (e.g. /media/removable/VOLUME)
-    const std::string& mount_path() const { return mount_path_; }
-
-    // The path of the device according to the udev system.
-    // (e.g. /sys/devices/pci0000:00/.../8:0:0:0/block/sdb/sdb1)
-    const std::string& system_path() const { return system_path_; }
-
-    // The path of the device according to filesystem.
-    // (e.g. /dev/sdb)
-    const std::string& file_path() const { return file_path_; }
-
-    // Device's label.
-    const std::string& device_label() const { return device_label_; }
-
-    void set_device_label(const std::string& device_label) {
-      device_label_ = device_label;
-    }
-
-    // If disk is a parent, then its label, else parents label.
-    // (e.g. "TransMemory")
-    const std::string& drive_label() const { return drive_label_; }
-
-    // Vendor ID of the device (e.g. "18d1").
-    const std::string& vendor_id() const { return vendor_id_; }
-
-    // Vendor name of the device (e.g. "Google Inc.").
-    const std::string& vendor_name() const { return vendor_name_; }
-
-    // Product ID of the device (e.g. "4e11").
-    const std::string& product_id() const { return product_id_; }
-
-    // Product name of the device (e.g. "Nexus One").
-    const std::string& product_name() const { return product_name_; }
-
-    // Returns the file system uuid string.
-    const std::string& fs_uuid() const { return fs_uuid_; }
-
-    // Path of the system device this device's block is a part of.
-    // (e.g. /sys/devices/pci0000:00/.../8:0:0:0/)
-    const std::string& system_path_prefix() const {
-      return system_path_prefix_;
-    }
-
-    // Device type.
-    DeviceType device_type() const { return device_type_; }
-
-    // Total size of the device in bytes.
-    uint64_t total_size_in_bytes() const { return total_size_in_bytes_; }
-
-    // Is the device is a parent device (i.e. sdb rather than sdb1).
-    bool is_parent() const { return is_parent_; }
-
-    // Whether the user can write to the device. True if read-only.
-    bool is_read_only() const {
-      return is_read_only_hardware_ || write_disabled_by_policy_;
-    }
-
-    // Is the device read only.
-    bool is_read_only_hardware() const { return is_read_only_hardware_; }
-
-    // Does the device contains media.
-    bool has_media() const { return has_media_; }
-
-    // Is the device on the boot device.
-    bool on_boot_device() const { return on_boot_device_; }
-
-    // Is the device on the removable device.
-    bool on_removable_device() const { return on_removable_device_; }
-
-    // Shoud the device be shown in the UI, or automounted.
-    bool is_hidden() const { return is_hidden_; }
-
-    void set_write_disabled_by_policy(bool disable) {
-      write_disabled_by_policy_ = disable;
-    }
-
-    void clear_mount_path() { mount_path_.clear(); }
-
-    bool is_mounted() const { return !mount_path_.empty(); }
-
-    const std::string& file_system_type() const { return file_system_type_; }
-
-    void set_file_system_type(const std::string& file_system_type) {
-      file_system_type_ = file_system_type;
-    }
-    // Name of the first mount path of the disk.
-    const std::string& base_mount_path() const { return base_mount_path_; }
-
-    void SetMountPath(const std::string& mount_path);
-
-   private:
-    std::string device_path_;
-    std::string mount_path_;
-    bool write_disabled_by_policy_;
-    std::string system_path_;
-    std::string file_path_;
-    std::string device_label_;
-    std::string drive_label_;
-    std::string vendor_id_;
-    std::string vendor_name_;
-    std::string product_id_;
-    std::string product_name_;
-    std::string fs_uuid_;
-    std::string system_path_prefix_;
-    DeviceType device_type_;
-    uint64_t total_size_in_bytes_;
-    bool is_parent_;
-    bool is_read_only_hardware_;
-    bool has_media_;
-    bool on_boot_device_;
-    bool on_removable_device_;
-    bool is_hidden_;
-    std::string file_system_type_;
-    std::string base_mount_path_;
-  };
   typedef std::map<std::string, std::unique_ptr<Disk>> DiskMap;
 
   // A struct to store information about mount point.
@@ -236,36 +96,40 @@ class CHROMEOS_EXPORT DiskMountManager {
 
   // A callback function type which is called after UnmountDeviceRecursively
   // finishes.
-  typedef base::Callback<void(bool)> UnmountDeviceRecursivelyCallbackType;
+  typedef base::OnceCallback<void(MountError error_code)>
+      UnmountDeviceRecursivelyCallbackType;
 
   // A callback type for UnmountPath method.
-  typedef base::Callback<void(MountError error_code)> UnmountPathCallback;
+  typedef base::OnceCallback<void(MountError error_code)> UnmountPathCallback;
 
   // A callback type for EnsureMountInfoRefreshed method.
-  typedef base::Callback<void(bool success)> EnsureMountInfoRefreshedCallback;
+  typedef base::OnceCallback<void(bool success)>
+      EnsureMountInfoRefreshedCallback;
 
   // Implement this interface to be notified about disk/mount related events.
   class Observer {
    public:
     virtual ~Observer() {}
 
-    // Called when disk mount status is changed.
-    virtual void OnDiskEvent(DiskEvent event, const Disk* disk) = 0;
+    // Called when auto-mountable disk mount status is changed.
+    virtual void OnAutoMountableDiskEvent(DiskEvent event, const Disk& disk) {}
+    // Called when fixed storage disk status is changed.
+    virtual void OnBootDeviceDiskEvent(DiskEvent event, const Disk& disk) {}
     // Called when device status is changed.
     virtual void OnDeviceEvent(DeviceEvent event,
-                               const std::string& device_path) = 0;
+                               const std::string& device_path) {}
     // Called after a mount point has been mounted or unmounted.
     virtual void OnMountEvent(MountEvent event,
                               MountError error_code,
-                              const MountPointInfo& mount_info) = 0;
+                              const MountPointInfo& mount_info) {}
     // Called on format process events.
     virtual void OnFormatEvent(FormatEvent event,
                                FormatError error_code,
-                               const std::string& device_path) = 0;
+                               const std::string& device_path) {}
     // Called on rename process events.
     virtual void OnRenameEvent(RenameEvent event,
                                RenameError error_code,
-                               const std::string& device_path) = 0;
+                               const std::string& device_path) {}
   };
 
   virtual ~DiskMountManager() {}
@@ -290,7 +154,7 @@ class CHROMEOS_EXPORT DiskMountManager {
   // invokes |callback| when finished. If the information is already refreshed
   // and |force| is false, it just runs |callback| immediately.
   virtual void EnsureMountInfoRefreshed(
-      const EnsureMountInfoRefreshedCallback& callback,
+      EnsureMountInfoRefreshedCallback callback,
       bool force) = 0;
 
   // Mounts a device or an archive file.
@@ -304,6 +168,7 @@ class CHROMEOS_EXPORT DiskMountManager {
   virtual void MountPath(const std::string& source_path,
                          const std::string& source_format,
                          const std::string& mount_label,
+                         const std::vector<std::string>& mount_options,
                          MountType type,
                          MountAccessMode access_mode) = 0;
 
@@ -315,15 +180,20 @@ class CHROMEOS_EXPORT DiskMountManager {
   // |callback| may be empty, in which case it gets ignored.
   virtual void UnmountPath(const std::string& mount_path,
                            UnmountOptions options,
-                           const UnmountPathCallback& callback) = 0;
+                           UnmountPathCallback callback) = 0;
 
   // Remounts mounted removable devices to change the read-only mount option.
   // Devices that can be mounted only in its read-only mode will be ignored.
   virtual void RemountAllRemovableDrives(chromeos::MountAccessMode mode) = 0;
 
-  // Formats Device given its mount path. Unmounts the device.
+  // Formats device mounted at |mount_path| with the given filesystem and label.
+  // Also unmounts the device before formatting.
   // Example: mount_path: /media/VOLUME_LABEL
-  virtual void FormatMountedDevice(const std::string& mount_path) = 0;
+  //          filesystem: FormatFileSystemType::kNtfs
+  //          label: MYUSB
+  virtual void FormatMountedDevice(const std::string& mount_path,
+                                   FormatFileSystemType filesystem,
+                                   const std::string& label) = 0;
 
   // Renames Device given its mount path.
   // Example: mount_path: /media/VOLUME_LABEL
@@ -334,7 +204,7 @@ class CHROMEOS_EXPORT DiskMountManager {
   // Unmounts device_path and all of its known children.
   virtual void UnmountDeviceRecursively(
       const std::string& device_path,
-      const UnmountDeviceRecursivelyCallbackType& callback) = 0;
+      UnmountDeviceRecursivelyCallbackType callback) = 0;
 
   // Used in tests to initialize the manager's disk and mount point sets.
   // Default implementation does noting. It just fails.

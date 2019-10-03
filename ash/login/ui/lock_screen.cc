@@ -9,39 +9,26 @@
 
 #include "ash/login/ui/lock_contents_view.h"
 #include "ash/login/ui/lock_debug_view.h"
-#include "ash/login/ui/lock_window.h"
-#include "ash/login/ui/login_constants.h"
 #include "ash/login/ui/login_data_dispatcher.h"
-#include "ash/public/interfaces/session_controller.mojom.h"
-#include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/login/ui/login_detachable_base_model.h"
+#include "ash/public/cpp/lock_screen_widget_factory.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shelf/login_shelf_view.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/tray_action/tray_action.h"
-#include "ash/wallpaper/wallpaper_widget_controller.h"
+#include "ash/wallpaper/wallpaper_controller_impl.h"
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "chromeos/chromeos_switches.h"
-#include "ui/compositor/layer.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/views/widget/widget.h"
+#include "ui/wm/core/capture_controller.h"
 
 namespace ash {
 namespace {
-
-views::View* BuildContentsView(mojom::TrayActionState initial_note_action_state,
-                               LoginDataDispatcher* data_dispatcher) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kShowLoginDevOverlay)) {
-    return new LockDebugView(initial_note_action_state, data_dispatcher);
-  }
-  return new LockContentsView(initial_note_action_state, data_dispatcher);
-}
-
-ui::Layer* GetWallpaperLayerForWindow(aura::Window* window) {
-  return RootWindowController::ForWindow(window)
-      ->wallpaper_widget_controller()
-      ->widget()
-      ->GetLayer();
-}
 
 // Global lock screen instance. There can only ever be on lock screen at a
 // time.
@@ -49,12 +36,27 @@ LockScreen* instance_ = nullptr;
 
 }  // namespace
 
-LockScreen::LockScreen()
-    : tray_action_observer_(this), session_observer_(this) {
-  tray_action_observer_.Add(ash::Shell::Get()->tray_action());
+LockScreen::TestApi::TestApi(LockScreen* lock_screen)
+    : lock_screen_(lock_screen) {}
+
+LockScreen::TestApi::~TestApi() = default;
+
+LockContentsView* LockScreen::TestApi::contents_view() const {
+  return lock_screen_->contents_view_;
 }
 
-LockScreen::~LockScreen() = default;
+LockScreen::LockScreen(ScreenType type) : type_(type) {
+  tray_action_observer_.Add(ash::Shell::Get()->tray_action());
+  saved_clipboard_ = ui::Clipboard::TakeForCurrentThread();
+}
+
+LockScreen::~LockScreen() {
+  widget_.reset();
+
+  ui::Clipboard::DestroyClipboardForCurrentThread();
+  if (saved_clipboard_)
+    ui::Clipboard::SetClipboardForCurrentThread(std::move(saved_clipboard_));
+}
 
 // static
 LockScreen* LockScreen::Get() {
@@ -63,69 +65,110 @@ LockScreen* LockScreen::Get() {
 }
 
 // static
-void LockScreen::Show() {
+void LockScreen::Show(ScreenType type) {
   CHECK(!instance_);
-  instance_ = new LockScreen();
+  // Capture should be released when locked.
+  ::wm::CaptureController::Get()->SetCapture(nullptr);
 
-  auto data_dispatcher = std::make_unique<LoginDataDispatcher>();
-  auto* contents = BuildContentsView(
-      ash::Shell::Get()->tray_action()->GetLockScreenNoteState(),
-      data_dispatcher.get());
+  instance_ = new LockScreen(type);
 
-  auto* window = instance_->window_ = new LockWindow(Shell::GetAshConfig());
-  window->SetBounds(display::Screen::GetScreen()->GetPrimaryDisplay().bounds());
-  window->SetContentsView(contents);
-  window->set_data_dispatcher(std::move(data_dispatcher));
-  window->Show();
+  aura::Window* parent = nullptr;
+  if (Shell::HasInstance()) {
+    parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
+                                 kShellWindowId_LockScreenContainer);
+  }
+  instance_->widget_ = CreateLockScreenWidget(parent);
+  instance_->widget_->SetBounds(
+      display::Screen::GetScreen()->GetPrimaryDisplay().bounds());
+
+  auto initial_note_action_state =
+      Shell::Get()->tray_action()->GetLockScreenNoteState();
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kShowLoginDevOverlay)) {
+    auto* debug_view = new LockDebugView(initial_note_action_state, type);
+    instance_->contents_view_ = debug_view->lock();
+    instance_->widget_->SetContentsView(debug_view);
+  } else {
+    auto detachable_base_model = LoginDetachableBaseModel::Create(
+        Shell::Get()->detachable_base_handler());
+    instance_->contents_view_ = new LockContentsView(
+        initial_note_action_state, type,
+        Shell::Get()->login_screen_controller()->data_dispatcher(),
+        std::move(detachable_base_model));
+    instance_->widget_->SetContentsView(instance_->contents_view_);
+  }
+
+  // Postpone showing the screen after the animation of the first wallpaper
+  // completes, to make the transition smooth. The callback will be dispatched
+  // immediately if the animation is already complete (e.g. kLock).
+  Shell::Get()->wallpaper_controller()->AddFirstWallpaperAnimationEndCallback(
+      base::BindOnce([]() {
+        // |instance_| may already be destroyed in tests.
+        if (!instance_ || instance_->is_shown_)
+          return;
+        instance_->is_shown_ = true;
+        instance_->widget_->Show();
+      }),
+      instance_->widget_->GetNativeView());
 }
 
 // static
-bool LockScreen::IsShown() {
+bool LockScreen::HasInstance() {
   return !!instance_;
 }
 
 void LockScreen::Destroy() {
+  LoginScreenController::AuthenticationStage authentication_stage =
+      ash::Shell::Get()->login_screen_controller()->authentication_stage();
+  base::debug::Alias(&authentication_stage);
+  if (ash::Shell::Get()->login_screen_controller()->authentication_stage() !=
+      authentication_stage) {
+    LOG(FATAL) << "Unexpected authentication stage "
+               << static_cast<int>(authentication_stage);
+  }
   CHECK_EQ(instance_, this);
 
-  // Restore the initial wallpaper bluriness if they were changed.
-  for (auto it = initial_blur_.begin(); it != initial_blur_.end(); ++it)
-    it->first->SetLayerBlur(it->second);
-  window_->Close();
+  Shell::Get()->login_screen_controller()->data_dispatcher()->RemoveObserver(
+      Shelf::ForWindow(Shell::GetPrimaryRootWindow())
+          ->shelf_widget()
+          ->login_shelf_view());
+
   delete instance_;
   instance_ = nullptr;
 }
 
-void LockScreen::ToggleBlurForDebug() {
-  // Save the initial wallpaper bluriness upon the first time this is called.
-  if (instance_->initial_blur_.empty()) {
-    for (aura::Window* window : Shell::GetAllRootWindows()) {
-      ui::Layer* layer = GetWallpaperLayerForWindow(window);
-      instance_->initial_blur_[layer] = layer->layer_blur();
-    }
-  }
-  for (aura::Window* window : Shell::GetAllRootWindows()) {
-    ui::Layer* layer = GetWallpaperLayerForWindow(window);
-    if (layer->layer_blur() > 0.0f) {
-      layer->SetLayerBlur(0.0f);
-    } else {
-      layer->SetLayerBlur(login_constants::kBlurSigma);
-    }
-  }
+void LockScreen::FocusNextUser() {
+  contents_view_->FocusNextUser();
 }
 
-LoginDataDispatcher* LockScreen::data_dispatcher() {
-  return window_->data_dispatcher();
+void LockScreen::FocusPreviousUser() {
+  contents_view_->FocusPreviousUser();
+}
+
+void LockScreen::ShowParentAccessDialog() {
+  contents_view_->ShowParentAccessDialog(true);
 }
 
 void LockScreen::OnLockScreenNoteStateChanged(mojom::TrayActionState state) {
-  if (data_dispatcher())
-    data_dispatcher()->SetLockScreenNoteState(state);
+  Shell::Get()
+      ->login_screen_controller()
+      ->data_dispatcher()
+      ->SetLockScreenNoteState(state);
+}
+
+void LockScreen::OnSessionStateChanged(session_manager::SessionState state) {
+  if (type_ == ScreenType::kLogin &&
+      state == session_manager::SessionState::ACTIVE) {
+    Destroy();
+  }
 }
 
 void LockScreen::OnLockStateChanged(bool locked) {
+  if (type_ != ScreenType::kLock)
+    return;
+
   if (!locked)
     Destroy();
-  Shell::Get()->metrics()->login_metrics_recorder()->Reset();
 }
 
 }  // namespace ash

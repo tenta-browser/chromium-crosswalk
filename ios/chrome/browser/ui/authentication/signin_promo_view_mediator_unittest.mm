@@ -6,9 +6,11 @@
 
 #include "base/run_loop.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
-#import "ios/chrome/browser/ui/authentication/signin_promo_view_configurator.h"
-#import "ios/chrome/browser/ui/authentication/signin_promo_view_consumer.h"
+#include "components/signin/public/base/signin_metrics.h"
+#include "components/unified_consent/feature.h"
+#import "ios/chrome/browser/ui/authentication/cells/signin_promo_view.h"
+#import "ios/chrome/browser/ui/authentication/cells/signin_promo_view_configurator.h"
+#import "ios/chrome/browser/ui/authentication/cells/signin_promo_view_consumer.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
@@ -132,10 +134,15 @@ class SigninPromoViewMediatorTest : public PlatformTest {
     NSRange profileNameRange =
         [primary_button_title_ rangeOfString:userFullName];
     EXPECT_NE(profileNameRange.length, 0u);
-    NSString* userEmail = expected_default_dentity_.userEmail;
-    NSRange profileEmailRange =
-        [secondary_button_title_ rangeOfString:userEmail];
-    EXPECT_NE(profileEmailRange.length, 0u);
+
+    if (!unified_consent::IsUnifiedConsentFeatureEnabled()) {
+      // Secondary buttons for sign-in promos contained the email before
+      // Unified Consent.
+      NSString* userEmail = expected_default_dentity_.userEmail;
+      NSRange profileEmailRange =
+          [secondary_button_title_ rangeOfString:userEmail];
+      EXPECT_NE(profileEmailRange.length, 0u);
+    }
   }
 
   // Mediator used for the tests.
@@ -248,11 +255,13 @@ TEST_F(SigninPromoViewMediatorTest, SigninPromoViewStateSignedin) {
         completion = value;
         return YES;
       }];
-  OCMExpect([consumer_ signinPromoViewMediator:mediator_
-                  shouldOpenSigninWithIdentity:nil
-                                   promoAction:signin_metrics::PromoAction::
-                                                   PROMO_ACTION_NEW_ACCOUNT
-                                    completion:completion_arg]);
+  OCMExpect([consumer_
+           signinPromoViewMediator:mediator_
+      shouldOpenSigninWithIdentity:nil
+                       promoAction:
+                           signin_metrics::PromoAction::
+                               PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT
+                        completion:completion_arg]);
   [mediator_ signinPromoViewDidTapSigninWithNewAccount:signin_promo_view_];
   EXPECT_TRUE(mediator_.isSigninInProgress);
   EXPECT_EQ(ios::SigninPromoViewState::UsedAtLeastOnce,

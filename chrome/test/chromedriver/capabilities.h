@@ -20,6 +20,7 @@
 #include "chrome/test/chromedriver/chrome/devtools_http_client.h"
 #include "chrome/test/chromedriver/chrome/log.h"
 #include "chrome/test/chromedriver/net/net_util.h"
+#include "chrome/test/chromedriver/session.h"
 
 namespace base {
 class CommandLine;
@@ -96,7 +97,36 @@ struct Capabilities {
   // Return true if android package is specified.
   bool IsAndroid() const;
 
-  Status Parse(const base::DictionaryValue& desired_caps);
+  // Accepts all W3C defined capabilities
+  // and all ChromeDriver-specific extensions.
+  Status Parse(const base::DictionaryValue& desired_caps,
+               bool w3c_compliant = true);
+
+  //
+  // W3C defined capabilities
+  //
+
+  bool accept_insecure_certs;
+
+  std::string browser_name;
+  std::string browser_version;
+  std::string platform_name;
+
+  std::string page_load_strategy;
+
+  // Data from "proxy" capability are stored in "switches" field.
+
+  base::TimeDelta script_timeout = Session::kDefaultScriptTimeout;
+  base::TimeDelta page_load_timeout = Session::kDefaultPageLoadTimeout;
+  base::TimeDelta implicit_wait_timeout = Session::kDefaultImplicitWaitTimeout;
+
+  bool strict_file_interactability;
+
+  std::string unhandled_prompt_behavior;
+
+  //
+  // ChromeDriver specific capabilities
+  //
 
   std::string android_activity;
 
@@ -105,6 +135,10 @@ struct Capabilities {
   std::string android_package;
 
   std::string android_process;
+
+  std::string android_device_socket;
+
+  std::string android_exec_name;
 
   bool android_use_running_app;
 
@@ -127,9 +161,8 @@ struct Capabilities {
 
   std::vector<std::string> extensions;
 
-  // True if should always use DevTools for taking screenshots.
-  // This is experimental and may be removed at a later point.
-  bool force_devtools_screenshot;
+  // Time to wait for extension background page to appear. If 0, no waiting.
+  base::TimeDelta extension_load_timeout;
 
   std::unique_ptr<base::DictionaryValue> local_state;
 
@@ -139,10 +172,6 @@ struct Capabilities {
 
   // If set, enable minidump for chrome crashes and save to this directory.
   std::string minidump_path;
-
-  std::string page_load_strategy;
-
-  std::string unexpected_alert_behaviour;
 
   bool network_emulation_enabled;
 

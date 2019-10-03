@@ -38,7 +38,7 @@ namespace {
 const net::BackoffEntry::Policy kDefaultBackoffPolicy = {
   // Number of initial errors (in sequence) to ignore before applying
   // exponential back-off rules.
-  0,
+  5,
 
   // Initial delay for exponential back-off in ms.
   2000,
@@ -189,11 +189,10 @@ void ChromotingHost::OnSessionAuthenticationFailed(ClientSession* client) {
 void ChromotingHost::OnSessionClosed(ClientSession* client) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  ClientSessions::iterator it =
-      std::find_if(clients_.begin(), clients_.end(),
-                   [client](const std::unique_ptr<ClientSession>& item) {
-                     return item.get() == client;
-                   });
+  auto it = std::find_if(clients_.begin(), clients_.end(),
+                         [client](const std::unique_ptr<ClientSession>& item) {
+                           return item.get() == client;
+                         });
   CHECK(it != clients_.end());
 
   bool was_authenticated = client->is_authenticated();
@@ -250,7 +249,7 @@ void ChromotingHost::OnIncomingSession(
   std::vector<HostExtension*> extension_ptrs;
   for (const auto& extension : extensions_)
     extension_ptrs.push_back(extension.get());
-  clients_.push_back(base::MakeUnique<ClientSession>(
+  clients_.push_back(std::make_unique<ClientSession>(
       this, std::move(connection), desktop_environment_factory_,
       desktop_environment_options_, max_session_duration_, pairing_registry_,
       extension_ptrs));

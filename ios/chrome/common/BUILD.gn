@@ -21,7 +21,6 @@ source_set("common") {
     "//components/version_info",
     "//components/version_info:version_string",
     "//ios/chrome/common/app_group:main_app",
-    "//ios/chrome/common/physical_web",
     "//net",
     "//url",
   ]
@@ -74,6 +73,10 @@ source_set("unit_tests") {
     "//testing/gtest",
   ]
   configs += [ "//build/config/compiler:enable_arc" ]
+  if (use_xcode_clang) {
+    # TODO(crbug.com/939749): Remove once Xcode's Clang has Clang r355012.
+    defines = [ "XCODE_CLANG" ]
+  }
 }
 
 # The block_unittest.mm has been duplicated during the migration of iOS code
@@ -94,7 +97,7 @@ source_set("noarc_unit_tests") {
   ]
 }
 
-buildflag_header("ios_app_bundle_id_prefix_header") {
-  header = "ios_app_bundle_id_prefix.h"
+buildflag_header("ios_app_bundle_id_prefix_buildflags") {
+  header = "ios_app_bundle_id_prefix_buildflags.h"
   flags = [ "IOS_APP_BUNDLE_ID_PREFIX=\"$ios_app_bundle_id_prefix\"" ]
 }

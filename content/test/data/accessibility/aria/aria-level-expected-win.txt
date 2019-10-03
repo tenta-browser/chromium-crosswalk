@@ -14,7 +14,7 @@ ROLE_SYSTEM_DOCUMENT READONLY FOCUSABLE
 ++IA2_ROLE_HEADING name='Level 5' level:5
 ++++ROLE_SYSTEM_STATICTEXT name='Level 5'
 ++ROLE_SYSTEM_OUTLINE
-++++ROLE_SYSTEM_OUTLINEITEM name='Tree item at level 1 ' EXPANDED level:1
+++++ROLE_SYSTEM_OUTLINEITEM name='Tree item at level 1' EXPANDED level:1
 ++++++ROLE_SYSTEM_STATICTEXT name='Tree item at level 1'
 ++++++ROLE_SYSTEM_GROUPING
 ++++++++ROLE_SYSTEM_OUTLINEITEM name='Tree item at level 2' level:2
@@ -28,5 +28,3 @@ ROLE_SYSTEM_DOCUMENT READONLY FOCUSABLE
 ++++ROLE_SYSTEM_OUTLINEITEM level:2
 ++++++ROLE_SYSTEM_CELL name='Cell at level 2'
 ++++++++ROLE_SYSTEM_STATICTEXT name='Cell at level 2'
-++++ROLE_SYSTEM_COLUMN
-++++IA2_ROLE_SECTION

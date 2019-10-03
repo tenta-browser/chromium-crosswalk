@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "chrome/common/media_router/discovery/media_sink_internal.h"
 #include "chrome/common/media_router/mojo/media_router.mojom.h"
 #include "chrome/common/media_router/mojo/media_router_traits_test_service.mojom.h"
@@ -35,7 +35,7 @@ class MediaRouterStructTraitsTest
     std::move(callback).Run(sink);
   }
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   mojo::BindingSet<MediaRouterTraitsTestService> traits_test_bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaRouterStructTraitsTest);
@@ -45,11 +45,12 @@ TEST_F(MediaRouterStructTraitsTest, DialMediaSink) {
   MediaSink::Id sink_id("sinkId123");
   std::string sink_name("The sink");
   SinkIconType icon_type(SinkIconType::CAST);
+  MediaRouteProviderId provider_id(MediaRouteProviderId::EXTENSION);
   std::string ip_address("192.168.1.2");
   std::string model_name("model name");
   GURL app_url("https://example.com");
 
-  MediaSink sink(sink_id, sink_name, icon_type);
+  MediaSink sink(sink_id, sink_name, icon_type, provider_id);
   DialSinkExtraData extra_data;
   EXPECT_TRUE(extra_data.ip_address.AssignFromIPLiteral(ip_address));
   extra_data.model_name = model_name;
@@ -68,9 +69,10 @@ TEST_F(MediaRouterStructTraitsTest, CastMediaSink) {
   MediaSink::Id sink_id("sinkId123");
   std::string sink_name("The sink");
   SinkIconType icon_type(SinkIconType::CAST);
+  MediaRouteProviderId provider_id(MediaRouteProviderId::EXTENSION);
   std::string model_name("model name");
 
-  MediaSink sink(sink_id, sink_name, icon_type);
+  MediaSink sink(sink_id, sink_name, icon_type, provider_id);
   CastSinkExtraData extra_data;
   extra_data.ip_endpoint = net::IPEndPoint(net::IPAddress(192, 168, 1, 2), 0);
   extra_data.model_name = model_name;
@@ -90,8 +92,9 @@ TEST_F(MediaRouterStructTraitsTest, GenericMediaSink) {
   MediaSink::Id sink_id("sinkId123");
   std::string sink_name("The sink");
   SinkIconType icon_type(SinkIconType::CAST);
+  MediaRouteProviderId provider_id(MediaRouteProviderId::EXTENSION);
 
-  MediaSink sink(sink_id, sink_name, icon_type);
+  MediaSink sink(sink_id, sink_name, icon_type, provider_id);
   MediaSinkInternal generic_sink;
   generic_sink.set_sink(sink);
 

@@ -4,11 +4,12 @@
 
 #include "chrome/renderer/net_benchmarking_extension.h"
 
+#include "base/no_destructor.h"
 #include "chrome/common/net_benchmarking.mojom.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/renderer/render_thread.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
+#include "third_party/blink/public/platform/web_cache.h"
 #include "v8/include/v8.h"
 
 using blink::WebCache;
@@ -48,16 +49,25 @@ class NetBenchmarkingWrapper : public v8::Extension {
   v8::Local<v8::FunctionTemplate> GetNativeFunctionTemplate(
       v8::Isolate* isolate,
       v8::Local<v8::String> name) override {
-    if (name->Equals(v8::String::NewFromUtf8(isolate, "ClearCache"))) {
+    if (name->StringEquals(
+            v8::String::NewFromUtf8(isolate, "ClearCache",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, ClearCache);
-    } else if (name->Equals(v8::String::NewFromUtf8(
-                   isolate, "ClearHostResolverCache"))) {
+    } else if (name->StringEquals(
+                   v8::String::NewFromUtf8(isolate, "ClearHostResolverCache",
+                                           v8::NewStringType::kInternalized)
+                       .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, ClearHostResolverCache);
-    } else if (name->Equals(
-                   v8::String::NewFromUtf8(isolate, "ClearPredictorCache"))) {
+    } else if (name->StringEquals(
+                   v8::String::NewFromUtf8(isolate, "ClearPredictorCache",
+                                           v8::NewStringType::kInternalized)
+                       .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, ClearPredictorCache);
-    } else if (name->Equals(
-                   v8::String::NewFromUtf8(isolate, "CloseConnections"))) {
+    } else if (name->StringEquals(
+                   v8::String::NewFromUtf8(isolate, "CloseConnections",
+                                           v8::NewStringType::kInternalized)
+                       .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, CloseConnections);
     }
 
@@ -65,9 +75,9 @@ class NetBenchmarkingWrapper : public v8::Extension {
   }
 
   static chrome::mojom::NetBenchmarking& GetNetBenchmarking() {
-    CR_DEFINE_STATIC_LOCAL(chrome::mojom::NetBenchmarkingPtr, net_benchmarking,
-                           (ConnectToBrowser()));
-    return *net_benchmarking;
+    static base::NoDestructor<chrome::mojom::NetBenchmarkingPtr>
+        net_benchmarking(ConnectToBrowser());
+    return **net_benchmarking;
   }
 
   static chrome::mojom::NetBenchmarkingPtr ConnectToBrowser() {
@@ -78,8 +88,7 @@ class NetBenchmarkingWrapper : public v8::Extension {
   }
 
   static void ClearCache(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    int rv;
-    GetNetBenchmarking().ClearCache(&rv);
+    GetNetBenchmarking().ClearCache();
     WebCache::Clear();
   }
 
@@ -99,8 +108,8 @@ class NetBenchmarkingWrapper : public v8::Extension {
   }
 };
 
-v8::Extension* NetBenchmarkingExtension::Get() {
-  return new NetBenchmarkingWrapper();
+std::unique_ptr<v8::Extension> NetBenchmarkingExtension::Get() {
+  return std::make_unique<NetBenchmarkingWrapper>();
 }
 
 }  // namespace extensions_v8

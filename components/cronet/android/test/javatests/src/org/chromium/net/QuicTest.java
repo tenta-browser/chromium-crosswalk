@@ -12,6 +12,7 @@ import static org.chromium.net.CronetTestRule.getTestStorage;
 
 import android.support.test.filters.LargeTest;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.json.JSONObject;
 import org.junit.After;
@@ -21,7 +22,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Log;
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
 import org.chromium.net.MetricsTestUtil.TestRequestFinishedListener;
@@ -36,7 +36,7 @@ import java.util.concurrent.Executors;
 /**
  * Tests making requests using QUIC.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class QuicTest {
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
@@ -66,8 +66,8 @@ public class QuicTest {
                                         .put("connection_options", "PACE,IW10,FOO,DEADBEEF")
                                         .put("max_server_configs_stored_in_properties", 2)
                                         .put("idle_connection_timeout_seconds", 300)
-                                        .put("migrate_sessions_on_network_change", false)
-                                        .put("migrate_sessions_early", false)
+                                        .put("migrate_sessions_on_network_change_v2", false)
+                                        .put("migrate_sessions_early_v2", false)
                                         .put("race_cert_verification", true);
         JSONObject hostResolverParams = CronetTestUtil.generateHostResolverRules();
         JSONObject experimentalOptions = new JSONObject()

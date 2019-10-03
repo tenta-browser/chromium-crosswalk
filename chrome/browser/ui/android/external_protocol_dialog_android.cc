@@ -18,28 +18,23 @@ using content::WebContents;
 // static
 void ExternalProtocolHandler::RunExternalProtocolDialog(
     const GURL& url,
-    int render_process_host_id,
-    int routing_id,
+    WebContents* web_contents,
     ui::PageTransition page_transition,
     bool has_user_gesture) {
-  WebContents* web_contents = tab_util::GetWebContentsByID(
-      render_process_host_id, routing_id);
-  if (!web_contents)
-    return;
   navigation_interception::InterceptNavigationDelegate* delegate =
       navigation_interception::InterceptNavigationDelegate::Get(web_contents);
   if (!delegate)
     return;
 
   navigation_interception::NavigationParams navigation_params(
-      url,
-      content::Referrer(),
-      has_user_gesture,       // has_user_gesture
-      false,                  // is_post, doesn't matter here.
+      url, content::Referrer(),
+      has_user_gesture,  // has_user_gesture
+      false,             // is_post, doesn't matter here.
       page_transition,
-      false,                  // is_redirect, doesn't matter here.
-      true,                   // is_external_protocol
-      false,                  // is_main_frame
-      GURL());                // base_url_for_data_url, not applicable.
+      false,    // is_redirect, doesn't matter here.
+      true,     // is_external_protocol
+      false,    // is_main_frame
+      true,     // is_renderer_initiated, doesn't matter here.
+      GURL());  // base_url_for_data_url, not applicable.
   delegate->ShouldIgnoreNavigation(navigation_params);
 }

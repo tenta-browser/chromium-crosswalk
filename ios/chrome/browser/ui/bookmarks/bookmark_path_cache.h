@@ -5,27 +5,42 @@
 #ifndef IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_PATH_CACHE_H_
 #define IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_PATH_CACHE_H_
 
-#import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// Caches the user's position in the bookmark hierarchy navigator, as well as
-// scroll position.
-@interface BookmarkPathCache : NSObject<NSCoding>
+namespace bookmarks {
+class BookmarkModel;
+}  // namespace bookmarks
 
-@property(nonatomic, assign, readonly) CGFloat position;
-@property(nonatomic, assign, readonly) int64_t folderId;
+namespace user_prefs {
+class PrefRegistrySyncable;
+}  // namespace user_prefs
 
-+ (BookmarkPathCache*)cacheForBookmarkFolder:(int64_t)folderId
-                                    position:(CGFloat)position;
+class PrefService;
 
-// This is not the designated initializer. It will return nil if there are
-// problems with the decoding process.
-- (instancetype)initWithCoder:(NSCoder*)coder;
-@end
+// Stores and retrieves the bookmark top most row that the user was last
+// viewing.
+@interface BookmarkPathCache : NSObject
 
-@interface BookmarkPathCache (ExposedForTesting)
-- (instancetype)cacheForBookmarkFolder:(int64_t)folderId
-                              position:(CGFloat)position;
+// Registers the feature preferences.
++ (void)registerBrowserStatePrefs:(user_prefs::PrefRegistrySyncable*)registry;
+
+// Caches the bookmark top most row that the user was last viewing.
++ (void)cacheBookmarkTopMostRowWithPrefService:(PrefService*)prefService
+                                      folderId:(int64_t)folderId
+                                    topMostRow:(int)topMostRow;
+
+// Gets the bookmark top most row that the user was last viewing. Returns YES if
+// a valid cache exists. |folderId| and |topMostRow| are out variables, only
+// populated if the return is YES.
++ (BOOL)getBookmarkTopMostRowCacheWithPrefService:(PrefService*)prefService
+                                            model:
+                                                (bookmarks::BookmarkModel*)model
+                                         folderId:(int64_t*)folderId
+                                       topMostRow:(int*)topMostRow;
+
+// Clears the bookmark top most row cache.
++ (void)clearBookmarkTopMostRowCacheWithPrefService:(PrefService*)prefService;
+
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_PATH_CACHE_H_

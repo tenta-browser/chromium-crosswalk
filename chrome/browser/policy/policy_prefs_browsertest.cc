@@ -52,12 +52,16 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-using testing::Return;
 using testing::_;
+using testing::Return;
 
 namespace policy {
 
 namespace {
+
+// The name of the template example in policy_test_cases.json that does not need
+// to be parsed.
+const char kTemplateSampleTest[] = "-- Template --";
 
 const char kCrosSettingsPrefix[] = "cros.";
 
@@ -127,9 +131,7 @@ class PrefMapping {
     return indicator_test_setup_js_;
   }
 
-  const std::string& indicator_selector() const {
-    return indicator_selector_;
-  }
+  const std::string& indicator_selector() const { return indicator_selector_; }
 
   const std::vector<std::unique_ptr<IndicatorTestCase>>& indicator_test_cases()
       const {
@@ -184,8 +186,7 @@ class PolicyTestCase {
 #else
 #error "Unknown platform"
 #endif
-    return std::find(supported_os_.begin(), supported_os_.end(), os) !=
-        supported_os_.end();
+    return base::Contains(supported_os_, os);
   }
   void AddSupportedOs(const std::string& os) { supported_os_.push_back(os); }
 
@@ -243,45 +244,34 @@ class PolicyTestCases {
     }
     int error_code = -1;
     std::string error_string;
-    base::DictionaryValue* dict = NULL;
-    std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
-        json, base::JSON_PARSE_RFC, &error_code, &error_string);
+    base::DictionaryValue* dict = nullptr;
+    std::unique_ptr<base::Value> value =
+        base::JSONReader::ReadAndReturnErrorDeprecated(
+            json, base::JSON_PARSE_RFC, &error_code, &error_string);
     if (!value.get() || !value->GetAsDictionary(&dict)) {
       ADD_FAILURE() << "Error parsing policy_test_cases.json: " << error_string;
       return;
     }
-    Schema chrome_schema = Schema::Wrap(GetChromeSchemaData());
-    if (!chrome_schema.valid()) {
-      ADD_FAILURE();
-      return;
-    }
-    for (base::DictionaryValue::Iterator it(*dict); !it.IsAtEnd();
-         it.Advance()) {
-      const std::string policy_name = GetPolicyName(it.key());
-      if (!chrome_schema.GetKnownProperty(policy_name).valid())
+    for (const auto& it : dict->DictItems()) {
+      const std::string policy_name = GetPolicyName(it.first);
+      if (policy_name == kTemplateSampleTest)
         continue;
-      PolicyTestCase* policy_test_case = GetPolicyTestCase(dict, it.key());
+      PolicyTestCase* policy_test_case = GetPolicyTestCase(dict, it.first);
       if (policy_test_case)
         policy_test_cases_[policy_name].push_back(policy_test_case);
     }
   }
 
   ~PolicyTestCases() {
-    for (iterator policy = policy_test_cases_.begin();
-         policy != policy_test_cases_.end();
-         ++policy) {
-      for (PolicyTestCaseVector::const_iterator test_case =
-               policy->second.begin();
-           test_case != policy->second.end();
-           ++test_case) {
-        delete *test_case;
-      }
+    for (const auto& policy : policy_test_cases_) {
+      for (PolicyTestCase* test_case : policy.second)
+        delete test_case;
     }
   }
 
   const PolicyTestCaseVector* Get(const std::string& name) const {
     const iterator it = policy_test_cases_.find(name);
-    return it == end() ? NULL : &it->second;
+    return it == end() ? nullptr : &it->second;
   }
 
   const PolicyTestCaseMap& map() const { return policy_test_cases_; }
@@ -291,20 +281,19 @@ class PolicyTestCases {
  private:
   PolicyTestCase* GetPolicyTestCase(const base::DictionaryValue* tests,
                                     const std::string& name) {
-    const base::DictionaryValue* policy_test_dict = NULL;
+    const base::DictionaryValue* policy_test_dict = nullptr;
     if (!tests->GetDictionaryWithoutPathExpansion(name, &policy_test_dict))
-      return NULL;
+      return nullptr;
     bool is_official_only = false;
     policy_test_dict->GetBoolean("official_only", &is_official_only);
     bool can_be_recommended = false;
     policy_test_dict->GetBoolean("can_be_recommended", &can_be_recommended);
     std::string indicator_selector;
     policy_test_dict->GetString("indicator_selector", &indicator_selector);
-    PolicyTestCase* policy_test_case = new PolicyTestCase(name,
-                                                          is_official_only,
-                                                          can_be_recommended,
-                                                          indicator_selector);
-    const base::ListValue* os_list = NULL;
+
+    PolicyTestCase* policy_test_case = new PolicyTestCase(
+        name, is_official_only, can_be_recommended, indicator_selector);
+    const base::ListValue* os_list = nullptr;
     if (policy_test_dict->GetList("os", &os_list)) {
       for (size_t i = 0; i < os_list->GetSize(); ++i) {
         std::string os;
@@ -312,18 +301,19 @@ class PolicyTestCases {
           policy_test_case->AddSupportedOs(os);
       }
     }
-    const base::DictionaryValue* policy = NULL;
+
+    const base::DictionaryValue* policy = nullptr;
     if (policy_test_dict->GetDictionary("test_policy", &policy))
       policy_test_case->SetTestPolicy(*policy);
-    const base::ListValue* pref_mappings = NULL;
+    const base::ListValue* pref_mappings = nullptr;
     if (policy_test_dict->GetList("pref_mappings", &pref_mappings)) {
       for (size_t i = 0; i < pref_mappings->GetSize(); ++i) {
-        const base::DictionaryValue* pref_mapping_dict = NULL;
+        const base::DictionaryValue* pref_mapping_dict = nullptr;
         std::string pref;
         if (!pref_mappings->GetDictionary(i, &pref_mapping_dict) ||
             !pref_mapping_dict->GetString("pref", &pref)) {
-          ADD_FAILURE() << "Malformed pref_mappings entry in "
-                        << "policy_test_cases.json.";
+          ADD_FAILURE() << "Malformed pref_mappings entry for " << name
+                        << " in policy_test_cases.json.";
           continue;
         }
         bool is_local_state = false;
@@ -341,18 +331,18 @@ class PolicyTestCases {
                                      &indicator_test_setup_js);
         std::string indicator_selector;
         pref_mapping_dict->GetString("indicator_selector", &indicator_selector);
-        auto pref_mapping = base::MakeUnique<PrefMapping>(
+        auto pref_mapping = std::make_unique<PrefMapping>(
             pref, is_local_state, check_for_mandatory, check_for_recommended,
             indicator_test_url, indicator_test_setup_js, indicator_selector);
-        const base::ListValue* indicator_tests = NULL;
+        const base::ListValue* indicator_tests = nullptr;
         if (pref_mapping_dict->GetList("indicator_tests", &indicator_tests)) {
           for (size_t i = 0; i < indicator_tests->GetSize(); ++i) {
-            const base::DictionaryValue* indicator_test_dict = NULL;
-            const base::DictionaryValue* policy = NULL;
+            const base::DictionaryValue* indicator_test_dict = nullptr;
+            const base::DictionaryValue* policy = nullptr;
             if (!indicator_tests->GetDictionary(i, &indicator_test_dict) ||
                 !indicator_test_dict->GetDictionary("policy", &policy)) {
-              ADD_FAILURE() << "Malformed indicator_tests entry in "
-                            << "policy_test_cases.json.";
+              ADD_FAILURE() << "Malformed indicator_tests entry for " << name
+                            << " in policy_test_cases.json.";
               continue;
             }
             std::string value;
@@ -360,7 +350,7 @@ class PolicyTestCases {
             bool readonly = false;
             indicator_test_dict->GetBoolean("readonly", &readonly);
             pref_mapping->AddIndicatorTestCase(
-                base::MakeUnique<IndicatorTestCase>(*policy, value, readonly));
+                std::make_unique<IndicatorTestCase>(*policy, value, readonly));
           }
         }
         policy_test_case->AddPrefMapping(std::move(pref_mapping));
@@ -389,8 +379,27 @@ IN_PROC_BROWSER_TEST_F(PolicyPrefsTestCoverageTest, AllPoliciesHaveATestCase) {
   PolicyTestCases policy_test_cases;
   for (Schema::Iterator it = chrome_schema.GetPropertiesIterator();
        !it.IsAtEnd(); it.Advance()) {
-    EXPECT_TRUE(base::ContainsKey(policy_test_cases.map(), it.key()))
-        << "Missing policy test case for: " << it.key();
+    auto policy = policy_test_cases.map().find(it.key());
+    if (policy == policy_test_cases.map().end()) {
+      ADD_FAILURE() << "Missing policy test case for: " << it.key();
+      continue;
+    }
+
+    bool has_test_case_for_this_os = false;
+    for (const PolicyTestCase* test_case : policy->second) {
+      has_test_case_for_this_os |= test_case->IsSupported();
+      if (has_test_case_for_this_os)
+        break;
+    }
+
+    // This can only be a warning as many policies are not really testable
+    // this way and only present as a single line in the file.
+    // Although they could at least contain the "os" and "test_policy" fields.
+    // See http://crbug.com/791125.
+    LOG_IF(WARNING, !has_test_case_for_this_os)
+        << "Policy " << policy->first
+        << " is marked as supported on this OS in policy_templates.json but "
+        << "have a test for this platform in policy_test_cases.json.";
   }
 }
 
@@ -418,16 +427,15 @@ class PolicyPrefsTest : public InProcessBrowserTest {
   void SetProviderPolicy(const base::DictionaryValue& policies,
                          PolicyLevel level) {
     PolicyMap policy_map;
-    for (base::DictionaryValue::Iterator it(policies);
-         !it.IsAtEnd(); it.Advance()) {
-      const PolicyDetails* policy_details = GetChromePolicyDetails(it.key());
+    for (const auto& it : policies.DictItems()) {
+      const PolicyDetails* policy_details = GetChromePolicyDetails(it.first);
       ASSERT_TRUE(policy_details);
       policy_map.Set(
-          it.key(), level, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
-          it.value().CreateDeepCopy(),
-          base::WrapUnique(policy_details->max_external_data_size
-                               ? new ExternalDataFetcher(nullptr, it.key())
-                               : nullptr));
+          it.first, level, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+          it.second.CreateDeepCopy(),
+          policy_details->max_external_data_size
+              ? std::make_unique<ExternalDataFetcher>(nullptr, it.first)
+              : nullptr);
     }
     provider_.UpdateChromePolicy(policy_map);
     base::RunLoop().RunUntilIdle();
@@ -439,22 +447,37 @@ class PolicyPrefsTest : public InProcessBrowserTest {
 // Verifies that policies make their corresponding preferences become managed,
 // and that the user can't override that setting.
 IN_PROC_BROWSER_TEST_F(PolicyPrefsTest, PolicyToPrefsMapping) {
+  Schema chrome_schema = Schema::Wrap(GetChromeSchemaData());
+  ASSERT_TRUE(chrome_schema.valid());
   PrefService* local_state = g_browser_process->local_state();
   PrefService* user_prefs = browser()->profile()->GetPrefs();
 
   const PolicyTestCases test_cases;
-  for (PolicyTestCases::iterator policy = test_cases.begin();
-       policy != test_cases.end();
-       ++policy) {
-    for (PolicyTestCases::PolicyTestCaseVector::const_iterator test_case =
-             policy->second.begin();
-         test_case != policy->second.end();
-         ++test_case) {
-      const auto& pref_mappings = (*test_case)->pref_mappings();
-      if (!(*test_case)->IsSupported() || pref_mappings.empty())
+  for (const auto& policy : test_cases) {
+    for (const PolicyTestCase* test_case : policy.second) {
+      const auto& pref_mappings = test_case->pref_mappings();
+      if (!chrome_schema.GetKnownProperty(policy.first).valid()) {
+        // If the policy is supported on this platform according to the test it
+        // should be known otherwise we signal this as a failure.
+        // =====================================================================
+        // !NOTE! If you see this assertion after changing Chrome's VERSION most
+        // probably the mentioned policy was deprecated and deleted. Verify this
+        // in policy_templates.json and remove the corresponding test entry
+        // in policy_test_cases.json. Don't completely delete it from there just
+        // replace it's definition with a single "note" value stating its
+        // deprecation date (see other examples present in the file already).
+        // =====================================================================
+        EXPECT_FALSE(test_case->IsSupported())
+            << "Policy " << policy.first
+            << " is marked as supported on this OS but does not exist in the "
+            << "Chrome policy schema.";
+        continue;
+      }
+
+      if (!test_case->IsSupported() || pref_mappings.empty())
         continue;
 
-      LOG(INFO) << "Testing policy: " << policy->first;
+      LOG(INFO) << "Testing policy: " << policy.first;
 
       for (const auto& pref_mapping : pref_mappings) {
         // Skip Chrome OS preferences that use a different backend and cannot be
@@ -473,7 +496,8 @@ IN_PROC_BROWSER_TEST_F(PolicyPrefsTest, PolicyToPrefsMapping) {
         // The preference must have been registered.
         const PrefService::Preference* pref =
             prefs->FindPreference(pref_mapping->pref().c_str());
-        ASSERT_TRUE(pref);
+        ASSERT_TRUE(pref) << "Pref " << pref_mapping->pref().c_str()
+                          << " not registered";
 
         // Verify that setting the policy overrides the pref.
         ClearProviderPolicy();
@@ -483,7 +507,8 @@ IN_PROC_BROWSER_TEST_F(PolicyPrefsTest, PolicyToPrefsMapping) {
         EXPECT_FALSE(pref->IsUserControlled());
         EXPECT_FALSE(pref->IsManaged());
 
-        SetProviderPolicy((*test_case)->test_policy(), POLICY_LEVEL_MANDATORY);
+        ASSERT_NO_FATAL_FAILURE(SetProviderPolicy(test_case->test_policy(),
+                                                  POLICY_LEVEL_MANDATORY));
         EXPECT_FALSE(pref->IsDefaultValue());
         EXPECT_FALSE(pref->IsUserModifiable());
         EXPECT_FALSE(pref->IsUserControlled());

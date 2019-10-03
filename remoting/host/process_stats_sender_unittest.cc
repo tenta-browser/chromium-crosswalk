@@ -6,13 +6,14 @@
 
 #include <stdint.h>
 
+#include <functional>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "remoting/host/process_stats_agent.h"
 #include "remoting/proto/process_stats.pb.h"
@@ -97,7 +98,7 @@ class FakeProcessStatsAgent : public ProcessStatsAgent {
 }  // namespace
 
 TEST(ProcessStatsSenderTest, ReportUsage) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   FakeProcessStatsStub stub;
   std::unique_ptr<ProcessStatsSender> stats;
@@ -112,11 +113,11 @@ TEST(ProcessStatsSenderTest, ReportUsage) {
         stats->reset();
         run_loop->Quit();
       },
-      base::Unretained(&stats), base::ConstRef(stub), base::ConstRef(agent),
+      base::Unretained(&stats), std::cref(stub), std::cref(agent),
       base::Unretained(&run_loop)));
-  message_loop.task_runner()->PostTask(
+  scoped_task_environment.GetMainThreadTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           [](std::unique_ptr<ProcessStatsSender>* stats,
              FakeProcessStatsStub* stub, FakeProcessStatsAgent* agent) -> void {
             stats->reset(new ProcessStatsSender(
@@ -133,7 +134,7 @@ TEST(ProcessStatsSenderTest, ReportUsage) {
 }
 
 TEST(ProcessStatsSenderTest, MergeUsage) {
-  base::MessageLoop message_loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
   base::RunLoop run_loop;
   FakeProcessStatsStub stub;
   std::unique_ptr<ProcessStatsSender> stats;
@@ -151,11 +152,11 @@ TEST(ProcessStatsSenderTest, MergeUsage) {
         stats->reset();
         run_loop->Quit();
       },
-      base::Unretained(&stats), base::ConstRef(stub), base::ConstRef(agent1),
-      base::ConstRef(agent2), base::Unretained(&run_loop)));
-  message_loop.task_runner()->PostTask(
+      base::Unretained(&stats), std::cref(stub), std::cref(agent1),
+      std::cref(agent2), base::Unretained(&run_loop)));
+  scoped_task_environment.GetMainThreadTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           [](std::unique_ptr<ProcessStatsSender>* stats,
              FakeProcessStatsStub* stub, FakeProcessStatsAgent* agent1,
              FakeProcessStatsAgent* agent2) -> void {

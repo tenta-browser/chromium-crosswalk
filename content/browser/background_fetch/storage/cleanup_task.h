@@ -10,17 +10,15 @@
 #include <vector>
 
 #include "content/browser/background_fetch/storage/database_task.h"
-#include "content/common/service_worker/service_worker_status_code.h"
+#include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 
 namespace content {
-
 namespace background_fetch {
 
 // Deletes inactive registrations marked for deletion.
-// TODO(crbug.com/780025): Log failed deletions to UMA.
 class CleanupTask : public background_fetch::DatabaseTask {
  public:
-  explicit CleanupTask(BackgroundFetchDataManager* data_manager);
+  explicit CleanupTask(DatabaseTaskHost* host);
 
   ~CleanupTask() override;
 
@@ -29,21 +27,23 @@ class CleanupTask : public background_fetch::DatabaseTask {
  private:
   void DidGetRegistrations(
       const std::vector<std::pair<int64_t, std::string>>& registration_data,
-      ServiceWorkerStatusCode status);
+      blink::ServiceWorkerStatusCode status);
 
- private:
   void DidGetActiveUniqueIds(
       const std::vector<std::pair<int64_t, std::string>>& registration_data,
       const std::vector<std::pair<int64_t, std::string>>& active_unique_id_data,
-      ServiceWorkerStatusCode status);
+      blink::ServiceWorkerStatusCode status);
 
-  base::WeakPtrFactory<CleanupTask> weak_factory_;  // Keep as last.
+  void FinishWithError(blink::mojom::BackgroundFetchError error) override;
+
+  std::string HistogramName() const override;
+
+  base::WeakPtrFactory<CleanupTask> weak_factory_{this};  // Keep as last.
 
   DISALLOW_COPY_AND_ASSIGN(CleanupTask);
 };
 
 }  // namespace background_fetch
-
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_BACKGROUND_FETCH_STORAGE_CLEANUP_TASK_H_

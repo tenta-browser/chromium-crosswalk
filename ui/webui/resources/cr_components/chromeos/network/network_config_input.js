@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,12 +8,17 @@
 Polymer({
   is: 'network-config-input',
 
-  behaviors: [I18nBehavior],
+  behaviors: [CrPolicyNetworkBehavior, NetworkConfigElementBehavior],
 
   properties: {
     label: String,
 
-    disabled: {
+    hidden: {
+      type: Boolean,
+      reflectToAttribute: true,
+    },
+
+    readonly: {
       type: Boolean,
       reflectToAttribute: true,
     },
@@ -22,46 +27,9 @@ Polymer({
       type: String,
       notify: true,
     },
-
-    password: Boolean,
-
-    showPassword: {
-      type: Boolean,
-      value: false,
-    },
   },
 
   focus: function() {
-    this.$$('input').focus();
-  },
-
-  /**
-   * @return {string}
-   * @private
-   */
-  getInputType_: function() {
-    return (this.password && !this.showPassword) ? 'password' : 'text';
-  },
-
-  /**
-   * @return {string}
-   * @private
-   */
-  getIconClass_: function() {
-    return this.showPassword ? 'icon-visibility-off' : 'icon-visibility';
-  },
-
-  /**
-   * @return {string}
-   * @private
-   */
-  getShowPasswordTitle_: function() {
-    return this.showPassword ? this.i18n('hidePassword') :
-                               this.i18n('showPassword');
-  },
-
-  /** @private */
-  onShowPasswordTap_: function() {
-    this.showPassword = !this.showPassword;
+    this.$$('cr-input').focus();
   },
 });

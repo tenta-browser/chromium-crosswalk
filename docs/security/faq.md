@@ -58,12 +58,23 @@ believe that tracking the latest stable upstream is usually less work for
 greater benefit in the long run than backporting. We strongly recommend that you
 track the latest stable branches, and we support only the latest stable branch.
 
+<a name="TOC-Severity-Guidelines"></a>
+## How does the Chrome team determine severity of security bugs?
+
+See the [severity guidelines](severity-guidelines.md) for more information.
+Only security issues are considered under the security vulnerability rewards
+program. Other types of bugs, which we call "functional bugs", are not.
+
 <a name="TOC-Are-privacy-issues-considered-security-bugs-"></a>
 ## Are privacy issues considered security bugs?
 
-Privacy bugs, such as leaking information from Incognito, fingerprinting, and
-bugs related to deleting browsing data are not considered under the security
-VRP. The Chrome Privacy team tracks them as functional bugs.
+No. The Chrome Privacy team treats privacy issues, such as leaking information
+from Incognito, fingerprinting, and bugs related to deleting browsing data as
+functional bugs.
+
+Privacy issues are not considered under the security vulnerability rewards
+program; the [severity guidelines](severity-guidelines.md) outline the types of
+bugs that are considered security vulnerabilities in more detail.
 
 <a name="TOC-Timing-Attacks"></a>
 ## Are timing attacks considered security vulnerabilities?
@@ -93,14 +104,15 @@ or Guest browsing modes.
 Other timing attacks can be mitigated via clever design changes. For instance,
 [Issue 544765](https://crbug.com/544765) describes an attack whereby an attacker
 can probe for the presence of HSTS rules (set by prior site visits) by timing
-the load of resources with URLs "fixed-up" by HSTS. HSTS rules are shared
-between regular browsing and Incognito mode, making the attack more interesting.
-The attack was mitigated by changing Content-Security-Policy such that secure
-URLs will match rules demanding non-secure HTTP urls, a fix that has also proven
-useful to help to unblock migrations to HTTPS. Similarly,
-[Issue 707071](https://crbug.com/707071) describes a timing attack in which an
-attacker could determine what Android applications are installed; the attack was
-mitigated by introducing randomness in the execution time of the affected API.
+the load of resources with URLs "fixed-up" by HSTS. Prior to Chrome 64, HSTS
+rules [were shared](https://crbug.com/774643) between regular browsing and
+Incognito mode, making the attack more interesting. The attack was mitigated by
+changing Content-Security-Policy such that secure URLs will match rules
+demanding non-secure HTTP urls, a fix that has also proven useful to help to
+unblock migrations to HTTPS. Similarly, [Issue 707071](https://crbug.com/707071)
+describes a timing attack in which an attacker could determine what Android
+applications are installed; the attack was mitigated by introducing randomness
+in the execution time of the affected API.
 
 <a name="TOC-What-are-the-security-and-privacy-guarantees-of-Incognito-mode-"></a>
 ## What are the security and privacy guarantees of Incognito mode?
@@ -120,8 +132,8 @@ some previously-stored state, such as browsing history.
 <a name="TOC-Are-denial-of-service-issues-considered-security-bugs-"></a>
 ## Are denial of service issues considered security bugs?
 
-Denial of Service (DoS) issues are treated as **abuse** or **stability** issues
-rather than security vulnerabilities.
+No. Denial of Service (DoS) issues are treated as **abuse** or **stability**
+issues rather than security vulnerabilities.
 
 *    If you find a reproducible crash, we encourage you to [report
      it](https://bugs.chromium.org/p/chromium/issues/entry?template=Crash%20Report).
@@ -138,15 +150,33 @@ are considered security vulnerabilities in more detail.
 
 No. Chromium contains a reflected XSS filter (called XSSAuditor) that is a
 best-effort second line of defense against reflected XSS flaws found in web
-sites.  We do not treat these bypasses as security bugs in Chromium because the
-underlying issue is in the web site itself.  We treat them as functional bugs,
-and we do appreciate such reports.
+sites. We do not treat these bypasses as security bugs in Chromium because the
+underlying security issue is in the web site itself. Instead, we treat them as
+functional bugs in Chromium.
 
-The XSSAuditor is not able to defend against persistent XSS or DOM-based XSS.
+We do appreciate reports of XSSAuditor bypasses, and endeavor to close them.
+When reporting an XSSAuditor bypass, two pieces of information are essential:
+*    The exact URL (and for POSTs, the request body) triggering the reflection.
+*    The view-source: of the page showing the reflection in the page text.
+
+Please do not provide links to vulnerable production sites seen in the wild,
+as that forces us to embargo the information in the bug.
+
+Note that the XSSAuditor is not able to defend against persistent XSS or
+DOM-based XSS. Nor is it able to defend against injections deep inside
+existing JavaScript blocks, [for
+example](https://bugs.chromium.org/p/chromium/issues/detail?id=135029), since
+the XSSAuditor is part of the HTML parser, not the JavaScript parser.
+
 There will also be a number of infrequently occurring reflected XSS corner
-cases, however, that it will never be able to cover. Among these are:
+case in an HTML context that it will never be able to cover. Among
+these are:
 *    Multiple unsanitized variables injected into the page.
 *    Unexpected server side transformation or decoding of the payload.
+
+XSSAuditor bypasses are not considered under the security vulnerability rewards
+program; the [severity guidelines](severity-guidelines.md) outline the types of
+bugs that are considered security vulnerabilities in more detail.
 
 <a name="TOC-Why-aren-t-physically-local-attacks-in-Chrome-s-threat-model-"></a>
 ## Why aren't physically-local attacks in Chrome's threat model?
@@ -197,9 +227,10 @@ computer.
 *    Assume everything you do on a public computer will become, well, public.
      You have no control over the operating system or other software on the
      machine, and there is no reason to trust the integrity of it.
-*    If you must use such a computer, consider using an incognito mode window,
-     to avoid persisting credentials. This, however, provides no protection
-     when the system is already compromised as above.
+*    If you must use such a computer, use Incognito mode and close all Incognito
+     windows when you are done browsing to limit the amount of data you leave
+     behind. Note that Incognito mode **provides no protection** if the system has
+     already been compromised as described above.
 
 <a name="TOC-Why-aren-t-compromised-infected-machines-in-Chrome-s-threat-model-"></a>
 ## Why aren't compromised/infected machines in Chrome's threat model?
@@ -207,7 +238,7 @@ computer.
 This is essentially the same situation as with physically-local attacks. The
 attacker's code, when it runs as your user account on your machine, can do
 anything you can do. (See also [Microsoft's Ten Immutable Laws Of
-Security](https://technet.microsoft.com/en-us/library/hh278941.aspx).)
+Security](https://web.archive.org/web/20160311224620/https://technet.microsoft.com/en-us/library/hh278941.aspx).)
 
 <a name="TOC-What-about-unmasking-of-passwords-with-the-developer-tools-"></a>
 ## What about unmasking of passwords with the developer tools?
@@ -231,11 +262,11 @@ extracting the password from any of these places.
 <a name="TOC-Does-entering-JavaScript:-URLs-in-the-URL-bar-or-running-script-in-the-developer-tools-mean-there-s-an-XSS-vulnerability-"></a>
 ## Does entering JavaScript: URLs in the URL bar or running script in the developer tools mean there's an XSS vulnerability?
 
-No. Chrome does not attempt to prevent the user from knowingly running script
-against loaded documents, either by entering script in the Developer Tools
-console or by typing a JavaScript: URI into the URL bar. Chrome and other
-browsers do undertake some efforts to prevent *paste* of script URLs in the URL
-bar (to limit
+[No](https://crbug.com/81697). Chrome does not attempt to prevent the user from
+knowingly running script against loaded documents, either by entering script in
+the Developer Tools console or by typing a JavaScript: URI into the URL bar.
+Chrome and other browsers do undertake some efforts to prevent *paste* of script
+URLs in the URL bar (to limit
 [social-engineering](https://blogs.msdn.microsoft.com/ieinternals/2011/05/19/socially-engineered-xss-attacks/))
 but users are otherwise free to invoke script against pages using either the URL
 bar or the DevTools console.
@@ -368,10 +399,10 @@ that the current server is not the true server.
 ## How does key pinning interact with local proxies and filters?
 
 To enable certificate chain validation, Chrome has access to two stores of trust
-anchors: certificates that are empowered as issuers. One trust anchor store is
-the system or public trust anchor store, and the other other is the local or
-private trust anchor store. The public store is provided as part of the
-operating system, and intended to authenticate public internet servers. The
+anchors (i.e. certificates that are empowered as issuers). One trust anchor
+store is the system or public trust anchor store, and the other other is the
+local or private trust anchor store. The public store is provided as part of
+the operating system, and intended to authenticate public internet servers. The
 private store contains certificates installed by the user or the administrator
 of the client machine. Private intranet servers should authenticate themselves
 with certificates issued by a private trust anchor.
@@ -399,6 +430,31 @@ certificate — that is, the client is already under the control of the person w
 controls the proxy (e.g. the enterprise’s IT administrator). If the client does
 not trust the private trust anchor, the proxy’s attempt to mediate the
 connection will fail as it should.
+
+<a name="TOC-When-is-key-pinning-enabled-"></a>
+## When is key pinning enabled?
+
+Key pinning is enabled for Chrome-branded, non-mobile builds when the local
+clock is within ten weeks of the embedded build timestamp. Key pinning is a
+useful security measure but it tightly couples client and server configurations
+and completely breaks when those configurations are out of sync. In order to
+manage that risk we need to ensure that we can promptly update pinning clients
+an in emergency and ensure that non-emergency changes can be deployed in a
+reasonable timeframe.
+
+Each of the conditions listed above helps ensure those properties:
+Chrome-branded builds are those that Google provides and they all have an
+auto-update mechanism that can be used in an emergency. However, auto-update on
+mobile devices is significantly less effective thus they are excluded. Even in
+cases where auto-update is generally effective, there are still non-trivial
+populations of stragglers for various reasons. The ten-week timeout prevents
+those stragglers from causing problems for regular, non-emergency changes and
+allows stuck users to still, for example, conduct searches and access Chrome's
+homepage to hopefully get unstuck.
+
+In order to determine whether key pinning is active, try loading
+[https://pinningtest.appspot.com](https://pinningtest.appspot.com). If key
+pinning is active the load will _fail_ with a pinning error.
 
 <a name="TOC-How-does-certificate-transparency-interact-with-local-proxies-and-filters-"></a>
 ## How does Certificate Transparency interact with local proxies and filters?
@@ -429,10 +485,10 @@ The full answer is here: we [Prefer Secure Origins For Powerful New
 Features](https://www.chromium.org/Home/chromium-security/prefer-secure-origins-for-powerful-new-features).
 In short, many web platform features give web origins access to sensitive new
 sources of information, or significant power over a user's experience with their
-computer/phone/watch/et c., or over their experience with it. We would therefore
+computer/phone/watch/etc., or over their experience with it. We would therefore
 like to have some basis to believe the origin meets a minimum bar for security,
 that the sensitive information is transported over the Internet in an
-authetnicated and confidential way, and that users can make meaningful choices
+authenticated and confidential way, and that users can make meaningful choices
 to trust or not trust a web origin.
 
 Note that the reason we require secure origins for WebCrypto is slightly
@@ -515,6 +571,18 @@ constituencies](http://www.schemehostport.com/2011/10/priority-of-constituencies
 For a longer discussion on this, see the [mailing list
 announcement](https://groups.google.com/a/chromium.org/forum/#!topic/chromium-dev/zhhj7hCip5c).
 
+<a name="TOC-Signout-of-Chrome"></a>
+## Signing out of Chrome does not delete previously-synced data?
+
+If you have signed into Chrome and subsequently sign out of Chrome, previously
+saved passwords and other data are not deleted from your device unless you
+select that option when signing out of Chrome.
+
+If you change your Google password, synced data will no longer be updated in
+Chrome instances until you provide the new password to Chrome on each device
+configured to sync. However, previously synced data [remains available](https://crbug.com/792967)
+on each previously-syncing device unless manually removed.
+
 <a name="TOC-Why-doesn-t-the-Password-Manager-save-my-Google-password-if-I-am-using-Chrome-Sync-"></a>
 ## Why doesn't the Password Manager save my Google password if I am using Chrome Sync?
 
@@ -553,9 +621,10 @@ specific:
      credentials in "Login Data" in the Chrome users profile directory, but
      encrypted on disk with a key that is then stored in the user's Keychain.
      See [Issue 466638](https://crbug.com/466638) for further explanation.
-*    On Linux, credentials are stored in an encrypted database, and the password
-     to decrypt the contents of that database are stored in KWallet or Gnome
-     Keyring. (See [Issue 602624](https://crbug.com/602624).)
+*    On Linux, credentials are stored into Gnome-Keyring or KWallet, depending
+     on the environment. On environments which don't ship with Gnome-Keyring
+     or KWallet, the password is stored into "Login Data" in an unprotected
+     format.
 *    On iOS, passwords are currently stored directly in the iOS Keychain and
      referenced from the rest of the metadata stored in a separate DB. The plan
      there is to just store them in plain text in the DB, because iOS gives
@@ -587,6 +656,18 @@ vulnerability in the relevant feature, not Safe Browsing itself.
 
 See our dedicated [Service Worker Security
 FAQ](https://chromium.googlesource.com/chromium/src/+/master/docs/security/service-worker-security-faq.md).
+
+<a name="TOC-What-about-URL-spoofs-using-Internationalized-Domain-Names-IDN-"></a>
+## What about URL spoofs using Internationalized Domain Names (IDN)?
+
+We try to balance the needs of our international userbase while protecting users
+against confusable homograph attacks. Despite this, there are a list of known
+IDN display issues we are still working on.
+
+*    Please see [this document](https://docs.google.com/document/d/1_xJz3J9kkAPwk3pma6K3X12SyPTyyaJDSCxTfF8Y5sU)
+for a list of known issues and how we handle them.
+*    [This document](https://www.chromium.org/developers/design-documents/idn-in-google-chrome)
+describes Chrome's IDN policy in detail.
 
 ## TODO
 

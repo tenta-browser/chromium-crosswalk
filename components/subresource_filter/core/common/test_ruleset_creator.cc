@@ -4,17 +4,17 @@
 
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
 #include "components/subresource_filter/core/common/test_ruleset_utils.h"
+#include "components/subresource_filter/core/common/unindexed_ruleset.h"
 #include "components/url_pattern_index/proto/rules.pb.h"
-#include "components/url_pattern_index/unindexed_ruleset.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 
@@ -41,7 +41,7 @@ std::vector<uint8_t> SerializeUnindexedRulesetWithMultipleRules(
     const std::vector<proto::UrlRule>& rules) {
   std::string ruleset_contents;
   google::protobuf::io::StringOutputStream output(&ruleset_contents);
-  url_pattern_index::UnindexedRulesetWriter ruleset_writer(&output);
+  UnindexedRulesetWriter ruleset_writer(&output);
   for (const auto& rule : rules)
     ruleset_writer.AddUrlRule(rule);
   ruleset_writer.Finish();
@@ -112,7 +112,7 @@ TestRulesetPair::~TestRulesetPair() = default;
 // TestRulesetCreator ----------------------------------------------------------
 
 TestRulesetCreator::TestRulesetCreator()
-    : scoped_temp_dir_(base::MakeUnique<base::ScopedTempDir>()) {}
+    : scoped_temp_dir_(std::make_unique<base::ScopedTempDir>()) {}
 
 TestRulesetCreator::~TestRulesetCreator() {
   base::ScopedAllowBlockingForTesting allow_blocking;
@@ -145,7 +145,7 @@ void TestRulesetCreator::CreateRulesetToDisallowURLsWithManySuffixes(
   std::vector<proto::UrlRule> rules;
   for (int i = 0; i < num_of_suffixes; ++i) {
     std::string current_suffix =
-        suffix.as_string() + '_' + base::IntToString(i);
+        suffix.as_string() + '_' + base::NumberToString(i);
     rules.push_back(CreateSuffixRule(current_suffix));
   }
   CreateRulesetWithRules(rules, test_ruleset_pair);
@@ -176,7 +176,7 @@ void TestRulesetCreator::GetUniqueTemporaryPath(base::FilePath* path) {
   ASSERT_TRUE(scoped_temp_dir_->IsValid() ||
               scoped_temp_dir_->CreateUniqueTempDir());
   *path = scoped_temp_dir_->GetPath().AppendASCII(
-      base::IntToString(next_unique_file_suffix++));
+      base::NumberToString(next_unique_file_suffix++));
 }
 
 void TestRulesetCreator::CreateTestRulesetFromContents(

@@ -4,11 +4,7 @@
 
 package org.chromium.chrome.browser.crash;
 
-import static org.chromium.chrome.browser.crash.MinidumpUploadService.BROWSER;
-import static org.chromium.chrome.browser.crash.MinidumpUploadService.GPU;
-import static org.chromium.chrome.browser.crash.MinidumpUploadService.OTHER;
-import static org.chromium.chrome.browser.crash.MinidumpUploadService.RENDERER;
-
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
@@ -35,9 +31,10 @@ import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.minidump_uploader.CrashTestRule;
 import org.chromium.components.minidump_uploader.CrashTestRule.MockCrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.MinidumpUploadCallable;
+import org.chromium.components.minidump_uploader.MinidumpUploadCallable.MinidumpUploadStatus;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.net.NetworkChangeNotifier;
 
 import java.io.File;
@@ -45,6 +42,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * Testcase for {@link MinidumpUploadService}.
  */
@@ -159,7 +157,7 @@ public class MinidumpUploadServiceTest {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_SUCCESS, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.SUCCESS, false));
         runUploadCrashTest(callables);
     }
 
@@ -171,8 +169,8 @@ public class MinidumpUploadServiceTest {
         final List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         for (int i = 0; i < MinidumpUploadService.MAX_TRIES_ALLOWED; i++) {
-            callables.add(new CountedMinidumpUploadCallable("chromium_renderer-111.dmp1.try" + i,
-                    MinidumpUploadCallable.UPLOAD_FAILURE, true));
+            callables.add(new CountedMinidumpUploadCallable(
+                    "chromium_renderer-111.dmp1.try" + i, MinidumpUploadStatus.FAILURE, true));
         }
         runUploadCrashTest(callables);
     }
@@ -184,9 +182,9 @@ public class MinidumpUploadServiceTest {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, true));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.FAILURE, true));
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try1", MinidumpUploadCallable.UPLOAD_SUCCESS, true));
+                "chromium_renderer-111.dmp1.try1", MinidumpUploadStatus.SUCCESS, true));
         runUploadCrashTest(callables);
     }
 
@@ -197,7 +195,7 @@ public class MinidumpUploadServiceTest {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.FAILURE, false));
         runUploadCrashTest(callables);
     }
 
@@ -211,8 +209,8 @@ public class MinidumpUploadServiceTest {
         // to return fake ones. It also ensures that the service never tries to create a callable
         // too many times.
         TestMinidumpUploadService service = new TestMinidumpUploadService() {
-            int mIndex = 0;
-            boolean mTriggerNetworkChange = false;
+            int mIndex;
+            boolean mTriggerNetworkChange;
 
             @Override
             MinidumpUploadCallable createMinidumpUploadCallable(File minidumpFile, File logfile) {
@@ -584,8 +582,8 @@ public class MinidumpUploadServiceTest {
         final File minidumpFile =
                 new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
         CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "browser");
-        Assert.assertEquals(
-                BROWSER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        Assert.assertEquals(MinidumpUploadService.ProcessType.BROWSER,
+                MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
     @Test
@@ -595,8 +593,8 @@ public class MinidumpUploadServiceTest {
         final File minidumpFile =
                 new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
         CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "renderer");
-        Assert.assertEquals(
-                RENDERER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        Assert.assertEquals(MinidumpUploadService.ProcessType.RENDERER,
+                MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
     @Test
@@ -606,8 +604,8 @@ public class MinidumpUploadServiceTest {
         final File minidumpFile =
                 new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
         CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "gpu-process");
-        Assert.assertEquals(
-                GPU, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        Assert.assertEquals(MinidumpUploadService.ProcessType.GPU,
+                MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
     @Test
@@ -617,8 +615,8 @@ public class MinidumpUploadServiceTest {
         final File minidumpFile =
                 new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
         CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "weird test type");
-        Assert.assertEquals(
-                OTHER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        Assert.assertEquals(MinidumpUploadService.ProcessType.OTHER,
+                MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
     private class MinidumpPreparationContext extends AdvancedMockContext {
@@ -666,6 +664,7 @@ public class MinidumpUploadServiceTest {
         public void cancelAll() {}
 
         @Override
+        @SuppressLint("WrongConstant")
         public int enqueue(JobInfo job, JobWorkItem work) {
             return 0;
         }

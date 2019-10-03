@@ -8,7 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_tester.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -76,13 +76,23 @@ class PageLoadMetricsObserverTestHarness
   // to the browser process. These will update the timing information for the
   // most recently committed navigation.
   void SimulateTimingUpdate(const mojom::PageLoadTiming& timing);
+  void SimulateTimingUpdate(const mojom::PageLoadTiming& timing,
+                            content::RenderFrameHost* rfh);
   void SimulateTimingAndMetadataUpdate(const mojom::PageLoadTiming& timing,
                                        const mojom::PageLoadMetadata& metadata);
+  void SimulateMetadataUpdate(const mojom::PageLoadMetadata& metadata,
+                              content::RenderFrameHost* rfh);
   void SimulateFeaturesUpdate(const mojom::PageLoadFeatures& new_features);
-  void SimulatePageLoadTimingUpdate(
-      const mojom::PageLoadTiming& timing,
-      const mojom::PageLoadMetadata& metadata,
-      const mojom::PageLoadFeatures& new_features);
+  void SimulateCpuTimingUpdate(const mojom::CpuTiming& cpu_timing);
+  void SimulateResourceDataUseUpdate(
+      const std::vector<mojom::ResourceDataUpdatePtr>& resources);
+  void SimulateResourceDataUseUpdate(
+      const std::vector<mojom::ResourceDataUpdatePtr>& resources,
+      content::RenderFrameHost* render_frame_host);
+  void SimulateRenderDataUpdate(
+      const mojom::FrameRenderDataUpdate& render_data);
+  void SimulateRenderDataUpdate(const mojom::FrameRenderDataUpdate& render_data,
+                                content::RenderFrameHost* rfh);
 
   // Simulates a loaded resource. Main frame resources must specify a
   // GlobalRequestID, using the SimulateLoadedResource() method that takes a
@@ -101,6 +111,18 @@ class PageLoadMetricsObserverTestHarness
 
   // Simulate playing a media element.
   void SimulateMediaPlayed();
+
+  // Simulate reading cookies.
+  void SimulateCookiesRead(const GURL& url,
+                           const GURL& first_party_url,
+                           const net::CookieList& cookie_list,
+                           bool blocked_by_policy);
+
+  // Simulate writing a cookie.
+  void SimulateCookieChange(const GURL& url,
+                            const GURL& first_party_url,
+                            const net::CanonicalCookie& cookie,
+                            bool blocked_by_policy);
 
   const base::HistogramTester& histogram_tester() const;
 

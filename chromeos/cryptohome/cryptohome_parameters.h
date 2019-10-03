@@ -11,8 +11,9 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
-#include "chromeos/chromeos_export.h"
+#include "base/component_export.h"
+#include "chromeos/dbus/cryptohome/rpc.pb.h"
+#include "chromeos/login/auth/challenge_response_key.h"
 
 class AccountId;
 
@@ -28,7 +29,7 @@ enum AuthKeyPrivileges {
 };
 
 // Identification of the user calling cryptohome method.
-class CHROMEOS_EXPORT Identification {
+class COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME) Identification {
  public:
   Identification();
 
@@ -52,12 +53,28 @@ class CHROMEOS_EXPORT Identification {
   std::string id_;
 };
 
+// Creates AccountIdentifier from AccountId.
+COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME)
+AccountIdentifier CreateAccountIdentifierFromAccountId(const AccountId& id);
+
+// Creates AccountIdentifier from Identification.
+COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME)
+AccountIdentifier CreateAccountIdentifierFromIdentification(
+    const Identification& id);
+
 // Definition of the key (e.g. password) for the cryptohome.
 // It contains authorization data along with extra parameters like permissions
 // associated with this key.
-struct CHROMEOS_EXPORT KeyDefinition {
+struct COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME) KeyDefinition {
   enum Type {
-    TYPE_PASSWORD = 0
+    // Password-based key. The password's text or its hashed/transformed
+    // representation is stored in |secret|. The |challenge_response_keys| field
+    // should be empty.
+    TYPE_PASSWORD = 0,
+    // The challenge-response type of key. Information about the keys to be
+    // challenged is stored in |challenge_response_keys|, while |secret| should
+    // be empty.
+    TYPE_CHALLENGE_RESPONSE = 1,
   };
 
   struct AuthorizationData {
@@ -118,28 +135,46 @@ struct CHROMEOS_EXPORT KeyDefinition {
     std::unique_ptr<std::string> bytes;
   };
 
+  struct Policy {
+    bool operator==(const Policy& other) const;
+    bool operator!=(const Policy& other) const;
+
+    bool low_entropy_credential = false;
+    bool auth_locked = false;
+  };
+
+  // Creates an instance with the TYPE_PASSWORD type.
+  static KeyDefinition CreateForPassword(const std::string& secret,
+                                         const std::string& label,
+                                         int privileges);
+  // Creates an instance with the TYPE_CHALLENGE_RESPONSE type.
+  static KeyDefinition CreateForChallengeResponse(
+      const std::vector<chromeos::ChallengeResponseKey>&
+          challenge_response_keys,
+      const std::string& label,
+      int privileges);
+
   KeyDefinition();
-  KeyDefinition(const std::string& secret,
-                const std::string& label,
-                int privileges);
   KeyDefinition(const KeyDefinition& other);
   ~KeyDefinition();
 
   bool operator==(const KeyDefinition& other) const;
 
-  Type type;
+  Type type = TYPE_PASSWORD;
   std::string label;
   // Privileges associated with key. Combination of |AuthKeyPrivileges| values.
-  int privileges;
-  int revision;
+  int privileges = 0;
+  Policy policy;
+  int revision = 0;
   std::string secret;
+  std::vector<chromeos::ChallengeResponseKey> challenge_response_keys;
 
   std::vector<AuthorizationData> authorization_data;
   std::vector<ProviderData> provider_data;
 };
 
 // Authorization attempt data for user.
-struct CHROMEOS_EXPORT Authorization {
+struct COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME) Authorization {
   Authorization(const std::string& key, const std::string& label);
   explicit Authorization(const KeyDefinition& key);
 
@@ -151,10 +186,12 @@ struct CHROMEOS_EXPORT Authorization {
 
 // This function returns true if cryptohome of |account_id| is migrated to
 // accountId-based identifier (AccountId::GetAccountIdKey()).
+COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME)
 bool GetGaiaIdMigrationStatus(const AccountId& account_id);
 
 // This function marks |account_id| cryptohome migrated to accountId-based
 // identifier (AccountId::GetAccountIdKey()).
+COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME)
 void SetGaiaIdMigrationStatusDone(const AccountId& account_id);
 
 }  // namespace cryptohome

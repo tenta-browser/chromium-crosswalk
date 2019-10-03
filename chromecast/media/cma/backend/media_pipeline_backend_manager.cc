@@ -6,12 +6,16 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
-#include "chromecast/chromecast_features.h"
+#include "base/time/time.h"
+#include "chromecast/base/metrics/cast_metrics_helper.h"
+#include "chromecast/chromecast_buildflags.h"
 #include "chromecast/media/cma/backend/audio_decoder_wrapper.h"
+#include "chromecast/media/cma/backend/cma_backend.h"
+#include "chromecast/media/cma/backend/extra_audio_stream.h"
 #include "chromecast/media/cma/backend/media_pipeline_backend_wrapper.h"
 #include "chromecast/public/volume_control.h"
 
@@ -28,27 +32,48 @@
 
 namespace chromecast {
 namespace media {
+
 namespace {
-#if BUILDFLAG(IS_CAST_AUDIO_ONLY)
+
+#if BUILDFLAG(IS_CAST_AUDIO_ONLY) || BUILDFLAG(ENABLE_ASSISTANT)
 constexpr int kAudioDecoderLimit = std::numeric_limits<int>::max();
 #else
 constexpr int kAudioDecoderLimit = 1;
 #endif
+
+constexpr base::TimeDelta kPowerSaveWaitTime = base::TimeDelta::FromSeconds(5);
+
 }  // namespace
 
 MediaPipelineBackendManager::MediaPipelineBackendManager(
     scoped_refptr<base::SingleThreadTaskRunner> media_task_runner)
     : media_task_runner_(std::move(media_task_runner)),
-      playing_noneffects_audio_streams_count_(0),
+      playing_audio_streams_count_({{AudioContentType::kMedia, 0},
+                                    {AudioContentType::kAlarm, 0},
+                                    {AudioContentType::kCommunication, 0},
+                                    {AudioContentType::kOther, 0}}),
+      playing_noneffects_audio_streams_count_(
+          {{AudioContentType::kMedia, 0},
+           {AudioContentType::kAlarm, 0},
+           {AudioContentType::kCommunication, 0},
+           {AudioContentType::kOther, 0}}),
       allow_volume_feedback_observers_(
           new base::ObserverListThreadSafe<AllowVolumeFeedbackObserver>()),
       global_volume_multipliers_({{AudioContentType::kMedia, 1.0f},
                                   {AudioContentType::kAlarm, 1.0f},
-                                  {AudioContentType::kCommunication, 1.0f}},
+                                  {AudioContentType::kCommunication, 1.0f},
+                                  {AudioContentType::kOther, 1.0f}},
                                  base::KEEP_FIRST_OF_DUPES),
+      backend_wrapper_using_video_decoder_(nullptr),
       buffer_delegate_(nullptr),
       weak_factory_(this) {
   DCHECK(media_task_runner_);
+  DCHECK(playing_audio_streams_count_.size() ==
+         static_cast<unsigned long>(AudioContentType::kNumTypes));
+  DCHECK(playing_noneffects_audio_streams_count_.size() ==
+         static_cast<unsigned long>(AudioContentType::kNumTypes));
+  DCHECK(global_volume_multipliers_.size() ==
+         static_cast<unsigned long>(AudioContentType::kNumTypes));
   for (int i = 0; i < NUM_DECODER_TYPES; ++i) {
     decoder_count_[i] = 0;
   }
@@ -58,11 +83,31 @@ MediaPipelineBackendManager::~MediaPipelineBackendManager() {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
 }
 
-std::unique_ptr<MediaPipelineBackend>
-MediaPipelineBackendManager::CreateMediaPipelineBackend(
+std::unique_ptr<CmaBackend> MediaPipelineBackendManager::CreateCmaBackend(
     const media::MediaPipelineDeviceParams& params) {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
-  return base::MakeUnique<MediaPipelineBackendWrapper>(params, this);
+  return std::make_unique<MediaPipelineBackendWrapper>(params, this);
+}
+
+void MediaPipelineBackendManager::BackendDestroyed(
+    MediaPipelineBackendWrapper* backend_wrapper) {
+  DCHECK(media_task_runner_->BelongsToCurrentThread());
+  if (backend_wrapper_using_video_decoder_ == backend_wrapper) {
+    backend_wrapper_using_video_decoder_ = nullptr;
+  }
+}
+
+void MediaPipelineBackendManager::BackendUseVideoDecoder(
+    MediaPipelineBackendWrapper* backend_wrapper) {
+  DCHECK(media_task_runner_->BelongsToCurrentThread());
+  DCHECK(backend_wrapper);
+  if (backend_wrapper_using_video_decoder_ &&
+      backend_wrapper_using_video_decoder_ != backend_wrapper) {
+    LOG(INFO) << __func__ << " revoke old backend : "
+              << backend_wrapper_using_video_decoder_;
+    backend_wrapper_using_video_decoder_->Revoke();
+  }
+  backend_wrapper_using_video_decoder_ = backend_wrapper;
 }
 
 bool MediaPipelineBackendManager::IncrementDecoderCount(DecoderType type) {
@@ -86,21 +131,71 @@ void MediaPipelineBackendManager::DecrementDecoderCount(DecoderType type) {
   decoder_count_[type]--;
 }
 
-void MediaPipelineBackendManager::UpdatePlayingAudioCount(int change) {
+void MediaPipelineBackendManager::UpdatePlayingAudioCount(
+    bool sfx,
+    const AudioContentType type,
+    int change) {
   DCHECK(change == -1 || change == 1) << "bad count change: " << change;
+
+  bool had_playing_audio_streams = (TotalPlayingAudioStreamsCount() > 0);
+  playing_audio_streams_count_[type] += change;
+  DCHECK_GE(playing_audio_streams_count_[type], 0);
+
+  int new_playing_audio_streams = TotalPlayingAudioStreamsCount();
+  if (new_playing_audio_streams == 0) {
+    power_save_timer_.Start(FROM_HERE, kPowerSaveWaitTime, this,
+                            &MediaPipelineBackendManager::EnterPowerSaveMode);
+  } else if (!had_playing_audio_streams && new_playing_audio_streams > 0) {
+    power_save_timer_.Stop();
+    if (VolumeControl::SetPowerSaveMode) {
+      metrics::CastMetricsHelper::GetInstance()->RecordSimpleAction(
+          "Cast.Platform.VolumeControl.PowerSaveOff");
+      VolumeControl::SetPowerSaveMode(false);
+    }
+  }
+
+  if (sfx) {
+    return;
+  }
 
   // Volume feedback sounds are only allowed when there are no non-effects
   // audio streams playing.
-  bool prev_allow_feedback = (playing_noneffects_audio_streams_count_ == 0);
-  playing_noneffects_audio_streams_count_ += change;
-  DCHECK_GE(playing_noneffects_audio_streams_count_, 0);
-  bool new_allow_feedback = (playing_noneffects_audio_streams_count_ == 0);
+  bool prev_allow_feedback = (TotalPlayingNoneffectsAudioStreamsCount() == 0);
+  playing_noneffects_audio_streams_count_[type] += change;
+  DCHECK_GE(playing_noneffects_audio_streams_count_[type], 0);
+  bool new_allow_feedback = (TotalPlayingNoneffectsAudioStreamsCount() == 0);
 
   if (new_allow_feedback != prev_allow_feedback) {
     allow_volume_feedback_observers_->Notify(
         FROM_HERE, &AllowVolumeFeedbackObserver::AllowVolumeFeedbackSounds,
         new_allow_feedback);
   }
+}
+
+int MediaPipelineBackendManager::TotalPlayingAudioStreamsCount() {
+  int total = 0;
+  for (auto entry : playing_audio_streams_count_) {
+    total += entry.second;
+  }
+  return total;
+}
+
+int MediaPipelineBackendManager::TotalPlayingNoneffectsAudioStreamsCount() {
+  int total = 0;
+  for (auto entry : playing_noneffects_audio_streams_count_) {
+    total += entry.second;
+  }
+  return total;
+}
+
+void MediaPipelineBackendManager::EnterPowerSaveMode() {
+  DCHECK_EQ(TotalPlayingAudioStreamsCount(), 0);
+  if (!VolumeControl::SetPowerSaveMode || !power_save_enabled_) {
+    return;
+  }
+  metrics::CastMetricsHelper::GetInstance()->RecordSimpleAction(
+      "Cast.Platform.VolumeControl.PowerSaveOn");
+  VolumeControl::SetPowerSaveMode(true);
 }
 
 void MediaPipelineBackendManager::AddAllowVolumeFeedbackObserver(
@@ -113,16 +208,25 @@ void MediaPipelineBackendManager::RemoveAllowVolumeFeedbackObserver(
   allow_volume_feedback_observers_->RemoveObserver(observer);
 }
 
-void MediaPipelineBackendManager::LogicalPause(MediaPipelineBackend* backend) {
-  MediaPipelineBackendWrapper* wrapper =
-      static_cast<MediaPipelineBackendWrapper*>(backend);
-  wrapper->LogicalPause();
+void MediaPipelineBackendManager::AddExtraPlayingStream(
+    bool sfx,
+    const AudioContentType type,
+    ExtraAudioStream* extra_audio_stream) {
+  MAKE_SURE_MEDIA_THREAD(AddExtraPlayingStream, sfx, type, extra_audio_stream);
+  UpdatePlayingAudioCount(sfx, type, 1);
+  if (extra_audio_stream)
+    extra_audio_streams_[type].emplace(extra_audio_stream);
 }
 
-void MediaPipelineBackendManager::LogicalResume(MediaPipelineBackend* backend) {
-  MediaPipelineBackendWrapper* wrapper =
-      static_cast<MediaPipelineBackendWrapper*>(backend);
-  wrapper->LogicalResume();
+void MediaPipelineBackendManager::RemoveExtraPlayingStream(
+    bool sfx,
+    const AudioContentType type,
+    ExtraAudioStream* extra_audio_stream) {
+  MAKE_SURE_MEDIA_THREAD(RemoveExtraPlayingStream, sfx, type,
+                         extra_audio_stream);
+  UpdatePlayingAudioCount(sfx, type, -1);
+  if (extra_audio_stream)
+    extra_audio_streams_[type].erase(extra_audio_stream);
 }
 
 void MediaPipelineBackendManager::SetGlobalVolumeMultiplier(
@@ -136,6 +240,9 @@ void MediaPipelineBackendManager::SetGlobalVolumeMultiplier(
       a->SetGlobalVolumeMultiplier(multiplier);
     }
   }
+  for (auto* extra_audio_stream : extra_audio_streams_[type]) {
+    extra_audio_stream->SetGlobalVolumeMultiplier(multiplier);
+  }
 }
 
 void MediaPipelineBackendManager::SetBufferDelegate(
@@ -146,8 +253,17 @@ void MediaPipelineBackendManager::SetBufferDelegate(
   buffer_delegate_ = buffer_delegate;
 }
 
+bool MediaPipelineBackendManager::IsPlaying(bool include_sfx,
+                                            AudioContentType type) {
+  if (include_sfx) {
+    return playing_audio_streams_count_[type];
+  } else {
+    return playing_noneffects_audio_streams_count_[type];
+  }
+}
+
 void MediaPipelineBackendManager::AddAudioDecoder(
-    AudioDecoderWrapper* decoder) {
+    ActiveAudioDecoderWrapper* decoder) {
   DCHECK(decoder);
   audio_decoders_.insert(decoder);
   decoder->SetGlobalVolumeMultiplier(
@@ -155,8 +271,16 @@ void MediaPipelineBackendManager::AddAudioDecoder(
 }
 
 void MediaPipelineBackendManager::RemoveAudioDecoder(
-    AudioDecoderWrapper* decoder) {
+    ActiveAudioDecoderWrapper* decoder) {
   audio_decoders_.erase(decoder);
+}
+
+void MediaPipelineBackendManager::SetPowerSaveEnabled(bool power_save_enabled) {
+  MAKE_SURE_MEDIA_THREAD(SetPowerSaveEnabled, power_save_enabled);
+  power_save_enabled_ = power_save_enabled;
+  if (VolumeControl::SetPowerSaveMode && !power_save_enabled_) {
+    VolumeControl::SetPowerSaveMode(false);
+  }
 }
 
 }  // namespace media

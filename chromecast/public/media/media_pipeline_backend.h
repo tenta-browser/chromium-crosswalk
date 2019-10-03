@@ -6,12 +6,15 @@
 #define CHROMECAST_PUBLIC_MEDIA_MEDIA_PIPELINE_BACKEND_H_
 
 #include <stdint.h>
+
 #include <string>
 
 #include "cast_key_status.h"
+#include "chromecast_export.h"
 #include "decoder_config.h"
 
 namespace chromecast {
+class TaskRunner;
 struct Size;
 
 namespace media {
@@ -151,6 +154,11 @@ class MediaPipelineBackend {
     static int64_t GetMinimumBufferedTime(const AudioConfig& config)
         __attribute__((__weak__));
 
+    // Returns true if the audio decoder requires that encrypted buffers be
+    // decrypted before being passed to PushBuffer().
+    CHROMECAST_EXPORT static bool RequiresDecryption()
+        __attribute__((__weak__));
+
    protected:
     ~AudioDecoder() override {}
   };
@@ -163,6 +171,34 @@ class MediaPipelineBackend {
       uint64_t decoded_bytes;  // Reported as webkitVideoBytesDecoded.
       uint64_t decoded_frames;  // Reported as webkitDecodedFrames.
       uint64_t dropped_frames;  // Reported as webkitDroppedFrames.
+    };
+
+    // FrameDisplayInfoDelegate methods must be called on the main CMA thread.
+    class FrameDisplayInfoDelegate {
+     public:
+      // OnFrameDisplayed is called either when the frame is displayed
+      // successfully (with valid |display_time|), or when the frame is dropped
+      // but it's meant to displayed(with |display_time|==INT64_MIN).
+      // If a pushed frame is repeated on screen, OnFrameDisplayed() is called
+      // only once.
+      // For this API to work properly, the pts fields in CastDecoderBuffer must
+      // be unique.
+      virtual void OnFrameDisplayed(
+          int64_t push_time,     // Time when the frame is pushed to backend,
+                                 // in microseconds, relative to
+                                 // CLOCK_MONOTONIC or CLOCK_MONOTONIC_RAW.
+                                 // When it's not available it's INT64_MIN.
+          int64_t display_time,  // Time when the frame is displayed on screen,
+                                 // in microseconds, relative to
+                                 // CLOCK_MONOTONIC or CLOCK_MONOTONIC_RAW.
+                                 // If it's INT64_MIN, the frame is not
+                                 // displayed but dropped.
+          int64_t pts  // The |timestamp| within the CastDecoderBuffer that's
+                       // pushed to backend, in microseconds.
+          ) = 0;
+
+     protected:
+      virtual ~FrameDisplayInfoDelegate() = default;
     };
 
     // Provides the video configuration. Called once with the configuration for
@@ -179,8 +215,67 @@ class MediaPipelineBackend {
     // called when playing or paused.
     virtual void GetStatistics(Statistics* statistics) = 0;
 
+    // Register |frame_display_info_delegate| on |video_decoder| to receive
+    // OnFrameDisplayed.
+    // TODO(guohuideng): make this a virtual method on VideoDecoder at next API
+    // update.
+    CHROMECAST_EXPORT static void SetFrameDisplayInfoDelegate(
+        FrameDisplayInfoDelegate* frame_display_info_delegate,
+        VideoDecoder* video_decoder) __attribute__((weak));
+
    protected:
     ~VideoDecoder() override {}
+  };
+
+  // This is created/deleted on media thread. All the methods and delegate
+  // methods should be called on media thread.
+  class AudioDecryptor {
+   public:
+    using BufferStatus = MediaPipelineBackend::BufferStatus;
+
+    // Delegate methods must be called on media thread.
+    class Delegate {
+     public:
+      // Called to indicate decryptor can accept more buffers, after
+      // PushBufferForDecrypt returns |kBufferPending|.
+      virtual void OnPushBufferForDecryptComplete(BufferStatus status) = 0;
+
+      // Must be called for each pushed buffer (both clear and encrypted).
+      // Returns false if decryption fails, e.g. license policy violation.
+      virtual void OnDecryptComplete(bool success) = 0;
+
+     protected:
+      virtual ~Delegate() = default;
+    };
+
+    // Aborts all the pending operations once the object is deleted.
+    virtual ~AudioDecryptor() = default;
+
+    // Provides delegate for this decryptor. Called once before any other APIs.
+    virtual void SetDelegate(Delegate* delegate) = 0;
+
+    // Pushes a buffer of data for decrypting. Decrypted data will be put in
+    // |output|. Implementation MUST check the license policy before returning
+    // the clear buffer back.
+    //
+    // Similar to Decoder::PushBuffer, implementation can return
+    // |kBufferPending| to stop caller from pushing more buffers. See comments
+    // of Decoder::PushBuffer for more details on buffer pushing.
+    //
+    // Implementation must invoke Delegate::OnDecryptComplete once data is
+    // decrypted. Both encrypted and clear buffers will be pushed.
+    // Implementation should call the delegate methods in the same sequence as
+    // pushing buffer.
+    //
+    // Once EOS buffer is pushed, implementation should decrypt and return all
+    // the buffers.
+    //
+    // |buffer| and |output| are owned by caller. Caller must not destroy them
+    // until Delegate::OnDecryptComplete is called. |output| must be long
+    // enough to hold clear data. |output| may overlap with the memory carried
+    // by |buffer|. The size of decrypted data should be same as encrypted data.
+    virtual BufferStatus PushBufferForDecrypt(CastDecoderBuffer* buffer,
+                                              uint8_t* output) = 0;
   };
 
   virtual ~MediaPipelineBackend() {}
@@ -224,13 +319,25 @@ class MediaPipelineBackend {
   virtual bool Resume() = 0;
 
   // Gets the current playback timestamp in microseconds. Only called when in
-  // the "playing" or "paused" states.
+  // the "playing" or "paused" states. Returns INT64_MIN if the PTS is not
+  // available.
   virtual int64_t GetCurrentPts() = 0;
 
   // Sets the playback rate.  |rate| > 0.  If this is not called, a default rate
   // of 1.0 is assumed. Returns true if successful. Only called when in
   // the "playing" or "paused" states.
   virtual bool SetPlaybackRate(float rate) = 0;
+
+  // Creates a new AudioDecryptor for extracting clear audio buffers.  Caller
+  // owns the object. This will be called multiple times on media thread. When
+  // the object is deleted, the implementation should abort all the pending
+  // operations.
+  // This function is optional. The correct implementation must return a valid
+  // object. Platforms which support standard CDM decryption APIs do not need to
+  // implement this function.
+  CHROMECAST_EXPORT static AudioDecryptor* CreateAudioDecryptor(
+      EncryptionScheme scheme,
+      TaskRunner* task_runner) __attribute__((weak));
 };
 
 }  // namespace media

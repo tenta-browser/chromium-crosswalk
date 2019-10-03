@@ -16,7 +16,7 @@ class MediaPerceptionPrivateGetStateFunction
  public:
   MediaPerceptionPrivateGetStateFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.getState",
-                             MEDIAPERCEPTIONPRIVATE_GETSTATE);
+                             MEDIAPERCEPTIONPRIVATE_GETSTATE)
 
  private:
   ~MediaPerceptionPrivateGetStateFunction() override;
@@ -34,7 +34,7 @@ class MediaPerceptionPrivateSetStateFunction
  public:
   MediaPerceptionPrivateSetStateFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setState",
-                             MEDIAPERCEPTIONPRIVATE_SETSTATE);
+                             MEDIAPERCEPTIONPRIVATE_SETSTATE)
 
  private:
   ~MediaPerceptionPrivateSetStateFunction() override;
@@ -52,7 +52,7 @@ class MediaPerceptionPrivateGetDiagnosticsFunction
  public:
   MediaPerceptionPrivateGetDiagnosticsFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.getDiagnostics",
-                             MEDIAPERCEPTIONPRIVATE_GETDIAGNOSTICS);
+                             MEDIAPERCEPTIONPRIVATE_GETDIAGNOSTICS)
 
  private:
   ~MediaPerceptionPrivateGetDiagnosticsFunction() override;
@@ -71,7 +71,7 @@ class MediaPerceptionPrivateSetAnalyticsComponentFunction
  public:
   MediaPerceptionPrivateSetAnalyticsComponentFunction();
   DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setAnalyticsComponent",
-                             MEDIAPERCEPTIONPRIVATE_SETANALYTICSCOMPONENT);
+                             MEDIAPERCEPTIONPRIVATE_SETANALYTICSCOMPONENT)
 
  private:
   ~MediaPerceptionPrivateSetAnalyticsComponentFunction() override;
@@ -84,6 +84,26 @@ class MediaPerceptionPrivateSetAnalyticsComponentFunction
           component_state);
 
   DISALLOW_COPY_AND_ASSIGN(MediaPerceptionPrivateSetAnalyticsComponentFunction);
+};
+
+class MediaPerceptionPrivateSetComponentProcessStateFunction
+    : public UIThreadExtensionFunction {
+ public:
+  MediaPerceptionPrivateSetComponentProcessStateFunction();
+  DECLARE_EXTENSION_FUNCTION("mediaPerceptionPrivate.setComponentProcessState",
+                             MEDIAPERCEPTIONPRIVATE_SETCOMPONENTPROCESSSTATE)
+
+ private:
+  ~MediaPerceptionPrivateSetComponentProcessStateFunction() override;
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
+
+  void OnComponentProcessStateSet(
+      extensions::api::media_perception_private::ProcessState process_state);
+
+  DISALLOW_COPY_AND_ASSIGN(
+      MediaPerceptionPrivateSetComponentProcessStateFunction);
 };
 
 }  // namespace extensions

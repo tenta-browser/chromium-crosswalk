@@ -62,49 +62,4 @@ gfx::Rect ConvertRectToPixel(const Layer* layer,
   return gfx::ConvertRectToPixel(GetDeviceScaleFactor(layer), rect_in_dip);
 }
 
-#if DCHECK_IS_ON()
-namespace {
-
-void CheckSnapped(float snapped_position) {
-  const float kEplison = 0.0003f;
-  float diff = std::abs(snapped_position - gfx::ToRoundedInt(snapped_position));
-  DCHECK_LT(diff, kEplison);
-}
-
-}  // namespace
-#endif
-
-void SnapLayerToPhysicalPixelBoundary(ui::Layer* snapped_layer,
-                                      ui::Layer* layer_to_snap) {
-  DCHECK_NE(snapped_layer, layer_to_snap);
-  DCHECK(snapped_layer);
-  DCHECK(snapped_layer->Contains(layer_to_snap));
-
-  gfx::PointF view_offset(layer_to_snap->GetTargetBounds().origin());
-  ui::Layer::ConvertPointToLayer(layer_to_snap->parent(), snapped_layer,
-                                 &view_offset);
-
-  float scale_factor = GetDeviceScaleFactor(layer_to_snap);
-  view_offset.Scale(scale_factor);
-  gfx::PointF view_offset_snapped(gfx::ToRoundedPoint(view_offset));
-
-  gfx::Vector2dF fudge = view_offset_snapped - view_offset;
-  fudge.Scale(1.0 / scale_factor);
-  layer_to_snap->SetSubpixelPositionOffset(fudge);
-#if DCHECK_IS_ON()
-  gfx::PointF layer_offset;
-  gfx::PointF origin;
-  Layer::ConvertPointToLayer(
-      layer_to_snap->parent(), snapped_layer, &layer_offset);
-  if (layer_to_snap->GetAnimator()->is_animating()) {
-    origin = gfx::PointF(layer_to_snap->GetTargetBounds().origin()) +
-             layer_to_snap->subpixel_position_offset();
-  } else {
-    origin = layer_to_snap->position();
-  }
-  CheckSnapped((layer_offset.x() + origin.x()) * scale_factor);
-  CheckSnapped((layer_offset.y() + origin.y()) * scale_factor);
-#endif
-}
-
 }  // namespace ui

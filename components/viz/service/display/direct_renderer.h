@@ -12,10 +12,10 @@
 #include "base/containers/circular_deque.h"
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
-#include "cc/resources/display_resource_provider.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/service/display/ca_layer_overlay.h"
 #include "components/viz/service/display/dc_layer_overlay.h"
+#include "components/viz/service/display/display_resource_provider.h"
 #include "components/viz/service/display/overlay_processor.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/texture_in_use_response.h"
@@ -25,18 +25,23 @@
 
 namespace cc {
 class FilterOperations;
-class OutputSurface;
 }  // namespace cc
 
 namespace gfx {
 class ColorSpace;
-}
+class RRectF;
+}  // namespace gfx
 
 namespace viz {
 class BspWalkActionDrawPolygon;
 class DrawPolygon;
+class OutputSurface;
 class RendererSettings;
 class RenderPass;
+
+namespace copy_output {
+struct RenderPassGeometry;
+}  // namespace copy_output
 
 // This is the base class for code shared between the GL and software
 // renderer implementations. "Direct" refers to the fact that it does not
@@ -46,7 +51,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
  public:
   DirectRenderer(const RendererSettings* settings,
                  OutputSurface* output_surface,
-                 cc::DisplayResourceProvider* resource_provider);
+                 DisplayResourceProvider* resource_provider);
   virtual ~DirectRenderer();
 
   void Initialize();
@@ -56,23 +61,17 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   void SetVisible(bool visible);
   void DecideRenderPassAllocationsForFrame(
       const RenderPassList& render_passes_in_draw_order);
-  void DrawFrame(RenderPassList* render_passes_in_draw_order,
-                 float device_scale_factor,
-                 const gfx::Size& device_viewport_size);
+  void DrawFrame(
+      RenderPassList* render_passes_in_draw_order,
+      float device_scale_factor,
+      const gfx::Size& device_viewport_size,
+      float sdr_white_level = gfx::ColorSpace::kDefaultSDRWhiteLevel);
 
   // Public interface implemented by subclasses.
-  virtual bool HasAllocatedResourcesForTesting(
-      const RenderPassId render_pass_id) const = 0;
   virtual void SwapBuffers(std::vector<ui::LatencyInfo> latency_info) = 0;
   virtual void SwapBuffersComplete() {}
   virtual void DidReceiveTextureInUseResponses(
       const gpu::TextureInUseResponses& responses) {}
-
-  // Allow tests to enlarge the texture size of non-root render passes to
-  // verify cases where the texture doesn't match the render pass size.
-  void SetEnlargePassTextureAmountForTesting(const gfx::Size& amount) {
-    enlarge_pass_texture_amount_ = amount;
-  }
 
   // Public for tests that poke at internals.
   struct VIZ_SERVICE_EXPORT DrawingFrame {
@@ -86,14 +85,29 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
     gfx::Rect root_damage_rect;
     std::vector<gfx::Rect> root_content_bounds;
     gfx::Size device_viewport_size;
+    float sdr_white_level = gfx::ColorSpace::kDefaultSDRWhiteLevel;
 
     gfx::Transform projection_matrix;
     gfx::Transform window_matrix;
 
-    cc::OverlayCandidateList overlay_list;
+    OverlayCandidateList overlay_list;
     CALayerOverlayList ca_layer_overlay_list;
     DCLayerOverlayList dc_layer_overlay_list;
   };
+
+  void SetCurrentFrameForTesting(const DrawingFrame& frame);
+  bool HasAllocatedResourcesForTesting(
+      const RenderPassId& render_pass_id) const;
+  // Allow tests to enlarge the texture size of non-root render passes to
+  // verify cases where the texture doesn't match the render pass size.
+  void SetEnlargePassTextureAmountForTesting(const gfx::Size& amount) {
+    enlarge_pass_texture_amount_ = amount;
+  }
+
+  bool has_overlay_validator() const {
+    return !!overlay_processor_->GetOverlayCandidateValidator();
+  }
+  bool OverlayNeedsSurfaceOccludingDamageRect() const;
 
  protected:
   friend class BspWalkActionDrawPolygon;
@@ -106,7 +120,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
 
   struct RenderPassRequirements {
     gfx::Size size;
-    ResourceTextureHint hint;
+    bool generate_mipmap = false;
   };
 
   static gfx::RectF QuadVertexRect();
@@ -130,9 +144,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
                       const gfx::Rect& render_pass_scissor);
   void SetScissorTestRectInDrawSpace(const gfx::Rect& draw_space_rect);
 
-  static gfx::Size RenderPassTextureSize(const RenderPass* render_pass);
-  static ResourceTextureHint RenderPassTextureHint(
-      const RenderPass* render_pass);
+  gfx::Size CalculateTextureSizeForRenderPass(const RenderPass* render_pass);
 
   void FlushPolygons(
       base::circular_deque<std::unique_ptr<DrawPolygon>>* poly_list,
@@ -153,24 +165,24 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
                      bool use_render_pass_scissor);
 
   const cc::FilterOperations* FiltersForPass(RenderPassId render_pass_id) const;
-  const cc::FilterOperations* BackgroundFiltersForPass(
+  const cc::FilterOperations* BackdropFiltersForPass(
+      RenderPassId render_pass_id) const;
+  const base::Optional<gfx::RRectF> BackdropFilterBoundsForPass(
       RenderPassId render_pass_id) const;
 
   // Private interface implemented by subclasses for use by DirectRenderer.
   virtual bool CanPartialSwap() = 0;
-  virtual ResourceFormat BackbufferFormat() const = 0;
   virtual void UpdateRenderPassTextures(
       const RenderPassList& render_passes_in_draw_order,
       const base::flat_map<RenderPassId, RenderPassRequirements>&
           render_passes_in_frame) = 0;
   virtual void AllocateRenderPassResourceIfNeeded(
-      const RenderPassId render_pass_id,
-      const gfx::Size& enlarged_size,
-      ResourceTextureHint texturehint) = 0;
+      const RenderPassId& render_pass_id,
+      const RenderPassRequirements& requirements) = 0;
   virtual bool IsRenderPassResourceAllocated(
-      const RenderPassId render_pass_id) const = 0;
-  virtual const gfx::Size& GetRenderPassTextureSize(
-      const RenderPassId render_pass_id) = 0;
+      const RenderPassId& render_pass_id) const = 0;
+  virtual gfx::Size GetRenderPassBackingPixelSize(
+      const RenderPassId& render_pass_id) = 0;
   virtual void BindFramebufferToOutputSurface() = 0;
   virtual void BindFramebufferToTexture(const RenderPassId render_pass_id) = 0;
   virtual void SetScissorTestRect(const gfx::Rect& scissor_rect) = 0;
@@ -187,6 +199,9 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   // If a pass contains a single tile draw quad and can be drawn without
   // a render pass (e.g. applying a filter directly to the tile quad)
   // return that quad, otherwise return null.
+  static const TileDrawQuad* CanPassBeDrawnDirectly(
+      const RenderPass* pass,
+      DisplayResourceProvider* const resource_provider);
   virtual const TileDrawQuad* CanPassBeDrawnDirectly(const RenderPass* pass);
   virtual void FinishDrawingQuadList() {}
   virtual bool FlippedFramebuffer() const = 0;
@@ -194,6 +209,7 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   virtual void EnsureScissorTestDisabled() = 0;
   virtual void DidChangeVisibility() = 0;
   virtual void CopyDrawnRenderPass(
+      const copy_output::RenderPassGeometry& geometry,
       std::unique_ptr<CopyOutputRequest> request) = 0;
   virtual void SetEnableDCLayers(bool enable) = 0;
   virtual void GenerateMipmap() = 0;
@@ -202,9 +218,11 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
     return reshape_surface_size_;
   }
 
+  bool ShouldApplyRoundedCorner(const DrawQuad* quad) const;
+
   const RendererSettings* const settings_;
   OutputSurface* const output_surface_;
-  cc::DisplayResourceProvider* const resource_provider_;
+  DisplayResourceProvider* const resource_provider_;
   // This can be replaced by test implementations.
   std::unique_ptr<OverlayProcessor> overlay_processor_;
 
@@ -231,7 +249,9 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
   // A map from RenderPass id to the filters used when drawing the RenderPass.
   base::flat_map<RenderPassId, cc::FilterOperations*> render_pass_filters_;
   base::flat_map<RenderPassId, cc::FilterOperations*>
-      render_pass_background_filters_;
+      render_pass_backdrop_filters_;
+  base::flat_map<RenderPassId, base::Optional<gfx::RRectF>>
+      render_pass_backdrop_filter_bounds_;
 
   bool visible_ = false;
   bool disable_color_checks_for_testing_ = false;
@@ -254,8 +274,6 @@ class VIZ_SERVICE_EXPORT DirectRenderer {
     DCHECK(current_frame_valid_);
     return &current_frame_;
   }
-
-  void SetCurrentFrameForTesting(const DrawingFrame& frame);
 
  private:
   bool initialized_ = false;

@@ -17,6 +17,7 @@ class Size;
 namespace content {
 
 class GuestHost;
+class RenderFrameHost;
 class RenderWidgetHost;
 class SiteInstance;
 
@@ -34,7 +35,7 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   virtual void WillAttach(content::WebContents* embedder_web_contents,
                           int element_instance_id,
                           bool is_full_page_plugin,
-                          const base::Closure& completion_callback) {}
+                          base::OnceClosure completion_callback) {}
 
   virtual WebContents* CreateNewGuestWindow(
       const WebContents::CreateParams& create_params);
@@ -54,7 +55,7 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   virtual void ElementSizeChanged(const gfx::Size& size) {}
 
   // Returns the WebContents that currently owns this guest.
-  virtual WebContents* GetOwnerWebContents() const;
+  virtual WebContents* GetOwnerWebContents();
 
   // Asks the delegate if the given guest can lock the pointer.
   // Invoking the |callback| synchronously is OK.
@@ -66,12 +67,6 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   // Provides the delegate with an interface with which to communicate with the
   // content module.
   virtual void SetGuestHost(GuestHost* guest_host) {}
-
-  // Sets the position of the context menu for the guest contents. The value
-  // reported from the guest renderer should be ignored. The reported value
-  // from the guest renderer is incorrect in situations where BrowserPlugin is
-  // subject to CSS transforms.
-  virtual void SetContextMenuPosition(const gfx::Point& position) {}
 
   // TODO(ekaramad): A short workaround to force some types of guests to use
   // a BrowserPlugin even when we are using cross process frames for guests. It
@@ -87,6 +82,9 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   // Returns true if the corresponding guest is allowed to be embedded inside an
   // <iframe> which is cross process.
   virtual bool CanBeEmbeddedInsideCrossProcessFrames();
+
+  // Returns the embedder frame for this guest.
+  virtual RenderFrameHost* GetEmbedderFrame();
 };
 
 }  // namespace content

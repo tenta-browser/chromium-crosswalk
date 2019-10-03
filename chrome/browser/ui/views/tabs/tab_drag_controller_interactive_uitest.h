@@ -12,12 +12,16 @@
 
 class Browser;
 class BrowserList;
-class TabStripImpl;
+class TabStrip;
 class TabStripModel;
 class WindowFinder;
 
 namespace content {
 class WebContents;
+}
+
+namespace ui {
+class GestureEvent;
 }
 
 // TabDragControllerTest is the basis for the two tests that exercise
@@ -28,24 +32,28 @@ class TabDragControllerTest : public InProcessBrowserTest {
   ~TabDragControllerTest() override;
 
   // Cover for TabStrip::StopAnimating(true).
-  void StopAnimating(TabStripImpl* tab_strip);
+  void StopAnimating(TabStrip* tab_strip);
 
   // Adds a new blank tab to |browser|, stops animations and resets the ids of
   // the tabs in |browser|.
-  void AddTabAndResetBrowser(Browser* browser);
+  void AddTabsAndResetBrowser(Browser* browser, int additional_tabs);
 
-  // Creates a new Browser and resizes |browser()| and the new browser to be
-  // side by side.
-  Browser* CreateAnotherWindowBrowserAndRelayout();
+  // Creates a new Browser and resizes browser() and the new browser to be side
+  // by side.
+  Browser* CreateAnotherBrowserAndResize();
 
-  void SetWindowFinderForTabStrip(TabStripImpl* tab_strip,
+  void SetWindowFinderForTabStrip(TabStrip* tab_strip,
                                   std::unique_ptr<WindowFinder> window_finder);
 
   const BrowserList* browser_list;
 
  protected:
+  void HandleGestureEvent(TabStrip* tab_strip, ui::GestureEvent* event);
+
+  bool HasDragStarted(TabStrip* tab_strip) const;
+
   // InProcessBrowserTest:
-  void SetUpCommandLine(base::CommandLine* command_line) override;
+  void SetUp() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TabDragControllerTest);
@@ -54,7 +62,7 @@ class TabDragControllerTest : public InProcessBrowserTest {
 namespace test {
 
 // Returns the TabStrip for |browser|.
-TabStripImpl* GetTabStripForBrowser(Browser* browser);
+TabStrip* GetTabStripForBrowser(Browser* browser);
 
 // Sets the id of |web_contents| to |id|.
 void SetID(content::WebContents* web_contents, int id);

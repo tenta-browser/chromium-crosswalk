@@ -27,7 +27,7 @@ class LoginInterstitialDelegate : public content::InterstitialPageDelegate {
 
   LoginInterstitialDelegate(content::WebContents* web_contents,
                             const GURL& request_url,
-                            base::Closure& callback);
+                            base::OnceClosure callback);
 
   ~LoginInterstitialDelegate() override;
 
@@ -37,15 +37,15 @@ class LoginInterstitialDelegate : public content::InterstitialPageDelegate {
 
   // content::InterstitialPageDelegate:
   void CommandReceived(const std::string& command) override;
-  content::InterstitialPageDelegate::TypeID GetTypeForTesting() const override;
+  content::InterstitialPageDelegate::TypeID GetTypeForTesting() override;
 
  protected:
   std::string GetHTMLContents() override;
 
  private:
-  base::Closure callback_;
+  base::OnceClosure callback_;
   content::InterstitialPage* interstitial_page_;
-  base::WeakPtrFactory<LoginInterstitialDelegate> weak_ptr_factory_;
+  base::WeakPtrFactory<LoginInterstitialDelegate> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(LoginInterstitialDelegate);
 };

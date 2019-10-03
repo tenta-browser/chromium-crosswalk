@@ -14,11 +14,11 @@
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebArrayBuffer.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_array_buffer.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 using blink::WebArrayBuffer;
 using blink::WebDocument;
@@ -142,8 +142,7 @@ void PepperWebSocketHost::DidReceiveMessageError() {
                                PpapiPluginMsg_WebSocket_ErrorReply());
 }
 
-void PepperWebSocketHost::DidUpdateBufferedAmount(
-    unsigned long buffered_amount) {
+void PepperWebSocketHost::DidUpdateBufferedAmount(uint64_t buffered_amount) {
   // Send an IPC to update buffered amount.
   host()->SendUnsolicitedReply(
       pp_resource(),
@@ -159,9 +158,9 @@ void PepperWebSocketHost::DidStartClosingHandshake() {
       PpapiPluginMsg_WebSocket_StateReply(PP_WEBSOCKETREADYSTATE_CLOSING));
 }
 
-void PepperWebSocketHost::DidClose(unsigned long unhandled_buffered_amount,
+void PepperWebSocketHost::DidClose(uint64_t unhandled_buffered_amount,
                                    ClosingHandshakeCompletionStatus status,
-                                   unsigned short code,
+                                   uint16_t code,
                                    const blink::WebString& reason) {
   if (connecting_) {
     connecting_ = false;
@@ -210,16 +209,15 @@ int32_t PepperWebSocketHost::OnHostMsgConnect(
     return PP_ERROR_BADARGUMENT;
   if (gurl.has_ref())
     return PP_ERROR_BADARGUMENT;
-  if (!net::IsPortAllowedForScheme(gurl.EffectiveIntPort(), gurl.scheme()))
+  if (!net::IsPortAllowedForScheme(gurl.EffectiveIntPort(),
+                                   gurl.scheme_piece()))
     return PP_ERROR_BADARGUMENT;
   WebURL web_url(gurl);
 
   // Validate protocols.
   std::string protocol_string;
-  for (std::vector<std::string>::const_iterator vector_it = protocols.begin();
-       vector_it != protocols.end();
+  for (auto vector_it = protocols.begin(); vector_it != protocols.end();
        ++vector_it) {
-
     // Check containing characters.
     for (std::string::const_iterator string_it = vector_it->begin();
          string_it != vector_it->end();

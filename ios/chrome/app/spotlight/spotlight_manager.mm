@@ -8,7 +8,7 @@
 #include "ios/chrome/app/spotlight/actions_spotlight_manager.h"
 #include "ios/chrome/app/spotlight/bookmarks_spotlight_manager.h"
 #include "ios/chrome/app/spotlight/topsites_spotlight_manager.h"
-#include "ios/chrome/browser/experimental_flags.h"
+#include "ios/chrome/browser/system_flags.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -24,7 +24,6 @@
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
     NS_DESIGNATED_INITIALIZER;
 
-- (instancetype)init NS_UNAVAILABLE;
 @end
 
 @implementation SpotlightManager
@@ -50,11 +49,6 @@
     _actionsManager = [ActionsSpotlightManager actionsSpotlightManager];
   }
   return self;
-}
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
 }
 
 - (void)dealloc {

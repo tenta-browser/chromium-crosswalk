@@ -8,13 +8,23 @@
 #include <stddef.h>
 
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 #include "base/containers/flat_set.h"
-#include "base/containers/hash_tables.h"
 #include "base/strings/string16.h"
 #include "components/history/core/browser/history_types.h"
 #include "url/gurl.h"
+
+// Convenience Types -----------------------------------------------------------
+
+typedef std::vector<base::string16> String16Vector;
+typedef base::flat_set<base::string16> String16Set;
+typedef base::flat_set<base::char16> Char16Set;
+typedef std::vector<base::char16> Char16Vector;
+
+// A vector that contains the offsets at which each word starts within a string.
+typedef std::vector<size_t> WordStarts;
 
 // Matches within URL and Title Strings ----------------------------------------
 
@@ -33,6 +43,10 @@ struct TermMatch {
   size_t length;  // The length of the substring match.
 };
 typedef std::vector<TermMatch> TermMatches;
+
+// Returns the joined TermMatches of each term. See MatchTermInString.
+TermMatches MatchTermsInString(const String16Vector& terms,
+                               const base::string16& cleaned_string);
 
 // Returns a TermMatches which has an entry for each occurrence of the
 // string |term| found in the string |cleaned_string|. Use
@@ -66,16 +80,6 @@ std::vector<size_t> OffsetsFromTermMatches(const TermMatches& matches);
 TermMatches ReplaceOffsetsInTermMatches(const TermMatches& matches,
                                         const std::vector<size_t>& offsets);
 
-// Convenience Types -----------------------------------------------------------
-
-typedef std::vector<base::string16> String16Vector;
-typedef base::flat_set<base::string16> String16Set;
-typedef base::flat_set<base::char16> Char16Set;
-typedef std::vector<base::char16> Char16Vector;
-
-// A vector that contains the offsets at which each word starts within a string.
-typedef std::vector<size_t> WordStarts;
-
 // Utility Functions -----------------------------------------------------------
 
 // Breaks the string |cleaned_uni_string| down into individual words.
@@ -88,34 +92,28 @@ typedef std::vector<size_t> WordStarts;
 String16Set String16SetFromString16(const base::string16& cleaned_uni_string,
                                     WordStarts* word_starts);
 
-// Breaks the |cleaned_uni_string| string down into individual words
-// and return a vector with the individual words in their original
-// order.  Use CleanUpUrlForMatching() or CleanUpUrlTitleMatching()
-// before passing |cleaned_uni_string| to this function.  If
-// |break_on_space| is false then the resulting list will contain only
-// words containing alpha-numeric characters. If |break_on_space| is
-// true then the resulting list will contain strings broken at
-// whitespace. (|break_on_space| indicates that the
-// BreakIterator::BREAK_SPACE (equivalent to BREAK_LINE) approach is
-// to be used. For a complete description of this algorithm refer to
-// the comments in base/i18n/break_iterator.h.) If |word_starts| is
-// not NULL then clears and pushes the word starts onto |word_starts|.
+// Breaks the |cleaned_uni_string| string down into individual words and
+// return a vector with the individual words in their original order. Use
+// CleanUpUrlForMatching() or CleanUpUrlTitleMatching() before passing
+// |cleaned_uni_string| to this function. If |break_on_space| is false then
+// the string is broken using BreakIterator's BREAK_WORD detection logic,
+// augmented so that it additionally breaks words at underscores. The resulting
+// list will contain only words containing alpha-numeric characters. If
+// |break_on_space| is true then the string is broken only at whitespace (no
+// word-boundary logic, no breaking at underscores). (|break_on_space| tells
+// BreakIterator to use BREAK_SPACE logic.) For more details, refer to the
+// comments in base/i18n/break_iterator.h.) If |word_starts| is not NULL
+// then clears and pushes the word starts onto |word_starts|.
 //
 // Example:
-//   Given: |cleaned_uni_string|: "http://www.google.com/ harry the rabbit."
+//   Given: |cleaned_uni_string|: "http://www.google.com/ harry the_rabbit."
 //   With |break_on_space| false the returned list will contain:
 //    "http", "www", "google", "com", "harry", "the", "rabbit"
 //   With |break_on_space| true the returned list will contain:
-//    "http://", "www.google.com/", "harry", "the", "rabbit."
+//    "http://", "www.google.com/", "harry", "the_rabbit."
 String16Vector String16VectorFromString16(
     const base::string16& cleaned_uni_string,
     bool break_on_space,
-    WordStarts* word_starts);
-
-String16Vector String16VectorFromString16(
-    const base::string16& cleaned_uni_string,
-    bool break_on_space,
-    bool break_on_underscore,
     WordStarts* word_starts);
 
 // Breaks the |uni_word| string down into its individual characters.
@@ -158,6 +156,10 @@ struct HistoryInfoMapValue {
   HistoryInfoMapValue& operator=(HistoryInfoMapValue&& other);
   ~HistoryInfoMapValue();
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
+
   // This field is always populated.
   history::URLRow url_row;
 
@@ -169,7 +171,7 @@ struct HistoryInfoMapValue {
 };
 
 // A map from history_id to the history's URL and title.
-typedef base::hash_map<HistoryID, HistoryInfoMapValue> HistoryInfoMap;
+typedef std::unordered_map<HistoryID, HistoryInfoMapValue> HistoryInfoMap;
 
 // A map from history_id to URL and page title word start metrics.
 struct RowWordStarts {
@@ -179,6 +181,10 @@ struct RowWordStarts {
   RowWordStarts& operator=(const RowWordStarts& other);
   RowWordStarts& operator=(RowWordStarts&& other);
   ~RowWordStarts();
+
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
 
   // Clears both url_word_starts_ and title_word_starts_.
   void Clear();

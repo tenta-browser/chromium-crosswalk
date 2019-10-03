@@ -40,7 +40,7 @@ class EasyUnlockKeyManager {
   EasyUnlockKeyManager();
   ~EasyUnlockKeyManager();
 
-  // Nukes existing Easy unlock keys and creates new ones for the given
+  // Clears existing Easy unlock keys and creates new ones for the given
   // |remote_devices| and the given |user_context|. |user_context| must have
   // secret to allow keys to be created.
   void RefreshKeys(const UserContext& user_context,
@@ -71,7 +71,7 @@ class EasyUnlockKeyManager {
       const AccountId& account_id,
       const EasyUnlockDeviceKeyDataList& data_list,
       base::ListValue* device_list);
-  static bool RemoteDeviceListToDeviceDataList(
+  static bool RemoteDeviceRefListToDeviceDataList(
       const base::ListValue& device_list,
       EasyUnlockDeviceKeyDataList* data_list);
 

@@ -17,7 +17,7 @@
 #include "components/sync/syncable/dir_open_result.h"
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/metahandle_set.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/statement.h"
 
 namespace base {
@@ -53,7 +53,9 @@ extern const int32_t kCurrentPageSizeKB;
 // OnDiskDirectoryBackingStore.
 class DirectoryBackingStore {
  public:
-  explicit DirectoryBackingStore(const std::string& dir_name);
+  DirectoryBackingStore(
+      const std::string& dir_name,
+      const base::RepeatingCallback<std::string()>& cache_guid_generator);
   virtual ~DirectoryBackingStore();
 
   // Loads and drops all currently persisted meta entries into |handles_map|
@@ -109,12 +111,14 @@ class DirectoryBackingStore {
 
  protected:
   // For test classes.
-  DirectoryBackingStore(const std::string& dir_name,
-                        sql::Connection* connection);
+  DirectoryBackingStore(
+      const std::string& dir_name,
+      const base::RepeatingCallback<std::string()>& cache_guid_generator,
+      sql::Database* connection);
 
-  // An accessor for the underlying sql::Connection. Avoid using outside of
+  // An accessor for the underlying sql::Database. Avoid using outside of
   // tests.
-  sql::Connection* db();
+  sql::Database* db();
 
   // Return true if the DB is open.
   bool IsOpen() const;
@@ -128,7 +132,10 @@ class DirectoryBackingStore {
   bool OpenInMemory();
 
   // Initialize database tables. Return true on success, false on error.
-  bool InitializeTables();
+  // |did_start_new| must not be null and allows callers to know whether a
+  // previously existing directory was opened or a new empty one had to be
+  // initialized.
+  bool InitializeTables(bool* did_start_new);
 
   // Load helpers for entries and attributes. Return true on success, false on
   // error.
@@ -151,8 +158,6 @@ class DirectoryBackingStore {
   // ID, rather than the enum value.
   static ModelType ModelIdToModelTypeEnum(const void* data, int length);
   static std::string ModelTypeEnumToModelId(ModelType model_type);
-
-  static std::string GenerateCacheGUID();
 
   // Checks that the references between sync nodes is consistent.
   static bool VerifyReferenceIntegrity(
@@ -188,6 +193,7 @@ class DirectoryBackingStore {
   bool MigrateVersion88To89();
   bool MigrateVersion89To90();
   bool MigrateVersion90To91();
+  bool MigrateVersion91To92();
 
   // Accessor for needs_column_refresh_.  Used in tests.
   bool needs_column_refresh() const;
@@ -256,9 +262,10 @@ class DirectoryBackingStore {
                                  sql::Statement* save_statement);
 
   const std::string dir_name_;
+  const base::RepeatingCallback<std::string()> cache_guid_generator_;
   const int database_page_size_;
 
-  std::unique_ptr<sql::Connection> db_;
+  std::unique_ptr<sql::Database> db_;
   sql::Statement save_meta_statement_;
   sql::Statement save_delete_journal_statement_;
 
@@ -268,7 +275,7 @@ class DirectoryBackingStore {
   bool needs_share_info_column_refresh_;
 
   // We keep a copy of the Closure so we reinstall it when the underlying
-  // sql::Connection is destroyed/recreated.
+  // sql::Database is destroyed/recreated.
   base::Closure catastrophic_error_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(DirectoryBackingStore);

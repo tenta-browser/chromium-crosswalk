@@ -7,22 +7,22 @@
 #include <nacl_io/nacl_io.h>
 #include <sys/mount.h>
 
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
@@ -59,6 +59,7 @@
 #include "remoting/signaling/delegating_signal_strategy.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_region.h"
 #include "third_party/webrtc/rtc_base/helpers.h"
+#include "third_party/webrtc/rtc_base/network.h"
 #include "url/gurl.h"
 
 namespace remoting {
@@ -194,7 +195,7 @@ ChromotingInstance::ChromotingInstance(PP_Instance pp_instance)
   rtc::InitRandom(random_seed, sizeof(random_seed));
 
   // Send hello message.
-  PostLegacyJsonMessage("hello", base::MakeUnique<base::DictionaryValue>());
+  PostLegacyJsonMessage("hello", std::make_unique<base::DictionaryValue>());
 }
 
 ChromotingInstance::~ChromotingInstance() {
@@ -222,6 +223,12 @@ bool ChromotingInstance::Init(uint32_t argc,
   // Start all the threads.
   context_.Start();
 
+  // Initialize ThreadPool. ThreadPoolInstance::StartWithDefaultParams() doesn't
+  // work on NACL.
+  base::ThreadPoolInstance::Create("RemotingChromeApp");
+  constexpr int kForegroundMaxThreads = 3;
+  base::ThreadPoolInstance::Get()->Start({kForegroundMaxThreads});
+
   return true;
 }
 
@@ -231,13 +238,12 @@ void ChromotingInstance::HandleMessage(const pp::Var& message) {
     return;
   }
 
-  std::unique_ptr<base::Value> json = base::JSONReader::Read(
+  std::unique_ptr<base::Value> json = base::JSONReader::ReadDeprecated(
       message.AsString(), base::JSON_ALLOW_TRAILING_COMMAS);
   base::DictionaryValue* message_dict = nullptr;
   std::string method;
   base::DictionaryValue* data = nullptr;
-  if (!json.get() ||
-      !json->GetAsDictionary(&message_dict) ||
+  if (!json.get() || !json->GetAsDictionary(&message_dict) ||
       !message_dict->GetString("method", &method) ||
       !message_dict->GetDictionary("data", &data)) {
     LOG(ERROR) << "Received invalid message:" << message.AsString();
@@ -245,7 +251,7 @@ void ChromotingInstance::HandleMessage(const pp::Var& message) {
   }
 
   if (method == "connect") {
-    HandleConnect(*data);
+    UpdateNetConfigAndConnect(*data);
   } else if (method == "disconnect") {
     HandleDisconnect(*data);
   } else if (method == "incomingIq") {
@@ -345,7 +351,7 @@ void ChromotingInstance::OnVideoDecodeError() {
 
 void ChromotingInstance::OnVideoFirstFrameReceived() {
   PostLegacyJsonMessage("onFirstFrameReceived",
-                        base::MakeUnique<base::DictionaryValue>());
+                        std::make_unique<base::DictionaryValue>());
 }
 
 void ChromotingInstance::OnVideoFrameDirtyRegion(
@@ -619,8 +625,8 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
         experiments, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   }
 
-  VLOG(0) << "Connecting to " << host_jid
-          << ". Local jid: " << local_jid << ".";
+  VLOG(0) << "Connecting to " << host_jid << ". Local jid: " << local_jid
+          << ".";
 
   std::string key_filter;
   if (!data.GetString("keyFilter", &key_filter)) {
@@ -690,14 +696,14 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
                  weak_factory_.GetWeakPtr())));
 
   // Create TransportContext.
-  scoped_refptr<protocol::TransportContext> transport_context(
-      new protocol::TransportContext(
-          signal_strategy_.get(),
-          base::MakeUnique<PepperPortAllocatorFactory>(this),
-          base::MakeUnique<PepperUrlRequestFactory>(this),
-          protocol::NetworkSettings(
-              protocol::NetworkSettings::NAT_TRAVERSAL_FULL),
-          protocol::TransportRole::CLIENT));
+  transport_context_ = new protocol::TransportContext(
+      signal_strategy_.get(),
+      std::make_unique<PepperPortAllocatorFactory>(
+          this, base::BindRepeating(&ChromotingInstance::SendNetworkInfo,
+                                    base::Unretained(this))),
+      std::make_unique<PepperUrlRequestFactory>(this),
+      protocol::NetworkSettings(protocol::NetworkSettings::NAT_TRAVERSAL_FULL),
+      protocol::TransportRole::CLIENT);
 
   std::unique_ptr<protocol::CandidateSessionConfig> config =
       protocol::CandidateSessionConfig::CreateDefault();
@@ -712,7 +718,7 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
   client_->set_protocol_config(std::move(config));
 
   // Kick off the connection.
-  client_->Start(signal_strategy_.get(), client_auth_config, transport_context,
+  client_->Start(signal_strategy_.get(), client_auth_config, transport_context_,
                  host_jid, capabilities);
 
   // Connect the input pipeline to the protocol stub.
@@ -756,7 +762,7 @@ void ChromotingInstance::HandleReleaseAllKeys(
 }
 
 void ChromotingInstance::HandleInjectKeyEvent(
-      const base::DictionaryValue& data) {
+    const base::DictionaryValue& data) {
   int usb_keycode = 0;
   bool is_pressed = false;
   if (!data.GetInteger("usbKeycode", &usb_keycode) ||
@@ -824,10 +830,8 @@ void ChromotingInstance::HandleNotifyClientResolution(
   int y_dpi = kDefaultDPI;
   if (!data.GetInteger("width", &width) ||
       !data.GetInteger("height", &height) ||
-      !data.GetInteger("x_dpi", &x_dpi) ||
-      !data.GetInteger("y_dpi", &y_dpi) ||
-      width <= 0 || height <= 0 ||
-      x_dpi <= 0 || y_dpi <= 0) {
+      !data.GetInteger("x_dpi", &x_dpi) || !data.GetInteger("y_dpi", &y_dpi) ||
+      width <= 0 || height <= 0 || x_dpi <= 0 || y_dpi <= 0) {
     LOG(ERROR) << "Invalid notifyClientResolution.";
     return;
   }
@@ -891,7 +895,7 @@ void ChromotingInstance::HandleOnPinFetched(const base::DictionaryValue& data) {
     return;
   }
   if (!secret_fetched_callback_.is_null()) {
-    base::ResetAndReturn(&secret_fetched_callback_).Run(pin);
+    std::move(secret_fetched_callback_).Run(pin);
   } else {
     LOG(WARNING) << "Ignored OnPinFetched received without a pending fetch.";
   }
@@ -907,8 +911,7 @@ void ChromotingInstance::HandleOnThirdPartyTokenFetched(
     return;
   }
   if (!third_party_token_fetched_callback_.is_null()) {
-    base::ResetAndReturn(&third_party_token_fetched_callback_)
-        .Run(token, shared_secret);
+    std::move(third_party_token_fetched_callback_).Run(token, shared_secret);
   } else {
     LOG(WARNING) << "Ignored OnThirdPartyTokenFetched without a pending fetch.";
   }
@@ -950,8 +953,9 @@ void ChromotingInstance::HandleExtensionMessage(
 void ChromotingInstance::HandleAllowMouseLockMessage() {
   // Create the mouse lock handler and route cursor shape messages through it.
   mouse_locker_.reset(new PepperMouseLocker(
-      this, base::Bind(&PepperInputHandler::set_send_mouse_move_deltas,
-                       base::Unretained(&input_handler_)),
+      this,
+      base::Bind(&PepperInputHandler::set_send_mouse_move_deltas,
+                 base::Unretained(&input_handler_)),
       &cursor_setter_));
   empty_cursor_filter_.set_cursor_stub(mouse_locker_.get());
 }
@@ -1012,6 +1016,17 @@ void ChromotingInstance::Disconnect() {
   video_renderer_.reset();
   audio_player_.reset();
   stats_update_timer_.Stop();
+  transport_context_ = nullptr;
+}
+
+void ChromotingInstance::UpdateNetConfigAndConnect(
+    const base::DictionaryValue& data) {
+  OnNetConfigUpdated(data);
+}
+
+void ChromotingInstance::OnNetConfigUpdated(
+    std::unique_ptr<base::DictionaryValue> data) {
+  HandleConnect(*data);
 }
 
 void ChromotingInstance::PostChromotingMessage(const std::string& method,
@@ -1092,7 +1107,9 @@ void ChromotingInstance::UnregisterLoggingInstance() {
 }
 
 // static
-bool ChromotingInstance::LogToUI(int severity, const char* file, int line,
+bool ChromotingInstance::LogToUI(int severity,
+                                 const char* file,
+                                 int line,
                                  size_t message_start,
                                  const std::string& str) {
   PP_LogLevel log_level = PP_LOGLEVEL_ERROR;
@@ -1160,6 +1177,26 @@ void ChromotingInstance::UpdateUmaCustomHistogram(
     uma.HistogramCustomTimes(histogram_name, value, histogram_min,
                              histogram_max, histogram_buckets);
   }
+}
+
+void ChromotingInstance::SendNetworkInfo() {
+  if (!transport_context_)
+    return;
+  rtc::NetworkManager* network_manager = transport_context_->network_manager();
+  if (!network_manager)
+    return;
+
+  rtc::NetworkManager::NetworkList network_list;
+  network_manager->GetNetworks(&network_list);
+
+  std::set<std::string> network_names;
+  for (const auto* network : network_list) {
+    network_names.insert(network->name());
+  }
+  pp::VarDictionary dictionary;
+  dictionary.Set(pp::Var("interfaceCount"),
+                 static_cast<int32_t>(network_names.size()));
+  PostChromotingMessage("networkInfo", dictionary);
 }
 
 }  // namespace remoting

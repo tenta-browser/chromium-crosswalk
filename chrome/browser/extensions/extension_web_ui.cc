@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -30,6 +30,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/bindings_policy.h"
+#include "extensions/browser/extension_icon_placeholder.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
@@ -121,7 +122,7 @@ void AddOverridesToList(base::ListValue* list, const GURL& override_url) {
     }
   }
 
-  auto dict = base::MakeUnique<base::DictionaryValue>();
+  auto dict = std::make_unique<base::DictionaryValue>();
   dict->SetString(kEntry, spec);
   dict->SetBoolean(kActive, true);
   // Add the entry to the front of the list.
@@ -179,7 +180,8 @@ void UnregisterAndReplaceOverrideForWebContents(const std::string& page,
   web_contents->GetController().LoadURL(
       url,
       content::Referrer::SanitizeForRequest(
-          url, content::Referrer(url, blink::kWebReferrerPolicyDefault)),
+          url,
+          content::Referrer(url, network::mojom::ReferrerPolicy::kDefault)),
       ui::PAGE_TRANSITION_RELOAD, std::string());
 }
 
@@ -193,7 +195,7 @@ enum UpdateBehavior {
 bool UpdateOverridesList(base::ListValue* overrides_list,
                          const std::string& override_url,
                          UpdateBehavior behavior) {
-  base::ListValue::iterator iter = std::find_if(
+  auto iter = std::find_if(
       overrides_list->begin(), overrides_list->end(),
       [&override_url](const base::Value& value) {
         std::string entry;
@@ -212,6 +214,7 @@ bool UpdateOverridesList(base::ListValue* overrides_list,
           break;
         }
         // Else fall through and erase the broken pref.
+        FALLTHROUGH;
       }
       case UPDATE_REMOVE:
         overrides_list->Erase(iter, nullptr);
@@ -250,13 +253,11 @@ void UpdateOverridesLists(Profile* profile,
   }
 }
 
-// Run favicon callbck with image result. If no favicon was available then
+// Run favicon callback with image result. If no favicon was available then
 // |image| will be empty.
-void RunFaviconCallbackAsync(
-    const favicon_base::FaviconResultsCallback& callback,
-    const gfx::Image& image) {
-  std::vector<favicon_base::FaviconRawBitmapResult>* favicon_bitmap_results =
-      new std::vector<favicon_base::FaviconRawBitmapResult>();
+void RunFaviconCallbackAsync(favicon_base::FaviconResultsCallback callback,
+                             const gfx::Image& image) {
+  std::vector<favicon_base::FaviconRawBitmapResult> favicon_bitmap_results;
 
   const std::vector<gfx::ImageSkiaRep>& image_reps =
       image.AsImageSkia().image_reps();
@@ -264,8 +265,7 @@ void RunFaviconCallbackAsync(
     const gfx::ImageSkiaRep& image_rep = image_reps[i];
     scoped_refptr<base::RefCountedBytes> bitmap_data(
         new base::RefCountedBytes());
-    if (gfx::PNGCodec::EncodeBGRASkBitmap(image_rep.sk_bitmap(),
-                                          false,
+    if (gfx::PNGCodec::EncodeBGRASkBitmap(image_rep.GetBitmap(), false,
                                           &bitmap_data->data())) {
       favicon_base::FaviconRawBitmapResult bitmap_result;
       bitmap_result.bitmap_data = bitmap_data;
@@ -274,7 +274,7 @@ void RunFaviconCallbackAsync(
       // Leave |bitmap_result|'s icon URL as the default of GURL().
       bitmap_result.icon_type = favicon_base::IconType::kFavicon;
 
-      favicon_bitmap_results->push_back(bitmap_result);
+      favicon_bitmap_results.push_back(bitmap_result);
     } else {
       NOTREACHED() << "Could not encode extension favicon";
     }
@@ -282,8 +282,7 @@ void RunFaviconCallbackAsync(
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::BindOnce(&favicon::FaviconService::FaviconResultsCallbackRunner,
-                     callback, base::Owned(favicon_bitmap_results)));
+      base::BindOnce(std::move(callback), std::move(favicon_bitmap_results)));
 }
 
 bool ValidateOverrideURL(const base::Value* override_url_value,
@@ -440,8 +439,8 @@ bool ExtensionWebUI::HandleChromeURLOverrideReverse(
     if (!dict_iter.value().GetAsList(&url_list))
       continue;
 
-    for (base::ListValue::const_iterator list_iter = url_list->begin();
-         list_iter != url_list->end(); ++list_iter) {
+    for (auto list_iter = url_list->begin(); list_iter != url_list->end();
+         ++list_iter) {
       const base::DictionaryValue* dict = nullptr;
       if (!list_iter->GetAsDictionary(&dict))
         continue;
@@ -490,7 +489,7 @@ void ExtensionWebUI::RegisterOrActivateChromeURLOverrides(
     base::ListValue* page_overrides_weak = nullptr;
     if (!all_overrides->GetList(page_override_pair.first,
                                 &page_overrides_weak)) {
-      auto page_overrides = base::MakeUnique<base::ListValue>();
+      auto page_overrides = std::make_unique<base::ListValue>();
       page_overrides_weak = page_overrides.get();
       all_overrides->Set(page_override_pair.first, std::move(page_overrides));
     }
@@ -516,11 +515,11 @@ void ExtensionWebUI::UnregisterChromeURLOverrides(
 void ExtensionWebUI::GetFaviconForURL(
     Profile* profile,
     const GURL& page_url,
-    const favicon_base::FaviconResultsCallback& callback) {
+    favicon_base::FaviconResultsCallback callback) {
   const Extension* extension = extensions::ExtensionRegistry::Get(
       profile)->enabled_extensions().GetByID(page_url.host());
   if (!extension) {
-    RunFaviconCallbackAsync(callback, gfx::Image());
+    RunFaviconCallbackAsync(std::move(callback), gfx::Image());
     return;
   }
 
@@ -539,15 +538,33 @@ void ExtensionWebUI::GetFaviconForURL(
                                                ExtensionIconSet::MATCH_BIGGER);
 
     ui::ScaleFactor resource_scale_factor = ui::GetSupportedScaleFactor(scale);
-    info_list.push_back(extensions::ImageLoader::ImageRepresentation(
-        icon_resource,
-        extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
-        gfx::Size(pixel_size, pixel_size),
-        resource_scale_factor));
+    if (!icon_resource.empty()) {
+      info_list.push_back(extensions::ImageLoader::ImageRepresentation(
+          icon_resource,
+          extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
+          gfx::Size(pixel_size, pixel_size), resource_scale_factor));
+    }
   }
 
-  // LoadImagesAsync actually can run callback synchronously. We want to force
-  // async.
-  extensions::ImageLoader::Get(profile)->LoadImagesAsync(
-      extension, info_list, base::Bind(&RunFaviconCallbackAsync, callback));
+  if (info_list.empty()) {
+    // Use the placeholder image when no default icon is available.
+    gfx::Image placeholder_image =
+        extensions::ExtensionIconPlaceholder::CreateImage(
+            extension_misc::EXTENSION_ICON_SMALL, extension->name());
+    gfx::ImageSkia placeholder_skia(placeholder_image.AsImageSkia());
+    // Ensure the ImageSkia has representation at all scales we would use for
+    // favicons.
+    std::vector<ui::ScaleFactor> scale_factors = ui::GetSupportedScaleFactors();
+    for (const auto& scale_factor : scale_factors) {
+      placeholder_skia.GetRepresentation(
+          ui::GetScaleForScaleFactor(scale_factor));
+    }
+    RunFaviconCallbackAsync(std::move(callback), gfx::Image(placeholder_skia));
+  } else {
+    // LoadImagesAsync actually can run callback synchronously. We want to force
+    // async.
+    extensions::ImageLoader::Get(profile)->LoadImagesAsync(
+        extension, info_list,
+        base::BindOnce(&RunFaviconCallbackAsync, std::move(callback)));
+  }
 }

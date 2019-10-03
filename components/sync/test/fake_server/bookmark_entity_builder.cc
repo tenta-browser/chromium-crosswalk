@@ -45,29 +45,38 @@ void BookmarkEntityBuilder::SetParentId(const std::string& parent_id) {
   parent_id_ = parent_id;
 }
 
+void BookmarkEntityBuilder::SetIndex(int index) {
+  index_ = index;
+}
+
 std::unique_ptr<LoopbackServerEntity> BookmarkEntityBuilder::BuildBookmark(
-    const GURL& url) {
+    const GURL& url,
+    bool is_legacy) {
   if (!url.is_valid()) {
     return base::WrapUnique<LoopbackServerEntity>(nullptr);
   }
 
-  sync_pb::EntitySpecifics entity_specifics = CreateBaseEntitySpecifics();
+  sync_pb::EntitySpecifics entity_specifics =
+      CreateBaseEntitySpecifics(is_legacy);
   entity_specifics.mutable_bookmark()->set_url(url.spec());
   const bool kIsNotFolder = false;
   return Build(entity_specifics, kIsNotFolder);
 }
 
-std::unique_ptr<LoopbackServerEntity> BookmarkEntityBuilder::BuildFolder() {
+std::unique_ptr<LoopbackServerEntity> BookmarkEntityBuilder::BuildFolder(
+    bool is_legacy) {
   const bool kIsFolder = true;
-  return Build(CreateBaseEntitySpecifics(), kIsFolder);
+  return Build(CreateBaseEntitySpecifics(is_legacy), kIsFolder);
 }
 
-sync_pb::EntitySpecifics BookmarkEntityBuilder::CreateBaseEntitySpecifics()
-    const {
+sync_pb::EntitySpecifics BookmarkEntityBuilder::CreateBaseEntitySpecifics(
+    bool is_legacy) const {
   sync_pb::EntitySpecifics entity_specifics;
   sync_pb::BookmarkSpecifics* bookmark_specifics =
       entity_specifics.mutable_bookmark();
-  bookmark_specifics->set_title(title_);
+  if (!is_legacy) {
+    bookmark_specifics->set_title(title_);
+  }
 
   return entity_specifics;
 }
@@ -75,11 +84,10 @@ sync_pb::EntitySpecifics BookmarkEntityBuilder::CreateBaseEntitySpecifics()
 std::unique_ptr<LoopbackServerEntity> BookmarkEntityBuilder::Build(
     const sync_pb::EntitySpecifics& entity_specifics,
     bool is_folder) {
-  sync_pb::UniquePosition unique_position;
-  // TODO(pvalenzuela): Allow caller customization of the position integer.
   const string suffix = GenerateSyncableBookmarkHash(
       originator_cache_guid_, originator_client_item_id_);
-  syncer::UniquePosition::FromInt64(0, suffix).ToProto(&unique_position);
+  sync_pb::UniquePosition unique_position =
+      syncer::UniquePosition::FromInt64(index_, suffix).ToProto();
 
   if (parent_id_.empty()) {
     parent_id_ =

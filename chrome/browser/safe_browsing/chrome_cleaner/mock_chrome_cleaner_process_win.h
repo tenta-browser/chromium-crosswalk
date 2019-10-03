@@ -5,13 +5,19 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_CHROME_CLEANER_MOCK_CHROME_CLEANER_PROCESS_WIN_H_
 #define CHROME_BROWSER_SAFE_BROWSING_CHROME_CLEANER_MOCK_CHROME_CLEANER_PROCESS_WIN_H_
 
-#include <set>
-#include <string>
+#include <ostream>
+#include <vector>
 
-#include "base/callback.h"
-#include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "components/chrome_cleaner/public/interfaces/chrome_prompt.mojom.h"
+#include "base/optional.h"
+#include "base/strings/string16.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/chrome_prompt_actions_win.h"
+
+class Profile;
+
+namespace base {
+class CommandLine;
+}  // namespace base
 
 namespace safe_browsing {
 
@@ -20,16 +26,12 @@ namespace safe_browsing {
 //
 // MULTIPROCESS_TEST_MAIN(MockChromeCleanerProcessMain) {
 //   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-//   MockChromeCleanerProcess::Options options;
-//   EXPECT_TRUE(MockChromeCleanerProcess::Options::FromCommandLine(
-//       *command_line, &options));
-//   std::string chrome_mojo_pipe_token = ...
-//   EXPECT_FALSE(chrome_mojo_pipe_token.empty())
 //
+//   MockChromeCleanerProcess mock_cleaner_process;
+//   EXPECT_TRUE(mock_cleaner_process.InitWithCommandLine(*command_line));
 //   if (::testing::Test::HasFailure())
 //     return MockChromeCleanerProcess::kInternalTestFailureExitCode;
-//   MockChromeCleanerProcess mock_cleaner_process(options,
-//                                                 chrome_mojo_pipe_token);
+//
 //   return mock_cleaner_process.Run();
 // }
 class MockChromeCleanerProcess {
@@ -43,17 +45,34 @@ class MockChromeCleanerProcess {
     kNumCrashPoints,
   };
 
-  // Indicates if registry keys will be sent from the cleaner process.
-  enum class RegistryKeysReporting {
+  // Indicates if a category of items (e.g. registry keys, extensions) to be
+  // removed/changed will be sent from the cleaner process.
+  enum class ItemsReporting {
     // Simulation of an older cleaner version that doesn't support sending
-    // registry keys.
+    // the category of items.
     kUnsupported,
-    // Simulation of a cleaner version that supports sending registry keys,
-    // but no registry key to be removed/changed reported.
+    // Simulation of a cleaner version that supports sending the category of
+    // items, but for which no items were reported.
     kNotReported,
-    // The cleaner reported registry keys to be removed/changed.
+    // The cleaner reported items to be removed/changed.
     kReported,
-    kNumRegistryKeysReporting,
+    kNumItemsReporting,
+  };
+
+  enum class UwsFoundStatus {
+    kNoUwsFound,
+    kUwsFoundRebootRequired,
+    kUwsFoundNoRebootRequired,
+  };
+
+  enum class ExtensionCleaningFeatureStatus {
+    kEnabled,
+    kDisabled,
+  };
+
+  enum class ProtobufIPCFeatureStatus {
+    kEnabled,
+    kDisabled,
   };
 
   static constexpr int kInternalTestFailureExitCode = 100001;
@@ -62,6 +81,14 @@ class MockChromeCleanerProcess {
   static constexpr int kDeclinedExitCode = 44;
   static constexpr int kRebootRequiredExitCode = 15;
   static constexpr int kRebootNotRequiredExitCode = 0;
+
+  static const base::char16 kInstalledExtensionId1[];
+  static const base::char16 kInstalledExtensionName1[];
+  static const base::char16 kInstalledExtensionId2[];
+  static const base::char16 kInstalledExtensionName2[];
+  static const base::char16 kUnknownExtensionId[];
+
+  static void AddMockExtensionsToProfile(Profile* profile);
 
   class Options {
    public:
@@ -76,13 +103,22 @@ class MockChromeCleanerProcess {
     void AddSwitchesToCommandLine(base::CommandLine* command_line) const;
 
     void SetReportedResults(bool has_files_to_remove,
-                            RegistryKeysReporting registry_keys_reporting);
+                            ItemsReporting registry_keys_reporting,
+                            ItemsReporting extensions_reporting);
 
     const std::vector<base::FilePath>& files_to_delete() const {
       return files_to_delete_;
     }
     const base::Optional<std::vector<base::string16>>& registry_keys() const {
       return registry_keys_;
+    }
+    const base::Optional<std::vector<base::string16>>& extension_ids() const {
+      return extension_ids_;
+    }
+
+    const base::Optional<std::vector<base::string16>>&
+    expected_extension_names() const {
+      return expected_extension_names_;
     }
 
     void set_reboot_required(bool reboot_required) {
@@ -94,34 +130,42 @@ class MockChromeCleanerProcess {
     CrashPoint crash_point() const { return crash_point_; }
 
     void set_expected_user_response(
-        chrome_cleaner::mojom::PromptAcceptance expected_user_response) {
+        ChromePromptActions::PromptAcceptance expected_user_response) {
       expected_user_response_ = expected_user_response;
     }
 
-    chrome_cleaner::mojom::PromptAcceptance expected_user_response() const {
+    ChromePromptActions::PromptAcceptance expected_user_response() const {
       return expected_user_response_;
     }
 
-    RegistryKeysReporting registry_keys_reporting() const {
+    ItemsReporting registry_keys_reporting() const {
       return registry_keys_reporting_;
     }
 
-    int ExpectedExitCode(chrome_cleaner::mojom::PromptAcceptance
-                             received_prompt_acceptance) const;
+    ItemsReporting extensions_reporting() const {
+      return extensions_reporting_;
+    }
+
+    int ExpectedExitCode(
+        ChromePromptActions::PromptAcceptance received_prompt_acceptance) const;
 
    private:
     std::vector<base::FilePath> files_to_delete_;
     base::Optional<std::vector<base::string16>> registry_keys_;
+    base::Optional<std::vector<base::string16>> extension_ids_;
+    base::Optional<std::vector<base::string16>> expected_extension_names_;
     bool reboot_required_ = false;
     CrashPoint crash_point_ = CrashPoint::kNone;
-    RegistryKeysReporting registry_keys_reporting_ =
-        RegistryKeysReporting::kUnsupported;
-    chrome_cleaner::mojom::PromptAcceptance expected_user_response_ =
-        chrome_cleaner::mojom::PromptAcceptance::UNSPECIFIED;
+    ItemsReporting registry_keys_reporting_ = ItemsReporting::kUnsupported;
+    ItemsReporting extensions_reporting_ = ItemsReporting::kUnsupported;
+    ChromePromptActions::PromptAcceptance expected_user_response_ =
+        ChromePromptActions::PromptAcceptance::UNSPECIFIED;
   };
 
-  MockChromeCleanerProcess(const Options& options,
-                           const std::string& chrome_mojo_pipe_token);
+  MockChromeCleanerProcess();
+  ~MockChromeCleanerProcess();
+
+  bool InitWithCommandLine(const base::CommandLine& command_line);
 
   // Call this in the main function of the mock Chrome Cleaner process. Returns
   // the exit code that should be used when the process exits.
@@ -132,21 +176,31 @@ class MockChromeCleanerProcess {
   int Run();
 
  private:
-  // Function that receives the Mojo response to the PromptUser message.
-  void SendScanResults(
-      chrome_cleaner::mojom::ChromePromptPtrInfo prompt_ptr_info,
-      base::OnceClosure quit_closure);
-  void PromptUserCallback(
-      base::OnceClosure quit_closure,
-      chrome_cleaner::mojom::PromptAcceptance prompt_acceptance);
-
   Options options_;
-  std::string chrome_mojo_pipe_token_;
-  // The PromptAcceptance received in PromptUserCallback().
-  chrome_cleaner::mojom::PromptAcceptance received_prompt_acceptance_ =
-      chrome_cleaner::mojom::PromptAcceptance::UNSPECIFIED;
-  chrome_cleaner::mojom::ChromePromptPtr* chrome_prompt_ptr_ = nullptr;
+
+  // Saved copy of command line for IPC setup.
+  std::unique_ptr<base::CommandLine> command_line_;
 };
+
+// Making test parameter types printable.
+
+std::ostream& operator<<(std::ostream& out,
+                         MockChromeCleanerProcess::CrashPoint crash_point);
+
+std::ostream& operator<<(std::ostream& out,
+                         MockChromeCleanerProcess::UwsFoundStatus status);
+
+std::ostream& operator<<(
+    std::ostream& out,
+    MockChromeCleanerProcess::ExtensionCleaningFeatureStatus status);
+
+std::ostream& operator<<(
+    std::ostream& out,
+    MockChromeCleanerProcess::ProtobufIPCFeatureStatus status);
+
+std::ostream& operator<<(
+    std::ostream& out,
+    MockChromeCleanerProcess::ItemsReporting items_reporting);
 
 }  // namespace safe_browsing
 

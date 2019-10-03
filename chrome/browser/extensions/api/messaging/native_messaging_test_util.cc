@@ -29,12 +29,15 @@ namespace {
 void WriteTestNativeHostManifest(const base::FilePath& target_dir,
                                  const std::string& host_name,
                                  const base::FilePath& host_path,
-                                 bool user_level) {
+                                 bool user_level,
+                                 bool supports_native_initiated_connections) {
   std::unique_ptr<base::DictionaryValue> manifest(new base::DictionaryValue());
   manifest->SetString("name", host_name);
   manifest->SetString("description", "Native Messaging Echo Test");
   manifest->SetString("type", "stdio");
   manifest->SetString("path", host_path.AsUTF8Unsafe());
+  manifest->SetBoolean("supports_native_initiated_connections",
+                       supports_native_initiated_connections);
 
   std::unique_ptr<base::ListValue> origins(new base::ListValue());
   origins->AppendString(base::StringPrintf(
@@ -63,6 +66,9 @@ const char ScopedTestNativeMessagingHost::kHostName[] =
     "com.google.chrome.test.echo";
 const char ScopedTestNativeMessagingHost::kBinaryMissingHostName[] =
     "com.google.chrome.test.host_binary_missing";
+const char ScopedTestNativeMessagingHost::
+    kSupportsNativeInitiatedConnectionsHostName[] =
+        "com.google.chrome.test.inbound_native_echo";
 const char ScopedTestNativeMessagingHost::kExtensionId[] =
     "knldjmfmopnpolahpmmgbagdohdnhkik";
 
@@ -74,7 +80,8 @@ void ScopedTestNativeMessagingHost::RegisterTestHost(bool user_level) {
   ScopedTestNativeMessagingHost test_host;
 
   base::FilePath test_user_data_dir;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_user_data_dir));
+  ASSERT_TRUE(
+      base::PathService::Get(chrome::DIR_TEST_DATA, &test_user_data_dir));
   test_user_data_dir = test_user_data_dir.AppendASCII("native_messaging")
                            .AppendASCII("native_hosts");
 
@@ -94,11 +101,16 @@ void ScopedTestNativeMessagingHost::RegisterTestHost(bool user_level) {
   base::FilePath host_path = test_user_data_dir.AppendASCII("echo.bat");
 #endif
   ASSERT_NO_FATAL_FAILURE(WriteTestNativeHostManifest(
-      temp_dir_.GetPath(), kHostName, host_path, user_level));
+      temp_dir_.GetPath(), kHostName, host_path, user_level, false));
 
   ASSERT_NO_FATAL_FAILURE(WriteTestNativeHostManifest(
       temp_dir_.GetPath(), kBinaryMissingHostName,
-      test_user_data_dir.AppendASCII("missing_nm_binary.exe"), user_level));
+      test_user_data_dir.AppendASCII("missing_nm_binary.exe"), user_level,
+      false));
+
+  ASSERT_NO_FATAL_FAILURE(WriteTestNativeHostManifest(
+      temp_dir_.GetPath(), kSupportsNativeInitiatedConnectionsHostName,
+      host_path, user_level, true));
 }
 
 ScopedTestNativeMessagingHost::~ScopedTestNativeMessagingHost() {

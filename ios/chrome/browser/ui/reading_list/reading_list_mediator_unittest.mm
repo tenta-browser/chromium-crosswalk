@@ -4,16 +4,20 @@
 
 #import "ios/chrome/browser/ui/reading_list/reading_list_mediator.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/strings/sys_string_conversions.h"
 #include "base/test/simple_test_clock.h"
-#include "components/favicon/core/large_icon_service.h"
+#include "components/favicon/core/large_icon_service_impl.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
 #include "components/reading_list/core/reading_list_model_impl.h"
 #include "components/url_formatter/url_formatter.h"
+#import "ios/chrome/browser/favicon/favicon_loader.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
-#import "ios/chrome/browser/ui/reading_list/reading_list_collection_view_item.h"
-#import "ios/chrome/browser/ui/reading_list/reading_list_collection_view_item_accessibility_delegate.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_list_item_accessibility_delegate.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_list_item_custom_action_factory.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_list_item_factory.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_table_view_item.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,18 +30,32 @@
 
 using testing::_;
 
-class ReadingListMediatorTest : public PlatformTest {
+namespace reading_list {
+
+// ReadingListMediatorTest is parameterized on this enum to test both
+// FaviconAttributesProvider and FaviconLoader.
+// TODO(crbug.com/878796): Remove as part of UIRefresh cleanup.
+enum class FaviconServiceType {
+  FAVICON_LOADER,
+  ATTRIBUTES_PROVIDER,
+};
+
+class ReadingListMediatorTest
+    : public PlatformTest,
+      public ::testing::WithParamInterface<FaviconServiceType> {
  public:
   ReadingListMediatorTest() {
-    std::unique_ptr<base::SimpleTestClock> clock =
-        base::MakeUnique<base::SimpleTestClock>();
-    clock_ = clock.get();
-    model_ = base::MakeUnique<ReadingListModelImpl>(nullptr, nullptr,
-                                                    std::move(clock));
+    model_ = std::make_unique<ReadingListModelImpl>(nullptr, nullptr, &clock_);
     EXPECT_CALL(mock_favicon_service_,
                 GetLargestRawFaviconForPageURL(_, _, _, _, _))
-        .WillRepeatedly(
-            favicon::PostReply<5>(favicon_base::FaviconRawBitmapResult()));
+        .WillRepeatedly([](auto, auto, auto,
+                           favicon_base::FaviconRawBitmapCallback callback,
+                           base::CancelableTaskTracker* tracker) {
+          return tracker->PostTask(
+              base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
+              base::BindOnce(std::move(callback),
+                             favicon_base::FaviconRawBitmapResult()));
+        });
 
     no_title_entry_url_ = GURL("http://chromium.org/unread3");
     // The first 3 have the same update time on purpose.
@@ -48,60 +66,59 @@ class ReadingListMediatorTest : public PlatformTest {
     model_->SetReadStatus(GURL("http://chromium.org/read1"), true);
     model_->AddEntry(GURL("http://chromium.org/unread2"), "unread2",
                      reading_list::ADDED_VIA_CURRENT_APP);
-    clock_->Advance(base::TimeDelta::FromMilliseconds(10));
+    clock_.Advance(base::TimeDelta::FromMilliseconds(10));
     model_->AddEntry(no_title_entry_url_, "",
                      reading_list::ADDED_VIA_CURRENT_APP);
-    clock_->Advance(base::TimeDelta::FromMilliseconds(10));
+    clock_.Advance(base::TimeDelta::FromMilliseconds(10));
     model_->AddEntry(GURL("http://chromium.org/read2"), "read2",
                      reading_list::ADDED_VIA_CURRENT_APP);
     model_->SetReadStatus(GURL("http://chromium.org/read2"), true);
-
-    large_icon_service_.reset(new favicon::LargeIconService(
+    large_icon_service_.reset(new favicon::LargeIconServiceImpl(
         &mock_favicon_service_, /*image_fetcher=*/nullptr));
 
-    mediator_ =
-        [[ReadingListMediator alloc] initWithModel:model_.get()
-                                  largeIconService:large_icon_service_.get()];
+    favicon_loader.reset(new FaviconLoader(large_icon_service_.get()));
+    mediator_ = [[ReadingListMediator alloc]
+          initWithModel:model_.get()
+          faviconLoader:favicon_loader.get()
+        listItemFactory:[[ReadingListListItemFactory alloc] init]];
   }
 
  protected:
   testing::StrictMock<favicon::MockFaviconService> mock_favicon_service_;
   std::unique_ptr<ReadingListModelImpl> model_;
   ReadingListMediator* mediator_;
-  base::SimpleTestClock* clock_;
+  base::SimpleTestClock clock_;
   GURL no_title_entry_url_;
-  std::unique_ptr<favicon::LargeIconService> large_icon_service_;
+  std::unique_ptr<FaviconLoader> favicon_loader;
+  std::unique_ptr<favicon::LargeIconServiceImpl> large_icon_service_;
 
  private:
   web::TestWebThreadBundle thread_bundle_;
   DISALLOW_COPY_AND_ASSIGN(ReadingListMediatorTest);
 };
 
-TEST_F(ReadingListMediatorTest, fillItems) {
+TEST_P(ReadingListMediatorTest, fillItems) {
   // Setup.
-  NSMutableArray<CollectionViewItem*>* readArray = [NSMutableArray array];
-  NSMutableArray<CollectionViewItem*>* unreadArray = [NSMutableArray array];
-  id mockDelegate = OCMProtocolMock(
-      @protocol(ReadingListCollectionViewItemAccessibilityDelegate));
+  NSMutableArray<id<ReadingListListItem>>* readArray = [NSMutableArray array];
+  NSMutableArray<id<ReadingListListItem>>* unreadArray = [NSMutableArray array];
 
   // Action.
-  [mediator_ fillReadItems:readArray
-               unreadItems:unreadArray
-              withDelegate:mockDelegate];
+  [mediator_ fillReadItems:readArray unreadItems:unreadArray];
 
   // Tests.
   EXPECT_EQ(3U, [unreadArray count]);
   EXPECT_EQ(2U, [readArray count]);
-  NSArray<ReadingListCollectionViewItem*>* rlReadArray = [readArray copy];
-  NSArray<ReadingListCollectionViewItem*>* rlUneadArray = [unreadArray copy];
-  EXPECT_TRUE([rlUneadArray[0].title
-      isEqualToString:base::SysUTF16ToNSString(url_formatter::FormatUrl(
-                          no_title_entry_url_.GetOrigin()))]);
+  NSArray<ReadingListTableViewItem*>* rlReadArray = [readArray copy];
+  NSArray<ReadingListTableViewItem*>* rlUneadArray = [unreadArray copy];
+  EXPECT_TRUE([rlUneadArray[0].title isEqualToString:@""]);
   EXPECT_TRUE([rlReadArray[0].title isEqualToString:@"read2"]);
   EXPECT_TRUE([rlReadArray[1].title isEqualToString:@"read1"]);
-  EXPECT_EQ(mockDelegate, rlReadArray[0].accessibilityDelegate);
-  EXPECT_EQ(mockDelegate, rlReadArray[1].accessibilityDelegate);
-  EXPECT_EQ(mockDelegate, rlUneadArray[0].accessibilityDelegate);
-  EXPECT_EQ(mockDelegate, rlUneadArray[1].accessibilityDelegate);
-  EXPECT_EQ(mockDelegate, rlUneadArray[2].accessibilityDelegate);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    ,  // Empty instatiation name.
+    ReadingListMediatorTest,
+    ::testing::Values(FaviconServiceType::FAVICON_LOADER,
+                      FaviconServiceType::ATTRIBUTES_PROVIDER));
+
+}  // namespace reading_list

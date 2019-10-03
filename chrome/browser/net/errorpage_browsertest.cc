@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
@@ -19,13 +21,13 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/net/net_error_diagnostics_dialog.h"
-#include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/ui_thread_search_terms_data.h"
 #include "chrome/browser/ui/browser.h"
@@ -36,14 +38,16 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/error_page/common/error_page_switches.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
+#include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/navigation_handle.h"
@@ -54,38 +58,38 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/content_features.h"
-#include "content/public/common/url_loader.mojom.h"
-#include "content/public/common/url_loader_factory.mojom.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/url_loader_interceptor.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "net/base/filename_util.h"
 #include "net/base/net_errors.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/http/failing_http_transaction_factory.h"
 #include "net/http/http_cache.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/url_request/url_request_failed_job.h"
+#include "net/test/url_request/url_request_mock_data_job.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "net/url_request/url_request_filter.h"
-#include "net/url_request/url_request_interceptor.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/chrome_browser_main_chromeos.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#include "chrome/browser/chromeos/settings/stub_install_attributes.h"
+#include "chromeos/tpm/stub_install_attributes.h"
 #include "components/policy/core/common/policy_types.h"
 #else
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chrome/browser/policy/profile_policy_connector_builder.h"
 #endif
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 
@@ -143,12 +147,13 @@ bool WARN_UNUSED_RESULT IsDisplayingDiagnosticsLink(Browser* browser) {
 
 // Checks that the local error page is being displayed, without remotely
 // retrieved navigation corrections, and with the specified error string.
-void ExpectDisplayingLocalErrorPage(Browser* browser,
+void ExpectDisplayingLocalErrorPage(const std::string& url,
+                                    Browser* browser,
                                     const std::string& error_string) {
   EXPECT_TRUE(IsDisplayingText(browser, error_string));
 
   // Locally generated error pages should not have navigation corrections.
-  EXPECT_FALSE(IsDisplayingText(browser, "http://mock.http/title2.html"));
+  EXPECT_FALSE(IsDisplayingText(browser, url));
 
   // Locally generated error pages should not have a link with search terms.
   EXPECT_FALSE(IsDisplayingText(browser, "search query"));
@@ -156,8 +161,11 @@ void ExpectDisplayingLocalErrorPage(Browser* browser,
 
 // Checks that the local error page is being displayed, without remotely
 // retrieved navigation corrections, and with the specified error code.
-void ExpectDisplayingLocalErrorPage(Browser* browser, net::Error error_code) {
-  ExpectDisplayingLocalErrorPage(browser, net::ErrorToShortString(error_code));
+void ExpectDisplayingLocalErrorPage(const std::string& url,
+                                    Browser* browser,
+                                    net::Error error_code) {
+  ExpectDisplayingLocalErrorPage(url, browser,
+                                 net::ErrorToShortString(error_code));
 }
 
 // Checks that an error page with information retrieved from the navigation
@@ -187,237 +195,15 @@ void ExpectDisplayingNavigationCorrections(Browser* browser,
                                         net::ErrorToShortString(error_code));
 }
 
-std::string GetShowSavedButtonLabel() {
-  return l10n_util::GetStringUTF8(IDS_ERRORPAGES_BUTTON_SHOW_SAVED_COPY);
-}
-
-void AddInterceptorForURL(const GURL& url,
-                          std::unique_ptr<net::URLRequestInterceptor> handler) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  net::URLRequestFilter::GetInstance()->AddUrlInterceptor(url,
-                                                          std::move(handler));
-}
-
-void SetNetworkFactoryForTesting(Browser* browser,
-                                 content::mojom::URLLoaderFactory* factory) {
-  content::WebContents* web_contents =
-      browser->tab_strip_model()->GetActiveWebContents();
-
-  auto* storage_partition = content::BrowserContext::GetDefaultStoragePartition(
-      web_contents->GetBrowserContext());
-  storage_partition->SetNetworkFactoryForTesting(factory);
-}
-
-// An url loader that fails a configurable number of requests, then succeeds
-// all requests after that, keeping count of failures and successes.
-class FailFirstNRequestsURLLoaderFactory
-    : public content::mojom::URLLoaderFactory {
- public:
-  explicit FailFirstNRequestsURLLoaderFactory(int32_t requests_to_fail,
-                                              int32_t* requests,
-                                              int32_t* failures)
-      : requests_(requests),
-        failures_(failures),
-        requests_to_fail_(requests_to_fail) {}
-
-  // content::mojom::URLLoaderFactory implementation.
-  void CreateLoaderAndStart(content::mojom::URLLoaderRequest request,
-                            int32_t routing_id,
-                            int32_t request_id,
-                            uint32_t options,
-                            const content::ResourceRequest& url_request,
-                            content::mojom::URLLoaderClientPtr client,
-                            const net::MutableNetworkTrafficAnnotationTag&
-                                traffic_annotation) override {
-    (*requests_)++;
-    if (*failures_ < requests_to_fail_) {
-      (*failures_)++;
-      network::URLLoaderCompletionStatus status;
-      status.error_code = net::ERR_CONNECTION_RESET;
-      client->OnComplete(status);
-    } else {
-      std::string headers = URLRequestTestJob::test_headers();
-      net::HttpResponseInfo info;
-      info.headers =
-          new net::HttpResponseHeaders(net::HttpUtil::AssembleRawHeaders(
-              URLRequestTestJob::test_headers().c_str(),
-              URLRequestTestJob::test_headers().length()));
-      content::ResourceResponseHead response;
-      response.headers = info.headers;
-      response.headers->GetMimeType(&response.mime_type);
-      client->OnReceiveResponse(response, base::nullopt, nullptr);
-
-      std::string body = URLRequestTestJob::test_data_1();
-      uint32_t bytes_written = body.size();
-      mojo::DataPipe data_pipe;
-      data_pipe.producer_handle->WriteData(body.data(), &bytes_written,
-                                           MOJO_WRITE_DATA_FLAG_ALL_OR_NONE);
-      client->OnStartLoadingResponseBody(std::move(data_pipe.consumer_handle));
-
-      network::URLLoaderCompletionStatus status;
-      status.error_code = net::OK;
-      client->OnComplete(status);
-    }
-  }
-
-  void Clone(content::mojom::URLLoaderFactoryRequest factory) override {
-    NOTREACHED();
-  }
-
- private:
-  int32_t* requests_;
-  int32_t* failures_;
-  int32_t requests_to_fail_;
-
-  DISALLOW_COPY_AND_ASSIGN(FailFirstNRequestsURLLoaderFactory);
-};
-
-// TODO(dougt): FailFirstNRequestsInterceptor can be removed as soon as the
-// Network Service is the only code path.
-
-// An interceptor that fails a configurable number of requests, then succeeds
-// all requests after that, keeping count of failures and successes.
-class FailFirstNRequestsInterceptor : public net::URLRequestInterceptor {
- public:
-  explicit FailFirstNRequestsInterceptor(int32_t requests_to_fail,
-                                         int32_t* requests,
-                                         int32_t* failures)
-      : requests_(requests),
-        failures_(failures),
-        requests_to_fail_(requests_to_fail) {}
-  ~FailFirstNRequestsInterceptor() override {}
-
-  // net::URLRequestInterceptor implementation
-  net::URLRequestJob* MaybeInterceptRequest(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate) const override {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    (*requests_)++;
-    if (*failures_ < requests_to_fail_) {
-      (*failures_)++;
-      // Note: net::ERR_CONNECTION_RESET does not summon the Link Doctor; see
-      // NetErrorHelperCore::GetErrorPageURL.
-      return new URLRequestFailedJob(request,
-                                     network_delegate,
-                                     net::ERR_CONNECTION_RESET);
-    } else {
-      return new URLRequestTestJob(request, network_delegate,
-                                   URLRequestTestJob::test_headers(),
-                                   URLRequestTestJob::test_data_1(),
-                                   true);
-    }
-  }
-
- private:
-  int32_t* requests_;
-  int32_t* failures_;
-  int32_t requests_to_fail_;
-
-  DISALLOW_COPY_AND_ASSIGN(FailFirstNRequestsInterceptor);
-};
-
-// An interceptor that serves LinkDoctor responses.  It also allows waiting
-// until a certain number of requests have been sent.
-// TODO(mmenke):  Wait until responses have been received instead.
-class LinkDoctorInterceptor : public net::URLRequestInterceptor {
- public:
-  LinkDoctorInterceptor() : num_requests_(0),
-                            requests_to_wait_for_(-1),
-                            weak_factory_(this) {
-  }
-
-  ~LinkDoctorInterceptor() override {}
-
-  // net::URLRequestInterceptor implementation
-  net::URLRequestJob* MaybeInterceptRequest(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate) const override {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&LinkDoctorInterceptor::RequestCreated,
-                       weak_factory_.GetWeakPtr()));
-
-    base::FilePath root_http;
-    PathService::Get(chrome::DIR_TEST_DATA, &root_http);
-    return new net::URLRequestMockHTTPJob(
-        request, network_delegate,
-        root_http.AppendASCII("mock-link-doctor.json"));
-  }
-
-  void WaitForRequests(int32_t requests_to_wait_for) {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    DCHECK_EQ(-1, requests_to_wait_for_);
-    DCHECK(!run_loop_);
-
-    if (requests_to_wait_for >= num_requests_)
-      return;
-
-    requests_to_wait_for_ = requests_to_wait_for;
-    run_loop_.reset(new base::RunLoop());
-    run_loop_->Run();
-    run_loop_.reset();
-    requests_to_wait_for_ = -1;
-    EXPECT_EQ(num_requests_, requests_to_wait_for);
-  }
-
-  // It is up to the caller to wait until all relevant requests has been
-  // created, either through calling WaitForRequests or some other manner,
-  // before calling this method.
-  int32_t num_requests() const {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    return num_requests_;
-  }
-
- private:
-  void RequestCreated() {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-    num_requests_++;
-    if (num_requests_ == requests_to_wait_for_)
-      run_loop_->Quit();
-  }
-
-  // These are only used on the UI thread.
-  int32_t num_requests_;
-  int32_t requests_to_wait_for_;
-  std::unique_ptr<base::RunLoop> run_loop_;
-
-  // This prevents any risk of flake if any test doesn't wait for a request
-  // it sent.  Mutable so it can be accessed from a const function.
-  mutable base::WeakPtrFactory<LinkDoctorInterceptor> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(LinkDoctorInterceptor);
-};
-
-void InstallMockInterceptors(
-    const GURL& search_url,
-    std::unique_ptr<net::URLRequestInterceptor> link_doctor_interceptor) {
-  chrome_browser_net::SetUrlRequestMocksEnabled(true);
-
-  AddInterceptorForURL(google_util::LinkDoctorBaseURL(),
-                       std::move(link_doctor_interceptor));
-
-  // Add a mock for the search engine the error page will use.
-  base::FilePath root_http;
-  PathService::Get(chrome::DIR_TEST_DATA, &root_http);
-  net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-      search_url.scheme(), search_url.host(),
-      net::URLRequestMockHTTPJob::CreateInterceptorForSingleFile(
-          root_http.AppendASCII("title3.html")));
-}
-
-// When it sees a request for |path|, returns a 500 response with a body that
-// will be sniffed as binary/octet-stream.
-std::unique_ptr<net::test_server::HttpResponse> Return500WithBinaryBody(
-    const std::string& path,
-    const net::test_server::HttpRequest& request) {
-  if (path != request.relative_url)
-    return nullptr;
-  return std::unique_ptr<net::test_server::HttpResponse>(
-      new net::test_server::RawHttpResponse("HTTP/1.1 500 Server Sad :(",
-                                            "\x01"));
+// Returns true if the platform has support for a diagnostics tool, and it
+// can be launched from |web_contents|.
+bool WebContentsCanShowDiagnosticsTool(content::WebContents* web_contents) {
+#if defined(OS_CHROMEOS)
+  // ChromeOS uses an extension instead of a diagnostics dialog.
+  return true;
+#else
+  return CanShowNetworkDiagnosticsDialog(web_contents);
+#endif
 }
 
 class ErrorPageTest : public InProcessBrowserTest {
@@ -427,21 +213,13 @@ class ErrorPageTest : public InProcessBrowserTest {
     HISTORY_NAVIGATE_FORWARD,
   };
 
-  ErrorPageTest() : link_doctor_interceptor_(NULL) {}
-  ~ErrorPageTest() override {}
-
-  // Navigates the active tab to a mock url created for the file at |file_path|.
-  // Needed for StaleCacheStatus and StaleCacheStatusFailedCorrections tests.
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(
-        error_page::switches::kShowSavedCopy,
-        error_page::switches::kEnableShowSavedCopyPrimary);
-  }
+  ErrorPageTest() = default;
+  ~ErrorPageTest() override = default;
 
   // Navigates the active tab to a mock url created for the file at |path|.
   void NavigateToFileURL(const std::string& path) {
-    ui_test_utils::NavigateToURL(browser(),
-                                 net::URLRequestMockHTTPJob::GetMockUrl(path));
+    GURL url = embedded_test_server()->GetURL(path);
+    ui_test_utils::NavigateToURL(browser(), url);
   }
 
   // Navigates to the given URL and waits for |num_navigations| to occur, and
@@ -486,94 +264,6 @@ class ErrorPageTest : public InProcessBrowserTest {
     NavigateHistory(num_navigations, HISTORY_NAVIGATE_FORWARD);
   }
 
-  // Confirms that the javascript variable indicating whether or not we have
-  // a stale copy in the cache has been set to |expected|, and that the
-  // stale load button is or isn't there based on the same expectation.
-  testing::AssertionResult ProbeStaleCopyValue(bool expected) {
-    const char* js_cache_probe =
-        "try {\n"
-        "    domAutomationController.send(\n"
-        "        loadTimeData.valueExists('showSavedCopyButton') ?"
-        "            'yes' : 'no');\n"
-        "} catch (e) {\n"
-        "    domAutomationController.send(e.message);\n"
-        "}\n";
-
-    std::string result;
-    bool ret =
-        content::ExecuteScriptAndExtractString(
-            browser()->tab_strip_model()->GetActiveWebContents(),
-            js_cache_probe,
-            &result);
-    if (!ret) {
-      return testing::AssertionFailure()
-          << "Failing return from ExecuteScriptAndExtractString.";
-    }
-
-    if ((expected && "yes" == result) || (!expected && "no" == result))
-      return testing::AssertionSuccess();
-
-    return testing::AssertionFailure() << "Cache probe result is " << result;
-  }
-
-  testing::AssertionResult ReloadStaleCopyFromCache() {
-    const char* js_reload_script =
-        "try {\n"
-        "    document.getElementById('show-saved-copy-button').click();\n"
-        "    domAutomationController.send('success');\n"
-        "} catch (e) {\n"
-        "    domAutomationController.send(e.message);\n"
-        "}\n";
-
-    std::string result;
-    bool ret = content::ExecuteScriptAndExtractString(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        js_reload_script,
-        &result);
-    EXPECT_TRUE(ret);
-    if (!ret)
-      return testing::AssertionFailure();
-    return ("success" == result ? testing::AssertionSuccess() :
-            (testing::AssertionFailure() << "Exception message is " << result));
-  }
-
-  LinkDoctorInterceptor* link_doctor_interceptor() {
-    return link_doctor_interceptor_;
-  }
-
- protected:
-  void SetUpOnMainThread() override {
-    link_doctor_interceptor_ = new LinkDoctorInterceptor();
-    std::unique_ptr<net::URLRequestInterceptor> owned_interceptor(
-        link_doctor_interceptor_);
-    // Ownership of the |interceptor_| is passed to an object the IO thread, but
-    // a pointer is kept in the test fixture.  As soon as anything calls
-    // URLRequestFilter::ClearHandlers(), |interceptor_| can become invalid.
-    UIThreadSearchTermsData search_terms_data(browser()->profile());
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&InstallMockInterceptors,
-                       GURL(search_terms_data.GoogleBaseURLValue()),
-                       base::Passed(&owned_interceptor)));
-  }
-
-  // Returns a GURL that results in a DNS error.
-  GURL GetDnsErrorURL() const {
-    return URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED);
-  }
-
-  // Returns true if the platform has support for a diagnostics tool, which
-  // can be launched from the error page.
-  bool PlatformSupportsDiagnosticsTool() {
-#if defined(OS_CHROMEOS)
-    // ChromeOS uses an extension instead of a diagnostics dialog.
-    return true;
-#else
-    return CanShowNetworkDiagnosticsDialog();
-#endif
-  }
-
- private:
   // Navigates the browser the indicated direction in the history and waits for
   // |num_navigations| to occur and the title to change to |expected_title|.
   void NavigateHistoryAndWaitForTitle(const std::string& expected_title,
@@ -592,8 +282,7 @@ class ErrorPageTest : public InProcessBrowserTest {
   void NavigateHistory(int32_t num_navigations,
                        HistoryNavigationDirection direction) {
     content::TestNavigationObserver test_navigation_observer(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        num_navigations);
+        browser()->tab_strip_model()->GetActiveWebContents(), num_navigations);
     if (direction == HISTORY_NAVIGATE_BACK) {
       chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
     } else if (direction == HISTORY_NAVIGATE_FORWARD) {
@@ -603,8 +292,6 @@ class ErrorPageTest : public InProcessBrowserTest {
     }
     test_navigation_observer.Wait();
   }
-
-  LinkDoctorInterceptor* link_doctor_interceptor_;
 };
 
 class TestFailProvisionalLoadObserver : public content::WebContentsObserver {
@@ -627,22 +314,127 @@ class TestFailProvisionalLoadObserver : public content::WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(TestFailProvisionalLoadObserver);
 };
 
-void InterceptNetworkTransactions(net::URLRequestContextGetter* getter,
-                                  net::Error error) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  net::HttpCache* cache(
-      getter->GetURLRequestContext()->http_transaction_factory()->GetCache());
-  DCHECK(cache);
-  std::unique_ptr<net::HttpTransactionFactory> factory(
-      new net::FailingHttpTransactionFactory(cache->GetSession(), error));
-  // Throw away old version; since this is a a browser test, we don't
-  // need to restore the old state.
-  cache->SetHttpNetworkTransactionFactoryForTesting(std::move(factory));
-}
+class DNSErrorPageTest : public ErrorPageTest {
+ public:
+  DNSErrorPageTest() {
+    url_loader_interceptor_ =
+        std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
+            [](DNSErrorPageTest* owner,
+               content::URLLoaderInterceptor::RequestParams* params) {
+              // Add an interceptor that serves LinkDoctor responses
+              if (google_util::LinkDoctorBaseURL() == params->url_request.url) {
+                // The origin header should exist and be opaque.
+                std::string origin;
+                bool has_origin = params->url_request.headers.GetHeader(
+                    net::HttpRequestHeaders::kOrigin, &origin);
+                EXPECT_TRUE(has_origin);
+                EXPECT_EQ(origin, "null");
+                // Send RequestCreated so that anyone blocking on
+                // WaitForRequests can continue.
+                base::PostTaskWithTraits(
+                    FROM_HERE, {BrowserThread::UI},
+                    base::BindOnce(&DNSErrorPageTest::RequestCreated,
+                                   base::Unretained(owner)));
+                content::URLLoaderInterceptor::WriteResponse(
+                    "chrome/test/data/mock-link-doctor.json",
+                    params->client.get());
+                return true;
+              }
+
+              // Referenced by mock Link Doctor page.
+              if (params->url_request.url.spec() ==
+                  "http://mock.http/title2.html") {
+                content::URLLoaderInterceptor::WriteResponse(
+                    "chrome/test/data/title2.html", params->client.get());
+                return true;
+              }
+
+              // Add an interceptor for the search engine the error page will
+              // use.
+              if (params->url_request.url.host() ==
+                  owner->search_term_url_.host()) {
+                content::URLLoaderInterceptor::WriteResponse(
+                    "chrome/test/data/title3.html", params->client.get());
+                return true;
+              }
+
+              return false;
+            },
+            this));
+  }
+
+  ~DNSErrorPageTest() override = default;
+
+  // When it sees a request for |path|, returns a 500 response with a body that
+  // will be sniffed as binary/octet-stream.
+  static std::unique_ptr<net::test_server::HttpResponse>
+  Return500WithBinaryBody(const std::string& path,
+                          const net::test_server::HttpRequest& request) {
+    if (path != request.relative_url)
+      return nullptr;
+    return std::unique_ptr<net::test_server::HttpResponse>(
+        new net::test_server::RawHttpResponse("HTTP/1.1 500 Server Sad :(\n\n",
+                                              "\x01"));
+  }
+
+  void TearDownOnMainThread() override { url_loader_interceptor_.reset(); }
+
+  void SetUpOnMainThread() override {
+    // All mock.http requests get served by the embedded test server.
+    host_resolver()->AddRule("mock.http", "127.0.0.1");
+
+    ASSERT_TRUE(embedded_test_server()->Start());
+
+    UIThreadSearchTermsData search_terms_data(browser()->profile());
+    search_term_url_ = GURL(search_terms_data.GoogleBaseURLValue());
+  }
+
+  void WaitForRequests(int32_t requests_to_wait_for) {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    DCHECK_EQ(-1, requests_to_wait_for_);
+    DCHECK(!run_loop_);
+
+    if (requests_to_wait_for <= num_requests_)
+      return;
+
+    requests_to_wait_for_ = requests_to_wait_for;
+    run_loop_.reset(new base::RunLoop());
+    run_loop_->Run();
+    run_loop_.reset();
+    requests_to_wait_for_ = -1;
+    EXPECT_EQ(num_requests_, requests_to_wait_for);
+  }
+
+  // Returns the total number of requests handled thus far.
+  int32_t num_requests() const {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    return num_requests_;
+  }
+
+  void RequestCreated() {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    num_requests_++;
+    if (num_requests_ == requests_to_wait_for_)
+      run_loop_->Quit();
+  }
+
+  // Returns a GURL that results in a DNS error.
+  GURL GetDnsErrorURL() const {
+    return URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED);
+  }
+
+ private:
+  // These are only used on the UI thread.
+  int32_t num_requests_ = 0;
+  int32_t requests_to_wait_for_ = -1;
+  GURL search_term_url_;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<content::URLLoaderInterceptor> url_loader_interceptor_;
+};
 
 // Test an error with a file URL, and make sure it doesn't have a
 // button to launch a network diagnostics tool.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, FileNotFound) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, FileNotFound) {
   // Create an empty temp directory, to be sure there's no file in it.
   base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
@@ -653,122 +445,132 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, FileNotFound) {
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), non_existent_file_url, 1);
 
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_FILE_NOT_FOUND);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_FILE_NOT_FOUND);
   // Should not request Link Doctor corrections for local errors.
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
   // Only errors on HTTP/HTTPS pages should display a diagnostics button.
   EXPECT_FALSE(IsDisplayingDiagnosticsLink(browser()));
 }
 
 // Check an network error page for ERR_FAILED. In particular, this should
 // not trigger a link doctor error page.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, Failed) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Failed) {
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), URLRequestFailedJob::GetMockHttpUrl(net::ERR_FAILED), 1);
 
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_FAILED);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_FAILED);
   // Should not request Link Doctor corrections for this error.
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // Test that a DNS error occuring in the main frame redirects to an error page.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_Basic) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_Basic) {
   // The first navigation should fail and load a blank page, while it fetches
   // the Link Doctor response.  The second navigation is the Link Doctor.
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(1, num_requests());
 }
 
 // Test that a DNS error occuring in the main frame does not result in an
 // additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_GoBack1) {
-  NavigateToFileURL("title2.html");
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_GoBack1) {
+  NavigateToFileURL("/title2.html");
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
   GoBackAndWaitForTitle("Title Of Awesomeness", 1);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(1, num_requests());
 }
 
 // Test that a DNS error occuring in the main frame does not result in an
 // additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_GoBack2) {
-  NavigateToFileURL("title2.html");
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_GoBack2) {
+  NavigateToFileURL("/title2.html");
 
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(1, num_requests());
 
-  NavigateToFileURL("title3.html");
+  NavigateToFileURL("/title3.html");
+
+  GoBackAndWaitForNavigations(2);
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(2, num_requests());
+
+  GoBackAndWaitForTitle("Title Of Awesomeness", 1);
+  EXPECT_EQ(2, num_requests());
+}
+
+// Test that a DNS error occuring in the main frame does not result in an
+// additional session history entry.
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_GoBack2AndForward) {
+  NavigateToFileURL("/title2.html");
+
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+       browser(), GetDnsErrorURL(), 2);
+
+  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(1, num_requests());
+
+  NavigateToFileURL("/title3.html");
 
   GoBackAndWaitForNavigations(2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
-
-  GoBackAndWaitForTitle("Title Of Awesomeness", 1);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
-}
-
-// Test that a DNS error occuring in the main frame does not result in an
-// additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_GoBack2AndForward) {
-  NavigateToFileURL("title2.html");
-
-  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
-       browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
-
-  NavigateToFileURL("title3.html");
-
-  GoBackAndWaitForNavigations(2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(2, num_requests());
 
   GoBackAndWaitForTitle("Title Of Awesomeness", 1);
 
   GoForwardAndWaitForNavigations(2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(3, num_requests());
 }
 
 // Test that a DNS error occuring in the main frame does not result in an
 // additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_GoBack2Forward2) {
-  NavigateToFileURL("title3.html");
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_GoBack2Forward2) {
+  NavigateToFileURL("/title3.html");
 
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(1, num_requests());
 
-  NavigateToFileURL("title2.html");
+  NavigateToFileURL("/title2.html");
 
   GoBackAndWaitForNavigations(2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(2, num_requests());
 
   GoBackAndWaitForTitle("Title Of More Awesomeness", 1);
 
   GoForwardAndWaitForNavigations(2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(3, num_requests());
 
   GoForwardAndWaitForTitle("Title Of Awesomeness", 1);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(3, num_requests());
 }
 
 // Test that the search link on a DNS error page works.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoSearch) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_DoSearch) {
   // The first navigation should fail, and the second one should be the error
   // page.
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(1, num_requests());
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -782,7 +584,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoSearch) {
   // notification that they've run, and scripts that trigger a navigation may
   // not send that notification.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.getElementById('search-link').click();"));
+      base::ASCIIToUTF16("document.getElementById('search-link').click();"),
+      base::NullCallback());
   nav_observer.Wait();
   EXPECT_EQ(base::ASCIIToUTF16("Title Of More Awesomeness"),
             title_watcher.WaitAndGetTitle());
@@ -790,8 +593,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoSearch) {
   // There should have been another Link Doctor request, for tracking purposes.
   // Have to wait for it, since the search page does not depend on having
   // sent the tracking request.
-  link_doctor_interceptor()->WaitForRequests(2);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
+  WaitForRequests(2);
 
   // Check the path and query string.
   std::string url;
@@ -804,18 +606,21 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoSearch) {
 
   // Go back to the error page, to make sure the history is correct.
   GoBackAndWaitForNavigations(2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(3, num_requests());
 }
 
 // Test that the reload button on a DNS error page works.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoReload) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_DoReload) {
   // The first navigation should fail, and the second one should be the error
   // page.
+  std::string url =
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec();
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(1, num_requests());
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -827,7 +632,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoReload) {
   // notification that they've run, and scripts that trigger a navigation may
   // not send that notification.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.getElementById('reload-button').click();"));
+      base::ASCIIToUTF16("document.getElementById('reload-button').click();"),
+      base::NullCallback());
   nav_observer.Wait();
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
 
@@ -835,21 +641,22 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoReload) {
   // for the new error page, and one for tracking purposes.  Have to make sure
   // to wait for the tracking request, since the new error page does not depend
   // on it.
-  link_doctor_interceptor()->WaitForRequests(3);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  WaitForRequests(3);
 }
 
 // Test that the reload button on a DNS error page works after a same document
 // navigation on the error page.  Error pages don't seem to do this, but some
 // traces indicate this may actually happen.  This test may hang on regression.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest,
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest,
                        DNSError_DoReloadAfterSameDocumentNavigation) {
   // The first navigation should fail, and the second one should be the error
   // page.
+  std::string url =
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec();
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(1, num_requests());
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -857,12 +664,12 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest,
   // Do a same-document navigation on the error page, which should not result
   // in a new navigation.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.location='#';"));
+      base::ASCIIToUTF16("document.location='#';"), base::NullCallback());
   content::WaitForLoadStop(web_contents);
   // Page being displayed should not change.
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
   // No new requests should have been issued.
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(1, num_requests());
 
   // Clicking the reload button should load the error page again, and there
   // should be two commits, as before.
@@ -871,7 +678,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest,
   // notification that they've run, and scripts that trigger a navigation may
   // not send that notification.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.getElementById('reload-button').click();"));
+      base::ASCIIToUTF16("document.getElementById('reload-button').click();"),
+      base::NullCallback());
   nav_observer2.Wait();
   ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
 
@@ -879,18 +687,19 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest,
   // for the new error page, and one for tracking purposes.  Have to make sure
   // to wait for the tracking request, since the new error page does not depend
   // on it.
-  link_doctor_interceptor()->WaitForRequests(3);
-  EXPECT_EQ(3, link_doctor_interceptor()->num_requests());
+  WaitForRequests(3);
 }
 
 // Test that clicking links on a DNS error page works.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoClickLink) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, DNSError_DoClickLink) {
   // The first navigation should fail, and the second one should be the error
   // page.
+  GURL url = embedded_test_server()->GetURL("mock.http", "/title2.html");
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
        browser(), GetDnsErrorURL(), 2);
-  ExpectDisplayingNavigationCorrections(browser(), net::ERR_NAME_NOT_RESOLVED);
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), net::ERR_NAME_NOT_RESOLVED);
+  EXPECT_EQ(1, num_requests());
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -905,26 +714,25 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, DNSError_DoClickLink) {
   // The tracking request is triggered by onmousedown, so it catches middle
   // mouse button clicks, as well as left clicks.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16(link_selector + ".onmousedown();"));
+      base::ASCIIToUTF16(link_selector + ".onmousedown();"),
+      base::NullCallback());
   // Can't use content::ExecuteScript because it waits for scripts to send
   // notification that they've run, and scripts that trigger a navigation may
   // not send that notification.
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16(link_selector + ".click();"));
+      base::ASCIIToUTF16(link_selector + ".click();"), base::NullCallback());
   EXPECT_EQ(base::ASCIIToUTF16("Title Of Awesomeness"),
             title_watcher.WaitAndGetTitle());
 
   // There should have been a tracking request to the correction service.  Have
   // to make sure to wait the tracking request, since the new page does not
   // depend on it.
-  link_doctor_interceptor()->WaitForRequests(2);
-  EXPECT_EQ(2, link_doctor_interceptor()->num_requests());
+  WaitForRequests(2);
 }
 
 // Test that a DNS error occuring in an iframe does not result in showing
 // navigation corrections.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_Basic) {
-  ASSERT_TRUE(embedded_test_server()->Start());
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, IFrameDNSError_Basic) {
   NavigateToURLAndWaitForTitle(
       embedded_test_server()->GetURL("/iframe_dns_error.html"), "Blah", 1);
   // We expect to have two history entries, since we started off with navigation
@@ -932,7 +740,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_Basic) {
   EXPECT_EQ(2,
       browser()->tab_strip_model()->GetActiveWebContents()->
           GetController().GetEntryCount());
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // This test fails regularly on win_rel trybots. See crbug.com/121540
@@ -943,15 +751,13 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_Basic) {
 #endif
 // Test that a DNS error occuring in an iframe does not result in an
 // additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, MAYBE_IFrameDNSError_GoBack) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, MAYBE_IFrameDNSError_GoBack) {
   ui_test_utils::NavigateToURL(browser(),
                                embedded_test_server()->GetURL("/title2.html"));
   ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/iframe_dns_error.html"));
   GoBackAndWaitForTitle("Title Of Awesomeness", 1);
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // This test fails regularly on win_rel trybots. See crbug.com/121540
@@ -964,21 +770,20 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, MAYBE_IFrameDNSError_GoBack) {
 #endif
 // Test that a DNS error occuring in an iframe does not result in an
 // additional session history entry.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, MAYBE_IFrameDNSError_GoBackAndForward) {
-  NavigateToFileURL("title2.html");
-  NavigateToFileURL("iframe_dns_error.html");
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest,
+                       MAYBE_IFrameDNSError_GoBackAndForward) {
+  NavigateToFileURL("/title2.html");
+  NavigateToFileURL("/iframe_dns_error.html");
   GoBackAndWaitForTitle("Title Of Awesomeness", 1);
   GoForwardAndWaitForTitle("Blah", 1);
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // Test that a DNS error occuring in an iframe, once the main document is
 // completed loading, does not result in an additional session history entry.
 // To ensure that the main document has completed loading, JavaScript is used to
 // inject an iframe after loading is done.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, IFrameDNSError_JavaScript) {
   content::WebContents* wc =
       browser()->tab_strip_model()->GetActiveWebContents();
   GURL fail_url =
@@ -1000,7 +805,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script),
+                                                  base::NullCallback());
     load_observer.Wait();
 
     // Ensure we saw the expected failure.
@@ -1020,7 +826,8 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script),
+                                                  base::NullCallback());
     load_observer.Wait();
   }
 
@@ -1031,109 +838,53 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, IFrameDNSError_JavaScript) {
     content::WindowedNotificationObserver load_observer(
         content::NOTIFICATION_LOAD_STOP,
         content::Source<NavigationController>(&wc->GetController()));
-    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script));
+    wc->GetMainFrame()->ExecuteJavaScriptForTests(base::ASCIIToUTF16(script),
+                                                  base::NullCallback());
     load_observer.Wait();
 
     EXPECT_EQ(fail_url, fail_observer.fail_url());
     EXPECT_EQ(2, wc->GetController().GetEntryCount());
   }
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // Checks that navigation corrections are not loaded when we receive an actual
 // 404 page.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, Page404) {
-  ASSERT_TRUE(embedded_test_server()->Start());
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Page404) {
   NavigateToURLAndWaitForTitle(embedded_test_server()->GetURL("/page404.html"),
                                "SUCCESS", 1);
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  EXPECT_EQ(0, num_requests());
 }
 
 // Checks that navigation corrections are loaded in response to a 404 page with
 // no body.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, Empty404) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Empty404) {
   // The first navigation should fail and load a blank page, while it fetches
   // the Link Doctor response.  The second navigation is the Link Doctor.
-  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
-      browser(),
-      net::URLRequestMockHTTPJob::GetMockUrl("errorpage/empty404.html"), 2);
+  GURL url = embedded_test_server()->GetURL("/errorpage/empty404.html");
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(browser(), url, 2);
   // This depends on the non-internationalized error ID string in
   // localized_error.cc.
-  ExpectDisplayingNavigationCorrections(browser(), "HTTP ERROR 404");
-  EXPECT_EQ(1, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingNavigationCorrections(
+      browser(), "HTTP ERROR 404");
+  EXPECT_EQ(1, num_requests());
 }
 
 // Checks that a local error page is shown in response to a 500 error page
 // without a body.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, Empty500) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Empty500) {
   ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/errorpage/empty500.html"));
   // This depends on the non-internationalized error ID string in
   // localized_error.cc.
-  ExpectDisplayingLocalErrorPage(browser(), "HTTP ERROR 500");
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
-}
-
-// Checks that when an error occurs, the stale cache status of the page
-// is correctly transferred, and that stale cached copied can be loaded
-// from the javascript.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, StaleCacheStatus) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  // Load cache with entry with "nocache" set, to create stale
-  // cache.  Currently it needs to at least have an etag for the cache to
-  // not give up on it entirely, however. See https://crbug.com/784520
-  GURL test_url(embedded_test_server()->GetURL("/nocache-with-etag.html"));
-  NavigateToURLAndWaitForTitle(test_url, "Nocache Test Page", 1);
-
-  // Reload same URL after forcing an error from the the network layer;
-  // confirm that the error page is told the cached copy exists.
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
-      browser()->profile()->GetRequestContext();
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&InterceptNetworkTransactions,
-                     base::RetainedRef(url_request_context_getter),
-                     net::ERR_FAILED));
-
-  // With no navigation corrections to load, there's only one navigation.
-  ui_test_utils::NavigateToURL(browser(), test_url);
-  EXPECT_TRUE(ProbeStaleCopyValue(true));
-  EXPECT_TRUE(IsDisplayingText(browser(), GetShowSavedButtonLabel()));
-  EXPECT_NE(base::ASCIIToUTF16("Nocache Test Page"),
-            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
-
-  // Confirm that loading the stale copy from the cache works.
-  content::TestNavigationObserver same_tab_observer(
-      browser()->tab_strip_model()->GetActiveWebContents(), 1);
-  ASSERT_TRUE(ReloadStaleCopyFromCache());
-  same_tab_observer.Wait();
-  EXPECT_EQ(base::ASCIIToUTF16("Nocache Test Page"),
-            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
-
-  // Reload the same URL with a post request; confirm the error page is told
-  // that there is no cached copy.
-  ui_test_utils::NavigateToURLWithPost(browser(), test_url);
-  EXPECT_TRUE(ProbeStaleCopyValue(false));
-  EXPECT_FALSE(IsDisplayingText(browser(), GetShowSavedButtonLabel()));
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
-
-  // Clear the cache and reload the same URL; confirm the error page is told
-  // that there is no cached copy.
-  content::BrowsingDataRemover* remover =
-      content::BrowserContext::GetBrowsingDataRemover(browser()->profile());
-  remover->Remove(base::Time(), base::Time::Max(),
-                  content::BrowsingDataRemover::DATA_TYPE_CACHE,
-                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
-  ui_test_utils::NavigateToURL(browser(), test_url);
-  EXPECT_TRUE(ProbeStaleCopyValue(false));
-  EXPECT_FALSE(IsDisplayingText(browser(), GetShowSavedButtonLabel()));
-  EXPECT_EQ(0, link_doctor_interceptor()->num_requests());
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), "HTTP ERROR 500");
+  EXPECT_EQ(0, num_requests());
 }
 
 // Check that the easter egg is present and initialised and is not disabled.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, CheckEasterEggIsNotDisabled) {
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, CheckEasterEggIsNotDisabled) {
   ui_test_utils::NavigateToURL(browser(),
       URLRequestFailedJob::GetMockHttpUrl(net::ERR_INTERNET_DISCONNECTED));
 
@@ -1158,43 +909,72 @@ IN_PROC_BROWSER_TEST_F(ErrorPageTest, CheckEasterEggIsNotDisabled) {
   EXPECT_EQ(1, result);
 }
 
+// Test error page in incognito mode. The two major things are that navigation
+// corrections are not fetched (Only one navigation, display local error page),
+// and that no network diagnostic link is included, except on ChromeOS.
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Incognito) {
+  Browser* incognito_browser = CreateIncognitoBrowser();
+
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      incognito_browser,
+      URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED), 1);
+
+  // Verify that the expected error page is being displayed.
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      incognito_browser, net::ERR_NAME_NOT_RESOLVED);
+
+#if !defined(OS_CHROMEOS)
+  // Can't currently show the diagnostics in incognito on any platform but
+  // ChromeOS.
+  EXPECT_FALSE(WebContentsCanShowDiagnosticsTool(
+      incognito_browser->tab_strip_model()->GetActiveWebContents()));
+#endif
+
+  // Diagnostics button should be displayed, if available.
+  EXPECT_EQ(WebContentsCanShowDiagnosticsTool(
+                incognito_browser->tab_strip_model()->GetActiveWebContents()),
+            IsDisplayingDiagnosticsLink(incognito_browser));
+}
+
 class ErrorPageAutoReloadTest : public InProcessBrowserTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kEnableOfflineAutoReload);
+    command_line->AppendSwitch(switches::kEnableAutoReload);
   }
 
-  void RemoveInterceptor() {
-    if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-      SetNetworkFactoryForTesting(browser(), nullptr);
-    }
-  }
+  void TearDownOnMainThread() override { url_loader_interceptor_.reset(); }
 
   void InstallInterceptor(const GURL& url, int32_t requests_to_fail) {
     requests_ = failures_ = 0;
 
-    if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-      url_loader_factory_ =
-          std::make_unique<FailFirstNRequestsURLLoaderFactory>(
-              requests_to_fail, &requests_, &failures_);
+    url_loader_interceptor_ =
+        std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
+            [](int32_t requests_to_fail, int32_t* requests, int32_t* failures,
+               content::URLLoaderInterceptor::RequestParams* params) {
+              if (params->url_request.url.path() == "/searchdomaincheck")
+                return false;
+              if (params->url_request.url.path() == "/favicon.ico")
+                return false;
+              if (params->url_request.url.GetOrigin() ==
+                  GaiaUrls::GetInstance()->gaia_url())
+                return false;
+              (*requests)++;
+              if (*failures < requests_to_fail) {
+                (*failures)++;
+                network::URLLoaderCompletionStatus status;
+                status.error_code = net::ERR_CONNECTION_RESET;
+                params->client->OnComplete(status);
+                return true;
+              }
 
-      SetNetworkFactoryForTesting(browser(), url_loader_factory_.get());
-    } else {
-      std::unique_ptr<net::URLRequestInterceptor> owned_interceptor(
-          new FailFirstNRequestsInterceptor(requests_to_fail, &requests_,
-                                            &failures_));
-
-      // Tests don't need to wait for this task to complete before using the
-      // filter; any requests that might be affected by it will end up in the IO
-      // thread's message loop after this posted task anyway.
-      //
-      // Ownership of the interceptor is passed to an object the IO thread, but
-      // a pointer is kept in the test fixture.  As soon as anything calls
-      // URLRequestFilter::ClearHandlers(), |interceptor_| can become invalid.
-      BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                              base::BindOnce(&AddInterceptorForURL, url,
-                                             base::Passed(&owned_interceptor)));
-    }
+              std::string body = URLRequestTestJob::test_data_1();
+              content::URLLoaderInterceptor::WriteResponse(
+                  URLRequestTestJob::test_headers(), body,
+                  params->client.get());
+              return true;
+            },
+            requests_to_fail, &requests_, &failures_));
   }
 
   void NavigateToURLAndWaitForTitle(const GURL& url,
@@ -1215,7 +995,7 @@ class ErrorPageAutoReloadTest : public InProcessBrowserTest {
   int32_t interceptor_failures() const { return failures_; }
 
  private:
-  std::unique_ptr<FailFirstNRequestsURLLoaderFactory> url_loader_factory_;
+  std::unique_ptr<content::URLLoaderInterceptor> url_loader_interceptor_;
   int32_t requests_;
   int32_t failures_;
 };
@@ -1237,7 +1017,6 @@ IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, MAYBE_AutoReload) {
   // this becomes racey.
   EXPECT_EQ(kRequestsToFail, interceptor_failures());
   EXPECT_EQ(kRequestsToFail + 1, interceptor_requests());
-  RemoveInterceptor();
 }
 
 IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, ManualReloadNotSuppressed) {
@@ -1259,12 +1038,12 @@ IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, ManualReloadNotSuppressed) {
     browser()->tab_strip_model()->GetActiveWebContents();
   content::TestNavigationObserver nav_observer(web_contents, 1);
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.getElementById('reload-button').click();"));
+      base::ASCIIToUTF16("document.getElementById('reload-button').click();"),
+      base::NullCallback());
   nav_observer.Wait();
   EXPECT_FALSE(IsDisplayingText(
       browser(), l10n_util::GetStringUTF8(
                      IDS_ERRORPAGES_SUGGESTION_CHECK_CONNECTION_HEADER)));
-  RemoveInterceptor();
 }
 
 // Make sure that a same document navigation does not cause issues with the
@@ -1284,7 +1063,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, IgnoresSameDocumentNavigation) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16("document.location='#';"));
+      base::ASCIIToUTF16("document.location='#';"), base::NullCallback());
   content::WaitForLoadStop(web_contents);
 
   // Same-document navigation on an error page should not have resulted in a
@@ -1298,71 +1077,7 @@ IN_PROC_BROWSER_TEST_F(ErrorPageAutoReloadTest, IgnoresSameDocumentNavigation) {
 
   EXPECT_EQ(2, interceptor_failures());
   EXPECT_EQ(3, interceptor_requests());
-  RemoveInterceptor();
 }
-
-// A url loader that fails matching requests with net::ERR_ADDRESS_UNREACHABLE,
-// otherwise it passes the request to a default loader.
-class AddressUnreachableURLLoaderFactory
-    : public content::mojom::URLLoaderFactory {
- public:
-  AddressUnreachableURLLoaderFactory(content::mojom::URLLoaderFactory* loader,
-                                     const GURL& url)
-      : default_loader_(loader), url_(url) {}
-
-  // content::mojom::URLLoaderFactory implementation.
-  void CreateLoaderAndStart(content::mojom::URLLoaderRequest request,
-                            int32_t routing_id,
-                            int32_t request_id,
-                            uint32_t options,
-                            const content::ResourceRequest& url_request,
-                            content::mojom::URLLoaderClientPtr client,
-                            const net::MutableNetworkTrafficAnnotationTag&
-                                traffic_annotation) override {
-    if (url_ == url_request.url) {
-      network::URLLoaderCompletionStatus status;
-
-      status.error_code = net::ERR_ADDRESS_UNREACHABLE;
-      client->OnComplete(status);
-      return;
-    }
-
-    default_loader_->CreateLoaderAndStart(
-        std::move(request), routing_id, request_id, options, url_request,
-        std::move(client), traffic_annotation);
-  }
-
-  void Clone(content::mojom::URLLoaderFactoryRequest factory) override {
-    NOTREACHED();
-  }
-
- private:
-  content::mojom::URLLoaderFactory* default_loader_;
-  GURL url_;
-
-  DISALLOW_COPY_AND_ASSIGN(AddressUnreachableURLLoaderFactory);
-};
-
-// TODO(dougt): AddressUnreachableInterceptor can be removed as soon as the
-// Network Service is the only code path.
-
-// Interceptor that fails all requests with net::ERR_ADDRESS_UNREACHABLE.
-class AddressUnreachableInterceptor : public net::URLRequestInterceptor {
- public:
-  AddressUnreachableInterceptor() {}
-  ~AddressUnreachableInterceptor() override {}
-
-  // net::URLRequestInterceptor:
-  net::URLRequestJob* MaybeInterceptRequest(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate) const override {
-    return new URLRequestFailedJob(request, network_delegate,
-                                   net::ERR_ADDRESS_UNREACHABLE);
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AddressUnreachableInterceptor);
-};
 
 // A test fixture that returns ERR_ADDRESS_UNREACHABLE for all navigation
 // correction requests.  ERR_NAME_NOT_RESOLVED is more typical, but need to use
@@ -1372,137 +1087,66 @@ class ErrorPageNavigationCorrectionsFailTest : public ErrorPageTest {
  public:
   // InProcessBrowserTest:
   void SetUpOnMainThread() override {
-    if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-      content::WebContents* web_contents =
-          browser()->tab_strip_model()->GetActiveWebContents();
-      auto* storage_partition =
-          content::BrowserContext::GetDefaultStoragePartition(
-              web_contents->GetBrowserContext());
-      content::mojom::URLLoaderFactory* default_network_factory =
-          storage_partition->GetURLLoaderFactoryForBrowserProcess();
+    url_loader_interceptor_ =
+        std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
+            [](content::URLLoaderInterceptor::RequestParams* params) {
+              if (params->url_request.url != google_util::LinkDoctorBaseURL())
+                return false;
 
-      url_loader_factory_ =
-          std::make_unique<AddressUnreachableURLLoaderFactory>(
-              default_network_factory, google_util::LinkDoctorBaseURL());
-      SetNetworkFactoryForTesting(browser(), url_loader_factory_.get());
-    } else {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
-          base::BindOnce(&ErrorPageNavigationCorrectionsFailTest::AddFilters));
-    }
+              network::URLLoaderCompletionStatus status;
+              status.error_code = net::ERR_ADDRESS_UNREACHABLE;
+              params->client->OnComplete(status);
+              return true;
+            }));
   }
 
-  void TearDownOnMainThread() override {
-    if (base::FeatureList::IsEnabled(features::kNetworkService)) {
-      SetNetworkFactoryForTesting(browser(), nullptr);
-    } else {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
-          base::BindOnce(
-              &ErrorPageNavigationCorrectionsFailTest::RemoveFilters));
-    }
-  }
+  void TearDownOnMainThread() override { url_loader_interceptor_.reset(); }
 
  private:
-  // Adds a filter that causes all correction service requests to fail with
-  // ERR_ADDRESS_UNREACHABLE.
-  //
-  // Also adds the net::URLRequestFailedJob filter.
-  static void AddFilters() {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    URLRequestFailedJob::AddUrlHandler();
-
-    net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
-        google_util::LinkDoctorBaseURL(),
-        std::unique_ptr<net::URLRequestInterceptor>(
-            new AddressUnreachableInterceptor()));
-  }
-
-  static void RemoveFilters() {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    net::URLRequestFilter::GetInstance()->ClearHandlers();
-  }
-
-  std::unique_ptr<AddressUnreachableURLLoaderFactory> url_loader_factory_;
+  std::unique_ptr<content::URLLoaderInterceptor> url_loader_interceptor_;
 };
 
 // Make sure that when corrections fail to load, the network error page is
-// successfully loaded.
+// successfully loaded and shows a link to the diagnostics too, if appropriate.
 IN_PROC_BROWSER_TEST_F(ErrorPageNavigationCorrectionsFailTest,
                        FetchCorrectionsFails) {
+  ASSERT_TRUE(embedded_test_server()->Start());
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
       browser(),
       URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED),
       2);
 
   // Verify that the expected error page is being displayed.
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_NAME_NOT_RESOLVED);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_NAME_NOT_RESOLVED);
 
-  // Diagnostics button should be displayed, if available on this platform.
-  EXPECT_EQ(PlatformSupportsDiagnosticsTool(),
+  // Diagnostics button should be displayed, if available.
+  EXPECT_EQ(WebContentsCanShowDiagnosticsTool(
+                browser()->tab_strip_model()->GetActiveWebContents()),
             IsDisplayingDiagnosticsLink(browser()));
 }
 
-// Checks that when an error occurs and a corrections fail to load, the stale
-// cache status of the page is correctly transferred, and we can load the
-// stale copy from the javascript.  Most logic copied from StaleCacheStatus
-// above.
-IN_PROC_BROWSER_TEST_F(ErrorPageNavigationCorrectionsFailTest,
-                       StaleCacheStatusFailedCorrections) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-  // Load cache with entry with "nocache" set, to create stale
-  // cache.
-  GURL test_url(embedded_test_server()->GetURL("/nocache-with-etag.html"));
-  NavigateToURLAndWaitForTitle(test_url, "Nocache Test Page", 1);
-
-  // Reload same URL after forcing an error from the the network layer;
-  // confirm that the error page is told the cached copy exists.
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
-      browser()->profile()->GetRequestContext();
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::BindOnce(&InterceptNetworkTransactions,
-                     base::RetainedRef(url_request_context_getter),
-                     net::ERR_CONNECTION_FAILED));
-
-  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
-      browser(), test_url, 2);
-  EXPECT_TRUE(IsDisplayingText(browser(), GetShowSavedButtonLabel()));
-  EXPECT_TRUE(ProbeStaleCopyValue(true));
-
-  // Confirm that loading the stale copy from the cache works.
-  content::TestNavigationObserver same_tab_observer(
-      browser()->tab_strip_model()->GetActiveWebContents(), 1);
-  ASSERT_TRUE(ReloadStaleCopyFromCache());
-  same_tab_observer.Wait();
-  EXPECT_EQ(base::ASCIIToUTF16("Nocache Test Page"),
-            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
-
-  // Clear the cache and reload the same URL; confirm the error page is told
-  // that there is no cached copy.
-  content::BrowsingDataRemover* remover =
-      content::BrowserContext::GetBrowsingDataRemover(browser()->profile());
-  remover->Remove(base::Time(), base::Time::Max(),
-                  content::BrowsingDataRemover::DATA_TYPE_CACHE,
-                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
-  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
-      browser(), test_url, 2);
-  EXPECT_TRUE(ProbeStaleCopyValue(false));
-  EXPECT_FALSE(IsDisplayingText(browser(), GetShowSavedButtonLabel()));
-}
-
 class ErrorPageOfflineTest : public ErrorPageTest {
- protected:
+  void SetUpOnMainThread() override {
+    url_loader_interceptor_ =
+        std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
+            [](content::URLLoaderInterceptor::RequestParams* params) {
+              return false;
+            }));
+  }
 
+  void TearDownOnMainThread() override { url_loader_interceptor_.reset(); }
+
+ protected:
   void SetUpInProcessBrowserTestFixture() override {
 #if defined(OS_CHROMEOS)
     if (enroll_) {
       // Set up fake install attributes.
-      std::unique_ptr<chromeos::StubInstallAttributes> attributes =
-          base::MakeUnique<chromeos::StubInstallAttributes>();
-      attributes->SetCloudManaged("example.com", "fake-id");
-      policy::BrowserPolicyConnectorChromeOS::SetInstallAttributesForTesting(
-          attributes.release());
+      test_install_attributes_ =
+          std::make_unique<chromeos::ScopedStubInstallAttributes>(
+              chromeos::StubInstallAttributes::CreateCloudManaged("example.com",
+                                                                  "fake-id"));
     }
 #endif
 
@@ -1519,7 +1163,7 @@ class ErrorPageOfflineTest : public ErrorPageTest {
       policy_map.Set(
           policy::key::kAllowDinosaurEasterEgg, policy::POLICY_LEVEL_MANDATORY,
           policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
-          base::MakeUnique<base::Value>(value_of_allow_dinosaur_easter_egg_),
+          std::make_unique<base::Value>(value_of_allow_dinosaur_easter_egg_),
           nullptr);
     }
     policy_provider_.UpdateChromePolicy(policy_map);
@@ -1528,8 +1172,7 @@ class ErrorPageOfflineTest : public ErrorPageTest {
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
 #else
-    policy::ProfilePolicyConnectorFactory::GetInstance()
-        ->PushProviderForTesting(&policy_provider_);
+    policy::PushProfilePolicyConnectorProviderForTesting(&policy_provider_);
 #endif
 
     ErrorPageTest::SetUpInProcessBrowserTestFixture();
@@ -1537,7 +1180,7 @@ class ErrorPageOfflineTest : public ErrorPageTest {
 
   std::string NavigateToPageAndReadText() {
 #if defined(OS_CHROMEOS)
-      // Check enterprise enrollment
+    // Check enterprise enrollment
     policy::BrowserPolicyConnectorChromeOS* connector =
         g_browser_process->platform_part()
         ->browser_policy_connector_chromeos();
@@ -1571,10 +1214,14 @@ class ErrorPageOfflineTest : public ErrorPageTest {
 #if defined(OS_CHROMEOS)
   // Whether to enroll this CrOS device
   bool enroll_ = true;
+
+  std::unique_ptr<chromeos::ScopedStubInstallAttributes>
+      test_install_attributes_;
 #endif
 
   // Mock policy provider for both user and device policies.
   policy::MockConfigurationPolicyProvider policy_provider_;
+  std::unique_ptr<content::URLLoaderInterceptor> url_loader_interceptor_;
 };
 
 class ErrorPageOfflineTestWithAllowDinosaurTrue : public ErrorPageOfflineTest {
@@ -1644,6 +1291,87 @@ IN_PROC_BROWSER_TEST_F(ErrorPageOfflineTestUnEnrolledChromeOS,
 }
 #endif
 
+IN_PROC_BROWSER_TEST_F(ErrorPageOfflineTestWithAllowDinosaurTrue,
+                       CheckEasterEggHighScoreLoaded) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::BrowserContext* browser_context = web_contents->GetBrowserContext();
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+
+  IntegerPrefMember easter_egg_high_score;
+  easter_egg_high_score.Init(prefs::kNetworkEasterEggHighScore,
+                             profile->GetPrefs());
+
+  // Set a high score in the user's profile.
+  int high_score = 1000;
+  easter_egg_high_score.SetValue(high_score);
+
+  std::string result = NavigateToPageAndReadText();
+  EXPECT_EQ("", result);
+
+  content::EvalJsResult actual_high_score = content::EvalJs(
+      web_contents,
+      "new Promise((resolve) => {"
+      "  window.initializeEasterEggHighScore = function(highscore) { "
+      "    resolve(highscore);"
+      "  };"
+      "  /* Request the initial highscore from the browser. */"
+      "  errorPageController.trackEasterEgg();"
+      "});");
+
+  EXPECT_EQ(high_score, actual_high_score);
+}
+
+IN_PROC_BROWSER_TEST_F(ErrorPageOfflineTestWithAllowDinosaurTrue,
+                       CheckEasterEggHighScoreSaved) {
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::BrowserContext* browser_context = web_contents->GetBrowserContext();
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+
+  IntegerPrefMember easter_egg_high_score;
+  easter_egg_high_score.Init(prefs::kNetworkEasterEggHighScore,
+                             profile->GetPrefs());
+
+  // The high score should be initialized to 0.
+  EXPECT_EQ(0, easter_egg_high_score.GetValue());
+
+  std::string result = NavigateToPageAndReadText();
+  EXPECT_EQ("", result);
+
+  {
+    base::RunLoop run_loop;
+    PrefChangeRegistrar change_observer;
+    change_observer.Init(profile->GetPrefs());
+    change_observer.Add(prefs::kNetworkEasterEggHighScore,
+                        run_loop.QuitClosure());
+
+    // Save a new high score.
+    EXPECT_TRUE(content::ExecJs(
+        web_contents, "errorPageController.updateEasterEggHighScore(2000);"));
+
+    // Wait for preference change.
+    run_loop.Run();
+    EXPECT_EQ(2000, easter_egg_high_score.GetValue());
+  }
+
+  {
+    base::RunLoop run_loop;
+    PrefChangeRegistrar change_observer;
+    change_observer.Init(profile->GetPrefs());
+    change_observer.Add(prefs::kNetworkEasterEggHighScore,
+                        run_loop.QuitClosure());
+
+    // Reset high score back to 0.
+    EXPECT_TRUE(content::ExecJs(
+        web_contents, "errorPageController.resetEasterEggHighScore();"));
+
+    // Wait for preference change.
+    run_loop.Run();
+    EXPECT_EQ(0, easter_egg_high_score.GetValue());
+  }
+}
+
 // A test fixture that simulates failing requests for an IDN domain name.
 class ErrorPageForIDNTest : public InProcessBrowserTest {
  public:
@@ -1654,27 +1382,8 @@ class ErrorPageForIDNTest : public InProcessBrowserTest {
   // InProcessBrowserTest:
   void SetUpOnMainThread() override {
     // Clear AcceptLanguages to force punycode decoding.
-    browser()->profile()->GetPrefs()->SetString(prefs::kAcceptLanguages,
-                                                std::string());
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&ErrorPageForIDNTest::AddFilters));
-  }
-
-  void TearDownOnMainThread() override {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::BindOnce(&ErrorPageForIDNTest::RemoveFilters));
-  }
-
- private:
-  static void AddFilters() {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    URLRequestFailedJob::AddUrlHandlerForHostname(kHostname);
-  }
-
-  static void RemoveFilters() {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    net::URLRequestFilter::GetInstance()->ClearHandlers();
+    browser()->profile()->GetPrefs()->SetString(
+        language::prefs::kAcceptLanguages, std::string());
   }
 };
 
@@ -1695,20 +1404,22 @@ IN_PROC_BROWSER_TEST_F(ErrorPageForIDNTest, IDN) {
 }
 
 // Make sure HTTP/0.9 is disabled on non-default ports by default.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, Http09WeirdPort) {
-  ASSERT_TRUE(embedded_test_server()->Start());
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, Http09WeirdPort) {
   ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/echo-raw?spam"));
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_INVALID_HTTP_RESPONSE);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_INVALID_HTTP_RESPONSE);
 }
 
 // Test that redirects to invalid URLs show an error. See
 // https://crbug.com/462272.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, RedirectToInvalidURL) {
-  ASSERT_TRUE(embedded_test_server()->Start());
+IN_PROC_BROWSER_TEST_F(DNSErrorPageTest, RedirectToInvalidURL) {
   GURL url = embedded_test_server()->GetURL("/server-redirect?https://:");
   ui_test_utils::NavigateToURL(browser(), url);
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_INVALID_REDIRECT);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_INVALID_REDIRECT);
   // The error page should commit before the redirect, not after.
   EXPECT_EQ(url, browser()
                      ->tab_strip_model()
@@ -1753,16 +1464,21 @@ IN_PROC_BROWSER_TEST_F(ErrorPageWithHttp09OnNonDefaultPortsTest,
 // is displayed. This tests the particular case in which the response body
 // is small enough that the entire response must be read before its MIME type
 // can be determined.
-IN_PROC_BROWSER_TEST_F(ErrorPageTest, SniffSmallHttpErrorResponseAsDownload) {
+class ErrorPageSniffTest : public InProcessBrowserTest {};
+
+IN_PROC_BROWSER_TEST_F(ErrorPageSniffTest,
+                       SniffSmallHttpErrorResponseAsDownload) {
   const char kErrorPath[] = "/foo";
-  embedded_test_server()->RegisterRequestHandler(
-      base::Bind(&Return500WithBinaryBody, kErrorPath));
+  embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
+      &DNSErrorPageTest::Return500WithBinaryBody, kErrorPath));
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ui_test_utils::NavigateToURL(browser(),
                                embedded_test_server()->GetURL(kErrorPath));
 
-  ExpectDisplayingLocalErrorPage(browser(), net::ERR_INVALID_RESPONSE);
+  ExpectDisplayingLocalErrorPage(
+      embedded_test_server()->GetURL("mock.http", "/title2.html").spec(),
+      browser(), net::ERR_INVALID_RESPONSE);
 }
 
 }  // namespace

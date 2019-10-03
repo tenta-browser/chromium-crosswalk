@@ -5,7 +5,8 @@
 #ifndef REMOTING_PROTOCOL_P2P_STREAM_SOCKET_H_
 #define REMOTING_PROTOCOL_P2P_STREAM_SOCKET_H_
 
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 class IOBuffer;
@@ -17,7 +18,7 @@ namespace protocol {
 // Peer-to-peer socket with stream semantics.
 class P2PStreamSocket {
  public:
-  virtual ~P2PStreamSocket() {};
+  virtual ~P2PStreamSocket() {}
 
   // Reads data, up to |buf_len| bytes, from the socket. The number of bytes
   // read is returned, or an error is returned upon failure. ERR_IO_PENDING
@@ -27,8 +28,9 @@ class P2PStreamSocket {
   // the provided buffer until the callback is invoked or the socket is
   // closed. If the socket is destroyed before the read completes, the
   // callback will not be invoked.
-  virtual int Read(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-                   const net::CompletionCallback& callback) = 0;
+  virtual int Read(const scoped_refptr<net::IOBuffer>& buf,
+                   int buf_len,
+                   net::CompletionOnceCallback callback) = 0;
 
   // Writes data, up to |buf_len| bytes, to the socket. Note: data may be
   // written partially. The number of bytes written is returned, or an error
@@ -39,8 +41,11 @@ class P2PStreamSocket {
   // the callback is invoked or the socket is closed. Implementations of this
   // method should not modify the contents of the actual buffer that is written
   // to the socket.
-  virtual int Write(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-                    const net::CompletionCallback& callback) = 0;
+  virtual int Write(
+      const scoped_refptr<net::IOBuffer>& buf,
+      int buf_len,
+      net::CompletionOnceCallback callback,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) = 0;
 };
 
 }  // namespace protocol

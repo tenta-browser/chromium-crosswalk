@@ -19,7 +19,8 @@ import android.widget.FrameLayout;
 import org.chromium.base.SysUtils;
 
 /**
- * Toast wrapper, makes sure toasts are not HW accelerated on low-end devices.
+ * Toast wrapper, makes sure toasts are not HW accelerated on low-end devices and presented
+ * correctly (i.e. use VrToast while in virtual reality).
  *
  * Can (and should) also be used for Chromium-related additions and extensions.
  */
@@ -28,11 +29,13 @@ public class Toast {
     public static final int LENGTH_SHORT = android.widget.Toast.LENGTH_SHORT;
     public static final int LENGTH_LONG = android.widget.Toast.LENGTH_LONG;
 
+    private static int sExtraYOffset;
+
     private android.widget.Toast mToast;
     private ViewGroup mSWLayout;
 
     public Toast(Context context) {
-        this(context, new android.widget.Toast(context));
+        this(context, UiWidgetFactory.getInstance().createToast(context));
     }
 
     private Toast(Context context, android.widget.Toast toast) {
@@ -60,6 +63,8 @@ public class Toast {
 
             setView(toast.getView());
         }
+        mToast.setGravity(
+                mToast.getGravity(), mToast.getXOffset(), mToast.getYOffset() + sExtraYOffset);
     }
 
     public android.widget.Toast getAndroidToast() {
@@ -147,12 +152,20 @@ public class Toast {
 
     @SuppressLint("ShowToast")
     public static Toast makeText(Context context, CharSequence text, int duration) {
-        return new Toast(context, android.widget.Toast.makeText(context, text, duration));
+        return new Toast(context, UiWidgetFactory.getInstance().makeToast(context, text, duration));
     }
 
-    @SuppressLint("ShowToast")
     public static Toast makeText(Context context, int resId, int duration)
             throws Resources.NotFoundException {
-        return new Toast(context, android.widget.Toast.makeText(context, resId, duration));
+        return makeText(context, context.getResources().getText(resId), duration);
+    }
+
+    /**
+     * Set extra Y offset for toasts all toasts created with this class. This can be overridden by
+     * calling {@link Toast#setGravity(int, int, int)} on an individual toast.
+     * @param yOffsetPx The Y offset from the normal toast position in px.
+     */
+    public static void setGlobalExtraYOffset(int yOffsetPx) {
+        sExtraYOffset = yOffsetPx;
     }
 }

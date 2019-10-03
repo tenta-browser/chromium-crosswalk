@@ -6,19 +6,18 @@
 
 #include <set>
 
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/apps/drive/drive_app_provider.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs_factory.h"
 
 namespace app_list {
 
@@ -48,7 +47,7 @@ std::unique_ptr<KeyedService> AppListSyncableServiceFactory::BuildInstanceFor(
   }
   VLOG(1) << "BuildInstanceFor: " << profile->GetDebugName()
           << " (" << profile << ")";
-  return base::MakeUnique<AppListSyncableService>(
+  return std::make_unique<AppListSyncableService>(
       profile, extensions::ExtensionSystem::Get(profile));
 }
 
@@ -67,7 +66,7 @@ AppListSyncableServiceFactory::AppListSyncableServiceFactory()
   dependent_factories.insert(
       extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   dependent_factories.insert(ArcAppListPrefsFactory::GetInstance());
-  DriveAppProvider::AppendDependsOnFactories(&dependent_factories);
+  dependent_factories.insert(apps::AppServiceProxyFactory::GetInstance());
   for (FactorySet::iterator it = dependent_factories.begin();
        it != dependent_factories.end();
        ++it) {
@@ -89,6 +88,23 @@ void AppListSyncableServiceFactory::RegisterProfilePrefs(
 
 content::BrowserContext* AppListSyncableServiceFactory::GetBrowserContextToUse(
     content::BrowserContext* context) const {
+  Profile* const profile = Profile::FromBrowserContext(context);
+  // No service if |context| is not a profile.
+  if (!profile)
+    return nullptr;
+
+  // No service for system profile.
+  if (profile->IsSystemProfile())
+    return nullptr;
+
+  // No service for sign in profile.
+  if (chromeos::ProfileHelper::IsSigninProfile(profile))
+    return nullptr;
+
+  // Use profile as-is for guest session.
+  if (profile->IsGuestSession())
+    return chrome::GetBrowserContextOwnInstanceInIncognito(context);
+
   // This matches the logic in ExtensionSyncServiceFactory, which uses the
   // orginal browser context.
   return chrome::GetBrowserContextRedirectedInIncognito(context);

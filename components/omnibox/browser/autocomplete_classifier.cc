@@ -13,7 +13,8 @@
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/browser/document_provider.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "url/gurl.h"
 
@@ -26,7 +27,7 @@ AutocompleteClassifier::AutocompleteClassifier(
 
 AutocompleteClassifier::~AutocompleteClassifier() {
   // We should only reach here after Shutdown() has been called.
-  DCHECK(!controller_.get());
+  DCHECK(!controller_);
 }
 
 void AutocompleteClassifier::Shutdown() {
@@ -36,22 +37,18 @@ void AutocompleteClassifier::Shutdown() {
 // static
 int AutocompleteClassifier::DefaultOmniboxProviders() {
   return
-#if defined(OS_ANDROID) || defined(OS_IOS)
-      // The Physical Web currently is only implemented on mobile devices.
-      AutocompleteProvider::TYPE_PHYSICAL_WEB |
-#else
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
       // Custom search engines cannot be used on mobile.
       AutocompleteProvider::TYPE_KEYWORD |
-#endif
-#if defined(OS_IOS)
-      (base::FeatureList::IsEnabled(omnibox::kZeroSuggestProviderIOS)
-           ? AutocompleteProvider::TYPE_ZERO_SUGGEST
-           : 0) |
 #else
-      AutocompleteProvider::TYPE_ZERO_SUGGEST |
+      AutocompleteProvider::TYPE_CLIPBOARD |
 #endif
-      (base::FeatureList::IsEnabled(omnibox::kEnableClipboardProvider)
-           ? AutocompleteProvider::TYPE_CLIPBOARD_URL
+      AutocompleteProvider::TYPE_ZERO_SUGGEST |
+      (base::FeatureList::IsEnabled(omnibox::kDocumentProvider)
+           ? AutocompleteProvider::TYPE_DOCUMENT
+           : 0) |
+      (base::FeatureList::IsEnabled(omnibox::kOnDeviceHeadProvider)
+           ? AutocompleteProvider::TYPE_ON_DEVICE_HEAD
            : 0) |
       AutocompleteProvider::TYPE_BOOKMARK | AutocompleteProvider::TYPE_BUILTIN |
       AutocompleteProvider::TYPE_HISTORY_QUICK |
@@ -70,6 +67,14 @@ void AutocompleteClassifier::Classify(
   base::AutoReset<bool> reset(&inside_classify_, true);
   AutocompleteInput input(text, page_classification, *scheme_classifier_);
   input.set_prevent_inline_autocomplete(true);
+  // If the user in keyword mode (which is often the case when |prefer_keyword|
+  // is true), ideally we'd set |input|'s keyword_mode_entry_method field.
+  // However, in the context of this code, we don't know how the keyword mode
+  // was entered. Moreover, we cannot add that as a parameter to Classify()
+  // because many callers do not know how keyword mode was entered. Luckily,
+  // Classify()'s purpose is to determine the default match, and at this time
+  // |keyword_mode_entry_method| only ends up affecting the ranking of
+  // lower-down suggestions.
   input.set_prefer_keyword(prefer_keyword);
   input.set_allow_exact_keyword_match(allow_exact_keyword_match);
   input.set_want_asynchronous_matches(false);

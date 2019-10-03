@@ -7,8 +7,10 @@
 
 #include "ash/public/cpp/shelf_item.h"
 #include "base/macros.h"
+#include "ui/base/ui_base_types.h"
 
 namespace gfx {
+class Point;
 class Rect;
 }
 
@@ -18,8 +20,7 @@ class View;
 
 namespace ash {
 class OverflowBubble;
-class OverflowButton;
-class ShelfButton;
+class ShelfAppButton;
 class ShelfButtonPressedMetricTracker;
 class ShelfTooltipManager;
 class ShelfView;
@@ -33,34 +34,25 @@ class ShelfViewTestAPI {
   // Number of icons displayed.
   int GetButtonCount();
 
-  // Retrieve the button at |index|, doesn't support the app list button,
-  // because the app list button is not a ShelfButton.
-  ShelfButton* GetButton(int index);
+  // Retrieve the button at |index|, doesn't support the home button,
+  // because the home button is not a ShelfAppButton.
+  ShelfAppButton* GetButton(int index);
+
+  // Adds a new item of the given type to the view.
+  ShelfID AddItem(ShelfItemType type);
 
   // Retrieve the view at |index|.
   views::View* GetViewAt(int index);
 
-  // First visible button index.
-  int GetFirstVisibleIndex();
-
-  // Last visible button index.
-  int GetLastVisibleIndex();
-
   // Gets current/ideal bounds for button at |index|.
   const gfx::Rect& GetBoundsByIndex(int index);
   const gfx::Rect& GetIdealBoundsByIndex(int index);
-
-  // Returns true if overflow button is visible.
-  bool IsOverflowButtonVisible();
 
   // Makes shelf view show its overflow bubble.
   void ShowOverflowBubble();
 
   // Makes shelf view hide its overflow bubble.
   void HideOverflowBubble();
-
-  // Returns true if the overflow bubble is visible.
-  bool IsShowingOverflowBubble() const;
 
   // An accessor for the |bounds_animator_| duration.
   int GetAnimationDuration() const;
@@ -70,6 +62,12 @@ class ShelfViewTestAPI {
 
   // Runs message loop and waits until all add/remove animations are done.
   void RunMessageLoopUntilAnimationsDone();
+
+  // Gets the anchor point that would be used for a context menu with these
+  // parameters.
+  gfx::Rect GetMenuAnchorRect(const views::View& source,
+                              const gfx::Point& location,
+                              bool context_menu) const;
 
   // Close any open app list or context menu; returns true if a menu was closed.
   bool CloseMenu();
@@ -82,9 +80,6 @@ class ShelfViewTestAPI {
 
   // An accessor for overflow bubble.
   OverflowBubble* overflow_bubble();
-
-  // An accessor for overflow button.
-  OverflowButton* overflow_button() const;
 
   // Returns minimum distance before drag starts.
   int GetMinimumDragDistance() const;
@@ -107,6 +102,7 @@ class ShelfViewTestAPI {
 
  private:
   ShelfView* shelf_view_;
+  int id_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfViewTestAPI);
 };

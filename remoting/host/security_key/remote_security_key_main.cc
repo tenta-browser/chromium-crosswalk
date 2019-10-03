@@ -10,11 +10,11 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/embedder.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
 #include "remoting/host/host_exit_codes.h"
 #include "remoting/host/logging.h"
 #include "remoting/host/security_key/security_key_ipc_client.h"
@@ -140,10 +140,10 @@ int StartRemoteSecurityKey() {
 #error Not implemented.
 #endif
 
-  mojo::edk::Init();
-  mojo::edk::ScopedIPCSupport ipc_support(
+  mojo::core::Init();
+  mojo::core::ScopedIPCSupport ipc_support(
       base::ThreadTaskRunnerHandle::Get(),
-      mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST);
+      mojo::core::ScopedIPCSupport::ShutdownPolicy::FAST);
 
   base::RunLoop run_loop;
 
@@ -161,7 +161,7 @@ int StartRemoteSecurityKey() {
 int RemoteSecurityKeyMain(int argc, char** argv) {
   // This object instance is required by Chrome classes (such as MessageLoop).
   base::AtExitManager exit_manager;
-  base::MessageLoopForIO message_loop;
+  base::SingleThreadTaskExecutor io_task_executor(base::MessagePump::Type::IO);
 
   base::CommandLine::Init(argc, argv);
   remoting::InitHostLogging();

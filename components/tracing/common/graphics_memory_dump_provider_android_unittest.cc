@@ -5,7 +5,7 @@
 #include "components/tracing/common/graphics_memory_dump_provider_android.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/process_memory_dump.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -20,7 +20,7 @@ TEST(GraphicsMemoryDumpProviderTest, ParseResponse) {
   const char* kDumpBaseName = GraphicsMemoryDumpProvider::kDumpBaseName;
 
   base::trace_event::ProcessMemoryDump pmd(
-      nullptr, {base::trace_event::MemoryDumpLevelOfDetail::DETAILED});
+      {base::trace_event::MemoryDumpLevelOfDetail::DETAILED});
   auto* instance = GraphicsMemoryDumpProvider::GetInstance();
   char buf[] = "graphics_total 12\ngraphics_pss 34\ngl_total 56\ngl_pss 78";
   instance->ParseResponseAndAddToDump(buf, strlen(buf), &pmd);

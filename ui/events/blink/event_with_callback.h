@@ -21,9 +21,11 @@ class EventWithCallback {
   struct OriginalEventWithCallback {
     OriginalEventWithCallback(
         WebScopedInputEvent event,
+        const LatencyInfo& latency,
         InputHandlerProxy::EventDispositionCallback callback);
     ~OriginalEventWithCallback();
     WebScopedInputEvent event_;
+    LatencyInfo latency_;
     InputHandlerProxy::EventDispositionCallback callback_;
   };
   using OriginalEventList = std::list<OriginalEventWithCallback>;
@@ -47,7 +49,9 @@ class EventWithCallback {
                     std::unique_ptr<DidOverscrollParams>);
 
   const blink::WebInputEvent& event() const { return *event_; }
-  const LatencyInfo latency_info() const { return latency_; }
+  blink::WebInputEvent* event_pointer() { return event_.get(); }
+  const LatencyInfo& latency_info() const { return latency_; }
+  LatencyInfo* mutable_latency_info() { return &latency_; }
   base::TimeTicks creation_timestamp() const { return creation_timestamp_; }
   base::TimeTicks last_coalesced_timestamp() const {
     return last_coalesced_timestamp_;

@@ -5,6 +5,7 @@
 #import <Foundation/Foundation.h>
 #import <ImageCaptureCore/ImageCaptureCore.h>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -14,9 +15,6 @@
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
-#include "base/test/sequenced_worker_pool_owner.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/media_galleries/mac/mtp_device_delegate_impl_mac.h"
 #include "components/storage_monitor/image_capture_device_manager.h"
 #include "components/storage_monitor/test_storage_monitor.h"
@@ -119,8 +117,11 @@ const char kTestFileContents[] = "test";
 
 - (id)init:(NSString*)name {
   if ((self = [super init])) {
+    base::scoped_nsobject<NSDateFormatter> iso8601day(
+        [[NSDateFormatter alloc] init]);
+    [iso8601day setDateFormat:@"yyyy-MM-dd"];
     name_.reset([name retain]);
-    date_.reset([[NSDate dateWithNaturalLanguageString:@"12/12/12"] retain]);
+    date_.reset([[iso8601day dateFromString:@"2012-12-12"] retain]);
   }
   return self;
 }
@@ -149,11 +150,7 @@ const char kTestFileContents[] = "test";
 
 class MTPDeviceDelegateImplMacTest : public testing::Test {
  public:
-  MTPDeviceDelegateImplMacTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        camera_(NULL),
-        delegate_(NULL) {}
+  MTPDeviceDelegateImplMacTest() : camera_(NULL), delegate_(NULL) {}
 
   void SetUp() override {
     storage_monitor::TestStorageMonitor* monitor =
@@ -235,7 +232,7 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
       base::Bind(&MTPDeviceDelegateImplMacTest::OnError,
                  base::Unretained(this),
                  &wait));
-    scoped_task_environment_.RunUntilIdle();
+    test_browser_thread_bundle_.RunUntilIdle();
     EXPECT_TRUE(wait.IsSignaled());
     *info = info_;
     return error_;
@@ -250,7 +247,7 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
                             base::Unretained(this), &wait),
         base::Bind(&MTPDeviceDelegateImplMacTest::OnError,
                    base::Unretained(this), &wait));
-    scoped_task_environment_.RunUntilIdle();
+    test_browser_thread_bundle_.RunUntilIdle();
     wait.Wait();
     return error_;
   }
@@ -268,13 +265,12 @@ class MTPDeviceDelegateImplMacTest : public testing::Test {
         base::Bind(&MTPDeviceDelegateImplMacTest::OnError,
                    base::Unretained(this),
                    &wait));
-    scoped_task_environment_.RunUntilIdle();
+    test_browser_thread_bundle_.RunUntilIdle();
     wait.Wait();
     return error_;
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
   content::TestBrowserThreadBundle test_browser_thread_bundle_;
 
   base::ScopedTempDir temp_dir_;
@@ -343,7 +339,7 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestOverlappedReadDir) {
   // Signal the delegate that no files are coming.
   delegate_->NoMoreItems();
 
-  scoped_task_environment_.RunUntilIdle();
+  test_browser_thread_bundle_.RunUntilIdle();
   wait.Wait();
 
   EXPECT_EQ(base::File::FILE_OK, error_);
@@ -383,11 +379,11 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestGetFileInfo) {
   EXPECT_EQ(base::File::FILE_OK, ReadDir(base::FilePath(kDevicePath)));
 
   ASSERT_EQ(2U, file_list_.size());
-  EXPECT_FALSE(file_list_[0].is_directory);
-  EXPECT_EQ("name1", file_list_[0].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[0].type);
+  EXPECT_EQ("name1", file_list_[0].name.value());
 
-  EXPECT_FALSE(file_list_[1].is_directory);
-  EXPECT_EQ("name2", file_list_[1].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[1].type);
+  EXPECT_EQ("name2", file_list_[1].name.value());
 }
 
 TEST_F(MTPDeviceDelegateImplMacTest, TestDirectoriesAndSorting) {
@@ -412,13 +408,13 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestDirectoriesAndSorting) {
   EXPECT_EQ(base::File::FILE_OK, ReadDir(base::FilePath(kDevicePath)));
 
   ASSERT_EQ(4U, file_list_.size());
-  EXPECT_EQ("dir1", file_list_[0].name);
-  EXPECT_EQ("dir2", file_list_[1].name);
-  EXPECT_FALSE(file_list_[2].is_directory);
-  EXPECT_EQ("name1", file_list_[2].name);
+  EXPECT_EQ("dir1", file_list_[0].name.value());
+  EXPECT_EQ("dir2", file_list_[1].name.value());
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[2].type);
+  EXPECT_EQ("name1", file_list_[2].name.value());
 
-  EXPECT_FALSE(file_list_[3].is_directory);
-  EXPECT_EQ("name2", file_list_[3].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[3].type);
+  EXPECT_EQ("name2", file_list_[3].name.value());
 }
 
 TEST_F(MTPDeviceDelegateImplMacTest, SubDirectories) {
@@ -461,33 +457,33 @@ TEST_F(MTPDeviceDelegateImplMacTest, SubDirectories) {
 
   EXPECT_EQ(base::File::FILE_OK, ReadDir(base::FilePath(kDevicePath)));
   ASSERT_EQ(3U, file_list_.size());
-  EXPECT_TRUE(file_list_[0].is_directory);
-  EXPECT_EQ("dir1", file_list_[0].name);
-  EXPECT_TRUE(file_list_[1].is_directory);
-  EXPECT_EQ("dir2", file_list_[1].name);
-  EXPECT_FALSE(file_list_[2].is_directory);
-  EXPECT_EQ("name4", file_list_[2].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::DIRECTORY, file_list_[0].type);
+  EXPECT_EQ("dir1", file_list_[0].name.value());
+  EXPECT_EQ(filesystem::mojom::FsFileType::DIRECTORY, file_list_[1].type);
+  EXPECT_EQ("dir2", file_list_[1].name.value());
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[2].type);
+  EXPECT_EQ("name4", file_list_[2].name.value());
 
   EXPECT_EQ(base::File::FILE_OK,
             ReadDir(base::FilePath(kDevicePath).Append("dir1")));
   ASSERT_EQ(1U, file_list_.size());
-  EXPECT_FALSE(file_list_[0].is_directory);
-  EXPECT_EQ("name1", file_list_[0].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[0].type);
+  EXPECT_EQ("name1", file_list_[0].name.value());
 
   EXPECT_EQ(base::File::FILE_OK,
             ReadDir(base::FilePath(kDevicePath).Append("dir2")));
   ASSERT_EQ(2U, file_list_.size());
-  EXPECT_FALSE(file_list_[0].is_directory);
-  EXPECT_EQ("name2", file_list_[0].name);
-  EXPECT_TRUE(file_list_[1].is_directory);
-  EXPECT_EQ("subdir", file_list_[1].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[0].type);
+  EXPECT_EQ("name2", file_list_[0].name.value());
+  EXPECT_EQ(filesystem::mojom::FsFileType::DIRECTORY, file_list_[1].type);
+  EXPECT_EQ("subdir", file_list_[1].name.value());
 
   EXPECT_EQ(base::File::FILE_OK,
             ReadDir(base::FilePath(kDevicePath)
                     .Append("dir2").Append("subdir")));
   ASSERT_EQ(1U, file_list_.size());
-  EXPECT_FALSE(file_list_[0].is_directory);
-  EXPECT_EQ("name3", file_list_[0].name);
+  EXPECT_EQ(filesystem::mojom::FsFileType::REGULAR_FILE, file_list_[0].type);
+  EXPECT_EQ("name3", file_list_[0].name.value());
 
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
             ReadDir(base::FilePath(kDevicePath)
@@ -519,7 +515,7 @@ TEST_F(MTPDeviceDelegateImplMacTest, TestDownload) {
 
   EXPECT_EQ(base::File::FILE_OK, ReadDir(base::FilePath(kDevicePath)));
   ASSERT_EQ(1U, file_list_.size());
-  ASSERT_EQ("filename", file_list_[0].name);
+  ASSERT_EQ("filename", file_list_[0].name.value());
 
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
             DownloadFile(base::FilePath("/ic:id/nonexist"),

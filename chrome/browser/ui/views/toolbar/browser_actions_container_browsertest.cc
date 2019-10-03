@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,9 @@
 
 #include "base/macros.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
-#include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/extensions/browser_action_test_util.h"
 #include "chrome/browser/ui/toolbar/browser_actions_bar_browsertest.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
@@ -24,6 +24,8 @@
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/views/controls/resize_area.h"
+#include "ui/views/test/test_views.h"
 #include "ui/views/view.h"
 
 // TODO(devlin): Continue moving any tests that should be platform independent
@@ -33,6 +35,7 @@
 // Test that dragging browser actions works, and that dragging a browser action
 // from the overflow menu results in it "popping" out (growing the container
 // size by 1), rather than just reordering the extensions.
+
 IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   LoadExtensions();
 
@@ -48,12 +51,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
           ->toolbar()->browser_actions();
 
   // The order of the child views should be the same.
-  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
-            container->child_at(0));
-  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
-            container->child_at(1));
-  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
-            container->child_at(2));
+  const auto& children = container->children();
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()), children[0]);
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()), children[1]);
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()), children[2]);
 
   // Simulate a drag and drop to the right.
   ui::OSExchangeData drop_data;
@@ -62,7 +63,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   browser_action_drag_data.Write(profile(), &drop_data);
   ToolbarActionView* view = container->GetViewForId(extension_b()->id());
   // ...to the right of extension B.
-  gfx::Point location(view->x() + view->width(), view->y());
+  gfx::PointF location(view->x() + view->width(), view->y());
   ui::DropTargetEvent target_event(
       drop_data, location, location, ui::DragDropTypes::DRAG_MOVE);
 
@@ -74,22 +75,19 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(0));
   EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(2));
-  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
-            container->child_at(0));
-  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
-            container->child_at(1));
-  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
-            container->child_at(2));
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()), children[0]);
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()), children[1]);
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()), children[2]);
 
   const extensions::ExtensionSet& extension_set =
       extensions::ExtensionRegistry::Get(profile())->enabled_extensions();
-  const std::vector<ToolbarActionsModel::ToolbarItem>& toolbar_items =
-      toolbar_model()->toolbar_items();
+  const std::vector<ToolbarActionsModel::ActionId>& toolbar_action_ids =
+      toolbar_model()->action_ids();
 
   // This order should be reflected in the underlying model.
-  EXPECT_EQ(extension_b(), extension_set.GetByID(toolbar_items[0].id));
-  EXPECT_EQ(extension_a(), extension_set.GetByID(toolbar_items[1].id));
-  EXPECT_EQ(extension_c(), extension_set.GetByID(toolbar_items[2].id));
+  EXPECT_EQ(extension_b(), extension_set.GetByID(toolbar_action_ids[0]));
+  EXPECT_EQ(extension_a(), extension_set.GetByID(toolbar_action_ids[1]));
+  EXPECT_EQ(extension_c(), extension_set.GetByID(toolbar_action_ids[2]));
 
   // Simulate a drag and drop to the left.
   ui::OSExchangeData drop_data2;
@@ -97,7 +95,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   BrowserActionDragData browser_action_drag_data2(extension_a()->id(), 1u);
   browser_action_drag_data2.Write(profile(), &drop_data2);
   // ...to the left of extension B (which is now at index 0).
-  location = gfx::Point(view->x(), view->y());
+  location = gfx::PointF(view->x(), view->y());
   ui::DropTargetEvent target_event2(
       drop_data2, location, location, ui::DragDropTypes::DRAG_MOVE);
 
@@ -109,12 +107,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(0));
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(2));
-  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
-            container->child_at(0));
-  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
-            container->child_at(1));
-  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
-            container->child_at(2));
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()), children[0]);
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()), children[1]);
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()), children[2]);
 
   // Shrink the size of the container so we have an overflow menu.
   toolbar_model()->SetVisibleIconCount(2u);
@@ -126,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   BrowserActionDragData browser_action_drag_data3(extension_c()->id(), 2u);
   browser_action_drag_data3.Write(profile(), &drop_data3);
   // ...to the left of extension B (which is back in index 1 on the main bar).
-  location = gfx::Point(view->x(), view->y());
+  location = gfx::PointF(view->x(), view->y());
   ui::DropTargetEvent target_event3(
       drop_data3, location, location, ui::DragDropTypes::DRAG_MOVE);
 
@@ -176,12 +171,12 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, MultipleWindows) {
   browser_action_drag_data.Write(profile(), &drop_data);
   ToolbarActionView* view = first->GetViewForId(extension_b()->id());
   // ...to the right of extension B.
-  gfx::Point location(view->x() + view->width(), view->y());
+  gfx::PointF location(view->x() + view->width(), view->y());
   ui::DropTargetEvent target_event(
       drop_data, location, location, ui::DragDropTypes::DRAG_MOVE);
 
   // Drag and drop.
-  first->toolbar_actions_bar()->OnDragStarted();
+  first->toolbar_actions_bar()->OnDragStarted(0u);
   first->OnDragUpdated(target_event);
 
   // Semi-random placement for a regression test for crbug.com/539744.
@@ -213,16 +208,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, HighlightMode) {
 
   EXPECT_EQ(3, browser_actions_bar()->VisibleBrowserActions());
   EXPECT_EQ(3, browser_actions_bar()->NumberOfBrowserActions());
-
-  BrowserActionsContainer* container =
-      BrowserView::GetBrowserViewForBrowser(browser())
-          ->toolbar()->browser_actions();
-
-  // Currently, dragging should be enabled.
-  ToolbarActionView* action_view = container->GetToolbarActionViewAt(0);
-  ASSERT_TRUE(action_view);
-  gfx::Point point(action_view->x(), action_view->y());
-  EXPECT_TRUE(container->CanStartDragForView(action_view, point, point));
+  EXPECT_TRUE(browser_actions_bar()->CanBeResized());
 
   std::vector<std::string> action_ids;
   action_ids.push_back(extension_a()->id());
@@ -235,15 +221,237 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, HighlightMode) {
   EXPECT_EQ(2, browser_actions_bar()->NumberOfBrowserActions());
 
   // We shouldn't be able to drag in highlight mode.
-  action_view = container->GetToolbarActionViewAt(0);
-  EXPECT_FALSE(container->CanStartDragForView(action_view, point, point));
+  EXPECT_FALSE(browser_actions_bar()->CanBeResized());
 
   // We should go back to normal after leaving highlight mode.
   toolbar_model()->StopHighlighting();
   EXPECT_EQ(3, browser_actions_bar()->VisibleBrowserActions());
   EXPECT_EQ(3, browser_actions_bar()->NumberOfBrowserActions());
-  action_view = container->GetToolbarActionViewAt(0);
-  EXPECT_TRUE(container->CanStartDragForView(action_view, point, point));
+  EXPECT_TRUE(browser_actions_bar()->CanBeResized());
+}
+
+namespace {
+
+// Wraps an existing browser actions container (BAC) delegate and forwards all
+// calls to it, except for reporting the max width available to the BAC, which
+// it intercepts. Injected into a live BAC for testing.
+class ForwardingDelegate : public BrowserActionsContainer::Delegate {
+ public:
+  explicit ForwardingDelegate(BrowserActionsContainer::Delegate* forward_to);
+  virtual ~ForwardingDelegate() = default;
+
+  BrowserActionsContainer::Delegate* forward_to() { return forward_to_; }
+  void set_max_browser_actions_width(
+      const base::Optional<int>& max_browser_actions_width) {
+    max_browser_actions_width_ = max_browser_actions_width;
+  }
+
+ protected:
+  // BrowserActionsContainer::Delegate:
+  views::LabelButton* GetOverflowReferenceView() override;
+  std::unique_ptr<ToolbarActionsBar> CreateToolbarActionsBar(
+      ToolbarActionsBarDelegate* delegate,
+      Browser* browser,
+      ToolbarActionsBar* main_bar) const override;
+  base::Optional<int> GetMaxBrowserActionsWidth() const override;
+
+ private:
+  BrowserActionsContainer::Delegate* const forward_to_;
+  base::Optional<int> max_browser_actions_width_;
+};
+
+ForwardingDelegate::ForwardingDelegate(
+    BrowserActionsContainer::Delegate* forward_to)
+    : forward_to_(forward_to),
+      max_browser_actions_width_(forward_to->GetMaxBrowserActionsWidth()) {}
+
+views::LabelButton* ForwardingDelegate::GetOverflowReferenceView() {
+  return forward_to_->GetOverflowReferenceView();
+}
+
+std::unique_ptr<ToolbarActionsBar> ForwardingDelegate::CreateToolbarActionsBar(
+    ToolbarActionsBarDelegate* delegate,
+    Browser* browser,
+    ToolbarActionsBar* main_bar) const {
+  return forward_to_->CreateToolbarActionsBar(delegate, browser, main_bar);
+}
+
+base::Optional<int> ForwardingDelegate::GetMaxBrowserActionsWidth() const {
+  return max_browser_actions_width_;
+}
+
+}  // namespace
+
+// Contains (mostly regression) tests that rely on direct access to the browser
+// action container's internal members. This test fixture is a friend of
+// BrowserActionContainer.
+class BrowserActionsContainerBrowserTest : public BrowserActionsBarBrowserTest {
+ public:
+  BrowserActionsContainerBrowserTest() = default;
+  ~BrowserActionsContainerBrowserTest() override = default;
+
+  ForwardingDelegate* test_delegate() { return test_delegate_.get(); }
+
+  views::ResizeArea* GetResizeArea();
+  void UpdateResizeArea();
+  int GetMinimumSize();
+  int GetMaximumSize();
+
+ protected:
+  // BrowserActionsBarBrowserTest:
+  void SetUpOnMainThread() override;
+  void TearDownOnMainThread() override;
+
+ private:
+  BrowserActionsContainer* GetContainer();
+
+  std::unique_ptr<ForwardingDelegate> test_delegate_;
+
+  DISALLOW_COPY_AND_ASSIGN(BrowserActionsContainerBrowserTest);
+};
+
+views::ResizeArea* BrowserActionsContainerBrowserTest::GetResizeArea() {
+  return GetContainer()->resize_area_;
+}
+
+void BrowserActionsContainerBrowserTest::UpdateResizeArea() {
+  return GetContainer()->UpdateResizeArea();
+}
+
+int BrowserActionsContainerBrowserTest::GetMinimumSize() {
+  return GetContainer()->GetWidthForIconCount(1);
+}
+
+int BrowserActionsContainerBrowserTest::GetMaximumSize() {
+  return GetContainer()->GetWidthWithAllActionsVisible();
+}
+
+void BrowserActionsContainerBrowserTest::SetUpOnMainThread() {
+  BrowserActionsBarBrowserTest::SetUpOnMainThread();
+  BrowserActionsContainer* const container = GetContainer();
+  // Create and inject a test delegate. We need to do const-fu because in the
+  // production code the delegate is (rightly) a const pointer.
+  test_delegate_ = std::make_unique<ForwardingDelegate>(container->delegate_);
+  *const_cast<BrowserActionsContainer::Delegate**>(&container->delegate_) =
+      test_delegate_.get();
+  LoadExtensions();
+}
+
+void BrowserActionsContainerBrowserTest::TearDownOnMainThread() {
+  if (test_delegate_) {
+    BrowserActionsContainer* const container = GetContainer();
+    // De-inject the test delegate. We need to do const-fu because in the
+    // production code the delegate is (rightly) a const pointer.
+    *const_cast<BrowserActionsContainer::Delegate**>(&container->delegate_) =
+        test_delegate_->forward_to();
+    test_delegate_.reset();
+  }
+  BrowserActionsBarBrowserTest::TearDownOnMainThread();
+}
+
+BrowserActionsContainer* BrowserActionsContainerBrowserTest::GetContainer() {
+  return BrowserView::GetBrowserViewForBrowser(browser())
+      ->toolbar()
+      ->browser_actions();
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserActionsContainerBrowserTest,
+                       CanResize_InHighlightMode) {
+  views::ResizeArea* const resize_area = GetResizeArea();
+  UpdateResizeArea();
+
+  // Resize area should be enabled by default.
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  std::vector<std::string> action_ids;
+  action_ids.push_back(extension_a()->id());
+  action_ids.push_back(extension_b()->id());
+  toolbar_model()->HighlightActions(action_ids,
+                                    ToolbarActionsModel::HIGHLIGHT_WARNING);
+
+  UpdateResizeArea();
+
+  // Resize area is disabled in highlight mode.
+  EXPECT_FALSE(resize_area->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserActionsContainerBrowserTest,
+                       CanResize_AtMinimumWidth) {
+  views::ResizeArea* const resize_area = GetResizeArea();
+  UpdateResizeArea();
+
+  // Resize area should be enabled by default.
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  // Resize area should be enabled when there is enough space for one icon.
+  const int required_space = GetMinimumSize();
+  test_delegate()->set_max_browser_actions_width(required_space);
+  UpdateResizeArea();
+  EXPECT_TRUE(resize_area->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserActionsContainerBrowserTest,
+                       CanResize_AboveMaximumWidth) {
+  views::ResizeArea* const resize_area = GetResizeArea();
+  UpdateResizeArea();
+
+  // Resize area should be enabled by default.
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  // Resize area should be enabled when there is more than the maximum space
+  // requested.
+  const int max_space = GetMaximumSize();
+  test_delegate()->set_max_browser_actions_width(max_space + 1);
+  UpdateResizeArea();
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  // Resize area should remain enabled when the space shrinks to the minimum
+  // required.
+  const int required_space = GetMinimumSize();
+  test_delegate()->set_max_browser_actions_width(required_space);
+  UpdateResizeArea();
+  EXPECT_TRUE(resize_area->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserActionsContainerBrowserTest,
+                       CannotResize_AtZeroWidth) {
+  views::ResizeArea* const resize_area = GetResizeArea();
+  UpdateResizeArea();
+
+  // Resize area should be enabled by default.
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  // Resize area should be disabled when there is zero space available.
+  test_delegate()->set_max_browser_actions_width(0);
+  UpdateResizeArea();
+  EXPECT_FALSE(resize_area->GetEnabled());
+
+  // Resize area should be re-enabled when there is enough space.
+  const int required_space = GetMinimumSize();
+  test_delegate()->set_max_browser_actions_width(required_space);
+  UpdateResizeArea();
+  EXPECT_TRUE(resize_area->GetEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserActionsContainerBrowserTest,
+                       CannotResize_BelowMinimumWidth) {
+  views::ResizeArea* const resize_area = GetResizeArea();
+  UpdateResizeArea();
+
+  // Resize area should be enabled by default.
+  EXPECT_TRUE(resize_area->GetEnabled());
+
+  // Resize area should be disabled when there is less than the minimum space
+  // for one icon.
+  const int required_space = GetMinimumSize();
+  test_delegate()->set_max_browser_actions_width(required_space - 1);
+  UpdateResizeArea();
+  EXPECT_FALSE(resize_area->GetEnabled());
+
+  // Resize area should be re-enabled when there is enough space.
+  test_delegate()->set_max_browser_actions_width(required_space);
+  UpdateResizeArea();
+  EXPECT_TRUE(resize_area->GetEnabled());
 }
 
 // Test the behavior of the overflow container for Extension Actions.
@@ -293,9 +501,11 @@ void BrowserActionsContainerOverflowTest::SetUpOnMainThread() {
   BrowserActionsBarBrowserTest::SetUpOnMainThread();
   main_bar_ = BrowserView::GetBrowserViewForBrowser(browser())
                   ->toolbar()->browser_actions();
-  overflow_parent_.reset(new views::View());
+  overflow_parent_.reset(new views::ResizeAwareParentView());
   overflow_parent_->set_owned_by_client();
-  overflow_bar_ = new BrowserActionsContainer(browser(), main_bar_);
+  overflow_bar_ = new BrowserActionsContainer(
+      browser(), main_bar_,
+      BrowserView::GetBrowserViewForBrowser(browser())->toolbar(), true);
   overflow_parent_->AddChildView(overflow_bar_);
 }
 
@@ -326,11 +536,11 @@ BrowserActionsContainerOverflowTest::VerifyVisibleCount(
   // implicitly also guarantees that the proper number are visible).
   for (size_t i = 0; i < overflow_bar_->num_toolbar_actions(); ++i) {
     bool visible = i < expected_visible;
-    if (main_bar_->GetToolbarActionViewAt(i)->visible() != visible) {
+    if (main_bar_->GetToolbarActionViewAt(i)->GetVisible() != visible) {
       return testing::AssertionFailure() << "Index " << i <<
           " has improper visibility in main: " << !visible;
     }
-    if (overflow_bar_->GetToolbarActionViewAt(i)->visible() == visible) {
+    if (overflow_bar_->GetToolbarActionViewAt(i)->GetVisible() == visible) {
       return testing::AssertionFailure() << "Index " << i <<
           " has improper visibility in overflow: " << visible;
     }
@@ -415,7 +625,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsContainerOverflowTest,
   BrowserActionDragData browser_action_drag_data(extension_a()->id(), 0u);
   browser_action_drag_data.Write(profile(), &drop_data);
   ToolbarActionView* view = overflow_bar()->GetViewForId(extension_c()->id());
-  gfx::Point location(view->x(), view->y());
+  gfx::PointF location(view->x(), view->y());
   ui::DropTargetEvent target_event(
       drop_data, location, location, ui::DragDropTypes::DRAG_MOVE);
 
@@ -434,7 +644,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsContainerOverflowTest,
   BrowserActionDragData browser_action_drag_data2(extension_a()->id(), 1u);
   browser_action_drag_data2.Write(profile(), &drop_data2);
   view = main_bar()->GetViewForId(extension_b()->id());
-  location = gfx::Point(view->x(), view->y());
+  location = gfx::PointF(view->x(), view->y());
   ui::DropTargetEvent target_event2(
       drop_data2, location, location, ui::DragDropTypes::DRAG_MOVE);
 
@@ -451,7 +661,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsContainerOverflowTest,
   ui::OSExchangeData drop_data3;
   BrowserActionDragData browser_action_drag_data3(extension_c()->id(), 2u);
   browser_action_drag_data3.Write(profile(), &drop_data3);
-  location = gfx::Point(view->x(), view->y());
+  location = gfx::PointF(view->x(), view->y());
   ui::DropTargetEvent target_event3(
       drop_data3, location, location, ui::DragDropTypes::DRAG_MOVE);
 

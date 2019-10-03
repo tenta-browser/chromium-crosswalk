@@ -22,11 +22,13 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_support_android.h"
+#include "base/threading/thread_restrictions.h"
 #include "gtest/gtest.h"
-#include "jni/NativeTest_jni.h"
 #include "testing/android/native_test/main_runner.h"
+#include "testing/android/native_test/native_test_jni_headers/NativeTest_jni.h"
 #include "testing/android/native_test/native_test_util.h"
 
 using base::android::JavaParamRef;
@@ -75,9 +77,11 @@ static void JNI_NativeTest_RunTests(
     const JavaParamRef<jstring>& jstdout_file_path,
     const JavaParamRef<jobject>& app_context,
     const JavaParamRef<jstring>& jtest_data_dir) {
+  base::ScopedAllowBlockingForTesting allow;
+
   // Command line initialized basically, will be fully initialized later.
   static const char* const kInitialArgv[] = { "ChromeTestActivity" };
-  base::CommandLine::Init(arraysize(kInitialArgv), kInitialArgv);
+  base::CommandLine::Init(base::size(kInitialArgv), kInitialArgv);
 
   std::vector<std::string> args;
 

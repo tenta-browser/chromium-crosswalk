@@ -7,10 +7,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace file_manager {
@@ -61,7 +63,9 @@ class JobEventRouterImpl : public JobEventRouter {
 
 class JobEventRouterTest : public testing::Test {
  protected:
-  void SetUp() override { job_event_router.reset(new JobEventRouterImpl()); }
+  void SetUp() override {
+    job_event_router = std::make_unique<JobEventRouterImpl>();
+  }
 
   drive::JobInfo CreateJobInfo(drive::JobID id,
                                int64_t num_completed_bytes,
@@ -90,7 +94,7 @@ class JobEventRouterTest : public testing::Test {
   std::unique_ptr<JobEventRouterImpl> job_event_router;
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(JobEventRouterTest, Basic) {

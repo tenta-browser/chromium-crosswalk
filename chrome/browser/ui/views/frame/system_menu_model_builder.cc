@@ -11,6 +11,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -19,10 +20,12 @@
 #include "ui/base/models/simple_menu_model.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/cpp/multi_user_window_manager.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user_info.h"
 #include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -106,21 +109,23 @@ void SystemMenuModelBuilder::BuildSystemMenuForAppOrPopupWindow(
   model->AddItemWithStringId(IDC_BACK, IDS_CONTENT_CONTEXT_BACK);
   model->AddItemWithStringId(IDC_FORWARD, IDS_CONTENT_CONTEXT_FORWARD);
   model->AddItemWithStringId(IDC_RELOAD, IDS_APP_MENU_RELOAD);
-  model->AddSeparator(ui::NORMAL_SEPARATOR);
-  if (browser()->is_app())
-    model->AddItemWithStringId(IDC_NEW_TAB, IDS_APP_MENU_NEW_WEB_PAGE);
-  else
-    model->AddItemWithStringId(IDC_SHOW_AS_TAB, IDS_SHOW_AS_TAB);
-  model->AddSeparator(ui::NORMAL_SEPARATOR);
-  model->AddItemWithStringId(IDC_CUT, IDS_CUT);
-  model->AddItemWithStringId(IDC_COPY, IDS_COPY);
-  model->AddItemWithStringId(IDC_PASTE, IDS_PASTE);
-  model->AddSeparator(ui::NORMAL_SEPARATOR);
-  model->AddItemWithStringId(IDC_FIND, IDS_FIND);
-  model->AddItemWithStringId(IDC_PRINT, IDS_PRINT);
-  zoom_menu_contents_.reset(new ZoomMenuModel(&menu_delegate_));
-  model->AddSubMenuWithStringId(IDC_ZOOM_MENU, IDS_ZOOM_MENU,
-                                zoom_menu_contents_.get());
+  if (!web_app::AppBrowserController::IsForWebAppBrowser(browser())) {
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    if (browser()->is_app())
+      model->AddItemWithStringId(IDC_NEW_TAB, IDS_APP_MENU_NEW_WEB_PAGE);
+    else
+      model->AddItemWithStringId(IDC_SHOW_AS_TAB, IDS_SHOW_AS_TAB);
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    model->AddItemWithStringId(IDC_CUT, IDS_CUT);
+    model->AddItemWithStringId(IDC_COPY, IDS_COPY);
+    model->AddItemWithStringId(IDC_PASTE, IDS_PASTE);
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    model->AddItemWithStringId(IDC_FIND, IDS_FIND);
+    model->AddItemWithStringId(IDC_PRINT, IDS_PRINT);
+    zoom_menu_contents_.reset(new ZoomMenuModel(&menu_delegate_));
+    model->AddSubMenuWithStringId(IDC_ZOOM_MENU, IDS_ZOOM_MENU,
+                                  zoom_menu_contents_.get());
+  }
   if (browser()->is_app() && chrome::CanOpenTaskManager()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER, IDS_TASK_MANAGER);
@@ -165,12 +170,12 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
 
   // If this does not belong to a profile or there is no window, or the window
   // is not owned by anyone, we don't show the menu addition.
-  MultiUserWindowManager* manager = MultiUserWindowManager::GetInstance();
+  auto* window_manager = MultiUserWindowManagerHelper::GetWindowManager();
   const AccountId account_id =
       multi_user_util::GetAccountIdFromProfile(browser()->profile());
   aura::Window* window = browser()->window()->GetNativeWindow();
   if (!account_id.is_valid() || !window ||
-      !manager->GetWindowOwner(window).is_valid())
+      !window_manager->GetWindowOwner(window).is_valid())
     return;
 
   model->AddSeparator(ui::NORMAL_SEPARATOR);

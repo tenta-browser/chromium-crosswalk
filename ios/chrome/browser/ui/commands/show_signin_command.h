@@ -7,18 +7,13 @@
 
 #import <Foundation/Foundation.h>
 
-#include "components/signin/core/browser/signin_metrics.h"
-#include "ios/chrome/browser/ui/commands/generic_chrome_command.h"
+#include "components/signin/public/base/signin_metrics.h"
 
 @class ChromeIdentity;
 
 typedef void (^ShowSigninCommandCompletionCallback)(BOOL succeeded);
 
 enum AuthenticationOperation {
-  // Operation to cancel the current authentication operation and dismiss any
-  // UI presented by this operation.
-  AUTHENTICATION_OPERATION_DISMISS,
-
   // Operation to start a re-authenticate operation. The user is presented with
   // the SSOAuth re-authenticate web page.
   AUTHENTICATION_OPERATION_REAUTHENTICATE,
@@ -29,10 +24,10 @@ enum AuthenticationOperation {
 };
 
 // A command to perform a sign in operation.
-@interface ShowSigninCommand : GenericChromeCommand
+@interface ShowSigninCommand : NSObject
 
 // Mark inherited initializer as unavailable to prevent calling it by mistake.
-- (instancetype)initWithTag:(NSInteger)tag NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
 
 // Initializes a command to perform the specified operation with a
 // SigninInteractionController and invoke a possibly-nil callback when finished.

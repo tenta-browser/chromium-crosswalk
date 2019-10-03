@@ -8,34 +8,16 @@
 
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/vsync_provider.h"
-#include "ui/ozone/public/ozone_platform.h"
-#include "ui/ozone/public/surface_factory_ozone.h"
+#include "ui/ozone/public/platform_window_surface.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
 
 namespace viz {
 
-// static
-std::unique_ptr<SoftwareOutputDeviceOzone> SoftwareOutputDeviceOzone::Create(
-    gfx::AcceleratedWidget widget) {
-  std::unique_ptr<SoftwareOutputDeviceOzone> result(
-      new SoftwareOutputDeviceOzone(widget));
-  if (!result->surface_ozone_)
-    return nullptr;
-  return result;
-}
-
 SoftwareOutputDeviceOzone::SoftwareOutputDeviceOzone(
-    gfx::AcceleratedWidget widget) {
-  ui::SurfaceFactoryOzone* factory =
-      ui::OzonePlatform::GetInstance()->GetSurfaceFactoryOzone();
-
-  surface_ozone_ = factory->CreateCanvasForWidget(widget);
-
-  if (!surface_ozone_) {
-    LOG(ERROR) << "Failed to initialize canvas";
-    return;
-  }
-
+    std::unique_ptr<ui::PlatformWindowSurface> platform_window_surface,
+    std::unique_ptr<ui::SurfaceOzoneCanvas> surface_ozone)
+    : platform_window_surface_(std::move(platform_window_surface)),
+      surface_ozone_(std::move(surface_ozone)) {
   vsync_provider_ = surface_ozone_->CreateVSyncProvider();
 }
 

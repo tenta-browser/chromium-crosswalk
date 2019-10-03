@@ -8,12 +8,14 @@
 #include <keyhi.h>
 #include <pk11pub.h>
 #include <prerror.h>
+#include <secmodt.h>
 
 #include <memory>
 #include <utility>
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "crypto/nss_crypto_module_delegate.h"
 #include "crypto/scoped_nss_types.h"
@@ -52,12 +54,20 @@ class SSLPlatformKeyNSS : public ThreadedSSLPrivateKey::Delegate {
                     crypto::ScopedSECKEYPrivateKey key)
       : type_(type),
         password_delegate_(std::move(password_delegate)),
-        key_(std::move(key)) {}
+        key_(std::move(key)),
+        supports_pss_(PK11_DoesMechanism(key_->pkcs11Slot, CKM_RSA_PKCS_PSS)) {}
   ~SSLPlatformKeyNSS() override = default;
 
+  std::string GetProviderName() override {
+    // This logic accesses fields directly on the struct, so it may run on any
+    // thread without caching.
+    return base::StringPrintf("%s, %s",
+                              PK11_GetModule(key_->pkcs11Slot)->commonName,
+                              PK11_GetSlotName(key_->pkcs11Slot));
+  }
+
   std::vector<uint16_t> GetAlgorithmPreferences() override {
-    return SSLPrivateKey::DefaultAlgorithmPreferences(type_,
-                                                      true /* supports PSS */);
+    return SSLPrivateKey::DefaultAlgorithmPreferences(type_, supports_pss_);
   }
 
   Error Sign(uint16_t algorithm,
@@ -172,6 +182,7 @@ class SSLPlatformKeyNSS : public ThreadedSSLPrivateKey::Delegate {
   scoped_refptr<crypto::CryptoModuleBlockingPasswordDelegate>
       password_delegate_;
   crypto::ScopedSECKEYPrivateKey key_;
+  bool supports_pss_;
 
   DISALLOW_COPY_AND_ASSIGN(SSLPlatformKeyNSS);
 };
@@ -187,7 +198,8 @@ scoped_refptr<SSLPrivateKey> FetchClientCertPrivateKey(
   // hooks (such as smart card UI). To ensure threads are not starved or
   // deadlocked, the base::ScopedBlockingCall below increments the thread pool
   // capacity if this method takes too much time to run.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   void* wincx = password_delegate ? password_delegate->wincx() : nullptr;
   crypto::ScopedSECKEYPrivateKey key(

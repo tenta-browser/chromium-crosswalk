@@ -19,7 +19,8 @@
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
-#include "ui/events/system_input_injector.h"
+#include "ui/ozone/public/ozone_platform.h"
+#include "ui/ozone/public/system_input_injector.h"
 
 namespace remoting {
 
@@ -78,7 +79,7 @@ void SetCapsLockState(bool caps_lock) {
 // This class is run exclusively on the UI thread of the browser process.
 class InputInjectorChromeos::Core {
  public:
-  Core(ui::SystemInputInjectorFactory* system_input_injector_factory);
+  Core();
 
   // Mirrors the public InputInjectorChromeos interface.
   void InjectClipboardEvent(const ClipboardEvent& event);
@@ -97,16 +98,10 @@ class InputInjectorChromeos::Core {
   // display rotation settings.
   std::unique_ptr<PointTransformer> point_transformer_;
 
-  // Creates |delegate_|. We store this since Core is created on one thread,
-  // but then Start() is run on a different one.
-  ui::SystemInputInjectorFactory* system_input_injector_factory_;
-
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
 
-InputInjectorChromeos::Core::Core(
-    ui::SystemInputInjectorFactory* system_input_injector_factory)
-    : system_input_injector_factory_(system_input_injector_factory) {}
+InputInjectorChromeos::Core::Core() = default;
 
 void InputInjectorChromeos::Core::InjectClipboardEvent(
     const ClipboardEvent& event) {
@@ -157,8 +152,7 @@ void InputInjectorChromeos::Core::InjectMouseEvent(const MouseEvent& event) {
 
 void InputInjectorChromeos::Core::Start(
     std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
-  // OK, so we now need to plumb from ChromotingHostContext to here.
-  delegate_ = system_input_injector_factory_->CreateSystemInputInjector();
+  delegate_ = ui::OzonePlatform::GetInstance()->CreateSystemInputInjector();
   DCHECK(delegate_);
 
   // Implemented by remoting::ClipboardAura.
@@ -168,11 +162,8 @@ void InputInjectorChromeos::Core::Start(
 }
 
 InputInjectorChromeos::InputInjectorChromeos(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory)
-    : input_task_runner_(task_runner) {
-  core_.reset(new Core(system_input_injector_factory));
-}
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : input_task_runner_(task_runner), core_(std::make_unique<Core>()) {}
 
 InputInjectorChromeos::~InputInjectorChromeos() {
   input_task_runner_->DeleteSoon(FROM_HERE, core_.release());
@@ -180,26 +171,26 @@ InputInjectorChromeos::~InputInjectorChromeos() {
 
 void InputInjectorChromeos::InjectClipboardEvent(const ClipboardEvent& event) {
   input_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::InjectClipboardEvent,
-                            base::Unretained(core_.get()), event));
+      FROM_HERE, base::BindOnce(&Core::InjectClipboardEvent,
+                                base::Unretained(core_.get()), event));
 }
 
 void InputInjectorChromeos::InjectKeyEvent(const KeyEvent& event) {
   input_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&Core::InjectKeyEvent, base::Unretained(core_.get()), event));
+      FROM_HERE, base::BindOnce(&Core::InjectKeyEvent,
+                                base::Unretained(core_.get()), event));
 }
 
 void InputInjectorChromeos::InjectTextEvent(const TextEvent& event) {
   input_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&Core::InjectTextEvent, base::Unretained(core_.get()), event));
+      FROM_HERE, base::BindOnce(&Core::InjectTextEvent,
+                                base::Unretained(core_.get()), event));
 }
 
 void InputInjectorChromeos::InjectMouseEvent(const MouseEvent& event) {
   input_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::InjectMouseEvent,
-                            base::Unretained(core_.get()), event));
+      FROM_HERE, base::BindOnce(&Core::InjectMouseEvent,
+                                base::Unretained(core_.get()), event));
 }
 
 void InputInjectorChromeos::InjectTouchEvent(const TouchEvent& event) {
@@ -209,19 +200,17 @@ void InputInjectorChromeos::InjectTouchEvent(const TouchEvent& event) {
 void InputInjectorChromeos::Start(
     std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   input_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::Start, base::Unretained(core_.get()),
-                            base::Passed(&client_clipboard)));
+      FROM_HERE, base::BindOnce(&Core::Start, base::Unretained(core_.get()),
+                                std::move(client_clipboard)));
 }
 
 // static
 std::unique_ptr<InputInjector> InputInjector::Create(
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory) {
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
   // The Ozone input injector must be called on the UI task runner of the
   // browser process.
-  return base::WrapUnique(
-      new InputInjectorChromeos(ui_task_runner, system_input_injector_factory));
+  return base::WrapUnique(new InputInjectorChromeos(ui_task_runner));
 }
 
 // static

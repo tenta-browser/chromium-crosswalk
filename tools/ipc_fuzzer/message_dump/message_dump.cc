@@ -11,10 +11,10 @@
 #include "tools/ipc_fuzzer/message_lib/message_file.h"
 
 #if defined(OS_WIN)
-#define PidToStringType base::UintToString16
+#define PidToStringType base::NumberToString16
 #define MESSAGE_DUMP_EXPORT __declspec(dllexport)
 #else
-#define PidToStringType base::IntToString
+#define PidToStringType base::NumberToString
 #define MESSAGE_DUMP_EXPORT __attribute__((visibility("default")))
 #endif
 
@@ -32,7 +32,7 @@ class IPCDump : public IPC::ChannelProxy::OutgoingMessageFilter {
   }
 
   IPC::Message* Rewrite(IPC::Message* message) override {
-    messages_.push_back(base::MakeUnique<IPC::Message>(*message));
+    messages_.push_back(std::make_unique<IPC::Message>(*message));
     return message;
   }
 

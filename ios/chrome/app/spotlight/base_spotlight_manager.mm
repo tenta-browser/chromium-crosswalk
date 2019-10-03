@@ -7,7 +7,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <MobileCoreServices/MobileCoreServices.h>
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/favicon/core/fallback_url_util.h"
@@ -85,11 +85,6 @@ UIImage* GetFallbackImageWithStringAndColor(NSString* string,
     _pendingTasks = [[NSMutableDictionary alloc] init];
   }
   return self;
-}
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
 }
 
 - (void)dealloc {
@@ -243,10 +238,10 @@ UIImage* GetFallbackImageWithStringAndColor(NSString* string,
   };
 
   base::CancelableTaskTracker::TaskId taskID =
-      _largeIconService->GetLargeIconOrFallbackStyle(
+      _largeIconService->GetLargeIconRawBitmapOrFallbackStyleForPageUrl(
           URL, kMinIconSize * [UIScreen mainScreen].scale,
           kIconSize * [UIScreen mainScreen].scale,
-          base::BindBlockArc(faviconBlock), &_largeIconTaskTracker);
+          base::BindRepeating(faviconBlock), &_largeIconTaskTracker);
   [_pendingTasks setObject:[NSNumber numberWithLongLong:taskID] forKey:NSURL];
 }
 

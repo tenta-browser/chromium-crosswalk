@@ -4,9 +4,9 @@
 
 #include "ios/web/public/test/test_redirect_observer.h"
 
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/web_state/navigation_context.h"
+#include "ios/web/public/navigation/navigation_context.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,8 +14,6 @@
 #endif
 
 namespace web {
-
-DEFINE_WEB_STATE_USER_DATA_KEY(TestRedirectObserver);
 
 #pragma mark - TestRedirectObserver
 
@@ -63,5 +61,7 @@ void TestRedirectObserver::DidStartNavigation(web::WebState* web_state,
 void TestRedirectObserver::WebStateDestroyed(web::WebState* web_state) {
   web_state->RemoveObserver(this);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(TestRedirectObserver)
 
 }  // namespace web

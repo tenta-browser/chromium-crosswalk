@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -16,6 +17,7 @@
 #include "storage/browser/test/test_file_system_options.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 using storage::FileSystemURL;
 
@@ -26,8 +28,7 @@ namespace {
 FileSystemURL CreateFileSystemURL(const char* path) {
   const GURL kOrigin("http://foo/");
   return storage::FileSystemURL::CreateForTest(
-      kOrigin,
-      storage::kFileSystemTypeTemporary,
+      url::Origin::Create(kOrigin), storage::kFileSystemTypeTemporary,
       base::FilePath::FromUTF8Unsafe(path));
 }
 
@@ -41,8 +42,8 @@ class SandboxFileSystemBackendDelegateTest : public testing::Test {
         nullptr, base::ThreadTaskRunnerHandle::Get().get());
     delegate_.reset(new storage::SandboxFileSystemBackendDelegate(
         quota_manager_proxy_.get(), base::ThreadTaskRunnerHandle::Get().get(),
-        data_dir_.GetPath(), NULL /* special_storage_policy */,
-        CreateAllowFileAccessOptions()));
+        data_dir_.GetPath(), nullptr /* special_storage_policy */,
+        CreateAllowFileAccessOptions(), nullptr /* env_override */));
   }
 
   bool IsAccessValid(const FileSystemURL& url) const {
@@ -95,7 +96,7 @@ TEST_F(SandboxFileSystemBackendDelegateTest, IsAccessValid) {
 
   // Access from non-allowed scheme should be disallowed.
   EXPECT_FALSE(IsAccessValid(
-      FileSystemURL::CreateForTest(GURL("unknown://bar"),
+      FileSystemURL::CreateForTest(url::Origin::Create(GURL("unknown://bar")),
                                    storage::kFileSystemTypeTemporary,
                                    base::FilePath::FromUTF8Unsafe("foo"))));
 
@@ -133,9 +134,10 @@ TEST_F(SandboxFileSystemBackendDelegateTest, OpenFileSystemAccessesStorage) {
   EXPECT_EQ(callback_count(), 1);
   EXPECT_EQ(last_error(), base::File::FILE_OK);
   EXPECT_EQ(quota_manager_proxy()->notify_storage_accessed_count(), 1);
-  EXPECT_EQ(quota_manager_proxy()->last_notified_origin(), origin);
+  EXPECT_EQ(quota_manager_proxy()->last_notified_origin(),
+            url::Origin::Create(origin));
   EXPECT_EQ(quota_manager_proxy()->last_notified_type(),
-            storage::kStorageTypeTemporary);
+            blink::mojom::StorageType::kTemporary);
 }
 
 }  // namespace content

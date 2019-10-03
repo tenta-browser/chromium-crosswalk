@@ -61,14 +61,12 @@ TEST(PaymentRequestTest, ParsingFullyPopulatedRequestDictionarySucceeds) {
   expected_request.details.id = "12345";
   expected_request.details.total = std::make_unique<PaymentItem>();
   expected_request.details.total->label = "TOTAL";
-  expected_request.details.total->amount.currency = "GBP";
-  expected_request.details.total->amount.value = "6.66";
+  expected_request.details.total->amount->currency = "GBP";
+  expected_request.details.total->amount->value = "6.66";
   expected_request.details.error = "Error in details";
 
   PaymentMethodData method_data;
-  std::vector<std::string> supported_methods;
-  supported_methods.push_back("Visa");
-  method_data.supported_methods = supported_methods;
+  method_data.supported_method = "Visa";
   expected_request.method_data.push_back(method_data);
 
   // Add the same values to the dictionary to be parsed.
@@ -86,9 +84,7 @@ TEST(PaymentRequestTest, ParsingFullyPopulatedRequestDictionarySucceeds) {
 
   auto method_data_list = std::make_unique<base::ListValue>();
   auto method_data_dict = std::make_unique<base::DictionaryValue>();
-  auto supported_methods_list = std::make_unique<base::ListValue>();
-  supported_methods_list->AppendString("Visa");
-  method_data_dict->Set("supportedMethods", std::move(supported_methods_list));
+  method_data_dict->SetString("supportedMethods", "Visa");
   method_data_list->Append(std::move(method_data_dict));
   request_dict.Set("methodData", std::move(method_data_list));
   request_dict.SetString("id", "123456789");
@@ -130,15 +126,15 @@ TEST(PaymentRequestTest, WebPaymentRequestEquality) {
   request2.payment_request_id = request1.payment_request_id;
   EXPECT_EQ(request1, request2);
 
-  PaymentAddress address1;
-  address1.recipient = base::ASCIIToUTF16("Jessica Jones");
-  request1.shipping_address = address1;
+  mojom::PaymentAddressPtr address1 = mojom::PaymentAddress::New();
+  address1->recipient = "Jessica Jones";
+  request1.shipping_address = address1.Clone();
   EXPECT_NE(request1, request2);
-  PaymentAddress address2;
-  address2.recipient = base::ASCIIToUTF16("Luke Cage");
-  request2.shipping_address = address2;
+  mojom::PaymentAddressPtr address2 = mojom::PaymentAddress::New();
+  address2->recipient = "Luke Cage";
+  request2.shipping_address = address2.Clone();
   EXPECT_NE(request1, request2);
-  request2.shipping_address = address1;
+  request2.shipping_address = address1.Clone();
   EXPECT_EQ(request1, request2);
 
   request1.shipping_option = "2-Day";
@@ -167,7 +163,7 @@ TEST(PaymentRequestTest, WebPaymentRequestEquality) {
   EXPECT_NE(request1, request2);
   PaymentDetails details2;
   details2.total = std::make_unique<PaymentItem>();
-  details2.total->amount.value = "0.01";
+  details2.total->amount->value = "0.01";
   request2.details = details2;
   EXPECT_NE(request1, request2);
   request2.details = details1;

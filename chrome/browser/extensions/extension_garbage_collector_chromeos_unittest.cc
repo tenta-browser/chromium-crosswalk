@@ -4,12 +4,12 @@
 
 #include "chrome/browser/extensions/extension_garbage_collector_chromeos.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -22,9 +22,9 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/account_id/account_id.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
@@ -32,8 +32,9 @@
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/install_flag.h"
-#include "extensions/common/manifest_constants.h"
-#include "ppapi/features/features.h"
+#include "extensions/common/extension_builder.h"
+#include "extensions/common/value_builder.h"
+#include "ppapi/buildflags/buildflags.h"
 
 namespace {
 const char kExtensionId1[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -48,6 +49,8 @@ class ExtensionGarbageCollectorChromeOSUnitTest
   const base::FilePath& cache_dir() { return cache_dir_.GetPath(); }
 
   void SetUp() override {
+    ExtensionServiceTestBase::SetUp();
+
 #if BUILDFLAG(ENABLE_PLUGINS)
     content::PluginService::GetInstance()->Init();
 #endif
@@ -92,16 +95,16 @@ class ExtensionGarbageCollectorChromeOSUnitTest
 
     base::DictionaryValue* extension_info_weak = NULL;
     if (!shared_extensions->GetDictionary(id, &extension_info_weak)) {
-      auto extension_info = base::MakeUnique<base::DictionaryValue>();
+      auto extension_info = std::make_unique<base::DictionaryValue>();
       extension_info_weak = extension_info.get();
       shared_extensions->Set(id, std::move(extension_info));
     }
 
-    auto version_info = base::MakeUnique<base::DictionaryValue>();
+    auto version_info = std::make_unique<base::DictionaryValue>();
     version_info->SetString(
         ExtensionAssetsManagerChromeOS::kSharedExtensionPath, path.value());
 
-    auto users = base::MakeUnique<base::ListValue>();
+    auto users = std::make_unique<base::ListValue>();
     for (const std::string& user :
          base::SplitString(users_string, ",", base::KEEP_WHITESPACE,
                            base::SPLIT_WANT_NONEMPTY)) {
@@ -113,20 +116,15 @@ class ExtensionGarbageCollectorChromeOSUnitTest
                                                  std::move(version_info));
   }
 
-  scoped_refptr<Extension> CreateExtension(const std::string& id,
-                                           const std::string& version,
-                                           const base::FilePath& path) {
-    base::DictionaryValue manifest;
-    manifest.SetString(manifest_keys::kName, "test");
-    manifest.SetString(manifest_keys::kVersion, version);
-
-    std::string error;
-    scoped_refptr<Extension> extension = Extension::Create(
-        path, Manifest::INTERNAL, manifest, Extension::NO_FLAGS, id, &error);
-    CHECK(extension.get()) << error;
-    CHECK_EQ(id, extension->id());
-
-    return extension;
+  scoped_refptr<const Extension> CreateExtension(const std::string& id,
+                                                 const std::string& version,
+                                                 const base::FilePath& path) {
+    return ExtensionBuilder("test")
+        .SetVersion(version)
+        .SetID(id)
+        .SetPath(path)
+        .SetLocation(Manifest::INTERNAL)
+        .Build();
   }
 
   ExtensionPrefs* GetExtensionPrefs() {
@@ -165,8 +163,8 @@ TEST_F(ExtensionGarbageCollectorChromeOSUnitTest, SharedExtensions) {
   CreateSharedExtensionPrefs(kExtensionId2, "1.0",
                              user_manager::StubAccountId().GetUserEmail(),
                              path_id2_1);
-  scoped_refptr<Extension> extension2 = CreateExtension(kExtensionId2, "1.0",
-                                                        path_id2_1);
+  scoped_refptr<const Extension> extension2 =
+      CreateExtension(kExtensionId2, "1.0", path_id2_1);
   GetExtensionPrefs()->SetDelayedInstallInfo(
       extension2.get(),
       Extension::ENABLED,

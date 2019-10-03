@@ -14,12 +14,12 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.TabState;
+import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController.FinishReason;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.io.File;
@@ -29,10 +29,7 @@ import java.util.Locale;
  * Integration testing for the CustomTab Tab persistence logic.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class CustomTabTabPersistenceIntegrationTest {
     @Rule
     public CustomTabActivityTestRule mCustomTabActivityTestRule = new CustomTabActivityTestRule();
@@ -50,17 +47,18 @@ public class CustomTabTabPersistenceIntegrationTest {
     public void testTabFilesDeletedOnClose() {
         Tab tab = mCustomTabActivityTestRule.getActivity().getActivityTab();
         String expectedTabFileName = TabState.getTabStateFilename(tab.getId(), false);
-        String expectedMetadataFileName = mCustomTabActivityTestRule.getActivity()
-                                                  .getTabPersistencePolicyForTest()
-                                                  .getStateFileName();
 
-        File stateDir = mCustomTabActivityTestRule.getActivity()
-                                .getTabPersistencePolicyForTest()
-                                .getOrCreateStateDirectory();
+        CustomTabTabPersistencePolicy tabPersistencePolicy = mCustomTabActivityTestRule
+                .getActivity().getComponent().resolveTabPersistencePolicy();
+
+        String expectedMetadataFileName = tabPersistencePolicy.getStateFileName();
+        File stateDir = tabPersistencePolicy.getOrCreateStateDirectory();
+
         waitForFileExistState(true, expectedTabFileName, stateDir);
         waitForFileExistState(true, expectedMetadataFileName, stateDir);
 
-        mCustomTabActivityTestRule.getActivity().finishAndClose(false);
+        mCustomTabActivityTestRule.getActivity().getComponent()
+                .resolveNavigationController().finish(FinishReason.OTHER);
 
         waitForFileExistState(false, expectedTabFileName, stateDir);
         waitForFileExistState(false, expectedMetadataFileName, stateDir);

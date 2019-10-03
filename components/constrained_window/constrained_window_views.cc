@@ -5,8 +5,10 @@
 #include "components/constrained_window/constrained_window_views.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "build/build_config.h"
 #include "components/constrained_window/constrained_window_views_client.h"
 #include "components/guest_view/browser/guest_view_base.h"
@@ -24,18 +26,18 @@
 #import "components/constrained_window/native_web_contents_modal_dialog_manager_views_mac.h"
 #endif
 
-#if defined(USE_AURA)
-#include "ui/aura/window.h"
-#include "ui/compositor/dip_util.h"
-#endif
-
 using web_modal::ModalDialogHost;
 using web_modal::ModalDialogHostObserver;
 
 namespace constrained_window {
 namespace {
 
-ConstrainedWindowViewsClient* constrained_window_views_client = nullptr;
+// Storage access for the currently active ConstrainedWindowViewsClient.
+std::unique_ptr<ConstrainedWindowViewsClient>& CurrentClient() {
+  static base::NoDestructor<std::unique_ptr<ConstrainedWindowViewsClient>>
+      client;
+  return *client;
+}
 
 // The name of a key to store on the window handle to associate
 // WidgetModalDialogHostObserverViews with the Widget.
@@ -131,19 +133,6 @@ void UpdateModalDialogPosition(views::Widget* widget,
   }
 
   widget->SetBounds(gfx::Rect(position, size));
-
-#if defined(USE_AURA)
-  if (!widget->is_top_level()) {
-    // Toplevel windows are automatiacally snapped, but CHILD windows
-    // may not. If it's not toplevel, snap the widget's layer to pixel
-    // based on the parent toplevel window, which should be snapped.
-    gfx::NativeView window = widget->GetNativeView();
-    views::Widget* toplevel =
-        views::Widget::GetTopLevelWidgetForNativeView(window->parent());
-    ui::SnapLayerToPhysicalPixelBoundary(toplevel->GetLayer(),
-                                         widget->GetLayer());
-  }
-#endif
 }
 
 }  // namespace
@@ -151,8 +140,7 @@ void UpdateModalDialogPosition(views::Widget* widget,
 // static
 void SetConstrainedWindowViewsClient(
     std::unique_ptr<ConstrainedWindowViewsClient> new_client) {
-  delete constrained_window_views_client;
-  constrained_window_views_client = new_client.release();
+  CurrentClient() = std::move(new_client);
 }
 
 void UpdateWebContentsModalDialogPosition(
@@ -186,7 +174,7 @@ content::WebContents* GetTopLevelWebContents(
 views::Widget* ShowWebModalDialogViews(
     views::WidgetDelegate* dialog,
     content::WebContents* initiator_web_contents) {
-  DCHECK(constrained_window_views_client);
+  DCHECK(CurrentClient());
   // For embedded WebContents, use the embedder's WebContents for constrained
   // window.
   content::WebContents* web_contents =
@@ -200,7 +188,7 @@ views::Widget* ShowWebModalDialogViews(
 views::Widget* ShowWebModalDialogWithOverlayViews(
     views::WidgetDelegate* dialog,
     content::WebContents* initiator_web_contents) {
-  DCHECK(constrained_window_views_client);
+  DCHECK(CurrentClient());
   // For embedded WebContents, use the embedder's WebContents for constrained
   // window.
   content::WebContents* web_contents =
@@ -232,11 +220,10 @@ views::Widget* CreateBrowserModalDialogViews(views::DialogDelegate* dialog,
                                              gfx::NativeWindow parent) {
   DCHECK_NE(ui::MODAL_TYPE_CHILD, dialog->GetModalType());
   DCHECK_NE(ui::MODAL_TYPE_NONE, dialog->GetModalType());
-  DCHECK(!parent || constrained_window_views_client);
+  DCHECK(!parent || CurrentClient());
 
   gfx::NativeView parent_view =
-      parent ? constrained_window_views_client->GetDialogHostView(parent)
-             : nullptr;
+      parent ? CurrentClient()->GetDialogHostView(parent) : nullptr;
   views::Widget* widget =
       views::DialogDelegate::CreateDialogWidget(dialog, nullptr, parent_view);
 
@@ -252,8 +239,7 @@ views::Widget* CreateBrowserModalDialogViews(views::DialogDelegate* dialog,
     return widget;
 
   ModalDialogHost* host =
-      parent ? constrained_window_views_client->GetModalDialogHost(parent)
-             : nullptr;
+      parent ? CurrentClient()->GetModalDialogHost(parent) : nullptr;
   if (host) {
     DCHECK_EQ(parent_view, host->GetHostView());
     ModalDialogHostObserver* dialog_host_observer =

@@ -4,12 +4,12 @@
 
 package org.chromium.chrome.browser.preferences;
 
-import android.app.Fragment;
 import android.os.Build;
-import android.preference.Preference;
-import android.preference.PreferenceFragment;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
+import android.support.v4.app.Fragment;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceFragmentCompat;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -18,28 +18,32 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ContentSettingsType;
-import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
+import org.chromium.chrome.browser.offlinepages.prefetch.PrefetchPrefs;
 import org.chromium.chrome.browser.preferences.website.ContentSettingsResources;
 import org.chromium.chrome.browser.preferences.website.SingleCategoryPreferences;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.browser.preferences.website.SiteSettingsCategory;
+import org.chromium.chrome.browser.test.ScreenShooter;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Tests for the NotificationsPreferences.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class NotificationsPreferencesTest {
-    // TODO(peconn): Add UI Catalogue entries for NotificationsPreferences.
     @Rule
     public final ChromeBrowserTestRule mBrowserTestRule = new ChromeBrowserTestRule();
     private Preferences mActivity;
+
+    @Rule
+    public ScreenShooter mScreenShooter = new ScreenShooter();
 
     @Before
     public void setUp() {
@@ -47,71 +51,82 @@ public class NotificationsPreferencesTest {
                 NotificationsPreferences.class.getName());
     }
 
+    // TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+    // clang-format off
     @Test
     @SmallTest
-    @Feature({"Preferences"})
-    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N)
-    @CommandLineFlags.Add("enable-features=ContentSuggestionsNotifications")
+    @Feature({"Preferences", "UiCatalogue"})
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N_MR1)
+    @CommandLineFlags.Add("enable-features=OfflinePagesPrefetching")
     public void testContentSuggestionsToggle() {
-        final PreferenceFragment fragment = (PreferenceFragment) mActivity.getFragmentForTest();
-        final ChromeSwitchPreference toggle = (ChromeSwitchPreference) fragment.findPreference(
-                NotificationsPreferences.PREF_SUGGESTIONS);
+        // clang-format on
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                // Make sure the toggle reflects the state correctly.
-                boolean initiallyChecked = toggle.isChecked();
-                Assert.assertEquals(toggle.isChecked(),
-                        SnippetsBridge.areContentSuggestionsNotificationsEnabled());
+        final PreferenceFragmentCompat fragment =
+                (PreferenceFragmentCompat) mActivity.getMainFragmentCompat();
+        final ChromeSwitchPreferenceCompat toggle =
+                (ChromeSwitchPreferenceCompat) fragment.findPreference(
+                        NotificationsPreferences.PREF_SUGGESTIONS);
 
-                // Make sure we can change the state.
-                PreferencesTest.clickPreference(fragment, toggle);
-                Assert.assertEquals(toggle.isChecked(), !initiallyChecked);
-                Assert.assertEquals(toggle.isChecked(),
-                        SnippetsBridge.areContentSuggestionsNotificationsEnabled());
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // Make sure the toggle reflects the state correctly.
+            boolean initiallyChecked = toggle.isChecked();
+            Assert.assertEquals(toggle.isChecked(), PrefetchPrefs.getNotificationEnabled());
 
-                // Make sure we can change it back.
-                PreferencesTest.clickPreference(fragment, toggle);
-                Assert.assertEquals(toggle.isChecked(), initiallyChecked);
-                Assert.assertEquals(toggle.isChecked(),
-                        SnippetsBridge.areContentSuggestionsNotificationsEnabled());
+            // Make sure we can change the state.
+            toggle.performClick();
+            Assert.assertEquals(toggle.isChecked(), !initiallyChecked);
+            Assert.assertEquals(toggle.isChecked(), PrefetchPrefs.getNotificationEnabled());
 
-                // Click it one last time so we're in a toggled state for the UI Capture.
-                PreferencesTest.clickPreference(fragment, toggle);
-            }
+            // Make sure we can change it back.
+            toggle.performClick();
+            Assert.assertEquals(toggle.isChecked(), initiallyChecked);
+            Assert.assertEquals(toggle.isChecked(), PrefetchPrefs.getNotificationEnabled());
+
+            // Click it one last time so we're in a toggled state for the UI Capture.
+            toggle.performClick();
         });
+
+        mScreenShooter.shoot("ContentSuggestionsToggle");
     }
 
+    // TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+    // clang-format off
     @Test
     @SmallTest
-    @Feature({"Preferences"})
-    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N)
-    @CommandLineFlags.Add("disable-features=NTPArticleSuggestions")
-    public void testToggleDisabledWhenSuggestionsDisabled() {
-        PreferenceFragment fragment = (PreferenceFragment) mActivity.getFragmentForTest();
-        ChromeSwitchPreference toggle = (ChromeSwitchPreference) fragment.findPreference(
-                NotificationsPreferences.PREF_SUGGESTIONS);
+    @Feature({"Preferences", "UiCatalogue"})
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N_MR1)
+    @CommandLineFlags.Add("disable-features=OfflinePagesPrefetching")
+    public void testToggleDisabledWhenPrefetchingDisabled() {
+        // clang-format on
+
+        PreferenceFragmentCompat fragment =
+                (PreferenceFragmentCompat) mActivity.getMainFragmentCompat();
+        ChromeSwitchPreferenceCompat toggle =
+                (ChromeSwitchPreferenceCompat) fragment.findPreference(
+                        NotificationsPreferences.PREF_SUGGESTIONS);
 
         Assert.assertFalse(toggle.isEnabled());
         Assert.assertFalse(toggle.isChecked());
+
+        mScreenShooter.shoot("ToggleDisabledWhenSuggestionsDisabled");
     }
 
-
+    // TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+    // clang-format off
     @Test
     @SmallTest
-    @Feature({"Preferences"})
-    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N)
+    @Feature({"Preferences", "UiCatalogue"})
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N_MR1)
     public void testLinkToWebsiteNotifications() {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PreferenceFragment fragment = (PreferenceFragment) mActivity.getFragmentForTest();
-                Preference fromWebsites =
-                        fragment.findPreference(NotificationsPreferences.PREF_FROM_WEBSITES);
+        // clang-format on
 
-                PreferencesTest.clickPreference(fragment, fromWebsites);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PreferenceFragmentCompat fragment =
+                    (PreferenceFragmentCompat) mActivity.getMainFragmentCompat();
+            Preference fromWebsites =
+                    fragment.findPreference(NotificationsPreferences.PREF_FROM_WEBSITES);
+
+            fromWebsites.performClick();
         });
 
         CriteriaHelper.pollUiThread(new Criteria() {
@@ -122,36 +137,43 @@ public class NotificationsPreferencesTest {
         });
 
         SingleCategoryPreferences fragment = (SingleCategoryPreferences) getTopFragment();
-        Assert.assertTrue(fragment.getCategoryForTest().showNotificationsSites());
+        Assert.assertTrue(
+                fragment.getCategoryForTest().showSites(SiteSettingsCategory.Type.NOTIFICATIONS));
+
+        mScreenShooter.shoot("LinkToWebsiteNotifications");
+    }
+
+    // TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+    // clang-format off
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N_MR1)
+    public void testWebsiteNotificationsSummary() {
+        // clang-format on
+
+        final PreferenceFragmentCompat fragment =
+                (PreferenceFragmentCompat) mActivity.getMainFragmentCompat();
+        final Preference fromWebsites =
+                fragment.findPreference(NotificationsPreferences.PREF_FROM_WEBSITES);
+
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PrefServiceBridge.getInstance().setCategoryEnabled(
+                    ContentSettingsType.CONTENT_SETTINGS_TYPE_NOTIFICATIONS, false);
+            fragment.onResume();
+            Assert.assertEquals(fromWebsites.getSummary(), getNotificationsSummary(false));
+
+            PrefServiceBridge.getInstance().setCategoryEnabled(
+                    ContentSettingsType.CONTENT_SETTINGS_TYPE_NOTIFICATIONS, true);
+            fragment.onResume();
+            Assert.assertEquals(fromWebsites.getSummary(), getNotificationsSummary(true));
+        });
     }
 
     /** Gets the fragment of the top Activity. Assumes the top Activity is a Preferences. */
     private static Fragment getTopFragment() {
         Preferences preferences = (Preferences) ApplicationStatus.getLastTrackedFocusedActivity();
-        return preferences.getFragmentForTest();
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"Preferences"})
-    @DisableIf.Build(sdk_is_greater_than = Build.VERSION_CODES.N)
-    public void testWebsiteNotificationsSummary() {
-        final PreferenceFragment fragment = (PreferenceFragment) mActivity.getFragmentForTest();
-        final Preference fromWebsites =
-                fragment.findPreference(NotificationsPreferences.PREF_FROM_WEBSITES);
-
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PrefServiceBridge.getInstance().setNotificationsEnabled(false);
-                fragment.onResume();
-                Assert.assertEquals(fromWebsites.getSummary(), getNotificationsSummary(false));
-
-                PrefServiceBridge.getInstance().setNotificationsEnabled(true);
-                fragment.onResume();
-                Assert.assertEquals(fromWebsites.getSummary(), getNotificationsSummary(true));
-            }
-        });
+        return preferences.getMainFragmentCompat();
     }
 
     /** Gets the summary text that should be used for site specific notifications. */

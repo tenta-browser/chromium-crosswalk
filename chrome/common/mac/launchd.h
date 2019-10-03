@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "chrome/common/mac/service_management.h"
 
 class Launchd {
  public:
@@ -33,14 +34,11 @@ class Launchd {
 
   virtual ~Launchd();
 
-  // Return a dictionary with the launchd entries for job labeled |name|.
-  virtual CFDictionaryRef CopyJobDictionary(CFStringRef label);
-
-  // Return a dictionary for launchd process.
-  virtual CFDictionaryRef CopyDictionaryByCheckingIn(CFErrorRef* error);
+  virtual bool GetJobInfo(const std::string& label,
+                          mac::services::JobInfo* info);
 
   // Remove a launchd process from launchd.
-  virtual bool RemoveJob(CFStringRef label, CFErrorRef* error);
+  virtual bool RemoveJob(const std::string& label);
 
   // Used by a process controlled by launchd to restart itself.
   // |session_type| can be "Aqua", "LoginWindow", "Background", "StandardIO" or

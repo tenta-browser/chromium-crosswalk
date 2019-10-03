@@ -10,10 +10,9 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "components/exo/buffer.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl_shared_memory.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/compositor/compositor.h"
 #include "ui/gfx/buffer_format_util.h"
@@ -35,8 +34,8 @@ bool IsSupportedFormat(gfx::BufferFormat format) {
 ////////////////////////////////////////////////////////////////////////////////
 // SharedMemory, public:
 
-SharedMemory::SharedMemory(const base::SharedMemoryHandle& handle)
-    : shared_memory_(handle, true /* read-only */) {}
+SharedMemory::SharedMemory(base::UnsafeSharedMemoryRegion shared_memory_region)
+    : shared_memory_region_(std::move(shared_memory_region)) {}
 
 SharedMemory::~SharedMemory() {}
 
@@ -64,13 +63,13 @@ std::unique_ptr<Buffer> SharedMemory::CreateBuffer(const gfx::Size& size,
 
   gfx::GpuMemoryBufferHandle handle;
   handle.type = gfx::SHARED_MEMORY_BUFFER;
-  handle.handle = base::SharedMemory::DuplicateHandle(shared_memory_.handle());
+  handle.region = shared_memory_region_.Duplicate();
   handle.offset = offset;
   handle.stride = stride;
 
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer =
       gpu::GpuMemoryBufferImplSharedMemory::CreateFromHandle(
-          handle, size, format, gfx::BufferUsage::GPU_READ,
+          std::move(handle), size, format, gfx::BufferUsage::GPU_READ,
           gpu::GpuMemoryBufferImpl::DestructionCallback());
   if (!gpu_memory_buffer) {
     LOG(ERROR) << "Failed to create GpuMemoryBuffer from handle";
@@ -89,7 +88,29 @@ std::unique_ptr<Buffer> SharedMemory::CreateBuffer(const gfx::Size& size,
       // glTexImage2D and the buffer can be reused as soon as that
       // command has been issued.
       GL_COMMANDS_ISSUED_CHROMIUM, use_zero_copy,
-      false /* is_overlay_candidate */);
+      false /* is_overlay_candidate */, false /* y_invert */);
+}
+
+size_t SharedMemory::GetSize() const {
+  return shared_memory_region_.GetSize();
+}
+
+bool SharedMemory::Resize(const size_t new_size) {
+  // The following code is to replace |shared_memory_region_| with an identical
+  // UnsafeSharedMemoryRegion with a new size.
+  base::subtle::PlatformSharedMemoryRegion platform_region =
+      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+          std::move(shared_memory_region_));
+  base::UnguessableToken guid = platform_region.GetGUID();
+  base::subtle::PlatformSharedMemoryRegion updated_platform_region =
+      base::subtle::PlatformSharedMemoryRegion::Take(
+          platform_region.PassPlatformHandle(),
+          base::subtle::PlatformSharedMemoryRegion::Mode::kUnsafe, new_size,
+          guid);
+  shared_memory_region_ = base::UnsafeSharedMemoryRegion::Deserialize(
+      std::move(updated_platform_region));
+
+  return shared_memory_region_.IsValid();
 }
 
 }  // namespace exo

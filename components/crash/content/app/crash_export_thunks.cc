@@ -7,10 +7,12 @@
 #include <algorithm>
 #include <type_traits>
 
+#include "base/process/process.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/crash/content/app/crashpad.h"
+#include "components/crash/content/app/dump_hung_process_with_ptype.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 
 void RequestSingleCrashUpload_ExportThunk(const char* local_id) {
@@ -53,57 +55,24 @@ void SetUploadConsent_ExportThunk(bool consent) {
   crash_reporter::SetUploadConsent(consent);
 }
 
-// NOTE: This function is used by SyzyASAN to annotate crash reports. If you
-// change the name or signature of this function you will break SyzyASAN
-// instrumented releases of Chrome. Please contact syzygy-team@chromium.org
-// before doing so! See also http://crbug.com/567781.
-void SetCrashKeyValue_ExportThunk(const wchar_t* key, const wchar_t* value) {
-  crash_reporter::SetCrashKeyValue(base::UTF16ToUTF8(key),
-                                   base::UTF16ToUTF8(value));
-}
-
-void ClearCrashKeyValue_ExportThunk(const wchar_t* key) {
-  crash_reporter::ClearCrashKey(base::UTF16ToUTF8(key));
-}
-
-void SetCrashKeyValueEx_ExportThunk(const char* key,
-                                    size_t key_len,
-                                    const char* value,
-                                    size_t value_len) {
-  crash_reporter::SetCrashKeyValue(base::StringPiece(key, key_len),
-                                   base::StringPiece(value, value_len));
-}
-
-void ClearCrashKeyValueEx_ExportThunk(const char* key, size_t key_len) {
-  crash_reporter::ClearCrashKey(base::StringPiece(key, key_len));
-}
-
-HANDLE InjectDumpForHungInput_ExportThunk(HANDLE process,
-                                          void* serialized_crash_keys) {
+HANDLE InjectDumpForHungInput_ExportThunk(HANDLE process) {
   return CreateRemoteThread(
       process, nullptr, 0,
-      crash_reporter::internal::DumpProcessForHungInputThread,
-      serialized_crash_keys, 0, nullptr);
+      crash_reporter::internal::DumpProcessForHungInputThread, nullptr, 0,
+      nullptr);
 }
 
-HANDLE InjectDumpForHungInputNoCrashKeys_ExportThunk(HANDLE process,
-                                                     int reason) {
-  return CreateRemoteThread(
-      process, nullptr, 0,
-      crash_reporter::internal::DumpProcessForHungInputNoCrashKeysThread,
-      reinterpret_cast<void*>(reason), 0, nullptr);
+const wchar_t* GetCrashpadDatabasePath_ExportThunk() {
+  return crash_reporter::GetCrashpadDatabasePathImpl();
 }
 
-#if defined(ARCH_CPU_X86_64)
-
-void RegisterNonABICompliantCodeRange_ExportThunk(void* start,
-                                                  size_t size_in_bytes) {
-  crash_reporter::internal::RegisterNonABICompliantCodeRangeImpl(start,
-                                                                 size_in_bytes);
+void ClearReportsBetween_ExportThunk(time_t begin, time_t end) {
+  crash_reporter::ClearReportsBetweenImpl(begin, end);
 }
 
-void UnregisterNonABICompliantCodeRange_ExportThunk(void* start) {
-  crash_reporter::internal::UnregisterNonABICompliantCodeRangeImpl(start);
-}
+bool DumpHungProcessWithPtype_ExportThunk(HANDLE process_handle,
+                                          const char* ptype) {
+  base::Process process(process_handle);
 
-#endif  // ARCH_CPU_X86_64
+  return crash_reporter::DumpHungProcessWithPtypeImpl(process, ptype);
+}

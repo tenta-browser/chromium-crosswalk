@@ -11,21 +11,20 @@
 
 class ChromeBrowserMainPartsAndroid : public ChromeBrowserMainParts {
  public:
-  explicit ChromeBrowserMainPartsAndroid(
-      const content::MainFunctionParams& parameters);
+  ChromeBrowserMainPartsAndroid(const content::MainFunctionParams& parameters,
+                                StartupData* startup_data);
   ~ChromeBrowserMainPartsAndroid() override;
 
   // content::BrowserMainParts overrides.
   int PreCreateThreads() override;
   void PostProfileInit() override;
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
 
   // ChromeBrowserMainParts overrides.
   void PostBrowserStart() override;
   void ShowMissingLocaleMessageBox() override;
 
  private:
-  std::unique_ptr<base::MessageLoop> main_message_loop_;
   std::unique_ptr<android::ChromeBackupWatcher> backup_watcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsAndroid);

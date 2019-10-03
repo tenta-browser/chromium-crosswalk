@@ -13,8 +13,9 @@
 
 #include "base/containers/queue.h"
 #include "base/json/json_writer.h"
-#include "components/sync/base/cryptographer.h"
-#include "components/sync/base/passphrase_type.h"
+#include "base/metrics/histogram_macros.h"
+#include "components/sync/base/passphrase_enums.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/entry.h"
 #include "components/sync/syncable/mutable_entry.h"
@@ -72,7 +73,7 @@ bool EntryNeedsEncryption(ModelTypeSet encrypted_types, const Entry& entry) {
   if (!entry.GetUniqueServerTag().empty())
     return false;  // We don't encrypt unique server nodes.
   ModelType type = entry.GetModelType();
-  if (type == PASSWORDS || IsControlType(type))
+  if (type == PASSWORDS || type == WIFI_CONFIGURATIONS || IsControlType(type))
     return false;
   // Checking NON_UNIQUE_NAME is not necessary for the correctness of encrypting
   // the data, nor for determining if data is encrypted. We simply ensure it has
@@ -85,7 +86,7 @@ bool EntryNeedsEncryption(ModelTypeSet encrypted_types, const Entry& entry) {
 bool SpecificsNeedsEncryption(ModelTypeSet encrypted_types,
                               const sync_pb::EntitySpecifics& specifics) {
   const ModelType type = GetModelTypeFromSpecifics(specifics);
-  if (type == PASSWORDS || IsControlType(type))
+  if (type == PASSWORDS || type == WIFI_CONFIGURATIONS || IsControlType(type))
     return false;  // These types have their own encryption schemes.
   if (!encrypted_types.Has(type))
     return false;  // This type does not require encryption
@@ -97,7 +98,7 @@ bool VerifyDataTypeEncryptionForTest(BaseTransaction* const trans,
                                      ModelType type,
                                      bool is_encrypted) {
   Cryptographer* cryptographer = trans->directory()->GetCryptographer(trans);
-  if (type == PASSWORDS || IsControlType(type)) {
+  if (type == PASSWORDS || type == WIFI_CONFIGURATIONS || IsControlType(type)) {
     NOTREACHED();
     return true;
   }
@@ -211,6 +212,9 @@ bool UpdateEntryWithEncryption(BaseTransaction* const trans,
           generated_specifics.SerializeAsString()) {
     DVLOG(2) << "Specifics of type " << ModelTypeToString(type)
              << " already match, dropping change.";
+    UMA_HISTOGRAM_ENUMERATION("Sync.ModelTypeRedundantPut",
+                              ModelTypeToHistogramInt(type),
+                              static_cast<int>(ModelType::NUM_ENTRIES));
     return true;
   }
 
@@ -246,7 +250,7 @@ void UpdateNigoriFromEncryptedTypes(ModelTypeSet encrypted_types,
                                     bool encrypt_everything,
                                     sync_pb::NigoriSpecifics* nigori) {
   nigori->set_encrypt_everything(encrypt_everything);
-  static_assert(40 == MODEL_TYPE_COUNT,
+  static_assert(46 == ModelType::NUM_ENTRIES,
                 "If adding an encryptable type, update handling below.");
   nigori->set_encrypt_bookmarks(encrypted_types.Has(BOOKMARKS));
   nigori->set_encrypt_preferences(encrypted_types.Has(PREFERENCES));
@@ -263,15 +267,19 @@ void UpdateNigoriFromEncryptedTypes(ModelTypeSet encrypted_types,
   nigori->set_encrypt_app_settings(encrypted_types.Has(APP_SETTINGS));
   nigori->set_encrypt_extension_settings(
       encrypted_types.Has(EXTENSION_SETTINGS));
-  nigori->set_encrypt_app_notifications(encrypted_types.Has(APP_NOTIFICATIONS));
+  nigori->set_encrypt_app_notifications(
+      encrypted_types.Has(DEPRECATED_APP_NOTIFICATIONS));
   nigori->set_encrypt_dictionary(encrypted_types.Has(DICTIONARY));
   nigori->set_encrypt_favicon_images(encrypted_types.Has(FAVICON_IMAGES));
   nigori->set_encrypt_favicon_tracking(encrypted_types.Has(FAVICON_TRACKING));
-  nigori->set_encrypt_articles(encrypted_types.Has(ARTICLES));
+  nigori->set_encrypt_articles(encrypted_types.Has(DEPRECATED_ARTICLES));
   nigori->set_encrypt_app_list(encrypted_types.Has(APP_LIST));
   nigori->set_encrypt_arc_package(encrypted_types.Has(ARC_PACKAGE));
   nigori->set_encrypt_printers(encrypted_types.Has(PRINTERS));
   nigori->set_encrypt_reading_list(encrypted_types.Has(READING_LIST));
+  nigori->set_encrypt_mountain_shares(encrypted_types.Has(MOUNTAIN_SHARES));
+  nigori->set_encrypt_send_tab_to_self(encrypted_types.Has(SEND_TAB_TO_SELF));
+  nigori->set_encrypt_web_apps(encrypted_types.Has(WEB_APPS));
 }
 
 ModelTypeSet GetEncryptedTypesFromNigori(
@@ -280,7 +288,7 @@ ModelTypeSet GetEncryptedTypesFromNigori(
     return ModelTypeSet::All();
 
   ModelTypeSet encrypted_types;
-  static_assert(40 == MODEL_TYPE_COUNT,
+  static_assert(46 == ModelType::NUM_ENTRIES,
                 "If adding an encryptable type, update handling below.");
   if (nigori.encrypt_bookmarks())
     encrypted_types.Put(BOOKMARKS);
@@ -309,7 +317,7 @@ ModelTypeSet GetEncryptedTypesFromNigori(
   if (nigori.encrypt_extension_settings())
     encrypted_types.Put(EXTENSION_SETTINGS);
   if (nigori.encrypt_app_notifications())
-    encrypted_types.Put(APP_NOTIFICATIONS);
+    encrypted_types.Put(DEPRECATED_APP_NOTIFICATIONS);
   if (nigori.encrypt_dictionary())
     encrypted_types.Put(DICTIONARY);
   if (nigori.encrypt_favicon_images())
@@ -317,7 +325,7 @@ ModelTypeSet GetEncryptedTypesFromNigori(
   if (nigori.encrypt_favicon_tracking())
     encrypted_types.Put(FAVICON_TRACKING);
   if (nigori.encrypt_articles())
-    encrypted_types.Put(ARTICLES);
+    encrypted_types.Put(DEPRECATED_ARTICLES);
   if (nigori.encrypt_app_list())
     encrypted_types.Put(APP_LIST);
   if (nigori.encrypt_arc_package())
@@ -326,6 +334,12 @@ ModelTypeSet GetEncryptedTypesFromNigori(
     encrypted_types.Put(PRINTERS);
   if (nigori.encrypt_reading_list())
     encrypted_types.Put(READING_LIST);
+  if (nigori.encrypt_mountain_shares())
+    encrypted_types.Put(MOUNTAIN_SHARES);
+  if (nigori.encrypt_send_tab_to_self())
+    encrypted_types.Put(SEND_TAB_TO_SELF);
+  if (nigori.encrypt_web_apps())
+    encrypted_types.Put(WEB_APPS);
   return encrypted_types;
 }
 

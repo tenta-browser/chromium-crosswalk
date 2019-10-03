@@ -13,10 +13,12 @@
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace arc {
 
@@ -31,26 +33,34 @@ policy::DeviceManagementService* GetDeviceManagementService() {
   return connector->device_management_service();
 }
 
+// Returns the Device Account Id. Assumes that |profile| is the only Profile
+// on Chrome OS.
+std::string GetDeviceAccountId(Profile* profile) {
+  const auto* const identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+
+  return identity_manager->GetPrimaryAccountId();
+}
+
 }  // namespace
 
-ArcAndroidManagementChecker::ArcAndroidManagementChecker(
-    Profile* profile,
-    ProfileOAuth2TokenService* token_service,
-    const std::string& account_id,
-    bool retry_on_error)
+ArcAndroidManagementChecker::ArcAndroidManagementChecker(Profile* profile,
+                                                         bool retry_on_error)
     : profile_(profile),
-      token_service_(token_service),
-      account_id_(account_id),
+      identity_manager_(IdentityManagerFactory::GetForProfile(profile_)),
+      device_account_id_(GetDeviceAccountId(profile_)),
       retry_on_error_(retry_on_error),
       retry_delay_(kRetryDelayMin),
-      android_management_client_(GetDeviceManagementService(),
-                                 g_browser_process->system_request_context(),
-                                 account_id,
-                                 token_service),
+      android_management_client_(
+          GetDeviceManagementService(),
+          g_browser_process->system_network_context_manager()
+              ->GetSharedURLLoaderFactory(),
+          device_account_id_,
+          identity_manager_),
       weak_ptr_factory_(this) {}
 
 ArcAndroidManagementChecker::~ArcAndroidManagementChecker() {
-  token_service_->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
 }
 
 // static
@@ -75,7 +85,7 @@ void ArcAndroidManagementChecker::StartCheck(const CheckCallback& callback) {
 }
 
 void ArcAndroidManagementChecker::EnsureRefreshTokenLoaded() {
-  if (token_service_->RefreshTokenIsAvailable(account_id_)) {
+  if (identity_manager_->HasAccountWithRefreshToken(device_account_id_)) {
     // If the refresh token is already available, just start the management
     // check immediately.
     StartCheckInternal();
@@ -84,25 +94,25 @@ void ArcAndroidManagementChecker::EnsureRefreshTokenLoaded() {
 
   // Set the observer to the token service so the callback will be called
   // when the token is loaded.
-  token_service_->AddObserver(this);
+  identity_manager_->AddObserver(this);
 }
 
-void ArcAndroidManagementChecker::OnRefreshTokenAvailable(
-    const std::string& account_id) {
-  if (account_id != account_id_)
+void ArcAndroidManagementChecker::OnRefreshTokenUpdatedForAccount(
+    const CoreAccountInfo& account_info) {
+  if (account_info.account_id != device_account_id_)
     return;
   OnRefreshTokensLoaded();
 }
 
 void ArcAndroidManagementChecker::OnRefreshTokensLoaded() {
-  token_service_->RemoveObserver(this);
+  identity_manager_->RemoveObserver(this);
   StartCheckInternal();
 }
 
 void ArcAndroidManagementChecker::StartCheckInternal() {
   DCHECK(!callback_.is_null());
 
-  if (!token_service_->RefreshTokenIsAvailable(account_id_)) {
+  if (!identity_manager_->HasAccountWithRefreshToken(device_account_id_)) {
     VLOG(2) << "No refresh token is available for android management check.";
     std::move(callback_).Run(policy::AndroidManagementClient::Result::ERROR);
     return;

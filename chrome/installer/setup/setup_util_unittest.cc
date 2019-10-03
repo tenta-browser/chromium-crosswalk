@@ -7,33 +7,38 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <ios>
 #include <memory>
 #include <string>
 
+#include "base/base64.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/version.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
+#include "build/build_config.h"
 #include "chrome/install_static/install_details.h"
+#include "chrome/install_static/install_util.h"
+#include "chrome/install_static/test/scoped_install_details.h"
 #include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/setup/setup_constants.h"
 #include "chrome/installer/setup/setup_util.h"
-#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_constants.h"
+#include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/installation_state.h"
-#include "chrome/installer/util/updating_app_registration_data.h"
 #include "chrome/installer/util/util_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -88,11 +93,6 @@ TEST(SetupUtilTest, DeleteFileFromTempProcess) {
   EXPECT_TRUE(installer::DeleteFileFromTempProcess(test_file, 0));
   base::PlatformThread::Sleep(TestTimeouts::tiny_timeout() * 3);
   EXPECT_FALSE(base::PathExists(test_file)) << test_file.value();
-}
-
-TEST(SetupUtilTest, GuidToSquid) {
-  ASSERT_EQ(installer::GuidToSquid(L"EDA620E3-AA98-3846-B81E-3493CB2E0E02"),
-            L"3E026ADE89AA64838BE14339BCE2E020");
 }
 
 TEST(SetupUtilTest, RegisterEventLogProvider) {
@@ -196,17 +196,25 @@ PriorityClassChangeResult RelaunchAndDoProcessPriorityAdjustment() {
 
 // Launching a subprocess at normal priority class is a noop.
 TEST(SetupUtilTest, AdjustFromNormalPriority) {
-  ASSERT_EQ(static_cast<DWORD>(NORMAL_PRIORITY_CLASS),
-            ::GetPriorityClass(::GetCurrentProcess()));
+  const DWORD priority_class = ::GetPriorityClass(::GetCurrentProcess());
+  if (priority_class != NORMAL_PRIORITY_CLASS) {
+    LOG(WARNING) << "Skipping SetupUtilTest.AdjustFromNormalPriority since "
+                    "the test harness is running at priority 0x"
+                 << std::hex << priority_class;
+    return;
+  }
   EXPECT_EQ(PCCR_UNCHANGED, RelaunchAndDoProcessPriorityAdjustment());
 }
 
 // Launching a subprocess below normal priority class drops it to bg mode for
 // sufficiently recent operating systems.
 TEST(SetupUtilTest, AdjustFromBelowNormalPriority) {
-  std::unique_ptr<ScopedPriorityClass> below_normal =
-      ScopedPriorityClass::Create(BELOW_NORMAL_PRIORITY_CLASS);
-  ASSERT_TRUE(below_normal);
+  std::unique_ptr<ScopedPriorityClass> below_normal;
+  if (::GetPriorityClass(::GetCurrentProcess()) !=
+      BELOW_NORMAL_PRIORITY_CLASS) {
+    below_normal = ScopedPriorityClass::Create(BELOW_NORMAL_PRIORITY_CLASS);
+    ASSERT_TRUE(below_normal);
+  }
   EXPECT_EQ(PCCR_CHANGED, RelaunchAndDoProcessPriorityAdjustment());
 }
 
@@ -248,21 +256,27 @@ TEST(SetupUtilTest, RecordUnPackMetricsTest) {
   base::HistogramTester histogram_tester;
   std::string unpack_status_metrics_name =
       std::string(installer::kUnPackStatusMetricsName) + "_SetupExePatch";
+  std::string unpack_result_metrics_name =
+      std::string(installer::kUnPackResultMetricsName) + "_SetupExePatch";
   std::string ntstatus_metrics_name =
       std::string(installer::kUnPackNTSTATUSMetricsName) + "_SetupExePatch";
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 0);
 
-  RecordUnPackMetrics(UnPackStatus::UNPACK_NO_ERROR, 0,
+  RecordUnPackMetrics(UnPackStatus::UNPACK_NO_ERROR, 0, ERROR_SUCCESS,
                       installer::UnPackConsumer::SETUP_EXE_PATCH);
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 1);
   histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 0, 1);
+  histogram_tester.ExpectTotalCount(unpack_result_metrics_name, 1);
+  histogram_tester.ExpectBucketCount(unpack_result_metrics_name, 0, 1);
   histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 1);
   histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 0, 1);
 
-  RecordUnPackMetrics(UnPackStatus::UNPACK_CLOSE_FILE_ERROR, 1,
+  RecordUnPackMetrics(UnPackStatus::UNPACK_CLOSE_FILE_ERROR, 1, 2,
                       installer::UnPackConsumer::SETUP_EXE_PATCH);
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 2);
   histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 10, 1);
+  histogram_tester.ExpectTotalCount(unpack_result_metrics_name, 2);
+  histogram_tester.ExpectBucketCount(unpack_result_metrics_name, 2, 1);
   histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 2);
   histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 1, 1);
 }
@@ -313,8 +327,7 @@ class FindArchiveToPatchTest : public testing::Test {
     installer_state_.reset(new installer::InstallerState(
         kSystemInstall_ ? installer::InstallerState::SYSTEM_LEVEL :
         installer::InstallerState::USER_LEVEL));
-    installer_state_->AddProductFromState(
-        *original_state_->GetProductState(kSystemInstall_));
+    installer_state_->set_target_path_for_testing(test_dir_.GetPath());
 
     // Create archives in the two version dirs.
     ASSERT_TRUE(
@@ -441,17 +454,68 @@ TEST(SetupUtilTest, ContainsUnsupportedSwitch) {
 }
 
 TEST(SetupUtilTest, GetRegistrationDataCommandKey) {
-  base::string16 app_guid = L"{AAAAAAAA-BBBB-1111-0123-456789ABCDEF}";
-  UpdatingAppRegistrationData reg_data(app_guid);
-  base::string16 key =
-      installer::GetRegistrationDataCommandKey(reg_data, L"test_name");
-  EXPECT_TRUE(base::EndsWith(key, app_guid + L"\\Commands\\test_name",
+  const base::string16 key = installer::GetCommandKey(L"test_name");
+  EXPECT_TRUE(base::EndsWith(key, L"\\Commands\\test_name",
                              base::CompareCase::SENSITIVE));
 }
 
 TEST(SetupUtilTest, GetConsoleSessionStartTime) {
   base::Time start_time = installer::GetConsoleSessionStartTime();
   EXPECT_FALSE(start_time.is_null());
+}
+
+TEST(SetupUtilTest, DecodeDMTokenSwitchValue) {
+  // Expect false with empty or badly formed base64-encoded string.
+  EXPECT_FALSE(installer::DecodeDMTokenSwitchValue(L""));
+  EXPECT_FALSE(installer::DecodeDMTokenSwitchValue(L"not-ascii\xff"));
+  EXPECT_FALSE(installer::DecodeDMTokenSwitchValue(L"not-base64-string"));
+
+  std::string token("this is a token");
+  std::string encoded;
+  base::Base64Encode(token, &encoded);
+  EXPECT_EQ(token,
+            *installer::DecodeDMTokenSwitchValue(base::UTF8ToUTF16(encoded)));
+}
+
+TEST(SetupUtilTest, StoreDMTokenToRegistrySuccess) {
+  install_static::ScopedInstallDetails scoped_install_details(true);
+  registry_util::RegistryOverrideManager registry_override_manager;
+  registry_override_manager.OverrideRegistry(HKEY_LOCAL_MACHINE);
+
+  // Use the 2 argument std::string constructor so that the length of the string
+  // is not calculated by assuming the input char array is null terminated.
+  static constexpr char kTokenData[] = "tokens are \0 binary data";
+  static constexpr DWORD kExpectedSize = sizeof(kTokenData) - 1;
+  std::string token(&kTokenData[0], kExpectedSize);
+  ASSERT_EQ(kExpectedSize, token.length());
+  EXPECT_TRUE(installer::StoreDMToken(token));
+
+  std::wstring path;
+  std::wstring name;
+  InstallUtil::GetMachineLevelUserCloudPolicyDMTokenRegistryPath(&path, &name);
+  base::win::RegKey key;
+  ASSERT_EQ(ERROR_SUCCESS, key.Open(HKEY_LOCAL_MACHINE, path.c_str(),
+                                    KEY_QUERY_VALUE | KEY_WOW64_64KEY));
+
+  DWORD size = kExpectedSize;
+  std::vector<char> raw_value(size);
+  DWORD dtype;
+  ASSERT_EQ(ERROR_SUCCESS,
+            key.ReadValue(name.c_str(), raw_value.data(), &size, &dtype));
+  EXPECT_EQ(REG_BINARY, dtype);
+  ASSERT_EQ(kExpectedSize, size);
+  EXPECT_EQ(0, memcmp(token.data(), raw_value.data(), kExpectedSize));
+}
+
+TEST(SetupUtilTest, StoreDMTokenToRegistryShouldFailWhenDMTokenTooLarge) {
+  install_static::ScopedInstallDetails scoped_install_details(true);
+  registry_util::RegistryOverrideManager registry_override_manager;
+  registry_override_manager.OverrideRegistry(HKEY_LOCAL_MACHINE);
+
+  std::string token_too_large(installer::kMaxDMTokenLength + 1, 'x');
+  ASSERT_GT(token_too_large.size(), installer::kMaxDMTokenLength);
+
+  EXPECT_FALSE(installer::StoreDMToken(token_too_large));
 }
 
 namespace installer {
@@ -575,7 +639,7 @@ class LegacyCleanupsTest : public ::testing::Test {
     ASSERT_NO_FATAL_FAILURE(
         registry_override_manager_.OverrideRegistry(HKEY_CURRENT_USER));
     installer_state_ =
-        base::MakeUnique<FakeInstallerState>(temp_dir_.GetPath());
+        std::make_unique<FakeInstallerState>(temp_dir_.GetPath());
     // Create the state to be cleared.
     ASSERT_TRUE(base::win::RegKey(HKEY_CURRENT_USER, kBinariesClientsKeyPath,
                                   KEY_WRITE | KEY_WOW64_32KEY)
@@ -642,11 +706,9 @@ class LegacyCleanupsTest : public ::testing::Test {
   class FakeInstallerState : public InstallerState {
    public:
     explicit FakeInstallerState(const base::FilePath& target_path) {
-      BrowserDistribution* dist = BrowserDistribution::GetDistribution();
       operation_ = InstallerState::SINGLE_INSTALL_OR_UPDATE;
       target_path_ = target_path;
-      state_key_ = dist->GetStateKey();
-      product_ = base::MakeUnique<Product>(dist);
+      state_key_ = install_static::GetClientStateKeyPath();
       level_ = InstallerState::USER_LEVEL;
       root_key_ = HKEY_CURRENT_USER;
     }

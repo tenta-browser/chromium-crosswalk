@@ -4,7 +4,6 @@
 
 #include "components/offline_pages/core/prefetch/test_prefetch_dispatcher.h"
 
-#include "base/memory/ptr_util.h"
 #include "components/offline_pages/core/offline_page_item.h"
 #include "components/offline_pages/core/prefetch/prefetch_background_task.h"
 
@@ -21,6 +20,11 @@ void TestPrefetchDispatcher::AddCandidatePrefetchURLs(
   new_suggestions_count++;
 }
 
+void TestPrefetchDispatcher::NewSuggestionsAvailable(
+    SuggestionsProvider* suggestions_provider) {}
+
+void TestPrefetchDispatcher::RemoveSuggestion(const GURL& url) {}
+
 void TestPrefetchDispatcher::RemoveAllUnprocessedPrefetchURLs(
     const std::string& name_space) {
   latest_prefetch_urls.clear();
@@ -30,7 +34,7 @@ void TestPrefetchDispatcher::RemoveAllUnprocessedPrefetchURLs(
 void TestPrefetchDispatcher::RemovePrefetchURLsByClientId(
     const ClientId& client_id) {
   remove_by_client_id_count++;
-  last_removed_client_id = base::MakeUnique<ClientId>(client_id);
+  last_removed_client_id = std::make_unique<ClientId>(client_id);
 }
 
 void TestPrefetchDispatcher::BeginBackgroundTask(
@@ -60,9 +64,20 @@ void TestPrefetchDispatcher::CleanupDownloads(
   cleanup_downloads_count++;
 }
 
+void TestPrefetchDispatcher::GeneratePageBundleRequested(
+    std::unique_ptr<IdsVector> ids) {
+  generate_page_bundle_requested++;
+  ids_from_generate_page_bundle_requested = std::move(ids);
+}
+
 void TestPrefetchDispatcher::DownloadCompleted(
     const PrefetchDownloadResult& download_result) {
   download_results.push_back(download_result);
+}
+
+void TestPrefetchDispatcher::ItemDownloaded(int64_t offline_id,
+                                            const ClientId& client_id) {
+  item_downloaded_results.push_back(std::make_pair(offline_id, client_id));
 }
 
 void TestPrefetchDispatcher::ArchiveImported(int64_t offline_id, bool success) {

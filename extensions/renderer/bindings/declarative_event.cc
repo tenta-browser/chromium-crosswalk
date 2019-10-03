@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "extensions/renderer/bindings/api_event_listeners.h"
@@ -151,6 +150,13 @@ gin::ObjectTemplateBuilder DeclarativeEvent::GetObjectTemplateBuilder(
       .SetMethod("getRules", &DeclarativeEvent::GetRules);
 }
 
+const char* DeclarativeEvent::GetTypeName() {
+  // NOTE(devlin): Currently, our documentation does not differentiate between
+  // "normal" events and declarative events. Use "Event" here so that developers
+  // don't think there's separate documentation to look for.
+  return "Event";
+}
+
 void DeclarativeEvent::AddRules(gin::Arguments* arguments) {
   // When adding rules, we use the signature we built for this event (e.g.
   // declarativeContent.onPageChanged.addRules).
@@ -185,22 +191,20 @@ void DeclarativeEvent::HandleFunction(const std::string& signature_name,
                        {gin::StringToSymbol(isolate, event_name_),
                         v8::Integer::New(isolate, webview_instance_id_)});
 
-  std::unique_ptr<base::ListValue> converted_arguments;
-  v8::Local<v8::Function> callback;
-  std::string error;
   const APISignature* signature =
       type_refs_->GetTypeMethodSignature(signature_name);
   DCHECK(signature);
-  if (!signature->ParseArgumentsToJSON(context, argument_list, *type_refs_,
-                                       &converted_arguments, &callback,
-                                       &error)) {
+  APISignature::JSONParseResult parse_result =
+      signature->ParseArgumentsToJSON(context, argument_list, *type_refs_);
+  if (!parse_result.succeeded()) {
     arguments->ThrowTypeError("Invalid invocation");
     return;
   }
 
   request_handler_->StartRequest(
-      context, request_name, std::move(converted_arguments), callback,
-      v8::Local<v8::Function>(), binding::RequestThread::UI);
+      context, request_name, std::move(parse_result.arguments),
+      parse_result.callback, v8::Local<v8::Function>(),
+      binding::RequestThread::UI);
 }
 
 }  // namespace extensions

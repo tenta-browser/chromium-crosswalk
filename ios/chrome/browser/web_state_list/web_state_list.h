@@ -11,6 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "url/gurl.h"
 
 class WebStateListDelegate;
 class WebStateListObserver;
@@ -70,6 +71,9 @@ class WebStateList {
   // Returns true if the specified index is contained by the model.
   bool ContainsIndex(int index) const;
 
+  // Returns true if the list is currently mutating.
+  bool IsMutating() const;
+
   // Returns the currently active WebState or null if there is none.
   web::WebState* GetActiveWebState() const;
 
@@ -80,6 +84,15 @@ class WebStateList {
   // Returns the index of the specified WebState or kInvalidIndex if the
   // WebState is not in the model.
   int GetIndexOfWebState(const web::WebState* web_state) const;
+
+  // Returns the index of the first WebState in the model whose visible URL is
+  // |url| or kInvalidIndex if no WebState with that URL exists.
+  int GetIndexOfWebStateWithURL(const GURL& url) const;
+
+  // Returns the index of the first WebState, ignoring the currently active
+  // WebState, in the model whose visible URL is |url| or kInvalidIndex if no
+  // non-active WebState with that URL exists.
+  int GetIndexOfInactiveWebStateWithURL(const GURL& url) const;
 
   // Returns information about the opener of the WebState at the specified
   // index. The structure |opener| will be null if there is no opener.
@@ -156,9 +169,9 @@ class WebStateList {
   // specified index to null.
   void ClearOpenersReferencing(int index);
 
-  // Notify the observers if the active WebState change.
-  void NotifyIfActiveWebStateChanged(web::WebState* old_web_state,
-                                     bool user_action);
+  // Notify the observers if the active WebState change. |reason| is the value
+  // passed to the WebStateListObservers.
+  void NotifyIfActiveWebStateChanged(web::WebState* old_web_state, int reason);
 
   // Returns the index of the |n|-th WebState (with n > 0) in the sequence of
   // WebStates opened from the specified WebState after |start_index|, or
@@ -181,10 +194,16 @@ class WebStateList {
   std::unique_ptr<WebStateListOrderController> order_controller_;
 
   // List of observers notified of changes to the model.
-  base::ObserverList<WebStateListObserver, true> observers_;
+  base::ObserverList<WebStateListObserver, true>::Unchecked observers_;
 
   // Index of the currently active WebState, kInvalidIndex if no such WebState.
   int active_index_ = kInvalidIndex;
+
+  // Lock to prevent observers from mutating or deleting the list while it is
+  // mutating.
+  // TODO(crbug.com/834263): Remove this lock and the code that uses it once
+  // the source of the crash is identified.
+  bool locked_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(WebStateList);
 };

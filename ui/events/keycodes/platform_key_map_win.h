@@ -9,11 +9,12 @@
 
 #include <unordered_map>
 
-#include "base/event_types.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
+#include "ui/events/event.h"
 #include "ui/events/events_export.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/events/keycodes/keyboard_codes_win.h"
+#include "ui/events/platform_event.h"
 
 namespace ui {
 
@@ -25,29 +26,33 @@ class EVENTS_EXPORT PlatformKeyMap {
   ~PlatformKeyMap();
 
   // Returns the DOM KeyboardEvent key from |KeyboardCode|+|EventFlags| and
-  // the keyboard layout of current thread.
+  // the keyboard layout of current thread. If this is an AltGraph modified
+  // key then |flags| will have Control+Alt removed, and AltGraph set.
   // Updates a per-thread key map cache whenever the layout changes.
-  // If |flags| includes both Control and Alt modifiers, they will be replaced
-  // by AltGraph if the key generates a printable character with them.
   static DomKey DomKeyFromKeyboardCode(KeyboardCode key_code, int* flags);
 
   // Returns true if the currently-active keymap uses AltGraph shift.
   static bool UsesAltGraph();
 
-  // TODO(crbug.com/25503): Returns true if we disambiguate AltGraph.
-  static bool IsFixAltGraphEnabled();
+  // If the supplied event has both Control and Alt modifiers set, then they
+  // are replaced by AltGraph. This should only ever be applied to the flags
+  // for printable-character events.
+  static int ReplaceControlAndAltWithAltGraph(int flags);
 
  private:
   friend class PlatformKeyMapTest;
 
   PlatformKeyMap();
 
-  // TODO(chongz): Expose this function when we need to access separate layout.
-  // Returns the DomKey 'meaning' of |KeyboardCode| in the context of specified
-  // |EventFlags| and stored keyboard layout.
+  // Returns the PlatformKeyMap instance for the current thread.
+  static PlatformKeyMap* GetThreadLocalPlatformKeyMap();
+
+  // TODO(input-dev): Expose this function when we need to access separate
+  // layout. Returns the DomKey 'meaning' of |KeyboardCode| in the context of
+  // specified |EventFlags| and stored keyboard layout.
   DomKey DomKeyFromKeyboardCodeImpl(KeyboardCode, int* flags) const;
 
-  // TODO(chongz): Expose this function in response to WM_INPUTLANGCHANGE.
+  // TODO(input-dev): Expose this function in response to WM_INPUTLANGCHANGE.
   void UpdateLayout(HKL layout);
 
   HKL keyboard_layout_ = 0;

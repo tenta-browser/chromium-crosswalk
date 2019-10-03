@@ -5,15 +5,16 @@
 #include "extensions/browser/api/power/power_api.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/api/power.h"
 #include "extensions/common/extension.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
@@ -36,8 +37,6 @@ device::mojom::WakeLockType LevelToWakeLockType(api::power::Level level) {
 
 base::LazyInstance<BrowserContextKeyedAPIFactory<PowerAPI>>::DestructorAtExit
     g_factory = LAZY_INSTANCE_INITIALIZER;
-
-void DoNothing(bool b) {}
 
 }  // namespace
 
@@ -137,7 +136,7 @@ void PowerAPI::Shutdown() {
 }
 
 void PowerAPI::ActivateWakeLock(device::mojom::WakeLockType type) {
-  GetWakeLock()->ChangeType(type, base::Bind(&DoNothing));
+  GetWakeLock()->ChangeType(type, base::DoNothing());
   if (!is_wake_lock_active_) {
     GetWakeLock()->RequestWakeLock();
     is_wake_lock_active_ = true;
@@ -158,9 +157,8 @@ device::mojom::WakeLock* PowerAPI::GetWakeLock() {
 
   device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
 
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-  auto* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  auto* connector = content::GetSystemConnector();
+  DCHECK(connector);
   device::mojom::WakeLockProviderPtr wake_lock_provider;
   connector->BindInterface(device::mojom::kServiceName,
                            mojo::MakeRequest(&wake_lock_provider));

@@ -14,32 +14,35 @@
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/infobars/core/infobar.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_form_metrics_recorder.h"
+#include "components/password_manager/core/browser/password_ui_utils.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/sync_service.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 
 // static
 void UpdatePasswordInfoBarDelegate::Create(
     content::WebContents* web_contents,
-    std::unique_ptr<password_manager::PasswordFormManager> form_to_save) {
+    std::unique_ptr<password_manager::PasswordFormManagerForUI> form_to_save) {
   const bool is_smartlock_branding_enabled =
       password_bubble_experiment::IsSmartLockUser(
           ProfileSyncServiceFactory::GetForProfile(
               Profile::FromBrowserContext(web_contents->GetBrowserContext())));
   InfoBarService::FromWebContents(web_contents)
-      ->AddInfoBar(base::MakeUnique<UpdatePasswordInfoBar>(
+      ->AddInfoBar(std::make_unique<UpdatePasswordInfoBar>(
           base::WrapUnique(new UpdatePasswordInfoBarDelegate(
               web_contents, std::move(form_to_save),
               is_smartlock_branding_enabled))));
 }
 
 UpdatePasswordInfoBarDelegate::~UpdatePasswordInfoBarDelegate() {
-  passwords_state_.form_manager()->metrics_recorder()->RecordUIDismissalReason(
-      infobar_response_);
+  password_manager::metrics_util::LogUpdateUIDismissalReason(infobar_response_);
+  passwords_state_.form_manager()
+      ->GetMetricsRecorder()
+      ->RecordUIDismissalReason(infobar_response_);
 }
 
 base::string16 UpdatePasswordInfoBarDelegate::GetBranding() const {
@@ -49,11 +52,7 @@ base::string16 UpdatePasswordInfoBarDelegate::GetBranding() const {
 }
 
 bool UpdatePasswordInfoBarDelegate::ShowMultipleAccounts() const {
-  const password_manager::PasswordFormManager* form_manager =
-      passwords_state_.form_manager();
-  bool is_password_overriden =
-      form_manager && form_manager->password_overridden();
-  return GetCurrentForms().size() > 1 && !is_password_overriden;
+  return GetCurrentForms().size() > 1;
 }
 
 const std::vector<std::unique_ptr<autofill::PasswordForm>>&
@@ -63,21 +62,20 @@ UpdatePasswordInfoBarDelegate::GetCurrentForms() const {
 
 UpdatePasswordInfoBarDelegate::UpdatePasswordInfoBarDelegate(
     content::WebContents* web_contents,
-    std::unique_ptr<password_manager::PasswordFormManager> form_to_update,
+    std::unique_ptr<password_manager::PasswordFormManagerForUI> form_to_update,
     bool is_smartlock_branding_enabled)
     : infobar_response_(password_manager::metrics_util::NO_DIRECT_INTERACTION),
       is_smartlock_branding_enabled_(is_smartlock_branding_enabled) {
   base::string16 message;
-  gfx::Range message_link_range = gfx::Range();
   GetSavePasswordDialogTitleTextAndLinkRange(
-      web_contents->GetVisibleURL(), form_to_update->observed_form().origin,
-      is_smartlock_branding_enabled, PasswordTitleType::UPDATE_PASSWORD,
-      &message, &message_link_range);
+      web_contents->GetVisibleURL(), form_to_update->GetOrigin(),
+      PasswordTitleType::UPDATE_PASSWORD, &message);
   SetMessage(message);
-  SetMessageLinkRange(message_link_range);
+  if (is_smartlock_branding_enabled)
+    SetDetailsMessage(l10n_util::GetStringUTF16(IDS_SAVE_PASSWORD_FOOTER));
 
   // TODO(melandory): Add histograms, crbug.com/577129
-  form_to_update->metrics_recorder()->RecordPasswordBubbleShown(
+  form_to_update->GetMetricsRecorder()->RecordPasswordBubbleShown(
       form_to_update->GetCredentialSource(),
       password_manager::metrics_util::AUTOMATIC_WITH_PASSWORD_PENDING_UPDATE);
 
@@ -88,7 +86,7 @@ UpdatePasswordInfoBarDelegate::UpdatePasswordInfoBarDelegate(
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 UpdatePasswordInfoBarDelegate::GetIdentifier() const {
-  return UPDATE_PASSWORD_INFOBAR_DELEGATE;
+  return UPDATE_PASSWORD_INFOBAR_DELEGATE_MOBILE;
 }
 
 int UpdatePasswordInfoBarDelegate::GetButtons() const {
@@ -108,16 +106,17 @@ bool UpdatePasswordInfoBarDelegate::Accept() {
   infobar_response_ = password_manager::metrics_util::CLICKED_SAVE;
   UpdatePasswordInfoBar* update_password_infobar =
       static_cast<UpdatePasswordInfoBar*>(infobar());
-  password_manager::PasswordFormManager* form_manager =
+  password_manager::PasswordFormManagerForUI* form_manager =
       passwords_state_.form_manager();
   if (ShowMultipleAccounts()) {
     int form_index = update_password_infobar->GetIdOfSelectedUsername();
     DCHECK_GE(form_index, 0);
     DCHECK_LT(static_cast<size_t>(form_index), GetCurrentForms().size());
-    form_manager->Update(*GetCurrentForms()[form_index]);
-  } else {
-    form_manager->Update(form_manager->pending_credentials());
+    UpdatePasswordFormUsernameAndPassword(
+        GetCurrentForms()[form_index]->username_value,
+        form_manager->GetPendingCredentials().password_value, form_manager);
   }
+  form_manager->Save();
   return true;
 }
 

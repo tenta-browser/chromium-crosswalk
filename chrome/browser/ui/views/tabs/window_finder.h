@@ -7,6 +7,7 @@
 
 #include <set>
 
+#include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
@@ -16,8 +17,8 @@ class Point;
 // Class used by the tabstrip to find chrome windows that we can attach tabs to.
 class WindowFinder {
  public:
-  WindowFinder();
-  virtual ~WindowFinder();
+  WindowFinder() = default;
+  virtual ~WindowFinder() = default;
 
   // Finds the topmost visible chrome window at |screen_point|. This should
   // return nullptr if |screen_point| is in another program's window which

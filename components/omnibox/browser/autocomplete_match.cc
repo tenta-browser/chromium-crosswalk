@@ -9,7 +9,8 @@
 
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -18,12 +19,14 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "build/build_config.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
-#include "components/omnibox/browser/features.h"
-#include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/browser/document_provider.h"
+#include "components/omnibox/browser/omnibox_pedal.h"
 #include "components/omnibox/browser/suggestion_answer.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/template_url.h"
+#include "components/search_engines/template_url_prepopulate_data.h"
 #include "components/search_engines/template_url_service.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "ui/gfx/vector_icon_types.h"
@@ -71,6 +74,22 @@ bool WordMatchesURLContent(
 
 }  // namespace
 
+// static
+const char* const AutocompleteMatch::kDocumentTypeStrings[]{
+    "none",        "drive_docs", "drive_forms", "drive_sheets", "drive_slides",
+    "drive_image", "drive_pdf",  "drive_video", "drive_other"};
+
+static_assert(
+    base::size(AutocompleteMatch::kDocumentTypeStrings) ==
+        static_cast<int>(AutocompleteMatch::DocumentType::DOCUMENT_TYPE_SIZE),
+    "Sizes of AutocompleteMatch::kDocumentTypeStrings and "
+    "AutocompleteMatch::DocumentType don't match.");
+
+// static
+const char* AutocompleteMatch::DocumentTypeString(DocumentType type) {
+  return kDocumentTypeStrings[static_cast<int>(type)];
+}
+
 // AutocompleteMatch ----------------------------------------------------------
 
 // static
@@ -81,17 +100,14 @@ const base::char16 AutocompleteMatch::kInvalidChars[] = {
   0
 };
 
+// static
+const char AutocompleteMatch::kEllipsis[] = "... ";
+
+// static
+size_t AutocompleteMatch::next_family_id_;
+
 AutocompleteMatch::AutocompleteMatch()
-    : provider(nullptr),
-      relevance(0),
-      typed_count(-1),
-      deletable(false),
-      allowed_to_be_default_match(false),
-      swap_contents_and_description(false),
-      transition(ui::PAGE_TRANSITION_GENERATED),
-      type(AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED),
-      subtype_identifier(0),
-      from_previous(false) {}
+    : transition(ui::PAGE_TRANSITION_GENERATED) {}
 
 AutocompleteMatch::AutocompleteMatch(AutocompleteProvider* provider,
                                      int relevance,
@@ -99,18 +115,14 @@ AutocompleteMatch::AutocompleteMatch(AutocompleteProvider* provider,
                                      Type type)
     : provider(provider),
       relevance(relevance),
-      typed_count(-1),
       deletable(deletable),
-      allowed_to_be_default_match(false),
-      swap_contents_and_description(false),
       transition(ui::PAGE_TRANSITION_TYPED),
-      type(type),
-      subtype_identifier(0),
-      from_previous(false) {}
+      type(type) {}
 
 AutocompleteMatch::AutocompleteMatch(const AutocompleteMatch& match)
     : provider(match.provider),
       relevance(match.relevance),
+      subrelevance(match.subrelevance),
       typed_count(match.typed_count),
       deletable(match.deletable),
       fill_into_edit(match.fill_into_edit),
@@ -118,28 +130,39 @@ AutocompleteMatch::AutocompleteMatch(const AutocompleteMatch& match)
       allowed_to_be_default_match(match.allowed_to_be_default_match),
       destination_url(match.destination_url),
       stripped_destination_url(match.stripped_destination_url),
+      image_dominant_color(match.image_dominant_color),
+      image_url(match.image_url),
+      document_type(match.document_type),
+      tail_suggest_common_prefix(match.tail_suggest_common_prefix),
       contents(match.contents),
       contents_class(match.contents_class),
       description(match.description),
       description_class(match.description_class),
       swap_contents_and_description(match.swap_contents_and_description),
-      answer_contents(match.answer_contents),
-      answer_type(match.answer_type),
-      answer(SuggestionAnswer::copy(match.answer.get())),
+      answer(match.answer),
       transition(match.transition),
       type(match.type),
+      has_tab_match(match.has_tab_match),
       subtype_identifier(match.subtype_identifier),
-      associated_keyword(match.associated_keyword.get()
+      associated_keyword(match.associated_keyword
                              ? new AutocompleteMatch(*match.associated_keyword)
                              : nullptr),
       keyword(match.keyword),
+      from_keyword(match.from_keyword),
+      pedal(match.pedal),
       from_previous(match.from_previous),
       search_terms_args(
-          match.search_terms_args.get()
+          match.search_terms_args
               ? new TemplateURLRef::SearchTermsArgs(*match.search_terms_args)
               : nullptr),
+      post_content(match.post_content
+                       ? new TemplateURLRef::PostContent(*match.post_content)
+                       : nullptr),
       additional_info(match.additional_info),
       duplicate_matches(match.duplicate_matches) {}
+
+AutocompleteMatch::AutocompleteMatch(AutocompleteMatch&& match) noexcept =
+    default;
 
 AutocompleteMatch::~AutocompleteMatch() {
 }
@@ -151,6 +174,7 @@ AutocompleteMatch& AutocompleteMatch::operator=(
 
   provider = match.provider;
   relevance = match.relevance;
+  subrelevance = match.subrelevance;
   typed_count = match.typed_count;
   deletable = match.deletable;
   fill_into_edit = match.fill_into_edit;
@@ -158,35 +182,45 @@ AutocompleteMatch& AutocompleteMatch::operator=(
   allowed_to_be_default_match = match.allowed_to_be_default_match;
   destination_url = match.destination_url;
   stripped_destination_url = match.stripped_destination_url;
+  image_dominant_color = match.image_dominant_color;
+  image_url = match.image_url;
+  document_type = match.document_type;
+  tail_suggest_common_prefix = match.tail_suggest_common_prefix;
   contents = match.contents;
   contents_class = match.contents_class;
   description = match.description;
   description_class = match.description_class;
   swap_contents_and_description = match.swap_contents_and_description;
-  answer_contents = match.answer_contents;
-  answer_type = match.answer_type;
-  answer = SuggestionAnswer::copy(match.answer.get());
+  answer = match.answer;
   transition = match.transition;
   type = match.type;
+  has_tab_match = match.has_tab_match;
   subtype_identifier = match.subtype_identifier;
   associated_keyword.reset(
-      match.associated_keyword.get()
+      match.associated_keyword
           ? new AutocompleteMatch(*match.associated_keyword)
           : nullptr);
   keyword = match.keyword;
+  from_keyword = match.from_keyword;
+  pedal = match.pedal;
   from_previous = match.from_previous;
   search_terms_args.reset(
-      match.search_terms_args.get()
+      match.search_terms_args
           ? new TemplateURLRef::SearchTermsArgs(*match.search_terms_args)
           : nullptr);
+  post_content.reset(match.post_content
+                         ? new TemplateURLRef::PostContent(*match.post_content)
+                         : nullptr);
   additional_info = match.additional_info;
   duplicate_matches = match.duplicate_matches;
   return *this;
 }
 
-// static
-const gfx::VectorIcon& AutocompleteMatch::TypeToVectorIcon(Type type) {
 #if (!defined(OS_ANDROID) || BUILDFLAG(ENABLE_VR)) && !defined(OS_IOS)
+const gfx::VectorIcon& AutocompleteMatch::GetVectorIcon(
+    bool is_bookmark) const {
+  if (is_bookmark)
+    return omnibox::kBookmarkIcon;
   switch (type) {
     case Type::URL_WHAT_YOU_TYPED:
     case Type::HISTORY_URL:
@@ -196,26 +230,35 @@ const gfx::VectorIcon& AutocompleteMatch::TypeToVectorIcon(Type type) {
     case Type::NAVSUGGEST:
     case Type::BOOKMARK_TITLE:
     case Type::NAVSUGGEST_PERSONALIZED:
-    case Type::CLIPBOARD:
-    case Type::PHYSICAL_WEB:
-    case Type::PHYSICAL_WEB_OVERFLOW:
-      return omnibox::kHttpIcon;
-
-    case Type::TAB_SEARCH:
-      return omnibox::kTabIcon;
+    case Type::CLIPBOARD_URL:
+    case Type::PHYSICAL_WEB_DEPRECATED:
+    case Type::PHYSICAL_WEB_OVERFLOW_DEPRECATED:
+    case Type::TAB_SEARCH_DEPRECATED:
+      return omnibox::kPageIcon;
 
     case Type::SEARCH_WHAT_YOU_TYPED:
-    case Type::SEARCH_HISTORY:
     case Type::SEARCH_SUGGEST:
     case Type::SEARCH_SUGGEST_ENTITY:
-    case Type::SEARCH_SUGGEST_PERSONALIZED:
     case Type::SEARCH_SUGGEST_PROFILE:
     case Type::SEARCH_OTHER_ENGINE:
     case Type::CONTACT_DEPRECATED:
     case Type::VOICE_SUGGEST:
+    case Type::CLIPBOARD_TEXT:
+    case Type::CLIPBOARD_IMAGE:
       return vector_icons::kSearchIcon;
 
-    case Type::EXTENSION_APP:
+    case Type::SEARCH_HISTORY:
+    case Type::SEARCH_SUGGEST_PERSONALIZED: {
+      if (base::FeatureList::IsEnabled(
+              omnibox::kOmniboxSuggestionTransparencyOptions) ||
+          base::FeatureList::IsEnabled(
+              omnibox::kOmniboxUICuesForSearchHistoryMatches)) {
+        return omnibox::kClockIcon;
+      }
+      return vector_icons::kSearchIcon;
+    }
+
+    case Type::EXTENSION_APP_DEPRECATED:
       return omnibox::kExtensionAppIcon;
 
     case Type::CALCULATOR:
@@ -224,17 +267,124 @@ const gfx::VectorIcon& AutocompleteMatch::TypeToVectorIcon(Type type) {
     case Type::SEARCH_SUGGEST_TAIL:
       return omnibox::kBlankIcon;
 
+    case Type::DOCUMENT_SUGGESTION:
+      switch (document_type) {
+        case DocumentType::DRIVE_DOCS:
+          return omnibox::kDriveDocsIcon;
+        case DocumentType::DRIVE_FORMS:
+          return omnibox::kDriveFormsIcon;
+        case DocumentType::DRIVE_SHEETS:
+          return omnibox::kDriveSheetsIcon;
+        case DocumentType::DRIVE_SLIDES:
+          return omnibox::kDriveSlidesIcon;
+        case DocumentType::DRIVE_IMAGE:
+          return omnibox::kDriveImageIcon;
+        case DocumentType::DRIVE_PDF:
+          return omnibox::kDrivePdfIcon;
+        case DocumentType::DRIVE_VIDEO:
+          return omnibox::kDriveVideoIcon;
+        case DocumentType::DRIVE_OTHER:
+          return omnibox::kDriveLogoIcon;
+        default:
+          return omnibox::kPageIcon;
+      }
+
+    case Type::PEDAL:
+      return (pedal ? pedal->GetVectorIcon() : omnibox::kPedalIcon);
+
     case Type::NUM_TYPES:
       NOTREACHED();
-      break;
+      static const gfx::VectorIcon dummy = {};
+      return dummy;
   }
-  NOTREACHED();
-  return omnibox::kHttpIcon;
-#else
-  NOTREACHED();
-  static const gfx::VectorIcon dummy = {};
-  return dummy;
+}
 #endif
+
+base::string16 AutocompleteMatch::GetWhyThisSuggestionText() const {
+  // TODO(tommycli): Replace these placeholder strings with final ones from UX.
+  switch (type) {
+    case Type::URL_WHAT_YOU_TYPED:
+      return base::ASCIIToUTF16(
+          "This navigation match is the exact URL you typed.");
+
+    case Type::HISTORY_URL:
+    case Type::HISTORY_TITLE:
+    case Type::HISTORY_BODY:
+    case Type::HISTORY_KEYWORD:
+      return base::ASCIIToUTF16(
+          "This navigation match is a previously visited page from Chrome "
+          "History.");
+
+    case Type::NAVSUGGEST:
+      return base::ASCIIToUTF16(
+          "This navigation match is suggested by the search engine based on "
+          "what you typed.");
+
+    case Type::SEARCH_WHAT_YOU_TYPED:
+      return base::ASCIIToUTF16("This search query is exactly what you typed.");
+
+    case Type::SEARCH_HISTORY:
+      // TODO(tommycli): We may need to distinguish between matches sourced
+      // from search history saved in the cloud vs. locally.
+      return base::ASCIIToUTF16(
+          "This search query is suggested by the search engine based on what "
+          "you typed and past search queries.");
+
+    case Type::SEARCH_SUGGEST:
+    case Type::SEARCH_SUGGEST_ENTITY:
+    case Type::SEARCH_SUGGEST_TAIL:
+      return base::ASCIIToUTF16(
+          "This search query is suggested by the search engine based on what "
+          "you typed.");
+
+    case Type::SEARCH_SUGGEST_PERSONALIZED:
+      return base::ASCIIToUTF16(
+          "This search query is suggested by the search engine based on what "
+          "you typed. It has also been personalized to you.");
+
+    case Type::SEARCH_OTHER_ENGINE:
+      return base::ASCIIToUTF16(
+          "This search query is for a non-default search engine.");
+
+    case Type::BOOKMARK_TITLE:
+      return base::ASCIIToUTF16(
+          "This navigation matches the title of a Bookmark.");
+
+    case Type::NAVSUGGEST_PERSONALIZED:
+      return base::ASCIIToUTF16(
+          "This navigation match is suggested by the search engine based on "
+          "what you typed. It has also been personalized to you.");
+
+    case Type::CALCULATOR:
+      return base::ASCIIToUTF16(
+          "This calculation is the result of evaluating your input provided by "
+          "your default search engine.");
+
+    case Type::CLIPBOARD_URL:
+    case Type::CLIPBOARD_TEXT:
+    case Type::CLIPBOARD_IMAGE:
+      return base::ASCIIToUTF16("This match is from the system clipboard.");
+
+    case Type::VOICE_SUGGEST:
+      return base::ASCIIToUTF16("This match is from voice.");
+
+    case Type::DOCUMENT_SUGGESTION:
+      return base::ASCIIToUTF16("This match is from your documents.");
+
+    case Type::PEDAL:
+      return base::ASCIIToUTF16(
+          "This is a suggested Chrome action based on what you typed.");
+
+    case Type::EXTENSION_APP_DEPRECATED:
+    case Type::SEARCH_SUGGEST_PROFILE:
+    case Type::CONTACT_DEPRECATED:
+    case Type::PHYSICAL_WEB_DEPRECATED:
+    case Type::PHYSICAL_WEB_OVERFLOW_DEPRECATED:
+    case Type::TAB_SEARCH_DEPRECATED:
+    case Type::NUM_TYPES:
+      NOTREACHED();
+      return base::string16();
+  }
 }
 
 // static
@@ -245,13 +395,6 @@ bool AutocompleteMatch::MoreRelevant(const AutocompleteMatch& elem1,
   // across multiple updates.
   return (elem1.relevance == elem2.relevance) ?
       (elem1.contents < elem2.contents) : (elem1.relevance > elem2.relevance);
-}
-
-// static
-bool AutocompleteMatch::DestinationsEqual(const AutocompleteMatch& elem1,
-                                          const AutocompleteMatch& elem2) {
-  return !elem1.stripped_destination_url.is_empty() &&
-         (elem1.stripped_destination_url == elem2.stripped_destination_url);
 }
 
 // static
@@ -315,8 +458,8 @@ AutocompleteMatch::ACMatchClassifications
     return classifications1;
 
   ACMatchClassifications output;
-  for (ACMatchClassifications::const_iterator i = classifications1.begin(),
-       j = classifications2.begin(); i != classifications1.end();) {
+  for (auto i = classifications1.begin(), j = classifications2.begin();
+       i != classifications1.end();) {
     AutocompleteMatch::AddLastClassificationIfNecessary(&output,
         std::max(i->offset, j->offset), i->style | j->style);
     const size_t next_i_offset = (i + 1) == classifications1.end() ?
@@ -341,7 +484,7 @@ std::string AutocompleteMatch::ClassificationsToString(
       serialized_classifications += ',';
     serialized_classifications +=
         base::NumberToString(classifications[i].offset) + ',' +
-        base::IntToString(classifications[i].style);
+        base::NumberToString(classifications[i].style);
   }
   return serialized_classifications;
 }
@@ -425,9 +568,19 @@ TemplateURL* AutocompleteMatch::GetTemplateURLWithKeyword(
     TemplateURLService* template_url_service,
     const base::string16& keyword,
     const std::string& host) {
+  return const_cast<TemplateURL*>(GetTemplateURLWithKeyword(
+      static_cast<const TemplateURLService*>(template_url_service), keyword,
+      host));
+}
+
+// static
+const TemplateURL* AutocompleteMatch::GetTemplateURLWithKeyword(
+    const TemplateURLService* template_url_service,
+    const base::string16& keyword,
+    const std::string& host) {
   if (template_url_service == nullptr)
     return nullptr;
-  TemplateURL* template_url =
+  const TemplateURL* template_url =
       keyword.empty() ? nullptr
                       : template_url_service->GetTemplateURLForKeyword(keyword);
   return (template_url || host.empty()) ?
@@ -438,10 +591,16 @@ TemplateURL* AutocompleteMatch::GetTemplateURLWithKeyword(
 GURL AutocompleteMatch::GURLToStrippedGURL(
     const GURL& url,
     const AutocompleteInput& input,
-    TemplateURLService* template_url_service,
+    const TemplateURLService* template_url_service,
     const base::string16& keyword) {
   if (!url.is_valid())
     return url;
+
+  // Special-case canonicalizing Docs URLs. This logic is self-contained and
+  // will not participate in the TemplateURL canonicalization.
+  GURL docs_url = DocumentProvider::GetURLForDeduping(url);
+  if (docs_url.is_valid())
+    return docs_url;
 
   GURL stripped_destination_url = url;
 
@@ -467,7 +626,7 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
     }
   }
 
-  // |replacements| keeps all the substitions we're going to make to
+  // |replacements| keeps all the substitutions we're going to make to
   // from {destination_url} to {stripped_destination_url}.  |need_replacement|
   // is a helper variable that helps us keep track of whether we need
   // to apply the replacement.
@@ -476,9 +635,9 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
 
   // Remove the www. prefix from the host.
   static const char prefix[] = "www.";
-  static const size_t prefix_len = arraysize(prefix) - 1;
+  static const size_t prefix_len = base::size(prefix) - 1;
   std::string host = stripped_destination_url.host();
-  if (host.compare(0, prefix_len, prefix) == 0) {
+  if (host.compare(0, prefix_len, prefix) == 0 && host.length() > prefix_len) {
     replacements.SetHostStr(base::StringPiece(host).substr(prefix_len));
     needs_replacement = true;
   }
@@ -494,6 +653,11 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
     needs_replacement = true;
   }
 
+  if (!input.parts().ref.is_nonempty() && url.has_ref()) {
+    replacements.ClearRef();
+    needs_replacement = true;
+  }
+
   if (needs_replacement)
     stripped_destination_url = stripped_destination_url.ReplaceComponents(
         replacements);
@@ -505,11 +669,9 @@ void AutocompleteMatch::GetMatchComponents(
     const GURL& url,
     const std::vector<MatchPosition>& match_positions,
     bool* match_in_scheme,
-    bool* match_in_subdomain,
-    bool* match_after_host) {
+    bool* match_in_subdomain) {
   DCHECK(match_in_scheme);
   DCHECK(match_in_subdomain);
-  DCHECK(match_after_host);
 
   size_t domain_length =
       net::registry_controlled_domains::GetDomainAndRegistry(
@@ -519,11 +681,6 @@ void AutocompleteMatch::GetMatchComponents(
   const url::Parsed& parsed = url.parsed_for_possibly_invalid_spec();
 
   size_t host_pos = parsed.CountCharactersBefore(url::Parsed::HOST, false);
-
-  // We must add an extra character to exclude the '/' delimiter that prefixes
-  // every path. We have to do this because the |include_delimiter| parameter
-  // passed to url::Parsed::CountCharactersBefore has no effect for the PATH.
-  size_t path_pos = parsed.CountCharactersBefore(url::Parsed::PATH, false) + 1;
 
   bool has_subdomain =
       domain_length > 0 && domain_length < url.host_piece().length();
@@ -544,61 +701,73 @@ void AutocompleteMatch::GetMatchComponents(
         position.second > host_pos && parsed.host.is_nonempty()) {
       *match_in_subdomain = true;
     }
-
-    if (position.second > path_pos &&
-        (parsed.path.is_nonempty() || parsed.query.is_nonempty() ||
-         parsed.ref.is_nonempty())) {
-      *match_after_host = true;
-    }
   }
 }
 
 // static
 url_formatter::FormatUrlTypes AutocompleteMatch::GetFormatTypes(
     bool preserve_scheme,
-    bool preserve_subdomain,
-    bool preserve_after_host) {
+    bool preserve_subdomain) {
   auto format_types = url_formatter::kFormatUrlOmitDefaults;
   if (preserve_scheme) {
     format_types &= ~url_formatter::kFormatUrlOmitHTTP;
-  } else if (base::FeatureList::IsEnabled(
-                 omnibox::kUIExperimentHideSuggestionUrlScheme)) {
+  } else {
     format_types |= url_formatter::kFormatUrlOmitHTTPS;
   }
 
-  if (!preserve_subdomain &&
-      base::FeatureList::IsEnabled(
-          omnibox::kUIExperimentHideSuggestionUrlTrivialSubdomains)) {
-    format_types |= url_formatter::kFormatUrlExperimentalOmitTrivialSubdomains;
-  }
-
-  if (!preserve_after_host &&
-      base::FeatureList::IsEnabled(
-          omnibox::kUIExperimentElideSuggestionUrlAfterHost)) {
-    format_types |= url_formatter::kFormatUrlExperimentalElideAfterHost;
+  if (!preserve_subdomain) {
+    format_types |= url_formatter::kFormatUrlOmitTrivialSubdomains;
   }
 
   return format_types;
 }
 
+// static
+void AutocompleteMatch::LogSearchEngineUsed(
+    const AutocompleteMatch& match,
+    TemplateURLService* template_url_service) {
+  DCHECK(template_url_service);
+
+  TemplateURL* template_url = match.GetTemplateURL(template_url_service, false);
+  if (template_url) {
+    SearchEngineType search_engine_type =
+        match.destination_url.is_valid()
+            ? TemplateURLPrepopulateData::GetEngineType(match.destination_url)
+            : SEARCH_ENGINE_OTHER;
+    UMA_HISTOGRAM_ENUMERATION("Omnibox.SearchEngineType", search_engine_type,
+                              SEARCH_ENGINE_MAX);
+  }
+}
+
+// static
+size_t AutocompleteMatch::GetNextFamilyID() {
+  next_family_id_ += FAMILY_SIZE;
+  // Avoid the default value. 0 means "no submatch", so no family can use it.
+  if (next_family_id_ == 0)
+    next_family_id_ += FAMILY_SIZE;
+  return next_family_id_;
+}
+
+// static
+bool AutocompleteMatch::IsSameFamily(size_t lhs, size_t rhs) {
+  return (lhs & FAMILY_SIZE_MASK) == (rhs & FAMILY_SIZE_MASK);
+}
+
+bool AutocompleteMatch::IsSubMatch() const {
+  return subrelevance & ~FAMILY_SIZE_MASK;
+}
+
 void AutocompleteMatch::ComputeStrippedDestinationURL(
     const AutocompleteInput& input,
     TemplateURLService* template_url_service) {
-  stripped_destination_url = GURLToStrippedGURL(
-      destination_url, input, template_url_service, keyword);
-}
-
-void AutocompleteMatch::EnsureUWYTIsAllowedToBeDefault(
-    const AutocompleteInput& input,
-    TemplateURLService* template_url_service) {
-  if (!allowed_to_be_default_match) {
-    const GURL& stripped_canonical_input_url =
-        AutocompleteMatch::GURLToStrippedGURL(
-            input.canonicalized_url(), input, template_url_service,
-            base::string16());
-    ComputeStrippedDestinationURL(input, template_url_service);
-    allowed_to_be_default_match =
-        stripped_canonical_input_url == stripped_destination_url;
+  // Other than document suggestions, computing |stripped_destination_url| will
+  // have the same result during a match's lifecycle, so it's safe to skip
+  // re-computing it if it's already computed. Document suggestions'
+  // |stripped_url|s are pre-computed by the document provider, and overwriting
+  // them here would prevent potential deduping.
+  if (stripped_destination_url.is_empty()) {
+    stripped_destination_url = GURLToStrippedGURL(
+        destination_url, input, template_url_service, keyword);
   }
 }
 
@@ -606,7 +775,7 @@ void AutocompleteMatch::GetKeywordUIState(
     TemplateURLService* template_url_service,
     base::string16* keyword,
     bool* is_keyword_hint) const {
-  *is_keyword_hint = associated_keyword.get() != nullptr;
+  *is_keyword_hint = associated_keyword != nullptr;
   keyword->assign(*is_keyword_hint ? associated_keyword->keyword :
       GetSubstitutingExplicitlyInvokedKeyword(template_url_service));
 }
@@ -634,6 +803,41 @@ TemplateURL* AutocompleteMatch::GetTemplateURL(
           destination_url.host() : std::string());
 }
 
+GURL AutocompleteMatch::ImageUrl() const {
+  return answer ? answer->image_url() : GURL(image_url);
+}
+
+AutocompleteMatch AutocompleteMatch::DerivePedalSuggestion(
+    OmniboxPedal* pedal) {
+  AutocompleteMatch copy(*this);
+  copy.pedal = pedal;
+  if (subrelevance == 0)
+    subrelevance = GetNextFamilyID();
+  copy.subrelevance = subrelevance + PEDAL_FAMILY_ID;
+  DCHECK(IsSameFamily(subrelevance, copy.subrelevance));
+
+  copy.type = Type::PEDAL;
+  copy.destination_url = copy.pedal->GetNavigationUrl();
+
+  // Normally this is computed by the match using a TemplateURLService
+  // but Pedal URLs are not typical and unknown, and we don't want them to
+  // be deduped, e.g. after stripping a query parameter that may do something
+  // meaningful like indicate the viewable scope of a settings page.  So here
+  // we keep the URL exactly as the Pedal specifies it.
+  copy.stripped_destination_url = copy.destination_url;
+
+  // Note: Always use empty classifications for empty text and non-empty
+  // classifications for non-empty text.
+  const auto& labels = copy.pedal->GetLabelStrings();
+  copy.contents = labels.suggestion_contents;
+  copy.contents_class = {ACMatchClassification(0, ACMatchClassification::NONE)};
+  copy.description = labels.hint;
+  copy.description_class = {
+      ACMatchClassification(0, ACMatchClassification::NONE)};
+
+  return copy;
+}
+
 void AutocompleteMatch::RecordAdditionalInfo(const std::string& property,
                                              const std::string& value) {
   DCHECK(!property.empty());
@@ -643,7 +847,7 @@ void AutocompleteMatch::RecordAdditionalInfo(const std::string& property,
 
 void AutocompleteMatch::RecordAdditionalInfo(const std::string& property,
                                              int value) {
-  RecordAdditionalInfo(property, base::IntToString(value));
+  RecordAdditionalInfo(property, base::NumberToString(value));
 }
 
 void AutocompleteMatch::RecordAdditionalInfo(const std::string& property,
@@ -655,8 +859,75 @@ void AutocompleteMatch::RecordAdditionalInfo(const std::string& property,
 
 std::string AutocompleteMatch::GetAdditionalInfo(
     const std::string& property) const {
-  AdditionalInfo::const_iterator i(additional_info.find(property));
+  auto i(additional_info.find(property));
   return (i == additional_info.end()) ? std::string() : i->second;
+}
+
+metrics::OmniboxEventProto::Suggestion::ResultType
+AutocompleteMatch::AsOmniboxEventResultType() const {
+  using metrics::OmniboxEventProto;
+
+  switch (type) {
+    case AutocompleteMatchType::URL_WHAT_YOU_TYPED:
+      return OmniboxEventProto::Suggestion::URL_WHAT_YOU_TYPED;
+    case AutocompleteMatchType::HISTORY_URL:
+      return OmniboxEventProto::Suggestion::HISTORY_URL;
+    case AutocompleteMatchType::HISTORY_TITLE:
+      return OmniboxEventProto::Suggestion::HISTORY_TITLE;
+    case AutocompleteMatchType::HISTORY_BODY:
+      return OmniboxEventProto::Suggestion::HISTORY_BODY;
+    case AutocompleteMatchType::HISTORY_KEYWORD:
+      return OmniboxEventProto::Suggestion::HISTORY_KEYWORD;
+    case AutocompleteMatchType::NAVSUGGEST:
+      return OmniboxEventProto::Suggestion::NAVSUGGEST;
+    case AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED:
+      return OmniboxEventProto::Suggestion::SEARCH_WHAT_YOU_TYPED;
+    case AutocompleteMatchType::SEARCH_HISTORY:
+      return OmniboxEventProto::Suggestion::SEARCH_HISTORY;
+    case AutocompleteMatchType::SEARCH_SUGGEST:
+      return OmniboxEventProto::Suggestion::SEARCH_SUGGEST;
+    case AutocompleteMatchType::SEARCH_SUGGEST_ENTITY:
+      return OmniboxEventProto::Suggestion::SEARCH_SUGGEST_ENTITY;
+    case AutocompleteMatchType::SEARCH_SUGGEST_TAIL:
+      return OmniboxEventProto::Suggestion::SEARCH_SUGGEST_TAIL;
+    case AutocompleteMatchType::SEARCH_SUGGEST_PERSONALIZED:
+      return OmniboxEventProto::Suggestion::SEARCH_SUGGEST_PERSONALIZED;
+    case AutocompleteMatchType::SEARCH_SUGGEST_PROFILE:
+      return OmniboxEventProto::Suggestion::SEARCH_SUGGEST_PROFILE;
+    case AutocompleteMatchType::CALCULATOR:
+      return OmniboxEventProto::Suggestion::CALCULATOR;
+    case AutocompleteMatchType::SEARCH_OTHER_ENGINE:
+      return OmniboxEventProto::Suggestion::SEARCH_OTHER_ENGINE;
+    case AutocompleteMatchType::EXTENSION_APP_DEPRECATED:
+      return OmniboxEventProto::Suggestion::EXTENSION_APP;
+    case AutocompleteMatchType::BOOKMARK_TITLE:
+      return OmniboxEventProto::Suggestion::BOOKMARK_TITLE;
+    case AutocompleteMatchType::NAVSUGGEST_PERSONALIZED:
+      return OmniboxEventProto::Suggestion::NAVSUGGEST_PERSONALIZED;
+    case AutocompleteMatchType::CLIPBOARD_URL:
+      return OmniboxEventProto::Suggestion::CLIPBOARD_URL;
+    case AutocompleteMatchType::DOCUMENT_SUGGESTION:
+      return OmniboxEventProto::Suggestion::DOCUMENT;
+    case AutocompleteMatchType::PEDAL:
+      // TODO(orinj): Add a new OmniboxEventProto type for Pedals.
+      // return OmniboxEventProto::Suggestion::PEDAL;
+      return OmniboxEventProto::Suggestion::NAVSUGGEST;
+    case AutocompleteMatchType::CLIPBOARD_TEXT:
+      return OmniboxEventProto::Suggestion::CLIPBOARD_TEXT;
+    case AutocompleteMatchType::CLIPBOARD_IMAGE:
+      return OmniboxEventProto::Suggestion::CLIPBOARD_IMAGE;
+    case AutocompleteMatchType::VOICE_SUGGEST:
+      // VOICE_SUGGEST matches are only used in Java and are not logged,
+      // so we should never reach this case.
+    case AutocompleteMatchType::CONTACT_DEPRECATED:
+    case AutocompleteMatchType::PHYSICAL_WEB_DEPRECATED:
+    case AutocompleteMatchType::PHYSICAL_WEB_OVERFLOW_DEPRECATED:
+    case AutocompleteMatchType::TAB_SEARCH_DEPRECATED:
+    case AutocompleteMatchType::NUM_TYPES:
+      break;
+  }
+  NOTREACHED();
+  return OmniboxEventProto::Suggestion::UNKNOWN_RESULT_TYPE;
 }
 
 bool AutocompleteMatch::IsVerbatimType() const {
@@ -673,35 +944,84 @@ bool AutocompleteMatch::SupportsDeletion() const {
   if (deletable)
     return true;
 
-  for (ACMatches::const_iterator it(duplicate_matches.begin());
-       it != duplicate_matches.end(); ++it) {
+  for (auto it(duplicate_matches.begin()); it != duplicate_matches.end();
+       ++it) {
     if (it->deletable)
       return true;
   }
   return false;
 }
 
-void AutocompleteMatch::PossiblySwapContentsAndDescriptionForDisplay() {
-  if (swap_contents_and_description) {
-    std::swap(contents, description);
-    std::swap(contents_class, description_class);
+AutocompleteMatch
+AutocompleteMatch::GetMatchWithContentsAndDescriptionPossiblySwapped() const {
+  AutocompleteMatch copy(*this);
+  if (copy.swap_contents_and_description) {
+    std::swap(copy.contents, copy.description);
+    std::swap(copy.contents_class, copy.description_class);
+    // Clear bit to prevent accidentally performing the swap again.
+    copy.swap_contents_and_description = false;
   }
+  return copy;
 }
 
 void AutocompleteMatch::InlineTailPrefix(const base::string16& common_prefix) {
-  if (type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
-    contents = common_prefix + contents;
+  // Prevent re-addition of prefix.
+  if (type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL &&
+      tail_suggest_common_prefix.empty()) {
+    tail_suggest_common_prefix = common_prefix;
+    // Insert an ellipsis before uncommon part.
+    const auto ellipsis = base::ASCIIToUTF16(kEllipsis);
+    contents = ellipsis + contents;
+    // If the first class is not already NONE, prepend a NONE class for the new
+    // ellipsis.
+    if (contents_class[0].offset == 0 &&
+        contents_class[0].style != ACMatchClassification::NONE) {
+      contents_class.insert(contents_class.begin(),
+                            {0, ACMatchClassification::NONE});
+    }
     // Shift existing styles.
-    for (ACMatchClassification& classification : contents_class)
-      classification.offset += common_prefix.size();
-    // Prefix with invisible text.
-    contents_class.insert(
-        contents_class.begin(),
-        ACMatchClassification(0, ACMatchClassification::INVISIBLE));
+    for (size_t i = 1; i < contents_class.size(); ++i)
+      contents_class[i].offset += ellipsis.size();
   }
 }
 
-#ifndef NDEBUG
+size_t AutocompleteMatch::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(fill_into_edit);
+  res += base::trace_event::EstimateMemoryUsage(inline_autocompletion);
+  res += base::trace_event::EstimateMemoryUsage(destination_url);
+  res += base::trace_event::EstimateMemoryUsage(stripped_destination_url);
+  res += base::trace_event::EstimateMemoryUsage(image_dominant_color);
+  res += base::trace_event::EstimateMemoryUsage(image_url);
+  res += base::trace_event::EstimateMemoryUsage(tail_suggest_common_prefix);
+  res += base::trace_event::EstimateMemoryUsage(contents);
+  res += base::trace_event::EstimateMemoryUsage(contents_class);
+  res += base::trace_event::EstimateMemoryUsage(description);
+  res += base::trace_event::EstimateMemoryUsage(description_class);
+  if (answer)
+    res += base::trace_event::EstimateMemoryUsage(answer.value());
+  else
+    res += sizeof(SuggestionAnswer);
+  res += base::trace_event::EstimateMemoryUsage(associated_keyword);
+  res += base::trace_event::EstimateMemoryUsage(keyword);
+  res += base::trace_event::EstimateMemoryUsage(search_terms_args);
+  res += base::trace_event::EstimateMemoryUsage(post_content);
+  res += base::trace_event::EstimateMemoryUsage(additional_info);
+  res += base::trace_event::EstimateMemoryUsage(duplicate_matches);
+
+  return res;
+}
+
+bool AutocompleteMatch::ShouldShowTabMatch() const {
+  return has_tab_match && !associated_keyword;
+}
+
+bool AutocompleteMatch::ShouldShowButton() const {
+  return ShouldShowTabMatch();
+}
+
+#if DCHECK_IS_ON()
 void AutocompleteMatch::Validate() const {
   ValidateClassifications(contents, contents_class);
   ValidateClassifications(description, description_class);
@@ -724,8 +1044,7 @@ void AutocompleteMatch::ValidateClassifications(
 
   // The classifications should always be sorted.
   size_t last_offset = classifications[0].offset;
-  for (ACMatchClassifications::const_iterator i(classifications.begin() + 1);
-       i != classifications.end(); ++i) {
+  for (auto i(classifications.begin() + 1); i != classifications.end(); ++i) {
     const char* provider_name = provider ? provider->GetName() : "None";
     DCHECK_GT(i->offset, last_offset)
         << " Classification for \"" << text << "\" with offset of " << i->offset
@@ -738,4 +1057,4 @@ void AutocompleteMatch::ValidateClassifications(
     last_offset = i->offset;
   }
 }
-#endif
+#endif  // DCHECK_IS_ON()

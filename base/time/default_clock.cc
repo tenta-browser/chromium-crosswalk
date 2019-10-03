@@ -4,20 +4,20 @@
 
 #include "base/time/default_clock.h"
 
-#include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 
 namespace base {
 
 DefaultClock::~DefaultClock() = default;
 
-Time DefaultClock::Now() {
+Time DefaultClock::Now() const {
   return Time::Now();
 }
 
 // static
 DefaultClock* DefaultClock::GetInstance() {
-  static LazyInstance<DefaultClock>::Leaky instance = LAZY_INSTANCE_INITIALIZER;
-  return instance.Pointer();
+  static base::NoDestructor<DefaultClock> instance;
+  return instance.get();
 }
 
 }  // namespace base

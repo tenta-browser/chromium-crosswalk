@@ -24,29 +24,27 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.concurrent.TimeUnit;
 
 /**
  * Tests for {@link GoogleApiClientHelper}
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class GoogleApiClientHelperTest {
     private GoogleApiClient mMockClient;
 
     @Before
     public void setUp() {
-        ApplicationStatus.destroyForJUnitTests();
         LifecycleHook.destroyInstanceForJUnitTests();
         mMockClient = mock(GoogleApiClient.class);
     }
 
     @After
     public void tearDown() {
-        ApplicationStatus.destroyForJUnitTests();
         LifecycleHook.destroyInstanceForJUnitTests();
     }
 

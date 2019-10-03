@@ -4,8 +4,8 @@
 
 #include "media/ffmpeg/ffmpeg_common.h"
 
+#include "base/hash/sha1.h"
 #include "base/logging.h"
-#include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,7 +16,8 @@
 #include "media/base/media_util.h"
 #include "media/base/video_decoder_config.h"
 #include "media/base/video_util.h"
-#include "media/media_features.h"
+#include "media/formats/mp4/box_definitions.h"
+#include "media/media_buildflags.h"
 
 namespace media {
 
@@ -468,9 +469,6 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
   gfx::Size natural_size =
       GetNaturalSize(visible_rect.size(), aspect_ratio.num, aspect_ratio.den);
 
-  VideoPixelFormat format =
-      AVPixelFormatToVideoPixelFormat(codec_context->pix_fmt);
-
   // Without the ffmpeg decoder configured, libavformat is unable to get the
   // profile, format, or coded size. So choose sensible defaults and let
   // decoders fail later if the configuration is actually unsupported.
@@ -479,28 +477,49 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
   // actually handle capabilities requests correctly. http://crbug.com/784610
   VideoCodecProfile profile = VIDEO_CODEC_PROFILE_UNKNOWN;
   switch (codec) {
-#if defined(DISABLE_FFMPEG_VIDEO_DECODERS)
-    case kCodecH264:
-      // TODO(dalecurtis): This is incorrect; see http://crbug.com/784627.
-      format = PIXEL_FORMAT_YV12;
-      profile = H264PROFILE_BASELINE;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+    case kCodecH264: {
+      profile = ProfileIDToVideoCodecProfile(codec_context->profile);
+      // if the profile is still unknown, try to extract it from
+      // the extradata using the internal parser
+      if (profile == VIDEO_CODEC_PROFILE_UNKNOWN && codec_context->extradata &&
+          codec_context->extradata_size) {
+        mp4::AVCDecoderConfigurationRecord avc_config;
+        if (avc_config.Parse(codec_context->extradata,
+                             codec_context->extradata_size)) {
+          profile = ProfileIDToVideoCodecProfile(avc_config.profile_indication);
+        }
+      }
+      // All the heuristics failed, let's assign a default profile
+      if (profile == VIDEO_CODEC_PROFILE_UNKNOWN)
+        profile = H264PROFILE_BASELINE;
       break;
+    }
 #endif
     case kCodecVP8:
-#if defined(DISABLE_FFMPEG_VIDEO_DECODERS)
-      // TODO(dalecurtis): This is incorrect; see http://crbug.com/784627.
-      format = PIXEL_FORMAT_YV12;
-#endif
       profile = VP8PROFILE_ANY;
       break;
     case kCodecVP9:
-      // TODO(dalecurtis): This is incorrect; see http://crbug.com/784627.
-      format = PIXEL_FORMAT_YV12;
-      profile = VP9PROFILE_PROFILE0;
+      switch (codec_context->profile) {
+        case FF_PROFILE_VP9_0:
+          profile = VP9PROFILE_PROFILE0;
+          break;
+        case FF_PROFILE_VP9_1:
+          profile = VP9PROFILE_PROFILE1;
+          break;
+        case FF_PROFILE_VP9_2:
+          profile = VP9PROFILE_PROFILE2;
+          break;
+        case FF_PROFILE_VP9_3:
+          profile = VP9PROFILE_PROFILE3;
+          break;
+        default:
+          profile = VP9PROFILE_MIN;
+          break;
+      }
       break;
     case kCodecAV1:
-      format = PIXEL_FORMAT_I420;
-      profile = AV1PROFILE_PROFILE0;
+      profile = AV1PROFILE_PROFILE_MAIN;
       break;
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
     case kCodecHEVC:
@@ -514,18 +533,8 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
       profile = ProfileIDToVideoCodecProfile(codec_context->profile);
   }
 
-  // Pad out |coded_size| for subsampled YUV formats.
-  if (format != PIXEL_FORMAT_YV24 && format != PIXEL_FORMAT_UNKNOWN) {
-    coded_size.set_width((coded_size.width() + 1) / 2 * 2);
-    if (format != PIXEL_FORMAT_YV16)
-      coded_size.set_height((coded_size.height() + 1) / 2 * 2);
-  }
-
-  AVDictionaryEntry* webm_alpha =
-      av_dict_get(stream->metadata, "alpha_mode", nullptr, 0);
-  if (webm_alpha && !strcmp(webm_alpha->value, "1")) {
-    format = PIXEL_FORMAT_YV12A;
-  }
+  auto* alpha_mode = av_dict_get(stream->metadata, "alpha_mode", nullptr, 0);
+  const bool has_alpha = alpha_mode && !strcmp(alpha_mode->value, "1");
 
   VideoRotation video_rotation = VIDEO_ROTATION_0;
   int rotation = 0;
@@ -552,13 +561,31 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
   }
 
   // Prefer the color space found by libavcodec if available.
-  ColorSpace color_space = AVColorSpaceToColorSpace(codec_context->colorspace,
-                                                    codec_context->color_range);
-  if (color_space == COLOR_SPACE_UNSPECIFIED) {
-    // Otherwise, assume that SD video is usually Rec.601, and HD is usually
-    // Rec.709.
-    color_space = (natural_size.height() < 720) ? COLOR_SPACE_SD_REC601
-                                                : COLOR_SPACE_HD_REC709;
+  VideoColorSpace color_space =
+      VideoColorSpace(codec_context->color_primaries, codec_context->color_trc,
+                      codec_context->colorspace,
+                      codec_context->color_range == AVCOL_RANGE_JPEG
+                          ? gfx::ColorSpace::RangeID::FULL
+                          : gfx::ColorSpace::RangeID::LIMITED);
+  if (!color_space.IsSpecified()) {
+    // VP9 frames may have color information, but that information cannot
+    // express new color spaces, like HDR. For that reason, color space
+    // information from the container should take precedence over color space
+    // information from the VP9 stream. However, if we infer the color space
+    // based on resolution here, it looks as if it came from the container.
+    // Since this inference causes color shifts and is slated to go away
+    // we just skip it for VP9 and leave the color space undefined, which
+    // will make the VP9 decoder behave correctly..
+    // We also ignore the resolution for AV1, since it's new and it's easy
+    // to make it behave correctly from the get-go.
+    // TODO(hubbe): Skip this inference for all codecs.
+    if (codec_context->codec_id != AV_CODEC_ID_VP9 &&
+        codec_context->codec_id != AV_CODEC_ID_AV1) {
+      // Otherwise, assume that SD video is usually Rec.601, and HD is usually
+      // Rec.709.
+      color_space = (natural_size.height() < 720) ? VideoColorSpace::REC601()
+                                                  : VideoColorSpace::REC709();
+    }
   }
 
   // AVCodecContext occasionally has invalid extra data. See
@@ -574,17 +601,45 @@ bool AVStreamToVideoDecoderConfig(const AVStream* stream,
     extra_data.assign(codec_context->extradata,
                       codec_context->extradata + codec_context->extradata_size);
   }
-  config->Initialize(codec, profile, format, color_space, video_rotation,
+  // TODO(tmathmeyer) ffmpeg can't provide us with an actual video rotation yet.
+  config->Initialize(codec, profile,
+                     has_alpha ? VideoDecoderConfig::AlphaMode::kHasAlpha
+                               : VideoDecoderConfig::AlphaMode::kIsOpaque,
+                     color_space, VideoTransformation(video_rotation),
                      coded_size, visible_rect, natural_size, extra_data,
                      GetEncryptionScheme(stream));
 
-  const AVCodecParameters* codec_parameters = stream->codecpar;
-  config->set_color_space_info(VideoColorSpace(
-      codec_parameters->color_primaries, codec_parameters->color_trc,
-      codec_parameters->color_space,
-      codec_parameters->color_range == AVCOL_RANGE_JPEG
-          ? gfx::ColorSpace::RangeID::FULL
-          : gfx::ColorSpace::RangeID::LIMITED));
+  if (stream->nb_side_data) {
+    for (int i = 0; i < stream->nb_side_data; ++i) {
+      AVPacketSideData side_data = stream->side_data[i];
+      if (side_data.type != AV_PKT_DATA_MASTERING_DISPLAY_METADATA)
+        continue;
+
+      HDRMetadata hdr_metadata{};
+      AVMasteringDisplayMetadata* metadata =
+          reinterpret_cast<AVMasteringDisplayMetadata*>(side_data.data);
+      if (metadata->has_primaries) {
+        hdr_metadata.mastering_metadata.primary_r =
+            gfx::PointF(av_q2d(metadata->display_primaries[0][0]),
+                        av_q2d(metadata->display_primaries[0][1]));
+        hdr_metadata.mastering_metadata.primary_g =
+            gfx::PointF(av_q2d(metadata->display_primaries[1][0]),
+                        av_q2d(metadata->display_primaries[1][1]));
+        hdr_metadata.mastering_metadata.primary_b =
+            gfx::PointF(av_q2d(metadata->display_primaries[2][0]),
+                        av_q2d(metadata->display_primaries[2][1]));
+        hdr_metadata.mastering_metadata.white_point = gfx::PointF(
+            av_q2d(metadata->white_point[0]), av_q2d(metadata->white_point[1]));
+      }
+      if (metadata->has_luminance) {
+        hdr_metadata.mastering_metadata.luminance_max =
+            av_q2d(metadata->max_luminance);
+        hdr_metadata.mastering_metadata.luminance_min =
+            av_q2d(metadata->min_luminance);
+      }
+      config->set_hdr_metadata(hdr_metadata);
+    }
+  }
 
   return true;
 }
@@ -597,8 +652,7 @@ void VideoDecoderConfigToAVCodecContext(
   codec_context->profile = VideoCodecProfileToProfileID(config.profile());
   codec_context->coded_width = config.coded_size().width();
   codec_context->coded_height = config.coded_size().height();
-  codec_context->pix_fmt = VideoPixelFormatToAVPixelFormat(config.format());
-  if (config.color_space() == COLOR_SPACE_JPEG)
+  if (config.color_space_info().range == gfx::ColorSpace::RangeID::FULL)
     codec_context->color_range = AVCOL_RANGE_JPEG;
 
   if (config.extra_data().empty()) {
@@ -690,19 +744,18 @@ VideoPixelFormat AVPixelFormatToVideoPixelFormat(AVPixelFormat pixel_format) {
   switch (pixel_format) {
     case AV_PIX_FMT_YUV444P:
     case AV_PIX_FMT_YUVJ444P:
-      return PIXEL_FORMAT_YV24;
+      return PIXEL_FORMAT_I444;
 
-    // TODO(dalecurtis): These are incorrect; see http://crbug.com/784627. This
-    // should actually be PIXEL_FORMAT_I420 and PIXEL_FORMAT_I422.
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVJ420P:
-      return PIXEL_FORMAT_YV12;
+      return PIXEL_FORMAT_I420;
+
     case AV_PIX_FMT_YUV422P:
     case AV_PIX_FMT_YUVJ422P:
-      return PIXEL_FORMAT_YV16;
+      return PIXEL_FORMAT_I422;
 
     case AV_PIX_FMT_YUVA420P:
-      return PIXEL_FORMAT_YV12A;
+      return PIXEL_FORMAT_I420A;
 
     case AV_PIX_FMT_YUV420P9LE:
       return PIXEL_FORMAT_YUV420P9;
@@ -725,67 +778,33 @@ VideoPixelFormat AVPixelFormatToVideoPixelFormat(AVPixelFormat pixel_format) {
     case AV_PIX_FMT_YUV444P12LE:
       return PIXEL_FORMAT_YUV444P12;
 
+    case AV_PIX_FMT_P016LE:
+      return PIXEL_FORMAT_P016LE;
+
     default:
       DVLOG(1) << "Unsupported AVPixelFormat: " << pixel_format;
   }
   return PIXEL_FORMAT_UNKNOWN;
 }
 
-AVPixelFormat VideoPixelFormatToAVPixelFormat(VideoPixelFormat video_format) {
-  switch (video_format) {
-    // TODO(dalecurtis): These are incorrect; see http://crbug.com/784627.
-    // FFmpeg actually has no YVU format...
-    case PIXEL_FORMAT_YV16:
-      return AV_PIX_FMT_YUV422P;
-    case PIXEL_FORMAT_YV12:
-      return AV_PIX_FMT_YUV420P;
-
-    case PIXEL_FORMAT_YV12A:
-      return AV_PIX_FMT_YUVA420P;
-    case PIXEL_FORMAT_YV24:
-      return AV_PIX_FMT_YUV444P;
-    case PIXEL_FORMAT_YUV420P9:
-      return AV_PIX_FMT_YUV420P9LE;
-    case PIXEL_FORMAT_YUV420P10:
-      return AV_PIX_FMT_YUV420P10LE;
-    case PIXEL_FORMAT_YUV420P12:
-      return AV_PIX_FMT_YUV420P12LE;
-    case PIXEL_FORMAT_YUV422P9:
-      return AV_PIX_FMT_YUV422P9LE;
-    case PIXEL_FORMAT_YUV422P10:
-      return AV_PIX_FMT_YUV422P10LE;
-    case PIXEL_FORMAT_YUV422P12:
-      return AV_PIX_FMT_YUV422P12LE;
-    case PIXEL_FORMAT_YUV444P9:
-      return AV_PIX_FMT_YUV444P9LE;
-    case PIXEL_FORMAT_YUV444P10:
-      return AV_PIX_FMT_YUV444P10LE;
-    case PIXEL_FORMAT_YUV444P12:
-      return AV_PIX_FMT_YUV444P12LE;
-
-    default:
-      DVLOG(1) << "Unsupported Format: " << video_format;
-  }
-  return AV_PIX_FMT_NONE;
-}
-
-ColorSpace AVColorSpaceToColorSpace(AVColorSpace color_space,
-                                    AVColorRange color_range) {
+VideoColorSpace AVColorSpaceToColorSpace(AVColorSpace color_space,
+                                         AVColorRange color_range) {
+  // TODO(hubbe): make this better
   if (color_range == AVCOL_RANGE_JPEG)
-    return COLOR_SPACE_JPEG;
+    return VideoColorSpace::JPEG();
 
   switch (color_space) {
     case AVCOL_SPC_UNSPECIFIED:
       break;
     case AVCOL_SPC_BT709:
-      return COLOR_SPACE_HD_REC709;
+      return VideoColorSpace::REC709();
     case AVCOL_SPC_SMPTE170M:
     case AVCOL_SPC_BT470BG:
-      return COLOR_SPACE_SD_REC601;
+      return VideoColorSpace::REC601();
     default:
       DVLOG(1) << "Unknown AVColorSpace: " << color_space;
   }
-  return COLOR_SPACE_UNSPECIFIED;
+  return VideoColorSpace();
 }
 
 std::string AVErrorToString(int errnum) {

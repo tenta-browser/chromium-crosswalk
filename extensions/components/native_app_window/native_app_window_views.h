@@ -76,6 +76,7 @@ class NativeAppWindowViews : public extensions::NativeAppWindow,
   void Show() override;
   void ShowInactive() override;
   void Hide() override;
+  bool IsVisible() const override;
   void Close() override;
   void Activate() override;
   void Deactivate() override;
@@ -84,8 +85,8 @@ class NativeAppWindowViews : public extensions::NativeAppWindow,
   void Restore() override;
   void SetBounds(const gfx::Rect& bounds) override;
   void FlashFrame(bool flash) override;
-  bool IsAlwaysOnTop() const override;
-  void SetAlwaysOnTop(bool always_on_top) override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
+  void SetZOrderLevel(ui::ZOrderLevel order) override;
 
   // WidgetDelegate implementation.
   void OnWidgetMove() override;
@@ -117,7 +118,7 @@ class NativeAppWindowViews : public extensions::NativeAppWindow,
   // views::View implementation.
   void Layout() override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
   void OnFocus() override;
@@ -131,7 +132,7 @@ class NativeAppWindowViews : public extensions::NativeAppWindow,
       const std::vector<extensions::DraggableRegion>& regions) override;
   SkRegion* GetDraggableRegion() override;
   void UpdateShape(std::unique_ptr<ShapeRects> rects) override;
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       const content::NativeWebKeyboardEvent& event) override;
   bool IsFrameless() const override;
   bool HasFrameColor() const override;
@@ -171,7 +172,8 @@ class NativeAppWindowViews : public extensions::NativeAppWindow,
 
   views::UnhandledKeyboardEventHandler unhandled_keyboard_event_handler_;
 
-  base::ObserverList<web_modal::ModalDialogHostObserver> observer_list_;
+  base::ObserverList<web_modal::ModalDialogHostObserver>::Unchecked
+      observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeAppWindowViews);
 };

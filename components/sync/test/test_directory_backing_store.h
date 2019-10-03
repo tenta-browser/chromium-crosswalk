@@ -25,7 +25,7 @@ class TestDirectoryBackingStore : public DirectoryBackingStore {
   // constructor unless you understand and intend to test the
   // DirectoryBackingStore's internals.
   TestDirectoryBackingStore(const std::string& dir_name,
-                            sql::Connection* connection);
+                            sql::Database* connection);
   ~TestDirectoryBackingStore() override;
   DirOpenResult Load(Directory::MetahandlesMap* handles_map,
                      JournalIndex* delete_journals,
@@ -56,6 +56,7 @@ class TestDirectoryBackingStore : public DirectoryBackingStore {
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, MigrateVersion88To89);
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, MigrateVersion89To90);
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, MigrateVersion90To91);
+  FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, MigrateVersion91To92);
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, DetectInvalidPosition);
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, ModelTypeIds);
   FRIEND_TEST_ALL_PREFIXES(DirectoryBackingStoreTest, Corruption);

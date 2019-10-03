@@ -39,7 +39,7 @@
 #include "base/logging.h"
 #include "base/threading/thread_local.h"
 #include "build/build_config.h"
-#include "ui/gl/extension_set.h"
+#include "ui/gfx/extension_set.h"
 #include "ui/gl/gl_export.h"
 
 // The standard OpenGL native extension headers are also included.
@@ -99,6 +99,7 @@
 #define GL_ALPHA8_EXT                                    0x803C
 #define GL_LUMINANCE8_EXT                                0x8040
 #define GL_LUMINANCE8_ALPHA8_EXT                         0x8045
+#define GL_RGB10_A2_EXT                                  0x8059
 #define GL_RGBA32F_EXT                                   0x8814
 #define GL_RGB32F_EXT                                    0x8815
 #define GL_ALPHA32F_EXT                                  0x8816
@@ -106,13 +107,13 @@
 #define GL_LUMINANCE_ALPHA32F_EXT                        0x8819
 #define GL_RGBA16F_EXT                                   0x881A
 #define GL_RGB16F_EXT                                    0x881B
-#define GL_RG16F_EXT 0x822F
-#define GL_R16F_EXT 0x822D
+#define GL_RG16F_EXT                                     0x822F
+#define GL_R16F_EXT                                      0x822D
 #define GL_ALPHA16F_EXT                                  0x881C
 #define GL_LUMINANCE16F_EXT                              0x881E
 #define GL_LUMINANCE_ALPHA16F_EXT                        0x881F
-#define GL_R32F_EXT 0x822E
-#define GL_RG32F_EXT 0x8230
+#define GL_R32F_EXT                                      0x822E
+#define GL_RG32F_EXT                                     0x8230
 #define GL_BGRA8_EXT                                     0x93A1
 
 // GL_ANGLE_instanced_arrays
@@ -127,6 +128,9 @@
 // GL_ANGLE_request_extension
 #define GL_REQUESTABLE_EXTENSIONS_ANGLE 0x93A8
 #define GL_NUM_REQUESTABLE_EXTENSIONS_ANGLE 0x93A8
+
+// GL_ANGLE_memory_size
+#define GL_MEMORY_SIZE_ANGLE 0x93AD
 
 // GL_EXT_occlusion_query_boolean
 #define GL_ANY_SAMPLES_PASSED_EXT                        0x8C2F
@@ -147,6 +151,9 @@
 /* GL_CHROMIUM_command_buffer_latency_query */
 #define GL_LATENCY_QUERY_CHROMIUM                        0x6007
 
+/* GL_CHROMIUM_program_completion_query */
+#define GL_PROGRAM_COMPLETION_QUERY_CHROMIUM 0x6009
+
 /* GL_CHROMIUM_async_pixel_transfers */
 #define GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM           0x6006
 
@@ -161,6 +168,9 @@
 
 // GL_CHROMIUM_ycbcr_420v_image
 #define GL_RGB_YCBCR_420V_CHROMIUM 0x78FC
+
+// GL_CHROMIUM_ycbcr_p010_image
+#define GL_RGB_YCBCR_P010_CHROMIUM 0x78FD
 
 // GL_CHROMIUM_schedule_overlay_plane
 #define GL_OVERLAY_TRANSFORM_NONE_CHROMIUM               0x9245
@@ -182,6 +192,7 @@
 #define GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM 0x8AF2
 #define GL_COLOR_SPACE_SRGB_CHROMIUM 0x8AF3
 #define GL_COLOR_SPACE_DISPLAY_P3_CHROMIUM 0x8AF4
+#define GL_COLOR_SPACE_HDR10_CHROMIUM 0x8AF5
 
 // GL_CHROMIUM_texture_storage_image
 #define GL_SCANOUT_CHROMIUM 0x6000
@@ -375,11 +386,9 @@
 #define GL_RG8_EXT 0x822B
 #endif /* GL_EXT_texture_rg */
 
-// This is from NV_path_rendering, but the Mesa GL header is not up to date with
-// the most recent
-// version of the extension. This definition could be removed once glext.h
-// r27498 or later is
-// imported.
+// This is from NV_path_rendering, but the GL header is not up to date with the
+// most recent version of the extension. This definition could be removed once
+// glext.h r27498 or later is imported.
 #ifndef GL_FRAGMENT_INPUT_NV
 #define GL_FRAGMENT_INPUT_NV 0x936D
 #endif
@@ -404,6 +413,35 @@
 #define GL_NUM_WINDOW_RECTANGLES_EXT 0x8F15
 #endif /* GL_EXT_window_rectangles */
 
+#ifndef GL_CHROMIUM_nonblocking_readback
+#define GL_CHROMIUM_nonblocking_readback 1
+#define GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM 0x84F8
+#endif /* GL_CHROMIUM_nonblocking_readback */
+
+#ifndef GL_MESA_framebuffer_flip_y
+#define GL_MESA_framebuffer_flip_y 1
+#define GL_FRAMEBUFFER_FLIP_Y_MESA 0x8BBB
+#endif /* GL_MESA_framebuffer_flip_y */
+
+#ifndef GL_KHR_parallel_shader_compile
+#define GL_KHR_parallel_shader_compile 1
+#define GL_MAX_SHADER_COMPILER_THREADS_KHR 0x91B0
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+#endif /* GL_KHR_parallel_shader_compile */
+
+#ifndef GL_CHROMIUM_shared_image
+#define GL_CHROMIUM_shared_image 1
+#define GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM 0x8AF6
+#define GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM 0x8AF7
+#endif /* GL_CHROMIUM_shared_image */
+
+#ifndef GL_NV_internalformat_sample_query
+#define GL_MULTISAMPLES_NV 0x9371
+#define GL_SUPERSAMPLE_SCALE_X_NV 0x9372
+#define GL_SUPERSAMPLE_SCALE_Y_NV 0x9373
+#define GL_CONFORMANT_NV 0x9374
+#endif /* GL_NV_internalformat_sample_query */
+
 #define GL_GLEXT_PROTOTYPES 1
 
 #if defined(OS_WIN)
@@ -412,22 +450,26 @@
 #define GL_BINDING_CALL
 #endif
 
+#if defined(NDEBUG) && !defined(GPU_ENABLE_SERVICE_LOGGING)
 #define GL_SERVICE_LOG(args) DLOG(INFO) << args;
-#if defined(NDEBUG)
-  #define GL_SERVICE_LOG_CODE_BLOCK(code)
+#define GL_SERVICE_LOG_CODE_BLOCK(code)
 #else
-  #define GL_SERVICE_LOG_CODE_BLOCK(code) code
+#define GL_SERVICE_LOG(args) LOG(INFO) << args;
+#define GL_SERVICE_LOG_CODE_BLOCK(code) code
 #endif
 
-// Forward declare OSMesa types.
-typedef struct osmesa_context *OSMesaContext;
-typedef void (*OSMESAproc)();
+// OVR_multiview2 constants.
+#define GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_NUM_VIEWS_OVR 0x9630
+#define GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_BASE_VIEW_INDEX_OVR 0x9632
+#define GL_MAX_VIEWS_OVR 0x9631
+#define GL_FRAMEBUFFER_INCOMPLETE_VIEW_TARGETS_OVR 0x9633
+
+#define GL_QUERY_RESULT_AVAILABLE_NO_FLUSH_CHROMIUM_EXT 0x8868
 
 // Forward declare EGL types.
 typedef uint64_t EGLuint64CHROMIUM;
 
 #include "gl_bindings_autogen_gl.h"
-#include "gl_bindings_autogen_osmesa.h"
 
 #if defined(USE_EGL)
 #include "gl_bindings_autogen_egl.h"
@@ -448,7 +490,7 @@ struct GLVersionInfo;
 struct GL_EXPORT DriverGL {
   void InitializeStaticBindings();
   void InitializeDynamicBindings(const GLVersionInfo* ver,
-                                 const ExtensionSet& extensions);
+                                 const gfx::ExtensionSet& extensions);
   void ClearBindings();
 
   ProcsGL fn;
@@ -464,18 +506,6 @@ struct GL_EXPORT CurrentGL {
   GLApi* Api = nullptr;
   DriverGL* Driver = nullptr;
   const GLVersionInfo* Version = nullptr;
-};
-
-struct GL_EXPORT DriverOSMESA {
-  void InitializeStaticBindings();
-  void InitializeExtensionBindings();
-  void ClearBindings();
-
-  ProcsOSMESA fn;
-  ExtensionsOSMESA ext;
-
- private:
-  static std::string GetPlatformExtensions();
 };
 
 #if defined(OS_WIN)
@@ -527,9 +557,6 @@ struct GL_EXPORT DriverGLX {
 #define g_current_gl_driver g_current_gl_context_tls->Get()->Driver
 #define g_current_gl_version g_current_gl_context_tls->Get()->Version
 GL_EXPORT extern base::ThreadLocalPointer<CurrentGL>* g_current_gl_context_tls;
-
-GL_EXPORT extern OSMESAApi* g_current_osmesa_context;
-GL_EXPORT extern DriverOSMESA g_driver_osmesa;
 
 #if defined(USE_EGL)
 GL_EXPORT extern EGLApi* g_current_egl_context;

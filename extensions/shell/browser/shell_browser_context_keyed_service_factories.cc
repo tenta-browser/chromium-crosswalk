@@ -6,16 +6,17 @@
 
 #include "extensions/browser/updater/update_service_factory.h"
 #include "extensions/shell/browser/api/identity/identity_api.h"
+#include "extensions/shell/browser/shell_extension_system_factory.h"
 
 namespace extensions {
 namespace shell {
 
 void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
-  IdentityAPI::GetFactoryInstance();
-
   // TODO(rockot): Remove this once UpdateService is supported across all
   // extensions embedders (and namely chrome.)
   UpdateServiceFactory::GetInstance();
+
+  ShellExtensionSystemFactory::GetInstance();
 }
 
 }  // namespace shell

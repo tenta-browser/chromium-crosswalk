@@ -4,7 +4,6 @@
 
 #include "extensions/renderer/user_script_set_manager.h"
 
-#include "base/memory/ptr_util.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/common/extension_messages.h"
@@ -66,9 +65,8 @@ void UserScriptSetManager::GetAllInjections(
     UserScript::RunLocation run_location) {
   static_scripts_.GetInjections(injections, render_frame, tab_id, run_location,
                                 activity_logging_enabled_);
-  for (UserScriptSetMap::iterator it = programmatic_scripts_.begin();
-       it != programmatic_scripts_.end();
-       ++it) {
+  for (auto it = programmatic_scripts_.begin();
+       it != programmatic_scripts_.end(); ++it) {
     it->second->GetInjections(injections, render_frame, tab_id, run_location,
                               activity_logging_enabled_);
   }
@@ -78,9 +76,8 @@ void UserScriptSetManager::GetAllActiveExtensionIds(
     std::set<std::string>* ids) const {
   DCHECK(ids);
   static_scripts_.GetActiveExtensionIds(ids);
-  for (UserScriptSetMap::const_iterator it = programmatic_scripts_.begin();
-       it != programmatic_scripts_.end();
-       ++it) {
+  for (auto it = programmatic_scripts_.cbegin();
+       it != programmatic_scripts_.cend(); ++it) {
     it->second->GetActiveExtensionIds(ids);
   }
 }
@@ -92,11 +89,11 @@ UserScriptSet* UserScriptSetManager::GetProgrammaticScriptsByHostID(
 }
 
 void UserScriptSetManager::OnUpdateUserScripts(
-    base::SharedMemoryHandle shared_memory,
+    base::ReadOnlySharedMemoryRegion shared_memory,
     const HostID& host_id,
     const std::set<HostID>& changed_hosts,
     bool whitelisted_only) {
-  if (!base::SharedMemory::IsHandleValid(shared_memory)) {
+  if (!shared_memory.IsValid()) {
     NOTREACHED() << "Bad scripts handle";
     return;
   }
@@ -149,8 +146,7 @@ void UserScriptSetManager::OnUpdateUserScripts(
     effective_hosts = &all_hosts;
   }
 
-  if (scripts->UpdateUserScripts(shared_memory,
-                                 *effective_hosts,
+  if (scripts->UpdateUserScripts(std::move(shared_memory), *effective_hosts,
                                  whitelisted_only)) {
     for (auto& observer : observers_)
       observer.OnUserScriptsUpdated(*effective_hosts);

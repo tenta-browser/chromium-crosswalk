@@ -10,60 +10,41 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "chrome/common/webui_url_constants.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
-#include "components/signin/core/browser/fake_signin_manager.h"
-#include "components/signin/core/browser/profile_management_switches.h"
-#include "components/signin/core/browser/scoped_account_consistency.h"
-#include "components/signin/core/browser/test_signin_client.h"
-#include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "components/signin/public/base/account_consistency_method.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
 // Constants defined for a better formatting of the test tables:
-const signin::AccountConsistencyMethod kDiceFixAuthErrors =
-    signin::AccountConsistencyMethod::kDiceFixAuthErrors;
 const signin::AccountConsistencyMethod kDice =
     signin::AccountConsistencyMethod::kDice;
-const signin::AccountConsistencyMethod kDicePrepareMigration =
-    signin::AccountConsistencyMethod::kDicePrepareMigration;
+const signin::AccountConsistencyMethod kDiceMigration =
+    signin::AccountConsistencyMethod::kDiceMigration;
 
 class ProcessDiceHeaderDelegateImplTest
     : public ChromeRenderViewHostTestHarness {
  public:
   ProcessDiceHeaderDelegateImplTest()
-      : signin_client_(&pref_service_),
-        signin_manager_(&signin_client_,
-                        &token_service_,
-                        &account_tracker_service_,
-                        nullptr),
-        enable_sync_called_(false),
+      : enable_sync_called_(false),
         show_error_called_(false),
         account_id_("12345"),
         email_("foo@bar.com"),
-        auth_error_(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS) {
-    signin::RegisterAccountConsistencyProfilePrefs(pref_service_.registry());
-    AccountTrackerService::RegisterPrefs(pref_service_.registry());
-    SigninManager::RegisterProfilePrefs(pref_service_.registry());
-    account_tracker_service_.Initialize(&signin_client_);
-  }
+        auth_error_(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS) {}
 
-  ~ProcessDiceHeaderDelegateImplTest() override {
-    signin_manager_.Shutdown();
-    account_tracker_service_.Shutdown();
-    token_service_.Shutdown();
-    signin_client_.Shutdown();
-  }
+  ~ProcessDiceHeaderDelegateImplTest() override {}
 
   // Creates a ProcessDiceHeaderDelegateImpl instance.
   std::unique_ptr<ProcessDiceHeaderDelegateImpl> CreateDelegate(
-      bool is_sync_signin_tab) {
+      bool is_sync_signin_tab,
+      signin::AccountConsistencyMethod account_consistency) {
     return std::make_unique<ProcessDiceHeaderDelegateImpl>(
-        web_contents(), &pref_service_, &signin_manager_, is_sync_signin_tab,
+        web_contents(), account_consistency,
+        identity_test_environment_.identity_manager(), is_sync_signin_tab,
         base::BindOnce(&ProcessDiceHeaderDelegateImplTest::StartSyncCallback,
                        base::Unretained(this)),
         base::BindOnce(
@@ -89,11 +70,7 @@ class ProcessDiceHeaderDelegateImplTest
     show_error_called_ = true;
   }
 
-  sync_preferences::TestingPrefServiceSyncable pref_service_;
-  TestSigninClient signin_client_;
-  FakeProfileOAuth2TokenService token_service_;
-  AccountTrackerService account_tracker_service_;
-  FakeSigninManager signin_manager_;
+  signin::IdentityTestEnvironment identity_test_environment_;
 
   bool enable_sync_called_;
   bool show_error_called_;
@@ -105,12 +82,11 @@ class ProcessDiceHeaderDelegateImplTest
 // Check that sync is enabled if the tab is closed during signin.
 TEST_F(ProcessDiceHeaderDelegateImplTest, CloseTabWhileStartingSync) {
   // Setup the test.
-  signin::ScopedAccountConsistencyDice account_consistency;
   GURL kSigninURL = GURL("https://accounts.google.com");
   NavigateAndCommit(kSigninURL);
   ASSERT_EQ(kSigninURL, web_contents()->GetVisibleURL());
   std::unique_ptr<ProcessDiceHeaderDelegateImpl> delegate =
-      CreateDelegate(true);
+      CreateDelegate(true, signin::AccountConsistencyMethod::kDice);
 
   // Close the tab.
   DeleteContents();
@@ -125,12 +101,11 @@ TEST_F(ProcessDiceHeaderDelegateImplTest, CloseTabWhileStartingSync) {
 // received.
 TEST_F(ProcessDiceHeaderDelegateImplTest, CloseTabWhileFailingSignin) {
   // Setup the test.
-  signin::ScopedAccountConsistencyDice account_consistency;
   GURL kSigninURL = GURL("https://accounts.google.com");
   NavigateAndCommit(kSigninURL);
   ASSERT_EQ(kSigninURL, web_contents()->GetVisibleURL());
   std::unique_ptr<ProcessDiceHeaderDelegateImpl> delegate =
-      CreateDelegate(true);
+      CreateDelegate(true, signin::AccountConsistencyMethod::kDice);
 
   // Close the tab.
   DeleteContents();
@@ -155,16 +130,12 @@ struct TestConfiguration {
 TestConfiguration kEnableSyncTestCases[] = {
     // clang-format off
     // AccountConsistency | signed_in | signin_tab | callback_called | show_ntp
-    {kDiceFixAuthErrors,    false,      false,       false,            false},
-    {kDiceFixAuthErrors,    false,      true,        false,            false},
-    {kDicePrepareMigration, false,      false,       false,            false},
-    {kDicePrepareMigration, false,      true,        true,             true},
+    {kDiceMigration,        false,      false,       false,            false},
+    {kDiceMigration,        false,      true,        true,             true},
     {kDice,                 false,      false,       false,            false},
     {kDice,                 false,      true,        true,             true},
-    {kDiceFixAuthErrors,    true,       false,       false,            false},
-    {kDiceFixAuthErrors,    true,       false,       false,            false},
-    {kDicePrepareMigration, true,       false,       false,            false},
-    {kDicePrepareMigration, true,       false,       false,            false},
+    {kDiceMigration,        true,       false,       false,            false},
+    {kDiceMigration,        true,       false,       false,            false},
     {kDice,                 true,       false,       false,            false},
     {kDice,                 true,       true,        false,            false},
     // clang-format on
@@ -178,42 +149,36 @@ class ProcessDiceHeaderDelegateImplTestEnableSync
 // Test the EnableSync() method in all configurations.
 TEST_P(ProcessDiceHeaderDelegateImplTestEnableSync, EnableSync) {
   // Setup the test.
-  signin::ScopedAccountConsistency account_consistency(
-      GetParam().account_consistency);
   GURL kSigninURL = GURL("https://accounts.google.com");
   NavigateAndCommit(kSigninURL);
   ASSERT_EQ(kSigninURL, web_contents()->GetVisibleURL());
   if (GetParam().signed_in)
-    signin_manager_.SignIn("gaia_id", "user", "pass");
+    identity_test_environment_.SetPrimaryAccount(email_);
   std::unique_ptr<ProcessDiceHeaderDelegateImpl> delegate =
-      CreateDelegate(GetParam().signin_tab);
+      CreateDelegate(GetParam().signin_tab, GetParam().account_consistency);
 
   // Check expectations.
   delegate->EnableSync(account_id_);
   EXPECT_EQ(GetParam().callback_called, enable_sync_called_);
   GURL expected_url =
-      GetParam().show_ntp ? GURL(chrome::kChromeUINewTabURL) : kSigninURL;
+      GetParam().show_ntp ? GURL(chrome::kChromeSearchLocalNtpUrl) : kSigninURL;
   EXPECT_EQ(expected_url, web_contents()->GetVisibleURL());
   EXPECT_FALSE(show_error_called_);
 }
 
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        ProcessDiceHeaderDelegateImplTestEnableSync,
-                        ::testing::ValuesIn(kEnableSyncTestCases));
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         ProcessDiceHeaderDelegateImplTestEnableSync,
+                         ::testing::ValuesIn(kEnableSyncTestCases));
 
 TestConfiguration kHandleTokenExchangeFailureTestCases[] = {
     // clang-format off
     // AccountConsistency | signed_in | signin_tab | callback_called | show_ntp
-    {kDiceFixAuthErrors,    false,      false,       false,            false},
-    {kDiceFixAuthErrors,    false,      true,        false,            false},
-    {kDicePrepareMigration, false,      false,       false,            false},
-    {kDicePrepareMigration, false,      true,        true,             true},
+    {kDiceMigration,        false,      false,       false,            false},
+    {kDiceMigration,        false,      true,        true,             true},
     {kDice,                 false,      false,       true,             false},
     {kDice,                 false,      true,        true,             true},
-    {kDiceFixAuthErrors,    true,       false,       false,            false},
-    {kDiceFixAuthErrors,    true,       false,       false,            false},
-    {kDicePrepareMigration, true,       false,       false,            false},
-    {kDicePrepareMigration, true,       false,       false,            false},
+    {kDiceMigration,        true,       false,       false,            false},
+    {kDiceMigration,        true,       false,       false,            false},
     {kDice,                 true,       false,       true,             false},
     {kDice,                 true,       true,        true,             false},
     // clang-format on
@@ -228,26 +193,24 @@ class ProcessDiceHeaderDelegateImplTestHandleTokenExchangeFailure
 TEST_P(ProcessDiceHeaderDelegateImplTestHandleTokenExchangeFailure,
        HandleTokenExchangeFailure) {
   // Setup the test.
-  signin::ScopedAccountConsistency account_consistency(
-      GetParam().account_consistency);
   GURL kSigninURL = GURL("https://accounts.google.com");
   NavigateAndCommit(kSigninURL);
   ASSERT_EQ(kSigninURL, web_contents()->GetVisibleURL());
   if (GetParam().signed_in)
-    signin_manager_.SignIn("gaia_id", "user", "pass");
+    identity_test_environment_.SetPrimaryAccount(email_);
   std::unique_ptr<ProcessDiceHeaderDelegateImpl> delegate =
-      CreateDelegate(GetParam().signin_tab);
+      CreateDelegate(GetParam().signin_tab, GetParam().account_consistency);
 
   // Check expectations.
   delegate->HandleTokenExchangeFailure(email_, auth_error_);
   EXPECT_FALSE(enable_sync_called_);
   EXPECT_EQ(GetParam().callback_called, show_error_called_);
   GURL expected_url =
-      GetParam().show_ntp ? GURL(chrome::kChromeUINewTabURL) : kSigninURL;
+      GetParam().show_ntp ? GURL(chrome::kChromeSearchLocalNtpUrl) : kSigninURL;
   EXPECT_EQ(expected_url, web_contents()->GetVisibleURL());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     ProcessDiceHeaderDelegateImplTestHandleTokenExchangeFailure,
     ::testing::ValuesIn(kHandleTokenExchangeFailureTestCases));

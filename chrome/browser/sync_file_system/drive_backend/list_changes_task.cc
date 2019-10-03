@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/format_macros.h"
 #include "base/location.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
@@ -27,9 +28,7 @@ namespace sync_file_system {
 namespace drive_backend {
 
 ListChangesTask::ListChangesTask(SyncEngineContext* sync_context)
-    : sync_context_(sync_context),
-      weak_ptr_factory_(this) {
-}
+    : sync_context_(sync_context) {}
 
 ListChangesTask::~ListChangesTask() {
 }
@@ -75,10 +74,19 @@ void ListChangesTask::DidListChanges(
     return;
   }
 
-  change_list_.reserve(change_list_.size() +
-                       change_list->mutable_items()->size());
-  std::move(change_list->mutable_items()->begin(),
-            change_list->mutable_items()->end(),
+  auto* mutable_items = change_list->mutable_items();
+
+  // google_apis::ChangeList can contain both FileResource and TeamDriveResource
+  // entries. We only care about FileResource entries, so filter out any entries
+  // that are TeamDriveReasource.
+  base::EraseIf(*mutable_items, [](const auto& change_resource) {
+    return change_resource->type() ==
+           google_apis::ChangeResource::ChangeType::TEAM_DRIVE;
+  });
+
+  change_list_.reserve(change_list_.size() + mutable_items->size());
+
+  std::move(mutable_items->begin(), mutable_items->end(),
             std::back_inserter(change_list_));
   change_list->mutable_items()->clear();
 

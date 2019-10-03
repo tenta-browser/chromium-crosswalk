@@ -16,6 +16,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
+#include "net/base/completion_once_callback.h"
 #include "net/disk_cache/disk_cache.h"
 
 namespace gpu {
@@ -30,7 +31,7 @@ class ShaderClearHelper;
 class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
  public:
   using ShaderLoadedCallback =
-      base::Callback<void(const std::string&, const std::string&)>;
+      base::RepeatingCallback<void(const std::string&, const std::string&)>;
 
   void set_shader_loaded_callback(const ShaderLoadedCallback& callback) {
     shader_loaded_callback_ = callback;
@@ -46,13 +47,13 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
   // operation completes.
   int Clear(const base::Time begin_time,
             const base::Time end_time,
-            const net::CompletionCallback& completion_callback);
+            net::CompletionOnceCallback completion_callback);
 
   // Sets a callback for when the cache is available. If the cache is
   // already available the callback will not be called and net::OK is returned.
   // If the callback is set net::ERR_IO_PENDING is returned and the callback
   // will be executed when the cache is available.
-  int SetAvailableCallback(const net::CompletionCallback& callback);
+  int SetAvailableCallback(net::CompletionOnceCallback callback);
 
   // Returns the number of elements currently in the cache.
   int32_t Size();
@@ -62,7 +63,7 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
   // The return value is a net error code. If this method returns
   // ERR_IO_PENDING, the |callback| will be invoked when all entries have
   // been written to the cache.
-  int SetCacheCompleteCallback(const net::CompletionCallback& callback);
+  int SetCacheCompleteCallback(net::CompletionOnceCallback callback);
 
   // Returns the size which should be used for the shader disk cache.
   static size_t CacheSizeBytes();
@@ -89,8 +90,8 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
   bool cache_available_;
   base::FilePath cache_path_;
   bool is_initialized_;
-  net::CompletionCallback available_callback_;
-  net::CompletionCallback cache_complete_callback_;
+  net::CompletionOnceCallback available_callback_;
+  net::CompletionOnceCallback cache_complete_callback_;
   ShaderLoadedCallback shader_loaded_callback_;
 
   std::unique_ptr<disk_cache::Backend> backend_;
@@ -117,14 +118,14 @@ class ShaderCacheFactory : public base::ThreadChecker {
   void ClearByPath(const base::FilePath& path,
                    const base::Time& begin_time,
                    const base::Time& end_time,
-                   const base::Closure& callback);
+                   base::OnceClosure callback);
 
   // Same as ClearByPath, but looks up the cache by |client_id|. The |callback|
   // will be executed when the clear is complete.
   void ClearByClientId(int32_t client_id,
                        const base::Time& begin_time,
                        const base::Time& end_time,
-                       const base::Closure& callback);
+                       base::OnceClosure callback);
 
   // Retrieve the shader disk cache for the provided |client_id|.
   scoped_refptr<ShaderDiskCache> Get(int32_t client_id);

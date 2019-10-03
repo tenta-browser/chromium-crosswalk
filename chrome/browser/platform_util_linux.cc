@@ -11,7 +11,8 @@
 #include "base/process/launch.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/version.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "content/public/browser/browser_thread.h"
@@ -42,7 +43,7 @@ void RunCommand(const std::string& command,
   // to a command that needs a terminal.  Set the environment variable telling
   // it that we definitely don't have a terminal available and that it should
   // bring up a new terminal if necessary.  See "man mailcap".
-  options.environ["MM_NOTTTY"] = "1";
+  options.environment["MM_NOTTTY"] = "1";
 
   // In Google Chrome, we do not let GNOME's bug-buddy intercept our crashes.
   // However, we do not want this environment variable to propagate to external
@@ -50,11 +51,11 @@ void RunCommand(const std::string& command,
   char* disable_gnome_bug_buddy = getenv("GNOME_DISABLE_CRASH_DIALOG");
   if (disable_gnome_bug_buddy &&
       disable_gnome_bug_buddy == std::string("SET_BY_GOOGLE_CHROME"))
-    options.environ["GNOME_DISABLE_CRASH_DIALOG"] = std::string();
+    options.environment["GNOME_DISABLE_CRASH_DIALOG"] = std::string();
 
   base::Process process = base::LaunchProcess(argv, options);
   if (process.IsValid())
-    base::EnsureProcessGetsReaped(process.Pid());
+    base::EnsureProcessGetsReaped(std::move(process));
 }
 
 void XDGOpen(const base::FilePath& working_directory, const std::string& path) {
@@ -136,6 +137,9 @@ void ShowItem(Profile* profile,
 namespace internal {
 
 void PlatformOpenVerifiedItem(const base::FilePath& path, OpenItemType type) {
+  // May result in an interactive dialog.
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   switch (type) {
     case OPEN_FILE:
       XDGOpen(path.DirName(), path.value());

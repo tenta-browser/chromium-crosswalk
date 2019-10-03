@@ -12,23 +12,22 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/test_io_thread.h"
-#include "device/test/usb_test_gadget.h"
-#include "device/usb/usb_device.h"
-#include "net/base/io_buffer.h"
 #include "services/device/hid/hid_service.h"
-#include "services/device/public/interfaces/hid.mojom.h"
+#include "services/device/public/mojom/hid.mojom.h"
+#include "services/device/test/usb_test_gadget.h"
+#include "services/device/usb/usb_device.h"
+#include "services/device/usb/usb_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace device {
 
 namespace {
-
-using net::IOBufferWithSize;
 
 // Helper class that can be used to block until a HID device with a particular
 // serial number is available. Example usage:
@@ -109,7 +108,7 @@ class TestIoCallback {
   ~TestIoCallback() {}
 
   void SetReadResult(bool success,
-                     scoped_refptr<net::IOBuffer> buffer,
+                     scoped_refptr<base::RefCountedBytes> buffer,
                      size_t size) {
     result_ = success;
     buffer_ = buffer;
@@ -135,14 +134,14 @@ class TestIoCallback {
     return base::BindOnce(&TestIoCallback::SetWriteResult,
                           base::Unretained(this));
   }
-  scoped_refptr<net::IOBuffer> buffer() const { return buffer_; }
+  scoped_refptr<base::RefCountedBytes> buffer() const { return buffer_; }
   size_t size() const { return size_; }
 
  private:
   base::RunLoop run_loop_;
   bool result_;
   size_t size_;
-  scoped_refptr<net::IOBuffer> buffer_;
+  scoped_refptr<base::RefCountedBytes> buffer_;
 };
 
 }  // namespace
@@ -156,13 +155,15 @@ class HidConnectionTest : public testing::Test {
 
  protected:
   void SetUp() override {
-    if (!UsbTestGadget::IsTestEnabled())
+    if (!UsbTestGadget::IsTestEnabled() || !usb_service_)
       return;
 
     service_ = HidService::Create();
     ASSERT_TRUE(service_);
 
-    test_gadget_ = UsbTestGadget::Claim(io_thread_.task_runner());
+    usb_service_ = UsbService::Create();
+    test_gadget_ =
+        UsbTestGadget::Claim(usb_service_.get(), io_thread_.task_runner());
     ASSERT_TRUE(test_gadget_);
     ASSERT_TRUE(test_gadget_->SetType(UsbTestGadget::HID_ECHO));
 
@@ -176,6 +177,7 @@ class HidConnectionTest : public testing::Test {
   base::TestIOThread io_thread_;
   std::unique_ptr<HidService> service_;
   std::unique_ptr<UsbTestGadget> test_gadget_;
+  std::unique_ptr<UsbService> usb_service_;
   std::string device_guid_;
 };
 
@@ -190,14 +192,14 @@ TEST_F(HidConnectionTest, ReadWrite) {
 
   const char kBufferSize = 9;
   for (char i = 0; i < 8; ++i) {
-    scoped_refptr<IOBufferWithSize> buffer(new IOBufferWithSize(kBufferSize));
+    auto buffer = base::MakeRefCounted<base::RefCountedBytes>(kBufferSize);
     buffer->data()[0] = 0;
     for (unsigned char j = 1; j < kBufferSize; ++j) {
       buffer->data()[j] = i + j - 1;
     }
 
     TestIoCallback write_callback;
-    conn->Write(buffer, buffer->size(), write_callback.GetWriteCallback());
+    conn->Write(buffer, write_callback.GetWriteCallback());
     ASSERT_TRUE(write_callback.WaitForResult());
 
     TestIoCallback read_callback;

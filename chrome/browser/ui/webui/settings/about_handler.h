@@ -15,13 +15,13 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/webui/help/version_updater.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
-#include "chrome/browser/upgrade_observer.h"
+#include "chrome/browser/upgrade_detector/upgrade_observer.h"
 #include "components/policy/core/common/policy_service.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/task/cancelable_task_tracker.h"
-#include "chromeos/system/version_loader.h"
+#include "chrome/browser/chromeos/tpm_firmware_update.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace base {
@@ -85,6 +85,18 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   void HandleOpenHelpPage(const base::ListValue* args);
 
 #if defined(OS_CHROMEOS)
+  // Checks if ReleaseNotes is enabled.
+  void HandleGetEnabledReleaseNotes(const base::ListValue* args);
+
+  // Checks if system is connected to internet.
+  void HandleCheckInternetConnection(const base::ListValue* args);
+
+  // Opens the release notes app. |args| must be empty.
+  void HandleLaunchReleaseNotes(const base::ListValue* args);
+
+  // Opens the help page. |args| must be empty.
+  void HandleOpenOsHelpPage(const base::ListValue* args);
+
   // Sets the release track version.
   void HandleSetChannel(const base::ListValue* args);
 
@@ -117,7 +129,8 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   // Called once when the page has loaded to retrieve the TPM firmware update
   // status.
   void HandleRefreshTPMFirmwareUpdateStatus(const base::ListValue* args);
-  void RefreshTPMFirmwareUpdateStatus(bool update_available);
+  void RefreshTPMFirmwareUpdateStatus(
+      const std::set<chromeos::tpm_firmware_update::Mode>& modes);
 #endif
 
   // Checks for and applies update.
@@ -126,6 +139,7 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   // Callback method which forwards status updates to the page.
   void SetUpdateStatus(VersionUpdater::Status status,
                        int progress,
+                       bool rollback,
                        const std::string& version,
                        int64_t size,
                        const base::string16& fail_message);
@@ -147,6 +161,16 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   void OnRegulatoryLabelTextRead(std::string callback_id,
                                  const base::FilePath& label_dir_path,
                                  const std::string& text);
+
+  // Retrieves device end of life status.
+  // Will asynchronously resolve the provided callback with a boolean
+  // indicating whether the device has reached end-of-life status (will no
+  // longer receive updates).
+  void HandleGetHasEndOfLife(const base::ListValue* args);
+
+  // Callbacks for version_updater_->GetEolStatus calls.
+  void OnGetEndOfLifeStatus(std::string callback_id,
+                            update_engine::EndOfLifeStatus status);
 #endif
 
   // Specialized instance of the VersionUpdater used to update the browser.
@@ -159,7 +183,7 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   bool apply_changes_from_upgrade_observer_;
 
   // Used for callbacks.
-  base::WeakPtrFactory<AboutHandler> weak_factory_;
+  base::WeakPtrFactory<AboutHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AboutHandler);
 };

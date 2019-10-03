@@ -9,39 +9,31 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/metrics/field_trial.h"
-#include "base/profiler/stack_sampling_profiler.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_browser_field_trials.h"
 #include "chrome/browser/chrome_process_singleton.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/process_singleton.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
-#include "chrome/common/stack_sampling_configuration.h"
-#include "components/metrics/call_stack_profile_params.h"
 #include "content/public/browser/browser_main_parts.h"
 #include "content/public/common/main_function_params.h"
 
 class BrowserProcessImpl;
 class ChromeBrowserMainExtraParts;
-class FieldTrialSynchronizer;
+class StartupData;
+class HeapProfilerController;
 class PrefService;
 class Profile;
 class StartupBrowserCreator;
 class StartupTimeBomb;
 class ShutdownWatcherHelper;
-class ThreeDAPIObserver;
 class WebUsbDetector;
 
-namespace chrome_browser {
-// For use by ShowMissingLocaleMessageBox.
-#if defined(OS_WIN)
-extern const char kMissingLocaleDataTitle[];
-#endif
+namespace tracing {
+class TraceEventSystemStatsMonitor;
+}
 
-#if defined(OS_WIN)
-extern const char kMissingLocaleDataMessage[];
-#endif
+namespace performance_monitor {
+class SystemMonitor;
 }
 
 class ChromeBrowserMainParts : public content::BrowserMainParts {
@@ -51,26 +43,31 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // Add additional ChromeBrowserMainExtraParts.
   virtual void AddParts(ChromeBrowserMainExtraParts* parts);
 
+#if !defined(OS_ANDROID)
+  // Returns the RunLoop that would be run by MainMessageLoopRun. This is used
+  // by InProcessBrowserTests to allow them to run until the BrowserProcess is
+  // ready for the browser to exit.
+  static std::unique_ptr<base::RunLoop> TakeRunLoopForTest();
+#endif
+
  protected:
-  explicit ChromeBrowserMainParts(
-      const content::MainFunctionParams& parameters);
+  ChromeBrowserMainParts(const content::MainFunctionParams& parameters,
+                         StartupData* startup_data);
 
   // content::BrowserMainParts overrides.
   // These are called in-order by content::BrowserMainLoop.
   // Each stage calls the same stages in any ChromeBrowserMainExtraParts added
   // with AddParts() from ChromeContentBrowserClient::CreateBrowserMainParts.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   void PostEarlyInitialization() override;
   void ToolkitInitialized() override;
   void PreMainMessageLoopStart() override;
   void PostMainMessageLoopStart() override;
   int PreCreateThreads() override;
-  void ServiceManagerConnectionStarted(
-      content::ServiceManagerConnection* connection) override;
+  void PostCreateThreads() override;
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
   void PostMainMessageLoopRun() override;
-  void PreShutdown() override;
   void PostDestroyThreads() override;
 
   // Additional stages for ChromeBrowserMainExtraParts. These stages are called
@@ -95,12 +92,8 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
 
   Profile* profile() { return profile_; }
 
-  const PrefService* local_state() const { return local_state_; }
-
  private:
-  // Sets up the field trials and related initialization. Call only after
-  // about:flags have been converted to switches.
-  void SetupFieldTrials();
+  friend class ChromeBrowserMainPartsTestApi;
 
   // Constructs the metrics service and initializes metrics recording.
   void SetupMetrics();
@@ -114,7 +107,19 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
 
   // Reads origin trial policy data from local state and configures command line
   // for child processes.
-  void SetupOriginTrialsCommandLine();
+  void SetupOriginTrialsCommandLine(PrefService* local_state);
+
+  // Calling during PreEarlyInitialization() to complete the remaining tasks
+  // after the local state is loaded. Return value is an exit status,
+  // RESULT_CODE_NORMAL_EXIT indicates success. If the return value is
+  // RESULT_CODE_MISSING_DATA, then |failed_to_load_resource_bundle| indicates
+  // if the ResourceBundle couldn't be loaded.
+  int OnLocalStateLoaded(bool* failed_to_load_resource_bundle);
+
+  // Applies any preferences (to local state) needed for first run. This is
+  // always called and early outs if not first-run. Return value is an exit
+  // status, RESULT_CODE_NORMAL_EXIT indicates success.
+  int ApplyFirstRunPrefs();
 
   // Methods for Main Message Loop -------------------------------------------
 
@@ -124,9 +129,12 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // Members initialized on construction ---------------------------------------
 
   const content::MainFunctionParams parameters_;
+  // TODO(sky): remove this. This class (and related calls), may mutate the
+  // CommandLine, so it is misleading keeping a const ref here.
   const base::CommandLine& parsed_command_line_;
   int result_code_;
 
+#if !defined(OS_ANDROID)
   // Create StartupTimeBomb object for watching jank during startup.
   std::unique_ptr<StartupTimeBomb> startup_watcher_;
 
@@ -135,23 +143,30 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // it is destroyed last.
   std::unique_ptr<ShutdownWatcherHelper> shutdown_watcher_;
 
-  // Statistical testing infrastructure for the entire browser. nullptr until
-  // |SetupFieldTrials()| is called.
-  std::unique_ptr<base::FieldTrialList> field_trial_list_;
-
-  ChromeBrowserFieldTrials browser_field_trials_;
-
-#if !defined(OS_ANDROID)
   std::unique_ptr<WebUsbDetector> web_usb_detector_;
-#endif
+#endif  // !defined(OS_ANDROID)
 
   // Vector of additional ChromeBrowserMainExtraParts.
   // Parts are deleted in the inverse order they are added.
   std::vector<ChromeBrowserMainExtraParts*> chrome_extra_parts_;
 
-  // A profiler that periodically samples stack traces. Used to sample startup
-  // behavior.
-  base::StackSamplingProfiler sampling_profiler_;
+  // The controller schedules UMA heap profiles collections and forwarding down
+  // the reporting pipeline.
+  std::unique_ptr<HeapProfilerController> heap_profiler_controller_;
+
+  // The system monitor instance, used by some subsystems to collect the system
+  // metrics they need.
+  std::unique_ptr<performance_monitor::SystemMonitor> system_monitor_;
+
+  // The system stats monitor used by chrome://tracing. This doesn't do anything
+  // until tracing of the |system_stats| category is enabled.
+  std::unique_ptr<tracing::TraceEventSystemStatsMonitor>
+      trace_event_system_stats_monitor_;
+
+  // Whether PerformPreMainMessageLoopStartup() is called on VariationsService.
+  // Initialized to true if |MainFunctionParams::ui_task| is null (meaning not
+  // running browser_tests), but may be forced to true for tests.
+  bool should_call_pre_main_loop_start_startup_on_variations_service_;
 
   // Members initialized after / released before main_message_loop_ ------------
 
@@ -165,27 +180,25 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // ProcessSingleton.
   std::unique_ptr<ChromeProcessSingleton> process_singleton_;
 
-  // Android's first run is done in Java instead of native.
-  std::unique_ptr<first_run::MasterPrefs> master_prefs_;
-
   ProcessSingleton::NotifyResult notify_result_ =
       ProcessSingleton::PROCESS_NONE;
 
   // Members needed across shutdown methods.
   bool restart_last_session_ = false;
+#endif  // !defined(OS_ANDROID)
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+  // Android's first run is done in Java instead of native. Chrome OS does not
+  // use master preferences.
+  std::unique_ptr<first_run::MasterPrefs> master_prefs_;
 #endif
 
   Profile* profile_;
   bool run_message_loop_;
-  std::unique_ptr<ThreeDAPIObserver> three_d_observer_;
 
-  // Initialized in |SetupFieldTrials()|.
-  scoped_refptr<FieldTrialSynchronizer> field_trial_synchronizer_;
-
-  // Members initialized in PreMainMessageLoopRun, needed in
-  // PreMainMessageLoopRunThreadsCreated.
-  PrefService* local_state_;
   base::FilePath user_data_dir_;
+
+  StartupData* startup_data_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainParts);
 };

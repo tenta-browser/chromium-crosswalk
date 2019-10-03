@@ -10,7 +10,9 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/time/tick_clock.h"
 #include "cc/debug/rendering_stats_instrumentation.h"
+#include "cc/test/fake_compositor_frame_reporting_controller.h"
 
 namespace cc {
 
@@ -19,28 +21,34 @@ FakeCompositorTimingHistory::Create(
     bool using_synchronous_renderer_compositor) {
   std::unique_ptr<RenderingStatsInstrumentation>
       rendering_stats_instrumentation = RenderingStatsInstrumentation::Create();
+  std::unique_ptr<CompositorFrameReportingController> reporting_controller =
+      std::make_unique<FakeCompositorFrameReportingController>();
   return base::WrapUnique(new FakeCompositorTimingHistory(
       using_synchronous_renderer_compositor,
-      std::move(rendering_stats_instrumentation)));
+      std::move(rendering_stats_instrumentation),
+      std::move(reporting_controller)));
 }
 
 FakeCompositorTimingHistory::FakeCompositorTimingHistory(
     bool using_synchronous_renderer_compositor,
     std::unique_ptr<RenderingStatsInstrumentation>
-        rendering_stats_instrumentation)
+        rendering_stats_instrumentation,
+    std::unique_ptr<CompositorFrameReportingController> reporting_controller)
     : CompositorTimingHistory(using_synchronous_renderer_compositor,
                               CompositorTimingHistory::NULL_UMA,
-                              rendering_stats_instrumentation.get()),
+                              rendering_stats_instrumentation.get(),
+                              reporting_controller.get()),
       rendering_stats_instrumentation_owned_(
-          std::move(rendering_stats_instrumentation)) {}
+          std::move(rendering_stats_instrumentation)),
+      reporting_controller_owned_(std::move(reporting_controller)) {}
 
-FakeCompositorTimingHistory::~FakeCompositorTimingHistory() {
-}
+FakeCompositorTimingHistory::~FakeCompositorTimingHistory() = default;
 
 void FakeCompositorTimingHistory::SetAllEstimatesTo(base::TimeDelta duration) {
   begin_main_frame_queue_duration_critical_ = duration;
   begin_main_frame_queue_duration_not_critical_ = duration;
-  begin_main_frame_start_to_commit_duration_ = duration;
+  begin_main_frame_start_to_ready_to_commit_duration_ = duration;
+  commit_duration_ = duration;
   commit_to_ready_to_activate_duration_ = duration;
   prepare_tiles_duration_ = duration;
   activate_duration_ = duration;
@@ -59,8 +67,14 @@ void FakeCompositorTimingHistory::
 }
 
 void FakeCompositorTimingHistory::
-    SetBeginMainFrameStartToCommitDurationEstimate(base::TimeDelta duration) {
-  begin_main_frame_start_to_commit_duration_ = duration;
+    SetBeginMainFrameStartToReadyToCommitDurationEstimate(
+        base::TimeDelta duration) {
+  begin_main_frame_start_to_ready_to_commit_duration_ = duration;
+}
+
+void FakeCompositorTimingHistory::SetCommitDurationEstimate(
+    base::TimeDelta duration) {
+  commit_duration_ = duration;
 }
 
 void FakeCompositorTimingHistory::SetCommitToReadyToActivateDurationEstimate(
@@ -95,10 +109,13 @@ FakeCompositorTimingHistory::BeginMainFrameQueueDurationNotCriticalEstimate()
   return begin_main_frame_queue_duration_not_critical_;
 }
 
-base::TimeDelta
-FakeCompositorTimingHistory::BeginMainFrameStartToCommitDurationEstimate()
-    const {
-  return begin_main_frame_start_to_commit_duration_;
+base::TimeDelta FakeCompositorTimingHistory::
+    BeginMainFrameStartToReadyToCommitDurationEstimate() const {
+  return begin_main_frame_start_to_ready_to_commit_duration_;
+}
+
+base::TimeDelta FakeCompositorTimingHistory::CommitDurationEstimate() const {
+  return commit_duration_;
 }
 
 base::TimeDelta
@@ -120,11 +137,11 @@ base::TimeDelta FakeCompositorTimingHistory::DrawDurationEstimate() const {
 }
 
 TestScheduler::TestScheduler(
-    base::SimpleTestTickClock* now_src,
+    const base::TickClock* now_src,
     SchedulerClient* client,
     const SchedulerSettings& scheduler_settings,
     int layer_tree_host_id,
-    OrderedSimpleTaskRunner* task_runner,
+    base::SingleThreadTaskRunner* task_runner,
     std::unique_ptr<CompositorTimingHistory> compositor_timing_history)
     : Scheduler(client,
                 scheduler_settings,
@@ -137,7 +154,6 @@ base::TimeTicks TestScheduler::Now() const {
   return now_src_->NowTicks();
 }
 
-TestScheduler::~TestScheduler() {
-}
+TestScheduler::~TestScheduler() = default;
 
 }  // namespace cc

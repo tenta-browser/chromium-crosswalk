@@ -7,7 +7,8 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "base/stl_util.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -50,8 +51,8 @@ base::string16 GetShippingAddressLabelFormAutofillProfile(
       autofill::ADDRESS_HOME_SORTING_CODE,
   };
 
-  return profile.ConstructInferredLabel(kLabelFields, arraysize(kLabelFields),
-                                        arraysize(kLabelFields), locale);
+  return profile.ConstructInferredLabel(kLabelFields, base::size(kLabelFields),
+                                        base::size(kLabelFields), locale);
 }
 
 base::string16 GetBillingAddressLabelFromAutofillProfile(
@@ -68,8 +69,8 @@ base::string16 GetBillingAddressLabelFromAutofillProfile(
       autofill::ADDRESS_HOME_SORTING_CODE,
   };
 
-  return profile.ConstructInferredLabel(kLabelFields, arraysize(kLabelFields),
-                                        arraysize(kLabelFields), locale);
+  return profile.ConstructInferredLabel(kLabelFields, base::size(kLabelFields),
+                                        base::size(kLabelFields), locale);
 }
 
 base::string16 GetShippingAddressSelectorInfoMessage(

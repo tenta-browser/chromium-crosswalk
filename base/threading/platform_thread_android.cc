@@ -12,11 +12,11 @@
 #include <unistd.h>
 
 #include "base/android/jni_android.h"
+#include "base/base_jni_headers/ThreadUtils_jni.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/threading/platform_thread_internal_posix.h"
 #include "base/threading/thread_id_name_manager.h"
-#include "jni/ThreadUtils_jni.h"
 
 namespace base {
 
@@ -34,6 +34,13 @@ const ThreadPriorityToNiceValuePair kThreadPriorityToNiceValueMap[4] = {
     {ThreadPriority::REALTIME_AUDIO, -16},
 };
 
+Optional<bool> CanIncreaseCurrentThreadPriorityForPlatform(
+    ThreadPriority priority) {
+  if (priority == ThreadPriority::REALTIME_AUDIO)
+    return base::make_optional(true);
+  return base::nullopt;
+}
+
 bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority) {
   // On Android, we set the Audio priority through JNI as Audio priority
   // will also allow the process to run while it is backgrounded.
@@ -45,22 +52,19 @@ bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority) {
   return false;
 }
 
-bool GetCurrentThreadPriorityForPlatform(ThreadPriority* priority) {
-  DCHECK(priority);
-  *priority = ThreadPriority::NORMAL;
+Optional<ThreadPriority> GetCurrentThreadPriorityForPlatform() {
   JNIEnv* env = base::android::AttachCurrentThread();
   if (Java_ThreadUtils_isThreadPriorityAudio(
       env, PlatformThread::CurrentId())) {
-    *priority = ThreadPriority::REALTIME_AUDIO;
-    return true;
+    return base::make_optional(ThreadPriority::REALTIME_AUDIO);
   }
-  return false;
+  return base::nullopt;
 }
 
 }  // namespace internal
 
 void PlatformThread::SetName(const std::string& name) {
-  ThreadIdNameManager::GetInstance()->SetName(CurrentId(), name);
+  ThreadIdNameManager::GetInstance()->SetName(name);
 
   // Like linux, on android we can get the thread names to show up in the
   // debugger by setting the process name for the LWP.

@@ -14,29 +14,18 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "chrome/browser/android/tab_state.h"
 #include "chrome/browser/sync/glue/synced_tab_delegate_android.h"
-#include "chrome/browser/ui/tab_contents/core_tab_helper_delegate.h"
-#include "components/favicon/core/favicon_driver_observer.h"
 #include "components/infobars/core/infobar_manager.h"
+#include "components/omnibox/browser/location_bar_model.h"
 #include "components/sessions/core/session_id.h"
-#include "components/toolbar/toolbar_model.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/web_contents_observer.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
-#include "third_party/WebKit/public/platform/media_download_in_product_help.mojom.h"
 
 class GURL;
 class Profile;
 
 namespace cc {
 class Layer;
-}
-
-namespace chrome {
-struct NavigateParams;
 }
 
 namespace android {
@@ -53,10 +42,7 @@ namespace prerender {
 class PrerenderManager;
 }
 
-class TabAndroid : public CoreTabHelperDelegate,
-                   public content::NotificationObserver,
-                   public favicon::FaviconDriverObserver,
-                   public content::WebContentsObserver {
+class TabAndroid {
  public:
   // A Java counterpart will be generated for this enum.
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser
@@ -80,7 +66,7 @@ class TabAndroid : public CoreTabHelperDelegate,
   static void AttachTabHelpers(content::WebContents* web_contents);
 
   TabAndroid(JNIEnv* env, const base::android::JavaRef<jobject>& obj);
-  ~TabAndroid() override;
+  ~TabAndroid();
 
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
@@ -91,7 +77,6 @@ class TabAndroid : public CoreTabHelperDelegate,
   scoped_refptr<cc::Layer> GetContentLayer() const;
 
   // Return specific id information regarding this TabAndroid.
-  const SessionID& session_id() const { return session_tab_id_; }
   const SessionID& window_id() const { return session_window_id_; }
 
   int GetAndroidId() const;
@@ -108,38 +93,19 @@ class TabAndroid : public CoreTabHelperDelegate,
   // it.
   bool IsUserInteractable() const;
 
-  // Load the tab if it was unloaded from memory.
-  bool LoadIfNeeded();
-
   // Helper methods to make it easier to access objects from the associated
   // WebContents.  Can return NULL.
   Profile* GetProfile() const;
   sync_sessions::SyncedTabDelegate* GetSyncedTabDelegate() const;
 
-  void SetWindowSessionID(SessionID::id_type window_id);
+  // Delete navigation entries matching predicate from frozen state.
+  void DeleteFrozenNavigationEntries(
+      const WebContentsState::DeletionPredicate& predicate);
+
+  void SetWindowSessionID(SessionID window_id);
   void SetSyncId(int sync_id);
 
-  void HandlePopupNavigation(chrome::NavigateParams* params);
-
   bool HasPrerenderedUrl(GURL gurl);
-
-  // Overridden from CoreTabHelperDelegate:
-  void SwapTabContents(content::WebContents* old_contents,
-                       content::WebContents* new_contents,
-                       bool did_start_load,
-                       bool did_finish_load) override;
-
-  // Overridden from NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
-  // Overridden from favicon::FaviconDriverObserver:
-  void OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
-                        NotificationIconType notification_icon_type,
-                        const GURL& icon_url,
-                        bool icon_url_changed,
-                        const gfx::Image& image) override;
 
   // Returns true if this tab is currently presented in the context of custom
   // tabs. Tabs can be moved between different activities so the returned value
@@ -155,6 +121,7 @@ class TabAndroid : public CoreTabHelperDelegate,
       jboolean incognito,
       jboolean is_background_tab,
       const base::android::JavaParamRef<jobject>& jweb_contents,
+      jint jparent_tab_id,
       const base::android::JavaParamRef<jobject>& jweb_contents_delegate,
       const base::android::JavaParamRef<jobject>& jcontext_menu_populator);
   void UpdateDelegates(
@@ -163,8 +130,9 @@ class TabAndroid : public CoreTabHelperDelegate,
         const base::android::JavaParamRef<jobject>& jweb_contents_delegate,
         const base::android::JavaParamRef<jobject>& jcontext_menu_populator);
   void DestroyWebContents(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj,
-                          jboolean delete_native);
+                          const base::android::JavaParamRef<jobject>& obj);
+  void ReleaseWebContents(JNIEnv* env,
+                          const base::android::JavaParamRef<jobject>& obj);
   void OnPhysicalBackingSizeChanged(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -178,6 +146,7 @@ class TabAndroid : public CoreTabHelperDelegate,
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& url,
+      const base::android::JavaParamRef<jstring>& j_initiator_origin,
       const base::android::JavaParamRef<jstring>& j_extra_headers,
       const base::android::JavaParamRef<jobject>& j_post_data,
       jint page_transition,
@@ -185,21 +154,15 @@ class TabAndroid : public CoreTabHelperDelegate,
       jint referrer_policy,
       jboolean is_renderer_initiated,
       jboolean should_replace_current_entry,
-      jlong intent_received_timestamp,
       jboolean has_user_gesture,
-      jboolean should_clear_history_list);
+      jboolean should_clear_history_list,
+      jlong omnibox_input_received_timestamp,
+      jlong intent_received_timestamp);
   void SetActiveNavigationEntryTitleForUrl(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& jurl,
       const base::android::JavaParamRef<jstring>& jtitle);
-  bool Print(JNIEnv* env,
-             const base::android::JavaParamRef<jobject>& obj,
-             jint render_process_id,
-             jint render_frame_id);
-
-  // Sets the tab as content to be printed through JNI.
-  void SetPendingPrint(int render_process_id, int render_frame_id);
 
   // Called to get default favicon of current tab, return null if no
   // favicon is avaliable for current tab.
@@ -213,13 +176,6 @@ class TabAndroid : public CoreTabHelperDelegate,
   static void CreateHistoricalTabFromContents(
       content::WebContents* web_contents);
 
-  void UpdateBrowserControlsState(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jint constraints,
-      jint current,
-      jboolean animate);
-
   void LoadOriginalImage(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
 
@@ -232,39 +188,9 @@ class TabAndroid : public CoreTabHelperDelegate,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& delegate);
 
-  // TODO(dtrainor): Remove this, pull content_layer() on demand.
-  void AttachToTabContentManager(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& jtab_content_manager);
-
-  void ClearThumbnailPlaceholder(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-
   bool HasPrerenderedUrl(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj,
                          const base::android::JavaParamRef<jstring>& url);
-
-  void SetWebappManifestScope(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& scope);
-
-  const std::string& GetWebappManifestScope() const {
-    return webapp_manifest_scope_;
-  }
-
-  void EnableEmbeddedMediaExperience(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jboolean enabled);
-
-  void MediaDownloadInProductHelpDismissed(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-
-  bool ShouldEnableEmbeddedMediaExperience() const;
 
   scoped_refptr<content::DevToolsAgentHost> GetDevToolsAgentHost();
 
@@ -273,40 +199,17 @@ class TabAndroid : public CoreTabHelperDelegate,
   void AttachDetachedTab(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
 
-  // Register the Tab's native methods through JNI.
-  static bool RegisterTabAndroid(JNIEnv* env);
-
-  // content::WebContentsObserver implementation.
-  void OnInterfaceRequestFromFrame(
-      content::RenderFrameHost* render_frame_host,
-      const std::string& interface_name,
-      mojo::ScopedMessagePipeHandle* interface_pipe) override;
-  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
-  void NavigationEntryChanged(
-      const content::EntryChangedDetails& change_details) override;
+  bool AreRendererInputEventsIgnored(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
 
  private:
-  class MediaDownloadInProductHelp;
-
   prerender::PrerenderManager* GetPrerenderManager() const;
-
-  // methods used by MediaDownloadInProductHelp.
-  void CreateInProductHelpService(
-      blink::mojom::MediaDownloadInProductHelpRequest request,
-      content::RenderFrameHost* render_frame_host);
-  void ShowMediaDownloadInProductHelp(const gfx::Rect& rect_in_frame);
-  void DismissMediaDownloadInProductHelp();
-  void OnMediaDownloadInProductHelpConnectionError();
 
   JavaObjectWeakGlobalRef weak_java_tab_;
 
-  // The identifier used by session restore for this tab.
-  SessionID session_tab_id_;
-
   // Identifier of the window the tab is in.
   SessionID session_window_id_;
-
-  content::NotificationRegistrar notification_registrar_;
 
   scoped_refptr<cc::Layer> content_layer_;
   android::TabContentManager* tab_content_manager_;
@@ -316,16 +219,6 @@ class TabAndroid : public CoreTabHelperDelegate,
       web_contents_delegate_;
   scoped_refptr<content::DevToolsAgentHost> devtools_host_;
   std::unique_ptr<browser_sync::SyncedTabDelegateAndroid> synced_tab_delegate_;
-
-  std::string webapp_manifest_scope_;
-  bool embedded_media_experience_enabled_;
-
-  std::unique_ptr<MediaDownloadInProductHelp> media_in_product_help_;
-
-  service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>
-      frame_interfaces_;
-
-  base::WeakPtrFactory<TabAndroid> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TabAndroid);
 };

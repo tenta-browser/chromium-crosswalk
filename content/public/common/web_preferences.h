@@ -13,7 +13,11 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "ui/base/touch/touch_device.h"
+#include "net/nqe/effective_connection_type.h"
+#include "third_party/blink/public/common/css/forced_colors.h"
+#include "third_party/blink/public/common/css/preferred_color_scheme.h"
+#include "third_party/blink/public/mojom/v8_cache_options.mojom.h"
+#include "ui/base/pointer/pointer_device.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -34,15 +38,6 @@ enum EditingBehavior {
   EDITING_BEHAVIOR_LAST = EDITING_BEHAVIOR_ANDROID
 };
 
-// Cache options for V8. See V8CacheOptions.h for information on the options.
-enum V8CacheOptions {
-  V8_CACHE_OPTIONS_DEFAULT,
-  V8_CACHE_OPTIONS_NONE,
-  V8_CACHE_OPTIONS_PARSE,
-  V8_CACHE_OPTIONS_CODE,
-  V8_CACHE_OPTIONS_LAST = V8_CACHE_OPTIONS_CODE
-};
-
 // ImageAnimationPolicy is used for controlling image animation
 // when image frame is rendered for animation.
 // See third_party/WebKit/Source/platform/graphics/ImageAnimationPolicy.h
@@ -55,30 +50,11 @@ enum ImageAnimationPolicy {
 
 enum class ViewportStyle { DEFAULT, MOBILE, TELEVISION, LAST = TELEVISION };
 
-// Controls when the progress bar reports itself as complete. See
-// third_party/WebKit/Source/core/loader/ProgressTracker.cpp for most of its
-// effects.
-enum class ProgressBarCompletion {
-  LOAD_EVENT,
-  RESOURCES_BEFORE_DCL,
-  DOM_CONTENT_LOADED,
-  RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES,
-  LAST = RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES
-};
-
-enum class SavePreviousDocumentResources {
-  NEVER,
-  UNTIL_ON_DOM_CONTENT_LOADED,
-  UNTIL_ON_LOAD,
-  LAST = UNTIL_ON_LOAD
-};
-
 // Defines the autoplay policy to be used. Should match the class in
 // WebSettings.h.
 enum class AutoplayPolicy {
   kNoUserGestureRequired,
   kUserGestureRequired,
-  kUserGestureRequiredForCrossOrigin,
   kDocumentUserActivationRequired,
 };
 
@@ -90,9 +66,9 @@ CONTENT_EXPORT extern const char kCommonScript[];
 // A struct for managing blink's settings.
 //
 // Adding new values to this class probably involves updating
-// blink::WebSettings, content/common/view_messages.h, browser/tab_contents/
-// render_view_host_delegate_helper.cc, browser/profiles/profile.cc,
-// and content/public/common/common_param_traits_macros.h
+// blink::WebSettings, content/common/view_messages.h,
+// browser/profiles/profile.cc, and
+// content/public/common/common_param_traits_macros.h
 struct CONTENT_EXPORT WebPreferences {
   ScriptFontFamilyMap standard_font_family_map;
   ScriptFontFamilyMap fixed_font_family_map;
@@ -127,11 +103,15 @@ struct CONTENT_EXPORT WebPreferences {
   // Preference to save data. When enabled, requests will contain the header
   // 'Save-Data: on'.
   bool data_saver_enabled;
+  // Whether data saver holdback for Web APIs is enabled. If enabled, data saver
+  // appears as disabled to the web consumers even if it has been actually
+  // enabled by the user.
+  bool data_saver_holdback_web_api_enabled;
   bool local_storage_enabled;
   bool databases_enabled;
   bool application_cache_enabled;
   bool tabs_to_links;
-  bool history_entry_requires_user_gesture;
+  bool disable_ipc_flooding_protection;
   bool hyperlink_auditing_enabled;
   bool allow_universal_access_from_file_urls;
   bool allow_file_access_from_file_urls;
@@ -173,6 +153,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool should_print_backgrounds;
   bool should_clear_document_background;
   bool enable_scroll_animator;
+  bool prefers_reduced_motion;
   bool touch_event_feature_detection_enabled;
   bool touch_adjustment_enabled;
   int pointer_events_max_touch_points;
@@ -180,6 +161,7 @@ struct CONTENT_EXPORT WebPreferences {
   ui::PointerType primary_pointer_type;
   int available_hover_types;
   ui::HoverType primary_hover_type;
+  bool dont_send_key_events_to_javascript;
   bool barrel_button_for_drag_enabled = false;
   bool sync_xhr_in_documents_enabled;
   bool should_respect_image_orientation;
@@ -188,18 +170,24 @@ struct CONTENT_EXPORT WebPreferences {
   bool supports_multiple_windows;
   bool viewport_enabled;
   bool viewport_meta_enabled;
+
+  // If true - Blink will clamp the minimum scale factor to the content width,
+  // preventing zoom beyond the visible content. This is really only needed if
+  // viewport_enabled is on.
   bool shrinks_viewport_contents_to_fit;
+
   ViewportStyle viewport_style;
   bool always_show_context_menu_on_touch;
+  bool smooth_scroll_for_find_enabled;
   bool main_frame_resizes_are_orientation_changes;
   bool initialize_at_minimum_page_scale;
   bool smart_insert_delete_enabled;
   bool spatial_navigation_enabled;
+  bool caret_browsing_enabled;
   bool use_solid_color_scrollbars;
   bool navigate_on_drag_drop;
-  V8CacheOptions v8_cache_options;
+  blink::mojom::V8CacheOptions v8_cache_options;
   bool record_whole_document;
-  SavePreviousDocumentResources save_previous_document_resources;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
   // only controls whether or not the "document.cookie" field is properly
@@ -208,36 +196,63 @@ struct CONTENT_EXPORT WebPreferences {
   // without raising a DOM security exception.
   bool cookie_enabled;
 
-  // This flag indicates whether H/W accelerated video decode is enabled for
-  // pepper plugins. Defaults to false.
-  bool pepper_accelerated_video_decode_enabled;
+  // This flag indicates whether H/W accelerated video decode is enabled.
+  // Defaults to false.
+  bool accelerated_video_decode_enabled;
 
   ImageAnimationPolicy animation_policy;
 
   bool user_gesture_required_for_presentation;
+
+  // These fields specify the foreground and background color for WebVTT text
+  // tracks. Their values can be any legal CSS color descriptor.
+  std::string text_track_background_color;
+  std::string text_track_text_color;
+
+  // These fields specify values for CSS properties used to style WebVTT text
+  // tracks.
+  // Specifies CSS font-size property in percentage.
+  std::string text_track_text_size;
+  std::string text_track_text_shadow;
+  std::string text_track_font_family;
+  // Specifies the value for CSS font-variant property.
+  std::string text_track_font_variant;
+
+  // These fields specify values for CSS properties used to style the window
+  // around WebVTT text tracks.
+  // Window color can be any legal CSS color descriptor.
+  std::string text_track_window_color;
+  // Window padding is in em.
+  std::string text_track_window_padding;
+  // Window radius is in pixels.
+  std::string text_track_window_radius;
 
   // Specifies the margin for WebVTT text tracks as a percentage of media
   // element height/width (for horizontal/vertical text respectively).
   // Cues will not be placed in this margin area.
   float text_track_margin_percentage;
 
-  bool page_popups_suppressed;
+  bool immersive_mode_enabled;
+
+  bool double_tap_to_zoom_enabled;
+
+  bool fullscreen_supported;
+
+  bool text_autosizing_enabled;
+
+  // Representation of the Web App Manifest scope if any.
+  GURL web_app_scope;
 
 #if defined(OS_ANDROID)
-  bool text_autosizing_enabled;
   float font_scale_factor;
   float device_scale_adjustment;
   bool force_enable_zoom;
-  bool fullscreen_supported;
-  bool double_tap_to_zoom_enabled;
-  std::string media_playback_gesture_whitelist_scope;
   GURL default_video_poster_url;
   bool support_deprecated_target_density_dpi;
   bool use_legacy_background_size_shorthand_behavior;
   bool wide_viewport_quirk;
   bool use_wide_viewport;
   bool force_zero_layout_height;
-  bool viewport_meta_layout_size_quirk;
   bool viewport_meta_merge_content_quirk;
   bool viewport_meta_non_user_scalable_quirk;
   bool viewport_meta_zero_values_quirk;
@@ -246,8 +261,7 @@ struct CONTENT_EXPORT WebPreferences {
   bool report_screen_size_in_physical_pixels_quirk;
   // Used by Android_WebView only to support legacy apps that inject script into
   // a top-level initial empty document and expect it to persist on navigation.
-  bool resue_global_for_unowned_main_frame;
-  ProgressBarCompletion progress_bar_completion;
+  bool reuse_global_for_unowned_main_frame;
   // Specifies default setting for spellcheck when the spellcheck attribute is
   // not explicitly specified.
   bool spellcheck_enabled_by_default;
@@ -262,13 +276,15 @@ struct CONTENT_EXPORT WebPreferences {
   // Enable 8 (#RRGGBBAA) and 4 (#RGBA) value hex colors in CSS Android
   // WebView quirk (http://crbug.com/618472).
   bool css_hex_alpha_color_enabled;
-  bool enable_media_download_in_product_help;
   // Enable support for document.scrollingElement
   // WebView sets this to false to retain old documentElement behaviour
   // (http://crbug.com/761016).
   bool scroll_top_left_interop_enabled;
-#else  // defined(OS_ANDROID)
 #endif  // defined(OS_ANDROID)
+
+  // Enable forcibly modifying content rendering to result in a light on dark
+  // color scheme.
+  bool force_dark_mode_enabled = false;
 
   // Default (used if the page or UA doesn't override these) values for page
   // scale limits. These are set directly on the WebView so there's no analogue
@@ -278,9 +294,6 @@ struct CONTENT_EXPORT WebPreferences {
 
   // Whether download UI should be hidden on this page.
   bool hide_download_ui;
-
-  // If enabled, disabled video track when the video is in the background.
-  bool background_video_track_optimization_enabled;
 
   // Whether it is a presentation receiver.
   bool presentation_receiver;
@@ -296,6 +309,49 @@ struct CONTENT_EXPORT WebPreferences {
 
   // Defines the current autoplay policy.
   AutoplayPolicy autoplay_policy;
+
+  // The preferred color scheme for the web content. The scheme is used to
+  // evaluate the prefers-color-scheme media query and resolve UA color scheme
+  // to be used based on the supported-color-schemes META tag and CSS property.
+  blink::PreferredColorScheme preferred_color_scheme =
+      blink::PreferredColorScheme::kNoPreference;
+
+  // Forced colors indicates whether forced color mode is active or not. Forced
+  // colors is used to evaluate the forced-colors and prefers-color-scheme
+  // media queries and is used to resolve the default color scheme as indicated
+  // by the preferred_color_scheme.
+  blink::ForcedColors forced_colors = blink::ForcedColors::kNone;
+
+  // Network quality threshold below which resources from iframes are assigned
+  // either kVeryLow or kVeryLow Blink priority.
+  net::EffectiveConnectionType low_priority_iframes_threshold;
+
+  // Whether Picture-in-Picture is enabled.
+  bool picture_in_picture_enabled;
+
+  // Whether a translate service is available.
+  // blink's hrefTranslate attribute existence relies on the result.
+  // See https://github.com/dtapuska/html-translate
+  bool translate_service_available;
+
+  // A value other than net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN implies that the
+  // network quality estimate related Web APIs are in the holdback mode. When
+  // the holdback is enabled, the related Web APIs return network quality
+  // estimate corresponding to |network_quality_estimator_web_holdback|
+  // regardless of the actual quality.
+  net::EffectiveConnectionType network_quality_estimator_web_holdback;
+
+  // Whether lazy loading of frames and images is enabled.
+  bool lazy_load_enabled = true;
+
+  // Specifies how close a lazily loaded iframe or image should be from the
+  // viewport before it should start being loaded in, depending on the effective
+  // connection type of the current network. Blink will use the default distance
+  // threshold for effective connection types that aren't specified here.
+  std::map<net::EffectiveConnectionType, int>
+      lazy_frame_loading_distance_thresholds_px;
+  std::map<net::EffectiveConnectionType, int>
+      lazy_image_loading_distance_thresholds_px;
 
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for

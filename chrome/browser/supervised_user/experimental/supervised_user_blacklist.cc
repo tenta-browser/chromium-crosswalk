@@ -8,9 +8,10 @@
 #include <cstring>
 #include <fstream>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "url/gurl.h"
 
 namespace {
@@ -21,8 +22,7 @@ ReadFromBinaryFileOnFileThread(const base::FilePath& path) {
       new std::vector<SupervisedUserBlacklist::Hash>);
 
   base::MemoryMappedFile file;
-  file.Initialize(path);
-  if (!file.IsValid())
+  if (!file.Initialize(path))
     return host_hashes;
 
   size_t size = file.length();
@@ -55,7 +55,7 @@ bool SupervisedUserBlacklist::Hash::operator<(const Hash& rhs) const {
   return memcmp(data, rhs.data, base::kSHA1Length) < 0;
 }
 
-SupervisedUserBlacklist::SupervisedUserBlacklist() : weak_ptr_factory_(this) {}
+SupervisedUserBlacklist::SupervisedUserBlacklist() {}
 
 SupervisedUserBlacklist::~SupervisedUserBlacklist() {}
 
@@ -72,7 +72,7 @@ void SupervisedUserBlacklist::ReadFromFile(const base::FilePath& path,
                                            const base::Closure& done_callback) {
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&ReadFromBinaryFileOnFileThread, path),
       base::BindOnce(&SupervisedUserBlacklist::OnReadFromFileCompleted,

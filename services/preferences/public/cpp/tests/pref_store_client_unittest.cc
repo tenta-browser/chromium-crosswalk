@@ -5,11 +5,10 @@
 #include "services/preferences/public/cpp/pref_store_client.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/values.h"
-#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/preferences/public/mojom/preferences.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -42,8 +41,7 @@ class PrefStoreClientTest : public testing::Test {
   void OnPrefChanged(const std::string& key, const base::Value& value) {
     std::vector<mojom::PrefUpdatePtr> updates;
     updates.push_back(mojom::PrefUpdate::New(
-        key, mojom::PrefUpdateValue::NewAtomicUpdate(value.CreateDeepCopy()),
-        0));
+        key, mojom::PrefUpdateValue::NewAtomicUpdate(value.Clone()), 0));
     observer_ptr_->OnPrefsChanged(std::move(updates));
   }
   void OnInitializationCompleted() {
@@ -54,7 +52,7 @@ class PrefStoreClientTest : public testing::Test {
   void SetUp() override {
     store_ = new PrefStoreClient(mojom::PrefStoreConnection::New(
         mojo::MakeRequest(&observer_ptr_),
-        std::make_unique<base::DictionaryValue>(), false));
+        base::Value(base::Value::Type::DICTIONARY), false));
     store_->AddObserver(&observer_);
   }
   void TearDown() override {
@@ -68,7 +66,7 @@ class PrefStoreClientTest : public testing::Test {
   scoped_refptr<PrefStoreClient> store_;
 
   // Required by mojo binding code within PrefStoreClient.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefStoreClientTest);
 };
@@ -167,9 +165,8 @@ TEST_F(PrefStoreClientTest, Initialized) {
   PrefStoreObserverMock observer;
   const char key[] = "hey";
   const int kValue = 42;
-  base::Value pref(kValue);
-  auto prefs = std::make_unique<base::DictionaryValue>();
-  prefs->Set(key, pref.CreateDeepCopy());
+  base::Value prefs(base::Value::Type::DICTIONARY);
+  prefs.SetKey(key, base::Value(kValue));
   auto store =
       base::MakeRefCounted<PrefStoreClient>(mojom::PrefStoreConnection::New(
           mojo::MakeRequest(&observer_ptr), std::move(prefs), true));

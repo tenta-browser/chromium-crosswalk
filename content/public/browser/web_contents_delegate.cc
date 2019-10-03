@@ -5,23 +5,26 @@
 #include "content/public/browser/web_contents_delegate.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "build/build_config.h"
+#include "components/viz/common/surfaces/surface_id.h"
+#include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/security_style_explanations.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/url_constants.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace content {
 
-WebContentsDelegate::WebContentsDelegate() {
-}
+WebContentsDelegate::WebContentsDelegate() = default;
 
 WebContents* WebContentsDelegate::OpenURLFromTab(WebContents* source,
                                                  const OpenURLParams& params) {
@@ -33,11 +36,9 @@ bool WebContentsDelegate::ShouldTransferNavigation(
   return true;
 }
 
-bool WebContentsDelegate::IsPopupOrPanel(const WebContents* source) const {
+bool WebContentsDelegate::CanOverscrollContent() {
   return false;
 }
-
-bool WebContentsDelegate::CanOverscrollContent() const { return false; }
 
 bool WebContentsDelegate::ShouldSuppressDialogs(WebContents* source) {
   return false;
@@ -49,7 +50,7 @@ bool WebContentsDelegate::ShouldPreserveAbortedURLs(WebContents* source) {
 
 bool WebContentsDelegate::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -78,15 +79,14 @@ bool WebContentsDelegate::TakeFocus(WebContents* source, bool reverse) {
   return false;
 }
 
-void WebContentsDelegate::CanDownload(
-    const GURL& url,
-    const std::string& request_method,
-    const base::Callback<void(bool)>& callback) {
-  callback.Run(true);
+void WebContentsDelegate::CanDownload(const GURL& url,
+                                      const std::string& request_method,
+                                      base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
 }
 
-bool WebContentsDelegate::HandleContextMenu(
-    const content::ContextMenuParams& params) {
+bool WebContentsDelegate::HandleContextMenu(RenderFrameHost* render_frame_host,
+                                            const ContextMenuParams& params) {
   return false;
 }
 
@@ -94,6 +94,12 @@ KeyboardEventProcessingResult WebContentsDelegate::PreHandleKeyboardEvent(
     WebContents* source,
     const NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
+}
+
+bool WebContentsDelegate::HandleKeyboardEvent(
+    WebContents* source,
+    const NativeWebKeyboardEvent& event) {
+  return false;
 }
 
 bool WebContentsDelegate::PreHandleGestureEvent(
@@ -140,41 +146,67 @@ std::unique_ptr<BluetoothChooser> WebContentsDelegate::RunBluetoothChooser(
   return nullptr;
 }
 
-bool WebContentsDelegate::EmbedsFullscreenWidget() const {
+std::unique_ptr<SmsDialog> WebContentsDelegate::CreateSmsDialog() {
+  return nullptr;
+}
+
+std::unique_ptr<BluetoothScanningPrompt>
+WebContentsDelegate::ShowBluetoothScanningPrompt(
+    RenderFrameHost* frame,
+    const BluetoothScanningPrompt::EventHandler& event_handler) {
+  return nullptr;
+}
+
+bool WebContentsDelegate::EmbedsFullscreenWidget() {
   return false;
 }
 
 bool WebContentsDelegate::IsFullscreenForTabOrPending(
-    const WebContents* web_contents) const {
+    const WebContents* web_contents) {
   return false;
 }
 
 blink::WebDisplayMode WebContentsDelegate::GetDisplayMode(
-    const WebContents* web_contents) const {
+    const WebContents* web_contents) {
   return blink::kWebDisplayModeBrowser;
 }
 
-content::ColorChooser* WebContentsDelegate::OpenColorChooser(
+ColorChooser* WebContentsDelegate::OpenColorChooser(
     WebContents* web_contents,
     SkColor color,
-    const std::vector<ColorSuggestion>& suggestions) {
+    const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions) {
   return nullptr;
+}
+
+void WebContentsDelegate::RunFileChooser(
+    RenderFrameHost* render_frame_host,
+    std::unique_ptr<FileSelectListener> listener,
+    const blink::mojom::FileChooserParams& params) {
+  listener->FileSelectionCanceled();
+}
+
+void WebContentsDelegate::EnumerateDirectory(
+    WebContents* web_contents,
+    std::unique_ptr<FileSelectListener> listener,
+    const base::FilePath& path) {
+  listener->FileSelectionCanceled();
 }
 
 void WebContentsDelegate::RequestMediaAccessPermission(
     WebContents* web_contents,
     const MediaStreamRequest& request,
-    const MediaResponseCallback& callback) {
+    content::MediaResponseCallback callback) {
   LOG(ERROR) << "WebContentsDelegate::RequestMediaAccessPermission: "
              << "Not supported.";
-  callback.Run(MediaStreamDevices(), MEDIA_DEVICE_NOT_SUPPORTED,
-               std::unique_ptr<MediaStreamUI>());
+  std::move(callback).Run(blink::MediaStreamDevices(),
+                          blink::mojom::MediaStreamRequestResult::NOT_SUPPORTED,
+                          std::unique_ptr<content::MediaStreamUI>());
 }
 
 bool WebContentsDelegate::CheckMediaAccessPermission(
-    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   LOG(ERROR) << "WebContentsDelegate::CheckMediaAccessPermission: "
              << "Not supported.";
   return false;
@@ -182,29 +214,22 @@ bool WebContentsDelegate::CheckMediaAccessPermission(
 
 std::string WebContentsDelegate::GetDefaultMediaDeviceID(
     WebContents* web_contents,
-    MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   return std::string();
 }
 
 #if defined(OS_ANDROID)
-base::android::ScopedJavaLocalRef<jobject>
-WebContentsDelegate::GetContentVideoViewEmbedder() {
-  return base::android::ScopedJavaLocalRef<jobject>();
-}
-
 bool WebContentsDelegate::ShouldBlockMediaRequest(const GURL& url) {
   return false;
 }
-
-void WebContentsDelegate::SetOverlayMode(bool use_overlay_mode) {}
 #endif
 
-bool WebContentsDelegate::RequestPpapiBrokerPermission(
+void WebContentsDelegate::RequestPpapiBrokerPermission(
     WebContents* web_contents,
     const GURL& url,
     const base::FilePath& plugin_path,
-    const base::Callback<void(bool)>& callback) {
-  return false;
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(false);
 }
 
 WebContentsDelegate::~WebContentsDelegate() {
@@ -226,11 +251,15 @@ void WebContentsDelegate::Detach(WebContents* web_contents) {
 }
 
 gfx::Size WebContentsDelegate::GetSizeForNewRenderView(
-    WebContents* web_contents) const {
+    WebContents* web_contents) {
   return gfx::Size();
 }
 
 bool WebContentsDelegate::IsNeverVisible(WebContents* web_contents) {
+  return false;
+}
+
+bool WebContentsDelegate::GuestSaveFrame(WebContents* guest_web_contents) {
   return false;
 }
 
@@ -244,10 +273,6 @@ blink::WebSecurityStyle WebContentsDelegate::GetSecurityStyle(
   return blink::kWebSecurityStyleUnknown;
 }
 
-void WebContentsDelegate::RequestAppBannerFromDevTools(
-    content::WebContents* web_contents) {
-}
-
 bool WebContentsDelegate::ShouldAllowRunningInsecureContent(
     WebContents* web_contents,
     bool allowed_per_prefs,
@@ -256,16 +281,40 @@ bool WebContentsDelegate::ShouldAllowRunningInsecureContent(
   return allowed_per_prefs;
 }
 
-int WebContentsDelegate::GetTopControlsHeight() const {
+int WebContentsDelegate::GetTopControlsHeight() {
   return 0;
 }
 
-int WebContentsDelegate::GetBottomControlsHeight() const {
+int WebContentsDelegate::GetBottomControlsHeight() {
   return 0;
 }
 
-bool WebContentsDelegate::DoBrowserControlsShrinkBlinkSize() const {
+bool WebContentsDelegate::DoBrowserControlsShrinkRendererSize(
+    const WebContents* web_contents) {
   return false;
 }
 
+PictureInPictureResult WebContentsDelegate::EnterPictureInPicture(
+    WebContents* web_contents,
+    const viz::SurfaceId&,
+    const gfx::Size&) {
+  return PictureInPictureResult::kNotSupported;
+}
+
+bool WebContentsDelegate::ShouldAllowLazyLoad() {
+  return true;
+}
+
+std::unique_ptr<WebContents> WebContentsDelegate::SwapWebContents(
+    WebContents* old_contents,
+    std::unique_ptr<WebContents> new_contents,
+    bool did_start_load,
+    bool did_finish_load) {
+  return new_contents;
+}
+
+bool WebContentsDelegate::ShouldShowStaleContentOnEviction(
+    WebContents* source) {
+  return false;
+}
 }  // namespace content

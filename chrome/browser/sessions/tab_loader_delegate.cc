@@ -4,11 +4,16 @@
 
 #include "chrome/browser/sessions/tab_loader_delegate.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "chrome/browser/resource_coordinator/session_restore_policy.h"
 #include "chrome/browser/resource_coordinator/tab_manager_features.h"
+#include "chrome/browser/sessions/session_restore_observer.h"
 #include "components/variations/variations_associated_data.h"
-#include "net/base/network_change_notifier.h"
+#include "content/public/browser/network_service_instance.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 
 namespace {
 
@@ -24,9 +29,11 @@ static const int kInitialDelayTimerMS = 1500;
 // first paint and interactivity of the foreground tab.
 static const int kFirstTabLoadTimeoutMS = 60000;
 
+resource_coordinator::SessionRestorePolicy* g_testing_policy = nullptr;
+
 class TabLoaderDelegateImpl
     : public TabLoaderDelegate,
-      public net::NetworkChangeNotifier::NetworkChangeObserver {
+      public network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
   explicit TabLoaderDelegateImpl(TabLoaderCallback* callback);
   ~TabLoaderDelegateImpl() override;
@@ -41,11 +48,50 @@ class TabLoaderDelegateImpl
     return resource_coordinator::GetTabLoadTimeout(timeout_);
   }
 
-  // net::NetworkChangeNotifier::NetworkChangeObserver implementation:
-  void OnNetworkChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
+  // TabLoaderDelegate:
+  size_t GetMaxSimultaneousTabLoads() const override {
+    return policy_->simultaneous_tab_loads();
+  }
+
+  // TabLoaderDelegate:
+  float AddTabForScoring(content::WebContents* contents) const override {
+    return policy_->AddTabForScoring(contents);
+  }
+
+  // TabLoaderDelegate:
+  void RemoveTabForScoring(content::WebContents* contents) const override {
+    policy_->RemoveTabForScoring(contents);
+  }
+
+  // TabLoaderDelegate:
+  bool ShouldLoad(content::WebContents* contents) const override {
+    return policy_->ShouldLoad(contents);
+  }
+
+  // TabLoaderDelegate:
+  void NotifyTabLoadStarted() override { policy_->NotifyTabLoadStarted(); }
+
+  // TabLoaderDelegate:
+  resource_coordinator::SessionRestorePolicy* GetPolicyForTesting() override {
+    return policy_;
+  }
+
+  // network::NetworkConnectionTracker::NetworkConnectionObserver:
+  void OnConnectionChanged(network::mojom::ConnectionType type) override;
+
+  // Callback that is invoked by the policy engine, and forwarded over to the
+  // TabLoader.
+  void NotifyTabScoreChanged(content::WebContents* content, float score);
 
  private:
+  // The default policy engine used to implement ShouldLoad.
+  resource_coordinator::SessionRestorePolicy default_policy_;
+
+  // The policy engine used to implement ShouldLoad. By default this is simply
+  // a pointer to |default_policy_|, but it can also point to externally
+  // injected policy engine for testing.
+  resource_coordinator::SessionRestorePolicy* policy_;
+
   // The function to call when the connection type changes.
   TabLoaderCallback* callback_;
 
@@ -53,13 +99,19 @@ class TabLoaderDelegateImpl
   base::TimeDelta first_timeout_;
   base::TimeDelta timeout_;
 
+  base::WeakPtrFactory<TabLoaderDelegateImpl> weak_factory_{this};
+
   DISALLOW_COPY_AND_ASSIGN(TabLoaderDelegateImpl);
 };
 
 TabLoaderDelegateImpl::TabLoaderDelegateImpl(TabLoaderCallback* callback)
-    : callback_(callback) {
-  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
-  if (net::NetworkChangeNotifier::IsOffline()) {
+    : policy_(&default_policy_), callback_(callback) {
+  content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
+  auto type = network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+  content::GetNetworkConnectionTracker()->GetConnectionType(
+      &type, base::BindOnce(&TabLoaderDelegateImpl::OnConnectionChanged,
+                            weak_factory_.GetWeakPtr()));
+  if (type == network::mojom::ConnectionType::CONNECTION_NONE) {
     // When we are off-line we do not allow loading of tabs, since each of
     // these tabs would start loading simultaneously when going online.
     // TODO(skuhne): Once we get a higher level resource control logic which
@@ -69,16 +121,31 @@ TabLoaderDelegateImpl::TabLoaderDelegateImpl(TabLoaderCallback* callback)
 
   first_timeout_ = base::TimeDelta::FromMilliseconds(kFirstTabLoadTimeoutMS);
   timeout_ = base::TimeDelta::FromMilliseconds(kInitialDelayTimerMS);
+
+  // Override |policy_| if a testing policy has been set.
+  if (g_testing_policy) {
+    policy_ = g_testing_policy;
+  }
+
+  // Register the policy callback.
+  policy_->SetTabScoreChangedCallback(
+      base::BindRepeating(&TabLoaderDelegateImpl::NotifyTabScoreChanged,
+                          weak_factory_.GetWeakPtr()));
 }
 
 TabLoaderDelegateImpl::~TabLoaderDelegateImpl() {
-  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
+  content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(this);
 }
 
-void TabLoaderDelegateImpl::OnNetworkChanged(
-    net::NetworkChangeNotifier::ConnectionType type) {
+void TabLoaderDelegateImpl::OnConnectionChanged(
+    network::mojom::ConnectionType type) {
   callback_->SetTabLoadingEnabled(
-      type != net::NetworkChangeNotifier::CONNECTION_NONE);
+      type != network::mojom::ConnectionType::CONNECTION_NONE);
+}
+
+void TabLoaderDelegateImpl::NotifyTabScoreChanged(content::WebContents* content,
+                                                  float score) {
+  callback_->NotifyTabScoreChanged(content, score);
 }
 
 }  // namespace
@@ -88,4 +155,10 @@ std::unique_ptr<TabLoaderDelegate> TabLoaderDelegate::Create(
     TabLoaderCallback* callback) {
   return std::unique_ptr<TabLoaderDelegate>(
       new TabLoaderDelegateImpl(callback));
+}
+
+// static
+void TabLoaderDelegate::SetSessionRestorePolicyForTesting(
+    resource_coordinator::SessionRestorePolicy* policy) {
+  g_testing_policy = policy;
 }

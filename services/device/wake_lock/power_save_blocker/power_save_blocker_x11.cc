@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include <X11/Xlib.h>
-#include <X11/extensions/dpms.h>
 #include <X11/extensions/scrnsaver.h>
 #include <stdint.h>
 
@@ -120,19 +119,12 @@ class PowerSaveBlocker::Delegate
   // Must be called on the UI thread.
   void XSSSuspendSet(bool suspend);
 
-  // If DPMS (the power saving system in X11) is not enabled, then we don't want
-  // to try to disable power saving, since on some desktop environments that may
-  // enable DPMS with very poor default settings (e.g. turning off the display
-  // after only 1 second). Must be called on the UI thread.
-  bool DPMSEnabled();
-
   // If no other method is available (i.e. not running under a Desktop
   // Environment) check whether the X11 Screen Saver Extension can be used
   // to disable the screen saver. Must be called on the UI thread.
   bool XSSAvailable();
 
   // Returns an appropriate D-Bus API to use based on the desktop environment.
-  // Must be called on the UI thread, as it may call DPMSEnabled() above.
   DBusAPI SelectAPI();
 
   const mojom::WakeLockType type_;
@@ -195,7 +187,7 @@ void PowerSaveBlocker::Delegate::Init() {
   unblock_inflight_ = false;
   enqueue_unblock_ = false;
   ui_task_runner_->PostTask(FROM_HERE,
-                            base::Bind(&Delegate::InitOnUIThread, this));
+                            base::BindOnce(&Delegate::InitOnUIThread, this));
 }
 
 void PowerSaveBlocker::Delegate::CleanUp() {
@@ -207,12 +199,12 @@ void PowerSaveBlocker::Delegate::CleanUp() {
     enqueue_apply_ = false;
   } else {
     if (ShouldBlock()) {
-      blocking_task_runner_->PostTask(FROM_HERE,
-                                      base::Bind(&Delegate::RemoveBlock, this));
+      blocking_task_runner_->PostTask(
+          FROM_HERE, base::BindOnce(&Delegate::RemoveBlock, this));
     }
 
     ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Delegate::XSSSuspendSet, this, false));
+        FROM_HERE, base::BindOnce(&Delegate::XSSSuspendSet, this, false));
   }
 }
 
@@ -227,8 +219,8 @@ void PowerSaveBlocker::Delegate::InitOnUIThread() {
       // D-Bus library, so we need to use the same thread above for
       // RemoveBlock(). It must be a thread that allows I/O operations, so we
       // use the FILE thread.
-      blocking_task_runner_->PostTask(FROM_HERE,
-                                      base::Bind(&Delegate::ApplyBlock, this));
+      blocking_task_runner_->PostTask(
+          FROM_HERE, base::BindOnce(&Delegate::ApplyBlock, this));
     }
     XSSSuspendSet(true);
   }
@@ -342,8 +334,8 @@ void PowerSaveBlocker::Delegate::ApplyBlockFinished(dbus::Response* response) {
     enqueue_unblock_ = false;
     // RemoveBlock() was called while the Inhibit operation was in flight,
     // so go ahead and remove the block now.
-    blocking_task_runner_->PostTask(FROM_HERE,
-                                    base::Bind(&Delegate::RemoveBlock, this));
+    blocking_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Delegate::RemoveBlock, this));
   }
 }
 
@@ -427,18 +419,6 @@ void PowerSaveBlocker::Delegate::XSSSuspendSet(bool suspend) {
   XScreenSaverSuspend(display, suspend);
 }
 
-bool PowerSaveBlocker::Delegate::DPMSEnabled() {
-  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
-  XDisplay* display = gfx::GetXDisplay();
-  BOOL enabled = false;
-  int dummy;
-  if (DPMSQueryExtension(display, &dummy, &dummy) && DPMSCapable(display)) {
-    CARD16 state;
-    DPMSInfo(display, &state, &enabled);
-  }
-  return enabled;
-}
-
 bool PowerSaveBlocker::Delegate::XSSAvailable() {
   DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
   // X Screen Saver isn't accessible in headless mode.
@@ -463,20 +443,20 @@ DBusAPI PowerSaveBlocker::Delegate::SelectAPI() {
   // Power saving APIs are not accessible in headless mode.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kHeadless))
     return NO_API;
+
+  // TODO(thomasanderson): Query the GNOME and Freedesktop APIs for availability
+  // directly rather than guessing based on the desktop environment.
   std::unique_ptr<base::Environment> env(base::Environment::Create());
   switch (base::nix::GetDesktopEnvironment(env.get())) {
+    case base::nix::DESKTOP_ENVIRONMENT_CINNAMON:
     case base::nix::DESKTOP_ENVIRONMENT_GNOME:
     case base::nix::DESKTOP_ENVIRONMENT_PANTHEON:
     case base::nix::DESKTOP_ENVIRONMENT_UNITY:
-      if (DPMSEnabled())
-        return GNOME_API;
-      break;
+      return GNOME_API;
     case base::nix::DESKTOP_ENVIRONMENT_XFCE:
     case base::nix::DESKTOP_ENVIRONMENT_KDE4:
     case base::nix::DESKTOP_ENVIRONMENT_KDE5:
-      if (DPMSEnabled())
-        return FREEDESKTOP_API;
-      break;
+      return FREEDESKTOP_API;
     case base::nix::DESKTOP_ENVIRONMENT_KDE3:
     case base::nix::DESKTOP_ENVIRONMENT_OTHER:
       // Not supported.

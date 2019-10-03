@@ -26,7 +26,7 @@
 #include "components/policy/core/common/remote_commands/test_remote_command_job.h"
 #include "components/policy/core/common/remote_commands/testing_remote_commands_server.h"
 #include "components/policy/proto/device_management_backend.pb.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -67,7 +67,8 @@ class MockTestRemoteCommandFactory : public RemoteCommandsFactory {
  private:
   // RemoteCommandJobsFactory:
   std::unique_ptr<RemoteCommandJob> BuildJobForType(
-      em::RemoteCommand_Type type) override {
+      em::RemoteCommand_Type type,
+      RemoteCommandsService* service) override {
     if (type != em::RemoteCommand_Type_COMMAND_ECHO_TEST) {
       ADD_FAILURE();
       return nullptr;
@@ -83,11 +84,16 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
  public:
   explicit TestingCloudPolicyClientForRemoteCommands(
       TestingRemoteCommandsServer* server)
-      : CloudPolicyClient(std::string(), /* machine_id */
-                          std::string(), /* machine_model */
-                          nullptr,       /* service */
-                          nullptr,       /* request_context */
-                          nullptr /* signing_service */),
+      : CloudPolicyClient(std::string() /* machine_id */,
+                          std::string() /* machine_model */,
+                          std::string() /* brand_code */,
+                          std::string() /* ethernet_mac_address */,
+                          std::string() /* dock_mac_address */,
+                          std::string() /* manufacture_date */,
+                          nullptr /* service */,
+                          nullptr /* url_loader_factory */,
+                          nullptr /* signing_service */,
+                          CloudPolicyClient::DeviceDMTokenCallback()),
         server_(server) {
     dm_token_ = kDMToken;
   }
@@ -126,7 +132,7 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
   void FetchRemoteCommands(
       std::unique_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
       const std::vector<em::RemoteCommandResult>& command_results,
-      const RemoteCommandCallback& callback) override {
+      RemoteCommandCallback callback) override {
     ASSERT_FALSE(expected_fetch_commands_calls_.empty());
 
     const FetchCallExpectation fetch_call_expectation =
@@ -136,10 +142,10 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
     // Simulate delay from client to DMServer.
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &TestingCloudPolicyClientForRemoteCommands::DoFetchRemoteCommands,
-            base::Unretained(this), base::Passed(&last_command_id),
-            command_results, callback, fetch_call_expectation),
+            base::Unretained(this), std::move(last_command_id), command_results,
+            std::move(callback), fetch_call_expectation),
         base::TimeDelta::FromSeconds(
             kTestClientServerCommunicationDelayInSeconds));
   }
@@ -147,7 +153,7 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
   void DoFetchRemoteCommands(
       std::unique_ptr<RemoteCommandJob::UniqueIDType> last_command_id,
       const std::vector<em::RemoteCommandResult>& command_results,
-      const RemoteCommandCallback& callback,
+      RemoteCommandCallback callback,
       const FetchCallExpectation& fetch_call_expectation) {
     const std::vector<em::RemoteCommand> fetched_commands =
         server_->FetchCommands(std::move(last_command_id), command_results);
@@ -162,7 +168,9 @@ class TestingCloudPolicyClientForRemoteCommands : public CloudPolicyClient {
 
     // Simulate delay from DMServer back to client.
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(callback, DM_STATUS_SUCCESS, fetched_commands),
+        FROM_HERE,
+        base::BindOnce(std::move(callback), DM_STATUS_SUCCESS,
+                       fetched_commands),
         base::TimeDelta::FromSeconds(
             kTestClientServerCommunicationDelayInSeconds));
   }
@@ -329,6 +337,38 @@ TEST_F(RemoteCommandsServiceTest, NewCommandFollwingFetch) {
   FlushAllTasks();
 
   EXPECT_EQ(0u, server_->NumberOfCommandsPendingResult());
+}
+
+// Tests that on_command_acked_callback_ gets called after the commands get
+// acked/fetched (one function handles both).
+TEST_F(RemoteCommandsServiceTest, AckedCallback) {
+  std::unique_ptr<MockTestRemoteCommandFactory> factory(
+      new MockTestRemoteCommandFactory());
+  EXPECT_CALL(*factory, BuildTestCommand()).Times(1);
+
+  StartService(std::move(factory));
+
+  bool on_command_acked_callback_called = false;
+  remote_commands_service_->SetOnCommandAckedCallback(base::BindOnce(
+      [](bool* on_command_acked_callback_called) {
+        *on_command_acked_callback_called = true;
+      },
+      &on_command_acked_callback_called));
+
+  // Set up expectations on fetch commands calls. The first request will fetch
+  // one command, and the second will fetch none but provide result for the
+  // previous command instead.
+  cloud_policy_client_->ExpectFetchCommands(0u, 1u, base::Closure());
+  cloud_policy_client_->ExpectFetchCommands(1u, 0u, base::Closure());
+
+  // Issue a command and manually start a command fetch.
+  server_->IssueCommand(em::RemoteCommand_Type_COMMAND_ECHO_TEST, kTestPayload,
+                        base::Bind(&ExpectSucceededJob, kTestPayload), false);
+  EXPECT_TRUE(remote_commands_service_->FetchRemoteCommands());
+
+  FlushAllTasks();
+
+  EXPECT_TRUE(on_command_acked_callback_called);
 }
 
 }  // namespace policy

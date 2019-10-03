@@ -6,9 +6,10 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #import "base/mac/scoped_block.h"
 #include "base/memory/ptr_util.h"
-#include "base/test/ios/wait_util.h"
+#import "base/test/ios/wait_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
@@ -39,7 +40,8 @@ class AuthenticationFlowTest : public PlatformTest {
     TestChromeBrowserState::Builder builder;
     builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
-        AuthenticationServiceFake::CreateAuthenticationService);
+        base::BindRepeating(
+            &AuthenticationServiceFake::CreateAuthenticationService));
     builder.SetPrefService(CreatePrefService());
     browser_state_ = builder.Build();
     ios::FakeChromeIdentityService* identityService =
@@ -164,7 +166,7 @@ TEST_F(AuthenticationFlowTest, TestAlreadySignedIn) {
                        toBrowserState:browser_state_.get()];
 
   AuthenticationServiceFactory::GetForBrowserState(browser_state_.get())
-      ->SignIn(identity1_, std::string());
+      ->SignIn(identity1_);
   [authentication_flow_ startSignInWithCompletion:sign_in_completion_];
 
   CheckSignInCompletion(true);
@@ -199,7 +201,8 @@ TEST_F(AuthenticationFlowTest, TestSignOutUserChoice) {
 
   [[[performer_ expect] andDo:^(NSInvocation*) {
     [authentication_flow_ didClearData];
-  }] clearData:browser_state_.get()];
+  }] clearData:browser_state_.get()
+      dispatcher:nil];
 
   [[performer_ expect] signInIdentity:identity1_
                      withHostedDomain:nil
@@ -208,7 +211,7 @@ TEST_F(AuthenticationFlowTest, TestSignOutUserChoice) {
   [[performer_ expect] commitSyncForBrowserState:browser_state_.get()];
 
   AuthenticationServiceFactory::GetForBrowserState(browser_state_.get())
-      ->SignIn(identity2_, std::string());
+      ->SignIn(identity2_);
   [authentication_flow_ startSignInWithCompletion:sign_in_completion_];
 
   CheckSignInCompletion(true);
@@ -287,7 +290,8 @@ TEST_F(AuthenticationFlowTest, TestShowManagedConfirmation) {
 
   [[[performer_ expect] andDo:^(NSInvocation*) {
     [authentication_flow_ didClearData];
-  }] clearData:browser_state_.get()];
+  }] clearData:browser_state_.get()
+      dispatcher:nil];
 
   [[performer_ expect] signInIdentity:identity1_
                      withHostedDomain:@"foo.com"

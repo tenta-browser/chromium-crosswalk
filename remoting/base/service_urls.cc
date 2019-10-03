@@ -10,37 +10,35 @@
 #include "remoting/base/remoting_bot.h"
 
 // Configurable service data.
-const char kDirectoryBaseUrl[] = "https://www.googleapis.com/chromoting/v1";
-const char kGcdBaseUrl[] = "https://www.googleapis.com/clouddevices/v1";
-const char kXmppServerAddress[] = "talk.google.com:443";
-const char kXmppServerAddressForMe2MeHost[] = "talk.google.com:5222";
-const bool kXmppServerUseTls = true;
-const char kGcdJid[] = "clouddevices.gserviceaccount.com";
+constexpr char kDirectoryBaseUrl[] = "https://www.googleapis.com/chromoting/v1";
+constexpr char kGcdBaseUrl[] = "https://www.googleapis.com/clouddevices/v1";
+constexpr char kGcdJid[] = "clouddevices.gserviceaccount.com";
+constexpr char kFtlServerEndpoint[] = "instantmessaging-pa.googleapis.com";
+constexpr char kRemotingServerEndpoint[] = "remotedesktop-pa.googleapis.com";
 
 // Command line switches.
 #if !defined(NDEBUG)
-const char kDirectoryBaseUrlSwitch[] = "directory-base-url";
-const char kGcdBaseUrlSwitch[] = "gcd-base-url";
-const char kXmppServerAddressSwitch[] = "xmpp-server-address";
-const char kXmppServerDisableTlsSwitch[] = "disable-xmpp-server-tls";
-const char kDirectoryBotJidSwitch[] = "directory-bot-jid";
-const char kGcdJidSwitch[] = "gcd-jid";
+constexpr char kDirectoryBaseUrlSwitch[] = "directory-base-url";
+constexpr char kGcdBaseUrlSwitch[] = "gcd-base-url";
+constexpr char kDirectoryBotJidSwitch[] = "directory-bot-jid";
+constexpr char kGcdJidSwitch[] = "gcd-jid";
+constexpr char kFtlServerEndpointSwitch[] = "ftl-server-endpoint";
+constexpr char kRemotingServerEndpointSwitch[] = "remoting-server-endpoint";
 #endif  // !defined(NDEBUG)
 
 // Non-configurable service paths.
-const char kDirectoryHostsSuffix[] = "/@me/hosts/";
-const char kDirectoryIceConfigSuffix[] = "/@me/iceconfig";
+constexpr char kDirectoryHostsSuffix[] = "/@me/hosts/";
+constexpr char kDirectoryIceConfigSuffix[] = "/@me/iceconfig";
 
 namespace remoting {
 
 ServiceUrls::ServiceUrls()
     : directory_base_url_(kDirectoryBaseUrl),
       gcd_base_url_(kGcdBaseUrl),
-      xmpp_server_address_(kXmppServerAddress),
-      xmpp_server_address_for_me2me_host_(kXmppServerAddressForMe2MeHost),
-      xmpp_server_use_tls_(kXmppServerUseTls),
       directory_bot_jid_(kRemotingBotJid),
-      gcd_jid_(kGcdJid) {
+      gcd_jid_(kGcdJid),
+      ftl_server_endpoint_(kFtlServerEndpoint),
+      remoting_server_endpoint_(kRemotingServerEndpoint) {
 #if !defined(NDEBUG)
   // The command line may not be initialized when running as a PNaCl plugin.
   if (base::CommandLine::InitializedForCurrentProcess()) {
@@ -54,20 +52,20 @@ ServiceUrls::ServiceUrls()
     if (command_line->HasSwitch(kGcdBaseUrlSwitch)) {
       gcd_base_url_ = command_line->GetSwitchValueASCII(kGcdBaseUrlSwitch);
     }
-    if (command_line->HasSwitch(kXmppServerAddressSwitch)) {
-      xmpp_server_address_ =
-          command_line->GetSwitchValueASCII(kXmppServerAddressSwitch);
-      xmpp_server_address_for_me2me_host_ = xmpp_server_address_;
-    }
-    if (command_line->HasSwitch(kXmppServerDisableTlsSwitch)) {
-      xmpp_server_use_tls_ = false;
-    }
     if (command_line->HasSwitch(kDirectoryBotJidSwitch)) {
       directory_bot_jid_ =
           command_line->GetSwitchValueASCII(kDirectoryBotJidSwitch);
     }
     if (command_line->HasSwitch(kGcdJidSwitch)) {
       gcd_jid_ = command_line->GetSwitchValueASCII(kGcdJidSwitch);
+    }
+    if (command_line->HasSwitch(kFtlServerEndpointSwitch)) {
+      ftl_server_endpoint_ =
+          command_line->GetSwitchValueASCII(kFtlServerEndpointSwitch);
+    }
+    if (command_line->HasSwitch(kRemotingServerEndpointSwitch)) {
+      remoting_server_endpoint_ =
+          command_line->GetSwitchValueASCII(kRemotingServerEndpointSwitch);
     }
   }
 #endif  // !defined(NDEBUG)

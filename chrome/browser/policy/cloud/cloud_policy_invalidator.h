@@ -74,7 +74,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
       enterprise_management::DeviceRegisterRequest::Type type,
       CloudPolicyCore* core,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-      std::unique_ptr<base::Clock> clock,
+      base::Clock* clock,
       int64_t highest_handled_invalidation_version);
   ~CloudPolicyInvalidator() override;
 
@@ -107,6 +107,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   void OnIncomingInvalidation(
       const syncer::ObjectIdInvalidationMap& invalidation_map) override;
   std::string GetOwnerName() const override;
+  bool IsPublicTopic(const syncer::Topic& topic) const override;
 
   // CloudPolicyCore::Observer:
   void OnCoreConnected(CloudPolicyCore* core) override;
@@ -186,7 +187,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // The clock.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // The invalidation service.
   invalidation::InvalidationService* invalidation_service_;
@@ -242,7 +243,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   base::ThreadChecker thread_checker_;
 
   // WeakPtrFactory used to create callbacks to this object.
-  base::WeakPtrFactory<CloudPolicyInvalidator> weak_factory_;
+  base::WeakPtrFactory<CloudPolicyInvalidator> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyInvalidator);
 };

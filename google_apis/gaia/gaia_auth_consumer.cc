@@ -4,20 +4,14 @@
 
 #include "google_apis/gaia/gaia_auth_consumer.h"
 
-GaiaAuthConsumer::ClientLoginResult::ClientLoginResult()
-    : two_factor(false) {
-}
+GaiaAuthConsumer::ClientLoginResult::ClientLoginResult() = default;
 
 GaiaAuthConsumer::ClientLoginResult::ClientLoginResult(
     const std::string& new_sid,
     const std::string& new_lsid,
     const std::string& new_token,
     const std::string& new_data)
-    : sid(new_sid),
-      lsid(new_lsid),
-      token(new_token),
-      data(new_data),
-      two_factor(false) {}
+    : sid(new_sid), lsid(new_lsid), token(new_token), data(new_data) {}
 
 GaiaAuthConsumer::ClientLoginResult::ClientLoginResult(
     const ClientLoginResult& other) = default;
@@ -26,25 +20,20 @@ GaiaAuthConsumer::ClientLoginResult::~ClientLoginResult() {}
 
 bool GaiaAuthConsumer::ClientLoginResult::operator==(
     const ClientLoginResult &b) const {
-  return sid == b.sid &&
-      lsid == b.lsid &&
-      token == b.token &&
-      data == b.data &&
-      two_factor == b.two_factor;
+  return sid == b.sid && lsid == b.lsid && token == b.token && data == b.data;
 }
-
-GaiaAuthConsumer::ClientOAuthResult::ClientOAuthResult()
-    : expires_in_secs(0) {}
 
 GaiaAuthConsumer::ClientOAuthResult::ClientOAuthResult(
     const std::string& new_refresh_token,
     const std::string& new_access_token,
     int new_expires_in_secs,
-    bool new_is_child_account)
+    bool new_is_child_account,
+    bool new_is_under_advanced_protection)
     : refresh_token(new_refresh_token),
       access_token(new_access_token),
       expires_in_secs(new_expires_in_secs),
-      is_child_account(new_is_child_account) {}
+      is_child_account(new_is_child_account),
+      is_under_advanced_protection(new_is_under_advanced_protection) {}
 
 GaiaAuthConsumer::ClientOAuthResult::ClientOAuthResult(
     const ClientOAuthResult& other) = default;

@@ -30,7 +30,7 @@
 #include "extensions/renderer/script_context_set.h"
 #include "extensions/renderer/user_script_set_manager.h"
 #include "extensions/renderer/v8_schema_registry.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "v8/include/v8.h"
 
 class ChromeRenderViewTest;
@@ -45,18 +45,26 @@ struct ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params;
 
 namespace blink {
 class WebLocalFrame;
+class WebServiceWorkerContextProxy;
 }
 
 namespace base {
 class ListValue;
 }
 
+namespace content {
+class RenderThread;
+}  // namespace content
+
 namespace extensions {
 class ContentWatcher;
 class DispatcherDelegate;
-class ExtensionBindingsSystem;
+class NativeExtensionBindingsSystem;
+class IPCMessageSender;
 class ScriptContext;
+class ScriptContextSetIterable;
 class ScriptInjectionManager;
+class WorkerScriptContextSet;
 struct EventFilteringInfo;
 struct Message;
 struct PortId;
@@ -69,8 +77,16 @@ class Dispatcher : public content::RenderThreadObserver,
   explicit Dispatcher(std::unique_ptr<DispatcherDelegate> delegate);
   ~Dispatcher() override;
 
+  // Returns Service Worker ScriptContexts belonging to current worker thread.
+  static WorkerScriptContextSet* GetWorkerScriptContextSet();
+
   const ScriptContextSet& script_context_set() const {
     return *script_context_set_;
+  }
+
+  // Returns iterator to iterate over all main thread ScriptContexts.
+  ScriptContextSetIterable* script_context_set_iterator() {
+    return script_context_set_.get();
   }
 
   V8SchemaRegistry* v8_schema_registry() { return v8_schema_registry_.get(); }
@@ -78,6 +94,8 @@ class Dispatcher : public content::RenderThreadObserver,
   const std::string& webview_partition_id() { return webview_partition_id_; }
 
   bool activity_logging_enabled() const { return activity_logging_enabled_; }
+
+  void OnRenderThreadStarted(content::RenderThread* render_thread);
 
   void OnRenderFrameCreated(content::RenderFrame* render_frame);
 
@@ -90,6 +108,7 @@ class Dispatcher : public content::RenderThreadObserver,
   // Runs on a different thread and should only use thread safe member
   // variables.
   void DidInitializeServiceWorkerContextOnWorkerThread(
+      blink::WebServiceWorkerContextProxy* context_proxy,
       v8::Local<v8::Context> v8_context,
       int64_t service_worker_version_id,
       const GURL& service_worker_scope,
@@ -98,6 +117,12 @@ class Dispatcher : public content::RenderThreadObserver,
   void WillReleaseScriptContext(blink::WebLocalFrame* frame,
                                 const v8::Local<v8::Context>& context,
                                 int world_id);
+
+  // Runs on worker thread and should not use any member variables.
+  static void DidStartServiceWorkerContextOnWorkerThread(
+      int64_t service_worker_version_id,
+      const GURL& service_worker_scope,
+      const GURL& script_url);
 
   // Runs on a different thread and should not use any member variables.
   static void WillDestroyServiceWorkerContextOnWorkerThread(
@@ -136,17 +161,19 @@ class Dispatcher : public content::RenderThreadObserver,
   struct JsResourceInfo {
     const char* name = nullptr;
     int id = 0;
-    bool gzipped = false;
   };
   // Returns a list of resources for the JS modules to add to the source map.
   static std::vector<JsResourceInfo> GetJsResources();
-  static void RegisterNativeHandlers(ModuleSystem* module_system,
-                                     ScriptContext* context,
-                                     Dispatcher* dispatcher,
-                                     ExtensionBindingsSystem* bindings_system,
-                                     V8SchemaRegistry* v8_schema_registry);
+  static void RegisterNativeHandlers(
+      ModuleSystem* module_system,
+      ScriptContext* context,
+      Dispatcher* dispatcher,
+      NativeExtensionBindingsSystem* bindings_system,
+      V8SchemaRegistry* v8_schema_registry);
 
-  ExtensionBindingsSystem* bindings_system() { return bindings_system_.get(); }
+  NativeExtensionBindingsSystem* bindings_system() {
+    return bindings_system_.get();
+  }
 
  private:
   // The RendererPermissionsPolicyDelegateTest.CannotScriptWebstore test needs
@@ -157,17 +184,19 @@ class Dispatcher : public content::RenderThreadObserver,
 
   // RenderThreadObserver implementation:
   bool OnControlMessageReceived(const IPC::Message& message) override;
-  void IdleNotification() override;
 
   void OnActivateExtension(const std::string& extension_id);
   void OnCancelSuspend(const std::string& extension_id);
-  void OnDeliverMessage(const PortId& target_port_id, const Message& message);
-  void OnDispatchOnConnect(const PortId& target_port_id,
+  void OnDeliverMessage(int worker_thread_id,
+                        const PortId& target_port_id,
+                        const Message& message);
+  void OnDispatchOnConnect(int worker_thread_id,
+                           const PortId& target_port_id,
                            const std::string& channel_name,
                            const ExtensionMsg_TabConnectionInfo& source,
-                           const ExtensionMsg_ExternalConnectionInfo& info,
-                           const std::string& tls_channel_id);
-  void OnDispatchOnDisconnect(const PortId& port_id,
+                           const ExtensionMsg_ExternalConnectionInfo& info);
+  void OnDispatchOnDisconnect(int worker_thread_id,
+                              const PortId& port_id,
                               const std::string& error_message);
   void OnLoaded(
       const std::vector<ExtensionMsg_Loaded_Params>& loaded_extensions);
@@ -212,11 +241,9 @@ class Dispatcher : public content::RenderThreadObserver,
   // Sets up the host permissions for |extension|.
   void InitOriginPermissions(const Extension* extension);
 
-  // Updates the host permissions for the extension url to include only those in
-  // |new_patterns|, and remove from |old_patterns| that are no longer allowed.
-  void UpdateOriginPermissions(const GURL& extension_url,
-                               const URLPatternSet& old_patterns,
-                               const URLPatternSet& new_patterns);
+  // Updates the host permissions for the extension url to include only those
+  // the extension currently has, removing any old entries.
+  void UpdateOriginPermissions(const Extension& extension);
 
   // Enable custom element whitelist in Apps.
   void EnableCustomElementWhiteList();
@@ -229,7 +256,7 @@ class Dispatcher : public content::RenderThreadObserver,
 
   void RegisterNativeHandlers(ModuleSystem* module_system,
                               ScriptContext* context,
-                              ExtensionBindingsSystem* bindings_system,
+                              NativeExtensionBindingsSystem* bindings_system,
                               V8SchemaRegistry* v8_schema_registry);
 
   // Updates a web page context with any content capabilities granted by active
@@ -246,11 +273,14 @@ class Dispatcher : public content::RenderThreadObserver,
   // |context|.
   void RequireGuestViewModules(ScriptContext* context);
 
+  // Creates the NativeExtensionBindingsSystem. Note: this may be called on any
+  // thread, and thus cannot mutate any state or rely on state which can be
+  // mutated in Dispatcher.
+  std::unique_ptr<NativeExtensionBindingsSystem> CreateBindingsSystem(
+      std::unique_ptr<IPCMessageSender> ipc_sender);
+
   // The delegate for this dispatcher to handle embedder-specific logic.
   std::unique_ptr<DispatcherDelegate> delegate_;
-
-  // True if the IdleNotification timer should be set.
-  bool set_idle_notifications_;
 
   // The IDs of extensions that failed to load, mapped to the error message
   // generated on failure.
@@ -266,10 +296,6 @@ class Dispatcher : public content::RenderThreadObserver,
 
   std::unique_ptr<ScriptInjectionManager> script_injection_manager_;
 
-  // Same as above, but on a longer timer and will run even if the process is
-  // not idle, to ensure that IdleHandle gets called eventually.
-  std::unique_ptr<base::RepeatingTimer> forced_idle_timer_;
-
   // The extensions and apps that are active in this process.
   ExtensionIdSet active_extension_ids_;
 
@@ -279,7 +305,7 @@ class Dispatcher : public content::RenderThreadObserver,
   std::unique_ptr<V8SchemaRegistry> v8_schema_registry_;
 
   // The bindings system associated with the main thread.
-  std::unique_ptr<ExtensionBindingsSystem> bindings_system_;
+  std::unique_ptr<NativeExtensionBindingsSystem> bindings_system_;
 
   // The platforms system font family and size;
   std::string system_font_family_;

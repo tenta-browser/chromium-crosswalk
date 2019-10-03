@@ -4,7 +4,6 @@
 
 #include "net/base/upload_data_stream.h"
 
-#include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "net/base/io_buffer.h"
@@ -15,26 +14,22 @@ namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogInitEndInfoCallback(
-    int result,
-    int total_size,
-    bool is_chunked,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+base::Value NetLogInitEndInfoParams(int result,
+                                    int total_size,
+                                    bool is_chunked) {
+  base::Value dict(base::Value::Type::DICTIONARY);
 
-  dict->SetInteger("net_error", result);
-  dict->SetInteger("total_size", total_size);
-  dict->SetBoolean("is_chunked", is_chunked);
-  return std::move(dict);
+  dict.SetIntKey("net_error", result);
+  dict.SetIntKey("total_size", total_size);
+  dict.SetBoolKey("is_chunked", is_chunked);
+  return dict;
 }
 
-std::unique_ptr<base::Value> NetLogReadInfoCallback(
-    int current_position,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+base::Value CreateReadInfoParams(int current_position) {
+  base::Value dict(base::Value::Type::DICTIONARY);
 
-  dict->SetInteger("current_position", current_position);
-  return std::move(dict);
+  dict.SetIntKey("current_position", current_position);
+  return dict;
 }
 
 }  // namespace
@@ -50,7 +45,7 @@ UploadDataStream::UploadDataStream(bool is_chunked, int64_t identifier)
 
 UploadDataStream::~UploadDataStream() = default;
 
-int UploadDataStream::Init(const CompletionCallback& callback,
+int UploadDataStream::Init(CompletionOnceCallback callback,
                            const NetLogWithSource& net_log) {
   Reset();
   DCHECK(!initialized_successfully_);
@@ -62,7 +57,7 @@ int UploadDataStream::Init(const CompletionCallback& callback,
   int result = InitInternal(net_log_);
   if (result == ERR_IO_PENDING) {
     DCHECK(!IsInMemory());
-    callback_ = callback;
+    callback_ = std::move(callback);
   } else {
     OnInitCompleted(result);
   }
@@ -72,13 +67,13 @@ int UploadDataStream::Init(const CompletionCallback& callback,
 
 int UploadDataStream::Read(IOBuffer* buf,
                            int buf_len,
-                           const CompletionCallback& callback) {
+                           CompletionOnceCallback callback) {
   DCHECK(!callback.is_null() || IsInMemory());
   DCHECK(initialized_successfully_);
   DCHECK_GT(buf_len, 0);
 
   net_log_.BeginEvent(NetLogEventType::UPLOAD_DATA_STREAM_READ,
-                      base::Bind(&NetLogReadInfoCallback, current_position_));
+                      [&] { return CreateReadInfoParams(current_position_); });
 
   int result = 0;
   if (!is_eof_)
@@ -86,7 +81,7 @@ int UploadDataStream::Read(IOBuffer* buf,
 
   if (result == ERR_IO_PENDING) {
     DCHECK(!IsInMemory());
-    callback_ = callback;
+    callback_ = std::move(callback);
   } else {
     OnReadCompleted(result);
   }
@@ -143,7 +138,7 @@ bool UploadDataStream::IsInMemory() const {
 
 const std::vector<std::unique_ptr<UploadElementReader>>*
 UploadDataStream::GetElementReaders() const {
-  return NULL;
+  return nullptr;
 }
 
 void UploadDataStream::OnInitCompleted(int result) {
@@ -158,12 +153,12 @@ void UploadDataStream::OnInitCompleted(int result) {
       is_eof_ = true;
   }
 
-  net_log_.EndEvent(
-      NetLogEventType::UPLOAD_DATA_STREAM_INIT,
-      base::Bind(&NetLogInitEndInfoCallback, result, total_size_, is_chunked_));
+  net_log_.EndEvent(NetLogEventType::UPLOAD_DATA_STREAM_INIT, [&] {
+    return NetLogInitEndInfoParams(result, total_size_, is_chunked_);
+  });
 
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(result);
+    std::move(callback_).Run(result);
 }
 
 void UploadDataStream::OnReadCompleted(int result) {
@@ -184,7 +179,7 @@ void UploadDataStream::OnReadCompleted(int result) {
                                     result);
 
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(result);
+    std::move(callback_).Run(result);
 }
 
 UploadProgress UploadDataStream::GetUploadProgress() const {

@@ -82,6 +82,9 @@ void CheckLibrary(const char* library_name,
 
 }  // namespace
 
+#define LIB_NAME "libcrazy_linker_tests_libfoo.so"
+#define LIB2_NAME "libcrazy_linker_tests_libfoo2.so"
+
 int main() {
   String exe_path = GetCurrentExecutableDirectory();
 
@@ -93,40 +96,39 @@ int main() {
   static const char* const kFoo2Symbols[] = {"Foo2", NULL};
 
   // Copy libfoo.so to $TMPDIR1/libfoo.so
-  CopyFile("libfoo.so", exe_path.c_str(), "libfoo.so", temp_dir_1.path());
+  CopyFile(LIB_NAME, exe_path.c_str(), LIB_NAME, temp_dir_1.path());
 
   // Copy libfoo2.so to $TMPDIR2/libfoo.so
-  CopyFile("libfoo2.so", exe_path.c_str(), "libfoo.so", temp_dir_2.path());
+  CopyFile(LIB2_NAME, exe_path.c_str(), LIB_NAME, temp_dir_2.path());
 
   // Create a new context object.
   crazy_context_t* context = crazy_context_create();
-  crazy_library_t* library;
 
   // Reset search paths to a non-existing directory. Check that the library
   // can't be loaded.
   setenv("LD_LIBRARY_PATH", "/this-directory-does-not-exist", 1);
-  crazy_context_reset_search_paths(context);
-  CheckLibraryCantLoad("libfoo.so", context);
+  crazy_reset_search_paths();
+  CheckLibraryCantLoad(LIB_NAME, context);
 
   // Add the search path to the current executable, this should load the
   // original
   // libfoo.so.
-  crazy_context_add_search_path_for_address(context, (void*)&main);
-  CheckLibrary("libfoo.so", kFooSymbols, kFoo2Symbols, context);
+  crazy_add_search_path_for_address((void*)&main);
+  CheckLibrary(LIB_NAME, kFooSymbols, kFoo2Symbols, context);
 
   // Reset search paths to use $TMPDIR2 then $TMPDIR1
   setenv("LD_LIBRARY_PATH", temp_dir_1.path(), 1);
-  crazy_context_reset_search_paths(context);
-  crazy_context_add_search_path(context, temp_dir_2.path());
+  crazy_reset_search_paths();
+  crazy_add_search_path(temp_dir_2.path());
 
   // Check that the copy of libfoo2.so is loaded.
-  CheckLibrary("libfoo.so", kFoo2Symbols, kFooSymbols, context);
+  CheckLibrary(LIB_NAME, kFoo2Symbols, kFooSymbols, context);
 
   // Reset search paths to use only $TMPDIR1
-  crazy_context_reset_search_paths(context);
+  crazy_reset_search_paths();
 
   // Check that the copy of libfoo.so is loaded.
-  CheckLibrary("libfoo.so", kFooSymbols, kFoo2Symbols, context);
+  CheckLibrary(LIB_NAME, kFooSymbols, kFoo2Symbols, context);
 
   crazy_context_destroy(context);
 

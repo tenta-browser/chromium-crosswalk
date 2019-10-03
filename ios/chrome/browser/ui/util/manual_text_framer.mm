@@ -6,7 +6,6 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #import "ios/chrome/browser/ui/util/core_text_util.h"
@@ -341,6 +340,7 @@ NSArray* GetParagraphStringsForString(NSAttributedString* string) {
     NSMutableCharacterSet* lineEndSet =
         [NSMutableCharacterSet whitespaceAndNewlineCharacterSet];
     [lineEndSet addCharactersInString:@"-\u2013\u2014"];
+    [lineEndSet removeCharactersInString:@"\u00A0"];
     _lineEndSet = lineEndSet;
   }
   return _lineEndSet;

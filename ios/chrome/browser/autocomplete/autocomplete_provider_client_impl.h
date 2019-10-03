@@ -8,10 +8,17 @@
 #include "base/macros.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "ios/chrome/browser/autocomplete/autocomplete_scheme_classifier_impl.h"
-#include "ios/chrome/browser/search_engines/ui_thread_search_terms_data.h"
 
 namespace ios {
 class ChromeBrowserState;
+}
+
+namespace unified_consent {
+class UrlKeyedDataCollectionConsentHelper;
+}
+
+namespace component_updater {
+class ComponentUpdateService;
 }
 
 // AutocompleteProviderClientImpl provides iOS-specific implementation of
@@ -23,7 +30,7 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   ~AutocompleteProviderClientImpl() override;
 
   // AutocompleteProviderClient implementation.
-  net::URLRequestContextGetter* GetRequestContext() override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   PrefService* GetPrefs() override;
   const AutocompleteSchemeClassifier& GetSchemeClassifier() const override;
   AutocompleteClassifier* GetAutocompleteClassifier() override;
@@ -34,22 +41,29 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   InMemoryURLIndex* GetInMemoryURLIndex() override;
   TemplateURLService* GetTemplateURLService() override;
   const TemplateURLService* GetTemplateURLService() const override;
-  ContextualSuggestionsService* GetContextualSuggestionsService(
+  RemoteSuggestionsService* GetRemoteSuggestionsService(
       bool create_if_necessary) const override;
-  const SearchTermsData& GetSearchTermsData() const override;
+  DocumentSuggestionsService* GetDocumentSuggestionsService(
+      bool create_if_necessary) const override;
+  OmniboxPedalProvider* GetPedalProvider() const override;
   scoped_refptr<ShortcutsBackend> GetShortcutsBackend() override;
   scoped_refptr<ShortcutsBackend> GetShortcutsBackendIfExists() override;
   std::unique_ptr<KeywordExtensionsDelegate> GetKeywordExtensionsDelegate(
       KeywordProvider* keyword_provider) override;
-  physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() override;
   std::string GetAcceptLanguages() const override;
-  std::string GetEmbedderRepresentationOfAboutScheme() override;
+  std::string GetEmbedderRepresentationOfAboutScheme() const override;
   std::vector<base::string16> GetBuiltinURLs() override;
   std::vector<base::string16> GetBuiltinsToProvideAsUserTypes() override;
+  // GetCurrentVisitTimestamp is only used by the contextual zero suggest
+  // suggestions for desktop users. This implementation returns base::Time().
+  base::Time GetCurrentVisitTimestamp() const override;
+  component_updater::ComponentUpdateService* GetComponentUpdateService()
+      override;
   bool IsOffTheRecord() const override;
   bool SearchSuggestEnabled() const override;
-  bool TabSyncEnabledAndUnencrypted() const override;
+  bool IsPersonalizedUrlDataCollectionActive() const override;
   bool IsAuthenticated() const override;
+  bool IsSyncActive() const override;
   void Classify(
       const base::string16& text,
       bool prefer_keyword,
@@ -61,14 +75,14 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
       history::KeywordID keyword_id,
       const base::string16& term) override;
   void PrefetchImage(const GURL& url) override;
-  void OnAutocompleteControllerResultReady(
-      AutocompleteController* controller) override;
-  bool IsTabOpenWithURL(const GURL& url) override;
+  bool IsTabOpenWithURL(const GURL& url,
+                        const AutocompleteInput* input) override;
 
  private:
   ios::ChromeBrowserState* browser_state_;
   AutocompleteSchemeClassifierImpl scheme_classifier_;
-  ios::UIThreadSearchTermsData search_terms_data_;
+  std::unique_ptr<unified_consent::UrlKeyedDataCollectionConsentHelper>
+      url_consent_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(AutocompleteProviderClientImpl);
 };

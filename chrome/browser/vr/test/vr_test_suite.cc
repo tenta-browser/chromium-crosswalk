@@ -4,11 +4,14 @@
 
 #include "chrome/browser/vr/test/vr_test_suite.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "mojo/core/embedder/embedder.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
 
@@ -21,21 +24,20 @@ VrTestSuite::~VrTestSuite() = default;
 void VrTestSuite::Initialize() {
   base::TestSuite::Initialize();
 
-  scoped_task_environment_ =
-      base::MakeUnique<base::test::ScopedTaskEnvironment>(
-          base::test::ScopedTaskEnvironment::MainThreadType::UI);
+  thread_bundle_ = std::make_unique<content::TestBrowserThreadBundle>();
 
-  mojo::edk::Init();
+  mojo::core::Init();
 
   base::FilePath pak_path;
 #if defined(OS_ANDROID)
   ui::RegisterPathProvider();
-  PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &pak_path);
+  base::PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &pak_path);
 #else
-  PathService::Get(base::DIR_MODULE, &pak_path);
+  base::PathService::Get(base::DIR_MODULE, &pak_path);
 #endif
   ui::ResourceBundle::InitSharedInstanceWithPakPath(
       pak_path.AppendASCII("vr_test.pak"));
+  ui::MaterialDesignController::Initialize();
 }
 
 void VrTestSuite::Shutdown() {

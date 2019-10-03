@@ -4,8 +4,9 @@
 
 #include "remoting/test/host_list_fetcher.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -34,8 +35,7 @@ void HostListFetcher::RetrieveHostlist(const std::string& access_token,
   hostlist_callback_ = callback;
 
   request_context_getter_ = new remoting::URLRequestContextGetter(
-      /*network_runner=*/base::ThreadTaskRunnerHandle::Get(),
-      /*file_runner=*/base::ThreadTaskRunnerHandle::Get());
+      /*network_runner=*/base::ThreadTaskRunnerHandle::Get());
 
   request_ = net::URLFetcher::Create(GURL(target_url), net::URLFetcher::GET,
                                      this, TRAFFIC_ANNOTATION_FOR_TESTS);
@@ -58,38 +58,34 @@ bool HostListFetcher::ProcessResponse(
     return false;
   }
 
-  std::unique_ptr<base::Value> response_value(
-      base::JSONReader::Read(response_string));
-  if (!response_value ||
-      !response_value->IsType(base::Value::Type::DICTIONARY)) {
+  base::Optional<base::Value> response =
+      base::JSONReader::Read(response_string);
+  if (!response) {
     LOG(ERROR) << "Failed to parse response string to JSON";
     return false;
   }
 
-  const base::DictionaryValue* response;
-  if (!response_value->GetAsDictionary(&response)) {
-    LOG(ERROR) << "Failed to convert parsed JSON to a dictionary object";
+  if (!response->is_dict()) {
+    LOG(ERROR) << "Parsed JSON is not a dictionary object";
     return false;
   }
 
-  const base::DictionaryValue* data = nullptr;
-  if (!response->GetDictionary("data", &data)) {
+  const base::Value* data = response->FindDictKey("data");
+  if (!data) {
     LOG(ERROR) << "Hostlist response data is empty";
     return false;
   }
 
-  const base::ListValue* hosts = nullptr;
-  if (!data->GetList("items", &hosts)) {
+  const base::Value* hosts = data->FindListKey("items");
+  if (!hosts) {
     LOG(ERROR) << "Failed to find hosts in Hostlist response data";
     return false;
   }
 
   // Any host_info with malformed data will not be added to the hostlist.
-  const base::DictionaryValue* host_dict;
-  for (const auto& host_info : *hosts) {
+  for (const base::Value& host_info : hosts->GetList()) {
     HostInfo host;
-    if (host_info.GetAsDictionary(&host_dict) &&
-        host.ParseHostInfo(*host_dict)) {
+    if (host_info.is_dict() && host.ParseHostInfo(host_info)) {
       hostlist->push_back(host);
     }
   }
@@ -106,7 +102,7 @@ void HostListFetcher::OnURLFetchComplete(
   if (!ProcessResponse(&hostlist)) {
     hostlist.clear();
   }
-  base::ResetAndReturn(&hostlist_callback_).Run(hostlist);
+  std::move(hostlist_callback_).Run(hostlist);
 }
 
 }  // namespace test

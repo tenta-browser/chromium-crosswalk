@@ -15,11 +15,19 @@
 namespace service_manager {
 namespace features {
 
+SERVICE_MANAGER_SANDBOX_EXPORT extern const base::Feature kAudioServiceSandbox;
+
+SERVICE_MANAGER_SANDBOX_EXPORT extern const base::Feature
+    kNetworkServiceSandbox;
+
 #if defined(OS_WIN)
 SERVICE_MANAGER_SANDBOX_EXPORT extern const base::Feature
     kWinSboxDisableExtensionPoints;
-SERVICE_MANAGER_SANDBOX_EXPORT extern const base::Feature kWinSboxForceMsSigned;
 #endif  // defined(OS_WIN)
+
+#if !defined(OS_ANDROID)
+SERVICE_MANAGER_SANDBOX_EXPORT extern const base::Feature kXRSandbox;
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace features
 }  // namespace service_manager

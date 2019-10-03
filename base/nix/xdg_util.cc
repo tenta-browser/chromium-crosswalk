@@ -11,6 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/third_party/xdg_user_dirs/xdg_user_dir_lookup.h"
 
@@ -57,31 +58,37 @@ DesktopEnvironment GetDesktopEnvironment(Environment* env) {
   // XDG_CURRENT_DESKTOP is the newest standard circa 2012.
   std::string xdg_current_desktop;
   if (env->GetVar("XDG_CURRENT_DESKTOP", &xdg_current_desktop)) {
-    // Not all desktop environments set this env var as of this writing.
-    if (base::StartsWith(xdg_current_desktop, "Unity",
-                         base::CompareCase::SENSITIVE)) {
-      // gnome-fallback sessions set XDG_CURRENT_DESKTOP to Unity
-      // DESKTOP_SESSION can be gnome-fallback or gnome-fallback-compiz
-      std::string desktop_session;
-      if (env->GetVar("DESKTOP_SESSION", &desktop_session) &&
-          desktop_session.find("gnome-fallback") != std::string::npos) {
-        return DESKTOP_ENVIRONMENT_GNOME;
-      }
-      return DESKTOP_ENVIRONMENT_UNITY;
-    }
-    if (xdg_current_desktop == "GNOME")
-      return DESKTOP_ENVIRONMENT_GNOME;
-    if (xdg_current_desktop == "KDE") {
-      std::string kde_session;
-      if (env->GetVar(kKDESessionEnvVar, &kde_session)) {
-        if (kde_session == "5") {
-          return DESKTOP_ENVIRONMENT_KDE5;
+    // It could have multiple values separated by colon in priority order.
+    for (const auto& value : SplitStringPiece(
+             xdg_current_desktop, ":", TRIM_WHITESPACE, SPLIT_WANT_NONEMPTY)) {
+      if (value == "Unity") {
+        // gnome-fallback sessions set XDG_CURRENT_DESKTOP to Unity
+        // DESKTOP_SESSION can be gnome-fallback or gnome-fallback-compiz
+        std::string desktop_session;
+        if (env->GetVar("DESKTOP_SESSION", &desktop_session) &&
+            desktop_session.find("gnome-fallback") != std::string::npos) {
+          return DESKTOP_ENVIRONMENT_GNOME;
         }
+        return DESKTOP_ENVIRONMENT_UNITY;
       }
-      return DESKTOP_ENVIRONMENT_KDE4;
+      if (value == "GNOME")
+        return DESKTOP_ENVIRONMENT_GNOME;
+      if (value == "X-Cinnamon")
+        return DESKTOP_ENVIRONMENT_CINNAMON;
+      if (value == "KDE") {
+        std::string kde_session;
+        if (env->GetVar(kKDESessionEnvVar, &kde_session)) {
+          if (kde_session == "5") {
+            return DESKTOP_ENVIRONMENT_KDE5;
+          }
+        }
+        return DESKTOP_ENVIRONMENT_KDE4;
+      }
+      if (value == "Pantheon")
+        return DESKTOP_ENVIRONMENT_PANTHEON;
+      if (value == "XFCE")
+        return DESKTOP_ENVIRONMENT_XFCE;
     }
-    if (xdg_current_desktop == "Pantheon")
-      return DESKTOP_ENVIRONMENT_PANTHEON;
   }
 
   // DESKTOP_SESSION was what everyone used in 2010.
@@ -120,6 +127,8 @@ const char* GetDesktopEnvironmentName(DesktopEnvironment env) {
   switch (env) {
     case DESKTOP_ENVIRONMENT_OTHER:
       return nullptr;
+    case DESKTOP_ENVIRONMENT_CINNAMON:
+      return "CINNAMON";
     case DESKTOP_ENVIRONMENT_GNOME:
       return "GNOME";
     case DESKTOP_ENVIRONMENT_KDE3:

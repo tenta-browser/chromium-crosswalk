@@ -10,7 +10,7 @@
 
 #include "base/macros.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
 #include "content/common/content_export.h"
@@ -37,14 +37,14 @@ class CONTENT_EXPORT ChildProcess {
   // Child processes should have an object that derives from this class.
   // Normally you would immediately call set_main_thread after construction.
   // |io_thread_priority| is the priority of the IO thread.
-  // |task_scheduler_name| and |task_scheduler_init_params| are used to
-  // initialize TaskScheduler. Default params are used if
-  // |task_scheduler_init_params| is nullptr.
+  // |thread_pool_name| and |thread_pool_init_params| are used to
+  // initialize ThreadPool. Default params are used if
+  // |thread_pool_init_params| is nullptr.
   ChildProcess(
       base::ThreadPriority io_thread_priority = base::ThreadPriority::NORMAL,
-      const std::string& task_scheduler_name = "ContentChild",
-      std::unique_ptr<base::TaskScheduler::InitParams>
-          task_scheduler_init_params = nullptr);
+      const std::string& thread_pool_name = "ContentChild",
+      std::unique_ptr<base::ThreadPoolInstance::InitParams>
+          thread_pool_init_params = nullptr);
   virtual ~ChildProcess();
 
   // May be NULL if the main thread hasn't been set explicitly.
@@ -54,7 +54,6 @@ class CONTENT_EXPORT ChildProcess {
   // Takes ownership of the pointer.
   void set_main_thread(ChildThreadImpl* thread);
 
-  base::MessageLoop* io_message_loop() { return io_thread_.message_loop(); }
   base::SingleThreadTaskRunner* io_task_runner() {
     return io_thread_.task_runner().get();
   }
@@ -72,13 +71,13 @@ class CONTENT_EXPORT ChildProcess {
 
   // These are used for ref-counting the child process.  The process shuts
   // itself down when the ref count reaches 0.
-  // For example, in the renderer process, generally each tab managed by this
-  // process will hold a reference to the process, and release when closed.
-  // However for renderer processes specifically, there is also fast shutdown
-  // code path initiated by the browser process. The process refcount does
-  // not influence fast shutdown. See blink::Platform::suddenTerminationChanged.
-  void AddRefProcess();
-  void ReleaseProcess();
+  //
+  // This is not used for renderer processes. The browser process is the only
+  // one responsible for shutting them down. See mojo::KeepAliveHandle and more
+  // generally the RenderProcessHostImpl class if you want to keep the renderer
+  // process alive longer.
+  virtual void AddRefProcess();
+  virtual void ReleaseProcess();
 
   // Getter for the one ChildProcess object for this process. Can only be called
   // on the main thread.
@@ -98,8 +97,8 @@ class CONTENT_EXPORT ChildProcess {
   // io_thread_.
   std::unique_ptr<ChildThreadImpl> main_thread_;
 
-  // Whether this ChildProcess initialized TaskScheduler.
-  bool initialized_task_scheduler_ = false;
+  // Whether this ChildProcess initialized ThreadPoolInstance.
+  bool initialized_thread_pool_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ChildProcess);
 };

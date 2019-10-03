@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLConnection;
 import java.util.List;
+import java.util.zip.GZIPInputStream;
 
 /**
  * Implements the Java side of Android URL protocol jobs.
@@ -43,9 +44,22 @@ public class AndroidProtocolHandler {
         if (uri == null) {
             return null;
         }
+        InputStream stream = openByScheme(uri);
+        if (stream != null && uri.getLastPathSegment().endsWith(".svgz")) {
+            try {
+                stream = new GZIPInputStream(stream);
+            } catch (IOException e) {
+                Log.e(TAG, "Error decompressing " + uri + " - " + e.getMessage());
+                return null;
+            }
+        }
+        return stream;
+    }
+
+    private static InputStream openByScheme(Uri uri) {
         try {
-            String path = uri.getPath();
             if (uri.getScheme().equals(FILE_SCHEME)) {
+                String path = uri.getPath();
                 if (path.startsWith(nativeGetAndroidAssetPath())) {
                     return openAsset(uri);
                 } else if (path.startsWith(nativeGetAndroidResourcePath())) {
@@ -55,7 +69,7 @@ public class AndroidProtocolHandler {
                 return openContent(uri);
             }
         } catch (Exception ex) {
-            Log.e(TAG, "Error opening inputstream: " + url);
+            Log.e(TAG, "Error opening inputstream: " + uri);
         }
         return null;
     }
@@ -69,26 +83,27 @@ public class AndroidProtocolHandler {
         return input.substring(0, lastDotIndex);
     }
 
-    private static Class<?> getClazz(String assetType) throws ClassNotFoundException {
+    private static Class<?> getClazz(String packageName, String assetType)
+            throws ClassNotFoundException {
         return ContextUtils.getApplicationContext().getClassLoader().loadClass(
-                ContextUtils.getApplicationContext().getPackageName() + ".R$" + assetType);
+                packageName + ".R$" + assetType);
     }
 
     private static int getFieldId(String assetType, String assetName)
             throws ClassNotFoundException, NoSuchFieldException, IllegalAccessException {
         Class<?> clazz = null;
+        String packageName = ContextUtils.getApplicationContext().getPackageName();
         try {
-            clazz = getClazz(assetType);
+            clazz = getClazz(packageName, assetType);
         } catch (ClassNotFoundException e) {
             // Strip out components from the end so gradle generated application suffix such as
             // com.example.my.pkg.pro works. This is by no means bulletproof.
-            String packageName = ContextUtils.getApplicationContext().getPackageName();
             while (clazz == null) {
                 packageName = removeOneSuffix(packageName);
                 // Throw original exception which contains the entire package id.
                 if (packageName == null) throw e;
                 try {
-                    clazz = getClazz(assetType);
+                    clazz = getClazz(packageName, assetType);
                 } catch (ClassNotFoundException ignored) {
                     // Strip and try again.
                 }
@@ -188,23 +203,50 @@ public class AndroidProtocolHandler {
             String path = uri.getPath();
             // The content URL type can be queried directly.
             if (uri.getScheme().equals(CONTENT_SCHEME)) {
-                return ContextUtils.getApplicationContext().getContentResolver().getType(uri);
+                String mimeType =
+                        ContextUtils.getApplicationContext().getContentResolver().getType(uri);
+                if (mimeType == null) {
+                    AwHistogramRecorder.recordMimeType(
+                            AwHistogramRecorder.MimeType.NULL_FROM_CONTENT_PROVIDER);
+                } else {
+                    AwHistogramRecorder.recordMimeType(
+                            AwHistogramRecorder.MimeType.NONNULL_FROM_CONTENT_PROVIDER);
+                }
+                return mimeType;
                 // Asset files may have a known extension.
             } else if (uri.getScheme().equals(FILE_SCHEME)
                     && path.startsWith(nativeGetAndroidAssetPath())) {
                 String mimeType = URLConnection.guessContentTypeFromName(path);
-                if (mimeType != null) {
+                if (mimeType == null) {
+                    AwHistogramRecorder.recordMimeType(
+                            AwHistogramRecorder.MimeType.CANNOT_GUESS_FROM_ANDROID_ASSET_PATH);
+                    // Do not return yet, try guessing from the stream.
+                } else {
+                    AwHistogramRecorder.recordMimeType(
+                            AwHistogramRecorder.MimeType.GUESSED_FROM_ANDROID_ASSET_PATH);
                     return mimeType;
                 }
             }
         } catch (Exception ex) {
             Log.e(TAG, "Unable to get mime type" + url);
+            AwHistogramRecorder.recordMimeType(
+                    AwHistogramRecorder.MimeType.CANNOT_GUESS_DUE_TO_GENERIC_EXCEPTION);
             return null;
         }
         // Fall back to sniffing the type from the stream.
         try {
-            return URLConnection.guessContentTypeFromStream(stream);
+            String mimeType = URLConnection.guessContentTypeFromStream(stream);
+            if (mimeType == null) {
+                AwHistogramRecorder.recordMimeType(
+                        AwHistogramRecorder.MimeType.CANNOT_GUESS_FROM_ANDROID_ASSET_INPUT_STREAM);
+            } else {
+                AwHistogramRecorder.recordMimeType(
+                        AwHistogramRecorder.MimeType.GUESSED_FROM_ANDROID_ASSET_INPUT_STREAM);
+            }
+            return mimeType;
         } catch (IOException e) {
+            AwHistogramRecorder.recordMimeType(
+                    AwHistogramRecorder.MimeType.CANNOT_GUESS_DUE_TO_IO_EXCEPTION);
             return null;
         }
     }
@@ -215,16 +257,11 @@ public class AndroidProtocolHandler {
      * @return a Uri instance, or null if the URL was invalid.
      */
     private static Uri verifyUrl(String url) {
-        if (url == null) {
-            return null;
-        }
-        Uri uri = Uri.parse(url);
-        if (uri == null) {
-            Log.e(TAG, "Malformed URL: " + url);
-            return null;
-        }
+        if (url == null) return null;
+        if (url.isEmpty()) return null;
+        Uri uri = Uri.parse(url); // Never null. parse() doesn't actually parse or verify anything.
         String path = uri.getPath();
-        if (path == null || path.length() == 0) {
+        if (path == null || path.isEmpty() || path.equals("/")) {
             Log.e(TAG, "URL does not have a path: " + url);
             return null;
         }

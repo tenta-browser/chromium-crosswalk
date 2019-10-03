@@ -34,7 +34,9 @@ FakeBluetoothMediaClient::FakeBluetoothMediaClient()
 
 FakeBluetoothMediaClient::~FakeBluetoothMediaClient() = default;
 
-void FakeBluetoothMediaClient::Init(dbus::Bus* bus) {}
+void FakeBluetoothMediaClient::Init(dbus::Bus* bus,
+                                    const std::string& bluetooth_service_name) {
+}
 
 void FakeBluetoothMediaClient::AddObserver(
     BluetoothMediaClient::Observer* observer) {
@@ -78,7 +80,7 @@ void FakeBluetoothMediaClient::UnregisterEndpoint(
   // TODO(mcchou): Come up with some corresponding actions.
   VLOG(1) << "UnregisterEndpoint: " << endpoint_path.value();
 
-  if (!base::ContainsKey(endpoints_, endpoint_path)) {
+  if (!base::Contains(endpoints_, endpoint_path)) {
     error_callback.Run(kFailedError, "Unknown media endpoint");
     return;
   }
@@ -128,7 +130,7 @@ void FakeBluetoothMediaClient::SetEndpointRegistered(
 
 bool FakeBluetoothMediaClient::IsRegistered(
     const dbus::ObjectPath& endpoint_path) {
-  return base::ContainsKey(endpoints_, endpoint_path);
+  return base::Contains(endpoints_, endpoint_path);
 }
 
 }  // namespace bluez

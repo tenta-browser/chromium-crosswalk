@@ -4,6 +4,8 @@
 
 #import "ios/testing/earl_grey/matchers.h"
 
+#include "ios/testing/earl_grey/earl_grey_test.h"
+
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
@@ -15,7 +17,7 @@ id<GREYMatcher> ButtonWithAccessibilityLabel(NSString* label) {
                     grey_accessibilityTrait(UIAccessibilityTraitButton), nil);
 }
 
-id<GREYMatcher> ElementToDismissContextMenu(NSString* cancel_text) {
+id<GREYMatcher> ElementToDismissAlert(NSString* cancel_text) {
   UIUserInterfaceIdiom idiom = [[UIDevice currentDevice] userInterfaceIdiom];
   if (idiom == UIUserInterfaceIdiomPad) {
     // On iPad the context menu is dismissed by tapping on something

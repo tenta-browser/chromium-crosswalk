@@ -23,7 +23,8 @@ namespace syncer {
 
 namespace {
 
-bool ExtractSyncEntity(ReadTransaction* trans,
+bool ExtractSyncEntity(ModelType type,
+                       ReadTransaction* trans,
                        int64_t id,
                        sync_pb::SyncEntity* entity) {
   ReadNode read_node(trans);
@@ -42,27 +43,50 @@ bool ExtractSyncEntity(ReadTransaction* trans,
   entity->set_name(entry.GetServerNonUniqueName());
   entity->set_deleted(entry.GetServerIsDel());
   entity->set_client_defined_unique_tag(entry.GetUniqueClientTag());
+  // Required fields for bookmarks only.
+  entity->set_folder(entry.GetServerIsDir());
+  if (!entry.GetServerParentId().IsNull()) {
+    entity->set_parent_id_string(entry.GetServerParentId().GetServerId());
+  }
 
-  // It looks like there are fancy other ways to get e.g. passwords specifics
-  // out of Entry. Do we need to special-case them when we ship those types?
+  if (!entry.GetUniqueServerTag().empty()) {
+    // Permanent nodes don't have unique_positions and are assigned unique
+    // server tags.
+    entity->set_server_defined_unique_tag(entry.GetUniqueServerTag());
+  } else if (entry.GetServerUniquePosition().IsValid()) {
+    *entity->mutable_unique_position() =
+        entry.GetServerUniquePosition().ToProto();
+  } else {
+    // All boookmarks (except permanent ones with server tag) should have valid
+    // unique_positions including legacy bookmarks that are missing the field.
+    // Directory should have taken care of assigning proper unique_position
+    // during the first sync flow.
+    DCHECK_NE(BOOKMARKS, type);
+  }
+
   entity->mutable_specifics()->CopyFrom(entry.GetServerSpecifics());
   return true;
 }
 
-}  // namespace
+void AppendAllDescendantIds(const ReadTransaction* trans,
+                            const ReadNode& node,
+                            std::vector<int64_t>* all_descendant_ids) {
+  std::vector<int64_t> child_ids;
+  node.GetChildIds(&child_ids);
 
-bool MigrateDirectoryData(ModelType type,
-                          UserShare* user_share,
-                          ModelTypeWorker* worker) {
-  return MigrateDirectoryDataWithBatchSize(type, user_share, worker, 64);
+  for (int child_id : child_ids) {
+    all_descendant_ids->push_back(child_id);
+    ReadNode child(trans);
+    child.InitByIdLookup(child_id);
+    AppendAllDescendantIds(trans, child, all_descendant_ids);
+  }
 }
 
 bool MigrateDirectoryDataWithBatchSize(ModelType type,
+                                       int batch_size,
                                        UserShare* user_share,
                                        ModelTypeWorker* worker,
-                                       int batch_size) {
-  DCHECK_NE(BOOKMARKS, type);
-  DCHECK_NE(PASSWORDS, type);
+                                       int* cumulative_migrated_entity_count) {
   ReadTransaction trans(FROM_HERE, user_share);
 
   ReadNode root(&trans);
@@ -81,11 +105,15 @@ bool MigrateDirectoryDataWithBatchSize(ModelType type,
                                             &context);
 
   std::vector<int64_t> child_ids;
-  root.GetChildIds(&child_ids);
+  AppendAllDescendantIds(&trans, root, &child_ids);
 
   // Process |batch_size| entities at a time to reduce memory usage.
   size_t i = 0;
-  while (i < child_ids.size()) {
+
+  // We use |do {} while| to guarantee that, even if there are no entities to
+  // process, we call ProcessGetUpdatesResponse() at least once in order to feed
+  // the progress marker.
+  do {
     // Vector to own the temporary entities.
     std::vector<std::unique_ptr<sync_pb::SyncEntity>> entities;
     // Vector of raw pointers for passing to ProcessGetUpdatesResponse().
@@ -94,7 +122,7 @@ bool MigrateDirectoryDataWithBatchSize(ModelType type,
     const size_t batch_limit = std::min(i + batch_size, child_ids.size());
     for (; i < batch_limit; i++) {
       auto entity = std::make_unique<sync_pb::SyncEntity>();
-      if (!ExtractSyncEntity(&trans, child_ids[i], entity.get())) {
+      if (!ExtractSyncEntity(type, &trans, child_ids[i], entity.get())) {
         LOG(ERROR) << "Failed to fetch child node for "
                    << ModelTypeToString(type);
         // Inform the worker so it can clear any partial data and trigger a
@@ -109,11 +137,36 @@ bool MigrateDirectoryDataWithBatchSize(ModelType type,
       }
     }
 
-    worker->ProcessGetUpdatesResponse(progress, context, entity_ptrs, nullptr);
-  }
+    *cumulative_migrated_entity_count += entity_ptrs.size();
+
+    worker->ProcessGetUpdatesResponse(progress, context, entity_ptrs,
+                                      /*from_uss_migrator=*/true,
+                                      /*status=*/nullptr);
+  } while (i != child_ids.size());
 
   worker->PassiveApplyUpdates(nullptr);
   return true;
+}
+
+}  // namespace
+
+bool MigrateDirectoryData(ModelType type,
+                          UserShare* user_share,
+                          ModelTypeWorker* worker,
+                          int* migrated_entity_count) {
+  *migrated_entity_count = 0;
+  return MigrateDirectoryDataWithBatchSize(type, 64, user_share, worker,
+                                           migrated_entity_count);
+}
+
+bool MigrateDirectoryDataWithBatchSizeForTesting(
+    ModelType type,
+    int batch_size,
+    UserShare* user_share,
+    ModelTypeWorker* worker,
+    int* cumulative_migrated_entity_count) {
+  return MigrateDirectoryDataWithBatchSize(type, batch_size, user_share, worker,
+                                           cumulative_migrated_entity_count);
 }
 
 }  // namespace syncer

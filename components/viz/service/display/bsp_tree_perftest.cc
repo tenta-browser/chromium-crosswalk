@@ -14,7 +14,7 @@
 #include "base/strings/string_piece.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
-#include "cc/base/lap_timer.h"
+#include "base/timer/lap_timer.h"
 #include "cc/layers/layer.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_layer_tree_host_client.h"
@@ -22,6 +22,7 @@
 #include "cc/test/layer_tree_test.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "cc/trees/transform_node.h"
 #include "components/viz/service/display/bsp_tree.h"
 #include "components/viz/service/display/draw_polygon.h"
 #include "components/viz/test/paths.h"
@@ -43,7 +44,8 @@ class BspTreePerfTest : public cc::LayerTreeTest {
 
   void SetupTree() override {
     gfx::Size viewport = gfx::Size(720, 1038);
-    layer_tree_host()->SetViewportSize(viewport);
+    layer_tree_host()->SetViewportSizeAndScale(viewport, 1.f,
+                                               LocalSurfaceIdAllocation());
     scoped_refptr<cc::Layer> root =
         ParseTreeFromJson(json_, &content_layer_client_);
     ASSERT_TRUE(root.get());
@@ -59,7 +61,7 @@ class BspTreePerfTest : public cc::LayerTreeTest {
 
   void ReadTestFile(const std::string& name) {
     base::FilePath test_data_dir;
-    ASSERT_TRUE(PathService::Get(Paths::DIR_TEST_DATA, &test_data_dir));
+    ASSERT_TRUE(base::PathService::Get(Paths::DIR_TEST_DATA, &test_data_dir));
     base::FilePath json_file = test_data_dir.AppendASCII(name + ".json");
     ASSERT_TRUE(base::ReadFileToString(json_file, &json_));
   }
@@ -106,16 +108,18 @@ class BspTreePerfTest : public cc::LayerTreeTest {
     cc::RenderSurfaceList update_list;
     cc::LayerTreeHostCommon::CalcDrawPropsImplInputs inputs(
         active_tree->root_layer_for_testing(),
-        active_tree->DeviceViewport().size(), host_impl->DrawTransform(),
+        active_tree->GetDeviceViewport().size(), host_impl->DrawTransform(),
         active_tree->device_scale_factor(),
         active_tree->current_page_scale_factor(),
         active_tree->InnerViewportContainerLayer(),
         active_tree->InnerViewportScrollLayer(),
         active_tree->OuterViewportScrollLayer(),
         active_tree->elastic_overscroll()->Current(active_tree->IsActiveTree()),
-        active_tree->OverscrollElasticityLayer(), max_texture_size,
-        host_impl->settings().layer_transforms_should_scale_layer_contents,
-        &update_list, active_tree->property_trees());
+        active_tree->OverscrollElasticityElementId(), max_texture_size,
+        &update_list, active_tree->property_trees(),
+        active_tree->property_trees()->transform_tree.Node(
+            active_tree->InnerViewportContainerLayer()
+                ->transform_tree_index()));
     cc::LayerTreeHostCommon::CalculateDrawProperties(&inputs);
   }
 
@@ -130,12 +134,12 @@ class BspTreePerfTest : public cc::LayerTreeTest {
   void AfterTest() override {
     CHECK(!test_name_.empty()) << "Must SetTestName() before TearDown().";
     perf_test::PrintResult("calc_draw_props_time", "", test_name_,
-                           1000 * timer_.MsPerLap(), "us", true);
+                           timer_.TimePerLap().InMicrosecondsF(), "us", true);
   }
 
  private:
   cc::FakeContentLayerClient content_layer_client_;
-  cc::LapTimer timer_;
+  base::LapTimer timer_;
   std::string test_name_;
   std::string json_;
   cc::LayerImplList base_list_;

@@ -33,7 +33,34 @@ class NetworkQualityEstimatorParams;
 namespace nqe {
 
 namespace internal {
+constexpr int32_t kStatVal0p = 0;
+constexpr int32_t kStatVal5p = 5;
+constexpr int32_t kStatVal50p = 50;
+constexpr int32_t kStatVal95p = 95;
+constexpr int32_t kStatVal99p = 99;
+constexpr int32_t kCanonicalPercentiles[] = {
+    kStatVal0p, kStatVal5p, kStatVal50p, kStatVal95p, kStatVal99p};
 
+struct NET_EXPORT_PRIVATE CanonicalStats {
+  CanonicalStats();
+  CanonicalStats(std::map<int32_t, int32_t>& canonical_pcts,
+                 int32_t most_recent_val,
+                 size_t observation_count);
+  CanonicalStats(const CanonicalStats& other);
+  ~CanonicalStats();
+
+  CanonicalStats& operator=(const CanonicalStats& other);
+
+  // Canonical percentiles values for a distribution.
+  std::map<int32_t, int32_t> canonical_pcts;
+
+  // The most recent value.
+  int32_t most_recent_val = 0;
+
+  // Counts the number of observations that were available for
+  // computing these results.
+  size_t observation_count = 0;
+};
 struct WeightedObservation;
 
 // Stores observations sorted by time and provides utility functions for
@@ -41,9 +68,14 @@ struct WeightedObservation;
 class NET_EXPORT_PRIVATE ObservationBuffer {
  public:
   ObservationBuffer(const NetworkQualityEstimatorParams* params,
-                    base::TickClock* tick_clock,
+                    const base::TickClock* tick_clock,
                     double weight_multiplier_per_second,
                     double weight_multiplier_per_signal_level);
+
+  //  This constructor does not copy the |observations_| from |other| to |this|.
+  //  As such, this constructor should only be called before adding any
+  //  observations to |other|.
+  ObservationBuffer(const ObservationBuffer& other);
 
   ~ObservationBuffer();
 
@@ -69,28 +101,24 @@ class NET_EXPORT_PRIVATE ObservationBuffer {
   // signal strength. |result| must not be null. If |observations_count| is not
   // null, then it is set to the number of observations that were available
   // in the observation buffer for computing the percentile.
-  base::Optional<int32_t> GetPercentile(
-      base::TimeTicks begin_timestamp,
-      const base::Optional<int32_t>& current_signal_strength,
-      int percentile,
-      size_t* observations_count) const;
+  base::Optional<int32_t> GetPercentile(base::TimeTicks begin_timestamp,
+                                        int32_t current_signal_strength,
+                                        int percentile,
+                                        size_t* observations_count) const;
 
-  void SetTickClockForTesting(base::TickClock* tick_clock) {
+  // Computes canonical statistic values of the observations for all hosts if
+  // |target_hosts| is empty. Otherwise, computes canonical statistic values
+  // only for hosts that are in the |target_hosts| set. Only observations made
+  // on or after |begin_timestamp| are considered. Returns all canonical
+  // statistics keyed by hosts. These include canonical percentile values, the
+  // most recent value, and the number of observations to compute these values.
+  std::map<IPHash, CanonicalStats> GetCanonicalStatsKeyedByHosts(
+      const base::TimeTicks& begin_timestamp,
+      const std::set<IPHash>& target_hosts) const;
+
+  void SetTickClockForTesting(const base::TickClock* tick_clock) {
     tick_clock_ = tick_clock;
   }
-
-  // Computes percentiles separately for each host. Observations without
-  // a host tag are skipped. Only data from the hosts present in |host_filter|
-  // are considered. Observations before |begin_timestamp| are skipped. The
-  // percentile value for each host is returned in |host_keyed_percentiles|. The
-  // number of valid observations for each host used for the computation is
-  // returned in |host_keyed_counts|.
-  void GetPercentileForEachHostWithCounts(
-      base::TimeTicks begin_timestamp,
-      int percentile,
-      const base::Optional<std::set<IPHash>>& host_filter,
-      std::map<IPHash, int32_t>* host_keyed_percentiles,
-      std::map<IPHash, size_t>* host_keyed_counts) const;
 
   // Removes all observations from the buffer whose corresponding entry in
   // |deleted_observation_sources| is set to true. For example, if index 1 and
@@ -109,7 +137,7 @@ class NET_EXPORT_PRIVATE ObservationBuffer {
   // at least one observation in the buffer.
   void ComputeWeightedObservations(
       const base::TimeTicks& begin_timestamp,
-      const base::Optional<int32_t>& current_signal_strength,
+      int32_t current_signal_strength,
       std::vector<WeightedObservation>* weighted_observations,
       double* total_weight) const;
 
@@ -134,9 +162,9 @@ class NET_EXPORT_PRIVATE ObservationBuffer {
   // |weight_multiplier_per_signal_level_| ^ 3.
   const double weight_multiplier_per_signal_level_;
 
-  base::TickClock* tick_clock_;
+  const base::TickClock* tick_clock_;
 
-  DISALLOW_COPY_AND_ASSIGN(ObservationBuffer);
+  DISALLOW_ASSIGN(ObservationBuffer);
 };
 
 }  // namespace internal

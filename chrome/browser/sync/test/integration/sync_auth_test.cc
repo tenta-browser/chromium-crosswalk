@@ -6,68 +6,94 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "chrome/common/pref_names.h"
+#include "components/bookmarks/browser/bookmark_node.h"
+#include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/driver/profile_sync_service.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/driver/sync_token_status.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_request_status.h"
 
-using bookmarks_helper::AddURL;
+namespace {
 
-const char kShortLivedOAuth2Token[] =
-    "{"
-    "  \"refresh_token\": \"short_lived_refresh_token\","
-    "  \"access_token\": \"short_lived_access_token\","
-    "  \"expires_in\": 5,"  // 5 seconds.
-    "  \"token_type\": \"Bearer\""
-    "}";
+constexpr char kShortLivedOAuth2Token[] = R"(
+    {
+      "refresh_token": "short_lived_refresh_token",
+      "access_token": "short_lived_access_token",
+      "expires_in": 5,  // 5 seconds.
+      "token_type": "Bearer"
+    })";
 
-const char kValidOAuth2Token[] = "{"
-                                 "  \"refresh_token\": \"new_refresh_token\","
-                                 "  \"access_token\": \"new_access_token\","
-                                 "  \"expires_in\": 3600,"  // 1 hour.
-                                 "  \"token_type\": \"Bearer\""
-                                 "}";
+constexpr char kValidOAuth2Token[] = R"({
+                                   "refresh_token": "new_refresh_token",
+                                   "access_token": "new_access_token",
+                                   "expires_in": 3600,  // 1 hour.
+                                   "token_type": "Bearer"
+                                 })";
 
-const char kInvalidGrantOAuth2Token[] = "{"
-                                        "  \"error\": \"invalid_grant\""
-                                        "}";
+constexpr char kInvalidGrantOAuth2Token[] = R"({
+                                           "error": "invalid_grant"
+                                        })";
 
-const char kInvalidClientOAuth2Token[] = "{"
-                                         "  \"error\": \"invalid_client\""
-                                         "}";
+constexpr char kInvalidClientOAuth2Token[] = R"({
+                                           "error": "invalid_client"
+                                         })";
 
-const char kEmptyOAuth2Token[] = "";
+constexpr char kEmptyOAuth2Token[] = "";
 
-const char kMalformedOAuth2Token[] = "{ \"foo\": ";
+constexpr char kMalformedOAuth2Token[] = R"({ "foo": )";
 
-class TestForAuthError : public SingleClientStatusChangeChecker {
+bool HasUserPrefValue(const PrefService* pref_service,
+                      const std::string& pref) {
+  return pref_service->GetUserPrefValue(pref) != nullptr;
+}
+
+// Waits until local changes are committed or an auth error is encountered.
+class TestForAuthError : public UpdatedProgressMarkerChecker {
  public:
-  explicit TestForAuthError(browser_sync::ProfileSyncService* service);
+  explicit TestForAuthError(syncer::ProfileSyncService* service)
+      : UpdatedProgressMarkerChecker(service) {}
 
   // StatusChangeChecker implementation.
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
+  bool IsExitConditionSatisfied() override {
+    // Note: This is quite fragile. It relies on Sync trying to fetch a new
+    // access token, even though it might already be in a persistent auth error
+    // state.
+    return (service()
+                ->GetSyncTokenStatusForDebugging()
+                .last_get_token_error.state() !=
+            GoogleServiceAuthError::NONE) ||
+           UpdatedProgressMarkerChecker::IsExitConditionSatisfied();
+  }
+
+  std::string GetDebugMessage() const override {
+    return "Waiting for auth error";
+  }
 };
 
-TestForAuthError::TestForAuthError(browser_sync::ProfileSyncService* service)
-    : SingleClientStatusChangeChecker(service) {}
+class SyncTransportActiveChecker : public SingleClientStatusChangeChecker {
+ public:
+  explicit SyncTransportActiveChecker(syncer::ProfileSyncService* service)
+      : SingleClientStatusChangeChecker(service) {}
 
-bool TestForAuthError::IsExitConditionSatisfied() {
-  return !service()->HasUnsyncedItems() ||
-      (service()->GetSyncTokenStatus().last_get_token_error.state() !=
-       GoogleServiceAuthError::NONE);
-}
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied() override {
+    return service()->GetTransportState() ==
+           syncer::SyncService::TransportState::ACTIVE;
+  }
 
-std::string TestForAuthError::GetDebugMessage() const {
-  return "Waiting for auth error";
-}
+  std::string GetDebugMessage() const override { return "Sync Active"; }
+};
 
 class SyncAuthTest : public SyncTest {
  public:
@@ -81,13 +107,14 @@ class SyncAuthTest : public SyncTest {
     int bookmark_index = GetNextBookmarkIndex();
     std::string title = base::StringPrintf("Bookmark %d", bookmark_index);
     GURL url = GURL(base::StringPrintf("http://www.foo%d.com", bookmark_index));
-    EXPECT_NE(nullptr, AddURL(0, title, url));
+    EXPECT_NE(nullptr, bookmarks_helper::AddURL(0, title, url));
 
     // Run until the bookmark is committed or an auth error is encountered.
     TestForAuthError(GetSyncService(0)).Wait();
 
-    GoogleServiceAuthError oauth_error =
-        GetSyncService(0)->GetSyncTokenStatus().last_get_token_error;
+    GoogleServiceAuthError oauth_error = GetSyncService(0)
+                                             ->GetSyncTokenStatusForDebugging()
+                                             .last_get_token_error;
 
     return oauth_error.state() != GoogleServiceAuthError::NONE;
   }
@@ -97,13 +124,12 @@ class SyncAuthTest : public SyncTest {
     // or CONNECTION_FAILED, this means the OAuth2TokenService has given up
     // trying to reach Gaia. In practice, OA2TS retries a fixed number of times,
     // but the count is transparent to PSS.
-    // Override the max retry count in TokenService so that we instantly trigger
-    // the case where ProfileSyncService must pick up where OAuth2TokenService
-    // left off (in terms of retries).
-    ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile(0))->
-        set_max_authorization_token_fetch_retries_for_testing(0);
+    // Disable retries so that we instantly trigger the case where
+    // ProfileSyncService must pick up where OAuth2TokenService left off (in
+    // terms of retries).
+    signin::DisableAccessTokenFetchRetries(
+        IdentityManagerFactory::GetForProfile(GetProfile(0)));
   }
-
 
  private:
   int GetNextBookmarkIndex() {
@@ -118,7 +144,7 @@ class SyncAuthTest : public SyncTest {
 // Verify that sync works with a valid OAuth2 token.
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, Sanity) {
   ASSERT_TRUE(SetupSync());
-  GetFakeServer()->SetAuthenticated();
+  GetFakeServer()->ClearHttpError();
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kValidOAuth2Token,
                          net::HTTP_OK,
@@ -132,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, Sanity) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnInternalServerError500) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kValidOAuth2Token,
                          net::HTTP_INTERNAL_SERVER_ERROR,
@@ -147,7 +173,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnInternalServerError500) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnHttpForbidden403) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kEmptyOAuth2Token,
                          net::HTTP_FORBIDDEN,
@@ -161,7 +187,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnHttpForbidden403) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnRequestFailed) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kEmptyOAuth2Token,
                          net::HTTP_INTERNAL_SERVER_ERROR,
@@ -175,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnRequestFailed) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnMalformedToken) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kMalformedOAuth2Token,
                          net::HTTP_OK,
@@ -190,7 +216,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryOnMalformedToken) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, InvalidGrant) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kInvalidGrantOAuth2Token,
                          net::HTTP_BAD_REQUEST,
@@ -206,7 +232,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, InvalidGrant) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryInvalidClient) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kInvalidClientOAuth2Token,
                          net::HTTP_BAD_REQUEST,
@@ -220,7 +246,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryInvalidClient) {
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryRequestCanceled) {
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(AttemptToTriggerAuthError());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kEmptyOAuth2Token,
                          net::HTTP_INTERNAL_SERVER_ERROR,
@@ -235,13 +261,13 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryRequestCanceled) {
 // HTTP_BAD_REQUEST (400) response code.
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, FailInitialSetupWithPersistentError) {
   ASSERT_TRUE(SetupClients());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kInvalidGrantOAuth2Token,
                          net::HTTP_BAD_REQUEST,
                          net::URLRequestStatus::SUCCESS);
   ASSERT_FALSE(GetClient(0)->SetupSync());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncActive());
+  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureActive());
   ASSERT_EQ(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS,
             GetSyncService(0)->GetAuthError().state());
 }
@@ -252,21 +278,22 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, FailInitialSetupWithPersistentError) {
 // code.
 IN_PROC_BROWSER_TEST_F(SyncAuthTest, RetryInitialSetupWithTransientError) {
   ASSERT_TRUE(SetupClients());
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kEmptyOAuth2Token,
                          net::HTTP_INTERNAL_SERVER_ERROR,
                          net::URLRequestStatus::SUCCESS);
   ASSERT_FALSE(GetClient(0)->SetupSync());
-  ASSERT_FALSE(GetSyncService(0)->IsSyncActive());
+  ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureActive());
   ASSERT_TRUE(GetSyncService(0)->IsRetryingAccessTokenFetchForTest());
 }
 
 // Verify that ProfileSyncService fetches a new token when an old token expires.
-IN_PROC_BROWSER_TEST_F(SyncAuthTest, TokenExpiry) {
+// Disabled due to flakiness: https://crbug.com/860200
+IN_PROC_BROWSER_TEST_F(SyncAuthTest, DISABLED_TokenExpiry) {
   // Initial sync succeeds with a short lived OAuth2 Token.
   ASSERT_TRUE(SetupClients());
-  GetFakeServer()->SetAuthenticated();
+  GetFakeServer()->ClearHttpError();
   DisableTokenFetchRetries();
   SetOAuth2TokenResponse(kShortLivedOAuth2Token,
                          net::HTTP_OK,
@@ -279,7 +306,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, TokenExpiry) {
 
   // Trigger an auth error on the server so PSS requests OA2TS for a new token
   // during the next sync cycle.
-  GetFakeServer()->SetUnauthenticated();
+  GetFakeServer()->SetHttpError(net::HTTP_UNAUTHORIZED);
   SetOAuth2TokenResponse(kEmptyOAuth2Token,
                          net::HTTP_INTERNAL_SERVER_ERROR,
                          net::URLRequestStatus::SUCCESS);
@@ -287,7 +314,7 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, TokenExpiry) {
   ASSERT_TRUE(GetSyncService(0)->IsRetryingAccessTokenFetchForTest());
 
   // Trigger an auth success state and set up a new valid OAuth2 token.
-  GetFakeServer()->SetAuthenticated();
+  GetFakeServer()->ClearHttpError();
   SetOAuth2TokenResponse(kValidOAuth2Token,
                          net::HTTP_OK,
                          net::URLRequestStatus::SUCCESS);
@@ -297,3 +324,151 @@ IN_PROC_BROWSER_TEST_F(SyncAuthTest, TokenExpiry) {
   std::string new_token = GetSyncService(0)->GetAccessTokenForTest();
   ASSERT_NE(old_token, new_token);
 }
+
+class NoAuthErrorChecker : public SingleClientStatusChangeChecker {
+ public:
+  explicit NoAuthErrorChecker(syncer::ProfileSyncService* service)
+      : SingleClientStatusChangeChecker(service) {}
+
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied() override {
+    return service()->GetAuthError().state() == GoogleServiceAuthError::NONE;
+  }
+
+  std::string GetDebugMessage() const override {
+    return "Waiting for auth error to be cleared";
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(SyncAuthTest, SyncPausedState) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  ASSERT_TRUE(GetSyncService(0)->IsSyncFeatureActive());
+  ASSERT_EQ(GetSyncService(0)->GetTransportState(),
+            syncer::SyncService::TransportState::ACTIVE);
+  const syncer::ModelTypeSet active_types =
+      GetSyncService(0)->GetActiveDataTypes();
+  ASSERT_FALSE(active_types.Empty());
+
+  // Enter the "Sync paused" state.
+  GetClient(0)->EnterSyncPausedStateForPrimaryAccount();
+  ASSERT_TRUE(GetSyncService(0)->GetAuthError().IsPersistentError());
+
+  if (base::FeatureList::IsEnabled(switches::kStopSyncInPausedState)) {
+    // Sync should have shut itself down.
+    EXPECT_EQ(GetSyncService(0)->GetTransportState(),
+              syncer::SyncService::TransportState::DISABLED);
+    EXPECT_TRUE(GetSyncService(0)->HasDisableReason(
+        syncer::SyncService::DISABLE_REASON_PAUSED));
+  } else {
+    ASSERT_TRUE(AttemptToTriggerAuthError());
+
+    // Pausing sync may issue a reconfiguration, so wait until it finishes.
+    SyncTransportActiveChecker(GetSyncService(0)).Wait();
+  }
+
+  // The active data types should now be empty.
+  EXPECT_TRUE(GetSyncService(0)->GetActiveDataTypes().Empty());
+
+  // Clear the "Sync paused" state again.
+  GetClient(0)->ExitSyncPausedStateForPrimaryAccount();
+  // SyncService will clear its auth error state only once it gets a valid
+  // access token again, so wait for that to happen.
+  NoAuthErrorChecker(GetSyncService(0)).Wait();
+  ASSERT_FALSE(GetSyncService(0)->GetAuthError().IsPersistentError());
+
+  if (base::FeatureList::IsEnabled(switches::kStopSyncInPausedState)) {
+    // Once the auth error is gone, wait for Sync to start up again.
+    GetClient(0)->AwaitSyncSetupCompletion();
+  } else {
+    // Resuming sync could issue a reconfiguration, so wait until it finishes.
+    SyncTransportActiveChecker(GetSyncService(0)).Wait();
+  }
+
+  // Now the active data types should be back.
+  EXPECT_TRUE(GetSyncService(0)->IsSyncFeatureActive());
+  EXPECT_EQ(GetSyncService(0)->GetActiveDataTypes(), active_types);
+}
+
+IN_PROC_BROWSER_TEST_F(SyncAuthTest, ShouldTrackDeletionsInSyncPausedState) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  ASSERT_TRUE(GetSyncService(0)->IsSyncFeatureActive());
+  ASSERT_EQ(GetSyncService(0)->GetTransportState(),
+            syncer::SyncService::TransportState::ACTIVE);
+
+  // USS type.
+  ASSERT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::BOOKMARKS));
+  // Pseudo-USS type.
+  ASSERT_TRUE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::PREFERENCES));
+
+  const GURL kTestURL("http://mail.google.com");
+
+  PrefService* pref_service = GetProfile(0)->GetPrefs();
+
+  // Create a bookmark...
+  const bookmarks::BookmarkNode* bar = bookmarks_helper::GetBookmarkBarNode(0);
+  ASSERT_FALSE(bookmarks_helper::HasNodeWithURL(0, kTestURL));
+  const bookmarks::BookmarkNode* bookmark = bookmarks_helper::AddURL(
+      0, bar, bar->children().size(), "Title", kTestURL);
+
+  // ...set a pref...
+  ASSERT_FALSE(HasUserPrefValue(pref_service, prefs::kHomePageIsNewTabPage));
+  pref_service->SetBoolean(prefs::kHomePageIsNewTabPage, true);
+
+  // ...and wait for both to be synced up.
+  UpdatedProgressMarkerChecker(GetSyncService(0)).Wait();
+
+  // Enter the "Sync paused" state.
+  GetClient(0)->EnterSyncPausedStateForPrimaryAccount();
+  ASSERT_TRUE(GetSyncService(0)->GetAuthError().IsPersistentError());
+
+  if (base::FeatureList::IsEnabled(switches::kStopSyncInPausedState)) {
+    // Sync should have shut itself down.
+    EXPECT_EQ(GetSyncService(0)->GetTransportState(),
+              syncer::SyncService::TransportState::DISABLED);
+    EXPECT_TRUE(GetSyncService(0)->HasDisableReason(
+        syncer::SyncService::DISABLE_REASON_PAUSED));
+  } else {
+    ASSERT_TRUE(AttemptToTriggerAuthError());
+
+    // Pausing sync may issue a reconfiguration, so wait until it finishes.
+    SyncTransportActiveChecker(GetSyncService(0)).Wait();
+  }
+
+  ASSERT_FALSE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::BOOKMARKS));
+  ASSERT_FALSE(
+      GetSyncService(0)->GetActiveDataTypes().Has(syncer::PREFERENCES));
+
+  // Delete the bookmark and the pref.
+  // Note that AttemptToTriggerAuthError() also creates bookmarks, so the index
+  // of our test bookmark might have changed.
+  ASSERT_EQ(bar->children().back().get(), bookmark);
+  bookmarks_helper::Remove(0, bar, bar->children().size() - 1);
+  ASSERT_FALSE(bookmarks_helper::HasNodeWithURL(0, kTestURL));
+  pref_service->ClearPref(prefs::kHomePageIsNewTabPage);
+
+  // Clear the "Sync paused" state again.
+  GetClient(0)->ExitSyncPausedStateForPrimaryAccount();
+  // SyncService will clear its auth error state only once it gets a valid
+  // access token again, so wait for that to happen.
+  NoAuthErrorChecker(GetSyncService(0)).Wait();
+  ASSERT_FALSE(GetSyncService(0)->GetAuthError().IsPersistentError());
+  if (base::FeatureList::IsEnabled(switches::kStopSyncInPausedState)) {
+    // Once the auth error is gone, wait for Sync to start up again.
+    GetClient(0)->AwaitSyncSetupCompletion();
+  } else {
+    // Resuming sync could issue a reconfiguration, so wait until it finishes.
+    SyncTransportActiveChecker(GetSyncService(0)).Wait();
+  }
+
+  // Resuming sync could issue a reconfiguration, so wait until it finishes.
+  SyncTransportActiveChecker(GetSyncService(0)).Wait();
+  ASSERT_TRUE(GetSyncService(0)->IsSyncFeatureActive());
+
+  // Resuming sync should *not* have re-created the deleted items.
+  EXPECT_FALSE(bookmarks_helper::HasNodeWithURL(0, kTestURL));
+  EXPECT_FALSE(HasUserPrefValue(pref_service, prefs::kHomePageIsNewTabPage));
+}
+
+}  // namespace

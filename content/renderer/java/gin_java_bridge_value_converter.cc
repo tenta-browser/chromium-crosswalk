@@ -44,8 +44,7 @@ std::unique_ptr<base::Value> GinJavaBridgeValueConverter::FromV8Value(
 bool GinJavaBridgeValueConverter::FromV8Object(
     v8::Local<v8::Object> value,
     std::unique_ptr<base::Value>* out,
-    v8::Isolate* isolate,
-    const FromV8ValueCallback& callback) const {
+    v8::Isolate* isolate) {
   GinJavaBridgeObject* unwrapped;
   if (!gin::ConvertFromV8(isolate, value, &unwrapped)) {
     return false;
@@ -123,7 +122,7 @@ std::unique_ptr<TypedArraySerializer> TypedArraySerializer::Create(
 bool GinJavaBridgeValueConverter::FromV8ArrayBuffer(
     v8::Local<v8::Object> value,
     std::unique_ptr<base::Value>* out,
-    v8::Isolate* isolate) const {
+    v8::Isolate* isolate) {
   if (!value->IsTypedArray()) {
     *out = GinJavaBridgeValue::CreateUndefinedValue();
     return true;
@@ -151,7 +150,7 @@ bool GinJavaBridgeValueConverter::FromV8ArrayBuffer(
 
 bool GinJavaBridgeValueConverter::FromV8Number(
     v8::Local<v8::Number> value,
-    std::unique_ptr<base::Value>* out) const {
+    std::unique_ptr<base::Value>* out) {
   double double_value = value->Value();
   if (std::isfinite(double_value))
     return false;
@@ -160,7 +159,7 @@ bool GinJavaBridgeValueConverter::FromV8Number(
 }
 
 bool GinJavaBridgeValueConverter::FromV8Undefined(
-    std::unique_ptr<base::Value>* out) const {
+    std::unique_ptr<base::Value>* out) {
   *out = GinJavaBridgeValue::CreateUndefinedValue();
   return true;
 }

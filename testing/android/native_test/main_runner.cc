@@ -6,7 +6,7 @@
 
 #include "base/android/jni_array.h"
 #include "base/logging.h"
-#include "jni/MainRunner_jni.h"
+#include "testing/android/native_test/native_test_jni_headers/MainRunner_jni.h"
 #include "testing/android/native_test/native_test_util.h"
 
 extern int main(int argc, char** argv);
@@ -16,7 +16,6 @@ namespace android {
 
 static jint JNI_MainRunner_RunMain(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const base::android::JavaParamRef<jobjectArray>& command_line) {
   // Guards against process being reused.
   // In most cases, running main again will cause problems (static variables,

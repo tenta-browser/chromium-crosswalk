@@ -35,6 +35,9 @@ RendererFactory* RendererFactorySelector::GetCurrentFactory() {
   if (query_is_remoting_active_cb_ && query_is_remoting_active_cb_.Run())
     next_factory_type = FactoryType::COURIER;
 
+  if (query_is_flinging_active_cb_ && query_is_flinging_active_cb_.Run())
+    next_factory_type = FactoryType::FLINGING;
+
   DVLOG(1) << __func__ << " Selecting factory type: " << next_factory_type;
 
   RendererFactory* current_factory = factories_[next_factory_type].get();
@@ -48,12 +51,30 @@ RendererFactory* RendererFactorySelector::GetCurrentFactory() {
 void RendererFactorySelector::SetUseMediaPlayer(bool use_media_player) {
   use_media_player_ = use_media_player;
 }
+
+void RendererFactorySelector::StartRequestRemotePlayStateCB(
+    RequestRemotePlayStateChangeCB callback_request) {
+  DCHECK(!remote_play_state_change_cb_request_);
+  remote_play_state_change_cb_request_ = std::move(callback_request);
+}
+
+void RendererFactorySelector::SetRemotePlayStateChangeCB(
+    RemotePlayStateChangeCB callback) {
+  DCHECK(remote_play_state_change_cb_request_);
+  std::move(remote_play_state_change_cb_request_).Run(std::move(callback));
+}
 #endif
 
 void RendererFactorySelector::SetQueryIsRemotingActiveCB(
     QueryIsRemotingActiveCB query_is_remoting_active_cb) {
   DCHECK(!query_is_remoting_active_cb_);
   query_is_remoting_active_cb_ = query_is_remoting_active_cb;
+}
+
+void RendererFactorySelector::SetQueryIsFlingingActiveCB(
+    QueryIsFlingingActiveCB query_is_flinging_active_cb) {
+  DCHECK(!query_is_flinging_active_cb_);
+  query_is_flinging_active_cb_ = query_is_flinging_active_cb;
 }
 
 }  // namespace media

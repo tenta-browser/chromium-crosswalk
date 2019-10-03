@@ -10,12 +10,11 @@
 #include <utility>
 
 #include "base/threading/simple_thread.h"
-#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 
 namespace cc {
 
-SynchronousTaskGraphRunner::SynchronousTaskGraphRunner() {}
+SynchronousTaskGraphRunner::SynchronousTaskGraphRunner() = default;
 
 SynchronousTaskGraphRunner::~SynchronousTaskGraphRunner() {
   DCHECK(!work_queue_.HasReadyToRunTasks());

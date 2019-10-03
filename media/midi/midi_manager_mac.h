@@ -13,10 +13,11 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 #include "base/threading/thread.h"
 #include "media/midi/midi_export.h"
 #include "media/midi/midi_manager.h"
-#include "media/midi/midi_port_info.h"
+#include "media/midi/midi_service.mojom.h"
 
 namespace midi {
 
@@ -29,16 +30,19 @@ class MIDI_EXPORT MidiManagerMac final : public MidiManager {
 
   // MidiManager implementation.
   void StartInitialization() override;
-  void Finalize() override;
   void DispatchSendMidiData(MidiManagerClient* client,
                             uint32_t port_index,
                             const std::vector<uint8_t>& data,
-                            double timestamp) override;
+                            base::TimeTicks timestamp) override;
 
  private:
   // Initializes CoreMIDI on |client_thread_| asynchronously. Called from
   // StartInitialization().
   void InitializeCoreMIDI();
+
+  // Completes CoreMIDI initialization and asks the thread that ran
+  // StartInitialization() to call CompleteStartSession() safely.
+  void CompleteCoreMIDIInitialization(mojom::Result result);
 
   // CoreMIDI callback for MIDI notification.
   // Receives MIDI related event notifications from CoreMIDI.
@@ -57,10 +61,10 @@ class MIDI_EXPORT MidiManagerMac final : public MidiManager {
   void SendMidiData(MidiManagerClient* client,
                     uint32_t port_index,
                     const std::vector<uint8_t>& data,
-                    double timestamp);
+                    base::TimeTicks timestamp);
 
-  // CoreMIDI client reference, should be protected by |midi_client_lock_|.
-  MIDIClientRef midi_client_ = 0;
+  // CoreMIDI client reference.
+  MIDIClientRef midi_client_ GUARDED_BY(midi_client_lock_) = 0;
   base::Lock midi_client_lock_;
 
   // Following members can be accessed without any lock on kClientTaskRunner,

@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.ntp.cards;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import android.content.res.Resources;
@@ -20,15 +21,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.UrlConstants;
-import org.chromium.chrome.browser.ntp.ContextMenuManager;
+import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.NewTabPageView;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
@@ -38,33 +38,39 @@ import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
 import org.chromium.chrome.browser.ntp.snippets.SnippetArticle;
 import org.chromium.chrome.browser.suggestions.ContentSuggestionsAdditionalAction;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.RecyclerViewTestUtils;
-import org.chromium.chrome.test.util.browser.suggestions.FakeMostVisitedSites;
 import org.chromium.chrome.test.util.browser.suggestions.FakeSuggestionsSource;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
-import org.chromium.content.browser.test.util.TestTouchUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.chrome.test.util.browser.suggestions.mostvisited.FakeMostVisitedSites;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TestTouchUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.test.util.UiRestriction;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Instrumentation tests for {@link NewTabPageRecyclerView}.
  */
+// TODO(https://crbug.com/894334): Remove format suppression once formatting bug is fixed.
+// clang-format off
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
-@Features.DisableFeatures("NetworkPrediction")
+@Features.DisableFeatures(ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS)
 @RetryOnFailure
 public class NewTabPageRecyclerViewTest {
+    // clang-format on
+
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
@@ -89,6 +95,7 @@ public class NewTabPageRecyclerViewTest {
 
     @Before
     public void setUp() throws Exception {
+
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
 
         FakeMostVisitedSites mostVisitedSites = new FakeMostVisitedSites();
@@ -114,6 +121,17 @@ public class NewTabPageRecyclerViewTest {
 
         assertTrue(mTab.getNativePage() instanceof NewTabPage);
         mNtp = (NewTabPage) mTab.getNativePage();
+
+        // When scrolling to a View, we wait until the View is no longer updating - when it is no
+        // longer dirty. If scroll to load is triggered, the animated progress spinner will keep
+        // the RecyclerView dirty as it is constantly updating.
+        //
+        // We do not want to disable the Scroll to Load feature entirely because its presence
+        // effects other elements of the UI - it moves the Learn More link into the Context Menu.
+        // Removing the ScrollToLoad listener from the RecyclerView allows us to prevent scroll to
+        // load triggering while maintaining the UI otherwise.
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mNtp.getNewTabPageView().getRecyclerView().clearScrollToLoadListener());
     }
 
     @After
@@ -133,11 +151,9 @@ public class NewTabPageRecyclerViewTest {
         SnippetArticle suggestion = suggestions.get(suggestions.size() - 1);
         int suggestionPosition = getLastCardPosition();
         final View suggestionView = getViewHolderAtPosition(suggestionPosition).itemView;
-        ChromeTabUtils.waitForTabPageLoaded(mTab, new Runnable() {
-            @Override
-            public void run() {
-                TouchCommon.singleClickView(suggestionView);
-            }
+        ChromeTabUtils.waitForTabPageLoaded(mTab, suggestion.mUrl, () -> {
+            TestTouchUtils.performClickOnMainSync(
+                    InstrumentationRegistry.getInstrumentation(), suggestionView);
         });
         assertEquals(suggestion.mUrl, mTab.getUrl());
     }
@@ -148,8 +164,6 @@ public class NewTabPageRecyclerViewTest {
     public void testAllDismissed() throws InterruptedException, TimeoutException {
         setSuggestionsAndWaitForUpdate(3);
         assertEquals(3, mSource.getSuggestionsForCategory(TEST_CATEGORY).size());
-        assertEquals(RecyclerView.NO_POSITION,
-                getAdapter().getFirstPositionForType(ItemViewType.ALL_DISMISSED));
         assertEquals(1, mSource.getCategories().length);
         assertEquals(TEST_CATEGORY, mSource.getCategories()[0]);
 
@@ -157,28 +171,24 @@ public class NewTabPageRecyclerViewTest {
         int signinPromoPosition = getAdapter().getFirstPositionForType(ItemViewType.PROMO);
         dismissItemAtPosition(signinPromoPosition);
 
-        // Dismiss all the cards, including status cards, which dismisses the associated category.
+        // Dismiss all the cards. Then, we are left with the status card,
+        // which shouldn't be dismissible.
         while (true) {
             int cardPosition = getAdapter().getFirstCardPosition();
             if (cardPosition == RecyclerView.NO_POSITION) break;
+            final ViewHolder viewHolder = getViewHolderAtPosition(cardPosition);
+            if (viewHolder.getItemViewType() == ItemViewType.STATUS) {
+                assertFalse(((NewTabPageViewHolder) viewHolder).isDismissable());
+                break;
+            }
             dismissItemAtPosition(cardPosition);
         }
-        assertEquals(0, mSource.getCategories().length);
-
-        // Click the refresh button on the all dismissed item.
-        int allDismissedPosition = getAdapter().getFirstPositionForType(ItemViewType.ALL_DISMISSED);
-        assertTrue(allDismissedPosition != RecyclerView.NO_POSITION);
-        View allDismissedView = getViewHolderAtPosition(allDismissedPosition).itemView;
-        TouchCommon.singleClickView(allDismissedView.findViewById(R.id.action_button));
-        RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), allDismissedView);
-        assertEquals(1, mSource.getCategories().length);
-        assertEquals(TEST_CATEGORY, mSource.getCategories()[0]);
     }
 
     @Test
     @MediumTest
     @Feature({"NewTabPage"})
-    public void testDismissArticleWithContextMenu() throws InterruptedException, TimeoutException {
+    public void testDismissArticleWithContextMenu() throws Exception {
         setSuggestionsAndWaitForUpdate(10);
         List<SnippetArticle> suggestions = mSource.getSuggestionsForCategory(TEST_CATEGORY);
         assertEquals(10, suggestions.size());
@@ -188,52 +198,11 @@ public class NewTabPageRecyclerViewTest {
         View suggestionView = getViewHolderAtPosition(suggestionPosition).itemView;
 
         // Dismiss the suggestion using the context menu.
-        invokeContextMenu(suggestionView, ContextMenuManager.ID_REMOVE);
+        invokeContextMenu(suggestionView, ContextMenuManager.ContextMenuItemId.REMOVE);
         RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), suggestionView);
 
         suggestions = mSource.getSuggestionsForCategory(TEST_CATEGORY);
         assertEquals(9, suggestions.size());
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"NewTabPage"})
-    public void testDismissStatusCardWithContextMenu()
-            throws InterruptedException, TimeoutException {
-        setSuggestionsAndWaitForUpdate(0);
-        assertArrayEquals(new int[] {TEST_CATEGORY}, mSource.getCategories());
-
-        // Scroll the status card into view.
-        int cardPosition = getAdapter().getFirstCardPosition();
-        assertEquals(ItemViewType.STATUS, getAdapter().getItemViewType(cardPosition));
-
-        View statusCardView = getViewHolderAtPosition(cardPosition).itemView;
-
-        // Dismiss the status card using the context menu.
-        invokeContextMenu(statusCardView, ContextMenuManager.ID_REMOVE);
-        RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), statusCardView);
-
-        assertArrayEquals(new int[0], mSource.getCategories());
-    }
-
-    @Test
-    @MediumTest
-    @Feature({"NewTabPage"})
-    public void testDismissActionItemWithContextMenu()
-            throws InterruptedException, TimeoutException {
-        setSuggestionsAndWaitForUpdate(0);
-        assertArrayEquals(new int[] {TEST_CATEGORY}, mSource.getCategories());
-
-        // Scroll the action item into view.
-        int actionItemPosition = getAdapter().getFirstCardPosition() + 1;
-        assertEquals(ItemViewType.ACTION, getAdapter().getItemViewType(actionItemPosition));
-        View actionItemView = getViewHolderAtPosition(actionItemPosition).itemView;
-
-        // Dismiss the action item using the context menu.
-        invokeContextMenu(actionItemView, ContextMenuManager.ID_REMOVE);
-        RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), actionItemView);
-
-        assertArrayEquals(new int[0], mSource.getCategories());
     }
 
     @Test
@@ -308,8 +277,7 @@ public class NewTabPageRecyclerViewTest {
 
     private int getSnapPosition(int scrollPosition) {
         NewTabPageView ntpView = getNtpView();
-        return getRecyclerView().calculateSnapPosition(
-                scrollPosition, ntpView.findViewById(R.id.search_box), ntpView.getHeight());
+        return ntpView.getSnapScrollHelper().calculateSnapPosition(scrollPosition);
     }
 
     private NewTabPageView getNtpView() {
@@ -341,13 +309,10 @@ public class NewTabPageRecyclerViewTest {
     private ViewHolder getViewHolderAtPosition(final int position) {
         final NewTabPageRecyclerView recyclerView = getRecyclerView();
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                recyclerView.getLinearLayoutManager().scrollToPositionWithOffset(position,
-                        mActivityTestRule.getActivity().getResources().getDimensionPixelSize(
-                                R.dimen.tab_strip_height));
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            recyclerView.getLinearLayoutManager().scrollToPositionWithOffset(position,
+                    mActivityTestRule.getActivity().getResources().getDimensionPixelSize(
+                            R.dimen.tab_strip_height));
         });
         return RecyclerViewTestUtils.waitForView(getRecyclerView(), position);
     }
@@ -361,24 +326,17 @@ public class NewTabPageRecyclerViewTest {
      */
     private void dismissItemAtPosition(int position) throws InterruptedException, TimeoutException {
         final ViewHolder viewHolder = getViewHolderAtPosition(position);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getRecyclerView().dismissItemWithAnimation(viewHolder);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { getRecyclerView().dismissItemWithAnimation(viewHolder); });
         RecyclerViewTestUtils.waitForViewToDetach(getRecyclerView(), (viewHolder.itemView));
     }
 
     private void setSuggestionsAndWaitForUpdate(final int suggestionsCount) {
         final FakeSuggestionsSource source = mSource;
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                source.setStatusForCategory(TEST_CATEGORY, CategoryStatus.AVAILABLE);
-                source.setSuggestionsForCategory(TEST_CATEGORY, buildSuggestions(suggestionsCount));
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            source.setStatusForCategory(TEST_CATEGORY, CategoryStatus.AVAILABLE);
+            source.setSuggestionsForCategory(TEST_CATEGORY, buildSuggestions(suggestionsCount));
         });
         RecyclerViewTestUtils.waitForStableRecyclerView(getRecyclerView());
     }
@@ -394,8 +352,9 @@ public class NewTabPageRecyclerViewTest {
         return suggestions;
     }
 
-    private void invokeContextMenu(View view, int contextMenuItemId) {
-        TestTouchUtils.longClickView(InstrumentationRegistry.getInstrumentation(), view);
+    private void invokeContextMenu(View view, int contextMenuItemId) throws ExecutionException {
+        TestTouchUtils.performLongClickOnMainSync(
+                InstrumentationRegistry.getInstrumentation(), view);
         assertTrue(InstrumentationRegistry.getInstrumentation().invokeContextMenuAction(
                 mActivityTestRule.getActivity(), contextMenuItemId, 0));
     }

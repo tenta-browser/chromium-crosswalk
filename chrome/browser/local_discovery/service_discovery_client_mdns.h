@@ -12,8 +12,8 @@
 #include "base/observer_list.h"
 #include "chrome/browser/local_discovery/service_discovery_client.h"
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
-#include "net/base/network_change_notifier.h"
 #include "net/dns/mdns_client.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 
 namespace local_discovery {
 
@@ -21,7 +21,7 @@ namespace local_discovery {
 // UI thread and the networking code on the IO thread.
 class ServiceDiscoveryClientMdns
     : public ServiceDiscoverySharedClient,
-      public net::NetworkChangeNotifier::NetworkChangeObserver {
+      public network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
   class Proxy;
 
@@ -30,7 +30,7 @@ class ServiceDiscoveryClientMdns
   // ServiceDiscoveryClient:
   std::unique_ptr<ServiceWatcher> CreateServiceWatcher(
       const std::string& service_type,
-      const ServiceWatcher::UpdatedCallback& callback) override;
+      ServiceWatcher::UpdatedCallback callback) override;
   std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
       ServiceResolver::ResolveCompleteCallback callback) override;
@@ -39,9 +39,8 @@ class ServiceDiscoveryClientMdns
       net::AddressFamily address_family,
       LocalDomainResolver::IPAddressCallback callback) override;
 
-  // net::NetworkChangeNotifier::NetworkChangeObserver:
-  void OnNetworkChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
+  // network::NetworkConnectionTracker::NetworkConnectionObserver:
+  void OnConnectionChanged(network::mojom::ConnectionType type) override;
 
  private:
   ~ServiceDiscoveryClientMdns() override;
@@ -49,13 +48,12 @@ class ServiceDiscoveryClientMdns
   void ScheduleStartNewClient();
   void StartNewClient();
   void OnInterfaceListReady(const net::InterfaceIndexFamilyList& interfaces);
-  void OnMdnsInitialized(bool success);
-  void ReportSuccess();
+  void OnMdnsInitialized(int net_error);
   void InvalidateWeakPtrs();
   void OnBeforeMdnsDestroy();
   void DestroyMdns();
 
-  base::ObserverList<Proxy, true> proxies_;
+  base::ObserverList<Proxy, true>::Unchecked proxies_;
 
   scoped_refptr<base::SequencedTaskRunner> mdns_runner_;
 
@@ -71,7 +69,7 @@ class ServiceDiscoveryClientMdns
   // If false, delay tasks until initialization is posted to |mdns_runner_|.
   bool need_delay_mdns_tasks_ = true;
 
-  base::WeakPtrFactory<ServiceDiscoveryClientMdns> weak_ptr_factory_;
+  base::WeakPtrFactory<ServiceDiscoveryClientMdns> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceDiscoveryClientMdns);
 };

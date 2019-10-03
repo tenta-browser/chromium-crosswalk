@@ -4,12 +4,15 @@
 
 #include "remoting/protocol/ice_config.h"
 
+#include <algorithm>
+
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/base/url_util.h"
+#include "remoting/proto/remoting/v1/network_traversal_messages.pb.h"
 
 namespace remoting {
 namespace protocol {
@@ -86,6 +89,21 @@ bool AddServerToConfig(std::string url,
   return true;
 }
 
+// Returns the smallest specified value, or 0 if neither is specified.
+// A value is "specified" if it is greater than 0.
+int MinimumSpecified(int value1, int value2) {
+  if (value1 <= 0) {
+    // value1 is not specified, so return value2 (or 0).
+    return std::max(0, value2);
+  }
+  if (value2 <= 0) {
+    // value1 is specified, so return it directly.
+    return value1;
+  }
+  // Both values are specified, so return the minimum.
+  return std::min(value1, value2);
+}
+
 }  // namespace
 
 IceConfig::IceConfig() = default;
@@ -117,6 +135,7 @@ IceConfig IceConfig::Parse(const base::DictionaryValue& dictionary) {
 
   // Parse iceServers list and store them in |ice_config|.
   bool errors_found = false;
+  ice_config.max_bitrate_kbps = 0;
   for (const auto& server : *ice_servers_list) {
     const base::DictionaryValue* server_dict;
     if (!server.GetAsDictionary(&server_dict)) {
@@ -135,6 +154,16 @@ IceConfig IceConfig::Parse(const base::DictionaryValue& dictionary) {
 
     std::string password;
     server_dict->GetString("credential", &password);
+
+    // Compute the lowest specified bitrate of all the ICE servers.
+    // Ideally the bitrate would be stored per ICE server, but it is not
+    // possible (at the application level) to look up which particular
+    // ICE server was used for the P2P connection.
+    double new_bitrate_double;
+    if (server_dict->GetDouble("maxRateKbps", &new_bitrate_double)) {
+      ice_config.max_bitrate_kbps = MinimumSpecified(
+          ice_config.max_bitrate_kbps, static_cast<int>(new_bitrate_double));
+    }
 
     for (const auto& url : *urls_list) {
       std::string url_str;
@@ -169,7 +198,8 @@ IceConfig IceConfig::Parse(const base::DictionaryValue& dictionary) {
 
 // static
 IceConfig IceConfig::Parse(const std::string& config_json) {
-  std::unique_ptr<base::Value> json = base::JSONReader::Read(config_json);
+  std::unique_ptr<base::Value> json =
+      base::JSONReader::ReadDeprecated(config_json);
   if (!json) {
     return IceConfig();
   }
@@ -188,6 +218,43 @@ IceConfig IceConfig::Parse(const std::string& config_json) {
   }
 
   return Parse(*dictionary);
+}
+
+// static
+IceConfig IceConfig::Parse(const apis::v1::GetIceConfigResponse& config) {
+  IceConfig ice_config;
+
+  // Parse lifetimeDuration field.
+  base::TimeDelta lifetime =
+      base::TimeDelta::FromSeconds(config.lifetime_duration().seconds()) +
+      base::TimeDelta::FromNanoseconds(config.lifetime_duration().nanos());
+  ice_config.expiration_time = base::Time::Now() + lifetime;
+
+  // Parse iceServers list and store them in |ice_config|.
+  ice_config.max_bitrate_kbps = 0;
+  for (const auto& server : config.servers()) {
+    // Compute the lowest specified bitrate of all the ICE servers.
+    // Ideally the bitrate would be stored per ICE server, but it is not
+    // possible (at the application level) to look up which particular
+    // ICE server was used for the P2P connection.
+    ice_config.max_bitrate_kbps =
+        MinimumSpecified(ice_config.max_bitrate_kbps, server.max_rate_kbps());
+
+    for (const auto& url : server.urls()) {
+      if (!AddServerToConfig(url, server.username(), server.credential(),
+                             &ice_config)) {
+        LOG(ERROR) << "Invalid ICE server URL: " << url;
+      }
+    }
+  }
+
+  // If there are no STUN or no TURN servers then mark the config as expired so
+  // it will be refreshed for the next session.
+  if (ice_config.stun_servers.empty() || ice_config.turn_servers.empty()) {
+    ice_config.expiration_time = base::Time::Now();
+  }
+
+  return ice_config;
 }
 
 }  // namespace protocol

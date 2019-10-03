@@ -17,7 +17,7 @@
 #include "gin/wrappable.h"
 #include "ppapi/proxy/host_dispatcher.h"
 #include "ppapi/shared_impl/resource.h"
-#include "third_party/WebKit/public/web/WebSerializedScriptValue.h"
+#include "third_party/blink/public/web/web_serialized_script_value.h"
 #include "v8/include/v8-util.h"
 #include "v8/include/v8.h"
 
@@ -194,13 +194,13 @@ class MessageChannel :
 
   // A callback to invoke at shutdown to ensure we unregister ourselves as
   // Observers for sync messages.
-  base::Closure unregister_observer_callback_;
+  base::OnceClosure unregister_observer_callback_;
 
   v8::StdGlobalValueMap<std::string, v8::FunctionTemplate> template_cache_;
 
   // This is used to ensure pending tasks will not fire after this object is
   // destroyed.
-  base::WeakPtrFactory<MessageChannel> weak_ptr_factory_;
+  base::WeakPtrFactory<MessageChannel> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MessageChannel);
 };

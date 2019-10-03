@@ -259,6 +259,21 @@ SBOX_TESTS_COMMAND int File_QueryAttributes(int argc, wchar_t** argv) {
   return SBOX_TEST_FAILED;
 }
 
+// Tries to create a backup of calc.exe in system32 folder. This should fail
+// with ERROR_ACCESS_DENIED if everything is working as expected.
+SBOX_TESTS_COMMAND int File_CopyFile(int argc, wchar_t** argv) {
+  base::string16 calc_path = MakePathToSys(L"calc.exe", false);
+  base::string16 calc_backup_path = MakePathToSys(L"calc.exe.bak", false);
+
+  if (::CopyFile(calc_path.c_str(), calc_backup_path.c_str(), FALSE))
+    return SBOX_TEST_FAILED_TO_EXECUTE_COMMAND;
+
+  if (::GetLastError() != ERROR_ACCESS_DENIED)
+    return SBOX_TEST_FAILED;
+
+  return SBOX_TEST_SUCCEEDED;
+}
+
 TEST(FilePolicyTest, DenyNtCreateCalc) {
   TestRunner runner;
   EXPECT_TRUE(
@@ -291,7 +306,8 @@ TEST(FilePolicyTest, AllowNtCreateWithNativePath) {
   ::wsprintfW(buff, L"File_CreateSys32 %s", nt_path.c_str());
   EXPECT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(buff));
 
-  std::transform(nt_path.begin(), nt_path.end(), nt_path.begin(), std::tolower);
+  for (wchar_t& c : nt_path)
+    c = std::tolower(c);
   ::wsprintfW(buff, L"File_CreateSys32 %s", nt_path.c_str());
   EXPECT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(buff));
 }
@@ -383,12 +399,12 @@ TEST(FilePolicyTest, AllowNtCreatePatternRule) {
   EXPECT_TRUE(runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_ANY, L"App*.dll"));
 
   EXPECT_EQ(SBOX_TEST_SUCCEEDED,
-            runner.RunTest(L"File_OpenSys32 appmgmts.dll"));
+            runner.RunTest(L"File_OpenSys32 apphelp.dll"));
   EXPECT_EQ(SBOX_TEST_DENIED, runner.RunTest(L"File_OpenSys32 appwiz.cpl"));
 
   runner.SetTestState(BEFORE_REVERT);
   EXPECT_EQ(SBOX_TEST_SUCCEEDED,
-            runner.RunTest(L"File_OpenSys32 appmgmts.dll"));
+            runner.RunTest(L"File_OpenSys32 apphelp.dll"));
   EXPECT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(L"File_OpenSys32 appwiz.cpl"));
 }
 
@@ -408,7 +424,7 @@ TEST(FilePolicyTest, CheckNoLeak) {
 TEST(FilePolicyTest, TestQueryAttributesFile) {
   TestRunner runner;
   EXPECT_TRUE(
-      runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_ANY, L"appmgmts.dll"));
+      runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_ANY, L"apphelp.dll"));
   EXPECT_TRUE(
       runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_ANY, L"notfound.exe"));
   EXPECT_TRUE(runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_ANY, L"drivers"));
@@ -419,7 +435,7 @@ TEST(FilePolicyTest, TestQueryAttributesFile) {
             runner.RunTest(L"File_QueryAttributes drivers d"));
 
   EXPECT_EQ(SBOX_TEST_SUCCEEDED,
-            runner.RunTest(L"File_QueryAttributes appmgmts.dll f"));
+            runner.RunTest(L"File_QueryAttributes apphelp.dll f"));
 
   EXPECT_EQ(SBOX_TEST_SUCCEEDED,
             runner.RunTest(L"File_QueryAttributes ipconfig.exe f"));
@@ -661,6 +677,29 @@ TEST(FilePolicyTest, CheckMissingNTPrefixEscape) {
   base::string16 result = FixNTPrefixForMatch(name);
 
   EXPECT_STREQ(result.c_str(), L"\\/?/?\\C:\\NAME");
+}
+
+TEST(FilePolicyTest, TestCopyFile) {
+  // Check if the test is running Win8 or newer since
+  // MITIGATION_STRICT_HANDLE_CHECKS is not supported on older systems.
+  if (base::win::GetVersion() < base::win::Version::WIN8)
+    return;
+
+  TestRunner runner;
+  runner.SetTimeout(2000);
+
+  // Allow read access to calc.exe, this should be on all Windows versions.
+  ASSERT_TRUE(
+      runner.AddRuleSys32(TargetPolicy::FILES_ALLOW_READONLY, L"calc.exe"));
+
+  sandbox::TargetPolicy* policy = runner.GetPolicy();
+
+  // Set proper mitigation.
+  EXPECT_EQ(
+      policy->SetDelayedProcessMitigations(MITIGATION_STRICT_HANDLE_CHECKS),
+      SBOX_ALL_OK);
+
+  ASSERT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(L"File_CopyFile"));
 }
 
 }  // namespace sandbox

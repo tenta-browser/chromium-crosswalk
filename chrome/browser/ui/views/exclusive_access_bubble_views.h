@@ -9,11 +9,11 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_hide_callback.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "ui/views/controls/link_listener.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_observer.h"
 #include "ui/views/widget/widget_observer.h"
 
 class ExclusiveAccessBubbleViewsContext;
@@ -33,9 +33,8 @@ class SubtleNotificationView;
 // a click target. The bubble auto-hides, and re-shows when the user moves to
 // the screen top.
 class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
-                                   public content::NotificationObserver,
-                                   public views::WidgetObserver,
-                                   public views::LinkListener {
+                                   public FullscreenObserver,
+                                   public views::WidgetObserver {
  public:
   ExclusiveAccessBubbleViews(
       ExclusiveAccessBubbleViewsContext* context,
@@ -44,10 +43,13 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
       ExclusiveAccessBubbleHideCallback bubble_first_hide_callback);
   ~ExclusiveAccessBubbleViews() override;
 
+  // |force_update| indicates the caller wishes to show the bubble contents
+  // regardless of whether the contents have changed.
   void UpdateContent(
       const GURL& url,
       ExclusiveAccessBubbleType bubble_type,
-      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback);
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
+      bool force_update);
 
   // Repositions |popup_| if it is visible.
   void RepositionIfVisible();
@@ -83,17 +85,12 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
   bool IsAnimating() override;
   bool CanTriggerOnMouse() const override;
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // FullscreenObserver:
+  void OnFullscreenStateChanged() override;
 
   // views::WidgetObserver:
   void OnWidgetDestroyed(views::Widget* widget) override;
   void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
-
-  // views::LinkListener override:
-  void LinkClicked(views::Link* source, int event_flags) override;
 
   void RunHideCallbackIfNeeded(ExclusiveAccessBubbleHideReason reason);
 
@@ -113,7 +110,8 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
   SubtleNotificationView* view_;
   base::string16 browser_fullscreen_exit_accelerator_;
 
-  content::NotificationRegistrar registrar_;
+  ScopedObserver<FullscreenController, FullscreenObserver> fullscreen_observer_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(ExclusiveAccessBubbleViews);
 };

@@ -4,6 +4,8 @@
 
 #include "net/cert/x509_util.h"
 
+#include <string.h>
+#include <map>
 #include <memory>
 
 #include "base/lazy_instance.h"
@@ -12,7 +14,9 @@
 #include "build/build_config.h"
 #include "crypto/openssl_util.h"
 #include "crypto/rsa_private_key.h"
+#include "crypto/sha2.h"
 #include "net/base/hash_value.h"
+#include "net/cert/asn1_util.h"
 #include "net/cert/internal/cert_errors.h"
 #include "net/cert/internal/name_constraints.h"
 #include "net/cert/internal/parse_certificate.h"
@@ -113,33 +117,6 @@ bool AddTime(CBB* cbb, base::Time time) {
          der::EncodeGeneralizedTime(generalized_time, out) && CBB_flush(cbb);
 }
 
-bool GetCommonName(const der::Input& tlv, std::string* common_name) {
-  RDNSequence rdn_sequence;
-  if (!ParseName(tlv, &rdn_sequence))
-    return false;
-
-  for (const auto& rdn : rdn_sequence) {
-    for (const auto& atv : rdn) {
-      if (atv.type == TypeCommonNameOid()) {
-        return atv.ValueAsString(common_name);
-      }
-    }
-  }
-  return true;
-}
-
-bool DecodeTime(const der::GeneralizedTime& generalized_time,
-                base::Time* time) {
-  base::Time::Exploded exploded = {0};
-  exploded.year = generalized_time.year;
-  exploded.month = generalized_time.month;
-  exploded.day_of_month = generalized_time.day;
-  exploded.hour = generalized_time.hours;
-  exploded.minute = generalized_time.minutes;
-  exploded.second = generalized_time.seconds;
-  return base::Time::FromUTCExploded(exploded, time);
-}
-
 class BufferPoolSingleton {
  public:
   BufferPoolSingleton() : pool_(CRYPTO_BUFFER_POOL_new()) {}
@@ -159,15 +136,13 @@ bool GetTLSServerEndPointChannelBinding(const X509Certificate& certificate,
                                         std::string* token) {
   static const char kChannelBindingPrefix[] = "tls-server-end-point:";
 
-  std::string der_encoded_certificate;
-  if (!X509Certificate::GetDEREncoded(certificate.os_cert_handle(),
-                                      &der_encoded_certificate))
-    return false;
+  base::StringPiece der_encoded_certificate =
+      x509_util::CryptoBufferAsStringPiece(certificate.cert_buffer());
 
   der::Input tbs_certificate_tlv;
   der::Input signature_algorithm_tlv;
   der::BitString signature_value;
-  if (!ParseCertificate(der::Input(&der_encoded_certificate),
+  if (!ParseCertificate(der::Input(der_encoded_certificate),
                         &tbs_certificate_tlv, &signature_algorithm_tlv,
                         &signature_value, nullptr))
     return false;
@@ -230,28 +205,32 @@ bool CreateKeyAndSelfSignedCert(const std::string& subject,
                                 std::string* der_cert) {
   std::unique_ptr<crypto::RSAPrivateKey> new_key(
       crypto::RSAPrivateKey::Create(kRSAKeyLength));
-  if (!new_key.get())
+  if (!new_key)
     return false;
 
-  bool success = CreateSelfSignedCert(new_key.get(),
-                                      kSignatureDigestAlgorithm,
-                                      subject,
-                                      serial_number,
-                                      not_valid_before,
-                                      not_valid_after,
-                                      der_cert);
+  bool success = CreateSelfSignedCert(new_key->key(), kSignatureDigestAlgorithm,
+                                      subject, serial_number, not_valid_before,
+                                      not_valid_after, {}, der_cert);
   if (success)
     *key = std::move(new_key);
 
   return success;
 }
 
-bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
+Extension::Extension(base::span<const uint8_t> in_oid,
+                     bool in_critical,
+                     base::span<const uint8_t> in_contents)
+    : oid(in_oid), critical(in_critical), contents(in_contents) {}
+Extension::~Extension() {}
+Extension::Extension(const Extension&) = default;
+
+bool CreateSelfSignedCert(EVP_PKEY* key,
                           DigestAlgorithm alg,
                           const std::string& subject,
                           uint32_t serial_number,
                           base::Time not_valid_before,
                           base::Time not_valid_after,
+                          const std::vector<Extension>& extension_specs,
                           std::string* der_encoded) {
   crypto::EnsureOpenSSLInit();
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
@@ -284,10 +263,40 @@ bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
       !AddTime(&validity, not_valid_before) ||
       !AddTime(&validity, not_valid_after) ||
       !AddNameWithCommonName(&tbs_cert, common_name) ||  // subject
-      !EVP_marshal_public_key(&tbs_cert, key->key()) ||  // subjectPublicKeyInfo
-      !CBB_finish(cbb.get(), &tbs_cert_bytes, &tbs_cert_len)) {
+      !EVP_marshal_public_key(&tbs_cert, key)) {         // subjectPublicKeyInfo
     return false;
   }
+
+  if (!extension_specs.empty()) {
+    CBB outer_extensions, extensions;
+    if (!CBB_add_asn1(&tbs_cert, &outer_extensions,
+                      3 | CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED) ||
+        !CBB_add_asn1(&outer_extensions, &extensions, CBS_ASN1_SEQUENCE)) {
+      return false;
+    }
+
+    for (const auto& extension_spec : extension_specs) {
+      CBB extension, oid, value;
+      if (!CBB_add_asn1(&extensions, &extension, CBS_ASN1_SEQUENCE) ||
+          !CBB_add_asn1(&extension, &oid, CBS_ASN1_OBJECT) ||
+          !CBB_add_bytes(&oid, extension_spec.oid.data(),
+                         extension_spec.oid.size()) ||
+          (extension_spec.critical && !CBB_add_asn1_bool(&extension, 1)) ||
+          !CBB_add_asn1(&extension, &value, CBS_ASN1_OCTETSTRING) ||
+          !CBB_add_bytes(&value, extension_spec.contents.data(),
+                         extension_spec.contents.size()) ||
+          !CBB_flush(&extensions)) {
+        return false;
+      }
+    }
+
+    if (!CBB_flush(&tbs_cert)) {
+      return false;
+    }
+  }
+
+  if (!CBB_finish(cbb.get(), &tbs_cert_bytes, &tbs_cert_len))
+    return false;
   bssl::UniquePtr<uint8_t> delete_tbs_cert_bytes(tbs_cert_bytes);
 
   // Sign the TBSCertificate and write the entire certificate.
@@ -303,8 +312,7 @@ bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
       !AddRSASignatureAlgorithm(&cert, alg) ||
       !CBB_add_asn1(&cert, &signature, CBS_ASN1_BITSTRING) ||
       !CBB_add_u8(&signature, 0 /* no unused bits */) ||
-      !EVP_DigestSignInit(ctx.get(), nullptr, ToEVP(alg), nullptr,
-                          key->key()) ||
+      !EVP_DigestSignInit(ctx.get(), nullptr, ToEVP(alg), nullptr, key) ||
       // Compute the maximum signature length.
       !EVP_DigestSign(ctx.get(), nullptr, &sig_len, tbs_cert_bytes,
                       tbs_cert_len) ||
@@ -318,61 +326,6 @@ bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
   }
   bssl::UniquePtr<uint8_t> delete_cert_bytes(cert_bytes);
   der_encoded->assign(reinterpret_cast<char*>(cert_bytes), cert_len);
-  return true;
-}
-
-bool ParseCertificateSandboxed(const base::StringPiece& certificate,
-                               std::string* subject,
-                               std::string* issuer,
-                               base::Time* not_before,
-                               base::Time* not_after,
-                               std::vector<std::string>* dns_names,
-                               std::vector<std::string>* ip_addresses) {
-  der::Input cert_data(certificate);
-  der::Input tbs_cert, signature_alg;
-  der::BitString signature_value;
-  if (!ParseCertificate(cert_data, &tbs_cert, &signature_alg, &signature_value,
-                        nullptr))
-    return false;
-
-  ParsedTbsCertificate parsed_tbs_cert;
-  if (!ParseTbsCertificate(tbs_cert, DefaultParseCertificateOptions(),
-                           &parsed_tbs_cert, nullptr))
-    return false;
-
-  if (!GetCommonName(parsed_tbs_cert.subject_tlv, subject))
-    return false;
-
-  if (!GetCommonName(parsed_tbs_cert.issuer_tlv, issuer))
-    return false;
-
-  if (!DecodeTime(parsed_tbs_cert.validity_not_before, not_before))
-    return false;
-
-  if (!DecodeTime(parsed_tbs_cert.validity_not_after, not_after))
-    return false;
-
-  if (!parsed_tbs_cert.has_extensions)
-    return true;
-
-  std::map<der::Input, ParsedExtension> extensions;
-  if (!ParseExtensions(parsed_tbs_cert.extensions_tlv, &extensions))
-    return false;
-
-  CertErrors unused_errors;
-  std::vector<std::string> san;
-  auto iter = extensions.find(SubjectAltNameOid());
-  if (iter != extensions.end()) {
-    std::unique_ptr<GeneralNames> subject_alt_names =
-        GeneralNames::Create(iter->second.value, &unused_errors);
-    if (subject_alt_names) {
-      for (const auto& dns_name : subject_alt_names->dns_names)
-        dns_names->push_back(dns_name.as_string());
-      for (const auto& ip : subject_alt_names->ip_addresses)
-        ip_addresses->push_back(ip.ToString());
-    }
-  }
-
   return true;
 }
 
@@ -393,6 +346,15 @@ bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
                         data.size(), GetBufferPool()));
 }
 
+bool CryptoBufferEqual(const CRYPTO_BUFFER* a, const CRYPTO_BUFFER* b) {
+  DCHECK(a && b);
+  if (a == b)
+    return true;
+  return CRYPTO_BUFFER_len(a) == CRYPTO_BUFFER_len(b) &&
+         memcmp(CRYPTO_BUFFER_data(a), CRYPTO_BUFFER_data(b),
+                CRYPTO_BUFFER_len(a)) == 0;
+}
+
 base::StringPiece CryptoBufferAsStringPiece(const CRYPTO_BUFFER* buffer) {
   return base::StringPiece(
       reinterpret_cast<const char*>(CRYPTO_BUFFER_data(buffer)),
@@ -400,23 +362,76 @@ base::StringPiece CryptoBufferAsStringPiece(const CRYPTO_BUFFER* buffer) {
 }
 
 scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
-    STACK_OF(CRYPTO_BUFFER) * buffers) {
+    const STACK_OF(CRYPTO_BUFFER) * buffers) {
   if (sk_CRYPTO_BUFFER_num(buffers) == 0) {
     NOTREACHED();
     return nullptr;
   }
 
-  std::vector<CRYPTO_BUFFER*> intermediate_chain;
-  for (size_t i = 1; i < sk_CRYPTO_BUFFER_num(buffers); ++i)
-    intermediate_chain.push_back(sk_CRYPTO_BUFFER_value(buffers, i));
-  return X509Certificate::CreateFromHandle(sk_CRYPTO_BUFFER_value(buffers, 0),
-                                           intermediate_chain);
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediate_chain;
+  for (size_t i = 1; i < sk_CRYPTO_BUFFER_num(buffers); ++i) {
+    intermediate_chain.push_back(
+        bssl::UpRef(sk_CRYPTO_BUFFER_value(buffers, i)));
+  }
+  return X509Certificate::CreateFromBuffer(
+      bssl::UpRef(sk_CRYPTO_BUFFER_value(buffers, 0)),
+      std::move(intermediate_chain));
 }
 
 ParseCertificateOptions DefaultParseCertificateOptions() {
   ParseCertificateOptions options;
   options.allow_invalid_serial_numbers = true;
   return options;
+}
+
+bool CalculateSha256SpkiHash(const CRYPTO_BUFFER* buffer, HashValue* hash) {
+  base::StringPiece spki;
+  if (!asn1::ExtractSPKIFromDERCert(CryptoBufferAsStringPiece(buffer), &spki)) {
+    return false;
+  }
+  *hash = HashValue(HASH_VALUE_SHA256);
+  crypto::SHA256HashString(spki, hash->data(), hash->size());
+  return true;
+}
+
+bool SignatureVerifierInitWithCertificate(
+    crypto::SignatureVerifier* verifier,
+    crypto::SignatureVerifier::SignatureAlgorithm signature_algorithm,
+    base::span<const uint8_t> signature,
+    const CRYPTO_BUFFER* certificate) {
+  base::StringPiece cert_der =
+      x509_util::CryptoBufferAsStringPiece(certificate);
+
+  der::Input tbs_certificate_tlv;
+  der::Input signature_algorithm_tlv;
+  der::BitString signature_value;
+  ParsedTbsCertificate tbs;
+  if (!ParseCertificate(der::Input(cert_der), &tbs_certificate_tlv,
+                        &signature_algorithm_tlv, &signature_value, nullptr) ||
+      !ParseTbsCertificate(tbs_certificate_tlv,
+                           DefaultParseCertificateOptions(), &tbs, nullptr)) {
+    return false;
+  }
+
+  // The key usage extension, if present, must assert the digitalSignature bit.
+  if (tbs.has_extensions) {
+    std::map<der::Input, ParsedExtension> extensions;
+    if (!ParseExtensions(tbs.extensions_tlv, &extensions)) {
+      return false;
+    }
+    ParsedExtension key_usage_ext;
+    if (ConsumeExtension(KeyUsageOid(), &extensions, &key_usage_ext)) {
+      der::BitString key_usage;
+      if (!ParseKeyUsage(key_usage_ext.value, &key_usage) ||
+          !key_usage.AssertsBit(KEY_USAGE_BIT_DIGITAL_SIGNATURE)) {
+        return false;
+      }
+    }
+  }
+
+  return verifier->VerifyInit(
+      signature_algorithm, signature,
+      base::make_span(tbs.spki_tlv.UnsafeData(), tbs.spki_tlv.Length()));
 }
 
 }  // namespace x509_util

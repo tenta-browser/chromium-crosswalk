@@ -4,13 +4,14 @@
 
 #include "cc/paint/record_paint_canvas.h"
 
-#include "base/memory/ptr_util.h"
+#include <utility>
+
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_record.h"
 #include "cc/paint/paint_recorder.h"
+#include "cc/paint/skottie_wrapper.h"
 #include "third_party/skia/include/core/SkAnnotation.h"
-#include "third_party/skia/include/core/SkMetaData.h"
 #include "third_party/skia/include/utils/SkNWayCanvas.h"
 
 namespace cc {
@@ -22,12 +23,6 @@ RecordPaintCanvas::RecordPaintCanvas(DisplayItemList* list,
 }
 
 RecordPaintCanvas::~RecordPaintCanvas() = default;
-
-SkMetaData& RecordPaintCanvas::getMetaData() {
-  // This could just be SkMetaData owned by RecordPaintCanvas, but since
-  // SkCanvas already has one, we might as well use it directly.
-  return GetCanvas()->getMetaData();
-}
 
 SkImageInfo RecordPaintCanvas::imageInfo() const {
   return GetCanvas()->imageInfo();
@@ -49,7 +44,7 @@ int RecordPaintCanvas::saveLayer(const SkRect* bounds,
       // TODO(enne): maybe more callers should know this and call
       // saveLayerAlpha instead of needing to check here.
       uint8_t alpha = SkColorGetA(flags->getColor());
-      return saveLayerAlpha(bounds, alpha, false);
+      return saveLayerAlpha(bounds, alpha);
     }
 
     // TODO(enne): it appears that image filters affect matrices and color
@@ -63,10 +58,8 @@ int RecordPaintCanvas::saveLayer(const SkRect* bounds,
   return GetCanvas()->saveLayer(bounds, nullptr);
 }
 
-int RecordPaintCanvas::saveLayerAlpha(const SkRect* bounds,
-                                      uint8_t alpha,
-                                      bool preserve_lcd_text_requests) {
-  list_->push<SaveLayerAlphaOp>(bounds, alpha, preserve_lcd_text_requests);
+int RecordPaintCanvas::saveLayerAlpha(const SkRect* bounds, uint8_t alpha) {
+  list_->push<SaveLayerAlphaOp>(bounds, alpha);
   return GetCanvas()->saveLayerAlpha(bounds, alpha);
 }
 
@@ -253,6 +246,7 @@ void RecordPaintCanvas::drawImage(const PaintImage& image,
                                   SkScalar left,
                                   SkScalar top,
                                   const PaintFlags* flags) {
+  DCHECK(!image.IsPaintWorklet());
   list_->push<DrawImageOp>(image, left, top, flags);
 }
 
@@ -264,25 +258,25 @@ void RecordPaintCanvas::drawImageRect(const PaintImage& image,
   list_->push<DrawImageRectOp>(image, src, dst, flags, constraint);
 }
 
-void RecordPaintCanvas::drawBitmap(const SkBitmap& bitmap,
-                                   SkScalar left,
-                                   SkScalar top,
-                                   const PaintFlags* flags) {
-  // TODO(enne): Move into base class?
-  if (bitmap.drawsNothing())
-    return;
-  drawImage(PaintImageBuilder::WithDefault()
-                .set_id(PaintImage::kNonLazyStableId)
-                .set_image(SkImage::MakeFromBitmap(bitmap))
-                .TakePaintImage(),
-            left, top, flags);
+void RecordPaintCanvas::drawSkottie(scoped_refptr<SkottieWrapper> skottie,
+                                    const SkRect& dst,
+                                    float t) {
+  list_->push<DrawSkottieOp>(std::move(skottie), dst, t);
 }
 
-void RecordPaintCanvas::drawTextBlob(scoped_refptr<PaintTextBlob> blob,
+void RecordPaintCanvas::drawTextBlob(sk_sp<SkTextBlob> blob,
                                      SkScalar x,
                                      SkScalar y,
                                      const PaintFlags& flags) {
   list_->push<DrawTextBlobOp>(std::move(blob), x, y, flags);
+}
+
+void RecordPaintCanvas::drawTextBlob(sk_sp<SkTextBlob> blob,
+                                     SkScalar x,
+                                     SkScalar y,
+                                     NodeId node_id,
+                                     const PaintFlags& flags) {
+  list_->push<DrawTextBlobOp>(std::move(blob), x, y, node_id, flags);
 }
 
 void RecordPaintCanvas::drawPicture(sk_sp<const PaintRecord> record) {
@@ -310,6 +304,10 @@ void RecordPaintCanvas::Annotate(AnnotationType type,
   list_->push<AnnotateOp>(type, rect, data);
 }
 
+void RecordPaintCanvas::recordCustomData(uint32_t id) {
+  list_->push<CustomDataOp>(id);
+}
+
 const SkNoDrawCanvas* RecordPaintCanvas::GetCanvas() const {
   return const_cast<RecordPaintCanvas*>(this)->GetCanvas();
 }
@@ -319,7 +317,7 @@ SkNoDrawCanvas* RecordPaintCanvas::GetCanvas() {
     return &*canvas_;
 
   // Size the canvas to be large enough to contain the |recording_bounds|, which
-  // may not be positioned at th origin.
+  // may not be positioned at the origin.
   SkIRect enclosing_rect = recording_bounds_.roundOut();
   canvas_.emplace(enclosing_rect.right(), enclosing_rect.bottom());
 

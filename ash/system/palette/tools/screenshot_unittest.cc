@@ -4,9 +4,7 @@
 
 #include <memory>
 
-#include "ash/public/cpp/config.h"
 #include "ash/shell.h"
-#include "ash/shell_test_api.h"
 #include "ash/system/palette/mock_palette_tool_delegate.h"
 #include "ash/system/palette/palette_ids.h"
 #include "ash/system/palette/palette_tool.h"
@@ -61,13 +59,13 @@ TEST_F(ScreenshotToolTest, EnablingCaptureRegionCallsDelegateAndDisablesTool) {
   EXPECT_CALL(*palette_tool_delegate_.get(),
               DisableTool(PaletteToolId::CAPTURE_REGION));
 
-  const gfx::Rect selection(100, 200, 300, 400);
-  GetEventGenerator().EnterPenPointerMode();
-  GetEventGenerator().MoveTouch(selection.origin());
-  GetEventGenerator().PressTouch();
-  GetEventGenerator().MoveTouch(
-      gfx::Point(selection.right(), selection.bottom()));
-  GetEventGenerator().ReleaseTouch();
+  const gfx::Rect selection(100, 200, 300, 399);
+  ui::test::EventGenerator* event_generator = GetEventGenerator();
+  event_generator->EnterPenPointerMode();
+  event_generator->MoveTouch(selection.origin());
+  event_generator->PressTouch();
+  event_generator->MoveTouch(gfx::Point(selection.right(), selection.bottom()));
+  event_generator->ReleaseTouch();
 
   EXPECT_FALSE(IsPartialScreenshotActive());
   EXPECT_EQ(1, GetScreenshotDelegate()->handle_take_partial_screenshot_count());

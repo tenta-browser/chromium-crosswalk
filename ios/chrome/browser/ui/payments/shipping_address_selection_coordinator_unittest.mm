@@ -5,12 +5,12 @@
 #import "ios/chrome/browser/ui/payments/shipping_address_selection_coordinator.h"
 
 #include "base/mac/foundation_util.h"
-#include "base/test/ios/wait_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#import "base/test/ios/wait_util.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/test_region_data_loader.h"
+#include "components/autofill/core/browser/geo/test_region_data_loader.h"
 #include "ios/chrome/browser/payments/payment_request_test_util.h"
 #import "ios/chrome/browser/payments/payment_request_unittest_base.h"
 #import "ios/chrome/browser/ui/payments/payment_request_selector_view_controller.h"
@@ -26,8 +26,10 @@ class PaymentRequestShippingAddressSelectionCoordinatorTest
     : public PaymentRequestUnitTestBase,
       public PlatformTest {
  protected:
+  // PlatformTest:
   void SetUp() override {
-    PaymentRequestUnitTestBase::SetUp();
+    PlatformTest::SetUp();
+    DoSetUp();
 
     // Add testing profiles to the database. Make the less frequently used one
     // incomplete.
@@ -47,7 +49,11 @@ class PaymentRequestShippingAddressSelectionCoordinatorTest
     payment_request()->SetRegionDataLoader(&test_region_data_loader_);
   }
 
-  void TearDown() override { PaymentRequestUnitTestBase::TearDown(); }
+  // PlatformTest:
+  void TearDown() override {
+    DoTearDown();
+    PlatformTest::TearDown();
+  }
 
  private:
   autofill::TestRegionDataLoader test_region_data_loader_;

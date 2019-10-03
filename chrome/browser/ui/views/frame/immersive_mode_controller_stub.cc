@@ -6,12 +6,6 @@
 
 #include "base/logging.h"
 
-ImmersiveModeControllerStub::ImmersiveModeControllerStub()
-    : ImmersiveModeController(Type::STUB) {}
-
-ImmersiveModeControllerStub::~ImmersiveModeControllerStub() {
-}
-
 void ImmersiveModeControllerStub::Init(BrowserView* browser_view) {
 }
 
@@ -47,10 +41,6 @@ void ImmersiveModeControllerStub::OnFindBarVisibleBoundsChanged(
 
 bool ImmersiveModeControllerStub::ShouldStayImmersiveAfterExitingFullscreen() {
   return false;
-}
-
-views::Widget* ImmersiveModeControllerStub::GetRevealWidget() {
-  return nullptr;
 }
 
 void ImmersiveModeControllerStub::OnWidgetActivationChanged(

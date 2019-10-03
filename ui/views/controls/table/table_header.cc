@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -22,19 +24,22 @@ namespace views {
 
 namespace {
 
-const int kVerticalPadding = 4;
-
 // The minimum width we allow a column to go down to.
-const int kMinColumnWidth = 10;
+constexpr int kMinColumnWidth = 10;
+
+// Amount that a column is resized when using the keyboard.
+constexpr int kResizeKeyboardAmount = 5;
+
+constexpr int kVerticalPadding = 4;
 
 // Distace from edge columns can be resized by.
-const int kResizePadding = 5;
+constexpr int kResizePadding = 5;
 
 // Amount of space above/below the separator.
-const int kSeparatorPadding = 4;
+constexpr int kSeparatorPadding = 4;
 
 // Size of the sort indicator (doesn't include padding).
-const int kSortIndicatorSize = 8;
+constexpr int kSortIndicatorSize = 8;
 
 }  // namespace
 
@@ -43,14 +48,14 @@ const char TableHeader::kViewClassName[] = "TableHeader";
 // static
 const int TableHeader::kHorizontalPadding = 7;
 // static
-const int TableHeader::kSortIndicatorWidth = kSortIndicatorSize +
-    TableHeader::kHorizontalPadding * 2;
+const int TableHeader::kSortIndicatorWidth =
+    kSortIndicatorSize + TableHeader::kHorizontalPadding * 2;
 
-typedef std::vector<TableView::VisibleColumn> Columns;
+using Columns = std::vector<TableView::VisibleColumn>;
 
 TableHeader::TableHeader(TableView* table) : table_(table) {}
 
-TableHeader::~TableHeader() {}
+TableHeader::~TableHeader() = default;
 
 void TableHeader::Layout() {
   SetBounds(x(), y(), table_->width(), GetPreferredSize().height());
@@ -73,37 +78,36 @@ void TableHeader::OnPaint(gfx::Canvas* canvas) {
   const Columns& columns = table_->visible_columns();
   const int sorted_column_id = table_->sort_descriptors().empty() ? -1 :
       table_->sort_descriptors()[0].column_id;
-  for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].width >= 2) {
-      const int separator_x = GetMirroredXInView(
-          columns[i].x + columns[i].width - 1);
+  for (const auto& column : columns) {
+    if (column.width >= 2) {
+      const int separator_x = GetMirroredXInView(column.x + column.width - 1);
       canvas->DrawSharpLine(
           gfx::PointF(separator_x, kSeparatorPadding),
           gfx::PointF(separator_x, height() - kSeparatorPadding),
           separator_color);
     }
 
-    const int x = columns[i].x + kHorizontalPadding;
-    int width = columns[i].width - kHorizontalPadding - kHorizontalPadding;
+    const int x = column.x + kHorizontalPadding;
+    int width = column.width - kHorizontalPadding - kHorizontalPadding;
     if (width <= 0)
       continue;
 
     const int title_width =
-        gfx::GetStringWidth(columns[i].column.title, font_list_);
+        gfx::GetStringWidth(column.column.title, font_list_);
     const bool paint_sort_indicator =
-        (columns[i].column.id == sorted_column_id &&
+        (column.column.id == sorted_column_id &&
          title_width + kSortIndicatorWidth <= width);
 
     if (paint_sort_indicator &&
-        columns[i].column.alignment == ui::TableColumn::RIGHT) {
+        column.column.alignment == ui::TableColumn::RIGHT) {
       width -= kSortIndicatorWidth;
     }
 
     canvas->DrawStringRectWithFlags(
-        columns[i].column.title, font_list_, text_color,
+        column.column.title, font_list_, text_color,
         gfx::Rect(GetMirroredXWithWidthInView(x, width), kVerticalPadding,
                   width, height() - kVerticalPadding * 2),
-        TableColumnAlignmentToCanvasAlignment(columns[i].column.alignment));
+        TableColumnAlignmentToCanvasAlignment(column.column.alignment));
 
     if (paint_sort_indicator) {
       cc::PaintFlags flags;
@@ -112,7 +116,7 @@ void TableHeader::OnPaint(gfx::Canvas* canvas) {
       flags.setAntiAlias(true);
 
       int indicator_x = 0;
-      ui::TableColumn::Alignment alignment = columns[i].column.alignment;
+      ui::TableColumn::Alignment alignment = column.column.alignment;
       if (base::i18n::IsRTL()) {
         if (alignment == ui::TableColumn::LEFT)
           alignment = ui::TableColumn::RIGHT;
@@ -191,7 +195,7 @@ bool TableHeader::OnMouseDragged(const ui::MouseEvent& event) {
 }
 
 void TableHeader::OnMouseReleased(const ui::MouseEvent& event) {
-  const bool was_resizing = resize_details_ != NULL;
+  const bool was_resizing = resize_details_ != nullptr;
   resize_details_.reset();
   if (!was_resizing && event.IsOnlyLeftMouseButton())
     ToggleSortOrder(event);
@@ -226,9 +230,32 @@ void TableHeader::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-void TableHeader::OnNativeThemeChanged(const ui::NativeTheme* theme) {
-  SetBackground(CreateSolidBackground(
-      theme->GetSystemColor(ui::NativeTheme::kColorId_TableHeaderBackground)));
+void TableHeader::OnThemeChanged() {
+  SetBackground(CreateSolidBackground(GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_TableHeaderBackground)));
+}
+
+void TableHeader::ResizeColumnViaKeyboard(
+    int index,
+    TableView::AdvanceDirection direction) {
+  DCHECK_GE(index, 0);
+  const TableView::VisibleColumn& column = table_->GetVisibleColumn(index);
+  const int needed_for_title =
+      gfx::GetStringWidth(column.column.title, font_list_) +
+      2 * kHorizontalPadding;
+
+  int new_width = column.width;
+  switch (direction) {
+    case TableView::ADVANCE_INCREMENT:
+      new_width += kResizeKeyboardAmount;
+      break;
+    case TableView::ADVANCE_DECREMENT:
+      new_width -= kResizeKeyboardAmount;
+      break;
+  }
+
+  table_->SetVisibleColumnWidth(
+      index, std::max({kMinColumnWidth, needed_for_title, new_width}));
 }
 
 bool TableHeader::StartResize(const ui::LocatedEvent& event) {
@@ -239,10 +266,10 @@ bool TableHeader::StartResize(const ui::LocatedEvent& event) {
   if (index == -1)
     return false;
 
-  resize_details_.reset(new ColumnResizeDetails);
+  resize_details_ = std::make_unique<ColumnResizeDetails>();
   resize_details_->column_index = index;
   resize_details_->initial_x = event.root_location().x();
-  resize_details_->initial_width = table_->visible_columns()[index].width;
+  resize_details_->initial_width = table_->GetVisibleColumn(index).width;
   return true;
 }
 
@@ -253,9 +280,15 @@ void TableHeader::ContinueResize(const ui::LocatedEvent& event) {
   const int scale = base::i18n::IsRTL() ? -1 : 1;
   const int delta = scale *
       (event.root_location().x() - resize_details_->initial_x);
+  const TableView::VisibleColumn& column =
+      table_->GetVisibleColumn(resize_details_->column_index);
+  const int needed_for_title =
+      gfx::GetStringWidth(column.column.title, font_list_) +
+      2 * kHorizontalPadding;
   table_->SetVisibleColumnWidth(
       resize_details_->column_index,
-      std::max(kMinColumnWidth, resize_details_->initial_width + delta));
+      std::max({kMinColumnWidth, needed_for_title,
+                resize_details_->initial_width + delta}));
 }
 
 void TableHeader::ToggleSortOrder(const ui::LocatedEvent& event) {
@@ -264,7 +297,7 @@ void TableHeader::ToggleSortOrder(const ui::LocatedEvent& event) {
 
   const int x = GetMirroredXInView(event.x());
   const int index = GetClosestVisibleColumnIndex(table_, x);
-  const TableView::VisibleColumn& column(table_->visible_columns()[index]);
+  const TableView::VisibleColumn& column(table_->GetVisibleColumn(index));
   if (x >= column.x && x < column.x + column.width && event.y() >= 0 &&
       event.y() < height())
     table_->ToggleSortOrder(index);
@@ -277,7 +310,7 @@ int TableHeader::GetResizeColumn(int x) const {
 
   const int index = GetClosestVisibleColumnIndex(table_, x);
   DCHECK_NE(-1, index);
-  const TableView::VisibleColumn& column(table_->visible_columns()[index]);
+  const TableView::VisibleColumn& column(table_->GetVisibleColumn(index));
   if (index > 0 && x >= column.x - kResizePadding &&
       x <= column.x + kResizePadding) {
     return index - 1;

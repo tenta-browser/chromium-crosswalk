@@ -16,8 +16,10 @@ import static org.chromium.net.CronetTestRule.getContext;
 
 import android.os.Build;
 import android.os.ConditionVariable;
+import android.os.Process;
 import android.os.StrictMode;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
@@ -26,7 +28,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Log;
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule.CronetTestFramework;
@@ -36,7 +37,9 @@ import org.chromium.net.TestUrlRequestCallback.FailureType;
 import org.chromium.net.TestUrlRequestCallback.ResponseStep;
 import org.chromium.net.impl.CronetUrlRequest;
 import org.chromium.net.impl.UrlResponseInfoImpl;
+import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.FailurePhase;
+import org.chromium.net.test.ServerCertificate;
 
 import java.io.IOException;
 import java.net.ConnectException;
@@ -56,8 +59,10 @@ import java.util.regex.Pattern;
 /**
  * Test functionality of CronetUrlRequest.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class CronetUrlRequestTest {
+    private static final String TAG = CronetUrlRequestTest.class.getSimpleName();
+
     // URL used for base tests.
     private static final String TEST_URL = "http://127.0.0.1:8000";
 
@@ -175,15 +180,14 @@ public class CronetUrlRequestTest {
             headersList.add(new AbstractMap.SimpleImmutableEntry<String, String>(
                     headers[i], headers[i + 1]));
         }
-        UrlResponseInfoImpl unknown = new UrlResponseInfoImpl(
-                Arrays.asList(urls), statusCode, message, headersList, false, "unknown", ":0");
-        unknown.setReceivedByteCount(receivedBytes);
+        UrlResponseInfoImpl unknown = new UrlResponseInfoImpl(Arrays.asList(urls), statusCode,
+                message, headersList, false, "unknown", ":0", receivedBytes);
         return unknown;
     }
 
     void runConnectionMigrationTest(boolean disableConnectionMigration) {
         // URLRequest load flags at net/base/load_flags_list.h.
-        int connectionMigrationLoadFlag = 1 << 17;
+        int connectionMigrationLoadFlag = nativeGetConnectionMigrationDisableLoadFlag();
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         callback.setAutoAdvance(false);
         // Create builder, start a request, and check if default load_flags are set correctly.
@@ -753,6 +757,42 @@ public class CronetUrlRequestTest {
         assertContains("Exception in CronetUrlRequest: net::ERR_CERT_DATE_INVALID",
                 callback.mError.getMessage());
         assertEquals(ResponseStep.ON_FAILED, callback.mResponseStep);
+    }
+
+    /**
+     * Tests that an SSL cert error with upload will be reported via {@link
+     * UrlRequest.Callback#onFailed}.
+     */
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet // Java impl doesn't support MockUrlRequestJobFactory
+    public void testSSLCertificateError() throws Exception {
+        EmbeddedTestServer sslServer = EmbeddedTestServer.createAndStartHTTPSServer(
+                getContext(), ServerCertificate.CERT_EXPIRED);
+
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        UrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                sslServer.getURL("/"), callback, callback.getExecutor());
+
+        TestUploadDataProvider dataProvider = new TestUploadDataProvider(
+                TestUploadDataProvider.SuccessCallbackMode.SYNC, callback.getExecutor());
+        dataProvider.addRead("test".getBytes());
+        builder.setUploadDataProvider(dataProvider, callback.getExecutor());
+        builder.addHeader("Content-Type", "useless/string");
+        builder.build().start();
+        callback.blockForDone();
+        dataProvider.assertClosed();
+
+        assertNull(callback.mResponseInfo);
+        assertNotNull(callback.mError);
+        assertTrue(callback.mOnErrorCalled);
+        assertEquals(-201, ((NetworkException) callback.mError).getCronetInternalErrorCode());
+        assertContains("Exception in CronetUrlRequest: net::ERR_CERT_DATE_INVALID",
+                callback.mError.getMessage());
+        assertEquals(ResponseStep.ON_FAILED, callback.mResponseStep);
+
+        sslServer.stopAndDestroyServer();
     }
 
     /**
@@ -2092,6 +2132,26 @@ public class CronetUrlRequestTest {
         assertEquals(1, quicException.getQuicDetailedErrorCode());
     }
 
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    public void testQuicErrorCodeForNetworkChanged() throws Exception {
+        TestUrlRequestCallback callback =
+                startAndWaitForComplete(MockUrlRequestJobFactory.getMockUrlWithFailure(
+                        FailurePhase.START, NetError.ERR_NETWORK_CHANGED));
+        assertNull(callback.mResponseInfo);
+        assertNotNull(callback.mError);
+        assertEquals(NetworkException.ERROR_NETWORK_CHANGED,
+                ((NetworkException) callback.mError).getErrorCode());
+        assertTrue(callback.mError instanceof QuicException);
+        QuicException quicException = (QuicException) callback.mError;
+        // QUIC_CONNECTION_MIGRATION_NO_NEW_NETWORK(83) is set in
+        // URLRequestFailedJob::PopulateNetErrorDetails for this test.
+        final int quicErrorCode = 83;
+        assertEquals(quicErrorCode, quicException.getQuicDetailedErrorCode());
+    }
+
     /**
      * Tests that legacy onFailed callback is invoked with UrlRequestException if there
      * is no onFailed callback implementation that takes CronetException.
@@ -2263,4 +2323,98 @@ public class CronetUrlRequestTest {
         builder.setHttpMethod("HEAD").build().start();
         callback.blockForDone();
     }
+
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @RequiresMinApi(9) // Tagging support added in API level 9: crrev.com/c/chromium/src/+/930086
+    public void testTagging() throws Exception {
+        if (!CronetTestUtil.nativeCanGetTaggedBytes()) {
+            Log.i(TAG, "Skipping test - GetTaggedBytes unsupported.");
+            return;
+        }
+        String url = NativeTestServer.getEchoMethodURL();
+
+        // Test untagged requests are given tag 0.
+        int tag = 0;
+        long priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        ExperimentalUrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test explicit tagging.
+        tag = 0x12345678;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test a different tag value to make sure reused connections are retagged.
+        tag = 0x87654321;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test tagging with our UID.
+        tag = 0;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestUrlRequestCallback();
+        builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsUid(Process.myUid()), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    /**
+     * Initiate many requests concurrently to make sure neither Cronet implementation crashes.
+     * Regression test for https://crbug.com/844031.
+     */
+    public void testManyRequests() throws Exception {
+        String url = NativeTestServer.getMultiRedirectURL();
+        // Jelly Bean has a 2000 limit on global references, crbug.com/922656.
+        final int numRequests = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT ? 2000 : 1500;
+        TestUrlRequestCallback callbacks[] = new TestUrlRequestCallback[numRequests];
+        UrlRequest requests[] = new UrlRequest[numRequests];
+        for (int i = 0; i < numRequests; i++) {
+            // Share the first callback's executor to avoid creating too many single-threaded
+            // executors and hence too many threads.
+            if (i == 0) {
+                callbacks[i] = new TestUrlRequestCallback();
+            } else {
+                callbacks[i] = new TestUrlRequestCallback(callbacks[0].getExecutor());
+            }
+            UrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                    url, callbacks[i], callbacks[i].getExecutor());
+            requests[i] = builder.build();
+        }
+        for (UrlRequest request : requests) {
+            request.start();
+        }
+        for (UrlRequest request : requests) {
+            request.cancel();
+        }
+        for (TestUrlRequestCallback callback : callbacks) {
+            callback.blockForDone();
+        }
+    }
+
+    // Return connection migration disable load flag value.
+    private static native int nativeGetConnectionMigrationDisableLoadFlag();
 }

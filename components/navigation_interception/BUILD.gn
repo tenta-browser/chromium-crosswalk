@@ -39,7 +39,6 @@ if (is_android) {
       "android/java/src/org/chromium/components/navigation_interception/InterceptNavigationDelegate.java",
       "android/java/src/org/chromium/components/navigation_interception/NavigationParams.java",
     ]
-    jni_package = "navigation_interception"
   }
 }
 
@@ -51,6 +50,7 @@ source_set("unit_tests") {
   deps = [
     ":navigation_interception",
     "//base",
+    "//base/test:test_support",
     "//content/public/browser",
     "//content/test:test_support",
     "//testing/gmock",

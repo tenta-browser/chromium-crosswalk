@@ -4,6 +4,7 @@
 
 #include "components/cronet/android/cronet_upload_data_stream_adapter.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -11,12 +12,11 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/cronet/android/cronet_jni_headers/CronetUploadDataStream_jni.h"
 #include "components/cronet/android/cronet_url_request_adapter.h"
 #include "components/cronet/android/io_buffer_with_byte_buffer.h"
-#include "jni/CronetUploadDataStream_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -52,7 +52,7 @@ void CronetUploadDataStreamAdapter::Read(net::IOBuffer* buffer, int buf_len) {
   // ones used last time.
   if (!(buffer_ && buffer_->io_buffer()->data() == buffer->data() &&
         buffer_->io_buffer_len() == buf_len)) {
-    buffer_ = base::MakeUnique<ByteBufferWithIOBuffer>(env, buffer, buf_len);
+    buffer_ = std::make_unique<ByteBufferWithIOBuffer>(env, buffer, buf_len);
   }
   Java_CronetUploadDataStream_readData(env, jupload_data_stream_,
                                        buffer_->byte_buffer());
@@ -86,18 +86,16 @@ void CronetUploadDataStreamAdapter::OnReadSucceeded(
   DCHECK(bytes_read > 0 || (final_chunk && bytes_read == 0));
 
   network_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&CronetUploadDataStream::OnReadSuccess,
-                            upload_data_stream_, bytes_read, final_chunk));
+      FROM_HERE, base::BindOnce(&CronetUploadDataStream::OnReadSuccess,
+                                upload_data_stream_, bytes_read, final_chunk));
 }
 
 void CronetUploadDataStreamAdapter::OnRewindSucceeded(
     JNIEnv* env,
     const JavaParamRef<jobject>& jcaller) {
-
   network_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&CronetUploadDataStream::OnRewindSuccess,
-                 upload_data_stream_));
+      FROM_HERE, base::BindOnce(&CronetUploadDataStream::OnRewindSuccess,
+                                upload_data_stream_));
 }
 
 void CronetUploadDataStreamAdapter::Destroy(JNIEnv* env,

@@ -30,21 +30,19 @@ bool DefaultBrowserIsDisabledByPolicy() {
 
 }  // namespace
 
-DefaultBrowserHandler::DefaultBrowserHandler(content::WebUI* webui)
-    : weak_ptr_factory_(this) {
-}
+DefaultBrowserHandler::DefaultBrowserHandler() {}
 
 DefaultBrowserHandler::~DefaultBrowserHandler() {}
 
 void DefaultBrowserHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "SettingsDefaultBrowser.requestDefaultBrowserState",
-      base::Bind(&DefaultBrowserHandler::RequestDefaultBrowserState,
-                 base::Unretained(this)));
+      "requestDefaultBrowserState",
+      base::BindRepeating(&DefaultBrowserHandler::RequestDefaultBrowserState,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "SettingsDefaultBrowser.setAsDefaultBrowser",
-      base::Bind(&DefaultBrowserHandler::SetAsDefaultBrowser,
-                 base::Unretained(this)));
+      "setAsDefaultBrowser",
+      base::BindRepeating(&DefaultBrowserHandler::SetAsDefaultBrowser,
+                          base::Unretained(this)));
 }
 
 void DefaultBrowserHandler::OnJavascriptAllowed() {
@@ -66,23 +64,30 @@ void DefaultBrowserHandler::OnJavascriptDisallowed() {
 }
 
 void DefaultBrowserHandler::RequestDefaultBrowserState(
-    const base::ListValue* /*args*/) {
+    const base::ListValue* args) {
   AllowJavascript();
+
+  CHECK_EQ(args->GetSize(), 1U);
+  CHECK(args->GetString(0, &check_default_callback_id_));
 
   default_browser_worker_->StartCheckIsDefault();
 }
 
 void DefaultBrowserHandler::SetAsDefaultBrowser(const base::ListValue* args) {
   CHECK(!DefaultBrowserIsDisabledByPolicy());
-
-  base::RecordAction(base::UserMetricsAction("Options_SetAsDefaultBrowser"));
-  UMA_HISTOGRAM_COUNTS("Settings.StartSetAsDefault", true);
+  AllowJavascript();
+  RecordSetAsDefaultUMA();
 
   default_browser_worker_->StartSetAsDefault();
 
   // If the user attempted to make Chrome the default browser, notify
   // them when this changes.
   ResetDefaultBrowserPrompt(Profile::FromWebUI(web_ui()));
+}
+
+void DefaultBrowserHandler::RecordSetAsDefaultUMA() {
+  base::RecordAction(base::UserMetricsAction("Options_SetAsDefaultBrowser"));
+  UMA_HISTOGRAM_COUNTS("Settings.StartSetAsDefault", true);
 }
 
 void DefaultBrowserHandler::OnDefaultBrowserWorkerFinished(
@@ -101,7 +106,12 @@ void DefaultBrowserHandler::OnDefaultBrowserWorkerFinished(
       state == shell_integration::UNKNOWN_DEFAULT);
   dict.SetBoolean("isDisabledByPolicy", DefaultBrowserIsDisabledByPolicy());
 
-  FireWebUIListener("settings.updateDefaultBrowserState", dict);
+  if (!check_default_callback_id_.empty()) {
+    ResolveJavascriptCallback(base::Value(check_default_callback_id_), dict);
+    check_default_callback_id_.clear();
+  } else {
+    FireWebUIListener("browser-default-state-changed", dict);
+  }
 }
 
 }  // namespace settings

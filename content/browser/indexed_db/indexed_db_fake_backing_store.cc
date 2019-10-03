@@ -5,27 +5,34 @@
 #include "content/browser/indexed_db/indexed_db_fake_backing_store.h"
 
 #include "base/files/file_path.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#include "content/browser/indexed_db/leveldb/leveldb_env.h"
 
 namespace content {
+namespace {
+
+using blink::IndexedDBKey;
+using blink::IndexedDBKeyRange;
+
+}  // namespace
 
 IndexedDBFakeBackingStore::IndexedDBFakeBackingStore()
-    : IndexedDBBackingStore(nullptr /* indexed_db_factory */,
+    : IndexedDBBackingStore(IndexedDBBackingStore::Mode::kInMemory,
+                            nullptr /* indexed_db_factory */,
+                            indexed_db::LevelDBFactory::Get(),
                             url::Origin::Create(GURL("http://localhost:81")),
                             base::FilePath(),
-                            scoped_refptr<net::URLRequestContextGetter>(),
-                            std::unique_ptr<LevelDBDatabase>(),
-                            std::unique_ptr<LevelDBComparator>(),
-                            nullptr /* task_runner */) {}
+                            std::unique_ptr<TransactionalLevelDBDatabase>(),
+                            base::SequencedTaskRunnerHandle::Get().get()) {}
 IndexedDBFakeBackingStore::IndexedDBFakeBackingStore(
     IndexedDBFactory* factory,
     base::SequencedTaskRunner* task_runner)
-    : IndexedDBBackingStore(factory,
+    : IndexedDBBackingStore(IndexedDBBackingStore::Mode::kOnDisk,
+                            factory,
+                            indexed_db::LevelDBFactory::Get(),
                             url::Origin::Create(GURL("http://localhost:81")),
                             base::FilePath(),
-                            nullptr /* request_context */,
-                            std::unique_ptr<LevelDBDatabase>(),
-                            std::unique_ptr<LevelDBComparator>(),
+                            std::unique_ptr<TransactionalLevelDBDatabase>(),
                             task_runner) {}
 IndexedDBFakeBackingStore::~IndexedDBFakeBackingStore() {}
 
@@ -40,7 +47,6 @@ leveldb::Status IndexedDBFakeBackingStore::PutRecord(
     int64_t object_store_id,
     const IndexedDBKey& key,
     IndexedDBValue* value,
-    std::vector<std::unique_ptr<storage::BlobDataHandle>>* handles,
     RecordIdentifier* record) {
   return leveldb::Status::OK();
 }
@@ -109,7 +115,7 @@ IndexedDBFakeBackingStore::OpenObjectStoreKeyCursor(
     int64_t database_id,
     int64_t object_store_id,
     const IndexedDBKeyRange& key_range,
-    blink::WebIDBCursorDirection,
+    blink::mojom::IDBCursorDirection,
     leveldb::Status* s) {
   return std::unique_ptr<IndexedDBBackingStore::Cursor>();
 }
@@ -119,7 +125,7 @@ IndexedDBFakeBackingStore::OpenObjectStoreCursor(
     int64_t database_id,
     int64_t object_store_id,
     const IndexedDBKeyRange& key_range,
-    blink::WebIDBCursorDirection,
+    blink::mojom::IDBCursorDirection,
     leveldb::Status* s) {
   return std::unique_ptr<IndexedDBBackingStore::Cursor>();
 }
@@ -130,7 +136,7 @@ IndexedDBFakeBackingStore::OpenIndexKeyCursor(
     int64_t object_store_id,
     int64_t index_id,
     const IndexedDBKeyRange& key_range,
-    blink::WebIDBCursorDirection,
+    blink::mojom::IDBCursorDirection,
     leveldb::Status* s) {
   return std::unique_ptr<IndexedDBBackingStore::Cursor>();
 }
@@ -141,7 +147,7 @@ IndexedDBFakeBackingStore::OpenIndexCursor(
     int64_t object_store_id,
     int64_t index_id,
     const IndexedDBKeyRange& key_range,
-    blink::WebIDBCursorDirection,
+    blink::mojom::IDBCursorDirection,
     leveldb::Status* s) {
   return std::unique_ptr<IndexedDBBackingStore::Cursor>();
 }
@@ -151,9 +157,9 @@ IndexedDBFakeBackingStore::FakeTransaction::FakeTransaction(
     : IndexedDBBackingStore::Transaction(nullptr), result_(result) {}
 void IndexedDBFakeBackingStore::FakeTransaction::Begin() {}
 leveldb::Status IndexedDBFakeBackingStore::FakeTransaction::CommitPhaseOne(
-    scoped_refptr<BlobWriteCallback> callback) {
-  callback->Run(IndexedDBBackingStore::BlobWriteResult::SUCCESS_SYNC);
-  return leveldb::Status::OK();
+    BlobWriteCallback callback) {
+  return std::move(callback).Run(
+      IndexedDBBackingStore::BlobWriteResult::SUCCESS_SYNC);
 }
 leveldb::Status IndexedDBFakeBackingStore::FakeTransaction::CommitPhaseTwo() {
   return result_;

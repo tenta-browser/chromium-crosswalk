@@ -10,10 +10,9 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/offline_pages/offline_page_mhtml_archiver.h"
@@ -30,18 +29,17 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(offline_pages::RecentTabHelper);
-
 namespace {
-class DefaultDelegate: public offline_pages::RecentTabHelper::Delegate {
+class DefaultRecentTabHelperDelegate
+    : public offline_pages::RecentTabHelper::Delegate {
  public:
-  DefaultDelegate() : is_low_end_device_(base::SysInfo::IsLowEndDevice()) {}
+  DefaultRecentTabHelperDelegate()
+      : is_low_end_device_(base::SysInfo::IsLowEndDevice()) {}
 
   // offline_pages::RecentTabHelper::Delegate
   std::unique_ptr<offline_pages::OfflinePageArchiver> CreatePageArchiver(
       content::WebContents* web_contents) override {
-    return base::MakeUnique<offline_pages::OfflinePageMHTMLArchiver>(
-        web_contents);
+    return std::make_unique<offline_pages::OfflinePageMHTMLArchiver>();
   }
   bool GetTabId(content::WebContents* web_contents, int* tab_id) override {
     return offline_pages::OfflinePageUtils::GetTabId(web_contents, tab_id);
@@ -99,7 +97,7 @@ struct RecentTabHelper::SnapshotProgressInfo {
 
 RecentTabHelper::RecentTabHelper(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
-      delegate_(new DefaultDelegate()),
+      delegate_(new DefaultRecentTabHelperDelegate()),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
@@ -120,7 +118,7 @@ void RecentTabHelper::ObserveAndDownloadCurrentPage(const ClientId& client_id,
   // that the call is from Downloads.
   DCHECK_EQ(kDownloadNamespace, client_id.name_space);
   auto new_downloads_snapshot_info =
-      base::MakeUnique<SnapshotProgressInfo>(client_id, request_id, origin);
+      std::make_unique<SnapshotProgressInfo>(client_id, request_id, origin);
 
   // If this tab helper is not enabled, immediately give the job back to
   // RequestCoordinator.
@@ -169,7 +167,7 @@ bool RecentTabHelper::EnsureInitialized() {
   if (snapshot_controller_)  // Initialized already.
     return snapshots_enabled_;
 
-  snapshot_controller_ = SnapshotController::CreateForForegroundOfflining(
+  snapshot_controller_ = std::make_unique<SnapshotController>(
       base::ThreadTaskRunnerHandle::Get(), this);
   snapshot_controller_->Stop();  // It is reset when navigation commits.
 
@@ -177,7 +175,7 @@ bool RecentTabHelper::EnsureInitialized() {
   tab_id_.clear();
 
   if (delegate_->GetTabId(web_contents(), &tab_id_number))
-    tab_id_ = base::IntToString(tab_id_number);
+    tab_id_ = base::NumberToString(tab_id_number);
 
   // TODO(dimich): When we have BackgroundOffliner, avoid capturing prerenderer
   // WebContents with its origin as well.
@@ -231,8 +229,10 @@ void RecentTabHelper::DidFinishNavigation(
            last_n_latest_saved_snapshot_info_->request_id)) {
     DVLOG(1) << " - Deleting previous last_n snapshot with offline_id "
              << last_n_latest_saved_snapshot_info_->request_id;
-    std::vector<int64_t> id{last_n_latest_saved_snapshot_info_->request_id};
-    page_model_->DeletePagesByOfflineId(id, DeletePageCallback());
+    PageCriteria criteria;
+    criteria.offline_ids =
+        std::vector<int64_t>{last_n_latest_saved_snapshot_info_->request_id};
+    page_model_->DeletePagesWithCriteria(criteria, base::DoNothing());
     last_n_latest_saved_snapshot_info_.reset();
   }
 
@@ -243,28 +243,29 @@ void RecentTabHelper::DidFinishNavigation(
   // Always reset so that posted tasks get canceled.
   snapshot_controller_->Reset();
 
-  // Check for conditions that should stop last_n from creating snapshots of
+  // Check for conditions that should stop us from creating snapshots of
   // this page:
   // - It is an error page.
-  // - The navigation is a POST as offline pages are never loaded for them.
   // - The navigated URL is not supported.
   // - The page being loaded is already an offline page.
   bool can_save =
-      !navigation_handle->IsErrorPage() && !navigation_handle->IsPost() &&
+      !navigation_handle->IsErrorPage() &&
       OfflinePageModel::CanSaveURL(web_contents()->GetLastCommittedURL()) &&
       current_offline_page == nullptr;
   DVLOG_IF(1, !can_save)
       << " - Page can not be saved for offline usage (reasons: "
       << !navigation_handle->IsErrorPage() << ", "
-      << !navigation_handle->IsPost() << ", "
       << OfflinePageModel::CanSaveURL(web_contents()->GetLastCommittedURL())
       << ", " << (current_offline_page == nullptr) << ")";
 
-  UMA_HISTOGRAM_BOOLEAN("OfflinePages.CanSaveRecentPage", can_save);
-
   if (!can_save)
     snapshot_controller_->Stop();
+  // Last N should be disabled when:
+  // - Running on low end devices.
+  // - Viewing POST content for privacy considerations.
+  // - Disabled by flag.
   last_n_listen_to_tab_hidden_ = can_save && !delegate_->IsLowEndDevice() &&
+                                 !navigation_handle->IsPost() &&
                                  IsOffliningRecentPagesEnabled();
   DVLOG_IF(1, can_save && !last_n_listen_to_tab_hidden_)
       << " - Page can not be saved by last_n";
@@ -293,7 +294,14 @@ void RecentTabHelper::WebContentsDestroyed() {
   CancelInFlightSnapshots();
 }
 
-void RecentTabHelper::WasHidden() {
+void RecentTabHelper::OnVisibilityChanged(content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN)
+    WebContentsWasHidden();
+  else
+    WebContentsWasShown();
+}
+
+void RecentTabHelper::WebContentsWasHidden() {
   if (!IsOffliningRecentPagesEnabled())
     return;
 
@@ -302,12 +310,17 @@ void RecentTabHelper::WasHidden() {
   // - A last_n snapshot is currently being saved.
   // - The tab is in the process of being closed.
   // - The tab is currently presented as a custom tab.
+  // Note that a WebContents may be embedded in another WebContents. The
+  // outermost WebContents is the one associated with the tab.
   if (!last_n_listen_to_tab_hidden_ || last_n_ongoing_snapshot_info_ ||
-      tab_is_closing_ || delegate_->IsCustomTab(web_contents())) {
+      tab_is_closing_ ||
+      delegate_->IsCustomTab(web_contents()->GetOutermostWebContents())) {
     DVLOG(1) << "Will not snapshot for last_n (reasons: "
              << !last_n_listen_to_tab_hidden_ << ", "
              << !!last_n_ongoing_snapshot_info_ << ", " << tab_is_closing_
-             << ", " << delegate_->IsCustomTab(web_contents())
+             << ", "
+             << delegate_->IsCustomTab(
+                    web_contents()->GetOutermostWebContents())
              << ") for: " << web_contents()->GetLastCommittedURL().spec();
     return;
   }
@@ -323,7 +336,7 @@ void RecentTabHelper::WasHidden() {
   DVLOG(1) << "Starting last_n snapshot for: "
            << web_contents()->GetLastCommittedURL().spec();
   last_n_ongoing_snapshot_info_ =
-      base::MakeUnique<SnapshotProgressInfo>(GetRecentPagesClientId());
+      std::make_unique<SnapshotProgressInfo>(GetRecentPagesClientId());
   DCHECK(last_n_ongoing_snapshot_info_->IsForLastN());
   DCHECK(snapshots_enabled_);
   // Remove previously captured pages for this tab.
@@ -332,10 +345,28 @@ void RecentTabHelper::WasHidden() {
       base::Bind(&RecentTabHelper::ContinueSnapshotWithIdsToPurge,
                  weak_ptr_factory_.GetWeakPtr(),
                  last_n_ongoing_snapshot_info_.get()));
+
+  IsSavingSamePageEnum saving_same_page_value = IsSavingSamePageEnum::kNewPage;
+  if (last_n_latest_saved_snapshot_info_) {
+    // If there was a previously saved snapshot for the current page we are
+    // saving a new one for the same page.
+    // Note: there might be a difference in page quality between here and when
+    // it's assessed again in ContinueSnapshotAfterPurge but this is not
+    // expected to happen often.
+    if (last_n_latest_saved_snapshot_info_->expected_page_quality ==
+        snapshot_controller_->current_page_quality()) {
+      saving_same_page_value = IsSavingSamePageEnum::kSamePageSameQuality;
+    } else {
+      saving_same_page_value = IsSavingSamePageEnum::kSamePageBetterQuality;
+    }
+  }
+  UMA_HISTOGRAM_ENUMERATION("OfflinePages.LastN.IsSavingSamePage",
+                            saving_same_page_value);
+
   last_n_latest_saved_snapshot_info_.reset();
 }
 
-void RecentTabHelper::WasShown() {
+void RecentTabHelper::WebContentsWasShown() {
   // If the tab was closing and is now being shown, the closure was reverted.
   DVLOG_IF(0, tab_is_closing_) << "Tab is not closing anymore: "
                                << web_contents()->GetLastCommittedURL().spec();
@@ -381,10 +412,6 @@ void RecentTabHelper::StartSnapshot() {
   snapshot_controller_->PendingSnapshotCompleted();
 }
 
-void RecentTabHelper::RunRenovations() {
-  snapshot_controller_->RenovationsCompleted();
-}
-
 void RecentTabHelper::SaveSnapshotForDownloads(bool replace_latest) {
   DCHECK_NE(PageQuality::POOR, snapshot_controller_->current_page_quality());
 
@@ -393,7 +420,7 @@ void RecentTabHelper::SaveSnapshotForDownloads(bool replace_latest) {
     // this page.
     DCHECK(downloads_latest_saved_snapshot_info_);
     DCHECK(!downloads_ongoing_snapshot_info_);
-    downloads_ongoing_snapshot_info_ = base::MakeUnique<SnapshotProgressInfo>(
+    downloads_ongoing_snapshot_info_ = std::make_unique<SnapshotProgressInfo>(
         downloads_latest_saved_snapshot_info_->client_id,
         downloads_latest_saved_snapshot_info_->request_id,
         downloads_latest_saved_snapshot_info_->origin);
@@ -424,9 +451,11 @@ void RecentTabHelper::ContinueSnapshotWithIdsToPurge(
 
   DVLOG_IF(1, !page_ids.empty()) << "Deleting " << page_ids.size()
                                  << " offline pages...";
-  page_model_->DeletePagesByOfflineId(
-      page_ids, base::Bind(&RecentTabHelper::ContinueSnapshotAfterPurge,
-                           weak_ptr_factory_.GetWeakPtr(), snapshot_info));
+  PageCriteria criteria;
+  criteria.offline_ids = page_ids;
+  page_model_->DeletePagesWithCriteria(
+      criteria, base::BindOnce(&RecentTabHelper::ContinueSnapshotAfterPurge,
+                               weak_ptr_factory_.GetWeakPtr(), snapshot_info));
 }
 
 void RecentTabHelper::ContinueSnapshotAfterPurge(
@@ -450,6 +479,7 @@ void RecentTabHelper::ContinueSnapshotAfterPurge(
   save_page_params.request_origin = snapshot_info->origin;
   page_model_->SavePage(
       save_page_params, delegate_->CreatePageArchiver(web_contents()),
+      web_contents(),
       base::Bind(&RecentTabHelper::SavePageCallback,
                  weak_ptr_factory_.GetWeakPtr(), snapshot_info));
 }
@@ -459,7 +489,10 @@ void RecentTabHelper::SavePageCallback(SnapshotProgressInfo* snapshot_info,
                                        int64_t offline_id) {
   DCHECK((snapshot_info->IsForLastN() &&
           snapshot_info->request_id == OfflinePageModel::kInvalidOfflineId) ||
-         snapshot_info->request_id == offline_id);
+         snapshot_info->request_id == offline_id)
+      << "SnapshotProgressInfo(client_id=" << snapshot_info->client_id
+      << ", request_id=" << snapshot_info->request_id
+      << ", origin=" << snapshot_info->origin << "), offline_id=" << offline_id;
   // Store the assigned offline_id (for downloads case it will already contain
   // the same value).
   snapshot_info->request_id = offline_id;
@@ -537,5 +570,7 @@ void RecentTabHelper::CancelInFlightSnapshots() {
   downloads_latest_saved_snapshot_info_.reset();
   last_n_ongoing_snapshot_info_.reset();
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(RecentTabHelper)
 
 }  // namespace offline_pages

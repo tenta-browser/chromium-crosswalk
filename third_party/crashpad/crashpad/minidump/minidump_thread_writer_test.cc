@@ -19,6 +19,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "gtest/gtest.h"
 #include "minidump/minidump_context_writer.h"
@@ -522,10 +523,10 @@ template <typename Traits>
 void RunInitializeFromSnapshotTest(bool thread_id_collision) {
   using MinidumpContextType = typename Traits::MinidumpContextType;
   MINIDUMP_THREAD expect_threads[3] = {};
-  uint64_t thread_ids[arraysize(expect_threads)] = {};
-  uint8_t memory_values[arraysize(expect_threads)] = {};
-  uint32_t context_seeds[arraysize(expect_threads)] = {};
-  MINIDUMP_MEMORY_DESCRIPTOR tebs[arraysize(expect_threads)] = {};
+  uint64_t thread_ids[base::size(expect_threads)] = {};
+  uint8_t memory_values[base::size(expect_threads)] = {};
+  uint32_t context_seeds[base::size(expect_threads)] = {};
+  MINIDUMP_MEMORY_DESCRIPTOR tebs[base::size(expect_threads)] = {};
 
   constexpr size_t kTebSize = 1024;
 
@@ -545,7 +546,7 @@ void RunInitializeFromSnapshotTest(bool thread_id_collision) {
   expect_threads[1].ThreadId = 11;
   expect_threads[1].SuspendCount = 12;
   expect_threads[1].Priority = 13;
-  expect_threads[1].Teb = 0xfedcba9876543210;
+  expect_threads[1].Teb = 0x1111111111111111;
   expect_threads[1].ThreadContext.DataSize = sizeof(MinidumpContextType);
   context_seeds[1] = 0x40000001;
   tebs[1].StartOfMemoryRange = expect_threads[1].Teb;
@@ -554,7 +555,7 @@ void RunInitializeFromSnapshotTest(bool thread_id_collision) {
   expect_threads[2].ThreadId = 21;
   expect_threads[2].SuspendCount = 22;
   expect_threads[2].Priority = 23;
-  expect_threads[2].Teb = 0x1111111111111111;
+  expect_threads[2].Teb = 0xfedcba9876543210;
   expect_threads[2].Stack.StartOfMemoryRange = 0x3000;
   expect_threads[2].Stack.Memory.DataSize = 0x300;
   expect_threads[2].ThreadContext.DataSize = sizeof(MinidumpContextType);
@@ -581,7 +582,7 @@ void RunInitializeFromSnapshotTest(bool thread_id_collision) {
 
   std::vector<std::unique_ptr<TestThreadSnapshot>> thread_snapshots_owner;
   std::vector<const ThreadSnapshot*> thread_snapshots;
-  for (size_t index = 0; index < arraysize(expect_threads); ++index) {
+  for (size_t index = 0; index < base::size(expect_threads); ++index) {
     thread_snapshots_owner.push_back(std::make_unique<TestThreadSnapshot>());
     TestThreadSnapshot* thread_snapshot = thread_snapshots_owner.back().get();
 

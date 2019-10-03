@@ -36,12 +36,14 @@ if "--use_bundled_pylibs" in sys.argv[1:]:
 sys.path.insert(0, os.path.join(_GetDirAbove("components"),
                                 "mojo", "public", "tools", "bindings", "pylib"))
 
+# pylint: disable=wrong-import-position
 from mojom.error import Error
 import mojom.fileutil as fileutil
 from mojom.generate import translate
 from mojom.generate import template_expander
 from mojom.generate.generator import AddComputedData
 from mojom.parse.parser import Parse
+# pylint: enable=wrong-import-position
 
 
 _BUILTIN_GENERATORS = {
@@ -208,13 +210,10 @@ class MojomProcessor(object):
             module, args.output_dir, typemap=self._typemap.get(language, {}),
             variant=args.variant, bytecode_path=args.bytecode_path,
             for_blink=args.for_blink,
-            use_once_callback=args.use_once_callback,
-            js_bindings_mode=args.js_bindings_mode,
             export_attribute=args.export_attribute,
             export_header=args.export_header,
             generate_non_variant_code=args.generate_non_variant_code,
-            support_lazy_serialization=args.support_lazy_serialization,
-            allow_native_structs=args.allow_native_structs)
+            support_lazy_serialization=args.support_lazy_serialization)
         filtered_args = []
         if hasattr(generator_module, 'GENERATOR_PREFIX'):
           prefix = '--' + generator_module.GENERATOR_PREFIX + '_'
@@ -340,16 +339,6 @@ def main():
                                help="Use WTF types as generated types for mojo "
                                "string/array/map.")
   generate_parser.add_argument(
-      "--use_once_callback", action="store_true",
-      help="Use base::OnceCallback instead of base::RepeatingCallback.")
-  generate_parser.add_argument(
-      "--js_bindings_mode", choices=["new", "both", "old"], default="new",
-      help="This option only affects the JavaScript bindings. The value could "
-      "be: \"new\" - generate only the new-style JS bindings, which use the "
-      "new module loading approach and the core api exposed by Web IDL; "
-      "\"both\" - generate both the old- and new-style bindings; \"old\" - "
-      "generate only the old-style bindings.")
-  generate_parser.add_argument(
       "--export_attribute", default="",
       help="Optional attribute to specify on class declaration to export it "
       "for the component build.")
@@ -377,11 +366,6 @@ def main():
       "--support_lazy_serialization",
       help="If set, generated bindings will serialize lazily when possible.",
       action="store_true")
-  generate_parser.add_argument(
-      "--allow_native_structs",
-      help="Allows the [Native] attribute to be specified on structs within "
-      "the mojom file. Must not be specified on internal bindings mojom or "
-      "other dependencies thereof.", action="store_true")
   generate_parser.set_defaults(func=_Generate)
 
   precompile_parser = subparsers.add_parser("precompile",

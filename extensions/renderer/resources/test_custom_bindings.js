@@ -5,8 +5,6 @@
 // test_custom_bindings.js
 // mini-framework for ExtensionApiTest browser tests
 
-var binding = apiBridge || require('binding').Binding.create('test');
-
 var environmentSpecificBindings = require('test_environment_specific_bindings');
 var GetExtensionAPIDefinitionsForTest =
     requireNative('apiDefinitions').GetExtensionAPIDefinitionsForTest;
@@ -16,23 +14,11 @@ var userGestures = requireNative('user_gestures');
 
 var GetModuleSystem = requireNative('v8_context').GetModuleSystem;
 
-var jsExceptionHandler =
-    bindingUtil ? undefined : require('uncaught_exception_handler');
-function setExceptionHandler(handler) {
-  if (bindingUtil)
-    bindingUtil.setExceptionHandler(handler);
-  else
-    jsExceptionHandler.setHandler(handler);
-}
-
 function handleException(message, error) {
-  if (bindingUtil)
-    bindingUtil.handleException(message, error);
-  else
-    jsExceptionHandler.handle(message, error);
+  bindingUtil.handleException(message || 'Unknown error', error);
 }
 
-binding.registerCustomHook(function(api) {
+apiBridge.registerCustomHook(function(api) {
   var chromeTest = api.compiledApi;
   var apiFunctions = api.apiFunctions;
 
@@ -94,7 +80,7 @@ binding.registerCustomHook(function(api) {
     pendingCallbacks = 0;
 
     lastTest = currentTest;
-    currentTest = chromeTest.tests.shift();
+    currentTest = $Array.shift(chromeTest.tests);
 
     if (!currentTest) {
       allTestsDone();
@@ -103,11 +89,11 @@ binding.registerCustomHook(function(api) {
 
     try {
       chromeTest.log("( RUN      ) " + testName(currentTest));
-      setExceptionHandler(function(message, e) {
+      bindingUtil.setExceptionHandler(function(message, e) {
         if (e !== failureException)
           chromeTest.fail('uncaught exception: ' + message);
       });
-      currentTest.call();
+      $Function.call(currentTest);
     } catch (e) {
       handleException(e.message, e);
     }
@@ -178,6 +164,19 @@ binding.registerCustomHook(function(api) {
 
     if (typeof(expected) !== typeof(actual))
       return false;
+
+    if ((actual instanceof ArrayBuffer) && (expected instanceof ArrayBuffer)) {
+      if (actual.byteLength != expected.byteLength)
+        return false;
+      var actualView = new Uint8Array(actual);
+      var expectedView = new Uint8Array(expected);
+      for (var i = 0; i < actualView.length; ++i) {
+        if (actualView[i] != expectedView[i]) {
+          return false;
+        }
+      }
+      return true;
+    }
 
     for (var p in actual) {
       if ($Object.hasOwnProperty(actual, p) &&
@@ -362,14 +361,9 @@ binding.registerCustomHook(function(api) {
     return userGestures.RunWithUserGesture(callback);
   });
 
-  apiFunctions.setHandleRequest('runWithoutUserGesture', function(callback) {
-    chromeTest.assertEq(typeof(callback), 'function');
-    return userGestures.RunWithoutUserGesture(callback);
-  });
-
   apiFunctions.setHandleRequest('setExceptionHandler', function(callback) {
     chromeTest.assertEq(typeof(callback), 'function');
-    setExceptionHandler(callback);
+    bindingUtil.setExceptionHandler(callback);
   });
 
   apiFunctions.setHandleRequest('getWakeEventPage', function() {
@@ -378,6 +372,3 @@ binding.registerCustomHook(function(api) {
 
   environmentSpecificBindings.registerHooks(api);
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

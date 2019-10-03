@@ -9,13 +9,11 @@
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/optional.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_record.h"
-#include "cc/paint/paint_text_blob.h"
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
 
 namespace cc {
@@ -26,18 +24,18 @@ class PaintFlags;
 class CC_PAINT_EXPORT RecordPaintCanvas final : public PaintCanvas {
  public:
   RecordPaintCanvas(DisplayItemList* list, const SkRect& bounds);
+  RecordPaintCanvas(const RecordPaintCanvas&) = delete;
   ~RecordPaintCanvas() override;
 
-  SkMetaData& getMetaData() override;
+  RecordPaintCanvas& operator=(const RecordPaintCanvas&) = delete;
+
   SkImageInfo imageInfo() const override;
 
   void flush() override;
 
   int save() override;
   int saveLayer(const SkRect* bounds, const PaintFlags* flags) override;
-  int saveLayerAlpha(const SkRect* bounds,
-                     uint8_t alpha,
-                     bool preserve_lcd_text_requests) override;
+  int saveLayerAlpha(const SkRect* bounds, uint8_t alpha) override;
 
   void restore() override;
   int getSaveCount() const override;
@@ -84,14 +82,17 @@ class CC_PAINT_EXPORT RecordPaintCanvas final : public PaintCanvas {
                      const SkRect& dst,
                      const PaintFlags* flags,
                      SrcRectConstraint constraint) override;
-  void drawBitmap(const SkBitmap& bitmap,
-                  SkScalar left,
-                  SkScalar top,
-                  const PaintFlags* flags) override;
-
-  void drawTextBlob(scoped_refptr<PaintTextBlob> blob,
+  void drawSkottie(scoped_refptr<SkottieWrapper> skottie,
+                   const SkRect& dst,
+                   float t) override;
+  void drawTextBlob(sk_sp<SkTextBlob> blob,
                     SkScalar x,
                     SkScalar y,
+                    const PaintFlags& flags) override;
+  void drawTextBlob(sk_sp<SkTextBlob> blob,
+                    SkScalar x,
+                    SkScalar y,
+                    NodeId node_id,
                     const PaintFlags& flags) override;
 
   void drawPicture(sk_sp<const PaintRecord> record) override;
@@ -103,12 +104,12 @@ class CC_PAINT_EXPORT RecordPaintCanvas final : public PaintCanvas {
   void Annotate(AnnotationType type,
                 const SkRect& rect,
                 sk_sp<SkData> data) override;
+  void recordCustomData(uint32_t id) override;
 
   // Don't shadow non-virtual helper functions.
   using PaintCanvas::clipRect;
   using PaintCanvas::clipRRect;
   using PaintCanvas::clipPath;
-  using PaintCanvas::drawBitmap;
   using PaintCanvas::drawColor;
   using PaintCanvas::drawImage;
   using PaintCanvas::drawPicture;
@@ -131,8 +132,6 @@ class CC_PAINT_EXPORT RecordPaintCanvas final : public PaintCanvas {
   // lazy initialize the canvas can still be const.
   mutable base::Optional<SkNoDrawCanvas> canvas_;
   SkRect recording_bounds_;
-
-  DISALLOW_COPY_AND_ASSIGN(RecordPaintCanvas);
 };
 
 }  // namespace cc

@@ -10,25 +10,34 @@
 #include "ash/host/ash_window_tree_host_mirroring_unified.h"
 #include "ash/host/ash_window_tree_host_platform.h"
 #include "ash/host/ash_window_tree_host_unified.h"
-#include "ash/shell_port.h"
+#include "ash/public/cpp/ash_switches.h"
+#include "base/command_line.h"
+#include "base/system/sys_info.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/platform_window/platform_window_init_properties.h"
 
 namespace ash {
+namespace {
 
-AshWindowTreeHost::AshWindowTreeHost() = default;
+bool GetAllowConfineCursor() {
+  return base::SysInfo::IsRunningOnChromeOS() ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kAshConstrainPointerToRoot);
+}
+
+}  // namespace
+
+AshWindowTreeHost::AshWindowTreeHost()
+    : allow_confine_cursor_(GetAllowConfineCursor()) {}
 
 AshWindowTreeHost::~AshWindowTreeHost() = default;
 
 void AshWindowTreeHost::TranslateLocatedEvent(ui::LocatedEvent* event) {
-  // NOTE: This code is not called in mus/mash, it is handled on the server
-  // side.
-  // TODO(sky): remove this when mus is the default http://crbug.com/763996.
-  DCHECK_EQ(aura::Env::Mode::LOCAL, aura::Env::GetInstance()->mode());
-
   if (event->IsTouchEvent())
     return;
 
@@ -57,11 +66,6 @@ void AshWindowTreeHost::TranslateLocatedEvent(ui::LocatedEvent* event) {
 // static
 std::unique_ptr<AshWindowTreeHost> AshWindowTreeHost::Create(
     const AshWindowTreeHostInitParams& init_params) {
-  std::unique_ptr<AshWindowTreeHost> ash_window_tree_host =
-      ShellPort::Get()->CreateAshWindowTreeHost(init_params);
-  if (ash_window_tree_host)
-    return ash_window_tree_host;
-
   if (init_params.mirroring_unified) {
     return std::make_unique<AshWindowTreeHostMirroringUnified>(
         init_params.initial_bounds, init_params.display_id,
@@ -72,7 +76,7 @@ std::unique_ptr<AshWindowTreeHost> AshWindowTreeHost::Create(
         init_params.initial_bounds, init_params.mirroring_delegate);
   }
   return std::make_unique<AshWindowTreeHostPlatform>(
-      init_params.initial_bounds);
+      ui::PlatformWindowInitProperties{init_params.initial_bounds});
 }
 
 }  // namespace ash

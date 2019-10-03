@@ -25,13 +25,14 @@ void JSONFeatureProviderSource::LoadJSON(int resource_id) {
       ui::ResourceBundle::GetSharedInstance().GetRawDataResource(resource_id);
   int error_code = 0;
   std::string error_message;
-  std::unique_ptr<base::Value> value(base::JSONReader::ReadAndReturnError(
-      features_file, base::JSON_PARSE_RFC, &error_code, &error_message));
+  std::unique_ptr<base::Value> value(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          features_file, base::JSON_PARSE_RFC, &error_code, &error_message));
   DCHECK(value) << "Could not load features: " << name_ << " " << error_message;
 
   std::unique_ptr<base::DictionaryValue> value_as_dict;
   if (value) {
-    CHECK(value->IsType(base::Value::Type::DICTIONARY)) << name_;
+    CHECK(value->is_dict()) << name_;
     value_as_dict = base::DictionaryValue::From(std::move(value));
   } else {
     // There was some error loading the features file.

@@ -4,7 +4,8 @@
 
 #include "media/audio/win/waveout_output_win.h"
 
-#include "base/atomicops.h"
+#include <atomic>
+
 #include "base/logging.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -72,6 +73,8 @@ inline WAVEHDR* PCMWaveOutAudioOutputStream::GetBuffer(int n) const {
   return reinterpret_cast<WAVEHDR*>(&buffers_[n * BufferSize()]);
 }
 
+constexpr SampleFormat kSampleFormat = kSampleFormatS16;
+
 PCMWaveOutAudioOutputStream::PCMWaveOutAudioOutputStream(
     AudioManagerWin* manager,
     const AudioParameters& params,
@@ -81,7 +84,7 @@ PCMWaveOutAudioOutputStream::PCMWaveOutAudioOutputStream(
       manager_(manager),
       callback_(NULL),
       num_buffers_(num_buffers),
-      buffer_size_(params.GetBytesPerBuffer()),
+      buffer_size_(params.GetBytesPerBuffer(kSampleFormat)),
       volume_(1),
       channels_(params.channels()),
       pending_bytes_(0),
@@ -92,7 +95,7 @@ PCMWaveOutAudioOutputStream::PCMWaveOutAudioOutputStream(
   format_.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
   format_.Format.nChannels = params.channels();
   format_.Format.nSamplesPerSec = params.sample_rate();
-  format_.Format.wBitsPerSample = params.bits_per_sample();
+  format_.Format.wBitsPerSample = SampleFormatToBitsPerChannel(kSampleFormat);
   format_.Format.cbSize = sizeof(format_) - sizeof(WAVEFORMATEX);
   // The next are computed from above.
   format_.Format.nBlockAlign = (format_.Format.nChannels *
@@ -105,7 +108,7 @@ PCMWaveOutAudioOutputStream::PCMWaveOutAudioOutputStream(
     format_.dwChannelMask = kChannelsToMask[params.channels()];
   }
   format_.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
-  format_.Samples.wValidBitsPerSample = params.bits_per_sample();
+  format_.Samples.wValidBitsPerSample = format_.Format.wBitsPerSample;
 }
 
 PCMWaveOutAudioOutputStream::~PCMWaveOutAudioOutputStream() {
@@ -209,7 +212,7 @@ void PCMWaveOutAudioOutputStream::Start(AudioSourceCallback* callback) {
   // From now on |pending_bytes_| would be accessed by callback thread.
   // Most likely waveOutPause() or waveOutRestart() has its own memory barrier,
   // but issuing our own is safer.
-  base::subtle::MemoryBarrier();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
 
   MMRESULT result = ::waveOutPause(waveout_);
   if (result != MMSYSERR_NOERROR) {
@@ -244,7 +247,7 @@ void PCMWaveOutAudioOutputStream::Stop() {
   if (state_ != PCMA_PLAYING)
     return;
   state_ = PCMA_STOPPING;
-  base::subtle::MemoryBarrier();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
 
   // Stop watching for buffer event, waits until outstanding callbacks finish.
   if (waiting_handle_) {
@@ -298,6 +301,10 @@ void PCMWaveOutAudioOutputStream::Close() {
   // we do on this function.
   manager_->ReleaseOutputStream(this);
 }
+
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void PCMWaveOutAudioOutputStream::Flush() {}
 
 void PCMWaveOutAudioOutputStream::SetVolume(double volume) {
   if (!waveout_)

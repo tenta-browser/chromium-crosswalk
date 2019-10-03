@@ -7,10 +7,12 @@ package org.chromium.components.sync.notifier;
 import android.accounts.Account;
 import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
+import android.support.annotation.Nullable;
 import android.util.Base64;
 
 import com.google.ipc.invalidation.external.client.types.ObjectId;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
@@ -19,8 +21,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * Class to manage the preferences used by the invalidation client.
@@ -175,7 +175,11 @@ public class InvalidationPreferences {
         if (base64State == null) {
             return null;
         }
-        return Base64.decode(base64State, Base64.DEFAULT);
+        try {
+            return Base64.decode(base64State, Base64.DEFAULT);
+        } catch (java.lang.IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** Sets the notification client internal state to {@code state}. */
@@ -205,7 +209,8 @@ public class InvalidationPreferences {
         } catch (NumberFormatException e) {
             return null;
         }
-        byte[] objectName = objectIdString.substring(separatorPos + 1).getBytes();
+        byte[] objectName =
+                ApiCompatibilityUtils.getBytesUtf8(objectIdString.substring(separatorPos + 1));
         return ObjectId.newInstance(objectSource, objectName);
     }
 }

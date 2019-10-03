@@ -9,7 +9,7 @@
 #include <string>
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "ui/gl/extension_set.h"
+#include "ui/gfx/extension_set.h"
 #include "ui/gl/gl_export.h"
 
 namespace gl {
@@ -17,7 +17,7 @@ namespace gl {
 struct GL_EXPORT GLVersionInfo {
   GLVersionInfo(const char* version_str,
                 const char* renderer_str,
-                const ExtensionSet& exts);
+                const gfx::ExtensionSet& exts);
 
   bool IsAtLeastGL(unsigned major, unsigned minor) const {
     return !is_es && (major_version > major ||
@@ -42,15 +42,15 @@ struct GL_EXPORT GLVersionInfo {
     return is_es || IsAtLeastGL(4, 1);
   }
 
-  static void ParseVersionString(const char* version_str,
-                                 unsigned* major_version,
-                                 unsigned* minor_version,
-                                 bool* is_es,
-                                 bool* is_es2,
-                                 bool* is_es3);
+  // We need to emulate GL_ALPHA and GL_LUMINANCE and GL_LUMINANCE_ALPHA
+  // texture formats on core profile and ES3, except for ANGLE and Swiftshader.
+  bool NeedsLuminanceAlphaEmulation() const {
+    return !is_angle && !is_swiftshader && (is_es3 || is_desktop_core_profile);
+  }
 
   bool is_es;
   bool is_angle;
+  bool is_d3d;
   bool is_mesa;
   bool is_swiftshader;
   unsigned major_version;
@@ -59,12 +59,18 @@ struct GL_EXPORT GLVersionInfo {
   bool is_es3;
   bool is_desktop_core_profile;
   bool is_es3_capable;
+  std::string driver_vendor;
+  std::string driver_version;
+
+  static void DisableES3ForTesting();
 
  private:
   void Initialize(const char* version_str,
                   const char* renderer_str,
-                  const ExtensionSet& extensions);
-  bool IsES3Capable(const ExtensionSet& extensions) const;
+                  const gfx::ExtensionSet& extensions);
+  void ParseVersionString(const char* version_str);
+  void ExtractDriverVendorANGLE(const char* renderer_str);
+  bool IsES3Capable(const gfx::ExtensionSet& extensions) const;
 
   DISALLOW_COPY_AND_ASSIGN(GLVersionInfo);
 };

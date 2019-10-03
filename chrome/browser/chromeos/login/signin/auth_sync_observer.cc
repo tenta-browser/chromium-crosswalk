@@ -4,17 +4,18 @@
 
 #include "chrome/browser/chromeos/login/signin/auth_sync_observer.h"
 
+#include "base/bind.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "chrome/browser/chromeos/login/reauth_stats.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/signin/core/browser/signin_manager_base.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
 
@@ -35,7 +36,7 @@ AuthSyncObserver::AuthSyncObserver(Profile* profile) : profile_(profile) {
 AuthSyncObserver::~AuthSyncObserver() {}
 
 void AuthSyncObserver::StartObserving() {
-  browser_sync::ProfileSyncService* const sync_service =
+  syncer::SyncService* const sync_service =
       ProfileSyncServiceFactory::GetForProfile(profile_);
   if (sync_service)
     sync_service->AddObserver(this);
@@ -49,7 +50,7 @@ void AuthSyncObserver::StartObserving() {
 }
 
 void AuthSyncObserver::Shutdown() {
-  browser_sync::ProfileSyncService* const sync_service =
+  syncer::SyncService* const sync_service =
       ProfileSyncServiceFactory::GetForProfile(profile_);
   if (sync_service)
     sync_service->RemoveObserver(this);
@@ -65,19 +66,12 @@ void AuthSyncObserver::OnStateChanged(syncer::SyncService* sync) {
 }
 
 void AuthSyncObserver::OnErrorChanged() {
-  SigninErrorController* const error_controller =
-      SigninErrorControllerFactory::GetForProfile(profile_);
-  const std::string error_account_id = error_controller->error_account_id();
-
-  const std::string primary_account_id =
-      SigninManagerFactory::GetForProfile(profile_)
-          ->GetAuthenticatedAccountId();
-
-  // Bail if there is an error account id and it is not the primary account id.
-  if (!error_account_id.empty() && error_account_id != primary_account_id)
-    return;
-
-  HandleAuthError(error_controller->auth_error());
+  // This notification could have come for any account but we are only
+  // interested in errors for the Primary Account.
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile_);
+  HandleAuthError(identity_manager->GetErrorStateOfRefreshTokenForAccount(
+      identity_manager->GetPrimaryAccountId()));
 }
 
 void AuthSyncObserver::HandleAuthError(
@@ -113,15 +107,16 @@ void AuthSyncObserver::HandleAuthError(
           base::UserMetricsAction("ManagedUsers_Chromeos_Sync_Invalidated"));
     }
   } else if (auth_error.state() == GoogleServiceAuthError::NONE) {
-    if (user->GetType() == user_manager::USER_TYPE_SUPERVISED &&
-        user->oauth_token_status() ==
-            user_manager::User::OAUTH2_TOKEN_STATUS_INVALID) {
+    if (user->oauth_token_status() ==
+        user_manager::User::OAUTH2_TOKEN_STATUS_INVALID) {
       LOG(ERROR) << "Got an incorrectly invalidated token case, restoring "
                     "token status.";
       user_manager::UserManager::Get()->SaveUserOAuthStatus(
           user->GetAccountId(), user_manager::User::OAUTH2_TOKEN_STATUS_VALID);
-      base::RecordAction(
-          base::UserMetricsAction("ManagedUsers_Chromeos_Sync_Recovered"));
+      if (user->GetType() == user_manager::USER_TYPE_SUPERVISED) {
+        base::RecordAction(
+            base::UserMetricsAction("ManagedUsers_Chromeos_Sync_Recovered"));
+      }
     }
   }
 }

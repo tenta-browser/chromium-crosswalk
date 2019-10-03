@@ -10,9 +10,9 @@
 #include <set>
 #include <string>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/macros.h"
-#include "base/memory/singleton.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -22,19 +22,16 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/font_pref_change_notifier_factory.h"
-#include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
+#include "chrome/browser/ui/prefs/pref_watcher.h"
 #include "chrome/common/pref_font_webkit_names.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/pref_names_util.h"
 #include "chrome/grit/platform_locale_settings.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/keyed_service/content/browser_context_keyed_service_factory.h"
-#include "components/keyed_service/core/keyed_service.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/overlay_user_pref_store.h"
-#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/strings/grit/components_locale_settings.h"
@@ -42,15 +39,17 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/renderer_preferences.h"
 #include "content/public/common/web_preferences.h"
-#include "extensions/features/features.h"
-#include "media/media_features.h"
+#include "extensions/buildflags/buildflags.h"
+#include "media/media_buildflags.h"
+#include "third_party/blink/public/mojom/renderer_preferences.mojom.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "third_party/icu/source/common/unicode/uscript.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if !defined(OS_ANDROID)
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/chrome_feature_list.h"
+#else  // !defined(OS_ANDROID)
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #endif
 
@@ -62,39 +61,7 @@
 using content::WebContents;
 using content::WebPreferences;
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(PrefsTabHelper);
-
 namespace {
-
-// The list of prefs we want to observe.
-const char* const kWebPrefsToObserve[] = {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  prefs::kAnimationPolicy,
-#endif
-  prefs::kDataSaverEnabled,
-  prefs::kDefaultCharset,
-  prefs::kDisable3DAPIs,
-  prefs::kEnableHyperlinkAuditing,
-  prefs::kWebKitAllowRunningInsecureContent,
-  prefs::kWebKitDefaultFixedFontSize,
-  prefs::kWebKitDefaultFontSize,
-  prefs::kWebKitDomPasteEnabled,
-#if defined(OS_ANDROID)
-  prefs::kWebKitFontScaleFactor,
-  prefs::kWebKitForceEnableZoom,
-  prefs::kWebKitPasswordEchoEnabled,
-#endif
-  prefs::kWebKitJavascriptEnabled,
-  prefs::kWebKitLoadsImagesAutomatically,
-  prefs::kWebKitMinimumFontSize,
-  prefs::kWebKitMinimumLogicalFontSize,
-  prefs::kWebKitPluginsEnabled,
-  prefs::kWebkitTabsToLinks,
-  prefs::kWebKitTextAreasAreResizable,
-  prefs::kWebKitWebSecurityEnabled,
-};
-
-const int kWebPrefsToObserveLength = arraysize(kWebPrefsToObserve);
 
 #if !defined(OS_ANDROID)
 // Registers a preference under the path |pref_name| for each script used for
@@ -125,7 +92,7 @@ ALL_FONT_SCRIPTS(WEBKIT_WEBPREFS_FONTS_STANDARD)
 #undef EXPAND_SCRIPT_FONT
   };
 
-  for (size_t i = 0; i < arraysize(kFontFamilyMap); ++i) {
+  for (size_t i = 0; i < base::size(kFontFamilyMap); ++i) {
     const char* pref_name = kFontFamilyMap[i];
     if (fonts_with_defaults.find(pref_name) == fonts_with_defaults.end()) {
       // We haven't already set a default value for this font preference, so set
@@ -229,7 +196,7 @@ const FontDefault kFontDefaults[] = {
 #endif
 };
 
-const size_t kFontDefaultsLength = arraysize(kFontDefaults);
+const size_t kFontDefaultsLength = base::size(kFontDefaults);
 
 // Returns the script of the font pref |pref_name|.  For example, suppose
 // |pref_name| is "webkit.webprefs.fonts.serif.Hant".  Since the script code for
@@ -250,9 +217,7 @@ UScriptCode GetScriptOfFontPref(const char* pref_name) {
 // Returns the primary script used by the browser's UI locale.  For example, if
 // the locale is "ru", the function returns USCRIPT_CYRILLIC, and if the locale
 // is "en", the function returns USCRIPT_LATIN.
-UScriptCode GetScriptOfBrowserLocale() {
-  std::string locale = g_browser_process->GetApplicationLocale();
-
+UScriptCode GetScriptOfBrowserLocale(const std::string& locale) {
   // For Chinese locales, uscript_getCode() just returns USCRIPT_HAN but our
   // per-script fonts are for USCRIPT_SIMPLIFIED_HAN and
   // USCRIPT_TRADITIONAL_HAN.
@@ -317,116 +282,10 @@ void RegisterLocalizedFontPref(user_prefs::PrefRegistrySyncable* registry,
 
 }  // namespace
 
-// Watching all these settings per tab is slow when a user has a lot of tabs and
-// and they use session restore. So watch them once per profile.
-// http://crbug.com/452693
-class PrefWatcher : public KeyedService {
- public:
-  explicit PrefWatcher(Profile* profile) : profile_(profile) {
-    pref_change_registrar_.Init(profile_->GetPrefs());
-
-    base::Closure renderer_callback = base::Bind(
-        &PrefWatcher::UpdateRendererPreferences, base::Unretained(this));
-    pref_change_registrar_.Add(prefs::kAcceptLanguages, renderer_callback);
-    pref_change_registrar_.Add(prefs::kEnableDoNotTrack, renderer_callback);
-    pref_change_registrar_.Add(prefs::kEnableReferrers, renderer_callback);
-    pref_change_registrar_.Add(prefs::kEnableEncryptedMedia, renderer_callback);
-
-#if BUILDFLAG(ENABLE_WEBRTC)
-    pref_change_registrar_.Add(prefs::kWebRTCMultipleRoutesEnabled,
-                               renderer_callback);
-    pref_change_registrar_.Add(prefs::kWebRTCNonProxiedUdpEnabled,
-                               renderer_callback);
-    pref_change_registrar_.Add(prefs::kWebRTCIPHandlingPolicy,
-                               renderer_callback);
-    pref_change_registrar_.Add(prefs::kWebRTCUDPPortRange, renderer_callback);
-#endif
-
-#if !defined(OS_MACOSX)
-    pref_change_registrar_.Add(prefs::kFullscreenAllowed, renderer_callback);
-#endif
-
-    PrefChangeRegistrar::NamedChangeCallback webkit_callback = base::Bind(
-        &PrefWatcher::OnWebPrefChanged, base::Unretained(this));
-    for (int i = 0; i < kWebPrefsToObserveLength; ++i) {
-      const char* pref_name = kWebPrefsToObserve[i];
-      pref_change_registrar_.Add(pref_name, webkit_callback);
-    }
-  }
-
-  static PrefWatcher* Get(Profile* profile);
-
-  void RegisterHelper(PrefsTabHelper* helper) {
-    helpers_.insert(helper);
-  }
-
-  void UnregisterHelper(PrefsTabHelper* helper) {
-    helpers_.erase(helper);
-  }
-
- private:
-  // KeyedService overrides:
-  void Shutdown() override {
-    pref_change_registrar_.RemoveAll();
-  }
-
-  void UpdateRendererPreferences() {
-    for (auto* helper : helpers_)
-      helper->UpdateRendererPreferences();
-  }
-
-  void OnWebPrefChanged(const std::string& pref_name) {
-    for (auto* helper : helpers_)
-      helper->OnWebPrefChanged(pref_name);
-  }
-
-  Profile* profile_;
-  PrefChangeRegistrar pref_change_registrar_;
-  std::set<PrefsTabHelper*> helpers_;
-};
-
-class PrefWatcherFactory : public BrowserContextKeyedServiceFactory {
- public:
-  static PrefWatcher* GetForProfile(Profile* profile) {
-    return static_cast<PrefWatcher*>(
-        GetInstance()->GetServiceForBrowserContext(profile, true));
-  }
-
-  static PrefWatcherFactory* GetInstance() {
-    return base::Singleton<PrefWatcherFactory>::get();
-  }
-
- private:
-  friend struct base::DefaultSingletonTraits<PrefWatcherFactory>;
-
-  PrefWatcherFactory() : BrowserContextKeyedServiceFactory(
-      "PrefWatcher",
-      BrowserContextDependencyManager::GetInstance()) {
-  }
-
-  ~PrefWatcherFactory() override {}
-
-  // BrowserContextKeyedServiceFactory:
-  KeyedService* BuildServiceInstanceFor(
-      content::BrowserContext* browser_context) const override {
-    return new PrefWatcher(Profile::FromBrowserContext(browser_context));
-  }
-
-  content::BrowserContext* GetBrowserContextToUse(
-      content::BrowserContext* context) const override {
-    return chrome::GetBrowserContextOwnInstanceInIncognito(context);
-  }
-};
-
-// static
-PrefWatcher* PrefWatcher::Get(Profile* profile) {
-  return PrefWatcherFactory::GetForProfile(profile);
-}
-
 PrefsTabHelper::PrefsTabHelper(WebContents* contents)
     : web_contents_(contents),
-      profile_(Profile::FromBrowserContext(web_contents_->GetBrowserContext())),
-      weak_ptr_factory_(this) {
+      profile_(
+          Profile::FromBrowserContext(web_contents_->GetBrowserContext())) {
   PrefService* prefs = profile_->GetPrefs();
   if (prefs) {
 #if !defined(OS_ANDROID)
@@ -453,22 +312,15 @@ PrefsTabHelper::PrefsTabHelper(WebContents* contents)
     PrefWatcher::Get(profile_)->RegisterHelper(this);
   }
 
-  content::RendererPreferences* render_prefs =
+  blink::mojom::RendererPreferences* render_prefs =
       web_contents_->GetMutableRendererPrefs();
-  renderer_preferences_util::UpdateFromSystemSettings(render_prefs,
-                                                      profile_,
-                                                      web_contents_);
+  renderer_preferences_util::UpdateFromSystemSettings(render_prefs, profile_);
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
   registrar_.Add(this,
                  chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(
                      ThemeServiceFactory::GetForProfile(profile_)));
-#endif
-#if defined(USE_AURA)
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_BROWSER_FLING_CURVE_PARAMETERS_CHANGED,
-                 content::NotificationService::AllSources());
 #endif
 }
 
@@ -478,7 +330,8 @@ PrefsTabHelper::~PrefsTabHelper() {
 
 // static
 void PrefsTabHelper::RegisterProfilePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
+    user_prefs::PrefRegistrySyncable* registry,
+    const std::string& locale) {
   WebPreferences pref_defaults;
   registry->RegisterBooleanPref(prefs::kWebKitJavascriptEnabled,
                                 pref_defaults.javascript_enabled);
@@ -492,6 +345,8 @@ void PrefsTabHelper::RegisterProfilePrefs(
                                 pref_defaults.dom_paste_enabled);
   registry->RegisterBooleanPref(prefs::kWebKitTextAreasAreResizable,
                                 pref_defaults.text_areas_are_resizable);
+  registry->RegisterBooleanPref(prefs::kWebKitJavascriptCanAccessClipboard,
+                                pref_defaults.javascript_can_access_clipboard);
   registry->RegisterBooleanPref(prefs::kWebkitTabsToLinks,
                                 pref_defaults.tabs_to_links);
   registry->RegisterBooleanPref(prefs::kWebKitAllowRunningInsecureContent,
@@ -504,11 +359,14 @@ void PrefsTabHelper::RegisterProfilePrefs(
                                 pref_defaults.force_enable_zoom);
   registry->RegisterBooleanPref(prefs::kWebKitPasswordEchoEnabled,
                                 pref_defaults.password_echo_enabled);
+
+  bool force_dark_mode_enabled =
+      base::FeatureList::IsEnabled(chrome::android::kAndroidWebContentsDarkMode)
+          ? true
+          : pref_defaults.force_dark_mode_enabled;
+  registry->RegisterBooleanPref(prefs::kWebKitForceDarkModeEnabled,
+                                force_dark_mode_enabled);
 #endif
-  registry->RegisterStringPref(
-      prefs::kAcceptLanguages,
-      l10n_util::GetStringUTF8(IDS_ACCEPT_LANGUAGES),
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterStringPref(
       prefs::kDefaultCharset,
       l10n_util::GetStringUTF8(IDS_DEFAULT_ENCODING),
@@ -516,7 +374,7 @@ void PrefsTabHelper::RegisterProfilePrefs(
 
   // Register font prefs that have defaults.
   std::set<std::string> fonts_with_defaults;
-  UScriptCode browser_script = GetScriptOfBrowserLocale();
+  UScriptCode browser_script = GetScriptOfBrowserLocale(locale);
   for (size_t i = 0; i < kFontDefaultsLength; ++i) {
     FontDefault pref = kFontDefaults[i];
 
@@ -553,10 +411,8 @@ void PrefsTabHelper::RegisterProfilePrefs(
 #if !defined(OS_ANDROID)
   RegisterFontFamilyPrefs(registry, fonts_with_defaults);
 
-  RegisterLocalizedFontPref(registry, prefs::kWebKitDefaultFontSize,
-                            IDS_DEFAULT_FONT_SIZE);
-  RegisterLocalizedFontPref(registry, prefs::kWebKitDefaultFixedFontSize,
-                            IDS_DEFAULT_FIXED_FONT_SIZE);
+  registry->RegisterIntegerPref(prefs::kWebKitDefaultFontSize, 16);
+  registry->RegisterIntegerPref(prefs::kWebKitDefaultFixedFontSize, 13);
   RegisterLocalizedFontPref(registry, prefs::kWebKitMinimumFontSize,
                             IDS_MINIMUM_FONT_SIZE);
   RegisterLocalizedFontPref(registry, prefs::kWebKitMinimumLogicalFontSize,
@@ -579,13 +435,6 @@ void PrefsTabHelper::Observe(int type,
   }
 #endif
 
-#if defined(USE_AURA)
-  if (type == chrome::NOTIFICATION_BROWSER_FLING_CURVE_PARAMETERS_CHANGED) {
-    UpdateRendererPreferences();
-    return;
-  }
-#endif  // defined(USE_AURA)
-
   NOTREACHED();
 }
 
@@ -595,10 +444,9 @@ void PrefsTabHelper::UpdateWebPreferences() {
 }
 
 void PrefsTabHelper::UpdateRendererPreferences() {
-  content::RendererPreferences* prefs =
+  blink::mojom::RendererPreferences* prefs =
       web_contents_->GetMutableRendererPrefs();
-  renderer_preferences_util::UpdateFromSystemSettings(
-      prefs, profile_, web_contents_);
+  renderer_preferences_util::UpdateFromSystemSettings(prefs, profile_);
   web_contents_->GetRenderViewHost()->SyncRendererPrefs();
 }
 
@@ -649,3 +497,5 @@ void PrefsTabHelper::NotifyWebkitPreferencesChanged(
 
   web_contents_->GetRenderViewHost()->OnWebkitPreferencesChanged();
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(PrefsTabHelper)

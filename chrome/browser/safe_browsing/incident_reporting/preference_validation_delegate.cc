@@ -9,11 +9,10 @@
 #include <vector>
 
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
 #include "chrome/browser/safe_browsing/incident_reporting/tracked_preference_incident.h"
 #include "components/safe_browsing/proto/csd.pb.h"
-#include "services/preferences/public/interfaces/tracked_preference_validation_delegate.mojom.h"
+#include "services/preferences/public/mojom/tracked_preference_validation_delegate.mojom.h"
 
 namespace safe_browsing {
 
@@ -62,7 +61,7 @@ PreferenceValidationDelegate::~PreferenceValidationDelegate() {
 
 void PreferenceValidationDelegate::OnAtomicPreferenceValidation(
     const std::string& pref_path,
-    std::unique_ptr<base::Value> value,
+    base::Optional<base::Value> value,
     ValueState value_state,
     ValueState external_validation_value_state,
     bool is_personal) {
@@ -72,14 +71,14 @@ void PreferenceValidationDelegate::OnAtomicPreferenceValidation(
     std::unique_ptr<TPIncident> incident(
         new ClientIncidentReport_IncidentData_TrackedPreferenceIncident());
     incident->set_path(pref_path);
-    if (!value ||
-        (!value->GetAsString(incident->mutable_atomic_value()) &&
-         !base::JSONWriter::Write(*value, incident->mutable_atomic_value()))) {
+    if (!value || (!value->GetAsString(incident->mutable_atomic_value()) &&
+                   !base::JSONWriter::Write(
+                       std::move(*value), incident->mutable_atomic_value()))) {
       incident->clear_atomic_value();
     }
     incident->set_value_state(proto_value_state);
     incident_receiver_->AddIncidentForProfile(
-        profile_, base::MakeUnique<TrackedPreferenceIncident>(
+        profile_, std::make_unique<TrackedPreferenceIncident>(
                       std::move(incident), is_personal));
   }
 }
@@ -100,20 +99,19 @@ void PreferenceValidationDelegate::OnSplitPreferenceValidation(
     incident->set_path(pref_path);
     if (proto_value_state == TPIncident::BYPASS_CLEARED ||
         proto_value_state == TPIncident::BYPASS_CHANGED) {
-      for (std::vector<std::string>::const_iterator scan(
-               external_validation_invalid_keys.begin());
+      for (auto scan(external_validation_invalid_keys.begin());
            scan != external_validation_invalid_keys.end(); ++scan) {
         incident->add_split_key(*scan);
       }
     } else {
-      for (std::vector<std::string>::const_iterator scan(invalid_keys.begin());
-           scan != invalid_keys.end(); ++scan) {
+      for (auto scan(invalid_keys.begin()); scan != invalid_keys.end();
+           ++scan) {
         incident->add_split_key(*scan);
       }
     }
     incident->set_value_state(proto_value_state);
     incident_receiver_->AddIncidentForProfile(
-        profile_, base::MakeUnique<TrackedPreferenceIncident>(
+        profile_, std::make_unique<TrackedPreferenceIncident>(
                       std::move(incident), is_personal));
   }
 }

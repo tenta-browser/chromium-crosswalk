@@ -4,6 +4,7 @@
 
 #include <tuple>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -19,7 +20,7 @@
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 using testing::AtLeast;
 using testing::Return;
@@ -88,7 +89,8 @@ class TestTranslateHelper : public translate::TranslateHelper {
     trans_result_error_type_ = translate::TranslateErrors::NONE;
 
     // Will get new result values via OnPageTranslated.
-    Translate(translate_script, source_lang, target_lang,
+    Translate(translate_script, network::mojom::URLLoaderFactoryPtr(),
+              source_lang, target_lang,
               base::Bind(&TestTranslateHelper::OnPageTranslated,
                          base::Unretained(this)));
   }

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,33 +7,33 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/gcm_driver/gcm_profile_service.h"
+#include "components/gcm_driver/instance_id/instance_id_profile_service.h"
+#include "components/invalidation/impl/fcm_invalidation_service.h"
 #include "components/invalidation/impl/invalidator_storage.h"
+#include "components/invalidation/impl/profile_identity_provider.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
-#include "components/invalidation/impl/ticl_invalidation_service.h"
-#include "components/invalidation/impl/ticl_profile_settings_provider.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry.h"
-#include "components/signin/core/browser/profile_identity_provider.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/services/gcm/ios_chrome_gcm_profile_service_factory.h"
-#include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
+#include "ios/chrome/browser/gcm/instance_id/ios_chrome_instance_id_profile_service_factory.h"
+#include "ios/chrome/browser/gcm/ios_chrome_gcm_profile_service_factory.h"
+#include "ios/chrome/browser/json_parser/in_process_json_parser.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/web/public/web_client.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-using invalidation::InvalidatorStorage;
 using invalidation::ProfileInvalidationProvider;
-using invalidation::TiclInvalidationService;
 
 // static
 invalidation::ProfileInvalidationProvider*
@@ -46,7 +46,9 @@ IOSChromeProfileInvalidationProviderFactory::GetForBrowserState(
 // static
 IOSChromeProfileInvalidationProviderFactory*
 IOSChromeProfileInvalidationProviderFactory::GetInstance() {
-  return base::Singleton<IOSChromeProfileInvalidationProviderFactory>::get();
+  static base::NoDestructor<IOSChromeProfileInvalidationProviderFactory>
+      instance;
+  return instance.get();
 }
 
 IOSChromeProfileInvalidationProviderFactory::
@@ -54,9 +56,9 @@ IOSChromeProfileInvalidationProviderFactory::
     : BrowserStateKeyedServiceFactory(
           "InvalidationService",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(ios::SigninManagerFactory::GetInstance());
+  DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(IOSChromeGCMProfileServiceFactory::GetInstance());
-  DependsOn(OAuth2TokenServiceFactory::GetInstance());
+  DependsOn(IOSChromeInstanceIDProfileServiceFactory::GetInstance());
 }
 
 IOSChromeProfileInvalidationProviderFactory::
@@ -68,29 +70,23 @@ IOSChromeProfileInvalidationProviderFactory::BuildServiceInstanceFor(
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
 
-  std::unique_ptr<IdentityProvider> identity_provider(
-      new ProfileIdentityProvider(
-          ios::SigninManagerFactory::GetForBrowserState(browser_state),
-          OAuth2TokenServiceFactory::GetForBrowserState(browser_state),
-          // LoginUIServiceFactory is not built on iOS.
-          base::Closure()));
+  auto identity_provider =
+      std::make_unique<invalidation::ProfileIdentityProvider>(
+          IdentityManagerFactory::GetForBrowserState(browser_state));
 
-  std::unique_ptr<TiclInvalidationService> service(new TiclInvalidationService(
-      web::GetWebClient()->GetUserAgent(web::UserAgentType::MOBILE),
-      std::move(identity_provider),
-      base::MakeUnique<invalidation::TiclProfileSettingsProvider>(
-          browser_state->GetPrefs()),
-      IOSChromeGCMProfileServiceFactory::GetForBrowserState(browser_state)
-          ->driver(),
-      browser_state->GetRequestContext()));
-  service->Init(
-      base::MakeUnique<InvalidatorStorage>(browser_state->GetPrefs()));
+  std::unique_ptr<invalidation::FCMInvalidationService> service =
+      std::make_unique<invalidation::FCMInvalidationService>(
+          identity_provider.get(),
+          IOSChromeGCMProfileServiceFactory::GetForBrowserState(browser_state)
+              ->driver(),
+          IOSChromeInstanceIDProfileServiceFactory::GetForBrowserState(
+              browser_state)
+              ->driver(),
+          browser_state->GetPrefs(),
+          base::BindRepeating(&InProcessJsonParser::Parse),
+          browser_state->GetURLLoaderFactory());
+  service->Init();
 
-  return base::MakeUnique<ProfileInvalidationProvider>(std::move(service));
-}
-
-void IOSChromeProfileInvalidationProviderFactory::RegisterBrowserStatePrefs(
-    user_prefs::PrefRegistrySyncable* registry) {
-  ProfileInvalidationProvider::RegisterProfilePrefs(registry);
-  InvalidatorStorage::RegisterProfilePrefs(registry);
+  return std::make_unique<ProfileInvalidationProvider>(
+      std::move(service), std::move(identity_provider));
 }

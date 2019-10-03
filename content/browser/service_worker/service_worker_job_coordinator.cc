@@ -11,7 +11,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "content/browser/service_worker/service_worker_register_job_base.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -105,31 +105,30 @@ ServiceWorkerJobCoordinator::~ServiceWorkerJobCoordinator() {
 void ServiceWorkerJobCoordinator::Register(
     const GURL& script_url,
     const blink::mojom::ServiceWorkerRegistrationOptions& options,
-    ServiceWorkerProviderHost* provider_host,
-    const ServiceWorkerRegisterJob::RegistrationCallback& callback) {
+    ServiceWorkerRegisterJob::RegistrationCallback callback) {
   std::unique_ptr<ServiceWorkerRegisterJobBase> job(
       new ServiceWorkerRegisterJob(context_, script_url, options));
   ServiceWorkerRegisterJob* queued_job = static_cast<ServiceWorkerRegisterJob*>(
       job_queues_[options.scope].Push(std::move(job)));
-  queued_job->AddCallback(callback, provider_host);
+  queued_job->AddCallback(std::move(callback));
 }
 
 void ServiceWorkerJobCoordinator::Unregister(
-    const GURL& pattern,
-    const ServiceWorkerUnregisterJob::UnregistrationCallback& callback) {
+    const GURL& scope,
+    ServiceWorkerUnregisterJob::UnregistrationCallback callback) {
   std::unique_ptr<ServiceWorkerRegisterJobBase> job(
-      new ServiceWorkerUnregisterJob(context_, pattern));
+      new ServiceWorkerUnregisterJob(context_, scope));
   ServiceWorkerUnregisterJob* queued_job =
       static_cast<ServiceWorkerUnregisterJob*>(
-          job_queues_[pattern].Push(std::move(job)));
-  queued_job->AddCallback(callback);
+          job_queues_[scope].Push(std::move(job)));
+  queued_job->AddCallback(std::move(callback));
 }
 
 void ServiceWorkerJobCoordinator::Update(
     ServiceWorkerRegistration* registration,
     bool force_bypass_cache) {
   DCHECK(registration);
-  job_queues_[registration->pattern()].Push(
+  job_queues_[registration->scope()].Push(
       base::WrapUnique<ServiceWorkerRegisterJobBase>(
           new ServiceWorkerRegisterJob(context_, registration,
                                        force_bypass_cache,
@@ -140,16 +139,23 @@ void ServiceWorkerJobCoordinator::Update(
     ServiceWorkerRegistration* registration,
     bool force_bypass_cache,
     bool skip_script_comparison,
-    ServiceWorkerProviderHost* provider_host,
-    const ServiceWorkerRegisterJob::RegistrationCallback& callback) {
+    ServiceWorkerRegisterJob::RegistrationCallback callback) {
   DCHECK(registration);
   ServiceWorkerRegisterJob* queued_job = static_cast<ServiceWorkerRegisterJob*>(
-      job_queues_[registration->pattern()].Push(
+      job_queues_[registration->scope()].Push(
           base::WrapUnique<ServiceWorkerRegisterJobBase>(
               new ServiceWorkerRegisterJob(context_, registration,
                                            force_bypass_cache,
                                            skip_script_comparison))));
-  queued_job->AddCallback(callback, provider_host);
+  queued_job->AddCallback(std::move(callback));
+}
+
+void ServiceWorkerJobCoordinator::Abort(const GURL& scope) {
+  auto pending_jobs = job_queues_.find(scope);
+  if (pending_jobs == job_queues_.end())
+    return;
+  pending_jobs->second.AbortAll();
+  job_queues_.erase(pending_jobs);
 }
 
 void ServiceWorkerJobCoordinator::AbortAll() {
@@ -158,9 +164,9 @@ void ServiceWorkerJobCoordinator::AbortAll() {
   job_queues_.clear();
 }
 
-void ServiceWorkerJobCoordinator::FinishJob(const GURL& pattern,
+void ServiceWorkerJobCoordinator::FinishJob(const GURL& scope,
                                             ServiceWorkerRegisterJobBase* job) {
-  auto pending_jobs = job_queues_.find(pattern);
+  auto pending_jobs = job_queues_.find(scope);
   DCHECK(pending_jobs != job_queues_.end()) << "Deleting non-existent job.";
   pending_jobs->second.Pop(job);
   if (pending_jobs->second.empty())

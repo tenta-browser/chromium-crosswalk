@@ -7,10 +7,12 @@
 #include <netinet/in.h>
 #include <resolv.h>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/threading/thread.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "net/dns/dns_config_service.h"
 
 namespace net {
@@ -21,42 +23,19 @@ static bool CalculateReachability(SCNetworkConnectionFlags flags) {
   return reachable && !connection_required;
 }
 
-// Thread on which we can run DnsConfigService, which requires a TYPE_IO
-// message loop.
-class NetworkChangeNotifierMac::DnsConfigServiceThread : public base::Thread {
- public:
-  DnsConfigServiceThread() : base::Thread("DnsConfigService") {}
-
-  ~DnsConfigServiceThread() override { Stop(); }
-
-  void Init() override {
-    service_ = DnsConfigService::CreateSystemService();
-    service_->WatchConfig(base::Bind(&NetworkChangeNotifier::SetDnsConfig));
-  }
-
-  void CleanUp() override { service_.reset(); }
-
- private:
-  std::unique_ptr<DnsConfigService> service_;
-
-  DISALLOW_COPY_AND_ASSIGN(DnsConfigServiceThread);
-};
-
 NetworkChangeNotifierMac::NetworkChangeNotifierMac()
     : NetworkChangeNotifier(NetworkChangeCalculatorParamsMac()),
       connection_type_(CONNECTION_UNKNOWN),
       connection_type_initialized_(false),
       initial_connection_type_cv_(&connection_type_lock_),
-      forwarder_(this),
-      dns_config_service_thread_(std::make_unique<DnsConfigServiceThread>()) {
+      forwarder_(this) {
   // Must be initialized after the rest of this object, as it may call back into
   // SetInitialConnectionType().
   config_watcher_ = std::make_unique<NetworkConfigWatcherMac>(&forwarder_);
-  dns_config_service_thread_->StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
 }
 
 NetworkChangeNotifierMac::~NetworkChangeNotifierMac() {
+  ClearGlobalPointer();
   // Delete the ConfigWatcher to join the notifier thread, ensuring that
   // StartReachabilityNotifications() has an opportunity to run to completion.
   config_watcher_.reset();
@@ -86,7 +65,8 @@ NetworkChangeNotifierMac::NetworkChangeCalculatorParamsMac() {
 
 NetworkChangeNotifier::ConnectionType
 NetworkChangeNotifierMac::GetCurrentConnectionType() const {
-  base::ThreadRestrictions::ScopedAllowWait allow_wait;
+  // https://crbug.com/125097
+  base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
   base::AutoLock lock(connection_type_lock_);
   // Make sure the initial connection type is set before returning.
   while (!connection_type_initialized_) {

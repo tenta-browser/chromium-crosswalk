@@ -4,8 +4,9 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/image_writer_private/removable_storage_provider.h"
+#include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 

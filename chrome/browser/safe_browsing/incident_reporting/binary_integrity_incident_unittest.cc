@@ -9,8 +9,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,13 +33,13 @@ std::unique_ptr<Incident> MakeIncident(const char* file_basename) {
       {42, 255, 100, 53, 2},
       {64, 33, 51, 91, 210},
   };
-  for (size_t i = 0; i < arraysize(certificates); ++i) {
+  for (size_t i = 0; i < base::size(certificates); ++i) {
     ClientDownloadRequest_CertificateChain_Element* element =
         certificate_chain->add_element();
-    element->set_certificate(certificates[i], arraysize(certificates[i]));
+    element->set_certificate(certificates[i], base::size(certificates[i]));
   }
 
-  return base::MakeUnique<BinaryIntegrityIncident>(std::move(incident));
+  return std::make_unique<BinaryIntegrityIncident>(std::move(incident));
 }
 
 }  // namespace

@@ -14,13 +14,13 @@
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/chromeos/arc/auth/arc_fetcher_base.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
 
 namespace enterprise_management {
 class DeviceManagementResponse;
 }  // namespace enterprise_management
 
 namespace policy {
-class DeviceManagementRequestJob;
 class DMTokenStorage;
 }  // namespace policy
 
@@ -71,25 +71,22 @@ class ArcActiveDirectoryEnrollmentTokenFetcher
   // Response from DM server. Calls the stored FetchCallback or initiates the
   // SAML flow.
   void OnEnrollmentTokenResponseReceived(
+      policy::DeviceManagementService::Job* job,
       policy::DeviceManagementStatus dm_status,
       int net_error,
       const enterprise_management::DeviceManagementResponse& response);
 
   // Sends |auth_redirect_url| to the ArcSupportHost instance, which displays
-  // it in a web view and checks whether authentication succeeded. Passes
-  // OnSamlFlowFinished as callback for when the SAML flow ends. Calls
+  // it in a web view and checks whether authentication succeeded. Calls
   // CancelSamlFlow() if the url is invalid.
   void InitiateSamlFlow(const std::string& auth_redirect_url);
 
   // Calls callback_ with an error status and resets state.
   void CancelSamlFlow();
 
-  // Callback called from ArcSupportHost when the SAML flow is finished.
-  void OnSamlFlowFinished(bool result);
-
   ArcSupportHost* const support_host_ = nullptr;  // Not owned.
 
-  std::unique_ptr<policy::DeviceManagementRequestJob> fetch_request_job_;
+  std::unique_ptr<policy::DeviceManagementService::Job> fetch_request_job_;
   std::unique_ptr<policy::DMTokenStorage> dm_token_storage_;
   FetchCallback callback_;
 

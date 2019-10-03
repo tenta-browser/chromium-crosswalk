@@ -16,7 +16,7 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/process/process_metrics.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace {
@@ -205,8 +205,9 @@ SysInternalsMessageHandler::~SysInternalsMessageHandler() {}
 
 void SysInternalsMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "getSysInfo", base::Bind(&SysInternalsMessageHandler::HandleGetSysInfo,
-                               base::Unretained(this)));
+      "getSysInfo",
+      base::BindRepeating(&SysInternalsMessageHandler::HandleGetSysInfo,
+                          base::Unretained(this)));
 }
 
 void SysInternalsMessageHandler::HandleGetSysInfo(const base::ListValue* args) {

@@ -3,13 +3,17 @@
 // found in the LICENSE file.
 
 /**
- * @fileoverview loadTimeData override values for ONC strings used in
- *     network_config.html and other network configuration UI.
+ * @fileoverview This file has two parts:
+ *
+ * 1. loadTimeData override values for ONC strings used in network_config.html
+ * and other network configuration UI.
+ *
+ * 2. Helper functions to convert and handle ONC properties for using in tests.
  */
 
-var CrOncStrings = {};
+var CrOncTest = CrOncTest || {};
 
-CrOncStrings.overrideValues = function() {
+CrOncTest.overrideCrOncStrings = function() {
   // From network_element_localized_string_provider.cc:AddOncLocalizedStrings.
   var oncKeys = {
     'OncConnected': 'OncConnected',
@@ -51,8 +55,11 @@ CrOncStrings.overrideValues = function() {
     'OncVPN-Host': 'OncVPN-Host',
     'OncVPN-IPsec-Group': 'OncVPN-IPsec-Group',
     'OncVPN-IPsec-PSK': 'OncVPN-IPsec-PSK',
+    'OncVPN-L2TP-Password': 'OncVPN-L2TP-Password',
+    'OncVPN-L2TP-Username': 'OncVPN-L2TP-Username',
     'OncVPN-OpenVPN-OTP': 'OncVPN-OpenVPN-OTP',
-    'OncVPN-Password': 'OncVPN-Password',
+    'OncVPN-OpenVPN-Password': 'OncVPN-OpenVPN-Password',
+    'OncVPN-OpenVPN-Username': 'OncVPN-OpenVPN-Username',
     'OncVPN-ThirdPartyVPN-ProviderName': 'OncVPN-ThirdPartyVPN-ProviderName',
     'OncVPN-Type': 'OncVPN-Type',
     'OncVPN-Type_L2TP_IPsec': 'OncVPN-Type_L2TP_IPsec',
@@ -60,7 +67,6 @@ CrOncStrings.overrideValues = function() {
     'OncVPN-Type_L2TP_IPsec_Cert': 'OncVPN-Type_L2TP_IPsec_Cert',
     'OncVPN-Type_OpenVPN': 'OncVPN-Type_OpenVPN',
     'OncVPN-Type_ARCVPN': 'OncVPN-Type_ARCVPN',
-    'OncVPN-Username': 'OncVPN-Username',
     'OncWiFi-Frequency': 'OncWiFi-Frequency',
     'OncWiFi-Passphrase': 'OncWiFi-Passphrase',
     'OncWiFi-SSID': 'OncWiFi-SSID',
@@ -78,4 +84,39 @@ CrOncStrings.overrideValues = function() {
     'Oncipv6-IPAddress': 'Oncipv6-IPAddress',
   };
   loadTimeData.overrideValues(oncKeys);
+};
+
+/**
+ * Converts an unmanaged ONC dictionary into a managed dictionary by
+ * setting properties 'Active' values to values from unmanaged dictionary.
+ * NOTE: Unmanaged properties inside ManagedProperties (e.g. 'GUID',
+ * 'Source', 'Type', etc) need to be specified here to avoid treating them
+ * as managed.
+ * The full list of ManagedProperties is found in networking_private.idl
+ * @param {!Object|undefined} properties An unmanaged ONC dictionary
+ * @return {!Object|undefined} A managed version of |properties|.
+ */
+CrOncTest.convertToManagedProperties = function(properties) {
+  'use strict';
+  if (!properties) {
+    return undefined;
+  }
+  var result = {};
+  var keys = Object.keys(properties);
+  if (typeof properties != 'object') {
+    return {Active: properties};
+  }
+  for (var i = 0; i < keys.length; ++i) {
+    var k = keys[i];
+    const unmanagedProperties = [
+      'ConnectionState', 'GUID',
+      /* ManagedCellularProperties.SIMLockStatus */ 'LockType', 'Source', 'Type'
+    ];
+    if (unmanagedProperties.includes(k)) {
+      result[k] = properties[k];
+    } else {
+      result[k] = this.convertToManagedProperties(properties[k]);
+    }
+  }
+  return result;
 };

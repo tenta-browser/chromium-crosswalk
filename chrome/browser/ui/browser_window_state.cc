@@ -10,13 +10,13 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_service.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/window_sizer/window_sizer.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -60,7 +60,7 @@ class WindowPlacementPrefUpdate : public DictionaryPrefUpdate {
     base::DictionaryValue* all_apps_dict = DictionaryPrefUpdate::Get();
     base::DictionaryValue* this_app_dict_weak = NULL;
     if (!all_apps_dict->GetDictionary(window_name_, &this_app_dict_weak)) {
-      auto this_app_dict = base::MakeUnique<base::DictionaryValue>();
+      auto this_app_dict = std::make_unique<base::DictionaryValue>();
       this_app_dict_weak = this_app_dict.get();
       all_apps_dict->Set(window_name_, std::move(this_app_dict));
     }
@@ -77,8 +77,8 @@ class WindowPlacementPrefUpdate : public DictionaryPrefUpdate {
 
 std::string GetWindowName(const Browser* browser) {
   if (browser->app_name().empty()) {
-    return browser->is_type_popup() ?
-        prefs::kBrowserWindowPlacementPopup : prefs::kBrowserWindowPlacement;
+    return browser->is_type_popup() ? prefs::kBrowserWindowPlacementPopup
+                                    : prefs::kBrowserWindowPlacement;
   }
   return browser->app_name();
 }
@@ -89,7 +89,7 @@ std::unique_ptr<DictionaryPrefUpdate> GetWindowPlacementDictionaryReadWrite(
   DCHECK(!window_name.empty());
   // A normal DictionaryPrefUpdate will suffice for non-app windows.
   if (prefs->FindPreference(window_name)) {
-    return base::MakeUnique<DictionaryPrefUpdate>(prefs, window_name);
+    return std::make_unique<DictionaryPrefUpdate>(prefs, window_name);
   }
   return std::unique_ptr<DictionaryPrefUpdate>(
       new WindowPlacementPrefUpdate(prefs, window_name));
@@ -115,13 +115,21 @@ bool ShouldSaveWindowPlacement(const Browser* browser) {
   // Only save the window placement of popups if the window is from a trusted
   // source (v1 app, devtools, or system window).
   return (browser->type() == Browser::TYPE_TABBED) ||
-    ((browser->type() == Browser::TYPE_POPUP) && browser->is_trusted_source());
+         ((browser->type() == Browser::TYPE_POPUP) &&
+          browser->is_trusted_source());
 }
 
 bool SavedBoundsAreContentBounds(const Browser* browser) {
-  // Pop ups such as devtools or bookmark app windows should behave as per other
-  // windows with persisted sizes - treating the saved bounds as window bounds.
-  return browser->is_type_popup() && !browser->is_app() &&
+  // Applications other than web apps (such as devtools) save their window size.
+  // Web apps, on the other hand, have the same behavior as popups, and save
+  // their content bounds.
+  bool is_app_with_window_bounds =
+      browser->is_app() &&
+      !web_app::AppBrowserController::IsForWebAppBrowser(browser);
+
+  // Pop ups such as devtools should behave as per other windows with persisted
+  // sizes - treating the saved bounds as window bounds.
+  return browser->is_type_popup() && !is_app_with_window_bounds &&
          !browser->is_trusted_source();
 }
 
@@ -152,11 +160,8 @@ void GetSavedWindowBoundsAndShowState(const Browser* browser,
   DCHECK(bounds);
   DCHECK(show_state);
   *bounds = browser->override_bounds();
-  WindowSizer::GetBrowserWindowBoundsAndShowState(browser->app_name(),
-                                                  *bounds,
-                                                  browser,
-                                                  bounds,
-                                                  show_state);
+  WindowSizer::GetBrowserWindowBoundsAndShowState(browser->app_name(), *bounds,
+                                                  browser, bounds, show_state);
 
   const base::CommandLine& parsed_command_line =
       *base::CommandLine::ForCurrentProcess();

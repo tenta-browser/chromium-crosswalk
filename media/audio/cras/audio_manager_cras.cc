@@ -10,14 +10,16 @@
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/environment.h"
 #include "base/logging.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/nix/xdg_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/audio/audio_device.h"
 #include "chromeos/audio/cras_audio_handler.h"
@@ -28,11 +30,6 @@
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
 #include "media/base/localized_strings.h"
-
-// cras_util.h headers pull in min/max macros...
-// TODO(dgreid): Fix headers such that these aren't imported.
-#undef min
-#undef max
 
 namespace media {
 namespace {
@@ -88,16 +85,15 @@ void ProcessVirtualDeviceName(AudioDeviceNames* device_names,
   if (device_list[0].type == chromeos::AUDIO_TYPE_LINEOUT ||
       device_list[1].type == chromeos::AUDIO_TYPE_LINEOUT) {
     device_names->emplace_back(kHeadphoneLineOutVirtualDevice,
-                               base::Uint64ToString(device_list[0].id));
+                               base::NumberToString(device_list[0].id));
   } else if (device_list[0].type == chromeos::AUDIO_TYPE_INTERNAL_SPEAKER ||
              device_list[1].type == chromeos::AUDIO_TYPE_INTERNAL_SPEAKER) {
     device_names->emplace_back(kInternalOutputVirtualDevice,
-                               base::Uint64ToString(device_list[0].id));
+                               base::NumberToString(device_list[0].id));
   } else {
-    DCHECK(device_list[0].type == chromeos::AUDIO_TYPE_INTERNAL_MIC ||
-           device_list[1].type == chromeos::AUDIO_TYPE_INTERNAL_MIC);
+    DCHECK(device_list[0].IsInternalMic() || device_list[1].IsInternalMic());
     device_names->emplace_back(kInternalInputVirtualDevice,
-                               base::Uint64ToString(device_list[0].id));
+                               base::NumberToString(device_list[0].id));
   }
 }
 
@@ -136,29 +132,27 @@ void AudioManagerCras::GetAudioDeviceNamesImpl(bool is_input,
 
   device_names->push_back(AudioDeviceName::CreateDefault());
 
-  if (base::FeatureList::IsEnabled(features::kEnumerateAudioDevices)) {
-    chromeos::AudioDeviceList devices;
-    GetAudioDevices(&devices);
+  chromeos::AudioDeviceList devices;
+  GetAudioDevices(&devices);
 
-    // |dev_idx_map| is a map of dev_index and their audio devices.
-    std::map<int, chromeos::AudioDeviceList> dev_idx_map;
-    for (const auto& device : devices) {
-      if (device.is_input != is_input || !device.is_for_simple_usage())
-        continue;
+  // |dev_idx_map| is a map of dev_index and their audio devices.
+  std::map<int, chromeos::AudioDeviceList> dev_idx_map;
+  for (const auto& device : devices) {
+    if (device.is_input != is_input || !device.is_for_simple_usage())
+      continue;
 
-      dev_idx_map[dev_index_of(device.id)].push_back(device);
-    }
+    dev_idx_map[dev_index_of(device.id)].push_back(device);
+  }
 
-    for (const auto& item : dev_idx_map) {
-      if (1 == item.second.size()) {
-        const chromeos::AudioDevice& device = item.second.front();
-        device_names->emplace_back(device.display_name,
-                                   base::Uint64ToString(device.id));
-      } else {
-        // Create virtual device name for audio nodes that share the same device
-        // index.
-        ProcessVirtualDeviceName(device_names, item.second);
-      }
+  for (const auto& item : dev_idx_map) {
+    if (1 == item.second.size()) {
+      const chromeos::AudioDevice& device = item.second.front();
+      device_names->emplace_back(device.display_name,
+                                 base::NumberToString(device.id));
+    } else {
+      // Create virtual device name for audio nodes that share the same device
+      // index.
+      ProcessVirtualDeviceName(device_names, item.second);
     }
   }
 }
@@ -183,22 +177,42 @@ AudioParameters AudioManagerCras::GetInputStreamParameters(
 
   // TODO(hshi): Fine-tune audio parameters based on |device_id|. The optimal
   // parameters for the loopback stream may differ from the default.
-  AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                         CHANNEL_LAYOUT_STEREO, kDefaultSampleRate, 16,
-                         buffer_size);
+  AudioParameters params(
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, CHANNEL_LAYOUT_STEREO,
+      kDefaultSampleRate, buffer_size,
+      AudioParameters::HardwareCapabilities(limits::kMinAudioBufferSize,
+                                            limits::kMaxAudioBufferSize));
   chromeos::AudioDeviceList devices;
   GetAudioDevices(&devices);
   if (HasKeyboardMic(devices))
     params.set_effects(AudioParameters::KEYBOARD_MIC);
+
+  // Allow experimentation with system echo cancellation with all devices,
+  // but enable it by default on devices that actually support it.
+  params.set_effects(params.effects() |
+                     AudioParameters::EXPERIMENTAL_ECHO_CANCELLER);
+  if (base::FeatureList::IsEnabled(features::kCrOSSystemAEC)) {
+    if (GetSystemAecSupportedPerBoard()) {
+      const int32_t aec_group_id = GetSystemAecGroupIdPerBoard();
+
+      // Check if the system AEC has a group ID which is flagged to be
+      // deactivated by the field trial.
+      const bool system_aec_deactivated =
+          base::GetFieldTrialParamByFeatureAsBool(
+              features::kCrOSSystemAECDeactivatedGroups,
+              std::to_string(aec_group_id), false);
+
+      if (!system_aec_deactivated) {
+        params.set_effects(params.effects() | AudioParameters::ECHO_CANCELLER);
+      }
+    }
+  }
 
   return params;
 }
 
 std::string AudioManagerCras::GetAssociatedOutputDeviceID(
     const std::string& input_device_id) {
-  if (!base::FeatureList::IsEnabled(features::kEnumerateAudioDevices))
-    return "";
-
   chromeos::AudioDeviceList devices;
   GetAudioDevices(&devices);
 
@@ -222,12 +236,17 @@ std::string AudioManagerCras::GetAssociatedOutputDeviceID(
       });
   return output_device_it == devices.end()
              ? ""
-             : base::Uint64ToString(output_device_it->id);
+             : base::NumberToString(output_device_it->id);
+}
+
+std::string AudioManagerCras::GetDefaultInputDeviceID() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  return base::NumberToString(GetPrimaryActiveInputNode());
 }
 
 std::string AudioManagerCras::GetDefaultOutputDeviceID() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  return base::Uint64ToString(GetPrimaryActiveOutputNode());
+  return base::NumberToString(GetPrimaryActiveOutputNode());
 }
 
 std::string AudioManagerCras::GetGroupIDOutput(
@@ -310,16 +329,56 @@ int AudioManagerCras::GetDefaultOutputBufferSizePerBoard() {
   return static_cast<int>(buffer_size);
 }
 
+bool AudioManagerCras::GetSystemAecSupportedPerBoard() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  bool system_aec_supported = false;
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  if (main_task_runner_->BelongsToCurrentThread()) {
+    // Unittest may use the same thread for audio thread.
+    GetSystemAecSupportedOnMainThread(&system_aec_supported, &event);
+  } else {
+    // Using base::Unretained is safe here because we wait for callback be
+    // executed in main thread before local variables are destructed.
+    main_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AudioManagerCras::GetSystemAecSupportedOnMainThread,
+                       weak_this_, base::Unretained(&system_aec_supported),
+                       base::Unretained(&event)));
+  }
+  WaitEventOrShutdown(&event);
+  return system_aec_supported;
+}
+
+int32_t AudioManagerCras::GetSystemAecGroupIdPerBoard() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  int32_t group_id = chromeos::CrasAudioHandler::kSystemAecGroupIdNotAvailable;
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  if (main_task_runner_->BelongsToCurrentThread()) {
+    // Unittest may use the same thread for audio thread.
+    GetSystemAecGroupIdOnMainThread(&group_id, &event);
+  } else {
+    // Using base::Unretained is safe here because we wait for callback be
+    // executed in main thread before local variables are destructed.
+    main_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AudioManagerCras::GetSystemAecGroupIdOnMainThread,
+                       weak_this_, base::Unretained(&group_id),
+                       base::Unretained(&event)));
+  }
+  WaitEventOrShutdown(&event);
+  return group_id;
+}
+
 AudioParameters AudioManagerCras::GetPreferredOutputStreamParameters(
     const std::string& output_device_id,
     const AudioParameters& input_params) {
   ChannelLayout channel_layout = CHANNEL_LAYOUT_STEREO;
   int sample_rate = kDefaultSampleRate;
   int buffer_size = GetDefaultOutputBufferSizePerBoard();
-  int bits_per_sample = 16;
   if (input_params.IsValid()) {
     sample_rate = input_params.sample_rate();
-    bits_per_sample = input_params.bits_per_sample();
     channel_layout = input_params.channel_layout();
     buffer_size =
         std::min(static_cast<int>(limits::kMaxAudioBufferSize),
@@ -331,8 +390,13 @@ AudioParameters AudioManagerCras::GetPreferredOutputStreamParameters(
   if (user_buffer_size)
     buffer_size = user_buffer_size;
 
-  return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-                         sample_rate, bits_per_sample, buffer_size);
+  AudioParameters params(
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, sample_rate,
+      buffer_size,
+      AudioParameters::HardwareCapabilities(limits::kMinAudioBufferSize,
+                                            limits::kMaxAudioBufferSize));
+
+  return params;
 }
 
 AudioOutputStream* AudioManagerCras::MakeOutputStream(
@@ -344,21 +408,6 @@ AudioOutputStream* AudioManagerCras::MakeOutputStream(
 AudioInputStream* AudioManagerCras::MakeInputStream(
     const AudioParameters& params, const std::string& device_id) {
   return new CrasInputStream(params, this, device_id);
-}
-
-snd_pcm_format_t AudioManagerCras::BitsToFormat(int bits_per_sample) {
-  switch (bits_per_sample) {
-    case 8:
-      return SND_PCM_FORMAT_U8;
-    case 16:
-      return SND_PCM_FORMAT_S16;
-    case 24:
-      return SND_PCM_FORMAT_S24;
-    case 32:
-      return SND_PCM_FORMAT_S32;
-    default:
-      return SND_PCM_FORMAT_UNKNOWN;
-  }
 }
 
 bool AudioManagerCras::IsDefault(const std::string& device_id, bool is_input) {
@@ -408,9 +457,8 @@ void AudioManagerCras::GetAudioDevicesOnMainThread(
     base::WaitableEvent* event) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   // CrasAudioHandler is shut down before AudioManagerCras.
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
+  if (chromeos::CrasAudioHandler::Get())
     chromeos::CrasAudioHandler::Get()->GetAudioDevices(devices);
-  }
   event->Signal();
 }
 
@@ -455,7 +503,7 @@ void AudioManagerCras::GetPrimaryActiveInputNodeOnMainThread(
     uint64_t* active_input_node_id,
     base::WaitableEvent* event) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
+  if (chromeos::CrasAudioHandler::Get()) {
     *active_input_node_id =
         chromeos::CrasAudioHandler::Get()->GetPrimaryActiveInputNode();
   }
@@ -466,7 +514,7 @@ void AudioManagerCras::GetPrimaryActiveOutputNodeOnMainThread(
     uint64_t* active_output_node_id,
     base::WaitableEvent* event) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
+  if (chromeos::CrasAudioHandler::Get()) {
     *active_output_node_id =
         chromeos::CrasAudioHandler::Get()->GetPrimaryActiveOutputNode();
   }
@@ -477,15 +525,34 @@ void AudioManagerCras::GetDefaultOutputBufferSizeOnMainThread(
     int32_t* buffer_size,
     base::WaitableEvent* event) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  if (chromeos::CrasAudioHandler::IsInitialized()) {
+  if (chromeos::CrasAudioHandler::Get())
     chromeos::CrasAudioHandler::Get()->GetDefaultOutputBufferSize(buffer_size);
+  event->Signal();
+}
+
+void AudioManagerCras::GetSystemAecSupportedOnMainThread(
+    bool* system_aec_supported,
+    base::WaitableEvent* event) {
+  DCHECK(main_task_runner_->BelongsToCurrentThread());
+  if (chromeos::CrasAudioHandler::Get()) {
+    *system_aec_supported =
+        chromeos::CrasAudioHandler::Get()->system_aec_supported();
   }
+  event->Signal();
+}
+
+void AudioManagerCras::GetSystemAecGroupIdOnMainThread(
+    int32_t* group_id,
+    base::WaitableEvent* event) {
+  DCHECK(main_task_runner_->BelongsToCurrentThread());
+  if (chromeos::CrasAudioHandler::Get())
+    *group_id = chromeos::CrasAudioHandler::Get()->system_aec_group_id();
   event->Signal();
 }
 
 void AudioManagerCras::WaitEventOrShutdown(base::WaitableEvent* event) {
   base::WaitableEvent* waitables[] = {event, &on_shutdown_};
-  base::WaitableEvent::WaitMany(waitables, arraysize(waitables));
+  base::WaitableEvent::WaitMany(waitables, base::size(waitables));
 }
 
 }  // namespace media

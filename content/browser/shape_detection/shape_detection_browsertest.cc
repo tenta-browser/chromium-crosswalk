@@ -49,9 +49,9 @@ class ShapeDetectionBrowserTest
       public ::testing::WithParamInterface<struct TestParameters> {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Flags to enable ShapeDetection and DOMRect API.
+    // Flag to enable ShapeDetection API.
     CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kEnableBlinkFeatures, "ShapeDetection, GeometryInterfaces");
+        switches::kEnableBlinkFeatures, "ShapeDetection");
   }
 
  protected:
@@ -111,8 +111,8 @@ IN_PROC_BROWSER_TEST_P(ShapeDetectionBrowserTest, MAYBE_DetectShapesInImage) {
                          GetParam().expected_bounding_boxes);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        ShapeDetectionBrowserTest,
-                        testing::ValuesIn(kTestParameters));
+INSTANTIATE_TEST_SUITE_P(,
+                         ShapeDetectionBrowserTest,
+                         testing::ValuesIn(kTestParameters));
 
 }  // namespace content

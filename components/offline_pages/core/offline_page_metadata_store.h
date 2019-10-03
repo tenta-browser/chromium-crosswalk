@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,68 +7,86 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
-#include "base/callback.h"
+#include "base/bind.h"
+#include "base/files/file_path.h"
+#include "base/location.h"
+#include "base/memory/weak_ptr.h"
+#include "base/task_runner_util.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
 #include "components/offline_pages/core/offline_page_item.h"
 #include "components/offline_pages/core/offline_store_types.h"
+#include "components/offline_pages/task/sql_store_base.h"
+
+namespace base {
+class SequencedTaskRunner;
+}
+
+namespace sql {
+class Database;
+}
 
 namespace offline_pages {
-
 typedef StoreUpdateResult<OfflinePageItem> OfflinePagesUpdateResult;
 
-// OfflinePageMetadataStore keeps metadata for the offline pages.
-// Ability to create multiple instances of the store as well as behavior of
-// asynchronous operations when the object is being destroyed, before such
-// operation finishes will depend on implementation. It should be possible to
-// issue multiple asynchronous operations in parallel.
-class OfflinePageMetadataStore {
+// OfflinePageMetadataStore keeps metadata for the offline pages in an SQLite
+// database.
+//
+// When updating the schema, be sure to do the following:
+// * Increment the version number kCurrentVersion (let's call its new value N).
+// * Write a function "UpgradeFromVersion<N-1>ToVersion<N>". This function
+//   should upgrade an existing database of the (previously) latest version and
+//   should call meta_table->SetVersionNumber(N). Add a case for version N-1 to
+//   the loop in CreateSchema.
+// * Update CreateLatestSchema() as necessary: this function creates a new empty
+//   DB. If there were changes to existing tables, their original "CREATE"
+//   queries should be copied into the new "UpgradeFromVersion..." function.
+// * Update `kCompatibleVersion` when a new schema becomes incompatible with
+//   old code (for instance, if a column is removed). Change it to the earliest
+//   version that is compatible with the new schema; that is very likely to be
+//   the version that broke compatibility.
+// * Add a test for upgrading to the latest database version to
+//   offline_page_metadata_store_unittest.cc. Good luck.
+//
+class OfflinePageMetadataStore : public SqlStoreBase {
  public:
-  // This enum is used in an UMA histogram. Hence the entries here shouldn't
-  // be deleted or re-ordered and new ones should be added to the end.
-  enum LoadStatus {
-    LOAD_SUCCEEDED,
-    STORE_INIT_FAILED,
-    STORE_LOAD_FAILED,
-    DATA_PARSING_FAILED,
+  // This is the first version saved in the meta table, which was introduced in
+  // the store in M65. It is set once a legacy upgrade is run successfully for
+  // the last time in |UpgradeFromLegacyVersion|.
+  static const int kFirstPostLegacyVersion = 1;
+  static const int kCurrentVersion = 4;
+  static const int kCompatibleVersion = kFirstPostLegacyVersion;
 
-    // NOTE: always keep this entry at the end.
-    LOAD_STATUS_COUNT
-  };
+  // TODO(fgorski): Move to private and expose ForTest factory.
+  // Applies in PrefetchStore as well.
+  // Creates the store in memory. Should only be used for testing.
+  explicit OfflinePageMetadataStore(
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner);
 
-  typedef base::Callback<void(bool /* success */)> InitializeCallback;
-  typedef base::Callback<void(bool /* success */)> ResetCallback;
-  typedef base::Callback<void(std::vector<OfflinePageItem>)> LoadCallback;
-  typedef base::Callback<void(ItemActionStatus)> AddCallback;
-  typedef base::Callback<void(std::unique_ptr<OfflinePagesUpdateResult>)>
-      UpdateCallback;
+  // Creates the store with database pointing to provided directory.
+  OfflinePageMetadataStore(
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner,
+      const base::FilePath& database_dir);
 
-  virtual ~OfflinePageMetadataStore(){};
+  ~OfflinePageMetadataStore() override;
 
-  // Initializes the store. Should be called before any other methods.
-  virtual void Initialize(const InitializeCallback& callback) = 0;
+  // Helper function used to force incorrect state for testing purposes.
+  StoreState GetStateForTesting() const;
 
-  // Get all of the offline pages from the store.
-  virtual void GetOfflinePages(const LoadCallback& callback) = 0;
-
-  // Asynchronously adds an offline page item metadata to the store.
-  virtual void AddOfflinePage(const OfflinePageItem& offline_page,
-                              const AddCallback& callback) = 0;
-
-  // Asynchronously updates a set of offline page items in the store.
-  virtual void UpdateOfflinePages(const std::vector<OfflinePageItem>& pages,
-                                  const UpdateCallback& callback) = 0;
-
-  // Asynchronously removes offline page metadata from the store.
-  // Result of the update is passed in callback.
-  virtual void RemoveOfflinePages(const std::vector<int64_t>& offline_ids,
-                                  const UpdateCallback& callback) = 0;
-
-  // Resets the store.
-  virtual void Reset(const ResetCallback& callback) = 0;
-
-  // Gets the store state.
-  virtual StoreState state() const = 0;
+ protected:
+  // SqlStoreBase:
+  base::OnceCallback<bool(sql::Database* db)> GetSchemaInitializationFunction()
+      override;
+  void OnOpenStart(base::TimeTicks last_open_time) override;
+  void OnOpenDone(bool success) override;
+  void OnTaskBegin(bool is_initialized) override;
+  void OnTaskRunComplete() override;
+  void OnTaskReturnComplete() override;
+  void OnCloseStart(InitializationStatus status_before_close) override;
+  void OnCloseComplete() override;
 };
 
 }  // namespace offline_pages

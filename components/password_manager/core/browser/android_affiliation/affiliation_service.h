@@ -20,9 +20,10 @@ class FilePath;
 class SequencedTaskRunner;
 }  // namespace base
 
-namespace net {
-class URLRequestContextGetter;
-}  // namespace net
+namespace network {
+class NetworkConnectionTracker;
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace password_manager {
 
@@ -91,8 +92,9 @@ class AffiliationBackend;
 //       };
 class AffiliationService : public KeyedService {
  public:
-  typedef base::Callback<void(const AffiliatedFacets& /* results */,
-                              bool /* success */)> ResultCallback;
+  using ResultCallback =
+      base::OnceCallback<void(const AffiliatedFacets& /* results */,
+                              bool /* success */)>;
 
   // Controls whether to send a network request or fail on a cache miss.
   enum class StrategyOnCacheMiss { FETCH_OVER_NETWORK, FAIL };
@@ -105,8 +107,10 @@ class AffiliationService : public KeyedService {
 
   // Initializes the service by creating its backend and transferring it to the
   // thread corresponding to |backend_task_runner_|.
-  void Initialize(net::URLRequestContextGetter* request_context_getter,
-                  const base::FilePath& db_path);
+  void Initialize(
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      network::NetworkConnectionTracker* network_connection_tracker,
+      const base::FilePath& db_path);
 
   // Looks up facets affiliated with the facet identified by |facet_uri| and
   // branding information, and invokes |result_callback| with the results. It is
@@ -120,7 +124,7 @@ class AffiliationService : public KeyedService {
   virtual void GetAffiliationsAndBranding(
       const FacetURI& facet_uri,
       StrategyOnCacheMiss cache_miss_strategy,
-      const ResultCallback& result_callback);
+      ResultCallback result_callback);
 
   // Prefetches affiliation information for the facet identified by |facet_uri|,
   // and keeps the information fresh by periodic re-fetches (as needed) until
@@ -158,7 +162,7 @@ class AffiliationService : public KeyedService {
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-  base::WeakPtrFactory<AffiliationService> weak_ptr_factory_;
+  base::WeakPtrFactory<AffiliationService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AffiliationService);
 };

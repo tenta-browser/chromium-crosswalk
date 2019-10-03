@@ -16,9 +16,9 @@
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
-#include "jni/CodecProfileLevelList_jni.h"
-#include "jni/MediaCodecUtil_jni.h"
 #include "media/base/android/media_codec_bridge.h"
+#include "media/base/android/media_jni_headers/CodecProfileLevelList_jni.h"
+#include "media/base/android/media_jni_headers/MediaCodecUtil_jni.h"
 #include "media/base/video_codecs.h"
 #include "url/gurl.h"
 
@@ -28,8 +28,8 @@ using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaIntArrayToIntVector;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
-using base::android::SDK_VERSION_JELLY_BEAN_MR2;
 using base::android::SDK_VERSION_KITKAT;
+using base::android::SDK_VERSION_LOLLIPOP;
 using base::android::SDK_VERSION_LOLLIPOP_MR1;
 
 namespace media {
@@ -46,6 +46,7 @@ const char kAvcMimeType[] = "video/avc";
 const char kHevcMimeType[] = "video/hevc";
 const char kVp8MimeType[] = "video/x-vnd.on2.vp8";
 const char kVp9MimeType[] = "video/x-vnd.on2.vp9";
+const char kAv1MimeType[] = "video/av01";
 }  // namespace
 
 static CodecProfileLevel MediaCodecProfileLevelToChromiumProfileLevel(
@@ -62,8 +63,8 @@ static CodecProfileLevel MediaCodecProfileLevelToChromiumProfileLevel(
 
 static bool IsSupportedAndroidMimeType(const std::string& mime_type) {
   std::vector<std::string> supported{
-      kMp3MimeType, kAacMimeType,  kOpusMimeType, kVorbisMimeType,
-      kAvcMimeType, kHevcMimeType, kVp8MimeType,  kVp9MimeType};
+      kMp3MimeType,  kAacMimeType, kOpusMimeType, kVorbisMimeType, kAvcMimeType,
+      kHevcMimeType, kVp8MimeType, kVp9MimeType,  kAv1MimeType};
   return std::find(supported.begin(), supported.end(), mime_type) !=
          supported.end();
 }
@@ -95,6 +96,26 @@ static bool IsEncoderSupportedByDevice(const std::string& android_mime_type) {
   ScopedJavaLocalRef<jstring> j_mime =
       ConvertUTF8ToJavaString(env, android_mime_type);
   return Java_MediaCodecUtil_isEncoderSupportedByDevice(env, j_mime);
+}
+
+static bool CanDecodeInternal(const std::string& mime, bool is_secure) {
+  if (!MediaCodecUtil::IsMediaCodecAvailable())
+    return false;
+  if (mime.empty())
+    return false;
+
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jstring> j_mime = ConvertUTF8ToJavaString(env, mime);
+  return Java_MediaCodecUtil_canDecode(env, j_mime, is_secure);
+}
+
+static bool HasVp9Profile23Decoder() {
+  // Support for VP9.2, VP9.3 was added in Nougat but it requires hardware
+  // support which we can't check from the renderer process. Since Android P+
+  // has a software decoder available for VP9.2, VP9.3 content and usage is nil
+  // on Android, just gate support on P+.
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+         base::android::SDK_VERSION_P;
 }
 
 // static
@@ -131,6 +152,8 @@ std::string MediaCodecUtil::CodecToAndroidMimeType(VideoCodec codec) {
       return kVp8MimeType;
     case kCodecVP9:
       return kVp9MimeType;
+    case kCodecAV1:
+      return kAv1MimeType;
     default:
       return std::string();
   }
@@ -156,7 +179,7 @@ bool MediaCodecUtil::IsMediaCodecAvailableFor(int sdk, const char* model) {
       return model == other.model;
     }
   };
-  static const std::vector<BlacklistEntry> blacklist = {
+  static const BlacklistEntry blacklist[] = {
       // crbug.com/653905
       {"LGMS330", SDK_VERSION_LOLLIPOP_MR1},
 
@@ -174,32 +197,18 @@ bool MediaCodecUtil::IsMediaCodecAvailableFor(int sdk, const char* model) {
       {"GT-S7262", SDK_VERSION_KITKAT},
       {"GT-S5282", SDK_VERSION_KITKAT},
       {"GT-I8552", SDK_VERSION_KITKAT},
-
-      // crbug.com/365494, crbug.com/615872
-      {"GT-P3113", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-P5110", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-P5100", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-P5113", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-P3110", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-N5110", SDK_VERSION_JELLY_BEAN_MR2},
-      {"e-tab4", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-I8200Q", SDK_VERSION_JELLY_BEAN_MR2},
-
-      // crbug.com/693216
-      {"GT-I8552B", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-I8262", SDK_VERSION_JELLY_BEAN_MR2},
-      {"GT-I8262B", SDK_VERSION_JELLY_BEAN_MR2},
   };
 
-  const auto iter =
-      std::find(blacklist.begin(), blacklist.end(), BlacklistEntry(model, 0));
-  return iter == blacklist.end() || sdk > iter->last_bad_sdk;
+  const BlacklistEntry* iter = std::find(
+      std::begin(blacklist), std::end(blacklist), BlacklistEntry(model, 0));
+  return iter == std::end(blacklist) || sdk > iter->last_bad_sdk;
 }
 
 // static
 bool MediaCodecUtil::SupportsSetParameters() {
-  // MediaCodec.setParameters() is only available starting with K.
-  return base::android::BuildInfo::GetInstance()->sdk_int() >= 19;
+  // MediaCodec.setParameters() is only available starting with KitKat.
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+         SDK_VERSION_KITKAT;
 }
 
 // static
@@ -220,91 +229,13 @@ std::set<int> MediaCodecUtil::GetEncoderColorFormats(
   ScopedJavaLocalRef<jintArray> j_color_format_array =
       Java_MediaCodecUtil_getEncoderColorFormatsForMime(env, j_mime);
 
-  if (j_color_format_array.obj()) {
+  if (!j_color_format_array.is_null()) {
     std::vector<int> formats;
-    JavaIntArrayToIntVector(env, j_color_format_array.obj(), &formats);
+    JavaIntArrayToIntVector(env, j_color_format_array, &formats);
     color_formats = std::set<int>(formats.begin(), formats.end());
   }
 
   return color_formats;
-}
-
-// static
-bool MediaCodecUtil::CanDecode(VideoCodec codec, bool is_secure) {
-  return CanDecodeInternal(CodecToAndroidMimeType(codec), is_secure);
-}
-
-// static
-bool MediaCodecUtil::CanDecode(AudioCodec codec) {
-  return CanDecodeInternal(CodecToAndroidMimeType(codec), false);
-}
-
-// static
-bool MediaCodecUtil::CanDecodeInternal(const std::string& mime,
-                                       bool is_secure) {
-  if (!IsMediaCodecAvailable())
-    return false;
-  if (mime.empty())
-    return false;
-
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> j_mime = ConvertUTF8ToJavaString(env, mime);
-  return Java_MediaCodecUtil_canDecode(env, j_mime, is_secure);
-}
-
-// static
-bool MediaCodecUtil::AddSupportedCodecProfileLevels(
-    std::vector<CodecProfileLevel>* result) {
-  DCHECK(result);
-  if (!IsMediaCodecAvailable())
-    return false;
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobjectArray> j_codec_profile_levels(
-      Java_MediaCodecUtil_getSupportedCodecProfileLevels(env));
-  int java_array_length = env->GetArrayLength(j_codec_profile_levels.obj());
-  for (int i = 0; i < java_array_length; ++i) {
-    ScopedJavaLocalRef<jobject> java_codec_profile_level(
-        env, env->GetObjectArrayElement(j_codec_profile_levels.obj(), i));
-    result->push_back(MediaCodecProfileLevelToChromiumProfileLevel(
-        env, java_codec_profile_level));
-  }
-  return true;
-}
-
-// static
-bool MediaCodecUtil::IsKnownUnaccelerated(VideoCodec codec,
-                                          MediaCodecDirection direction) {
-  if (!IsMediaCodecAvailable())
-    return true;
-
-  std::string codec_name =
-      GetDefaultCodecName(CodecToAndroidMimeType(codec), direction, false);
-  DVLOG(1) << __func__ << "Default codec for " << GetCodecName(codec) << " : "
-           << codec_name << ", direction: " << static_cast<int>(direction);
-  if (codec_name.empty())
-    return true;
-
-  // MediaTek hardware vp8 is known slower than the software implementation.
-  // MediaTek hardware vp9 is known crashy, see http://crbug.com/446974 and
-  // http://crbug.com/597836.
-  if (base::StartsWith(codec_name, "OMX.MTK.", base::CompareCase::SENSITIVE)) {
-    if (codec == kCodecVP8)
-      return true;
-
-    if (codec == kCodecVP9)
-      return base::android::BuildInfo::GetInstance()->sdk_int() < 21;
-
-    return false;
-  }
-
-  // It would be nice if MediaCodecInfo externalized some notion of
-  // HW-acceleration but it doesn't. Android Media guidance is that the
-  // "OMX.google" prefix is always used for SW decoders, so that's what we
-  // use. "OMX.SEC.*" codec is Samsung software implementation - report it
-  // as unaccelerated as well.
-  return base::StartsWith(codec_name, "OMX.google.",
-                          base::CompareCase::SENSITIVE) ||
-         base::StartsWith(codec_name, "OMX.SEC.", base::CompareCase::SENSITIVE);
 }
 
 // static
@@ -338,9 +269,31 @@ bool MediaCodecUtil::IsVp9DecoderAvailable() {
 }
 
 // static
-bool MediaCodecUtil::IsH264EncoderAvailable() {
-  return IsMediaCodecAvailable() && IsEncoderSupportedByDevice(kAvcMimeType);
+bool MediaCodecUtil::IsVp9Profile2DecoderAvailable() {
+  return IsVp9DecoderAvailable() && HasVp9Profile23Decoder();
 }
+
+// static
+bool MediaCodecUtil::IsVp9Profile3DecoderAvailable() {
+  return IsVp9DecoderAvailable() && HasVp9Profile23Decoder();
+}
+
+// static
+bool MediaCodecUtil::IsOpusDecoderAvailable() {
+  return IsMediaCodecAvailable() && IsDecoderSupportedByDevice(kOpusMimeType);
+}
+
+// static
+bool MediaCodecUtil::IsAv1DecoderAvailable() {
+  return IsMediaCodecAvailable() && IsDecoderSupportedByDevice(kAv1MimeType);
+}
+
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+// static
+bool MediaCodecUtil::IsHEVCDecoderAvailable() {
+  return IsMediaCodecAvailable() && IsDecoderSupportedByDevice(kHevcMimeType);
+}
+#endif
 
 // static
 bool MediaCodecUtil::IsSurfaceViewOutputSupported() {
@@ -380,18 +333,83 @@ bool MediaCodecUtil::IsPassthroughAudioFormat(AudioCodec codec) {
 }
 
 // static
+bool MediaCodecUtil::CanDecode(VideoCodec codec, bool is_secure) {
+  return CanDecodeInternal(CodecToAndroidMimeType(codec), is_secure);
+}
+
+// static
+bool MediaCodecUtil::CanDecode(AudioCodec codec) {
+  return CanDecodeInternal(CodecToAndroidMimeType(codec), false);
+}
+
+// static
+bool MediaCodecUtil::IsH264EncoderAvailable() {
+  return IsMediaCodecAvailable() && IsEncoderSupportedByDevice(kAvcMimeType);
+}
+
+// static
+bool MediaCodecUtil::AddSupportedCodecProfileLevels(
+    std::vector<CodecProfileLevel>* result) {
+  DCHECK(result);
+  if (!IsMediaCodecAvailable())
+    return false;
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobjectArray> j_codec_profile_levels(
+      Java_MediaCodecUtil_getSupportedCodecProfileLevels(env));
+  for (auto java_codec_profile_level :
+       j_codec_profile_levels.ReadElements<jobject>()) {
+    result->push_back(MediaCodecProfileLevelToChromiumProfileLevel(
+        env, java_codec_profile_level));
+  }
+  return true;
+}
+
+// static
+bool MediaCodecUtil::IsKnownUnaccelerated(VideoCodec codec,
+                                          MediaCodecDirection direction) {
+  if (!IsMediaCodecAvailable())
+    return true;
+
+  std::string codec_name =
+      GetDefaultCodecName(CodecToAndroidMimeType(codec), direction, false);
+  DVLOG(1) << __func__ << "Default codec for " << GetCodecName(codec) << " : "
+           << codec_name << ", direction: " << static_cast<int>(direction);
+  if (codec_name.empty())
+    return true;
+
+  // MediaTek hardware vp8 is known slower than the software implementation.
+  // MediaTek hardware vp9 is known crashy, see http://crbug.com/446974 and
+  // http://crbug.com/597836.
+  if (base::StartsWith(codec_name, "OMX.MTK.", base::CompareCase::SENSITIVE)) {
+    if (codec == kCodecVP8)
+      return true;
+
+    if (codec == kCodecVP9)
+      return base::android::BuildInfo::GetInstance()->sdk_int() <
+             SDK_VERSION_LOLLIPOP;
+
+    return false;
+  }
+
+  // It would be nice if MediaCodecInfo externalized some notion of
+  // HW-acceleration but it doesn't. Android Media guidance is that the
+  // "OMX.google" prefix is always used for SW decoders, so that's what we
+  // use. "OMX.SEC.*" codec is Samsung software implementation - report it
+  // as unaccelerated as well.
+  return base::StartsWith(codec_name, "OMX.google.",
+                          base::CompareCase::SENSITIVE) ||
+         base::StartsWith(codec_name, "OMX.SEC.", base::CompareCase::SENSITIVE);
+}
+
+// static
 bool MediaCodecUtil::CodecNeedsFlushWorkaround(MediaCodecBridge* codec) {
-  int sdk_int = base::android::BuildInfo::GetInstance()->sdk_int();
-  std::string codec_name = codec->GetName();
-  return sdk_int < SDK_VERSION_JELLY_BEAN_MR2 ||
-         (sdk_int == SDK_VERSION_JELLY_BEAN_MR2 &&
-          ("OMX.SEC.avc.dec" == codec_name ||
-           "OMX.SEC.avc.dec.secure" == codec_name)) ||
-         (sdk_int == SDK_VERSION_KITKAT &&
-          base::StartsWith(base::android::BuildInfo::GetInstance()->model(),
-                           "SM-G800", base::CompareCase::INSENSITIVE_ASCII) &&
-          ("OMX.Exynos.avc.dec" == codec_name ||
-           "OMX.Exynos.avc.dec.secure" == codec_name));
+  const auto& codec_name = codec->GetName();
+  return base::android::BuildInfo::GetInstance()->sdk_int() ==
+             SDK_VERSION_KITKAT &&
+         base::StartsWith(base::android::BuildInfo::GetInstance()->model(),
+                          "SM-G800", base::CompareCase::INSENSITIVE_ASCII) &&
+         ("OMX.Exynos.avc.dec" == codec_name ||
+          "OMX.Exynos.avc.dec.secure" == codec_name);
 }
 
 }  // namespace media

@@ -9,9 +9,9 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/codec/video_encoder.h"
@@ -37,7 +37,7 @@ namespace protocol {
 namespace {
 
 ACTION(FinishSend) {
-  arg1.Run();
+  std::move(*arg1).Run();
 }
 
 std::unique_ptr<webrtc::DesktopFrame> CreateNullFrame(
@@ -49,19 +49,20 @@ std::unique_ptr<webrtc::DesktopFrame> CreateUnchangedFrame(
     webrtc::SharedMemoryFactory* shared_memory_factory) {
   const webrtc::DesktopSize kSize(800, 640);
   // updated_region() is already empty by default in new BasicDesktopFrames.
-  return base::MakeUnique<webrtc::BasicDesktopFrame>(kSize);
+  return std::make_unique<webrtc::BasicDesktopFrame>(kSize);
 }
 
 class MockVideoEncoder : public VideoEncoder {
  public:
   MockVideoEncoder() = default;
-  ~MockVideoEncoder() = default;
+  ~MockVideoEncoder() override = default;
 
   MOCK_METHOD1(SetLosslessEncode, void(bool));
   MOCK_METHOD1(SetLosslessColor, void(bool));
   MOCK_METHOD1(EncodePtr, VideoPacket*(const webrtc::DesktopFrame&));
 
-  std::unique_ptr<VideoPacket> Encode(const webrtc::DesktopFrame& frame) {
+  std::unique_ptr<VideoPacket> Encode(
+      const webrtc::DesktopFrame& frame) override {
     return base::WrapUnique(EncodePtr(frame));
   }
 };
@@ -83,7 +84,7 @@ class ThreadCheckVideoEncoder : public VideoEncoderVerbatim {
 
   std::unique_ptr<VideoPacket> Encode(
       const webrtc::DesktopFrame& frame) override {
-    return base::MakeUnique<VideoPacket>();
+    return std::make_unique<VideoPacket>();
   }
 
  private:
@@ -146,7 +147,7 @@ class VideoFramePumpTest : public testing::Test {
                            std::unique_ptr<VideoEncoder> encoder);
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::RunLoop run_loop_;
   scoped_refptr<AutoThreadTaskRunner> encode_task_runner_;
   scoped_refptr<AutoThreadTaskRunner> main_task_runner_;
@@ -157,7 +158,8 @@ class VideoFramePumpTest : public testing::Test {
 
 void VideoFramePumpTest::SetUp() {
   main_task_runner_ = new AutoThreadTaskRunner(
-      message_loop_.task_runner(), run_loop_.QuitClosure());
+      scoped_task_environment_.GetMainThreadTaskRunner(),
+      run_loop_.QuitClosure());
   encode_task_runner_ = AutoThread::Create("encode", main_task_runner_);
 }
 

@@ -51,7 +51,7 @@ TEST(BitsTest, Log2Ceiling) {
 }
 
 TEST(BitsTest, Align) {
-  const size_t kSizeTMax = std::numeric_limits<size_t>::max();
+  static constexpr size_t kSizeTMax = std::numeric_limits<size_t>::max();
   EXPECT_EQ(0ul, Align(0, 4));
   EXPECT_EQ(4ul, Align(1, 4));
   EXPECT_EQ(4096ul, Align(1, 4096));
@@ -60,6 +60,19 @@ TEST(BitsTest, Align) {
   EXPECT_EQ(8192ul, Align(4097, 4096));
   EXPECT_EQ(kSizeTMax - 31, Align(kSizeTMax - 62, 32));
   EXPECT_EQ(kSizeTMax / 2 + 1, Align(1, kSizeTMax / 2 + 1));
+}
+
+TEST(BitsTest, AlignDown) {
+  static constexpr size_t kSizeTMax = std::numeric_limits<size_t>::max();
+  EXPECT_EQ(0ul, AlignDown(0, 4));
+  EXPECT_EQ(0ul, AlignDown(1, 4));
+  EXPECT_EQ(0ul, AlignDown(1, 4096));
+  EXPECT_EQ(4096ul, AlignDown(4096, 4096));
+  EXPECT_EQ(0ul, AlignDown(4095, 4096));
+  EXPECT_EQ(4096ul, AlignDown(4097, 4096));
+  EXPECT_EQ(kSizeTMax - 63, AlignDown(kSizeTMax - 62, 32));
+  EXPECT_EQ(kSizeTMax - 31, AlignDown(kSizeTMax, 32));
+  EXPECT_EQ(0ul, AlignDown(1, kSizeTMax / 2 + 1));
 }
 
 TEST(BitsTest, CountLeadingZeroBits8) {
@@ -118,8 +131,6 @@ TEST(BitsTest, CountTrailingeZeroBits32) {
   EXPECT_EQ(4u, CountTrailingZeroBits(uint32_t{0xf0f0f0f0}));
 }
 
-#if defined(ARCH_CPU_64_BITS)
-
 TEST(BitsTest, CountLeadingZeroBits64) {
   EXPECT_EQ(64u, CountLeadingZeroBits(uint64_t{0}));
   EXPECT_EQ(63u, CountLeadingZeroBits(uint64_t{1}));
@@ -137,8 +148,6 @@ TEST(BitsTest, CountTrailingeZeroBits64) {
   }
   EXPECT_EQ(4u, CountTrailingZeroBits(uint64_t{0xf0f0f0f0f0f0f0f0}));
 }
-
-#endif  // ARCH_CPU_64_BITS
 
 TEST(BitsTest, CountLeadingZeroBitsSizeT) {
 #if defined(ARCH_CPU_64_BITS)
@@ -168,6 +177,29 @@ TEST(BitsTest, CountTrailingZeroBitsSizeT) {
   EXPECT_EQ(1u, CountTrailingZeroBitsSizeT(size_t{2}));
   EXPECT_EQ(0u, CountTrailingZeroBitsSizeT(size_t{1}));
 #endif  // ARCH_CPU_64_BITS
+}
+
+TEST(BitsTest, PowerOfTwo) {
+  EXPECT_FALSE(IsPowerOfTwo(-1));
+  EXPECT_FALSE(IsPowerOfTwo(0));
+  EXPECT_TRUE(IsPowerOfTwo(1));
+  EXPECT_TRUE(IsPowerOfTwo(2));
+  // Unsigned 64 bit cases.
+  for (uint32_t i = 2; i < 64; i++) {
+    const uint64_t val = uint64_t{1} << i;
+    EXPECT_FALSE(IsPowerOfTwo(val - 1));
+    EXPECT_TRUE(IsPowerOfTwo(val));
+    EXPECT_FALSE(IsPowerOfTwo(val + 1));
+  }
+  // Signed 64 bit cases.
+  for (uint32_t i = 2; i < 63; i++) {
+    const int64_t val = int64_t{1} << i;
+    EXPECT_FALSE(IsPowerOfTwo(val - 1));
+    EXPECT_TRUE(IsPowerOfTwo(val));
+    EXPECT_FALSE(IsPowerOfTwo(val + 1));
+  }
+  // Signed integers with only the last bit set are negative, not powers of two.
+  EXPECT_FALSE(IsPowerOfTwo(int64_t{1} << 63));
 }
 
 }  // namespace bits

@@ -19,8 +19,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/win/windows_version.h"
 #include "media/audio/audio_device_description.h"
@@ -92,15 +90,23 @@ AudioManagerWin::AudioManagerWin(std::unique_ptr<AudioThread> audio_thread,
 
   SetMaxOutputStreamsAllowed(kMaxOutputStreams);
 
-  // WARNING: This is executed on the UI loop, do not add any code here which
-  // loads libraries or attempts to call out into the OS.  Instead add such code
-  // to the InitializeOnAudioThread() method below.
+  // WARNING: This may be executed on the UI loop, do not add any code here
+  // which loads libraries or attempts to call out into the OS.  Instead add
+  // such code to the InitializeOnAudioThread() method below.
+
+  // In case we are already on the audio thread (i.e. when running out of
+  // process audio), don't post.
+  if (GetTaskRunner()->BelongsToCurrentThread()) {
+    this->InitializeOnAudioThread();
+    return;
+  }
 
   // Task must be posted last to avoid races from handing out "this" to the
-  // audio thread.
+  // audio thread. Unretained is safe since we join the audio thread before
+  // destructing |this|.
   GetTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&AudioManagerWin::InitializeOnAudioThread,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&AudioManagerWin::InitializeOnAudioThread,
+                                base::Unretained(this)));
 }
 
 AudioManagerWin::~AudioManagerWin() = default;
@@ -172,7 +178,7 @@ AudioParameters AudioManagerWin::GetInputStreamParameters(
     // code path somehow for a configuration - e.g. tab capture).
     parameters =
         AudioParameters(AudioParameters::AUDIO_PCM_LINEAR,
-                        CHANNEL_LAYOUT_STEREO, 48000, 16, kFallbackBufferSize);
+                        CHANNEL_LAYOUT_STEREO, 48000, kFallbackBufferSize);
   }
 
   int user_buffer_size = GetUserBufferSize();
@@ -252,19 +258,33 @@ AudioInputStream* AudioManagerWin::MakeLowLatencyInputStream(
   return new WASAPIAudioInputStream(this, params, device_id, log_callback);
 }
 
+std::string AudioManagerWin::GetDefaultInputDeviceID() {
+  return CoreAudioUtil::GetDefaultInputDeviceID();
+}
+
 std::string AudioManagerWin::GetDefaultOutputDeviceID() {
   return CoreAudioUtil::GetDefaultOutputDeviceID();
+}
+
+std::string AudioManagerWin::GetCommunicationsInputDeviceID() {
+  return CoreAudioUtil::GetCommunicationsInputDeviceID();
+}
+
+std::string AudioManagerWin::GetCommunicationsOutputDeviceID() {
+  return CoreAudioUtil::GetCommunicationsOutputDeviceID();
 }
 
 AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     const std::string& output_device_id,
     const AudioParameters& input_params) {
   const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  int channels = 0;
   ChannelLayout channel_layout = CHANNEL_LAYOUT_STEREO;
   int sample_rate = 48000;
   int buffer_size = kFallbackBufferSize;
-  int bits_per_sample = 16;
   int effects = AudioParameters::NO_EFFECTS;
+  int min_buffer_size = 0;
+  int max_buffer_size = 0;
 
   // TODO(henrika): Remove kEnableExclusiveAudio and related code. It doesn't
   // look like it's used.
@@ -294,12 +314,20 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
       DLOG(ERROR) << "GetPreferredAudioParameters failed: " << std::hex << hr;
       return AudioParameters();
     }
+    DVLOG(1) << params.AsHumanReadableString();
+    DCHECK(params.IsValid());
 
-    bits_per_sample = params.bits_per_sample();
+    channels = params.channels();
     buffer_size = params.frames_per_buffer();
     channel_layout = params.channel_layout();
     sample_rate = params.sample_rate();
     effects = params.effects();
+
+    AudioParameters::HardwareCapabilities hardware_capabilities =
+        params.hardware_capabilities().value_or(
+            AudioParameters::HardwareCapabilities());
+    min_buffer_size = hardware_capabilities.min_frames_per_buffer;
+    max_buffer_size = hardware_capabilities.max_frames_per_buffer;
   }
 
   if (input_params.IsValid()) {
@@ -331,15 +359,28 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
     }
 
     effects |= input_params.effects();
+
+    // Allow non-default buffer sizes if we have a valid min and max.
+    if (min_buffer_size > 0 && max_buffer_size > 0) {
+      buffer_size =
+          std::min(max_buffer_size,
+                   std::max(input_params.frames_per_buffer(), min_buffer_size));
+    }
   }
 
   int user_buffer_size = GetUserBufferSize();
   if (user_buffer_size)
     buffer_size = user_buffer_size;
 
-  AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-                         sample_rate, bits_per_sample, buffer_size);
+  AudioParameters params(
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, sample_rate,
+      buffer_size,
+      AudioParameters::HardwareCapabilities(min_buffer_size, max_buffer_size));
   params.set_effects(effects);
+  if (channel_layout == CHANNEL_LAYOUT_DISCRETE) {
+    params.set_channels_for_discrete(channels);
+  }
+  DCHECK(params.IsValid());
   return params;
 }
 
@@ -347,7 +388,7 @@ AudioParameters AudioManagerWin::GetPreferredOutputStreamParameters(
 std::unique_ptr<AudioManager> CreateAudioManager(
     std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory) {
-  return base::MakeUnique<AudioManagerWin>(std::move(audio_thread),
+  return std::make_unique<AudioManagerWin>(std::move(audio_thread),
                                            audio_log_factory);
 }
 

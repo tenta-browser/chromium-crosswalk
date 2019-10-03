@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.contextualsearch;
 
 import android.text.TextUtils;
 
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSwitch;
+
 /**
  * Implements signals for Taps on short and long words.
  * This signal could be used for suppression when the word is short, so we aggregate-log too.
@@ -28,9 +30,10 @@ class TapWordLengthSuppression extends ContextualSearchHeuristic {
      */
     TapWordLengthSuppression(ContextualSearchContext contextualSearchContext) {
         mWordTapped = contextualSearchContext.getWordTapped();
-        mIsShortWordSuppressionEnabled = ContextualSearchFieldTrial.isShortWordSuppressionEnabled();
-        mIsNotLongWordSuppressionEnabled =
-                ContextualSearchFieldTrial.isNotLongWordSuppressionEnabled();
+        mIsShortWordSuppressionEnabled = ContextualSearchFieldTrial.getSwitch(
+                ContextualSearchSwitch.IS_SHORT_WORD_SUPPRESSION_ENABLED);
+        mIsNotLongWordSuppressionEnabled = ContextualSearchFieldTrial.getSwitch(
+                ContextualSearchSwitch.IS_NOT_LONG_WORD_SUPPRESSION_ENABLED);
         mIsShortWordConditionSatisfied = isTapOnShortWord();
         mIsLongWordConditionSatisfied = isTapOnLongWord();
     }
@@ -64,11 +67,11 @@ class TapWordLengthSuppression extends ContextualSearchHeuristic {
     }
 
     @Override
-    protected void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
-        logger.logFeature(
-                ContextualSearchRankerLogger.Feature.IS_SHORT_WORD, mIsShortWordConditionSatisfied);
-        logger.logFeature(
-                ContextualSearchRankerLogger.Feature.IS_LONG_WORD, mIsLongWordConditionSatisfied);
+    protected void logRankerTapSuppression(ContextualSearchInteractionRecorder logger) {
+        logger.logFeature(ContextualSearchInteractionRecorder.Feature.IS_SHORT_WORD,
+                mIsShortWordConditionSatisfied);
+        logger.logFeature(ContextualSearchInteractionRecorder.Feature.IS_LONG_WORD,
+                mIsLongWordConditionSatisfied);
     }
 
     /**

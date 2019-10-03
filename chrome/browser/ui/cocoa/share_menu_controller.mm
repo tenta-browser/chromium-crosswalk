@@ -6,24 +6,27 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/global_keyboard_shortcuts_mac.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/accelerators_cocoa.h"
-#import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/fast_resize_view.h"
-#import "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "net/base/mac/url_conversions.h"
 #include "ui/base/accelerators/platform_accelerator_cocoa.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/mac/coordinate_conversion.h"
 #include "ui/snapshot/snapshot.h"
+#include "ui/views/view.h"
 
 // Private method, used to identify instantiated services.
 @interface NSSharingService (ExposeName)
@@ -57,24 +60,35 @@ NSString* const kRemindersSharingServiceName =
   base::scoped_nsobject<NSImage> snapshotForShare_;
   // The Reminders share extension reads title/URL from the currently active
   // activity.
-  base::scoped_nsobject<NSUserActivity> activity_ API_AVAILABLE(macos(10.10));
-}
-
-+ (BOOL)shouldShowMoreItem {
-  return base::mac::IsAtLeastOS10_10();
+  base::scoped_nsobject<NSUserActivity> activity_;
 }
 
 // NSMenuDelegate
+
+- (BOOL)menuHasKeyEquivalent:(NSMenu*)menu
+                    forEvent:(NSEvent*)event
+                      target:(id*)target
+                      action:(SEL*)action {
+  // Load the menu if it hasn't loaded already.
+  if ([menu numberOfItems] == 0) {
+    [self menuNeedsUpdate:menu];
+  }
+  // Per tapted@'s comment in BookmarkMenuCocoaController, it's fine
+  // to return NO here if an item will handle this. This is why it's
+  // necessary to ensure the menu is loaded above.
+  return NO;
+}
+
 - (void)menuNeedsUpdate:(NSMenu*)menu {
   [menu removeAllItems];
   [menu setAutoenablesItems:NO];
 
-  Browser* lastActiveBrowser = chrome::GetLastActiveBrowser();
+  Browser* lastActiveBrowser = chrome::FindLastActive();
   BOOL canShare =
       lastActiveBrowser != nullptr &&
       // Avoid |CanEmailPageLocation| segfault in interactive UI tests
       lastActiveBrowser->tab_strip_model()->GetActiveWebContents() != nullptr &&
-      chrome::CanEmailPageLocation(chrome::GetLastActiveBrowser());
+      chrome::CanEmailPageLocation(lastActiveBrowser);
   // Using a real URL instead of empty string to avoid system log about relative
   // URLs in the pasteboard. This URL will not actually be shared to, just used
   // to fetch sharing services that can handle the NSURL type.
@@ -88,9 +102,6 @@ NSString* const kRemindersSharingServiceName =
     NSMenuItem* item = [self menuItemForService:service];
     [item setEnabled:canShare];
     [menu addItem:item];
-  }
-  if (![[self class] shouldShowMoreItem]) {
-    return;
   }
   base::scoped_nsobject<NSMenuItem> moreItem([[NSMenuItem alloc]
       initWithTitle:l10n_util::GetNSString(IDS_SHARING_MORE_MAC)
@@ -138,17 +149,25 @@ NSString* const kRemindersSharingServiceName =
 
 // Saves details required by delegate methods for the transition animation.
 - (void)saveTransitionDataFromBrowser:(Browser*)browser {
-  windowForShare_ = browser->window()->GetNativeWindow();
+  windowForShare_ = browser->window()->GetNativeWindow().GetNativeNSWindow();
+  BrowserView* browserView = BrowserView::GetBrowserViewForBrowser(browser);
+  if (!browserView)
+    return;
 
-  NSView* contentsView = [[windowForShare_ windowController] tabContentArea];
-  NSRect rectInWindow =
-      [[contentsView superview] convertRect:[contentsView frame] toView:nil];
-  rectForShare_ = [windowForShare_ convertRectToScreen:rectInWindow];
+  views::View* contentsView = browserView->contents_container();
+  if (!contentsView)
+    return;
 
+  gfx::Rect screenRect = contentsView->bounds();
+  views::View::ConvertRectToScreen(browserView, &screenRect);
+
+  rectForShare_ = ScreenRectToNSRect(screenRect);
+
+  gfx::Rect rectInWidget =
+      browserView->ConvertRectToWidget(contentsView->bounds());
   gfx::Image image;
-  gfx::Rect rect = gfx::Rect(NSRectToCGRect([contentsView bounds]));
-  if (ui::GrabViewSnapshot(contentsView, rect, &image)) {
-    snapshotForShare_.reset(image.CopyNSImage());
+  if (ui::GrabWindowSnapshot(windowForShare_, rectInWidget, &image)) {
+    snapshotForShare_.reset([image.ToNSImage() retain]);
   }
 }
 
@@ -156,15 +175,13 @@ NSString* const kRemindersSharingServiceName =
   windowForShare_ = nil;
   rectForShare_ = NSZeroRect;
   snapshotForShare_.reset();
-  if (@available(macOS 10.10, *)) {
-    [activity_ invalidate];
-    activity_.reset();
-  }
+  [activity_ invalidate];
+  activity_.reset();
 }
 
 // Performs the share action using the sharing service represented by |sender|.
 - (void)performShare:(NSMenuItem*)sender {
-  Browser* browser = chrome::GetLastActiveBrowser();
+  Browser* browser = chrome::FindLastActive();
   DCHECK(browser);
   [self saveTransitionDataFromBrowser:browser];
 
@@ -186,24 +203,21 @@ NSString* const kRemindersSharingServiceName =
   } else {
     itemsToShare = @[ url ];
   }
-  if (@available(macOS 10.10, *)) {
-    if ([[service name] isEqual:kRemindersSharingServiceName]) {
-      activity_.reset([[NSUserActivity alloc]
-          initWithActivityType:NSUserActivityTypeBrowsingWeb]);
-      // webpageURL must be http or https or an exception is thrown.
-      if ([url.scheme hasPrefix:@"http"]) {
-        [activity_ setWebpageURL:url];
-      }
-      [activity_ setTitle:title];
-      [activity_ becomeCurrent];
+  if ([[service name] isEqual:kRemindersSharingServiceName]) {
+    activity_.reset([[NSUserActivity alloc]
+        initWithActivityType:NSUserActivityTypeBrowsingWeb]);
+    // webpageURL must be http or https or an exception is thrown.
+    if ([url.scheme hasPrefix:@"http"]) {
+      [activity_ setWebpageURL:url];
     }
+    [activity_ setTitle:title];
+    [activity_ becomeCurrent];
   }
   [service performWithItems:itemsToShare];
 }
 
 // Opens the "Sharing" subpane of the "Extensions" macOS preference pane.
 - (void)openSharingPrefs:(NSMenuItem*)sender {
-  DCHECK([[self class] shouldShowMoreItem]);
   NSURL* prefPaneURL =
       [NSURL fileURLWithPath:kExtensionPrefPanePath isDirectory:YES];
   NSDictionary* args = @{
@@ -254,13 +268,15 @@ NSString* const kRemindersSharingServiceName =
 }
 
 - (NSString*)keyEquivalentForMail {
-  AcceleratorsCocoa* keymap = AcceleratorsCocoa::GetInstance();
-  const ui::Accelerator* accelerator =
-      keymap->GetAcceleratorForCommand(IDC_EMAIL_PAGE_LOCATION);
-  const ui::PlatformAcceleratorCocoa* platform =
-      static_cast<const ui::PlatformAcceleratorCocoa*>(
-          accelerator->platform_accelerator());
-  return platform->characters();
+  ui::Accelerator accelerator;
+  bool found = GetDefaultMacAcceleratorForCommandId(IDC_EMAIL_PAGE_LOCATION,
+                                                    &accelerator);
+  DCHECK(found);
+  NSString* key_equivalent;
+  NSUInteger modifier_mask;
+  GetKeyEquivalentAndModifierMaskFromAccelerator(accelerator, &key_equivalent,
+                                                 &modifier_mask);
+  return key_equivalent;
 }
 
 @end

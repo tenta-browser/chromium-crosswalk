@@ -10,9 +10,8 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,7 +50,7 @@ class BindToTaskRunnerTest : public ::testing::Test {
  public:
   ~BindToTaskRunnerTest() override { base::RunLoop().RunUntilIdle(); }
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   MockCallbacks callbacks_;
 };
 
@@ -94,7 +93,7 @@ TEST_F(BindToTaskRunnerTest, OnceCallbackWithUnboundConstRef) {
 TEST_F(BindToTaskRunnerTest, OnceCallbackWithBoundMoveOnly) {
   base::OnceCallback<void()> callback = BindToCurrentThread(base::BindOnce(
       &Callbacks::MoveOnlyCallback, base::Unretained(&callbacks_),
-      base::MakeUnique<Type>(kValue)));
+      std::make_unique<Type>(kValue)));
   std::move(callback).Run();
   EXPECT_CALL(callbacks_, DoMoveOnlyCallback(Pointee(kValue)));
 }
@@ -103,7 +102,7 @@ TEST_F(BindToTaskRunnerTest, OnceCallbackWithUnboundMoveOnly) {
   base::OnceCallback<void(std::unique_ptr<Type>)> callback =
       BindToCurrentThread(base::BindOnce(&Callbacks::MoveOnlyCallback,
                                          base::Unretained(&callbacks_)));
-  std::move(callback).Run(base::MakeUnique<Type>(kValue));
+  std::move(callback).Run(std::make_unique<Type>(kValue));
   EXPECT_CALL(callbacks_, DoMoveOnlyCallback(Pointee(kValue)));
 }
 
@@ -150,7 +149,7 @@ TEST_F(BindToTaskRunnerTest, RepeatingCallbackWithBoundMoveOnly) {
   base::RepeatingCallback<void()> callback =
       BindToCurrentThread(base::BindRepeating(
           &Callbacks::MoveOnlyCallback, base::Unretained(&callbacks_),
-          base::Passed(base::MakeUnique<Type>(kValue))));
+          base::Passed(std::make_unique<Type>(kValue))));
   callback.Run();
   EXPECT_CALL(callbacks_, DoMoveOnlyCallback(Pointee(kValue)));
 }
@@ -159,7 +158,7 @@ TEST_F(BindToTaskRunnerTest, RepeatingCallbackWithUnboundMoveOnly) {
   base::RepeatingCallback<void(std::unique_ptr<Type>)> callback =
       BindToCurrentThread(base::BindRepeating(&Callbacks::MoveOnlyCallback,
                                               base::Unretained(&callbacks_)));
-  callback.Run(base::MakeUnique<Type>(kValue));
+  callback.Run(std::make_unique<Type>(kValue));
   EXPECT_CALL(callbacks_, DoMoveOnlyCallback(Pointee(kValue)));
 }
 

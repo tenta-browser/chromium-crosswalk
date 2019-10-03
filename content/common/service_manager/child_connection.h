@@ -11,12 +11,12 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/process/process_handle.h"
+#include "base/process/process.h"
 #include "base/sequenced_task_runner.h"
 #include "content/common/content_export.h"
-#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
+#include "mojo/public/cpp/system/invitation.h"
 #include "services/service_manager/public/cpp/identity.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
 
 namespace service_manager {
 class Connector;
@@ -35,7 +35,7 @@ class CONTENT_EXPORT ChildConnection {
   // service name. |connector| is the connector to use to establish the
   // connection.
   ChildConnection(const service_manager::Identity& child_identity,
-                  mojo::edk::OutgoingBrokerClientInvitation* invitation,
+                  mojo::OutgoingInvitation* invitation,
                   service_manager::Connector* connector,
                   scoped_refptr<base::SequencedTaskRunner> io_task_runner);
   ~ChildConnection();
@@ -54,10 +54,10 @@ class CONTENT_EXPORT ChildConnection {
   // initialize its end of the Service Manager connection pipe.
   std::string service_token() const { return service_token_; }
 
-  // Sets the child connection's process handle. This should be called as soon
+  // Sets the child connection's process. This should be called as soon
   // as the process has been launched, and the connection will not be fully
   // functional until this is called.
-  void SetProcessHandle(base::ProcessHandle handle);
+  void SetProcess(base::Process process);
 
  private:
   class IOThreadContext;
@@ -65,9 +65,8 @@ class CONTENT_EXPORT ChildConnection {
   scoped_refptr<IOThreadContext> context_;
   service_manager::Identity child_identity_;
   std::string service_token_;
-  base::ProcessHandle process_handle_ = base::kNullProcessHandle;
 
-  base::WeakPtrFactory<ChildConnection> weak_factory_;
+  base::WeakPtrFactory<ChildConnection> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChildConnection);
 };

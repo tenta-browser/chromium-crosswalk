@@ -4,14 +4,11 @@
 
 #import <EarlGrey/EarlGrey.h>
 
-#include "base/ios/ios_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/app/history_test_util.h"
-#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/public/test/http_server/html_response_provider.h"
 #import "ios/web/public/test/http_server/html_response_provider_impl.h"
 #import "ios/web/public/test/http_server/http_server.h"
@@ -21,6 +18,12 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::ClearBrowsingDataCell;
+using chrome_test_util::ClearBrowsingDataView;
+using chrome_test_util::ClearBrowsingDataButton;
+using chrome_test_util::ConfirmClearBrowsingDataButton;
+using chrome_test_util::SettingsDoneButton;
+using chrome_test_util::SettingsMenuPrivacyButton;
 using web::test::HttpServer;
 
 // Test case for NTP tiles.
@@ -30,8 +33,7 @@ using web::test::HttpServer;
 @implementation NTPTilesTest
 
 - (void)tearDown {
-  chrome_test_util::ClearBrowsingHistory();
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+  [ChromeEarlGrey clearBrowsingHistory];
   [super tearDown];
 }
 
@@ -45,9 +47,8 @@ using web::test::HttpServer;
   web::test::SetUpSimpleHttpServer(responses);
 
   // Clear history and verify that the tile does not exist.
-  chrome_test_util::ClearBrowsingHistory();
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  chrome_test_util::OpenNewTab();
+  [ChromeEarlGrey clearBrowsingHistory];
+  [ChromeEarlGrey openNewTab];
 
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title1")]
@@ -58,8 +59,10 @@ using web::test::HttpServer;
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.
   [ChromeEarlGrey goBack];
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
-  chrome_test_util::OpenNewTab();
+  [ChromeEarlGrey openNewTab];
+
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title1")]
       assertWithMatcher:grey_notNil()];
@@ -89,21 +92,22 @@ using web::test::HttpServer;
   web::test::SetUpHttpServer(std::move(provider));
 
   // Clear history and verify that the tile does not exist.
-  chrome_test_util::ClearBrowsingHistory();
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  chrome_test_util::OpenNewTab();
+  [ChromeEarlGrey clearBrowsingHistory];
+  [ChromeEarlGrey openNewTab];
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title2")]
       assertWithMatcher:grey_nil()];
 
   // Load first URL and expect redirect to destination URL.
   [ChromeEarlGrey loadURL:firstRedirectURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"redirect complete"];
+  [ChromeEarlGrey waitForWebStateContainingText:"redirect complete"];
 
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.
   [ChromeEarlGrey goBack];
-  chrome_test_util::OpenNewTab();
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
+  [ChromeEarlGrey openNewTab];
 
   // Which of the two tiles that is displayed is an implementation detail, and
   // this test helps document it. The purpose of the test is to verify that only
@@ -113,6 +117,20 @@ using web::test::HttpServer;
       assertWithMatcher:grey_notNil()];
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(@"title1")]
+      assertWithMatcher:grey_nil()];
+
+  // Clear history and verify that the tile does not exist.
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
+  [ChromeEarlGreyUI tapPrivacyMenuButton:ClearBrowsingDataCell()];
+  [ChromeEarlGreyUI tapClearBrowsingDataMenuButton:ClearBrowsingDataButton()];
+  [[EarlGrey selectElementWithMatcher:ConfirmClearBrowsingDataButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
+      performAction:grey_tap()];
+
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::StaticTextWithAccessibilityLabel(@"title2")]
       assertWithMatcher:grey_nil()];
 }
 

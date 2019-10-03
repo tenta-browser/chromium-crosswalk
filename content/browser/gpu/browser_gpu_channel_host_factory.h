@@ -15,13 +15,18 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/browser_thread.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "ipc/message_filter.h"
 
+namespace gpu {
+class GpuMemoryBufferManager;
+}
+
 namespace content {
-class BrowserGpuMemoryBufferManager;
 
 class CONTENT_EXPORT BrowserGpuChannelHostFactory
     : public gpu::GpuChannelEstablishFactory {
@@ -37,17 +42,19 @@ class CONTENT_EXPORT BrowserGpuChannelHostFactory
   // thread stops.
   void CloseChannel();
 
+  // Notify the BrowserGpuChannelHostFactory of visibility, used to prevent
+  // timeouts while backgrounded.
+  void SetApplicationVisible(bool is_visible);
+
   // Overridden from gpu::GpuChannelEstablishFactory:
   // The factory will return a null GpuChannelHost in the callback during
   // shutdown.
   void EstablishGpuChannel(
-      const gpu::GpuChannelEstablishedCallback& callback) override;
-  scoped_refptr<gpu::GpuChannelHost> EstablishGpuChannelSync(
-      bool* connection_error) override;
+      gpu::GpuChannelEstablishedCallback callback) override;
+  scoped_refptr<gpu::GpuChannelHost> EstablishGpuChannelSync() override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
 
  private:
-  struct CreateRequest;
   class EstablishRequest;
 
   BrowserGpuChannelHostFactory();
@@ -58,13 +65,15 @@ class CONTENT_EXPORT BrowserGpuChannelHostFactory
 
   static void InitializeShaderDiskCacheOnIO(int gpu_client_id,
                                             const base::FilePath& cache_dir);
+  static void InitializeGrShaderDiskCacheOnIO(const base::FilePath& cache_dir);
 
   const int gpu_client_id_;
   const uint64_t gpu_client_tracing_id_;
   scoped_refptr<gpu::GpuChannelHost> gpu_channel_;
-  std::unique_ptr<BrowserGpuMemoryBufferManager> gpu_memory_buffer_manager_;
+  std::unique_ptr<gpu::GpuMemoryBufferManager, BrowserThread::DeleteOnIOThread>
+      gpu_memory_buffer_manager_;
   scoped_refptr<EstablishRequest> pending_request_;
-  std::vector<gpu::GpuChannelEstablishedCallback> established_callbacks_;
+  bool is_visible_ = true;
 
   base::OneShotTimer timeout_;
 

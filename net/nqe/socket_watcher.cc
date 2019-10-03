@@ -61,7 +61,7 @@ SocketWatcher::SocketWatcher(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     OnUpdatedRTTAvailableCallback updated_rtt_observation_callback,
     ShouldNotifyRTTCallback should_notify_rtt_callback,
-    base::TickClock* tick_clock)
+    const base::TickClock* tick_clock)
     : protocol_(protocol),
       task_runner_(std::move(task_runner)),
       updated_rtt_observation_callback_(updated_rtt_observation_callback),
@@ -69,7 +69,7 @@ SocketWatcher::SocketWatcher(
       rtt_notifications_minimum_interval_(min_notification_interval),
       run_rtt_callback_(allow_rtt_private_address ||
                         (!address_list.empty() &&
-                         !address_list.front().address().IsReserved())),
+                         address_list.front().address().IsPubliclyRoutable())),
       tick_clock_(tick_clock),
       first_quic_rtt_notification_received_(false),
       host_(CalculateIPHash(address_list)) {
@@ -80,7 +80,7 @@ SocketWatcher::SocketWatcher(
 SocketWatcher::~SocketWatcher() = default;
 
 bool SocketWatcher::ShouldNotifyUpdatedRTT() const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!run_rtt_callback_)
     return false;
@@ -104,9 +104,12 @@ bool SocketWatcher::ShouldNotifyUpdatedRTT() const {
 }
 
 void SocketWatcher::OnUpdatedRTTAvailable(const base::TimeDelta& rtt) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (rtt <= base::TimeDelta())
+  // tcp_socket_posix may sometimes report RTT as 1 microsecond when the RTT was
+  // actually invalid. See:
+  // https://cs.chromium.org/chromium/src/net/socket/tcp_socket_posix.cc?rcl=7ad660e34f2a996e381a85b2a515263003b0c171&l=106.
+  if (rtt <= base::TimeDelta::FromMicroseconds(1))
     return;
 
   if (!first_quic_rtt_notification_received_ &&
@@ -120,11 +123,11 @@ void SocketWatcher::OnUpdatedRTTAvailable(const base::TimeDelta& rtt) {
   last_rtt_notification_ = tick_clock_->NowTicks();
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(updated_rtt_observation_callback_, protocol_, rtt, host_));
+      base::BindOnce(updated_rtt_observation_callback_, protocol_, rtt, host_));
 }
 
 void SocketWatcher::OnConnectionChanged() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 }  // namespace internal

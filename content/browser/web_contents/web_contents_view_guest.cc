@@ -12,11 +12,12 @@
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
 #include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/frame_host/render_widget_host_view_guest.h"
-#include "content/browser/mus_util.h"
+#include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/drag_messages.h"
+#include "content/public/browser/guest_mode.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/context_menu_params.h"
 #include "content/public/common/drop_data.h"
@@ -44,6 +45,7 @@ WebContentsViewGuest::WebContentsViewGuest(
       platform_view_(std::move(platform_view)),
       platform_view_delegate_view_(*delegate_view) {
   *delegate_view = this;
+  DCHECK(!GuestMode::IsCrossProcessFrameGuest(web_contents));
 }
 
 WebContentsViewGuest::~WebContentsViewGuest() {
@@ -64,13 +66,6 @@ gfx::NativeWindow WebContentsViewGuest::GetTopLevelNativeWindow() const {
   return guest_->embedder_web_contents()->GetTopLevelNativeWindow();
 }
 
-void WebContentsViewGuest::GetScreenInfo(ScreenInfo* screen_info) const {
-  if (guest_->embedder_web_contents())
-    guest_->embedder_web_contents()->GetView()->GetScreenInfo(screen_info);
-  else
-    WebContentsView::GetDefaultScreenInfo(screen_info);
-}
-
 void WebContentsViewGuest::OnGuestAttached(WebContentsView* parent_view) {
 #if defined(USE_AURA)
   // In aura, ScreenPositionClient doesn't work properly if we do
@@ -78,17 +73,14 @@ void WebContentsViewGuest::OnGuestAttached(WebContentsView* parent_view) {
   // view hierarchy. We add this view as embedder's child here.
   // This would go in WebContentsViewGuest::CreateView, but that is too early to
   // access embedder_web_contents(). Therefore, we do it here.
-  if (!IsUsingMus())
-    parent_view->GetNativeView()->AddChild(platform_view_->GetNativeView());
+  parent_view->GetNativeView()->AddChild(platform_view_->GetNativeView());
 #endif  // defined(USE_AURA)
 }
 
 void WebContentsViewGuest::OnGuestDetached(WebContentsView* old_parent_view) {
 #if defined(USE_AURA)
-  if (!IsUsingMus()) {
-    old_parent_view->GetNativeView()->RemoveChild(
-        platform_view_->GetNativeView());
-  }
+  old_parent_view->GetNativeView()->RemoveChild(
+      platform_view_->GetNativeView());
 #endif  // defined(USE_AURA)
 }
 
@@ -121,16 +113,6 @@ gfx::Rect WebContentsViewGuest::GetViewBounds() const {
   return gfx::Rect(size_);
 }
 
-#if defined(OS_MACOSX)
-void WebContentsViewGuest::SetAllowOtherViews(bool allow) {
-  platform_view_->SetAllowOtherViews(allow);
-}
-
-bool WebContentsViewGuest::GetAllowOtherViews() const {
-  return platform_view_->GetAllowOtherViews();
-}
-#endif
-
 void WebContentsViewGuest::CreateView(const gfx::Size& initial_size,
                                       gfx::NativeView context) {
   platform_view_->CreateView(initial_size, context);
@@ -157,9 +139,9 @@ RenderWidgetHostViewBase* WebContentsViewGuest::CreateViewForWidget(
                                            platform_widget->GetWeakPtr());
 }
 
-RenderWidgetHostViewBase* WebContentsViewGuest::CreateViewForPopupWidget(
+RenderWidgetHostViewBase* WebContentsViewGuest::CreateViewForChildWidget(
     RenderWidgetHost* render_widget_host) {
-  return platform_view_->CreateViewForPopupWidget(render_widget_host);
+  return platform_view_->CreateViewForChildWidget(render_widget_host);
 }
 
 void WebContentsViewGuest::SetPageTitle(const base::string16& title) {
@@ -169,8 +151,13 @@ void WebContentsViewGuest::RenderViewCreated(RenderViewHost* host) {
   platform_view_->RenderViewCreated(host);
 }
 
-void WebContentsViewGuest::RenderViewSwappedIn(RenderViewHost* host) {
-  platform_view_->RenderViewSwappedIn(host);
+void WebContentsViewGuest::RenderViewReady() {
+  platform_view_->RenderViewReady();
+}
+
+void WebContentsViewGuest::RenderViewHostChanged(RenderViewHost* old_host,
+                                                 RenderViewHost* new_host) {
+  platform_view_->RenderViewHostChanged(old_host, new_host);
 }
 
 void WebContentsViewGuest::SetOverscrollControllerEnabled(bool enabled) {
@@ -178,11 +165,8 @@ void WebContentsViewGuest::SetOverscrollControllerEnabled(bool enabled) {
 }
 
 #if defined(OS_MACOSX)
-bool WebContentsViewGuest::IsEventTracking() const {
+bool WebContentsViewGuest::CloseTabAfterEventTrackingIfNeeded() {
   return false;
-}
-
-void WebContentsViewGuest::CloseTabAfterEventTracking() {
 }
 #endif
 

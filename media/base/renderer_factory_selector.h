@@ -7,6 +7,8 @@
 
 #include "base/callback.h"
 #include "base/optional.h"
+#include "build/build_config.h"
+#include "media/base/media_status.h"
 #include "media/base/renderer_factory.h"
 
 namespace media {
@@ -17,13 +19,15 @@ namespace media {
 class MEDIA_EXPORT RendererFactorySelector {
  public:
   using QueryIsRemotingActiveCB = base::Callback<bool()>;
+  using QueryIsFlingingActiveCB = base::Callback<bool()>;
 
   enum FactoryType {
     DEFAULT,       // DefaultRendererFactory.
     MOJO,          // MojoRendererFactory.
     MEDIA_PLAYER,  // MediaPlayerRendererClientFactory.
     COURIER,       // CourierRendererFactory.
-    FACTORY_TYPE_MAX = COURIER,
+    FLINGING,      // FlingingRendererClientFactory
+    FACTORY_TYPE_MAX = FLINGING,
   };
 
   RendererFactorySelector();
@@ -54,10 +58,30 @@ class MEDIA_EXPORT RendererFactorySelector {
   void SetQueryIsRemotingActiveCB(
       QueryIsRemotingActiveCB query_is_remoting_active_cb);
 
+  // Sets the callback to query whether we are currently flinging media, and if
+  // we should temporarily use the FLINGING factory.
+  void SetQueryIsFlingingActiveCB(
+      QueryIsFlingingActiveCB query_is_flinging_active_cb);
+
+#if defined(OS_ANDROID)
+  // Starts a request to receive a RemotePlayStateChangeCB, to be fulfilled
+  // later by passing a request via SetRemotePlayStateChangeCB().
+  // NOTE: There should be no pending request (this new one would overwrite it).
+  void StartRequestRemotePlayStateCB(
+      RequestRemotePlayStateChangeCB callback_request);
+
+  // Fulfills a request initiated by StartRequestRemotePlayStateCB().
+  // NOTE: There must be a pending request.
+  void SetRemotePlayStateChangeCB(RemotePlayStateChangeCB callback);
+#endif
+
  private:
   bool use_media_player_ = false;
 
   QueryIsRemotingActiveCB query_is_remoting_active_cb_;
+  QueryIsFlingingActiveCB query_is_flinging_active_cb_;
+
+  RequestRemotePlayStateChangeCB remote_play_state_change_cb_request_;
 
   base::Optional<FactoryType> base_factory_type_;
   std::unique_ptr<RendererFactory> factories_[FACTORY_TYPE_MAX + 1];

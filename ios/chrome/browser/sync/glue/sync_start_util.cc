@@ -7,13 +7,14 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "base/task/post_task.h"
 #include "components/sync/driver/sync_service.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager.h"
-#include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/chrome/browser/sync/profile_sync_service_factory.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 
 namespace ios {
 namespace {
@@ -36,7 +37,7 @@ void StartSyncOnUIThread(const base::FilePath& browser_state_path,
   }
 
   syncer::SyncService* sync_service =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(browser_state);
+      ProfileSyncServiceFactory::GetForBrowserState(browser_state);
   if (!sync_service) {
     DVLOG(2) << "No SyncService for browser state, can't start sync.";
     return;
@@ -46,9 +47,9 @@ void StartSyncOnUIThread(const base::FilePath& browser_state_path,
 
 void StartSyncProxy(const base::FilePath& browser_state_path,
                     syncer::ModelType type) {
-  web::WebThread::PostTask(
-      web::WebThread::UI, FROM_HERE,
-      base::Bind(&StartSyncOnUIThread, browser_state_path, type));
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::UI},
+      base::BindOnce(&StartSyncOnUIThread, browser_state_path, type));
 }
 
 }  // namespace

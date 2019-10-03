@@ -4,7 +4,6 @@
 
 #include "chrome/browser/chromeos/system_logs/device_event_log_source.h"
 
-#include "base/message_loop/message_loop.h"
 #include "components/device_event_log/device_event_log.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -19,7 +18,7 @@ DeviceEventLogSource::DeviceEventLogSource() : SystemLogsSource("DeviceEvent") {
 DeviceEventLogSource::~DeviceEventLogSource() {
 }
 
-void DeviceEventLogSource::Fetch(const SysLogsSourceCallback& callback) {
+void DeviceEventLogSource::Fetch(SysLogsSourceCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!callback.is_null());
 
@@ -31,7 +30,7 @@ void DeviceEventLogSource::Fetch(const SysLogsSourceCallback& callback) {
   (*response)[kDeviceEventLogEntry] = device_event_log::GetAsString(
       device_event_log::OLDEST_FIRST, "time,file,type,level", "non-network",
       device_event_log::LOG_LEVEL_DEBUG, kMaxDeviceEventsForAboutSystem);
-  callback.Run(std::move(response));
+  std::move(callback).Run(std::move(response));
 }
 
 }  // namespace system_logs

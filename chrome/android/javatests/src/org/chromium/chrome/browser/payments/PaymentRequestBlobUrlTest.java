@@ -13,18 +13,13 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /** Web payments test for blob URL.  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestBlobUrlTest {
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
@@ -33,11 +28,10 @@ public class PaymentRequestBlobUrlTest {
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void test() throws InterruptedException, ExecutionException, TimeoutException {
+    public void test() throws InterruptedException, TimeoutException {
         mPaymentRequestTestRule.openPageAndClickNode("buy");
         mPaymentRequestTestRule.assertWaitForPageScaleFactorMatch(2);
         mPaymentRequestTestRule.expectResultContains(
-                new String[] {"SecurityError: Failed to construct 'PaymentRequest': "
-                        + "Must be in a secure context"});
+                new String[] {"PaymentRequest is not defined"});
     }
 }

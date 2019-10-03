@@ -1,5 +1,10 @@
 include_rules = [
+  "+components/account_id",
   "-components/policy/core/browser",
-  "+components/data_use_measurement/core",
-  "+extensions/features",
+  "+components/strings",
+  "+extensions/buildflags",
+  "+net/http",
+  "+net/traffic_annotation",
+  "+services/network/test",
+  "+third_party/libxml",
 ]

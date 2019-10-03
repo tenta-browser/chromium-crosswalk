@@ -23,22 +23,6 @@
 namespace chromium_android_linker {
 namespace {
 
-// Retrieve the SDK build version and pass it into the crazy linker. This
-// needs to be done early in initialization, before any other crazy linker
-// code is run.
-// |env| is the current JNI environment handle.
-// On success, return true.
-bool InitSDKVersionInfo(JNIEnv* env) {
-  jint value = 0;
-  if (!InitStaticInt(env, "android/os/Build$VERSION", "SDK_INT", &value))
-    return false;
-
-  crazy_set_sdk_build_version(static_cast<int>(value));
-  LOG_INFO("Set SDK build version to %d", static_cast<int>(value));
-
-  return true;
-}
-
 // The linker uses a single crazy_context_t object created on demand.
 // There is no need to protect this against concurrent access, locking
 // is already handled on the Java side.
@@ -51,8 +35,8 @@ crazy_context_t* GetCrazyContext() {
 
     // Ensure libraries located in the same directory as the linker
     // can be loaded before system ones.
-    crazy_context_add_search_path_for_address(
-        s_crazy_context, reinterpret_cast<void*>(&GetCrazyContext));
+    crazy_add_search_path_for_address(
+        reinterpret_cast<void*>(&GetCrazyContext));
   }
 
   return s_crazy_context;
@@ -83,86 +67,39 @@ class ScopedLibrary {
   crazy_library_t* lib_;
 };
 
-template <class LibraryOpener>
-bool GenericLoadLibrary(JNIEnv* env,
-                        const char* library_name,
-                        jlong load_address,
-                        jobject lib_info_obj,
-                        const LibraryOpener& opener) {
-  LOG_INFO("Called for %s, at address 0x%llx", library_name, load_address);
-  crazy_context_t* context = GetCrazyContext();
+// We identify the abi tag for which the linker is running. This allows
+// us to select the library which matches the abi of the linker.
 
-  if (!IsValidAddress(load_address)) {
-    LOG_ERROR("Invalid address 0x%llx", load_address);
-    return false;
-  }
+#if defined(__arm__) && defined(__ARM_ARCH_7A__)
+#define CURRENT_ABI "armeabi-v7a"
+#elif defined(__arm__)
+#define CURRENT_ABI "armeabi"
+#elif defined(__i386__)
+#define CURRENT_ABI "x86"
+#elif defined(__mips__)
+#define CURRENT_ABI "mips"
+#elif defined(__x86_64__)
+#define CURRENT_ABI "x86_64"
+#elif defined(__aarch64__)
+#define CURRENT_ABI "arm64-v8a"
+#else
+#error "Unsupported target abi"
+#endif
 
-  // Set the desired load address (0 means randomize it).
-  crazy_context_set_load_address(context, static_cast<size_t>(load_address));
+// Add a zip archive file path to the context's current search path
+// list. Making it possible to load libraries directly from it.
+JNI_GENERATOR_EXPORT bool
+Java_org_chromium_base_library_1loader_LegacyLinker_nativeAddZipArchivePath(
+    JNIEnv* env,
+    jclass clazz,
+    jstring apk_path_obj) {
+  String apk_path(env, apk_path_obj);
 
-  ScopedLibrary library;
-  if (!opener.Open(library.GetPtr(), library_name, context)) {
-    return false;
-  }
+  char search_path[512];
+  snprintf(search_path, sizeof(search_path), "%s!lib/" CURRENT_ABI "/",
+           apk_path.c_str());
 
-  crazy_library_info_t info;
-  if (!crazy_library_get_info(library.Get(), context, &info)) {
-    LOG_ERROR("Could not get library information for %s: %s",
-              library_name, crazy_context_get_error(context));
-    return false;
-  }
-
-  // Release library object to keep it alive after the function returns.
-  library.Release();
-
-  s_lib_info_fields.SetLoadInfo(env,
-                                lib_info_obj,
-                                info.load_address, info.load_size);
-  LOG_INFO("Success loading library %s", library_name);
-  return true;
-}
-
-// Used for opening the library in a regular file.
-class FileLibraryOpener {
- public:
-  bool Open(crazy_library_t** library,
-            const char* library_name,
-            crazy_context_t* context) const;
-};
-
-bool FileLibraryOpener::Open(crazy_library_t** library,
-                             const char* library_name,
-                             crazy_context_t* context) const {
-  if (!crazy_library_open(library, library_name, context)) {
-    LOG_ERROR("Could not open %s: %s",
-              library_name, crazy_context_get_error(context));
-    return false;
-  }
-  return true;
-}
-
-// Used for opening the library in a zip file.
-class ZipLibraryOpener {
- public:
-  explicit ZipLibraryOpener(const char* zip_file) : zip_file_(zip_file) { }
-  bool Open(crazy_library_t** library,
-            const char* library_name,
-            crazy_context_t* context) const;
- private:
-  const char* zip_file_;
-};
-
-bool ZipLibraryOpener::Open(crazy_library_t** library,
-                            const char* library_name,
-                            crazy_context_t* context) const {
-  if (!crazy_library_open_in_zip_file(library,
-                                      zip_file_,
-                                      library_name,
-                                      context)) {
-     LOG_ERROR("Could not open %s in zip file %s: %s",
-               library_name, zip_file_, crazy_context_get_error(context));
-     return false;
-  }
+  crazy_add_search_path(search_path);
   return true;
 }
 
@@ -177,158 +114,65 @@ bool ZipLibraryOpener::Open(crazy_library_t** library,
 // and is ignored here.
 // |library_name| is the library name (e.g. libfoo.so).
 // |load_address| is an explicit load address.
-// |library_info| is a LibInfo handle used to communicate information
+// |lib_info_obj| is a LibInfo handle used to communicate information
 // with the Java side.
 // Return true on success.
-jboolean LoadLibrary(JNIEnv* env,
-                     jclass clazz,
-                     jstring library_name,
-                     jlong load_address,
-                     jobject lib_info_obj) {
-  String lib_name(env, library_name);
-  FileLibraryOpener opener;
-
-  return GenericLoadLibrary(env,
-                            lib_name.c_str(),
-                            static_cast<size_t>(load_address),
-                            lib_info_obj,
-                            opener);
-}
-
-// Load a library from a zipfile with the chromium linker. The
-// library in the zipfile must be uncompressed and page aligned.
-// The basename of the library is given. The library is expected
-// to be lib/<abi_tag>/crazy.<basename>. The <abi_tag> used will be the
-// same as the abi for this linker. The "crazy." prefix is included
-// so that the Android Package Manager doesn't extract the library into
-// /data/app-lib.
-//
-// Loading the library will also call its JNI_OnLoad() method, which
-// shall register its methods. Note that lazy native method resolution
-// will _not_ work after this, because Dalvik uses the system's dlsym()
-// which won't see the new library, so explicit registration is mandatory.
-//
-// |env| is the current JNI environment handle.
-// |clazz| is the static class handle for org.chromium.base.Linker,
-// and is ignored here.
-// |zipfile_name| is the filename of the zipfile containing the library.
-// |library_name| is the library base name (e.g. libfoo.so).
-// |load_address| is an explicit load address.
-// |library_info| is a LibInfo handle used to communicate information
-// with the Java side.
-// Returns true on success.
-jboolean LoadLibraryInZipFile(JNIEnv* env,
-                              jclass clazz,
-                              jstring zipfile_name,
-                              jstring library_name,
-                              jlong load_address,
-                              jobject lib_info_obj) {
-  String zipfile_name_str(env, zipfile_name);
-  String lib_name(env, library_name);
-  ZipLibraryOpener opener(zipfile_name_str.c_str());
-
-  return GenericLoadLibrary(env,
-                            lib_name.c_str(),
-                            static_cast<size_t>(load_address),
-                            lib_info_obj,
-                            opener);
-}
-
-// Class holding the Java class and method ID for the Java side Linker
-// postCallbackOnMainThread method.
-struct JavaCallbackBindings_class {
-  jclass clazz;
-  jmethodID method_id;
-
-  // Initialize an instance.
-  bool Init(JNIEnv* env, jclass linker_class) {
-    clazz = reinterpret_cast<jclass>(env->NewGlobalRef(linker_class));
-    return InitStaticMethodId(env,
-                              linker_class,
-                              "postCallbackOnMainThread",
-                              "(J)V",
-                              &method_id);
-  }
-};
-
-static JavaCallbackBindings_class s_java_callback_bindings;
-
-// Designated receiver function for callbacks from Java. Its name is known
-// to the Java side.
-// |env| is the current JNI environment handle and is ignored here.
-// |clazz| is the static class handle for org.chromium.base.Linker,
-// and is ignored here.
-// |arg| is a pointer to an allocated crazy_callback_t, deleted after use.
-void RunCallbackOnUiThread(JNIEnv* env, jclass clazz, jlong arg) {
-  crazy_callback_t* callback = reinterpret_cast<crazy_callback_t*>(arg);
-
-  LOG_INFO("Called back from java with handler %p, opaque %p",
-           callback->handler, callback->opaque);
-
-  crazy_callback_run(callback);
-  delete callback;
-}
-
-// Request a callback from Java. The supplied crazy_callback_t is valid only
-// for the duration of this call, so we copy it to a newly allocated
-// crazy_callback_t and then call the Java side's postCallbackOnMainThread.
-// This will call back to to our RunCallbackOnUiThread some time
-// later on the UI thread.
-// |callback_request| is a crazy_callback_t.
-// |poster_opaque| is unused.
-// Returns true if the callback request succeeds.
-static bool PostForLaterExecution(crazy_callback_t* callback_request,
-                                  void* poster_opaque UNUSED) {
+JNI_GENERATOR_EXPORT bool
+Java_org_chromium_base_library_1loader_LegacyLinker_nativeLoadLibrary(
+    JNIEnv* env,
+    jclass clazz,
+    jstring lib_name_obj,
+    jlong load_address,
+    jobject lib_info_obj) {
+  String library_name(env, lib_name_obj);
+  LOG_INFO("Called for %s, at address 0x%llx", library_name.c_str(),
+           load_address);
   crazy_context_t* context = GetCrazyContext();
 
-  JavaVM* vm;
-  int minimum_jni_version;
-  crazy_context_get_java_vm(context,
-                            reinterpret_cast<void**>(&vm),
-                            &minimum_jni_version);
-
-  // Do not reuse JNIEnv from JNI_OnLoad, but retrieve our own.
-  JNIEnv* env;
-  if (JNI_OK != vm->GetEnv(
-      reinterpret_cast<void**>(&env), minimum_jni_version)) {
-    LOG_ERROR("Could not create JNIEnv");
+  if (!IsValidAddress(load_address)) {
+    LOG_ERROR("Invalid address 0x%llx",
+              static_cast<unsigned long long>(load_address));
     return false;
   }
 
-  // Copy the callback; the one passed as an argument may be temporary.
-  crazy_callback_t* callback = new crazy_callback_t();
-  *callback = *callback_request;
+  // Set the desired load address (0 means randomize it).
+  crazy_context_set_load_address(context, static_cast<size_t>(load_address));
 
-  LOG_INFO("Calling back to java with handler %p, opaque %p",
-           callback->handler, callback->opaque);
-
-  jlong arg = static_cast<jlong>(reinterpret_cast<uintptr_t>(callback));
-
-  env->CallStaticVoidMethod(
-      s_java_callback_bindings.clazz, s_java_callback_bindings.method_id, arg);
-
-  // Back out and return false if we encounter a JNI exception.
-  if (env->ExceptionCheck() == JNI_TRUE) {
-    env->ExceptionDescribe();
-    env->ExceptionClear();
-    delete callback;
+  ScopedLibrary library;
+  if (!crazy_library_open(library.GetPtr(), library_name.c_str(), context)) {
     return false;
   }
 
+  crazy_library_info_t info;
+  if (!crazy_library_get_info(library.Get(), context, &info)) {
+    LOG_ERROR("Could not get library information for %s: %s",
+              library_name.c_str(), crazy_context_get_error(context));
+    return false;
+  }
+
+  // Release library object to keep it alive after the function returns.
+  library.Release();
+
+  s_lib_info_fields.SetLoadInfo(env, lib_info_obj, info.load_address,
+                                info.load_size);
+  LOG_INFO("Success loading library %s", library_name.c_str());
   return true;
 }
 
-jboolean CreateSharedRelro(JNIEnv* env,
-                           jclass clazz,
-                           jstring library_name,
-                           jlong load_address,
-                           jobject lib_info_obj) {
+JNI_GENERATOR_EXPORT jboolean
+Java_org_chromium_base_library_1loader_LegacyLinker_nativeCreateSharedRelro(
+    JNIEnv* env,
+    jclass clazz,
+    jstring library_name,
+    jlong load_address,
+    jobject lib_info_obj) {
   String lib_name(env, library_name);
 
   LOG_INFO("Called for %s", lib_name.c_str());
 
   if (!IsValidAddress(load_address)) {
-    LOG_ERROR("Invalid address 0x%llx", load_address);
+    LOG_ERROR("Invalid address 0x%llx",
+              static_cast<unsigned long long>(load_address));
     return false;
   }
 
@@ -343,27 +187,25 @@ jboolean CreateSharedRelro(JNIEnv* env,
   size_t relro_size = 0;
   int relro_fd = -1;
 
-  if (!crazy_library_create_shared_relro(library.Get(),
-                                         context,
-                                         static_cast<size_t>(load_address),
-                                         &relro_start,
-                                         &relro_size,
-                                         &relro_fd)) {
+  if (!crazy_library_create_shared_relro(
+          library.Get(), context, static_cast<size_t>(load_address),
+          &relro_start, &relro_size, &relro_fd)) {
     LOG_ERROR("Could not create shared RELRO sharing for %s: %s\n",
               lib_name.c_str(), crazy_context_get_error(context));
     return false;
   }
 
-  s_lib_info_fields.SetRelroInfo(env,
-                                 lib_info_obj,
-                                 relro_start, relro_size, relro_fd);
+  s_lib_info_fields.SetRelroInfo(env, lib_info_obj, relro_start, relro_size,
+                                 relro_fd);
   return true;
 }
 
-jboolean UseSharedRelro(JNIEnv* env,
-                        jclass clazz,
-                        jstring library_name,
-                        jobject lib_info_obj) {
+JNI_GENERATOR_EXPORT jboolean
+Java_org_chromium_base_library_1loader_LegacyLinker_nativeUseSharedRelro(
+    JNIEnv* env,
+    jclass clazz,
+    jstring library_name,
+    jobject lib_info_obj) {
   String lib_name(env, library_name);
 
   LOG_INFO("Called for %s, lib_info_ref=%p", lib_name.c_str(), lib_info_obj);
@@ -378,18 +220,16 @@ jboolean UseSharedRelro(JNIEnv* env,
   size_t relro_start = 0;
   size_t relro_size = 0;
   int relro_fd = -1;
-  s_lib_info_fields.GetRelroInfo(env,
-                                 lib_info_obj,
-                                 &relro_start, &relro_size, &relro_fd);
+  s_lib_info_fields.GetRelroInfo(env, lib_info_obj, &relro_start, &relro_size,
+                                 &relro_fd);
 
-  LOG_INFO("library=%s relro start=%p size=%p fd=%d",
-           lib_name.c_str(), (void*)relro_start, (void*)relro_size, relro_fd);
+  LOG_INFO("library=%s relro start=%p size=%p fd=%d", lib_name.c_str(),
+           (void*)relro_start, (void*)relro_size, relro_fd);
 
-  if (!crazy_library_use_shared_relro(library.Get(),
-                                      context,
-                                      relro_start, relro_size, relro_fd)) {
-    LOG_ERROR("Could not use shared RELRO for %s: %s",
-              lib_name.c_str(), crazy_context_get_error(context));
+  if (!crazy_library_use_shared_relro(library.Get(), context, relro_start,
+                                      relro_size, relro_fd)) {
+    LOG_ERROR("Could not use shared RELRO for %s: %s", lib_name.c_str(),
+              crazy_context_get_error(context));
     return false;
   }
 
@@ -398,89 +238,14 @@ jboolean UseSharedRelro(JNIEnv* env,
   return true;
 }
 
-const JNINativeMethod kNativeMethods[] = {
-    {"nativeLoadLibrary",
-     "("
-     "Ljava/lang/String;"
-     "J"
-     "Lorg/chromium/base/library_loader/Linker$LibInfo;"
-     ")"
-     "Z",
-     reinterpret_cast<void*>(&LoadLibrary)},
-    {"nativeLoadLibraryInZipFile",
-     "("
-     "Ljava/lang/String;"
-     "Ljava/lang/String;"
-     "J"
-     "Lorg/chromium/base/library_loader/Linker$LibInfo;"
-     ")"
-     "Z",
-     reinterpret_cast<void*>(&LoadLibraryInZipFile)},
-    {"nativeRunCallbackOnUiThread",
-     "("
-     "J"
-     ")"
-     "V",
-     reinterpret_cast<void*>(&RunCallbackOnUiThread)},
-    {"nativeCreateSharedRelro",
-     "("
-     "Ljava/lang/String;"
-     "J"
-     "Lorg/chromium/base/library_loader/Linker$LibInfo;"
-     ")"
-     "Z",
-     reinterpret_cast<void*>(&CreateSharedRelro)},
-    {"nativeUseSharedRelro",
-     "("
-     "Ljava/lang/String;"
-     "Lorg/chromium/base/library_loader/Linker$LibInfo;"
-     ")"
-     "Z",
-     reinterpret_cast<void*>(&UseSharedRelro)},
-};
-
-const size_t kNumNativeMethods =
-    sizeof(kNativeMethods) / sizeof(kNativeMethods[0]);
-
 }  // namespace
 
 bool LegacyLinkerJNIInit(JavaVM* vm, JNIEnv* env) {
   LOG_INFO("Entering");
 
-  // Initialize SDK version info.
-  LOG_INFO("Retrieving SDK version info");
-  if (!InitSDKVersionInfo(env))
-    return false;
-
-// Disable debugger support when needed. See https://crbug.com/796938
-#if defined(LEGACY_LINKER_DISABLE_DEBUGGER_SUPPORT)
-  crazy_set_debugger_support(false);
-#endif
-
-  // Register native methods.
-  jclass linker_class;
-  if (!InitClassReference(env,
-                          "org/chromium/base/library_loader/LegacyLinker",
-                          &linker_class))
-    return false;
-
-  LOG_INFO("Registering native methods");
-  if (env->RegisterNatives(linker_class, kNativeMethods, kNumNativeMethods) < 0)
-    return false;
-
-  // Resolve and save the Java side Linker callback class and method.
-  LOG_INFO("Resolving callback bindings");
-  if (!s_java_callback_bindings.Init(env, linker_class)) {
-    return false;
-  }
-
-  // Save JavaVM* handle into context.
-  crazy_context_t* context = GetCrazyContext();
-  crazy_context_set_java_vm(context, vm, JNI_VERSION_1_4);
-
-  // Register the function that the crazy linker can call to post code
-  // for later execution.
-  crazy_context_set_callback_poster(context, &PostForLaterExecution, nullptr);
+  // Save JavaVM* handle into linker, so that it can call JNI_OnLoad()
+  // automatically when loading libraries containing JNI entry points.
+  crazy_set_java_vm(vm, JNI_VERSION_1_4);
 
   return true;
 }

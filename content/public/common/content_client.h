@@ -13,12 +13,19 @@
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/base/layout.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "url/url_util.h"
 
 namespace base {
 class RefCountedMemory;
+class DictionaryValue;
+}
+
+namespace blink {
+class OriginTrialPolicy;
 }
 
 namespace IPC {
@@ -45,8 +52,6 @@ class ContentClient;
 class ContentGpuClient;
 class ContentRendererClient;
 class ContentUtilityClient;
-class OriginTrialPolicy;
-class ServiceManagerConnection;
 struct CdmInfo;
 struct PepperPluginInfo;
 
@@ -60,7 +65,9 @@ ContentClient* GetContentClient();
 #endif
 
 // Used for tests to override the relevant embedder interfaces. Each method
-// returns the old value.
+// returns the old value. In browser tests it seems safest to call these in
+// SetUpOnMainThread() or you may get TSan errors due a race between the
+// browser "process" and the child "process" for the test both accessing it.
 CONTENT_EXPORT ContentBrowserClient* SetBrowserClientForTesting(
     ContentBrowserClient* b);
 CONTENT_EXPORT ContentRendererClient* SetRendererClientForTesting(
@@ -79,8 +86,14 @@ class CONTENT_EXPORT ContentClient {
   ContentRendererClient* renderer() { return renderer_; }
   ContentUtilityClient* utility() { return utility_; }
 
-  // Sets the currently active URL.  Use GURL() to clear the URL.
-  virtual void SetActiveURL(const GURL& url) {}
+  // Sets the active URL (the URL of a frame that is navigating or processing an
+  // IPC message), and the origin of the main frame (for diagnosing crashes).
+  // Use GURL() or std::string() to clear the URL/origin.
+  //
+  // A string is used for the origin because the source of that value may be a
+  // WebSecurityOrigin or a full URL (if called from the browser process) and a
+  // string is the lowest-common-denominator.
+  virtual void SetActiveURL(const GURL& url, std::string top_origin) {}
 
   // Sets the data on the current gpu.
   virtual void SetGpuInfo(const gpu::GPUInfo& gpu_info) {}
@@ -122,10 +135,14 @@ class CONTENT_EXPORT ContentClient {
     std::vector<std::string> csp_bypassing_schemes;
     // See https://www.w3.org/TR/powerful-features/#is-origin-trustworthy.
     std::vector<std::string> secure_schemes;
-    std::vector<GURL> secure_origins;
     // Registers a URL scheme as strictly empty documents, allowing them to
     // commit synchronously.
     std::vector<std::string> empty_document_schemes;
+#if defined(OS_ANDROID)
+    // Normally, non-standard schemes canonicalize to opaque origins. However,
+    // Android WebView requires non-standard schemes to still be preserved.
+    bool allow_non_standard_schemes_in_origins = false;
+#endif
   };
 
   virtual void AddAdditionalSchemes(Schemes* schemes) {}
@@ -133,47 +150,47 @@ class CONTENT_EXPORT ContentClient {
   // Returns whether the given message should be sent in a swapped out renderer.
   virtual bool CanSendWhileSwappedOut(const IPC::Message* message);
 
-  // Returns a string describing the embedder product name and version,
-  // of the form "productname/version", with no other slashes.
-  // Used as part of the user agent string.
-  virtual std::string GetProduct() const;
-
-  // Returns the user agent.  Content may cache this value.
-  virtual std::string GetUserAgent() const;
-
   // Returns a string resource given its id.
-  virtual base::string16 GetLocalizedString(int message_id) const;
+  virtual base::string16 GetLocalizedString(int message_id);
+
+  // Returns a string resource given its id and replace $1 with the given
+  // replacement.
+  virtual base::string16 GetLocalizedString(int message_id,
+                                            const base::string16& replacement);
 
   // Return the contents of a resource in a StringPiece given the resource id.
-  virtual base::StringPiece GetDataResource(
-      int resource_id,
-      ui::ScaleFactor scale_factor) const;
+  virtual base::StringPiece GetDataResource(int resource_id,
+                                            ui::ScaleFactor scale_factor);
 
   // Returns the raw bytes of a scale independent data resource.
-  virtual base::RefCountedMemory* GetDataResourceBytes(
-      int resource_id) const;
+  virtual base::RefCountedMemory* GetDataResourceBytes(int resource_id);
+
+  // Returns whether the contents of a resource are compressed (with gzip).
+  virtual bool IsDataResourceGzipped(int resource_id);
 
   // Returns a native image given its id.
-  virtual gfx::Image& GetNativeImageNamed(int resource_id) const;
+  virtual gfx::Image& GetNativeImageNamed(int resource_id);
 
   // Called by content::GetProcessTypeNameInEnglish for process types that it
   // doesn't know about because they're from the embedder.
   virtual std::string GetProcessTypeNameInEnglish(int type);
 
+  // Called once during initialization of NetworkService to provide constants
+  // to NetLog.  (Though it may be called multiples times if NetworkService
+  // crashes and needs to be reinitialized).  The return value is merged with
+  // |GetNetConstants()| and passed to FileNetLogObserver - see documentation
+  // of |FileNetLogObserver::CreateBounded()| for more information.  The
+  // convention is to put new constants under a subdict at the key "clientInfo".
+  virtual base::DictionaryValue GetNetLogConstants();
+
   // Returns whether or not V8 script extensions should be allowed for a
   // service worker.
-  virtual bool AllowScriptExtensionForServiceWorker(const GURL& script_url);
-
-  // Returns true if the embedder wishes to supplement the site isolation policy
-  // used by the content layer. Returning true enables the infrastructure for
-  // out-of-process iframes, and causes the content layer to consult
-  // ContentBrowserClient::DoesSiteRequireDedicatedProcess() when making process
-  // model decisions.
-  virtual bool IsSupplementarySiteIsolationModeEnabled();
+  virtual bool AllowScriptExtensionForServiceWorker(
+      const url::Origin& script_origin);
 
   // Returns the origin trial policy, or nullptr if origin trials are not
   // supported by the embedder.
-  virtual OriginTrialPolicy* GetOriginTrialPolicy();
+  virtual blink::OriginTrialPolicy* GetOriginTrialPolicy();
 
 #if defined(OS_ANDROID)
   // Returns true for clients like Android WebView that uses synchronous
@@ -185,7 +202,11 @@ class CONTENT_EXPORT ContentClient {
   virtual media::MediaDrmBridgeClient* GetMediaDrmBridgeClient();
 #endif  // OS_ANDROID
 
-  virtual void OnServiceManagerConnected(ServiceManagerConnection* connection);
+  // Allows the embedder to handle incoming interface binding requests from
+  // the browser process to any type of child process.
+  virtual void BindChildProcessInterface(
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* receiving_handle);
 
  private:
   friend class ContentClientInitializer;  // To set these pointers.

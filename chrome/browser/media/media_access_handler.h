@@ -7,9 +7,11 @@
 
 #include "base/callback.h"
 #include "content/public/browser/media_request_state.h"
-#include "content/public/common/media_stream_request.h"
+#include "content/public/browser/media_stream_request.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 namespace content {
+class RenderFrameHost;
 class WebContents;
 }
 
@@ -26,27 +28,43 @@ class MediaAccessHandler {
 
   // Check if the media stream type is supported by MediaAccessHandler.
   virtual bool SupportsStreamType(content::WebContents* web_contents,
-                                  const content::MediaStreamType type,
+                                  const blink::mojom::MediaStreamType type,
                                   const extensions::Extension* extension) = 0;
+
   // Check media access permission. |extension| is set to NULL if request was
   // made from a drive-by page.
   virtual bool CheckMediaAccessPermission(
-      content::WebContents* web_contents,
+      content::RenderFrameHost* render_frame_host,
       const GURL& security_origin,
-      content::MediaStreamType type,
+      blink::mojom::MediaStreamType type,
       const extensions::Extension* extension) = 0;
+
   // Process media access requests. |extension| is set to NULL if request was
   // made from a drive-by page.
   virtual void HandleRequest(content::WebContents* web_contents,
                              const content::MediaStreamRequest& request,
-                             const content::MediaResponseCallback& callback,
+                             content::MediaResponseCallback callback,
                              const extensions::Extension* extension) = 0;
+
   // Update media request state. Called on UI thread.
-  virtual void UpdateMediaRequestState(int render_process_id,
-                                       int render_frame_id,
-                                       int page_request_id,
-                                       content::MediaStreamType stream_type,
-                                       content::MediaRequestState state) {}
+  virtual void UpdateMediaRequestState(
+      int render_process_id,
+      int render_frame_id,
+      int page_request_id,
+      blink::mojom::MediaStreamType stream_type,
+      content::MediaRequestState state) {}
+
+  // Return true if there is any ongoing insecured capturing. The capturing is
+  // deemed secure if all connected video sinks are reported secure and the
+  // connections to the sinks are being managed by a trusted source.
+  virtual bool IsInsecureCapturingInProgress(int render_process_id,
+                                             int render_frame_id);
+
+  //  Update any ongoing insecured capturing state.
+  virtual void UpdateVideoScreenCaptureStatus(int render_process_id,
+                                              int render_frame_id,
+                                              int page_request_id,
+                                              bool is_secure) {}
 
  protected:
   // Helper function for derived classes which takes in whether audio/video
@@ -55,7 +73,7 @@ class MediaAccessHandler {
   static void CheckDevicesAndRunCallback(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback,
+      content::MediaResponseCallback callback,
       bool audio_allowed,
       bool video_allowed);
 };

@@ -49,7 +49,7 @@ namespace {
 // |last_swipe_gesture()|.
 class ThreeFingerSwipeView : public View {
  public:
-  ThreeFingerSwipeView() {}
+  ThreeFingerSwipeView() = default;
 
   // View:
   void OnGestureEvent(ui::GestureEvent* event) override {
@@ -89,20 +89,21 @@ class ThreeFingerSwipeView : public View {
 
 class ViewMacTest : public test::WidgetTest {
  public:
-  ViewMacTest() {}
+  ViewMacTest() = default;
 
   base::Optional<gfx::Point> SwipeGestureVector(int dx, int dy) {
     base::scoped_nsobject<FakeSwipeEvent> swipe_event(
         [[FakeSwipeEvent alloc] init]);
     [swipe_event setDeltaX:dx];
     [swipe_event setDeltaY:dy];
-    [swipe_event setWindow:widget_->GetNativeWindow()];
+    [swipe_event setWindow:widget_->GetNativeWindow().GetNativeNSWindow()];
     [swipe_event setLocationInWindow:NSMakePoint(50, 50)];
     [swipe_event setTimestamp:[[NSProcessInfo processInfo] systemUptime]];
 
     // BridgedContentView should create an appropriate ui::GestureEvent and pass
     // it to the Widget.
-    [[widget_->GetNativeWindow() contentView] swipeWithEvent:swipe_event];
+    [[widget_->GetNativeWindow().GetNativeNSWindow() contentView]
+        swipeWithEvent:swipe_event];
     return view_->last_swipe_gesture();
   }
 

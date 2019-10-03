@@ -16,6 +16,7 @@
 
 class ConfirmInfoBarDelegate;
 class GURL;
+class InfoBarUiTest;
 
 namespace infobars {
 
@@ -112,13 +113,9 @@ class InfoBarManager {
     animations_enabled_ = animations_enabled;
   }
 
-  // Notifies the observer in |observer_list_|.
-  // TODO(droger): Absorb these methods back into their callers once virtual
-  // overrides are removed (see http://crbug.com/354380).
-  virtual void NotifyInfoBarAdded(InfoBar* infobar);
-  virtual void NotifyInfoBarRemoved(InfoBar* infobar, bool animate);
-
  private:
+  friend class ::InfoBarUiTest;
+
   // InfoBars associated with this InfoBarManager.  We own these pointers.
   // However, this is not a vector of unique_ptr, because we don't delete the
   // infobars directly once they've been added to this; instead, when we're
@@ -129,10 +126,9 @@ class InfoBarManager {
   void RemoveInfoBarInternal(InfoBar* infobar, bool animate);
 
   InfoBars infobars_;
-  bool infobars_enabled_ = true;
   bool animations_enabled_ = true;
 
-  base::ObserverList<Observer, true> observer_list_;
+  base::ObserverList<Observer, true>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarManager);
 };

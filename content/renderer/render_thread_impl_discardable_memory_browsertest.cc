@@ -14,16 +14,17 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/memory/discardable_memory.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/discardable_memory/client/client_discardable_shared_memory_manager.h"
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"
-#include "content/browser/browser_main_loop.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "url/gurl.h"
 
@@ -42,7 +43,7 @@ class RenderThreadImplDiscardableMemoryBrowserTest : public ContentBrowserTest {
 
   void SetUpOnMainThread() override {
     NavigateToURL(shell(), GURL(url::kAboutBlankURL));
-    PostTaskToInProcessRendererAndWait(base::Bind(
+    PostTaskToInProcessRendererAndWait(base::BindOnce(
         &RenderThreadImplDiscardableMemoryBrowserTest::SetUpOnRenderThread,
         base::Unretained(this)));
   }
@@ -77,9 +78,7 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
   memory->Unlock();
 
   // Purge all unlocked memory.
-  BrowserMainLoop::GetInstance()
-      ->discardable_shared_memory_manager()
-      ->SetMemoryLimit(0);
+  discardable_memory::DiscardableSharedMemoryManager::Get()->SetMemoryLimit(0);
 
   // Should fail as memory should have been purged.
   EXPECT_FALSE(memory->Lock());
@@ -118,8 +117,7 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
   EXPECT_TRUE(memory);
   memory.reset();
 
-  EXPECT_GE(BrowserMainLoop::GetInstance()
-                ->discardable_shared_memory_manager()
+  EXPECT_GE(discardable_memory::DiscardableSharedMemoryManager::Get()
                 ->GetBytesAllocated(),
             kSize);
 
@@ -129,13 +127,38 @@ IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
   base::TimeTicks end =
       base::TimeTicks::Now() + base::TimeDelta::FromSeconds(5);
   while (base::TimeTicks::Now() < end) {
-    if (!BrowserMainLoop::GetInstance()
-             ->discardable_shared_memory_manager()
+    if (!discardable_memory::DiscardableSharedMemoryManager::Get()
              ->GetBytesAllocated())
       break;
   }
 
   EXPECT_LT(base::TimeTicks::Now(), end);
+}
+
+IN_PROC_BROWSER_TEST_F(RenderThreadImplDiscardableMemoryBrowserTest,
+                       ReleaseFreeMemory) {
+  const size_t kSize = 1024 * 1024;  // 1MiB.
+
+  std::unique_ptr<base::DiscardableMemory> memory =
+      child_discardable_shared_memory_manager()
+          ->AllocateLockedDiscardableMemory(kSize);
+
+  EXPECT_TRUE(memory);
+  memory.reset();
+
+  EXPECT_GE(discardable_memory::DiscardableSharedMemoryManager::Get()
+                ->GetBytesAllocated(),
+            kSize);
+
+  // Call RenderThreadImpl::ReleaseFreeMemory through a fake memory pressure
+  // notification.
+  base::MemoryPressureListener::SimulatePressureNotification(
+      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
+  base::RunLoop().RunUntilIdle();
+  RunAllTasksUntilIdle();
+
+  EXPECT_EQ(0U, discardable_memory::DiscardableSharedMemoryManager::Get()
+                    ->GetBytesAllocated());
 }
 
 }  // namespace

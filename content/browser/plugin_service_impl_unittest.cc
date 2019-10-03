@@ -4,10 +4,12 @@
 
 #include "content/browser/plugin_service_impl.h"
 
+#include <memory>
+
 #include "build/build_config.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "components/ukm/ukm_source.h"
 #include "content/browser/ppapi_plugin_process_host.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -15,6 +17,7 @@
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -45,23 +48,25 @@ class PluginServiceImplTest : public RenderViewHostTestHarness {
   void SetUp() override {
     RenderViewHostTestHarness::SetUp();
 
-    test_ukm_recorder_ = base::MakeUnique<ukm::TestAutoSetUkmRecorder>();
+    test_ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
   }
 
-  bool RecordedBrokerEvent(const GURL& url) {
+  // Check if count events were recorded and if they were all recorded with
+  // the specified source_id.
+  bool RecordedBrokerEvents(ukm::SourceId source_id, size_t count) {
     RunAllPendingInMessageLoop(BrowserThread::UI);
     auto entries = test_ukm_recorder_->GetEntriesByName(kPepperBrokerEvent);
+    if (entries.size() != count)
+      return false;
     for (const auto* const entry : entries) {
-      const ukm::UkmSource* source =
-          test_ukm_recorder_->GetSourceForSourceId(entry->source_id);
-      if (source && source->url() == url)
-        return true;
+      if (entry->source_id != source_id)
+        return false;
     }
-    return false;
+    return true;
   }
 
   void ResetUKM() {
-    test_ukm_recorder_ = base::MakeUnique<ukm::TestAutoSetUkmRecorder>();
+    test_ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
   }
 
  private:
@@ -74,20 +79,21 @@ TEST_F(PluginServiceImplTest, RecordBrokerUsage) {
   TestBrokerClient client;
 
   NavigateAndCommit(GURL(kURL1));
+  ukm::SourceId source_id = static_cast<WebContentsImpl*>(web_contents())
+                                ->GetUkmSourceIdForLastCommittedSource();
   PluginServiceImpl* service = PluginServiceImpl::GetInstance();
 
   // Internal usage of the broker should not record metrics. Internal usage will
   // not pass a RFH.
   service->OpenChannelToPpapiBroker(0, 0, base::FilePath(), &client);
-  EXPECT_FALSE(RecordedBrokerEvent(GURL(kURL1)));
+  EXPECT_TRUE(RecordedBrokerEvents(source_id, 0));
 
   // Top level frame usage should be recorded.
   int render_process_id = main_rfh()->GetProcess()->GetID();
   int render_frame_id = main_rfh()->GetRoutingID();
   service->OpenChannelToPpapiBroker(render_process_id, render_frame_id,
                                     base::FilePath(), &client);
-  EXPECT_TRUE(RecordedBrokerEvent(GURL(kURL1)));
-  EXPECT_FALSE(RecordedBrokerEvent(GURL(kURL2)));
+  EXPECT_TRUE(RecordedBrokerEvents(source_id, 1));
 
   ResetUKM();
 
@@ -101,8 +107,7 @@ TEST_F(PluginServiceImplTest, RecordBrokerUsage) {
   render_frame_id = child_frame->GetRoutingID();
   service->OpenChannelToPpapiBroker(render_process_id, render_frame_id,
                                     base::FilePath(), &client);
-  EXPECT_TRUE(RecordedBrokerEvent(GURL(kURL1)));
-  EXPECT_FALSE(RecordedBrokerEvent(GURL(kURL2)));
+  EXPECT_TRUE(RecordedBrokerEvents(source_id, 1));
 }
 
 }  // namespace content

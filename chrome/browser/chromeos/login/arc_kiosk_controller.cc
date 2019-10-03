@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/arc_kiosk_controller.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -15,30 +17,34 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/chromeos/login/arc_kiosk_splash_screen_handler.h"
+#include "chrome/browser/ui/webui/chromeos/login/encryption_migration_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chromeos/login/auth/user_context.h"
+#include "components/account_id/account_id.h"
 #include "components/session_manager/core/session_manager.h"
-#include "components/signin/core/account_id/account_id.h"
 
 namespace chromeos {
 
 // ARC Kiosk splash screen minimum show time.
 constexpr base::TimeDelta kArcKioskSplashScreenMinTime =
-    base::TimeDelta::FromSeconds(3);
+    base::TimeDelta::FromSeconds(10);
 
 ArcKioskController::ArcKioskController(LoginDisplayHost* host, OobeUI* oobe_ui)
     : host_(host),
-      arc_kiosk_splash_screen_view_(oobe_ui->GetArcKioskSplashScreenView()),
+      arc_kiosk_splash_screen_view_(
+          oobe_ui->GetView<ArcKioskSplashScreenHandler>()),
       weak_ptr_factory_(this) {}
 
 ArcKioskController::~ArcKioskController() {
-  arc_kiosk_splash_screen_view_->SetDelegate(nullptr);
+  if (arc_kiosk_splash_screen_view_)
+    arc_kiosk_splash_screen_view_->SetDelegate(nullptr);
 }
 
 void ArcKioskController::StartArcKiosk(const AccountId& account_id) {
   DVLOG(1) << "Starting ARC Kiosk for account: " << account_id.GetUserEmail();
 
-  host_->GetWebUILoginView()->SetUIEnabled(true);
+  host_->GetLoginDisplay()->SetUIEnabled(true);
 
   arc_kiosk_splash_screen_view_->SetDelegate(this);
   arc_kiosk_splash_screen_view_->Show();
@@ -46,8 +52,18 @@ void ArcKioskController::StartArcKiosk(const AccountId& account_id) {
                            base::Bind(&ArcKioskController::CloseSplashScreen,
                                       weak_ptr_factory_.GetWeakPtr()));
 
-  login_performer_ = base::MakeUnique<ChromeLoginPerformer>(this);
+  login_performer_ = std::make_unique<ChromeLoginPerformer>(this);
   login_performer_->LoginAsArcKioskAccount(account_id);
+}
+
+void ArcKioskController::OnCancelArcKioskLaunch() {
+  KioskAppLaunchError::Save(KioskAppLaunchError::USER_CANCEL);
+  CleanUp();
+  chrome::AttemptUserExit();
+}
+
+void ArcKioskController::OnDeletingSplashScreenView() {
+  arc_kiosk_splash_screen_view_ = nullptr;
 }
 
 void ArcKioskController::CleanUp() {
@@ -55,14 +71,13 @@ void ArcKioskController::CleanUp() {
   // Delegate is registered only when |profile_| is set.
   if (profile_)
     ArcKioskAppService::Get(profile_)->SetDelegate(nullptr);
-  if (host_)
-    host_->Finalize(base::OnceClosure());
 }
 
 void ArcKioskController::CloseSplashScreen() {
   if (!launched_)
     return;
   CleanUp();
+  host_->Finalize(base::OnceClosure());
   session_manager::SessionManager::Get()->SessionStarted();
 }
 
@@ -70,8 +85,8 @@ void ArcKioskController::OnAuthFailure(const AuthFailure& error) {
   LOG(ERROR) << "ARC Kiosk launch failed. Will now shut down, error="
              << error.GetErrorString();
   KioskAppLaunchError::Save(KioskAppLaunchError::ARC_AUTH_FAILED);
-  chrome::AttemptUserExit();
   CleanUp();
+  chrome::AttemptUserExit();
 }
 
 void ArcKioskController::OnAuthSuccess(const UserContext& user_context) {
@@ -104,7 +119,7 @@ void ArcKioskController::SetAuthFlowOffline(bool offline) {
 void ArcKioskController::OnOldEncryptionDetected(
     const UserContext& user_context,
     bool has_incomplete_migration) {
-  host_->StartWizard(OobeScreen::SCREEN_ENCRYPTION_MIGRATION);
+  host_->StartWizard(EncryptionMigrationScreenView::kScreenId);
 
   EncryptionMigrationScreen* migration_screen =
       static_cast<EncryptionMigrationScreen*>(
@@ -122,14 +137,19 @@ void ArcKioskController::OnProfilePrepared(Profile* profile,
   // a profile load, so invalidate the delegate now.
   UserSessionManager::GetInstance()->DelegateDeleted(this);
   ArcKioskAppService::Get(profile_)->SetDelegate(this);
-  arc_kiosk_splash_screen_view_->UpdateArcKioskState(
-      ArcKioskSplashScreenView::ArcKioskState::WAITING_APP_LAUNCH);
+  if (arc_kiosk_splash_screen_view_) {
+    arc_kiosk_splash_screen_view_->UpdateArcKioskState(
+        ArcKioskSplashScreenView::ArcKioskState::WAITING_APP_LAUNCH);
+  }
 }
 
 void ArcKioskController::OnAppStarted() {
   DVLOG(1) << "ARC Kiosk launch succeeded, wait for app window.";
-  arc_kiosk_splash_screen_view_->UpdateArcKioskState(
-      ArcKioskSplashScreenView::ArcKioskState::WAITING_APP_WINDOW);
+
+  if (arc_kiosk_splash_screen_view_) {
+    arc_kiosk_splash_screen_view_->UpdateArcKioskState(
+        ArcKioskSplashScreenView::ArcKioskState::WAITING_APP_WINDOW);
+  }
 }
 
 void ArcKioskController::OnAppWindowLaunched() {
@@ -140,12 +160,6 @@ void ArcKioskController::OnAppWindowLaunched() {
   if (splash_wait_timer_.IsRunning())
     return;
   CloseSplashScreen();
-}
-
-void ArcKioskController::OnCancelArcKioskLaunch() {
-  KioskAppLaunchError::Save(KioskAppLaunchError::USER_CANCEL);
-  CleanUp();
-  chrome::AttemptUserExit();
 }
 
 }  // namespace chromeos

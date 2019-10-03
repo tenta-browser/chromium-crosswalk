@@ -10,15 +10,22 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/mac/bundle_locations.h"
+#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/numerics/checked_math.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/plugin_service.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/pepper_plugin_info.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #include "services/service_manager/sandbox/mac/sandbox_mac.h"
+#include "services/service_manager/sandbox/sandbox_type.h"
+#include "services/service_manager/sandbox/switches.h"
 
 namespace content {
 
@@ -39,13 +46,26 @@ std::string GetOSVersion() {
   return std::to_string(final_os_version);
 }
 
-}  // namespace
+// Retrieves the users shared cache and adds it to the profile.
+void AddDarwinUserCache(sandbox::SeatbeltExecClient* client) {
+  char dir_path[PATH_MAX + 1];
 
-void SetupRendererSandboxParameters(sandbox::SeatbeltExecClient* client) {
+  size_t rv = confstr(_CS_DARWIN_USER_CACHE_DIR, dir_path, sizeof(dir_path));
+  PCHECK(rv != 0);
+  CHECK(client->SetParameter(
+      "DARWIN_USER_CACHE_DIR",
+      service_manager::SandboxMac::GetCanonicalPath(base::FilePath(dir_path))
+          .value()));
+}
+
+// All of the below functions populate the |client| with the parameters that the
+// sandbox needs to resolve information that cannot be known at build time, such
+// as the user's home directory.
+void SetupCommonSandboxParameters(sandbox::SeatbeltExecClient* client) {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
   bool enable_logging =
-      command_line->HasSwitch(switches::kEnableSandboxLogging);
+      command_line->HasSwitch(service_manager::switches::kEnableSandboxLogging);
 
   CHECK(client->SetBooleanParameter(
       service_manager::SandboxMac::kSandboxEnableLogging, enable_logging));
@@ -53,22 +73,14 @@ void SetupRendererSandboxParameters(sandbox::SeatbeltExecClient* client) {
       service_manager::SandboxMac::kSandboxDisableDenialLogging,
       !enable_logging));
 
-  std::string homedir =
-      service_manager::SandboxMac::GetCanonicalPath(base::GetHomeDir()).value();
-  CHECK(client->SetParameter(
-      service_manager::SandboxMac::kSandboxHomedirAsLiteral, homedir));
-
-  CHECK(client->SetParameter(service_manager::SandboxMac::kSandboxOSVersion,
-                             GetOSVersion()));
-
   std::string bundle_path =
       service_manager::SandboxMac::GetCanonicalPath(base::mac::MainBundlePath())
           .value();
   CHECK(client->SetParameter(service_manager::SandboxMac::kSandboxBundlePath,
                              bundle_path));
 
-  NSBundle* bundle = base::mac::OuterBundle();
-  std::string bundle_id = base::SysNSStringToUTF8([bundle bundleIdentifier]);
+  std::string bundle_id = base::mac::BaseBundleID();
+  DCHECK(!bundle_id.empty()) << "base::mac::OuterBundle is unset";
   CHECK(client->SetParameter(
       service_manager::SandboxMac::kSandboxChromeBundleId, bundle_id));
 
@@ -89,6 +101,109 @@ void SetupRendererSandboxParameters(sandbox::SeatbeltExecClient* client) {
   CHECK(client->SetParameter(service_manager::SandboxMac::kSandboxComponentPath,
                              component_path_canonical));
 #endif
+
+  CHECK(client->SetParameter(service_manager::SandboxMac::kSandboxOSVersion,
+                             GetOSVersion()));
+
+  std::string homedir =
+      service_manager::SandboxMac::GetCanonicalPath(base::GetHomeDir()).value();
+  CHECK(client->SetParameter(
+      service_manager::SandboxMac::kSandboxHomedirAsLiteral, homedir));
+}
+
+void SetupNetworkSandboxParameters(sandbox::SeatbeltExecClient* client) {
+  SetupCommonSandboxParameters(client);
+
+  std::vector<base::FilePath> storage_paths =
+      GetContentClient()->browser()->GetNetworkContextsParentDirectory();
+
+  AddDarwinUserCache(client);
+
+  CHECK(client->SetParameter("NETWORK_SERVICE_STORAGE_PATHS_COUNT",
+                             base::NumberToString(storage_paths.size())));
+  for (size_t i = 0; i < storage_paths.size(); ++i) {
+    base::FilePath path =
+        service_manager::SandboxMac::GetCanonicalPath(storage_paths[i]);
+    std::string param_name =
+        base::StringPrintf("NETWORK_SERVICE_STORAGE_PATH_%zu", i);
+    CHECK(client->SetParameter(param_name, path.value())) << param_name;
+  }
+}
+
+void SetupPPAPISandboxParameters(sandbox::SeatbeltExecClient* client) {
+  SetupCommonSandboxParameters(client);
+
+  std::vector<content::WebPluginInfo> plugins;
+  PluginService::GetInstance()->GetInternalPlugins(&plugins);
+
+  base::FilePath bundle_path = service_manager::SandboxMac::GetCanonicalPath(
+      base::mac::MainBundlePath());
+
+  const std::string param_base_name = "PPAPI_PATH_";
+  int index = 0;
+  for (const auto& plugin : plugins) {
+    // Only add plugins which are external to Chrome's bundle to the profile.
+    if (!bundle_path.IsParent(plugin.path) && plugin.path.IsAbsolute()) {
+      std::string param_name =
+          param_base_name + base::StringPrintf("%d", index++);
+      CHECK(client->SetParameter(param_name, plugin.path.value()));
+    }
+  }
+
+  // The profile does not support more than 4 PPAPI plugins, but it will be set
+  // to n+1 more than the plugins added.
+  CHECK(index <= 5);
+}
+
+void SetupCDMSandboxParameters(sandbox::SeatbeltExecClient* client) {
+  SetupCommonSandboxParameters(client);
+
+  base::FilePath bundle_path = service_manager::SandboxMac::GetCanonicalPath(
+      base::mac::FrameworkBundlePath().DirName());
+  CHECK(!bundle_path.empty());
+
+  CHECK(client->SetParameter(
+      service_manager::SandboxMac::kSandboxBundleVersionPath,
+      bundle_path.value()));
+}
+
+void SetupUtilitySandboxParameters(sandbox::SeatbeltExecClient* client,
+                                   const base::CommandLine& command_line) {
+  SetupCommonSandboxParameters(client);
+}
+
+}  // namespace
+
+void SetupSandboxParameters(service_manager::SandboxType sandbox_type,
+                            const base::CommandLine& command_line,
+                            sandbox::SeatbeltExecClient* client) {
+  switch (sandbox_type) {
+    case service_manager::SANDBOX_TYPE_AUDIO:
+    case service_manager::SANDBOX_TYPE_NACL_LOADER:
+    case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
+    case service_manager::SANDBOX_TYPE_RENDERER:
+      SetupCommonSandboxParameters(client);
+      break;
+    case service_manager::SANDBOX_TYPE_GPU:
+      SetupCommonSandboxParameters(client);
+      AddDarwinUserCache(client);
+      break;
+    case service_manager::SANDBOX_TYPE_CDM:
+      SetupCDMSandboxParameters(client);
+      break;
+    case service_manager::SANDBOX_TYPE_NETWORK:
+      SetupNetworkSandboxParameters(client);
+      break;
+    case service_manager::SANDBOX_TYPE_PPAPI:
+      SetupPPAPISandboxParameters(client);
+      break;
+    case service_manager::SANDBOX_TYPE_PROFILING:
+    case service_manager::SANDBOX_TYPE_UTILITY:
+      SetupUtilitySandboxParameters(client, command_line);
+      break;
+    default:
+      CHECK(false) << "Unhandled parameters for sandbox_type " << sandbox_type;
+  }
 }
 
 }  // namespace content

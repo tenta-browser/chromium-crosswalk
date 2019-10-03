@@ -8,14 +8,15 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/no_destructor.h"
+#include "base/one_shot_event.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -34,9 +35,7 @@
 #include "chrome/browser/prefs/chrome_pref_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/shell_integration.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -52,15 +51,12 @@
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/search_engines/template_url_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/common/one_shot_event.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "url/gurl.h"
 
@@ -85,6 +81,10 @@ bool g_should_do_autofill_personal_data_manager_first_run = false;
 // is invoked, then used as a cache on subsequent calls.
 first_run::internal::FirstRunState g_first_run =
     first_run::internal::FIRST_RUN_UNKNOWN;
+
+// Cached first run sentinel creation time.
+// Used to avoid excess file operations.
+base::Time g_cached_sentinel_creation_time;
 
 // This class acts as an observer for the ImporterProgressObserver::ImportEnded
 // callback. When the import process is started, certain errors may cause
@@ -122,45 +122,34 @@ class ImportEndedObserver : public importer::ImporterProgressObserver {
   DISALLOW_COPY_AND_ASSIGN(ImportEndedObserver);
 };
 
-// Helper class that performs delayed first-run tasks that need more of the
-// chrome infrastructure to be up and running before they can be attempted.
-class FirstRunDelayedTasks : public content::NotificationObserver {
+// Helper class that makes sure extensions get updated as soon as the
+// ExtensionService is ready.
+class FirstRunDelayedExtensionUpdater : public content::NotificationObserver {
  public:
-  FirstRunDelayedTasks() : weak_ptr_factory_(this) {
-    registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
-                   content::NotificationService::AllSources());
-    registrar_.Add(this, chrome::NOTIFICATION_BROWSER_CLOSED,
-                   content::NotificationService::AllSources());
-  }
+  static void Create() { new FirstRunDelayedExtensionUpdater(); }
 
+  // content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
-    switch (type) {
-      case chrome::NOTIFICATION_PROFILE_CREATED: {
-        content::BrowserContext* context =
-            content::Source<Profile>(source).ptr();
-        extensions::ExtensionSystem::Get(context)->ready().Post(
-            FROM_HERE, base::Bind(&FirstRunDelayedTasks::OnExtensionSystemReady,
-                                  weak_ptr_factory_.GetWeakPtr(), context));
-        break;
-      }
-      case chrome::NOTIFICATION_BROWSER_CLOSED: {
-        delete this;
-        break;
-      }
-      default:
-        NOTREACHED();
-    }
+    DCHECK_EQ(chrome::NOTIFICATION_PROFILE_CREATED, type);
+    content::BrowserContext* context = content::Source<Profile>(source).ptr();
+    extensions::ExtensionSystem::Get(context)->ready().Post(
+        FROM_HERE,
+        base::BindOnce(&FirstRunDelayedExtensionUpdater::OnExtensionSystemReady,
+                       base::Unretained(this), context));
   }
 
  private:
-  // Private ctor forces it to be created only in the heap.
-  ~FirstRunDelayedTasks() override {}
+  FirstRunDelayedExtensionUpdater() {
+    registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
+                   content::NotificationService::AllSources());
+  }
+  ~FirstRunDelayedExtensionUpdater() override = default;
 
   void OnExtensionSystemReady(content::BrowserContext* context) {
     // Process the notification and delete this.
-    ExtensionService* service =
+    extensions::ExtensionService* service =
         extensions::ExtensionSystem::Get(context)->extension_service();
     if (service) {
       // Trigger an extension update check. If the extension specified in the
@@ -172,23 +161,7 @@ class FirstRunDelayedTasks : public content::NotificationObserver {
   }
 
   content::NotificationRegistrar registrar_;
-  base::WeakPtrFactory<FirstRunDelayedTasks> weak_ptr_factory_;
 };
-
-// Installs a task to do an extensions update check once the extensions system
-// is running.
-void DoDelayedInstallExtensions() {
-  new FirstRunDelayedTasks();
-}
-
-void DoDelayedInstallExtensionsIfNeeded(
-    installer::MasterPreferences* install_prefs) {
-  base::DictionaryValue* extensions = 0;
-  if (install_prefs->GetExtensionsBlock(&extensions)) {
-    DVLOG(1) << "Extensions block found in master preferences";
-    DoDelayedInstallExtensions();
-  }
-}
 
 // Launches the import, via |importer_host|, from |source_profile| into
 // |target_profile| for the items specified in the |items_to_import| bitfield.
@@ -265,142 +238,9 @@ void ConvertStringVectorToGURLVector(
   std::transform(src.begin(), src.end(), ret->begin(), &UrlFromString);
 }
 
-// Show the first run search engine bubble at the first appropriate opportunity.
-// This bubble may be delayed by other UI, like global errors and sync promos.
-class FirstRunBubbleLauncher : public content::NotificationObserver {
- public:
-  // Show the bubble at the first appropriate opportunity. This function
-  // instantiates a FirstRunBubbleLauncher, which manages its own lifetime.
-  static void ShowFirstRunBubbleSoon();
-
- private:
-  FirstRunBubbleLauncher();
-  ~FirstRunBubbleLauncher() override;
-
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
-  content::NotificationRegistrar registrar_;
-
-  DISALLOW_COPY_AND_ASSIGN(FirstRunBubbleLauncher);
-};
-
-// static
-void FirstRunBubbleLauncher::ShowFirstRunBubbleSoon() {
-  SetShowFirstRunBubblePref(first_run::FIRST_RUN_BUBBLE_SHOW);
-  // This FirstRunBubbleLauncher instance will manage its own lifetime.
-  new FirstRunBubbleLauncher();
-}
-
-FirstRunBubbleLauncher::FirstRunBubbleLauncher() {
-  registrar_.Add(this, content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME,
-                 content::NotificationService::AllSources());
-
-  // This notification is required to observe the switch between the sync setup
-  // page and the general settings page.
-  registrar_.Add(this, chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED,
-                 content::NotificationService::AllSources());
-}
-
-FirstRunBubbleLauncher::~FirstRunBubbleLauncher() {}
-
-void FirstRunBubbleLauncher::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK(type == content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME ||
-         type == chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED);
-
-  Browser* browser = chrome::FindBrowserWithWebContents(
-      content::Source<content::WebContents>(source).ptr());
-  if (!browser || !browser->is_type_tabbed())
-    return;
-
-  // Check the preference to determine if the bubble should be shown.
-  PrefService* prefs = g_browser_process->local_state();
-  if (!prefs || prefs->GetInteger(prefs::kShowFirstRunBubbleOption) !=
-      first_run::FIRST_RUN_BUBBLE_SHOW) {
-    delete this;
-    return;
-  }
-
-  content::WebContents* contents =
-      browser->tab_strip_model()->GetActiveWebContents();
-
-  // Suppress the first run bubble if a Gaia sign in page or the sync setup
-  // page is showing.
-  if (contents && (contents->GetURL().GetOrigin().spec() ==
-                       chrome::kChromeUIChromeSigninURL ||
-                   gaia::IsGaiaSignonRealm(contents->GetURL().GetOrigin()) ||
-                   contents->GetURL() ==
-                       chrome::GetSettingsUrl(chrome::kSyncSetupSubPage) ||
-                   first_run::IsOnWelcomePage(contents))) {
-    return;
-  }
-
-  if (contents && contents->GetURL().SchemeIs(content::kChromeUIScheme)) {
-#if defined(OS_WIN)
-    // Suppress the first run bubble if 'make chrome metro' flow is showing.
-    if (contents->GetURL().host_piece() == chrome::kChromeUIMetroFlowHost)
-      return;
-#endif
-
-    // Suppress the first run bubble if the NTP sync promo bubble is showing
-    // or if sign in is in progress.
-    if (contents->GetURL().host_piece() == chrome::kChromeUINewTabHost) {
-      Profile* profile =
-          Profile::FromBrowserContext(contents->GetBrowserContext());
-      SigninManagerBase* manager =
-          SigninManagerFactory::GetForProfile(profile);
-      bool signin_in_progress = manager && manager->AuthInProgress();
-      bool is_promo_bubble_visible =
-          profile->GetPrefs()->GetBoolean(prefs::kSignInPromoShowNTPBubble);
-
-      if (is_promo_bubble_visible || signin_in_progress)
-        return;
-    }
-  }
-
-  // Suppress the first run bubble if a global error bubble is pending.
-  GlobalErrorService* global_error_service =
-      GlobalErrorServiceFactory::GetForProfile(browser->profile());
-  if (global_error_service->GetFirstGlobalErrorWithBubbleView() != NULL)
-    return;
-
-  // Reset the preference and notifications to avoid showing the bubble again.
-  prefs->SetInteger(prefs::kShowFirstRunBubbleOption,
-                    first_run::FIRST_RUN_BUBBLE_DONT_SHOW);
-
-  // Show the bubble now and destroy this bubble launcher.
-  browser->ShowFirstRunBubble();
-  delete this;
-}
-
-static base::LazyInstance<base::FilePath>::DestructorAtExit
-    master_prefs_path_for_testing = LAZY_INSTANCE_INITIALIZER;
-
-// Loads master preferences from the master preference file into the installer
-// master preferences. Returns the pointer to installer::MasterPreferences
-// object if successful; otherwise, returns NULL.
-installer::MasterPreferences* LoadMasterPrefs() {
-  base::FilePath master_prefs_path;
-  if (!master_prefs_path_for_testing.Get().empty()) {
-    master_prefs_path = master_prefs_path_for_testing.Get();
-  } else {
-    master_prefs_path = base::FilePath(first_run::internal::MasterPrefsPath());
-  }
-  if (master_prefs_path.empty())
-    return NULL;
-  installer::MasterPreferences* install_prefs =
-      new installer::MasterPreferences(master_prefs_path);
-  if (!install_prefs->read_from_file()) {
-    delete install_prefs;
-    return NULL;
-  }
-
-  return install_prefs;
+base::FilePath& GetMasterPrefsPathForTesting() {
+  static base::NoDestructor<base::FilePath> s;
+  return *s;
 }
 
 // Makes chrome the user's default browser according to policy or
@@ -447,18 +287,7 @@ void SetupMasterPrefsFromInstallPrefs(
   ConvertStringVectorToGURLVector(
       install_prefs.GetFirstRunTabs(), &out_prefs->new_tabs);
 
-  // If we're suppressing the first-run bubble, set that preference now.
-  // Otherwise, wait until the user has completed first run to set it, so the
-  // user is guaranteed to see the bubble iff they have completed the first run
-  // process.
   bool value = false;
-  if (install_prefs.GetBool(
-          installer::master_preferences::kDistroSuppressFirstRunBubble,
-          &value) &&
-      value) {
-    SetShowFirstRunBubblePref(FIRST_RUN_BUBBLE_SUPPRESS);
-  }
-
   if (install_prefs.GetBool(
           installer::master_preferences::kMakeChromeDefaultForUser,
           &value) && value) {
@@ -475,26 +304,14 @@ void SetupMasterPrefsFromInstallPrefs(
       installer::master_preferences::kDistroImportBookmarksFromFilePref,
       &out_prefs->import_bookmarks_path);
 
-  out_prefs->compressed_variations_seed =
-      install_prefs.GetCompressedVariationsSeed();
-  out_prefs->variations_seed_signature =
-      install_prefs.GetVariationsSeedSignature();
-
   install_prefs.GetString(
       installer::master_preferences::kDistroSuppressDefaultBrowserPromptPref,
       &out_prefs->suppress_default_browser_prompt_for_version);
-
-  if (install_prefs.GetBool(
-          installer::master_preferences::kDistroWelcomePageOnOSUpgradeEnabled,
-          &value) &&
-      !value) {
-    out_prefs->welcome_page_on_os_upgrade_enabled = false;
-  }
 }
 
 bool GetFirstRunSentinelFilePath(base::FilePath* path) {
   base::FilePath user_data_dir;
-  if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
+  if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
     return false;
   *path = user_data_dir.Append(chrome::kFirstRunSentinel);
   return true;
@@ -575,22 +392,14 @@ void CreateSentinelIfNeeded() {
 }
 
 base::Time GetFirstRunSentinelCreationTime() {
-  static const base::Time cached_time = ReadFirstRunSentinelCreationTime();
-  return cached_time;
+  if (g_cached_sentinel_creation_time.is_null())
+    g_cached_sentinel_creation_time = ReadFirstRunSentinelCreationTime();
+  return g_cached_sentinel_creation_time;
 }
 
-bool SetShowFirstRunBubblePref(FirstRunBubbleOptions show_bubble_option) {
-  PrefService* local_state = g_browser_process->local_state();
-  if (!local_state)
-    return false;
-  if (local_state->GetInteger(
-          prefs::kShowFirstRunBubbleOption) != FIRST_RUN_BUBBLE_SUPPRESS) {
-    // Set the new state as long as the bubble wasn't explicitly suppressed
-    // already.
-    local_state->SetInteger(prefs::kShowFirstRunBubbleOption,
-                            show_bubble_option);
-  }
-  return true;
+void ResetCachedSentinelDataForTesting() {
+  g_cached_sentinel_creation_time = base::Time();
+  g_first_run = first_run::internal::FIRST_RUN_UNKNOWN;
 }
 
 void SetShouldShowWelcomePage() {
@@ -604,10 +413,8 @@ bool ShouldShowWelcomePage() {
 }
 
 bool IsOnWelcomePage(content::WebContents* contents) {
-  const GURL welcome_page(chrome::kChromeUIWelcomeURL);
-  const GURL welcome_page_win10(chrome::kChromeUIWelcomeWin10URL);
-  const GURL current = contents->GetURL().GetWithEmptyPath();
-  return current == welcome_page || current == welcome_page_win10;
+  return contents->GetURL().GetWithEmptyPath() ==
+         GURL(chrome::kChromeUIWelcomeURL);
 }
 
 void SetShouldDoPersonalDataManagerFirstRun() {
@@ -620,22 +427,31 @@ bool ShouldDoPersonalDataManagerFirstRun() {
   return retval;
 }
 
-void LogFirstRunMetric(FirstRunBubbleMetric metric) {
-  UMA_HISTOGRAM_ENUMERATION("FirstRun.SearchEngineBubble", metric,
-                            NUM_FIRST_RUN_BUBBLE_METRICS);
+void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs) {
+  GetMasterPrefsPathForTesting() = master_prefs;
 }
 
-void SetMasterPrefsPathForTesting(const base::FilePath& master_prefs) {
-  master_prefs_path_for_testing.Get() = master_prefs;
+std::unique_ptr<installer::MasterPreferences> LoadMasterPrefs() {
+  base::FilePath master_prefs_path;
+  if (!GetMasterPrefsPathForTesting().empty())
+    master_prefs_path = GetMasterPrefsPathForTesting();
+  else
+    master_prefs_path = base::FilePath(first_run::internal::MasterPrefsPath());
+
+  if (master_prefs_path.empty())
+    return nullptr;
+  auto install_prefs =
+      std::make_unique<installer::MasterPreferences>(master_prefs_path);
+  if (!install_prefs->read_from_file())
+    return nullptr;
+  return install_prefs;
 }
 
 ProcessMasterPreferencesResult ProcessMasterPreferences(
     const base::FilePath& user_data_dir,
+    std::unique_ptr<installer::MasterPreferences> install_prefs,
     MasterPrefs* out_prefs) {
   DCHECK(!user_data_dir.empty());
-
-  std::unique_ptr<installer::MasterPreferences> install_prefs(
-      LoadMasterPrefs());
 
   if (install_prefs.get()) {
     if (!internal::ShowPostInstallEULAIfNeeded(install_prefs.get()))
@@ -655,7 +471,11 @@ ProcessMasterPreferencesResult ProcessMasterPreferences(
       DLOG(ERROR) << "Failed to initialize from master_preferences.";
     }
 
-    DoDelayedInstallExtensionsIfNeeded(install_prefs.get());
+    base::DictionaryValue* extensions = 0;
+    if (install_prefs->GetExtensionsBlock(&extensions)) {
+      DVLOG(1) << "Extensions block found in master preferences";
+      FirstRunDelayedExtensionUpdater::Create();
+    }
 
     internal::SetupMasterPrefsFromInstallPrefs(*install_prefs, out_prefs);
   }
@@ -698,7 +518,7 @@ void AutoImport(
     // It may be possible to do the if block below asynchronously. In which
     // case, get rid of this RunLoop. http://crbug.com/366116.
     base::RunLoop run_loop;
-    auto importer_list = base::MakeUnique<ImporterList>();
+    auto importer_list = std::make_unique<ImporterList>();
     importer_list->DetectSourceProfiles(
         g_browser_process->GetApplicationLocale(),
         false,  // include_interactive_profiles?
@@ -722,11 +542,6 @@ void DoPostImportTasks(Profile* profile, bool make_chrome_default_for_user) {
   // default browser to know what to import from.
   ProcessDefaultBrowserPolicy(make_chrome_default_for_user);
 
-  // Display the first run bubble if there is a default search provider.
-  TemplateURLService* template_url =
-      TemplateURLServiceFactory::GetForProfile(profile);
-  if (template_url && template_url->GetDefaultSearchProvider())
-    FirstRunBubbleLauncher::ShowFirstRunBubbleSoon();
   SetShouldShowWelcomePage();
   SetShouldDoPersonalDataManagerFirstRun();
 

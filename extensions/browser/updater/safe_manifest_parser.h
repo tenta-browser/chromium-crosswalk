@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_UPDATER_SAFE_MANIFEST_PARSER_H_
 #define EXTENSIONS_BROWSER_UPDATER_SAFE_MANIFEST_PARSER_H_
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,11 @@ struct UpdateManifestResult {
   std::string version;
   std::string browser_min_version;
 
+  // Attribute for no update: server may provide additional info about why there
+  // is no updates, eg. “bandwidth limit” if client is downloading extensions
+  // too aggressive.
+  base::Optional<std::string> info;
+
   // Attributes for the full update.
   GURL crx_url;
   std::string package_hash;
@@ -46,6 +52,10 @@ struct UpdateManifestResults {
   UpdateManifestResults(const UpdateManifestResults& other);
   UpdateManifestResults& operator=(const UpdateManifestResults& other);
   ~UpdateManifestResults();
+
+  // Group |list| by |extension_id|.
+  std::map<std::string, std::vector<const UpdateManifestResult*>> GroupByID()
+      const;
 
   std::vector<UpdateManifestResult> list;
   // This will be >= 0, or kNoDaystart if the <daystart> tag was not present.

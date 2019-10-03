@@ -46,6 +46,7 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   // Overridden from GLImage:
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
+  BindOrCopy ShouldBindOrCopy() override;
   bool BindTexImage(unsigned target) override;
   bool BindTexImageWithInternalformat(unsigned target,
                                       unsigned internalformat) override;
@@ -58,7 +59,9 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
                             int z_order,
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
-                            const gfx::RectF& crop_rect) override;
+                            const gfx::RectF& crop_rect,
+                            bool enable_blend,
+                            std::unique_ptr<gfx::GpuFence> gpu_fence) override;
   void SetColorSpace(const gfx::ColorSpace& color_space) override;
   void Flush() override {}
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
@@ -85,11 +88,11 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   static GLImageIOSurface* FromGLImage(GLImage* image);
 
  protected:
-  ~GLImageIOSurface() override;
-
- private:
   GLImageIOSurface(const gfx::Size& size, unsigned internalformat);
+  ~GLImageIOSurface() override;
+  virtual bool BindTexImageImpl(unsigned internalformat);
 
+  static bool ValidFormat(gfx::BufferFormat format);
   Type GetType() const override;
   class RGBConverter;
 
@@ -106,10 +109,6 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   base::ScopedCFTypeRef<IOSurfaceRef> io_surface_;
   base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer_;
   gfx::GenericSharedMemoryId io_surface_id_;
-
-  // Cache the color space, because re-assigning the same value can be
-  // expensive.
-  gfx::ColorSpace color_space_;
 
   base::ThreadChecker thread_checker_;
   // The default value of Rec. 601 is based on historical shader code.

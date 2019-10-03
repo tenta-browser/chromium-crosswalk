@@ -10,18 +10,16 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/md5.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/value_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_file_watcher.h"
 #include "chrome/browser/download/download_prefs.h"
-#include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/pref_names.h"
@@ -56,7 +54,6 @@ namespace {
 
 static const char kRootName[] = "<root>";
 static const char kPermissionDenied[] = "<permission denied>";
-static const char kAlreadyAdded[] = "<already added>";
 
 base::LazyInstance<base::FilePath>::Leaky
     g_last_save_path = LAZY_INSTANCE_INITIALIZER;
@@ -124,14 +121,12 @@ class SelectFileDialog : public ui::SelectFileDialog::Listener,
 };
 
 void WriteToFile(const base::FilePath& path, const std::string& content) {
-  base::AssertBlockingAllowed();
   DCHECK(!path.empty());
 
   base::WriteFile(path, content.c_str(), content.length());
 }
 
 void AppendToFile(const base::FilePath& path, const std::string& content) {
-  base::AssertBlockingAllowed();
   DCHECK(!path.empty());
 
   base::AppendToFile(path, content.c_str(), content.size());
@@ -150,24 +145,25 @@ std::string RegisterFileSystem(WebContents* web_contents,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   CHECK(web_contents->GetURL().SchemeIs(content::kChromeDevToolsScheme));
   std::string root_name(kRootName);
-  std::string file_system_id = isolated_context()->RegisterFileSystemForPath(
-      storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
+  storage::IsolatedContext::ScopedFSHandle file_system =
+      isolated_context()->RegisterFileSystemForPath(
+          storage::kFileSystemTypeNativeLocal, std::string(), path, &root_name);
 
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
   RenderViewHost* render_view_host = web_contents->GetRenderViewHost();
   int renderer_id = render_view_host->GetProcess()->GetID();
-  policy->GrantReadFileSystem(renderer_id, file_system_id);
-  policy->GrantWriteFileSystem(renderer_id, file_system_id);
-  policy->GrantCreateFileForFileSystem(renderer_id, file_system_id);
-  policy->GrantDeleteFromFileSystem(renderer_id, file_system_id);
+  policy->GrantReadFileSystem(renderer_id, file_system.id());
+  policy->GrantWriteFileSystem(renderer_id, file_system.id());
+  policy->GrantCreateFileForFileSystem(renderer_id, file_system.id());
+  policy->GrantDeleteFromFileSystem(renderer_id, file_system.id());
 
   // We only need file level access for reading FileEntries. Saving FileEntries
   // just needs the file system to have read/write access, which is granted
   // above if required.
   if (!policy->CanReadFile(renderer_id, path))
     policy->GrantReadFile(renderer_id, path);
-  return file_system_id;
+  return file_system.id();
 }
 
 DevToolsFileHelper::FileSystem CreateFileSystemStruct(
@@ -222,8 +218,7 @@ DevToolsFileHelper::DevToolsFileHelper(WebContents* web_contents,
       profile_(profile),
       delegate_(delegate),
       file_task_runner_(
-          base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})),
-      weak_factory_(this) {
+          base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})) {
   pref_change_registrar_.Init(profile_->GetPrefs());
 }
 
@@ -234,7 +229,7 @@ void DevToolsFileHelper::Save(const std::string& url,
                               bool save_as,
                               const SaveCallback& saveCallback,
                               const CancelCallback& cancelCallback) {
-  PathsMap::iterator it = saved_files_.find(url);
+  auto it = saved_files_.find(url);
   if (it != saved_files_.end() && !save_as) {
     SaveAsFileSelected(url, content, saveCallback, it->second);
     return;
@@ -245,8 +240,11 @@ void DevToolsFileHelper::Save(const std::string& url,
   base::FilePath initial_path;
 
   const base::Value* path_value;
-  if (file_map->Get(base::MD5String(url), &path_value))
-    base::GetValueAsFilePath(*path_value, &initial_path);
+  if (file_map->Get(base::MD5String(url), &path_value)) {
+    // Ignore base::GetValueAsFilePath() failure since we handle empty
+    // |initial_path| below.
+    ignore_result(base::GetValueAsFilePath(*path_value, &initial_path));
+  }
 
   if (initial_path.empty()) {
     GURL gurl(url);
@@ -281,7 +279,7 @@ void DevToolsFileHelper::Save(const std::string& url,
 void DevToolsFileHelper::Append(const std::string& url,
                                 const std::string& content,
                                 const AppendCallback& callback) {
-  PathsMap::iterator it = saved_files_.find(url);
+  auto it = saved_files_.find(url);
   if (it == saved_files_.end())
     return;
   callback.Run();
@@ -299,8 +297,7 @@ void DevToolsFileHelper::SaveAsFileSelected(const std::string& url,
   DictionaryPrefUpdate update(profile_->GetPrefs(),
                               prefs::kDevToolsEditedFiles);
   base::DictionaryValue* files_map = update.Get();
-  files_map->SetWithoutPathExpansion(base::MD5String(url),
-                                     base::CreateFilePathValue(path));
+  files_map->SetKey(base::MD5String(url), base::CreateFilePathValue(path));
   std::string file_system_path = path.AsUTF8Unsafe();
   callback.Run(file_system_path);
   file_task_runner_->PostTask(FROM_HERE, BindOnce(&WriteToFile, path, content));
@@ -343,10 +340,8 @@ void DevToolsFileHelper::InnerAddFileSystem(
     const base::FilePath& path) {
   std::string file_system_path = path.AsUTF8Unsafe();
 
-  if (IsFileSystemAdded(file_system_path)) {
-    FailedToAddFileSystem(kAlreadyAdded);
-    return;
-  }
+  if (IsFileSystemAdded(file_system_path))
+    RemoveFileSystem(file_system_path);
 
   std::string path_display_name = path.AsEndingWithSeparator().AsUTF8Unsafe();
   base::string16 message = l10n_util::GetStringFUTF16(
@@ -372,7 +367,7 @@ void DevToolsFileHelper::AddUserConfirmedFileSystem(const std::string& type,
                               prefs::kDevToolsFileSystemPaths);
   base::DictionaryValue* file_systems_paths_value = update.Get();
   file_systems_paths_value->SetWithoutPathExpansion(
-      file_system_path, base::MakeUnique<base::Value>(type));
+      file_system_path, std::make_unique<base::Value>(type));
 }
 
 void DevToolsFileHelper::FailedToAddFileSystem(const std::string& error) {
@@ -424,6 +419,24 @@ bool DevToolsFileHelper::IsFileSystemAdded(
   const base::DictionaryValue* file_systems_paths_value =
       profile_->GetPrefs()->GetDictionary(prefs::kDevToolsFileSystemPaths);
   return file_systems_paths_value->HasKey(file_system_path);
+}
+
+void DevToolsFileHelper::OnOpenItemComplete(
+    const base::FilePath& path,
+    platform_util::OpenOperationResult result) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (result == platform_util::OPEN_FAILED_INVALID_TYPE)
+    platform_util::ShowItemInFolder(profile_, path);
+}
+
+void DevToolsFileHelper::ShowItemInFolder(const std::string& file_system_path) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (file_system_path.empty())
+    return;
+  base::FilePath path = base::FilePath::FromUTF8Unsafe(file_system_path);
+  platform_util::OpenItem(profile_, path, platform_util::OPEN_FOLDER,
+                          base::Bind(&DevToolsFileHelper::OnOpenItemComplete,
+                                     weak_factory_.GetWeakPtr(), path));
 }
 
 void DevToolsFileHelper::FileSystemPathsSettingChanged() {

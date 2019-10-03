@@ -5,13 +5,19 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_NOTIFICATION_PLATFORM_BRIDGE_WIN_H_
 #define CHROME_BROWSER_NOTIFICATIONS_NOTIFICATION_PLATFORM_BRIDGE_WIN_H_
 
-#include <windows.ui.notifications.h>
 #include <string>
 
-#include "base/compiler_specific.h"
+#include <windows.ui.notifications.h>
+#include <wrl/client.h>
+
 #include "base/macros.h"
-#include "base/sequenced_task_runner.h"
+#include "base/optional.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
+
+namespace base {
+class CommandLine;
+class SequencedTaskRunner;
+}
 
 class NotificationPlatformBridgeWinImpl;
 class NotificationTemplateBuilder;
@@ -25,52 +31,63 @@ class NotificationPlatformBridgeWin : public NotificationPlatformBridge {
 
   // NotificationPlatformBridge implementation.
   void Display(NotificationHandler::Type notification_type,
-               const std::string& profile_id,
-               bool incognito,
+               Profile* profile,
                const message_center::Notification& notification,
                std::unique_ptr<NotificationCommon::Metadata> metadata) override;
-  void Close(const std::string& profile_id,
-             const std::string& notification_id) override;
-  void GetDisplayed(
-      const std::string& profile_id,
-      bool incognito,
-      const GetDisplayedNotificationsCallback& callback) const override;
+  void Close(Profile* profile, const std::string& notification_id) override;
+  void GetDisplayed(Profile* profile,
+                    GetDisplayedNotificationsCallback callback) const override;
   void SetReadyCallback(NotificationBridgeReadyCallback callback) override;
+  void DisplayServiceShutDown(Profile* profile) override;
+
+  // Handles notification activation encoded in |command_line| from the
+  // notification_helper process.
+  // Returns false if |command_line| does not contain a valid
+  // notification-launch-id switch.
+  static bool HandleActivation(const base::CommandLine& command_line);
+
+  // Checks if native notification is enabled.
+  static bool NativeNotificationEnabled();
 
  private:
   friend class NotificationPlatformBridgeWinImpl;
   friend class NotificationPlatformBridgeWinTest;
-  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinTest, EncodeDecode);
+  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinTest, Suppress);
+  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinUITest, GetDisplayed);
+  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinUITest, HandleEvent);
+  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinUITest, HandleSettings);
+  FRIEND_TEST_ALL_PREFIXES(NotificationPlatformBridgeWinUITest,
+                           DisplayWithFakeAC);
 
-  // Takes an |encoded| string as input and decodes it, returning the values in
-  // the out parameters. Returns true if successful, but false otherwise.
-  static bool DecodeTemplateId(const std::string& encoded,
-                               NotificationHandler::Type* notification_type,
-                               std::string* notification_id,
-                               std::string* profile_id,
-                               bool* incognito,
-                               GURL* origin_url) WARN_UNUSED_RESULT;
+  // Simulates a click/dismiss event. Only for use in testing.
+  // Note: Ownership of |notification| and |args| is retained by the caller.
+  void ForwardHandleEventForTesting(
+      NotificationCommon::Operation operation,
+      ABI::Windows::UI::Notifications::IToastNotification* notification,
+      ABI::Windows::UI::Notifications::IToastActivatedEventArgs* args,
+      const base::Optional<bool>& by_user);
 
-  // Encodes a template ID string given the input parameters.
-  static std::string EncodeTemplateId(
-      NotificationHandler::Type notification_type,
-      const std::string& notification_id,
-      const std::string& profile_id,
-      bool incognito,
-      const GURL& origin_url);
+  // Initializes the displayed notification vector. Only for use in testing.
+  void SetDisplayedNotificationsForTesting(
+      std::vector<Microsoft::WRL::ComPtr<
+          ABI::Windows::UI::Notifications::IToastNotification>>* notifications);
+
+  // Sets a Toast Notifier to use to display notifications, when run in a test.
+  void SetNotifierForTesting(
+      ABI::Windows::UI::Notifications::IToastNotifier* notifier);
 
   // Obtain an IToastNotification interface from a given XML (provided by the
   // NotificationTemplateBuilder). For testing use only.
-  HRESULT GetToastNotificationForTesting(
+  Microsoft::WRL::ComPtr<ABI::Windows::UI::Notifications::IToastNotification>
+  GetToastNotificationForTesting(
       const message_center::Notification& notification,
-      const NotificationTemplateBuilder& notification_template_builder,
-      ABI::Windows::UI::Notifications::IToastNotification** toast_notification);
-
-  void PostTaskToTaskRunnerThread(base::OnceClosure closure) const;
+      const base::string16& xml_template,
+      const std::string& profile_id,
+      bool incognito);
 
   scoped_refptr<NotificationPlatformBridgeWinImpl> impl_;
 
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> notification_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationPlatformBridgeWin);
 };

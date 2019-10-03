@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 suite('BannerTests', function() {
-  var resetBanner = null;
-  var browserProxy = null;
+  let resetBanner = null;
+  let browserProxy = null;
 
   setup(function() {
     browserProxy = new reset_page.TestResetBrowserProxy();
@@ -15,13 +15,15 @@ suite('BannerTests', function() {
     assertTrue(resetBanner.$.dialog.open);
   });
 
-  teardown(function() { resetBanner.remove(); });
+  teardown(function() {
+    resetBanner.remove();
+  });
 
   // Tests that the reset profile banner navigates to the Reset profile dialog
   // URL when the "reset all settings" button is clicked.
   test('ResetBannerReset', function() {
     assertNotEquals(settings.routes.RESET_DIALOG, settings.getCurrentRoute());
-    MockInteractions.tap(resetBanner.$.reset);
+    resetBanner.$.reset.click();
     assertEquals(settings.routes.RESET_DIALOG, settings.getCurrentRoute());
     assertFalse(resetBanner.$.dialog.open);
   });
@@ -29,7 +31,7 @@ suite('BannerTests', function() {
   // Tests that the reset profile banner closes itself when the OK button is
   // clicked and that |onHideResetProfileBanner| is called.
   test('ResetBannerOk', function() {
-    MockInteractions.tap(resetBanner.$.ok);
+    resetBanner.$.ok.click();
     return browserProxy.whenCalled('onHideResetProfileBanner').then(function() {
       assertFalse(resetBanner.$.dialog.open);
     });

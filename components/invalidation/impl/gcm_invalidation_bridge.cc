@@ -2,18 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/invalidation/impl/gcm_invalidation_bridge.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "google_apis/gaia/gaia_constants.h"
-#include "google_apis/gaia/identity_provider.h"
 
 namespace invalidation {
 namespace {
@@ -73,7 +72,7 @@ class GCMInvalidationBridge::Core : public syncer::GCMNetworkChannelDelegate {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<Core> weak_factory_;
+  base::WeakPtrFactory<Core> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
@@ -81,9 +80,7 @@ class GCMInvalidationBridge::Core : public syncer::GCMNetworkChannelDelegate {
 GCMInvalidationBridge::Core::Core(
     base::WeakPtr<GCMInvalidationBridge> bridge,
     scoped_refptr<base::SingleThreadTaskRunner> ui_thread_task_runner)
-    : bridge_(bridge),
-      ui_thread_task_runner_(ui_thread_task_runner),
-      weak_factory_(this) {
+    : bridge_(bridge), ui_thread_task_runner_(ui_thread_task_runner) {
   // Core is created on UI thread but all calls happen on IO thread.
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
@@ -99,40 +96,38 @@ void GCMInvalidationBridge::Core::Initialize(
   // Pass core WeapPtr and TaskRunner to GCMInvalidationBridge for it to be able
   // to post back.
   ui_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::CoreInitializationDone,
-                 bridge_,
-                 weak_factory_.GetWeakPtr(),
-                 base::ThreadTaskRunnerHandle::Get()));
+      FROM_HERE, base::BindOnce(&GCMInvalidationBridge::CoreInitializationDone,
+                                bridge_, weak_factory_.GetWeakPtr(),
+                                base::ThreadTaskRunnerHandle::Get()));
 }
 
 void GCMInvalidationBridge::Core::RequestToken(RequestTokenCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::RequestToken, bridge_, callback));
+      base::BindOnce(&GCMInvalidationBridge::RequestToken, bridge_, callback));
 }
 
 void GCMInvalidationBridge::Core::InvalidateToken(const std::string& token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::InvalidateToken, bridge_, token));
+      base::BindOnce(&GCMInvalidationBridge::InvalidateToken, bridge_, token));
 }
 
 void GCMInvalidationBridge::Core::Register(RegisterCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Register, bridge_, callback));
+      base::BindOnce(&GCMInvalidationBridge::Register, bridge_, callback));
 }
 
 void GCMInvalidationBridge::Core::SetMessageReceiver(MessageCallback callback) {
   message_callback_ = callback;
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::SubscribeForIncomingMessages,
-                 bridge_));
+      base::BindOnce(&GCMInvalidationBridge::SubscribeForIncomingMessages,
+                     bridge_));
 }
 
 void GCMInvalidationBridge::Core::RequestTokenFinished(
@@ -173,11 +168,9 @@ void GCMInvalidationBridge::Core::OnStoreReset() {
 GCMInvalidationBridge::GCMInvalidationBridge(
     gcm::GCMDriver* gcm_driver,
     IdentityProvider* identity_provider)
-    : OAuth2TokenService::Consumer("gcm_network_channel"),
-      gcm_driver_(gcm_driver),
+    : gcm_driver_(gcm_driver),
       identity_provider_(identity_provider),
-      subscribed_for_incoming_messages_(false),
-      weak_factory_(this) {}
+      subscribed_for_incoming_messages_(false) {}
 
 GCMInvalidationBridge::~GCMInvalidationBridge() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -190,7 +183,7 @@ GCMInvalidationBridge::~GCMInvalidationBridge() {
 std::unique_ptr<syncer::GCMNetworkChannelDelegate>
 GCMInvalidationBridge::CreateDelegate() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return base::MakeUnique<Core>(weak_factory_.GetWeakPtr(),
+  return std::make_unique<Core>(weak_factory_.GetWeakPtr(),
                                 base::ThreadTaskRunnerHandle::Get());
 }
 
@@ -205,64 +198,41 @@ void GCMInvalidationBridge::CoreInitializationDone(
 void GCMInvalidationBridge::RequestToken(
     syncer::GCMNetworkChannelDelegate::RequestTokenCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (access_token_request_ != nullptr) {
+  if (access_token_fetcher_ != nullptr) {
     // Report previous request as cancelled.
     GoogleServiceAuthError error(GoogleServiceAuthError::REQUEST_CANCELED);
     std::string access_token;
     core_thread_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&GCMInvalidationBridge::Core::RequestTokenFinished,
-                   core_,
-                   request_token_callback_,
-                   error,
-                   access_token));
+        base::BindOnce(&GCMInvalidationBridge::Core::RequestTokenFinished,
+                       core_, request_token_callback_, error, access_token));
   }
   request_token_callback_ = callback;
-  OAuth2TokenService::ScopeSet scopes;
+  OAuth2AccessTokenManager::ScopeSet scopes;
   scopes.insert(GaiaConstants::kChromeSyncOAuth2Scope);
-  access_token_request_ = identity_provider_->GetTokenService()->StartRequest(
-      identity_provider_->GetActiveAccountId(), scopes, this);
+  access_token_fetcher_ = identity_provider_->FetchAccessToken(
+      "gcm_network_channel", scopes,
+      base::BindOnce(&GCMInvalidationBridge::OnAccessTokenRequestCompleted,
+                     base::Unretained(this)));
 }
 
-void GCMInvalidationBridge::OnGetTokenSuccess(
-    const OAuth2TokenService::Request* request,
-    const std::string& access_token,
-    const base::Time& expiration_time) {
+void GCMInvalidationBridge::OnAccessTokenRequestCompleted(
+    GoogleServiceAuthError error,
+    std::string access_token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(access_token_request_.get(), request);
   core_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::RequestTokenFinished,
-                 core_,
-                 request_token_callback_,
-                 GoogleServiceAuthError::AuthErrorNone(),
-                 access_token));
+      base::BindOnce(&GCMInvalidationBridge::Core::RequestTokenFinished, core_,
+                     request_token_callback_, error, access_token));
   request_token_callback_.Reset();
-  access_token_request_.reset();
-}
-
-void GCMInvalidationBridge::OnGetTokenFailure(
-    const OAuth2TokenService::Request* request,
-    const GoogleServiceAuthError& error) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(access_token_request_.get(), request);
-  core_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::RequestTokenFinished,
-                 core_,
-                 request_token_callback_,
-                 error,
-                 std::string()));
-  request_token_callback_.Reset();
-  access_token_request_.reset();
+  access_token_fetcher_.reset();
 }
 
 void GCMInvalidationBridge::InvalidateToken(const std::string& token) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  OAuth2TokenService::ScopeSet scopes;
+  OAuth2AccessTokenManager::ScopeSet scopes;
   scopes.insert(GaiaConstants::kChromeSyncOAuth2Scope);
-  identity_provider_->GetTokenService()->InvalidateAccessToken(
-      identity_provider_->GetActiveAccountId(), scopes, token);
+  identity_provider_->InvalidateAccessToken(scopes, token);
 }
 
 void GCMInvalidationBridge::Register(
@@ -287,12 +257,8 @@ void GCMInvalidationBridge::RegisterFinished(
     gcm::GCMClient::Result result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   core_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::RegisterFinished,
-                 core_,
-                 callback,
-                 registration_id,
-                 result));
+      FROM_HERE, base::BindOnce(&GCMInvalidationBridge::Core::RegisterFinished,
+                                core_, callback, registration_id, result));
 }
 
 void GCMInvalidationBridge::Unregister() {
@@ -301,15 +267,7 @@ void GCMInvalidationBridge::Unregister() {
   if (gcm_driver_ == nullptr)
     return;
 
-  gcm_driver_->Unregister(
-      kInvalidationsAppId,
-      base::Bind(&GCMInvalidationBridge::UnregisterFinishedNoOp));
-}
-
-// static
-void GCMInvalidationBridge::UnregisterFinishedNoOp(
-    gcm::GCMClient::Result result) {
-  // No-op.
+  gcm_driver_->Unregister(kInvalidationsAppId, base::DoNothing());
 }
 
 void GCMInvalidationBridge::SubscribeForIncomingMessages() {
@@ -322,9 +280,8 @@ void GCMInvalidationBridge::SubscribeForIncomingMessages() {
   gcm_driver_->AddConnectionObserver(this);
   core_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::OnConnectionStateChanged,
-                 core_,
-                 gcm_driver_->IsConnected()));
+      base::BindOnce(&GCMInvalidationBridge::Core::OnConnectionStateChanged,
+                     core_, gcm_driver_->IsConnected()));
 
   subscribed_for_incoming_messages_ = true;
 }
@@ -335,7 +292,8 @@ void GCMInvalidationBridge::ShutdownHandler() {
 
 void GCMInvalidationBridge::OnStoreReset() {
   core_thread_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&GCMInvalidationBridge::Core::OnStoreReset, core_));
+      FROM_HERE,
+      base::BindOnce(&GCMInvalidationBridge::Core::OnStoreReset, core_));
 }
 
 void GCMInvalidationBridge::OnMessage(const std::string& app_id,
@@ -351,11 +309,8 @@ void GCMInvalidationBridge::OnMessage(const std::string& app_id,
     echo_token = it->second;
 
   core_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::OnIncomingMessage,
-                 core_,
-                 content,
-                 echo_token));
+      FROM_HERE, base::BindOnce(&GCMInvalidationBridge::Core::OnIncomingMessage,
+                                core_, content, echo_token));
 }
 
 void GCMInvalidationBridge::OnMessagesDeleted(const std::string& app_id) {
@@ -381,16 +336,15 @@ void GCMInvalidationBridge::OnSendAcknowledged(
 void GCMInvalidationBridge::OnConnected(const net::IPEndPoint& ip_endpoint) {
   core_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(
-          &GCMInvalidationBridge::Core::OnConnectionStateChanged, core_, true));
+      base::BindOnce(&GCMInvalidationBridge::Core::OnConnectionStateChanged,
+                     core_, true));
 }
 
 void GCMInvalidationBridge::OnDisconnected() {
   core_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&GCMInvalidationBridge::Core::OnConnectionStateChanged,
-                 core_,
-                 false));
+      base::BindOnce(&GCMInvalidationBridge::Core::OnConnectionStateChanged,
+                     core_, false));
 }
 
 }  // namespace invalidation

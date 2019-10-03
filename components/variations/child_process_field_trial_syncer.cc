@@ -9,7 +9,7 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#include "components/variations/variations_util.h"
+#include "components/variations/variations_crash_keys.h"
 
 namespace variations {
 
@@ -22,7 +22,7 @@ ChildProcessFieldTrialSyncer::~ChildProcessFieldTrialSyncer() {}
 void ChildProcessFieldTrialSyncer::InitFieldTrialObserving(
     const base::CommandLine& command_line) {
   // Set up initial set of crash dump data for field trials in this process.
-  SetVariationListCrashKeys();
+  variations::InitCrashKeys();
 
   // Listen for field trial activations to report them to the browser.
   base::FieldTrialList::AddObserver(observer_);
@@ -41,7 +41,7 @@ void ChildProcessFieldTrialSyncer::InitFieldTrialObserving(
   base::FieldTrial::ActiveGroups current_active_trials;
   base::FieldTrialList::GetActiveFieldTrialGroups(&current_active_trials);
   for (const auto& trial : current_active_trials) {
-    if (!base::ContainsKey(initially_active_trials_set, trial.trial_name))
+    if (!base::Contains(initially_active_trials_set, trial.trial_name))
       observer_->OnFieldTrialGroupFinalized(trial.trial_name, trial.group_name);
   }
 }
@@ -54,7 +54,6 @@ void ChildProcessFieldTrialSyncer::OnSetFieldTrialGroup(
   // Ensure the trial is marked as "used" by calling group() on it if it is
   // marked as activated.
   trial->group();
-  SetVariationListCrashKeys();
 }
 
 }  // namespace variations

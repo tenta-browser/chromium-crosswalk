@@ -23,7 +23,7 @@
 #include "base/scoped_observer.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
@@ -38,16 +38,16 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/screen_info.h"
 #include "content/public/common/webplugininfo.h"
-#include "device/geolocation/public/cpp/geoposition.h"
-#include "device/geolocation/public/interfaces/geolocation.mojom.h"
-#include "device/geolocation/public/interfaces/geolocation_context.mojom.h"
-#include "device/geolocation/public/interfaces/geoposition.mojom.h"
 #include "gpu/config/gpu_info.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "ppapi/features/features.h"
-#include "services/device/public/interfaces/constants.mojom.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/device/public/cpp/geolocation/geoposition.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/geolocation.mojom.h"
+#include "services/device/public/mojom/geolocation_context.mojom.h"
+#include "services/device/public/mojom/geoposition.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "third_party/WebKit/public/platform/WebRect.h"
+#include "third_party/blink/public/platform/web_rect.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
@@ -163,18 +163,19 @@ void AddCpuInfoToFingerprint(Fingerprint::MachineCharacteristics* machine) {
 
 // Writes info about the machine's GPU into the |machine|.
 void AddGpuInfoToFingerprint(Fingerprint::MachineCharacteristics* machine,
-                             const content::GpuDataManager& gpu_data_manager) {
+                             content::GpuDataManager& gpu_data_manager) {
   if (!gpu_data_manager.IsEssentialGpuInfoAvailable())
     return;
 
   const gpu::GPUInfo gpu_info = gpu_data_manager.GetGPUInfo();
+  const gpu::GPUInfo::GPUDevice& active_gpu = gpu_info.active_gpu();
 
   Fingerprint::MachineCharacteristics::Graphics* graphics =
       machine->mutable_graphics_card();
-  graphics->set_vendor_id(gpu_info.gpu.vendor_id);
-  graphics->set_device_id(gpu_info.gpu.device_id);
-  graphics->set_driver_version(gpu_info.driver_version);
-  graphics->set_driver_date(gpu_info.driver_date);
+  graphics->set_vendor_id(active_gpu.vendor_id);
+  graphics->set_device_id(active_gpu.device_id);
+  graphics->set_driver_version(active_gpu.driver_version);
+  graphics->set_driver_date(active_gpu.driver_date);
 }
 
 // Waits for all asynchronous data required for the fingerprint to be loaded,
@@ -193,7 +194,7 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
       const std::string& app_locale,
       const std::string& user_agent,
       const base::TimeDelta& timeout,
-      const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback,
+      base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback,
       service_manager::Connector* connector);
 
  private:
@@ -248,11 +249,11 @@ class FingerprintDataLoader : public content::GpuDataManagerObserver {
   base::OneShotTimer timeout_timer_;
 
   // The callback that will be called once all the data is available.
-  base::Callback<void(std::unique_ptr<Fingerprint>)> callback_;
+  base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback_;
 
   // For invalidating asynchronous callbacks that might arrive after |this|
   // instance is destroyed.
-  base::WeakPtrFactory<FingerprintDataLoader> weak_ptr_factory_;
+  base::WeakPtrFactory<FingerprintDataLoader> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FingerprintDataLoader);
 };
@@ -269,7 +270,7 @@ FingerprintDataLoader::FingerprintDataLoader(
     const std::string& app_locale,
     const std::string& user_agent,
     const base::TimeDelta& timeout,
-    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback,
+    base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback,
     service_manager::Connector* connector)
     : gpu_data_manager_(content::GpuDataManager::GetInstance()),
       gpu_observer_(this),
@@ -284,13 +285,13 @@ FingerprintDataLoader::FingerprintDataLoader(
       user_agent_(user_agent),
       install_time_(install_time),
       waiting_on_plugins_(true),
-      callback_(callback),
-      weak_ptr_factory_(this) {
+      callback_(std::move(callback)) {
   DCHECK(!install_time_.is_null());
 
-  timeout_timer_.Start(FROM_HERE, timeout,
-                       base::Bind(&FingerprintDataLoader::MaybeFillFingerprint,
-                                  weak_ptr_factory_.GetWeakPtr()));
+  timeout_timer_.Start(
+      FROM_HERE, timeout,
+      base::BindOnce(&FingerprintDataLoader::MaybeFillFingerprint,
+                     weak_ptr_factory_.GetWeakPtr()));
 
   // Load GPU data if needed.
   if (gpu_data_manager_->GpuAccessAllowed(nullptr) &&
@@ -301,17 +302,15 @@ FingerprintDataLoader::FingerprintDataLoader(
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   // Load plugin data.
-  content::PluginService::GetInstance()->GetPlugins(
-      base::Bind(&FingerprintDataLoader::OnGotPlugins,
-                 weak_ptr_factory_.GetWeakPtr()));
+  content::PluginService::GetInstance()->GetPlugins(base::BindOnce(
+      &FingerprintDataLoader::OnGotPlugins, weak_ptr_factory_.GetWeakPtr()));
 #else
   waiting_on_plugins_ = false;
 #endif
 
   // Load font data.
-  content::GetFontListAsync(
-      base::Bind(&FingerprintDataLoader::OnGotFonts,
-                 weak_ptr_factory_.GetWeakPtr()));
+  content::GetFontListAsync(base::BindOnce(&FingerprintDataLoader::OnGotFonts,
+                                           weak_ptr_factory_.GetWeakPtr()));
 
   // Load geolocation data.
   DCHECK(connector);
@@ -437,7 +436,7 @@ void FingerprintDataLoader::FillFingerprint() {
   metadata->set_obfuscated_gaia_id(obfuscated_gaia_id_);
   metadata->set_fingerprinter_version(kFingerprinterVersion);
 
-  callback_.Run(std::move(fingerprint));
+  std::move(callback_).Run(std::move(fingerprint));
 }
 
 }  // namespace
@@ -456,14 +455,14 @@ void GetFingerprintInternal(
     const std::string& app_locale,
     const std::string& user_agent,
     const base::TimeDelta& timeout,
-    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback,
+    base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback,
     service_manager::Connector* connector) {
   // Begin loading all of the data that we need to load asynchronously.
   // This class is responsible for freeing its own memory.
   new FingerprintDataLoader(obfuscated_gaia_id, window_bounds, content_bounds,
                             screen_info, version, charset, accept_languages,
                             install_time, app_locale, user_agent, timeout,
-                            callback, connector);
+                            std::move(callback), connector);
 }
 
 }  // namespace internal
@@ -478,12 +477,12 @@ void GetFingerprint(
     const base::Time& install_time,
     const std::string& app_locale,
     const std::string& user_agent,
-    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback,
+    base::OnceCallback<void(std::unique_ptr<Fingerprint>)> callback,
     service_manager::Connector* connector) {
   gfx::Rect content_bounds = web_contents->GetContainerBounds();
 
   content::ScreenInfo screen_info;
-  const content::RenderWidgetHostView* host_view =
+  content::RenderWidgetHostView* host_view =
       web_contents->GetRenderWidgetHostView();
   if (host_view)
     host_view->GetRenderWidgetHost()->GetScreenInfo(&screen_info);
@@ -491,7 +490,8 @@ void GetFingerprint(
   internal::GetFingerprintInternal(
       obfuscated_gaia_id, window_bounds, content_bounds, screen_info, version,
       charset, accept_languages, install_time, app_locale, user_agent,
-      base::TimeDelta::FromSeconds(kTimeoutSeconds), callback, connector);
+      base::TimeDelta::FromSeconds(kTimeoutSeconds), std::move(callback),
+      connector);
 }
 
 }  // namespace risk

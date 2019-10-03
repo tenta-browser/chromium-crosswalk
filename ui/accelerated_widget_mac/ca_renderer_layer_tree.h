@@ -19,6 +19,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/mac/io_surface.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 @class AVSampleBufferDisplayLayer;
@@ -51,13 +52,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   // not re-used by |this| will be removed from the CALayer hierarchy.
   void CommitScheduledCALayers(CALayer* superlayer,
                                std::unique_ptr<CARendererLayerTree> old_tree,
+                               const gfx::Size& pixel_size,
                                float scale_factor);
-
-  // TODO(sdy): Remove. Guts have moved to RootLayer.
-  bool CommitFullscreenLowPowerLayer(
-      AVSampleBufferDisplayLayer109* fullscreen_low_power_layer) {
-    return false;
-  }
 
   // Returns the contents used for a given solid color.
   id ContentsForSolidColorForTesting(unsigned int color);
@@ -86,21 +82,22 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     bool AddContentLayer(CARendererLayerTree* tree,
                          const CARendererLayerParams& params);
 
+    // Workaround for https://crbug.com/923427. Only allow any
+    // AVSampleBufferDisplayLayer if there is exactly one video quad.
+    void EnforceOnlyOneAVLayer();
+
     // Allocate CALayers for this layer and its children, and set their
     // properties appropriately. Re-use the CALayers from |old_layer| if
     // possible. If re-using a CALayer from |old_layer|, reset its |ca_layer|
     // to nil, so that its destructor will not remove an active CALayer.
     void CommitToCA(CALayer* superlayer,
                     RootLayer* old_layer,
+                    const gfx::Size& pixel_size,
                     float scale_factor);
 
-    // Check to see if the CALayer tree is just a video layer on a black
-    // background. If so, return true and set background_rect to the
-    // background's bounding rect, otherwise return false. CommitToCA() calls
-    // this function and, based on its return value, either gives the root
-    // layer this frame and a black background color or clears them.
-    bool WantsFullcreenLowPowerBackdrop(float scale_factor,
-                                        gfx::RectF* background_rect);
+    // Return true if the CALayer tree is just a video layer on a black or
+    // transparent background, false otherwise.
+    bool WantsFullcreenLowPowerBackdrop() const;
 
     std::vector<ClipAndSortingLayer> clip_and_sorting_layers;
     base::scoped_nsobject<CALayer> ca_layer;
@@ -111,6 +108,7 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   struct ClipAndSortingLayer {
     ClipAndSortingLayer(bool is_clipped,
                         gfx::Rect clip_rect,
+                        gfx::RRectF rounded_corner_bounds,
                         unsigned sorting_context_id,
                         bool is_singleton_sorting_context);
     ClipAndSortingLayer(ClipAndSortingLayer&& layer);
@@ -127,9 +125,11 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     std::vector<TransformLayer> transform_layers;
     bool is_clipped = false;
     gfx::Rect clip_rect;
+    gfx::RRectF rounded_corner_bounds;
     unsigned sorting_context_id = 0;
     bool is_singleton_sorting_context = false;
-    base::scoped_nsobject<CALayer> ca_layer;
+    base::scoped_nsobject<CALayer> clipping_ca_layer;
+    base::scoped_nsobject<CALayer> rounded_corner_ca_layer;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ClipAndSortingLayer);

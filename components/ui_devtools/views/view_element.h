@@ -6,9 +6,9 @@
 #define COMPONENTS_UI_DEVTOOLS_VIEWS_VIEW_ELEMENT_H_
 
 #include "base/macros.h"
-#include "components/ui_devtools/views/ui_element.h"
-#include "ui/aura/window.h"
+#include "components/ui_devtools/ui_element.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/view.h"
 #include "ui/views/view_observer.h"
 
@@ -22,7 +22,7 @@ class ViewElement : public views::ViewObserver, public UIElement {
               UIElementDelegate* ui_element_delegate,
               UIElement* parent);
   ~ViewElement() override;
-  views::View* view() const { return view_; };
+  views::View* view() const { return view_; }
 
   // views::ViewObserver
   void OnChildViewRemoved(views::View* parent, views::View* view) override;
@@ -31,14 +31,18 @@ class ViewElement : public views::ViewObserver, public UIElement {
   void OnViewBoundsChanged(views::View* view) override;
 
   // UIElement:
-  std::vector<std::pair<std::string, std::string>> GetCustomAttributes()
+  std::vector<UIElement::ClassProperties> GetCustomPropertiesForMatchedStyle()
       const override;
   void GetBounds(gfx::Rect* bounds) const override;
   void SetBounds(const gfx::Rect& bounds) override;
   void GetVisible(bool* visible) const override;
   void SetVisible(bool visible) override;
-  std::pair<aura::Window*, gfx::Rect> GetNodeWindowAndBounds() const override;
+  bool SetPropertiesFromString(const std::string& text) override;
+  std::vector<std::string> GetAttributes() const override;
+  std::pair<gfx::NativeWindow, gfx::Rect> GetNodeWindowAndScreenBounds()
+      const override;
   static views::View* From(const UIElement* element);
+  void PaintRect() const override;
 
  private:
   views::View* view_;

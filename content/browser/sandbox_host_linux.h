@@ -16,7 +16,7 @@
 
 namespace base {
 template <typename T>
-struct DefaultSingletonTraits;
+class NoDestructor;
 }
 
 namespace content {
@@ -38,13 +38,15 @@ class CONTENT_EXPORT SandboxHostLinux {
   }
   void Init();
 
- private:
-  friend struct base::DefaultSingletonTraits<SandboxHostLinux>;
-  // This object must be constructed on the main thread.
-  SandboxHostLinux();
-  ~SandboxHostLinux();
+  bool IsInitialized() const { return initialized_; }
 
-  bool ShutdownIPCChannel();
+ private:
+  friend class base::NoDestructor<SandboxHostLinux>;
+  // This object must be constructed on the main thread. It then lives for the
+  // lifetime of the process (and resources are reclaimed by the OS when the
+  // process dies).
+  SandboxHostLinux();
+  ~SandboxHostLinux() = delete;
 
   // Whether Init() has been called yet.
   bool initialized_ = false;

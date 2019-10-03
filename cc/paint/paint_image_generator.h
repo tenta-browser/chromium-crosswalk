@@ -7,14 +7,14 @@
 
 #include <vector>
 
-#include "base/macros.h"
 #include "cc/paint/frame_metadata.h"
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_image.h"
 #include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkSize.h"
-#include "third_party/skia/include/core/SkYUVSizeInfo.h"
+#include "third_party/skia/include/core/SkYUVAIndex.h"
+#include "third_party/skia/include/core/SkYUVASizeInfo.h"
 
 namespace cc {
 
@@ -24,7 +24,18 @@ namespace cc {
 // be called from any thread.
 class CC_PAINT_EXPORT PaintImageGenerator : public SkRefCnt {
  public:
+  PaintImageGenerator(const PaintImageGenerator&) = delete;
   ~PaintImageGenerator() override;
+
+  PaintImageGenerator& operator=(const PaintImageGenerator&) = delete;
+
+  // Returns true if we can guarantee that the software decoder hasn't done work
+  // on the image, so it's appropriate to send the encoded image to a hardware
+  // accelerator. False if we can't guarantee this or if not applicable. For
+  // example, if the encoded data comes incrementally, and the software decoder
+  // starts working with partial data, the image shouldn't later be sent to a
+  // hardware decoder.
+  virtual bool IsEligibleForAcceleratedDecoding() const = 0;
 
   // Returns a reference to the encoded content of this image.
   virtual sk_sp<SkData> GetEncodedData() const = 0;
@@ -39,25 +50,30 @@ class CC_PAINT_EXPORT PaintImageGenerator : public SkRefCnt {
                          void* pixels,
                          size_t row_bytes,
                          size_t frame_index,
+                         PaintImage::GeneratorClientId client_id,
                          uint32_t lazy_pixel_ref) = 0;
 
   // Returns true if the generator supports YUV decoding, providing the output
   // information in |info| and |color_space|.
-  virtual bool QueryYUV8(SkYUVSizeInfo* info,
-                         SkYUVColorSpace* color_space) const = 0;
+  virtual bool QueryYUVA8(SkYUVASizeInfo* info,
+                          SkYUVAIndex indices[SkYUVAIndex::kIndexCount],
+                          SkYUVColorSpace* color_space) const = 0;
 
   // Decodes to YUV into the provided |planes| for each of the Y, U, and V
   // planes, and returns true on success. The method should only be used if
-  // QueryYUV8 returns true.
-  // |info| needs to exactly match the values returned by the query, except the
-  // WidthBytes may be larger than the recommendation (but not smaller).
+  // QueryYUVA8 returns true.
+  // |info| and |indices| need to exactly match the values returned by the
+  // query, except the info.fWidthBytes may be larger than the recommendation
+  // (but not smaller).
   //
   // TODO(khushalsagar): |lazy_pixel_ref| is only present for
   // DecodingImageGenerator tracing needs. Remove it.
-  virtual bool GetYUV8Planes(const SkYUVSizeInfo& info,
-                             void* planes[3],
-                             size_t frame_index,
-                             uint32_t lazy_pixel_ref) = 0;
+  virtual bool GetYUVA8Planes(
+      const SkYUVASizeInfo& info,
+      const SkYUVAIndex indices[SkYUVAIndex::kIndexCount],
+      void* planes[3],
+      size_t frame_index,
+      uint32_t lazy_pixel_ref) = 0;
 
   // Returns the smallest size that is at least as big as the requested size,
   // such that we can decode to exactly that scale.
@@ -81,8 +97,6 @@ class CC_PAINT_EXPORT PaintImageGenerator : public SkRefCnt {
   const SkImageInfo info_;
   const PaintImage::ContentId generator_content_id_;
   const std::vector<FrameMetadata> frames_;
-
-  DISALLOW_COPY_AND_ASSIGN(PaintImageGenerator);
 };
 
 }  // namespace cc

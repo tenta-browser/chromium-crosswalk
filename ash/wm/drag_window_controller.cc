@@ -9,6 +9,7 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
+#include "ash/window_factory.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -23,6 +24,7 @@
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/display/display.h"
+#include "ui/gfx/transform_util.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/coordinate_conversion.h"
@@ -30,6 +32,13 @@
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
+
+namespace {
+
+// The maximum opacity of the drag phantom window.
+constexpr float kDragPhantomMaxOpacity = 0.8f;
+
+}  // namespace
 
 // This keeps track of the drag window's state. It creates/destroys/updates
 // bounds and opacity based on the current bounds.
@@ -45,10 +54,10 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
   }
 
   void Update(aura::Window* original_window,
-              const gfx::Rect& bounds_in_screen,
               const gfx::Point& drag_location_in_screen) {
-    gfx::Rect root_bounds_in_screen = root_window_->GetBoundsInScreen();
-    if (!root_bounds_in_screen.Intersects(bounds_in_screen)) {
+    const float opacity = GetDragWindowOpacity(root_window_, original_window,
+                                               drag_location_in_screen);
+    if (opacity == 0.f) {
       delete drag_window_;
       // Make sure drag_window_ is reset so that new drag window will be created
       // when it becomes necessary again.
@@ -57,32 +66,27 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
       return;
     }
     if (!drag_window_)
-      CreateDragWindow(original_window, bounds_in_screen);
+      CreateDragWindow(original_window);
 
-    gfx::Rect bounds_in_root = bounds_in_screen;
-    ::wm::ConvertRectFromScreen(drag_window_->parent(), &bounds_in_root);
-    drag_window_->SetBounds(bounds_in_root);
-    if (root_bounds_in_screen.Contains(drag_location_in_screen)) {
-      SetOpacity(original_window, 1.f);
-    } else {
-      drag_window_->SetBounds(bounds_in_root);
-      gfx::Rect visible_bounds = root_bounds_in_screen;
-      visible_bounds.Intersect(bounds_in_screen);
-      SetOpacity(original_window,
-                 GetDragWindowOpacity(bounds_in_screen, visible_bounds));
-    }
+    gfx::Rect bounds = original_window->bounds();
+    aura::Window::ConvertRectToTarget(original_window->parent(),
+                                      drag_window_->parent(), &bounds);
+    drag_window_->SetBounds(bounds);
+    drag_window_->SetTransform(original_window->transform());
+    SetOpacity(opacity);
   }
 
  private:
   friend class DragWindowController;
 
-  void CreateDragWindow(aura::Window* original_window,
-                        const gfx::Rect& bounds_in_screen) {
+  void CreateDragWindow(aura::Window* original_window) {
     DCHECK(!drag_window_);
     original_window_ = original_window;
-    drag_window_ = new aura::Window(this);
+    drag_window_ = window_factory::NewWindow(this).release();
     int parent_id = original_window->parent()->id();
     aura::Window* container = root_window_->GetChildById(parent_id);
+    gfx::Rect bounds = original_window->bounds();
+    ::wm::ConvertRectToScreen(original_window->parent(), &bounds);
 
     drag_window_->SetType(aura::client::WINDOW_TYPE_POPUP);
     drag_window_->SetTransparent(true);
@@ -91,8 +95,8 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
     drag_window_->set_id(kShellWindowId_PhantomWindow);
     drag_window_->SetProperty(aura::client::kAnimationsDisabledKey, true);
     container->AddChild(drag_window_);
-    drag_window_->SetBounds(bounds_in_screen);
-    SetShadowElevation(drag_window_, ::wm::ShadowElevation::LARGE);
+    drag_window_->SetBounds(bounds);
+    ::wm::SetShadowElevation(drag_window_, ::wm::kShadowElevationActiveWindow);
 
     RecreateWindowLayers(original_window);
     layer_owner_->root()->SetVisible(true);
@@ -116,10 +120,11 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
     gfx::Rect layer_bounds = layer_owner_->root()->bounds();
     layer_bounds.set_origin(gfx::Point(0, 0));
     layer_owner_->root()->SetBounds(layer_bounds);
+    layer_owner_->root()->SetTransform(gfx::Transform());
     layer_owner_->root()->SetVisible(false);
   }
 
-  void SetOpacity(const aura::Window* original_window, float opacity) {
+  void SetOpacity(float opacity) {
     ui::Layer* layer = drag_window_->layer();
     ui::ScopedLayerAnimationSettings scoped_setter(layer->GetAnimator());
     layer->SetOpacity(opacity);
@@ -150,7 +155,7 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
   bool HasHitTestMask() const override { return false; }
-  void GetHitTestMask(gfx::Path* mask) const override {}
+  void GetHitTestMask(SkPath* mask) const override {}
   void OnWindowDestroying(aura::Window* window) override {
     DCHECK_EQ(drag_window_, window);
     drag_window_ = nullptr;
@@ -170,13 +175,23 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
 
 // static
 float DragWindowController::GetDragWindowOpacity(
-    const gfx::Rect& window_bounds,
-    const gfx::Rect& visible_bounds) {
-  // The maximum opacity of the drag phantom window.
-  static const float kMaxOpacity = 0.8f;
+    aura::Window* root_window,
+    aura::Window* dragged_window,
+    const gfx::Point& drag_location_in_screen) {
+  const gfx::Rect root_bounds = root_window->GetBoundsInScreen();
+  if (root_bounds.Contains(drag_location_in_screen))
+    return 1.f;
 
-  return kMaxOpacity * visible_bounds.size().GetArea() /
-         window_bounds.size().GetArea();
+  gfx::Rect dragged_window_bounds = dragged_window->bounds();
+  ::wm::ConvertRectToScreen(dragged_window->parent(), &dragged_window_bounds);
+  gfx::RectF transformed_dragged_window_bounds(dragged_window_bounds);
+  gfx::TransformAboutPivot(dragged_window_bounds.origin(),
+                           dragged_window->transform())
+      .TransformRect(&transformed_dragged_window_bounds);
+  gfx::RectF visible_bounds(root_bounds);
+  visible_bounds.Intersect(transformed_dragged_window_bounds);
+  return kDragPhantomMaxOpacity * visible_bounds.size().GetArea() /
+         transformed_dragged_window_bounds.size().GetArea();
 }
 
 DragWindowController::DragWindowController(aura::Window* window)
@@ -195,10 +210,9 @@ DragWindowController::DragWindowController(aura::Window* window)
 
 DragWindowController::~DragWindowController() = default;
 
-void DragWindowController::Update(const gfx::Rect& bounds_in_screen,
-                                  const gfx::Point& drag_location_in_screen) {
+void DragWindowController::Update(const gfx::Point& drag_location_in_screen) {
   for (std::unique_ptr<DragWindowDetails>& details : drag_windows_)
-    details->Update(window_, bounds_in_screen, drag_location_in_screen);
+    details->Update(window_, drag_location_in_screen);
 }
 
 int DragWindowController::GetDragWindowsCountForTest() const {

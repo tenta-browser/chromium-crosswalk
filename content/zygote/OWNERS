@@ -1,7 +1,3 @@
-jln@chromium.org
-palmer@chromium.org
-rsesek@chromium.org
-tsepez@chromium.org
-
-# TEAM: security-dev@chromium.org
+file://services/service_manager/zygote/OWNERS
 # COMPONENT: Internals>Sandbox
+# TEAM: security-dev@chromium.org

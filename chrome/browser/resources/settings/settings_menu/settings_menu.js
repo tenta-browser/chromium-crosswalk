@@ -14,28 +14,24 @@ Polymer({
   properties: {
     advancedOpened: {
       type: Boolean,
+      value: false,
       notify: true,
     },
 
     /**
      * Dictionary defining page visibility.
-     * @type {!GuestModePageVisibility}
+     * @type {!PageVisibility}
      */
     pageVisibility: Object,
   },
 
-  listeners: {
-    'topMenu.tap': 'onLinkTap_',
-    'subMenu.tap': 'onLinkTap_',
-  },
-
   /** @param {!settings.Route} newRoute */
   currentRouteChanged: function(newRoute) {
-    var currentPath = newRoute.path;
+    const currentPath = newRoute.path;
 
     // Focus the initially selected path.
-    var anchors = this.root.querySelectorAll('a');
-    for (var i = 0; i < anchors.length; ++i) {
+    const anchors = this.root.querySelectorAll('a');
+    for (let i = 0; i < anchors.length; ++i) {
       if (anchors[i].getAttribute('href') == currentPath) {
         this.setSelectedUrl_(anchors[i].href);
         return;
@@ -45,15 +41,21 @@ Polymer({
     this.setSelectedUrl_('');  // Nothing is selected.
   },
 
+  /** @private */
+  onAdvancedButtonToggle_: function() {
+    this.advancedOpened = !this.advancedOpened;
+  },
+
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
    * accessibility purposes, taps are handled separately by <iron-selector>.
    * @param {!Event} event
    * @private
    */
-  onLinkTap_: function(event) {
-    if (event.target.hasAttribute('href'))
+  onLinkClick_: function(event) {
+    if (event.target.matches('a:not(#extensionsLink)')) {
       event.preventDefault();
+    }
   },
 
   /**
@@ -72,8 +74,8 @@ Polymer({
   onSelectorActivate_: function(event) {
     this.setSelectedUrl_(event.detail.selected);
 
-    var path = new URL(event.detail.selected).pathname;
-    var route = settings.getRouteForPath(path);
+    const path = new URL(event.detail.selected).pathname;
+    const route = settings.getRouteForPath(path);
     assert(route, 'settings-menu has an entry with an invalid route.');
     settings.navigateTo(
         route, /* dynamicParams */ null, /* removeSearch */ true);
@@ -86,5 +88,11 @@ Polymer({
    * */
   arrowState_: function(opened) {
     return opened ? 'cr:arrow-drop-up' : 'cr:arrow-drop-down';
+  },
+
+  /** @private */
+  onExtensionsLinkClick_: function() {
+    chrome.metricsPrivate.recordUserAction(
+        'SettingsMenu_ExtensionsLinkClicked');
   },
 });

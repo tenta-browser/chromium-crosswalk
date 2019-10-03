@@ -4,14 +4,17 @@
 
 #include "chrome/browser/ui/views/page_info/chosen_object_view.h"
 
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include <memory>
+#include <utility>
+
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/page_info/chosen_object_view_observer.h"
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/resources/grit/ui_resources.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
@@ -25,62 +28,101 @@ ChosenObjectView::ChosenObjectView(
   // |ChosenObjectView| layout (fills parent):
   // *------------------------------------*
   // | Icon | Chosen Object Name      | X |
+  // |------|-------------------------|---|
+  // |      | USB device              |   |
   // *------------------------------------*
   //
   // Where the icon and close button columns are fixed widths.
 
-  constexpr float kFixed = 0.f;
-  constexpr float kStretchy = 1.f;
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
   const int column_set_id = 0;
+
+  const int related_label_padding =
+      ChromeLayoutProvider::Get()->GetDistanceMetric(
+          views::DISTANCE_RELATED_LABEL_HORIZONTAL);
   views::ColumnSet* column_set = layout->AddColumnSet(column_set_id);
   column_set->AddColumn(views::GridLayout::CENTER, views::GridLayout::CENTER,
-                        kFixed, views::GridLayout::FIXED,
+                        views::GridLayout::kFixedSize, views::GridLayout::FIXED,
                         PageInfoBubbleView::kIconColumnWidth, 0);
-  column_set->AddPaddingColumn(kFixed,
-                               ChromeLayoutProvider::Get()->GetDistanceMetric(
-                                   views::DISTANCE_RELATED_LABEL_HORIZONTAL));
+  column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                               related_label_padding);
   column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::CENTER,
-                        kStretchy, views::GridLayout::USE_PREF, 0, 0);
+                        1.0, views::GridLayout::USE_PREF, 0, 0);
+  column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
+                               related_label_padding);
   column_set->AddColumn(views::GridLayout::TRAILING, views::GridLayout::CENTER,
-                        kFixed, views::GridLayout::USE_PREF,
+                        views::GridLayout::kFixedSize,
+                        views::GridLayout::USE_PREF,
                         PageInfoBubbleView::kIconColumnWidth, 0);
 
-  layout->StartRow(kStretchy, column_set_id);
+  layout->StartRow(1.0, column_set_id);
+  // This padding is added to the top and bottom of each chosen object row, so
+  // use half. This is also consistent with |PermissionSelectorRow|'s behavior.
+  const int list_item_padding = ChromeLayoutProvider::Get()->GetDistanceMetric(
+                                    DISTANCE_CONTROL_LIST_VERTICAL) /
+                                2;
+  layout->StartRowWithPadding(1.0, column_set_id, views::GridLayout::kFixedSize,
+                              list_item_padding);
   // Create the chosen object icon.
-  icon_ = new views::ImageView();
-  const gfx::Image& image = PageInfoUI::GetChosenObjectIcon(*info_, false);
-  icon_->SetImage(image.ToImageSkia());
-  layout->AddView(icon_);
-  // Create the label that displays the chosen object name.
-  views::Label* label = new views::Label(
-      l10n_util::GetStringFUTF16(info_->ui_info.label_string_id,
-                                 PageInfoUI::ChosenObjectToUIString(*info_)),
-      CONTEXT_BODY_TEXT_LARGE);
-  layout->AddView(label);
-  // Create the delete button.
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    delete_button_ = views::CreateVectorImageButton(this);
-    views::SetImageFromVectorIcon(
-        delete_button_, vector_icons::kClose16Icon,
-        views::style::GetColor(*this, CONTEXT_BODY_TEXT_LARGE,
-                               views::style::STYLE_PRIMARY));
+  icon_ = layout->AddView(std::make_unique<views::ImageView>());
 
-  } else {
-    delete_button_ = new views::ImageButton(this);
-    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-    delete_button_->SetImage(views::ImageButton::STATE_NORMAL,
-                             rb.GetImageSkiaNamed(IDR_CLOSE_2));
-    delete_button_->SetImage(views::ImageButton::STATE_HOVERED,
-                             rb.GetImageSkiaNamed(IDR_CLOSE_2_H));
-    delete_button_->SetImage(views::ImageButton::STATE_PRESSED,
-                             rb.GetImageSkiaNamed(IDR_CLOSE_2_P));
-  }
-  delete_button_->SetFocusForPlatform();
-  delete_button_->set_request_focus_on_press(true);
-  delete_button_->SetTooltipText(
+  // Create the label that displays the chosen object name.
+  auto label = std::make_unique<views::Label>(
+      PageInfoUI::ChosenObjectToUIString(*info_), CONTEXT_BODY_TEXT_LARGE);
+  icon_->SetImage(
+      PageInfoUI::GetChosenObjectIcon(*info_, false, label->GetEnabledColor()));
+  layout->AddView(std::move(label));
+
+  // Create the delete button.
+  std::unique_ptr<views::ImageButton> delete_button =
+      views::CreateVectorImageButton(this);
+  views::SetImageFromVectorIcon(
+      delete_button.get(), vector_icons::kCloseRoundedIcon,
+      views::style::GetColor(*this, CONTEXT_BODY_TEXT_LARGE,
+                             views::style::STYLE_PRIMARY));
+  delete_button->SetFocusForPlatform();
+  delete_button->set_request_focus_on_press(true);
+  delete_button->SetTooltipText(
       l10n_util::GetStringUTF16(info_->ui_info.delete_tooltip_string_id));
-  layout->AddView(delete_button_);
+  delete_button_ = layout->AddView(std::move(delete_button));
+
+  // Display secondary text underneath the name of the chosen object to describe
+  // what the chosen object actually is.
+  layout->StartRow(1.0, column_set_id);
+  layout->SkipColumns(1);
+
+  // Disable the delete button for policy controlled objects and display the
+  // allowed by policy string below for |secondary_label|.
+  std::unique_ptr<views::Label> secondary_label;
+  if (info_->chooser_object->source ==
+      content_settings::SettingSource::SETTING_SOURCE_POLICY) {
+    delete_button_->SetEnabled(false);
+    secondary_label = std::make_unique<views::Label>(l10n_util::GetStringUTF16(
+        info_->ui_info.allowed_by_policy_description_string_id));
+  } else {
+    secondary_label = std::make_unique<views::Label>(
+        l10n_util::GetStringUTF16(info_->ui_info.description_string_id));
+  }
+
+  secondary_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  secondary_label->SetEnabledColor(PageInfoUI::GetSecondaryTextColor());
+  secondary_label->SetMultiLine(true);
+
+  // Long labels that cannot fit in the existing space under the permission
+  // label should be allowed to use up to |kMaxSecondaryLabelWidth| for display.
+  int preferred_width = secondary_label->GetPreferredSize().width();
+  constexpr int kMaxSecondaryLabelWidth = 140;
+  if (preferred_width > kMaxSecondaryLabelWidth) {
+    layout->AddView(std::move(secondary_label), /*col_span=*/1, /*row_span=*/1,
+                    views::GridLayout::LEADING, views::GridLayout::CENTER,
+                    kMaxSecondaryLabelWidth, /*pref_height=*/0);
+  } else {
+    layout->AddView(std::move(secondary_label), /*col_span=*/1, /*row_span=*/1,
+                    views::GridLayout::FILL, views::GridLayout::CENTER);
+  }
+
+  layout->AddPaddingRow(column_set_id, list_item_padding);
 }
 
 void ChosenObjectView::AddObserver(ChosenObjectViewObserver* observer) {
@@ -92,10 +134,12 @@ ChosenObjectView::~ChosenObjectView() {}
 void ChosenObjectView::ButtonPressed(views::Button* sender,
                                      const ui::Event& event) {
   // Change the icon to reflect the selected setting.
-  const gfx::Image& image = PageInfoUI::GetChosenObjectIcon(*info_, true);
-  icon_->SetImage(image.ToImageSkia());
+  icon_->SetImage(PageInfoUI::GetChosenObjectIcon(
+      *info_, true,
+      views::style::GetColor(*this, views::style::CONTEXT_LABEL,
+                             views::style::STYLE_PRIMARY)));
 
-  DCHECK(delete_button_->visible());
+  DCHECK(delete_button_->GetVisible());
   delete_button_->SetVisible(false);
 
   for (ChosenObjectViewObserver& observer : observer_list_) {

@@ -26,13 +26,7 @@
 
 class ProfileMenuControllerTest : public CocoaProfileTest {
  public:
-  ProfileMenuControllerTest() {
-    item_.reset([[NSMenuItem alloc] initWithTitle:@"Users"
-                                           action:nil
-                                    keyEquivalent:@""]);
-    controller_.reset(
-        [[ProfileMenuController alloc] initWithMainMenuItem:item_]);
-  }
+  ProfileMenuControllerTest() { RebuildController(); }
 
   void SetUp() override {
     CocoaProfileTest::SetUp();
@@ -40,6 +34,14 @@ class ProfileMenuControllerTest : public CocoaProfileTest {
 
     // Spin the runloop so |-initializeMenu| gets called.
     chrome::testing::NSRunLoopRunAllPending();
+  }
+
+  void RebuildController() {
+    item_.reset([[NSMenuItem alloc] initWithTitle:@"Users"
+                                           action:nil
+                                    keyEquivalent:@""]);
+    controller_.reset(
+        [[ProfileMenuController alloc] initWithMainMenuItem:item_]);
   }
 
   void TestBottomItems() {
@@ -248,54 +250,22 @@ TEST_F(ProfileMenuControllerTest, DeleteActiveProfile) {
   base::ThreadRestrictions::SetIOAllowed(io_was_allowed);
 }
 
-TEST_F(ProfileMenuControllerTest, SupervisedProfile) {
-  TestingProfileManager* manager = testing_profile_manager();
-  TestingProfile* supervised_profile = manager->CreateTestingProfile(
-      "test1", std::unique_ptr<sync_preferences::PrefServiceSyncable>(),
-      base::ASCIIToUTF16("Supervised User"), 0, "TEST_ID",
-      TestingProfile::TestingFactories());
-  // The supervised profile is initially marked as omitted from the avatar menu
-  // (in non-test code, until we have confirmation that it has actually been
-  // created on the server). For the test, just tell the profile attribute
-  // storage to un-hide it.
-  ProfileAttributesEntry* entry;
-  ASSERT_TRUE(manager->profile_attributes_storage()->
-      GetProfileAttributesWithPath(supervised_profile->GetPath(), &entry));
-  entry->SetIsOmitted(false);
+TEST_F(ProfileMenuControllerTest, AddProfileDisabled) {
+  PrefService* local_state = g_browser_process->local_state();
+  local_state->SetBoolean(prefs::kBrowserAddPersonEnabled, false);
 
-  BrowserList::SetLastActive(browser());
+  RebuildController();
+  // Spin the runloop so |-initializeMenu| gets called.
+  chrome::testing::NSRunLoopRunAllPending();
 
   NSMenu* menu = [controller() menu];
-  // Person 1, Supervised User, <sep>, Edit, <sep>, New.
-  ASSERT_EQ(6, [menu numberOfItems]);
+  NSInteger count = [menu numberOfItems];
 
-  NSMenuItem* item = [menu itemAtIndex:0];
-  ASSERT_EQ(@selector(switchToProfileFromMenu:), [item action]);
-  EXPECT_TRUE([controller() validateMenuItem:item]);
+  ASSERT_GE(count, 2);
 
-  item = [menu itemAtIndex:1];
-  ASSERT_EQ(@selector(switchToProfileFromMenu:), [item action]);
-  EXPECT_TRUE([controller() validateMenuItem:item]);
+  NSMenuItem* item = [menu itemAtIndex:count - 2];
+  EXPECT_TRUE([item isSeparatorItem]);
 
-  item = [menu itemAtIndex:5];
-  ASSERT_EQ(@selector(newProfile:), [item action]);
-  EXPECT_TRUE([controller() validateMenuItem:item]);
-
-  // Open a new browser for the supervised user and switch to it.
-  Browser::CreateParams supervised_profile_params(supervised_profile, true);
-  std::unique_ptr<Browser> supervised_browser(
-      CreateBrowserWithTestWindowForParams(&supervised_profile_params));
-  BrowserList::SetLastActive(supervised_browser.get());
-
-  item = [menu itemAtIndex:0];
-  ASSERT_EQ(@selector(switchToProfileFromMenu:), [item action]);
-  EXPECT_FALSE([controller() validateMenuItem:item]);
-
-  item = [menu itemAtIndex:1];
-  ASSERT_EQ(@selector(switchToProfileFromMenu:), [item action]);
-  EXPECT_TRUE([controller() validateMenuItem:item]);
-
-  item = [menu itemAtIndex:5];
-  ASSERT_EQ(@selector(newProfile:), [item action]);
-  EXPECT_FALSE([controller() validateMenuItem:item]);
+  item = [menu itemAtIndex:count - 1];
+  EXPECT_EQ(@selector(editProfile:), [item action]);
 }

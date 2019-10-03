@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/scoped_observer.h"
 #include "base/single_thread_task_runner.h"
@@ -220,8 +219,8 @@ ExtensionDisabledGlobalError::GetBubbleViewMessages() {
       messages.push_back(
           l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WILL_HAVE_ACCESS_TO));
   } else {
-    // TODO(treib): If NeedCustodianApprovalForPermissionIncrease, add an extra
-    // message for supervised users. crbug.com/461261
+    // TODO(crbug.com/461261): If NeedCustodianApprovalForPermissionIncrease,
+    // add an extra message for supervised users.
     messages.push_back(
         l10n_util::GetStringUTF16(IDS_EXTENSION_DISABLED_ERROR_LABEL));
   }
@@ -234,8 +233,8 @@ ExtensionDisabledGlobalError::GetBubbleViewMessages() {
 
 base::string16 ExtensionDisabledGlobalError::GetBubbleViewAcceptButtonLabel() {
   if (util::IsExtensionSupervised(extension_, service_->profile())) {
-    // TODO(treib): Probably use a new string here once we get UX design.
-    // For now, just use "OK". crbug.com/461261
+    // TODO(crbug.com/461261): Probably use a new string here once we get UX
+    // design. For now, just use "OK".
     return l10n_util::GetStringUTF16(IDS_OK);
   }
   if (is_remote_install_) {
@@ -293,17 +292,17 @@ void ExtensionDisabledGlobalError::BubbleViewCancelButtonPressed(
   // there is only an "OK" button.
   // Supervised users may never remove custodian-installed extensions.
   DCHECK(!util::IsExtensionSupervised(extension_, service_->profile()));
-  uninstall_dialog_.reset(ExtensionUninstallDialog::Create(
-      service_->profile(), browser->window()->GetNativeWindow(), this));
+  uninstall_dialog_ = ExtensionUninstallDialog::Create(
+      service_->profile(), browser->window()->GetNativeWindow(), this);
   user_response_ = UNINSTALL;
   // Delay showing the uninstall dialog, so that this function returns
   // immediately, to close the bubble properly. See crbug.com/121544.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&ExtensionUninstallDialog::ConfirmUninstall,
-                 uninstall_dialog_->AsWeakPtr(), base::RetainedRef(extension_),
-                 UNINSTALL_REASON_EXTENSION_DISABLED,
-                 UNINSTALL_SOURCE_PERMISSIONS_INCREASE));
+      FROM_HERE, base::BindOnce(&ExtensionUninstallDialog::ConfirmUninstall,
+                                uninstall_dialog_->AsWeakPtr(),
+                                base::RetainedRef(extension_),
+                                UNINSTALL_REASON_EXTENSION_DISABLED,
+                                UNINSTALL_SOURCE_PERMISSIONS_INCREASE));
 }
 
 bool ExtensionDisabledGlobalError::ShouldCloseOnDeactivate() const {
@@ -374,7 +373,7 @@ void AddExtensionDisabledErrorWithIcon(base::WeakPtr<ExtensionService> service,
   const Extension* extension = service->GetInstalledExtension(extension_id);
   if (extension) {
     GlobalErrorServiceFactory::GetForProfile(service->profile())
-        ->AddGlobalError(base::MakeUnique<ExtensionDisabledGlobalError>(
+        ->AddGlobalError(std::make_unique<ExtensionDisabledGlobalError>(
             service.get(), extension, is_remote_install, icon));
   }
 }
@@ -386,13 +385,10 @@ void AddExtensionDisabledError(ExtensionService* service,
       extension, kIconSize, ExtensionIconSet::MATCH_BIGGER);
   gfx::Size size(kIconSize, kIconSize);
   ImageLoader::Get(service->profile())
-      ->LoadImageAsync(extension,
-                       image,
-                       size,
-                       base::Bind(&AddExtensionDisabledErrorWithIcon,
-                                  service->AsWeakPtr(),
-                                  extension->id(),
-                                  is_remote_install));
+      ->LoadImageAsync(extension, image, size,
+                       base::BindOnce(&AddExtensionDisabledErrorWithIcon,
+                                      service->AsWeakPtr(), extension->id(),
+                                      is_remote_install));
 }
 
 }  // namespace extensions

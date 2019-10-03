@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_TEST_PASSWORD_STORE_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_TEST_PASSWORD_STORE_H_
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/sequenced_task_runner.h"
 #include "components/password_manager/core/browser/password_store.h"
 
 namespace password_manager {
@@ -23,8 +25,9 @@ class TestPasswordStore : public PasswordStore {
  public:
   TestPasswordStore();
 
-  typedef std::map<std::string /* signon_realm */,
-                   std::vector<autofill::PasswordForm>> PasswordMap;
+  using PasswordMap = std::map<std::string /* signon_realm */,
+                               std::vector<autofill::PasswordForm>,
+                               std::less<>>;
 
   const PasswordMap& stored_passwords() const;
   void Clear();
@@ -34,6 +37,8 @@ class TestPasswordStore : public PasswordStore {
   // have entries of size 0.
   bool IsEmpty() const;
 
+  int fill_matching_logins_calls() const { return fill_matching_logins_calls_; }
+
  protected:
   ~TestPasswordStore() override;
 
@@ -41,10 +46,10 @@ class TestPasswordStore : public PasswordStore {
       const override;
 
   // PasswordStore interface
-  PasswordStoreChangeList AddLoginImpl(
-      const autofill::PasswordForm& form) override;
-  PasswordStoreChangeList UpdateLoginImpl(
-      const autofill::PasswordForm& form) override;
+  PasswordStoreChangeList AddLoginImpl(const autofill::PasswordForm& form,
+                                       AddLoginError* error) override;
+  PasswordStoreChangeList UpdateLoginImpl(const autofill::PasswordForm& form,
+                                          UpdateLoginError* error) override;
   PasswordStoreChangeList RemoveLoginImpl(
       const autofill::PasswordForm& form) override;
   std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
@@ -53,10 +58,11 @@ class TestPasswordStore : public PasswordStore {
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
+  DatabaseCleanupResult DeleteUndecryptableLogins() override;
+  std::vector<InteractionsStats> GetSiteStatsImpl(
+      const GURL& origin_domain) override;
 
   // Unused portions of PasswordStore interface
-  std::vector<std::unique_ptr<autofill::PasswordForm>>
-  FillLoginsForSameOrganizationName(const std::string& signon_realm) override;
   void ReportMetricsImpl(const std::string& sync_username,
                          bool custom_passphrase_sync_enabled) override;
   PasswordStoreChangeList RemoveLoginsByURLAndTimeImpl(
@@ -66,9 +72,6 @@ class TestPasswordStore : public PasswordStore {
   PasswordStoreChangeList RemoveLoginsCreatedBetweenImpl(
       base::Time begin,
       base::Time end) override;
-  PasswordStoreChangeList RemoveLoginsSyncedBetweenImpl(
-      base::Time delete_begin,
-      base::Time delete_end) override;
   PasswordStoreChangeList DisableAutoSignInForOriginsImpl(
       const base::Callback<bool(const GURL&)>& origin_filter) override;
   bool RemoveStatisticsByOriginAndTimeImpl(
@@ -78,11 +81,21 @@ class TestPasswordStore : public PasswordStore {
   void AddSiteStatsImpl(const InteractionsStats& stats) override;
   void RemoveSiteStatsImpl(const GURL& origin_domain) override;
   std::vector<InteractionsStats> GetAllSiteStatsImpl() override;
-  std::vector<InteractionsStats> GetSiteStatsImpl(
-      const GURL& origin_domain) override;
+
+  // PasswordStoreSync interface.
+  bool BeginTransaction() override;
+  void RollbackTransaction() override;
+  bool CommitTransaction() override;
+  FormRetrievalResult ReadAllLogins(
+      PrimaryKeyToFormMap* key_to_form_map) override;
+  PasswordStoreChangeList RemoveLoginByPrimaryKeySync(int primary_key) override;
+  PasswordStoreSync::MetadataStore* GetMetadataStore() override;
 
  private:
   PasswordMap stored_passwords_;
+
+  // Number of calls of FillMatchingLogins() method.
+  int fill_matching_logins_calls_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(TestPasswordStore);
 };

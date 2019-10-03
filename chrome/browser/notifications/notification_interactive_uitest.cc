@@ -16,10 +16,11 @@
 #include "base/time/clock.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/notifications/notification_interactive_uitest_support.h"
 #include "chrome/browser/notifications/notification_test_util.h"
+#include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -30,21 +31,21 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/history/core/browser/history_service.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/message_center_observer.h"
-#include "ui/message_center/notification.h"
 #include "ui/message_center/notification_blocker.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
+#include "ui/message_center/public/cpp/notification.h"
 #include "url/gurl.h"
 
 #if defined(OS_MACOSX)
@@ -133,20 +134,36 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateSimpleNotification) {
 
 IN_PROC_BROWSER_TEST_F(NotificationsTest, NotificationBlockerTest) {
   ToggledNotificationBlocker blocker;
+  TestMessageCenterObserver observer;
 
   ASSERT_TRUE(embedded_test_server()->Start());
+  message_center::MessageCenter::Get()->AddObserver(&observer);
 
   // Creates a simple notification.
   AllowAllOrigins();
   ui_test_utils::NavigateToURL(browser(), GetTestPageURL());
 
+  EXPECT_EQ(0, GetNotificationPopupCount());
+  blocker.SetNotificationsEnabled(false);
+
   std::string result = CreateSimpleNotification(browser(), true);
+  EXPECT_NE("-1", result);
+  EXPECT_EQ(0, GetNotificationPopupCount());
+  EXPECT_EQ("", observer.last_displayed_id());
+
+  blocker.SetNotificationsEnabled(true);
+  EXPECT_EQ(1, GetNotificationPopupCount());
+  EXPECT_NE("", observer.last_displayed_id());
+
+  result = CreateSimpleNotification(browser(), true);
   EXPECT_NE("-1", result);
   result = CreateSimpleNotification(browser(), true);
   EXPECT_NE("-1", result);
 
   blocker.SetNotificationsEnabled(false);
   EXPECT_EQ(0, GetNotificationPopupCount());
+
+  message_center::MessageCenter::Get()->RemoveObserver(&observer);
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCloseNotification) {
@@ -217,7 +234,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestDenyOnPermissionRequestUI) {
   CreateSimpleNotification(browser(), false);
   ASSERT_EQ(0, GetNotificationCount());
   ContentSettingsForOneType settings;
-  GetPrefsByContentSetting(CONTENT_SETTING_BLOCK, &settings);
+  GetDisabledContentSettings(&settings);
   EXPECT_TRUE(CheckOriginInSetting(settings, GetTestPageURL()));
 }
 
@@ -230,13 +247,11 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestClosePermissionRequestUI) {
   CreateSimpleNotification(browser(), false);
   ASSERT_EQ(0, GetNotificationCount());
   ContentSettingsForOneType settings;
-  GetPrefsByContentSetting(CONTENT_SETTING_BLOCK, &settings);
+  GetDisabledContentSettings(&settings);
   EXPECT_EQ(0U, settings.size());
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationsTest, TestPermissionAPI) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  EnablePermissionsEmbargo(&scoped_feature_list);
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Test that Notification.permission returns the right thing.
@@ -248,8 +263,14 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestPermissionAPI) {
 
   DenyOrigin(GetTestPageURL().GetOrigin());
   EXPECT_EQ("denied", QueryPermissionStatus(browser()));
+}
 
-  DropOriginPreference(GetTestPageURL().GetOrigin());
+IN_PROC_BROWSER_TEST_F(NotificationsTest, TestPermissionEmbargo) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  EnablePermissionsEmbargo(&scoped_feature_list);
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  ui_test_utils::NavigateToURL(browser(), GetTestPageURL());
 
   // Verify embargo behaviour - automatically blocked after 3 dismisses.
   ASSERT_TRUE(RequestAndDismissPermission(browser()));
@@ -340,6 +361,50 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestDenyAndThenAllowDomain) {
   ASSERT_EQ(1, GetNotificationCount());
 }
 
+IN_PROC_BROWSER_TEST_F(NotificationsTest, InlinePermissionRevokeUkm) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  ukm::TestAutoSetUkmRecorder ukm_recorder;
+
+  // Verify able to create, deny, and close the notification.
+  AllowAllOrigins();
+  ui_test_utils::NavigateToURL(browser(), GetTestPageURL());
+
+  Profile* profile = Profile::FromBrowserContext(browser()
+                                                     ->tab_strip_model()
+                                                     ->GetActiveWebContents()
+                                                     ->GetBrowserContext());
+  history::HistoryService* history_service =
+      HistoryServiceFactory::GetForProfile(profile,
+                                           ServiceAccessType::EXPLICIT_ACCESS);
+  base::RunLoop origin_queried_waiter;
+  history_service->set_origin_queried_closure_for_testing(
+      origin_queried_waiter.QuitClosure());
+
+  CreateSimpleNotification(browser(), true);
+  ASSERT_EQ(1, GetNotificationCount());
+
+  message_center::NotificationList::Notifications notifications =
+      message_center::MessageCenter::Get()->GetVisibleNotifications();
+  message_center::MessageCenter::Get()->DisableNotification(
+      (*notifications.rbegin())->id());
+
+  origin_queried_waiter.Run();
+
+  auto entries = ukm_recorder.GetEntriesByName("Permission");
+  EXPECT_EQ(1u, entries.size());
+  auto* entry = entries.front();
+
+  ukm_recorder.ExpectEntrySourceHasUrl(entry,
+                                       embedded_test_server()->base_url());
+  EXPECT_EQ(*ukm_recorder.GetEntryMetric(entry, "Source"),
+            static_cast<int64_t>(PermissionSourceUI::INLINE_SETTINGS));
+  EXPECT_EQ(*ukm_recorder.GetEntryMetric(entry, "PermissionType"),
+            static_cast<int64_t>(
+                ContentSettingsType::CONTENT_SETTINGS_TYPE_NOTIFICATIONS));
+  EXPECT_EQ(*ukm_recorder.GetEntryMetric(entry, "Action"),
+            static_cast<int64_t>(PermissionAction::REVOKED));
+}
+
 IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateDenyCloseNotifications) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -351,7 +416,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateDenyCloseNotifications) {
 
   DenyOrigin(GetTestPageURL().GetOrigin());
   ContentSettingsForOneType settings;
-  GetPrefsByContentSetting(CONTENT_SETTING_BLOCK, &settings);
+  GetDisabledContentSettings(&settings);
   ASSERT_TRUE(CheckOriginInSetting(settings, GetTestPageURL().GetOrigin()));
 
   EXPECT_EQ(1, GetNotificationCount());
@@ -361,36 +426,6 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateDenyCloseNotifications) {
       (*notifications.rbegin())->id(),
       true);  // by_user
   ASSERT_EQ(0, GetNotificationCount());
-}
-
-// Crashes on Linux/Win. See http://crbug.com/160657.
-IN_PROC_BROWSER_TEST_F(
-    NotificationsTest,
-    DISABLED_TestOriginPrefsNotSavedInIncognito) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  // Verify that allow/deny origin preferences are not saved in incognito.
-  Browser* incognito = CreateIncognitoBrowser();
-  ui_test_utils::NavigateToURL(incognito, GetTestPageURL());
-  ASSERT_TRUE(RequestAndDenyPermission(incognito));
-  CloseBrowserWindow(incognito);
-
-  incognito = CreateIncognitoBrowser();
-  ui_test_utils::NavigateToURL(incognito, GetTestPageURL());
-  ASSERT_TRUE(RequestAndAcceptPermission(incognito));
-  CreateSimpleNotification(incognito, true);
-  ASSERT_EQ(1, GetNotificationCount());
-  CloseBrowserWindow(incognito);
-
-  incognito = CreateIncognitoBrowser();
-  ui_test_utils::NavigateToURL(incognito, GetTestPageURL());
-  ASSERT_TRUE(RequestPermissionAndWait(incognito));
-
-  ContentSettingsForOneType settings;
-  GetPrefsByContentSetting(CONTENT_SETTING_BLOCK, &settings);
-  EXPECT_EQ(0U, settings.size());
-  GetPrefsByContentSetting(CONTENT_SETTING_ALLOW, &settings);
-  EXPECT_EQ(0U, settings.size());
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCloseTabWithPermissionRequestUI) {
@@ -424,7 +459,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest,
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), GURL("about:blank"), WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_TAB);
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   ui_test_utils::NavigateToURL(browser(), GetTestPageURL());
   CreateSimpleNotification(browser(), true);
   ASSERT_EQ(1, GetNotificationCount());
@@ -460,6 +496,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestNotificationReplacement) {
 
 IN_PROC_BROWSER_TEST_F(NotificationsTest,
                        TestNotificationReplacementReappearance) {
+  message_center::MessageCenter::Get()->SetHasMessageCenterView(false);
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Test that we can replace a notification using the tag, and that it will
@@ -481,11 +519,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest,
   message_center::MessageCenter::Get()->ClickOnNotification(
       (*notifications.rbegin())->id());
 
-#if defined(OS_CHROMEOS)
-  ASSERT_EQ(0, GetNotificationPopupCount());
-#else
   ASSERT_EQ(1, GetNotificationPopupCount());
-#endif
 
   result = CreateNotification(
       browser(), true, "abc.png", "Title2", "Body2", "chat");

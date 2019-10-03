@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "cc/layers/video_frame_provider_client_impl.h"
-#include "base/macros.h"
 #include "cc/layers/video_layer_impl.h"
 #include "cc/test/fake_video_frame_provider.h"
 #include "cc/test/layer_test_common.h"
@@ -33,15 +32,17 @@ class VideoFrameProviderClientImplTest : public testing::Test,
   VideoFrameProviderClientImplTest()
       : client_impl_(VideoFrameProviderClientImpl::Create(&provider_, this)),
         video_layer_impl_(nullptr),
-        test_frame_(media::VideoFrame::CreateFrame(media::PIXEL_FORMAT_YV12,
+        test_frame_(media::VideoFrame::CreateFrame(media::PIXEL_FORMAT_I420,
                                                    gfx::Size(10, 10),
                                                    gfx::Rect(10, 10),
                                                    gfx::Size(10, 10),
                                                    base::TimeDelta())) {
     DebugSetImplThreadAndMainThreadBlocked(impl_.task_runner_provider());
   }
+  VideoFrameProviderClientImplTest(const VideoFrameProviderClientImplTest&) =
+      delete;
 
-  ~VideoFrameProviderClientImplTest() {
+  ~VideoFrameProviderClientImplTest() override {
     if (!client_impl_->Stopped()) {
       client_impl_->Stop();
       DCHECK(client_impl_->Stopped());
@@ -50,6 +51,9 @@ class VideoFrameProviderClientImplTest : public testing::Test,
 
     provider_.SetVideoFrameProviderClient(nullptr);
   }
+
+  VideoFrameProviderClientImplTest& operator=(
+      const VideoFrameProviderClientImplTest&) = delete;
 
   void StartRendering() {
     EXPECT_CALL(*this, AddVideoFrameController(_));
@@ -92,9 +96,6 @@ class VideoFrameProviderClientImplTest : public testing::Test,
   scoped_refptr<VideoFrameProviderClientImpl> client_impl_;
   VideoLayerImpl* video_layer_impl_;
   scoped_refptr<media::VideoFrame> test_frame_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(VideoFrameProviderClientImplTest);
 };
 
 TEST_F(VideoFrameProviderClientImplTest, StartStopRendering) {

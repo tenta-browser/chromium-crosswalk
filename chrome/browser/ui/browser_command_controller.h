@@ -60,14 +60,19 @@ class BrowserCommandController : public CommandUpdater,
 #endif
   void PrintingStateChanged();
   void LoadingStateChanged(bool is_loading, bool force);
+  void FindBarVisibilityChanged();
   void ExtensionStateChanged();
 
   // Overriden from CommandUpdater:
   bool SupportsCommand(int id) const override;
   bool IsCommandEnabled(int id) const override;
-  bool ExecuteCommand(int id) override;
-  bool ExecuteCommandWithDisposition(int id, WindowOpenDisposition disposition)
-      override;
+  bool ExecuteCommand(
+      int id,
+      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
+  bool ExecuteCommandWithDisposition(
+      int id,
+      WindowOpenDisposition disposition,
+      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
   void AddCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(CommandObserver* observer) override;
@@ -91,15 +96,10 @@ class BrowserCommandController : public CommandUpdater,
                            LockedFullscreen);
 
   // Overridden from TabStripModelObserver:
-  void TabInsertedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* contents,
-                     int index,
-                     bool foreground) override;
-  void TabDetachedAt(content::WebContents* contents, int index) override;
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* old_contents,
-                     content::WebContents* new_contents,
-                     int index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
   void TabBlockedStateChanged(content::WebContents* contents,
                               int index) override;
 
@@ -114,6 +114,10 @@ class BrowserCommandController : public CommandUpdater,
   // only. Consider using SupportsWindowFeature if you need the mentioned
   // functionality anywhere else.
   bool IsShowingMainUI();
+
+  // Returns true if the location bar is shown or is currently hidden, but can
+  // be shown. Used for updating window command states only.
+  bool IsShowingLocationBar();
 
   // Initialize state for all browser commands.
   void InitCommandState();
@@ -147,6 +151,10 @@ class BrowserCommandController : public CommandUpdater,
   // window is in.
   void UpdateCommandsForFullscreenMode();
 
+  // Update commands whose state depends on whether they're available to hosted
+  // app windows.
+  void UpdateCommandsForHostedAppAvailability();
+
 #if defined(OS_CHROMEOS)
   // Update commands whose state depends on whether the window is in locked
   // fullscreen mode or not.
@@ -174,6 +182,9 @@ class BrowserCommandController : public CommandUpdater,
 
   // Updates commands for find.
   void UpdateCommandsForFind();
+
+  // Updates the command to close find or stop loading.
+  void UpdateCloseFindOrStop();
 
   // Updates commands for Media Router.
   void UpdateCommandsForMediaRouter();

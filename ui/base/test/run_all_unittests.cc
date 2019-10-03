@@ -9,7 +9,7 @@
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/core/embedder/embedder.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
 
@@ -49,10 +49,10 @@ void UIBaseTestSuite::Initialize() {
 
   ui::RegisterPathProvider();
 
-  base::FilePath exe_path;
-  PathService::Get(base::DIR_EXE, &exe_path);
-
 #if defined(OS_MACOSX) && !defined(OS_IOS)
+  base::FilePath exe_path;
+  base::PathService::Get(base::DIR_EXE, &exe_path);
+
   mock_cr_app::RegisterMockCrApp();
 
   // On Mac, a test Framework bundle is created that links locale.pak and
@@ -67,19 +67,38 @@ void UIBaseTestSuite::Initialize() {
   // resources built in. On Android, ui_base_unittests_apk provides the
   // necessary framework.
   ui::ResourceBundle::InitSharedInstanceWithLocale(
-      "en-US", NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
+      "en-US", NULL, ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
 
 #else
   // On other platforms, the (hardcoded) paths for chrome_100_percent.pak and
   // locale.pak get populated by later build steps. To avoid clobbering them,
   // load the test .pak files directly.
+  base::FilePath assets_path;
+  base::PathService::Get(base::DIR_ASSETS, &assets_path);
   ui::ResourceBundle::InitSharedInstanceWithPakPath(
-      exe_path.AppendASCII("ui_test.pak"));
+      assets_path.AppendASCII("ui_test.pak"));
 
   // ui_base_unittests can't depend on the locales folder which Chrome will make
   // later, so use the path created by ui_test_pak.
-  PathService::Override(ui::DIR_LOCALES, exe_path.AppendASCII("ui"));
+  base::PathService::Override(ui::DIR_LOCALES, assets_path.AppendASCII("ui"));
 #endif
+
+  base::FilePath dir_resources;
+  bool result;
+#if defined(OS_ANDROID)
+  result =
+      base::PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &dir_resources);
+#elif defined(OS_MACOSX) || defined(OS_IOS)
+  result = base::PathService::Get(base::DIR_MODULE, &dir_resources);
+#else
+  dir_resources = assets_path;
+  result = true;
+#endif
+  DCHECK(result);
+  base::FilePath ui_base_test_resources_pak =
+      dir_resources.Append(FILE_PATH_LITERAL("ui_base_test_resources.pak"));
+  ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+      ui_base_test_resources_pak, ui::SCALE_FACTOR_NONE);
 }
 
 void UIBaseTestSuite::Shutdown() {
@@ -96,9 +115,8 @@ void UIBaseTestSuite::Shutdown() {
 int main(int argc, char** argv) {
   UIBaseTestSuite test_suite(argc, argv);
 
-  mojo::edk::Init();
-  return base::LaunchUnitTests(argc,
-                               argv,
-                               base::Bind(&UIBaseTestSuite::Run,
-                                          base::Unretained(&test_suite)));
+  mojo::core::Init();
+  return base::LaunchUnitTests(
+      argc, argv,
+      base::BindOnce(&UIBaseTestSuite::Run, base::Unretained(&test_suite)));
 }

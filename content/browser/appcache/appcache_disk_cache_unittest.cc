@@ -6,11 +6,11 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -25,9 +25,8 @@ class AppCacheDiskCacheTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(directory_.CreateUniqueTempDir());
-    completion_callback_ = base::Bind(
-        &AppCacheDiskCacheTest::OnComplete,
-        base::Unretained(this));
+    completion_callback_ = base::BindRepeating(
+        &AppCacheDiskCacheTest::OnComplete, base::Unretained(this));
   }
 
   void TearDown() override { scoped_task_environment_.RunUntilIdle(); }
@@ -43,20 +42,20 @@ class AppCacheDiskCacheTest : public testing::Test {
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedTempDir directory_;
-  net::CompletionCallback completion_callback_;
+  net::CompletionRepeatingCallback completion_callback_;
   std::vector<int> completion_results_;
 
   static const int k10MBytes = 10 * 1024 * 1024;
 };
 
 TEST_F(AppCacheDiskCacheTest, DisablePriorToInitCompletion) {
-  AppCacheDiskCache::Entry* entry = nullptr;
+  AppCacheDiskCacheEntry* entry = nullptr;
 
   // Create an instance and start it initializing, queue up
   // one of each kind of "entry" function.
-  std::unique_ptr<AppCacheDiskCache> disk_cache(new AppCacheDiskCache);
+  auto disk_cache = std::make_unique<AppCacheDiskCache>();
   EXPECT_FALSE(disk_cache->is_disabled());
-  disk_cache->InitWithDiskBackend(directory_.GetPath(), k10MBytes, false,
+  disk_cache->InitWithDiskBackend(directory_.GetPath(), false,
                                   base::OnceClosure(), completion_callback_);
   disk_cache->CreateEntry(1, &entry, completion_callback_);
   disk_cache->OpenEntry(2, &entry, completion_callback_);
@@ -71,9 +70,8 @@ TEST_F(AppCacheDiskCacheTest, DisablePriorToInitCompletion) {
 
   EXPECT_EQ(nullptr, entry);
   EXPECT_EQ(4u, completion_results_.size());
-  for (std::vector<int>::const_iterator iter = completion_results_.begin();
-       iter < completion_results_.end(); ++iter) {
-    EXPECT_EQ(net::ERR_ABORTED, *iter);
+  for (const auto& result : completion_results_) {
+    EXPECT_EQ(net::ERR_ABORTED, result);
   }
 
   // Ensure the directory can be deleted at this point.
@@ -85,9 +83,9 @@ TEST_F(AppCacheDiskCacheTest, DisablePriorToInitCompletion) {
 
 TEST_F(AppCacheDiskCacheTest, DisableAfterInitted) {
   // Create an instance and let it fully init.
-  std::unique_ptr<AppCacheDiskCache> disk_cache(new AppCacheDiskCache);
+  auto disk_cache = std::make_unique<AppCacheDiskCache>();
   EXPECT_FALSE(disk_cache->is_disabled());
-  disk_cache->InitWithDiskBackend(directory_.GetPath(), k10MBytes, false,
+  disk_cache->InitWithDiskBackend(directory_.GetPath(), false,
                                   base::OnceClosure(), completion_callback_);
   FlushCacheTasks();
   EXPECT_EQ(1u, completion_results_.size());
@@ -105,7 +103,7 @@ TEST_F(AppCacheDiskCacheTest, DisableAfterInitted) {
 
   // Methods should return immediately when disabled and not invoke
   // the callback at all.
-  AppCacheDiskCache::Entry* entry = nullptr;
+  AppCacheDiskCacheEntry* entry = nullptr;
   completion_results_.clear();
   EXPECT_EQ(net::ERR_ABORTED,
             disk_cache->CreateEntry(1, &entry, completion_callback_));
@@ -120,9 +118,9 @@ TEST_F(AppCacheDiskCacheTest, DisableAfterInitted) {
 // Flaky on Android: http://crbug.com/339534
 TEST_F(AppCacheDiskCacheTest, DISABLED_DisableWithEntriesOpen) {
   // Create an instance and let it fully init.
-  std::unique_ptr<AppCacheDiskCache> disk_cache(new AppCacheDiskCache);
+  auto disk_cache = std::make_unique<AppCacheDiskCache>();
   EXPECT_FALSE(disk_cache->is_disabled());
-  disk_cache->InitWithDiskBackend(directory_.GetPath(), k10MBytes, false,
+  disk_cache->InitWithDiskBackend(directory_.GetPath(), false,
                                   base::OnceClosure(), completion_callback_);
   FlushCacheTasks();
   EXPECT_EQ(1u, completion_results_.size());
@@ -137,8 +135,8 @@ TEST_F(AppCacheDiskCacheTest, DISABLED_DisableWithEntriesOpen) {
   // and we do have expectations about that.
 
   // Create/open some entries.
-  AppCacheDiskCache::Entry* entry1 = nullptr;
-  AppCacheDiskCache::Entry* entry2 = nullptr;
+  AppCacheDiskCacheEntry* entry1 = nullptr;
+  AppCacheDiskCacheEntry* entry2 = nullptr;
   disk_cache->CreateEntry(1, &entry1, completion_callback_);
   disk_cache->CreateEntry(2, &entry2, completion_callback_);
   FlushCacheTasks();
@@ -148,12 +146,14 @@ TEST_F(AppCacheDiskCacheTest, DISABLED_DisableWithEntriesOpen) {
   // Write something to one of the entries and flush it.
   const char* kData = "Hello";
   const int kDataLen = strlen(kData) + 1;
-  scoped_refptr<net::IOBuffer> write_buf(new net::WrappedIOBuffer(kData));
+  scoped_refptr<net::IOBuffer> write_buf =
+      base::MakeRefCounted<net::WrappedIOBuffer>(kData);
   entry1->Write(0, 0, write_buf.get(), kDataLen, completion_callback_);
   FlushCacheTasks();
 
   // Queue up a read and a write.
-  scoped_refptr<net::IOBuffer> read_buf = new net::IOBuffer(kDataLen);
+  scoped_refptr<net::IOBuffer> read_buf =
+      base::MakeRefCounted<net::IOBuffer>(kDataLen);
   entry1->Read(0, 0, read_buf.get(), kDataLen, completion_callback_);
   entry2->Write(0, 0, write_buf.get(), kDataLen, completion_callback_);
 
@@ -185,9 +185,9 @@ TEST_F(AppCacheDiskCacheTest, CleanupCallback) {
 
   net::TestClosure cleanup_done;
   net::TestCompletionCallback init_done;
-  std::unique_ptr<AppCacheDiskCache> disk_cache(new AppCacheDiskCache);
+  auto disk_cache = std::make_unique<AppCacheDiskCache>();
   EXPECT_FALSE(disk_cache->is_disabled());
-  disk_cache->InitWithDiskBackend(directory_.GetPath(), k10MBytes, false,
+  disk_cache->InitWithDiskBackend(directory_.GetPath(), false,
                                   cleanup_done.closure(), init_done.callback());
   EXPECT_EQ(net::OK, init_done.WaitForResult());
 

@@ -8,15 +8,14 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
 #include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/ntp_snippets_constants.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/variations/variations_params_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -38,26 +37,21 @@ class UserClassifierTest : public testing::Test {
   }
 
   UserClassifier* CreateUserClassifier() {
-    auto test_clock = base::MakeUnique<base::SimpleTestClock>();
-    test_clock_ = test_clock.get();
-
     base::Time now;
     CHECK(base::Time::FromUTCString(kNowString, &now));
-    test_clock_->SetNow(now);
+    test_clock_.SetNow(now);
 
     user_classifier_ =
-        base::MakeUnique<UserClassifier>(&test_prefs_, std::move(test_clock));
+        std::make_unique<UserClassifier>(&test_prefs_, &test_clock_);
     return user_classifier_.get();
   }
 
-  base::SimpleTestClock* test_clock() { return test_clock_; }
+  base::SimpleTestClock* test_clock() { return &test_clock_; }
 
  private:
   TestingPrefServiceSimple test_prefs_;
   std::unique_ptr<UserClassifier> user_classifier_;
-
-  // Owned by the UserClassifier.
-  base::SimpleTestClock* test_clock_;
+  base::SimpleTestClock test_clock_;
 
   DISALLOW_COPY_AND_ASSIGN(UserClassifierTest);
 };
@@ -89,11 +83,11 @@ TEST_F(UserClassifierTest,
 TEST_F(UserClassifierTest,
        ShouldBecomeActiveSuggestionsConsumerByClickingOftenWithDecreasedParam) {
   // Increase the param to one half.
-  variations::testing::VariationParamsManager variation_params(
-      kArticleSuggestionsFeature.name,
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kArticleSuggestionsFeature,
       {{"user_classifier_active_consumer_clicks_at_least_once_per_hours",
-        "36"}},
-      {kArticleSuggestionsFeature.name});
+        "36"}});
   UserClassifier* user_classifier = CreateUserClassifier();
 
   // After two clicks still only an active user.
@@ -127,10 +121,10 @@ TEST_F(UserClassifierTest, ShouldBecomeRareNtpUserByNoActivity) {
 TEST_F(UserClassifierTest,
        ShouldBecomeRareNtpUserByNoActivityWithDecreasedParam) {
   // Decrease the param to one half.
-  variations::testing::VariationParamsManager variation_params(
-      kArticleSuggestionsFeature.name,
-      {{"user_classifier_rare_user_opens_ntp_at_most_once_per_hours", "48"}},
-      {kArticleSuggestionsFeature.name});
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kArticleSuggestionsFeature,
+      {{"user_classifier_rare_user_opens_ntp_at_most_once_per_hours", "48"}});
   UserClassifier* user_classifier = CreateUserClassifier();
 
   // After one days of waiting still an active user.
@@ -149,7 +143,7 @@ class UserClassifierMetricTest
       public ::testing::WithParamInterface<
           std::pair<UserClassifier::Metric, std::string>> {
  public:
-  UserClassifierMetricTest() : UserClassifierTest() {}
+  UserClassifierMetricTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(UserClassifierMetricTest);
@@ -229,9 +223,9 @@ TEST_P(UserClassifierMetricTest,
        ShouldIgnoreSubsequentEventsWithIncreasedLimit) {
   UserClassifier::Metric metric = GetParam().first;
   // Increase the min_hours to 1.0, i.e. 60 minutes.
-  variations::testing::VariationParamsManager variation_params(
-      kArticleSuggestionsFeature.name, {{"user_classifier_min_hours", "1.0"}},
-      {kArticleSuggestionsFeature.name});
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kArticleSuggestionsFeature, {{"user_classifier_min_hours", "1.0"}});
   UserClassifier* user_classifier = CreateUserClassifier();
 
   // The initial event
@@ -276,9 +270,9 @@ TEST_P(UserClassifierMetricTest,
        ShouldCapDelayBetweenEventsWithDecreasedLimit) {
   UserClassifier::Metric metric = GetParam().first;
   // Decrease the max_hours to 72, i.e. 3 days.
-  variations::testing::VariationParamsManager variation_params(
-      kArticleSuggestionsFeature.name, {{"user_classifier_max_hours", "72"}},
-      {kArticleSuggestionsFeature.name});
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      kArticleSuggestionsFeature, {{"user_classifier_max_hours", "72"}});
   UserClassifier* user_classifier = CreateUserClassifier();
 
   // The initial event
@@ -299,7 +293,7 @@ TEST_P(UserClassifierMetricTest,
               Eq(metric_after_a_year));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ,  // An empty prefix for the parametrized tests names (no need to
        // distinguish the only instance we make here).
     UserClassifierMetricTest,

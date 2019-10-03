@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -19,34 +19,38 @@
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/framebuffer_completeness_cache.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/shader_translator_cache.h"
 #include "gpu/config/gpu_feature_info.h"
-#include "gpu/gpu_export.h"
+#include "gpu/config/gpu_preferences.h"
+#include "gpu/gpu_gles2_export.h"
+
+namespace gl {
+class ProgressReporter;
+}
 
 namespace gpu {
 
 class ImageFactory;
 struct GpuPreferences;
-class TransferBufferManager;
+class MailboxManager;
+class SharedImageManager;
+class SharedImageRepresentationFactory;
 class ServiceDiscardableManager;
-class ServiceTransferCache;
+class PassthroughDiscardableManager;
+class DecoderContext;
+class MemoryTracker;
 
 namespace gles2 {
 
 class ProgramCache;
 class BufferManager;
-class GLES2Decoder;
 class ImageManager;
-class MailboxManager;
 class RenderbufferManager;
 class PathManager;
 class ProgramManager;
-class ProgressReporter;
 class SamplerManager;
 class ShaderManager;
 class TextureManager;
-class MemoryTracker;
 struct DisallowedFeatures;
 struct PassthroughResources;
 
@@ -54,33 +58,35 @@ DisallowedFeatures AdjustDisallowedFeatures(
     ContextType context_type,
     const DisallowedFeatures& disallowed_features);
 
-// A Context Group helps manage multiple GLES2Decoders that share
+// A Context Group helps manage multiple DecoderContexts that share
 // resources.
-class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
+class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
  public:
   ContextGroup(const GpuPreferences& gpu_preferences,
                bool supports_passthrough_command_decoders,
                MailboxManager* mailbox_manager,
-               const scoped_refptr<MemoryTracker>& memory_tracker,
+               std::unique_ptr<MemoryTracker> memory_tracker,
                ShaderTranslatorCache* shader_translator_cache,
                FramebufferCompletenessCache* framebuffer_completeness_cache,
                const scoped_refptr<FeatureInfo>& feature_info,
                bool bind_generates_resource,
                ImageManager* image_manager,
                gpu::ImageFactory* image_factory,
-               ProgressReporter* progress_reporter,
+               gl::ProgressReporter* progress_reporter,
                const GpuFeatureInfo& gpu_feature_info,
-               ServiceDiscardableManager* discardable_manager);
+               ServiceDiscardableManager* discardable_manager,
+               PassthroughDiscardableManager* passthrough_discardable_manager,
+               SharedImageManager* shared_image_manager);
 
-  // This should only be called by GLES2Decoder. This must be paired with a
+  // This should only be called by a DecoderContext. This must be paired with a
   // call to destroy if it succeeds.
-  gpu::ContextResult Initialize(GLES2Decoder* decoder,
+  gpu::ContextResult Initialize(DecoderContext* decoder,
                                 ContextType context_type,
                                 const DisallowedFeatures& disallowed_features);
 
   // Destroys all the resources when called for the last context in the group.
-  // It should only be called by GLES2Decoder.
-  void Destroy(GLES2Decoder* decoder, bool have_context);
+  // It should only be called by DecoderContext.
+  void Destroy(DecoderContext* decoder, bool have_context);
 
   MailboxManager* mailbox_manager() const { return mailbox_manager_; }
 
@@ -180,20 +186,16 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
     return program_manager_.get();
   }
 
-  bool has_program_cache() const {
-    return program_cache_ != NULL;
-  }
+  bool has_program_cache() const { return program_cache_ != nullptr; }
 
   void set_program_cache(ProgramCache* program_cache) {
     program_cache_ = program_cache;
   }
 
+  ProgramCache* get_program_cache() { return program_cache_; }
+
   ShaderManager* shader_manager() const {
     return shader_manager_.get();
-  }
-
-  TransferBufferManager* transfer_buffer_manager() const {
-    return transfer_buffer_manager_.get();
   }
 
   SamplerManager* sampler_manager() const {
@@ -204,7 +206,10 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
     return discardable_manager_;
   }
 
-  ServiceTransferCache* transfer_cache() const { return transfer_cache_.get(); }
+  SharedImageRepresentationFactory* shared_image_representation_factory()
+      const {
+    return shared_image_representation_factory_.get();
+  }
 
   uint32_t GetMemRepresented() const;
 
@@ -218,7 +223,7 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   }
 
   bool GetSyncServiceId(GLuint client_id, GLsync* service_id) const {
-    base::hash_map<GLuint, GLsync>::const_iterator iter =
+    std::unordered_map<GLuint, GLsync>::const_iterator iter =
         syncs_id_map_.find(client_id);
     if (iter == syncs_id_map_.end())
       return false;
@@ -239,7 +244,13 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
     return passthrough_resources_.get();
   }
 
+  PassthroughDiscardableManager* passthrough_discardable_manager() const {
+    return passthrough_discardable_manager_;
+  }
+
   const GpuFeatureInfo& gpu_feature_info() const { return gpu_feature_info_; }
+
+  void ReportProgress();
 
  private:
   friend class base::RefCounted<ContextGroup>;
@@ -250,16 +261,14 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   bool QueryGLFeature(GLenum pname, GLint min_required, GLint* v);
   bool QueryGLFeatureU(GLenum pname, GLint min_required, uint32_t* v);
   bool HaveContexts();
-  void ReportProgress();
 
   // It's safer to make a copy of the GpuPreferences struct rather
   // than refer to the one passed in to the constructor.
   const GpuPreferences gpu_preferences_;
   MailboxManager* mailbox_manager_;
-  scoped_refptr<MemoryTracker> memory_tracker_;
+  std::unique_ptr<MemoryTracker> memory_tracker_;
   ShaderTranslatorCache* shader_translator_cache_;
   FramebufferCompletenessCache* framebuffer_completeness_cache_;
-  std::unique_ptr<TransferBufferManager> transfer_buffer_manager_;
 
   bool enforce_gl_minimums_;
   bool bind_generates_resource_;
@@ -306,30 +315,26 @@ class GPU_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
 
   gpu::ImageFactory* image_factory_;
 
-  std::vector<base::WeakPtr<gles2::GLES2Decoder>> decoders_;
+  std::vector<base::WeakPtr<DecoderContext>> decoders_;
 
   // Mappings from client side IDs to service side IDs.
-  base::hash_map<GLuint, GLsync> syncs_id_map_;
+  std::unordered_map<GLuint, GLsync> syncs_id_map_;
 
   bool use_passthrough_cmd_decoder_;
   std::unique_ptr<PassthroughResources> passthrough_resources_;
+  PassthroughDiscardableManager* passthrough_discardable_manager_;
 
   // Used to notify the watchdog thread of progress during destruction,
   // preventing time-outs when destruction takes a long time. May be null when
   // using in-process command buffer.
-  ProgressReporter* progress_reporter_;
+  gl::ProgressReporter* progress_reporter_;
 
   GpuFeatureInfo gpu_feature_info_;
 
   ServiceDiscardableManager* discardable_manager_;
 
-  // ServiceTransferCache uses Ids based on transfer buffer shm_id+offset, which
-  // are guaranteed to be unique within the scope of the TransferBufferManager
-  // which generates them. Because of this, |transfer_cache_| must have the same
-  // scope as |transfer_buffer_manager_|. In the future, we could add a channel
-  // Id to allow a single ServiceTransferCache to be shared among multiple
-  // ContextGroups.
-  std::unique_ptr<ServiceTransferCache> transfer_cache_;
+  std::unique_ptr<SharedImageRepresentationFactory>
+      shared_image_representation_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextGroup);
 };

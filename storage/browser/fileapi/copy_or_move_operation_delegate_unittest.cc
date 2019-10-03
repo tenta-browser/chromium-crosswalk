@@ -4,10 +4,14 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <map>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/containers/queue.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -19,6 +23,7 @@
 #include "base/stl_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "storage/browser/fileapi/copy_or_move_file_validator.h"
 #include "storage/browser/fileapi/copy_or_move_operation_delegate.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
@@ -46,7 +51,7 @@ using storage::FileSystemURL;
 
 namespace content {
 
-typedef storage::FileSystemOperation::FileEntryList FileEntryList;
+using FileEntryList = storage::FileSystemOperation::FileEntryList;
 
 namespace {
 
@@ -87,7 +92,7 @@ class TestValidatorFactory : public storage::CopyOrMoveFileValidatorFactory {
         const ResultCallback& result_callback) override {
       // Post the result since a real validator must do work asynchronously.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(result_callback, result_));
+          FROM_HERE, base::BindOnce(result_callback, result_));
     }
 
     void StartPostWriteValidation(
@@ -100,7 +105,7 @@ class TestValidatorFactory : public storage::CopyOrMoveFileValidatorFactory {
       }
       // Post the result since a real validator must do work asynchronously.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(result_callback, result));
+          FROM_HERE, base::BindOnce(result_callback, result));
     }
 
    private:
@@ -154,8 +159,8 @@ class ScopedThreadStopper {
     if (thread_) {
       // Give another chance for deleted streams to perform Close.
       base::RunLoop run_loop;
-      thread_->task_runner()->PostTaskAndReply(
-          FROM_HERE, base::Bind(&base::DoNothing), run_loop.QuitClosure());
+      thread_->task_runner()->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                               run_loop.QuitClosure());
       run_loop.Run();
       thread_->Stop();
     }
@@ -182,10 +187,10 @@ class CopyOrMoveOperationTestHelper {
             base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
 
   ~CopyOrMoveOperationTestHelper() {
-    file_system_context_ = NULL;
+    file_system_context_ = nullptr;
     quota_manager_proxy_->SimulateQuotaManagerDestroyed();
-    quota_manager_ = NULL;
-    quota_manager_proxy_ = NULL;
+    quota_manager_ = nullptr;
+    quota_manager_proxy_ = nullptr;
     scoped_task_environment_.RunUntilIdle();
   }
 
@@ -204,7 +209,7 @@ class CopyOrMoveOperationTestHelper {
     quota_manager_ =
         new MockQuotaManager(false /* is_incognito */, base_dir,
                              base::ThreadTaskRunnerHandle::Get().get(),
-                             NULL /* special storage policy */);
+                             nullptr /* special storage policy */);
     quota_manager_proxy_ = new MockQuotaManagerProxy(
         quota_manager_.get(), base::ThreadTaskRunnerHandle::Get().get());
     file_system_context_ =
@@ -214,9 +219,10 @@ class CopyOrMoveOperationTestHelper {
     storage::FileSystemBackend* backend =
         file_system_context_->GetFileSystemBackend(src_type_);
     backend->ResolveURL(
-        FileSystemURL::CreateForTest(origin_, src_type_, base::FilePath()),
+        FileSystemURL::CreateForTest(url::Origin::Create(origin_), src_type_,
+                                     base::FilePath()),
         storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::Bind(&ExpectOk));
+        base::BindOnce(&ExpectOk));
     backend = file_system_context_->GetFileSystemBackend(dest_type_);
     if (dest_type_ == storage::kFileSystemTypeTest) {
       TestFileSystemBackend* test_backend =
@@ -230,31 +236,30 @@ class CopyOrMoveOperationTestHelper {
             std::move(factory));
     }
     backend->ResolveURL(
-        FileSystemURL::CreateForTest(origin_, dest_type_, base::FilePath()),
+        FileSystemURL::CreateForTest(url::Origin::Create(origin_), dest_type_,
+                                     base::FilePath()),
         storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::Bind(&ExpectOk));
+        base::BindOnce(&ExpectOk));
     scoped_task_environment_.RunUntilIdle();
 
     // Grant relatively big quota initially.
     quota_manager_->SetQuota(
-        origin_,
-        storage::FileSystemTypeToQuotaStorageType(src_type_),
-        1024 * 1024);
+        url::Origin::Create(origin_),
+        storage::FileSystemTypeToQuotaStorageType(src_type_), 1024 * 1024);
     quota_manager_->SetQuota(
-        origin_,
-        storage::FileSystemTypeToQuotaStorageType(dest_type_),
-        1024 * 1024);
+        url::Origin::Create(origin_),
+        storage::FileSystemTypeToQuotaStorageType(dest_type_), 1024 * 1024);
   }
 
   int64_t GetSourceUsage() {
     int64_t usage = 0;
-    GetUsageAndQuota(src_type_, &usage, NULL);
+    GetUsageAndQuota(src_type_, &usage, nullptr);
     return usage;
   }
 
   int64_t GetDestUsage() {
     int64_t usage = 0;
-    GetUsageAndQuota(dest_type_, &usage, NULL);
+    GetUsageAndQuota(dest_type_, &usage, nullptr);
     return usage;
   }
 
@@ -294,8 +299,7 @@ class CopyOrMoveOperationTestHelper {
     for (size_t i = 0; i < test_case_size; ++i) {
       const FileSystemTestCaseRecord& test_case = test_cases[i];
       FileSystemURL url = file_system_context_->CreateCrackedFileSystemURL(
-          root.origin(),
-          root.mount_type(),
+          root.origin().GetURL(), root.mount_type(),
           root.virtual_path().Append(test_case.path));
       if (test_case.is_directory)
         result = CreateDirectory(url);
@@ -328,14 +332,13 @@ class CopyOrMoveOperationTestHelper {
       ASSERT_EQ(base::File::FILE_OK, ReadDirectory(dir, &entries));
       for (size_t i = 0; i < entries.size(); ++i) {
         FileSystemURL url = file_system_context_->CreateCrackedFileSystemURL(
-            dir.origin(),
-            dir.mount_type(),
+            dir.origin().GetURL(), dir.mount_type(),
             dir.virtual_path().Append(entries[i].name));
         base::FilePath relative;
         root.virtual_path().AppendRelativePath(url.virtual_path(), &relative);
         relative = relative.NormalizePathSeparators();
-        ASSERT_TRUE(base::ContainsKey(test_case_map, relative));
-        if (entries[i].is_directory) {
+        ASSERT_TRUE(base::Contains(test_case_map, relative));
+        if (entries[i].type == filesystem::mojom::FsFileType::DIRECTORY) {
           EXPECT_TRUE(test_case_map[relative]->is_directory);
           directories.push(url);
         } else {
@@ -346,10 +349,9 @@ class CopyOrMoveOperationTestHelper {
       }
     }
     EXPECT_TRUE(test_case_map.empty());
-    std::map<base::FilePath,
-        const FileSystemTestCaseRecord*>::const_iterator it;
-    for (it = test_case_map.begin(); it != test_case_map.end(); ++it) {
-      LOG(ERROR) << "Extra entry: " << it->first.LossyDisplayName();
+    for (const auto& path_record_pair : test_case_map) {
+      LOG(ERROR) << "Extra entry: "
+                 << path_record_pair.first.LossyDisplayName();
     }
   }
 
@@ -387,9 +389,11 @@ class CopyOrMoveOperationTestHelper {
   void GetUsageAndQuota(storage::FileSystemType type,
                         int64_t* usage,
                         int64_t* quota) {
-    storage::QuotaStatusCode status = AsyncFileTestHelper::GetUsageAndQuota(
-        quota_manager_.get(), origin_, type, usage, quota);
-    ASSERT_EQ(storage::kQuotaStatusOk, status);
+    blink::mojom::QuotaStatusCode status =
+        AsyncFileTestHelper::GetUsageAndQuota(quota_manager_.get(),
+                                              url::Origin::Create(origin_),
+                                              type, usage, quota);
+    ASSERT_EQ(blink::mojom::QuotaStatusCode::kOk, status);
   }
 
  private:
@@ -631,9 +635,8 @@ TEST(LocalFileSystemCopyOrMoveOperationTest,
     {false, FILE_PATH_LITERAL("file 3"), 0},
   };
 
-  helper.VerifyTestCaseFiles(dest,
-                             kMoveDirResultCases,
-                             arraysize(kMoveDirResultCases));
+  helper.VerifyTestCaseFiles(dest, kMoveDirResultCases,
+                             base::size(kMoveDirResultCases));
 }
 
 TEST(LocalFileSystemCopyOrMoveOperationTest, CopySingleFileNoValidator) {
@@ -671,10 +674,11 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, ProgressCallback) {
                                       kRegularFileSystemTestCaseSize));
 
   std::vector<ProgressRecord> records;
-  ASSERT_EQ(base::File::FILE_OK,
-            helper.CopyWithProgress(src, dest,
-                                    base::Bind(&RecordProgressCallback,
-                                               base::Unretained(&records))));
+  ASSERT_EQ(
+      base::File::FILE_OK,
+      helper.CopyWithProgress(src, dest,
+                              base::BindRepeating(&RecordProgressCallback,
+                                                  base::Unretained(&records))));
 
   // Verify progress callback.
   for (size_t i = 0; i < kRegularFileSystemTestCaseSize; ++i) {
@@ -732,7 +736,7 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelper) {
   base::FilePath dest_path = temp_dir.GetPath().AppendASCII("dest");
   const char kTestData[] = "abcdefghijklmnopqrstuvwxyz0123456789";
   base::WriteFile(source_path, kTestData,
-                  arraysize(kTestData) - 1);  // Exclude trailing '\0'.
+                  base::size(kTestData) - 1);  // Exclude trailing '\0'.
 
   base::MessageLoopForIO message_loop;
   base::Thread file_thread("file_thread");
@@ -743,24 +747,26 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelper) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       file_thread.task_runner();
 
-  std::unique_ptr<storage::FileStreamReader> reader(
+  std::unique_ptr<storage::FileStreamReader> reader =
       storage::FileStreamReader::CreateForLocalFile(
-          task_runner.get(), source_path, 0, base::Time()));
+          task_runner.get(), source_path, 0, base::Time());
 
-  std::unique_ptr<FileStreamWriter> writer(FileStreamWriter::CreateForLocalFile(
-      task_runner.get(), dest_path, 0, FileStreamWriter::CREATE_NEW_FILE));
+  std::unique_ptr<FileStreamWriter> writer =
+      FileStreamWriter::CreateForLocalFile(task_runner.get(), dest_path, 0,
+                                           FileStreamWriter::CREATE_NEW_FILE);
 
   std::vector<int64_t> progress;
   CopyOrMoveOperationDelegate::StreamCopyHelper helper(
       std::move(reader), std::move(writer),
       storage::FlushPolicy::NO_FLUSH_ON_COMPLETION,
       10,  // buffer size
-      base::Bind(&RecordFileProgressCallback, base::Unretained(&progress)),
+      base::BindRepeating(&RecordFileProgressCallback,
+                          base::Unretained(&progress)),
       base::TimeDelta());  // For testing, we need all the progress.
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   base::RunLoop run_loop;
-  helper.Run(base::Bind(&AssignAndQuit, &run_loop, &error));
+  helper.Run(base::BindOnce(&AssignAndQuit, &run_loop, &error));
   run_loop.Run();
 
   EXPECT_EQ(base::File::FILE_OK, error);
@@ -787,8 +793,7 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelperWithFlush) {
   base::FilePath dest_path = temp_dir.GetPath().AppendASCII("dest");
   const char kTestData[] = "abcdefghijklmnopqrstuvwxyz0123456789";
   base::WriteFile(source_path, kTestData,
-                  arraysize(kTestData) - 1);  // Exclude trailing '\0'.
-
+                  base::size(kTestData) - 1);  // Exclude trailing '\0'.
 
   base::MessageLoopForIO message_loop;
   base::Thread file_thread("file_thread");
@@ -799,24 +804,26 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelperWithFlush) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       file_thread.task_runner();
 
-  std::unique_ptr<storage::FileStreamReader> reader(
+  std::unique_ptr<storage::FileStreamReader> reader =
       storage::FileStreamReader::CreateForLocalFile(
-          task_runner.get(), source_path, 0, base::Time()));
+          task_runner.get(), source_path, 0, base::Time());
 
-  std::unique_ptr<FileStreamWriter> writer(FileStreamWriter::CreateForLocalFile(
-      task_runner.get(), dest_path, 0, FileStreamWriter::CREATE_NEW_FILE));
+  std::unique_ptr<FileStreamWriter> writer =
+      FileStreamWriter::CreateForLocalFile(task_runner.get(), dest_path, 0,
+                                           FileStreamWriter::CREATE_NEW_FILE);
 
   std::vector<int64_t> progress;
   CopyOrMoveOperationDelegate::StreamCopyHelper helper(
       std::move(reader), std::move(writer),
       storage::FlushPolicy::NO_FLUSH_ON_COMPLETION,
       10,  // buffer size
-      base::Bind(&RecordFileProgressCallback, base::Unretained(&progress)),
+      base::BindRepeating(&RecordFileProgressCallback,
+                          base::Unretained(&progress)),
       base::TimeDelta());  // For testing, we need all the progress.
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   base::RunLoop run_loop;
-  helper.Run(base::Bind(&AssignAndQuit, &run_loop, &error));
+  helper.Run(base::BindOnce(&AssignAndQuit, &run_loop, &error));
   run_loop.Run();
 
   EXPECT_EQ(base::File::FILE_OK, error);
@@ -839,7 +846,7 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelper_Cancel) {
   base::FilePath dest_path = temp_dir.GetPath().AppendASCII("dest");
   const char kTestData[] = "abcdefghijklmnopqrstuvwxyz0123456789";
   base::WriteFile(source_path, kTestData,
-                  arraysize(kTestData) - 1);  // Exclude trailing '\0'.
+                  base::size(kTestData) - 1);  // Exclude trailing '\0'.
 
   base::MessageLoopForIO message_loop;
   base::Thread file_thread("file_thread");
@@ -850,30 +857,32 @@ TEST(LocalFileSystemCopyOrMoveOperationTest, StreamCopyHelper_Cancel) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       file_thread.task_runner();
 
-  std::unique_ptr<storage::FileStreamReader> reader(
+  std::unique_ptr<storage::FileStreamReader> reader =
       storage::FileStreamReader::CreateForLocalFile(
-          task_runner.get(), source_path, 0, base::Time()));
+          task_runner.get(), source_path, 0, base::Time());
 
-  std::unique_ptr<FileStreamWriter> writer(FileStreamWriter::CreateForLocalFile(
-      task_runner.get(), dest_path, 0, FileStreamWriter::CREATE_NEW_FILE));
+  std::unique_ptr<FileStreamWriter> writer =
+      FileStreamWriter::CreateForLocalFile(task_runner.get(), dest_path, 0,
+                                           FileStreamWriter::CREATE_NEW_FILE);
 
   std::vector<int64_t> progress;
   CopyOrMoveOperationDelegate::StreamCopyHelper helper(
       std::move(reader), std::move(writer),
       storage::FlushPolicy::NO_FLUSH_ON_COMPLETION,
       10,  // buffer size
-      base::Bind(&RecordFileProgressCallback, base::Unretained(&progress)),
+      base::BindRepeating(&RecordFileProgressCallback,
+                          base::Unretained(&progress)),
       base::TimeDelta());  // For testing, we need all the progress.
 
   // Call Cancel() later.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&CopyOrMoveOperationDelegate::StreamCopyHelper::Cancel,
-                 base::Unretained(&helper)));
+      base::BindOnce(&CopyOrMoveOperationDelegate::StreamCopyHelper::Cancel,
+                     base::Unretained(&helper)));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
   base::RunLoop run_loop;
-  helper.Run(base::Bind(&AssignAndQuit, &run_loop, &error));
+  helper.Run(base::BindOnce(&AssignAndQuit, &run_loop, &error));
   run_loop.Run();
 
   EXPECT_EQ(base::File::FILE_ERROR_ABORT, error);

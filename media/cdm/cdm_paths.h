@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/token.h"
 
 namespace media {
 
@@ -16,22 +17,15 @@ extern const char kClearKeyCdmLibraryName[];
 
 extern const char kClearKeyCdmBaseDirectory[];
 
-// Platform-specific filename relative to kClearKeyCdmBaseDirectory.
-extern const char kClearKeyCdmAdapterFileName[];
-
 // Display name for Clear Key CDM.
 extern const char kClearKeyCdmDisplayName[];
 
 // The default GUID for Clear Key Cdm.
-extern const char kClearKeyCdmGuid[];
+extern const base::Token kClearKeyCdmGuid;
 
 // A different GUID for Clear Key Cdm for testing running different types of
 // CDMs in the system.
-extern const char kClearKeyCdmDifferentGuid[];
-
-// Pepper type for Clear Key CDM.
-// TODO(xhwang): Remove after switching to mojo CDM.
-extern const char kClearKeyCdmPepperMimeType[];
+extern const base::Token kClearKeyCdmDifferentGuid;
 
 // Identifier used by the PluginPrivateFileSystem to identify the files stored
 // for the Clear Key CDM.

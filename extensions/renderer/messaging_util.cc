@@ -9,14 +9,16 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
+#include "components/crx_file/id_util.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/renderer/get_script_context.h"
 #include "extensions/renderer/script_context.h"
 #include "gin/converter.h"
 #include "gin/dictionary.h"
-#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
+#include "third_party/blink/public/web/web_user_gesture_indicator.h"
 
 namespace extensions {
 namespace messaging_util {
@@ -40,6 +42,7 @@ const char kOnRequestEvent[] = "extension.onRequest";
 const char kOnRequestExternalEvent[] = "extension.onRequestExternal";
 const char kOnConnectEvent[] = "runtime.onConnect";
 const char kOnConnectExternalEvent[] = "runtime.onConnectExternal";
+const char kOnConnectNativeEvent[] = "runtime.onConnectNative";
 
 const int kNoFrameId = -1;
 
@@ -74,13 +77,19 @@ std::unique_ptr<Message> MessageFromV8(v8::Local<v8::Context> context,
     return nullptr;
   }
 
-  return MessageFromJSONString(stringified, error_out);
+  ScriptContext* script_context = GetScriptContextFromV8Context(context);
+  blink::WebLocalFrame* web_frame =
+      script_context ? script_context->web_frame() : nullptr;
+  return MessageFromJSONString(isolate, stringified, error_out, web_frame);
 }
 
-std::unique_ptr<Message> MessageFromJSONString(v8::Local<v8::String> json,
-                                               std::string* error_out) {
+std::unique_ptr<Message> MessageFromJSONString(
+    v8::Isolate* isolate,
+    v8::Local<v8::String> json,
+    std::string* error_out,
+    blink::WebLocalFrame* web_frame) {
   std::string message;
-  message = gin::V8ToString(json);
+  message = gin::V8ToString(isolate, json);
   // JSON.stringify can fail to produce a string value in one of two ways: it
   // can throw an exception (as with unserializable objects), or it can return
   // `undefined` (as with e.g. passing a function). If JSON.stringify returns
@@ -111,7 +120,8 @@ std::unique_ptr<Message> MessageFromJSONString(v8::Local<v8::String> json,
   }
 
   return std::make_unique<Message>(
-      message, blink::WebUserGestureIndicator::IsProcessingUserGesture());
+      message,
+      blink::WebUserGestureIndicator::IsProcessingUserGesture(web_frame));
 }
 
 v8::Local<v8::Value> MessageToV8(v8::Local<v8::Context> context,
@@ -131,17 +141,17 @@ v8::Local<v8::Value> MessageToV8(v8::Local<v8::Context> context,
 }
 
 int ExtractIntegerId(v8::Local<v8::Value> value) {
+  if (value->IsInt32())
+    return value.As<v8::Int32>()->Value();
+
   // Account for -0, which is a valid integer, but is stored as a number in v8.
-  DCHECK(value->IsNumber() &&
-         (value->IsInt32() || value.As<v8::Number>()->Value() == 0.0));
-  return value->Int32Value();
+  DCHECK(value->IsNumber() && value.As<v8::Number>()->Value() == 0.0);
+  return 0;
 }
 
-ParseOptionsResult ParseMessageOptions(v8::Local<v8::Context> context,
-                                       v8::Local<v8::Object> v8_options,
-                                       int flags,
-                                       MessageOptions* options_out,
-                                       std::string* error_out) {
+MessageOptions ParseMessageOptions(v8::Local<v8::Context> context,
+                                   v8::Local<v8::Object> v8_options,
+                                   int flags) {
   DCHECK(!v8_options.IsEmpty());
   DCHECK(!v8_options->IsNull());
 
@@ -149,59 +159,46 @@ ParseOptionsResult ParseMessageOptions(v8::Local<v8::Context> context,
 
   MessageOptions options;
 
-  // Theoretically, our argument matching code already checked the types of
-  // the properties on v8_connect_options. However, since we don't make an
-  // independent copy, it's possible that author script has super sneaky
-  // getters/setters that change the result each time the property is
-  // queried. Make no assumptions.
   gin::Dictionary options_dict(isolate, v8_options);
   if ((flags & PARSE_CHANNEL_NAME) != 0) {
     v8::Local<v8::Value> v8_channel_name;
-    if (!options_dict.Get("name", &v8_channel_name))
-      return THROWN;
+    bool success = options_dict.Get("name", &v8_channel_name);
+    DCHECK(success);
 
     if (!v8_channel_name->IsUndefined()) {
-      if (!v8_channel_name->IsString()) {
-        *error_out = "connectInfo.name must be a string.";
-        return TYPE_ERROR;
-      }
-      options.channel_name = gin::V8ToString(v8_channel_name);
+      DCHECK(v8_channel_name->IsString());
+      options.channel_name = gin::V8ToString(isolate, v8_channel_name);
     }
   }
 
   if ((flags & PARSE_INCLUDE_TLS_CHANNEL_ID) != 0) {
     v8::Local<v8::Value> v8_include_tls_channel_id;
-    if (!options_dict.Get("includeTlsChannelId", &v8_include_tls_channel_id))
-      return THROWN;
+    bool success =
+        options_dict.Get("includeTlsChannelId", &v8_include_tls_channel_id);
+    DCHECK(success);
 
     if (!v8_include_tls_channel_id->IsUndefined()) {
-      if (!v8_include_tls_channel_id->IsBoolean()) {
-        *error_out = "connectInfo.includeTlsChannelId must be a boolean.";
-        return TYPE_ERROR;
-      }
+      DCHECK(v8_include_tls_channel_id->IsBoolean());
       options.include_tls_channel_id =
-          v8_include_tls_channel_id->BooleanValue();
+          v8_include_tls_channel_id.As<v8::Boolean>()->Value();
     }
   }
 
   if ((flags & PARSE_FRAME_ID) != 0) {
     v8::Local<v8::Value> v8_frame_id;
-    if (!options_dict.Get("frameId", &v8_frame_id))
-      return THROWN;
+    bool success = options_dict.Get("frameId", &v8_frame_id);
+    DCHECK(success);
 
     if (!v8_frame_id->IsUndefined()) {
-      if (!v8_frame_id->IsInt32() &&
-          (!v8_frame_id->IsNumber() ||
-           v8_frame_id.As<v8::Number>()->Value() != 0.0)) {
-        *error_out = "connectInfo.frameId must be an integer.";
-        return TYPE_ERROR;
-      }
-      options.frame_id = v8_frame_id->Int32Value();
+      DCHECK(v8_frame_id->IsInt32());
+      int frame_id = v8_frame_id.As<v8::Int32>()->Value();
+      // NOTE(devlin): JS bindings coerce any negative value to -1. For
+      // backwards compatibility, we do the same here.
+      options.frame_id = frame_id < 0 ? -1 : frame_id;
     }
   }
 
-  *options_out = std::move(options);
-  return SUCCESS;
+  return options;
 }
 
 bool GetTargetExtensionId(ScriptContext* script_context,
@@ -210,21 +207,40 @@ bool GetTargetExtensionId(ScriptContext* script_context,
                           std::string* target_out,
                           std::string* error_out) {
   DCHECK(!v8_target_id.IsEmpty());
+  // Argument parsing should guarantee this is null or a string before we reach
+  // this point.
+  DCHECK(v8_target_id->IsNull() || v8_target_id->IsString());
 
   std::string target_id;
-  if (v8_target_id->IsNull()) {
+  // If omitted, we use the extension associated with the context.
+  // Note: we deliberately treat the empty string as omitting the id, even
+  // though it's not strictly correct. See https://crbug.com/823577.
+  if (v8_target_id->IsNull() ||
+      (v8_target_id->IsString() &&
+       v8_target_id.As<v8::String>()->Length() == 0)) {
     if (!script_context->extension()) {
       *error_out =
           base::StringPrintf(kExtensionIdRequiredErrorTemplate, method_name);
       return false;
     }
 
-    *target_out = script_context->extension()->id();
+    target_id = script_context->extension()->id();
+    // An extension should never have an invalid id.
+    DCHECK(crx_file::id_util::IdIsValid(target_id));
   } else {
     DCHECK(v8_target_id->IsString());
-    *target_out = gin::V8ToString(v8_target_id);
+    target_id = gin::V8ToString(script_context->isolate(), v8_target_id);
+    // NOTE(devlin): JS bindings only validate that the extension id is present,
+    // rather than validating its content. This seems better. Let's see how this
+    // goes.
+    if (!crx_file::id_util::IdIsValid(target_id)) {
+      *error_out =
+          base::StringPrintf("Invalid extension id: '%s'", target_id.c_str());
+      return false;
+    }
   }
 
+  *target_out = std::move(target_id);
   return true;
 }
 
@@ -265,18 +281,21 @@ void MassageSendMessageArguments(
       // Argument must be the message.
       message = arguments[0];
       break;
-    case 2:
-      // Assume the meaning is (id, message) if id would be a string, or if
-      // the options argument isn't expected.
-      // Otherwise the meaning is (message, options).
-      if (!allow_options_argument || arguments[0]->IsString()) {
+    case 2: {
+      // Assume the first argument is the ID if we don't expect options, or if
+      // the argument could match the ID parameter.
+      // ID could be either a string, or null/undefined (since it's optional).
+      bool could_match_id =
+          arguments[0]->IsString() || arguments[0]->IsNullOrUndefined();
+      if (!allow_options_argument || could_match_id) {
         target_id = arguments[0];
         message = arguments[1];
-      } else {
+      } else {  // Otherwise, the meaning is (message, options).
         message = arguments[0];
         options = arguments[1];
       }
       break;
+    }
     case 3:
       DCHECK(allow_options_argument);
       // The meaning in this case is unambiguous.

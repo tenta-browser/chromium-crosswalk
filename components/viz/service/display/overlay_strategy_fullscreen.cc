@@ -21,15 +21,18 @@ OverlayStrategyFullscreen::OverlayStrategyFullscreen(
 OverlayStrategyFullscreen::~OverlayStrategyFullscreen() {}
 
 bool OverlayStrategyFullscreen::Attempt(
-    cc::DisplayResourceProvider* resource_provider,
-    RenderPass* render_pass,
-    cc::OverlayCandidateList* candidate_list,
+    const SkMatrix44& output_color_matrix,
+    const OverlayProcessor::FilterOperationsMap& render_pass_backdrop_filters,
+    DisplayResourceProvider* resource_provider,
+    RenderPassList* render_pass_list,
+    OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
+  RenderPass* render_pass = render_pass_list->back().get();
   QuadList* quad_list = &render_pass->quad_list;
   // First quad of quad_list is the top most quad.
   auto front = quad_list->begin();
   while (front != quad_list->end()) {
-    if (!cc::OverlayCandidate::IsInvisibleQuad(*front))
+    if (!OverlayCandidate::IsInvisibleQuad(*front))
       break;
     ++front;
   }
@@ -41,22 +44,20 @@ bool OverlayStrategyFullscreen::Attempt(
   if (quad->ShouldDrawWithBlending())
     return false;
 
-  cc::OverlayCandidate candidate;
-  if (!cc::OverlayCandidate::FromDrawQuad(resource_provider, quad,
-                                          &candidate)) {
+  OverlayCandidate candidate;
+  if (!OverlayCandidate::FromDrawQuad(resource_provider, output_color_matrix,
+                                      quad, &candidate)) {
     return false;
   }
 
   if (!candidate.display_rect.origin().IsOrigin() ||
       gfx::ToRoundedSize(candidate.display_rect.size()) !=
-          render_pass->output_rect.size() ||
-      render_pass->output_rect.size() != candidate.resource_size_in_pixels) {
+          render_pass->output_rect.size()) {
     return false;
   }
-
+  candidate.is_opaque = true;
   candidate.plane_z_order = 0;
-  candidate.overlay_handled = true;
-  cc::OverlayCandidateList new_candidate_list;
+  OverlayCandidateList new_candidate_list;
   new_candidate_list.push_back(candidate);
   capability_checker_->CheckOverlaySupport(&new_candidate_list);
   if (!new_candidate_list.front().overlay_handled)
@@ -66,6 +67,10 @@ bool OverlayStrategyFullscreen::Attempt(
 
   render_pass->quad_list = QuadList();  // Remove all the quads
   return true;
+}
+
+OverlayStrategy OverlayStrategyFullscreen::GetUMAEnum() const {
+  return OverlayStrategy::kFullscreen;
 }
 
 }  // namespace viz

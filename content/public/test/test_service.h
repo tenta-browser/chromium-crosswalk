@@ -12,6 +12,8 @@
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/service.h"
+#include "services/service_manager/public/cpp/service_binding.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
 namespace content {
 
@@ -21,7 +23,7 @@ extern const char kTestServiceUrl[];
 // terminates itself after its TestService fulfills a single DoSomething call.
 class TestService : public service_manager::Service, public mojom::TestService {
  public:
-  TestService();
+  explicit TestService(service_manager::mojom::ServiceRequest request);
   ~TestService() override;
 
  private:
@@ -35,13 +37,15 @@ class TestService : public service_manager::Service, public mojom::TestService {
   // TestService:
   void DoSomething(DoSomethingCallback callback) override;
   void DoTerminateProcess(DoTerminateProcessCallback callback) override;
+  void DoCrashImmediately(DoCrashImmediatelyCallback callback) override;
   void CreateFolder(CreateFolderCallback callback) override;
   void GetRequestorName(GetRequestorNameCallback callback) override;
   void CreateSharedBuffer(const std::string& message,
                           CreateSharedBufferCallback callback) override;
 
+  service_manager::ServiceBinding service_binding_;
   service_manager::BinderRegistry registry_;
-  mojo::Binding<mojom::TestService> service_binding_;
+  mojo::Binding<mojom::TestService> binding_{this};
 
   // The name of the app connecting to us.
   std::string requestor_name_;

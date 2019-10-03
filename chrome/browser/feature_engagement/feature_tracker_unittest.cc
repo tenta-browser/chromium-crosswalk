@@ -6,11 +6,7 @@
 
 #include <memory>
 
-#include "base/feature_list.h"
 #include "base/files/file_util.h"
-#include "base/metrics/field_trial.h"
-#include "base/metrics/field_trial_param_associator.h"
-#include "base/metrics/field_trial_params.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,7 +22,6 @@
 #include "components/feature_engagement/public/event_constants.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "components/variations/variations_params_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,8 +33,6 @@ namespace {
 constexpr int kTestTimeDeltaInMinutes = 100;
 constexpr int kTestTimeSufficentInMinutes = 110;
 constexpr int kTestTimeInsufficientInMinutes = 90;
-constexpr char kGroupName[] = "Enabled";
-constexpr char kNewTabFieldTrialName[] = "NewTabFieldTrial";
 constexpr char kTestProfileName[] = "test-profile";
 constexpr char kTestObservedSessionTimeKey[] = "test_observed_session_time_key";
 
@@ -51,7 +44,7 @@ class TestFeatureTracker : public FeatureTracker {
                        kTestObservedSessionTimeKey,
                        base::TimeDelta::FromMinutes(kTestTimeDeltaInMinutes)),
         pref_service_(
-            base::MakeUnique<sync_preferences::TestingPrefServiceSyncable>()) {
+            std::make_unique<sync_preferences::TestingPrefServiceSyncable>()) {
     SessionDurationUpdater::RegisterProfilePrefs(pref_service_->registry());
   }
 
@@ -84,11 +77,11 @@ class FeatureTrackerTest : public testing::Test {
   void SetUp() override {
     // Start the DesktopSessionDurationTracker to track active session time.
     metrics::DesktopSessionDurationTracker::Initialize();
-    testing_profile_manager_ = base::MakeUnique<TestingProfileManager>(
+    testing_profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(testing_profile_manager_->SetUp());
     mock_feature_tracker_ =
-        base::MakeUnique<testing::StrictMock<MockTestFeatureTracker>>(
+        std::make_unique<testing::StrictMock<MockTestFeatureTracker>>(
             testing_profile_manager_->CreateTestingProfile(kTestProfileName));
   }
 
@@ -147,24 +140,9 @@ class FeatureTrackerParamsTest : public testing::Test {
   void SetUp() override {
     // Start the DesktopSessionDurationTracker to track active session time.
     metrics::DesktopSessionDurationTracker::Initialize();
-    testing_profile_manager_ = base::MakeUnique<TestingProfileManager>(
+    testing_profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(testing_profile_manager_->SetUp());
-
-    // Set up the NewTabInProductHelp field trial.
-    base::FieldTrial* new_tab_trial = base::FieldTrialList::CreateFieldTrial(
-        kNewTabFieldTrialName, kGroupName);
-    trials_[kIPHNewTabFeature.name] = new_tab_trial;
-
-    std::unique_ptr<base::FeatureList> feature_list =
-        base::MakeUnique<base::FeatureList>();
-    feature_list->RegisterFieldTrialOverride(
-        kIPHNewTabFeature.name, base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-        new_tab_trial);
-
-    scoped_feature_list_.InitWithFeatureList(std::move(feature_list));
-    ASSERT_EQ(new_tab_trial,
-              base::FeatureList::GetFieldTrial(kIPHNewTabFeature));
   }
 
   void TearDown() override {
@@ -174,22 +152,14 @@ class FeatureTrackerParamsTest : public testing::Test {
   }
 
   void SetFeatureParams(const base::Feature& feature,
-                        std::map<std::string, std::string> params) {
-    ASSERT_TRUE(
-        base::FieldTrialParamAssociator::GetInstance()
-            ->AssociateFieldTrialParams(trials_[feature.name]->trial_name(),
-                                        kGroupName, params));
-    std::map<std::string, std::string> actualParams;
-    EXPECT_TRUE(
-        base::GetFieldTrialParamsByFeature(kIPHNewTabFeature, &actualParams));
-    EXPECT_EQ(params, actualParams);
+                        const FieldTrialParams& params) {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(kIPHNewTabFeature,
+                                                            params);
   }
 
  protected:
   std::unique_ptr<TestingProfileManager> testing_profile_manager_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  std::map<std::string, base::FieldTrial*> trials_;
-  variations::testing::VariationParamsManager params_manager_;
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
@@ -265,12 +235,13 @@ TEST_F(FeatureTrackerParamsTest, TestSessionTimeWithInvalidFieldTrialValue) {
 TEST_F(FeatureTrackerParamsTest, TestIsNewUser_DefaultTime) {
   // Setting the experiment timestamp equal to the first run sentinel timestamp.
   std::map<std::string, std::string> new_tab_params;
-  new_tab_params["x_date_released_in_seconds"] = base::Int64ToString(
-      first_run::GetFirstRunSentinelCreationTime().ToDoubleT());
+  new_tab_params["x_date_released_in_seconds"] =
+      base::NumberToString(static_cast<int64_t>(
+          first_run::GetFirstRunSentinelCreationTime().ToDoubleT()));
   SetFeatureParams(kIPHNewTabFeature, new_tab_params);
 
   std::unique_ptr<MockTestFeatureTracker> mock_feature_tracker =
-      base::MakeUnique<testing::StrictMock<MockTestFeatureTracker>>(
+      std::make_unique<testing::StrictMock<MockTestFeatureTracker>>(
           testing_profile_manager_->CreateTestingProfile(kTestProfileName));
 
   EXPECT_TRUE(mock_feature_tracker->IsNewUserWrapper());
@@ -282,13 +253,14 @@ TEST_F(FeatureTrackerParamsTest, TestIsNotNewUser_DefaultTime) {
   // Setting the experiment timestamp equal to one second older than what is
   // considered a new user.
   std::map<std::string, std::string> new_tab_params;
-  new_tab_params["x_date_released_in_seconds"] = base::Int64ToString(
-      first_run::GetFirstRunSentinelCreationTime().ToDoubleT() +
-      base::TimeDelta::FromHours(24).InSeconds() + 1);
+  new_tab_params["x_date_released_in_seconds"] =
+      base::NumberToString(static_cast<int64_t>(
+          first_run::GetFirstRunSentinelCreationTime().ToDoubleT() +
+          base::TimeDelta::FromHours(24).InSeconds() + 1));
   SetFeatureParams(kIPHNewTabFeature, new_tab_params);
 
   std::unique_ptr<MockTestFeatureTracker> mock_feature_tracker =
-      base::MakeUnique<testing::StrictMock<MockTestFeatureTracker>>(
+      std::make_unique<testing::StrictMock<MockTestFeatureTracker>>(
           testing_profile_manager_->CreateTestingProfile(kTestProfileName));
 
   EXPECT_FALSE(mock_feature_tracker->IsNewUserWrapper());
@@ -303,12 +275,13 @@ TEST_F(FeatureTrackerParamsTest, TestIsNewUser_CustomTime) {
 
   // Setting the experiment timestamp equal to the limit of what is considered a
   // new user.
-  new_tab_params["x_date_released_in_seconds"] = base::Int64ToString(
-      first_run::GetFirstRunSentinelCreationTime().ToDoubleT());
+  new_tab_params["x_date_released_in_seconds"] =
+      base::NumberToString(static_cast<int64_t>(
+          first_run::GetFirstRunSentinelCreationTime().ToDoubleT()));
   SetFeatureParams(kIPHNewTabFeature, new_tab_params);
 
   std::unique_ptr<MockTestFeatureTracker> mock_feature_tracker =
-      base::MakeUnique<testing::StrictMock<MockTestFeatureTracker>>(
+      std::make_unique<testing::StrictMock<MockTestFeatureTracker>>(
           testing_profile_manager_->CreateTestingProfile(kTestProfileName));
 
   EXPECT_TRUE(mock_feature_tracker->IsNewUserWrapper());
@@ -323,13 +296,14 @@ TEST_F(FeatureTrackerParamsTest, TestIsNotNewUser_CustomTime) {
 
   // Setting the experiment timestamp equal to one second older than what is
   // considered a new user.
-  new_tab_params["x_date_released_in_seconds"] = base::Int64ToString(
-      first_run::GetFirstRunSentinelCreationTime().ToDoubleT() +
-      base::TimeDelta::FromHours(28).InSeconds() + 1);
+  new_tab_params["x_date_released_in_seconds"] =
+      base::NumberToString(static_cast<int64_t>(
+          first_run::GetFirstRunSentinelCreationTime().ToDoubleT() +
+          base::TimeDelta::FromHours(28).InSeconds() + 1));
   SetFeatureParams(kIPHNewTabFeature, new_tab_params);
 
   std::unique_ptr<MockTestFeatureTracker> mock_feature_tracker =
-      base::MakeUnique<testing::StrictMock<MockTestFeatureTracker>>(
+      std::make_unique<testing::StrictMock<MockTestFeatureTracker>>(
           testing_profile_manager_->CreateTestingProfile(kTestProfileName));
 
   EXPECT_FALSE(mock_feature_tracker->IsNewUserWrapper());

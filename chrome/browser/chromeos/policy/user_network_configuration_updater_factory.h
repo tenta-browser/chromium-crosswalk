@@ -14,11 +14,9 @@ template <typename T>
 struct DefaultSingletonTraits;
 }  // namespace base
 
-namespace user_manager {
-class User;
+namespace content {
+class BrowserContext;
 }
-
-class Profile;
 
 namespace policy {
 
@@ -29,9 +27,11 @@ class UserNetworkConfigurationUpdaterFactory
     : public BrowserContextKeyedServiceFactory {
  public:
   // Returns an existing or creates a new UserNetworkConfigurationUpdater for
-  // |profile|. Will return NULL if this service isn't allowed for |profile|,
-  // i.e. for all but the primary user's profile.
-  static UserNetworkConfigurationUpdater* GetForProfile(Profile* profile);
+  // |browser_context|. Will return nullptr if this service isn't allowed for
+  // |browser_context|, i.e. for all but the BrowserContext which refers to the
+  // primary user's profile.
+  static UserNetworkConfigurationUpdater* GetForBrowserContext(
+      content::BrowserContext* browser_context);
 
   static UserNetworkConfigurationUpdaterFactory* GetInstance();
 
@@ -49,8 +49,6 @@ class UserNetworkConfigurationUpdaterFactory
   bool ServiceIsNULLWhileTesting() const override;
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* context) const override;
-
-  static bool AllowTrustedCertsFromPolicy(const user_manager::User* user);
 
   DISALLOW_COPY_AND_ASSIGN(UserNetworkConfigurationUpdaterFactory);
 };

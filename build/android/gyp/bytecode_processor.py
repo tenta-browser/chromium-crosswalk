@@ -7,6 +7,7 @@
 
 import argparse
 import os
+import subprocess
 import sys
 
 from util import build_utils
@@ -20,28 +21,57 @@ def _AddSwitch(parser, val):
 def main(argv):
   argv = build_utils.ExpandFileArgs(argv[1:])
   parser = argparse.ArgumentParser()
-  build_utils.AddDepfileOption(parser)
   parser.add_argument('--script', required=True,
                       help='Path to the java binary wrapper script.')
   parser.add_argument('--input-jar', required=True)
   parser.add_argument('--output-jar', required=True)
-  parser.add_argument('--extra-classpath-jar', dest='extra_jars',
+  parser.add_argument('--direct-classpath-jars', required=True)
+  parser.add_argument('--sdk-classpath-jars', required=True)
+  parser.add_argument('--extra-classpath-jars', dest='extra_jars',
                       action='append', default=[],
                       help='Extra inputs, passed last to the binary script.')
+  parser.add_argument('-v', '--verbose', action='store_true')
+  _AddSwitch(parser, '--is-prebuilt')
   _AddSwitch(parser, '--enable-custom-resources')
   _AddSwitch(parser, '--enable-assert')
+  _AddSwitch(parser, '--enable-thread-annotations')
+  _AddSwitch(parser, '--enable-check-class-path')
+  parser.add_argument('--enable-class-deps-output', default='')
+  parser.add_argument(
+      '--split-compat-class-names',
+      action='append',
+      default=[],
+      help='Names of classes that need to be made SplitCompat-enabled.')
   args = parser.parse_args(argv)
+
+  sdk_jars = build_utils.ParseGnList(args.sdk_classpath_jars)
+  assert len(sdk_jars) > 0
+
+  direct_jars = build_utils.ParseGnList(args.direct_classpath_jars)
+  assert len(direct_jars) > 0
+
   extra_classpath_jars = []
   for a in args.extra_jars:
     extra_classpath_jars.extend(build_utils.ParseGnList(a))
 
-  cmd = [args.script, args.input_jar, args.output_jar, args.enable_assert,
-         args.enable_custom_resources] + extra_classpath_jars
-  build_utils.CheckOutput(cmd)
+  split_compat_class_names = build_utils.ParseGnList(
+      args.split_compat_class_names)
 
-  if args.depfile:
-    inputs = [args.script, args.input_jar] + extra_classpath_jars
-    build_utils.WriteDepfile(args.depfile, args.output_jar, inputs)
+  if args.verbose:
+    verbose = '--verbose'
+  else:
+    verbose = '--not-verbose'
+
+  cmd = ([
+      args.script, args.input_jar, args.output_jar, verbose, args.is_prebuilt,
+      args.enable_assert, args.enable_custom_resources,
+      args.enable_thread_annotations, args.enable_check_class_path,
+      args.enable_class_deps_output,
+      str(len(sdk_jars))
+  ] + sdk_jars + [str(len(direct_jars))] + direct_jars + [
+      str(len(split_compat_class_names))
+  ] + split_compat_class_names + extra_classpath_jars)
+  subprocess.check_call(cmd)
 
 
 if __name__ == '__main__':

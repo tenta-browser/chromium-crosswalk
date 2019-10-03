@@ -11,33 +11,37 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/ui/blocked_content/list_item_position.h"
 #include "chrome/browser/ui/blocked_content/popup_tracker.h"
 #include "chrome/browser/ui/blocked_content/tab_under_navigation_throttle.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "components/rappor/public/rappor_parameters.h"
-#include "components/rappor/test_rappor_service.h"
+#include "chrome/test/base/testing_profile.h"
 #include "components/ukm/content/source_url_recorder.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "components/ukm/ukm_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
+#include "base/android/scoped_java_ref.h"
 #include "chrome/browser/ui/android/infobars/infobar_android.h"
-#endif  // defined(OS_ANDROID)
+#else
+#include "chrome/browser/ui/blocked_content/framebust_block_tab_helper.h"
+#endif
 
 class InfoBarAndroid;
 
@@ -53,17 +57,18 @@ class PopupOpenerTabHelperTest : public ChromeRenderViewHostTestHarness {
 
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-    auto tick_clock = base::MakeUnique<base::SimpleTestTickClock>();
-    raw_clock_ = tick_clock.get();
-    PopupOpenerTabHelper::CreateForWebContents(web_contents(),
-                                               std::move(tick_clock));
+    PopupOpenerTabHelper::CreateForWebContents(web_contents(), &raw_clock_);
     InfoBarService::CreateForWebContents(web_contents());
+    TabSpecificContentSettings::CreateForWebContents(web_contents());
+#if !defined(OS_ANDROID)
+    FramebustBlockTabHelper::CreateForWebContents(web_contents());
+#endif
 
     // The tick clock needs to be advanced manually so it isn't set to null,
     // which the code uses to determine if it is set yet.
-    raw_clock_->Advance(base::TimeDelta::FromMilliseconds(1));
+    raw_clock_.Advance(base::TimeDelta::FromMilliseconds(1));
 
-    EXPECT_TRUE(web_contents()->IsVisible());
+    EXPECT_EQ(web_contents()->GetVisibility(), content::Visibility::VISIBLE);
   }
 
   void TearDown() override {
@@ -96,13 +101,13 @@ class PopupOpenerTabHelperTest : public ChromeRenderViewHostTestHarness {
     return raw_popup;
   }
 
-  base::SimpleTestTickClock* raw_clock() { return raw_clock_; }
+  base::SimpleTestTickClock* raw_clock() { return &raw_clock_; }
 
   base::HistogramTester* histogram_tester() { return &histogram_tester_; }
 
  private:
   base::HistogramTester histogram_tester_;
-  base::SimpleTestTickClock* raw_clock_ = nullptr;
+  base::SimpleTestTickClock raw_clock_;
 
   std::vector<std::unique_ptr<content::WebContents>> popups_;
 
@@ -322,7 +327,7 @@ class BlockTabUnderTest : public PopupOpenerTabHelperTest {
 
   void SetUp() override {
     PopupOpenerTabHelperTest::SetUp();
-    scoped_feature_list_ = base::MakeUnique<base::test::ScopedFeatureList>();
+    scoped_feature_list_ = std::make_unique<base::test::ScopedFeatureList>();
     scoped_feature_list_->InitAndEnableFeature(
         TabUnderNavigationThrottle::kBlockTabUnders);
   }
@@ -344,7 +349,10 @@ class BlockTabUnderTest : public PopupOpenerTabHelperTest {
   void ExpectUIShown(bool shown) {
 #if defined(OS_ANDROID)
     EXPECT_EQ(shown, !!GetInfoBar());
-#endif  // defined(OS_ANDROID)
+#else
+    EXPECT_EQ(shown, FramebustBlockTabHelper::FromWebContents(web_contents())
+                         ->HasBlockedUrls());
+#endif
   }
 
   // content::WebContentsDelegate:
@@ -354,7 +362,7 @@ class BlockTabUnderTest : public PopupOpenerTabHelperTest {
   }
 
   void DisableFeature() {
-    scoped_feature_list_ = base::MakeUnique<base::test::ScopedFeatureList>();
+    scoped_feature_list_ = std::make_unique<base::test::ScopedFeatureList>();
     scoped_feature_list_->InitAndDisableFeature(
         TabUnderNavigationThrottle::kBlockTabUnders);
   }
@@ -396,6 +404,15 @@ TEST_F(BlockTabUnderTest, SameOriginRedirect_NoBlocking) {
   ExpectUIShown(false);
 }
 
+TEST_F(BlockTabUnderTest, SameSiteRedirect_NoBlocking) {
+  EXPECT_TRUE(
+      NavigateAndCommitWithoutGesture(GURL("https://sub1.blah.co.uk/")));
+  SimulatePopup();
+  EXPECT_TRUE(
+      NavigateAndCommitWithoutGesture(GURL("https://sub2.blah.co.uk/path")));
+  ExpectUIShown(false);
+}
+
 TEST_F(BlockTabUnderTest, BrowserInitiatedNavigation_NoBlocking) {
   EXPECT_TRUE(NavigateAndCommitWithoutGesture(GURL("https://first.test/")));
   SimulatePopup();
@@ -426,35 +443,6 @@ TEST_F(BlockTabUnderTest, TabUnderCrossOriginRedirect_IsBlocked) {
   EXPECT_EQ(content::NavigationThrottle::CANCEL,
             simulator->GetLastThrottleCheckResult());
   ExpectUIShown(true);
-}
-
-// Ensure that even though the *redirect* occurred in the background, if the
-// navigation started in the foreground there is no blocking.
-TEST_F(BlockTabUnderTest,
-       TabUnderCrossOriginRedirectFromForeground_IsNotBlocked) {
-  EXPECT_TRUE(NavigateAndCommitWithoutGesture(GURL("https://first.test/")));
-  SimulatePopup();
-
-  web_contents()->WasShown();
-
-  // Navigate to a same-origin URL that redirects cross origin.
-  const GURL same_origin("https://first.test/path");
-  const GURL cross_origin("https://example.test/");
-  std::unique_ptr<content::NavigationSimulator> simulator =
-      content::NavigationSimulator::CreateRendererInitiated(same_origin,
-                                                            main_rfh());
-  simulator->SetHasUserGesture(false);
-  simulator->Start();
-  EXPECT_EQ(content::NavigationThrottle::PROCEED,
-            simulator->GetLastThrottleCheckResult());
-
-  web_contents()->WasHidden();
-
-  simulator->Redirect(cross_origin);
-  EXPECT_EQ(content::NavigationThrottle::PROCEED,
-            simulator->GetLastThrottleCheckResult());
-  simulator->Commit();
-  ExpectUIShown(false);
 }
 
 // There is no time limit to this intervention. Explicitly test that navigations
@@ -530,6 +518,34 @@ TEST_F(BlockTabUnderTest,
   histogram_tester()->ExpectTotalCount(kTabUnderAction, 10);
 }
 
+TEST_F(BlockTabUnderTest, ClickThroughAction) {
+  EXPECT_TRUE(NavigateAndCommitWithoutGesture(GURL("https://first.test/")));
+  histogram_tester()->ExpectUniqueSample(
+      kTabUnderAction,
+      static_cast<int>(TabUnderNavigationThrottle::Action::kStarted), 1);
+  SimulatePopup();
+
+  // Populate two blocked URLs in the UI.
+  const GURL blocked_url("https://example.test/");
+  EXPECT_FALSE(NavigateAndCommitWithoutGesture(blocked_url));
+  EXPECT_FALSE(NavigateAndCommitWithoutGesture(blocked_url));
+#if defined(OS_ANDROID)
+  InfoBarAndroid* infobar = GetInfoBar();
+  base::android::JavaParamRef<jobject> jobj(nullptr);
+  infobar->OnLinkClicked(nullptr /* env */, jobj);
+#else
+  FramebustBlockTabHelper* framebust =
+      FramebustBlockTabHelper::FromWebContents(web_contents());
+  framebust->OnBlockedUrlClicked(1);
+  histogram_tester()->ExpectUniqueSample(
+      "Tab.TabUnder.ClickThroughPosition",
+      static_cast<int>(ListItemPosition::kLastItem), 1);
+#endif
+  histogram_tester()->ExpectBucketCount(
+      kTabUnderAction,
+      static_cast<int>(TabUnderNavigationThrottle::Action::kClickedThrough), 1);
+}
+
 // kDidTabUnder is not reported multiple times for redirects.
 TEST_F(BlockTabUnderTest, DisableFeature_LogsDidTabUnder) {
   DisableFeature();
@@ -553,14 +569,11 @@ TEST_F(BlockTabUnderTest, DisableFeature_LogsDidTabUnder) {
   histogram_tester()->ExpectTotalCount(kTabUnderAction, 3);
 }
 
-TEST_F(BlockTabUnderTest, LogsRapporAndUkm) {
-  using UkmEntry = ukm::builders::AbusiveExperienceHeuristic;
+TEST_F(BlockTabUnderTest, LogsUkm) {
+  using UkmEntry = ukm::builders::AbusiveExperienceHeuristic_TabUnder;
 
   ukm::InitializeSourceUrlRecorderForWebContents(web_contents());
   ukm::TestAutoSetUkmRecorder test_ukm_recorder;
-  rappor::TestRapporServiceImpl test_rappor_service;
-  TestingBrowserProcess::GetGlobal()->SetRapporServiceImpl(
-      &test_rappor_service);
 
   const GURL first_url("https://first.test/");
   EXPECT_TRUE(NavigateAndCommitWithoutGesture(first_url));
@@ -568,13 +581,6 @@ TEST_F(BlockTabUnderTest, LogsRapporAndUkm) {
   raw_clock()->Advance(base::TimeDelta::FromMilliseconds(15));
   const GURL blocked_url("https://example.test/");
   EXPECT_FALSE(NavigateAndCommitWithoutGesture(blocked_url));
-
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(test_rappor_service.GetRecordedSampleForMetric(
-      "Tab.TabUnder.Opener", &sample, &type));
-  EXPECT_EQ(first_url.host(), sample);
-  EXPECT_EQ(rappor::UMA_RAPPOR_TYPE, type);
 
   auto entries = test_ukm_recorder.GetEntriesByName(UkmEntry::kEntryName);
   EXPECT_EQ(1u, entries.size());
@@ -611,4 +617,55 @@ TEST_F(BlockTabUnderTest, LogsToConsole) {
   std::string expected_message = base::StringPrintf(kBlockTabUnderFormatMessage,
                                                     blocked_url.spec().c_str());
   EXPECT_EQ(expected_message, messages.front());
+}
+
+// 1. Navigate to a.com
+// 2. Start a navigation without a user gesture to b.com
+// 3. Open a popup
+// 4. Navigation from (2) redirects and should not be blocked.
+TEST_F(BlockTabUnderTest, SlowRedirectAfterPopup_IsNotBlocked) {
+  NavigateAndCommit(GURL("https://a.com"));
+
+  std::unique_ptr<content::NavigationSimulator> candidate_navigation =
+      content::NavigationSimulator::CreateRendererInitiated(
+          GURL("https://b.com"), main_rfh());
+  candidate_navigation->SetHasUserGesture(false);
+  candidate_navigation->Start();
+
+  SimulatePopup();
+
+  candidate_navigation->Redirect(GURL("https://b.com/redirect"));
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            candidate_navigation->GetLastThrottleCheckResult());
+  candidate_navigation->Commit();
+  EXPECT_EQ(main_rfh(), candidate_navigation->GetFinalRenderFrameHost());
+}
+
+// Ensure that even though the *redirect* occurred in the background, if the
+// navigation started in the foreground there is no blocking.
+TEST_F(BlockTabUnderTest,
+       TabUnderCrossOriginRedirectFromForeground_IsNotBlocked) {
+  EXPECT_TRUE(NavigateAndCommitWithoutGesture(GURL("https://first.test/")));
+  SimulatePopup();
+
+  web_contents()->WasShown();
+
+  // Navigate to a same-origin URL that redirects cross origin.
+  const GURL same_origin("https://first.test/path");
+  const GURL cross_origin("https://example.test/");
+  std::unique_ptr<content::NavigationSimulator> simulator =
+      content::NavigationSimulator::CreateRendererInitiated(same_origin,
+                                                            main_rfh());
+  simulator->SetHasUserGesture(false);
+  simulator->Start();
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            simulator->GetLastThrottleCheckResult());
+
+  web_contents()->WasHidden();
+
+  simulator->Redirect(cross_origin);
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            simulator->GetLastThrottleCheckResult());
+  simulator->Commit();
+  ExpectUIShown(false);
 }

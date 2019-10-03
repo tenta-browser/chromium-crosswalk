@@ -5,48 +5,66 @@
 #ifndef SERVICES_SHAPE_DETECTION_FACE_DETECTION_IMPL_WIN_H_
 #define SERVICES_SHAPE_DETECTION_FACE_DETECTION_IMPL_WIN_H_
 
+#include <windows.foundation.collections.h>
 #include <windows.foundation.h>
+#include <windows.graphics.imaging.h>
+#include <windows.media.faceanalysis.h>
 #include <wrl/client.h>
+#include <memory>
+#include <utility>
+#include <vector>
 
-#include "detection_utils_win.h"
-#include "services/shape_detection/public/interfaces/facedetection.mojom.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/shape_detection/public/mojom/facedetection.mojom.h"
 
 class SkBitmap;
 
-namespace ABI {
-namespace Windows {
-namespace Media {
-namespace FaceAnalysis {
-interface IFaceDetectorStatics;
-interface IFaceDetector;
-class FaceDetector;
-}  // namespace FaceAnalysis
-}  // namespace Media
-}  // namespace Windows
-}  // namespace ABI
-
 namespace shape_detection {
-
-extern base::OnceCallback<void(bool)> g_callback_for_testing;
 
 class FaceDetectionImplWin : public mojom::FaceDetection {
  public:
-  using IFaceDetectorStatics =
-      ABI::Windows::Media::FaceAnalysis::IFaceDetectorStatics;
-  using FaceDetector = ABI::Windows::Media::FaceAnalysis::FaceDetector;
-  using IFaceDetector = ABI::Windows::Media::FaceAnalysis::IFaceDetector;
-
-  FaceDetectionImplWin(Microsoft::WRL::ComPtr<IFaceDetectorStatics> factory,
-                       Microsoft::WRL::ComPtr<IFaceDetector> face_detector);
+  FaceDetectionImplWin(
+      Microsoft::WRL::ComPtr<ABI::Windows::Media::FaceAnalysis::IFaceDetector>
+          face_detector,
+      Microsoft::WRL::ComPtr<
+          ABI::Windows::Graphics::Imaging::ISoftwareBitmapStatics>
+          bitmap_factory,
+      ABI::Windows::Graphics::Imaging::BitmapPixelFormat pixel_format);
   ~FaceDetectionImplWin() override;
+
+  void SetBinding(mojo::StrongBindingPtr<mojom::FaceDetection> binding) {
+    binding_ = std::move(binding);
+  }
 
   // mojom::FaceDetection implementation.
   void Detect(const SkBitmap& bitmap,
               mojom::FaceDetection::DetectCallback callback) override;
 
  private:
-  Microsoft::WRL::ComPtr<IFaceDetectorStatics> face_detector_factory_;
-  Microsoft::WRL::ComPtr<IFaceDetector> face_detector_;
+  HRESULT BeginDetect(const SkBitmap& bitmap);
+  std::vector<mojom::FaceDetectionResultPtr> BuildFaceDetectionResult(
+      Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IVector<
+          ABI::Windows::Media::FaceAnalysis::DetectedFace*>> result);
+  void OnFaceDetected(
+      Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Imaging::ISoftwareBitmap>
+          win_bitmap,
+      Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IVector<
+          ABI::Windows::Media::FaceAnalysis::DetectedFace*>> result);
+
+  Microsoft::WRL::ComPtr<ABI::Windows::Media::FaceAnalysis::IFaceDetector>
+      face_detector_;
+
+  Microsoft::WRL::ComPtr<
+      ABI::Windows::Graphics::Imaging::ISoftwareBitmapStatics>
+      bitmap_factory_;
+  ABI::Windows::Graphics::Imaging::BitmapPixelFormat pixel_format_;
+
+  DetectCallback detected_face_callback_;
+  mojo::StrongBindingPtr<mojom::FaceDetection> binding_;
+
+  base::WeakPtrFactory<FaceDetectionImplWin> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(FaceDetectionImplWin);
 };

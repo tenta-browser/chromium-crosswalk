@@ -36,6 +36,8 @@ class TestSafeBrowsingDatabaseHelper;
 
 namespace subresource_filter {
 
+class RulesetService;
+
 class SubresourceFilterBrowserTest : public InProcessBrowserTest {
  public:
   SubresourceFilterBrowserTest();
@@ -88,11 +90,15 @@ class SubresourceFilterBrowserTest : public InProcessBrowserTest {
 
   void SetRulesetWithRules(const std::vector<proto::UrlRule>& rules);
 
+  // Re-initializes the ruleset_service by opening the ruleset file provided
+  // by indexed_ruleset_path and publishing it.
+  void OpenAndPublishRuleset(RulesetService* ruleset_service,
+                             const base::FilePath& indexed_ruleset_path);
+
   void ResetConfiguration(Configuration config);
 
   void ResetConfigurationToEnableOnPhishingSites(
-      bool measure_performance = false,
-      bool whitelist_site_on_reload = false);
+      bool measure_performance = false);
 
   TestSafeBrowsingDatabaseHelper* database_helper() {
     return database_helper_.get();

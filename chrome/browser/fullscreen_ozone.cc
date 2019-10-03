@@ -4,15 +4,18 @@
 
 #include "chrome/browser/fullscreen.h"
 
-#include "ui/aura/env.h"
+#include <algorithm>
 
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window.h"
+
+// The Ozone implementation is limited to chrome only: it checks whether any
+// existing browser object has a fullscreen window, but does not try to find
+// if there are ones belonging to other applications.
 bool IsFullScreenMode() {
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS) {
-    // TODO: http://crbug.com/640390.
-    NOTIMPLEMENTED();
-    return false;
-  }
-
-  NOTREACHED() << "For Ozone builds, only --mash launch is supported for now.";
-  return false;
+  const auto* list = BrowserList::GetInstance();
+  return std::any_of(list->begin(), list->end(), [](const Browser* browser) {
+    return browser->window()->IsFullscreen();
+  });
 }

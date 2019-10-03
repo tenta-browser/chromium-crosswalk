@@ -9,7 +9,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
+import android.content.Context;
 import android.os.Build;
+import android.support.v4.app.NotificationManagerCompat;
+
+import org.chromium.base.Log;
 
 import java.util.List;
 
@@ -18,10 +22,19 @@ import java.util.List;
  * normal Android Notification Manager.
  */
 public class NotificationManagerProxyImpl implements NotificationManagerProxy {
+    private static final String TAG = "NotifManagerProxy";
+    private final Context mContext;
     private final NotificationManager mNotificationManager;
 
-    public NotificationManagerProxyImpl(NotificationManager notificationManager) {
-        mNotificationManager = notificationManager;
+    public NotificationManagerProxyImpl(Context context) {
+        mContext = context;
+        mNotificationManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+    }
+
+    @Override
+    public boolean areNotificationsEnabled() {
+        return NotificationManagerCompat.from(mContext).areNotificationsEnabled();
     }
 
     @Override
@@ -82,12 +95,34 @@ public class NotificationManagerProxyImpl implements NotificationManagerProxy {
 
     @Override
     public void notify(int id, Notification notification) {
+        if (notification == null) {
+            Log.e(TAG, "Failed to create notification.");
+            return;
+        }
+
         mNotificationManager.notify(id, notification);
     }
 
     @Override
     public void notify(String tag, int id, Notification notification) {
+        if (notification == null) {
+            Log.e(TAG, "Failed to create notification.");
+            return;
+        }
+
         mNotificationManager.notify(tag, id, notification);
+    }
+
+    @Override
+    public void notify(ChromeNotification notification) {
+        if (notification == null || notification.getNotification() == null) {
+            Log.e(TAG, "Failed to create notification.");
+            return;
+        }
+
+        assert notification.getMetadata() != null;
+        mNotificationManager.notify(notification.getMetadata().tag, notification.getMetadata().id,
+                notification.getNotification());
     }
 
     @TargetApi(Build.VERSION_CODES.O)

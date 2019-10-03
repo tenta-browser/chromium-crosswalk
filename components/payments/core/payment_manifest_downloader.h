@@ -8,42 +8,71 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_fetcher_delegate.h"
-
-class GURL;
+#include "base/memory/weak_ptr.h"
+#include "url/gurl.h"
 
 namespace net {
-class URLRequestContextGetter;
-}
+class HttpResponseHeaders;
+struct RedirectInfo;
+}  // namespace net
+
+namespace network {
+class SharedURLLoaderFactory;
+class SimpleURLLoader;
+struct ResourceResponseHead;
+}  // namespace network
 
 namespace payments {
 
-// Called on completed download of a manifest. Download failure results in empty
-// contents. Failure to download the manifest can happen because of the
-// following reasons:
+class ErrorLogger;
+
+// Called on completed download of a manifest |contents| from |url|, which is
+// the final URL after following the redirects, if any.
+//
+// Download failure results in empty contents. Failure to download the manifest
+// can happen because of the following reasons:
 //  - HTTP response code is not 200. (204 is also allowed for HEAD request.)
 //  - HTTP GET on the manifest URL returns empty content.
 //
 // In the case of a payment method manifest download, can also fail when:
+//  - More than three redirects.
+//  - Cross-site redirects.
 //  - HTTP response headers are absent.
 //  - HTTP response headers do not contain Link headers.
 //  - Link header does not contain rel="payment-method-manifest".
-//  - Link header does not contain a valid URL.
-using PaymentManifestDownloadCallback =
-    base::OnceCallback<void(const std::string&)>;
-
-// The interface for the downloader of the payment method manifest.
+//  - Link header does not contain a valid URL of the same origin.
 //
-// The downloader does not follow redirects. A download succeeds only if all
-// HTTP response codes are 200 or 204.
-class PaymentMethodManifestDownloaderInterface {
+// In the case of a web app manifest download, can also also fail when:
+//  - There's a redirect.
+using PaymentManifestDownloadCallback =
+    base::OnceCallback<void(const GURL& url,
+                            const std::string& contents,
+                            const std::string& error_message)>;
+
+// Downloader of the payment method manifest and web-app manifest based on the
+// payment method name that is a URL with HTTPS scheme, e.g.,
+// https://bobpay.com.
+//
+// The downloader follows up to three redirects for the HEAD request only (used
+// for payment method manifests). Three is enough for known legitimate use cases
+// and seems like a good upper bound.
+//
+// The command line must be initialized to use this class in tests, because it
+// checks for --unsafely-treat-insecure-origin-as-secure=<origin> flag. For
+// example:
+//  base::CommandLine::Init(0, nullptr);
+class PaymentManifestDownloader {
  public:
-  virtual ~PaymentMethodManifestDownloaderInterface() {}
+  PaymentManifestDownloader(
+      std::unique_ptr<ErrorLogger> log,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+
+  virtual ~PaymentManifestDownloader();
 
   // Download a payment method manifest via two consecutive HTTP requests:
   //
@@ -64,37 +93,8 @@ class PaymentMethodManifestDownloaderInterface {
   // 2) GET request for the payment method manifest file.
   //
   // |url| should be a valid URL with HTTPS scheme.
-  virtual void DownloadPaymentMethodManifest(
-      const GURL& url,
-      PaymentManifestDownloadCallback callback) = 0;
-
- protected:
-  PaymentMethodManifestDownloaderInterface() {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PaymentMethodManifestDownloaderInterface);
-};
-
-// Downloader of the payment method manifest and web-app manifest based on the
-// payment method name that is a URL with HTTPS scheme, e.g.,
-// https://bobpay.com.
-//
-// The downloader does not follow redirects. A download succeeds only if all
-// HTTP response codes are 200 or 204.
-class PaymentManifestDownloader
-    : public net::URLFetcherDelegate,
-      public PaymentMethodManifestDownloaderInterface {
- public:
-  // |delegate| should not be null and must outlive this object.
-  explicit PaymentManifestDownloader(
-      const scoped_refptr<net::URLRequestContextGetter>& context);
-
-  ~PaymentManifestDownloader() override;
-
-  // PaymentMethodManifestDownloaderInterface implementation.
-  void DownloadPaymentMethodManifest(
-      const GURL& url,
-      PaymentManifestDownloadCallback callback) override;
+  void DownloadPaymentMethodManifest(const GURL& url,
+                                     PaymentManifestDownloadCallback callback);
 
   // Download a web app manifest via a single HTTP request:
   //
@@ -104,32 +104,68 @@ class PaymentManifestDownloader
   void DownloadWebAppManifest(const GURL& url,
                               PaymentManifestDownloadCallback callback);
 
+  // Overridden in TestDownloader to convert |url| to a test server URL. The
+  // default implementation here simply returns |url|.
+  virtual GURL FindTestServerURL(const GURL& url) const;
+
  private:
+  friend class PaymentMethodManifestDownloaderTest;
+  friend class TestDownloader;
+  friend class WebAppManifestDownloaderTest;
+
   // Information about an ongoing download request.
   struct Download {
     Download();
     ~Download();
 
-    net::URLFetcher::RequestType request_type;
-    std::unique_ptr<net::URLFetcher> fetcher;
+    int allowed_number_of_redirects = 0;
+    std::string method;
+    GURL original_url;
+    std::unique_ptr<network::SimpleURLLoader> loader;
     PaymentManifestDownloadCallback callback;
   };
 
-  // net::URLFetcherDelegate
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  // Called by SimpleURLLoader on a redirect.
+  void OnURLLoaderRedirect(network::SimpleURLLoader* url_loader,
+                           const net::RedirectInfo& redirect_info,
+                           const network::ResourceResponseHead& response_head,
+                           std::vector<std::string>* to_be_removed_headers);
 
-  void InitiateDownload(const GURL& url,
-                        net::URLFetcher::RequestType request_type,
-                        PaymentManifestDownloadCallback callback);
-  bool IsValidManifestUrl(const GURL& url);
+  // Called by SimpleURLLoader on completion.
+  void OnURLLoaderComplete(network::SimpleURLLoader* url_loader,
+                           std::unique_ptr<std::string> response_body);
 
-  scoped_refptr<net::URLRequestContextGetter> context_;
+  // Internally called by OnURLLoaderComplete, exposed to ease unit tests.
+  void OnURLLoaderCompleteInternal(
+      network::SimpleURLLoader* url_loader,
+      const GURL& final_url,
+      const std::string& response_body,
+      scoped_refptr<net::HttpResponseHeaders> headers,
+      int net_error);
 
-  // Downloads are identified by net::URLFetcher pointers, because that's the
-  // only unique piece of information that OnURLFetchComplete() receives. Can't
-  // rely on the URL of the download, because of possible collision between HEAD
-  // and GET requests.
-  std::map<const net::URLFetcher*, std::unique_ptr<Download>> downloads_;
+  // Called by unittests to get the one in-progress loader.
+  network::SimpleURLLoader* GetLoaderForTesting();
+
+  // Called by unittests to get the original URL of the in-progress loader.
+  GURL GetLoaderOriginalURLForTesting();
+
+  // Overridden in TestDownloader.
+  virtual void InitiateDownload(const GURL& url,
+                                const std::string& method,
+                                int allowed_number_of_redirects,
+                                PaymentManifestDownloadCallback callback);
+
+  std::unique_ptr<ErrorLogger> log_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+
+  // Downloads are identified by network::SimpleURLLoader pointers, because
+  // that's the only unique piece of information that OnURLLoaderComplete()
+  // receives. Can't rely on the URL of the download, because of possible
+  // collision between HEAD and GET requests.
+  std::map<const network::SimpleURLLoader*, std::unique_ptr<Download>>
+      downloads_;
+
+  base::WeakPtrFactory<PaymentManifestDownloader> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PaymentManifestDownloader);
 };

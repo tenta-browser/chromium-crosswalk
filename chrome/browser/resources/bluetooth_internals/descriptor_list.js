@@ -8,14 +8,14 @@
  */
 
 cr.define('descriptor_list', function() {
-  /** @const */ var ArrayDataModel = cr.ui.ArrayDataModel;
-  /** @const */ var ExpandableList = expandable_list.ExpandableList;
-  /** @const */ var ExpandableListItem = expandable_list.ExpandableListItem;
-  /** @const */ var Snackbar = snackbar.Snackbar;
-  /** @const */ var SnackbarType = snackbar.SnackbarType;
+  const ArrayDataModel = cr.ui.ArrayDataModel;
+  const ExpandableList = expandable_list.ExpandableList;
+  const ExpandableListItem = expandable_list.ExpandableListItem;
+  const Snackbar = snackbar.Snackbar;
+  const SnackbarType = snackbar.SnackbarType;
 
   /** Property names for the DescriptorInfo fieldset */
-  var INFO_PROPERTY_NAMES = {
+  const INFO_PROPERTY_NAMES = {
     id: 'ID',
     'uuid.uuid': 'UUID',
   };
@@ -29,10 +29,11 @@ cr.define('descriptor_list', function() {
    * @param {string} deviceAddress
    * @param {string} serviceId
    * @param {string} characteristicId
+   * @extends {expandable_list.ExpandableListItem}
    */
   function DescriptorListItem(
       descriptorInfo, deviceAddress, serviceId, characteristicId) {
-    var listItem = new ExpandableListItem();
+    const listItem = new ExpandableListItem();
     listItem.__proto__ = DescriptorListItem.prototype;
 
     /** @type {!bluetooth.mojom.DescriptorInfo} */
@@ -60,7 +61,7 @@ cr.define('descriptor_list', function() {
       this.classList.add('descriptor-list-item');
 
       /** @private {!object_fieldset.ObjectFieldSet} */
-      this.descriptorFieldSet_ = object_fieldset.ObjectFieldSet();
+      this.descriptorFieldSet_ = new object_fieldset.ObjectFieldSet();
       this.descriptorFieldSet_.setPropertyDisplayNames(INFO_PROPERTY_NAMES);
       this.descriptorFieldSet_.setObject({
         id: this.info.id,
@@ -77,29 +78,29 @@ cr.define('descriptor_list', function() {
       });
 
       // Create content for display in brief content container.
-      var descriptorHeaderText = document.createElement('div');
+      const descriptorHeaderText = document.createElement('div');
       descriptorHeaderText.textContent = 'Descriptor:';
 
-      var descriptorHeaderValue = document.createElement('div');
+      const descriptorHeaderValue = document.createElement('div');
       descriptorHeaderValue.textContent = this.info.uuid.uuid;
 
-      var descriptorHeader = document.createElement('div');
+      const descriptorHeader = document.createElement('div');
       descriptorHeader.appendChild(descriptorHeaderText);
       descriptorHeader.appendChild(descriptorHeaderValue);
       this.briefContent_.appendChild(descriptorHeader);
 
       // Create content for display in expanded content container.
-      var descriptorInfoHeader = document.createElement('h4');
+      const descriptorInfoHeader = document.createElement('h4');
       descriptorInfoHeader.textContent = 'Descriptor Info';
 
-      var descriptorDiv = document.createElement('div');
+      const descriptorDiv = document.createElement('div');
       descriptorDiv.classList.add('flex');
       descriptorDiv.appendChild(this.descriptorFieldSet_);
 
-      var valueHeader = document.createElement('h4');
+      const valueHeader = document.createElement('h4');
       valueHeader.textContent = 'Value';
 
-      var infoDiv = document.createElement('div');
+      const infoDiv = document.createElement('div');
       infoDiv.classList.add('info-container');
       infoDiv.appendChild(descriptorInfoHeader);
       infoDiv.appendChild(descriptorDiv);
@@ -113,8 +114,9 @@ cr.define('descriptor_list', function() {
   /**
    * A list that displays DescriptorListItems.
    * @constructor
+   * @extends {expandable_list.ExpandableList}
    */
-  var DescriptorList = cr.ui.define('list');
+  const DescriptorList = cr.ui.define('list');
 
   DescriptorList.prototype = {
     __proto__: ExpandableList.prototype,
@@ -136,10 +138,10 @@ cr.define('descriptor_list', function() {
       this.setEmptyMessage('No Descriptors Found');
     },
 
-    /** @override */
     createItem: function(data) {
       return new DescriptorListItem(
-          data, this.deviceAddress_, this.serviceId_, this.characteristicId_);
+          data, assert(this.deviceAddress_), assert(this.serviceId_),
+          assert(this.characteristicId_));
     },
 
     /**
@@ -152,8 +154,9 @@ cr.define('descriptor_list', function() {
      * @param {string} characteristicId
      */
     load: function(deviceAddress, serviceId, characteristicId) {
-      if (this.descriptorsRequested_ || !this.isSpinnerShowing())
+      if (this.descriptorsRequested_ || !this.isSpinnerShowing()) {
         return;
+      }
 
       this.deviceAddress_ = deviceAddress;
       this.serviceId_ = serviceId;

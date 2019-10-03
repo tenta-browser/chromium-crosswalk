@@ -14,7 +14,12 @@ interface ContextualSearchSelectionHandler {
     /**
      * Handle a scroll event on the base page.
      */
-    public void handleScroll();
+    public void handleScrollStart();
+
+    /**
+     * Handle a scroll-ending event on the base page.
+     */
+    public void handleScrollEnd();
 
     /**
      * Handle the selection being cleared on the base page.
@@ -34,8 +39,8 @@ interface ContextualSearchSelectionHandler {
     /**
      * Handle a new selection of the given type, created at the given x,y position.
      */
-    public void handleSelection(String selection, boolean selectionValid, SelectionType type,
-            float x, float y);
+    public void handleSelection(
+            String selection, boolean selectionValid, @SelectionType int type, float x, float y);
 
     /**
      * Handle a modification to the selection, done at the given x,y position.
@@ -69,4 +74,17 @@ interface ContextualSearchSelectionHandler {
      * @param tapHeuristics The set of heuristics that would suppress the Tap.
      */
     public void handleMetricsForWouldSuppressTap(ContextualSearchHeuristics tapHeuristics);
+
+    /**
+     * Logs all the features that we can obtain without accessing heuristics, i.e. from global
+     * state.
+     * @param interactionRecorder The {@link ContextualSearchInteractionRecorder} to log the
+     * features to.
+     */
+    public void logNonHeuristicFeatures(ContextualSearchInteractionRecorder interactionRecorder);
+
+    /**
+     * Handles a long-press gesture that may make a server Resolve request to determine the search.
+     */
+    void handleValidResolvingLongpress();
 }

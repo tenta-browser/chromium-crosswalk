@@ -5,9 +5,10 @@
 #include "components/content_settings/core/common/content_settings.h"
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
@@ -26,10 +27,7 @@ struct HistogramValue {
 //
 // TODO(raymes): We should use a sparse histogram here on the hash of the
 // content settings type name instead.
-//
-// The array size must be explicit for the static_asserts below.
-constexpr size_t kNumHistogramValues = 35;
-constexpr HistogramValue kHistogramValue[kNumHistogramValues] = {
+constexpr HistogramValue kHistogramValue[] = {
     {CONTENT_SETTINGS_TYPE_COOKIES, 0},
     {CONTENT_SETTINGS_TYPE_IMAGES, 1},
     {CONTENT_SETTINGS_TYPE_JAVASCRIPT, 2},
@@ -65,6 +63,21 @@ constexpr HistogramValue kHistogramValue[kNumHistogramValues] = {
     {CONTENT_SETTINGS_TYPE_ACCESSIBILITY_EVENTS, 39},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, 40},
     {CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE, 41},
+    {CONTENT_SETTINGS_TYPE_PLUGINS_DATA, 42},
+    {CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER, 43},
+    {CONTENT_SETTINGS_TYPE_USB_GUARD, 44},
+    {CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH, 45},
+    {CONTENT_SETTINGS_TYPE_INTENT_PICKER_DISPLAY, 46},
+    {CONTENT_SETTINGS_TYPE_IDLE_DETECTION, 47},
+    {CONTENT_SETTINGS_TYPE_SERIAL_GUARD, 48},
+    {CONTENT_SETTINGS_TYPE_SERIAL_CHOOSER_DATA, 49},
+    {CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC, 50},
+    {CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING, 51},
+    {CONTENT_SETTINGS_TYPE_HID_GUARD, 52},
+    {CONTENT_SETTINGS_TYPE_HID_CHOOSER_DATA, 53},
+    {CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN, 54},
+    {CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM, 55},
+    {CONTENT_SETTINGS_TYPE_LEGACY_COOKIE_ACCESS, 56},
 };
 
 }  // namespace
@@ -78,14 +91,14 @@ ContentSetting IntToContentSetting(int content_setting) {
 
 int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting,
                                        size_t* num_values) {
-  *num_values = arraysize(kHistogramValue);
+  *num_values = base::size(kHistogramValue);
 
   // Verify the array is sorted by enum type and contains all values.
   DCHECK(std::is_sorted(std::begin(kHistogramValue), std::end(kHistogramValue),
                         [](const HistogramValue& a, const HistogramValue& b) {
                           return a.type < b.type;
                         }));
-  static_assert(kHistogramValue[kNumHistogramValues - 1].type ==
+  static_assert(kHistogramValue[base::size(kHistogramValue) - 1].type ==
                     CONTENT_SETTINGS_NUM_TYPES - 1,
                 "Update content settings histogram lookup");
 
@@ -103,7 +116,7 @@ int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting,
 ContentSettingPatternSource::ContentSettingPatternSource(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
-    std::unique_ptr<base::Value> setting_value,
+    base::Value setting_value,
     const std::string& source,
     bool incognito)
     : primary_pattern(primary_pattern),
@@ -123,8 +136,7 @@ ContentSettingPatternSource& ContentSettingPatternSource::operator=(
     const ContentSettingPatternSource& other) {
   primary_pattern = other.primary_pattern;
   secondary_pattern = other.secondary_pattern;
-  if (other.setting_value)
-    setting_value = base::MakeUnique<base::Value>(other.setting_value->Clone());
+  setting_value = other.setting_value.Clone();
   source = other.source;
   incognito = other.incognito;
   return *this;
@@ -133,7 +145,17 @@ ContentSettingPatternSource& ContentSettingPatternSource::operator=(
 ContentSettingPatternSource::~ContentSettingPatternSource() {}
 
 ContentSetting ContentSettingPatternSource::GetContentSetting() const {
-  return content_settings::ValueToContentSetting(setting_value.get());
+  return content_settings::ValueToContentSetting(&setting_value);
+}
+
+// static
+bool RendererContentSettingRules::IsRendererContentSetting(
+    ContentSettingsType content_type) {
+  return content_type == CONTENT_SETTINGS_TYPE_IMAGES ||
+         content_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
+         content_type == CONTENT_SETTINGS_TYPE_AUTOPLAY ||
+         content_type == CONTENT_SETTINGS_TYPE_CLIENT_HINTS ||
+         content_type == CONTENT_SETTINGS_TYPE_POPUPS;
 }
 
 RendererContentSettingRules::RendererContentSettingRules() {}

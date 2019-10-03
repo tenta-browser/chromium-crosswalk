@@ -8,9 +8,9 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -158,7 +158,7 @@ class EdgeImporterBrowserTest : public InProcessBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporter) {
   // Only verified to work with ESE library on Windows 8.1 and above.
-  if (base::win::GetVersion() < base::win::VERSION_WIN8_1)
+  if (base::win::GetVersion() < base::win::Version::WIN8_1)
     return;
 
   const BookmarkInfo kEdgeBookmarks[] = {
@@ -177,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporter) {
       {false, 0, {}, L"InvalidFavicon", "http://www.invalid-favicon.com/"},
   };
   std::vector<BookmarkInfo> bookmark_entries(
-      kEdgeBookmarks, kEdgeBookmarks + arraysize(kEdgeBookmarks));
+      kEdgeBookmarks, kEdgeBookmarks + base::size(kEdgeBookmarks));
 
   const FaviconGroup kEdgeFaviconGroup[] = {
       {L"http://www.links-sublink.com/favicon.ico",
@@ -195,10 +195,10 @@ IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporter) {
   };
 
   std::vector<FaviconGroup> favicon_groups(
-      kEdgeFaviconGroup, kEdgeFaviconGroup + arraysize(kEdgeFaviconGroup));
+      kEdgeFaviconGroup, kEdgeFaviconGroup + base::size(kEdgeFaviconGroup));
 
   base::FilePath data_path;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &data_path));
   data_path = data_path.AppendASCII("edge_profile");
 
   base::FilePath temp_path = temp_dir_.GetPath();
@@ -232,17 +232,21 @@ IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporter) {
 }
 
 IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporterLegacyFallback) {
+  // We only do legacy fallback on versions < Version::WIN10_TH2.
+  if (base::win::GetVersion() >= base::win::Version::WIN10_TH2)
+    return;
+
   const BookmarkInfo kEdgeBookmarks[] = {
       {false, 0, {}, L"Google", "http://www.google.com/"}};
   std::vector<BookmarkInfo> bookmark_entries(
-      kEdgeBookmarks, kEdgeBookmarks + arraysize(kEdgeBookmarks));
+      kEdgeBookmarks, kEdgeBookmarks + base::size(kEdgeBookmarks));
   const FaviconGroup kEdgeFaviconGroup[] = {
       {L"http://www.google.com/favicon.ico", L"http://www.google.com/"}};
   std::vector<FaviconGroup> favicon_groups(
-      kEdgeFaviconGroup, kEdgeFaviconGroup + arraysize(kEdgeFaviconGroup));
+      kEdgeFaviconGroup, kEdgeFaviconGroup + base::size(kEdgeFaviconGroup));
 
   base::FilePath data_path;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &data_path));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &data_path));
   data_path = data_path.AppendASCII("edge_profile");
 
   {
@@ -277,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporterLegacyFallback) {
 
 IN_PROC_BROWSER_TEST_F(EdgeImporterBrowserTest, EdgeImporterNoDatabase) {
   // Only verified to work with ESE library on Windows 8.1 and above.
-  if (base::win::GetVersion() < base::win::VERSION_WIN8_1)
+  if (base::win::GetVersion() < base::win::Version::WIN8_1)
     return;
 
   std::vector<BookmarkInfo> bookmark_entries;

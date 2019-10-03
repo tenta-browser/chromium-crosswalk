@@ -17,18 +17,23 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/single_thread_task_runner.h"
+#include "base/strings/stringprintf.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
+#include "net/url_request/test_url_fetcher_factory.h"
 #include "rlz/lib/financial_ping.h"
+#include "rlz/lib/lib_values.h"
 #include "rlz/lib/net_response_check.h"
 #include "rlz/lib/rlz_lib.h"
 #include "rlz/lib/rlz_value_store.h"
 #include "rlz/test/rlz_test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 #if defined(OS_WIN)
 #include <Windows.h>
@@ -39,8 +44,18 @@
 #include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/threading/thread.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "services/network/test/test_url_loader_factory.h"
 #endif
 
+#if defined(OS_CHROMEOS)
+#include "base/files/important_file_writer.h"
+#include "base/stl_util.h"
+#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/fake_debug_daemon_client.h"
+#include "rlz/chromeos/lib/rlz_value_store_chromeos.h"
+#endif
 
 class MachineDealCodeHelper
 #if defined(OS_WIN)
@@ -57,11 +72,43 @@ class MachineDealCodeHelper
   }
 
  private:
-  MachineDealCodeHelper() {}
-  ~MachineDealCodeHelper() {}
+  MachineDealCodeHelper() = default;
+  ~MachineDealCodeHelper() = default;
 };
 
 class RlzLibTest : public RlzLibTestBase {
+ protected:
+  void FakeGoodPingResponse(rlz_lib::Product product,
+                            const rlz_lib::AccessPoint* access_points,
+                            const char* product_signature,
+                            const char* product_brand,
+                            const char* product_id,
+                            const char* product_lang,
+                            bool exclude_machine_id,
+                            network::TestURLLoaderFactory* url_loader_factory) {
+    const char kGoodPingResponses[] =
+        "version: 3.0.914.7250\r\n"
+        "url: "
+        "http://www.corp.google.com/~av/45/opt/SearchWithGoogleUpdate.exe\r\n"
+        "launch-action: custom-action\r\n"
+        "launch-target: SearchWithGoogleUpdate.exe\r\n"
+        "signature: c08a3f4438e1442c4fe5678ee147cf6c5516e5d62bb64e\r\n"
+        "rlz: 1R1_____en__252\r\n"
+        "rlzXX: 1R1_____en__250\r\n"
+        "rlzT4  1T4_____en__251\r\n"
+        "rlzT4: 1T4_____en__252\r\n"
+        "rlz\r\n"
+        "crc32: D6FD55A3";
+    std::string request;
+    EXPECT_TRUE(rlz_lib::FinancialPing::FormRequest(
+        product, access_points, product_signature, product_brand, product_id,
+        product_lang, exclude_machine_id, &request));
+    std::string url = base::StringPrintf(
+        "https://%s%s", rlz_lib::kFinancialServer, request.c_str());
+    url_loader_factory->AddResponse(url, kGoodPingResponses);
+  }
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(RlzLibTest, RecordProductEvent) {
@@ -172,6 +219,92 @@ TEST_F(RlzLibTest, SetAccessPointRlz) {
   EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, rlz_50, 50));
   EXPECT_STREQ("IeTbRlz", rlz_50);
 }
+
+#if defined(OS_CHROMEOS)
+TEST_F(RlzLibTest, SetAccessPointRlzOnlyOnce) {
+  // On Chrome OS, and RLZ string can ne set only once.
+  char rlz_50[50];
+  EXPECT_TRUE(rlz_lib::SetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, "First"));
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, rlz_50, 50));
+  EXPECT_STREQ("First", rlz_50);
+
+  EXPECT_TRUE(rlz_lib::SetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, "Second"));
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, rlz_50, 50));
+  EXPECT_STREQ("First", rlz_50);
+}
+
+TEST_F(RlzLibTest, UpdateExistingAccessPointRlz) {
+  const std::string json_data = R"({
+   "access_points": {
+      "CA": {
+         "_": "1CANPEC_enUS818"
+      },
+      "CB": {
+         "_": "1CBNPE"
+      },
+      "CC": {
+         "_": "1CANPEC_enUS818"
+      }
+   },
+   "product_events": {
+      "C": {
+         "_": [ "CAS" ]
+      }
+   }
+})";
+  ASSERT_TRUE(base::ImportantFileWriter::WriteFileAtomically(
+      base::FilePath(rlz_lib::testing::RlzStoreFilenameStr()), json_data));
+  // Verify that the initial values are read correctly.
+  char data[50];
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_OMNIBOX, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+  EXPECT_TRUE(
+      rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_HOME_PAGE, data, 50));
+  EXPECT_STREQ("1CBNPE", data);
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_APP_LIST, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+  EXPECT_TRUE(rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, data, 50));
+  EXPECT_STREQ("events=CAS", data);
+
+  // Verify that if the brand code doesn't consist of four letters, none of the
+  // access point RLZ strings is updated.
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_OMNIBOX, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+  EXPECT_TRUE(
+      rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_HOME_PAGE, data, 50));
+  EXPECT_STREQ("1CBNPE", data);
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_APP_LIST, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+
+  // Update the RLZ strings with a valid brand code. Verify that the RLZ string
+  // is updated if it also has valid format.
+  EXPECT_TRUE(rlz_lib::UpdateExistingAccessPointRlz("BMGD"));
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_OMNIBOX, data, 50));
+  EXPECT_STREQ("1CABMGD_enUS818", data);
+  // The RLZ string remains unchanged if it has fewer than seven characters.
+  EXPECT_TRUE(
+      rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_HOME_PAGE, data, 50));
+  EXPECT_STREQ("1CBNPE", data);
+  // The RLZ string remains unchanged if the access point names don't match.
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_APP_LIST, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+  // The product events remain unchanged.
+  EXPECT_TRUE(rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, data, 50));
+  EXPECT_STREQ("events=CAS", data);
+
+  // Verify a second update is no-op.
+  EXPECT_FALSE(rlz_lib::UpdateExistingAccessPointRlz("BMGD"));
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_OMNIBOX, data, 50));
+  EXPECT_STREQ("1CABMGD_enUS818", data);
+  EXPECT_TRUE(
+      rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_HOME_PAGE, data, 50));
+  EXPECT_STREQ("1CBNPE", data);
+  EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::CHROMEOS_APP_LIST, data, 50));
+  EXPECT_STREQ("1CANPEC_enUS818", data);
+  EXPECT_TRUE(rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, data, 50));
+  EXPECT_STREQ("events=CAS", data);
+}
+#endif
 
 TEST_F(RlzLibTest, GetAccessPointRlz) {
   char rlz_1[1];
@@ -332,12 +465,6 @@ TEST_F(RlzLibTest, ParsePingResponse) {
   EXPECT_TRUE(rlz_lib::RecordProductEvent(rlz_lib::TOOLBAR_NOTIFIER,
       rlz_lib::IE_HOME_PAGE, rlz_lib::INSTALL));
 
-  EXPECT_TRUE(rlz_lib::SetAccessPointRlz(
-      rlz_lib::IETB_SEARCH_BOX, "TbRlzValue"));
-
-  EXPECT_TRUE(rlz_lib::ParsePingResponse(rlz_lib::TOOLBAR_NOTIFIER,
-                                         kPingResponse));
-
 #if defined(OS_WIN)
   EXPECT_TRUE(rlz_lib::MachineDealCode::Set("dcc_value"));
 #endif
@@ -357,13 +484,23 @@ TEST_F(RlzLibTest, ParsePingResponse) {
   EXPECT_TRUE(rlz_lib::ParsePingResponse(rlz_lib::TOOLBAR_NOTIFIER,
                                          kPingResponse2));
   EXPECT_TRUE(rlz_lib::GetAccessPointRlz(rlz_lib::IETB_SEARCH_BOX, value, 50));
+#if defined(OS_CHROMEOS)
+  // On Chrome OS, the RLZ string is not modified by response once set.
+  EXPECT_STREQ("1T4_____en__252", value);
+#else
   EXPECT_STREQ("1T4_____de__253", value);
+#endif
 
   const char* kPingResponse3 =
     "crc32: 0\r\n";  // Good RLZ - empty response.
   EXPECT_TRUE(rlz_lib::ParsePingResponse(rlz_lib::TOOLBAR_NOTIFIER,
                                          kPingResponse3));
+#if defined(OS_CHROMEOS)
+  // On Chrome OS, the RLZ string is not modified by response once set.
+  EXPECT_STREQ("1T4_____en__252", value);
+#else
   EXPECT_STREQ("1T4_____de__253", value);
+#endif
 }
 
 // Test whether a stateful event will only be sent in financial pings once.
@@ -423,37 +560,28 @@ TEST_F(RlzLibTest, ParsePingResponseWithStatefulEvents) {
   EXPECT_STREQ("events=W1I", value);
 }
 
-class URLRequestRAII {
+class URLLoaderFactoryRAII {
  public:
-  URLRequestRAII(net::URLRequestContextGetter* context) {
-    rlz_lib::SetURLRequestContext(context);
+  URLLoaderFactoryRAII(network::mojom::URLLoaderFactory* factory) {
+    rlz_lib::SetURLLoaderFactory(factory);
   }
-  ~URLRequestRAII() {
-    rlz_lib::SetURLRequestContext(NULL);
-  }
+  ~URLLoaderFactoryRAII() { rlz_lib::SetURLLoaderFactory(nullptr); }
 };
 
 TEST_F(RlzLibTest, SendFinancialPing) {
-  // We don't really check a value or result in this test. All this does is
-  // attempt to ping the financial server, which you can verify in Fiddler.
-  // TODO: Make this a measurable test.
+  // rlz_lib::SendFinancialPing fails when this is set.
+  if (!rlz_lib::SupplementaryBranding::GetBrand().empty())
+    return;
 
 #if defined(RLZ_NETWORK_IMPLEMENTATION_CHROME_NET)
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool pool;
 #endif
 
-  base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  network::TestURLLoaderFactory test_url_loader_factory;
 
-  base::Thread io_thread("rlz_unittest_io_thread");
-  ASSERT_TRUE(io_thread.StartWithOptions(options));
-
-  scoped_refptr<net::TestURLRequestContextGetter> context =
-      new net::TestURLRequestContextGetter(io_thread.task_runner());
-  rlz_lib::SetURLRequestContext(context.get());
-
-  URLRequestRAII set_context(context.get());
+  URLLoaderFactoryRAII set_factory(
+      test_url_loader_factory.GetSafeWeakWrapper().get());
 #endif
 
   MachineDealCodeHelper::Clear();
@@ -474,16 +602,22 @@ TEST_F(RlzLibTest, SendFinancialPing) {
     {rlz_lib::IETB_SEARCH_BOX, rlz_lib::NO_ACCESS_POINT,
      rlz_lib::NO_ACCESS_POINT};
 
-  std::string request;
-  rlz_lib::SendFinancialPing(rlz_lib::TOOLBAR_NOTIFIER, points,
-      "swg", "GGLA", "SwgProductId1234", "en-UK", false,
-      /*skip_time_check=*/true);
+  // Excluding machine id from requests so that a stable URL is used and
+  // this test can use TestURLLoaderFactory.
+  FakeGoodPingResponse(rlz_lib::TOOLBAR_NOTIFIER, points, "swg", "GGLA",
+                       "SwgProductId1234", "en-UK",
+                       /* exclude_machine_id */ true, &test_url_loader_factory);
+
+  rlz_lib::SendFinancialPing(rlz_lib::TOOLBAR_NOTIFIER, points, "swg", "GGLA",
+                             "SwgProductId1234", "en-UK",
+                             /* exclude_machine_id */ true,
+                             /* skip_time_check */ true);
 }
 
 #if defined(RLZ_NETWORK_IMPLEMENTATION_CHROME_NET)
 
-void ResetContext() {
-  rlz_lib::SetURLRequestContext(NULL);
+void ResetURLLoaderFactory() {
+  rlz_lib::SetURLLoaderFactory(nullptr);
 }
 
 TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
@@ -501,11 +635,9 @@ TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
   base::Thread io_thread("rlz_unittest_io_thread");
   ASSERT_TRUE(io_thread.StartWithOptions(options));
 
-  scoped_refptr<net::TestURLRequestContextGetter> context =
-      new net::TestURLRequestContextGetter(io_thread.task_runner());
-  rlz_lib::SetURLRequestContext(context.get());
-
-  URLRequestRAII set_context(context.get());
+  network::TestURLLoaderFactory test_url_loader_factory;
+  URLLoaderFactoryRAII set_factory(
+      test_url_loader_factory.GetSafeWeakWrapper().get());
 
   rlz_lib::AccessPoint points[] =
     {rlz_lib::IETB_SEARCH_BOX, rlz_lib::NO_ACCESS_POINT,
@@ -513,12 +645,13 @@ TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
   rlz_lib::test::ResetSendFinancialPingInterrupted();
   EXPECT_FALSE(rlz_lib::test::WasSendFinancialPingInterrupted());
 
-  base::MessageLoop loop;
-  loop.task_runner()->PostTask(FROM_HERE, base::Bind(&ResetContext));
-  std::string request;
-  EXPECT_FALSE(rlz_lib::SendFinancialPing(rlz_lib::TOOLBAR_NOTIFIER, points,
-      "swg", "GGLA", "SwgProductId1234", "en-UK", false,
-      /*skip_time_check=*/true));
+  io_thread.task_runner()->PostTask(FROM_HERE,
+                                    base::BindOnce(&ResetURLLoaderFactory));
+
+  rlz_lib::SendFinancialPing(rlz_lib::TOOLBAR_NOTIFIER, points, "swg", "GGLA",
+                             "SwgProductId1234", "en-UK",
+                             /* exclude_machine_id */ false,
+                             /* skip_time_check */ true);
 
   EXPECT_TRUE(rlz_lib::test::WasSendFinancialPingInterrupted());
   rlz_lib::test::ResetSendFinancialPingInterrupted();
@@ -929,6 +1062,10 @@ TEST_F(RlzLibTest, LockAcquistionSucceedsButStoreFileCannotBeCreated) {
   if (!rlz_lib::SupplementaryBranding::GetBrand().empty())
     return;
 
+  // Make sure to use a brand new directory for this test, since
+  // RlzLibTest::SetUp() will have created a store file to setup the tests.
+  m_rlz_test_helper_.Reset();
+
   // Create a directory where the rlz file is supposed to appear. This way,
   // the lock file can be created successfully, but creation of the rlz file
   // itself will fail.
@@ -941,4 +1078,126 @@ TEST_F(RlzLibTest, LockAcquistionSucceedsButStoreFileCannotBeCreated) {
       rlz_lib::IE_DEFAULT_SEARCH, rlz_lib::INSTALL));
 }
 
+#endif
+
+#if defined(OS_CHROMEOS)
+class TestDebugDaemonClient : public chromeos::FakeDebugDaemonClient {
+ public:
+  TestDebugDaemonClient() = default;
+  ~TestDebugDaemonClient() override = default;
+
+  int num_set_rlz_ping_sent() const { return num_set_rlz_ping_sent_; }
+
+  // Sets the result returned by the callback in order to test both success and
+  // failure cases.
+  void set_default_result(bool default_result) {
+    default_result_ = default_result;
+  }
+
+  void SetRlzPingSent(SetRlzPingSentCallback callback) override {
+    ++num_set_rlz_ping_sent_;
+    std::move(callback).Run(default_result_);
+  }
+
+ private:
+  int num_set_rlz_ping_sent_ = 0;
+  bool default_result_;
+  DISALLOW_COPY_AND_ASSIGN(TestDebugDaemonClient);
+};
+
+TEST_F(RlzLibTest, SetRlzPingSent) {
+  TestDebugDaemonClient* debug_daemon_client = new TestDebugDaemonClient;
+  chromeos::DBusThreadManager::GetSetterForTesting()->SetDebugDaemonClient(
+      std::unique_ptr<chromeos::DebugDaemonClient>(debug_daemon_client));
+  const char* kPingResponse =
+      "stateful-events: CAF\r\n"
+      "crc32: 3BB2FEAE\r\n";
+
+  // Verify that a |SetRlzPingSent| dbus call is made and it's made only once
+  // if success status is returned.
+  debug_daemon_client->set_default_result(true);
+  EXPECT_TRUE(
+      rlz_lib::ParsePingResponse(rlz_lib::TOOLBAR_NOTIFIER, kPingResponse));
+  EXPECT_EQ(debug_daemon_client->num_set_rlz_ping_sent(), 1);
+
+  // Verify that a maximum of |kMaxRetryCount| times of attempts are made if
+  // |SetRlzPingSent| returns failure status.
+  debug_daemon_client->set_default_result(false);
+  EXPECT_TRUE(
+      rlz_lib::ParsePingResponse(rlz_lib::TOOLBAR_NOTIFIER, kPingResponse));
+  EXPECT_EQ(debug_daemon_client->num_set_rlz_ping_sent(),
+            1 + rlz_lib::RlzValueStoreChromeOS::kMaxRetryCount);
+}
+
+TEST_F(RlzLibTest, NoRecordCAFEvent) {
+  // Setup as if a new machine where "should send RLZ" is true.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueTrue);
+
+  // Record a first search event, make sure it is written correctly.
+  rlz_lib::RecordProductEvent(rlz_lib::CHROME, rlz_lib::CHROMEOS_OMNIBOX,
+                              rlz_lib::FIRST_SEARCH);
+  char cgi[256];
+  EXPECT_TRUE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+  EXPECT_NE(nullptr, strstr(cgi, "CAF"));
+
+  // Simulate another user on the machine sending the RLZ ping, so "should send
+  // RLZ" is now false.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueFalse);
+
+  // The first search event should no longer appear, so there are no events
+  // to report.
+  EXPECT_FALSE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+
+  // The event should be permanently deleted, so setting the flag back to
+  // true should still not return the event.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueTrue);
+  EXPECT_FALSE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+}
+
+TEST_F(RlzLibTest, NoRecordCAFEvent2) {
+  // Setup as if a new machine where "should send RLZ" is true.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueTrue);
+
+  // Record install and first search events, make sure they are written.
+  rlz_lib::RecordProductEvent(rlz_lib::CHROME, rlz_lib::CHROMEOS_OMNIBOX,
+                              rlz_lib::INSTALL);
+  rlz_lib::RecordProductEvent(rlz_lib::CHROME, rlz_lib::CHROMEOS_OMNIBOX,
+                              rlz_lib::FIRST_SEARCH);
+  char cgi[256];
+  EXPECT_TRUE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+  EXPECT_NE(nullptr, strstr(cgi, "CAF"));
+  EXPECT_NE(nullptr, strstr(cgi, "CAI"));
+
+  // Simulate another user on the machine sending the RLZ ping, so "should send
+  // RLZ" is now false.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueFalse);
+
+  // Only the "CAI" event should appear.
+  EXPECT_TRUE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+  EXPECT_NE(nullptr, strstr(cgi, "CAI"));
+
+  // The event should be permanently deleted, so setting the flag back to
+  // true should still not return the "CAF" event.
+  statistics_provider_->SetMachineStatistic(
+      chromeos::system::kShouldSendRlzPingKey,
+      chromeos::system::kShouldSendRlzPingValueTrue);
+  EXPECT_TRUE(
+      rlz_lib::GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi)));
+  EXPECT_NE(nullptr, strstr(cgi, "CAI"));
+}
 #endif

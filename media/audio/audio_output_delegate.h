@@ -13,7 +13,7 @@
 #include "media/base/media_export.h"
 
 namespace base {
-class SharedMemory;
+class UnsafeSharedMemoryRegion;
 class CancelableSyncSocket;
 }
 
@@ -30,7 +30,7 @@ class MEDIA_EXPORT AudioOutputDelegate {
     // Called when the underlying stream is ready for playout.
     virtual void OnStreamCreated(
         int stream_id,
-        const base::SharedMemory* shared_memory,
+        base::UnsafeSharedMemoryRegion shared_memory_region,
         std::unique_ptr<base::CancelableSyncSocket> socket) = 0;
 
     // Called if stream encounters an error and has become unusable.
@@ -44,6 +44,7 @@ class MEDIA_EXPORT AudioOutputDelegate {
   // Stream control:
   virtual void OnPlayStream() = 0;
   virtual void OnPauseStream() = 0;
+  virtual void OnFlushStream() = 0;
   virtual void OnSetVolume(double volume) = 0;
 };
 

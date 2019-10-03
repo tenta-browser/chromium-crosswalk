@@ -46,8 +46,7 @@ namespace {
 void OnGotCategories(const WebUIDataSource::GotDataCallback& callback,
                      const std::set<std::string>& categorySet) {
   base::ListValue category_list;
-  for (std::set<std::string>::const_iterator it = categorySet.begin();
-       it != categorySet.end(); it++) {
+  for (auto it = categorySet.begin(); it != categorySet.end(); it++) {
     category_list.AppendString(*it);
   }
 
@@ -65,8 +64,7 @@ bool BeginRecording(const std::string& data64,
     return false;
 
   return TracingController::GetInstance()->StartTracing(
-      trace_config,
-      base::Bind(&OnRecordingEnabledAck, callback));
+      trace_config, base::BindOnce(&OnRecordingEnabledAck, callback));
 }
 
 void OnRecordingEnabledAck(const WebUIDataSource::GotDataCallback& callback) {
@@ -109,7 +107,7 @@ bool OnBeginJSONRequest(const std::string& path,
                         const WebUIDataSource::GotDataCallback& callback) {
   if (path == "json/categories") {
     return TracingController::GetInstance()->GetCategories(
-        base::Bind(OnGotCategories, callback));
+        base::BindOnce(OnGotCategories, callback));
   }
 
   const char kBeginRecordingPath[] = "json/begin_recording?";
@@ -120,11 +118,11 @@ bool OnBeginJSONRequest(const std::string& path,
   }
   if (path == "json/get_buffer_percent_full") {
     return TracingController::GetInstance()->GetTraceBufferUsage(
-        base::Bind(OnTraceBufferUsageResult, callback));
+        base::BindOnce(OnTraceBufferUsageResult, callback));
   }
   if (path == "json/get_buffer_status") {
     return TracingController::GetInstance()->GetTraceBufferUsage(
-        base::Bind(OnTraceBufferStatusResult, callback));
+        base::BindOnce(OnTraceBufferStatusResult, callback));
   }
   if (path == "json/end_recording_compressed") {
     if (!TracingController::GetInstance()->IsTracing())
@@ -141,16 +139,17 @@ bool OnBeginJSONRequest(const std::string& path,
   return false;
 }
 
-bool OnTracingRequest(const std::string& path,
+bool OnShouldHandleRequest(const std::string& path) {
+  return base::StartsWith(path, "json/", base::CompareCase::SENSITIVE);
+}
+
+void OnTracingRequest(const std::string& path,
                       const WebUIDataSource::GotDataCallback& callback) {
-  if (base::StartsWith(path, "json/", base::CompareCase::SENSITIVE)) {
-    if (!OnBeginJSONRequest(path, callback)) {
-      std::string error("##ERROR##");
-      callback.Run(base::RefCountedString::TakeString(&error));
-    }
-    return true;
+  DCHECK(OnShouldHandleRequest(path));
+  if (!OnBeginJSONRequest(path, callback)) {
+    std::string error("##ERROR##");
+    callback.Run(base::RefCountedString::TakeString(&error));
   }
-  return false;
 }
 
 }  // namespace
@@ -164,27 +163,24 @@ bool OnTracingRequest(const std::string& path,
 
 TracingUI::TracingUI(WebUI* web_ui)
     : WebUIController(web_ui),
-      delegate_(GetContentClient()->browser()->GetTracingDelegate()),
-      weak_factory_(this) {
+      delegate_(GetContentClient()->browser()->GetTracingDelegate()) {
   web_ui->RegisterMessageCallback(
       "doUpload",
-      base::Bind(&TracingUI::DoUpload, base::Unretained(this)));
+      base::BindRepeating(&TracingUI::DoUpload, base::Unretained(this)));
   web_ui->RegisterMessageCallback(
-      "doUploadBase64",
-      base::Bind(&TracingUI::DoUploadBase64Encoded, base::Unretained(this)));
+      "doUploadBase64", base::BindRepeating(&TracingUI::DoUploadBase64Encoded,
+                                            base::Unretained(this)));
 
   // Set up the chrome://tracing/ source.
   BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();
 
   WebUIDataSource* source = WebUIDataSource::Create(kChromeUITracingHost);
-  source->UseGzip({"json/begin_recording", "json/categories",
-                   "json/end_recording_compressed",
-                   "json/get_buffer_percent_full", "json/get_buffer_status"});
   source->SetJsonPath("strings.js");
   source->SetDefaultResource(IDR_TRACING_HTML);
   source->AddResourcePath("tracing.js", IDR_TRACING_JS);
-  source->SetRequestFilter(base::Bind(OnTracingRequest));
+  source->SetRequestFilter(base::BindRepeating(OnShouldHandleRequest),
+                           base::BindRepeating(OnTracingRequest));
   WebUIDataSource::Add(browser_context, source);
   TracingControllerImpl::GetInstance()->RegisterTracingUI(this);
 }
@@ -237,17 +233,17 @@ void TracingUI::DoUploadInternal(const std::string& file_contents,
   TraceUploader::UploadProgressCallback progress_callback =
       base::Bind(&TracingUI::OnTraceUploadProgress,
       weak_factory_.GetWeakPtr());
-  TraceUploader::UploadDoneCallback done_callback =
-      base::Bind(&TracingUI::OnTraceUploadComplete,
-      weak_factory_.GetWeakPtr());
+  TraceUploader::UploadDoneCallback done_callback = base::BindOnce(
+      &TracingUI::OnTraceUploadComplete, weak_factory_.GetWeakPtr());
 
   trace_uploader_ = delegate_->GetTraceUploader(
       BrowserContext::GetDefaultStoragePartition(
-          web_ui()->GetWebContents()->GetBrowserContext())->
-              GetURLRequestContext());
+          web_ui()->GetWebContents()->GetBrowserContext())
+          ->GetURLLoaderFactoryForBrowserProcess());
   DCHECK(trace_uploader_);
   trace_uploader_->DoUpload(file_contents, upload_mode, nullptr,
-                            progress_callback, done_callback);
+                            std::move(progress_callback),
+                            std::move(done_callback));
   // TODO(mmandlis): Add support for stopping the upload in progress.
 }
 
@@ -261,7 +257,8 @@ bool TracingUI::GetTracingOptions(
     return false;
   }
 
-  std::unique_ptr<base::Value> optionsRaw = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> optionsRaw =
+      base::JSONReader::ReadDeprecated(data);
   if (!optionsRaw) {
     LOG(ERROR) << "Options were not valid JSON";
     return false;

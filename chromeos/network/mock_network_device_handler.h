@@ -6,11 +6,12 @@
 #define CHROMEOS_NETWORK_MOCK_NETWORK_DEVICE_HANDLER_H_
 
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/values.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_device_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
 #include "net/base/ip_endpoint.h"
@@ -18,7 +19,8 @@
 
 namespace chromeos {
 
-class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) MockNetworkDeviceHandler
+    : public NetworkDeviceHandler {
  public:
   MockNetworkDeviceHandler();
   virtual ~MockNetworkDeviceHandler();
@@ -44,12 +46,6 @@ class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
   MOCK_METHOD4(RegisterCellularNetwork,
                void(const std::string& device_path,
                     const std::string& network_id,
-                    const base::Closure& callback,
-                    const network_handler::ErrorCallback& error_callback));
-
-  MOCK_METHOD4(SetCarrier,
-               void(const std::string& device_path,
-                    const std::string& carrier,
                     const base::Closure& callback,
                     const network_handler::ErrorCallback& error_callback));
 
@@ -97,6 +93,16 @@ class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
 
   MOCK_METHOD3(AddWifiWakeOnPacketConnection,
                void(const net::IPEndPoint& ip_endpoint,
+                    const base::Closure& callback,
+                    const network_handler::ErrorCallback& error_callback));
+
+  MOCK_METHOD3(AddWifiWakeOnPacketOfTypes,
+               void(const std::vector<std::string>& types,
+                    const base::Closure& callback,
+                    const network_handler::ErrorCallback& error_callback));
+
+  MOCK_METHOD3(RemoveWifiWakeOnPacketOfTypes,
+               void(const std::vector<std::string>& types,
                     const base::Closure& callback,
                     const network_handler::ErrorCallback& error_callback));
 

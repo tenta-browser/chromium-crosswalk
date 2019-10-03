@@ -1,3 +1,5 @@
 rogerta@chromium.org
-per-file google_apis.gyp=*
+file://components/signin/OWNERS
+
 per-file BUILD.gn=*
+# COMPONENT: Services>SignIn

@@ -4,21 +4,43 @@
 
 #include "base/message_loop/message_pump_fuchsia.h"
 
+#include <lib/async-loop/cpp/loop.h>
+#include <lib/fdio/io.h>
+#include <lib/fdio/unsafe.h>
+#include <lib/zx/time.h>
 #include <zircon/status.h>
 #include <zircon/syscalls.h>
 
 #include "base/auto_reset.h"
+#include "base/fuchsia/fuchsia_logging.h"
 #include "base/logging.h"
+#include "base/trace_event/trace_event.h"
 
 namespace base {
 
 MessagePumpFuchsia::ZxHandleWatchController::ZxHandleWatchController(
     const Location& from_here)
-    : created_from_location_(from_here) {}
+    : async_wait_t({}), created_from_location_(from_here) {}
 
 MessagePumpFuchsia::ZxHandleWatchController::~ZxHandleWatchController() {
   if (!StopWatchingZxHandle())
     NOTREACHED();
+}
+
+bool MessagePumpFuchsia::ZxHandleWatchController::WaitBegin() {
+  DCHECK(!handler);
+  async_wait_t::handler = &HandleSignal;
+
+  zx_status_t status =
+      async_begin_wait(weak_pump_->async_loop_->dispatcher(), this);
+  if (status != ZX_OK) {
+    ZX_DLOG(ERROR, status) << "async_begin_wait():"
+                           << created_from_location_.ToString();
+    async_wait_t::handler = nullptr;
+    return false;
+  }
+
+  return true;
 }
 
 bool MessagePumpFuchsia::ZxHandleWatchController::StopWatchingZxHandle() {
@@ -33,28 +55,75 @@ bool MessagePumpFuchsia::ZxHandleWatchController::StopWatchingZxHandle() {
     was_stopped_ = nullptr;
   }
 
-  if (!has_begun_)
-    return true;
-
-  has_begun_ = false;
-
   // If the pump is gone then there is nothing to cancel.
   if (!weak_pump_)
     return true;
 
-  int result = zx_port_cancel(weak_pump_->port_.get(), handle_, wait_key());
-  DLOG_IF(ERROR, result != ZX_OK)
-      << "zx_port_cancel(handle=" << handle_
-      << ") failed: " << zx_status_get_string(result);
+  // |handler| is set when waiting for a signal.
+  if (!handler)
+    return true;
 
+  async_wait_t::handler = nullptr;
+
+  zx_status_t result =
+      async_cancel_wait(weak_pump_->async_loop_->dispatcher(), this);
+  ZX_DLOG_IF(ERROR, result != ZX_OK, result)
+      << "async_cancel_wait(): " << created_from_location_.ToString();
   return result == ZX_OK;
+}
+
+// static
+void MessagePumpFuchsia::ZxHandleWatchController::HandleSignal(
+    async_dispatcher_t* async,
+    async_wait_t* wait,
+    zx_status_t status,
+    const zx_packet_signal_t* signal) {
+  TRACE_EVENT0("toplevel", "ZxHandleSignal");
+
+  ZxHandleWatchController* controller =
+      static_cast<ZxHandleWatchController*>(wait);
+  DCHECK_EQ(controller->handler, &HandleSignal);
+
+  if (status != ZX_OK) {
+    ZX_DLOG(WARNING, status) << "async wait failed: "
+                             << controller->created_from_location_.ToString();
+    return;
+  }
+
+  controller->handler = nullptr;
+
+  // In the case of a persistent Watch, the Watch may be stopped and
+  // potentially deleted by the caller within the callback, in which case
+  // |controller| should not be accessed again, and we mustn't continue the
+  // watch. We check for this with a bool on the stack, which the Watch
+  // receives a pointer to.
+  bool was_stopped = false;
+  controller->was_stopped_ = &was_stopped;
+
+  controller->watcher_->OnZxHandleSignalled(wait->object, signal->observed);
+
+  if (was_stopped)
+    return;
+
+  controller->was_stopped_ = nullptr;
+
+  if (controller->persistent_)
+    controller->WaitBegin();
 }
 
 void MessagePumpFuchsia::FdWatchController::OnZxHandleSignalled(
     zx_handle_t handle,
     zx_signals_t signals) {
   uint32_t events;
-  __fdio_wait_end(io_, signals, &events);
+  fdio_unsafe_wait_end(io_, signals, &events);
+
+  // |events| can include other spurious things, in particular, that an fd
+  // is writable, when we only asked to know when it was readable. In that
+  // case, we don't want to call both the CanWrite and CanRead callback,
+  // when the caller asked for only, for example, readable callbacks. So,
+  // mask with the events that we actually wanted to know about.
+  events &= desired_events_;
+  DCHECK_NE(0u, events);
 
   // Each |watcher_| callback we invoke may stop or delete |this|. The pump has
   // set |was_stopped_| to point to a safe location on the calling stack, so we
@@ -71,27 +140,41 @@ void MessagePumpFuchsia::FdWatchController::OnZxHandleSignalled(
 
 MessagePumpFuchsia::FdWatchController::FdWatchController(
     const Location& from_here)
-    : ZxHandleWatchController(from_here) {}
+    : FdWatchControllerInterface(from_here),
+      ZxHandleWatchController(from_here) {}
 
 MessagePumpFuchsia::FdWatchController::~FdWatchController() {
   if (!StopWatchingFileDescriptor())
     NOTREACHED();
 }
 
+bool MessagePumpFuchsia::FdWatchController::WaitBegin() {
+  // Refresh the |handle_| and |desired_signals_| from the mxio for the fd.
+  // Some types of fdio map read/write events to different signals depending on
+  // their current state, so we must do this every time we begin to wait.
+  fdio_unsafe_wait_begin(io_, desired_events_, &object, &trigger);
+  if (async_wait_t::object == ZX_HANDLE_INVALID) {
+    DLOG(ERROR) << "fdio_wait_begin failed: "
+                << ZxHandleWatchController::created_from_location_.ToString();
+    return false;
+  }
+
+  return MessagePumpFuchsia::ZxHandleWatchController::WaitBegin();
+}
+
 bool MessagePumpFuchsia::FdWatchController::StopWatchingFileDescriptor() {
   bool success = StopWatchingZxHandle();
   if (io_) {
-    __fdio_release(io_);
+    fdio_unsafe_release(io_);
     io_ = nullptr;
   }
   return success;
 }
 
-MessagePumpFuchsia::MessagePumpFuchsia() : weak_factory_(this) {
-  CHECK_EQ(ZX_OK, zx_port_create(0, port_.receive()));
-}
-
-MessagePumpFuchsia::~MessagePumpFuchsia() {}
+MessagePumpFuchsia::MessagePumpFuchsia()
+    : async_loop_(new async::Loop(&kAsyncLoopConfigAttachToThread)),
+      weak_factory_(this) {}
+MessagePumpFuchsia::~MessagePumpFuchsia() = default;
 
 bool MessagePumpFuchsia::WatchFileDescriptor(int fd,
                                              bool persistent,
@@ -109,7 +192,7 @@ bool MessagePumpFuchsia::WatchFileDescriptor(int fd,
   controller->watcher_ = delegate;
 
   DCHECK(!controller->io_);
-  controller->io_ = __fdio_fd_to_io(fd);
+  controller->io_ = fdio_unsafe_fd_to_io(fd);
   if (!controller->io_) {
     DLOG(ERROR) << "Failed to get IO for FD";
     return false;
@@ -137,19 +220,6 @@ bool MessagePumpFuchsia::WatchFileDescriptor(int fd,
                        controller);
 }
 
-bool MessagePumpFuchsia::FdWatchController::WaitBegin() {
-  // Refresh the |handle_| and |desired_signals_| from the mxio for the fd.
-  // Some types of mxio map read/write events to different signals depending on
-  // their current state, so we must do this every time we begin to wait.
-  __fdio_wait_begin(io_, desired_events_, &handle_, &desired_signals_);
-  if (handle_ == ZX_HANDLE_INVALID) {
-    DLOG(ERROR) << "fdio_wait_begin failed";
-    return false;
-  }
-
-  return MessagePumpFuchsia::ZxHandleWatchController::WaitBegin();
-}
-
 bool MessagePumpFuchsia::WatchZxHandle(zx_handle_t handle,
                                        bool persistent,
                                        zx_signals_t signals,
@@ -159,15 +229,15 @@ bool MessagePumpFuchsia::WatchZxHandle(zx_handle_t handle,
   DCHECK(controller);
   DCHECK(delegate);
   DCHECK(handle == ZX_HANDLE_INVALID ||
-         controller->handle_ == ZX_HANDLE_INVALID ||
-         handle == controller->handle_);
+         controller->async_wait_t::object == ZX_HANDLE_INVALID ||
+         handle == controller->async_wait_t::object);
 
   if (!controller->StopWatchingZxHandle())
     NOTREACHED();
 
-  controller->handle_ = handle;
+  controller->async_wait_t::object = handle;
   controller->persistent_ = persistent;
-  controller->desired_signals_ = signals;
+  controller->async_wait_t::trigger = signals;
   controller->watcher_ = delegate;
 
   controller->weak_pump_ = weak_factory_.GetWeakPtr();
@@ -175,85 +245,25 @@ bool MessagePumpFuchsia::WatchZxHandle(zx_handle_t handle,
   return controller->WaitBegin();
 }
 
-bool MessagePumpFuchsia::ZxHandleWatchController::WaitBegin() {
-  DCHECK(!has_begun_);
-
-  zx_status_t status =
-      zx_object_wait_async(handle_, weak_pump_->port_.get(), wait_key(),
-                           desired_signals_, ZX_WAIT_ASYNC_ONCE);
-  if (status != ZX_OK) {
-    DLOG(ERROR) << "zx_object_wait_async failed: "
-                << zx_status_get_string(status)
-                << " (port=" << weak_pump_->port_.get() << ")";
-    return false;
-  }
-
-  has_begun_ = true;
-
-  return true;
-}
-
-uint32_t MessagePumpFuchsia::ZxHandleWatchController::WaitEnd(
-    zx_signals_t signals) {
-  DCHECK(has_begun_);
-
-  has_begun_ = false;
-
-  // |signals| can include other spurious things, in particular, that an fd
-  // is writable, when we only asked to know when it was readable. In that
-  // case, we don't want to call both the CanWrite and CanRead callback,
-  // when the caller asked for only, for example, readable callbacks. So,
-  // mask with the events that we actually wanted to know about.
-  signals &= desired_signals_;
-  return signals;
-}
-
 bool MessagePumpFuchsia::HandleEvents(zx_time_t deadline) {
-  zx_port_packet_t packet;
-  const zx_status_t wait_status =
-      zx_port_wait(port_.get(), deadline, &packet, 0);
+  zx_status_t status = async_loop_->Run(zx::time(deadline), /*once=*/true);
+  switch (status) {
+    // Return true if some tasks or events were dispatched or if the dispatcher
+    // was stopped by ScheduleWork().
+    case ZX_OK:
+      return true;
 
-  if (wait_status == ZX_ERR_TIMED_OUT)
-    return false;
+    case ZX_ERR_CANCELED:
+      async_loop_->ResetQuit();
+      return true;
 
-  if (wait_status != ZX_OK) {
-    NOTREACHED() << "unexpected wait status: "
-                 << zx_status_get_string(wait_status);
-    return false;
+    case ZX_ERR_TIMED_OUT:
+      return false;
+
+    default:
+      ZX_DLOG(DCHECK, status) << "unexpected wait status";
+      return false;
   }
-
-  if (packet.type == ZX_PKT_TYPE_SIGNAL_ONE) {
-    // A watched fd caused the wakeup via zx_object_wait_async().
-    DCHECK_EQ(ZX_OK, packet.status);
-    ZxHandleWatchController* controller =
-        reinterpret_cast<ZxHandleWatchController*>(
-            static_cast<uintptr_t>(packet.key));
-
-    DCHECK_NE(0u, packet.signal.trigger & packet.signal.observed);
-
-    zx_signals_t signals = controller->WaitEnd(packet.signal.observed);
-
-    // In the case of a persistent Watch, the Watch may be stopped and
-    // potentially deleted by the caller within the callback, in which case
-    // |controller| should not be accessed again, and we mustn't continue the
-    // watch. We check for this with a bool on the stack, which the Watch
-    // receives a pointer to.
-    bool controller_was_stopped = false;
-    controller->was_stopped_ = &controller_was_stopped;
-
-    controller->watcher_->OnZxHandleSignalled(controller->handle_, signals);
-
-    if (!controller_was_stopped) {
-      controller->was_stopped_ = nullptr;
-      if (controller->persistent_)
-        controller->WaitBegin();
-    }
-  } else {
-    // Wakeup caused by ScheduleWork().
-    DCHECK_EQ(ZX_PKT_TYPE_USER, packet.type);
-  }
-
-  return true;
 }
 
 void MessagePumpFuchsia::Run(Delegate* delegate) {
@@ -285,6 +295,7 @@ void MessagePumpFuchsia::Run(Delegate* delegate) {
     zx_time_t deadline = delayed_work_time_.is_null()
                              ? ZX_TIME_INFINITE
                              : delayed_work_time_.ToZxTime();
+
     HandleEvents(deadline);
   }
 }
@@ -294,13 +305,8 @@ void MessagePumpFuchsia::Quit() {
 }
 
 void MessagePumpFuchsia::ScheduleWork() {
-  // Since this can be called on any thread, we need to ensure that our Run loop
-  // wakes up.
-  zx_port_packet_t packet = {};
-  packet.type = ZX_PKT_TYPE_USER;
-  zx_status_t status = zx_port_queue(port_.get(), &packet, 0);
-  DLOG_IF(ERROR, status != ZX_OK)
-      << "zx_port_queue failed: " << status << " (port=" << port_.get() << ")";
+  // Stop async_loop to let MessagePumpFuchsia::Run() handle message loop tasks.
+  async_loop_->Quit();
 }
 
 void MessagePumpFuchsia::ScheduleDelayedWork(

@@ -10,19 +10,18 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
 #include "chrome/browser/chromeos/note_taking_helper.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -31,12 +30,14 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/arc/arc_service_manager.h"
-#include "components/arc/arc_session.h"
+#include "components/arc/session/arc_session.h"
+#include "components/crx_file/id_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/switches.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -181,12 +182,13 @@ class UnittestProfileManager : public ::ProfileManagerWithoutInit {
     return new TestingProfile(path, NULL);
   }
 
-  Profile* CreateProfileAsyncHelper(const base::FilePath& path,
-                                    Delegate* delegate) override {
+  std::unique_ptr<Profile> CreateProfileAsyncHelper(
+      const base::FilePath& path,
+      Delegate* delegate) override {
     pending_profile_creation_.Set(path, delegate);
 
     auto new_profile =
-        base::MakeUnique<TestingProfile>(path, &pending_profile_creation_);
+        std::make_unique<TestingProfile>(path, &pending_profile_creation_);
 
     // Build accompaning incognito profile, to ensure it has the same path
     // as the original profile.
@@ -194,7 +196,7 @@ class UnittestProfileManager : public ::ProfileManagerWithoutInit {
     incognito_builder.SetPath(path);
     incognito_builder.BuildIncognito(new_profile.get());
 
-    return new_profile.release();
+    return new_profile;
   }
 
  private:
@@ -210,24 +212,27 @@ class LockScreenProfileCreatorImplTest : public testing::Test {
   ~LockScreenProfileCreatorImplTest() override {}
 
   void SetUp() override {
+    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+        extensions::switches::kWhitelistedExtensionID,
+        crx_file::id_util::GenerateId("test_app"));
     ASSERT_TRUE(user_data_dir_.CreateUniqueTempDir());
 
     auto profile_manager =
-        base::MakeUnique<UnittestProfileManager>(user_data_dir_.GetPath());
+        std::make_unique<UnittestProfileManager>(user_data_dir_.GetPath());
     profile_manager_ = profile_manager.get();
     TestingBrowserProcess::GetGlobal()->SetProfileManager(
         profile_manager.release());
 
     // Needed by note taking helper.
-    arc_session_manager_ = base::MakeUnique<arc::ArcSessionManager>(
-        base::MakeUnique<arc::ArcSessionRunner>(
-            base::Bind(&ArcSessionFactory)));
+    arc_session_manager_ = std::make_unique<arc::ArcSessionManager>(
+        std::make_unique<arc::ArcSessionRunner>(
+            base::BindRepeating(&ArcSessionFactory)));
     chromeos::NoteTakingHelper::Initialize();
 
     AddTestUserProfile();
 
     lock_screen_profile_creator_ =
-        base::MakeUnique<LockScreenProfileCreatorImpl>(primary_profile_,
+        std::make_unique<LockScreenProfileCreatorImpl>(primary_profile_,
                                                        &tick_clock_);
   }
 
@@ -261,7 +266,7 @@ class LockScreenProfileCreatorImplTest : public testing::Test {
         ListBuilder()
             .Append(DictionaryBuilder()
                         .Set("action", "new_note")
-                        .SetBoolean("enabled_on_lock_screen", true)
+                        .Set("enabled_on_lock_screen", true)
                         .Build())
             .Build();
 
@@ -277,6 +282,7 @@ class LockScreenProfileCreatorImplTest : public testing::Test {
 
     return extensions::ExtensionBuilder()
         .SetManifest(manifest_builder.Build())
+        .SetID(crx_file::id_util::GenerateId("test_app"))
         .Build();
   }
 
@@ -329,10 +335,10 @@ class LockScreenProfileCreatorImplTest : public testing::Test {
             ProfileHelper::GetUserIdHashByUserIdForTesting(kPrimaryUser)));
 
     std::unique_ptr<TestingProfile> primary_profile =
-        base::MakeUnique<TestingProfile>(user_profile_path);
+        std::make_unique<TestingProfile>(user_profile_path);
     primary_profile_ = primary_profile.get();
     profile_manager_->RegisterTestingProfile(
-        primary_profile.release(), false /*add_to_storage*/,
+        std::move(primary_profile), false /*add_to_storage*/,
         false /*start_deferred_task_runner*/);
     InitExtensionSystem(primary_profile_);
 
@@ -343,8 +349,8 @@ class LockScreenProfileCreatorImplTest : public testing::Test {
   base::ScopedTempDir user_data_dir_;
   ScopedTestingLocalState local_state_;
   content::TestBrowserThreadBundle threads_;
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 
   UnittestProfileManager* profile_manager_;
@@ -582,7 +588,7 @@ TEST_F(LockScreenProfileCreatorImplTest, LockScreenProfileSetBeforeCallback) {
 }
 
 TEST_F(LockScreenProfileCreatorImplTest, MetricsOnSuccess) {
-  auto histogram_tester = base::MakeUnique<base::HistogramTester>();
+  auto histogram_tester = std::make_unique<base::HistogramTester>();
   lock_screen_profile_creator()->Initialize();
 
   bool callback_run = false;
@@ -617,7 +623,7 @@ TEST_F(LockScreenProfileCreatorImplTest, MetricsOnSuccess) {
 }
 
 TEST_F(LockScreenProfileCreatorImplTest, MetricsOnFailure) {
-  auto histogram_tester = base::MakeUnique<base::HistogramTester>();
+  auto histogram_tester = std::make_unique<base::HistogramTester>();
   lock_screen_profile_creator()->Initialize();
 
   bool callback_run = false;

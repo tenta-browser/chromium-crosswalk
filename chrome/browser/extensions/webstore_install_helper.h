@@ -18,13 +18,13 @@ class DictionaryValue;
 class Value;
 }
 
-namespace chrome {
 class BitmapFetcher;
-}
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
 }
+}  // namespace network
 
 namespace safe_json {
 class SafeJsonParser;
@@ -37,7 +37,7 @@ namespace extensions {
 // fetching/decoding icon data. Clients must implement the
 // WebstoreInstallHelper::Delegate interface to receive the parsed data.
 class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper>,
-                              public chrome::BitmapFetcherDelegate {
+                              public BitmapFetcherDelegate {
  public:
   class Delegate {
    public:
@@ -48,11 +48,11 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper>,
     };
 
     // Called when we've successfully parsed the manifest and decoded the icon
-    // in the utility process. Ownership of parsed_manifest is transferred.
+    // in the utility process.
     virtual void OnWebstoreParseSuccess(
         const std::string& id,
         const SkBitmap& icon,
-        base::DictionaryValue* parsed_manifest) = 0;
+        std::unique_ptr<base::DictionaryValue> parsed_manifest) = 0;
 
     // Called to indicate a parse failure. The |result_code| parameter should
     // indicate whether the problem was with the manifest or icon.
@@ -69,9 +69,8 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper>,
   WebstoreInstallHelper(Delegate* delegate,
                         const std::string& id,
                         const std::string& manifest,
-                        const GURL& icon_url,
-                        net::URLRequestContextGetter* context_getter);
-  void Start();
+                        const GURL& icon_url);
+  void Start(network::mojom::URLLoaderFactory* loader_factory);
 
  private:
   friend class base::RefCounted<WebstoreInstallHelper>;
@@ -79,10 +78,10 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper>,
   ~WebstoreInstallHelper() override;
 
   // Callbacks for the SafeJsonParser.
-  void OnJSONParseSucceeded(std::unique_ptr<base::Value> result);
+  void OnJSONParseSucceeded(base::Value result);
   void OnJSONParseFailed(const std::string& error_message);
 
-  // Implementing the chrome::BitmapFetcherDelegate interface.
+  // Implementing the BitmapFetcherDelegate interface.
   void OnFetchComplete(const GURL& url, const SkBitmap* image) override;
 
   void ReportResultsIfComplete();
@@ -99,8 +98,7 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper>,
   // If |icon_url_| is non-empty, it needs to be fetched and decoded into an
   // SkBitmap.
   GURL icon_url_;
-  net::URLRequestContextGetter* context_getter_; // Only usable on UI thread.
-  std::unique_ptr<chrome::BitmapFetcher> icon_fetcher_;
+  std::unique_ptr<BitmapFetcher> icon_fetcher_;
 
   // Flags for whether we're done doing icon decoding and manifest parsing.
   bool icon_decode_complete_;

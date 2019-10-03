@@ -12,11 +12,14 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
+#include "ipc/ipc.mojom.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_listener.h"
@@ -72,7 +75,7 @@ class MessageFilterRouter;
 // |channel_lifetime_lock_| is used to protect it. The locking overhead is only
 // paid if the underlying channel supports thread-safe |Send|.
 //
-class IPC_EXPORT ChannelProxy : public Sender {
+class COMPONENT_EXPORT(IPC) ChannelProxy : public Sender {
  public:
 #if defined(ENABLE_IPC_FUZZER)
   // Interface for a filter to be imposed on outgoing messages which can
@@ -259,11 +262,28 @@ class IPC_EXPORT ChannelProxy : public Sender {
       return ipc_task_runner_;
     }
 
+    scoped_refptr<base::SingleThreadTaskRunner> listener_task_runner() {
+      return default_listener_task_runner_;
+    }
+
     // Dispatches a message on the listener thread.
     void OnDispatchMessage(const Message& message);
 
     // Sends |message| from appropriate thread.
     void Send(Message* message);
+
+    // Adds |task_runner| for the task to be executed later.
+    void AddListenerTaskRunner(
+        int32_t routing_id,
+        scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
+    // Removes task runner for |routing_id|.
+    void RemoveListenerTaskRunner(int32_t routing_id);
+
+    // Called on the IPC::Channel thread.
+    // Returns the task runner associated with |routing_id|.
+    scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
+        int32_t routing_id);
 
    protected:
     friend class base::RefCountedThreadSafe<Context>;
@@ -328,7 +348,13 @@ class IPC_EXPORT ChannelProxy : public Sender {
         const std::string& name,
         const GenericAssociatedInterfaceFactory& factory);
 
-    scoped_refptr<base::SingleThreadTaskRunner> listener_task_runner_;
+    base::Lock listener_thread_task_runners_lock_;
+    // Map of routing_id and listener's thread task runner.
+    std::map<int32_t, scoped_refptr<base::SingleThreadTaskRunner>>
+        listener_thread_task_runners_
+            GUARDED_BY(listener_thread_task_runners_lock_);
+
+    scoped_refptr<base::SingleThreadTaskRunner> default_listener_task_runner_;
     Listener* listener_;
 
     // List of filters.  This is only accessed on the IPC thread.

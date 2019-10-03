@@ -7,7 +7,7 @@
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "ui/gfx/canvas.h"
 
-ProfileIndicatorIcon::ProfileIndicatorIcon() : old_height_(0) {
+ProfileIndicatorIcon::ProfileIndicatorIcon() {
   // In RTL mode, the incognito icon should be looking the opposite direction.
   EnableCanvasFlippingForRTLUI(true);
 }

@@ -1,5 +1,8 @@
 <!--
 @MAC-ALLOW:AXValue*
+@WIN-ALLOW:hidden*
+@AURALINUX-ALLOW:hidden*
+@BLINK-ALLOW:isLineBreakingObject*
 -->
 <html>
 <head>
@@ -10,6 +13,7 @@
 #noneDisplayAriaHiddenTrue {display: none;}
 #blockDisplayAriaHiddenFalse {display: block;}
 #noneDisplayAriaHiddenFalse {display: none;}
+#blockDisplayAriaHiddenTrueFocusable {display: block;}
 </style>
 </head>
 <body>
@@ -19,5 +23,6 @@
   <div id="noneDisplayAriaHiddenTrue" aria-hidden="true">noneDisplay Hiddentrue</div>
   <div id="blockDisplayAriaHiddenFalse" aria-hidden="false">blockDisplay Hiddenfalse</div>
   <div id="noneDisplayAriaHiddenFalse" aria-hidden="false">noneDisplay Hiddenfalse</div>
+  <div id="blockDisplayAriaHiddenTrueFocusable" aria-hidden="true" tabindex="-1">blockDisplay Hiddentruefocusable</div>
 </body>
 </html>

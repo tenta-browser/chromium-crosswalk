@@ -1,8 +1,11 @@
 include_rules = [
+  "+gpu/vulkan",
   "+services/service_manager/public/cpp",
   "+skia/ext",
   "+third_party/khronos",
   "+third_party/skia",
+  "+ui/base/ime",
+  "-ui/base/ime/init",
   "+ui/display",
   "+ui/events",
   "+ui/base/cursor",
@@ -12,6 +15,11 @@ include_rules = [
 ]
 specific_include_rules = {
   "run_all_unittests\.cc": [
-    "+mojo/edk/embedder/embedder.h",
+    "+mojo/core/embedder/embedder.h",
+  ],
+
+  # Dependencies specific for fuzz targets and other fuzzing-related code.
+  ".*fuzz.*": [
+    "+third_party/libFuzzer/src/utils",  # This contains FuzzedDataProvider.
   ],
 }

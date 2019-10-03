@@ -11,9 +11,9 @@ struct Feature;
 
 namespace favicon {
 
-extern const base::Feature kFaviconsFromWebManifest;
 extern const base::Feature kAllowPropagationOfFaviconCacheHits;
-extern const base::Feature kAllowDeletionOfFaviconMappings;
+extern const base::Feature kEnableHistoryFaviconsGoogleServerQuery;
+extern const base::Feature kNotifySessionsOfMostRecentIconUrlChange;
 
 }  // namespace favicon
 

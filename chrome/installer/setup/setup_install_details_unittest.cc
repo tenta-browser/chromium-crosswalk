@@ -8,12 +8,11 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/test_reg_util_win.h"
+#include "chrome/chrome_elf/nt_registry/nt_registry.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/installer/util/master_preferences.h"
-#include "chrome_elf/nt_registry/nt_registry.h"
 
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -261,7 +260,7 @@ class MakeInstallDetailsTest : public testing::TestWithParam<TestData> {
     // Prepare the inputs from the process command line.
     command_line_.ParseFromString(test_data_.command_line);
     master_preferences_ =
-        base::MakeUnique<installer::MasterPreferences>(command_line_);
+        std::make_unique<installer::MasterPreferences>(command_line_);
   }
 
   void SetUp() override {
@@ -361,6 +360,6 @@ TEST_P(MakeInstallDetailsTest, Test) {
   EXPECT_THAT(details->channel(), Eq(test_data().channel));
 }
 
-INSTANTIATE_TEST_CASE_P(All,
-                        MakeInstallDetailsTest,
-                        testing::ValuesIn(kTestData));
+INSTANTIATE_TEST_SUITE_P(All,
+                         MakeInstallDetailsTest,
+                         testing::ValuesIn(kTestData));

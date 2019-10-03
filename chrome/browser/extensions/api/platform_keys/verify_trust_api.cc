@@ -7,18 +7,20 @@
 #include <algorithm>
 #include <memory>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/extensions/api/platform_keys/platform_keys_api.h"
 #include "chrome/common/extensions/api/platform_keys_internal.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "extensions/browser/extension_registry_factory.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_with_source.h"
-#include "net/ssl/ssl_config_service.h"
 
 namespace extensions {
 
@@ -110,8 +112,8 @@ void VerifyTrustAPI::Verify(std::unique_ptr<Params> params,
       &CallBackOnUI, base::Bind(&VerifyTrustAPI::FinishedVerificationOnUI,
                                 weak_factory_.GetWeakPtr(), ui_callback)));
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&IOPart::Verify, base::Unretained(io_part_.get()),
                      base::Passed(&params), extension_id, finish_callback));
 }
@@ -120,8 +122,8 @@ void VerifyTrustAPI::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
     UnloadedExtensionReason reason) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&IOPart::OnExtensionUnloaded,
                      base::Unretained(io_part_.get()), extension->id()));
 }
@@ -140,8 +142,8 @@ void VerifyTrustAPI::CallBackOnUI(const VerifyCallback& ui_callback,
                                   const std::string& error,
                                   int return_value,
                                   int cert_status) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(ui_callback, error, return_value, cert_status));
 }
 
@@ -162,7 +164,8 @@ void VerifyTrustAPI::IOPart::Verify(std::unique_ptr<Params> params,
   }
 
   std::vector<base::StringPiece> der_cert_chain;
-  for (const std::vector<char>& cert_der : details.server_certificate_chain) {
+  for (const std::vector<uint8_t>& cert_der :
+       details.server_certificate_chain) {
     if (cert_der.empty()) {
       callback.Run(platform_keys::kErrorInvalidX509Cert, 0, 0);
       return;
@@ -177,8 +180,9 @@ void VerifyTrustAPI::IOPart::Verify(std::unique_ptr<Params> params,
     return;
   }
 
-  if (!base::ContainsKey(extension_to_verifier_, extension_id)) {
-    extension_to_verifier_[extension_id] = net::CertVerifier::CreateDefault();
+  if (!base::Contains(extension_to_verifier_, extension_id)) {
+    extension_to_verifier_[extension_id] =
+        net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr);
   }
   net::CertVerifier* verifier = extension_to_verifier_[extension_id].get();
 
@@ -188,6 +192,7 @@ void VerifyTrustAPI::IOPart::Verify(std::unique_ptr<Params> params,
   const int flags = 0;
 
   std::string ocsp_response;
+  std::string sct_list;
   net::CertVerifyResult* const verify_result_ptr = verify_result.get();
 
   RequestState* request_state = new RequestState();
@@ -197,10 +202,8 @@ void VerifyTrustAPI::IOPart::Verify(std::unique_ptr<Params> params,
 
   const int return_value = verifier->Verify(
       net::CertVerifier::RequestParams(std::move(cert_chain), details.hostname,
-                                       flags, ocsp_response,
-                                       net::CertificateList()),
-      net::SSLConfigService::GetCRLSet().get(), verify_result_ptr,
-      bound_callback, &request_state->request, *net_log);
+                                       flags, ocsp_response, sct_list),
+      verify_result_ptr, bound_callback, &request_state->request, *net_log);
 
   if (return_value != net::ERR_IO_PENDING) {
     bound_callback.Run(return_value);

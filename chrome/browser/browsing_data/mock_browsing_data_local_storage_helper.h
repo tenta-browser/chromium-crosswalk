@@ -21,12 +21,15 @@ class MockBrowsingDataLocalStorageHelper
   explicit MockBrowsingDataLocalStorageHelper(Profile* profile);
 
   // BrowsingDataLocalStorageHelper implementation.
-  void StartFetching(const FetchCallback& callback) override;
-  void DeleteOrigin(const GURL& origin) override;
+  void StartFetching(FetchCallback callback) override;
+  void DeleteOrigin(const url::Origin& origin,
+                    base::OnceClosure callback) override;
 
   // Adds some LocalStorageInfo samples.
   void AddLocalStorageSamples();
-  void AddLocalStorageSamplesWithSuborigins();
+
+  // Add a LocalStorageInfo entry for a single origin.
+  void AddLocalStorageForOrigin(const url::Origin& origin, int64_t size);
 
   // Notifies the callback.
   void Notify();
@@ -38,16 +41,16 @@ class MockBrowsingDataLocalStorageHelper
   // invocation.
   bool AllDeleted();
 
-  GURL last_deleted_origin_;
+  url::Origin last_deleted_origin_;
 
  private:
   ~MockBrowsingDataLocalStorageHelper() override;
 
   FetchCallback callback_;
 
-  std::map<const GURL, bool> origins_;
+  std::map<const url::Origin, bool> origins_;
 
-  std::list<LocalStorageInfo> response_;
+  std::list<content::StorageUsageInfo> response_;
 
   DISALLOW_COPY_AND_ASSIGN(MockBrowsingDataLocalStorageHelper);
 };

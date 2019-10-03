@@ -7,7 +7,6 @@
 #include <limits>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/numerics/math_constants.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
@@ -532,8 +531,8 @@ TEST(DrawPolygonSplitTest, AlmostCoplanarSplit) {
   EXPECT_TRUE(back_polygon != nullptr);
 
   for (auto vertex : vertices_b) {
-    EXPECT_TRUE(base::ContainsValue(front_polygon->points(), vertex) ||
-                base::ContainsValue(back_polygon->points(), vertex));
+    EXPECT_TRUE(base::Contains(front_polygon->points(), vertex) ||
+                base::Contains(back_polygon->points(), vertex));
   }
 }
 
@@ -595,8 +594,8 @@ TEST(DrawPolygonSplitTest, DoubleSplit) {
   EXPECT_EQ(3u, second_back_polygon->points().size());
 
   for (auto vertex : saved_back_polygon_vertices) {
-    EXPECT_TRUE(base::ContainsValue(second_front_polygon->points(), vertex) ||
-                base::ContainsValue(second_back_polygon->points(), vertex));
+    EXPECT_TRUE(base::Contains(second_front_polygon->points(), vertex) ||
+                base::Contains(second_back_polygon->points(), vertex));
   }
 }
 

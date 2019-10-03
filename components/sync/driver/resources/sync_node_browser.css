@@ -16,13 +16,13 @@
 }
 
 #sync-node-tree-container {
-  -webkit-padding-start: 10px;
   box-sizing: border-box;
   height: 100%;
   /* min-width and max-width are used by the split pane. */
   max-width: 50%;
   min-width: 200px;
   overflow: auto;
+  padding-inline-start: 10px;
   width: 200px;
 }
 
@@ -33,7 +33,7 @@
 }
 
 /* TODO(akalin): Find a better icon to use for leaf nodes. */
-#sync-node-tree .leaf .tree-label {
+#sync-node-tree .leaf .tree-label-icon {
   background-image: url(star_small.png);
 }
 

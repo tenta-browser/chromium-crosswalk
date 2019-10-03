@@ -4,12 +4,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/test/scoped_task_environment.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "services/device/device_service_test_base.h"
 #include "services/device/generic_sensor/absolute_orientation_euler_angles_fusion_algorithm_using_accelerometer_and_magnetometer.h"
 #include "services/device/generic_sensor/fake_platform_sensor_and_provider.h"
 #include "services/device/generic_sensor/linear_acceleration_fusion_algorithm_using_accelerometer.h"
@@ -26,11 +26,10 @@ namespace device {
 
 using mojom::SensorType;
 
-class PlatformSensorFusionTest : public DeviceServiceTestBase {
+class PlatformSensorFusionTest : public testing::Test {
  public:
   PlatformSensorFusionTest() {
     provider_ = std::make_unique<FakePlatformSensorProvider>();
-    PlatformSensorProvider::SetProviderForTesting(provider_.get());
   }
 
  protected:
@@ -85,11 +84,13 @@ class PlatformSensorFusionTest : public DeviceServiceTestBase {
         base::Bind(&PlatformSensorFusionTest::PlatformSensorFusionCallback,
                    base::Unretained(this));
     SensorType type = fusion_algorithm->fused_type();
-    PlatformSensorFusion::Create(provider_->GetMapping(type), provider_.get(),
-                                 std::move(fusion_algorithm), callback);
+    PlatformSensorFusion::Create(provider_->GetSensorReadingBuffer(type),
+                                 provider_.get(), std::move(fusion_algorithm),
+                                 callback);
     EXPECT_TRUE(platform_sensor_fusion_callback_called_);
   }
 
+  base::test::ScopedTaskEnvironment task_environment_;
   std::unique_ptr<FakePlatformSensorProvider> provider_;
   bool accelerometer_callback_called_ = false;
   scoped_refptr<FakePlatformSensor> accelerometer_;
@@ -325,6 +326,35 @@ TEST_F(PlatformSensorFusionTest,
 
   CreateAbsoluteOrientationEulerAnglesFusionSensor();
   EXPECT_FALSE(fusion_sensor_);
+}
+
+TEST_F(PlatformSensorFusionTest,
+       FusionSensorMaximumSupportedFrequencyIsTheMaximumOfItsSourceSensors) {
+  EXPECT_FALSE(provider_->GetSensor(SensorType::ACCELEROMETER));
+  CreateAccelerometer();
+  scoped_refptr<PlatformSensor> accelerometer =
+      provider_->GetSensor(SensorType::ACCELEROMETER);
+  EXPECT_TRUE(accelerometer);
+  static_cast<FakePlatformSensor*>(accelerometer.get())
+      ->set_maximum_supported_frequency(30.0);
+
+  EXPECT_FALSE(provider_->GetSensor(SensorType::MAGNETOMETER));
+  CreateMagnetometer();
+  scoped_refptr<PlatformSensor> magnetometer =
+      provider_->GetSensor(SensorType::MAGNETOMETER);
+  EXPECT_TRUE(magnetometer);
+  static_cast<FakePlatformSensor*>(magnetometer.get())
+      ->set_maximum_supported_frequency(20.0);
+
+  CreateAbsoluteOrientationEulerAnglesFusionSensor();
+  EXPECT_TRUE(fusion_sensor_);
+  EXPECT_EQ(SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES,
+            fusion_sensor_->GetType());
+  EXPECT_EQ(30.0, fusion_sensor_->GetMaximumSupportedFrequency());
+  auto client = std::make_unique<testing::NiceMock<MockPlatformSensorClient>>(
+      fusion_sensor_);
+  EXPECT_TRUE(fusion_sensor_->StartListening(
+      client.get(), PlatformSensorConfiguration(30.0)));
 }
 
 }  //  namespace device

@@ -14,8 +14,8 @@
 #include "base/values.h"
 #import "ios/chrome/browser/web/chrome_web_test.h"
 #include "ios/chrome/common/string_util.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #import "ios/web/public/test/js_test_util.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
@@ -59,7 +59,7 @@ class JsLanguageDetectionManagerTest : public ChromeWebTest {
   // Injects JS, waits for the completion handler and verifies if the result
   // was what was expected.
   void InjectJsAndVerify(NSString* js, id expected_result) {
-    EXPECT_NSEQ(expected_result, web::ExecuteJavaScript(manager_, js));
+    EXPECT_NSEQ(expected_result, web::test::ExecuteJavaScript(manager_, js));
   }
 
   // Injects JS, and spins the run loop until |condition| block returns true
@@ -232,7 +232,7 @@ TEST_F(JsLanguageDetectionManagerTest, LongTextContent) {
       initWithFormat:
           @"__gCrWeb.languageDetection.getTextContent(document.body, %lu);",
           language_detection::kMaxIndexChars];
-  NSString* result = web::ExecuteJavaScript(manager_, script);
+  NSString* result = web::test::ExecuteJavaScript(manager_, script);
   EXPECT_EQ(language_detection::kMaxIndexChars, [result length]);
 }
 
@@ -264,23 +264,26 @@ class JsLanguageDetectionManagerDetectLanguageTest
     auto callback = base::Bind(
         &JsLanguageDetectionManagerDetectLanguageTest::CommandReceived,
         base::Unretained(this));
-    web_state()->AddScriptCommandCallback(callback, "languageDetection");
+    subscription_ =
+        web_state()->AddScriptCommandCallback(callback, "languageDetection");
   }
   void TearDown() override {
-    web_state()->RemoveScriptCommandCallback("languageDetection");
     JsLanguageDetectionManagerTest::TearDown();
   }
   // Called when "languageDetection" command is received.
-  bool CommandReceived(const base::DictionaryValue& command,
-                       const GURL&,
-                       bool) {
+  void CommandReceived(const base::DictionaryValue& command,
+                       const GURL& url,
+                       bool user_is_interacting,
+                       web::WebFrame* sender_frame) {
     commands_received_.push_back(command.CreateDeepCopy());
-    return true;
   }
 
  protected:
   // Received "languageDetection" commands.
   std::vector<std::unique_ptr<base::DictionaryValue>> commands_received_;
+
+  // Subscription for JS message.
+  std::unique_ptr<web::WebState::ScriptCommandSubscription> subscription_;
 };
 
 // Tests if |__gCrWeb.languageDetection.detectLanguage| correctly informs the

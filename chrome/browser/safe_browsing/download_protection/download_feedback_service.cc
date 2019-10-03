@@ -9,13 +9,14 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/supports_user_data.h"
 #include "base/task_runner.h"
+#include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/safe_browsing/download_protection/download_feedback.h"
-#include "content/public/browser/download_danger_type.h"
-#include "content/public/browser/download_item.h"
+#include "components/download/public/common/download_item.h"
+#include "content/public/browser/browser_thread.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace safe_browsing {
 
@@ -29,14 +30,14 @@ class DownloadFeedbackPings : public base::SupportsUserData::Data {
                         const std::string& ping_response);
 
   // Stores the ping data in the given |download|.
-  static void CreateForDownload(content::DownloadItem* download,
+  static void CreateForDownload(download::DownloadItem* download,
                                 const std::string& ping_request,
                                 const std::string& ping_response);
 
   // Returns the DownloadFeedbackPings object associated with |download|.  May
   // return NULL.
   static DownloadFeedbackPings* FromDownload(
-      const content::DownloadItem& download);
+      const download::DownloadItem& download);
 
   const std::string& ping_request() const { return ping_request_; }
 
@@ -53,27 +54,26 @@ DownloadFeedbackPings::DownloadFeedbackPings(const std::string& ping_request,
 
 // static
 void DownloadFeedbackPings::CreateForDownload(
-    content::DownloadItem* download,
+    download::DownloadItem* download,
     const std::string& ping_request,
     const std::string& ping_response) {
-  download->SetUserData(kPingKey, base::MakeUnique<DownloadFeedbackPings>(
+  download->SetUserData(kPingKey, std::make_unique<DownloadFeedbackPings>(
                                       ping_request, ping_response));
 }
 
 // static
 DownloadFeedbackPings* DownloadFeedbackPings::FromDownload(
-    const content::DownloadItem& download) {
+    const download::DownloadItem& download) {
   return static_cast<DownloadFeedbackPings*>(download.GetUserData(kPingKey));
 }
 
 }  // namespace
 
 DownloadFeedbackService::DownloadFeedbackService(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     base::TaskRunner* file_task_runner)
-    : request_context_getter_(request_context_getter),
-      file_task_runner_(file_task_runner),
-      weak_ptr_factory_(this) {
+    : url_loader_factory_(url_loader_factory),
+      file_task_runner_(file_task_runner) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
@@ -85,20 +85,22 @@ DownloadFeedbackService::~DownloadFeedbackService() {
 void DownloadFeedbackService::MaybeStorePingsForDownload(
     DownloadCheckResult result,
     bool upload_requested,
-    content::DownloadItem* download,
+    download::DownloadItem* download,
     const std::string& ping,
     const std::string& response) {
-  // We never upload SAFE files.
-  if (result == DownloadCheckResult::SAFE)
+  // We never upload SAFE or WHITELISTED_BY_POLICY files.
+  if (result == DownloadCheckResult::SAFE ||
+      result == DownloadCheckResult::WHITELISTED_BY_POLICY) {
     return;
+  }
 
   UMA_HISTOGRAM_BOOLEAN("SBDownloadFeedback.UploadRequestedByServer",
                         upload_requested);
   if (!upload_requested)
     return;
 
-  UMA_HISTOGRAM_COUNTS("SBDownloadFeedback.SizeEligibleKB",
-                       download->GetReceivedBytes() / 1024);
+  UMA_HISTOGRAM_COUNTS_1M("SBDownloadFeedback.SizeEligibleKB",
+                          download->GetReceivedBytes() / 1024);
   if (download->GetReceivedBytes() > DownloadFeedback::kMaxUploadSize)
     return;
 
@@ -107,13 +109,13 @@ void DownloadFeedbackService::MaybeStorePingsForDownload(
 
 // static
 bool DownloadFeedbackService::IsEnabledForDownload(
-    const content::DownloadItem& download) {
+    const download::DownloadItem& download) {
   return !!DownloadFeedbackPings::FromDownload(download);
 }
 
 // static
 bool DownloadFeedbackService::GetPingsForDownloadForTesting(
-    const content::DownloadItem& download,
+    const download::DownloadItem& download,
     std::string* ping,
     std::string* response) {
   DownloadFeedbackPings* pings = DownloadFeedbackPings::FromDownload(download);
@@ -127,18 +129,18 @@ bool DownloadFeedbackService::GetPingsForDownloadForTesting(
 
 // static
 void DownloadFeedbackService::RecordEligibleDownloadShown(
-    content::DownloadDangerType danger_type) {
+    download::DownloadDangerType danger_type) {
   UMA_HISTOGRAM_ENUMERATION("SBDownloadFeedback.Eligible", danger_type,
-                            content::DOWNLOAD_DANGER_TYPE_MAX);
+                            download::DOWNLOAD_DANGER_TYPE_MAX);
 }
 
 void DownloadFeedbackService::BeginFeedbackForDownload(
-    content::DownloadItem* download,
+    download::DownloadItem* download,
     DownloadCommands::Command download_command) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   UMA_HISTOGRAM_ENUMERATION("SBDownloadFeedback.Activations",
                             download->GetDangerType(),
-                            content::DOWNLOAD_DANGER_TYPE_MAX);
+                            download::DOWNLOAD_DANGER_TYPE_MAX);
 
   DownloadFeedbackPings* pings = DownloadFeedbackPings::FromDownload(*download);
   DCHECK(pings);
@@ -148,8 +150,10 @@ void DownloadFeedbackService::BeginFeedbackForDownload(
       base::Bind(&DownloadFeedbackService::BeginFeedbackOrDeleteFile,
                  file_task_runner_, weak_ptr_factory_.GetWeakPtr(),
                  pings->ping_request(), pings->ping_response()));
-  if (download_command == DownloadCommands::KEEP)
-    DownloadCommands(download).ExecuteCommand(download_command);
+  if (download_command == DownloadCommands::KEEP) {
+    DownloadItemModel model(download);
+    DownloadCommands(&model).ExecuteCommand(download_command);
+  }
 }
 
 // static
@@ -183,9 +187,9 @@ void DownloadFeedbackService::BeginFeedback(const std::string& ping_request,
                                             const std::string& ping_response,
                                             const base::FilePath& path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  std::unique_ptr<DownloadFeedback> feedback(DownloadFeedback::Create(
-      request_context_getter_.get(), file_task_runner_.get(), path,
-      ping_request, ping_response));
+  std::unique_ptr<DownloadFeedback> feedback(
+      DownloadFeedback::Create(url_loader_factory_, file_task_runner_.get(),
+                               path, ping_request, ping_response));
   active_feedback_.push(std::move(feedback));
   UMA_HISTOGRAM_COUNTS_100("SBDownloadFeedback.ActiveFeedbacks",
                            active_feedback_.size());

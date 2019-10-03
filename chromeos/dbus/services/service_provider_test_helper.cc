@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "dbus/message.h"
 #include "dbus/mock_bus.h"
@@ -22,7 +23,7 @@ using ::testing::Unused;
 namespace chromeos {
 
 ServiceProviderTestHelper::ServiceProviderTestHelper() {
-  if (!base::MessageLoop::current())
+  if (!base::MessageLoopCurrent::Get())
     message_loop_.reset(new base::MessageLoop());
 }
 
@@ -34,6 +35,7 @@ void ServiceProviderTestHelper::SetUp(
     const std::string& interface_name,
     const std::string& exported_method_name,
     CrosDBusService::ServiceProviderInterface* service_provider) {
+  exported_method_name_ = exported_method_name;
   // Create a mock bus.
   dbus::Bus::Options options;
   options.bus_type = dbus::Bus::SYSTEM;
@@ -49,8 +51,9 @@ void ServiceProviderTestHelper::SetUp(
   // |mock_exported_object_|'s ExportMethod() will use
   // |MockExportedObject().
   EXPECT_CALL(*mock_exported_object_.get(),
-              ExportMethod(interface_name, exported_method_name, _, _))
-      .WillOnce(Invoke(this, &ServiceProviderTestHelper::MockExportMethod));
+              ExportMethod(interface_name, _, _, _))
+      .WillRepeatedly(
+          Invoke(this, &ServiceProviderTestHelper::MockExportMethod));
 
   // Create a mock object proxy, with which we call a method of
   // |mock_exported_object_|.
@@ -60,13 +63,12 @@ void ServiceProviderTestHelper::SetUp(
   // to return responses.
   EXPECT_CALL(*mock_object_proxy_.get(),
               CallMethodAndBlock(
-                  AllOf(ResultOf(std::mem_fun(&dbus::MethodCall::GetInterface),
+                  AllOf(ResultOf(std::mem_fn(&dbus::MethodCall::GetInterface),
                                  interface_name),
-                        ResultOf(std::mem_fun(&dbus::MethodCall::GetMember),
+                        ResultOf(std::mem_fn(&dbus::MethodCall::GetMember),
                                  exported_method_name)),
                   _))
-      .WillOnce(
-          Invoke(this, &ServiceProviderTestHelper::CallMethodAndBlock));
+      .WillOnce(Invoke(this, &ServiceProviderTestHelper::CallMethodAndBlock));
 
   service_provider->Start(mock_exported_object_.get());
 }
@@ -114,7 +116,9 @@ void ServiceProviderTestHelper::MockExportMethod(
   // Tell the call back that the method is exported successfully.
   on_exported_callback.Run(interface_name, method_name, true);
   // Capture the callback, so we can run this at a later time.
-  method_callback_ = method_callback;
+  if (method_name == exported_method_name_) {
+    method_callback_ = method_callback;
+  }
 }
 
 std::unique_ptr<dbus::Response> ServiceProviderTestHelper::CallMethodAndBlock(

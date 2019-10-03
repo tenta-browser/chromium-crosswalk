@@ -7,13 +7,14 @@
 #include "ui/aura/window.h"
 #include "ui/base/class_property.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(aura::client::DragDropClient*)
+DEFINE_UI_CLASS_PROPERTY_TYPE(aura::client::DragDropClient*)
 
 namespace aura {
 namespace client {
 
-DEFINE_LOCAL_UI_CLASS_PROPERTY_KEY(
-    DragDropClient*, kRootWindowDragDropClientKey, NULL);
+DEFINE_UI_CLASS_PROPERTY_KEY(DragDropClient*,
+                             kRootWindowDragDropClientKey,
+                             nullptr)
 
 void SetDragDropClient(Window* root_window, DragDropClient* client) {
   DCHECK_EQ(root_window->GetRootWindow(), root_window);

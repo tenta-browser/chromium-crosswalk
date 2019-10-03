@@ -4,12 +4,12 @@
 
 #include "remoting/protocol/stream_message_pipe_adapter.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "remoting/base/buffered_socket_writer.h"
 #include "remoting/base/compound_buffer.h"
 #include "remoting/protocol/message_serialization.h"
@@ -33,13 +33,13 @@ void StreamMessagePipeAdapter::Start(EventHandler* event_handler) {
   DCHECK(event_handler);
   event_handler_ = event_handler;
 
-  writer_ = base::MakeUnique<BufferedSocketWriter>();
+  writer_ = std::make_unique<BufferedSocketWriter>();
   writer_->Start(
       base::Bind(&P2PStreamSocket::Write, base::Unretained(socket_.get())),
       base::Bind(&StreamMessagePipeAdapter::CloseOnError,
                  base::Unretained(this)));
 
-  reader_ = base::MakeUnique<MessageReader>();
+  reader_ = std::make_unique<MessageReader>();
   reader_->StartReading(socket_.get(),
                         base::Bind(&EventHandler::OnMessageReceived,
                                    base::Unretained(event_handler_)),
@@ -50,9 +50,35 @@ void StreamMessagePipeAdapter::Start(EventHandler* event_handler) {
 }
 
 void StreamMessagePipeAdapter::Send(google::protobuf::MessageLite* message,
-                                    const base::Closure& done) {
+                                    base::OnceClosure done) {
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("stream_message_pipe_adapter", R"(
+        semantics {
+          sender: "Stream Message Pipe Adapter"
+          description: "Chrome Remote Desktop P2P channel."
+          trigger: "Initiating a Chrome Remote Desktop connection."
+          data:
+            "Chrome Remote Desktop session data, including video and input "
+            "events."
+          destination: OTHER
+          destination_other:
+            "The Chrome Remote Desktop client/host that user is connecting to."
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This request cannot be stopped in settings, but will not be sent "
+            "if user does not use Chrome Remote Desktop."
+          policy_exception_justification:
+            "Not implemented. 'RemoteAccessHostClientDomainList' and "
+            "'RemoteAccessHostDomainList' policies can limit the domains to "
+            "which a connection can be made, but they cannot be used to block "
+            "the request to all domains. Please refer to help desk for other "
+            "approaches to manage this feature."
+        })");
   if (writer_)
-    writer_->Write(SerializeAndFrameMessage(*message), done);
+    writer_->Write(SerializeAndFrameMessage(*message), std::move(done),
+                   traffic_annotation);
 }
 
 void StreamMessagePipeAdapter::CloseOnError(int error) {
@@ -63,7 +89,7 @@ void StreamMessagePipeAdapter::CloseOnError(int error) {
   if (error == 0) {
     event_handler_->OnMessagePipeClosed();
   } else if (error_callback_) {
-    base::ResetAndReturn(&error_callback_).Run(error);
+    std::move(error_callback_).Run(error);
   }
 }
 
@@ -96,7 +122,7 @@ void StreamMessageChannelFactoryAdapter::OnChannelCreated(
     error_callback_.Run(net::ERR_FAILED);
     return;
   }
-  callback.Run(base::MakeUnique<StreamMessagePipeAdapter>(std::move(socket),
+  callback.Run(std::make_unique<StreamMessagePipeAdapter>(std::move(socket),
                                                           error_callback_));
 }
 

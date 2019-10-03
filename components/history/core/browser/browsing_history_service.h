@@ -148,7 +148,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
   BrowsingHistoryService(BrowsingHistoryDriver* driver,
                          HistoryService* local_history,
                          syncer::SyncService* sync_service,
-                         std::unique_ptr<base::Timer> web_history_timer);
+                         std::unique_ptr<base::OneShotTimer> web_history_timer);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(::BrowsingHistoryHandlerTest,
@@ -172,7 +172,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
 
   // Callback from the history system when a history query has completed.
   void QueryComplete(scoped_refptr<QueryHistoryState> state,
-                     QueryResults* results);
+                     QueryResults results);
 
   // Combines the query results from the local history database and the history
   // server, and sends the combined results to the
@@ -202,10 +202,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
 
   // HistoryServiceObserver implementation.
   void OnURLsDeleted(HistoryService* history_service,
-                     bool all_history,
-                     bool expired,
-                     const URLRows& deleted_rows,
-                     const std::set<GURL>& favicon_urls) override;
+                     const DeletionInfo& deletion_info) override;
 
   // WebHistoryServiceObserver implementation.
   void OnWebHistoryDeleted() override;
@@ -227,7 +224,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
   std::set<GURL> urls_to_be_deleted_;
 
   // Timer used to implement a timeout on a Web History response.
-  std::unique_ptr<base::Timer> web_history_timer_;
+  std::unique_ptr<base::OneShotTimer> web_history_timer_;
 
   // HistoryService (local history) observer.
   ScopedObserver<HistoryService, HistoryServiceObserver>
@@ -256,7 +253,7 @@ class BrowsingHistoryService : public HistoryServiceObserver,
   // The clock used to vend times.
   std::unique_ptr<base::Clock> clock_;
 
-  base::WeakPtrFactory<BrowsingHistoryService> weak_factory_;
+  base::WeakPtrFactory<BrowsingHistoryService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingHistoryService);
 };

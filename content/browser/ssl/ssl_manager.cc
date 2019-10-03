@@ -9,32 +9,46 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/metrics/ukm_source_id.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/supports_user_data.h"
-#include "content/browser/devtools/devtools_agent_host_impl.h"
-#include "content/browser/devtools/protocol/security_handler.h"
+#include "base/task/post_task.h"
+#include "content/browser/devtools/devtools_instrumentation.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/ssl/ssl_error_handler.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/certificate_request_result_type.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
-#include "content/public/common/console_message_level.h"
 #include "net/url_request/url_request.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 
 namespace content {
 
 namespace {
 
 const char kSSLManagerKeyName[] = "content_ssl_manager";
+
+// Used to log type of mixed content displayed/ran, matches histogram enum
+// (MixedContentType). DO NOT REORDER.
+enum class MixedContentType {
+  kDisplayMixedContent = 0,
+  kDisplayWithCertErrors = 1,
+  kMixedForm = 2,
+  kScriptingMixedContent = 3,
+  kScriptingWithCertErrors = 4,
+  kMaxValue = kScriptingWithCertErrors,
+};
 
 void OnAllowCertificateWithRecordDecision(
     bool record_decision,
@@ -94,14 +108,15 @@ void HandleSSLErrorOnUI(
     const base::Callback<WebContents*(void)>& web_contents_getter,
     const base::WeakPtr<SSLErrorHandler::Delegate>& delegate,
     BrowserThread::ID delegate_thread,
-    const ResourceType resource_type,
+    bool is_main_frame_request,
     const GURL& url,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal) {
   content::WebContents* web_contents = web_contents_getter.Run();
-  std::unique_ptr<SSLErrorHandler> handler(
-      new SSLErrorHandler(web_contents, delegate, delegate_thread,
-                          resource_type, url, ssl_info, fatal));
+  std::unique_ptr<SSLErrorHandler> handler(new SSLErrorHandler(
+      web_contents, delegate, delegate_thread, is_main_frame_request, url,
+      net_error, ssl_info, fatal));
 
   if (!web_contents) {
     // Requests can fail to dispatch because they don't have a WebContents. See
@@ -123,35 +138,44 @@ void HandleSSLErrorOnUI(
   manager->OnCertError(std::move(handler));
 }
 
+void LogMixedContentMetrics(MixedContentType type,
+                            ukm::SourceId source_id,
+                            ukm::UkmRecorder* recorder) {
+  UMA_HISTOGRAM_ENUMERATION("SSL.MixedContentShown", type);
+  ukm::builders::SSL_MixedContentShown(source_id)
+      .SetType(static_cast<int64_t>(type))
+      .Record(recorder);
+}
+
 }  // namespace
 
 // static
 void SSLManager::OnSSLCertificateError(
     const base::WeakPtr<SSLErrorHandler::Delegate>& delegate,
-    const ResourceType resource_type,
+    bool is_main_frame_request,
     const GURL& url,
     const base::Callback<WebContents*(void)>& web_contents_getter,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal) {
   DCHECK(delegate.get());
-  DVLOG(1) << "OnSSLCertificateError() cert_error: "
-           << net::MapCertStatusToNetError(ssl_info.cert_status)
-           << " resource_type: " << resource_type
-           << " url: " << url.spec()
-           << " cert_status: " << std::hex << ssl_info.cert_status;
+  DVLOG(1) << "OnSSLCertificateError() cert_error: " << net_error
+           << " url: " << url.spec() << " cert_status: " << std::hex
+           << ssl_info.cert_status;
 
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     HandleSSLErrorOnUI(web_contents_getter, delegate, BrowserThread::UI,
-                       resource_type, url, ssl_info, fatal);
+                       is_main_frame_request, url, net_error, ssl_info, fatal);
     return;
   }
 
   // TODO(jam): remove the logic to call this from IO thread once the
   // network service code path is the only one.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&HandleSSLErrorOnUI, web_contents_getter, delegate,
-                     BrowserThread::IO, resource_type, url, ssl_info, fatal));
+                     BrowserThread::IO, is_main_frame_request, url, net_error,
+                     ssl_info, fatal));
 }
 
 // static
@@ -160,12 +184,13 @@ void SSLManager::OnSSLCertificateSubresourceError(
     const GURL& url,
     int render_process_id,
     int render_frame_id,
+    int net_error,
     const net::SSLInfo& ssl_info,
     bool fatal) {
-  OnSSLCertificateError(delegate, RESOURCE_TYPE_SUB_RESOURCE, url,
+  OnSSLCertificateError(delegate, false, url,
                         base::Bind(&WebContentsImpl::FromRenderFrameHostID,
                                    render_process_id, render_frame_id),
-                        ssl_info, fatal);
+                        net_error, ssl_info, fatal);
 }
 
 SSLManager::SSLManager(NavigationControllerImpl* controller)
@@ -225,10 +250,28 @@ void SSLManager::DidCommitProvisionalLoad(const LoadCommittedDetails& details) {
 }
 
 void SSLManager::DidDisplayMixedContent() {
+  NavigationEntryImpl* entry = controller_->GetLastCommittedEntry();
+  if (entry && entry->GetURL().SchemeIsCryptographic() &&
+      entry->GetSSL().certificate) {
+    WebContentsImpl* contents = static_cast<WebContentsImpl*>(
+        controller_->delegate()->GetWebContents());
+    ukm::SourceId source_id = contents->GetUkmSourceIdForLastCommittedSource();
+    LogMixedContentMetrics(MixedContentType::kDisplayMixedContent, source_id,
+                           ukm::UkmRecorder::Get());
+  }
   UpdateLastCommittedEntry(SSLStatus::DISPLAYED_INSECURE_CONTENT, 0);
 }
 
 void SSLManager::DidContainInsecureFormAction() {
+  NavigationEntryImpl* entry = controller_->GetLastCommittedEntry();
+  if (entry && entry->GetURL().SchemeIsCryptographic() &&
+      entry->GetSSL().certificate) {
+    WebContentsImpl* contents = static_cast<WebContentsImpl*>(
+        controller_->delegate()->GetWebContents());
+    ukm::SourceId source_id = contents->GetUkmSourceIdForLastCommittedSource();
+    LogMixedContentMetrics(MixedContentType::kMixedForm, source_id,
+                           ukm::UkmRecorder::Get());
+  }
   UpdateLastCommittedEntry(SSLStatus::DISPLAYED_FORM_WITH_INSECURE_ACTION, 0);
 }
 
@@ -239,6 +282,11 @@ void SSLManager::DidDisplayContentWithCertErrors() {
   // Only record information about subresources with cert errors if the
   // main page is HTTPS with a certificate.
   if (entry->GetURL().SchemeIsCryptographic() && entry->GetSSL().certificate) {
+    WebContentsImpl* contents = static_cast<WebContentsImpl*>(
+        controller_->delegate()->GetWebContents());
+    ukm::SourceId source_id = contents->GetUkmSourceIdForLastCommittedSource();
+    LogMixedContentMetrics(MixedContentType::kDisplayWithCertErrors, source_id,
+                           ukm::UkmRecorder::Get());
     UpdateLastCommittedEntry(SSLStatus::DISPLAYED_CONTENT_WITH_CERT_ERRORS, 0);
   }
 }
@@ -247,6 +295,14 @@ void SSLManager::DidRunMixedContent(const GURL& security_origin) {
   NavigationEntryImpl* entry = controller_->GetLastCommittedEntry();
   if (!entry)
     return;
+
+  if (entry->GetURL().SchemeIsCryptographic() && entry->GetSSL().certificate) {
+    WebContentsImpl* contents = static_cast<WebContentsImpl*>(
+        controller_->delegate()->GetWebContents());
+    ukm::SourceId source_id = contents->GetUkmSourceIdForLastCommittedSource();
+    LogMixedContentMetrics(MixedContentType::kScriptingMixedContent, source_id,
+                           ukm::UkmRecorder::Get());
+  }
 
   SiteInstance* site_instance = entry->site_instance();
   if (!site_instance)
@@ -265,6 +321,14 @@ void SSLManager::DidRunContentWithCertErrors(const GURL& security_origin) {
   NavigationEntryImpl* entry = controller_->GetLastCommittedEntry();
   if (!entry)
     return;
+
+  if (entry->GetURL().SchemeIsCryptographic() && entry->GetSSL().certificate) {
+    WebContentsImpl* contents = static_cast<WebContentsImpl*>(
+        controller_->delegate()->GetWebContents());
+    ukm::SourceId source_id = contents->GetUkmSourceIdForLastCommittedSource();
+    LogMixedContentMetrics(MixedContentType::kScriptingWithCertErrors,
+                           source_id, ukm::UkmRecorder::Get());
+  }
 
   SiteInstance* site_instance = entry->site_instance();
   if (!site_instance)
@@ -305,28 +369,22 @@ void SSLManager::OnCertError(std::unique_ptr<SSLErrorHandler> handler) {
 }
 
 void SSLManager::DidStartResourceResponse(const GURL& url,
-                                          bool has_certificate,
-                                          net::CertStatus ssl_cert_status,
-                                          ResourceType resource_type) {
-  if (has_certificate && url.SchemeIsCryptographic() &&
-      !net::IsCertStatusError(ssl_cert_status)) {
-    // If the scheme is https: or wss: *and* the security info for the
-    // cert has been set (i.e. the cert id is not 0) and the cert did
-    // not have any errors, revoke any previous decisions that
-    // have occurred. If the cert info has not been set, do nothing since it
-    // isn't known if the connection was actually a valid connection or if it
-    // had a cert error.
-    if (ssl_host_state_delegate_ &&
-        ssl_host_state_delegate_->HasAllowException(url.host())) {
-      // If there's no certificate error, a good certificate has been seen, so
-      // clear out any exceptions that were made by the user for bad
-      // certificates. This intentionally does not apply to cached resources
-      // (see https://crbug.com/634553 for an explanation).
-      UMA_HISTOGRAM_BOOLEAN("interstitial.ssl.good_cert_seen_type_is_frame",
-                            IsResourceTypeFrame(resource_type));
-      ssl_host_state_delegate_->RevokeUserAllowExceptions(url.host());
-    }
+                                          bool has_certificate_errors) {
+  if (!url.SchemeIsCryptographic() || has_certificate_errors)
+    return;
+
+  // If the scheme is https: or wss and the cert did not have any errors, revoke
+  // any previous decisions that have occurred.
+  if (!ssl_host_state_delegate_ ||
+      !ssl_host_state_delegate_->HasAllowException(url.host())) {
+    return;
   }
+
+  // If there's no certificate error, a good certificate has been seen, so
+  // clear out any exceptions that were made by the user for bad
+  // certificates. This intentionally does not apply to cached resources
+  // (see https://crbug.com/634553 for an explanation).
+  ssl_host_state_delegate_->RevokeUserAllowExceptions(url.host());
 }
 
 void SSLManager::OnCertErrorInternal(std::unique_ptr<SSLErrorHandler> handler,
@@ -335,31 +393,25 @@ void SSLManager::OnCertErrorInternal(std::unique_ptr<SSLErrorHandler> handler,
   int cert_error = handler->cert_error();
   const net::SSLInfo& ssl_info = handler->ssl_info();
   const GURL& request_url = handler->request_url();
-  ResourceType resource_type = handler->resource_type();
+  bool is_main_frame_request = handler->is_main_frame_request();
   bool fatal = handler->fatal();
 
   base::Callback<void(bool, content::CertificateRequestResultType)> callback =
       base::Bind(&OnAllowCertificate, base::Owned(handler.release()),
                  ssl_host_state_delegate_);
 
-  DevToolsAgentHostImpl* agent_host = static_cast<DevToolsAgentHostImpl*>(
-      DevToolsAgentHost::GetOrCreateFor(web_contents).get());
-  if (agent_host) {
-    for (auto* security_handler :
-         protocol::SecurityHandler::ForAgentHost(agent_host)) {
-      if (security_handler->NotifyCertificateError(
-              cert_error, request_url,
-              base::Bind(&OnAllowCertificateWithRecordDecision, false,
-                         callback))) {
-        return;
-      }
-    }
+  if (devtools_instrumentation::HandleCertificateError(
+          web_contents, cert_error, request_url,
+          base::BindRepeating(&OnAllowCertificateWithRecordDecision, false,
+                              callback))) {
+    return;
   }
 
   GetContentClient()->browser()->AllowCertificateError(
-      web_contents, cert_error, ssl_info, request_url, resource_type, fatal,
-      expired_previous_decision,
-      base::Bind(&OnAllowCertificateWithRecordDecision, true, callback));
+      web_contents, cert_error, ssl_info, request_url, is_main_frame_request,
+      fatal, expired_previous_decision,
+      base::Bind(&OnAllowCertificateWithRecordDecision, true,
+                 std::move(callback)));
 }
 
 bool SSLManager::UpdateEntry(NavigationEntryImpl* entry,
@@ -425,8 +477,7 @@ void SSLManager::NotifySSLInternalStateChanged(BrowserContext* context) {
   SSLManagerSet* managers =
       static_cast<SSLManagerSet*>(context->GetUserData(kSSLManagerKeyName));
 
-  for (std::set<SSLManager*>::iterator i = managers->get().begin();
-       i != managers->get().end(); ++i) {
+  for (auto i = managers->get().begin(); i != managers->get().end(); ++i) {
     (*i)->UpdateEntry((*i)->controller()->GetLastCommittedEntry(), 0, 0);
   }
 }

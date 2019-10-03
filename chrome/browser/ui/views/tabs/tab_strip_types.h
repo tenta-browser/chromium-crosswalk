@@ -4,7 +4,6 @@
 
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_TAB_STRIP_TYPES_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_STRIP_TYPES_H_
-
 // Enum passed to EndDrag().
 enum EndDragReason {
   // Complete the drag.
@@ -21,6 +20,13 @@ enum EndDragReason {
 enum CloseTabSource {
   CLOSE_TAB_FROM_MOUSE,
   CLOSE_TAB_FROM_TOUCH,
+};
+
+// Enum passed to GetTabForegroundColor and GetTabBackgroundColor to indicate
+// whether the tab is active or not.
+enum TabState {
+  TAB_ACTIVE,
+  TAB_INACTIVE,
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_STRIP_TYPES_H_

@@ -18,10 +18,13 @@ bool TestPrefetchDownloader::IsDownloadServiceUnavailable() const {
 
 void TestPrefetchDownloader::CleanupDownloadsWhenReady() {}
 
-void TestPrefetchDownloader::StartDownload(
-    const std::string& download_id,
-    const std::string& download_location) {
-  requested_downloads_[download_id] = download_location;
+void TestPrefetchDownloader::StartDownload(const std::string& download_id,
+                                           const std::string& download_location,
+                                           const std::string& operation_name) {
+  Request request;
+  request.download_location = download_location;
+  request.operation_name = operation_name;
+  requested_downloads_[download_id] = request;
 }
 
 void TestPrefetchDownloader::OnDownloadServiceReady(
@@ -37,6 +40,10 @@ void TestPrefetchDownloader::OnDownloadSucceeded(
     int64_t file_size) {}
 
 void TestPrefetchDownloader::OnDownloadFailed(const std::string& download_id) {}
+
+int TestPrefetchDownloader::GetMaxConcurrentDownloads() {
+  return max_concurrent_downloads_;
+}
 
 void TestPrefetchDownloader::Reset() {
   requested_downloads_.clear();

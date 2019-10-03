@@ -24,11 +24,16 @@ enum AppGroupApplications {
 enum ShareExtensionItemType {
   READING_LIST_ITEM = 0,
   BOOKMARK_ITEM,
+  OPEN_IN_CHROME_ITEM
 };
 
 // The x-callback-url indicating that an application in the group requires a
 // command.
 extern const char kChromeAppGroupXCallbackCommand[];
+
+// The key of a preference containing a dictionary of field trial values needed
+// in extensions.
+extern const char kChromeExtensionFieldTrialPreference[];
 
 // The key of a preference containing a dictionary containing app group command
 // parameters.
@@ -44,6 +49,12 @@ extern const char kChromeAppGroupCommandCommandPreference[];
 
 // The command to open a URL. Parameter must contain the URL.
 extern const char kChromeAppGroupOpenURLCommand[];
+
+// The command to search some text. Parameter must contain the text.
+extern const char kChromeAppGroupSearchTextCommand[];
+
+// The command to search an image. Data parameter must contain the image.
+extern const char kChromeAppGroupSearchImageCommand[];
 
 // The command to trigger a voice search.
 extern const char kChromeAppGroupVoiceSearchCommand[];
@@ -64,13 +75,21 @@ extern const char kChromeAppGroupQRScannerCommand[];
 // |kChromeAppGroupCommandAppPreference| issued the command.
 extern const char kChromeAppGroupCommandTimePreference[];
 
-// The key in kChromeAppGroupCommandPreference containing the URL to open for if
-// the command requires one.
-extern const char kChromeAppGroupCommandURLPreference[];
+// The key in kChromeAppGroupCommandPreference containing the text use for the
+// command if it requires one. This could be a URL, a string, etc.
+extern const char kChromeAppGroupCommandTextPreference[];
+
+// The key in kChromeAppGroupCommandPreference containing the data to use for
+// the command if it requires one. This could be an image, etc.
+extern const char kChromeAppGroupCommandDataPreference[];
 
 // The key in kChromeAppGroupCommandPreference containing the index to open for
 // if the command requires one.
 extern const char kChromeAppGroupCommandIndexPreference[];
+
+// The key of a preference containing whether the current default search engine
+// supports Search by Image.
+extern const char kChromeAppGroupSupportsSearchByImage[];
 
 // The key of a preference containing Chrome client ID reported in the metrics
 // client ID. If the user does not opt in, this value must be cleared from the
@@ -98,6 +117,7 @@ extern NSString* const kShareItemSourceShareExtension;
 extern NSString* const kOpenCommandSourceTodayExtension;
 extern NSString* const kOpenCommandSourceContentExtension;
 extern NSString* const kOpenCommandSourceSearchExtension;
+extern NSString* const kOpenCommandSourceShareExtension;
 
 // The value of the key for the sharedDefaults used by the Content Widget.
 extern NSString* const kSuggestedItems;

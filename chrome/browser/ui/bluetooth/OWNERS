@@ -1,7 +1,5 @@
 juncai@chromium.org
-jyasskin@chromium.org
-ortuno@chromium.org
-scheib@chromium.org
+file://content/browser/bluetooth/OWNERS
 
 # TEAM: web-bluetooth@chromium.org
 # COMPONENT: Blink>Bluetooth

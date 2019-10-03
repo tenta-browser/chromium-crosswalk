@@ -5,7 +5,8 @@
 #include "chrome/browser/ui/browser_command_controller.h"
 
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
@@ -25,8 +26,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/signin/core/browser/profile_management_switches.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -161,8 +161,7 @@ TEST_F(BrowserCommandControllerTest, IncognitoCommands) {
   testprofile->SetGuestSession(true);
   chrome::BrowserCommandController ::
       UpdateSharedCommandsForIncognitoAvailability(
-          browser()->command_controller(),
-          testprofile);
+          browser()->command_controller(), testprofile);
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_SHOW_SIGNIN));
@@ -172,8 +171,7 @@ TEST_F(BrowserCommandControllerTest, IncognitoCommands) {
                                       IncognitoModePrefs::FORCED);
   chrome::BrowserCommandController ::
       UpdateSharedCommandsForIncognitoAvailability(
-          browser()->command_controller(),
-          testprofile);
+          browser()->command_controller(), testprofile);
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_SHOW_SIGNIN));
@@ -200,27 +198,28 @@ TEST_F(BrowserCommandControllerTest, AvatarAcceleratorEnabledOnDesktop) {
   const CommandUpdater* command_updater = &command_controller;
 
   bool enabled = true;
+  size_t profiles_count = 1U;
 #if defined(OS_CHROMEOS)
   // Chrome OS uses system tray menu to handle multi-profiles.
   enabled = false;
+  profiles_count = 2U;
 #endif
 
-  ASSERT_EQ(1U, profile_manager->GetNumberOfProfiles());
+  ASSERT_EQ(profiles_count, profile_manager->GetNumberOfProfiles());
   EXPECT_EQ(enabled, command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
 
   testing_profile_manager->CreateTestingProfile("p2");
-  ASSERT_EQ(2U, profile_manager->GetNumberOfProfiles());
+  profiles_count++;
+  ASSERT_EQ(profiles_count, profile_manager->GetNumberOfProfiles());
   EXPECT_EQ(enabled, command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
 
   testing_profile_manager->DeleteTestingProfile("p2");
-  ASSERT_EQ(1U, profile_manager->GetNumberOfProfiles());
+  profiles_count--;
+  ASSERT_EQ(profiles_count, profile_manager->GetNumberOfProfiles());
   EXPECT_EQ(enabled, command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
 }
 
-TEST_F(BrowserCommandControllerTest, AvatarMenuAlwaysDisabledInIncognitoMode) {
-  if (!profiles::IsMultipleProfilesEnabled())
-    return;
-
+TEST_F(BrowserCommandControllerTest, AvatarMenuAlwaysEnabledInIncognitoMode) {
   // Set up a profile with an off the record profile.
   TestingProfile::Builder normal_builder;
   std::unique_ptr<TestingProfile> original_profile = normal_builder.Build();
@@ -234,8 +233,8 @@ TEST_F(BrowserCommandControllerTest, AvatarMenuAlwaysDisabledInIncognitoMode) {
   chrome::BrowserCommandController command_controller(otr_browser.get());
   const CommandUpdater* command_updater = &command_controller;
 
-  // The avatar menu should be disabled.
-  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
+  // The avatar menu should be enabled.
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_AVATAR_MENU));
   // The command line is reset at the end of every test by the test suite.
 }
 
@@ -274,8 +273,10 @@ class FullscreenTestBrowserWindow : public TestBrowserWindow,
   void UpdateExclusiveAccessExitBubbleContent(
       const GURL& url,
       ExclusiveAccessBubbleType bubble_type,
-      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback) override {}
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
+      bool force_update) override {}
   void OnExclusiveAccessUserInput() override {}
+  bool CanUserExitFullscreen() const override { return true; }
 
   void set_toolbar_showing(bool showing) { toolbar_showing_ = showing; }
 
@@ -297,8 +298,8 @@ class BrowserCommandControllerFullscreenTest
   Browser* GetBrowser() { return BrowserWithTestWindowTest::browser(); }
 
   // BrowserWithTestWindowTest overrides:
-  BrowserWindow* CreateBrowserWindow() override {
-    return new FullscreenTestBrowserWindow(this);
+  std::unique_ptr<BrowserWindow> CreateBrowserWindow() override {
+    return std::make_unique<FullscreenTestBrowserWindow>(this);
   }
 
  private:
@@ -333,6 +334,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
 
     //         Command ID        |      tab mode      |      fullscreen     |
     //                           | enabled | reserved | enabled  | reserved |
+    // clang-format off
     { IDC_OPEN_CURRENT_URL,        true,     false,     false,     false    },
     { IDC_FOCUS_TOOLBAR,           true,     false,     false,     false    },
     { IDC_FOCUS_LOCATION,          true,     false,     false,     false    },
@@ -342,7 +344,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
     { IDC_FOCUS_PREVIOUS_PANE,     true,     false,     false,     false    },
     { IDC_FOCUS_BOOKMARKS,         true,     false,     false,     false    },
     { IDC_DEVELOPER_MENU,          true,     false,     false,     false    },
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     { IDC_FEEDBACK,                true,     false,     false,     false    },
 #endif
     { IDC_OPTIONS,                 true,     false,     false,     false    },
@@ -351,6 +353,9 @@ TEST_F(BrowserCommandControllerFullscreenTest,
     { IDC_VIEW_PASSWORDS,          true,     false,     false,     false    },
     { IDC_ABOUT,                   true,     false,     false,     false    },
     { IDC_SHOW_APP_MENU,           true,     false,     false,     false    },
+    { IDC_SEND_TAB_TO_SELF,        true,     false,     false,     false    },
+    { IDC_SEND_TAB_TO_SELF_SINGLE_TARGET,
+                                   true,     false,     false,     false    },
     { IDC_FULLSCREEN,              true,     false,     true,      true     },
     { IDC_CLOSE_TAB,               true,     true,      true,      false    },
     { IDC_CLOSE_WINDOW,            true,     true,      true,      false    },
@@ -361,11 +366,14 @@ TEST_F(BrowserCommandControllerFullscreenTest,
     { IDC_SELECT_PREVIOUS_TAB,     true,     true,      true,      false    },
     { IDC_EXIT,                    true,     true,      true,      true     },
     { IDC_SHOW_AS_TAB,             false,    false,     false,     false    },
+    { IDC_SHOW_SIGNIN,             true,     false,      true,      false   },
+    // clang-format on
   };
   const content::NativeWebKeyboardEvent key_event(
-      blink::WebInputEvent::kTypeFirst, 0, 0);
+      blink::WebInputEvent::kUndefined, 0,
+      blink::WebInputEvent::GetStaticTimeStampForTests());
   // Defaults for a tabbed browser.
-  for (size_t i = 0; i < arraysize(commands); i++) {
+  for (size_t i = 0; i < base::size(commands); i++) {
     SCOPED_TRACE(commands[i].command_id);
     EXPECT_EQ(chrome::IsCommandEnabled(browser(), commands[i].command_id),
               commands[i].enabled_in_tab);
@@ -382,7 +390,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   // By default, in fullscreen mode, the toolbar should be hidden; and all
   // platforms behave similarly.
   EXPECT_FALSE(window()->IsToolbarShowing());
-  for (size_t i = 0; i < arraysize(commands); i++) {
+  for (size_t i = 0; i < base::size(commands); i++) {
     SCOPED_TRACE(commands[i].command_id);
     EXPECT_EQ(chrome::IsCommandEnabled(browser(), commands[i].command_id),
               commands[i].enabled_in_fullscreen);
@@ -398,7 +406,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
       true);
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
       IDC_FULLSCREEN, key_event));
-  for (size_t i = 0; i < arraysize(commands); i++) {
+  for (size_t i = 0; i < base::size(commands); i++) {
     if (commands[i].command_id != IDC_FULLSCREEN) {
       SCOPED_TRACE(commands[i].command_id);
       EXPECT_EQ(browser()->command_controller()->IsReservedCommandOrKey(
@@ -416,7 +424,7 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   ASSERT_FALSE(browser()->window()->IsFullscreen());
   browser()->command_controller()->FullscreenStateChanged();
 
-  for (size_t i = 0; i < arraysize(commands); i++) {
+  for (size_t i = 0; i < base::size(commands); i++) {
     SCOPED_TRACE(commands[i].command_id);
     EXPECT_EQ(chrome::IsCommandEnabled(browser(), commands[i].command_id),
               commands[i].enabled_in_tab);
@@ -478,9 +486,9 @@ TEST_F(BrowserCommandControllerTest, IncognitoModeOnSigninAllowedPrefChange) {
   const CommandUpdater* command_updater = &command_controller;
 
   // Check that the SYNC_SETUP command is updated on preference change.
-  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_SIGNIN));
   profile1->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
-  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SIGNIN));
 }
 
 TEST_F(BrowserCommandControllerTest, OnSigninAllowedPrefChange) {
@@ -488,7 +496,7 @@ TEST_F(BrowserCommandControllerTest, OnSigninAllowedPrefChange) {
   const CommandUpdater* command_updater = &command_controller;
 
   // Check that the SYNC_SETUP command is updated on preference change.
-  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
+  EXPECT_TRUE(command_updater->IsCommandEnabled(IDC_SHOW_SIGNIN));
   profile()->GetPrefs()->SetBoolean(prefs::kSigninAllowed, false);
-  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SYNC_SETUP));
+  EXPECT_FALSE(command_updater->IsCommandEnabled(IDC_SHOW_SIGNIN));
 }

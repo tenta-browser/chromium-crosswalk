@@ -11,8 +11,8 @@
 #include "content/renderer/v8_value_converter_impl.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace content {
 
@@ -36,8 +36,10 @@ void DomAutomationController::Install(RenderFrame* render_frame,
     return;
 
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "domAutomationController"),
-              controller.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "domAutomationController"),
+            controller.ToV8())
+      .Check();
 }
 
 DomAutomationController::DomAutomationController(RenderFrame* render_frame)
@@ -72,8 +74,10 @@ void DomAutomationController::DidCreateScriptContext(
     return;
 
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "domAutomationController"),
-              controller.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "domAutomationController"),
+            controller.ToV8())
+      .Check();
 }
 
 bool DomAutomationController::SendMsg(const gin::Arguments& args) {

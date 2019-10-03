@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/animation/animation_curve.h"
 #include "cc/animation/animation_export.h"
@@ -20,10 +19,10 @@ class TimingFunction;
 // ScrollOffsetAnimationCurve computes scroll offset as a function of time
 // during a scroll offset animation.
 //
-// Scroll offset animations can run either in Blink or on a cc AnimationPlayer,
-// in response to user input or programmatic scroll operations.  For more
-// information about scheduling and servicing scroll animations, see
-// blink::ScrollAnimator and blink::ProgrammaticScrollAnimator.
+// Scroll offset animations can run either in Blink or in cc, in response to
+// user input or programmatic scroll operations.  For more information about
+// scheduling and servicing scroll animations, see blink::ScrollAnimator and
+// blink::ProgrammaticScrollAnimator.
 
 class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
  public:
@@ -36,7 +35,9 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
     // Duration inversely proportional to scroll delta within certain bounds.
     // Used for mouse wheels, makes fast wheel flings feel "snappy" while
     // preserving smoothness of slow wheel movements.
-    INVERSE_DELTA
+    INVERSE_DELTA,
+    // Constant velocity; used for autoscrolls.
+    CONSTANT_VELOCITY,
   };
   static std::unique_ptr<ScrollOffsetAnimationCurve> Create(
       const gfx::ScrollOffset& target_value,
@@ -45,12 +46,19 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
 
   static base::TimeDelta SegmentDuration(const gfx::Vector2dF& delta,
                                          DurationBehavior behavior,
-                                         base::TimeDelta delayed_by);
+                                         base::TimeDelta delayed_by,
+                                         float velocity);
 
+  ScrollOffsetAnimationCurve(const ScrollOffsetAnimationCurve&) = delete;
   ~ScrollOffsetAnimationCurve() override;
 
+  ScrollOffsetAnimationCurve& operator=(const ScrollOffsetAnimationCurve&) =
+      delete;
+
+  // Sets the initial offset and velocity (in pixels per second).
   void SetInitialValue(const gfx::ScrollOffset& initial_value,
-                       base::TimeDelta delayed_by = base::TimeDelta());
+                       base::TimeDelta delayed_by = base::TimeDelta(),
+                       float velocity = 0);
   bool HasSetInitialValue() const;
   gfx::ScrollOffset GetValue(base::TimeDelta t) const;
   gfx::ScrollOffset target_value() const { return target_value_; }
@@ -59,7 +67,7 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
   // relative to the start of the animation.  The duration is recomputed based
   // on the DurationBehavior the curve was constructed with.  The timing
   // function is an ease-in-out cubic bezier modified to preserve velocity at t.
-  void UpdateTarget(double t, const gfx::ScrollOffset& new_target);
+  void UpdateTarget(base::TimeDelta t, const gfx::ScrollOffset& new_target);
 
   // Shifts the entire curve by a delta without affecting its shape or timing.
   // Used for scroll anchoring adjustments that happen during scroll animations
@@ -72,6 +80,8 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
   std::unique_ptr<AnimationCurve> Clone() const override;
   std::unique_ptr<ScrollOffsetAnimationCurve>
   CloneToScrollOffsetAnimationCurve() const;
+
+  static void SetAnimationDurationForTesting(base::TimeDelta duration);
 
  private:
   ScrollOffsetAnimationCurve(const gfx::ScrollOffset& target_value,
@@ -90,7 +100,7 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationCurve : public AnimationCurve {
 
   bool has_set_initial_value_;
 
-  DISALLOW_COPY_AND_ASSIGN(ScrollOffsetAnimationCurve);
+  static base::Optional<double> animation_duration_for_testing_;
 };
 
 }  // namespace cc

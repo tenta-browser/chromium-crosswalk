@@ -48,29 +48,45 @@ class SystemLogUploader : public UploadJob::Delegate {
   static const int64_t kDefaultUploadDelayMs;
   static const int64_t kErrorUploadDelayMs;
 
-  // Http header constants to upload.
+  // Http header constants to upload non-zipped logs.
   static const char* const kNameFieldTemplate;
   static const char* const kFileTypeHeaderName;
   static const char* const kFileTypeLogFile;
   static const char* const kContentTypePlainText;
+
+  // Http header constants to upload zipped logs.
+  static const char* const kFileTypeZippedLogFile;
+  static const char* const kZippedLogsName;
+  static const char* const kZippedLogsFileName;
+  static const char* const kContentTypeOctetStream;
 
   // A delegate interface used by SystemLogUploader to read the system logs
   // from the disk and create an upload job.
   class Delegate {
    public:
     using LogUploadCallback =
-        base::Callback<void(std::unique_ptr<SystemLogs> system_logs)>;
+        base::OnceCallback<void(std::unique_ptr<SystemLogs> system_logs)>;
+
+    using ZippedLogUploadCallback =
+        base::OnceCallback<void(std::string zipped_system_logs)>;
 
     virtual ~Delegate() {}
 
+    // Returns current policy dump in JSON format.
+    virtual std::string GetPolicyAsJSON() = 0;
+
     // Loads system logs and invokes |upload_callback|.
-    virtual void LoadSystemLogs(const LogUploadCallback& upload_callback) = 0;
+    virtual void LoadSystemLogs(LogUploadCallback upload_callback) = 0;
 
     // Creates a new fully configured instance of an UploadJob. This method
     // will be called exactly once per every system log upload.
     virtual std::unique_ptr<UploadJob> CreateUploadJob(
         const GURL& upload_url,
         UploadJob::Delegate* delegate) = 0;
+
+    // Zips system logs in a single zip archive and invokes |upload_callback|.
+    virtual void ZipSystemLogs(std::unique_ptr<SystemLogs> system_logs,
+                               ZippedLogUploadCallback upload_callback) = 0;
   };
 
   // Constructor. Callers can inject their own Delegate. A nullptr can be passed
@@ -93,6 +109,8 @@ class SystemLogUploader : public UploadJob::Delegate {
   void OnSuccess() override;
   void OnFailure(UploadJob::ErrorCode error_code) override;
 
+  bool upload_enabled() const { return upload_enabled_; }
+
  private:
   // Updates the system log upload enabled field from settings.
   void RefreshUploadSettings();
@@ -101,8 +119,14 @@ class SystemLogUploader : public UploadJob::Delegate {
   void StartLogUpload();
 
   // The callback is invoked by the Delegate if system logs have been loaded
-  // from disk, uploads system logs.
+  // from disk, adds policy dump and calls UploadSystemLogs.
+  void OnSystemLogsLoaded(std::unique_ptr<SystemLogs> system_logs);
+
+  // Uploads system logs.
   void UploadSystemLogs(std::unique_ptr<SystemLogs> system_logs);
+
+  // Uploads zipped system logs.
+  void UploadZippedSystemLogs(std::string zipped_system_logs);
 
   // Helper method that figures out when the next system log upload should
   // be scheduled.

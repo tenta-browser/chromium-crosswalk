@@ -11,16 +11,15 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/stylus_state.h"
 
 namespace ash {
 
 TrayAction::TrayAction(BacklightsForcedOffSetter* backlights_forced_off_setter)
     : backlights_forced_off_setter_(backlights_forced_off_setter),
-      binding_(this),
       stylus_observer_(this) {
-  stylus_observer_.Add(ui::InputDeviceManager::GetInstance());
+  stylus_observer_.Add(ui::DeviceDataManager::GetInstance());
 }
 
 TrayAction::~TrayAction() = default;
@@ -34,7 +33,7 @@ void TrayAction::RemoveObserver(TrayActionObserver* observer) {
 }
 
 void TrayAction::BindRequest(mojom::TrayActionRequest request) {
-  binding_.Bind(std::move(request));
+  bindings_.AddBinding(this, std::move(request));
 }
 
 mojom::TrayActionState TrayAction::GetLockScreenNoteState() const {

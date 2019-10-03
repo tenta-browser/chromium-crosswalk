@@ -4,8 +4,8 @@
 
 #include "chrome/browser/chromeos/file_manager/select_file_dialog_util.h"
 
-#include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 namespace file_manager {
 namespace util {
@@ -19,6 +19,7 @@ base::string16 GetSelectFileDialogTitle(
       break;
 
     case ui::SelectFileDialog::SELECT_FOLDER:
+    case ui::SelectFileDialog::SELECT_EXISTING_FOLDER:
       title = l10n_util::GetStringUTF16(
           IDS_FILE_BROWSER_SELECT_FOLDER_TITLE);
       break;
@@ -42,9 +43,6 @@ base::string16 GetSelectFileDialogTitle(
       title = l10n_util::GetStringUTF16(
           IDS_FILE_BROWSER_SELECT_OPEN_MULTI_FILE_TITLE);
       break;
-
-    default:
-      NOTREACHED();
   }
 
   return title;

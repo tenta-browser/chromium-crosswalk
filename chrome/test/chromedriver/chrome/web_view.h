@@ -19,6 +19,7 @@ class TimeDelta;
 class Value;
 }
 
+class FrameTracker;
 struct Geoposition;
 class JavaScriptDialogManager;
 struct KeyEvent;
@@ -52,6 +53,12 @@ class WebView {
 
   // Reload the current page.
   virtual Status Reload(const Timeout* timeout) = 0;
+
+  // Freeze the current page.
+  virtual Status Freeze(const Timeout* timeout) = 0;
+
+  // Resume the current page.
+  virtual Status Resume(const Timeout* timeout) = 0;
 
   // Send a command to the DevTools debugger
   virtual Status SendCommand(const std::string& cmd,
@@ -109,6 +116,16 @@ class WebView {
       const base::ListValue& args,
       const base::TimeDelta& timeout,
       std::unique_ptr<base::Value>* result) = 0;
+
+  // Same as |CallFunction|, except |kJavaScriptError| or |kScriptTimeout| is
+  // used as the error code instead of |kUnknownError| in appropriate cases, and
+  // respects timeout.
+  // |result| will never be NULL on success.
+  virtual Status CallUserSyncScript(const std::string& frame,
+                                    const std::string& script,
+                                    const base::ListValue& args,
+                                    const base::TimeDelta& timeout,
+                                    std::unique_ptr<base::Value>* result) = 0;
 
   // Gets the frame ID for a frame element returned by invoking the given
   // JavaScript function. |frame| is a frame ID or an empty string for the main
@@ -176,15 +193,21 @@ class WebView {
   virtual Status OverrideNetworkConditions(
       const NetworkConditions& network_conditions) = 0;
 
+  // Overrides normal download directory with given path.
+  virtual Status OverrideDownloadDirectoryIfNeeded(
+      const std::string& download_directory) = 0;
+
   // Captures the visible portions of the web view as a base64-encoded PNG.
-  virtual Status CaptureScreenshot(std::string* screenshot) = 0;
+  virtual Status CaptureScreenshot(
+      std::string* screenshot,
+      const base::DictionaryValue& params) = 0;
 
   // Set files in a file input element.
   // |element| is the WebElement JSON Object of the input element.
-  virtual Status SetFileInputFiles(
-      const std::string& frame,
-      const base::DictionaryValue& element,
-      const std::vector<base::FilePath>& files) = 0;
+  virtual Status SetFileInputFiles(const std::string& frame,
+                                   const base::DictionaryValue& element,
+                                   const std::vector<base::FilePath>& files,
+                                   const bool append) = 0;
 
   // Take a heap snapshot which can build up a graph of Javascript objects.
   // A raw heap snapshot is in JSON format:
@@ -210,13 +233,13 @@ class WebView {
                                          int xoffset,
                                          int yoffset) = 0;
 
-  virtual Status SynthesizePinchGesture(int x, int y, double scale_factor) = 0;
+  virtual bool IsOOPIF(const std::string& frame_id) = 0;
 
-  virtual Status GetScreenOrientation(std::string* orientation) = 0;
+  virtual FrameTracker* GetFrameTracker() const = 0;
 
-  virtual Status SetScreenOrientation(std::string orientation) = 0;
+  virtual std::unique_ptr<base::Value> GetCastSinks() = 0;
 
-  virtual Status DeleteScreenOrientation() = 0;
+  virtual std::unique_ptr<base::Value> GetCastIssueMessage() = 0;
 };
 
 #endif  // CHROME_TEST_CHROMEDRIVER_CHROME_WEB_VIEW_H_

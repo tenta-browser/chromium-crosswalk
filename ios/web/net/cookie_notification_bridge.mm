@@ -8,8 +8,10 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/task/post_task.h"
 #import "ios/net/cookies/cookie_store_ios.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -25,7 +27,7 @@ CookieNotificationBridge::CookieNotificationBridge() {
               usingBlock:^(NSNotification* notification) {
                 OnNotificationReceived(notification);
               }];
-  observer_.reset(observer);
+  observer_ = observer;
 }
 
 CookieNotificationBridge::~CookieNotificationBridge() {
@@ -36,9 +38,9 @@ void CookieNotificationBridge::OnNotificationReceived(
     NSNotification* notification) {
   DCHECK([[notification name]
       isEqualToString:NSHTTPCookieManagerCookiesChangedNotification]);
-  web::WebThread::PostTask(
-      web::WebThread::IO, FROM_HERE,
-      base::Bind(&net::CookieStoreIOS::NotifySystemCookiesChanged));
+  base::PostTaskWithTraits(
+      FROM_HERE, {web::WebThread::IO},
+      base::BindOnce(&net::CookieStoreIOS::NotifySystemCookiesChanged));
 }
 
 }  // namespace web

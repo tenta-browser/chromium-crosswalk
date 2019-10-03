@@ -15,8 +15,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import android.content.Context;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -26,18 +24,17 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.ContextUtils;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
+import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.components.background_task_scheduler.BackgroundTaskScheduler;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskInfo;
 import org.chromium.components.background_task_scheduler.TaskInfo.NetworkType;
 import org.chromium.components.offline_items_collection.ContentId;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -47,11 +44,9 @@ import java.util.concurrent.TimeUnit;
  * {@link BackgroundTaskScheduler} based on the parameters stored about currently running downloads
  * in the persistence layer exposed by {@link DownloadSharedPreferenceHelper}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class DownloadResumptionSchedulerTest {
-    Context mContext;
-
     @Mock
     private BackgroundTaskScheduler mScheduler;
 
@@ -60,8 +55,8 @@ public class DownloadResumptionSchedulerTest {
 
     @Before
     public void setUp() {
-        mContext = RuntimeEnvironment.application;
-        ContextUtils.initApplicationContextForTests(mContext);
+        ChromePreferenceManager.getInstance().writeBoolean(
+                ChromePreferenceManager.DOWNLOAD_AUTO_RESUMPTION_IN_NATIVE_KEY, false);
         BackgroundTaskSchedulerFactory.setSchedulerForTesting(mScheduler);
     }
 
@@ -73,7 +68,7 @@ public class DownloadResumptionSchedulerTest {
     @Test
     @Feature({"Download"})
     public void testCancelRequest() {
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).cancel();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().cancel();
 
         verify(mScheduler, never()).schedule(any(), any());
         verify(mScheduler, times(1)).cancel(any(), eq(TaskIds.DOWNLOAD_RESUMPTION_JOB_ID));
@@ -82,7 +77,7 @@ public class DownloadResumptionSchedulerTest {
     @Test
     @Feature({"Download"})
     public void testScheduleRequestWithNoDownloads() {
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         verify(mScheduler, never()).schedule(any(), any());
         verify(mScheduler, times(1)).cancel(any(), eq(TaskIds.DOWNLOAD_RESUMPTION_JOB_ID));
@@ -95,7 +90,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(false /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         verify(mScheduler, never()).schedule(any(), any());
         verify(mScheduler, times(1)).cancel(any(), eq(TaskIds.DOWNLOAD_RESUMPTION_JOB_ID));
@@ -108,7 +103,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(true /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -124,7 +119,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(true /* isAutoResumable */, true /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -141,7 +136,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(true /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -158,7 +153,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(false /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -175,7 +170,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(false /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -193,7 +188,7 @@ public class DownloadResumptionSchedulerTest {
                 buildEntry(true /* isAutoResumable */, false /* meteredOk */),
         });
 
-        DownloadResumptionScheduler.getDownloadResumptionScheduler(mContext).scheduleIfNecessary();
+        DownloadResumptionScheduler.getDownloadResumptionScheduler().scheduleIfNecessary();
 
         ArgumentCaptor<TaskInfo> taskCaptor = ArgumentCaptor.forClass(TaskInfo.class);
         verify(mScheduler, times(1)).schedule(any(), taskCaptor.capture());
@@ -206,7 +201,7 @@ public class DownloadResumptionSchedulerTest {
     private static void assertTaskIsDownloadResumptionTask(TaskInfo task, boolean meteredOk) {
         @NetworkType
         int expectedNetworkType =
-                meteredOk ? TaskInfo.NETWORK_TYPE_ANY : TaskInfo.NETWORK_TYPE_UNMETERED;
+                meteredOk ? TaskInfo.NetworkType.ANY : TaskInfo.NetworkType.UNMETERED;
 
         assertNotNull(task);
         assertEquals(TaskIds.DOWNLOAD_RESUMPTION_JOB_ID, task.getTaskId());

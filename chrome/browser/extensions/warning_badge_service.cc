@@ -6,8 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/warning_badge_service_factory.h"
@@ -140,9 +141,8 @@ void WarningBadgeService::ExtensionWarningsChanged(
 void WarningBadgeService::UpdateBadgeStatus() {
   const std::set<Warning>& warnings = GetCurrentWarnings();
   bool non_suppressed_warnings_exist = false;
-  for (std::set<Warning>::const_iterator i = warnings.begin();
-       i != warnings.end(); ++i) {
-    if (!base::ContainsKey(suppressed_warnings_, *i)) {
+  for (auto i = warnings.begin(); i != warnings.end(); ++i) {
+    if (!base::Contains(suppressed_warnings_, *i)) {
       non_suppressed_warnings_exist = true;
       break;
     }
@@ -160,7 +160,7 @@ void WarningBadgeService::ShowBadge(bool show) {
   if (error && !show)
     service->RemoveGlobalError(error);
   else if (!error && show)
-    service->AddGlobalError(base::MakeUnique<ErrorBadge>(this));
+    service->AddGlobalError(std::make_unique<ErrorBadge>(this));
 }
 
 }  // namespace extensions

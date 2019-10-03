@@ -15,19 +15,23 @@ struct VectorIcon;
 }
 
 // Used for UMA to record the types of permission prompts shown.
-// This corresponds to the PermissionRequestType enum in
-// src/tools/metrics/histograms.xml. The usual rules of updating UMA values
-// applies to this enum:
+// When updating, you also need to update:
+//   1) The PermissionRequestType enum in tools/metrics/histograms/enums.xml.
+//   2) The PermissionRequestTypes suffix list in
+//      tools/metrics/histograms/histograms.xml.
+//   3) GetPermissionRequestString in
+//      chrome/browser/permissions/permission_uma_util.cc.
+//
+// The usual rules of updating UMA values applies to this enum:
 // - don't remove values
 // - only ever add values at the end
-// - keep the PermissionRequestType enum in sync with this definition.
 enum class PermissionRequestType {
   UNKNOWN = 0,
   MULTIPLE = 1,
-  UNUSED_PERMISSION = 2,
+  // UNUSED_PERMISSION = 2,
   QUOTA = 3,
   DOWNLOAD = 4,
-  MEDIA_STREAM = 5,
+  // MEDIA_STREAM = 5,
   REGISTER_PROTOCOL_HANDLER = 6,
   PERMISSION_GEOLOCATION = 7,
   PERMISSION_MIDI_SYSEX = 8,
@@ -39,6 +43,8 @@ enum class PermissionRequestType {
   PERMISSION_MEDIASTREAM_CAMERA = 14,
   PERMISSION_ACCESSIBILITY_EVENTS = 15,
   PERMISSION_CLIPBOARD_READ = 16,
+  PERMISSION_SECURITY_KEY_ATTESTATION = 17,
+  PERMISSION_PAYMENT_HANDLER = 18,
   // NUM must be the last value in the enum.
   NUM
 };
@@ -79,15 +85,18 @@ class PermissionRequest {
   virtual IconId GetIconId() const = 0;
 
 #if defined(OS_ANDROID)
+  // Returns the title of this permission as text. This is currently only used
+  // in touchless mode in Android.
+  virtual base::string16 GetTitleText() const = 0;
+
   // Returns the full prompt text for this permission. This is currently only
   // used on Android.
   virtual base::string16 GetMessageText() const = 0;
 #endif
 
-  // Returns the shortened prompt text for this permission.  Must be phrased
-  // as a heading, e.g. "Location", or "Camera". The permission bubble may
-  // coalesce different requests, and if it does, this text will be displayed
-  // next to an image and indicate the user grants the permission.
+  // Returns the shortened prompt text for this permission. The permission
+  // bubble may coalesce different requests, and if it does, this text will
+  // be displayed next to an image and indicate the user grants the permission.
   virtual base::string16 GetMessageTextFragment() const = 0;
 
   // Get the origin on whose behalf this permission request is being made.

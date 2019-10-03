@@ -6,6 +6,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/policy_handlers.h"
 #include "components/policy/core/browser/policy_error_map.h"
@@ -16,6 +17,10 @@
 #include "components/prefs/pref_value_map.h"
 #include "extensions/browser/pref_names.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_WIN)
+#include "base/win/win_util.h"
+#endif
 
 namespace extensions {
 
@@ -91,15 +96,14 @@ TEST(ExtensionListPolicyHandlerTest, CheckPolicySettings) {
 }
 
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettingsURL) {
-  std::vector<std::string> good_urls = {
-      "*://*.example.com", "*://example.com", "http://cat.example.com",
-      "https://example.*", "*://*.example.*", "<all_urls>"};
+  std::vector<std::string> good_urls = {"*://*.example.com", "*://example.com",
+                                        "http://cat.example.com", "<all_urls>"};
 
   // Invalid URLPattern or with a non-standard path
   std::vector<std::string> bad_urls = {
       "://*.example.com",       "*://example.com/cat*",  "*://example.com/",
       "*://*.example.com/*cat", "*://example.com/cat/*", "bad",
-      "*://example.com/*"};
+      "*://example.com/*",      "https://example.*",     "*://*.example.*"};
 
   // Crafts and parses a ExtensionSettings policy to test URL parsing.
   auto url_parses_successfully = [](const char* policy_template,
@@ -107,7 +111,7 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettingsURL) {
     std::string policy = base::StringPrintf(policy_template, url.c_str());
     std::string error;
     std::unique_ptr<base::Value> policy_value =
-        base::JSONReader::ReadAndReturnError(
+        base::JSONReader::ReadAndReturnErrorDeprecated(
             policy, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS,
             nullptr, &error);
     if (!policy_value)
@@ -172,6 +176,7 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   policy::PolicyErrorMap errors;
   ExtensionInstallForcelistPolicyHandler handler;
 
+  // Start with an empty policy.
   policy_map.Set(policy::key::kExtensionInstallForcelist,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                  policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
@@ -179,6 +184,7 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
+  // Add a correct entry. No errors should be generated.
   list.AppendString("abcdefghijklmnopabcdefghijklmnop;http://example.com");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
@@ -206,14 +212,14 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_EQ(2U, errors.size());
 
-  // Just an extension ID should also generate an error.
+  // Just an extension ID should be accepted.
   list.AppendString("abcdefghijklmnopabcdefghijklmnop");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                  policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
-  EXPECT_EQ(3U, errors.size());
+  EXPECT_EQ(2U, errors.size());
 }
 
 TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
@@ -224,10 +230,12 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
   base::Value* value = NULL;
   ExtensionInstallForcelistPolicyHandler handler;
 
+  // Start with the policy being missing. This shouldn't affect the pref.
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_FALSE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_FALSE(value);
 
+  // Set the policy to an empty value. This shouldn't affect the pref.
   policy_map.Set(policy::key::kExtensionInstallForcelist,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
@@ -235,6 +243,8 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_EQ(expected, *value);
 
+  // Add a correct entry to the policy. The pref should contain a corresponding
+  // entry.
   policy.AppendString("abcdefghijklmnopabcdefghijklmnop;http://example.com");
   extensions::ExternalPolicyLoader::AddExtension(
       &expected, "abcdefghijklmnopabcdefghijklmnop", "http://example.com");
@@ -245,6 +255,23 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_EQ(expected, *value);
 
+  // Add a correct entry with an omitted update URL. The pref should contain now
+  // two entries, with the default update URL substituted for the new entry.
+  // Note: the URL hardcoded below is part of the public policy contract (as
+  // documented in the policy_templates.json file), and therefore any changes to
+  // it must be carefully thought out.
+  policy.AppendString("bcdefghijklmnopabcdefghijklmnopa");
+  extensions::ExternalPolicyLoader::AddExtension(
+      &expected, "bcdefghijklmnopabcdefghijklmnopa",
+      "https://clients2.google.com/service/update2/crx");
+  policy_map.Set(policy::key::kExtensionInstallForcelist,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
+  handler.ApplyPolicySettings(policy_map, &prefs);
+  EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
+  EXPECT_EQ(expected, *value);
+
+  // Add an invalid entry. The pref should still contain two previous entries.
   policy.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
@@ -325,7 +352,7 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   std::string error;
   std::unique_ptr<base::Value> policy_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           kTestManagementPolicy1,
           base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
@@ -345,9 +372,14 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
 }
 
 TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
+// Mark as enterprise managed.
+#if defined(OS_WIN)
+  base::win::ScopedDomainStateForTesting scoped_domain(true);
+#endif
+
   std::string error;
   std::unique_ptr<base::Value> policy_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           kTestManagementPolicy2,
           base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
@@ -369,5 +401,35 @@ TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
   ASSERT_TRUE(prefs.GetValue(pref_names::kExtensionManagement, &value));
   EXPECT_EQ(*policy_value, *value);
 }
+
+// Only enterprise managed machines can auto install extensions from a location
+// other than the webstore https://crbug.com/809004.
+#if defined(OS_WIN)
+TEST(ExtensionSettingsPolicyHandlerTest, NonManagedOffWebstoreExtension) {
+  // Mark as not enterprise managed.
+  base::win::ScopedDomainStateForTesting scoped_domain(false);
+
+  std::string error;
+  std::unique_ptr<base::Value> policy_value =
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          kTestManagementPolicy2,
+          base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
+  ASSERT_TRUE(policy_value.get()) << error;
+
+  policy::Schema chrome_schema =
+      policy::Schema::Wrap(policy::GetChromeSchemaData());
+  policy::PolicyMap policy_map;
+  policy::PolicyErrorMap errors;
+  PrefValueMap prefs;
+  ExtensionSettingsPolicyHandler handler(chrome_schema);
+
+  policy_map.Set(policy::key::kExtensionSettings,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy_value->CreateDeepCopy(),
+                 nullptr);
+  EXPECT_FALSE(handler.CheckPolicySettings(policy_map, &errors));
+  EXPECT_FALSE(errors.empty());
+}
+#endif
 
 }  // namespace extensions

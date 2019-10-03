@@ -9,9 +9,10 @@
 
 #include <list>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -82,9 +83,9 @@ class DedupingFactory {
   // Cache of previous prototypes in most-recently-used order. Most recently
   // used objects are at the end.
   typedef std::list<scoped_refptr<const BaseClassT> > PrototypeList;
-  typedef base::hash_map<InstanceType, PrototypeList> ExistingPrototypes;
-  typedef base::hash_map<InstanceType, FactoryMethod> FactoryMethods;
-  typedef base::hash_set<InstanceType> ParameterizedTypes;
+  typedef std::unordered_map<InstanceType, PrototypeList> ExistingPrototypes;
+  typedef std::unordered_map<InstanceType, FactoryMethod> FactoryMethods;
+  typedef std::unordered_set<InstanceType> ParameterizedTypes;
 
   const size_t max_number_prototypes_;
   ExistingPrototypes prototypes_;
@@ -106,7 +107,7 @@ void DedupingFactory<BaseClassT>::RegisterFactoryMethod(
     const std::string& instance_type,
     typename DedupingFactory<BaseClassT>::Parameterized parameterized,
     FactoryMethod factory_method) {
-  DCHECK(!base::ContainsKey(factory_methods_, instance_type));
+  DCHECK(!base::Contains(factory_methods_, instance_type));
   factory_methods_[instance_type] = factory_method;
   if (parameterized == IS_PARAMETERIZED)
     parameterized_types_.insert(instance_type);
@@ -133,7 +134,7 @@ scoped_refptr<const BaseClassT> DedupingFactory<BaseClassT>::Instantiate(
   // We can take a shortcut for objects that are not parameterized. For those
   // only a single instance may ever exist so we can simplify the creation
   // logic.
-  if (!base::ContainsKey(parameterized_types_, instance_type)) {
+  if (!base::Contains(parameterized_types_, instance_type)) {
     if (prototypes.empty()) {
       scoped_refptr<const BaseClassT> new_object =
           (*factory_method)(instance_type, value, error, bad_message);

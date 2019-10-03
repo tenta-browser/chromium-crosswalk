@@ -6,13 +6,10 @@
 #define UI_VIEWS_FOCUS_WIDGET_FOCUS_MANAGER_H_
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "base/observer_list.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
-
-namespace base {
-template <typename T> struct DefaultSingletonTraits;
-}
 
 namespace views {
 
@@ -26,13 +23,15 @@ class WidgetFocusChangeListener {
   virtual void OnNativeFocusChanged(gfx::NativeView focused_now) = 0;
 
  protected:
-  virtual ~WidgetFocusChangeListener() {}
+  virtual ~WidgetFocusChangeListener() = default;
 };
 
 class VIEWS_EXPORT WidgetFocusManager {
  public:
   // Returns the singleton instance.
   static WidgetFocusManager* GetInstance();
+
+  ~WidgetFocusManager();
 
   // Adds/removes a WidgetFocusChangeListener |listener| to the set of
   // active listeners.
@@ -50,14 +49,15 @@ class VIEWS_EXPORT WidgetFocusManager {
   void DisableNotifications() { enabled_ = false; }
 
  private:
-  friend struct base::DefaultSingletonTraits<WidgetFocusManager>;
+  class Owner;
+  friend class base::NoDestructor<WidgetFocusManager>;
 
   WidgetFocusManager();
-  ~WidgetFocusManager();
 
-  base::ObserverList<WidgetFocusChangeListener> focus_change_listeners_;
+  base::ObserverList<WidgetFocusChangeListener>::Unchecked
+      focus_change_listeners_;
 
-  bool enabled_;
+  bool enabled_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(WidgetFocusManager);
 };

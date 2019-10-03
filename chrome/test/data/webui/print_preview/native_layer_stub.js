@@ -4,11 +4,12 @@
 
 cr.define('print_preview', function() {
   /**
-  * Test version of the native layer.
-  */
+   * Test version of the native layer.
+   */
   class NativeLayerStub extends TestBrowserProxy {
     constructor() {
       super([
+        'dialogClose',
         'getInitialSettings',
         'getPrinters',
         'getPreview',
@@ -17,6 +18,8 @@ cr.define('print_preview', function() {
         'print',
         'saveAppState',
         'setupPrinter',
+        'showSystemDialog',
+        'signIn',
       ]);
 
       /**
@@ -25,12 +28,20 @@ cr.define('print_preview', function() {
        */
       this.initialSettings_ = null;
 
+      /** @private {?Array<string>} Accounts to be sent on signIn(). */
+      this.accounts_ = null;
+
       /**
-       *
        * @private {!Array<!print_preview.LocalDestinationInfo>} Local
        *     destination list to be used for the response to |getPrinters|.
        */
       this.localDestinationInfos_ = [];
+
+      /**
+       * @private {!Array<!print_preview.ProvisionalDestinationInfo>} Local
+       *     destination list to be used for the response to |getPrinters|.
+       */
+      this.extensionDestinationInfos_ = [];
 
       /**
        * @private {!Map<string,
@@ -56,6 +67,22 @@ cr.define('print_preview', function() {
        * @private {string} The ID of a printer with a bad driver.
        */
       this.badPrinterId_ = '';
+
+      /** @private {number} The number of total pages in the document. */
+      this.pageCount_ = 1;
+
+      /** @private {?print_preview.PageLayoutInfo} Page layout information */
+      this.pageLayoutInfo_ = null;
+    }
+
+    /** @param {number} pageCount The number of pages in the document. */
+    setPageCount(pageCount) {
+      this.pageCount_ = pageCount;
+    }
+
+    /** @override */
+    dialogClose(isCancel) {
+      this.methodCalled('dialogClose', isCancel);
     }
 
     /** @override */
@@ -67,31 +94,38 @@ cr.define('print_preview', function() {
     /** @override */
     getPrinters(type) {
       this.methodCalled('getPrinters', type);
-      cr.webUIListenerCallback(
-          'printers-added', type, this.localDestinationInfos_);
+      if (type == print_preview.PrinterType.LOCAL_PRINTER &&
+          this.localDestinationInfos_.length > 0) {
+        cr.webUIListenerCallback(
+            'printers-added', type, this.localDestinationInfos_);
+      } else if (
+          type == print_preview.PrinterType.EXTENSION_PRINTER &&
+          this.extensionDestinationInfos_.length > 0) {
+        cr.webUIListenerCallback(
+            'printers-added', type, this.extensionDestinationInfos_);
+      }
       return Promise.resolve();
     }
 
     /** @override */
-    getPreview(
-        destination, printTicketStore, documentInfo, generateDraft, requestId) {
-      this.methodCalled('getPreview', {
-        destination: destination,
-        printTicketStore: printTicketStore,
-        documentInfo: documentInfo,
-        generateDraft: generateDraft,
-        requestId: requestId,
-      });
-      if (destination.id == this.badPrinterId_) {
-        let rejectString = print_preview.PreviewArea.EventType.SETTINGS_INVALID;
-        rejectString = rejectString.substring(
-            rejectString.lastIndexOf('.') + 1, rejectString.length);
-        return Promise.reject(rejectString);
+    getPreview(printTicket) {
+      this.methodCalled('getPreview', {printTicket: printTicket});
+      const printTicketParsed = JSON.parse(printTicket);
+      if (printTicketParsed.deviceName == this.badPrinterId_) {
+        return Promise.reject('SETTINGS_INVALID');
       }
-      const pageRanges = printTicketStore.pageRange.getDocumentPageRanges();
+      const pageRanges = printTicketParsed.pageRange;
+      const requestId = printTicketParsed.requestID;
+      if (this.pageLayoutInfo_) {
+        cr.webUIListenerCallback(
+            'page-layout-ready', this.pageLayoutInfo_, false);
+      }
       if (pageRanges.length == 0) {  // assume full length document, 1 page.
-        cr.webUIListenerCallback('page-count-ready', 1, requestId, 100);
-        cr.webUIListenerCallback('page-preview-ready', 0, 0, requestId);
+        cr.webUIListenerCallback(
+            'page-count-ready', this.pageCount_, requestId, 100);
+        for (let i = 0; i < this.pageCount_; i++) {
+          cr.webUIListenerCallback('page-preview-ready', i, 0, requestId);
+        }
       } else {
         const pages = pageRanges.reduce(function(soFar, range) {
           for (let page = range.from; page <= range.to; page++) {
@@ -100,7 +134,7 @@ cr.define('print_preview', function() {
           return soFar;
         }, []);
         cr.webUIListenerCallback(
-            'page-count-ready', pages.length, requestId, 100);
+            'page-count-ready', this.pageCount_, requestId, 100);
         pages.forEach(function(page) {
           cr.webUIListenerCallback(
               'page-preview-ready', page - 1, 0, requestId);
@@ -117,25 +151,28 @@ cr.define('print_preview', function() {
 
     /** @override */
     getPrinterCapabilities(printerId, type) {
-      this.methodCalled('getPrinterCapabilities', printerId, type);
-      return this.localDestinationCapabilities_.get(printerId);
+      this.methodCalled(
+          'getPrinterCapabilities',
+          {destinationId: printerId, printerType: type});
+      if (printerId == print_preview.Destination.GooglePromotedId.SAVE_AS_PDF) {
+        return Promise.resolve({
+          deviceName: 'Save as PDF',
+          capabilities: print_preview_test_utils.getPdfPrinter(),
+        });
+      }
+      if (type != print_preview.PrinterType.LOCAL_PRINTER) {
+        return Promise.reject();
+      }
+      return this.localDestinationCapabilities_.get(printerId) ||
+          Promise.reject();
     }
 
     /** @override */
-    print(
-      destination,
-      printTicketStore,
-      documentInfo,
-      opt_isOpenPdfInPreview,
-      opt_showSystemDialog
-    ) {
-      this.methodCalled('print', {
-        destination: destination,
-        printTicketStore: printTicketStore,
-        documentInfo: documentInfo,
-        openPdfInPreview: opt_isOpenPdfInPreview || false,
-        showSystemDialog: opt_showSystemDialog || false,
-      });
+    print(printTicket) {
+      this.methodCalled('print', printTicket);
+      if (JSON.parse(printTicket).printWithCloudPrint) {
+        return Promise.resolve('sample data');
+      }
       return Promise.resolve();
     }
 
@@ -153,6 +190,11 @@ cr.define('print_preview', function() {
     }
 
     /** @override */
+    showSystemDialog() {
+      this.methodCalled('showSystemDialog');
+    }
+
+    /** @override */
     recordAction() {}
 
     /** @override */
@@ -161,6 +203,26 @@ cr.define('print_preview', function() {
     /** @override */
     saveAppState(appState) {
       this.methodCalled('saveAppState', appState);
+    }
+
+    /** @override */
+    signIn(addAccount) {
+      this.methodCalled('signIn', addAccount);
+      const accounts = this.accounts_ || ['foo@chromium.org'];
+      if (!this.accounts_ && addAccount) {
+        accounts.push('bar@chromium.org');
+      }
+      if (accounts.length > 0) {
+        cr.webUIListenerCallback('user-accounts-updated', accounts);
+      }
+    }
+
+    /**
+     * @param {!Array<string>} accounts The accounts to send when signIn is
+     * called.
+     */
+    setSignIn(accounts) {
+      this.accounts_ = accounts;
     }
 
     /**
@@ -180,24 +242,35 @@ cr.define('print_preview', function() {
     }
 
     /**
+     * @param {!Array<!print_preview.ProvisionalDestinationInfo>}
+     *     extensionDestinations The extension destinations to return as a
+     *     response to |getPrinters|.
+     */
+    setExtensionDestinations(extensionDestinations) {
+      this.extensionDestinationInfos_ = extensionDestinations;
+    }
+
+    /**
      * @param {!print_preview.CapabilitiesResponse} response The
      *     response to send for the destination whose ID is in the response.
-     * @param {boolean?} opt_reject Whether to reject the callback for this
+     * @param {?boolean} opt_reject Whether to reject the callback for this
      *     destination. Defaults to false (will resolve callback) if not
      *     provided.
      */
     setLocalDestinationCapabilities(response, opt_reject) {
-      this.localDestinationCapabilities_.set(response.printer.deviceName,
+      this.localDestinationCapabilities_.set(
+          response.printer.deviceName,
           opt_reject ? Promise.reject() : Promise.resolve(response));
     }
 
     /**
-     * @param {boolean} reject Whether printSetup requests should be rejected.
      * @param {!print_preview.PrinterSetupResponse} The response to send when
      *     |setupPrinter| is called.
+     * @param {?boolean} opt_reject Whether printSetup requests should be
+     *     rejected. Defaults to false (will resolve callback) if not provided.
      */
-    setSetupPrinterResponse(reject, response) {
-      this.shouldRejectPrinterSetup_ = reject;
+    setSetupPrinterResponse(response, opt_reject) {
+      this.shouldRejectPrinterSetup_ = opt_reject || false;
       this.setupPrinterResponse_ = response;
     }
 
@@ -208,6 +281,11 @@ cr.define('print_preview', function() {
      */
     setInvalidPrinterId(id) {
       this.badPrinterId_ = id;
+    }
+
+    /** @param {!print_preview.PageLayoutInfo} pageLayoutInfo */
+    setPageLayoutInfo(pageLayoutInfo) {
+      this.pageLayoutInfo_ = pageLayoutInfo;
     }
   }
 

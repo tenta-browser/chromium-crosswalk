@@ -9,7 +9,7 @@ import android.graphics.Bitmap;
 import android.text.TextUtils;
 
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.content_public.common.MediaMetadata;
+import org.chromium.services.media_session.MediaMetadata;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -295,6 +295,7 @@ public class MediaNotificationInfo {
     }
 
     @Override
+    @SuppressWarnings("ReferenceEquality")
     public boolean equals(Object obj) {
         if (obj == this) return true;
         if (!(obj instanceof MediaNotificationInfo)) return false;

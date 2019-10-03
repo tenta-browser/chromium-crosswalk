@@ -6,36 +6,42 @@
 
 #include <string>
 
+#include "apps/browser_context_keyed_service_factories.h"
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/memory/ref_counted.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "components/prefs/pref_service.h"
+#include "components/sessions/core/session_id_generator.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/update_client/update_query_params.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/context_factory.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/system_connector.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
 #include "extensions/browser/browser_context_keyed_service_factories.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/updater/update_service.h"
 #include "extensions/common/constants.h"
+#include "extensions/shell/browser/desktop_controller.h"
 #include "extensions/shell/browser/shell_browser_context.h"
 #include "extensions/shell/browser/shell_browser_context_keyed_service_factories.h"
 #include "extensions/shell/browser/shell_browser_main_delegate.h"
-#include "extensions/shell/browser/shell_desktop_controller_aura.h"
-#include "extensions/shell/browser/shell_device_client.h"
 #include "extensions/shell/browser/shell_extension_system.h"
 #include "extensions/shell/browser/shell_extension_system_factory.h"
 #include "extensions/shell/browser/shell_extensions_browser_client.h"
-#include "extensions/shell/browser/shell_oauth2_token_service.h"
 #include "extensions/shell/browser/shell_prefs.h"
 #include "extensions/shell/browser/shell_update_query_params_delegate.h"
 #include "extensions/shell/common/shell_extensions_client.h"
 #include "extensions/shell/common/switches.h"
-#include "ui/base/ime/input_method_initializer.h"
+#include "ui/base/ime/init/input_method_initializer.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(USE_AURA)
@@ -57,13 +63,11 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #elif defined(OS_LINUX)
-#include "device/bluetooth/dbus/dbus_thread_manager_linux.h"
-#endif
-
-#if defined(OS_MACOSX)
-#include "extensions/shell/browser/shell_browser_main_parts_mac.h"
+#include "device/bluetooth/dbus/bluez_dbus_thread_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_NACL)
@@ -74,7 +78,7 @@
 #endif
 
 #if defined(USE_AURA) && defined(USE_X11)
-#include "ui/events/devices/x11/touch_factory_x11.h"
+#include "ui/events/devices/x11/touch_factory_x11.h"  // nogncheck
 #endif
 
 using base::CommandLine;
@@ -85,6 +89,16 @@ using content::BrowserThread;
 #endif
 
 namespace extensions {
+
+namespace {
+
+// Intentionally dereferences a null pointer to test the crash reporter.
+void CrashForTest() {
+  int* bad_pointer = nullptr;
+  *bad_pointer = 0;
+}
+
+}  // namespace
 
 ShellBrowserMainParts::ShellBrowserMainParts(
     const content::MainFunctionParams& parameters,
@@ -102,9 +116,6 @@ void ShellBrowserMainParts::PreMainMessageLoopStart() {
 #if defined(USE_AURA) && defined(USE_X11)
   ui::TouchFactory::SetTouchDeviceListFromCommandLine();
 #endif
-#if defined(OS_MACOSX)
-  MainPartsPreMainMessageLoopStartMac();
-#endif
 }
 
 void ShellBrowserMainParts::PostMainMessageLoopStart() {
@@ -113,11 +124,18 @@ void ShellBrowserMainParts::PostMainMessageLoopStart() {
   // helper classes so those classes' tests can initialize stub versions of the
   // D-Bus objects.
   chromeos::DBusThreadManager::Initialize();
-  chromeos::disks::DiskMountManager::Initialize();
+  dbus::Bus* bus = chromeos::DBusThreadManager::Get()->GetSystemBus();
+  if (bus) {
+    bluez::BluezDBusManager::Initialize(bus);
+    chromeos::CrasAudioClient::Initialize(bus);
+    chromeos::PowerManagerClient::Initialize(bus);
+  } else {
+    bluez::BluezDBusManager::InitializeFake();
+    chromeos::CrasAudioClient::InitializeFake();
+    chromeos::PowerManagerClient::InitializeFake();
+  }
 
-  bluez::BluezDBusManager::Initialize(
-      chromeos::DBusThreadManager::Get()->GetSystemBus(),
-      chromeos::DBusThreadManager::Get()->IsUsingFakes());
+  chromeos::disks::DiskMountManager::Initialize();
 
   chromeos::NetworkHandler::Initialize();
   network_controller_.reset(new ShellNetworkController(
@@ -134,16 +152,14 @@ void ShellBrowserMainParts::PostMainMessageLoopStart() {
   // TODO(michaelpg): Verify this works for target environments.
   ui::InitializeInputMethodForTesting();
 
-  bluez::DBusThreadManagerLinux::Initialize();
-  bluez::BluezDBusManager::Initialize(
-      bluez::DBusThreadManagerLinux::Get()->GetSystemBus(),
-      /*use_dbus_fakes=*/false);
+  bluez::BluezDBusManager::Initialize(nullptr /* system_bus */);
 #else
   ui::InitializeInputMethodForTesting();
 #endif
 }
 
-void ShellBrowserMainParts::PreEarlyInitialization() {
+int ShellBrowserMainParts::PreEarlyInitialization() {
+  return service_manager::RESULT_CODE_NORMAL_EXIT;
 }
 
 int ShellBrowserMainParts::PreCreateThreads() {
@@ -157,20 +173,41 @@ int ShellBrowserMainParts::PreCreateThreads() {
 }
 
 void ShellBrowserMainParts::PreMainMessageLoopRun() {
+  extensions_client_ = std::make_unique<ShellExtensionsClient>();
+  ExtensionsClient::Set(extensions_client_.get());
+
+  // BrowserContextKeyedAPIServiceFactories require an ExtensionsBrowserClient.
+  extensions_browser_client_ = std::make_unique<ShellExtensionsBrowserClient>();
+  ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+
+  apps::EnsureBrowserContextKeyedServiceFactoriesBuilt();
+  EnsureBrowserContextKeyedServiceFactoriesBuilt();
+  shell::EnsureBrowserContextKeyedServiceFactoriesBuilt();
+
   // Initialize our "profile" equivalent.
-  browser_context_.reset(new ShellBrowserContext(this));
+  browser_context_ = std::make_unique<ShellBrowserContext>();
 
   // app_shell only supports a single user, so all preferences live in the user
   // data directory, including the device-wide local state.
   local_state_ = shell_prefs::CreateLocalState(browser_context_->GetPath());
+  sessions::SessionIdGenerator::GetInstance()->Init(local_state_.get());
   user_pref_service_ =
       shell_prefs::CreateUserPrefService(browser_context_.get());
+  extensions_browser_client_->InitWithBrowserContext(browser_context_.get(),
+                                                     user_pref_service_.get());
 
 #if defined(OS_CHROMEOS)
   chromeos::CrasAudioHandler::Initialize(
-      new chromeos::AudioDevicesPrefHandlerImpl(local_state_.get()));
+      content::GetSystemConnector(),
+      base::MakeRefCounted<chromeos::AudioDevicesPrefHandlerImpl>(
+          local_state_.get()));
   audio_controller_.reset(new ShellAudioController());
 #endif
+
+  // Create BrowserContextKeyedServices now that we have an
+  // ExtensionsBrowserClient that BrowserContextKeyedAPIServices can query.
+  BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(
+      browser_context_.get());
 
 #if defined(USE_AURA)
   aura::Env::GetInstance()->set_context_factory(content::GetContextFactory());
@@ -178,45 +215,19 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
       content::GetContextFactoryPrivate());
 #endif
 
-  storage_monitor::StorageMonitor::Create();
+  storage_monitor::StorageMonitor::Create(
+      content::GetSystemConnector()->Clone());
 
   desktop_controller_.reset(
       browser_main_delegate_->CreateDesktopController(browser_context_.get()));
 
   // TODO(jamescook): Initialize user_manager::UserManager.
 
-  device_client_.reset(new ShellDeviceClient);
-
-  extensions_client_.reset(CreateExtensionsClient());
-  ExtensionsClient::Set(extensions_client_.get());
-
-  extensions_browser_client_.reset(CreateExtensionsBrowserClient(
-      browser_context_.get(), user_pref_service_.get()));
-  ExtensionsBrowserClient::Set(extensions_browser_client_.get());
-
   update_query_params_delegate_.reset(new ShellUpdateQueryParamsDelegate);
   update_client::UpdateQueryParams::SetDelegate(
       update_query_params_delegate_.get());
 
-  // Create our custom ExtensionSystem first because other
-  // KeyedServices depend on it.
-  // TODO(yoz): Move this after EnsureBrowserContextKeyedServiceFactoriesBuilt.
-  CreateExtensionSystem();
-
-  // Register additional KeyedService factories here. See
-  // ChromeBrowserMainExtraPartsProfiles for details.
-  EnsureBrowserContextKeyedServiceFactoriesBuilt();
-  ShellExtensionSystemFactory::GetInstance();
-
-  BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(
-      browser_context_.get());
-
-  // Initialize OAuth2 support from command line.
-  base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
-  oauth2_token_service_.reset(new ShellOAuth2TokenService(
-      browser_context_.get(),
-      cmd->GetSwitchValueASCII(switches::kAppShellUser),
-      cmd->GetSwitchValueASCII(switches::kAppShellRefreshToken)));
+  InitExtensionSystem();
 
 #if BUILDFLAG(ENABLE_NACL)
   nacl::NaClBrowser::SetDelegate(
@@ -224,12 +235,17 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
   // Track the task so it can be canceled if app_shell shuts down very quickly,
   // such as in browser tests.
   task_tracker_.PostTask(
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get(), FROM_HERE,
-      base::Bind(nacl::NaClProcessHost::EarlyStartup));
+      base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}).get(),
+      FROM_HERE, base::Bind(nacl::NaClProcessHost::EarlyStartup));
 #endif
 
   content::ShellDevToolsManagerDelegate::StartHttpHandler(
       browser_context_.get());
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          ::switches::kBrowserCrashTest))
+    CrashForTest();
+
   if (parameters_.ui_task) {
     // For running browser tests.
     parameters_.ui_task->Run();
@@ -244,7 +260,7 @@ bool ShellBrowserMainParts::MainMessageLoopRun(int* result_code) {
   if (!run_message_loop_)
     return true;
   desktop_controller_->Run();
-  *result_code = content::RESULT_CODE_NORMAL_EXIT;
+  *result_code = service_manager::RESULT_CODE_NORMAL_EXIT;
   return true;
 }
 
@@ -260,12 +276,9 @@ void ShellBrowserMainParts::PostMainMessageLoopRun() {
   task_tracker_.TryCancelAll();
 #endif
 
-  oauth2_token_service_.reset();
   BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
       browser_context_.get());
   extension_system_ = NULL;
-  ExtensionsBrowserClient::Set(NULL);
-  extensions_browser_client_.reset();
 
   desktop_controller_.reset();
 
@@ -276,6 +289,8 @@ void ShellBrowserMainParts::PostMainMessageLoopRun() {
   chromeos::CrasAudioHandler::Shutdown();
 #endif
 
+  sessions::SessionIdGenerator::GetInstance()->Shutdown();
+
   user_pref_service_->CommitPendingWrite();
   user_pref_service_.reset();
   local_state_->CommitPendingWrite();
@@ -285,35 +300,30 @@ void ShellBrowserMainParts::PostMainMessageLoopRun() {
 }
 
 void ShellBrowserMainParts::PostDestroyThreads() {
+  extensions_browser_client_.reset();
+  ExtensionsBrowserClient::Set(nullptr);
+
 #if defined(OS_CHROMEOS)
   network_controller_.reset();
   chromeos::NetworkHandler::Shutdown();
   chromeos::disks::DiskMountManager::Shutdown();
   device::BluetoothAdapterFactory::Shutdown();
   bluez::BluezDBusManager::Shutdown();
+  chromeos::PowerManagerClient::Shutdown();
+  chromeos::CrasAudioClient::Shutdown();
   chromeos::DBusThreadManager::Shutdown();
 #elif defined(OS_LINUX)
   device::BluetoothAdapterFactory::Shutdown();
   bluez::BluezDBusManager::Shutdown();
-  bluez::DBusThreadManagerLinux::Shutdown();
+  bluez::BluezDBusThreadManager::Shutdown();
 #endif
 }
 
-ExtensionsClient* ShellBrowserMainParts::CreateExtensionsClient() {
-  return new ShellExtensionsClient();
-}
-
-ExtensionsBrowserClient* ShellBrowserMainParts::CreateExtensionsBrowserClient(
-    content::BrowserContext* context,
-    PrefService* service) {
-  return new ShellExtensionsBrowserClient(context, service);
-}
-
-void ShellBrowserMainParts::CreateExtensionSystem() {
+void ShellBrowserMainParts::InitExtensionSystem() {
   DCHECK(browser_context_);
   extension_system_ = static_cast<ShellExtensionSystem*>(
       ExtensionSystem::Get(browser_context_.get()));
-  extension_system_->InitForRegularProfile(true);
+  extension_system_->InitForRegularProfile(true /* extensions_enabled */);
 }
 
 }  // namespace extensions

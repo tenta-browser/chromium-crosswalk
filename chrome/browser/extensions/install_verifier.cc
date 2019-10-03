@@ -13,6 +13,7 @@
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/one_shot_event.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -33,7 +34,7 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_url_handlers.h"
-#include "extensions/common/one_shot_event.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace extensions {
@@ -43,7 +44,7 @@ namespace {
 // This should only be set during tests.
 ScopedInstallVerifierBypassForTest::ForceType* g_bypass_for_test = nullptr;
 
-enum VerifyStatus {
+enum class VerifyStatus {
   NONE = 0,   // Do not request install signatures, and do not enforce them.
   BOOTSTRAP,  // Request install signatures, but do not enforce them.
   ENFORCE,    // Request install signatures, and enforce them.
@@ -63,27 +64,27 @@ VerifyStatus GetExperimentStatus() {
 
   std::string forced_trials =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kForceFieldTrials);
+          ::switches::kForceFieldTrials);
   if (forced_trials.find(kExperimentName) != std::string::npos) {
     // We don't want to allow turning off enforcement by forcing the field
     // trial group to something other than enforcement.
-    return ENFORCE_STRICT;
+    return VerifyStatus::ENFORCE_STRICT;
   }
 
 #if defined(GOOGLE_CHROME_BUILD) && (defined(OS_WIN) || defined(OS_MACOSX))
-  VerifyStatus default_status = ENFORCE;
+  VerifyStatus default_status = VerifyStatus::ENFORCE;
 #else
-  VerifyStatus default_status = NONE;
+  VerifyStatus default_status = VerifyStatus::NONE;
 #endif  // defined(GOOGLE_CHROME_BUILD)
 
   if (group == "EnforceStrict")
-    return ENFORCE_STRICT;
+    return VerifyStatus::ENFORCE_STRICT;
   else if (group == "Enforce")
-    return ENFORCE;
+    return VerifyStatus::ENFORCE;
   else if (group == "Bootstrap")
-    return BOOTSTRAP;
+    return VerifyStatus::BOOTSTRAP;
   else if (group == "None" || group == "Control")
-    return NONE;
+    return VerifyStatus::NONE;
 
   return default_status;
 }
@@ -91,29 +92,29 @@ VerifyStatus GetExperimentStatus() {
 VerifyStatus GetCommandLineStatus() {
   const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
   if (!InstallSigner::GetForcedNotFromWebstore().empty())
-    return ENFORCE;
+    return VerifyStatus::ENFORCE;
 
-  if (cmdline->HasSwitch(switches::kExtensionsInstallVerification)) {
+  if (cmdline->HasSwitch(::switches::kExtensionsInstallVerification)) {
     std::string value = cmdline->GetSwitchValueASCII(
-        switches::kExtensionsInstallVerification);
+        ::switches::kExtensionsInstallVerification);
     if (value == "bootstrap")
-      return BOOTSTRAP;
+      return VerifyStatus::BOOTSTRAP;
     else if (value == "enforce_strict")
-      return ENFORCE_STRICT;
+      return VerifyStatus::ENFORCE_STRICT;
     else
-      return ENFORCE;
+      return VerifyStatus::ENFORCE;
   }
 
-  return NONE;
+  return VerifyStatus::NONE;
 }
 
 VerifyStatus GetStatus() {
   if (g_bypass_for_test) {
     switch (*g_bypass_for_test) {
       case ScopedInstallVerifierBypassForTest::kForceOn:
-        return ENFORCE_STRICT;
+        return VerifyStatus::ENFORCE_STRICT;
       case ScopedInstallVerifierBypassForTest::kForceOff:
-        return NONE;
+        return VerifyStatus::NONE;
     }
   }
 
@@ -121,7 +122,7 @@ VerifyStatus GetStatus() {
 }
 
 bool ShouldFetchSignature() {
-  return GetStatus() >= BOOTSTRAP;
+  return GetStatus() >= VerifyStatus::BOOTSTRAP;
 }
 
 enum InitResult {
@@ -186,11 +187,7 @@ void LogAddVerifiedSuccess(bool success) {
 
 InstallVerifier::InstallVerifier(ExtensionPrefs* prefs,
                                  content::BrowserContext* context)
-    : prefs_(prefs),
-      context_(context),
-      bootstrap_check_complete_(false),
-      weak_factory_(this) {
-}
+    : prefs_(prefs), context_(context), bootstrap_check_complete_(false) {}
 
 InstallVerifier::~InstallVerifier() {}
 
@@ -202,7 +199,7 @@ InstallVerifier* InstallVerifier::Get(
 
 // static
 bool InstallVerifier::ShouldEnforce() {
-  return GetStatus() >= ENFORCE;
+  return GetStatus() >= VerifyStatus::ENFORCE;
 }
 
 // static
@@ -219,9 +216,10 @@ bool InstallVerifier::IsFromStore(const Extension& extension) {
 void InstallVerifier::Init() {
   TRACE_EVENT0("browser,startup", "extensions::InstallVerifier::Init");
   UMA_HISTOGRAM_ENUMERATION("ExtensionInstallVerifier.ExperimentStatus",
-                            GetExperimentStatus(), VERIFY_STATUS_MAX);
+                            GetExperimentStatus(),
+                            VerifyStatus::VERIFY_STATUS_MAX);
   UMA_HISTOGRAM_ENUMERATION("ExtensionInstallVerifier.ActualStatus",
-                            GetStatus(), VERIFY_STATUS_MAX);
+                            GetStatus(), VerifyStatus::VERIFY_STATUS_MAX);
 
   const base::DictionaryValue* pref = prefs_->GetInstallSignature();
   if (pref) {
@@ -244,9 +242,8 @@ void InstallVerifier::Init() {
   }
 
   ExtensionSystem::Get(context_)->ready().Post(
-      FROM_HERE,
-      base::Bind(&InstallVerifier::MaybeBootstrapSelf,
-                 weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&InstallVerifier::MaybeBootstrapSelf,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void InstallVerifier::VerifyAllExtensions() {
@@ -261,12 +258,12 @@ base::Time InstallVerifier::SignatureTimestamp() {
 }
 
 bool InstallVerifier::IsKnownId(const std::string& id) const {
-  return signature_.get() && (base::ContainsKey(signature_->ids, id) ||
-                              base::ContainsKey(signature_->invalid_ids, id));
+  return signature_.get() && (base::Contains(signature_->ids, id) ||
+                              base::Contains(signature_->invalid_ids, id));
 }
 
 bool InstallVerifier::IsInvalid(const std::string& id) const {
-  return ((signature_.get() && base::ContainsKey(signature_->invalid_ids, id)));
+  return ((signature_.get() && base::Contains(signature_->invalid_ids, id)));
 }
 
 void InstallVerifier::VerifyExtension(const std::string& extension_id) {
@@ -317,9 +314,9 @@ void InstallVerifier::RemoveMany(const ExtensionIdSet& ids) {
     return;
 
   bool found_any = false;
-  for (ExtensionIdSet::const_iterator i = ids.begin(); i != ids.end(); ++i) {
-    if (base::ContainsKey(signature_->ids, *i) ||
-        base::ContainsKey(signature_->invalid_ids, *i)) {
+  for (auto i = ids.begin(); i != ids.end(); ++i) {
+    if (base::Contains(signature_->ids, *i) ||
+        base::Contains(signature_->invalid_ids, *i)) {
       found_any = true;
       break;
     }
@@ -396,15 +393,16 @@ bool InstallVerifier::MustRemainDisabled(const Extension* extension,
 
   bool verified = true;
   MustRemainDisabledOutcome outcome = VERIFIED;
-  if (base::ContainsKey(InstallSigner::GetForcedNotFromWebstore(),
-                        extension->id())) {
+  if (base::Contains(InstallSigner::GetForcedNotFromWebstore(),
+                     extension->id())) {
     verified = false;
     outcome = FORCED_NOT_VERIFIED;
   } else if (!IsFromStore(*extension)) {
     verified = false;
     outcome = NOT_FROM_STORE;
   } else if (signature_.get() == NULL &&
-             (!bootstrap_check_complete_ || GetStatus() < ENFORCE_STRICT)) {
+             (!bootstrap_check_complete_ ||
+              GetStatus() < VerifyStatus::ENFORCE_STRICT)) {
     // If we don't have a signature yet, we'll temporarily consider every
     // extension from the webstore verified to avoid false positives on existing
     // profiles hitting this code for the first time. The InstallVerifier
@@ -416,8 +414,8 @@ bool InstallVerifier::MustRemainDisabled(const Extension* extension,
     // be from the webstore unless the signature explicitly lists the extension
     // as invalid.
     if (signature_.get() &&
-        !base::ContainsKey(signature_->invalid_ids, extension->id()) &&
-        GetStatus() < ENFORCE_STRICT) {
+        !base::Contains(signature_->invalid_ids, extension->id()) &&
+        GetStatus() < VerifyStatus::ENFORCE_STRICT) {
       outcome = NOT_VERIFIED_BUT_UNKNOWN_ID;
     } else {
       verified = false;
@@ -474,8 +472,7 @@ void InstallVerifier::MaybeBootstrapSelf() {
   if (signature_.get() == NULL && ShouldFetchSignature()) {
     needs_bootstrap = true;
   } else {
-    for (ExtensionIdSet::const_iterator iter = extension_ids.begin();
-         iter != extension_ids.end();
+    for (auto iter = extension_ids.begin(); iter != extension_ids.end();
          ++iter) {
       if (!IsKnownId(*iter)) {
         needs_bootstrap = true;
@@ -515,7 +512,7 @@ void InstallVerifier::OnVerificationComplete(bool success, OperationType type) {
           }
         }
       }
-      if (success || GetStatus() == ENFORCE_STRICT) {
+      if (success || GetStatus() == VerifyStatus::ENFORCE_STRICT) {
         ExtensionSystem::Get(context_)
             ->extension_service()
             ->CheckManagementPolicy();
@@ -541,7 +538,7 @@ void InstallVerifier::GarbageCollect() {
   prefs_->GetExtensions(&all_ids);
   for (ExtensionIdList::const_iterator i = all_ids.begin();
        i != all_ids.end(); ++i) {
-    ExtensionIdSet::iterator found = leftovers.find(*i);
+    auto found = leftovers.find(*i);
     if (found != leftovers.end())
       leftovers.erase(found);
   }
@@ -551,8 +548,8 @@ void InstallVerifier::GarbageCollect() {
 }
 
 bool InstallVerifier::IsVerified(const std::string& id) const {
-  return ((signature_.get() && base::ContainsKey(signature_->ids, id)) ||
-          base::ContainsKey(provisional_, id));
+  return ((signature_.get() && base::Contains(signature_->ids, id)) ||
+          base::Contains(provisional_, id));
 }
 
 void InstallVerifier::BeginFetch() {
@@ -569,21 +566,20 @@ void InstallVerifier::BeginFetch() {
     ids_to_sign.insert(signature_->ids.begin(), signature_->ids.end());
   }
   if (operation.type == InstallVerifier::REMOVE) {
-    for (ExtensionIdSet::const_iterator i = operation.ids.begin();
-         i != operation.ids.end(); ++i) {
-      if (base::ContainsKey(ids_to_sign, *i))
+    for (auto i = operation.ids.begin(); i != operation.ids.end(); ++i) {
+      if (base::Contains(ids_to_sign, *i))
         ids_to_sign.erase(*i);
     }
   } else {  // All other operation types are some form of "ADD".
     ids_to_sign.insert(operation.ids.begin(), operation.ids.end());
   }
 
-  signer_.reset(new InstallSigner(
-      content::BrowserContext::GetDefaultStoragePartition(context_)->
-          GetURLRequestContext(),
-      ids_to_sign));
-  signer_->GetSignature(base::Bind(&InstallVerifier::SignatureCallback,
-                                   weak_factory_.GetWeakPtr()));
+  auto url_loader_factory =
+      content::BrowserContext::GetDefaultStoragePartition(context_)
+          ->GetURLLoaderFactoryForBrowserProcess();
+  signer_ = std::make_unique<InstallSigner>(url_loader_factory, ids_to_sign);
+  signer_->GetSignature(base::BindOnce(&InstallVerifier::SignatureCallback,
+                                       weak_factory_.GetWeakPtr()));
 }
 
 void InstallVerifier::SaveToPrefs() {

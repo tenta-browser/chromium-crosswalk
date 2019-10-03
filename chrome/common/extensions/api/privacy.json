@@ -57,7 +57,18 @@
           "autofillEnabled": {
             "$ref": "types.ChromeSetting",
             "value": ["autofillEnabled", {"type":"boolean"}],
+            "deprecated": "Please use privacy.services.autofillAddressEnabled and privacy.services.autofillCreditCardEnabled. This remains for backward compatibility in this release and will be removed in the future.",
             "description": "If enabled, Chrome offers to automatically fill in forms. This preference's value is a boolean, defaulting to <code>true</code>."
+          },
+          "autofillAddressEnabled": {
+            "$ref": "types.ChromeSetting",
+            "value": ["autofillAddressEnabled", {"type":"boolean"}],
+            "description": "If enabled, Chrome offers to automatically fill in addresses and other form data. This preference's value is a boolean, defaulting to <code>true</code>."
+          },
+          "autofillCreditCardEnabled": {
+            "$ref": "types.ChromeSetting",
+            "value": ["autofillCreditCardEnabled", {"type":"boolean"}],
+            "description": "If enabled, Chrome offers to automatically fill in credit card forms. This preference's value is a boolean, defaulting to <code>true</code>."
           },
           "passwordSavingEnabled": {
             "$ref": "types.ChromeSetting",
@@ -110,6 +121,11 @@
             "$ref": "types.ChromeSetting",
             "value": ["referrersEnabled", {"type":"boolean"}],
             "description": "If enabled, Chrome sends <code>referer</code> headers with your requests. Yes, the name of this preference doesn't match the misspelled header. No, we're not going to change it. The value of this preference is of type boolean, and the default value is <code>true</code>."
+          },
+          "doNotTrackEnabled": {
+            "$ref": "types.ChromeSetting",
+            "value": ["doNotTrackEnabled", {"type":"boolean"}],
+            "description": "If enabled, Chrome sends 'Do Not Track' (<code>DNT: 1</code>) header with your requests. The value of this preference is of type boolean, and the default value is <code>false</code>."
           },
           "protectedContentEnabled": {
             "$ref": "types.ChromeSetting",

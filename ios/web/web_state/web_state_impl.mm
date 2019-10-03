@@ -13,35 +13,43 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#import "ios/web/interstitials/web_interstitial_impl.h"
+#import "ios/web/common/crw_content_view.h"
+#include "ios/web/common/url_util.h"
+#import "ios/web/js_messaging/crw_js_injector.h"
 #import "ios/web/navigation/crw_session_controller.h"
 #import "ios/web/navigation/legacy_navigation_manager_impl.h"
+#import "ios/web/navigation/navigation_context_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/session_storage_builder.h"
 #import "ios/web/navigation/wk_based_navigation_manager_impl.h"
+#import "ios/web/navigation/wk_navigation_util.h"
 #include "ios/web/public/browser_state.h"
-#import "ios/web/public/crw_session_storage.h"
+#import "ios/web/public/deprecated/crw_native_content.h"
+#import "ios/web/public/deprecated/crw_native_content_holder.h"
+#include "ios/web/public/favicon/favicon_url.h"
 #import "ios/web/public/java_script_dialog_presenter.h"
-#import "ios/web/public/navigation_item.h"
-#include "ios/web/public/url_util.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
+#include "ios/web/public/service/web_state_interface_provider.h"
+#import "ios/web/public/session/crw_navigation_item_storage.h"
+#import "ios/web/public/session/crw_session_storage.h"
+#import "ios/web/public/session/serializable_user_data_manager.h"
+#include "ios/web/public/thread/web_thread.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/context_menu_params.h"
-#import "ios/web/public/web_state/ui/crw_content_view.h"
 #import "ios/web/public/web_state/web_state_delegate.h"
-#include "ios/web/public/web_state/web_state_interface_provider.h"
 #include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_policy_decider.h"
-#include "ios/web/public/web_thread.h"
 #include "ios/web/public/webui/web_ui_ios_controller.h"
+#import "ios/web/security/web_interstitial_impl.h"
+#import "ios/web/session/session_certificate_policy_cache_impl.h"
 #include "ios/web/web_state/global_web_state_event_tracker.h"
-#import "ios/web/web_state/navigation_context_impl.h"
-#import "ios/web/web_state/session_certificate_policy_cache_impl.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #import "ios/web/web_state/ui/crw_web_controller_container_view.h"
 #import "ios/web/web_state/ui/crw_web_view_navigation_proxy.h"
 #include "ios/web/webui/web_ui_ios_controller_factory_registry.h"
 #include "ios/web/webui/web_ui_ios_impl.h"
 #include "net/http/http_response_headers.h"
+#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/image/image.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -56,6 +64,8 @@ std::unique_ptr<WebState> WebState::Create(const CreateParams& params) {
 
   // Initialize the new session.
   web_state->GetNavigationManagerImpl().InitializeSession();
+  web_state->GetNavigationManagerImpl().GetSessionController().delegate =
+      web_state->GetWebController();
 
   return web_state;
 }
@@ -77,20 +87,21 @@ WebStateImpl::WebStateImpl(const CreateParams& params,
       is_loading_(false),
       is_being_destroyed_(false),
       web_controller_(nil),
+      web_frames_manager_(*this),
       interstitial_(nullptr),
       created_with_opener_(params.created_with_opener),
       weak_factory_(this) {
   if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
-    navigation_manager_ = base::MakeUnique<WKBasedNavigationManagerImpl>();
+    navigation_manager_ = std::make_unique<WKBasedNavigationManagerImpl>();
   } else {
-    navigation_manager_ = base::MakeUnique<LegacyNavigationManagerImpl>();
+    navigation_manager_ = std::make_unique<LegacyNavigationManagerImpl>();
   }
 
   navigation_manager_->SetDelegate(this);
   navigation_manager_->SetBrowserState(params.browser_state);
   // Send creation event and create the web controller.
   GlobalWebStateEventTracker::GetInstance()->OnWebStateCreated(this);
-  web_controller_.reset([[CRWWebController alloc] initWithWebState:this]);
+  web_controller_ = [[CRWWebController alloc] initWithWebState:this];
 
   // Restore session history last because WKBasedNavigationManagerImpl relies on
   // CRWWebController to restore history into the web view.
@@ -98,13 +109,13 @@ WebStateImpl::WebStateImpl(const CreateParams& params,
     RestoreSessionStorage(session_storage);
   } else {
     certificate_policy_cache_ =
-        base::MakeUnique<SessionCertificatePolicyCacheImpl>();
+        std::make_unique<SessionCertificatePolicyCacheImpl>();
   }
 }
 
 WebStateImpl::~WebStateImpl() {
-  [web_controller_ close];
   is_being_destroyed_ = true;
+  [web_controller_ close];
 
   // WebUI depends on web state so it must be destroyed first in case any WebUI
   // implementations depends on accessing web state during destruction.
@@ -116,7 +127,6 @@ WebStateImpl::~WebStateImpl() {
     observer.WebStateDestroyed();
   for (auto& observer : policy_deciders_)
     observer.ResetWebState();
-  DCHECK(script_command_callbacks_.empty());
   SetDelegate(nullptr);
 }
 
@@ -171,7 +181,12 @@ CRWWebController* WebStateImpl::GetWebController() {
 
 void WebStateImpl::SetWebController(CRWWebController* web_controller) {
   [web_controller_ close];
-  web_controller_.reset(web_controller);
+  web_controller_ = web_controller;
+}
+
+void WebStateImpl::OnBackForwardStateChanged() {
+  for (auto& observer : observers_)
+    observer.DidChangeBackForwardState(this);
 }
 
 void WebStateImpl::OnTitleChanged() {
@@ -179,31 +194,26 @@ void WebStateImpl::OnTitleChanged() {
     observer.TitleWasSet(this);
 }
 
-void WebStateImpl::OnDialogSuppressed() {
-  DCHECK(ShouldSuppressDialogs());
-  for (auto& observer : observers_)
-    observer.DidSuppressDialog(this);
-}
-
 void WebStateImpl::OnRenderProcessGone() {
   for (auto& observer : observers_)
     observer.RenderProcessGone(this);
 }
 
-bool WebStateImpl::OnScriptCommandReceived(const std::string& command,
+void WebStateImpl::OnScriptCommandReceived(const std::string& command,
                                            const base::DictionaryValue& value,
-                                           const GURL& url,
-                                           bool user_is_interacting) {
+                                           const GURL& page_url,
+                                           bool user_is_interacting,
+                                           web::WebFrame* sender_frame) {
   size_t dot_position = command.find_first_of('.');
   if (dot_position == 0 || dot_position == std::string::npos)
-    return false;
+    return;
 
   std::string prefix = command.substr(0, dot_position);
   auto it = script_command_callbacks_.find(prefix);
   if (it == script_command_callbacks_.end())
-    return false;
+    return;
 
-  return it->second.Run(value, url, user_is_interacting);
+  it->second.Notify(value, page_url, user_is_interacting, sender_frame);
 }
 
 void WebStateImpl::SetIsLoading(bool is_loading) {
@@ -226,6 +236,9 @@ bool WebStateImpl::IsLoading() const {
 }
 
 double WebStateImpl::GetLoadingProgress() const {
+  if (navigation_manager_->IsRestoreSessionInProgress())
+    return 0.0;
+
   return [web_controller_ loadingProgress];
 }
 
@@ -246,17 +259,17 @@ bool WebStateImpl::IsBeingDestroyed() const {
 }
 
 void WebStateImpl::OnPageLoaded(const GURL& url, bool load_success) {
+  // Navigation manager loads internal URLs to restore session history and
+  // create back-forward entries for Native View and WebUI. Do not trigger
+  // external callbacks.
+  if (wk_navigation_util::IsWKInternalUrl(url))
+    return;
+
   PageLoadCompletionStatus load_completion_status =
       load_success ? PageLoadCompletionStatus::SUCCESS
                    : PageLoadCompletionStatus::FAILURE;
   for (auto& observer : observers_)
     observer.PageLoaded(this, load_completion_status);
-}
-
-void WebStateImpl::OnFormActivityRegistered(const FormActivityParams& params) {
-  for (auto& observer : observers_) {
-    observer.FormActivityRegistered(this, params);
-  }
 }
 
 void WebStateImpl::OnFaviconUrlUpdated(
@@ -266,18 +279,20 @@ void WebStateImpl::OnFaviconUrlUpdated(
     observer.FaviconUrlUpdated(this, candidates);
 }
 
-void WebStateImpl::OnDocumentSubmitted(const std::string& form_name,
-                                       bool user_initiated) {
-  for (auto& observer : observers_)
-    observer.DocumentSubmitted(this, form_name, user_initiated);
+const NavigationManagerImpl& WebStateImpl::GetNavigationManagerImpl() const {
+  return *navigation_manager_;
 }
 
 NavigationManagerImpl& WebStateImpl::GetNavigationManagerImpl() {
   return *navigation_manager_;
 }
 
-const NavigationManagerImpl& WebStateImpl::GetNavigationManagerImpl() const {
-  return *navigation_manager_;
+const WebFramesManagerImpl& WebStateImpl::GetWebFramesManagerImpl() const {
+  return web_frames_manager_;
+}
+
+WebFramesManagerImpl& WebStateImpl::GetWebFramesManagerImpl() {
+  return web_frames_manager_;
 }
 
 const SessionCertificatePolicyCacheImpl&
@@ -302,32 +317,17 @@ bool WebStateImpl::HasWebUI() {
   return !!web_ui_;
 }
 
-void WebStateImpl::ProcessWebUIMessage(const GURL& source_url,
-                                       const std::string& message,
-                                       const base::ListValue& args) {
-  if (web_ui_)
-    web_ui_->ProcessWebUIIOSMessage(source_url, message, args);
-}
-
-void WebStateImpl::LoadWebUIHtml(const base::string16& html, const GURL& url) {
-  CHECK(web::GetWebClient()->IsAppSpecificURL(url));
-  [web_controller_ loadHTML:base::SysUTF16ToNSString(html)
-          forAppSpecificURL:url];
-}
-
 const base::string16& WebStateImpl::GetTitle() const {
   // TODO(stuartmorgan): Implement the NavigationManager logic necessary to
   // match the WebContents implementation of this method.
   DCHECK(Configured());
   web::NavigationItem* item = navigation_manager_->GetLastCommittedItem();
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    // Display title for the visible item makes more sense. Only do this in
+    // WKBasedNavigationManager for now to limit impact.
+    item = navigation_manager_->GetVisibleItem();
+  }
   return item ? item->GetTitleForDisplay() : empty_string16_;
-}
-
-void WebStateImpl::ShowTransientContentView(CRWContentView* content_view) {
-  DCHECK(Configured());
-  DCHECK(content_view);
-  DCHECK(content_view.scrollView);
-  [web_controller_ showTransientContentView:content_view];
 }
 
 bool WebStateImpl::IsShowingWebInterstitial() const {
@@ -378,9 +378,11 @@ void WebStateImpl::UpdateHttpResponseHeaders(const GURL& url) {
 
 void WebStateImpl::ShowWebInterstitial(WebInterstitialImpl* interstitial) {
   DCHECK(Configured());
-  DCHECK(interstitial);
   interstitial_ = interstitial;
-  ShowTransientContentView(interstitial_->GetContentView());
+
+  DCHECK(interstitial_->GetContentView());
+  DCHECK(interstitial_->GetContentView().scrollView);
+  [web_controller_ showTransientContentView:interstitial_->GetContentView()];
 }
 
 void WebStateImpl::SendChangeLoadProgress(double progress) {
@@ -395,11 +397,11 @@ void WebStateImpl::HandleContextMenu(const web::ContextMenuParams& params) {
 }
 
 void WebStateImpl::ShowRepostFormWarningDialog(
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   if (delegate_) {
-    delegate_->ShowRepostFormWarningDialog(this, callback);
+    delegate_->ShowRepostFormWarningDialog(this, std::move(callback));
   } else {
-    callback.Run(true);
+    std::move(callback).Run(true);
   }
 }
 
@@ -408,15 +410,27 @@ void WebStateImpl::RunJavaScriptDialog(
     JavaScriptDialogType javascript_dialog_type,
     NSString* message_text,
     NSString* default_prompt_text,
-    const DialogClosedCallback& callback) {
+    DialogClosedCallback callback) {
   JavaScriptDialogPresenter* presenter =
       delegate_ ? delegate_->GetJavaScriptDialogPresenter(this) : nullptr;
   if (!presenter) {
-    callback.Run(false, nil);
+    std::move(callback).Run(false, nil);
     return;
   }
+  running_javascript_dialog_ = true;
+  DialogClosedCallback presenter_callback =
+      base::BindOnce(&WebStateImpl::JavaScriptDialogClosed,
+                     weak_factory_.GetWeakPtr(), std::move(callback));
   presenter->RunJavaScriptDialog(this, origin_url, javascript_dialog_type,
-                                 message_text, default_prompt_text, callback);
+                                 message_text, default_prompt_text,
+                                 std::move(presenter_callback));
+}
+
+void WebStateImpl::JavaScriptDialogClosed(DialogClosedCallback callback,
+                                          bool success,
+                                          NSString* user_input) {
+  running_javascript_dialog_ = false;
+  std::move(callback).Run(success, user_input);
 }
 
 WebState* WebStateImpl::CreateNewWebState(const GURL& url,
@@ -462,7 +476,7 @@ std::unique_ptr<web::WebUIIOS> WebStateImpl::CreateWebUIIOS(const GURL& url) {
       WebUIIOSControllerFactoryRegistry::GetInstance();
   if (!factory)
     return nullptr;
-  std::unique_ptr<web::WebUIIOS> web_ui = base::MakeUnique<WebUIIOSImpl>(this);
+  std::unique_ptr<web::WebUIIOS> web_ui = std::make_unique<WebUIIOSImpl>(this);
   auto controller = factory->CreateWebUIIOSControllerForURL(web_ui.get(), url);
   if (!controller)
     return nullptr;
@@ -475,10 +489,11 @@ void WebStateImpl::SetContentsMimeType(const std::string& mime_type) {
   mime_type_ = mime_type;
 }
 
-bool WebStateImpl::ShouldAllowRequest(NSURLRequest* request,
-                                      ui::PageTransition transition) {
+bool WebStateImpl::ShouldAllowRequest(
+    NSURLRequest* request,
+    const WebStatePolicyDecider::RequestInfo& request_info) {
   for (auto& policy_decider : policy_deciders_) {
-    if (!policy_decider.ShouldAllowRequest(request, transition))
+    if (!policy_decider.ShouldAllowRequest(request, request_info))
       return false;
   }
   return true;
@@ -515,7 +530,7 @@ void WebStateImpl::CommitPreviewingViewController(
 WebStateInterfaceProvider* WebStateImpl::GetWebStateInterfaceProvider() {
   if (!web_state_interface_provider_) {
     web_state_interface_provider_ =
-        base::MakeUnique<WebStateInterfaceProvider>();
+        std::make_unique<WebStateInterfaceProvider>();
   }
   return web_state_interface_provider_.get();
 }
@@ -535,8 +550,16 @@ void WebStateImpl::BindInterfaceRequestFromMainFrame(
   }
 }
 
-base::WeakPtr<WebState> WebStateImpl::AsWeakPtr() {
-  return weak_factory_.GetWeakPtr();
+#pragma mark - WebFrame management
+
+void WebStateImpl::OnWebFrameAvailable(web::WebFrame* frame) {
+  for (auto& observer : observers_)
+    observer.WebFrameDidBecomeAvailable(this, frame);
+}
+
+void WebStateImpl::OnWebFrameUnavailable(web::WebFrame* frame) {
+  for (auto& observer : observers_)
+    observer.WebFrameWillBecomeUnavailable(this, frame);
 }
 
 #pragma mark - WebState implementation
@@ -546,29 +569,7 @@ bool WebStateImpl::IsWebUsageEnabled() const {
 }
 
 void WebStateImpl::SetWebUsageEnabled(bool enabled) {
-  // SetWebUsageEnabled(false) will cause the WKWebView to be removed and this
-  // is the only way to clear browser data. Cache the session history in this
-  // WebState so that when web usage is re-enabled, history can be restored into
-  // the newly created WKWebView.
-  // TODO(crbug.com/557963): don't destroy WKWebView to clear browser data.
-  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
-    if (enabled && cached_session_storage_) {
-      RestoreSessionStorage(cached_session_storage_.get());
-      cached_session_storage_.reset();
-    } else {
-      cached_session_storage_.reset(BuildSessionStorage());
-    }
-  }
-
   [web_controller_ setWebUsageEnabled:enabled];
-}
-
-bool WebStateImpl::ShouldSuppressDialogs() const {
-  return [web_controller_ shouldSuppressDialogs];
-}
-
-void WebStateImpl::SetShouldSuppressDialogs(bool should_suppress) {
-  [web_controller_ setShouldSuppressDialogs:should_suppress];
 }
 
 UIView* WebStateImpl::GetView() {
@@ -576,15 +577,25 @@ UIView* WebStateImpl::GetView() {
 }
 
 void WebStateImpl::WasShown() {
+  if (IsVisible())
+    return;
+
   [web_controller_ wasShown];
   for (auto& observer : observers_)
     observer.WasShown(this);
 }
 
 void WebStateImpl::WasHidden() {
+  if (!IsVisible())
+    return;
+
   [web_controller_ wasHidden];
   for (auto& observer : observers_)
     observer.WasHidden(this);
+}
+
+void WebStateImpl::SetKeepRenderProcessAlive(bool keep_alive) {
+  [web_controller_ setKeepsRenderProcessAlive:keep_alive];
 }
 
 BrowserState* WebStateImpl::GetBrowserState() const {
@@ -599,6 +610,11 @@ void WebStateImpl::OpenURL(const WebState::OpenURLParams& params) {
 }
 
 void WebStateImpl::Stop() {
+  if (navigation_manager_->IsRestoreSessionInProgress()) {
+    // Do not interrupt session restoration process. For embedder session
+    // restoration is opaque and WebState acts like ut's idle.
+    return;
+  }
   [web_controller_ stopLoading];
 }
 
@@ -608,6 +624,14 @@ const NavigationManager* WebStateImpl::GetNavigationManager() const {
 
 NavigationManager* WebStateImpl::GetNavigationManager() {
   return &GetNavigationManagerImpl();
+}
+
+const WebFramesManager* WebStateImpl::GetWebFramesManager() const {
+  return &web_frames_manager_;
+}
+
+WebFramesManager* WebStateImpl::GetWebFramesManager() {
+  return &web_frames_manager_;
 }
 
 const SessionCertificatePolicyCache*
@@ -622,36 +646,55 @@ WebStateImpl::GetSessionCertificatePolicyCache() {
 
 CRWSessionStorage* WebStateImpl::BuildSessionStorage() {
   [web_controller_ recordStateInHistory];
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() &&
+      restored_session_storage_) {
+    // UserData can be updated in an uncommitted WebState. Even
+    // if a WebState hasn't been restored, its opener value may have changed.
+    std::unique_ptr<web::SerializableUserData> serializable_user_data =
+        web::SerializableUserDataManager::FromWebState(this)
+            ->CreateSerializableUserData();
+    [restored_session_storage_
+        setSerializableUserData:std::move(serializable_user_data)];
+    return restored_session_storage_;
+  }
   SessionStorageBuilder session_storage_builder;
   return session_storage_builder.BuildStorage(this);
 }
 
+void WebStateImpl::LoadData(NSData* data,
+                            NSString* mime_type,
+                            const GURL& url) {
+  [web_controller_ loadData:data MIMEType:mime_type forURL:url];
+}
+
 CRWJSInjectionReceiver* WebStateImpl::GetJSInjectionReceiver() const {
-  return [web_controller_ jsInjectionReceiver];
+  return [web_controller_.jsInjector JSInjectionReceiver];
 }
 
 void WebStateImpl::ExecuteJavaScript(const base::string16& javascript) {
-  [web_controller_ executeJavaScript:base::SysUTF16ToNSString(javascript)
-                   completionHandler:nil];
+  [web_controller_.jsInjector
+      executeJavaScript:base::SysUTF16ToNSString(javascript)
+      completionHandler:nil];
 }
 
 void WebStateImpl::ExecuteJavaScript(const base::string16& javascript,
-                                     const JavaScriptResultCallback& callback) {
-  JavaScriptResultCallback stackCallback = callback;
-  [web_controller_ executeJavaScript:base::SysUTF16ToNSString(javascript)
-                   completionHandler:^(id value, NSError* error) {
-                     if (error) {
-                       DLOG(WARNING)
-                           << "Script execution has failed: "
-                           << base::SysNSStringToUTF16(
-                                  error.userInfo[NSLocalizedDescriptionKey]);
-                     }
-                     stackCallback.Run(ValueResultFromWKResult(value).get());
-                   }];
+                                     JavaScriptResultCallback callback) {
+  __block JavaScriptResultCallback stack_callback = std::move(callback);
+  [web_controller_.jsInjector
+      executeJavaScript:base::SysUTF16ToNSString(javascript)
+      completionHandler:^(id value, NSError* error) {
+        if (error) {
+          DLOG(WARNING) << "Script execution has failed: "
+                        << base::SysNSStringToUTF16(
+                               error.userInfo[NSLocalizedDescriptionKey]);
+        }
+        std::move(stack_callback).Run(ValueResultFromWKResult(value).get());
+      }];
 }
 
 void WebStateImpl::ExecuteUserJavaScript(NSString* javaScript) {
-  [web_controller_ executeUserJavaScript:javaScript completionHandler:nil];
+  [web_controller_.jsInjector executeUserJavaScript:javaScript
+                                  completionHandler:nil];
 }
 
 const std::string& WebStateImpl::GetContentsMimeType() const {
@@ -673,29 +716,58 @@ const GURL& WebStateImpl::GetLastCommittedURL() const {
 }
 
 GURL WebStateImpl::GetCurrentURL(URLVerificationTrustLevel* trust_level) const {
-  GURL URL = [web_controller_ currentURLWithTrustLevel:trust_level];
-  bool equalOrigins = URL.GetOrigin() == GetLastCommittedURL().GetOrigin();
-  DCHECK(equalOrigins);
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() && !trust_level) {
+    auto ignore_trust = URLVerificationTrustLevel::kNone;
+    return [web_controller_ currentURLWithTrustLevel:&ignore_trust];
+  }
+  GURL result = [web_controller_ currentURLWithTrustLevel:trust_level];
+
+  web::NavigationItemImpl* item =
+      navigation_manager_->GetLastCommittedItemImpl();
+  GURL lastCommittedURL;
+  if (item) {
+    if ([[web_controller_ nativeContentHolder].nativeController
+            respondsToSelector:@selector(virtualURL)] ||
+        item->error_retry_state_machine().state() ==
+            ErrorRetryState::kReadyToDisplayErrorForFailedNavigation) {
+      // For native content, or when webView.URL is a placeholder URL,
+      // |currentURLWithTrustLevel:| returns virtual URL if one is available.
+      lastCommittedURL = item->GetVirtualURL();
+    } else {
+      // Otherwise document URL is returned.
+      lastCommittedURL = item->GetURL();
+    }
+  }
+
+  bool equalOrigins;
+  if (result.SchemeIs(url::kAboutScheme) &&
+      web::GetWebClient()->IsAppSpecificURL(GetLastCommittedURL())) {
+    // This special case is added for any app specific URLs that have been
+    // rewritten to about:// URLs.  In this case, an about scheme does not have
+    // an origin to compare, only a path.
+    equalOrigins = result.path() == lastCommittedURL.path();
+  } else {
+    equalOrigins = result.GetOrigin() == lastCommittedURL.GetOrigin();
+  }
+  DCHECK(equalOrigins) << "Origin mismatch. URL: " << result.spec()
+                       << " Last committed: " << lastCommittedURL.spec();
   UMA_HISTOGRAM_BOOLEAN("Web.CurrentOriginEqualsLastCommittedOrigin",
                         equalOrigins);
-  return URL;
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled() &&
+      (!equalOrigins || (item && item->IsUntrusted()))) {
+    *trust_level = web::URLVerificationTrustLevel::kMixed;
+  }
+  return result;
 }
 
-void WebStateImpl::AddScriptCommandCallback(
-    const ScriptCommandCallback& callback,
-    const std::string& command_prefix) {
+std::unique_ptr<WebState::ScriptCommandSubscription>
+WebStateImpl::AddScriptCommandCallback(const ScriptCommandCallback& callback,
+                                       const std::string& command_prefix) {
   DCHECK(!command_prefix.empty());
   DCHECK(command_prefix.find_first_of('.') == std::string::npos);
-  DCHECK(script_command_callbacks_.find(command_prefix) ==
-         script_command_callbacks_.end());
-  script_command_callbacks_[command_prefix] = callback;
-}
-
-void WebStateImpl::RemoveScriptCommandCallback(
-    const std::string& command_prefix) {
-  DCHECK(script_command_callbacks_.find(command_prefix) !=
-         script_command_callbacks_.end());
-  script_command_callbacks_.erase(command_prefix);
+  DCHECK(script_command_callbacks_.count(command_prefix) == 0 ||
+         script_command_callbacks_[command_prefix].empty());
+  return script_command_callbacks_[command_prefix].Add(callback);
 }
 
 id<CRWWebViewProxy> WebStateImpl::GetWebViewProxy() const {
@@ -710,29 +782,46 @@ void WebStateImpl::SetHasOpener(bool has_opener) {
   created_with_opener_ = has_opener;
 }
 
-void WebStateImpl::TakeSnapshot(const SnapshotCallback& callback,
-                                CGSize target_size) const {
-  UIView* view = [web_controller_ view];
-  UIImage* snapshot = nil;
-  if (view && !CGRectIsEmpty(view.bounds)) {
-    CGFloat scaled_height =
-        view.bounds.size.height * target_size.width / view.bounds.size.width;
-    CGRect scaled_rect = CGRectMake(0, 0, target_size.width, scaled_height);
-    UIGraphicsBeginImageContextWithOptions(target_size, YES, 0);
-    [view drawViewHierarchyInRect:scaled_rect afterScreenUpdates:NO];
-    snapshot = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-  }
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, gfx::Image(snapshot)));
+bool WebStateImpl::CanTakeSnapshot() const {
+  // The WKWebView snapshot API depends on IPC execution that does not function
+  // properly when JavaScript dialogs are running.
+  return !running_javascript_dialog_;
 }
 
-void WebStateImpl::OnNavigationStarted(web::NavigationContext* context) {
+void WebStateImpl::TakeSnapshot(const gfx::RectF& rect,
+                                SnapshotCallback callback) {
+  DCHECK(CanTakeSnapshot());
+  // Move the callback to a __block pointer, which will be in scope as long
+  // as the callback is retained.
+  __block SnapshotCallback shared_callback = std::move(callback);
+  [web_controller_ takeSnapshotWithRect:rect.ToCGRect()
+                             completion:^(UIImage* snapshot) {
+                               shared_callback.Run(gfx::Image(snapshot));
+                             }];
+}
+
+void WebStateImpl::OnNavigationStarted(web::NavigationContextImpl* context) {
+  // Navigation manager loads internal URLs to restore session history and
+  // create back-forward entries for Native View and WebUI. Do not trigger
+  // external callbacks.
+  if (context->IsPlaceholderNavigation() ||
+      wk_navigation_util::IsRestoreSessionUrl(context->GetUrl())) {
+    return;
+  }
+
   for (auto& observer : observers_)
     observer.DidStartNavigation(this, context);
 }
 
-void WebStateImpl::OnNavigationFinished(web::NavigationContext* context) {
+void WebStateImpl::OnNavigationFinished(web::NavigationContextImpl* context) {
+  // Navigation manager loads internal URLs to restore session history and
+  // create back-forward entries for Native View and WebUI. Do not trigger
+  // external callbacks.
+  if (context->IsPlaceholderNavigation() ||
+      wk_navigation_util::IsRestoreSessionUrl(context->GetUrl())) {
+    return;
+  }
+
   for (auto& observer : observers_)
     observer.DidFinishNavigation(this, context);
 
@@ -754,6 +843,10 @@ void WebStateImpl::OnNavigationFinished(web::NavigationContext* context) {
 
 void WebStateImpl::ClearTransientContent() {
   if (interstitial_) {
+    // |visible_item| can be null if non-committed entries where discarded.
+    NavigationItem* visible_item = navigation_manager_->GetVisibleItem();
+    const SSLStatus* old_status =
+        visible_item ? &(visible_item->GetSSL()) : nullptr;
     // Store the currently displayed interstitial in a local variable and reset
     // |interstitial_| early.  This is to prevent an infinite loop, as
     // |DontProceed()| internally calls |ClearTransientContent()|.
@@ -762,8 +855,18 @@ void WebStateImpl::ClearTransientContent() {
     interstitial->DontProceed();
     // Don't access |interstitial| after calling |DontProceed()|, as it triggers
     // deletion.
+
+    const web::NavigationItem* new_item = navigation_manager_->GetVisibleItem();
+    if (!new_item || !old_status || !new_item->GetSSL().Equals(*old_status)) {
+      // Visible SSL state has actually changed after interstitial dismissal.
+      DidChangeVisibleSecurityState();
+    }
   }
   [web_controller_ clearTransientContentView];
+}
+
+void WebStateImpl::ClearDialogs() {
+  CancelDialogs();
 }
 
 void WebStateImpl::RecordPageStateInNavigationItem() {
@@ -771,8 +874,11 @@ void WebStateImpl::RecordPageStateInNavigationItem() {
 }
 
 void WebStateImpl::OnGoToIndexSameDocumentNavigation(
-    NavigationInitiationType type) {
-  [web_controller_ didFinishGoToIndexSameDocumentNavigationWithType:type];
+    NavigationInitiationType type,
+    bool has_user_gesture) {
+  [web_controller_
+      didFinishGoToIndexSameDocumentNavigationWithType:type
+                                        hasUserGesture:has_user_gesture];
 }
 
 void WebStateImpl::WillChangeUserAgentType() {
@@ -782,12 +888,9 @@ void WebStateImpl::WillChangeUserAgentType() {
   [web_controller_ requirePageReconstruction];
 }
 
-void WebStateImpl::WillLoadCurrentItemWithUrl(const GURL& url) {
-  [web_controller_ willLoadCurrentItemWithURL:url];
-}
-
-void WebStateImpl::LoadCurrentItem() {
-  [web_controller_ loadCurrentURL];
+void WebStateImpl::LoadCurrentItem(NavigationInitiationType type) {
+  [web_controller_ loadCurrentURLWithRendererInitiatedNavigation:
+                       type == NavigationInitiationType::RENDERER_INITIATED];
 }
 
 void WebStateImpl::LoadIfNecessary() {
@@ -795,7 +898,7 @@ void WebStateImpl::LoadIfNecessary() {
 }
 
 void WebStateImpl::Reload() {
-  [web_controller_ reload];
+  [web_controller_ reloadWithRendererInitiatedNavigation:NO];
 }
 
 void WebStateImpl::OnNavigationItemsPruned(size_t pruned_item_count) {
@@ -803,15 +906,15 @@ void WebStateImpl::OnNavigationItemsPruned(size_t pruned_item_count) {
     observer.NavigationItemsPruned(this, pruned_item_count);
 }
 
-void WebStateImpl::OnNavigationItemChanged() {
-  for (auto& observer : observers_)
-    observer.NavigationItemChanged(this);
-}
+void WebStateImpl::OnNavigationItemCommitted(NavigationItem* item) {
+  if (wk_navigation_util::IsWKInternalUrl(item->GetURL()))
+    return;
 
-void WebStateImpl::OnNavigationItemCommitted(
-    const LoadCommittedDetails& load_details) {
-  for (auto& observer : observers_)
-    observer.NavigationItemCommitted(this, load_details);
+  // A committed navigation item indicates that NavigationManager has a new
+  // valid session history so should invalidate the cached restored session
+  // history.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    restored_session_storage_ = nil;
 }
 
 WebState* WebStateImpl::GetWebState() {
@@ -822,9 +925,38 @@ id<CRWWebViewNavigationProxy> WebStateImpl::GetWebViewNavigationProxy() const {
   return [web_controller_ webViewNavigationProxy];
 }
 
+void WebStateImpl::GoToBackForwardListItem(WKBackForwardListItem* wk_item,
+                                           NavigationItem* item,
+                                           NavigationInitiationType type,
+                                           bool has_user_gesture) {
+  return [web_controller_ goToBackForwardListItem:wk_item
+                                   navigationItem:item
+                         navigationInitiationType:type
+                                   hasUserGesture:has_user_gesture];
+}
+
+void WebStateImpl::RemoveWebView() {
+  return [web_controller_ removeWebView];
+}
+
+NavigationItemImpl* WebStateImpl::GetPendingItem() {
+  return [web_controller_ lastPendingItemForNewNavigation];
+}
+
 void WebStateImpl::RestoreSessionStorage(CRWSessionStorage* session_storage) {
+  // Session storage restore is asynchronous with WKBasedNavigationManager
+  // because it involves a page load in WKWebView. Temporarily cache the
+  // restored session so it can be returned if BuildSessionStorage() or
+  // GetTitle() is called before the actual restoration completes. This can
+  // happen to inactive tabs when a navigation in the current tab triggers the
+  // serialization of all tabs and when user clicks on tab switcher without
+  // switching to a tab.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled())
+    restored_session_storage_ = session_storage;
   SessionStorageBuilder session_storage_builder;
   session_storage_builder.ExtractSessionState(this, session_storage);
+  GetNavigationManagerImpl().GetSessionController().delegate =
+      GetWebController();
 }
 
 }  // namespace web

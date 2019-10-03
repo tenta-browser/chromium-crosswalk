@@ -4,26 +4,22 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 
-#include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
+#include "chrome/browser/ui/webui/chromeos/network_element_localized_strings_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/strings/grit/ui_strings.h"
 
-namespace {
-
-const char kJsScreenPath[] = "login.ErrorMessageScreen";
-
-}  // namespace
-
 namespace chromeos {
 
-ErrorScreenHandler::ErrorScreenHandler()
-    : BaseScreenHandler(kScreenId), weak_ptr_factory_(this) {
-  set_call_js_prefix(kJsScreenPath);
+constexpr StaticOobeScreenId ErrorScreenView::kScreenId;
+
+ErrorScreenHandler::ErrorScreenHandler(JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {
+  set_user_acted_method_path("login.ErrorMessageScreen.userActed");
 }
 
 ErrorScreenHandler::~ErrorScreenHandler() {
@@ -38,14 +34,14 @@ void ErrorScreenHandler::Show() {
   }
   BaseScreenHandler::ShowScreen(kScreenId);
   if (screen_)
-    screen_->OnShow();
+    screen_->DoShow();
   showing_ = true;
 }
 
 void ErrorScreenHandler::Hide() {
   showing_ = false;
   if (screen_)
-    screen_->OnHide();
+    screen_->DoHide();
 }
 
 void ErrorScreenHandler::Bind(ErrorScreen* screen) {
@@ -58,8 +54,34 @@ void ErrorScreenHandler::Unbind() {
   BaseScreenHandler::SetBaseScreen(nullptr);
 }
 
-void ErrorScreenHandler::ShowOobeScreen(OobeScreen screen) {
+void ErrorScreenHandler::ShowOobeScreen(OobeScreenId screen) {
   ShowScreen(screen);
+}
+
+void ErrorScreenHandler::SetErrorStateCode(
+    NetworkError::ErrorState error_state) {
+  CallJS("login.ErrorMessageScreen.setErrorState",
+         static_cast<int>(error_state));
+}
+
+void ErrorScreenHandler::SetErrorStateNetwork(const std::string& network_name) {
+  CallJS("login.ErrorMessageScreen.setErrorStateNetwork", network_name);
+}
+
+void ErrorScreenHandler::SetGuestSigninAllowed(bool value) {
+  CallJS("login.ErrorMessageScreen.allowGuestSignin", value);
+}
+
+void ErrorScreenHandler::SetOfflineSigninAllowed(bool value) {
+  CallJS("login.ErrorMessageScreen.allowOfflineLogin", value);
+}
+
+void ErrorScreenHandler::SetShowConnectingIndicator(bool value) {
+  CallJS("login.ErrorMessageScreen.showConnectingIndicator", value);
+}
+
+void ErrorScreenHandler::SetUIState(NetworkError::UIState ui_state) {
+  CallJS("login.ErrorMessageScreen.setUIState", static_cast<int>(ui_state));
 }
 
 void ErrorScreenHandler::RegisterMessages() {
@@ -103,8 +125,12 @@ void ErrorScreenHandler::DeclareLocalizedValues(
   builder->Add("rebootButton", IDS_RELAUNCH_BUTTON);
   builder->Add("diagnoseButton", IDS_DIAGNOSE_BUTTON);
   builder->Add("configureCertsButton", IDS_MANAGE_CERTIFICATES);
-  builder->Add("continueButton", IDS_NETWORK_SELECTION_CONTINUE_BUTTON);
+  builder->Add("continueButton", IDS_WELCOME_SELECTION_CONTINUE_BUTTON);
   builder->Add("okButton", IDS_APP_OK);
+  builder->Add("proxySettingsMenuName",
+               IDS_NETWORK_PROXY_SETTINGS_LIST_ITEM_NAME);
+  builder->Add("addWiFiNetworkMenuName", IDS_NETWORK_ADD_WI_FI_LIST_ITEM_NAME);
+  network_element::AddLocalizedValuesToBuilder(builder);
 }
 
 void ErrorScreenHandler::Initialize() {
@@ -116,11 +142,6 @@ void ErrorScreenHandler::Initialize() {
     Show();
     show_on_init_ = false;
   }
-}
-
-void ErrorScreenHandler::OnConnectToNetworkRequested() {
-  if (showing_ && screen_)
-    screen_->OnUserAction(ErrorScreen::kUserActionConnectRequested);
 }
 
 void ErrorScreenHandler::HandleHideCaptivePortal() {

@@ -5,6 +5,8 @@
 
 '''Unit tests for grit.format.rc'''
 
+from __future__ import print_function
+
 import os
 import re
 import sys
@@ -36,12 +38,16 @@ class DummyOutput(object):
     self.type = type
     self.language = language
     self.file = file
+
   def GetType(self):
     return self.type
+
   def GetLanguage(self):
     return self.language
+
   def GetOutputFilename(self):
     return self.file
+
 
 class FormatRcUnittest(unittest.TestCase):
   def testMessages(self):
@@ -73,7 +79,6 @@ BEGIN
   BONGO           "Howdie ""Mr. Elephant"", how are you doing?   "
   IDS_WITH_LINEBREAKS "Good day sir,\\nI am a bee\\nSting sting"
 END''', output)
-
 
   def testRcSection(self):
     root = util.ParseGrdForUnittest('''
@@ -228,7 +233,7 @@ END'''.strip()
     # Check for removed "<if>" and "</if>" tags.
     self.failUnless(file_contents.find('<if expr=') == -1)
     self.failUnless(file_contents.find('</if>') == -1)
-
+    os.remove(output_file)
 
   def testStructureNodeOutputfile(self):
     input_file = util.PathFromRoot('grit/testdata/simple.html')
@@ -252,7 +257,7 @@ END'''.strip()
 
     self.failUnless(contents.find('<p>') != -1)  # should contain the markup
     self.failUnless(contents.find('Hello!') == -1)  # should be translated
-
+    os.remove(fr_file)
 
   def testChromeHtmlNodeOutputfile(self):
     input_file = util.PathFromRoot('grit/testdata/chrome_html.html')
@@ -284,7 +289,7 @@ END'''.strip()
     self.failUnless(file_contents.find('Hello Include!') != -1)
     # Check for inserted -webkit-image-set.
     self.failUnless(file_contents.find('content: -webkit-image-set') != -1)
-
+    os.remove(output_file)
 
   def testSubstitutionHtml(self):
     input_file = util.PathFromRoot('grit/testdata/toolbar_about.html')
@@ -311,7 +316,7 @@ END'''.strip()
     contents = util.ReadFile(ar_file, util.RAW_TEXT)
 
     self.failUnless(contents.find('dir="RTL"') != -1)
-
+    os.remove(ar_file)
 
   def testFallbackToEnglish(self):
     root = util.ParseGrdForUnittest('''\

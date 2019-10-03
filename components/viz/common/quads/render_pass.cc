@@ -11,7 +11,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
@@ -26,6 +26,7 @@
 #include "components/viz/common/quads/surface_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
+#include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/traced_value.h"
 
@@ -102,17 +103,16 @@ RenderPass::RenderPass(size_t shared_quad_state_list_size,
                              shared_quad_state_list_size) {}
 
 RenderPass::~RenderPass() {
-  TRACE_EVENT_OBJECT_DELETED_WITH_ID(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), "RenderPass",
-      reinterpret_cast<void*>(id));
+  TRACE_EVENT_OBJECT_DELETED_WITH_ID(TRACE_DISABLED_BY_DEFAULT("viz.quads"),
+                                     "RenderPass", reinterpret_cast<void*>(id));
 }
 
 std::unique_ptr<RenderPass> RenderPass::Copy(int new_id) const {
   std::unique_ptr<RenderPass> copy_pass(
       Create(shared_quad_state_list.size(), quad_list.size()));
   copy_pass->SetAll(new_id, output_rect, damage_rect, transform_to_root_target,
-                    filters, background_filters, color_space,
-                    has_transparent_background, cache_render_pass,
+                    filters, backdrop_filters, backdrop_filter_bounds,
+                    color_space, has_transparent_background, cache_render_pass,
                     has_damage_from_contributing_content, generate_mipmap);
   return copy_pass;
 }
@@ -125,8 +125,8 @@ std::unique_ptr<RenderPass> RenderPass::DeepCopy() const {
   std::unique_ptr<RenderPass> copy_pass(
       Create(shared_quad_state_list.size(), quad_list.size()));
   copy_pass->SetAll(id, output_rect, damage_rect, transform_to_root_target,
-                    filters, background_filters, color_space,
-                    has_transparent_background, cache_render_pass,
+                    filters, backdrop_filters, backdrop_filter_bounds,
+                    color_space, has_transparent_background, cache_render_pass,
                     has_damage_from_contributing_content, generate_mipmap);
 
   if (shared_quad_state_list.empty()) {
@@ -147,7 +147,7 @@ std::unique_ptr<RenderPass> RenderPass::DeepCopy() const {
     }
     DCHECK(quad->shared_quad_state == *sqs_iter);
 
-    if (quad->material == DrawQuad::RENDER_PASS) {
+    if (quad->material == DrawQuad::Material::kRenderPass) {
       const RenderPassDrawQuad* pass_quad =
           RenderPassDrawQuad::MaterialCast(quad);
       copy_pass->CopyFromAndAppendRenderPassDrawQuad(pass_quad,
@@ -184,17 +184,19 @@ void RenderPass::SetNew(uint64_t id,
   DCHECK(shared_quad_state_list.empty());
 }
 
-void RenderPass::SetAll(uint64_t id,
-                        const gfx::Rect& output_rect,
-                        const gfx::Rect& damage_rect,
-                        const gfx::Transform& transform_to_root_target,
-                        const cc::FilterOperations& filters,
-                        const cc::FilterOperations& background_filters,
-                        const gfx::ColorSpace& color_space,
-                        bool has_transparent_background,
-                        bool cache_render_pass,
-                        bool has_damage_from_contributing_content,
-                        bool generate_mipmap) {
+void RenderPass::SetAll(
+    uint64_t id,
+    const gfx::Rect& output_rect,
+    const gfx::Rect& damage_rect,
+    const gfx::Transform& transform_to_root_target,
+    const cc::FilterOperations& filters,
+    const cc::FilterOperations& backdrop_filters,
+    const base::Optional<gfx::RRectF>& backdrop_filter_bounds,
+    const gfx::ColorSpace& color_space,
+    bool has_transparent_background,
+    bool cache_render_pass,
+    bool has_damage_from_contributing_content,
+    bool generate_mipmap) {
   DCHECK(id);
 
   this->id = id;
@@ -202,7 +204,8 @@ void RenderPass::SetAll(uint64_t id,
   this->damage_rect = damage_rect;
   this->transform_to_root_target = transform_to_root_target;
   this->filters = filters;
-  this->background_filters = background_filters;
+  this->backdrop_filters = backdrop_filters;
+  this->backdrop_filter_bounds = backdrop_filter_bounds;
   this->color_space = color_space;
   this->has_transparent_background = has_transparent_background;
   this->cache_render_pass = cache_render_pass;
@@ -231,9 +234,14 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
   filters.AsValueInto(value);
   value->EndArray();
 
-  value->BeginArray("background_filters");
-  background_filters.AsValueInto(value);
+  value->BeginArray("backdrop_filters");
+  backdrop_filters.AsValueInto(value);
   value->EndArray();
+
+  if (backdrop_filter_bounds.has_value()) {
+    cc::MathUtil::AddToTracedValue("backdrop_filter_bounds",
+                                   backdrop_filter_bounds.value(), value);
+  }
 
   value->BeginArray("shared_quad_state_list");
   for (auto* shared_quad_state : shared_quad_state_list) {
@@ -252,7 +260,7 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
   value->EndArray();
 
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), value, "RenderPass",
+      TRACE_DISABLED_BY_DEFAULT("viz.quads"), value, "RenderPass",
       reinterpret_cast<void*>(id));
 }
 
@@ -273,33 +281,36 @@ RenderPassDrawQuad* RenderPass::CopyFromAndAppendRenderPassDrawQuad(
 DrawQuad* RenderPass::CopyFromAndAppendDrawQuad(const DrawQuad* quad) {
   DCHECK(!shared_quad_state_list.empty());
   switch (quad->material) {
-    case DrawQuad::DEBUG_BORDER:
+    case DrawQuad::Material::kDebugBorder:
       CopyFromAndAppendTypedDrawQuad<DebugBorderDrawQuad>(quad);
       break;
-    case DrawQuad::PICTURE_CONTENT:
+    case DrawQuad::Material::kPictureContent:
       CopyFromAndAppendTypedDrawQuad<PictureDrawQuad>(quad);
       break;
-    case DrawQuad::TEXTURE_CONTENT:
+    case DrawQuad::Material::kTextureContent:
       CopyFromAndAppendTypedDrawQuad<TextureDrawQuad>(quad);
       break;
-    case DrawQuad::SOLID_COLOR:
+    case DrawQuad::Material::kSolidColor:
       CopyFromAndAppendTypedDrawQuad<SolidColorDrawQuad>(quad);
       break;
-    case DrawQuad::TILED_CONTENT:
+    case DrawQuad::Material::kTiledContent:
       CopyFromAndAppendTypedDrawQuad<TileDrawQuad>(quad);
       break;
-    case DrawQuad::STREAM_VIDEO_CONTENT:
+    case DrawQuad::Material::kStreamVideoContent:
       CopyFromAndAppendTypedDrawQuad<StreamVideoDrawQuad>(quad);
       break;
-    case DrawQuad::SURFACE_CONTENT:
+    case DrawQuad::Material::kSurfaceContent:
       CopyFromAndAppendTypedDrawQuad<SurfaceDrawQuad>(quad);
       break;
-    case DrawQuad::YUV_VIDEO_CONTENT:
+    case DrawQuad::Material::kVideoHole:
+      CopyFromAndAppendTypedDrawQuad<VideoHoleDrawQuad>(quad);
+      break;
+    case DrawQuad::Material::kYuvVideoContent:
       CopyFromAndAppendTypedDrawQuad<YUVVideoDrawQuad>(quad);
       break;
     // RenderPass quads need to use specific CopyFrom function.
-    case DrawQuad::RENDER_PASS:
-    case DrawQuad::INVALID:
+    case DrawQuad::Material::kRenderPass:
+    case DrawQuad::Material::kInvalid:
       // TODO(danakj): Why is this a check instead of dcheck, and validate from
       // IPC?
       CHECK(false);  // Invalid DrawQuad material.

@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/aligned_memory.h"
 
 namespace {
@@ -30,6 +29,9 @@ class ListContainerHelper::CharAllocator {
   // This class holds the raw memory chunk, as well as information about its
   // size and availability.
   struct InnerList {
+    InnerList(const InnerList&) = delete;
+    InnerList& operator=(const InnerList&) = delete;
+
     std::unique_ptr<char[], base::AlignedFreeDeleter> data;
     // The number of elements in total the memory can hold. The difference
     // between capacity and size is the how many more elements this list can
@@ -99,9 +101,6 @@ class ListContainerHelper::CharAllocator {
     char* End() const { return data.get() + size * step; }
     char* LastElement() const { return data.get() + (size - 1) * step; }
     char* ElementAt(size_t index) const { return data.get() + index * step; }
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(InnerList);
   };
 
   CharAllocator(size_t alignment, size_t element_size, size_t element_count)
@@ -119,7 +118,10 @@ class ListContainerHelper::CharAllocator {
     last_list_ = storage_[last_list_index_].get();
   }
 
-  ~CharAllocator() {}
+  CharAllocator(const CharAllocator&) = delete;
+  ~CharAllocator() = default;
+
+  CharAllocator& operator=(const CharAllocator&) = delete;
 
   void* Allocate() {
     if (last_list_->IsFull()) {
@@ -261,17 +263,12 @@ class ListContainerHelper::CharAllocator {
 
   // This is equivalent to |storage_[last_list_index_]|.
   InnerList* last_list_;
-
-  DISALLOW_COPY_AND_ASSIGN(CharAllocator);
 };
 
 // PositionInCharAllocator
 //////////////////////////////////////////////////////
 ListContainerHelper::PositionInCharAllocator::PositionInCharAllocator(
-    const ListContainerHelper::PositionInCharAllocator& other)
-    : ptr_to_container(other.ptr_to_container),
-      vector_index(other.vector_index),
-      item_iterator(other.item_iterator) {}
+    const ListContainerHelper::PositionInCharAllocator& other) = default;
 
 ListContainerHelper::PositionInCharAllocator::PositionInCharAllocator(
     ListContainerHelper::CharAllocator* container,
@@ -349,7 +346,7 @@ ListContainerHelper::ListContainerHelper(size_t alignment,
                               max_size_for_derived_class,
                               num_of_elements_to_reserve_for)) {}
 
-ListContainerHelper::~ListContainerHelper() {}
+ListContainerHelper::~ListContainerHelper() = default;
 
 void ListContainerHelper::RemoveLast() {
   data_->RemoveLast();
@@ -497,7 +494,7 @@ ListContainerHelper::Iterator::Iterator(CharAllocator* container,
     : PositionInCharAllocator(container, vector_ind, item_iter),
       index_(index) {}
 
-ListContainerHelper::Iterator::~Iterator() {}
+ListContainerHelper::Iterator::~Iterator() = default;
 
 size_t ListContainerHelper::Iterator::index() const {
   return index_;
@@ -516,7 +513,7 @@ ListContainerHelper::ConstIterator::ConstIterator(CharAllocator* container,
     : PositionInCharAllocator(container, vector_ind, item_iter),
       index_(index) {}
 
-ListContainerHelper::ConstIterator::~ConstIterator() {}
+ListContainerHelper::ConstIterator::~ConstIterator() = default;
 
 size_t ListContainerHelper::ConstIterator::index() const {
   return index_;
@@ -531,7 +528,7 @@ ListContainerHelper::ReverseIterator::ReverseIterator(CharAllocator* container,
     : PositionInCharAllocator(container, vector_ind, item_iter),
       index_(index) {}
 
-ListContainerHelper::ReverseIterator::~ReverseIterator() {}
+ListContainerHelper::ReverseIterator::~ReverseIterator() = default;
 
 size_t ListContainerHelper::ReverseIterator::index() const {
   return index_;
@@ -551,7 +548,7 @@ ListContainerHelper::ConstReverseIterator::ConstReverseIterator(
     : PositionInCharAllocator(container, vector_ind, item_iter),
       index_(index) {}
 
-ListContainerHelper::ConstReverseIterator::~ConstReverseIterator() {}
+ListContainerHelper::ConstReverseIterator::~ConstReverseIterator() = default;
 
 size_t ListContainerHelper::ConstReverseIterator::index() const {
   return index_;

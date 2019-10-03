@@ -8,33 +8,14 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
+#include "chrome/browser/ui/autofill/popup_view_test_helpers.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/display/display.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace autofill {
-
-namespace {
-
-// Test class which overrides specific behavior for testing.
-class TestPopupViewCommon : public PopupViewCommon {
- public:
-  explicit TestPopupViewCommon(const display::Display& display)
-      : display_(display) {}
-
-  display::Display GetDisplayNearestPoint(
-      const gfx::Point& point,
-      gfx::NativeView container_view) override {
-    return display_;
-  }
-
- private:
-  display::Display display_;
-};
-
-}  // namespace
 
 class PopupViewCommonTest : public ChromeRenderViewHostTestHarness {
  public:
@@ -49,10 +30,8 @@ TEST_F(PopupViewCommonTest, CalculatePopupBounds) {
   int desired_width = 40;
   int desired_height = 16;
 
-  // Set up the visible screen space.
-  display::Display display(
-      0, gfx::Rect(0, 0, 2 * desired_width, 2 * desired_height));
-  TestPopupViewCommon view_common(display);
+  gfx::Rect window_bounds(0, 0, 2 * desired_width, 2 * desired_height);
+  MockPopupViewCommonForUnitTesting view_common(window_bounds);
 
   struct {
     gfx::Rect element_bounds;
@@ -76,19 +55,19 @@ TEST_F(PopupViewCommonTest, CalculatePopupBounds) {
       {gfx::Rect(2 * desired_width, 2 * desired_height, 5, 0),
        gfx::Rect(desired_width, desired_height, desired_width, desired_height)},
 
-      // The popup would be partial off the top and left side of the screen.
+      // The popup would be partial off the top and left side of the window.
       {gfx::Rect(-desired_width / 2, -desired_height / 2, 5, 0),
        gfx::Rect(0, 0, desired_width, desired_height)},
 
       // The popup would be partially off the bottom and the right side of
-      // the screen.
+      // the window.
       {gfx::Rect(desired_width * 1.5, desired_height * 1.5, 5, 0),
        gfx::Rect((desired_width * 1.5 + 5 - desired_width),
                  (desired_height * 1.5 - desired_height), desired_width,
                  desired_height)},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     gfx::Rect actual_popup_bounds = view_common.CalculatePopupBounds(
         desired_width, desired_height, test_cases[i].element_bounds,
         web_contents()->GetNativeView(), /* is_rtl= */ false);

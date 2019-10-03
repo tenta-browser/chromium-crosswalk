@@ -10,7 +10,9 @@
 #include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/test_extension_environment.h"
 #include "chrome/common/extensions/permissions/chrome_permission_message_provider.h"
+#include "components/version_info/version_info.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/permissions/permission_message_test_util.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -20,7 +22,7 @@
 
 namespace extensions {
 
-const char kWhitelistedExtensionID[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const char kAllowlistedExtensionID[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 // Tests that ChromePermissionMessageProvider produces the expected messages for
 // various combinations of app/extension permissions.
@@ -28,7 +30,7 @@ class PermissionMessageCombinationsUnittest : public testing::Test {
  public:
   PermissionMessageCombinationsUnittest()
       : message_provider_(new ChromePermissionMessageProvider()),
-        whitelisted_extension_id_(kWhitelistedExtensionID) {}
+        allowlisted_extension_id_(kAllowlistedExtensionID) {}
   ~PermissionMessageCombinationsUnittest() override {}
 
   // Overridden from testing::Test:
@@ -44,8 +46,8 @@ class PermissionMessageCombinationsUnittest : public testing::Test {
     std::replace(json_manifest_with_double_quotes.begin(),
                  json_manifest_with_double_quotes.end(), '\'', '"');
     app_ = env_.MakeExtension(
-        *base::test::ParseJson(json_manifest_with_double_quotes),
-        kWhitelistedExtensionID);
+        *base::test::ParseJsonDeprecated(json_manifest_with_double_quotes),
+        kAllowlistedExtensionID);
   }
 
   // Checks whether the currently installed app or extension produces the given
@@ -200,9 +202,9 @@ class PermissionMessageCombinationsUnittest : public testing::Test {
   extensions::TestExtensionEnvironment env_;
   std::unique_ptr<ChromePermissionMessageProvider> message_provider_;
   scoped_refptr<const Extension> app_;
-  // Whitelist a known extension id so we can test all permissions. This ID
-  // will be used for each test app.
-  SimpleFeature::ScopedThreadUnsafeWhitelistForTest whitelisted_extension_id_;
+  // Add a known extension id to the explicit allowlist so we can test all
+  // permissions. This ID will be used for each test app.
+  SimpleFeature::ScopedThreadUnsafeAllowlistForTest allowlisted_extension_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionMessageCombinationsUnittest);
 };
@@ -1177,6 +1179,37 @@ TEST_F(PermissionMessageCombinationsUnittest, NewTabPagePermissionMessages) {
   CreateAndInstall(kManifest);
   ASSERT_TRUE(CheckManifestProducesPermissions(
       "Replace the page you see when opening a new tab"));
+}
+
+TEST_F(PermissionMessageCombinationsUnittest,
+       DeclarativeNetRequestFeedbackPermissionMessages) {
+  // Set the current channel to trunk.
+  ScopedCurrentChannel scoped_channel(version_info::Channel::UNKNOWN);
+
+  CreateAndInstall(
+      "{"
+      "  'permissions': ["
+      "    'declarativeNetRequestFeedback'"
+      "  ]"
+      "}");
+  ASSERT_TRUE(CheckManifestProducesPermissions("Read your browsing history"));
+
+  CreateAndInstall(
+      "{"
+      "  'permissions': ["
+      "    'tabs', 'declarativeNetRequestFeedback'"
+      "  ]"
+      "}");
+  ASSERT_TRUE(CheckManifestProducesPermissions("Read your browsing history"));
+
+  CreateAndInstall(
+      "{"
+      "  'permissions': ["
+      "    '<all_urls>', 'declarativeNetRequestFeedback'"
+      "  ]"
+      "}");
+  ASSERT_TRUE(CheckManifestProducesPermissions(
+      "Read and change all your data on the websites you visit"));
 }
 
 // TODO(sashab): Add a test that checks that messages are generated correctly

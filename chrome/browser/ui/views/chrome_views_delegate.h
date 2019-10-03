@@ -5,12 +5,15 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CHROME_VIEWS_DELEGATE_H_
 #define CHROME_BROWSER_UI_VIEWS_CHROME_VIEWS_DELEGATE_H_
 
+#include <map>
+#include <memory>
+#include <string>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "ui/accessibility/ax_enums.h"
 #include "ui/views/views_delegate.h"
 
 class ScopedKeepAlive;
@@ -29,8 +32,6 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
                                const std::string& window_name,
                                gfx::Rect* bounds,
                                ui::WindowShowState* show_state) const override;
-  void NotifyAccessibilityEvent(views::View* view,
-                                ui::AXEvent event_type) override;
 #if defined(OS_CHROMEOS)
   ProcessMenuAcceleratorResult ProcessAcceleratorWhileMenuShowing(
       const ui::Accelerator& accelerator) override;
@@ -42,7 +43,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
   HICON GetDefaultWindowIcon() const override;
   HICON GetSmallWindowIcon() const override;
   int GetAppbarAutohideEdges(HMONITOR monitor,
-                             const base::Closure& callback) override;
+                             base::OnceClosure callback) override;
 #elif defined(OS_LINUX) && !defined(OS_CHROMEOS)
   gfx::ImageSkia* GetDefaultWindowIcon() const override;
   bool WindowManagerProvidesTitleBar(bool maximized) override;
@@ -50,6 +51,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
 
   void AddRef() override;
   void ReleaseRef() override;
+  bool IsShuttingDown() const override;
   void OnBeforeWidgetInit(
       views::Widget::InitParams* params,
       views::internal::NativeWidgetDelegate* delegate) override;
@@ -63,7 +65,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
 
   // Callback on main thread with the edges. |returned_edges| is the value that
   // was returned from the call to GetAutohideEdges() that initiated the lookup.
-  void OnGotAppbarAutohideEdges(const base::Closure& callback,
+  void OnGotAppbarAutohideEdges(base::OnceClosure callback,
                                 HMONITOR monitor,
                                 int returned_edges,
                                 int edges);

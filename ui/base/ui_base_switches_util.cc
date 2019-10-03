@@ -13,19 +13,10 @@ namespace switches {
 bool IsTouchDragDropEnabled() {
 #if defined(OS_CHROMEOS) || defined(OS_ANDROID)
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableTouchDragDrop);
+      kDisableTouchDragDrop);
 #else
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableTouchDragDrop);
-#endif
-}
-
-bool IsMusHostingViz() {
-#if defined(USE_AURA)
-  auto* cmd = base::CommandLine::ForCurrentProcess();
-  return cmd->GetSwitchValueASCII(switches::kMus) == switches::kMusHostVizValue;
-#else
-  return false;
+      kEnableTouchDragDrop);
 #endif
 }
 

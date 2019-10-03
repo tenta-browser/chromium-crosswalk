@@ -7,16 +7,16 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket.h"
 #include "remoting/protocol/fake_stream_socket.h"
 #include "remoting/protocol/message_reader.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/webrtc/rtc_base/byteorder.h"
+#include "third_party/webrtc/rtc_base/byte_order.h"
 
 using testing::_;
 using testing::DoAll;
@@ -79,7 +79,7 @@ class MessageReaderTest : public testing::Test {
     callback_.OnMessage();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<MessageReader> reader_;
   FakeStreamSocket socket_;
   MockMessageReceivedCallback callback_;

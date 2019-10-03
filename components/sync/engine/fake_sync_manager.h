@@ -83,12 +83,13 @@ class FakeSyncManager : public SyncManager {
                           ModelTypeSet to_journal,
                           ModelTypeSet to_unapply) override;
   void UpdateCredentials(const SyncCredentials& credentials) override;
+  void InvalidateCredentials() override;
   void StartSyncingNormally(base::Time last_poll_time) override;
   void StartConfiguration() override;
   void ConfigureSyncer(ConfigureReason reason,
                        ModelTypeSet to_download,
-                       const base::Closure& ready_task,
-                       const base::Closure& retry_task) override;
+                       SyncFeatureState sync_feature_state,
+                       const base::Closure& ready_task) override;
   void OnIncomingInvalidation(
       ModelType type,
       std::unique_ptr<InvalidationInterface> interface) override;
@@ -97,13 +98,14 @@ class FakeSyncManager : public SyncManager {
   void RemoveObserver(Observer* observer) override;
   SyncStatus GetDetailedStatus() const override;
   void SaveChanges() override;
-  void ShutdownOnSyncThread(ShutdownReason reason) override;
+  void ShutdownOnSyncThread() override;
   UserShare* GetUserShare() override;
   ModelTypeConnector* GetModelTypeConnector() override;
   std::unique_ptr<ModelTypeConnector> GetModelTypeConnectorProxy() override;
-  const std::string cache_guid() override;
-  bool ReceivedExperiment(Experiments* experiments) override;
-  bool HasUnsyncedItems() override;
+  std::string cache_guid() override;
+  std::string birthday() override;
+  std::string bag_of_chips() override;
+  bool HasUnsyncedItemsForTest() override;
   SyncEncryptionHandler* GetEncryptionHandler() override;
   std::vector<std::unique_ptr<ProtocolEvent>> GetBufferedProtocolEvents()
       override;
@@ -115,14 +117,14 @@ class FakeSyncManager : public SyncManager {
   bool HasDirectoryTypeDebugInfoObserver(
       TypeDebugInfoObserver* observer) override;
   void RequestEmitDebugInfo() override;
-  void ClearServerData(const base::Closure& callback) override;
   void OnCookieJarChanged(bool account_mismatch, bool empty_jar) override;
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) override;
+  void UpdateInvalidationClientId(const std::string&) override;
 
  private:
   scoped_refptr<base::SequencedTaskRunner> sync_task_runner_;
 
-  base::ObserverList<SyncManager::Observer> observers_;
+  base::ObserverList<SyncManager::Observer>::Unchecked observers_;
 
   // Faked directory state.
   ModelTypeSet initial_sync_ended_types_;
@@ -145,9 +147,9 @@ class FakeSyncManager : public SyncManager {
   // The most recent configure reason.
   ConfigureReason last_configure_reason_;
 
-  FakeModelTypeConnector fake_model_type_connector_;
-
   FakeSyncEncryptionHandler fake_encryption_handler_;
+
+  FakeModelTypeConnector fake_model_type_connector_;
 
   TestUserShare test_user_share_;
 

@@ -8,52 +8,58 @@
 #include <memory>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/lookalikes/safety_tips/safety_tip_ui.h"
+#include "chrome/browser/ui/page_info/page_info_dialog.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
+#include "chrome/browser/ui/views/bubble_anchor_util_views.h"
+#include "chrome/browser/ui/views/hover_button.h"
 #include "chrome/browser/ui/views/page_info/chosen_object_view_observer.h"
+#include "chrome/browser/ui/views/page_info/page_info_bubble_view_base.h"
+#include "chrome/browser/ui/views/page_info/page_info_hover_button.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row_observer.h"
-#include "content/public/browser/web_contents_observer.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "components/security_state/core/security_state.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/controls/separator.h"
+#include "ui/views/controls/styled_label.h"
 #include "ui/views/controls/styled_label_listener.h"
+#include "ui/views/widget/widget.h"
 
-class GURL;
-class Browser;
 class BubbleHeaderView;
-class HoverButton;
+class GURL;
 class Profile;
 
 namespace content {
 class WebContents;
-}
+}  // namespace content
+
+namespace gfx {
+class Rect;
+}  // namespace gfx
 
 namespace net {
 class X509Certificate;
-}
-
-namespace security_state {
-struct SecurityInfo;
-}  // namespace security_state
+}  // namespace net
 
 namespace test {
 class PageInfoBubbleViewTestApi;
-}
+}  // namespace test
 
 namespace views {
 class Link;
-class Widget;
+class View;
 }  // namespace views
 
 // The views implementation of the page info UI.
-class PageInfoBubbleView : public content::WebContentsObserver,
+class PageInfoBubbleView : public PageInfoBubbleViewBase,
                            public PermissionSelectorRowObserver,
                            public ChosenObjectViewObserver,
-                           public views::BubbleDialogDelegateView,
                            public views::ButtonListener,
                            public views::LinkListener,
                            public views::StyledLabelListener,
@@ -66,94 +72,98 @@ class PageInfoBubbleView : public content::WebContentsObserver,
 
   ~PageInfoBubbleView() override;
 
-  // Type of the bubble being displayed.
-  enum BubbleType {
-    BUBBLE_NONE,
-    // Usual page info bubble for websites.
-    BUBBLE_PAGE_INFO,
-    // Custom bubble for internal pages like chrome:// and chrome-extensions://.
-    BUBBLE_INTERNAL_PAGE
-  };
-
   enum PageInfoBubbleViewID {
     VIEW_ID_NONE = 0,
     VIEW_ID_PAGE_INFO_BUTTON_CLOSE,
     VIEW_ID_PAGE_INFO_BUTTON_CHANGE_PASSWORD,
     VIEW_ID_PAGE_INFO_BUTTON_WHITELIST_PASSWORD_REUSE,
     VIEW_ID_PAGE_INFO_LABEL_SECURITY_DETAILS,
+    VIEW_ID_PAGE_INFO_LABEL_EV_CERTIFICATE_DETAILS,
     VIEW_ID_PAGE_INFO_LABEL_RESET_CERTIFICATE_DECISIONS,
     VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIE_DIALOG,
     VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_SITE_SETTINGS,
     VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_CERTIFICATE_VIEWER,
+    VIEW_ID_PAGE_INFO_BUTTON_END_VR,
+    VIEW_ID_PAGE_INFO_HOVER_BUTTON_VR_PRESENTATION,
+    VIEW_ID_PAGE_INFO_BUTTON_LEAVE_SITE,
   };
 
   // Creates the appropriate page info bubble for the given |url|.
+  // |anchor_view| will be used to place the bubble.  If |anchor_view| is null,
+  // |anchor_rect| will be used instead.  |parent_window| will become the
+  // parent of the widget hosting the bubble view.
   static views::BubbleDialogDelegateView* CreatePageInfoBubble(
-      Browser* browser,
+      views::View* anchor_view,
+      const gfx::Rect& anchor_rect,
+      gfx::NativeWindow parent_window,
+      Profile* profile,
       content::WebContents* web_contents,
       const GURL& url,
-      const security_state::SecurityInfo& security_info);
-
-  // Returns the type of the bubble being shown.
-  static BubbleType GetShownBubbleType();
-
-  // Returns a weak reference to the page info bubble being shown.
-  static views::BubbleDialogDelegateView* GetPageInfoBubble();
+      security_state::SecurityLevel security_level,
+      const security_state::VisibleSecurityState& visible_security_state,
+      PageInfoClosingCallback closing_callback);
 
  private:
   friend class PageInfoBubbleViewBrowserTest;
   friend class test::PageInfoBubbleViewTestApi;
 
-  PageInfoBubbleView(views::View* anchor_view,
-                     const gfx::Rect& anchor_rect,
-                     gfx::NativeView parent_window,
-                     Profile* profile,
-                     content::WebContents* web_contents,
-                     const GURL& url,
-                     const security_state::SecurityInfo& security_info);
+  PageInfoBubbleView(
+      views::View* anchor_view,
+      const gfx::Rect& anchor_rect,
+      gfx::NativeView parent_window,
+      Profile* profile,
+      content::WebContents* web_contents,
+      const GURL& url,
+      security_state::SecurityLevel security_level,
+      const security_state::VisibleSecurityState& visible_security_state,
+      PageInfoClosingCallback closing_callback);
 
-  // WebContentsObserver implementation.
-  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  // PageInfoBubbleViewBase:
+  gfx::Size CalculatePreferredSize() const override;
+  void OnWidgetDestroying(views::Widget* widget) override;
   void WebContentsDestroyed() override;
-  void WasHidden() override;
-  void DidStartNavigation(content::NavigationHandle* handle) override;
 
-  // PermissionSelectorRowObserver implementation.
+  // PermissionSelectorRowObserver:
   void OnPermissionChanged(
       const PageInfoUI::PermissionInfo& permission) override;
 
-  // ChosenObjectViewObserver implementation.
+  // ChosenObjectViewObserver:
   void OnChosenObjectDeleted(const PageInfoUI::ChosenObjectInfo& info) override;
 
-  // views::BubbleDialogDelegateView implementation.
-  base::string16 GetWindowTitle() const override;
-  bool ShouldShowCloseButton() const override;
-  void OnWidgetDestroying(views::Widget* widget) override;
-  int GetDialogButtons() const override;
-
-  // views::ButtonListener implementation.
+  // views::ButtonListener:
   void ButtonPressed(views::Button* button, const ui::Event& event) override;
 
-  // views::LinkListener implementation.
+  // views::LinkListener:
   void LinkClicked(views::Link* source, int event_flags) override;
 
-  // views::StyledLabelListener implementation.
+  // views::StyledLabelListener:
   void StyledLabelLinkClicked(views::StyledLabel* label,
                               const gfx::Range& range,
                               int event_flags) override;
 
-  // views::View implementation.
-  gfx::Size CalculatePreferredSize() const override;
-
-  // PageInfoUI implementations.
+  // PageInfoUI:
   void SetCookieInfo(const CookieInfoList& cookie_info_list) override;
   void SetPermissionInfo(const PermissionInfoList& permission_info_list,
                          ChosenObjectInfoList chosen_object_info_list) override;
   void SetIdentityInfo(const IdentityInfo& identity_info) override;
+  void SetPageFeatureInfo(const PageFeatureInfo& info) override;
+
+  void LayoutPermissionsLikeUiRow(views::GridLayout* layout,
+                                  bool is_list_empty,
+                                  int column_id);
+
+  // WebContentsObserver:
+  void DidChangeVisibleSecurityState() override;
+
+#if defined(FULL_SAFE_BROWSING)
+  std::unique_ptr<PageInfoUI::SecurityDescription>
+  CreateSecurityDescriptionForPasswordReuse(
+      bool is_enterprise_password) const override;
+#endif
 
   // Creates the contents of the |site_settings_view_|. The ownership of the
   // returned view is transferred to the caller.
-  views::View* CreateSiteSettingsView() WARN_UNUSED_RESULT;
+  std::unique_ptr<views::View> CreateSiteSettingsView() WARN_UNUSED_RESULT;
 
   // Posts a task to HandleMoreInfoRequestAsync() below.
   void HandleMoreInfoRequest(views::View* source);
@@ -166,24 +176,26 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   // The presenter that controls the Page Info UI.
   std::unique_ptr<PageInfo> presenter_;
 
-  Profile* profile_;
+  Profile* const profile_;
 
   // The header section (containing security-related information).
-  BubbleHeaderView* header_;
-
-  // The security summary for the current page.
-  base::string16 summary_text_;
+  BubbleHeaderView* header_ = nullptr;
 
   // The view that contains the certificate, cookie, and permissions sections.
-  views::View* site_settings_view_;
+  views::View* site_settings_view_ = nullptr;
 
-  // The link that opens the "Cookies" dialog. Non-harmony mode only.
-  views::Link* cookie_link_legacy_;
-  // The bubble that opens the "Cookies" dialog. Harmony mode only.
-  HoverButton* cookie_button_;
+  // The button that opens the "Cookies" dialog.
+  PageInfoHoverButton* cookie_button_ = nullptr;
+
+  // The button that opens the "Certificate" dialog.
+  PageInfoHoverButton* certificate_button_ = nullptr;
 
   // The view that contains the "Permissions" table of the bubble.
-  views::View* permissions_view_;
+  views::View* permissions_view_ = nullptr;
+
+  // The view that contains ui related to features on a page, like a presenting
+  // VR page.
+  views::View* page_feature_info_view_ = nullptr;
 
   // The certificate provided by the site, if one exists.
   scoped_refptr<net::X509Certificate> certificate_;
@@ -193,9 +205,19 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   // |Permission| changes.
   std::vector<std::unique_ptr<PermissionSelectorRow>> selector_rows_;
 
-  base::WeakPtrFactory<PageInfoBubbleView> weak_factory_;
+  PageInfoClosingCallback closing_callback_;
+
+  base::WeakPtrFactory<PageInfoBubbleView> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PageInfoBubbleView);
 };
+
+// Creates and returns a safety tip bubble. Used in unit tests.
+PageInfoBubbleViewBase* CreateSafetyTipBubbleForTesting(
+    gfx::NativeView parent_view,
+    content::WebContents* web_contents,
+    safety_tips::SafetyTipType type,
+    const GURL& virtual_url,
+    const GURL& safe_url);
 
 #endif  // CHROME_BROWSER_UI_VIEWS_PAGE_INFO_PAGE_INFO_BUBBLE_VIEW_H_

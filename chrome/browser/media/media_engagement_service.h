@@ -7,6 +7,7 @@
 
 #include <map>
 #include <set>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/values.h"
@@ -16,7 +17,6 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 
-class GURL;
 class MediaEngagementContentsObserver;
 class MediaEngagementScore;
 class Profile;
@@ -32,6 +32,10 @@ class WebContents;
 namespace history {
 class HistoryService;
 }
+
+namespace url {
+class Origin;
+}  // namespace url
 
 class MediaEngagementService : public KeyedService,
                                public history::HistoryServiceObserver {
@@ -52,20 +56,17 @@ class MediaEngagementService : public KeyedService,
   explicit MediaEngagementService(Profile* profile);
   ~MediaEngagementService() override;
 
-  // Returns the engagement score of |url|.
-  double GetEngagementScore(const GURL& url) const;
+  // Returns the engagement score of |origin|.
+  double GetEngagementScore(const url::Origin& origin) const;
 
-  // Returns true if |url| has an engagement score considered high.
-  bool HasHighEngagement(const GURL& url) const;
+  // Returns true if |origin| has an engagement score considered high.
+  bool HasHighEngagement(const url::Origin& origin) const;
 
   // Returns a map of all stored origins and their engagement levels.
-  std::map<GURL, double> GetScoreMapForTesting() const;
+  std::map<url::Origin, double> GetScoreMapForTesting() const;
 
-  // Record a visit of a |url|.
-  void RecordVisit(const GURL& url);
-
-  // Record a media playback on a |url|.
-  void RecordPlayback(const GURL& url);
+  // Record a visit of a |origin|.
+  void RecordVisit(const url::Origin& origin);
 
   // Returns an array of engagement score details for all origins which
   // have a score.
@@ -74,10 +75,7 @@ class MediaEngagementService : public KeyedService,
 
   // Overridden from history::HistoryServiceObserver:
   void OnURLsDeleted(history::HistoryService* history_service,
-                     bool all_history,
-                     bool expired,
-                     const history::URLRows& deleted_rows,
-                     const std::set<GURL>& favicon_urls) override;
+                     const history::DeletionInfo& deletion_info) override;
 
   // KeyedService support:
   void Shutdown() override;
@@ -86,20 +84,15 @@ class MediaEngagementService : public KeyedService,
   void ClearDataBetweenTime(const base::Time& delete_begin,
                             const base::Time& delete_end);
 
-  // Retrieves the MediaEngagementScore for |url|.
-  MediaEngagementScore CreateEngagementScore(const GURL& url) const;
+  // Retrieves the MediaEngagementScore for |origin|.
+  MediaEngagementScore CreateEngagementScore(const url::Origin& origin) const;
 
   MediaEngagementContentsObserver* GetContentsObserverFor(
       content::WebContents* web_contents) const;
 
   Profile* profile() const;
 
-  // The name of the histogram that scores are logged to on startup.
-  static const char kHistogramScoreAtStartupName[];
-
-  // The name of the histogram that records the reduction in score when history
-  // is cleared.
-  static const char kHistogramURLsDeletedScoreReductionName[];
+  const base::Clock* clock() const { return clock_; }
 
  private:
   friend class MediaEngagementBrowserTest;
@@ -108,11 +101,11 @@ class MediaEngagementService : public KeyedService,
   friend class MediaEngagementSessionTest;
   friend class MediaEngagementContentsObserver;
 
-  MediaEngagementService(Profile* profile, std::unique_ptr<base::Clock> clock);
+  MediaEngagementService(Profile* profile, base::Clock* clock);
 
   // Returns true if we should record engagement for this url. Currently,
   // engagement is only earned for HTTP and HTTPS.
-  bool ShouldRecordEngagement(const GURL& url) const;
+  bool ShouldRecordEngagement(const url::Origin& origin) const;
 
   base::flat_map<content::WebContents*, MediaEngagementContentsObserver*>
       contents_observers_;
@@ -120,16 +113,22 @@ class MediaEngagementService : public KeyedService,
   Profile* profile_;
 
   // Clear any data for a specific origin.
-  void Clear(const GURL& url);
+  void Clear(const url::Origin& origin);
 
   // An internal clock for testing.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
-  // Records all the stored scores to a histogram.
-  void RecordStoredScoresToHistogram();
+  std::vector<MediaEngagementScore> GetAllStoredScores() const;
 
   int GetSchemaVersion() const;
   void SetSchemaVersion(int);
+
+  // Remove origins from `deleted_origins` that have no more visits in the
+  // history service, represented as `origin_data`. This is meant to be used
+  // when the service receives a notification of history expiration.
+  void RemoveOriginsWithNoVisits(
+      const std::set<url::Origin>& deleted_origins,
+      const history::OriginCountAndLastVisitMap& origin_data);
 
   DISALLOW_COPY_AND_ASSIGN(MediaEngagementService);
 };

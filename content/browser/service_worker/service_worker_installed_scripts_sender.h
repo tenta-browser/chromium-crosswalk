@@ -5,9 +5,13 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INSTALLED_SCRIPTS_SENDER_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INSTALLED_SCRIPTS_SENDER_H_
 
+#include "base/containers/flat_map.h"
 #include "base/containers/queue.h"
-#include "content/common/service_worker/service_worker_installed_scripts_manager.mojom.h"
+#include "content/browser/service_worker/service_worker_installed_script_reader.h"
+#include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/system/data_pipe.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_installed_scripts_manager.mojom.h"
 
 namespace content {
 
@@ -29,41 +33,30 @@ class ServiceWorkerVersion;
 // 3. The sender sends requested scripts. |state_| is kSendingScripts. When all
 //    the requested scripts are sent, returns to the phase 2.
 class CONTENT_EXPORT ServiceWorkerInstalledScriptsSender
-    : public mojom::ServiceWorkerInstalledScriptsManagerHost {
+    : public blink::mojom::ServiceWorkerInstalledScriptsManagerHost,
+      public ServiceWorkerInstalledScriptReader::Client {
  public:
-  // Do not change the order. This is used for UMA.
-  enum class FinishedReason {
-    kNotFinished = 0,
-    kSuccess = 1,
-    kNoHttpInfoError = 2,
-    kCreateDataPipeError = 3,
-    kConnectionError = 4,
-    kResponseReaderError = 5,
-    kMetaDataSenderError = 6,
-    // Add a new type here, then update kMaxValue and enums.xml.
-    kMaxValue = kMetaDataSenderError,
-  };
-
   // |owner| must be an installed service worker.
   explicit ServiceWorkerInstalledScriptsSender(ServiceWorkerVersion* owner);
 
   ~ServiceWorkerInstalledScriptsSender() override;
 
-  // Creates a Mojo struct (mojom::ServiceWorkerInstalledScriptsInfo) and sets
-  // it with the information to create WebServiceWorkerInstalledScriptsManager
-  // on the renderer.
-  mojom::ServiceWorkerInstalledScriptsInfoPtr CreateInfoAndBind();
+  // Creates a Mojo struct (blink::mojom::ServiceWorkerInstalledScriptsInfo) and
+  // sets it with the information to create
+  // WebServiceWorkerInstalledScriptsManager on the renderer.
+  blink::mojom::ServiceWorkerInstalledScriptsInfoPtr CreateInfoAndBind();
 
   // Starts sending installed scripts to the worker.
   void Start();
 
   // Returns the reason for the last time the sender entered the idle state. If
   // this sender has never reached the idle state, returns kNotFinished.
-  FinishedReason last_finished_reason() const { return last_finished_reason_; }
+  ServiceWorkerInstalledScriptReader::FinishedReason last_finished_reason()
+      const {
+    return last_finished_reason_;
+  }
 
  private:
-  class Sender;
-
   enum class State {
     kNotStarted,
     kSendingScripts,
@@ -76,22 +69,24 @@ class CONTENT_EXPORT ServiceWorkerInstalledScriptsSender
   // the renderer. Also, if |reason| indicates failure to read the installed
   // script from the disk cache (kNoHTTPInfoError or kResponseReaderError), then
   // |owner_| is doomed via ServiceWorkerRegistration::DeleteVersion().
-  void Abort(FinishedReason reason);
+  void Abort(ServiceWorkerInstalledScriptReader::FinishedReason reason);
 
-  void UpdateFinishedReasonAndBecomeIdle(FinishedReason reason);
+  void UpdateFinishedReasonAndBecomeIdle(
+      ServiceWorkerInstalledScriptReader::FinishedReason reason);
 
-  // Called from |running_sender_|.
-  void SendScriptInfoToRenderer(
-      std::string encoding,
-      std::unordered_map<std::string, std::string> headers,
-      mojo::ScopedDataPipeConsumerHandle body_handle,
-      uint64_t body_size,
-      mojo::ScopedDataPipeConsumerHandle meta_data_handle,
-      uint64_t meta_data_size);
-  void OnHttpInfoRead(scoped_refptr<HttpResponseInfoIOBuffer> http_info);
-  void OnFinishSendingScript(FinishedReason reason);
+  // Implements ServiceWorkerInstalledScriptReader::Client.
+  void OnStarted(std::string encoding,
+                 base::flat_map<std::string, std::string> headers,
+                 mojo::ScopedDataPipeConsumerHandle body_handle,
+                 uint64_t body_size,
+                 mojo::ScopedDataPipeConsumerHandle meta_data_handle,
+                 uint64_t meta_data_size) override;
+  void OnHttpInfoRead(
+      scoped_refptr<HttpResponseInfoIOBuffer> http_info) override;
+  void OnFinished(
+      ServiceWorkerInstalledScriptReader::FinishedReason reason) override;
 
-  // Implements mojom::ServiceWorkerInstalledScriptsManagerHost.
+  // Implements blink::mojom::ServiceWorkerInstalledScriptsManagerHost.
   void RequestInstalledScript(const GURL& script_url) override;
 
   bool IsSendingMainScript() const;
@@ -101,12 +96,13 @@ class CONTENT_EXPORT ServiceWorkerInstalledScriptsSender
   const int64_t main_script_id_;
   bool sent_main_script_;
 
-  mojo::Binding<mojom::ServiceWorkerInstalledScriptsManagerHost> binding_;
-  mojom::ServiceWorkerInstalledScriptsManagerPtr manager_;
-  std::unique_ptr<Sender> running_sender_;
+  mojo::Binding<blink::mojom::ServiceWorkerInstalledScriptsManagerHost>
+      binding_;
+  blink::mojom::ServiceWorkerInstalledScriptsManagerPtr manager_;
+  std::unique_ptr<ServiceWorkerInstalledScriptReader> reader_;
 
   State state_;
-  FinishedReason last_finished_reason_;
+  ServiceWorkerInstalledScriptReader::FinishedReason last_finished_reason_;
 
   GURL current_sending_url_;
   base::queue<std::pair<int64_t /* resource_id */, GURL>> pending_scripts_;

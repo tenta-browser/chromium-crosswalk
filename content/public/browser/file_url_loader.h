@@ -5,16 +5,41 @@
 #ifndef CONTENT_PUBLIC_BROWSER_FILE_URL_LOADER_H_
 #define CONTENT_PUBLIC_BROWSER_FILE_URL_LOADER_H_
 
+#include <memory>
+
+#include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
-#include "content/public/common/url_loader.mojom.h"
+#include "mojo/public/cpp/system/filtered_data_source.h"
+#include "net/http/http_response_headers.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
+
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
+}
+}  // namespace network
 
 namespace content {
 
-struct ResourceRequest;
+class SharedCorsOriginAccessList;
+
+class CONTENT_EXPORT FileURLLoaderObserver
+    : public mojo::FilteredDataSource::Filter {
+ public:
+  FileURLLoaderObserver() {}
+  ~FileURLLoaderObserver() override {}
+
+  virtual void OnStart() {}
+  virtual void OnSeekComplete(int64_t result) {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(FileURLLoaderObserver);
+};
 
 // Helper to create a self-owned URLLoader instance which fulfills |request|
 // using the contents of the file at |path|. The URL in |request| must be a
-// file:// URL.
+// file:// URL. The *optionally* supplied |observer| will be called to report
+// progress during the file loading.
 //
 // Note that this does not restrict filesystem access *in any way*, so if the
 // file at |path| is accessible to the browser, it will be loaded and used to
@@ -23,9 +48,28 @@ struct ResourceRequest;
 // The URLLoader created by this function does *not* automatically follow
 // filesytem links (e.g. Windows shortcuts) or support directory listing.
 // A directory path will always yield a FILE_NOT_FOUND network error.
-CONTENT_EXPORT void CreateFileURLLoader(const ResourceRequest& request,
-                                        mojom::URLLoaderRequest loader,
-                                        mojom::URLLoaderClientPtr client);
+CONTENT_EXPORT void CreateFileURLLoader(
+    const network::ResourceRequest& request,
+    network::mojom::URLLoaderRequest loader,
+    network::mojom::URLLoaderClientPtr client,
+    std::unique_ptr<FileURLLoaderObserver> observer,
+    bool allow_directory_listing,
+    scoped_refptr<net::HttpResponseHeaders> extra_response_headers = nullptr);
+
+// Helper to create a FileURLLoaderFactory instance. This exposes the ability
+// to load file:// URLs through SimpleURLLoader to non-content classes.
+//
+// When non-empty, |profile_path| is used to whitelist specific directories on
+// ChromeOS and Android. It is checked by
+// ContentBrowserClient::IsFileAccessAllowed.
+// |shared_cors_origin_access_list| can be specified if caller wants only
+// listed access pattern to be permitted for CORS requests. If nullptr is
+// passed, all file accesses are permitted even for CORS requests. This list
+// does not affect no-cors requests.
+CONTENT_EXPORT std::unique_ptr<network::mojom::URLLoaderFactory>
+CreateFileURLLoaderFactory(
+    const base::FilePath& profile_path,
+    scoped_refptr<SharedCorsOriginAccessList> shared_cors_origin_access_list);
 
 }  // namespace content
 

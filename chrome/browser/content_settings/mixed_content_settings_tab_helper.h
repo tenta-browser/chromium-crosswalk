@@ -34,6 +34,8 @@ class MixedContentSettingsTabHelper
 
   explicit MixedContentSettingsTabHelper(content::WebContents* tab);
 
+  // content::WebContentsObserver
+  void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
@@ -41,6 +43,8 @@ class MixedContentSettingsTabHelper
   // on cross-site main frame navigations.
   content::SiteInstance* insecure_content_site_instance_ = nullptr;
   bool is_running_insecure_content_allowed_ = false;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(MixedContentSettingsTabHelper);
 };

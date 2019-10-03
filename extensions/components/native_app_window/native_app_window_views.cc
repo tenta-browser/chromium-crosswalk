@@ -4,7 +4,6 @@
 
 #include "extensions/components/native_app_window/native_app_window_views.h"
 
-#include "base/threading/sequenced_worker_pool.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -12,7 +11,6 @@
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/common/draggable_region.h"
 #include "third_party/skia/include/core/SkRegion.h"
-#include "ui/gfx/path.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/non_client_view.h"
@@ -65,7 +63,8 @@ void NativeAppWindowViews::InitializeWindow(
   // Stub implementation. See also ChromeNativeAppWindowViews.
   views::Widget::InitParams init_params(views::Widget::InitParams::TYPE_WINDOW);
   init_params.delegate = this;
-  init_params.keep_on_top = create_params.always_on_top;
+  if (create_params.always_on_top)
+    init_params.z_order = ui::ZOrderLevel::kFloatingWindow;
   widget_->Init(init_params);
   widget_->CenterWindow(
       create_params.GetInitialWindowBounds(gfx::Insets()).size());
@@ -129,6 +128,10 @@ void NativeAppWindowViews::Hide() {
   widget_->Hide();
 }
 
+bool NativeAppWindowViews::IsVisible() const {
+  return widget_->IsVisible();
+}
+
 void NativeAppWindowViews::Close() {
   widget_->Close();
 }
@@ -161,13 +164,13 @@ void NativeAppWindowViews::FlashFrame(bool flash) {
   widget_->FlashFrame(flash);
 }
 
-bool NativeAppWindowViews::IsAlwaysOnTop() const {
+ui::ZOrderLevel NativeAppWindowViews::GetZOrderLevel() const {
   // Stub implementation. See also ChromeNativeAppWindowViews.
-  return widget_->IsAlwaysOnTop();
+  return widget_->GetZOrderLevel();
 }
 
-void NativeAppWindowViews::SetAlwaysOnTop(bool always_on_top) {
-  widget_->SetAlwaysOnTop(always_on_top);
+void NativeAppWindowViews::SetZOrderLevel(ui::ZOrderLevel order) {
+  widget_->SetZOrderLevel(order);
 }
 
 gfx::NativeView NativeAppWindowViews::GetHostView() const {
@@ -215,7 +218,7 @@ bool NativeAppWindowViews::CanResize() const {
 
 bool NativeAppWindowViews::CanMaximize() const {
   return resizable_ && !size_constraints_.HasMaximumSize() &&
-         !app_window_->window_type_is_panel() && !WidgetHasHitTestMask();
+         !WidgetHasHitTestMask();
 }
 
 bool NativeAppWindowViews::CanMinimize() const {
@@ -318,7 +321,7 @@ void NativeAppWindowViews::Layout() {
 }
 
 void NativeAppWindowViews::ViewHierarchyChanged(
-    const ViewHierarchyChangedDetails& details) {
+    const views::ViewHierarchyChangedDetails& details) {
   if (details.is_add && details.child == this) {
     web_view_ = new views::WebView(NULL);
     AddChildView(web_view_);
@@ -376,10 +379,10 @@ void NativeAppWindowViews::UpdateShape(std::unique_ptr<ShapeRects> rects) {
   // Stub implementation. See also ChromeNativeAppWindowViews.
 }
 
-void NativeAppWindowViews::HandleKeyboardEvent(
+bool NativeAppWindowViews::HandleKeyboardEvent(
     const content::NativeWebKeyboardEvent& event) {
-  unhandled_keyboard_event_handler_.HandleKeyboardEvent(event,
-                                                        GetFocusManager());
+  return unhandled_keyboard_event_handler_.HandleKeyboardEvent(
+      event, GetFocusManager());
 }
 
 bool NativeAppWindowViews::IsFrameless() const {

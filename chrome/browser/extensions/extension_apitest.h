@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/strings/string_piece_forward.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "content/public/browser/notification_registrar.h"
@@ -18,7 +19,6 @@ class FilePath;
 
 namespace extensions {
 class Extension;
-}
 
 // The general flow of these API tests should work like this:
 // (1) Setup initial browser state (e.g. create some bookmarks for the
@@ -61,6 +61,15 @@ class ExtensionApiTest : public ExtensionBrowserTest {
     // Load the extension using //extensions/test/data/ as the root path instead
     // of loading from //chrome/test/data/extensions/api_test/.
     kFlagUseRootExtensionsDir = 1 << 7,
+
+    // Pass the FOR_LOGIN_SCREEN flag when loading the extension. This flag is
+    // usually provided for force-installed extension on the login screen. This
+    // also sets the location to EXTERNAL_POLICY.
+    kFlagLoadForLoginScreen = 1 << 8,
+
+    // Load the event page extension as a Service Worker based background
+    // extension.
+    kFlagRunAsServiceWorkerBasedExtension = 1 << 9,
   };
 
   ExtensionApiTest();
@@ -84,6 +93,13 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   bool RunExtensionTestWithArg(const std::string& extension_name,
                                const char* custom_arg);
 
+  // Similar to RunExtensionTest, except sets an additional string arguments
+  // |customArg| to the test config object and |flags| (as defined in the Flags
+  // enum).
+  bool RunExtensionTestWithFlagsAndArg(const std::string& extension_name,
+                                       const char* custom_arg,
+                                       int flags);
+
   // Same as RunExtensionTest, but enables the extension for incognito mode.
   bool RunExtensionTestIncognito(const std::string& extension_name);
 
@@ -98,20 +114,15 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   // Same as RunExtensionTest, but loads extension as component.
   bool RunComponentExtensionTest(const std::string& extension_name);
 
+  // Same as RunComponentExtensionTest, but provides extra arg.
+  bool RunComponentExtensionTestWithArg(const std::string& extension_name,
+                                        const char* custom_arg);
+
   // Same as RunExtensionTest, but disables file access.
   bool RunExtensionTestNoFileAccess(const std::string& extension_name);
 
   // Same as RunExtensionTestIncognito, but disables file access.
   bool RunExtensionTestIncognitoNoFileAccess(const std::string& extension_name);
-
-  // Returns true if the Subtest and Page tests are being skipped. This is
-  // will only be true for windows debug builds, see http://crbug.com/177163.
-  //
-  // Usually you won't need to check this, but if a test continues after
-  // RunExtensionSubtest, you may. For example, if a test calls
-  // RunExtensionSubtest then asserts that the Extension was installed, it will
-  // fail on win debug builds.
-  bool ExtensionSubtestsAreSkipped();
 
   // If not empty, Load |extension_name|, load |page_url| and wait for pass /
   // fail notification from the extension API on the page. Note that if
@@ -127,6 +138,18 @@ class ExtensionApiTest : public ExtensionBrowserTest {
                            const std::string& page_url,
                            int flags);
 
+  // As above but with support for injecting a custom argument into the test
+  // config.
+  bool RunExtensionSubtestWithArg(const std::string& extension_name,
+                                  const std::string& page_url,
+                                  const char* custom_arg);
+
+  // As above but with support for custom flags defined in Flags above.
+  bool RunExtensionSubtestWithArgAndFlags(const std::string& extension_name,
+                                          const std::string& page_url,
+                                          const char* custom_arg,
+                                          int flags);
+
   // Load |page_url| and wait for pass / fail notification from the extension
   // API on the page.
   bool RunPageTest(const std::string& page_url);
@@ -138,9 +161,8 @@ class ExtensionApiTest : public ExtensionBrowserTest {
 
   // Similar to RunPlatformAppTest, except sets an additional string argument
   // |customArg| to the test config object.
-  bool RunPlatformAppTestWithArg(
-      const std::string& extension_name, const char* custom_arg);
-
+  bool RunPlatformAppTestWithArg(const std::string& extension_name,
+                                 const char* custom_arg);
 
   // Similar to RunPlatformAppTest, with custom |flags| (as defined in the Flags
   // enum). The kFlagLaunchPlatformApp flag is automatically added.
@@ -188,9 +210,13 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   // chrome.test.getConfig().
   bool StartFTPServer(const base::FilePath& root_directory);
 
+  // Sets the additional string argument |customArg| to the test config object,
+  // which is available to javascript tests using chrome.test.getConfig().
+  void SetCustomArg(base::StringPiece custom_arg);
+
   // Test that exactly one extension loaded.  If so, return a pointer to
   // the extension.  If not, return NULL and set message_.
-  const extensions::Extension* GetSingleLoadedExtension();
+  const Extension* GetSingleLoadedExtension();
 
   // All extensions tested by ExtensionApiTest are in the "api_test" dir.
   void SetUpCommandLine(base::CommandLine* command_line) override;
@@ -221,5 +247,7 @@ class ExtensionApiTest : public ExtensionBrowserTest {
   // Test data directory shared with //extensions.
   base::FilePath shared_test_data_dir_;
 };
+
+}  // namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_EXTENSION_APITEST_H_

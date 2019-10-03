@@ -5,65 +5,44 @@
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 
 #import "base/mac/foundation_util.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_switch_item.h"
-#import "ios/chrome/browser/ui/settings/cells/sync_switch_item.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/web/public/test/earl_grey/web_view_actions.h"
+#import "ios/chrome/test/earl_grey/chrome_actions_app_interface.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
+#import "ios/web/public/test/element_selector.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
+#if defined(CHROME_EARL_GREY_2)
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(ChromeActionsAppInterface)
+#endif
+
 namespace chrome_test_util {
 
-id<GREYAction> LongPressElementForContextMenu(const std::string& element_id,
+id<GREYAction> LongPressElementForContextMenu(ElementSelector* selector,
                                               bool triggers_context_menu) {
-  return WebViewLongPressElementForContextMenu(
-      chrome_test_util::GetCurrentWebState(), element_id,
-      triggers_context_menu);
+  return [ChromeActionsAppInterface longPressElement:selector
+                                  triggerContextMenu:triggers_context_menu];
 }
 
-id<GREYAction> TurnCollectionViewSwitchOn(BOOL on) {
-  id<GREYMatcher> constraints = grey_not(grey_systemAlertViewShown());
-  NSString* actionName =
-      [NSString stringWithFormat:@"Turn collection view switch to %@ state",
-                                 on ? @"ON" : @"OFF"];
-  return [GREYActionBlock
-      actionWithName:actionName
-         constraints:constraints
-        performBlock:^BOOL(id collectionViewCell,
-                           __strong NSError** errorOrNil) {
-          CollectionViewSwitchCell* switchCell =
-              base::mac::ObjCCastStrict<CollectionViewSwitchCell>(
-                  collectionViewCell);
-          UISwitch* switchView = switchCell.switchView;
-          if (switchView.on != on) {
-            id<GREYAction> longPressAction = [GREYActions
-                actionForLongPressWithDuration:kGREYLongPressDefaultDuration];
-            return [longPressAction perform:switchView error:errorOrNil];
-          }
-          return YES;
-        }];
+id<GREYAction> TurnSettingsSwitchOn(BOOL on) {
+  return [ChromeActionsAppInterface turnSettingsSwitchOn:on];
 }
 
 id<GREYAction> TurnSyncSwitchOn(BOOL on) {
-  id<GREYMatcher> constraints = grey_not(grey_systemAlertViewShown());
-  NSString* actionName = [NSString
-      stringWithFormat:@"Turn sync switch to %@ state", on ? @"ON" : @"OFF"];
-  return [GREYActionBlock
-      actionWithName:actionName
-         constraints:constraints
-        performBlock:^BOOL(id syncSwitchCell, __strong NSError** errorOrNil) {
-          SyncSwitchCell* switchCell =
-              base::mac::ObjCCastStrict<SyncSwitchCell>(syncSwitchCell);
-          UISwitch* switchView = switchCell.switchView;
-          if (switchView.on != on) {
-            id<GREYAction> longPressAction = [GREYActions
-                actionForLongPressWithDuration:kGREYLongPressDefaultDuration];
-            return [longPressAction perform:switchView error:errorOrNil];
-          }
-          return YES;
-        }];
+  return [ChromeActionsAppInterface turnSyncSwitchOn:on];
+}
+
+id<GREYAction> TapWebElement(const std::string& element_id) {
+  return [ChromeActionsAppInterface
+      tapWebElement:[ElementSelector selectorWithElementID:element_id]];
+}
+
+id<GREYAction> TapWebElementInFrame(const std::string& element_id,
+                                    const int frame_index) {
+  return [ChromeActionsAppInterface
+      tapWebElement:[ElementSelector selectorWithElementID:element_id
+                                          inFrameWithIndex:frame_index]];
 }
 
 }  // namespace chrome_test_util

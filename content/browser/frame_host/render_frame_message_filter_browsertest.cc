@@ -8,14 +8,20 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/test/histogram_tester.h"
+#include "base/optional.h"
+#include "base/task/post_task.h"
+#include "base/test/bind_test_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/render_frame_message_filter.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_messages.h"
-#include "content/common/render_frame_message_filter.mojom.h"
+#include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -24,8 +30,12 @@
 #include "content/shell/browser/shell.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "ipc/ipc_security_test_util.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/network/public/mojom/restricted_cookie_manager.mojom-test-utils.h"
+#include "services/network/public/mojom/restricted_cookie_manager.mojom.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -34,6 +44,11 @@ namespace content {
 
 namespace {
 
+void SetCookieFromJS(RenderFrameHost* frame, std::string cookie) {
+  EvalJsResult result = EvalJs(frame, "document.cookie = '" + cookie + "'");
+  EXPECT_TRUE(result.error.empty()) << result.error;
+}
+
 std::string GetCookieFromJS(RenderFrameHost* frame) {
   std::string cookie;
   EXPECT_TRUE(ExecuteScriptAndExtractString(
@@ -41,10 +56,38 @@ std::string GetCookieFromJS(RenderFrameHost* frame) {
   return cookie;
 }
 
-mojom::RenderFrameMessageFilter* GetFilterForProcess(
-    RenderProcessHost* process) {
-  return static_cast<RenderProcessHostImpl*>(process)
-      ->render_frame_message_filter_for_testing();
+void SetCookieDirect(WebContentsImpl* tab,
+                     const GURL& url,
+                     const std::string& cookie_line) {
+  auto cookie_obj = net::CanonicalCookie::Create(
+      url, cookie_line, base::Time::Now(), net::CookieOptions());
+
+  base::RunLoop run_loop;
+  BrowserContext::GetDefaultStoragePartition(tab->GetBrowserContext())
+      ->GetCookieManagerForBrowserProcess()
+      ->SetCanonicalCookie(
+          *cookie_obj, url.scheme(), net::CookieOptions(),
+          base::BindLambdaForTesting(
+              [&](net::CanonicalCookie::CookieInclusionStatus status) {
+                run_loop.Quit();
+              }));
+  run_loop.Run();
+}
+
+std::string GetCookiesDirect(WebContentsImpl* tab, const GURL& url) {
+  net::CookieList result;
+  base::RunLoop run_loop;
+  BrowserContext::GetDefaultStoragePartition(tab->GetBrowserContext())
+      ->GetCookieManagerForBrowserProcess()
+      ->GetCookieList(url, net::CookieOptions(),
+                      base::BindLambdaForTesting(
+                          [&](const net::CookieList& cookie_list,
+                              const net::CookieStatusList& excluded_cookies) {
+                            result = cookie_list;
+                            run_loop.Quit();
+                          }));
+  run_loop.Run();
+  return net::CanonicalCookie::BuildCookieLine(result);
 }
 
 }  // namespace
@@ -70,8 +113,7 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.AddDefaultHandlers(
-      base::FilePath(FILE_PATH_LITERAL("content/test/data")));
+  https_server.AddDefaultHandlers(GetTestDataFilePath());
   ASSERT_TRUE(https_server.Start());
 
   // The server sends a HttpOnly cookie. The RenderFrameMessageFilter should
@@ -87,10 +129,22 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
       static_cast<WebContentsImpl*>(shell2->web_contents());
   WebContentsImpl* web_contents_http =
       static_cast<WebContentsImpl*>(shell()->web_contents());
-  EXPECT_EQ("http://127.0.0.1/",
-            web_contents_http->GetSiteInstance()->GetSiteURL().spec());
-  EXPECT_EQ("https://127.0.0.1/",
-            web_contents_https->GetSiteInstance()->GetSiteURL().spec());
+  if (AreDefaultSiteInstancesEnabled()) {
+    // Note: Both use the default SiteInstance because the URLs don't require
+    // a dedicated process, but these default SiteInstances are not the same
+    // object because they come from different BrowsingInstances.
+    EXPECT_TRUE(web_contents_http->GetSiteInstance()->IsDefaultSiteInstance());
+    EXPECT_TRUE(web_contents_https->GetSiteInstance()->IsDefaultSiteInstance());
+    EXPECT_NE(web_contents_http->GetSiteInstance(),
+              web_contents_https->GetSiteInstance());
+    EXPECT_FALSE(web_contents_http->GetSiteInstance()->IsRelatedSiteInstance(
+        web_contents_https->GetSiteInstance()));
+  } else {
+    EXPECT_EQ("http://127.0.0.1/",
+              web_contents_http->GetSiteInstance()->GetSiteURL().spec());
+    EXPECT_EQ("https://127.0.0.1/",
+              web_contents_https->GetSiteInstance()->GetSiteURL().spec());
+  }
 
   EXPECT_NE(web_contents_http->GetSiteInstance()->GetProcess(),
             web_contents_https->GetSiteInstance()->GetProcess());
@@ -123,6 +177,32 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
   EXPECT_EQ("B=2; C=3; D=4",
             GetCookieFromJS(web_contents_https->GetMainFrame()));
   EXPECT_EQ("B=2; D=4", GetCookieFromJS(web_contents_http->GetMainFrame()));
+}
+
+// Ensure "priority" cookie option is settable via document.cookie.
+IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, CookiePriority) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  struct {
+    std::string param;
+    net::CookiePriority priority;
+  } cases[] = {{"name=value", net::COOKIE_PRIORITY_DEFAULT},
+               {"name=value;priority=Low", net::COOKIE_PRIORITY_LOW},
+               {"name=value;priority=Medium", net::COOKIE_PRIORITY_MEDIUM},
+               {"name=value;priority=High", net::COOKIE_PRIORITY_HIGH}};
+
+  for (auto test_case : cases) {
+    GURL url = embedded_test_server()->GetURL("/set_document_cookie.html?" +
+                                              test_case.param);
+    NavigateToURL(shell(), url);
+    std::vector<net::CanonicalCookie> cookies =
+        GetCanonicalCookies(shell()->web_contents()->GetBrowserContext(), url);
+
+    EXPECT_EQ(1u, cookies.size());
+    EXPECT_EQ("name", cookies[0].Name());
+    EXPECT_EQ("value", cookies[0].Value());
+    EXPECT_EQ(test_case.priority, cookies[0].Priority());
+  }
 }
 
 // SameSite cookies (that aren't marked as http-only) should be available to
@@ -168,9 +248,89 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, SameSiteCookies) {
   EXPECT_EQ("normal=1", GetCookieFromJS(b_iframe));
 }
 
-// The RenderFrameMessageFilter will kill processes when they access the cookies
-// of sites other than the site the process is dedicated to, under site
-// isolation.
+class RestrictedCookieManagerInterceptor
+    : public network::mojom::RestrictedCookieManagerInterceptorForTesting {
+ public:
+  RestrictedCookieManagerInterceptor(
+      network::mojom::RestrictedCookieManagerRequest request,
+      network::mojom::RestrictedCookieManagerPtr real_rcm)
+      : binding_(this, std::move(request)), real_rcm_(std::move(real_rcm)) {}
+
+  void set_override_url(base::Optional<std::string> maybe_url) {
+    override_url_ = std::move(maybe_url);
+  }
+
+  void SetCookieFromString(const GURL& url,
+                           const GURL& site_for_cookies,
+                           const std::string& cookie,
+                           SetCookieFromStringCallback callback) override {
+    GetForwardingInterface()->SetCookieFromString(
+        URLToUse(url), std::move(site_for_cookies), std::move(cookie),
+        std::move(callback));
+  }
+
+  void GetCookiesString(const GURL& url,
+                        const GURL& site_for_cookies,
+                        GetCookiesStringCallback callback) override {
+    GetForwardingInterface()->GetCookiesString(
+        URLToUse(url), std::move(site_for_cookies), std::move(callback));
+  }
+
+ private:
+  network::mojom::RestrictedCookieManager* GetForwardingInterface() override {
+    return real_rcm_.get();
+  }
+
+  GURL URLToUse(const GURL& url_in) {
+    return override_url_ ? GURL(override_url_.value()) : url_in;
+  }
+
+  base::Optional<std::string> override_url_;
+
+  mojo::Binding<network::mojom::RestrictedCookieManager> binding_;
+  network::mojom::RestrictedCookieManagerPtr real_rcm_;
+};
+
+class CookieStoreContentBrowserClient : public ContentBrowserClient {
+ public:
+  ~CookieStoreContentBrowserClient() override {}
+
+  bool WillCreateRestrictedCookieManager(
+      network::mojom::RestrictedCookieManagerRole role,
+      content::BrowserContext* browser_context,
+      const url::Origin& origin,
+      bool is_service_worker,
+      int process_id,
+      int routing_id,
+      network::mojom::RestrictedCookieManagerRequest* request) override {
+    network::mojom::RestrictedCookieManagerRequest orig_request =
+        std::move(*request);
+
+    network::mojom::RestrictedCookieManagerPtr real_rcm;
+    *request = mojo::MakeRequest(&real_rcm);
+
+    rcm_interceptor_ = std::make_unique<RestrictedCookieManagerInterceptor>(
+        std::move(orig_request), std::move(real_rcm));
+    rcm_interceptor_->set_override_url(override_url_);
+
+    return false;  // only made a proxy, still need the actual impl to be made.
+  }
+
+  void set_override_url(base::Optional<std::string> maybe_url) {
+    override_url_ = maybe_url;
+    if (rcm_interceptor_)
+      rcm_interceptor_->set_override_url(override_url_);
+  }
+
+ private:
+  base::Optional<std::string> override_url_;
+  std::unique_ptr<RestrictedCookieManagerInterceptor> rcm_interceptor_;
+};
+
+// Cookie access in loader is locked to a particular origin, so messages
+// for wrong URLs are rejected.
+// TODO(https://crbug.com/954603): This should actually result in renderer
+// kills.
 IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
                        CrossSiteCookieSecurityEnforcement) {
   // The code under test is only active under site isolation.
@@ -200,88 +360,51 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
 
   EXPECT_NE(iframe->GetProcess(), main_frame->GetProcess());
 
-  RenderProcessHostWatcher iframe_killed(
-      iframe->GetProcess(), RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+  SetCookieDirect(tab, GURL("http://127.0.0.1/"), "A_cookie = parent");
+  SetCookieDirect(tab, GURL("http://baz.com/"), "B_cookie = child");
+  EXPECT_EQ("A_cookie=parent",
+            GetCookiesDirect(tab, GURL("http://127.0.0.1/")));
 
-  // Try to get cross-site cookies from the subframe's process and wait for it
-  // to be killed.
-  BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(
-                     [](RenderFrameHost* frame) {
-                       GetFilterForProcess(frame->GetProcess())
-                           ->GetCookies(
-                               frame->GetRoutingID(), GURL("http://127.0.0.1/"),
-                               GURL("http://127.0.0.1/"),
-                               base::BindOnce([](const std::string&) {}));
-                     },
-                     iframe));
+  EXPECT_EQ("B_cookie=child", GetCookiesDirect(tab, GURL("http://baz.com/")));
 
-  iframe_killed.Wait();
+  // Try to get cross-site cookies from the subframe's process.
+  {
+    CookieStoreContentBrowserClient browser_client;
+    content::ContentBrowserClient* old_browser_client =
+        content::SetBrowserClientForTesting(&browser_client);
+    browser_client.set_override_url("http://127.0.0.1/");
+    EXPECT_EQ("", GetCookieFromJS(iframe));
+
+    content::SetBrowserClientForTesting(old_browser_client);
+  }
 
   EXPECT_EQ(
       " Site A ------------ proxies for B\n"
       "   +--Site B ------- proxies for A\n"
       "Where A = http://127.0.0.1/\n"
-      "      B = http://baz.com/ (no process)",
+      "      B = http://baz.com/",
       v.DepictFrameTree(tab->GetFrameTree()->root()));
 
-  // Now set a cross-site cookie from the main frame's process and wait for it
-  // to be killed.
-  RenderProcessHostWatcher main_frame_killed(
-      tab->GetMainFrame()->GetProcess(),
-      RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+  // Now set a cross-site cookie from the main frame's process.
+  {
+    CookieStoreContentBrowserClient browser_client;
+    content::ContentBrowserClient* old_browser_client =
+        content::SetBrowserClientForTesting(&browser_client);
 
-  BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)
-      ->PostTask(FROM_HERE, base::BindOnce(
-                                [](RenderFrameHost* frame) {
-                                  GetFilterForProcess(frame->GetProcess())
-                                      ->SetCookie(
-                                          frame->GetRoutingID(),
-                                          GURL("https://baz.com/"),
-                                          GURL("https://baz.com/"), "pwn=ed",
-                                          base::BindOnce(&base::DoNothing));
-                                },
-                                main_frame));
+    browser_client.set_override_url("https://baz.com/");
+    SetCookieFromJS(iframe, "pwn=ed");
 
-  main_frame_killed.Wait();
+    EXPECT_EQ("B_cookie=child", GetCookiesDirect(tab, GURL("http://baz.com/")));
+
+    content::SetBrowserClientForTesting(old_browser_client);
+  }
 
   EXPECT_EQ(
-      " Site A\n"
-      "Where A = http://127.0.0.1/ (no process)",
+      " Site A ------------ proxies for B\n"
+      "   +--Site B ------- proxies for A\n"
+      "Where A = http://127.0.0.1/\n"
+      "      B = http://baz.com/",
       v.DepictFrameTree(tab->GetFrameTree()->root()));
-}
-
-// FrameHostMsg_RenderProcessGone is a synthetic message that's really an
-// implementation detail of RenderProcessHostImpl's crash recovery. It should be
-// ignored if it arrives over the IPC channel.
-IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, RenderProcessGone) {
-  GURL web_url("http://foo.com/simple_page.html");
-  NavigateToURL(shell(), web_url);
-  RenderFrameHost* web_rfh = shell()->web_contents()->GetMainFrame();
-
-  base::HistogramTester uma;
-
-  ASSERT_TRUE(web_rfh->IsRenderFrameLive());
-  RenderProcessHostWatcher web_process_killed(
-      web_rfh->GetProcess(), RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  IPC::IpcSecurityTestUtil::PwnMessageReceived(
-      web_rfh->GetProcess()->GetChannel(),
-      FrameHostMsg_RenderProcessGone(
-          web_rfh->GetRoutingID(), base::TERMINATION_STATUS_NORMAL_TERMINATION,
-          0));
-
-  EXPECT_THAT(uma.GetAllSamples("Stability.BadMessageTerminated.Content"),
-              testing::ElementsAre(base::Bucket(
-                  bad_message::RFMF_RENDERER_FAKED_ITS_OWN_DEATH, 1)));
-
-  // If the message had gone through, we'd have marked the RFH as dead but
-  // left the RPH and its connection alive, and the Wait below would hang.
-  web_process_killed.Wait();
-
-  ASSERT_FALSE(web_rfh->GetProcess()->HasConnection());
-  ASSERT_FALSE(web_rfh->IsRenderFrameLive());
-  ASSERT_FALSE(web_process_killed.did_exit_normally());
 }
 
 }  // namespace content

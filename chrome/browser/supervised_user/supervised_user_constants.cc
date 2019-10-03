@@ -11,6 +11,7 @@ const char kAccountConsistencyMirrorRequired[] =
     "AccountConsistencyMirrorRequired";
 #endif
 const char kApprovedExtensions[] = "ApprovedExtensions";
+const char kAuthorizationHeaderFormat[] = "Bearer %s";
 const char kCameraMicDisabled[] = "CameraMicDisabled";
 const char kContentPackDefaultFilteringBehavior[] =
     "ContentPackDefaultFilteringBehavior";
@@ -20,12 +21,14 @@ const char kCookiesAlwaysAllowed[] = "CookiesAlwaysAllowed";
 const char kForceSafeSearch[] = "ForceSafeSearch";
 const char kGeolocationDisabled[] = "GeolocationDisabled";
 const char kRecordHistory[] = "RecordHistory";
-const char kRecordHistoryIncludesSessionSync[] =
-    "RecordHistoryIncludesSessionSync";
 const char kSafeSitesEnabled[] = "SafeSites";
 const char kSigninAllowed[] = "SigninAllowed";
 const char kUserName[] = "UserName";
 
+// NOTE: Do not change this value without changing the value of the
+// corresponding constant in
+// //components/signin/public/identity_manager/identity_manager.cc to
+// correspond.
 const char kSupervisedUserPseudoEmail[] = "managed_user@localhost";
 
 const char kChildAccountSUID[] = "ChildAccountSUID";

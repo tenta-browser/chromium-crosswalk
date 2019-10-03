@@ -4,11 +4,12 @@
 
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_web_state_observer.h"
 
-#include "base/memory/ptr_util.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_model.h"
 #import "ios/chrome/browser/ui/fullscreen/test/fullscreen_model_test_util.h"
-#import "ios/web/public/navigation_item.h"
-#include "ios/web/public/ssl_status.h"
+#import "ios/chrome/browser/ui/fullscreen/test/test_fullscreen_controller.h"
+#import "ios/chrome/browser/ui/fullscreen/test/test_fullscreen_mediator.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -20,20 +21,24 @@
 
 class FullscreenWebStateObserverTest : public PlatformTest {
  public:
-  FullscreenWebStateObserverTest() : PlatformTest(), observer_(&model_) {
-    // Set up model.
-    SetUpFullscreenModelForTesting(&model_, 100.0);
+  FullscreenWebStateObserverTest()
+      : PlatformTest(),
+        controller_(&model_),
+        mediator_(&controller_, &model_),
+        observer_(&controller_, &model_, &mediator_) {
     // Set up a TestNavigationManager.
     std::unique_ptr<web::TestNavigationManager> navigation_manager =
-        base::MakeUnique<web::TestNavigationManager>();
+        std::make_unique<web::TestNavigationManager>();
     navigation_manager_ = navigation_manager.get();
     web_state_.SetNavigationManager(std::move(navigation_manager));
     // Begin observing the WebState.
     observer_.SetWebState(&web_state_);
+    // Set up model.
+    SetUpFullscreenModelForTesting(&model_, 100.0);
   }
 
   ~FullscreenWebStateObserverTest() override {
-    // Stop observing the WebState.
+    mediator_.Disconnect();
     observer_.SetWebState(nullptr);
   }
 
@@ -45,6 +50,8 @@ class FullscreenWebStateObserverTest : public PlatformTest {
 
  private:
   FullscreenModel model_;
+  TestFullscreenController controller_;
+  TestFullscreenMediator mediator_;
   web::TestWebState web_state_;
   web::TestNavigationManager* navigation_manager_;
   FullscreenWebStateObserver observer_;
@@ -54,32 +61,64 @@ class FullscreenWebStateObserverTest : public PlatformTest {
 TEST_F(FullscreenWebStateObserverTest, ResetForNavigation) {
   // Simulate a scroll to 0.5 progress.
   SimulateFullscreenUserScrollForProgress(&model(), 0.5);
-  EXPECT_EQ(model().progress(), 0.5);
+  EXPECT_EQ(0.5, model().progress());
   // Simulate a navigation.
   web::FakeNavigationContext context;
   web_state().OnNavigationFinished(&context);
   EXPECT_FALSE(model().has_base_offset());
-  EXPECT_EQ(model().progress(), 1.0);
+  EXPECT_EQ(1.0, model().progress());
 }
 
-// Tests that the model is disabled when a load is occurring.
-TEST_F(FullscreenWebStateObserverTest, DisableDuringLoad) {
-  EXPECT_TRUE(model().enabled());
-  web_state().SetLoading(true);
-  EXPECT_FALSE(model().enabled());
-  web_state().SetLoading(false);
-  EXPECT_TRUE(model().enabled());
+// Tests that the FullscreenModel is not reset for same-document navigations
+// with the same URL.
+TEST_F(FullscreenWebStateObserverTest, NoResetForSameDocumentSameURL) {
+  // Navigate to a URL.
+  web::FakeNavigationContext context;
+  context.SetUrl(GURL("https://www.test.com"));
+  web_state().OnNavigationFinished(&context);
+  model().SetYContentOffset(0.0);
+  // Simulate a scroll to 0.5 progress.
+  SimulateFullscreenUserScrollForProgress(&model(), 0.5);
+  EXPECT_EQ(0.5, model().progress());
+  // Simulate a same-document navigation to the same URL and verify that the 0.5
+  // progress hasn't been reset to 1.0.
+  context.SetIsSameDocument(true);
+  web_state().OnNavigationFinished(&context);
+  EXPECT_EQ(0.5, model().progress());
 }
 
-// Tests that the model is disabled when the SSL status is broken.
-TEST_F(FullscreenWebStateObserverTest, DisableForBrokenSSL) {
-  std::unique_ptr<web::NavigationItem> item = web::NavigationItem::Create();
-  item->GetSSL().security_style = web::SECURITY_STYLE_AUTHENTICATION_BROKEN;
-  navigation_manager().SetLastCommittedItem(item.get());
-  EXPECT_TRUE(model().enabled());
-  web_state().OnVisibleSecurityStateChanged();
-  EXPECT_FALSE(model().enabled());
-  navigation_manager().SetLastCommittedItem(nullptr);
-  web_state().OnVisibleSecurityStateChanged();
-  EXPECT_TRUE(model().enabled());
+// Tests that the FullscreenModel is not reset for a same-document navigation.
+TEST_F(FullscreenWebStateObserverTest, NoResetForSameDocumentFragmentChange) {
+  // Navigate to a URL.
+  web::FakeNavigationContext context;
+  context.SetUrl(GURL("https://www.test.com"));
+  web_state().OnNavigationFinished(&context);
+  model().SetYContentOffset(0.0);
+  // Simulate a scroll to 0.5 progress.
+  SimulateFullscreenUserScrollForProgress(&model(), 0.5);
+  EXPECT_EQ(0.5, model().progress());
+  // Simulate a same-document navigation to a URL with a different fragment and
+  // verify that the 0.5 progress hasn't been reset to 1.0.
+  context.SetUrl(GURL("https://www.test.com#fragment"));
+  context.SetIsSameDocument(true);
+  web_state().OnNavigationFinished(&context);
+  EXPECT_EQ(0.5, model().progress());
+}
+
+// Tests that the FullscreenModel is not reset for a same-document navigation.
+TEST_F(FullscreenWebStateObserverTest, ResetForSameDocumentURLChange) {
+  // Navigate to a URL.
+  web::FakeNavigationContext context;
+  context.SetUrl(GURL("https://www.test.com"));
+  web_state().OnNavigationFinished(&context);
+  model().SetYContentOffset(0.0);
+  // Simulate a scroll to 0.5 progress.
+  SimulateFullscreenUserScrollForProgress(&model(), 0.5);
+  EXPECT_EQ(0.5, model().progress());
+  // Simulate a same-document navigation to a new URL and verify that the 0.5
+  // progress is reset to 1.0.
+  context.SetUrl(GURL("https://www.test2.com"));
+  context.SetIsSameDocument(true);
+  web_state().OnNavigationFinished(&context);
+  EXPECT_EQ(1.0, model().progress());
 }

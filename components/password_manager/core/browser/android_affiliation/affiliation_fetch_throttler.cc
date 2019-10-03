@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
 #include "base/sequenced_task_runner.h"
@@ -52,24 +53,26 @@ const int64_t AffiliationFetchThrottler::kGracePeriodAfterReconnectMs =
 AffiliationFetchThrottler::AffiliationFetchThrottler(
     AffiliationFetchThrottlerDelegate* delegate,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-    base::TickClock* tick_clock)
+    network::NetworkConnectionTracker* network_connection_tracker,
+    const base::TickClock* tick_clock)
     : delegate_(delegate),
       task_runner_(task_runner),
+      network_connection_tracker_(network_connection_tracker),
       tick_clock_(tick_clock),
       state_(IDLE),
       has_network_connectivity_(false),
       is_fetch_scheduled_(false),
-      exponential_backoff_(new net::BackoffEntry(&kBackoffPolicy, tick_clock_)),
-      weak_ptr_factory_(this) {
+      exponential_backoff_(
+          new net::BackoffEntry(&kBackoffPolicy, tick_clock_)) {
   DCHECK(delegate);
   // Start observing before querying the current connectivity state, so that if
   // the state changes concurrently in-between, it will not go unnoticed.
-  net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
-  has_network_connectivity_ = !net::NetworkChangeNotifier::IsOffline();
+  network_connection_tracker_->AddNetworkConnectionObserver(this);
+  has_network_connectivity_ = !network_connection_tracker_->IsOffline();
 }
 
 AffiliationFetchThrottler::~AffiliationFetchThrottler() {
-  net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+  network_connection_tracker_->RemoveNetworkConnectionObserver(this);
 }
 
 void AffiliationFetchThrottler::SignalNetworkRequestNeeded() {
@@ -97,8 +100,8 @@ void AffiliationFetchThrottler::EnsureCallbackIsScheduled() {
   is_fetch_scheduled_ = true;
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&AffiliationFetchThrottler::OnBackoffDelayExpiredCallback,
-                 weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&AffiliationFetchThrottler::OnBackoffDelayExpiredCallback,
+                     weak_ptr_factory_.GetWeakPtr()),
       exponential_backoff_->GetTimeUntilRelease());
 }
 
@@ -108,7 +111,7 @@ void AffiliationFetchThrottler::OnBackoffDelayExpiredCallback() {
   is_fetch_scheduled_ = false;
 
   // Do nothing if network connectivity was lost while this callback was in the
-  // task queue. The callback will be posted in the OnConnectionTypeChanged
+  // task queue. The callback will be posted in the OnNetworkChanged
   // handler once again.
   if (!has_network_connectivity_)
     return;
@@ -121,11 +124,14 @@ void AffiliationFetchThrottler::OnBackoffDelayExpiredCallback() {
     state_ = delegate_->OnCanSendNetworkRequest() ? FETCH_IN_FLIGHT : IDLE;
 }
 
-void AffiliationFetchThrottler::OnConnectionTypeChanged(
-    net::NetworkChangeNotifier::ConnectionType type) {
+void AffiliationFetchThrottler::OnConnectionChanged(
+    network::mojom::ConnectionType type) {
   bool old_has_network_connectivity = has_network_connectivity_;
-  has_network_connectivity_ =
-      (type != net::NetworkChangeNotifier::CONNECTION_NONE);
+  // We reread the connection type here instead of relying on |type| because
+  // NetworkConnectionTracker will call this function an extra time with
+  // CONNECTION_NONE whenever the connection changes to an online state, even
+  // if it was already in a different online state.
+  has_network_connectivity_ = !network_connection_tracker_->IsOffline();
 
   // Only react when network connectivity has been reestablished.
   if (!has_network_connectivity_ || old_has_network_connectivity)

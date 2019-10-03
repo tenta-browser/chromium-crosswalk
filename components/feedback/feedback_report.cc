@@ -4,6 +4,7 @@
 
 #include "components/feedback/feedback_report.h"
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
@@ -11,7 +12,8 @@
 #include "base/guid.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
+
+namespace feedback {
 
 namespace {
 
@@ -22,44 +24,48 @@ constexpr char kFeedbackReportFilenamePrefix[] = "Feedback Report.";
 
 void WriteReportOnBlockingPool(const base::FilePath reports_path,
                                const base::FilePath& file,
-                               const std::string& data) {
+                               scoped_refptr<FeedbackReport> report) {
   DCHECK(reports_path.IsParent(file));
   if (!base::DirectoryExists(reports_path)) {
     base::File::Error error;
     if (!base::CreateDirectoryAndGetError(reports_path, &error))
       return;
   }
-  base::ImportantFileWriter::WriteFileAtomically(file, data, "FeedbackReport");
+  base::ImportantFileWriter::WriteFileAtomically(file, report->data(),
+                                                 "FeedbackReport");
 }
 
 }  // namespace
 
-namespace feedback {
-
 FeedbackReport::FeedbackReport(
     const base::FilePath& path,
     const base::Time& upload_at,
-    const std::string& data,
+    std::unique_ptr<std::string> data,
     scoped_refptr<base::SequencedTaskRunner> task_runner)
     : reports_path_(path),
       upload_at_(upload_at),
-      data_(data),
+      data_(std::move(data)),
       reports_task_runner_(task_runner) {
   if (reports_path_.empty())
     return;
   file_ = reports_path_.AppendASCII(
       kFeedbackReportFilenamePrefix + base::GenerateGUID());
 
-  reports_task_runner_->PostTask(FROM_HERE, base::Bind(
-      &WriteReportOnBlockingPool, reports_path_, file_, data_));
+  reports_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&WriteReportOnBlockingPool, reports_path_, file_,
+                     base::WrapRefCounted<FeedbackReport>(this)));
 }
 
 // static
 const char FeedbackReport::kCrashReportIdsKey[]  = "crash_report_ids";
 
 // static
-void FeedbackReport::LoadReportsAndQueue(
-    const base::FilePath& user_dir, QueueCallback callback) {
+const char FeedbackReport::kAllCrashReportIdsKey[] = "all_crash_report_ids";
+
+// static
+void FeedbackReport::LoadReportsAndQueue(const base::FilePath& user_dir,
+                                         const QueueCallback& callback) {
   if (user_dir.empty())
     return;
 
@@ -70,9 +76,9 @@ void FeedbackReport::LoadReportsAndQueue(
   for (base::FilePath name = enumerator.Next();
        !name.empty();
        name = enumerator.Next()) {
-    std::string data;
-    if (ReadFileToString(name, &data))
-      callback.Run(data);
+    auto data = std::make_unique<std::string>();
+    if (ReadFileToString(name, data.get()))
+      callback.Run(std::move(data));
     base::DeleteFile(name, false);
   }
 }
@@ -80,11 +86,9 @@ void FeedbackReport::LoadReportsAndQueue(
 void FeedbackReport::DeleteReportOnDisk() {
   reports_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(base::IgnoreResult(&base::DeleteFile), file_, false));
+      base::BindOnce(base::IgnoreResult(&base::DeleteFile), file_, false));
 }
 
-FeedbackReport::~FeedbackReport() {
-  DeleteReportOnDisk();
-}
+FeedbackReport::~FeedbackReport() {}
 
 }  // namespace feedback

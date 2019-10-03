@@ -9,13 +9,18 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "components/sessions/core/session_id.h"
 
 class SessionService;
+
+namespace base {
+class Location;
+}
 
 namespace sessions {
 class SerializedNavigationEntry;
@@ -50,7 +55,7 @@ class SessionServiceTestHelper {
   // Reads the contents of the last session.
   void ReadWindows(
       std::vector<std::unique_ptr<sessions::SessionWindow>>* windows,
-      SessionID::id_type* active_window_id);
+      SessionID* active_window_id);
 
   void AssertTabEquals(const SessionID& window_id,
                        const SessionID& tab_id,
@@ -78,6 +83,10 @@ class SessionServiceTestHelper {
 
   void RunTaskOnBackendThread(const base::Location& from_here,
                               const base::Closure& task);
+
+  void SetAvailableRange(const SessionID& tab_id,
+                         const std::pair<int, int>& range);
+  bool GetAvailableRange(const SessionID& tab_id, std::pair<int, int>* range);
 
  private:
   std::unique_ptr<SessionService> service_;

@@ -4,7 +4,6 @@
 
 #include "ios/chrome/browser/ui/omnibox/chrome_omnibox_client_ios.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/favicon/ios/web_favicon_driver.h"
@@ -24,8 +23,8 @@
 #include "ios/chrome/browser/sessions/ios_chrome_session_tab_helper.h"
 #include "ios/chrome/browser/ui/omnibox/web_omnibox_edit_controller.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#import "ios/web/public/web_state/web_state.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -41,7 +40,7 @@ ChromeOmniboxClientIOS::~ChromeOmniboxClientIOS() {}
 
 std::unique_ptr<AutocompleteProviderClient>
 ChromeOmniboxClientIOS::CreateAutocompleteProviderClient() {
-  return base::MakeUnique<AutocompleteProviderClientImpl>(browser_state_);
+  return std::make_unique<AutocompleteProviderClientImpl>(browser_state_);
 }
 
 std::unique_ptr<OmniboxNavigationObserver>
@@ -72,31 +71,9 @@ bool ChromeOmniboxClientIOS::IsPasteAndGoEnabled() const {
   return false;
 }
 
-bool ChromeOmniboxClientIOS::IsInstantNTP() const {
-  // This is currently only called by the OmniboxEditModel to determine if the
-  // Google landing page is showing.
-  // TODO(lliabraa): This should also check the user's default search engine
-  // because if they're not using Google the Google landing page is not shown
-  // (crbug/315563).
-  GURL currentURL = controller_->GetWebState()->GetVisibleURL();
-  return currentURL == GURL(kChromeUINewTabURL);
-}
-
-bool ChromeOmniboxClientIOS::IsSearchResultsPage() const {
-  ios::ChromeBrowserState* browser_state =
-      ios::ChromeBrowserState::FromBrowserState(
-          controller_->GetWebState()->GetBrowserState());
-  return ios::TemplateURLServiceFactory::GetForBrowserState(browser_state)
-      ->IsSearchResultsPageFromDefaultSearchProvider(GetURL());
-}
-
-bool ChromeOmniboxClientIOS::IsNewTabPage(const GURL& url) const {
-  return url.spec() == kChromeUINewTabURL;
-}
-
-bool ChromeOmniboxClientIOS::IsHomePage(const GURL& url) const {
-  // iOS does not have a notion of home page.
-  return false;
+bool ChromeOmniboxClientIOS::IsDefaultSearchProviderEnabled() const {
+  // iOS does not have Enterprise policies
+  return true;
 }
 
 const SessionID& ChromeOmniboxClientIOS::GetSessionID() const {
@@ -136,8 +113,6 @@ bool ChromeOmniboxClientIOS::ProcessExtensionKeyword(
   return false;
 }
 
-void ChromeOmniboxClientIOS::OnInputStateChanged() {}
-
 void ChromeOmniboxClientIOS::OnFocusChanged(OmniboxFocusState state,
                                             OmniboxFocusChangeReason reason) {
   // TODO(crbug.com/754050): OnFocusChanged is not the correct place to be
@@ -158,7 +133,8 @@ void ChromeOmniboxClientIOS::OnFocusChanged(OmniboxFocusState state,
 void ChromeOmniboxClientIOS::OnResultChanged(
     const AutocompleteResult& result,
     bool default_match_changed,
-    const base::Callback<void(const SkBitmap& bitmap)>& on_bitmap_fetched) {
+    const base::Callback<void(int result_index, const SkBitmap& bitmap)>&
+        on_bitmap_fetched) {
   if (result.empty()) {
     return;
   }
@@ -189,10 +165,6 @@ void ChromeOmniboxClientIOS::OnResultChanged(
   }
 }
 
-void ChromeOmniboxClientIOS::OnCurrentMatchChanged(const AutocompleteMatch&) {}
-
-void ChromeOmniboxClientIOS::OnURLOpenedFromOmnibox(OmniboxLog* log) {}
-
 void ChromeOmniboxClientIOS::OnBookmarkLaunched() {
   RecordBookmarkLaunch(BOOKMARK_LAUNCH_LOCATION_OMNIBOX);
 }
@@ -212,15 +184,3 @@ gfx::Image ChromeOmniboxClientIOS::GetFavicon() const {
   return favicon::WebFaviconDriver::FromWebState(controller_->GetWebState())
       ->GetFavicon();
 }
-
-void ChromeOmniboxClientIOS::OnTextChanged(
-    const AutocompleteMatch& current_match,
-    bool user_input_in_progress,
-    const base::string16& user_text,
-    const AutocompleteResult& result,
-    bool is_popup_open,
-    bool has_focus) {}
-
-void ChromeOmniboxClientIOS::OnInputAccepted(const AutocompleteMatch& match) {}
-
-void ChromeOmniboxClientIOS::OnRevert() {}

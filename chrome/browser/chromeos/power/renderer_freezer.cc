@@ -9,12 +9,8 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/process/process_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/login/lock/screen_locker.h"
-#include "chrome/browser/chromeos/login/lock/webui_screen_locker.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -66,12 +62,6 @@ void RendererFreezer::Observe(int type,
                               const content::NotificationSource& source,
                               const content::NotificationDetails& details) {
   switch (type) {
-    case chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED: {
-      OnScreenLockStateChanged(
-          content::Source<chromeos::ScreenLocker>(source).ptr(),
-          *(content::Details<bool>(details).ptr()));
-      break;
-    }
     case content::NOTIFICATION_RENDERER_PROCESS_CREATED: {
       content::RenderProcessHost* process =
           content::Source<content::RenderProcessHost>(source).ptr();
@@ -85,9 +75,9 @@ void RendererFreezer::Observe(int type,
   }
 }
 
-void RendererFreezer::RenderProcessExited(content::RenderProcessHost* host,
-                                          base::TerminationStatus status,
-                                          int exit_code) {
+void RendererFreezer::RenderProcessExited(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
   auto it = gcm_extension_processes_.find(host->GetID());
   if (it == gcm_extension_processes_.end()) {
     LOG(ERROR) << "Received unrequested RenderProcessExited message";
@@ -118,12 +108,9 @@ void RendererFreezer::OnCheckCanFreezeRenderersComplete(bool can_freeze) {
   if (!can_freeze)
     return;
 
-  DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->SetRenderProcessManagerDelegate(weak_factory_.GetWeakPtr());
+  PowerManagerClient::Get()->SetRenderProcessManagerDelegate(
+      weak_factory_.GetWeakPtr());
 
-  registrar_.Add(this, chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED,
-                 content::NotificationService::AllBrowserContextsAndSources());
   registrar_.Add(
       this,
       content::NOTIFICATION_RENDERER_PROCESS_CREATED,
@@ -138,26 +125,6 @@ void RendererFreezer::OnThawRenderersComplete(bool success) {
   // are in big trouble because none of the tabs will be responsive so let's
   // crash the browser instead.
   LOG(FATAL) << "Unable to thaw renderers.";
-}
-
-void RendererFreezer::OnScreenLockStateChanged(chromeos::ScreenLocker* locker,
-                                               bool is_locked) {
-  // The ScreenLocker class sends NOTIFICATION_SCREEN_LOCK_STATE_CHANGED when
-  // the lock screen becomes ready, resulting in this code running synchronously
-  // to mark the screen locker renderer to remain unfrozen during a suspend
-  // request.  Since this happens before the PowerManagerClient calls
-  // RendererFreezer::SuspendImminent(), it is guaranteed that the screen locker
-  // renderer will not be frozen at any point.
-  if (is_locked) {
-    // |web_contents| is null when using views-based login/lock screen.
-    // TODO(jdufault): Remove this code after webui login/lock is gone. See
-    // crbug.com/719015.
-    content::WebContents* web_contents = locker->delegate()->GetWebContents();
-    if (web_contents) {
-      delegate_->SetShouldFreezeRenderer(
-          web_contents->GetMainFrame()->GetProcess()->GetHandle(), false);
-    }
-  }
 }
 
 void RendererFreezer::OnRenderProcessCreated(content::RenderProcessHost* rph) {
@@ -195,7 +162,7 @@ void RendererFreezer::OnRenderProcessCreated(content::RenderProcessHost* rph) {
 
     // This renderer has an extension that is using GCM.  Make sure it is not
     // frozen during suspend.
-    delegate_->SetShouldFreezeRenderer(rph->GetHandle(), false);
+    delegate_->SetShouldFreezeRenderer(rph->GetProcess().Handle(), false);
     gcm_extension_processes_.insert(rph_id);
 
     // Watch to see if the renderer process or the RenderProcessHost is
@@ -206,7 +173,7 @@ void RendererFreezer::OnRenderProcessCreated(content::RenderProcessHost* rph) {
 
   // We didn't find an extension in this RenderProcessHost that is using GCM so
   // we can go ahead and freeze it on suspend.
-  delegate_->SetShouldFreezeRenderer(rph->GetHandle(), true);
+  delegate_->SetShouldFreezeRenderer(rph->GetProcess().Handle(), true);
 }
 
 }  // namespace chromeos

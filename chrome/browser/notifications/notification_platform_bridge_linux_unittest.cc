@@ -4,28 +4,34 @@
 
 #include "chrome/browser/notifications/notification_platform_bridge_linux.h"
 
+#include <dbus/dbus-shared.h>
+
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/i18n/number_formatting.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/notifications/notification_test_util.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "chrome/test/base/browser_with_test_window_test.h"
+#include "components/dbus/thread_linux/dbus_thread_linux.h"
 #include "content/public/test/test_utils.h"
 #include "dbus/mock_bus.h"
 #include "dbus/mock_object_proxy.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
+using message_center::ButtonInfo;
 using message_center::Notification;
 using testing::_;
 using testing::ByMove;
@@ -99,15 +105,83 @@ class NotificationBuilder {
     return *this;
   }
 
+  NotificationBuilder& AddButton(const ButtonInfo& button) {
+    auto buttons = notification_.buttons();
+    buttons.push_back(button);
+    notification_.set_buttons(buttons);
+    return *this;
+  }
+
  private:
   Notification notification_;
 };
 
 struct NotificationRequest {
+  struct Action {
+    std::string id;
+    std::string label;
+  };
+
   std::string summary;
   std::string body;
+  std::vector<Action> actions;
   int32_t expire_timeout = 0;
   bool silent = false;
+};
+
+struct TestParams {
+  TestParams()
+      : name_has_owner(true),
+        capabilities{"actions", "body", "body-hyperlinks", "body-images",
+                     "body-markup"},
+        server_name("NPBL_unittest"),
+        server_version("1.0"),
+        expect_init_success(true),
+        expect_shutdown(true),
+        connect_signals(true) {}
+
+  TestParams& SetNameHasOwner(bool name_has_owner) {
+    this->name_has_owner = name_has_owner;
+    return *this;
+  }
+
+  TestParams& SetCapabilities(const std::vector<std::string>& capabilities) {
+    this->capabilities = capabilities;
+    return *this;
+  }
+
+  TestParams& SetServerName(const std::string& server_name) {
+    this->server_name = server_name;
+    return *this;
+  }
+
+  TestParams& SetServerVersion(const std::string& server_version) {
+    this->server_version = server_version;
+    return *this;
+  }
+
+  TestParams& SetExpectInitSuccess(bool expect_init_success) {
+    this->expect_init_success = expect_init_success;
+    return *this;
+  }
+
+  TestParams& SetExpectShutdown(bool expect_shutdown) {
+    this->expect_shutdown = expect_shutdown;
+    return *this;
+  }
+
+  TestParams& SetConnectSignals(bool connect_signals) {
+    this->connect_signals = connect_signals;
+    return *this;
+  }
+
+  bool name_has_owner;
+  std::vector<std::string> capabilities;
+  std::string server_name;
+  std::string server_version;
+  bool expect_init_success;
+  bool expect_shutdown;
+  bool connect_signals;
 };
 
 const SkBitmap CreateBitmap(int width, int height) {
@@ -140,8 +214,11 @@ NotificationRequest ParseRequest(dbus::MethodCall* method_call) {
     EXPECT_TRUE(reader.PopArray(&actions_reader));
     while (actions_reader.HasMoreData()) {
       // Actions come in pairs.
-      EXPECT_TRUE(actions_reader.PopString(&str));
-      EXPECT_TRUE(actions_reader.PopString(&str));
+      std::string id;
+      std::string label;
+      EXPECT_TRUE(actions_reader.PopString(&id));
+      EXPECT_TRUE(actions_reader.PopString(&label));
+      request.actions.push_back({id, label});
     }
   }
 
@@ -174,6 +251,16 @@ std::unique_ptr<dbus::Response> GetIdResponse(uint32_t id) {
   std::unique_ptr<dbus::Response> response = dbus::Response::CreateEmpty();
   dbus::MessageWriter writer(response.get());
   writer.AppendUint32(id);
+  return response;
+}
+
+ACTION_P2(OnGetServerInformation, server_name, server_version) {
+  std::unique_ptr<dbus::Response> response = dbus::Response::CreateEmpty();
+  dbus::MessageWriter writer(response.get());
+  writer.AppendString(server_name);     // name
+  writer.AppendString("chromium");      // vendor
+  writer.AppendString(server_version);  // version
+  writer.AppendString("1.2");           // spec_version
   return response;
 }
 
@@ -211,52 +298,83 @@ MATCHER_P(Calls, member, "") {
 
 }  // namespace
 
-class NotificationPlatformBridgeLinuxTest : public testing::Test {
+class NotificationPlatformBridgeLinuxTest : public BrowserWithTestWindowTest {
  public:
   NotificationPlatformBridgeLinuxTest() = default;
   ~NotificationPlatformBridgeLinuxTest() override = default;
 
   void SetUp() override {
-    mock_bus_ = new dbus::MockBus(dbus::Bus::Options());
-    mock_notification_proxy_ = new StrictMock<dbus::MockObjectProxy>(
-        mock_bus_.get(), kFreedesktopNotificationsName,
-        dbus::ObjectPath(kFreedesktopNotificationsPath));
+    BrowserWithTestWindowTest::SetUp();
+    display_service_tester_ =
+        std::make_unique<NotificationDisplayServiceTester>(profile());
+    display_service_tester_->SetProcessNotificationOperationDelegate(
+        base::BindRepeating(
+            &NotificationPlatformBridgeLinuxTest::HandleOperation,
+            base::Unretained(this)));
+    mock_bus_ = base::MakeRefCounted<dbus::MockBus>(dbus::Bus::Options());
+    mock_dbus_proxy_ = base::MakeRefCounted<StrictMock<dbus::MockObjectProxy>>(
+        mock_bus_.get(), DBUS_SERVICE_DBUS, dbus::ObjectPath(DBUS_PATH_DBUS));
+    mock_notification_proxy_ =
+        base::MakeRefCounted<StrictMock<dbus::MockObjectProxy>>(
+            mock_bus_.get(), kFreedesktopNotificationsName,
+            dbus::ObjectPath(kFreedesktopNotificationsPath));
   }
 
   void TearDown() override {
     notification_bridge_linux_->CleanUp();
     content::RunAllTasksUntilIdle();
     notification_bridge_linux_.reset();
+    display_service_tester_.reset();
+    mock_dbus_proxy_.reset();
     mock_notification_proxy_ = nullptr;
     mock_bus_ = nullptr;
+    BrowserWithTestWindowTest::TearDown();
+  }
+
+  void HandleOperation(NotificationCommon::Operation operation,
+                       NotificationHandler::Type notification_type,
+                       const GURL& origin,
+                       const std::string& notification_id,
+                       const base::Optional<int>& action_index,
+                       const base::Optional<base::string16>& reply,
+                       const base::Optional<bool>& by_user) {
+    last_operation_ = operation;
+    last_action_index_ = action_index;
   }
 
  protected:
-  void CreateNotificationBridgeLinux() {
-    CreateNotificationBridgeLinux(
-        std::vector<std::string>{"actions", "body", "body-hyperlinks",
-                                 "body-images", "body-markup"},
-        true, true, true);
-  }
-
-  void CreateNotificationBridgeLinux(
-      const std::vector<std::string>& capabilities,
-      bool expect_init_success,
-      bool expect_shutdown,
-      bool connect_signals) {
+  void CreateNotificationBridgeLinux(const TestParams& test_params) {
+    EXPECT_CALL(
+        *mock_bus_.get(),
+        GetObjectProxy(DBUS_SERVICE_DBUS, dbus::ObjectPath(DBUS_PATH_DBUS)))
+        .WillOnce(Return(mock_dbus_proxy_.get()));
     EXPECT_CALL(*mock_bus_.get(),
                 GetObjectProxy(kFreedesktopNotificationsName,
                                dbus::ObjectPath(kFreedesktopNotificationsPath)))
         .WillOnce(Return(mock_notification_proxy_.get()));
 
-    std::unique_ptr<dbus::Response> response = dbus::Response::CreateEmpty();
-    dbus::MessageWriter writer(response.get());
-    writer.AppendArrayOfStrings(capabilities);
+    auto name_has_owner_response = dbus::Response::CreateEmpty();
+    dbus::MessageWriter name_has_owner_writer(name_has_owner_response.get());
+    name_has_owner_writer.AppendBool(test_params.name_has_owner);
+    EXPECT_CALL(*mock_dbus_proxy_.get(),
+                CallMethodAndBlock(Calls("NameHasOwner"), _))
+        .WillOnce(Return(ByMove(std::move(name_has_owner_response))));
+
+    auto capabilities_response = dbus::Response::CreateEmpty();
+    dbus::MessageWriter capabilities_writer(capabilities_response.get());
+    capabilities_writer.AppendArrayOfStrings(test_params.capabilities);
     EXPECT_CALL(*mock_notification_proxy_.get(),
                 CallMethodAndBlock(Calls("GetCapabilities"), _))
-        .WillOnce(Return(ByMove(std::move(response))));
+        .WillOnce(Return(ByMove(std::move(capabilities_response))));
 
-    if (connect_signals) {
+    if (test_params.expect_init_success) {
+      EXPECT_CALL(*mock_notification_proxy_.get(),
+                  CallMethodAndBlock(Calls("GetServerInformation"), _))
+          .WillOnce(OnGetServerInformation(test_params.server_name,
+                                           test_params.server_version));
+    }
+
+    if (test_params.connect_signals) {
       EXPECT_CALL(*mock_notification_proxy_.get(),
                   DoConnectToSignal(kFreedesktopNotificationsName,
                                     "ActionInvoked", _, _))
@@ -269,9 +387,9 @@ class NotificationPlatformBridgeLinuxTest : public testing::Test {
     }
 
     EXPECT_CALL(*this, MockableNotificationBridgeReadyCallback(_))
-        .WillOnce(OnNotificationBridgeReady(expect_init_success));
+        .WillOnce(OnNotificationBridgeReady(test_params.expect_init_success));
 
-    if (expect_shutdown)
+    if (test_params.expect_shutdown)
       EXPECT_CALL(*mock_bus_.get(), ShutdownAndBlock());
 
     notification_bridge_linux_ =
@@ -283,24 +401,42 @@ class NotificationPlatformBridgeLinuxTest : public testing::Test {
     content::RunAllTasksUntilIdle();
   }
 
+  void InvokeAction(uint32_t dbus_id, const std::string& action) {
+    dbus_thread_linux::GetTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&NotificationPlatformBridgeLinuxTest::DoInvokeAction,
+                       base::Unretained(this), dbus_id, action));
+  }
+
   MOCK_METHOD1(MockableNotificationBridgeReadyCallback, void(bool));
 
-  content::TestBrowserThreadBundle thread_bundle_;
-
   scoped_refptr<dbus::MockBus> mock_bus_;
+  scoped_refptr<dbus::MockObjectProxy> mock_dbus_proxy_;
   scoped_refptr<dbus::MockObjectProxy> mock_notification_proxy_;
 
   base::Callback<void(dbus::Signal*)> action_invoked_callback_;
   base::Callback<void(dbus::Signal*)> notification_closed_callback_;
 
   std::unique_ptr<NotificationPlatformBridgeLinux> notification_bridge_linux_;
+  std::unique_ptr<NotificationDisplayServiceTester> display_service_tester_;
+
+  base::Optional<NotificationCommon::Operation> last_operation_;
+  base::Optional<int> last_action_index_;
 
  private:
+  void DoInvokeAction(uint32_t dbus_id, const std::string& action) {
+    dbus::Signal signal(kFreedesktopNotificationsName, "ActionInvoked");
+    dbus::MessageWriter writer(&signal);
+    writer.AppendUint32(dbus_id);
+    writer.AppendString(action);
+    action_invoked_callback_.Run(&signal);
+  }
+
   DISALLOW_COPY_AND_ASSIGN(NotificationPlatformBridgeLinuxTest);
 };
 
 TEST_F(NotificationPlatformBridgeLinuxTest, SetUpAndTearDown) {
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
 }
 
 TEST_F(NotificationPlatformBridgeLinuxTest, NotifyAndCloseFormat) {
@@ -311,11 +447,11 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotifyAndCloseFormat) {
               CallMethodAndBlock(Calls("CloseNotification"), _))
       .WillOnce(OnCloseNotification());
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("").GetResult(), nullptr);
-  notification_bridge_linux_->Close("", "");
+  notification_bridge_linux_->Close(profile(), "");
 }
 
 TEST_F(NotificationPlatformBridgeLinuxTest, ProgressPercentageAddedToSummary) {
@@ -329,9 +465,9 @@ TEST_F(NotificationPlatformBridgeLinuxTest, ProgressPercentageAddedToSummary) {
           },
           1));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("")
           .SetType(message_center::NOTIFICATION_TYPE_PROGRESS)
           .SetProgress(42)
@@ -349,9 +485,9 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationListItemsInBody) {
           },
           1));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("")
           .SetType(message_center::NOTIFICATION_TYPE_MULTIPLE)
           .SetItems(std::vector<message_center::NotificationItem>{
@@ -377,12 +513,12 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationTimeoutsNoPersistence) {
           },
           2));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("1").SetNeverTimeout(false).GetResult(), nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("2").SetNeverTimeout(true).GetResult(), nullptr);
 }
 
@@ -397,11 +533,10 @@ TEST_F(NotificationPlatformBridgeLinuxTest,
           },
           1));
 
-  CreateNotificationBridgeLinux(
-      std::vector<std::string>{"actions", "body", "persistence"}, true, true,
-      true);
+  CreateNotificationBridgeLinux(TestParams().SetCapabilities(
+      std::vector<std::string>{"actions", "body", "persistence"}));
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("1").GetResult(), nullptr);
 }
 
@@ -423,7 +558,8 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationImages) {
           [=](const NotificationRequest& request) {
             std::string file_name;
             EXPECT_TRUE(RE2::FullMatch(
-                request.body, "\\<img src=\\\"(.+)\\\" alt=\\\".*\\\"/\\>",
+                request.body,
+                "\\<img src=\\\"file://(.+)\\\" alt=\\\".*\\\"/\\>",
                 &file_name));
             std::string file_contents;
             EXPECT_TRUE(base::ReadFileToString(base::FilePath(file_name),
@@ -436,9 +572,9 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationImages) {
           },
           1));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("")
           .SetType(message_center::NOTIFICATION_TYPE_IMAGE)
           .SetImage(original_image)
@@ -458,9 +594,9 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationAttribution) {
           },
           1));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("")
           .SetMessage(base::ASCIIToUTF16("Body text"))
           .SetOriginUrl(GURL("https://google.com/search?q=test&ie=UTF8"))
@@ -469,13 +605,19 @@ TEST_F(NotificationPlatformBridgeLinuxTest, NotificationAttribution) {
 }
 
 TEST_F(NotificationPlatformBridgeLinuxTest, MissingActionsCapability) {
-  CreateNotificationBridgeLinux(std::vector<std::string>{"body"}, false, true,
-                                false);
+  CreateNotificationBridgeLinux(
+      TestParams()
+          .SetCapabilities(std::vector<std::string>{"body"})
+          .SetExpectInitSuccess(false)
+          .SetConnectSignals(false));
 }
 
 TEST_F(NotificationPlatformBridgeLinuxTest, MissingBodyCapability) {
-  CreateNotificationBridgeLinux(std::vector<std::string>{"actions"}, false,
-                                true, false);
+  CreateNotificationBridgeLinux(
+      TestParams()
+          .SetCapabilities(std::vector<std::string>{"actions"})
+          .SetExpectInitSuccess(false)
+          .SetConnectSignals(false));
 }
 
 TEST_F(NotificationPlatformBridgeLinuxTest, EscapeHtml) {
@@ -488,9 +630,9 @@ TEST_F(NotificationPlatformBridgeLinuxTest, EscapeHtml) {
           },
           1));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("")
           .SetMessage(
               base::ASCIIToUTF16("<span id='1' class=\"2\">&#39;</span>"))
@@ -512,12 +654,12 @@ TEST_F(NotificationPlatformBridgeLinuxTest, Silent) {
           },
           2));
 
-  CreateNotificationBridgeLinux();
+  CreateNotificationBridgeLinux(TestParams());
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("1").SetSilent(false).GetResult(), nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("2").SetSilent(true).GetResult(), nullptr);
 }
 
@@ -550,37 +692,169 @@ TEST_F(NotificationPlatformBridgeLinuxTest, OriginUrlFormat) {
           },
           4));
 
-  CreateNotificationBridgeLinux(std::vector<std::string>{"actions", "body"},
-                                true, true, true);
+  CreateNotificationBridgeLinux(TestParams().SetCapabilities(
+      std::vector<std::string>{"actions", "body"}));
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("1")
           .SetOriginUrl(GURL("https://google.com"))
           .GetResult(),
       nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("2")
           .SetOriginUrl(GURL("https://mail.google.com"))
           .GetResult(),
       nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("3")
           .SetOriginUrl(GURL("https://123.123.123.123"))
           .GetResult(),
       nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("4")
           .SetOriginUrl(GURL("https://a.b.c.co.uk/file.html"))
           .GetResult(),
       nullptr);
   notification_bridge_linux_->Display(
-      NotificationHandler::Type::WEB_PERSISTENT, "", false,
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
       NotificationBuilder("5")
           .SetOriginUrl(GURL(
               "https://google.com.blahblahblahblahblahblahblah.evilsite.com"))
           .GetResult(),
       nullptr);
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest,
+       OldCinnamonNotificationsHaveClosebutton) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify(
+          [](const NotificationRequest& request) {
+            ASSERT_EQ(3UL, request.actions.size());
+            EXPECT_EQ("default", request.actions[0].id);
+            EXPECT_EQ("Activate", request.actions[0].label);
+            EXPECT_EQ("settings", request.actions[1].id);
+            EXPECT_EQ("Settings", request.actions[1].label);
+            EXPECT_EQ("close", request.actions[2].id);
+            EXPECT_EQ("Close", request.actions[2].label);
+          },
+          1));
+
+  CreateNotificationBridgeLinux(
+      TestParams().SetServerName("cinnamon").SetServerVersion("3.6.7"));
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("").GetResult(), nullptr);
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest,
+       NewCinnamonNotificationsDontHaveClosebutton) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify(
+          [](const NotificationRequest& request) {
+            ASSERT_EQ(2UL, request.actions.size());
+            EXPECT_EQ("default", request.actions[0].id);
+            EXPECT_EQ("Activate", request.actions[0].label);
+            EXPECT_EQ("settings", request.actions[1].id);
+            EXPECT_EQ("Settings", request.actions[1].label);
+          },
+          1));
+
+  CreateNotificationBridgeLinux(
+      TestParams().SetServerName("cinnamon").SetServerVersion("3.8.0"));
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("").GetResult(), nullptr);
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest, DefaultButtonForwards) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify([](const NotificationRequest&) {}, 1));
+
+  CreateNotificationBridgeLinux(TestParams());
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("1")
+          .SetOriginUrl(GURL("https://google.com"))
+          .GetResult(),
+      nullptr);
+
+  InvokeAction(1, "default");
+
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_EQ(NotificationCommon::OPERATION_CLICK, last_operation_);
+  EXPECT_EQ(false, last_action_index_.has_value());
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest, SettingsButtonForwards) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify([](const NotificationRequest&) {}, 1));
+
+  CreateNotificationBridgeLinux(TestParams());
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("1")
+          .SetOriginUrl(GURL("https://google.com"))
+          .GetResult(),
+      nullptr);
+
+  InvokeAction(1, "settings");
+
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_EQ(NotificationCommon::OPERATION_SETTINGS, last_operation_);
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest, ActionButtonForwards) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify([](const NotificationRequest&) {}, 1));
+
+  CreateNotificationBridgeLinux(TestParams());
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("1")
+          .SetOriginUrl(GURL("https://google.com"))
+          .AddButton(ButtonInfo(base::ASCIIToUTF16("button0")))
+          .AddButton(ButtonInfo(base::ASCIIToUTF16("button1")))
+          .GetResult(),
+      nullptr);
+
+  InvokeAction(1, "1");
+
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_EQ(NotificationCommon::OPERATION_CLICK, last_operation_);
+  EXPECT_EQ(1, last_action_index_);
+}
+
+TEST_F(NotificationPlatformBridgeLinuxTest, CloseButtonForwards) {
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("Notify"), _))
+      .WillOnce(OnNotify([](const NotificationRequest&) {}, 1));
+  EXPECT_CALL(*mock_notification_proxy_.get(),
+              CallMethodAndBlock(Calls("CloseNotification"), _))
+      .WillOnce(OnCloseNotification());
+
+  // custom close button is only added on cinnamon
+  CreateNotificationBridgeLinux(TestParams().SetServerName("cinnamon"));
+  notification_bridge_linux_->Display(
+      NotificationHandler::Type::WEB_PERSISTENT, profile(),
+      NotificationBuilder("1")
+          .SetOriginUrl(GURL("https://google.com"))
+          .GetResult(),
+      nullptr);
+
+  InvokeAction(1, "close");
+
+  content::RunAllTasksUntilIdle();
+
+  EXPECT_EQ(NotificationCommon::OPERATION_CLOSE, last_operation_);
 }

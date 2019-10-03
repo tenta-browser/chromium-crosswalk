@@ -7,11 +7,11 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
-#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_adapter_bluez.h"
 #include "device/bluetooth/dbus/bluetooth_profile_service_provider.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
@@ -19,6 +19,7 @@
 #include "device/bluetooth/dbus/fake_bluetooth_agent_manager_client.h"
 #include "device/bluetooth/dbus/fake_bluetooth_device_client.h"
 #include "device/bluetooth/dbus/fake_bluetooth_profile_manager_client.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using device::BluetoothAdapter;
@@ -57,16 +58,15 @@ class BluetoothAdapterProfileBlueZTest : public testing::Test {
 
     // Grab a pointer to the adapter.
     device::BluetoothAdapterFactory::GetAdapter(
-        base::Bind(&BluetoothAdapterProfileBlueZTest::AdapterCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&BluetoothAdapterProfileBlueZTest::AdapterCallback,
+                       base::Unretained(this)));
     base::RunLoop().Run();
     ASSERT_TRUE(adapter_.get() != nullptr);
     ASSERT_TRUE(adapter_->IsInitialized());
     ASSERT_TRUE(adapter_->IsPresent());
 
     // Turn on the adapter.
-    adapter_->SetPowered(true, base::Bind(&base::DoNothing),
-                         base::Bind(&base::DoNothing));
+    adapter_->SetPowered(true, base::DoNothing(), base::DoNothing());
     ASSERT_TRUE(adapter_->IsPowered());
   }
 
@@ -98,16 +98,16 @@ class BluetoothAdapterProfileBlueZTest : public testing::Test {
         base::ScopedFD fd,
         const bluez::BluetoothProfileServiceProvider::Delegate::Options&
             options,
-        const ConfirmationCallback& callback) override {
+        ConfirmationCallback callback) override {
       ++connections_;
       fd.reset();
-      callback.Run(SUCCESS);
+      std::move(callback).Run(SUCCESS);
       if (device_path_.value() != "")
         ASSERT_EQ(device_path_, device_path);
     }
 
     void RequestDisconnection(const dbus::ObjectPath& device_path,
-                              const ConfirmationCallback& callback) override {
+                              ConfirmationCallback callback) override {
       ++disconnections_;
     }
 
@@ -193,12 +193,12 @@ TEST_F(BluetoothAdapterProfileBlueZTest, DelegateCount) {
   EXPECT_EQ(1U, profile_->DelegateCount());
 
   profile_->RemoveDelegate(fake_delegate_autopair_.device_path_,
-                           base::Bind(&base::DoNothing));
+                           base::DoNothing());
 
   EXPECT_EQ(1U, profile_->DelegateCount());
 
   profile_->RemoveDelegate(fake_delegate_paired_.device_path_,
-                           base::Bind(&base::DoNothing));
+                           base::DoNothing());
 
   EXPECT_EQ(0U, profile_->DelegateCount());
 }

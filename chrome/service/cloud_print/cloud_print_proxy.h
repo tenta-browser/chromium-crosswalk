@@ -12,10 +12,15 @@
 
 #include "base/macros.h"
 #include "base/sequence_checker.h"
+#include "base/values.h"
 #include "chrome/service/cloud_print/cloud_print_proxy_backend.h"
 #include "chrome/service/cloud_print/cloud_print_wipeout.h"
 
 class ServiceProcessPrefs;
+
+namespace network {
+class NetworkConnectionTracker;
+}
 
 namespace cloud_print {
 
@@ -43,15 +48,17 @@ class CloudPrintProxy : public CloudPrintProxyFrontend,
 
   // Initializes the object. This should be called every time an object of this
   // class is constructed.
-  void Initialize(ServiceProcessPrefs* service_prefs, Client* client);
+  void Initialize(
+      ServiceProcessPrefs* service_prefs,
+      Client* client,
+      network::NetworkConnectionTracker* network_connection_tracker);
 
   // Enables/disables cloud printing for the user
   void EnableForUser();
-  void EnableForUserWithRobot(
-      const std::string& robot_auth_code,
-      const std::string& robot_email,
-      const std::string& user_email,
-      const base::DictionaryValue& user_settings);
+  void EnableForUserWithRobot(const std::string& robot_auth_code,
+                              const std::string& robot_email,
+                              const std::string& user_email,
+                              base::Value user_settings);
   void UnregisterPrintersAndDisableForUser();
   void DisableForUser();
   // Returns the proxy info.
@@ -85,16 +92,18 @@ class CloudPrintProxy : public CloudPrintProxyFrontend,
   std::unique_ptr<CloudPrintProxyBackend> backend_;
   // This class does not own this. It is guaranteed to remain valid for the
   // lifetime of this class.
-  ServiceProcessPrefs* service_prefs_;
+  ServiceProcessPrefs* service_prefs_ = nullptr;
   // This class does not own this. If non-NULL, It is guaranteed to remain
   // valid for the lifetime of this class.
-  Client* client_;
+  Client* client_ = nullptr;
+  // Used to listen for network connection changes.
+  network::NetworkConnectionTracker* network_connection_tracker_ = nullptr;
   // The email address of the account used to authenticate to the Cloud Print
   // service.
   std::string user_email_;
   // This is set to true when the Cloud Print proxy is enabled and after
   // successful authentication with the Cloud Print service.
-  bool enabled_;
+  bool enabled_ = false;
   // This is a cleanup class for unregistering printers on proxy disable.
   std::unique_ptr<CloudPrintWipeout> wipeout_;
 

@@ -24,6 +24,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/system/sys_info.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "third_party/crashpad/crashpad/client/annotation.h"
@@ -32,7 +34,6 @@
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 #include "third_party/crashpad/crashpad/client/crashpad_info.h"
 #include "third_party/crashpad/crashpad/client/settings.h"
-#include "third_party/crashpad/crashpad/client/simple_string_dictionary.h"
 #include "third_party/crashpad/crashpad/client/simulate_crash.h"
 
 #if defined(OS_POSIX)
@@ -47,7 +48,8 @@ namespace crash_reporter {
 
 namespace {
 
-crashpad::SimpleStringDictionary* g_simple_string_dictionary;
+base::FilePath* g_database_path;
+
 crashpad::CrashReportDatabase* g_database;
 
 bool LogMessageHandler(int severity,
@@ -81,16 +83,26 @@ bool LogMessageHandler(int severity,
   CHECK_LE(message_start, string.size());
   std::string message = base::StringPrintf("%s:%d: %s", file, line,
                                            string.c_str() + message_start);
-  SetCrashKeyValue("LOG_FATAL", message);
+  static crashpad::StringAnnotation<512> crash_key("LOG_FATAL");
+  crash_key.Set(message);
 
   // Rather than including the code to force the crash here, allow the caller to
   // do it.
   return false;
 }
 
+void InitializeDatabasePath(const base::FilePath& database_path) {
+  DCHECK(!g_database_path);
+
+  // Intentionally leaked.
+  g_database_path = new base::FilePath(database_path);
+}
+
 void InitializeCrashpadImpl(bool initial_client,
                             const std::string& process_type,
                             const std::string& user_data_dir,
+                            const base::FilePath& exe_path,
+                            const std::vector<std::string>& initial_arguments,
                             bool embedded_handler) {
   static bool initialized = false;
   DCHECK(!initialized);
@@ -104,11 +116,16 @@ void InitializeCrashpadImpl(bool initial_client,
     // "relauncher" is hard-coded because it's a Chrome --type, but this
     // component can't see Chrome's switches. This is only used for argument
     // sanitization.
-    DCHECK(browser_process || process_type == "relauncher");
+    DCHECK(browser_process || process_type == "relauncher" ||
+           process_type == "app_shim");
 #elif defined(OS_WIN)
     // "Chrome Installer" is the name historically used for installer binaries
     // as processed by the backend.
-    DCHECK(browser_process || process_type == "Chrome Installer");
+    DCHECK(browser_process || process_type == "Chrome Installer" ||
+           process_type == "notification-helper" ||
+           process_type == "GCPW Installer" || process_type == "GCPW DLL");
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
+    DCHECK(browser_process);
 #else
 #error Port.
 #endif  // OS_MACOSX
@@ -118,10 +135,8 @@ void InitializeCrashpadImpl(bool initial_client,
 
   // database_path is only valid in the browser process.
   base::FilePath database_path = internal::PlatformCrashpadInitialization(
-      initial_client, browser_process, embedded_handler, user_data_dir);
-
-  crashpad::CrashpadInfo* crashpad_info =
-      crashpad::CrashpadInfo::GetCrashpadInfo();
+      initial_client, browser_process, embedded_handler, user_data_dir,
+      exe_path, initial_arguments);
 
 #if defined(OS_MACOSX)
 #if defined(NDEBUG)
@@ -138,32 +153,26 @@ void InitializeCrashpadImpl(bool initial_client,
   // browser process, because the system's crash reporter can take a very long
   // time to chew on symbols.
   if (!browser_process || is_debug_build) {
-    crashpad_info->set_system_crash_reporter_forwarding(
-        crashpad::TriState::kDisabled);
+    crashpad::CrashpadInfo::GetCrashpadInfo()
+        ->set_system_crash_reporter_forwarding(crashpad::TriState::kDisabled);
   }
 #endif  // OS_MACOSX
 
-  g_simple_string_dictionary = new crashpad::SimpleStringDictionary();
-  crashpad_info->set_simple_annotations(g_simple_string_dictionary);
-
-  // On Windows chrome_elf registers crash keys. This should work identically
-  // for component and non component builds.
-  base::debug::SetCrashKeyReportingFunctions(SetCrashKeyValue, ClearCrashKey);
-  crash_reporter_client->RegisterCrashKeys();
-
   crashpad::AnnotationList::Register();
 
-  // TODO(rsesek): Remove this test annotation.
-  static crashpad::StringAnnotation<8> test_annotation("annotation-v2-test");
-  test_annotation.Set("it works");
+  static crashpad::StringAnnotation<24> ptype_key("ptype");
+  ptype_key.Set(browser_process ? base::StringPiece("browser")
+                                : base::StringPiece(process_type));
 
-  SetCrashKeyValue("ptype", browser_process ? base::StringPiece("browser")
-                                            : base::StringPiece(process_type));
+  static crashpad::StringAnnotation<12> pid_key("pid");
 #if defined(OS_POSIX)
-  SetCrashKeyValue("pid", base::IntToString(getpid()));
+  pid_key.Set(base::NumberToString(getpid()));
 #elif defined(OS_WIN)
-  SetCrashKeyValue("pid", base::IntToString(::GetCurrentProcessId()));
+  pid_key.Set(base::NumberToString(::GetCurrentProcessId()));
 #endif
+
+  static crashpad::StringAnnotation<24> osarch_key("osarch");
+  osarch_key.Set(base::SysInfo::OperatingSystemArchitecture());
 
   logging::SetLogMessageHandler(LogMessageHandler);
 
@@ -183,8 +192,12 @@ void InitializeCrashpadImpl(bool initial_client,
   // other "main, first process" to initialize things. There is no "relauncher"
   // on Windows, so this is synonymous with initial_client.
   const bool should_initialize_database_and_set_upload_policy = initial_client;
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
+  const bool should_initialize_database_and_set_upload_policy = browser_process;
 #endif
   if (should_initialize_database_and_set_upload_policy) {
+    InitializeDatabasePath(database_path);
+
     g_database =
         crashpad::CrashReportDatabase::Initialize(database_path).release();
 
@@ -194,24 +207,28 @@ void InitializeCrashpadImpl(bool initial_client,
 
 }  // namespace
 
-void SetCrashKeyValue(const base::StringPiece& key,
-                      const base::StringPiece& value) {
-  g_simple_string_dictionary->SetKeyValue(key, value);
-}
-
-void ClearCrashKey(const base::StringPiece& key) {
-  g_simple_string_dictionary->RemoveKey(key);
-}
-
 void InitializeCrashpad(bool initial_client, const std::string& process_type) {
-  InitializeCrashpadImpl(initial_client, process_type, std::string(), false);
+  InitializeCrashpadImpl(initial_client, process_type, std::string(),
+                         base::FilePath(), std::vector<std::string>(), false);
 }
 
 #if defined(OS_WIN)
 void InitializeCrashpadWithEmbeddedHandler(bool initial_client,
                                            const std::string& process_type,
-                                           const std::string& user_data_dir) {
-  InitializeCrashpadImpl(initial_client, process_type, user_data_dir, true);
+                                           const std::string& user_data_dir,
+                                           const base::FilePath& exe_path) {
+  InitializeCrashpadImpl(initial_client, process_type, user_data_dir, exe_path,
+                         std::vector<std::string>(), true);
+}
+
+void InitializeCrashpadWithDllEmbeddedHandler(
+    bool initial_client,
+    const std::string& process_type,
+    const std::string& user_data_dir,
+    const base::FilePath& exe_path,
+    const std::vector<std::string>& initial_arguments) {
+  InitializeCrashpadImpl(initial_client, process_type, user_data_dir, exe_path,
+                         initial_arguments, true);
 }
 #endif  // OS_WIN
 
@@ -253,9 +270,17 @@ bool GetUploadsEnabled() {
   return false;
 }
 
+#if !defined(OS_ANDROID)
 void DumpWithoutCrashing() {
   CRASHPAD_SIMULATE_CRASH();
 }
+#endif
+
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+void CrashWithoutDumping(const std::string& message) {
+  crashpad::CrashpadClient::CrashWithoutDump(message);
+}
+#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 void GetReports(std::vector<Report>* reports) {
 #if defined(OS_WIN)
@@ -294,6 +319,22 @@ void RequestSingleCrashUpload(const std::string& local_id) {
   RequestSingleCrashUpload_ExportThunk(local_id.c_str());
 #else
   crash_reporter::RequestSingleCrashUploadImpl(local_id);
+#endif
+}
+
+base::FilePath GetCrashpadDatabasePath() {
+#if defined(OS_WIN)
+  return base::FilePath(GetCrashpadDatabasePath_ExportThunk());
+#else
+  return base::FilePath(GetCrashpadDatabasePathImpl());
+#endif
+}
+
+void ClearReportsBetween(const base::Time& begin, const base::Time& end) {
+#if defined(OS_WIN)
+  ClearReportsBetween_ExportThunk(begin.ToTimeT(), end.ToTimeT());
+#else
+  ClearReportsBetweenImpl(begin.ToTimeT(), end.ToTimeT());
 #endif
 }
 
@@ -347,7 +388,7 @@ void GetReportsImpl(std::vector<Report>* reports) {
     report.upload_time = 0;
     report.state = pending_report.upload_explicitly_requested
                        ? ReportUploadState::Pending_UserRequested
-                       : report.state = ReportUploadState::Pending;
+                       : ReportUploadState::Pending;
     reports->push_back(report);
   }
 
@@ -364,5 +405,35 @@ void RequestSingleCrashUploadImpl(const std::string& local_id) {
   uuid.InitializeFromString(local_id);
   g_database->RequestUpload(uuid);
 }
+
+base::FilePath::StringType::const_pointer GetCrashpadDatabasePathImpl() {
+  if (!g_database_path)
+    return nullptr;
+
+  return g_database_path->value().c_str();
+}
+
+void ClearReportsBetweenImpl(time_t begin, time_t end) {
+  std::vector<Report> reports;
+  GetReports(&reports);
+  for (const Report& report : reports) {
+    // Delete if either time lies in the range, as they both reveal that the
+    // browser was open.
+    if ((begin <= report.capture_time && report.capture_time <= end) ||
+        (begin <= report.upload_time && report.upload_time <= end)) {
+      crashpad::UUID uuid;
+      uuid.InitializeFromString(report.local_id);
+      g_database->DeleteReport(uuid);
+    }
+  }
+}
+
+namespace internal {
+
+crashpad::CrashReportDatabase* GetCrashReportDatabase() {
+  return g_database;
+}
+
+}  // namespace internal
 
 }  // namespace crash_reporter

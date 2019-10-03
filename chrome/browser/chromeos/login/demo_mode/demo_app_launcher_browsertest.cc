@@ -14,7 +14,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_paths.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/user_manager/user_manager.h"
@@ -30,7 +30,7 @@ namespace {
 
 base::FilePath GetTestDemoAppPath() {
   base::FilePath test_data_dir;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
+  EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
   return test_data_dir.Append(FILE_PATH_LITERAL("chromeos/demo_app"));
 }
 
@@ -60,7 +60,7 @@ bool VerifyNetworksDisabled() {
 
 }  // namespace
 
-class DemoAppLauncherTest : public ExtensionBrowserTest {
+class DemoAppLauncherTest : public extensions::ExtensionBrowserTest {
  public:
   DemoAppLauncherTest() { set_exit_when_last_browser_closes(false); }
 
@@ -78,7 +78,7 @@ class DemoAppLauncherTest : public ExtensionBrowserTest {
 
   void SetUp() override {
     chromeos::DemoAppLauncher::SetDemoAppPathForTesting(GetTestDemoAppPath());
-    ExtensionBrowserTest::SetUp();
+    extensions::ExtensionBrowserTest::SetUp();
   }
 
  private:

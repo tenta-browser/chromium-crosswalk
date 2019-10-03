@@ -5,6 +5,7 @@
 #include "content/public/test/fake_download_item.h"
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "net/http/http_response_headers.h"
 
 namespace content {
@@ -78,11 +79,12 @@ const std::vector<GURL>& FakeDownloadItem::GetUrlChain() const {
   return url_chain_;
 }
 
-void FakeDownloadItem::SetLastReason(DownloadInterruptReason last_reason) {
+void FakeDownloadItem::SetLastReason(
+    download::DownloadInterruptReason last_reason) {
   last_reason_ = last_reason;
 }
 
-DownloadInterruptReason FakeDownloadItem::GetLastReason() const {
+download::DownloadInterruptReason FakeDownloadItem::GetLastReason() const {
   return last_reason_;
 }
 
@@ -123,7 +125,7 @@ void FakeDownloadItem::SetState(const DownloadState& state) {
   download_state_ = state;
 }
 
-DownloadItem::DownloadState FakeDownloadItem::GetState() const {
+download::DownloadItem::DownloadState FakeDownloadItem::GetState() const {
   return download_state_;
 }
 
@@ -181,6 +183,19 @@ bool FakeDownloadItem::IsTransient() const {
   return is_transient_;
 }
 
+void FakeDownloadItem::SetIsParallelDownload(bool is_parallel_download) {
+  is_parallel_download_ = is_parallel_download;
+}
+
+bool FakeDownloadItem::IsParallelDownload() const {
+  return is_parallel_download_;
+}
+
+download::DownloadItem::DownloadCreationType
+FakeDownloadItem::GetDownloadCreationType() const {
+  return download::DownloadItem::DownloadCreationType::TYPE_ACTIVE_DOWNLOAD;
+}
+
 void FakeDownloadItem::SetIsDone(bool is_done) {
   is_done_ = is_done;
 }
@@ -200,6 +215,10 @@ const std::string& FakeDownloadItem::GetETag() const {
 void FakeDownloadItem::SetLastModifiedTime(
     const std::string& last_modified_time) {
   last_modified_time_ = last_modified_time;
+}
+
+void FakeDownloadItem::SetHash(const std::string& hash) {
+  hash_ = hash;
 }
 
 const std::string& FakeDownloadItem::GetLastModifiedTime() const {
@@ -222,7 +241,7 @@ void FakeDownloadItem::Pause() {
   NOTREACHED();
 }
 
-void FakeDownloadItem::Resume() {
+void FakeDownloadItem::Resume(bool user_resume) {
   NOTREACHED();
 }
 
@@ -242,7 +261,17 @@ void FakeDownloadItem::ShowDownloadInShell() {
   NOTREACHED();
 }
 
+void FakeDownloadItem::Rename(const base::FilePath& name,
+                              RenameDownloadCallback callback) {
+  NOTREACHED();
+}
+
 bool FakeDownloadItem::IsPaused() const {
+  return false;
+}
+
+bool FakeDownloadItem::AllowMetered() const {
+  NOTREACHED();
   return false;
 }
 
@@ -254,6 +283,16 @@ bool FakeDownloadItem::IsTemporary() const {
 bool FakeDownloadItem::CanResume() const {
   NOTREACHED();
   return false;
+}
+
+int64_t FakeDownloadItem::GetBytesWasted() const {
+  NOTREACHED();
+  return 0;
+}
+
+int32_t FakeDownloadItem::GetAutoResumeCount() const {
+  NOTREACHED();
+  return 0;
 }
 
 const GURL& FakeDownloadItem::GetReferrerUrl() const {
@@ -274,6 +313,12 @@ const GURL& FakeDownloadItem::GetTabUrl() const {
 const GURL& FakeDownloadItem::GetTabReferrerUrl() const {
   NOTREACHED();
   return dummy_url;
+}
+
+const base::Optional<url::Origin>& FakeDownloadItem::GetRequestInitiator()
+    const {
+  NOTREACHED();
+  return dummy_origin;
 }
 
 std::string FakeDownloadItem::GetSuggestedFilename() const {
@@ -320,19 +365,24 @@ const base::FilePath& FakeDownloadItem::GetForcedFilePath() const {
   return dummy_file_path;
 }
 
+base::FilePath FakeDownloadItem::GetTemporaryFilePath() const {
+  NOTREACHED();
+  return dummy_file_path;
+}
+
 base::FilePath FakeDownloadItem::GetFileNameToReportUser() const {
   NOTREACHED();
   return base::FilePath();
 }
 
-DownloadItem::TargetDisposition FakeDownloadItem::GetTargetDisposition() const {
+download::DownloadItem::TargetDisposition
+FakeDownloadItem::GetTargetDisposition() const {
   NOTREACHED();
   return TargetDisposition();
 }
 
 const std::string& FakeDownloadItem::GetHash() const {
-  NOTREACHED();
-  return dummy_string;
+  return hash_;
 }
 
 void FakeDownloadItem::DeleteFile(const base::Callback<void(bool)>& callback) {
@@ -340,14 +390,18 @@ void FakeDownloadItem::DeleteFile(const base::Callback<void(bool)>& callback) {
   callback.Run(false);
 }
 
+download::DownloadFile* FakeDownloadItem::GetDownloadFile() {
+  return nullptr;
+}
+
 bool FakeDownloadItem::IsDangerous() const {
   NOTREACHED();
   return false;
 }
 
-DownloadDangerType FakeDownloadItem::GetDangerType() const {
+download::DownloadDangerType FakeDownloadItem::GetDangerType() const {
   NOTREACHED();
-  return DownloadDangerType();
+  return download::DownloadDangerType();
 }
 
 bool FakeDownloadItem::TimeRemaining(base::TimeDelta* remaining) const {
@@ -374,10 +428,10 @@ int64_t FakeDownloadItem::GetTotalBytes() const {
   return total_bytes_;
 }
 
-const std::vector<DownloadItem::ReceivedSlice>&
+const std::vector<download::DownloadItem::ReceivedSlice>&
 FakeDownloadItem::GetReceivedSlices() const {
   NOTREACHED();
-  static const std::vector<DownloadItem::ReceivedSlice> slices;
+  static const std::vector<download::DownloadItem::ReceivedSlice> slices;
   return slices;
 }
 
@@ -411,18 +465,9 @@ bool FakeDownloadItem::GetOpened() const {
   return false;
 }
 
-BrowserContext* FakeDownloadItem::GetBrowserContext() const {
-  NOTREACHED();
-  return nullptr;
-}
-
-WebContents* FakeDownloadItem::GetWebContents() const {
-  NOTREACHED();
-  return nullptr;
-}
-
-void FakeDownloadItem::OnContentCheckCompleted(DownloadDangerType danger_type,
-                                               DownloadInterruptReason reason) {
+void FakeDownloadItem::OnContentCheckCompleted(
+    download::DownloadDangerType danger_type,
+    download::DownloadInterruptReason reason) {
   NOTREACHED();
 }
 
@@ -441,6 +486,11 @@ void FakeDownloadItem::SetDisplayName(const base::FilePath& name) {
 std::string FakeDownloadItem::DebugString(bool verbose) const {
   NOTREACHED();
   return std::string();
+}
+
+void FakeDownloadItem::SimulateErrorForTesting(
+    download::DownloadInterruptReason reason) {
+  NOTREACHED();
 }
 
 }  // namespace content

@@ -4,19 +4,25 @@
 
 #include "chrome/browser/ui/views/autofill/view_util.h"
 
-#include "components/strings/grit/components_strings.h"
-#include "ui/base/l10n/l10n_util.h"
-#include "ui/views/controls/textfield/textfield.h"
+#include <utility>
+
+#include "ui/gfx/color_palette.h"
+#include "ui/views/controls/label.h"
 
 namespace autofill {
 
-views::Textfield* CreateCvcTextfield() {
-  views::Textfield* textfield = new views::Textfield();
-  textfield->set_placeholder_text(
-      l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_CVC));
-  textfield->set_default_width_in_chars(8);
-  textfield->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_NUMBER);
-  return textfield;
+std::unique_ptr<views::Label> CreateLabelWithColorReadabilityDisabled(
+    const base::string16& text,
+    int text_context,
+    int text_style) {
+  auto label = std::make_unique<views::Label>(text, text_context, text_style);
+  label->SetAutoColorReadabilityEnabled(false);
+  // Forces the color for the required context and style to be applied. It may
+  // have been overridden by the default theme's color before auto-color
+  // readability was disabled.
+  label->SetEnabledColor(
+      views::style::GetColor(*label, text_context, text_style));
+  return label;
 }
 
 }  // namespace autofill

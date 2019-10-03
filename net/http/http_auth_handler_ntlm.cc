@@ -4,6 +4,8 @@
 
 #include "net/http/http_auth_handler_ntlm.h"
 
+#include <utility>
+
 #if !defined(NTLM_SSPI)
 #include "base/base64.h"
 #endif
@@ -19,11 +21,6 @@
 
 namespace net {
 
-HttpAuth::AuthorizationResult HttpAuthHandlerNTLM::HandleAnotherChallenge(
-    HttpAuthChallengeTokenizer* challenge) {
-  return ParseChallenge(challenge, false);
-}
-
 bool HttpAuthHandlerNTLM::Init(HttpAuthChallengeTokenizer* tok,
                                const SSLInfo& ssl_info) {
   auth_scheme_ = HttpAuth::AUTH_SCHEME_NTLM;
@@ -38,15 +35,18 @@ bool HttpAuthHandlerNTLM::Init(HttpAuthChallengeTokenizer* tok,
 }
 
 int HttpAuthHandlerNTLM::GenerateAuthTokenImpl(
-    const AuthCredentials* credentials, const HttpRequestInfo* request,
-    const CompletionCallback& callback, std::string* auth_token) {
+    const AuthCredentials* credentials,
+    const HttpRequestInfo* request,
+    CompletionOnceCallback callback,
+    std::string* auth_token) {
 #if defined(NTLM_SSPI)
   return auth_sspi_.GenerateAuthToken(credentials, CreateSPN(origin_),
-                                      channel_bindings_, auth_token, callback);
+                                      channel_bindings_, auth_token, net_log(),
+                                      std::move(callback));
 #else  // !defined(NTLM_SSPI)
   // TODO(cbentzel): Shouldn't be hitting this case.
   if (!credentials) {
-    LOG(ERROR) << "Username and password are expected to be non-NULL.";
+    LOG(ERROR) << "Username and password are expected to be non-nullptr.";
     return ERR_MISSING_AUTH_CREDENTIALS;
   }
 
@@ -80,9 +80,8 @@ int HttpAuthHandlerNTLM::GenerateAuthTokenImpl(
     }
   }
 
-  ntlm::Buffer next_token = GetNextToken(
-      ntlm::Buffer(reinterpret_cast<const uint8_t*>(decoded_auth_data.data()),
-                   decoded_auth_data.size()));
+  std::vector<uint8_t> next_token =
+      GetNextToken(base::as_bytes(base::make_span(decoded_auth_data)));
   if (next_token.empty())
     return ERR_UNEXPECTED;
 
@@ -96,6 +95,11 @@ int HttpAuthHandlerNTLM::GenerateAuthTokenImpl(
   *auth_token = std::string("NTLM ") + encode_output;
   return OK;
 #endif
+}
+
+HttpAuth::AuthorizationResult HttpAuthHandlerNTLM::HandleAnotherChallengeImpl(
+    HttpAuthChallengeTokenizer* challenge) {
+  return ParseChallenge(challenge, false);
 }
 
 // The NTLM challenge header looks like:

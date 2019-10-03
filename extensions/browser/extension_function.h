@@ -20,13 +20,15 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/timer/elapsed_timer.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/console_message_level.h"
 #include "extensions/browser/extension_function_histogram_value.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/features/feature.h"
 #include "ipc/ipc_message.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-forward.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom-forward.h"
 
 class ExtensionFunction;
 class UIThreadExtensionFunction;
@@ -116,11 +118,10 @@ class ExtensionFunction
     BAD_MESSAGE
   };
 
-  using ResponseCallback = base::Callback<void(
-      ResponseType type,
-      const base::ListValue& results,
-      const std::string& error,
-      extensions::functions::HistogramValue histogram_value)>;
+  using ResponseCallback =
+      base::RepeatingCallback<void(ResponseType type,
+                                   const base::ListValue& results,
+                                   const std::string& error)>;
 
   ExtensionFunction();
 
@@ -129,12 +130,10 @@ class ExtensionFunction
 
   // Returns true if the function has permission to run.
   //
-  // The default implementation is to check the Extension's permissions against
-  // what this function requires to run, but some APIs may require finer
-  // grained control, such as tabs.executeScript being allowed for active tabs.
-  //
-  // This will be run after the function has been set up but before Run().
-  virtual bool HasPermission();
+  // This checks the Extension's permissions against the features declared in
+  // the *_features.json files. Note that some functions may perform additional
+  // checks in Run(), such as for specific host permissions or user gestures.
+  bool HasPermission() const;
 
   // The result of a function call.
   //
@@ -210,8 +209,6 @@ class ExtensionFunction
   // Callers must call Execute() on the return ResponseAction at some point,
   // exactly once.
   //
-  // AsyncExtensionFunctions implement this in terms of
-  // AsyncExtensionFunction::RunAsync, but this is deprecated.
   // ExtensionFunction implementations are encouraged to just implement Run.
   virtual ResponseAction Run() WARN_UNUSED_RESULT = 0;
 
@@ -235,9 +232,9 @@ class ExtensionFunction
   // returns an error.
   virtual void OnQuotaExceeded(const std::string& violation_error);
 
-  // Specifies the raw arguments to the function, as a JSON value.
-  // TODO(dcheng): This should take a const ref.
-  virtual void SetArgs(const base::ListValue* args);
+  // Specifies the raw arguments to the function, as a JSON value. Expects a
+  // base::Value of type LIST.
+  void SetArgs(base::Value args);
 
   // Retrieves the results of the function as a ListValue.
   const base::ListValue* GetResultList() const;
@@ -273,13 +270,17 @@ class ExtensionFunction
   int request_id() { return request_id_; }
 
   void set_source_url(const GURL& source_url) { source_url_ = source_url; }
-  const GURL& source_url() { return source_url_; }
+  const GURL& source_url() const { return source_url_; }
 
   void set_has_callback(bool has_callback) { has_callback_ = has_callback; }
-  bool has_callback() { return has_callback_; }
+  bool has_callback() const { return has_callback_; }
 
-  void set_include_incognito(bool include) { include_incognito_ = include; }
-  bool include_incognito() const { return include_incognito_; }
+  void set_include_incognito_information(bool include) {
+    include_incognito_information_ = include;
+  }
+  bool include_incognito_information() const {
+    return include_incognito_information_;
+  }
 
   // Note: consider using ScopedUserGestureForTests instead of calling
   // set_user_gesture directly.
@@ -308,6 +309,18 @@ class ExtensionFunction
   }
   int source_process_id() const {
     return source_process_id_;
+  }
+
+  void set_service_worker_version_id(int64_t service_worker_version_id) {
+    service_worker_version_id_ = service_worker_version_id;
+  }
+  int64_t service_worker_version_id() const {
+    return service_worker_version_id_;
+  }
+
+  bool is_from_service_worker() const {
+    return service_worker_version_id_ !=
+           blink::mojom::kInvalidServiceWorkerVersionId;
   }
 
   ResponseType* response_type() const { return response_type_.get(); }
@@ -344,7 +357,7 @@ class ExtensionFunction
   // Error. chrome.runtime.lastError.message will be set to |error|.
   ResponseValue Error(const std::string& error);
   // Error with formatting. Args are processed using
-  // ErrorUtils::FormatErrorMessage, that is, each occurence of * is replaced
+  // ErrorUtils::FormatErrorMessage, that is, each occurrence of * is replaced
   // by the corresponding |s*|:
   // Error("Error in *: *", "foo", "bar") <--> Error("Error in foo: bar").
   ResponseValue Error(const std::string& format, const std::string& s1);
@@ -471,7 +484,7 @@ class ExtensionFunction
   // even if our profile_ is non-incognito. Note that in the case of a "split"
   // mode extension, this will always be false, and we will limit access to
   // data from within the same profile_ (either incognito or not).
-  bool include_incognito_;
+  bool include_incognito_information_;
 
   // True if the call was made in response of user gesture.
   bool user_gesture_;
@@ -490,6 +503,10 @@ class ExtensionFunction
   // The process ID of the page that triggered this function call, or -1
   // if unknown.
   int source_process_id_;
+
+  // If this ExtensionFunction was called by an extension Service Worker, then
+  // this contains the worker's version id.
+  int64_t service_worker_version_id_;
 
   // The response type of the function, if the response has been sent.
   std::unique_ptr<ResponseType> response_type_;
@@ -536,15 +553,10 @@ class UIThreadExtensionFunction : public ExtensionFunction {
     return dispatcher_.get();
   }
 
-  void set_service_worker_version_id(int64_t version_id) {
-    service_worker_version_id_ = version_id;
+  void set_worker_thread_id(int worker_thread_id) {
+    worker_thread_id_ = worker_thread_id;
   }
-
-  // Gets the "current" web contents if any. If there is no associated web
-  // contents then defaults to the foremost one.
-  // NOTE: "current" can mean different things in different contexts. You
-  // probably want to use GetSenderWebContents().
-  virtual content::WebContents* GetAssociatedWebContents();
+  int worker_thread_id() const { return worker_thread_id_; }
 
   // Returns the web contents associated with the sending |render_frame_host_|.
   // This can be null.
@@ -552,7 +564,7 @@ class UIThreadExtensionFunction : public ExtensionFunction {
 
  protected:
   // Emits a message to the extension's devtools console.
-  void WriteToConsole(content::ConsoleMessageLevel level,
+  void WriteToConsole(blink::mojom::ConsoleMessageLevel level,
                       const std::string& message);
 
   friend struct content::BrowserThread::DeleteOnThread<
@@ -575,25 +587,18 @@ class UIThreadExtensionFunction : public ExtensionFunction {
 
   void Destruct() const override;
 
-  bool is_from_service_worker() const {
-    return service_worker_version_id_ !=
-           extensions::kInvalidServiceWorkerVersionId;
-  }
-
   // The dispatcher that will service this extension function call.
   base::WeakPtr<extensions::ExtensionFunctionDispatcher> dispatcher_;
 
   // The RenderFrameHost we will send responses to.
   content::RenderFrameHost* render_frame_host_;
 
-  // If this ExtensionFunction was called by an extension Service Worker, then
-  // this contains the worker's version id.
-  int64_t service_worker_version_id_;
-
   std::unique_ptr<RenderFrameHostTracker> tracker_;
 
   // The blobs transferred to the renderer process.
   std::vector<std::string> transferred_blob_uuids_;
+
+  int worker_thread_id_ = -1;
 
   DISALLOW_COPY_AND_ASSIGN(UIThreadExtensionFunction);
 };
@@ -605,6 +610,8 @@ class UIThreadExtensionFunction : public ExtensionFunction {
 // requests). Generally, UIThreadExtensionFunction is more appropriate and will
 // be easier to use and interface with the rest of the browser.
 // To use this, specify `"forIOThread": true` in the function's schema.
+// TODO(http://crbug.com/980774): Remove this as it is no longer used. Also
+// remove "forIOThread" support in JSON.
 class IOThreadExtensionFunction : public ExtensionFunction {
  public:
   IOThreadExtensionFunction();
@@ -613,10 +620,8 @@ class IOThreadExtensionFunction : public ExtensionFunction {
   void SetBadMessage() final;
 
   void set_ipc_sender(
-      base::WeakPtr<extensions::IOThreadExtensionMessageFilter> ipc_sender,
-      int routing_id) {
+      base::WeakPtr<extensions::IOThreadExtensionMessageFilter> ipc_sender) {
     ipc_sender_ = ipc_sender;
-    routing_id_ = routing_id;
   }
 
   base::WeakPtr<extensions::IOThreadExtensionMessageFilter> ipc_sender_weak()
@@ -624,7 +629,10 @@ class IOThreadExtensionFunction : public ExtensionFunction {
     return ipc_sender_;
   }
 
-  int routing_id() const { return routing_id_; }
+  void set_worker_thread_id(int worker_thread_id) {
+    worker_thread_id_ = worker_thread_id;
+  }
+  int worker_thread_id() const { return worker_thread_id_; }
 
   void set_extension_info_map(const extensions::InfoMap* extension_info_map) {
     extension_info_map_ = extension_info_map;
@@ -644,62 +652,11 @@ class IOThreadExtensionFunction : public ExtensionFunction {
 
  private:
   base::WeakPtr<extensions::IOThreadExtensionMessageFilter> ipc_sender_;
-  int routing_id_;
+  int worker_thread_id_;
 
   scoped_refptr<const extensions::InfoMap> extension_info_map_;
 
   DISALLOW_COPY_AND_ASSIGN(IOThreadExtensionFunction);
-};
-
-// Base class for an extension function that runs asynchronously *relative to
-// the browser's UI thread*.
-class AsyncExtensionFunction : public UIThreadExtensionFunction {
- public:
-  AsyncExtensionFunction();
-
-  void SetError(const std::string& error);
-
-  // ExtensionFunction:
-  const std::string& GetError() const override;
-
- protected:
-  ~AsyncExtensionFunction() override;
-
-  // Sets a single Value as the results of the function.
-  void SetResult(std::unique_ptr<base::Value> result);
-
-  // Sets multiple Values as the results of the function.
-  void SetResultList(std::unique_ptr<base::ListValue> results);
-
-  // Deprecated: Override UIThreadExtensionFunction and implement Run() instead.
-  //
-  // AsyncExtensionFunctions implement this method. Return true to indicate that
-  // nothing has gone wrong yet; SendResponse must be called later. Return false
-  // to respond immediately with an error.
-  virtual bool RunAsync() = 0;
-
-  // ValidationFailure override to match RunAsync().
-  static bool ValidationFailure(AsyncExtensionFunction* function);
-
-  // Responds with success/failure. |results_| or |error_| should be set
-  // accordingly.
-  void SendResponse(bool success);
-
-  // Exposed versions of |results_| and |error_| which are curried into the
-  // ExtensionFunction response.
-  // These need to keep the same name to avoid breaking existing
-  // implementations, but this should be temporary with crbug.com/648275
-  // and crbug.com/634140.
-  std::unique_ptr<base::ListValue> results_;
-  std::string error_;
-
- private:
-  // If you're hitting a compile error here due to "final" - great! You're
-  // doing the right thing, you just need to extend UIThreadExtensionFunction
-  // instead of AsyncExtensionFunction.
-  ResponseAction Run() final;
-
-  DISALLOW_COPY_AND_ASSIGN(AsyncExtensionFunction);
 };
 
 #endif  // EXTENSIONS_BROWSER_EXTENSION_FUNCTION_H_

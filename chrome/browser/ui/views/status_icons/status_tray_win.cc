@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequence_checker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -226,7 +225,7 @@ std::unique_ptr<StatusIcon> StatusTrayWin::CreatePlatformStatusIcon(
   else
     next_icon_id = ReservedIconId(type);
 
-  auto icon = base::MakeUnique<StatusIconWin>(this, next_icon_id, window_,
+  auto icon = std::make_unique<StatusIconWin>(this, next_icon_id, window_,
                                               kStatusIconMessage);
 
   icon->SetImage(image);
@@ -244,6 +243,6 @@ void StatusTrayWin::SetStatusTrayStateChangerProxyForTest(
   state_changer_proxy_ = std::move(proxy);
 }
 
-StatusTray* StatusTray::Create() {
-  return new StatusTrayWin();
+std::unique_ptr<StatusTray> StatusTray::Create() {
+  return std::make_unique<StatusTrayWin>();
 }

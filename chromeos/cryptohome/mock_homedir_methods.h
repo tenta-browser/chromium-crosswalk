@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "chromeos/cryptohome/homedir_methods.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
@@ -15,28 +16,19 @@
 
 namespace cryptohome {
 
-class CHROMEOS_EXPORT MockHomedirMethods : public HomedirMethods {
+class COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME) MockHomedirMethods
+    : public HomedirMethods {
  public:
   MockHomedirMethods();
   ~MockHomedirMethods() override;
 
   void SetUp(bool success, MountError return_code);
 
-  MOCK_METHOD4(GetKeyDataEx,
-               void(const Identification& id,
-                    const AuthorizationRequest& auth,
-                    const GetKeyDataRequest& request,
-                    const GetKeyDataCallback& callback));
   MOCK_METHOD4(CheckKeyEx,
                void(const Identification& id,
                     const AuthorizationRequest& auth,
                     const CheckKeyRequest& request,
                     const Callback& callback));
-  MOCK_METHOD4(MountEx,
-               void(const Identification& id,
-                    const AuthorizationRequest& auth,
-                    const MountRequest& request,
-                    const MountCallback& callback));
   MOCK_METHOD4(AddKeyEx,
                void(const Identification& id,
                     const AuthorizationRequest& auth,
@@ -52,31 +44,18 @@ class CHROMEOS_EXPORT MockHomedirMethods : public HomedirMethods {
                     const AuthorizationRequest& auth,
                     const UpdateKeyRequest& request,
                     const Callback& callback));
-  MOCK_METHOD3(RenameCryptohome,
-               void(const Identification& id_from,
-                    const Identification& id_to,
-                    const Callback& callback));
-  MOCK_METHOD2(GetAccountDiskUsage,
-               void(const Identification& id,
-                    const GetAccountDiskUsageCallback& callback));
 
-  void set_mount_callback(const base::Closure& callback) {
-    on_mount_called_ = callback;
-  }
   void set_add_key_callback(const base::Closure& callback) {
     on_add_key_called_ = callback;
   }
 
  private:
   void DoCallback(const Callback& callback);
-  void DoGetDataCallback(const GetKeyDataCallback& callback);
-  void DoMountCallback(const MountCallback& callback);
   void DoAddKeyCallback(const Callback& callback);
 
   bool success_ = false;
   MountError return_code_ = MOUNT_ERROR_NONE;
 
-  base::Closure on_mount_called_;
   base::Closure on_add_key_called_;
 
   DISALLOW_COPY_AND_ASSIGN(MockHomedirMethods);

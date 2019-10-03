@@ -7,22 +7,26 @@
 #include <set>
 
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/OverlayPanelContent_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/android/view_android_helper.h"
+#include "chrome/common/chrome_render_frame.mojom.h"
+#include "components/embedder_support/android/delegate/web_contents_delegate_android.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "components/variations/variations_associated_data.h"
-#include "components/web_contents_delegate_android/web_contents_delegate_android.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/OverlayPanelContent_jni.h"
+#include "content/public/common/browser_controls_state.h"
 #include "net/url_request/url_fetcher_impl.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/android/view_android.h"
 
 using base::android::JavaParamRef;
@@ -87,12 +91,10 @@ void OverlayPanelContent::RemoveLastHistoryEntry(
     std::set<GURL> restrict_set;
     restrict_set.insert(
         GURL(base::android::ConvertJavaStringToUTF8(env, search_url)));
-    service->ExpireHistoryBetween(
-        restrict_set,
-        begin_time,
-        end_time,
-        base::Bind(&OnHistoryDeletionDone),
-        &history_task_tracker_);
+    service->ExpireHistoryBetween(restrict_set, begin_time, end_time,
+                                  /*user_initiated*/ false,
+                                  base::BindOnce(&OnHistoryDeletionDone),
+                                  &history_task_tracker_);
   }
 }
 
@@ -106,9 +108,8 @@ void OverlayPanelContent::SetWebContents(
 
   DCHECK(web_contents);
 
-  // NOTE(pedrosimonetti): Takes ownership of the WebContents associated
-  // with the ContentViewCore. This is to make sure that the WebContens
-  // and the Compositor are in the same process.
+  // NOTE(pedrosimonetti): Takes ownership of the WebContents. This is to make
+  // sure that the WebContens and the Compositor are in the same process.
   // TODO(pedrosimonetti): Confirm with dtrainor@ if the comment above
   // is accurate.
   web_contents_.reset(web_contents);
@@ -144,8 +145,30 @@ void OverlayPanelContent::SetInterceptNavigationDelegate(
   DCHECK(web_contents);
   navigation_interception::InterceptNavigationDelegate::Associate(
       web_contents,
-      base::MakeUnique<navigation_interception::InterceptNavigationDelegate>(
+      std::make_unique<navigation_interception::InterceptNavigationDelegate>(
           env, delegate));
+}
+
+void OverlayPanelContent::UpdateBrowserControlsState(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean are_controls_hidden) {
+  if (!web_contents_)
+    return;
+
+  content::BrowserControlsState state = content::BROWSER_CONTROLS_STATE_SHOWN;
+  if (are_controls_hidden)
+    state = content::BROWSER_CONTROLS_STATE_HIDDEN;
+
+  chrome::mojom::ChromeRenderFrameAssociatedPtr renderer;
+  web_contents_->GetMainFrame()->GetRemoteAssociatedInterfaces()->GetInterface(
+      &renderer);
+
+  if (!renderer.is_bound())
+    return;
+
+  renderer->UpdateBrowserControlsState(
+      state, content::BROWSER_CONTROLS_STATE_BOTH, false);
 }
 
 jlong JNI_OverlayPanelContent_Init(JNIEnv* env,

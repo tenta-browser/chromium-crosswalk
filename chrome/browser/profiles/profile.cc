@@ -6,40 +6,46 @@
 
 #include <string>
 
+#include "base/path_service.h"
 #include "build/build_config.h"
+#include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_prefs.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/sync/base/sync_prefs.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/driver/sync_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
 #include "base/command_line.h"
 #include "chrome/common/chrome_switches.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/first_run/first_run.h"
 #include "content/public/browser/host_zoom_map.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/browser/extension_pref_store.h"
+#include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/pref_names.h"
 #endif
 
@@ -52,10 +58,10 @@
 
 namespace {
 
-base::LazyInstance<base::Lock>::Leaky g_instances_lock =
+base::LazyInstance<base::Lock>::Leaky g_profile_instances_lock =
     LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<std::set<content::BrowserContext*>>::Leaky g_instances =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::set<content::BrowserContext*>>::Leaky
+    g_profile_instances = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
@@ -68,8 +74,8 @@ Profile::Profile()
       is_guest_profile_(false),
       is_system_profile_(false) {
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  g_instances.Get().insert(this);
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  g_profile_instances.Get().insert(this);
 #endif  // DCHECK_IS_ON()
 
   BrowserContextDependencyManager::GetInstance()->MarkBrowserContextLive(this);
@@ -77,8 +83,8 @@ Profile::Profile()
 
 Profile::~Profile() {
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  g_instances.Get().erase(this);
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  g_profile_instances.Get().erase(this);
 #endif  // DCHECK_IS_ON()
 }
 
@@ -92,8 +98,8 @@ Profile* Profile::FromBrowserContext(content::BrowserContext* browser_context) {
   // testing, however, there are several BrowserContext subclasses that are not
   // Profile subclasses, and we can catch them. http://crbug.com/725276
 #if DCHECK_IS_ON()
-  base::AutoLock lock(g_instances_lock.Get());
-  if (!g_instances.Get().count(browser_context)) {
+  base::AutoLock lock(g_profile_instances_lock.Get());
+  if (!g_profile_instances.Get().count(browser_context)) {
     DCHECK(false)
         << "Non-Profile BrowserContext passed to Profile::FromBrowserContext! "
            "If you have a test linked in chrome/ you need a chrome/ based test "
@@ -129,8 +135,6 @@ Profile::Delegate::~Delegate() {
 
 // static
 const char Profile::kProfileKey[] = "__PROFILE__";
-// This must be a string which can never be a valid domain.
-const char Profile::kNoHostedDomainFound[] = "NO_HOSTED_DOMAIN";
 
 // static
 void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -154,7 +158,23 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(extensions::pref_names::kAlertsInitialized,
                                 false);
 #endif
-  registry->RegisterStringPref(prefs::kSelectFileLastDirectory, std::string());
+  base::FilePath home;
+  base::PathService::Get(base::DIR_HOME, &home);
+  registry->RegisterStringPref(prefs::kSelectFileLastDirectory,
+                               home.MaybeAsASCII());
+  registry->RegisterStringPref(prefs::kAccessibilityCaptionsTextSize,
+                               std::string());
+  registry->RegisterStringPref(prefs::kAccessibilityCaptionsTextFont,
+                               std::string());
+  registry->RegisterStringPref(prefs::kAccessibilityCaptionsTextColor,
+                               std::string());
+  registry->RegisterIntegerPref(prefs::kAccessibilityCaptionsTextOpacity, 100);
+  registry->RegisterIntegerPref(prefs::kAccessibilityCaptionsBackgroundOpacity,
+                                100);
+  registry->RegisterStringPref(prefs::kAccessibilityCaptionsBackgroundColor,
+                               std::string());
+  registry->RegisterStringPref(prefs::kAccessibilityCaptionsTextShadow,
+                               std::string());
 #if !defined(OS_ANDROID)
   registry->RegisterDictionaryPref(prefs::kPartitionDefaultZoomLevel);
   registry->RegisterDictionaryPref(prefs::kPartitionPerHostZoomLevels);
@@ -171,20 +191,13 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   // In the future we may want to maintain kApplicationLocale
   // in user's profile for other platforms as well.
   registry->RegisterStringPref(
-      prefs::kApplicationLocale,
-      std::string(),
+      language::prefs::kApplicationLocale, std::string(),
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
   registry->RegisterStringPref(prefs::kApplicationLocaleBackup, std::string());
   registry->RegisterStringPref(prefs::kApplicationLocaleAccepted,
                                std::string());
-  registry->RegisterStringPref(prefs::kCurrentWallpaperAppName, std::string());
 #endif
 
-#if defined(OS_ANDROID)
-  registry->RegisterBooleanPref(prefs::kDevToolsRemoteEnabled, false);
-#endif
-
-  registry->RegisterBooleanPref(prefs::kDataSaverEnabled, false);
   data_reduction_proxy::RegisterSyncableProfilePrefs(registry);
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
@@ -213,12 +226,12 @@ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(prefs::kMediaRouterMediaRemotingEnabled, true);
   registry->RegisterListPref(prefs::kMediaRouterTabMirroringSources);
 
-#if defined(OS_CHROMEOS)
-  registry->RegisterBooleanPref(prefs::kAllowScreenLock, true);
-#endif
-
   registry->RegisterDictionaryPref(prefs::kWebShareVisitedTargets);
   registry->RegisterDictionaryPref(prefs::kExcludedSchemes);
+
+  // Instead of registering new prefs here, please create a static method and
+  // invoke it from RegisterProfilePrefs() in
+  // chrome/browser/prefs/browser_prefs.cc.
 }
 
 std::string Profile::GetDebugName() {
@@ -227,6 +240,14 @@ std::string Profile::GetDebugName() {
     name = "UnknownProfile";
   }
   return name;
+}
+
+bool Profile::IsRegularProfile() const {
+  return GetProfileType() == REGULAR_PROFILE;
+}
+
+bool Profile::IsIncognitoProfile() const {
+  return GetProfileType() == INCOGNITO_PROFILE;
 }
 
 bool Profile::IsGuestSession() const {
@@ -244,30 +265,48 @@ bool Profile::IsSystemProfile() const {
   return is_system_profile_;
 }
 
-content::mojom::NetworkContextPtr Profile::CreateMainNetworkContext() {
+bool Profile::ShouldRestoreOldSessionCookies() {
+  return false;
+}
+
+bool Profile::ShouldPersistSessionCookies() {
+  return false;
+}
+
+network::mojom::NetworkContextPtr Profile::CreateNetworkContext(
+    bool in_memory,
+    const base::FilePath& relative_partition_path) {
   return ProfileNetworkContextServiceFactory::GetForContext(this)
-      ->CreateMainNetworkContext();
+      ->CreateNetworkContext(in_memory, relative_partition_path);
 }
 
 bool Profile::IsNewProfile() {
-  // The profile has been shut down if the prefs were loaded from disk, unless
-  // first-run autoimport wrote them and reloaded the pref service.
-  // TODO(crbug.com/660346): revisit this when crbug.com/22142 (unifying the
-  // profile import code) is fixed.
+#if !defined(OS_ANDROID)
+  // The profile is new if the preference files has just been created, except on
+  // first run, because the installer may create a preference file. See
+  // https://crbug.com/728402
+  if (first_run::IsChromeFirstRun())
+    return true;
+#endif
+
   return GetOriginalProfile()->GetPrefs()->GetInitializationStatus() ==
-      PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
+         PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE;
 }
 
 bool Profile::IsSyncAllowed() {
-  if (ProfileSyncServiceFactory::HasProfileSyncService(this)) {
-    return ProfileSyncServiceFactory::GetForProfile(this)->IsSyncAllowed();
+  if (ProfileSyncServiceFactory::HasSyncService(this)) {
+    syncer::SyncService* sync_service =
+        ProfileSyncServiceFactory::GetForProfile(this);
+    return !sync_service->HasDisableReason(
+               syncer::SyncService::DISABLE_REASON_PLATFORM_OVERRIDE) &&
+           !sync_service->HasDisableReason(
+               syncer::SyncService::DISABLE_REASON_ENTERPRISE_POLICY);
   }
 
   // No ProfileSyncService created yet - we don't want to create one, so just
   // infer the accessible state by looking at prefs/command line flags.
   syncer::SyncPrefs prefs(GetPrefs());
-  return browser_sync::ProfileSyncService::IsSyncAllowedByFlag() &&
-         !prefs.IsManaged();
+  return switches::IsSyncAllowedByFlag() && !prefs.IsManaged();
 }
 
 void Profile::MaybeSendDestroyedNotification() {
@@ -280,6 +319,17 @@ void Profile::MaybeSendDestroyedNotification() {
         content::Source<Profile>(this),
         content::NotificationService::NoDetails());
   }
+}
+
+PrefStore* Profile::CreateExtensionPrefStore(Profile* profile,
+                                             bool incognito_pref_store) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  return new ExtensionPrefStore(
+      ExtensionPrefValueMapFactory::GetForBrowserContext(profile),
+      incognito_pref_store);
+#else
+  return nullptr;
+#endif
 }
 
 bool ProfileCompare::operator()(Profile* a, Profile* b) const {
@@ -296,3 +346,10 @@ double Profile::GetDefaultZoomLevelForProfile() {
       ->GetDefaultZoomLevel();
 }
 #endif  // !defined(OS_ANDROID)
+
+void Profile::Wipe() {
+  content::BrowserContext::GetBrowsingDataRemover(this)->Remove(
+      base::Time(), base::Time::Max(),
+      ChromeBrowsingDataRemoverDelegate::WIPE_PROFILE,
+      ChromeBrowsingDataRemoverDelegate::ALL_ORIGIN_TYPES);
+}

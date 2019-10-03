@@ -4,19 +4,27 @@
 
 """Presubmit script for ui/accessibility."""
 
-import os, re
+import os, re, json
 
-AX_IDL = 'ui/accessibility/ax_enums.idl'
-AUTOMATION_IDL = 'chrome/common/extensions/api/automation.idl'
+AX_MOJOM = 'ui/accessibility/ax_enums.mojom'
+AUTOMATION_IDL = 'extensions/common/api/automation.idl'
 
-AX_JS_FILE = 'content/browser/resources/accessibility/accessibility.js'
-AX_MODE_HEADER = 'ui/accessibility/ax_modes.h'
+AX_JS_FILE = 'chrome/browser/resources/accessibility/accessibility.js'
+AX_MODE_HEADER = 'ui/accessibility/ax_mode.h'
 
 def InitialLowerCamelCase(unix_name):
   words = unix_name.split('_')
   return words[0] + ''.join(word.capitalize() for word in words[1:])
 
-# Given a full path to an IDL file containing enum definitions,
+def CamelToLowerHacker(str):
+  out = ''
+  for i in range(len(str)):
+    if str[i] >= 'A' and str[i] <= 'Z' and out:
+      out += '_'
+    out += str[i]
+  return out.lower()
+
+# Given a full path to an IDL or MOJOM file containing enum definitions,
 # parse the file for enums and return a dict mapping the enum name
 # to a list of values for that enum.
 def GetEnumsFromFile(fullpath):
@@ -45,7 +53,15 @@ def GetEnumsFromFile(fullpath):
     m = re.search('([\w]+)', line)
     if m:
       enums.setdefault(enum_name, [])
-      enums[enum_name].append(m.group(1))
+      enum_value = m.group(1)
+      if (enum_value[0] == 'k' and
+          enum_value[1] == enum_value[1].upper()):
+        enum_value = CamelToLowerHacker(enum_value[1:])
+      if enum_value == 'none' or enum_value == 'last':
+        continue
+      if enum_value == 'active_descendant_changed':
+        enum_value = 'activedescendantchanged'
+      enums[enum_name].append(enum_value)
 
   return enums
 
@@ -54,10 +70,11 @@ def CheckMatchingEnum(ax_enums,
                       automation_enums,
                       automation_enum_name,
                       errs,
-                      output_api):
+                      output_api,
+                      strict_ordering=False):
   if ax_enum_name not in ax_enums:
     errs.append(output_api.PresubmitError(
-        'Expected %s to have an enum named %s' % (AX_IDL, ax_enum_name)))
+        'Expected %s to have an enum named %s' % (AX_MOJOM, ax_enum_name)))
     return
   if automation_enum_name not in automation_enums:
     errs.append(output_api.PresubmitError(
@@ -66,6 +83,25 @@ def CheckMatchingEnum(ax_enums,
     return
   src = ax_enums[ax_enum_name]
   dst = automation_enums[automation_enum_name]
+  if strict_ordering and len(src) != len(dst):
+    errs.append(output_api.PresubmitError(
+        'Expected %s to have the same number of items as %s' % (
+            automation_enum_name, ax_enum_name)))
+    return
+
+  if strict_ordering:
+    for index, value in enumerate(src):
+      lower_value = InitialLowerCamelCase(value)
+      if lower_value != dst[index]:
+        errs.append(output_api.PresubmitError(
+            ('At index %s in enums, unexpected ordering around %s.%s ' +
+            'and %s.%s in %s and %s') % (
+                index, ax_enum_name, lower_value,
+                automation_enum_name, dst[index],
+                AX_MOJOM, AUTOMATION_IDL)))
+        return
+    return
+
   for value in src:
     lower_value = InitialLowerCamelCase(value)
     if lower_value in dst:
@@ -73,7 +109,7 @@ def CheckMatchingEnum(ax_enums,
     else:
       errs.append(output_api.PresubmitError(
           'Found %s.%s in %s, but did not find %s.%s in %s' % (
-              ax_enum_name, value, AX_IDL,
+              ax_enum_name, value, AX_MOJOM,
               automation_enum_name, InitialLowerCamelCase(value),
               AUTOMATION_IDL)))
   #  Should be no remaining items
@@ -82,11 +118,11 @@ def CheckMatchingEnum(ax_enums,
           'Found %s.%s in %s, but did not find %s.%s in %s' % (
               automation_enum_name, value, AUTOMATION_IDL,
               ax_enum_name, InitialLowerCamelCase(value),
-              AX_IDL)))
+              AX_MOJOM)))
 
 def CheckEnumsMatch(input_api, output_api):
   repo_root = input_api.change.RepositoryRoot()
-  ax_enums = GetEnumsFromFile(os.path.join(repo_root, AX_IDL))
+  ax_enums = GetEnumsFromFile(os.path.join(repo_root, AX_MOJOM))
   automation_enums = GetEnumsFromFile(os.path.join(repo_root, AUTOMATION_IDL))
 
   # Focused state only exists in automation.
@@ -95,16 +131,20 @@ def CheckEnumsMatch(input_api, output_api):
   automation_enums['StateType'].remove('offscreen')
 
   errs = []
-  CheckMatchingEnum(ax_enums, 'AXRole', automation_enums, 'RoleType', errs,
+  CheckMatchingEnum(ax_enums, 'Role', automation_enums, 'RoleType', errs,
                     output_api)
-  CheckMatchingEnum(ax_enums, 'AXState', automation_enums, 'StateType', errs,
+  CheckMatchingEnum(ax_enums, 'State', automation_enums, 'StateType', errs,
+                    output_api, strict_ordering=True)
+  CheckMatchingEnum(ax_enums, 'Action', automation_enums, 'ActionType', errs,
+                    output_api, strict_ordering=True)
+  CheckMatchingEnum(ax_enums, 'Event', automation_enums, 'EventType', errs,
                     output_api)
-  CheckMatchingEnum(ax_enums, 'AXEvent', automation_enums, 'EventType', errs,
-                    output_api)
-  CheckMatchingEnum(ax_enums, 'AXNameFrom', automation_enums, 'NameFromType',
+  CheckMatchingEnum(ax_enums, 'NameFrom', automation_enums, 'NameFromType',
                     errs, output_api)
-  CheckMatchingEnum(ax_enums, 'AXRestriction', automation_enums,
+  CheckMatchingEnum(ax_enums, 'Restriction', automation_enums,
                    'Restriction', errs, output_api)
+  CheckMatchingEnum(ax_enums, 'DefaultActionVerb', automation_enums,
+                   'DefaultActionVerb', errs, output_api)
   return errs
 
 # Given a full path to c++ header, return an array of the first static
@@ -119,7 +159,11 @@ def GetConstexprFromFile(fullpath):
     # Look for lines of the form "static constexpr <type> NAME "
     m = re.search('static constexpr [\w]+ ([\w]+)', line)
     if m:
-      values.append(m.group(1))
+      value = m.group(1)
+      # Skip first/last sentinels
+      if value == 'kFirstModeFlag' or value == 'kLastModeFlag':
+        continue
+      values.append(value)
 
   return values
 
@@ -180,7 +224,7 @@ def CheckChangeOnUpload(input_api, output_api):
   errs = []
   for path in input_api.LocalPaths():
     path = path.replace('\\', '/')
-    if AX_IDL == path:
+    if AX_MOJOM == path:
       errs.extend(CheckEnumsMatch(input_api, output_api))
 
     if AX_MODE_HEADER == path:
@@ -192,7 +236,7 @@ def CheckChangeOnCommit(input_api, output_api):
   errs = []
   for path in input_api.LocalPaths():
     path = path.replace('\\', '/')
-    if AX_IDL == path:
+    if AX_MOJOM == path:
       errs.extend(CheckEnumsMatch(input_api, output_api))
 
     if AX_MODE_HEADER == path:

@@ -11,26 +11,28 @@
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/chromeos/arc/arc_service_launcher.h"
 #include "chrome/browser/chromeos/arc/enterprise/arc_cert_store_bridge.h"
+#include "chrome/browser/chromeos/login/mixin_based_in_process_browser_test.h"
+#include "chrome/browser/chromeos/login/test/local_policy_test_server_mixin.h"
 #include "chrome/browser/chromeos/platform_keys/key_permissions.h"
 #include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/chromeos/policy/user_policy_test_helper.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/net/nss_context.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/chromeos_switches.h"
-#include "components/arc/arc_bridge_service.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/arc/arc_prefs.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/common/cert_store.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "crypto/scoped_test_system_nss_key_slot.h"
@@ -64,7 +66,7 @@ class FakeArcCertStoreInstance : public mojom::CertStoreInstance {
  public:
   // mojom::CertStoreInstance:
   void InitDeprecated(mojom::CertStoreHostPtr host) override {
-    Init(std::move(host), base::BindOnce(&base::DoNothing));
+    Init(std::move(host), base::DoNothing());
   }
 
   void Init(mojom::CertStoreHostPtr host, InitCallback callback) override {
@@ -91,31 +93,42 @@ class FakeArcCertStoreInstance : public mojom::CertStoreInstance {
   bool is_on_certs_changed_called_ = false;
 };
 
-class ArcCertStoreBridgeTest : public InProcessBrowserTest {
+class ArcCertStoreBridgeTest : public chromeos::MixinBasedInProcessBrowserTest {
  protected:
   ArcCertStoreBridgeTest() = default;
 
-  // InProcessBrowserTest:
+  // chromeos::MixinBasedInProcessBrowserTest:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
+    chromeos::MixinBasedInProcessBrowserTest::SetUpCommandLine(command_line);
 
     arc::SetArcAvailableCommandLineForTesting(command_line);
 
-    policy_helper_ =
-        std::make_unique<policy::UserPolicyTestHelper>(kFakeUserName);
-    policy_helper_->Init(
+    policy_helper_ = std::make_unique<policy::UserPolicyTestHelper>(
+        kFakeUserName, &local_policy_server_);
+    policy_helper_->SetPolicy(
         base::DictionaryValue() /* empty mandatory policy */,
         base::DictionaryValue() /* empty recommended policy */);
-    policy_helper_->UpdateCommandLine(command_line);
 
     command_line->AppendSwitchASCII(chromeos::switches::kLoginUser,
                                     kFakeUserName);
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
                                     TestingProfile::kTestUserProfileDir);
+    // Don't require policy for our sessions - this is required because
+    // this test creates a secondary profile synchronously, so we need to
+    // let the policy code know not to expect cached policy.
+    command_line->AppendSwitchASCII(chromeos::switches::kProfileRequiresPolicy,
+                                    "false");
+
+    // Tell the policy subsystem to wait for an initial policy load, even
+    // though we are using a synchronously loaded profile.
+    // TODO(edmanp): Update this test to properly use an asynchronously loaded
+    // user profile and remove the use of this flag (crbug.com/795737).
+    command_line->AppendSwitchASCII(
+        chromeos::switches::kWaitForInitialPolicyFetchForTest, "true");
   }
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
+    chromeos::MixinBasedInProcessBrowserTest::SetUpOnMainThread();
 
     policy_helper_->WaitForInitialPolicy(browser()->profile());
 
@@ -134,11 +147,12 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     instance_ = std::make_unique<FakeArcCertStoreInstance>();
     ASSERT_TRUE(arc_bridge());
     arc_bridge()->cert_store()->SetInstance(instance_.get());
+    WaitForInstanceReady(arc_bridge()->cert_store());
   }
 
   void TearDownOnMainThread() override {
     ASSERT_TRUE(arc_bridge());
-    arc_bridge()->cert_store()->SetInstance(nullptr);
+    arc_bridge()->cert_store()->CloseInstance(instance_.get());
     instance_.reset();
 
     // Since ArcServiceLauncher is (re-)set up with profile() in
@@ -148,6 +162,7 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     // instance in fixture, once), but it should be no op.
     ArcServiceLauncher::Get()->Shutdown();
     chromeos::ProfileHelper::SetAlwaysReturnPrimaryUserForTesting(false);
+    chromeos::MixinBasedInProcessBrowserTest::TearDownOnMainThread();
   }
 
   ArcBridgeService* arc_bridge() {
@@ -177,7 +192,7 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     user_policy.SetKey(policy::key::kKeyPermissions,
                        base::Value(key_permissions_policy_str));
 
-    policy_helper_->UpdatePolicy(
+    policy_helper_->SetPolicyAndWait(
         user_policy, base::DictionaryValue() /* empty recommended policy */,
         browser()->profile());
   }
@@ -186,8 +201,7 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     ASSERT_NO_FATAL_FAILURE(ImportCerts());
 
     policy::ProfilePolicyConnector* const policy_connector =
-        policy::ProfilePolicyConnectorFactory::GetForBrowserContext(
-            browser()->profile());
+        browser()->profile()->GetProfilePolicyConnector();
 
     extensions::StateStore* const state_store =
         extensions::ExtensionSystem::Get(browser()->profile())->state_store();
@@ -249,12 +263,14 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     std::string client_cert1_spki(
         client_cert1_->derPublicKey.data,
         client_cert1_->derPublicKey.data + client_cert1_->derPublicKey.len);
-    permissions_for_ext->RegisterKeyForCorporateUsage(client_cert1_spki);
+    permissions_for_ext->RegisterKeyForCorporateUsage(
+        client_cert1_spki, {chromeos::KeyPermissions::KeyLocation::kUserSlot});
     done_callback.Run();
   }
 
   void SetUpTestClientCerts(const base::Closure& done_callback,
                             net::NSSCertDatabase* cert_db) {
+    base::ScopedAllowBlockingForTesting allow_io;
     net::ImportSensitiveKeyFromFile(net::GetTestCertsDirectory(),
                                     "client_1.pk8",
                                     cert_db->GetPrivateSlot().get());
@@ -282,6 +298,7 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
 
   std::unique_ptr<policy::UserPolicyTestHelper> policy_helper_;
   std::unique_ptr<FakeArcCertStoreInstance> instance_;
+  chromeos::LocalPolicyTestServerMixin local_policy_server_{&mixin_host_};
 
   DISALLOW_COPY_AND_ASSIGN(ArcCertStoreBridgeTest);
 };
@@ -345,7 +362,7 @@ IN_PROC_BROWSER_TEST_F(ArcCertStoreBridgeTest, ListCertificatesTest) {
   mojom_cert1->alias = client_cert1_->nickname;
   auto x509_cert = net::x509_util::CreateX509CertificateFromCERTCertificate(
       client_cert1_.get());
-  net::X509Certificate::GetPEMEncoded(x509_cert->os_cert_handle(),
+  net::X509Certificate::GetPEMEncoded(x509_cert->cert_buffer(),
                                       &mojom_cert1->cert);
 
   std::vector<mojom::CertificatePtr> expected_certs;

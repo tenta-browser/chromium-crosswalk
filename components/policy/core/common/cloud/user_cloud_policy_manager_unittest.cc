@@ -6,7 +6,6 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/test/scoped_task_environment.h"
 #include "components/policy/core/common/cloud/cloud_external_data_manager.h"
@@ -15,7 +14,7 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema_registry.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,7 +35,7 @@ class UserCloudPolicyManagerTest : public testing::Test {
   void SetUp() override {
     // Set up a policy map for testing.
     policy_map_.Set("key", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-                    POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>("value"),
+                    POLICY_SOURCE_CLOUD, std::make_unique<base::Value>("value"),
                     nullptr);
     expected_bundle_.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
         .CopyFrom(policy_map_);
@@ -55,7 +54,8 @@ class UserCloudPolicyManagerTest : public testing::Test {
     const auto task_runner = scoped_task_environment_.GetMainThreadTaskRunner();
     manager_.reset(new UserCloudPolicyManager(
         std::unique_ptr<UserCloudPolicyStore>(store_), base::FilePath(),
-        std::unique_ptr<CloudExternalDataManager>(), task_runner, task_runner));
+        std::unique_ptr<CloudExternalDataManager>(), task_runner,
+        network::TestNetworkConnectionTracker::CreateGetter()));
     manager_->Init(&schema_registry_);
     manager_->AddObserver(&observer_);
     Mock::VerifyAndClearExpectations(store_);

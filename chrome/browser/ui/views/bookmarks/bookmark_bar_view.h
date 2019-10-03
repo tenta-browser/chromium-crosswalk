@@ -5,23 +5,23 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_BAR_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_BOOKMARKS_BOOKMARK_BAR_VIEW_H_
 
+#include <memory>
 #include <set>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
-#include "chrome/browser/ui/bookmarks/bookmark_bar_instructions_delegate.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bubble_observer.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_menu_controller_observer.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/accessible_pane_view.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
@@ -38,7 +38,7 @@ class Profile;
 namespace bookmarks {
 class BookmarkModel;
 class ManagedBookmarkService;
-}
+}  // namespace bookmarks
 
 namespace content {
 class PageNavigator;
@@ -53,7 +53,7 @@ class Button;
 class MenuButton;
 class MenuItemView;
 class LabelButton;
-}
+}  // namespace views
 
 // BookmarkBarView renders the BookmarkModel.  Each starred entry on the
 // BookmarkBar is rendered as a MenuButton. An additional MenuButton aligned to
@@ -68,9 +68,8 @@ class BookmarkBarView : public views::AccessiblePaneView,
                         public views::ButtonListener,
                         public views::ContextMenuController,
                         public views::DragController,
-                        public gfx::AnimationDelegate,
+                        public views::AnimationDelegateViews,
                         public BookmarkMenuControllerObserver,
-                        public BookmarkBarInstructionsDelegate,
                         public bookmarks::BookmarkBubbleObserver {
  public:
   // The internal view class name.
@@ -94,9 +93,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   // Sets whether the containing browser is showing an infobar.  This affects
   // layout during animation.
-  void set_infobar_visible(bool infobar_visible) {
-    infobar_visible_ = infobar_visible;
-  }
+  void SetInfoBarVisible(bool infobar_visible);
 
   // Changes the state of the bookmark bar.
   void SetBookmarkBarState(BookmarkBar::State state,
@@ -109,7 +106,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // contained in the overflow menu.
   const bookmarks::BookmarkNode* GetNodeForButtonAtModelIndex(
       const gfx::Point& loc,
-      int* model_start_index);
+      size_t* model_start_index);
 
   // Returns the MenuButton for node.
   views::MenuButton* GetMenuButtonForNode(const bookmarks::BookmarkNode* node);
@@ -127,9 +124,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // Returns the button used when not all the items on the bookmark bar fit.
   views::MenuButton* overflow_button() const { return overflow_button_; }
 
-  const gfx::Animation& size_animation() {
-    return size_animation_;
-  }
+  const gfx::Animation& size_animation() { return size_animation_; }
 
   // Returns the active MenuItemView, or NULL if a menu isn't showing.
   views::MenuItemView* GetMenu();
@@ -156,23 +151,18 @@ class BookmarkBarView : public views::AccessiblePaneView,
       const GURL& url,
       const base::string16& title);
 
-  // Returns true if Bookmarks Bar is currently detached from the Toolbar.
-  bool IsDetached() const;
-
   // Returns the current amount of overlap atop the browser toolbar.
   int GetToolbarOverlap() const;
 
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
-  bool CanProcessEventsWithinSubtree() const override;
   void Layout() override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   void PaintChildren(const views::PaintInfo& paint_info) override;
-  bool GetDropFormats(
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types) override;
+  bool GetDropFormats(int* formats,
+                      std::set<ui::ClipboardFormatType>* format_types) override;
   bool AreDropTypesRequired() override;
   bool CanDrop(const ui::OSExchangeData& data) override;
   void OnDragEntered(const ui::DropTargetEvent& event) override;
@@ -186,16 +176,13 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // AccessiblePaneView:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
-  // gfx::AnimationDelegate:
+  // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
 
   // BookmarkMenuControllerObserver:
   void BookmarkMenuControllerDeleted(
       BookmarkMenuController* controller) override;
-
-  // BookmarkBarInstructionsDelegate:
-  void OnImportBookmarks() override;
 
   // bookmarks::BookmarkBubbleObserver:
   void OnBookmarkBubbleShown(const bookmarks::BookmarkNode* node) override;
@@ -207,15 +194,15 @@ class BookmarkBarView : public views::AccessiblePaneView,
   void BookmarkModelBeingDeleted(bookmarks::BookmarkModel* model) override;
   void BookmarkNodeMoved(bookmarks::BookmarkModel* model,
                          const bookmarks::BookmarkNode* old_parent,
-                         int old_index,
+                         size_t old_index,
                          const bookmarks::BookmarkNode* new_parent,
-                         int new_index) override;
+                         size_t new_index) override;
   void BookmarkNodeAdded(bookmarks::BookmarkModel* model,
                          const bookmarks::BookmarkNode* parent,
-                         int index) override;
+                         size_t index) override;
   void BookmarkNodeRemoved(bookmarks::BookmarkModel* model,
                            const bookmarks::BookmarkNode* parent,
-                           int old_index,
+                           size_t old_index,
                            const bookmarks::BookmarkNode* node,
                            const std::set<GURL>& removed_urls) override;
   void BookmarkAllUserNodesRemoved(bookmarks::BookmarkModel* model,
@@ -239,7 +226,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
                            const gfx::Point& p) override;
 
   // views::MenuButtonListener:
-  void OnMenuButtonClicked(views::MenuButton* source,
+  void OnMenuButtonClicked(views::Button* source,
                            const gfx::Point& point,
                            const ui::Event* event) override;
 
@@ -247,9 +234,9 @@ class BookmarkBarView : public views::AccessiblePaneView,
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::ContextMenuController:
-  void ShowContextMenuForView(views::View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  void ShowContextMenuForViewImpl(views::View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
  private:
   class ButtonSeparatorView;
@@ -260,32 +247,18 @@ class BookmarkBarView : public views::AccessiblePaneView,
   friend class BookmarkBarViewEventTestBase;
 
   // Used to identify what the user is dropping onto.
-  enum DropButtonType {
-    DROP_BOOKMARK,
-    DROP_OTHER_FOLDER,
-    DROP_OVERFLOW
-  };
+  enum DropButtonType { DROP_BOOKMARK, DROP_OTHER_FOLDER, DROP_OVERFLOW };
 
   // Creates recent bookmark button and when visible button as well as
   // calculating the preferred height.
   void Init();
 
-  // NOTE: unless otherwise stated all methods that take an int for an index are
-  // in terms of the bookmark bar view. Typically the view index and model index
-  // are the same, but they may differ during animations or drag and drop.
+  // NOTE: unless otherwise stated all methods that take an index are in terms
+  // of the bookmark bar view. Typically the view index and model index are the
+  // same, but they may differ during animations or drag and drop.
   //
   // It's easy to get the mapping wrong. For this reason all these methods are
   // private.
-
-  // Returns the number of bookmark bar url/folder buttons that have been
-  // created. This does not necessarily represent the number of bookmark bar
-  // nodes, nor the number of visible bookmark bar buttons. Buttons are created
-  // lazily to fill available space, and may be hidden for ordering or sizing
-  // changes.
-  int GetBookmarkButtonCount() const;
-
-  // Returns the button at the specified index.
-  views::LabelButton* GetBookmarkButton(int index);
 
   // Returns BOOKMARK_LAUNCH_LOCATION_DETACHED_BAR or
   // BOOKMARK_LAUNCH_LOCATION_ATTACHED_BAR based on detached node_data.
@@ -293,7 +266,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   // Returns the index of the first hidden bookmark button. If all buttons are
   // visible, this returns GetBookmarkButtonCount().
-  int GetFirstHiddenNodeIndex();
+  size_t GetFirstHiddenNodeIndex();
 
   // Creates the button showing the "Other Bookmarks" folder.
   views::MenuButton* CreateOtherBookmarksButton();
@@ -319,13 +292,13 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // is required.
   bool BookmarkNodeAddedImpl(bookmarks::BookmarkModel* model,
                              const bookmarks::BookmarkNode* parent,
-                             int index);
+                             size_t index);
 
   // Implementation for BookmarkNodeRemoved. Returns true if LayoutAndPaint() is
   // required.
   bool BookmarkNodeRemovedImpl(bookmarks::BookmarkModel* model,
                                const bookmarks::BookmarkNode* parent,
-                               int index);
+                               size_t index);
 
   // If the node is a child of the root node, the button is updated
   // appropriately.
@@ -346,6 +319,10 @@ class BookmarkBarView : public views::AccessiblePaneView,
                              const bookmarks::BookmarkNodeData& data,
                              DropLocation* location);
 
+  // Returns the node corresponding to |sender|, which is one of the
+  // |bookmark_buttons_|.
+  const bookmarks::BookmarkNode* GetNodeForSender(View* sender) const;
+
   // Writes a BookmarkNodeData for node to data.
   void WriteBookmarkDragData(const bookmarks::BookmarkNode* node,
                              ui::OSExchangeData* data);
@@ -361,7 +338,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // removed.
   views::Button* DetermineViewToThrobFromRemove(
       const bookmarks::BookmarkNode* parent,
-      int old_index);
+      size_t old_index);
 
   // Sets/updates the colors and icons for all the child objects in the
   // bookmarks bar.
@@ -385,7 +362,16 @@ class BookmarkBarView : public views::AccessiblePaneView,
     SchedulePaint();
   }
 
-  int GetPreferredHeight() const;
+  // Inserts |button| in logical position |index| in the bar, maintaining
+  // correct focus traversal order.
+  void InsertBookmarkButtonAtIndex(views::View* button, size_t index);
+
+  // Returns the model index for the bookmark associated with |button|,
+  // or size_t{-1} if |button| is not a bookmark button from this bar.
+  size_t GetIndexForButton(views::View* button);
+
+  // Returns the color that should be used to draw text on the bookmark bar.
+  SkColor GetBookmarkBarTextColor();
 
   // Needed to react to kShowAppsShortcutInBookmarkBar changes.
   PrefChangeRegistrar profile_pref_registrar_;
@@ -428,9 +414,8 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // Visible if not all the bookmark buttons fit.
   views::MenuButton* overflow_button_;
 
-  // Shows a text and a link to import bookmarks if there are no bookmarks in
-  // the Bookmarks Bar.
-  views::View* instructions_;
+  // The individual bookmark buttons.
+  std::vector<views::LabelButton*> bookmark_buttons_;
 
   ButtonSeparatorView* bookmarks_separator_view_;
 
@@ -450,13 +435,10 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   BookmarkBar::State bookmark_bar_state_;
 
-  // Are we animating to or from the detached state?
-  bool animating_detached_;
-
-  base::ObserverList<BookmarkBarViewObserver> observers_;
+  base::ObserverList<BookmarkBarViewObserver>::Unchecked observers_;
 
   // Factory used to delay showing of the drop menu.
-  base::WeakPtrFactory<BookmarkBarView> show_folder_method_factory_;
+  base::WeakPtrFactory<BookmarkBarView> show_folder_method_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkBarView);
 };

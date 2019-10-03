@@ -6,7 +6,12 @@
 #define CHROME_BROWSER_UI_SEARCH_SEARCH_IPC_ROUTER_POLICY_IMPL_H_
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/search/search_ipc_router.h"
+
+#if defined(OS_ANDROID)
+#error "Instant is only used on desktop";
+#endif
 
 namespace content {
 class WebContents;
@@ -15,7 +20,7 @@ class WebContents;
 // The SearchIPCRouter::Policy implementation.
 class SearchIPCRouterPolicyImpl : public SearchIPCRouter::Policy {
  public:
-  explicit SearchIPCRouterPolicyImpl(const content::WebContents* web_contents);
+  explicit SearchIPCRouterPolicyImpl(content::WebContents* web_contents);
   ~SearchIPCRouterPolicyImpl() override;
 
  private:
@@ -26,21 +31,36 @@ class SearchIPCRouterPolicyImpl : public SearchIPCRouter::Policy {
   bool ShouldProcessDeleteMostVisitedItem() override;
   bool ShouldProcessUndoMostVisitedDeletion() override;
   bool ShouldProcessUndoAllMostVisitedDeletions() override;
+  bool ShouldProcessAddCustomLink() override;
+  bool ShouldProcessUpdateCustomLink() override;
+  bool ShouldProcessReorderCustomLink() override;
+  bool ShouldProcessDeleteCustomLink() override;
+  bool ShouldProcessUndoCustomLinkAction() override;
+  bool ShouldProcessResetCustomLinks() override;
+  bool ShouldProcessToggleMostVisitedOrCustomLinks() override;
+  bool ShouldProcessToggleShortcutsVisibility() override;
   bool ShouldProcessLogEvent() override;
+  bool ShouldProcessLogSuggestionEventWithValue() override;
   bool ShouldProcessPasteIntoOmnibox(bool is_active_tab) override;
-  bool ShouldProcessChromeIdentityCheck() override;
-  bool ShouldProcessHistorySyncCheck() override;
   bool ShouldSendSetInputInProgress(bool is_active_tab) override;
   bool ShouldSendOmniboxFocusChanged() override;
-  bool ShouldSendMostVisitedItems() override;
+  bool ShouldSendMostVisitedInfo() override;
   bool ShouldSendThemeBackgroundInfo() override;
+  bool ShouldSendLocalBackgroundSelected() override;
+  bool ShouldProcessSetCustomBackgroundInfo() override;
+  bool ShouldProcessSelectLocalBackgroundImage() override;
+  bool ShouldProcessBlocklistSearchSuggestion() override;
+  bool ShouldProcessBlocklistSearchSuggestionWithHash() override;
+  bool ShouldProcessSearchSuggestionSelected() override;
+  bool ShouldProcessOptOutOfSearchSuggestions() override;
+  bool ShouldProcessThemeChangeMessages() override;
 
   // Used by unit tests.
   void set_is_incognito(bool is_incognito) {
     is_incognito_ = is_incognito;
   }
 
-  const content::WebContents* web_contents_;
+  content::WebContents* web_contents_;
   bool is_incognito_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchIPCRouterPolicyImpl);

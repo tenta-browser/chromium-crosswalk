@@ -4,25 +4,24 @@
 
 #include "chrome/browser/ui/webui/log_web_ui_url.h"
 
-#include "extensions/features/features.h"
+#include "chrome/common/webui_url_constants.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
 TEST(LogWebUIUrlTest, ValidUrls) {
   // Typical WebUI page.
-  EXPECT_TRUE(webui::LogWebUIUrl(GURL("chrome://downloads")));
+  EXPECT_TRUE(webui::LogWebUIUrl(GURL(chrome::kChromeUIDownloadsURL)));
 
   // WebUI page with a subpage.
-  EXPECT_TRUE(webui::LogWebUIUrl(GURL("chrome://settings/clearBrowserData")));
+  GURL::Replacements replace_clear_data_path;
+  replace_clear_data_path.SetPathStr(chrome::kClearBrowserDataSubPage);
+  EXPECT_TRUE(
+      webui::LogWebUIUrl(GURL(chrome::kChromeUISettingsURL)
+                             .ReplaceComponents(replace_clear_data_path)));
 
   // Developer tools scheme.
-  EXPECT_TRUE(webui::LogWebUIUrl(GURL("chrome-devtools://devtools")));
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Bookmarks Manager (the only currently allowed extension).
-  EXPECT_TRUE(webui::LogWebUIUrl(GURL(
-      "chrome-extension://eemcgdkfndhakfknompkggombfjjjeno")));
-#endif
+  EXPECT_TRUE(webui::LogWebUIUrl(GURL("devtools://devtools")));
 }
 
 TEST(LogWebUIUrlTest, InvalidUrls) {
@@ -31,7 +30,7 @@ TEST(LogWebUIUrlTest, InvalidUrls) {
   EXPECT_FALSE(webui::LogWebUIUrl(GURL("https://facebook.com")));
   EXPECT_FALSE(webui::LogWebUIUrl(GURL("ftp://ftp.mysite.com")));
 
-  // Extensions other than the Bookmarks Manager should also be ignored.
+  // Extensions schemes should also be ignored.
   EXPECT_FALSE(webui::LogWebUIUrl(GURL(
       "chrome-extension://mfehgcgbbipciphmccgaenjidiccnmng")));
 }

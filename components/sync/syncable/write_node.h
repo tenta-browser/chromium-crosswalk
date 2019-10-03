@@ -135,13 +135,14 @@ class WriteNode : public BaseNode {
   // Should only be called if GetModelType() == PASSWORD.
   void SetPasswordSpecifics(const sync_pb::PasswordSpecificsData& specifics);
 
+  // Set the wifi configuration specifics.
+  // Should only be called if GetModelType() == WIFI_CONFIGURATION.
+  void SetWifiConfigurationSpecifics(
+      const sync_pb::WifiConfigurationSpecificsData& specifics);
+
   // Set the typed_url specifics (url, title, typed_count, etc).
   // Should only be called if GetModelType() == TYPED_URLS.
   void SetTypedUrlSpecifics(const sync_pb::TypedUrlSpecifics& specifics);
-
-  // Set the attachment metadata.
-  void SetAttachmentMetadata(
-      const sync_pb::AttachmentMetadata& attachment_metadata);
 
   // Implementation of BaseNode's abstract virtual accessors.
   const syncable::Entry* GetEntry() const override;

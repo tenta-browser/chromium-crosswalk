@@ -9,12 +9,12 @@
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/console_message_level.h"
 #include "extensions/browser/app_window/app_delegate.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/suggest_permission_util.h"
 #include "extensions/common/permissions/api_permission.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
 
 namespace extensions {
 
@@ -32,8 +32,19 @@ AppWebContentsHelper::AppWebContentsHelper(
 // static
 bool AppWebContentsHelper::ShouldSuppressGestureEvent(
     const blink::WebGestureEvent& event) {
+  // Disable "smart zoom" (double-tap with two fingers on Mac trackpad).
+  if (event.GetType() == blink::WebInputEvent::kGestureDoubleTap)
+    return true;
+
   // Disable pinch zooming in app windows.
-  return blink::WebInputEvent::IsPinchGestureEventType(event.GetType());
+  if (blink::WebInputEvent::IsPinchGestureEventType(event.GetType())) {
+    // Only suppress pinch events that cause a scale change. We still
+    // allow synthetic wheel events for touchpad pinch to go to the page.
+    return !(event.SourceDevice() == blink::WebGestureDevice::kTouchpad &&
+             event.NeedsWheelEvent());
+  }
+
+  return false;
 }
 
 content::WebContents* AppWebContentsHelper::OpenURLFromTab(
@@ -46,7 +57,7 @@ content::WebContents* AppWebContentsHelper::OpenURLFromTab(
   WindowOpenDisposition disposition = params.disposition;
   if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     web_contents_->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_ERROR,
+        blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't open same-window link to \"%s\"; try target=\"_blank\".",
             params.url.spec().c_str()));
@@ -62,7 +73,7 @@ content::WebContents* AppWebContentsHelper::OpenURLFromTab(
       app_delegate_->OpenURLFromTab(browser_context_, web_contents_, params);
   if (!contents) {
     web_contents_->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_ERROR,
+        blink::mojom::ConsoleMessageLevel::kError,
         base::StringPrintf(
             "Can't navigate to \"%s\"; apps do not support navigation.",
             params.url.spec().c_str()));
@@ -84,24 +95,25 @@ void AppWebContentsHelper::RequestToLockMouse() const {
 
 void AppWebContentsHelper::RequestMediaAccessPermission(
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback) const {
+    content::MediaResponseCallback callback) const {
   const Extension* extension = GetExtension();
   if (!extension)
     return;
 
-  app_delegate_->RequestMediaAccessPermission(
-      web_contents_, request, callback, extension);
+  app_delegate_->RequestMediaAccessPermission(web_contents_, request,
+                                              std::move(callback), extension);
 }
 
 bool AppWebContentsHelper::CheckMediaAccessPermission(
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    content::MediaStreamType type) const {
+    blink::mojom::MediaStreamType type) const {
   const Extension* extension = GetExtension();
   if (!extension)
     return false;
 
   return app_delegate_->CheckMediaAccessPermission(
-      web_contents_, security_origin, type, extension);
+      render_frame_host, security_origin, type, extension);
 }
 
 const Extension* AppWebContentsHelper::GetExtension() const {

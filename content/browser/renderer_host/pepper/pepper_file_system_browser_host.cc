@@ -6,10 +6,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/task/post_task.h"
 #include "content/browser/renderer_host/pepper/pepper_file_io_host.h"
 #include "content/browser/renderer_host/pepper/quota_reservation.h"
 #include "content/common/pepper_file_util.h"
 #include "content/public/browser/browser_ppapi_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/browser/render_process_host.h"
@@ -26,7 +28,6 @@
 #include "storage/browser/fileapi/isolated_context.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/fileapi/file_system_util.h"
-#include "storage/common/quota/quota_types.h"
 
 namespace content {
 
@@ -60,8 +61,7 @@ PepperFileSystemBrowserHost::PepperFileSystemBrowserHost(BrowserPpapiHost* host,
       opened_(false),
       file_system_context_(nullptr),
       reserved_quota_(0),
-      reserving_quota_(false),
-      weak_factory_(this) {}
+      reserving_quota_(false) {}
 
 PepperFileSystemBrowserHost::~PepperFileSystemBrowserHost() {
   // If |files_| is not empty, the plugin failed to close some files. It must
@@ -90,13 +90,11 @@ void PepperFileSystemBrowserHost::OpenExisting(const GURL& root_url,
   called_open_ = true;
   // Get the file system context asynchronously, and then complete the Open
   // operation by calling |callback|.
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::UI,
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {BrowserThread::UI},
       base::Bind(&GetFileSystemContextFromRenderId, render_process_id),
       base::Bind(&PepperFileSystemBrowserHost::OpenExistingFileSystem,
-                 weak_factory_.GetWeakPtr(),
-                 callback));
+                 weak_factory_.GetWeakPtr(), callback));
 }
 
 int32_t PepperFileSystemBrowserHost::OnResourceMessageReceived(
@@ -138,7 +136,7 @@ void PepperFileSystemBrowserHost::CloseQuotaFile(
     PepperFileIOHost* file_io_host,
     const ppapi::FileGrowth& file_growth) {
   int32_t id = file_io_host->pp_resource();
-  FileMap::iterator it = files_.find(id);
+  auto it = files_.find(id);
   if (it != files_.end()) {
     files_.erase(it);
   } else {
@@ -174,13 +172,11 @@ int32_t PepperFileSystemBrowserHost::OnHostMsgOpen(
     return PP_ERROR_FAILED;
   }
 
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::UI,
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {BrowserThread::UI},
       base::Bind(&GetFileSystemContextFromRenderId, render_process_id),
       base::Bind(&PepperFileSystemBrowserHost::OpenFileSystem,
-                 weak_factory_.GetWeakPtr(),
-                 context->MakeReplyMessageContext(),
+                 weak_factory_.GetWeakPtr(), context->MakeReplyMessageContext(),
                  file_system_type));
   return PP_OK_COMPLETIONPENDING;
 }
@@ -342,15 +338,12 @@ int32_t PepperFileSystemBrowserHost::OnHostMsgInitIsolatedFileSystem(
       fsid,
       ppapi::IsolatedFileSystemTypeToRootName(type)));
 
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::UI,
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {BrowserThread::UI},
       base::Bind(&GetFileSystemContextFromRenderId, render_process_id),
       base::Bind(&PepperFileSystemBrowserHost::OpenIsolatedFileSystem,
-                 weak_factory_.GetWeakPtr(),
-                 context->MakeReplyMessageContext(),
-                 fsid,
-                 type));
+                 weak_factory_.GetWeakPtr(), context->MakeReplyMessageContext(),
+                 fsid, type));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -418,7 +411,7 @@ bool PepperFileSystemBrowserHost::ShouldCreateQuotaReservation() const {
   storage::FileSystemType file_system_type =
       PepperFileSystemTypeToFileSystemType(type_);
   return !quota_manager_proxy->quota_manager()->IsStorageUnlimited(
-      root_url_.GetOrigin(),
+      url::Origin::Create(root_url_),
       storage::FileSystemTypeToQuotaStorageType(file_system_type));
 }
 
@@ -460,7 +453,7 @@ void PepperFileSystemBrowserHost::GotReservedQuota(
 
 std::string PepperFileSystemBrowserHost::GetPluginMimeType() const {
   base::FilePath plugin_path = browser_ppapi_host_->GetPluginPath();
-  PepperPluginInfo* info =
+  const PepperPluginInfo* info =
       PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(plugin_path);
   if (!info || info->mime_types.empty())
     return std::string();

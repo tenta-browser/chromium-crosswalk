@@ -35,20 +35,21 @@ class MEDIA_EXPORT MediaUrlDemuxer : public Demuxer {
   MediaUrlDemuxer(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       const GURL& media_url,
-      const GURL& site_for_cookies);
+      const GURL& site_for_cookies,
+      bool allow_credentials,
+      bool is_hls);
   ~MediaUrlDemuxer() override;
 
   // MediaResource interface.
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
   MediaUrlParams GetMediaUrlParams() const override;
   MediaResource::Type GetType() const override;
+  void ForwardDurationChangeToDemuxerHost(base::TimeDelta duration) override;
 
   // Demuxer interface.
   std::string GetDisplayName() const override;
   void Initialize(DemuxerHost* host,
-                  const PipelineStatusCB& status_cb,
-                  bool enable_text_tracks) override;
+                  const PipelineStatusCB& status_cb) override;
   void StartWaitingForSeek(base::TimeDelta seek_time) override;
   void CancelPendingSeek(base::TimeDelta seek_time) override;
   void Seek(base::TimeDelta time, const PipelineStatusCB& status_cb) override;
@@ -58,13 +59,15 @@ class MEDIA_EXPORT MediaUrlDemuxer : public Demuxer {
   base::Time GetTimelineOffset() const override;
   int64_t GetMemoryUsage() const override;
   void OnEnabledAudioTracksChanged(const std::vector<MediaTrack::Id>& track_ids,
-                                   base::TimeDelta curr_time) override;
-  void OnSelectedVideoTrackChanged(
-      base::Optional<MediaTrack::Id> selected_track_id,
-      base::TimeDelta curr_time) override;
+                                   base::TimeDelta curr_time,
+                                   TrackChangeCB change_completed_cb) override;
+  void OnSelectedVideoTrackChanged(const std::vector<MediaTrack::Id>& track_ids,
+                                   base::TimeDelta curr_time,
+                                   TrackChangeCB change_completed_cb) override;
 
  private:
   MediaUrlParams params_;
+  DemuxerHost* host_;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 

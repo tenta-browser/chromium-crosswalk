@@ -6,12 +6,13 @@
 #define COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_TYPES_H_
 
 #include <stdint.h>
-
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/callback.h"
 #include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_visuals.h"
 
 class GURL;
 
@@ -19,31 +20,33 @@ class GURL;
 // temporary step to refactor and interface of the model out of the
 // implementation.
 namespace offline_pages {
-// Result of saving a page offline.
+// Result of saving a page offline. Must be kept with sync with
+// OfflinePagesSavePageResult in metrics' enum.xml
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.offlinepages
 enum class SavePageResult {
-  SUCCESS,
-  CANCELLED,
-  DEVICE_FULL,
-  CONTENT_UNAVAILABLE,
-  ARCHIVE_CREATION_FAILED,
-  STORE_FAILURE,
-  ALREADY_EXISTS,
+  SUCCESS = 0,
+  CANCELLED = 1,
+  DEVICE_FULL = 2,
+  CONTENT_UNAVAILABLE = 3,
+  ARCHIVE_CREATION_FAILED = 4,
+  STORE_FAILURE = 5,
+  ALREADY_EXISTS = 6,
   // Certain pages, i.e. file URL or NTP, will not be saved because these
   // are already locally accessible.
-  SKIPPED,
-  SECURITY_CERTIFICATE_ERROR,
-  // Returned when we detect trying to save a chrome error page.
-  ERROR_PAGE,
-  // Returned when we detect trying to save a chrome interstitial page.
-  INTERSTITIAL_PAGE,
+  SKIPPED = 7,
+  DEPRECATED_SECURITY_CERTIFICATE_ERROR = 8,
+  DEPRECATED_ERROR_PAGE = 9,
+  DEPRECATED_INTERSTITIAL_PAGE = 10,
   // Failed to compute digest for the archive file.
-  DIGEST_CALCULATION_FAILED,
-  // NOTE: always keep this entry at the end. Add new result types only
-  // immediately above this line. Make sure to update the corresponding
-  // histogram enum accordingly.
-  RESULT_COUNT,
+  DIGEST_CALCULATION_FAILED = 11,
+  // Unable to move the file into a public directory.
+  FILE_MOVE_FAILED = 12,
+  // Unable to add the file to the system download manager.
+  ADD_TO_DOWNLOAD_MANAGER_FAILED = 13,
+  // Unable to get write permission on public directory.
+  PERMISSION_DENIED = 14,
+  kMaxValue = PERMISSION_DENIED,
 };
 
 // Result of adding an offline page.
@@ -51,13 +54,11 @@ enum class AddPageResult {
   SUCCESS,
   STORE_FAILURE,
   ALREADY_EXISTS,
-  // NOTE: always keep this entry at the end. Add new result types only
-  // immediately above this line. Make sure to update the corresponding
-  // histogram enum accordingly.
-  RESULT_COUNT,
+  kMaxValue = ALREADY_EXISTS,
 };
 
-// Result of deleting an offline page.
+// Result of deleting an offline page. Must be kept with sync with
+// OfflinePagesDeletePageResult in metrics' enum.xml.
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.offlinepages
 enum class DeletePageResult {
@@ -67,37 +68,49 @@ enum class DeletePageResult {
   DEVICE_FAILURE,
   // Deprecated. Deleting pages which are not in metadata store would be
   // returing |SUCCESS|. Should not be used anymore.
-  NOT_FOUND,
-  // NOTE: always keep this entry at the end. Add new result types only
-  // immediately above this line. Make sure to update the corresponding
-  // histogram enum accordingly.
-  RESULT_COUNT,
+  DEPRECATED_NOT_FOUND,
+  kMaxValue = DEPRECATED_NOT_FOUND,
 };
 
-// Controls how to search on differnt URLs for pages.
-enum class URLSearchMode {
-  // Match against the last committed URL only.
-  SEARCH_BY_FINAL_URL_ONLY,
-  // Match against all stored URLs, including the last committed URL and
-  // the original request URL.
-  SEARCH_BY_ALL_URLS,
+// The result when trying to share offline page to other apps.
+enum class ShareResult {
+  // Successfully shared.
+  kSuccess,
+
+  // Failed due to no file access permission.
+  kFileAccessPermissionDenied,
+};
+
+struct VisualsAvailability {
+  bool has_thumbnail;
+  bool has_favicon;
+  bool operator==(const VisualsAvailability& rhs) const {
+    return has_thumbnail == rhs.has_thumbnail && has_favicon == rhs.has_favicon;
+  }
 };
 
 typedef std::vector<int64_t> MultipleOfflineIdResult;
 typedef std::vector<OfflinePageItem> MultipleOfflinePageItemResult;
 
-typedef base::Callback<void(SavePageResult, int64_t)> SavePageCallback;
-typedef base::Callback<void(AddPageResult, int64_t)> AddPageCallback;
-typedef base::Callback<void(DeletePageResult)> DeletePageCallback;
-typedef base::Callback<void(bool)> HasPagesCallback;
-typedef base::Callback<void(const MultipleOfflineIdResult&)>
+typedef base::OnceCallback<void(SavePageResult, int64_t)> SavePageCallback;
+typedef base::OnceCallback<void(AddPageResult, int64_t)> AddPageCallback;
+typedef base::OnceCallback<void(DeletePageResult)> DeletePageCallback;
+typedef base::OnceCallback<void(const MultipleOfflineIdResult&)>
     MultipleOfflineIdCallback;
-typedef base::Callback<void(const OfflinePageItem*)>
+typedef base::OnceCallback<void(const OfflinePageItem*)>
     SingleOfflinePageItemCallback;
-typedef base::Callback<void(const MultipleOfflinePageItemResult&)>
+typedef base::OnceCallback<void(const MultipleOfflinePageItemResult&)>
     MultipleOfflinePageItemCallback;
-typedef base::Callback<bool(const GURL&)> UrlPredicate;
-typedef base::Callback<void(int64_t)> SizeInBytesCallback;
+typedef base::RepeatingCallback<bool(const GURL&)> UrlPredicate;
+typedef base::OnceCallback<void(int64_t)> SizeInBytesCallback;
+typedef base::OnceCallback<void(std::unique_ptr<OfflinePageVisuals>)>
+    GetVisualsCallback;
+typedef base::OnceCallback<void(bool)> CleanupVisualsCallback;
+
+// Callbacks used for publishing an offline page.
+using PublishPageCallback =
+    base::OnceCallback<void(const base::FilePath&, SavePageResult)>;
+
 }  // namespace offline_pages
 
 #endif  // COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_TYPES_H_

@@ -9,16 +9,25 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/global_request_id.h"
+#include "content/public/browser/reload_type.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
-#include "content/public/common/resource_request_body.h"
+#include "content/public/common/was_activated_option.h"
+#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/tabs/tab_group_id.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#endif
 
 class Browser;
 class Profile;
@@ -27,57 +36,64 @@ namespace content {
 class RenderFrameHost;
 class WebContents;
 struct OpenURLParams;
-}
-
-namespace chrome {
+}  // namespace content
 
 // Parameters that tell Navigate() what to do.
 //
 // Some basic examples:
 //
 // Simple Navigate to URL in current tab:
-// chrome::NavigateParams params(browser, GURL("http://www.google.com/"),
+// NavigateParams params(browser, GURL("http://www.google.com/"),
 //                               ui::PAGE_TRANSITION_LINK);
-// chrome::Navigate(&params);
+// Navigate(&params);
 //
 // Open bookmark in new background tab:
-// chrome::NavigateParams params(browser, url,
+// NavigateParams params(browser, url,
 //                               ui::PAGE_TRANSITION_AUTO_BOOKMARK);
 // params.disposition = NEW_BACKGROUND_TAB;
-// chrome::Navigate(&params);
+// Navigate(&params);
 //
 // Opens a popup WebContents:
-// chrome::NavigateParams params(browser, popup_contents);
+// NavigateParams params(browser, popup_contents);
 // params.source_contents = source_contents;
-// chrome::Navigate(&params);
+// Navigate(&params);
 //
 // See browser_navigator_browsertest.cc for more examples.
 
 // TODO(thestig): Split or ifdef out more fields that are not used on Android.
 struct NavigateParams {
 #if defined(OS_ANDROID)
-  explicit NavigateParams(content::WebContents* a_target_contents);
+  explicit NavigateParams(
+      std::unique_ptr<content::WebContents> contents_to_insert);
 #else
   NavigateParams(Browser* browser,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
   NavigateParams(Browser* browser,
-                 content::WebContents* a_target_contents);
+                 std::unique_ptr<content::WebContents> contents_to_insert);
 #endif
   NavigateParams(Profile* profile,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
-  NavigateParams(const NavigateParams& other);
+  NavigateParams(NavigateParams&& params);
   ~NavigateParams();
 
-  // The URL/referrer to be loaded. Ignored if |target_contents| is non-NULL.
+  // Copies fields from |params| struct to |nav_params| struct.
+  void FillNavigateParamsFromOpenURLParams(
+      const content::OpenURLParams& params);
+
+  // The URL/referrer to be loaded. Ignored if |contents_to_insert| is non-NULL.
   GURL url;
   content::Referrer referrer;
+
+  // The origin of the initiator of the navigation.
+  base::Optional<url::Origin> initiator_origin;
 
   // The frame name to be used for the main frame.
   std::string frame_name;
 
-  // The browser-global ID of the frame to navigate, or -1 for the main frame.
+  // The browser-global ID of the frame to navigate, or
+  // content::RenderFrameHost::kNoFrameTreeNodeId for the main frame.
   int frame_tree_node_id = -1;
 
   // Any redirect URLs that occurred for this navigation before |url|.
@@ -88,26 +104,33 @@ struct NavigateParams {
   bool uses_post = false;
 
   // The post data when the navigation uses POST.
-  scoped_refptr<content::ResourceRequestBody> post_data;
+  scoped_refptr<network::ResourceRequestBody> post_data;
 
   // Extra headers to add to the request for this page.  Headers are
   // represented as "<name>: <value>" and separated by \r\n.  The entire string
   // is terminated by \r\n.  May be empty if no extra headers are needed.
   std::string extra_headers;
 
-  // [in]  A WebContents to be navigated or inserted into the target
-  //       Browser's tabstrip. If NULL, |url| or the homepage will be used
-  //       instead. When non-NULL, Navigate() assumes it has already been
-  //       navigated to its intended destination and will not load any URL in it
-  //       (i.e. |url| is ignored).
-  //       Default is NULL.
-  // [out] The WebContents in which the navigation occurred or that was
-  //       inserted. Guaranteed non-NULL except for note below:
-  // Note: If this field is set to NULL by the caller and Navigate() creates
-  //       a new WebContents, this field will remain NULL and the
-  //       WebContents deleted if the WebContents it created is
-  //       not added to a TabStripModel before Navigate() returns.
-  content::WebContents* target_contents = nullptr;
+  // Input parameter.
+  // WebContents to be inserted into the target Browser's tabstrip. If NULL,
+  // |url| or the homepage will be used instead. When non-NULL, Navigate()
+  // assumes it has already been navigated to its intended destination and will
+  // not load any URL in it (i.e. |url| is ignored). Default is NULL.
+  std::unique_ptr<content::WebContents> contents_to_insert;
+
+  // Input parameter.
+  // Only used by Singleton tabs. Causes a tab-switch in addition to navigation.
+  content::WebContents* switch_to_singleton_tab = nullptr;
+
+  // Output parameter.
+  // The WebContents in which the navigation occurred or that was inserted.
+  // Guaranteed non-NULL except for note below:
+  //
+  // Note: If this field is set to NULL by the caller and Navigate() creates a
+  // new WebContents, this field will remain NULL and the WebContents deleted if
+  // the WebContents it created is not added to a TabStripModel before
+  // Navigate() returns.
+  content::WebContents* navigated_or_inserted_contents = nullptr;
 
   // [in]  The WebContents that initiated the Navigate() request if such
   //       context is necessary. Default is NULL, i.e. no context.
@@ -153,11 +176,6 @@ struct NavigateParams {
   // accordance with |add_types|. The default allows the TabHandler to decide.
   int tabstrip_index = -1;
 
-  // A bitmask of values defined in TabStripModel::AddTabTypes. Helps
-  // determine where to insert a new tab and whether or not it should be
-  // selected, among other properties.
-  int tabstrip_add_types = TabStripModel::ADD_ACTIVE;
-
   // If non-empty, the new tab is an app tab.
   std::string extension_app_id;
 
@@ -192,19 +210,8 @@ struct NavigateParams {
     RESPECT,
     // Ignore path when finding existing tab, navigate to new URL.
     IGNORE_AND_NAVIGATE,
-    // Ignore path when finding existing tab, don't navigate tab.
-    IGNORE_AND_STAY_PUT,
   };
   PathBehavior path_behavior = RESPECT;
-
-  // What to do with the ref component of the URL for singleton navigations.
-  enum RefBehavior {
-    // Two URLs with differing refs are same.
-    IGNORE_REF,
-    // Two URLs with differing refs are different.
-    RESPECT_REF,
-  };
-  RefBehavior ref_behavior = IGNORE_REF;
 
 #if !defined(OS_ANDROID)
   // [in]  Specifies a Browser object where the navigation could occur or the
@@ -220,6 +227,14 @@ struct NavigateParams {
   //       window can assume responsibility for the Browser's lifetime (Browser
   //       objects are deleted when the user closes a visible browser window).
   Browser* browser = nullptr;
+
+  // The group the caller would like the tab to be added to.
+  base::Optional<TabGroupId> group;
+
+  // A bitmask of values defined in TabStripModel::AddTabTypes. Helps
+  // determine where to insert a new tab and whether or not it should be
+  // selected, among other properties.
+  int tabstrip_add_types = TabStripModel::ADD_ACTIVE;
 #endif
 
   // The profile that is initiating the navigation. If there is a non-NULL
@@ -230,7 +245,8 @@ struct NavigateParams {
   // navigation entry.
   bool should_replace_current_entry = false;
 
-  // Indicates whether |target_contents| is being created with a window.opener.
+  // Indicates whether |contents_to_insert| is being created with a
+  // window.opener.
   bool created_with_opener = false;
 
   // Whether or not the related navigation was started in the context menu.
@@ -243,14 +259,37 @@ struct NavigateParams {
   // an about:blank or a data url navigation.
   scoped_refptr<content::SiteInstance> source_site_instance;
 
+  // Optional URLLoaderFactory to facilitate blob URL loading.
+  scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
+
+  // Indicates that the navigation should happen in an pwa window if
+  // possible, i.e. if the is a PWA installed for the target URL.
+  bool open_pwa_window_if_possible = false;
+
+  // The time when the input which led to the navigation occurred. Currently
+  // only set when a link is clicked or the navigation takes place from the
+  // desktop omnibox.
+  base::TimeTicks input_start;
+
+  // Indicates that the new page should have a propagated user activation.
+  // This should be used when we want to pass an activation that occurred
+  // outside of the page and pass it to the page as if it happened on a prior
+  // page. For example, if the assistant opens a page we should treat the
+  // user's interaction with the assistant as a previous user activation.
+  content::WasActivatedOption was_activated =
+      content::WasActivatedOption::kUnknown;
+
+  // If this navigation was initiated from a link that specified the
+  // hrefTranslate attribute, this contains the attribute's value (a BCP47
+  // language code). Empty otherwise.
+  std::string href_translate;
+
+  // Indicates the reload type of this navigation.
+  content::ReloadType reload_type = content::ReloadType::NONE;
+
  private:
   NavigateParams();
+  DISALLOW_COPY_AND_ASSIGN(NavigateParams);
 };
-
-// Copies fields from |params| struct to |nav_params| struct.
-void FillNavigateParamsFromOpenURLParams(chrome::NavigateParams* nav_params,
-                                         const content::OpenURLParams& params);
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_UI_BROWSER_NAVIGATOR_PARAMS_H_

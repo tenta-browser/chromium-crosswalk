@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -31,21 +30,19 @@ const void* const kURLRequestUserDataKey = &kURLRequestUserDataKey;
 
 std::string CanonicalizeEmailImpl(const std::string& email_address,
                                   bool change_googlemail_to_gmail) {
+  std::string lower_case_email = base::ToLowerASCII(email_address);
   std::vector<std::string> parts = base::SplitString(
-      email_address, "@", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (parts.size() != 2U) {
-    NOTREACHED() << "expecting exactly one @, but got "
-                 << (parts.empty() ? 0 : parts.size() - 1)
-                 << " : " << email_address;
-  } else {
-    if (change_googlemail_to_gmail && parts[1] == kGooglemailDomain)
-      parts[1] = kGmailDomain;
+      lower_case_email, "@", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (parts.size() != 2U)
+    return lower_case_email;
 
-    if (parts[1] == kGmailDomain)  // only strip '.' for gmail accounts.
-      base::RemoveChars(parts[0], ".", &parts[0]);
-  }
+  if (change_googlemail_to_gmail && parts[1] == kGooglemailDomain)
+    parts[1] = kGmailDomain;
 
-  std::string new_email = base::ToLowerASCII(base::JoinString(parts, "@"));
+  if (parts[1] == kGmailDomain)  // only strip '.' for gmail accounts.
+    base::RemoveChars(parts[0], ".", &parts[0]);
+
+  std::string new_email = base::JoinString(parts, "@");
   VLOG(1) << "Canonicalized " << email_address << " to " << new_email;
   return new_email;
 }
@@ -53,7 +50,7 @@ std::string CanonicalizeEmailImpl(const std::string& email_address,
 class GaiaURLRequestUserData : public base::SupportsUserData::Data {
  public:
   static std::unique_ptr<base::SupportsUserData::Data> Create() {
-    return base::MakeUnique<GaiaURLRequestUserData>();
+    return std::make_unique<GaiaURLRequestUserData>();
   }
 };
 
@@ -126,7 +123,7 @@ bool ParseListAccountsData(const std::string& data,
     signed_out_accounts->clear();
 
   // Parse returned data and make sure we have data.
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(data);
   if (!value)
     return false;
 
@@ -143,7 +140,7 @@ bool ParseListAccountsData(const std::string& data,
   // account in the list is the primary account.
   for (size_t i = 0; i < account_list->GetSize(); ++i) {
     base::ListValue* account;
-    if (account_list->GetList(i, &account) && account != NULL) {
+    if (account_list->GetList(i, &account) && account != nullptr) {
       std::string email;
       // Canonicalize the email since ListAccounts returns "display email".
       if (account->GetString(3, &email) && !email.empty()) {
@@ -183,16 +180,6 @@ bool ParseListAccountsData(const std::string& data,
   }
 
   return true;
-}
-
-bool RequestOriginatedFromGaia(const net::URLRequest& request) {
-  return request.GetUserData(kURLRequestUserDataKey) != nullptr;
-}
-
-void MarkURLFetcherAsGaia(net::URLFetcher* fetcher) {
-  DCHECK(fetcher);
-  fetcher->SetURLRequestUserData(kURLRequestUserDataKey,
-                                 base::Bind(&GaiaURLRequestUserData::Create));
 }
 
 }  // namespace gaia

@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/native_library.h"
 #include "build/build_config.h"
-#include "ui/gl/extension_set.h"
+#include "ui/gfx/extension_set.h"
 #include "ui/gl/gl_export.h"
 #include "ui/gl/gl_switches.h"
 
@@ -21,24 +21,30 @@ namespace gl {
 class GLApi;
 
 // The GL implementation currently in use.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. It should match enum GLImplementation
+// in /tool/metrics/histograms/enums.xml
 enum GLImplementation {
-  kGLImplementationNone,
-  kGLImplementationDesktopGL,
-  kGLImplementationDesktopGLCoreProfile,
-  kGLImplementationOSMesaGL,
-  kGLImplementationSwiftShaderGL,
-  kGLImplementationAppleGL,
-  kGLImplementationEGLGLES2,
-  kGLImplementationMockGL,
-  kGLImplementationStubGL,
+  kGLImplementationNone = 0,
+  kGLImplementationDesktopGL = 1,
+  kGLImplementationDesktopGLCoreProfile = 2,
+  kGLImplementationSwiftShaderGL = 3,
+  kGLImplementationAppleGL = 4,
+  kGLImplementationEGLGLES2 = 5,  // Native EGL/GLES2
+  kGLImplementationMockGL = 6,
+  kGLImplementationStubGL = 7,
+  kGLImplementationDisabled = 8,
+  kGLImplementationEGLANGLE = 9,  // EGL/GL implemented using ANGLE
+  kMaxValue = kGLImplementationEGLANGLE,
 };
 
 struct GL_EXPORT GLWindowSystemBindingInfo {
   GLWindowSystemBindingInfo();
+  ~GLWindowSystemBindingInfo();
   std::string vendor;
   std::string version;
   std::string extensions;
-  bool direct_rendering;
+  std::string direct_rendering_version;
 };
 
 using GLFunctionPointerType = void (*)();
@@ -120,8 +126,9 @@ GL_EXPORT GLFunctionPointerType GetGLProcAddress(const char* name);
 GL_EXPORT std::string GetGLExtensionsFromCurrentContext();
 GL_EXPORT std::string GetGLExtensionsFromCurrentContext(GLApi* api);
 
-GL_EXPORT ExtensionSet GetRequestableGLExtensionsFromCurrentContext();
-GL_EXPORT ExtensionSet GetRequestableGLExtensionsFromCurrentContext(GLApi* api);
+GL_EXPORT gfx::ExtensionSet GetRequestableGLExtensionsFromCurrentContext();
+GL_EXPORT gfx::ExtensionSet GetRequestableGLExtensionsFromCurrentContext(
+    GLApi* api);
 
 // Helper for the GL bindings implementation to understand whether
 // glGetString(GL_EXTENSIONS) or glGetStringi(GL_EXTENSIONS, i) will

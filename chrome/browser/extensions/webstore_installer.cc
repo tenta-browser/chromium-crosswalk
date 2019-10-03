@@ -15,8 +15,8 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -24,8 +24,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -42,11 +41,10 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/crx_file/id_util.h"
+#include "components/download/public/common/download_url_parameters.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
-#include "content/public/browser/download_save_info.h"
-#include "content/public/browser/download_url_parameters.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -55,7 +53,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_registry.h"
@@ -76,10 +73,10 @@
 
 using content::BrowserContext;
 using content::BrowserThread;
-using content::DownloadItem;
 using content::DownloadManager;
 using content::NavigationController;
-using content::DownloadUrlParameters;
+using download::DownloadItem;
+using download::DownloadUrlParameters;
 
 namespace {
 
@@ -103,7 +100,8 @@ const char kAppLauncherInstallSource[] = "applauncher";
 // See http://crbug.com/371398.
 const char kAuthUserQueryKey[] = "authuser";
 
-const size_t kTimeRemainingMinutesThreshold = 1u;
+constexpr base::TimeDelta kTimeRemainingThreshold =
+    base::TimeDelta::FromSeconds(1);
 
 // Folder for downloading crx files from the webstore. This is used so that the
 // crx files don't go via the usual downloads folder.
@@ -114,7 +112,6 @@ base::FilePath* g_download_directory_for_tests = NULL;
 
 base::FilePath GetDownloadFilePath(const base::FilePath& download_directory,
                                    const std::string& id) {
-  base::AssertBlockingAllowed();
   // Ensure the download directory exists. TODO(asargent) - make this use
   // common code from the downloads system.
   if (!base::DirectoryExists(download_directory) &&
@@ -126,20 +123,13 @@ base::FilePath GetDownloadFilePath(const base::FilePath& download_directory,
   // filename and when the download starts writing to it (think concurrently
   // running sharded browser tests installing the same test file, for
   // instance).
-  std::string random_number = base::Uint64ToString(
+  std::string random_number = base::NumberToString(
       base::RandGenerator(std::numeric_limits<uint16_t>::max()));
 
   base::FilePath file =
       download_directory.AppendASCII(id + "_" + random_number + ".crx");
 
-  int uniquifier =
-      base::GetUniquePathNumber(file, base::FilePath::StringType());
-  if (uniquifier > 0) {
-    file = file.InsertBeforeExtensionASCII(
-        base::StringPrintf(" (%d)", uniquifier));
-  }
-
-  return file;
+  return base::GetUniquePath(file);
 }
 
 void MaybeAppendAuthUserParameter(const std::string& authuser, GURL* url) {
@@ -174,10 +164,10 @@ void MaybeAppendAuthUserParameter(const std::string& authuser, GURL* url) {
 }
 
 std::string GetErrorMessageForDownloadInterrupt(
-    content::DownloadInterruptReason reason) {
+    download::DownloadInterruptReason reason) {
   switch (reason) {
-    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED:
-    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
+    case download::DOWNLOAD_INTERRUPT_REASON_SERVER_UNAUTHORIZED:
+    case download::DOWNLOAD_INTERRUPT_REASON_SERVER_FORBIDDEN:
       return l10n_util::GetStringUTF8(IDS_WEBSTORE_DOWNLOAD_ACCESS_DENIED);
     default:
       break;
@@ -206,9 +196,9 @@ GURL WebstoreInstaller::GetWebstoreInstallURL(
   }
 
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kAppsGalleryDownloadURL)) {
+  if (cmd_line->HasSwitch(::switches::kAppsGalleryDownloadURL)) {
     std::string download_url =
-        cmd_line->GetSwitchValueASCII(switches::kAppsGalleryDownloadURL);
+        cmd_line->GetSwitchValueASCII(::switches::kAppsGalleryDownloadURL);
     return GURL(base::StringPrintf(download_url.c_str(),
                                    extension_id.c_str()));
   }
@@ -233,13 +223,11 @@ GURL WebstoreInstaller::GetWebstoreInstallURL(
 
 void WebstoreInstaller::Delegate::OnExtensionDownloadStarted(
     const std::string& id,
-    content::DownloadItem* item) {
-}
+    download::DownloadItem* item) {}
 
 void WebstoreInstaller::Delegate::OnExtensionDownloadProgress(
     const std::string& id,
-    content::DownloadItem* item) {
-}
+    download::DownloadItem* item) {}
 
 WebstoreInstaller::Approval::Approval()
     : profile(NULL),
@@ -417,7 +405,7 @@ void WebstoreInstaller::OnExtensionInstalled(
   } else {
     const base::Version version_required(info.minimum_version);
     if (version_required.IsValid() &&
-        extension->version()->CompareTo(version_required) < 0) {
+        extension->version().CompareTo(version_required) < 0) {
       // It should not happen, CrxInstaller will make sure the version is
       // equal or newer than version_required.
       ReportFailure(kDependencyNotFoundError,
@@ -452,11 +440,11 @@ WebstoreInstaller::~WebstoreInstaller() {
 void WebstoreInstaller::OnDownloadStarted(
     const std::string& extension_id,
     DownloadItem* item,
-    content::DownloadInterruptReason interrupt_reason) {
-  if (!item || interrupt_reason != content::DOWNLOAD_INTERRUPT_REASON_NONE) {
+    download::DownloadInterruptReason interrupt_reason) {
+  if (!item || interrupt_reason != download::DOWNLOAD_INTERRUPT_REASON_NONE) {
     if (item)
       item->Remove();
-    ReportFailure(content::DownloadInterruptReasonToString(interrupt_reason),
+    ReportFailure(download::DownloadInterruptReasonToString(interrupt_reason),
                   FAILURE_REASON_OTHER);
     return;
   }
@@ -479,7 +467,7 @@ void WebstoreInstaller::OnDownloadStarted(
     return;
   }
 
-  DCHECK_EQ(content::DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
+  DCHECK_EQ(download::DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
   DCHECK(!pending_modules_.empty());
   download_item_ = item;
   download_item_->AddObserver(this);
@@ -584,7 +572,7 @@ void WebstoreInstaller::DownloadCrx(
   MaybeAppendAuthUserParameter(approval_->authuser, &download_url_);
 
   base::FilePath user_data_dir;
-  PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   base::FilePath download_path = user_data_dir.Append(kWebstoreDownloadFolder);
 
   base::FilePath download_directory(g_download_directory_for_tests ?
@@ -655,16 +643,12 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
   // The download url for the given extension is contained in |download_url_|.
   // We will navigate the current tab to this url to start the download. The
   // download system will then pass the crx to the CrxInstaller.
-  RecordDownloadSource(DOWNLOAD_INITIATED_BY_WEBSTORE_INSTALLER);
   int render_process_host_id =
       contents->GetRenderViewHost()->GetProcess()->GetID();
   int render_view_host_routing_id =
       contents->GetRenderViewHost()->GetRoutingID();
 
   content::RenderFrameHost* render_frame_host = contents->GetMainFrame();
-  content::StoragePartition* storage_partition =
-      BrowserContext::GetStoragePartition(profile_,
-                                          render_frame_host->GetSiteInstance());
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("webstore_installer", R"(
         semantics {
@@ -697,16 +681,21 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
         })");
   std::unique_ptr<DownloadUrlParameters> params(new DownloadUrlParameters(
       download_url_, render_process_host_id, render_view_host_routing_id,
-      render_frame_host->GetRoutingID(),
-      storage_partition->GetURLRequestContext(), traffic_annotation));
+      render_frame_host->GetRoutingID(), traffic_annotation));
   params->set_file_path(file);
-  if (controller.GetVisibleEntry())
-    params->set_referrer(content::Referrer::SanitizeForRequest(
-        download_url_, content::Referrer(controller.GetVisibleEntry()->GetURL(),
-                                         blink::kWebReferrerPolicyDefault)));
+  if (controller.GetVisibleEntry()) {
+    content::Referrer referrer = content::Referrer::SanitizeForRequest(
+        download_url_,
+        content::Referrer(controller.GetVisibleEntry()->GetURL(),
+                          network::mojom::ReferrerPolicy::kDefault));
+    params->set_referrer(referrer.url);
+    params->set_referrer_policy(
+        content::Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
+  }
   params->set_callback(base::Bind(&WebstoreInstaller::OnDownloadStarted,
                                   this,
                                   extension_id));
+  params->set_download_source(download::DownloadSource::EXTENSION_INSTALLER);
   download_manager->DownloadUrl(std::move(params));
 }
 
@@ -737,13 +726,9 @@ void WebstoreInstaller::UpdateDownloadProgress() {
   // timer.
   base::TimeDelta time_remaining;
   if (download_item_->TimeRemaining(&time_remaining) &&
-      time_remaining >
-          base::TimeDelta::FromSeconds(kTimeRemainingMinutesThreshold)) {
-    download_progress_timer_.Start(
-        FROM_HERE,
-        base::TimeDelta::FromSeconds(kTimeRemainingMinutesThreshold),
-        this,
-        &WebstoreInstaller::UpdateDownloadProgress);
+      time_remaining > kTimeRemainingThreshold) {
+    download_progress_timer_.Start(FROM_HERE, kTimeRemainingThreshold, this,
+                                   &WebstoreInstaller::UpdateDownloadProgress);
   } else {
     download_progress_timer_.Stop();
   }
@@ -753,11 +738,6 @@ void WebstoreInstaller::StartCrxInstaller(const DownloadItem& download) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!crx_installer_.get());
 
-  // The clock may be backward, e.g. daylight savings time just happenned.
-  if (download.GetEndTime() >= download.GetStartTime()) {
-    UMA_HISTOGRAM_TIMES("Extensions.WebstoreDownload.FileDownload",
-                        download.GetEndTime() - download.GetStartTime());
-  }
   ExtensionService* service = ExtensionSystem::Get(profile_)->
       extension_service();
   CHECK(service);
@@ -798,8 +778,8 @@ void WebstoreInstaller::ReportSuccess() {
 }
 
 void WebstoreInstaller::RecordInterrupt(const DownloadItem* download) const {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.WebstoreDownload.InterruptReason",
-                              download->GetLastReason());
+  base::UmaHistogramSparse("Extensions.WebstoreDownload.InterruptReason",
+                           download->GetLastReason());
 
   // Use logarithmic bin sizes up to 1 TB.
   const int kNumBuckets = 30;

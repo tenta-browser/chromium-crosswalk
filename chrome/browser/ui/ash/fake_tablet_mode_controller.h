@@ -5,29 +5,27 @@
 #ifndef CHROME_BROWSER_UI_ASH_FAKE_TABLET_MODE_CONTROLLER_H_
 #define CHROME_BROWSER_UI_ASH_FAKE_TABLET_MODE_CONTROLLER_H_
 
-#include "ash/public/interfaces/tablet_mode.mojom.h"
+#include "ash/public/cpp/tablet_mode.h"
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/binding.h"
 
 // Simulates the TabletModeController in ash.
-class FakeTabletModeController : ash::mojom::TabletModeController {
+class FakeTabletModeController : public ash::TabletMode {
  public:
   FakeTabletModeController();
 
   ~FakeTabletModeController() override;
 
-  bool was_client_set() const { return was_client_set_; }
+  bool has_observer() const { return !!observer_; }
 
-  // Returns a mojo interface pointer bound to this object.
-  ash::mojom::TabletModeControllerPtr CreateInterfacePtr();
-
-  // ash::mojom::TabletModeController:
-  void SetClient(ash::mojom::TabletModeClientPtr client) override;
+  // ash::TabletMode:
+  void AddObserver(ash::TabletModeObserver* observer) override;
+  void RemoveObserver(ash::TabletModeObserver* observer) override;
+  bool InTabletMode() const override;
+  void SetEnabledForTest(bool enabled) override;
 
  private:
-  mojo::Binding<ash::mojom::TabletModeController> binding_;
-
-  bool was_client_set_ = false;
+  bool enabled_ = false;
+  ash::TabletModeObserver* observer_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(FakeTabletModeController);
 };

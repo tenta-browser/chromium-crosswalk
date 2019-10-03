@@ -12,7 +12,8 @@
 #include "chrome/browser/chromeos/extensions/input_method_event_router.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -76,16 +77,13 @@ class TestListener : public content::NotificationObserver {
   content::NotificationRegistrar registrar_;
 };
 
-class ExtensionInputMethodApiTest : public ExtensionApiTest {
+class ExtensionInputMethodApiTest : public extensions::ExtensionApiTest {
  public:
-  ExtensionInputMethodApiTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kOptInImeMenu);
-  }
-
+  ExtensionInputMethodApiTest() {}
   ~ExtensionInputMethodApiTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionApiTest::SetUpCommandLine(command_line);
+    extensions::ExtensionApiTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(
         extensions::switches::kWhitelistedExtensionID,
         "ilanclmaeigfpnmdlgelmhkpkegdioip");
@@ -104,6 +102,21 @@ IN_PROC_BROWSER_TEST_F(ExtensionInputMethodApiTest, Basic) {
   TestListener listener;
 
   ASSERT_TRUE(RunExtensionTest("input_method/basic")) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionInputMethodApiTest, Typing) {
+  // Enable the test IME from the test extension.
+  std::vector<std::string> extension_ime_ids = {
+      "_ext_ime_ilanclmaeigfpnmdlgelmhkpkegdioiptest"};
+  InputMethodManager::Get()->GetActiveIMEState()->SetEnabledExtensionImes(
+      &extension_ime_ids);
+
+  GURL test_url = ui_test_utils::GetTestUrl(
+      base::FilePath("extensions/api_test/input_method/typing/"),
+      base::FilePath("test_page.html"));
+  ui_test_utils::NavigateToURL(browser(), test_url);
+
+  ASSERT_TRUE(RunExtensionTest("input_method/typing")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionInputMethodApiTest, ImeMenuActivation) {
@@ -161,4 +174,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionInputMethodApiTest, ImeMenuAPITest) {
       kTestIMEID2, false /* show_message */);
   engine_handler->Enable("test2");
   ASSERT_TRUE(list_listenter.WaitUntilSatisfied()) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionInputMethodApiTest, Settings) {
+  ASSERT_TRUE(RunExtensionTest("input_method/settings")) << message_;
 }

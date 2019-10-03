@@ -21,6 +21,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include "build/build_config.h"
+
 // Set this to 1 to enable debug traces to the Android log.
 // Note that LOG() from "base/logging.h" cannot be used, since it is
 // in base/ which hasn't been loaded yet.
@@ -29,15 +31,15 @@
 #define TAG "cr_ChromiumAndroidLinker"
 
 #if DEBUG
-#define LOG_INFO(FORMAT, ...) \
-    __android_log_print(ANDROID_LOG_INFO, TAG, \
-                        "%s: " FORMAT, __FUNCTION__, ##__VA_ARGS__)
+#define LOG_INFO(FORMAT, ...)                                             \
+  __android_log_print(ANDROID_LOG_INFO, TAG, "%s: " FORMAT, __FUNCTION__, \
+                      ##__VA_ARGS__)
 #else
 #define LOG_INFO(FORMAT, ...) ((void)0)
 #endif
-#define LOG_ERROR(FORMAT, ...) \
-    __android_log_print(ANDROID_LOG_ERROR, TAG, \
-                        "%s: " FORMAT, __FUNCTION__, ##__VA_ARGS__)
+#define LOG_ERROR(FORMAT, ...)                                             \
+  __android_log_print(ANDROID_LOG_ERROR, TAG, "%s: " FORMAT, __FUNCTION__, \
+                      ##__VA_ARGS__)
 
 #define UNUSED __attribute__((unused))
 
@@ -47,6 +49,16 @@
 // For more, see:
 //   https://crbug.com/504410
 #define RESERVE_BREAKPAD_GUARD_REGION 1
+
+#if defined(ARCH_CPU_X86)
+// Dalvik JIT generated code doesn't guarantee 16-byte stack alignment on
+// x86 - use force_align_arg_pointer to realign the stack at the JNI
+// boundary. https://crbug.com/655248
+#define JNI_GENERATOR_EXPORT \
+  extern "C" __attribute__((visibility("default"), force_align_arg_pointer))
+#else
+#define JNI_GENERATOR_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 namespace chromium_android_linker {
 
@@ -99,16 +111,6 @@ extern bool InitFieldId(JNIEnv* env,
                         const char* field_sig,
                         jfieldID* field_id);
 
-// Initialize a jmethodID corresponding to the static method of a given
-// |clazz|, with name |method_name| and signature |method_sig|.
-// |env| is the current JNI environment handle.
-// On success, return true and set |*method_id|.
-extern bool InitStaticMethodId(JNIEnv* env,
-                               jclass clazz,
-                               const char* method_name,
-                               const char* method_sig,
-                               jmethodID* method_id);
-
 // Initialize a jfieldID corresponding to the static field of a given |clazz|,
 // with name |field_name| and signature |field_sig|.
 // |env| is the current JNI environment handle.
@@ -118,15 +120,6 @@ extern bool InitStaticFieldId(JNIEnv* env,
                               const char* field_name,
                               const char* field_sig,
                               jfieldID* field_id);
-
-// Initialize a jint corresponding to the static integer field of a class
-// with class name |class_name| and field name |field_name|.
-// |env| is the current JNI environment handle.
-// On success, return true and set |*value|.
-extern bool InitStaticInt(JNIEnv* env,
-                          const char* class_name,
-                          const char* field_name,
-                          jint* value);
 
 // Use Android ASLR to create a random library load address.
 // |env| is the current JNI environment handle, and |clazz| a class.
@@ -147,7 +140,7 @@ struct LibInfo_class {
   bool Init(JNIEnv* env) {
     jclass clazz;
     if (!InitClassReference(
-             env, "org/chromium/base/library_loader/Linker$LibInfo", &clazz)) {
+            env, "org/chromium/base/library_loader/Linker$LibInfo", &clazz)) {
       return false;
     }
 

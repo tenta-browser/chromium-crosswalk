@@ -9,7 +9,7 @@ cr.define('settings_toggle_button', () => {
      * Toggle button created before each test.
      * @type {SettingsCheckbox}
      */
-    var testElement;
+    let testElement;
 
     // Initialize a checked control before each test.
     setup(() => {
@@ -19,7 +19,7 @@ cr.define('settings_toggle_button', () => {
        * dependencies between tests.
        * @type {chrome.settingsPrivate.PrefObject}
        */
-      var pref = {
+      const pref = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.BOOLEAN,
         value: true
@@ -34,11 +34,11 @@ cr.define('settings_toggle_button', () => {
       assertTrue(testElement.checked);
       assertTrue(testElement.pref.value);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.checked);
       assertFalse(testElement.pref.value);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertTrue(testElement.checked);
       assertTrue(testElement.pref.value);
     });
@@ -49,7 +49,7 @@ cr.define('settings_toggle_button', () => {
         done();
       });
       assertTrue(testElement.checked);
-      MockInteractions.tap(testElement);
+      testElement.click();
     });
 
     test('fires a change event for label', (done) => {
@@ -58,7 +58,7 @@ cr.define('settings_toggle_button', () => {
         done();
       });
       assertTrue(testElement.checked);
-      MockInteractions.tap(testElement.$.labelWrapper);
+      testElement.$.labelWrapper.click();
     });
 
     test('fires a change event for toggle', (done) => {
@@ -67,7 +67,7 @@ cr.define('settings_toggle_button', () => {
         done();
       });
       assertTrue(testElement.checked);
-      MockInteractions.tap(testElement.$.control);
+      testElement.$.control.click();
     });
 
     test('fires a single change event per tap', () => {
@@ -75,11 +75,11 @@ cr.define('settings_toggle_button', () => {
       testElement.addEventListener('change', () => {
         ++counter;
       });
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertEquals(1, counter);
-      MockInteractions.tap(testElement.$.labelWrapper);
+      testElement.$.labelWrapper.click();
       assertEquals(2, counter);
-      MockInteractions.tap(testElement.$.control);
+      testElement.$.control.click();
       assertEquals(3, counter);
     });
 
@@ -89,7 +89,7 @@ cr.define('settings_toggle_button', () => {
       assertTrue(testElement.disabled);
       assertTrue(testElement.$.control.disabled);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.checked);
       assertFalse(testElement.$.control.checked);
     });
@@ -105,17 +105,17 @@ cr.define('settings_toggle_button', () => {
       assertTrue(testElement.pref.value);
       assertFalse(testElement.checked);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.pref.value);
       assertTrue(testElement.checked);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertTrue(testElement.pref.value);
       assertFalse(testElement.checked);
     });
 
     test('numerical pref', () => {
-      var prefNum = {
+      const prefNum = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 1
@@ -124,17 +124,17 @@ cr.define('settings_toggle_button', () => {
       testElement.set('pref', prefNum);
       assertTrue(testElement.checked);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.checked);
       assertEquals(0, prefNum.value);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertTrue(testElement.checked);
       assertEquals(1, prefNum.value);
     });
 
     test('numerical pref with custom values', () => {
-      var prefNum = {
+      const prefNum = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 5
@@ -145,17 +145,17 @@ cr.define('settings_toggle_button', () => {
       testElement.set('pref', prefNum);
       assertFalse(testElement.checked);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertTrue(testElement.checked);
       assertEquals(1, prefNum.value);
 
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.checked);
       assertEquals(5, prefNum.value);
     });
 
     test('numerical pref with unknown initial value', () => {
-      var prefNum = {
+      const prefNum = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 3
@@ -172,12 +172,12 @@ cr.define('settings_toggle_button', () => {
       assertEquals(3, prefNum.value);
 
       // Unchecking should still send the unchecked value to prefs.
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertFalse(testElement.checked);
       assertEquals(5, prefNum.value);
 
       // Checking should still send the normal checked value to prefs.
-      MockInteractions.tap(testElement);
+      testElement.click();
       assertTrue(testElement.checked);
       assertEquals(1, prefNum.value);
     });
@@ -185,7 +185,7 @@ cr.define('settings_toggle_button', () => {
     test('shows controlled indicator when pref is controlled', () => {
       assertFalse(!!testElement.$$('cr-policy-pref-indicator'));
 
-      var pref = {
+      const pref = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 3,
@@ -203,7 +203,7 @@ cr.define('settings_toggle_button', () => {
       assertFalse(!!testElement.$$('cr-policy-pref-indicator'));
 
       testElement.noExtensionIndicator = true;
-      var pref = {
+      const pref = {
         key: 'test',
         type: chrome.settingsPrivate.PrefType.NUMBER,
         value: 3,

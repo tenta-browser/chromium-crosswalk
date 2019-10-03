@@ -23,9 +23,9 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
@@ -35,20 +35,21 @@ import org.chromium.chrome.browser.locale.DefaultSearchEnginePromoDialog;
 import org.chromium.chrome.browser.locale.DefaultSearchEnginePromoDialog.DefaultSearchEnginePromoDialogObserver;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.omnibox.MatchClassificationStyle;
-import org.chromium.chrome.browser.omnibox.OmniboxSuggestion;
-import org.chromium.chrome.browser.omnibox.OmniboxSuggestion.MatchClassification;
 import org.chromium.chrome.browser.omnibox.UrlBar;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
+import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestion;
+import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestion.MatchClassification;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.searchwidget.SearchActivity.SearchActivityDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.MultiActivityTestRule;
 import org.chromium.chrome.test.util.ActivityUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.KeyUtils;
+import org.chromium.components.search_engines.TemplateUrl;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.KeyUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.util.ArrayList;
@@ -102,12 +103,12 @@ public class SearchActivityTest {
                 LocaleManager.setInstanceForTest(new LocaleManager() {
                     @Override
                     public int getSearchEnginePromoShowType() {
-                        return SEARCH_ENGINE_PROMO_SHOW_EXISTING;
+                        return SearchEnginePromoType.SHOW_EXISTING;
                     }
 
                     @Override
                     public List<TemplateUrl> getSearchEnginesForPromoDialog(int promoType) {
-                        return TemplateUrlService.getInstance().getSearchEngines();
+                        return TemplateUrlServiceFactory.get().getTemplateUrls();
                     }
                 });
                 super.showSearchEngineDialogIfNeeded(activity, onSearchEngineFinalized);
@@ -192,11 +193,15 @@ public class SearchActivityTest {
 
         // Monitor for ChromeTabbedActivity.
         final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        waitForChromeTabbedActivityToStart(() -> {
-            // Type in a URL that should get kicked to ChromeTabbedActivity.
-            setUrlBarText(searchActivity, url);
-            final UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
-            KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+        waitForChromeTabbedActivityToStart(new Callable<Void>() {
+            @Override
+            public Void call() {
+                // Type in a URL that should get kicked to ChromeTabbedActivity.
+                setUrlBarText(searchActivity, url);
+                final UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
+                KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+                return null;
+            }
         }, url);
     }
 
@@ -214,12 +219,8 @@ public class SearchActivityTest {
         setUrlBarText(searchActivity, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
         // Start loading native, then let the activity finish initialization.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                searchActivity.startDelayedNativeInitialization();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> searchActivity.startDelayedNativeInitialization());
 
         Assert.assertEquals(
                 1, mTestDelegate.shouldDelayNativeInitializationCallback.getCallCount());
@@ -233,15 +234,20 @@ public class SearchActivityTest {
         OmniboxTestUtils.waitForOmniboxSuggestions(locationBar);
 
         final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        waitForChromeTabbedActivityToStart(() -> {
-            // Hitting enter should submit the URL and kick the user to the browser.
-            UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
-            KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+        waitForChromeTabbedActivityToStart(new Callable<Void>() {
+            @Override
+            public Void call() {
+                // Hitting enter should submit the URL and kick the user to the browser.
+                UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
+                KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+                return null;
+            }
         }, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
     }
 
     @Test
     @SmallTest
+    @RetryOnFailure(message = "crbug.com/765476")
     public void testEnterUrlBeforeNativeIsLoaded() throws Exception {
         // Wait for the activity to load, but don't let it load the native library.
         mTestDelegate.shouldDelayLoadingNative = true;
@@ -258,19 +264,19 @@ public class SearchActivityTest {
         Assert.assertEquals(searchActivity, ApplicationStatus.getLastTrackedFocusedActivity());
         Assert.assertFalse(searchActivity.isFinishing());
 
-        waitForChromeTabbedActivityToStart(() -> {
-            // Finish initialization.  It should notice the URL is queued up and start the
-            // browser.
-            ThreadUtils.runOnUiThreadBlocking(
-                    () -> { searchActivity.startDelayedNativeInitialization(); });
+        waitForChromeTabbedActivityToStart(new Callable<Void>() {
+            @Override
+            public Void call() throws InterruptedException, TimeoutException {
+                // Finish initialization.  It should notice the URL is queued up and start the
+                // browser.
+                TestThreadUtils.runOnUiThreadBlocking(
+                        () -> { searchActivity.startDelayedNativeInitialization(); });
 
-            Assert.assertEquals(
-                    1, mTestDelegate.shouldDelayNativeInitializationCallback.getCallCount());
-            try {
+                Assert.assertEquals(
+                        1, mTestDelegate.shouldDelayNativeInitializationCallback.getCallCount());
                 mTestDelegate.showSearchEngineDialogIfNeededCallback.waitForCallback(0);
                 mTestDelegate.onFinishDeferredInitializationCallback.waitForCallback(0);
-            } catch (InterruptedException | TimeoutException e) {
-                Assert.fail("Unexpected exception");
+                return null;
             }
         }, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
     }
@@ -289,11 +295,11 @@ public class SearchActivityTest {
         List<MatchClassification> classifications = new ArrayList<>();
         classifications.add(new MatchClassification(0, MatchClassificationStyle.NONE));
         OmniboxSuggestion mockSuggestion = new OmniboxSuggestion(0, true, 0, 0,
-                "https://google.com", classifications, "https://google.com", classifications, "",
-                "", "", "https://google.com", false, false);
+                "https://google.com", classifications, "https://google.com", classifications, null,
+                "", "https://google.com", null, null, false, false);
         OmniboxSuggestion mockSuggestion2 = new OmniboxSuggestion(0, true, 0, 0,
-                "https://android.com", classifications, "https://android.com", classifications, "",
-                "", "", "https://android.com", false, false);
+                "https://android.com", classifications, "https://android.com", classifications,
+                null, "", "https://android.com", null, null, false, false);
         List<OmniboxSuggestion> list = new ArrayList<>();
         list.add(mockSuggestion);
         list.add(mockSuggestion2);
@@ -326,12 +332,8 @@ public class SearchActivityTest {
 
         // Set some text in the search box, then continue startup.
         setUrlBarText(searchActivity, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTestDelegate.onSearchEngineFinalizedCallback.onResult(true);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mTestDelegate.onSearchEngineFinalizedCallback.onResult(true));
 
         // Let the initialization finish completely.
         Assert.assertEquals(
@@ -346,10 +348,14 @@ public class SearchActivityTest {
         OmniboxTestUtils.waitForOmniboxSuggestions(locationBar, OMNIBOX_SHOW_TIMEOUT_MS);
 
         final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        waitForChromeTabbedActivityToStart(() -> {
-            // Hitting enter should submit the URL and kick the user to the browser.
-            UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
-            KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+        waitForChromeTabbedActivityToStart(new Callable<Void>() {
+            @Override
+            public Void call() {
+                // Hitting enter should submit the URL and kick the user to the browser.
+                UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
+                KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+                return null;
+            }
         }, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
     }
 
@@ -382,10 +388,14 @@ public class SearchActivityTest {
         OmniboxTestUtils.waitForOmniboxSuggestions(locationBar);
 
         final Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-        waitForChromeTabbedActivityToStart(() -> {
-            // Hitting enter should submit the URL and kick the user to the browser.
-            UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
-            KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+        waitForChromeTabbedActivityToStart(new Callable<Void>() {
+            @Override
+            public Void call() {
+                // Hitting enter should submit the URL and kick the user to the browser.
+                UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
+                KeyUtils.singleKeyEventView(instrumentation, urlBar, KeyEvent.KEYCODE_ENTER);
+                return null;
+            }
         }, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
     }
 
@@ -469,7 +479,7 @@ public class SearchActivityTest {
         return (SearchActivity) searchActivity;
     }
 
-    private void waitForChromeTabbedActivityToStart(Runnable trigger, String expectedUrl)
+    private void waitForChromeTabbedActivityToStart(Callable<Void> trigger, String expectedUrl)
             throws Exception {
         final ChromeTabbedActivity cta = ActivityUtils.waitForActivity(
                 InstrumentationRegistry.getInstrumentation(), ChromeTabbedActivity.class, trigger);
@@ -487,13 +497,18 @@ public class SearchActivityTest {
 
     @SuppressLint("SetTextI18n")
     private void setUrlBarText(final Activity activity, final String url) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
-            public void run() {
+            public boolean isSatisfied() {
                 UrlBar urlBar = (UrlBar) activity.findViewById(R.id.url_bar);
-                if (!urlBar.hasFocus()) urlBar.requestFocus();
-                urlBar.setText(url);
+                if (urlBar.isFocusable() && urlBar.hasFocus()) return true;
+                urlBar.requestFocus();
+                return false;
             }
+        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            UrlBar urlBar = (UrlBar) activity.findViewById(R.id.url_bar);
+            urlBar.setText(url);
         });
     }
 }

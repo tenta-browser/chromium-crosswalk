@@ -16,6 +16,7 @@ import android.util.AttributeSet;
 import android.view.View;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 
 /**
@@ -35,14 +36,14 @@ import org.chromium.chrome.R;
  * -------------------------------------------------------------------------------------------------
  * DEFINING THE CONTROL STYLING IN AN XML LAYOUT
  *
- * Add the "chrome" namespace as an attribute to the main tag of the layout file:
- * xmlns:chrome="http://schemas.android.com/apk/res-auto
+ * Add the "app" namespace as an attribute to the main tag of the layout file:
+ * xmlns:app="http://schemas.android.com/apk/res-auto
  *
  * These attributes control styling of the bar:
- * chrome:colorBackground         Background color of the progress bar.
- * chrome:colorProgress           Represents progress along the determinate progress bar.
- *                                Also used as the pulsing color.
- * chrome:colorSecondaryProgress  Represents secondary progress on top of the regular progress.
+ * app:colorBackground         Background color of the progress bar.
+ * app:colorProgress           Represents progress along the determinate progress bar.
+ *                             Also used as the pulsing color.
+ * app:colorSecondaryProgress  Represents secondary progress on top of the regular progress.
  */
 public class MaterialProgressBar extends View implements AnimatorUpdateListener {
     private static final long INDETERMINATE_ANIMATION_DURATION_MS = 3000;
@@ -239,5 +240,11 @@ public class MaterialProgressBar extends View implements AnimatorUpdateListener 
         } else {
             canvas.drawRect(start, 0, end, canvas.getHeight(), paint);
         }
+    }
+
+    /** @return The current progress value. */
+    @VisibleForTesting
+    public int getProgressForTesting() {
+        return mProgress;
     }
 }

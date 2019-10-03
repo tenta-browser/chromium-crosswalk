@@ -14,33 +14,127 @@
 
 vars = {
   'chromium_git': 'https://chromium.googlesource.com',
+  'pull_linux_clang': False,
+  'pull_win_toolchain': False
 }
 
 deps = {
   'buildtools':
-      Var('chromium_git') + '/chromium/buildtools.git@' +
-      'f6d165d9d842ddd29056c127a5f3a3c5d8e0d2e3',
+      Var('chromium_git') + '/chromium/src/buildtools.git@' +
+      '3e50219fc4503f461b2176a9976891b28d80f9ab',
   'crashpad/third_party/gtest/gtest':
       Var('chromium_git') + '/external/github.com/google/googletest@' +
-      '7b6561c56e353100aca8458d7bc49c4e0119bae8',
+      'da10da05c262af0a9e8fa91789a272a3dec67655',
   'crashpad/third_party/gyp/gyp':
       Var('chromium_git') + '/external/gyp@' +
-      'f72586209ecbf70b71ce690f2182ebe51669cbb3',
+      '8bee09f4a57807136593ddc906b0b213c21f9014',
+  'crashpad/third_party/lss/lss':
+      Var('chromium_git') + '/linux-syscall-support.git@' +
+      '8048ece6c16c91acfe0d36d1d3cc0890ab6e945c',
   'crashpad/third_party/mini_chromium/mini_chromium':
       Var('chromium_git') + '/chromium/mini_chromium@' +
-      'dd0c3e9680ae3c4c22f2221a2a75e48dd4a562ec',
+      '6ad086b2b6ed3b3169226ee9f311eb2332f332c2',
+  'crashpad/third_party/libfuzzer/src':
+      Var('chromium_git') + '/chromium/llvm-project/compiler-rt/lib/fuzzer.git@' +
+      'fda403cf93ecb8792cb1d061564d89a6553ca020',
   'crashpad/third_party/zlib/zlib':
       Var('chromium_git') + '/chromium/src/third_party/zlib@' +
       '13dc246a58e4b72104d35f9b1809af95221ebda7',
+
+  # CIPD packages below.
+  'crashpad/third_party/linux/clang/linux-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/clang/linux-amd64',
+        'version': 'goma',
+      },
+    ],
+    'condition': 'checkout_linux and pull_linux_clang',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/linux/clang/mac-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/clang/mac-amd64',
+        'version': 'goma',
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "mac"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/fuchsia/clang/linux-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/clang/linux-amd64',
+        'version': 'goma',
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "linux"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/fuchsia/qemu/mac-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/qemu/mac-amd64',
+        'version': 'latest'
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "mac"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/fuchsia/qemu/linux-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/qemu/linux-amd64',
+        'version': 'latest'
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "linux"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/fuchsia/sdk/mac-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/sdk/core/mac-amd64',
+        'version': 'latest'
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "mac"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/fuchsia/sdk/linux-amd64': {
+    'packages': [
+      {
+        'package': 'fuchsia/sdk/core/linux-amd64',
+        'version': 'latest'
+      },
+    ],
+    'condition': 'checkout_fuchsia and host_os == "linux"',
+    'dep_type': 'cipd'
+  },
+  'crashpad/third_party/win/toolchain': {
+    # This package is only updated when the solution in .gclient includes an
+    # entry like:
+    #   "custom_vars": { "pull_win_toolchain": True }
+    # This is because the contained bits are not redistributable.
+    'packages': [
+      {
+        'package': 'chrome_internal/third_party/sdk/windows',
+        'version': 'uploaded:2018-06-13'
+      },
+    ],
+    'condition': 'checkout_win and pull_win_toolchain',
+    'dep_type': 'cipd'
+  },
 }
 
 hooks = [
   {
     'name': 'clang_format_mac',
     'pattern': '.',
+    'condition': 'host_os == "mac"',
     'action': [
       'download_from_google_storage',
-      '--platform=^darwin$',
       '--no_resume',
       '--no_auth',
       '--bucket=chromium-clang-format',
@@ -49,24 +143,11 @@ hooks = [
     ],
   },
   {
-    'name': 'clang_format_win',
-    'pattern': '.',
-    'action': [
-      'download_from_google_storage',
-      '--platform=^win32$',
-      '--no_resume',
-      '--no_auth',
-      '--bucket=chromium-clang-format',
-      '--sha1_file',
-      'buildtools/win/clang-format.exe.sha1',
-    ],
-  },
-  {
     'name': 'clang_format_linux',
     'pattern': '.',
+    'condition': 'host_os == "linux"',
     'action': [
       'download_from_google_storage',
-      '--platform=^linux2?$',
       '--no_resume',
       '--no_auth',
       '--bucket=chromium-clang-format',
@@ -75,11 +156,24 @@ hooks = [
     ],
   },
   {
-    'name': 'gn_mac',
+    'name': 'clang_format_win',
     'pattern': '.',
+    'condition': 'host_os == "win"',
     'action': [
       'download_from_google_storage',
-      '--platform=^darwin$',
+      '--no_resume',
+      '--no_auth',
+      '--bucket=chromium-clang-format',
+      '--sha1_file',
+      'buildtools/win/clang-format.exe.sha1',
+    ],
+  },
+  {
+    'name': 'gn_mac',
+    'pattern': '.',
+    'condition': 'host_os == "mac"',
+    'action': [
+      'download_from_google_storage',
       '--no_resume',
       '--no_auth',
       '--bucket=chromium-gn',
@@ -88,24 +182,11 @@ hooks = [
     ],
   },
   {
-    'name': 'gn_win',
-    'pattern': '.',
-    'action': [
-      'download_from_google_storage',
-      '--platform=^win32$',
-      '--no_resume',
-      '--no_auth',
-      '--bucket=chromium-gn',
-      '--sha1_file',
-      'buildtools/win/gn.exe.sha1',
-    ],
-  },
-  {
     'name': 'gn_linux',
     'pattern': '.',
+    'condition': 'host_os == "linux"',
     'action': [
       'download_from_google_storage',
-      '--platform=^linux2?$',
       '--no_resume',
       '--no_auth',
       '--bucket=chromium-gn',
@@ -114,21 +195,27 @@ hooks = [
     ],
   },
   {
-    'name': 'fuchsia_clang',
+    'name': 'gn_win',
     'pattern': '.',
-    'condition': 'checkout_fuchsia',
+    'condition': 'host_os == "win"',
     'action': [
-      'cipd',
-      'ensure',
-      '-ensure-file', 'crashpad/third_party/fuchsia/toolchain.ensure',
-      '-root', 'crashpad/third_party/fuchsia',
-      '-log-level', 'info',
+      'download_from_google_storage',
+      '--no_resume',
+      '--no_auth',
+      '--bucket=chromium-gn',
+      '--sha1_file',
+      'buildtools/win/gn.exe.sha1',
     ],
   },
   {
-    'name': 'gyp',
-    'pattern': '\.gypi?$',
-    'action': ['python', 'crashpad/build/gyp_crashpad.py'],
+    # If using a local clang ("pull_linux_clang" above), also pull down a
+    # sysroot.
+    'name': 'sysroot_linux',
+    'pattern': '.',
+    'condition': 'checkout_linux and pull_linux_clang',
+    'action': [
+      'crashpad/build/install_linux_sysroot.py',
+    ],
   },
 ]
 

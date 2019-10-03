@@ -198,8 +198,7 @@ class V4Database {
       const base::FilePath& base_path,
       const ListInfos& list_infos,
       const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
-      NewDatabaseReadyCallback callback,
-      const base::TimeTicks create_start_time);
+      NewDatabaseReadyCallback callback);
 
   // Makes the passed |factory| the factory used to instantiate a V4Database.
   // Only for tests.
@@ -218,9 +217,9 @@ class V4Database {
                          std::unique_ptr<V4Store> store);
 
   // See |VerifyChecksum|.
-  void VerifyChecksumOnTaskRunner(
-      const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
-      DatabaseReadyForUpdatesCallback db_ready_for_updates_callback);
+  void OnChecksumVerified(
+      DatabaseReadyForUpdatesCallback db_ready_for_updates_callback,
+      const std::vector<ListIdentifier>& stores_to_reset);
 
   bool IsStoreAvailable(const ListIdentifier& identifier) const;
 
@@ -236,7 +235,7 @@ class V4Database {
 
   // Only meant to be dereferenced and invalidated on the IO thread and hence
   // named. For details, see the comment at the top of weak_ptr.h
-  base::WeakPtrFactory<V4Database> weak_factory_on_io_;
+  base::WeakPtrFactory<V4Database> weak_factory_on_io_{this};
 
   DISALLOW_COPY_AND_ASSIGN(V4Database);
 };

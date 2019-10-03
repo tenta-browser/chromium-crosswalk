@@ -6,7 +6,6 @@
 
 #include <unordered_set>
 
-#include "base/memory/ptr_util.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/category_status.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
@@ -78,12 +77,7 @@ void SuggestedArticlesObserver::OnNewSuggestions(Category category) {
   if (category != ArticlesCategory())
     return;
 
-  std::vector<PrefetchURL> prefetch_urls;
-  if (!GetCurrentSuggestions(&prefetch_urls))
-    return;
-
-  prefetch_service_->GetPrefetchDispatcher()->AddCandidatePrefetchURLs(
-      kSuggestedArticlesNamespace, prefetch_urls);
+  ConsumeSuggestions();
 }
 
 void SuggestedArticlesObserver::OnCategoryStatusChanged(
@@ -125,11 +119,20 @@ void SuggestedArticlesObserver::ContentSuggestionsServiceShutdown() {
   // No need to do anything here, we will just stop getting events.
 }
 
+void SuggestedArticlesObserver::ConsumeSuggestions() {
+  std::vector<PrefetchURL> prefetch_urls;
+  if (!GetCurrentSuggestions(&prefetch_urls))
+    return;
+
+  prefetch_service_->GetPrefetchDispatcher()->AddCandidatePrefetchURLs(
+      kSuggestedArticlesNamespace, prefetch_urls);
+}
+
 std::vector<ntp_snippets::ContentSuggestion>*
 SuggestedArticlesObserver::GetTestingArticles() {
   if (!test_articles_) {
     test_articles_ =
-        base::MakeUnique<std::vector<ntp_snippets::ContentSuggestion>>();
+        std::make_unique<std::vector<ntp_snippets::ContentSuggestion>>();
   }
   return test_articles_.get();
 }

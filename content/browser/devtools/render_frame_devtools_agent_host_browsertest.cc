@@ -5,15 +5,18 @@
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_base.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
-#include "content/public/test/controllable_http_response.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
 
 namespace content {
 
@@ -25,17 +28,30 @@ class RenderFrameDevToolsAgentHostBrowserTest : public ContentBrowserTest {
   }
 };
 
+namespace {
+
+// A DevToolsAgentHostClient implementation doing nothing.
+class StubDevToolsAgentHostClient : public content::DevToolsAgentHostClient {
+ public:
+  StubDevToolsAgentHostClient() {}
+  ~StubDevToolsAgentHostClient() override {}
+  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {}
+  void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
+                               const std::string& message) override {}
+};
+
+}  // namespace
+
 // This test checks which RenderFrameHostImpl the RenderFrameDevToolsAgentHost
 // is tracking while a cross-site navigation is canceled after having reached
 // the ReadyToCommit stage.
 // See https://crbug.com/695203.
 IN_PROC_BROWSER_TEST_F(RenderFrameDevToolsAgentHostBrowserTest,
                        CancelCrossOriginNavigationAfterReadyToCommit) {
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
-  ControllableHttpResponse response_b(embedded_test_server(), "/response_b");
-  ControllableHttpResponse response_c(embedded_test_server(), "/response_c");
+  net::test_server::ControllableHttpResponse response_b(embedded_test_server(),
+                                                        "/response_b");
+  net::test_server::ControllableHttpResponse response_c(embedded_test_server(),
+                                                        "/response_c");
   EXPECT_TRUE(embedded_test_server()->Start());
 
   // 1) Loads a document.
@@ -79,6 +95,10 @@ IN_PROC_BROWSER_TEST_F(RenderFrameDevToolsAgentHostBrowserTest,
   EXPECT_TRUE(observer_b.WaitForResponse());  // Headers are received.
   observer_b.ResumeNavigation();  // ReadyToCommitNavigation is called.
   EXPECT_EQ(speculative_rfh_b, rfh_devtools_agent->GetFrameHostForTesting());
+  auto speculative_rfh_b_site_id =
+      speculative_rfh_b->GetSiteInstance()->GetId();
+  if (AreDefaultSiteInstancesEnabled())
+    EXPECT_TRUE(speculative_rfh_b->GetSiteInstance()->IsDefaultSiteInstance());
 
   // 4) Navigate elsewhere, it will cancel the previous navigation.
 
@@ -90,7 +110,21 @@ IN_PROC_BROWSER_TEST_F(RenderFrameDevToolsAgentHostBrowserTest,
   RenderFrameHostImpl* speculative_rfh_c =
       root->render_manager()->speculative_frame_host();
   EXPECT_TRUE(speculative_rfh_c);
-  EXPECT_EQ(current_rfh, rfh_devtools_agent->GetFrameHostForTesting());
+  auto speculative_rfh_c_site_id =
+      speculative_rfh_c->GetSiteInstance()->GetId();
+  if (AreDefaultSiteInstancesEnabled()) {
+    // Verify that this new URL also belongs to the default SiteInstance and
+    // therefore the RenderFrameHost from the previous navigation could be
+    // reused.
+    EXPECT_TRUE(speculative_rfh_c->GetSiteInstance()->IsDefaultSiteInstance());
+    EXPECT_EQ(speculative_rfh_c, rfh_devtools_agent->GetFrameHostForTesting());
+    EXPECT_EQ(speculative_rfh_b_site_id, speculative_rfh_c_site_id);
+  } else {
+    // Verify that the RenderFrameHost is restored because the new URL required
+    // a new SiteInstance.
+    EXPECT_EQ(current_rfh, rfh_devtools_agent->GetFrameHostForTesting());
+    EXPECT_NE(speculative_rfh_b_site_id, speculative_rfh_c_site_id);
+  }
 
   // 4.b) Navigation: ReadyToCommit.
   observer_c.ResumeNavigation();  // Send the request.
@@ -109,6 +143,31 @@ IN_PROC_BROWSER_TEST_F(RenderFrameDevToolsAgentHostBrowserTest,
   observer_c.WaitForNavigationFinished();
   EXPECT_EQ(speculative_rfh_c, root->render_manager()->current_frame_host());
   EXPECT_EQ(speculative_rfh_c, rfh_devtools_agent->GetFrameHostForTesting());
+}
+
+// Regression test for https://crbug.com/795694.
+// * Open chrome://dino
+// * Open DevTools
+// * Reload from DevTools must work.
+IN_PROC_BROWSER_TEST_F(RenderFrameDevToolsAgentHostBrowserTest,
+                       ReloadDinoPage) {
+  // 1) Navigate to chrome://dino.
+  GURL dino_url(kChromeUIScheme + std::string("://") + kChromeUIDinoHost);
+  EXPECT_FALSE(NavigateToURL(shell(), dino_url));
+
+  // 2) Open DevTools.
+  scoped_refptr<DevToolsAgentHost> devtools_agent_host =
+      DevToolsAgentHost::GetOrCreateFor(shell()->web_contents());
+  StubDevToolsAgentHostClient devtools_agent_host_client;
+  devtools_agent_host->AttachClient(&devtools_agent_host_client);
+
+  // 3) Reload from DevTools.
+  TestNavigationObserver reload_observer(shell()->web_contents());
+  devtools_agent_host->DispatchProtocolMessage(
+      &devtools_agent_host_client,
+      R"({"id":1,"method": "Page.reload"})");
+  reload_observer.Wait();
+  devtools_agent_host->DetachClient(&devtools_agent_host_client);
 }
 
 }  // namespace content

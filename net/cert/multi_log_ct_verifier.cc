@@ -6,8 +6,6 @@
 
 #include <vector>
 
-#include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
@@ -19,7 +17,6 @@
 #include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_event_type.h"
-#include "net/log/net_log_parameters_callback.h"
 #include "net/log/net_log_with_source.h"
 
 namespace net {
@@ -45,16 +42,6 @@ void LogSCTOriginToUMA(ct::SignedCertificateTimestamp::Origin origin) {
                             ct::SignedCertificateTimestamp::SCT_ORIGIN_MAX);
 }
 
-// Count the number of SCTs that were available for each SSL connection
-// (including SCTs embedded in the certificate).
-// This metric would allow measuring:
-// * Of all SSL connections, how many had SCTs available for validation.
-// * When SCTs are available, how many are available per connection.
-void LogNumSCTsToUMA(const SignedCertificateTimestampAndStatusList& scts) {
-  UMA_HISTOGRAM_CUSTOM_COUNTS("Net.CertificateTransparency.SCTsPerConnection",
-                              scts.size(), 1, 10, 11);
-}
-
 void AddSCTAndLogStatus(scoped_refptr<ct::SignedCertificateTimestamp> sct,
                         ct::SCTVerifyStatus status,
                         SignedCertificateTimestampAndStatusList* sct_list) {
@@ -64,8 +51,7 @@ void AddSCTAndLogStatus(scoped_refptr<ct::SignedCertificateTimestamp> sct,
 
 }  // namespace
 
-MultiLogCTVerifier::MultiLogCTVerifier() : observer_(nullptr) {
-}
+MultiLogCTVerifier::MultiLogCTVerifier() {}
 
 MultiLogCTVerifier::~MultiLogCTVerifier() = default;
 
@@ -77,11 +63,8 @@ void MultiLogCTVerifier::AddLogs(
   }
 }
 
-void MultiLogCTVerifier::SetObserver(Observer* observer) {
-  observer_ = observer;
-}
-
 void MultiLogCTVerifier::Verify(
+    base::StringPiece hostname,
     X509Certificate* cert,
     base::StringPiece stapled_ocsp_response,
     base::StringPiece sct_list_from_tls_extension,
@@ -90,62 +73,66 @@ void MultiLogCTVerifier::Verify(
   DCHECK(cert);
   DCHECK(output_scts);
 
+  base::TimeTicks start = base::TimeTicks::Now();
+
   output_scts->clear();
 
   std::string embedded_scts;
-  if (!cert->GetIntermediateCertificates().empty() &&
-      ct::ExtractEmbeddedSCTList(
-          cert->os_cert_handle(),
-          &embedded_scts)) {
+  if (!cert->intermediate_buffers().empty() &&
+      ct::ExtractEmbeddedSCTList(cert->cert_buffer(), &embedded_scts)) {
     ct::SignedEntryData precert_entry;
 
-    if (ct::GetPrecertSignedEntry(cert->os_cert_handle(),
-                                  cert->GetIntermediateCertificates().front(),
+    if (ct::GetPrecertSignedEntry(cert->cert_buffer(),
+                                  cert->intermediate_buffers().front().get(),
                                   &precert_entry)) {
-      VerifySCTs(embedded_scts, precert_entry,
+      VerifySCTs(hostname, embedded_scts, precert_entry,
                  ct::SignedCertificateTimestamp::SCT_EMBEDDED, cert,
                  output_scts);
     }
   }
 
   std::string sct_list_from_ocsp;
-  if (!stapled_ocsp_response.empty() &&
-      !cert->GetIntermediateCertificates().empty()) {
+  if (!stapled_ocsp_response.empty() && !cert->intermediate_buffers().empty()) {
     ct::ExtractSCTListFromOCSPResponse(
-        cert->GetIntermediateCertificates().front(), cert->serial_number(),
+        cert->intermediate_buffers().front().get(), cert->serial_number(),
         stapled_ocsp_response, &sct_list_from_ocsp);
   }
 
   // Log to Net Log, after extracting SCTs but before possibly failing on
   // X.509 entry creation.
-  NetLogParametersCallback net_log_callback =
-      base::Bind(&NetLogRawSignedCertificateTimestampCallback, embedded_scts,
-                 sct_list_from_ocsp, sct_list_from_tls_extension);
-
-  net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED,
-                   net_log_callback);
+  net_log.AddEvent(
+      NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_RECEIVED, [&] {
+        return NetLogRawSignedCertificateTimestampParams(
+            embedded_scts, sct_list_from_ocsp, sct_list_from_tls_extension);
+      });
 
   ct::SignedEntryData x509_entry;
-  if (ct::GetX509SignedEntry(cert->os_cert_handle(), &x509_entry)) {
-    VerifySCTs(sct_list_from_ocsp, x509_entry,
+  if (ct::GetX509SignedEntry(cert->cert_buffer(), &x509_entry)) {
+    VerifySCTs(hostname, sct_list_from_ocsp, x509_entry,
                ct::SignedCertificateTimestamp::SCT_FROM_OCSP_RESPONSE, cert,
                output_scts);
 
-    VerifySCTs(sct_list_from_tls_extension, x509_entry,
+    VerifySCTs(hostname, sct_list_from_tls_extension, x509_entry,
                ct::SignedCertificateTimestamp::SCT_FROM_TLS_EXTENSION, cert,
                output_scts);
   }
 
-  NetLogParametersCallback net_log_checked_callback =
-      base::Bind(&NetLogSignedCertificateTimestampCallback, output_scts);
+  // Only log the verification time if SCTs were provided.
+  if (!output_scts->empty()) {
+    base::TimeDelta verify_time = base::TimeTicks::Now() - start;
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "Net.CertificateTransparency.SCT.VerificationTime", verify_time,
+        base::TimeDelta::FromMicroseconds(1),
+        base::TimeDelta::FromMilliseconds(100), 50);
+  }
 
-  net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED,
-                   net_log_checked_callback);
-
-  LogNumSCTsToUMA(*output_scts);
+  net_log.AddEvent(NetLogEventType::SIGNED_CERTIFICATE_TIMESTAMPS_CHECKED, [&] {
+    return NetLogSignedCertificateTimestampParams(output_scts);
+  });
 }
 
 void MultiLogCTVerifier::VerifySCTs(
+    base::StringPiece hostname,
     base::StringPiece encoded_sct_list,
     const ct::SignedEntryData& expected_entry,
     ct::SignedCertificateTimestamp::Origin origin,
@@ -171,11 +158,18 @@ void MultiLogCTVerifier::VerifySCTs(
     }
     decoded_sct->origin = origin;
 
-    VerifySingleSCT(decoded_sct, expected_entry, cert, output_scts);
+    base::TimeTicks start = base::TimeTicks::Now();
+    VerifySingleSCT(hostname, decoded_sct, expected_entry, cert, output_scts);
+    base::TimeDelta verify_time = base::TimeTicks::Now() - start;
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "Net.CertificateTransparency.SCT.SingleVerificationTime", verify_time,
+        base::TimeDelta::FromMicroseconds(1),
+        base::TimeDelta::FromMilliseconds(100), 50);
   }
 }
 
 bool MultiLogCTVerifier::VerifySingleSCT(
+    base::StringPiece hostname,
     scoped_refptr<ct::SignedCertificateTimestamp> sct,
     const ct::SignedEntryData& expected_entry,
     X509Certificate* cert,
@@ -204,8 +198,6 @@ bool MultiLogCTVerifier::VerifySingleSCT(
   }
 
   AddSCTAndLogStatus(sct, ct::SCT_STATUS_OK, output_scts);
-  if (observer_)
-    observer_->OnSCTVerified(cert, sct.get());
   return true;
 }
 

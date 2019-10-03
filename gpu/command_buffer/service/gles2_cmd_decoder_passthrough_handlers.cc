@@ -4,6 +4,10 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder_passthrough.h"
 
+#include "gpu/command_buffer/common/discardable_handle.h"
+#include "gpu/command_buffer/service/multi_draw_manager.h"
+#include "ui/gfx/ipc/color/gfx_param_traits.h"
+
 namespace gpu {
 namespace gles2 {
 
@@ -53,7 +57,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleBufferData(
 error::Error GLES2DecoderPassthroughImpl::HandleClientWaitSync(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::ClientWaitSync& c =
@@ -97,7 +101,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleCreateShader(
 error::Error GLES2DecoderPassthroughImpl::HandleFenceSync(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::FenceSync& c =
@@ -208,7 +212,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniform(
 error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformBlockiv(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetActiveUniformBlockiv& c =
@@ -245,7 +249,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformBlockiv(
 error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformBlockName(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetActiveUniformBlockName& c =
@@ -284,7 +288,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformBlockName(
 error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformsiv(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetActiveUniformsiv& c =
@@ -302,8 +306,12 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetActiveUniformsiv(
   GLsizei uniformCount = static_cast<GLsizei>(bucket->size() / sizeof(GLuint));
   const GLuint* indices = bucket->GetDataAs<const GLuint*>(0, bucket->size());
   typedef cmds::GetActiveUniformsiv::Result Result;
-  Result* result = GetSharedMemoryAs<Result*>(
-      params_shm_id, params_shm_offset, Result::ComputeSize(uniformCount));
+  uint32_t checked_size = 0;
+  if (!Result::ComputeSize(uniformCount).AssignIfValid(&checked_size)) {
+    return error::kOutOfBounds;
+  }
+  Result* result = GetSharedMemoryAs<Result*>(params_shm_id, params_shm_offset,
+                                              checked_size);
   GLint* params = result ? result->GetData() : nullptr;
   if (params == nullptr) {
     return error::kOutOfBounds;
@@ -335,8 +343,12 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetAttachedShaders(
 
   typedef cmds::GetAttachedShaders::Result Result;
   uint32_t maxCount = Result::ComputeMaxResults(result_size);
+  uint32_t checked_size = 0;
+  if (!Result::ComputeSize(maxCount).AssignIfValid(&checked_size)) {
+    return error::kOutOfBounds;
+  }
   Result* result = GetSharedMemoryAs<Result*>(result_shm_id, result_shm_offset,
-                                              Result::ComputeSize(maxCount));
+                                              checked_size);
   if (!result) {
     return error::kOutOfBounds;
   }
@@ -384,35 +396,10 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetAttribLocation(
   return DoGetAttribLocation(program, name_str.c_str(), location);
 }
 
-error::Error GLES2DecoderPassthroughImpl::HandleGetBufferSubDataAsyncCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
-    return error::kUnknownCommand;
-  }
-  const volatile gles2::cmds::GetBufferSubDataAsyncCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::GetBufferSubDataAsyncCHROMIUM*>(
-          cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
-  GLintptr offset = static_cast<GLintptr>(c.offset);
-  GLsizeiptr size = static_cast<GLsizeiptr>(c.size);
-  uint32_t data_shm_id = c.data_shm_id;
-  uint32_t data_shm_offset = c.data_shm_offset;
-
-  uint8_t* mem =
-      GetSharedMemoryAs<uint8_t*>(data_shm_id, data_shm_offset, size);
-  if (!mem) {
-    return error::kOutOfBounds;
-  }
-
-  return DoGetBufferSubDataAsyncCHROMIUM(target, offset, size, mem);
-}
-
-
 error::Error GLES2DecoderPassthroughImpl::HandleGetFragDataLocation(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetFragDataLocation& c =
@@ -444,7 +431,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetFragDataLocation(
 error::Error GLES2DecoderPassthroughImpl::HandleGetInternalformativ(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetInternalformativ& c =
@@ -493,6 +480,162 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetProgramInfoLog(
 
   Bucket* bucket = CreateBucket(bucket_id);
   bucket->SetFromString(infolog.c_str());
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleGetProgramResourceiv(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  if (!feature_info_->IsWebGL2ComputeContext()) {
+    return error::kUnknownCommand;
+  }
+  const volatile gles2::cmds::GetProgramResourceiv& c =
+      *static_cast<const volatile gles2::cmds::GetProgramResourceiv*>(cmd_data);
+  GLuint program = static_cast<GLuint>(c.program);
+  GLenum program_interface = static_cast<GLenum>(c.program_interface);
+  GLuint index = static_cast<GLuint>(c.index);
+  uint32_t props_bucket_id = c.props_bucket_id;
+  uint32_t params_shm_id = c.params_shm_id;
+  uint32_t params_shm_offset = c.params_shm_offset;
+
+  Bucket* bucket = GetBucket(props_bucket_id);
+  if (!bucket) {
+    return error::kInvalidArguments;
+  }
+  GLsizei prop_count = static_cast<GLsizei>(bucket->size() / sizeof(GLenum));
+  const GLenum* props = bucket->GetDataAs<const GLenum*>(0, bucket->size());
+  unsigned int buffer_size = 0;
+  typedef cmds::GetProgramResourceiv::Result Result;
+  Result* result = GetSharedMemoryAndSizeAs<Result*>(
+      params_shm_id, params_shm_offset, sizeof(Result), &buffer_size);
+  GLint* params = result ? result->GetData() : nullptr;
+  if (params == nullptr) {
+    return error::kOutOfBounds;
+  }
+  // Check that the client initialized the result.
+  if (result->size != 0) {
+    return error::kInvalidArguments;
+  }
+  GLsizei bufsize = Result::ComputeMaxResults(buffer_size);
+  GLsizei length = 0;
+  error::Error error = DoGetProgramResourceiv(
+      program, program_interface, index, prop_count, props, bufsize, &length,
+      params);
+  if (error != error::kNoError) {
+    return error;
+  }
+  if (length > bufsize) {
+    return error::kOutOfBounds;
+  }
+  result->SetNumResults(length);
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleGetProgramResourceIndex(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  if (!feature_info_->IsWebGL2ComputeContext()) {
+    return error::kUnknownCommand;
+  }
+  const volatile gles2::cmds::GetProgramResourceIndex& c =
+      *static_cast<const volatile gles2::cmds::GetProgramResourceIndex*>(
+          cmd_data);
+  GLuint program = static_cast<GLuint>(c.program);
+  GLenum program_interface = static_cast<GLenum>(c.program_interface);
+  uint32_t name_bucket_id = c.name_bucket_id;
+  uint32_t index_shm_id = c.index_shm_id;
+  uint32_t index_shm_offset = c.index_shm_offset;
+
+  Bucket* bucket = GetBucket(name_bucket_id);
+  if (!bucket) {
+    return error::kInvalidArguments;
+  }
+  std::string name_str;
+  if (!bucket->GetAsString(&name_str)) {
+    return error::kInvalidArguments;
+  }
+  GLuint* index = GetSharedMemoryAs<GLuint*>(
+      index_shm_id, index_shm_offset, sizeof(GLuint));
+  if (!index) {
+    return error::kOutOfBounds;
+  }
+  if (*index != GL_INVALID_INDEX) {
+    return error::kInvalidArguments;
+  }
+  return DoGetProgramResourceIndex(
+      program, program_interface, name_str.c_str(), index);
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleGetProgramResourceLocation(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  if (!feature_info_->IsWebGL2ComputeContext()) {
+    return error::kUnknownCommand;
+  }
+  const volatile gles2::cmds::GetProgramResourceLocation& c =
+      *static_cast<const volatile gles2::cmds::GetProgramResourceLocation*>(
+          cmd_data);
+  GLuint program = static_cast<GLuint>(c.program);
+  GLenum program_interface = static_cast<GLenum>(c.program_interface);
+  uint32_t name_bucket_id = c.name_bucket_id;
+  uint32_t location_shm_id = c.location_shm_id;
+  uint32_t location_shm_offset = c.location_shm_offset;
+
+  Bucket* bucket = GetBucket(name_bucket_id);
+  if (!bucket) {
+    return error::kInvalidArguments;
+  }
+  std::string name_str;
+  if (!bucket->GetAsString(&name_str)) {
+    return error::kInvalidArguments;
+  }
+  GLint* location = GetSharedMemoryAs<GLint*>(
+      location_shm_id, location_shm_offset, sizeof(GLint));
+  if (!location) {
+    return error::kOutOfBounds;
+  }
+  if (*location != -1) {
+    return error::kInvalidArguments;
+  }
+  return DoGetProgramResourceLocation(
+      program, program_interface, name_str.c_str(), location);
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleGetProgramResourceName(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  if (!feature_info_->IsWebGL2ComputeContext()) {
+    return error::kUnknownCommand;
+  }
+  const volatile gles2::cmds::GetProgramResourceName& c =
+      *static_cast<const volatile gles2::cmds::GetProgramResourceName*>(
+          cmd_data);
+  GLuint program = static_cast<GLuint>(c.program);
+  GLenum program_interface = static_cast<GLenum>(c.program_interface);
+  GLuint index = static_cast<GLuint>(c.index);
+  uint32_t name_bucket_id = c.name_bucket_id;
+  uint32_t result_shm_id = c.result_shm_id;
+  uint32_t result_shm_offset = c.result_shm_offset;
+
+  typedef cmds::GetProgramResourceName::Result Result;
+  Result* result = GetSharedMemoryAs<Result*>(
+      result_shm_id, result_shm_offset, sizeof(*result));
+  if (!result) {
+    return error::kOutOfBounds;
+  }
+  // Check that the client initialized the result.
+  if (*result != 0) {
+    return error::kInvalidArguments;
+  }
+  std::string name;
+  error::Error error =
+      DoGetProgramResourceName(program, program_interface, index, &name);
+  if (error != error::kNoError) {
+    return error;
+  }
+  *result = 1;
+  Bucket* bucket = CreateBucket(name_bucket_id);
+  bucket->SetFromString(name.c_str());
   return error::kNoError;
 }
 
@@ -587,7 +730,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetString(
 error::Error GLES2DecoderPassthroughImpl::HandleGetTransformFeedbackVarying(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetTransformFeedbackVarying& c =
@@ -630,7 +773,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetTransformFeedbackVarying(
 error::Error GLES2DecoderPassthroughImpl::HandleGetUniformBlockIndex(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetUniformBlockIndex& c =
@@ -726,7 +869,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetUniformiv(
 error::Error GLES2DecoderPassthroughImpl::HandleGetUniformuiv(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetUniformuiv& c =
@@ -761,7 +904,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetUniformuiv(
 error::Error GLES2DecoderPassthroughImpl::HandleGetUniformIndices(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetUniformIndices& c =
@@ -782,9 +925,12 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetUniformIndices(
     return error::kInvalidArguments;
   }
   typedef cmds::GetUniformIndices::Result Result;
-  Result* result = GetSharedMemoryAs<Result*>(
-      indices_shm_id, indices_shm_offset,
-      Result::ComputeSize(static_cast<size_t>(count)));
+  uint32_t checked_size = 0;
+  if (!Result::ComputeSize(count).AssignIfValid(&checked_size)) {
+    return error::kOutOfBounds;
+  }
+  Result* result = GetSharedMemoryAs<Result*>(indices_shm_id,
+                                              indices_shm_offset, checked_size);
   GLuint* indices = result ? result->GetData() : nullptr;
   if (indices == nullptr) {
     return error::kOutOfBounds;
@@ -968,7 +1114,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleShaderBinary(
   uint32_t binary_shm_offset = c.binary_shm_offset;
 
   uint32_t data_size;
-  if (!SafeMultiplyUint32(n, sizeof(GLuint), &data_size)) {
+  if (!base::CheckMul(n, sizeof(GLuint)).AssignIfValid(&data_size)) {
     return error::kOutOfBounds;
   }
   const GLuint* shaders = GetSharedMemoryAs<const GLuint*>(
@@ -1019,7 +1165,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexImage2D(
 error::Error GLES2DecoderPassthroughImpl::HandleTexImage3D(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::TexImage3D& c =
@@ -1091,7 +1237,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage2D(
 error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage3D(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::TexSubImage3D& c =
@@ -1130,7 +1276,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage3D(
 error::Error GLES2DecoderPassthroughImpl::HandleUniformBlockBinding(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::UniformBlockBinding& c =
@@ -1145,7 +1291,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleUniformBlockBinding(
 error::Error GLES2DecoderPassthroughImpl::HandleVertexAttribIPointer(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::VertexAttribIPointer& c =
@@ -1179,7 +1325,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleVertexAttribPointer(
 error::Error GLES2DecoderPassthroughImpl::HandleWaitSync(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context())
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext())
     return error::kUnknownCommand;
   const volatile gles2::cmds::WaitSync& c =
       *static_cast<const volatile gles2::cmds::WaitSync*>(cmd_data);
@@ -1331,7 +1477,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleEnableFeatureCHROMIUM(
 error::Error GLES2DecoderPassthroughImpl::HandleMapBufferRange(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::MapBufferRange& c =
@@ -1370,7 +1516,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleMapBufferRange(
 error::Error GLES2DecoderPassthroughImpl::HandleUnmapBuffer(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::UnmapBuffer& c =
@@ -1470,7 +1616,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleGetProgramInfoCHROMIUM(
 error::Error GLES2DecoderPassthroughImpl::HandleGetUniformBlocksCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetUniformBlocksCHROMIUM& c =
@@ -1498,7 +1644,7 @@ error::Error
 GLES2DecoderPassthroughImpl::HandleGetTransformFeedbackVaryingsCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetTransformFeedbackVaryingsCHROMIUM& c =
@@ -1526,7 +1672,7 @@ GLES2DecoderPassthroughImpl::HandleGetTransformFeedbackVaryingsCHROMIUM(
 error::Error GLES2DecoderPassthroughImpl::HandleGetUniformsES3CHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::GetUniformsES3CHROMIUM& c =
@@ -1584,8 +1730,10 @@ error::Error GLES2DecoderPassthroughImpl::HandlePostSubBufferCHROMIUM(
   GLint y = static_cast<GLint>(c.y);
   GLint width = static_cast<GLint>(c.width);
   GLint height = static_cast<GLint>(c.height);
+  GLuint64 swap_id = static_cast<GLuint64>(c.swap_id());
+  GLbitfield flags = static_cast<GLbitfield>(c.flags);
 
-  return DoPostSubBufferCHROMIUM(x, y, width, height);
+  return DoPostSubBufferCHROMIUM(swap_id, x, y, width, height, flags);
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleDrawArraysInstancedANGLE(
@@ -1622,6 +1770,181 @@ error::Error GLES2DecoderPassthroughImpl::HandleDrawElementsInstancedANGLE(
   GLsizei primcount = static_cast<GLsizei>(c.primcount);
 
   return DoDrawElementsInstancedANGLE(mode, count, type, indices, primcount);
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleMultiDrawArraysCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::MultiDrawArraysCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::MultiDrawArraysCHROMIUM*>(
+          cmd_data);
+  if (!features().webgl_multi_draw) {
+    return error::kUnknownCommand;
+  }
+
+  GLenum mode = static_cast<GLenum>(c.mode);
+  GLsizei drawcount = static_cast<GLsizei>(c.drawcount);
+
+  uint32_t firsts_size, counts_size;
+  base::CheckedNumeric<uint32_t> checked_size(drawcount);
+  if (!(checked_size * sizeof(GLint)).AssignIfValid(&firsts_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&counts_size)) {
+    return error::kOutOfBounds;
+  }
+  const GLint* firsts = GetSharedMemoryAs<const GLint*>(
+      c.firsts_shm_id, c.firsts_shm_offset, firsts_size);
+  const GLsizei* counts = GetSharedMemoryAs<const GLsizei*>(
+      c.counts_shm_id, c.counts_shm_offset, counts_size);
+  if (firsts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (!multi_draw_manager_->MultiDrawArrays(mode, firsts, counts, drawcount)) {
+    return error::kInvalidArguments;
+  }
+  return error::kNoError;
+}
+
+error::Error
+GLES2DecoderPassthroughImpl::HandleMultiDrawArraysInstancedCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::MultiDrawArraysInstancedCHROMIUM& c =
+      *static_cast<
+          const volatile gles2::cmds::MultiDrawArraysInstancedCHROMIUM*>(
+          cmd_data);
+  if (!features().webgl_multi_draw_instanced) {
+    return error::kUnknownCommand;
+  }
+
+  GLenum mode = static_cast<GLenum>(c.mode);
+  GLsizei drawcount = static_cast<GLsizei>(c.drawcount);
+
+  uint32_t firsts_size, counts_size, instance_counts_size;
+  base::CheckedNumeric<uint32_t> checked_size(drawcount);
+  if (!(checked_size * sizeof(GLint)).AssignIfValid(&firsts_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&counts_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&instance_counts_size)) {
+    return error::kOutOfBounds;
+  }
+  const GLint* firsts = GetSharedMemoryAs<const GLint*>(
+      c.firsts_shm_id, c.firsts_shm_offset, firsts_size);
+  const GLsizei* counts = GetSharedMemoryAs<const GLsizei*>(
+      c.counts_shm_id, c.counts_shm_offset, counts_size);
+  const GLsizei* instance_counts = GetSharedMemoryAs<const GLsizei*>(
+      c.instance_counts_shm_id, c.instance_counts_shm_offset,
+      instance_counts_size);
+  if (firsts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (instance_counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (!multi_draw_manager_->MultiDrawArraysInstanced(
+          mode, firsts, counts, instance_counts, drawcount)) {
+    return error::kInvalidArguments;
+  }
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleMultiDrawElementsCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::MultiDrawElementsCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::MultiDrawElementsCHROMIUM*>(
+          cmd_data);
+  if (!features().webgl_multi_draw) {
+    return error::kUnknownCommand;
+  }
+
+  GLenum mode = static_cast<GLenum>(c.mode);
+  GLenum type = static_cast<GLenum>(c.type);
+  GLsizei drawcount = static_cast<GLsizei>(c.drawcount);
+
+  uint32_t counts_size, offsets_size;
+  base::CheckedNumeric<uint32_t> checked_size(drawcount);
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&counts_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&offsets_size)) {
+    return error::kOutOfBounds;
+  }
+  const GLsizei* counts = GetSharedMemoryAs<const GLsizei*>(
+      c.counts_shm_id, c.counts_shm_offset, counts_size);
+  const GLsizei* offsets = GetSharedMemoryAs<const GLsizei*>(
+      c.offsets_shm_id, c.offsets_shm_offset, offsets_size);
+  if (counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (offsets == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (!multi_draw_manager_->MultiDrawElements(mode, counts, type, offsets,
+                                              drawcount)) {
+    return error::kInvalidArguments;
+  }
+  return error::kNoError;
+}
+
+error::Error
+GLES2DecoderPassthroughImpl::HandleMultiDrawElementsInstancedCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::MultiDrawElementsInstancedCHROMIUM& c =
+      *static_cast<
+          const volatile gles2::cmds::MultiDrawElementsInstancedCHROMIUM*>(
+          cmd_data);
+  if (!features().webgl_multi_draw_instanced) {
+    return error::kUnknownCommand;
+  }
+
+  GLenum mode = static_cast<GLenum>(c.mode);
+  GLenum type = static_cast<GLenum>(c.type);
+  GLsizei drawcount = static_cast<GLsizei>(c.drawcount);
+
+  uint32_t counts_size, offsets_size, instance_counts_size;
+  base::CheckedNumeric<uint32_t> checked_size(drawcount);
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&counts_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&offsets_size)) {
+    return error::kOutOfBounds;
+  }
+  if (!(checked_size * sizeof(GLsizei)).AssignIfValid(&instance_counts_size)) {
+    return error::kOutOfBounds;
+  }
+  const GLsizei* counts = GetSharedMemoryAs<const GLsizei*>(
+      c.counts_shm_id, c.counts_shm_offset, counts_size);
+  const GLsizei* offsets = GetSharedMemoryAs<const GLsizei*>(
+      c.offsets_shm_id, c.offsets_shm_offset, offsets_size);
+  const GLsizei* instance_counts = GetSharedMemoryAs<const GLsizei*>(
+      c.instance_counts_shm_id, c.instance_counts_shm_offset,
+      instance_counts_size);
+  if (counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (offsets == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (instance_counts == nullptr) {
+    return error::kOutOfBounds;
+  }
+  if (!multi_draw_manager_->MultiDrawElementsInstanced(
+          mode, counts, type, offsets, instance_counts, drawcount)) {
+    return error::kInvalidArguments;
+  }
+  return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleVertexAttribDivisorANGLE(
@@ -1672,8 +1995,10 @@ error::Error GLES2DecoderPassthroughImpl::HandleTraceBeginCHROMIUM(
 
   Bucket* category_bucket = GetBucket(category_bucket_id);
   Bucket* name_bucket = GetBucket(name_bucket_id);
-  if (!category_bucket || category_bucket->size() == 0 || !name_bucket ||
-      name_bucket->size() == 0) {
+  static constexpr size_t kMaxStrLen = 256;
+  if (!category_bucket || category_bucket->size() == 0 ||
+      category_bucket->size() > kMaxStrLen || !name_bucket ||
+      name_bucket->size() == 0 || name_bucket->size() > kMaxStrLen) {
     return error::kInvalidArguments;
   }
 
@@ -1691,42 +2016,6 @@ error::Error GLES2DecoderPassthroughImpl::HandleDescheduleUntilFinishedCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
   return DoDescheduleUntilFinishedCHROMIUM();
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleInsertFenceSyncCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::InsertFenceSyncCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::InsertFenceSyncCHROMIUM*>(
-          cmd_data);
-  GLuint64 release_count = c.release_count();
-
-  return DoInsertFenceSyncCHROMIUM(release_count);
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleWaitSyncTokenCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::WaitSyncTokenCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::WaitSyncTokenCHROMIUM*>(
-          cmd_data);
-  CommandBufferNamespace namespace_id =
-      static_cast<gpu::CommandBufferNamespace>(c.namespace_id);
-  const uint64_t release_count = c.release_count();
-  CommandBufferId command_buffer_id =
-      CommandBufferId::FromUnsafeValue(c.command_buffer_id());
-
-  const CommandBufferNamespace kMinNamespaceId =
-      CommandBufferNamespace::INVALID;
-  const CommandBufferNamespace kMaxNamespaceId =
-      CommandBufferNamespace::NUM_COMMAND_BUFFER_NAMESPACES;
-  if ((namespace_id < static_cast<int32_t>(kMinNamespaceId)) ||
-      (namespace_id >= static_cast<int32_t>(kMaxNamespaceId))) {
-    namespace_id = gpu::CommandBufferNamespace::INVALID;
-  }
-
-  return DoWaitSyncTokenCHROMIUM(namespace_id, command_buffer_id,
-                                 release_count);
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleDiscardBackbufferCHROMIUM(
@@ -1749,13 +2038,16 @@ error::Error GLES2DecoderPassthroughImpl::HandleScheduleOverlayPlaneCHROMIUM(
   GLint bounds_width = static_cast<GLint>(c.bounds_width);
   GLint bounds_height = static_cast<GLint>(c.bounds_height);
   GLfloat uv_x = static_cast<GLfloat>(c.uv_x);
-  GLfloat uv_y = static_cast<GLfloat>(c.uv_x);
-  GLfloat uv_width = static_cast<GLfloat>(c.uv_x);
-  GLfloat uv_height = static_cast<GLfloat>(c.uv_x);
+  GLfloat uv_y = static_cast<GLfloat>(c.uv_y);
+  GLfloat uv_width = static_cast<GLfloat>(c.uv_width);
+  GLfloat uv_height = static_cast<GLfloat>(c.uv_height);
+  bool enable_blend = static_cast<bool>(c.enable_blend);
+  GLuint gpu_fence_id = static_cast<GLuint>(c.gpu_fence_id);
 
   return DoScheduleOverlayPlaneCHROMIUM(
       plane_z_order, plane_transform, overlay_texture_id, bounds_x, bounds_y,
-      bounds_width, bounds_height, uv_x, uv_y, uv_width, uv_height);
+      bounds_width, bounds_height, uv_x, uv_y, uv_width, uv_height,
+      enable_blend, gpu_fence_id);
 }
 
 error::Error
@@ -1772,14 +2064,17 @@ GLES2DecoderPassthroughImpl::HandleScheduleCALayerSharedStateCHROMIUM(
   uint32_t shm_id = c.shm_id;
   uint32_t shm_offset = c.shm_offset;
 
+  // 4 for |clip_rect|, 5 for |rounded_corner_bounds|, 16 for |transform|.
   const GLfloat* mem = GetSharedMemoryAs<const GLfloat*>(shm_id, shm_offset,
-                                                         20 * sizeof(GLfloat));
+                                                         25 * sizeof(GLfloat));
   if (!mem) {
     return error::kOutOfBounds;
   }
   const GLfloat* clip_rect = mem + 0;
-  const GLfloat* transform = mem + 4;
+  const GLfloat* rounded_corner_bounds = mem + 4;
+  const GLfloat* transform = mem + 9;
   return DoScheduleCALayerSharedStateCHROMIUM(opacity, is_clipped, clip_rect,
+                                              rounded_corner_bounds,
                                               sorting_context_id, transform);
 }
 
@@ -1792,6 +2087,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleScheduleCALayerCHROMIUM(
   GLuint contents_texture_id = static_cast<GLint>(c.contents_texture_id);
   GLuint background_color = static_cast<GLuint>(c.background_color);
   GLuint edge_aa_mask = static_cast<GLuint>(c.edge_aa_mask);
+  GLenum filter = static_cast<GLenum>(c.filter);
   uint32_t shm_id = c.shm_id;
   uint32_t shm_offset = c.shm_offset;
 
@@ -1803,71 +2099,35 @@ error::Error GLES2DecoderPassthroughImpl::HandleScheduleCALayerCHROMIUM(
   const GLfloat* contents_rect = mem;
   const GLfloat* bounds_rect = mem + 4;
   return DoScheduleCALayerCHROMIUM(contents_texture_id, contents_rect,
-                                   background_color, edge_aa_mask, bounds_rect);
-}
-
-error::Error
-GLES2DecoderPassthroughImpl::HandleScheduleDCLayerSharedStateCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::ScheduleDCLayerSharedStateCHROMIUM& c =
-      *static_cast<
-          const volatile gles2::cmds::ScheduleDCLayerSharedStateCHROMIUM*>(
-          cmd_data);
-  GLfloat opacity = static_cast<GLfloat>(c.opacity);
-  GLboolean is_clipped = static_cast<GLboolean>(c.is_clipped);
-  GLint z_order = static_cast<GLint>(c.z_order);
-  uint32_t shm_id = c.shm_id;
-  uint32_t shm_offset = c.shm_offset;
-
-  const GLfloat* mem = GetSharedMemoryAs<const GLfloat*>(shm_id, shm_offset,
-                                                         20 * sizeof(GLfloat));
-  if (!mem) {
-    return error::kOutOfBounds;
-  }
-  const GLfloat* clip_rect = mem + 0;
-  const GLfloat* transform = mem + 4;
-  return DoScheduleDCLayerSharedStateCHROMIUM(opacity, is_clipped, clip_rect,
-                                              z_order, transform);
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleScheduleDCLayerCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::ScheduleDCLayerCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::ScheduleDCLayerCHROMIUM*>(
-          cmd_data);
-  GLuint background_color = static_cast<GLuint>(c.background_color);
-  GLuint edge_aa_mask = static_cast<GLuint>(c.edge_aa_mask);
-  GLenum filter = static_cast<GLenum>(c.filter);
-  const GLsizei num_textures = c.num_textures;
-  uint32_t shm_id = c.shm_id;
-  uint32_t shm_offset = c.shm_offset;
-
-  unsigned int size;
-  const GLfloat* mem = GetSharedMemoryAndSizeAs<const GLfloat*>(
-      shm_id, shm_offset, 8 * sizeof(GLfloat), &size);
-  if (!mem) {
-    return error::kOutOfBounds;
-  }
-  if (num_textures < 0 || (size - 8 * sizeof(GLfloat)) / sizeof(GLuint) <
-                              static_cast<GLuint>(num_textures)) {
-    return error::kOutOfBounds;
-  }
-  const volatile GLuint* contents_texture_ids =
-      reinterpret_cast<const volatile GLuint*>(mem + 8);
-  const GLfloat* contents_rect = mem;
-  const GLfloat* bounds_rect = mem + 4;
-  return DoScheduleDCLayerCHROMIUM(num_textures, contents_texture_ids,
-                                   contents_rect, background_color,
-                                   edge_aa_mask, filter, bounds_rect);
+                                   background_color, edge_aa_mask, filter,
+                                   bounds_rect);
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleSetColorSpaceMetadataCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  NOTIMPLEMENTED();
-  return error::kNoError;
+  const volatile gles2::cmds::SetColorSpaceMetadataCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::SetColorSpaceMetadataCHROMIUM*>(
+          cmd_data);
+  GLuint texture_id = c.texture_id;
+  GLsizei color_space_size = c.color_space_size;
+  const char* data = static_cast<const char*>(
+      GetAddressAndCheckSize(c.shm_id, c.shm_offset, color_space_size));
+  if (!data) {
+    return error::kOutOfBounds;
+  }
+
+  // Make a copy to reduce the risk of a time of check to time of use attack.
+  std::vector<char> color_space_data(data, data + color_space_size);
+  base::Pickle color_space_pickle(color_space_data.data(), color_space_size);
+  base::PickleIterator iterator(color_space_pickle);
+  gfx::ColorSpace color_space;
+  if (!IPC::ParamTraits<gfx::ColorSpace>::Read(&color_space_pickle, &iterator,
+                                               &color_space)) {
+    return error::kOutOfBounds;
+  }
+
+  return DoSetColorSpaceMetadataCHROMIUM(texture_id, color_space);
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleGenPathsCHROMIUM(
@@ -2651,7 +2911,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage2D(
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3DBucket(
     uint32_t immediate_data_size, const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::CompressedTexImage3DBucket& c =
@@ -2679,7 +2939,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3DBucket(
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3D(
     uint32_t immediate_data_size, const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::CompressedTexImage3D& c =
@@ -2714,7 +2974,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3D(
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3DBucket(
     uint32_t immediate_data_size, const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::CompressedTexSubImage3DBucket& c =
@@ -2745,7 +3005,7 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3DBucket(
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3D(
     uint32_t immediate_data_size, const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3Context()) {
+  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
   const volatile gles2::cmds::CompressedTexSubImage3D& c =
@@ -2786,28 +3046,75 @@ error::Error
 GLES2DecoderPassthroughImpl::HandleInitializeDiscardableTextureCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  return error::kNoError;
+  const volatile gles2::cmds::InitializeDiscardableTextureCHROMIUM& c =
+      *static_cast<
+          const volatile gles2::cmds::InitializeDiscardableTextureCHROMIUM*>(
+          cmd_data);
+  GLuint texture_id = c.texture_id;
+  uint32_t shm_id = c.shm_id;
+  uint32_t shm_offset = c.shm_offset;
+
+  scoped_refptr<gpu::Buffer> buffer = GetSharedMemoryBuffer(shm_id);
+  if (!DiscardableHandleBase::ValidateParameters(buffer.get(), shm_offset)) {
+    return error::kInvalidArguments;
+  }
+
+  ServiceDiscardableHandle handle(std::move(buffer), shm_offset, shm_id);
+
+  return DoInitializeDiscardableTextureCHROMIUM(texture_id, std::move(handle));
 }
 
 error::Error
 GLES2DecoderPassthroughImpl::HandleUnlockDiscardableTextureCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  return error::kNoError;
+  const volatile gles2::cmds::UnlockDiscardableTextureCHROMIUM& c =
+      *static_cast<
+          const volatile gles2::cmds::UnlockDiscardableTextureCHROMIUM*>(
+          cmd_data);
+  GLuint texture_id = c.texture_id;
+
+  return DoUnlockDiscardableTextureCHROMIUM(texture_id);
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleLockDiscardableTextureCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  return error::kNoError;
+  const volatile gles2::cmds::LockDiscardableTextureCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::LockDiscardableTextureCHROMIUM*>(
+          cmd_data);
+  GLuint texture_id = c.texture_id;
+
+  return DoLockDiscardableTextureCHROMIUM(texture_id);
 }
 
-error::Error
-GLES2DecoderPassthroughImpl::HandleCreateTransferCacheEntryCHROMIUM(
+error::Error GLES2DecoderPassthroughImpl::HandleCreateGpuFenceINTERNAL(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  NOTIMPLEMENTED();
-  return error::kNoError;
+  const volatile gles2::cmds::CreateGpuFenceINTERNAL& c =
+      *static_cast<const volatile gles2::cmds::CreateGpuFenceINTERNAL*>(
+          cmd_data);
+  GLuint gpu_fence_id = static_cast<GLuint>(c.gpu_fence_id);
+  return DoCreateGpuFenceINTERNAL(gpu_fence_id);
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleWaitGpuFenceCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::WaitGpuFenceCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::WaitGpuFenceCHROMIUM*>(cmd_data);
+  GLuint gpu_fence_id = static_cast<GLuint>(c.gpu_fence_id);
+  return DoWaitGpuFenceCHROMIUM(gpu_fence_id);
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleDestroyGpuFenceCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::DestroyGpuFenceCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::DestroyGpuFenceCHROMIUM*>(
+          cmd_data);
+  GLuint gpu_fence_id = static_cast<GLuint>(c.gpu_fence_id);
+  return DoDestroyGpuFenceCHROMIUM(gpu_fence_id);
 }
 
 }  // namespace gles2

@@ -14,7 +14,10 @@
 namespace metrics {
 
 // BrowserList / TabStripModelObserver used for tracking audio status.
-class AudibleContentsTracker : public chrome::BrowserListObserver,
+// TODO(chrisha): Migrate this entire thing to use RecentlyAudibleHelper
+// notifications rather then TabStripModel notifications.
+// https://crbug.com/846374
+class AudibleContentsTracker : public BrowserListObserver,
                                public TabStripModelObserver {
  public:
   // Interface for an observer of the AudibleContentsTracker. The only client
@@ -42,21 +45,18 @@ class AudibleContentsTracker : public chrome::BrowserListObserver,
   ~AudibleContentsTracker() override;
 
  private:
-  // chrome::BrowserListObserver:
+  // BrowserListObserver:
   void OnBrowserAdded(Browser* browser) override;
   void OnBrowserRemoved(Browser* browser) override;
 
   // TabStripModelObserver:
-  void TabClosingAt(TabStripModel* model,
-                    content::WebContents* web_contents,
-                    int index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
   void TabChangedAt(content::WebContents* web_contents,
                     int index,
                     TabChangeType change_type) override;
-  void TabReplacedAt(TabStripModel* model,
-                     content::WebContents* old_web_contents,
-                     content::WebContents* new_web_contents,
-                     int index) override;
 
   // Used for managing audible_contents_, and invoking OnAudioStart and
   // OnAudioEnd callbacks.

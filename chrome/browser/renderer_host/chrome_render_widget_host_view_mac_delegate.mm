@@ -6,6 +6,7 @@
 
 #include <cmath>
 
+#include "base/auto_reset.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/profiles/profile.h"
@@ -13,12 +14,12 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
-#import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #include "chrome/common/url_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/spellcheck/browser/spellcheck_platform.h"
 #include "components/spellcheck/common/spellcheck_panel.mojom.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -32,7 +33,9 @@ using content::RenderViewHost;
 @interface ChromeRenderWidgetHostViewMacDelegate () <HistorySwiperDelegate>
 @end
 
-@implementation ChromeRenderWidgetHostViewMacDelegate
+@implementation ChromeRenderWidgetHostViewMacDelegate {
+  BOOL resigningFirstResponder_;
+}
 
 - (id)initWithRenderWidgetHost:(content::RenderWidgetHost*)renderWidgetHost {
   self = [super init];
@@ -102,18 +105,29 @@ using content::RenderViewHost;
 }
 
 - (NSView*)viewThatWantsHistoryOverlay {
-  return renderWidgetHost_->GetView()->GetNativeView();
+  return renderWidgetHost_->GetView()->GetNativeView().GetNativeNSView();
 }
 
 - (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item
                       isValidItem:(BOOL*)valid {
   SEL action = [item action];
 
+  Profile* profile = Profile::FromBrowserContext(
+      renderWidgetHost_->GetProcess()->GetBrowserContext());
+  DCHECK(profile);
+  PrefService* pref = profile->GetPrefs();
+  const PrefService::Preference* spellCheckEnablePreference =
+      pref->FindPreference(spellcheck::prefs::kSpellCheckEnable);
+  DCHECK(spellCheckEnablePreference);
+  const bool spellCheckUserModifiable =
+      spellCheckEnablePreference->IsUserModifiable();
+
   // For now, this action is always enabled for render view;
   // this is sub-optimal.
   // TODO(suzhe): Plumb the "can*" methods up from WebCore.
   if (action == @selector(checkSpelling:)) {
-    *valid = RenderViewHost::From(renderWidgetHost_) != nullptr;
+    *valid = spellCheckUserModifiable &&
+             (RenderViewHost::From(renderWidgetHost_) != nullptr);
     return YES;
   }
 
@@ -121,17 +135,18 @@ using content::RenderViewHost;
   // is still necessary.
   if (action == @selector(toggleContinuousSpellChecking:)) {
     if ([(id)item respondsToSelector:@selector(setState:)]) {
-      content::RenderProcessHost* host = renderWidgetHost_->GetProcess();
-      Profile* profile = Profile::FromBrowserContext(host->GetBrowserContext());
-      DCHECK(profile);
       NSCellStateValue checkedState =
-          profile->GetPrefs()->GetBoolean(
-              spellcheck::prefs::kEnableSpellcheck)
-              ? NSOnState
-              : NSOffState;
+          pref->GetBoolean(spellcheck::prefs::kSpellCheckEnable) ? NSOnState
+                                                                 : NSOffState;
       [(id)item setState:checkedState];
     }
-    *valid = YES;
+    *valid = spellCheckUserModifiable;
+    return YES;
+  }
+
+  if (action == @selector(showGuessPanel:) ||
+      action == @selector(toggleGrammarChecking:)) {
+    *valid = spellCheckUserModifiable;
     return YES;
   }
 
@@ -217,11 +232,73 @@ using content::RenderViewHost;
   Profile* profile = Profile::FromBrowserContext(host->GetBrowserContext());
   DCHECK(profile);
   PrefService* pref = profile->GetPrefs();
-  pref->SetBoolean(
-      spellcheck::prefs::kEnableSpellcheck,
-      !pref->GetBoolean(spellcheck::prefs::kEnableSpellcheck));
+  pref->SetBoolean(spellcheck::prefs::kSpellCheckEnable,
+                   !pref->GetBoolean(spellcheck::prefs::kSpellCheckEnable));
 }
 
 // END Spellchecking methods
+
+// If a dialog is visible, make its window key. See becomeFirstResponder.
+- (void)makeAnyDialogKey {
+  if (const auto* contents = content::WebContents::FromRenderViewHost(
+          RenderViewHost::From(renderWidgetHost_))) {
+    if (const auto* manager =
+            web_modal::WebContentsModalDialogManager::FromWebContents(
+                contents)) {
+      // IsDialogActive() returns true if a dialog exists.
+      if (manager->IsDialogActive()) {
+        manager->FocusTopmostDialog();
+      }
+    }
+  }
+}
+
+// If the RenderWidgetHostView becomes first responder while it has a dialog
+// (say, if the user was interacting with the omnibox and then tabs back into
+// the web contents), then make the dialog window key.
+- (void)becomeFirstResponder {
+  [self makeAnyDialogKey];
+}
+
+// If the RenderWidgetHostView is asked to resign first responder while a child
+// window is key, then the user performed some action which targets the browser
+// window, like clicking the omnibox or typing cmd+L. In that case, the browser
+// window should become key.
+- (void)resignFirstResponder {
+  NSWindow* browserWindow =
+      [renderWidgetHost_->GetView()->GetNativeView().GetNativeNSView() window];
+  DCHECK(browserWindow);
+
+  // If the browser window is already key, there's nothing to do.
+  if (browserWindow.isKeyWindow)
+    return;
+
+  // Otherwise, look for it in the key window's chain of parents.
+  NSWindow* keyWindowOrParent = NSApp.keyWindow;
+  while (keyWindowOrParent && keyWindowOrParent != browserWindow)
+    keyWindowOrParent = keyWindowOrParent.parentWindow;
+
+  // If the browser window isn't among the parents, there's nothing to do.
+  if (keyWindowOrParent != browserWindow)
+    return;
+
+  // Otherwise, temporarily set an ivar so that -windowDidBecomeKey, below,
+  // doesn't immediately make the dialog key.
+  base::AutoReset<BOOL> scoped(&resigningFirstResponder_, YES);
+
+  // …then make the browser window key.
+  [browserWindow makeKeyWindow];
+}
+
+// If the browser window becomes key while the RenderWidgetHostView is first
+// responder, make the dialog key (if there is one).
+- (void)windowDidBecomeKey {
+  if (resigningFirstResponder_)
+    return;
+  NSView* view =
+      renderWidgetHost_->GetView()->GetNativeView().GetNativeNSView();
+  if (view.window.firstResponder == view)
+    [self makeAnyDialogKey];
+}
 
 @end

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef REMOTING_SIGNALING_MOCK_SIGNAL_STRATEGY_H_
+#define REMOTING_SIGNALING_MOCK_SIGNAL_STRATEGY_H_
+
 #include <memory>
 
 #include "remoting/signaling/iq_sender.h"
@@ -27,8 +30,8 @@ class MockSignalStrategy : public SignalStrategy {
 
   // GMock currently doesn't support move-only arguments, so we have
   // to use this hack here.
-  MOCK_METHOD1(SendStanzaPtr, bool(buzz::XmlElement* stanza));
-  bool SendStanza(std::unique_ptr<buzz::XmlElement> stanza) override {
+  MOCK_METHOD1(SendStanzaPtr, bool(jingle_xmpp::XmlElement* stanza));
+  bool SendStanza(std::unique_ptr<jingle_xmpp::XmlElement> stanza) override {
     return SendStanzaPtr(stanza.release());
   }
 
@@ -39,3 +42,5 @@ class MockSignalStrategy : public SignalStrategy {
 };
 
 }  // namespace remoting
+
+#endif  // REMOTING_SIGNALING_MOCK_SIGNAL_STRATEGY_H_

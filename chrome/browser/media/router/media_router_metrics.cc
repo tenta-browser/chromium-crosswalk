@@ -4,11 +4,15 @@
 
 #include "chrome/browser/media/router/media_router_metrics.h"
 
+#include <algorithm>
+
 #include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/time/default_clock.h"
-#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/media_sink.h"
+#include "chrome/common/media_router/media_source.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -41,8 +45,12 @@ MediaRouterMetrics::MediaRouterMetrics() {}
 MediaRouterMetrics::~MediaRouterMetrics() = default;
 
 // static
+const char MediaRouterMetrics::kHistogramCloseLatency[] =
+    "MediaRouter.Ui.Action.CloseLatency";
 const char MediaRouterMetrics::kHistogramDialParsingError[] =
     "MediaRouter.Dial.ParsingError";
+const char MediaRouterMetrics::kHistogramDialFetchAppInfo[] =
+    "MediaRouter.Dial.FetchAppInfo";
 const char MediaRouterMetrics::kHistogramIconClickLocation[] =
     "MediaRouter.Icon.Click.Location";
 const char MediaRouterMetrics::kHistogramMediaRouterCastingSource[] =
@@ -51,16 +59,30 @@ const char MediaRouterMetrics::kHistogramMediaRouterFileFormat[] =
     "MediaRouter.Source.LocalFileFormat";
 const char MediaRouterMetrics::kHistogramMediaRouterFileSize[] =
     "MediaRouter.Source.LocalFileSize";
+const char MediaRouterMetrics::kHistogramMediaSinkType[] =
+    "MediaRouter.Sink.SelectedType";
+const char MediaRouterMetrics::kHistogramPresentationUrlType[] =
+    "MediaRouter.PresentationRequest.AvailabilityUrlType";
+const char MediaRouterMetrics::kHistogramRecordSearchSinkOutcome[] =
+    "MediaRouter.Sink.SearchOutcome";
 const char MediaRouterMetrics::kHistogramRouteCreationOutcome[] =
     "MediaRouter.Route.CreationOutcome";
+const char MediaRouterMetrics::kHistogramStartLocalLatency[] =
+    "MediaRouter.Ui.Action.StartLocal.Latency";
+const char MediaRouterMetrics::kHistogramStartLocalPosition[] =
+    "MediaRouter.Ui.Action.StartLocalPosition";
+const char MediaRouterMetrics::kHistogramStartLocalSessionSuccessful[] =
+    "MediaRouter.Ui.Action.StartLocalSessionSuccessful";
+const char MediaRouterMetrics::kHistogramStopRoute[] =
+    "MediaRouter.Ui.Action.StopRoute";
+const char MediaRouterMetrics::kHistogramUiDeviceCount[] =
+    "MediaRouter.Ui.Device.Count";
 const char MediaRouterMetrics::kHistogramUiDialogPaint[] =
     "MediaRouter.Ui.Dialog.Paint";
 const char MediaRouterMetrics::kHistogramUiDialogLoadedWithData[] =
     "MediaRouter.Ui.Dialog.LoadedWithData";
 const char MediaRouterMetrics::kHistogramUiFirstAction[] =
     "MediaRouter.Ui.FirstAction";
-const char MediaRouterMetrics::kHistogramPresentationUrlType[] =
-    "MediaRouter.PresentationRequest.AvailabilityUrlType";
 
 // static
 void MediaRouterMetrics::RecordMediaRouterDialogOrigin(
@@ -74,14 +96,20 @@ void MediaRouterMetrics::RecordMediaRouterDialogOrigin(
 
 // static
 void MediaRouterMetrics::RecordMediaRouterDialogPaint(
-    const base::TimeDelta delta) {
+    const base::TimeDelta& delta) {
   UMA_HISTOGRAM_TIMES(kHistogramUiDialogPaint, delta);
 }
 
 // static
 void MediaRouterMetrics::RecordMediaRouterDialogLoaded(
-    const base::TimeDelta delta) {
+    const base::TimeDelta& delta) {
   UMA_HISTOGRAM_TIMES(kHistogramUiDialogLoadedWithData, delta);
+}
+
+// static
+void MediaRouterMetrics::RecordCloseDialogLatency(
+    const base::TimeDelta& delta) {
+  UMA_HISTOGRAM_TIMES(kHistogramCloseLatency, delta);
 }
 
 // static
@@ -106,14 +134,14 @@ void MediaRouterMetrics::RecordRouteCreationOutcome(
 
 // static
 void MediaRouterMetrics::RecordMediaRouterCastingSource(MediaCastMode source) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(kHistogramMediaRouterCastingSource, source);
+  base::UmaHistogramSparse(kHistogramMediaRouterCastingSource, source);
 }
 
 // static
 void MediaRouterMetrics::RecordMediaRouterFileFormat(
     const media::container_names::MediaContainerName format) {
   UMA_HISTOGRAM_ENUMERATION(kHistogramMediaRouterFileFormat, format,
-                            media::container_names::CONTAINER_MAX);
+                            media::container_names::CONTAINER_MAX + 1);
 }
 
 // static
@@ -132,10 +160,61 @@ void MediaRouterMetrics::RecordDialParsingError(
 }
 
 // static
+void MediaRouterMetrics::RecordDialFetchAppInfo(
+    DialAppInfoResultCode result_code) {
+  UMA_HISTOGRAM_ENUMERATION(kHistogramDialFetchAppInfo, result_code,
+                            DialAppInfoResultCode::kCount);
+}
+
+// static
 void MediaRouterMetrics::RecordPresentationUrlType(const GURL& url) {
   PresentationUrlType type = GetPresentationUrlType(url);
   UMA_HISTOGRAM_ENUMERATION(kHistogramPresentationUrlType, type,
                             PresentationUrlType::kPresentationUrlTypeCount);
+}
+
+// static
+void MediaRouterMetrics::RecordMediaSinkType(SinkIconType sink_icon_type) {
+  UMA_HISTOGRAM_ENUMERATION(kHistogramMediaSinkType, sink_icon_type,
+                            SinkIconType::TOTAL_COUNT);
+}
+
+// static
+void MediaRouterMetrics::RecordDeviceCount(int device_count) {
+  UMA_HISTOGRAM_COUNTS_100(kHistogramUiDeviceCount, device_count);
+}
+
+// static
+void MediaRouterMetrics::RecordStartRouteDeviceIndex(int index) {
+  base::UmaHistogramSparse(kHistogramStartLocalPosition, std::min(index, 100));
+}
+
+// static
+void MediaRouterMetrics::RecordStartLocalSessionLatency(
+    const base::TimeDelta& delta) {
+  UMA_HISTOGRAM_TIMES(kHistogramStartLocalLatency, delta);
+}
+
+// static
+void MediaRouterMetrics::RecordStartLocalSessionSuccessful(bool success) {
+  UMA_HISTOGRAM_BOOLEAN(kHistogramStartLocalSessionSuccessful, success);
+}
+
+// static
+void MediaRouterMetrics::RecordStopLocalRoute() {
+  // Local routes have the enum value 0.
+  UMA_HISTOGRAM_BOOLEAN(kHistogramStopRoute, 0);
+}
+
+// static
+void MediaRouterMetrics::RecordStopRemoteRoute() {
+  // Remote routes have the enum value 1.
+  UMA_HISTOGRAM_BOOLEAN(kHistogramStopRoute, 1);
+}
+
+// static
+void MediaRouterMetrics::RecordSearchSinkOutcome(bool success) {
+  UMA_HISTOGRAM_BOOLEAN(kHistogramRecordSearchSinkOutcome, success);
 }
 
 }  // namespace media_router

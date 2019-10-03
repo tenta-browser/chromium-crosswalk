@@ -63,6 +63,7 @@ namespace downloads {
     SERVER_FORBIDDEN,
     SERVER_UNREACHABLE,
     SERVER_CONTENT_LENGTH_MISMATCH,
+    SERVER_CROSS_ORIGIN_REDIRECT,
     USER_CANCELED,
     USER_SHUTDOWN,
     CRASH};
@@ -514,10 +515,6 @@ namespace downloads {
     // |downloadId|: The identifier for the $(ref:DownloadItem).
     // |callback|: Called when the danger prompt dialog closes.
     static void acceptDanger(long downloadId, optional NullCallback callback);
-
-    // Initiate dragging the downloaded file to another application. Call in a
-    // javascript <code>ondragstart</code> handler.
-    static void drag(long downloadId);
 
     // Enable or disable the gray shelf at the bottom of every window associated
     // with the current browser profile. The shelf will be disabled as long as

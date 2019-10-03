@@ -16,7 +16,10 @@
 #include "components/policy/core/common/cloud/cloud_policy_validator.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_export.h"
-#include "components/policy/proto/device_management_backend.pb.h"
+
+namespace enterprise_management {
+class PolicyData;
+}
 
 namespace policy {
 
@@ -76,13 +79,14 @@ class POLICY_EXPORT CloudPolicyStore {
   const enterprise_management::PolicyData* policy() const {
     return policy_.get();
   }
-  bool is_managed() const {
-    return policy_.get() &&
-           policy_->state() == enterprise_management::PolicyData::ACTIVE;
-  }
+  bool is_managed() const;
   Status status() const { return status_; }
   CloudPolicyValidatorBase::Status validation_status() const {
-    return validation_status_;
+    return validation_result_.get() ? validation_result_->status
+                                    : CloudPolicyValidatorBase::VALIDATION_OK;
+  }
+  const CloudPolicyValidatorBase::ValidationResult* validation_result() const {
+    return validation_result_.get();
   }
   const std::string& policy_signature_public_key() const {
     return policy_signature_public_key_;
@@ -148,8 +152,9 @@ class POLICY_EXPORT CloudPolicyStore {
   // Latest status code.
   Status status_;
 
-  // Latest validation status.
-  CloudPolicyValidatorBase::Status validation_status_;
+  // Latest validation result.
+  std::unique_ptr<CloudPolicyValidatorBase::ValidationResult>
+      validation_result_;
 
   // The invalidation version of the last policy stored.
   int64_t invalidation_version_;
@@ -166,7 +171,7 @@ class POLICY_EXPORT CloudPolicyStore {
   // triggered by calling Load().
   bool is_initialized_;
 
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyStore);
 };

@@ -1,71 +1,31 @@
-/* Copyright 2015 The Chromium Authors. All rights reserved.
+/* Copyright 2017 The Chromium Authors. All rights reserved.
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
 cr.define('sync.confirmation', function() {
   'use strict';
 
-  function onConfirm(e) {
-    chrome.send('confirm');
-  }
-
-  function onUndo(e) {
-    chrome.send('undo');
-  }
-
-  function onGoToSettings(e) {
-    chrome.send('goToSettings');
-  }
-
   function initialize() {
-    document.addEventListener('keydown', onKeyDown);
-    $('confirmButton').addEventListener('click', onConfirm);
-    $('undoButton').addEventListener('click', onUndo);
-    if (loadTimeData.getBoolean('isSyncAllowed')) {
-      $('settingsLink').addEventListener('click', onGoToSettings);
-      $('profile-picture').addEventListener('load', onPictureLoaded);
-      $('syncDisabledDetails').hidden = true;
-    } else {
-      $('syncConfirmationDetails').hidden = true;
-    }
-
+    const syncConfirmationBrowserProxy =
+        sync.confirmation.SyncConfirmationBrowserProxyImpl.getInstance();
     // Prefer using |document.body.offsetHeight| instead of
     // |document.body.scrollHeight| as it returns the correct height of the
     // even when the page zoom in Chrome is different than 100%.
-    chrome.send('initializedWithSize', [document.body.offsetHeight]);
+    syncConfirmationBrowserProxy.initializedWithSize(
+        [document.body.offsetHeight]);
+    // The web dialog size has been initialized, so reset the body width to
+    // auto. This makes sure that the body only takes up the viewable width,
+    // e.g. when there is a scrollbar.
+    document.body.style.width = 'auto';
   }
 
   function clearFocus() {
     document.activeElement.blur();
   }
 
-  function setUserImageURL(url) {
-    if (loadTimeData.getBoolean('isSyncAllowed')) {
-      $('profile-picture').src = url;
-    }
-  }
-
-  function onPictureLoaded(e) {
-    if (loadTimeData.getBoolean('isSyncAllowed')) {
-      $('picture-container').classList.add('loaded');
-    }
-  }
-
-  function onKeyDown(e) {
-    // If the currently focused element isn't something that performs an action
-    // on "enter" being pressed and the user hits "enter", perform the default
-    // action of the dialog, which is "OK, Got It".
-    if (e.key == 'Enter' &&
-        !/^(A|PAPER-(BUTTON|CHECKBOX))$/.test(document.activeElement.tagName)) {
-      $('confirmButton').click();
-      e.preventDefault();
-    }
-  }
-
   return {
     clearFocus: clearFocus,
     initialize: initialize,
-    setUserImageURL: setUserImageURL
   };
 });
 

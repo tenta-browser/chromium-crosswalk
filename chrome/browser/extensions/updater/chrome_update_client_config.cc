@@ -7,24 +7,41 @@
 #include <algorithm>
 
 #include "base/command_line.h"
+#include "base/containers/flat_map.h"
+#include "base/no_destructor.h"
 #include "base/version.h"
 #include "chrome/browser/component_updater/component_updater_utils.h"
+#include "chrome/browser/extensions/updater/extension_update_client_command_line_config_policy.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
 #include "chrome/common/channel_info.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
+#include "components/update_client/patcher.h"
+#include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/browser/extension_prefs.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 
 namespace {
+
+using FactoryCallback = ChromeUpdateClientConfig::FactoryCallback;
+
+// static
+static FactoryCallback& GetFactoryCallback() {
+  static base::NoDestructor<FactoryCallback> factory;
+  return *factory;
+}
 
 class ExtensionActivityDataService final
     : public update_client::ActivityDataService {
@@ -83,9 +100,9 @@ void ExtensionActivityDataService::ClearActiveBit(const std::string& id) {
 // communication with the update backend.
 ChromeUpdateClientConfig::ChromeUpdateClientConfig(
     content::BrowserContext* context)
-    : impl_(base::CommandLine::ForCurrentProcess(),
-            content::BrowserContext::GetDefaultStoragePartition(context)
-                ->GetURLRequestContext(),
+    : context_(context),
+      impl_(ExtensionUpdateClientCommandLineConfigPolicy(
+                base::CommandLine::ForCurrentProcess()),
             /*require_encryption=*/true),
       pref_service_(ExtensionPrefs::Get(context)->pref_service()),
       activity_data_service_(std::make_unique<ExtensionActivityDataService>(
@@ -106,7 +123,7 @@ int ChromeUpdateClientConfig::OnDemandDelay() const {
 }
 
 int ChromeUpdateClientConfig::UpdateDelay() const {
-  return 0;
+  return impl_.UpdateDelay();
 }
 
 std::vector<GURL> ChromeUpdateClientConfig::UpdateUrl() const {
@@ -127,7 +144,7 @@ base::Version ChromeUpdateClientConfig::GetBrowserVersion() const {
 }
 
 std::string ChromeUpdateClientConfig::GetChannel() const {
-  return chrome::GetChannelString();
+  return chrome::GetChannelName();
 }
 
 std::string ChromeUpdateClientConfig::GetBrand() const {
@@ -144,7 +161,8 @@ std::string ChromeUpdateClientConfig::GetOSLongName() const {
   return impl_.GetOSLongName();
 }
 
-std::string ChromeUpdateClientConfig::ExtraRequestParams() const {
+base::flat_map<std::string, std::string>
+ChromeUpdateClientConfig::ExtraRequestParams() const {
   return impl_.ExtraRequestParams();
 }
 
@@ -152,16 +170,35 @@ std::string ChromeUpdateClientConfig::GetDownloadPreference() const {
   return std::string();
 }
 
-net::URLRequestContextGetter* ChromeUpdateClientConfig::RequestContext() const {
-  return impl_.RequestContext();
+scoped_refptr<update_client::NetworkFetcherFactory>
+ChromeUpdateClientConfig::GetNetworkFetcherFactory() {
+  if (!network_fetcher_factory_) {
+    network_fetcher_factory_ =
+        base::MakeRefCounted<update_client::NetworkFetcherChromiumFactory>(
+            content::BrowserContext::GetDefaultStoragePartition(context_)
+                ->GetURLLoaderFactoryForBrowserProcess());
+  }
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-ChromeUpdateClientConfig::CreateServiceManagerConnector() const {
+scoped_refptr<update_client::UnzipperFactory>
+ChromeUpdateClientConfig::GetUnzipperFactory() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  return content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->Clone();
+  if (!unzip_factory_) {
+    unzip_factory_ = base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+        content::GetSystemConnector()->Clone());
+  }
+  return unzip_factory_;
+}
+
+scoped_refptr<update_client::PatcherFactory>
+ChromeUpdateClientConfig::GetPatcherFactory() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!patch_factory_) {
+    patch_factory_ = base::MakeRefCounted<update_client::PatchChromiumFactory>(
+        content::GetSystemConnector()->Clone());
+  }
+  return patch_factory_;
 }
 
 bool ChromeUpdateClientConfig::EnabledDeltas() const {
@@ -197,6 +234,36 @@ std::vector<uint8_t> ChromeUpdateClientConfig::GetRunActionKeyHash() const {
   return impl_.GetRunActionKeyHash();
 }
 
+std::string ChromeUpdateClientConfig::GetAppGuid() const {
+  return impl_.GetAppGuid();
+}
+
+std::unique_ptr<update_client::ProtocolHandlerFactory>
+ChromeUpdateClientConfig::GetProtocolHandlerFactory() const {
+  return impl_.GetProtocolHandlerFactory();
+}
+
+update_client::RecoveryCRXElevator
+ChromeUpdateClientConfig::GetRecoveryCRXElevator() const {
+  return impl_.GetRecoveryCRXElevator();
+}
+
 ChromeUpdateClientConfig::~ChromeUpdateClientConfig() {}
+
+// static
+scoped_refptr<ChromeUpdateClientConfig> ChromeUpdateClientConfig::Create(
+    content::BrowserContext* context) {
+  FactoryCallback& factory = GetFactoryCallback();
+  return factory.is_null() ? scoped_refptr<ChromeUpdateClientConfig>(
+                                 new ChromeUpdateClientConfig(context))
+                           : factory.Run(context);
+}
+
+// static
+void ChromeUpdateClientConfig::SetChromeUpdateClientConfigFactoryForTesting(
+    FactoryCallback factory) {
+  DCHECK(!factory.is_null());
+  GetFactoryCallback() = factory;
+}
 
 }  // namespace extensions

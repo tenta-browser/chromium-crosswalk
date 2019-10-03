@@ -5,24 +5,16 @@
 #import "ios/chrome/browser/ui/settings/cells/copied_to_chrome_item.h"
 
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
+#import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
-#import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
-#import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-namespace {
-// Padding used on the leading and trailing edges of the cell.
-const CGFloat kHorizontalPadding = 16;
-
-// Padding used on the top and bottom edges of the cell.
-const CGFloat kVerticalPadding = 16;
-}  // namespace
 
 @implementation CopiedToChromeItem
 
@@ -39,45 +31,54 @@ const CGFloat kVerticalPadding = 16;
 @implementation CopiedToChromeCell
 
 @synthesize textLabel = _textLabel;
-@synthesize button = _button;
 
-- (instancetype)initWithFrame:(CGRect)frame {
-  self = [super initWithFrame:frame];
+- (instancetype)initWithStyle:(UITableViewCellStyle)style
+              reuseIdentifier:(NSString*)reuseIdentifier {
+  self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
   if (self) {
     UIView* contentView = self.contentView;
 
     _textLabel = [[UILabel alloc] init];
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [contentView addSubview:_textLabel];
-
-    _button = [[MDCFlatButton alloc] init];
-    _button.translatesAutoresizingMaskIntoConstraints = NO;
-    [contentView addSubview:_button];
-
-    _textLabel.font = [[MDCTypography fontLoader] mediumFontOfSize:14];
-    _textLabel.textColor = [[MDCPalette greyPalette] tint900];
     _textLabel.text =
         l10n_util::GetNSString(IDS_IOS_AUTOFILL_DESCRIBE_LOCAL_COPY);
+    _textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    _textLabel.adjustsFontForContentSizeCategory = YES;
+    _textLabel.textColor = UIColor.cr_labelColor;
+    [_textLabel
+        setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                        forAxis:
+                                            UILayoutConstraintAxisHorizontal];
+    [contentView addSubview:_textLabel];
 
-    [_button setTitleColor:[[MDCPalette cr_bluePalette] tint600]
+    _button = [UIButton buttonWithType:UIButtonTypeCustom];
+    [_button setTitleColor:UIColorFromRGB(kTableViewTextLabelColorBlue)
                   forState:UIControlStateNormal];
+
+    _button.translatesAutoresizingMaskIntoConstraints = NO;
     [_button
         setTitle:l10n_util::GetNSString(IDS_AUTOFILL_CLEAR_LOCAL_COPY_BUTTON)
         forState:UIControlStateNormal];
+    [contentView addSubview:_button];
 
     // Set up the constraints.
     [NSLayoutConstraint activateConstraints:@[
       [_textLabel.leadingAnchor
           constraintEqualToAnchor:contentView.leadingAnchor
-                         constant:kHorizontalPadding],
-      [_textLabel.topAnchor constraintEqualToAnchor:contentView.topAnchor
-                                           constant:kVerticalPadding],
-      [_textLabel.bottomAnchor constraintEqualToAnchor:contentView.bottomAnchor
-                                              constant:-kVerticalPadding],
+                         constant:kTableViewHorizontalSpacing],
+      [_textLabel.trailingAnchor
+          constraintLessThanOrEqualToAnchor:_button.leadingAnchor
+                                   constant:-kTableViewHorizontalSpacing],
+      [_textLabel.centerYAnchor
+          constraintEqualToAnchor:contentView.centerYAnchor],
       [_button.trailingAnchor
-          constraintEqualToAnchor:contentView.trailingAnchor],
-      [_button.centerYAnchor constraintEqualToAnchor:contentView.centerYAnchor],
+          constraintEqualToAnchor:contentView.trailingAnchor
+                         constant:-kTableViewHorizontalSpacing],
+      [_button.firstBaselineAnchor
+          constraintEqualToAnchor:_textLabel.firstBaselineAnchor],
     ]];
+    AddOptionalVerticalPadding(contentView, _textLabel,
+                               kTableViewOneLabelCellVerticalSpacing);
   }
   return self;
 }

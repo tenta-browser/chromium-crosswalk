@@ -10,13 +10,15 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/memory/scoped_refptr.h"
 #include "chrome/common/mac/launchd.h"
 #include "chrome/common/multi_process_lock.h"
 
 namespace base {
-class MessageLoop;
+class SingleThreadTaskRunner;
 }
 
 // TODO(dmaclach): Write this in terms of a real mock.
@@ -28,13 +30,15 @@ class MockLaunchd : public Launchd {
                           base::FilePath* bundle_root,
                           base::FilePath* executable);
 
-  MockLaunchd(const base::FilePath& file, base::MessageLoop* loop,
-              bool create_socket, bool as_service);
+  MockLaunchd(const base::FilePath& file,
+              scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
+              base::OnceClosure quit_closure,
+              bool as_service);
   ~MockLaunchd() override;
 
-  CFDictionaryRef CopyJobDictionary(CFStringRef label) override;
-  CFDictionaryRef CopyDictionaryByCheckingIn(CFErrorRef* error) override;
-  bool RemoveJob(CFStringRef label, CFErrorRef* error) override;
+  bool GetJobInfo(const std::string& label,
+                  mac::services::JobInfo* info) override;
+  bool RemoveJob(const std::string& label) override;
   bool RestartJob(Domain domain,
                   Type type,
                   CFStringRef name,
@@ -59,9 +63,9 @@ class MockLaunchd : public Launchd {
  private:
   base::FilePath file_;
   std::string pipe_name_;
-  base::MessageLoop* message_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
+  base::OnceClosure quit_closure_;
   std::unique_ptr<MultiProcessLock> running_lock_;
-  bool create_socket_;
   bool as_service_;
   bool restart_called_;
   bool remove_called_;

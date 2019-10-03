@@ -1,8 +1,0 @@
-Check that while Runtime.getProperties call on proxy object no user defined trap will be executed.
-{
-    result : {
-        type : number
-        value : 0
-    }
-}
-

@@ -4,21 +4,26 @@
 
 package org.chromium.net.urlconnection;
 
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import static org.chromium.net.CronetTestRule.getContext;
 
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
+import org.hamcrest.Description;
+import org.hamcrest.TypeSafeMatcher;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetEngine;
 import org.chromium.net.CronetTestRule;
@@ -26,6 +31,7 @@ import org.chromium.net.CronetTestRule.CompareDefaultWithCronet;
 import org.chromium.net.CronetTestRule.OnlyRunCronetHttpURLConnection;
 import org.chromium.net.NativeTestServer;
 import org.chromium.net.NetworkException;
+import org.chromium.net.impl.CallbackExceptionImpl;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -42,10 +48,13 @@ import java.net.URL;
  * {@code OnlyRunCronetHttpURLConnection} only run Cronet's implementation.
  * See {@link CronetTestBase#runTest()} for details.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class CronetFixedModeOutputStreamTest {
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
+
+    @Rule
+    public ExpectedException thrown = ExpectedException.none();
 
     @Before
     public void setUp() throws Exception {
@@ -428,11 +437,37 @@ public class CronetFixedModeOutputStreamTest {
         connection.disconnect();
     }
 
+    private static class CauseMatcher extends TypeSafeMatcher<Throwable> {
+        private final Class<? extends Throwable> mType;
+        private final String mExpectedMessage;
+        private final Class<? extends Throwable> mInnerCauseType;
+        private final String mInnerCauseExpectedMessage;
+
+        public CauseMatcher(Class<? extends Throwable> type, String expectedMessage,
+                Class<? extends Throwable> innerCauseType, String innerCauseExpectedMessage) {
+            this.mType = type;
+            this.mExpectedMessage = expectedMessage;
+            this.mInnerCauseType = innerCauseType;
+            this.mInnerCauseExpectedMessage = innerCauseExpectedMessage;
+        }
+
+        @Override
+        protected boolean matchesSafely(Throwable item) {
+            return item.getClass().isAssignableFrom(mType)
+                    && item.getMessage().equals(mExpectedMessage)
+                    && item.getCause().getClass().isAssignableFrom(mInnerCauseType)
+                    && item.getCause().getMessage().equals(mInnerCauseExpectedMessage);
+        }
+        @Override
+        public void describeTo(Description description) {}
+    }
+
     @Test
     @SmallTest
     @Feature({"Cronet"})
-    @CompareDefaultWithCronet
-    public void testRewind() throws Exception {
+    @OnlyRunCronetHttpURLConnection
+    public void testRewindWithCronet() throws Exception {
+        assertFalse(mTestRule.testingSystemHttpURLConnection());
         // Post preserving redirect should fail.
         URL url = new URL(NativeTestServer.getRedirectToEchoBody());
         HttpURLConnection connection =
@@ -440,12 +475,14 @@ public class CronetFixedModeOutputStreamTest {
         connection.setDoOutput(true);
         connection.setRequestMethod("POST");
         connection.setFixedLengthStreamingMode(TestUtil.UPLOAD_DATA.length);
-        try {
-            OutputStream out = connection.getOutputStream();
-            out.write(TestUtil.UPLOAD_DATA);
-        } catch (HttpRetryException e) {
-            assertEquals("Cannot retry streamed Http body", e.getMessage());
-        }
+        thrown.expectMessage("Cronet Test failed.");
+        thrown.expectCause(instanceOf(CallbackExceptionImpl.class));
+        thrown.expectCause(new CauseMatcher(CallbackExceptionImpl.class,
+                "Exception received from UploadDataProvider", HttpRetryException.class,
+                "Cannot retry streamed Http body"));
+        OutputStream out = connection.getOutputStream();
+        out.write(TestUtil.UPLOAD_DATA);
+        connection.getResponseCode();
         connection.disconnect();
     }
 }

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "chrome/browser/extensions/chrome_extension_function.h"
+#include "extensions/browser/extension_function.h"
 
 namespace net {
 class X509Certificate;
@@ -33,7 +33,7 @@ std::string PlatformKeysTokenIdToApiId(
 }  // namespace platform_keys
 
 class PlatformKeysInternalSelectClientCertificatesFunction
-    : public ChromeUIThreadExtensionFunction {
+    : public UIThreadExtensionFunction {
  private:
   ~PlatformKeysInternalSelectClientCertificatesFunction() override;
   ResponseAction Run() override;
@@ -44,21 +44,20 @@ class PlatformKeysInternalSelectClientCertificatesFunction
                               const std::string& error_message);
 
   DECLARE_EXTENSION_FUNCTION("platformKeysInternal.selectClientCertificates",
-                             PLATFORMKEYSINTERNAL_SELECTCLIENTCERTIFICATES);
+                             PLATFORMKEYSINTERNAL_SELECTCLIENTCERTIFICATES)
 };
 
 class PlatformKeysInternalGetPublicKeyFunction
-    : public ChromeUIThreadExtensionFunction {
+    : public UIThreadExtensionFunction {
  private:
   ~PlatformKeysInternalGetPublicKeyFunction() override;
   ResponseAction Run() override;
 
   DECLARE_EXTENSION_FUNCTION("platformKeysInternal.getPublicKey",
-                             PLATFORMKEYSINTERNAL_GETPUBLICKEY);
+                             PLATFORMKEYSINTERNAL_GETPUBLICKEY)
 };
 
-class PlatformKeysInternalSignFunction
-    : public ChromeUIThreadExtensionFunction {
+class PlatformKeysInternalSignFunction : public UIThreadExtensionFunction {
  private:
   ~PlatformKeysInternalSignFunction() override;
   ResponseAction Run() override;
@@ -68,7 +67,7 @@ class PlatformKeysInternalSignFunction
   void OnSigned(const std::string& signature, const std::string& error_message);
 
   DECLARE_EXTENSION_FUNCTION("platformKeysInternal.sign",
-                             PLATFORMKEYSINTERNAL_SIGN);
+                             PLATFORMKEYSINTERNAL_SIGN)
 };
 
 class PlatformKeysVerifyTLSServerCertificateFunction
@@ -82,7 +81,7 @@ class PlatformKeysVerifyTLSServerCertificateFunction
                             int cert_status);
 
   DECLARE_EXTENSION_FUNCTION("platformKeys.verifyTLSServerCertificate",
-                             PLATFORMKEYS_VERIFYTLSSERVERCERTIFICATE);
+                             PLATFORMKEYS_VERIFYTLSSERVERCERTIFICATE)
 };
 
 }  // namespace extensions

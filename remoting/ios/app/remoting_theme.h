@@ -10,9 +10,6 @@
 // Styles to be used when rendering the iOS client's UI.
 @interface RemotingTheme : NSObject
 
-// Applys default color schemes on elements like buttons and alerts.
-+ (void)applyColorSchemes;
-
 // Colors
 
 @property(class, nonatomic, readonly) UIColor* buttonBackgroundColor;
@@ -31,6 +28,7 @@
 @property(class, nonatomic, readonly) UIColor* hostWarningColor;
 @property(class, nonatomic, readonly) UIColor* menuBlueColor;
 @property(class, nonatomic, readonly) UIColor* menuTextColor;
+@property(class, nonatomic, readonly) UIColor* menuSeparatorColor;
 @property(class, nonatomic, readonly) UIColor* refreshIndicatorColor;
 @property(class, nonatomic, readonly) UIColor* pinEntryPairingColor;
 @property(class, nonatomic, readonly) UIColor* pinEntryPlaceholderColor;

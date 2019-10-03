@@ -7,8 +7,8 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
@@ -31,7 +31,7 @@ const char* kFailurePhase[]{
     "readasync",  // READ_ASYNC
 };
 
-static_assert(arraysize(kFailurePhase) ==
+static_assert(base::size(kFailurePhase) ==
                   URLRequestFailedJob::FailurePhase::MAX_FAILURE_PHASE,
               "kFailurePhase must match FailurePhase enum");
 
@@ -47,7 +47,7 @@ class MockJobInterceptor : public URLRequestInterceptor {
     int net_error = OK;
     URLRequestFailedJob::FailurePhase phase =
         URLRequestFailedJob::FailurePhase::MAX_FAILURE_PHASE;
-    for (size_t i = 0; i < arraysize(kFailurePhase); i++) {
+    for (size_t i = 0; i < base::size(kFailurePhase); i++) {
       std::string phase_error_string;
       if (GetValueForKeyInQuery(request->url(), kFailurePhase[i],
                                 &phase_error_string)) {
@@ -72,7 +72,7 @@ GURL GetMockUrl(const std::string& scheme,
   CHECK_LE(phase, URLRequestFailedJob::FailurePhase::READ_ASYNC);
   CHECK_LT(net_error, OK);
   return GURL(scheme + "://" + hostname + "/error?" + kFailurePhase[phase] +
-              "=" + base::IntToString(net_error));
+              "=" + base::NumberToString(net_error));
 }
 
 }  // namespace
@@ -84,8 +84,7 @@ URLRequestFailedJob::URLRequestFailedJob(URLRequest* request,
     : URLRequestJob(request, network_delegate),
       phase_(phase),
       net_error_(net_error),
-      total_received_bytes_(0),
-      weak_factory_(this) {
+      total_received_bytes_(0) {
   CHECK_GE(phase, URLRequestFailedJob::FailurePhase::START);
   CHECK_LE(phase, URLRequestFailedJob::FailurePhase::READ_ASYNC);
   CHECK_LT(net_error, OK);
@@ -99,8 +98,8 @@ URLRequestFailedJob::URLRequestFailedJob(URLRequest* request,
 
 void URLRequestFailedJob::Start() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&URLRequestFailedJob::StartAsync, weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&URLRequestFailedJob::StartAsync,
+                                weak_factory_.GetWeakPtr()));
 }
 
 int URLRequestFailedJob::ReadRawData(IOBuffer* buf, int buf_size) {
@@ -109,8 +108,8 @@ int URLRequestFailedJob::ReadRawData(IOBuffer* buf, int buf_size) {
     return net_error_;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&URLRequestFailedJob::ReadRawDataComplete,
-                            weak_factory_.GetWeakPtr(), net_error_));
+      FROM_HERE, base::BindOnce(&URLRequestFailedJob::ReadRawDataComplete,
+                                weak_factory_.GetWeakPtr(), net_error_));
   return ERR_IO_PENDING;
 }
 
@@ -121,7 +120,10 @@ void URLRequestFailedJob::GetResponseInfo(HttpResponseInfo* info) {
 void URLRequestFailedJob::PopulateNetErrorDetails(
     NetErrorDetails* details) const {
   if (net_error_ == ERR_QUIC_PROTOCOL_ERROR) {
-    details->quic_connection_error = QUIC_INTERNAL_ERROR;
+    details->quic_connection_error = quic::QUIC_INTERNAL_ERROR;
+  } else if (net_error_ == ERR_NETWORK_CHANGED) {
+    details->quic_connection_error =
+        quic::QUIC_CONNECTION_MIGRATION_NO_NEW_NETWORK;
   }
 }
 

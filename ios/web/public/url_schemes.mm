@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ios/web/public/url_schemes.h"
+#include "ios/web/public/navigation/url_schemes.h"
 
 #include <algorithm>
 #include <vector>
@@ -20,7 +20,7 @@ void RegisterWebSchemes(bool lock_schemes) {
   web::WebClient::Schemes schemes;
   GetWebClient()->AddAdditionalSchemes(&schemes);
   for (const auto& scheme : schemes.standard_schemes)
-    url::AddStandardScheme(scheme.c_str(), url::SCHEME_WITHOUT_PORT);
+    url::AddStandardScheme(scheme.c_str(), url::SCHEME_WITH_HOST);
 
   for (const auto& scheme : schemes.secure_schemes)
     url::AddSecureScheme(scheme.c_str());

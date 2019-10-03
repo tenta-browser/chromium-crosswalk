@@ -41,7 +41,7 @@ void FakeBluetoothGattServiceClient::Properties::Get(
     dbus::PropertyBase* property,
     dbus::PropertySet::GetCallback callback) {
   VLOG(1) << "Get " << property->name();
-  callback.Run(false);
+  std::move(callback).Run(false);
 }
 
 void FakeBluetoothGattServiceClient::Properties::GetAll() {
@@ -50,9 +50,9 @@ void FakeBluetoothGattServiceClient::Properties::GetAll() {
 
 void FakeBluetoothGattServiceClient::Properties::Set(
     dbus::PropertyBase* property,
-    dbus::PropertySet::GetCallback callback) {
+    dbus::PropertySet::SetCallback callback) {
   VLOG(1) << "Set " << property->name();
-  callback.Run(false);
+  std::move(callback).Run(false);
 }
 
 FakeBluetoothGattServiceClient::FakeBluetoothGattServiceClient()
@@ -60,7 +60,9 @@ FakeBluetoothGattServiceClient::FakeBluetoothGattServiceClient()
 
 FakeBluetoothGattServiceClient::~FakeBluetoothGattServiceClient() = default;
 
-void FakeBluetoothGattServiceClient::Init(dbus::Bus* bus) {}
+void FakeBluetoothGattServiceClient::Init(
+    dbus::Bus* bus,
+    const std::string& bluetooth_service_name) {}
 
 void FakeBluetoothGattServiceClient::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
@@ -114,7 +116,7 @@ void FakeBluetoothGattServiceClient::ExposeHeartRateService(
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &FakeBluetoothGattServiceClient::ExposeHeartRateCharacteristics,
           weak_ptr_factory_.GetWeakPtr()));
 }

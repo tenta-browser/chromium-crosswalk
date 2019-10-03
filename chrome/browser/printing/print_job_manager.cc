@@ -4,13 +4,14 @@
 
 #include "chrome/browser/printing/print_job_manager.h"
 
+#include "base/bind.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/printing/print_job.h"
 #include "chrome/browser/printing/printer_query.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "printing/printed_document.h"
-#include "printing/printed_page.h"
 
 namespace printing {
 
@@ -22,32 +23,33 @@ PrintQueriesQueue::~PrintQueriesQueue() {
   queued_queries_.clear();
 }
 
-void PrintQueriesQueue::QueuePrinterQuery(PrinterQuery* job) {
+void PrintQueriesQueue::QueuePrinterQuery(std::unique_ptr<PrinterQuery> query) {
   base::AutoLock lock(lock_);
-  DCHECK(job);
-  queued_queries_.push_back(base::WrapRefCounted(job));
-  DCHECK(job->is_valid());
+  DCHECK(query);
+  DCHECK(query->is_valid());
+  queued_queries_.push_back(std::move(query));
 }
 
-scoped_refptr<PrinterQuery> PrintQueriesQueue::PopPrinterQuery(
+std::unique_ptr<PrinterQuery> PrintQueriesQueue::PopPrinterQuery(
     int document_cookie) {
   base::AutoLock lock(lock_);
-  for (PrinterQueries::iterator itr = queued_queries_.begin();
-       itr != queued_queries_.end(); ++itr) {
-    if ((*itr)->cookie() == document_cookie && !(*itr)->is_callback_pending()) {
-      scoped_refptr<PrinterQuery> current_query(*itr);
-      queued_queries_.erase(itr);
-      DCHECK(current_query->is_valid());
-      return current_query;
-    }
+  for (auto it = queued_queries_.begin(); it != queued_queries_.end(); ++it) {
+    std::unique_ptr<PrinterQuery>& query = *it;
+    if (query->cookie() != document_cookie)
+      continue;
+
+    std::unique_ptr<PrinterQuery> current_query = std::move(query);
+    queued_queries_.erase(it);
+    DCHECK(current_query->is_valid());
+    return current_query;
   }
-  return NULL;
+  return nullptr;
 }
 
-scoped_refptr<PrinterQuery> PrintQueriesQueue::CreatePrinterQuery(
+std::unique_ptr<PrinterQuery> PrintQueriesQueue::CreatePrinterQuery(
     int render_process_id,
     int render_frame_id) {
-  return base::MakeRefCounted<PrinterQuery>(render_process_id, render_frame_id);
+  return std::make_unique<PrinterQuery>(render_process_id, render_frame_id);
 }
 
 void PrintQueriesQueue::Shutdown() {
@@ -59,13 +61,13 @@ void PrintQueriesQueue::Shutdown() {
   // Stop all pending queries, requests to generate print preview do not have
   // corresponding PrintJob, so any pending preview requests are not covered
   // by PrintJobManager::StopJobs and should be stopped explicitly.
-  for (PrinterQueries::iterator itr = queries_to_stop.begin();
-       itr != queries_to_stop.end(); ++itr) {
-    (*itr)->PostTask(FROM_HERE, base::Bind(&PrinterQuery::StopWorker, *itr));
+  for (auto& query : queries_to_stop) {
+    query->PostTask(
+        FROM_HERE, base::BindOnce(&PrinterQuery::StopWorker, std::move(query)));
   }
 }
 
-PrintJobManager::PrintJobManager() : is_shutdown_(false) {
+PrintJobManager::PrintJobManager() {
   registrar_.Add(this, chrome::NOTIFICATION_PRINT_JOB_EVENT,
                  content::NotificationService::AllSources());
 }
@@ -75,9 +77,15 @@ PrintJobManager::~PrintJobManager() {
 
 scoped_refptr<PrintQueriesQueue> PrintJobManager::queue() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (!queue_.get())
-    queue_ = new PrintQueriesQueue();
+  if (!queue_)
+    queue_ = base::MakeRefCounted<PrintQueriesQueue>();
   return queue_;
+}
+
+void PrintJobManager::SetQueueForTest(scoped_refptr<PrintQueriesQueue> queue) {
+  if (queue_)
+    queue_->Shutdown();
+  queue_ = queue;
 }
 
 void PrintJobManager::Shutdown() {
@@ -86,9 +94,10 @@ void PrintJobManager::Shutdown() {
   is_shutdown_ = true;
   registrar_.RemoveAll();
   StopJobs(true);
-  if (queue_.get())
+  if (queue_) {
     queue_->Shutdown();
-  queue_ = NULL;
+    queue_ = nullptr;
+  }
 }
 
 void PrintJobManager::StopJobs(bool wait_for_finish) {
@@ -97,8 +106,7 @@ void PrintJobManager::StopJobs(bool wait_for_finish) {
   PrintJobs to_stop;
   to_stop.swap(current_jobs_);
 
-  for (PrintJobs::const_iterator job = to_stop.begin(); job != to_stop.end();
-       ++job) {
+  for (auto job = to_stop.begin(); job != to_stop.end(); ++job) {
     // Wait for two minutes for the print job to be spooled.
     if (wait_for_finish)
       (*job)->FlushJob(base::TimeDelta::FromMinutes(2));
@@ -121,14 +129,14 @@ void PrintJobManager::OnPrintJobEvent(
     const JobEventDetails& event_details) {
   switch (event_details.type()) {
     case JobEventDetails::NEW_DOC: {
-      DCHECK(current_jobs_.end() == current_jobs_.find(print_job));
       // Causes a AddRef().
-      current_jobs_.insert(print_job);
+      bool inserted = current_jobs_.insert(print_job).second;
+      DCHECK(inserted);
       break;
     }
     case JobEventDetails::JOB_DONE: {
-      DCHECK(current_jobs_.end() != current_jobs_.find(print_job));
-      current_jobs_.erase(print_job);
+      size_t erased = current_jobs_.erase(print_job);
+      DCHECK_EQ(1U, erased);
       break;
     }
     case JobEventDetails::FAILED: {
@@ -138,8 +146,9 @@ void PrintJobManager::OnPrintJobEvent(
     case JobEventDetails::USER_INIT_DONE:
     case JobEventDetails::USER_INIT_CANCELED:
     case JobEventDetails::DEFAULT_INIT_DONE:
-    case JobEventDetails::NEW_PAGE:
+#if defined(OS_WIN)
     case JobEventDetails::PAGE_DONE:
+#endif
     case JobEventDetails::DOC_DONE:
     case JobEventDetails::ALL_PAGES_REQUESTED: {
       // Don't care.

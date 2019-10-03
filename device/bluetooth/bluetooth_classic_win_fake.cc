@@ -5,6 +5,7 @@
 #include "device/bluetooth/bluetooth_classic_win_fake.h"
 
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 
 namespace device {
 namespace win {
@@ -14,19 +15,16 @@ BluetoothClassicWrapperFake::BluetoothClassicWrapperFake()
 BluetoothClassicWrapperFake::~BluetoothClassicWrapperFake() {}
 
 HBLUETOOTH_RADIO_FIND BluetoothClassicWrapperFake::FindFirstRadio(
-    const BLUETOOTH_FIND_RADIO_PARAMS* params,
-    HANDLE* out_handle) {
+    const BLUETOOTH_FIND_RADIO_PARAMS* params) {
   if (simulated_radios_) {
-    *out_handle = (PVOID)simulated_radios_.get();
     last_error_ = ERROR_SUCCESS;
-    return *out_handle;
+    return (PVOID)simulated_radios_.get();
   }
   last_error_ = ERROR_NO_MORE_ITEMS;
   return NULL;
 }
 
 DWORD BluetoothClassicWrapperFake::GetRadioInfo(
-    HANDLE handle,
     PBLUETOOTH_RADIO_INFO out_radio_info) {
   if (simulated_radios_) {
     *out_radio_info = simulated_radios_->radio_info;
@@ -38,10 +36,11 @@ DWORD BluetoothClassicWrapperFake::GetRadioInfo(
 }
 
 BOOL BluetoothClassicWrapperFake::FindRadioClose(HBLUETOOTH_RADIO_FIND handle) {
+  DCHECK_EQ(handle, (PVOID)simulated_radios_.get());
   return TRUE;
 }
 
-BOOL BluetoothClassicWrapperFake::IsConnectable(HANDLE handle) {
+BOOL BluetoothClassicWrapperFake::IsConnectable() {
   if (simulated_radios_) {
     last_error_ = ERROR_SUCCESS;
     return simulated_radios_->is_connectable;
@@ -69,18 +68,20 @@ BOOL BluetoothClassicWrapperFake::FindDeviceClose(
   return TRUE;
 }
 
-BOOL BluetoothClassicWrapperFake::EnableDiscovery(HANDLE handle,
-                                                  BOOL is_enable) {
+BOOL BluetoothClassicWrapperFake::EnableDiscovery(BOOL is_enable) {
   return TRUE;
 }
 
-BOOL BluetoothClassicWrapperFake::EnableIncomingConnections(HANDLE handle,
-                                                            BOOL is_enable) {
+BOOL BluetoothClassicWrapperFake::EnableIncomingConnections(BOOL is_enable) {
   return TRUE;
 }
 
 DWORD BluetoothClassicWrapperFake::LastError() {
   return last_error_;
+}
+
+bool BluetoothClassicWrapperFake::HasHandle() {
+  return bool(simulated_radios_);
 }
 
 BluetoothRadio* BluetoothClassicWrapperFake::SimulateARadio(
@@ -91,7 +92,7 @@ BluetoothRadio* BluetoothClassicWrapperFake::SimulateARadio(
   size_t length =
       ((name.size() > BLUETOOTH_MAX_NAME_SIZE) ? BLUETOOTH_MAX_NAME_SIZE
                                                : name.size());
-  wcsncpy(radio->radio_info.szName, name.c_str(), length);
+  wcsncpy(radio->radio_info.szName, base::as_wcstr(name), length);
   radio->radio_info.address = address;
   simulated_radios_.reset(radio);
   return radio;

@@ -8,13 +8,13 @@
 #include <memory>
 #include <utility>
 
-#include "ash/shell.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/candidate_window.h"
@@ -22,8 +22,10 @@
 #include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/ime/chromeos/ime_keymap.h"
 #include "ui/base/ime/composition_text.h"
+#include "ui/base/ime/constants.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/text_input_flags.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/chromeos/ime/input_method_menu_item.h"
 #include "ui/chromeos/ime/input_method_menu_manager.h"
 #include "ui/events/event.h"
@@ -31,8 +33,6 @@
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
 
 using input_method::InputMethodEngineBase;
 
@@ -66,9 +66,49 @@ InputMethodEngine::CandidateWindowProperty::CandidateWindowProperty()
 InputMethodEngine::CandidateWindowProperty::~CandidateWindowProperty() {}
 
 InputMethodEngine::InputMethodEngine()
-    : candidate_window_(new ui::CandidateWindow()), window_visible_(false) {}
+    : candidate_window_(new ui::CandidateWindow()),
+      window_visible_(false),
+      is_mirroring_(false),
+      is_casting_(false) {}
 
 InputMethodEngine::~InputMethodEngine() {}
+
+void InputMethodEngine::Enable(const std::string& component_id) {
+  InputMethodEngineBase::Enable(component_id);
+  EnableInputView();
+}
+
+bool InputMethodEngine::IsActive() const {
+  return !active_component_id_.empty();
+}
+
+void InputMethodEngine::PropertyActivate(const std::string& property_name) {
+  observer_->OnMenuItemActivated(active_component_id_, property_name);
+}
+
+void InputMethodEngine::CandidateClicked(uint32_t index) {
+  if (index > candidate_ids_.size()) {
+    return;
+  }
+
+  // Only left button click is supported at this moment.
+  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
+                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
+}
+
+void InputMethodEngine::SetMirroringEnabled(bool mirroring_enabled) {
+  if (mirroring_enabled != is_mirroring_) {
+    is_mirroring_ = mirroring_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
+
+void InputMethodEngine::SetCastingEnabled(bool casting_enabled) {
+  if (casting_enabled != is_casting_) {
+    is_casting_ = casting_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
 
 const InputMethodEngine::CandidateWindowProperty&
 InputMethodEngine::GetCandidateWindowProperty() const {
@@ -211,49 +251,103 @@ bool InputMethodEngine::UpdateMenuItems(
   return true;
 }
 
-bool InputMethodEngine::IsActive() const {
-  return !active_component_id_.empty();
+void InputMethodEngine::HideInputView() {
+  auto* keyboard_client = ChromeKeyboardControllerClient::Get();
+  if (keyboard_client->is_keyboard_enabled())
+    keyboard_client->HideKeyboard(ash::HideReason::kUser);
 }
 
-void InputMethodEngine::HideInputView() {
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller) {
-    keyboard_controller->HideKeyboard(
-        keyboard::KeyboardController::HIDE_REASON_MANUAL);
+void InputMethodEngine::UpdateComposition(
+    const ui::CompositionText& composition_text,
+    uint32_t cursor_pos,
+    bool is_visible) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->UpdateCompositionText(composition_text, cursor_pos,
+                                         is_visible);
+}
+
+bool InputMethodEngine::SetCompositionRange(
+    uint32_t before,
+    uint32_t after,
+    const std::vector<ui::ImeTextSpan>& text_spans) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+  return input_context->SetCompositionRange(before, after, text_spans);
+}
+
+void InputMethodEngine::CommitTextToInputContext(int context_id,
+                                                 const std::string& text) {
+  bool committed = false;
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->CommitText(text);
+    committed = true;
+  }
+
+  if (committed && !composition_text_->text.empty()) {
+    // Records histograms for committed characters.
+    base::string16 wtext = base::UTF8ToUTF16(text);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
+                                25, 25);
+    composition_text_.reset(new ui::CompositionText());
+  }
+}
+
+void InputMethodEngine::DeleteSurroundingTextToInputContext(
+    int offset,
+    size_t number_of_chars) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->DeleteSurroundingText(offset, number_of_chars);
+}
+
+bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
+                                     const std::string& code) {
+  DCHECK(event);
+  if (event->key_code() == ui::VKEY_UNKNOWN)
+    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
+
+  // Marks the simulated key event is from the Virtual Keyboard.
+  ui::Event::Properties properties;
+  properties[ui::kPropertyFromVK] =
+      std::vector<uint8_t>(ui::kPropertyFromVKSize);
+  properties[ui::kPropertyFromVK][ui::kPropertyFromVKIsMirroringIndex] =
+      (uint8_t)is_mirroring_;
+  event->SetProperties(properties);
+
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->SendKeyEvent(event);
+    return true;
+  }
+  return false;
+}
+
+void InputMethodEngine::ConfirmCompositionText() {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->ConfirmCompositionText();
+    composition_text_.reset(new ui::CompositionText());
   }
 }
 
 void InputMethodEngine::EnableInputView() {
-  keyboard::SetOverrideContentUrl(input_method::InputMethodManager::Get()
-                                      ->GetActiveIMEState()
-                                      ->GetCurrentInputMethod()
-                                      .input_view_url());
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  if (keyboard_controller)
-    keyboard_controller->Reload();
+  input_method::InputMethodManager::Get()
+      ->GetActiveIMEState()
+      ->EnableInputView();
+  auto* keyboard_client = ChromeKeyboardControllerClient::Get();
+  if (keyboard_client->is_keyboard_enabled())
+    keyboard_client->ReloadKeyboardIfNeeded();
 }
 
-
-void InputMethodEngine::Enable(const std::string& component_id) {
-  InputMethodEngineBase::Enable(component_id);
-  EnableInputView();
-}
-
-void InputMethodEngine::PropertyActivate(const std::string& property_name) {
-  observer_->OnMenuItemActivated(active_component_id_, property_name);
-}
-
-void InputMethodEngine::CandidateClicked(uint32_t index) {
-  if (index > candidate_ids_.size()) {
-    return;
-  }
-
-  // Only left button click is supported at this moment.
-  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
-                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
-}
 
 // TODO(uekawa): rename this method to a more reasonable name.
 void InputMethodEngine::MenuItemToProperty(
@@ -295,42 +389,6 @@ void InputMethodEngine::MenuItemToProperty(
   }
 
   // TODO(nona): Support item.children.
-}
-
-void InputMethodEngine::UpdateComposition(
-    const ui::CompositionText& composition_text,
-    uint32_t cursor_pos,
-    bool is_visible) {
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (input_context)
-    input_context->UpdateCompositionText(composition_text, cursor_pos,
-                                         is_visible);
-}
-
-void InputMethodEngine::CommitTextToInputContext(int context_id,
-                                                 const std::string& text) {
-  ui::IMEBridge::Get()->GetInputContextHandler()->CommitText(text);
-
-  // Records histograms for committed characters.
-  if (!composition_text_->text.empty()) {
-    base::string16 wtext = base::UTF8ToUTF16(text);
-    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
-                                25, 25);
-    composition_text_.reset(new ui::CompositionText());
-  }
-}
-
-bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
-                                     const std::string& code) {
-  DCHECK(event);
-  if (event->key_code() == ui::VKEY_UNKNOWN)
-    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
-
-  ui::EventSink* sink =
-      ash::Shell::GetPrimaryRootWindow()->GetHost()->event_sink();
-  ui::EventDispatchDetails details = sink->OnEventFromSource(event);
-  return !details.dispatcher_destroyed;
 }
 
 }  // namespace chromeos

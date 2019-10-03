@@ -5,6 +5,7 @@
 #include "chrome/renderer/safe_browsing/phishing_classifier.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -25,12 +26,12 @@
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/renderer/render_frame.h"
 #include "crypto/sha2.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebDocumentLoader.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_document_loader.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 
 namespace safe_browsing {
@@ -59,10 +60,7 @@ void RecordReasonForSkippingClassificationToUMA(
 
 PhishingClassifier::PhishingClassifier(content::RenderFrame* render_frame,
                                        FeatureExtractorClock* clock)
-    : render_frame_(render_frame),
-      scorer_(NULL),
-      clock_(clock),
-      weak_factory_(this) {
+    : render_frame_(render_frame), scorer_(nullptr), clock_(clock) {
   Clear();
 }
 
@@ -99,9 +97,8 @@ bool PhishingClassifier::is_ready() const {
   return scorer_ != NULL;
 }
 
-void PhishingClassifier::BeginClassification(
-    const base::string16* page_text,
-    const DoneCallback& done_callback) {
+void PhishingClassifier::BeginClassification(const base::string16* page_text,
+                                             DoneCallback done_callback) {
   DCHECK(is_ready());
 
   // The RenderView should have called CancelPendingClassification() before
@@ -112,7 +109,7 @@ void PhishingClassifier::BeginClassification(
   CancelPendingClassification();
 
   page_text_ = page_text;
-  done_callback_ = done_callback;
+  done_callback_ = std::move(done_callback);
 
   // For consistency, we always want to invoke the DoneCallback
   // asynchronously, rather than directly from this method.  To ensure that
@@ -136,8 +133,7 @@ void PhishingClassifier::BeginFeatureExtraction() {
   }
 
   blink::WebDocumentLoader* document_loader = frame->GetDocumentLoader();
-  if (!document_loader ||
-      document_loader->GetRequest().HttpMethod().Ascii() != "GET") {
+  if (!document_loader || document_loader->HttpMethod().Ascii() != "GET") {
     if (document_loader)
       RecordReasonForSkippingClassificationToUMA(SKIP_NONE_GET);
     RunFailureCallback();
@@ -155,8 +151,8 @@ void PhishingClassifier::BeginFeatureExtraction() {
   // in several chunks of work and invokes the callback when finished.
   dom_extractor_->ExtractFeatures(
       frame->GetDocument(), features_.get(),
-      base::Bind(&PhishingClassifier::DOMExtractionFinished,
-                 base::Unretained(this)));
+      base::BindOnce(&PhishingClassifier::DOMExtractionFinished,
+                     base::Unretained(this)));
 }
 
 void PhishingClassifier::CancelPendingClassification() {
@@ -175,11 +171,9 @@ void PhishingClassifier::DOMExtractionFinished(bool success) {
     // Term feature extraction can take awhile, so it runs asynchronously
     // in several chunks of work and invokes the callback when finished.
     term_extractor_->ExtractFeatures(
-        page_text_,
-        features_.get(),
-        shingle_hashes_.get(),
-        base::Bind(&PhishingClassifier::TermExtractionFinished,
-                   base::Unretained(this)));
+        page_text_, features_.get(), shingle_hashes_.get(),
+        base::BindOnce(&PhishingClassifier::TermExtractionFinished,
+                       base::Unretained(this)));
   } else {
     RunFailureCallback();
   }
@@ -226,7 +220,7 @@ void PhishingClassifier::CheckNoPendingClassification() {
 }
 
 void PhishingClassifier::RunCallback(const ClientPhishingRequest& verdict) {
-  done_callback_.Run(verdict);
+  std::move(done_callback_).Run(verdict);
   Clear();
 }
 

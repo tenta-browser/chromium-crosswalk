@@ -13,7 +13,7 @@ class Pickle;
 class PickleIterator;
 }
 
-class SkData;
+class SkBitmap;
 class SkFlattenable;
 
 namespace skia {
@@ -42,16 +42,12 @@ SK_API void WriteSkFontIdentity(
 // Writes style into the request pickle.
 SK_API void WriteSkFontStyle(base::Pickle* pickle, SkFontStyle style);
 
-// Serializes the SkFlattenable. Any encoded images contained in the flattenable
-// will be decoded during serialization.
-SK_API sk_sp<SkData> ValidatingSerializeFlattenable(SkFlattenable* flattenable);
-
-// Deserializes the SkFlattenable. This method must not be called with data
-// containing encoded images.
-SK_API SkFlattenable* ValidatingDeserializeFlattenable(
-    const void* data,
-    size_t size,
-    SkFlattenable::Type type);
+// Converts an SkBitmap to an Opaque or Premul N32 SkBitmap. If the input is in
+// the right format (N32 Opaque or Premul) already, points |out| directly at
+// |in|. |out| may or may not be GPU-backed.
+//
+// If unsuccessful, returns false, but |out| may be modified.
+SK_API bool SkBitmapToN32OpaqueOrPremul(const SkBitmap& in, SkBitmap* out);
 
 }  // namespace skia
 

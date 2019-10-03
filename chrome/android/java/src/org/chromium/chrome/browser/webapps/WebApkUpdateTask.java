@@ -4,11 +4,8 @@
 
 package org.chromium.chrome.browser.webapps;
 
-import android.app.Activity;
 import android.content.Context;
-import android.text.TextUtils;
 
-import org.chromium.base.ApplicationStatus;
 import org.chromium.base.StrictModeContext;
 import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask;
 import org.chromium.components.background_task_scheduler.BackgroundTask.TaskFinishedCallback;
@@ -24,7 +21,7 @@ import java.util.List;
  */
 public class WebApkUpdateTask extends NativeBackgroundTask {
     /** The WebappDataStorage for the WebAPK to update. */
-    private WebappDataStorage mStorageToUpdate = null;
+    private WebappDataStorage mStorageToUpdate;
 
     /** Whether there are more WebAPKs to update than just {@link mStorageToUpdate}. */
     private boolean mMoreToUpdate;
@@ -35,20 +32,22 @@ public class WebApkUpdateTask extends NativeBackgroundTask {
             Context context, TaskParameters taskParameters, TaskFinishedCallback callback) {
         assert taskParameters.getTaskId() == TaskIds.WEBAPK_UPDATE_JOB_ID;
 
-        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
             WebappRegistry.warmUpSharedPrefs();
         }
 
         List<String> ids = WebappRegistry.getInstance().findWebApksWithPendingUpdate();
         for (String id : ids) {
             WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(id);
-            if (!isWebApkActivityRunning(storage.getWebApkPackageName())) {
+            WeakReference<WebappActivity> activity =
+                    WebappActivity.findRunningWebappActivityWithId(storage.getId());
+            if (activity == null || activity.get() == null) {
                 mStorageToUpdate = storage;
                 mMoreToUpdate = ids.size() > 1;
-                return LOAD_NATIVE;
+                return StartBeforeNativeResult.LOAD_NATIVE;
             }
         }
-        return ids.isEmpty() ? DONE : RESCHEDULE;
+        return ids.isEmpty() ? StartBeforeNativeResult.DONE : StartBeforeNativeResult.RESCHEDULE;
     }
 
     @Override
@@ -56,8 +55,8 @@ public class WebApkUpdateTask extends NativeBackgroundTask {
             Context context, TaskParameters taskParameters, final TaskFinishedCallback callback) {
         assert taskParameters.getTaskId() == TaskIds.WEBAPK_UPDATE_JOB_ID;
 
-        WebApkUpdateManager updateManager = new WebApkUpdateManager(mStorageToUpdate);
-        updateManager.updateWhileNotRunning(() -> callback.taskFinished(mMoreToUpdate));
+        WebApkUpdateManager.updateWhileNotRunning(
+                mStorageToUpdate, () -> callback.taskFinished(mMoreToUpdate));
     }
 
     @Override
@@ -80,20 +79,4 @@ public class WebApkUpdateTask extends NativeBackgroundTask {
 
     @Override
     public void reschedule(Context context) {}
-
-    /** Returns whether a WebApkActivity with {@link webApkPackageName} is running. */
-    private static boolean isWebApkActivityRunning(String webApkPackageName) {
-        for (WeakReference<Activity> activity : ApplicationStatus.getRunningActivities()) {
-            if (!(activity.get() instanceof WebApkActivity)) {
-                continue;
-            }
-            WebApkActivity webApkActivity = (WebApkActivity) activity.get();
-            if (webApkActivity != null
-                    && TextUtils.equals(
-                               webApkPackageName, webApkActivity.getNativeClientPackageName())) {
-                return true;
-            }
-        }
-        return false;
-    }
 }

@@ -5,28 +5,32 @@
 #ifndef COMPONENTS_SAFE_BROWSING_PASSWORD_PROTECTION_PASSWORD_PROTECTION_REQUEST_H_
 #define COMPONENTS_SAFE_BROWSING_PASSWORD_PROTECTION_PASSWORD_PROTECTION_REQUEST_H_
 
+#include <vector>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/time/time.h"
+#include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/safe_browsing/common/safe_browsing.mojom.h"
+#include "components/safe_browsing/password_protection/metrics_util.h"
 #include "components/safe_browsing/password_protection/password_protection_service.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_status.h"
-
-#include <vector>
+#include "content/public/browser/web_contents_observer.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 class GURL;
+
+namespace network {
+class SimpleURLLoader;
+}
 
 namespace safe_browsing {
 
 class PasswordProtectionNavigationThrottle;
 
-// UMA metrics
-extern const char kPasswordOnFocusVerdictHistogram[];
-extern const char kAnyPasswordEntryVerdictHistogram[];
-extern const char kSyncPasswordEntryVerdictHistogram[];
-extern const char kProtectedPasswordEntryVerdictHistogram[];
+using password_manager::metrics_util::PasswordType;
 
 // A request for checking if an unfamiliar login form or a password reuse event
 // is safe. PasswordProtectionRequest objects are owned by
@@ -41,20 +45,23 @@ extern const char kProtectedPasswordEntryVerdictHistogram[];
 // (3) |   IO   | Check whitelist and return the result back to UI thread.
 // (4) |   UI   | If whitelisted, check verdict cache; else quit request.
 // (5) |   UI   | If verdict cached, quit request; else prepare request proto.
-// (6) |   UI   | Start a timeout task, and send network request.
-// (7) |   UI   | On receiving response, handle response and finish.
+// (6) |   UI   | Collect features related to the DOM of the page.
+// (7) |   UI   | If appropriate, compute visual features of the page.
+// (7) |   UI   | Start a timeout task, and send network request.
+// (8) |   UI   | On receiving response, handle response and finish.
 //     |        | On request timeout, cancel request.
 //     |        | On deletion of |password_protection_service_|, cancel request.
 class PasswordProtectionRequest : public base::RefCountedThreadSafe<
                                       PasswordProtectionRequest,
                                       content::BrowserThread::DeleteOnUIThread>,
-                                  public net::URLFetcherDelegate {
+                                  public content::WebContentsObserver {
  public:
   PasswordProtectionRequest(content::WebContents* web_contents,
                             const GURL& main_frame_url,
                             const GURL& password_form_action,
                             const GURL& password_form_frame_url,
-                            bool matches_sync_password,
+                            const std::string& username,
+                            PasswordType password_type,
                             const std::vector<std::string>& matching_origins,
                             LoginReputationClientRequest::TriggerType type,
                             bool password_field_exists,
@@ -73,9 +80,8 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // due to timeout. This function will call Finish() to destroy |this|.
   void Cancel(bool timed_out);
 
-  // net::URLFetcherDelegate override.
   // Processes the received response.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void OnURLLoaderComplete(std::unique_ptr<std::string> response_body);
 
   GURL main_frame_url() const { return main_frame_url_; }
 
@@ -89,7 +95,9 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
     return trigger_type_;
   }
 
-  bool matches_sync_password() { return matches_sync_password_; }
+  const std::string username() const { return username_; }
+
+  PasswordType password_type() const { return password_type_; }
 
   bool is_modal_warning_showing() const { return is_modal_warning_showing_; }
 
@@ -109,6 +117,9 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // Cancels navigation if there is modal warning showing, resumes it otherwise.
   void HandleDeferredNavigations();
 
+  // WebContentsObserver implementation
+  void WebContentsDestroyed() override;
+
  protected:
   friend class base::RefCountedThreadSafe<PasswordProtectionRequest>;
 
@@ -116,6 +127,7 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   friend struct content::BrowserThread::DeleteOnThread<
       content::BrowserThread::UI>;
   friend class base::DeleteHelper<PasswordProtectionRequest>;
+  friend class PasswordProtectionServiceTest;
   friend class ChromePasswordProtectionServiceTest;
   ~PasswordProtectionRequest() override;
 
@@ -137,6 +149,16 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // Fill |request_proto_| with appropriate values.
   void FillRequestProto();
 
+  // Collects visual features from the current login page.
+  void CollectVisualFeatures();
+
+  // Processes the screenshot of the login page into visual features.
+  void OnScreenshotTaken(const SkBitmap& bitmap);
+
+  // Called when the visual feature extraction is complete.
+  void OnVisualFeatureCollectionDone(
+      std::unique_ptr<VisualFeatures> visual_features);
+
   // Initiates network request to Safe Browsing backend.
   void SendRequest();
 
@@ -144,8 +166,11 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   void StartTimeout();
 
   // |this| will be destroyed after calling this function.
-  void Finish(PasswordProtectionService::RequestOutcome outcome,
+  void Finish(RequestOutcome outcome,
               std::unique_ptr<LoginReputationClientResponse> response);
+
+  // Called when the DOM feature extraction is complete.
+  void OnGetDomFeatures(const std::string& verdict);
 
   // WebContents of the password protection event.
   content::WebContents* web_contents_;
@@ -159,12 +184,17 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // Frame url of the detected password form.
   const GURL password_form_frame_url_;
 
-  // True if the password is the sync/Google password.
-  const bool matches_sync_password_;
+  // The username of the reused password hash. The username can be an email or
+  // a username for a non-GAIA or saved-password reuse. No validation has been
+  // done on it.
+  const std::string username_;
+
+  // Type of the reused password.
+  const PasswordType password_type_;
 
   // Domains from the Password Manager that match this password.
-  // Should be non-empty if |matches_sync_password_| == false. Otherwise,
-  // may or may not be empty.
+  // Should be non-empty if |reused_password_type_| == SAVED_PASSWORD.
+  // Otherwise, may or may not be empty.
   const std::vector<std::string> matching_domains_;
 
   // If this request is for unfamiliar login page or for a password reuse event.
@@ -176,8 +206,8 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // When request is sent.
   base::TimeTicks request_start_time_;
 
-  // URLFetcher instance for sending request and receiving response.
-  std::unique_ptr<net::URLFetcher> fetcher_;
+  // SimpleURLLoader instance for sending request and receiving response.
+  std::unique_ptr<network::SimpleURLLoader> url_loader_;
 
   // The PasswordProtectionService instance owns |this|.
   // Can only be accessed on UI thread.
@@ -200,7 +230,21 @@ class PasswordProtectionRequest : public base::RefCountedThreadSafe<
   // Whether there is a modal warning triggered by this request.
   bool is_modal_warning_showing_;
 
-  base::WeakPtrFactory<PasswordProtectionRequest> weakptr_factory_;
+  // If a request is sent, this is the token returned by the WebUI.
+  int web_ui_token_;
+
+  // When we start extracting visual features.
+  base::TimeTicks visual_feature_start_time_;
+
+  // The Mojo pipe used for extracting DOM features from the renderer.
+  safe_browsing::mojom::PhishingDetectorPtr phishing_detector_;
+
+  // When we start extracting DOM features. Used to compute the duration of DOM
+  // feature extraction, which is logged at
+  // PasswordProtection.DomFeatureExtractionDuration.
+  base::TimeTicks dom_feature_start_time_;
+
+  base::WeakPtrFactory<PasswordProtectionRequest> weakptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(PasswordProtectionRequest);
 };
 

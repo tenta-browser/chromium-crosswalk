@@ -18,10 +18,6 @@
 enum class PermissionAction;
 class PermissionRequest;
 
-namespace safe_browsing {
-class PermissionReporterBrowserTest;
-}
-
 namespace test {
 class PermissionRequestManagerTestApi;
 }
@@ -44,8 +40,11 @@ class PermissionRequestManager
  public:
   class Observer {
    public:
-    virtual ~Observer();
-    virtual void OnBubbleAdded();
+    virtual void OnBubbleAdded() {}
+    virtual void OnBubbleRemoved() {}
+
+   protected:
+    virtual ~Observer() = default;
   };
 
   enum AutoResponseType {
@@ -65,15 +64,6 @@ class PermissionRequestManager
   // request will be merged with the outstanding request, and will have the same
   // callbacks called as the outstanding request.
   void AddRequest(PermissionRequest* request);
-
-  // Cancels an outstanding request. This may have different effects depending
-  // on what is going on with the bubble. If the request is pending, it will be
-  // removed and never shown. If the request is showing, it will continue to be
-  // shown, but the user's action won't be reported back to the request object.
-  // In some circumstances, we can remove the request from the bubble, and may
-  // do so. The request will have RequestFinished executed on it if it is found,
-  // at which time the caller is free to delete the request.
-  void CancelRequest(PermissionRequest* request);
 
   // Will reposition the bubble (may change parent if necessary).
   void UpdateAnchorPosition();
@@ -108,21 +98,21 @@ class PermissionRequestManager
   friend class MockPermissionPromptFactory;
   friend class PermissionContextBaseTests;
   friend class PermissionRequestManagerTest;
-  friend class safe_browsing::PermissionReporterBrowserTest;
   friend class content::WebContentsUserData<PermissionRequestManager>;
   FRIEND_TEST_ALL_PREFIXES(DownloadTest, TestMultipleDownloadsBubble);
 
   explicit PermissionRequestManager(content::WebContents* web_contents);
 
   // WebContentsObserver:
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   void DocumentOnLoadCompletedInMainFrame() override;
   void DocumentLoadedInFrame(
       content::RenderFrameHost* render_frame_host) override;
   void WebContentsDestroyed() override;
-  void WasShown() override;
-  void WasHidden() override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
 
   // PermissionPrompt::Delegate:
   const std::vector<PermissionRequest*>& Requests() override;
@@ -169,6 +159,7 @@ class PermissionRequestManager
   void RequestFinishedIncludingDuplicates(PermissionRequest* request);
 
   void NotifyBubbleAdded();
+  void NotifyBubbleRemoved();
 
   void DoAutoResponseForTesting();
 
@@ -182,7 +173,7 @@ class PermissionRequestManager
   std::unique_ptr<PermissionPrompt> view_;
   // We only show new prompts when both of these are true.
   bool main_frame_has_fully_loaded_;
-  bool tab_is_visible_;
+  bool tab_is_hidden_;
 
   std::vector<PermissionRequest*> requests_;
   base::circular_deque<PermissionRequest*> queued_requests_;
@@ -191,10 +182,15 @@ class PermissionRequestManager
   std::unordered_multimap<PermissionRequest*, PermissionRequest*>
       duplicate_requests_;
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
   AutoResponseType auto_response_for_test_;
 
-  base::WeakPtrFactory<PermissionRequestManager> weak_factory_;
+  // Suppress notification permission prompts in this tab, regardless of the
+  // origin requesting the permission.
+  bool is_notification_prompt_cooldown_active_ = false;
+
+  base::WeakPtrFactory<PermissionRequestManager> weak_factory_{this};
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
 #endif  // CHROME_BROWSER_PERMISSIONS_PERMISSION_REQUEST_MANAGER_H_

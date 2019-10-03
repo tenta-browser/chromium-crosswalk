@@ -14,7 +14,9 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_piece.h"
 #include "net/http/http_status_code.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -38,8 +40,7 @@ class HttpServer {
                                const HttpServerRequestInfo& info) = 0;
     virtual void OnWebSocketRequest(int connection_id,
                                     const HttpServerRequestInfo& info) = 0;
-    virtual void OnWebSocketMessage(int connection_id,
-                                    const std::string& data) = 0;
+    virtual void OnWebSocketMessage(int connection_id, std::string data) = 0;
     virtual void OnClose(int connection_id) = 0;
   };
 
@@ -52,23 +53,35 @@ class HttpServer {
   ~HttpServer();
 
   void AcceptWebSocket(int connection_id,
-                       const HttpServerRequestInfo& request);
-  void SendOverWebSocket(int connection_id, const std::string& data);
+                       const HttpServerRequestInfo& request,
+                       NetworkTrafficAnnotationTag traffic_annotation);
+  void SendOverWebSocket(int connection_id,
+                         base::StringPiece data,
+                         NetworkTrafficAnnotationTag traffic_annotation);
   // Sends the provided data directly to the given connection. No validation is
   // performed that data constitutes a valid HTTP response. A valid HTTP
   // response may be split across multiple calls to SendRaw.
-  void SendRaw(int connection_id, const std::string& data);
+  void SendRaw(int connection_id,
+               const std::string& data,
+               NetworkTrafficAnnotationTag traffic_annotation);
   // TODO(byungchul): Consider replacing function name with SendResponseInfo
-  void SendResponse(int connection_id, const HttpServerResponseInfo& response);
+  void SendResponse(int connection_id,
+                    const HttpServerResponseInfo& response,
+                    NetworkTrafficAnnotationTag traffic_annotation);
   void Send(int connection_id,
             HttpStatusCode status_code,
             const std::string& data,
-            const std::string& mime_type);
+            const std::string& mime_type,
+            NetworkTrafficAnnotationTag traffic_annotation);
   void Send200(int connection_id,
                const std::string& data,
-               const std::string& mime_type);
-  void Send404(int connection_id);
-  void Send500(int connection_id, const std::string& message);
+               const std::string& mime_type,
+               NetworkTrafficAnnotationTag traffic_annotation);
+  void Send404(int connection_id,
+               NetworkTrafficAnnotationTag traffic_annotation);
+  void Send500(int connection_id,
+               const std::string& message,
+               NetworkTrafficAnnotationTag traffic_annotation);
 
   void Close(int connection_id);
 
@@ -89,8 +102,11 @@ class HttpServer {
   void OnReadCompleted(int connection_id, int rv);
   int HandleReadResult(HttpConnection* connection, int rv);
 
-  void DoWriteLoop(HttpConnection* connection);
-  void OnWriteCompleted(int connection_id, int rv);
+  void DoWriteLoop(HttpConnection* connection,
+                   NetworkTrafficAnnotationTag traffic_annotation);
+  void OnWriteCompleted(int connection_id,
+                        NetworkTrafficAnnotationTag traffic_annotation,
+                        int rv);
   int HandleWriteResult(HttpConnection* connection, int rv);
 
   // Expects the raw data to be stored in recv_data_. If parsing is successful,
@@ -115,7 +131,7 @@ class HttpServer {
   int last_id_;
   std::map<int, std::unique_ptr<HttpConnection>> id_to_connection_;
 
-  base::WeakPtrFactory<HttpServer> weak_ptr_factory_;
+  base::WeakPtrFactory<HttpServer> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HttpServer);
 };

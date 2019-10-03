@@ -25,7 +25,7 @@ namespace ash {
 class Shelf;
 class TrayContainer;
 
-// Adds a logout button to the launcher's status area if enabled by the
+// Adds a logout button to the shelf's status area if enabled by the
 // kShowLogoutButtonInTray pref.
 class ASH_EXPORT LogoutButtonTray : public views::View,
                                     public views::ButtonListener,
@@ -41,12 +41,15 @@ class ASH_EXPORT LogoutButtonTray : public views::View,
 
   // views::View:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  const char* GetClassName() const override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // SessionObserver:
   void OnActiveUserPrefServiceChanged(PrefService* prefs) override;
+
+  views::MdTextButton* button_for_test() const { return button_; }
 
  private:
   void UpdateShowLogoutButtonInTray();
@@ -55,9 +58,9 @@ class ASH_EXPORT LogoutButtonTray : public views::View,
   void UpdateButtonTextAndImage();
 
   Shelf* const shelf_;
-  TrayContainer* const container_;
-  views::MdTextButton* const button_;
-  bool show_logout_button_in_tray_;
+  TrayContainer* container_;
+  views::MdTextButton* button_;
+  bool show_logout_button_in_tray_ = false;
   base::TimeDelta dialog_duration_;
 
   // Observes user profile prefs.

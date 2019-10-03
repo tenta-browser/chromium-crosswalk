@@ -24,27 +24,7 @@
 namespace gpu {
 
 CommandBufferHelper::CommandBufferHelper(CommandBuffer* command_buffer)
-    : command_buffer_(command_buffer),
-      ring_buffer_id_(-1),
-      ring_buffer_size_(0),
-      entries_(nullptr),
-      total_entry_count_(0),
-      immediate_entry_count_(0),
-      token_(0),
-      put_(0),
-      last_put_sent_(0),
-      cached_last_token_read_(0),
-      cached_get_offset_(0),
-      set_get_buffer_count_(0),
-      service_on_old_buffer_(false),
-#if defined(CMD_HELPER_PERIODIC_FLUSH_CHECK)
-      commands_issued_(0),
-#endif
-      usable_(true),
-      context_lost_(false),
-      flush_automatically_(true),
-      flush_generation_(0) {
-}
+    : command_buffer_(command_buffer) {}
 
 void CommandBufferHelper::SetAutomaticFlushes(bool enabled) {
   flush_automatically_ = enabled;
@@ -80,10 +60,10 @@ void CommandBufferHelper::CalcImmediateEntries(int waiting_count) {
   if (flush_automatically_) {
     int32_t limit =
         total_entry_count_ /
-        ((curr_get == last_put_sent_) ? kAutoFlushSmall : kAutoFlushBig);
+        ((curr_get == last_flush_put_) ? kAutoFlushSmall : kAutoFlushBig);
 
-    int32_t pending =
-        (put_ + total_entry_count_ - last_put_sent_) % total_entry_count_;
+    int32_t pending = (put_ + total_entry_count_ - last_ordering_barrier_put_) %
+                      total_entry_count_;
 
     if (pending > 0 && pending >= limit) {
       // Time to force flush.
@@ -136,7 +116,8 @@ void CommandBufferHelper::SetGetBuffer(int32_t id,
   // Call to SetGetBuffer(id) above resets get and put offsets to 0.
   // No need to query it through IPC.
   put_ = 0;
-  last_put_sent_ = 0;
+  last_flush_put_ = 0;
+  last_ordering_barrier_put_ = 0;
   cached_get_offset_ = 0;
   service_on_old_buffer_ = true;
   CalcImmediateEntries(0);
@@ -144,13 +125,15 @@ void CommandBufferHelper::SetGetBuffer(int32_t id,
 
 void CommandBufferHelper::FreeRingBuffer() {
   if (HaveRingBuffer()) {
-    FlushLazy();
+    OrderingBarrier();
     command_buffer_->DestroyTransferBuffer(ring_buffer_id_);
+    // SetGetBuffer is an IPC, so previous work needs to be flushed first.
+    Flush();
     SetGetBuffer(-1, nullptr);
   }
 }
 
-gpu::ContextResult CommandBufferHelper::Initialize(int32_t ring_buffer_size) {
+gpu::ContextResult CommandBufferHelper::Initialize(uint32_t ring_buffer_size) {
   ring_buffer_size_ = ring_buffer_size;
   if (!AllocateRingBuffer()) {
     // This would fail if CreateTransferBuffer fails, which will not fail for
@@ -187,13 +170,15 @@ bool CommandBufferHelper::WaitForGetOffsetInRange(int32_t start, int32_t end) {
 }
 
 void CommandBufferHelper::Flush() {
+  TRACE_EVENT0("gpu", "CommandBufferHelper::Flush");
   // Wrap put_ before flush.
   if (put_ == total_entry_count_)
     put_ = 0;
 
   if (HaveRingBuffer()) {
     last_flush_time_ = base::TimeTicks::Now();
-    last_put_sent_ = put_;
+    last_flush_put_ = put_;
+    last_ordering_barrier_put_ = put_;
     command_buffer_->Flush(put_);
     ++flush_generation_;
     CalcImmediateEntries(0);
@@ -201,7 +186,7 @@ void CommandBufferHelper::Flush() {
 }
 
 void CommandBufferHelper::FlushLazy() {
-  if (put_ == last_put_sent_)
+  if (put_ == last_flush_put_ && put_ == last_ordering_barrier_put_)
     return;
   Flush();
 }
@@ -212,6 +197,7 @@ void CommandBufferHelper::OrderingBarrier() {
     put_ = 0;
 
   if (HaveRingBuffer()) {
+    last_ordering_barrier_put_ = put_;
     command_buffer_->OrderingBarrier(put_);
     ++flush_generation_;
     CalcImmediateEntries(0);
@@ -274,8 +260,18 @@ bool CommandBufferHelper::HasTokenPassed(int32_t token) {
   // Don't update state if we don't have to.
   if (token <= cached_last_token_read_)
     return true;
+  RefreshCachedToken();
+  return token <= cached_last_token_read_;
+}
+
+void CommandBufferHelper::RefreshCachedToken() {
   CommandBuffer::State last_state = command_buffer_->GetLastState();
   UpdateCachedState(last_state);
+}
+
+bool CommandBufferHelper::HasCachedTokenPassed(int32_t token) {
+  if (token > token_)
+    return true;
   return token <= cached_last_token_read_;
 }
 
@@ -331,7 +327,14 @@ void CommandBufferHelper::WaitForAvailableEntries(int32_t count) {
   // Try to get 'count' entries without flushing.
   CalcImmediateEntries(count);
   if (immediate_entry_count_ < count) {
-    // Try again with a shallow Flush().
+    // Update cached_get_offset_ and try again.
+    UpdateCachedState(command_buffer_->GetLastState());
+    CalcImmediateEntries(count);
+  }
+
+  if (immediate_entry_count_ < count) {
+    // Try again with a shallow Flush(). Flush can change immediate_entry_count_
+    // because of the auto flush logic.
     FlushLazy();
     CalcImmediateEntries(count);
     if (immediate_entry_count_ < count) {
@@ -379,7 +382,7 @@ bool CommandBufferHelper::OnMemoryDump(
         "free_size", MemoryAllocatorDump::kUnitsBytes,
         GetTotalFreeEntriesNoWaiting() * sizeof(CommandBufferEntry));
     base::UnguessableToken shared_memory_guid =
-        ring_buffer_->backing()->shared_memory_handle().GetGUID();
+        ring_buffer_->backing()->GetGUID();
     const int kImportance = 2;
     if (!shared_memory_guid.is_empty()) {
       pmd->CreateSharedMemoryOwnershipEdge(dump->guid(), shared_memory_guid,

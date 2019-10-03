@@ -4,7 +4,7 @@
 
 #include "content/shell/gpu/shell_content_gpu_client.h"
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "content/shell/common/power_monitor_test_impl.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
@@ -18,8 +18,7 @@ ShellContentGpuClient::~ShellContentGpuClient() = default;
 void ShellContentGpuClient::InitializeRegistry(
     service_manager::BinderRegistry* registry) {
   registry->AddInterface<mojom::PowerMonitorTest>(
-      base::Bind(&PowerMonitorTestImpl::MakeStrongBinding,
-                 base::Passed(std::make_unique<PowerMonitorTestImpl>())),
+      base::BindRepeating(&PowerMonitorTestImpl::MakeStrongBinding),
       base::ThreadTaskRunnerHandle::Get());
 }
 

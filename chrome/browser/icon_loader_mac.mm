@@ -8,10 +8,8 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
@@ -33,11 +31,11 @@ void IconLoader::ReadIcon() {
   NSWorkspace* workspace = [NSWorkspace sharedWorkspace];
   NSImage* icon = [workspace iconForFileType:group];
 
-  std::unique_ptr<gfx::Image> image;
+  gfx::Image image;
 
   if (icon_size_ == ALL) {
     // The NSImage already has all sizes.
-    image = base::MakeUnique<gfx::Image>([icon retain]);
+    image = gfx::Image(icon);
   } else {
     NSSize size = NSZeroSize;
     switch (icon_size_) {
@@ -53,11 +51,12 @@ void IconLoader::ReadIcon() {
     gfx::ImageSkia image_skia(gfx::ImageSkiaFromResizedNSImage(icon, size));
     if (!image_skia.isNull()) {
       image_skia.MakeThreadSafe();
-      image = base::MakeUnique<gfx::Image>(image_skia);
+      image = gfx::Image(image_skia);
     }
   }
 
   target_task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback_, base::Passed(&image), group_));
+      FROM_HERE,
+      base::BindOnce(std::move(callback_), std::move(image), group_));
   delete this;
 }

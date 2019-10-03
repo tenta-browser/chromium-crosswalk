@@ -34,15 +34,17 @@ class LogoutConfirmationDialog;
 // closed.
 class ASH_EXPORT LogoutConfirmationController : public SessionObserver {
  public:
+  enum class Source { kShelfExitButton, kCloseAllWindows };
+
   LogoutConfirmationController();
   ~LogoutConfirmationController() override;
 
-  base::TickClock* clock() const { return clock_.get(); }
+  const base::TickClock* clock() const { return clock_; }
 
   // Shows a LogoutConfirmationDialog. If a confirmation dialog is already being
   // shown, it is closed and a new one opened if |logout_time| is earlier than
   // the current dialog's |logout_time_|.
-  void ConfirmLogout(base::TimeTicks logout_time);
+  void ConfirmLogout(base::TimeTicks logout_time, Source source);
 
   // SessionObserver:
   void OnLoginStatusChanged(LoginStatus login_status) override;
@@ -54,22 +56,32 @@ class ASH_EXPORT LogoutConfirmationController : public SessionObserver {
   // Called by the |dialog_| when it is closed.
   void OnDialogClosed();
 
-  void SetClockForTesting(std::unique_ptr<base::TickClock> clock);
-  void SetLogoutClosureForTesting(const base::Closure& logout_closure);
+  // Overrides the internal clock for testing. This doesn't take the ownership
+  // of the clock. |clock| must outlive the LogoutConfirmationController
+  // instance.
+  void SetClockForTesting(const base::TickClock* clock);
+  void SetLogoutCallbackForTesting(
+      const base::RepeatingCallback<void(Source)>& logout_callback);
   LogoutConfirmationDialog* dialog_for_testing() const { return dialog_; }
+
+  int confirm_logout_count_for_test() const {
+    return confirm_logout_count_for_test_;
+  }
 
  private:
   class LastWindowClosedObserver;
   std::unique_ptr<LastWindowClosedObserver> last_window_closed_observer_;
 
-  std::unique_ptr<base::TickClock> clock_;
-  base::Closure logout_closure_;
+  const base::TickClock* clock_;
+
+  base::RepeatingCallback<void(Source)> logout_callback_;
+  Source source_;
 
   base::TimeTicks logout_time_;
   LogoutConfirmationDialog* dialog_ = nullptr;  // Owned by the Views hierarchy.
-  base::Timer logout_timer_;
+  base::OneShotTimer logout_timer_;
 
-  ScopedSessionObserver scoped_session_observer_;
+  int confirm_logout_count_for_test_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(LogoutConfirmationController);
 };

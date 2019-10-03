@@ -8,14 +8,14 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "gpu/ipc/common/gpu_surface_tracker.h"
 #include "media/base/mock_filters.h"
 #include "media/mojo/clients/mojo_android_overlay.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
+#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/android/scoped_java_surface.h"
 #include "ui/gl/android/surface_texture.h"
@@ -111,7 +111,7 @@ class MojoAndroidOverlayTest : public ::testing::Test {
     provider_binding_.Bind(mojo::MakeRequest(&provider_ptr));
 
     overlay_client_.reset(new MojoAndroidOverlay(
-        std::move(provider_ptr), std::move(config_), routing_token, nullptr));
+        std::move(provider_ptr), std::move(config_), routing_token));
     overlay_client_->AddSurfaceDestroyedCallback(base::Bind(
         &MockClientCallbacks::OnDestroyed, base::Unretained(&callbacks_)));
     base::RunLoop().RunUntilIdle();
@@ -135,8 +135,9 @@ class MojoAndroidOverlayTest : public ::testing::Test {
     surface_texture_ = gl::SurfaceTexture::Create(0);
     surface_ = gl::ScopedJavaSurface(surface_texture_.get());
     surface_key_ = gpu::GpuSurfaceTracker::Get()->AddSurfaceForNativeWidget(
-        gpu::GpuSurfaceTracker::SurfaceRecord(gfx::kNullAcceleratedWidget,
-                                              surface_.j_surface().obj()));
+        gpu::GpuSurfaceTracker::SurfaceRecord(
+            gfx::kNullAcceleratedWidget, surface_.j_surface().obj(),
+            false /* can_be_used_with_surface_control */));
 
     mock_provider_.client_->OnSurfaceReady(surface_key_);
     base::RunLoop().RunUntilIdle();
@@ -154,7 +155,7 @@ class MojoAndroidOverlayTest : public ::testing::Test {
   }
 
   // Mojo stuff.
-  base::MessageLoop loop;
+  base::test::ScopedTaskEnvironment scoped_task_environment;
 
   // The mock provider that |overlay_client_| will talk to.
   // |interface_provider_| will bind it.

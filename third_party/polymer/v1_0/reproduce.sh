@@ -21,7 +21,6 @@ check_dep() {
 check_dep "which npm" "npm" "visiting https://nodejs.org/en/"
 check_dep "which bower" "bower" "npm install -g bower"
 check_dep "which rsync" "rsync" "apt-get install rsync"
-check_dep "python -c 'import bs4'" "bs4" "apt-get install python-bs4"
 check_dep "sed --version | grep GNU" \
     "GNU sed as 'sed'" "'brew install gnu-sed --with-default-names'"
 
@@ -34,46 +33,25 @@ rm -rf ../../web-animations-js/sources
 
 bower install --no-color --production
 
-rm components/*/.travis.yml
-
-mv components/web-animations-js ../../web-animations-js/sources
+# Update third_party/web-animations-js/ folder.
+mkdir -p ../../web-animations-js/sources/
+mv components/web-animations-js/web-animations-next-lite.min.js \
+  ../../web-animations-js/sources/
+mv components/web-animations-js/COPYING \
+  ../../web-animations-js/sources/
 cp ../../web-animations-js/sources/COPYING ../../web-animations-js/LICENSE
+rm -rf components/web-animations-js/
 
 # Remove source mapping directives since we don't compile the maps.
 sed -i 's/^\s*\/\/#\s*sourceMappingURL.*//' \
   ../../web-animations-js/sources/*.min.js
 
-# These components are needed only for demos and docs.
-rm -rf components/{hydrolysis,marked,marked-element,prism,prism-element,\
-iron-component-page,iron-doc-viewer,webcomponentsjs}
-
-# Test and demo directories aren't needed.
-rm -rf components/*/{test,demo}
-rm -rf components/polymer/explainer
-
-# Remove promise-polyfill and components which depend on it.
-rm -rf components/promise-polyfill
-rm -rf components/iron-ajax
-rm -rf components/iron-form
-
-# Make checkperms.py happy.
-find components/*/hero.svg -type f -exec chmod -x {} \;
-find components/iron-selector -type f -exec chmod -x {} \;
-
-# Remove carriage returns to make CQ happy.
-find components -type f \( -name \*.html -o -name \*.css -o -name \*.js\
-  -o -name \*.md -o -name \*.sh -o -name \*.json -o -name \*.gitignore\
-  -o -name \*.bat -o -name \*.svg \) -print0 | xargs -0 sed -i -e $'s/\r$//g'
-
-# Resolve a unicode encoding issue in dom-innerHTML.html.
-NBSP=$(python -c 'print u"\u00A0".encode("utf-8")')
-sed -i 's/['"$NBSP"']/\\u00A0/g' components/polymer/polymer-mini.html
-
-rsync -c --delete -r -v --exclude-from="rsync_exclude.txt" \
+rsync -c --delete --delete-excluded -r -v --exclude-from="rsync_exclude.txt" \
     --prune-empty-dirs "components/" "components-chromium/"
 
-find "components-chromium/" -name "*.html" | \
-xargs grep -l "<script>" | \
+find "components-chromium/" -name "*.html" \
+  ! -path "components-chromium/polymer2*" | \
+  xargs grep -l "<script>" | \
 while read original_html_name
 do
   echo "Crisping $original_html_name"
@@ -85,9 +63,17 @@ done
 # a Polymer issue and/or pull request to minimize these patches.
 patch -p1 --forward -r - < chromium.patch
 
+echo 'Minifying Polymer 2, since it comes non-minified from bower.'
+python minify_polymer.py
+
 # Undo any changes in paper-ripple, since Chromium's implementation is a fork of
 # the original paper-ripple.
 git checkout -- components-chromium/paper-ripple/*
+
+# Remove iron-flex-layout-extracted.js since it only contains an unnecessary
+# backwards compatibiilty code that was added at
+# https://github.com/PolymerElements/iron-flex-layout/commit/f1c967fddbced2ecb5f78456b837fec5117dad14
+rm components-chromium/iron-flex-layout/iron-flex-layout-extracted.js
 
 new=$(git status --porcelain components-chromium | grep '^??' | \
       cut -d' ' -f2 | egrep '\.(html|js|css)$' || true)
@@ -112,13 +98,14 @@ if [[ ! -z "${new}${deleted}" ]]; then
 fi
 
 echo 'Stripping unnecessary prefixed CSS rules...'
-python css_strip_prefixes.py
+python css_strip_prefixes.py --file_extension=html
+
+echo 'Generating -rgb versions of --google-* vars in paper-style/colors.html...'
+python rgbify_hex_vars.py --filter-prefix=google --replace \
+    components-chromium/paper-styles/color.html
 
 echo 'Creating a summary of components...'
 python create_components_summary.py > components_summary.txt
-
-echo 'Creating GYP files for interfaces and externs...'
-./generate_gyp.sh
 
 echo 'Creating GN files for interfaces and externs...'
 ./generate_gn.sh

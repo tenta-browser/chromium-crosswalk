@@ -14,21 +14,21 @@
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/transform.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 
 namespace cc {
 
 PixelTestOutputSurface::PixelTestOutputSurface(
     scoped_refptr<viz::ContextProvider> context_provider,
     bool flipped_output_surface)
-    : OutputSurface(std::move(context_provider)), weak_ptr_factory_(this) {
+    : OutputSurface(std::move(context_provider)) {
   capabilities_.flipped_output_surface = flipped_output_surface;
   capabilities_.supports_stencil = true;
 }
 
 PixelTestOutputSurface::PixelTestOutputSurface(
     std::unique_ptr<viz::SoftwareOutputDevice> software_device)
-    : OutputSurface(std::move(software_device)), weak_ptr_factory_(this) {
+    : OutputSurface(std::move(software_device)) {
   capabilities_.supports_stencil = true;
 }
 
@@ -58,7 +58,7 @@ void PixelTestOutputSurface::Reshape(const gfx::Size& size,
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
@@ -73,17 +73,13 @@ void PixelTestOutputSurface::ApplyExternalStencil() {}
 void PixelTestOutputSurface::SwapBuffers(viz::OutputSurfaceFrame frame) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(&PixelTestOutputSurface::SwapBuffersCallback,
-                                weak_ptr_factory_.GetWeakPtr(), ++swap_id_));
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
-void PixelTestOutputSurface::SwapBuffersCallback(uint64_t swap_id) {
-  client_->DidReceiveSwapBuffersAck(swap_id);
-  client_->DidReceivePresentationFeedback(swap_id, gfx::PresentationFeedback());
-}
-
-viz::OverlayCandidateValidator*
-PixelTestOutputSurface::GetOverlayCandidateValidator() const {
-  return nullptr;
+void PixelTestOutputSurface::SwapBuffersCallback() {
+  client_->DidReceiveSwapBuffersAck(gfx::SwapTimings());
+  client_->DidReceivePresentationFeedback(
+      gfx::PresentationFeedback(base::TimeTicks::Now(), base::TimeDelta(), 0));
 }
 
 bool PixelTestOutputSurface::IsDisplayedAsOverlayPlane() const {
@@ -98,15 +94,22 @@ gfx::BufferFormat PixelTestOutputSurface::GetOverlayBufferFormat() const {
   return gfx::BufferFormat::RGBX_8888;
 }
 
-bool PixelTestOutputSurface::SurfaceIsSuspendForRecycle() const {
-  return false;
-}
-
 uint32_t PixelTestOutputSurface::GetFramebufferCopyTextureFormat() {
   // This format will work if the |context_provider| has an RGB or RGBA
   // framebuffer. For now assume tests do not want/care about alpha in
   // the root render pass.
   return GL_RGB;
+}
+
+unsigned PixelTestOutputSurface::UpdateGpuFence() {
+  return 0;
+}
+
+void PixelTestOutputSurface::SetUpdateVSyncParametersCallback(
+    viz::UpdateVSyncParametersCallback callback) {}
+
+gfx::OverlayTransform PixelTestOutputSurface::GetDisplayTransform() {
+  return gfx::OVERLAY_TRANSFORM_NONE;
 }
 
 }  // namespace cc

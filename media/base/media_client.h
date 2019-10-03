@@ -9,10 +9,12 @@
 #include <string>
 #include <vector>
 
+#include "base/optional.h"
 #include "media/base/audio_codecs.h"
-#include "media/base/decode_capabilities.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/key_system_properties.h"
 #include "media/base/media_export.h"
+#include "media/base/media_types.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
 #include "ui/gfx/color_space.h"
@@ -27,7 +29,7 @@ class MediaClient;
 MEDIA_EXPORT void SetMediaClient(MediaClient* media_client);
 
 // Media's embedder API should only be used by media.
-#if defined(MEDIA_IMPLEMENTATION) || defined(MEDIA_BLINK_IMPLEMENTATION)
+#if defined(IS_MEDIA_IMPL) || defined(MEDIA_BLINK_IMPLEMENTATION)
 // Getter for the client. Returns NULL if no customized client is needed.
 MEDIA_EXPORT MediaClient* GetMediaClient();
 #endif
@@ -49,14 +51,18 @@ class MEDIA_EXPORT MediaClient {
   virtual bool IsKeySystemsUpdateNeeded() = 0;
 
   // Returns true if the given audio config is supported.
-  virtual bool IsSupportedAudioConfig(const AudioConfig& config) = 0;
+  virtual bool IsSupportedAudioType(const AudioType& type) = 0;
 
   // Returns true if the given video config is supported.
-  virtual bool IsSupportedVideoConfig(const VideoConfig& config) = 0;
+  virtual bool IsSupportedVideoType(const VideoType& type) = 0;
 
   // Returns true if the compressed audio |codec| format is supported by the
   // audio sink.
   virtual bool IsSupportedBitstreamAudioCodec(AudioCodec codec) = 0;
+
+  // Optionally returns audio renderer algorithm parameters.
+  virtual base::Optional<::media::AudioRendererAlgorithmParameters>
+  GetAudioRendererAlgorithmParameters(AudioParameters audio_parameters) = 0;
 };
 
 }  // namespace media

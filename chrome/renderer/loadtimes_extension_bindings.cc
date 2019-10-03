@@ -10,8 +10,8 @@
 #include "content/public/renderer/document_state.h"
 #include "extensions/renderer/v8_helpers.h"
 #include "net/http/http_response_info.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPerformance.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_performance.h"
 #include "v8/include/v8.h"
 
 using blink::WebDocumentLoader;
@@ -64,9 +64,15 @@ class LoadTimesExtensionWrapper : public v8::Extension {
   v8::Local<v8::FunctionTemplate> GetNativeFunctionTemplate(
       v8::Isolate* isolate,
       v8::Local<v8::String> name) override {
-    if (name->Equals(v8::String::NewFromUtf8(isolate, "GetLoadTimes"))) {
+    if (name->StringEquals(
+            v8::String::NewFromUtf8(isolate, "GetLoadTimes",
+                                    v8::NewStringType::kInternalized)
+                .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, GetLoadTimes);
-    } else if (name->Equals(v8::String::NewFromUtf8(isolate, "GetCSI"))) {
+    } else if (name->StringEquals(
+                   v8::String::NewFromUtf8(isolate, "GetCSI",
+                                           v8::NewStringType::kInternalized)
+                       .ToLocalChecked())) {
       return v8::FunctionTemplate::New(isolate, GetCSI);
     }
     return v8::Local<v8::FunctionTemplate>();
@@ -110,8 +116,8 @@ class LoadTimesExtensionWrapper : public v8::Extension {
       v8::Local<v8::Name> name,
       const v8::PropertyCallbackInfo<v8::Value>& info) {
     if (WebLocalFrame* frame = WebLocalFrame::FrameForCurrentContext()) {
-      frame->UsageCountChromeLoadTimes(
-          blink::WebString::FromUTF8(*v8::String::Utf8Value(name)));
+      frame->UsageCountChromeLoadTimes(blink::WebString::FromUTF8(
+          *v8::String::Utf8Value(info.GetIsolate(), name)));
     }
     info.GetReturnValue().Set(info.Data());
   }
@@ -398,8 +404,8 @@ class LoadTimesExtensionWrapper : public v8::Extension {
   }
 };
 
-v8::Extension* LoadTimesExtension::Get() {
-  return new LoadTimesExtensionWrapper();
+std::unique_ptr<v8::Extension> LoadTimesExtension::Get() {
+  return std::make_unique<LoadTimesExtensionWrapper>();
 }
 
 }  // namespace extensions_v8

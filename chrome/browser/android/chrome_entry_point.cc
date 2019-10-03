@@ -11,7 +11,7 @@
 
 namespace {
 
-bool NativeInit() {
+bool NativeInit(base::android::LibraryProcessType) {
   return android::OnJNIOnLoadInit();
 }
 
@@ -30,9 +30,6 @@ JNI_EXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     return -1;
   }
   if (!RegisterMainDexNatives(env)) {
-    return -1;
-  }
-  if (!android::OnJNIOnLoadRegisterJNI(env)) {
     return -1;
   }
   base::android::SetNativeInitializationHook(NativeInit);

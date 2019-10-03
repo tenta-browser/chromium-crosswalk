@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/macros.h"
 #include "cc/base/list_container.h"
 #include "cc/paint/filter_operations.h"
@@ -20,7 +20,7 @@
 #include "components/viz/common/viz_common_export.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
 
 namespace base {
@@ -35,7 +35,9 @@ class DrawQuad;
 class RenderPassDrawQuad;
 class SharedQuadState;
 
-// A list of DrawQuad objects, sorted internally in front-to-back order.
+// A list of DrawQuad objects, sorted internally in front-to-back order. To
+// add a new quad drawn behind another quad, it must be placed after the other
+// quad.
 class VIZ_COMMON_EXPORT QuadList : public cc::ListContainer<DrawQuad> {
  public:
   QuadList();
@@ -88,7 +90,8 @@ class VIZ_COMMON_EXPORT RenderPass {
               const gfx::Rect& damage_rect,
               const gfx::Transform& transform_to_root_target,
               const cc::FilterOperations& filters,
-              const cc::FilterOperations& background_filters,
+              const cc::FilterOperations& backdrop_filters,
+              const base::Optional<gfx::RRectF>& backdrop_filter_bounds,
               const gfx::ColorSpace& color_space,
               bool has_transparent_background,
               bool cache_render_pass,
@@ -124,8 +127,11 @@ class VIZ_COMMON_EXPORT RenderPass {
   cc::FilterOperations filters;
 
   // Post-processing filters, applied to the pixels showing through the
-  // background of the render pass, from behind it.
-  cc::FilterOperations background_filters;
+  // backdrop of the render pass, from behind it.
+  cc::FilterOperations backdrop_filters;
+
+  // Clipping bounds for backdrop filter.
+  base::Optional<gfx::RRectF> backdrop_filter_bounds;
 
   // The color space into which content will be rendered for this render pass.
   gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
@@ -144,8 +150,7 @@ class VIZ_COMMON_EXPORT RenderPass {
 
   // If non-empty, the renderer should produce a copy of the render pass'
   // contents as a bitmap, and give a copy of the bitmap to each callback in
-  // this list. This property should not be serialized between compositors, as
-  // it only makes sense in the root compositor.
+  // this list.
   std::vector<std::unique_ptr<CopyOutputRequest>> copy_requests;
 
   QuadList quad_list;

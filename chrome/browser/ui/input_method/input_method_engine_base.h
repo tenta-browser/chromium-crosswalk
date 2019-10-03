@@ -85,7 +85,7 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
     virtual void OnKeyEvent(
         const std::string& engine_id,
         const InputMethodEngineBase::KeyboardEvent& event,
-        ui::IMEEngineHandlerInterface::KeyEventDoneCallback& key_data) = 0;
+        ui::IMEEngineHandlerInterface::KeyEventDoneCallback key_data) = 0;
 
     // Called when Chrome terminates on-going text input session.
     virtual void OnReset(const std::string& engine_id) = 0;
@@ -107,9 +107,6 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
                                           int anchor_pos,
                                           int offset_pos) = 0;
 
-    // Called when the engine's MaybeSwitchEngine is called.
-    virtual void OnRequestEngineSwitch() = 0;
-
 #if defined(OS_CHROMEOS)
 
     // Called when an InputContext's properties change while it is focused.
@@ -125,6 +122,8 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
     // Called when a menu item for this IME is interacted with.
     virtual void OnMenuItemActivated(const std::string& component_id,
                                      const std::string& menu_id) = 0;
+
+    virtual void OnScreenProjectionChanged(bool is_projected) = 0;
 #endif  // defined(OS_CHROMEOS)
   };
 
@@ -143,25 +142,35 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
   void Enable(const std::string& component_id) override;
   void Disable() override;
   void Reset() override;
-  void MaybeSwitchEngine() override;
   void ProcessKeyEvent(const ui::KeyEvent& key_event,
-                       KeyEventDoneCallback& callback) override;
+                       KeyEventDoneCallback callback) override;
   void SetSurroundingText(const std::string& text,
                           uint32_t cursor_pos,
                           uint32_t anchor_pos,
                           uint32_t offset_pos) override;
   void SetCompositionBounds(const std::vector<gfx::Rect>& bounds) override;
-  bool ClearComposition(int context_id, std::string* error) override;
-  bool CommitText(int context_id,
-                  const char* text,
-                  std::string* error) override;
-  const std::string& GetActiveComponentId() const override;
+
+  // Returns the current active input_component id.
+  const std::string& GetActiveComponentId() const;
+
+  // Clear the current composition.
+  bool ClearComposition(int context_id, std::string* error);
+
+  // Commit the specified text to the specified context.  Fails if the context
+  // is not focused.
+  bool CommitText(int context_id, const char* text, std::string* error);
+
+  // Deletes |number_of_chars| unicode characters as the basis of |offset| from
+  // the surrounding text. The |offset| is relative position based on current
+  // caret.
+  // NOTE: Currently we are falling back to backspace forwarding workaround,
+  // because delete_surrounding_text is not supported in Chrome. So this
+  // function is restricted for only preceding text.
+  // TODO(nona): Support full spec delete surrounding text.
   bool DeleteSurroundingText(int context_id,
                              int offset,
                              size_t number_of_chars,
-                             std::string* error) override;
-  int GetCotextIdForTesting() { return context_id_; }
-  bool IsInterestedInKeyEvent() const override;
+                             std::string* error);
 
   // Send the sequence of key events.
   bool SendKeyEvents(int context_id, const std::vector<KeyboardEvent>& events);
@@ -174,6 +183,14 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
                       int cursor,
                       const std::vector<SegmentInfo>& segments,
                       std::string* error);
+
+  // Set the current composition range.
+  bool SetCompositionRange(int context_id,
+                           int selection_before,
+                           int selection_after,
+                           const std::vector<SegmentInfo>& segments,
+                           std::string* error);
+
   // Called when a key event is handled.
   void KeyEventHandled(const std::string& extension_id,
                        const std::string& request_id,
@@ -182,19 +199,39 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
   // Adds unprocessed key event to |request_map_|.
   std::string AddRequest(
       const std::string& component_id,
-      ui::IMEEngineHandlerInterface::KeyEventDoneCallback& key_data);
+      ui::IMEEngineHandlerInterface::KeyEventDoneCallback key_data);
+
+  int GetContextIdForTesting() const { return context_id_; }
+
+  // Get the composition bounds.
+  const std::vector<gfx::Rect>& composition_bounds() const {
+    return composition_bounds_;
+  }
 
  protected:
+  // Returns true if this IME is active, false if not.
+  virtual bool IsActive() const = 0;
+
   // Notifies InputContextHandler that the composition is changed.
   virtual void UpdateComposition(const ui::CompositionText& composition_text,
                                  uint32_t cursor_pos,
                                  bool is_visible) = 0;
+  // Notifies InputContextHandler to change the composition range.
+  virtual bool SetCompositionRange(
+      uint32_t before,
+      uint32_t after,
+      const std::vector<ui::ImeTextSpan>& text_spans) = 0;
   // Notifies InputContextHanlder to commit |text|.
   virtual void CommitTextToInputContext(int context_id,
                                         const std::string& text) = 0;
+  // Notifies InputContextHandler to delete surrounding text.
+  virtual void DeleteSurroundingTextToInputContext(int offset,
+                                                   size_t number_of_chars) = 0;
   // Sends the key event to the window tree host.
   virtual bool SendKeyEvent(ui::KeyEvent* ui_event,
                             const std::string& code) = 0;
+  // Notifies InputContextHandler to commit any composition text.
+  virtual void ConfirmCompositionText() = 0;
 
   ui::TextInputType current_input_type_;
 
@@ -217,10 +254,6 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
   std::unique_ptr<ui::CompositionText> composition_text_;
   int composition_cursor_;
 
-  // Used with SendKeyEvents and ProcessKeyEvent to check if the key event
-  // sent to ProcessKeyEvent is sent by SendKeyEvents.
-  const ui::KeyEvent* sent_key_event_;
-
   Profile* profile_;
 
   using RequestMap =
@@ -234,6 +267,10 @@ class InputMethodEngineBase : virtual public ui::IMEEngineHandlerInterface {
   // The composition text to be set from calling input.ime.setComposition API.
   ui::CompositionText composition_;
   bool composition_changed_;
+
+  // The composition bounds returned by inputMethodPrivate.getCompositionBounds
+  // API.
+  std::vector<gfx::Rect> composition_bounds_;
 
   // The text to be committed from calling input.ime.commitText API.
   std::string text_;

@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_PAGE_LOAD_METRICS_OBSERVERS_CORE_PAGE_LOAD_METRICS_OBSERVER_H_
 #define CHROME_BROWSER_PAGE_LOAD_METRICS_OBSERVERS_CORE_PAGE_LOAD_METRICS_OBSERVER_H_
 
+#include "chrome/browser/page_load_metrics/observers/largest_contentful_paint_handler.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
-#include "components/ukm/ukm_source.h"
+#include "services/metrics/public/cpp/ukm_source.h"
 
 namespace internal {
 
@@ -15,12 +16,26 @@ namespace internal {
 // background histogram if the web contents was ever in the background from
 // navigation start to the event in question.
 extern const char kHistogramFirstLayout[];
+extern const char kHistogramFirstInputDelay[];
+extern const char kHistogramFirstInputTimestamp[];
+extern const char kHistogramFirstInputDelaySkipFilteringComparison[];
+extern const char kHistogramFirstInputTimestampSkipFilteringComparison[];
+extern const char kHistogramFirstInputDelay4[];
+extern const char kHistogramFirstInputTimestamp4[];
+extern const char kHistogramLongestInputDelay[];
+extern const char kHistogramLongestInputTimestamp[];
 extern const char kHistogramFirstPaint[];
-extern const char kHistogramFirstTextPaint[];
+extern const char kHistogramFirstImagePaint[];
 extern const char kHistogramDomContentLoaded[];
 extern const char kHistogramLoad[];
 extern const char kHistogramFirstContentfulPaint[];
 extern const char kHistogramFirstMeaningfulPaint[];
+extern const char kHistogramLargestImagePaint[];
+extern const char kHistogramLargestTextPaint[];
+extern const char kHistogramLargestContentfulPaint[];
+extern const char kHistogramLargestContentfulPaintContentType[];
+extern const char kHistogramLargestContentfulPaintMainFrame[];
+extern const char kHistogramLargestContentfulPaintMainFrameContentType[];
 extern const char kHistogramTimeToInteractive[];
 extern const char kHistogramParseDuration[];
 extern const char kHistogramParseBlockedOnScriptLoad[];
@@ -28,7 +43,7 @@ extern const char kHistogramParseBlockedOnScriptExecution[];
 extern const char kHistogramParseStartToFirstMeaningfulPaint[];
 
 extern const char kBackgroundHistogramFirstLayout[];
-extern const char kBackgroundHistogramFirstTextPaint[];
+extern const char kBackgroundHistogramFirstImagePaint[];
 extern const char kBackgroundHistogramDomContentLoaded[];
 extern const char kBackgroundHistogramLoad[];
 extern const char kBackgroundHistogramFirstPaint[];
@@ -43,21 +58,24 @@ extern const char kHistogramLoadTypeParseStartNewNavigation[];
 
 extern const char kHistogramFailedProvisionalLoad[];
 
+extern const char kHistogramUserGestureNavigationToForwardBack[];
+
 extern const char kHistogramPageTimingForegroundDuration[];
 extern const char kHistogramPageTimingForegroundDurationNoCommit[];
 
 extern const char kHistogramForegroundToFirstMeaningfulPaint[];
 
-extern const char kRapporMetricsNameCoarseTiming[];
 extern const char kHistogramFirstMeaningfulPaintStatus[];
 extern const char kHistogramTimeToInteractiveStatus[];
 
 extern const char kHistogramFirstNonScrollInputAfterFirstPaint[];
 extern const char kHistogramFirstScrollInputAfterFirstPaint[];
 
-extern const char kHistogramTotalBytes[];
-extern const char kHistogramNetworkBytes[];
-extern const char kHistogramCacheBytes[];
+extern const char kHistogramPageLoadTotalBytes[];
+extern const char kHistogramPageLoadNetworkBytes[];
+extern const char kHistogramPageLoadCacheBytes[];
+extern const char kHistogramPageLoadNetworkBytesIncludingHeaders[];
+extern const char kHistogramPageLoadUnfinishedBytes[];
 
 extern const char kHistogramLoadTypeTotalBytesForwardBack[];
 extern const char kHistogramLoadTypeNetworkBytesForwardBack[];
@@ -75,6 +93,15 @@ extern const char kHistogramTotalCompletedResources[];
 extern const char kHistogramNetworkCompletedResources[];
 extern const char kHistogramCacheCompletedResources[];
 
+extern const char kHistogramInputToNavigation[];
+extern const char kBackgroundHistogramInputToNavigation[];
+extern const char kHistogramInputToNavigationLinkClick[];
+extern const char kHistogramInputToNavigationOmnibox[];
+extern const char kHistogramInputToFirstPaint[];
+extern const char kBackgroundHistogramInputToFirstPaint[];
+extern const char kHistogramInputToFirstContentfulPaint[];
+extern const char kBackgroundHistogramInputToFirstContentfulPaint[];
+
 enum FirstMeaningfulPaintStatus {
   FIRST_MEANINGFUL_PAINT_RECORDED,
   FIRST_MEANINGFUL_PAINT_BACKGROUNDED,
@@ -84,18 +111,33 @@ enum FirstMeaningfulPaintStatus {
   FIRST_MEANINGFUL_PAINT_LAST_ENTRY
 };
 
+// Different events can prevent us from recording a successful time to
+// interactive value, and sometimes several of these failure events can happen
+// simultaneously. In the case of multiple invalidating events, we record the
+// failure reason in decreasing order of priority of the following:
+//
+// 1. Did not reach First Meaningful Paint
+// 2. Did not reach quiescence
+// 3. Page was not in foreground until TTI was detected.
+// 4. There was a non-mouse-move user input before interactive time.
+//
+// Table of conditions and the TTI Status recorded for each case:
+// FMP Reached | Quiesence Reached | Always Foreground | No User Input | Status
+// True        | True              | True              | True          | 0
+// True        | True              | True              | False         | 2
+// True        | True              | False             | *             | 1
+// True        | False             | *                 | *             | 3
+// False       | *                 | *                 | *             | 4
 enum TimeToInteractiveStatus {
   // Time to Interactive recorded successfully.
   TIME_TO_INTERACTIVE_RECORDED = 0,
 
-  // Reasons for not recording Time to Interactive:
   // Main thread and network quiescence reached, but the user backgrounded the
   // page at least once before reaching quiescence.
   TIME_TO_INTERACTIVE_BACKGROUNDED = 1,
 
   // Main thread and network quiescence reached, but there was a non-mouse-move
   // user input that hit the renderer main thread between navigation start and
-  // the
   // interactive time, so the detected interactive time is inaccurate. Note that
   // Time to Interactive is not invalidated if the user input is after
   // interactive time, but before quiescence windows are detected. User input
@@ -110,7 +152,9 @@ enum TimeToInteractiveStatus {
   TIME_TO_INTERACTIVE_DID_NOT_REACH_QUIESCENCE = 3,
 
   // User left page before First Meaningful Paint happened, but after First
-  // Paint.
+  // Paint. This status will also be recorded if the first meaningful paint was
+  // reached on the renderer, but invalidated there due to user input. Input
+  // invalided First Meaningful Paint values do not reach the browser.
   TIME_TO_INTERACTIVE_DID_NOT_REACH_FIRST_MEANINGFUL_PAINT = 4,
 
   TIME_TO_INTERACTIVE_LAST_ENTRY
@@ -144,9 +188,6 @@ class CorePageLoadMetricsObserver
   void OnFirstPaintInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstTextPaintInPage(
-      const page_load_metrics::mojom::PageLoadTiming& timing,
-      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnFirstImagePaintInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
@@ -157,6 +198,9 @@ class CorePageLoadMetricsObserver
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnPageInteractive(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstInputInPage(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnParseStart(
@@ -173,19 +217,31 @@ class CorePageLoadMetricsObserver
   ObservePolicy FlushMetricsOnAppEnterBackground(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info) override;
-  void OnUserInput(const blink::WebInputEvent& event) override;
-  void OnLoadedResource(const page_load_metrics::ExtraRequestCompleteInfo&
-                            extra_request_complete_info) override;
+  void OnUserInput(
+      const blink::WebInputEvent& event,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnResourceDataUseObserved(
+      content::RenderFrameHost* rfh,
+      const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+          resources) override;
+
+  void OnTimingUpdate(
+      content::RenderFrameHost* subframe_rfh,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+
+  void OnDidFinishSubFrameNavigation(
+      content::NavigationHandle* navigation_handle,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
 
  private:
   void RecordTimingHistograms(
-      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& main_frame_timing,
       const page_load_metrics::PageLoadExtraInfo& info);
   void RecordByteAndResourceHistograms(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info);
-  void RecordRappor(const page_load_metrics::mojom::PageLoadTiming& timing,
-                    const page_load_metrics::PageLoadExtraInfo& info);
   void RecordForegroundDurationHistograms(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info,
@@ -194,16 +250,18 @@ class CorePageLoadMetricsObserver
   ui::PageTransition transition_;
   bool was_no_store_main_resource_;
 
-  // Note: these are only approximations, based on WebContents attribution from
-  // ResourceRequestInfo objects while this is the currently committed load in
-  // the WebContents.
+  // Number of complete resources loaded by the page.
   int num_cache_resources_;
   int num_network_resources_;
 
-  // The number of body (not header) prefilter bytes consumed by requests for
-  // the page.
+  // The number of body (not header) prefilter bytes consumed by completed
+  // requests for the page.
   int64_t cache_bytes_;
   int64_t network_bytes_;
+
+  // The number of prefilter bytes consumed by completed and partial network
+  // requests for the page.
+  int64_t network_bytes_including_headers_;
 
   // Size of the redirect chain, which excludes the first URL.
   int redirect_chain_size_;
@@ -216,6 +274,9 @@ class CorePageLoadMetricsObserver
   bool received_scroll_input_after_first_paint_ = false;
 
   base::TimeTicks first_paint_;
+
+  page_load_metrics::LargestContentfulPaintHandler
+      largest_contentful_paint_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(CorePageLoadMetricsObserver);
 };

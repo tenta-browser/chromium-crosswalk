@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/webui/chromeos/system_web_dialog_delegate.h"
+#include "chromeos/services/network_config/public/mojom/cros_network_config.mojom.h"  // nogncheck
 #include "ui/web_dialogs/web_dialog_ui.h"
 
 namespace chromeos {
@@ -26,24 +27,32 @@ class InternetDetailDialog : public SystemWebDialogDelegate {
   explicit InternetDetailDialog(const NetworkState& network);
   ~InternetDetailDialog() override;
 
+  // SystemWebDialogDelegate
+  const std::string& Id() override;
+
   // ui::WebDialogDelegate
   void GetDialogSize(gfx::Size* size) const override;
   std::string GetDialogArgs() const override;
 
  private:
-  std::string guid_;
+  std::string network_id_;
+  std::string network_type_;
+  std::string network_name_;
 
   DISALLOW_COPY_AND_ASSIGN(InternetDetailDialog);
 };
 
 // A WebUI to host a subset of the network details page to allow setting of
 // proxy, IP address, and nameservers in the login screen.
-class InternetDetailDialogUI : public ui::WebDialogUI {
+class InternetDetailDialogUI : public ui::MojoWebDialogUI {
  public:
   explicit InternetDetailDialogUI(content::WebUI* web_ui);
   ~InternetDetailDialogUI() override;
 
  private:
+  void BindCrosNetworkConfig(
+      chromeos::network_config::mojom::CrosNetworkConfigRequest request);
+
   DISALLOW_COPY_AND_ASSIGN(InternetDetailDialogUI);
 };
 

@@ -253,13 +253,13 @@ class IDLParser(object):
       p[0] = ListFromConcat(p[2], p[3])
 
   def p_Definition(self, p):
-    """Definition : CallbackOrInterface
+    """Definition : CallbackOrInterfaceOrMixin
                   | Namespace
                   | Partial
                   | Dictionary
                   | Enum
                   | Typedef
-                  | ImplementsStatement"""
+                  | IncludesStatement"""
     p[0] = p[1]
 
   # Error recovery for definition
@@ -267,28 +267,32 @@ class IDLParser(object):
     """Definition : error ';'"""
     p[0] = self.BuildError(p, 'Definition')
 
-  def p_CallbackOrInterface(self, p):
-    """CallbackOrInterface : CALLBACK CallbackRestOrInterface
-                           | Interface"""
-    if len(p) > 2:
-      if p[2].GetClass() != 'Callback':
-        p[2].AddChildren(self.BuildTrue('CALLBACK'))
-      p[0] = p[2]
-    else:
-      p[0] = p[1]
+  def p_CallbackOrInterfaceOrMixin(self, p):
+    """CallbackOrInterfaceOrMixin : CALLBACK CallbackRestOrInterface
+                                  | INTERFACE InterfaceOrMixin"""
+    p[0] = p[2]
 
   def p_CallbackRestOrInterface(self, p):
     """CallbackRestOrInterface : CallbackRest
-                               | Interface"""
+                               | INTERFACE InterfaceRest"""
+    if len(p) < 3:
+      p[0] = p[1]
+    else:
+      p[2].AddChildren(self.BuildTrue('CALLBACK'))
+      p[0] = p[2]
+
+  def p_InterfaceOrMixin(self, p):
+    """InterfaceOrMixin : InterfaceRest
+                        | MixinRest"""
     p[0] = p[1]
 
-  def p_Interface(self, p):
-    """Interface : INTERFACE identifier Inheritance '{' InterfaceMembers '}' ';'"""
-    p[0] = self.BuildNamed('Interface', p, 2, ListFromConcat(p[3], p[5]))
+  def p_InterfaceRest(self, p):
+    """InterfaceRest : identifier Inheritance '{' InterfaceMembers '}' ';'"""
+    p[0] = self.BuildNamed('Interface', p, 1, ListFromConcat(p[2], p[4]))
 
   # Error recovery for interface.
-  def p_InterfaceError(self, p):
-    """Interface : INTERFACE identifier Inheritance '{' error"""
+  def p_InterfaceRestError(self, p):
+    """InterfaceRest : identifier Inheritance '{' error"""
     p[0] = self.BuildError(p, 'Interface')
 
   def p_Partial(self, p):
@@ -302,14 +306,22 @@ class IDLParser(object):
     p[0] = self.BuildError(p, 'Partial')
 
   def p_PartialDefinition(self, p):
-    """PartialDefinition : PartialDictionary
-                         | PartialInterface
+    """PartialDefinition : INTERFACE PartialInterfaceOrPartialMixin
+                         | PartialDictionary
                          | Namespace"""
+    if len(p) > 2:
+      p[0] = p[2]
+    else:
+      p[0] = p[1]
+
+  def p_PartialInterfaceOrPartialMixin(self, p):
+    """PartialInterfaceOrPartialMixin : PartialInterfaceRest
+                                      | MixinRest"""
     p[0] = p[1]
 
-  def p_PartialInterface(self, p):
-    """PartialInterface : INTERFACE identifier '{' InterfaceMembers '}' ';'"""
-    p[0] = self.BuildNamed('Interface', p, 2, p[4])
+  def p_PartialInterfaceRest(self, p):
+    """PartialInterfaceRest : identifier '{' InterfaceMembers '}' ';'"""
+    p[0] = self.BuildNamed('Interface', p, 1, p[3])
 
   def p_InterfaceMembers(self, p):
     """InterfaceMembers : ExtendedAttributeList InterfaceMember InterfaceMembers
@@ -323,11 +335,9 @@ class IDLParser(object):
     """InterfaceMembers : error"""
     p[0] = self.BuildError(p, 'InterfaceMembers')
 
-  # Removed unsupported: Serializer
   def p_InterfaceMember(self, p):
     """InterfaceMember : Const
                        | Operation
-                       | Serializer
                        | Stringifier
                        | StaticMember
                        | Iterable
@@ -336,6 +346,34 @@ class IDLParser(object):
                        | ReadWriteMaplike
                        | ReadWriteSetlike"""
     p[0] = p[1]
+
+  def p_MixinRest(self, p):
+    """MixinRest : MIXIN identifier '{' MixinMembers '}' ';'"""
+    p[0] = self.BuildNamed('Interface', p, 2, p[4])
+    p[0].AddChildren(self.BuildTrue('MIXIN'))
+
+  def p_MixinMembers(self, p):
+    """MixinMembers : ExtendedAttributeList MixinMember MixinMembers
+                    |"""
+    if len(p) > 1:
+      p[2].AddChildren(p[1])
+      p[0] = ListFromConcat(p[2], p[3])
+
+  # Error recovery for InterfaceMembers
+  def p_MixinMembersError(self, p):
+    """MixinMembers : error"""
+    p[0] = self.BuildError(p, 'MixinMembers')
+
+  def p_MixinMember(self, p):
+    """MixinMember : Const
+                   | Operation
+                   | Stringifier
+                   | ReadOnly AttributeRest"""
+    if len(p) == 2:
+      p[0] = p[1]
+    else:
+      p[2].AddChildren(p[1])
+      p[0] = p[2]
 
   def p_Dictionary(self, p):
     """Dictionary : DICTIONARY identifier Inheritance '{' DictionaryMembers '}' ';'"""
@@ -427,9 +465,9 @@ class IDLParser(object):
     p[0] = self.BuildError(p, 'Enum')
 
   def p_EnumValueList(self, p):
-    """EnumValueList : ExtendedAttributeList string EnumValueListComma"""
-    enum = self.BuildNamed('EnumItem', p, 2, p[1])
-    p[0] = ListFromConcat(enum, p[3])
+    """EnumValueList : string EnumValueListComma"""
+    enum = self.BuildNamed('EnumItem', p, 1)
+    p[0] = ListFromConcat(enum, p[2])
 
   def p_EnumValueListComma(self, p):
     """EnumValueListComma : ',' EnumValueListString
@@ -438,11 +476,11 @@ class IDLParser(object):
       p[0] = p[2]
 
   def p_EnumValueListString(self, p):
-    """EnumValueListString : ExtendedAttributeList string EnumValueListComma
+    """EnumValueListString : string EnumValueListComma
                            |"""
     if len(p) > 1:
-      enum = self.BuildNamed('EnumItem', p, 2, p[1])
-      p[0] = ListFromConcat(enum, p[3])
+      enum = self.BuildNamed('EnumItem', p, 1)
+      p[0] = ListFromConcat(enum, p[2])
 
   def p_CallbackRest(self, p):
     """CallbackRest : identifier '=' ReturnType '(' ArgumentList ')' ';'"""
@@ -458,10 +496,10 @@ class IDLParser(object):
     """Typedef : TYPEDEF error ';'"""
     p[0] = self.BuildError(p, 'Typedef')
 
-  def p_ImplementsStatement(self, p):
-    """ImplementsStatement : identifier IMPLEMENTS identifier ';'"""
+  def p_IncludesStatement(self, p):
+    """IncludesStatement : identifier INCLUDES identifier ';'"""
     name = self.BuildAttribute('REFERENCE', p[3])
-    p[0] = self.BuildNamed('Implements', p, 1, name)
+    p[0] = self.BuildNamed('Includes', p, 1, name)
 
   def p_Const(self,  p):
     """Const : CONST ConstType identifier '=' ConstValue ';'"""
@@ -502,70 +540,6 @@ class IDLParser(object):
       val = p[1]
     p[0] = ListFromConcat(self.BuildAttribute('TYPE', 'float'),
                           self.BuildAttribute('VALUE', val))
-
-  def p_Serializer(self, p):
-    """Serializer : SERIALIZER SerializerRest"""
-    p[0] = self.BuildProduction('Serializer', p, 1, p[2])
-
-  # TODO(jl): This adds ReturnType and ';', missing from the spec's grammar.
-  # https://www.w3.org/Bugs/Public/show_bug.cgi?id=20361
-  def p_SerializerRest(self, p):
-    """SerializerRest : ReturnType OperationRest
-                      | '=' SerializationPattern ';'
-                      | ';'"""
-    if len(p) == 3:
-      p[2].AddChildren(p[1])
-      p[0] = p[2]
-    elif len(p) == 4:
-      p[0] = p[2]
-
-  def p_SerializationPattern(self, p):
-    """SerializationPattern : '{' SerializationPatternMap '}'
-                            | '[' SerializationPatternList ']'
-                            | identifier"""
-    if len(p) > 2:
-      p[0] = p[2]
-    else:
-      p[0] = self.BuildAttribute('ATTRIBUTE', p[1])
-
-  # TODO(jl): This adds the "ATTRIBUTE" and "INHERIT ',' ATTRIBUTE" variants,
-  # missing from the spec's grammar.
-  # https://www.w3.org/Bugs/Public/show_bug.cgi?id=20361
-  def p_SerializationPatternMap(self, p):
-    """SerializationPatternMap : GETTER
-                               | ATTRIBUTE
-                               | INHERIT ',' ATTRIBUTE
-                               | INHERIT Identifiers
-                               | identifier Identifiers
-                               |"""
-    p[0] = self.BuildProduction('Map', p, 0)
-    if len(p) == 4:
-      p[0].AddChildren(self.BuildTrue('INHERIT'))
-      p[0].AddChildren(self.BuildTrue('ATTRIBUTE'))
-    elif len(p) > 1:
-      if p[1] == 'getter':
-        p[0].AddChildren(self.BuildTrue('GETTER'))
-      elif p[1] == 'attribute':
-        p[0].AddChildren(self.BuildTrue('ATTRIBUTE'))
-      else:
-        if p[1] == 'inherit':
-          p[0].AddChildren(self.BuildTrue('INHERIT'))
-          attributes = p[2]
-        else:
-          attributes = ListFromConcat(p[1], p[2])
-        p[0].AddChildren(self.BuildAttribute('ATTRIBUTES', attributes))
-
-  def p_SerializationPatternList(self, p):
-    """SerializationPatternList : GETTER
-                                | identifier Identifiers
-                                |"""
-    p[0] = self.BuildProduction('List', p, 0)
-    if len(p) > 1:
-      if p[1] == 'getter':
-        p[0].AddChildren(self.BuildTrue('GETTER'))
-      else:
-        attributes = ListFromConcat(p[1], p[2])
-        p[0].AddChildren(self.BuildAttribute('ATTRIBUTES', attributes))
 
   def p_Stringifier(self, p):
     """Stringifier : STRINGIFIER StringifierRest"""
@@ -845,12 +819,11 @@ class IDLParser(object):
                            | DICTIONARY
                            | ENUM
                            | GETTER
-                           | IMPLEMENTS
+                           | INCLUDES
                            | INHERIT
                            | LEGACYCALLER
                            | NAMESPACE
                            | PARTIAL
-                           | SERIALIZER
                            | SETTER
                            | STATIC
                            | STRINGIFIER
@@ -889,10 +862,12 @@ class IDLParser(object):
     p[0] = self.BuildProduction('UnionType', p, 1, members)
 
   def p_UnionMemberType(self, p):
-    """UnionMemberType : NonAnyType
+    """UnionMemberType : ExtendedAttributeList NonAnyType
                        | UnionType Null"""
-    if len(p) == 2:
-      p[0] = self.BuildProduction('Type', p, 1, p[1])
+    if p[1] is None:
+      p[0] = self.BuildProduction('Type', p, 1, p[2])
+    elif p[1].GetClass() == 'ExtAttributes':
+      p[0] = self.BuildProduction('Type', p, 1, ListFromConcat(p[2], p[1]))
     else:
       p[0] = self.BuildProduction('Type', p, 1, ListFromConcat(p[1], p[2]))
 
@@ -902,7 +877,7 @@ class IDLParser(object):
     if len(p) > 2:
       p[0] = ListFromConcat(p[2], p[3])
 
-  # Moved BYTESTRING, DOMSTRING, OBJECT, DATE, REGEXP to PrimitiveType
+  # Moved BYTESTRING, DOMSTRING, OBJECT to PrimitiveType
   # Moving all built-in types into PrimitiveType makes it easier to
   # differentiate between them and 'identifier', since p[1] would be a string in
   # both cases.
@@ -934,7 +909,7 @@ class IDLParser(object):
       p[0] = p[1]
 
 
-  # Added StringType, OBJECT, DATE, REGEXP
+  # Added StringType, OBJECT
   def p_PrimitiveType(self, p):
     """PrimitiveType : UnsignedIntegerType
                      | UnrestrictedFloatType
@@ -942,9 +917,7 @@ class IDLParser(object):
                      | BOOLEAN
                      | BYTE
                      | OCTET
-                     | OBJECT
-                     | DATE
-                     | REGEXP"""
+                     | OBJECT"""
     if type(p[1]) == str:
       p[0] = self.BuildNamed('PrimitiveType', p, 1)
     else:
@@ -989,19 +962,9 @@ class IDLParser(object):
     else:
       p[0] = ''
 
-  # Add unqualified Promise
   def p_PromiseType(self, p):
-    """PromiseType : PROMISE '<' ReturnType '>'
-                   | PROMISE"""
-    if len(p) == 2:
-      # Promise without resolution type is not specified in the Web IDL spec.
-      # As it is used in some specs and in the blink implementation,
-      # we allow that here.
-      resolution_type = self.BuildProduction('Type', p, 1,
-                                             self.BuildProduction('Any', p, 1))
-      p[0] = self.BuildNamed('Promise', p, 1, resolution_type)
-    else:
-      p[0] = self.BuildNamed('Promise', p, 1, p[3])
+    """PromiseType : PROMISE '<' ReturnType '>'"""
+    p[0] = self.BuildNamed('Promise', p, 1, p[3])
 
   def p_Null(self, p):
     """Null : '?'
@@ -1159,6 +1122,9 @@ class IDLParser(object):
     self.tokens = lexer.KnownTokens()
     self.yaccobj = yacc.yacc(module=self, tabmodule=None, debug=debug,
                              optimize=0, write_tables=0)
+    # TODO: Make our code compatible with defaulted_states. Currently disabled
+    #       for compatibility.
+    self.yaccobj.defaulted_states = {}
     self.parse_debug = debug
     self.verbose = verbose
     self.mute_error = mute_error

@@ -6,12 +6,13 @@
 #include "chrome/browser/sync/test/integration/search_engines_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/sync/driver/profile_sync_service.h"
 
 class SingleClientSearchEnginesSyncTest : public SyncTest {
  public:
   SingleClientSearchEnginesSyncTest() : SyncTest(SINGLE_CLIENT) {}
+
   ~SingleClientSearchEnginesSyncTest() override {}
 
  private:

@@ -13,7 +13,6 @@
 #import "ios/chrome/app/application_delegate/tab_opening.h"
 #import "ios/chrome/app/application_delegate/tab_switching.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
-#import "ios/chrome/browser/ui/main/browser_view_information.h"
 
 @class AppState;
 @class MetricsMediator;
@@ -31,10 +30,6 @@
                                      TabOpening,
                                      TabSwitching>
 
-// A BrowserViewInformation object to perform BrowserViewController operations.
-@property(weak, nonatomic, readonly) id<BrowserViewInformation>
-    browserViewInformation;
-
 // The application window.
 @property(nonatomic, strong) UIWindow* window;
 
@@ -46,13 +41,9 @@
 // to the user preferences.
 @property(nonatomic, weak) MetricsMediator* metricsMediator;
 
-// UIResponder addition to execute a Chrome command.  Overridden in UIWindow to
-// forward the call to the application delegate. The application delegate
-// forwards the call to this class.
-- (void)chromeExecuteCommand:(id)sender;
-
-// Returns whether the tab switcher is active.
-- (BOOL)isTabSwitcherActive;
+// Returns whether the app is showing or partially showing the
+// incognito panel.
+@property(nonatomic, assign, readonly) BOOL incognitoContentVisible;
 
 @end
 

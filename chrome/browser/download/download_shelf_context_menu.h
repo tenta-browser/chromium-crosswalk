@@ -12,7 +12,8 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_commands.h"
-#include "content/public/browser/download_item.h"
+#include "chrome/browser/download/download_ui_model.h"
+#include "components/download/public/common/download_item.h"
 #include "ui/base/models/simple_menu_model.h"
 
 // This class is responsible for the download shelf context menu. Platform
@@ -21,14 +22,15 @@
 // The DownloadItem corresponding to the context menu is observed for removal or
 // destruction.
 class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
-                                 public content::DownloadItem::Observer {
+                                 public DownloadUIModel::Observer {
  public:
+  // Only show a context menu for a dangerous download if it is malicious.
+  static bool WantsContextMenu(DownloadUIModel* download_model);
+
   ~DownloadShelfContextMenu() override;
 
-  content::DownloadItem* download_item() const { return download_item_; }
-
  protected:
-  explicit DownloadShelfContextMenu(content::DownloadItem* download_item);
+  explicit DownloadShelfContextMenu(DownloadUIModel* download);
 
   // Returns the correct menu model depending on the state of the download item.
   // Returns NULL if the download was destroyed.
@@ -47,15 +49,15 @@ class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
   // destroyed or when this object is being destroyed.
   void DetachFromDownloadItem();
 
-  // content::DownloadItem::Observer
-  void OnDownloadDestroyed(content::DownloadItem* download) override;
+  // DownloadUIModel::Observer overrides.
+  void OnDownloadDestroyed() override;
 
-  ui::SimpleMenuModel* GetInProgressMenuModel();
-  ui::SimpleMenuModel* GetInProgressPausedMenuModel();
-  ui::SimpleMenuModel* GetFinishedMenuModel();
-  ui::SimpleMenuModel* GetInterruptedMenuModel();
-  ui::SimpleMenuModel* GetMaybeMaliciousMenuModel();
-  ui::SimpleMenuModel* GetMaliciousMenuModel();
+  ui::SimpleMenuModel* GetInProgressMenuModel(bool is_download);
+  ui::SimpleMenuModel* GetInProgressPausedMenuModel(bool is_download);
+  ui::SimpleMenuModel* GetFinishedMenuModel(bool is_download);
+  ui::SimpleMenuModel* GetInterruptedMenuModel(bool is_download);
+  ui::SimpleMenuModel* GetMaybeMaliciousMenuModel(bool is_download);
+  ui::SimpleMenuModel* GetMaliciousMenuModel(bool is_download);
 
   // We show slightly different menus if the download is in progress vs. if the
   // download has finished.
@@ -67,7 +69,7 @@ class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
   std::unique_ptr<ui::SimpleMenuModel> malicious_download_menu_model_;
 
   // Information source.
-  content::DownloadItem* download_item_;
+  DownloadUIModel* download_;
   std::unique_ptr<DownloadCommands> download_commands_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadShelfContextMenu);

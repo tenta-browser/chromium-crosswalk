@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/sessions/core/base_session_service_delegate.h"
@@ -39,7 +39,7 @@ void PostOrRunInternalGetCommandsCallback(
     callback.Run(std::move(commands));
   } else {
     task_runner->PostTask(FROM_HERE,
-                          base::Bind(callback, base::Passed(&commands)));
+                          base::BindOnce(callback, std::move(commands)));
   }
 }
 
@@ -56,10 +56,9 @@ BaseSessionService::BaseSessionService(SessionType type,
       commands_since_reset_(0),
       delegate_(delegate),
       backend_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
-      weak_factory_(this) {
+          {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
   backend_ = new SessionBackend(type, path);
-  DCHECK(backend_.get());
+  DCHECK(backend_);
 }
 
 BaseSessionService::~BaseSessionService() {}
@@ -123,7 +122,7 @@ void BaseSessionService::StartSaveTimer() {
       base::ThreadTaskRunnerHandle::IsSet() && !weak_factory_.HasWeakPtrs()) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&BaseSessionService::Save, weak_factory_.GetWeakPtr()),
+        base::BindOnce(&BaseSessionService::Save, weak_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(kSaveDelayMS));
   }
 }
@@ -139,9 +138,8 @@ void BaseSessionService::Save() {
   // We create a new vector which will receive all elements from the
   // current commands. This will also clear the current list.
   RunTaskOnBackendThread(
-      FROM_HERE,
-      base::BindOnce(&SessionBackend::AppendCommands, backend_,
-                     base::Passed(&pending_commands_), pending_reset_));
+      FROM_HERE, base::BindOnce(&SessionBackend::AppendCommands, backend_,
+                                std::move(pending_commands_), pending_reset_));
 
   if (pending_reset_) {
     commands_since_reset_ = 0;

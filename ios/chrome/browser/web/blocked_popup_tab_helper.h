@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "components/infobars/core/infobar_manager.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 #import "ios/web/public/web_state/web_state_user_data.h"
 #include "url/gurl.h"
 
@@ -59,6 +59,8 @@ class BlockedPopupTabHelper
   };
 
  private:
+  friend class web::WebStateUserData<BlockedPopupTabHelper>;
+
   friend class BlockedPopupTabHelperTest;
 
   // Shows the infobar for the current popups. Will also handle replacing an
@@ -84,6 +86,8 @@ class BlockedPopupTabHelper
   // called.
   ScopedObserver<infobars::InfoBarManager, infobars::InfoBarManager::Observer>
       scoped_observer_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(BlockedPopupTabHelper);
 };

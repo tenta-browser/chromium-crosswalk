@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 
+#include <memory>
 #include <set>
 
 #include "base/command_line.h"
@@ -17,8 +18,6 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
@@ -26,8 +25,8 @@
 #include "base/posix/unix_domain_socket.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
-#include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_nonsfi_util.h"
 #include "components/nacl/common/nacl_paths.h"
@@ -131,11 +130,12 @@ bool SendIPCRequestAndReadReply(int ipc_channel,
 namespace nacl {
 
 void AddNaClZygoteForkDelegates(
-    std::vector<std::unique_ptr<content::ZygoteForkDelegate>>* delegates) {
+    std::vector<std::unique_ptr<service_manager::ZygoteForkDelegate>>*
+        delegates) {
   delegates->push_back(
-      base::MakeUnique<NaClForkDelegate>(false /* nonsfi_mode */));
+      std::make_unique<NaClForkDelegate>(false /* nonsfi_mode */));
   delegates->push_back(
-      base::MakeUnique<NaClForkDelegate>(true /* nonsfi_mode */));
+      std::make_unique<NaClForkDelegate>(true /* nonsfi_mode */));
 }
 
 NaClForkDelegate::NaClForkDelegate(bool nonsfi_mode)
@@ -168,8 +168,8 @@ void NaClForkDelegate::Init(const int sandboxdesc,
 
   // For communications between the NaCl loader process and
   // the browser process.
-  int nacl_sandbox_descriptor =
-      base::GlobalDescriptors::kBaseDescriptor + kSandboxIPCChannel;
+  int nacl_sandbox_descriptor = base::GlobalDescriptors::kBaseDescriptor +
+                                service_manager::kSandboxIPCChannel;
   // Confirm a hard-wired assumption.
   DCHECK_EQ(sandboxdesc, nacl_sandbox_descriptor);
 
@@ -202,16 +202,14 @@ void NaClForkDelegate::Init(const int sandboxdesc,
   status_ = kNaClHelperUnused;
   base::FilePath helper_exe;
   base::FilePath helper_bootstrap_exe;
-  if (!PathService::Get(
+  if (!base::PathService::Get(
           nonsfi_mode_ ? nacl::FILE_NACL_HELPER_NONSFI : nacl::FILE_NACL_HELPER,
           &helper_exe)) {
     status_ = kNaClHelperMissing;
   } else if (use_nacl_bootstrap &&
-             !PathService::Get(nacl::FILE_NACL_HELPER_BOOTSTRAP,
-                               &helper_bootstrap_exe)) {
+             !base::PathService::Get(nacl::FILE_NACL_HELPER_BOOTSTRAP,
+                                     &helper_bootstrap_exe)) {
     status_ = kNaClHelperBootstrapMissing;
-  } else if (RunningOnValgrind()) {
-    status_ = kNaClHelperValgrind;
   } else {
     base::CommandLine::StringVector argv_to_launch;
     {
@@ -222,17 +220,17 @@ void NaClForkDelegate::Init(const int sandboxdesc,
         cmd_line.SetProgram(helper_exe);
 
       // Append any switches that need to be forwarded to the NaCl helper.
-      static const char* kForwardSwitches[] = {
+      static constexpr const char* kForwardSwitches[] = {
           service_manager::switches::kAllowSandboxDebugging,
           service_manager::switches::kDisableSeccompFilterSandbox,
+          service_manager::switches::kNoSandbox,
           switches::kEnableNaClDebug,
           switches::kNaClDangerousNoSandboxNonSfi,
-          switches::kNoSandbox,
       };
       const base::CommandLine& current_cmd_line =
           *base::CommandLine::ForCurrentProcess();
       cmd_line.CopySwitchesFrom(current_cmd_line, kForwardSwitches,
-                                arraysize(kForwardSwitches));
+                                base::size(kForwardSwitches));
 
       // The command line needs to be tightly controlled to use
       // |helper_bootstrap_exe|. So from now on, argv_to_launch should be
@@ -279,7 +277,7 @@ void NaClForkDelegate::Init(const int sandboxdesc,
 
     // To avoid information leaks in Non-SFI mode, clear the environment for
     // the NaCl Helper process.
-    options.clear_environ = true;
+    options.clear_environment = true;
     AddPassthroughEnvToOptions(&options);
 
     base::Process process =
@@ -460,7 +458,7 @@ void NaClForkDelegate::AddPassthroughEnvToOptions(
   for (size_t i = 0; i < pass_through_vars.size(); ++i) {
     std::string temp;
     if (env->GetVar(pass_through_vars[i], &temp))
-      options->environ[pass_through_vars[i]] = temp;
+      options->environment[pass_through_vars[i]] = temp;
   }
 }
 

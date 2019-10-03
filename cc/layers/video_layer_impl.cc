@@ -10,15 +10,17 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "cc/layers/video_frame_provider_client_impl.h"
-#include "cc/resources/resource_provider.h"
+#include "cc/trees/layer_tree_frame_sink.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
 #include "cc/trees/task_runner_provider.h"
+#include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/resources/single_release_callback.h"
 #include "media/base/video_frame.h"
+#include "media/renderers/video_resource_updater.h"
 #include "ui/gfx/color_space.h"
 
 namespace cc {
@@ -76,8 +78,11 @@ void VideoLayerImpl::DidBecomeActive() {
 }
 
 bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
-                              LayerTreeResourceProvider* resource_provider) {
+                              viz::ClientResourceProvider* resource_provider) {
   if (draw_mode == DRAW_MODE_RESOURCELESS_SOFTWARE)
+    return false;
+
+  if (!LayerImpl::WillDraw(draw_mode, resource_provider))
     return false;
 
   // Explicitly acquire and release the provider mutex so it can be held from
@@ -97,14 +102,19 @@ bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
     return false;
   }
 
-  if (!LayerImpl::WillDraw(draw_mode, resource_provider))
-    return false;
-
   if (!updater_) {
-    updater_.reset(new VideoResourceUpdater(
+    const LayerTreeSettings& settings = layer_tree_impl()->settings();
+    // TODO(sergeyu): Pass RasterContextProvider when it's available. Then
+    // remove ContextProvider parameter from VideoResourceUpdater.
+    updater_ = std::make_unique<media::VideoResourceUpdater>(
         layer_tree_impl()->context_provider(),
+        /*raster_context_provider=*/nullptr,
+        layer_tree_impl()->layer_tree_frame_sink(),
         layer_tree_impl()->resource_provider(),
-        layer_tree_impl()->settings().use_stream_video_draw_quad));
+        settings.use_stream_video_draw_quad,
+        settings.resource_settings.use_gpu_memory_buffer_resources,
+        settings.resource_settings.use_r16_texture,
+        layer_tree_impl()->max_texture_size());
   }
   updater_->ObtainFrameResources(frame_);
   return true;
@@ -115,6 +125,8 @@ void VideoLayerImpl::AppendQuads(viz::RenderPass* render_pass,
   DCHECK(frame_.get());
 
   gfx::Transform transform = DrawTransform();
+  // bounds() is in post-rotation space so quad rect in content space must be
+  // in pre-rotation space
   gfx::Size rotated_size = bounds();
 
   switch (video_rotation_) {
@@ -131,27 +143,28 @@ void VideoLayerImpl::AppendQuads(viz::RenderPass* render_pass,
       rotated_size = gfx::Size(rotated_size.height(), rotated_size.width());
       transform.Rotate(270.0);
       transform.Translate(-rotated_size.width(), 0);
+      break;
     case media::VIDEO_ROTATION_0:
       break;
   }
 
+  gfx::Rect quad_rect(rotated_size);
   Occlusion occlusion_in_video_space =
       draw_properties()
           .occlusion_in_content_space.GetOcclusionWithGivenDrawTransform(
               transform);
   gfx::Rect visible_quad_rect =
-      occlusion_in_video_space.GetUnoccludedContentRect(
-          gfx::Rect(rotated_size));
+      occlusion_in_video_space.GetUnoccludedContentRect(quad_rect);
   if (visible_quad_rect.IsEmpty())
     return;
 
-  updater_->AppendQuads(render_pass, frame_, transform, rotated_size,
-                        visible_layer_rect(), clip_rect(), is_clipped(),
-                        contents_opaque(), draw_opacity(),
-                        GetSortingContextId(), visible_quad_rect);
+  updater_->AppendQuads(
+      render_pass, frame_, transform, quad_rect, visible_quad_rect,
+      draw_properties().rounded_corner_bounds, clip_rect(), is_clipped(),
+      contents_opaque(), draw_opacity(), GetSortingContextId());
 }
 
-void VideoLayerImpl::DidDraw(LayerTreeResourceProvider* resource_provider) {
+void VideoLayerImpl::DidDraw(viz::ClientResourceProvider* resource_provider) {
   LayerImpl::DidDraw(resource_provider);
 
   DCHECK(frame_.get());

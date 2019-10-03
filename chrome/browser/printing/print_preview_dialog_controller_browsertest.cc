@@ -6,11 +6,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -37,6 +38,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "ipc/ipc_message_macros.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_switches.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -48,12 +50,11 @@ namespace {
 class RequestPrintPreviewObserver : public WebContentsObserver {
  public:
   explicit RequestPrintPreviewObserver(WebContents* dialog)
-      : WebContentsObserver(dialog) {
-  }
-  ~RequestPrintPreviewObserver() override {}
+      : WebContentsObserver(dialog) {}
+  ~RequestPrintPreviewObserver() override = default;
 
-  void set_quit_closure(const base::Closure& quit_closure) {
-    quit_closure_ = quit_closure;
+  void set_quit_closure(base::OnceClosure quit_closure) {
+    quit_closure_ = std::move(quit_closure);
   }
 
  private:
@@ -70,10 +71,11 @@ class RequestPrintPreviewObserver : public WebContentsObserver {
 
   void OnRequestPrintPreview(
       const PrintHostMsg_RequestPrintPreview_Params& /* params */) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, quit_closure_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(quit_closure_));
   }
 
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestPrintPreviewObserver);
 };
@@ -81,9 +83,8 @@ class RequestPrintPreviewObserver : public WebContentsObserver {
 class PrintPreviewDialogClonedObserver : public WebContentsObserver {
  public:
   explicit PrintPreviewDialogClonedObserver(WebContents* dialog)
-      : WebContentsObserver(dialog) {
-  }
-  ~PrintPreviewDialogClonedObserver() override {}
+      : WebContentsObserver(dialog) {}
+  ~PrintPreviewDialogClonedObserver() override = default;
 
   RequestPrintPreviewObserver* request_preview_dialog_observer() {
     return request_preview_dialog_observer_.get();
@@ -94,7 +95,7 @@ class PrintPreviewDialogClonedObserver : public WebContentsObserver {
   void DidCloneToNewWebContents(WebContents* old_web_contents,
                                 WebContents* new_web_contents) override {
     request_preview_dialog_observer_ =
-        base::MakeUnique<RequestPrintPreviewObserver>(new_web_contents);
+        std::make_unique<RequestPrintPreviewObserver>(new_web_contents);
   }
 
   std::unique_ptr<RequestPrintPreviewObserver> request_preview_dialog_observer_;
@@ -105,10 +106,8 @@ class PrintPreviewDialogClonedObserver : public WebContentsObserver {
 class PrintPreviewDialogDestroyedObserver : public WebContentsObserver {
  public:
   explicit PrintPreviewDialogDestroyedObserver(WebContents* dialog)
-      : WebContentsObserver(dialog),
-        dialog_destroyed_(false) {
-  }
-  ~PrintPreviewDialogDestroyedObserver() override {}
+      : WebContentsObserver(dialog) {}
+  ~PrintPreviewDialogDestroyedObserver() override = default;
 
   bool dialog_destroyed() const { return dialog_destroyed_; }
 
@@ -116,19 +115,19 @@ class PrintPreviewDialogDestroyedObserver : public WebContentsObserver {
   // content::WebContentsObserver implementation.
   void WebContentsDestroyed() override { dialog_destroyed_ = true; }
 
-  bool dialog_destroyed_;
+  bool dialog_destroyed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewDialogDestroyedObserver);
 };
 
 void PluginsLoadedCallback(
-    const base::Closure& quit_closure,
+    base::OnceClosure quit_closure,
     const std::vector<content::WebPluginInfo>& /* info */) {
-  quit_closure.Run();
+  std::move(quit_closure).Run();
 }
 
 bool GetPdfPluginInfo(content::WebPluginInfo* info) {
-  base::FilePath pdf_plugin_path = base::FilePath::FromUTF8Unsafe(
+  static const base::FilePath pdf_plugin_path(
       ChromeContentClient::kPDFPluginPath);
   return content::PluginService::GetInstance()->GetPluginInfoByPath(
       pdf_plugin_path, info);
@@ -155,8 +154,8 @@ void CheckPdfPluginForRenderFrame(content::RenderFrameHost* frame) {
 
 class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
  public:
-  PrintPreviewDialogControllerBrowserTest() : initiator_(nullptr) {}
-  ~PrintPreviewDialogControllerBrowserTest() override {}
+  PrintPreviewDialogControllerBrowserTest() = default;
+  ~PrintPreviewDialogControllerBrowserTest() override = default;
 
   WebContents* initiator() {
     return initiator_;
@@ -175,13 +174,18 @@ class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
     return dialog_controller->GetPrintPreviewForContents(initiator_);
   }
 
-  void SetAlwaysOpenPdfExternallyForTests(bool always_open_pdf_externally) {
+  void SetAlwaysOpenPdfExternallyForTests() {
     PluginPrefs::GetForProfile(browser()->profile())
-        ->SetAlwaysOpenPdfExternallyForTests(always_open_pdf_externally);
+        ->SetAlwaysOpenPdfExternallyForTests(true);
   }
 
  private:
   void SetUpOnMainThread() override {
+#if defined(OS_MACOSX)
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kDisableModalAnimations);
+#endif
+
     WebContents* first_tab =
         browser()->tab_strip_model()->GetActiveWebContents();
     ASSERT_TRUE(first_tab);
@@ -192,7 +196,7 @@ class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
     // RequestPrintPreviewObserver to get messages first for the purposes of
     // this test.
     cloned_tab_observer_ =
-        base::MakeUnique<PrintPreviewDialogClonedObserver>(first_tab);
+        std::make_unique<PrintPreviewDialogClonedObserver>(first_tab);
     chrome::DuplicateTab(browser());
 
     initiator_ = browser()->tab_strip_model()->GetActiveWebContents();
@@ -212,7 +216,7 @@ class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
   }
 
   std::unique_ptr<PrintPreviewDialogClonedObserver> cloned_tab_observer_;
-  WebContents* initiator_;
+  WebContents* initiator_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewDialogControllerBrowserTest);
 };
@@ -266,6 +270,11 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
   chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
   content::WaitForLoadStop(
       browser()->tab_strip_model()->GetActiveWebContents());
+  // When Widget::Close is called, a task is posted that will destroy the
+  // widget. Here the widget is closed when the navigation commits. Load stop
+  // may occur right after the commit, before the widget is destroyed.
+  // Execute pending tasks to account for this.
+  base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(dialog_destroyed_observer.dialog_destroyed());
 
   // Try printing again.
@@ -284,7 +293,7 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
   {
     base::RunLoop run_loop;
     content::PluginService::GetInstance()->GetPlugins(
-        base::Bind(&PluginsLoadedCallback, run_loop.QuitClosure()));
+        base::BindOnce(&PluginsLoadedCallback, run_loop.QuitClosure()));
     run_loop.Run();
   }
   // Get the PDF plugin info.
@@ -292,7 +301,7 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
   ASSERT_TRUE(GetPdfPluginInfo(&pdf_plugin_info));
 
   // Disable the PDF plugin.
-  SetAlwaysOpenPdfExternallyForTests(true);
+  SetAlwaysOpenPdfExternallyForTests();
 
   // Make sure it is actually disabled for webpages.
   ChromePluginServiceFilter* filter = ChromePluginServiceFilter::GetInstance();
@@ -322,12 +331,13 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
 
     frame_count = 0;
     preview_dialog->ForEachFrame(
-        base::Bind(&CountFrames, base::Unretained(&frame_count)));
+        base::BindRepeating(&CountFrames, base::Unretained(&frame_count)));
   } while (frame_count < kExpectedFrameCount);
   ASSERT_EQ(kExpectedFrameCount, frame_count);
 
   // Make sure all the frames in the dialog has access to the PDF plugin.
-  preview_dialog->ForEachFrame(base::Bind(&CheckPdfPluginForRenderFrame));
+  preview_dialog->ForEachFrame(
+      base::BindRepeating(&CheckPdfPluginForRenderFrame));
 }
 
 namespace {
@@ -340,6 +350,8 @@ base::string16 GetExpectedPrefix() {
 const std::vector<task_manager::WebContentsTag*>& GetTrackedTags() {
   return task_manager::WebContentsTagsManager::GetInstance()->tracked_tags();
 }
+
+}  // namespace
 
 IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
                        TaskManagementTest) {
@@ -391,5 +403,3 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
   WebContents* preview_dialog = GetPrintPreviewDialog();
   WaitForAccessibilityTreeToContainNodeWithName(preview_dialog, "HelloWorld");
 }
-
-}  // namespace

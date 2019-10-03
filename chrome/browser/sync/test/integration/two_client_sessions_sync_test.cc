@@ -14,8 +14,13 @@
 #include "chrome/browser/sync/test/integration/sessions_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
+
+namespace {
 
 using sessions_helper::CheckInitialState;
+using sessions_helper::CloseTab;
 using sessions_helper::DeleteForeignSession;
 using sessions_helper::GetLocalWindows;
 using sessions_helper::GetSessionData;
@@ -26,6 +31,7 @@ using sessions_helper::ScopedWindowMap;
 using sessions_helper::SessionWindowMap;
 using sessions_helper::SyncedSessionVector;
 using sessions_helper::WindowsMatch;
+using testing::IsEmpty;
 
 class TwoClientSessionsSyncTest : public SyncTest {
  public:
@@ -59,7 +65,6 @@ static const char* kURLTemplate =
 // (as well as multi-window). We're currently only checking basic single-window/
 // single-tab functionality.
 
-
 IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
                        E2E_ENABLED(SingleClientChanged)) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
@@ -73,8 +78,27 @@ IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
   WaitForForeignSessionsToSync(0, 1);
 }
 
-IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
-                       E2E_ENABLED(AllChanged)) {
+IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, SingleClientClosed) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  // Open two tabs on client 0.
+  OpenTab(0, GURL(kURL1));
+  OpenTab(0, GURL(kURL2));
+  WaitForForeignSessionsToSync(0, 1);
+
+  // Close one of the two tabs. We also issue another navigation to make sure
+  // association logic kicks in.
+  CloseTab(/*index=*/0, /*tab_index=*/1);
+  NavigateTab(0, GURL(kURL3));
+  WaitForForeignSessionsToSync(0, 1);
+
+  std::vector<sync_pb::SyncEntity> entities =
+      GetFakeServer()->GetSyncEntitiesByModelType(syncer::SESSIONS);
+  // Two header entities and one tab entity (the other one has been deleted).
+  EXPECT_EQ(3U, entities.size());
+}
+
+IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, E2E_ENABLED(AllChanged)) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
 
   // Open tabs on all clients and retain window information.
@@ -108,11 +132,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
   ASSERT_TRUE(IsEncryptionComplete(1));
 }
 
-// This test is flaky on several platforms:
-//    http://crbug.com/420979
-//    http://crbug.com/421167
 IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
-                       DISABLED_SingleClientEnabledEncryptionAndChanged) {
+                       SingleClientEnabledEncryptionAndChanged) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
 
   ASSERT_TRUE(CheckInitialState(0));
@@ -170,13 +191,12 @@ IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, DeleteIdleSession) {
 
   // Client 1 now deletes client 0's tabs. This frees the memory of sessions1.
   DeleteForeignSession(1, sessions1[0]->session_tag);
+  ASSERT_TRUE(GetClient(1)->HasUnsyncedItems());
   ASSERT_TRUE(GetClient(1)->AwaitMutualSyncCycleCompletion(GetClient(0)));
-  ASSERT_FALSE(GetSessionData(1, &sessions1));
+  EXPECT_FALSE(GetSessionData(1, &sessions1));
 }
 
-// Fails all release trybots. crbug.com/263369.
-IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
-                       DeleteActiveSession) {
+IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, DeleteActiveSession) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
 
   ASSERT_TRUE(CheckInitialState(0));
@@ -192,12 +212,14 @@ IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
 
   // Client 1 now deletes client 0's tabs. This frees the memory of sessions1.
   DeleteForeignSession(1, sessions1[0]->session_tag);
+  ASSERT_TRUE(GetClient(1)->HasUnsyncedItems());
   ASSERT_TRUE(GetClient(1)->AwaitMutualSyncCycleCompletion(GetClient(0)));
   ASSERT_FALSE(GetSessionData(1, &sessions1));
 
   // Client 0 becomes active again with a new tab.
   ASSERT_TRUE(OpenTab(0, GURL(kURL2)));
   WaitForForeignSessionsToSync(0, 1);
+  EXPECT_TRUE(GetSessionData(1, &sessions1));
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, MultipleWindowsMultipleTabs) {
@@ -216,3 +238,24 @@ IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest, MultipleWindowsMultipleTabs) {
 
   WaitForForeignSessionsToSync(0, 1);
 }
+
+IN_PROC_BROWSER_TEST_F(TwoClientSessionsSyncTest,
+                       NoHistoryIfEncryptionEnabled) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  ASSERT_TRUE(CheckInitialState(0));
+  ASSERT_TRUE(CheckInitialState(1));
+
+  ASSERT_TRUE(EnableEncryption(0));
+  ASSERT_TRUE(EnableEncryption(1));
+  ASSERT_TRUE(AwaitQuiescence());
+  ASSERT_TRUE(IsEncryptionComplete(0));
+  ASSERT_TRUE(IsEncryptionComplete(1));
+
+  EXPECT_TRUE(OpenTab(0, GURL(kURL1)));
+  WaitForForeignSessionsToSync(0, 1);
+
+  EXPECT_THAT(GetFakeServer()->GetCommittedHistoryURLs(), IsEmpty());
+}
+
+}  // namespace

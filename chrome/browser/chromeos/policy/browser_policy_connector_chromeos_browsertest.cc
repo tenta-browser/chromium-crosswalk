@@ -21,6 +21,7 @@ using testing::InvokeWithoutArgs;
 namespace policy {
 
 const char kCustomDisplayDomain[] = "acme.corp";
+const char kMachineName[] = "machine_name";
 
 void WaitUntilPolicyLoaded() {
   BrowserPolicyConnectorChromeOS* connector =
@@ -40,6 +41,11 @@ void WaitUntilPolicyLoaded() {
 }
 
 class BrowserPolicyConnectorChromeOSTest : public DevicePolicyCrosBrowserTest {
+ public:
+  BrowserPolicyConnectorChromeOSTest() {
+    device_state_.set_skip_initial_policy_setup(true);
+  }
+  ~BrowserPolicyConnectorChromeOSTest() override = default;
 };
 
 // Test that GetEnterpriseEnrollmentDomain and GetEnterpriseDisplayDomain work
@@ -62,6 +68,32 @@ IN_PROC_BROWSER_TEST_F(BrowserPolicyConnectorChromeOSTest, EnterpriseDomains) {
   // Make sure that enrollment domain stays the same.
   EXPECT_EQ(PolicyBuilder::kFakeDomain,
             connector->GetEnterpriseEnrollmentDomain());
+}
+
+IN_PROC_BROWSER_TEST_F(BrowserPolicyConnectorChromeOSTest, MarketSegment) {
+  BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
+  EXPECT_EQ(MarketSegment::UNKNOWN, connector->GetEnterpriseMarketSegment());
+
+  device_policy()->policy_data().set_market_segment(
+      enterprise_management::PolicyData::ENROLLED_EDUCATION);
+  RefreshDevicePolicy();
+  WaitUntilPolicyLoaded();
+  EXPECT_EQ(MarketSegment::EDUCATION, connector->GetEnterpriseMarketSegment());
+}
+
+// Test that GetEnterpriseEnrollmentDomain and GetEnterpriseDisplayDomain work
+// as expected.
+IN_PROC_BROWSER_TEST_F(BrowserPolicyConnectorChromeOSTest, MachineName) {
+  BrowserPolicyConnectorChromeOS* connector =
+      g_browser_process->platform_part()->browser_policy_connector_chromeos();
+  EXPECT_EQ(std::string(), connector->GetMachineName());
+  device_policy()->policy_data().set_machine_name(kMachineName);
+  RefreshDevicePolicy();
+  WaitUntilPolicyLoaded();
+  // At this point custom display domain is set and policy is loaded so expect
+  // to see the custom display domain.
+  EXPECT_EQ(kMachineName, connector->GetMachineName());
 }
 
 }  // namespace policy

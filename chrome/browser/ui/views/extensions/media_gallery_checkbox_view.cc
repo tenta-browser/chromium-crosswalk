@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/extensions/media_gallery_checkbox_view.h"
 
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
@@ -29,7 +29,8 @@ MediaGalleryCheckboxView::MediaGalleryCheckboxView(
     views::ButtonListener* button_listener,
     views::ContextMenuController* menu_controller) {
   DCHECK(button_listener != NULL);
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal));
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const gfx::Insets dialog_insets =
       provider->GetInsetsMetric(views::INSETS_DIALOG);
@@ -38,8 +39,8 @@ MediaGalleryCheckboxView::MediaGalleryCheckboxView(
   if (menu_controller)
     set_context_menu_controller(menu_controller);
 
-  checkbox_ = new views::Checkbox(pref_info.GetGalleryDisplayName());
-  checkbox_->set_listener(button_listener);
+  checkbox_ =
+      new views::Checkbox(pref_info.GetGalleryDisplayName(), button_listener);
   if (menu_controller)
     checkbox_->set_context_menu_controller(menu_controller);
   checkbox_->SetElideBehavior(gfx::ELIDE_MIDDLE);
@@ -73,7 +74,7 @@ void MediaGalleryCheckboxView::Layout() {
   // up at most half of the space and the checkbox can take up whatever is left.
   int checkbox_width = checkbox_->GetPreferredSize().width();
   int secondary_text_width = secondary_text_->GetPreferredSize().width();
-  if (!secondary_text_->visible())
+  if (!secondary_text_->GetVisible())
     secondary_text_width = 0;
 
   gfx::Rect area(GetLocalBounds());
@@ -86,7 +87,7 @@ void MediaGalleryCheckboxView::Layout() {
   checkbox_width = area.width() - secondary_text_width;
 
   checkbox_->SetBounds(area.x(), area.y(), checkbox_width, area.height());
-  if (secondary_text_->visible()) {
+  if (secondary_text_->GetVisible()) {
     secondary_text_->SetBounds(checkbox_->x() + checkbox_width, area.y(),
                                secondary_text_width, area.height());
   }

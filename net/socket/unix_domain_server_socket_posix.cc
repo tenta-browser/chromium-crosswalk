@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
@@ -119,36 +120,42 @@ int UnixDomainServerSocket::GetLocalAddress(IPEndPoint* address) const {
 }
 
 int UnixDomainServerSocket::Accept(std::unique_ptr<StreamSocket>* socket,
-                                   const CompletionCallback& callback) {
+                                   CompletionOnceCallback callback) {
   DCHECK(socket);
+  DCHECK(callback);
+  DCHECK(!callback_);
 
   SetterCallback setter_callback = base::Bind(&SetStreamSocket, socket);
-  return DoAccept(setter_callback, callback);
+  int rv = DoAccept(setter_callback);
+  if (rv == ERR_IO_PENDING)
+    callback_ = std::move(callback);
+  return rv;
 }
 
 int UnixDomainServerSocket::AcceptSocketDescriptor(
     SocketDescriptor* socket,
-    const CompletionCallback& callback) {
+    CompletionOnceCallback callback) {
   DCHECK(socket);
+  DCHECK(callback);
+  DCHECK(!callback_);
 
   SetterCallback setter_callback = base::Bind(&SetSocketDescriptor, socket);
-  return DoAccept(setter_callback, callback);
+  int rv = DoAccept(setter_callback);
+  if (rv == ERR_IO_PENDING)
+    callback_ = std::move(callback);
+  return rv;
 }
 
-int UnixDomainServerSocket::DoAccept(const SetterCallback& setter_callback,
-                                     const CompletionCallback& callback) {
+int UnixDomainServerSocket::DoAccept(const SetterCallback& setter_callback) {
   DCHECK(!setter_callback.is_null());
-  DCHECK(!callback.is_null());
   DCHECK(listen_socket_);
   DCHECK(!accept_socket_);
 
   while (true) {
     int rv = listen_socket_->Accept(
         &accept_socket_,
-        base::Bind(&UnixDomainServerSocket::AcceptCompleted,
-                   base::Unretained(this),
-                   setter_callback,
-                   callback));
+        base::BindOnce(&UnixDomainServerSocket::AcceptCompleted,
+                       base::Unretained(this), setter_callback));
     if (rv != OK)
       return rv;
     if (AuthenticateAndGetStreamSocket(setter_callback))
@@ -160,23 +167,24 @@ int UnixDomainServerSocket::DoAccept(const SetterCallback& setter_callback,
 
 void UnixDomainServerSocket::AcceptCompleted(
     const SetterCallback& setter_callback,
-    const CompletionCallback& callback,
     int rv) {
+  DCHECK(!callback_.is_null());
+
   if (rv != OK) {
-    callback.Run(rv);
+    std::move(callback_).Run(rv);
     return;
   }
 
   if (AuthenticateAndGetStreamSocket(setter_callback)) {
-    callback.Run(OK);
+    std::move(callback_).Run(OK);
     return;
   }
 
   // Accept another socket because authentication error should be transparent
   // to the caller.
-  rv = DoAccept(setter_callback, callback);
+  rv = DoAccept(setter_callback);
   if (rv != ERR_IO_PENDING)
-    callback.Run(rv);
+    std::move(callback_).Run(rv);
 }
 
 bool UnixDomainServerSocket::AuthenticateAndGetStreamSocket(

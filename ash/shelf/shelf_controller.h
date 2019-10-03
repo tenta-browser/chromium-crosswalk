@@ -5,27 +5,29 @@
 #ifndef ASH_SHELF_SHELF_CONTROLLER_H_
 #define ASH_SHELF_SHELF_CONTROLLER_H_
 
+#include <memory>
+#include <string>
+
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
-#include "ash/public/cpp/shelf_item.h"
 #include "ash/public/cpp/shelf_model.h"
-#include "ash/public/cpp/shelf_model_observer.h"
-#include "ash/public/cpp/shelf_types.h"
-#include "ash/public/interfaces/shelf.mojom.h"
+#include "ash/public/cpp/tablet_mode_observer.h"
 #include "ash/session/session_observer.h"
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "mojo/public/cpp/bindings/interface_ptr_set.h"
+#include "base/scoped_observer.h"
+#include "ui/message_center/message_center_observer.h"
 
 class PrefChangeRegistrar;
 class PrefRegistrySimple;
 
+namespace message_center {
+class MessageCenter;
+}
+
 namespace ash {
 
-// Ash's ShelfController owns the ShelfModel and implements interface functions
-// that allow Chrome to modify and observe the Shelf and ShelfModel state.
-class ASH_EXPORT ShelfController : public mojom::ShelfController,
-                                   public ShelfModelObserver,
+// ShelfController owns the ShelfModel and manages shelf preferences.
+// ChromeLauncherController and related classes largely manage the ShelfModel.
+class ASH_EXPORT ShelfController : public message_center::MessageCenterObserver,
                                    public SessionObserver,
                                    public TabletModeObserver,
                                    public WindowTreeHostManager::Observer {
@@ -33,38 +35,19 @@ class ASH_EXPORT ShelfController : public mojom::ShelfController,
   ShelfController();
   ~ShelfController() override;
 
-  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
+  // Removes observers from this object's dependencies.
+  void Shutdown();
 
-  // Binds the mojom::ShelfController interface request to this object.
-  void BindRequest(mojom::ShelfControllerRequest request);
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   ShelfModel* model() { return &model_; }
 
-  bool should_synchronize_shelf_models() const {
-    return should_synchronize_shelf_models_;
-  }
-
-  // mojom::ShelfController:
-  void AddObserver(mojom::ShelfObserverAssociatedPtrInfo observer) override;
-  void AddShelfItem(int32_t index, const ShelfItem& item) override;
-  void RemoveShelfItem(const ShelfID& id) override;
-  void MoveShelfItem(const ShelfID& id, int32_t index) override;
-  void UpdateShelfItem(const ShelfItem& item) override;
-  void SetShelfItemDelegate(const ShelfID& id,
-                            mojom::ShelfItemDelegatePtr delegate) override;
-
-  // ShelfModelObserver:
-  void ShelfItemAdded(int index) override;
-  void ShelfItemRemoved(int index, const ShelfItem& old_item) override;
-  void ShelfItemMoved(int start_index, int target_index) override;
-  void ShelfItemChanged(int index, const ShelfItem& old_item) override;
-  void ShelfItemDelegateChanged(const ShelfID& id,
-                                ShelfItemDelegate* old_delegate,
-                                ShelfItemDelegate* delegate) override;
-
-  void FlushForTesting();
-
  private:
+  // message_center::MessageCenterObserver:
+  void OnNotificationAdded(const std::string& notification_id) override;
+  void OnNotificationRemoved(const std::string& notification_id,
+                             bool by_user) override;
+
   // SessionObserver:
   void OnActiveUserPrefServiceChanged(PrefService* pref_service) override;
 
@@ -83,18 +66,12 @@ class ASH_EXPORT ShelfController : public mojom::ShelfController,
   // The shelf model shared by all shelf instances.
   ShelfModel model_;
 
-  // Bindings for the ShelfController interface.
-  mojo::BindingSet<mojom::ShelfController> bindings_;
+  // Whether notification indicators are enabled for app icons in the shelf.
+  const bool is_notification_indicator_enabled_;
 
-  // True if Ash and Chrome should synchronize separate ShelfModel instances.
-  bool should_synchronize_shelf_models_ = false;
-
-  // True when applying changes from the remote ShelfModel owned by Chrome.
-  // Changes to the local ShelfModel should not be reported during this time.
-  bool applying_remote_shelf_model_changes_ = false;
-
-  // The set of shelf observers notified about state and model changes.
-  mojo::AssociatedInterfacePtrSet<mojom::ShelfObserver> observers_;
+  ScopedObserver<message_center::MessageCenter,
+                 message_center::MessageCenterObserver>
+      message_center_observer_;
 
   // Observes user profile prefs for the shelf.
   std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;

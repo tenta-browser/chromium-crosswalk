@@ -7,10 +7,12 @@
 #include <stddef.h>
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/x/selection_utils.h"
 #include "ui/base/x/x11_util.h"
@@ -65,11 +67,11 @@ class SelectionRequestorTest : public testing::Test {
                               InputOnly,
                               CopyFromParent,  // visual
                               0,
-                              NULL);
+                              nullptr);
 
-    event_source_ = ui::PlatformEventSource::CreateDefault();
-    CHECK(ui::PlatformEventSource::GetInstance());
-    requestor_.reset(new SelectionRequestor(x_display_, x_window_, NULL));
+    event_source_ = PlatformEventSource::CreateDefault();
+    CHECK(PlatformEventSource::GetInstance());
+    requestor_.reset(new SelectionRequestor(x_display_, x_window_, nullptr));
   }
 
   void TearDown() override {
@@ -84,10 +86,11 @@ class SelectionRequestorTest : public testing::Test {
   // |requestor_|'s window.
   XID x_window_;
 
-  std::unique_ptr<ui::PlatformEventSource> event_source_;
+  std::unique_ptr<PlatformEventSource> event_source_;
   std::unique_ptr<SelectionRequestor> requestor_;
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::UI};
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SelectionRequestorTest);
@@ -123,19 +126,18 @@ TEST_F(SelectionRequestorTest, NestedRequests) {
   XAtom target1 = gfx::GetAtom("TARGET1");
   XAtom target2 = gfx::GetAtom("TARGET2");
 
-  base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-  loop->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&PerformBlockingConvertSelection,
-                            base::Unretained(requestor_.get()), selection,
-                            target2, "Data2"));
-  loop->task_runner()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&PerformBlockingConvertSelection,
+                                base::Unretained(requestor_.get()), selection,
+                                target2, "Data2"));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&SelectionRequestorTest::SendSelectionNotify,
-                 base::Unretained(this), selection, target1, "Data1"));
-  loop->task_runner()->PostTask(
+      base::BindOnce(&SelectionRequestorTest::SendSelectionNotify,
+                     base::Unretained(this), selection, target1, "Data1"));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&SelectionRequestorTest::SendSelectionNotify,
-                 base::Unretained(this), selection, target2, "Data2"));
+      base::BindOnce(&SelectionRequestorTest::SendSelectionNotify,
+                     base::Unretained(this), selection, target2, "Data2"));
   PerformBlockingConvertSelection(requestor_.get(), selection, target1,
                                   "Data1");
 }

@@ -7,8 +7,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_utils.h"
@@ -31,8 +31,7 @@ namespace dom_distiller {
 SourcePageHandleWebContents::SourcePageHandleWebContents(
     content::WebContents* web_contents,
     bool owned)
-    : web_contents_(web_contents), owned_(owned) {
-}
+    : web_contents_(web_contents), owned_(owned) {}
 
 SourcePageHandleWebContents::~SourcePageHandleWebContents() {
   if (owned_) {
@@ -67,8 +66,7 @@ DistillerPageWebContents::DistillerPageWebContents(
     : state_(IDLE),
       source_page_handle_(nullptr),
       browser_context_(browser_context),
-      render_view_size_(render_view_size),
-      weak_factory_(this) {
+      render_view_size_(render_view_size) {
   if (optional_web_contents_handle) {
     source_page_handle_ = std::move(optional_web_contents_handle);
     if (render_view_size.IsEmpty())
@@ -77,11 +75,10 @@ DistillerPageWebContents::DistillerPageWebContents(
   }
 }
 
-DistillerPageWebContents::~DistillerPageWebContents() {
-}
+DistillerPageWebContents::~DistillerPageWebContents() {}
 
 bool DistillerPageWebContents::StringifyOutput() {
- return false;
+  return false;
 }
 
 void DistillerPageWebContents::DistillPageImpl(const GURL& url,
@@ -122,23 +119,24 @@ void DistillerPageWebContents::CreateNewWebContents(const GURL& url) {
   // Create new WebContents to use for distilling the content.
   content::WebContents::CreateParams create_params(browser_context_);
   create_params.initially_hidden = true;
-  content::WebContents* web_contents =
+  std::unique_ptr<content::WebContents> web_contents =
       content::WebContents::Create(create_params);
   DCHECK(web_contents);
 
   web_contents->SetDelegate(this);
 
   // Start observing WebContents and load the requested URL.
-  content::WebContentsObserver::Observe(web_contents);
+  content::WebContentsObserver::Observe(web_contents.get());
   content::NavigationController::LoadURLParams params(url);
   web_contents->GetController().LoadURLWithParams(params);
 
+  // SourcePageHandleWebContents takes ownership of |web_contents|.
   source_page_handle_.reset(
-      new SourcePageHandleWebContents(web_contents, true));
+      new SourcePageHandleWebContents(web_contents.release(), true));
 }
 
 gfx::Size DistillerPageWebContents::GetSizeForNewRenderView(
-    content::WebContents* web_contents) const {
+    content::WebContents* web_contents) {
   gfx::Size size(render_view_size_);
   if (size.IsEmpty())
     size = web_contents->GetContainerBounds().size();
@@ -168,8 +166,7 @@ void DistillerPageWebContents::DidFailLoad(
     content::WebContentsObserver::Observe(nullptr);
     DCHECK(state_ == LOADING_PAGE || state_ == EXECUTING_JAVASCRIPT);
     state_ = PAGELOAD_FAILED;
-    auto empty = base::MakeUnique<base::Value>();
-    OnWebContentsDistillationDone(GURL(), base::TimeTicks(), empty.get());
+    OnWebContentsDistillationDone(GURL(), base::TimeTicks(), base::Value());
   }
 }
 
@@ -186,16 +183,16 @@ void DistillerPageWebContents::ExecuteJavaScript() {
   DVLOG(1) << "Beginning distillation";
   RunIsolatedJavaScript(
       frame, script_,
-      base::Bind(&DistillerPageWebContents::OnWebContentsDistillationDone,
-                 weak_factory_.GetWeakPtr(),
-                 source_page_handle_->web_contents()->GetLastCommittedURL(),
-                 base::TimeTicks::Now()));
+      base::BindOnce(&DistillerPageWebContents::OnWebContentsDistillationDone,
+                     weak_factory_.GetWeakPtr(),
+                     source_page_handle_->web_contents()->GetLastCommittedURL(),
+                     base::TimeTicks::Now()));
 }
 
 void DistillerPageWebContents::OnWebContentsDistillationDone(
     const GURL& page_url,
     const base::TimeTicks& javascript_start,
-    const base::Value* value) {
+    base::Value value) {
   DCHECK(state_ == IDLE || state_ == LOADING_PAGE ||  // TODO(nyquist): 493795.
          state_ == PAGELOAD_FAILED || state_ == EXECUTING_JAVASCRIPT);
   state_ = IDLE;
@@ -206,7 +203,7 @@ void DistillerPageWebContents::OnWebContentsDistillationDone(
     DVLOG(1) << "DomDistiller.Time.RunJavaScript = " << javascript_time;
   }
 
-  DistillerPage::OnDistillationDone(page_url, value);
+  DistillerPage::OnDistillationDone(page_url, &value);
 }
 
 }  // namespace dom_distiller

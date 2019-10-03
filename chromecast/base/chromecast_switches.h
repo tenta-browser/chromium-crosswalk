@@ -5,6 +5,7 @@
 #ifndef CHROMECAST_BASE_CHROMECAST_SWITCHES_H_
 #define CHROMECAST_BASE_CHROMECAST_SWITCHES_H_
 
+#include <cstdint>
 #include <string>
 
 #include "build/build_config.h"
@@ -18,6 +19,9 @@ extern const char kSwitchValueFalse[];
 // Url to upload crash data to.
 extern const char kCrashServerUrl[];
 
+// Disable Crash Reporting
+extern const char kDisableCrashReporter[];
+
 // Content-implementation switches
 extern const char kEnableLocalFileAccesses[];
 
@@ -26,9 +30,7 @@ extern const char kOverrideMetricsUploadUrl[];
 
 // Network switches
 extern const char kNoWifi[];
-
-// App switches
-extern const char kAllowHiddenMediaPlayback[];
+extern const char kRequireWlan[];
 
 // Switches to communicate app state information
 extern const char kLastLaunchedApp[];
@@ -38,19 +40,27 @@ extern const char kPreviousApp[];
 extern const char kAcceptResourceProvider[];
 
 // ALSA-based CMA switches. (Only valid for audio products.)
-extern const char kAlsaOutputBufferSize[];
-extern const char kAlsaOutputPeriodSize[];
-extern const char kAlsaOutputStartThreshold[];
-extern const char kAlsaOutputAvailMin[];
+// TODO(sergeyu): kAlsaEnableUpsampling and kAlsaCheckCloseTimeout are
+// implemented in StreamMixer, which is not ALSA-specific - it's also used on
+// Fuchsia. Rename these flags.
+extern const char kAlsaAmpDeviceName[];
+extern const char kAlsaAmpElementName[];
 extern const char kAlsaCheckCloseTimeout[];
 extern const char kAlsaEnableUpsampling[];
 extern const char kAlsaFixedOutputSampleRate[];
-extern const char kAlsaVolumeDeviceName[];
-extern const char kAlsaVolumeElementName[];
 extern const char kAlsaMuteDeviceName[];
 extern const char kAlsaMuteElementName[];
-extern const char kMaxOutputVolumeDba1m[];
+extern const char kAlsaOutputAvailMin[];
+extern const char kAlsaOutputBufferSize[];
+extern const char kAlsaOutputPeriodSize[];
+extern const char kAlsaOutputStartThreshold[];
+extern const char kAlsaVolumeDeviceName[];
+extern const char kAlsaVolumeElementName[];
 extern const char kAudioOutputChannels[];
+extern const char kAudioOutputSampleRate[];
+extern const char kMaxOutputVolumeDba1m[];
+extern const char kMixerSourceAudioReadyThresholdMs[];
+extern const char kMixerSourceInputQueueMs[];
 
 // Memory pressure switches
 extern const char kMemPressureSystemReservedKb[];
@@ -59,12 +69,29 @@ extern const char kMemPressureSystemReservedKb[];
 extern const char kCastInitialScreenWidth[];
 extern const char kCastInitialScreenHeight[];
 extern const char kGraphicsBufferCount[];
+extern const char kVSyncInterval[];
 
 // Graphics switches
 extern const char kDesktopWindow1080p[];
+extern const char kForceMediaResolutionHeight[];
+extern const char kForceMediaResolutionWidth[];
 
 // UI switches
 extern const char kEnableInput[];
+extern const char kSystemGestureStartWidth[];
+extern const char kSystemGestureStartHeight[];
+extern const char kBottomSystemGestureStartHeight[];
+extern const char kBackGestureHorizontalThreshold[];
+extern const char kEnableTopDragGesture[];
+
+// Background color used when Chromium hasn't rendered anything yet.
+extern const char kCastAppBackgroundColor[];
+
+extern const char kMixerServiceEndpoint[];
+extern const char kCastMemoryPressureCriticalFraction[];
+extern const char kCastMemoryPressureModerateFraction[];
+
+extern const char kDisableMojoRenderer[];
 
 }  // namespace switches
 
@@ -88,6 +115,16 @@ int GetSwitchValueInt(const std::string& switch_name, const int default_value);
 // the |default_value| is returned.
 int GetSwitchValueNonNegativeInt(const std::string& switch_name,
                                  const int default_value);
+
+// Gets a floating point value from switch |switch_name|. If the switch is not
+// present in the command line, or the value is not a number, the
+// |default_value| is returned.
+double GetSwitchValueDouble(const std::string& switch_name,
+                            const double default_value);
+
+// Gets a color value from the format "#AARRGGBB" (hex).
+uint32_t GetSwitchValueColor(const std::string& switch_name,
+                             const uint32_t default_value);
 
 }  // namespace chromecast
 

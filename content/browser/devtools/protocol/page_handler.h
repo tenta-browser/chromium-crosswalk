@@ -15,19 +15,26 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
 #include "base/time/time.h"
-#include "components/viz/common/quads/compositor_frame_metadata.h"
+#include "build/build_config.h"
+#include "content/browser/devtools/devtools_frame_metadata.h"
+#include "content/browser/devtools/devtools_video_consumer.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/devtools_download_manager_delegate.h"
 #include "content/browser/devtools/protocol/page.h"
 #include "content/public/browser/javascript_dialog_manager.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/readback_types.h"
+#include "content/public/browser/render_widget_host_observer.h"
 #include "content/public/common/javascript_dialog_type.h"
+#include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
+#include "third_party/blink/public/mojom/manifest/manifest_manager.mojom.h"
 #include "url/gurl.h"
 
 class SkBitmap;
+
+namespace base {
+class UnguessableToken;
+}
 
 namespace gfx {
 class Image;
@@ -40,6 +47,8 @@ struct WebDeviceEmulationParams;
 namespace content {
 
 class DevToolsAgentHostImpl;
+class FileSelectListener;
+class FrameTreeNode;
 class NavigationRequest;
 class RenderFrameHostImpl;
 class WebContentsImpl;
@@ -50,9 +59,12 @@ class EmulationHandler;
 
 class PageHandler : public DevToolsDomainHandler,
                     public Page::Backend,
-                    public NotificationObserver {
+                    public RenderWidgetHostObserver {
  public:
-  explicit PageHandler(EmulationHandler* handler);
+  PageHandler(EmulationHandler* handler,
+              void** active_file_chooser_interceptor,
+              bool allow_set_download_behavior,
+              bool allow_file_access);
   ~PageHandler() override;
 
   static std::vector<PageHandler*> EnabledForWebContents(
@@ -60,11 +72,11 @@ class PageHandler : public DevToolsDomainHandler,
   static std::vector<PageHandler*> ForAgentHost(DevToolsAgentHostImpl* host);
 
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderer(RenderProcessHost* process_host,
+  void SetRenderer(int process_host_id,
                    RenderFrameHostImpl* frame_host) override;
-  void OnSwapCompositorFrame(viz::CompositorFrameMetadata frame_metadata);
+  // Instrumentation signals.
   void OnSynchronousSwapCompositorFrame(
-      viz::CompositorFrameMetadata frame_metadata);
+      const DevToolsFrameMetadata& frame_metadata);
   void DidAttachInterstitialPage();
   void DidDetachInterstitialPage();
   bool screencast_enabled() const { return enabled_ && screencast_enabled_; }
@@ -74,20 +86,29 @@ class PageHandler : public DevToolsDomainHandler,
                               const base::string16& message,
                               const base::string16& default_prompt,
                               JavaScriptDialogType dialog_type,
+                              bool has_non_devtools_handlers,
                               JavaScriptDialogCallback callback);
   void DidRunBeforeUnloadConfirm(const GURL& url,
+                                 bool has_non_devtools_handlers,
                                  JavaScriptDialogCallback callback);
   void DidCloseJavaScriptDialog(bool success, const base::string16& user_input);
   void NavigationReset(NavigationRequest* navigation_request);
+  void DownloadWillBegin(FrameTreeNode* ftn, const GURL& url);
+
+  WebContentsImpl* GetWebContents();
 
   Response Enable() override;
   Response Disable() override;
 
-  Response Reload(Maybe<bool> bypassCache,
-                  Maybe<std::string> script_to_evaluate_on_load) override;
+  Response Crash() override;
+  Response Close() override;
+  void Reload(Maybe<bool> bypassCache,
+              Maybe<std::string> script_to_evaluate_on_load,
+              std::unique_ptr<ReloadCallback> callback) override;
   void Navigate(const std::string& url,
                 Maybe<std::string> referrer,
                 Maybe<std::string> transition_type,
+                Maybe<std::string> frame_id,
                 std::unique_ptr<NavigateCallback> callback) override;
   Response StopLoading() override;
 
@@ -96,6 +117,11 @@ class PageHandler : public DevToolsDomainHandler,
       int* current_index,
       std::unique_ptr<NavigationEntries>* entries) override;
   Response NavigateToHistoryEntry(int entry_id) override;
+  Response ResetNavigationHistory() override;
+  Response SetInterceptFileChooserDialog(bool enabled) override;
+  Response HandleFileChooser(
+      const std::string& action,
+      Maybe<protocol::Array<std::string>> files) override;
 
   void CaptureScreenshot(
       Maybe<std::string> format,
@@ -103,6 +129,9 @@ class PageHandler : public DevToolsDomainHandler,
       Maybe<Page::Viewport> clip,
       Maybe<bool> from_surface,
       std::unique_ptr<CaptureScreenshotCallback> callback) override;
+  void CaptureSnapshot(
+      Maybe<std::string> format,
+      std::unique_ptr<CaptureSnapshotCallback> callback) override;
   void PrintToPDF(Maybe<bool> landscape,
                   Maybe<bool> display_header_footer,
                   Maybe<bool> print_background,
@@ -115,6 +144,10 @@ class PageHandler : public DevToolsDomainHandler,
                   Maybe<double> margin_right,
                   Maybe<String> page_ranges,
                   Maybe<bool> ignore_invalid_page_ranges,
+                  Maybe<String> header_template,
+                  Maybe<String> footer_template,
+                  Maybe<bool> prefer_css_page_size,
+                  Maybe<String> transfer_mode,
                   std::unique_ptr<PrintToPDFCallback> callback) override;
   Response StartScreencast(Maybe<std::string> format,
                            Maybe<int> quality,
@@ -127,25 +160,35 @@ class PageHandler : public DevToolsDomainHandler,
   Response HandleJavaScriptDialog(bool accept,
                                   Maybe<std::string> prompt_text) override;
 
-  Response RequestAppBanner() override;
-
   Response BringToFront() override;
 
   Response SetDownloadBehavior(const std::string& behavior,
                                Maybe<std::string> download_path) override;
 
+  void GetAppManifest(
+      std::unique_ptr<GetAppManifestCallback> callback) override;
+
+  Response SetWebLifecycleState(const std::string& state) override;
+  void GetInstallabilityErrors(
+      std::unique_ptr<GetInstallabilityErrorsCallback> callback) override;
+
+  bool InterceptFileChooser(RenderFrameHostImpl* rfh,
+                            std::unique_ptr<FileSelectListener>* listener,
+                            const blink::mojom::FileChooserParams& params);
+
  private:
   enum EncodingFormat { PNG, JPEG };
 
-  WebContentsImpl* GetWebContents();
   void NotifyScreencastVisibility(bool visible);
   void InnerSwapCompositorFrame();
-  void ScreencastFrameCaptured(viz::CompositorFrameMetadata metadata,
-                               const SkBitmap& bitmap,
-                               ReadbackResponse response);
-  void ScreencastFrameEncoded(viz::CompositorFrameMetadata metadata,
-                              const base::Time& timestamp,
-                              const std::string& data);
+  void OnFrameFromVideoConsumer(scoped_refptr<media::VideoFrame> frame);
+  void ScreencastFrameCaptured(
+      std::unique_ptr<Page::ScreencastFrameMetadata> metadata,
+      const SkBitmap& bitmap);
+  void ScreencastFrameEncoded(
+      std::unique_ptr<Page::ScreencastFrameMetadata> metadata,
+      const protocol::Binary& data);
+  void FallbackOrCancelFileChooser();
 
   void ScreenshotCaptured(
       std::unique_ptr<CaptureScreenshotCallback> callback,
@@ -156,10 +199,14 @@ class PageHandler : public DevToolsDomainHandler,
       const blink::WebDeviceEmulationParams& original_params,
       const gfx::Image& image);
 
-  // NotificationObserver overrides.
-  void Observe(int type,
-               const NotificationSource& source,
-               const NotificationDetails& details) override;
+  void GotManifest(std::unique_ptr<GetAppManifestCallback> callback,
+                   const GURL& manifest_url,
+                   blink::mojom::ManifestDebugInfoPtr debug_info);
+
+  // RenderWidgetHostObserver overrides.
+  void RenderWidgetHostVisibilityChanged(RenderWidgetHost* widget_host,
+                                         bool became_visible) override;
+  void RenderWidgetHostDestroyed(RenderWidgetHost* widget_host) override;
 
   bool enabled_;
 
@@ -170,21 +217,37 @@ class PageHandler : public DevToolsDomainHandler,
   int screencast_max_height_;
   int capture_every_nth_frame_;
   int capture_retry_count_;
-  bool has_compositor_frame_metadata_;
-  viz::CompositorFrameMetadata next_compositor_frame_metadata_;
-  viz::CompositorFrameMetadata last_compositor_frame_metadata_;
+  base::Optional<DevToolsFrameMetadata> frame_metadata_;
   int session_id_;
   int frame_counter_;
   int frames_in_flight_;
 
+  // |video_consumer_| consumes video frames from FrameSinkVideoCapturerImpl,
+  // and provides PageHandler with these frames via OnFrameFromVideoConsumer.
+  // This is only used if Viz is enabled and if OS is not Android.
+  std::unique_ptr<DevToolsVideoConsumer> video_consumer_;
+
+  // The last surface size used to determine if frames with new sizes need
+  // to be requested. This changes due to window resizing.
+  gfx::Size last_surface_size_;
+
   RenderFrameHostImpl* host_;
   EmulationHandler* emulation_handler_;
+  void** active_file_chooser_interceptor_;
+  bool allow_set_download_behavior_;
+  const bool allow_file_access_;
+
   std::unique_ptr<Page::Frontend> frontend_;
-  NotificationRegistrar registrar_;
+  ScopedObserver<RenderWidgetHost, RenderWidgetHostObserver> observer_;
   JavaScriptDialogCallback pending_dialog_;
   scoped_refptr<DevToolsDownloadManagerDelegate> download_manager_delegate_;
-  std::unique_ptr<NavigateCallback> navigate_callback_;
-  base::WeakPtrFactory<PageHandler> weak_factory_;
+  base::flat_map<base::UnguessableToken, std::unique_ptr<NavigateCallback>>
+      navigate_callbacks_;
+  std::unique_ptr<FileSelectListener> file_chooser_listener_;
+  std::unique_ptr<blink::mojom::FileChooserParams> file_chooser_params_;
+  base::Optional<std::pair<int, int>> file_chooser_rfh_id_;
+
+  base::WeakPtrFactory<PageHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PageHandler);
 };

@@ -6,6 +6,10 @@
 
 #include "base/bind.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -13,13 +17,19 @@
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+
+// TODO: Remove these definitions when upgrading to an NDK that includes them.
+// They were copied from <malloc.h> in Bionic master.
+extern "C" int mallopt(int __option, int __value) __attribute__((weak));
+#define M_PURGE -101
+#endif
+
 using testing::Le;
 using testing::Ge;
 using testing::AllOf;
-using memory_instrumentation::mojom::GlobalMemoryDumpPtr;
-using memory_instrumentation::mojom::GlobalMemoryDump;
-using memory_instrumentation::mojom::ProcessMemoryDumpPtr;
-using memory_instrumentation::mojom::ProcessMemoryDump;
+using memory_instrumentation::GlobalMemoryDump;
 using memory_instrumentation::mojom::ProcessType;
 
 namespace content {
@@ -27,52 +37,77 @@ namespace content {
 class MemoryInstrumentationTest : public ContentBrowserTest {
  protected:
   void Navigate(Shell* shell) {
-    NavigateToURL(shell, GetTestUrl("", "title.html"));
+    EXPECT_TRUE(NavigateToURL(shell, GetTestUrl("", "title1.html")));
   }
 };
 
 uint64_t GetPrivateFootprintKb(ProcessType type,
-                               const GlobalMemoryDump& global_dump) {
-  ProcessMemoryDump* target_dump = nullptr;
-  for (const ProcessMemoryDumpPtr& dump : global_dump.process_dumps) {
-    if (dump->process_type == type) {
-      EXPECT_FALSE(target_dump);
-      target_dump = dump.get();
-    }
+                               const GlobalMemoryDump& global_dump,
+                               base::ProcessId pid = base::kNullProcessId) {
+  const GlobalMemoryDump::ProcessDump* target_dump = nullptr;
+  for (const auto& dump : global_dump.process_dumps()) {
+    if (dump.process_type() != type)
+      continue;
+
+    if (pid != base::kNullProcessId && pid != dump.pid())
+      continue;
+
+    EXPECT_FALSE(target_dump);
+    target_dump = &dump;
   }
   EXPECT_TRUE(target_dump);
-  return target_dump->os_dump->private_footprint_kb;
+  return target_dump->os_dump().private_footprint_kb;
 }
 
-GlobalMemoryDumpPtr DoGlobalDump() {
-  GlobalMemoryDumpPtr result = nullptr;
+std::unique_ptr<GlobalMemoryDump> DoGlobalDump() {
+  std::unique_ptr<GlobalMemoryDump> result = nullptr;
   base::RunLoop run_loop;
   memory_instrumentation::MemoryInstrumentation::GetInstance()
-      ->RequestGlobalDump(base::Bind(
-          [](base::Closure quit_closure, GlobalMemoryDumpPtr* out_result,
-             bool success, GlobalMemoryDumpPtr result) {
-            EXPECT_TRUE(success);
-            *out_result = std::move(result);
-            quit_closure.Run();
-          },
-          run_loop.QuitClosure(), &result));
+      ->RequestGlobalDump(
+          {}, base::BindOnce(
+                  [](base::Closure quit_closure,
+                     std::unique_ptr<GlobalMemoryDump>* out_result,
+                     bool success, std::unique_ptr<GlobalMemoryDump> result) {
+                    EXPECT_TRUE(success);
+                    *out_result = std::move(result);
+                    std::move(quit_closure).Run();
+                  },
+                  run_loop.QuitClosure(), &result));
   run_loop.Run();
   return result;
 }
 
 // *SAN fake some sys calls we need meaning we never get dumps for the
 // processes.
+// Flakes on Android. crbug.com/970058
 #if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER) || \
-    defined(THREAD_SANITIZER)
+    defined(THREAD_SANITIZER) || defined(OS_ANDROID)
 #define MAYBE_PrivateFootprintComputation DISABLED_PrivateFootprintComputation
 #else
-#define MAYBE_PrivateFootprintComputation PrivateFootprintComputatio
+#define MAYBE_PrivateFootprintComputation PrivateFootprintComputation
 #endif
 
 // Despite the location, this test is not tracing related.
 // TODO(hjd): Move this once we have a resource_coordinator folder in browser.
 IN_PROC_BROWSER_TEST_F(MemoryInstrumentationTest,
                        MAYBE_PrivateFootprintComputation) {
+#if defined(OS_ANDROID)
+  // The allocator in Android N and above will defer madvising large allocations
+  // until the purge interval, which is set at 1 second. If we are on N or
+  // above, check whether we can use mallopt(M_PURGE) to trigger an immediate
+  // purge. If we can't, skip the test.
+  if (base::android::BuildInfo::GetInstance()->sdk_int() >=
+      base::android::SDK_VERSION_NOUGAT) {
+    // M_PURGE is supported on most devices running P, but not all of them. So
+    // we can't check the API level but must instead attempt to trigger a purge
+    // and check whether or not it succeeded.
+    if (!mallopt || mallopt(M_PURGE, 0) == 0) {
+      DVLOG(0) << "Skipping test - unable to trigger a purge.";
+      return;
+    }
+  }
+#endif
+
   Navigate(shell());
 
   // We have to pick a big size (>=64mb) to avoid an implementation detail of
@@ -81,7 +116,7 @@ IN_PROC_BROWSER_TEST_F(MemoryInstrumentationTest,
   const int64_t kAllocSize = 65 * 1024 * 1024;
   const int64_t kAllocSizeKb = kAllocSize / 1024;
 
-  GlobalMemoryDumpPtr before_ptr = DoGlobalDump();
+  std::unique_ptr<GlobalMemoryDump> before_ptr = DoGlobalDump();
 
   std::unique_ptr<char[]> buffer = std::make_unique<char[]>(kAllocSize);
   memset(buffer.get(), 1, kAllocSize);
@@ -89,15 +124,23 @@ IN_PROC_BROWSER_TEST_F(MemoryInstrumentationTest,
   EXPECT_EQ(x[0] + x[kAllocSize - 1], 2);
 
   content::WebContents* web_contents = shell()->web_contents();
+  base::ProcessId renderer_pid =
+      web_contents->GetMainFrame()->GetProcess()->GetProcess().Pid();
+
   // Should allocate at least 4*10^6 / 1024 = 4000kb.
   EXPECT_TRUE(content::ExecuteScript(web_contents,
                                      "var a = Array(1000000).fill(1234);\n"));
 
-  GlobalMemoryDumpPtr during_ptr = DoGlobalDump();
+  std::unique_ptr<GlobalMemoryDump> during_ptr = DoGlobalDump();
 
   buffer.reset();
 
-  GlobalMemoryDumpPtr after_ptr = DoGlobalDump();
+#if defined(OS_ANDROID)
+  if (mallopt)
+    mallopt(M_PURGE, 0);
+#endif
+
+  std::unique_ptr<GlobalMemoryDump> after_ptr = DoGlobalDump();
 
   int64_t before_kb = GetPrivateFootprintKb(ProcessType::BROWSER, *before_ptr);
   int64_t during_kb = GetPrivateFootprintKb(ProcessType::BROWSER, *during_ptr);
@@ -111,9 +154,9 @@ IN_PROC_BROWSER_TEST_F(MemoryInstrumentationTest,
               AllOf(Ge(kAllocSizeKb - 3000), Le(kAllocSizeKb + 3000)));
 
   int64_t before_renderer_kb =
-      GetPrivateFootprintKb(ProcessType::RENDERER, *before_ptr);
+      GetPrivateFootprintKb(ProcessType::RENDERER, *before_ptr, renderer_pid);
   int64_t during_renderer_kb =
-      GetPrivateFootprintKb(ProcessType::RENDERER, *during_ptr);
+      GetPrivateFootprintKb(ProcessType::RENDERER, *during_ptr, renderer_pid);
   EXPECT_GE(during_renderer_kb - before_renderer_kb, 3000);
 }
 

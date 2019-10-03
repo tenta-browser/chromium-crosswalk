@@ -11,8 +11,8 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/public/renderer/render_thread_observer.h"
-#include "third_party/WebKit/public/platform/WebSpeechSynthesizer.h"
-#include "third_party/WebKit/public/platform/WebSpeechSynthesizerClient.h"
+#include "third_party/blink/public/platform/web_speech_synthesizer.h"
+#include "third_party/blink/public/platform/web_speech_synthesizer_client.h"
 
 namespace IPC {
 class Message;
@@ -52,8 +52,8 @@ class TtsDispatcher
   void OnDidFinishSpeaking(int utterance_id);
   void OnDidPauseSpeaking(int utterance_id);
   void OnDidResumeSpeaking(int utterance_id);
-  void OnWordBoundary(int utterance_id, int char_index);
-  void OnSentenceBoundary(int utterance_id, int char_index);
+  void OnWordBoundary(int utterance_id, int char_index, int char_length);
+  void OnSentenceBoundary(int utterance_id, int char_index, int char_length);
   void OnMarkerEvent(int utterance_id, int char_index);
   void OnWasInterrupted(int utterance_id);
   void OnWasCancelled(int utterance_id);

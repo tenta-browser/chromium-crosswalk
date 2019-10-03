@@ -8,30 +8,38 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "components/guest_view/browser/guest_view_message_filter.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/browser/browser_main_runner.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/user_agent.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
+#include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/extension_message_filter.h"
 #include "extensions/browser/extension_navigation_throttle.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
 #include "extensions/browser/extension_protocols.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/guest_view/extensions_guest_view_message_filter.h"
+#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/browser/io_thread_extension_message_filter.h"
 #include "extensions/browser/process_map.h"
+#include "extensions/browser/url_loader_factory_manager.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/switches.h"
@@ -40,6 +48,7 @@
 #include "extensions/shell/browser/shell_extension_system.h"
 #include "extensions/shell/browser/shell_navigation_ui_data.h"
 #include "extensions/shell/browser/shell_speech_recognition_manager_delegate.h"
+#include "extensions/shell/common/version.h"  // Generated file.
 #include "storage/browser/quota/quota_settings.h"
 #include "url/gurl.h"
 
@@ -47,8 +56,8 @@
 #include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/browser/nacl_host_message_filter.h"
 #include "components/nacl/browser/nacl_process_host.h"
-#include "components/nacl/common/nacl_process_type.h"
-#include "components/nacl/common/nacl_switches.h"
+#include "components/nacl/common/nacl_process_type.h"  // nogncheck
+#include "components/nacl/common/nacl_switches.h"      // nogncheck
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
 #endif
@@ -85,15 +94,20 @@ content::BrowserContext* ShellContentBrowserClient::GetBrowserContext() {
   return browser_main_parts_->browser_context();
 }
 
-content::BrowserMainParts* ShellContentBrowserClient::CreateBrowserMainParts(
+std::unique_ptr<content::BrowserMainParts>
+ShellContentBrowserClient::CreateBrowserMainParts(
     const content::MainFunctionParams& parameters) {
-  browser_main_parts_ =
+  auto browser_main_parts =
       CreateShellBrowserMainParts(parameters, browser_main_delegate_);
-  return browser_main_parts_;
+
+  browser_main_parts_ = browser_main_parts.get();
+
+  return browser_main_parts;
 }
 
 void ShellContentBrowserClient::RenderProcessWillLaunch(
-    content::RenderProcessHost* host) {
+    content::RenderProcessHost* host,
+    service_manager::mojom::ServiceRequest* service_request) {
   int render_process_id = host->GetID();
   BrowserContext* browser_context = browser_main_parts_->browser_context();
   host->AddFilter(
@@ -107,10 +121,8 @@ void ShellContentBrowserClient::RenderProcessWillLaunch(
   // the concept of disabled plugins.
 #if BUILDFLAG(ENABLE_NACL)
   host->AddFilter(new nacl::NaClHostMessageFilter(
-      render_process_id,
-      browser_context->IsOffTheRecord(),
-      browser_context->GetPath(),
-      host->GetStoragePartition()->GetURLRequestContext()));
+      render_process_id, browser_context->IsOffTheRecord(),
+      browser_context->GetPath()));
 #endif
 }
 
@@ -129,7 +141,8 @@ void ShellContentBrowserClient::GetQuotaSettings(
     content::StoragePartition* partition,
     storage::OptionalQuotaSettingsCallback callback) {
   storage::GetNominalDynamicSettings(
-      partition->GetPath(), context->IsOffTheRecord(), std::move(callback));
+      partition->GetPath(), context->IsOffTheRecord(),
+      storage::GetDefaultDiskInfoHelper(), std::move(callback));
 }
 
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -166,14 +179,12 @@ void ShellContentBrowserClient::SiteInstanceGotProcess(
                site_instance->GetProcess()->GetID(),
                site_instance->GetId());
 
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&InfoMap::RegisterExtensionProcess,
-                 browser_main_parts_->extension_system()->info_map(),
-                 extension->id(),
-                 site_instance->GetProcess()->GetID(),
-                 site_instance->GetId()));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
+      base::BindOnce(&InfoMap::RegisterExtensionProcess,
+                     browser_main_parts_->extension_system()->info_map(),
+                     extension->id(), site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ShellContentBrowserClient::SiteInstanceDeleting(
@@ -192,14 +203,12 @@ void ShellContentBrowserClient::SiteInstanceDeleting(
                site_instance->GetProcess()->GetID(),
                site_instance->GetId());
 
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&InfoMap::UnregisterExtensionProcess,
-                 browser_main_parts_->extension_system()->info_map(),
-                 extension->id(),
-                 site_instance->GetProcess()->GetID(),
-                 site_instance->GetId()));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
+      base::BindOnce(&InfoMap::UnregisterExtensionProcess,
+                     browser_main_parts_->extension_system()->info_map(),
+                     extension->id(), site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ShellContentBrowserClient::AppendExtraCommandLineSwitches(
@@ -261,10 +270,95 @@ ShellContentBrowserClient::GetNavigationUIData(
   return std::make_unique<ShellNavigationUIData>(navigation_handle);
 }
 
-ShellBrowserMainParts* ShellContentBrowserClient::CreateShellBrowserMainParts(
+void ShellContentBrowserClient::RegisterNonNetworkNavigationURLLoaderFactories(
+    int frame_tree_node_id,
+    NonNetworkURLLoaderFactoryMap* factories) {
+  content::WebContents* web_contents =
+      content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
+  factories->emplace(
+      extensions::kExtensionScheme,
+      extensions::CreateExtensionNavigationURLLoaderFactory(
+          web_contents->GetBrowserContext(),
+          !!extensions::WebViewGuest::FromWebContents(web_contents)));
+}
+
+void ShellContentBrowserClient::
+    RegisterNonNetworkServiceWorkerUpdateURLLoaderFactories(
+        content::BrowserContext* browser_context,
+        NonNetworkURLLoaderFactoryMap* factories) {
+  DCHECK(browser_context);
+  DCHECK(factories);
+  factories->emplace(
+      extensions::kExtensionScheme,
+      extensions::CreateExtensionServiceWorkerScriptURLLoaderFactory(
+          browser_context));
+}
+
+void ShellContentBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories(
+    int render_process_id,
+    int render_frame_id,
+    NonNetworkURLLoaderFactoryMap* factories) {
+  auto factory = extensions::CreateExtensionURLLoaderFactory(render_process_id,
+                                                             render_frame_id);
+  if (factory)
+    factories->emplace(extensions::kExtensionScheme, std::move(factory));
+}
+
+bool ShellContentBrowserClient::WillCreateURLLoaderFactory(
+    content::BrowserContext* browser_context,
+    content::RenderFrameHost* frame,
+    int render_process_id,
+    bool is_navigation,
+    bool is_download,
+    const url::Origin& request_initiator,
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory>* factory_receiver,
+    network::mojom::TrustedURLLoaderHeaderClientPtrInfo* header_client,
+    bool* bypass_redirect_checks) {
+  auto* web_request_api =
+      extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(
+          browser_context);
+  bool use_proxy = web_request_api->MaybeProxyURLLoaderFactory(
+      browser_context, frame, render_process_id, is_navigation, is_download,
+      factory_receiver, header_client);
+  if (bypass_redirect_checks)
+    *bypass_redirect_checks = use_proxy;
+  return use_proxy;
+}
+
+bool ShellContentBrowserClient::HandleExternalProtocol(
+    const GURL& url,
+    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    int child_id,
+    content::NavigationUIData* navigation_data,
+    bool is_main_frame,
+    ui::PageTransition page_transition,
+    bool has_user_gesture,
+    network::mojom::URLLoaderFactoryPtr* out_factory) {
+  return false;
+}
+
+network::mojom::URLLoaderFactoryPtrInfo
+ShellContentBrowserClient::CreateURLLoaderFactoryForNetworkRequests(
+    content::RenderProcessHost* process,
+    network::mojom::NetworkContext* network_context,
+    network::mojom::TrustedURLLoaderHeaderClientPtrInfo* header_client,
+    const url::Origin& request_initiator) {
+  return URLLoaderFactoryManager::CreateFactory(
+      process, network_context, header_client, request_initiator);
+}
+
+std::string ShellContentBrowserClient::GetUserAgent() {
+  // Must contain a user agent string for version sniffing. For example,
+  // pluginless WebRTC Hangouts checks the Chrome version number.
+  return content::BuildUserAgentFromProduct("Chrome/" PRODUCT_VERSION);
+}
+
+std::unique_ptr<ShellBrowserMainParts>
+ShellContentBrowserClient::CreateShellBrowserMainParts(
     const content::MainFunctionParams& parameters,
     ShellBrowserMainDelegate* browser_main_delegate) {
-  return new ShellBrowserMainParts(parameters, browser_main_delegate);
+  return std::make_unique<ShellBrowserMainParts>(parameters,
+                                                 browser_main_delegate);
 }
 
 void ShellContentBrowserClient::AppendRendererSwitches(
@@ -277,7 +371,7 @@ void ShellContentBrowserClient::AppendRendererSwitches(
       switches::kExtensionProcess,
   };
   command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                                 kSwitchNames, arraysize(kSwitchNames));
+                                 kSwitchNames, base::size(kSwitchNames));
 
 #if BUILDFLAG(ENABLE_NACL)
   // NOTE: app_shell does not support non-SFI mode, so it does not pass through
@@ -286,7 +380,8 @@ void ShellContentBrowserClient::AppendRendererSwitches(
       ::switches::kEnableNaClDebug,
   };
   command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                                 kNaclSwitchNames, arraysize(kNaclSwitchNames));
+                                 kNaclSwitchNames,
+                                 base::size(kNaclSwitchNames));
 #endif  // BUILDFLAG(ENABLE_NACL)
 }
 

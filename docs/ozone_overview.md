@@ -63,6 +63,9 @@ Ozone moves platform-specific code behind the following interfaces:
 * `SystemInputInjector` converts input into events and injects them to the
   Ozone platform.
 * `NativeDisplayDelegate` is used to support display configuration & hotplug.
+* `PlatformScreen` is used to fetch screen configuration.
+* `ClipboardDelegate` provides an interface to exchange data with other
+applications on the host system using a system clipboard mechanism.
 
 ## Ozone in Chromium
 
@@ -94,7 +97,8 @@ Users of the Ozone abstraction need to do the following, at minimum:
 * Write a subclass of `OverlayManagerOzone` or just use `StubOverlayManager` if
   your platform does not support overlays.
 * Write a subclass of `NativeDisplayDelegate` if necessary or just use
-  `FakeDisplayDelegate`.
+  `FakeDisplayDelegate`, and write a subclass of `PlatformScreen`, which is
+  used by aura::ScreenOzone then.
 * Write a subclass of `GpuPlatformSupportHost` or just use
   `StubGpuPlatformSupportHost`.
 * Write a subclass of `InputController` or just use `StubInputController`.
@@ -154,22 +158,27 @@ Then to run for example the headless platform:
 
 ### Linux Desktop - ([waterfall](https://build.chromium.org/p/chromium.fyi/builders/Ozone%20Linux/))
 
-**Warning: Experimental support for Linux Desktop is available since m57 but
-  upstream support has always been a bit fragile. For now, development
-  continues on the
-  [ozone-wayland-dev](https://github.com/Igalia/chromium/tree/ozone-wayland-dev)
-  branch.**
+**Warning: Experimental support for Linux Desktop is available since m57 and still under
+  development. The work is purely done in the upstream, but you can still find some Ozone/X11
+  patches in the the old [ozone-wayland-dev](https://github.com/Igalia/chromium/tree/ozone-wayland-dev) branch.**
 
 To build `chrome`, do this from the `src` directory:
 
 ``` shell
-gn args out/OzoneLinuxDesktop --args="use_ozone=true enable_mus=true"
+gn args out/OzoneLinuxDesktop --args="use_ozone=true use_system_minigbm=true use_system_libdrm=true"
 ninja -C out/OzoneLinuxDesktop chrome
 ```
+
 Then to run for example the X11 platform:
 
 ``` shell
-./out/OzoneLinuxDesktop/chrome --ozone-platform=x11 --mus
+./out/OzoneLinuxDesktop/chrome --ozone-platform=x11
+```
+
+Or run for example the Wayland platform:
+
+``` shell
+./out/OzoneLinuxDesktop/chrome --ozone-platform=wayland
 ```
 
 ### GN Configuration notes
@@ -245,19 +254,20 @@ This platform provides support for the
 initially developed by Intel as
 [a fork of chromium](https://github.com/01org/ozone-wayland)
 and then partially upstreamed.
-It is still actively being developed on the
+It is still actively being developed by Igalia both on the
 [ozone-wayland-dev](https://github.com/Igalia/chromium/tree/ozone-wayland-dev)
-branch, feel free to discuss
+branch and the Chromium mainline repository, feel free to discuss
 with us on freenode.net, `#ozone-wayland` channel or on `ozone-dev`.
 
 Below are some quick build & run instructions. It is assumed that you are
 launching `chrome` from a Wayland environment such as `weston`. Execute the
-following commands:
+following commands (make sure a system version of gbm and drm is used, which are
+required by Ozone/Wayland by design, when running on Linux platforms.):
 
 ``` shell
-gn args out/OzoneWayland --args="use_ozone=true enable_mus=true"
+gn args out/OzoneWayland --args="use_ozone=true use_system_minigbm=true use_system_libdrm=true"
 ninja -C out/OzoneWayland chrome
-./out/OzoneWayland/chrome --ozone-platform=wayland --mus
+./out/OzoneWayland/chrome --ozone-platform=wayland
 ```
 
 ### Caca

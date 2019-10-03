@@ -19,7 +19,7 @@ class PasswordManagerClientHelperDelegate {
 
   // Methods required from PasswordManagerClient implementation:
   virtual bool IsIncognito() const = 0;
-  virtual PrefService* GetPrefs() = 0;
+  virtual PrefService* GetPrefs() const = 0;
   virtual PasswordManager* GetPasswordManager() = 0;
 
  protected:
@@ -54,7 +54,7 @@ class PasswordManagerClientHelper {
 
   // Common logic for IOSChromePasswordManagerClient and
   // ChromePasswordManagerClient implementation of NotifyStorePasswordCalled.
-  // Calls DropFormManagers on PasswordManager corresponding to the client.
+  // Notifies PasswordManager corresponding to the client.
   void NotifyStorePasswordCalled();
 
   // Common logic for IOSChromePasswordManagerClient and

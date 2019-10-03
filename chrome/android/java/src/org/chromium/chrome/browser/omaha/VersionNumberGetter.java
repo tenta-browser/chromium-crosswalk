@@ -6,10 +6,12 @@ package org.chromium.chrome.browser.omaha;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.ChromeFeatureList;
 
 /**
  * Stubbed class for getting version numbers from the rest of Chrome.  Override the functions for
@@ -51,7 +53,7 @@ public class VersionNumberGetter {
      */
     public String getLatestKnownVersion(Context context) {
         assert !ThreadUtils.runningOnUiThread();
-        SharedPreferences prefs = OmahaBase.getSharedPreferences(context);
+        SharedPreferences prefs = OmahaBase.getSharedPreferences();
         return prefs.getString(OmahaBase.PREF_LATEST_VERSION, "");
     }
 
@@ -60,7 +62,7 @@ public class VersionNumberGetter {
      * @return The latest version if we retrieved one from the Omaha server, or "" if we haven't.
      */
     public String getCurrentlyUsedVersion(Context context) {
-        return BuildInfo.getPackageVersionName();
+        return BuildInfo.getInstance().versionName;
     }
 
     /**
@@ -91,6 +93,19 @@ public class VersionNumberGetter {
     }
 
     /**
+     * @return Whether the current Android OS version is supported.
+     */
+    public static boolean isCurrentOsVersionSupported() {
+        // By default, only Android KitKat and above is supported.
+        int oldestSupportedVersion = Build.VERSION_CODES.KITKAT;
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.JELLY_BEAN_SUPPORTED)) {
+            oldestSupportedVersion = Build.VERSION_CODES.JELLY_BEAN;
+        }
+        return Build.VERSION.SDK_INT >= oldestSupportedVersion;
+    }
+
+    /**
      * Checks if we know about a newer version available than the one we're using.  This does not
      * actually fire any requests over to the server: it just checks the version we stored the last
      * time we talked to the Omaha server.
@@ -107,7 +122,7 @@ public class VersionNumberGetter {
 
         // If the market link is bad, don't show an update to avoid frustrating users trying to
         // hit the "Update" button.
-        if ("".equals(MarketURLGetter.getMarketUrl(context))) {
+        if ("".equals(MarketURLGetter.getMarketUrl())) {
             return false;
         }
 

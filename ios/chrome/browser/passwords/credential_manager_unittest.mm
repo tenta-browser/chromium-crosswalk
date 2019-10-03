@@ -4,25 +4,23 @@
 
 #import "ios/chrome/browser/passwords/credential_manager.h"
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/password_manager/core/browser/password_manager.h"
-#include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/test_password_store.h"
-#include "components/password_manager/core/common/password_manager_pref_names.h"
-#include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/testing_pref_service.h"
 #include "ios/chrome/browser/passwords/credential_manager_util.h"
+#import "ios/chrome/browser/passwords/test/test_password_manager_client.h"
 #include "ios/chrome/browser/ssl/ios_security_state_tab_helper.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_manager.h"
-#include "ios/web/public/ssl_status.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/security/ssl_status.h"
 #import "ios/web/public/test/web_js_test.h"
 #include "ios/web/public/test/web_test_with_web_state.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
-#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/origin.h"
 
@@ -30,10 +28,6 @@
 #error "This file requires ARC support."
 #endif
 
-using password_manager::PasswordStore;
-using password_manager::PasswordManager;
-using password_manager::PasswordFormManager;
-using password_manager::TestPasswordStore;
 using testing::_;
 using url::Origin;
 
@@ -54,101 +48,6 @@ constexpr char kFileOrigin[] = "file://example_file";
 
 // SSL certificate to load for testing.
 constexpr char kCertFileName[] = "ok_cert.pem";
-
-// Mocks PasswordManagerClient, used indirectly by CredentialManager.
-class MockPasswordManagerClient
-    : public password_manager::StubPasswordManagerClient {
- public:
-  MockPasswordManagerClient()
-      : last_committed_url_(kHttpsWebOrigin), password_manager_(this) {
-    store_ = base::MakeRefCounted<TestPasswordStore>();
-    store_->Init(syncer::SyncableService::StartSyncFlare(), nullptr);
-    prefs_.registry()->RegisterBooleanPref(
-        password_manager::prefs::kCredentialsEnableAutosignin, true);
-    prefs_.registry()->RegisterBooleanPref(
-        password_manager::prefs::kWasAutoSignInFirstRunExperienceShown, true);
-  }
-
-  // PasswordManagerClient:
-  MOCK_METHOD0(OnCredentialManagerUsed, bool());
-
-  // PromptUserTo*Ptr functions allow to both override PromptUserTo* methods
-  // and expect calls.
-  MOCK_METHOD1(PromptUserToSavePasswordPtr, void(PasswordFormManager*));
-  MOCK_METHOD3(PromptUserToChooseCredentialsPtr,
-               bool(const std::vector<autofill::PasswordForm*>& local_forms,
-                    const GURL& origin,
-                    const CredentialsCallback& callback));
-
-  scoped_refptr<TestPasswordStore> password_store() const { return store_; }
-  void set_password_store(scoped_refptr<TestPasswordStore> store) {
-    store_ = store;
-  }
-
-  PasswordFormManager* pending_manager() const { return manager_.get(); }
-
-  void set_current_url(const GURL& current_url) {
-    last_committed_url_ = current_url;
-  }
-
- private:
-  // PasswordManagerClient:
-  PrefService* GetPrefs() override { return &prefs_; }
-  PasswordStore* GetPasswordStore() const override { return store_.get(); }
-  const PasswordManager* GetPasswordManager() const override {
-    return &password_manager_;
-  }
-  const GURL& GetLastCommittedEntryURL() const override {
-    return last_committed_url_;
-  }
-  // Stores |manager| into |manager_|. Save() should be
-  // called manually in test. To put expectation on this function being called,
-  // use PromptUserToSavePasswordPtr.
-  bool PromptUserToSaveOrUpdatePassword(
-      std::unique_ptr<PasswordFormManager> manager,
-      bool update_password) override;
-  // Mocks choosing a credential by the user. To put expectation on this
-  // function being called, use PromptUserToChooseCredentialsPtr.
-  bool PromptUserToChooseCredentials(
-      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
-      const GURL& origin,
-      const CredentialsCallback& callback) override;
-
-  TestingPrefServiceSimple prefs_;
-  GURL last_committed_url_;
-  PasswordManager password_manager_;
-  std::unique_ptr<PasswordFormManager> manager_;
-  scoped_refptr<TestPasswordStore> store_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockPasswordManagerClient);
-};
-
-bool MockPasswordManagerClient::PromptUserToSaveOrUpdatePassword(
-    std::unique_ptr<PasswordFormManager> manager,
-    bool update_password) {
-  EXPECT_FALSE(update_password);
-  manager_.swap(manager);
-  PromptUserToSavePasswordPtr(manager_.get());
-  return true;
-}
-
-bool MockPasswordManagerClient::PromptUserToChooseCredentials(
-    std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
-    const GURL& origin,
-    const CredentialsCallback& callback) {
-  EXPECT_FALSE(local_forms.empty());
-  const autofill::PasswordForm* form = local_forms[0].get();
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(callback, base::Owned(new autofill::PasswordForm(*form))));
-  std::vector<autofill::PasswordForm*> raw_forms(local_forms.size());
-  std::transform(local_forms.begin(), local_forms.end(), raw_forms.begin(),
-                 [](const std::unique_ptr<autofill::PasswordForm>& form) {
-                   return form.get();
-                 });
-  PromptUserToChooseCredentialsPtr(raw_forms, origin, callback);
-  return true;
-}
 
 }  // namespace
 
@@ -179,7 +78,6 @@ class CredentialManagerBaseTest
     ssl.security_style = security_style;
     ssl.certificate = cert;
     ssl.cert_status = cert_status;
-    ssl.connection_status = net::SSL_CONNECTION_VERSION_SSL3;
     ssl.content_status = content_status;
     ssl.cert_status_host = kHostName;
   }
@@ -201,8 +99,8 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
   void SetUp() override {
     CredentialManagerBaseTest::SetUp();
 
-    client_ = base::MakeUnique<MockPasswordManagerClient>();
-    manager_ = base::MakeUnique<CredentialManager>(client_.get(), web_state());
+    client_ = std::make_unique<TestPasswordManagerClient>();
+    manager_ = std::make_unique<CredentialManager>(client_.get(), web_state());
 
     // Inject JavaScript and set up secure context.
     LoadHtml(@"<html></html>", GURL(kHttpsWebOrigin));
@@ -219,7 +117,7 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
     password_credential_form_1_.password_value = base::ASCIIToUTF16("secret1");
     password_credential_form_1_.origin = GURL(kHttpsWebOrigin);
     password_credential_form_1_.signon_realm = kHttpsWebOrigin;
-    password_credential_form_1_.scheme = autofill::PasswordForm::SCHEME_HTML;
+    password_credential_form_1_.scheme = autofill::PasswordForm::Scheme::kHtml;
 
     password_credential_form_2_.username_value = base::ASCIIToUTF16("id2");
     password_credential_form_2_.display_name = base::ASCIIToUTF16("Name Two");
@@ -227,7 +125,7 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
     password_credential_form_2_.password_value = base::ASCIIToUTF16("secret2");
     password_credential_form_2_.origin = GURL(kHttpsWebOrigin);
     password_credential_form_2_.signon_realm = kHttpsWebOrigin;
-    password_credential_form_2_.scheme = autofill::PasswordForm::SCHEME_HTML;
+    password_credential_form_2_.scheme = autofill::PasswordForm::Scheme::kHtml;
 
     federated_credential_form_.username_value = base::ASCIIToUTF16("id");
     federated_credential_form_.display_name = base::ASCIIToUTF16("name");
@@ -238,7 +136,7 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
     federated_credential_form_.origin = GURL(kHttpsWebOrigin);
     federated_credential_form_.signon_realm =
         "federation://www.example.com/www.federation.com";
-    federated_credential_form_.scheme = autofill::PasswordForm::SCHEME_HTML;
+    federated_credential_form_.scheme = autofill::PasswordForm::Scheme::kHtml;
   }
 
   void TearDown() override {
@@ -253,7 +151,7 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
   }
 
  protected:
-  std::unique_ptr<MockPasswordManagerClient> client_;
+  std::unique_ptr<TestPasswordManagerClient> client_;
   std::unique_ptr<CredentialManager> manager_;
 
   autofill::PasswordForm password_credential_form_1_;

@@ -20,12 +20,12 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/test/scoped_path_override.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "chrome/browser/apps/app_browsertest_util.h"
+#include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/system/automatic_reboot_manager.h"
@@ -33,7 +33,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_paths.h"
+#include "chromeos/constants/chromeos_paths.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
@@ -177,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(KioskAppUpdateServiceTest, AppUpdate) {
 
   ExtensionTestMessageListener listener("app_update", false);
   FireAppUpdateAvailable();
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
 
 // Verifies that the app is notified a reboot is required when an OS update is
@@ -189,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(KioskAppUpdateServiceTest, OsUpdate) {
   g_browser_process->local_state()->SetBoolean(prefs::kRebootAfterUpdate, true);
   ExtensionTestMessageListener listener("os_update", false);
   FireUpdatedNeedReboot();
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
 
 // Verifies that the app is notified a reboot is required when a periodic reboot
@@ -199,7 +199,7 @@ IN_PROC_BROWSER_TEST_F(KioskAppUpdateServiceTest, Periodic) {
 
   ExtensionTestMessageListener listener("periodic", false);
   RequestPeriodicReboot();
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
 
 // Verifies that the app is notified a reboot is required when an OS update was
@@ -211,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(KioskAppUpdateServiceTest, StartAfterOsUpdate) {
 
   ExtensionTestMessageListener listener("os_update", false);
   CreateKioskAppUpdateService();
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
 
 // Verifies that the app is notified a reboot is required when a periodic reboot
@@ -221,7 +221,7 @@ IN_PROC_BROWSER_TEST_F(KioskAppUpdateServiceTest, StartAfterPeriodic) {
 
   ExtensionTestMessageListener listener("periodic", false);
   CreateKioskAppUpdateService();
-  listener.WaitUntilSatisfied();
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
 }
 
 }  // namespace chromeos

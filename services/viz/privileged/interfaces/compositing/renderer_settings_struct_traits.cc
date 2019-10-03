@@ -3,7 +3,12 @@
 // found in the LICENSE file.
 
 #include "services/viz/privileged/interfaces/compositing/renderer_settings_struct_traits.h"
+
 #include "services/viz/public/cpp/compositing/resource_settings_struct_traits.h"
+
+#if defined(OS_ANDROID)
+#include "ui/gfx/mojo/color_space_mojom_traits.h"
+#endif
 
 namespace mojo {
 
@@ -15,20 +20,33 @@ bool StructTraits<viz::mojom::RendererSettingsDataView, viz::RendererSettings>::
   out->force_antialiasing = data.force_antialiasing();
   out->force_blending_with_shaders = data.force_blending_with_shaders();
   out->partial_swap_enabled = data.partial_swap_enabled();
-  out->finish_rendering_on_resize = data.finish_rendering_on_resize();
   out->should_clear_root_render_pass = data.should_clear_root_render_pass();
   out->release_overlay_resources_after_gpu_query =
       data.release_overlay_resources_after_gpu_query();
-  out->gl_composited_overlay_candidate_quad_border =
-      data.gl_composited_overlay_candidate_quad_border();
+  out->tint_gl_composited_content = data.tint_gl_composited_content();
   out->show_overdraw_feedback = data.show_overdraw_feedback();
   out->highp_threshold_min = data.highp_threshold_min();
-  out->disallow_non_exact_resource_reuse =
-      data.disallow_non_exact_resource_reuse();
   out->slow_down_compositing_scale_factor =
       data.slow_down_compositing_scale_factor();
   out->use_skia_renderer = data.use_skia_renderer();
-  return data.ReadResourceSettings(&out->resource_settings);
+  out->record_sk_picture = data.record_sk_picture();
+  out->allow_overlays = data.allow_overlays();
+  out->requires_alpha_channel = data.requires_alpha_channel();
+
+#if defined(OS_ANDROID)
+  if (!data.ReadInitialScreenSize(&out->initial_screen_size))
+    return false;
+
+  if (!data.ReadColorSpace(&out->color_space))
+    return false;
+#endif
+
+#if defined(USE_OZONE)
+  if (!data.ReadOverlayStrategies(&out->overlay_strategies))
+    return false;
+#endif
+
+  return true;
 }
 
 }  // namespace mojo

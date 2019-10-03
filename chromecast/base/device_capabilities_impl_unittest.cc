@@ -153,7 +153,7 @@ void GetSampleDefaultCapability(std::string* key,
   DCHECK(key);
   DCHECK(init_value);
   *key = DeviceCapabilities::kKeyBluetoothSupported;
-  *init_value = base::MakeUnique<base::Value>(true);
+  *init_value = std::make_unique<base::Value>(true);
 }
 
 // For test fixtures that test dynamic capabilities, gets a sample key
@@ -163,21 +163,21 @@ void GetSampleDynamicCapability(std::string* key,
   DCHECK(key);
   DCHECK(init_value);
   *key = "dummy_dynamic_key";
-  *init_value = base::MakeUnique<base::Value>(99);
+  *init_value = std::make_unique<base::Value>(99);
 }
 
 // Gets a value for sample default capability different from |init_value|
 // returned in GetSampleDefaultCapability(). Must be of same type as
 // |init_value| of course.
 std::unique_ptr<base::Value> GetSampleDefaultCapabilityNewValue() {
-  return base::MakeUnique<base::Value>(false);
+  return std::make_unique<base::Value>(false);
 }
 
 // Gets a value for sample dynamic capability different from |init_value|
 // returned in GetSampleDynamicCapability(). Must be of same type as
 // |init_value| of course.
 std::unique_ptr<base::Value> GetSampleDynamicCapabilityNewValue() {
-  return base::MakeUnique<base::Value>(100);
+  return std::make_unique<base::Value>(100);
 }
 
 // Tests that |json| string matches contents of a DictionaryValue with one entry
@@ -187,8 +187,8 @@ bool JsonStringEquals(const std::string& json,
                       const base::Value& value) {
   base::DictionaryValue dict_value;
   dict_value.Set(key, value.CreateDeepCopy());
-  std::unique_ptr<const std::string> dict_json(SerializeToJson(dict_value));
-  return dict_json.get() && *dict_json == json;
+  base::Optional<std::string> dict_json = SerializeToJson(dict_value);
+  return dict_json && *dict_json == json;
 }
 
 // The function runs through the set of basic operations of DeviceCapabilities.
@@ -273,9 +273,8 @@ class DeviceCapabilitiesImplTest : public ::testing::Test {
 
 // Tests that class is in correct state after Create().
 TEST_F(DeviceCapabilitiesImplTest, Create) {
-  std::unique_ptr<const std::string> empty_dict_string(
-      SerializeToJson(base::DictionaryValue()));
-  EXPECT_EQ(capabilities()->GetAllData()->json_string(), *empty_dict_string);
+  std::string empty_dict_string = *SerializeToJson(base::DictionaryValue());
+  EXPECT_EQ(capabilities()->GetAllData()->json_string(), empty_dict_string);
   EXPECT_TRUE(capabilities()->GetAllData()->dictionary().empty());
 }
 
@@ -290,9 +289,8 @@ TEST_F(DeviceCapabilitiesImplTest, Register) {
                                       false);
 
   EXPECT_EQ(capabilities()->GetValidator(key), &manager);
-  std::unique_ptr<const std::string> empty_dict_string(
-      SerializeToJson(base::DictionaryValue()));
-  EXPECT_EQ(capabilities()->GetAllData()->json_string(), *empty_dict_string);
+  std::string empty_dict_string = *SerializeToJson(base::DictionaryValue());
+  EXPECT_EQ(capabilities()->GetAllData()->json_string(), empty_dict_string);
   EXPECT_FALSE(capabilities()->GetCapability(key));
 }
 
@@ -309,9 +307,8 @@ TEST_F(DeviceCapabilitiesImplTest, Unregister) {
   delete manager;
 
   EXPECT_FALSE(capabilities()->GetValidator(key));
-  std::unique_ptr<const std::string> empty_dict_string(
-      SerializeToJson(base::DictionaryValue()));
-  EXPECT_EQ(capabilities()->GetAllData()->json_string(), *empty_dict_string);
+  std::string empty_dict_string = *SerializeToJson(base::DictionaryValue());
+  EXPECT_EQ(capabilities()->GetAllData()->json_string(), empty_dict_string);
   EXPECT_FALSE(capabilities()->GetCapability(key));
 }
 

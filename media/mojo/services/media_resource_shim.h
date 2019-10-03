@@ -27,7 +27,6 @@ class MediaResourceShim : public MediaResource {
 
   // MediaResource interface.
   std::vector<DemuxerStream*> GetAllStreams() override;
-  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
 
  private:
   // Called as each mojom::DemuxerStream becomes ready.  Once all streams
@@ -46,7 +45,7 @@ class MediaResourceShim : public MediaResource {
   size_t streams_ready_;
 
   // WeakPtrFactorys must always be the last member variable.
-  base::WeakPtrFactory<MediaResourceShim> weak_factory_;
+  base::WeakPtrFactory<MediaResourceShim> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaResourceShim);
 };

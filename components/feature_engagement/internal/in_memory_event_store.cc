@@ -4,11 +4,12 @@
 
 #include "components/feature_engagement/internal/in_memory_event_store.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -18,10 +19,10 @@ namespace feature_engagement {
 
 InMemoryEventStore::InMemoryEventStore(
     std::unique_ptr<std::vector<Event>> events)
-    : EventStore(), events_(std::move(events)), ready_(false) {}
+    : events_(std::move(events)), ready_(false) {}
 
 InMemoryEventStore::InMemoryEventStore()
-    : InMemoryEventStore(base::MakeUnique<std::vector<Event>>()) {}
+    : InMemoryEventStore(std::make_unique<std::vector<Event>>()) {}
 
 InMemoryEventStore::~InMemoryEventStore() = default;
 
@@ -44,7 +45,7 @@ void InMemoryEventStore::DeleteEvent(const std::string& event_name) {
 void InMemoryEventStore::HandleLoadResult(const OnLoadedCallback& callback,
                                           bool success) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, success, base::Passed(&events_)));
+      FROM_HERE, base::BindOnce(callback, success, std::move(events_)));
   ready_ = success;
 }
 

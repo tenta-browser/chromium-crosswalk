@@ -4,50 +4,67 @@
 
 #include "chrome/browser/ui/views/intent_picker_bubble_view.h"
 
-#include "base/bind.h"
+#include <utility>
+
 #include "base/i18n/rtl.h"
-#include "base/logging.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/apps/intent_helper/apps_navigation_throttle.h"
+#include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "content/public/browser/navigation_handle.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_host_view.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/scroll_view.h"
+#include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/window/dialog_client_view.h"
+
+#if defined(OS_CHROMEOS)
+#include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#endif  // defined(OS_CHROMEOS)
 
 namespace {
 
 // TODO(djacobo): Replace this limit to correctly reflect the UI mocks, which
 // now instead of limiting the results to 3.5 will allow whatever fits in 256pt.
 // Using |kMaxAppResults| as a measure of how many apps we want to show.
-constexpr size_t kMaxAppResults = arc::ArcNavigationThrottle::kMaxAppResults;
+constexpr size_t kMaxAppResults = apps::AppsNavigationThrottle::kMaxAppResults;
 // Main components sizes
 constexpr int kTitlePadding = 16;
-constexpr int kRowHeight = 40;
-constexpr int kMaxWidth = 320;
+constexpr int kRowHeight = 32;
+constexpr int kMaxIntentPickerLabelButtonWidth = 320;
+constexpr gfx::Insets kSeparatorPadding(16, 0, 16, 0);
+constexpr SkColor kSeparatorColor = SkColorSetARGB(0x1F, 0x0, 0x0, 0x0);
 
 // UI position wrt the Top Container
 constexpr int kTopContainerMerge = 3;
 
-constexpr char kInvalidPackageName[] = "";
+constexpr char kInvalidLaunchName[] = "";
 
 bool IsKeyboardCodeArrow(ui::KeyboardCode key_code) {
   return key_code == ui::VKEY_UP || key_code == ui::VKEY_DOWN ||
          key_code == ui::VKEY_RIGHT || key_code == ui::VKEY_LEFT;
+}
+
+std::unique_ptr<views::Separator> CreateHorizontalSeparator() {
+  auto separator = std::make_unique<views::Separator>();
+  separator->SetColor(kSeparatorColor);
+  separator->SetBorder(views::CreateEmptyBorder(kSeparatorPadding));
+  return separator;
 }
 
 }  // namespace
@@ -58,21 +75,22 @@ bool IsKeyboardCodeArrow(ui::KeyboardCode key_code) {
 class IntentPickerLabelButton : public views::LabelButton {
  public:
   IntentPickerLabelButton(views::ButtonListener* listener,
-                          gfx::Image* icon,
-                          const std::string& package_name,
-                          const std::string& activity_name)
+                          const gfx::Image* icon,
+                          const std::string& launch_name,
+                          const std::string& display_name)
       : LabelButton(listener,
-                    base::UTF8ToUTF16(base::StringPiece(activity_name))),
-        package_name_(package_name) {
+                    base::UTF8ToUTF16(base::StringPiece(display_name))),
+        launch_name_(launch_name) {
     SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    SetMinSize(gfx::Size(kMaxWidth, kRowHeight));
+    SetMinSize(gfx::Size(kMaxIntentPickerLabelButtonWidth, kRowHeight));
     SetInkDropMode(InkDropMode::ON);
     if (!icon->IsEmpty())
       SetImage(views::ImageButton::STATE_NORMAL, *icon->ToImageSkia());
-    SetBorder(views::CreateEmptyBorder(10, 16, 10, 0));
+    SetBorder(views::CreateEmptyBorder(8, 16, 8, 0));
+    SetFocusForPlatform();
+    set_ink_drop_base_color(SK_ColorGRAY);
+    set_ink_drop_visible_opacity(kToolbarInkDropVisibleOpacity);
   }
-
-  SkColor GetInkDropBaseColor() const override { return SK_ColorBLACK; }
 
   void MarkAsUnselected(const ui::Event* event) {
     AnimateInkDrop(views::InkDropState::HIDDEN,
@@ -89,7 +107,7 @@ class IntentPickerLabelButton : public views::LabelButton {
   }
 
  private:
-  std::string package_name_;
+  std::string launch_name_;
 
   DISALLOW_COPY_AND_ASSIGN(IntentPickerLabelButton);
 };
@@ -101,10 +119,12 @@ IntentPickerBubbleView* IntentPickerBubbleView::intent_picker_bubble_ = nullptr;
 views::Widget* IntentPickerBubbleView::ShowBubble(
     views::View* anchor_view,
     content::WebContents* web_contents,
-    const std::vector<AppInfo>& app_info,
-    bool disable_stay_in_chrome,
-    const IntentPickerResponse& intent_picker_cb) {
+    std::vector<AppInfo> app_info,
+    bool enable_stay_in_chrome,
+    bool show_persistence_options,
+    IntentPickerResponse intent_picker_cb) {
   if (intent_picker_bubble_) {
+    intent_picker_bubble_->Initialize();
     views::Widget* widget =
         views::BubbleDialogDelegateView::CreateBubble(intent_picker_bubble_);
     widget->Show();
@@ -112,20 +132,23 @@ views::Widget* IntentPickerBubbleView::ShowBubble(
   }
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
   if (!browser || !BrowserView::GetBrowserViewForBrowser(browser)) {
-    intent_picker_cb.Run(kInvalidPackageName,
-                         arc::ArcNavigationThrottle::CloseReason::ERROR);
+    std::move(intent_picker_cb)
+        .Run(kInvalidLaunchName, apps::mojom::AppType::kUnknown,
+             apps::IntentPickerCloseReason::ERROR_BEFORE_PICKER, false);
     return nullptr;
   }
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   intent_picker_bubble_ = new IntentPickerBubbleView(
-      app_info, intent_picker_cb, web_contents, disable_stay_in_chrome);
+      std::move(app_info), std::move(intent_picker_cb), web_contents,
+      enable_stay_in_chrome, show_persistence_options);
   intent_picker_bubble_->set_margins(gfx::Insets());
 
   if (anchor_view) {
     intent_picker_bubble_->SetAnchorView(anchor_view);
-    intent_picker_bubble_->set_arrow(views::BubbleBorder::TOP_RIGHT);
+    intent_picker_bubble_->SetArrow(views::BubbleBorder::TOP_RIGHT);
   } else {
-    intent_picker_bubble_->set_parent_window(browser_view->GetNativeWindow());
+    intent_picker_bubble_->set_parent_window(
+        platform_util::GetViewForWindow(browser_view->GetNativeWindow()));
     // Using the TopContainerBoundsInScreen Rect to specify an anchor for the
     // the UI. Rect allow us to set the coordinates(x,y), the width and height
     // for the new Rectangle.
@@ -136,10 +159,22 @@ views::Widget* IntentPickerBubbleView::ShowBubble(
                   browser_view->GetTopContainerBoundsInScreen().height() -
                       kTopContainerMerge));
   }
+  intent_picker_bubble_->Initialize();
   views::Widget* widget =
       views::BubbleDialogDelegateView::CreateBubble(intent_picker_bubble_);
   intent_picker_bubble_->GetDialogClientView()->Layout();
+  // TODO(aleventhal) Should not need to be focusable as only descendant widgets
+  // are interactive; however, it does call RequestFocus(). If it is going to be
+  // focusable, it needs an accessible name so that it can pass accessibility
+  // checks. Use the same accessible name as the icon. Set the role as kDialog
+  // to ensure screen readers immediately announce the text of this view.
+  intent_picker_bubble_->GetViewAccessibility().OverrideRole(
+      ax::mojom::Role::kDialog);
+  intent_picker_bubble_->GetViewAccessibility().OverrideName(
+      l10n_util::GetStringUTF16(IDS_TOOLTIP_INTENT_PICKER_ICON));
   intent_picker_bubble_->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  DCHECK(intent_picker_bubble_->HasCandidates());
   intent_picker_bubble_->GetIntentPickerLabelButtonAt(0)->MarkAsSelected(
       nullptr);
   widget->Show();
@@ -148,14 +183,15 @@ views::Widget* IntentPickerBubbleView::ShowBubble(
 
 // static
 std::unique_ptr<IntentPickerBubbleView>
-IntentPickerBubbleView::CreateBubbleView(
-    const std::vector<AppInfo>& app_info,
-    bool disable_stay_in_chrome,
-    const IntentPickerResponse& intent_picker_cb,
-    content::WebContents* web_contents) {
+IntentPickerBubbleView::CreateBubbleView(std::vector<AppInfo> app_info,
+                                         bool enable_stay_in_chrome,
+                                         bool show_persistence_options,
+                                         IntentPickerResponse intent_picker_cb,
+                                         content::WebContents* web_contents) {
   std::unique_ptr<IntentPickerBubbleView> bubble(new IntentPickerBubbleView(
-      app_info, intent_picker_cb, web_contents, disable_stay_in_chrome));
-  bubble->Init();
+      std::move(app_info), std::move(intent_picker_cb), web_contents,
+      enable_stay_in_chrome, show_persistence_options));
+  bubble->Initialize();
   return bubble;
 }
 
@@ -171,28 +207,33 @@ void IntentPickerBubbleView::CloseBubble() {
 }
 
 bool IntentPickerBubbleView::Accept() {
-  RunCallback(
-      app_info_[selected_app_tag_].package_name,
-      remember_selection_checkbox_->checked()
-          ? arc::ArcNavigationThrottle::CloseReason::ARC_APP_PREFERRED_PRESSED
-          : arc::ArcNavigationThrottle::CloseReason::ARC_APP_PRESSED);
+  bool should_persist = remember_selection_checkbox_ &&
+                        remember_selection_checkbox_->GetChecked();
+  RunCallback(app_info_[selected_app_tag_].launch_name,
+              app_info_[selected_app_tag_].type,
+              apps::IntentPickerCloseReason::OPEN_APP, should_persist);
   return true;
 }
 
 bool IntentPickerBubbleView::Cancel() {
-  RunCallback(
-      arc::ArcIntentHelperBridge::kArcIntentHelperPackageName,
-      remember_selection_checkbox_->checked()
-          ? arc::ArcNavigationThrottle::CloseReason::CHROME_PREFERRED_PRESSED
-          : arc::ArcNavigationThrottle::CloseReason::CHROME_PRESSED);
+  const char* launch_name =
+#if defined(OS_CHROMEOS)
+      arc::ArcIntentHelperBridge::kArcIntentHelperPackageName;
+#else
+      kInvalidLaunchName;
+#endif
+  bool should_persist = remember_selection_checkbox_ &&
+                        remember_selection_checkbox_->GetChecked();
+  RunCallback(launch_name, apps::mojom::AppType::kUnknown,
+              apps::IntentPickerCloseReason::STAY_IN_CHROME, should_persist);
   return true;
 }
 
 bool IntentPickerBubbleView::Close() {
   // Whenever closing the bubble without pressing |Just once| or |Always| we
   // need to report back that the user didn't select anything.
-  RunCallback(kInvalidPackageName,
-              arc::ArcNavigationThrottle::CloseReason::DIALOG_DEACTIVATED);
+  RunCallback(kInvalidLaunchName, apps::mojom::AppType::kUnknown,
+              apps::IntentPickerCloseReason::DIALOG_DEACTIVATED, false);
   return true;
 }
 
@@ -200,70 +241,10 @@ bool IntentPickerBubbleView::ShouldShowCloseButton() const {
   return true;
 }
 
-void IntentPickerBubbleView::Init() {
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
-
-  // Creates a view to hold the views for each app.
-  views::View* scrollable_view = new views::View();
-  views::BoxLayout* scrollable_layout =
-      new views::BoxLayout(views::BoxLayout::kVertical);
-  scrollable_view->SetLayoutManager(scrollable_layout);
-
-  size_t i = 0;
-  size_t to_erase = app_info_.size();
-  for (AppInfo app_info : app_info_) {
-    if (arc::ArcIntentHelperBridge::IsIntentHelperPackage(
-            app_info.package_name)) {
-      to_erase = i;
-      continue;
-    }
-    IntentPickerLabelButton* app_button = new IntentPickerLabelButton(
-        this, &app_info.icon, app_info.package_name, app_info.activity_name);
-    app_button->set_tag(i);
-    scrollable_view->AddChildViewAt(app_button, i++);
-  }
-  // We should delete at most one entry, this is the case when Chrome is listed
-  // as a candidate to handle a given URL.
-  if (to_erase != app_info_.size())
-    app_info_.erase(app_info_.begin() + to_erase);
-
-  scroll_view_ = new views::ScrollView();
-  scroll_view_->SetBackgroundColor(SK_ColorWHITE);
-  scroll_view_->SetContents(scrollable_view);
-  // This part gives the scroll a fixed width and height. The height depends on
-  // how many app candidates we got and how many we actually want to show.
-  // The added 0.5 on the else block allow us to let the user know there are
-  // more than |kMaxAppResults| apps accessible by scrolling the list.
-  size_t rows = GetScrollViewSize();
-  if (rows <= kMaxAppResults) {
-    scroll_view_->ClipHeightTo(kRowHeight, rows * kRowHeight);
-  } else {
-    scroll_view_->ClipHeightTo(kRowHeight, (kMaxAppResults + 0.5) * kRowHeight);
-  }
-
-  constexpr int kColumnSetId = 0;
-  views::ColumnSet* cs = layout->AddColumnSet(kColumnSetId);
-  cs->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
-                views::GridLayout::FIXED, kMaxWidth, 0);
-
-  layout->StartRowWithPadding(0, kColumnSetId, 0, kTitlePadding);
-  layout->AddView(scroll_view_);
-
-  // This second ColumnSet has a padding column in order to manipulate the
-  // Checkbox positioning freely.
-  constexpr int kColumnSetIdPadded = 1;
-  views::ColumnSet* cs_padded = layout->AddColumnSet(kColumnSetIdPadded);
-  cs_padded->AddPaddingColumn(0, kTitlePadding);
-  cs_padded->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
-                       views::GridLayout::FIXED, kMaxWidth - 2 * kTitlePadding,
-                       0);
-
-  layout->StartRowWithPadding(0, kColumnSetIdPadded, 0, kTitlePadding / 2);
-  remember_selection_checkbox_ = new views::Checkbox(l10n_util::GetStringUTF16(
-      IDS_INTENT_PICKER_BUBBLE_VIEW_REMEMBER_SELECTION));
-  layout->AddView(remember_selection_checkbox_);
-
-  layout->AddPaddingRow(0, kTitlePadding / 2);
+int IntentPickerBubbleView::GetDialogButtons() const {
+  if (show_persistence_options_)
+    return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
+  return ui::DIALOG_BUTTON_OK;
 }
 
 base::string16 IntentPickerBubbleView::GetWindowTitle() const {
@@ -272,7 +253,7 @@ base::string16 IntentPickerBubbleView::GetWindowTitle() const {
 
 bool IntentPickerBubbleView::IsDialogButtonEnabled(
     ui::DialogButton button) const {
-  if (disable_stay_in_chrome_ && button == ui::DIALOG_BUTTON_CANCEL)
+  if (!enable_stay_in_chrome_ && button == ui::DIALOG_BUTTON_CANCEL)
     return false;
   return true;
 }
@@ -281,23 +262,24 @@ base::string16 IntentPickerBubbleView::GetDialogButtonLabel(
     ui::DialogButton button) const {
   return l10n_util::GetStringUTF16(
       button == ui::DIALOG_BUTTON_OK
-          ? IDS_INTENT_PICKER_BUBBLE_VIEW_USE_APP
+          ? IDS_INTENT_PICKER_BUBBLE_VIEW_OPEN
           : IDS_INTENT_PICKER_BUBBLE_VIEW_STAY_IN_CHROME);
 }
 
 IntentPickerBubbleView::IntentPickerBubbleView(
-    const std::vector<AppInfo>& app_info,
+    std::vector<AppInfo> app_info,
     IntentPickerResponse intent_picker_cb,
     content::WebContents* web_contents,
-    bool disable_stay_in_chrome)
-    : LocationBarBubbleDelegateView(nullptr /* anchor_view */, web_contents),
-      content::WebContentsObserver(web_contents),
-      intent_picker_cb_(intent_picker_cb),
+    bool enable_stay_in_chrome,
+    bool show_persistence_options)
+    : LocationBarBubbleDelegateView(nullptr /* anchor_view */,
+                                    gfx::Point(),
+                                    web_contents),
+      intent_picker_cb_(std::move(intent_picker_cb)),
       selected_app_tag_(0),
-      scroll_view_(nullptr),
-      app_info_(app_info),
-      remember_selection_checkbox_(nullptr),
-      disable_stay_in_chrome_(disable_stay_in_chrome) {
+      app_info_(std::move(app_info)),
+      enable_stay_in_chrome_(enable_stay_in_chrome),
+      show_persistence_options_(show_persistence_options) {
   chrome::RecordDialogCreation(chrome::DialogIdentifier::INTENT_PICKER);
 }
 
@@ -308,8 +290,8 @@ IntentPickerBubbleView::~IntentPickerBubbleView() {
 // If the widget gets closed without an app being selected we still need to use
 // the callback so the caller can Resume the navigation.
 void IntentPickerBubbleView::OnWidgetDestroying(views::Widget* widget) {
-  RunCallback(kInvalidPackageName,
-              arc::ArcNavigationThrottle::CloseReason::DIALOG_DEACTIVATED);
+  RunCallback(kInvalidLaunchName, apps::mojom::AppType::kUnknown,
+              apps::IntentPickerCloseReason::DIALOG_DEACTIVATED, false);
 }
 
 void IntentPickerBubbleView::ButtonPressed(views::Button* sender,
@@ -321,12 +303,6 @@ void IntentPickerBubbleView::ButtonPressed(views::Button* sender,
 void IntentPickerBubbleView::ArrowButtonPressed(int index) {
   SetSelectedAppIndex(index, nullptr);
   AdjustScrollViewVisibleRegion();
-}
-
-// If the actual web_contents gets destroyed in the middle of the process we
-// should inform the caller about this error.
-void IntentPickerBubbleView::WebContentsDestroyed() {
-  GetWidget()->Close();
 }
 
 void IntentPickerBubbleView::OnKeyEvent(ui::KeyEvent* event) {
@@ -357,29 +333,113 @@ void IntentPickerBubbleView::OnKeyEvent(ui::KeyEvent* event) {
   View::OnKeyEvent(event);
 }
 
+void IntentPickerBubbleView::Initialize() {
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
+
+  // Creates a view to hold the views for each app.
+  auto scrollable_view = std::make_unique<views::View>();
+  scrollable_view->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
+
+  size_t i = 0;
+  size_t to_erase = app_info_.size();
+  for (const auto& app_info : app_info_) {
+#if defined(OS_CHROMEOS)
+    if (arc::ArcIntentHelperBridge::IsIntentHelperPackage(
+            app_info.launch_name)) {
+      to_erase = i;
+      continue;
+    }
+#endif  // defined(OS_CHROMEOS)
+    auto app_button = std::make_unique<IntentPickerLabelButton>(
+        this, &app_info.icon, app_info.launch_name, app_info.display_name);
+    app_button->set_tag(i);
+    scrollable_view->AddChildViewAt(std::move(app_button), i++);
+  }
+
+  // We should delete at most one entry, this is the case when Chrome is listed
+  // as a candidate to handle a given URL.
+  if (to_erase != app_info_.size())
+    app_info_.erase(app_info_.begin() + to_erase);
+
+  auto scroll_view = std::make_unique<views::ScrollView>();
+  scroll_view->SetBackgroundColor(SK_ColorWHITE);
+  scroll_view->SetContents(std::move(scrollable_view));
+  // This part gives the scroll a fixed width and height. The height depends on
+  // how many app candidates we got and how many we actually want to show.
+  // The added 0.5 on the else block allow us to let the user know there are
+  // more than |kMaxAppResults| apps accessible by scrolling the list.
+  size_t rows = scroll_view->contents()->children().size();
+  if (rows <= kMaxAppResults) {
+    scroll_view->ClipHeightTo(kRowHeight, rows * kRowHeight);
+  } else {
+    scroll_view->ClipHeightTo(kRowHeight, (kMaxAppResults + 0.5) * kRowHeight);
+  }
+
+  constexpr int kColumnSetId = 0;
+  views::ColumnSet* cs = layout->AddColumnSet(kColumnSetId);
+  cs->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
+                views::GridLayout::kFixedSize, views::GridLayout::FIXED,
+                kMaxIntentPickerLabelButtonWidth, 0);
+
+  layout->StartRowWithPadding(views::GridLayout::kFixedSize, kColumnSetId,
+                              views::GridLayout::kFixedSize, kTitlePadding);
+  scroll_view_ = layout->AddView(std::move(scroll_view));
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId, 0);
+
+  // Add Show remember selection checkbox if there are apps besides pwas present
+  if (show_persistence_options_) {
+    layout->AddView(CreateHorizontalSeparator());
+
+    // This second ColumnSet has a padding column in order to manipulate the
+    // Checkbox positioning freely.
+    constexpr int kColumnSetIdPadded = 1;
+    views::ColumnSet* cs_padded = layout->AddColumnSet(kColumnSetIdPadded);
+    cs_padded->AddPaddingColumn(views::GridLayout::kFixedSize, kTitlePadding);
+    cs_padded->AddColumn(
+        views::GridLayout::FILL, views::GridLayout::CENTER,
+        views::GridLayout::kFixedSize, views::GridLayout::FIXED,
+        kMaxIntentPickerLabelButtonWidth - 2 * kTitlePadding, 0);
+
+    layout->StartRowWithPadding(views::GridLayout::kFixedSize,
+                                kColumnSetIdPadded,
+                                views::GridLayout::kFixedSize, 0);
+
+    remember_selection_checkbox_ = layout->AddView(
+        std::make_unique<views::Checkbox>(l10n_util::GetStringUTF16(
+            IDS_INTENT_PICKER_BUBBLE_VIEW_REMEMBER_SELECTION)));
+    UpdateCheckboxState();
+  }
+  layout->AddPaddingRow(views::GridLayout::kFixedSize, kTitlePadding);
+}
+
 IntentPickerLabelButton* IntentPickerBubbleView::GetIntentPickerLabelButtonAt(
     size_t index) {
-  views::View* temp_contents = scroll_view_->contents();
-  return static_cast<IntentPickerLabelButton*>(temp_contents->child_at(index));
+  const auto& children = scroll_view_->contents()->children();
+  return static_cast<IntentPickerLabelButton*>(children[index]);
+}
+
+bool IntentPickerBubbleView::HasCandidates() const {
+  return !app_info_.empty();
 }
 
 void IntentPickerBubbleView::RunCallback(
-    std::string package,
-    arc::ArcNavigationThrottle::CloseReason close_reason) {
+    const std::string& launch_name,
+    apps::mojom::AppType app_type,
+    apps::IntentPickerCloseReason close_reason,
+    bool should_persist) {
   if (!intent_picker_cb_.is_null()) {
-    // We must ensure |intent_picker_cb_| is only Run() once, this is why we
-    // have a temporary |callback| helper, so we can set the original callback
-    // to null and still report back to whoever started the UI.
-    auto callback = intent_picker_cb_;
-    intent_picker_cb_.Reset();
-    callback.Run(package, close_reason);
+    // Calling Run() will make |intent_picker_cb_| null.
+    std::move(intent_picker_cb_)
+        .Run(launch_name, app_type, close_reason, should_persist);
   }
 
   intent_picker_bubble_ = nullptr;
 }
 
 size_t IntentPickerBubbleView::GetScrollViewSize() const {
-  return scroll_view_->contents()->child_count();
+  return scroll_view_->contents()->children().size();
 }
 
 void IntentPickerBubbleView::AdjustScrollViewVisibleRegion() {
@@ -393,16 +453,33 @@ void IntentPickerBubbleView::AdjustScrollViewVisibleRegion() {
 void IntentPickerBubbleView::SetSelectedAppIndex(int index,
                                                  const ui::Event* event) {
   // The selected app must be a value in the range [0, app_info_.size()-1].
+  DCHECK(HasCandidates());
   DCHECK_LT(static_cast<size_t>(index), app_info_.size());
+  DCHECK_GE(static_cast<size_t>(index), 0u);
 
   GetIntentPickerLabelButtonAt(selected_app_tag_)->MarkAsUnselected(nullptr);
   selected_app_tag_ = index;
   GetIntentPickerLabelButtonAt(selected_app_tag_)->MarkAsSelected(event);
+  UpdateCheckboxState();
 }
 
 size_t IntentPickerBubbleView::CalculateNextAppIndex(int delta) {
   size_t size = GetScrollViewSize();
   return static_cast<size_t>((selected_app_tag_ + size + delta) % size);
+}
+
+void IntentPickerBubbleView::UpdateCheckboxState() {
+  if (!remember_selection_checkbox_)
+    return;
+  // TODO(crbug.com/826982): allow PWAs to have their decision persisted when
+  // there is a central Chrome OS apps registry to store persistence.
+  const bool should_enable =
+      app_info_[selected_app_tag_].type != apps::mojom::AppType::kWeb;
+
+  // Reset the checkbox state to the default unchecked if becomes disabled.
+  if (!should_enable)
+    remember_selection_checkbox_->SetChecked(false);
+  remember_selection_checkbox_->SetEnabled(should_enable);
 }
 
 gfx::ImageSkia IntentPickerBubbleView::GetAppImageForTesting(size_t index) {

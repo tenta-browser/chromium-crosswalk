@@ -131,10 +131,16 @@ def Install(device, install_json, apk=None, enable_device_cache=False,
       splits = []
       for split_glob in split_globs:
         splits.extend((f for f in glob.glob(split_glob)))
-      device.InstallSplitApk(apk, splits, reinstall=True,
-                             allow_cached_props=True, permissions=permissions)
+      device.InstallSplitApk(
+          apk,
+          splits,
+          allow_downgrade=True,
+          reinstall=True,
+          allow_cached_props=True,
+          permissions=permissions)
     else:
-      device.Install(apk, reinstall=True, permissions=permissions)
+      device.Install(
+          apk, allow_downgrade=True, reinstall=True, permissions=permissions)
     install_timer.Stop(log=False)
 
   # Push .so and .dex files to the device (if they have changed).
@@ -178,6 +184,24 @@ def Install(device, install_json, apk=None, enable_device_cache=False,
                       'first disabling isolated processes.\n'
                       'To do so, use GN arg:\n'
                       '    disable_incremental_isolated_processes=true')
+
+    target_sdk_version = int(apk.GetTargetSdkVersion())
+    # Beta Q builds apply whitelist to targetSdk=28 as well.
+    if target_sdk_version >= 28 and device.build_version_sdk >= 29:
+      apis_allowed = ''.join(
+          device.RunShellCommand(
+              ['settings', 'get', 'global', 'hidden_api_policy'],
+              check_return=True))
+      if apis_allowed.strip() not in '01':
+        msg = """\
+Cannot use incremental installs on Android Q+ without first enabling access to
+non-SDK interfaces (https://developer.android.com/preview/non-sdk-q).
+
+To enable access:
+   adb -s {0} shell settings put global hidden_api_policy 0
+To restore back to default:
+   adb -s {0} shell settings delete global hidden_api_policy"""
+        raise Exception(msg.format(device.serial))
 
   cache_path = _DeviceCachePath(device)
   def restore_cache():
@@ -227,10 +251,11 @@ def Install(device, install_json, apk=None, enable_device_cache=False,
   finalize_timer = _Execute(use_concurrency, release_installer_lock, save_cache)
 
   logging.info(
-      'Took %s seconds (setup=%s, install=%s, libs=%s, dex=%s, finalize=%s)',
-      main_timer.GetDelta(), setup_timer.GetDelta(), install_timer.GetDelta(),
-      push_native_timer.GetDelta(), push_dex_timer.GetDelta(),
-      finalize_timer.GetDelta())
+      'Install of %s took %s seconds '
+      '(setup=%s, install=%s, libs=%s, dex=%s, finalize=%s)',
+      os.path.basename(apk.path), main_timer.GetDelta(), setup_timer.GetDelta(),
+      install_timer.GetDelta(), push_native_timer.GetDelta(),
+      push_dex_timer.GetDelta(), finalize_timer.GetDelta())
   if show_proguard_warning:
     logging.warning('Target had proguard enabled, but incremental install uses '
                     'non-proguarded .dex files. Performance characteristics '

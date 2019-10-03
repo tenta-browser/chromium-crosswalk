@@ -4,7 +4,6 @@
 
 #include "content/browser/bluetooth/frame_connected_bluetooth_devices.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/bluetooth/web_bluetooth_service_impl.h"
 #include "content/test/test_render_view_host.h"
@@ -31,11 +30,11 @@ using testing::_;
 
 namespace {
 
-const WebBluetoothDeviceId kDeviceId0("000000000000000000000A==");
+const blink::WebBluetoothDeviceId kDeviceId0("000000000000000000000A==");
 constexpr char kDeviceAddress0[] = "0";
 constexpr char kDeviceName0[] = "Device0";
 
-const WebBluetoothDeviceId kDeviceId1("111111111111111111111A==");
+const blink::WebBluetoothDeviceId kDeviceId1("111111111111111111111A==");
 constexpr char kDeviceAddress1[] = "1";
 constexpr char kDeviceName1[] = "Device1";
 

@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
@@ -21,6 +21,8 @@ namespace {
 
 scoped_refptr<base::RefCountedMemory> EncodeImageAsPNG(
     const gfx::Image& image) {
+  if (image.IsEmpty())
+    return nullptr;
   std::vector<uint8_t> result;
   DCHECK(!image.AsImageSkia().GetRepresentation(1.0f).is_null());
   gfx::PNGCodec::FastEncodeBGRASkBitmap(image.AsBitmap(), true, &result);

@@ -23,7 +23,7 @@
 #define IN_LIBEXSLT
 #include "libexslt/libexslt.h"
 
-#if defined(WIN32) && !defined (__CYGWIN__) && (!__MINGW32__)
+#if defined(_WIN32) && !defined (__CYGWIN__) && (!__MINGW32__)
 #include <win32config.h>
 #else
 #include "config.h"
@@ -113,24 +113,12 @@ exsltDynMapFunction(xmlXPathParserContextPtr ctxt, int nargs)
         return;
     }
     str = xmlXPathPopString(ctxt);
-    if (xmlXPathCheckError(ctxt)) {
-        xmlXPathSetTypeError(ctxt);
-        return;
-    }
+    if (xmlXPathCheckError(ctxt))
+        goto cleanup;
 
     nodeset = xmlXPathPopNodeSet(ctxt);
-    if (xmlXPathCheckError(ctxt)) {
-        xmlXPathSetTypeError(ctxt);
-        return;
-    }
-    if (str == NULL || !xmlStrlen(str) || !(comp = xmlXPathCompile(str))) {
-        if (nodeset != NULL)
-            xmlXPathFreeNodeSet(nodeset);
-        if (str != NULL)
-            xmlFree(str);
-        valuePush(ctxt, xmlXPathNewNodeSet(NULL));
-        return;
-    }
+    if (xmlXPathCheckError(ctxt))
+        goto cleanup;
 
     ret = xmlXPathNewNodeSet(NULL);
     if (ret == NULL) {
@@ -138,6 +126,9 @@ exsltDynMapFunction(xmlXPathParserContextPtr ctxt, int nargs)
                          "exsltDynMapFunction: ret == NULL\n");
         goto cleanup;
     }
+
+    if (str == NULL || !xmlStrlen(str) || !(comp = xmlXPathCompile(str)))
+        goto cleanup;
 
     oldDoc = ctxt->context->doc;
     oldNode = ctxt->context->node;
@@ -203,10 +194,10 @@ exsltDynMapFunction(xmlXPathParserContextPtr ctxt, int nargs)
                     case XPATH_BOOLEAN:
                         if (container != NULL) {
                             xmlNodePtr cur =
-                                xmlNewChild((xmlNodePtr) container, NULL,
-                                            BAD_CAST "boolean",
-                                            BAD_CAST (subResult->
-                                            boolval ? "true" : ""));
+                                xmlNewTextChild((xmlNodePtr) container, NULL,
+                                                BAD_CAST "boolean",
+                                                BAD_CAST (subResult->
+                                                boolval ? "true" : ""));
                             if (cur != NULL) {
                                 cur->ns =
                                     xmlNewNs(cur,
@@ -224,8 +215,8 @@ exsltDynMapFunction(xmlXPathParserContextPtr ctxt, int nargs)
                                 xmlXPathCastNumberToString(subResult->
                                                            floatval);
                             xmlNodePtr cur =
-                                xmlNewChild((xmlNodePtr) container, NULL,
-                                            BAD_CAST "number", val);
+                                xmlNewTextChild((xmlNodePtr) container, NULL,
+                                                BAD_CAST "number", val);
                             if (val != NULL)
                                 xmlFree(val);
 
@@ -243,9 +234,9 @@ exsltDynMapFunction(xmlXPathParserContextPtr ctxt, int nargs)
                     case XPATH_STRING:
                         if (container != NULL) {
                             xmlNodePtr cur =
-                                xmlNewChild((xmlNodePtr) container, NULL,
-                                            BAD_CAST "string",
-                                            subResult->stringval);
+                                xmlNewTextChild((xmlNodePtr) container, NULL,
+                                                BAD_CAST "string",
+                                                subResult->stringval);
                             if (cur != NULL) {
                                 cur->ns =
                                     xmlNewNs(cur,

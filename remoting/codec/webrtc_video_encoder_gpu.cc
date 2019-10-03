@@ -4,6 +4,7 @@
 
 #include "remoting/codec/webrtc_video_encoder_gpu.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -11,7 +12,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
+#include "gpu/config/gpu_preferences.h"
 #include "media/gpu/gpu_video_encode_accelerator_factory.h"
 #include "remoting/base/constants.h"
 #include "third_party/libyuv/include/libyuv/convert_from_argb.h"
@@ -157,7 +158,7 @@ void WebrtcVideoEncoderGpu::RequireBitstreamBuffers(
   output_buffers_.clear();
 
   for (unsigned int i = 0; i < kWebrtcVideoEncoderGpuOutputBufferCount; ++i) {
-    auto shm = base::MakeUnique<base::SharedMemory>();
+    auto shm = std::make_unique<base::SharedMemory>();
     // TODO(gusss): Do we need to handle mapping failure more gracefully?
     CHECK(shm->CreateAndMapAnonymous(output_buffer_size_));
     output_buffers_.push_back(std::move(shm));
@@ -171,24 +172,23 @@ void WebrtcVideoEncoderGpu::RequireBitstreamBuffers(
   RunAnyPendingEncode();
 }
 
-void WebrtcVideoEncoderGpu::BitstreamBufferReady(int32_t bitstream_buffer_id,
-                                                 size_t payload_size,
-                                                 bool key_frame,
-                                                 base::TimeDelta timestamp) {
+void WebrtcVideoEncoderGpu::BitstreamBufferReady(
+    int32_t bitstream_buffer_id,
+    const media::BitstreamBufferMetadata& metadata) {
   DVLOG(3) << __func__ << " bitstream_buffer_id = " << bitstream_buffer_id
            << ", "
-           << "payload_size = " << payload_size << ", "
-           << "key_frame = " << key_frame << ", "
-           << "timestamp ms = " << timestamp.InMilliseconds();
+           << "payload_size = " << metadata.payload_size_bytes << ", "
+           << "key_frame = " << metadata.key_frame << ", "
+           << "timestamp ms = " << metadata.timestamp.InMilliseconds();
 
   std::unique_ptr<EncodedFrame> encoded_frame =
-      base::MakeUnique<EncodedFrame>();
+      std::make_unique<EncodedFrame>();
   base::SharedMemory* output_buffer =
       output_buffers_[bitstream_buffer_id].get();
   DCHECK(output_buffer->memory());
   encoded_frame->data.assign(reinterpret_cast<char*>(output_buffer->memory()),
-                             payload_size);
-  encoded_frame->key_frame = key_frame;
+                             metadata.payload_size_bytes);
+  encoded_frame->key_frame = metadata.key_frame;
   encoded_frame->size = webrtc::DesktopSize(input_coded_size_.width(),
                                             input_coded_size_.height());
   encoded_frame->quantizer = 0;
@@ -196,12 +196,12 @@ void WebrtcVideoEncoderGpu::BitstreamBufferReady(int32_t bitstream_buffer_id,
 
   UseOutputBitstreamBufferId(bitstream_buffer_id);
 
-  auto callback_it = callbacks_.find(timestamp);
+  auto callback_it = callbacks_.find(metadata.timestamp);
   DCHECK(callback_it != callbacks_.end())
-      << "Callback not found for timestamp " << timestamp;
+      << "Callback not found for timestamp " << metadata.timestamp;
   std::move(std::get<1>(*callback_it)).Run(
       EncodeResult::SUCCEEDED, std::move(encoded_frame));
-  callbacks_.erase(timestamp);
+  callbacks_.erase(metadata.timestamp);
 }
 
 void WebrtcVideoEncoderGpu::NotifyError(
@@ -219,10 +219,11 @@ void WebrtcVideoEncoderGpu::BeginInitialization() {
   // per second.
   uint32_t initial_bitrate = kTargetFrameRate * 1024 * 1024 * 8;
 
+  const media::VideoEncodeAccelerator::Config config(
+      input_format, input_visible_size_, codec_profile_, initial_bitrate);
   video_encode_accelerator_ =
       media::GpuVideoEncodeAcceleratorFactory::CreateVEA(
-          input_format, input_visible_size_, codec_profile_, initial_bitrate,
-          this, CreateGpuPreferences());
+          config, this, CreateGpuPreferences());
 
   if (!video_encode_accelerator_) {
     LOG(ERROR) << "Could not create VideoEncodeAccelerator";
@@ -238,9 +239,8 @@ void WebrtcVideoEncoderGpu::UseOutputBitstreamBufferId(
     int32_t bitstream_buffer_id) {
   DVLOG(3) << __func__ << " id=" << bitstream_buffer_id;
   video_encode_accelerator_->UseOutputBitstreamBuffer(media::BitstreamBuffer(
-      bitstream_buffer_id,
-      output_buffers_[bitstream_buffer_id]->handle().Duplicate(),
-      output_buffer_size_));
+      bitstream_buffer_id, output_buffers_[bitstream_buffer_id]->handle(),
+      false /* read_only */, output_buffer_size_));
 }
 
 void WebrtcVideoEncoderGpu::RunAnyPendingEncode() {

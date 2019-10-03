@@ -49,31 +49,30 @@ void AudioDiscardHelper::Reset(size_t initial_discard) {
   delayed_discard_padding_ = DecoderBuffer::DiscardPadding();
 }
 
-bool AudioDiscardHelper::ProcessBuffers(
-    const scoped_refptr<DecoderBuffer>& encoded_buffer,
-    const scoped_refptr<AudioBuffer>& decoded_buffer) {
-  DCHECK(!encoded_buffer->end_of_stream());
-  DCHECK(encoded_buffer->timestamp() != kNoTimestamp);
+bool AudioDiscardHelper::ProcessBuffers(const DecoderBuffer& encoded_buffer,
+                                        AudioBuffer* decoded_buffer) {
+  DCHECK(!encoded_buffer.end_of_stream());
+  DCHECK(encoded_buffer.timestamp() != kNoTimestamp);
 
   // Issue a debug warning when we see non-monotonic timestamps.  Only a warning
   // to allow chained OGG playback.
   WarnOnNonMonotonicTimestamps(last_input_timestamp_,
-                               encoded_buffer->timestamp());
-  last_input_timestamp_ = encoded_buffer->timestamp();
+                               encoded_buffer.timestamp());
+  last_input_timestamp_ = encoded_buffer.timestamp();
 
   // If this is the first buffer seen, setup the timestamp helper.
   if (!initialized()) {
     // Clamp the base timestamp to zero.
     timestamp_helper_.SetBaseTimestamp(
-        std::max(base::TimeDelta(), encoded_buffer->timestamp()));
+        std::max(base::TimeDelta(), encoded_buffer.timestamp()));
   }
   DCHECK(initialized());
 
-  if (!decoded_buffer.get()) {
+  if (!decoded_buffer) {
     // If there's a one buffer delay for decoding, we need to save it so it can
     // be processed with the next decoder buffer.
     if (delayed_discard_)
-      delayed_discard_padding_ = encoded_buffer->discard_padding();
+      delayed_discard_padding_ = encoded_buffer.discard_padding();
     return false;
   }
 
@@ -82,7 +81,7 @@ bool AudioDiscardHelper::ProcessBuffers(
   // If there's a one buffer delay for decoding, pick up the last encoded
   // buffer's discard padding for processing with the current decoded buffer.
   DecoderBuffer::DiscardPadding current_discard_padding =
-      encoded_buffer->discard_padding();
+      encoded_buffer.discard_padding();
   if (delayed_discard_) {
     // For simplicity disallow cases where decoder delay is present with delayed
     // discard (no codecs at present).  Doing so allows us to avoid complexity
@@ -137,9 +136,8 @@ bool AudioDiscardHelper::ProcessBuffers(
     // duration of the encoded buffer.
     const size_t start_frames_to_discard =
         current_discard_padding.first == kInfiniteDuration
-            ? (decoder_delay_ > 0
-                   ? TimeDeltaToFrames(encoded_buffer->duration())
-                   : decoded_frames)
+            ? (decoder_delay_ > 0 ? TimeDeltaToFrames(encoded_buffer.duration())
+                                  : decoded_frames)
             : TimeDeltaToFrames(current_discard_padding.first);
 
     // Regardless of the timestamp on the encoded buffer, the corresponding

@@ -8,14 +8,17 @@
 #include <vector>
 
 #include "base/i18n/char_iterator.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/grit/components_scaled_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "third_party/icu/source/common/unicode/uscript.h"
@@ -24,7 +27,13 @@
 namespace autofill {
 namespace data_util {
 
+using bit_field_type_groups::kAddress;
+using bit_field_type_groups::kEmail;
+using bit_field_type_groups::kName;
+using bit_field_type_groups::kPhone;
+
 namespace {
+
 // Mappings from Chrome card networks to Payment Request API basic card payment
 // spec networks and icons. Note that "generic" is not in the spec.
 // https://w3c.github.io/webpayments-methods-card/#method-id
@@ -44,6 +53,13 @@ const PaymentRequestData kPaymentRequestData[]{
      IDS_AUTOFILL_CC_UNION_PAY},
     {autofill::kVisaCard, "visa", IDR_AUTOFILL_CC_VISA, IDS_AUTOFILL_CC_VISA},
 };
+
+#if defined(GOOGLE_CHROME_BUILD)
+const PaymentRequestData kGooglePayBrandingRequestData = {
+    "googlePay", "googlePay", IDR_AUTOFILL_GOOGLE_PAY,
+    IDS_AUTOFILL_CC_GOOGLE_PAY};
+#endif  // GOOGLE_CHROME_BUILD
+
 const PaymentRequestData kGenericPaymentRequestData = {
     autofill::kGenericCard, "generic", IDR_AUTOFILL_CC_GENERIC,
     IDS_AUTOFILL_CC_GENERIC};
@@ -106,9 +122,9 @@ bool ContainsString(const char* const set[],
 
 // Removes common name prefixes from |name_tokens|.
 void StripPrefixes(std::vector<base::StringPiece16>* name_tokens) {
-  std::vector<base::StringPiece16>::iterator iter = name_tokens->begin();
+  auto iter = name_tokens->begin();
   while (iter != name_tokens->end()) {
-    if (!ContainsString(name_prefixes, arraysize(name_prefixes), *iter))
+    if (!ContainsString(name_prefixes, base::size(name_prefixes), *iter))
       break;
     ++iter;
   }
@@ -121,7 +137,7 @@ void StripPrefixes(std::vector<base::StringPiece16>* name_tokens) {
 // Removes common name suffixes from |name_tokens|.
 void StripSuffixes(std::vector<base::StringPiece16>* name_tokens) {
   while (!name_tokens->empty()) {
-    if (!ContainsString(name_suffixes, arraysize(name_suffixes),
+    if (!ContainsString(name_suffixes, base::size(name_suffixes),
                         name_tokens->back())) {
       break;
     }
@@ -210,13 +226,13 @@ bool SplitCJKName(const std::vector<base::StringPiece16>& name_tokens,
       // ones)
       surname_length = std::max<size_t>(
           1, StartsWithAny(name, korean_multi_char_surnames,
-                           arraysize(korean_multi_char_surnames)));
+                           base::size(korean_multi_char_surnames)));
     } else {
       // Default to 1 character if the surname is not in
       // |common_cjk_multi_char_surnames|.
       surname_length = std::max<size_t>(
           1, StartsWithAny(name, common_cjk_multi_char_surnames,
-                           arraysize(common_cjk_multi_char_surnames)));
+                           base::size(common_cjk_multi_char_surnames)));
     }
     parts->family = name.substr(0, surname_length).as_string();
     parts->given = name.substr(surname_length).as_string();
@@ -234,6 +250,92 @@ bool SplitCJKName(const std::vector<base::StringPiece16>& name_tokens,
 }
 
 }  // namespace
+
+bool ContainsName(uint32_t groups) {
+  return groups & kName;
+}
+
+bool ContainsAddress(uint32_t groups) {
+  return groups & kAddress;
+}
+
+bool ContainsEmail(uint32_t groups) {
+  return groups & kEmail;
+}
+
+bool ContainsPhone(uint32_t groups) {
+  return groups & kPhone;
+}
+
+uint32_t DetermineGroups(const std::vector<ServerFieldType>& types) {
+  uint32_t group_bitmask = 0;
+  for (const ServerFieldType& type : types) {
+    const FieldTypeGroup group =
+        AutofillType(AutofillType(type).GetStorableType()).group();
+    switch (group) {
+      case autofill::NAME:
+        group_bitmask |= kName;
+        break;
+      case autofill::ADDRESS_HOME:
+        group_bitmask |= kAddress;
+        break;
+      case autofill::EMAIL:
+        group_bitmask |= kEmail;
+        break;
+      case autofill::PHONE_HOME:
+        group_bitmask |= kPhone;
+        break;
+      default:
+        break;
+    }
+  }
+  return group_bitmask;
+}
+
+bool IsSupportedFormType(uint32_t groups) {
+  return ContainsAddress(groups) ||
+         ContainsName(groups) + ContainsEmail(groups) + ContainsPhone(groups) >=
+             2;
+}
+
+std::string GetSuffixForProfileFormType(uint32_t bitmask) {
+  switch (bitmask) {
+    case kAddress | kEmail | kPhone:
+    case kName | kAddress | kEmail | kPhone:
+      return ".AddressPlusEmailPlusPhone";
+    case kAddress | kPhone:
+    case kName | kAddress | kPhone:
+      return ".AddressPlusPhone";
+    case kAddress | kEmail:
+    case kName | kAddress | kEmail:
+      return ".AddressPlusEmail";
+    case kAddress:
+    case kName | kAddress:
+      return ".AddressOnly";
+    case kEmail | kPhone:
+    case kName | kEmail | kPhone:
+    case kName | kEmail:
+    case kName | kPhone:
+      return ".ContactOnly";
+    default:
+      return ".Other";
+  }
+}
+
+std::string TruncateUTF8(const std::string& data) {
+  std::string trimmed_value;
+  base::TruncateUTF8ToByteSize(data, AutofillTable::kMaxDataLength,
+                               &trimmed_value);
+  return trimmed_value;
+}
+
+bool IsCreditCardExpirationType(ServerFieldType type) {
+  return type == CREDIT_CARD_EXP_MONTH ||
+         type == CREDIT_CARD_EXP_2_DIGIT_YEAR ||
+         type == CREDIT_CARD_EXP_4_DIGIT_YEAR ||
+         type == CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR ||
+         type == CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR;
+}
 
 bool IsCJKName(base::StringPiece16 name) {
   // The name is considered to be a CJK name if it is only CJK characters,
@@ -314,7 +416,7 @@ NameParts SplitName(base::StringPiece16 name) {
   reverse_family_tokens.push_back(name_tokens.back());
   name_tokens.pop_back();
   while (name_tokens.size() >= 1 &&
-         ContainsString(family_name_prefixes, arraysize(family_name_prefixes),
+         ContainsString(family_name_prefixes, base::size(family_name_prefixes),
                         name_tokens.back())) {
     reverse_family_tokens.push_back(name_tokens.back());
     name_tokens.pop_back();
@@ -420,6 +522,11 @@ const PaymentRequestData& GetPaymentRequestData(
     if (issuer_network == data.issuer_network)
       return data;
   }
+#if defined(GOOGLE_CHROME_BUILD)
+  if (issuer_network == kGooglePayBrandingRequestData.issuer_network) {
+    return kGooglePayBrandingRequestData;
+  }
+#endif  // GOOGLE_CHROME_BUILD
   return kGenericPaymentRequestData;
 }
 

@@ -10,7 +10,6 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/browser_process.h"
@@ -21,8 +20,8 @@
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_service_client.h"
+#include "chromeos/dbus/shill/shill_device_client.h"
+#include "chromeos/dbus/shill/shill_service_client.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #endif
 
@@ -41,15 +40,6 @@ class TestNetworkingCastPrivateDelegate
                          const FailureCallback& failure_callback) override {
     AssertCredentials(*credentials);
     success_callback.Run(true);
-  }
-
-  void VerifyAndEncryptCredentials(
-      const std::string& guid,
-      std::unique_ptr<Credentials> credentials,
-      const DataCallback& success_callback,
-      const FailureCallback& failure_callback) override {
-    AssertCredentials(*credentials);
-    success_callback.Run("encrypted_credentials");
   }
 
   void VerifyAndEncryptData(const std::string& data,
@@ -139,7 +129,7 @@ class NetworkingCastPrivateApiTest : public ExtensionApiTest {
  private:
   std::unique_ptr<ChromeNetworkingCastPrivateDelegate>
   CreateNetworkingCastPrivateDelegate() {
-    return base::MakeUnique<TestNetworkingCastPrivateDelegate>();
+    return std::make_unique<TestNetworkingCastPrivateDelegate>();
   }
 
   ChromeNetworkingCastPrivateDelegate::FactoryCallback

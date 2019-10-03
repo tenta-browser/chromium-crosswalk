@@ -13,14 +13,17 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/base/locale_util.h"
-#include "chrome/browser/chromeos/login/screens/core_oobe_view.h"
+#include "chrome/browser/chromeos/login/screens/terms_of_service_screen.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/language/core/common/locale_util.h"
 #include "components/login/localized_values_builder.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
@@ -28,18 +31,15 @@
 #include "content/public/browser/web_ui.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 
-namespace {
-
-const char kJsScreenPath[] = "login.TermsOfServiceScreen";
-
-}  // namespace
-
 namespace chromeos {
 
+constexpr StaticOobeScreenId TermsOfServiceScreenView::kScreenId;
+
 TermsOfServiceScreenHandler::TermsOfServiceScreenHandler(
+    JSCallsContainer* js_calls_container,
     CoreOobeView* core_oobe_view)
-    : BaseScreenHandler(kScreenId), core_oobe_view_(core_oobe_view) {
-  set_call_js_prefix(kJsScreenPath);
+    : BaseScreenHandler(kScreenId, js_calls_container),
+      core_oobe_view_(core_oobe_view) {
 }
 
 TermsOfServiceScreenHandler::~TermsOfServiceScreenHandler() {
@@ -71,7 +71,7 @@ void TermsOfServiceScreenHandler::DeclareLocalizedValues(
                IDS_TERMS_OF_SERVICE_SCREEN_ACCEPT_BUTTON);
 }
 
-void TermsOfServiceScreenHandler::SetDelegate(Delegate* screen) {
+void TermsOfServiceScreenHandler::SetDelegate(TermsOfServiceScreen* screen) {
   screen_ = screen;
 }
 
@@ -81,12 +81,13 @@ void TermsOfServiceScreenHandler::Show() {
     return;
   }
 
-  const std::string locale =
+  std::string locale =
       ProfileHelper::Get()
           ->GetProfileByUserUnsafe(
               user_manager::UserManager::Get()->GetActiveUser())
           ->GetPrefs()
-          ->GetString(prefs::kApplicationLocale);
+          ->GetString(language::prefs::kApplicationLocale);
+  language::ConvertToActualUILocale(&locale);
 
   if (locale.empty() || locale == g_browser_process->GetApplicationLocale()) {
     // If the user has not chosen a UI locale yet or the chosen locale matches
@@ -174,7 +175,7 @@ void TermsOfServiceScreenHandler::DoShow() {
 
 void TermsOfServiceScreenHandler::UpdateDomainInUI() {
   if (page_is_ready())
-    CallJS("setDomain", domain_);
+    CallJS("login.TermsOfServiceScreen.setDomain", domain_);
 }
 
 void TermsOfServiceScreenHandler::UpdateTermsOfServiceInUI() {
@@ -186,9 +187,9 @@ void TermsOfServiceScreenHandler::UpdateTermsOfServiceInUI() {
   // download is still in progress and the UI will be updated when the
   // OnLoadError() or the OnLoadSuccess() callback is called.
   if (load_error_)
-    CallJS("setTermsOfServiceLoadError");
+    CallJS("login.TermsOfServiceScreen.setTermsOfServiceLoadError");
   else if (!terms_of_service_.empty())
-    CallJS("setTermsOfService", terms_of_service_);
+    CallJS("login.TermsOfServiceScreen.setTermsOfService", terms_of_service_);
 }
 
 void TermsOfServiceScreenHandler::HandleBack() {

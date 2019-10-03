@@ -5,17 +5,15 @@
 #include "chromeos/cryptohome/async_method_caller.h"
 
 #include "base/bind.h"
-#include "base/containers/hash_tables.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 
-using chromeos::DBusThreadManager;
+using chromeos::CryptohomeClient;
 
 namespace cryptohome {
 
@@ -28,94 +26,31 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
                               public chromeos::CryptohomeClient::Observer {
  public:
   AsyncMethodCallerImpl() : weak_ptr_factory_(this) {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AddObserver(this);
+    CryptohomeClient::Get()->AddObserver(this);
   }
 
   ~AsyncMethodCallerImpl() override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->RemoveObserver(this);
-  }
-
-  void AsyncCheckKey(const Identification& cryptohome_id,
-                     const std::string& passhash,
-                     Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AsyncCheckKey(
-        cryptohome_id, passhash,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate async check of user's key."));
-  }
-
-  void AsyncMigrateKey(const Identification& cryptohome_id,
-                       const std::string& old_hash,
-                       const std::string& new_hash,
-                       Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AsyncMigrateKey(
-        cryptohome_id, old_hash, new_hash,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate aync migration of user's key"));
-  }
-
-  void AsyncMount(const Identification& cryptohome_id,
-                  const std::string& passhash,
-                  int flags,
-                  Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AsyncMount(
-        cryptohome_id, passhash, flags,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate async mount of cryptohome."));
-  }
-
-  void AsyncAddKey(const Identification& cryptohome_id,
-                   const std::string& passhash,
-                   const std::string& new_passhash,
-                   Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AsyncAddKey(
-        cryptohome_id, passhash, new_passhash,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate async key addition."));
-  }
-
-  void AsyncMountGuest(Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->
-        AsyncMountGuest(base::Bind(
-            &AsyncMethodCallerImpl::RegisterAsyncCallback,
-            weak_ptr_factory_.GetWeakPtr(),
-            callback,
-            "Couldn't initiate async mount of cryptohome."));
-  }
-
-  void AsyncRemove(const Identification& cryptohome_id,
-                   Callback callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->AsyncRemove(
-        cryptohome_id,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate async removal of cryptohome."));
+    CryptohomeClient::Get()->RemoveObserver(this);
   }
 
   void AsyncTpmAttestationCreateEnrollRequest(
       chromeos::attestation::PrivacyCAType pca_type,
       const DataCallback& callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->
-        AsyncTpmAttestationCreateEnrollRequest(pca_type, base::Bind(
-            &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
-            weak_ptr_factory_.GetWeakPtr(),
-            callback,
-            "Couldn't initiate async attestation enroll request."));
+    CryptohomeClient::Get()->AsyncTpmAttestationCreateEnrollRequest(
+        pca_type,
+        base::BindOnce(&AsyncMethodCallerImpl::RegisterAsyncDataCallback,
+                       weak_ptr_factory_.GetWeakPtr(), callback,
+                       "Couldn't initiate async attestation enroll request."));
   }
 
   void AsyncTpmAttestationEnroll(chromeos::attestation::PrivacyCAType pca_type,
                                  const std::string& pca_response,
                                  const Callback& callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->
-        AsyncTpmAttestationEnroll(pca_type, pca_response, base::Bind(
-            &AsyncMethodCallerImpl::RegisterAsyncCallback,
-            weak_ptr_factory_.GetWeakPtr(),
-            callback,
-            "Couldn't initiate async attestation enroll."));
+    CryptohomeClient::Get()->AsyncTpmAttestationEnroll(
+        pca_type, pca_response,
+        base::BindOnce(&AsyncMethodCallerImpl::RegisterAsyncCallback,
+                       weak_ptr_factory_.GetWeakPtr(), callback,
+                       "Couldn't initiate async attestation enroll."));
   }
 
   void AsyncTpmAttestationCreateCertRequest(
@@ -124,11 +59,11 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       const Identification& cryptohome_id,
       const std::string& request_origin,
       const DataCallback& callback) override {
-    DBusThreadManager::Get()
-        ->GetCryptohomeClient()
-        ->AsyncTpmAttestationCreateCertRequest(
-            pca_type, certificate_profile, cryptohome_id, request_origin,
-            base::Bind(&AsyncMethodCallerImpl::RegisterAsyncDataCallback,
+    CryptohomeClient::Get()->AsyncTpmAttestationCreateCertRequest(
+        pca_type, certificate_profile,
+        CreateAccountIdentifierFromIdentification(cryptohome_id),
+        request_origin,
+        base::BindOnce(&AsyncMethodCallerImpl::RegisterAsyncDataCallback,
                        weak_ptr_factory_.GetWeakPtr(), callback,
                        "Couldn't initiate async attestation cert request."));
   }
@@ -139,14 +74,13 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       const Identification& cryptohome_id,
       const std::string& key_name,
       const DataCallback& callback) override {
-    DBusThreadManager::Get()
-        ->GetCryptohomeClient()
-        ->AsyncTpmAttestationFinishCertRequest(
-            pca_response, key_type, cryptohome_id, key_name,
-            base::Bind(
-                &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
-                weak_ptr_factory_.GetWeakPtr(), callback,
-                "Couldn't initiate async attestation finish cert request."));
+    CryptohomeClient::Get()->AsyncTpmAttestationFinishCertRequest(
+        pca_response, key_type,
+        CreateAccountIdentifierFromIdentification(cryptohome_id), key_name,
+        base::BindOnce(
+            &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
+            weak_ptr_factory_.GetWeakPtr(), callback,
+            "Couldn't initiate async attestation finish cert request."));
   }
 
   void TpmAttestationRegisterKey(
@@ -154,11 +88,12 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       const Identification& cryptohome_id,
       const std::string& key_name,
       const Callback& callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->TpmAttestationRegisterKey(
-        key_type, cryptohome_id, key_name,
-        base::Bind(&AsyncMethodCallerImpl::RegisterAsyncCallback,
-                   weak_ptr_factory_.GetWeakPtr(), callback,
-                   "Couldn't initiate async attestation register key."));
+    CryptohomeClient::Get()->TpmAttestationRegisterKey(
+        key_type, CreateAccountIdentifierFromIdentification(cryptohome_id),
+        key_name,
+        base::BindOnce(&AsyncMethodCallerImpl::RegisterAsyncCallback,
+                       weak_ptr_factory_.GetWeakPtr(), callback,
+                       "Couldn't initiate async attestation register key."));
   }
 
   void TpmAttestationSignEnterpriseChallenge(
@@ -170,15 +105,13 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       chromeos::attestation::AttestationChallengeOptions options,
       const std::string& challenge,
       const DataCallback& callback) override {
-    DBusThreadManager::Get()
-        ->GetCryptohomeClient()
-        ->TpmAttestationSignEnterpriseChallenge(
-            key_type, cryptohome_id, key_name, domain, device_id, options,
-            challenge,
-            base::Bind(
-                &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
-                weak_ptr_factory_.GetWeakPtr(), callback,
-                "Couldn't initiate async attestation enterprise challenge."));
+    CryptohomeClient::Get()->TpmAttestationSignEnterpriseChallenge(
+        key_type, CreateAccountIdentifierFromIdentification(cryptohome_id),
+        key_name, domain, device_id, options, challenge,
+        base::BindOnce(
+            &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
+            weak_ptr_factory_.GetWeakPtr(), callback,
+            "Couldn't initiate async attestation enterprise challenge."));
   }
 
   void TpmAttestationSignSimpleChallenge(
@@ -187,27 +120,13 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       const std::string& key_name,
       const std::string& challenge,
       const DataCallback& callback) override {
-    DBusThreadManager::Get()
-        ->GetCryptohomeClient()
-        ->TpmAttestationSignSimpleChallenge(
-            key_type, cryptohome_id, key_name, challenge,
-            base::Bind(
-                &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
-                weak_ptr_factory_.GetWeakPtr(), callback,
-                "Couldn't initiate async attestation simple challenge."));
-  }
-
-  void AsyncGetSanitizedUsername(const Identification& cryptohome_id,
-                                 const DataCallback& callback) override {
-    DBusThreadManager::Get()->GetCryptohomeClient()->GetSanitizedUsername(
-        cryptohome_id,
-        base::BindOnce(&AsyncMethodCallerImpl::GetSanitizedUsernameCallback,
-                       weak_ptr_factory_.GetWeakPtr(), callback));
-  }
-
-  void GetSanitizedUsernameCallback(const DataCallback& callback,
-                                    base::Optional<std::string> result) {
-    callback.Run(true, result.value_or(std::string()));
+    CryptohomeClient::Get()->TpmAttestationSignSimpleChallenge(
+        key_type, CreateAccountIdentifierFromIdentification(cryptohome_id),
+        key_name, challenge,
+        base::BindOnce(
+            &AsyncMethodCallerImpl::RegisterAsyncDataCallback,
+            weak_ptr_factory_.GetWeakPtr(), callback,
+            "Couldn't initiate async attestation simple challenge."));
   }
 
  private:
@@ -230,8 +149,8 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner;
   };
 
-  typedef base::hash_map<int, CallbackElement> CallbackMap;
-  typedef base::hash_map<int, DataCallbackElement> DataCallbackMap;
+  typedef std::unordered_map<int, CallbackElement> CallbackMap;
+  typedef std::unordered_map<int, DataCallbackElement> DataCallbackMap;
 
   // Handles the response for async calls.
   // Below is described how async calls work.
@@ -251,8 +170,8 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
       return;
     }
     it->second.task_runner->PostTask(
-        FROM_HERE, base::Bind(it->second.callback, return_status,
-                              static_cast<MountError>(return_code)));
+        FROM_HERE, base::BindOnce(it->second.callback, return_status,
+                                  static_cast<MountError>(return_code)));
     callback_map_.erase(it);
   }
 
@@ -267,9 +186,10 @@ class AsyncMethodCallerImpl : public AsyncMethodCaller,
     }
     it->second.task_runner->PostTask(
         FROM_HERE,
-        base::Bind(it->second.data_callback, return_status, return_data));
+        base::BindOnce(it->second.data_callback, return_status, return_data));
     data_callback_map_.erase(it);
   }
+
   // Registers a callback which is called when the result for AsyncXXX is ready.
   void RegisterAsyncCallback(Callback callback,
                              const char* error,

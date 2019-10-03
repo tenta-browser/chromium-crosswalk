@@ -2,9 +2,9 @@ Name: Alliance for Open Media Video Codec
 Short Name: libaom
 URL: https://aomedia.googlesource.com/aom/
 Version: 0
-Date: Monday November 20 2017
-Branch: test-20170915
-Commit: cccda0db727c2282375b174104294b40911d1447
+Date: Wednesday January 30 2019
+Branch: master
+Commit: 625cded0550bb79efd10d98a9809a7ccd72a8f60
 License: BSD
 License File: source/libaom/LICENSE
 Security Critical: yes
@@ -26,7 +26,8 @@ Please follow these steps to update libaom source code:
    Use the generated commit message for the roll.
 
 2. Generate the config files:
-    ./generate_gni.sh
+    ./cmake_update.sh
+    # See prerequisites in file comments.
 
   This will also update this file with the new revision.
 

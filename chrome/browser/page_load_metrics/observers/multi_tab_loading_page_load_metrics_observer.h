@@ -15,14 +15,9 @@ class NavigationHandle;
 namespace internal {
 
 // Exposed for tests.
-extern const char kHistogramMultiTabLoadingFirstContentfulPaint[];
-extern const char kHistogramMultiTabLoadingForegroundToFirstContentfulPaint[];
-extern const char kHistogramMultiTabLoadingFirstMeaningfulPaint[];
-extern const char kHistogramMultiTabLoadingForegroundToFirstMeaningfulPaint[];
-extern const char kHistogramMultiTabLoadingDomContentLoaded[];
-extern const char kBackgroundHistogramMultiTabLoadingDomContentLoaded[];
-extern const char kHistogramMultiTabLoadingLoad[];
-extern const char kBackgroundHistogramMultiTabLoadingLoad[];
+extern const char kHistogramPrefixMultiTabLoading[];
+extern const char kHistogramPrefixMultiTabLoading2OrMore[];
+extern const char kHistogramPrefixMultiTabLoading5OrMore[];
 
 }  // namespace internal
 
@@ -53,10 +48,14 @@ class MultiTabLoadingPageLoadMetricsObserver
       const page_load_metrics::PageLoadExtraInfo& info) override;
 
  protected:
-  // Overridden in testing.
-  virtual bool IsAnyTabLoading(content::NavigationHandle* navigation_handle);
+  // Overridden in testing. Returns the number of loading tabs, excluding
+  // current tab.
+  virtual int NumberOfTabsWithInflightLoad(
+      content::NavigationHandle* navigation_handle);
 
  private:
+  int num_loading_tabs_when_started_;
+
   DISALLOW_COPY_AND_ASSIGN(MultiTabLoadingPageLoadMetricsObserver);
 };
 

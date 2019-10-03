@@ -19,13 +19,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/sequenced_task_runner_helpers.h"
+#include "chrome/browser/net/proxy_config_monitor.h"
 #include "chrome/browser/safe_browsing/services_delegate.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/db/util.h"
-#include "components/safe_browsing/db/v4_feature_list.h"
+#include "components/safe_browsing/safe_browsing_service_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
 
 #if defined(FULL_SAFE_BROWSING)
 #include "chrome/browser/safe_browsing/incident_reporting/delayed_analysis_callback.h"
@@ -39,75 +41,54 @@ namespace content {
 class DownloadManager;
 }
 
-namespace net {
-class URLRequest;
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class NetworkContext;
 }
+class SharedURLLoaderFactory;
+class SharedURLLoaderFactoryInfo;
+}  // namespace network
 
 namespace prefs {
 namespace mojom {
 class TrackedPreferenceValidationDelegate;
 }
-}
+}  // namespace prefs
+
+namespace extensions {
+class SafeBrowsingPrivateApiUnitTest;
+}  // namespace extensions
 
 namespace safe_browsing {
+class PingManager;
+class VerdictCacheManager;
 class ClientSideDetectionService;
 class DownloadProtectionService;
 class PasswordProtectionService;
-struct ResourceRequestInfo;
-struct SafeBrowsingProtocolConfig;
 class SafeBrowsingDatabaseManager;
 class SafeBrowsingNavigationObserverManager;
-class SafeBrowsingPingManager;
-class SafeBrowsingProtocolManager;
-class SafeBrowsingProtocolManagerDelegate;
+class SafeBrowsingNetworkContext;
 class SafeBrowsingServiceFactory;
 class SafeBrowsingUIManager;
-class SafeBrowsingURLRequestContextGetter;
 class TriggerManager;
-struct V4ProtocolConfig;
 
 // Construction needs to happen on the main thread.
 // The SafeBrowsingService owns both the UI and Database managers which do
 // the heavylifting of safebrowsing service. Both of these managers stay
 // alive until SafeBrowsingService is destroyed, however, they are disabled
 // permanently when Shutdown method is called.
-class SafeBrowsingService : public base::RefCountedThreadSafe<
-                                SafeBrowsingService,
-                                content::BrowserThread::DeleteOnUIThread>,
+class SafeBrowsingService : public SafeBrowsingServiceInterface,
                             public content::NotificationObserver {
  public:
-  // Makes the passed |factory| the factory used to instanciate
-  // a SafeBrowsingService. Useful for tests.
-  static void RegisterFactory(SafeBrowsingServiceFactory* factory) {
-    factory_ = factory;
-  }
-
   static base::FilePath GetCookieFilePathForTesting();
 
   static base::FilePath GetBaseFilename();
-
-  // Create an instance of the safe browsing service.
-  static SafeBrowsingService* CreateSafeBrowsingService();
 
   // Called on the UI thread to initialize the service.
   void Initialize();
 
   // Called on the main thread to let us know that the io_thread is going away.
   void ShutDown();
-
-  // Called on UI thread to decide if the download file's sha256 hash
-  // should be calculated for safebrowsing.
-  bool DownloadBinHashNeeded() const;
-
-  // Create a protocol config struct.
-  virtual SafeBrowsingProtocolConfig GetProtocolConfig() const;
-
-  // Create a v4 protocol config struct.
-  virtual V4ProtocolConfig GetV4ProtocolConfig() const;
-
-  // Returns the client_name field for both V3 and V4 protocol manager configs.
-  std::string GetProtocolConfigClientName() const;
 
   // NOTE(vakh): This is not the most reliable way to find out if extended
   // reporting has been enabled. That's why it starts with estimated_. It
@@ -140,29 +121,24 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
     return services_delegate_->GetDownloadService();
   }
 
-  scoped_refptr<net::URLRequestContextGetter> url_request_context();
+  // NetworkContext and URLLoaderFactory used for safe browsing requests.
+  // Called on UI thread.
+  network::mojom::NetworkContext* GetNetworkContext();
+  virtual scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory();
 
-  // Called on IO thread thread when QUIC should be disabled (e.g. because of
-  // policy). This should not be necessary anymore when http://crbug.com/678653
-  // is implemented.
-  void DisableQuicOnIOThread();
+  // Flushes above two interfaces to avoid races in tests.
+  void FlushNetworkInterfaceForTesting();
 
   const scoped_refptr<SafeBrowsingUIManager>& ui_manager() const;
 
-  // This returns either the v3 or the v4 database manager, depending on
-  // the experiment settings.
-  const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager() const;
+  virtual const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager()
+      const;
 
   scoped_refptr<SafeBrowsingNavigationObserverManager>
   navigation_observer_manager();
 
-  SafeBrowsingProtocolManager* protocol_manager() const;
-
-  SafeBrowsingPingManager* ping_manager() const;
-
-  // This may be NULL if v4 is not enabled by experiment.
-  const scoped_refptr<SafeBrowsingDatabaseManager>& v4_local_database_manager()
-      const;
+  // Called on UI thread.
+  PingManager* ping_manager() const;
 
   TriggerManager* trigger_manager() const;
 
@@ -184,10 +160,6 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Adds |download_manager| to the set monitored by safe browsing.
   void AddDownloadManager(content::DownloadManager* download_manager);
 
-  // Observes resource requests made by the renderer and reports suspicious
-  // activity.
-  void OnResourceRequest(const net::URLRequest* request);
-
   // Type for subscriptions to SafeBrowsing service state.
   typedef base::CallbackList<void(void)>::Subscription StateSubscription;
   typedef base::CallbackList<void(void)>::Subscription ShutdownSubscription;
@@ -195,35 +167,29 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Adds a listener for when SafeBrowsing preferences might have changed.
   // To get the current state, the callback should call enabled_by_prefs().
   // Should only be called on the UI thread.
-  std::unique_ptr<StateSubscription> RegisterStateCallback(
-      const base::Callback<void(void)>& callback);
-
-  // Adds a listener for when SafeBrowsingService starts shutting down.
-  // The callbacks run on the UI thread, and give the subscribers an opportunity
-  // to clean up any references they hold to SafeBrowsingService.
-  std::unique_ptr<ShutdownSubscription> RegisterShutdownCallback(
+  virtual std::unique_ptr<StateSubscription> RegisterStateCallback(
       const base::Callback<void(void)>& callback);
 
   // Sends serialized download report to backend.
   virtual void SendSerializedDownloadReport(const std::string& report);
 
+  // Create the default v4 protocol config struct.
+  virtual V4ProtocolConfig GetV4ProtocolConfig() const;
+
+  // Get the cache manager by profile.
+  VerdictCacheManager* GetVerdictCacheManager(Profile* profile) const;
+
  protected:
   // Creates the safe browsing service.  Need to initialize before using.
-  SafeBrowsingService(V4FeatureList::V4UsageStatus v4_usage_status =
-                          V4FeatureList::V4UsageStatus::V4_DISABLED);
+  SafeBrowsingService();
 
   ~SafeBrowsingService() override;
-
-  virtual SafeBrowsingDatabaseManager* CreateDatabaseManager();
 
   virtual SafeBrowsingUIManager* CreateUIManager();
 
   // Registers all the delayed analysis with the incident reporting service.
   // This is where you register your process-wide, profile-independent analysis.
   virtual void RegisterAllDelayedAnalysis();
-
-  // Return a ptr to DatabaseManager's delegate, or NULL if it doesn't have one.
-  virtual SafeBrowsingProtocolManagerDelegate* GetProtocolManagerDelegate();
 
   std::unique_ptr<ServicesDelegate> services_delegate_;
 
@@ -232,19 +198,25 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   friend struct content::BrowserThread::DeleteOnThread<
       content::BrowserThread::UI>;
   friend class base::DeleteHelper<SafeBrowsingService>;
-  friend class SafeBrowsingBlockingPageTest;
+  friend class SafeBrowsingBlockingPageTestBase;
   friend class SafeBrowsingBlockingQuietPageTest;
+  friend class extensions::SafeBrowsingPrivateApiUnitTest;
   friend class SafeBrowsingServerTest;
-  friend class SafeBrowsingServiceTest;
   friend class SafeBrowsingUIManagerTest;
   friend class SafeBrowsingURLRequestContextGetter;
   friend class TestSafeBrowsingService;
   friend class TestSafeBrowsingServiceFactory;
+  friend class V4SafeBrowsingServiceTest;
+
+  // Returns the client_name to use for Safe Browsing requests..
+  std::string GetProtocolConfigClientName() const;
+
+  void SetDatabaseManagerForTest(SafeBrowsingDatabaseManager* database_manager);
 
   // Called to initialize objects that are used on the io_thread.  This may be
   // called multiple times during the life of the SafeBrowsingService.
   void StartOnIOThread(
-      net::URLRequestContextGetter* url_request_context_getter);
+      std::unique_ptr<network::SharedURLLoaderFactoryInfo> url_loader_factory);
 
   // Called to stop or shutdown operations on the io_thread. This may be called
   // multiple times to stop during the life of the SafeBrowsingService. If
@@ -277,34 +249,27 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // starts or stops the service accordingly.
   void RefreshState();
 
-  void OnSendSerializedDownloadReport(const std::string& report);
-
-  // Process the observed resource requests on the UI thread.
-  void ProcessResourceRequest(const ResourceRequestInfo& request);
-
   void CreateTriggerManager();
 
-  // The factory used to instantiate a SafeBrowsingService object.
-  // Useful for tests, so they can provide their own implementation of
-  // SafeBrowsingService.
-  static SafeBrowsingServiceFactory* factory_;
+  // Creates a configured NetworkContextParams when the network service is in
+  // use.
+  network::mojom::NetworkContextParamsPtr CreateNetworkContextParams();
 
-  // The SafeBrowsingURLRequestContextGetter used to access
-  // |url_request_context_|. Accessed on UI thread.
-  scoped_refptr<SafeBrowsingURLRequestContextGetter>
-      url_request_context_getter_;
+  std::unique_ptr<ProxyConfigMonitor> proxy_config_monitor_;
 
-#if defined(SAFE_BROWSING_DB_LOCAL)
-  // Handles interaction with SafeBrowsing servers. Accessed on IO thread.
-  std::unique_ptr<SafeBrowsingProtocolManager> protocol_manager_;
-#endif
+  // This owns the URLRequestContext inside the network service. This is used by
+  // SimpleURLLoader for safe browsing requests.
+  std::unique_ptr<safe_browsing::SafeBrowsingNetworkContext> network_context_;
 
-  // Provides phishing and malware statistics. Accessed on IO thread.
-  std::unique_ptr<SafeBrowsingPingManager> ping_manager_;
+  // Provides phishing and malware statistics. Accessed on UI thread.
+  std::unique_ptr<PingManager> ping_manager_;
 
   // Whether SafeBrowsing Extended Reporting is enabled by the current set of
   // profiles. Updated on the UI thread.
   ExtendedReportingLevel estimated_extended_reporting_by_prefs_;
+
+  // Whether the service has been shutdown.
+  bool shutdown_;
 
   // Whether the service is running. 'enabled_' is used by SafeBrowsingService
   // on the IO thread during normal operations.
@@ -313,15 +278,6 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Whether SafeBrowsing is enabled by the current set of profiles.
   // Accessed on UI thread.
   bool enabled_by_prefs_;
-
-  // Whether SafeBrowsing needs to be enabled in V4Only mode. In this mode, all
-  // SafeBrowsing decisions are made using the PVer4 implementation.
-  bool use_v4_only_;
-
-  // Whether the PVer4 implementation needs to be instantiated. Note that even
-  // if the PVer4 implementation has been instantiated, it is used only if
-  // |use_v4_only_| is true.
-  bool v4_enabled_;
 
   // Tracks existing PrefServices, and the safe browsing preference on each.
   // This is used to determine if any profile is currently using the safe
@@ -336,17 +292,9 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Should only be accessed on the UI thread.
   base::CallbackList<void(void)> state_callback_list_;
 
-  // Callbacks when SafeBrowsing service starts shutting down.
-  // Should only be accessed on the UI thread.
-  base::CallbackList<void(void)> shutdown_callback_list_;
-
   // The UI manager handles showing interstitials.  Accessed on both UI and IO
   // thread.
   scoped_refptr<SafeBrowsingUIManager> ui_manager_;
-
-  // The database manager handles the database and download logic.  Accessed on
-  // both UI and IO thread.
-  scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;
 
   // The navigation observer manager handles attribution of safe browsing
   // events.
@@ -358,15 +306,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingService);
 };
 
-// Factory for creating SafeBrowsingService.  Useful for tests.
-class SafeBrowsingServiceFactory {
- public:
-  SafeBrowsingServiceFactory() { }
-  virtual ~SafeBrowsingServiceFactory() { }
-  virtual SafeBrowsingService* CreateSafeBrowsingService() = 0;
- private:
-  DISALLOW_COPY_AND_ASSIGN(SafeBrowsingServiceFactory);
-};
+SafeBrowsingServiceFactory* GetSafeBrowsingServiceFactory();
 
 }  // namespace safe_browsing
 

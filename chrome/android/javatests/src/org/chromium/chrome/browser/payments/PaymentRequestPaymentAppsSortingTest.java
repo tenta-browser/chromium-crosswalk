@@ -10,6 +10,7 @@ import static org.chromium.chrome.browser.payments.PaymentRequestTestRule.IMMEDI
 import android.support.test.filters.MediumTest;
 
 import org.junit.Assert;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -22,28 +23,27 @@ import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.CardType;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
-import org.chromium.chrome.browser.payments.PaymentRequestTestCommon.TestPay;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.payments.PaymentRequestTestRule.TestPay;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ui.DisableAnimationsTestRule;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /** A payment integration test that sorting payment apps and instruments by frecency. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestPaymentAppsSortingTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule = new PaymentRequestTestRule(
             "payment_request_alicepay_bobpay_charliepay_and_cards_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws InterruptedException, TimeoutException {
         AutofillTestHelper helper = new AutofillTestHelper();
         String billingAddressId = helper.setProfile(new AutofillProfile("", "https://example.com",
                 true, "Jon Doe", "Google", "340 Main St", "CA", "Los Angeles", "", "90291", "",
@@ -58,8 +58,7 @@ public class PaymentRequestPaymentAppsSortingTest implements MainActivityStartCa
     @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testPaymentAppsSortingByFrecency()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testPaymentAppsSortingByFrecency() throws InterruptedException, TimeoutException {
         // Install a payment app with Bob Pay and Alice Pay, and another payment app with Charlie
         // Pay.
         final TestPay appA =
@@ -69,7 +68,7 @@ public class PaymentRequestPaymentAppsSortingTest implements MainActivityStartCa
         final TestPay appC =
                 new TestPay("https://charliepay.com", HAVE_INSTRUMENTS, IMMEDIATE_RESPONSE);
         PaymentAppFactory.getInstance().addAdditionalFactory(
-                (webContents, methodNames, callback) -> {
+                (webContents, methodNames, mayCrawlUnused, callback) -> {
                     callback.onPaymentAppCreated(appA);
                     callback.onPaymentAppCreated(appB);
                     callback.onPaymentAppCreated(appC);
@@ -109,8 +108,12 @@ public class PaymentRequestPaymentAppsSortingTest implements MainActivityStartCa
                 "https://bobpay.com", mPaymentRequestTestRule.getPaymentInstrumentLabel(1));
         Assert.assertEquals(
                 "https://alicepay.com", mPaymentRequestTestRule.getPaymentInstrumentLabel(2));
+        // \u0020\...\u2060 is four dots ellipsis, \u202A is the Left-To-Right Embedding (LTE) mark,
+        // \u202C is the Pop Directional Formatting (PDF) mark. Expected string with form
+        // 'Visa  <LRE>****1111<PDF>\nJoe Doe'.
         Assert.assertEquals(
-                "Visa\u0020\u0020\u2022\u2006\u2022\u2006\u2022\u2006\u2022\u20061111\nJon Doe",
+                "Visa\u0020\u0020\u202A\u2022\u2060\u2006\u2060\u2022\u2060\u2006\u2060\u2022"
+                        + "\u2060\u2006\u2060\u2022\u2060\u2006\u20601111\u202C\nJon Doe",
                 mPaymentRequestTestRule.getPaymentInstrumentLabel(3));
 
         // Cancel the Payment Request.
@@ -143,8 +146,12 @@ public class PaymentRequestPaymentAppsSortingTest implements MainActivityStartCa
                 "https://charliepay.com", mPaymentRequestTestRule.getPaymentInstrumentLabel(1));
         Assert.assertEquals(
                 "https://bobpay.com", mPaymentRequestTestRule.getPaymentInstrumentLabel(2));
+        // \u0020\...\u2060 is four dots ellipsis, \u202A is the Left-To-Right Embedding (LTE) mark,
+        // \u202C is the Pop Directional Formatting (PDF) mark. Expected string with form
+        // 'Visa  <LRE>****1111<PDF>\nJoe Doe'.
         Assert.assertEquals(
-                "Visa\u0020\u0020\u2022\u2006\u2022\u2006\u2022\u2006\u2022\u20061111\nJon Doe",
+                "Visa\u0020\u0020\u202A\u2022\u2060\u2006\u2060\u2022\u2060\u2006\u2060\u2022"
+                        + "\u2060\u2006\u2060\u2022\u2060\u2006\u20601111\u202C\nJon Doe",
                 mPaymentRequestTestRule.getPaymentInstrumentLabel(3));
 
         mPaymentRequestTestRule.clickAndWait(

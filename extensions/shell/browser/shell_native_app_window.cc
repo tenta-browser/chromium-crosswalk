@@ -72,11 +72,11 @@ void ShellNativeAppWindow::FlashFrame(bool flash) {
   NOTIMPLEMENTED();
 }
 
-bool ShellNativeAppWindow::IsAlwaysOnTop() const {
-  return false;
+ui::ZOrderLevel ShellNativeAppWindow::GetZOrderLevel() const {
+  return ui::ZOrderLevel::kNormal;
 }
 
-void ShellNativeAppWindow::SetAlwaysOnTop(bool always_on_top) {
+void ShellNativeAppWindow::SetZOrderLevel(ui::ZOrderLevel level) {
   NOTIMPLEMENTED();
 }
 
@@ -136,9 +136,10 @@ void ShellNativeAppWindow::UpdateShape(std::unique_ptr<ShapeRects> rects) {
   NOTIMPLEMENTED();
 }
 
-void ShellNativeAppWindow::HandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) {
+bool ShellNativeAppWindow::HandleKeyboardEvent(
+    const content::NativeWebKeyboardEvent& event) {
   // No special handling. The WebContents will handle it.
+  return false;
 }
 
 bool ShellNativeAppWindow::IsFrameless() const {

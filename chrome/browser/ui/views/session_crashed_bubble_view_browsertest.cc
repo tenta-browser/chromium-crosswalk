@@ -6,11 +6,14 @@
 
 #include <string>
 
+#include "build/buildflag.h"
+#include "chrome/browser/ui/bubble_anchor_util.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/toolbar/app_menu_button.h"
+#include "chrome/browser/ui/views/toolbar/browser_app_menu_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "ui/base/buildflags.h"
 #include "ui/views/view.h"
 
 class SessionCrashedBubbleViewTest : public DialogBrowserTest {
@@ -18,12 +21,17 @@ class SessionCrashedBubbleViewTest : public DialogBrowserTest {
   SessionCrashedBubbleViewTest() {}
   ~SessionCrashedBubbleViewTest() override {}
 
-  void ShowDialog(const std::string& name) override {
-    views::View* anchor_view = BrowserView::GetBrowserViewForBrowser(browser())
-                                   ->toolbar()
-                                   ->app_menu_button();
+  void ShowUi(const std::string& name) override {
+    gfx::Rect anchor_rect = gfx::Rect();
+    views::View* anchor_view = nullptr;
+    if (anchor_rect == gfx::Rect()) {
+      anchor_view = BrowserView::GetBrowserViewForBrowser(browser())
+                        ->toolbar_button_provider()
+                        ->GetAppMenuButton();
+    }
     SessionCrashedBubbleView* crash_bubble =
-        new SessionCrashedBubbleView(anchor_view, browser(), false);
+        new SessionCrashedBubbleView(anchor_view, anchor_rect, browser(),
+                                     name == "SessionCrashedBubbleOfferUma");
     views::BubbleDialogDelegateView::CreateBubble(crash_bubble)->Show();
   }
 
@@ -32,6 +40,11 @@ class SessionCrashedBubbleViewTest : public DialogBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(SessionCrashedBubbleViewTest,
-                       InvokeDialog_SessionCrashedBubble) {
-  RunDialog();
+                       InvokeUi_SessionCrashedBubble) {
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(SessionCrashedBubbleViewTest,
+                       InvokeUi_SessionCrashedBubbleOfferUma) {
+  ShowAndVerifyUi();
 }

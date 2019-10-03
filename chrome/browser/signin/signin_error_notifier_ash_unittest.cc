@@ -7,36 +7,33 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
-#include "chrome/browser/notifications/notification_ui_manager.h"
-#include "chrome/browser/signin/fake_signin_manager_builder.h"
-#include "chrome/browser/signin/signin_error_controller_factory.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
+#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/signin_error_notifier_factory_ash.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_service.h"
+#include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/testing_profile_manager.h"
-#include "components/signin/core/browser/fake_auth_status_provider.h"
-#include "components/signin/core/browser/signin_error_controller.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/user_manager/scoped_user_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 
 namespace {
 
-static const char kTestAccountId[] = "testing_profile";
+const char kTestEmail[] = "email@example.com";
 
 // Notification ID corresponding to kProfileSigninNotificationId +
 // kTestAccountId.
-static const char kNotificationId[] =
-    "chrome://settings/signin/testing_profile";
+const char kNotificationId[] = "chrome://settings/signin/testing_profile";
 
 class SigninErrorNotifierTest : public BrowserWithTestWindowTest {
  public:
@@ -47,105 +44,108 @@ class SigninErrorNotifierTest : public BrowserWithTestWindowTest {
     user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
         base::WrapUnique(mock_user_manager_));
 
-    error_controller_ =
-        SigninErrorControllerFactory::GetForProfile(GetProfile());
     SigninErrorNotifierFactory::GetForProfile(GetProfile());
-    notification_ui_manager_ = g_browser_process->notification_ui_manager();
+    display_service_ =
+        std::make_unique<NotificationDisplayServiceTester>(profile());
+
+    identity_test_env_profile_adaptor_ =
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(GetProfile());
+  }
+
+  void TearDown() override {
+    // Need to be destroyed before the profile associated to this test, which
+    // will be destroyed as part of the TearDown() process.
+    identity_test_env_profile_adaptor_.reset();
+
+    BrowserWithTestWindowTest::TearDown();
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
-    return {{SigninManagerFactory::GetInstance(), BuildFakeSigninManagerBase}};
+    return IdentityTestEnvironmentProfileAdaptor::
+        GetIdentityTestEnvironmentFactories();
+  }
+
+  void SetAuthError(const std::string& account_id,
+                    const GoogleServiceAuthError& error) {
+    signin::UpdatePersistentErrorOfRefreshTokenForAccount(
+        identity_test_env()->identity_manager(), account_id, error);
+  }
+
+  signin::IdentityTestEnvironment* identity_test_env() {
+    return identity_test_env_profile_adaptor_->identity_test_env();
   }
 
  protected:
-  void GetMessage(base::string16* message) {
-    const message_center::Notification* notification =
-        g_browser_process->notification_ui_manager()->FindById(
-            kNotificationId, NotificationUIManager::GetProfileID(GetProfile()));
-    ASSERT_FALSE(notification == NULL);
-    *message = notification->message();
-  }
-
-  SigninErrorController* error_controller_;
-  NotificationUIManager* notification_ui_manager_;
+  std::unique_ptr<NotificationDisplayServiceTester> display_service_;
   chromeos::MockUserManager* mock_user_manager_;  // Not owned.
   std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
+  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
+      identity_test_env_profile_adaptor_;
 };
 
-TEST_F(SigninErrorNotifierTest, NoErrorAuthStatusProviders) {
-  ASSERT_FALSE(notification_ui_manager_->FindById(
-      kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-  {
-    // Add a provider (removes itself on exiting this scope).
-    FakeAuthStatusProvider provider(error_controller_);
-    ASSERT_FALSE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-  }
-  ASSERT_FALSE(notification_ui_manager_->FindById(
-      kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
+TEST_F(SigninErrorNotifierTest, NoNotification) {
+  EXPECT_FALSE(display_service_->GetNotification(kNotificationId));
 }
 
-TEST_F(SigninErrorNotifierTest, ErrorAuthStatusProvider) {
-  {
-    FakeAuthStatusProvider provider(error_controller_);
-    ASSERT_FALSE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-    {
-      FakeAuthStatusProvider error_provider(error_controller_);
-      error_provider.SetAuthError(
-          kTestAccountId,
-          GoogleServiceAuthError(
-              GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
-      ASSERT_TRUE(notification_ui_manager_->FindById(
-          kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-    }
-    // error_provider is removed now that we've left that scope.
-    ASSERT_FALSE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-  }
-  // All providers should be removed now.
-  ASSERT_FALSE(notification_ui_manager_->FindById(
-      kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
+// Verify that if Supervision has just been added for the current user
+// the notification isn't shown.  This is because the Add Supervision
+// flow itself will prompt the user to sign out, so the notification
+// is unnecessary.
+TEST_F(SigninErrorNotifierTest, NoNotificationAfterAddSupervisionEnabled) {
+  std::string account_id =
+      identity_test_env()->MakeAccountAvailable(kTestEmail).account_id;
+  identity_test_env()->SetPrimaryAccount(kTestEmail);
+
+  // Mark signout required.
+  SupervisedUserService* service =
+      SupervisedUserServiceFactory::GetForProfile(profile());
+  service->set_signout_required_after_supervision_enabled();
+
+  SetAuthError(
+      identity_test_env()->identity_manager()->GetPrimaryAccountId(),
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+
+  EXPECT_FALSE(display_service_->GetNotification(kNotificationId));
 }
 
-TEST_F(SigninErrorNotifierTest, AuthStatusProviderErrorTransition) {
-  {
-    FakeAuthStatusProvider provider0(error_controller_);
-    FakeAuthStatusProvider provider1(error_controller_);
-    provider0.SetAuthError(
-        kTestAccountId,
-        GoogleServiceAuthError(
-            GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
-    ASSERT_TRUE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
+TEST_F(SigninErrorNotifierTest, ErrorReset) {
+  EXPECT_FALSE(display_service_->GetNotification(kNotificationId));
 
-    base::string16 message;
-    GetMessage(&message);
-    ASSERT_FALSE(message.empty());
+  std::string account_id =
+      identity_test_env()->MakeAccountAvailable(kTestEmail).account_id;
+  SetAuthError(
+      account_id,
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+  EXPECT_TRUE(display_service_->GetNotification(kNotificationId));
 
-    // Now set another auth error and clear the original.
-    provider1.SetAuthError(
-        kTestAccountId,
-        GoogleServiceAuthError(
-            GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE));
-    provider0.SetAuthError(
-        kTestAccountId,
-        GoogleServiceAuthError::AuthErrorNone());
+  SetAuthError(account_id, GoogleServiceAuthError::AuthErrorNone());
+  EXPECT_FALSE(display_service_->GetNotification(kNotificationId));
+}
 
-    ASSERT_TRUE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
+TEST_F(SigninErrorNotifierTest, ErrorTransition) {
+  std::string account_id =
+      identity_test_env()->MakeAccountAvailable(kTestEmail).account_id;
+  SetAuthError(
+      account_id,
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
 
-    base::string16 new_message;
-    GetMessage(&new_message);
-    ASSERT_FALSE(new_message.empty());
+  base::Optional<message_center::Notification> notification =
+      display_service_->GetNotification(kNotificationId);
+  ASSERT_TRUE(notification);
+  base::string16 message = notification->message();
+  EXPECT_FALSE(message.empty());
 
-    ASSERT_NE(new_message, message);
+  // Now set another auth error.
+  SetAuthError(account_id,
+               GoogleServiceAuthError(
+                   GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE));
 
-    provider1.SetAuthError(
-        kTestAccountId, GoogleServiceAuthError::AuthErrorNone());
-    ASSERT_FALSE(notification_ui_manager_->FindById(
-        kNotificationId, NotificationUIManager::GetProfileID(GetProfile())));
-  }
+  notification = display_service_->GetNotification(kNotificationId);
+  ASSERT_TRUE(notification);
+  base::string16 new_message = notification->message();
+  EXPECT_FALSE(new_message.empty());
+
+  ASSERT_NE(new_message, message);
 }
 
 // Verify that SigninErrorNotifier ignores certain errors.
@@ -156,39 +156,33 @@ TEST_F(SigninErrorNotifierTest, AuthStatusEnumerateAllErrors) {
   } ErrorTableEntry;
 
   ErrorTableEntry table[] = {
-    { GoogleServiceAuthError::NONE, false },
-    { GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS, true },
-    { GoogleServiceAuthError::USER_NOT_SIGNED_UP, true },
-    { GoogleServiceAuthError::CONNECTION_FAILED, false },
-    { GoogleServiceAuthError::CAPTCHA_REQUIRED, true },
-    { GoogleServiceAuthError::ACCOUNT_DELETED, true },
-    { GoogleServiceAuthError::ACCOUNT_DISABLED, true },
-    { GoogleServiceAuthError::SERVICE_UNAVAILABLE, false },
-    { GoogleServiceAuthError::TWO_FACTOR, true },
-    { GoogleServiceAuthError::REQUEST_CANCELED, false },
-    { GoogleServiceAuthError::HOSTED_NOT_ALLOWED_DEPRECATED, false },
-    { GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE, true },
-    { GoogleServiceAuthError::SERVICE_ERROR, true },
-    { GoogleServiceAuthError::WEB_LOGIN_REQUIRED, true },
+      {GoogleServiceAuthError::NONE, false},
+      {GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS, true},
+      {GoogleServiceAuthError::USER_NOT_SIGNED_UP, true},
+      {GoogleServiceAuthError::CONNECTION_FAILED, false},
+      {GoogleServiceAuthError::SERVICE_UNAVAILABLE, false},
+      {GoogleServiceAuthError::REQUEST_CANCELED, false},
+      {GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE, true},
+      {GoogleServiceAuthError::SERVICE_ERROR, true},
   };
-  static_assert(arraysize(table) == GoogleServiceAuthError::NUM_STATES,
+  static_assert(
+      base::size(table) == GoogleServiceAuthError::NUM_STATES -
+                               GoogleServiceAuthError::kDeprecatedStateCount,
       "table size should match number of auth error types");
+  std::string account_id =
+      identity_test_env()->MakeAccountAvailable(kTestEmail).account_id;
 
-  for (size_t i = 0; i < arraysize(table); ++i) {
-    if (GoogleServiceAuthError::IsDeprecated(table[i].error_state))
-      continue;
-    FakeAuthStatusProvider provider(error_controller_);
-    provider.SetAuthError(kTestAccountId,
-                          GoogleServiceAuthError(table[i].error_state));
-    const message_center::Notification* notification =
-        notification_ui_manager_->FindById(
-            kNotificationId, NotificationUIManager::GetProfileID(GetProfile()));
-    ASSERT_EQ(table[i].is_error, notification != NULL);
+  for (size_t i = 0; i < base::size(table); ++i) {
+    SetAuthError(account_id, GoogleServiceAuthError(table[i].error_state));
+    base::Optional<message_center::Notification> notification =
+        display_service_->GetNotification(kNotificationId);
+    ASSERT_EQ(table[i].is_error, !!notification);
     if (table[i].is_error) {
       EXPECT_FALSE(notification->title().empty());
       EXPECT_FALSE(notification->message().empty());
       EXPECT_EQ((size_t)1, notification->buttons().size());
     }
+    SetAuthError(account_id, GoogleServiceAuthError::AuthErrorNone());
   }
 }
 

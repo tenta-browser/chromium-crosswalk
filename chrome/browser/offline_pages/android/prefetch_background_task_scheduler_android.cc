@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "jni/PrefetchBackgroundTaskScheduler_jni.h"
+#include "chrome/android/chrome_jni_headers/PrefetchBackgroundTaskScheduler_jni.h"
 
 namespace offline_pages {
 
@@ -14,6 +14,14 @@ namespace offline_pages {
 void PrefetchBackgroundTaskScheduler::Schedule(int additional_delay_seconds) {
   JNIEnv* env = base::android::AttachCurrentThread();
   prefetch::Java_PrefetchBackgroundTaskScheduler_scheduleTask(
+      env, additional_delay_seconds);
+}
+
+// static
+void PrefetchBackgroundTaskScheduler::ScheduleLimitless(
+    int additional_delay_seconds) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  prefetch::Java_PrefetchBackgroundTaskScheduler_scheduleTaskLimitless(
       env, additional_delay_seconds);
 }
 

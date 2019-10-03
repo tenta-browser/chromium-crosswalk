@@ -5,53 +5,54 @@
 package org.chromium.chrome.browser.download.ui;
 
 import android.content.ComponentName;
+import android.content.Context;
 import android.support.annotation.Nullable;
 import android.support.v7.widget.RecyclerView.ViewHolder;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.download.DownloadItem;
+import org.chromium.chrome.browser.download.DownloadManagerService.DownloadObserver;
 import org.chromium.chrome.browser.download.DownloadSharedPreferenceHelper;
 import org.chromium.chrome.browser.download.DownloadUtils;
+import org.chromium.chrome.browser.download.home.metrics.FileExtensions;
+import org.chromium.chrome.browser.download.home.storage.StorageSummaryProvider;
 import org.chromium.chrome.browser.download.ui.BackendProvider.DownloadDelegate;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper.DownloadItemWrapper;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper.OfflineItemWrapper;
-import org.chromium.chrome.browser.download.ui.DownloadManagerUi.DownloadUiObserver;
 import org.chromium.chrome.browser.widget.DateDividedAdapter;
-import org.chromium.chrome.browser.widget.DateDividedAdapter.TimedItem;
 import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
+import org.chromium.chrome.download.R;
+import org.chromium.components.download.DownloadState;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.offline_items_collection.OfflineContentProvider;
 import org.chromium.components.offline_items_collection.OfflineItem;
-import org.chromium.components.offline_items_collection.OfflineItemFilter;
 import org.chromium.components.offline_items_collection.OfflineItemState;
-import org.chromium.content_public.browser.DownloadState;
+import org.chromium.components.offline_items_collection.UpdateDelta;
+import org.chromium.components.variations.VariationsAssociatedData;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 
 /** Bridges the user's download history and the UI used to display it. */
-public class DownloadHistoryAdapter extends DateDividedAdapter
-        implements DownloadUiObserver, DownloadSharedPreferenceHelper.Observer,
-                   OfflineContentProvider.Observer {
+public class DownloadHistoryAdapter
+        extends DateDividedAdapter implements DownloadSharedPreferenceHelper.Observer,
+                                              OfflineContentProvider.Observer, DownloadObserver {
     private static final String TAG = "DownloadAdapter";
 
     /** Alerted about changes to internal state. */
@@ -80,22 +81,21 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
 
     /** Represents the subsection header of the suggested pages for a given date. */
     protected static class SubsectionHeader extends TimedItem {
-        private final long mTimestamp;
         private List<DownloadHistoryItemWrapper> mSubsectionItems;
         private long mTotalFileSize;
+        private long mLatestUpdateTime;
         private final Long mStableId;
         private boolean mIsExpanded;
+        private boolean mShouldShowRecentBadge;
 
-        public SubsectionHeader(Date date) {
-            mTimestamp = date.getTime();
-
+        public SubsectionHeader() {
             // Generate a stable ID based on timestamp.
-            mStableId = 0xFFFFFFFF00000000L + (getTimestamp() & 0x0FFFFFFFF);
+            mStableId = 0xFFFFFFFF00000000L + (new Date().getTime() & 0x0FFFFFFFF);
         }
 
         @Override
         public long getTimestamp() {
-            return mTimestamp;
+            return mLatestUpdateTime;
         }
 
         /**
@@ -129,6 +129,16 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
             mIsExpanded = isExpanded;
         }
 
+        /** @return Whether the NEW badge should be shown. */
+        public boolean shouldShowRecentBadge() {
+            return mShouldShowRecentBadge;
+        }
+
+        /** @param show Whether the NEW badge should be shown. */
+        public void setShouldShowRecentBadge(boolean show) {
+            mShouldShowRecentBadge = show;
+        }
+
         /**
          * Helper method to set the items for this subsection.
          * @param subsectionItems The items associated with this subsection.
@@ -138,7 +148,29 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
             mTotalFileSize = 0;
             for (DownloadHistoryItemWrapper item : subsectionItems) {
                 mTotalFileSize += item.getFileSize();
+                mLatestUpdateTime = Math.max(mLatestUpdateTime, item.getTimestamp());
             }
+        }
+    }
+
+    /** An item group containing the prefetched items. */
+    private static class PrefetchItemGroup extends ItemGroup {
+        @Override
+        public @GroupPriority int priority() {
+            return GroupPriority.ELEVATED_CONTENT;
+        }
+
+        @Override
+        public @ItemViewType int getItemViewType(int index) {
+            return index == 0 ? ItemViewType.SUBSECTION_HEADER : ItemViewType.NORMAL;
+        }
+
+        @Override
+        protected int compareItem(TimedItem lhs, TimedItem rhs) {
+            if (lhs instanceof SubsectionHeader) return -1;
+            if (rhs instanceof SubsectionHeader) return 1;
+
+            return super.compareItem(lhs, rhs);
         }
     }
 
@@ -152,6 +184,13 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
 
     private static final String PREF_SHOW_STORAGE_INFO_HEADER =
             "download_home_show_storage_info_header";
+    public static final String PREF_PREFETCH_BUNDLE_LAST_VISITED_TIME =
+            "download_home_prefetch_bundle_last_visited_time";
+    private static final String VARIATION_TRIAL_DOWNLOAD_HOME_PREFETCH_UI =
+            "DownloadHomePrefetchUI";
+    private static final String VARIATION_PARAM_TIME_THRESHOLD_FOR_RECENT_BADGE =
+            "recent_badge_time_threshold_hours";
+    private static final int DEFAULT_TIME_THRESHOLD_FOR_RECENT_BADGE_HOURS = 48;
 
     private final BackendItems mRegularDownloadItems = new BackendItemsImpl();
     private final BackendItems mIncognitoDownloadItems = new BackendItemsImpl();
@@ -160,7 +199,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     private final FilePathsToDownloadItemsMap mFilePathsToItemsMap =
             new FilePathsToDownloadItemsMap();
 
-    private final Map<Date, SubsectionHeader> mSubsectionHeaders = new HashMap<>();
+    private SubsectionHeader mPrefetchHeader;
     private final ComponentName mParentComponent;
     private final boolean mShowOffTheRecord;
     private final LoadingStateDelegate mLoadingDelegate;
@@ -168,12 +207,20 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     private final List<DownloadItemView> mViews = new ArrayList<>();
 
     private BackendProvider mBackendProvider;
-    private int mFilter = DownloadFilter.FILTER_ALL;
+    private @DownloadFilter.Type int mFilter = DownloadFilter.Type.ALL;
     private String mSearchQuery = EMPTY_QUERY;
+    // TODO(xingliu): Remove deprecated storage info. See https://crbug/853260.
     private SpaceDisplay mSpaceDisplay;
+    private StorageSummaryProvider mStorageSummaryProvider;
     private HeaderItem mSpaceDisplayHeaderItem;
+    private HeaderItem mStorageSummaryHeaderItem;
     private boolean mIsSearching;
     private boolean mShouldShowStorageInfoHeader;
+    private boolean mShouldPrefetchSectionExpand;
+    private long mPrefetchBundleLastVisitedTime;
+
+    // Should only be accessed through getRecentBadgeTimeThreshold().
+    private Integer mTimeThresholdForRecentBadgeMs;
 
     @Nullable // This may be null during tests.
     private UiConfig mUiConfig;
@@ -189,62 +236,73 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
 
     /**
      * Initializes the adapter.
+     * @param context The {@link Context} used for inflating views.
      * @param provider The {@link BackendProvider} that provides classes needed by the adapter.
      * @param uiConfig The UiConfig used to observe display style changes.
      */
-    public void initialize(BackendProvider provider, @Nullable UiConfig uiConfig) {
+    public void initialize(Context context, BackendProvider provider, @Nullable UiConfig uiConfig) {
         mBackendProvider = provider;
         mUiConfig = uiConfig;
 
-        generateHeaderItems();
+        generateHeaderItems(context);
 
         DownloadItemSelectionDelegate selectionDelegate =
                 (DownloadItemSelectionDelegate) mBackendProvider.getSelectionDelegate();
         selectionDelegate.initialize(this);
 
-        // Get all regular and (if necessary) off the record downloads.
-        DownloadDelegate downloadManager = getDownloadDelegate();
-        downloadManager.addDownloadHistoryAdapter(this);
-        downloadManager.getAllDownloads(false);
-        if (mShowOffTheRecord) downloadManager.getAllDownloads(true);
+        if (!useNewDownloadPath()) {
+            // Get all regular and (if necessary) off the record downloads.
+            DownloadDelegate downloadManager = getDownloadDelegate();
+            downloadManager.addDownloadObserver(this);
+            downloadManager.getAllDownloads(false);
+            if (mShowOffTheRecord) downloadManager.getAllDownloads(true);
+        }
 
+        // Fetch all Offline Items from OfflineContentProvider (Pages, Background Fetches etc).
+        getAllOfflineItems();
         getOfflineContentProvider().addObserver(this);
 
         sDeletedFileTracker.incrementInstanceCount();
         mShouldShowStorageInfoHeader = ContextUtils.getAppSharedPreferences().getBoolean(
                 PREF_SHOW_STORAGE_INFO_HEADER,
                 ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOAD_HOME_SHOW_STORAGE_INFO));
+        mPrefetchBundleLastVisitedTime = ContextUtils.getAppSharedPreferences().getLong(
+                PREF_PREFETCH_BUNDLE_LAST_VISITED_TIME, new Date(0L).getTime());
     }
 
     private OfflineContentProvider getOfflineContentProvider() {
         return mBackendProvider.getOfflineContentProvider();
     }
 
-    /** Called when the user's regular or incognito download history has been loaded. */
+    @Override
     public void onAllDownloadsRetrieved(List<DownloadItem> result, boolean isOffTheRecord) {
+        if (useNewDownloadPath()) return;
         if (isOffTheRecord && !mShowOffTheRecord) return;
 
         BackendItems list = getDownloadItemList(isOffTheRecord);
         if (list.isInitialized()) return;
         assert list.size() == 0;
 
-        int[] itemCounts = new int[DownloadFilter.FILTER_BOUNDARY];
+        int[] itemCounts = new int[DownloadFilter.Type.NUM_ENTRIES];
+        int[] viewedItemCounts = new int[DownloadFilter.Type.NUM_ENTRIES];
 
         for (DownloadItem item : result) {
             DownloadItemWrapper wrapper = createDownloadItemWrapper(item);
             if (addDownloadHistoryItemWrapper(wrapper)
-                    && wrapper.isVisibleToUser(DownloadFilter.FILTER_ALL)) {
+                    && wrapper.isVisibleToUser(DownloadFilter.Type.ALL)) {
                 itemCounts[wrapper.getFilterType()]++;
-                if (!isOffTheRecord && wrapper.getFilterType() == DownloadFilter.FILTER_OTHER) {
+
+                if (DownloadUtils.isDownloadViewed(wrapper.getItem()))
+                    viewedItemCounts[wrapper.getFilterType()]++;
+                if (!isOffTheRecord && wrapper.getFilterType() == DownloadFilter.Type.OTHER) {
                     RecordHistogram.recordEnumeratedHistogram(
                             "Android.DownloadManager.OtherExtensions.InitialCount",
-                            wrapper.getFileExtensionType(),
-                            DownloadHistoryItemWrapper.FILE_EXTENSION_BOUNDARY);
+                            wrapper.getFileExtensionType(), FileExtensions.Type.NUM_ENTRIES);
                 }
             }
         }
 
-        if (!isOffTheRecord) recordDownloadCountHistograms(itemCounts);
+        if (!isOffTheRecord) recordDownloadCountHistograms(itemCounts, viewedItemCounts);
 
         list.setIsInitialized();
         onItemsRetrieved(isOffTheRecord
@@ -261,15 +319,19 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         //                    downloads rather than passing them to Java.
         if (sDeletedFileTracker.contains(wrapper)) return true;
 
-        if (wrapper.hasBeenExternallyRemoved()) {
+        if (!wrapper.hasBeenExternallyRemoved()) return false;
+
+        if (DownloadUtils.isInPrimaryStorageDownloadDirectory(wrapper.getFilePath())) {
             sDeletedFileTracker.add(wrapper);
-            wrapper.remove();
+            wrapper.removePermanently();
             mFilePathsToItemsMap.removeItem(wrapper);
             RecordUserAction.record("Android.DownloadManager.Item.ExternallyDeleted");
             return true;
+        } else {
+            // Keeps the download record when the file is on external SD card.
+            RecordUserAction.record("Android.DownloadManager.Item.ExternallyDeletedKeepRecord");
+            return false;
         }
-
-        return false;
     }
 
     private boolean addDownloadHistoryItemWrapper(DownloadHistoryItemWrapper wrapper) {
@@ -301,7 +363,9 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
 
     /** Returns a collection of {@link SubsectionHeader}s. */
     public Collection<SubsectionHeader> getSubsectionHeaders() {
-        return mSubsectionHeaders.values();
+        List<SubsectionHeader> headers = new ArrayList<>();
+        if (mPrefetchHeader != null) headers.add(mPrefetchHeader);
+        return headers;
     }
 
     @Override
@@ -347,26 +411,38 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     @Override
     protected void bindViewHolderForHeaderItem(ViewHolder viewHolder, HeaderItem headerItem) {
         super.bindViewHolderForHeaderItem(viewHolder, headerItem);
-        mSpaceDisplay.onChanged();
-    }
-
-    @Override
-    protected ItemGroup createGroup(long timeStamp) {
-        return new DownloadItemGroup(timeStamp);
+        updateStorageSummary();
     }
 
     /**
      * Initialize space display view in storage info header and generate header item for it.
+     * @param context The {@link Context} used for inflating views.
      */
-    void generateHeaderItems() {
-        mSpaceDisplay = new SpaceDisplay(null, this);
+    private void generateHeaderItems(Context context) {
+        mSpaceDisplay = new SpaceDisplay(context, null, this);
         View view = mSpaceDisplay.getViewContainer();
         registerAdapterDataObserver(mSpaceDisplay);
         mSpaceDisplayHeaderItem = new HeaderItem(0, view);
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOADS_LOCATION_CHANGE)) {
+            View storageSummaryView =
+                    LayoutInflater.from(context).inflate(R.layout.download_storage_summary, null);
+            mStorageSummaryProvider =
+                    new StorageSummaryProvider(context, this ::updateStorageInfo, null);
+            mStorageSummaryHeaderItem = new HeaderItem(0, storageSummaryView);
+        }
+    }
+
+    private void updateStorageInfo(String storageInfo) {
+        TextView storageSummaryView = (TextView) mStorageSummaryHeaderItem.getView();
+        storageSummaryView.setText(storageInfo);
     }
 
     /** Called when a new DownloadItem has been created by the native DownloadManager. */
+    @Override
     public void onDownloadItemCreated(DownloadItem item) {
+        if (useNewDownloadPath()) return;
+
         boolean isOffTheRecord = item.getDownloadInfo().isOffTheRecord();
         if (isOffTheRecord && !mShowOffTheRecord) return;
 
@@ -381,7 +457,10 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     }
 
     /** Updates the list when new information about a download comes in. */
+    @Override
     public void onDownloadItemUpdated(DownloadItem item) {
+        if (useNewDownloadPath()) return;
+
         DownloadItemWrapper newWrapper = createDownloadItemWrapper(item);
         if (newWrapper.isOffTheRecord() && !mShowOffTheRecord) return;
 
@@ -429,7 +508,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
                     if (TextUtils.equals(item.getId(), wrapper.getId())) {
                         view.displayItem(mBackendProvider, existingWrapper);
                         if (item.getDownloadInfo().state() == DownloadState.COMPLETE) {
-                            mSpaceDisplay.onChanged();
+                            updateStorageSummary();
                         }
                     }
                 }
@@ -444,15 +523,18 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
      * @param guid           ID of the DownloadItem that has been removed.
      * @param isOffTheRecord True if off the record, false otherwise.
      */
+    @Override
     public void onDownloadItemRemoved(String guid, boolean isOffTheRecord) {
+        if (useNewDownloadPath()) return;
+
         if (isOffTheRecord && !mShowOffTheRecord) return;
         if (getDownloadItemList(isOffTheRecord).removeItem(guid) != null) {
             filter(mFilter);
         }
     }
 
-    @Override
-    public void onFilterChanged(int filter) {
+    /** Called when the filter representing which items can show has changed. */
+    public void onFilterChanged(@DownloadFilter.Type int filter) {
         if (mLoadingDelegate.isLoaded()) {
             filter(filter);
         } else {
@@ -461,9 +543,9 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         }
     }
 
-    @Override
-    public void onManagerDestroyed() {
-        getDownloadDelegate().removeDownloadHistoryAdapter(this);
+    /** Called when this object should be destroyed. */
+    public void destroy() {
+        getDownloadDelegate().removeDownloadObserver(this);
         getOfflineContentProvider().removeObserver(this);
         sDeletedFileTracker.decrementInstanceCount();
         if (mSpaceDisplay != null) unregisterAdapterDataObserver(mSpaceDisplay);
@@ -570,36 +652,76 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     }
 
     /** Filters the list of downloads to show only files of a specific type. */
-    private void filter(int filterType) {
+    private void filter(@DownloadFilter.Type int filterType) {
         mFilter = filterType;
 
         List<TimedItem> filteredTimedItems = new ArrayList<>();
         mRegularDownloadItems.filter(mFilter, mSearchQuery, filteredTimedItems);
         mIncognitoDownloadItems.filter(mFilter, mSearchQuery, filteredTimedItems);
 
-        filter(mFilter, mSearchQuery, mOfflineItems, filteredTimedItems);
+        List<DownloadHistoryItemWrapper> prefetchedItems = new ArrayList<>();
+        filter(mFilter, mSearchQuery, mOfflineItems, filteredTimedItems, prefetchedItems);
 
         clear(false);
-        if (!filteredTimedItems.isEmpty() && !mIsSearching && mShouldShowStorageInfoHeader) {
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOADS_LOCATION_CHANGE)) {
+            setHeaders(mStorageSummaryHeaderItem);
+        } else if (!filteredTimedItems.isEmpty() && !mIsSearching && mShouldShowStorageInfoHeader) {
             setHeaders(mSpaceDisplayHeaderItem);
         }
 
+        createPrefetchedItemGroup(prefetchedItems);
         loadItems(filteredTimedItems);
+    }
+
+    private void createPrefetchedItemGroup(List<DownloadHistoryItemWrapper> prefetchedItems) {
+        if (prefetchedItems.isEmpty()) return;
+        if (!TextUtils.isEmpty(mSearchQuery)) return;
+
+        if (mPrefetchHeader == null) mPrefetchHeader = new SubsectionHeader();
+        mPrefetchHeader.setIsExpanded(mShouldPrefetchSectionExpand);
+        mPrefetchHeader.update(prefetchedItems);
+
+        ItemGroup prefetchItemGroup = new PrefetchItemGroup();
+        prefetchItemGroup.addItem(mPrefetchHeader);
+        if (mPrefetchHeader.isExpanded()) {
+            for (DownloadHistoryItemWrapper item : prefetchedItems) {
+                prefetchItemGroup.addItem(item);
+            }
+        }
+
+        addGroup(prefetchItemGroup);
+        updateRecentBadges(prefetchedItems);
+    }
+
+    private void updateRecentBadges(List<DownloadHistoryItemWrapper> prefetchedItems) {
+        boolean showBadgeForHeader = false;
+        for (DownloadHistoryItemWrapper item : prefetchedItems) {
+            item.setShouldShowRecentBadge(shouldItemShowRecentBadge(item));
+            showBadgeForHeader |= shouldItemShowRecentBadge(item);
+        }
+
+        mPrefetchHeader.setShouldShowRecentBadge(showBadgeForHeader);
+    }
+
+    private boolean shouldItemShowRecentBadge(DownloadHistoryItemWrapper item) {
+        return item.getTimestamp() > mPrefetchBundleLastVisitedTime;
     }
 
     /**
      * Filters the list based on the current filter and search text.
-     * If there are suggested pages, they are filtered based on whether or not the subsection for
-     * that date is expanded. Also a header is added for each subsection if any.
+     * If there are suggested pages, they are filtered based on whether or not the prefetch section
+     * is expanded. While doing a search, we don't show the prefetch header, but show the items
+     * nevertheless.
      * @param filterType The filter to use.
      * @param query The search text to match.
      * @param inputList The input item list.
-     * @param filteredItems The output item list which is append-only.
+     * @param filteredItems The output item list (append-only) for the normal section.
+     * @param suggestedItems The output item list for the prefetch section.
      */
     private void filter(int filterType, String query, List<DownloadHistoryItemWrapper> inputList,
-            List<TimedItem> filteredItems) {
+            List<TimedItem> filteredItems, List<DownloadHistoryItemWrapper> suggestedItems) {
         boolean shouldShowSubsectionHeaders = TextUtils.isEmpty(mSearchQuery);
-        List<DownloadHistoryItemWrapper> suggestedItems = new ArrayList<>();
 
         for (DownloadHistoryItemWrapper item : inputList) {
             if (!item.isVisibleToUser(filterType)) continue;
@@ -611,88 +733,32 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
                 filteredItems.add(item);
             }
         }
-
-        if (!shouldShowSubsectionHeaders) return;
-
-        Map<Date, List<DownloadHistoryItemWrapper>> suggestedPageMap = new HashMap<>();
-
-        for (DownloadHistoryItemWrapper offlineItem : suggestedItems) {
-            // Add the suggested pages to the adapter only if the section is expanded for that date.
-            addItemToSuggestedPagesMap(offlineItem, suggestedPageMap);
-            if (!isSubsectionExpanded(
-                        DownloadUtils.getDateAtMidnight(offlineItem.getTimestamp()))) {
-                continue;
-            }
-            filteredItems.add(offlineItem);
-        }
-
-        generateSubsectionHeaders(filteredItems, suggestedPageMap);
-    }
-
-    private void addItemToSuggestedPagesMap(DownloadHistoryItemWrapper offlineItem,
-            Map<Date, List<DownloadHistoryItemWrapper>> suggestedPageMap) {
-        Date date = DownloadUtils.getDateAtMidnight(offlineItem.getTimestamp());
-
-        if (!suggestedPageMap.containsKey(date)) {
-            suggestedPageMap.put(date, new ArrayList<DownloadHistoryItemWrapper>());
-        }
-
-        suggestedPageMap.get(date).add(offlineItem);
-    }
-
-    // Creates subsection headers for each date and appends to |filteredTimedItems|.
-    private void generateSubsectionHeaders(List<TimedItem> filteredTimedItems,
-            Map<Date, List<DownloadHistoryItemWrapper>> suggestedPageMap) {
-        for (Map.Entry<Date, List<DownloadHistoryItemWrapper>> entry :
-                suggestedPageMap.entrySet()) {
-            Date date = entry.getKey();
-            if (!mSubsectionHeaders.containsKey(date)) {
-                mSubsectionHeaders.put(date, new SubsectionHeader(date));
-            }
-
-            mSubsectionHeaders.get(date).update(suggestedPageMap.get(date));
-        }
-
-        // Remove entry from |mSubsectionExpanded| if there are no more suggested pages.
-        Iterator<Entry<Date, SubsectionHeader>> iter = mSubsectionHeaders.entrySet().iterator();
-        while (iter.hasNext()) {
-            Entry<Date, SubsectionHeader> entry = iter.next();
-            if (!suggestedPageMap.containsKey(entry.getKey())) {
-                iter.remove();
-            }
-        }
-
-        filteredTimedItems.addAll(mSubsectionHeaders.values());
     }
 
     /**
-     * Whether the suggested pages section is expanded for a given date.
-     * @param date The download date.
-     * @return Whether the suggested pages section is expanded.
+     * Sets the state of the prefetch section and updates the adapter.
+     * @param expanded Whether the prefetched section should be expanded.
      */
-    public boolean isSubsectionExpanded(Date date) {
-        // Default state is collapsed.
-        if (!mSubsectionHeaders.containsKey(date)) {
-            return false;
-        }
+    public void setPrefetchSectionExpanded(boolean expanded) {
+        if (mShouldPrefetchSectionExpand == expanded) return;
+        mShouldPrefetchSectionExpand = expanded;
 
-        return mSubsectionHeaders.get(date).isExpanded();
-    }
-
-    /**
-     * Sets the state of a subsection for a particular date and updates the adapter.
-     * @param date The download date.
-     * @param expanded Whether the suggested pages should be expanded.
-     */
-    public void setSubsectionExpanded(Date date, boolean expanded) {
-        mSubsectionHeaders.get(date).setIsExpanded(expanded);
+        updatePrefetchBundleLastVisitedTime();
         clear(false);
         filter(mFilter);
     }
 
-    @Override
-    protected boolean isSubsectionHeader(TimedItem timedItem) {
-        return timedItem instanceof SubsectionHeader;
+    private void updatePrefetchBundleLastVisitedTime() {
+        // We don't care about marking recent for items updated more than 48 hours ago.
+        Calendar calendar = Calendar.getInstance();
+        calendar.add(Calendar.HOUR_OF_DAY, -getRecentBadgeTimeThreshold());
+        mPrefetchBundleLastVisitedTime = ContextUtils.getAppSharedPreferences().getLong(
+                PREF_PREFETCH_BUNDLE_LAST_VISITED_TIME, calendar.getTime().getTime());
+
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putLong(PREF_PREFETCH_BUNDLE_LAST_VISITED_TIME, new Date().getTime())
+                .apply();
     }
 
     private BackendItems getDownloadItemList(boolean isOffTheRecord) {
@@ -708,20 +774,32 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     }
 
     private DownloadItemWrapper createDownloadItemWrapper(DownloadItem item) {
+        assert !useNewDownloadPath();
         return new DownloadItemWrapper(item, mBackendProvider, mParentComponent);
     }
 
-    private void recordDownloadCountHistograms(int[] itemCounts) {
+    private void recordDownloadCountHistograms(int[] itemCounts, int[] viewedItemCounts) {
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Audio",
-                itemCounts[DownloadFilter.FILTER_AUDIO]);
+                itemCounts[DownloadFilter.Type.AUDIO]);
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Document",
-                itemCounts[DownloadFilter.FILTER_DOCUMENT]);
+                itemCounts[DownloadFilter.Type.DOCUMENT]);
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Image",
-                itemCounts[DownloadFilter.FILTER_IMAGE]);
+                itemCounts[DownloadFilter.Type.IMAGE]);
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Other",
-                itemCounts[DownloadFilter.FILTER_OTHER]);
+                itemCounts[DownloadFilter.Type.OTHER]);
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Video",
-                itemCounts[DownloadFilter.FILTER_VIDEO]);
+                itemCounts[DownloadFilter.Type.VIDEO]);
+
+        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Viewed.Audio",
+                viewedItemCounts[DownloadFilter.Type.AUDIO]);
+        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Viewed.Document",
+                viewedItemCounts[DownloadFilter.Type.DOCUMENT]);
+        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Viewed.Image",
+                viewedItemCounts[DownloadFilter.Type.IMAGE]);
+        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Viewed.Other",
+                viewedItemCounts[DownloadFilter.Type.OTHER]);
+        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Viewed.Video",
+                viewedItemCounts[DownloadFilter.Type.VIDEO]);
     }
 
     private void recordTotalDownloadCountHistogram() {
@@ -736,31 +814,48 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         return mSpaceDisplay;
     }
 
-    @Override
-    public void onItemsAvailable() {
-        List<OfflineItem> offlineItems = getOfflineContentProvider().getAllItems();
-        for (OfflineItem item : offlineItems) {
-            if (item.isTransient) continue;
-            DownloadHistoryItemWrapper wrapper = createDownloadHistoryItemWrapper(item);
-            addDownloadHistoryItemWrapper(wrapper);
-        }
+    private void getAllOfflineItems() {
+        getOfflineContentProvider().getAllItems(offlineItems -> {
+            for (OfflineItem item : offlineItems) {
+                if (item.isTransient) continue;
+                DownloadHistoryItemWrapper wrapper = createDownloadHistoryItemWrapper(item);
+                addDownloadHistoryItemWrapper(wrapper);
+            }
 
-        recordOfflineItemCountHistograms();
-        onItemsRetrieved(LoadingStateDelegate.OFFLINE_ITEMS);
+            recordOfflineItemCountHistograms();
+            onItemsRetrieved(LoadingStateDelegate.OFFLINE_ITEMS);
+        });
     }
 
     private void recordOfflineItemCountHistograms() {
-        int[] itemCounts = new int[OfflineItemFilter.FILTER_BOUNDARY];
-        for (DownloadHistoryItemWrapper item : mOfflineItems) {
-            OfflineItemWrapper offlineItem = (OfflineItemWrapper) item;
-            if (offlineItem.isOffTheRecord()) continue;
-            itemCounts[offlineItem.getOfflineItemFilter()]++;
+        int offlinePageCount = 0;
+        int viewedOfflinePageCount = 0;
+        int prefetchedOfflinePageCount = 0;
+        int viewedPrefetchedOfflinePageCount = 0;
+
+        for (DownloadHistoryItemWrapper itemWrapper : mOfflineItems) {
+            if (itemWrapper.isOffTheRecord()) continue;
+            OfflineItemWrapper offlineItemWrapper = (OfflineItemWrapper) itemWrapper;
+            boolean hasBeenViewed = DownloadUtils.isOfflineItemViewed(offlineItemWrapper.getItem());
+            if (offlineItemWrapper.isSuggested()) {
+                prefetchedOfflinePageCount++;
+                if (hasBeenViewed) viewedPrefetchedOfflinePageCount++;
+            } else {
+                offlinePageCount++;
+                if (hasBeenViewed) viewedOfflinePageCount++;
+            }
         }
 
-        // TODO(shaktisahu): UMA for initial counts of offline pages, regular downloads and download
-        // file types and file extensions.
-        RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.OfflinePage",
-                itemCounts[OfflineItemFilter.FILTER_PAGE]);
+        RecordHistogram.recordCountHistogram(
+                "Android.DownloadManager.InitialCount.OfflinePage", offlinePageCount);
+        RecordHistogram.recordCountHistogram(
+                "Android.DownloadManager.InitialCount.Viewed.OfflinePage", viewedOfflinePageCount);
+        RecordHistogram.recordCountHistogram(
+                "Android.DownloadManager.InitialCount.PrefetchedOfflinePage",
+                prefetchedOfflinePageCount);
+        RecordHistogram.recordCountHistogram(
+                "Android.DownloadManager.InitialCount.Viewed.PrefetchedOfflinePage",
+                viewedPrefetchedOfflinePageCount);
     }
 
     @Override
@@ -789,7 +884,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     }
 
     @Override
-    public void onItemUpdated(OfflineItem item) {
+    public void onItemUpdated(OfflineItem item, UpdateDelta updateDelta) {
         if (item.isTransient) return;
 
         DownloadHistoryItemWrapper newWrapper = createDownloadHistoryItemWrapper(item);
@@ -834,7 +929,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
                     if (TextUtils.equals(item.id.id, view.getItem().getId())) {
                         view.displayItem(mBackendProvider, existingWrapper);
                         if (item.state == OfflineItemState.COMPLETE) {
-                            mSpaceDisplay.onChanged();
+                            updateStorageSummary();
                         }
                     }
                 }
@@ -844,7 +939,33 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         }
     }
 
+    private static boolean useNewDownloadPath() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOAD_OFFLINE_CONTENT_PROVIDER);
+    }
+
     private DownloadHistoryItemWrapper createDownloadHistoryItemWrapper(OfflineItem item) {
         return new OfflineItemWrapper(item, mBackendProvider, mParentComponent);
+    }
+
+    private int getRecentBadgeTimeThreshold() {
+        if (mTimeThresholdForRecentBadgeMs == null) {
+            mTimeThresholdForRecentBadgeMs = DEFAULT_TIME_THRESHOLD_FOR_RECENT_BADGE_HOURS;
+
+            String variationResult = VariationsAssociatedData.getVariationParamValue(
+                    VARIATION_TRIAL_DOWNLOAD_HOME_PREFETCH_UI,
+                    VARIATION_PARAM_TIME_THRESHOLD_FOR_RECENT_BADGE);
+            if (!TextUtils.isEmpty(variationResult)) {
+                mTimeThresholdForRecentBadgeMs = Integer.parseInt(variationResult);
+            }
+        }
+
+        return mTimeThresholdForRecentBadgeMs;
+    }
+
+    private void updateStorageSummary() {
+        if (mSpaceDisplay != null) mSpaceDisplay.onChanged();
+        if (mStorageSummaryProvider != null) {
+            mStorageSummaryProvider.setUsedStorage(getTotalDownloadSize());
+        }
     }
 }

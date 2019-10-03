@@ -11,6 +11,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
+import android.text.SpannableString;
+import android.text.style.RelativeSizeSpan;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -24,7 +26,9 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Shows the dialog to choose a host browser to launch WebAPK. Calls the listener callback when the
@@ -39,6 +43,9 @@ public class ChooseHostBrowserDialog {
         void onHostBrowserSelected(String selectedHostBrowser);
         void onQuit();
     }
+
+    /** Checked prior to running the {@link DialogInterface.OnDismissListener}. */
+    private static class OnDismissListenerCanceler { public boolean canceled; }
 
     /** Stores information about a potential host browser for the WebAPK. */
     public static class BrowserItem {
@@ -80,10 +87,10 @@ public class ChooseHostBrowserDialog {
      * Shows the dialog for choosing a host browser.
      * @param context The current Context.
      * @param listener The listener for the dialog.
-     * @param infos The list of ResolvedInfos of the browsers that are shown on the dialog.
+     * @param infos The set of ResolvedInfos of the browsers that are shown on the dialog.
      * @param appName The name of the WebAPK for which the dialog is shown.
      */
-    public static void show(Context context, final DialogListener listener, List<ResolveInfo> infos,
+    public static void show(Context context, final DialogListener listener, Set<ResolveInfo> infos,
             String appName) {
         final List<BrowserItem> browserItems =
                 getBrowserInfosForHostBrowserSelection(context.getPackageManager(), infos);
@@ -103,6 +110,8 @@ public class ChooseHostBrowserDialog {
         ListView browserList = (ListView) view.findViewById(R.id.browser_list);
         browserList.setAdapter(new BrowserArrayAdapter(context, browserItems));
 
+        OnDismissListenerCanceler onDismissCanceler = new OnDismissListenerCanceler();
+
         // The context theme wrapper is needed for pre-L.
         AlertDialog.Builder builder = new AlertDialog.Builder(
                 new ContextThemeWrapper(context, android.R.style.Theme_DeviceDefault_Light_Dialog));
@@ -110,7 +119,7 @@ public class ChooseHostBrowserDialog {
                 R.string.choose_host_browser_dialog_quit, new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        listener.onQuit();
+                        dialog.cancel();
                     }
                 });
 
@@ -120,6 +129,7 @@ public class ChooseHostBrowserDialog {
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 BrowserItem browserItem = browserItems.get(position);
                 if (browserItem.supportsWebApks()) {
+                    onDismissCanceler.canceled = true;
                     listener.onHostBrowserSelected(browserItem.getPackageName());
                     dialog.cancel();
                 }
@@ -129,6 +139,8 @@ public class ChooseHostBrowserDialog {
         dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
             @Override
             public void onDismiss(DialogInterface dialogInterface) {
+                if (onDismissCanceler.canceled) return;
+
                 listener.onQuit();
             }
         });
@@ -137,11 +149,15 @@ public class ChooseHostBrowserDialog {
 
     /** Returns a list of BrowserItem for all of the installed browsers. */
     private static List<BrowserItem> getBrowserInfosForHostBrowserSelection(
-            PackageManager packageManager, List<ResolveInfo> resolveInfos) {
+            PackageManager packageManager, Set<ResolveInfo> resolveInfos) {
         List<BrowserItem> browsers = new ArrayList<>();
-        List<String> browsersSupportingWebApk = WebApkUtils.getBrowsersSupportingWebApk();
+        List<String> browsersSupportingWebApk = HostBrowserUtils.getBrowsersSupportingWebApk();
+        Set<String> packages = new HashSet<>();
 
         for (ResolveInfo info : resolveInfos) {
+            if (packages.contains(info.activityInfo.packageName)) continue;
+            packages.add(info.activityInfo.packageName);
+
             browsers.add(new BrowserItem(info.activityInfo.packageName,
                     info.loadLabel(packageManager), info.loadIcon(packageManager),
                     browsersSupportingWebApk.contains(info.activityInfo.packageName)));
@@ -166,6 +182,8 @@ public class ChooseHostBrowserDialog {
     private static class BrowserArrayAdapter extends ArrayAdapter<BrowserItem> {
         private List<BrowserItem> mBrowsers;
         private Context mContext;
+        private static final float UNSUPPORTED_ICON_OPACITY = 0.26f;
+        private static final float SUPPORTED_ICON_OPACITY = 1f;
 
         public BrowserArrayAdapter(Context context, List<BrowserItem> browsers) {
             super(context, R.layout.host_browser_list_item, browsers);
@@ -191,11 +209,19 @@ public class ChooseHostBrowserDialog {
             if (item.supportsWebApks()) {
                 name.setText(item.getApplicationName());
                 name.setTextColor(WebApkUtils.getColor(res, R.color.black_alpha_87));
+                icon.setAlpha(SUPPORTED_ICON_OPACITY);
             } else {
-                name.setText(mContext.getString(R.string.host_browser_item_not_supporting_webapks,
-                        item.getApplicationName()));
+                String text = mContext.getString(R.string.host_browser_item_not_supporting_webapks,
+                        item.getApplicationName());
+                SpannableString spannableName = new SpannableString(text);
+                float descriptionProportion = res.getDimension(R.dimen.text_size_medium_dense)
+                        / res.getDimension(R.dimen.text_size_large);
+                spannableName.setSpan(new RelativeSizeSpan(descriptionProportion),
+                        item.getApplicationName().length() + 1, spannableName.length(), 0);
+                name.setText(spannableName);
                 name.setSingleLine(false);
                 name.setTextColor(WebApkUtils.getColor(res, R.color.black_alpha_38));
+                icon.setAlpha(UNSUPPORTED_ICON_OPACITY);
             }
             icon.setImageDrawable(item.getApplicationIcon());
             icon.setEnabled(item.supportsWebApks());

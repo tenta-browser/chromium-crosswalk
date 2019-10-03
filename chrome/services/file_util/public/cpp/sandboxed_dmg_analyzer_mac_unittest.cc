@@ -16,37 +16,43 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
+#include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/services/file_util/file_util_service.h"
+#include "chrome/services/file_util/public/mojom/constants.mojom.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "services/service_manager/public/cpp/test/test_connector_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace chrome {
 namespace {
 
 class SandboxedDMGAnalyzerTest : public testing::Test {
  public:
   SandboxedDMGAnalyzerTest()
       : browser_thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-        test_connector_factory_(std::make_unique<chrome::FileUtilService>()),
-        connector_(test_connector_factory_.CreateConnector()) {}
+        file_util_service_(test_connector_factory_.RegisterInstance(
+            chrome::mojom::kFileUtilServiceName)) {}
 
   void AnalyzeFile(const base::FilePath& path,
                    safe_browsing::ArchiveAnalyzerResults* results) {
     base::RunLoop run_loop;
     ResultsGetter results_getter(run_loop.QuitClosure(), results);
     scoped_refptr<SandboxedDMGAnalyzer> analyzer(new SandboxedDMGAnalyzer(
-        path, results_getter.GetCallback(), connector_.get()));
+        path,
+        safe_browsing::FileTypePolicies::GetInstance()->GetMaxFileSizeToAnalyze(
+            "dmg"),
+        results_getter.GetCallback(),
+        test_connector_factory_.GetDefaultConnector()));
     analyzer->Start();
     run_loop.Run();
   }
 
   base::FilePath GetFilePath(const char* file_name) {
     base::FilePath test_data;
-    EXPECT_TRUE(PathService::Get(chrome::DIR_GEN_TEST_DATA, &test_data));
-    return test_data.AppendASCII("chrome")
-        .AppendASCII("safe_browsing_dmg")
+    EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data));
+    return test_data.AppendASCII("safe_browsing")
+        .AppendASCII("dmg")
+        .AppendASCII("data")
         .AppendASCII(file_name);
   }
 
@@ -79,7 +85,7 @@ class SandboxedDMGAnalyzerTest : public testing::Test {
   content::TestBrowserThreadBundle browser_thread_bundle_;
   content::InProcessUtilityThreadHelper utility_thread_helper_;
   service_manager::TestConnectorFactory test_connector_factory_;
-  std::unique_ptr<service_manager::Connector> connector_;
+  FileUtilService file_util_service_;
 };
 
 TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDMG) {
@@ -142,12 +148,20 @@ TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDMG) {
           "2012CE4987B0FA4A5D285DF7E810560E841CFAB3054BC19E1AAB345F862A6C4E",
           actual_sha256);
     } else {
-      ADD_FAILURE() << "Unepxected result file " << binary.file_basename();
+      ADD_FAILURE() << "Unexpected result file " << binary.file_basename();
     }
   }
 
   EXPECT_TRUE(got_executable);
   EXPECT_TRUE(got_dylib);
+
+  ASSERT_EQ(1, results.detached_code_signatures.size());
+  const safe_browsing::ClientDownloadRequest_DetachedCodeSignature
+      detached_signature = results.detached_code_signatures.Get(0);
+  EXPECT_EQ(
+      "Mach-O in DMG/shell-script.app/Contents/_CodeSignature/CodeSignature",
+      detached_signature.file_name());
+  EXPECT_EQ(1842u, detached_signature.contents().size());
 }
 
 TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDmgNoSignature) {
@@ -164,7 +178,7 @@ TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDmgNoSignature) {
 
 TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDmgWithSignature) {
   base::FilePath signed_dmg;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &signed_dmg));
+  EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &signed_dmg));
   signed_dmg = signed_dmg.AppendASCII("safe_browsing")
                    .AppendASCII("mach_o")
                    .AppendASCII("signed-archive.dmg");
@@ -176,7 +190,8 @@ TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDmgWithSignature) {
   EXPECT_EQ(2215u, results.signature_blob.size());
 
   base::FilePath signed_dmg_signature;
-  EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &signed_dmg_signature));
+  EXPECT_TRUE(
+      base::PathService::Get(chrome::DIR_TEST_DATA, &signed_dmg_signature));
   signed_dmg_signature = signed_dmg_signature.AppendASCII("safe_browsing")
                              .AppendASCII("mach_o")
                              .AppendASCII("signed-archive-signature.data");
@@ -190,4 +205,3 @@ TEST_F(SandboxedDMGAnalyzerTest, AnalyzeDmgWithSignature) {
 }
 
 }  // namespace
-}  // namespace chrome

@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/optional.h"
@@ -45,8 +46,8 @@ class FileStreamForwarderTest : public testing::Test {
     context_->OpenFileSystem(
         GURL(kURLOrigin), storage::kFileSystemTypeTemporary,
         storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
-        base::Bind([](const GURL& root_url, const std::string& name,
-                      base::File::Error result) {
+        base::BindOnce([](const GURL& root_url, const std::string& name,
+                          base::File::Error result) {
           EXPECT_EQ(base::File::FILE_OK, result);
         }));
     base::RunLoop().RunUntilIdle();

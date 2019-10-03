@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
@@ -107,16 +108,6 @@ class BluetoothInterfaceDeviceTest : public testing::Test {
 
     service2->AddMockCharacteristic(std::move(characteristic3));
 
-    EXPECT_CALL(*service1, GetCharacteristics())
-        .WillRepeatedly(
-            Invoke(service1.get(),
-                   &device::MockBluetoothGattService::GetMockCharacteristics));
-
-    EXPECT_CALL(*service2, GetCharacteristics())
-        .WillRepeatedly(
-            Invoke(service2.get(),
-                   &device::MockBluetoothGattService::GetMockCharacteristics));
-
     device_.AddMockService(std::move(service1));
     device_.AddMockService(std::move(service2));
 
@@ -134,8 +125,8 @@ class BluetoothInterfaceDeviceTest : public testing::Test {
     Device::Create(adapter_, std::move(connection), mojo::MakeRequest(&proxy_));
 
     proxy_.set_connection_error_handler(
-        base::Bind(&BluetoothInterfaceDeviceTest::OnConnectionError,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&BluetoothInterfaceDeviceTest::OnConnectionError,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void TearDown() override {
@@ -175,10 +166,10 @@ class BluetoothInterfaceDeviceTest : public testing::Test {
     if (expected == Call::EXPECTED)
       ++expected_success_callback_calls_;
 
-    return base::Bind(&BluetoothInterfaceDeviceTest::CheckGetServicesCountImpl,
-                      weak_factory_.GetWeakPtr(), expected,
-                      2 /* expected_service_count */,
-                      expected_callback_count_++);
+    return base::BindOnce(
+        &BluetoothInterfaceDeviceTest::CheckGetServicesCountImpl,
+        weak_factory_.GetWeakPtr(), expected, 2 /* expected_service_count */,
+        expected_callback_count_++);
   }
 
   scoped_refptr<NiceMockBluetoothAdapter> adapter_;

@@ -2,20 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <iostream>
+
+#include "base/bind.h"
 #include "base/build_time.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "build/build_config.h"
 #include "crypto/nss_util.h"
-#include "net/socket/client_socket_pool_base.h"
+#include "net/socket/transport_client_socket_pool.h"
 #include "net/test/net_test_suite.h"
-#include "url/url_features.h"
-
-#if !defined(OS_IOS)
-#include "mojo/edk/embedder/embedder.h"  // nogncheck
-#endif
-
-using net::internal::ClientSocketPoolBaseHelper;
+#include "url/buildflags.h"
 
 namespace {
 
@@ -50,18 +46,11 @@ bool VerifyBuildIsTimely() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  // Record histograms, so we can get histograms data in tests.
-  base::StatisticsRecorder::Initialize();
-
   if (!VerifyBuildIsTimely())
     return 1;
 
   NetTestSuite test_suite(argc, argv);
-  ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(false);
-
-#if !defined(OS_IOS)
-  mojo::edk::Init();
-#endif
+  net::TransportClientSocketPool::set_connect_backup_jobs_enabled(false);
 
   return base::LaunchUnitTests(
       argc, argv, base::Bind(&NetTestSuite::Run,

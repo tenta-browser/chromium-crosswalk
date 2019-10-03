@@ -21,7 +21,6 @@ import org.chromium.components.url_formatter.UrlFormatter;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Provides the communication channel for Android to fetch and manipulate the
@@ -168,7 +167,6 @@ public class BookmarkBridge {
      * Contains data about a bookmark or bookmark folder.
      */
     public static class BookmarkItem {
-
         private final String mTitle;
         private final String mUrl;
         private final BookmarkId mId;
@@ -200,12 +198,7 @@ public class BookmarkBridge {
 
         /** @return The string to display for the item's url. */
         public String getUrlForDisplay() {
-            return UrlFormatter.formatUrlForSecurityDisplay(getUrl(), false);
-        }
-
-        /** @return Id of the bookmark item. */
-        public BookmarkId getId() {
-            return mId;
+            return UrlFormatter.formatUrlForSecurityDisplayOmitScheme(getUrl());
         }
 
         /** @return Whether item is a folder or a bookmark. */
@@ -236,6 +229,10 @@ public class BookmarkBridge {
         /** @return Whether this is a managed bookmark. */
         public boolean isManaged() {
             return mIsManaged;
+        }
+
+        public BookmarkId getId() {
+            return mId;
         }
     }
 
@@ -311,8 +308,8 @@ public class BookmarkBridge {
             @Override
             public void bookmarkModelLoaded() {
                 removeObserver(this);
-                RecordHistogram.recordTimesHistogram("PartnerBookmark.LoadingTime",
-                        SystemClock.elapsedRealtime() - startTime, TimeUnit.MILLISECONDS);
+                RecordHistogram.recordTimesHistogram(
+                        "PartnerBookmark.LoadingTime", SystemClock.elapsedRealtime() - startTime);
                 runAfterModelLoaded.run();
             }
             @Override
@@ -473,6 +470,7 @@ public class BookmarkBridge {
      * @return Child IDs of the given folder, with the specified type.
      */
     public List<BookmarkId> getChildIDs(BookmarkId id, boolean getFolders, boolean getBookmarks) {
+        // TODO(crbug.com/160194): Remove boolean parameters after bookmark reordering launches.
         assert mIsNativeBookmarkModelLoaded;
         List<BookmarkId> result = new ArrayList<BookmarkId>();
         nativeGetChildIDs(mNativeBookmarkBridge,
@@ -487,7 +485,7 @@ public class BookmarkBridge {
     /**
      * Gets the child of a folder at the specific position.
      * @param folderId Id of the parent folder
-     * @param index Posision of child among all children in folder
+     * @param index Position of child among all children in folder
      * @return BookmarkId of the child, which will be null if folderId does not point to a folder or
      *         index is invalid.
      */
@@ -495,6 +493,16 @@ public class BookmarkBridge {
         assert mIsNativeBookmarkModelLoaded;
         return nativeGetChildAt(mNativeBookmarkBridge, folderId.getId(), folderId.getType(),
                 index);
+    }
+
+    /**
+     * Get the total number of bookmarks in the sub tree of the specified folder.
+     * @param id The {@link BookmarkId} of the folder to be queried.
+     * @return The total number of bookmarks in the folder.
+     */
+    public int getTotalBookmarkCount(BookmarkId id) {
+        assert mIsNativeBookmarkModelLoaded;
+        return nativeGetTotalBookmarkCount(mNativeBookmarkBridge, id.getId(), id.getType());
     }
 
     /**
@@ -538,7 +546,7 @@ public class BookmarkBridge {
 
     /**
      * Fetches the bookmarks of the given folder. This is an always-synchronous version of another
-     * getBookmarksForForder function.
+     * getBookmarksForFolder function.
      *
      * @param folderId The parent folder id.
      * @return Bookmarks of the given folder.
@@ -705,6 +713,16 @@ public class BookmarkBridge {
                 observer.bookmarkModelLoaded();
             }
         }
+    }
+
+    /**
+     * Reorders the bookmarks of the folder "parent" to be as specified by newOrder.
+     *
+     * @param parent The parent folder for the reordered bookmarks.
+     * @param newOrder A list of bookmark IDs that represents the new order for these bookmarks.
+     */
+    public void reorderBookmarks(BookmarkId parent, long[] newOrder) {
+        nativeReorderChildren(mNativeBookmarkBridge, parent, newOrder);
     }
 
     @CalledByNative
@@ -896,6 +914,7 @@ public class BookmarkBridge {
             boolean getFolders, boolean getBookmarks, List<BookmarkId> bookmarksList);
     private native BookmarkId nativeGetChildAt(long nativeBookmarkBridge, long id, int type,
             int index);
+    private native int nativeGetTotalBookmarkCount(long nativeBookmarkBridge, long id, int type);
     private native void nativeSetBookmarkTitle(long nativeBookmarkBridge, long id, int type,
             String title);
     private native void nativeSetBookmarkUrl(long nativeBookmarkBridge, long id, int type,
@@ -926,4 +945,6 @@ public class BookmarkBridge {
     private native boolean nativeIsDoingExtensiveChanges(long nativeBookmarkBridge);
     private native void nativeDestroy(long nativeBookmarkBridge);
     private static native boolean nativeIsEditBookmarksEnabled(long nativeBookmarkBridge);
+    private native void nativeReorderChildren(
+            long nativeBookmarkBridge, BookmarkId parent, long[] orderedNodes);
 }

@@ -10,12 +10,11 @@
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/timer/elapsed_timer.h"
+#include "base/task/post_task.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
 namespace {
@@ -30,12 +29,12 @@ bool IsValidLocale(const std::string& locale) {
 
 base::File GetDictionaryFile(const std::string& locale) {
   // Keep Files open in the cache for subsequent calls.
-  CR_DEFINE_STATIC_LOCAL(DictionaryFileMap, cache, ());
+  static base::NoDestructor<DictionaryFileMap> cache;
 
-  const auto& it = cache.find(locale);
-  if (it != cache.end())
+  const auto& it = cache->find(locale);
+  if (it != cache->end())
     return it->second.Duplicate();
-  const auto& inserted = cache.insert(std::make_pair(locale, base::File()));
+  const auto& inserted = cache->insert(std::make_pair(locale, base::File()));
   base::File& file = inserted.first->second;
   DCHECK(!file.IsValid());
 
@@ -46,9 +45,7 @@ base::File GetDictionaryFile(const std::string& locale) {
 #endif
   std::string filename = base::StringPrintf("hyph-%s.hyb", locale.c_str());
   base::FilePath path = dir.AppendASCII(filename);
-  base::ElapsedTimer timer;
   file.Initialize(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-  UMA_HISTOGRAM_TIMES("Hyphenation.Open.File", timer.Elapsed());
   return file.Duplicate();
 }
 
@@ -68,12 +65,11 @@ void HyphenationImpl::Create(blink::mojom::HyphenationRequest request) {
 
 // static
 scoped_refptr<base::SequencedTaskRunner> HyphenationImpl::GetTaskRunner() {
-  CR_DEFINE_STATIC_LOCAL(
-      scoped_refptr<base::SequencedTaskRunner>, runner,
-      (base::CreateSequencedTaskRunnerWithTraits(
+  static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> runner(
+      base::CreateSequencedTaskRunnerWithTraits(
           {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
-           base::TaskPriority::USER_BLOCKING})));
-  return runner;
+           base::TaskPriority::USER_BLOCKING}));
+  return *runner;
 }
 
 void HyphenationImpl::OpenDictionary(const std::string& locale,

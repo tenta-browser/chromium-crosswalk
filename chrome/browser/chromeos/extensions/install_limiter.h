@@ -32,24 +32,29 @@ class InstallLimiter : public KeyedService,
  public:
   static InstallLimiter* Get(Profile* profile);
 
+  // Install should be deferred if the size is larger than 1MB and the app is
+  // not the screensaver in demo mode (which requires instant installation to
+  // avoid visual delay).
+  static bool ShouldDeferInstall(int64_t app_size, const std::string& app_id);
+
   InstallLimiter();
   ~InstallLimiter() override;
 
   void DisableForTest();
 
   void Add(const scoped_refptr<CrxInstaller>& installer,
-           const base::FilePath& path);
+           const CRXFileInfo& file_info);
 
  private:
   // DeferredInstall holds info to run a CrxInstaller later.
   struct DeferredInstall {
     DeferredInstall(const scoped_refptr<CrxInstaller>& installer,
-                   const base::FilePath& path);
+                    const CRXFileInfo& file_info);
     DeferredInstall(const DeferredInstall& other);
     ~DeferredInstall();
 
     const scoped_refptr<CrxInstaller> installer;
-    const base::FilePath path;
+    const CRXFileInfo file_info;
   };
 
   using DeferredInstallList = base::queue<DeferredInstall>;
@@ -59,7 +64,7 @@ class InstallLimiter : public KeyedService,
   // it stores the install info into |deferred_installs_| to run it later.
   // Otherwise, it just runs the installer.
   void AddWithSize(const scoped_refptr<CrxInstaller>& installer,
-                   const base::FilePath& path,
+                   const CRXFileInfo& file_info,
                    int64_t size);
 
   // Checks and runs deferred big app installs when appropriate.
@@ -68,7 +73,7 @@ class InstallLimiter : public KeyedService,
   // Starts install using passed-in info and observes |installer|'s done
   // notification.
   void RunInstall(const scoped_refptr<CrxInstaller>& installer,
-                  const base::FilePath& path);
+                  const CRXFileInfo& file_info);
 
   // content::NotificationObserver overrides:
   void Observe(int type,

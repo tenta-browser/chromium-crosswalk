@@ -7,8 +7,8 @@
 #include <string>
 
 #include "base/cpu.h"
-#include "base/sys_info.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/system/sys_info.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
 #include "chrome/common/channel_info.h"
 #include "components/safe_browsing/proto/csd.pb.h"
@@ -64,7 +64,8 @@ void CollectProcessData(ClientIncidentReport_EnvironmentData_Process* process) {
 }  // namespace
 
 void CollectEnvironmentData(ClientIncidentReport_EnvironmentData* data) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
 
   // OS
   {

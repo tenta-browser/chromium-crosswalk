@@ -4,7 +4,9 @@
 
 #import "ios/chrome/test/app/chrome_test_util.h"
 
+#include "base/logging.h"
 #include "base/mac/foundation_util.h"
+#import "base/test/ios/wait_util.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
@@ -19,12 +21,14 @@
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/metrics/previous_session_info_private.h"
-#import "ios/chrome/browser/tabs/tab.h"
-#import "ios/chrome/browser/ui/browser_view_controller.h"
-#import "ios/chrome/browser/ui/main/view_controller_swapping.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
-#import "ios/chrome/browser/ui/tab_switcher/tab_switcher.h"
+#import "ios/chrome/browser/ui/browser_view/browser_view_controller.h"
+#import "ios/chrome/browser/ui/main/bvc_container_view_controller.h"
+#import "ios/chrome/browser/ui/tab_grid/view_controller_swapping.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/test/fakes/test_web_state_observer.h"
 #import "ios/web/public/test/native_controller_test_util.h"
 #import "third_party/breakpad/breakpad/src/client/ios/BreakpadController.h"
 
@@ -67,15 +71,6 @@ ios::ChromeBrowserState* GetBrowserState(bool incognito) {
                    : browser_state;
 }
 
-// Gets the root UIViewController.
-UIViewController* GetActiveViewController() {
-  UIWindow* main_window = [[UIApplication sharedApplication] keyWindow];
-  DCHECK([main_window isKindOfClass:[ChromeOverlayWindow class]]);
-  id<ViewControllerSwapping> main_view_controller =
-      static_cast<id<ViewControllerSwapping>>([main_window rootViewController]);
-  return main_view_controller.activeViewController;
-}
-
 }  // namespace
 
 namespace chrome_test_util {
@@ -88,18 +83,6 @@ DeviceSharingManager* GetDeviceSharingManager() {
   return [GetMainController() deviceSharingManager];
 }
 
-NewTabPageController* GetCurrentNewTabPageController() {
-  web::WebState* web_state = GetCurrentWebState();
-  id nativeController = web::test::GetCurrentNativeController(web_state);
-  if (![nativeController isKindOfClass:[NewTabPageController class]])
-    return nil;
-  return base::mac::ObjCCast<NewTabPageController>(nativeController);
-}
-
-web::WebState* GetCurrentWebState() {
-  return GetCurrentTab().webState;
-}
-
 ios::ChromeBrowserState* GetOriginalBrowserState() {
   return GetBrowserState(false);
 }
@@ -109,32 +92,55 @@ ios::ChromeBrowserState* GetCurrentIncognitoBrowserState() {
 }
 
 NSUInteger GetRegisteredKeyCommandsCount() {
-  BrowserViewController* mainBVC =
-      GetMainController().browserViewInformation.mainBVC;
-  return mainBVC.keyCommands.count;
+  UIViewController* mainViewController =
+      GetMainController().interfaceProvider.mainInterface.viewController;
+  return mainViewController.keyCommands.count;
 }
 
 id<BrowserCommands> BrowserCommandDispatcherForMainBVC() {
   BrowserViewController* mainBVC =
-      GetMainController().browserViewInformation.mainBVC;
+      GetMainController().interfaceProvider.mainInterface.bvc;
   return mainBVC.dispatcher;
 }
 
-id<ApplicationCommands, BrowserCommands> DispatcherForActiveViewController() {
+UIViewController* GetActiveViewController() {
+  UIWindow* main_window = [[UIApplication sharedApplication] keyWindow];
+  DCHECK([main_window isKindOfClass:[ChromeOverlayWindow class]]);
+  UIViewController* main_view_controller = main_window.rootViewController;
+  if ([main_view_controller
+          conformsToProtocol:@protocol(ViewControllerSwapping)]) {
+    // This is either the stack_view or the iPad tab_switcher, in which case it
+    // is best to call |-activeViewController|.
+    return [static_cast<id<ViewControllerSwapping>>(main_view_controller)
+        activeViewController];
+  }
+
+  // The active view controller is either the TabGridViewController or its
+  // presented BVC. The BVC is itself contained inside of a
+  // BVCContainerViewController.
+  UIViewController* active_view_controller =
+      main_view_controller.presentedViewController
+          ? main_view_controller.presentedViewController
+          : main_view_controller;
+  if ([active_view_controller
+          isKindOfClass:[BVCContainerViewController class]]) {
+    active_view_controller =
+        base::mac::ObjCCastStrict<BVCContainerViewController>(
+            active_view_controller)
+            .currentBVC;
+  }
+  return active_view_controller;
+}
+
+id<ApplicationCommands, BrowserCommands>
+DispatcherForActiveBrowserViewController() {
   UIViewController* vc = GetActiveViewController();
   BrowserViewController* bvc = base::mac::ObjCCast<BrowserViewController>(vc);
-  if (bvc)
-    return bvc.dispatcher;
-  if ([vc conformsToProtocol:@protocol(TabSwitcher)]) {
-    UIViewController<TabSwitcher>* tabSwitcher =
-        static_cast<UIViewController<TabSwitcher>*>(vc);
-    return tabSwitcher.dispatcher;
-  }
-  return nil;
+  return bvc.dispatcher;
 }
 
 void RemoveAllInfoBars() {
-  web::WebState* webState = [GetCurrentTab() webState];
+  web::WebState* webState = GetCurrentWebState();
   if (webState) {
     infobars::InfoBarManager* info_bar_manager =
         InfoBarManagerImpl::FromWebState(webState);
@@ -216,6 +222,31 @@ void OpenChromeFromExternalApp(const GURL& url) {
 
   [[[UIApplication sharedApplication] delegate]
       applicationDidBecomeActive:[UIApplication sharedApplication]];
+}
+
+bool PurgeCachedWebViewPages() {
+  web::WebState* web_state = chrome_test_util::GetCurrentWebState();
+  const GURL last_committed_url = web_state->GetLastCommittedURL();
+
+  web_state->SetWebUsageEnabled(false);
+  web_state->SetWebUsageEnabled(true);
+
+  auto observer = std::make_unique<web::TestWebStateObserver>(web_state);
+  web::TestWebStateObserver* observer_ptr = observer.get();
+
+  web_state->GetNavigationManager()->LoadIfNecessary();
+
+  // The navigation triggered by LoadIfNecessary() may only start loading in the
+  // next run loop, if it is for a web URL. The most reliable way to detect that
+  // this navigation has finished is via the WebStateObserver.
+  return base::test::ios::WaitUntilConditionOrTimeout(
+      base::test::ios::kWaitForPageLoadTimeout, ^{
+        return observer_ptr->did_finish_navigation_info() &&
+               observer_ptr->did_finish_navigation_info()->context &&
+               observer_ptr->did_finish_navigation_info()
+                       ->context->GetWebState()
+                       ->GetVisibleURL() == last_committed_url;
+      });
 }
 
 }  // namespace chrome_test_util

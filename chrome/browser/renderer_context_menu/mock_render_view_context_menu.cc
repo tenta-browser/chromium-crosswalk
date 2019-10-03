@@ -47,10 +47,6 @@ void MockRenderViewContextMenu::ExecuteCommand(int command_id,
   observer_->ExecuteCommand(command_id);
 }
 
-void MockRenderViewContextMenu::MenuWillShow(ui::SimpleMenuModel* source) {}
-
-void MockRenderViewContextMenu::MenuClosed(ui::SimpleMenuModel* source) {}
-
 void MockRenderViewContextMenu::AddMenuItem(int command_id,
                                             const base::string16& title) {
   MockMenuItem item;
@@ -59,6 +55,20 @@ void MockRenderViewContextMenu::AddMenuItem(int command_id,
   item.checked = false;
   item.hidden = false;
   item.title = title;
+  items_.push_back(item);
+}
+
+void MockRenderViewContextMenu::AddMenuItemWithIcon(
+    int command_id,
+    const base::string16& title,
+    const gfx::ImageSkia& image) {
+  MockMenuItem item;
+  item.command_id = command_id;
+  item.enabled = observer_->IsCommandIdEnabled(command_id);
+  item.checked = false;
+  item.hidden = false;
+  item.title = title;
+  item.icon = gfx::Image(image);
   items_.push_back(item);
 }
 
@@ -93,6 +103,27 @@ void MockRenderViewContextMenu::AddSubMenu(int command_id,
   item.title = label;
   items_.push_back(item);
 
+  AppendSubMenuItems(model);
+}
+
+void MockRenderViewContextMenu::AddSubMenuWithStringIdAndIcon(
+    int command_id,
+    int message_id,
+    ui::MenuModel* model,
+    const gfx::ImageSkia& image) {
+  MockMenuItem item;
+  item.command_id = command_id;
+  item.enabled = observer_->IsCommandIdEnabled(command_id);
+  item.checked = observer_->IsCommandIdChecked(command_id);
+  item.hidden = false;
+  item.title = l10n_util::GetStringUTF16(message_id);
+  item.icon = gfx::Image(image);
+  items_.push_back(item);
+
+  AppendSubMenuItems(model);
+}
+
+void MockRenderViewContextMenu::AppendSubMenuItems(ui::MenuModel* model) {
   // Add items in the submenu |model| to |items_| so that the items can be
   // updated later via the RenderViewContextMenuProxy interface.
   // NOTE: this is a hack for the mock class. Ideally, RVCMProxy should neither
@@ -141,10 +172,37 @@ void MockRenderViewContextMenu::UpdateMenuIcon(int command_id,
          << " command_id: " << command_id;
 }
 
+void MockRenderViewContextMenu::RemoveMenuItem(int command_id) {}
+
+void MockRenderViewContextMenu::RemoveAdjacentSeparators() {}
+
 void MockRenderViewContextMenu::AddSpellCheckServiceItem(bool is_checked) {
   AddCheckItem(
       IDC_CONTENT_CONTEXT_SPELLING_TOGGLE,
       l10n_util::GetStringUTF16(IDS_CONTENT_CONTEXT_SPELLING_ASK_GOOGLE));
+}
+
+void MockRenderViewContextMenu::AddAccessibilityLabelsServiceItem(
+    bool is_checked) {
+  // TODO(katie): Is there a way not to repeat this logic from
+  // render_view_context_menu.cc?
+  if (is_checked) {
+    AddCheckItem(IDC_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_TOGGLE,
+                 l10n_util::GetStringUTF16(
+                     IDS_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_MENU_OPTION));
+  } else {
+    ui::SimpleMenuModel accessibility_labels_submenu_model_(this);
+    accessibility_labels_submenu_model_.AddItemWithStringId(
+        IDC_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_TOGGLE,
+        IDS_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_SEND);
+    accessibility_labels_submenu_model_.AddItemWithStringId(
+        IDC_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_TOGGLE_ONCE,
+        IDS_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_SEND_ONCE);
+    AddSubMenu(IDC_CONTENT_CONTEXT_ACCESSIBILITY_LABELS,
+               l10n_util::GetStringUTF16(
+                   IDS_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_MENU_OPTION),
+               &accessibility_labels_submenu_model_);
+  }
 }
 
 content::RenderViewHost* MockRenderViewContextMenu::GetRenderViewHost() const {
@@ -156,7 +214,7 @@ content::BrowserContext* MockRenderViewContextMenu::GetBrowserContext() const {
 }
 
 content::WebContents* MockRenderViewContextMenu::GetWebContents() const {
-  return nullptr;
+  return web_contents_;
 }
 
 void MockRenderViewContextMenu::SetObserver(

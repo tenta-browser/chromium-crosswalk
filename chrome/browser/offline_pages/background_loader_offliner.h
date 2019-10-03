@@ -13,19 +13,23 @@
 #include "components/offline_pages/content/background_loader/background_loader_contents.h"
 #include "components/offline_pages/core/background/load_termination_listener.h"
 #include "components/offline_pages/core/background/offliner.h"
+#include "components/offline_pages/core/background_snapshot_controller.h"
 #include "components/offline_pages/core/offline_page_types.h"
-#include "components/offline_pages/core/snapshot_controller.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/page_type.h"
 
 namespace content {
 class BrowserContext;
 }  // namespace content
 
+namespace security_state {
+struct VisibleSecurityState;
+}  // namespace security_state
+
 namespace offline_pages {
 
 class OfflinerPolicy;
 class OfflinePageModel;
-
 class PageRenovationLoader;
 class PageRenovator;
 
@@ -39,10 +43,12 @@ struct RequestStats {
 // An Offliner implementation that attempts client-side rendering and saving
 // of an offline page. It uses the BackgroundLoader to load the page and the
 // OfflinePageModel to save it. Only one request may be active at a time.
-class BackgroundLoaderOffliner : public Offliner,
-                                 public content::WebContentsObserver,
-                                 public SnapshotController::Client,
-                                 public ResourceLoadingObserver {
+class BackgroundLoaderOffliner
+    : public Offliner,
+      public background_loader::BackgroundLoaderContents::Delegate,
+      public content::WebContentsObserver,
+      public BackgroundSnapshotController::Client,
+      public ResourceLoadingObserver {
  public:
   BackgroundLoaderOffliner(
       content::BrowserContext* browser_context,
@@ -56,11 +62,17 @@ class BackgroundLoaderOffliner : public Offliner,
 
   // Offliner implementation.
   bool LoadAndSave(const SavePageRequest& request,
-                   const CompletionCallback& completion_callback,
+                   CompletionCallback completion_callback,
                    const ProgressCallback& progress_callback) override;
-  bool Cancel(const CancelCallback& callback) override;
+  bool Cancel(CancelCallback callback) override;
   void TerminateLoadIfInProgress() override;
   bool HandleTimeout(int64_t request_id) override;
+
+  // BackgroundLoaderContents::Delegate implementation.
+  // Called when a navigation resulted in a single-file download. e.g.
+  // When user navigated to a pdf page while offline and clicks on the
+  // "Download page later" button.
+  void CanDownload(base::OnceCallback<void(bool)> callback) override;
 
   // WebContentsObserver implementation.
   void DocumentAvailableInMainFrame() override;
@@ -70,28 +82,29 @@ class BackgroundLoaderOffliner : public Offliner,
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
-  // SnapshotController::Client implementation.
+  // BackgroundSnapshotController::Client implementation.
   void StartSnapshot() override;
   void RunRenovations() override;
 
-  void SetSnapshotControllerForTest(
-      std::unique_ptr<SnapshotController> controller);
+  void SetBackgroundSnapshotControllerForTest(
+      std::unique_ptr<BackgroundSnapshotController> controller);
 
   // ResourceLoadingObserver implemenation
   void ObserveResourceLoading(ResourceLoadingObserver::ResourceDataType type,
                               bool started) override;
   void OnNetworkBytesChanged(int64_t bytes) override;
 
- protected:
-  // Called to reset the loader.
-  virtual void ResetLoader();
-
  private:
   friend class TestBackgroundLoaderOffliner;
   friend class BackgroundLoaderOfflinerTest;
 
   enum SaveState { NONE, SAVING, DELETE_AFTER_SAVE };
-  enum PageLoadState { SUCCESS, RETRIABLE, NONRETRIABLE };
+  enum PageLoadState {
+    SUCCESS,
+    RETRIABLE_NET_ERROR,
+    RETRIABLE_HTTP_ERROR,
+    NONRETRIABLE
+  };
 
   // Called when the page has been saved.
   void OnPageSaved(SavePageResult save_result, int64_t offline_id);
@@ -114,8 +127,27 @@ class BackgroundLoaderOffliner : public Offliner,
   void DeleteOfflinePageCallback(const SavePageRequest& request,
                                  DeletePageResult result);
 
+  // Checks whether the loaded page can be saved in the background based on its
+  // security information and other characteristics. Returns the respective
+  // RequestStatus value for any specific error or RequestStatus::UNKNOWN
+  // otherwise.
+  Offliner::RequestStatus CanSavePageInBackground(
+      content::WebContents* web_contents);
+
   // Testing method to examine resource stats.
   RequestStats* GetRequestStatsForTest() { return stats_; }
+
+  // Called to reset the loader. Overridden in tests.
+  virtual void ResetLoader();
+
+  // Returns the VisibleSecurityState for the page currently loaded by the
+  // provided WebContents. Overridden in tests.
+  virtual std::unique_ptr<security_state::VisibleSecurityState>
+  GetVisibleSecurityState(content::WebContents* web_contents);
+
+  // Returns PageType for the page currently loaded by the provided WebContents.
+  // Overridden in tests.
+  virtual content::PageType GetPageType(content::WebContents* web_contents);
 
   std::unique_ptr<background_loader::BackgroundLoaderContents> loader_;
   // Not owned.
@@ -127,7 +159,7 @@ class BackgroundLoaderOffliner : public Offliner,
   // Tracks pending request, if any.
   std::unique_ptr<SavePageRequest> pending_request_;
   // Handles determining when a page should be snapshotted.
-  std::unique_ptr<SnapshotController> snapshot_controller_;
+  std::unique_ptr<BackgroundSnapshotController> snapshot_controller_;
   // Callback when pending request completes.
   CompletionCallback completion_callback_;
   // Callback to report progress.

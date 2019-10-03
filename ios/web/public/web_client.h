@@ -11,13 +11,15 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/values.h"
 #include "ios/web/public/user_agent.h"
 #include "mojo/public/cpp/system/message_pipe.h"
-#include "services/service_manager/embedder/embedded_service_info.h"
+#include "services/service_manager/public/cpp/manifest.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 #include "ui/base/layout.h"
 #include "url/url_util.h"
 
@@ -32,6 +34,10 @@ class GURL;
 
 namespace net {
 class SSLInfo;
+}
+
+namespace service_manager {
+class Service;
 }
 
 namespace web {
@@ -77,10 +83,6 @@ class WebClient {
   // schemes early on in the startup sequence.
   virtual void AddAdditionalSchemes(Schemes* schemes) const {}
 
-  // Returns the languages used in the Accept-Languages HTTP header.
-  // Used to decide URL formatting.
-  virtual std::string GetAcceptLangs(BrowserState* state) const;
-
   // Returns the embedding application locale string.
   virtual std::string GetApplicationLocale() const;
 
@@ -91,10 +93,6 @@ class WebClient {
 
   // Returns text to be displayed for an unsupported plugin.
   virtual base::string16 GetPluginNotSupportedText() const;
-
-  // Returns a string describing the embedder product name and version, of the
-  // form "productname/version".  Used as part of the user agent string.
-  virtual std::string GetProduct() const;
 
   // Returns the user agent string for the specified type.
   virtual std::string GetUserAgent(UserAgentType type) const;
@@ -108,6 +106,9 @@ class WebClient {
 
   // Returns the raw bytes of a scale independent data resource.
   virtual base::RefCountedMemory* GetDataResourceBytes(int resource_id) const;
+
+  // Returns whether the contents of a resource are compressed (with gzip).
+  virtual bool IsDataResourceGzipped(int resource_id) const;
 
   // Returns a list of additional WebUI schemes, if any. These additional
   // schemes act as aliases to the about: scheme. The additional schemes may or
@@ -124,23 +125,42 @@ class WebClient {
 
   // Gives the embedder a chance to provide the JavaScript to be injected into
   // the web view as early as possible. Result must not be nil.
+  // The script returned will be injected in all frames (main and subframes).
   //
   // TODO(crbug.com/703964): Change the return value to NSArray<NSString*> to
   // improve performance.
-  virtual NSString* GetEarlyPageScript(BrowserState* browser_state) const;
+  virtual NSString* GetDocumentStartScriptForAllFrames(
+      BrowserState* browser_state) const;
 
-  using StaticServiceMap =
-      std::map<std::string, service_manager::EmbeddedServiceInfo>;
+  // Gives the embedder a chance to provide the JavaScript to be injected into
+  // the web view as early as possible. Result must not be nil.
+  // The script returned will only be injected in the main frame.
+  //
+  // TODO(crbug.com/703964): Change the return value to NSArray<NSString*> to
+  // improve performance.
+  virtual NSString* GetDocumentStartScriptForMainFrame(
+      BrowserState* browser_state) const;
 
-  // Registers services to be loaded by the Service Manager.
-  virtual void RegisterServices(StaticServiceMap* services) {}
+  // Handles an incoming service request from the Service Manager.
+  virtual std::unique_ptr<service_manager::Service> HandleServiceRequest(
+      const std::string& service_name,
+      service_manager::mojom::ServiceRequest request);
 
-  // Allows the embedder to provide a dictionary loaded from a JSON file
-  // resembling a service manifest whose capabilities section will be merged
-  // with web's own for |name|. Additional entries will be appended to their
-  // respective sections.
-  virtual std::unique_ptr<base::Value> GetServiceManifestOverlay(
+  // Allows the embedder to augment service manifests for existing services.
+  // Specifically, the sets of exposed and required capabilities, interface
+  // filter capabilities (deprecated), and packaged services will be taken from
+  // the returned Manifest and amended to those of the existing Manifest for the
+  // service named |name|.
+  //
+  // If no overlay is provided for the service, this returns |base::nullopt|.
+  virtual base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece name);
+
+  // Allows the embedder to provide manifests for additional services available
+  // at runtime. Any extra manifests returned by this method should have
+  // corresponding logic to actually run the service on-demand in
+  // |HandleServiceRequest()|.
+  virtual std::vector<service_manager::Manifest> GetExtraServiceManifests();
 
   // Allows the embedder to bind an interface request for a WebState-scoped
   // interface that originated from the main frame of |web_state|. Called if
@@ -150,7 +170,8 @@ class WebClient {
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle interface_pipe) {}
 
-  // Informs the embedder that a certificate error has occurred. If
+  // Informs the embedder that a certificate error has occurred. |cert_error| is
+  // a network error code defined in //net/base/net_error_list.h. If
   // |overridable| is true, the user can ignore the error and continue. The
   // embedder can call the |callback| asynchronously (an argument of true means
   // that |cert_error| should be ignored and web// should load the page).
@@ -162,11 +183,25 @@ class WebClient {
       bool overridable,
       const base::Callback<void(bool)>& callback);
 
+  // Returns the information to display when a navigation error occurs.
+  // |error| and |error_html| are always valid pointers. Embedder may set
+  // |error_html| to an HTML page containing the details of the error and maybe
+  // links to more info.
+  virtual void PrepareErrorPage(WebState* web_state,
+                                const GURL& url,
+                                NSError* error,
+                                bool is_post,
+                                bool is_off_the_record,
+                                NSString** error_html);
+
   // Allows upper layers to inject experimental flags to the web layer.
   // TODO(crbug.com/734150): Clean up this flag after experiment. If need for a
   // second flag arises before clean up, consider generalizing to an experiment
   // flags struct instead of adding a bool method for each experiment.
   virtual bool IsSlimNavigationManagerEnabled() const;
+
+  // Instructs the embedder to return a container that is attached to a window.
+  virtual UIView* GetWindowedContainer();
 };
 
 }  // namespace web

@@ -60,13 +60,6 @@ class GeolocationPermissionContextAndroid
   explicit GeolocationPermissionContextAndroid(Profile* profile);
   ~GeolocationPermissionContextAndroid() override;
 
- protected:
-  // GeolocationPermissionContext:
-  ContentSetting GetPermissionStatusInternal(
-      content::RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin,
-      const GURL& embedding_origin) const override;
-
  private:
   friend class GeolocationPermissionContextTests;
   friend class PermissionManagerTest;
@@ -75,14 +68,11 @@ class GeolocationPermissionContextAndroid
   static void SetDSEOriginForTesting(const char* dse_origin);
 
   // GeolocationPermissionContext:
-  void RequestPermission(
-      content::WebContents* web_contents,
-      const PermissionRequestID& id,
-      const GURL& requesting_frame_origin,
-      bool user_gesture,
-      const BrowserPermissionCallback& callback) override;
-  void CancelPermissionRequest(content::WebContents* web_contents,
-                               const PermissionRequestID& id) override;
+  void RequestPermission(content::WebContents* web_contents,
+                         const PermissionRequestID& id,
+                         const GURL& requesting_frame_origin,
+                         bool user_gesture,
+                         BrowserPermissionCallback callback) override;
   void UserMadePermissionDecision(const PermissionRequestID& id,
                                   const GURL& requesting_origin,
                                   const GURL& embedding_origin,
@@ -90,7 +80,7 @@ class GeolocationPermissionContextAndroid
   void NotifyPermissionSet(const PermissionRequestID& id,
                            const GURL& requesting_origin,
                            const GURL& embedding_origin,
-                           const BrowserPermissionCallback& callback,
+                           BrowserPermissionCallback callback,
                            bool persist,
                            ContentSetting content_setting) override;
   PermissionResult UpdatePermissionStatusWithDeviceStatus(
@@ -119,7 +109,7 @@ class GeolocationPermissionContextAndroid
   void HandleUpdateAndroidPermissions(const PermissionRequestID& id,
                                       const GURL& requesting_frame_origin,
                                       const GURL& embedding_origin,
-                                      const BrowserPermissionCallback& callback,
+                                      BrowserPermissionCallback callback,
                                       bool permissions_updated);
 
   // Will return true if the location settings dialog will be shown for the
@@ -140,7 +130,7 @@ class GeolocationPermissionContextAndroid
   void FinishNotifyPermissionSet(const PermissionRequestID& id,
                                  const GURL& requesting_origin,
                                  const GURL& embedding_origin,
-                                 const BrowserPermissionCallback& callback,
+                                 BrowserPermissionCallback callback,
                                  bool persist,
                                  ContentSetting content_setting);
 
@@ -150,13 +140,6 @@ class GeolocationPermissionContextAndroid
       std::unique_ptr<LocationSettings> settings);
 
   std::unique_ptr<LocationSettings> location_settings_;
-
-  // We need to be able to clean up upon cancel requests for permissions
-  // currently showing a permission update infobars or location settings
-  // dialog, as the callback is invalid after a cancel.
-
-  // This is owned by the InfoBarService (owner of the InfoBar).
-  infobars::InfoBar* permission_update_infobar_;
 
   PermissionRequestID location_settings_dialog_request_id_;
   BrowserPermissionCallback location_settings_dialog_callback_;

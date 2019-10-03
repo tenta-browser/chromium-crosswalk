@@ -13,8 +13,8 @@
 #include "content/common/content_export.h"
 #include "content/renderer/media/webrtc/two_keys_adapter_map.h"
 #include "content/renderer/media/webrtc/webrtc_media_stream_track_adapter.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/webrtc/api/mediastreaminterface.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
 
 namespace content {
 
@@ -38,6 +38,7 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapterMap
 
     std::unique_ptr<AdapterRef> Copy() const;
     bool is_initialized() const { return adapter_->is_initialized(); }
+    void InitializeOnMainThread();
     const blink::WebMediaStreamTrack& web_track() const {
       return adapter_->web_track();
     }
@@ -71,7 +72,8 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapterMap
 
   // Must be invoked on the main thread.
   WebRtcMediaStreamTrackAdapterMap(
-      PeerConnectionDependencyFactory* const factory);
+      PeerConnectionDependencyFactory* const factory,
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread);
 
   // Gets a new reference to the local track adapter, or null if no such adapter
   // was found. When all references are destroyed the adapter is disposed and
@@ -135,8 +137,6 @@ class CONTENT_EXPORT WebRtcMediaStreamTrackAdapterMap
 
   // Invoke on the main thread.
   virtual ~WebRtcMediaStreamTrackAdapterMap();
-
-  void OnRemoteTrackAdapterInitialized(std::unique_ptr<AdapterRef> adapter_ref);
 
   // Pointer to a |PeerConnectionDependencyFactory| owned by the |RenderThread|.
   // It's valid for the lifetime of |RenderThread|.

@@ -8,11 +8,12 @@
 #include <memory>
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "components/os_crypt/key_storage_linux.h"
 #include "components/os_crypt/kwallet_dbus.h"
 
-class KeyStorageKWallet : public KeyStorageLinux {
+class COMPONENT_EXPORT(OS_CRYPT) KeyStorageKWallet : public KeyStorageLinux {
  public:
   KeyStorageKWallet(base::nix::DesktopEnvironment desktop_env,
                     std::string app_name);
@@ -20,8 +21,7 @@ class KeyStorageKWallet : public KeyStorageLinux {
 
   // Initialize using an optional KWalletDBus mock.
   // A DBus session will not be created if a mock is provided.
-  bool InitWithKWalletDBus(
-      std::unique_ptr<KWalletDBus> optional_kwallet_dbus_ptr);
+  bool InitWithKWalletDBus(std::unique_ptr<KWalletDBus> mock_kwallet_dbus_ptr);
 
  protected:
   // KeyStorageLinux
@@ -35,6 +35,8 @@ class KeyStorageKWallet : public KeyStorageLinux {
     PERMANENT_FAIL,
   };
 
+  static constexpr int kInvalidHandle = -1;
+
   // Check whether KWallet is enabled and set |wallet_name_|
   InitResult InitWallet();
 
@@ -42,7 +44,7 @@ class KeyStorageKWallet : public KeyStorageLinux {
   bool InitFolder();
 
   const base::nix::DesktopEnvironment desktop_env_;
-  int32_t handle_;
+  int32_t handle_ = kInvalidHandle;
   std::string wallet_name_;
   const std::string app_name_;
   std::unique_ptr<KWalletDBus> kwallet_dbus_;

@@ -4,8 +4,10 @@
 
 #include "net/dns/mapped_host_resolver.h"
 
+#include <string>
 #include <utility>
 
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
@@ -13,38 +15,60 @@
 
 namespace net {
 
+class MappedHostResolver::AlwaysErrorRequestImpl
+    : public HostResolver::ResolveHostRequest {
+ public:
+  explicit AlwaysErrorRequestImpl(int error) : error_(error) {}
+
+  int Start(CompletionOnceCallback callback) override { return error_; }
+
+  const base::Optional<AddressList>& GetAddressResults() const override {
+    static base::NoDestructor<base::Optional<AddressList>> nullopt_result;
+    return *nullopt_result;
+  }
+
+  const base::Optional<std::vector<std::string>>& GetTextResults()
+      const override {
+    static const base::NoDestructor<base::Optional<std::vector<std::string>>>
+        nullopt_result;
+    return *nullopt_result;
+  }
+
+  const base::Optional<std::vector<HostPortPair>>& GetHostnameResults()
+      const override {
+    static const base::NoDestructor<base::Optional<std::vector<HostPortPair>>>
+        nullopt_result;
+    return *nullopt_result;
+  }
+
+  const base::Optional<HostCache::EntryStaleness>& GetStaleInfo()
+      const override {
+    static const base::NoDestructor<base::Optional<HostCache::EntryStaleness>>
+        nullopt_result;
+    return *nullopt_result;
+  }
+
+ private:
+  const int error_;
+};
+
 MappedHostResolver::MappedHostResolver(std::unique_ptr<HostResolver> impl)
     : impl_(std::move(impl)) {}
 
 MappedHostResolver::~MappedHostResolver() = default;
 
-int MappedHostResolver::Resolve(const RequestInfo& original_info,
-                                RequestPriority priority,
-                                AddressList* addresses,
-                                const CompletionCallback& callback,
-                                std::unique_ptr<Request>* request,
-                                const NetLogWithSource& net_log) {
-  RequestInfo info = original_info;
-  int rv = ApplyRules(&info);
-  if (rv != OK)
-    return rv;
+std::unique_ptr<HostResolver::ResolveHostRequest>
+MappedHostResolver::CreateRequest(
+    const HostPortPair& host,
+    const NetLogWithSource& source_net_log,
+    const base::Optional<ResolveHostParameters>& optional_parameters) {
+  HostPortPair rewritten = host;
+  rules_.RewriteHost(&rewritten);
 
-  return impl_->Resolve(info, priority, addresses, callback, request, net_log);
-}
+  if (rewritten.host() == "~NOTFOUND")
+    return std::make_unique<AlwaysErrorRequestImpl>(ERR_NAME_NOT_RESOLVED);
 
-int MappedHostResolver::ResolveFromCache(const RequestInfo& original_info,
-                                         AddressList* addresses,
-                                         const NetLogWithSource& net_log) {
-  RequestInfo info = original_info;
-  int rv = ApplyRules(&info);
-  if (rv != OK)
-    return rv;
-
-  return impl_->ResolveFromCache(info, addresses, net_log);
-}
-
-void MappedHostResolver::SetDnsClientEnabled(bool enabled) {
-  impl_->SetDnsClientEnabled(enabled);
+  return impl_->CreateRequest(rewritten, source_net_log, optional_parameters);
 }
 
 HostCache* MappedHostResolver::GetHostCache() {
@@ -55,22 +79,12 @@ std::unique_ptr<base::Value> MappedHostResolver::GetDnsConfigAsValue() const {
   return impl_->GetDnsConfigAsValue();
 }
 
-void MappedHostResolver::SetNoIPv6OnWifi(bool no_ipv6_on_wifi) {
-  impl_->SetNoIPv6OnWifi(no_ipv6_on_wifi);
+void MappedHostResolver::SetRequestContext(URLRequestContext* request_context) {
+  impl_->SetRequestContext(request_context);
 }
 
-bool MappedHostResolver::GetNoIPv6OnWifi() {
-  return impl_->GetNoIPv6OnWifi();
-}
-
-int MappedHostResolver::ApplyRules(RequestInfo* info) const {
-  HostPortPair host_port(info->host_port_pair());
-  if (rules_.RewriteHost(&host_port)) {
-    if (host_port.host() == "~NOTFOUND")
-      return ERR_NAME_NOT_RESOLVED;
-    info->set_host_port_pair(host_port);
-  }
-  return OK;
+HostResolverManager* MappedHostResolver::GetManagerForTesting() {
+  return impl_->GetManagerForTesting();
 }
 
 }  // namespace net

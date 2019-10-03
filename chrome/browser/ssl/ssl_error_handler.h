@@ -29,6 +29,7 @@
 
 class CommonNameMismatchHandler;
 class Profile;
+struct DynamicInterstitialInfo;
 
 namespace base {
 class Clock;
@@ -46,7 +47,6 @@ class NetworkTimeTracker;
 extern const base::Feature kMITMSoftwareInterstitial;
 extern const base::Feature kCaptivePortalInterstitial;
 extern const base::Feature kCaptivePortalCertificateList;
-extern const base::Feature kSuperfishInterstitial;
 
 // This class is responsible for deciding what type of interstitial to display
 // for an SSL validation error and actually displaying it. The display of the
@@ -116,10 +116,11 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
     virtual void ShowMITMSoftwareInterstitial(
         const std::string& mitm_software_name,
         bool is_enterprise_managed) = 0;
-    virtual void ShowSSLInterstitial() = 0;
+    virtual void ShowSSLInterstitial(const GURL& support_url) = 0;
     virtual void ShowBadClockInterstitial(
         const base::Time& now,
         ssl_errors::ClockState clock_state) = 0;
+    virtual void ReportNetworkConnectivity(base::OnceClosure callback) = 0;
   };
 
   // Entry point for the class. All parameters except
@@ -128,12 +129,13 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   // |blocking_page_ready_callback| is null, this function will create a
   // blocking page and call Show() on it. Otherwise, this function creates an
   // interstitial and passes it to |blocking_page_ready_callback|.
+  // |blocking_page_ready_callback| is guaranteed not to be called
+  // synchronously.
   static void HandleSSLError(
       content::WebContents* web_contents,
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
-      bool should_ssl_errors_be_fatal,
       bool expired_previous_decision,
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
       const base::Callback<void(content::CertificateRequestResultType)>&
@@ -155,6 +157,8 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   static void SetClockForTesting(base::Clock* testing_clock);
   static void SetNetworkTimeTrackerForTesting(
       network_time::NetworkTimeTracker* tracker);
+  static void SetReportNetworkConnectivityCallbackForTesting(
+      base::OnceClosure callback);
   static void SetEnterpriseManagedForTesting(bool enterprise_managed);
   static bool IsEnterpriseManagedFlagSetForTesting();
   static std::string GetHistogramNameForTesting();
@@ -180,6 +184,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   void StartHandlingError();
 
  private:
+  friend class content::WebContentsUserData<SSLErrorHandler>;
   FRIEND_TEST_ALL_PREFIXES(SSLErrorHandlerTest, CalculateOptionsMask);
 
   void ShowCaptivePortalInterstitial(const GURL& landing_url);
@@ -188,6 +193,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   void ShowSSLInterstitial();
   void ShowBadClockInterstitial(const base::Time& now,
                                 ssl_errors::ClockState clock_state);
+  void ShowDynamicInterstitial(const DynamicInterstitialInfo interstitial);
 
   // Gets the result of whether the suggested URL is valid. Displays
   // common name mismatch interstitial or ssl interstitial accordingly.
@@ -220,9 +226,7 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
   // Calculates a mask encoded using flags in SSLErrorUI::SSLErrorOptionsMask.
   static int CalculateOptionsMask(int cert_error,
                                   bool hard_override_disabled,
-                                  bool should_ssl_errors_be_fatal,
-                                  bool is_superfish,
-                                  bool expired_previous_decision);
+                                  bool should_ssl_errors_be_fatal);
 
   std::unique_ptr<Delegate> delegate_;
   content::WebContents* const web_contents_;
@@ -238,7 +242,9 @@ class SSLErrorHandler : public content::WebContentsUserData<SSLErrorHandler>,
 
   std::unique_ptr<CommonNameMismatchHandler> common_name_mismatch_handler_;
 
-  base::WeakPtrFactory<SSLErrorHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<SSLErrorHandler> weak_ptr_factory_{this};
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(SSLErrorHandler);
 };

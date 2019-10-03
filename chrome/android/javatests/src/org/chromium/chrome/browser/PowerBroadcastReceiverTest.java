@@ -15,25 +15,21 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Tests for the PowerBroadcastReceiver.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @RetryOnFailure
 public class PowerBroadcastReceiverTest {
     @Rule
@@ -54,13 +50,13 @@ public class PowerBroadcastReceiverTest {
         public CallbackHelper runActionsHelper = new CallbackHelper();
 
         @Override
-        public void setState(int state) {
+        public void setState(@State int state) {
             super.setState(state);
-            if (state == STATE_POSTED) {
+            if (state == State.POSTED) {
                 postHelper.notifyCalled();
-            } else if (state == STATE_CANCELED) {
+            } else if (state == State.CANCELED) {
                 cancelHelper.notifyCalled();
-            } else if (state == STATE_COMPLETED) {
+            } else if (state == State.COMPLETED) {
                 runHelper.notifyCalled();
             }
         }
@@ -97,9 +93,9 @@ public class PowerBroadcastReceiverTest {
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityFromLauncher();
-        mReceiver = ThreadUtils.runOnUiThreadBlocking(
+        mReceiver = TestThreadUtils.runOnUiThreadBlocking(
                 () -> ChromeActivitySessionTracker.getInstance()
-                        .getPowerBroadcastReceiverForTesting());
+                                   .getPowerBroadcastReceiverForTesting());
 
         // Set up our mock runnable.
         mRunnable = new MockServiceRunnable();

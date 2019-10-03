@@ -8,7 +8,7 @@
 #include "base/location.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
 
 namespace policy {
 
@@ -26,7 +26,6 @@ ServerBackedStateKeysBroker::ServerBackedStateKeysBroker(
     chromeos::SessionManagerClient* session_manager_client)
     : session_manager_client_(session_manager_client),
       requested_(false),
-      initial_retrieval_completed_(false),
       weak_factory_(this) {}
 
 ServerBackedStateKeysBroker::~ServerBackedStateKeysBroker() {
@@ -34,23 +33,21 @@ ServerBackedStateKeysBroker::~ServerBackedStateKeysBroker() {
 
 ServerBackedStateKeysBroker::Subscription
 ServerBackedStateKeysBroker::RegisterUpdateCallback(
-    const base::Closure& callback) {
+    const base::RepeatingClosure& callback) {
   if (!available())
     FetchStateKeys();
   return update_callbacks_.Add(callback);
 }
 
-void ServerBackedStateKeysBroker::RequestStateKeys(
-    const StateKeysCallback& callback) {
-  if (pending()) {
-    request_callbacks_.push_back(callback);
+void ServerBackedStateKeysBroker::RequestStateKeys(StateKeysCallback callback) {
+  if (!available()) {
+    request_callbacks_.push_back(std::move(callback));
     FetchStateKeys();
     return;
   }
 
   if (!callback.is_null())
-    callback.Run(state_keys_);
-  return;
+    std::move(callback).Run(state_keys_);
 }
 
 // static
@@ -69,15 +66,14 @@ void ServerBackedStateKeysBroker::FetchStateKeys() {
 
 void ServerBackedStateKeysBroker::StoreStateKeys(
     const std::vector<std::string>& state_keys) {
-  bool send_notification = !initial_retrieval_completed_;
+  bool send_notification = !available();
 
   requested_ = false;
   if (state_keys.empty()) {
     LOG(WARNING) << "Failed to obtain server-backed state keys.";
-  } else if (base::ContainsValue(state_keys, std::string())) {
+  } else if (base::Contains(state_keys, std::string())) {
     LOG(WARNING) << "Bad state keys.";
   } else {
-    initial_retrieval_completed_ = true;
     send_notification |= state_keys_ != state_keys;
     state_keys_ = state_keys;
   }
@@ -87,12 +83,9 @@ void ServerBackedStateKeysBroker::StoreStateKeys(
 
   std::vector<StateKeysCallback> callbacks;
   request_callbacks_.swap(callbacks);
-  for (std::vector<StateKeysCallback>::const_iterator callback(
-           callbacks.begin());
-       callback != callbacks.end();
-       ++callback) {
-    if (!callback->is_null())
-      callback->Run(state_keys_);
+  for (auto& callback : callbacks) {
+    if (!callback.is_null())
+      std::move(callback).Run(state_keys_);
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(

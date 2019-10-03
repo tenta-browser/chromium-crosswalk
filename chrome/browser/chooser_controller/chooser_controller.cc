@@ -6,13 +6,18 @@
 
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "extensions/browser/extension_registry.h"
-#include "extensions/common/constants.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
+#endif
 
 namespace {
 
@@ -21,6 +26,7 @@ base::string16 CreateTitle(content::RenderFrameHost* render_frame_host,
                            int title_string_id_extension) {
   url::Origin origin = render_frame_host->GetLastCommittedOrigin();
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (origin.scheme() == extensions::kExtensionScheme) {
     content::WebContents* web_contents =
         content::WebContents::FromRenderFrameHost(render_frame_host);
@@ -37,6 +43,7 @@ base::string16 CreateTitle(content::RenderFrameHost* render_frame_host,
       }
     }
   }
+#endif
 
   return l10n_util::GetStringFUTF16(
       title_string_id_origin,
@@ -65,11 +72,27 @@ bool ChooserController::ShouldShowIconBeforeText() const {
   return false;
 }
 
-bool ChooserController::ShouldShowFootnoteView() const {
+bool ChooserController::ShouldShowHelpButton() const {
   return true;
 }
 
+bool ChooserController::ShouldShowReScanButton() const {
+  return false;
+}
+
 bool ChooserController::AllowMultipleSelection() const {
+  return false;
+}
+
+base::string16 ChooserController::GetCancelButtonLabel() const {
+  return l10n_util::GetStringUTF16(IDS_DEVICE_CHOOSER_CANCEL_BUTTON_TEXT);
+}
+
+bool ChooserController::BothButtonsAlwaysEnabled() const {
+  return false;
+}
+
+bool ChooserController::TableViewAlwaysDisabled() const {
   return false;
 }
 

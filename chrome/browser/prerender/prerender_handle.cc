@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -69,7 +68,7 @@ PrerenderContents* PrerenderHandle::contents() const {
 
 PrerenderHandle::PrerenderHandle(
     PrerenderManager::PrerenderData* prerender_data)
-    : observer_(nullptr), weak_ptr_factory_(this) {
+    : observer_(nullptr) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (prerender_data) {
     prerender_data_ = prerender_data->AsWeakPtr();

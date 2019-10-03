@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "base/posix/eintr_wrapper.h"
+#include "build/build_config.h"
 #include "gtest/gtest.h"
 #include "test/errors.h"
 #include "util/misc/scoped_forbid_return.h"
@@ -27,6 +28,10 @@
 
 #if defined(OS_LINUX)
 #include <stdio_ext.h>
+#endif
+
+#if defined(OS_MACOSX)
+#include "util/mach/task_for_pid.h"
 #endif
 
 namespace crashpad {
@@ -146,6 +151,14 @@ void MultiprocessExec::MultiprocessChild() {
 
   forbid_return.Disarm();
   FAIL() << ErrnoMessage("execv") << ": " << argv_[0];
+}
+
+ProcessType MultiprocessExec::ChildProcess() {
+#if defined(OS_MACOSX)
+  return TaskForPID(ChildPID());
+#else
+  return ChildPID();
+#endif
 }
 
 }  // namespace test

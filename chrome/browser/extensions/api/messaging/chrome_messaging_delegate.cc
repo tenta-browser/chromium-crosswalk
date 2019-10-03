@@ -4,9 +4,10 @@
 
 #include "chrome/browser/extensions/api/messaging/chrome_messaging_delegate.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/incognito_connectability.h"
 #include "chrome/browser/extensions/api/messaging/native_message_port.h"
@@ -81,7 +82,13 @@ std::unique_ptr<base::DictionaryValue> ChromeMessagingDelegate::MaybeGetTabInfo(
     // Only the tab id is useful to platform apps for internal use. The
     // unnecessary bits will be stripped out in
     // MessagingBindings::DispatchOnConnect().
-    return ExtensionTabUtil::CreateTabObject(web_contents)->ToValue();
+    // Note: We don't bother scrubbing the tab object, because this is only
+    // reached as a result of a tab (or content script) messaging the extension.
+    // We need the extension to see the sender so that it can validate if it
+    // trusts it or not.
+    return ExtensionTabUtil::CreateTabObject(
+               web_contents, ExtensionTabUtil::kDontScrubTab, nullptr)
+        ->ToValue();
   }
   return nullptr;
 }
@@ -113,13 +120,14 @@ std::unique_ptr<MessagePort> ChromeMessagingDelegate::CreateReceiverForTab(
   if (!receiver_rfh)
     return nullptr;
 
-  return base::MakeUnique<ExtensionMessagePort>(
+  return std::make_unique<ExtensionMessagePort>(
       channel_delegate, receiver_port_id, extension_id, receiver_rfh,
       include_child_frames);
 }
 
 std::unique_ptr<MessagePort>
 ChromeMessagingDelegate::CreateReceiverForNativeApp(
+    content::BrowserContext* browser_context,
     base::WeakPtr<MessagePort::ChannelDelegate> channel_delegate,
     content::RenderFrameHost* source,
     const std::string& extension_id,
@@ -129,11 +137,12 @@ ChromeMessagingDelegate::CreateReceiverForNativeApp(
     std::string* error_out) {
   DCHECK(error_out);
   gfx::NativeView native_view = source ? source->GetNativeView() : nullptr;
-  std::unique_ptr<NativeMessageHost> native_host = NativeMessageHost::Create(
-      native_view, extension_id, native_app_name, allow_user_level, error_out);
+  std::unique_ptr<NativeMessageHost> native_host =
+      NativeMessageHost::Create(browser_context, native_view, extension_id,
+                                native_app_name, allow_user_level, error_out);
   if (!native_host.get())
     return nullptr;
-  return base::MakeUnique<NativeMessagePort>(channel_delegate, receiver_port_id,
+  return std::make_unique<NativeMessagePort>(channel_delegate, receiver_port_id,
                                              std::move(native_host));
 }
 

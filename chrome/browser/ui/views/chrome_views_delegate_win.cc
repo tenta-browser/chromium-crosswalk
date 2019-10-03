@@ -7,7 +7,10 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 
-#include "base/task_scheduler/post_task.h"
+#include <utility>
+
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/ui/views/native_widget_factory.h"
 #include "chrome/browser/win/app_icon.h"
@@ -121,7 +124,15 @@ views::NativeWidget* ChromeViewsDelegate::CreateNativeWidget(
           ? NativeWidgetType::NATIVE_WIDGET_AURA
           : NativeWidgetType::DESKTOP_NATIVE_WIDGET_AURA;
 
-  if (!ui::win::IsAeroGlassEnabled()) {
+  if (params->shadow_type == views::Widget::InitParams::SHADOW_TYPE_DROP &&
+      params->shadow_elevation.has_value()) {
+    // If the window defines an elevation based shadow in the Widget
+    // initialization parameters, force the use of a non toplevel window,
+    // as the native window manager has no concept of elevation based shadows.
+    // TODO: This may no longer be needed if we get proper elevation-based
+    // shadows on toplevel windows. See https://crbug.com/838667.
+    native_widget_type = NativeWidgetType::NATIVE_WIDGET_AURA;
+  } else if (!ui::win::IsAeroGlassEnabled()) {
     // If we don't have composition (either because Glass is not enabled or
     // because it was disabled at the command line), anything that requires
     // transparency will be broken with a toplevel window, so force the use of
@@ -144,7 +155,7 @@ views::NativeWidget* ChromeViewsDelegate::CreateNativeWidget(
 }
 
 int ChromeViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
-                                                const base::Closure& callback) {
+                                                base::OnceClosure callback) {
   // Initialize the map with EDGE_BOTTOM. This is important, as if we return an
   // initial value of 0 (no auto-hide edges) then we'll go fullscreen and
   // windows will automatically remove WS_EX_TOPMOST from the appbar resulting
@@ -162,23 +173,22 @@ int ChromeViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
     // https://crbug.com/662122
     base::PostTaskWithTraitsAndReplyWithResult(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
-        base::Bind(&GetAppbarAutohideEdgesOnWorkerThread, monitor),
-        base::Bind(&ChromeViewsDelegate::OnGotAppbarAutohideEdges,
-                   weak_factory_.GetWeakPtr(), callback, monitor,
-                   appbar_autohide_edge_map_[monitor]));
+        base::BindOnce(&GetAppbarAutohideEdgesOnWorkerThread, monitor),
+        base::BindOnce(&ChromeViewsDelegate::OnGotAppbarAutohideEdges,
+                       weak_factory_.GetWeakPtr(), std::move(callback), monitor,
+                       appbar_autohide_edge_map_[monitor]));
   }
   return appbar_autohide_edge_map_[monitor];
 }
 
-void ChromeViewsDelegate::OnGotAppbarAutohideEdges(
-    const base::Closure& callback,
-    HMONITOR monitor,
-    int returned_edges,
-    int edges) {
+void ChromeViewsDelegate::OnGotAppbarAutohideEdges(base::OnceClosure callback,
+                                                   HMONITOR monitor,
+                                                   int returned_edges,
+                                                   int edges) {
   appbar_autohide_edge_map_[monitor] = edges;
   if (returned_edges == edges)
     return;
 
   base::AutoReset<bool> in_callback_setter(&in_autohide_edges_callback_, true);
-  callback.Run();
+  std::move(callback).Run();
 }

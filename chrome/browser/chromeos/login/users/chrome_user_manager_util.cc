@@ -4,63 +4,99 @@
 
 #include "chrome/browser/chromeos/login/users/chrome_user_manager_util.h"
 
-#include "components/user_manager/user.h"
+#include "base/values.h"
+#include "chrome/browser/chromeos/policy/minimum_version_policy_handler.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/settings/device_settings_provider.h"
+#include "chromeos/settings/cros_settings_names.h"
+#include "components/policy/core/common/policy_map.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
+#include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
 
 namespace chromeos {
 namespace chrome_user_manager_util {
 
-bool GetPlatformKnownUserId(const std::string& user_email,
-                            const std::string& gaia_id,
-                            AccountId* out_account_id) {
-  if (user_email == user_manager::kStubUserEmail) {
-    *out_account_id = user_manager::StubAccountId();
-    return true;
+bool AreAllUsersAllowed(const user_manager::UserList& users,
+                        const enterprise_management::ChromeDeviceSettingsProto&
+                            device_settings_proto) {
+  PrefValueMap decoded_policies;
+  DeviceSettingsProvider::DecodePolicies(device_settings_proto,
+                                         &decoded_policies);
+
+  bool supervised_users_allowed = false;
+  decoded_policies.GetBoolean(kAccountsPrefSupervisedUsersEnabled,
+                              &supervised_users_allowed);
+
+  bool is_guest_allowed = false;
+  decoded_policies.GetBoolean(kAccountsPrefAllowGuest, &is_guest_allowed);
+
+  const base::Value* value;
+  const base::ListValue* whitelist;
+  if (decoded_policies.GetValue(kAccountsPrefUsers, &value)) {
+    value->GetAsList(&whitelist);
   }
 
-  if (user_email == user_manager::kGuestUserName) {
-    *out_account_id = user_manager::GuestAccountId();
-    return true;
+  bool allow_new_user = false;
+  decoded_policies.GetBoolean(kAccountsPrefAllowNewUser, &allow_new_user);
+
+  std::string min_chrome_version_string;
+  decoded_policies.GetString(kMinimumRequiredChromeVersion,
+                             &min_chrome_version_string);
+  bool are_min_version_requirements_satisfied =
+      policy::MinimumVersionPolicyHandler::AreRequirementsSatisfied(
+          min_chrome_version_string);
+
+  for (user_manager::User* user : users) {
+    bool is_user_whitelisted =
+        user->HasGaiaAccount() &&
+        CrosSettings::FindEmailInList(
+            whitelist, user->GetAccountId().GetUserEmail(), nullptr);
+    if (!IsUserAllowed(
+            *user, supervised_users_allowed, is_guest_allowed,
+            user->HasGaiaAccount() && (allow_new_user || is_user_whitelisted),
+            are_min_version_requirements_satisfied))
+      return false;
   }
-  return false;
+  return true;
 }
 
-void UpdateLoginState(const user_manager::User* active_user,
-                      const user_manager::User* primary_user,
-                      bool is_current_user_owner) {
-  if (!chromeos::LoginState::IsInitialized())
-    return;  // LoginState may not be initialized in tests.
+bool IsUserAllowed(const user_manager::User& user,
+                   bool supervised_users_allowed,
+                   bool is_guest_allowed,
+                   bool is_user_whitelisted,
+                   bool are_min_version_constraints_satisfied) {
+  DCHECK(user.GetType() == user_manager::USER_TYPE_REGULAR ||
+         user.GetType() == user_manager::USER_TYPE_GUEST ||
+         user.GetType() == user_manager::USER_TYPE_SUPERVISED ||
+         user.GetType() == user_manager::USER_TYPE_CHILD);
 
-  chromeos::LoginState::LoggedInState logged_in_state;
-  logged_in_state = active_user ? chromeos::LoginState::LOGGED_IN_ACTIVE
-                                : chromeos::LoginState::LOGGED_IN_NONE;
-
-  chromeos::LoginState::LoggedInUserType login_user_type;
-  if (logged_in_state == chromeos::LoginState::LOGGED_IN_NONE)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_NONE;
-  else if (is_current_user_owner)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_OWNER;
-  else if (active_user->GetType() == user_manager::USER_TYPE_GUEST)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_GUEST;
-  else if (active_user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_PUBLIC_ACCOUNT;
-  else if (active_user->GetType() == user_manager::USER_TYPE_SUPERVISED)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_SUPERVISED;
-  else if (active_user->GetType() == user_manager::USER_TYPE_KIOSK_APP)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_KIOSK_APP;
-  else if (active_user->GetType() == user_manager::USER_TYPE_ARC_KIOSK_APP)
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_ARC_KIOSK_APP;
-  else
-    login_user_type = chromeos::LoginState::LOGGED_IN_USER_REGULAR;
-
-  if (primary_user) {
-    chromeos::LoginState::Get()->SetLoggedInStateAndPrimaryUser(
-        logged_in_state, login_user_type, primary_user->username_hash());
-  } else {
-    chromeos::LoginState::Get()->SetLoggedInState(logged_in_state,
-                                                  login_user_type);
+  if (user.GetType() == user_manager::USER_TYPE_GUEST && !is_guest_allowed) {
+    return false;
   }
+  if (user.GetType() == user_manager::USER_TYPE_SUPERVISED &&
+      !supervised_users_allowed) {
+    return false;
+  }
+  if (user.HasGaiaAccount() && !is_user_whitelisted) {
+    return false;
+  }
+  if (!are_min_version_constraints_satisfied &&
+      user.GetType() != user_manager::USER_TYPE_GUEST) {
+    return false;
+  }
+  return true;
+}
+
+bool IsPublicSessionOrEphemeralLogin() {
+  const user_manager::UserManager* user_manager =
+      user_manager::UserManager::Get();
+  return user_manager->IsLoggedInAsPublicAccount() ||
+         (user_manager->IsCurrentUserNonCryptohomeDataEphemeral() &&
+          user_manager->GetActiveUser()->GetType() !=
+              user_manager::USER_TYPE_REGULAR);
 }
 
 }  // namespace chrome_user_manager_util

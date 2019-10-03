@@ -9,19 +9,19 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/geolocation/geoposition.h"
 #include "chromeos/network/network_util.h"
 #include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SimpleURLLoader;
+class SharedURLLoaderFactory;
 }
 
 namespace chromeos {
@@ -38,9 +38,8 @@ class SimpleGeolocationRequestTestMonitor;
 // - If request is destroyed while callback has not beed called yet, request
 // is silently cancelled.
 //
-// Note: we need CHROMEOS_EXPORT for tests.
-class CHROMEOS_EXPORT SimpleGeolocationRequest
-    : private net::URLFetcherDelegate {
+// Note: we need COMPONENT_EXPORT(CHROMEOS_GEOLOCATION) for tests.
+class COMPONENT_EXPORT(CHROMEOS_GEOLOCATION) SimpleGeolocationRequest {
  public:
   // Called when a new geo geolocation information is available.
   // The second argument indicates whether there was a server error or not.
@@ -54,13 +53,14 @@ class CHROMEOS_EXPORT SimpleGeolocationRequest
   // |timeout| retry request on error until timeout.
   // If wifi_data is not null, it will be sent to the geolocation server.
   // If cell_tower_data is not null, it will be sent to the geolocation server.
-  SimpleGeolocationRequest(net::URLRequestContextGetter* url_context_getter,
-                           const GURL& service_url,
-                           base::TimeDelta timeout,
-                           std::unique_ptr<WifiAccessPointVector> wifi_data,
-                           std::unique_ptr<CellTowerVector> cell_tower_data);
+  SimpleGeolocationRequest(
+      scoped_refptr<network::SharedURLLoaderFactory> factory,
+      const GURL& service_url,
+      base::TimeDelta timeout,
+      std::unique_ptr<WifiAccessPointVector> wifi_data,
+      std::unique_ptr<CellTowerVector> cell_tower_data);
 
-  ~SimpleGeolocationRequest() override;
+  ~SimpleGeolocationRequest();
 
   // Initiates request.
   // Note: if request object is destroyed before callback is called,
@@ -83,8 +83,7 @@ class CHROMEOS_EXPORT SimpleGeolocationRequest
   std::string FormatRequestBodyForTesting() const;
 
  private:
-  // net::URLFetcherDelegate
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void OnSimpleURLLoaderComplete(std::unique_ptr<std::string> response_body);
 
   // Start new request.
   void StartRequest();
@@ -101,7 +100,7 @@ class CHROMEOS_EXPORT SimpleGeolocationRequest
   // Returns API request body.
   std::string FormatRequestBody() const;
 
-  scoped_refptr<net::URLRequestContextGetter> url_context_getter_;
+  scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
 
   // Service URL from constructor arguments.
   const GURL service_url_;
@@ -111,7 +110,7 @@ class CHROMEOS_EXPORT SimpleGeolocationRequest
   // Actual URL with parameters.
   GURL request_url_;
 
-  std::unique_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<network::SimpleURLLoader> simple_url_loader_;
 
   // When request was actually started.
   base::Time request_started_at_;

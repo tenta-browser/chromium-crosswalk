@@ -8,17 +8,19 @@
 
 namespace gpu {
 
-ImageFactory::ImageFactory() {
-}
+ImageFactory::ImageFactory() = default;
 
-ImageFactory::~ImageFactory() {
+ImageFactory::~ImageFactory() = default;
+
+bool ImageFactory::SupportsCreateAnonymousImage() const {
+  return false;
 }
 
 scoped_refptr<gl::GLImage> ImageFactory::CreateAnonymousImage(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    unsigned internalformat) {
+    bool* is_cleared) {
   NOTREACHED();
   return nullptr;
 }

@@ -12,57 +12,58 @@ StubOfflinePageModel::StubOfflinePageModel()
     : archive_directory_(base::FilePath(FILE_PATH_LITERAL("/archive_dir/"))) {}
 StubOfflinePageModel::~StubOfflinePageModel() {}
 
+void StubOfflinePageModel::SetArchiveDirectory(const base::FilePath& path) {
+  archive_directory_ = path;
+}
+
 void StubOfflinePageModel::AddObserver(Observer* observer) {}
 void StubOfflinePageModel::RemoveObserver(Observer* observer) {}
 void StubOfflinePageModel::SavePage(
     const SavePageParams& save_page_params,
     std::unique_ptr<OfflinePageArchiver> archiver,
-    const SavePageCallback& callback) {}
+    content::WebContents* web_contents,
+    SavePageCallback callback) {}
 void StubOfflinePageModel::AddPage(const OfflinePageItem& page,
-                                   const AddPageCallback& callback) {}
+                                   AddPageCallback callback) {}
 void StubOfflinePageModel::MarkPageAccessed(int64_t offline_id) {}
-void StubOfflinePageModel::DeletePagesByOfflineId(
-    const std::vector<int64_t>& offline_ids,
-    const DeletePageCallback& callback) {}
-void StubOfflinePageModel::DeletePagesByClientIds(
-    const std::vector<ClientId>& client_ids,
-    const DeletePageCallback& callback) {}
-void StubOfflinePageModel::GetPagesByClientIds(
-    const std::vector<ClientId>& client_ids,
-    const MultipleOfflinePageItemCallback& callback) {}
+void StubOfflinePageModel::DeletePagesWithCriteria(
+    const PageCriteria& criteria,
+    DeletePageCallback callback) {}
 void StubOfflinePageModel::DeleteCachedPagesByURLPredicate(
     const UrlPredicate& predicate,
-    const DeletePageCallback& callback) {}
+    DeletePageCallback callback) {}
 void StubOfflinePageModel::GetAllPages(
-    const MultipleOfflinePageItemCallback& callback) {}
+    MultipleOfflinePageItemCallback callback) {}
 void StubOfflinePageModel::GetOfflineIdsForClientId(
     const ClientId& client_id,
-    const MultipleOfflineIdCallback& callback) {}
+    MultipleOfflineIdCallback callback) {}
 void StubOfflinePageModel::GetPageByOfflineId(
     int64_t offline_id,
-    const SingleOfflinePageItemCallback& callback) {}
-void StubOfflinePageModel::GetPagesByURL(
-    const GURL& url,
-    URLSearchMode url_search_mode,
-    const MultipleOfflinePageItemCallback& callback) {}
-void StubOfflinePageModel::GetPagesByRequestOrigin(
-    const std::string& origin,
-    const MultipleOfflinePageItemCallback& callback) {}
-void StubOfflinePageModel::GetPagesRemovedOnCacheReset(
-    const MultipleOfflinePageItemCallback& callback) {}
-void StubOfflinePageModel::GetPagesByNamespace(
-    const std::string& name_space,
-    const MultipleOfflinePageItemCallback& callback) {}
-void StubOfflinePageModel::GetPagesSupportedByDownloads(
-    const MultipleOfflinePageItemCallback& callback) {}
-const base::FilePath& StubOfflinePageModel::GetArchiveDirectory(
+    SingleOfflinePageItemCallback callback) {}
+void StubOfflinePageModel::GetPagesWithCriteria(
+    const PageCriteria& criteria,
+    MultipleOfflinePageItemCallback callback) {}
+void StubOfflinePageModel::StoreThumbnail(int64_t offline_id,
+                                          std::string thumbnail) {}
+void StubOfflinePageModel::StoreFavicon(int64_t offline_id,
+                                        std::string favicon) {}
+void StubOfflinePageModel::GetVisualsByOfflineId(int64_t offline_id,
+                                                 GetVisualsCallback callback) {}
+void StubOfflinePageModel::GetVisualsAvailability(
+    int64_t offline_id,
+    base::OnceCallback<void(VisualsAvailability)> callback) {}
+void StubOfflinePageModel::PublishInternalArchive(
+    const OfflinePageItem& offline_page,
+    PublishPageCallback publish_done_callback) {}
+const base::FilePath& StubOfflinePageModel::GetInternalArchiveDirectory(
     const std::string& name_space) const {
   return archive_directory_;
 }
-
-ClientPolicyController* StubOfflinePageModel::GetPolicyController() {
-  return &policy_controller_;
+bool StubOfflinePageModel::IsArchiveInInternalDir(
+    const base::FilePath& file_path) const {
+  return archive_directory_.IsParent(file_path);
 }
+
 OfflineEventLogger* StubOfflinePageModel::GetLogger() {
   return nullptr;
 }

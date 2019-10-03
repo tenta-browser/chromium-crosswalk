@@ -13,10 +13,12 @@
 
 #include "base/callback.h"
 #include "base/containers/circular_deque.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "build/build_config.h"
+#include "chrome/browser/metrics/incognito_observer.h"
 #include "chrome/browser/metrics/metrics_memory_details.h"
 #include "components/metrics/file_metrics_provider.h"
 #include "components/metrics/metrics_log_uploader.h"
@@ -26,17 +28,13 @@
 #include "components/ukm/observers/sync_disable_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "third_party/metrics_proto/system_profile.pb.h"
 
+class BrowserActivityWatcher;
 class PluginMetricsProvider;
 class Profile;
 class PrefRegistrySimple;
-
-#if defined(OS_ANDROID)
-class TabModelListObserver;
-#endif  // defined(OS_ANDROID)
-
 
 namespace metrics {
 class MetricsService;
@@ -59,9 +57,6 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   // Registers local state prefs used by this class.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // Checks if the user has forced metrics collection on via the override flag.
-  static bool IsMetricsReportingForceEnabled();
-
   // metrics::MetricsServiceClient:
   metrics::MetricsService* GetMetricsService() override;
   ukm::UkmService* GetUkmService() override;
@@ -75,8 +70,8 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   void OnLogCleanShutdown() override;
   void CollectFinalMetricsForLog(const base::Closure& done_callback) override;
   std::unique_ptr<metrics::MetricsLogUploader> CreateUploader(
-      base::StringPiece server_url,
-      base::StringPiece insecure_server_url,
+      const GURL& server_url,
+      const GURL& insecure_server_url,
       base::StringPiece mime_type,
       metrics::MetricsLogUploader::MetricServiceType service_type,
       const metrics::MetricsLogUploader::UploadCallback& on_upload_complete)
@@ -86,7 +81,13 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   bool IsReportingPolicyManaged() override;
   metrics::EnableMetricsDefault GetMetricsReportingDefaultState() override;
   bool IsUMACellularUploadLogicEnabled() override;
-  bool IsHistorySyncEnabledOnAllProfiles() override;
+  bool SyncStateAllowsUkm() override;
+  bool SyncStateAllowsExtensionUkm() override;
+  bool AreNotificationListenersEnabledOnAllProfiles() override;
+  std::string GetAppPackageName() override;
+  std::string GetUploadSigningKey() override;
+  static void SetNotificationListenerSetupFailedForTesting(
+      bool simulate_failure);
 
   // ukm::HistoryDeleteObserver:
   void OnHistoryDeleted() override;
@@ -100,13 +101,9 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
       const base::FilePath& path);
   static void SetIsProcessRunningForTesting(IsProcessRunningFunction func);
 
-  // Persistent browser metrics need to be persisted somewhere. This constant
-  // provides a known string to be used for both the allocator's internal name
-  // and for a file on disk (relative to chrome::DIR_USER_DATA) to which they
-  // can be saved.
-  static const char kBrowserMetricsName[];
-
  private:
+  FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServiceClientTest, IsWebstoreExtension);
+
   explicit ChromeMetricsServiceClient(
       metrics::MetricsStateManager* state_manager);
 
@@ -139,10 +136,12 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   // user is performing work. This is useful to allow some features to sleep,
   // until the machine becomes active, such as precluding UMA uploads unless
   // there was recent activity.
-  void RegisterForNotifications();
+  // Returns true if registration was successful for all profiles.
+  bool RegisterForNotifications();
 
   // Call to listen for events on the selected profile's services.
-  void RegisterForProfileEvents(Profile* profile);
+  // Returns true if we registered for all notifications we wanted successfully.
+  bool RegisterForProfileEvents(Profile* profile);
 
   // content::NotificationObserver:
   void Observe(int type,
@@ -158,6 +157,9 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   void CountBrowserCrashDumpAttempts();
 #endif  // OS_WIN
 
+  // Check if an extension is installed via the Web Store.
+  static bool IsWebstoreExtension(base::StringPiece id);
+
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Weak pointer to the MetricsStateManager.
@@ -171,35 +173,26 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
 
   content::NotificationRegistrar registrar_;
 
-#if defined(OS_ANDROID)
   // Listener for changes in incognito activity.
-  // Desktop platform use BrowserList, and can listen for
-  // chrome::NOTIFICATION_BROWSER_OPENED instead.
-  std::unique_ptr<TabModelListObserver> incognito_observer_;
-#endif  // defined(OS_ANDROID)
+  std::unique_ptr<IncognitoObserver> incognito_observer_;
 
-  // A queue of tasks for initial metrics gathering. These may be asynchronous
-  // or synchronous.
-  base::circular_deque<base::Closure> initialize_task_queue_;
+  // Whether we registered all notification listeners successfully.
+  bool notification_listeners_active_ = false;
 
   // Saved callback received from CollectFinalMetricsForLog().
   base::Closure collect_final_metrics_done_callback_;
 
   // Indicates that collect final metrics step is running.
-  bool waiting_for_collect_final_metrics_step_;
+  bool waiting_for_collect_final_metrics_step_ = false;
 
   // Number of async histogram fetch requests in progress.
-  int num_async_histogram_fetches_in_progress_;
+  int num_async_histogram_fetches_in_progress_ = 0;
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   // The PluginMetricsProvider instance that was registered with
   // MetricsService. Has the same lifetime as |metrics_service_|.
-  PluginMetricsProvider* plugin_metrics_provider_;
+  PluginMetricsProvider* plugin_metrics_provider_ = nullptr;
 #endif
-
-  // The MemoryGrowthTracker instance that tracks memory usage growth in
-  // MemoryDetails.
-  MemoryGrowthTracker memory_growth_tracker_;
 
   // Callback to determine whether or not a cellular network is currently being
   // used.
@@ -210,7 +203,11 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   std::unique_ptr<base::CallbackList<void(OmniboxLog*)>::Subscription>
       omnibox_url_opened_subscription_;
 
-  base::WeakPtrFactory<ChromeMetricsServiceClient> weak_ptr_factory_;
+#if !defined(OS_ANDROID)
+  std::unique_ptr<BrowserActivityWatcher> browser_activity_watcher_;
+#endif
+
+  base::WeakPtrFactory<ChromeMetricsServiceClient> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChromeMetricsServiceClient);
 };

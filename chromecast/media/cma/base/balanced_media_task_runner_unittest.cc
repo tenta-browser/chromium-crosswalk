@@ -10,11 +10,12 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -127,8 +128,9 @@ void BalancedMediaTaskRunnerTest::SetupTest(
 
 void BalancedMediaTaskRunnerTest::ProcessAllTasks() {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&BalancedMediaTaskRunnerTest::OnTestTimeout,
-                            base::Unretained(this)),
+      FROM_HERE,
+      base::BindOnce(&BalancedMediaTaskRunnerTest::OnTestTimeout,
+                     base::Unretained(this)),
       base::TimeDelta::FromSeconds(5));
   ScheduleTask();
 }
@@ -156,8 +158,8 @@ void BalancedMediaTaskRunnerTest::ScheduleTask() {
       context.is_pending_task) {
     pattern_index_ = next_pattern_index;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&BalancedMediaTaskRunnerTest::ScheduleTask,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&BalancedMediaTaskRunnerTest::ScheduleTask,
+                                  base::Unretained(this)));
     return;
   }
 
@@ -183,8 +185,8 @@ void BalancedMediaTaskRunnerTest::ScheduleTask() {
   context.task_index++;
   pattern_index_ = next_pattern_index;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&BalancedMediaTaskRunnerTest::ScheduleTask,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&BalancedMediaTaskRunnerTest::ScheduleTask,
+                                base::Unretained(this)));
 }
 
 void BalancedMediaTaskRunnerTest::Task(
@@ -205,7 +207,7 @@ void BalancedMediaTaskRunnerTest::Task(
 
 void BalancedMediaTaskRunnerTest::OnTestTimeout() {
   ADD_FAILURE() << "Test timed out";
-  if (base::MessageLoop::current())
+  if (base::MessageLoopCurrent::Get())
     base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
@@ -216,7 +218,7 @@ TEST_F(BalancedMediaTaskRunnerTest, OneTaskRunner) {
   int timestamps0_ms[] = {0, 10, 20, 30, 40, 30, 50, 60, 20, 30, 70};
   std::vector<std::vector<int> > timestamps_ms(1);
   timestamps_ms[0] = std::vector<int>(
-      timestamps0_ms, timestamps0_ms + arraysize(timestamps0_ms));
+      timestamps0_ms, timestamps0_ms + base::size(timestamps0_ms));
 
   // Scheduling pattern.
   std::vector<size_t> scheduling_pattern(1);
@@ -224,9 +226,9 @@ TEST_F(BalancedMediaTaskRunnerTest, OneTaskRunner) {
 
   // Expected results.
   int expected_timestamps[] = {0, 10, 20, 30, 40, 50, 60, 70};
-  std::vector<int> expected_timestamps_ms(std::vector<int>(
-      expected_timestamps,
-      expected_timestamps + arraysize(expected_timestamps)));
+  std::vector<int> expected_timestamps_ms(
+      std::vector<int>(expected_timestamps,
+                       expected_timestamps + base::size(expected_timestamps)));
 
   SetupTest(base::TimeDelta::FromMilliseconds(30),
             timestamps_ms,
@@ -245,21 +247,21 @@ TEST_F(BalancedMediaTaskRunnerTest, TwoTaskRunnerUnbalanced) {
   int timestamps1_ms[] = {5, 15, 25, 35, 45, 35, 55, 65, 25, 35, 75};
   std::vector<std::vector<int> > timestamps_ms(2);
   timestamps_ms[0] = std::vector<int>(
-      timestamps0_ms, timestamps0_ms + arraysize(timestamps0_ms));
+      timestamps0_ms, timestamps0_ms + base::size(timestamps0_ms));
   timestamps_ms[1] = std::vector<int>(
-      timestamps1_ms, timestamps1_ms + arraysize(timestamps1_ms));
+      timestamps1_ms, timestamps1_ms + base::size(timestamps1_ms));
 
   // Scheduling pattern.
   size_t pattern[] = {1, 0, 0, 0, 0};
-  std::vector<size_t> scheduling_pattern = std::vector<size_t>(
-      pattern, pattern + arraysize(pattern));
+  std::vector<size_t> scheduling_pattern =
+      std::vector<size_t>(pattern, pattern + base::size(pattern));
 
   // Expected results.
   int expected_timestamps[] = {
     5, 0, 10, 20, 30, 15, 40, 25, 50, 35, 60, 45, 70, 55, 65, 75 };
-  std::vector<int> expected_timestamps_ms(std::vector<int>(
-      expected_timestamps,
-      expected_timestamps + arraysize(expected_timestamps)));
+  std::vector<int> expected_timestamps_ms(
+      std::vector<int>(expected_timestamps,
+                       expected_timestamps + base::size(expected_timestamps)));
 
   SetupTest(base::TimeDelta::FromMilliseconds(30),
             timestamps_ms,

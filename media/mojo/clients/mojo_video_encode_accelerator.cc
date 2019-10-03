@@ -4,7 +4,10 @@
 
 #include "media/mojo/clients/mojo_video_encode_accelerator.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
@@ -15,9 +18,6 @@
 namespace media {
 
 namespace {
-
-// Does nothing but keeping |frame| alive.
-void KeepVideoFrameAlive(const scoped_refptr<VideoFrame>& frame) {}
 
 // File-static mojom::VideoEncodeAcceleratorClient implementation to trampoline
 // method calls to its |client_|. Note that this class is thread hostile when
@@ -34,10 +34,9 @@ class VideoEncodeAcceleratorClient
   void RequireBitstreamBuffers(uint32_t input_count,
                                const gfx::Size& input_coded_size,
                                uint32_t output_buffer_size) override;
-  void BitstreamBufferReady(int32_t bitstream_buffer_id,
-                            uint32_t payload_size,
-                            bool key_frame,
-                            base::TimeDelta timestamp) override;
+  void BitstreamBufferReady(
+      int32_t bitstream_buffer_id,
+      const media::BitstreamBufferMetadata& metadata) override;
   void NotifyError(VideoEncodeAccelerator::Error error) override;
 
  private:
@@ -67,14 +66,11 @@ void VideoEncodeAcceleratorClient::RequireBitstreamBuffers(
 
 void VideoEncodeAcceleratorClient::BitstreamBufferReady(
     int32_t bitstream_buffer_id,
-    uint32_t payload_size,
-    bool key_frame,
-    base::TimeDelta timestamp) {
+    const media::BitstreamBufferMetadata& metadata) {
   DVLOG(2) << __func__ << " bitstream_buffer_id=" << bitstream_buffer_id
-           << ", payload_size=" << payload_size
-           << "B,  key_frame=" << key_frame;
-  client_->BitstreamBufferReady(bitstream_buffer_id, payload_size, key_frame,
-                                timestamp);
+           << ", payload_size=" << metadata.payload_size_bytes
+           << "B,  key_frame=" << metadata.key_frame;
+  client_->BitstreamBufferReady(bitstream_buffer_id, metadata);
 }
 
 void VideoEncodeAcceleratorClient::NotifyError(
@@ -102,16 +98,9 @@ MojoVideoEncodeAccelerator::GetSupportedProfiles() {
       supported_profiles_);
 }
 
-bool MojoVideoEncodeAccelerator::Initialize(VideoPixelFormat input_format,
-                                            const gfx::Size& input_visible_size,
-                                            VideoCodecProfile output_profile,
-                                            uint32_t initial_bitrate,
+bool MojoVideoEncodeAccelerator::Initialize(const Config& config,
                                             Client* client) {
-  DVLOG(2) << __func__
-           << " input_format=" << VideoPixelFormatToString(input_format)
-           << ", input_visible_size=" << input_visible_size.ToString()
-           << ", output_profile=" << GetProfileName(output_profile)
-           << ", initial_bitrate=" << initial_bitrate;
+  DVLOG(2) << __func__ << " " << config.AsHumanReadableString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!client)
     return false;
@@ -119,19 +108,33 @@ bool MojoVideoEncodeAccelerator::Initialize(VideoPixelFormat input_format,
   // Get a mojom::VideoEncodeAcceleratorClient bound to a local implementation
   // (VideoEncodeAcceleratorClient) and send the pointer remotely.
   mojom::VideoEncodeAcceleratorClientPtr vea_client_ptr;
-  vea_client_ = base::MakeUnique<VideoEncodeAcceleratorClient>(
+  vea_client_ = std::make_unique<VideoEncodeAcceleratorClient>(
       client, mojo::MakeRequest(&vea_client_ptr));
 
   bool result = false;
-  vea_->Initialize(input_format, input_visible_size, output_profile,
-                   initial_bitrate, std::move(vea_client_ptr), &result);
+  vea_->Initialize(config, std::move(vea_client_ptr), &result);
   return result;
 }
 
-void MojoVideoEncodeAccelerator::Encode(const scoped_refptr<VideoFrame>& frame,
+void MojoVideoEncodeAccelerator::Encode(scoped_refptr<VideoFrame> frame,
                                         bool force_keyframe) {
   DVLOG(2) << __func__ << " tstamp=" << frame->timestamp();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK_EQ(VideoFrame::NumPlanes(frame->format()),
+            frame->layout().num_planes());
+  DCHECK(vea_.is_bound());
+
+#if defined(OS_LINUX)
+  if (frame->storage_type() == VideoFrame::STORAGE_DMABUFS) {
+    DCHECK(frame->HasDmaBufs());
+    vea_->Encode(
+        std::move(frame), force_keyframe,
+        base::BindOnce(base::DoNothing::Once<scoped_refptr<VideoFrame>>(),
+                       frame));
+    return;
+  }
+#endif
+
   DCHECK_EQ(PIXEL_FORMAT_I420, frame->format());
   DCHECK_EQ(VideoFrame::STORAGE_SHMEM, frame->storage_type());
   DCHECK(frame->shared_memory_handle().IsValid());
@@ -142,9 +145,13 @@ void MojoVideoEncodeAccelerator::Encode(const scoped_refptr<VideoFrame>& frame,
 
   // WrapSharedMemoryHandle() takes ownership of the handle passed to it, but we
   // don't have ownership of frame->shared_memory_handle(), so Duplicate() it.
-  mojo::ScopedSharedBufferHandle handle =
-      mojo::WrapSharedMemoryHandle(frame->shared_memory_handle().Duplicate(),
-                                   allocation_size, true /* read_only */);
+  //
+  // TODO(https://crbug.com/793446): This should be changed to wrap the frame
+  // buffer handle as read-only, but VideoFrame does not seem to guarantee that
+  // its shared_memory_handle() is in fact read-only.
+  mojo::ScopedSharedBufferHandle handle = mojo::WrapSharedMemoryHandle(
+      frame->shared_memory_handle().Duplicate(), allocation_size,
+      mojo::UnwrappedSharedMemoryHandleProtection::kReadWrite);
 
   const size_t y_offset = frame->shared_memory_offset();
   const size_t u_offset = y_offset + frame->data(VideoFrame::kUPlane) -
@@ -163,22 +170,22 @@ void MojoVideoEncodeAccelerator::Encode(const scoped_refptr<VideoFrame>& frame,
   // Encode() is synchronous: clients will assume full ownership of |frame| when
   // this gets destroyed and probably recycle its shared_memory_handle(): keep
   // the former alive until the remote end is actually finished.
-  DCHECK(vea_.is_bound());
-  vea_->Encode(mojo_frame, force_keyframe,
-               base::Bind(&KeepVideoFrameAlive, frame));
+  vea_->Encode(
+      std::move(mojo_frame), force_keyframe,
+      base::BindOnce(base::DoNothing::Once<scoped_refptr<VideoFrame>>(),
+                     std::move(frame)));
 }
 
 void MojoVideoEncodeAccelerator::UseOutputBitstreamBuffer(
-    const BitstreamBuffer& buffer) {
+    BitstreamBuffer buffer) {
   DVLOG(2) << __func__ << " buffer.id()= " << buffer.id()
            << " buffer.size()= " << buffer.size() << "B";
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // WrapSharedMemoryHandle() takes ownership of the handle passed to it, but we
-  // don't have ownership of the |buffer|s underlying handle, so Duplicate() it.
-  DCHECK(buffer.handle().IsValid());
-  mojo::ScopedSharedBufferHandle buffer_handle = mojo::WrapSharedMemoryHandle(
-      buffer.handle().Duplicate(), buffer.size(), true /* read_only */);
+  DCHECK(buffer.region().IsValid());
+
+  auto buffer_handle =
+      mojo::WrapPlatformSharedMemoryRegion(buffer.TakeRegion());
 
   vea_->UseOutputBitstreamBuffer(buffer.id(), std::move(buffer_handle));
 }
@@ -189,6 +196,19 @@ void MojoVideoEncodeAccelerator::RequestEncodingParametersChange(
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(vea_.is_bound());
+
+  media::VideoBitrateAllocation bitrate_allocation;
+  bitrate_allocation.SetBitrate(0, 0, bitrate);
+  vea_->RequestEncodingParametersChange(bitrate_allocation, framerate);
+}
+
+void MojoVideoEncodeAccelerator::RequestEncodingParametersChange(
+    const VideoBitrateAllocation& bitrate,
+    uint32_t framerate) {
+  DVLOG(2) << __func__;
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(vea_.is_bound());
+
   vea_->RequestEncodingParametersChange(bitrate, framerate);
 }
 

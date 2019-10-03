@@ -5,16 +5,10 @@
 #include "chrome/browser/net/net_export_helper.h"
 
 #include "base/values.h"
-#include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
-#include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_network_delegate.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_store.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/extension_service.h"
@@ -44,24 +38,14 @@ std::unique_ptr<base::DictionaryValue> GetPrerenderInfo(Profile* profile) {
   return value;
 }
 
-std::unique_ptr<base::Value> GetHistoricNetworkStats(Profile* profile) {
-  DataReductionProxyChromeSettings* data_reduction_proxy_settings =
-      DataReductionProxyChromeSettingsFactory::GetForBrowserContext(profile);
-
-  return data_reduction_proxy_settings
-             ? data_reduction_proxy_settings->data_reduction_proxy_service()
-                   ->compression_stats()
-                   ->HistoricNetworkStatsInfoToValue()
-             : nullptr;
-}
-
 std::unique_ptr<base::ListValue> GetExtensionInfo(Profile* profile) {
-  auto extension_list = base::MakeUnique<base::ListValue>();
+  auto extension_list = std::make_unique<base::ListValue>();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::ExtensionSystem* extension_system =
       extensions::ExtensionSystem::Get(profile);
   if (extension_system) {
-    ExtensionService* extension_service = extension_system->extension_service();
+    extensions::ExtensionService* extension_service =
+        extension_system->extension_service();
     if (extension_service) {
       std::unique_ptr<const extensions::ExtensionSet> extensions(
           extensions::ExtensionRegistry::Get(profile)
@@ -80,40 +64,15 @@ std::unique_ptr<base::ListValue> GetExtensionInfo(Profile* profile) {
   return extension_list;
 }
 
-std::unique_ptr<base::DictionaryValue> GetDataReductionProxyInfo(
-    Profile* profile) {
-  DataReductionProxyChromeSettings* data_reduction_proxy_settings =
-      DataReductionProxyChromeSettingsFactory::GetForBrowserContext(profile);
-
-  if (!data_reduction_proxy_settings)
-    return nullptr;
-
-  data_reduction_proxy::DataReductionProxyEventStore* event_store =
-      data_reduction_proxy_settings->GetEventStore();
-
-  return event_store ? event_store->GetSummaryValue() : nullptr;
-}
-
-std::unique_ptr<base::Value> GetSessionNetworkStats(Profile* profile) {
-  DataReductionProxyChromeSettings* data_reduction_proxy_settings =
-      DataReductionProxyChromeSettingsFactory::GetForBrowserContext(profile);
-
-  return data_reduction_proxy_settings
-             ? data_reduction_proxy_settings->data_reduction_proxy_service()
-                   ->compression_stats()
-                   ->SessionNetworkStatsInfoToValue()
-             : nullptr;
-}
-
 #if defined(OS_WIN)
 std::unique_ptr<base::DictionaryValue> GetWindowsServiceProviders() {
-  auto service_providers = base::MakeUnique<base::DictionaryValue>();
+  auto service_providers = std::make_unique<base::DictionaryValue>();
 
   WinsockLayeredServiceProviderList layered_providers;
   GetWinsockLayeredServiceProviders(&layered_providers);
-  auto layered_provider_list = base::MakeUnique<base::ListValue>();
+  auto layered_provider_list = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < layered_providers.size(); ++i) {
-    auto service_dict = base::MakeUnique<base::DictionaryValue>();
+    auto service_dict = std::make_unique<base::DictionaryValue>();
     service_dict->SetString("name", layered_providers[i].name);
     service_dict->SetInteger("version", layered_providers[i].version);
     service_dict->SetInteger("chain_length", layered_providers[i].chain_length);
@@ -128,9 +87,9 @@ std::unique_ptr<base::DictionaryValue> GetWindowsServiceProviders() {
 
   WinsockNamespaceProviderList namespace_providers;
   GetWinsockNamespaceProviders(&namespace_providers);
-  auto namespace_list = base::MakeUnique<base::ListValue>();
+  auto namespace_list = std::make_unique<base::ListValue>();
   for (size_t i = 0; i < namespace_providers.size(); ++i) {
-    auto namespace_dict = base::MakeUnique<base::DictionaryValue>();
+    auto namespace_dict = std::make_unique<base::DictionaryValue>();
     namespace_dict->SetString("name", namespace_providers[i].name);
     namespace_dict->SetBoolean("active", namespace_providers[i].active);
     namespace_dict->SetInteger("version", namespace_providers[i].version);

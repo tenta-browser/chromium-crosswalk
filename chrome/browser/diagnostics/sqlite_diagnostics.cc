@@ -7,10 +7,10 @@
 #include <stdint.h>
 
 #include "base/base_paths.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
@@ -25,13 +25,13 @@
 #include "components/history/core/browser/history_constants.h"
 #include "components/webdata/common/webdata_constants.h"
 #include "content/public/common/content_constants.h"
-#include "sql/connection.h"
+#include "sql/database.h"
 #include "sql/statement.h"
 #include "storage/browser/database/database_tracker.h"
 #include "third_party/sqlite/sqlite3.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_constants.h"
+#include "chromeos/constants/chromeos_constants.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace diagnostics {
@@ -64,7 +64,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
         case DIAG_SQLITE_DB_CORRUPTED:
           LOG(WARNING) << "Removing broken SQLite database: "
                        << db_path_.value();
-          sql::Connection::Delete(db_path_);
+          sql::Database::Delete(db_path_);
           break;
         case DIAG_SQLITE_SUCCESS:
         case DIAG_SQLITE_FILE_NOT_FOUND_OK:
@@ -102,13 +102,13 @@ class SqliteIntegrityTest : public DiagnosticsTest {
 
     int errors = 0;
     {  // Scope the statement and database so they close properly.
-      sql::Connection database;
+      sql::Database database;
       database.set_exclusive_locking();
       scoped_refptr<ErrorRecorder> recorder(new ErrorRecorder);
 
       // Set the error callback so that we can get useful results in a debug
       // build for a corrupted database. Without setting the error callback,
-      // sql::Connection will just DCHECK.
+      // sql::Database will just DCHECK.
       database.set_error_callback(
           base::Bind(&SqliteIntegrityTest::ErrorRecorder::RecordSqliteError,
                      recorder->AsWeakPtr(),
@@ -137,7 +137,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
                         "Database locked by another process");
         } else {
           std::string str("Pragma failed. Error: ");
-          str += base::IntToString(error);
+          str += base::NumberToString(error);
           RecordFailure(DIAG_SQLITE_PRAGMA_FAILED, str);
         }
         return false;
@@ -158,7 +158,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
     // All done. Report to the user.
     if (errors != 0) {
       std::string str("Database corruption detected: ");
-      str += base::IntToString(errors) + " errors";
+      str += base::NumberToString(errors) + " errors";
       RecordFailure(DIAG_SQLITE_DB_CORRUPTED, str);
       return true;
     }
@@ -172,7 +172,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
    public:
     ErrorRecorder() : has_error_(false), sqlite_error_(0), last_errno_(0) {}
 
-    void RecordSqliteError(sql::Connection* connection,
+    void RecordSqliteError(sql::Database* connection,
                            int sqlite_error,
                            sql::Statement* statement) {
       has_error_ = true;
@@ -210,7 +210,7 @@ class SqliteIntegrityTest : public DiagnosticsTest {
 }  // namespace
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteCookiesDbTest() {
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_COOKIE_TEST,
       base::FilePath(chrome::kCookieFilename));
 }
@@ -219,13 +219,13 @@ std::unique_ptr<DiagnosticsTest> MakeSqliteWebDatabaseTrackerDbTest() {
   base::FilePath databases_dir(storage::kDatabaseDirectoryName);
   base::FilePath tracker_db =
       databases_dir.Append(storage::kTrackerDatabaseFileName);
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::NO_FLAGS_SET,
       DIAGNOSTICS_SQLITE_INTEGRITY_DATABASE_TRACKER_TEST, tracker_db);
 }
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteHistoryDbTest() {
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_HISTORY_TEST,
       base::FilePath(history::kHistoryFilename));
 }
@@ -233,8 +233,8 @@ std::unique_ptr<DiagnosticsTest> MakeSqliteHistoryDbTest() {
 #if defined(OS_CHROMEOS)
 std::unique_ptr<DiagnosticsTest> MakeSqliteNssCertDbTest() {
   base::FilePath home_dir;
-  PathService::Get(base::DIR_HOME, &home_dir);
-  return base::MakeUnique<SqliteIntegrityTest>(
+  base::PathService::Get(base::DIR_HOME, &home_dir);
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::REMOVE_IF_CORRUPT,
       DIAGNOSTICS_SQLITE_INTEGRITY_NSS_CERT_TEST,
       home_dir.Append(chromeos::kNssCertDbPath));
@@ -242,8 +242,8 @@ std::unique_ptr<DiagnosticsTest> MakeSqliteNssCertDbTest() {
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteNssKeyDbTest() {
   base::FilePath home_dir;
-  PathService::Get(base::DIR_HOME, &home_dir);
-  return base::MakeUnique<SqliteIntegrityTest>(
+  base::PathService::Get(base::DIR_HOME, &home_dir);
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::REMOVE_IF_CORRUPT,
       DIAGNOSTICS_SQLITE_INTEGRITY_NSS_KEY_TEST,
       home_dir.Append(chromeos::kNssKeyDbPath));
@@ -251,21 +251,21 @@ std::unique_ptr<DiagnosticsTest> MakeSqliteNssKeyDbTest() {
 #endif  // defined(OS_CHROMEOS)
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteFaviconsDbTest() {
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::NO_FLAGS_SET,
       DIAGNOSTICS_SQLITE_INTEGRITY_FAVICONS_TEST,
       base::FilePath(history::kFaviconsFilename));
 }
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteTopSitesDbTest() {
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::NO_FLAGS_SET,
       DIAGNOSTICS_SQLITE_INTEGRITY_TOPSITES_TEST,
       base::FilePath(history::kTopSitesFilename));
 }
 
 std::unique_ptr<DiagnosticsTest> MakeSqliteWebDataDbTest() {
-  return base::MakeUnique<SqliteIntegrityTest>(
+  return std::make_unique<SqliteIntegrityTest>(
       SqliteIntegrityTest::CRITICAL, DIAGNOSTICS_SQLITE_INTEGRITY_WEB_DATA_TEST,
       base::FilePath(kWebDataFilename));
 }

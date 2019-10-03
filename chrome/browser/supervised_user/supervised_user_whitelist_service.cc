@@ -9,9 +9,9 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -25,6 +25,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_change_processor.h"
 #include "components/sync/model/sync_data.h"
 #include "components/sync/model/sync_error.h"
 #include "components/sync/model/sync_error_factory.h"
@@ -37,10 +38,7 @@ SupervisedUserWhitelistService::SupervisedUserWhitelistService(
     PrefService* prefs,
     component_updater::SupervisedUserWhitelistInstaller* installer,
     const std::string& client_id)
-    : prefs_(prefs),
-      installer_(installer),
-      client_id_(client_id),
-      weak_ptr_factory_(this) {
+    : prefs_(prefs), installer_(installer), client_id_(client_id) {
   DCHECK(prefs);
 }
 
@@ -140,6 +138,12 @@ syncer::SyncData SupervisedUserWhitelistService::CreateWhitelistSyncData(
   whitelist->set_name(name);
 
   return syncer::SyncData::CreateLocalData(id, name, specifics);
+}
+
+void SupervisedUserWhitelistService::WaitUntilReadyToSync(
+    base::OnceClosure done) {
+  // This service handles sync events at any time.
+  std::move(done).Run();
 }
 
 syncer::SyncMergeResult

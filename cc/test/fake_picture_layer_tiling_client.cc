@@ -22,13 +22,14 @@ FakePictureLayerTilingClient::FakePictureLayerTilingClient()
       has_valid_tile_priorities_(true) {}
 
 FakePictureLayerTilingClient::FakePictureLayerTilingClient(
-    ResourceProvider* resource_provider)
+    viz::ClientResourceProvider* resource_provider,
+    viz::ContextProvider* context_provider)
     : resource_pool_(
-          ResourcePool::Create(resource_provider,
-                               base::ThreadTaskRunnerHandle::Get().get(),
-                               viz::ResourceTextureHint::kDefault,
-                               ResourcePool::kDefaultExpirationDelay,
-                               false)),
+          std::make_unique<ResourcePool>(resource_provider,
+                                         context_provider,
+                                         base::ThreadTaskRunnerHandle::Get(),
+                                         ResourcePool::kDefaultExpirationDelay,
+                                         false)),
       tile_manager_(
           new FakeTileManager(&tile_manager_client_, resource_pool_.get())),
       raster_source_(FakeRasterSource::CreateInfiniteFilled()),
@@ -36,8 +37,7 @@ FakePictureLayerTilingClient::FakePictureLayerTilingClient(
       twin_tiling_(nullptr),
       has_valid_tile_priorities_(true) {}
 
-FakePictureLayerTilingClient::~FakePictureLayerTilingClient() {
-}
+FakePictureLayerTilingClient::~FakePictureLayerTilingClient() = default;
 
 std::unique_ptr<Tile> FakePictureLayerTilingClient::CreateTile(
     const Tile::CreateInfo& info) {
@@ -49,7 +49,7 @@ void FakePictureLayerTilingClient::SetTileSize(const gfx::Size& tile_size) {
 }
 
 gfx::Size FakePictureLayerTilingClient::CalculateTileSize(
-    const gfx::Size& /* content_bounds */) const {
+    const gfx::Size& /* content_bounds */) {
   return tile_size_;
 }
 
@@ -76,6 +76,11 @@ FakePictureLayerTilingClient::GetPendingOrActiveTwinTiling(
 
 bool FakePictureLayerTilingClient::RequiresHighResToDraw() const {
   return false;
+}
+
+const PaintWorkletRecordMap&
+FakePictureLayerTilingClient::GetPaintWorkletRecords() const {
+  return paint_worklet_records_;
 }
 
 }  // namespace cc

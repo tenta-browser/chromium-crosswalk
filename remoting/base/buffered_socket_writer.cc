@@ -4,12 +4,14 @@
 
 #include "remoting/base/buffered_socket_writer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace remoting {
 
@@ -18,28 +20,33 @@ namespace {
 int WriteNetSocket(net::Socket* socket,
                    const scoped_refptr<net::IOBuffer>& buf,
                    int buf_len,
-                   const net::CompletionCallback& callback) {
-  return socket->Write(buf.get(), buf_len, callback);
+                   net::CompletionOnceCallback callback,
+                   const net::NetworkTrafficAnnotationTag& traffic_annotation) {
+  return socket->Write(buf.get(), buf_len, std::move(callback),
+                       traffic_annotation);
 }
 
 }  // namespace
 
 struct BufferedSocketWriter::PendingPacket {
   PendingPacket(scoped_refptr<net::DrainableIOBuffer> data,
-                const base::Closure& done_task)
+                base::OnceClosure done_task,
+                const net::NetworkTrafficAnnotationTag& traffic_annotation)
       : data(data),
-        done_task(done_task) {
-  }
+        done_task(std::move(done_task)),
+        traffic_annotation(traffic_annotation) {}
 
   scoped_refptr<net::DrainableIOBuffer> data;
-  base::Closure done_task;
+  base::OnceClosure done_task;
+  net::NetworkTrafficAnnotationTag traffic_annotation;
 };
 
 // static
 std::unique_ptr<BufferedSocketWriter> BufferedSocketWriter::CreateForSocket(
     net::Socket* socket,
     const WriteFailedCallback& write_failed_callback) {
-  std::unique_ptr<BufferedSocketWriter> result(new BufferedSocketWriter());
+  std::unique_ptr<BufferedSocketWriter> result =
+      std::make_unique<BufferedSocketWriter>();
   result->Start(base::Bind(&WriteNetSocket, socket), write_failed_callback);
   return result;
 }
@@ -59,8 +66,9 @@ void BufferedSocketWriter::Start(
 }
 
 void BufferedSocketWriter::Write(
-    const scoped_refptr<net::IOBufferWithSize>& data,
-    const base::Closure& done_task) {
+    scoped_refptr<net::IOBufferWithSize> data,
+    base::OnceClosure done_task,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(data.get());
 
@@ -68,8 +76,10 @@ void BufferedSocketWriter::Write(
   if (closed_)
     return;
 
-  queue_.push_back(base::MakeUnique<PendingPacket>(
-      new net::DrainableIOBuffer(data.get(), data->size()), done_task));
+  int data_size = data->size();
+  queue_.push_back(std::make_unique<PendingPacket>(
+      base::MakeRefCounted<net::DrainableIOBuffer>(std::move(data), data_size),
+      std::move(done_task), traffic_annotation));
 
   DoWrite();
 }
@@ -83,7 +93,8 @@ void BufferedSocketWriter::DoWrite() {
     int result = write_callback_.Run(
         queue_.front()->data.get(), queue_.front()->data->BytesRemaining(),
         base::Bind(&BufferedSocketWriter::OnWritten,
-                   weak_factory_.GetWeakPtr()));
+                   weak_factory_.GetWeakPtr()),
+        queue_.front()->traffic_annotation);
     HandleWriteResult(result);
   }
 }
@@ -96,7 +107,7 @@ void BufferedSocketWriter::HandleWriteResult(int result) {
       closed_ = true;
       write_callback_.Reset();
       if (!write_failed_callback_.is_null())
-        base::ResetAndReturn(&write_failed_callback_).Run(result);
+        std::move(write_failed_callback_).Run(result);
     }
     return;
   }
@@ -106,11 +117,11 @@ void BufferedSocketWriter::HandleWriteResult(int result) {
   queue_.front()->data->DidConsume(result);
 
   if (queue_.front()->data->BytesRemaining() == 0) {
-    base::Closure done_task = queue_.front()->done_task;
+    base::OnceClosure done_task = std::move(queue_.front()->done_task);
     queue_.pop_front();
 
     if (!done_task.is_null())
-      done_task.Run();
+      std::move(done_task).Run();
   }
 }
 

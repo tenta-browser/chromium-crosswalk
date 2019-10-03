@@ -7,8 +7,9 @@
 
 #import <Foundation/Foundation.h>
 
+#import "ios/chrome/browser/ui/commands/browsing_data_commands.h"
+
 @class OpenNewTabCommand;
-@class OpenUrlCommand;
 @class ShowSigninCommand;
 @class StartVoiceSearchCommand;
 @class UIViewController;
@@ -19,6 +20,10 @@
 
 // Shows the accounts settings UI, presenting from |baseViewController|.
 - (void)showAccountsSettingsFromViewController:
+    (UIViewController*)baseViewController;
+
+// Shows the Google services settings UI, presenting from |baseViewController|.
+- (void)showGoogleServicesSettingsFromViewController:
     (UIViewController*)baseViewController;
 
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
@@ -32,6 +37,18 @@
 - (void)showSyncPassphraseSettingsFromViewController:
     (UIViewController*)baseViewController;
 
+// Shows the list of saved passwords in the settings.
+- (void)showSavedPasswordsSettingsFromViewController:
+    (UIViewController*)baseViewController;
+
+// Shows the list of profiles (addresess) in the settings.
+- (void)showProfileSettingsFromViewController:
+    (UIViewController*)baseViewController;
+
+// Shows the list of credit cards in the settings.
+- (void)showCreditCardSettingsFromViewController:
+    (UIViewController*)baseViewController;
+
 @end
 
 // Protocol for commands that will generally be handled by the application,
@@ -41,7 +58,9 @@
 // object that implements the methods in this protocol should be able to forward
 // ApplicationSettingsCommands to the settings view controller if necessary.
 
-@protocol ApplicationCommands<NSObject, ApplicationSettingsCommands>
+@protocol ApplicationCommands<NSObject,
+                              ApplicationSettingsCommands,
+                              BrowsingDataCommands>
 
 // Dismisses all modal dialogs.
 - (void)dismissModalDialogs;
@@ -50,32 +69,37 @@
 // Shows the Settings UI, presenting from |baseViewController|.
 - (void)showSettingsFromViewController:(UIViewController*)baseViewController;
 
-// Switches to show either regular or incognito tabs, and then opens
-// a new oen of those tabs. |newTabCommand|'s |incognito| property inidcates
-// the type of tab to open.
-- (void)switchModesAndOpenNewTab:(OpenNewTabCommand*)newTabCommand;
+// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+//
+// Shows the advanced sign-in settings. Only used when unified consent feature
+// is enabled.
+//
+// TODO(crbug.com/965992): This is a temporary command that was added as the
+// First Run and the Sign-in promo are not managed by the
+// |SigninInteractionCoordinator| and they need to present the advanced sign-in
+// settings via a dispatched command. |SigninInteractionCoordinator| should be
+// changed to present the|FirstRunChromeSigninViewController| and
+//|SigninPromoViewController| and this command should be removed.
+- (void)showAdvancedSigninSettingsFromViewController:
+    (UIViewController*)baseViewController;
 
 // Starts a voice search on the current BVC.
-- (void)startVoiceSearch:(StartVoiceSearchCommand*)command;
+- (void)startVoiceSearch;
 
 // Shows the History UI.
 - (void)showHistory;
 
 // Closes the History UI and opens a URL.
-- (void)closeSettingsUIAndOpenURL:(OpenUrlCommand*)command;
+- (void)closeSettingsUIAndOpenURL:(OpenNewTabCommand*)command;
 
 // Closes the History UI.
 - (void)closeSettingsUI;
 
+// Prepare to show the TabSwitcher UI.
+- (void)prepareTabSwitcher;
+
 // Shows the TabSwitcher UI.
 - (void)displayTabSwitcher;
-
-// Dismisses the TabSwitcher UI.
-- (void)dismissTabSwitcher;
-
-// Shows the Clear Browsing Data Settings UI (part of Settings).
-- (void)showClearBrowsingDataSettingsFromViewController:
-    (UIViewController*)baseViewController;
 
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
 // Shows the Autofill Settings UI, presenting from |baseViewController|.
@@ -86,8 +110,10 @@
 - (void)showReportAnIssueFromViewController:
     (UIViewController*)baseViewController;
 
-// Opens the |command| URL.
-- (void)openURL:(OpenUrlCommand*)command;
+// Opens the |command| URL in a new tab.
+// TODO(crbug.com/907527): Check if it is possible to merge it with the
+// URLLoader methods.
+- (void)openURLInNewTab:(OpenNewTabCommand*)command;
 
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
 // Shows the signin UI, presenting from |baseViewController|.
@@ -97,6 +123,9 @@
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
 // Shows the Add Account UI, presenting from |baseViewController|.
 - (void)showAddAccountFromViewController:(UIViewController*)baseViewController;
+
+// Sets whether the UI is displaying incognito content.
+- (void)setIncognitoContentVisible:(BOOL)incognitoContentVisible;
 
 @end
 

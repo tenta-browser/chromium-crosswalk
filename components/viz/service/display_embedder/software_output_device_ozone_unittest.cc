@@ -9,18 +9,23 @@
 #include "base/macros.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/compositor/compositor.h"
-#include "ui/compositor/test/context_factories_for_test.h"
+#include "ui/compositor/test/test_context_factories.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/ozone/public/ozone_platform.h"
+#include "ui/ozone/public/platform_window_surface.h"
+#include "ui/ozone/public/surface_factory_ozone.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/platform_window_delegate.h"
+
+namespace viz {
 
 namespace {
 
@@ -39,11 +44,10 @@ class TestPlatformWindowDelegate : public ui::PlatformWindowDelegate {
   void OnClosed() override {}
   void OnWindowStateChanged(ui::PlatformWindowState new_state) override {}
   void OnLostCapture() override {}
-  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget,
-                                    float device_pixel_ratio) override {
+  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) override {
     widget_ = widget;
   }
-  void OnAcceleratedWidgetDestroyed() override { NOTREACHED(); }
+  void OnAcceleratedWidgetDestroyed() override {}
   void OnActivationChanged(bool active) override {}
 
  private:
@@ -63,36 +67,43 @@ class SoftwareOutputDeviceOzoneTest : public testing::Test {
   void TearDown() override;
 
  protected:
-  std::unique_ptr<viz::SoftwareOutputDeviceOzone> output_device_;
+  std::unique_ptr<SoftwareOutputDeviceOzone> output_device_;
   bool enable_pixel_output_ = false;
 
  private:
+  std::unique_ptr<ui::TestContextFactories> context_factories_;
   std::unique_ptr<ui::Compositor> compositor_;
   TestPlatformWindowDelegate window_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(SoftwareOutputDeviceOzoneTest);
 };
 
-SoftwareOutputDeviceOzoneTest::SoftwareOutputDeviceOzoneTest() {}
-SoftwareOutputDeviceOzoneTest::~SoftwareOutputDeviceOzoneTest() {}
+SoftwareOutputDeviceOzoneTest::SoftwareOutputDeviceOzoneTest() = default;
+SoftwareOutputDeviceOzoneTest::~SoftwareOutputDeviceOzoneTest() = default;
 
 void SoftwareOutputDeviceOzoneTest::SetUp() {
-  ui::ContextFactory* context_factory = nullptr;
-  ui::ContextFactoryPrivate* context_factory_private = nullptr;
-  ui::InitializeContextFactoryForTests(enable_pixel_output_, &context_factory,
-                                       &context_factory_private);
+  context_factories_ =
+      std::make_unique<ui::TestContextFactories>(enable_pixel_output_);
 
   const gfx::Size size(500, 400);
-  compositor_.reset(
-      new ui::Compositor(viz::FrameSinkId(1, 1), context_factory, nullptr,
-                         base::ThreadTaskRunnerHandle::Get(),
-                         false /* enable_surface_synchronization */,
-                         false /* enable_pixel_canvas */));
+  compositor_ = std::make_unique<ui::Compositor>(
+      FrameSinkId(1, 1), context_factories_->GetContextFactory(), nullptr,
+      base::ThreadTaskRunnerHandle::Get(), false /* enable_pixel_canvas */);
   compositor_->SetAcceleratedWidget(window_delegate_.GetAcceleratedWidget());
-  compositor_->SetScaleAndSize(1.0f, size);
+  compositor_->SetScaleAndSize(1.0f, size, LocalSurfaceIdAllocation());
 
-  output_device_ =
-      viz::SoftwareOutputDeviceOzone::Create(compositor_->widget());
+  ui::SurfaceFactoryOzone* factory =
+      ui::OzonePlatform::GetInstance()->GetSurfaceFactoryOzone();
+  std::unique_ptr<ui::PlatformWindowSurface> platform_window_surface =
+      factory->CreatePlatformWindowSurface(compositor_->widget());
+  std::unique_ptr<ui::SurfaceOzoneCanvas> surface_ozone =
+      factory->CreateCanvasForWidget(compositor_->widget());
+  if (!surface_ozone) {
+    LOG(ERROR) << "SurfaceOzoneCanvas not constructible on this platform";
+  } else {
+    output_device_ = std::make_unique<SoftwareOutputDeviceOzone>(
+        std::move(platform_window_surface), std::move(surface_ozone));
+  }
   if (output_device_)
     output_device_->Resize(size, 1.f);
 }
@@ -100,7 +111,7 @@ void SoftwareOutputDeviceOzoneTest::SetUp() {
 void SoftwareOutputDeviceOzoneTest::TearDown() {
   output_device_.reset();
   compositor_.reset();
-  ui::TerminateContextFactoryForTests();
+  context_factories_.reset();
 }
 
 class SoftwareOutputDeviceOzonePixelTest
@@ -138,3 +149,5 @@ TEST_F(SoftwareOutputDeviceOzoneTest, CheckCorrectResizeBehavior) {
                       canvas->getBaseLayerSize().height());
   EXPECT_EQ(size.ToString(), canvas_size.ToString());
 }
+
+}  // namespace viz

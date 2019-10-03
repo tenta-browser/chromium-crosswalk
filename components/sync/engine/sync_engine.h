@@ -14,7 +14,8 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
+#include "base/sequenced_task_runner.h"
+#include "base/time/time.h"
 #include "components/sync/base/extensions_activity.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/weak_handle.h"
@@ -23,7 +24,7 @@
 #include "components/sync/engine/model_type_configurer.h"
 #include "components/sync/engine/shutdown_reason.h"
 #include "components/sync/engine/sync_backend_registrar.h"
-#include "components/sync/engine/sync_manager.h"
+#include "components/sync/engine/sync_credentials.h"
 #include "components/sync/engine/sync_manager_factory.h"
 
 class GURL;
@@ -42,9 +43,8 @@ class UnrecoverableErrorHandler;
 // interface will handle crossing threads if necessary.
 class SyncEngine : public ModelTypeConfigurer {
  public:
-  using Status = SyncStatus;
   using HttpPostProviderFactoryGetter =
-      base::Callback<std::unique_ptr<HttpPostProviderFactory>(
+      base::OnceCallback<std::unique_ptr<HttpPostProviderFactory>(
           CancelationSignal*)>;
 
   // Utility struct for holding initialization options.
@@ -53,7 +53,7 @@ class SyncEngine : public ModelTypeConfigurer {
     InitParams(InitParams&& other);
     ~InitParams();
 
-    scoped_refptr<base::SingleThreadTaskRunner> sync_task_runner;
+    scoped_refptr<base::SequencedTaskRunner> sync_task_runner;
     SyncEngineHost* host = nullptr;
     std::unique_ptr<SyncBackendRegistrar> registrar;
     std::unique_ptr<SyncEncryptionHandler::Observer> encryption_observer_proxy;
@@ -62,7 +62,7 @@ class SyncEngine : public ModelTypeConfigurer {
     GURL service_url;
     std::string sync_user_agent;
     SyncEngine::HttpPostProviderFactoryGetter http_factory_getter;
-    SyncCredentials credentials;
+    std::string authenticated_account_id;
     std::string invalidator_client_id;
     std::unique_ptr<SyncManagerFactory> sync_manager_factory;
     bool delete_sync_data_folder = false;
@@ -73,8 +73,15 @@ class SyncEngine : public ModelTypeConfigurer {
     std::unique_ptr<EngineComponentsFactory> engine_components_factory;
     WeakHandle<UnrecoverableErrorHandler> unrecoverable_error_handler;
     base::Closure report_unrecoverable_error_function;
-    std::unique_ptr<SyncEncryptionHandler::NigoriState> saved_nigori_state;
     std::map<ModelType, int64_t> invalidation_versions;
+
+    // Initial authoritative values (usually read from prefs).
+    std::string cache_guid;
+    std::string birthday;
+    std::string bag_of_chips;
+
+    // Define the polling interval. Must not be zero.
+    base::TimeDelta poll_interval;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(InitParams);
@@ -90,11 +97,19 @@ class SyncEngine : public ModelTypeConfigurer {
   // engine instance. May be null.
   virtual void Initialize(InitParams params) = 0;
 
+  // Returns whether the asynchronous initialization process has finished.
+  virtual bool IsInitialized() const = 0;
+
   // Inform the engine to trigger a sync cycle for |types|.
   virtual void TriggerRefresh(const ModelTypeSet& types) = 0;
 
-  // Updates the engine's SyncCredentials.
+  // Updates the engine's SyncCredentials. The credentials must be fully
+  // specified (account ID, email, and sync token). To invalidate the
+  // credentials, use InvalidateCredentials() instead.
   virtual void UpdateCredentials(const SyncCredentials& credentials) = 0;
+
+  // Invalidates the SyncCredentials.
+  virtual void InvalidateCredentials() = 0;
 
   // Switches sync engine into configuration mode. In this mode only initial
   // data for newly enabled types is downloaded from server. No local changes
@@ -109,15 +124,8 @@ class SyncEngine : public ModelTypeConfigurer {
   // Asynchronously set a new passphrase for encryption. Note that it is an
   // error to call SetEncryptionPassphrase under the following circumstances:
   // - An explicit passphrase has already been set
-  // - |is_explicit| is true and we have pending keys.
-  // When |is_explicit| is false, a couple of things could happen:
-  // - If there are pending keys, we try to decrypt them. If decryption works,
-  //   this acts like a call to SetDecryptionPassphrase. If not, the GAIA
-  //   passphrase passed in is cached so we can re-encrypt with it in future.
-  // - If there are no pending keys, data is encrypted with |passphrase| (this
-  //   is a no-op if data was already encrypted with |passphrase|.)
-  virtual void SetEncryptionPassphrase(const std::string& passphrase,
-                                       bool is_explicit) = 0;
+  // - We have pending keys.
+  virtual void SetEncryptionPassphrase(const std::string& passphrase) = 0;
 
   // Use the provided passphrase to asynchronously attempt decryption. If new
   // encrypted keys arrive during the asynchronous call, OnPassphraseRequired
@@ -143,17 +151,14 @@ class SyncEngine : public ModelTypeConfigurer {
   virtual UserShare* GetUserShare() const = 0;
 
   // Called from any thread to obtain current detailed status information.
-  virtual Status GetDetailedStatus() = 0;
+  virtual SyncStatus GetDetailedStatus() = 0;
 
   // Determines if the underlying sync engine has made any local changes to
   // items that have not yet been synced with the server.
   // ONLY CALL THIS IF OnInitializationComplete was called!
-  virtual bool HasUnsyncedItems() const = 0;
+  virtual void HasUnsyncedItemsForTest(
+      base::OnceCallback<void(bool)> cb) const = 0;
 
-  // True if the cryptographer has any keys available to attempt decryption.
-  // Could mean we've downloaded and loaded Nigori objects, or we bootstrapped
-  // using a token previously received.
-  virtual bool IsCryptographerReady(const BaseTransaction* trans) const = 0;
 
   virtual void GetModelSafeRoutingInfo(ModelSafeRoutingInfo* out) const = 0;
 
@@ -177,17 +182,14 @@ class SyncEngine : public ModelTypeConfigurer {
   // Disables the sending of directory type debug counters.
   virtual void DisableDirectoryTypeDebugInfoForwarding() = 0;
 
-  // Triggers sync cycle to update |types|.
-  virtual void RefreshTypesForTest(ModelTypeSet types) = 0;
-
-  // See SyncManager::ClearServerData.
-  virtual void ClearServerData(const base::Closure& callback) = 0;
-
   // Notify the syncer that the cookie jar has changed.
   // See SyncManager::OnCookieJarChanged.
   virtual void OnCookieJarChanged(bool account_mismatch,
                                   bool empty_jar,
                                   const base::Closure& callback) = 0;
+
+  // Enables/Disables invalidations for session sync related datatypes.
+  virtual void SetInvalidationsForSessionsEnabled(bool enabled) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SyncEngine);

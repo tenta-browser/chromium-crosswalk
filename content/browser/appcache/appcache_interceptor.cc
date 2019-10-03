@@ -18,6 +18,8 @@
 #include "content/browser/loader/resource_requester_info.h"
 #include "content/common/appcache_interfaces.h"
 #include "net/url_request/url_request.h"
+#include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 
 static int kHandlerKey;  // Value is not used.
 
@@ -35,22 +37,18 @@ AppCacheRequestHandler* AppCacheInterceptor::GetHandler(
       request->GetUserData(&kHandlerKey));
 }
 
-void AppCacheInterceptor::SetExtraRequestInfo(net::URLRequest* request,
-                                              AppCacheServiceImpl* service,
-                                              int process_id,
-                                              int host_id,
-                                              ResourceType resource_type,
-                                              bool should_reset_appcache) {
-  if (!service || (host_id == kAppCacheNoHostId))
-    return;
-
-  AppCacheBackendImpl* backend = service->GetBackend(process_id);
-  if (!backend)
+void AppCacheInterceptor::SetExtraRequestInfo(
+    net::URLRequest* request,
+    AppCacheServiceImpl* service,
+    const base::UnguessableToken& host_id,
+    ResourceType resource_type,
+    bool should_reset_appcache) {
+  if (!service || host_id.is_empty())
     return;
 
   // TODO(michaeln): An invalid host id is indicative of bad data
   // from a child process. How should we handle that here?
-  AppCacheHost* host = backend->GetHost(host_id);
+  AppCacheHost* host = service->GetHost(host_id);
   if (!host)
     return;
 
@@ -65,7 +63,7 @@ void AppCacheInterceptor::SetExtraRequestInfoForHost(
     bool should_reset_appcache) {
   // Create a handler for this request and associate it with the request.
   std::unique_ptr<AppCacheRequestHandler> handler =
-      host->CreateRequestHandler(AppCacheURLRequest::Create(request),
+      host->CreateRequestHandler(std::make_unique<AppCacheURLRequest>(request),
                                  resource_type, should_reset_appcache);
   if (handler)
     SetHandler(request, std::move(handler));
@@ -74,50 +72,11 @@ void AppCacheInterceptor::SetExtraRequestInfoForHost(
 void AppCacheInterceptor::GetExtraResponseInfo(net::URLRequest* request,
                                                int64_t* cache_id,
                                                GURL* manifest_url) {
-  DCHECK(*cache_id == kAppCacheNoCacheId);
+  DCHECK(*cache_id == blink::mojom::kAppCacheNoCacheId);
   DCHECK(manifest_url->is_empty());
   AppCacheRequestHandler* handler = GetHandler(request);
   if (handler)
     handler->GetExtraResponseInfo(cache_id, manifest_url);
-}
-
-void AppCacheInterceptor::PrepareForCrossSiteTransfer(
-    net::URLRequest* request,
-    int old_process_id) {
-  AppCacheRequestHandler* handler = GetHandler(request);
-  if (!handler)
-    return;
-  handler->PrepareForCrossSiteTransfer(old_process_id);
-}
-
-void AppCacheInterceptor::CompleteCrossSiteTransfer(
-    net::URLRequest* request,
-    int new_process_id,
-    int new_host_id,
-    ResourceRequesterInfo* requester_info) {
-  // AppCache is supported only for renderer initiated requests.
-  DCHECK(requester_info->IsRenderer());
-  AppCacheRequestHandler* handler = GetHandler(request);
-  if (!handler)
-    return;
-  if (!handler->SanityCheckIsSameService(requester_info->appcache_service())) {
-    // This can happen when V2 apps and web pages end up in the same storage
-    // partition.
-    bad_message::ReceivedBadMessage(requester_info->filter(),
-                                    bad_message::ACI_WRONG_STORAGE_PARTITION);
-    return;
-  }
-  DCHECK_NE(kAppCacheNoHostId, new_host_id);
-  handler->CompleteCrossSiteTransfer(new_process_id, new_host_id);
-}
-
-void AppCacheInterceptor::MaybeCompleteCrossSiteTransferInOldProcess(
-    net::URLRequest* request,
-    int process_id) {
-  AppCacheRequestHandler* handler = GetHandler(request);
-  if (!handler)
-    return;
-  handler->MaybeCompleteCrossSiteTransferInOldProcess(process_id);
 }
 
 AppCacheInterceptor::AppCacheInterceptor() {

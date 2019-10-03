@@ -71,12 +71,12 @@ img {
 }
 
 .tab-header {
-  -webkit-border-start: 6px solid transparent;
+  border-inline-start: 6px solid transparent;
   padding-left: 15px;
 }
 
 .tab-header.selected {
-  -webkit-border-start-color: rgb(78, 87, 100);
+  border-inline-start-color: rgb(78, 87, 100);
 }
 
 .tab-header > button {
@@ -176,6 +176,14 @@ img {
 .browser-header > .browser-user {
   color: #999;
   margin-left: 6px;
+}
+
+.browser-fallback-note {
+  display: flex;
+  flex-flow: row wrap;
+  margin-left: 4px;
+  margin-top: 5px;
+  min-height: 15px;
 }
 
 .used-for-port-forwarding {

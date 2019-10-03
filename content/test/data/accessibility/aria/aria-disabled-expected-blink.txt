@@ -1,13 +1,23 @@
 rootWebArea
-++genericContainer
-++++textField
-++++textField restriction=disabled
-++++textField
-++genericContainer restriction=disabled
-++++textField restriction=disabled
-++++textField restriction=disabled
-++++textField
-++genericContainer
-++++textField
-++++textField restriction=disabled
-++++textField
+++genericContainer ignored
+++++genericContainer
+++++++textField
+++++++++genericContainer
+++++++textField restriction=disabled
+++++++++genericContainer
+++++++textField
+++++++++genericContainer
+++++genericContainer restriction=disabled
+++++++textField restriction=disabled
+++++++++genericContainer
+++++++textField restriction=disabled
+++++++++genericContainer
+++++++textField
+++++++++genericContainer
+++++genericContainer
+++++++textField
+++++++++genericContainer
+++++++textField restriction=disabled
+++++++++genericContainer
+++++++textField
+++++++++genericContainer

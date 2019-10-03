@@ -6,8 +6,8 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/LocaleManager_jni.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
-#include "jni/LocaleManager_jni.h"
 #include "url/gurl.h"
 
 // static
@@ -29,10 +29,9 @@ std::string LocaleManager::GetMailRUReferralID() {
 }
 
 // static
-int JNI_LocaleManager_GetEngineType(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& clazz,
-    const base::android::JavaParamRef<jstring>& j_url) {
-  GURL url(base::android::ConvertJavaStringToUTF8(env, j_url));
-  return TemplateURLPrepopulateData::GetEngineType(url);
+void LocaleManager::RecordUserTypeMetrics() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> jlocale_manager =
+      Java_LocaleManager_getInstance(env);
+  return Java_LocaleManager_recordUserTypeMetrics(env, jlocale_manager);
 }

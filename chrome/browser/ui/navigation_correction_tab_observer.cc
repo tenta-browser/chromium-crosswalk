@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/navigation_correction_tab_observer.h"
 
+#include "base/bind.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/google/google_url_tracker_factory.h"
@@ -12,18 +13,16 @@
 #include "chrome/common/navigation_corrector.mojom.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "google_apis/google_api_keys.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 
 using content::RenderFrameHost;
 using content::WebContents;
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(NavigationCorrectionTabObserver);
 
 NavigationCorrectionTabObserver::NavigationCorrectionTabObserver(
     WebContents* web_contents)
@@ -51,14 +50,12 @@ NavigationCorrectionTabObserver::NavigationCorrectionTabObserver(
   }
 }
 
-NavigationCorrectionTabObserver::~NavigationCorrectionTabObserver() {
-}
+NavigationCorrectionTabObserver::~NavigationCorrectionTabObserver() {}
 
 // static
 void NavigationCorrectionTabObserver::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* prefs) {
-  prefs->RegisterBooleanPref(prefs::kAlternateErrorPagesEnabled,
-                             true,
+  prefs->RegisterBooleanPref(prefs::kAlternateErrorPagesEnabled, true,
                              user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
@@ -108,3 +105,5 @@ void NavigationCorrectionTabObserver::UpdateNavigationCorrectionInfo(
       google_apis::GetAPIKey(),
       google_util::GetGoogleSearchURL(google_base_url));
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(NavigationCorrectionTabObserver)

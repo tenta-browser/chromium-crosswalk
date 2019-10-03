@@ -10,6 +10,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/common/page_load_metrics/page_load_timing.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
 using page_load_metrics::PageAbortReason;
@@ -24,8 +25,6 @@ const char kHistogramFromGWSLoad[] =
     "NavigationToLoadEventFired";
 const char kHistogramFromGWSFirstPaint[] =
     "PageLoad.Clients.FromGoogleSearch.PaintTiming.NavigationToFirstPaint";
-const char kHistogramFromGWSFirstTextPaint[] =
-    "PageLoad.Clients.FromGoogleSearch.PaintTiming.NavigationToFirstTextPaint";
 const char kHistogramFromGWSFirstImagePaint[] =
     "PageLoad.Clients.FromGoogleSearch.PaintTiming.NavigationToFirstImagePaint";
 const char kHistogramFromGWSFirstContentfulPaint[] =
@@ -38,6 +37,8 @@ const char kHistogramFromGWSParseDuration[] =
     "PageLoad.Clients.FromGoogleSearch.ParseTiming.ParseDuration";
 const char kHistogramFromGWSParseStart[] =
     "PageLoad.Clients.FromGoogleSearch.ParseTiming.NavigationToParseStart";
+const char kHistogramFromGWSFirstInputDelay[] =
+    "PageLoad.Clients.FromGoogleSearch.InteractiveTiming.FirstInputDelay3";
 
 const char kHistogramFromGWSAbortNewNavigationBeforeCommit[] =
     "PageLoad.Clients.FromGoogleSearch.Experimental.AbortTiming.NewNavigation."
@@ -110,8 +111,6 @@ const char kHistogramFromGWSForegroundDurationWithoutPaint[] =
     "WithoutPaint";
 const char kHistogramFromGWSForegroundDurationNoCommit[] =
     "PageLoad.Clients.FromGoogleSearch.PageTiming.ForegroundDuration.NoCommit";
-
-const char kUkmFromGoogleSearchName[] = "PageLoad.FromGoogleSearch";
 
 }  // namespace internal
 
@@ -393,12 +392,6 @@ void FromGWSPageLoadMetricsObserver::OnFirstPaintInPage(
   logger_.OnFirstPaintInPage(timing, extra_info);
 }
 
-void FromGWSPageLoadMetricsObserver::OnFirstTextPaintInPage(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  logger_.OnFirstTextPaintInPage(timing, extra_info);
-}
-
 void FromGWSPageLoadMetricsObserver::OnFirstImagePaintInPage(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
@@ -409,6 +402,12 @@ void FromGWSPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
   logger_.OnFirstContentfulPaintInPage(timing, extra_info);
+}
+
+void FromGWSPageLoadMetricsObserver::OnFirstInputInPage(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
+  logger_.OnFirstInputInPage(timing, extra_info);
 }
 
 void FromGWSPageLoadMetricsObserver::OnParseStart(
@@ -436,8 +435,10 @@ void FromGWSPageLoadMetricsObserver::OnFailedProvisionalLoad(
 }
 
 void FromGWSPageLoadMetricsObserver::OnUserInput(
-    const blink::WebInputEvent& event) {
-  logger_.OnUserInput(event);
+    const blink::WebInputEvent& event,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
+  logger_.OnUserInput(event, timing, extra_info);
 }
 
 void FromGWSPageLoadMetricsLogger::OnCommit(
@@ -445,11 +446,8 @@ void FromGWSPageLoadMetricsLogger::OnCommit(
     ukm::SourceId source_id) {
   if (!ShouldLogPostCommitMetrics(navigation_handle->GetURL()))
     return;
-  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-  if (ukm_recorder) {
-    ukm_recorder->GetEntryBuilder(source_id,
-                                  internal::kUkmFromGoogleSearchName);
-  }
+  ukm::builders::PageLoad_FromGoogleSearch(source_id).Record(
+      ukm::UkmRecorder::Get());
 }
 
 void FromGWSPageLoadMetricsLogger::OnComplete(
@@ -581,16 +579,6 @@ void FromGWSPageLoadMetricsLogger::OnFirstPaintInPage(
   first_paint_triggered_ = true;
 }
 
-void FromGWSPageLoadMetricsLogger::OnFirstTextPaintInPage(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  if (ShouldLogForegroundEventAfterCommit(timing.paint_timing->first_text_paint,
-                                          extra_info)) {
-    PAGE_LOAD_HISTOGRAM(internal::kHistogramFromGWSFirstTextPaint,
-                        timing.paint_timing->first_text_paint.value());
-  }
-}
-
 void FromGWSPageLoadMetricsLogger::OnFirstImagePaintInPage(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
@@ -620,6 +608,16 @@ void FromGWSPageLoadMetricsLogger::OnFirstContentfulPaintInPage(
   }
 }
 
+void FromGWSPageLoadMetricsLogger::OnFirstInputInPage(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
+  if (ShouldLogForegroundEventAfterCommit(
+          timing.interactive_timing->first_input_delay, extra_info)) {
+    PAGE_LOAD_HISTOGRAM(internal::kHistogramFromGWSFirstInputDelay,
+                        timing.interactive_timing->first_input_delay.value());
+  }
+}
+
 void FromGWSPageLoadMetricsLogger::OnParseStart(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
@@ -642,7 +640,9 @@ void FromGWSPageLoadMetricsLogger::OnParseStop(
 }
 
 void FromGWSPageLoadMetricsLogger::OnUserInput(
-    const blink::WebInputEvent& event) {
+    const blink::WebInputEvent& event,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
+    const page_load_metrics::PageLoadExtraInfo& extra_info) {
   if (first_paint_triggered_ && !first_user_interaction_after_paint_) {
     DCHECK(!navigation_start_.is_null());
     first_user_interaction_after_paint_ =

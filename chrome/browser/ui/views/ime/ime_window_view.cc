@@ -38,7 +38,7 @@ ImeWindowView::ImeWindowView(ImeWindow* ime_window,
   params.delegate = this;
   params.wants_mouse_events_when_inactive = true;
   params.remove_standard_frame = false;
-  params.keep_on_top = true;
+  params.z_order = ui::ZOrderLevel::kFloatingWindow;
   params.activatable = views::Widget::InitParams::ACTIVATABLE_NO;
   params.visible_on_all_workspaces = false;
   params.bounds = bounds;
@@ -53,7 +53,7 @@ ImeWindowView::ImeWindowView(ImeWindow* ime_window,
   web_view_->SetFocusBehavior(FocusBehavior::NEVER);
   AddChildView(web_view_);
 
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   Layout();
 
   // TODO(shuchen): supports auto cursor/composition aligning for
@@ -170,10 +170,6 @@ bool ImeWindowView::CanMinimize() const {
 
 base::string16 ImeWindowView::GetWindowTitle() const {
   return base::UTF8ToUTF16(ime_window_->title());
-}
-
-gfx::ImageSkia ImeWindowView::GetWindowAppIcon() {
-  return GetWindowIcon();
 }
 
 gfx::ImageSkia ImeWindowView::GetWindowIcon() {

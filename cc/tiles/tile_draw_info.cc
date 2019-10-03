@@ -20,10 +20,32 @@ void TileDrawInfo::AsValueInto(base::trace_event::TracedValue* state) const {
                     mode_ == SOLID_COLOR_MODE && !SkColorGetA(solid_color_));
 }
 
-Resource* TileDrawInfo::TakeResource() {
-  Resource* resource = resource_;
-  set_resource(nullptr, false);
-  return resource;
+void TileDrawInfo::SetResource(ResourcePool::InUsePoolResource resource,
+                               bool resource_is_checker_imaged,
+                               bool is_premultiplied) {
+  DCHECK(!resource_);
+  DCHECK(resource);
+
+  mode_ = RESOURCE_MODE;
+  is_resource_ready_to_draw_ = false;
+  resource_is_checker_imaged_ = resource_is_checker_imaged;
+  is_premultiplied_ = is_premultiplied;
+  resource_ = std::move(resource);
+}
+
+const ResourcePool::InUsePoolResource& TileDrawInfo::GetResource() {
+  DCHECK_EQ(mode_, RESOURCE_MODE);
+  DCHECK(resource_);
+  return resource_;
+}
+
+ResourcePool::InUsePoolResource TileDrawInfo::TakeResource() {
+  DCHECK_EQ(mode_, RESOURCE_MODE);
+  DCHECK(resource_);
+  is_resource_ready_to_draw_ = false;
+  resource_is_checker_imaged_ = false;
+  is_premultiplied_ = false;
+  return std::move(resource_);
 }
 
 }  // namespace cc

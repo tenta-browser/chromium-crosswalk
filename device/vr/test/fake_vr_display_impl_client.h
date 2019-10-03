@@ -5,23 +5,26 @@
 #ifndef DEVICE_VR_TEST_FAKE_VR_DISPLAY_IMPL_CLIENT_H_
 #define DEVICE_VR_TEST_FAKE_VR_DISPLAY_IMPL_CLIENT_H_
 
-#include "device/vr/vr_service.mojom.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 
 namespace device {
 class FakeVRServiceClient;
 
-class FakeVRDisplayImplClient : public mojom::VRDisplayClient {
+class FakeVRDisplayImplClient : public mojom::VRDisplayClient,
+                                public mojom::XRSessionClient {
  public:
   FakeVRDisplayImplClient(mojom::VRDisplayClientRequest request);
   ~FakeVRDisplayImplClient() override;
 
   void SetServiceClient(FakeVRServiceClient* service_client);
+  // mojom::XRSessionClient overrides
   void OnChanged(mojom::VRDisplayInfoPtr display) override;
   void OnExitPresent() override {}
   void OnBlur() override {}
   void OnFocus() override {}
+  // mojom::VRDisplayClient overrides
   void OnActivate(mojom::VRDisplayEventReason reason,
                   OnActivateCallback callback) override {}
   void OnDeactivate(mojom::VRDisplayEventReason reason) override {}

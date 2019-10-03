@@ -6,11 +6,12 @@ package org.chromium.chrome.browser.services.gcm;
 
 import android.content.Context;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.content.browser.BrowserStartupController;
-import org.chromium.content.browser.BrowserStartupController.StartupCallback;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.BrowserStartupController;
+import org.chromium.content_public.browser.BrowserStartupController.StartupCallback;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * Helper Class for GCM UMA Collection.
@@ -59,24 +60,22 @@ public class GcmUma {
     }
 
     private static void onNativeLaunched(final Context context, final Runnable task) {
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
-                        .addStartupCompletedObserver(
-                                new StartupCallback() {
-                                    @Override
-                                    public void onSuccess(boolean alreadyStarted) {
-                                        task.run();
-                                    }
+                        .addStartupCompletedObserver(new StartupCallback() {
+                            @Override
+                            public void onSuccess() {
+                                task.run();
+                            }
 
-                                    @Override
-                                    public void onFailure() {
-                                        // Startup failed.
-                                    }
-                                });
+                            @Override
+                            public void onFailure() {
+                                // Startup failed.
+                            }
+                        });
             }
         });
     }
 }
-

@@ -4,7 +4,77 @@
 # found in the LICENSE file.
 
 from xml.dom import minidom
-from writers import xml_formatted_writer
+from writers import gpo_editor_writer, xml_formatted_writer
+
+
+class AdmxElementType:
+  '''The different types of ADMX elements that can be used to display a policy.
+  This is related to the 'type' field in policy_templates.json, but there isn't
+  a perfect 1:1 mapping. This class is also used when writing ADML files, to
+  ensure that the ADML generated from policy_templates.json is compatible with
+  the ADMX generated from policy_templates.json"""
+  '''
+  MAIN = 1
+  STRING = 2
+  MULTI_STRING = 3
+  INT = 4
+  ENUM = 5
+  LIST = 6
+  GROUP = 7
+
+  @staticmethod
+  def GetType(policy, allow_multi_strings=False):
+    '''Returns the ADMX element type that should be used for the given policy.
+    This logic is shared between the ADMX writer and the ADML writer, to ensure
+    that the ADMX and ADML generated from policy_tempates.json are compatible.
+
+    Args:
+      policy: A dict describing the policy, as found in policy_templates.json.
+      allow_multi_strings: If true, the use of multi-line textbox elements is
+          allowed, so this function will sometimes return MULTI_STRING. If false
+          it falls back to single-line textboxes instead by returning STRING.
+
+    Returns:
+      One of the enum values of AdmxElementType.
+
+    Raises:
+      Exception: If policy['type'] is not recognized.
+    '''
+    policy_type = policy['type']
+    policy_example = policy.get('example_value')
+
+    # TODO(olsen): Some policies are defined in policy_templates.json as type
+    # string, but the string is actually a JSON object. We should change the
+    # schema so they are 'dict' or similar, but until then, we use this
+    # heuristic to decide whether they are actually JSON and so could benefit
+    # from being displayed to the user as a multi-line string:
+    if (policy_type == 'string' and allow_multi_strings and
+        policy_example is not None and policy_example.strip().startswith('{')):
+      return AdmxElementType.MULTI_STRING
+
+    admx_element_type = AdmxElementType._POLICY_TYPE_MAP.get(policy_type)
+    if admx_element_type is None:
+      raise Exception('Unknown policy type %s.' % policy_type)
+
+    if (admx_element_type == AdmxElementType.MULTI_STRING and
+        not allow_multi_strings):
+      return AdmxElementType.STRING
+
+    return admx_element_type
+
+
+AdmxElementType._POLICY_TYPE_MAP = {
+    'main': AdmxElementType.MAIN,
+    'string': AdmxElementType.STRING,
+    'dict': AdmxElementType.MULTI_STRING,
+    'external': AdmxElementType.MULTI_STRING,
+    'int': AdmxElementType.INT,
+    'int-enum': AdmxElementType.ENUM,
+    'string-enum': AdmxElementType.ENUM,
+    'list': AdmxElementType.LIST,
+    'string-enum-list': AdmxElementType.LIST,
+    'group': AdmxElementType.GROUP
+}
 
 
 def GetWriter(config):
@@ -12,10 +82,11 @@ def GetWriter(config):
   GetWriter method because the TemplateFormatter uses this method to
   instantiate a Writer.
   '''
-  return ADMXWriter(['win'], config)
+  return ADMXWriter(['win', 'win7'], config)
 
 
-class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
+class ADMXWriter(xml_formatted_writer.XMLFormattedWriter,
+                 gpo_editor_writer.GpoEditorWriter):
   '''Class for generating an ADMX policy template. It is used by the
   PolicyTemplateGenerator to write the admx file.
   '''
@@ -29,7 +100,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
 
   def Init(self):
     # Shortcut to platform-specific ADMX/ADM specific configuration.
-    assert len(self.platforms) == 1
+    assert len(self.platforms) <= 2
     self.winconfig = self.config['win_config'][self.platforms[0]]
 
   def _AdmlString(self, name):
@@ -70,26 +141,25 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     '''
     policy_namespaces_elem = self.AddElement(parent, 'policyNamespaces')
     attributes = {
-      'prefix': prefix,
-      'namespace': namespace,
+        'prefix': prefix,
+        'namespace': namespace,
     }
     self.AddElement(policy_namespaces_elem, 'target', attributes)
     if 'admx_using_namespaces' in self.config:
       prefix_namespace_map = self.config['admx_using_namespaces']
       for prefix in prefix_namespace_map:
         attributes = {
-          'prefix': prefix,
-          'namespace': prefix_namespace_map[prefix],
+            'prefix': prefix,
+            'namespace': prefix_namespace_map[prefix],
         }
         self.AddElement(policy_namespaces_elem, 'using', attributes)
     attributes = {
-      'prefix': 'windows',
-      'namespace': 'Microsoft.Policies.Windows',
+        'prefix': 'windows',
+        'namespace': 'Microsoft.Policies.Windows',
     }
     self.AddElement(policy_namespaces_elem, 'using', attributes)
 
-  def _AddCategory(self, parent, name, display_name,
-                   parent_category_name=None):
+  def _AddCategory(self, parent, name, display_name, parent_category_name=None):
     '''Adds an ADMX category element to the passed parent node. The following
     snippet shows an example of a category element where "chromium" is the value
     of the parameter name:
@@ -114,8 +184,8 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
       assert existing[0].getAttribute('displayName') == display_name
       return
     attributes = {
-      'name': name,
-      'displayName': display_name,
+        'name': name,
+        'displayName': display_name,
     }
     category_elem = self.AddElement(parent, 'category', attributes)
     if parent_category_name:
@@ -150,7 +220,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
         self._AddCategory(self._categories_elem, category_name,
                           self._AdmlString(category_name), parent_category_name)
 
-  def _AddSupportedOn(self, parent, supported_os):
+  def _AddSupportedOn(self, parent, supported_os_list):
     '''Generates the "supportedOn" ADMX element and adds it to the passed
     parent node. The "supportedOn" element contains information about supported
     Windows OS versions. The following code snippet contains an example of a
@@ -158,8 +228,8 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
 
     <supportedOn>
       <definitions>
-        <definition name="SUPPORTED_WINXPSP2"
-                    displayName="$(string.SUPPORTED_WINXPSP2)"/>
+        <definition name="$(supported_os)"
+                    displayName="$(string.$(supported_os))"/>
         </definitions>
         ...
     </supportedOn>
@@ -170,31 +240,57 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     '''
     supported_on_elem = self.AddElement(parent, 'supportedOn')
     definitions_elem = self.AddElement(supported_on_elem, 'definitions')
-    attributes = {
-      'name': supported_os,
-      'displayName': self._AdmlString(supported_os)
-    }
-    self.AddElement(definitions_elem, 'definition', attributes)
+    for supported_os in supported_os_list:
+      attributes = {
+          'name': supported_os,
+          'displayName': self._AdmlString(supported_os)
+      }
+      self.AddElement(definitions_elem, 'definition', attributes)
 
-  def _AddStringPolicy(self, parent, name):
+  def _AddStringPolicy(self, parent, name, id=None):
     '''Generates ADMX elements for a String-Policy and adds them to the
     passed parent node.
     '''
     attributes = {
-      'id': name,
-      'valueName': name,
-      'maxLength': '1000000',
+        'id': id or name,
+        'valueName': name,
+        'maxLength': '1000000',
     }
     self.AddElement(parent, 'text', attributes)
 
-  def _AddIntPolicy(self, parent, name):
+  def _AddMultiStringPolicy(self, parent, name):
+    '''Generates ADMX elements for a multi-line String-Policy and adds them to
+    the passed parent node.
+    '''
+    # We currently also show a single-line textbox - see http://crbug/829328
+    self._AddStringPolicy(parent, name, id=name + '_Legacy')
+    attributes = {
+        'id': name,
+        'valueName': name,
+        'maxLength': '1000000',
+    }
+    self.AddElement(parent, 'multiText', attributes)
+
+  def _AddIntPolicy(self, parent, policy):
     '''Generates ADMX elements for an Int-Policy and adds them to the passed
     parent node.
     '''
+    #default max value for an integer
+    max = 2000000000
+    min = 0
+    if self.PolicyHasRestrictions(policy):
+      schema = policy['schema']
+      if 'minimum' in schema and schema['minimum'] >= 0:
+        min = schema['minimum']
+      if 'maximum' in schema and schema['maximum'] >= 0:
+        max = schema['maximum']
+    assert type(min) == int
+    assert type(max) == int
     attributes = {
-      'id': name,
-      'valueName': name,
-      'maxValue': '2000000000',
+        'id': policy['name'],
+        'valueName': policy['name'],
+        'maxValue': str(max),
+        'minValue': str(min),
     }
     self.AddElement(parent, 'decimal', attributes)
 
@@ -205,8 +301,8 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     name = policy['name']
     items = policy['items']
     attributes = {
-      'id': name,
-      'valueName': name,
+        'id': name,
+        'valueName': name,
     }
     enum_elem = self.AddElement(parent, 'enum', attributes)
     for item in items:
@@ -224,11 +320,11 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     passed parent element.
     '''
     attributes = {
-      # The ID must be in sync with ID of the corresponding element in the ADML
-      # file.
-      'id': name + 'Desc',
-      'valuePrefix': '',
-      'key': key + '\\' + name,
+        # The ID must be in sync with ID of the corresponding element in the
+        # ADML file.
+        'id': name + 'Desc',
+        'valuePrefix': '',
+        'key': key + '\\' + name,
     }
     self.AddElement(parent, 'list', attributes)
 
@@ -236,10 +332,16 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     '''Generates ADMX elements for a Main-Policy amd adds them to the
     passed parent element.
     '''
-    enabled_value_elem = self.AddElement(parent, 'enabledValue');
+    enabled_value_elem = self.AddElement(parent, 'enabledValue')
     self.AddElement(enabled_value_elem, 'decimal', {'value': '1'})
-    disabled_value_elem = self.AddElement(parent, 'disabledValue');
+    disabled_value_elem = self.AddElement(parent, 'disabledValue')
     self.AddElement(disabled_value_elem, 'decimal', {'value': '0'})
+
+  def PolicyHasRestrictions(self, policy):
+    if 'schema' in policy:
+      return any(keyword in policy['schema'] \
+        for keyword in ['minimum', 'maximum'])
+    return False
 
   def _GetElements(self, policy_group_elem):
     '''Returns the ADMX "elements" child from an ADMX "policy" element. If the
@@ -253,9 +355,9 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
       Exception: The policy_group_elem does not contain a ADMX "policy" element.
     '''
     if policy_group_elem.tagName != 'policy':
-      raise Exception('Expected a "policy" element but got a "%s" element'
-                      % policy_group_elem.tagName)
-    elements_list = policy_group_elem.getElementsByTagName('elements');
+      raise Exception('Expected a "policy" element but got a "%s" element' %
+                      policy_group_elem.tagName)
+    elements_list = policy_group_elem.getElementsByTagName('elements')
     if len(elements_list) == 0:
       return self.AddElement(policy_group_elem, 'elements')
     elif len(elements_list) == 1:
@@ -264,62 +366,65 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
       raise Exception('There is supposed to be only one "elements" node but'
                       ' there are %s.' % str(len(elements_list)))
 
-  def _WritePolicy(self, policy, name, key, parent):
-    '''Generates AMDX elements for a Policy. There are four different policy
-    types: Main-Policy, String-Policy, Enum-Policy and List-Policy.
-    '''
-    policies_elem = self._active_policies_elem
-    policy_type = policy['type']
-    policy_name = policy['name']
+  def _GetAdmxElementType(self, policy):
+    '''Returns the ADMX element type for a particular Policy.'''
+    return AdmxElementType.GetType(policy, allow_multi_strings=False)
 
+  def _WritePolicy(self, policy, name, key, parent):
+    '''Generates ADMX elements for a Policy.'''
+    policies_elem = self._active_policies_elem
+    policy_name = policy['name']
     attributes = {
-      'name': name,
-      'class': self.GetClass(policy),
-      'displayName': self._AdmlString(policy_name),
-      'explainText': self._AdmlStringExplain(policy_name),
-      'presentation': self._AdmlPresentation(policy_name),
-      'key': key,
+        'name': name,
+        'class': self.GetClass(policy),
+        'displayName': self._AdmlString(policy_name),
+        'explainText': self._AdmlStringExplain(policy_name),
+        'presentation': self._AdmlPresentation(policy_name),
+        'key': key,
     }
+    is_win7_only = self.IsPolicyOnWin7Only(policy)
+    supported_key = ('win_supported_os_win7'
+                     if is_win7_only else 'win_supported_os')
+    supported_on_text = self.config[supported_key]
+
     # Store the current "policy" AMDX element in self for later use by the
     # WritePolicy method.
-    policy_elem = self.AddElement(policies_elem, 'policy',
-                                  attributes)
-    self.AddElement(policy_elem, 'parentCategory',
-                    {'ref': parent})
-    self.AddElement(policy_elem, 'supportedOn',
-                    {'ref': self.config['win_supported_os']})
-    if policy_type == 'main':
+    policy_elem = self.AddElement(policies_elem, 'policy', attributes)
+    self.AddElement(policy_elem, 'parentCategory', {'ref': parent})
+    self.AddElement(policy_elem, 'supportedOn', {'ref': supported_on_text})
+
+    element_type = self._GetAdmxElementType(policy)
+    if element_type == AdmxElementType.MAIN:
       self.AddAttribute(policy_elem, 'valueName', policy_name)
       self._AddMainPolicy(policy_elem)
-    elif policy_type in ('string', 'dict', 'external'):
-      # 'dict' and 'external' policies are configured as JSON-encoded strings on
-      # Windows.
+    elif element_type == AdmxElementType.STRING:
       parent = self._GetElements(policy_elem)
       self._AddStringPolicy(parent, policy_name)
-    elif policy_type == 'int':
+    elif element_type == AdmxElementType.MULTI_STRING:
       parent = self._GetElements(policy_elem)
-      self._AddIntPolicy(parent, policy_name)
-    elif policy_type in ('int-enum', 'string-enum'):
+      self._AddMultiStringPolicy(parent, policy_name)
+    elif element_type == AdmxElementType.INT:
+      parent = self._GetElements(policy_elem)
+      self._AddIntPolicy(parent, policy)
+    elif element_type == AdmxElementType.ENUM:
       parent = self._GetElements(policy_elem)
       self._AddEnumPolicy(parent, policy)
-    elif policy_type in ('list', 'string-enum-list'):
+    elif element_type == AdmxElementType.LIST:
       parent = self._GetElements(policy_elem)
       self._AddListPolicy(parent, key, policy_name)
-    elif policy_type == 'group':
+    elif element_type == AdmxElementType.GROUP:
       pass
     else:
-      raise Exception('Unknown policy type %s.' % policy_type)
+      raise Exception('Unknown element type %s.' % element_type)
 
   def WritePolicy(self, policy):
     if self.CanBeMandatory(policy):
-      self._WritePolicy(policy,
-                        policy['name'],
+      self._WritePolicy(policy, policy['name'],
                         self.winconfig['reg_mandatory_key_name'],
                         self._active_mandatory_policy_group_name)
 
   def WriteRecommendedPolicy(self, policy):
-    self._WritePolicy(policy,
-                      policy['name'] + '_recommended',
+    self._WritePolicy(policy, policy['name'] + '_recommended',
                       self.winconfig['reg_recommended_key_name'],
                       self._active_recommended_policy_group_name)
 
@@ -327,20 +432,16 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     '''Generates ADMX elements for a Policy-Group.
     '''
     attributes = {
-      'name': name,
-      'displayName': self._AdmlString(group['name'] + '_group'),
+        'name': name,
+        'displayName': self._AdmlString(group['name'] + '_group'),
     }
-    category_elem = self.AddElement(self._categories_elem,
-                                    'category',
+    category_elem = self.AddElement(self._categories_elem, 'category',
                                     attributes)
-    attributes = {
-      'ref': parent
-    }
+    attributes = {'ref': parent}
     self.AddElement(category_elem, 'parentCategory', attributes)
 
   def BeginPolicyGroup(self, group):
-    self._BeginPolicyGroup(group,
-                           group['name'],
+    self._BeginPolicyGroup(group, group['name'],
                            self.winconfig['mandatory_category_path'][-1])
     self._active_mandatory_policy_group_name = group['name']
 
@@ -349,8 +450,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
         self.winconfig['mandatory_category_path'][-1]
 
   def BeginRecommendedPolicyGroup(self, group):
-    self._BeginPolicyGroup(group,
-                           group['name'] + '_recommended',
+    self._BeginPolicyGroup(group, group['name'] + '_recommended',
                            self.winconfig['recommended_category_path'][-1])
     self._active_recommended_policy_group_name = group['name'] + '_recommended'
 
@@ -377,9 +477,10 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
                               self.config['admx_prefix'],
                               self.winconfig['namespace'])
     self.AddElement(policy_definitions_elem, 'resources',
-                    {'minRequiredRevision' : '1.0'})
-    self._AddSupportedOn(policy_definitions_elem,
-                         self.config['win_supported_os'])
+                    {'minRequiredRevision': '1.0'})
+    self._AddSupportedOn(
+        policy_definitions_elem,
+        [self.config['win_supported_os'], self.config['win_supported_os_win7']])
     self._categories_elem = self.AddElement(policy_definitions_elem,
                                             'categories')
     self._AddCategories(self.winconfig['mandatory_category_path'])

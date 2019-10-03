@@ -8,7 +8,8 @@
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_dump_manager.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
+#include "build/build_config.h"
 
 namespace memory_instrumentation {
 
@@ -16,10 +17,6 @@ using base::trace_event::TracedValue;
 using base::trace_event::ProcessMemoryDump;
 
 namespace {
-
-const int kTraceEventNumArgs = 1;
-const char* const kTraceEventArgNames[] = {"dumps"};
-const unsigned char kTraceEventArgTypes[] = {TRACE_VALUE_TYPE_CONVERTABLE};
 
 bool IsMemoryInfraTracingEnabled() {
   bool enabled;
@@ -30,14 +27,28 @@ bool IsMemoryInfraTracingEnabled() {
 
 void OsDumpAsValueInto(TracedValue* value, const mojom::OSMemDump& os_dump) {
   value->SetString(
-      "resident_set_bytes",
-      base::StringPrintf("%" PRIx32, os_dump.resident_set_kb * 1024));
-  value->SetString(
       "private_footprint_bytes",
-      base::StringPrintf("%" PRIx32, os_dump.private_footprint_kb * 1024));
+      base::StringPrintf(
+          "%" PRIx64,
+          static_cast<uint64_t>(os_dump.private_footprint_kb) * 1024));
+  value->SetString(
+      "peak_resident_set_size",
+      base::StringPrintf(
+          "%" PRIx64,
+          static_cast<uint64_t>(os_dump.peak_resident_set_kb) * 1024));
+  value->SetBoolean("is_peak_rss_resettable", os_dump.is_peak_rss_resettable);
 }
 
-};  // namespace
+std::string ApplyPathFiltering(const std::string& file,
+                               bool is_argument_filtering_enabled) {
+  if (is_argument_filtering_enabled) {
+    base::FilePath::StringType path(file.begin(), file.end());
+    return base::FilePath(path).BaseName().AsUTF8Unsafe();
+  }
+  return file;
+}
+
+}  // namespace
 
 TracingObserver::TracingObserver(
     base::trace_event::TraceLog* trace_log,
@@ -111,15 +122,14 @@ void TracingObserver::AddToTrace(
   const uint64_t dump_guid = args.dump_guid;
   const char* const event_name =
       base::trace_event::MemoryDumpTypeToString(args.dump_type);
-  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> event_value(
-      std::move(traced_value));
+  base::trace_event::TraceArguments trace_args("dumps",
+                                               std::move(traced_value));
   TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_PROCESS_ID(
       TRACE_EVENT_PHASE_MEMORY_DUMP,
       base::trace_event::TraceLog::GetCategoryGroupEnabled(
           base::trace_event::MemoryDumpManager::kTraceCategory),
       event_name, trace_event_internal::kGlobalScope, dump_guid, pid,
-      kTraceEventNumArgs, kTraceEventArgNames, kTraceEventArgTypes,
-      nullptr /* arg_values */, &event_value, TRACE_EVENT_FLAG_HAS_ID);
+      &trace_args, TRACE_EVENT_FLAG_HAS_ID);
 }
 
 bool TracingObserver::AddChromeDumpToTraceIfEnabled(
@@ -178,21 +188,23 @@ void TracingObserver::MemoryMapsAsValueInto(
     if (region->module_timestamp)
       value->SetString("ts",
                        base::StringPrintf(kHexFmt, region->module_timestamp));
+    if (!region->module_debugid.empty())
+      value->SetString("id", region->module_debugid);
+    if (!region->module_debug_path.empty()) {
+      value->SetString("df", ApplyPathFiltering(region->module_debug_path,
+                                                is_argument_filtering_enabled));
+    }
     value->SetInteger("pf", region->protection_flags);
 
     // The module path will be the basename when argument filtering is
     // activated. The whitelisting implemented for filtering string values
     // doesn't allow rewriting. Therefore, a different path is produced here
     // when argument filtering is activated.
-    if (is_argument_filtering_enabled) {
-      base::FilePath::StringType module_path(region->mapped_file.begin(),
-                                             region->mapped_file.end());
-      value->SetString("mf",
-                       base::FilePath(module_path).BaseName().AsUTF8Unsafe());
-    } else {
-      value->SetString("mf", region->mapped_file);
-    }
+    value->SetString("mf", ApplyPathFiltering(region->mapped_file,
+                                              is_argument_filtering_enabled));
 
+// The following stats are only well defined on Linux-derived OSes.
+#if !defined(OS_MACOSX) && !defined(OS_WIN)
     value->BeginDictionary("bs");  // byte stats
     value->SetString(
         "pss",
@@ -212,6 +224,7 @@ void TracingObserver::MemoryMapsAsValueInto(
     value->SetString("sw",
                      base::StringPrintf(kHexFmt, region->byte_stats_swapped));
     value->EndDictionary();
+#endif
 
     value->EndDictionary();
   }

@@ -25,12 +25,6 @@ extern const char kDistroImportBookmarksFromFilePref[];
 // String of Chrome version for which the "set as default browser" infobar will
 // never be shown.
 extern const char kDistroSuppressDefaultBrowserPromptPref[];
-// Boolean. Do not show first run bubble, even if it would otherwise be shown.
-extern const char kDistroSuppressFirstRunBubble[];
-// Boolean that specifies whether or not showing the welcome page following an
-// OS upgrade is enabled. True by default. May be overridden by the
-// WelcomePageOnOSUpgradeEnabled policy setting.
-extern const char kDistroWelcomePageOnOSUpgradeEnabled[];
 // Boolean. Prevent creation of all shortcuts to chrome, including the
 // desktop, quick launch, taskbar and the start menu shortcuts.
 extern const char kDoNotCreateAnyShortcuts[];

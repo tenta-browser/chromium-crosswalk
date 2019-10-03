@@ -34,11 +34,6 @@ namespace ui_controls {
 // Note: Windows does not currently do anything with the |window| argument for
 // these functions, so passing NULL is ok.
 
-// Send a key press with/without modifier keys.
-//
-// If you're writing a test chances are you want the variant in ui_test_utils.
-// See it for details.
-
 // Per the above comment, these methods can only be called from non-sharded test
 // suites. This method ensures that they're not accidently called by sharded
 // tests.
@@ -48,6 +43,10 @@ void EnableUIControls();
 bool IsUIControlsEnabled();
 #endif
 
+// Send a key press with/without modifier keys.
+//
+// If you're writing a test chances are you want the variant in ui_test_utils.
+// See it for details.
 bool SendKeyPress(gfx::NativeWindow window,
                   ui::KeyboardCode key,
                   bool control,
@@ -60,7 +59,7 @@ bool SendKeyPressNotifyWhenDone(gfx::NativeWindow window,
                                 bool shift,
                                 bool alt,
                                 bool command,
-                                const base::Closure& task);
+                                base::OnceClosure task);
 
 // Simulate a mouse move.
 bool SendMouseMove(long screen_x, long screen_y);
@@ -69,7 +68,7 @@ bool SendMouseMove(long screen_x, long screen_y);
 // belonging to the current process.
 bool SendMouseMoveNotifyWhenDone(long screen_x,
                                  long screen_y,
-                                 const base::Closure& task);
+                                 base::OnceClosure task);
 
 enum MouseButton {
   LEFT = 0,
@@ -83,15 +82,29 @@ enum MouseButtonState {
   DOWN = 2
 };
 
+// The keys that may be held down while generating a mouse event.
+enum AcceleratorState {
+  kNoAccelerator = 0,
+  kShift = 1 << 0,
+  kControl = 1 << 1,
+  kAlt = 1 << 2,
+  kCommand = 1 << 3,
+};
+
 enum TouchType { PRESS = 1 << 0, RELEASE = 1 << 1, MOVE = 1 << 2 };
 
-// Sends a mouse down and/or up message. The click will be sent to wherever
-// the cursor currently is, so be sure to move the cursor before calling this
+// Sends a mouse down and/or up message with optional one or multiple
+// accelerator keys. The click will be sent to wherever the cursor
+// currently is, so be sure to move the cursor before calling this
 // (and be sure the cursor has arrived!).
-bool SendMouseEvents(MouseButton type, int state);
+// |accelerator_state| is a bitmask of AcceleratorState.
+bool SendMouseEvents(MouseButton type,
+                     int button_state,
+                     int accelerator_state = kNoAccelerator);
 bool SendMouseEventsNotifyWhenDone(MouseButton type,
-                                   int state,
-                                   const base::Closure& task);
+                                   int button_state,
+                                   base::OnceClosure task,
+                                   int accelerator_state = kNoAccelerator);
 
 // Same as SendMouseEvents with UP | DOWN.
 bool SendMouseClick(MouseButton type);
@@ -104,11 +117,17 @@ bool SendMouseClick(MouseButton type);
 // pointers, |screen_x| and |screen_y| are the screen coordinates of a touch
 // pointer.
 bool SendTouchEvents(int action, int num, int screen_x, int screen_y);
-#endif
-
-#if defined(TOOLKIT_VIEWS)
-// Runs |closure| after processing all pending ui events.
-void RunClosureAfterAllPendingUIEvents(const base::Closure& closure);
+#elif defined(OS_CHROMEOS)
+// Sends a TouchEvent to the window system. |action| is a bitmask of the
+// TouchType constants that indicates what events are generated, |id| identifies
+// the touch point.
+// TODO(mukai): consolidate this interface with the Windows SendTouchEvents.
+bool SendTouchEvents(int action, int id, int x, int y);
+bool SendTouchEventsNotifyWhenDone(int action,
+                                   int id,
+                                   int x,
+                                   int y,
+                                   base::OnceClosure task);
 #endif
 
 #if defined(USE_AURA)

@@ -7,7 +7,7 @@ package org.chromium.components.signin.test.util;
 import android.accounts.Account;
 import android.accounts.AuthenticatorDescription;
 import android.app.Activity;
-import android.content.Context;
+import android.content.Intent;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 
@@ -17,20 +17,17 @@ import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.components.signin.AccountManagerDelegate;
 import org.chromium.components.signin.AccountManagerDelegateException;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountsChangeObserver;
+import org.chromium.components.signin.AuthException;
 import org.chromium.components.signin.ProfileDataSource;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -51,55 +48,6 @@ import java.util.concurrent.CountDownLatch;
  * AccountHolder} builder method alwaysAccept(true).
  */
 public class FakeAccountManagerDelegate implements AccountManagerDelegate {
-    private static class FakeProfileDataSource implements ProfileDataSource {
-        private final ObserverList<Observer> mObservers = new ObserverList<>();
-        private final Map<String, ProfileData> mProfileDataMap = new HashMap<>();
-
-        FakeProfileDataSource() {}
-
-        @Override
-        public Map<String, ProfileData> getProfileDataMap() {
-            ThreadUtils.assertOnUiThread();
-            return Collections.unmodifiableMap(mProfileDataMap);
-        }
-
-        @Override
-        public @Nullable ProfileData getProfileDataForAccount(String accountId) {
-            ThreadUtils.assertOnUiThread();
-            return mProfileDataMap.get(accountId);
-        }
-
-        @Override
-        public void addObserver(Observer observer) {
-            ThreadUtils.assertOnUiThread();
-            mObservers.addObserver(observer);
-        }
-
-        @Override
-        public void removeObserver(Observer observer) {
-            ThreadUtils.assertOnUiThread();
-            boolean success = mObservers.removeObserver(observer);
-            assert success : "Can't find observer";
-        }
-
-        public void setProfileData(String accountId, @Nullable ProfileData profileData) {
-            ThreadUtils.assertOnUiThread();
-            if (profileData == null) {
-                mProfileDataMap.remove(accountId);
-            } else {
-                assert accountId.equals(profileData.getAccountName());
-                mProfileDataMap.put(accountId, profileData);
-            }
-            fireOnProfileDataUpdatedNotification(accountId);
-        }
-
-        private void fireOnProfileDataUpdatedNotification(String accountId) {
-            for (Observer observer : mObservers) {
-                observer.onProfileDataUpdated(accountId);
-            }
-        }
-    }
-
     private static final String TAG = "FakeAccountManager";
 
     /** Controls whether FakeAccountManagerDelegate should provide a ProfileDataSource. */
@@ -112,25 +60,14 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
     /** Use {@link FakeProfileDataSource}. */
     public static final int ENABLE_PROFILE_DATA_SOURCE = 1;
 
-    private final Set<AccountHolder> mAccounts = new HashSet<>();
+    private final Set<AccountHolder> mAccounts = new LinkedHashSet<>();
     private final ObserverList<AccountsChangeObserver> mObservers = new ObserverList<>();
     private boolean mRegisterObserversCalled;
     private FakeProfileDataSource mFakeProfileDataSource;
 
-    @VisibleForTesting
     public FakeAccountManagerDelegate(@ProfileDataSourceFlag int profileDataSourceFlag) {
         if (profileDataSourceFlag == ENABLE_PROFILE_DATA_SOURCE) {
             mFakeProfileDataSource = new FakeProfileDataSource();
-        }
-    }
-
-    /** Will be removed after fixing downstream clients. */
-    @Deprecated
-    public FakeAccountManagerDelegate(Context context, Account... accounts) {
-        if (accounts != null) {
-            for (Account account : accounts) {
-                mAccounts.add(AccountHolder.builder(account).alwaysAccept(true).build());
-            }
         }
     }
 
@@ -231,27 +168,16 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
     public void addAccountHolderBlocking(AccountHolder accountHolder) {
         ThreadUtils.assertOnBackgroundThread();
 
-        CountDownLatch cacheUpdated = new CountDownLatch(1);
-        AccountsChangeObserver observer = () -> {
-            // Observers are invoked asynchronously, so this call may be unrelated to accountHolder,
-            // hereby this check that account is in AccountManagerFacade cache.
-            if (AccountManagerFacade.get().hasAccountForName(accountHolder.getAccount().name)) {
-                cacheUpdated.countDown();
-            }
-        };
-
+        final CountDownLatch cacheUpdated = new CountDownLatch(1);
         try {
             ThreadUtils.runOnUiThreadBlocking(() -> {
-                AccountManagerFacade.get().addObserver(observer);
                 addAccountHolderExplicitly(accountHolder);
+                AccountManagerFacade.get().waitForPendingUpdates(cacheUpdated::countDown);
             });
 
             cacheUpdated.await();
         } catch (InterruptedException e) {
-            throw new RuntimeException("Exception occurred while waiting for future", e);
-        } finally {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () -> AccountManagerFacade.get().removeObserver(observer));
+            throw new RuntimeException("Exception occurred while waiting for updates", e);
         }
     }
 
@@ -265,32 +191,25 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
         ThreadUtils.assertOnBackgroundThread();
 
         CountDownLatch cacheUpdated = new CountDownLatch(1);
-        AccountsChangeObserver observer = () -> {
-            // Observers are invoked asynchronously, so this call may be unrelated to accountHolder,
-            // hereby this check that account isn't in AccountManagerFacade cache.
-            if (!AccountManagerFacade.get().hasAccountForName(accountHolder.getAccount().name)) {
-                cacheUpdated.countDown();
-            }
-        };
-
         try {
             ThreadUtils.runOnUiThreadBlocking(() -> {
-                AccountManagerFacade.get().addObserver(observer);
                 removeAccountHolderExplicitly(accountHolder);
+                AccountManagerFacade.get().waitForPendingUpdates(cacheUpdated::countDown);
             });
 
             cacheUpdated.await();
         } catch (InterruptedException e) {
-            throw new RuntimeException("Exception occurred while waiting for future", e);
-        } finally {
-            ThreadUtils.runOnUiThreadBlocking(
-                    () -> AccountManagerFacade.get().removeObserver(observer));
+            throw new RuntimeException("Exception occurred while waiting for updates", e);
         }
     }
 
     @Override
-    public String getAuthToken(Account account, String authTokenScope) {
-        AccountHolder ah = getAccountHolder(account);
+    public String getAuthToken(Account account, String authTokenScope) throws AuthException {
+        AccountHolder ah = tryGetAccountHolder(account);
+        if (ah == null) {
+            throw new AuthException(AuthException.NONTRANSIENT,
+                    "Cannot get auth token for unknown account '" + account + "'");
+        }
         assert ah.hasBeenAccepted(authTokenScope);
         synchronized (mAccounts) {
             // Some tests register auth tokens with value null, and those should be preserved.
@@ -332,7 +251,12 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
 
     @Override
     public boolean hasFeatures(Account account, String[] features) {
-        final AccountHolder accountHolder = getAccountHolder(account);
+        @Nullable
+        AccountHolder accountHolder = tryGetAccountHolder(account);
+        if (accountHolder == null) {
+            // Features status is queried asynchronously, so the account could have been removed.
+            return false;
+        }
         Set<String> accountFeatures = accountHolder.getFeatures();
         boolean hasAllFeatures = true;
         for (String feature : features) {
@@ -342,6 +266,12 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
             }
         }
         return hasAllFeatures;
+    }
+
+    @Override
+    public void createAddAccountIntent(Callback<Intent> callback) {
+        ThreadUtils.assertOnUiThread();
+        ThreadUtils.postOnUiThread(() -> callback.onResult(null));
     }
 
     @Override
@@ -355,7 +285,7 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
         ThreadUtils.postOnUiThread(() -> callback.onResult(true));
     }
 
-    private AccountHolder getAccountHolder(Account account) {
+    private AccountHolder tryGetAccountHolder(Account account) {
         if (account == null) {
             throw new IllegalArgumentException("Account can not be null");
         }
@@ -366,6 +296,14 @@ public class FakeAccountManagerDelegate implements AccountManagerDelegate {
                 }
             }
         }
-        throw new IllegalArgumentException("Can not find AccountHolder for account " + account);
+        return null;
+    }
+
+    private AccountHolder getAccountHolder(Account account) {
+        AccountHolder ah = tryGetAccountHolder(account);
+        if (ah == null) {
+            throw new IllegalArgumentException("Can not find AccountHolder for account " + account);
+        }
+        return ah;
     }
 }

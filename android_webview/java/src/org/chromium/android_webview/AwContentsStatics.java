@@ -4,7 +4,6 @@
 
 package org.chromium.android_webview;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.net.Uri;
 
@@ -12,6 +11,8 @@ import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.List;
 
@@ -85,15 +86,6 @@ public class AwContentsStatics {
         nativeSetServiceWorkerIoThreadClient(ioThreadClient, browserContext);
     }
 
-    // Can be called from any thread.
-    public static boolean getSafeBrowsingEnabledByManifest() {
-        return nativeGetSafeBrowsingEnabledByManifest();
-    }
-
-    public static void setSafeBrowsingEnabledByManifest(boolean enable) {
-        nativeSetSafeBrowsingEnabledByManifest(enable);
-    }
-
     @CalledByNative
     private static void safeBrowsingWhitelistAssigned(Callback<Boolean> callback, boolean success) {
         if (callback == null) return;
@@ -109,19 +101,18 @@ public class AwContentsStatics {
         nativeSetSafeBrowsingWhitelist(urlArray, callback);
     }
 
-    @SuppressWarnings("unchecked")
-    @TargetApi(19)
+    @SuppressWarnings("NoContextGetApplicationContext")
     public static void initSafeBrowsing(Context context, final Callback<Boolean> callback) {
         // Wrap the callback to make sure we always invoke it on the UI thread, as guaranteed by the
         // API.
-        final Context appContext = context.getApplicationContext();
         Callback<Boolean> wrapperCallback = b -> {
             if (callback != null) {
-                ThreadUtils.runOnUiThread(() -> callback.onResult(b));
+                PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> callback.onResult(b));
             }
         };
 
-        PlatformServiceBridge.getInstance().warmUpSafeBrowsing(appContext, wrapperCallback);
+        PlatformServiceBridge.getInstance().warmUpSafeBrowsing(
+                context.getApplicationContext(), wrapperCallback);
     }
 
     public static Uri getSafeBrowsingPrivacyPolicyUrl() {
@@ -130,6 +121,10 @@ public class AwContentsStatics {
 
     public static void setCheckClearTextPermitted(boolean permitted) {
         nativeSetCheckClearTextPermitted(permitted);
+    }
+
+    public static void logCommandLineForDebugging() {
+        nativeLogCommandLineForDebugging();
     }
 
     /**
@@ -146,18 +141,25 @@ public class AwContentsStatics {
         return FindAddress.findAddress(addr);
     }
 
+    /**
+     * Returns true if WebView is running in multi process mode.
+     */
+    public static boolean isMultiProcessEnabled() {
+        return nativeIsMultiProcessEnabled();
+    }
+
     //--------------------------------------------------------------------------------------------
     //  Native methods
     //--------------------------------------------------------------------------------------------
+    private static native void nativeLogCommandLineForDebugging();
     private static native String nativeGetSafeBrowsingPrivacyPolicyUrl();
     private static native void nativeClearClientCertPreferences(Runnable callback);
     private static native String nativeGetUnreachableWebDataUrl();
     private static native String nativeGetProductVersion();
     private static native void nativeSetServiceWorkerIoThreadClient(
             AwContentsIoThreadClient ioThreadClient, AwBrowserContext browserContext);
-    private static native boolean nativeGetSafeBrowsingEnabledByManifest();
-    private static native void nativeSetSafeBrowsingEnabledByManifest(boolean enable);
     private static native void nativeSetSafeBrowsingWhitelist(
             String[] urls, Callback<Boolean> callback);
     private static native void nativeSetCheckClearTextPermitted(boolean permitted);
+    private static native boolean nativeIsMultiProcessEnabled();
 }

@@ -3,89 +3,156 @@
 // found in the LICENSE file.
 
 /**
- * @fileoverview Installs Translate management functions on the __gCrWeb object.
+ * @fileoverview Translate script for iOS that is needed in addition to the
+ * cross platform script translate.js.
  *
  * TODO(crbug.com/659442): Enable checkTypes, checkVars errors for this file.
  * @suppress {checkTypes, checkVars}
  */
 
+goog.require('__crWeb.base');
+
+/**
+ * Namespace for this module.
+ */
 __gCrWeb.translate = {};
 
-// Store translate namespace object in a global __gCrWeb object referenced by a
+// Store message namespace object in a global __gCrWeb object referenced by a
 // string, so it does not get renamed by closure compiler during the
 // minification.
 __gCrWeb['translate'] = __gCrWeb.translate;
 
+/* Beginning of anonymous object. */
 (function() {
-/**
- * The delay a wait performed (in milliseconds) before checking whether the
- * translation has finished.
- * @type {number}
- */
-__gCrWeb.translate.TRANSLATE_STATUS_CHECK_DELAY = 400;
 
 /**
- * The delay in milliseconds that we'll wait to check if a page has finished
- * loading before attempting a translation.
- * @type {number}
+ * Defines function to install callbacks on cr.googleTranslate.
+ * See translate_script.cc for usage.
  */
-__gCrWeb.translate.TRANSLATE_LOAD_CHECK_DELAY = 150;
-
-/**
- * The maximum number of times a check is performed to see if the translate
- * library injected in the page is ready.
- * @type {number}
- */
-__gCrWeb.translate.MAX_TRANSLATE_INIT_CHECK_ATTEMPTS = 5;
-
-// The number of times polling for the ready status of the translate script has
-//  been performed.
-var translationAttemptCount = 0;
-
-/**
- * Polls every TRANSLATE_LOAD_CHECK_DELAY milliseconds to check if the translate
- * script is ready and informs the host when it is.
- */
-__gCrWeb.translate['checkTranslateReady'] = function() {
-  translationAttemptCount += 1;
-  if (cr.googleTranslate.libReady) {
-    translationAttemptCount = 0;
+__gCrWeb.translate['installCallbacks'] = function() {
+  /**
+   * Sets a callback to inform host of the ready state of the translate element.
+   */
+  cr.googleTranslate.readyCallback = function() {
     __gCrWeb.message.invokeOnHost({
         'command': 'translate.ready',
-        'timeout': false,
+        'errorCode': cr.googleTranslate.errorCode,
         'loadTime': cr.googleTranslate.loadTime,
         'readyTime': cr.googleTranslate.readyTime});
-  } else if (translationAttemptCount >=
-             __gCrWeb.translate.MAX_TRANSLATE_INIT_CHECK_ATTEMPTS) {
+  }
+
+  /**
+   * Sets a callback to inform host of the result of translation.
+   */
+  cr.googleTranslate.resultCallback = function() {
     __gCrWeb.message.invokeOnHost({
-        'command': 'translate.ready',
-        'timeout': true});
-  } else {
-    // The translation is still pending, check again later.
-    window.setTimeout(__gCrWeb.translate.checkTranslateReady,
-                      __gCrWeb.translate.TRANSLATE_LOAD_CHECK_DELAY);
+        'command': 'translate.status',
+        'errorCode': cr.googleTranslate.errorCode,
+        'originalPageLanguage': cr.googleTranslate.sourceLang,
+        'translationTime': cr.googleTranslate.translationTime});
+  }
+
+  /**
+   * Sets a callback to inform host to download javascript.
+   */
+  cr.googleTranslate.loadJavascriptCallback = function(url) {
+    __gCrWeb.message.invokeOnHost({
+        'command': 'translate.loadjavascript',
+        'url': url});
+  }
+};
+
+/**
+ * Redefine XMLHttpRequest's open to capture request configurations.
+ * Only redefines once because this script may be injected multiple times.
+ */
+if (typeof(XMLHttpRequest.prototype.realOpen) == 'undefined') {
+  XMLHttpRequest.prototype.realOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+    this.savedMethod = method;
+    this.savedUrl = url;
+    this.savedAsync = async;
+    this.savedUser = user;
+    this.savedPassword = password;
+    this.realOpen(method, url, async, user, password);
   }
 }
 
 /**
- * Polls every TRANSLATE_STATUS_CHECK_DELAY milliseconds to check if translate
- * is ready and informs the host when it is.
+ * Translate XMLHttpRequests still outstanding.
+ * @type {Array<XMLHttpRequest>}
  */
-__gCrWeb.translate['checkTranslateStatus'] = function() {
-  if (cr.googleTranslate.error) {
-    __gCrWeb.message.invokeOnHost({'command': 'translate.status',
-                                   'success': false});
-  } else if (cr.googleTranslate.finished) {
-    __gCrWeb.message.invokeOnHost({
-        'command': 'translate.status',
-        'success': true,
-        'originalPageLanguage': cr.googleTranslate.sourceLang,
-        'translationTime': cr.googleTranslate.translationTime});
-  } else {
-    // The translation is still pending, check again later.
-    window.setTimeout(__gCrWeb.translate.checkTranslateStatus,
-                      __gCrWeb.translate.TRANSLATE_STATUS_CHECK_DELAY);
+__gCrWeb.translate['xhrs'] = [];
+
+/**
+ * Redefine XMLHttpRequest's send to call into the browser if it matches the
+ * predefined translate security origin.
+ * Only redefines once because this script may be injected multiple times.
+ */
+if (typeof(XMLHttpRequest.prototype.realSend) == 'undefined') {
+  XMLHttpRequest.prototype.realSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function(body) {
+    // If this is a translate request, save this xhr and proxy the request to
+    // the browser. Else, pass it through to the original implementation.
+    // |securityOrigin| is predefined by translate_script.cc.
+    if (this.savedUrl.startsWith(securityOrigin)) {
+      var length = __gCrWeb.translate['xhrs'].push(this);
+      __gCrWeb.message.invokeOnHost({
+          'command': 'translate.sendrequest',
+          'method': this.savedMethod,
+          'url': this.savedUrl,
+          'body': body,
+          'requestID': length - 1});
+    } else {
+      this.realSend(body);
+    }
   }
 }
 
-}());  // anonymous function
+/**
+ * Receives the response the browser got for the proxied xhr request and
+ * configures the xhr object as it would have been had it been sent normally.
+ * @param {string} url The original url which initiated the request.
+ * @param {number} requestID The index of the xhr request in |xhrs|.
+ * @param {number} status HTTP response code.
+ * @param {string} statusText HTTP response status text.
+ * @param {string} responseURL The url which the response was returned from.
+ * @param {string} responseText The text received from the server.
+ */
+__gCrWeb.translate['handleResponse'] = function(url, requestID, status,
+                                                statusText, responseURL,
+                                                responseText) {
+  // Retrive xhr object that's waiting for the response.
+  xhr = __gCrWeb.translate['xhrs'][requestID];
+
+  // Configure xhr as it would have been if it was sent.
+  Object.defineProperties(xhr, {
+    responseText: {
+      value: responseText
+    },
+    response: {
+      value: responseText
+    },
+    readyState: {
+      value: XMLHttpRequest.DONE
+    },
+    status: {
+      value: status
+    },
+    statusText : {
+      value: statusText
+    },
+    responseType: {
+      value: "text"
+    },
+    responseURL: {
+      value: responseURL
+    },
+  });
+  xhr.onreadystatechange();
+
+  // Clean it up
+  delete __gCrWeb.translate['xhrs'][requestID];
+};
+
+}());  // End of anonymous function.

@@ -41,15 +41,21 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattCharacteristicServiceProvider
   // GATT manager.
   void GetValue(
       const dbus::ObjectPath& device_path,
-      const device::BluetoothLocalGattService::Delegate::ValueCallback&
-          callback,
-      const device::BluetoothLocalGattService::Delegate::ErrorCallback&
+      device::BluetoothLocalGattService::Delegate::ValueCallback callback,
+      device::BluetoothLocalGattService::Delegate::ErrorCallback
           error_callback);
-  void SetValue(
+  void SetValue(const dbus::ObjectPath& device_path,
+                const std::vector<uint8_t>& value,
+                base::OnceClosure callback,
+                device::BluetoothLocalGattService::Delegate::ErrorCallback
+                    error_callback);
+  void PrepareSetValue(
       const dbus::ObjectPath& device_path,
       const std::vector<uint8_t>& value,
-      const base::Closure& callback,
-      const device::BluetoothLocalGattService::Delegate::ErrorCallback&
+      int offset,
+      bool has_subsequent_write,
+      base::OnceClosure callback,
+      device::BluetoothLocalGattService::Delegate::ErrorCallback
           error_callback);
 
   // Method to simulate starting and stopping notifications.

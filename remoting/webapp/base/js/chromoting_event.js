@@ -130,6 +130,8 @@ remoting.ChromotingEvent = function(type) {
   this.client_fullscreen;
   /** @type {remoting.ChromotingEvent.ChromotingDotComMigration} */
   this.chromoting_dot_com_migration;
+  /** @type {number} */
+  this.number_of_network_interfaces;
 
   this.init_();
 };
@@ -437,7 +439,9 @@ remoting.ChromotingEvent.Mode = {
 /** @enum {number} */
 remoting.ChromotingEvent.SignalStrategyType = {
   XMPP: 1,
-  WCS: 2
+  WCS: 2,
+  LCS: 3,
+  FTL: 4,
 };
 
 /** @enum {number} */

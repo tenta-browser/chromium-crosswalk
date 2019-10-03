@@ -8,9 +8,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ui/passwords/password_dialog_prompts.h"
 #include "chrome/browser/ui/passwords/passwords_model_delegate_mock.h"
 #include "chrome/test/base/testing_profile.h"
@@ -19,6 +18,7 @@
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/account_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -80,8 +80,8 @@ TEST_F(PasswordDialogControllerTest, ShowAccountChooser) {
   autofill::PasswordForm local_form2 = local_form;
   local_form2.username_value = base::ASCIIToUTF16(kUsername2);
   std::vector<std::unique_ptr<autofill::PasswordForm>> locals;
-  locals.push_back(base::MakeUnique<autofill::PasswordForm>(local_form));
-  locals.push_back(base::MakeUnique<autofill::PasswordForm>(local_form2));
+  locals.push_back(std::make_unique<autofill::PasswordForm>(local_form));
+  locals.push_back(std::make_unique<autofill::PasswordForm>(local_form2));
   autofill::PasswordForm* local_form_ptr = locals[0].get();
 
   EXPECT_CALL(prompt, ShowAccountChooser());
@@ -110,7 +110,7 @@ TEST_F(PasswordDialogControllerTest, ShowAccountChooserAndSignIn) {
   StrictMock<MockPasswordPrompt> prompt;
   autofill::PasswordForm local_form = GetLocalForm();
   std::vector<std::unique_ptr<autofill::PasswordForm>> locals;
-  locals.push_back(base::MakeUnique<autofill::PasswordForm>(local_form));
+  locals.push_back(std::make_unique<autofill::PasswordForm>(local_form));
 
   EXPECT_CALL(prompt, ShowAccountChooser());
   controller().ShowAccountChooser(&prompt, std::move(locals));
@@ -134,7 +134,7 @@ TEST_F(PasswordDialogControllerTest, AccountChooserClosed) {
   base::HistogramTester histogram_tester;
   StrictMock<MockPasswordPrompt> prompt;
   std::vector<std::unique_ptr<autofill::PasswordForm>> locals;
-  locals.push_back(base::MakeUnique<autofill::PasswordForm>(GetLocalForm()));
+  locals.push_back(std::make_unique<autofill::PasswordForm>(GetLocalForm()));
   EXPECT_CALL(prompt, ShowAccountChooser());
   controller().ShowAccountChooser(&prompt, std::move(locals));
 
@@ -209,11 +209,6 @@ TEST_F(PasswordDialogControllerTest, AutoSigninPromoTurnOff) {
   histogram_tester.ExpectUniqueSample(
       "PasswordManager.AutoSigninFirstRunDialog",
        password_manager::metrics_util::AUTO_SIGNIN_TURN_OFF, 1);
-}
-
-TEST_F(PasswordDialogControllerTest, OnBrandLinkClicked) {
-  EXPECT_CALL(ui_controller_mock(), NavigateToSmartLockHelpPage());
-  controller().OnSmartLockLinkClicked();
 }
 
 }  // namespace

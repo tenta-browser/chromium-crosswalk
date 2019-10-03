@@ -5,13 +5,14 @@
 #include "cc/tiles/tile_task_manager.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 
 namespace cc {
 
-TileTaskManager::TileTaskManager() {}
+TileTaskManager::TileTaskManager() = default;
 
-TileTaskManager::~TileTaskManager() {}
+TileTaskManager::~TileTaskManager() = default;
 
 // static
 std::unique_ptr<TileTaskManagerImpl> TileTaskManagerImpl::Create(
@@ -24,7 +25,7 @@ TileTaskManagerImpl::TileTaskManagerImpl(TaskGraphRunner* task_graph_runner)
     : task_graph_runner_(task_graph_runner),
       namespace_token_(task_graph_runner->GenerateNamespaceToken()) {}
 
-TileTaskManagerImpl::~TileTaskManagerImpl() {}
+TileTaskManagerImpl::~TileTaskManagerImpl() = default;
 
 void TileTaskManagerImpl::ScheduleTasks(TaskGraph* graph) {
   TRACE_EVENT0("cc", "TileTaskManagerImpl::ScheduleTasks");
@@ -50,7 +51,10 @@ void TileTaskManagerImpl::Shutdown() {
   // Cancel non-scheduled tasks and wait for running tasks to finish.
   TaskGraph empty;
   task_graph_runner_->ScheduleTasks(namespace_token_, &empty);
-  task_graph_runner_->WaitForTasksToFinishRunning(namespace_token_);
+  {
+    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
+    task_graph_runner_->WaitForTasksToFinishRunning(namespace_token_);
+  }
 }
 
 }  // namespace cc

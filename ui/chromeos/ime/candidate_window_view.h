@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "ui/base/ime/candidate_window.h"
 #include "ui/chromeos/ui_chromeos_export.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/button.h"
 
 namespace ui {
@@ -83,8 +83,6 @@ class UI_CHROMEOS_EXPORT CandidateWindowView
   // views::BubbleDialogDelegateView:
   const char* GetClassName() const override;
   int GetDialogButtons() const override;
-  void OnBeforeBubbleWidgetInit(views::Widget::InitParams* params,
-                                views::Widget* widget) const override;
 
   // Overridden from views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -103,7 +101,7 @@ class UI_CHROMEOS_EXPORT CandidateWindowView
   int selected_candidate_index_in_page_;
 
   // The observers of the object.
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   // Views created in the class will be part of tree of |this|, so these
   // child views will be deleted when |this| is deleted.

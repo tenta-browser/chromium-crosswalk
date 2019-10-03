@@ -17,7 +17,7 @@
 #include "content/public/renderer/render_frame.h"
 #include "content/renderer/peripheral_content_heuristic.h"
 #include "ppapi/shared_impl/ppapi_constants.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace content {
@@ -31,15 +31,17 @@ const char kPeripheralHeuristicHistogram[] =
 
 PluginPowerSaverHelper::PeripheralPlugin::PeripheralPlugin(
     const url::Origin& content_origin,
-    const base::Closure& unthrottle_callback)
+    base::OnceClosure unthrottle_callback)
     : content_origin(content_origin),
-      unthrottle_callback(unthrottle_callback) {}
+      unthrottle_callback(std::move(unthrottle_callback)) {}
 
-PluginPowerSaverHelper::PeripheralPlugin::PeripheralPlugin(
-    const PeripheralPlugin& other) = default;
+PluginPowerSaverHelper::PeripheralPlugin::~PeripheralPlugin() = default;
 
-PluginPowerSaverHelper::PeripheralPlugin::~PeripheralPlugin() {
-}
+PluginPowerSaverHelper::PeripheralPlugin::PeripheralPlugin(PeripheralPlugin&&) =
+    default;
+PluginPowerSaverHelper::PeripheralPlugin&
+PluginPowerSaverHelper::PeripheralPlugin::operator=(PeripheralPlugin&&) =
+    default;
 
 PluginPowerSaverHelper::PluginPowerSaverHelper(RenderFrame* render_frame)
     : RenderFrameObserver(render_frame) {}
@@ -48,8 +50,8 @@ PluginPowerSaverHelper::~PluginPowerSaverHelper() {
 }
 
 void PluginPowerSaverHelper::DidCommitProvisionalLoad(
-    bool is_new_navigation,
-    bool is_same_document_navigation) {
+    bool is_same_document_navigation,
+    ui::PageTransition transition) {
   blink::WebFrame* frame = render_frame()->GetWebFrame();
   // Only apply to top-level and new page navigation.
   if (frame->Parent() || is_same_document_navigation)
@@ -82,8 +84,9 @@ void PluginPowerSaverHelper::OnUpdatePluginContentOriginWhitelist(
     if (origin_whitelist.count(it->content_origin)) {
       // Because the unthrottle callback may register another peripheral plugin
       // and invalidate our iterator, we cannot run it synchronously.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                    it->unthrottle_callback);
+      render_frame()
+          ->GetTaskRunner(blink::TaskType::kInternalDefault)
+          ->PostTask(FROM_HERE, std::move(it->unthrottle_callback));
       it = peripheral_plugins_.erase(it);
     } else {
       ++it;
@@ -93,9 +96,9 @@ void PluginPowerSaverHelper::OnUpdatePluginContentOriginWhitelist(
 
 void PluginPowerSaverHelper::RegisterPeripheralPlugin(
     const url::Origin& content_origin,
-    const base::Closure& unthrottle_callback) {
+    base::OnceClosure unthrottle_callback) {
   peripheral_plugins_.push_back(
-      PeripheralPlugin(content_origin, unthrottle_callback));
+      PeripheralPlugin(content_origin, std::move(unthrottle_callback)));
 }
 
 RenderFrame::PeripheralContentStatus

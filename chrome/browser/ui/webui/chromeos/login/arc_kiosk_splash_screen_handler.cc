@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
+#include "chrome/browser/chromeos/login/arc_kiosk_controller.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -17,19 +17,18 @@
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/gfx/image/image_skia.h"
 
-namespace {
-
-constexpr char kJsScreenPath[] = "login.ArcKioskSplashScreen";
-}
-
 namespace chromeos {
 
-ArcKioskSplashScreenHandler::ArcKioskSplashScreenHandler()
-    : BaseScreenHandler(kScreenId) {
-  set_call_js_prefix(kJsScreenPath);
-}
+constexpr StaticOobeScreenId ArcKioskSplashScreenView::kScreenId;
 
-ArcKioskSplashScreenHandler::~ArcKioskSplashScreenHandler() = default;
+ArcKioskSplashScreenHandler::ArcKioskSplashScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {}
+
+ArcKioskSplashScreenHandler::~ArcKioskSplashScreenHandler() {
+  if (controller_)
+    controller_->OnDeletingSplashScreenView();
+}
 
 void ArcKioskSplashScreenHandler::DeclareLocalizedValues(
     ::login::LocalizedValuesBuilder* builder) {
@@ -59,7 +58,7 @@ void ArcKioskSplashScreenHandler::Show() {
   base::DictionaryValue data;
   // |data| will take ownership of |app_info|.
   std::unique_ptr<base::DictionaryValue> app_info =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   PopulateAppInfo(app_info.get());
   data.Set("appInfo", std::move(app_info));
   ShowScreenWithData(kScreenId, &data);
@@ -76,9 +75,8 @@ void ArcKioskSplashScreenHandler::UpdateArcKioskState(ArcKioskState state) {
   SetLaunchText(l10n_util::GetStringUTF8(GetProgressMessageFromState(state)));
 }
 
-void ArcKioskSplashScreenHandler::SetDelegate(
-    ArcKioskSplashScreenHandler::Delegate* delegate) {
-  delegate_ = delegate;
+void ArcKioskSplashScreenHandler::SetDelegate(ArcKioskController* controller) {
+  controller_ = controller;
 }
 
 void ArcKioskSplashScreenHandler::PopulateAppInfo(
@@ -92,7 +90,7 @@ void ArcKioskSplashScreenHandler::PopulateAppInfo(
 }
 
 void ArcKioskSplashScreenHandler::SetLaunchText(const std::string& text) {
-  CallJS("updateArcKioskMessage", text);
+  CallJS("login.ArcKioskSplashScreen.updateArcKioskMessage", text);
 }
 
 int ArcKioskSplashScreenHandler::GetProgressMessageFromState(
@@ -112,11 +110,11 @@ int ArcKioskSplashScreenHandler::GetProgressMessageFromState(
 }
 
 void ArcKioskSplashScreenHandler::HandleCancelArcKioskLaunch() {
-  if (!delegate_) {
+  if (!controller_) {
     LOG(WARNING) << "No delegate set to handle cancel app launch";
     return;
   }
-  delegate_->OnCancelArcKioskLaunch();
+  controller_->OnCancelArcKioskLaunch();
 }
 
 }  // namespace chromeos

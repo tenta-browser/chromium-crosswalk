@@ -1,10 +1,18 @@
 # This OWNERS list is a last resort. Please prefer to use more specific OWNERS
 # where possible.
 
-# Reviewers:
-jochen@chromium.org
-sky@chromium.org
+# Reviewers (in CET):
+blundell@chromium.org
+droger@chromium.org
+treib@chromium.org
+vasilii@chromium.org
+
+# Reviewers (in EST):
+avi@chromium.org
 thakis@chromium.org
+
+# Reviewers (in PST):
+sky@chromium.org
 thestig@chromium.org
 
 # per-file rules:
@@ -16,3 +24,5 @@ per-file VERSION=amineer@chromium.org
 per-file VERSION=anantha@chromium.org
 per-file VERSION=govind@chromium.org
 per-file VERSION=mmoss@chromium.org
+# COMPONENT: Build
+# TEAM: chromium-reviews@chromium.org

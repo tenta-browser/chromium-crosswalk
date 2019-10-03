@@ -9,12 +9,15 @@
 
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
+#include "base/message_loop/message_pump_for_io.h"
+#include "base/strings/string_util.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 
 namespace {
 
+class CompletionHandler;
 // Structure used for asynchronous operations.
 struct MyOverlapped {
   MyOverlapped(disk_cache::File* file, size_t offset,
@@ -24,8 +27,9 @@ struct MyOverlapped {
     return &context_.overlapped;
   }
 
-  base::MessageLoopForIO::IOContext context_;
+  base::MessagePumpForIO::IOContext context_;
   scoped_refptr<disk_cache::File> file_;
+  scoped_refptr<CompletionHandler> completion_handler_;
   disk_cache::FileIOCallback* callback_;
 };
 
@@ -33,17 +37,46 @@ static_assert(offsetof(MyOverlapped, context_) == 0,
               "should start with overlapped");
 
 // Helper class to handle the IO completion notifications from the message loop.
-class CompletionHandler : public base::MessageLoopForIO::IOHandler {
-  void OnIOCompleted(base::MessageLoopForIO::IOContext* context,
+class CompletionHandler : public base::MessagePumpForIO::IOHandler,
+                          public base::RefCounted<CompletionHandler> {
+ public:
+  CompletionHandler() = default;
+  static CompletionHandler* Get();
+
+ private:
+  friend class base::RefCounted<CompletionHandler>;
+  ~CompletionHandler() override {}
+
+  // implement base::MessagePumpForIO::IOHandler.
+  void OnIOCompleted(base::MessagePumpForIO::IOContext* context,
                      DWORD actual_bytes,
                      DWORD error) override;
+
+  DISALLOW_COPY_AND_ASSIGN(CompletionHandler);
 };
 
-static base::LazyInstance<CompletionHandler>::DestructorAtExit
-    g_completion_handler = LAZY_INSTANCE_INITIALIZER;
+class CompletionHandlerHolder {
+ public:
+  CompletionHandlerHolder() { completion_handler_ = new CompletionHandler; }
+
+  CompletionHandler* completion_handler() { return completion_handler_.get(); }
+
+ private:
+  scoped_refptr<CompletionHandler> completion_handler_;
+};
+
+static base::LazyInstance<CompletionHandlerHolder>::DestructorAtExit
+    g_completion_handler_holder = LAZY_INSTANCE_INITIALIZER;
+
+CompletionHandler* CompletionHandler::Get() {
+  if (auto* holder = g_completion_handler_holder.Pointer()) {
+    return holder->completion_handler();
+  }
+  return nullptr;
+}
 
 void CompletionHandler::OnIOCompleted(
-    base::MessageLoopForIO::IOContext* context,
+    base::MessagePumpForIO::IOContext* context,
     DWORD actual_bytes,
     DWORD error) {
   MyOverlapped* data = reinterpret_cast<MyOverlapped*>(context);
@@ -65,6 +98,7 @@ MyOverlapped::MyOverlapped(disk_cache::File* file, size_t offset,
   context_.overlapped.Offset = static_cast<DWORD>(offset);
   file_ = file;
   callback_ = callback;
+  completion_handler_ = CompletionHandler::Get();
 }
 
 }  // namespace
@@ -81,20 +115,20 @@ bool File::Init(const base::FilePath& name) {
 
   DWORD sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
   DWORD access = GENERIC_READ | GENERIC_WRITE | DELETE;
-  base_file_ =
-      base::File(CreateFile(name.value().c_str(), access, sharing, NULL,
-                            OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL));
+  base_file_ = base::File(CreateFile(base::as_wcstr(name.value()), access,
+                                     sharing, nullptr, OPEN_EXISTING,
+                                     FILE_FLAG_OVERLAPPED, nullptr));
 
   if (!base_file_.IsValid())
     return false;
 
-  base::MessageLoopForIO::current()->RegisterIOHandler(
-      base_file_.GetPlatformFile(), g_completion_handler.Pointer());
+  base::MessageLoopCurrentForIO::Get()->RegisterIOHandler(
+      base_file_.GetPlatformFile(), CompletionHandler::Get());
 
   init_ = true;
-  sync_base_file_  =
-    base::File(CreateFile(name.value().c_str(), access, sharing, NULL,
-                          OPEN_EXISTING, 0, NULL));
+  sync_base_file_ =
+      base::File(CreateFile(base::as_wcstr(name.value()), access, sharing,
+                            nullptr, OPEN_EXISTING, 0, nullptr));
 
   if (!sync_base_file_.IsValid())
     return false;
@@ -159,8 +193,8 @@ bool File::Read(void* buffer, size_t buffer_len, size_t offset,
   // The operation completed already. We'll be called back anyway.
   *completed = (actual == size);
   DCHECK_EQ(size, actual);
-  data->callback_ = NULL;
-  data->file_ = NULL;  // There is no reason to hold on to this anymore.
+  data->callback_ = nullptr;
+  data->file_ = nullptr;  // There is no reason to hold on to this anymore.
   return *completed;
 }
 
@@ -209,8 +243,8 @@ bool File::AsyncWrite(const void* buffer, size_t buffer_len, size_t offset,
   // The operation completed already. We'll be called back anyway.
   *completed = (actual == size);
   DCHECK_EQ(size, actual);
-  data->callback_ = NULL;
-  data->file_ = NULL;  // There is no reason to hold on to this anymore.
+  data->callback_ = nullptr;
+  data->file_ = nullptr;  // There is no reason to hold on to this anymore.
   return *completed;
 }
 
@@ -221,7 +255,8 @@ bool File::SetLength(size_t length) {
 
   DWORD size = static_cast<DWORD>(length);
   HANDLE file = platform_file();
-  if (INVALID_SET_FILE_POINTER == SetFilePointer(file, size, NULL, FILE_BEGIN))
+  if (INVALID_SET_FILE_POINTER ==
+      SetFilePointer(file, size, nullptr, FILE_BEGIN))
     return false;
 
   return TRUE == SetEndOfFile(file);
@@ -244,8 +279,8 @@ void File::WaitForPendingIO(int* num_pending_io) {
   while (*num_pending_io) {
     // Asynchronous IO operations may be in flight and the completion may end
     // up calling us back so let's wait for them.
-    base::MessageLoopForIO::IOHandler* handler = g_completion_handler.Pointer();
-    base::MessageLoopForIO::current()->WaitForIOCompletion(100, handler);
+    base::MessagePumpForIO::IOHandler* handler = CompletionHandler::Get();
+    base::MessageLoopCurrentForIO::Get()->WaitForIOCompletion(100, handler);
   }
 }
 

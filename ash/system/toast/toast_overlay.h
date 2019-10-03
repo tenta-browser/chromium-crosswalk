@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "ash/ash_export.h"
+#include "ash/public/cpp/keyboard/keyboard_controller_observer.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "ui/compositor/layer_animation_observer.h"
@@ -25,11 +26,12 @@ class Widget;
 
 namespace ash {
 
-class ToastManagerTest;
+class ToastManagerImplTest;
 class ToastOverlayView;
 class ToastOverlayButton;
 
-class ASH_EXPORT ToastOverlay : public ui::ImplicitAnimationObserver {
+class ASH_EXPORT ToastOverlay : public ui::ImplicitAnimationObserver,
+                                public KeyboardControllerObserver {
  public:
   class ASH_EXPORT Delegate {
    public:
@@ -47,14 +49,20 @@ class ASH_EXPORT ToastOverlay : public ui::ImplicitAnimationObserver {
   // used.
   ToastOverlay(Delegate* delegate,
                const base::string16& text,
-               base::Optional<base::string16> dismiss_text);
+               base::Optional<base::string16> dismiss_text,
+               bool show_on_lock_screen = false);
   ~ToastOverlay() override;
 
   // Shows or hides the overlay.
   void Show(bool visible);
 
+  // Update the position and size of toast.
+  void UpdateOverlayBounds();
+
  private:
-  friend class ToastManagerTest;
+  friend class ToastManagerImplTest;
+
+  class ToastDisplayObserver;
 
   // Returns the current bounds of the overlay, which is based on visibility.
   gfx::Rect CalculateOverlayBounds();
@@ -62,6 +70,9 @@ class ASH_EXPORT ToastOverlay : public ui::ImplicitAnimationObserver {
   // ui::ImplicitAnimationObserver:
   void OnImplicitAnimationsScheduled() override;
   void OnImplicitAnimationsCompleted() override;
+
+  // KeyboardControllerObserver:
+  void OnKeyboardOccludedBoundsChanged(const gfx::Rect& new_bounds) override;
 
   views::Widget* widget_for_testing();
   ToastOverlayButton* dismiss_button_for_testing();
@@ -72,6 +83,8 @@ class ASH_EXPORT ToastOverlay : public ui::ImplicitAnimationObserver {
   const base::Optional<base::string16> dismiss_text_;
   std::unique_ptr<views::Widget> overlay_widget_;
   std::unique_ptr<ToastOverlayView> overlay_view_;
+  std::unique_ptr<ToastDisplayObserver> display_observer_;
+
   gfx::Size widget_size_;
 
   DISALLOW_COPY_AND_ASSIGN(ToastOverlay);

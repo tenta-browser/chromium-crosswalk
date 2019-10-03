@@ -12,14 +12,13 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace {
-
-static device::win::BluetoothLowEnergyWrapper* g_instance_ = nullptr;
 
 using device::win::DeviceRegistryPropertyValue;
 using device::win::DevicePropertyValue;
@@ -460,8 +459,8 @@ bool CollectBluetoothLowEnergyDeviceInfo(
 
   std::unique_ptr<device::win::BluetoothLowEnergyDeviceInfo> result(
       new device::win::BluetoothLowEnergyDeviceInfo());
-  result->path =
-      base::FilePath(std::wstring(device_interface_detail_data->DevicePath));
+  result->path = base::FilePath(
+      base::as_u16cstr(device_interface_detail_data->DevicePath));
   if (!CollectBluetoothLowEnergyDeviceInstanceId(
           device_info_handle, &device_info_data, result, error)) {
     return false;
@@ -651,29 +650,11 @@ bool ExtractBluetoothAddressFromDeviceInstanceIdForTesting(
   return ExtractBluetoothAddressFromDeviceInstanceId(instance_id, btha, error);
 }
 
-BluetoothLowEnergyWrapper* BluetoothLowEnergyWrapper::GetInstance() {
-  if (g_instance_ == nullptr) {
-    g_instance_ = new BluetoothLowEnergyWrapper();
-  }
-  return g_instance_;
-}
-
-void BluetoothLowEnergyWrapper::DeleteInstance() {
-  delete g_instance_;
-  g_instance_ = nullptr;
-}
-
-void BluetoothLowEnergyWrapper::SetInstanceForTest(
-    BluetoothLowEnergyWrapper* instance) {
-  delete g_instance_;
-  g_instance_ = instance;
-}
-
 BluetoothLowEnergyWrapper::BluetoothLowEnergyWrapper() {}
 BluetoothLowEnergyWrapper::~BluetoothLowEnergyWrapper() {}
 
 bool BluetoothLowEnergyWrapper::IsBluetoothLowEnergySupported() {
-  return base::win::GetVersion() >= base::win::VERSION_WIN8;
+  return base::win::GetVersion() >= base::win::Version::WIN8;
 }
 
 bool BluetoothLowEnergyWrapper::EnumerateKnownBluetoothLowEnergyDevices(

@@ -16,7 +16,9 @@
 
 namespace ash {
 
+class DemoSessionMetricsRecorder;
 class DesktopTaskSwitchMetricRecorder;
+enum class DictationToggleSource;
 class PointerMetricsRecorder;
 
 // User Metrics Recorder provides a repeating callback (RecordPeriodicMetrics)
@@ -32,12 +34,22 @@ class ASH_EXPORT UserMetricsRecorder {
 
   virtual ~UserMetricsRecorder();
 
-  // Record interesting user clicks on lock screen.
-  static void RecordUserClick(
-      LoginMetricsRecorder::LockScreenUserClickTarget target);
+  // Record interesting user clicks on tray on lock and login screens.
+  static void RecordUserClickOnTray(
+      LoginMetricsRecorder::TrayClickTarget target);
+
+  // Record interesting user clicks on shelf buttons on lock and login screens.
+  static void RecordUserClickOnShelfButton(
+      LoginMetricsRecorder::ShelfButtonClickTarget target);
+
+  // Record the method used to activate dictation.
+  static void RecordUserToggleDictation(DictationToggleSource source);
 
   // Records an Ash owned user action.
   void RecordUserMetricsAction(UserMetricsAction action);
+
+  // Starts recording demo session metrics. Used in Demo Mode.
+  void StartDemoSessionMetricsRecording();
 
   TaskSwitchMetricsRecorder& task_switch_metrics_recorder() {
     return task_switch_metrics_recorder_;
@@ -89,6 +101,9 @@ class ASH_EXPORT UserMetricsRecorder {
 
   // Metric recorder to track login authentication activity.
   std::unique_ptr<LoginMetricsRecorder> login_metrics_recorder_;
+
+  // Metric recorder to track app use in demo sessions.
+  std::unique_ptr<DemoSessionMetricsRecorder> demo_session_metrics_recorder_;
 
   DISALLOW_COPY_AND_ASSIGN(UserMetricsRecorder);
 };

@@ -8,8 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "chrome/browser/ui/app_list/search/search_provider.h"
 #include "components/omnibox/browser/autocomplete_controller_delegate.h"
-#include "ui/app_list/search_provider.h"
 
 class AppListControllerDelegate;
 class AutocompleteController;
@@ -27,7 +27,7 @@ class OmniboxProvider : public SearchProvider,
   ~OmniboxProvider() override;
 
   // SearchProvider overrides:
-  void Start(bool is_voice_query, const base::string16& query) override;
+  void Start(const base::string16& query) override;
 
  private:
   // Populates result list from AutocompleteResult.
@@ -36,15 +36,18 @@ class OmniboxProvider : public SearchProvider,
   // AutocompleteControllerDelegate overrides:
   void OnResultChanged(bool default_match_changed) override;
 
+  void RecordQueryLatencyHistogram();
+
   Profile* profile_;
+  bool is_zero_state_enabled_ = false;
+  // True if the input is empty for zero state suggestion.
+  bool is_zero_state_input_ = false;
   AppListControllerDelegate* list_controller_;
+  base::TimeTicks query_start_time_;
 
   // The omnibox AutocompleteController that collects/sorts/dup-
   // eliminates the results as they come in.
   std::unique_ptr<AutocompleteController> controller_;
-
-  // Whether the current query is a voice query.
-  bool is_voice_query_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxProvider);
 };

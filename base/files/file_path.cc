@@ -23,6 +23,7 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
+#include "base/win/win_util.h"
 #elif defined(OS_MACOSX)
 #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -94,9 +95,8 @@ bool IsPathAbsolute(StringPieceType path) {
 }
 
 bool AreAllSeparators(const StringType& input) {
-  for (StringType::const_iterator it = input.begin();
-      it != input.end(); ++it) {
-    if (!FilePath::IsSeparator(*it))
+  for (auto it : input) {
+    if (!FilePath::IsSeparator(it))
       return false;
   }
 
@@ -137,15 +137,15 @@ StringType::size_type ExtensionSeparatorPosition(const StringType& path) {
     return last_dot;
   }
 
-  for (size_t i = 0; i < arraysize(kCommonDoubleExtensions); ++i) {
+  for (auto* i : kCommonDoubleExtensions) {
     StringType extension(path, penultimate_dot + 1);
-    if (LowerCaseEqualsASCII(extension, kCommonDoubleExtensions[i]))
+    if (LowerCaseEqualsASCII(extension, i))
       return penultimate_dot;
   }
 
   StringType extension(path, last_dot + 1);
-  for (size_t i = 0; i < arraysize(kCommonDoubleExtensionSuffixes); ++i) {
-    if (LowerCaseEqualsASCII(extension, kCommonDoubleExtensionSuffixes[i])) {
+  for (auto* i : kCommonDoubleExtensionSuffixes) {
+    if (LowerCaseEqualsASCII(extension, i)) {
       if ((last_dot - penultimate_dot) <= 5U &&
           (last_dot - penultimate_dot) > 1U) {
         return penultimate_dot;
@@ -423,7 +423,7 @@ FilePath FilePath::InsertBeforeExtensionASCII(StringPiece suffix)
   DCHECK(IsStringASCII(suffix));
 #if defined(OS_WIN)
   return InsertBeforeExtension(ASCIIToUTF16(suffix));
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   return InsertBeforeExtension(suffix);
 #endif
 }
@@ -444,6 +444,15 @@ FilePath FilePath::AddExtension(StringPieceType extension) const {
   }
   extension.AppendToString(&str);
   return FilePath(str);
+}
+
+FilePath FilePath::AddExtensionASCII(StringPiece extension) const {
+  DCHECK(IsStringASCII(extension));
+#if defined(OS_WIN)
+  return AddExtension(ASCIIToUTF16(extension));
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  return AddExtension(extension);
+#endif
 }
 
 FilePath FilePath::ReplaceExtension(StringPieceType extension) const {
@@ -526,7 +535,7 @@ FilePath FilePath::AppendASCII(StringPiece component) const {
   DCHECK(base::IsStringASCII(component));
 #if defined(OS_WIN)
   return Append(ASCIIToUTF16(component));
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   return Append(component);
 #endif
 }
@@ -586,7 +595,38 @@ bool FilePath::ReferencesParent() const {
   return false;
 }
 
-#if defined(OS_POSIX)
+#if defined(OS_WIN)
+
+string16 FilePath::LossyDisplayName() const {
+  return path_;
+}
+
+std::string FilePath::MaybeAsASCII() const {
+  if (base::IsStringASCII(path_))
+    return UTF16ToASCII(path_);
+  return std::string();
+}
+
+std::string FilePath::AsUTF8Unsafe() const {
+  return UTF16ToUTF8(value());
+}
+
+string16 FilePath::AsUTF16Unsafe() const {
+  return value();
+}
+
+// static
+FilePath FilePath::FromUTF8Unsafe(StringPiece utf8) {
+  return FilePath(UTF8ToUTF16(utf8));
+}
+
+// static
+FilePath FilePath::FromUTF16Unsafe(StringPiece16 utf16) {
+  return FilePath(utf16);
+}
+
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+
 // See file_path.h for a discussion of the encoding of paths on POSIX
 // platforms.  These encoding conversion functions are not quite correct.
 
@@ -634,41 +674,15 @@ FilePath FilePath::FromUTF16Unsafe(StringPiece16 utf16) {
 #endif
 }
 
-#elif defined(OS_WIN)
-string16 FilePath::LossyDisplayName() const {
-  return path_;
-}
-
-std::string FilePath::MaybeAsASCII() const {
-  if (base::IsStringASCII(path_))
-    return UTF16ToASCII(path_);
-  return std::string();
-}
-
-std::string FilePath::AsUTF8Unsafe() const {
-  return WideToUTF8(value());
-}
-
-string16 FilePath::AsUTF16Unsafe() const {
-  return value();
-}
-
-// static
-FilePath FilePath::FromUTF8Unsafe(StringPiece utf8) {
-  return FilePath(UTF8ToWide(utf8));
-}
-
-// static
-FilePath FilePath::FromUTF16Unsafe(StringPiece16 utf16) {
-  return FilePath(utf16);
-}
-#endif
+#endif  // defined(OS_WIN)
 
 void FilePath::WriteToPickle(Pickle* pickle) const {
 #if defined(OS_WIN)
   pickle->WriteString16(path_);
-#else
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   pickle->WriteString(path_);
+#else
+#error Unsupported platform
 #endif
 }
 
@@ -676,9 +690,11 @@ bool FilePath::ReadFromPickle(PickleIterator* iter) {
 #if defined(OS_WIN)
   if (!iter->ReadString16(&path_))
     return false;
-#else
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
   if (!iter->ReadString(&path_))
     return false;
+#else
+#error Unsupported platform
 #endif
 
   if (path_.find(kStringTerminator) != StringType::npos)
@@ -692,10 +708,11 @@ bool FilePath::ReadFromPickle(PickleIterator* iter) {
 
 int FilePath::CompareIgnoreCase(StringPieceType string1,
                                 StringPieceType string2) {
-  static decltype(::CharUpperW)* const char_upper_api =
-      reinterpret_cast<decltype(::CharUpperW)*>(
-          ::GetProcAddress(::GetModuleHandle(L"user32.dll"), "CharUpperW"));
-  CHECK(char_upper_api);
+  // CharUpperW within user32 is used here because it will provide unicode
+  // conversions regardless of locale. The STL alternative, towupper, has a
+  // locale consideration that prevents it from converting all characters by
+  // default.
+  CHECK(win::IsUser32AndGdi32Available());
   // Perform character-wise upper case comparison rather than using the
   // fully Unicode-aware CompareString(). For details see:
   // http://blogs.msdn.com/michkap/archive/2005/10/17/481600.aspx
@@ -705,9 +722,9 @@ int FilePath::CompareIgnoreCase(StringPieceType string1,
   StringPieceType::const_iterator string2end = string2.end();
   for ( ; i1 != string1end && i2 != string2end; ++i1, ++i2) {
     wchar_t c1 =
-        (wchar_t)LOWORD(char_upper_api((LPWSTR)(DWORD_PTR)MAKELONG(*i1, 0)));
+        (wchar_t)LOWORD(::CharUpperW((LPWSTR)(DWORD_PTR)MAKELONG(*i1, 0)));
     wchar_t c2 =
-        (wchar_t)LOWORD(char_upper_api((LPWSTR)(DWORD_PTR)MAKELONG(*i2, 0)));
+        (wchar_t)LOWORD(::CharUpperW((LPWSTR)(DWORD_PTR)MAKELONG(*i2, 0)));
     if (c1 < c2)
       return -1;
     if (c1 > c2)
@@ -1243,7 +1260,6 @@ int FilePath::CompareIgnoreCase(StringPieceType string1,
 
   // GetHFSDecomposedForm() returns an empty string in an error case.
   if (hfs1.empty() || hfs2.empty()) {
-    NOTREACHED();
     ScopedCFTypeRef<CFStringRef> cfstring1(
         CFStringCreateWithBytesNoCopy(
             NULL,
@@ -1260,6 +1276,20 @@ int FilePath::CompareIgnoreCase(StringPieceType string1,
             kCFStringEncodingUTF8,
             false,
             kCFAllocatorNull));
+    // If neither GetHFSDecomposedForm nor CFStringCreateWithBytesNoCopy
+    // succeed, fall back to strcmp. This can occur when the input string is
+    // invalid UTF-8.
+    if (!cfstring1 || !cfstring2) {
+      int comparison =
+          memcmp(string1.as_string().c_str(), string2.as_string().c_str(),
+                 std::min(string1.length(), string2.length()));
+      if (comparison < 0)
+        return -1;
+      if (comparison > 0)
+        return 1;
+      return 0;
+    }
+
     return CFStringCompare(cfstring1,
                            cfstring2,
                            kCFCompareCaseInsensitive);
@@ -1268,7 +1298,7 @@ int FilePath::CompareIgnoreCase(StringPieceType string1,
   return HFSFastUnicodeCompare(hfs1, hfs2);
 }
 
-#else  // << WIN. MACOSX | other (POSIX) >>
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 
 // Generic Posix system comparisons.
 int FilePath::CompareIgnoreCase(StringPieceType string1,

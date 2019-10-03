@@ -194,7 +194,7 @@ class UnackedInvalidationSetSerializationTest
     std::unique_ptr<base::DictionaryValue> value =
         unacked_invalidations_.ToValue();
     UnackedInvalidationSet deserialized(kObjectId_);
-    deserialized.ResetFromValue(*value.get());
+    deserialized.ResetFromValue(*value);
     return deserialized;
   }
 };
@@ -248,7 +248,7 @@ TEST_F(UnackedInvalidationSetSerializationTest, InvalidConversionFromMap) {
   EXPECT_FALSE(UnackedInvalidationSet::DeserializeSetIntoMap(dict, &map));
 
   // Missing "name" should fail.
-  dict.SetString("source", base::IntToString(kObjectId_.source()));
+  dict.SetString("source", base::NumberToString(kObjectId_.source()));
   EXPECT_FALSE(UnackedInvalidationSet::DeserializeSetIntoMap(dict, &map));
 
   // The "invalidation-list" is not required, so add "name" to make valid.

@@ -12,9 +12,9 @@
 #include "base/logging.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/common/view_messages.h"
+#include "content/public/android/content_jni_headers/ContentViewStaticsImpl_jni.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
-#include "jni/ContentViewStatics_jni.h"
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF16ToJavaString;
@@ -40,9 +40,9 @@ class SuspendedProcessWatcher : public content::RenderProcessHostObserver {
 
   // If the process crashes, stop watching the corresponding RenderProcessHost
   // and ensure it doesn't get over-resumed.
-  void RenderProcessExited(content::RenderProcessHost* host,
-                           base::TerminationStatus status,
-                           int exit_code) override {
+  void RenderProcessExited(
+      content::RenderProcessHost* host,
+      const content::ChildProcessTerminationInfo& info) override {
     StopWatching(host);
   }
 
@@ -90,9 +90,8 @@ base::LazyInstance<SuspendedProcessWatcher>::DestructorAtExit
 
 }  // namespace
 
-static void JNI_ContentViewStatics_SetWebKitSharedTimersSuspended(
+static void JNI_ContentViewStaticsImpl_SetWebKitSharedTimersSuspended(
     JNIEnv* env,
-    const JavaParamRef<jclass>& obj,
     jboolean suspend) {
   if (suspend) {
     g_suspended_processes_watcher.Pointer()->SuspendWebKitSharedTimers();

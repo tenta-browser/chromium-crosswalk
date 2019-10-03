@@ -15,7 +15,7 @@
 #include "base/macros.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/stl_util.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
@@ -44,7 +44,7 @@ class SessionRestorePageLoadMetricsObserverTest
  public:
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
     tracker->AddObserver(
-        base::MakeUnique<SessionRestorePageLoadMetricsObserver>());
+        std::make_unique<SessionRestorePageLoadMetricsObserver>());
   }
 
  protected:
@@ -88,7 +88,7 @@ class SessionRestorePageLoadMetricsObserverTest
     tabs_.emplace_back(CreateTestWebContents());
     WebContents* contents = tabs_.back().get();
     auto tester =
-        base::MakeUnique<page_load_metrics::PageLoadMetricsObserverTester>(
+        std::make_unique<page_load_metrics::PageLoadMetricsObserverTester>(
             contents,
             base::BindRepeating(
                 &SessionRestorePageLoadMetricsObserverTest::RegisterObservers,
@@ -122,8 +122,9 @@ class SessionRestorePageLoadMetricsObserverTest
     std::vector<std::unique_ptr<content::NavigationEntry>> entries;
     std::unique_ptr<content::NavigationEntry> entry(
         content::NavigationController::CreateNavigationEntry(
-            GetTestURL(), content::Referrer(), ui::PAGE_TRANSITION_RELOAD,
-            false, std::string(), browser_context()));
+            GetTestURL(), content::Referrer(), base::nullopt,
+            ui::PAGE_TRANSITION_RELOAD, false, std::string(), browser_context(),
+            nullptr /* blob_url_loader_factory */));
     entries.emplace_back(std::move(entry));
 
     content::NavigationController& controller = contents->GetController();
@@ -138,7 +139,7 @@ class SessionRestorePageLoadMetricsObserverTest
   }
 
   void SimulateTimingUpdateForTab(WebContents* contents) {
-    ASSERT_TRUE(base::ContainsKey(testers_, contents));
+    ASSERT_TRUE(base::Contains(testers_, contents));
     testers_[contents]->SimulateTimingUpdate(timing_);
   }
 

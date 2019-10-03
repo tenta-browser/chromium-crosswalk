@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// Commands used are documented here:
+// https://github.com/mozilla/libadb.js/blob/master/android-tools/adb-bin/SERVICES.TXT
+
 #include "chrome/test/chromedriver/chrome/adb_impl.h"
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/environment.h"
 #include "base/json/string_escape.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -20,6 +24,7 @@
 #include "base/time/time.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/net/adb_client_socket.h"
+#include "net/base/net_errors.h"
 
 namespace {
 
@@ -48,9 +53,20 @@ class ResponseBuffer : public base::RefCountedThreadSafe<ResponseBuffer> {
             static_cast<int>(timeout.InSeconds())));
       ready_.TimedWait(timeout);
     }
-    if (result_ < 0)
+    if (result_ < 0) {
       return Status(kUnknownError,
-          "Failed to run adb command, is the adb server running?");
+                    "Failed to run adb command with networking error: " +
+                        net::ErrorToString(result_) +
+                        ". Is the adb server running? Extra response: <" +
+                        response_ + ">.");
+    }
+    if (result_ > 0) {
+      return Status(
+          // TODO(crouleau): Use an error code that can differentiate this from
+          // the above networking error.
+          kUnknownError,
+          "The adb command failed. Extra response: <" + response_ + ">.");
+    }
     *response = response_;
     return Status(kOk);
   }
@@ -67,7 +83,7 @@ class ResponseBuffer : public base::RefCountedThreadSafe<ResponseBuffer> {
 void ExecuteCommandOnIOThread(
     const std::string& command, scoped_refptr<ResponseBuffer> response_buffer,
     int port) {
-  CHECK(base::MessageLoopForIO::IsCurrent());
+  CHECK(base::MessageLoopCurrentForIO::IsSet());
   AdbClientSocket::AdbQuery(port, command,
       base::Bind(&ResponseBuffer::OnResponse, response_buffer));
 }
@@ -77,10 +93,16 @@ void SendFileOnIOThread(const std::string& device_serial,
                         const std::string& content,
                         scoped_refptr<ResponseBuffer> response_buffer,
                         int port) {
-  CHECK(base::MessageLoopForIO::IsCurrent());
+  CHECK(base::MessageLoopCurrentForIO::IsSet());
   AdbClientSocket::SendFile(
       port, device_serial, filename, content,
       base::Bind(&ResponseBuffer::OnResponse, response_buffer));
+}
+
+std::string GetSerialFromEnvironment() {
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  std::string serial;
+  return env->GetVar("ANDROID_SERIAL", &serial) ? serial : "";
 }
 
 }  // namespace
@@ -95,6 +117,7 @@ AdbImpl::AdbImpl(
 AdbImpl::~AdbImpl() {}
 
 Status AdbImpl::GetDevices(std::vector<std::string>* devices) {
+  const std::string& serial_from_env = GetSerialFromEnvironment();
   std::string response;
   Status status = ExecuteCommand("host:devices", &response);
   if (!status.IsOk())
@@ -105,27 +128,42 @@ Status AdbImpl::GetDevices(std::vector<std::string>* devices) {
         lines.token_piece(), base::kWhitespaceASCII,
         base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
     if (fields.size() == 2 && fields[1] == "device") {
-      devices->push_back(fields[0]);
+      if (!serial_from_env.empty() && fields[0] == serial_from_env) {
+        // Move device with matching ANDROID_SERIAL to the top.
+        devices->insert(devices->begin(), fields[0]);
+      } else {
+        devices->push_back(fields[0]);
+      }
     }
   }
   return Status(kOk);
 }
 
-Status AdbImpl::ForwardPort(
-    const std::string& device_serial, int local_port,
-    const std::string& remote_abstract) {
+Status AdbImpl::ForwardPort(const std::string& device_serial,
+                            const std::string& remote_abstract,
+                            int* local_port_output) {
   std::string response;
-  Status status = ExecuteHostCommand(
-      device_serial,
-      "forward:tcp:" + base::IntToString(local_port) + ";localabstract:" +
-          remote_abstract,
+  Status adb_command_status = ExecuteHostCommand(
+      device_serial, "forward:tcp:0;localabstract:" + remote_abstract,
       &response);
-  if (!status.IsOk())
-    return status;
-  if (response == "OKAY")
-    return Status(kOk);
-  return Status(kUnknownError, "Failed to forward ports to device " +
-                device_serial + ": " + response);
+  // response should be the port number like "39025".
+  if (!adb_command_status.IsOk())
+    return Status(kUnknownError, "Failed to forward ports to device " +
+                                     device_serial + ": " + response + ". " +
+                                     adb_command_status.message());
+  base::StringToInt(response, local_port_output);
+  if (*local_port_output == 0) {
+    return Status(
+        kUnknownError,
+        "Failed to forward ports to device " + device_serial +
+            ". No port chosen: " + response +
+            ". Perhaps your adb version is out of date. "
+            "ChromeDriver 2.39 and newer require adb version 1.0.38 or newer. "
+            "Run 'adb version' in your terminal of the host device to find "
+            "your version of adb.");
+  }
+
+  return Status(kOk);
 }
 
 Status AdbImpl::SetCommandLineFile(const std::string& device_serial,
@@ -207,8 +245,8 @@ Status AdbImpl::GetPidByName(const std::string& device_serial,
                              int* pid) {
   std::string response;
   // on Android O `ps` returns only user processes, so also try with `-A` flag.
-  Status status = ExecuteHostShellCommand(device_serial, "ps && ps -A",
-      &response);
+  Status status =
+      ExecuteHostShellCommand(device_serial, "ps && ps -A", &response);
 
   if (!status.IsOk())
     return status;
@@ -234,6 +272,32 @@ Status AdbImpl::GetPidByName(const std::string& device_serial,
 
   return Status(kUnknownError,
                 "Failed to get PID for the following process: " + process_name);
+}
+
+Status AdbImpl::GetSocketByPattern(const std::string& device_serial,
+                                   const std::string& grep_pattern,
+                                   std::string* socket_name) {
+  std::string response;
+  std::string grep_command = "grep -a '" + grep_pattern + "' /proc/net/unix";
+  Status status =
+      ExecuteHostShellCommand(device_serial, grep_command, &response);
+
+  if (!status.IsOk())
+    return status;
+
+  for (const base::StringPiece& line : base::SplitString(
+           response, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    std::vector<base::StringPiece> tokens = base::SplitStringPiece(
+        line, base::kWhitespaceASCII, base::TRIM_WHITESPACE,
+        base::SPLIT_WANT_NONEMPTY);
+    if (tokens.size() != 8)
+      continue;
+    *socket_name = tokens[7].as_string();
+    return Status(kOk);
+  }
+
+  return Status(kUnknownError,
+                "Failed to get sockets matching: " + grep_pattern);
 }
 
 Status AdbImpl::ExecuteCommand(

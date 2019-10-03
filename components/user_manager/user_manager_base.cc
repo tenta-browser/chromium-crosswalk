@@ -5,6 +5,7 @@
 #include "components/user_manager/user_manager_base.h"
 
 #include <stddef.h>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -16,7 +17,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -71,8 +71,8 @@ const char kLastActiveUser[] = "LastActiveUser";
 // one regular user logging out and a different regular user logging in.
 const int kLogoutToLoginDelayMaxSec = 1800;
 
-// This reads integer vaule from kUserType Local State preference and
-// interpretes it as UserType. It is used in initial users load.
+// This reads integer value from kUserType Local State preference and
+// interprets it as UserType. It is used in initial users load.
 UserType GetStoredUserType(const base::DictionaryValue* prefs_user_types,
                            const AccountId& account_id) {
   const base::Value* stored_user_type = prefs_user_types->FindKey(
@@ -91,6 +91,10 @@ UserType GetStoredUserType(const base::DictionaryValue* prefs_user_types,
 }
 
 }  // namespace
+
+// Feature that hides Supervised Users.
+const base::Feature kHideSupervisedUsers{"HideSupervisedUsers",
+                                         base::FEATURE_ENABLED_BY_DEFAULT};
 
 // static
 void UserManagerBase::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -178,6 +182,7 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
   } else {
     switch (user_type) {
       case USER_TYPE_REGULAR:  // fallthrough
+      case USER_TYPE_CHILD:    // fallthrough
       case USER_TYPE_ACTIVE_DIRECTORY:
         if (account_id != GetOwnerAccountId() && !user &&
             (AreEphemeralUsersEnabled() || browser_restart)) {
@@ -202,10 +207,6 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
 
       case USER_TYPE_KIOSK_APP:
         KioskAppLoggedIn(user);
-        break;
-
-      case USER_TYPE_CHILD:
-        RegularUserLoggedIn(account_id, USER_TYPE_CHILD);
         break;
 
       case USER_TYPE_ARC_KIOSK_APP:
@@ -305,16 +306,6 @@ void UserManagerBase::OnSessionStarted() {
   GetLocalState()->CommitPendingWrite();
 }
 
-void UserManagerBase::OnProfileInitialized(User* user) {
-  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
-
-  // Mark the user as having an initialized session and persist this in
-  // the known_user DB.
-  user->set_profile_ever_initialized(true);
-  known_user::SetProfileEverInitialized(user->GetAccountId(), true);
-  GetLocalState()->CommitPendingWrite();
-}
-
 void UserManagerBase::RemoveUser(const AccountId& account_id,
                                  RemoveUserDelegate* delegate) {
   DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
@@ -332,20 +323,30 @@ void UserManagerBase::RemoveUserInternal(const AccountId& account_id,
 
 void UserManagerBase::RemoveNonOwnerUserInternal(const AccountId& account_id,
                                                  RemoveUserDelegate* delegate) {
+  // If account_id points to AccountId in User object, it will become deleted
+  // after RemoveUserFromList(), which could lead to use-after-free in observer.
+  // TODO(https://crbug.com/928534): Update user removal flow to prevent this.
+  const AccountId account_id_copy(account_id);
+
   if (delegate)
     delegate->OnBeforeUserRemoved(account_id);
   AsyncRemoveCryptohome(account_id);
   RemoveUserFromList(account_id);
 
   if (delegate)
-    delegate->OnUserRemoved(account_id);
+    delegate->OnUserRemoved(account_id_copy);
 }
 
 void UserManagerBase::RemoveUserFromList(const AccountId& account_id) {
   DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   RemoveNonCryptohomeData(account_id);
+  known_user::RemovePrefs(account_id);
   if (user_loading_stage_ == STAGE_LOADED) {
-    DeleteUser(RemoveRegularOrSupervisedUserFromList(account_id));
+    // After the User object is deleted from memory in DeleteUser() here,
+    // the account_id reference will be invalid if the reference points
+    // to the account_id in the User object.
+    DeleteUser(
+        RemoveRegularOrSupervisedUserFromList(account_id, true /* notify */));
   } else if (user_loading_stage_ == STAGE_LOADING) {
     DCHECK(IsSupervisedAccountId(account_id));
     // Special case, removing partially-constructed supervised user during user
@@ -357,8 +358,6 @@ void UserManagerBase::RemoveUserFromList(const AccountId& account_id) {
     NOTREACHED() << "Users are not loaded yet.";
     return;
   }
-
-  known_user::RemovePrefs(account_id);
 
   // Make sure that new data is persisted to Local State.
   GetLocalState()->CommitPendingWrite();
@@ -830,6 +829,8 @@ void UserManagerBase::EnsureUsersLoaded() {
        it != regular_users.end(); ++it) {
     User* user = nullptr;
     if (IsSupervisedAccountId(*it)) {
+      if (base::FeatureList::IsEnabled(kHideSupervisedUsers))
+        continue;
       user = User::CreateSupervisedUser(*it);
     } else {
       user = User::CreateRegularUser(*it,
@@ -837,8 +838,6 @@ void UserManagerBase::EnsureUsersLoaded() {
     }
     user->set_oauth_token_status(LoadUserOAuthStatus(*it));
     user->set_force_online_signin(LoadForceOnlineSignin(*it));
-    user->set_profile_ever_initialized(
-        known_user::WasProfileEverInitialized(*it));
     user->set_using_saml(known_user::IsUsingSAML(*it));
     users_.push_back(user);
 
@@ -907,14 +906,18 @@ void UserManagerBase::AddUserRecord(User* user) {
   // Add the user to the front of the user list.
   ListPrefUpdate prefs_users_update(GetLocalState(), kRegularUsers);
   prefs_users_update->Insert(
-      0, base::MakeUnique<base::Value>(user->GetAccountId().GetUserEmail()));
+      0, std::make_unique<base::Value>(user->GetAccountId().GetUserEmail()));
   users_.insert(users_.begin(), user);
 }
 
 void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id,
                                           const UserType user_type) {
   // Remove the user from the user list.
-  active_user_ = RemoveRegularOrSupervisedUserFromList(account_id);
+  active_user_ =
+      RemoveRegularOrSupervisedUserFromList(account_id, false /* notify */);
+
+  if (active_user_ && active_user_->GetType() != user_type)
+    active_user_->UpdateType(user_type);
 
   // If the user was not found on the user list, create a new user.
   SetIsCurrentUserNew(!active_user_);
@@ -925,13 +928,12 @@ void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id,
     active_user_->set_oauth_token_status(LoadUserOAuthStatus(account_id));
     SaveUserDisplayName(active_user_->GetAccountId(),
                         base::UTF8ToUTF16(active_user_->GetAccountName(true)));
-    known_user::SetProfileEverInitialized(
-        active_user_->GetAccountId(), active_user_->profile_ever_initialized());
   } else {
     SaveUserType(active_user_);
   }
 
   AddUserRecord(active_user_);
+  known_user::SetIsEphemeralUser(active_user_->GetAccountId(), false);
 
   // Make sure that new data is persisted to Local State.
   GetLocalState()->CommitPendingWrite();
@@ -944,6 +946,13 @@ void UserManagerBase::RegularUserLoggedInAsEphemeral(
   SetIsCurrentUserNew(true);
   is_current_user_ephemeral_regular_user_ = true;
   active_user_ = User::CreateRegularUser(account_id, user_type);
+  known_user::SetIsEphemeralUser(active_user_->GetAccountId(), true);
+}
+
+void UserManagerBase::NotifyActiveUserChanged(const User* active_user) {
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
+  for (auto& observer : session_state_observer_list_)
+    observer.ActiveUserChanged(active_user);
 }
 
 void UserManagerBase::NotifyOnLogin() {
@@ -1017,7 +1026,8 @@ void UserManagerBase::RemoveNonCryptohomeData(const AccountId& account_id) {
 }
 
 User* UserManagerBase::RemoveRegularOrSupervisedUserFromList(
-    const AccountId& account_id) {
+    const AccountId& account_id,
+    bool notify) {
   ListPrefUpdate prefs_users_update(GetLocalState(), kRegularUsers);
   prefs_users_update->Clear();
   User* user = nullptr;
@@ -1034,14 +1044,9 @@ User* UserManagerBase::RemoveRegularOrSupervisedUserFromList(
       ++it;
     }
   }
-  OnUserRemoved(account_id);
+  if (notify)
+    OnUserRemoved(account_id);
   return user;
-}
-
-void UserManagerBase::NotifyActiveUserChanged(const User* active_user) {
-  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
-  for (auto& observer : session_state_observer_list_)
-    observer.ActiveUserChanged(active_user);
 }
 
 void UserManagerBase::NotifyUserAddedToSession(const User* added_user,
@@ -1057,20 +1062,10 @@ void UserManagerBase::NotifyActiveUserHashChanged(const std::string& hash) {
     observer.ActiveUserHashChanged(hash);
 }
 
-void UserManagerBase::ResetProfileEverInitialized(const AccountId& account_id) {
-  User* user = FindUserAndModify(account_id);
-  if (!user) {
-    LOG(ERROR) << "User not found: " << account_id.GetUserEmail();
-    return;  // Ignore if there is no such user.
-  }
-
-  user->set_profile_ever_initialized(false);
-  known_user::SetProfileEverInitialized(user->GetAccountId(), false);
-  GetLocalState()->CommitPendingWrite();
-}
-
 void UserManagerBase::Initialize() {
   UserManager::Initialize();
+  if (!HasBrowserRestarted())
+    known_user::CleanEphemeralUsers();
   CallUpdateLoginState();
 }
 
@@ -1113,14 +1108,15 @@ void UserManagerBase::UpdateUserAccountLocale(const AccountId& account_id,
                                               const std::string& locale) {
   std::unique_ptr<std::string> resolved_locale(new std::string());
   if (!locale.empty() && locale != GetApplicationLocale()) {
-    // base::Passed will nullptr out |resolved_locale|, so cache the underlying
+    // std::move will nullptr out |resolved_locale|, so cache the underlying
     // ptr.
     std::string* raw_resolved_locale = resolved_locale.get();
-    ScheduleResolveLocale(locale,
-                          base::Bind(&UserManagerBase::DoUpdateAccountLocale,
-                                     weak_factory_.GetWeakPtr(), account_id,
-                                     base::Passed(&resolved_locale)),
-                          raw_resolved_locale);
+    ScheduleResolveLocale(
+        locale,
+        base::BindOnce(&UserManagerBase::DoUpdateAccountLocale,
+                       weak_factory_.GetWeakPtr(), account_id,
+                       std::move(resolved_locale)),
+        raw_resolved_locale);
   } else {
     resolved_locale.reset(new std::string(locale));
     DoUpdateAccountLocale(account_id, std::move(resolved_locale));

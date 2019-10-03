@@ -50,10 +50,16 @@ public interface ContextualSearchManagementDelegate {
     void dismissContextualSearchBar();
 
     /**
+     * Hides the Contextual Search UX by changing into the IDLE state.
+     * @param reason The {@link StateChangeReason} for hiding Contextual Search.
+     */
+    void hideContextualSearch(@StateChangeReason int reason);
+
+    /**
      * Notifies that the Contextual Search Panel did get closed.
      * @param reason The reason the panel is closing.
      */
-    void onCloseContextualSearch(StateChangeReason reason);
+    void onCloseContextualSearch(@StateChangeReason int reason);
 
     /**
      * @return An OverlayContentDelegate to watch events on the panel's content.

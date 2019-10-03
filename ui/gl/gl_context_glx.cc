@@ -278,20 +278,17 @@ void* GLContextGLX::GetHandle() {
   return context_;
 }
 
-void GLContextGLX::OnSetSwapInterval(int interval) {
+unsigned int GLContextGLX::CheckStickyGraphicsResetStatus() {
   DCHECK(IsCurrent(nullptr));
-  if (GLSurfaceGLX::IsEXTSwapControlSupported()) {
-    glXSwapIntervalEXT(display_, glXGetCurrentDrawable(), interval);
-  } else if (GLSurfaceGLX::IsMESASwapControlSupported()) {
-    glXSwapIntervalMESA(interval);
-  } else if (interval == 0) {
-    LOG(WARNING)
-        << "Could not disable vsync: driver does not support swap control";
+  DCHECK(g_current_gl_driver);
+  const ExtensionsGL& ext = g_current_gl_driver->ext;
+  if ((graphics_reset_status_ == GL_NO_ERROR) &&
+      GLSurfaceGLX::IsCreateContextRobustnessSupported() &&
+      (ext.b_GL_KHR_robustness || ext.b_GL_EXT_robustness ||
+       ext.b_GL_ARB_robustness)) {
+    graphics_reset_status_ = glGetGraphicsResetStatusARB();
   }
-}
-
-bool GLContextGLX::WasAllocatedUsingRobustnessExtension() {
-  return GLSurfaceGLX::IsCreateContextRobustnessSupported();
+  return graphics_reset_status_;
 }
 
 GLContextGLX::~GLContextGLX() {

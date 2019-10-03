@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/views/close_bubble_on_tab_activation_helper.h"
 
 #include "chrome/browser/ui/browser.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/widget/widget.h"
 
 CloseBubbleOnTabActivationHelper::CloseBubbleOnTabActivationHelper(
@@ -18,11 +18,13 @@ CloseBubbleOnTabActivationHelper::CloseBubbleOnTabActivationHelper(
 
 CloseBubbleOnTabActivationHelper::~CloseBubbleOnTabActivationHelper() = default;
 
-void CloseBubbleOnTabActivationHelper::ActiveTabChanged(
-    content::WebContents* old_contents,
-    content::WebContents* new_contents,
-    int index,
-    int reason) {
+void CloseBubbleOnTabActivationHelper::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (tab_strip_model->empty() || !selection.active_tab_changed())
+    return;
+
   if (owner_bubble_) {
     views::Widget* bubble_widget = owner_bubble_->GetWidget();
     if (bubble_widget)

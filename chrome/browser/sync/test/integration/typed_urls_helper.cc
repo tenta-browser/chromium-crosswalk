@@ -7,9 +7,12 @@
 #include <stddef.h>
 
 #include <memory>
+#include <sstream>
 
 #include "base/big_endian.h"
+#include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -18,7 +21,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_backend_observer.h"
 #include "components/history/core/browser/history_database.h"
@@ -157,7 +159,8 @@ void WaitForHistoryDBThread(int index) {
   base::WaitableEvent wait_event(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
-  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+  service->ScheduleDBTask(FROM_HERE,
+                          std::unique_ptr<history::HistoryDBTask>(
                               new FlushHistoryDBQueueTask(&wait_event)),
                           &tracker);
   wait_event.Wait();
@@ -206,7 +209,8 @@ history::URLRows GetTypedUrlsFromHistoryService(
   base::WaitableEvent wait_event(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
-  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+  service->ScheduleDBTask(FROM_HERE,
+                          std::unique_ptr<history::HistoryDBTask>(
                               new GetTypedUrlsTask(&rows, &wait_event)),
                           &tracker);
   wait_event.Wait();
@@ -221,7 +225,8 @@ bool GetUrlFromHistoryService(history::HistoryService* service,
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   bool found = false;
-  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+  service->ScheduleDBTask(FROM_HERE,
+                          std::unique_ptr<history::HistoryDBTask>(
                               new GetUrlTask(url, row, &found, &wait_event)),
                           &tracker);
   wait_event.Wait();
@@ -236,7 +241,8 @@ history::VisitVector GetVisitsFromHistoryService(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   history::VisitVector visits;
-  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+  service->ScheduleDBTask(FROM_HERE,
+                          std::unique_ptr<history::HistoryDBTask>(
                               new GetVisitsTask(id, &visits, &wait_event)),
                           &tracker);
   wait_event.Wait();
@@ -249,7 +255,8 @@ void RemoveVisitsFromHistoryService(history::HistoryService* service,
   base::WaitableEvent wait_event(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
-  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+  service->ScheduleDBTask(FROM_HERE,
+                          std::unique_ptr<history::HistoryDBTask>(
                               new RemoveVisitsTask(visits, &wait_event)),
                           &tracker);
   wait_event.Wait();
@@ -263,7 +270,8 @@ void GetMetadataBatchFromHistoryService(history::HistoryService* service,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
 
   service->ScheduleDBTask(
-      std::make_unique<GetTypedUrlsMetadataTask>(batch, &wait_event), &tracker);
+      FROM_HERE, std::make_unique<GetTypedUrlsMetadataTask>(batch, &wait_event),
+      &tracker);
   wait_event.Wait();
 }
 
@@ -348,6 +356,36 @@ void AddUrlToHistoryWithTimestamp(int index,
   WaitForHistoryDBThread(index);
 }
 
+void ExpireHistoryBefore(int index, base::Time end_time) {
+  base::CancelableTaskTracker task_tracker;
+  GetHistoryServiceFromClient(index)->ExpireHistoryBeforeForTesting(
+      end_time, base::DoNothing(), &task_tracker);
+  if (test()->use_verifier()) {
+    HistoryServiceFactory::GetForProfile(test()->verifier(),
+                                         ServiceAccessType::IMPLICIT_ACCESS)
+        ->ExpireHistoryBeforeForTesting(end_time, base::DoNothing(),
+                                        &task_tracker);
+  }
+  WaitForHistoryDBThread(index);
+}
+
+void ExpireHistoryBetween(int index,
+                          base::Time begin_time,
+                          base::Time end_time) {
+  base::CancelableTaskTracker task_tracker;
+  GetHistoryServiceFromClient(index)->ExpireHistoryBetween(
+      {}, begin_time, end_time, /*user_initiated*/ true, base::DoNothing(),
+      &task_tracker);
+  if (test()->use_verifier()) {
+    HistoryServiceFactory::GetForProfile(test()->verifier(),
+                                         ServiceAccessType::IMPLICIT_ACCESS)
+        ->ExpireHistoryBetween({}, begin_time, end_time,
+                               /*user_initiated*/ true, base::DoNothing(),
+                               &task_tracker);
+  }
+  WaitForHistoryDBThread(index);
+}
+
 void DeleteUrlFromHistory(int index, const GURL& url) {
   GetHistoryServiceFromClient(index)->DeleteURL(url);
   if (test()->use_verifier())
@@ -375,8 +413,20 @@ void SetPageTitle(int index, const GURL& url, const std::string& title) {
   WaitForHistoryDBThread(index);
 }
 
-bool CheckURLRowVectorsAreEqual(const history::URLRows& left,
-                                const history::URLRows& right) {
+std::string PrintUrlRows(const history::URLRows& rows,
+                         const std::string& label) {
+  std::ostringstream os;
+  os << "Typed URLs for client " << label << ":";
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const history::URLRow& row = rows[i];
+    os << "[" << i << "] " << row.url() << " " << row.visit_count() << " "
+       << row.typed_count() << " " << row.last_visit() << " " << row.hidden();
+  }
+  return os.str();
+}
+
+bool CheckURLRowVectorsAreEqualForTypedURLs(const history::URLRows& left,
+                                            const history::URLRows& right) {
   if (left.size() != right.size())
     return false;
   for (size_t i = 0; i < left.size(); ++i) {
@@ -385,7 +435,7 @@ bool CheckURLRowVectorsAreEqual(const history::URLRows& left,
     bool found = false;
     for (size_t j = 0; j < right.size(); ++j) {
       if (left[i].url() == right[j].url()) {
-        if (CheckURLRowsAreEqual(left[i], right[j])) {
+        if (CheckURLRowsAreEqualForTypedURLs(left[i], right[j])) {
           found = true;
           break;
         }
@@ -421,17 +471,25 @@ bool AreVisitsUnique(const history::VisitVector& visits) {
   return true;
 }
 
-bool CheckURLRowsAreEqual(
-    const history::URLRow& left, const history::URLRow& right) {
-  return (left.url() == right.url()) &&
-      (left.title() == right.title()) &&
-      (left.visit_count() == right.visit_count()) &&
-      (left.typed_count() == right.typed_count()) &&
-      (left.last_visit() == right.last_visit()) &&
-      (left.hidden() == right.hidden());
+bool CheckURLRowsAreEqualForTypedURLs(const history::URLRow& left,
+                                      const history::URLRow& right) {
+  if (left.url() != right.url() || left.title() != right.title() ||
+      left.hidden() != right.hidden() ||
+      left.typed_count() != right.typed_count()) {
+    return false;
+  }
+  // (Non-typed) visit counts can differ and by this also the time of the last
+  // visit but these two quantities have the same order.
+  if (left.visit_count() == right.visit_count()) {
+    return left.last_visit() == right.last_visit();
+  } else if (left.visit_count() > right.visit_count()) {
+    return left.last_visit() >= right.last_visit();
+  } else {
+    return left.last_visit() <= right.last_visit();
+  }
 }
 
-bool CheckAllProfilesHaveSameURLs() {
+bool CheckAllProfilesHaveSameTypedURLs() {
   history::URLRows golden_urls;
   if (test()->use_verifier()) {
     history::HistoryService* verifier_service =
@@ -443,8 +501,13 @@ bool CheckAllProfilesHaveSameURLs() {
   }
   for (int i = 0; i < test()->num_clients(); ++i) {
     history::URLRows urls = GetTypedUrlsFromClient(i);
-    if (!CheckURLRowVectorsAreEqual(golden_urls, urls))
+    if (!CheckURLRowVectorsAreEqualForTypedURLs(golden_urls, urls)) {
+      DVLOG(1) << "Found no match in typed URLs between two profiles";
+      DVLOG(1) << PrintUrlRows(
+          golden_urls, test()->use_verifier() ? "verifier" : "client 0");
+      DVLOG(1) << PrintUrlRows(urls, base::StringPrintf("client %i", i));
       return false;
+    }
   }
   return true;
 }
@@ -469,17 +532,35 @@ bool CheckSyncHasURLMetadata(int index, const GURL& url) {
   return false;
 }
 
-}  // namespace typed_urls_helper
+bool CheckSyncHasMetadataForURLID(int index, history::URLID url_id) {
+  history::URLRow row;
+  history::HistoryService* service = GetHistoryServiceFromClient(index);
 
-ProfilesHaveSameURLsChecker::ProfilesHaveSameURLsChecker()
-    : MultiClientStatusChangeChecker(
-        sync_datatype_helper::test()->GetSyncServices()) {}
+  syncer::MetadataBatch batch;
+  GetMetadataBatchFromHistoryService(service, &batch);
 
-bool ProfilesHaveSameURLsChecker::IsExitConditionSatisfied() {
-  return typed_urls_helper::CheckAllProfilesHaveSameURLs();
+  std::string storage_key(sizeof(url_id), 0);
+  base::WriteBigEndian<history::URLID>(&storage_key[0], url_id);
+
+  syncer::EntityMetadataMap metadata_map(batch.TakeAllMetadata());
+  for (const auto& kv : metadata_map) {
+    if (kv.first == storage_key)
+      return true;
+  }
+  return false;
 }
 
-std::string ProfilesHaveSameURLsChecker::GetDebugMessage() const {
+}  // namespace typed_urls_helper
+
+ProfilesHaveSameTypedURLsChecker::ProfilesHaveSameTypedURLsChecker()
+    : MultiClientStatusChangeChecker(
+          sync_datatype_helper::test()->GetSyncServices()) {}
+
+bool ProfilesHaveSameTypedURLsChecker::IsExitConditionSatisfied() {
+  return typed_urls_helper::CheckAllProfilesHaveSameTypedURLs();
+}
+
+std::string ProfilesHaveSameTypedURLsChecker::GetDebugMessage() const {
   return "Waiting for matching typed urls profiles";
 }
 

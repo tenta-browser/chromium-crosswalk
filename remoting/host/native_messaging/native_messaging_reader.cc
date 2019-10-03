@@ -112,8 +112,8 @@ void NativeMessagingReader::Core::ReadMessage() {
     }
 
     std::string message_json(message_length, '\0');
-    read_result = read_stream_.ReadAtCurrentPos(
-        base::string_as_array(&message_json), message_length);
+    read_result =
+        read_stream_.ReadAtCurrentPos(base::data(message_json), message_length);
     if (read_result != static_cast<int>(message_length)) {
       LOG(ERROR) << "Failed to read message body, read returned "
                  << read_result;
@@ -121,7 +121,8 @@ void NativeMessagingReader::Core::ReadMessage() {
       return;
     }
 
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(message_json);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(message_json);
     if (!message) {
       LOG(ERROR) << "Failed to parse JSON message: " << message.get();
       NotifyEof();
@@ -130,8 +131,8 @@ void NativeMessagingReader::Core::ReadMessage() {
 
     // Notify callback of new message.
     caller_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&NativeMessagingReader::InvokeMessageCallback,
-                              reader_, base::Passed(&message)));
+        FROM_HERE, base::BindOnce(&NativeMessagingReader::InvokeMessageCallback,
+                                  reader_, std::move(message)));
   }
 }
 
@@ -139,7 +140,7 @@ void NativeMessagingReader::Core::NotifyEof() {
   DCHECK(read_task_runner_->RunsTasksInCurrentSequence());
   caller_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NativeMessagingReader::InvokeEofCallback, reader_));
+      base::BindOnce(&NativeMessagingReader::InvokeEofCallback, reader_));
 }
 
 NativeMessagingReader::NativeMessagingReader(base::File file)
@@ -188,8 +189,8 @@ void NativeMessagingReader::Start(MessageCallback message_callback,
   // base::Unretained is safe since |core_| is only deleted via the
   // DeleteSoon task which is posted from this class's dtor.
   read_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&NativeMessagingReader::Core::ReadMessage,
-                            base::Unretained(core_.get())));
+      FROM_HERE, base::BindOnce(&NativeMessagingReader::Core::ReadMessage,
+                                base::Unretained(core_.get())));
 }
 
 void NativeMessagingReader::InvokeMessageCallback(

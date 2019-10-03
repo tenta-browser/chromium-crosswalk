@@ -8,7 +8,6 @@
 #include <list>
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/native_app_window.h"
@@ -129,7 +128,7 @@ class RootWindowControllerTest : public ShellTestBaseAura {
  private:
   TestAppWindowClient app_window_client_;
 
-  scoped_refptr<Extension> extension_;
+  scoped_refptr<const Extension> extension_;
   std::unique_ptr<FakeDesktopDelegate> desktop_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(RootWindowControllerTest);

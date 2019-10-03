@@ -6,6 +6,7 @@
 
 #include "media/capture/video/shared_memory_handle_provider.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "services/video_capture/public/mojom/scoped_access_permission.mojom.h"
 
 namespace {
 
@@ -30,12 +31,10 @@ ReceiverMediaToMojoAdapter::ReceiverMediaToMojoAdapter(
 
 ReceiverMediaToMojoAdapter::~ReceiverMediaToMojoAdapter() = default;
 
-void ReceiverMediaToMojoAdapter::OnNewBufferHandle(
+void ReceiverMediaToMojoAdapter::OnNewBuffer(
     int32_t buffer_id,
-    mojo::ScopedSharedBufferHandle buffer_handle) {
-  auto provider = std::make_unique<media::SharedMemoryHandleProvider>();
-  CHECK(provider->InitFromMojoHandle(std::move(buffer_handle)));
-  receiver_->OnNewBufferHandle(buffer_id, std::move(provider));
+    media::mojom::VideoBufferHandlePtr buffer_handle) {
+  receiver_->OnNewBuffer(buffer_id, std::move(buffer_handle));
 }
 
 void ReceiverMediaToMojoAdapter::OnFrameReadyInBuffer(
@@ -54,8 +53,13 @@ void ReceiverMediaToMojoAdapter::OnBufferRetired(int32_t buffer_id) {
   receiver_->OnBufferRetired(buffer_id);
 }
 
-void ReceiverMediaToMojoAdapter::OnError() {
-  receiver_->OnError();
+void ReceiverMediaToMojoAdapter::OnError(media::VideoCaptureError error) {
+  receiver_->OnError(error);
+}
+
+void ReceiverMediaToMojoAdapter::OnFrameDropped(
+    media::VideoCaptureFrameDropReason reason) {
+  receiver_->OnFrameDropped(reason);
 }
 
 void ReceiverMediaToMojoAdapter::OnLog(const std::string& message) {
@@ -68,6 +72,10 @@ void ReceiverMediaToMojoAdapter::OnStarted() {
 
 void ReceiverMediaToMojoAdapter::OnStartedUsingGpuDecode() {
   receiver_->OnStartedUsingGpuDecode();
+}
+
+void ReceiverMediaToMojoAdapter::OnStopped() {
+  receiver_->OnStopped();
 }
 
 }  // namespace video_capture

@@ -4,13 +4,16 @@
 
 #include "gpu/ipc/service/image_transport_surface.h"
 
+#include "base/feature_list.h"
 #include "base/logging.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "gpu/command_buffer/service/feature_info.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/common/gpu_surface_lookup.h"
 #include "gpu/ipc/service/pass_through_image_transport_surface.h"
 #include "ui/gl/gl_surface_egl.h"
+#include "ui/gl/gl_surface_egl_surface_control.h"
 #include "ui/gl/gl_surface_stub.h"
-
-#include <android/native_window.h>
 
 namespace gpu {
 
@@ -26,21 +29,31 @@ scoped_refptr<gl::GLSurface> ImageTransportSurface::CreateNativeSurface(
   DCHECK_NE(surface_handle, kNullSurfaceHandle);
   // On Android, the surface_handle is the id of the surface in the
   // GpuSurfaceTracker/GpuSurfaceLookup
-  ANativeWindow* window =
-      GpuSurfaceLookup::GetInstance()->AcquireNativeWidget(surface_handle);
+  bool can_be_used_with_surface_control = false;
+  ANativeWindow* window = GpuSurfaceLookup::GetInstance()->AcquireNativeWidget(
+      surface_handle, &can_be_used_with_surface_control);
   if (!window) {
     LOG(WARNING) << "Failed to acquire native widget.";
     return nullptr;
   }
-  scoped_refptr<gl::GLSurface> surface =
-      new gl::NativeViewGLSurfaceEGL(window, nullptr);
+  scoped_refptr<gl::GLSurface> surface;
+
+  if (delegate &&
+      delegate->GetFeatureInfo()->feature_flags().android_surface_control &&
+      can_be_used_with_surface_control) {
+    surface = new gl::GLSurfaceEGLSurfaceControl(
+        window, base::ThreadTaskRunnerHandle::Get());
+  } else {
+    surface = new gl::NativeViewGLSurfaceEGL(window, nullptr);
+  }
+
   bool initialize_success = surface->Initialize(format);
   ANativeWindow_release(window);
   if (!initialize_success)
     return scoped_refptr<gl::GLSurface>();
 
-  return scoped_refptr<gl::GLSurface>(new PassThroughImageTransportSurface(
-      delegate, surface.get(), kMultiWindowSwapIntervalDefault));
+  return scoped_refptr<gl::GLSurface>(
+      new PassThroughImageTransportSurface(delegate, surface.get(), false));
 }
 
 }  // namespace gpu

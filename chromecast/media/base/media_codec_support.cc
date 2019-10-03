@@ -30,6 +30,8 @@ AudioCodec ToCastAudioCodec(const ::media::AudioCodec codec) {
       return kCodecAC3;
     case ::media::kCodecFLAC:
       return kCodecFLAC;
+    case ::media::kCodecMpegHAudio:
+      return kCodecMpegHAudio;
     default:
       LOG(ERROR) << "Unsupported audio codec " << codec;
   }
@@ -48,11 +50,13 @@ VideoCodec ToCastVideoCodec(const ::media::VideoCodec video_codec,
     case ::media::kCodecHEVC:
       return kCodecHEVC;
     case ::media::kCodecDolbyVision:
-      if (codec_profile == ::media::DOLBYVISION_PROFILE0) {
+      if (codec_profile == ::media::DOLBYVISION_PROFILE0 ||
+          codec_profile == ::media::DOLBYVISION_PROFILE9) {
         return kCodecDolbyVisionH264;
       } else if (codec_profile == ::media::DOLBYVISION_PROFILE4 ||
                  codec_profile == ::media::DOLBYVISION_PROFILE5 ||
-                 codec_profile == ::media::DOLBYVISION_PROFILE7) {
+                 codec_profile == ::media::DOLBYVISION_PROFILE7 ||
+                 codec_profile == ::media::DOLBYVISION_PROFILE8) {
         return kCodecDolbyVisionHEVC;
       }
       LOG(ERROR) << "Unsupported video codec profile " << codec_profile;

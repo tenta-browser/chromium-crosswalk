@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.crash;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.MainDex;
+import org.chromium.components.crash.CrashKeys;
 
 /**
  * This UncaughtExceptionHandler will upload the stacktrace when there is an uncaught exception.
@@ -17,7 +18,7 @@ import org.chromium.base.annotations.MainDex;
 public class PureJavaExceptionHandler implements Thread.UncaughtExceptionHandler {
     private final Thread.UncaughtExceptionHandler mParent;
     private boolean mHandlingException;
-    private static boolean sIsDisabled = false;
+    private static boolean sIsDisabled;
 
     private PureJavaExceptionHandler(Thread.UncaughtExceptionHandler parent) {
         mParent = parent;
@@ -48,6 +49,7 @@ public class PureJavaExceptionHandler implements Thread.UncaughtExceptionHandler
         // all the handlers before mParent. In order to disable this handler, globally setting a
         // flag to ignore it seems to be the easiest way.
         sIsDisabled = true;
+        CrashKeys.getInstance().flushToNative();
     }
 
     private void reportJavaException(Throwable e) {

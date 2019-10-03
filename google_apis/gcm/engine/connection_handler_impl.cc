@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "google/protobuf/io/coded_stream.h"
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "google_apis/gcm/base/mcs_util.h"
@@ -45,12 +45,13 @@ const int kMCSVersion = 41;
 }  // namespace
 
 ConnectionHandlerImpl::ConnectionHandlerImpl(
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
     base::TimeDelta read_timeout,
     const ProtoReceivedCallback& read_callback,
     const ProtoSentCallback& write_callback,
     const ConnectionChangedCallback& connection_callback)
-    : read_timeout_(read_timeout),
-      socket_(NULL),
+    : io_task_runner_(std::move(io_task_runner)),
+      read_timeout_(read_timeout),
       handshake_complete_(false),
       message_tag_(0),
       message_size_(0),
@@ -59,6 +60,8 @@ ConnectionHandlerImpl::ConnectionHandlerImpl(
       connection_callback_(connection_callback),
       size_packet_so_far_(0),
       weak_ptr_factory_(this) {
+  DCHECK(io_task_runner_);
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
 }
 
 ConnectionHandlerImpl::~ConnectionHandlerImpl() {
@@ -66,7 +69,8 @@ ConnectionHandlerImpl::~ConnectionHandlerImpl() {
 
 void ConnectionHandlerImpl::Init(
     const mcs_proto::LoginRequest& login_request,
-    net::StreamSocket* socket) {
+    mojo::ScopedDataPipeConsumerHandle receive_stream,
+    mojo::ScopedDataPipeProducerHandle send_stream) {
   DCHECK(!read_callback_.is_null());
   DCHECK(!write_callback_.is_null());
   DCHECK(!connection_callback_.is_null());
@@ -77,9 +81,8 @@ void ConnectionHandlerImpl::Init(
   handshake_complete_ = false;
   message_tag_ = 0;
   message_size_ = 0;
-  socket_ = socket;
-  input_stream_.reset(new SocketInputStream(socket_));
-  output_stream_.reset(new SocketOutputStream(socket_));
+  input_stream_.reset(new SocketInputStream(std::move(receive_stream)));
+  output_stream_.reset(new SocketOutputStream(std::move(send_stream)));
 
   Login(login_request);
 }
@@ -117,6 +120,7 @@ void ConnectionHandlerImpl::SendMessage(
 
 void ConnectionHandlerImpl::Login(
     const google::protobuf::MessageLite& login_request) {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   DCHECK_EQ(output_stream_->GetState(), SocketOutputStream::EMPTY);
 
   const char version_byte[1] = {kMCSVersion};
@@ -132,10 +136,9 @@ void ConnectionHandlerImpl::Login(
   if (output_stream_->Flush(
           base::Bind(&ConnectionHandlerImpl::OnMessageSent,
                      weak_ptr_factory_.GetWeakPtr())) != net::ERR_IO_PENDING) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&ConnectionHandlerImpl::OnMessageSent,
-                   weak_ptr_factory_.GetWeakPtr()));
+    io_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&ConnectionHandlerImpl::OnMessageSent,
+                                  weak_ptr_factory_.GetWeakPtr()));
   }
 
   read_timeout_timer_.Start(FROM_HERE,
@@ -176,6 +179,7 @@ void ConnectionHandlerImpl::GetNextMessage() {
 }
 
 void ConnectionHandlerImpl::WaitForData(ProcessingState state) {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   DVLOG(1) << "Waiting for MCS data: state == " << state;
 
   if (!input_stream_) {
@@ -260,11 +264,10 @@ void ConnectionHandlerImpl::WaitForData(ProcessingState state) {
     DVLOG(1) << "Socket read finished prematurely. Waiting for "
              << min_bytes_needed - input_stream_->UnreadByteCount()
              << " more bytes.";
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    io_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&ConnectionHandlerImpl::WaitForData,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   MCS_PROTO_BYTES));
+        base::BindOnce(&ConnectionHandlerImpl::WaitForData,
+                       weak_ptr_factory_.GetWeakPtr(), MCS_PROTO_BYTES));
     return;
   }
 
@@ -376,16 +379,17 @@ void ConnectionHandlerImpl::OnGotMessageSize() {
 }
 
 void ConnectionHandlerImpl::OnGotMessageBytes() {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
+
   read_timeout_timer_.Stop();
   std::unique_ptr<google::protobuf::MessageLite> protobuf(
       BuildProtobufFromTag(message_tag_));
   // Messages with no content are valid; just use the default protobuf for
   // that tag.
   if (protobuf.get() && message_size_ == 0) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&ConnectionHandlerImpl::GetNextMessage,
-                   weak_ptr_factory_.GetWeakPtr()));
+    io_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&ConnectionHandlerImpl::GetNextMessage,
+                                  weak_ptr_factory_.GetWeakPtr()));
     read_callback_.Run(std::move(protobuf));
     return;
   }
@@ -415,7 +419,7 @@ void ConnectionHandlerImpl::OnGotMessageBytes() {
     }
   } else {
     // Copy any data in the input stream onto the end of the buffer.
-    const void* data_ptr = NULL;
+    const void* data_ptr = nullptr;
     int size = 0;
     input_stream_->Next(&data_ptr, &size);
     payload_input_buffer_.insert(payload_input_buffer_.end(),
@@ -455,10 +459,9 @@ void ConnectionHandlerImpl::OnGotMessageBytes() {
   }
 
   input_stream_->RebuildBuffer();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&ConnectionHandlerImpl::GetNextMessage,
-                 weak_ptr_factory_.GetWeakPtr()));
+  io_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&ConnectionHandlerImpl::GetNextMessage,
+                                weak_ptr_factory_.GetWeakPtr()));
   if (message_tag_ == kLoginResponseTag) {
     if (handshake_complete_) {
       LOG(ERROR) << "Unexpected login response.";
@@ -480,9 +483,6 @@ void ConnectionHandlerImpl::OnTimeout() {
 void ConnectionHandlerImpl::CloseConnection() {
   DVLOG(1) << "Closing connection.";
   read_timeout_timer_.Stop();
-  if (socket_)
-    socket_->Disconnect();
-  socket_ = NULL;
   handshake_complete_ = false;
   message_tag_ = 0;
   message_size_ = 0;

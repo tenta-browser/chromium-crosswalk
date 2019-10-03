@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/singleton_tabs.h"
 
+#include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ui/browser.h"
@@ -14,19 +15,16 @@
 #include "content/public/browser/browser_url_handler.h"
 #include "content/public/browser/web_contents.h"
 
-namespace chrome {
 namespace {
 
 // Returns true if two URLs are equal after taking |replacements| into account.
 bool CompareURLsWithReplacements(const GURL& url,
                                  const GURL& other,
-                                 const url::Replacements<char>& replacements) {
-  if (url == other)
-    return true;
-
+                                 const url::Replacements<char>& replacements,
+                                 ChromeAutocompleteProviderClient* client) {
   GURL url_replaced = url.ReplaceComponents(replacements);
   GURL other_replaced = other.ReplaceComponents(replacements);
-  return url_replaced == other_replaced;
+  return client->StrippedURLsAreEqual(url_replaced, other_replaced, nullptr);
 }
 
 }  // namespace
@@ -38,26 +36,29 @@ void ShowSingletonTab(Browser* browser, const GURL& url) {
 
 void ShowSingletonTabRespectRef(Browser* browser, const GURL& url) {
   NavigateParams params(GetSingletonTabNavigateParams(browser, url));
-  params.ref_behavior = NavigateParams::RESPECT_REF;
   Navigate(&params);
 }
 
-void ShowSingletonTabOverwritingNTP(Browser* browser,
-                                    const NavigateParams& params) {
+void ShowSingletonTabOverwritingNTP(Browser* browser, NavigateParams params) {
   DCHECK(browser);
-  NavigateParams local_params(params);
+  DCHECK_EQ(params.disposition, WindowOpenDisposition::SINGLETON_TAB);
   content::WebContents* contents =
       browser->tab_strip_model()->GetActiveWebContents();
   if (contents) {
-    const GURL& contents_url = contents->GetURL();
-    if ((contents_url == kChromeUINewTabURL || search::IsInstantNTP(contents) ||
-         contents_url == url::kAboutBlankURL) &&
-        GetIndexOfSingletonTab(&local_params) < 0) {
-      local_params.disposition = WindowOpenDisposition::CURRENT_TAB;
+    const GURL& contents_url = contents->GetVisibleURL();
+    if (contents_url == chrome::kChromeUINewTabURL ||
+        search::IsInstantNTP(contents) || contents_url == url::kAboutBlankURL) {
+      int tab_index = GetIndexOfExistingTab(browser, params);
+      if (tab_index < 0) {
+        params.disposition = WindowOpenDisposition::CURRENT_TAB;
+      } else {
+        params.switch_to_singleton_tab =
+            browser->tab_strip_model()->GetWebContentsAt(tab_index);
+      }
     }
   }
 
-  Navigate(&local_params);
+  Navigate(&params);
 }
 
 NavigateParams GetSingletonTabNavigateParams(Browser* browser,
@@ -70,32 +71,31 @@ NavigateParams GetSingletonTabNavigateParams(Browser* browser,
   return params;
 }
 
-// Returns the index of an existing singleton tab in |params->browser| matching
+// Returns the index of an existing singleton tab in |browser| matching
 // the URL specified in |params|.
-int GetIndexOfSingletonTab(NavigateParams* params) {
-  if (params->disposition != WindowOpenDisposition::SINGLETON_TAB)
+int GetIndexOfExistingTab(Browser* browser, const NavigateParams& params) {
+  if (params.disposition != WindowOpenDisposition::SINGLETON_TAB &&
+      params.disposition != WindowOpenDisposition::SWITCH_TO_TAB)
     return -1;
 
   // In case the URL was rewritten by the BrowserURLHandler we need to ensure
   // that we do not open another URL that will get redirected to the rewritten
   // URL.
-  GURL rewritten_url(params->url);
+  GURL rewritten_url(params.url);
   bool reverse_on_redirect = false;
   content::BrowserURLHandler::GetInstance()->RewriteURLIfNecessary(
-      &rewritten_url,
-      params->browser->profile(),
-      &reverse_on_redirect);
+      &rewritten_url, browser->profile(), &reverse_on_redirect);
 
+  ChromeAutocompleteProviderClient client(browser->profile());
   // If there are several matches: prefer the active tab by starting there.
-  int start_index =
-      std::max(0, params->browser->tab_strip_model()->active_index());
-  int tab_count = params->browser->tab_strip_model()->count();
+  int start_index = std::max(0, browser->tab_strip_model()->active_index());
+  int tab_count = browser->tab_strip_model()->count();
   for (int i = 0; i < tab_count; ++i) {
     int tab_index = (start_index + i) % tab_count;
     content::WebContents* tab =
-        params->browser->tab_strip_model()->GetWebContentsAt(tab_index);
+        browser->tab_strip_model()->GetWebContentsAt(tab_index);
 
-    GURL tab_url = tab->GetURL();
+    GURL tab_url = tab->GetVisibleURL();
 
     // Skip view-source tabs. This is needed because RewriteURLIfNecessary
     // removes the "view-source:" scheme which leads to incorrect matching.
@@ -104,29 +104,22 @@ int GetIndexOfSingletonTab(NavigateParams* params) {
 
     GURL rewritten_tab_url = tab_url;
     content::BrowserURLHandler::GetInstance()->RewriteURLIfNecessary(
-      &rewritten_tab_url,
-      params->browser->profile(),
-      &reverse_on_redirect);
+        &rewritten_tab_url, browser->profile(), &reverse_on_redirect);
 
     url::Replacements<char> replacements;
-    if (params->ref_behavior == NavigateParams::IGNORE_REF)
-      replacements.ClearRef();
-    if (params->path_behavior == NavigateParams::IGNORE_AND_NAVIGATE ||
-        params->path_behavior == NavigateParams::IGNORE_AND_STAY_PUT) {
+    replacements.ClearRef();
+    if (params.path_behavior == NavigateParams::IGNORE_AND_NAVIGATE) {
       replacements.ClearPath();
       replacements.ClearQuery();
     }
 
-    if (CompareURLsWithReplacements(tab_url, params->url, replacements) ||
-        CompareURLsWithReplacements(rewritten_tab_url,
-                                    rewritten_url,
-                                    replacements)) {
-      params->target_contents = tab;
+    if (CompareURLsWithReplacements(tab_url, params.url, replacements,
+                                    &client) ||
+        CompareURLsWithReplacements(rewritten_tab_url, rewritten_url,
+                                    replacements, &client)) {
       return tab_index;
     }
   }
 
   return -1;
 }
-
-}  // namespace chrome

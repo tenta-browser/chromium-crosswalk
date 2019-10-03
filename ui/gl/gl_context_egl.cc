@@ -21,22 +21,23 @@
 #include "third_party/khronos/EGL/eglext.h"
 #include "ui/gl/egl_util.h"
 #include "ui/gl/gl_bindings.h"
+#include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_surface_egl.h"
-
+#include "ui/gl/yuv_to_rgb_converter.h"
 
 #ifndef EGL_CHROMIUM_create_context_bind_generates_resource
 #define EGL_CHROMIUM_create_context_bind_generates_resource 1
-#define EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM 0x3AAD
+#define EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM 0x33AD
 #endif /* EGL_CHROMIUM_create_context_bind_generates_resource */
 
 #ifndef EGL_ANGLE_create_context_webgl_compatibility
 #define EGL_ANGLE_create_context_webgl_compatibility 1
-#define EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE 0x3AAC
+#define EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE 0x33AC
 #endif /* EGL_ANGLE_create_context_webgl_compatibility */
 
 #ifndef EGL_ANGLE_display_texture_share_group
 #define EGL_ANGLE_display_texture_share_group 1
-#define EGL_DISPLAY_TEXTURE_SHARE_GROUP_ANGLE 0x3AAF
+#define EGL_DISPLAY_TEXTURE_SHARE_GROUP_ANGLE 0x33AF
 #endif /* EGL_ANGLE_display_texture_share_group */
 
 #ifndef EGL_ANGLE_create_context_client_arrays
@@ -48,6 +49,11 @@
 #define EGL_ANGLE_robust_resource_initialization 1
 #define EGL_ROBUST_RESOURCE_INITIALIZATION_ANGLE 0x3453
 #endif /* EGL_ANGLE_display_robust_resource_initialization */
+
+#ifndef EGL_ANGLE_create_context_backwards_compatible
+#define EGL_ANGLE_create_context_backwards_compatible 1
+#define EGL_CONTEXT_OPENGL_BACKWARDS_COMPATIBLE_ANGLE 0x3483
+#endif /* EGL_ANGLE_create_context_backwards_compatible */
 
 #ifndef EGL_CONTEXT_PRIORITY_LEVEL_IMG
 #define EGL_CONTEXT_PRIORITY_LEVEL_IMG 0x3100
@@ -61,11 +67,7 @@ using ui::GetLastEGLErrorString;
 namespace gl {
 
 GLContextEGL::GLContextEGL(GLShareGroup* share_group)
-    : GLContextReal(share_group),
-      context_(nullptr),
-      display_(nullptr),
-      config_(nullptr),
-      unbind_fbo_on_makecurrent_(false) {}
+    : GLContextReal(share_group) {}
 
 bool GLContextEGL::Initialize(GLSurface* compatible_surface,
                               const GLContextAttribs& attribs) {
@@ -186,6 +188,14 @@ bool GLContextEGL::Initialize(GLSurface* compatible_surface,
     DCHECK(!attribs.robust_resource_initialization);
   }
 
+  if (GLSurfaceEGL::HasEGLExtension(
+          "EGL_ANGLE_create_context_backwards_compatible")) {
+    // Request a specific context version. The Passthrough command decoder
+    // relies on the returned context being the exact version it requested.
+    context_attributes.push_back(EGL_CONTEXT_OPENGL_BACKWARDS_COMPATIBLE_ANGLE);
+    context_attributes.push_back(EGL_FALSE);
+  }
+
   // Append final EGL_NONE to signal the context attributes are finished
   context_attributes.push_back(EGL_NONE);
   context_attributes.push_back(EGL_NONE);
@@ -204,6 +214,7 @@ bool GLContextEGL::Initialize(GLSurface* compatible_surface,
 }
 
 void GLContextEGL::Destroy() {
+  ReleaseYUVToRGBConverters();
   if (context_) {
     if (!eglDestroyContext(display_, context_)) {
       LOG(ERROR) << "eglDestroyContext failed with error "
@@ -214,10 +225,72 @@ void GLContextEGL::Destroy() {
   }
 }
 
+YUVToRGBConverter* GLContextEGL::GetYUVToRGBConverter(
+    const gfx::ColorSpace& color_space) {
+  // Make sure YUVToRGBConverter objects never get created when surfaceless EGL
+  // contexts aren't supported since support for surfaceless EGL contexts is
+  // required in order to properly release YUVToRGBConverter objects (see
+  // GLContextEGL::ReleaseYUVToRGBConverters())
+  if (!GLSurfaceEGL::IsEGLSurfacelessContextSupported()) {
+    return nullptr;
+  }
+
+  std::unique_ptr<YUVToRGBConverter>& yuv_to_rgb_converter =
+      yuv_to_rgb_converters_[color_space];
+  if (!yuv_to_rgb_converter) {
+    yuv_to_rgb_converter =
+        std::make_unique<YUVToRGBConverter>(*GetVersionInfo(), color_space);
+  }
+  return yuv_to_rgb_converter.get();
+}
+
+void GLContextEGL::ReleaseYUVToRGBConverters() {
+  if (!yuv_to_rgb_converters_.empty()) {
+    // If this context is not current, bind this context's API so that the YUV
+    // converter can safely destruct
+    GLContext* current_context = GetRealCurrent();
+    if (current_context != this) {
+      SetCurrentGL(GetCurrentGL());
+    }
+
+    EGLContext current_egl_context = eglGetCurrentContext();
+    EGLSurface current_draw_surface = EGL_NO_SURFACE;
+    EGLSurface current_read_surface = EGL_NO_SURFACE;
+    if (context_ != current_egl_context) {
+      current_draw_surface = eglGetCurrentSurface(EGL_DRAW);
+      current_read_surface = eglGetCurrentSurface(EGL_READ);
+      // This call relies on the fact that yuv_to_rgb_converters_ are only ever
+      // allocated in GLImageIOSurfaceEGL::CopyTexImage, which is only on
+      // MacOS, where surfaceless EGL contexts are always supported.
+      if (!eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_)) {
+        DVLOG(1) << "eglMakeCurrent failed with error "
+                 << GetLastEGLErrorString();
+      }
+    }
+
+    yuv_to_rgb_converters_.clear();
+
+    // Rebind the current context's API if needed.
+    if (current_context && current_context != this) {
+      SetCurrentGL(current_context->GetCurrentGL());
+    }
+
+    if (context_ != current_egl_context) {
+      if (!eglMakeCurrent(display_, current_draw_surface, current_read_surface,
+                          current_egl_context)) {
+        DVLOG(1) << "eglMakeCurrent failed with error "
+                 << GetLastEGLErrorString();
+      }
+    }
+  }
+}
+
 bool GLContextEGL::MakeCurrent(GLSurface* surface) {
   DCHECK(context_);
+  if (lost_)
+    return false;
   if (IsCurrent(surface))
-      return true;
+    return true;
 
   ScopedReleaseCurrent release_current;
   TRACE_EVENT2("gpu", "GLContextEGL::MakeCurrent",
@@ -264,14 +337,20 @@ void GLContextEGL::ReleaseCurrent(GLSurface* surface) {
     glBindFramebufferEXT(GL_FRAMEBUFFER, 0);
 
   SetCurrent(nullptr);
-  eglMakeCurrent(display_,
-                 EGL_NO_SURFACE,
-                 EGL_NO_SURFACE,
-                 EGL_NO_CONTEXT);
+  if (!eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                      EGL_NO_CONTEXT)) {
+    DVLOG(1) << "eglMakeCurrent failed to release current with error "
+             << GetLastEGLErrorString();
+    lost_ = true;
+  }
+
+  DCHECK(!IsCurrent(nullptr));
 }
 
 bool GLContextEGL::IsCurrent(GLSurface* surface) {
   DCHECK(context_);
+  if (lost_)
+    return false;
 
   bool native_context_is_current = context_ == eglGetCurrentContext();
 
@@ -295,22 +374,17 @@ void* GLContextEGL::GetHandle() {
   return context_;
 }
 
-void GLContextEGL::OnSetSwapInterval(int interval) {
-  DCHECK(IsCurrent(nullptr) && GLSurface::GetCurrent());
-
-  // This is a surfaceless context. eglSwapInterval doesn't take any effect in
-  // this case and will just return EGL_BAD_SURFACE.
-  if (GLSurface::GetCurrent()->IsSurfaceless())
-    return;
-
-  if (!eglSwapInterval(display_, interval)) {
-    LOG(ERROR) << "eglSwapInterval failed with error "
-               << GetLastEGLErrorString();
+unsigned int GLContextEGL::CheckStickyGraphicsResetStatus() {
+  DCHECK(IsCurrent(nullptr));
+  DCHECK(g_current_gl_driver);
+  const ExtensionsGL& ext = g_current_gl_driver->ext;
+  if ((graphics_reset_status_ == GL_NO_ERROR) &&
+      GLSurfaceEGL::IsCreateContextRobustnessSupported() &&
+      (ext.b_GL_KHR_robustness || ext.b_GL_EXT_robustness ||
+       ext.b_GL_ARB_robustness)) {
+    graphics_reset_status_ = glGetGraphicsResetStatusARB();
   }
-}
-
-bool GLContextEGL::WasAllocatedUsingRobustnessExtension() {
-  return GLSurfaceEGL::IsCreateContextRobustnessSupported();
+  return graphics_reset_status_;
 }
 
 GLContextEGL::~GLContextEGL() {

@@ -11,22 +11,14 @@
 #include <memory>
 #include <string>
 
-#include "base/atomicops.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/strings/string_util.h"
-#include "base/synchronization/lock.h"
-#include "base/threading/thread_checker.h"
-#include "components/sync/base/cancelation_observer.h"
+#include "base/sequence_checker.h"
 #include "components/sync/syncable/syncable_id.h"
 
 namespace syncer {
 
 class CancelationSignal;
-
-static const int32_t kUnsetResponseCode = -1;
-static const int32_t kUnsetContentLength = -1;
-static const int32_t kUnsetPayloadLength = -1;
 
 // HttpResponse gathers the relevant output properties of an HTTP request.
 // Depending on the value of the server_status code, response_code, and
@@ -36,37 +28,35 @@ struct HttpResponse {
     // For uninitialized state.
     NONE,
 
-    // CONNECTION_UNAVAILABLE is returned when InternetConnect() fails.
+    // CONNECTION_UNAVAILABLE means either the request got canceled or it
+    // encountered a network error.
     CONNECTION_UNAVAILABLE,
 
     // IO_ERROR is returned when reading/writing to a buffer has failed.
     IO_ERROR,
 
     // SYNC_SERVER_ERROR is returned when the HTTP status code indicates that
-    // a non-auth error has occured.
+    // a non-auth error has occurred.
     SYNC_SERVER_ERROR,
 
     // SYNC_AUTH_ERROR is returned when the HTTP status code indicates that an
-    // auth error has occured (i.e. a 401 or sync-specific AUTH_INVALID
-    // response)
-    // TODO(tim): Caring about AUTH_INVALID is a layering violation. But
-    // this app-specific logic is being added as a stable branch hotfix so
-    // minimal changes prevail for the moment.  Fix this! Bug 35060.
+    // auth error has occurred (i.e. a 401).
+    // TODO(crbug.com/842096, crbug.com/951350): Remove this and instead use
+    // SYNC_SERVER_ERROR plus |http_status_code| == 401.
     SYNC_AUTH_ERROR,
 
     // SERVER_CONNECTION_OK is returned when request was handled correctly.
     SERVER_CONNECTION_OK,
-
-    // RETRY is returned when a Commit request fails with a RETRY response from
-    // the server.
-    //
-    // TODO(idana): the server no longer returns RETRY so we should remove this
-    // value.
-    RETRY,
   };
 
+  // Identifies the type of failure, if any.
+  ServerConnectionCode server_status;
+
+  // The network error code.
+  int net_error_code;
+
   // The HTTP Status code.
-  int64_t response_code;
+  int http_status_code;
 
   // The value of the Content-length header.
   int64_t content_length;
@@ -74,12 +64,16 @@ struct HttpResponse {
   // The size of a download request's payload.
   int64_t payload_length;
 
-  // Identifies the type of failure, if any.
-  ServerConnectionCode server_status;
+  static HttpResponse Uninitialized();
+  static HttpResponse ForNetError(int net_error_code);
+  static HttpResponse ForIoError();
+  static HttpResponse ForHttpError(int http_status_code);
+  static HttpResponse ForSuccess();
 
+ private:
+  // Private to prevent accidental usage. Use Uninitialized() if you really need
+  // a "default" instance.
   HttpResponse();
-
-  static const char* GetServerConnectionCodeString(ServerConnectionCode code);
 };
 
 struct ServerConnectionEvent {
@@ -106,7 +100,7 @@ class ServerConnectionManager {
   struct PostBufferParams {
     std::string buffer_in;
     std::string buffer_out;
-    HttpResponse response;
+    HttpResponse response = HttpResponse::Uninitialized();
   };
 
   // Abstract class providing network-layer functionality to the
@@ -118,14 +112,13 @@ class ServerConnectionManager {
     virtual ~Connection();
 
     // Called to initialize and perform an HTTP POST.
+    // TODO(crbug.com/951350): Return the HttpResponse by value. It's not
+    // obvious what the boolean return value means. (True means success or HTTP
+    // error, false means canceled or network error.)
     virtual bool Init(const char* path,
-                      const std::string& auth_token,
+                      const std::string& access_token,
                       const std::string& payload,
                       HttpResponse* response) = 0;
-
-    // Immediately abandons a pending HTTP POST request and unblocks caller
-    // in Init.
-    virtual void Abort() = 0;
 
     bool ReadBufferResponse(std::string* buffer_out,
                             HttpResponse* response,
@@ -161,7 +154,7 @@ class ServerConnectionManager {
   virtual ~ServerConnectionManager();
 
   // POSTS buffer_in and reads a response into buffer_out. Uses our currently
-  // set auth token in our headers.
+  // set access token in our headers.
   //
   // Returns true if executed successfully.
   virtual bool PostBufferWithCachedAuth(PostBufferParams* params);
@@ -170,52 +163,58 @@ class ServerConnectionManager {
   void RemoveListener(ServerConnectionEventListener* listener);
 
   inline HttpResponse::ServerConnectionCode server_status() const {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    return server_status_;
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return server_response_.server_status;
+  }
+
+  inline int net_error_code() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return server_response_.net_error_code;
+  }
+
+  inline int http_status_code() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return server_response_.http_status_code;
   }
 
   const std::string client_id() const { return client_id_; }
 
-  // Factory method to create an Connection object we can use for
-  // communication with the server.
-  virtual std::unique_ptr<Connection> MakeConnection();
-
   void set_client_id(const std::string& client_id) {
-    DCHECK(thread_checker_.CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(client_id_.empty());
     client_id_.assign(client_id);
   }
 
-  // Sets a new auth token and time.
-  bool SetAuthToken(const std::string& auth_token);
+  // Sets a new access token. If |access_token| is empty, the current token is
+  // invalidated and cleared. Returns false if the server is in authentication
+  // error state.
+  bool SetAccessToken(const std::string& access_token);
 
-  bool HasInvalidAuthToken() { return auth_token_.empty(); }
-
-  const std::string auth_token() const {
-    DCHECK(thread_checker_.CalledOnValidThread());
-    return auth_token_;
-  }
+  bool HasInvalidAccessToken() { return access_token_.empty(); }
 
  protected:
   inline std::string proto_sync_path() const { return proto_sync_path_; }
 
-  // Updates server_status_ and notifies listeners if server_status_ changed
-  void SetServerStatus(HttpResponse::ServerConnectionCode server_status);
+  // Updates |server_response_| and notifies listeners if the server status
+  // changed.
+  void SetServerResponse(const HttpResponse& server_response);
+
+  // Factory method to create an Connection object we can use for communication
+  // with the server. The returned object must not outlive |*this|.
+  virtual std::unique_ptr<Connection> MakeConnection();
 
   // NOTE: Tests rely on this protected function being virtual.
   //
   // Internal PostBuffer base function.
   virtual bool PostBufferToPath(PostBufferParams*,
                                 const std::string& path,
-                                const std::string& auth_token);
+                                const std::string& access_token);
 
-  // An internal helper to clear our auth_token_ and cache the old version
-  // in |previously_invalidated_token_| to shelter us from retrying with a
-  // known bad token.
-  void InvalidateAndClearAuthToken();
+  void ClearAccessToken();
 
   // Helper to check terminated flags and build a Connection object. If this
-  // ServerConnectionManager has been terminated, this will return null.
+  // ServerConnectionManager has been terminated, this will return null. The
+  // returned object must not outlive |*this|.
   std::unique_ptr<Connection> MakeActiveConnection();
 
  private:
@@ -236,17 +235,14 @@ class ServerConnectionManager {
   // The paths we post to.
   std::string proto_sync_path_;
 
-  // The auth token to use in authenticated requests.
-  std::string auth_token_;
+  // The access token to use in authenticated requests.
+  std::string access_token_;
 
-  // The previous auth token that is invalid now.
-  std::string previously_invalidated_token;
+  base::ObserverList<ServerConnectionEventListener>::Unchecked listeners_;
 
-  base::ObserverList<ServerConnectionEventListener> listeners_;
+  HttpResponse server_response_;
 
-  HttpResponse::ServerConnectionCode server_status_;
-
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
   CancelationSignal* const cancelation_signal_;
 

@@ -2,12 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 import("//ui/ozone/ozone.gni")
 
 assert(use_x11 || ozone_platform_x11)
 
-component("x11") {
+jumbo_component("x11") {
   output_name = "x11_events_platform"
 
   sources = [
@@ -22,7 +23,6 @@ component("x11") {
   configs += [ "//build/config/linux:x11" ]
 
   public_deps = [
-    "//ui/base/x",
     "//ui/events",
     "//ui/events:events_base",
     "//ui/events/devices",
@@ -36,6 +36,10 @@ component("x11") {
   deps = [
     "//base",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//ui/events/ozone:events_ozone" ]
+  }
 
   if (use_glib) {
     sources += [

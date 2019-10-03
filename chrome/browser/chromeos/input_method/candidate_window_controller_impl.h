@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/input_method/candidate_window_controller.h"
-#include "ui/base/ime/chromeos/ime_candidate_window_handler_interface.h"
+#include "ui/base/ime/ime_candidate_window_handler_interface.h"
 #include "ui/base/ime/infolist_entry.h"
 #include "ui/chromeos/ime/candidate_window_view.h"
 #include "ui/views/widget/widget_observer.h"
@@ -29,8 +29,6 @@ class Widget;
 
 namespace chromeos {
 namespace input_method {
-
-class ModeIndicatorController;
 
 // The implementation of CandidateWindowController.
 // CandidateWindowController controls the CandidateWindow.
@@ -64,6 +62,7 @@ class CandidateWindowControllerImpl
   // IMECandidateWindowHandlerInterface implementation.
   void SetCursorBounds(const gfx::Rect& cursor_bounds,
                        const gfx::Rect& composition_head) override;
+  gfx::Rect GetCursorBounds() const override;
   void UpdateLookupTable(const ui::CandidateWindow& candidate_window,
                          bool visible) override;
   void UpdatePreeditText(const base::string16& text,
@@ -74,27 +73,26 @@ class CandidateWindowControllerImpl
   void InitCandidateWindowView();
 
   // The candidate window view.
-  ui::ime::CandidateWindowView* candidate_window_view_;
+  ui::ime::CandidateWindowView* candidate_window_view_ = nullptr;
 
   // This is the outer frame of the infolist window view. Owned by the widget.
-  ui::ime::InfolistWindow* infolist_window_;
+  ui::ime::InfolistWindow* infolist_window_ = nullptr;
+
+  bool is_focused_ = false;
 
   gfx::Rect cursor_bounds_;
   gfx::Rect composition_head_;
-
-  // This is the controller of the IME mode indicator.
-  std::unique_ptr<ModeIndicatorController> mode_indicator_controller_;
 
   // The infolist entries and its focused index which currently shown in
   // Infolist window.
   std::vector<ui::InfolistEntry> latest_infolist_entries_;
 
-  base::ObserverList<CandidateWindowController::Observer> observers_;
+  base::ObserverList<CandidateWindowController::Observer>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(CandidateWindowControllerImpl);
 };
 
-#endif  // CHROME_BROWSER_CHROMEOS_INPUT_METHOD_CANDIDATE_WINDOW_CONTROLLER_IMPL_H_
-
 }  // namespace input_method
 }  // namespace chromeos
+
+#endif  // CHROME_BROWSER_CHROMEOS_INPUT_METHOD_CANDIDATE_WINDOW_CONTROLLER_IMPL_H_

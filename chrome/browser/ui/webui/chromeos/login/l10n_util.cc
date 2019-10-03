@@ -16,17 +16,16 @@
 #include "base/i18n/rtl.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/customization/customization_document.h"
@@ -89,7 +88,7 @@ std::unique_ptr<base::DictionaryValue> CreateLanguageEntry(
       base::i18n::StringContainsStrongRTLChars(display_name);
   const std::string directionality = has_rtl_chars ? "rtl" : "ltr";
 
-  auto dictionary = base::MakeUnique<base::DictionaryValue>();
+  auto dictionary = std::make_unique<base::DictionaryValue>();
   dictionary->SetString("code", language_code);
   dictionary->SetString("displayName", language_display_name);
   dictionary->SetString("textDirection", directionality);
@@ -156,7 +155,7 @@ std::unique_ptr<base::ListValue> GetLanguageList(
     if (lang.empty() || lang == language_id)
       continue;
 
-    if (base::ContainsValue(base_language_codes, language_id)) {
+    if (base::Contains(base_language_codes, language_id)) {
       // Language is supported. No need to replace
       continue;
     }
@@ -164,7 +163,7 @@ std::unique_ptr<base::ListValue> GetLanguageList(
     if (!l10n_util::CheckAndResolveLocale(language_id, &resolved_locale))
       continue;
 
-    if (!base::ContainsValue(base_language_codes, resolved_locale)) {
+    if (!base::Contains(base_language_codes, resolved_locale)) {
       // Resolved locale is not supported.
       continue;
     }
@@ -187,7 +186,7 @@ std::unique_ptr<base::ListValue> GetLanguageList(
        it != language_codes.end(); ++it) {
      // Exclude the language which is not in |base_langauge_codes| even it has
      // input methods.
-     if (!base::ContainsValue(base_language_codes, *it))
+     if (!base::Contains(base_language_codes, *it))
        continue;
 
      const base::string16 display_name =
@@ -268,7 +267,7 @@ std::unique_ptr<base::ListValue> GetLanguageList(
     base::string16 display_name(out_display_names[i]);
     if (insert_divider && display_name == divider16) {
       // Insert divider.
-      auto dictionary = base::MakeUnique<base::DictionaryValue>();
+      auto dictionary = std::make_unique<base::DictionaryValue>();
       dictionary->SetString("code", kMostRelevantLanguagesDivider);
       language_list->Append(std::move(dictionary));
       continue;
@@ -350,7 +349,8 @@ void ResolveLanguageListInThreadPool(
         language_switch_result,
     const scoped_refptr<base::TaskRunner> task_runner,
     const UILanguageListResolvedCallback& resolved_callback) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   std::string selected_language;
   if (!language_switch_result) {

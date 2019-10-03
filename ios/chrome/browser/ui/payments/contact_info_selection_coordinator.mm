@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/ui/payments/contact_info_selection_coordinator.h"
 
 #include "base/strings/sys_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/payments/core/strings_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/payments/payment_request.h"
@@ -134,6 +134,8 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
 
 - (void)contactInfoEditCoordinator:(ContactInfoEditCoordinator*)coordinator
            didFinishEditingProfile:(autofill::AutofillProfile*)profile {
+  BOOL isEditing = [self.viewController isEditing];
+
   // Update the data source with the new data.
   [self.mediator loadItems];
 
@@ -151,10 +153,13 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
       self.mediator.selectableItems[index];
   editedItem.complete = YES;
 
-  if (![self.viewController isEditing]) {
+  if (!isEditing) {
     // Update the data source with the selection.
     self.mediator.selectedItemIndex = index;
   }
+
+  // Exit 'edit' mode, if applicable.
+  [self.viewController setEditing:NO];
 
   [self.viewController loadModel];
   [self.viewController.collectionView reloadData];
@@ -162,7 +167,7 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
   [self.contactInfoEditCoordinator stop];
   self.contactInfoEditCoordinator = nil;
 
-  if (![self.viewController isEditing]) {
+  if (!isEditing) {
     // Inform |self.delegate| that |profile| has been selected.
     [self.delegate contactInfoSelectionCoordinator:self
                            didSelectContactProfile:profile];
@@ -171,6 +176,13 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
 
 - (void)contactInfoEditCoordinatorDidCancel:
     (ContactInfoEditCoordinator*)coordinator {
+  // Exit 'edit' mode, if applicable.
+  if ([self.viewController isEditing]) {
+    [self.viewController setEditing:NO];
+    [self.viewController loadModel];
+    [self.viewController.collectionView reloadData];
+  }
+
   [self.contactInfoEditCoordinator stop];
   self.contactInfoEditCoordinator = nil;
 }

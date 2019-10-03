@@ -16,11 +16,13 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.UrlUtils;
+import org.chromium.chrome.browser.util.ConversionUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 import java.util.Set;
@@ -42,6 +44,7 @@ public class ThumbnailDiskStorageTest {
     private static final Bitmap BITMAP2 = BitmapFactory.decodeFile(FILE_PATH2);
     private static final int ICON_WIDTH1 = 50;
     private static final int ICON_WIDTH2 = 70;
+    private static final int TEST_MAX_CACHE_BYTES = 1 * ConversionUtils.BYTES_PER_MEGABYTE;
 
     private static final long TIMEOUT_MS = 10000;
     private static final long INTERVAL_MS = 500;
@@ -60,6 +63,11 @@ public class ThumbnailDiskStorageTest {
         // This is not called in the test.
         @Override
         public String getFilePath() {
+            return null;
+        }
+
+        @Override
+        public String getMimeType() {
             return null;
         }
 
@@ -93,9 +101,9 @@ public class ThumbnailDiskStorageTest {
         // Accessed by test and UI threads.
         public final AtomicBoolean initialized = new AtomicBoolean();
 
-        public TestThumbnailDiskStorage(
-                TestThumbnailStorageDelegate delegate, TestThumbnailGenerator thumbnailGenerator) {
-            super(delegate, thumbnailGenerator);
+        public TestThumbnailDiskStorage(TestThumbnailStorageDelegate delegate,
+                TestThumbnailGenerator thumbnailGenerator, int maxCacheSizeBytes) {
+            super(delegate, thumbnailGenerator, maxCacheSizeBytes);
         }
 
         @Override
@@ -149,16 +157,14 @@ public class ThumbnailDiskStorageTest {
 
     @Before
     public void setUp() throws Exception {
+        RecordHistogram.setDisabledForTests(true);
         mTestThumbnailStorageDelegate = new TestThumbnailStorageDelegate();
         mTestThumbnailGenerator = new TestThumbnailGenerator();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTestThumbnailDiskStorage = new TestThumbnailDiskStorage(
-                        mTestThumbnailStorageDelegate, mTestThumbnailGenerator);
-                // Clear the disk cache so that cached entries from previous runs won't show up.
-                mTestThumbnailDiskStorage.clear();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mTestThumbnailDiskStorage = new TestThumbnailDiskStorage(
+                    mTestThumbnailStorageDelegate, mTestThumbnailGenerator, TEST_MAX_CACHE_BYTES);
+            // Clear the disk cache so that cached entries from previous runs won't show up.
+            mTestThumbnailDiskStorage.clear();
         });
         assertInitialized();
         assertDiskSizeBytes(0);
@@ -304,12 +310,8 @@ public class ThumbnailDiskStorageTest {
      */
     private void retrieveThumbnailAndAssertRetrieved(final TestThumbnailRequest request)
             throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTestThumbnailDiskStorage.retrieveThumbnail(request);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mTestThumbnailDiskStorage.retrieveThumbnail(request); });
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
@@ -334,12 +336,8 @@ public class ThumbnailDiskStorageTest {
      * @param expectedRemoveCount The expected removeCount.
      */
     private void removeThumbnailAndExpectedCount(String contentId, int expectedRemoveCount) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTestThumbnailDiskStorage.removeFromDisk(contentId);
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mTestThumbnailDiskStorage.removeFromDisk(contentId); });
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
@@ -350,6 +348,6 @@ public class ThumbnailDiskStorageTest {
     }
 
     private Set<Integer> getIconSizes(String contentId) {
-        return mTestThumbnailDiskStorage.sIconSizesMap.get(contentId);
+        return ThumbnailDiskStorage.sIconSizesMap.get(contentId);
     }
 }

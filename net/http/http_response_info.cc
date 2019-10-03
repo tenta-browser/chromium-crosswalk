@@ -5,9 +5,9 @@
 #include "net/http/http_response_info.h"
 
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/time/time.h"
-#include "net/base/auth.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/cert/sct_status_flags.h"
@@ -56,8 +56,8 @@ enum {
   // versions include the available certificate chain.
   RESPONSE_INFO_HAS_CERT = 1 << 8,
 
-  // This bit is set if the response info has a security-bits field (security
-  // strength, in bits, of the SSL connection) at the end.
+  // This bit was historically set if the response info had a security-bits
+  // field (security strength, in bits, of the SSL connection) at the end.
   RESPONSE_INFO_HAS_SECURITY_BITS = 1 << 9,
 
   // This bit is set if the response info has a cert status at the end.
@@ -104,6 +104,12 @@ enum {
   // trust anchor.
   RESPONSE_INFO_PKP_BYPASSED = 1 << 23,
 
+  // This bit is set if stale_revalidate_time is stored.
+  RESPONSE_INFO_HAS_STALENESS = 1 << 24,
+
+  // This bit is set if the response has a peer signature algorithm.
+  RESPONSE_INFO_HAS_PEER_SIGNATURE_ALGORITHM = 1 << 25,
+
   // TODO(darin): Add other bits to indicate alternate request methods.
   // For now, we don't support storing those.
 };
@@ -118,6 +124,7 @@ HttpResponseInfo::HttpResponseInfo()
       was_fetched_via_proxy(false),
       did_use_http_auth(false),
       unused_since_prefetch(false),
+      async_revalidation_requested(false),
       connection_info(CONNECTION_INFO_UNKNOWN) {}
 
 HttpResponseInfo::HttpResponseInfo(const HttpResponseInfo& rhs) = default;
@@ -172,10 +179,11 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
     ssl_info.cert_status = cert_status;
   }
   if (flags & RESPONSE_INFO_HAS_SECURITY_BITS) {
+    // The security_bits field has been removed from ssl_info. For backwards
+    // compatibility, we should still read the value out of iter.
     int security_bits;
     if (!iter.ReadInt(&security_bits))
       return false;
-    ssl_info.security_bits = security_bits;
   }
 
   if (flags & RESPONSE_INFO_HAS_SSL_CONNECTION_STATUS) {
@@ -191,6 +199,8 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
     ssl_info.connection_status = connection_status;
   }
 
+  // Signed Certificate Timestamps are no longer persisted to the cache, so
+  // ignore them when reading them out.
   if (flags & RESPONSE_INFO_HAS_SIGNED_CERTIFICATE_TIMESTAMPS) {
     int num_scts;
     if (!iter.ReadInt(&num_scts))
@@ -201,11 +211,6 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
       uint16_t status;
       if (!sct.get() || !iter.ReadUInt16(&status))
         return false;
-      if (!net::ct::IsValidSCTStatus(status))
-        return false;
-      ssl_info.signed_certificate_timestamps.push_back(
-          SignedCertificateTimestampAndStatus(
-              sct, static_cast<ct::SCTVerifyStatus>(status)));
     }
   }
 
@@ -223,7 +228,13 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
   uint16_t socket_address_port;
   if (!iter.ReadUInt16(&socket_address_port))
     return false;
-  socket_address = HostPortPair(socket_address_host, socket_address_port);
+
+  IPAddress ip_address;
+  if (ip_address.AssignFromIPLiteral(socket_address_host)) {
+    remote_endpoint = IPEndPoint(ip_address, socket_address_port);
+  } else if (ParseURLHostnameToAddress(socket_address_host, &ip_address)) {
+    remote_endpoint = IPEndPoint(ip_address, socket_address_port);
+  }
 
   // Read protocol-version.
   if (flags & RESPONSE_INFO_HAS_ALPN_NEGOTIATED_PROTOCOL) {
@@ -256,6 +267,14 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
       ssl_info.key_exchange_group = key_exchange_group;
   }
 
+  // Read staleness time.
+  if (flags & RESPONSE_INFO_HAS_STALENESS) {
+    if (!iter.ReadInt64(&time_val))
+      return false;
+    stale_revalidate_timeout =
+        base::Time() + base::TimeDelta::FromMicroseconds(time_val);
+  }
+
   was_fetched_via_spdy = (flags & RESPONSE_INFO_WAS_SPDY) != 0;
 
   was_alpn_negotiated = (flags & RESPONSE_INFO_WAS_ALPN) != 0;
@@ -270,6 +289,18 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
 
   ssl_info.pkp_bypassed = (flags & RESPONSE_INFO_PKP_BYPASSED) != 0;
 
+  // Read peer_signature_algorithm.
+  if (flags & RESPONSE_INFO_HAS_PEER_SIGNATURE_ALGORITHM) {
+    int peer_signature_algorithm;
+    if (!iter.ReadInt(&peer_signature_algorithm) ||
+        !base::IsValueInRangeForNumericType<uint16_t>(
+            peer_signature_algorithm)) {
+      return false;
+    }
+    ssl_info.peer_signature_algorithm =
+        base::checked_cast<uint16_t>(peer_signature_algorithm);
+  }
+
   return true;
 }
 
@@ -280,12 +311,12 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
   if (ssl_info.is_valid()) {
     flags |= RESPONSE_INFO_HAS_CERT;
     flags |= RESPONSE_INFO_HAS_CERT_STATUS;
-    if (ssl_info.security_bits != -1)
-      flags |= RESPONSE_INFO_HAS_SECURITY_BITS;
     if (ssl_info.key_exchange_group != 0)
       flags |= RESPONSE_INFO_HAS_KEY_EXCHANGE_GROUP;
     if (ssl_info.connection_status != 0)
       flags |= RESPONSE_INFO_HAS_SSL_CONNECTION_STATUS;
+    if (ssl_info.peer_signature_algorithm != 0)
+      flags |= RESPONSE_INFO_HAS_PEER_SIGNATURE_ALGORITHM;
   }
   if (vary_data.is_valid())
     flags |= RESPONSE_INFO_HAS_VARY_DATA;
@@ -305,10 +336,10 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
     flags |= RESPONSE_INFO_USE_HTTP_AUTHENTICATION;
   if (unused_since_prefetch)
     flags |= RESPONSE_INFO_UNUSED_SINCE_PREFETCH;
-  if (!ssl_info.signed_certificate_timestamps.empty())
-    flags |= RESPONSE_INFO_HAS_SIGNED_CERTIFICATE_TIMESTAMPS;
   if (ssl_info.pkp_bypassed)
     flags |= RESPONSE_INFO_PKP_BYPASSED;
+  if (!stale_revalidate_timeout.is_null())
+    flags |= RESPONSE_INFO_HAS_STALENESS;
 
   pickle->WriteInt(flags);
   pickle->WriteInt64(request_time.ToInternalValue());
@@ -331,26 +362,15 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
   if (ssl_info.is_valid()) {
     ssl_info.cert->Persist(pickle);
     pickle->WriteUInt32(ssl_info.cert_status);
-    if (ssl_info.security_bits != -1)
-      pickle->WriteInt(ssl_info.security_bits);
     if (ssl_info.connection_status != 0)
       pickle->WriteInt(ssl_info.connection_status);
-    if (!ssl_info.signed_certificate_timestamps.empty()) {
-      pickle->WriteInt(ssl_info.signed_certificate_timestamps.size());
-      for (SignedCertificateTimestampAndStatusList::const_iterator it =
-           ssl_info.signed_certificate_timestamps.begin(); it !=
-           ssl_info.signed_certificate_timestamps.end(); ++it) {
-        it->sct->Persist(pickle);
-        pickle->WriteUInt16(static_cast<uint16_t>(it->status));
-      }
-    }
   }
 
   if (vary_data.is_valid())
     vary_data.Persist(pickle);
 
-  pickle->WriteString(socket_address.host());
-  pickle->WriteUInt16(socket_address.port());
+  pickle->WriteString(remote_endpoint.ToStringWithoutPort());
+  pickle->WriteUInt16(remote_endpoint.port());
 
   if (was_alpn_negotiated)
     pickle->WriteString(alpn_negotiated_protocol);
@@ -360,6 +380,14 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
 
   if (ssl_info.is_valid() && ssl_info.key_exchange_group != 0)
     pickle->WriteInt(ssl_info.key_exchange_group);
+
+  if (flags & RESPONSE_INFO_HAS_STALENESS) {
+    pickle->WriteInt64(
+        (stale_revalidate_timeout - base::Time()).InMicroseconds());
+  }
+
+  if (ssl_info.is_valid() && ssl_info.peer_signature_algorithm != 0)
+    pickle->WriteInt(ssl_info.peer_signature_algorithm);
 }
 
 bool HttpResponseInfo::DidUseQuic() const {
@@ -387,6 +415,13 @@ bool HttpResponseInfo::DidUseQuic() const {
     case CONNECTION_INFO_QUIC_41:
     case CONNECTION_INFO_QUIC_42:
     case CONNECTION_INFO_QUIC_43:
+    case CONNECTION_INFO_QUIC_44:
+    case CONNECTION_INFO_QUIC_45:
+    case CONNECTION_INFO_QUIC_46:
+    case CONNECTION_INFO_QUIC_47:
+    case CONNECTION_INFO_QUIC_48:
+    case CONNECTION_INFO_QUIC_99:
+    case CONNECTION_INFO_QUIC_999:
       return true;
     case NUM_OF_CONNECTION_INFOS:
       NOTREACHED();
@@ -443,10 +478,24 @@ std::string HttpResponseInfo::ConnectionInfoToString(
       return "http/2+quic/42";
     case CONNECTION_INFO_QUIC_43:
       return "http/2+quic/43";
+    case CONNECTION_INFO_QUIC_44:
+      return "http/2+quic/44";
+    case CONNECTION_INFO_QUIC_45:
+      return "http/2+quic/45";
+    case CONNECTION_INFO_QUIC_46:
+      return "http/2+quic/46";
+    case CONNECTION_INFO_QUIC_47:
+      return "http/2+quic/47";
+    case CONNECTION_INFO_QUIC_48:
+      return "http/2+quic/48";
+    case CONNECTION_INFO_QUIC_99:
+      return "http/2+quic/99";
     case CONNECTION_INFO_HTTP0_9:
       return "http/0.9";
     case CONNECTION_INFO_HTTP1_0:
       return "http/1.0";
+    case CONNECTION_INFO_QUIC_999:
+      return "http2+quic/999";
     case NUM_OF_CONNECTION_INFOS:
       break;
   }

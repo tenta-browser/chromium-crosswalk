@@ -13,13 +13,12 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/zlib/google/zip_reader.h"
-
-namespace chrome {
 
 namespace {
 
@@ -64,8 +63,7 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, FailZipForAbsentFile) {
        base::Bind(&TestCallback, &success,
                   content::GetDeferredQuitTaskForRunLoop(&run_loop)),
        zip_base_dir(), paths, zip_archive_path()))
-      ->Start(
-          content::ServiceManagerConnection::GetForProcess()->GetConnector());
+      ->Start(content::GetSystemConnector());
 
   content::RunThisRunLoop(&run_loop);
   EXPECT_FALSE(success);
@@ -78,10 +76,13 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, SomeFilesZip) {
   const base::FilePath kFile2(FILE_PATH_LITERAL("random"));
   const int kRandomDataSize = 100000;
   const std::string kRandomData = base::RandBytesAsString(kRandomDataSize);
-  base::CreateDirectory(zip_base_dir().Append(kDir1));
-  base::WriteFile(zip_base_dir().Append(kFile1), "123", 3);
-  base::WriteFile(zip_base_dir().Append(kFile2), kRandomData.c_str(),
-                  kRandomData.size());
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    base::CreateDirectory(zip_base_dir().Append(kDir1));
+    base::WriteFile(zip_base_dir().Append(kFile1), "123", 3);
+    base::WriteFile(zip_base_dir().Append(kFile2), kRandomData.c_str(),
+                    kRandomData.size());
+  }
 
   bool success = false;
   base::RunLoop run_loop;
@@ -94,11 +95,12 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, SomeFilesZip) {
        base::Bind(&TestCallback, &success,
                   content::GetDeferredQuitTaskForRunLoop(&run_loop)),
        zip_base_dir(), paths, zip_archive_path()))
-      ->Start(
-          content::ServiceManagerConnection::GetForProcess()->GetConnector());
+      ->Start(content::GetSystemConnector());
 
   content::RunThisRunLoop(&run_loop);
   EXPECT_TRUE(success);
+
+  base::ScopedAllowBlockingForTesting allow_io;
 
   // Check the archive content.
   zip::ZipReader reader;
@@ -118,7 +120,9 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, SomeFilesZip) {
       EXPECT_EQ(kRandomDataSize, entry->original_size());
 
       const base::FilePath out = dir_.GetPath().AppendASCII("archived_content");
-      EXPECT_TRUE(reader.ExtractCurrentEntryToFilePath(out));
+      zip::FilePathWriterDelegate writer(out);
+      EXPECT_TRUE(reader.ExtractCurrentEntry(
+          &writer, std::numeric_limits<uint64_t>::max()));
       EXPECT_TRUE(base::ContentsEqual(zip_base_dir().Append(kFile2), out));
     } else {
       ADD_FAILURE();
@@ -147,26 +151,30 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, ZipDirectoryWithManyFiles) {
   // root_dir/10/7.txt -> Hello10/7
 
   base::FilePath root_dir = zip_base_dir().Append("root_dir");
-  ASSERT_TRUE(base::CreateDirectory(root_dir));
 
   // File paths to file content. Used for validation.
   std::map<base::FilePath, std::string> file_tree_content;
-  for (int i = 1; i < 90; i++) {
-    base::FilePath file(std::to_string(i) + ".txt");
-    std::string content = "Hello" + std::to_string(i);
-    ASSERT_TRUE(CreateFile(root_dir.Append(file), content));
-    file_tree_content[file] = content;
-  }
-  for (int i = 1; i <= 10; i++) {
-    base::FilePath dir(std::to_string(i));
-    ASSERT_TRUE(base::CreateDirectory(root_dir.Append(dir)));
-    file_tree_content[dir] = std::string();
-    for (int j = 1; j <= 7; j++) {
-      base::FilePath file = dir.Append(std::to_string(j) + ".txt");
-      std::string content =
-          "Hello" + std::to_string(i) + "/" + std::to_string(j);
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+    ASSERT_TRUE(base::CreateDirectory(root_dir));
+
+    for (int i = 1; i < 90; i++) {
+      base::FilePath file(std::to_string(i) + ".txt");
+      std::string content = "Hello" + std::to_string(i);
       ASSERT_TRUE(CreateFile(root_dir.Append(file), content));
       file_tree_content[file] = content;
+    }
+    for (int i = 1; i <= 10; i++) {
+      base::FilePath dir(std::to_string(i));
+      ASSERT_TRUE(base::CreateDirectory(root_dir.Append(dir)));
+      file_tree_content[dir] = std::string();
+      for (int j = 1; j <= 7; j++) {
+        base::FilePath file = dir.Append(std::to_string(j) + ".txt");
+        std::string content =
+            "Hello" + std::to_string(i) + "/" + std::to_string(j);
+        ASSERT_TRUE(CreateFile(root_dir.Append(file), content));
+        file_tree_content[file] = content;
+      }
     }
   }
 
@@ -182,8 +190,7 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, ZipDirectoryWithManyFiles) {
        base::Bind(&TestCallback, &success, run_loop.QuitClosure()), root_dir,
        std::vector<base::FilePath>(),  // Empty means zip everything in dir.
        zip_archive_path()))
-      ->Start(
-          content::ServiceManagerConnection::GetForProcess()->GetConnector());
+      ->Start(content::GetSystemConnector());
 
   content::RunThisRunLoop(&run_loop);
   EXPECT_TRUE(success);
@@ -219,5 +226,3 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, ZipDirectoryWithManyFiles) {
   }
   EXPECT_TRUE(file_tree_content.empty());
 }
-
-}  // namespace chrome

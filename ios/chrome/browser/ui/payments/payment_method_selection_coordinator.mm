@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/payments/core/autofill_payment_instrument.h"
 #include "components/payments/core/payment_instrument.h"
 #include "components/strings/grit/components_strings.h"
@@ -143,6 +143,8 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
 - (void)creditCardEditCoordinator:(CreditCardEditCoordinator*)coordinator
     didFinishEditingPaymentMethod:
         (payments::AutofillPaymentInstrument*)creditCard {
+  BOOL isEditing = [self.viewController isEditing];
+
   // Update the data source with the new data.
   [self.mediator loadItems];
 
@@ -158,10 +160,13 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
       self.mediator.selectableItems[position - paymentMethods.begin()];
   editedItem.complete = YES;
 
-  if (![self.viewController isEditing]) {
+  if (!isEditing) {
     // Update the data source with the selection.
     self.mediator.selectedItemIndex = position - paymentMethods.begin();
   }
+
+  // Exit 'edit' mode, if applicable.
+  [self.viewController setEditing:NO];
 
   [self.viewController loadModel];
   [self.viewController.collectionView reloadData];
@@ -169,7 +174,7 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
   [self.creditCardEditCoordinator stop];
   self.creditCardEditCoordinator = nil;
 
-  if (![self.viewController isEditing]) {
+  if (!isEditing) {
     // Inform |self.delegate| that this card has been selected.
     [self.delegate paymentMethodSelectionCoordinator:self
                               didSelectPaymentMethod:creditCard];
@@ -178,6 +183,13 @@ const int64_t kDelegateNotificationDelayInNanoSeconds = 0.2 * NSEC_PER_SEC;
 
 - (void)creditCardEditCoordinatorDidCancel:
     (CreditCardEditCoordinator*)coordinator {
+  // Exit 'edit' mode, if applicable.
+  if ([self.viewController isEditing]) {
+    [self.viewController setEditing:NO];
+    [self.viewController loadModel];
+    [self.viewController.collectionView reloadData];
+  }
+
   [self.creditCardEditCoordinator stop];
   self.creditCardEditCoordinator = nil;
 }

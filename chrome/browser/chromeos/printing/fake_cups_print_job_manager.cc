@@ -4,17 +4,14 @@
 
 #include "chrome/browser/chromeos/printing/fake_cups_print_job_manager.h"
 
-#include <memory>
-#include <string>
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/chromeos/printing/cups_print_job.h"
 #include "chrome/browser/chromeos/printing/cups_print_job_manager.h"
 #include "content/public/browser/browser_context.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 
 namespace chromeos {
 
@@ -26,7 +23,7 @@ FakeCupsPrintJobManager::FakeCupsPrintJobManager(Profile* profile)
   VLOG(1) << "Using Fake Print Job Manager";
 }
 
-FakeCupsPrintJobManager::~FakeCupsPrintJobManager() {}
+FakeCupsPrintJobManager::~FakeCupsPrintJobManager() = default;
 
 bool FakeCupsPrintJobManager::CreatePrintJob(const std::string& printer_name,
                                              const std::string& title,
@@ -34,15 +31,15 @@ bool FakeCupsPrintJobManager::CreatePrintJob(const std::string& printer_name,
   Printer printer(printer_name);
   printer.set_display_name(printer_name);
   // Create a new print job.
-  std::unique_ptr<CupsPrintJob> new_job = base::MakeUnique<CupsPrintJob>(
+  std::unique_ptr<CupsPrintJob> new_job = std::make_unique<CupsPrintJob>(
       printer, next_job_id_++, title, total_page_number);
   print_jobs_.push_back(std::move(new_job));
 
   // Show the waiting-for-printing notification immediately.
   base::SequencedTaskRunnerHandle::Get()->PostNonNestableDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeCupsPrintJobManager::ChangePrintJobState,
-                 weak_ptr_factory_.GetWeakPtr(), print_jobs_.back().get()),
+      base::BindOnce(&FakeCupsPrintJobManager::ChangePrintJobState,
+                     weak_ptr_factory_.GetWeakPtr(), print_jobs_.back().get()),
       base::TimeDelta());
 
   return true;
@@ -50,7 +47,7 @@ bool FakeCupsPrintJobManager::CreatePrintJob(const std::string& printer_name,
 
 void FakeCupsPrintJobManager::CancelPrintJob(CupsPrintJob* job) {
   job->set_state(CupsPrintJob::State::STATE_CANCELLED);
-  NotifyJobCanceled(job);
+  NotifyJobCanceled(job->GetWeakPtr());
 
   // Note: |job| is deleted here.
   for (auto iter = print_jobs_.begin(); iter != print_jobs_.end(); ++iter) {
@@ -63,17 +60,18 @@ void FakeCupsPrintJobManager::CancelPrintJob(CupsPrintJob* job) {
 
 bool FakeCupsPrintJobManager::SuspendPrintJob(CupsPrintJob* job) {
   job->set_state(CupsPrintJob::State::STATE_SUSPENDED);
-  NotifyJobSuspended(job);
+  NotifyJobSuspended(job->GetWeakPtr());
   return true;
 }
 
 bool FakeCupsPrintJobManager::ResumePrintJob(CupsPrintJob* job) {
   job->set_state(CupsPrintJob::State::STATE_RESUMED);
-  NotifyJobResumed(job);
+  NotifyJobResumed(job->GetWeakPtr());
 
   base::SequencedTaskRunnerHandle::Get()->PostNonNestableDelayedTask(
-      FROM_HERE, base::Bind(&FakeCupsPrintJobManager::ChangePrintJobState,
-                            weak_ptr_factory_.GetWeakPtr(), job),
+      FROM_HERE,
+      base::BindOnce(&FakeCupsPrintJobManager::ChangePrintJobState,
+                     weak_ptr_factory_.GetWeakPtr(), job),
       base::TimeDelta::FromMilliseconds(3000));
 
   return true;
@@ -90,33 +88,33 @@ void FakeCupsPrintJobManager::ChangePrintJobState(CupsPrintJob* job) {
   }
 
   if (!found || job->state() == CupsPrintJob::State::STATE_SUSPENDED ||
-      job->state() == CupsPrintJob::State::STATE_ERROR) {
+      job->state() == CupsPrintJob::State::STATE_FAILED) {
     return;
   }
 
   switch (job->state()) {
     case CupsPrintJob::State::STATE_NONE:
       job->set_state(CupsPrintJob::State::STATE_WAITING);
-      NotifyJobCreated(job);
+      NotifyJobCreated(job->GetWeakPtr());
       break;
     case CupsPrintJob::State::STATE_WAITING:
       job->set_state(CupsPrintJob::State::STATE_STARTED);
-      NotifyJobStarted(job);
+      NotifyJobStarted(job->GetWeakPtr());
       break;
     case CupsPrintJob::State::STATE_STARTED:
       job->set_printed_page_number(job->printed_page_number() + 1);
       job->set_state(CupsPrintJob::State::STATE_PAGE_DONE);
-      NotifyJobStarted(job);
+      NotifyJobStarted(job->GetWeakPtr());
       break;
     case CupsPrintJob::State::STATE_PAGE_DONE:
     case CupsPrintJob::State::STATE_RESUMED:
       if (job->printed_page_number() == job->total_page_number()) {
         job->set_state(CupsPrintJob::State::STATE_DOCUMENT_DONE);
-        NotifyJobDone(job);
+        NotifyJobDone(job->GetWeakPtr());
       } else {
         job->set_printed_page_number(job->printed_page_number() + 1);
         job->set_state(CupsPrintJob::State::STATE_PAGE_DONE);
-        NotifyJobUpdated(job);
+        NotifyJobUpdated(job->GetWeakPtr());
       }
       break;
     case CupsPrintJob::State::STATE_DOCUMENT_DONE:
@@ -133,8 +131,9 @@ void FakeCupsPrintJobManager::ChangePrintJobState(CupsPrintJob* job) {
   }
 
   base::SequencedTaskRunnerHandle::Get()->PostNonNestableDelayedTask(
-      FROM_HERE, base::Bind(&FakeCupsPrintJobManager::ChangePrintJobState,
-                            weak_ptr_factory_.GetWeakPtr(), job),
+      FROM_HERE,
+      base::BindOnce(&FakeCupsPrintJobManager::ChangePrintJobState,
+                     weak_ptr_factory_.GetWeakPtr(), job),
       base::TimeDelta::FromMilliseconds(3000));
 }
 

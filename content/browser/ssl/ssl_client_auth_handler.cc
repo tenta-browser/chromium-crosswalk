@@ -9,6 +9,8 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/content_browser_client.h"
@@ -29,8 +31,8 @@ class ClientCertificateDelegateImpl : public ClientCertificateDelegate {
 
   ~ClientCertificateDelegateImpl() override {
     if (!continue_called_) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&SSLClientAuthHandler::CancelCertificateSelection,
                          handler_));
     }
@@ -41,8 +43,8 @@ class ClientCertificateDelegateImpl : public ClientCertificateDelegate {
                                scoped_refptr<net::SSLPrivateKey> key) override {
     DCHECK(!continue_called_);
     continue_called_ = true;
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&SSLClientAuthHandler::ContinueWithCertificate, handler_,
                        std::move(cert), std::move(key)));
   }
@@ -53,6 +55,22 @@ class ClientCertificateDelegateImpl : public ClientCertificateDelegate {
 
   DISALLOW_COPY_AND_ASSIGN(ClientCertificateDelegateImpl);
 };
+
+// This function is used to pass the UI cancellation callback from the UI thread
+// to the SSLClientAuthHandler |handler| on the IO thread. If |handler| has
+// already expired, the UI elements are considered orphaned, so we post the
+// cancellation callback to the UI thread immediately.
+void TrySetCancellationCallback(
+    const base::WeakPtr<SSLClientAuthHandler>& handler,
+    base::OnceClosure callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (handler) {
+    handler->SetCancellationCallback(std::move(callback));
+  } else if (callback) {
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                             std::move(callback));
+  }
+}
 
 void SelectCertificateOnUIThread(
     const ResourceRequestInfo::WebContentsGetter& wc_getter,
@@ -68,9 +86,19 @@ void SelectCertificateOnUIThread(
   if (!web_contents)
     return;
 
-  GetContentClient()->browser()->SelectClientCertificate(
-      web_contents, cert_request_info, std::move(client_certs),
-      std::move(delegate));
+  base::OnceClosure cancellation_callback =
+      GetContentClient()->browser()->SelectClientCertificate(
+          web_contents, cert_request_info, std::move(client_certs),
+          std::move(delegate));
+
+  // Attempt to pass the callback to |handler|. If |handler| has already been
+  // destroyed, TrySetCancellationCallback will just invoke the callback. In
+  // contrast, simply posting SetCancellationCallback to the IO thread would
+  // result in |cancellation_callback| never being called if |handler| had
+  // already been destroyed when the task ran.
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                           base::BindOnce(&TrySetCancellationCallback, handler,
+                                          std::move(cancellation_callback)));
 }
 
 }  // namespace
@@ -96,7 +124,7 @@ class SSLClientAuthHandler::Core : public base::RefCountedThreadSafe<Core> {
       // callback.
       client_cert_store_->GetClientCerts(
           *cert_request_info_,
-          base::Bind(&SSLClientAuthHandler::Core::DidGetClientCerts, this));
+          base::BindOnce(&SSLClientAuthHandler::Core::DidGetClientCerts, this));
     } else {
       DidGetClientCerts(net::ClientCertIdentityList());
     }
@@ -120,13 +148,12 @@ class SSLClientAuthHandler::Core : public base::RefCountedThreadSafe<Core> {
 
 SSLClientAuthHandler::SSLClientAuthHandler(
     std::unique_ptr<net::ClientCertStore> client_cert_store,
-    net::URLRequest* request,
+    ResourceRequestInfo::WebContentsGetter web_contents_getter,
     net::SSLCertRequestInfo* cert_request_info,
-    SSLClientAuthHandler::Delegate* delegate)
-    : request_(request),
+    Delegate* delegate)
+    : web_contents_getter_(web_contents_getter),
       cert_request_info_(cert_request_info),
-      delegate_(delegate),
-      weak_factory_(this) {
+      delegate_(delegate) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   core_ = new Core(weak_factory_.GetWeakPtr(), std::move(client_cert_store),
@@ -134,6 +161,10 @@ SSLClientAuthHandler::SSLClientAuthHandler(
 }
 
 SSLClientAuthHandler::~SSLClientAuthHandler() {
+  if (cancellation_callback_) {
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                             std::move(cancellation_callback_));
+  }
 }
 
 void SSLClientAuthHandler::SelectCertificate() {
@@ -141,6 +172,11 @@ void SSLClientAuthHandler::SelectCertificate() {
 
   // |core_| will call DidGetClientCerts when done.
   core_->GetClientCerts();
+}
+
+void SSLClientAuthHandler::SetCancellationCallback(base::OnceClosure callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  cancellation_callback_ = std::move(callback);
 }
 
 // static
@@ -175,18 +211,16 @@ void SSLClientAuthHandler::DidGetClientCerts(
     // before checking ClientCertStore; ClientCertStore itself should probably
     // be handled by the embedder (https://crbug.com/394131), especially since
     // this doesn't work on Android (https://crbug.com/345641).
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&SSLClientAuthHandler::ContinueWithCertificate,
                        weak_factory_.GetWeakPtr(), nullptr, nullptr));
     return;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&SelectCertificateOnUIThread,
-                     ResourceRequestInfo::ForRequest(request_)
-                         ->GetWebContentsGetterForRequest(),
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&SelectCertificateOnUIThread, web_contents_getter_,
                      base::RetainedRef(cert_request_info_),
                      std::move(client_certs), weak_factory_.GetWeakPtr()));
 }

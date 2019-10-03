@@ -4,16 +4,18 @@
 
 #include "chrome/browser/chromeos/policy/cached_policy_key_loader_chromeos.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/scoped_task_environment.h"
-#include "chromeos/dbus/fake_cryptohome_client.h"
+#include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -31,7 +33,7 @@ class CachedPolicyKeyLoaderTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(tmp_dir_.CreateUniqueTempDir());
 
-    cached_policy_key_loader_ = base::MakeUnique<CachedPolicyKeyLoaderChromeOS>(
+    cached_policy_key_loader_ = std::make_unique<CachedPolicyKeyLoaderChromeOS>(
         &cryptohome_client_, scoped_task_environment_.GetMainThreadTaskRunner(),
         account_id_, user_policy_keys_dir());
   }
@@ -71,8 +73,8 @@ class CachedPolicyKeyLoaderTest : public testing::Test {
       base::test::ScopedTaskEnvironment::MainThreadType::UI};
   chromeos::FakeCryptohomeClient cryptohome_client_;
   const AccountId account_id_ = AccountId::FromUserEmail(kTestUserName);
-  const cryptohome::Identification cryptohome_id_ =
-      cryptohome::Identification(account_id_);
+  const cryptohome::AccountIdentifier cryptohome_id_ =
+      cryptohome::CreateAccountIdentifierFromAccountId(account_id_);
 
   std::unique_ptr<CachedPolicyKeyLoaderChromeOS> cached_policy_key_loader_;
 

@@ -15,15 +15,15 @@
 #include "base/i18n/unicodestring.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
 #include "base/task_runner.h"
-#include "base/task_scheduler/post_task.h"
 #include "chromeos/settings/timezone_settings_helper.h"
 
 namespace chromeos {
@@ -299,7 +299,7 @@ class TimezoneSettingsBaseImpl : public chromeos::system::TimezoneSettings {
   const icu::TimeZone* GetKnownTimezoneOrNull(
       const icu::TimeZone& timezone) const;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
   std::vector<std::unique_ptr<icu::TimeZone>> timezones_;
   std::unique_ptr<icu::TimeZone> timezone_;
 
@@ -370,7 +370,7 @@ TimezoneSettingsBaseImpl::GetTimezoneList() const {
 }
 
 TimezoneSettingsBaseImpl::TimezoneSettingsBaseImpl() {
-  for (size_t i = 0; i < arraysize(kTimeZones); ++i) {
+  for (size_t i = 0; i < base::size(kTimeZones); ++i) {
     timezones_.push_back(base::WrapUnique(icu::TimeZone::createTimeZone(
         icu::UnicodeString(kTimeZones[i], -1, US_INV))));
   }
@@ -394,9 +394,9 @@ void TimezoneSettingsImpl::SetTimezone(const icu::TimeZone& timezone) {
   // It's safe to change the timezone config files in the background as the
   // following operations don't depend on the completion of the config change.
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
                             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-                           base::Bind(&SetTimezoneIDFromString, id));
+                           base::BindOnce(&SetTimezoneIDFromString, id));
   icu::TimeZone::setDefault(*known_timezone);
   for (auto& observer : observers_)
     observer.TimezoneChanged(*known_timezone);

@@ -14,12 +14,13 @@
 
 namespace {
 
-blink::FeaturePolicyFeature GetFeaturePolicyFeature(ContentSettingsType type) {
+blink::mojom::FeaturePolicyFeature GetFeaturePolicyFeature(
+    ContentSettingsType type) {
   if (type == CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC)
-    return blink::FeaturePolicyFeature::kMicrophone;
+    return blink::mojom::FeaturePolicyFeature::kMicrophone;
 
   DCHECK_EQ(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, type);
-  return blink::FeaturePolicyFeature::kCamera;
+  return blink::mojom::FeaturePolicyFeature::kCamera;
 }
 
 }  // namespace
@@ -43,10 +44,10 @@ void MediaStreamDevicePermissionContext::DecidePermission(
     const GURL& requesting_origin,
     const GURL& embedding_origin,
     bool user_gesture,
-    const BrowserPermissionCallback& callback) {
+    BrowserPermissionCallback callback) {
   PermissionContextBase::DecidePermission(web_contents, id, requesting_origin,
                                           embedding_origin, user_gesture,
-                                          callback);
+                                          std::move(callback));
 }
 
 ContentSetting MediaStreamDevicePermissionContext::GetPermissionStatusInternal(

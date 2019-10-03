@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <memory>
+#include <string>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -20,17 +21,12 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_registry_observer.h"
 #endif
-
-struct PolicyStringMap {
-  const char* key;
-  int string_id;
-};
 
 class PolicyStatusProvider;
 
@@ -45,11 +41,6 @@ class PolicyUIHandler : public content::WebUIMessageHandler,
  public:
   PolicyUIHandler();
   ~PolicyUIHandler() override;
-
-
-  static void AddLocalizedPolicyStrings(content::WebUIDataSource* source,
-                                        const PolicyStringMap* strings,
-                                        size_t count);
 
   static void AddCommonLocalizedStringsToSource(
       content::WebUIDataSource* source);
@@ -75,12 +66,6 @@ class PolicyUIHandler : public content::WebUIMessageHandler,
   void OnSchemaRegistryUpdated(bool has_new_schemas) override;
 
  protected:
-  virtual void AddPolicyName(const std::string& name,
-                             base::DictionaryValue* names) const;
-
-  // Send a dictionary containing the names of all known policies to the UI.
-  virtual void SendPolicyNames() const;
-
   // ui::SelectFileDialog::Listener implementation.
   void FileSelected(const base::FilePath& path,
                     int index,
@@ -88,39 +73,26 @@ class PolicyUIHandler : public content::WebUIMessageHandler,
   void FileSelectionCanceled(void* params) override;
 
  private:
+  base::Value GetPolicyNames() const;
+  base::Value GetPolicyValues() const;
+
+  void HandleExportPoliciesJson(const base::ListValue* args);
+  void HandleListenPoliciesUpdates(const base::ListValue* args);
+  void HandleReloadPolicies(const base::ListValue* args);
+
   // Send information about the current policy values to the UI. For each policy
   // whose value has been set, a dictionary containing the value and additional
   // metadata is sent.
-  void SendPolicyValues() const;
+  void SendPolicies();
 
   // Send the status of cloud policy to the UI. For each scope that has cloud
   // policy enabled (device and/or user), a dictionary containing status
   // information is sent.
-  void SendStatus() const;
-
-  // Inserts a description of each policy in |policy_map| into |values|, using
-  // the optional errors in |errors| to determine the status of each policy. If
-  // |convert_values| is true, converts the values to show them in javascript.
-  void GetPolicyValues(const policy::PolicyMap& policy_map,
-                       policy::PolicyErrorMap* errors,
-                       base::DictionaryValue* values,
-                       bool convert_values) const;
-
-  // Returns a dictionary with the values of all set policies, with some values
-  // converted to be shown in javascript, if it is specified.
-  std::unique_ptr<base::DictionaryValue> GetAllPolicyValues(
-      bool convert_values) const;
-
-  void GetChromePolicyValues(base::DictionaryValue* values,
-                             bool convert_values) const;
+  void SendStatus();
 
   void WritePoliciesToJSONFile(const base::FilePath& path) const;
 
-  void HandleInitialized(const base::ListValue* args);
-  void HandleReloadPolicies(const base::ListValue* args);
-  void HandleExportPoliciesJSON(const base::ListValue* args);
-
-  void OnRefreshPoliciesDone() const;
+  void OnRefreshPoliciesDone();
 
   policy::PolicyService* GetPolicyService() const;
 
@@ -133,8 +105,9 @@ class PolicyUIHandler : public content::WebUIMessageHandler,
   // the platform (Chrome OS / desktop) and type of policy that is in effect.
   std::unique_ptr<PolicyStatusProvider> user_status_provider_;
   std::unique_ptr<PolicyStatusProvider> device_status_provider_;
+  std::unique_ptr<PolicyStatusProvider> machine_status_provider_;
 
-  base::WeakPtrFactory<PolicyUIHandler> weak_factory_;
+  base::WeakPtrFactory<PolicyUIHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PolicyUIHandler);
 };

@@ -13,7 +13,7 @@
 #include "components/offline_pages/core/background/offliner_policy_utils.h"
 #include "components/offline_pages/core/background/request_queue_results.h"
 #include "components/offline_pages/core/background/save_page_request.h"
-#include "components/offline_pages/core/task.h"
+#include "components/offline_pages/task/task.h"
 
 namespace offline_pages {
 
@@ -42,7 +42,7 @@ class CleanupTask : public Task {
              std::vector<std::unique_ptr<SavePageRequest>> requests);
 
   // Step 3. Send delete notifications for the expired requests.
-  void OnRequestsExpired(std::unique_ptr<UpdateRequestsResult> result);
+  void OnRequestsExpired(UpdateRequestsResult result);
 
   // Build a list of IDs whose request has expired.
   void PopulateExpiredRequestIdsAndReasons(
@@ -59,7 +59,7 @@ class CleanupTask : public Task {
       expired_request_ids_and_reasons_;
 
   // Allows us to pass a weak pointer to callbacks.
-  base::WeakPtrFactory<CleanupTask> weak_ptr_factory_;
+  base::WeakPtrFactory<CleanupTask> weak_ptr_factory_{this};
 };
 
 }  // namespace offline_pages

@@ -11,9 +11,8 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "remoting/client/client_context.h"
 #include "remoting/codec/video_encoder_verbatim.h"
@@ -52,7 +51,7 @@ class TestFrameConsumer : public protocol::FrameConsumer {
   std::unique_ptr<DesktopFrame> AllocateFrame(
       const webrtc::DesktopSize& size) override {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
-    return base::MakeUnique<webrtc::BasicDesktopFrame>(size);
+    return std::make_unique<webrtc::BasicDesktopFrame>(size);
   }
 
   void DrawFrame(std::unique_ptr<DesktopFrame> frame,
@@ -144,7 +143,7 @@ class SoftwareVideoRendererTest : public ::testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   ClientContext context_;
 
   TestFrameConsumer frame_consumer_;

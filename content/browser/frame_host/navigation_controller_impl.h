@@ -14,8 +14,10 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "content/browser/frame_host/back_forward_cache.h"
 #include "content/browser/frame_host/navigation_controller_delegate.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/ssl/ssl_manager.h"
@@ -26,9 +28,9 @@
 struct FrameHostMsg_DidCommitProvisionalLoad_Params;
 
 namespace content {
+enum class WasActivatedOption;
 class FrameTreeNode;
 class RenderFrameHostImpl;
-class NavigationEntryScreenshotManager;
 class SiteInstance;
 struct LoadCommittedDetails;
 
@@ -40,24 +42,24 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   ~NavigationControllerImpl() override;
 
   // NavigationController implementation:
-  WebContents* GetWebContents() const override;
-  BrowserContext* GetBrowserContext() const override;
+  WebContents* GetWebContents() override;
+  BrowserContext* GetBrowserContext() override;
   void Restore(int selected_navigation,
                RestoreType type,
                std::vector<std::unique_ptr<NavigationEntry>>* entries) override;
-  NavigationEntryImpl* GetActiveEntry() const override;
-  NavigationEntryImpl* GetVisibleEntry() const override;
-  int GetCurrentEntryIndex() const override;
-  NavigationEntryImpl* GetLastCommittedEntry() const override;
-  int GetLastCommittedEntryIndex() const override;
-  bool CanViewSource() const override;
-  int GetEntryCount() const override;
-  NavigationEntryImpl* GetEntryAtIndex(int index) const override;
-  NavigationEntryImpl* GetEntryAtOffset(int offset) const override;
+  NavigationEntryImpl* GetActiveEntry() override;
+  NavigationEntryImpl* GetVisibleEntry() override;
+  int GetCurrentEntryIndex() override;
+  NavigationEntryImpl* GetLastCommittedEntry() override;
+  int GetLastCommittedEntryIndex() override;
+  bool CanViewSource() override;
+  int GetEntryCount() override;
+  NavigationEntryImpl* GetEntryAtIndex(int index) override;
+  NavigationEntryImpl* GetEntryAtOffset(int offset) override;
   void DiscardNonCommittedEntries() override;
-  NavigationEntryImpl* GetPendingEntry() const override;
-  int GetPendingEntryIndex() const override;
-  NavigationEntryImpl* GetTransientEntry() const override;
+  NavigationEntryImpl* GetPendingEntry() override;
+  int GetPendingEntryIndex() override;
+  NavigationEntryImpl* GetTransientEntry() override;
   void SetTransientEntry(std::unique_ptr<NavigationEntry> entry) override;
   void LoadURL(const GURL& url,
                const Referrer& referrer,
@@ -65,36 +67,67 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
                const std::string& extra_headers) override;
   void LoadURLWithParams(const LoadURLParams& params) override;
   void LoadIfNecessary() override;
-  bool CanGoBack() const override;
-  bool CanGoForward() const override;
-  bool CanGoToOffset(int offset) const override;
+  bool CanGoBack() override;
+  bool CanGoForward() override;
+  bool CanGoToOffset(int offset) override;
   void GoBack() override;
   void GoForward() override;
   void GoToIndex(int index) override;
   void GoToOffset(int offset) override;
   bool RemoveEntryAtIndex(int index) override;
-  const SessionStorageNamespaceMap& GetSessionStorageNamespaceMap()
-      const override;
+  const SessionStorageNamespaceMap& GetSessionStorageNamespaceMap() override;
   SessionStorageNamespace* GetDefaultSessionStorageNamespace() override;
-  bool NeedsReload() const override;
+  bool NeedsReload() override;
   void SetNeedsReload() override;
   void CancelPendingReload() override;
   void ContinuePendingReload() override;
-  bool IsInitialNavigation() const override;
-  bool IsInitialBlankNavigation() const override;
+  bool IsInitialNavigation() override;
+  bool IsInitialBlankNavigation() override;
   void Reload(ReloadType reload_type, bool check_for_repost) override;
-  void NotifyEntryChanged(const NavigationEntry* entry) override;
-  void CopyStateFrom(const NavigationController& source,
-                     bool needs_reload) override;
+  void NotifyEntryChanged(NavigationEntry* entry) override;
+  void CopyStateFrom(NavigationController* source, bool needs_reload) override;
   void CopyStateFromAndPrune(NavigationController* source,
                              bool replace_entry) override;
   bool CanPruneAllButLastCommitted() override;
   void PruneAllButLastCommitted() override;
-  void ClearAllScreenshots() override;
+  void DeleteNavigationEntries(
+      const DeletionPredicate& deletionPredicate) override;
+  bool IsEntryMarkedToBeSkipped(int index) override;
+
+  // Starts a navigation in a newly created subframe as part of a history
+  // navigation. Returns true if the history navigation could start, false
+  // otherwise.  If this returns false, the caller should do a regular
+  // navigation to the default src URL for the frame instead.
+  bool StartHistoryNavigationInNewSubframe(
+      RenderFrameHostImpl* render_frame_host,
+      mojom::NavigationClientAssociatedPtrInfo* navigation_client);
+
+  // Navigates to a specified offset from the "current entry". Currently records
+  // a histogram indicating whether the session history navigation would only
+  // affect frames within the subtree of |sandbox_frame_tree_node_id|, which
+  // initiated the navigation.
+  void GoToOffsetInSandboxedFrame(int offset, int sandbox_frame_tree_node_id);
+
+  // Called when a document requests a navigation through a
+  // RenderFrameProxyHost.
+  void NavigateFromFrameProxy(
+      RenderFrameHostImpl* render_frame_host,
+      const GURL& url,
+      const base::Optional<url::Origin>& initiator_origin,
+      bool is_renderer_initiated,
+      SiteInstance* source_site_instance,
+      const Referrer& referrer,
+      ui::PageTransition page_transition,
+      bool should_replace_current_entry,
+      NavigationDownloadPolicy download_policy,
+      const std::string& method,
+      scoped_refptr<network::ResourceRequestBody> post_body,
+      const std::string& extra_headers,
+      scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory);
 
   // Whether this is the initial navigation in an unmodified new tab.  In this
   // case, we know there is no content displayed in the page.
-  bool IsUnmodifiedBlankTab() const;
+  bool IsUnmodifiedBlankTab();
 
   // The session storage namespace that all child RenderViews belonging to
   // |instance| should use.
@@ -115,6 +148,21 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
     return delegate_;
   }
 
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class NeedsReloadType {
+    kRequestedByClient = 0,
+    kRestoreSession = 1,
+    kCopyStateFrom = 2,
+    kCrashedSubframe = 3,
+    kMaxValue = kCrashedSubframe
+  };
+
+  // Request a reload to happen when activated.  Same as the public
+  // SetNeedsReload(), but takes in a |type| which specifies why the reload is
+  // being requested.
+  void SetNeedsReload(NeedsReloadType type);
+
   // For use by WebContentsImpl ------------------------------------------------
 
   // Allow renderer-initiated navigations to create a pending entry when the
@@ -131,12 +179,18 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   //
   // In the case that nothing has changed, the details structure is undefined
   // and it will return false.
+  //
+  // |previous_document_was_activated| is true if the previous document had user
+  // interaction. This is used for a new renderer-initiated navigation to decide
+  // if the page that initiated the navigation should be skipped on
+  // back/forward button.
   bool RendererDidNavigate(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       LoadCommittedDetails* details,
-      bool is_navigation_within_page,
-      NavigationHandleImpl* navigation_handle);
+      bool is_same_document_navigation,
+      bool previous_document_was_activated,
+      NavigationRequest* navigation_request);
 
   // Notifies us that we just became active. This is used by the WebContentsImpl
   // so that we know to load URLs that were pending as "lazy" loads.
@@ -162,7 +216,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   bool IsURLSameDocumentNavigation(const GURL& url,
                                    const url::Origin& origin,
                                    bool renderer_says_same_document,
-                                   RenderFrameHost* rfh) const;
+                                   RenderFrameHost* rfh);
 
   // Sets the SessionStorageNamespace for the given |partition_id|. This is
   // used during initialization of a new NavigationController to allow
@@ -189,14 +243,6 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   void SetGetTimestampCallbackForTest(
       const base::Callback<base::Time()>& get_timestamp_callback);
 
-  // Takes a screenshot of the page at the current state.
-  void TakeScreenshot();
-
-  // Sets the screenshot manager for this NavigationControllerImpl. Setting a
-  // NULL manager recreates the default screenshot manager and uses that.
-  void SetScreenshotManager(
-      std::unique_ptr<NavigationEntryScreenshotManager> manager);
-
   // Discards only the pending entry. |was_failure| should be set if the pending
   // entry is being discarded because it failed to load.
   void DiscardPendingEntry(bool was_failure);
@@ -205,19 +251,26 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // navigation failed due to an SSL error.
   void SetPendingNavigationSSLError(bool error);
 
+  BackForwardCache& back_forward_cache() { return back_forward_cache_; }
+
+// Returns true if the string corresponds to a valid data URL, false
+// otherwise.
+#if defined(OS_ANDROID)
+  static bool ValidateDataURLAsString(
+      const scoped_refptr<const base::RefCountedString>& data_url_as_string);
+#endif
+
+  // Invoked when a user activation occurs within the page, so that relevant
+  // entries can be updated as needed.
+  void NotifyUserActivation();
+
  private:
   friend class RestoreHelper;
 
-  FRIEND_TEST_ALL_PREFIXES(NavigationControllerTest,
-                           PurgeScreenshot);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, Basic);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, SingleDuplicate);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, ManyDuplicates);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, ClockBackwardsJump);
-
-  // Used for identifying which frames need to navigate.
-  using FrameLoadVector =
-      std::vector<std::pair<FrameTreeNode*, FrameNavigationEntry*>>;
 
   // Helper class to smooth out runs of duplicate timestamps while still
   // allowing time to jump backwards.
@@ -233,22 +286,81 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
     base::Time high_water_mark_;
   };
 
-  // Causes the controller to load the specified entry. The function assumes
-  // ownership of the pointer since it is put in the navigation list.
-  // NOTE: Do not pass an entry that the controller already owns!
-  void LoadEntry(std::unique_ptr<NavigationEntryImpl> entry);
+  // Navigates in session history to the given index. If
+  // |sandbox_frame_tree_node_id| is valid, then this request came
+  // from a sandboxed iframe with top level navigation disallowed. This
+  // is currently only used for tracking metrics.
+  void GoToIndex(int index, int sandbox_frame_tree_node_id);
 
-  // Identifies which frames need to be navigated for the pending
-  // NavigationEntry and instructs their Navigator to navigate them.  Returns
-  // whether any frame successfully started a navigation.
-  bool NavigateToPendingEntryInternal(ReloadType reload_type);
+  // Starts a navigation to an already existing pending NavigationEntry.
+  // Currently records a histogram indicating whether the session history
+  // navigation would only affect frames within the subtree of
+  // |sandbox_frame_tree_node_id|, which initiated the navigation.
+  void NavigateToExistingPendingEntry(ReloadType reload_type,
+                                      int sandboxed_source_frame_tree_node_id);
 
-  // Recursively identifies which frames need to be navigated for the pending
-  // NavigationEntry, starting at |frame| and exploring its children.  Only used
-  // in --site-per-process.
-  void FindFramesToNavigate(FrameTreeNode* frame,
-                            FrameLoadVector* sameDocumentLoads,
-                            FrameLoadVector* differentDocumentLoads);
+  // Recursively identifies which frames need to be navigated for a navigation
+  // to |pending_entry_|, starting at |frame| and exploring its children.
+  // |same_document_loads| and |different_document_loads| will be filled with
+  // the NavigationRequests needed to navigate to |pending_entry_|.
+  void FindFramesToNavigate(
+      FrameTreeNode* frame,
+      ReloadType reload_type,
+      std::vector<std::unique_ptr<NavigationRequest>>* same_document_loads,
+      std::vector<std::unique_ptr<NavigationRequest>>*
+          different_document_loads);
+
+  // Starts a new navigation based on |load_params|, that doesn't correspond to
+  // an exisiting NavigationEntry.
+  void NavigateWithoutEntry(const LoadURLParams& load_params);
+
+  // Handles a navigation to a renderer-debug URL.
+  void HandleRendererDebugURL(FrameTreeNode* frame_tree_node, const GURL& url);
+
+  // Creates and returns a NavigationEntry based on |load_params| for a
+  // navigation in |node|.
+  // |override_user_agent|, |should_replace_current_entry| and
+  // |has_user_gesture| will override the values from |load_params|. The same
+  // values should be passed to CreateNavigationRequestFromLoadParams.
+  std::unique_ptr<NavigationEntryImpl> CreateNavigationEntryFromLoadParams(
+      FrameTreeNode* node,
+      const LoadURLParams& load_params,
+      bool override_user_agent,
+      bool should_replace_current_entry,
+      bool has_user_gesture);
+
+  // Creates and returns a NavigationRequest based on |load_params| for a
+  // new navigation in |node|.
+  // Will return nullptr if the parameters are invalid and the navigation cannot
+  // start.
+  // |override_user_agent|, |should_replace_current_entry| and
+  // |has_user_gesture| will override the values from |load_params|. The same
+  // values should be passed to CreateNavigationEntryFromLoadParams.
+  // TODO(clamy): Remove the dependency on NavigationEntry and
+  // FrameNavigationEntry.
+  std::unique_ptr<NavigationRequest> CreateNavigationRequestFromLoadParams(
+      FrameTreeNode* node,
+      const LoadURLParams& load_params,
+      bool override_user_agent,
+      bool should_replace_current_entry,
+      bool has_user_gesture,
+      NavigationDownloadPolicy download_policy,
+      ReloadType reload_type,
+      NavigationEntryImpl* entry,
+      FrameNavigationEntry* frame_entry);
+
+  // Creates and returns a NavigationRequest for a navigation to |entry|. Will
+  // return nullptr if the parameters are invalid and the navigation cannot
+  // start.
+  // TODO(clamy): Ensure this is only called for navigations to existing
+  // NavigationEntries.
+  std::unique_ptr<NavigationRequest> CreateNavigationRequestFromEntry(
+      FrameTreeNode* frame_tree_node,
+      NavigationEntryImpl* entry,
+      FrameNavigationEntry* frame_entry,
+      ReloadType reload_type,
+      bool is_same_document_history_load,
+      bool is_history_navigation_in_new_child_frame);
 
   // Returns whether there is a pending NavigationEntry whose unique ID matches
   // the given NavigationHandle's pending_nav_entry_id.
@@ -257,7 +369,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // Classifies the given renderer navigation (see the NavigationType enum).
   NavigationType ClassifyNavigation(
       RenderFrameHostImpl* rfh,
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params) const;
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
 
   // Handlers for the different types of navigation types. They will actually
   // handle the navigations corresponding to the different NavClasses above.
@@ -278,28 +390,31 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
       bool replace_entry,
+      bool previous_document_was_activated,
       NavigationHandleImpl* handle);
   void RendererDidNavigateToExistingPage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
       bool was_restored,
-      NavigationHandleImpl* handle);
+      NavigationHandleImpl* handle,
+      bool keep_pending_entry);
   void RendererDidNavigateToSamePage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      bool is_same_document,
       NavigationHandleImpl* handle);
   void RendererDidNavigateNewSubframe(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
       bool is_same_document,
-      bool replace_entry);
+      bool replace_entry,
+      bool previous_document_was_activated,
+      NavigationHandleImpl* handle);
   bool RendererDidNavigateAutoSubframe(
       RenderFrameHostImpl* rfh,
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params);
-
-  // Actually issues the navigation held in pending_entry.
-  void NavigateToPendingEntry(ReloadType reload_type);
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      NavigationHandleImpl* handle);
 
   // Allows the derived class to issue notifications that a load has been
   // committed. This will fill in the active entry to the details structure.
@@ -329,9 +444,10 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // Discards only the transient entry.
   void DiscardTransientEntry();
 
-  // If we have the maximum number of entries, remove the oldest one in
-  // preparation to add another.
-  void PruneOldestEntryIfFull();
+  // If we have the maximum number of entries, remove the oldest entry that is
+  // marked to be skipped on back/forward button, in preparation to add another.
+  // If no entry is skippable, then the oldest entry will be pruned.
+  void PruneOldestSkippableEntryIfFull();
 
   // Removes all entries except the last committed entry.  If there is a new
   // pending navigation it is preserved. In contrast to
@@ -344,11 +460,39 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // adjust any of the members that reference entries_
   // (last_committed_entry_index_, pending_entry_index_ or
   // transient_entry_index_).
-  void InsertEntriesFrom(const NavigationControllerImpl& source, int max_index);
+  void InsertEntriesFrom(NavigationControllerImpl* source, int max_index);
 
   // Returns the navigation index that differs from the current entry by the
   // specified |offset|.  The index returned is not guaranteed to be valid.
-  int GetIndexForOffset(int offset) const;
+  int GetIndexForOffset(int offset);
+
+  // BackForwardCache:
+  // Notify observers a document was restored from the bfcache.
+  // This updates the URL bar and the history buttons.
+  void CommitRestoreFromBackForwardCache();
+
+  // History Manipulation intervention:
+  // The previous document that started this navigation needs to be skipped in
+  // subsequent back/forward UI navigations if it never received any user
+  // gesture. This is to intervene against pages that manipulate the history
+  // such that the user is not able to go back to the last site they interacted
+  // with (crbug.com/907167).
+  // Note that this function must be called before the new navigation entry is
+  // inserted in |entries_| to make sure UKM reports the URL of the document
+  // adding the entry.
+  void SetShouldSkipOnBackForwardUIIfNeeded(
+      RenderFrameHostImpl* rfh,
+      bool replace_entry,
+      bool previous_document_was_activated,
+      bool is_renderer_initiated);
+
+  // This function sets all same document entries with the same value
+  // of skippable flag. This is to avoid back button abuse by inserting
+  // multiple history entries and also to help valid cases where a user gesture
+  // on the document should apply to all same document history entries and none
+  // should be skipped. All entries belonging to the same document as the entry
+  // at |reference_index| will get their skippable flag set to |skippable|.
+  void SetSkippableForSameDocumentEntries(int reference_index, bool skippable);
 
   // ---------------------------------------------------------------------------
 
@@ -366,10 +510,6 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // != -1, or it may be its own entry that should be deleted. Be careful with
   // the memory management.
   NavigationEntryImpl* pending_entry_;
-
-  // Navigations could occur in succession. This field holds the last pending
-  // entry for which we haven't received a response yet.
-  NavigationEntryImpl* last_pending_entry_;
 
   // If a new entry fails loading, details about it are temporarily held here
   // until the error page is shown (or 0 otherwise).
@@ -395,13 +535,6 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // after the transient entry will become invalid if you navigate forward.
   int transient_entry_index_;
 
-  // The index of the last pending entry if it is in entries, or -1 if it was
-  // created by LoadURL.
-  int last_pending_entry_index_;
-
-  // The index of the last transient entry. Defaults to -1.
-  int last_transient_entry_index_;
-
   // The delegate associated with the controller. Possibly NULL during
   // setup.
   NavigationControllerDelegate* delegate_;
@@ -411,6 +544,10 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
 
   // Whether we need to be reloaded when made active.
   bool needs_reload_;
+
+  // Source of when |needs_reload_| is set. Only valid when |needs_reload_|
+  // is set.
+  NeedsReloadType needs_reload_type_ = NeedsReloadType::kRequestedByClient;
 
   // Whether this is the initial navigation.
   // Becomes false when initial navigation commits.
@@ -445,14 +582,11 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   // the wrong order in the history view.
   TimeSmoother time_smoother_;
 
-  std::unique_ptr<NavigationEntryScreenshotManager> screenshot_manager_;
-
-  // Used for tracking consecutive reload requests.  If the last user-initiated
-  // navigation (either browser-initiated or renderer-initiated with a user
-  // gesture) was a reload, these hold the ReloadType and timestamp.  Otherwise
-  // these are ReloadType::NONE and a null timestamp, respectively.
-  ReloadType last_committed_reload_type_;
-  base::Time last_committed_reload_time_;
+  // BackForwardCache:
+  //
+  // Stores frozen RenderFrameHost. Restores them on history navigation.
+  // See BackForwardCache class documentation.
+  BackForwardCache back_forward_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationControllerImpl);
 };

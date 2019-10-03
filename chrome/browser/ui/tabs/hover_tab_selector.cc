@@ -11,11 +11,8 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 
-HoverTabSelector::HoverTabSelector(
-    TabStripModel* tab_strip_model)
-    : tab_strip_model_(tab_strip_model),
-      tab_transition_tab_index_(-1),
-      weak_factory_(this) {
+HoverTabSelector::HoverTabSelector(TabStripModel* tab_strip_model)
+    : tab_strip_model_(tab_strip_model), tab_transition_tab_index_(-1) {
   DCHECK(tab_strip_model_);
 }
 
@@ -52,6 +49,7 @@ void HoverTabSelector::CancelTabTransition() {
 void HoverTabSelector::PerformTabTransition() {
   DCHECK(tab_transition_tab_index_ >= 0 &&
          tab_transition_tab_index_ < tab_strip_model_->count());
-  tab_strip_model_->ActivateTabAt(tab_transition_tab_index_, true);
+  tab_strip_model_->ActivateTabAt(tab_transition_tab_index_,
+                                  {TabStripModel::GestureType::kOther});
 }
 

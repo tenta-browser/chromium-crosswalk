@@ -4,17 +4,16 @@
 
 #include "chrome/browser/ui/views/extensions/bookmark_app_confirmation_view.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/callback_helpers.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/extension_util.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/extensions/web_app_info_image_source.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -31,70 +30,74 @@
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/widget/widget.h"
 
+namespace {
+
+bool g_auto_accept_bookmark_app_for_testing = false;
+
+}  // namespace
+
 BookmarkAppConfirmationView::~BookmarkAppConfirmationView() {}
 
 BookmarkAppConfirmationView::BookmarkAppConfirmationView(
-    const WebApplicationInfo& web_app_info,
+    std::unique_ptr<WebApplicationInfo> web_app_info,
     chrome::AppInstallationAcceptanceCallback callback)
-    : web_app_info_(web_app_info),
-      callback_(std::move(callback)),
-      open_as_window_checkbox_(nullptr),
-      title_tf_(nullptr) {
+    : web_app_info_(std::move(web_app_info)), callback_(std::move(callback)) {
+  DCHECK(web_app_info_);
   const ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
   set_margins(layout_provider->GetDialogInsetsForContentType(views::CONTROL,
-                                                             views::CONTROL));
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+                                                             views::TEXT));
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
   constexpr int kColumnSetId = 0;
 
   views::ColumnSet* column_set = layout->AddColumnSet(kColumnSetId);
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
+                        views::GridLayout::kFixedSize,
                         views::GridLayout::USE_PREF, 0, 0);
-  column_set->AddPaddingColumn(0,
+  column_set->AddPaddingColumn(views::GridLayout::kFixedSize,
                                layout_provider->GetDistanceMetric(
                                    views::DISTANCE_RELATED_CONTROL_HORIZONTAL));
   constexpr int textfield_width = 320;
-  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
-                        views::GridLayout::FIXED, textfield_width, 0);
+  column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
+                        views::GridLayout::kFixedSize, views::GridLayout::FIXED,
+                        textfield_width, 0);
 
-  const int icon_size = layout_provider->IsHarmonyMode()
-                            ? extension_misc::EXTENSION_ICON_SMALL
-                            : extension_misc::EXTENSION_ICON_MEDIUM;
-  views::ImageView* icon_image_view = new views::ImageView();
-  gfx::Size image_size(icon_size, icon_size);
+  auto icon_image_view = std::make_unique<views::ImageView>();
+  gfx::Size image_size(extension_misc::EXTENSION_ICON_SMALL,
+                       extension_misc::EXTENSION_ICON_SMALL);
   gfx::ImageSkia image(
-      base::MakeUnique<WebAppInfoImageSource>(icon_size, web_app_info_.icons),
+      std::make_unique<WebAppInfoImageSource>(
+          extension_misc::EXTENSION_ICON_SMALL, web_app_info_->icons),
       image_size);
   icon_image_view->SetImageSize(image_size);
   icon_image_view->SetImage(image);
-  layout->StartRow(0, kColumnSetId);
-  layout->AddView(icon_image_view);
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId);
+  layout->AddView(std::move(icon_image_view));
 
-  title_tf_ = new views::Textfield();
-  title_tf_->SetText(web_app_info_.title);
-  title_tf_->SetAccessibleName(
+  auto title_tf = std::make_unique<views::Textfield>();
+  title_tf->SetText(web_app_info_->title);
+  title_tf->SetAccessibleName(
       l10n_util::GetStringUTF16(IDS_BOOKMARK_APP_AX_BUBBLE_NAME_LABEL));
-  title_tf_->set_controller(this);
-  layout->AddView(title_tf_);
+  title_tf->set_controller(this);
+  title_tf_ = layout->AddView(std::move(title_tf));
 
   layout->AddPaddingRow(
-      0, layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL));
-
-  // When CanHostedAppsOpenInWindows() returns false, do not show the open as
-  // window checkbox to avoid confusing users.
-  // Desktop PWAs will choose the display mode automatically.
-  if (extensions::util::CanHostedAppsOpenInWindows() &&
-      !base::FeatureList::IsEnabled(features::kDesktopPWAWindowing)) {
-    open_as_window_checkbox_ = new views::Checkbox(
-        l10n_util::GetStringUTF16(IDS_BOOKMARK_APP_BUBBLE_OPEN_AS_WINDOW));
-    open_as_window_checkbox_->SetChecked(web_app_info_.open_as_window);
-    layout->StartRow(0, kColumnSetId);
-    layout->SkipColumns(1);
-    layout->AddView(open_as_window_checkbox_);
-  }
+      views::GridLayout::kFixedSize,
+      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL));
+  auto open_as_window_checkbox = std::make_unique<views::Checkbox>(
+      l10n_util::GetStringUTF16(IDS_BOOKMARK_APP_BUBBLE_OPEN_AS_WINDOW));
+  open_as_window_checkbox->SetChecked(web_app_info_->open_as_window);
+  layout->StartRow(views::GridLayout::kFixedSize, kColumnSetId);
+  layout->SkipColumns(1);
+  open_as_window_checkbox_ =
+      layout->AddView(std::move(open_as_window_checkbox));
 
   title_tf_->SelectAll(true);
   chrome::RecordDialogCreation(
       chrome::DialogIdentifier::BOOKMARK_APP_CONFIRMATION);
+
+  if (g_auto_accept_bookmark_app_for_testing)
+    Accept();
 }
 
 views::View* BookmarkAppConfirmationView::GetInitiallyFocusedView() {
@@ -114,22 +117,26 @@ bool BookmarkAppConfirmationView::ShouldShowCloseButton() const {
 }
 
 void BookmarkAppConfirmationView::WindowClosing() {
-  if (callback_)
-    std::move(callback_).Run(false, web_app_info_);
+  if (callback_) {
+    DCHECK(web_app_info_);
+    std::move(callback_).Run(false, std::move(web_app_info_));
+  }
 }
 
 bool BookmarkAppConfirmationView::Accept() {
-  web_app_info_.title = GetTrimmedTitle();
-  web_app_info_.open_as_window =
-      open_as_window_checkbox_ && open_as_window_checkbox_->checked();
-  base::ResetAndReturn(&callback_).Run(true, web_app_info_);
+  DCHECK(web_app_info_);
+  web_app_info_->title = GetTrimmedTitle();
+  web_app_info_->open_as_window =
+      open_as_window_checkbox_ && open_as_window_checkbox_->GetChecked();
+  std::move(callback_).Run(true, std::move(web_app_info_));
   return true;
 }
 
 base::string16 BookmarkAppConfirmationView::GetDialogButtonLabel(
     ui::DialogButton button) const {
-  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK ? IDS_ADD
-                                                                  : IDS_CANCEL);
+  return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK
+                                       ? IDS_CREATE_SHORTCUTS_BUTTON_LABEL
+                                       : IDS_CANCEL);
 }
 
 bool BookmarkAppConfirmationView::IsDialogButtonEnabled(
@@ -153,11 +160,16 @@ base::string16 BookmarkAppConfirmationView::GetTrimmedTitle() const {
 namespace chrome {
 
 void ShowBookmarkAppDialog(content::WebContents* web_contents,
-                           const WebApplicationInfo& web_app_info,
+                           std::unique_ptr<WebApplicationInfo> web_app_info,
                            AppInstallationAcceptanceCallback callback) {
   constrained_window::ShowWebModalDialogViews(
-      new BookmarkAppConfirmationView(web_app_info, std::move(callback)),
+      new BookmarkAppConfirmationView(std::move(web_app_info),
+                                      std::move(callback)),
       web_contents);
+}
+
+void SetAutoAcceptBookmarkAppDialogForTesting(bool auto_accept) {
+  g_auto_accept_bookmark_app_for_testing = auto_accept;
 }
 
 }  // namespace chrome

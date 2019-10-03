@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/task/single_thread_task_executor.h"
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
@@ -19,9 +19,9 @@ namespace {
 
 int RunHelper(base::TestSuite* testSuite) {
 #if defined(USE_OZONE)
-  base::MessageLoopForUI main_loop;
+  base::SingleThreadTaskExecutor executor(base::MessagePump::Type::UI);
 #else
-  base::MessageLoopForIO message_loop;
+  base::SingleThreadTaskExecutor executor(base::MessagePump::Type::IO);
 #endif
   return testSuite->Run();
 }
@@ -63,5 +63,5 @@ int main(int argc, char** argv) {
 #endif
   testing::InitGoogleMock(&argc, argv);
   return base::LaunchUnitTestsSerially(
-      argc, argv, base::Bind(&RunHelper, base::Unretained(&test_suite)));
+      argc, argv, base::BindOnce(&RunHelper, base::Unretained(&test_suite)));
 }

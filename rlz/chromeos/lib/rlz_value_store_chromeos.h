@@ -25,6 +25,9 @@ namespace rlz_lib {
 // An implementation of RlzValueStore for ChromeOS.
 class RlzValueStoreChromeOS : public RlzValueStore {
  public:
+  // The maximum retry times allowed for |SetRlzPingSent|.
+  static const int kMaxRetryCount;
+
   // Creates new instance and synchronously reads data from file.
   explicit RlzValueStoreChromeOS(const base::FilePath& store_path);
   ~RlzValueStoreChromeOS() override;
@@ -42,6 +45,7 @@ class RlzValueStoreChromeOS : public RlzValueStore {
                           char* rlz,
                           size_t rlz_size) override;
   bool ClearAccessPointRlz(AccessPoint access_point) override;
+  bool UpdateExistingAccessPointRlz(const std::string& brand) override;
 
   bool AddProductEvent(Product product, const char* event_rlz) override;
   bool ReadProductEvents(Product product,
@@ -56,6 +60,10 @@ class RlzValueStoreChromeOS : public RlzValueStore {
   void CollectGarbage() override;
 
  private:
+  // Returns true if the |rlz_embargo_end_date| present in VPD has passed
+  // compared to the current time.
+  static bool HasRlzEmbargoEndDatePassed();
+
   // Reads RLZ store from file.
   void ReadStore();
 

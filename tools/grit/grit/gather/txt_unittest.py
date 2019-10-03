@@ -5,6 +5,7 @@
 
 '''Unit tests for TxtFile gatherer'''
 
+from __future__ import print_function
 
 import os
 import sys
@@ -31,4 +32,3 @@ class TxtUnittest(unittest.TestCase):
 
 if __name__ == '__main__':
   unittest.main()
-

@@ -3,21 +3,73 @@
 // found in the LICENSE file.
 
 /**
+ * Returns the Play Store footer element that can be detected by id or class
+ * name.
+ */
+function getPlayFooterElement() {
+  var elements = document.getElementsByClassName('play-footer');
+  if (!elements || elements.length == 0) {
+    console.error('Failed to find play-footer element in ToS.');
+    return null;
+  }
+  if (elements.length != 1) {
+    console.error('Found more than one play-footer element in ToS.');
+  }
+  return elements[0];
+}
+
+/**
+ * Returns the select element that controls zone/language selection.
+ */
+function getLangZoneSelect() {
+  var footer = getPlayFooterElement();
+  if (!footer) {
+    return null;
+  }
+
+  var elements = footer.getElementsByTagName('select');
+  if (!elements || elements.length == 0) {
+    console.error('Cannot find zone/language select select element');
+    return null;
+  }
+  if (elements.length != 1) {
+    console.error('Found more than one zone/language select element in ToS.');
+  }
+  return elements[0];
+}
+
+
+/**
  * Analyzes current document and tries to find the link to the Play Store ToS
  * that matches requested |language| and |countryCode|. Once found, navigate
  * to this link and returns True. If no match was found then returns False.
  */
 function navigateToLanguageAndCountryCode(language, countryCode) {
-  var doc = document;
-  var selectLangZoneTerms =
-      doc.getElementById('play-footer').getElementsByTagName('select')[0];
+  var selectLangZoneTerms = getLangZoneSelect();
+
+  if (!selectLangZoneTerms) {
+    // Layout is not recognized, cannot check document structure.
+    return false;
+  }
 
   var applyTermsForLangAndZone = function(termsLang) {
+    // Check special case for en_us which may be mapped to en.
+    var matchDefaultUs = null;
+    if (window.location.href.startsWith(
+            'https://play.google.com/intl/en_us/about/play-terms') &&
+        termsLang == 'en' && countryCode == 'us' &&
+        selectLangZoneTerms.value.startsWith('/intl/en/about/play-terms')) {
+      return true;
+    }
     var matchByLangZone =
-        '/intl/' + termsLang + '_' + countryCode + '/about/play-terms.html';
+        '/intl/' + termsLang + '_' + countryCode + '/about/play-terms';
+    if (selectLangZoneTerms.value.startsWith(matchByLangZone)) {
+      // Already selected what is needed.
+      return true;
+    }
     for (var i = selectLangZoneTerms.options.length - 1; i >= 0; --i) {
       var option = selectLangZoneTerms.options[i];
-      if (option.value == matchByLangZone) {
+      if (option.value.startsWith(matchByLangZone)) {
         window.location.href = option.value;
         return true;
       }
@@ -52,6 +104,14 @@ function navigateToLanguageAndCountryCode(language, countryCode) {
 function processLangZoneTerms(initialLoad, language, countryCode) {
   var langSegments = language.split('-');
   if (initialLoad && navigateToLanguageAndCountryCode(language, countryCode)) {
+    document.body.hidden = false;
+    return true;
+  }
+
+  var footer = getPlayFooterElement();
+  if (!footer) {
+    // Layout is not recognized, show content and stop processing.
+    document.body.hidden = false;
     return true;
   }
 
@@ -61,17 +121,20 @@ function processLangZoneTerms(initialLoad, language, countryCode) {
     matchByLangShort = '/intl/' + langSegments[0] + '_';
   }
 
-  var matchByZone = '_' + countryCode + '/about/play-terms.html';
-  var matchByDefault = '/intl/en/about/play-terms.html';
+  var matchByZone = '_' + countryCode + '/about/play-terms';
+  var matchByDefault = '/intl/en/about/play-terms';
 
   // We are allowed to display terms by default only in language that matches
   // current UI language. In other cases we have to switch to default version.
   var langMatch = false;
   var defaultExist = false;
 
-  var doc = document;
-  var selectLangZoneTerms =
-      doc.getElementById('play-footer').getElementsByTagName('select')[0];
+  var selectLangZoneTerms = getLangZoneSelect();
+  if (!selectLangZoneTerms) {
+    document.body.hidden = false;
+    return;
+  }
+
   for (var i = selectLangZoneTerms.options.length - 1; i >= 0; --i) {
     var option = selectLangZoneTerms.options[i];
     if (selectLangZoneTerms.selectedIndex == i) {
@@ -79,13 +142,13 @@ function processLangZoneTerms(initialLoad, language, countryCode) {
           (matchByLangShort && option.value.startsWith(matchByLangShort));
       continue;
     }
-    if (option.value == matchByDefault) {
+    if (option.value.startsWith(matchByDefault)) {
       defaultExist = true;
       continue;
     }
 
     option.hidden = !option.value.startsWith(matchByLang) &&
-        !option.value.endsWith(matchByZone) &&
+        !option.value.includes(matchByZone) &&
         !(matchByLangShort && option.value.startsWith(matchByLangShort)) &&
         option.text != 'English';
   }
@@ -97,6 +160,14 @@ function processLangZoneTerms(initialLoad, language, countryCode) {
     document.body.hidden = false;
   }
   return true;
+}
+
+/**
+ * Returns the raw body HTML of the ToS contents.
+ * @return {string} HTML of document body.
+ */
+function getToSContent() {
+  return document.body.innerHTML;
 }
 
 /**
@@ -119,11 +190,6 @@ function formatDocument() {
   base.target = '_blank';
   document.head.appendChild(base);
 
-  // Remove header element that contains logo image we don't want to show in
-  // our view.
-  var doc = document;
-  document.body.removeChild(doc.getElementById('play-header'));
-
   // Hide content at this point. We might want to redirect our view to terms
   // that exactly match current language and country code.
   document.body.hidden = true;
@@ -135,12 +201,14 @@ function formatDocument() {
  *                  document or link to the default policy if it is not found.
  */
 function getPrivacyPolicyLink() {
-  var doc = document;
-  var links = doc.getElementById('play-footer').getElementsByTagName('a');
-  for (var i = 0; i < links.length; ++i) {
-    var targetURL = links[i].href;
-    if (targetURL.endsWith('/policies/privacy/')) {
-      return targetURL;
+  var footer = getPlayFooterElement();
+  if (footer) {
+    var links = footer.getElementsByTagName('a');
+    for (var i = 0; i < links.length; ++i) {
+      var targetURL = links[i].href;
+      if (targetURL.endsWith('/policies/privacy/')) {
+        return targetURL;
+      }
     }
   }
   return 'https://www.google.com/policies/privacy/';
@@ -157,8 +225,8 @@ function processDocument() {
   }
   formatDocument();
 
-  var initialLoad =
-      window.location.href == 'https://play.google.com/about/play-terms.html';
+  var initialLoad = window.location.href.startsWith(
+      'https://play.google.com/about/play-terms');
   var language = document.language;
   if (!language) {
     language = navigator.language;

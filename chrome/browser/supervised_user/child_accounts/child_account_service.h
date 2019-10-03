@@ -19,9 +19,7 @@
 #include "chrome/browser/supervised_user/child_accounts/family_info_fetcher.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
-#include "components/sync/driver/sync_service_observer.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "net/base/backoff_entry.h"
 
 namespace user_prefs {
@@ -35,10 +33,8 @@ class Profile;
 // supervised user experience, fetch information about the parent(s)).
 class ChildAccountService : public KeyedService,
                             public FamilyInfoFetcher::Consumer,
-                            public AccountTrackerService::Observer,
-                            public syncer::SyncServiceObserver,
-                            public SupervisedUserService::Delegate,
-                            public GaiaCookieManagerService::Observer {
+                            public signin::IdentityManager::Observer,
+                            public SupervisedUserService::Delegate {
  public:
   enum class AuthState { AUTHENTICATED, NOT_AUTHENTICATED, PENDING };
 
@@ -57,7 +53,7 @@ class ChildAccountService : public KeyedService,
   // KeyedService:
   void Shutdown() override;
 
-  void AddChildStatusReceivedCallback(const base::Closure& callback);
+  void AddChildStatusReceivedCallback(base::OnceClosure callback);
 
   // Returns whether or not the user is authenticated on Google web properties
   // based on the state of the cookie jar. Returns AuthState::PENDING if
@@ -82,22 +78,18 @@ class ChildAccountService : public KeyedService,
   // Sets whether the signed-in account is a child account.
   void SetIsChildAccount(bool is_child_account);
 
-  // AccountTrackerService::Observer implementation.
-  void OnAccountUpdated(const AccountInfo& info) override;
-  void OnAccountRemoved(const AccountInfo& info) override;
+  // signin::IdentityManager::Observer implementation.
+  void OnExtendedAccountInfoUpdated(const AccountInfo& info) override;
+  void OnExtendedAccountInfoRemoved(const AccountInfo& info) override;
 
   // FamilyInfoFetcher::Consumer implementation.
   void OnGetFamilyMembersSuccess(
       const std::vector<FamilyInfoFetcher::FamilyMember>& members) override;
   void OnFailure(FamilyInfoFetcher::ErrorCode error) override;
 
-  // syncer::SyncServiceObserver implementation.
-  void OnStateChanged(syncer::SyncService* sync) override;
-
-  // GaiaCookieManagerService::Observer implementation.
-  void OnGaiaAccountsInCookieUpdated(
-      const std::vector<gaia::ListedAccount>& accounts,
-      const std::vector<gaia::ListedAccount>& signed_out_accounts,
+  // IdentityManager::Observer implementation.
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
       const GoogleServiceAuthError& error) override;
 
   void StartFetchingFamilyInfo();
@@ -122,17 +114,14 @@ class ChildAccountService : public KeyedService,
   base::OneShotTimer family_fetch_timer_;
   net::BackoffEntry family_fetch_backoff_;
 
-  ScopedObserver<syncer::SyncService, syncer::SyncServiceObserver>
-      sync_service_observer_;
-
-  GaiaCookieManagerService* gaia_cookie_manager_;
+  signin::IdentityManager* identity_manager_;
 
   base::CallbackList<void()> google_auth_state_observers_;
 
   // Callbacks to run when the user status becomes known.
-  std::vector<base::Closure> status_received_callback_list_;
+  std::vector<base::OnceClosure> status_received_callback_list_;
 
-  base::WeakPtrFactory<ChildAccountService> weak_ptr_factory_;
+  base::WeakPtrFactory<ChildAccountService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChildAccountService);
 };

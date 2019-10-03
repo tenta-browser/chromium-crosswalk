@@ -5,9 +5,16 @@
 #ifndef CHROME_BROWSER_SYNC_SESSIONS_SYNC_SESSIONS_ROUTER_TAB_HELPER_H_
 #define CHROME_BROWSER_SYNC_SESSIONS_SYNC_SESSIONS_ROUTER_TAB_HELPER_H_
 
+#include "chrome/browser/translate/chrome_translate_client.h"
+#include "components/favicon/core/favicon_driver_observer.h"
 #include "components/sessions/core/session_id.h"
+#include "components/translate/content/browser/content_translate_driver.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+
+namespace favicon {
+class FaviconDriver;
+}
 
 namespace sync_sessions {
 
@@ -22,7 +29,9 @@ class SyncSessionsWebContentsRouter;
 // https://chromium.googlesource.com/chromium/src/+/master/docs/tab_helpers.md
 class SyncSessionsRouterTabHelper
     : public content::WebContentsUserData<SyncSessionsRouterTabHelper>,
-      public content::WebContentsObserver {
+      public content::WebContentsObserver,
+      public translate::ContentTranslateDriver::Observer,
+      public favicon::FaviconDriverObserver {
  public:
   ~SyncSessionsRouterTabHelper() override;
 
@@ -46,9 +55,25 @@ class SyncSessionsRouterTabHelper
                            bool started_from_context_menu,
                            bool renderer_initiated) override;
 
+  // ContentTranslateDriver::Observer implementation.
+  void OnLanguageDetermined(
+      const translate::LanguageDetectionDetails& details) override;
+
+  // favicon::FaviconDriverObserver implementation.
+  void OnFaviconUpdated(
+      favicon::FaviconDriver* favicon_driver,
+      FaviconDriverObserver::NotificationIconType notification_icon_type,
+      const GURL& icon_url,
+      bool icon_url_changed,
+      const gfx::Image& image) override;
+
+  // Sets the source tab id for the given child WebContents to the id of the
+  // WebContents that owns this helper.
+  void SetSourceTabIdForChild(content::WebContents* child_contents);
+
   // Get the tab id of the tab responsible for creating the tab this helper
-  // corresponds to. Returns -1 if there is no such tab.
-  SessionID::id_type source_tab_id() const { return source_tab_id_; }
+  // corresponds to. Returns an invalid ID if there is no such tab.
+  SessionID source_tab_id() const { return source_tab_id_; }
 
  private:
   friend class content::WebContentsUserData<SyncSessionsRouterTabHelper>;
@@ -58,7 +83,7 @@ class SyncSessionsRouterTabHelper
 
   // Set the tab id of the tab reponsible for creating the tab this helper
   // corresponds to.
-  void set_source_tab_id(const SessionID::id_type id) { source_tab_id_ = id; }
+  void set_source_tab_id(SessionID id) { source_tab_id_ = id; }
 
   void NotifyRouter(bool page_load_completed = false);
 
@@ -70,7 +95,13 @@ class SyncSessionsRouterTabHelper
   // * From context menu, "Open link in new window".
   // * Ctrl-click.
   // * Click on a link with target='_blank'.
-  SessionID::id_type source_tab_id_;
+  SessionID source_tab_id_;
+
+  ChromeTranslateClient* chrome_translate_client_;
+
+  favicon::FaviconDriver* favicon_driver_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(SyncSessionsRouterTabHelper);
 };

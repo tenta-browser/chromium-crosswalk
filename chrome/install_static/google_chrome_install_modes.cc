@@ -4,6 +4,8 @@
 
 // Brand-specific constants and install modes for Google Chrome.
 
+#include "chrome/install_static/google_chrome_install_modes.h"
+
 #include <stdlib.h>
 
 #include "chrome/app/chrome_dll_resource.h"
@@ -22,6 +24,8 @@ const wchar_t kBinariesAppGuid[] = L"{4DC8B4CA-1BDA-483e-B5FA-D3C12E15B62D}";
 
 // Google Chrome integrates with Google Update, so the app GUID above is used.
 const wchar_t kBinariesPathName[] = L"";
+
+const char kSafeBrowsingName[] = "googlechrome";
 
 const InstallConstants kInstallModes[] = {
     // The primary install mode for stable Google Chrome.
@@ -43,6 +47,17 @@ const InstallConstants kInstallModes[] = {
          0x425C,
          {0xAC, 0xB7, 0x6D, 0x19, 0xD6, 0x44, 0x28,
           0xCD}},  // Toast Activator CLSID.
+        {0x708860E0,
+         0xF641,
+         0x4611,
+         {0x88, 0x95, 0x7D, 0x86, 0x7D, 0xD3, 0x67, 0x5B}},  // Elevator CLSID.
+
+        {0x463abecf,
+         0x410d,
+         0x407f,
+         {0x8a, 0xf5, 0xd, 0xf3, 0x5a, 0x0, 0x5c,
+          0xc8}},  // IElevator IID and TypeLib
+                   // {463ABECF-410D-407F-8AF5-0DF35A005CC8}.
         L"",       // The empty string means "stable".
         ChannelStrategy::ADDITIONAL_PARAMETERS,
         true,  // Supports system-level installs.
@@ -51,6 +66,8 @@ const InstallConstants kInstallModes[] = {
         true,  // Supported multi-install.
         icon_resources::kApplicationIndex,  // App icon resource index.
         IDR_MAINFRAME,                      // App icon resource id.
+        L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
+        L"924012149-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Google Chrome Beta
     {
@@ -71,6 +88,17 @@ const InstallConstants kInstallModes[] = {
          0x4AE2,
          {0x98, 0xC4, 0x63, 0x73, 0xEA, 0xA1, 0xEA,
           0x4D}},  // Toast Activator CLSID.
+        {0xDD2646BA,
+         0x3707,
+         0x4BF8,
+         {0xB9, 0xA7, 0x3, 0x86, 0x91, 0xA6, 0x8F, 0xC2}},  // Elevator CLSID.
+
+        {0xa2721d66,
+         0x376e,
+         0x4d2f,
+         {0x9f, 0xf, 0x90, 0x70, 0xe9, 0xa4, 0x2b,
+          0x5f}},  // IElevator IID and TypeLib
+                   // {A2721D66-376E-4D2F-9F0F-9070E9A42B5F}.
         L"beta",   // Forced channel name.
         ChannelStrategy::FIXED,
         true,   // Supports system-level installs.
@@ -79,6 +107,8 @@ const InstallConstants kInstallModes[] = {
         false,  // Did not support multi-install.
         icon_resources::kBetaApplicationIndex,  // App icon resource index.
         IDR_X005_BETA,                          // App icon resource id.
+        L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
+        L"924012151-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Google Chrome Dev
     {
@@ -99,6 +129,17 @@ const InstallConstants kInstallModes[] = {
          0x4C83,
          {0x8D, 0x7A, 0x90, 0x27, 0x71, 0xE7, 0x32,
           0xFA}},  // Toast Activator CLSID.
+        {0xDA7FDCA5,
+         0x2CAA,
+         0x4637,
+         {0xAA, 0x17, 0x7, 0x40, 0x58, 0x4D, 0xE7, 0xDA}},  // Elevator CLSID.
+
+        {0xbb2aa26b,
+         0x343a,
+         0x4072,
+         {0x8b, 0x6f, 0x80, 0x55, 0x7b, 0x8c, 0xe5,
+          0x71}},  // IElevator IID and TypeLib
+                   // {BB2AA26B-343A-4072-8B6F-80557B8CE571}.
         L"dev",    // Forced channel name.
         ChannelStrategy::FIXED,
         true,   // Supports system-level installs.
@@ -107,6 +148,8 @@ const InstallConstants kInstallModes[] = {
         false,  // Did not support multi-install.
         icon_resources::kDevApplicationIndex,  // App icon resource index.
         IDR_X004_DEV,                          // App icon resource id.
+        L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
+        L"924012152-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Google Chrome SxS (canary).
     {
@@ -126,7 +169,18 @@ const InstallConstants kInstallModes[] = {
          0x149F,
          0x4E95,
          {0x83, 0x2D, 0x8F, 0x69, 0x8D, 0x40, 0xAD,
-          0x7F}},   // Toast Activator CLSID.
+          0x7F}},  // Toast Activator CLSID.
+        {0x704C2872,
+         0x2049,
+         0x435E,
+         {0xA4, 0x69, 0xA, 0x53, 0x43, 0x13, 0xC4, 0x2B}},  // Elevator CLSID.
+
+        {0x4f7ce041,
+         0x28e9,
+         0x484f,
+         {0x9d, 0xd0, 0x61, 0xa8, 0xca, 0xce, 0xfe,
+          0xe4}},   // IElevator IID and TypeLib
+                    // {4F7CE041-28E9-484F-9DD0-61A8CACEFEE4}.
         L"canary",  // Forced channel name.
         ChannelStrategy::FIXED,
         false,  // Does not support system-level installs.
@@ -135,6 +189,8 @@ const InstallConstants kInstallModes[] = {
         false,  // Did not support multi-install.
         icon_resources::kSxSApplicationIndex,  // App icon resource index.
         IDR_SXS,                               // App icon resource id.
+        L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
+        L"924012150-",  // App container sid prefix for sandbox.
     },
 };
 

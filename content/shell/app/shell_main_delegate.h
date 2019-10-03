@@ -19,13 +19,9 @@ class ShellContentGpuClient;
 class ShellContentRendererClient;
 class ShellContentUtilityClient;
 
-#if defined(OS_ANDROID)
-class BrowserMainRunner;
-#endif
-
 class ShellMainDelegate : public ContentMainDelegate {
  public:
-  ShellMainDelegate();
+  explicit ShellMainDelegate(bool is_browsertest = false);
   ~ShellMainDelegate() override;
 
   // ContentMainDelegate implementation:
@@ -36,6 +32,7 @@ class ShellMainDelegate : public ContentMainDelegate {
 #if defined(OS_LINUX)
   void ZygoteForked() override;
 #endif
+  void PreCreateMainMessageLoop() override;
   ContentBrowserClient* CreateContentBrowserClient() override;
   ContentGpuClient* CreateContentGpuClient() override;
   ContentRendererClient* CreateContentRendererClient() override;
@@ -44,15 +41,12 @@ class ShellMainDelegate : public ContentMainDelegate {
   static void InitializeResourceBundle();
 
  private:
+  bool is_browsertest_;
   std::unique_ptr<ShellContentBrowserClient> browser_client_;
   std::unique_ptr<ShellContentGpuClient> gpu_client_;
   std::unique_ptr<ShellContentRendererClient> renderer_client_;
   std::unique_ptr<ShellContentUtilityClient> utility_client_;
   std::unique_ptr<ContentClient> content_client_;
-
-#if defined(OS_ANDROID)
-  std::unique_ptr<BrowserMainRunner> browser_runner_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(ShellMainDelegate);
 };

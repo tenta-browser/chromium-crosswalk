@@ -8,6 +8,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -17,17 +18,16 @@
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_info_cache_unittest.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/test_signin_client_builder.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/account_info.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/gfx/image/image.h"
@@ -44,8 +44,7 @@ class ProfileDownloaderMock : public ProfileDownloader {
       : ProfileDownloader(delegate) {
   }
 
-  virtual ~ProfileDownloaderMock() {
-  }
+  ~ProfileDownloaderMock() override {}
 
   MOCK_CONST_METHOD0(GetProfileFullName, base::string16());
   MOCK_CONST_METHOD0(GetProfileGivenName, base::string16());
@@ -62,22 +61,47 @@ class GAIAInfoUpdateServiceMock : public GAIAInfoUpdateService {
       : GAIAInfoUpdateService(profile) {
   }
 
-  virtual ~GAIAInfoUpdateServiceMock() {
-  }
+  ~GAIAInfoUpdateServiceMock() override {}
 
   MOCK_METHOD0(Update, void());
 };
 
 // TODO(anthonyvd) : remove ProfileInfoCacheTest from the test fixture.
-class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
+class GAIAInfoUpdateServiceTestBase : public ProfileInfoCacheTest {
  protected:
-  GAIAInfoUpdateServiceTest() : profile_(NULL) {
+  explicit GAIAInfoUpdateServiceTestBase(bool create_gaia_info_service_on_setup)
+      : create_gaia_info_service_on_setup_(create_gaia_info_service_on_setup) {}
+  ~GAIAInfoUpdateServiceTestBase() override = default;
+
+  void SetUp() override {
+    ProfileInfoCacheTest::SetUp();
+    if (create_gaia_info_service_on_setup_) {
+      service_.reset(new NiceMock<GAIAInfoUpdateServiceMock>(profile()));
+      downloader_.reset(new NiceMock<ProfileDownloaderMock>(service()));
+    }
+
+    identity_test_env_adaptor_ =
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
+  }
+
+  void TearDown() override {
+    if (downloader_)
+      downloader_.reset();
+    if (service_) {
+      service_->Shutdown();
+      service_.reset();
+    }
+    ProfileInfoCacheTest::TearDown();
   }
 
   Profile* profile() {
     if (!profile_)
       profile_ = CreateProfile("Person 1");
     return profile_;
+  }
+
+  signin::IdentityTestEnvironment* identity_test_env() {
+    return identity_test_env_adaptor_->identity_test_env();
   }
 
   ProfileAttributesStorage* storage() {
@@ -88,13 +112,16 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
   NiceMock<ProfileDownloaderMock>* downloader() { return downloader_.get(); }
 
   Profile* CreateProfile(const std::string& name) {
-    TestingProfile::TestingFactories testing_factories;
-    testing_factories.push_back(std::make_pair(
+    TestingProfile::TestingFactories testing_factories =
+        IdentityTestEnvironmentProfileAdaptor::
+            GetIdentityTestEnvironmentFactories();
+    testing_factories.emplace_back(
         ChromeSigninClientFactory::GetInstance(),
-        signin::BuildTestSigninClient));
+        base::BindRepeating(&signin::BuildTestSigninClient));
     Profile* profile = testing_profile_manager_.CreateTestingProfile(
         name, std::unique_ptr<sync_preferences::PrefServiceSyncable>(),
-        base::UTF8ToUTF16(name), 0, std::string(), testing_factories);
+        base::UTF8ToUTF16(name), 0, std::string(),
+        std::move(testing_factories));
     // The testing manager sets the profile name manually, which counts as
     // a user-customized profile name. Reset this to match the default name
     // we are actually using.
@@ -155,27 +182,52 @@ class GAIAInfoUpdateServiceTest : public ProfileInfoCacheTest {
     EXPECT_EQ(given_name, entry->GetGAIAGivenName());
   }
 
- private:
-  void SetUp() override;
-  void TearDown() override;
-
-  Profile* profile_;
+  const bool create_gaia_info_service_on_setup_;
+  Profile* profile_ = nullptr;
+  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
+      identity_test_env_adaptor_;
   std::unique_ptr<NiceMock<GAIAInfoUpdateServiceMock>> service_;
   std::unique_ptr<NiceMock<ProfileDownloaderMock>> downloader_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(GAIAInfoUpdateServiceTestBase);
 };
 
-void GAIAInfoUpdateServiceTest::SetUp() {
-  ProfileInfoCacheTest::SetUp();
-  service_.reset(new NiceMock<GAIAInfoUpdateServiceMock>(profile()));
-  downloader_.reset(new NiceMock<ProfileDownloaderMock>(service()));
-}
+class GAIAInfoUpdateServiceTest : public GAIAInfoUpdateServiceTestBase {
+ public:
+  GAIAInfoUpdateServiceTest()
+      : GAIAInfoUpdateServiceTestBase(
+            /*create_gaia_info_service_on_setup_=*/true) {}
+  ~GAIAInfoUpdateServiceTest() override = default;
 
-void GAIAInfoUpdateServiceTest::TearDown() {
-  downloader_.reset();
-  service_->Shutdown();
-  service_.reset();
-  ProfileInfoCacheTest::TearDown();
-}
+ private:
+  DISALLOW_COPY_AND_ASSIGN(GAIAInfoUpdateServiceTest);
+};
+
+class GAIAInfoUpdateServiceMiscTest : public GAIAInfoUpdateServiceTestBase,
+                                      public ProfileInfoCacheObserver {
+ public:
+  GAIAInfoUpdateServiceMiscTest()
+      : GAIAInfoUpdateServiceTestBase(
+            /*create_gaia_info_service_on_setup_=*/false) {}
+  ~GAIAInfoUpdateServiceMiscTest() override = default;
+
+  void OnProfileNameChanged(const base::FilePath& profile_path,
+                            const base::string16& old_profile_name) override {
+    profile_name_changed_count_++;
+  }
+
+  void OnProfileAvatarChanged(const base::FilePath& profile_path) override {
+    profile_avatar_changed_count_++;
+  }
+
+ protected:
+  unsigned int profile_name_changed_count_ = 0;
+  unsigned int profile_avatar_changed_count_ = 0;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(GAIAInfoUpdateServiceMiscTest);
+};
 
 }  // namespace
 
@@ -200,8 +252,8 @@ TEST_F(GAIAInfoUpdateServiceTest, DownloadSuccess) {
   EXPECT_EQ(given_name, entry->GetGAIAGivenName());
   EXPECT_TRUE(gfx::test::AreImagesEqual(image, *entry->GetGAIAPicture()));
   EXPECT_EQ(url, service()->GetCachedPictureURL());
-  EXPECT_EQ(Profile::kNoHostedDomainFound, profile()->GetPrefs()->
-      GetString(prefs::kGoogleServicesHostedDomain));
+  EXPECT_EQ(kNoHostedDomainFound, profile()->GetPrefs()->GetString(
+                                      prefs::kGoogleServicesHostedDomain));
 }
 
 TEST_F(GAIAInfoUpdateServiceTest, DownloadFailure) {
@@ -302,16 +354,14 @@ TEST_F(GAIAInfoUpdateServiceTest, ScheduleUpdate) {
 #if !defined(OS_CHROMEOS)
 
 TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
-  SigninManager* signin_manager =
-      SigninManagerFactory::GetForProfile(profile());
-  signin_manager->SetAuthenticatedAccountInfo("gaia_id", "pat@example.com");
+  identity_test_env()->SetPrimaryAccount("pat@example.com");
   base::string16 gaia_name = base::UTF8ToUTF16("Pat Foo");
 
   ASSERT_EQ(1u, storage()->GetNumberOfProfiles());
   ProfileAttributesEntry* entry = storage()->GetAllProfilesAttributes().front();
   entry->SetGAIAName(gaia_name);
   gfx::Image gaia_picture = gfx::test::CreateImage(256, 256);
-  entry->SetGAIAPicture(&gaia_picture);
+  entry->SetGAIAPicture(gaia_picture);
 
   // Set a fake picture URL.
   profile()->GetPrefs()->SetString(prefs::kProfileGAIAInfoPictureURL,
@@ -320,8 +370,7 @@ TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
   EXPECT_FALSE(service()->GetCachedPictureURL().empty());
 
   // Log out.
-  signin_manager->SignOut(signin_metrics::SIGNOUT_TEST,
-                          signin_metrics::SignoutDelete::IGNORE_METRIC);
+  identity_test_env()->ClearPrimaryAccount();
   // Verify that the GAIA name and picture, and picture URL are unset.
   EXPECT_TRUE(entry->GetGAIAName().empty());
   EXPECT_EQ(nullptr, entry->GetGAIAPicture());
@@ -331,11 +380,61 @@ TEST_F(GAIAInfoUpdateServiceTest, LogOut) {
 TEST_F(GAIAInfoUpdateServiceTest, LogIn) {
   // Log in.
   EXPECT_CALL(*service(), Update());
-  AccountTrackerServiceFactory::GetForProfile(profile())
-      ->SeedAccountInfo("gaia_id", "pat@example.com");
-  SigninManager* signin_manager =
-      SigninManagerFactory::GetForProfile(profile());
-  signin_manager->OnExternalSigninCompleted("pat@example.com");
+  identity_test_env()->SetPrimaryAccount("pat@example.com");
+}
+
+TEST_F(GAIAInfoUpdateServiceMiscTest, ClearGaiaInfoOnStartup) {
+  // Simulate a state where the profile entry has GAIA related information
+  // when there is not primary account set.
+  ASSERT_FALSE(identity_test_env()->identity_manager()->HasPrimaryAccount());
+  ASSERT_EQ(1u, storage()->GetNumberOfProfiles());
+  ProfileAttributesEntry* entry = storage()->GetAllProfilesAttributes().front();
+  entry->SetGAIAName(base::UTF8ToUTF16("foo"));
+  entry->SetGAIAGivenName(base::UTF8ToUTF16("Pat Foo"));
+  gfx::Image gaia_picture = gfx::test::CreateImage(256, 256);
+  entry->SetGAIAPicture(gaia_picture);
+
+  GetCache()->AddObserver(this);
+
+  // Verify that creating the GAIAInfoUpdateService resets the GAIA related
+  // profile attributes if the profile no longer has a primary account and that
+  // the profile info cache observer wass notified about profile name and
+  // avatar changes.
+  service_.reset(new NiceMock<GAIAInfoUpdateServiceMock>(profile()));
+  EXPECT_TRUE(entry->GetGAIAName().empty());
+  EXPECT_TRUE(entry->GetGAIAGivenName().empty());
+  EXPECT_FALSE(entry->GetGAIAPicture());
+  EXPECT_EQ(1U, profile_name_changed_count_);
+  EXPECT_EQ(1U, profile_avatar_changed_count_);
+
+  GetCache()->RemoveObserver(this);
+}
+
+// Regression test for http://crbug.com/900374
+TEST_F(GAIAInfoUpdateServiceMiscTest,
+       ClearGaiaInfoForSignedOutProfileDoesNotNotifyProfileObservers) {
+  // Simulate a state where the profile entry has no GAIA related information
+  // and when there is not primary account set.
+  ASSERT_FALSE(identity_test_env()->identity_manager()->HasPrimaryAccount());
+  ASSERT_EQ(1u, storage()->GetNumberOfProfiles());
+  ProfileAttributesEntry* entry = storage()->GetAllProfilesAttributes().front();
+  ASSERT_TRUE(entry->GetGAIAName().empty());
+  ASSERT_TRUE(entry->GetGAIAGivenName().empty());
+  ASSERT_FALSE(entry->GetGAIAPicture());
+
+  GetCache()->AddObserver(this);
+
+  // Verify that the state for the profile entry did not change and that the
+  // profile info cache observer was not notified about any profile name
+  // and avatar changes.
+  service_.reset(new NiceMock<GAIAInfoUpdateServiceMock>(profile()));
+  EXPECT_TRUE(entry->GetGAIAName().empty());
+  EXPECT_TRUE(entry->GetGAIAGivenName().empty());
+  EXPECT_FALSE(entry->GetGAIAPicture());
+  EXPECT_EQ(0U, profile_name_changed_count_);
+  EXPECT_EQ(0U, profile_avatar_changed_count_);
+
+  GetCache()->RemoveObserver(this);
 }
 
 #endif

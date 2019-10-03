@@ -11,14 +11,15 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "build/build_config.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/incoming_broker_client_invitation.h"
-#include "mojo/edk/embedder/named_platform_channel_pair.h"
-#include "mojo/edk/embedder/platform_channel_pair.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
+#include "mojo/public/cpp/platform/named_platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel.h"
+#include "mojo/public/cpp/platform/platform_channel_endpoint.h"
+#include "mojo/public/cpp/system/invitation.h"
 #include "remoting/base/auto_thread.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/desktop_process.h"
@@ -33,11 +34,14 @@ namespace remoting {
 int DesktopProcessMain() {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  base::MessageLoopForUI message_loop;
+
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("Me2Me");
+
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
   base::RunLoop run_loop;
-  scoped_refptr<AutoThreadTaskRunner> ui_task_runner =
-      new AutoThreadTaskRunner(message_loop.task_runner(),
-                               run_loop.QuitClosure());
+  scoped_refptr<AutoThreadTaskRunner> ui_task_runner = new AutoThreadTaskRunner(
+      main_task_executor.task_runner(), run_loop.QuitClosure());
 
   // Launch the video capture thread.
   scoped_refptr<AutoThreadTaskRunner> video_capture_task_runner =
@@ -45,33 +49,27 @@ int DesktopProcessMain() {
 
   // Launch the input thread.
   scoped_refptr<AutoThreadTaskRunner> input_task_runner =
-      AutoThread::CreateWithType(
-          "Input thread", ui_task_runner, base::MessageLoop::TYPE_IO);
+      AutoThread::CreateWithType("Input thread", ui_task_runner,
+                                 base::MessagePump::Type::IO);
 
   // Launch the I/O thread.
   scoped_refptr<AutoThreadTaskRunner> io_task_runner =
       AutoThread::CreateWithType("I/O thread", ui_task_runner,
-                                 base::MessageLoop::TYPE_IO);
+                                 base::MessagePump::Type::IO);
 
-  mojo::edk::ScopedIPCSupport ipc_support(
+  mojo::core::ScopedIPCSupport ipc_support(
       io_task_runner->task_runner(),
-      mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST);
-  mojo::edk::ScopedPlatformHandle parent_pipe =
-      mojo::edk::PlatformChannelPair::PassClientHandleFromParentProcess(
+      mojo::core::ScopedIPCSupport::ShutdownPolicy::FAST);
+  mojo::PlatformChannelEndpoint endpoint =
+      mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(
           *command_line);
-  if (!parent_pipe.is_valid()) {
-    parent_pipe =
-        mojo::edk::NamedPlatformChannelPair::PassClientHandleFromParentProcess(
-            *command_line);
-  }
-  if (!parent_pipe.is_valid()) {
+  if (!endpoint.is_valid())
+    endpoint = mojo::NamedPlatformChannel::ConnectToServer(*command_line);
+  if (!endpoint.is_valid())
     return kInvalidCommandLineExitCode;
-  }
 
-  auto invitation = mojo::edk::IncomingBrokerClientInvitation::Accept(
-      mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
-                                  std::move(parent_pipe)));
-  mojo::ScopedMessagePipeHandle message_pipe = invitation->ExtractMessagePipe(
+  auto invitation = mojo::IncomingInvitation::Accept(std::move(endpoint));
+  mojo::ScopedMessagePipeHandle message_pipe = invitation.ExtractMessagePipe(
       command_line->GetSwitchValueASCII(kMojoPipeToken));
   DesktopProcess desktop_process(ui_task_runner, input_task_runner,
                                  io_task_runner, std::move(message_pipe));
@@ -87,11 +85,11 @@ int DesktopProcessMain() {
 
   desktop_environment_factory.reset(new SessionDesktopEnvironmentFactory(
       ui_task_runner, video_capture_task_runner, input_task_runner,
-      ui_task_runner, nullptr, inject_sas_closure, lock_workstation_closure));
+      ui_task_runner, inject_sas_closure, lock_workstation_closure));
 #else  // !defined(OS_WIN)
   desktop_environment_factory.reset(new Me2MeDesktopEnvironmentFactory(
       ui_task_runner, video_capture_task_runner, input_task_runner,
-      ui_task_runner, nullptr));
+      ui_task_runner));
 #endif  // !defined(OS_WIN)
 
   if (!desktop_process.Start(std::move(desktop_environment_factory)))

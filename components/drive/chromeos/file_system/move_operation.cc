@@ -4,6 +4,7 @@
 
 #include "components/drive/chromeos/file_system/move_operation.h"
 
+#include "base/bind.h"
 #include "base/sequenced_task_runner.h"
 #include "components/drive/chromeos/file_system/operation_delegate.h"
 #include "components/drive/chromeos/resource_metadata.h"
@@ -75,14 +76,14 @@ MoveOperation::MoveOperation(base::SequencedTaskRunner* blocking_task_runner,
 }
 
 MoveOperation::~MoveOperation() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
 void MoveOperation::Move(const base::FilePath& src_file_path,
                          const base::FilePath& dest_file_path,
                          const FileOperationCallback& callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!callback.is_null());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK(callback);
 
   FileChange* changed_files = new FileChange;
   std::string* local_id = new std::string;
@@ -107,7 +108,7 @@ void MoveOperation::MoveAfterUpdateLocalState(
     const FileChange* changed_files,
     const std::string* local_id,
     FileError error) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (error == FILE_ERROR_OK) {
     // Notify the change of directory.
     delegate_->OnFileChangedByOperation(*changed_files);

@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/ukm/content/source_url_recorder.h"
 #include "content/public/browser/global_request_id.h"
@@ -16,7 +15,7 @@
 #include "content/public/common/referrer.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -34,7 +33,7 @@ void PageLoadMetricsObserverTestHarness::SetUp() {
   // Page load metrics depends on UKM source URLs being recorded, so make sure
   // the SourceUrlRecorderWebContentsObserver is instantiated.
   ukm::InitializeSourceUrlRecorderForWebContents(web_contents());
-  tester_ = base::MakeUnique<PageLoadMetricsObserverTester>(
+  tester_ = std::make_unique<PageLoadMetricsObserverTester>(
       web_contents(),
       base::BindRepeating(
           &PageLoadMetricsObserverTestHarness::RegisterObservers,
@@ -51,7 +50,13 @@ void PageLoadMetricsObserverTestHarness::StartNavigation(const GURL& gurl) {
 
 void PageLoadMetricsObserverTestHarness::SimulateTimingUpdate(
     const mojom::PageLoadTiming& timing) {
-  tester_->SimulateTimingAndMetadataUpdate(timing, mojom::PageLoadMetadata());
+  tester_->SimulateTimingUpdate(timing);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateTimingUpdate(
+    const mojom::PageLoadTiming& timing,
+    content::RenderFrameHost* rfh) {
+  tester_->SimulateTimingUpdate(timing, rfh);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateTimingAndMetadataUpdate(
@@ -60,9 +65,42 @@ void PageLoadMetricsObserverTestHarness::SimulateTimingAndMetadataUpdate(
   tester_->SimulateTimingAndMetadataUpdate(timing, metadata);
 }
 
+void PageLoadMetricsObserverTestHarness::SimulateCpuTimingUpdate(
+    const mojom::CpuTiming& cpu_timing) {
+  tester_->SimulateCpuTimingUpdate(cpu_timing);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateMetadataUpdate(
+    const mojom::PageLoadMetadata& metadata,
+    content::RenderFrameHost* rfh) {
+  tester_->SimulateMetadataUpdate(metadata, rfh);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateResourceDataUseUpdate(
+    const std::vector<mojom::ResourceDataUpdatePtr>& resources) {
+  tester_->SimulateResourceDataUseUpdate(resources);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateResourceDataUseUpdate(
+    const std::vector<mojom::ResourceDataUpdatePtr>& resources,
+    content::RenderFrameHost* render_frame_host) {
+  tester_->SimulateResourceDataUseUpdate(resources, render_frame_host);
+}
+
 void PageLoadMetricsObserverTestHarness::SimulateFeaturesUpdate(
     const mojom::PageLoadFeatures& new_features) {
   tester_->SimulateFeaturesUpdate(new_features);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateRenderDataUpdate(
+    const mojom::FrameRenderDataUpdate& render_data) {
+  tester_->SimulateRenderDataUpdate(render_data);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateRenderDataUpdate(
+    const mojom::FrameRenderDataUpdate& render_data,
+    content::RenderFrameHost* render_frame_host) {
+  tester_->SimulateRenderDataUpdate(render_data, render_frame_host);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
@@ -89,6 +127,24 @@ void PageLoadMetricsObserverTestHarness::SimulateMediaPlayed() {
   tester_->SimulateMediaPlayed();
 }
 
+void PageLoadMetricsObserverTestHarness::SimulateCookiesRead(
+    const GURL& url,
+    const GURL& first_party_url,
+    const net::CookieList& cookie_list,
+    bool blocked_by_policy) {
+  tester_->SimulateCookiesRead(url, first_party_url, cookie_list,
+                               blocked_by_policy);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateCookieChange(
+    const GURL& url,
+    const GURL& first_party_url,
+    const net::CanonicalCookie& cookie,
+    bool blocked_by_policy) {
+  tester_->SimulateCookieChange(url, first_party_url, cookie,
+                                blocked_by_policy);
+}
+
 const base::HistogramTester&
 PageLoadMetricsObserverTestHarness::histogram_tester() const {
   return histogram_tester_;
@@ -107,8 +163,13 @@ PageLoadMetricsObserverTestHarness::GetPageLoadExtraInfoForCommittedLoad() {
 void PageLoadMetricsObserverTestHarness::NavigateWithPageTransitionAndCommit(
     const GURL& url,
     ui::PageTransition transition) {
-  controller().LoadURL(url, content::Referrer(), transition, std::string());
-  content::WebContentsTester::For(web_contents())->CommitPendingNavigation();
+  auto simulator = PageTransitionIsWebTriggerable(transition)
+                       ? content::NavigationSimulator::CreateRendererInitiated(
+                             url, main_rfh())
+                       : content::NavigationSimulator::CreateBrowserInitiated(
+                             url, web_contents());
+  simulator->SetTransition(transition);
+  simulator->Commit();
 }
 
 void PageLoadMetricsObserverTestHarness::NavigateToUntrackedUrl() {

@@ -8,7 +8,7 @@
 
 #include <memory>
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #import "ios/web/public/test/crw_mock_web_state_delegate.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -88,7 +88,7 @@ TEST_F(WebStateDelegateBridgeTest, OpenURLFromWebState) {
   ASSERT_FALSE([delegate_ openURLParams]);
 
   web::WebState::OpenURLParams params(
-      GURL("https://chromium.test/"),
+      GURL("https://chromium.test/"), GURL("https://virtual.chromium.test/"),
       web::Referrer(GURL("https://chromium2.test/"), ReferrerPolicyNever),
       WindowOpenDisposition::NEW_WINDOW, ui::PAGE_TRANSITION_FORM_SUBMIT, true);
   EXPECT_EQ(&test_web_state_,
@@ -98,6 +98,7 @@ TEST_F(WebStateDelegateBridgeTest, OpenURLFromWebState) {
   const web::WebState::OpenURLParams* result_params = [delegate_ openURLParams];
   ASSERT_TRUE(result_params);
   EXPECT_EQ(params.url, result_params->url);
+  EXPECT_EQ(params.virtual_url, result_params->virtual_url);
   EXPECT_EQ(params.referrer.url, result_params->referrer.url);
   EXPECT_EQ(params.referrer.policy, result_params->referrer.policy);
   EXPECT_EQ(params.disposition, result_params->disposition);
@@ -110,11 +111,11 @@ TEST_F(WebStateDelegateBridgeTest, OpenURLFromWebState) {
 TEST_F(WebStateDelegateBridgeTest, HandleContextMenu) {
   EXPECT_EQ(nil, [delegate_ contextMenuParams]);
   web::ContextMenuParams context_menu_params;
-  context_menu_params.menu_title.reset([@"Menu title" copy]);
+  context_menu_params.menu_title = [@"Menu title" copy];
   context_menu_params.link_url = GURL("http://www.url.com");
   context_menu_params.src_url = GURL("http://www.url.com/image.jpeg");
   context_menu_params.referrer_policy = web::ReferrerPolicyOrigin;
-  context_menu_params.view.reset([[UIView alloc] init]);
+  context_menu_params.view = [[UIView alloc] init];
   context_menu_params.location = CGPointMake(5.0, 5.0);
   bridge_->HandleContextMenu(nullptr, context_menu_params);
   web::ContextMenuParams* result_params = [delegate_ contextMenuParams];
@@ -144,7 +145,7 @@ TEST_F(WebStateDelegateBridgeTest, ShowRepostFormWarningDialog) {
 TEST_F(WebStateDelegateBridgeTest, ShowRepostFormWarningWithNoDelegateMethod) {
   __block bool callback_called = false;
   empty_delegate_bridge_->ShowRepostFormWarningDialog(
-      nullptr, base::BindBlockArc(^(bool should_repost) {
+      nullptr, base::BindOnce(^(bool should_repost) {
         EXPECT_TRUE(should_repost);
         callback_called = true;
       }));

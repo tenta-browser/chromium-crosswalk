@@ -6,6 +6,8 @@
 
 #include "components/cronet/native/generated/cronet.idl_c.h"
 
+#include <math.h>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -23,52 +25,32 @@ class CronetStructTest : public ::testing::Test {
   DISALLOW_COPY_AND_ASSIGN(CronetStructTest);
 };
 
-// Test Struct Cronet_Buffer setters and getters.
-TEST_F(CronetStructTest, TestCronet_Buffer) {
-  Cronet_BufferPtr first = Cronet_Buffer_Create();
-  Cronet_BufferPtr second = Cronet_Buffer_Create();
+// Test Struct Cronet_Error setters and getters.
+TEST_F(CronetStructTest, TestCronet_Error) {
+  Cronet_ErrorPtr first = Cronet_Error_Create();
+  Cronet_ErrorPtr second = Cronet_Error_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_Buffer_set_size(second, Cronet_Buffer_get_size(first));
-  EXPECT_EQ(Cronet_Buffer_get_size(first), Cronet_Buffer_get_size(second));
-  Cronet_Buffer_set_limit(second, Cronet_Buffer_get_limit(first));
-  EXPECT_EQ(Cronet_Buffer_get_limit(first), Cronet_Buffer_get_limit(second));
-  Cronet_Buffer_set_position(second, Cronet_Buffer_get_position(first));
-  EXPECT_EQ(Cronet_Buffer_get_position(first),
-            Cronet_Buffer_get_position(second));
-  Cronet_Buffer_set_data(second, Cronet_Buffer_get_data(first));
-  EXPECT_EQ(Cronet_Buffer_get_data(first), Cronet_Buffer_get_data(second));
-  Cronet_Buffer_set_callback(second, Cronet_Buffer_get_callback(first));
-  EXPECT_EQ(Cronet_Buffer_get_callback(first),
-            Cronet_Buffer_get_callback(second));
-  Cronet_Buffer_Destroy(first);
-  Cronet_Buffer_Destroy(second);
-}
-
-// Test Struct Cronet_Exception setters and getters.
-TEST_F(CronetStructTest, TestCronet_Exception) {
-  Cronet_ExceptionPtr first = Cronet_Exception_Create();
-  Cronet_ExceptionPtr second = Cronet_Exception_Create();
-
-  // Copy values from |first| to |second|.
-  Cronet_Exception_set_error_code(second,
-                                  Cronet_Exception_get_error_code(first));
-  EXPECT_EQ(Cronet_Exception_get_error_code(first),
-            Cronet_Exception_get_error_code(second));
-  Cronet_Exception_set_internal_error_code(
-      second, Cronet_Exception_get_internal_error_code(first));
-  EXPECT_EQ(Cronet_Exception_get_internal_error_code(first),
-            Cronet_Exception_get_internal_error_code(second));
-  Cronet_Exception_set_immediately_retryable(
-      second, Cronet_Exception_get_immediately_retryable(first));
-  EXPECT_EQ(Cronet_Exception_get_immediately_retryable(first),
-            Cronet_Exception_get_immediately_retryable(second));
-  Cronet_Exception_set_quic_detailed_error_code(
-      second, Cronet_Exception_get_quic_detailed_error_code(first));
-  EXPECT_EQ(Cronet_Exception_get_quic_detailed_error_code(first),
-            Cronet_Exception_get_quic_detailed_error_code(second));
-  Cronet_Exception_Destroy(first);
-  Cronet_Exception_Destroy(second);
+  Cronet_Error_error_code_set(second, Cronet_Error_error_code_get(first));
+  EXPECT_EQ(Cronet_Error_error_code_get(first),
+            Cronet_Error_error_code_get(second));
+  Cronet_Error_message_set(second, Cronet_Error_message_get(first));
+  EXPECT_STREQ(Cronet_Error_message_get(first),
+               Cronet_Error_message_get(second));
+  Cronet_Error_internal_error_code_set(
+      second, Cronet_Error_internal_error_code_get(first));
+  EXPECT_EQ(Cronet_Error_internal_error_code_get(first),
+            Cronet_Error_internal_error_code_get(second));
+  Cronet_Error_immediately_retryable_set(
+      second, Cronet_Error_immediately_retryable_get(first));
+  EXPECT_EQ(Cronet_Error_immediately_retryable_get(first),
+            Cronet_Error_immediately_retryable_get(second));
+  Cronet_Error_quic_detailed_error_code_set(
+      second, Cronet_Error_quic_detailed_error_code_get(first));
+  EXPECT_EQ(Cronet_Error_quic_detailed_error_code_get(first),
+            Cronet_Error_quic_detailed_error_code_get(second));
+  Cronet_Error_Destroy(first);
+  Cronet_Error_Destroy(second);
 }
 
 // Test Struct Cronet_QuicHint setters and getters.
@@ -77,15 +59,15 @@ TEST_F(CronetStructTest, TestCronet_QuicHint) {
   Cronet_QuicHintPtr second = Cronet_QuicHint_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_QuicHint_set_host(second, Cronet_QuicHint_get_host(first));
-  EXPECT_STREQ(Cronet_QuicHint_get_host(first),
-               Cronet_QuicHint_get_host(second));
-  Cronet_QuicHint_set_port(second, Cronet_QuicHint_get_port(first));
-  EXPECT_EQ(Cronet_QuicHint_get_port(first), Cronet_QuicHint_get_port(second));
-  Cronet_QuicHint_set_alternatePort(second,
-                                    Cronet_QuicHint_get_alternatePort(first));
-  EXPECT_EQ(Cronet_QuicHint_get_alternatePort(first),
-            Cronet_QuicHint_get_alternatePort(second));
+  Cronet_QuicHint_host_set(second, Cronet_QuicHint_host_get(first));
+  EXPECT_STREQ(Cronet_QuicHint_host_get(first),
+               Cronet_QuicHint_host_get(second));
+  Cronet_QuicHint_port_set(second, Cronet_QuicHint_port_get(first));
+  EXPECT_EQ(Cronet_QuicHint_port_get(first), Cronet_QuicHint_port_get(second));
+  Cronet_QuicHint_alternate_port_set(second,
+                                     Cronet_QuicHint_alternate_port_get(first));
+  EXPECT_EQ(Cronet_QuicHint_alternate_port_get(first),
+            Cronet_QuicHint_alternate_port_get(second));
   Cronet_QuicHint_Destroy(first);
   Cronet_QuicHint_Destroy(second);
 }
@@ -96,14 +78,18 @@ TEST_F(CronetStructTest, TestCronet_PublicKeyPins) {
   Cronet_PublicKeyPinsPtr second = Cronet_PublicKeyPins_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_PublicKeyPins_set_host(second, Cronet_PublicKeyPins_get_host(first));
-  EXPECT_STREQ(Cronet_PublicKeyPins_get_host(first),
-               Cronet_PublicKeyPins_get_host(second));
-  // TODO(mef): Test array |pinsSha256|.
-  Cronet_PublicKeyPins_set_includeSubdomains(
-      second, Cronet_PublicKeyPins_get_includeSubdomains(first));
-  EXPECT_EQ(Cronet_PublicKeyPins_get_includeSubdomains(first),
-            Cronet_PublicKeyPins_get_includeSubdomains(second));
+  Cronet_PublicKeyPins_host_set(second, Cronet_PublicKeyPins_host_get(first));
+  EXPECT_STREQ(Cronet_PublicKeyPins_host_get(first),
+               Cronet_PublicKeyPins_host_get(second));
+  // TODO(mef): Test array |pins_sha256|.
+  Cronet_PublicKeyPins_include_subdomains_set(
+      second, Cronet_PublicKeyPins_include_subdomains_get(first));
+  EXPECT_EQ(Cronet_PublicKeyPins_include_subdomains_get(first),
+            Cronet_PublicKeyPins_include_subdomains_get(second));
+  Cronet_PublicKeyPins_expiration_date_set(
+      second, Cronet_PublicKeyPins_expiration_date_get(first));
+  EXPECT_EQ(Cronet_PublicKeyPins_expiration_date_get(first),
+            Cronet_PublicKeyPins_expiration_date_get(second));
   Cronet_PublicKeyPins_Destroy(first);
   Cronet_PublicKeyPins_Destroy(second);
 }
@@ -114,45 +100,64 @@ TEST_F(CronetStructTest, TestCronet_EngineParams) {
   Cronet_EngineParamsPtr second = Cronet_EngineParams_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_EngineParams_set_userAgent(second,
-                                    Cronet_EngineParams_get_userAgent(first));
-  EXPECT_STREQ(Cronet_EngineParams_get_userAgent(first),
-               Cronet_EngineParams_get_userAgent(second));
-  Cronet_EngineParams_set_storagePath(
-      second, Cronet_EngineParams_get_storagePath(first));
-  EXPECT_STREQ(Cronet_EngineParams_get_storagePath(first),
-               Cronet_EngineParams_get_storagePath(second));
-  Cronet_EngineParams_set_enableQuic(second,
-                                     Cronet_EngineParams_get_enableQuic(first));
-  EXPECT_EQ(Cronet_EngineParams_get_enableQuic(first),
-            Cronet_EngineParams_get_enableQuic(second));
-  Cronet_EngineParams_set_enableHttp2(
-      second, Cronet_EngineParams_get_enableHttp2(first));
-  EXPECT_EQ(Cronet_EngineParams_get_enableHttp2(first),
-            Cronet_EngineParams_get_enableHttp2(second));
-  Cronet_EngineParams_set_enableBrotli(
-      second, Cronet_EngineParams_get_enableBrotli(first));
-  EXPECT_EQ(Cronet_EngineParams_get_enableBrotli(first),
-            Cronet_EngineParams_get_enableBrotli(second));
-  Cronet_EngineParams_set_httpCacheMode(
-      second, Cronet_EngineParams_get_httpCacheMode(first));
-  EXPECT_EQ(Cronet_EngineParams_get_httpCacheMode(first),
-            Cronet_EngineParams_get_httpCacheMode(second));
-  Cronet_EngineParams_set_httpCacheMaxSize(
-      second, Cronet_EngineParams_get_httpCacheMaxSize(first));
-  EXPECT_EQ(Cronet_EngineParams_get_httpCacheMaxSize(first),
-            Cronet_EngineParams_get_httpCacheMaxSize(second));
-  // TODO(mef): Test array |quicHints|.
-  // TODO(mef): Test array |publicKeyPins|.
-  Cronet_EngineParams_set_enablePublicKeyPinningBypassForLocalTrustAnchors(
+  Cronet_EngineParams_enable_check_result_set(
+      second, Cronet_EngineParams_enable_check_result_get(first));
+  EXPECT_EQ(Cronet_EngineParams_enable_check_result_get(first),
+            Cronet_EngineParams_enable_check_result_get(second));
+  Cronet_EngineParams_user_agent_set(second,
+                                     Cronet_EngineParams_user_agent_get(first));
+  EXPECT_STREQ(Cronet_EngineParams_user_agent_get(first),
+               Cronet_EngineParams_user_agent_get(second));
+  Cronet_EngineParams_accept_language_set(
+      second, Cronet_EngineParams_accept_language_get(first));
+  EXPECT_STREQ(Cronet_EngineParams_accept_language_get(first),
+               Cronet_EngineParams_accept_language_get(second));
+  Cronet_EngineParams_storage_path_set(
+      second, Cronet_EngineParams_storage_path_get(first));
+  EXPECT_STREQ(Cronet_EngineParams_storage_path_get(first),
+               Cronet_EngineParams_storage_path_get(second));
+  Cronet_EngineParams_enable_quic_set(
+      second, Cronet_EngineParams_enable_quic_get(first));
+  EXPECT_EQ(Cronet_EngineParams_enable_quic_get(first),
+            Cronet_EngineParams_enable_quic_get(second));
+  Cronet_EngineParams_enable_http2_set(
+      second, Cronet_EngineParams_enable_http2_get(first));
+  EXPECT_EQ(Cronet_EngineParams_enable_http2_get(first),
+            Cronet_EngineParams_enable_http2_get(second));
+  Cronet_EngineParams_enable_brotli_set(
+      second, Cronet_EngineParams_enable_brotli_get(first));
+  EXPECT_EQ(Cronet_EngineParams_enable_brotli_get(first),
+            Cronet_EngineParams_enable_brotli_get(second));
+  Cronet_EngineParams_http_cache_mode_set(
+      second, Cronet_EngineParams_http_cache_mode_get(first));
+  EXPECT_EQ(Cronet_EngineParams_http_cache_mode_get(first),
+            Cronet_EngineParams_http_cache_mode_get(second));
+  Cronet_EngineParams_http_cache_max_size_set(
+      second, Cronet_EngineParams_http_cache_max_size_get(first));
+  EXPECT_EQ(Cronet_EngineParams_http_cache_max_size_get(first),
+            Cronet_EngineParams_http_cache_max_size_get(second));
+  // TODO(mef): Test array |quic_hints|.
+  // TODO(mef): Test array |public_key_pins|.
+  Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_set(
       second,
-      Cronet_EngineParams_get_enablePublicKeyPinningBypassForLocalTrustAnchors(
+      Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_get(
           first));
   EXPECT_EQ(
-      Cronet_EngineParams_get_enablePublicKeyPinningBypassForLocalTrustAnchors(
+      Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_get(
           first),
-      Cronet_EngineParams_get_enablePublicKeyPinningBypassForLocalTrustAnchors(
+      Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_get(
           second));
+  Cronet_EngineParams_network_thread_priority_set(
+      second, Cronet_EngineParams_network_thread_priority_get(first));
+  EXPECT_TRUE(
+      Cronet_EngineParams_network_thread_priority_get(first) ==
+          Cronet_EngineParams_network_thread_priority_get(second) ||
+      isnan(Cronet_EngineParams_network_thread_priority_get(first)) &&
+          isnan(Cronet_EngineParams_network_thread_priority_get(second)));
+  Cronet_EngineParams_experimental_options_set(
+      second, Cronet_EngineParams_experimental_options_get(first));
+  EXPECT_STREQ(Cronet_EngineParams_experimental_options_get(first),
+               Cronet_EngineParams_experimental_options_get(second));
   Cronet_EngineParams_Destroy(first);
   Cronet_EngineParams_Destroy(second);
 }
@@ -163,12 +168,12 @@ TEST_F(CronetStructTest, TestCronet_HttpHeader) {
   Cronet_HttpHeaderPtr second = Cronet_HttpHeader_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_HttpHeader_set_name(second, Cronet_HttpHeader_get_name(first));
-  EXPECT_STREQ(Cronet_HttpHeader_get_name(first),
-               Cronet_HttpHeader_get_name(second));
-  Cronet_HttpHeader_set_value(second, Cronet_HttpHeader_get_value(first));
-  EXPECT_STREQ(Cronet_HttpHeader_get_value(first),
-               Cronet_HttpHeader_get_value(second));
+  Cronet_HttpHeader_name_set(second, Cronet_HttpHeader_name_get(first));
+  EXPECT_STREQ(Cronet_HttpHeader_name_get(first),
+               Cronet_HttpHeader_name_get(second));
+  Cronet_HttpHeader_value_set(second, Cronet_HttpHeader_value_get(first));
+  EXPECT_STREQ(Cronet_HttpHeader_value_get(first),
+               Cronet_HttpHeader_value_get(second));
   Cronet_HttpHeader_Destroy(first);
   Cronet_HttpHeader_Destroy(second);
 }
@@ -179,35 +184,35 @@ TEST_F(CronetStructTest, TestCronet_UrlResponseInfo) {
   Cronet_UrlResponseInfoPtr second = Cronet_UrlResponseInfo_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_UrlResponseInfo_set_url(second, Cronet_UrlResponseInfo_get_url(first));
-  EXPECT_STREQ(Cronet_UrlResponseInfo_get_url(first),
-               Cronet_UrlResponseInfo_get_url(second));
-  // TODO(mef): Test array |urlChain|.
-  Cronet_UrlResponseInfo_set_httpStatusCode(
-      second, Cronet_UrlResponseInfo_get_httpStatusCode(first));
-  EXPECT_EQ(Cronet_UrlResponseInfo_get_httpStatusCode(first),
-            Cronet_UrlResponseInfo_get_httpStatusCode(second));
-  Cronet_UrlResponseInfo_set_httpStatusText(
-      second, Cronet_UrlResponseInfo_get_httpStatusText(first));
-  EXPECT_STREQ(Cronet_UrlResponseInfo_get_httpStatusText(first),
-               Cronet_UrlResponseInfo_get_httpStatusText(second));
-  // TODO(mef): Test array |allHeadersList|.
-  Cronet_UrlResponseInfo_set_wasCached(
-      second, Cronet_UrlResponseInfo_get_wasCached(first));
-  EXPECT_EQ(Cronet_UrlResponseInfo_get_wasCached(first),
-            Cronet_UrlResponseInfo_get_wasCached(second));
-  Cronet_UrlResponseInfo_set_negotiatedProtocol(
-      second, Cronet_UrlResponseInfo_get_negotiatedProtocol(first));
-  EXPECT_STREQ(Cronet_UrlResponseInfo_get_negotiatedProtocol(first),
-               Cronet_UrlResponseInfo_get_negotiatedProtocol(second));
-  Cronet_UrlResponseInfo_set_proxyServer(
-      second, Cronet_UrlResponseInfo_get_proxyServer(first));
-  EXPECT_STREQ(Cronet_UrlResponseInfo_get_proxyServer(first),
-               Cronet_UrlResponseInfo_get_proxyServer(second));
-  Cronet_UrlResponseInfo_set_receivedByteCount(
-      second, Cronet_UrlResponseInfo_get_receivedByteCount(first));
-  EXPECT_EQ(Cronet_UrlResponseInfo_get_receivedByteCount(first),
-            Cronet_UrlResponseInfo_get_receivedByteCount(second));
+  Cronet_UrlResponseInfo_url_set(second, Cronet_UrlResponseInfo_url_get(first));
+  EXPECT_STREQ(Cronet_UrlResponseInfo_url_get(first),
+               Cronet_UrlResponseInfo_url_get(second));
+  // TODO(mef): Test array |url_chain|.
+  Cronet_UrlResponseInfo_http_status_code_set(
+      second, Cronet_UrlResponseInfo_http_status_code_get(first));
+  EXPECT_EQ(Cronet_UrlResponseInfo_http_status_code_get(first),
+            Cronet_UrlResponseInfo_http_status_code_get(second));
+  Cronet_UrlResponseInfo_http_status_text_set(
+      second, Cronet_UrlResponseInfo_http_status_text_get(first));
+  EXPECT_STREQ(Cronet_UrlResponseInfo_http_status_text_get(first),
+               Cronet_UrlResponseInfo_http_status_text_get(second));
+  // TODO(mef): Test array |all_headers_list|.
+  Cronet_UrlResponseInfo_was_cached_set(
+      second, Cronet_UrlResponseInfo_was_cached_get(first));
+  EXPECT_EQ(Cronet_UrlResponseInfo_was_cached_get(first),
+            Cronet_UrlResponseInfo_was_cached_get(second));
+  Cronet_UrlResponseInfo_negotiated_protocol_set(
+      second, Cronet_UrlResponseInfo_negotiated_protocol_get(first));
+  EXPECT_STREQ(Cronet_UrlResponseInfo_negotiated_protocol_get(first),
+               Cronet_UrlResponseInfo_negotiated_protocol_get(second));
+  Cronet_UrlResponseInfo_proxy_server_set(
+      second, Cronet_UrlResponseInfo_proxy_server_get(first));
+  EXPECT_STREQ(Cronet_UrlResponseInfo_proxy_server_get(first),
+               Cronet_UrlResponseInfo_proxy_server_get(second));
+  Cronet_UrlResponseInfo_received_byte_count_set(
+      second, Cronet_UrlResponseInfo_received_byte_count_get(first));
+  EXPECT_EQ(Cronet_UrlResponseInfo_received_byte_count_get(first),
+            Cronet_UrlResponseInfo_received_byte_count_get(second));
   Cronet_UrlResponseInfo_Destroy(first);
   Cronet_UrlResponseInfo_Destroy(second);
 }
@@ -218,32 +223,286 @@ TEST_F(CronetStructTest, TestCronet_UrlRequestParams) {
   Cronet_UrlRequestParamsPtr second = Cronet_UrlRequestParams_Create();
 
   // Copy values from |first| to |second|.
-  Cronet_UrlRequestParams_set_httpMethod(
-      second, Cronet_UrlRequestParams_get_httpMethod(first));
-  EXPECT_STREQ(Cronet_UrlRequestParams_get_httpMethod(first),
-               Cronet_UrlRequestParams_get_httpMethod(second));
-  // TODO(mef): Test array |requestHeaders|.
-  Cronet_UrlRequestParams_set_disableCache(
-      second, Cronet_UrlRequestParams_get_disableCache(first));
-  EXPECT_EQ(Cronet_UrlRequestParams_get_disableCache(first),
-            Cronet_UrlRequestParams_get_disableCache(second));
-  Cronet_UrlRequestParams_set_priority(
-      second, Cronet_UrlRequestParams_get_priority(first));
-  EXPECT_EQ(Cronet_UrlRequestParams_get_priority(first),
-            Cronet_UrlRequestParams_get_priority(second));
-  Cronet_UrlRequestParams_set_uploadDataProvider(
-      second, Cronet_UrlRequestParams_get_uploadDataProvider(first));
-  EXPECT_EQ(Cronet_UrlRequestParams_get_uploadDataProvider(first),
-            Cronet_UrlRequestParams_get_uploadDataProvider(second));
-  Cronet_UrlRequestParams_set_uploadDataProviderExecutor(
-      second, Cronet_UrlRequestParams_get_uploadDataProviderExecutor(first));
-  EXPECT_EQ(Cronet_UrlRequestParams_get_uploadDataProviderExecutor(first),
-            Cronet_UrlRequestParams_get_uploadDataProviderExecutor(second));
-  Cronet_UrlRequestParams_set_allowDirectExecutor(
-      second, Cronet_UrlRequestParams_get_allowDirectExecutor(first));
-  EXPECT_EQ(Cronet_UrlRequestParams_get_allowDirectExecutor(first),
-            Cronet_UrlRequestParams_get_allowDirectExecutor(second));
+  Cronet_UrlRequestParams_http_method_set(
+      second, Cronet_UrlRequestParams_http_method_get(first));
+  EXPECT_STREQ(Cronet_UrlRequestParams_http_method_get(first),
+               Cronet_UrlRequestParams_http_method_get(second));
+  // TODO(mef): Test array |request_headers|.
+  Cronet_UrlRequestParams_disable_cache_set(
+      second, Cronet_UrlRequestParams_disable_cache_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_disable_cache_get(first),
+            Cronet_UrlRequestParams_disable_cache_get(second));
+  Cronet_UrlRequestParams_priority_set(
+      second, Cronet_UrlRequestParams_priority_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_priority_get(first),
+            Cronet_UrlRequestParams_priority_get(second));
+  Cronet_UrlRequestParams_upload_data_provider_set(
+      second, Cronet_UrlRequestParams_upload_data_provider_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_upload_data_provider_get(first),
+            Cronet_UrlRequestParams_upload_data_provider_get(second));
+  Cronet_UrlRequestParams_upload_data_provider_executor_set(
+      second, Cronet_UrlRequestParams_upload_data_provider_executor_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_upload_data_provider_executor_get(first),
+            Cronet_UrlRequestParams_upload_data_provider_executor_get(second));
+  Cronet_UrlRequestParams_allow_direct_executor_set(
+      second, Cronet_UrlRequestParams_allow_direct_executor_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_allow_direct_executor_get(first),
+            Cronet_UrlRequestParams_allow_direct_executor_get(second));
   // TODO(mef): Test array |annotations|.
+  Cronet_UrlRequestParams_request_finished_listener_set(
+      second, Cronet_UrlRequestParams_request_finished_listener_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_request_finished_listener_get(first),
+            Cronet_UrlRequestParams_request_finished_listener_get(second));
+  Cronet_UrlRequestParams_request_finished_executor_set(
+      second, Cronet_UrlRequestParams_request_finished_executor_get(first));
+  EXPECT_EQ(Cronet_UrlRequestParams_request_finished_executor_get(first),
+            Cronet_UrlRequestParams_request_finished_executor_get(second));
   Cronet_UrlRequestParams_Destroy(first);
   Cronet_UrlRequestParams_Destroy(second);
+}
+
+// Test Struct Cronet_DateTime setters and getters.
+TEST_F(CronetStructTest, TestCronet_DateTime) {
+  Cronet_DateTimePtr first = Cronet_DateTime_Create();
+  Cronet_DateTimePtr second = Cronet_DateTime_Create();
+
+  // Copy values from |first| to |second|.
+  Cronet_DateTime_value_set(second, Cronet_DateTime_value_get(first));
+  EXPECT_EQ(Cronet_DateTime_value_get(first),
+            Cronet_DateTime_value_get(second));
+  Cronet_DateTime_Destroy(first);
+  Cronet_DateTime_Destroy(second);
+}
+
+// Test Struct Cronet_Metrics setters and getters.
+TEST_F(CronetStructTest, TestCronet_Metrics) {
+  Cronet_MetricsPtr first = Cronet_Metrics_Create();
+  Cronet_MetricsPtr second = Cronet_Metrics_Create();
+
+  // Copy values from |first| to |second|.
+  Cronet_DateTimePtr test_request_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_request_start_get(first), nullptr);
+
+  Cronet_Metrics_request_start_set(first, test_request_start);
+  EXPECT_NE(Cronet_Metrics_request_start_get(first), nullptr);
+  Cronet_Metrics_request_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_request_start_get(first), nullptr);
+
+  Cronet_Metrics_request_start_move(first, test_request_start);
+  EXPECT_NE(Cronet_Metrics_request_start_get(first), nullptr);
+  Cronet_Metrics_request_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_request_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_request_start);
+  Cronet_DateTimePtr test_dns_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_dns_start_get(first), nullptr);
+
+  Cronet_Metrics_dns_start_set(first, test_dns_start);
+  EXPECT_NE(Cronet_Metrics_dns_start_get(first), nullptr);
+  Cronet_Metrics_dns_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_dns_start_get(first), nullptr);
+
+  Cronet_Metrics_dns_start_move(first, test_dns_start);
+  EXPECT_NE(Cronet_Metrics_dns_start_get(first), nullptr);
+  Cronet_Metrics_dns_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_dns_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_dns_start);
+  Cronet_DateTimePtr test_dns_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_dns_end_get(first), nullptr);
+
+  Cronet_Metrics_dns_end_set(first, test_dns_end);
+  EXPECT_NE(Cronet_Metrics_dns_end_get(first), nullptr);
+  Cronet_Metrics_dns_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_dns_end_get(first), nullptr);
+
+  Cronet_Metrics_dns_end_move(first, test_dns_end);
+  EXPECT_NE(Cronet_Metrics_dns_end_get(first), nullptr);
+  Cronet_Metrics_dns_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_dns_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_dns_end);
+  Cronet_DateTimePtr test_connect_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_connect_start_get(first), nullptr);
+
+  Cronet_Metrics_connect_start_set(first, test_connect_start);
+  EXPECT_NE(Cronet_Metrics_connect_start_get(first), nullptr);
+  Cronet_Metrics_connect_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_connect_start_get(first), nullptr);
+
+  Cronet_Metrics_connect_start_move(first, test_connect_start);
+  EXPECT_NE(Cronet_Metrics_connect_start_get(first), nullptr);
+  Cronet_Metrics_connect_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_connect_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_connect_start);
+  Cronet_DateTimePtr test_connect_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_connect_end_get(first), nullptr);
+
+  Cronet_Metrics_connect_end_set(first, test_connect_end);
+  EXPECT_NE(Cronet_Metrics_connect_end_get(first), nullptr);
+  Cronet_Metrics_connect_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_connect_end_get(first), nullptr);
+
+  Cronet_Metrics_connect_end_move(first, test_connect_end);
+  EXPECT_NE(Cronet_Metrics_connect_end_get(first), nullptr);
+  Cronet_Metrics_connect_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_connect_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_connect_end);
+  Cronet_DateTimePtr test_ssl_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_ssl_start_get(first), nullptr);
+
+  Cronet_Metrics_ssl_start_set(first, test_ssl_start);
+  EXPECT_NE(Cronet_Metrics_ssl_start_get(first), nullptr);
+  Cronet_Metrics_ssl_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_ssl_start_get(first), nullptr);
+
+  Cronet_Metrics_ssl_start_move(first, test_ssl_start);
+  EXPECT_NE(Cronet_Metrics_ssl_start_get(first), nullptr);
+  Cronet_Metrics_ssl_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_ssl_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_ssl_start);
+  Cronet_DateTimePtr test_ssl_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_ssl_end_get(first), nullptr);
+
+  Cronet_Metrics_ssl_end_set(first, test_ssl_end);
+  EXPECT_NE(Cronet_Metrics_ssl_end_get(first), nullptr);
+  Cronet_Metrics_ssl_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_ssl_end_get(first), nullptr);
+
+  Cronet_Metrics_ssl_end_move(first, test_ssl_end);
+  EXPECT_NE(Cronet_Metrics_ssl_end_get(first), nullptr);
+  Cronet_Metrics_ssl_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_ssl_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_ssl_end);
+  Cronet_DateTimePtr test_sending_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_sending_start_get(first), nullptr);
+
+  Cronet_Metrics_sending_start_set(first, test_sending_start);
+  EXPECT_NE(Cronet_Metrics_sending_start_get(first), nullptr);
+  Cronet_Metrics_sending_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_sending_start_get(first), nullptr);
+
+  Cronet_Metrics_sending_start_move(first, test_sending_start);
+  EXPECT_NE(Cronet_Metrics_sending_start_get(first), nullptr);
+  Cronet_Metrics_sending_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_sending_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_sending_start);
+  Cronet_DateTimePtr test_sending_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_sending_end_get(first), nullptr);
+
+  Cronet_Metrics_sending_end_set(first, test_sending_end);
+  EXPECT_NE(Cronet_Metrics_sending_end_get(first), nullptr);
+  Cronet_Metrics_sending_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_sending_end_get(first), nullptr);
+
+  Cronet_Metrics_sending_end_move(first, test_sending_end);
+  EXPECT_NE(Cronet_Metrics_sending_end_get(first), nullptr);
+  Cronet_Metrics_sending_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_sending_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_sending_end);
+  Cronet_DateTimePtr test_push_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_push_start_get(first), nullptr);
+
+  Cronet_Metrics_push_start_set(first, test_push_start);
+  EXPECT_NE(Cronet_Metrics_push_start_get(first), nullptr);
+  Cronet_Metrics_push_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_push_start_get(first), nullptr);
+
+  Cronet_Metrics_push_start_move(first, test_push_start);
+  EXPECT_NE(Cronet_Metrics_push_start_get(first), nullptr);
+  Cronet_Metrics_push_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_push_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_push_start);
+  Cronet_DateTimePtr test_push_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_push_end_get(first), nullptr);
+
+  Cronet_Metrics_push_end_set(first, test_push_end);
+  EXPECT_NE(Cronet_Metrics_push_end_get(first), nullptr);
+  Cronet_Metrics_push_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_push_end_get(first), nullptr);
+
+  Cronet_Metrics_push_end_move(first, test_push_end);
+  EXPECT_NE(Cronet_Metrics_push_end_get(first), nullptr);
+  Cronet_Metrics_push_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_push_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_push_end);
+  Cronet_DateTimePtr test_response_start = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_response_start_get(first), nullptr);
+
+  Cronet_Metrics_response_start_set(first, test_response_start);
+  EXPECT_NE(Cronet_Metrics_response_start_get(first), nullptr);
+  Cronet_Metrics_response_start_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_response_start_get(first), nullptr);
+
+  Cronet_Metrics_response_start_move(first, test_response_start);
+  EXPECT_NE(Cronet_Metrics_response_start_get(first), nullptr);
+  Cronet_Metrics_response_start_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_response_start_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_response_start);
+  Cronet_DateTimePtr test_request_end = Cronet_DateTime_Create();
+  EXPECT_EQ(Cronet_Metrics_request_end_get(first), nullptr);
+
+  Cronet_Metrics_request_end_set(first, test_request_end);
+  EXPECT_NE(Cronet_Metrics_request_end_get(first), nullptr);
+  Cronet_Metrics_request_end_set(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_request_end_get(first), nullptr);
+
+  Cronet_Metrics_request_end_move(first, test_request_end);
+  EXPECT_NE(Cronet_Metrics_request_end_get(first), nullptr);
+  Cronet_Metrics_request_end_move(first, nullptr);
+  EXPECT_EQ(Cronet_Metrics_request_end_get(first), nullptr);
+
+  Cronet_DateTime_Destroy(test_request_end);
+  Cronet_Metrics_socket_reused_set(second,
+                                   Cronet_Metrics_socket_reused_get(first));
+  EXPECT_EQ(Cronet_Metrics_socket_reused_get(first),
+            Cronet_Metrics_socket_reused_get(second));
+  Cronet_Metrics_sent_byte_count_set(second,
+                                     Cronet_Metrics_sent_byte_count_get(first));
+  EXPECT_EQ(Cronet_Metrics_sent_byte_count_get(first),
+            Cronet_Metrics_sent_byte_count_get(second));
+  Cronet_Metrics_received_byte_count_set(
+      second, Cronet_Metrics_received_byte_count_get(first));
+  EXPECT_EQ(Cronet_Metrics_received_byte_count_get(first),
+            Cronet_Metrics_received_byte_count_get(second));
+  Cronet_Metrics_Destroy(first);
+  Cronet_Metrics_Destroy(second);
+}
+
+// Test Struct Cronet_RequestFinishedInfo setters and getters.
+TEST_F(CronetStructTest, TestCronet_RequestFinishedInfo) {
+  Cronet_RequestFinishedInfoPtr first = Cronet_RequestFinishedInfo_Create();
+  Cronet_RequestFinishedInfoPtr second = Cronet_RequestFinishedInfo_Create();
+
+  // Copy values from |first| to |second|.
+  Cronet_MetricsPtr test_metrics = Cronet_Metrics_Create();
+  EXPECT_EQ(Cronet_RequestFinishedInfo_metrics_get(first), nullptr);
+
+  Cronet_RequestFinishedInfo_metrics_set(first, test_metrics);
+  EXPECT_NE(Cronet_RequestFinishedInfo_metrics_get(first), nullptr);
+  Cronet_RequestFinishedInfo_metrics_set(first, nullptr);
+  EXPECT_EQ(Cronet_RequestFinishedInfo_metrics_get(first), nullptr);
+
+  Cronet_RequestFinishedInfo_metrics_move(first, test_metrics);
+  EXPECT_NE(Cronet_RequestFinishedInfo_metrics_get(first), nullptr);
+  Cronet_RequestFinishedInfo_metrics_move(first, nullptr);
+  EXPECT_EQ(Cronet_RequestFinishedInfo_metrics_get(first), nullptr);
+
+  Cronet_Metrics_Destroy(test_metrics);
+  // TODO(mef): Test array |annotations|.
+  Cronet_RequestFinishedInfo_finished_reason_set(
+      second, Cronet_RequestFinishedInfo_finished_reason_get(first));
+  EXPECT_EQ(Cronet_RequestFinishedInfo_finished_reason_get(first),
+            Cronet_RequestFinishedInfo_finished_reason_get(second));
+  Cronet_RequestFinishedInfo_Destroy(first);
+  Cronet_RequestFinishedInfo_Destroy(second);
 }

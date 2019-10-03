@@ -11,19 +11,19 @@ cr.define('inline.login', function() {
 
   /**
    * The auth extension host instance.
-   * @type {cr.login.GaiaAuthHost}
+   * @type {cr.login.Authenticator}
    */
-  var authExtHost;
+  let authExtHost;
 
   /**
    * Whether the auth ready event has been fired, for testing purpose.
    */
-  var authReadyFired;
+  let authReadyFired;
 
   /**
    * Whether the login UI is loaded for signing in primary account.
    */
-  var isLoginPrimaryAccount;
+  let isLoginPrimaryAccount;
 
   function onResize(e) {
     chrome.send('switchToFullTab', [e.detail]);
@@ -32,8 +32,9 @@ cr.define('inline.login', function() {
   function onAuthReady(e) {
     $('contents').classList.toggle('loading', false);
     authReadyFired = true;
-    if (isLoginPrimaryAccount)
+    if (isLoginPrimaryAccount) {
       chrome.send('metricsHandler:recordAction', ['Signin_SigninPage_Shown']);
+    }
   }
 
   function onDropLink(e) {
@@ -55,17 +56,22 @@ cr.define('inline.login', function() {
     $('contents').classList.toggle('loading', true);
   }
 
+  function onShowIncognito() {
+    chrome.send('showIncognito');
+  }
+
   /**
    * Initialize the UI.
    */
   function initialize() {
     $('navigation-button').addEventListener('click', navigationButtonClicked);
-    authExtHost = new cr.login.GaiaAuthHost('signin-frame');
+    authExtHost = new cr.login.Authenticator('signin-frame');
     authExtHost.addEventListener('dropLink', onDropLink);
     authExtHost.addEventListener('ready', onAuthReady);
     authExtHost.addEventListener('newWindow', onNewWindow);
     authExtHost.addEventListener('resize', onResize);
     authExtHost.addEventListener('authCompleted', onAuthCompleted);
+    authExtHost.addEventListener('showIncognito', onShowIncognito);
     chrome.send('initialize');
   }
 
@@ -80,7 +86,7 @@ cr.define('inline.login', function() {
     $('contents')
         .classList.toggle(
             'loading',
-            data.authMode != cr.login.GaiaAuthHost.AuthMode.DESKTOP ||
+            data.authMode != cr.login.Authenticator.AuthMode.DESKTOP ||
                 data.constrained == '1');
     isLoginPrimaryAccount = data.isLoginPrimaryAccount;
   }
@@ -90,6 +96,18 @@ cr.define('inline.login', function() {
    */
   function closeDialog() {
     chrome.send('dialogClose', ['']);
+  }
+
+  /**
+   * Sends a message 'lstFetchResults'. This is a specific message  sent when
+   * the inline signin is loaded with reason REASON_FETCH_LST_ONLY. Handlers of
+   * this message would expect a single argument a base::Dictionary value that
+   * contains the values fetched from the gaia sign in endpoint.
+   * @param {string} arg The string representation of the json data returned by
+   *    the sign in dialog after it has finished the sign in process.
+   */
+  function sendLSTFetchResults(arg) {
+    chrome.send('lstFetchResults', [arg]);
   }
 
   /**
@@ -116,8 +134,8 @@ cr.define('inline.login', function() {
   }
 
   function showBackButton() {
-    $('navigation-button').icon =
-        isRTL() ? 'icons:arrow-forward' : 'icons:arrow-back';
+    $('navigation-button').ironIcon =
+        isRTL() ? 'cr:arrow-forward' : 'cr:arrow-back';
 
     $('navigation-button')
         .setAttribute(
@@ -125,7 +143,7 @@ cr.define('inline.login', function() {
   }
 
   function showCloseButton() {
-    $('navigation-button').icon = 'icons:close';
+    $('navigation-button').ironIcon = 'cr:close';
     $('navigation-button').classList.add('enabled');
     $('navigation-button')
         .setAttribute(
@@ -138,6 +156,7 @@ cr.define('inline.login', function() {
 
   return {
     closeDialog: closeDialog,
+    sendLSTFetchResults: sendLSTFetchResults,
     getAuthExtHost: getAuthExtHost,
     handleOAuth2TokenFailure: handleOAuth2TokenFailure,
     initialize: initialize,

@@ -55,7 +55,7 @@ const PendingExtensionInfo* PendingExtensionManager::GetById(
 }
 
 bool PendingExtensionManager::Remove(const std::string& id) {
-  if (base::ContainsKey(expected_policy_reinstalls_, id)) {
+  if (base::Contains(expected_policy_reinstalls_, id)) {
     base::TimeDelta latency =
         base::TimeTicks::Now() - expected_policy_reinstalls_[id];
     UMA_HISTOGRAM_LONG_TIMES("Extensions.CorruptPolicyExtensionResolved",
@@ -95,15 +95,27 @@ bool PendingExtensionManager::HasPendingExtensionFromSync() const {
   return false;
 }
 
+bool PendingExtensionManager::HasHighPriorityPendingExtension() const {
+  return std::find_if(
+             pending_extension_list_.begin(), pending_extension_list_.end(),
+             [](const PendingExtensionInfo& info) {
+               return info.install_source() ==
+                          Manifest::EXTERNAL_POLICY_DOWNLOAD ||
+                      info.install_source() == Manifest::EXTERNAL_COMPONENT;
+             }) != pending_extension_list_.end();
+}
+
 void PendingExtensionManager::ExpectPolicyReinstallForCorruption(
     const ExtensionId& id) {
+  if (base::Contains(expected_policy_reinstalls_, id))
+    return;
   expected_policy_reinstalls_[id] = base::TimeTicks::Now();
-  UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptPolicyExtensionDetected", true);
+  UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptPolicyExtensionDetected2", true);
 }
 
 bool PendingExtensionManager::IsPolicyReinstallForCorruptionExpected(
     const ExtensionId& id) const {
-  return base::ContainsKey(expected_policy_reinstalls_, id);
+  return base::Contains(expected_policy_reinstalls_, id);
 }
 
 bool PendingExtensionManager::HasAnyPolicyReinstallForCorruption() const {

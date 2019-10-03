@@ -13,12 +13,13 @@
 
 #include "base/callback_helpers.h"
 #include "base/logging.h"
+#include "base/numerics/math_constants.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/audio_decoder_config.h"
+#include "media/base/encryption_pattern.h"
 #include "media/base/encryption_scheme.h"
-#include "media/base/media_switches.h"
 #include "media/base/media_tracks.h"
 #include "media/base/media_util.h"
 #include "media/base/stream_parser_buffer.h"
@@ -36,8 +37,10 @@ namespace media {
 namespace mp4 {
 
 namespace {
+
 const int kMaxEmptySampleLogs = 20;
 const int kMaxInvalidConversionLogs = 20;
+const int kMaxVideoKeyframeMismatchLogs = 10;
 
 // Caller should be prepared to handle return of Unencrypted() in case of
 // unsupported scheme.
@@ -46,7 +49,7 @@ EncryptionScheme GetEncryptionScheme(const ProtectionSchemeInfo& sinf) {
     return Unencrypted();
   FourCC fourcc = sinf.type.type;
   EncryptionScheme::CipherMode mode = EncryptionScheme::CIPHER_MODE_UNENCRYPTED;
-  EncryptionScheme::Pattern pattern;
+  EncryptionPattern pattern;
 #if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   bool uses_pattern_encryption = false;
 #endif
@@ -66,9 +69,8 @@ EncryptionScheme GetEncryptionScheme(const ProtectionSchemeInfo& sinf) {
   }
 #if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   if (uses_pattern_encryption) {
-    uint8_t crypt = sinf.info.track_encryption.default_crypt_byte_block;
-    uint8_t skip = sinf.info.track_encryption.default_skip_byte_block;
-    pattern = EncryptionScheme::Pattern(crypt, skip);
+    pattern = {sinf.info.track_encryption.default_crypt_byte_block,
+               sinf.info.track_encryption.default_skip_byte_block};
   }
 #endif
   return EncryptionScheme(mode, pattern);
@@ -88,14 +90,13 @@ MP4StreamParser::MP4StreamParser(const std::set<int>& audio_object_types,
       has_sbr_(has_sbr),
       has_flac_(has_flac),
       num_empty_samples_skipped_(0),
-      num_invalid_conversions_(0) {
-  DCHECK(!has_flac || base::FeatureList::IsEnabled(kMseFlacInIsobmff));
-}
+      num_invalid_conversions_(0),
+      num_video_keyframe_mismatches_(0) {}
 
 MP4StreamParser::~MP4StreamParser() = default;
 
 void MP4StreamParser::Init(
-    const InitCB& init_cb,
+    InitCB init_cb,
     const NewConfigCB& config_cb,
     const NewBuffersCB& new_buffers_cb,
     bool /* ignore_text_tracks */,
@@ -104,16 +105,16 @@ void MP4StreamParser::Init(
     const EndMediaSegmentCB& end_of_segment_cb,
     MediaLog* media_log) {
   DCHECK_EQ(state_, kWaitingForInit);
-  DCHECK(init_cb_.is_null());
-  DCHECK(!init_cb.is_null());
-  DCHECK(!config_cb.is_null());
-  DCHECK(!new_buffers_cb.is_null());
-  DCHECK(!encrypted_media_init_data_cb.is_null());
-  DCHECK(!new_segment_cb.is_null());
-  DCHECK(!end_of_segment_cb.is_null());
+  DCHECK(!init_cb_);
+  DCHECK(init_cb);
+  DCHECK(config_cb);
+  DCHECK(new_buffers_cb);
+  DCHECK(encrypted_media_init_data_cb);
+  DCHECK(new_segment_cb);
+  DCHECK(end_of_segment_cb);
 
   ChangeState(kParsingBoxes);
-  init_cb_ = init_cb;
+  init_cb_ = std::move(init_cb);
   config_cb_ = config_cb;
   new_buffers_cb_ = new_buffers_cb;
   encrypted_media_init_data_cb_ = encrypted_media_init_data_cb;
@@ -133,6 +134,10 @@ void MP4StreamParser::Flush() {
   DCHECK_NE(state_, kWaitingForInit);
   Reset();
   ChangeState(kParsingBoxes);
+}
+
+bool MP4StreamParser::GetGenerateTimestampsFlag() const {
+  return false;
 }
 
 bool MP4StreamParser::Parse(const uint8_t* buf, int size) {
@@ -238,13 +243,44 @@ ParseResult MP4StreamParser::ParseBox() {
   return ParseResult::kOk;
 }
 
+VideoTransformation MP4StreamParser::CalculateRotation(
+    const TrackHeader& track,
+    const MovieHeader& movie) {
+  static_assert(kDisplayMatrixDimension == 9, "Display matrix must be 3x3");
+  // 3x3 matrix: [ a b c ]
+  //             [ d e f ]
+  //             [ x y z ]
+  int32_t rotation_matrix[kDisplayMatrixDimension] = {0};
+
+  // Shift values for fixed point multiplications.
+  const int32_t shifts[kDisplayMatrixHeight] = {16, 16, 30};
+
+  // Matrix multiplication for
+  // track.display_matrix * movie.display_matrix
+  // with special consideration taken that entries a-f are 16.16 fixed point
+  // decimals and x-z are 2.30 fixed point decimals.
+  for (int i = 0; i < kDisplayMatrixWidth; i++) {
+    for (int j = 0; j < kDisplayMatrixHeight; j++) {
+      for (int e = 0; e < kDisplayMatrixHeight; e++) {
+        rotation_matrix[i * kDisplayMatrixHeight + j] +=
+            ((int64_t)track.display_matrix[i * kDisplayMatrixHeight + e] *
+             movie.display_matrix[e * kDisplayMatrixHeight + j]) >>
+            shifts[e];
+      }
+    }
+  }
+
+  int32_t rotation_only[4] = {rotation_matrix[0], rotation_matrix[1],
+                              rotation_matrix[3], rotation_matrix[4]};
+  return VideoTransformation(rotation_only);
+}
+
 bool MP4StreamParser::ParseMoov(BoxReader* reader) {
   moov_.reset(new Movie);
   RCHECK(moov_->Parse(reader));
   runs_.reset();
   audio_track_ids_.clear();
   video_track_ids_.clear();
-  is_track_encrypted_.clear();
 
   has_audio_ = false;
   has_video_ = false;
@@ -285,7 +321,6 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
       if (desc_idx >= samp_descr.audio_entries.size())
         desc_idx = 0;
       const AudioSampleEntry& entry = samp_descr.audio_entries[desc_idx];
-      const AAC& aac = entry.esds.aac;
 
       // For encrypted audio streams entry.format is FOURCC_ENCA and actual
       // format is in entry.sinf.format.format.
@@ -293,24 +328,34 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
                                 ? entry.sinf.format.format
                                 : entry.format;
 
+      if (audio_format != FOURCC_OPUS && audio_format != FOURCC_FLAC &&
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
-      if (audio_format != FOURCC_MP4A && audio_format != FOURCC_FLAC &&
-          audio_format != FOURCC_AC3 && audio_format != FOURCC_EAC3) {
-#else
-      if (audio_format != FOURCC_MP4A && audio_format != FOURCC_FLAC) {
+          audio_format != FOURCC_AC3 && audio_format != FOURCC_EAC3 &&
 #endif
-        MEDIA_LOG(ERROR, media_log_) << "Unsupported audio format 0x"
-                                     << std::hex << entry.format
-                                     << " in stsd box.";
+#if BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
+          audio_format != FOURCC_MHM1 && audio_format != FOURCC_MHA1 &&
+#endif
+          audio_format != FOURCC_MP4A) {
+        MEDIA_LOG(ERROR, media_log_)
+            << "Unsupported audio format 0x" << std::hex << entry.format
+            << " in stsd box.";
         return false;
       }
 
       AudioCodec codec = kUnknownAudioCodec;
       ChannelLayout channel_layout = CHANNEL_LAYOUT_NONE;
       int sample_per_second = 0;
+      int codec_delay_in_frames = 0;
+      base::TimeDelta seek_preroll;
       std::vector<uint8_t> extra_data;
-
-      if (audio_format == FOURCC_FLAC) {
+      if (audio_format == FOURCC_OPUS) {
+        codec = kCodecOpus;
+        channel_layout = GuessChannelLayout(entry.dops.channel_count);
+        sample_per_second = entry.dops.sample_rate;
+        codec_delay_in_frames = entry.dops.codec_delay_in_frames;
+        seek_preroll = entry.dops.seek_preroll;
+        extra_data = entry.dops.extradata;
+      } else if (audio_format == FOURCC_FLAC) {
         // FLAC-in-ISOBMFF does not use object type indication. |audio_format|
         // is sufficient for identifying FLAC codec.
         if (!has_flac_) {
@@ -324,6 +369,14 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         channel_layout = GuessChannelLayout(entry.channelcount);
         sample_per_second = entry.samplerate;
         extra_data = entry.dfla.stream_info;
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+#if BUILDFLAG(ENABLE_MPEG_H_AUDIO_DEMUXING)
+      } else if (audio_format == FOURCC_MHM1 || audio_format == FOURCC_MHA1) {
+        codec = kCodecMpegHAudio;
+        channel_layout = CHANNEL_LAYOUT_BITSTREAM;
+        sample_per_second = entry.samplerate;
+        extra_data = entry.dfla.stream_info;
+#endif
       } else {
         uint8_t audio_type = entry.esds.object_type;
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
@@ -346,6 +399,7 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         // Check if it is MPEG4 AAC defined in ISO 14496 Part 3 or
         // supported MPEG2 AAC varients.
         if (ESDescriptor::IsAAC(audio_type)) {
+          const AAC& aac = entry.esds.aac;
           codec = kCodecAAC;
           channel_layout = aac.GetChannelLayout(has_sbr_);
           sample_per_second = aac.GetOutputSamplesPerSecond(has_sbr_);
@@ -368,6 +422,7 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
               << static_cast<int>(audio_type) << " in esds.";
           return false;
         }
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
       }
 
       SampleFormat sample_format;
@@ -392,7 +447,6 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         return false;
       }
       bool is_track_encrypted = entry.sinf.info.track_encryption.is_encrypted;
-      is_track_encrypted_[audio_track_id] = is_track_encrypted;
       EncryptionScheme scheme = Unencrypted();
       if (is_track_encrypted) {
         scheme = GetEncryptionScheme(entry.sinf);
@@ -401,7 +455,7 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
       }
       audio_config.Initialize(codec, sample_format, channel_layout,
                               sample_per_second, extra_data, scheme,
-                              base::TimeDelta(), 0);
+                              seek_preroll, codec_delay_in_frames);
       if (codec == kCodecAAC)
         audio_config.disable_discard_decoder_delay();
 
@@ -415,9 +469,10 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
       has_audio_ = true;
       audio_track_ids_.insert(audio_track_id);
       const char* track_kind = (audio_track_ids_.size() == 1 ? "main" : "");
-      media_tracks->AddAudioTrack(audio_config, audio_track_id, track_kind,
-                                  track->media.handler.name,
-                                  track->media.header.language());
+      media_tracks->AddAudioTrack(
+          audio_config, audio_track_id, MediaTrack::Kind(track_kind),
+          MediaTrack::Label(track->media.handler.name),
+          MediaTrack::Language(track->media.header.language()));
       continue;
     }
 
@@ -461,7 +516,6 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         return false;
       }
       bool is_track_encrypted = entry.sinf.info.track_encryption.is_encrypted;
-      is_track_encrypted_[video_track_id] = is_track_encrypted;
       EncryptionScheme scheme = Unencrypted();
       if (is_track_encrypted) {
         scheme = GetEncryptionScheme(entry.sinf);
@@ -469,9 +523,10 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
           return false;
       }
       video_config.Initialize(entry.video_codec, entry.video_codec_profile,
-                              PIXEL_FORMAT_YV12, COLOR_SPACE_HD_REC709,
-                              VIDEO_ROTATION_0, coded_size, visible_rect,
-                              natural_size,
+                              VideoDecoderConfig::AlphaMode::kIsOpaque,
+                              VideoColorSpace::REC709(),
+                              CalculateRotation(track->header, moov_->header),
+                              coded_size, visible_rect, natural_size,
                               // No decoder-specific buffer needed for AVC;
                               // SPS/PPS are embedded in the video stream
                               EmptyExtraData(), scheme);
@@ -484,10 +539,12 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
       }
       has_video_ = true;
       video_track_ids_.insert(video_track_id);
-      const char* track_kind = (video_track_ids_.size() == 1 ? "main" : "");
-      media_tracks->AddVideoTrack(video_config, video_track_id, track_kind,
-                                  track->media.handler.name,
-                                  track->media.header.language());
+      auto track_kind =
+          MediaTrack::Kind(video_track_ids_.size() == 1 ? "main" : "");
+      media_tracks->AddVideoTrack(
+          video_config, video_track_id, track_kind,
+          MediaTrack::Label(track->media.handler.name),
+          MediaTrack::Language(track->media.header.language()));
       continue;
     }
 
@@ -550,11 +607,11 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
 
   DVLOG(1) << "liveness: " << params.liveness;
 
-  if (!init_cb_.is_null()) {
+  if (init_cb_) {
     params.detected_audio_track_count = detected_audio_track_count;
     params.detected_video_track_count = detected_video_track_count;
     params.detected_text_track_count = detected_text_track_count;
-    base::ResetAndReturn(&init_cb_).Run(params);
+    std::move(init_cb_).Run(params);
   }
 
   return true;
@@ -596,6 +653,7 @@ void MP4StreamParser::OnEncryptedMediaInitData(
   encrypted_media_init_data_cb_.Run(EmeInitDataType::CENC, init_data);
 }
 
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
 bool MP4StreamParser::PrepareAACBuffer(
     const AAC& aac_config,
     std::vector<uint8_t>* frame_buf,
@@ -613,6 +671,7 @@ bool MP4StreamParser::PrepareAACBuffer(
   }
   return true;
 }
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 ParseResult MP4StreamParser::EnqueueSample(BufferQueueMap* buffers) {
   DCHECK_EQ(state_, kEmittingSamples);
@@ -710,56 +769,93 @@ ParseResult MP4StreamParser::EnqueueSample(BufferQueueMap* buffers) {
     subsamples = decrypt_config->subsamples();
   }
 
+  // This may change if analysis results indicate runs_->is_keyframe() is
+  // opposite of what the coded frame contains.
+  bool is_keyframe = runs_->is_keyframe();
+
   std::vector<uint8_t> frame_buf(buf, buf + sample_size);
   if (video) {
     if (runs_->video_description().video_codec == kCodecH264 ||
         runs_->video_description().video_codec == kCodecHEVC ||
         runs_->video_description().video_codec == kCodecDolbyVision) {
       DCHECK(runs_->video_description().frame_bitstream_converter);
-      if (!runs_->video_description().frame_bitstream_converter->ConvertFrame(
-              &frame_buf, runs_->is_keyframe(), &subsamples)) {
+      BitstreamConverter::AnalysisResult analysis;
+      if (!runs_->video_description()
+               .frame_bitstream_converter->ConvertAndAnalyzeFrame(
+                   &frame_buf, is_keyframe, &subsamples, &analysis)) {
         MEDIA_LOG(ERROR, media_log_)
             << "Failed to prepare video sample for decode";
         return ParseResult::kError;
       }
-      if (!runs_->video_description().frame_bitstream_converter->IsValid(
-              &frame_buf, &subsamples)) {
+
+      // If conformance analysis was not actually performed, assume the frame is
+      // conformant.  If it was performed and found to be non-conformant, log
+      // it.
+      if (!analysis.is_conformant.value_or(true)) {
         LIMITED_MEDIA_LOG(DEBUG, media_log_, num_invalid_conversions_,
                           kMaxInvalidConversionLogs)
             << "Prepared video sample is not conformant";
+      }
+
+      // Use |analysis.is_keyframe|, if it was actually determined, for logging
+      // if the analysis mismatches the container's keyframe metadata for
+      // |frame_buf|.
+      if (analysis.is_keyframe.has_value() &&
+          is_keyframe != analysis.is_keyframe.value()) {
+        LIMITED_MEDIA_LOG(DEBUG, media_log_, num_video_keyframe_mismatches_,
+                          kMaxVideoKeyframeMismatchLogs)
+            << "ISO-BMFF container metadata for video frame indicates that the "
+               "frame is "
+            << (is_keyframe ? "" : "not ")
+            << "a keyframe, but the video frame contents indicate the "
+               "opposite.";
+        // As of September 2018, it appears that all of Edge, Firefox, Safari
+        // work with content that marks non-avc-keyframes as a keyframe in the
+        // container. Encoders/muxers/old streams still exist that produce
+        // all-keyframe mp4 video tracks, though many of the coded frames are
+        // not keyframes (likely workaround due to the impact on low-latency
+        // live streams until https://crbug.com/229412 was fixed).  We'll trust
+        // the AVC frame's keyframe-ness over the mp4 container's metadata if
+        // they mismatch. If other out-of-order codecs in mp4 (e.g. HEVC, DV)
+        // implement keyframe analysis in their frame_bitstream_converter, we'll
+        // similarly trust that analysis instead of the mp4.
+        is_keyframe = analysis.is_keyframe.value();
       }
     }
   }
 
   if (audio) {
-    if (ESDescriptor::IsAAC(runs_->audio_description().esds.object_type) &&
-        !PrepareAACBuffer(runs_->audio_description().esds.aac,
-                          &frame_buf, &subsamples)) {
-      MEDIA_LOG(ERROR, media_log_) << "Failed to prepare AAC sample for decode";
+    if (ESDescriptor::IsAAC(runs_->audio_description().esds.object_type)) {
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+      if (!PrepareAACBuffer(runs_->audio_description().esds.aac, &frame_buf,
+                            &subsamples)) {
+        MEDIA_LOG(ERROR, media_log_)
+            << "Failed to prepare AAC sample for decode";
+        return ParseResult::kError;
+      }
+#else
       return ParseResult::kError;
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
     }
   }
 
   if (decrypt_config) {
     if (!subsamples.empty()) {
       // Create a new config with the updated subsamples.
-      decrypt_config.reset(new DecryptConfig(decrypt_config->key_id(),
-                                             decrypt_config->iv(), subsamples));
+      decrypt_config.reset(
+          new DecryptConfig(decrypt_config->encryption_mode(),
+                            decrypt_config->key_id(), decrypt_config->iv(),
+                            subsamples, decrypt_config->encryption_pattern()));
     }
     // else, use the existing config.
-  } else if (is_track_encrypted_[runs_->track_id()]) {
-    // The media pipeline requires a DecryptConfig with an empty |iv|.
-    // TODO(ddorwin): Refactor so we do not need a fake key ID ("1");
-    decrypt_config.reset(
-        new DecryptConfig("1", "", std::vector<SubsampleEntry>()));
   }
 
   StreamParserBuffer::Type buffer_type = audio ? DemuxerStream::AUDIO :
       DemuxerStream::VIDEO;
 
-  scoped_refptr<StreamParserBuffer> stream_buf = StreamParserBuffer::CopyFrom(
-      &frame_buf[0], frame_buf.size(), runs_->is_keyframe(), buffer_type,
-      runs_->track_id());
+  scoped_refptr<StreamParserBuffer> stream_buf =
+      StreamParserBuffer::CopyFrom(&frame_buf[0], frame_buf.size(), is_keyframe,
+                                   buffer_type, runs_->track_id());
 
   if (decrypt_config)
     stream_buf->set_decrypt_config(std::move(decrypt_config));
@@ -787,8 +883,7 @@ ParseResult MP4StreamParser::EnqueueSample(BufferQueueMap* buffers) {
   }
 
   DVLOG(3) << "Emit " << (audio ? "audio" : "video") << " frame: "
-           << " track_id=" << runs_->track_id()
-           << ", key=" << runs_->is_keyframe()
+           << " track_id=" << runs_->track_id() << ", key=" << is_keyframe
            << ", dur=" << runs_->duration().InMilliseconds()
            << ", dts=" << runs_->dts().InMilliseconds()
            << ", cts=" << runs_->cts().InMilliseconds()

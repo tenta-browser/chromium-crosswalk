@@ -11,17 +11,16 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/hex_utils.h"
-#include "net/quic/platform/api/quic_str_cat.h"
-#include "net/quic/platform/api/quic_string.h"
-#include "net/quic/platform/api/quic_string_piece.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_str_cat.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_string_piece.h"
 
-namespace net {
+namespace quic {
 
 template <typename... Args>
-inline void QuicStrAppendImpl(QuicString* output, const Args&... args) {
+inline void QuicStrAppendImpl(std::string* output, const Args&... args) {
   output->append(QuicStrCatImpl(args...));
 }
 
-}  // namespace net
+}  // namespace quic
 
 #endif  // NET_QUIC_PLATFORM_IMPL_QUIC_STRING_UTILS_IMPL_H_

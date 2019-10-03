@@ -227,12 +227,12 @@ const char* FullscreenControllerStateTest::GetWindowStateString() {
 
 bool FullscreenControllerStateTest::InvokeEvent(Event event) {
   if (!fullscreen_notification_observer_.get()) {
-    // Start observing NOTIFICATION_FULLSCREEN_CHANGED. Construct the
-    // notification observer here instead of in
+    // Start observing fullscreen changes. Construct the notification observer
+    // here instead of in
     // FullscreenControllerStateTest::FullscreenControllerStateTest() so that we
     // listen to notifications on the proper thread.
-    fullscreen_notification_observer_.reset(
-        new FullscreenNotificationObserver());
+    fullscreen_notification_observer_ =
+        std::make_unique<FullscreenNotificationObserver>(GetBrowser());
   }
 
   State source_state = state_;
@@ -270,7 +270,7 @@ bool FullscreenControllerStateTest::InvokeEvent(Event event) {
 
       // Activating/Deactivating tab fullscreen on a captured tab should not
       // evoke a state change in the browser window.
-      if (active_tab->GetCapturerCount() > 0)
+      if (active_tab->IsBeingCaptured())
         state_ = source_state;
       break;
     }
@@ -350,8 +350,8 @@ void FullscreenControllerStateTest::MaybeWaitForNotification() {
       IsPersistentState(state_)) {
     fullscreen_notification_observer_->Wait();
     last_notification_received_state_ = state_;
-    fullscreen_notification_observer_.reset(
-        new FullscreenNotificationObserver());
+    fullscreen_notification_observer_ =
+        std::make_unique<FullscreenNotificationObserver>(GetBrowser());
   }
 }
 
@@ -505,6 +505,10 @@ void FullscreenControllerStateTest::VerifyWindowStateExpectations(
     EXPECT_EQ(GetFullscreenController()->IsWindowFullscreenForTabOrPending(),
               !!fullscreen_for_tab) << GetAndClearDebugLog();
   }
+}
+
+void FullscreenControllerStateTest::TearDown() {
+  fullscreen_notification_observer_.reset();
 }
 
 FullscreenController* FullscreenControllerStateTest::GetFullscreenController() {

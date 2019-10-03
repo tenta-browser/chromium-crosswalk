@@ -65,8 +65,7 @@ SyncTaskManager::SyncTaskManager(
       maximum_background_task_(maximum_background_task),
       pending_task_seq_(0),
       task_token_seq_(SyncTaskToken::kMinimumBackgroundTaskTokenID),
-      task_runner_(task_runner),
-      weak_ptr_factory_(this) {}
+      task_runner_(task_runner) {}
 
 SyncTaskManager::~SyncTaskManager() {
   weak_ptr_factory_.InvalidateWeakPtrs();
@@ -253,7 +252,7 @@ void SyncTaskManager::NotifyTaskDoneBody(std::unique_ptr<SyncTaskToken> token,
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&SyncTaskManager::MaybeStartNextForegroundTask,
-                     weak_ptr_factory_.GetWeakPtr(), base::Passed(&token)));
+                     weak_ptr_factory_.GetWeakPtr(), std::move(token)));
 }
 
 void SyncTaskManager::UpdateTaskBlockerBody(

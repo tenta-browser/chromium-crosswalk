@@ -4,8 +4,9 @@
 //
 // Sync protocol for communication between sync client and server.
 
-// Update proto_value_conversions{.h,.cc,_unittest.cc} if you change
-// any fields in this file.
+// If you change or add any fields in this file, update proto_visitors.h and
+// potentially proto_enum_conversions.{h, cc}. If you add new Specifics proto,
+// also update proto_value_conversions.{h, cc}.
 
 syntax = "proto2";
 
@@ -19,7 +20,6 @@ import "app_setting_specifics.proto";
 import "app_specifics.proto";
 import "arc_package_specifics.proto";
 import "article_specifics.proto";
-import "attachments.proto";
 import "autofill_specifics.proto";
 import "bookmark_specifics.proto";
 import "client_commands.proto";
@@ -34,17 +34,20 @@ import "favicon_image_specifics.proto";
 import "favicon_tracking_specifics.proto";
 import "get_updates_caller_info.proto";
 import "history_delete_directive_specifics.proto";
-import "nigori_specifics.proto";
 import "managed_user_setting_specifics.proto";
 import "managed_user_shared_setting_specifics.proto";
 import "managed_user_specifics.proto";
 import "managed_user_whitelist_specifics.proto";
+import "mountain_share_specifics.proto";
+import "nigori_specifics.proto";
 import "password_specifics.proto";
 import "preference_specifics.proto";
 import "printer_specifics.proto";
 import "priority_preference_specifics.proto";
 import "reading_list_specifics.proto";
 import "search_engine_specifics.proto";
+import "security_event_specifics.proto";
+import "send_tab_to_self_specifics.proto";
 import "session_specifics.proto";
 import "sync_enums.proto";
 import "synced_notification_app_info_specifics.proto";
@@ -52,7 +55,10 @@ import "synced_notification_specifics.proto";
 import "theme_specifics.proto";
 import "typed_url_specifics.proto";
 import "unique_position.proto";
+import "user_consent_specifics.proto";
 import "user_event_specifics.proto";
+import "web_app_specifics.proto";
+import "wifi_configuration_specifics.proto";
 import "wifi_credential_specifics.proto";
 
 // Used for inspecting how long we spent performing operations in different
@@ -103,45 +109,51 @@ message EntitySpecifics {
   // noise in logs and debugging contexts, and creating a divergent subset of
   // tags would only make things a bit more confusing.
 
-  optional AutofillSpecifics autofill = 31729;
-  optional BookmarkSpecifics bookmark = 32904;
-  optional PreferenceSpecifics preference = 37702;
-  optional TypedUrlSpecifics typed_url = 40781;
-  optional ThemeSpecifics theme = 41210;
-  optional AppNotification app_notification = 45184;
-  optional PasswordSpecifics password = 45873;
-  optional NigoriSpecifics nigori = 47745;
-  optional ExtensionSpecifics extension = 48119;
-  optional AppSpecifics app = 48364;
-  optional SessionSpecifics session = 50119;
-  optional AutofillProfileSpecifics autofill_profile = 63951;
-  optional SearchEngineSpecifics search_engine = 88610;
-  optional ExtensionSettingSpecifics extension_setting = 96159;
-  optional AppSettingSpecifics app_setting = 103656;
-  optional HistoryDeleteDirectiveSpecifics history_delete_directive = 150251;
-  optional SyncedNotificationSpecifics synced_notification = 153108;
-  optional SyncedNotificationAppInfoSpecifics synced_notification_app_info =
-      235816;
-  optional DeviceInfoSpecifics device_info = 154522;
-  optional ExperimentsSpecifics experiments = 161496;
-  optional PriorityPreferenceSpecifics priority_preference = 163425;
-  optional DictionarySpecifics dictionary = 170540;
-  optional FaviconTrackingSpecifics favicon_tracking = 181534;
-  optional FaviconImageSpecifics favicon_image = 182019;
-  optional ManagedUserSettingSpecifics managed_user_setting = 186662;
-  optional ManagedUserSpecifics managed_user = 194582;
-  optional ManagedUserSharedSettingSpecifics managed_user_shared_setting =
-      202026;
-  optional ManagedUserWhitelistSpecifics managed_user_whitelist = 306060;
-  optional ArticleSpecifics article = 223759;
-  optional AppListSpecifics app_list = 229170;
-  optional WifiCredentialSpecifics wifi_credential = 218175;
-  optional AutofillWalletSpecifics autofill_wallet = 306270;
-  optional WalletMetadataSpecifics wallet_metadata = 330441;
-  optional ArcPackageSpecifics arc_package = 340906;
-  optional PrinterSpecifics printer = 410745;
-  optional ReadingListSpecifics reading_list = 411028;
-  optional UserEventSpecifics user_event = 455206;
+  oneof specifics_variant {
+    AutofillSpecifics autofill = 31729;
+    BookmarkSpecifics bookmark = 32904;
+    PreferenceSpecifics preference = 37702;
+    TypedUrlSpecifics typed_url = 40781;
+    ThemeSpecifics theme = 41210;
+    AppNotification app_notification = 45184;
+    PasswordSpecifics password = 45873;
+    NigoriSpecifics nigori = 47745;
+    ExtensionSpecifics extension = 48119;
+    AppSpecifics app = 48364;
+    SessionSpecifics session = 50119;
+    AutofillProfileSpecifics autofill_profile = 63951;
+    SearchEngineSpecifics search_engine = 88610;
+    ExtensionSettingSpecifics extension_setting = 96159;
+    AppSettingSpecifics app_setting = 103656;
+    HistoryDeleteDirectiveSpecifics history_delete_directive = 150251;
+    SyncedNotificationSpecifics synced_notification = 153108;
+    SyncedNotificationAppInfoSpecifics synced_notification_app_info = 235816;
+    DeviceInfoSpecifics device_info = 154522;
+    ExperimentsSpecifics experiments = 161496;
+    PriorityPreferenceSpecifics priority_preference = 163425;
+    DictionarySpecifics dictionary = 170540;
+    FaviconTrackingSpecifics favicon_tracking = 181534;
+    FaviconImageSpecifics favicon_image = 182019;
+    ManagedUserSettingSpecifics managed_user_setting = 186662;
+    ManagedUserSpecifics managed_user = 194582;
+    ManagedUserSharedSettingSpecifics managed_user_shared_setting = 202026;
+    ManagedUserWhitelistSpecifics managed_user_whitelist = 306060;
+    ArticleSpecifics article = 223759;
+    AppListSpecifics app_list = 229170;
+    WifiCredentialSpecifics wifi_credential = 218175;
+    AutofillWalletSpecifics autofill_wallet = 306270;
+    WalletMetadataSpecifics wallet_metadata = 330441;
+    ArcPackageSpecifics arc_package = 340906;
+    PrinterSpecifics printer = 410745;
+    ReadingListSpecifics reading_list = 411028;
+    UserEventSpecifics user_event = 455206;
+    UserConsentSpecifics user_consent = 556014;
+    MountainShareSpecifics mountain_share = 545005;
+    SendTabToSelfSpecifics send_tab_to_self = 601980;
+    SecurityEventSpecifics security_event = 600372;
+    WebAppSpecifics web_app = 673225;
+    WifiConfigurationSpecifics wifi_configuration = 662827;
+  }
 }
 
 message SyncEntity {
@@ -239,7 +251,7 @@ message SyncEntity {
   //
   // This group is deprecated; clients should use the bookmark EntitySpecifics
   // protocol buffer extension instead.
-  optional group BookmarkData = 11 {
+  optional group BookmarkData = 11 [deprecated = true] {
     // We use a required field to differentiate between a bookmark and a
     // bookmark folder.
     // Present in both GetUpdatesMessage and CommitMessage.
@@ -374,8 +386,7 @@ message SyncEntity {
   // This field is present in both GetUpdatesResponse and CommitMessage, if the
   // item's type requires it and the client that wrote the item supports it (M26
   // or higher).  Clients must also be prepared to handle updates from clients
-  // that do not set this field.  See the comments on
-  // |server_position_in_parent| for more information on how this is handled.
+  // that do not set this field.
   //
   // This field will not be set for items whose type ignores positioning.
   // Clients should not attempt to read this field on the receipt of an item of
@@ -385,8 +396,9 @@ message SyncEntity {
   // its internal representation.
   optional UniquePosition unique_position = 25;
 
-  // Attachment ids of attachments associated with this SyncEntity.
-  repeated AttachmentIdProto attachment_id = 26;
+  // This used to be a list of sync attachment IDs, but it was never launched
+  // and the code has been removed as of M66.
+  repeated DeprecatedMessage attachment_id = 26 [deprecated = true];
 };
 
 // This message contains diagnostic information used to correlate
@@ -531,14 +543,18 @@ message GarbageCollectionDirective {
     UNKNOWN = 0;
     VERSION_WATERMARK = 1;
     AGE_WATERMARK = 2;
-    MAX_ITEM_COUNT = 3;
+    DEPRECATED_MAX_ITEM_COUNT = 3 [deprecated = true];
   }
 
   optional Type type = 1 [default = UNKNOWN];
 
   // This field specifies the watermark for the versions which should get
-  // garbage collected.  The client should purge all sync entities with a
-  // version smaller than version_watermark locally.
+  // garbage collected.  The client should purge all sync entities when
+  // receiving any value of this.  This is a change from previous behavior,
+  // where the client would only be required to purge items older than the
+  // specified watermark.
+  // TODO(crbug.com/877951): Rename this to make clear that whenever it's set,
+  // the client will delete ALL data, regardless of its value.
   optional int64 version_watermark = 2;
 
   // This field specifies the watermark in terms of age in days.  The client
@@ -549,7 +565,8 @@ message GarbageCollectionDirective {
   // This field specifies the max number of items that the client should keep
   // for a specific datatype.  If the number of items exceeds this limit, the
   // client should purge the extra sync entities based on the LRU rule.
-  optional int32 max_number_of_items = 4;
+  // Deprecated in M76.
+  optional int32 deprecated_max_number_of_items = 4 [deprecated = true];
 }
 
 message DataTypeProgressMarker {
@@ -618,26 +635,15 @@ message GetUpdatesMessage {
   optional int64 from_timestamp = 1;
 
   // Indicates the reason for the GetUpdatesMessage.
-  // Deprecated in M29.  We should eventually rely on GetUpdatesOrigin instead.
-  // Newer clients will support both systems during the transition period.
+  // This was *mostly* deprecated in M29.  GetUpdatesOrigin is the new way to
+  // encode the reason for the GetUpdates request, but some parts of the server
+  // still rely on this field.  It also still contains the
+  // "notifications_enabled" flag which needs to be moved elsewhere before this
+  // can be fully removed. See https://crbug.com/510165.
   optional GetUpdatesCallerInfo caller_info = 2;
 
   // Indicates whether related folders should be fetched.
   optional bool fetch_folders = 3 [default = true];
-
-  // The presence of an individual EntitySpecifics field indicates that the
-  // client requests sync object types associated with that field.  This
-  // determination depends only on the presence of the field, not its
-  // contents -- thus clients should send empty messages as the field value.
-  // For backwards compatibility only bookmark objects will be sent to the
-  // client should requested_types not be present.
-  //
-  // requested_types may contain multiple EntitySpecifics fields -- in this
-  // event, the server will return items of all the indicated types.
-  //
-  // requested_types has been deprecated; clients should use
-  // |from_progress_marker| instead, which allows more flexibility.
-  optional EntitySpecifics requested_types = 4;
 
   // Client-requested limit on the maximum number of updates to return at once.
   // The server may opt to return fewer updates than this amount, but it should
@@ -669,8 +675,9 @@ message GetUpdatesMessage {
   optional bool need_encryption_key = 8 [default = false];
 
   // Whether to create the mobile bookmarks folder if it's not
-  // already created.  Should be set to true only by mobile clients.
-  optional bool create_mobile_bookmarks_folder = 1000 [default = false];
+  // already created.  Set to true by all modern clients.
+  optional bool create_mobile_bookmarks_folder = 1000
+      [default = false, deprecated = true];
 
   // This value is an updated version of the GetUpdatesCallerInfo's
   // GetUpdatesSource.  It describes the reason for the GetUpdate request.
@@ -683,6 +690,11 @@ message GetUpdatesMessage {
 
   // Set of optional per-client datatype contexts.
   repeated DataTypeContext client_contexts = 11;
+
+  // requested_types is a deprecated predecessor to using progress markers.
+  // See https://crbug.com/687426.
+  reserved 4;
+  reserved "requested_types";
 };
 
 message AuthenticateMessage {
@@ -704,10 +716,6 @@ message ClearServerDataResponse {
   // No result fields necessary. Success/failure is indicated in
   // ClientToServerResponse.
 };
-
-message DeprecatedMessage1 {};
-
-message DeprecatedMessage2 {};
 
 // The client must preserve, store, and resend the chip bag with
 // every request.  The server depends on the chip bag in order
@@ -738,6 +746,9 @@ message ClientStatus {
   // taken.  There is no guarantee the problem will be addressed in a reasonable
   // amount of time.
   optional bool hierarchy_conflict_detected = 1;
+
+  // Whether the client has full sync (or, sync the feature) enabled or not.
+  optional bool is_sync_feature_enabled = 2;
 }
 
 // A single datatype's sync context. Allows the datatype to pass along
@@ -775,7 +786,7 @@ message ClientToServerMessage {
   optional GetUpdatesMessage get_updates = 5;
   optional AuthenticateMessage authenticate = 6;
 
-  optional DeprecatedMessage1 deprecated_field_9 = 9 [deprecated = true];
+  optional DeprecatedMessage deprecated_field_9 = 9 [deprecated = true];
 
   optional string store_birthday = 7;  // Opaque store ID; if it changes, duck!
   // The client sets this if it detects a sync issue. The server will tell it
@@ -851,12 +862,9 @@ message CommitResponse {
     // should be filled if our parent was assigned a new ID.
     optional string parent_id_string = 4;
 
-    // This value is the same as the position_in_parent value returned within
-    // the SyncEntity message in GetUpdatesResponse.  There was a time when the
-    // client would attempt to honor this position, but nowadays the server
-    // should ensure it is no different from the position_in_parent sent up in
-    // the commit request and the client should not read it.
-    optional int64 position_in_parent = 5;
+    // This used to be set to the same as the position_in_parent value in
+    // the SyncEntity message in GetUpdatesResponse, but it's not set anymore.
+    optional int64 deprecated_position_in_parent = 5 [deprecated = true];
 
     // The item's current version.
     optional int64 version = 6;
@@ -992,7 +1000,7 @@ message ClientToServerResponse {
 
   optional ClientCommand client_command = 7;
   optional ProfilingData profiling_data = 8;
-  optional DeprecatedMessage2 deprecated_field_9 = 9 [deprecated = true];
+  optional DeprecatedMessage deprecated_field_9 = 9 [deprecated = true];
   optional GetUpdatesMetadataResponse stream_metadata = 10;
   // If GetUpdatesStreamingResponse is contained in the ClientToServerResponse,
   // none of the other fields (error_code and etc) will be set.

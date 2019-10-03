@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/stl_util.h"
+#include "base/strings/pattern.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/log.h"
 #include "chrome/test/chromedriver/chrome/status.h"
@@ -99,6 +100,24 @@ TEST(Switches, Unparsed) {
   switches.SetUnparsedSwitch("-e=--1=1");
 
   ASSERT_EQ("---e=--1=1 --a --b --c=1 --d=1", switches.ToString());
+}
+
+TEST(ParseCapabilities, UnknownCapabilityLegacy) {
+  // In legacy mode, unknown capabilities are ignored.
+  Capabilities capabilities;
+  base::DictionaryValue caps;
+  caps.SetString("foo", "bar");
+  Status status = capabilities.Parse(caps, false);
+  ASSERT_TRUE(status.IsOk());
+}
+
+TEST(ParseCapabilities, UnknownCapabilityW3c) {
+  // In W3C mode, unknown capabilities results in error.
+  Capabilities capabilities;
+  base::DictionaryValue caps;
+  caps.SetString("foo", "bar");
+  Status status = capabilities.Parse(caps);
+  ASSERT_EQ(status.code(), kInvalidArgument);
 }
 
 TEST(ParseCapabilities, WithAndroidPackage) {
@@ -215,7 +234,7 @@ TEST(ParseCapabilities, IllegalProxyType) {
 TEST(ParseCapabilities, DirectProxy) {
   Capabilities capabilities;
   base::DictionaryValue proxy;
-  proxy.SetString("proxyType", "DIRECT");
+  proxy.SetString("proxyType", "direct");
   base::DictionaryValue caps;
   caps.SetKey("proxy", std::move(proxy));
   Status status = capabilities.Parse(caps);
@@ -238,7 +257,7 @@ TEST(ParseCapabilities, SystemProxy) {
 TEST(ParseCapabilities, PacProxy) {
   Capabilities capabilities;
   base::DictionaryValue proxy;
-  proxy.SetString("proxyType", "PAC");
+  proxy.SetString("proxyType", "pac");
   proxy.SetString("proxyAutoconfigUrl", "test.wpad");
   base::DictionaryValue caps;
   caps.SetKey("proxy", std::move(proxy));
@@ -251,7 +270,7 @@ TEST(ParseCapabilities, PacProxy) {
 TEST(ParseCapabilities, MissingProxyAutoconfigUrl) {
   Capabilities capabilities;
   base::DictionaryValue proxy;
-  proxy.SetString("proxyType", "PAC");
+  proxy.SetString("proxyType", "pac");
   proxy.SetString("httpProxy", "http://localhost:8001");
   base::DictionaryValue caps;
   caps.SetKey("proxy", std::move(proxy));
@@ -278,28 +297,24 @@ TEST(ParseCapabilities, ManualProxy) {
   proxy.SetString("ftpProxy", "localhost:9001");
   proxy.SetString("httpProxy", "localhost:8001");
   proxy.SetString("sslProxy", "localhost:10001");
-  proxy.SetString("noProxy", "google.com, youtube.com");
+  proxy.SetString("socksProxy", "localhost:12345");
+  proxy.SetInteger("socksVersion", 5);
+  std::unique_ptr<base::ListValue> bypass = std::make_unique<base::ListValue>();
+  bypass->AppendString("google.com");
+  bypass->AppendString("youtube.com");
+  proxy.SetList("noProxy", std::move(bypass));
   base::DictionaryValue caps;
   caps.SetKey("proxy", std::move(proxy));
   Status status = capabilities.Parse(caps);
   ASSERT_TRUE(status.IsOk());
   ASSERT_EQ(2u, capabilities.switches.GetSize());
   ASSERT_EQ(
-      "ftp=localhost:9001;http=localhost:8001;https=localhost:10001",
+      "ftp=localhost:9001;http=localhost:8001;https=localhost:10001;"
+      "socks=socks5://localhost:12345",
       capabilities.switches.GetSwitchValue("proxy-server"));
   ASSERT_EQ(
-      "google.com, youtube.com",
+      "google.com,youtube.com",
       capabilities.switches.GetSwitchValue("proxy-bypass-list"));
-}
-
-TEST(ParseCapabilities, MissingSettingForManualProxy) {
-  Capabilities capabilities;
-  base::DictionaryValue proxy;
-  proxy.SetString("proxyType", "manual");
-  base::DictionaryValue caps;
-  caps.SetKey("proxy", std::move(proxy));
-  Status status = capabilities.Parse(caps);
-  ASSERT_FALSE(status.IsOk());
 }
 
 TEST(ParseCapabilities, IgnoreNullValueForManualProxy) {
@@ -320,12 +335,52 @@ TEST(ParseCapabilities, IgnoreNullValueForManualProxy) {
       capabilities.switches.GetSwitchValue("proxy-server"));
 }
 
+TEST(ParseCapabilities, MissingSocksVersion) {
+  Capabilities capabilities;
+  base::DictionaryValue proxy;
+  proxy.SetString("proxyType", "manual");
+  proxy.SetString("socksProxy", "localhost:6000");
+  base::DictionaryValue caps;
+  caps.SetKey("proxy", std::move(proxy));
+  Status status = capabilities.Parse(caps);
+  ASSERT_FALSE(status.IsOk());
+}
+
+TEST(ParseCapabilities, BadSocksVersion) {
+  Capabilities capabilities;
+  base::DictionaryValue proxy;
+  proxy.SetString("proxyType", "manual");
+  proxy.SetString("socksProxy", "localhost:6000");
+  proxy.SetInteger("socksVersion", 256);
+  base::DictionaryValue caps;
+  caps.SetKey("proxy", std::move(proxy));
+  Status status = capabilities.Parse(caps);
+  ASSERT_FALSE(status.IsOk());
+}
+
+TEST(ParseCapabilities, AcceptInsecureCertsDisabledByDefault) {
+  Capabilities capabilities;
+  base::DictionaryValue caps;
+  Status status = capabilities.Parse(caps);
+  ASSERT_TRUE(status.IsOk());
+  ASSERT_FALSE(capabilities.accept_insecure_certs);
+}
+
+TEST(ParseCapabilities, EnableAcceptInsecureCerts) {
+  Capabilities capabilities;
+  base::DictionaryValue caps;
+  caps.SetBoolean("acceptInsecureCerts", true);
+  Status status = capabilities.Parse(caps);
+  ASSERT_TRUE(status.IsOk());
+  ASSERT_TRUE(capabilities.accept_insecure_certs);
+}
+
 TEST(ParseCapabilities, LoggingPrefsOk) {
   Capabilities capabilities;
   base::DictionaryValue logging_prefs;
   logging_prefs.SetString("Network", "INFO");
   base::DictionaryValue caps;
-  caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   Status status = capabilities.Parse(caps);
   ASSERT_TRUE(status.IsOk());
   ASSERT_EQ(1u, capabilities.logging_prefs.size());
@@ -335,7 +390,7 @@ TEST(ParseCapabilities, LoggingPrefsOk) {
 TEST(ParseCapabilities, LoggingPrefsNotDict) {
   Capabilities capabilities;
   base::DictionaryValue caps;
-  caps.SetString("loggingPrefs", "INFO");
+  caps.SetString("goog:loggingPrefs", "INFO");
   Status status = capabilities.Parse(caps);
   ASSERT_FALSE(status.IsOk());
 }
@@ -346,7 +401,7 @@ TEST(ParseCapabilities, PerfLoggingPrefsInspectorDomainStatus) {
   base::DictionaryValue logging_prefs;
   logging_prefs.SetString(WebDriverLog::kPerformanceType, "INFO");
   base::DictionaryValue desired_caps;
-  desired_caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  desired_caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   ASSERT_EQ(PerfLoggingPrefs::InspectorDomainStatus::kDefaultEnabled,
             capabilities.perf_logging_prefs.network);
   ASSERT_EQ(PerfLoggingPrefs::InspectorDomainStatus::kDefaultEnabled,
@@ -370,7 +425,7 @@ TEST(ParseCapabilities, PerfLoggingPrefsTracing) {
   base::DictionaryValue logging_prefs;
   logging_prefs.SetString(WebDriverLog::kPerformanceType, "INFO");
   base::DictionaryValue desired_caps;
-  desired_caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  desired_caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   ASSERT_EQ("", capabilities.perf_logging_prefs.trace_categories);
   base::DictionaryValue perf_logging_prefs;
   perf_logging_prefs.SetString("traceCategories", "benchmark,blink.console");
@@ -391,7 +446,7 @@ TEST(ParseCapabilities, PerfLoggingPrefsInvalidInterval) {
   base::DictionaryValue logging_prefs;
   logging_prefs.SetString(WebDriverLog::kPerformanceType, "INFO");
   base::DictionaryValue desired_caps;
-  desired_caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  desired_caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   base::DictionaryValue perf_logging_prefs;
   // A bufferUsageReportingInterval interval <= 0 will cause DevTools errors.
   perf_logging_prefs.SetInteger("bufferUsageReportingInterval", 0);
@@ -407,7 +462,7 @@ TEST(ParseCapabilities, PerfLoggingPrefsNotDict) {
   base::DictionaryValue logging_prefs;
   logging_prefs.SetString(WebDriverLog::kPerformanceType, "INFO");
   base::DictionaryValue desired_caps;
-  desired_caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  desired_caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   desired_caps.SetString("goog:chromeOptions.perfLoggingPrefs",
                          "traceCategories");
   Status status = capabilities.Parse(desired_caps);
@@ -432,7 +487,7 @@ TEST(ParseCapabilities, PerfLoggingPrefsPerfLogOff) {
   // Disable performance log by setting logging level to OFF.
   logging_prefs.SetString(WebDriverLog::kPerformanceType, "OFF");
   base::DictionaryValue desired_caps;
-  desired_caps.SetKey("loggingPrefs", std::move(logging_prefs));
+  desired_caps.SetKey("goog:loggingPrefs", std::move(logging_prefs));
   base::DictionaryValue perf_logging_prefs;
   perf_logging_prefs.SetBoolean("enableNetwork", true);
   desired_caps.SetPath({"goog:chromeOptions", "perfLoggingPrefs"},
@@ -454,8 +509,8 @@ TEST(ParseCapabilities, ExcludeSwitches) {
   ASSERT_TRUE(status.IsOk());
   ASSERT_EQ(2u, capabilities.exclude_switches.size());
   const std::set<std::string>& switches = capabilities.exclude_switches;
-  ASSERT_TRUE(base::ContainsKey(switches, "switch1"));
-  ASSERT_TRUE(base::ContainsKey(switches, "switch2"));
+  ASSERT_TRUE(base::Contains(switches, "switch1"));
+  ASSERT_TRUE(base::Contains(switches, "switch2"));
 }
 
 TEST(ParseCapabilities, UseRemoteBrowser) {
@@ -513,11 +568,11 @@ TEST(ParseCapabilities, MobileEmulationDeviceName) {
 
   ASSERT_EQ(1u, capabilities.switches.GetSize());
   ASSERT_TRUE(capabilities.switches.HasSwitch("user-agent"));
-  ASSERT_EQ(
+  ASSERT_TRUE(base::MatchPattern(
+      capabilities.switches.GetSwitchValue("user-agent"),
       "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) "
-      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3227.0 Mobile "
-      "Safari/537.36",
-      capabilities.switches.GetSwitchValue("user-agent"));
+      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/*.*.*.* Mobile "
+      "Safari/537.36"));
 
   ASSERT_EQ(360, capabilities.device_metrics->width);
   ASSERT_EQ(640, capabilities.device_metrics->height);

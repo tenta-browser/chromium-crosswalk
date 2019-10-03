@@ -8,25 +8,23 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
-#include "chrome/browser/chromeos/login/ui/webui_login_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
-#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/settings/install_attributes.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/policy_switches.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -83,7 +81,7 @@ struct BlockingLoginTestParam {
   const bool enroll_device;
 };
 
-// TODO(atwilson): This test is completely broken - it originally was built
+// TODO(poromov): This test is completely broken - it originally was built
 // when we made an entirely different set of network calls on startup. As a
 // result it generates random failures in startup network requests, then waits
 // to see if the profile finishes loading which is not at all what it is
@@ -102,9 +100,6 @@ class BlockingLoginTest
     command_line->AppendSwitchASCII(
         policy::switches::kDeviceManagementUrl,
         embedded_test_server()->GetURL("/device_management").spec());
-
-    command_line->AppendSwitch(
-        chromeos::switches::kAllowFailedPolicyFetchForTest);
   }
 
   void SetUpOnMainThread() override {
@@ -137,15 +132,10 @@ class BlockingLoginTest
     base::RunLoop().RunUntilIdle();
   }
 
-  policy::BrowserPolicyConnectorChromeOS* browser_policy_connector() {
-    return g_browser_process->platform_part()
-        ->browser_policy_connector_chromeos();
-  }
-
   void EnrollDevice(const std::string& domain) {
     base::RunLoop loop;
     InstallAttributes::LockResult result;
-    browser_policy_connector()->GetInstallAttributes()->LockDevice(
+    InstallAttributes::Get()->LockDevice(
         policy::DEVICE_MODE_ENTERPRISE, domain, std::string(), "100200300",
         base::Bind(&CopyLockResult, &loop, &result));
     loop.Run();
@@ -158,14 +148,10 @@ class BlockingLoginTest
         chrome::NOTIFICATION_SESSION_STARTED,
         content::NotificationService::AllSources());
 
-    ExistingUserController* controller =
-        ExistingUserController::current_controller();
-    ASSERT_TRUE(controller);
-    WebUILoginDisplay* login_display =
-        static_cast<WebUILoginDisplay*>(controller->login_display());
-    ASSERT_TRUE(login_display);
-
-    login_display->ShowSigninScreenForCreds(username, "password");
+    LoginDisplayHost::default_host()
+        ->GetOobeUI()
+        ->GetView<GaiaScreenHandler>()
+        ->ShowSigninScreenForTest(username, "password", "[]");
 
     // Wait for the session to start after submitting the credentials. This
     // will wait until all the background requests are done.
@@ -180,9 +166,7 @@ class BlockingLoginTest
     std::unique_ptr<net::test_server::HttpResponse> response;
 
     GaiaUrls* gaia = GaiaUrls::GetInstance();
-    if (request.relative_url ==
-            gaia->deprecated_client_login_to_oauth2_url().path() ||
-        request.relative_url == gaia->oauth2_token_url().path() ||
+    if (request.relative_url == gaia->oauth2_token_url().path() ||
         base::StartsWith(request.relative_url, kDMRegisterRequest,
                          base::CompareCase::SENSITIVE) ||
         base::StartsWith(request.relative_url, kDMPolicyRequest,
@@ -201,7 +185,7 @@ class BlockingLoginTest
   // next response used.
   // Returns a reference to that response, so that it can be further customized.
   net::test_server::BasicHttpResponse& PushResponse(net::HttpStatusCode code) {
-    auto response = base::MakeUnique<net::test_server::BasicHttpResponse>();
+    auto response = std::make_unique<net::test_server::BasicHttpResponse>();
     net::test_server::BasicHttpResponse* response_ptr = response.get();
     response->set_code(code);
     responses_.push_back(std::move(response));
@@ -224,7 +208,7 @@ class BlockingLoginTest
   // Returns the body of the fetch response from the policy server.
   std::string GetPolicyResponse() {
     em::DeviceManagementResponse response;
-    response.mutable_policy_response()->add_response();
+    response.mutable_policy_response()->add_responses();
     std::string data;
     EXPECT_TRUE(response.SerializeToString(&data));
     return data;
@@ -249,7 +233,7 @@ IN_PROC_BROWSER_TEST_P(BlockingLoginTest, LoginBlocksForUser) {
   // Verify that there isn't a logged in user when the test starts.
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
   EXPECT_FALSE(user_manager->IsUserLoggedIn());
-  EXPECT_FALSE(browser_policy_connector()->IsEnterpriseManaged());
+  EXPECT_FALSE(InstallAttributes::Get()->IsEnterpriseManaged());
   EXPECT_FALSE(profile_added_);
 
   // Enroll the device, if enrollment is enabled for this test instance.
@@ -257,9 +241,8 @@ IN_PROC_BROWSER_TEST_P(BlockingLoginTest, LoginBlocksForUser) {
     EnrollDevice(kDomain);
 
     EXPECT_FALSE(user_manager->IsUserLoggedIn());
-    EXPECT_TRUE(browser_policy_connector()->IsEnterpriseManaged());
-    EXPECT_EQ(kDomain,
-              browser_policy_connector()->GetEnterpriseEnrollmentDomain());
+    EXPECT_TRUE(InstallAttributes::Get()->IsEnterpriseManaged());
+    EXPECT_EQ(kDomain, InstallAttributes::Get()->GetDomain());
     EXPECT_FALSE(profile_added_);
     RunUntilIdle();
     EXPECT_FALSE(
@@ -290,15 +273,19 @@ IN_PROC_BROWSER_TEST_P(BlockingLoginTest, LoginBlocksForUser) {
 
     case 5:
       PushResponse(net::HTTP_OK).set_content(GetPolicyResponse());
+      FALLTHROUGH;
 
     case 4:
       PushResponse(net::HTTP_OK).set_content(GetRegisterResponse());
+      FALLTHROUGH;
 
     case 3:
       PushResponse(net::HTTP_OK).set_content(kOAuth2AccessTokenData);
+      FALLTHROUGH;
 
     case 2:
       PushResponse(net::HTTP_OK).set_content(kOAuth2TokenPairData);
+      FALLTHROUGH;
 
     case 1:
       PushResponse(net::HTTP_OK)
@@ -339,8 +326,10 @@ const BlockingLoginTestParam kBlockinLoginTestCases[] = {
     {5, kUsernameOtherDomain, true},
 };
 
-INSTANTIATE_TEST_CASE_P(BlockingLoginTestInstance,
-                        BlockingLoginTest,
-                        testing::ValuesIn(kBlockinLoginTestCases));
+// TODO(poromov): Disabled because it has become flaky due to incorrect mock
+// network requests - re-enable this when https://crbug.com/580537 is fixed.
+INSTANTIATE_TEST_SUITE_P(DISABLED_BlockingLoginTestInstance,
+                         BlockingLoginTest,
+                         testing::ValuesIn(kBlockinLoginTestCases));
 
 }  // namespace chromeos

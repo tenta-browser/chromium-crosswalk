@@ -9,7 +9,7 @@
 
 namespace views {
 
-MenuDelegate::~MenuDelegate() {}
+MenuDelegate::~MenuDelegate() = default;
 
 bool MenuDelegate::IsItemChecked(int id) const {
   return false;
@@ -19,13 +19,7 @@ base::string16 MenuDelegate::GetLabel(int id) const {
   return base::string16();
 }
 
-const gfx::FontList* MenuDelegate::GetLabelFontList(int id) const {
-  return NULL;
-}
-
-bool MenuDelegate::GetShouldUseNormalForegroundColor(int command_id) const {
-  return false;
-}
+void MenuDelegate::GetLabelStyle(int id, LabelStyle* style) const {}
 
 base::string16 MenuDelegate::GetTooltipText(int id,
                                       const gfx::Point& screen_loc) const {
@@ -87,7 +81,7 @@ bool MenuDelegate::CanDrop(MenuItemView* menu, const OSExchangeData& data) {
 bool MenuDelegate::GetDropFormats(
     MenuItemView* menu,
     int* formats,
-    std::set<ui::Clipboard::FormatType>* format_types) {
+    std::set<ui::ClipboardFormatType>* format_types) {
   return false;
 }
 
@@ -131,7 +125,7 @@ MenuItemView* MenuDelegate::GetSiblingMenu(MenuItemView* menu,
                                            MenuAnchorPosition* anchor,
                                            bool* has_mnemonics,
                                            MenuButton** button) {
-  return NULL;
+  return nullptr;
 }
 
 int MenuDelegate::GetMaxWidthForMenu(MenuItemView* menu) {
@@ -155,6 +149,10 @@ void MenuDelegate::GetHorizontalIconMargins(int command_id,
 }
 
 bool MenuDelegate::ShouldReserveSpaceForSubmenuIndicator() const {
+  return true;
+}
+
+bool MenuDelegate::ShouldTryPositioningBesideAnchor() const {
   return true;
 }
 

@@ -4,6 +4,7 @@
 
 import("//build/config/arm.gni")
 import("//build/config/sanitizers/sanitizers.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 
 config("libwebp_config") {
   include_dirs = [ "./src" ]
@@ -15,14 +16,15 @@ config("libwebp_config_internal") {
   defines = [
     "WEBP_NEAR_LOSSLESS=0",
     "WEBP_DISABLE_STATS",
+    "WEBP_REDUCE_SIZE",
   ]
   if (!is_ios) {
     defines += [ "WEBP_REDUCE_CSP" ]
   }
 }
 
-set_opt_level =
-    !is_debug && is_posix && (current_cpu == "arm" || current_cpu == "arm64")
+set_opt_level = !is_debug && (is_posix || is_fuchsia) &&
+                (current_cpu == "arm" || current_cpu == "arm64")
 
 # webp's dsp code can be built for all configurations. Skipping it when both
 # arm_use_neon and arm_optionally_use_neon are false will result in link errors
@@ -109,6 +111,7 @@ static_library("libwebp_mux") {
   configs -= [ "//build/config/compiler:chromium_code" ]
   configs += [ "//build/config/compiler:no_chromium_code" ]
   deps = [
+    ":libwebp_dec",
     ":libwebp_utils",
     ":libwebp_webp",
   ]
@@ -129,7 +132,6 @@ static_library("libwebp_dsp") {
     "src/dsp/dec_msa.c",
     "src/dsp/dsp.h",
     "src/dsp/enc.c",
-    "src/dsp/enc_avx2.c",
     "src/dsp/enc_mips32.c",
     "src/dsp/enc_mips_dsp_r2.c",
     "src/dsp/enc_msa.c",
@@ -148,6 +150,7 @@ static_library("libwebp_dsp") {
     "src/dsp/mips_macro.h",
     "src/dsp/msa_macro.h",
     "src/dsp/neon.h",
+    "src/dsp/quant.h",
     "src/dsp/rescaler.c",
     "src/dsp/rescaler_mips32.c",
     "src/dsp/rescaler_mips_dsp_r2.c",
@@ -177,10 +180,7 @@ static_library("libwebp_dsp") {
     ":libwebp_webp",
   ]
   if (is_android) {
-    deps += [ "//third_party/android_tools:cpu_features" ]
-
-    configs -= [ "//build/config/android:default_cygprofile_instrumentation" ]
-    configs += [ "//build/config/android:no_cygprofile_instrumentation" ]
+    deps += [ "//third_party/android_sdk:cpu_features" ]
   }
   if (current_cpu == "x86" || current_cpu == "x64") {
     defines = [
@@ -193,9 +193,12 @@ static_library("libwebp_dsp") {
 static_library("libwebp_dsp_sse41") {
   sources = [
     "src/dsp/alpha_processing_sse41.c",
+    "src/dsp/common_sse41.h",
     "src/dsp/dec_sse41.c",
     "src/dsp/enc_sse41.c",
     "src/dsp/lossless_enc_sse41.c",
+    "src/dsp/upsampling_sse41.c",
+    "src/dsp/yuv_sse41.c",
   ]
   configs += [ ":libwebp_config_internal" ]
   configs -= [ "//build/config/compiler:chromium_code" ]
@@ -250,6 +253,7 @@ if (use_dsp_neon) {
   static_library("libwebp_dsp_neon") {
     sources = [
       "src/dsp/alpha_processing_neon.c",
+      "src/dsp/cost_neon.c",
       "src/dsp/dec_neon.c",
       "src/dsp/enc_neon.c",
       "src/dsp/filters_neon.c",
@@ -275,11 +279,6 @@ if (use_dsp_neon) {
       # avoid an ICE with gcc-4.9: b/15574841
       cflags = [ "-frename-registers" ]
     }
-
-    if (is_android) {
-      configs -= [ "//build/config/android:default_cygprofile_instrumentation" ]
-      configs += [ "//build/config/android:no_cygprofile_instrumentation" ]
-    }
   }
 }  # use_dsp_neon
 
@@ -293,8 +292,6 @@ static_library("libwebp_enc") {
     "src/enc/config_enc.c",
     "src/enc/cost_enc.c",
     "src/enc/cost_enc.h",
-    "src/enc/delta_palettization_enc.c",
-    "src/enc/delta_palettization_enc.h",
     "src/enc/filter_enc.c",
     "src/enc/frame_enc.c",
     "src/enc/histogram_enc.c",
@@ -379,6 +376,10 @@ static_library("libwebp_utils") {
   all_dependent_configs = [ ":libwebp_config" ]
 
   public_configs = [ ":libwebp_utils_warnings" ]
+
+  deps = [
+    ":libwebp_webp",
+  ]
 }
 
 group("libwebp") {
@@ -389,6 +390,9 @@ group("libwebp") {
     ":libwebp_enc",
     ":libwebp_mux",
     ":libwebp_utils",
+  ]
+  public_deps = [
+    ":libwebp_webp",
   ]
   public_configs = [ ":libwebp_config" ]
   if (use_dsp_neon) {
@@ -413,6 +417,7 @@ if (current_toolchain == host_toolchain) {
     }
 
     deps = [
+      ":imageio_util",
       ":libwebp_webp",
     ]
     configs += [ ":libwebp_config" ]
@@ -422,6 +427,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imageio_util") {
     sources = [
+      "examples/unicode.h",
       "imageio/imageio_util.c",
       "imageio/imageio_util.h",
     ]
@@ -442,6 +448,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imagedec") {
     sources = [
+      "examples/unicode.h",
       "imageio/image_dec.c",
       "imageio/image_dec.h",
       "imageio/jpegdec.c",
@@ -469,6 +476,7 @@ if (current_toolchain == host_toolchain) {
     }
 
     deps = [
+      ":imageio_util",
       ":libwebp_webp",
       "//third_party/libpng",
       "//third_party/zlib",
@@ -479,6 +487,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imageenc") {
     sources = [
+      "examples/unicode.h",
       "imageio/image_enc.c",
       "imageio/image_enc.h",
     ]
@@ -491,6 +500,7 @@ if (current_toolchain == host_toolchain) {
     }
 
     deps = [
+      ":imageio_util",
       ":libwebp_webp",
     ]
     configs += [ ":libwebp_config" ]
@@ -501,6 +511,7 @@ if (current_toolchain == host_toolchain) {
     sources = [
       "examples/cwebp.c",
       "examples/stopwatch.h",
+      "examples/unicode.h",
     ]
 
     deps = [
@@ -508,8 +519,8 @@ if (current_toolchain == host_toolchain) {
       ":imagedec",
       ":imageio_util",
       ":libwebp",
+      ":libwebp_webp",
       "//base",
-      "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",
     ]
     configs += [ ":libwebp_config_internal" ]
@@ -525,6 +536,7 @@ if (current_toolchain == host_toolchain) {
     sources = [
       "examples/dwebp.c",
       "examples/stopwatch.h",
+      "examples/unicode.h",
     ]
 
     deps = [
@@ -533,8 +545,8 @@ if (current_toolchain == host_toolchain) {
       ":imageenc",
       ":imageio_util",
       ":libwebp",
+      ":libwebp_webp",
       "//base",
-      "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",
     ]
     configs += [ ":libwebp_config_internal" ]
@@ -545,4 +557,85 @@ if (current_toolchain == host_toolchain) {
       configs += [ "//build/config/compiler:optimize_max" ]
     }
   }
+}
+
+############################################################################## #
+# Fuzzers
+# TODO(https://bugs.chromium.org/p/webp/issues/detail?id=409):
+#     Eliminated need for cflags_cc.
+
+fuzzer_test("libwebp_simple_api_fuzzer") {
+  sources = [
+    "fuzzing/fuzz_simple_api.cc",
+  ]
+  dict = "fuzzing/fuzz.dict"
+  seed_corpus = "fuzzing/fuzz_seed_corpus"
+  deps = [
+    ":libwebp",
+    ":libwebp_webp",
+  ]
+  cflags_cc = [ "-Wno-unused-function" ]
+  defines = [ "WEBP_MAX_IMAGE_SIZE=838860800" ]
+  additional_configs = [ ":libwebp_config_internal" ]
+}
+
+fuzzer_test("libwebp_advanced_api_fuzzer") {
+  sources = [
+    "fuzzing/fuzz_advanced_api.cc",
+  ]
+  dict = "fuzzing/fuzz.dict"
+  seed_corpus = "fuzzing/fuzz_seed_corpus"
+  deps = [
+    ":libwebp",
+    ":libwebp_webp",
+  ]
+  cflags_cc = [ "-Wno-unused-function" ]
+  defines = [ "WEBP_MAX_IMAGE_SIZE=838860800" ]
+  additional_configs = [ ":libwebp_config_internal" ]
+}
+
+fuzzer_test("libwebp_animation_api_fuzzer") {
+  sources = [
+    "fuzzing/fuzz_animation_api.cc",
+    "src/demux/anim_decode.c",
+  ]
+  dict = "fuzzing/fuzz.dict"
+  seed_corpus = "fuzzing/fuzz_seed_corpus"
+  deps = [
+    ":libwebp",
+    ":libwebp_webp",
+  ]
+  cflags_cc = [ "-Wno-unused-function" ]
+  defines = [ "WEBP_MAX_IMAGE_SIZE=838860800" ]
+  additional_configs = [ ":libwebp_config_internal" ]
+}
+
+fuzzer_test("libwebp_demux_api_fuzzer") {
+  sources = [
+    "fuzzing/fuzz_demux_api.cc",
+  ]
+  dict = "fuzzing/fuzz.dict"
+  seed_corpus = "fuzzing/fuzz_seed_corpus"
+  deps = [
+    ":libwebp",
+    ":libwebp_webp",
+  ]
+  cflags_cc = [ "-Wno-unused-function" ]
+  defines = [ "WEBP_MAX_IMAGE_SIZE=838860800" ]
+  additional_configs = [ ":libwebp_config_internal" ]
+}
+
+fuzzer_test("libwebp_enc_dec_api_fuzzer") {
+  sources = [
+    "fuzzing/fuzz_webp_enc_dec.cc",
+  ]
+  dict = "fuzzing/fuzz.dict"
+  seed_corpus = "fuzzing/fuzz_seed_corpus"
+  deps = [
+    ":libwebp",
+    ":libwebp_webp",
+  ]
+  cflags_cc = [ "-Wno-unused-function" ]
+  defines = [ "WEBP_MAX_IMAGE_SIZE=838860800" ]
+  additional_configs = [ ":libwebp_config_internal" ]
 }

@@ -4,35 +4,29 @@
 
 #import "ios/chrome/browser/signin/authentication_service.h"
 
-#import <UIKit/UIKit.h>
-
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/device_accounts_synchronizer.h"
+#import "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
+#include "components/unified_consent/feature.h"
 #include "google_apis/gaia/gaia_auth_util.h"
-#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/crash_report/breakpad_helper.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
-#import "ios/chrome/browser/signin/browser_state_data_remover.h"
+#import "ios/chrome/browser/signin/authentication_service_delegate.h"
 #include "ios/chrome/browser/signin/constants.h"
-#include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/signin/signin_util.h"
-#include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
+#include "ios/chrome/browser/system_flags.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 #include "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
@@ -58,115 +52,97 @@ enum LoginMethodAndSyncState {
 
 // A fake account id used in the list of last signed in accounts when migrating
 // an email for which the corresponding account was removed.
-const char* kFakeAccountIdForRemovedAccount = "0000000000000";
+constexpr char kFakeAccountIdForRemovedAccount[] = "0000000000000";
 
 // Returns the account id associated with |identity|.
-std::string ChromeIdentityToAccountID(ios::ChromeBrowserState* browser_state,
+std::string ChromeIdentityToAccountID(signin::IdentityManager* identity_manager,
                                       ChromeIdentity* identity) {
-  AccountTrackerService* account_tracker =
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state);
   std::string gaia_id = base::SysNSStringToUTF8([identity gaiaID]);
-  return account_tracker->FindAccountInfoByGaiaId(gaia_id).account_id;
+  auto maybe_account =
+      identity_manager->FindAccountInfoForAccountWithRefreshTokenByGaiaId(
+          gaia_id);
+  AccountInfo account_info =
+      maybe_account.has_value() ? maybe_account.value() : AccountInfo();
+  return account_info.account_id;
 }
 
 }  // namespace
 
 AuthenticationService::AuthenticationService(
-    ios::ChromeBrowserState* browser_state,
-    ProfileOAuth2TokenService* token_service,
-    SyncSetupService* sync_setup_service)
-    : browser_state_(browser_state),
-      token_service_(token_service),
+    PrefService* pref_service,
+    SyncSetupService* sync_setup_service,
+    signin::IdentityManager* identity_manager,
+    syncer::SyncService* sync_service)
+    : pref_service_(pref_service),
       sync_setup_service_(sync_setup_service),
-      have_accounts_changed_(false),
-      is_in_foreground_(false),
-      is_reloading_credentials_(false),
+      identity_manager_(identity_manager),
+      sync_service_(sync_service),
       identity_service_observer_(this),
+      identity_manager_observer_(this),
       weak_pointer_factory_(this) {
-  DCHECK(browser_state_);
+  DCHECK(pref_service_);
   DCHECK(sync_setup_service_);
-  token_service_->AddObserver(this);
+  DCHECK(identity_manager_);
+  DCHECK(sync_service_);
 }
 
 AuthenticationService::~AuthenticationService() {
-  token_service_->RemoveObserver(this);
+  DCHECK(!delegate_);
 }
 
 // static
 void AuthenticationService::RegisterPrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterStringPref(prefs::kSigninSharedAuthenticationUserId,
-                               std::string());
   registry->RegisterBooleanPref(prefs::kSigninShouldPromptForSigninAgain,
                                 false);
   registry->RegisterListPref(prefs::kSigninLastAccounts);
   registry->RegisterBooleanPref(prefs::kSigninLastAccountsMigrated, false);
 }
 
-void AuthenticationService::Initialize() {
+void AuthenticationService::Initialize(
+    std::unique_ptr<AuthenticationServiceDelegate> delegate) {
+  CHECK(delegate);
+  CHECK(!initialized());
+  delegate_ = std::move(delegate);
+  initialized_ = true;
+
   MigrateAccountsStoredInPrefsIfNeeded();
 
   HandleForgottenIdentity(nil, true /* should_prompt */);
 
-  bool isSignedIn = IsAuthenticated();
-  if (isSignedIn) {
-    if (!sync_setup_service_->HasFinishedInitialSetup()) {
-      // Sign out the user if sync was not configured after signing
-      // in (see PM comments in http://crbug.com/339831 ).
-      SignOut(signin_metrics::ABORT_SIGNIN, nil);
-      SetPromptForSignIn(true);
-      isSignedIn = false;
-    }
+  bool is_signed_in = IsAuthenticated();
+  if (is_signed_in && !unified_consent::IsUnifiedConsentFeatureEnabled() &&
+      !sync_setup_service_->HasFinishedInitialSetup()) {
+    // Sign out the user if sync was not configured after signing
+    // in (see PM comments in http://crbug.com/339831 ).
+    SignOut(signin_metrics::ABORT_SIGNIN, nil);
+    SetPromptForSignIn();
+    is_signed_in = false;
   }
-  breakpad_helper::SetCurrentlySignedIn(isSignedIn);
-
-  OnApplicationEnterForeground();
-
-  NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
-  foreground_observer_.reset([center
-      addObserverForName:UIApplicationWillEnterForegroundNotification
-                  object:nil
-                   queue:nil
-              usingBlock:^(NSNotification* notification) {
-                OnApplicationEnterForeground();
-              }]);
-  background_observer_.reset([center
-      addObserverForName:UIApplicationDidEnterBackgroundNotification
-                  object:nil
-                   queue:nil
-              usingBlock:^(NSNotification* notification) {
-                OnApplicationEnterBackground();
-              }]);
+  breakpad_helper::SetCurrentlySignedIn(is_signed_in);
 
   identity_service_observer_.Add(
       ios::GetChromeBrowserProvider()->GetChromeIdentityService());
+
+  OnApplicationWillEnterForeground();
 }
 
 void AuthenticationService::Shutdown() {
-  NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
-  [center removeObserver:foreground_observer_];
-  [center removeObserver:background_observer_];
+  identity_manager_observer_.RemoveAll();
+  delegate_.reset();
 }
 
-void AuthenticationService::OnApplicationEnterForeground() {
-  if (is_in_foreground_) {
+void AuthenticationService::OnApplicationWillEnterForeground() {
+  if (identity_manager_observer_.IsObservingSources())
     return;
-  }
 
-  // A change might have happened while in background, and SSOAuth didn't send
-  // the corresponding notifications yet. Reload the credentials to catch up
-  // with potentials changes.
-  ReloadCredentialsFromIdentities(true /* should_prompt */);
+  identity_manager_observer_.Add(identity_manager_);
 
-  // Set |is_in_foreground_| only after handling forgotten identity.
-  // This ensures that any changes made to the SSOAuth identities before this
-  // are correctly seen as made while in background.
-  is_in_foreground_ = true;
-
-  // Accounts might have changed while the AuthenticationService was in
-  // background. Check whether they changed, then store the current accounts.
-  ComputeHaveAccountsChanged();
-  StoreAccountsInPrefs();
+  // As the SSO library does not send notification when the app is in the
+  // background, reload the credentials and check whether any accounts have
+  // changed (both are done by calling ComputeHaveAccountsChanged). After
+  // that, save the current list of accounts.
+  ComputeHaveAccountsChanged(/*should_prompt=*/true);
 
   if (IsAuthenticated()) {
     bool sync_enabled = sync_setup_service_->IsSyncEnabled();
@@ -184,179 +160,176 @@ void AuthenticationService::OnApplicationEnterForeground() {
 
   // Clear signin errors on the accounts that had a specific MDM device status.
   // This will trigger services to fetch data for these accounts again.
-  ProfileOAuth2TokenServiceIOSDelegate* token_service_delegate =
-      static_cast<ProfileOAuth2TokenServiceIOSDelegate*>(
-          token_service_->GetDelegate());
-  std::map<std::string, base::scoped_nsobject<NSDictionary>> cached_mdm_infos(
-      cached_mdm_infos_);
-  cached_mdm_infos_.clear();
-  for (const auto& cached_mdm_info : cached_mdm_infos) {
-    token_service_delegate->AddOrUpdateAccount(cached_mdm_info.first);
+  using std::swap;
+  std::map<std::string, NSDictionary*> cached_mdm_infos;
+  swap(cached_mdm_infos_, cached_mdm_infos);
+
+  if (!cached_mdm_infos.empty()) {
+    signin::DeviceAccountsSynchronizer* device_accounts_synchronizer =
+        identity_manager_->GetDeviceAccountsSynchronizer();
+    for (const auto& cached_mdm_info : cached_mdm_infos) {
+      device_accounts_synchronizer->ReloadAccountFromSystem(
+          cached_mdm_info.first);
+    }
   }
 }
 
-void AuthenticationService::OnApplicationEnterBackground() {
-  is_in_foreground_ = false;
+void AuthenticationService::OnApplicationDidEnterBackground() {
+  if (!identity_manager_observer_.IsObservingSources())
+    return;
+
+  // Stop observing |identity_manager_| when in the background. Note that
+  // this allows checking whether the app is in background without having a
+  // separate bool by using identity_manager_observer_.IsObservingSources().
+  identity_manager_observer_.Remove(identity_manager_);
 }
 
-void AuthenticationService::SetPromptForSignIn(bool should_prompt) {
-  if (ShouldPromptForSignIn() != should_prompt) {
-    browser_state_->GetPrefs()->SetBoolean(
-        prefs::kSigninShouldPromptForSigninAgain, should_prompt);
-  }
+void AuthenticationService::SetPromptForSignIn() {
+  pref_service_->SetBoolean(prefs::kSigninShouldPromptForSigninAgain, true);
 }
 
-bool AuthenticationService::ShouldPromptForSignIn() {
-  return browser_state_->GetPrefs()->GetBoolean(
-      prefs::kSigninShouldPromptForSigninAgain);
+void AuthenticationService::ResetPromptForSignIn() {
+  pref_service_->SetBoolean(prefs::kSigninShouldPromptForSigninAgain, false);
 }
 
-void AuthenticationService::ComputeHaveAccountsChanged() {
+bool AuthenticationService::ShouldPromptForSignIn() const {
+  return pref_service_->GetBoolean(prefs::kSigninShouldPromptForSigninAgain);
+}
+
+void AuthenticationService::ComputeHaveAccountsChanged(bool should_prompt) {
+  // Load accounts from preference before synchronizing the accounts with
+  // the system, otherwiser we would never detect any changes to the list
+  // of accounts.
+  std::vector<std::string> old_accounts = GetAccountsInPrefs();
+  std::sort(old_accounts.begin(), old_accounts.end());
+
   // Reload credentials to ensure the accounts from the token service are
   // up-to-date.
-  // While the AuthenticationService is in background, changes should be shown
-  // to the user and |should_prompt| is true.
-  ReloadCredentialsFromIdentities(!is_in_foreground_ /* should_prompt */);
-  std::vector<std::string> newAccounts = token_service_->GetAccounts();
-  std::vector<std::string> oldAccounts = GetAccountsInPrefs();
-  std::sort(newAccounts.begin(), newAccounts.end());
-  std::sort(oldAccounts.begin(), oldAccounts.end());
-  have_accounts_changed_ = oldAccounts != newAccounts;
+  ReloadCredentialsFromIdentities(should_prompt);
+
+  std::vector<CoreAccountInfo> new_accounts_info =
+      identity_manager_->GetAccountsWithRefreshTokens();
+  std::vector<std::string> new_accounts;
+  for (const CoreAccountInfo& account_info : new_accounts_info)
+    new_accounts.push_back(account_info.account_id);
+  std::sort(new_accounts.begin(), new_accounts.end());
+
+  have_accounts_changed_ = old_accounts != new_accounts;
 }
 
-bool AuthenticationService::HaveAccountsChanged() {
-  if (!is_in_foreground_) {
-    // While AuthenticationService is in background, the value can change
-    // without warning and needs to be recomputed every time.
-    ComputeHaveAccountsChanged();
-  }
+bool AuthenticationService::HaveAccountsChanged() const {
   return have_accounts_changed_;
 }
 
 void AuthenticationService::MigrateAccountsStoredInPrefsIfNeeded() {
-  AccountTrackerService* account_tracker =
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state_);
-  if (account_tracker->GetMigrationState() ==
-      AccountTrackerService::MIGRATION_NOT_STARTED) {
+  if (identity_manager_->GetAccountIdMigrationState() ==
+      signin::IdentityManager::AccountIdMigrationState::MIGRATION_NOT_STARTED) {
     return;
   }
-  DCHECK_EQ(AccountTrackerService::MIGRATION_DONE,
-            account_tracker->GetMigrationState());
-  if (browser_state_->GetPrefs()->GetBoolean(
-          prefs::kSigninLastAccountsMigrated)) {
+  DCHECK_EQ(signin::IdentityManager::AccountIdMigrationState::MIGRATION_DONE,
+            identity_manager_->GetAccountIdMigrationState());
+  if (pref_service_->GetBoolean(prefs::kSigninLastAccountsMigrated)) {
     // Already migrated.
     return;
   }
 
-  std::vector<std::string> emails = GetAccountsInPrefs();
-  base::ListValue accounts_pref_value;
-  for (const std::string& email : emails) {
-    AccountInfo account_info = account_tracker->FindAccountInfoByEmail(email);
-    if (!account_info.email.empty()) {
-      DCHECK(!account_info.gaia.empty());
-      accounts_pref_value.AppendString(account_info.account_id);
+  std::vector<std::string> account_ids = GetAccountsInPrefs();
+  std::vector<base::Value> accounts_pref_value;
+  for (const std::string& account_id : account_ids) {
+    if (identity_manager_->HasAccountWithRefreshToken(account_id)) {
+      accounts_pref_value.emplace_back(account_id);
     } else {
       // The account for |email| was removed since the last application cold
       // start. Insert |kFakeAccountIdForRemovedAccount| to ensure
       // |have_accounts_changed_| will be set to true and the removal won't be
       // silently ignored.
-      accounts_pref_value.AppendString(kFakeAccountIdForRemovedAccount);
+      accounts_pref_value.emplace_back(kFakeAccountIdForRemovedAccount);
     }
   }
-  browser_state_->GetPrefs()->Set(prefs::kSigninLastAccounts,
-                                  accounts_pref_value);
-  browser_state_->GetPrefs()->SetBoolean(prefs::kSigninLastAccountsMigrated,
-                                         true);
+  pref_service_->Set(prefs::kSigninLastAccounts,
+                     base::Value(std::move(accounts_pref_value)));
+  pref_service_->SetBoolean(prefs::kSigninLastAccountsMigrated, true);
 }
 
 void AuthenticationService::StoreAccountsInPrefs() {
-  std::vector<std::string> accounts(token_service_->GetAccounts());
-  base::ListValue accountsPrefValue;
-  for (const std::string& account : accounts)
-    accountsPrefValue.AppendString(account);
-  browser_state_->GetPrefs()->Set(prefs::kSigninLastAccounts,
-                                  accountsPrefValue);
+  std::vector<CoreAccountInfo> accounts(
+      identity_manager_->GetAccountsWithRefreshTokens());
+  std::vector<base::Value> accounts_pref_value;
+  for (const CoreAccountInfo& account_info : accounts)
+    accounts_pref_value.emplace_back(account_info.account_id.id);
+  pref_service_->Set(prefs::kSigninLastAccounts,
+                     base::Value(std::move(accounts_pref_value)));
 }
 
 std::vector<std::string> AuthenticationService::GetAccountsInPrefs() {
+  const base::Value* accounts_pref =
+      pref_service_->GetList(prefs::kSigninLastAccounts);
+
   std::vector<std::string> accounts;
-  const base::ListValue* accountsPref =
-      browser_state_->GetPrefs()->GetList(prefs::kSigninLastAccounts);
-  for (size_t i = 0; i < accountsPref->GetSize(); ++i) {
-    std::string account;
-    if (accountsPref->GetString(i, &account) && !account.empty()) {
-      accounts.push_back(account);
-    } else {
-      NOTREACHED();
-    }
+  for (const auto& value : accounts_pref->GetList()) {
+    DCHECK(value.is_string());
+    DCHECK(!value.GetString().empty());
+    accounts.push_back(value.GetString());
   }
   return accounts;
 }
 
-ChromeIdentity* AuthenticationService::GetAuthenticatedIdentity() {
+ChromeIdentity* AuthenticationService::GetAuthenticatedIdentity() const {
   // There is no authenticated identity if there is no signed in user or if the
   // user signed in via the client login flow.
   if (!IsAuthenticated())
     return nil;
-  std::string authenticatedAccountId =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-          ->GetAuthenticatedAccountId();
 
-  AccountTrackerService* accountTracker =
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state_);
-  std::string authenticatedGaiaId =
-      accountTracker->GetAccountInfo(authenticatedAccountId).gaia;
-  if (authenticatedGaiaId.empty())
+  std::string authenticated_gaia_id =
+      identity_manager_->GetPrimaryAccountInfo().gaia;
+  if (authenticated_gaia_id.empty())
     return nil;
 
   return ios::GetChromeBrowserProvider()
       ->GetChromeIdentityService()
-      ->GetIdentityWithGaiaID(authenticatedGaiaId);
+      ->GetIdentityWithGaiaID(authenticated_gaia_id);
 }
 
-void AuthenticationService::SignIn(ChromeIdentity* identity,
-                                   const std::string& hosted_domain) {
+void AuthenticationService::SignIn(ChromeIdentity* identity) {
   DCHECK(ios::GetChromeBrowserProvider()
              ->GetChromeIdentityService()
              ->IsValidIdentity(identity));
 
-  // The account info needs to be seeded for the primary account id before
-  // signing in.
-  // TODO(msarda): http://crbug.com/478770 Seed account information for
-  // all secondary accounts.
-  AccountTrackerService* accountTracker =
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state_);
-  AccountInfo info;
-  info.gaia = base::SysNSStringToUTF8([identity gaiaID]);
-  info.email = GetCanonicalizedEmailForIdentity(identity);
-  info.hosted_domain = hosted_domain;
-  std::string newAuthenticatedAccountId = accountTracker->SeedAccountInfo(info);
-  std::string oldAuthenticatedAccountId =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-          ->GetAuthenticatedAccountId();
-  // |SigninManager::SetAuthenticatedAccountId| simply ignores the call if
-  // there is already a signed in user. Check that there is no signed in account
-  // or that the new signed in account matches the old one to avoid a mismatch
-  // between the old and the new authenticated accounts.
-  if (!oldAuthenticatedAccountId.empty())
-    CHECK_EQ(newAuthenticatedAccountId, oldAuthenticatedAccountId);
-
-  SetPromptForSignIn(false);
+  ResetPromptForSignIn();
   sync_setup_service_->PrepareForFirstSyncSetup();
 
-  // Update the SigninManager with the new logged in identity.
-  std::string newAuthenticatedUsername =
-      accountTracker->GetAccountInfo(newAuthenticatedAccountId).email;
-  ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-      ->OnExternalSigninCompleted(newAuthenticatedUsername);
+  const CoreAccountId account_id = identity_manager_->PickAccountIdForAccount(
+      base::SysNSStringToUTF8(identity.gaiaID),
+      GetCanonicalizedEmailForIdentity(identity));
 
-  // Reload all credentials to match the desktop model. Exclude all the
-  // accounts ids that are the primary account ids on other profiles.
-  ProfileOAuth2TokenServiceIOSDelegate* tokenServiceDelegate =
-      static_cast<ProfileOAuth2TokenServiceIOSDelegate*>(
-          token_service_->GetDelegate());
-  tokenServiceDelegate->ReloadCredentials(newAuthenticatedAccountId);
-  StoreAccountsInPrefs();
+  // Load all credentials from SSO library. This must load the credentials
+  // for the primary account too.
+  identity_manager_->GetDeviceAccountsSynchronizer()
+      ->ReloadAllAccountsFromSystem();
+
+  // Ensure that the account the user is trying to sign into has been loaded
+  // from the SSO library and that hosted_domain is set (should be the proper
+  // hosted domain or kNoHostedDomainFound that are both non-empty strings).
+  const base::Optional<AccountInfo> account_info =
+      identity_manager_->FindAccountInfoForAccountWithRefreshTokenByAccountId(
+          account_id);
+  CHECK(account_info.has_value());
+  CHECK(!account_info->hosted_domain.empty());
+
+  // |PrimaryAccountManager::SetAuthenticatedAccountId| simply ignores the call
+  // if there is already a signed in user. Check that there is no signed in
+  // account or that the new signed in account matches the old one to avoid a
+  // mismatch between the old and the new authenticated accounts.
+  if (!identity_manager_->HasPrimaryAccount()) {
+    DCHECK(identity_manager_->GetPrimaryAccountMutator());
+    const bool success =
+        identity_manager_->GetPrimaryAccountMutator()->SetPrimaryAccount(
+            account_id);
+    CHECK(success);
+  }
+
+  // The primary account should now be set to the expected account_id.
+  CHECK_EQ(account_id, identity_manager_->GetPrimaryAccountId());
 
   // Kick-off sync: The authentication error UI (sign in infobar and warning
   // badge in settings screen) check the sync auth error state. Sync
@@ -365,9 +338,7 @@ void AuthenticationService::SignIn(ChromeIdentity* identity,
   // TODO(msarda): Remove this code once the authentication error UI checks
   // SigninGlobalError instead of the sync auth error state.
   // crbug.com/289493
-  syncer::SyncService* sync_service =
-      IOSChromeProfileSyncServiceFactory::GetForBrowserState(browser_state_);
-  sync_service->RequestStart();
+  sync_service_->GetUserSettings()->SetSyncRequested(true);
   breakpad_helper::SetCurrentlySignedIn(true);
 }
 
@@ -382,42 +353,45 @@ void AuthenticationService::SignOut(
 
   bool is_managed = IsAuthenticatedIdentityManaged();
 
-  IOSChromeProfileSyncServiceFactory::GetForBrowserState(browser_state_)
-      ->RequestStop(syncer::SyncService::CLEAR_DATA);
-  ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-      ->SignOut(signout_source, signin_metrics::SignoutDelete::IGNORE_METRIC);
+  sync_service_->StopAndClear();
+
+  auto* account_mutator = identity_manager_->GetPrimaryAccountMutator();
+
+  // GetPrimaryAccountMutator() returns nullptr on ChromeOS only.
+  DCHECK(account_mutator);
+  account_mutator->ClearPrimaryAccount(
+      signin::PrimaryAccountMutator::ClearAccountsAction::kDefault,
+      signout_source, signin_metrics::SignoutDelete::IGNORE_METRIC);
   breakpad_helper::SetCurrentlySignedIn(false);
   cached_mdm_infos_.clear();
   if (is_managed) {
-    BrowserStateDataRemover::ClearData(browser_state_, completion);
+    delegate_->ClearBrowsingData(completion);
   } else if (completion) {
     completion();
   }
 }
 
 NSDictionary* AuthenticationService::GetCachedMDMInfo(
-    ChromeIdentity* identity) {
+    ChromeIdentity* identity) const {
   auto it = cached_mdm_infos_.find(
-      ChromeIdentityToAccountID(browser_state_, identity));
+      ChromeIdentityToAccountID(identity_manager_, identity));
 
   if (it == cached_mdm_infos_.end()) {
     return nil;
   }
 
-  ProfileOAuth2TokenServiceIOSDelegate* token_service_delegate =
-      static_cast<ProfileOAuth2TokenServiceIOSDelegate*>(
-          token_service_->GetDelegate());
-  if (!token_service_delegate->RefreshTokenHasError(it->first)) {
+  if (!identity_manager_->HasAccountWithRefreshTokenInPersistentErrorState(
+          it->first)) {
     // Account has no error, invalidate the cache.
     cached_mdm_infos_.erase(it);
     return nil;
   }
 
-  return it->second.get();
+  return it->second;
 }
 
 bool AuthenticationService::HasCachedMDMErrorForIdentity(
-    ChromeIdentity* identity) {
+    ChromeIdentity* identity) const {
   return GetCachedMDMInfo(identity) != nil;
 }
 
@@ -436,7 +410,7 @@ bool AuthenticationService::ShowMDMErrorDialogForIdentity(
 }
 
 void AuthenticationService::ResetChromeIdentityServiceObserverForTesting() {
-  identity_service_observer_.RemoveAll();
+  DCHECK(!identity_service_observer_.IsObservingSources());
   identity_service_observer_.Add(
       ios::GetChromeBrowserProvider()->GetChromeIdentityService());
 }
@@ -445,13 +419,11 @@ base::WeakPtr<AuthenticationService> AuthenticationService::GetWeakPtr() {
   return weak_pointer_factory_.GetWeakPtr();
 }
 
-void AuthenticationService::OnEndBatchChanges() {
-  if (is_in_foreground_) {
-    // Accounts maybe have been excluded or included from the current browser
-    // state, without any change to the identity list.
-    // Store the current list of accounts to make sure it is up-to-date.
-    StoreAccountsInPrefs();
-  }
+void AuthenticationService::OnEndBatchOfRefreshTokenStateChanges() {
+  // Accounts maybe have been excluded or included from the current browser
+  // state, without any change to the identity list.
+  // Store the current list of accounts to make sure it is up-to-date.
+  StoreAccountsInPrefs();
 }
 
 void AuthenticationService::OnIdentityListChanged() {
@@ -462,8 +434,10 @@ void AuthenticationService::OnIdentityListChanged() {
   // If the identity list changed while the authentication service was in
   // background, the user should be warned about it.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&AuthenticationService::HandleIdentityListChanged,
-                            base::Unretained(this), !is_in_foreground_));
+      FROM_HERE,
+      base::BindOnce(&AuthenticationService::HandleIdentityListChanged,
+                     GetWeakPtr(),
+                     !identity_manager_observer_.IsObservingSources()));
 }
 
 bool AuthenticationService::HandleMDMNotification(ChromeIdentity* identity,
@@ -479,18 +453,19 @@ bool AuthenticationService::HandleMDMNotification(ChromeIdentity* identity,
     return false;
   }
 
+  base::WeakPtr<AuthenticationService> weak_ptr = GetWeakPtr();
   ios::MDMStatusCallback callback = ^(bool is_blocked) {
-    if (is_blocked) {
+    if (is_blocked && weak_ptr.get()) {
       // If the identiy is blocked, sign out of the account. As only managed
       // account can be blocked, this will clear the associated browsing data.
-      if (identity == GetAuthenticatedIdentity()) {
-        SignOut(signin_metrics::ABORT_SIGNIN, nil);
+      if (identity == weak_ptr->GetAuthenticatedIdentity()) {
+        weak_ptr->SignOut(signin_metrics::ABORT_SIGNIN, nil);
       }
     }
   };
   if (identity_service->HandleMDMNotification(identity, user_info, callback)) {
-    cached_mdm_infos_[ChromeIdentityToAccountID(browser_state_, identity)]
-        .reset(user_info);
+    cached_mdm_infos_[ChromeIdentityToAccountID(identity_manager_, identity)] =
+        user_info;
     return true;
   }
   return false;
@@ -518,8 +493,8 @@ void AuthenticationService::OnAccessTokenRefreshFailed(
   // might still be accessible in SSO, and |OnIdentityListChanged| will handle
   // this when |identity| will actually disappear from SSO.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&AuthenticationService::HandleForgottenIdentity,
-                            base::Unretained(this), identity, true));
+      FROM_HERE, base::BindOnce(&AuthenticationService::HandleForgottenIdentity,
+                                base::Unretained(this), identity, true));
 }
 
 void AuthenticationService::OnChromeIdentityServiceWillBeDestroyed() {
@@ -527,12 +502,7 @@ void AuthenticationService::OnChromeIdentityServiceWillBeDestroyed() {
 }
 
 void AuthenticationService::HandleIdentityListChanged(bool should_prompt) {
-  ReloadCredentialsFromIdentities(should_prompt);
-
-  if (is_in_foreground_) {
-    // Update the accounts currently stored in the profile prefs.
-    StoreAccountsInPrefs();
-  }
+  ComputeHaveAccountsChanged(should_prompt);
 }
 
 void AuthenticationService::HandleForgottenIdentity(
@@ -551,16 +521,9 @@ void AuthenticationService::HandleForgottenIdentity(
   }
 
   // Sign the user out.
-  //
-  // The authenticated id is removed from the device (either by the user or
-  // when an invalid credentials is received from the server). There is no
-  // upstream entry in enum |signin_metrics::ProfileSignout| for this event. The
-  // temporary solution is to map this to |ABORT_SIGNIN|.
-  //
-  // TODO(msarda): http://crbug.com/416823 Add another entry in Chromium
-  // upstream for |signin_metrics| that matches the device identity was lost.
   SignOut(signin_metrics::ABORT_SIGNIN, nil);
-  SetPromptForSignIn(should_prompt);
+  if (should_prompt)
+    SetPromptForSignIn();
 }
 
 void AuthenticationService::ReloadCredentialsFromIdentities(
@@ -568,44 +531,27 @@ void AuthenticationService::ReloadCredentialsFromIdentities(
   if (is_reloading_credentials_) {
     return;
   }
-  base::AutoReset<bool> is_reloading_credentials(&is_reloading_credentials_,
-                                                 true);
+
+  base::AutoReset<bool> auto_reset(&is_reloading_credentials_, true);
+
   HandleForgottenIdentity(nil, should_prompt);
-  if (GetAuthenticatedUserEmail()) {
-    ProfileOAuth2TokenServiceIOSDelegate* token_service_delegate =
-        static_cast<ProfileOAuth2TokenServiceIOSDelegate*>(
-            token_service_->GetDelegate());
-    token_service_delegate->ReloadCredentials();
+  if (IsAuthenticated()) {
+    identity_manager_->GetDeviceAccountsSynchronizer()
+        ->ReloadAllAccountsFromSystem();
   }
 }
 
-bool AuthenticationService::IsAuthenticated() {
-  if (!is_in_foreground_) {
-    // While AuthenticationService is in background, the list of accounts can
-    // change without a OnIdentityListChanged notification being fired.
-    // Reload credentials to ensure that the user is still authenticated.
-    ReloadCredentialsFromIdentities(true /* should_prompt */);
-  }
-  return ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-      ->IsAuthenticated();
+bool AuthenticationService::IsAuthenticated() const {
+  return identity_manager_->HasPrimaryAccount();
 }
 
-NSString* AuthenticationService::GetAuthenticatedUserEmail() {
-  if (!IsAuthenticated())
-    return nil;
-  std::string authenticatedUsername =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-          ->GetAuthenticatedAccountInfo()
-          .email;
-  DCHECK_LT(0U, authenticatedUsername.length());
-  return base::SysUTF8ToNSString(authenticatedUsername);
-}
+bool AuthenticationService::IsAuthenticatedIdentityManaged() const {
+  base::Optional<AccountInfo> primary_account_info =
+      identity_manager_->FindExtendedAccountInfoForAccount(
+          identity_manager_->GetPrimaryAccountInfo());
+  if (!primary_account_info)
+    return false;
 
-bool AuthenticationService::IsAuthenticatedIdentityManaged() {
-  std::string hosted_domain =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state_)
-          ->GetAuthenticatedAccountInfo()
-          .hosted_domain;
-  return !hosted_domain.empty() &&
-         hosted_domain != AccountTrackerService::kNoHostedDomainFound;
+  const std::string& hosted_domain = primary_account_info->hosted_domain;
+  return hosted_domain != kNoHostedDomainFound && !hosted_domain.empty();
 }

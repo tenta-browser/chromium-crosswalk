@@ -5,9 +5,8 @@
 #import "ios/chrome/browser/tabs/tab_model_selected_tab_observer.h"
 
 #include "base/logging.h"
-#import "ios/chrome/browser/tabs/legacy_tab_helper.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
+#import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -31,29 +30,11 @@
     didChangeActiveWebState:(web::WebState*)newWebState
                 oldWebState:(web::WebState*)oldWebState
                     atIndex:(int)atIndex
-                 userAction:(BOOL)userAction {
-  if (oldWebState) {
-    // Save state, such as scroll position, ... of the old selected Tab.
-    Tab* oldTab = LegacyTabHelper::GetTabForWebState(oldWebState);
-    DCHECK(oldTab);
+                     reason:(int)reason {
 
-    // Avoid artificially extending the lifetime of oldTab until the global
-    // autoreleasepool is purged.
-    @autoreleasepool {
-      [[NSNotificationCenter defaultCenter]
-          postNotificationName:kTabModelTabDeselectedNotification
-                        object:_tabModel
-                      userInfo:@{kTabModelTabKey : oldTab}];
-    }
-  }
-
-  if (newWebState) {
-    Tab* newTab = LegacyTabHelper::GetTabForWebState(newWebState);
-    [newTab updateLastVisitedTimestamp];
-
+  if (newWebState && !newWebState->IsLoading()) {
     // Persist the session state.
-    if (newTab.loadFinished)
-      [_tabModel saveSessionImmediately:NO];
+    [_tabModel saveSessionImmediately:NO];
   }
 }
 

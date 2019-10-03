@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
+import org.chromium.base.TimeUtils;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSetting;
+
 /**
  * Heuristic for Tap suppression after a recent scroll action.
  * Handles logging of results seen and activation.
@@ -25,12 +28,13 @@ public class RecentScrollTapSuppression extends ContextualSearchHeuristic {
     RecentScrollTapSuppression(ContextualSearchSelectionController selectionController) {
         long recentScrollTimeNs = selectionController.getLastScrollTime();
         if (recentScrollTimeNs > 0) {
-            mDurationSinceRecentScrollMs =
-                    (int) ((System.nanoTime() - recentScrollTimeNs) / NANOSECONDS_IN_A_MILLISECOND);
+            mDurationSinceRecentScrollMs = (int) ((System.nanoTime() - recentScrollTimeNs)
+                    / TimeUtils.NANOSECONDS_PER_MILLISECOND);
         } else {
             mDurationSinceRecentScrollMs = 0;
         }
-        int experimentThreshold = ContextualSearchFieldTrial.getRecentScrollDurationMs();
+        int experimentThreshold = ContextualSearchFieldTrial.getValue(
+                ContextualSearchSetting.RECENT_SCROLL_DURATION_MS);
         mRecentScrollDurationThreshold = experimentThreshold > 0
                 ? experimentThreshold
                 : DEFAULT_RECENT_SCROLL_SUPPRESSION_DURATION_MS;
@@ -49,8 +53,8 @@ public class RecentScrollTapSuppression extends ContextualSearchHeuristic {
     }
 
     @Override
-    protected void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
-        logger.logFeature(ContextualSearchRankerLogger.Feature.DURATION_AFTER_SCROLL_MS,
+    protected void logRankerTapSuppression(ContextualSearchInteractionRecorder logger) {
+        logger.logFeature(ContextualSearchInteractionRecorder.Feature.DURATION_AFTER_SCROLL_MS,
                 mDurationSinceRecentScrollMs);
     }
 }

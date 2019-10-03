@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.tabmodel;
 
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
 import android.os.StrictMode;
 import android.support.annotation.WorkerThread;
 import android.util.Pair;
@@ -18,12 +17,12 @@ import org.chromium.base.PathUtils;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.chrome.browser.TabState;
-import org.chromium.chrome.browser.browseractions.BrowserActionsTabModelSelector;
-import org.chromium.chrome.browser.browseractions.BrowserActionsTabPersistencePolicy;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
+import org.chromium.base.task.TaskRunner;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 
 import java.io.BufferedInputStream;
@@ -33,7 +32,6 @@ import java.io.FileInputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -72,8 +70,8 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
     /** Tracks whether tabs from two TabPersistentStores tabs are being merged together. */
     private static final AtomicBoolean MERGE_IN_PROGRESS = new AtomicBoolean();
 
-    private static AsyncTask<Void, Void, Void> sMigrationTask;
-    private static AsyncTask<Void, Void, Void> sCleanupTask;
+    private static AsyncTask<Void> sMigrationTask;
+    private static AsyncTask<Void> sCleanupTask;
 
     private static File sStateDirectory;
 
@@ -120,11 +118,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         if (FeatureUtilities.isTabModelMergingEnabled()) {
             mergedFileNames.add(getStateFileName(mOtherSelectorIndex));
         }
-        if (!BrowserActionsTabModelSelector.isInitialized()) {
-            BrowserActionsTabPersistencePolicy browserActionsPersistencePolicy =
-                    new BrowserActionsTabPersistencePolicy();
-            mergedFileNames.add(browserActionsPersistencePolicy.getStateFileName());
-        }
+        // TODO(peconn): Can I clean up this code now that Browser Actions are gone?
         return mergedFileNames;
     }
 
@@ -160,7 +154,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
     }
 
     @Override
-    public boolean performInitialization(Executor executor) {
+    public boolean performInitialization(TaskRunner taskRunner) {
         ThreadUtils.assertOnUiThread();
 
         final boolean hasRunLegacyMigration =
@@ -172,9 +166,9 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
 
         synchronized (MIGRATION_LOCK) {
             if (sMigrationTask != null) return true;
-            sMigrationTask = new AsyncTask<Void, Void, Void>() {
+            sMigrationTask = new BackgroundOnlyAsyncTask<Void>() {
                 @Override
-                protected Void doInBackground(Void... params) {
+                protected Void doInBackground() {
                     if (!hasRunLegacyMigration) {
                         performLegacyMigration();
                     }
@@ -189,7 +183,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
                     }
                     return null;
                 }
-            }.executeOnExecutor(executor);
+            }.executeOnTaskRunner(taskRunner);
             return true;
         }
     }
@@ -243,19 +237,10 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         File oldMetadataFile = new File(stateDir, LEGACY_SAVED_STATE_FILE);
         if (newMetadataFile.exists()) {
             Log.e(TAG, "New metadata file already exists");
-            if (LibraryLoader.isInitialized()) {
-                RecordHistogram.recordBooleanHistogram(
-                        "Android.MultiInstanceMigration.NewMetadataFileExists", true);
-            }
         } else if (oldMetadataFile.exists()) {
             // 1. Rename tab metadata file for tab directory "0".
             if (!oldMetadataFile.renameTo(newMetadataFile)) {
                 Log.e(TAG, "Failed to rename file: " + oldMetadataFile);
-
-                if (LibraryLoader.isInitialized()) {
-                    RecordHistogram.recordBooleanHistogram(
-                            "Android.MultiInstanceMigration.FailedToRenameMetadataFile", true);
-                }
             }
         }
 
@@ -384,7 +369,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         mDestroyed = true;
     }
 
-    private class CleanUpTabStateDataTask extends AsyncTask<Void, Void, Void> {
+    private class CleanUpTabStateDataTask extends AsyncTask<Void> {
         private final Callback<List<String>> mFilesToDeleteCallback;
 
         private String[] mTabFileNames;
@@ -396,7 +381,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
         }
 
         @Override
-        protected Void doInBackground(Void... voids) {
+        protected Void doInBackground() {
             if (mDestroyed) return null;
 
             mTabFileNames = getOrCreateStateDirectory().list();
@@ -438,6 +423,10 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
                     }
                 }
             }
+
+            synchronized (CLEAN_UP_TASK_LOCK) {
+                sCleanupTask = null;
+            }
         }
 
         private boolean shouldDeleteTabFile(int tabId, TabWindowManager tabWindowManager) {
@@ -469,6 +458,14 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
                         StreamUtil.closeQuietly(stream);
                     }
                 }
+            }
+        }
+
+        @Override
+        protected void onCancelled(Void result) {
+            super.onCancelled(result);
+            synchronized (CLEAN_UP_TASK_LOCK) {
+                sCleanupTask = null;
             }
         }
     }

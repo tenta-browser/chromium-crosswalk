@@ -1,13 +1,13 @@
 {
   "TestTrial1": [
     {
-      "platforms": ["win"],
+      "platforms": ["windows"],
       "experiments": [{"name": "TestGroup1"}]
     }
   ],
   "TestTrial2": [
     {
-      "platforms": ["win"],
+      "platforms": ["windows"],
       "experiments": [
         {
           "name": "TestGroup2",
@@ -32,17 +32,52 @@
   ],
   "TestTrial3": [
     {
-      "platforms": ["win"],
+      "platforms": ["windows"],
       "experiments": [{"name": "TestGroup3", "enable_features": ["X"]}]
     }
   ],
   "TrialWithForcingFlag":  [
     {
-      "platforms": ["win"],
+      "platforms": ["windows"],
       "experiments": [
         {
           "name": "ForcedGroup",
           "forcing_flag": "my-forcing-flag"
+        }
+      ]
+    }
+  ],
+  "TrialWithDeviceType": [
+    {
+      "platforms": ["windows"],
+      "is_low_end_device": true,
+      "experiments": [{"name": "TestGroup1"}]
+    },
+    {
+      "platforms": ["windows"],
+      "is_low_end_device": false,
+      "experiments": [{"name": "TestGroup2"}]
+    }
+  ],
+  "TrialWithFormFactors": [
+    {
+      "platforms": ["windows"],
+      "form_factors": ["desktop", "phone"],
+      "experiments": [{"name": "TestGroup1"}]
+    },
+    {
+      "platforms": ["windows"],
+      "form_factors": ["tablet"],
+      "experiments": [{"name": "TestGroup2"}]
+    }
+  ],
+  "TrialWithOverrideUIString": [
+    {
+      "platforms": ["windows"],
+      "experiments": [
+        {
+          "name": "TestGroup",
+          "override_ui_strings": {"IDS_NEW_TAB_TITLE": "test"}
         }
       ]
     }

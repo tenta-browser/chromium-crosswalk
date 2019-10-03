@@ -19,11 +19,11 @@
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/page_state.h"
 #include "content/public/test/mock_render_thread.h"
-#include "mojo/edk/embedder/scoped_ipc_support.h"
+#include "mojo/core/embedder/scoped_ipc_support.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/Platform.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebLeakDetector.h"
+#include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/web/web_frame.h"
 
 namespace base {
 class FieldTrialList;
@@ -31,7 +31,7 @@ class FieldTrialList;
 
 namespace blink {
 namespace scheduler {
-class RendererScheduler;
+class WebThreadScheduler;
 }
 class WebGestureEvent;
 class WebInputElement;
@@ -47,16 +47,16 @@ namespace content {
 class ContentBrowserClient;
 class ContentClient;
 class ContentRendererClient;
-class FakeCompositorDependencies;
+class CompositorDependencies;
 class MockRenderProcess;
 class PageState;
 class RendererMainPlatformDelegate;
 class RendererBlinkPlatformImpl;
 class RendererBlinkPlatformImplTestOverrideImpl;
 class RenderView;
-struct ResizeParams;
+struct VisualProperties;
 
-class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
+class RenderViewTest : public testing::Test {
  public:
   // A special BlinkPlatformImpl class with overrides that are useful for
   // RenderViewTest.
@@ -68,8 +68,13 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
     void Initialize();
     void Shutdown();
 
+    blink::scheduler::WebThreadScheduler* GetMainThreadScheduler() {
+      return main_thread_scheduler_.get();
+    }
+
    private:
-    std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler_;
+    std::unique_ptr<blink::scheduler::WebThreadScheduler>
+        main_thread_scheduler_;
     std::unique_ptr<RendererBlinkPlatformImplTestOverrideImpl>
         blink_platform_impl_;
   };
@@ -91,6 +96,13 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // false otherwise.
   bool ExecuteJavaScriptAndReturnIntValue(const base::string16& script,
                                           int* result);
+
+  // Executes the given JavaScript and sets the number value it evaluates to in
+  // |result|.
+  // Returns true if the JavaScript was evaluated correctly to an number value,
+  // false otherwise.
+  bool ExecuteJavaScriptAndReturnNumberValue(const base::string16& script,
+                                             double* result);
 
   // Loads |html| into the main frame as a data: URL and blocks until the
   // navigation is committed.
@@ -146,8 +158,8 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // Sends a tap at the |rect|.
   void SimulateRectTap(const gfx::Rect& rect);
 
-  // Simulates |node| being focused.
-  void SetFocused(const blink::WebNode& node);
+  // Simulates |element| being focused.
+  void SetFocused(const blink::WebElement& element);
 
   // Simulates a navigation with a type of reload to the given url.
   void Reload(const GURL& url);
@@ -170,8 +182,7 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // These are all methods from RenderViewImpl that we expose to testing code.
   bool OnMessageReceived(const IPC::Message& msg);
   void OnSameDocumentNavigation(blink::WebLocalFrame* frame,
-                                bool is_new_navigation,
-                                bool content_initiated);
+                                bool is_new_navigation);
   blink::WebWidget* GetWebWidget();
 
   // Allows a subclass to override the various content client implementations.
@@ -180,19 +191,23 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   virtual ContentRendererClient* CreateContentRendererClient();
 
   // Allows a subclass to customize the initial size of the RenderView.
-  virtual std::unique_ptr<ResizeParams> InitialSizeParams();
+  virtual std::unique_ptr<VisualProperties> InitialVisualProperties();
+
+  // Override this to change the CompositorDependencies for the test.
+  virtual std::unique_ptr<CompositorDependencies>
+  CreateCompositorDependencies();
 
   // testing::Test
   void SetUp() override;
 
   void TearDown() override;
 
-  // blink::WebLeakDetectorClient implementation.
-  void OnLeakDetectionComplete(const Result& result) override;
+  // Install a fake URL loader factory for the RenderFrameImpl.
+  void CreateFakeWebURLLoaderFactory();
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
 
-  std::unique_ptr<FakeCompositorDependencies> compositor_deps_;
+  std::unique_ptr<CompositorDependencies> compositor_deps_;
   std::unique_ptr<MockRenderProcess> mock_process_;
   // We use a naked pointer because we don't want to expose RenderViewImpl in
   // the embedder's namespace.
@@ -211,7 +226,8 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
 
   // For Mojo.
   std::unique_ptr<base::TestIOThread> test_io_thread_;
-  std::unique_ptr<mojo::edk::ScopedIPCSupport> ipc_support_;
+  std::unique_ptr<mojo::core::ScopedIPCSupport> ipc_support_;
+  service_manager::BinderRegistry binder_registry_;
 
 #if defined(OS_MACOSX)
   std::unique_ptr<base::mac::ScopedNSAutoreleasePool> autorelease_pool_;

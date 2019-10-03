@@ -7,15 +7,12 @@
 #include <string>
 
 #include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/omnibox/browser/autocomplete_match_classification.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
-#include "components/strings/grit/components_strings.h"
-#include "ui/base/l10n/l10n_util.h"
-#include "url/url_util.h"
 
 using bookmarks::BookmarkModel;
 
@@ -43,17 +40,28 @@ bool HistoryProvider::PreventInlineAutocomplete(
       (!input.text().empty() && base::IsUnicodeWhitespace(input.text().back()));
 }
 
+// static
+ACMatchClassifications HistoryProvider::SpansFromTermMatch(
+    const TermMatches& matches,
+    size_t text_length,
+    bool is_url) {
+  ACMatchClassification::Style non_match_style =
+      is_url ? ACMatchClassification::URL : ACMatchClassification::NONE;
+  return ClassifyTermMatches(matches, text_length,
+                             ACMatchClassification::MATCH | non_match_style,
+                             non_match_style);
+}
+
 HistoryProvider::HistoryProvider(AutocompleteProvider::Type type,
                                  AutocompleteProviderClient* client)
-    : AutocompleteProvider(type), client_(client) {
-}
+    : AutocompleteProvider(type), client_(client) {}
 
 HistoryProvider::~HistoryProvider() {}
 
 void HistoryProvider::DeleteMatchFromMatches(const AutocompleteMatch& match) {
   bool found = false;
   BookmarkModel* bookmark_model = client_->GetBookmarkModel();
-  for (ACMatches::iterator i(matches_.begin()); i != matches_.end(); ++i) {
+  for (auto i(matches_.begin()); i != matches_.end(); ++i) {
     if (i->destination_url == match.destination_url && i->type == match.type) {
       found = true;
       if ((i->type == AutocompleteMatchType::URL_WHAT_YOU_TYPED) ||
@@ -71,66 +79,4 @@ void HistoryProvider::DeleteMatchFromMatches(const AutocompleteMatch& match) {
     }
   }
   DCHECK(found) << "Asked to delete a URL that isn't in our set of matches";
-}
-
-// static
-ACMatchClassifications HistoryProvider::SpansFromTermMatch(
-    const TermMatches& matches,
-    size_t text_length,
-    bool is_url) {
-  ACMatchClassification::Style url_style =
-      is_url ? ACMatchClassification::URL : ACMatchClassification::NONE;
-  ACMatchClassifications spans;
-  if (matches.empty()) {
-    if (text_length)
-      spans.push_back(ACMatchClassification(0, url_style));
-    return spans;
-  }
-  if (matches[0].offset)
-    spans.push_back(ACMatchClassification(0, url_style));
-  size_t match_count = matches.size();
-  for (size_t i = 0; i < match_count;) {
-    size_t offset = matches[i].offset;
-    spans.push_back(ACMatchClassification(offset,
-        ACMatchClassification::MATCH | url_style));
-    // Skip all adjacent matches.
-    do {
-      offset += matches[i].length;
-      ++i;
-    } while ((i < match_count) && (offset == matches[i].offset));
-    if (offset < text_length)
-      spans.push_back(ACMatchClassification(offset, url_style));
-  }
-
-  return spans;
-}
-
-void HistoryProvider::ConvertOpenTabMatches() {
-  for (auto& match : matches_) {
-    // If url is in a tab, change type, update classification.
-    if (client()->IsTabOpenWithURL(match.destination_url)) {
-      match.type = AutocompleteMatchType::TAB_SEARCH;
-      const base::string16 switch_tab_message =
-          l10n_util::GetStringUTF16(IDS_OMNIBOX_TAB_SUGGEST_HINT) +
-          base::UTF8ToUTF16(match.description.empty() ? "" : " - ");
-      match.description = switch_tab_message + match.description;
-      // Add classfication for the prefix.
-      if (match.description_class.empty()) {
-        match.description_class.push_back(
-            ACMatchClassification(0, ACMatchClassification::NONE));
-      } else {
-        if (match.description_class[0].style != ACMatchClassification::NONE) {
-          match.description_class.insert(
-              match.description_class.begin(),
-              ACMatchClassification(0, ACMatchClassification::NONE));
-        }
-        // Shift the rest.
-        for (auto& classification : match.description_class) {
-          if (classification.offset != 0 ||
-              classification.style != ACMatchClassification::NONE)
-            classification.offset += switch_tab_message.size();
-        }
-      }
-    }
-  }
 }

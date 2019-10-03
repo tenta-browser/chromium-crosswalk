@@ -6,14 +6,16 @@ package org.chromium.chrome.browser.webapps;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
-import android.os.AsyncTask;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.PackageUtils;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
-import org.chromium.chrome.browser.banners.InstallerDelegate;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.chrome.browser.browserservices.permissiondelegation.TrustedWebActivityPermissionStore;
 import org.chromium.chrome.browser.browsing_data.UrlFilter;
 import org.chromium.chrome.browser.browsing_data.UrlFilterBridge;
 import org.chromium.webapk.lib.common.WebApkConstants;
@@ -24,7 +26,6 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Singleton class which tracks web apps backed by a SharedPreferences file (abstracted by the
@@ -48,10 +49,10 @@ public class WebappRegistry {
     static final String KEY_LAST_CLEANUP = "last_cleanup";
 
     /** Represents a period of 4 weeks in milliseconds */
-    static final long FULL_CLEANUP_DURATION = TimeUnit.DAYS.toMillis(4L * 7L);
+    static final long FULL_CLEANUP_DURATION = DateUtils.WEEK_IN_MILLIS * 4;
 
     /** Represents a period of 13 weeks in milliseconds */
-    static final long WEBAPP_UNOPENED_CLEANUP_DURATION = TimeUnit.DAYS.toMillis(13L * 7L);
+    static final long WEBAPP_UNOPENED_CLEANUP_DURATION = DateUtils.WEEK_IN_MILLIS * 13;
 
     /** Initialization-on-demand holder. This exists for thread-safe lazy initialization. */
     private static class Holder {
@@ -61,6 +62,7 @@ public class WebappRegistry {
 
     private HashMap<String, WebappDataStorage> mStorages;
     private SharedPreferences mPreferences;
+    private TrustedWebActivityPermissionStore mTrustedWebActivityPermissionStore;
 
     /**
      * Callback run when a WebappDataStorage object is registered for the first time. The storage
@@ -73,6 +75,7 @@ public class WebappRegistry {
     private WebappRegistry() {
         mPreferences = openSharedPreferences();
         mStorages = new HashMap<>();
+        mTrustedWebActivityPermissionStore = new TrustedWebActivityPermissionStore();
     }
 
     /**
@@ -111,16 +114,16 @@ public class WebappRegistry {
      * @return The storage object for the web app.
      */
     public void register(final String webappId, final FetchWebappDataStorageCallback callback) {
-        new AsyncTask<Void, Void, WebappDataStorage>() {
+        new AsyncTask<WebappDataStorage>() {
             @Override
-            protected final WebappDataStorage doInBackground(Void... nothing) {
+            protected final WebappDataStorage doInBackground() {
                 // Create the WebappDataStorage on the background thread, as this must create and
                 // open a new SharedPreferences.
                 WebappDataStorage storage = WebappDataStorage.open(webappId);
                 // Access the WebappDataStorage to force it to finish loading. A strict mode
                 // exception is thrown if the WebappDataStorage is accessed on the UI thread prior
                 // to the storage being fully loaded.
-                storage.getLastUsedTime();
+                storage.getLastUsedTimeMs();
                 return storage;
             }
 
@@ -135,7 +138,8 @@ public class WebappRegistry {
                 storage.updateLastUsedTime();
                 if (callback != null) callback.onWebappDataStorageRetrieved(storage);
             }
-        }.execute();
+        }
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 
     /**
@@ -172,17 +176,35 @@ public class WebappRegistry {
     }
 
     /**
+     * Returns true if a WebAPK is found whose scope matches the provided URL.
+     * @param url The URL to search a WebAPK for.
+     */
+    public boolean hasWebApkForUrl(String url) {
+        for (HashMap.Entry<String, WebappDataStorage> entry : mStorages.entrySet()) {
+            WebappDataStorage storage = entry.getValue();
+            if (!storage.getId().startsWith(WebApkConstants.WEBAPK_ID_PREFIX)) continue;
+
+            String scope = storage.getScope();
+
+            // Scope shouldn't be empty.
+            assert (!scope.isEmpty());
+
+            if (url.startsWith(scope)) return true;
+        }
+        return false;
+    }
+
+    /**
      * Returns the list of WebAPK IDs with pending updates. Filters out WebAPKs which have been
      * uninstalled.
      * */
     public List<String> findWebApksWithPendingUpdate() {
         ArrayList<String> webApkIdsWithPendingUpdate = new ArrayList<String>();
-        PackageManager packageManager = ContextUtils.getApplicationContext().getPackageManager();
         for (HashMap.Entry<String, WebappDataStorage> entry : mStorages.entrySet()) {
             WebappDataStorage storage = entry.getValue();
             if (!TextUtils.isEmpty(storage.getPendingUpdateRequestPath())
-                    && InstallerDelegate.isInstalled(
-                               packageManager, storage.getWebApkPackageName())) {
+                    && PackageUtils.isPackageInstalled(ContextUtils.getApplicationContext(),
+                               storage.getWebApkPackageName())) {
                 webApkIdsWithPendingUpdate.add(entry.getKey());
             }
         }
@@ -195,8 +217,8 @@ public class WebappRegistry {
     @VisibleForTesting
     public static Set<String> getRegisteredWebappIdsForTesting() {
         // Wrap with unmodifiableSet to ensure it's never modified. See crbug.com/568369.
-        return Collections.unmodifiableSet(openSharedPreferences().getStringSet(
-                KEY_WEBAPP_SET, Collections.<String>emptySet()));
+        return Collections.unmodifiableSet(
+                openSharedPreferences().getStringSet(KEY_WEBAPP_SET, Collections.emptySet()));
     }
 
     @VisibleForTesting
@@ -232,10 +254,11 @@ public class WebappRegistry {
                 // deprecated naming scheme and that the WebApk is still installed. The former is
                 // necessary as we migrate away from the old naming scheme and garbage collect.
                 if (entry.getKey().startsWith(WebApkConstants.WEBAPK_ID_PREFIX)
-                        && isWebApkInstalled(webApkPackage)) {
+                        && PackageUtils.isPackageInstalled(
+                                   ContextUtils.getApplicationContext(), webApkPackage)) {
                     continue;
                 }
-            } else if ((currentTime - storage.getLastUsedTime())
+            } else if ((currentTime - storage.getLastUsedTimeMs())
                     < WEBAPP_UNOPENED_CLEANUP_DURATION) {
                 continue;
             }
@@ -247,6 +270,10 @@ public class WebappRegistry {
                 .putLong(KEY_LAST_CLEANUP, currentTime)
                 .putStringSet(KEY_WEBAPP_SET, mStorages.keySet())
                 .apply();
+    }
+
+    public TrustedWebActivityPermissionStore getTrustedWebActivityPermissionStore() {
+        return mTrustedWebActivityPermissionStore;
     }
 
     /**
@@ -299,22 +326,18 @@ public class WebappRegistry {
         urlFilter.destroy();
     }
 
-    /**
-     * Returns true if the given WebAPK is installed.
-     */
-    private boolean isWebApkInstalled(String webApkPackage) {
-        PackageManager packageManager = ContextUtils.getApplicationContext().getPackageManager();
-        return InstallerDelegate.isInstalled(packageManager, webApkPackage);
-    }
-
     private static SharedPreferences openSharedPreferences() {
-        return ContextUtils.getApplicationContext().getSharedPreferences(
-                REGISTRY_FILE_NAME, Context.MODE_PRIVATE);
+        // TODO(peconn): Don't open general WebappRegistry preferences when we just need the
+        // TrustedWebActivityPermissionStore.
+        // This is required to fix https://crbug.com/952841.
+        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
+            return ContextUtils.getApplicationContext().getSharedPreferences(
+                    REGISTRY_FILE_NAME, Context.MODE_PRIVATE);
+        }
     }
 
     private void initStorages(String idToInitialize, boolean replaceExisting) {
-        Set<String> webapps =
-                mPreferences.getStringSet(KEY_WEBAPP_SET, Collections.<String>emptySet());
+        Set<String> webapps = mPreferences.getStringSet(KEY_WEBAPP_SET, Collections.emptySet());
         boolean initAll = (idToInitialize == null || idToInitialize.isEmpty());
 
         // Don't overwrite any entry in mStorages unless replaceExisting is set to true.
@@ -324,6 +347,8 @@ public class WebappRegistry {
                     mStorages.put(id, WebappDataStorage.open(id));
                 }
             }
+
+            mTrustedWebActivityPermissionStore.initStorage();
         } else {
             if (webapps.contains(idToInitialize)
                     && (replaceExisting || !mStorages.containsKey(idToInitialize))) {

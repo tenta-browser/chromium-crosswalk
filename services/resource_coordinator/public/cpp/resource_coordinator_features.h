@@ -8,39 +8,17 @@
 #ifndef SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_RESOURCE_COORDINATOR_FEATURES_H_
 #define SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_RESOURCE_COORDINATOR_FEATURES_H_
 
+#include "base/component_export.h"
 #include "base/feature_list.h"
-#include "services/resource_coordinator/public/cpp/resource_coordinator_export.h"
+#include "build/build_config.h"
 
 namespace features {
 
-// The features should be documented alongside the definition of their values
-// in the .cc file.
-extern const SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT base::Feature
-    kGlobalResourceCoordinator;
-extern const SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT base::Feature
-    kGRCRenderProcessCPUProfiling;
-extern const SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT base::Feature
-    kPageAlmostIdle;
+#if defined(OS_WIN)
+extern const COMPONENT_EXPORT(SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_FEATURES)
+    base::Feature kEmptyWorkingSet;
+#endif
 
 }  // namespace features
-
-namespace resource_coordinator {
-
-bool SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT
-IsResourceCoordinatorEnabled();
-
-int64_t SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT
-GetGRCRenderProcessCPUProfilingDurationInMs();
-
-int64_t SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT
-GetGRCRenderProcessCPUProfilingIntervalInMs();
-
-bool SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT
-IsPageAlmostIdleSignalEnabled();
-
-int SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_EXPORT
-GetMainThreadTaskLoadLowThreshold();
-
-}  // namespace resource_coordinator
 
 #endif  // SERVICES_RESOURCE_COORDINATOR_PUBLIC_CPP_RESOURCE_COORDINATOR_FEATURES_H_

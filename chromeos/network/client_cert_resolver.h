@@ -9,14 +9,15 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
-#include "chromeos/cert_loader.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/client_cert_util.h"
+#include "chromeos/network/network_cert_loader.h"
 #include "chromeos/network/network_policy_observer.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
@@ -30,15 +31,19 @@ namespace chromeos {
 class NetworkState;
 class ManagedNetworkConfigurationHandler;
 
+namespace internal {
+struct NetworkAndMatchingCert;
+struct MatchingCertAndResolveStatus;
+}  // namespace internal
+
 // Observes the known networks. If a network is configured with a client
 // certificate pattern, this class searches for a matching client certificate.
 // Each time it finds a match, it configures the network accordingly.
-class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
-                                           public CertLoader::Observer,
-                                           public NetworkPolicyObserver {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) ClientCertResolver
+    : public NetworkStateHandlerObserver,
+      public NetworkCertLoader::Observer,
+      public NetworkPolicyObserver {
  public:
-  struct NetworkAndMatchingCert;
-
   class Observer {
    public:
     // Called every time resolving of client certificate patterns finishes,
@@ -73,12 +78,13 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   void SetClockForTesting(base::Clock* clock);
 
   // Returns true and sets the Shill properties that have to be configured in
-  // |shill_properties| if the certificate pattern |pattern| could be resolved.
+  // |shill_properties| if the client certificate could be resolved according to
+  // |client_cert_config|.
   // Returns false otherwise and sets empty Shill properties to clear the
   // certificate configuration.
   // Note that it uses the global clock when checking the certificates for
   // expiration.
-  static bool ResolveCertificatePatternSync(
+  static bool ResolveClientCertificateSync(
       const client_cert::ConfigType client_cert_type,
       const client_cert::ClientCertConfig& client_cert_config,
       base::DictionaryValue* shill_properties);
@@ -88,9 +94,8 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   void NetworkListChanged() override;
   void NetworkConnectionStateChanged(const NetworkState* network) override;
 
-  // CertLoader::Observer overrides
-  void OnCertificatesLoaded(
-      const net::ScopedCERTCertificateList& cert_list) override;
+  // NetworkCertLoader::Observer overrides
+  void OnCertificatesLoaded() override;
 
   // NetworkPolicyObserver overrides
   void PolicyAppliedToNetwork(const std::string& service_path) override;
@@ -107,7 +112,7 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   // |matches| contains networks for which a matching certificate was found.
   // Configures these networks.
   void ConfigureCertificates(
-      std::unique_ptr<std::vector<NetworkAndMatchingCert>> matches);
+      std::vector<internal::NetworkAndMatchingCert> matches);
 
   // Trigger a ResolveRequestCompleted event on all observers.
   void NotifyResolveRequestCompleted();
@@ -117,11 +122,13 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   // instead.
   base::Time Now() const;
 
-  base::ObserverList<Observer, true> observers_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
 
-  // The set of networks that were checked/resolved in previous passes. These
-  // networks are skipped in the NetworkListChanged notification.
-  std::set<std::string> resolved_networks_;
+  // Stores the current client certificate resolution status for each network.
+  // The key is the network's service path. If a network is not present, it is
+  // not known yet (or disappeared from the list of known networks again).
+  base::flat_map<std::string, internal::MatchingCertAndResolveStatus>
+      networks_status_;
 
   // The list of network paths that still have to be resolved.
   std::set<std::string> queued_networks_to_resolve_;

@@ -10,15 +10,16 @@
 #include <utility>
 
 #include "base/files/file_util.h"
+#include "base/format_macros.h"
 #include "base/guid.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/synchronization/lock.h"
 #include "components/sync/engine_impl/loopback_server/persistent_bookmark_entity.h"
 #include "components/sync/engine_impl/loopback_server/persistent_permanent_entity.h"
 #include "components/sync/engine_impl/loopback_server/persistent_tombstone_entity.h"
@@ -51,15 +52,95 @@ static const char kOtherBookmarksFolderName[] = "Other Bookmarks";
 static const char kSyncedBookmarksFolderServerTag[] = "synced_bookmarks";
 static const char kSyncedBookmarksFolderName[] = "Synced Bookmarks";
 
+int GetServerMigrationVersion(
+    const std::map<ModelType, int>& server_migration_versions,
+    ModelType type) {
+  auto server_it = server_migration_versions.find(type);
+  return server_it == server_migration_versions.end() ? 0 : server_it->second;
+}
+
+class ProgressMarkerToken {
+ public:
+  static ProgressMarkerToken FromEmpty(int migration_version) {
+    ProgressMarkerToken token;
+    token.migration_version_ = migration_version;
+    return token;
+  }
+
+  static ProgressMarkerToken FromString(const std::string& s) {
+    DCHECK(!s.empty());
+    const vector<base::StringPiece> splits = base::SplitStringPiece(
+        s, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+    if (splits.size() != 2) {
+      ProgressMarkerToken token;
+      base::StringToInt64(s, &token.entity_version_);
+      return token;
+    }
+    ProgressMarkerToken token;
+    if (!base::StringToInt(splits[0], &token.migration_version_) ||
+        !base::StringToInt64(splits[1], &token.entity_version_)) {
+      return ProgressMarkerToken();
+    }
+    return token;
+  }
+
+  std::string ToString() const {
+    if (migration_version_ == 0) {
+      return base::NumberToString(entity_version_);
+    } else {
+      return base::StringPrintf("%d/%" PRId64, migration_version_,
+                                entity_version_);
+    }
+  }
+
+  int migration_version() const { return migration_version_; }
+  int64_t entity_version() const { return entity_version_; }
+
+  void UpdateWithEntity(int64_t other_entity_version) {
+    entity_version_ = std::max(entity_version_, other_entity_version);
+  }
+
+ private:
+  int migration_version_ = 0;
+  int64_t entity_version_ = 0;
+};
+
 // A filter used during GetUpdates calls to determine what information to
 // send back to the client; filtering out old entities and tracking versions to
 // use in response progress markers. Note that only the GetUpdatesMessage's
 // from_progress_marker is used to determine this; legacy fields are ignored.
 class UpdateSieve {
  public:
-  explicit UpdateSieve(const sync_pb::GetUpdatesMessage& message)
-      : UpdateSieve(MessageToVersionMap(message)) {}
+  UpdateSieve(const sync_pb::GetUpdatesMessage& message,
+              const std::map<ModelType, int>& server_migration_versions)
+      : UpdateSieve(MessageToVersionMap(message, server_migration_versions)) {}
   ~UpdateSieve() {}
+
+  // Verifies if MIGRATION_DONE should be exercised. It intentionally returns
+  // migrations in the order that they were triggered.  Doing it this way
+  // allows the client to queue up two migrations in a row, so the second one
+  // is received while responding to the first.
+  bool ShouldTriggerMigration(
+      const std::map<ModelType, int>& server_migration_versions,
+      std::vector<ModelType>* datatypes_to_migrate) const {
+    DCHECK(datatypes_to_migrate);
+    datatypes_to_migrate->clear();
+
+    for (const auto& request_version : request_version_map_) {
+      const ModelType type = request_version.first;
+      const int client_migration_version =
+          request_version.second.migration_version();
+
+      const int server_migration_version =
+          GetServerMigrationVersion(server_migration_versions, type);
+
+      if (client_migration_version < server_migration_version) {
+        datatypes_to_migrate->push_back(type);
+      }
+    }
+
+    return !datatypes_to_migrate->empty();
+  }
 
   // Sets the progress markers in |get_updates_response| based on the highest
   // version between request progress markers and response entities.
@@ -70,45 +151,52 @@ class UpdateSieve {
           get_updates_response->add_new_progress_marker();
       new_marker->set_data_type_id(
           GetSpecificsFieldNumberFromModelType(kv.first));
-      new_marker->set_token(base::Int64ToString(kv.second));
+      new_marker->set_token(kv.second.ToString());
     }
   }
 
   // Determines whether the server should send an |entity| to the client as
-  // part of a GetUpdatesResponse. Update internal tracking of max versions as a
-  // side effect which will later be used to set response progress markers.
-  bool ClientWantsItem(const LoopbackServerEntity& entity) {
-    int64_t version = entity.GetVersion();
+  // part of a GetUpdatesResponse.
+  bool ClientWantsItem(const LoopbackServerEntity& entity) const {
     ModelType type = entity.GetModelType();
-    response_version_map_[type] =
-        std::max(response_version_map_[type], version);
     auto it = request_version_map_.find(type);
-    return it == request_version_map_.end() ? false : it->second < version;
+    if (it == request_version_map_.end())
+      return false;
+    DCHECK_NE(0U, response_version_map_.count(type));
+    return it->second.entity_version() < entity.GetVersion();
+  }
+
+  // Updates internal tracking of max versions to later be used to set response
+  // progress markers.
+  void UpdateProgressMarker(const LoopbackServerEntity& entity) {
+    DCHECK(ClientWantsItem(entity));
+    ModelType type = entity.GetModelType();
+    response_version_map_[type].UpdateWithEntity(entity.GetVersion());
   }
 
  private:
-  using ModelTypeToVersionMap = std::map<ModelType, int64_t>;
+  using ModelTypeToVersionMap = std::map<ModelType, ProgressMarkerToken>;
 
   static UpdateSieve::ModelTypeToVersionMap MessageToVersionMap(
-      const sync_pb::GetUpdatesMessage& get_updates_message) {
+      const sync_pb::GetUpdatesMessage& get_updates_message,
+      const std::map<ModelType, int>& server_migration_versions) {
     DCHECK_GT(get_updates_message.from_progress_marker_size(), 0)
         << "A GetUpdates request must have at least one progress marker.";
     ModelTypeToVersionMap request_version_map;
 
     for (int i = 0; i < get_updates_message.from_progress_marker_size(); i++) {
-      sync_pb::DataTypeProgressMarker marker =
+      const sync_pb::DataTypeProgressMarker& marker =
           get_updates_message.from_progress_marker(i);
 
-      int64_t version = 0;
-      // Let the version remain zero if there is no token or an empty token (the
-      // first request for this type).
-      if (marker.has_token() && !marker.token().empty()) {
-        bool parsed = base::StringToInt64(marker.token(), &version);
-        DCHECK(parsed) << "Unable to parse progress marker token.";
-      }
-
-      ModelType model_type =
+      const ModelType model_type =
           syncer::GetModelTypeFromSpecificsFieldNumber(marker.data_type_id());
+      const int server_migration_version =
+          GetServerMigrationVersion(server_migration_versions, model_type);
+      const ProgressMarkerToken version =
+          marker.token().empty()
+              ? ProgressMarkerToken::FromEmpty(server_migration_version)
+              : ProgressMarkerToken::FromString(marker.token());
+
       DCHECK(request_version_map.find(model_type) == request_version_map.end());
       request_version_map[model_type] = version;
     }
@@ -130,13 +218,20 @@ class UpdateSieve {
   ModelTypeToVersionMap response_version_map_;
 };
 
+bool SortByVersion(const LoopbackServerEntity* lhs,
+                   const LoopbackServerEntity* rhs) {
+  return lhs->GetVersion() < rhs->GetVersion();
+}
+
 }  // namespace
 
 LoopbackServer::LoopbackServer(const base::FilePath& persistent_file)
-    : version_(0),
+    : strong_consistency_model_enabled_(false),
+      version_(0),
       store_birthday_(0),
       persistent_file_(persistent_file),
       observer_for_tests_(nullptr) {
+  DCHECK(!persistent_file_.empty());
   Init();
 }
 
@@ -178,28 +273,26 @@ bool LoopbackServer::CreateDefaultPermanentItems() {
   ModelTypeSet permanent_folder_types =
       ModelTypeSet(syncer::BOOKMARKS, syncer::NIGORI);
 
-  for (ModelTypeSet::Iterator it = permanent_folder_types.First(); it.Good();
-       it.Inc()) {
-    ModelType model_type = it.Get();
-
+  for (ModelType model_type : permanent_folder_types) {
     std::unique_ptr<LoopbackServerEntity> top_level_entity =
         PersistentPermanentEntity::CreateTopLevel(model_type);
     if (!top_level_entity) {
       return false;
     }
+    top_level_permanent_item_ids_[model_type] = top_level_entity->GetId();
     SaveEntity(std::move(top_level_entity));
-
-    if (model_type == syncer::BOOKMARKS) {
-      if (!CreatePermanentBookmarkFolder(kBookmarkBarFolderServerTag,
-                                         kBookmarkBarFolderName))
-        return false;
-      if (!CreatePermanentBookmarkFolder(kOtherBookmarksFolderServerTag,
-                                         kOtherBookmarksFolderName))
-        return false;
-    }
   }
 
   return true;
+}
+
+std::string LoopbackServer::GetTopLevelPermanentItemId(
+    syncer::ModelType model_type) {
+  auto it = top_level_permanent_item_ids_.find(model_type);
+  if (it == top_level_permanent_item_ids_.end()) {
+    return std::string();
+  }
+  return it->second;
 }
 
 void LoopbackServer::UpdateEntityVersion(LoopbackServerEntity* entity) {
@@ -211,12 +304,10 @@ void LoopbackServer::SaveEntity(std::unique_ptr<LoopbackServerEntity> entity) {
   entities_[entity->GetId()] = std::move(entity);
 }
 
-void LoopbackServer::HandleCommand(
-    const string& request,
-    HttpResponse::ServerConnectionCode* server_status,
-    int64_t* response_code,
-    std::string* response) {
+net::HttpStatusCode LoopbackServer::HandleCommand(const string& request,
+                                                  std::string* response) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  response->clear();
 
   sync_pb::ClientToServerMessage message;
   bool parsed = message.ParseFromString(request);
@@ -224,15 +315,22 @@ void LoopbackServer::HandleCommand(
 
   sync_pb::ClientToServerResponse response_proto;
 
+  if (bag_of_chips_.has_value()) {
+    *response_proto.mutable_new_bag_of_chips() = *bag_of_chips_;
+  }
+
   if (message.has_store_birthday() &&
       message.store_birthday() != GetStoreBirthday()) {
     response_proto.set_error_code(sync_pb::SyncEnums::NOT_MY_BIRTHDAY);
   } else {
     bool success = false;
+    std::vector<ModelType> datatypes_to_migrate;
     switch (message.message_contents()) {
       case sync_pb::ClientToServerMessage::GET_UPDATES:
-        success = HandleGetUpdatesRequest(message.get_updates(),
-                                          response_proto.mutable_get_updates());
+        success = HandleGetUpdatesRequest(
+            message.get_updates(), message.store_birthday(),
+            message.invalidator_client_id(),
+            response_proto.mutable_get_updates(), &datatypes_to_migrate);
         break;
       case sync_pb::ClientToServerMessage::COMMIT:
         success = HandleCommitRequest(message.commit(),
@@ -245,64 +343,129 @@ void LoopbackServer::HandleCommand(
         success = true;
         break;
       default:
-        *server_status = HttpResponse::SYNC_SERVER_ERROR;
-        *response_code = net::ERR_NOT_IMPLEMENTED;
-        *response = string();
-        return;
+        return net::HTTP_BAD_REQUEST;
     }
 
-    if (!success) {
-      *server_status = HttpResponse::SYNC_SERVER_ERROR;
-      *response_code = net::ERR_FAILED;
-      *response = string();
+    if (success) {
+      response_proto.set_error_code(sync_pb::SyncEnums::SUCCESS);
+    } else if (datatypes_to_migrate.empty()) {
       UMA_HISTOGRAM_ENUMERATION(
           "Sync.Local.RequestTypeOnError", message.message_contents(),
           sync_pb::ClientToServerMessage_Contents_Contents_MAX);
-      return;
+      return net::HTTP_INTERNAL_SERVER_ERROR;
+    } else {
+      DLOG(WARNING) << "Migration required for " << datatypes_to_migrate.size()
+                    << " datatypes";
+      for (ModelType type : datatypes_to_migrate) {
+        response_proto.add_migrated_data_type_id(
+            GetSpecificsFieldNumberFromModelType(type));
+      }
+      response_proto.set_error_code(sync_pb::SyncEnums::MIGRATION_DONE);
     }
-
-    response_proto.set_error_code(sync_pb::SyncEnums::SUCCESS);
   }
 
   response_proto.set_store_birthday(GetStoreBirthday());
-
-  *server_status = HttpResponse::SERVER_CONNECTION_OK;
-  *response_code = net::HTTP_OK;
   *response = response_proto.SerializeAsString();
 
   // TODO(pastarmovj): This should be done asynchronously.
   SaveStateToFile(persistent_file_);
+  return net::HTTP_OK;
+}
+
+void LoopbackServer::EnableStrongConsistencyWithConflictDetectionModel() {
+  strong_consistency_model_enabled_ = true;
 }
 
 bool LoopbackServer::HandleGetUpdatesRequest(
     const sync_pb::GetUpdatesMessage& get_updates,
-    sync_pb::GetUpdatesResponse* response) {
-  // TODO(pvalenzuela): Implement batching instead of sending all information
-  // at once.
+    const std::string& store_birthday,
+    const std::string& invalidator_client_id,
+    sync_pb::GetUpdatesResponse* response,
+    std::vector<ModelType>* datatypes_to_migrate) {
   response->set_changes_remaining(0);
 
-  auto sieve = std::make_unique<UpdateSieve>(get_updates);
+  bool is_initial_bookmark_sync = false;
+  for (const sync_pb::DataTypeProgressMarker& marker :
+       get_updates.from_progress_marker()) {
+    if (GetModelTypeFromSpecificsFieldNumber(marker.data_type_id()) !=
+        syncer::BOOKMARKS) {
+      continue;
+    }
+    if (!marker.has_token() || marker.token().empty()) {
+      is_initial_bookmark_sync = true;
+      break;
+    }
+  }
 
-  // This folder is called "Synced Bookmarks" by sync and is renamed
-  // "Mobile Bookmarks" by the mobile client UIs.
-  if (get_updates.create_mobile_bookmarks_folder() &&
-      !CreatePermanentBookmarkFolder(kSyncedBookmarksFolderServerTag,
-                                     kSyncedBookmarksFolderName)) {
+  if (is_initial_bookmark_sync) {
+    if (!CreatePermanentBookmarkFolder(kBookmarkBarFolderServerTag,
+                                       kBookmarkBarFolderName)) {
+      return false;
+    }
+    if (!CreatePermanentBookmarkFolder(kOtherBookmarksFolderServerTag,
+                                       kOtherBookmarksFolderName)) {
+      return false;
+    }
+    // This folder is called "Synced Bookmarks" by sync and is renamed
+    // "Mobile Bookmarks" by the mobile client UIs.
+    if (!CreatePermanentBookmarkFolder(kSyncedBookmarksFolderServerTag,
+                                       kSyncedBookmarksFolderName)) {
+      return false;
+    }
+  }
+
+  // It's a protocol-level contract that the birthday should only be empty
+  // during the initial sync cycle, which requires all progress markers to be
+  // empty. This is also DCHECK-ed on the client, inside syncer_proto_util.cc,
+  // but we guard against client-side code changes here.
+  if (store_birthday.empty()) {
+    for (const sync_pb::DataTypeProgressMarker& marker :
+         get_updates.from_progress_marker()) {
+      if (!marker.token().empty()) {
+        DLOG(WARNING) << "Non-empty progress marker without birthday";
+        return false;
+      }
+    }
+  }
+
+  auto sieve = std::make_unique<UpdateSieve>(get_updates, migration_versions_);
+
+  if (sieve->ShouldTriggerMigration(migration_versions_,
+                                    datatypes_to_migrate)) {
+    DCHECK(!datatypes_to_migrate->empty());
     return false;
   }
 
-  bool send_encryption_keys_based_on_nigori = false;
-  for (const auto& kv : entities_) {
-    const LoopbackServerEntity& entity = *kv.second;
-    if (sieve->ClientWantsItem(entity)) {
-      sync_pb::SyncEntity* response_entity = response->add_entries();
-      entity.SerializeAsProto(response_entity);
+  std::vector<const LoopbackServerEntity*> wanted_entities;
+  for (const auto& id_and_entity : entities_) {
+    if (sieve->ClientWantsItem(*id_and_entity.second)) {
+      wanted_entities.push_back(id_and_entity.second.get());
+    }
+  }
 
-      if (entity.GetModelType() == syncer::NIGORI) {
-        send_encryption_keys_based_on_nigori =
-            response_entity->specifics().nigori().passphrase_type() ==
-            sync_pb::NigoriSpecifics::KEYSTORE_PASSPHRASE;
-      }
+  int max_batch_size = max_get_updates_batch_size_;
+  if (get_updates.batch_size() > 0)
+    max_batch_size = std::min(max_batch_size, get_updates.batch_size());
+
+  if (static_cast<int>(wanted_entities.size()) > max_batch_size) {
+    response->set_changes_remaining(wanted_entities.size() - max_batch_size);
+    std::partial_sort(wanted_entities.begin(),
+                      wanted_entities.begin() + max_batch_size,
+                      wanted_entities.end(), SortByVersion);
+    wanted_entities.resize(max_batch_size);
+  }
+
+  bool send_encryption_keys_based_on_nigori = false;
+  for (const LoopbackServerEntity* entity : wanted_entities) {
+    sieve->UpdateProgressMarker(*entity);
+
+    sync_pb::SyncEntity* response_entity = response->add_entries();
+    entity->SerializeAsProto(response_entity);
+
+    if (entity->GetModelType() == syncer::NIGORI) {
+      send_encryption_keys_based_on_nigori =
+          response_entity->specifics().nigori().passphrase_type() ==
+          sync_pb::NigoriSpecifics::KEYSTORE_PASSPHRASE;
     }
   }
 
@@ -314,6 +477,12 @@ bool LoopbackServer::HandleGetUpdatesRequest(
   }
 
   sieve->SetProgressMarkers(response);
+  // During initial bookmark sync, we create new entities for bookmark permanent
+  // folders, and hence we should inform the observers.
+  if (is_initial_bookmark_sync && observer_for_tests_) {
+    observer_for_tests_->OnCommit(invalidator_client_id, {syncer::BOOKMARKS});
+  }
+
   return true;
 }
 
@@ -324,6 +493,20 @@ string LoopbackServer::CommitEntity(
     const string& parent_id) {
   if (client_entity.version() == 0 && client_entity.deleted()) {
     return string();
+  }
+
+  // If strong consistency model is enabled (usually on a per-datatype level,
+  // but implemented here as a global state), the server detects version
+  // mismatches and responds with CONFLICT.
+  if (strong_consistency_model_enabled_) {
+    EntityMap::const_iterator iter = entities_.find(client_entity.id_string());
+    if (iter != entities_.end()) {
+      const LoopbackServerEntity* server_entity = iter->second.get();
+      if (server_entity->GetVersion() != client_entity.version()) {
+        entry_response->set_response_type(sync_pb::CommitResponse::CONFLICT);
+        return client_entity.id_string();
+      }
+    }
   }
 
   std::unique_ptr<LoopbackServerEntity> entity;
@@ -428,6 +611,11 @@ bool LoopbackServer::HandleCommitRequest(
   string guid = commit.cache_guid();
   ModelTypeSet committed_model_types;
 
+  ModelTypeSet enabled_types;
+  for (int field_number : commit.config_params().enabled_type_ids()) {
+    enabled_types.Put(GetModelTypeFromSpecificsFieldNumber(field_number));
+  }
+
   // TODO(pvalenzuela): Add validation of CommitMessage.entries.
   for (const sync_pb::SyncEntity& client_entity : commit.entries()) {
     sync_pb::CommitResponse_EntryResponse* entry_response =
@@ -452,6 +640,20 @@ bool LoopbackServer::HandleCommitRequest(
     EntityMap::const_iterator iter = entities_.find(entity_id);
     DCHECK(iter != entities_.end());
     committed_model_types.Put(iter->second->GetModelType());
+
+    // Notify observers about history having been synced. "History" sync is
+    // guarded by the user's selection in the settings page. This also excludes
+    // custom passphrase users who, in addition to HISTORY_DELETE_DIRECTIVES not
+    // being enabled, will commit encrypted specifics and hence cannot be
+    // iterated over.
+    if (observer_for_tests_ && iter->second->GetModelType() == SESSIONS &&
+        enabled_types.Has(HISTORY_DELETE_DIRECTIVES) &&
+        enabled_types.Has(TYPED_URLS)) {
+      for (const sync_pb::TabNavigation& navigation :
+           client_entity.specifics().session().tab().navigation()) {
+        observer_for_tests_->OnHistoryCommit(navigation.virtual_url());
+      }
+    }
   }
 
   if (observer_for_tests_)
@@ -471,7 +673,7 @@ void LoopbackServer::ClearServerData() {
 
 std::string LoopbackServer::GetStoreBirthday() const {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return base::Int64ToString(store_birthday_);
+  return base::NumberToString(store_birthday_);
 }
 
 std::vector<sync_pb::SyncEntity> LoopbackServer::GetSyncEntitiesByModelType(
@@ -490,6 +692,22 @@ std::vector<sync_pb::SyncEntity> LoopbackServer::GetSyncEntitiesByModelType(
   return sync_entities;
 }
 
+std::vector<sync_pb::SyncEntity>
+LoopbackServer::GetPermanentSyncEntitiesByModelType(ModelType model_type) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  std::vector<sync_pb::SyncEntity> sync_entities;
+  for (const auto& kv : entities_) {
+    const LoopbackServerEntity& entity = *kv.second;
+    if (!entity.IsDeleted() && entity.IsPermanent() &&
+        entity.GetModelType() == model_type) {
+      sync_pb::SyncEntity sync_entity;
+      entity.SerializeAsProto(&sync_entity);
+      sync_entities.push_back(sync_entity);
+    }
+  }
+  return sync_entities;
+}
+
 std::unique_ptr<base::DictionaryValue>
 LoopbackServer::GetEntitiesAsDictionaryValue() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -498,8 +716,8 @@ LoopbackServer::GetEntitiesAsDictionaryValue() {
 
   // Initialize an empty ListValue for all ModelTypes.
   ModelTypeSet all_types = ModelTypeSet::All();
-  for (ModelTypeSet::Iterator it = all_types.First(); it.Good(); it.Inc()) {
-    dictionary->Set(ModelTypeToString(it.Get()),
+  for (ModelType type : all_types) {
+    dictionary->Set(ModelTypeToString(type),
                     std::make_unique<base::ListValue>());
   }
 
@@ -610,7 +828,9 @@ bool LoopbackServer::SaveStateToFile(const base::FilePath& filename) const {
     return false;
   }
   int result = base::WriteFile(filename, serialized.data(), serialized.size());
-  UMA_HISTOGRAM_MEMORY_KB("Sync.Local.FileSize", result);
+  if (result == static_cast<int>(serialized.size()))
+    UMA_HISTOGRAM_MEMORY_KB("Sync.Local.FileSizeKB", result / 1024);
+  // TODO(pastarmovj): Add new UMA here to catch error counts.
   return result == static_cast<int>(serialized.size());
 }
 

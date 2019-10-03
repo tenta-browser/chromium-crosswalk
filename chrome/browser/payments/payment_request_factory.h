@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_PAYMENTS_PAYMENT_REQUEST_FACTORY_H_
 #define CHROME_BROWSER_PAYMENTS_PAYMENT_REQUEST_FACTORY_H_
 
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
 
 namespace content {
 class RenderFrameHost;
@@ -19,6 +19,13 @@ namespace payments {
 // of PaymentRequest is created in the renderer.
 void CreatePaymentRequest(mojom::PaymentRequestRequest request,
                           content::RenderFrameHost* render_frame_host);
+
+// Unit tests should clean up this factory override by giving a null callback so
+// as to not interfere with other tests.
+void SetPaymentRequestFactoryForTesting(
+    base::RepeatingCallback<void(mojom::PaymentRequestRequest request,
+                                 content::RenderFrameHost* render_frame_host)>
+        factory_callback);
 
 }  // namespace payments
 

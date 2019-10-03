@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "content/browser/notification_service_impl.h"
 
 namespace content {
@@ -49,6 +50,7 @@ void NotificationRegistrar::Add(NotificationObserver* observer,
                                 const NotificationSource& source) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!IsRegistered(observer, type, source)) << "Duplicate registration.";
+  DCHECK(NotificationServiceImpl::current());
 
   Record record = { observer, type, source };
   registered_.push_back(record);
@@ -62,8 +64,8 @@ void NotificationRegistrar::Remove(NotificationObserver* observer,
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   Record record = { observer, type, source };
-  RecordVector::iterator found = std::find(
-      registered_.begin(), registered_.end(), record);
+  RecordVector::iterator found =
+      std::find(registered_.begin(), registered_.end(), record);
   DCHECK(found != registered_.end());
 
   registered_.erase(found);
@@ -109,8 +111,7 @@ bool NotificationRegistrar::IsRegistered(NotificationObserver* observer,
                                          const NotificationSource& source) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   Record record = { observer, type, source };
-  return std::find(registered_.begin(), registered_.end(), record) !=
-      registered_.end();
+  return base::Contains(registered_, record);
 }
 
 }  // namespace content

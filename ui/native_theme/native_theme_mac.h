@@ -5,9 +5,13 @@
 #ifndef UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 #define UI_NATIVE_THEME_NATIVE_THEME_MAC_H_
 
+#include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "ui/native_theme/native_theme_base.h"
 #include "ui/native_theme/native_theme_export.h"
+
+@class NativeThemeEffectiveAppearanceObserver;
 
 namespace ui {
 
@@ -45,6 +49,7 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
       State state,
       const gfx::Rect& rect,
       const MenuItemExtraParams& menu_item) const override;
+  bool SystemDarkModeSupported() const override;
 
   // Paints the styled button shape used for default controls on Mac. The basic
   // style is used for dialog buttons, comboboxes, and tabbed pane tabs.
@@ -59,11 +64,23 @@ class NATIVE_THEME_EXPORT NativeThemeMac : public NativeThemeBase {
 
  protected:
   friend class NativeTheme;
+  friend class base::NoDestructor<NativeThemeMac>;
   static NativeThemeMac* instance();
 
  private:
   NativeThemeMac();
   ~NativeThemeMac() override;
+
+  // Paint the selected menu item background, and a border for emphasis when in
+  // high contrast.
+  void PaintSelectedMenuItem(cc::PaintCanvas* canvas,
+                             const gfx::Rect& rect) const;
+
+  void InitializeDarkModeStateAndObserver();
+
+  base::scoped_nsobject<NativeThemeEffectiveAppearanceObserver>
+      appearance_observer_;
+  id high_contrast_notification_token_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeThemeMac);
 };

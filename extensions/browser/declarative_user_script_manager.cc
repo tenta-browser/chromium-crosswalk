@@ -4,7 +4,6 @@
 
 #include "extensions/browser/declarative_user_script_manager.h"
 
-#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/declarative_user_script_manager_factory.h"
 #include "extensions/browser/declarative_user_script_master.h"
@@ -31,8 +30,7 @@ DeclarativeUserScriptManager* DeclarativeUserScriptManager::Get(
 DeclarativeUserScriptMaster*
 DeclarativeUserScriptManager::GetDeclarativeUserScriptMasterByID(
     const HostID& host_id) {
-  UserScriptMasterMap::iterator it =
-      declarative_user_script_masters_.find(host_id);
+  auto it = declarative_user_script_masters_.find(host_id);
 
   if (it != declarative_user_script_masters_.end())
     return it->second.get();

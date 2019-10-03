@@ -10,7 +10,10 @@ DownloadServiceModelImplTest.*
 DownloadStoreTest.*
 FileMonitorTest.*
 InProgressConversionsTest.*
+InMemoryDownloadDriverTest.*
+InMemoryDownloadTest.*
 NavigationMonitorImplTest.*
 NetworkListenerTest.*
 ProtoConversionsTest.*
 ServiceConfigImplTest.*
+TaskManagerImplTest.*

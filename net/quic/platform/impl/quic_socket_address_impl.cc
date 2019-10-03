@@ -5,18 +5,19 @@
 #include "net/quic/platform/impl/quic_socket_address_impl.h"
 
 #include "net/base/sockaddr_storage.h"
-#include "net/quic/platform/api/quic_bug_tracker.h"
+#include "net/quic/address_utils.h"
+#include "net/third_party/quiche/src/quic/platform/api/quic_bug_tracker.h"
 
 using std::string;
 
-namespace net {
+namespace quic {
 
-QuicSocketAddressImpl::QuicSocketAddressImpl(const IPEndPoint& address)
+QuicSocketAddressImpl::QuicSocketAddressImpl(const net::IPEndPoint& address)
     : socket_address_(address) {}
 
-QuicSocketAddressImpl::QuicSocketAddressImpl(QuicIpAddressImpl address,
+QuicSocketAddressImpl::QuicSocketAddressImpl(QuicIpAddress address,
                                              uint16_t port)
-    : socket_address_(address.ip_address(), port) {}
+    : socket_address_(net::ToIPAddress(address), port) {}
 
 QuicSocketAddressImpl::QuicSocketAddressImpl(
     const struct sockaddr_storage& saddr) {
@@ -30,9 +31,13 @@ QuicSocketAddressImpl::QuicSocketAddressImpl(
   }
 }
 
-QuicSocketAddressImpl::QuicSocketAddressImpl(const struct sockaddr& saddr) {
-  QUIC_BUG << "QuicSocketAddressImpl(const struct sockaddr& saddr) is not "
-              "implemented.";
+QuicSocketAddressImpl::QuicSocketAddressImpl(const sockaddr* saddr,
+                                             socklen_t len) {
+  if (saddr->sa_family == AF_INET) {
+    CHECK(socket_address_.FromSockAddr(saddr, len));
+  } else if (saddr->sa_family == AF_INET6) {
+    CHECK(socket_address_.FromSockAddr(saddr, len));
+  }
 }
 
 bool operator==(const QuicSocketAddressImpl& lhs,
@@ -60,7 +65,7 @@ string QuicSocketAddressImpl::ToString() const {
 }
 
 int QuicSocketAddressImpl::FromSocket(int fd) {
-  SockaddrStorage storage;
+  net::SockaddrStorage storage;
   if (getsockname(fd, storage.addr, &storage.addr_len) != 0 ||
       !socket_address_.FromSockAddr(storage.addr, storage.addr_len)) {
     return 1;
@@ -74,8 +79,8 @@ QuicSocketAddressImpl QuicSocketAddressImpl::Normalized() const {
   return QuicSocketAddressImpl();
 }
 
-QuicIpAddressImpl QuicSocketAddressImpl::host() const {
-  return QuicIpAddressImpl(socket_address_.address());
+QuicIpAddress QuicSocketAddressImpl::host() const {
+  return ToQuicIpAddress(socket_address_.address());
 }
 
 uint16_t QuicSocketAddressImpl::port() const {
@@ -83,11 +88,11 @@ uint16_t QuicSocketAddressImpl::port() const {
 }
 
 sockaddr_storage QuicSocketAddressImpl::generic_address() const {
-  sockaddr_storage raw_address;
+  sockaddr_storage raw_address = {};
   socklen_t address_len = sizeof(raw_address);
   CHECK(socket_address_.ToSockAddr(
       reinterpret_cast<struct sockaddr*>(&raw_address), &address_len));
   return raw_address;
 }
 
-}  // namespace net
+}  // namespace quic

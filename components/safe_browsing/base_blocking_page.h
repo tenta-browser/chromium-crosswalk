@@ -72,6 +72,7 @@ class BaseBlockingPage
   bool ShouldCreateNewNavigation() const override;
   void PopulateInterstitialStrings(
       base::DictionaryValue* load_time_data) override;
+  void OnInterstitialClosing() override;
 
   // Called when the interstitial is going away. Intentionally do nothing in
   // this base class.
@@ -102,6 +103,10 @@ class BaseBlockingPage
 
   UnsafeResourceList unsafe_resources() const;
 
+  bool proceeded() const;
+
+  int64_t threat_details_proceed_delay() const;
+
   BaseSafeBrowsingErrorUI* sb_error_ui() const;
 
   void set_proceeded(bool proceeded);
@@ -125,6 +130,8 @@ class BaseBlockingPage
   int GetHTMLTemplateId() override;
 
   void set_sb_error_ui(std::unique_ptr<BaseSafeBrowsingErrorUI> sb_error_ui);
+
+  void OnDontProceedDone();
 
  private:
   // For reporting back user actions.

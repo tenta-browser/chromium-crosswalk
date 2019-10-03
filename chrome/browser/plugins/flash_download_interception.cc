@@ -5,12 +5,12 @@
 #include "chrome/browser/plugins/flash_download_interception.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/bind_helpers.h"
+#include "base/no_destructor.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/plugins/plugin_utils.h"
-#include "chrome/browser/plugins/plugins_field_trial.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -19,7 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "url/origin.h"
 
@@ -29,20 +29,29 @@ using content::NavigationThrottle;
 
 namespace {
 
-// Regexes matching
-const char kGetFlashURLCanonicalRegex[] = "(?i)get2?\\.adobe\\.com/.*flash.*";
-const char kGetFlashURLSecondaryGoRegex[] =
-    "(?i)(www\\.)?(adobe|macromedia)\\.com/go/"
-    "((?i).*get[-_]?flash|getfp10android|.*fl(ash)player|.*flashpl|"
-    ".*flash_player|flash_completion|flashpm|.*flashdownload|d65_flplayer|"
-    "fp_jp|runtimes_fp|[a-z_-]{3,6}h-m-a-?2|chrome|download_player|"
-    "gnav_fl|pdcredirect).*";
-const char kGetFlashURLSecondaryDownloadRegex[] =
-    "(?i)(www\\.)?(adobe|macromedia)\\.com/shockwave/download/download.cgi";
+const RE2& GetFlashURLCanonicalRegex() {
+  static const base::NoDestructor<RE2> re("(?i)get2?\\.adobe\\.com/.*flash.*");
+  return *re;
+}
+
+const RE2& GetFlashURLSecondaryGoRegex() {
+  static const base::NoDestructor<RE2> re(
+      "(?i)(www\\.)?(adobe|macromedia)\\.com/go/"
+      "((?i).*get[-_]?flash|getfp10android|.*fl(ash)player|.*flashpl|"
+      ".*flash_player|flash_completion|flashpm|.*flashdownload|d65_flplayer|"
+      "fp_jp|runtimes_fp|[a-z_-]{3,6}h-m-a-?2|chrome|download_player|"
+      "gnav_fl|pdcredirect).*");
+  return *re;
+}
+
+const RE2& GetFlashURLSecondaryDownloadRegex() {
+  static const base::NoDestructor<RE2> re(
+      "(?i)(www\\.)?(adobe|macromedia)\\.com/shockwave/download/download.cgi");
+  return *re;
+}
+
 const char kGetFlashURLSecondaryDownloadQuery[] =
     "P1_Prod_Version=ShockwaveFlash";
-
-void DoNothing(ContentSetting result) {}
 
 bool InterceptNavigation(
     const GURL& source_url,
@@ -68,14 +77,12 @@ void FlashDownloadInterception::InterceptFlashDownloadNavigation(
   ContentSetting flash_setting = PluginUtils::GetFlashPluginContentSetting(
       host_content_settings_map, url::Origin::Create(source_url), source_url,
       nullptr);
-  flash_setting = PluginsFieldTrial::EffectiveContentSetting(
-      host_content_settings_map, CONTENT_SETTINGS_TYPE_PLUGINS, flash_setting);
 
   if (flash_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT) {
     PermissionManager* manager = PermissionManager::Get(profile);
     manager->RequestPermission(
         CONTENT_SETTINGS_TYPE_PLUGINS, web_contents->GetMainFrame(),
-        web_contents->GetLastCommittedURL(), true, base::Bind(&DoNothing));
+        web_contents->GetLastCommittedURL(), true, base::DoNothing());
   } else if (flash_setting == CONTENT_SETTING_BLOCK) {
     auto* settings = TabSpecificContentSettings::FromWebContents(web_contents);
     if (settings)
@@ -91,9 +98,6 @@ bool FlashDownloadInterception::ShouldStopFlashDownloadAction(
     const GURL& source_url,
     const GURL& target_url,
     bool has_user_gesture) {
-  if (!PluginUtils::ShouldPreferHtmlOverPlugins(host_content_settings_map))
-    return false;
-
   if (!has_user_gesture)
     return false;
 
@@ -107,21 +111,25 @@ bool FlashDownloadInterception::ShouldStopFlashDownloadAction(
   // intercept the download. The user may be trying to download Flash.
   std::string source_url_str =
       source_url.ReplaceComponents(replacements).GetContent();
-  if (RE2::PartialMatch(source_url_str, kGetFlashURLCanonicalRegex))
-    return false;
 
   std::string target_url_str =
       target_url.ReplaceComponents(replacements).GetContent();
-  if (RE2::FullMatch(target_url_str, kGetFlashURLCanonicalRegex) ||
-      RE2::FullMatch(target_url_str, kGetFlashURLSecondaryGoRegex) ||
-      (RE2::FullMatch(target_url_str, kGetFlashURLSecondaryDownloadRegex) &&
+
+  // Early optimization since RE2 is expensive. http://crbug.com/809775
+  if (target_url_str.find("adobe.com") == std::string::npos &&
+      target_url_str.find("macromedia.com") == std::string::npos)
+    return false;
+
+  if (RE2::PartialMatch(source_url_str, GetFlashURLCanonicalRegex()))
+    return false;
+
+  if (RE2::FullMatch(target_url_str, GetFlashURLCanonicalRegex()) ||
+      RE2::FullMatch(target_url_str, GetFlashURLSecondaryGoRegex()) ||
+      (RE2::FullMatch(target_url_str, GetFlashURLSecondaryDownloadRegex()) &&
        target_url.query() == kGetFlashURLSecondaryDownloadQuery)) {
     ContentSetting flash_setting = PluginUtils::GetFlashPluginContentSetting(
         host_content_settings_map, url::Origin::Create(source_url), source_url,
         nullptr);
-    flash_setting = PluginsFieldTrial::EffectiveContentSetting(
-        host_content_settings_map, CONTENT_SETTINGS_TYPE_PLUGINS,
-        flash_setting);
 
     return flash_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT ||
            flash_setting == CONTENT_SETTING_BLOCK;
@@ -160,6 +168,7 @@ FlashDownloadInterception::MaybeCreateThrottleFor(NavigationHandle* handle) {
     return nullptr;
   }
 
-  return base::MakeUnique<navigation_interception::InterceptNavigationThrottle>(
-      handle, base::Bind(&InterceptNavigation, source_url));
+  return std::make_unique<navigation_interception::InterceptNavigationThrottle>(
+      handle, base::Bind(&InterceptNavigation, source_url),
+      navigation_interception::SynchronyMode::kSync);
 }

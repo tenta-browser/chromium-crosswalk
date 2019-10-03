@@ -16,7 +16,9 @@ SyncEncryptionHandler::~SyncEncryptionHandler() {}
 ModelTypeSet SyncEncryptionHandler::SensitiveTypes() {
   ModelTypeSet types;
   types.Put(PASSWORDS);  // Has its own encryption, but include it anyway.
-  types.Put(WIFI_CREDENTIALS);
+  types.Put(
+      WIFI_CONFIGURATIONS);  // Has its own encryption, but include it anyway.
+  types.Put(DEPRECATED_WIFI_CREDENTIALS);
   return types;
 }
 

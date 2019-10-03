@@ -6,6 +6,9 @@
 
 #include "base/android/callback_android.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
+#include "chrome/android/chrome_jni_headers/BackgroundSchedulerBridge_jni.h"
+#include "chrome/browser/offline_pages/android/offline_page_auto_fetcher_service_factory.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
 #include "chrome/browser/offline_pages/request_coordinator_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -13,7 +16,6 @@
 #include "components/offline_pages/core/background/device_conditions.h"
 #include "components/offline_pages/core/background/offliner.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
-#include "jni/BackgroundSchedulerBridge_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
@@ -22,20 +24,9 @@ using base::android::ScopedJavaLocalRef;
 namespace offline_pages {
 namespace android {
 
-namespace {
-
-// C++ callback that delegates to Java callback.
-void ProcessingDoneCallback(
-    const ScopedJavaGlobalRef<jobject>& j_callback_obj, bool result) {
-  base::android::RunCallbackAndroid(j_callback_obj, result);
-}
-
-}  // namespace
-
 // JNI call to start request processing in scheduled mode.
 static jboolean JNI_BackgroundSchedulerBridge_StartScheduledProcessing(
     JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller,
     const jboolean j_power_connected,
     const jint j_battery_percentage,
     const jint j_net_connection_type,
@@ -43,9 +34,16 @@ static jboolean JNI_BackgroundSchedulerBridge_StartScheduledProcessing(
   ScopedJavaGlobalRef<jobject> j_callback_ref;
   j_callback_ref.Reset(env, j_callback_obj);
 
+  Profile* profile = ProfileManager::GetLastUsedProfile();
+  if (!profile)
+    return false;
+
+  // Make sure the auto-fetch service is running, so it can respond to completed
+  // pages.
+  OfflinePageAutoFetcherServiceFactory::GetForBrowserContext(profile);
+
   // Lookup/create RequestCoordinator KeyedService and call
   // StartScheduledProcessing on it with bound j_callback_obj.
-  Profile* profile = ProfileManager::GetLastUsedProfile();
   RequestCoordinator* coordinator =
       RequestCoordinatorFactory::GetInstance()->
       GetForBrowserContext(profile);
@@ -55,21 +53,22 @@ static jboolean JNI_BackgroundSchedulerBridge_StartScheduledProcessing(
       static_cast<net::NetworkChangeNotifier::ConnectionType>(
           j_net_connection_type));
   return coordinator->StartScheduledProcessing(
-      device_conditions, base::Bind(&ProcessingDoneCallback, j_callback_ref));
+      device_conditions,
+      base::BindRepeating(&base::android::RunBooleanCallbackAndroid,
+                          j_callback_ref));
 }
 
 // JNI call to stop request processing in scheduled mode.
-static void JNI_BackgroundSchedulerBridge_StopScheduledProcessing(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& jcaller) {
+static void JNI_BackgroundSchedulerBridge_StopScheduledProcessing(JNIEnv* env) {
   Profile* profile = ProfileManager::GetLastUsedProfile();
+  if (!profile)
+    return;
   RequestCoordinator* coordinator =
       RequestCoordinatorFactory::GetInstance()->GetForBrowserContext(profile);
   DVLOG(2) << "resource_coordinator: " << coordinator;
   if (!coordinator)
     return;
-  coordinator->StopProcessing(
-      Offliner::RequestStatus::BACKGROUND_SCHEDULER_CANCELED);
+  coordinator->CancelProcessing();
 }
 
 BackgroundSchedulerBridge::BackgroundSchedulerBridge() = default;
@@ -87,7 +86,8 @@ void BackgroundSchedulerBridge::Schedule(
 }
 
 void BackgroundSchedulerBridge::BackupSchedule(
-    const TriggerConditions& trigger_conditions, long delay_in_seconds) {
+    const TriggerConditions& trigger_conditions,
+    int64_t delay_in_seconds) {
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> j_conditions =
       CreateTriggerConditions(env, trigger_conditions.require_power_connected,
@@ -128,7 +128,7 @@ BackgroundSchedulerBridge::GetCurrentDeviceConditions() {
       static_cast<net::NetworkChangeNotifier::ConnectionType>(jnetwork);
 
   // Now return the current conditions to the caller.
-  device_conditions_ = base::MakeUnique<DeviceConditions>(
+  device_conditions_ = std::make_unique<DeviceConditions>(
       power, battery, network_connection_type);
   return *device_conditions_;
 }

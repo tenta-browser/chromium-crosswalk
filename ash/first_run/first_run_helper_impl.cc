@@ -4,101 +4,77 @@
 
 #include "ash/first_run/first_run_helper_impl.h"
 
-#include "ash/public/cpp/shell_window_ids.h"
-#include "ash/shelf/app_list_button.h"
+#include <memory>
+#include <utility>
+
+#include "ash/app_list/views/app_list_view.h"
+#include "ash/first_run/desktop_cleaner.h"
+#include "ash/root_window_controller.h"
+#include "ash/session/session_controller_impl.h"
+#include "ash/shelf/home_button.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_bubble.h"
+#include "ash/system/status_area_widget.h"
+#include "ash/system/unified/unified_system_tray.h"
 #include "base/logging.h"
-#include "ui/app_list/views/app_list_view.h"
-#include "ui/aura/window.h"
-#include "ui/display/display.h"
-#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/view.h"
-#include "ui/views/widget/widget.h"
 
 namespace ash {
 
-namespace {
-
-views::Widget* CreateFirstRunWindow() {
-  views::Widget::InitParams params(
-      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.bounds = display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
-  params.show_state = ui::SHOW_STATE_FULLSCREEN;
-  params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
-  params.parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
-                                      ash::kShellWindowId_OverlayContainer);
-  views::Widget* window = new views::Widget;
-  window->Init(params);
-  return window;
+// static
+std::unique_ptr<FirstRunHelper> FirstRunHelper::Start(
+    base::OnceClosure on_cancelled) {
+  return std::make_unique<FirstRunHelperImpl>(std::move(on_cancelled));
 }
 
-}  // anonymous namespace
-
-FirstRunHelperImpl::FirstRunHelperImpl() : widget_(CreateFirstRunWindow()) {
-  Shell::Get()->overlay_filter()->Activate(this);
+FirstRunHelperImpl::FirstRunHelperImpl(base::OnceClosure on_cancelled)
+    : on_cancelled_(std::move(on_cancelled)),
+      cleaner_(std::make_unique<DesktopCleaner>()) {
+  Shell::Get()->session_controller()->AddObserver(this);
 }
 
 FirstRunHelperImpl::~FirstRunHelperImpl() {
-  Shell::Get()->overlay_filter()->Deactivate(this);
-  if (IsTrayBubbleOpened())
-    CloseTrayBubble();
-  widget_->Close();
-}
-
-views::Widget* FirstRunHelperImpl::GetOverlayWidget() {
-  return widget_;
+  Shell::Get()->session_controller()->RemoveObserver(this);
+  // Ensure the tray is closed.
+  CloseTrayBubble();
 }
 
 gfx::Rect FirstRunHelperImpl::GetAppListButtonBounds() {
   Shelf* shelf = Shelf::ForWindow(Shell::GetPrimaryRootWindow());
-  AppListButton* app_button = shelf->shelf_widget()->GetAppListButton();
-  return app_button->GetBoundsInScreen();
+  HomeButton* home_button = shelf->shelf_widget()->GetHomeButton();
+  return home_button->GetBoundsInScreen();
 }
 
-void FirstRunHelperImpl::Cancel() {
-  for (auto& observer : observers())
-    observer.OnCancelled();
-}
-
-bool FirstRunHelperImpl::IsCancelingKeyEvent(ui::KeyEvent* event) {
-  return event->key_code() == ui::VKEY_ESCAPE;
-}
-
-aura::Window* FirstRunHelperImpl::GetWindow() {
-  return widget_->GetNativeWindow();
-}
-
-void FirstRunHelperImpl::OpenTrayBubble() {
-  SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
-  tray->ShowPersistentDefaultView();
+gfx::Rect FirstRunHelperImpl::OpenTrayBubble() {
+  UnifiedSystemTray* tray = Shell::Get()
+                                ->GetPrimaryRootWindowController()
+                                ->GetStatusAreaWidget()
+                                ->unified_system_tray();
+  tray->ShowBubble(false /* show_by_click */);
+  return tray->GetBubbleBoundsInScreen();
 }
 
 void FirstRunHelperImpl::CloseTrayBubble() {
-  SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
-  DCHECK(tray->HasSystemBubble()) << "Tray bubble is closed already.";
-  tray->CloseBubble();
+  Shell::Get()
+      ->GetPrimaryRootWindowController()
+      ->GetStatusAreaWidget()
+      ->unified_system_tray()
+      ->CloseBubble();
 }
 
-bool FirstRunHelperImpl::IsTrayBubbleOpened() {
-  SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
-  return tray->HasSystemBubble();
+void FirstRunHelperImpl::OnLockStateChanged(bool locked) {
+  Cancel();
 }
 
-gfx::Rect FirstRunHelperImpl::GetTrayBubbleBounds() {
-  SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
-  views::View* bubble = tray->GetSystemBubble()->bubble_view();
-  return bubble->GetBoundsInScreen();
+void FirstRunHelperImpl::OnChromeTerminating() {
+  Cancel();
 }
 
-gfx::Rect FirstRunHelperImpl::GetHelpButtonBounds() {
-  SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
-  views::View* help_button = tray->GetHelpButtonView();
-  return help_button->GetBoundsInScreen();
+void FirstRunHelperImpl::Cancel() {
+  if (!on_cancelled_.is_null())
+    std::move(on_cancelled_).Run();
 }
 
 }  // namespace ash

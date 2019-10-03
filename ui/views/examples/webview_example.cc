@@ -14,27 +14,25 @@ namespace examples {
 
 WebViewExample::WebViewExample(content::BrowserContext* browser_context)
     : ExampleBase("WebView"),
-      webview_(NULL),
-      browser_context_(browser_context) {
-}
+      webview_(nullptr),
+      browser_context_(browser_context) {}
 
-WebViewExample::~WebViewExample() {
-}
+WebViewExample::~WebViewExample() = default;
 
 void WebViewExample::CreateExampleView(View* container) {
   webview_ = new WebView(browser_context_);
   webview_->GetWebContents()->SetDelegate(this);
-  container->SetLayoutManager(new FillLayout);
+  container->SetLayoutManager(std::make_unique<FillLayout>());
   container->AddChildView(webview_);
 
   webview_->LoadInitialURL(GURL("http://www.google.com/"));
   webview_->GetWebContents()->Focus();
 }
 
-void WebViewExample::HandleKeyboardEvent(
+bool WebViewExample::HandleKeyboardEvent(
     content::WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
-  unhandled_keyboard_event_handler_.HandleKeyboardEvent(
+  return unhandled_keyboard_event_handler_.HandleKeyboardEvent(
       event, webview_->GetFocusManager());
 }
 

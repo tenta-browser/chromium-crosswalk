@@ -18,14 +18,13 @@
 #include "extensions/common/features/feature.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/renderer/module_system.h"
-#include "extensions/renderer/request_sender.h"
 #include "extensions/renderer/safe_builtins.h"
 #include "extensions/renderer/script_injection_callback.h"
-#include "gin/runner.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
 
 namespace blink {
+class WebDocumentLoader;
 class WebLocalFrame;
 }
 
@@ -44,7 +43,7 @@ class Extension;
 //
 // Note that ScriptContexts bound to worker threads will not have the full
 // functionality as those bound to the main RenderThread.
-class ScriptContext : public RequestSender::Source {
+class ScriptContext {
  public:
   using RunScriptExceptionHandler = base::Callback<void(const v8::TryCatch&)>;
 
@@ -54,7 +53,7 @@ class ScriptContext : public RequestSender::Source {
                 Feature::Context context_type,
                 const Extension* effective_extension,
                 Feature::Context effective_context_type);
-  ~ScriptContext() override;
+  ~ScriptContext();
 
   // Returns whether |url| from any Extension in |extension_set| is sandboxed,
   // as declared in each Extension's manifest.
@@ -62,13 +61,16 @@ class ScriptContext : public RequestSender::Source {
   // See comment in HasAccessOrThrowError.
   static bool IsSandboxedPage(const GURL& url);
 
+  // Initializes |module_system| and associates it with this context.
+  void SetModuleSystem(std::unique_ptr<ModuleSystem> module_system);
+
   // Clears the WebLocalFrame for this contexts and invalidates the associated
   // ModuleSystem.
   void Invalidate();
 
   // Registers |observer| to be run when this context is invalidated. Closures
   // are run immediately when Invalidate() is called, not in a message loop.
-  void AddInvalidationObserver(const base::Closure& observer);
+  void AddInvalidationObserver(base::OnceClosure observer);
 
   // Returns true if this context is still valid, false if it isn't.
   // A context becomes invalid via Invalidate().
@@ -93,10 +95,6 @@ class ScriptContext : public RequestSender::Source {
   }
 
   const base::UnguessableToken& context_id() const { return context_id_; }
-
-  void set_module_system(std::unique_ptr<ModuleSystem> module_system) {
-    module_system_ = std::move(module_system);
-  }
 
   ModuleSystem* module_system() { return module_system_.get(); }
 
@@ -154,6 +152,12 @@ class ScriptContext : public RequestSender::Source {
 
   const GURL& service_worker_scope() const;
 
+  int64_t service_worker_version_id() const {
+    return service_worker_version_id_;
+  }
+
+  bool IsForServiceWorker() const;
+
   // Sets the URL of this ScriptContext. Usually this will automatically be set
   // on construction, unless this isn't constructed with enough information to
   // determine the URL (e.g. frame was null).
@@ -162,6 +166,9 @@ class ScriptContext : public RequestSender::Source {
   void set_service_worker_scope(const GURL& scope) {
     service_worker_scope_ = scope;
   }
+  void set_service_worker_version_id(int64_t service_worker_version_id) {
+    service_worker_version_id_ = service_worker_version_id;
+  }
 
   // Returns whether the API |api| or any part of the API could be available in
   // this context without taking into account the context's extension.
@@ -169,6 +176,21 @@ class ScriptContext : public RequestSender::Source {
   // alias that is available.
   bool IsAnyFeatureAvailableToContext(const extensions::Feature& api,
                                       CheckAliasStatus check_alias);
+
+  // Scope which maps a frame to a document loader. This is used by various
+  // static methods below, which need to account for "just about to load"
+  // document when retrieving URL.
+  class ScopedFrameDocumentLoader {
+   public:
+    ScopedFrameDocumentLoader(blink::WebLocalFrame* frame,
+                              blink::WebDocumentLoader* document_loader);
+    ~ScopedFrameDocumentLoader();
+
+   private:
+    blink::WebLocalFrame* frame_;
+    blink::WebDocumentLoader* document_loader_;
+    DISALLOW_COPY_AND_ASSIGN(ScopedFrameDocumentLoader);
+  };
 
   // Utility to get the URL we will match against for a frame. If the frame has
   // committed, this is the commited URL. Otherwise it is the provisional URL.
@@ -189,17 +211,9 @@ class ScriptContext : public RequestSender::Source {
                                       const GURL& document_url,
                                       bool match_about_blank);
 
-  // RequestSender::Source implementation.
-  ScriptContext* GetContext() override;
-  void OnResponseReceived(const std::string& name,
-                          int request_id,
-                          bool success,
-                          const base::ListValue& response,
-                          const std::string& error) override;
-
   // Grants a set of content capabilities to this context.
-  void set_content_capabilities(const APIPermissionSet& capabilities) {
-    content_capabilities_ = capabilities;
+  void set_content_capabilities(APIPermissionSet capabilities) {
+    content_capabilities_ = std::move(capabilities);
   }
 
   // Indicates if this context has an effective API permission either by being
@@ -234,8 +248,6 @@ class ScriptContext : public RequestSender::Source {
   v8::Local<v8::Value> CallFunction(const v8::Local<v8::Function>& function,
                                     int argc,
                                     v8::Local<v8::Value> argv[]) const;
-
-  class Runner;
 
   // Whether this context is valid.
   bool is_valid_;
@@ -274,9 +286,9 @@ class ScriptContext : public RequestSender::Source {
   // The set of capabilities granted to this context by extensions.
   APIPermissionSet content_capabilities_;
 
-  // A list of base::Closure instances as an observer interface for
+  // A list of base::OnceClosure instances as an observer interface for
   // invalidation.
-  std::vector<base::Closure> invalidate_observers_;
+  std::vector<base::OnceClosure> invalidate_observers_;
 
   v8::Isolate* isolate_;
 
@@ -284,7 +296,7 @@ class ScriptContext : public RequestSender::Source {
 
   GURL service_worker_scope_;
 
-  std::unique_ptr<Runner> runner_;
+  int64_t service_worker_version_id_;
 
   base::ThreadChecker thread_checker_;
 

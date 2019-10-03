@@ -9,6 +9,7 @@ class TestDownloadsBrowserProxy extends TestBrowserProxy {
       'initializeDownloads',
       'selectDownloadLocation',
       'resetAutoOpenFileTypes',
+      'getDownloadLocationText',
     ]);
   }
 
@@ -28,15 +29,15 @@ class TestDownloadsBrowserProxy extends TestBrowserProxy {
   }
 }
 
-var downloadsPage = null;
+let downloadsPage = null;
 
 /** @type {?TestDownloadsBrowserProxy} */
-var DownloadsBrowserProxy = null;
+let DownloadsBrowserProxy = null;
 
 suite('DownloadsHandler', function() {
   setup(function() {
-    DownloadsBrowserProxy = new TestDownloadsBrowserProxy();
-    settings.DownloadsBrowserProxyImpl.instance_ = DownloadsBrowserProxy;
+    downloadsBrowserProxy = new TestDownloadsBrowserProxy();
+    settings.DownloadsBrowserProxyImpl.instance_ = downloadsBrowserProxy;
 
     PolymerTest.clearBody();
 
@@ -44,7 +45,7 @@ suite('DownloadsHandler', function() {
     document.body.appendChild(downloadsPage);
 
     // Page element must call 'initializeDownloads' upon attachment to the DOM.
-    return DownloadsBrowserProxy.whenCalled('initializeDownloads');
+    return downloadsBrowserProxy.whenCalled('initializeDownloads');
   });
 
   teardown(function() {
@@ -52,29 +53,66 @@ suite('DownloadsHandler', function() {
   });
 
   test('select downloads location', function() {
-    var button = downloadsPage.$$('#changeDownloadsPath');
+    const button = downloadsPage.$$('#changeDownloadsPath');
     assertTrue(!!button);
-    MockInteractions.tap(button);
+    button.click();
     button.fire('transitionend');
-    return DownloadsBrowserProxy.whenCalled('selectDownloadLocation');
+    return downloadsBrowserProxy.whenCalled('selectDownloadLocation');
   });
 
   test('openAdvancedDownloadsettings', function() {
-    var button = downloadsPage.$$('#resetAutoOpenFileTypes');
+    let button = downloadsPage.$$('#resetAutoOpenFileTypes');
     assertTrue(!button);
 
     cr.webUIListenerCallback('auto-open-downloads-changed', true);
     Polymer.dom.flush();
-    var button = downloadsPage.$$('#resetAutoOpenFileTypes');
+    button = downloadsPage.$$('#resetAutoOpenFileTypes');
     assertTrue(!!button);
 
-    MockInteractions.tap(button);
-    return DownloadsBrowserProxy.whenCalled('resetAutoOpenFileTypes')
+    button.click();
+    return downloadsBrowserProxy.whenCalled('resetAutoOpenFileTypes')
         .then(function() {
           cr.webUIListenerCallback('auto-open-downloads-changed', false);
           Polymer.dom.flush();
-          var button = downloadsPage.$$('#resetAutoOpenFileTypes');
+          const button = downloadsPage.$$('#resetAutoOpenFileTypes');
           assertTrue(!button);
         });
   });
+
+  if (cr.isChromeOS) {
+    /** @override */
+    TestDownloadsBrowserProxy.prototype.getDownloadLocationText = function(
+        path) {
+      this.methodCalled('getDownloadLocationText', path);
+      return Promise.resolve('downloads-text');
+    };
+
+    function setDefaultDownloadPathPref(downloadPath) {
+      downloadsPage.prefs = {
+        download: {
+          default_directory: {
+            key: 'download.default_directory',
+            type: chrome.settingsPrivate.PrefType.STRING,
+            value: downloadPath,
+          }
+        }
+      };
+    }
+
+    function getDefaultDownloadPathString() {
+      const pathElement = downloadsPage.$$('#defaultDownloadPath');
+      assertTrue(!!pathElement);
+      return pathElement.textContent.trim();
+    }
+
+    test('rewrite default download paths', function() {
+      setDefaultDownloadPathPref('downloads-path');
+      return downloadsBrowserProxy.whenCalled('getDownloadLocationText')
+          .then(path => {
+            assertEquals('downloads-path', path);
+            Polymer.dom.flush();
+            assertEquals('downloads-text', getDefaultDownloadPathString());
+          });
+    });
+  }
 });

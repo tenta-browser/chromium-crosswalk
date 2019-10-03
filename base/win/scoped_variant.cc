@@ -12,6 +12,11 @@ namespace win {
 // Global, const instance of an empty variant.
 const VARIANT ScopedVariant::kEmptyVariant = {{{VT_EMPTY}}};
 
+ScopedVariant::ScopedVariant(ScopedVariant&& var) {
+  var_.vt = VT_EMPTY;
+  Reset(var.Release());
+}
+
 ScopedVariant::~ScopedVariant() {
   static_assert(sizeof(ScopedVariant) == sizeof(VARIANT), "ScopedVariantSize");
   ::VariantClear(&var_);
@@ -29,7 +34,10 @@ ScopedVariant::ScopedVariant(const wchar_t* str, UINT length) {
 
 ScopedVariant::ScopedVariant(int value, VARTYPE vt) {
   var_.vt = vt;
-  var_.lVal = value;
+  if (vt == VT_BOOL)
+    var_.boolVal = value ? VARIANT_TRUE : VARIANT_FALSE;
+  else
+    var_.lVal = value;
 }
 
 ScopedVariant::ScopedVariant(double value, VARTYPE vt) {
@@ -92,24 +100,18 @@ int ScopedVariant::Compare(const VARIANT& var, bool ignore_case) const {
   ULONG flags = ignore_case ? NORM_IGNORECASE : 0;
   HRESULT hr = ::VarCmp(const_cast<VARIANT*>(&var_), const_cast<VARIANT*>(&var),
                         LOCALE_USER_DEFAULT, flags);
-  int ret = 0;
+  DCHECK(SUCCEEDED(hr) && hr != VARCMP_NULL)
+      << "unsupported variant comparison: " << var_.vt << " and " << var.vt;
 
   switch (hr) {
     case VARCMP_LT:
-      ret = -1;
-      break;
-
+      return -1;
     case VARCMP_GT:
     case VARCMP_NULL:
-      ret = 1;
-      break;
-
+      return 1;
     default:
-      // Equal.
-      break;
+      return 0;
   }
-
-  return ret;
 }
 
 void ScopedVariant::Set(const wchar_t* str) {
@@ -223,6 +225,12 @@ void ScopedVariant::Set(const VARIANT& var) {
     DLOG(ERROR) << "VariantCopy failed";
     var_.vt = VT_EMPTY;
   }
+}
+
+ScopedVariant& ScopedVariant::operator=(ScopedVariant&& var) {
+  if (var.ptr() != &var_)
+    Reset(var.Release());
+  return *this;
 }
 
 ScopedVariant& ScopedVariant::operator=(const VARIANT& var) {

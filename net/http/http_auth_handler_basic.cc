@@ -11,6 +11,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_string_util.h"
+#include "net/dns/host_resolver.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_scheme.h"
@@ -41,10 +42,11 @@ bool ParseRealm(const HttpAuthChallengeTokenizer& tokenizer,
   realm->clear();
   HttpUtil::NameValuePairsIterator parameters = tokenizer.param_pairs();
   while (parameters.GetNext()) {
-    if (!base::LowerCaseEqualsASCII(parameters.name(), "realm"))
+    if (!base::LowerCaseEqualsASCII(parameters.name_piece(), "realm"))
       continue;
 
-    if (!ConvertToUtf8AndNormalize(parameters.value(), kCharsetLatin1, realm)) {
+    if (!ConvertToUtf8AndNormalize(parameters.value_piece(), kCharsetLatin1,
+                                   realm)) {
       return false;
     }
   }
@@ -75,22 +77,11 @@ bool HttpAuthHandlerBasic::ParseChallenge(
   return true;
 }
 
-HttpAuth::AuthorizationResult HttpAuthHandlerBasic::HandleAnotherChallenge(
-    HttpAuthChallengeTokenizer* challenge) {
-  // Basic authentication is always a single round, so any responses
-  // should be treated as a rejection.  However, if the new challenge
-  // is for a different realm, then indicate the realm change.
-  std::string realm;
-  if (!ParseRealm(*challenge, &realm))
-    return HttpAuth::AUTHORIZATION_RESULT_INVALID;
-  return (realm_ != realm)?
-      HttpAuth::AUTHORIZATION_RESULT_DIFFERENT_REALM:
-      HttpAuth::AUTHORIZATION_RESULT_REJECT;
-}
-
 int HttpAuthHandlerBasic::GenerateAuthTokenImpl(
-    const AuthCredentials* credentials, const HttpRequestInfo*,
-    const CompletionCallback&, std::string* auth_token) {
+    const AuthCredentials* credentials,
+    const HttpRequestInfo*,
+    CompletionOnceCallback callback,
+    std::string* auth_token) {
   DCHECK(credentials);
   // TODO(eroman): is this the right encoding of username/password?
   std::string base64_username_password;
@@ -99,6 +90,18 @@ int HttpAuthHandlerBasic::GenerateAuthTokenImpl(
                      &base64_username_password);
   *auth_token = "Basic " + base64_username_password;
   return OK;
+}
+
+HttpAuth::AuthorizationResult HttpAuthHandlerBasic::HandleAnotherChallengeImpl(
+    HttpAuthChallengeTokenizer* challenge) {
+  // Basic authentication is always a single round, so any responses
+  // should be treated as a rejection.  However, if the new challenge
+  // is for a different realm, then indicate the realm change.
+  std::string realm;
+  if (!ParseRealm(*challenge, &realm))
+    return HttpAuth::AUTHORIZATION_RESULT_INVALID;
+  return (realm_ != realm) ? HttpAuth::AUTHORIZATION_RESULT_DIFFERENT_REALM
+                           : HttpAuth::AUTHORIZATION_RESULT_REJECT;
 }
 
 HttpAuthHandlerBasic::Factory::Factory() = default;
@@ -113,6 +116,7 @@ int HttpAuthHandlerBasic::Factory::CreateAuthHandler(
     CreateReason reason,
     int digest_nonce_count,
     const NetLogWithSource& net_log,
+    HostResolver* host_resolver,
     std::unique_ptr<HttpAuthHandler>* handler) {
   // TODO(cbentzel): Move towards model of parsing in the factory
   //                 method and only constructing when valid.

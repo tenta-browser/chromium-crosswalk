@@ -11,16 +11,16 @@
 #include "base/macros.h"
 #include "chrome/browser/browsing_data/browsing_data_cookie_helper.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/cookies/cookie_store.h"
+
+class Profile;
 
 // Mock for BrowsingDataCookieHelper.
 class MockBrowsingDataCookieHelper : public BrowsingDataCookieHelper {
  public:
-  explicit MockBrowsingDataCookieHelper(
-      net::URLRequestContextGetter* request_context_getter);
+  explicit MockBrowsingDataCookieHelper(Profile* profile);
 
   // BrowsingDataCookieHelper methods.
-  void StartFetching(const FetchCallback& callback) override;
+  void StartFetching(FetchCallback callback) override;
   void DeleteCookie(const net::CanonicalCookie& cookie) override;
 
   // Adds some cookie samples.

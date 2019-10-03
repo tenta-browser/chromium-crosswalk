@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.contextualsearch;
 
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial.ContextualSearchSetting;
+
 /**
  * Provides a signal for the duration of a Tap being either brief or lengthy.
  * This signal could be used for suppression of taps below some threshold, so we aggregate-log too.
@@ -22,7 +24,8 @@ class TapDurationSuppression extends ContextualSearchHeuristic {
      */
     TapDurationSuppression(int tapDurationMs) {
         mTapDurationMs = tapDurationMs;
-        mTapDurationThresholdMs = ContextualSearchFieldTrial.getTapDurationThresholdMs();
+        mTapDurationThresholdMs = ContextualSearchFieldTrial.getValue(
+                ContextualSearchSetting.TAP_DURATION_THRESHOLD_MS);
         int tapDurationThreshold = mTapDurationThresholdMs != 0 ? mTapDurationThresholdMs
                                                                 : DEFAULT_TAP_DURATION_THRESHOLD_MS;
         mIsConditionSatisfied = tapDurationMs < tapDurationThreshold;
@@ -44,8 +47,9 @@ class TapDurationSuppression extends ContextualSearchHeuristic {
     }
 
     @Override
-    protected void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
-        logger.logFeature(ContextualSearchRankerLogger.Feature.TAP_DURATION_MS, mTapDurationMs);
+    protected void logRankerTapSuppression(ContextualSearchInteractionRecorder logger) {
+        logger.logFeature(
+                ContextualSearchInteractionRecorder.Feature.TAP_DURATION_MS, mTapDurationMs);
     }
 
     @Override

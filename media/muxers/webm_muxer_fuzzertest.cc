@@ -5,13 +5,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <random>
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/video_frame.h"
@@ -54,9 +55,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   for (const auto& input_type : kVideoAudioInputTypes) {
     const auto video_codec = static_cast<VideoCodec>(
-        kSupportedVideoCodecs[rng() % arraysize(kSupportedVideoCodecs)]);
+        kSupportedVideoCodecs[rng() % base::size(kSupportedVideoCodecs)]);
     const auto audio_codec = static_cast<AudioCodec>(
-        kSupportedAudioCodecs[rng() % arraysize(kSupportedAudioCodecs)]);
+        kSupportedAudioCodecs[rng() % base::size(kSupportedAudioCodecs)]);
     WebmMuxer muxer(video_codec, audio_codec, input_type.has_video,
                     input_type.has_audio, base::Bind(&OnWriteCallback));
     base::RunLoop run_loop;
@@ -70,11 +71,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         const auto video_frame = VideoFrame::CreateBlackFrame(visible_rect);
         const auto is_key_frame = rng() % 2;
         const auto has_alpha_frame = rng() % 4;
-        muxer.OnEncodedVideo(
-            WebmMuxer::VideoParameters(video_frame),
-            base::MakeUnique<std::string>(str),
-            has_alpha_frame ? base::MakeUnique<std::string>(str) : nullptr,
-            base::TimeTicks(), is_key_frame);
+        muxer.OnEncodedVideo(WebmMuxer::VideoParameters(video_frame), str,
+                             has_alpha_frame ? str : std::string(),
+                             base::TimeTicks(), is_key_frame);
         base::RunLoop run_loop;
         run_loop.RunUntilIdle();
       }
@@ -83,13 +82,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         const ChannelLayout layout = rng() % 2 ? media::CHANNEL_LAYOUT_STEREO
                                                : media::CHANNEL_LAYOUT_MONO;
         const int sample_rate =
-            kSampleRatesInKHz[rng() % arraysize(kSampleRatesInKHz)];
+            kSampleRatesInKHz[rng() % base::size(kSampleRatesInKHz)];
 
         const AudioParameters params(
             media::AudioParameters::AUDIO_PCM_LOW_LATENCY, layout, sample_rate,
-            16 /* bits_per_sample */, 60 * sample_rate);
-        muxer.OnEncodedAudio(params, base::MakeUnique<std::string>(str),
-                             base::TimeTicks());
+            60 * sample_rate);
+        muxer.OnEncodedAudio(params, str, base::TimeTicks());
         base::RunLoop run_loop;
         run_loop.RunUntilIdle();
       }

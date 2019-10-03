@@ -5,12 +5,10 @@
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 
 #include "base/memory/singleton.h"
-#include "chrome/browser/profiles/incognito_helpers.h"
-#include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "build/build_config.h"
+#include "chrome/browser/profiles/profile_key.h"
+#include "components/keyed_service/core/simple_dependency_manager.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
-#include "content/public/browser/browser_context.h"
-
-namespace offline_items_collection {
 
 // static
 OfflineContentAggregatorFactory*
@@ -19,29 +17,28 @@ OfflineContentAggregatorFactory::GetInstance() {
 }
 
 // static
-OfflineContentAggregator* OfflineContentAggregatorFactory::GetForBrowserContext(
-    content::BrowserContext* context) {
-  DCHECK(!context->IsOffTheRecord());
+offline_items_collection::OfflineContentAggregator*
+OfflineContentAggregatorFactory::GetForKey(SimpleFactoryKey* key) {
   return static_cast<offline_items_collection::OfflineContentAggregator*>(
-      GetInstance()->GetServiceForBrowserContext(context, true));
+      GetInstance()->GetServiceForKey(key, true));
 }
 
 OfflineContentAggregatorFactory::OfflineContentAggregatorFactory()
-    : BrowserContextKeyedServiceFactory(
+    : SimpleKeyedServiceFactory(
           "offline_items_collection::OfflineContentAggregator",
-          BrowserContextDependencyManager::GetInstance()) {}
+          SimpleDependencyManager::GetInstance()) {}
 
 OfflineContentAggregatorFactory::~OfflineContentAggregatorFactory() = default;
 
-KeyedService* OfflineContentAggregatorFactory::BuildServiceInstanceFor(
-    content::BrowserContext* context) const {
-  return new offline_items_collection::OfflineContentAggregator();
+std::unique_ptr<KeyedService>
+OfflineContentAggregatorFactory::BuildServiceInstanceFor(
+    SimpleFactoryKey* key) const {
+  DCHECK(!key->IsOffTheRecord());
+  return std::make_unique<offline_items_collection::OfflineContentAggregator>();
 }
 
-content::BrowserContext*
-OfflineContentAggregatorFactory::GetBrowserContextToUse(
-    content::BrowserContext* context) const {
-  return chrome::GetBrowserContextRedirectedInIncognito(context);
+SimpleFactoryKey* OfflineContentAggregatorFactory::GetKeyToUse(
+    SimpleFactoryKey* key) const {
+  ProfileKey* profile_key = ProfileKey::FromSimpleFactoryKey(key);
+  return profile_key->GetOriginalKey();
 }
-
-}  // namespace offline_items_collection

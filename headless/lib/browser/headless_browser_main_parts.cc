@@ -4,38 +4,42 @@
 
 #include "headless/lib/browser/headless_browser_main_parts.h"
 
-#include "base/command_line.h"
-#include "content/public/common/content_switches.h"
 #include "headless/lib/browser/headless_browser_context_impl.h"
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_devtools.h"
-#include "headless/lib/browser/headless_net_log.h"
 #include "headless/lib/browser/headless_screen.h"
 
 namespace headless {
 
-HeadlessBrowserMainParts::HeadlessBrowserMainParts(HeadlessBrowserImpl* browser)
-    : browser_(browser)
-    , devtools_http_handler_started_(false) {}
+HeadlessBrowserMainParts::HeadlessBrowserMainParts(
+    const content::MainFunctionParams& parameters,
+    HeadlessBrowserImpl* browser)
+    : parameters_(parameters), browser_(browser) {}
 
 HeadlessBrowserMainParts::~HeadlessBrowserMainParts() = default;
 
 void HeadlessBrowserMainParts::PreMainMessageLoopRun() {
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kLogNetLog)) {
-    base::FilePath log_path =
-        command_line->GetSwitchValuePath(switches::kLogNetLog);
-    net_log_.reset(new HeadlessNetLog(log_path));
-  } else {
-    net_log_.reset(new net::NetLog());
-  }
-
   if (browser_->options()->DevtoolsServerEnabled()) {
     StartLocalDevToolsHttpHandler(browser_->options());
     devtools_http_handler_started_ = true;
   }
   browser_->PlatformInitialize();
+  browser_->RunOnStartCallback();
+
+  if (parameters_.ui_task) {
+    parameters_.ui_task->Run();
+    delete parameters_.ui_task;
+    run_message_loop_ = false;
+  }
+}
+
+void HeadlessBrowserMainParts::PreDefaultMainMessageLoopRun(
+    base::OnceClosure quit_closure) {
+  quit_main_message_loop_ = std::move(quit_closure);
+}
+
+bool HeadlessBrowserMainParts::MainMessageLoopRun(int* result_code) {
+  return !run_message_loop_;
 }
 
 void HeadlessBrowserMainParts::PostMainMessageLoopRun() {
@@ -43,6 +47,11 @@ void HeadlessBrowserMainParts::PostMainMessageLoopRun() {
     StopLocalDevToolsHttpHandler();
     devtools_http_handler_started_ = false;
   }
+}
+
+void HeadlessBrowserMainParts::QuitMainMessageLoop() {
+  if (quit_main_message_loop_)
+    std::move(quit_main_message_loop_).Run();
 }
 
 }  // namespace headless

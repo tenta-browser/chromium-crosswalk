@@ -8,12 +8,12 @@
 ##
 ## Top level settings
 ##
-version_id: 15
+version_id: 37
 sampled_ping_probability: 0.01
 max_archived_binaries_to_report: 10
 default_file_type {
   uma_value: 18
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
   platform_settings {
     danger_level: NOT_DANGEROUS
     auto_open_hint: ALLOW_AUTO_OPEN
@@ -24,21 +24,81 @@ default_file_type {
 ## General cross-platform file types
 ##
 
-# Files that are not dangerous but for which we want to track via UMA.
+# Files that are not dangerous, and are popular enough that we'd like to
+# exclude them from download pings.
 file_types {
-  extension: "bin"
-  uma_value: 159
+  extension: "jpg"
+  uma_value: 322
   ping_setting: SAMPLED_PING
 }
 file_types {
-  # PDFs are opened internally, so they are considered safe.
-  extension: "pdf"
-  uma_value: 14
+  extension: "jpeg"
+  uma_value: 323
   ping_setting: SAMPLED_PING
 }
 file_types {
-  extension: "rtf"
-  uma_value: 244
+  extension: "mp3"
+  uma_value: 324
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "mp4"
+  uma_value: 325
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "png"
+  uma_value: 326
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "csv"
+  uma_value: 330
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ica"
+  uma_value: 331
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "gif"
+  uma_value: 333
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "txt"
+  uma_value: 334
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "package"
+  uma_value: 335
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "tif"
+  uma_value: 336
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "webp"
+  uma_value: 338
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "mkv"
+  uma_value: 339
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "wav"
+  uma_value: 340
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "mov"
+  uma_value: 341
   ping_setting: SAMPLED_PING
 }
 
@@ -126,6 +186,15 @@ file_types {
   ping_setting: FULL_PING
 }
 file_types {
+  # On MacOS, BIN files are automatically extracted as ZIPs
+  # See: http://crbug/933637
+  extension: "bin"
+  uma_value: 159
+  is_archive: true
+  ping_setting: FULL_PING
+  inspection_type: ZIP
+}
+file_types {
   extension: "bz"
   uma_value: 177
   is_archive: true
@@ -190,6 +259,7 @@ file_types {
   uma_value: 181
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: DMG
 }
 file_types {
   extension: "lha"
@@ -280,186 +350,220 @@ file_types {
   uma_value: 195
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r01"
   uma_value: 196
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r02"
   uma_value: 197
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r03"
   uma_value: 198
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r04"
   uma_value: 199
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r05"
   uma_value: 200
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r06"
   uma_value: 201
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r07"
   uma_value: 202
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r08"
   uma_value: 203
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r09"
   uma_value: 204
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r10"
   uma_value: 205
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r11"
   uma_value: 206
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r12"
   uma_value: 207
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r13"
   uma_value: 208
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r14"
   uma_value: 209
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r15"
   uma_value: 210
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r16"
   uma_value: 211
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r17"
   uma_value: 212
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r18"
   uma_value: 213
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r19"
   uma_value: 214
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r20"
   uma_value: 215
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r21"
   uma_value: 216
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r22"
   uma_value: 217
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r23"
   uma_value: 218
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r24"
   uma_value: 219
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r25"
   uma_value: 220
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r26"
   uma_value: 221
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r27"
   uma_value: 222
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r28"
   uma_value: 223
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "r29"
   uma_value: 224
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
 }
 file_types {
   extension: "rar"
   uma_value: 8
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: RAR
+  platform_settings {
+    max_file_size_to_analyze: 52428800 # 50MB
+  }
 }
 file_types {
   extension: "squashfs"
@@ -600,6 +704,10 @@ file_types {
   uma_value: 7
   is_archive: true
   ping_setting: FULL_PING
+  inspection_type: ZIP
+  platform_settings {
+    max_file_size_to_analyze: 52428800 # 50MB
+  }
 }
 file_types {
   extension: "zipx"
@@ -720,6 +828,50 @@ file_types {
   }
 }
 file_types {
+  # Equivalent of a DLL, for python libraries
+  # Added with crbug.com/902234
+  extension: "pyd"
+  uma_value: 318
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_LINUX
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  # Compiled python code
+  # Added with crbug.com/902234
+  extension: "pyo"
+  uma_value: 319
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_LINUX
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
   extension: "pyw"
   uma_value: 132
   ping_setting: FULL_PING
@@ -797,7 +949,7 @@ file_types {
 file_types {
   # Opened by uTorrent and Transmission (can be a renamed .torrent)
   # Added crbug.com/767502
-  extension: "btbtskin"
+  extension: "btskin"
   uma_value: 299
   ping_setting: FULL_PING
 }
@@ -821,6 +973,17 @@ file_types {
   extension: "btsearch"
   uma_value: 302
   ping_setting: FULL_PING
+}
+file_types {
+  # OpenOffice extension, can execute arbitrary code.
+  # https://crbug.com/862163
+  extension: "oxt"
+  uma_value: 317
+  ping_setting: FULL_PING
+  platform_settings {
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
 }
 
 ##
@@ -1163,89 +1326,195 @@ file_types {
     auto_open_hint: ALLOW_AUTO_OPEN
   }
 }
+file_types {
+  # Control Panel Item. Executable used for adding icons to Control Panel.
+  # Added in crbug.com/914400
+  extension: "cpi"
+  uma_value: 321
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
 
-# OOXML MS Office files.  These can embed executables, but they don't
-# execute automatically when opened.  These are here to produce UMA metrics.
-# crbug.com/566110
+# Office Docs. These have been abused in the past through embedded
+# executables, so send a FULL_PING.
 file_types {
-  extension: "docx"
-  uma_value: 268
-  ping_setting: SAMPLED_PING
-}
-file_types {
-  extension: "docm"
-  uma_value: 269
-  ping_setting: SAMPLED_PING
-}
-file_types {
-  extension: "dott"
-  uma_value: 270
-  ping_setting: SAMPLED_PING
-}
-file_types {
-  extension: "dotm"
-  uma_value: 271
-  ping_setting: SAMPLED_PING
+  extension: "doc"
+  uma_value: 328
+  ping_setting: FULL_PING
 }
 file_types {
   extension: "docb"
   uma_value: 272
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "xlsx"
-  uma_value: 273
-  ping_setting: SAMPLED_PING
+  extension: "docm"
+  uma_value: 269
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "xlsm"
-  uma_value: 274
-  ping_setting: SAMPLED_PING
+  extension: "docx"
+  uma_value: 268
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "xltx"
-  uma_value: 275
-  ping_setting: SAMPLED_PING
+  extension: "dot"
+  uma_value: 342
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "xltm"
-  uma_value: 276
-  ping_setting: SAMPLED_PING
+  extension: "dotm"
+  uma_value: 271
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "pptx"
-  uma_value: 277
-  ping_setting: SAMPLED_PING
+  extension: "dott"
+  uma_value: 270
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "pptm"
-  uma_value: 278
-  ping_setting: SAMPLED_PING
+  extension: "dotx"
+  uma_value: 343
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "pdf"
+  uma_value: 14
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "pot"
+  uma_value: 352
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "potm"
+  uma_value: 353
+  ping_setting: FULL_PING
 }
 file_types {
   extension: "potx"
   uma_value: 279
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
 }
 file_types {
   extension: "ppam"
   uma_value: 280
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "pps"
+  uma_value: 355
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "ppsm"
+  uma_value: 354
+  ping_setting: FULL_PING
 }
 file_types {
   extension: "ppsx"
   uma_value: 281
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
 }
 file_types {
-  extension: "sldx"
-  uma_value: 282
-  ping_setting: SAMPLED_PING
+  extension: "ppt"
+  uma_value: 332
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "pptm"
+  uma_value: 278
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "pptx"
+  uma_value: 277
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "rtf"
+  uma_value: 244
+  ping_setting: FULL_PING
 }
 file_types {
   extension: "sldm"
   uma_value: 283
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "sldx"
+  uma_value: 282
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xla"
+  uma_value: 348
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlam"
+  uma_value: 349
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xldm"
+  uma_value: 347
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xll"
+  uma_value: 350
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlm"
+  uma_value: 346
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xls"
+  uma_value: 327
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlsb"
+  uma_value: 344
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlsm"
+  uma_value: 274
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlsx"
+  uma_value: 273
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlt"
+  uma_value: 345
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xltm"
+  uma_value: 276
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xltx"
+  uma_value: 275
+  ping_setting: FULL_PING
+}
+file_types {
+  extension: "xlw"
+  uma_value: 351
+  ping_setting: FULL_PING
 }
 
 # Extensions that will open in IE even when chrome is set as default browser.
@@ -2160,6 +2429,18 @@ file_types {
   }
 }
 file_types {
+  # Used to create shortcuts to various Windows 10 setting pages.
+  # Allows invoking any binary file with any parameters.
+  extension: "settingcontent-ms"
+  uma_value: 316
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
   # Microsoft Windows Shortcut into a document.
   # See https://support.microsoft.com/kb/212344
   extension: "shb"
@@ -2205,6 +2486,18 @@ file_types {
   extension: "sht"
   uma_value: 308
   ping_setting: FULL_PING
+}
+file_types {
+  # Symbolic link file. Can be used to pass a script to Excel, etc.
+  # Added in https://crbug.com/845618
+  extension: "slk"
+  uma_value: 309
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: ALLOW_AUTO_OPEN
+  }
 }
 file_types {
   # System executable. Windows tries hard to prevent you from opening these
@@ -2272,7 +2565,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # A Visio file type. Added in https://crbug.com/771469
@@ -2284,7 +2577,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # A Visio file type. Added in https://crbug.com/771469
@@ -2296,7 +2589,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # A Visio file type. Added in https://crbug.com/771469
@@ -2308,7 +2601,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # A Visio file type. Added in https://crbug.com/771469
@@ -2320,7 +2613,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # A Visio file type. Added in https://crbug.com/771469
@@ -2332,7 +2625,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: ALLOW_AUTO_OPEN
   }
-  # TODO(nparker): Unpack these as ZIP files. https://crbug.com/628796
+  inspection_type: ZIP
 }
 file_types {
   # An older Visio file type. See https://crbug.com/771469
@@ -2444,6 +2737,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "dart"
@@ -2454,6 +2748,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "dc42"
@@ -2464,6 +2759,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "diskcopy42"
@@ -2474,6 +2770,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "dmg"
@@ -2485,6 +2782,7 @@ file_types {
     auto_open_hint: DISALLOW_AUTO_OPEN
     max_file_size_to_analyze: 52428800 # 50MB
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "dmgpart"
@@ -2495,10 +2793,22 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "dvdr"
   uma_value: 253
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  inspection_type: DMG
+}
+file_types {
+  extension: "dylib"
+  uma_value: 357
   ping_setting: FULL_PING
   platform_settings {
     platform: PLATFORM_MAC
@@ -2515,6 +2825,12 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  platform_settings {
+    platform: PLATFORM_WINDOWS
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  inspection_type: DMG
 }
 file_types {
   extension: "imgpart"
@@ -2525,10 +2841,22 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "ndif"
   uma_value: 258
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  inspection_type: DMG
+}
+file_types {
+  extension: "service"
+  uma_value: 358
   ping_setting: FULL_PING
   platform_settings {
     platform: PLATFORM_MAC
@@ -2545,6 +2873,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "sparsebundle"
@@ -2555,6 +2884,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "sparseimage"
@@ -2565,6 +2895,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "toast"
@@ -2575,6 +2906,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 file_types {
   extension: "udif"
@@ -2585,6 +2917,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: DMG
 }
 
 # Other MacOS files
@@ -2592,7 +2925,40 @@ file_types {
   # Automator action
   extension: "action"
   uma_value: 158
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  # Automator action
+  extension: "definition"
+  uma_value: 359
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  # Automator action
+  extension: "wflow"
+  uma_value: 360
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  # Automator action
+  extension: "caction"
+  uma_value: 361
+  ping_setting: FULL_PING
   platform_settings {
     platform: PLATFORM_MAC
     danger_level: ALLOW_ON_USER_GESTURE
@@ -2609,6 +2975,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: ZIP
 }
 file_types {
   # Opened as a .gz on Mac. http://crbug.com/600907
@@ -2621,6 +2988,7 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: ZIP
 }
 file_types {
   extension: "command"
@@ -2629,6 +2997,66 @@ file_types {
   platform_settings {
     platform: PLATFORM_MAC
     danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "applescript"
+  uma_value: 310
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "scpt"
+  uma_value: 311
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "scptd"
+  uma_value: 312
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "seplugin"
+  uma_value: 313
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "osas"
+  uma_value: 314
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "osax"
+  uma_value: 315
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: DANGEROUS
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
 }
@@ -2654,12 +3082,13 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+  inspection_type: ZIP
 }
 file_types {
   # Automator workflow
   extension: "workflow"
   uma_value: 170
-  ping_setting: SAMPLED_PING
+  ping_setting: FULL_PING
   platform_settings {
     platform: PLATFORM_MAC
     danger_level: ALLOW_ON_USER_GESTURE
@@ -2670,6 +3099,47 @@ file_types {
   # Opened as a .zip on Mac. http://crbug.com/600907
   extension: "xip"
   uma_value: 267
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+  inspection_type: ZIP
+}
+file_types {
+  extension: "mobileconfig"
+  uma_value: 356
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "configprofile"
+  uma_value: 362
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "internetconnect"
+  uma_value: 363
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_MAC
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
+file_types {
+  extension: "networkconnect"
+  uma_value: 364
   ping_setting: FULL_PING
   platform_settings {
     platform: PLATFORM_MAC
@@ -2862,6 +3332,18 @@ file_types {
     auto_open_hint: ALLOW_AUTO_OPEN
   }
 }
+file_types {
+  # .desktop file is a shortcut that runs other files.
+  # Added in crbug/904182
+  extension: "desktop"
+  uma_value: 320
+  ping_setting: FULL_PING
+  platform_settings {
+    platform: PLATFORM_LINUX
+    danger_level: ALLOW_ON_USER_GESTURE
+    auto_open_hint: DISALLOW_AUTO_OPEN
+  }
+}
 
 ##
 ## Android-specific files
@@ -2902,4 +3384,121 @@ file_types {
     danger_level: ALLOW_ON_USER_GESTURE
     auto_open_hint: DISALLOW_AUTO_OPEN
   }
+}
+
+# Other file types supported by Web Share API on Android
+file_types {
+  extension: "bmp"
+  uma_value: 365
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "css"
+  uma_value: 366
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ehtml"
+  uma_value: 367
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "flac"
+  uma_value: 368
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ico"
+  uma_value: 369
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "jfif"
+  uma_value: 370
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "m4a"
+  uma_value: 371
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "m4v"
+  uma_value: 372
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "mpeg"
+  uma_value: 373
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "mpg"
+  uma_value: 374
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "oga"
+  uma_value: 375
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ogg"
+  uma_value: 376
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ogm"
+  uma_value: 377
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "ogv"
+  uma_value: 378
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "opus"
+  uma_value: 379
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "pjp"
+  uma_value: 380
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "pjpeg"
+  uma_value: 381
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "svgz"
+  uma_value: 382
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "text"
+  uma_value: 383
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "tiff"
+  uma_value: 384
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "weba"
+  uma_value: 385
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "webm"
+  uma_value: 386
+  ping_setting: SAMPLED_PING
+}
+file_types {
+  extension: "xbm"
+  uma_value: 387
+  ping_setting: SAMPLED_PING
 }

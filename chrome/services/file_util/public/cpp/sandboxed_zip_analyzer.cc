@@ -8,14 +8,13 @@
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
-#include "chrome/services/file_util/public/interfaces/constants.mojom.h"
-#include "chrome/services/file_util/public/interfaces/safe_archive_analyzer.mojom.h"
+#include "chrome/services/file_util/public/mojom/constants.mojom.h"
+#include "chrome/services/file_util/public/mojom/safe_archive_analyzer.mojom.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/service_manager/public/cpp/connector.h"
-
-namespace chrome {
 
 SandboxedZipAnalyzer::SandboxedZipAnalyzer(
     const base::FilePath& zip_file,
@@ -30,7 +29,7 @@ void SandboxedZipAnalyzer::Start() {
 
   base::PostTaskWithTraits(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&SandboxedZipAnalyzer::PrepareFileToAnalyze, this));
 }
@@ -61,17 +60,17 @@ void SandboxedZipAnalyzer::PrepareFileToAnalyze() {
     return;
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&SandboxedZipAnalyzer::AnalyzeFile, this,
-                     base::Passed(&file), base::Passed(&temp_file)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&SandboxedZipAnalyzer::AnalyzeFile, this, std::move(file),
+                     std::move(temp_file)));
 }
 
 void SandboxedZipAnalyzer::ReportFileFailure() {
   DCHECK(!analyzer_ptr_);
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(callback_, safe_browsing::ArchiveAnalyzerResults()));
 }
 
@@ -96,5 +95,3 @@ void SandboxedZipAnalyzer::AnalyzeFileDone(
   analyzer_ptr_.reset();
   callback_.Run(results);
 }
-
-}  // namespace chrome

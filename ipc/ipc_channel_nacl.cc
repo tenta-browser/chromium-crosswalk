@@ -15,6 +15,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_pump_for_io.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner_util.h"
@@ -116,7 +117,7 @@ void ChannelNacl::ReaderThreadRunner::Run() {
     if (success) {
       main_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(data_read_callback_, base::Passed(&msg_contents)));
+          base::BindOnce(data_read_callback_, std::move(msg_contents)));
     } else {
       main_task_runner_->PostTask(FROM_HERE, failure_callback_);
       // Because the read failed, we know we're going to quit. Don't bother
@@ -173,8 +174,8 @@ bool ChannelNacl::Connect() {
   // If there were any messages queued before connection, send them.
   ProcessOutgoingMessages();
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ChannelNacl::CallOnChannelConnected,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ChannelNacl::CallOnChannelConnected,
+                                weak_ptr_factory_.GetWeakPtr()));
 
   return true;
 }
@@ -235,7 +236,7 @@ void ChannelNacl::DidRecvMsg(std::unique_ptr<MessageContents> contents) {
   contents->fds.clear();
 
   // In POSIX, we would be told when there are bytes to read by implementing
-  // OnFileCanReadWithoutBlocking in MessageLoopForIO::Watcher. In NaCl, we
+  // OnFileCanReadWithoutBlocking in MessagePumpForIO::FdWatcher. In NaCl, we
   // instead know at this point because the reader thread posted some data to
   // us.
   ProcessIncomingMessages();

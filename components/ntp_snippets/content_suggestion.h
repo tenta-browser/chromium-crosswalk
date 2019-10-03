@@ -19,35 +19,6 @@
 
 namespace ntp_snippets {
 
-// DownloadSuggestionExtra contains additional data which is only available for
-// download suggestions.
-struct DownloadSuggestionExtra {
-  DownloadSuggestionExtra();
-  DownloadSuggestionExtra(const DownloadSuggestionExtra&);
-  ~DownloadSuggestionExtra();
-
-  // The GUID for the downloaded file.
-  std::string download_guid;
-  // The file path of the downloaded file once download completes.
-  base::FilePath target_file_path;
-  // The effective MIME type of downloaded content.
-  std::string mime_type;
-  // Underlying offline page identifier.
-  int64_t offline_page_id = 0;
-  // Whether or not the download suggestion is a downloaded asset.
-  // When this is true, |offline_page_id| is ignored, otherwise
-  // |target_file_path| and |mime_type| are ignored.
-  bool is_download_asset = false;
-};
-
-// Contains additional data which is only available for recent tab suggestions.
-struct RecentTabSuggestionExtra {
-  // Corresponding tab identifier.
-  int tab_id;
-  // Underlying offline page identifier.
-  int64_t offline_page_id = 0;
-};
-
 // ReadingListSuggestionExtra contains additional data which is only available
 // for Reading List suggestions.
 struct ReadingListSuggestionExtra {
@@ -117,6 +88,13 @@ class ContentSuggestion {
     url_with_favicon_ = url_with_favicon;
   }
 
+  // A URL for an image that represents the content of the suggestion.
+  // Empty when an image is not available.
+  GURL salient_image_url() const { return salient_image_url_; }
+  void set_salient_image_url(const GURL& salient_image_url) {
+    salient_image_url_ = salient_image_url;
+  }
+
   static GURL GetFaviconDomain(const GURL& favicon_url);
 
   // Title of the suggestion.
@@ -154,23 +132,6 @@ class ContentSuggestion {
   float score() const { return score_; }
   void set_score(float score) { score_ = score; }
 
-  // Extra information for download suggestions. Only available for DOWNLOADS
-  // suggestions (i.e., if the associated category has the
-  // KnownCategories::DOWNLOADS id).
-  DownloadSuggestionExtra* download_suggestion_extra() const {
-    return download_suggestion_extra_.get();
-  }
-  void set_download_suggestion_extra(
-      std::unique_ptr<DownloadSuggestionExtra> download_suggestion_extra);
-
-  // Extra information for recent tab suggestions. Only available for
-  // KnownCategories::RECENT_TABS suggestions.
-  RecentTabSuggestionExtra* recent_tab_suggestion_extra() const {
-    return recent_tab_suggestion_extra_.get();
-  }
-  void set_recent_tab_suggestion_extra(
-      std::unique_ptr<RecentTabSuggestionExtra> recent_tab_suggestion_extra);
-
   // Extra information for reading list suggestions. Only available for
   // KnownCategories::READING_LIST suggestions.
   ReadingListSuggestionExtra* reading_list_suggestion_extra() const {
@@ -207,13 +168,12 @@ class ContentSuggestion {
   ID id_;
   GURL url_;
   GURL url_with_favicon_;
+  GURL salient_image_url_;
   base::string16 title_;
   base::string16 snippet_text_;
   base::Time publish_date_;
   base::string16 publisher_name_;
   float score_;
-  std::unique_ptr<DownloadSuggestionExtra> download_suggestion_extra_;
-  std::unique_ptr<RecentTabSuggestionExtra> recent_tab_suggestion_extra_;
   std::unique_ptr<ReadingListSuggestionExtra> reading_list_suggestion_extra_;
   std::unique_ptr<NotificationExtra> notification_extra_;
 

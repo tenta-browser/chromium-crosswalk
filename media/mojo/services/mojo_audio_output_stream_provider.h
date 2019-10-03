@@ -24,6 +24,7 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
   using CreateDelegateCallback =
       base::OnceCallback<std::unique_ptr<AudioOutputDelegate>(
           const AudioParameters& params,
+          mojom::AudioOutputStreamObserverPtr observer,
           AudioOutputDelegate::EventHandler*)>;
   using DeleterCallback = base::OnceCallback<void(AudioOutputStreamProvider*)>;
 
@@ -31,28 +32,36 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
   // AudioOutput when it's initialized and |deleter_callback| is called when
   // this class should be removed (stream ended/error). |deleter_callback| is
   // required to destroy |this| synchronously.
-  MojoAudioOutputStreamProvider(mojom::AudioOutputStreamProviderRequest request,
-                                CreateDelegateCallback create_delegate_callback,
-                                DeleterCallback deleter_callback);
+  MojoAudioOutputStreamProvider(
+      mojom::AudioOutputStreamProviderRequest request,
+      CreateDelegateCallback create_delegate_callback,
+      DeleterCallback deleter_callback,
+      std::unique_ptr<mojom::AudioOutputStreamObserver> observer);
 
   ~MojoAudioOutputStreamProvider() override;
 
  private:
   // mojom::AudioOutputStreamProvider implementation.
-  void Acquire(mojom::AudioOutputStreamRequest stream_request,
-               mojom::AudioOutputStreamClientPtr client,
-               const AudioParameters& params,
-               AcquireCallback acquire_callback) override;
+  void Acquire(
+      const AudioParameters& params,
+      mojom::AudioOutputStreamProviderClientPtr provider_client,
+      const base::Optional<base::UnguessableToken>& processing_id) override;
 
   // Called when |audio_output_| had an error.
-  void OnError();
+  void CleanUp(bool had_error);
+
+  // Closes mojo connections, reports a bad message, and self-destructs.
+  void BadMessage(const std::string& error);
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::Optional<MojoAudioOutputStream> audio_output_;
   mojo::Binding<AudioOutputStreamProvider> binding_;
   CreateDelegateCallback create_delegate_callback_;
   DeleterCallback deleter_callback_;
+  std::unique_ptr<mojom::AudioOutputStreamObserver> observer_;
+  mojo::Binding<mojom::AudioOutputStreamObserver> observer_binding_;
+  base::Optional<MojoAudioOutputStream> audio_output_;
+  mojom::AudioOutputStreamProviderClientPtr provider_client_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoAudioOutputStreamProvider);
 };

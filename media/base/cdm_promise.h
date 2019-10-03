@@ -29,7 +29,7 @@ namespace media {
 // indicates the type of CdmPromiseTemplate. CdmPromiseTemplate<T> adds the
 // resolve(T) method that is dependent on the type of promise. This base class
 // is specified so that the promises can be easily saved before passing across
-// the pepper interface.
+// IPC.
 class MEDIA_EXPORT CdmPromise {
  public:
   enum class Exception {
@@ -45,6 +45,19 @@ class MEDIA_EXPORT CdmPromise {
     INT_TYPE,
     STRING_TYPE,
     KEY_STATUS_TYPE
+  };
+
+  // These values are reported to UMA. Never change existing values. Only add
+  // new values at the bottom of the list.
+  // TODO(xhwang): Make SystemCode an enum class and pass |system_code| as
+  // SystemCode everywhere.
+  enum SystemCode : uint32_t {
+    kMinValue = 1000000,  // To avoid conflict with system code reported by CDM.
+    kOk = kMinValue,
+    kFailure,
+    kAborted,
+    kConnectionError,
+    kMaxValue = kConnectionError,
   };
 
   CdmPromise() = default;
@@ -125,7 +138,7 @@ class CdmPromiseTemplate : public CdmPromise {
     std::string message =
         "Unfulfilled promise rejected automatically during destruction.";
     DVLOG(1) << message;
-    reject(Exception::INVALID_STATE_ERROR, 0, message);
+    reject(Exception::INVALID_STATE_ERROR, SystemCode::kAborted, message);
     DCHECK(is_settled_);
   }
 

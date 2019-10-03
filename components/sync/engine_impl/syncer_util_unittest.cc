@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/engine_impl/test_entry_factory.h"
 #include "components/sync/protocol/sync.pb.h"
@@ -57,7 +57,7 @@ class GetUpdatePositionTest : public ::testing::Test {
   }
 
   void InitProtoPosition() {
-    test_position.ToProto(update.mutable_unique_position());
+    update.mutable_unique_position()->CopyFrom(test_position.ToProto());
   }
 
   void InitInt64Position(int64_t pos_value) {
@@ -66,7 +66,7 @@ class GetUpdatePositionTest : public ::testing::Test {
 
   sync_pb::SyncEntity update;
   UniquePosition test_position;
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   TestDirectorySetterUpper dir_maker_;
   std::unique_ptr<TestEntryFactory> entry_factory_;
 };

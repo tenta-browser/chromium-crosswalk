@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "chrome/browser/predictors/loading_predictor.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
@@ -16,12 +15,6 @@
 
 namespace internal {
 
-const char kHistogramResourcePrefetchPredictorFirstContentfulPaint[] =
-    "PageLoad.Clients.ResourcePrefetchPredictor.PaintTiming."
-    "NavigationToFirstContentfulPaint.Prefetchable";
-const char kHistogramResourcePrefetchPredictorFirstMeaningfulPaint[] =
-    "PageLoad.Clients.ResourcePrefetchPredictor.Experimental.PaintTiming."
-    "NavigationToFirstMeaningfulPaint.Prefetchable";
 const char kHistogramLoadingPredictorFirstContentfulPaintPreconnectable[] =
     "PageLoad.Clients.LoadingPredictor.PaintTiming."
     "NavigationToFirstContentfulPaint.Preconnectable";
@@ -39,20 +32,17 @@ LoadingPredictorPageLoadMetricsObserver::CreateIfNeeded(
       Profile::FromBrowserContext(web_contents->GetBrowserContext()));
   if (!loading_predictor)
     return nullptr;
-  return base::MakeUnique<LoadingPredictorPageLoadMetricsObserver>(
+  return std::make_unique<LoadingPredictorPageLoadMetricsObserver>(
       loading_predictor->resource_prefetch_predictor(),
-      loading_predictor->loading_data_collector(), web_contents);
+      loading_predictor->loading_data_collector());
 }
 
 LoadingPredictorPageLoadMetricsObserver::
     LoadingPredictorPageLoadMetricsObserver(
         predictors::ResourcePrefetchPredictor* predictor,
-        predictors::LoadingDataCollector* collector,
-        content::WebContents* web_contents)
+        predictors::LoadingDataCollector* collector)
     : predictor_(predictor),
       collector_(collector),
-      web_contents_(web_contents),
-      record_histogram_prefetchable_(false),
       record_histogram_preconnectable_(false) {
   DCHECK(predictor_);
   DCHECK(collector_);
@@ -66,9 +56,6 @@ LoadingPredictorPageLoadMetricsObserver::OnStart(
     content::NavigationHandle* navigation_handle,
     const GURL& currently_commited_url,
     bool started_in_foreground) {
-  record_histogram_prefetchable_ =
-      started_in_foreground &&
-      predictor_->IsUrlPrefetchable(navigation_handle->GetURL());
   record_histogram_preconnectable_ =
       started_in_foreground &&
       predictor_->IsUrlPreconnectable(navigation_handle->GetURL());
@@ -80,7 +67,6 @@ page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 LoadingPredictorPageLoadMetricsObserver::OnHidden(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  record_histogram_prefetchable_ = false;
   record_histogram_preconnectable_ = false;
   return CONTINUE_OBSERVING;
 }
@@ -88,16 +74,11 @@ LoadingPredictorPageLoadMetricsObserver::OnHidden(
 void LoadingPredictorPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
     const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  predictors::NavigationID navigation_id(web_contents_);
+  predictors::NavigationID navigation_id(GetDelegate()->GetWebContents());
 
   collector_->RecordFirstContentfulPaint(
       navigation_id, extra_info.navigation_start +
                          timing.paint_timing->first_contentful_paint.value());
-  if (record_histogram_prefetchable_) {
-    PAGE_LOAD_HISTOGRAM(
-        internal::kHistogramResourcePrefetchPredictorFirstContentfulPaint,
-        timing.paint_timing->first_contentful_paint.value());
-  }
   if (record_histogram_preconnectable_) {
     PAGE_LOAD_HISTOGRAM(
         internal::kHistogramLoadingPredictorFirstContentfulPaintPreconnectable,
@@ -109,11 +90,6 @@ void LoadingPredictorPageLoadMetricsObserver::
     OnFirstMeaningfulPaintInMainFrameDocument(
         const page_load_metrics::mojom::PageLoadTiming& timing,
         const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  if (record_histogram_prefetchable_) {
-    PAGE_LOAD_HISTOGRAM(
-        internal::kHistogramResourcePrefetchPredictorFirstMeaningfulPaint,
-        timing.paint_timing->first_meaningful_paint.value());
-  }
   if (record_histogram_preconnectable_) {
     PAGE_LOAD_HISTOGRAM(
         internal::kHistogramLoadingPredictorFirstMeaningfulPaintPreconnectable,

@@ -24,6 +24,9 @@ class CRWWebViewScrollViewProxyTest : public PlatformTest {
     mockScrollView_ = [OCMockObject niceMockForClass:[UIScrollView class]];
     webViewScrollViewProxy_ = [[CRWWebViewScrollViewProxy alloc] init];
   }
+  ~CRWWebViewScrollViewProxyTest() override {
+    [webViewScrollViewProxy_ setScrollView:nil];
+  }
   id mockScrollView_;
   CRWWebViewScrollViewProxy* webViewScrollViewProxy_;
 };
@@ -130,19 +133,21 @@ TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewPresent) {
   [[[mockScrollView_ expect] andReturn:subviews] subviews];
   EXPECT_EQ(subviews, [webViewScrollViewProxy_ subviews]);
 
-  if (@available(iOS 11, *)) {
-    [[[mockScrollView_ expect]
-        andReturnValue:@(UIScrollViewContentInsetAdjustmentAutomatic)]
-        contentInsetAdjustmentBehavior];
-    EXPECT_EQ(UIScrollViewContentInsetAdjustmentAutomatic,
-              [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
+  [[[mockScrollView_ expect]
+      andReturnValue:@(UIScrollViewContentInsetAdjustmentAutomatic)]
+      contentInsetAdjustmentBehavior];
+  EXPECT_EQ(UIScrollViewContentInsetAdjustmentAutomatic,
+            [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
 
-    [[[mockScrollView_ expect]
-        andReturnValue:@(UIScrollViewContentInsetAdjustmentNever)]
-        contentInsetAdjustmentBehavior];
-    EXPECT_EQ(UIScrollViewContentInsetAdjustmentNever,
-              [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
-  }
+  [[[mockScrollView_ expect]
+      andReturnValue:@(UIScrollViewContentInsetAdjustmentNever)]
+      contentInsetAdjustmentBehavior];
+  EXPECT_EQ(UIScrollViewContentInsetAdjustmentNever,
+            [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
+  [[[mockScrollView_ expect] andReturnValue:@(NO)] clipsToBounds];
+  EXPECT_FALSE([webViewScrollViewProxy_ clipsToBounds]);
+  [[[mockScrollView_ expect] andReturnValue:@(YES)] clipsToBounds];
+  EXPECT_TRUE([webViewScrollViewProxy_ clipsToBounds]);
 }
 
 // Tests that CRWWebViewScrollViewProxy returns the correct property values when
@@ -164,10 +169,9 @@ TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewAbsent) {
   EXPECT_FALSE([webViewScrollViewProxy_ isTracking]);
   EXPECT_FALSE([webViewScrollViewProxy_ scrollsToTop]);
   EXPECT_EQ((NSUInteger)0, [webViewScrollViewProxy_ subviews].count);
-  if (@available(iOS 11, *)) {
-    EXPECT_EQ(UIScrollViewContentInsetAdjustmentAutomatic,
-              [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
-  }
+  EXPECT_EQ(UIScrollViewContentInsetAdjustmentAutomatic,
+            [webViewScrollViewProxy_ contentInsetAdjustmentBehavior]);
+  EXPECT_FALSE([webViewScrollViewProxy_ clipsToBounds]);
 
   // Make sure setting the properties is fine too.
   // Arbitrary point.
@@ -180,6 +184,47 @@ TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewAbsent) {
   // Arbitrary size.
   const CGSize kContentSize = CGSizeMake(19, 19);
   [webViewScrollViewProxy_ setContentSize:kContentSize];
+}
+
+// Tests that CRWWebViewScrollViewProxy returns the correct property values when
+// they are set while there isn't an underlying scroll view, then a new scroll
+// view is set.
+TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewAbsentThenReset) {
+  [webViewScrollViewProxy_ setScrollView:nil];
+  UIScrollView* scrollView = [[UIScrollView alloc] init];
+
+  [[mockScrollView_ expect] setClipsToBounds:YES];
+  [webViewScrollViewProxy_ setClipsToBounds:YES];
+  [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
+                                UIScrollViewContentInsetAdjustmentNever];
+  [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
+                               UIScrollViewContentInsetAdjustmentNever];
+
+  [webViewScrollViewProxy_ setScrollView:scrollView];
+
+  [webViewScrollViewProxy_ setScrollView:mockScrollView_];
+
+  EXPECT_OCMOCK_VERIFY(mockScrollView_);
+}
+
+// Tests that CRWWebViewScrollViewProxy returns the correct property values when
+// they are set while there is an underlying scroll view, then a new scroll view
+// is set.
+TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewPresentThenReset) {
+  [webViewScrollViewProxy_ setScrollView:nil];
+  UIScrollView* scrollView = [[UIScrollView alloc] init];
+
+  [webViewScrollViewProxy_ setScrollView:scrollView];
+  [[mockScrollView_ expect] setClipsToBounds:YES];
+  [webViewScrollViewProxy_ setClipsToBounds:YES];
+  [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
+                                UIScrollViewContentInsetAdjustmentNever];
+  [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
+                               UIScrollViewContentInsetAdjustmentNever];
+
+  [webViewScrollViewProxy_ setScrollView:mockScrollView_];
+
+  EXPECT_OCMOCK_VERIFY(mockScrollView_);
 }
 
 // Tests releasing a scroll view when none is owned by the
@@ -218,30 +263,66 @@ TEST_F(CRWWebViewScrollViewProxyTest, MultipleWebViewScrollViewProxies) {
 TEST_F(CRWWebViewScrollViewProxyTest, ScrollViewSetProperties) {
   [webViewScrollViewProxy_ setScrollView:mockScrollView_];
 
-  if (@available(iOS 11, *)) {
-    [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
-                                  UIScrollViewContentInsetAdjustmentNever];
-    [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
-                                 UIScrollViewContentInsetAdjustmentNever];
-    [mockScrollView_ verify];
-  }
+  [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
+                                UIScrollViewContentInsetAdjustmentNever];
+  [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
+                               UIScrollViewContentInsetAdjustmentNever];
+  [mockScrollView_ verify];
 }
 
 // Tests that -setContentInsetAdjustmentBehavior: works even if it is called
 // before setting the scroll view.
 TEST_F(CRWWebViewScrollViewProxyTest,
        SetContentInsetAdjustmentBehaviorBeforeSettingScrollView) {
-  if (@available(iOS 11, *)) {
-    [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
-                                  UIScrollViewContentInsetAdjustmentNever];
+  [[mockScrollView_ expect] setContentInsetAdjustmentBehavior:
+                                UIScrollViewContentInsetAdjustmentNever];
 
-    [webViewScrollViewProxy_ setScrollView:nil];
-    [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
-                                 UIScrollViewContentInsetAdjustmentNever];
-    [webViewScrollViewProxy_ setScrollView:mockScrollView_];
+  [webViewScrollViewProxy_ setScrollView:nil];
+  [webViewScrollViewProxy_ setContentInsetAdjustmentBehavior:
+                               UIScrollViewContentInsetAdjustmentNever];
+  [webViewScrollViewProxy_ setScrollView:mockScrollView_];
 
-    [mockScrollView_ verify];
-  }
+  [mockScrollView_ verify];
+}
+
+// Tests that -setClipsToBounds: works even if it is called before setting the
+// scroll view.
+TEST_F(CRWWebViewScrollViewProxyTest, SetClipsToBoundsBeforeSettingScrollView) {
+  [[mockScrollView_ expect] setClipsToBounds:YES];
+
+  [webViewScrollViewProxy_ setScrollView:nil];
+  [webViewScrollViewProxy_ setClipsToBounds:YES];
+  [webViewScrollViewProxy_ setScrollView:mockScrollView_];
+
+  [mockScrollView_ verify];
+}
+
+// Tests that frame changes are communicated to observers.
+TEST_F(CRWWebViewScrollViewProxyTest, FrameDidChange) {
+  UIScrollView* scroll_view = [[UIScrollView alloc] initWithFrame:CGRectZero];
+  [webViewScrollViewProxy_ setScrollView:scroll_view];
+  id mock_delegate = [OCMockObject
+      niceMockForProtocol:@protocol(CRWWebViewScrollViewProxyObserver)];
+  [webViewScrollViewProxy_ addObserver:mock_delegate];
+  [[mock_delegate expect]
+      webViewScrollViewFrameDidChange:webViewScrollViewProxy_];
+  scroll_view.frame = CGRectMake(1, 2, 3, 4);
+  [mock_delegate verify];
+  [webViewScrollViewProxy_ setScrollView:nil];
+}
+
+// Tests that contentInset changes are communicated to observers.
+TEST_F(CRWWebViewScrollViewProxyTest, ContentInsetDidChange) {
+  UIScrollView* scroll_view = [[UIScrollView alloc] initWithFrame:CGRectZero];
+  [webViewScrollViewProxy_ setScrollView:scroll_view];
+  id mock_delegate = [OCMockObject
+      niceMockForProtocol:@protocol(CRWWebViewScrollViewProxyObserver)];
+  [webViewScrollViewProxy_ addObserver:mock_delegate];
+  [[mock_delegate expect]
+      webViewScrollViewDidResetContentInset:webViewScrollViewProxy_];
+  scroll_view.contentInset = UIEdgeInsetsMake(0, 1, 2, 3);
+  [mock_delegate verify];
+  [webViewScrollViewProxy_ setScrollView:nil];
 }
 
 }  // namespace

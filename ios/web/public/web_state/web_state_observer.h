@@ -15,9 +15,8 @@
 namespace web {
 
 struct FaviconURL;
-struct FormActivityParams;
 class NavigationContext;
-struct LoadCommittedDetails;
+class WebFrame;
 class WebState;
 
 enum class PageLoadCompletionStatus : bool { SUCCESS = 0, FAILURE = 1 };
@@ -33,26 +32,14 @@ class WebStateObserver {
   virtual void WasHidden(WebState* web_state) {}
 
   // This method is invoked when committed navigation items have been pruned.
+  // DEPRECATED. DidChangeBackForwardState is a superset of this callback and
+  // should be used instead of NavigationItemsPruned in the future.
+  // NavigationItemsPruned is not called when slim-navigation-manager is enabled
+  // and DidChangeBackForwardState is not called when slim-navigation-manager is
+  // disabled. So for now the clients should implement both callbacks.
+  // TODO(crbug.com/910894): Remove this method.
   virtual void NavigationItemsPruned(WebState* web_state,
                                      size_t pruned_item_count) {}
-
-  // This method is invoked either when NavigationItem's titile did change or
-  // when window.location.replace JavaScript API was called.
-  // DEPRECATED. Use |TitleWasSet| to listen for title changes and
-  // |DidFinishNavigation| for |window.location.replace|.
-  // TODO(crbug.com/720786): Remove this method.
-  virtual void NavigationItemChanged(WebState* web_state) {}
-
-  // This method is invoked when a new non-pending navigation item is created.
-  // This corresponds to one NavigationManager item being created
-  // (in the case of new navigations) or renavigated to (for back/forward
-  // navigations).
-  // DEPRECATED. Use |DidFinishNavigation| to listen for
-  // "navigation item committed" signals.
-  // TODO(crbug.com/720786): Remove this method.
-  virtual void NavigationItemCommitted(
-      WebState* web_state,
-      const LoadCommittedDetails& load_details) {}
 
   // Called when a navigation started in the WebState for the main frame.
   // |navigation_context| is unique to a specific navigation. The same
@@ -109,10 +96,13 @@ class WebStateObserver {
   virtual void DidStopLoading(WebState* web_state) {}
 
   // Called when the current page has finished the loading of the main frame
-  // document. DidStopLoading relates to the general loading state of the
-  // WebState, but PageLoaded is correlated with the main frame document load
-  // phase. Unlike DidStopLoading, this callback is not called when the load
-  // is aborted.
+  // document (including same-document navigations). DidStopLoading relates to
+  // the general loading state of the WebState, but PageLoaded is correlated
+  // with the main frame document load phase. Unlike DidStopLoading, this
+  // callback is not called when the load is aborted (WebState::Stop is called
+  // or the load is rejected via WebStatePolicyDecider (both ShouldAllowRequest
+  // or ShouldAllowResponse). If PageLoaded is called it is always called after
+  // DidFinishNavigation.
   virtual void PageLoaded(WebState* web_state,
                           PageLoadCompletionStatus load_completion_status) {}
 
@@ -121,31 +111,32 @@ class WebStateObserver {
   // loaded).
   virtual void LoadProgressChanged(WebState* web_state, double progress) {}
 
+  // Called when the canGoBack / canGoForward state of the window was changed.
+  virtual void DidChangeBackForwardState(WebState* web_state) {}
+
   // Called when the title of the WebState is set.
   virtual void TitleWasSet(WebState* web_state) {}
 
   // Called when the visible security state of the page changes.
   virtual void DidChangeVisibleSecurityState(WebState* web_state) {}
 
-  // Called when a JavaScript dialog or window open request was suppressed.
-  // NOTE: Called only if WebState::SetShouldSuppressDialogs() was called with
-  // false.
-  virtual void DidSuppressDialog(WebState* web_state) {}
-
-  // Called on form submission. |user_initiated| is true if the user
-  // interacted with the page.
-  virtual void DocumentSubmitted(WebState* web_state,
-                                 const std::string& form_name,
-                                 bool user_initiated) {}
-
-  // Called when the user is typing on a form field, with |params.input_missing|
-  // indicating if there is any error when parsing the form field information.
-  virtual void FormActivityRegistered(WebState* web_state,
-                                      const FormActivityParams& params) {}
-
   // Invoked when new favicon URL candidates are received.
   virtual void FaviconUrlUpdated(WebState* web_state,
                                  const std::vector<FaviconURL>& candidates) {}
+
+  // Called when a frame was created or navigated to a new document.
+  // Receivers can keep references to |web_frame| until
+  // |WebFrameWillBecomeUnavailable| is called but must not assume that the
+  // web Frame described by |web_frame| still exist.
+  virtual void WebFrameDidBecomeAvailable(WebState* web_state,
+                                          WebFrame* web_frame) {}
+
+  // Called when a frame was deleted or navigated away from the document and
+  // will be removed from the WebFramesManager.
+  // Receivers of this callback should clear all references to
+  // |web_frame|.
+  virtual void WebFrameWillBecomeUnavailable(WebState* web_state,
+                                             WebFrame* web_frame) {}
 
   // Called when the web process is terminated (usually by crashing, though
   // possibly by other means).

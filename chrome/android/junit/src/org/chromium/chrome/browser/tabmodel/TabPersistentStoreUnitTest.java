@@ -26,27 +26,23 @@ import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.Robolectric;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.ContextUtils;
+import org.chromium.base.task.TaskRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.TabState;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabPersistentStoreObserver;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabRestoreDetails;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.content_public.browser.LoadUrlParams;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
-
-import java.util.concurrent.Executor;
 
 /**
  * Unit tests for the tab persistent store logic.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TabPersistentStoreUnitTest {
     @Mock
@@ -83,9 +79,7 @@ public class TabPersistentStoreUnitTest {
         when(mPersistencePolicy.getStateFileName())
                 .thenReturn(TabPersistencePolicy.SAVED_STATE_FILE_PREFIX + "state_files_yay");
         when(mPersistencePolicy.isMergeInProgress()).thenReturn(false);
-        when(mPersistencePolicy.performInitialization(any(Executor.class))).thenReturn(false);
-
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
+        when(mPersistencePolicy.performInitialization(any(TaskRunner.class))).thenReturn(false);
     }
 
     @After

@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -34,8 +35,7 @@ class MockDemuxerStreamAdapter {
       const std::string& name,
       DemuxerStream* demuxer_stream,
       mojom::RemotingDataStreamSenderPtrInfo stream_sender_info,
-      mojo::ScopedDataPipeProducerHandle producer_handle)
-      : weak_factory_(this) {
+      mojo::ScopedDataPipeProducerHandle producer_handle) {
     rpc_broker_.reset(
         new RpcBroker(base::Bind(&MockDemuxerStreamAdapter::OnSendMessageToSink,
                                  weak_factory_.GetWeakPtr())));
@@ -81,7 +81,7 @@ class MockDemuxerStreamAdapter {
 
     demuxer_stream_adapter_->OnReceivedRpc(std::move(rpc));
   }
-  void OnNewBuffer(const scoped_refptr<DecoderBuffer>& frame) {
+  void OnNewBuffer(scoped_refptr<DecoderBuffer> frame) {
     demuxer_stream_adapter_->OnNewBuffer(DemuxerStream::kOk, frame);
   }
 
@@ -103,7 +103,7 @@ class MockDemuxerStreamAdapter {
 
   std::vector<StopTrigger> errors_;
 
-  base::WeakPtrFactory<MockDemuxerStreamAdapter> weak_factory_;
+  base::WeakPtrFactory<MockDemuxerStreamAdapter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MockDemuxerStreamAdapter);
 };
@@ -117,8 +117,8 @@ class DemuxerStreamAdapterTest : public ::testing::Test {
     constexpr size_t kDataPipeCapacity = 256;
     demuxer_stream_.reset(new FakeDemuxerStream(true));  // audio.
     const MojoCreateDataPipeOptions data_pipe_options{
-        sizeof(MojoCreateDataPipeOptions),
-        MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE, 1, kDataPipeCapacity};
+        sizeof(MojoCreateDataPipeOptions), MOJO_CREATE_DATA_PIPE_FLAG_NONE, 1,
+        kDataPipeCapacity};
     mojom::RemotingDataStreamSenderPtr stream_sender;
     mojo::ScopedDataPipeProducerHandle producer_end;
     mojo::ScopedDataPipeConsumerHandle consumer_end;
@@ -177,6 +177,7 @@ TEST_F(DemuxerStreamAdapterTest, MultiReadUntil) {
 }
 
 TEST_F(DemuxerStreamAdapterTest, WriteOneFrameSmallerThanCapacity) {
+  EXPECT_CALL(*demuxer_stream_, Read(_)).Times(1);
   // Sends a frame with size 50 bytes, pts = 1 and key frame.
   demuxer_stream_->CreateFakeFrame(50, true, 1 /* pts */);
   demuxer_stream_adapter_->FakeReadUntil(1, 999);
@@ -184,7 +185,6 @@ TEST_F(DemuxerStreamAdapterTest, WriteOneFrameSmallerThanCapacity) {
 
   // Checks if it's sent to consumer side and data is correct
   ASSERT_EQ(data_stream_sender_->send_frame_count(), 1U);
-  ASSERT_EQ(data_stream_sender_->consume_data_chunk_count(), 1U);
   ASSERT_TRUE(data_stream_sender_->ValidateFrameBuffer(0, 50, true, 1));
   pb::RpcMessage* last_rpc = demuxer_stream_adapter_->last_received_rpc();
   ASSERT_TRUE(last_rpc);
@@ -194,6 +194,7 @@ TEST_F(DemuxerStreamAdapterTest, WriteOneFrameSmallerThanCapacity) {
 }
 
 TEST_F(DemuxerStreamAdapterTest, WriteOneFrameLargerThanCapacity) {
+  EXPECT_CALL(*demuxer_stream_, Read(_)).Times(1);
   // Sends a frame with size 800 bytes, pts = 1 and key frame.
   demuxer_stream_->CreateFakeFrame(800, true, 1 /* pts */);
   demuxer_stream_adapter_->FakeReadUntil(1, 999);
@@ -201,7 +202,6 @@ TEST_F(DemuxerStreamAdapterTest, WriteOneFrameLargerThanCapacity) {
 
   // Checks if it's sent to consumer side and data is correct
   ASSERT_EQ(data_stream_sender_->send_frame_count(), 1U);
-  ASSERT_EQ(data_stream_sender_->consume_data_chunk_count(), 4U);
   ASSERT_TRUE(data_stream_sender_->ValidateFrameBuffer(0, 800, true, 1));
   pb::RpcMessage* last_rpc = demuxer_stream_adapter_->last_received_rpc();
   ASSERT_TRUE(last_rpc);
@@ -211,6 +211,7 @@ TEST_F(DemuxerStreamAdapterTest, WriteOneFrameLargerThanCapacity) {
 }
 
 TEST_F(DemuxerStreamAdapterTest, SendFrameAndSignalFlushMix) {
+  EXPECT_CALL(*demuxer_stream_, Read(_)).Times(4);
   // Sends a frame with size 50 bytes, pts = 1 and key frame.
   demuxer_stream_->CreateFakeFrame(50, true, 1 /* pts */);
   // Issues ReadUntil request with frame count up to 1 (fetch #0).

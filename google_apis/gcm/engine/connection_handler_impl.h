@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "google_apis/gcm/engine/connection_handler.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace mcs_proto {
 class LoginRequest;
@@ -26,6 +27,11 @@ class SocketOutputStream;
 
 class GCM_EXPORT ConnectionHandlerImpl : public ConnectionHandler {
  public:
+  // Must be called on |io_task_runner|.
+  // |io_task_runner|: for running IO tasks. When provided, it could be a
+  //     wrapper on top of base::ThreadTaskRunnerHandle::Get() to provide power
+  //     management featueres so that a delayed task posted to it can wake the
+  //     system up from sleep to perform the task.
   // |read_callback| will be invoked with the contents of any received protobuf
   // message.
   // |write_callback| will be invoked anytime a message has been successfully
@@ -33,16 +39,17 @@ class GCM_EXPORT ConnectionHandlerImpl : public ConnectionHandler {
   // other end received it.
   // |connection_callback| will be invoked with any fatal read/write errors
   // encountered.
-  ConnectionHandlerImpl(
-      base::TimeDelta read_timeout,
-      const ProtoReceivedCallback& read_callback,
-      const ProtoSentCallback& write_callback,
-      const ConnectionChangedCallback& connection_callback);
+  ConnectionHandlerImpl(scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+                        base::TimeDelta read_timeout,
+                        const ProtoReceivedCallback& read_callback,
+                        const ProtoSentCallback& write_callback,
+                        const ConnectionChangedCallback& connection_callback);
   ~ConnectionHandlerImpl() override;
 
   // ConnectionHandler implementation.
   void Init(const mcs_proto::LoginRequest& login_request,
-            net::StreamSocket* socket) override;
+            mojo::ScopedDataPipeConsumerHandle receive_stream,
+            mojo::ScopedDataPipeProducerHandle send_stream) override;
   void Reset() override;
   bool CanSendMessage() const override;
   void SendMessage(const google::protobuf::MessageLite& message) override;
@@ -92,6 +99,8 @@ class GCM_EXPORT ConnectionHandlerImpl : public ConnectionHandler {
   // Closes the current connection.
   void CloseConnection();
 
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
+
   // Timeout policy: the timeout is only enforced while waiting on the
   // handshake (version and/or LoginResponse) or once at least a tag packet has
   // been received. It is reset every time new data is received, and is
@@ -101,8 +110,7 @@ class GCM_EXPORT ConnectionHandlerImpl : public ConnectionHandler {
   const base::TimeDelta read_timeout_;
   base::OneShotTimer read_timeout_timer_;
 
-  // This connection's socket and the input/output streams attached to it.
-  net::StreamSocket* socket_;
+  // This connection's input/output streams.
   std::unique_ptr<SocketInputStream> input_stream_;
   std::unique_ptr<SocketOutputStream> output_stream_;
 

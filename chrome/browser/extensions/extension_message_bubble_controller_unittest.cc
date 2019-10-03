@@ -4,12 +4,13 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_web_ui_override_registrar.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/ntp_overridden_bubble_delegate.h"
 #include "chrome/browser/extensions/proxy_overridden_bubble_delegate.h"
 #include "chrome/browser/extensions/settings_api_bubble_delegate.h"
@@ -35,7 +37,6 @@
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/version_info/version_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
 #include "extensions/browser/extension_prefs.h"
@@ -57,13 +58,13 @@ const char kId3[] = "ioibbbfddncmmabjmpokikkeiofalaek";
 
 std::unique_ptr<KeyedService> BuildOverrideRegistrar(
     content::BrowserContext* context) {
-  return base::MakeUnique<extensions::ExtensionWebUIOverrideRegistrar>(context);
+  return std::make_unique<extensions::ExtensionWebUIOverrideRegistrar>(context);
 }
 
 // Creates a new ToolbarActionsModel for the given |context|.
 std::unique_ptr<KeyedService> BuildToolbarModel(
     content::BrowserContext* context) {
-  return base::MakeUnique<ToolbarActionsModel>(
+  return std::make_unique<ToolbarActionsModel>(
       Profile::FromBrowserContext(context),
       extensions::ExtensionPrefs::Get(context));
 }
@@ -325,7 +326,7 @@ class ExtensionMessageBubbleTest : public BrowserWithTestWindowTest {
         false);  // is_incognito_enabled.
     extension_prefs_value_map->SetExtensionPref(id, proxy_config::prefs::kProxy,
                                                 kExtensionPrefsScopeRegular,
-                                                new base::Value(id));
+                                                base::Value(id));
 
     if (ExtensionRegistry::Get(profile())->enabled_extensions().GetByID(id))
       return testing::AssertionSuccess();
@@ -333,7 +334,7 @@ class ExtensionMessageBubbleTest : public BrowserWithTestWindowTest {
   }
 
   void Init() {
-    ExtensionErrorReporter::Init(true);
+    LoadErrorReporter::Init(false);
     // The two lines of magical incantation required to get the extension
     // service to work inside a unit test and access the extension prefs.
     static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()))
@@ -342,12 +343,13 @@ class ExtensionMessageBubbleTest : public BrowserWithTestWindowTest {
     service_ = ExtensionSystem::Get(profile())->extension_service();
     service_->Init();
 
-    extensions::ExtensionWebUIOverrideRegistrar::GetFactoryInstance()->
-        SetTestingFactory(profile(), &BuildOverrideRegistrar);
+    extensions::ExtensionWebUIOverrideRegistrar::GetFactoryInstance()
+        ->SetTestingFactory(profile(),
+                            base::BindRepeating(&BuildOverrideRegistrar));
     extensions::ExtensionWebUIOverrideRegistrar::GetFactoryInstance()->Get(
         profile());
     ToolbarActionsModelFactory::GetInstance()->SetTestingFactory(
-        profile(), &BuildToolbarModel);
+        profile(), base::BindRepeating(&BuildToolbarModel));
   }
 
   ~ExtensionMessageBubbleTest() override {}
@@ -395,15 +397,6 @@ class ExtensionMessageBubbleTest : public BrowserWithTestWindowTest {
   }
 
  protected:
-  scoped_refptr<Extension> CreateExtension(
-      Manifest::Location location,
-      const std::string& data,
-      const std::string& id) {
-    std::unique_ptr<base::DictionaryValue> parsed_manifest(
-        api_test_utils::ParseDictionary(data));
-    return api_test_utils::CreateExtension(location, parsed_manifest.get(), id);
-  }
-
   ExtensionService* service_;
 
  private:
@@ -507,8 +500,9 @@ TEST_P(ExtensionMessageBubbleTestWithParam,
   EXPECT_TRUE(controller->ShouldShow());
 }
 
-INSTANTIATE_TEST_CASE_P(ExtensionMessageBubbleTest,
-                        ExtensionMessageBubbleTestWithParam, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(ExtensionMessageBubbleTest,
+                         ExtensionMessageBubbleTestWithParam,
+                         testing::Bool());
 
 // The feature this is meant to test is only enacted on Windows, but it should
 // pass on all platforms.
@@ -695,6 +689,75 @@ TEST_F(ExtensionMessageBubbleTest, DevModeControllerTest) {
   EXPECT_EQ(0U, dev_mode_extensions.size());
 }
 
+// Test that if we show the dev mode bubble for the regular profile, we won't
+// show it for its incognito profile.
+// Regression test for crbug.com/819309.
+TEST_F(ExtensionMessageBubbleTest, ShowDevModeBubbleOncePerOriginalProfile) {
+  FeatureSwitch::ScopedOverride force_dev_mode_highlighting(
+      FeatureSwitch::force_dev_mode_highlighting(), true);
+  Init();
+
+  ASSERT_TRUE(LoadGenericExtension("1", kId1, Manifest::UNPACKED));
+
+  auto get_controller = [](Browser* browser) {
+    auto controller = std::make_unique<TestExtensionMessageBubbleController>(
+        new DevModeBubbleDelegate(browser->profile()), browser);
+    controller->SetIsActiveBubble();
+    return controller;
+  };
+
+  {
+    // Show the bubble for the regular profile, and dismiss it.
+    auto controller = get_controller(browser());
+    EXPECT_TRUE(controller->ShouldShow());
+    FakeExtensionMessageBubble bubble;
+    bubble.set_action_on_show(
+        FakeExtensionMessageBubble::BUBBLE_ACTION_CLICK_DISMISS_BUTTON);
+    bubble.set_controller(controller.get());
+    bubble.Show();
+  }
+
+  {
+    // The bubble shouldn't want to show twice for the same profile.
+    auto controller = get_controller(browser());
+    EXPECT_FALSE(controller->ShouldShow());
+  }
+
+  {
+    // Construct an off-the-record profile and browser.
+    Profile* off_the_record_profile = profile()->GetOffTheRecordProfile();
+
+    ToolbarActionsModelFactory::GetInstance()->SetTestingFactory(
+        off_the_record_profile, base::BindRepeating(&BuildToolbarModel));
+
+    std::unique_ptr<BrowserWindow> off_the_record_window(CreateBrowserWindow());
+    std::unique_ptr<Browser> off_the_record_browser(
+        CreateBrowser(off_the_record_profile, Browser::TYPE_TABBED, false,
+                      off_the_record_window.get()));
+
+    // The bubble shouldn't want to show for an incognito version of the same
+    // profile.
+    auto controller = get_controller(browser());
+    EXPECT_FALSE(controller->ShouldShow());
+
+    // Now, try the inverse - show the bubble for the incognito profile, and
+    // dismiss it.
+    controller->delegate()->ClearProfileSetForTesting();
+    EXPECT_TRUE(controller->ShouldShow());
+    FakeExtensionMessageBubble bubble;
+    bubble.set_action_on_show(
+        FakeExtensionMessageBubble::BUBBLE_ACTION_CLICK_DISMISS_BUTTON);
+    bubble.set_controller(controller.get());
+    bubble.Show();
+  }
+
+  {
+    // The bubble shouldn't want to show for the regular profile.
+    auto controller = get_controller(browser());
+    EXPECT_FALSE(controller->ShouldShow());
+  }
+}
+
 // The feature this is meant to test is only implemented on Windows and Mac.
 #if defined(OS_WIN) || defined(OS_MACOSX)
 #define MAYBE_SettingsApiControllerTest SettingsApiControllerTest
@@ -851,7 +914,7 @@ TEST_F(ExtensionMessageBubbleTest,
   Init();
   ASSERT_TRUE(LoadExtensionOverridingNtp("1", kId1, Manifest::UNPACKED));
 
-  auto controller = base::MakeUnique<TestExtensionMessageBubbleController>(
+  auto controller = std::make_unique<TestExtensionMessageBubbleController>(
       new NtpOverriddenBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
 
@@ -884,7 +947,7 @@ TEST_F(ExtensionMessageBubbleTest,
   Init();
   ASSERT_TRUE(LoadExtensionOverridingNtp("1", kId1, Manifest::COMMAND_LINE));
 
-  auto controller = base::MakeUnique<TestExtensionMessageBubbleController>(
+  auto controller = std::make_unique<TestExtensionMessageBubbleController>(
       new SuspiciousExtensionBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
   FakeExtensionMessageBubble bubble;
@@ -940,7 +1003,7 @@ TEST_F(ExtensionMessageBubbleTest, TestBubbleShownForMultipleExtensions) {
   ASSERT_TRUE(LoadGenericExtension("2", kId2, Manifest::UNPACKED));
   ASSERT_TRUE(LoadGenericExtension("3", kId3, Manifest::UNPACKED));
 
-  auto controller = base::MakeUnique<TestExtensionMessageBubbleController>(
+  auto controller = std::make_unique<TestExtensionMessageBubbleController>(
       new DevModeBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
 
@@ -1125,9 +1188,9 @@ TEST_F(ExtensionMessageBubbleTest, ShowNtpBubblePerProfilePerExtensionTest) {
 void SetInstallTime(const std::string& extension_id,
                     const base::Time& time,
                     ExtensionPrefs* prefs) {
-  std::string time_str = base::Int64ToString(time.ToInternalValue());
+  std::string time_str = base::NumberToString(time.ToInternalValue());
   prefs->UpdateExtensionPref(extension_id, "install_time",
-                             base::MakeUnique<base::Value>(time_str));
+                             std::make_unique<base::Value>(time_str));
 }
 
 // The feature this is meant to test is only implemented on Windows and Mac.
@@ -1281,7 +1344,7 @@ TEST_F(ExtensionMessageBubbleTest, TestBubbleOutlivesBrowser) {
       new DevModeBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
   EXPECT_TRUE(controller->ShouldShow());
-  EXPECT_EQ(1u, model->toolbar_items().size());
+  EXPECT_EQ(1u, model->action_ids().size());
   controller->HighlightExtensionsIfNecessary();
   EXPECT_TRUE(model->is_highlighting());
   set_browser(nullptr);
@@ -1289,12 +1352,21 @@ TEST_F(ExtensionMessageBubbleTest, TestBubbleOutlivesBrowser) {
   controller.reset();
 }
 
+// Fails on linux-chromeos-rel: crbug.com/839371
+#if defined(OS_CHROMEOS)
+#define MAYBE_TestUninstallExtensionAfterBrowserDestroyed \
+  DISABLED_TestUninstallExtensionAfterBrowserDestroyed
+#else
+#define MAYBE_TestUninstallExtensionAfterBrowserDestroyed \
+  TestUninstallExtensionAfterBrowserDestroyed
+#endif  // defined(OS_CHROMEOS)
+
 // Tests that when an extension -- associated with a bubble controller -- is
 // uninstalling after the browser is destroyed, the controller does not access
 // the associated browser object and therefore, no use-after-free occurs.
 // crbug.com/756316
 TEST_F(ExtensionMessageBubbleTest,
-       TestUninstallExtensionAfterBrowserDestroyed) {
+       MAYBE_TestUninstallExtensionAfterBrowserDestroyed) {
   FeatureSwitch::ScopedOverride force_dev_mode_highlighting(
       FeatureSwitch::force_dev_mode_highlighting(), true);
   Init();
@@ -1307,7 +1379,7 @@ TEST_F(ExtensionMessageBubbleTest,
       new DevModeBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
   EXPECT_TRUE(controller->ShouldShow());
-  EXPECT_EQ(1u, model->toolbar_items().size());
+  EXPECT_EQ(1u, model->action_ids().size());
   controller->HighlightExtensionsIfNecessary();
   EXPECT_TRUE(model->is_highlighting());
   set_browser(nullptr);
@@ -1334,7 +1406,7 @@ TEST_F(ExtensionMessageBubbleTest,
       new DevModeBubbleDelegate(browser()->profile()), browser());
   controller->SetIsActiveBubble();
   EXPECT_TRUE(controller->ShouldShow());
-  EXPECT_EQ(1u, model->toolbar_items().size());
+  EXPECT_EQ(1u, model->action_ids().size());
   controller->HighlightExtensionsIfNecessary();
   EXPECT_TRUE(model->is_highlighting());
   set_browser(nullptr);

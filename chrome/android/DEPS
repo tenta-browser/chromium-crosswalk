@@ -1,4 +1,6 @@
 include_rules = [
+  "+chrome/lib/util/public",
+  "+components/content_capture",
   "+components/download",
   "+components/favicon_base",
   "+components/invalidation",
@@ -7,4 +9,5 @@ include_rules = [
   "+components/spellcheck/browser",
   "+jni",
   "+media/base/android/java",
+  "+services/media_session/public",
 ]

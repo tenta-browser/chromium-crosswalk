@@ -10,138 +10,90 @@
 
 #include "base/logging.h"
 
-// Struct Cronet_Buffer.
-Cronet_Buffer::Cronet_Buffer() {}
+// Struct Cronet_Error.
+Cronet_Error::Cronet_Error() = default;
 
-Cronet_Buffer::~Cronet_Buffer() {}
+Cronet_Error::Cronet_Error(const Cronet_Error& from) = default;
 
-Cronet_BufferPtr Cronet_Buffer_Create() {
-  return new Cronet_Buffer();
+Cronet_Error::Cronet_Error(Cronet_Error&& from) = default;
+
+Cronet_Error::~Cronet_Error() = default;
+
+Cronet_ErrorPtr Cronet_Error_Create() {
+  return new Cronet_Error();
 }
 
-void Cronet_Buffer_Destroy(Cronet_BufferPtr self) {
+void Cronet_Error_Destroy(Cronet_ErrorPtr self) {
   delete self;
 }
 
-// Struct Cronet_Buffer setters.
-void Cronet_Buffer_set_size(Cronet_BufferPtr self, int32_t size) {
-  DCHECK(self);
-  self->size = size;
-}
-
-void Cronet_Buffer_set_limit(Cronet_BufferPtr self, int32_t limit) {
-  DCHECK(self);
-  self->limit = limit;
-}
-
-void Cronet_Buffer_set_position(Cronet_BufferPtr self, int32_t position) {
-  DCHECK(self);
-  self->position = position;
-}
-
-void Cronet_Buffer_set_data(Cronet_BufferPtr self, RawDataPtr data) {
-  DCHECK(self);
-  self->data = data;
-}
-
-void Cronet_Buffer_set_callback(Cronet_BufferPtr self,
-                                Cronet_BufferCallbackPtr callback) {
-  DCHECK(self);
-  self->callback = callback;
-}
-
-// Struct Cronet_Buffer getters.
-int32_t Cronet_Buffer_get_size(Cronet_BufferPtr self) {
-  DCHECK(self);
-  return self->size;
-}
-
-int32_t Cronet_Buffer_get_limit(Cronet_BufferPtr self) {
-  DCHECK(self);
-  return self->limit;
-}
-
-int32_t Cronet_Buffer_get_position(Cronet_BufferPtr self) {
-  DCHECK(self);
-  return self->position;
-}
-
-RawDataPtr Cronet_Buffer_get_data(Cronet_BufferPtr self) {
-  DCHECK(self);
-  return self->data;
-}
-
-Cronet_BufferCallbackPtr Cronet_Buffer_get_callback(Cronet_BufferPtr self) {
-  DCHECK(self);
-  return self->callback;
-}
-
-// Struct Cronet_Exception.
-Cronet_Exception::Cronet_Exception() {}
-
-Cronet_Exception::~Cronet_Exception() {}
-
-Cronet_ExceptionPtr Cronet_Exception_Create() {
-  return new Cronet_Exception();
-}
-
-void Cronet_Exception_Destroy(Cronet_ExceptionPtr self) {
-  delete self;
-}
-
-// Struct Cronet_Exception setters.
-void Cronet_Exception_set_error_code(Cronet_ExceptionPtr self,
-                                     Cronet_Exception_ERROR_CODE error_code) {
+// Struct Cronet_Error setters.
+void Cronet_Error_error_code_set(Cronet_ErrorPtr self,
+                                 const Cronet_Error_ERROR_CODE error_code) {
   DCHECK(self);
   self->error_code = error_code;
 }
 
-void Cronet_Exception_set_internal_error_code(Cronet_ExceptionPtr self,
-                                              int32_t internal_error_code) {
+void Cronet_Error_message_set(Cronet_ErrorPtr self,
+                              const Cronet_String message) {
+  DCHECK(self);
+  self->message = message;
+}
+
+void Cronet_Error_internal_error_code_set(Cronet_ErrorPtr self,
+                                          const int32_t internal_error_code) {
   DCHECK(self);
   self->internal_error_code = internal_error_code;
 }
 
-void Cronet_Exception_set_immediately_retryable(Cronet_ExceptionPtr self,
-                                                bool immediately_retryable) {
+void Cronet_Error_immediately_retryable_set(Cronet_ErrorPtr self,
+                                            const bool immediately_retryable) {
   DCHECK(self);
   self->immediately_retryable = immediately_retryable;
 }
 
-void Cronet_Exception_set_quic_detailed_error_code(
-    Cronet_ExceptionPtr self,
-    int32_t quic_detailed_error_code) {
+void Cronet_Error_quic_detailed_error_code_set(
+    Cronet_ErrorPtr self,
+    const int32_t quic_detailed_error_code) {
   DCHECK(self);
   self->quic_detailed_error_code = quic_detailed_error_code;
 }
 
-// Struct Cronet_Exception getters.
-Cronet_Exception_ERROR_CODE Cronet_Exception_get_error_code(
-    Cronet_ExceptionPtr self) {
+// Struct Cronet_Error getters.
+Cronet_Error_ERROR_CODE Cronet_Error_error_code_get(
+    const Cronet_ErrorPtr self) {
   DCHECK(self);
   return self->error_code;
 }
 
-int32_t Cronet_Exception_get_internal_error_code(Cronet_ExceptionPtr self) {
+Cronet_String Cronet_Error_message_get(const Cronet_ErrorPtr self) {
+  DCHECK(self);
+  return self->message.c_str();
+}
+
+int32_t Cronet_Error_internal_error_code_get(const Cronet_ErrorPtr self) {
   DCHECK(self);
   return self->internal_error_code;
 }
 
-bool Cronet_Exception_get_immediately_retryable(Cronet_ExceptionPtr self) {
+bool Cronet_Error_immediately_retryable_get(const Cronet_ErrorPtr self) {
   DCHECK(self);
   return self->immediately_retryable;
 }
 
-int32_t Cronet_Exception_get_quic_detailed_error_code(
-    Cronet_ExceptionPtr self) {
+int32_t Cronet_Error_quic_detailed_error_code_get(const Cronet_ErrorPtr self) {
   DCHECK(self);
   return self->quic_detailed_error_code;
 }
 
 // Struct Cronet_QuicHint.
-Cronet_QuicHint::Cronet_QuicHint() {}
+Cronet_QuicHint::Cronet_QuicHint() = default;
 
-Cronet_QuicHint::~Cronet_QuicHint() {}
+Cronet_QuicHint::Cronet_QuicHint(const Cronet_QuicHint& from) = default;
+
+Cronet_QuicHint::Cronet_QuicHint(Cronet_QuicHint&& from) = default;
+
+Cronet_QuicHint::~Cronet_QuicHint() = default;
 
 Cronet_QuicHintPtr Cronet_QuicHint_Create() {
   return new Cronet_QuicHint();
@@ -152,42 +104,49 @@ void Cronet_QuicHint_Destroy(Cronet_QuicHintPtr self) {
 }
 
 // Struct Cronet_QuicHint setters.
-void Cronet_QuicHint_set_host(Cronet_QuicHintPtr self, CharString host) {
+void Cronet_QuicHint_host_set(Cronet_QuicHintPtr self,
+                              const Cronet_String host) {
   DCHECK(self);
   self->host = host;
 }
 
-void Cronet_QuicHint_set_port(Cronet_QuicHintPtr self, int32_t port) {
+void Cronet_QuicHint_port_set(Cronet_QuicHintPtr self, const int32_t port) {
   DCHECK(self);
   self->port = port;
 }
 
-void Cronet_QuicHint_set_alternatePort(Cronet_QuicHintPtr self,
-                                       int32_t alternatePort) {
+void Cronet_QuicHint_alternate_port_set(Cronet_QuicHintPtr self,
+                                        const int32_t alternate_port) {
   DCHECK(self);
-  self->alternatePort = alternatePort;
+  self->alternate_port = alternate_port;
 }
 
 // Struct Cronet_QuicHint getters.
-CharString Cronet_QuicHint_get_host(Cronet_QuicHintPtr self) {
+Cronet_String Cronet_QuicHint_host_get(const Cronet_QuicHintPtr self) {
   DCHECK(self);
   return self->host.c_str();
 }
 
-int32_t Cronet_QuicHint_get_port(Cronet_QuicHintPtr self) {
+int32_t Cronet_QuicHint_port_get(const Cronet_QuicHintPtr self) {
   DCHECK(self);
   return self->port;
 }
 
-int32_t Cronet_QuicHint_get_alternatePort(Cronet_QuicHintPtr self) {
+int32_t Cronet_QuicHint_alternate_port_get(const Cronet_QuicHintPtr self) {
   DCHECK(self);
-  return self->alternatePort;
+  return self->alternate_port;
 }
 
 // Struct Cronet_PublicKeyPins.
-Cronet_PublicKeyPins::Cronet_PublicKeyPins() {}
+Cronet_PublicKeyPins::Cronet_PublicKeyPins() = default;
 
-Cronet_PublicKeyPins::~Cronet_PublicKeyPins() {}
+Cronet_PublicKeyPins::Cronet_PublicKeyPins(const Cronet_PublicKeyPins& from) =
+    default;
+
+Cronet_PublicKeyPins::Cronet_PublicKeyPins(Cronet_PublicKeyPins&& from) =
+    default;
+
+Cronet_PublicKeyPins::~Cronet_PublicKeyPins() = default;
 
 Cronet_PublicKeyPinsPtr Cronet_PublicKeyPins_Create() {
   return new Cronet_PublicKeyPins();
@@ -198,51 +157,75 @@ void Cronet_PublicKeyPins_Destroy(Cronet_PublicKeyPinsPtr self) {
 }
 
 // Struct Cronet_PublicKeyPins setters.
-void Cronet_PublicKeyPins_set_host(Cronet_PublicKeyPinsPtr self,
-                                   CharString host) {
+void Cronet_PublicKeyPins_host_set(Cronet_PublicKeyPinsPtr self,
+                                   const Cronet_String host) {
   DCHECK(self);
   self->host = host;
 }
 
-void Cronet_PublicKeyPins_add_pinsSha256(Cronet_PublicKeyPinsPtr self,
-                                         RawDataPtr pinsSha256) {
+void Cronet_PublicKeyPins_pins_sha256_add(Cronet_PublicKeyPinsPtr self,
+                                          const Cronet_String element) {
   DCHECK(self);
-  self->pinsSha256.push_back(pinsSha256);
+  self->pins_sha256.push_back(element);
 }
 
-void Cronet_PublicKeyPins_set_includeSubdomains(Cronet_PublicKeyPinsPtr self,
-                                                bool includeSubdomains) {
+void Cronet_PublicKeyPins_include_subdomains_set(
+    Cronet_PublicKeyPinsPtr self,
+    const bool include_subdomains) {
   DCHECK(self);
-  self->includeSubdomains = includeSubdomains;
+  self->include_subdomains = include_subdomains;
+}
+
+void Cronet_PublicKeyPins_expiration_date_set(Cronet_PublicKeyPinsPtr self,
+                                              const int64_t expiration_date) {
+  DCHECK(self);
+  self->expiration_date = expiration_date;
 }
 
 // Struct Cronet_PublicKeyPins getters.
-CharString Cronet_PublicKeyPins_get_host(Cronet_PublicKeyPinsPtr self) {
+Cronet_String Cronet_PublicKeyPins_host_get(
+    const Cronet_PublicKeyPinsPtr self) {
   DCHECK(self);
   return self->host.c_str();
 }
 
-uint32_t Cronet_PublicKeyPins_get_pinsSha256Size(Cronet_PublicKeyPinsPtr self) {
+uint32_t Cronet_PublicKeyPins_pins_sha256_size(Cronet_PublicKeyPinsPtr self) {
   DCHECK(self);
-  return self->pinsSha256.size();
+  return self->pins_sha256.size();
 }
-RawDataPtr Cronet_PublicKeyPins_get_pinsSha256AtIndex(
-    Cronet_PublicKeyPinsPtr self,
+Cronet_String Cronet_PublicKeyPins_pins_sha256_at(
+    const Cronet_PublicKeyPinsPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->pinsSha256.size());
-  return self->pinsSha256[index];
+  DCHECK(index < self->pins_sha256.size());
+  return self->pins_sha256[index].c_str();
+}
+void Cronet_PublicKeyPins_pins_sha256_clear(Cronet_PublicKeyPinsPtr self) {
+  DCHECK(self);
+  self->pins_sha256.clear();
 }
 
-bool Cronet_PublicKeyPins_get_includeSubdomains(Cronet_PublicKeyPinsPtr self) {
+bool Cronet_PublicKeyPins_include_subdomains_get(
+    const Cronet_PublicKeyPinsPtr self) {
   DCHECK(self);
-  return self->includeSubdomains;
+  return self->include_subdomains;
+}
+
+int64_t Cronet_PublicKeyPins_expiration_date_get(
+    const Cronet_PublicKeyPinsPtr self) {
+  DCHECK(self);
+  return self->expiration_date;
 }
 
 // Struct Cronet_EngineParams.
-Cronet_EngineParams::Cronet_EngineParams() {}
+Cronet_EngineParams::Cronet_EngineParams() = default;
 
-Cronet_EngineParams::~Cronet_EngineParams() {}
+Cronet_EngineParams::Cronet_EngineParams(const Cronet_EngineParams& from) =
+    default;
+
+Cronet_EngineParams::Cronet_EngineParams(Cronet_EngineParams&& from) = default;
+
+Cronet_EngineParams::~Cronet_EngineParams() = default;
 
 Cronet_EngineParamsPtr Cronet_EngineParams_Create() {
   return new Cronet_EngineParams();
@@ -253,144 +236,209 @@ void Cronet_EngineParams_Destroy(Cronet_EngineParamsPtr self) {
 }
 
 // Struct Cronet_EngineParams setters.
-void Cronet_EngineParams_set_userAgent(Cronet_EngineParamsPtr self,
-                                       CharString userAgent) {
-  DCHECK(self);
-  self->userAgent = userAgent;
-}
-
-void Cronet_EngineParams_set_storagePath(Cronet_EngineParamsPtr self,
-                                         CharString storagePath) {
-  DCHECK(self);
-  self->storagePath = storagePath;
-}
-
-void Cronet_EngineParams_set_enableQuic(Cronet_EngineParamsPtr self,
-                                        bool enableQuic) {
-  DCHECK(self);
-  self->enableQuic = enableQuic;
-}
-
-void Cronet_EngineParams_set_enableHttp2(Cronet_EngineParamsPtr self,
-                                         bool enableHttp2) {
-  DCHECK(self);
-  self->enableHttp2 = enableHttp2;
-}
-
-void Cronet_EngineParams_set_enableBrotli(Cronet_EngineParamsPtr self,
-                                          bool enableBrotli) {
-  DCHECK(self);
-  self->enableBrotli = enableBrotli;
-}
-
-void Cronet_EngineParams_set_httpCacheMode(
+void Cronet_EngineParams_enable_check_result_set(
     Cronet_EngineParamsPtr self,
-    Cronet_EngineParams_HTTP_CACHE_MODE httpCacheMode) {
+    const bool enable_check_result) {
   DCHECK(self);
-  self->httpCacheMode = httpCacheMode;
+  self->enable_check_result = enable_check_result;
 }
 
-void Cronet_EngineParams_set_httpCacheMaxSize(Cronet_EngineParamsPtr self,
-                                              int64_t httpCacheMaxSize) {
+void Cronet_EngineParams_user_agent_set(Cronet_EngineParamsPtr self,
+                                        const Cronet_String user_agent) {
   DCHECK(self);
-  self->httpCacheMaxSize = httpCacheMaxSize;
+  self->user_agent = user_agent;
 }
 
-void Cronet_EngineParams_add_quicHints(Cronet_EngineParamsPtr self,
-                                       Cronet_QuicHintPtr quicHints) {
-  DCHECK(self);
-  std::unique_ptr<Cronet_QuicHint> tmp_ptr(quicHints);
-  self->quicHints.push_back(std::move(tmp_ptr));
-}
-
-void Cronet_EngineParams_add_publicKeyPins(
+void Cronet_EngineParams_accept_language_set(
     Cronet_EngineParamsPtr self,
-    Cronet_PublicKeyPinsPtr publicKeyPins) {
+    const Cronet_String accept_language) {
   DCHECK(self);
-  std::unique_ptr<Cronet_PublicKeyPins> tmp_ptr(publicKeyPins);
-  self->publicKeyPins.push_back(std::move(tmp_ptr));
+  self->accept_language = accept_language;
 }
 
-void Cronet_EngineParams_set_enablePublicKeyPinningBypassForLocalTrustAnchors(
-    Cronet_EngineParamsPtr self,
-    bool enablePublicKeyPinningBypassForLocalTrustAnchors) {
+void Cronet_EngineParams_storage_path_set(Cronet_EngineParamsPtr self,
+                                          const Cronet_String storage_path) {
   DCHECK(self);
-  self->enablePublicKeyPinningBypassForLocalTrustAnchors =
-      enablePublicKeyPinningBypassForLocalTrustAnchors;
+  self->storage_path = storage_path;
+}
+
+void Cronet_EngineParams_enable_quic_set(Cronet_EngineParamsPtr self,
+                                         const bool enable_quic) {
+  DCHECK(self);
+  self->enable_quic = enable_quic;
+}
+
+void Cronet_EngineParams_enable_http2_set(Cronet_EngineParamsPtr self,
+                                          const bool enable_http2) {
+  DCHECK(self);
+  self->enable_http2 = enable_http2;
+}
+
+void Cronet_EngineParams_enable_brotli_set(Cronet_EngineParamsPtr self,
+                                           const bool enable_brotli) {
+  DCHECK(self);
+  self->enable_brotli = enable_brotli;
+}
+
+void Cronet_EngineParams_http_cache_mode_set(
+    Cronet_EngineParamsPtr self,
+    const Cronet_EngineParams_HTTP_CACHE_MODE http_cache_mode) {
+  DCHECK(self);
+  self->http_cache_mode = http_cache_mode;
+}
+
+void Cronet_EngineParams_http_cache_max_size_set(
+    Cronet_EngineParamsPtr self,
+    const int64_t http_cache_max_size) {
+  DCHECK(self);
+  self->http_cache_max_size = http_cache_max_size;
+}
+
+void Cronet_EngineParams_quic_hints_add(Cronet_EngineParamsPtr self,
+                                        const Cronet_QuicHintPtr element) {
+  DCHECK(self);
+  self->quic_hints.push_back(*element);
+}
+
+void Cronet_EngineParams_public_key_pins_add(
+    Cronet_EngineParamsPtr self,
+    const Cronet_PublicKeyPinsPtr element) {
+  DCHECK(self);
+  self->public_key_pins.push_back(*element);
+}
+
+void Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_set(
+    Cronet_EngineParamsPtr self,
+    const bool enable_public_key_pinning_bypass_for_local_trust_anchors) {
+  DCHECK(self);
+  self->enable_public_key_pinning_bypass_for_local_trust_anchors =
+      enable_public_key_pinning_bypass_for_local_trust_anchors;
+}
+
+void Cronet_EngineParams_network_thread_priority_set(
+    Cronet_EngineParamsPtr self,
+    const double network_thread_priority) {
+  DCHECK(self);
+  self->network_thread_priority = network_thread_priority;
+}
+
+void Cronet_EngineParams_experimental_options_set(
+    Cronet_EngineParamsPtr self,
+    const Cronet_String experimental_options) {
+  DCHECK(self);
+  self->experimental_options = experimental_options;
 }
 
 // Struct Cronet_EngineParams getters.
-CharString Cronet_EngineParams_get_userAgent(Cronet_EngineParamsPtr self) {
+bool Cronet_EngineParams_enable_check_result_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->userAgent.c_str();
+  return self->enable_check_result;
 }
 
-CharString Cronet_EngineParams_get_storagePath(Cronet_EngineParamsPtr self) {
+Cronet_String Cronet_EngineParams_user_agent_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->storagePath.c_str();
+  return self->user_agent.c_str();
 }
 
-bool Cronet_EngineParams_get_enableQuic(Cronet_EngineParamsPtr self) {
+Cronet_String Cronet_EngineParams_accept_language_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->enableQuic;
+  return self->accept_language.c_str();
 }
 
-bool Cronet_EngineParams_get_enableHttp2(Cronet_EngineParamsPtr self) {
+Cronet_String Cronet_EngineParams_storage_path_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->enableHttp2;
+  return self->storage_path.c_str();
 }
 
-bool Cronet_EngineParams_get_enableBrotli(Cronet_EngineParamsPtr self) {
+bool Cronet_EngineParams_enable_quic_get(const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->enableBrotli;
+  return self->enable_quic;
 }
 
-Cronet_EngineParams_HTTP_CACHE_MODE Cronet_EngineParams_get_httpCacheMode(
-    Cronet_EngineParamsPtr self) {
+bool Cronet_EngineParams_enable_http2_get(const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->httpCacheMode;
+  return self->enable_http2;
 }
 
-int64_t Cronet_EngineParams_get_httpCacheMaxSize(Cronet_EngineParamsPtr self) {
+bool Cronet_EngineParams_enable_brotli_get(const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->httpCacheMaxSize;
+  return self->enable_brotli;
 }
 
-uint32_t Cronet_EngineParams_get_quicHintsSize(Cronet_EngineParamsPtr self) {
+Cronet_EngineParams_HTTP_CACHE_MODE Cronet_EngineParams_http_cache_mode_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->quicHints.size();
+  return self->http_cache_mode;
 }
-Cronet_QuicHintPtr Cronet_EngineParams_get_quicHintsAtIndex(
-    Cronet_EngineParamsPtr self,
+
+int64_t Cronet_EngineParams_http_cache_max_size_get(
+    const Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  return self->http_cache_max_size;
+}
+
+uint32_t Cronet_EngineParams_quic_hints_size(Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  return self->quic_hints.size();
+}
+Cronet_QuicHintPtr Cronet_EngineParams_quic_hints_at(
+    const Cronet_EngineParamsPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->quicHints.size());
-  return self->quicHints[index].get();
+  DCHECK(index < self->quic_hints.size());
+  return &(self->quic_hints[index]);
+}
+void Cronet_EngineParams_quic_hints_clear(Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  self->quic_hints.clear();
 }
 
-uint32_t Cronet_EngineParams_get_publicKeyPinsSize(
-    Cronet_EngineParamsPtr self) {
+uint32_t Cronet_EngineParams_public_key_pins_size(Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->publicKeyPins.size();
+  return self->public_key_pins.size();
 }
-Cronet_PublicKeyPinsPtr Cronet_EngineParams_get_publicKeyPinsAtIndex(
-    Cronet_EngineParamsPtr self,
+Cronet_PublicKeyPinsPtr Cronet_EngineParams_public_key_pins_at(
+    const Cronet_EngineParamsPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->publicKeyPins.size());
-  return self->publicKeyPins[index].get();
+  DCHECK(index < self->public_key_pins.size());
+  return &(self->public_key_pins[index]);
+}
+void Cronet_EngineParams_public_key_pins_clear(Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  self->public_key_pins.clear();
 }
 
-bool Cronet_EngineParams_get_enablePublicKeyPinningBypassForLocalTrustAnchors(
-    Cronet_EngineParamsPtr self) {
+bool Cronet_EngineParams_enable_public_key_pinning_bypass_for_local_trust_anchors_get(
+    const Cronet_EngineParamsPtr self) {
   DCHECK(self);
-  return self->enablePublicKeyPinningBypassForLocalTrustAnchors;
+  return self->enable_public_key_pinning_bypass_for_local_trust_anchors;
+}
+
+double Cronet_EngineParams_network_thread_priority_get(
+    const Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  return self->network_thread_priority;
+}
+
+Cronet_String Cronet_EngineParams_experimental_options_get(
+    const Cronet_EngineParamsPtr self) {
+  DCHECK(self);
+  return self->experimental_options.c_str();
 }
 
 // Struct Cronet_HttpHeader.
-Cronet_HttpHeader::Cronet_HttpHeader() {}
+Cronet_HttpHeader::Cronet_HttpHeader() = default;
 
-Cronet_HttpHeader::~Cronet_HttpHeader() {}
+Cronet_HttpHeader::Cronet_HttpHeader(const Cronet_HttpHeader& from) = default;
+
+Cronet_HttpHeader::Cronet_HttpHeader(Cronet_HttpHeader&& from) = default;
+
+Cronet_HttpHeader::~Cronet_HttpHeader() = default;
 
 Cronet_HttpHeaderPtr Cronet_HttpHeader_Create() {
   return new Cronet_HttpHeader();
@@ -401,31 +449,39 @@ void Cronet_HttpHeader_Destroy(Cronet_HttpHeaderPtr self) {
 }
 
 // Struct Cronet_HttpHeader setters.
-void Cronet_HttpHeader_set_name(Cronet_HttpHeaderPtr self, CharString name) {
+void Cronet_HttpHeader_name_set(Cronet_HttpHeaderPtr self,
+                                const Cronet_String name) {
   DCHECK(self);
   self->name = name;
 }
 
-void Cronet_HttpHeader_set_value(Cronet_HttpHeaderPtr self, CharString value) {
+void Cronet_HttpHeader_value_set(Cronet_HttpHeaderPtr self,
+                                 const Cronet_String value) {
   DCHECK(self);
   self->value = value;
 }
 
 // Struct Cronet_HttpHeader getters.
-CharString Cronet_HttpHeader_get_name(Cronet_HttpHeaderPtr self) {
+Cronet_String Cronet_HttpHeader_name_get(const Cronet_HttpHeaderPtr self) {
   DCHECK(self);
   return self->name.c_str();
 }
 
-CharString Cronet_HttpHeader_get_value(Cronet_HttpHeaderPtr self) {
+Cronet_String Cronet_HttpHeader_value_get(const Cronet_HttpHeaderPtr self) {
   DCHECK(self);
   return self->value.c_str();
 }
 
 // Struct Cronet_UrlResponseInfo.
-Cronet_UrlResponseInfo::Cronet_UrlResponseInfo() {}
+Cronet_UrlResponseInfo::Cronet_UrlResponseInfo() = default;
 
-Cronet_UrlResponseInfo::~Cronet_UrlResponseInfo() {}
+Cronet_UrlResponseInfo::Cronet_UrlResponseInfo(
+    const Cronet_UrlResponseInfo& from) = default;
+
+Cronet_UrlResponseInfo::Cronet_UrlResponseInfo(Cronet_UrlResponseInfo&& from) =
+    default;
+
+Cronet_UrlResponseInfo::~Cronet_UrlResponseInfo() = default;
 
 Cronet_UrlResponseInfoPtr Cronet_UrlResponseInfo_Create() {
   return new Cronet_UrlResponseInfo();
@@ -436,135 +492,152 @@ void Cronet_UrlResponseInfo_Destroy(Cronet_UrlResponseInfoPtr self) {
 }
 
 // Struct Cronet_UrlResponseInfo setters.
-void Cronet_UrlResponseInfo_set_url(Cronet_UrlResponseInfoPtr self,
-                                    CharString url) {
+void Cronet_UrlResponseInfo_url_set(Cronet_UrlResponseInfoPtr self,
+                                    const Cronet_String url) {
   DCHECK(self);
   self->url = url;
 }
 
-void Cronet_UrlResponseInfo_add_urlChain(Cronet_UrlResponseInfoPtr self,
-                                         CharString urlChain) {
+void Cronet_UrlResponseInfo_url_chain_add(Cronet_UrlResponseInfoPtr self,
+                                          const Cronet_String element) {
   DCHECK(self);
-  self->urlChain.push_back(urlChain);
+  self->url_chain.push_back(element);
 }
 
-void Cronet_UrlResponseInfo_set_httpStatusCode(Cronet_UrlResponseInfoPtr self,
-                                               int32_t httpStatusCode) {
-  DCHECK(self);
-  self->httpStatusCode = httpStatusCode;
-}
-
-void Cronet_UrlResponseInfo_set_httpStatusText(Cronet_UrlResponseInfoPtr self,
-                                               CharString httpStatusText) {
-  DCHECK(self);
-  self->httpStatusText = httpStatusText;
-}
-
-void Cronet_UrlResponseInfo_add_allHeadersList(
+void Cronet_UrlResponseInfo_http_status_code_set(
     Cronet_UrlResponseInfoPtr self,
-    Cronet_HttpHeaderPtr allHeadersList) {
+    const int32_t http_status_code) {
   DCHECK(self);
-  std::unique_ptr<Cronet_HttpHeader> tmp_ptr(allHeadersList);
-  self->allHeadersList.push_back(std::move(tmp_ptr));
+  self->http_status_code = http_status_code;
 }
 
-void Cronet_UrlResponseInfo_set_wasCached(Cronet_UrlResponseInfoPtr self,
-                                          bool wasCached) {
-  DCHECK(self);
-  self->wasCached = wasCached;
-}
-
-void Cronet_UrlResponseInfo_set_negotiatedProtocol(
+void Cronet_UrlResponseInfo_http_status_text_set(
     Cronet_UrlResponseInfoPtr self,
-    CharString negotiatedProtocol) {
+    const Cronet_String http_status_text) {
   DCHECK(self);
-  self->negotiatedProtocol = negotiatedProtocol;
+  self->http_status_text = http_status_text;
 }
 
-void Cronet_UrlResponseInfo_set_proxyServer(Cronet_UrlResponseInfoPtr self,
-                                            CharString proxyServer) {
-  DCHECK(self);
-  self->proxyServer = proxyServer;
-}
-
-void Cronet_UrlResponseInfo_set_receivedByteCount(
+void Cronet_UrlResponseInfo_all_headers_list_add(
     Cronet_UrlResponseInfoPtr self,
-    int64_t receivedByteCount) {
+    const Cronet_HttpHeaderPtr element) {
   DCHECK(self);
-  self->receivedByteCount = receivedByteCount;
+  self->all_headers_list.push_back(*element);
+}
+
+void Cronet_UrlResponseInfo_was_cached_set(Cronet_UrlResponseInfoPtr self,
+                                           const bool was_cached) {
+  DCHECK(self);
+  self->was_cached = was_cached;
+}
+
+void Cronet_UrlResponseInfo_negotiated_protocol_set(
+    Cronet_UrlResponseInfoPtr self,
+    const Cronet_String negotiated_protocol) {
+  DCHECK(self);
+  self->negotiated_protocol = negotiated_protocol;
+}
+
+void Cronet_UrlResponseInfo_proxy_server_set(Cronet_UrlResponseInfoPtr self,
+                                             const Cronet_String proxy_server) {
+  DCHECK(self);
+  self->proxy_server = proxy_server;
+}
+
+void Cronet_UrlResponseInfo_received_byte_count_set(
+    Cronet_UrlResponseInfoPtr self,
+    const int64_t received_byte_count) {
+  DCHECK(self);
+  self->received_byte_count = received_byte_count;
 }
 
 // Struct Cronet_UrlResponseInfo getters.
-CharString Cronet_UrlResponseInfo_get_url(Cronet_UrlResponseInfoPtr self) {
+Cronet_String Cronet_UrlResponseInfo_url_get(
+    const Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
   return self->url.c_str();
 }
 
-uint32_t Cronet_UrlResponseInfo_get_urlChainSize(
-    Cronet_UrlResponseInfoPtr self) {
+uint32_t Cronet_UrlResponseInfo_url_chain_size(Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->urlChain.size();
+  return self->url_chain.size();
 }
-CharString Cronet_UrlResponseInfo_get_urlChainAtIndex(
-    Cronet_UrlResponseInfoPtr self,
+Cronet_String Cronet_UrlResponseInfo_url_chain_at(
+    const Cronet_UrlResponseInfoPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->urlChain.size());
-  return self->urlChain[index].c_str();
+  DCHECK(index < self->url_chain.size());
+  return self->url_chain[index].c_str();
+}
+void Cronet_UrlResponseInfo_url_chain_clear(Cronet_UrlResponseInfoPtr self) {
+  DCHECK(self);
+  self->url_chain.clear();
 }
 
-int32_t Cronet_UrlResponseInfo_get_httpStatusCode(
-    Cronet_UrlResponseInfoPtr self) {
+int32_t Cronet_UrlResponseInfo_http_status_code_get(
+    const Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->httpStatusCode;
+  return self->http_status_code;
 }
 
-CharString Cronet_UrlResponseInfo_get_httpStatusText(
-    Cronet_UrlResponseInfoPtr self) {
+Cronet_String Cronet_UrlResponseInfo_http_status_text_get(
+    const Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->httpStatusText.c_str();
+  return self->http_status_text.c_str();
 }
 
-uint32_t Cronet_UrlResponseInfo_get_allHeadersListSize(
+uint32_t Cronet_UrlResponseInfo_all_headers_list_size(
     Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->allHeadersList.size();
+  return self->all_headers_list.size();
 }
-Cronet_HttpHeaderPtr Cronet_UrlResponseInfo_get_allHeadersListAtIndex(
-    Cronet_UrlResponseInfoPtr self,
+Cronet_HttpHeaderPtr Cronet_UrlResponseInfo_all_headers_list_at(
+    const Cronet_UrlResponseInfoPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->allHeadersList.size());
-  return self->allHeadersList[index].get();
+  DCHECK(index < self->all_headers_list.size());
+  return &(self->all_headers_list[index]);
 }
-
-bool Cronet_UrlResponseInfo_get_wasCached(Cronet_UrlResponseInfoPtr self) {
-  DCHECK(self);
-  return self->wasCached;
-}
-
-CharString Cronet_UrlResponseInfo_get_negotiatedProtocol(
+void Cronet_UrlResponseInfo_all_headers_list_clear(
     Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->negotiatedProtocol.c_str();
+  self->all_headers_list.clear();
 }
 
-CharString Cronet_UrlResponseInfo_get_proxyServer(
-    Cronet_UrlResponseInfoPtr self) {
+bool Cronet_UrlResponseInfo_was_cached_get(
+    const Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->proxyServer.c_str();
+  return self->was_cached;
 }
 
-int64_t Cronet_UrlResponseInfo_get_receivedByteCount(
-    Cronet_UrlResponseInfoPtr self) {
+Cronet_String Cronet_UrlResponseInfo_negotiated_protocol_get(
+    const Cronet_UrlResponseInfoPtr self) {
   DCHECK(self);
-  return self->receivedByteCount;
+  return self->negotiated_protocol.c_str();
+}
+
+Cronet_String Cronet_UrlResponseInfo_proxy_server_get(
+    const Cronet_UrlResponseInfoPtr self) {
+  DCHECK(self);
+  return self->proxy_server.c_str();
+}
+
+int64_t Cronet_UrlResponseInfo_received_byte_count_get(
+    const Cronet_UrlResponseInfoPtr self) {
+  DCHECK(self);
+  return self->received_byte_count;
 }
 
 // Struct Cronet_UrlRequestParams.
-Cronet_UrlRequestParams::Cronet_UrlRequestParams() {}
+Cronet_UrlRequestParams::Cronet_UrlRequestParams() = default;
 
-Cronet_UrlRequestParams::~Cronet_UrlRequestParams() {}
+Cronet_UrlRequestParams::Cronet_UrlRequestParams(
+    const Cronet_UrlRequestParams& from) = default;
+
+Cronet_UrlRequestParams::Cronet_UrlRequestParams(
+    Cronet_UrlRequestParams&& from) = default;
+
+Cronet_UrlRequestParams::~Cronet_UrlRequestParams() = default;
 
 Cronet_UrlRequestParamsPtr Cronet_UrlRequestParams_Create() {
   return new Cronet_UrlRequestParams();
@@ -575,118 +648,613 @@ void Cronet_UrlRequestParams_Destroy(Cronet_UrlRequestParamsPtr self) {
 }
 
 // Struct Cronet_UrlRequestParams setters.
-void Cronet_UrlRequestParams_set_httpMethod(Cronet_UrlRequestParamsPtr self,
-                                            CharString httpMethod) {
+void Cronet_UrlRequestParams_http_method_set(Cronet_UrlRequestParamsPtr self,
+                                             const Cronet_String http_method) {
   DCHECK(self);
-  self->httpMethod = httpMethod;
+  self->http_method = http_method;
 }
 
-void Cronet_UrlRequestParams_add_requestHeaders(
+void Cronet_UrlRequestParams_request_headers_add(
     Cronet_UrlRequestParamsPtr self,
-    Cronet_HttpHeaderPtr requestHeaders) {
+    const Cronet_HttpHeaderPtr element) {
   DCHECK(self);
-  std::unique_ptr<Cronet_HttpHeader> tmp_ptr(requestHeaders);
-  self->requestHeaders.push_back(std::move(tmp_ptr));
+  self->request_headers.push_back(*element);
 }
 
-void Cronet_UrlRequestParams_set_disableCache(Cronet_UrlRequestParamsPtr self,
-                                              bool disableCache) {
+void Cronet_UrlRequestParams_disable_cache_set(Cronet_UrlRequestParamsPtr self,
+                                               const bool disable_cache) {
   DCHECK(self);
-  self->disableCache = disableCache;
+  self->disable_cache = disable_cache;
 }
 
-void Cronet_UrlRequestParams_set_priority(
+void Cronet_UrlRequestParams_priority_set(
     Cronet_UrlRequestParamsPtr self,
-    Cronet_UrlRequestParams_REQUEST_PRIORITY priority) {
+    const Cronet_UrlRequestParams_REQUEST_PRIORITY priority) {
   DCHECK(self);
   self->priority = priority;
 }
 
-void Cronet_UrlRequestParams_set_uploadDataProvider(
+void Cronet_UrlRequestParams_upload_data_provider_set(
     Cronet_UrlRequestParamsPtr self,
-    Cronet_UploadDataProviderPtr uploadDataProvider) {
+    const Cronet_UploadDataProviderPtr upload_data_provider) {
   DCHECK(self);
-  self->uploadDataProvider = uploadDataProvider;
+  self->upload_data_provider = upload_data_provider;
 }
 
-void Cronet_UrlRequestParams_set_uploadDataProviderExecutor(
+void Cronet_UrlRequestParams_upload_data_provider_executor_set(
     Cronet_UrlRequestParamsPtr self,
-    Cronet_ExecutorPtr uploadDataProviderExecutor) {
+    const Cronet_ExecutorPtr upload_data_provider_executor) {
   DCHECK(self);
-  self->uploadDataProviderExecutor = uploadDataProviderExecutor;
+  self->upload_data_provider_executor = upload_data_provider_executor;
 }
 
-void Cronet_UrlRequestParams_set_allowDirectExecutor(
+void Cronet_UrlRequestParams_allow_direct_executor_set(
     Cronet_UrlRequestParamsPtr self,
-    bool allowDirectExecutor) {
+    const bool allow_direct_executor) {
   DCHECK(self);
-  self->allowDirectExecutor = allowDirectExecutor;
+  self->allow_direct_executor = allow_direct_executor;
 }
 
-void Cronet_UrlRequestParams_add_annotations(Cronet_UrlRequestParamsPtr self,
-                                             RawDataPtr annotations) {
+void Cronet_UrlRequestParams_annotations_add(Cronet_UrlRequestParamsPtr self,
+                                             const Cronet_RawDataPtr element) {
   DCHECK(self);
-  self->annotations.push_back(annotations);
+  self->annotations.push_back(element);
+}
+
+void Cronet_UrlRequestParams_request_finished_listener_set(
+    Cronet_UrlRequestParamsPtr self,
+    const Cronet_RequestFinishedInfoListenerPtr request_finished_listener) {
+  DCHECK(self);
+  self->request_finished_listener = request_finished_listener;
+}
+
+void Cronet_UrlRequestParams_request_finished_executor_set(
+    Cronet_UrlRequestParamsPtr self,
+    const Cronet_ExecutorPtr request_finished_executor) {
+  DCHECK(self);
+  self->request_finished_executor = request_finished_executor;
 }
 
 // Struct Cronet_UrlRequestParams getters.
-CharString Cronet_UrlRequestParams_get_httpMethod(
-    Cronet_UrlRequestParamsPtr self) {
+Cronet_String Cronet_UrlRequestParams_http_method_get(
+    const Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
-  return self->httpMethod.c_str();
+  return self->http_method.c_str();
 }
 
-uint32_t Cronet_UrlRequestParams_get_requestHeadersSize(
+uint32_t Cronet_UrlRequestParams_request_headers_size(
     Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
-  return self->requestHeaders.size();
+  return self->request_headers.size();
 }
-Cronet_HttpHeaderPtr Cronet_UrlRequestParams_get_requestHeadersAtIndex(
-    Cronet_UrlRequestParamsPtr self,
+Cronet_HttpHeaderPtr Cronet_UrlRequestParams_request_headers_at(
+    const Cronet_UrlRequestParamsPtr self,
     uint32_t index) {
   DCHECK(self);
-  DCHECK(index < self->requestHeaders.size());
-  return self->requestHeaders[index].get();
+  DCHECK(index < self->request_headers.size());
+  return &(self->request_headers[index]);
 }
-
-bool Cronet_UrlRequestParams_get_disableCache(Cronet_UrlRequestParamsPtr self) {
-  DCHECK(self);
-  return self->disableCache;
-}
-
-Cronet_UrlRequestParams_REQUEST_PRIORITY Cronet_UrlRequestParams_get_priority(
+void Cronet_UrlRequestParams_request_headers_clear(
     Cronet_UrlRequestParamsPtr self) {
+  DCHECK(self);
+  self->request_headers.clear();
+}
+
+bool Cronet_UrlRequestParams_disable_cache_get(
+    const Cronet_UrlRequestParamsPtr self) {
+  DCHECK(self);
+  return self->disable_cache;
+}
+
+Cronet_UrlRequestParams_REQUEST_PRIORITY Cronet_UrlRequestParams_priority_get(
+    const Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
   return self->priority;
 }
 
-Cronet_UploadDataProviderPtr Cronet_UrlRequestParams_get_uploadDataProvider(
-    Cronet_UrlRequestParamsPtr self) {
+Cronet_UploadDataProviderPtr Cronet_UrlRequestParams_upload_data_provider_get(
+    const Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
-  return self->uploadDataProvider;
+  return self->upload_data_provider;
 }
 
-Cronet_ExecutorPtr Cronet_UrlRequestParams_get_uploadDataProviderExecutor(
-    Cronet_UrlRequestParamsPtr self) {
+Cronet_ExecutorPtr Cronet_UrlRequestParams_upload_data_provider_executor_get(
+    const Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
-  return self->uploadDataProviderExecutor;
+  return self->upload_data_provider_executor;
 }
 
-bool Cronet_UrlRequestParams_get_allowDirectExecutor(
-    Cronet_UrlRequestParamsPtr self) {
+bool Cronet_UrlRequestParams_allow_direct_executor_get(
+    const Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
-  return self->allowDirectExecutor;
+  return self->allow_direct_executor;
 }
 
-uint32_t Cronet_UrlRequestParams_get_annotationsSize(
+uint32_t Cronet_UrlRequestParams_annotations_size(
     Cronet_UrlRequestParamsPtr self) {
   DCHECK(self);
   return self->annotations.size();
 }
-RawDataPtr Cronet_UrlRequestParams_get_annotationsAtIndex(
-    Cronet_UrlRequestParamsPtr self,
+Cronet_RawDataPtr Cronet_UrlRequestParams_annotations_at(
+    const Cronet_UrlRequestParamsPtr self,
     uint32_t index) {
   DCHECK(self);
   DCHECK(index < self->annotations.size());
   return self->annotations[index];
+}
+void Cronet_UrlRequestParams_annotations_clear(
+    Cronet_UrlRequestParamsPtr self) {
+  DCHECK(self);
+  self->annotations.clear();
+}
+
+Cronet_RequestFinishedInfoListenerPtr
+Cronet_UrlRequestParams_request_finished_listener_get(
+    const Cronet_UrlRequestParamsPtr self) {
+  DCHECK(self);
+  return self->request_finished_listener;
+}
+
+Cronet_ExecutorPtr Cronet_UrlRequestParams_request_finished_executor_get(
+    const Cronet_UrlRequestParamsPtr self) {
+  DCHECK(self);
+  return self->request_finished_executor;
+}
+
+// Struct Cronet_DateTime.
+Cronet_DateTime::Cronet_DateTime() = default;
+
+Cronet_DateTime::Cronet_DateTime(const Cronet_DateTime& from) = default;
+
+Cronet_DateTime::Cronet_DateTime(Cronet_DateTime&& from) = default;
+
+Cronet_DateTime::~Cronet_DateTime() = default;
+
+Cronet_DateTimePtr Cronet_DateTime_Create() {
+  return new Cronet_DateTime();
+}
+
+void Cronet_DateTime_Destroy(Cronet_DateTimePtr self) {
+  delete self;
+}
+
+// Struct Cronet_DateTime setters.
+void Cronet_DateTime_value_set(Cronet_DateTimePtr self, const int64_t value) {
+  DCHECK(self);
+  self->value = value;
+}
+
+// Struct Cronet_DateTime getters.
+int64_t Cronet_DateTime_value_get(const Cronet_DateTimePtr self) {
+  DCHECK(self);
+  return self->value;
+}
+
+// Struct Cronet_Metrics.
+Cronet_Metrics::Cronet_Metrics() = default;
+
+Cronet_Metrics::Cronet_Metrics(const Cronet_Metrics& from) = default;
+
+Cronet_Metrics::Cronet_Metrics(Cronet_Metrics&& from) = default;
+
+Cronet_Metrics::~Cronet_Metrics() = default;
+
+Cronet_MetricsPtr Cronet_Metrics_Create() {
+  return new Cronet_Metrics();
+}
+
+void Cronet_Metrics_Destroy(Cronet_MetricsPtr self) {
+  delete self;
+}
+
+// Struct Cronet_Metrics setters.
+void Cronet_Metrics_request_start_set(Cronet_MetricsPtr self,
+                                      const Cronet_DateTimePtr request_start) {
+  DCHECK(self);
+  self->request_start.reset();
+  if (request_start != nullptr)
+    self->request_start.emplace(*request_start);
+}
+void Cronet_Metrics_request_start_move(Cronet_MetricsPtr self,
+                                       Cronet_DateTimePtr request_start) {
+  DCHECK(self);
+  self->request_start.reset();
+  if (request_start != nullptr)
+    self->request_start.emplace(std::move(*request_start));
+}
+
+void Cronet_Metrics_dns_start_set(Cronet_MetricsPtr self,
+                                  const Cronet_DateTimePtr dns_start) {
+  DCHECK(self);
+  self->dns_start.reset();
+  if (dns_start != nullptr)
+    self->dns_start.emplace(*dns_start);
+}
+void Cronet_Metrics_dns_start_move(Cronet_MetricsPtr self,
+                                   Cronet_DateTimePtr dns_start) {
+  DCHECK(self);
+  self->dns_start.reset();
+  if (dns_start != nullptr)
+    self->dns_start.emplace(std::move(*dns_start));
+}
+
+void Cronet_Metrics_dns_end_set(Cronet_MetricsPtr self,
+                                const Cronet_DateTimePtr dns_end) {
+  DCHECK(self);
+  self->dns_end.reset();
+  if (dns_end != nullptr)
+    self->dns_end.emplace(*dns_end);
+}
+void Cronet_Metrics_dns_end_move(Cronet_MetricsPtr self,
+                                 Cronet_DateTimePtr dns_end) {
+  DCHECK(self);
+  self->dns_end.reset();
+  if (dns_end != nullptr)
+    self->dns_end.emplace(std::move(*dns_end));
+}
+
+void Cronet_Metrics_connect_start_set(Cronet_MetricsPtr self,
+                                      const Cronet_DateTimePtr connect_start) {
+  DCHECK(self);
+  self->connect_start.reset();
+  if (connect_start != nullptr)
+    self->connect_start.emplace(*connect_start);
+}
+void Cronet_Metrics_connect_start_move(Cronet_MetricsPtr self,
+                                       Cronet_DateTimePtr connect_start) {
+  DCHECK(self);
+  self->connect_start.reset();
+  if (connect_start != nullptr)
+    self->connect_start.emplace(std::move(*connect_start));
+}
+
+void Cronet_Metrics_connect_end_set(Cronet_MetricsPtr self,
+                                    const Cronet_DateTimePtr connect_end) {
+  DCHECK(self);
+  self->connect_end.reset();
+  if (connect_end != nullptr)
+    self->connect_end.emplace(*connect_end);
+}
+void Cronet_Metrics_connect_end_move(Cronet_MetricsPtr self,
+                                     Cronet_DateTimePtr connect_end) {
+  DCHECK(self);
+  self->connect_end.reset();
+  if (connect_end != nullptr)
+    self->connect_end.emplace(std::move(*connect_end));
+}
+
+void Cronet_Metrics_ssl_start_set(Cronet_MetricsPtr self,
+                                  const Cronet_DateTimePtr ssl_start) {
+  DCHECK(self);
+  self->ssl_start.reset();
+  if (ssl_start != nullptr)
+    self->ssl_start.emplace(*ssl_start);
+}
+void Cronet_Metrics_ssl_start_move(Cronet_MetricsPtr self,
+                                   Cronet_DateTimePtr ssl_start) {
+  DCHECK(self);
+  self->ssl_start.reset();
+  if (ssl_start != nullptr)
+    self->ssl_start.emplace(std::move(*ssl_start));
+}
+
+void Cronet_Metrics_ssl_end_set(Cronet_MetricsPtr self,
+                                const Cronet_DateTimePtr ssl_end) {
+  DCHECK(self);
+  self->ssl_end.reset();
+  if (ssl_end != nullptr)
+    self->ssl_end.emplace(*ssl_end);
+}
+void Cronet_Metrics_ssl_end_move(Cronet_MetricsPtr self,
+                                 Cronet_DateTimePtr ssl_end) {
+  DCHECK(self);
+  self->ssl_end.reset();
+  if (ssl_end != nullptr)
+    self->ssl_end.emplace(std::move(*ssl_end));
+}
+
+void Cronet_Metrics_sending_start_set(Cronet_MetricsPtr self,
+                                      const Cronet_DateTimePtr sending_start) {
+  DCHECK(self);
+  self->sending_start.reset();
+  if (sending_start != nullptr)
+    self->sending_start.emplace(*sending_start);
+}
+void Cronet_Metrics_sending_start_move(Cronet_MetricsPtr self,
+                                       Cronet_DateTimePtr sending_start) {
+  DCHECK(self);
+  self->sending_start.reset();
+  if (sending_start != nullptr)
+    self->sending_start.emplace(std::move(*sending_start));
+}
+
+void Cronet_Metrics_sending_end_set(Cronet_MetricsPtr self,
+                                    const Cronet_DateTimePtr sending_end) {
+  DCHECK(self);
+  self->sending_end.reset();
+  if (sending_end != nullptr)
+    self->sending_end.emplace(*sending_end);
+}
+void Cronet_Metrics_sending_end_move(Cronet_MetricsPtr self,
+                                     Cronet_DateTimePtr sending_end) {
+  DCHECK(self);
+  self->sending_end.reset();
+  if (sending_end != nullptr)
+    self->sending_end.emplace(std::move(*sending_end));
+}
+
+void Cronet_Metrics_push_start_set(Cronet_MetricsPtr self,
+                                   const Cronet_DateTimePtr push_start) {
+  DCHECK(self);
+  self->push_start.reset();
+  if (push_start != nullptr)
+    self->push_start.emplace(*push_start);
+}
+void Cronet_Metrics_push_start_move(Cronet_MetricsPtr self,
+                                    Cronet_DateTimePtr push_start) {
+  DCHECK(self);
+  self->push_start.reset();
+  if (push_start != nullptr)
+    self->push_start.emplace(std::move(*push_start));
+}
+
+void Cronet_Metrics_push_end_set(Cronet_MetricsPtr self,
+                                 const Cronet_DateTimePtr push_end) {
+  DCHECK(self);
+  self->push_end.reset();
+  if (push_end != nullptr)
+    self->push_end.emplace(*push_end);
+}
+void Cronet_Metrics_push_end_move(Cronet_MetricsPtr self,
+                                  Cronet_DateTimePtr push_end) {
+  DCHECK(self);
+  self->push_end.reset();
+  if (push_end != nullptr)
+    self->push_end.emplace(std::move(*push_end));
+}
+
+void Cronet_Metrics_response_start_set(
+    Cronet_MetricsPtr self,
+    const Cronet_DateTimePtr response_start) {
+  DCHECK(self);
+  self->response_start.reset();
+  if (response_start != nullptr)
+    self->response_start.emplace(*response_start);
+}
+void Cronet_Metrics_response_start_move(Cronet_MetricsPtr self,
+                                        Cronet_DateTimePtr response_start) {
+  DCHECK(self);
+  self->response_start.reset();
+  if (response_start != nullptr)
+    self->response_start.emplace(std::move(*response_start));
+}
+
+void Cronet_Metrics_request_end_set(Cronet_MetricsPtr self,
+                                    const Cronet_DateTimePtr request_end) {
+  DCHECK(self);
+  self->request_end.reset();
+  if (request_end != nullptr)
+    self->request_end.emplace(*request_end);
+}
+void Cronet_Metrics_request_end_move(Cronet_MetricsPtr self,
+                                     Cronet_DateTimePtr request_end) {
+  DCHECK(self);
+  self->request_end.reset();
+  if (request_end != nullptr)
+    self->request_end.emplace(std::move(*request_end));
+}
+
+void Cronet_Metrics_socket_reused_set(Cronet_MetricsPtr self,
+                                      const bool socket_reused) {
+  DCHECK(self);
+  self->socket_reused = socket_reused;
+}
+
+void Cronet_Metrics_sent_byte_count_set(Cronet_MetricsPtr self,
+                                        const int64_t sent_byte_count) {
+  DCHECK(self);
+  self->sent_byte_count = sent_byte_count;
+}
+
+void Cronet_Metrics_received_byte_count_set(Cronet_MetricsPtr self,
+                                            const int64_t received_byte_count) {
+  DCHECK(self);
+  self->received_byte_count = received_byte_count;
+}
+
+// Struct Cronet_Metrics getters.
+Cronet_DateTimePtr Cronet_Metrics_request_start_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->request_start == base::nullopt)
+    return nullptr;
+  return &self->request_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_dns_start_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->dns_start == base::nullopt)
+    return nullptr;
+  return &self->dns_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_dns_end_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->dns_end == base::nullopt)
+    return nullptr;
+  return &self->dns_end.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_connect_start_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->connect_start == base::nullopt)
+    return nullptr;
+  return &self->connect_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_connect_end_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->connect_end == base::nullopt)
+    return nullptr;
+  return &self->connect_end.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_ssl_start_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->ssl_start == base::nullopt)
+    return nullptr;
+  return &self->ssl_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_ssl_end_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->ssl_end == base::nullopt)
+    return nullptr;
+  return &self->ssl_end.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_sending_start_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->sending_start == base::nullopt)
+    return nullptr;
+  return &self->sending_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_sending_end_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->sending_end == base::nullopt)
+    return nullptr;
+  return &self->sending_end.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_push_start_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->push_start == base::nullopt)
+    return nullptr;
+  return &self->push_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_push_end_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->push_end == base::nullopt)
+    return nullptr;
+  return &self->push_end.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_response_start_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->response_start == base::nullopt)
+    return nullptr;
+  return &self->response_start.value();
+}
+
+Cronet_DateTimePtr Cronet_Metrics_request_end_get(
+    const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  if (self->request_end == base::nullopt)
+    return nullptr;
+  return &self->request_end.value();
+}
+
+bool Cronet_Metrics_socket_reused_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  return self->socket_reused;
+}
+
+int64_t Cronet_Metrics_sent_byte_count_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  return self->sent_byte_count;
+}
+
+int64_t Cronet_Metrics_received_byte_count_get(const Cronet_MetricsPtr self) {
+  DCHECK(self);
+  return self->received_byte_count;
+}
+
+// Struct Cronet_RequestFinishedInfo.
+Cronet_RequestFinishedInfo::Cronet_RequestFinishedInfo() = default;
+
+Cronet_RequestFinishedInfo::Cronet_RequestFinishedInfo(
+    const Cronet_RequestFinishedInfo& from) = default;
+
+Cronet_RequestFinishedInfo::Cronet_RequestFinishedInfo(
+    Cronet_RequestFinishedInfo&& from) = default;
+
+Cronet_RequestFinishedInfo::~Cronet_RequestFinishedInfo() = default;
+
+Cronet_RequestFinishedInfoPtr Cronet_RequestFinishedInfo_Create() {
+  return new Cronet_RequestFinishedInfo();
+}
+
+void Cronet_RequestFinishedInfo_Destroy(Cronet_RequestFinishedInfoPtr self) {
+  delete self;
+}
+
+// Struct Cronet_RequestFinishedInfo setters.
+void Cronet_RequestFinishedInfo_metrics_set(Cronet_RequestFinishedInfoPtr self,
+                                            const Cronet_MetricsPtr metrics) {
+  DCHECK(self);
+  self->metrics.reset();
+  if (metrics != nullptr)
+    self->metrics.emplace(*metrics);
+}
+void Cronet_RequestFinishedInfo_metrics_move(Cronet_RequestFinishedInfoPtr self,
+                                             Cronet_MetricsPtr metrics) {
+  DCHECK(self);
+  self->metrics.reset();
+  if (metrics != nullptr)
+    self->metrics.emplace(std::move(*metrics));
+}
+
+void Cronet_RequestFinishedInfo_annotations_add(
+    Cronet_RequestFinishedInfoPtr self,
+    const Cronet_RawDataPtr element) {
+  DCHECK(self);
+  self->annotations.push_back(element);
+}
+
+void Cronet_RequestFinishedInfo_finished_reason_set(
+    Cronet_RequestFinishedInfoPtr self,
+    const Cronet_RequestFinishedInfo_FINISHED_REASON finished_reason) {
+  DCHECK(self);
+  self->finished_reason = finished_reason;
+}
+
+// Struct Cronet_RequestFinishedInfo getters.
+Cronet_MetricsPtr Cronet_RequestFinishedInfo_metrics_get(
+    const Cronet_RequestFinishedInfoPtr self) {
+  DCHECK(self);
+  if (self->metrics == base::nullopt)
+    return nullptr;
+  return &self->metrics.value();
+}
+
+uint32_t Cronet_RequestFinishedInfo_annotations_size(
+    Cronet_RequestFinishedInfoPtr self) {
+  DCHECK(self);
+  return self->annotations.size();
+}
+Cronet_RawDataPtr Cronet_RequestFinishedInfo_annotations_at(
+    const Cronet_RequestFinishedInfoPtr self,
+    uint32_t index) {
+  DCHECK(self);
+  DCHECK(index < self->annotations.size());
+  return self->annotations[index];
+}
+void Cronet_RequestFinishedInfo_annotations_clear(
+    Cronet_RequestFinishedInfoPtr self) {
+  DCHECK(self);
+  self->annotations.clear();
+}
+
+Cronet_RequestFinishedInfo_FINISHED_REASON
+Cronet_RequestFinishedInfo_finished_reason_get(
+    const Cronet_RequestFinishedInfoPtr self) {
+  DCHECK(self);
+  return self->finished_reason;
 }

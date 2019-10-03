@@ -10,14 +10,16 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/biod/constants.pb.h"
-#include "chromeos/dbus/dbus_client.h"
-#include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
+
+namespace dbus {
+class Bus;
+}
 
 namespace chromeos {
 
@@ -30,7 +32,7 @@ using AuthScanMatches =
 
 // BiodClient is used to communicate with a biod D-Bus manager
 // interface.
-class CHROMEOS_EXPORT BiodClient : public DBusClient {
+class COMPONENT_EXPORT(BIOD_CLIENT) BiodClient {
  public:
   // Interface for observing changes from the biometrics manager.
   class Observer {
@@ -49,7 +51,7 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
 
     // Called when an authentication scan is performed. If the scan is
     // successful, |matches| will equal all the enrollment IDs that match the
-    // scan, and the labels of the matched fingeprints.
+    // scan, and the labels of the matched fingerprints.
     virtual void BiodAuthScanDoneReceived(biod::ScanResult scan_result,
                                           const AuthScanMatches& matches) {}
 
@@ -62,7 +64,17 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
     virtual ~Observer() {}
   };
 
-  ~BiodClient() override;
+  // Creates and initializes the global instance. |bus| must not be null.
+  static void Initialize(dbus::Bus* bus);
+
+  // Creates and initializes a fake global instance if not already created.
+  static void InitializeFake();
+
+  // Destroys the global instance which must have been initialized.
+  static void Shutdown();
+
+  // Returns the global instance if initialized. May return null.
+  static BiodClient* Get();
 
   // Adds and removes the observer.
   virtual void AddObserver(Observer* observer) = 0;
@@ -75,14 +87,14 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
   // one argument which contains a list of the stored records' object paths for
   // a given user.
   using UserRecordsCallback =
-      base::Callback<void(const std::vector<dbus::ObjectPath>&)>;
+      base::OnceCallback<void(const std::vector<dbus::ObjectPath>&)>;
 
   // BiometricTypeCallback is used for the GetType method. It receives
   // one argument which states the type of biometric.
-  using BiometricTypeCallback = base::Callback<void(uint32_t)>;
+  using BiometricTypeCallback = base::OnceCallback<void(biod::BiometricType)>;
 
   // LabelCallback is for the RequestRecordLabel method.
-  using LabelCallback = base::Callback<void(const std::string& label)>;
+  using LabelCallback = base::OnceCallback<void(const std::string& label)>;
 
   // Starts the biometric enroll session. |callback| is called with the object
   // path of the current enroll session after the method succeeds. |user_id|
@@ -97,7 +109,7 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
   // succeeds. |user_id| contains the unique identifier for the owner of the
   // biometric.
   virtual void GetRecordsForUser(const std::string& user_id,
-                                 const UserRecordsCallback& callback) = 0;
+                                 UserRecordsCallback callback) = 0;
 
   // Irreversibly destroys all records registered. |callback| is called
   // asynchronously with the result.
@@ -109,7 +121,7 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
 
   // Requests the type of biometric. |callback| is called with the biometric
   // type after the method succeeds.
-  virtual void RequestType(const BiometricTypeCallback& callback) = 0;
+  virtual void RequestType(BiometricTypeCallback callback) = 0;
 
   // Cancels the enroll session.
   // |callback| is called asynchronously with the result.
@@ -134,16 +146,14 @@ class CHROMEOS_EXPORT BiodClient : public DBusClient {
   // Requests the label of the record at |record_path|. |callback| is called
   // with the label of the record.
   virtual void RequestRecordLabel(const dbus::ObjectPath& record_path,
-                                  const LabelCallback& callback) = 0;
-
-  // Creates the instance.
-  static BiodClient* Create(DBusClientImplementationType type);
+                                  LabelCallback callback) = 0;
 
  protected:
   friend class BiodClientTest;
 
-  // Create() should be used instead.
+  // Initialize/Shutdown should be used instead.
   BiodClient();
+  virtual ~BiodClient();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BiodClient);

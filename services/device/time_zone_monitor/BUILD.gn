@@ -29,7 +29,7 @@ source_set("time_zone_monitor") {
   ]
 
   public_deps = [
-    "//services/device/public/interfaces",
+    "//services/device/public/mojom",
   ]
 
   if (is_android) {
@@ -41,7 +41,7 @@ source_set("time_zone_monitor") {
   }
 
   if (is_chromeos) {
-    deps += [ "//chromeos" ]
+    deps += [ "//chromeos/settings" ]
   }
 
   if (is_mac) {
@@ -51,6 +51,10 @@ source_set("time_zone_monitor") {
   if (is_fuchsia) {
     sources += [ "time_zone_monitor_fuchsia.cc" ]
   }
+
+  if (is_chromecast) {
+    defines = [ "IS_CHROMECAST" ]
+  }
 }
 
 if (is_android) {
@@ -59,7 +63,6 @@ if (is_android) {
     sources = [
       "android/java/src/org/chromium/device/time_zone_monitor/TimeZoneMonitor.java",
     ]
-    jni_package = "time_zone_monitor"
   }
 
   android_library("java") {

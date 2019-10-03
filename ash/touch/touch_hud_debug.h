@@ -18,16 +18,16 @@
 namespace views {
 class Label;
 class View;
-}
+}  // namespace views
 
 namespace ash {
 class TouchHudCanvas;
 class TouchLog;
 
 // A heads-up display to show touch traces on the screen and log touch events.
-// As a derivative of TouchObserverHUD, objects of this class manage their own
+// As a derivative of TouchObserverHud, objects of this class manage their own
 // lifetime.
-class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
+class ASH_EXPORT TouchHudDebug : public TouchObserverHud {
  public:
   enum Mode {
     FULLSCREEN,
@@ -51,7 +51,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   Mode mode() const { return mode_; }
 
-  // Overriden from TouchObserverHUD.
+  // TouchObserverHud:
   void Clear() override;
 
  private:
@@ -61,7 +61,7 @@ class ASH_EXPORT TouchHudDebug : public TouchObserverHUD {
 
   void UpdateTouchPointLabel(int index);
 
-  // Overriden from TouchObserverHUD.
+  // TouchObserverHud:
   void OnTouchEvent(ui::TouchEvent* event) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;

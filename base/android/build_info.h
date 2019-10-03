@@ -31,14 +31,13 @@ enum SdkVersion {
   SDK_VERSION_NOUGAT = 24,
   SDK_VERSION_NOUGAT_MR1 = 25,
   SDK_VERSION_OREO = 26,
+  SDK_VERSION_O_MR1 = 27,
+  SDK_VERSION_P = 28,
 };
 
 // BuildInfo is a singleton class that stores android build and device
 // information. It will be called from Android specific code and gets used
 // primarily in crash reporting.
-
-// It is also used to store the last java exception seen during JNI.
-// TODO(nileshagrawal): Find a better place to store this info.
 class BASE_EXPORT BuildInfo {
  public:
 
@@ -82,6 +81,12 @@ class BASE_EXPORT BuildInfo {
     return gms_version_code_;
   }
 
+  const char* host_package_name() const { return host_package_name_; }
+
+  const char* host_version_code() const { return host_version_code_; }
+
+  const char* host_package_label() const { return host_package_label_; }
+
   const char* package_version_code() const {
     return package_version_code_;
   }
@@ -90,17 +95,22 @@ class BASE_EXPORT BuildInfo {
     return package_version_name_;
   }
 
-  const char* package_label() const {
-    return package_label_;
-  }
-
   const char* package_name() const {
     return package_name_;
   }
 
+  // Will be empty string if no app id is assigned.
+  const char* firebase_app_id() const { return firebase_app_id_; }
+
+  const char* custom_themes() const { return custom_themes_; }
+
+  const char* resources_version() const { return resources_version_; }
+
   const char* build_type() const {
     return build_type_;
   }
+
+  const char* board() const { return board_; }
 
   const char* installer_package_name() const { return installer_package_name_; }
 
@@ -112,13 +122,9 @@ class BASE_EXPORT BuildInfo {
     return sdk_int_;
   }
 
-  const char* java_exception_info() const {
-    return java_exception_info_;
-  }
+  bool is_at_least_q() const { return is_at_least_q_; }
 
-  void SetJavaExceptionInfo(const std::string& info);
-
-  void ClearJavaExceptionInfo();
+  bool is_debug_android() const { return is_debug_android_; }
 
  private:
   friend struct BuildInfoSingletonTraits;
@@ -136,7 +142,10 @@ class BASE_EXPORT BuildInfo {
   const char* const model_;
   const int sdk_int_;
   const char* const build_type_;
-  const char* const package_label_;
+  const char* const board_;
+  const char* const host_package_name_;
+  const char* const host_version_code_;
+  const char* const host_package_label_;
   const char* const package_name_;
   const char* const package_version_code_;
   const char* const package_version_name_;
@@ -144,10 +153,13 @@ class BASE_EXPORT BuildInfo {
   const char* const gms_version_code_;
   const char* const installer_package_name_;
   const char* const abi_name_;
+  const char* const firebase_app_id_;
+  const char* const custom_themes_;
+  const char* const resources_version_;
   // Not needed by breakpad.
   const std::string extracted_file_suffix_;
-  // This is set via set_java_exception_info, not at constructor time.
-  const char* java_exception_info_;
+  const bool is_at_least_q_;
+  const bool is_debug_android_;
 
   DISALLOW_COPY_AND_ASSIGN(BuildInfo);
 };

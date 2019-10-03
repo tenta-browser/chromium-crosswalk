@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_VARIATIONS_CLIENT_FILTERABLE_STATE_H_
 #define COMPONENTS_VARIATIONS_CLIENT_FILTERABLE_STATE_H_
 
+#include <string>
+
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "base/version.h"
@@ -12,7 +14,7 @@
 
 namespace variations {
 
-// A contianer for all of the client state which is used for filtering studies.
+// A container for all of the client state which is used for filtering studies.
 struct ClientFilterableState {
   static Study::Platform GetCurrentPlatform();
 
@@ -27,6 +29,10 @@ struct ClientFilterableState {
 
   // The Chrome version to filter on.
   base::Version version;
+
+  // The OS version to filter on. See |min_os_version| in study.proto for
+  // details.
+  base::Version os_version;
 
   // The Channel for this Chrome installation.
   Study::Channel channel;

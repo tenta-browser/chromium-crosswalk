@@ -31,14 +31,16 @@ class DevToolsDeviceDiscovery {
 
     RemotePage(scoped_refptr<AndroidDeviceManager::Device> device,
                const std::string& browser_id,
-               const base::DictionaryValue& dict);
+               const std::string& browser_version,
+               base::Value dict);
 
     virtual ~RemotePage();
 
     scoped_refptr<AndroidDeviceManager::Device> device_;
     std::string browser_id_;
+    std::string browser_version_;
     std::string frontend_url_;
-    std::unique_ptr<base::DictionaryValue> dict_;
+    base::Value dict_;
     scoped_refptr<content::DevToolsAgentHost> agent_host_;
 
     DISALLOW_COPY_AND_ASSIGN(RemotePage);
@@ -139,7 +141,7 @@ class DevToolsDeviceDiscovery {
   AndroidDeviceManager* device_manager_;
   const DeviceListCallback callback_;
   base::Callback<void(const base::Closure&)> task_scheduler_;
-  base::WeakPtrFactory<DevToolsDeviceDiscovery> weak_factory_;
+  base::WeakPtrFactory<DevToolsDeviceDiscovery> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsDeviceDiscovery);
 };

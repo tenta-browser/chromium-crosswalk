@@ -6,134 +6,116 @@
 #define CONTENT_SHELL_TEST_RUNNER_WEB_WIDGET_TEST_PROXY_H_
 
 #include <memory>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "content/renderer/render_widget.h"
+#include "content/shell/test_runner/event_sender.h"
 #include "content/shell/test_runner/test_runner_export.h"
-#include "content/shell/test_runner/web_widget_test_client.h"
-#include "third_party/WebKit/public/web/WebWidgetClient.h"
+#include "third_party/blink/public/web/web_widget_client.h"
 
 namespace blink {
 class WebLocalFrame;
 class WebString;
-class WebWidget;
+}
+
+namespace content {
+class RenderViewImpl;
 }
 
 namespace test_runner {
 
+class TestRunner;
+class TestRunnerForSpecificView;
 class EventSender;
-class WebViewTestProxyBase;
+class WebViewTestProxy;
 
-class TEST_RUNNER_EXPORT WebWidgetTestProxyBase {
+// WebWidgetTestProxy is used to run web tests. This class is a partial fake
+// implementation of RenderWidget that overrides the minimal necessary portions
+// of RenderWidget to allow for use in web tests.
+//
+// This method of injecting test functionality is an outgrowth of legacy.
+// In particular, classic dependency injection does not work easily
+// because the RenderWidget class is too large with too much entangled
+// stated, and complex creation (subclass using heavy implementation
+// inheritance, multiple modes of operation for frames/popups/fullscreen, etc)
+// making it hard to factor our creation points for injection.
+//
+// While implementing a fake via partial overriding of a class leads to
+// a fragile base class problem and implicit coupling of the test code
+// and production code, it is the most viable mechanism available with a huge
+// refactor.
+//
+// Historically, the overridden functionality has been small enough to not
+// cause too much trouble. If that changes, then this entire testing
+// architecture should be revisited.
+class TEST_RUNNER_EXPORT WebWidgetTestProxy : public content::RenderWidget {
  public:
-  blink::WebWidget* web_widget() { return web_widget_; }
-  void set_web_widget(blink::WebWidget* widget) {
-    DCHECK(widget);
-    DCHECK(!web_widget_);
-    web_widget_ = widget;
-  }
+  template <typename... Args>
+  explicit WebWidgetTestProxy(Args&&... args)
+      : RenderWidget(std::forward<Args>(args)...) {}
 
-  void set_widget_test_client(
-      std::unique_ptr<WebWidgetTestClient> widget_test_client) {
-    DCHECK(widget_test_client);
-    DCHECK(!widget_test_client_);
-    widget_test_client_ = std::move(widget_test_client);
-  }
+  // RenderWidget overrides.
+  void BeginMainFrame(base::TimeTicks frame_time) override;
+  void RequestDecode(const cc::PaintImage& image,
+                     base::OnceCallback<void(bool)> callback) override;
+  void RequestPresentation(PresentationTimeCallback callback) override;
 
-  WebViewTestProxyBase* web_view_test_proxy_base() const {
-    return web_view_test_proxy_base_;
-  }
-  void set_web_view_test_proxy_base(
-      WebViewTestProxyBase* web_view_test_proxy_base) {
-    DCHECK(web_view_test_proxy_base);
-    DCHECK(!web_view_test_proxy_base_);
-    web_view_test_proxy_base_ = web_view_test_proxy_base;
-  }
+  // WebWidgetClient implementation.
+  void ScheduleAnimation() override;
+  bool RequestPointerLock(blink::WebLocalFrame* requester_frame) override;
+  void RequestPointerUnlock() override;
+  bool IsPointerLocked() override;
+  void SetToolTipText(const blink::WebString& text,
+                      blink::WebTextDirection hint) override;
+  void StartDragging(network::mojom::ReferrerPolicy policy,
+                     const blink::WebDragData& data,
+                     blink::WebDragOperationsMask mask,
+                     const SkBitmap& drag_image,
+                     const gfx::Point& image_offset) override;
 
-  EventSender* event_sender() { return event_sender_.get(); }
+  // In the test runner code, it can be expected that the RenderViewImpl will
+  // actually be a WebViewTestProxy as the creation of RenderView/Frame/Widget
+  // are all hooked at the same time to provide a consistent set of fake
+  // objects.
+  WebViewTestProxy* GetWebViewTestProxy();
 
+  EventSender* event_sender() { return &event_sender_; }
   void Reset();
   void BindTo(blink::WebLocalFrame* frame);
 
- protected:
-  WebWidgetTestProxyBase();
-  ~WebWidgetTestProxyBase();
+  void EndSyntheticGestures();
 
-  blink::WebWidgetClient* widget_test_client() {
-    return widget_test_client_.get();
-  }
-
- private:
-  blink::WebWidget* web_widget_;
-  WebViewTestProxyBase* web_view_test_proxy_base_;
-  std::unique_ptr<WebWidgetTestClient> widget_test_client_;
-  std::unique_ptr<EventSender> event_sender_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebWidgetTestProxyBase);
-};
-
-// WebWidgetTestProxy is used during LayoutTests and always instantiated, at
-// time of writing with Base=RenderWidget. It does not directly inherit from it
-// for layering purposes.
-// The intent of that class is to wrap RenderWidget for tests purposes in
-// order to reduce the amount of test specific code in the production code.
-// WebWidgetTestProxy is only doing the glue between RenderWidget and
-// WebWidgetTestProxyBase, that means that there is no logic living in this
-// class except deciding which base class should be called (could be both).
-//
-// Examples of usage:
-//  * when a fooClient has a mock implementation, WebWidgetTestProxy can
-//    override the fooClient() call and have WebWidgetTestProxyBase return the
-//    mock implementation.
-//  * when a value needs to be overridden by LayoutTests, WebWidgetTestProxy can
-//    override RenderViewImpl's getter and call a getter from
-//    WebWidgetTestProxyBase instead. In addition, WebWidgetTestProxyBase will
-//    have a public setter that could be called from the TestRunner.
-template <class Base, typename... Args>
-class WebWidgetTestProxy : public Base, public WebWidgetTestProxyBase {
- public:
-  explicit WebWidgetTestProxy(Args... args) : Base(args...) {}
-
-  // WebWidgetClient implementation.
-  blink::WebScreenInfo GetScreenInfo() override {
-    blink::WebScreenInfo info = Base::GetScreenInfo();
-    blink::WebScreenInfo test_info = widget_test_client()->GetScreenInfo();
-    if (test_info.orientation_type != blink::kWebScreenOrientationUndefined) {
-      info.orientation_type = test_info.orientation_type;
-      info.orientation_angle = test_info.orientation_angle;
-    }
-    return info;
-  }
-  void ScheduleAnimation() override {
-    Base::ScheduleAnimation();
-    widget_test_client()->ScheduleAnimation();
-  }
-  bool RequestPointerLock() override {
-    return widget_test_client()->RequestPointerLock();
-  }
-  void RequestPointerUnlock() override {
-    widget_test_client()->RequestPointerUnlock();
-  }
-  bool IsPointerLocked() override {
-    return widget_test_client()->IsPointerLocked();
-  }
-  void SetToolTipText(const blink::WebString& text,
-                      blink::WebTextDirection hint) override {
-    Base::SetToolTipText(text, hint);
-    widget_test_client()->SetToolTipText(text, hint);
-  }
-  void StartDragging(blink::WebReferrerPolicy policy,
-                     const blink::WebDragData& data,
-                     blink::WebDragOperationsMask mask,
-                     const blink::WebImage& image,
-                     const blink::WebPoint& point) override {
-    widget_test_client()->StartDragging(policy, data, mask, image, point);
-    // Don't forward this call to Base because we don't want to do a real
-    // drag-and-drop.
-  }
+  // When |do_raster| is false, only a main frame animation step is performed,
+  // but when true, a full composite is performed and a frame submitted to the
+  // display compositor if there is any damage.
+  void SynchronouslyComposite(bool do_raster);
 
  private:
-  virtual ~WebWidgetTestProxy() {}
+  // RenderWidget does not have a public destructor.
+  ~WebWidgetTestProxy() override;
+
+  TestRunnerForSpecificView* GetViewTestRunner();
+  TestRunner* GetTestRunner();
+
+  void ScheduleAnimationInternal(bool do_raster);
+  void AnimateNow();
+
+  EventSender event_sender_{this};
+
+  // For collapsing multiple simulated ScheduleAnimation() calls.
+  bool animation_scheduled_ = false;
+  // When true, an AnimateNow() is scheduled that will perform a full composite.
+  // Otherwise, any scheduled AnimateNow() calls will only perform the animation
+  // step, which calls out to blink but doesn't composite for performance
+  // reasons. See setAnimationRequiresRaster() in
+  // https://chromium.googlesource.com/chromium/src/+/master/docs/testing/writing_web_tests.md
+  // for details on the optimization.
+  bool composite_requested_ = false;
+
+  base::WeakPtrFactory<WebWidgetTestProxy> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebWidgetTestProxy);
 };

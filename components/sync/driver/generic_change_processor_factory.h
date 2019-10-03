@@ -15,7 +15,6 @@
 namespace syncer {
 
 class GenericChangeProcessor;
-class SyncClient;
 class SyncMergeResult;
 class SyncableService;
 struct UserShare;
@@ -27,8 +26,6 @@ struct UserShare;
 // The GCP is created "on the fly" at just the right time, on just the right
 // thread. Given that, we use a factory to instantiate GenericChangeProcessors
 // so that tests can choose to use a fake processor (i.e instead of injection).
-// |sync_factory| is used to create AttachmentServicefor GenericChangeProcessor.
-// It is not retained after CreateGenericChangeProcessor exits.
 class GenericChangeProcessorFactory {
  public:
   GenericChangeProcessorFactory();
@@ -38,8 +35,7 @@ class GenericChangeProcessorFactory {
       UserShare* user_share,
       std::unique_ptr<DataTypeErrorHandler> error_handler,
       const base::WeakPtr<SyncableService>& local_service,
-      const base::WeakPtr<SyncMergeResult>& merge_result,
-      SyncClient* sync_client);
+      const base::WeakPtr<SyncMergeResult>& merge_result);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GenericChangeProcessorFactory);

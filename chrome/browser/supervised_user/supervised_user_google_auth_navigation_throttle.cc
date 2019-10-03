@@ -4,13 +4,16 @@
 
 #include "chrome/browser/supervised_user/supervised_user_google_auth_navigation_throttle.h"
 
+#include "base/bind.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service_factory.h"
-#include "components/google/core/browser/google_util.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/google/core/common/google_util.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 
@@ -36,12 +39,12 @@ SupervisedUserGoogleAuthNavigationThrottle::
         Profile* profile,
         content::NavigationHandle* navigation_handle)
     : content::NavigationThrottle(navigation_handle),
-      child_account_service_(
-          ChildAccountServiceFactory::GetForProfile(profile)),
+      child_account_service_(ChildAccountServiceFactory::GetForProfile(profile))
 #if defined(OS_ANDROID)
-      has_shown_reauth_(false),
+      ,
+      has_shown_reauth_(false)
 #endif
-      weak_ptr_factory_(this) {
+{
 }
 
 SupervisedUserGoogleAuthNavigationThrottle::
@@ -119,19 +122,20 @@ SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed() {
   if (authStatus == ChildAccountService::AuthState::PENDING)
     return content::NavigationThrottle::DEFER;
 
-#if !defined(OS_ANDROID)
-  // TODO(bauerb): Show a reauthentication dialog.
-  return content::NavigationThrottle::CANCEL_AND_IGNORE;
-#else
+#if defined(OS_CHROMEOS)
+  // A credentials re-mint is already underway when we reach here (Mirror
+  // account reconciliation). Nothing to do here except block the navigation
+  // while re-minting is underway.
+  return content::NavigationThrottle::DEFER;
+#elif defined(OS_ANDROID)
   if (!has_shown_reauth_) {
     has_shown_reauth_ = true;
 
     content::WebContents* web_contents = navigation_handle()->GetWebContents();
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
-    SigninManager* signin_manager =
-        SigninManagerFactory::GetForProfile(profile);
-    AccountInfo account_info = signin_manager->GetAuthenticatedAccountInfo();
+    auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+    CoreAccountInfo account_info = identity_manager->GetPrimaryAccountInfo();
     ReauthenticateChildAccount(
         web_contents, account_info.email,
         base::Bind(&SupervisedUserGoogleAuthNavigationThrottle::
@@ -139,6 +143,12 @@ SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed() {
                    weak_ptr_factory_.GetWeakPtr()));
   }
   return content::NavigationThrottle::DEFER;
+#else
+  NOTREACHED();
+
+  // This should never happen but needs to be included to avoid compilation
+  // error on debug builds.
+  return content::NavigationThrottle::CANCEL_AND_IGNORE;
 #endif
 }
 

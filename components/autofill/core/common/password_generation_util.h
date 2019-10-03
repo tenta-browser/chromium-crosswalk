@@ -5,7 +5,11 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_PASSWORD_GENERATION_UTIL_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_PASSWORD_GENERATION_UTIL_H_
 
+#include "components/autofill/core/common/password_form.h"
+#include "ui/gfx/geometry/rect_f.h"
+
 namespace autofill {
+
 namespace password_generation {
 
 // Enumerates various events related to the password generation process.
@@ -58,8 +62,7 @@ enum PasswordGenerationEvent {
   // User focused the password field containing the generated password.
   EDITING_POPUP_SHOWN,
 
-  // Generation enabled because autocomplete attributes for username and
-  // new-password are set.
+  // Generation enabled because autocomplete attributes for new-password is set.
   AUTOCOMPLETE_ATTRIBUTES_ENABLED_GENERATION,
 
   // Generation is triggered by the user from the context menu.
@@ -68,8 +71,19 @@ enum PasswordGenerationEvent {
   // Context menu with generation item was shown.
   PASSWORD_GENERATION_CONTEXT_MENU_SHOWN,
 
+  // The generated password was removed from the field because a credential
+  // was autofilled.
+  PASSWORD_DELETED_BY_AUTOFILLING,
+
   // Number of enum entries, used for UMA histogram reporting macros.
   EVENT_ENUM_COUNT
+};
+
+enum class PasswordGenerationType {
+  // The user was automatically shown the possibility to generate a password.
+  kAutomatic,
+  // The user had to manually request password generation.
+  kManual
 };
 
 // Wrapper to store the user interactions with the password generation bubble.
@@ -90,32 +104,42 @@ struct PasswordGenerationActions {
   ~PasswordGenerationActions();
 };
 
-void LogUserActions(PasswordGenerationActions actions);
+struct PasswordGenerationUIData {
+  PasswordGenerationUIData(const gfx::RectF& bounds,
+                           int max_length,
+                           const base::string16& generation_element,
+                           uint32_t generation_element_id,
+                           base::i18n::TextDirection text_direction,
+                           const autofill::PasswordForm& password_form);
+  PasswordGenerationUIData();
+  PasswordGenerationUIData(const PasswordGenerationUIData& rhs);
+  PasswordGenerationUIData(PasswordGenerationUIData&& rhs);
+  PasswordGenerationUIData& operator=(const PasswordGenerationUIData& rhs);
+  PasswordGenerationUIData& operator=(PasswordGenerationUIData&& rhs);
+  ~PasswordGenerationUIData();
+
+  // Location at which to display a popup if needed. This location is specified
+  // in the renderer's coordinate system. The popup will be anchored at
+  // |bounds|.
+  gfx::RectF bounds;
+
+  // Maximum length of the generated password.
+  int max_length;
+
+  // Name of the password field to which the generation popup is attached.
+  base::string16 generation_element;
+
+  // Renderer ID of the generation element.
+  uint32_t generation_element_id;
+
+  // Direction of the text for |generation_element|.
+  base::i18n::TextDirection text_direction;
+
+  // The form associated with the password field.
+  autofill::PasswordForm password_form;
+};
 
 void LogPasswordGenerationEvent(PasswordGenerationEvent event);
-
-// Enumerates user actions after password generation bubble is shown.
-// These are visible for testing purposes.
-enum UserAction {
-  // User closes the bubble without any meaningful actions (e.g. use backspace
-  // key, close the bubble, click outside the bubble, etc).
-  IGNORE_FEATURE,
-
-  // User navigates to the learn more page. Note that in the current
-  // implementation this will result in closing the bubble so this action
-  // doesn't overlap with the following two actions.
-  LEARN_MORE,
-
-  // User accepts the generated password without manually editing it (but
-  // including changing it through the regenerate button).
-  ACCEPT_ORIGINAL_PASSWORD,
-
-  // User accepts the gererated password after manually editing it.
-  ACCEPT_AFTER_EDITING,
-
-  // Number of enum entries, used for UMA histogram reporting macros.
-  ACTION_ENUM_COUNT
-};
 
 // Returns true if Password Generation is enabled according to the field
 // trial result and the flags.

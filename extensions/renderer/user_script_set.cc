@@ -24,8 +24,8 @@
 #include "extensions/renderer/script_injection.h"
 #include "extensions/renderer/user_script_injector.h"
 #include "extensions/renderer/web_ui_injection_host.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -93,33 +93,35 @@ void UserScriptSet::GetInjections(
   }
 }
 
-bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
-                                      const std::set<HostID>& changed_hosts,
-                                      bool whitelisted_only) {
+bool UserScriptSet::UpdateUserScripts(
+    base::ReadOnlySharedMemoryRegion shared_memory,
+    const std::set<HostID>& changed_hosts,
+    bool whitelisted_only) {
   bool only_inject_incognito =
       ExtensionsRendererClient::Get()->IsIncognitoProcess();
 
-  // Create the shared memory object (read only).
-  shared_memory_.reset(new base::SharedMemory(shared_memory, true));
-  if (!shared_memory_.get())
+  // Create the shared memory mapping.
+  shared_memory_mapping_ = shared_memory.Map();
+  if (!shared_memory.IsValid())
     return false;
 
   // First get the size of the memory block.
-  if (!shared_memory_->Map(sizeof(base::Pickle::Header)))
+  const base::Pickle::Header* pickle_header =
+      shared_memory_mapping_.GetMemoryAs<base::Pickle::Header>();
+  if (!pickle_header)
     return false;
-  base::Pickle::Header* pickle_header =
-      reinterpret_cast<base::Pickle::Header*>(shared_memory_->memory());
 
-  // Now map in the rest of the block.
-  int pickle_size = sizeof(base::Pickle::Header) + pickle_header->payload_size;
-  shared_memory_->Unmap();
-  if (!shared_memory_->Map(pickle_size))
-    return false;
+  // Now read in the rest of the block.
+  size_t pickle_size =
+      sizeof(base::Pickle::Header) + pickle_header->payload_size;
 
   // Unpickle scripts.
   uint32_t num_scripts = 0;
-  base::Pickle pickle(reinterpret_cast<char*>(shared_memory_->memory()),
-                      pickle_size);
+  auto memory = shared_memory_mapping_.GetMemoryAsSpan<char>(pickle_size);
+  if (!memory.size())
+    return false;
+
+  base::Pickle pickle(memory.data(), pickle_size);
   base::PickleIterator iter(pickle);
   base::debug::Alias(&pickle_size);
   CHECK(iter.ReadUInt32(&num_scripts));
@@ -160,8 +162,8 @@ bool UserScriptSet::UpdateUserScripts(base::SharedMemoryHandle shared_memory,
     const Extension* extension =
         RendererExtensionRegistry::Get()->GetByID(script->extension_id());
     if (whitelisted_only &&
-        (!extension ||
-         !PermissionsData::CanExecuteScriptEverywhere(extension))) {
+        (!extension || !PermissionsData::CanExecuteScriptEverywhere(
+                           extension->id(), extension->location()))) {
       continue;
     }
 
@@ -212,23 +214,18 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
     injection_host.reset(new WebUIInjectionHost(host_id));
   }
 
-  if (web_frame->Parent() && !script->match_all_frames())
-    return injection;  // Only match subframes if the script declared it.
-
   GURL effective_document_url = ScriptContext::GetEffectiveDocumentURL(
       web_frame, document_url, script->match_about_blank());
 
-  if (!script->MatchesURL(effective_document_url))
+  bool is_subframe = web_frame->Parent();
+  if (!script->MatchesDocument(effective_document_url, is_subframe))
     return injection;
 
   std::unique_ptr<ScriptInjector> injector(
       new UserScriptInjector(script, this, is_declarative));
 
-  if (injector->CanExecuteOnFrame(
-          injection_host.get(),
-          web_frame,
-          tab_id) ==
-      PermissionsData::ACCESS_DENIED) {
+  if (injector->CanExecuteOnFrame(injection_host.get(), web_frame, tab_id) ==
+      PermissionsData::PageAccess::kDenied) {
     return injection;
   }
 
@@ -247,7 +244,7 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
 blink::WebString UserScriptSet::GetJsSource(const UserScript::File& file,
                                             bool emulate_greasemonkey) {
   const GURL& url = file.url();
-  std::map<GURL, blink::WebString>::iterator iter = script_sources_.find(url);
+  auto iter = script_sources_.find(url);
   if (iter != script_sources_.end())
     return iter->second;
 
@@ -274,7 +271,7 @@ blink::WebString UserScriptSet::GetJsSource(const UserScript::File& file,
 
 blink::WebString UserScriptSet::GetCssSource(const UserScript::File& file) {
   const GURL& url = file.url();
-  std::map<GURL, blink::WebString>::iterator iter = script_sources_.find(url);
+  auto iter = script_sources_.find(url);
   if (iter != script_sources_.end())
     return iter->second;
 

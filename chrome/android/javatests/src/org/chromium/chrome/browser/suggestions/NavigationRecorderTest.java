@@ -18,17 +18,16 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.BottomSheetTestRule;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.TimeoutException;
@@ -37,8 +36,7 @@ import java.util.concurrent.TimeoutException;
  * Instrumentation tests for {@link NavigationRecorder}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        BottomSheetTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class NavigationRecorderTest {
     @Rule
     public ChromeTabbedActivityTestRule mTestSetupRule = new ChromeTabbedActivityTestRule();
@@ -59,7 +57,10 @@ public class NavigationRecorderTest {
 
     @After
     public void tearDown() {
-        mTestServer.stopAndDestroyServer();
+        // If setUp() fails, tearDown() still needs to be able to execute without exceptions.
+        if (mTestServer != null) {
+            mTestServer.stopAndDestroyServer();
+        }
     }
 
     @Test
@@ -77,12 +78,7 @@ public class NavigationRecorderTest {
         });
 
         ChromeTabUtils.waitForTabPageLoaded(mInitialTab, (String) null);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mInitialTab.goBack();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { mInitialTab.goBack(); });
 
         callback.waitForCallback(0);
     }
@@ -126,12 +122,8 @@ public class NavigationRecorderTest {
     /** Loads the provided URL in the current tab and sets up navigation recording for it. */
     private void loadUrlAndRecordVisit(
             final String url, Callback<NavigationRecorder.VisitData> visitCallback) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mInitialTab.loadUrl(new LoadUrlParams(url));
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mInitialTab.loadUrl(new LoadUrlParams(url)); });
         NavigationRecorder.record(mInitialTab, visitCallback);
     }
 }

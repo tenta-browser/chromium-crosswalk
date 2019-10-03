@@ -10,7 +10,6 @@
 #include "build/build_config.h"
 #include "ui/aura/window_observer.h"
 #include "ui/events/gestures/gesture_recognizer.h"
-#include "ui/gfx/path.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_host_root_view.h"
@@ -84,9 +83,9 @@ void TransferGesture(Widget* source, Widget* target) {
 #if defined(OS_MACOSX)
   NOTIMPLEMENTED();
 #else   // !defined(OS_MACOSX)
-  ui::GestureRecognizer::Get()->TransferEventsTo(
+  source->GetGestureRecognizer()->TransferEventsTo(
       source->GetNativeView(), target->GetNativeView(),
-      ui::GestureRecognizer::ShouldCancelTouches::DontCancel);
+      ui::TransferTouchesBehavior::kDontCancel);
 #endif  // defined(OS_MACOSX)
 }
 
@@ -116,7 +115,7 @@ void MenuHost::InitMenuHost(Widget* parent,
   const MenuController* menu_controller =
       submenu_->GetMenuItem()->GetMenuController();
   const MenuConfig& menu_config = MenuConfig::instance();
-  bool rounded_border = menu_controller && menu_config.corner_radius > 0;
+  bool rounded_border = menu_config.CornerRadiusForMenu(menu_controller) != 0;
   bool bubble_border = submenu_->GetScrollViewContainer() &&
                        submenu_->GetScrollViewContainer()->HasBubbleBorder();
   params.shadow_type = bubble_border ? Widget::InitParams::SHADOW_TYPE_NONE
@@ -124,8 +123,13 @@ void MenuHost::InitMenuHost(Widget* parent,
   params.opacity = (bubble_border || rounded_border) ?
       Widget::InitParams::TRANSLUCENT_WINDOW :
       Widget::InitParams::OPAQUE_WINDOW;
-  params.parent = parent ? parent->GetNativeView() : NULL;
+  params.parent = parent ? parent->GetNativeView() : gfx::kNullNativeView;
   params.bounds = bounds;
+  // If MenuHost has no parent widget, it needs to be marked
+  // Activatable, so that calling Show in ShowMenuHost will
+  // get keyboard focus.
+  if (parent == nullptr)
+    params.activatable = Widget::InitParams::ACTIVATABLE_YES;
 #if defined(OS_WIN)
   // On Windows use the software compositor to ensure that we don't block
   // the UI thread blocking issue during command buffer creation. We can
@@ -135,8 +139,9 @@ void MenuHost::InitMenuHost(Widget* parent,
   Init(params);
 
 #if !defined(OS_MACOSX)
-  pre_dispatch_handler_.reset(new internal::PreMenuEventDispatchHandler(
-      menu_controller, submenu_, GetNativeView()));
+  pre_dispatch_handler_ =
+      std::make_unique<internal::PreMenuEventDispatchHandler>(
+          menu_controller, submenu_, GetNativeView());
 #endif
 
   DCHECK(!owner_);
@@ -166,13 +171,17 @@ void MenuHost::ShowMenuHost(bool do_capture) {
       // gesture events instead of being dropped.
       internal::TransferGesture(owner_, this);
     } else {
-      ui::GestureRecognizer::Get()->CancelActiveTouchesExcept(nullptr);
+      GetGestureRecognizer()->CancelActiveTouchesExcept(nullptr);
     }
 #if defined(MACOSX)
     // Cancel existing touches, so we don't miss some touch release/cancel
     // events due to the menu taking capture.
-    ui::GestureRecognizer::Get()->CancelActiveTouchesExcept(nullptr);
+    GetGestureRecognizer()->CancelActiveTouchesExcept(nullptr);
 #endif  // defined (OS_MACOSX)
+    // If MenuHost has no parent widget, it needs to call Show to get focus,
+    // so that it will get keyboard events.
+    if (owner_ == nullptr)
+      Show();
     native_widget_private()->SetCapture();
   }
 }
@@ -222,7 +231,7 @@ void MenuHost::OnMouseCaptureLost() {
   MenuController* menu_controller =
       submenu_->GetMenuItem()->GetMenuController();
   if (menu_controller && !menu_controller->drag_in_progress())
-    menu_controller->CancelAll();
+    menu_controller->Cancel(MenuController::ExitType::kAll);
   Widget::OnMouseCaptureLost();
 }
 
@@ -243,7 +252,7 @@ void MenuHost::OnOwnerClosing() {
   MenuController* menu_controller =
       submenu_->GetMenuItem()->GetMenuController();
   if (menu_controller && !menu_controller->drag_in_progress())
-    menu_controller->CancelAll();
+    menu_controller->Cancel(MenuController::ExitType::kAll);
 }
 
 void MenuHost::OnDragWillStart() {

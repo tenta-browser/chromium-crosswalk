@@ -9,12 +9,12 @@
  *  rotate90: number
  * }}
  */
-var ImageTransformation;
+let ImageTransformation;
 
 /**
- * Metadata of a file.
+ * Metadata of a file. Doesn't have @struct to allow for '[]' computed property
+ * access.
  * @constructor
- * @struct
  */
 function MetadataItem() {
   /**
@@ -27,6 +27,11 @@ function MetadataItem() {
    * @public {!Date|undefined}
    */
   this.modificationTime;
+
+  /**
+   * @public {Error|undefined}
+   */
+  this.modificationTimeError;
 
   /**
    * @public {!Date|undefined}
@@ -44,6 +49,11 @@ function MetadataItem() {
    * @public {string|undefined}
    */
   this.croppedThumbnailUrl;
+
+  /**
+   * @public {Error|undefined}
+   */
+  this.croppedThumbnailUrlError;
 
   /**
    * @public {Error|undefined}
@@ -224,4 +234,49 @@ function MetadataItem() {
    * @public {boolean|undefined}
    */
   this.exifLittleEndian;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.canCopy;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.canDelete;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.canRename;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.canAddChildren;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.canShare;
+
+  /**
+   * @public {string|undefined}
+   */
+  this.alternateUrl;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.isMachineRoot;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.isArbitrarySyncFolder;
+
+  /**
+   * @public {boolean|undefined}
+   */
+  this.isExternalMedia;
 }

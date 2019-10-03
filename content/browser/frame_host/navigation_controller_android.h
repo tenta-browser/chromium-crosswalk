@@ -55,8 +55,10 @@ class CONTENT_EXPORT NavigationControllerAndroid {
   void ReloadBypassingCache(JNIEnv* env,
                             const base::android::JavaParamRef<jobject>& obj,
                             jboolean check_for_repost);
-  void RequestRestoreLoad(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& obj);
+  jboolean NeedsReload(JNIEnv* env,
+                       const base::android::JavaParamRef<jobject>& obj);
+  void SetNeedsReload(JNIEnv* env,
+                      const base::android::JavaParamRef<jobject>& obj);
   void CancelPendingReload(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& obj);
   void GoToNavigationIndex(JNIEnv* env,
@@ -94,6 +96,9 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       int index);
+  base::android::ScopedJavaLocalRef<jobject> GetVisibleEntry(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& /* obj */);
   base::android::ScopedJavaLocalRef<jobject> GetPendingEntry(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& /* obj */);
@@ -106,10 +111,6 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       const base::android::JavaParamRef<jobject>& history,
       jboolean is_forward,
       jint max_entries);
-  base::android::ScopedJavaLocalRef<jstring>
-  GetOriginalUrlForVisibleNavigationEntry(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
   void ClearHistory(JNIEnv* env,
                     const base::android::JavaParamRef<jobject>& obj);
   int GetLastCommittedEntryIndex(
@@ -118,19 +119,6 @@ class CONTENT_EXPORT NavigationControllerAndroid {
   jboolean RemoveEntryAtIndex(JNIEnv* env,
                               const base::android::JavaParamRef<jobject>& obj,
                               jint index);
-  jboolean CanCopyStateOver(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj);
-  jboolean CanPruneAllButLastCommitted(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void CopyStateFrom(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& obj,
-                     jlong source_native_navigation_controller_android,
-                     jboolean needs_reload);
-  void CopyStateFromAndPrune(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
-                             jlong source_native_navigation_controller_android,
-                             jboolean replace_entry);
   base::android::ScopedJavaLocalRef<jstring> GetEntryExtraData(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -141,6 +129,10 @@ class CONTENT_EXPORT NavigationControllerAndroid {
                          jint index,
                          const base::android::JavaParamRef<jstring>& jkey,
                          const base::android::JavaParamRef<jstring>& jvalue);
+  jboolean IsEntryMarkedToBeSkipped(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint index);
 
  private:
   NavigationControllerImpl* navigation_controller_;

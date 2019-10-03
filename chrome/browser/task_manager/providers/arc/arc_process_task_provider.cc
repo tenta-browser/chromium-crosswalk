@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/process/process.h"
@@ -45,7 +46,7 @@ Task* ArcProcessTaskProvider::GetTaskOfUrlRequest(int child_id, int route_id) {
 
 void ArcProcessTaskProvider::UpdateProcessList(
     ArcTaskMap* pid_to_task,
-    const std::vector<ArcProcess>& processes) {
+    std::vector<ArcProcess> processes) {
   if (!is_updating_)
     return;
 
@@ -57,7 +58,7 @@ void ArcProcessTaskProvider::UpdateProcessList(
   for (const auto& entry : *pid_to_task)
     nspid_to_remove.insert(entry.first);
 
-  for (const auto& entry : processes) {
+  for (auto& entry : processes) {
     if (nspid_to_remove.erase(entry.nspid()) == 0) {
       // New arc process.
       std::unique_ptr<ArcProcessTask>& task = (*pid_to_task)[entry.nspid()];
@@ -67,9 +68,7 @@ void ArcProcessTaskProvider::UpdateProcessList(
       // (crbug.com/587707).
       DCHECK(!task.get()) <<
           "Task with the same pid should not be added twice.";
-      task.reset(new ArcProcessTask(entry.pid(), entry.nspid(),
-                                    entry.process_name(), entry.process_state(),
-                                    entry.packages()));
+      task = std::make_unique<ArcProcessTask>(std::move(entry));
       NotifyObserverTaskAdded(task.get());
     } else {
       // Update process state of existing process.
@@ -87,15 +86,22 @@ void ArcProcessTaskProvider::UpdateProcessList(
 }
 
 void ArcProcessTaskProvider::OnUpdateAppProcessList(
-    std::vector<ArcProcess> processes) {
+    OptionalArcProcessList processes) {
+  if (!processes) {
+    VLOG(2) << "ARC process instance is not ready.";
+    ScheduleNextAppRequest();
+    return;
+  }
+
   TRACE_EVENT0("browser", "ArcProcessTaskProvider::OnUpdateAppProcessList");
-  UpdateProcessList(&nspid_to_task_, processes);
+  UpdateProcessList(&nspid_to_task_, std::move(*processes));
   ScheduleNextAppRequest();
 }
 
 void ArcProcessTaskProvider::OnUpdateSystemProcessList(
-    std::vector<ArcProcess> processes) {
-  UpdateProcessList(&nspid_to_sys_task_, processes);
+    OptionalArcProcessList processes) {
+  if (processes)
+    UpdateProcessList(&nspid_to_sys_task_, std::move(*processes));
   ScheduleNextSystemRequest();
 }
 
@@ -104,12 +110,12 @@ void ArcProcessTaskProvider::RequestAppProcessList() {
       arc::ArcProcessService::Get();
   auto callback = base::Bind(&ArcProcessTaskProvider::OnUpdateAppProcessList,
                              weak_ptr_factory_.GetWeakPtr());
-  if (!arc_process_service ||
-      !arc_process_service->RequestAppProcessList(callback)) {
+  if (!arc_process_service) {
     VLOG(2) << "ARC process instance is not ready.";
     ScheduleNextAppRequest();
     return;
   }
+  arc_process_service->RequestAppProcessList(callback);
 }
 
 void ArcProcessTaskProvider::RequestSystemProcessList() {

@@ -5,15 +5,10 @@
 package org.chromium.chrome.browser.init;
 
 import android.content.Intent;
-import android.os.Handler;
-import android.os.Looper;
-import android.util.Log;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryProcessType;
-import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 
 import java.util.ArrayList;
@@ -29,7 +24,6 @@ class NativeInitializationController {
     private static final String TAG = "NativeInitializationController";
 
     private final ChromeActivityNativeDelegate mActivityDelegate;
-    private final Handler mHandler;
 
     private boolean mOnStartPending;
     private boolean mOnResumePending;
@@ -63,7 +57,6 @@ class NativeInitializationController {
      * @param activityDelegate The activity delegate for the owning activity.
      */
     public NativeInitializationController(ChromeActivityNativeDelegate activityDelegate) {
-        mHandler = new Handler(Looper.getMainLooper());
         mActivityDelegate = activityDelegate;
     }
 
@@ -111,15 +104,8 @@ class NativeInitializationController {
             assert !mHasSignaledLibraryLoaded;
             mHasSignaledLibraryLoaded = true;
 
-            // Allow the UI thread to continue its initialization - so that this call back
-            // doesn't block priority work on the UI thread until it's idle.
-            mHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    if (mActivityDelegate.isActivityDestroyed()) return;
-                    mActivityDelegate.onCreateWithNative();
-                }
-            });
+            if (mActivityDelegate.isActivityFinishingOrDestroyed()) return;
+            mActivityDelegate.onCreateWithNative();
         }
     }
 
@@ -149,14 +135,7 @@ class NativeInitializationController {
             onResume();
         }
 
-        try {
-            LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER)
-                    .onNativeInitializationComplete();
-        } catch (ProcessInitException e) {
-            Log.e(TAG, "Unable to load native library.", e);
-            mActivityDelegate.onStartupFailure();
-            return;
-        }
+        LibraryLoader.getInstance().onBrowserNativeInitializationComplete();
     }
 
     /**

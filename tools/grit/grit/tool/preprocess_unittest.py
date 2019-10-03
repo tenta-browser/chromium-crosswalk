@@ -8,6 +8,8 @@
    provide the actual rctext data.
 '''
 
+from __future__ import print_function
+
 import os
 import sys
 if __name__ == '__main__':
@@ -46,4 +48,3 @@ END
 
 if __name__ == '__main__':
   unittest.main()
-

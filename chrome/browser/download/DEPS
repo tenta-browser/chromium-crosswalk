@@ -1,4 +1,0 @@
-include_rules = [
-  "+components/drive/drive_pref_names.h",
-  "+components/safe_browsing/proto/csd.pb.h",
-]

@@ -6,8 +6,8 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_flattener.h"
 #include "base/metrics/histogram_snapshot_manager.h"
@@ -15,7 +15,11 @@
 #include "base/metrics/persistent_memory_allocator.h"
 #include "base/metrics/statistics_recorder.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using ::testing::UnorderedElementsAre;
+using ::testing::IsEmpty;
 
 namespace {
 
@@ -44,11 +48,7 @@ class HistogramFlattenerDeltaRecorder : public base::HistogramFlattener {
 
 class SubprocessMetricsProviderTest : public testing::Test {
  protected:
-  SubprocessMetricsProviderTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::DEFAULT) {
-    // Get this first so it isn't created inside a persistent allocator.
-    base::PersistentHistogramAllocator::GetCreateHistogramResultHistogram();
-
+  SubprocessMetricsProviderTest() {
     // MergeHistogramDeltas needs to be called beause it uses a histogram
     // macro which caches a pointer to a histogram. If not done before setting
     // a persistent global allocator, then it would point into memory that
@@ -72,13 +72,13 @@ class SubprocessMetricsProviderTest : public testing::Test {
   std::unique_ptr<base::PersistentHistogramAllocator> CreateDuplicateAllocator(
       base::PersistentHistogramAllocator* allocator) {
     // Just wrap around the data segment in-use by the passed allocator.
-    return base::MakeUnique<base::PersistentHistogramAllocator>(
-        base::MakeUnique<base::PersistentMemoryAllocator>(
+    return std::make_unique<base::PersistentHistogramAllocator>(
+        std::make_unique<base::PersistentMemoryAllocator>(
             const_cast<void*>(allocator->data()), allocator->length(), 0, 0,
             std::string(), false));
   }
 
-  size_t GetSnapshotHistogramCount() {
+  std::vector<std::string> GetSnapshotHistogramNames() {
     // Merge the data from the allocator into the StatisticsRecorder.
     provider_.MergeHistogramDeltas();
 
@@ -89,7 +89,7 @@ class SubprocessMetricsProviderTest : public testing::Test {
     base::StatisticsRecorder::PrepareDeltas(true, base::Histogram::kNoFlags,
                                             base::Histogram::kNoFlags,
                                             &snapshot_manager);
-    return flattener.GetRecordedDeltaHistogramNames().size();
+    return flattener.GetRecordedDeltaHistogramNames();
   }
 
   void EnableRecording() { provider_.OnRecordingEnabled(); }
@@ -133,25 +133,26 @@ TEST_F(SubprocessMetricsProviderTest, SnapshotMetrics) {
                               CreateDuplicateAllocator(global_allocator.get()));
 
   // Recording should find the two histograms created in persistent memory.
-  EXPECT_EQ(2U, GetSnapshotHistogramCount());
+  EXPECT_THAT(GetSnapshotHistogramNames(), UnorderedElementsAre("foo", "bar"));
 
   // A second run should have nothing to produce.
-  EXPECT_EQ(0U, GetSnapshotHistogramCount());
+  EXPECT_THAT(GetSnapshotHistogramNames(), IsEmpty());
 
   // Create a new histogram and update existing ones. Should now report 3 items.
   baz->Add(1969);
   foo->Add(10);
   bar->Add(20);
-  EXPECT_EQ(3U, GetSnapshotHistogramCount());
+  EXPECT_THAT(GetSnapshotHistogramNames(),
+              UnorderedElementsAre("foo", "bar", "baz"));
 
   // Ensure that deregistering does a final merge of the data.
   foo->Add(10);
   bar->Add(20);
   DeregisterSubprocessAllocator(123);
-  EXPECT_EQ(2U, GetSnapshotHistogramCount());
+  EXPECT_THAT(GetSnapshotHistogramNames(), UnorderedElementsAre("foo", "bar"));
 
   // Further snapshots should be empty even if things have changed.
   foo->Add(10);
   bar->Add(20);
-  EXPECT_EQ(0U, GetSnapshotHistogramCount());
+  EXPECT_THAT(GetSnapshotHistogramNames(), IsEmpty());
 }

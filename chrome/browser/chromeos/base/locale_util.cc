@@ -7,15 +7,23 @@
 #include <utility>
 #include <vector>
 
-#include "base/task_scheduler/post_task.h"
+#include "base/bind.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/pref_names.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/language/core/common/locale_util.h"
+#include "components/prefs/pref_service.h"
+#include "components/translate/core/browser/translate_prefs.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/common/extension_l10n_util.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/ime/chromeos/input_method_util.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/platform_font_linux.h"
+#include "ui/gfx/platform_font_skia.h"
 
 namespace chromeos {
 
@@ -41,9 +49,9 @@ struct SwitchLanguageData {
   Profile* profile;
 };
 
-// Runs on SequencedWorkerPool thread under PostTaskAndReply().
-// So data is owned by "Reply" part of PostTaskAndReply() process.
-void SwitchLanguageDoReloadLocale(SwitchLanguageData* data) {
+// Runs on ThreadPool thread under PostTaskAndReply().
+std::unique_ptr<SwitchLanguageData> SwitchLanguageDoReloadLocale(
+    std::unique_ptr<SwitchLanguageData> data) {
   DCHECK(!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   data->result.loaded_locale =
@@ -51,6 +59,8 @@ void SwitchLanguageDoReloadLocale(SwitchLanguageData* data) {
           data->result.requested_locale);
 
   data->result.success = !data->result.loaded_locale.empty();
+
+  return data;
 }
 
 // Callback after SwitchLanguageDoReloadLocale() back in UI thread.
@@ -58,6 +68,11 @@ void FinishSwitchLanguage(std::unique_ptr<SwitchLanguageData> data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (data->result.success) {
     g_browser_process->SetApplicationLocale(data->result.loaded_locale);
+
+    // Ensure chrome app names are localized. Note that the user might prefer
+    // a different locale than was actually loaded (e.g. "en-CA" vs. "en-US").
+    extension_l10n_util::SetProcessLocale(data->result.loaded_locale);
+    extension_l10n_util::SetPreferredLocale(data->result.requested_locale);
 
     if (data->enable_locale_keyboard_layouts) {
       input_method::InputMethodManager* manager =
@@ -95,14 +110,25 @@ void FinishSwitchLanguage(std::unique_ptr<SwitchLanguageData> data) {
   // The font clean up of ResourceBundle should be done on UI thread, since the
   // cached fonts are thread unsafe.
   ui::ResourceBundle::GetSharedInstance().ReloadFonts();
-  gfx::PlatformFontLinux::ReloadDefaultFont();
+  gfx::PlatformFontSkia::ReloadDefaultFont();
   if (!data->callback.is_null())
     data->callback.Run(data->result);
+}
+
+// Get parsed list of preferred languages from the 'kPreferredLanguages'
+// setting.
+std::vector<std::string> GetPreferredLanguagesList(const PrefService* prefs) {
+  std::string preferred_languages_string =
+      prefs->GetString(language::prefs::kPreferredLanguages);
+  return base::SplitString(preferred_languages_string, ",",
+                           base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 }
 
 }  // namespace
 
 namespace locale_util {
+
+constexpr const char* kAllowedUILanguageFallback = "en-US";
 
 LanguageSwitchResult::LanguageSwitchResult(const std::string& requested_locale,
                                            const std::string& loaded_locale,
@@ -118,14 +144,106 @@ void SwitchLanguage(const std::string& locale,
                     const SwitchLanguageCallback& callback,
                     Profile* profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  std::unique_ptr<SwitchLanguageData> data(
-      new SwitchLanguageData(locale, enable_locale_keyboard_layouts,
-                             login_layouts_only, callback, profile));
-  base::Closure reloader(
-      base::Bind(&SwitchLanguageDoReloadLocale, base::Unretained(data.get())));
-  base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND}, reloader,
-      base::Bind(&FinishSwitchLanguage, base::Passed(std::move(data))));
+  auto data = std::make_unique<SwitchLanguageData>(
+      locale, enable_locale_keyboard_layouts, login_layouts_only, callback,
+      profile);
+  // USER_BLOCKING because it blocks startup on ChromeOS. crbug.com/968554
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+      base::BindOnce(&SwitchLanguageDoReloadLocale, std::move(data)),
+      base::BindOnce(&FinishSwitchLanguage));
+}
+
+bool IsAllowedLanguage(const std::string& language, const PrefService* prefs) {
+  const base::Value::ListStorage& allowed_languages =
+      prefs->GetList(prefs::kAllowedLanguages)->GetList();
+
+  // Empty list means all languages are allowed.
+  if (allowed_languages.empty())
+    return true;
+
+  // Check if locale is in list of allowed UI locales.
+  return base::Contains(allowed_languages, base::Value(language));
+}
+
+bool IsAllowedUILanguage(const std::string& language,
+                         const PrefService* prefs) {
+  return IsAllowedLanguage(language, prefs) && IsNativeUILanguage(language);
+}
+
+bool IsNativeUILanguage(const std::string& locale) {
+  std::string resolved_locale = locale;
+
+  // The locale is a UI locale or can be converted to a UI locale.
+  return language::ConvertToActualUILocale(&resolved_locale);
+}
+
+void RemoveDisallowedLanguagesFromPreferred(PrefService* prefs) {
+  // Do nothing if all languages are allowed
+  if (prefs->GetList(prefs::kAllowedLanguages)->GetList().empty())
+    return;
+
+  std::vector<std::string> preferred_languages =
+      GetPreferredLanguagesList(prefs);
+  std::vector<std::string> updated_preferred_languages;
+  bool have_ui_language = false;
+  for (const std::string& language : preferred_languages) {
+    if (IsAllowedLanguage(language, prefs)) {
+      updated_preferred_languages.push_back(language);
+      if (IsNativeUILanguage(language))
+        have_ui_language = true;
+    }
+  }
+  if (!have_ui_language)
+    updated_preferred_languages.push_back(GetAllowedFallbackUILanguage(prefs));
+
+  // Do not set setting if it did not change to not cause the update callback
+  if (preferred_languages != updated_preferred_languages) {
+    prefs->SetString(language::prefs::kPreferredLanguages,
+                     base::JoinString(updated_preferred_languages, ","));
+  }
+}
+
+std::string GetAllowedFallbackUILanguage(const PrefService* prefs) {
+  // Check the user's preferred languages if one of them is an allowed UI
+  // locale.
+  std::string preferred_languages_string =
+      prefs->GetString(language::prefs::kPreferredLanguages);
+  std::vector<std::string> preferred_languages =
+      GetPreferredLanguagesList(prefs);
+  for (const std::string& language : preferred_languages) {
+    if (IsAllowedUILanguage(language, prefs))
+      return language;
+  }
+
+  // Check the allowed UI locales and return the first valid entry.
+  const base::Value::ListStorage& allowed_languages =
+      prefs->GetList(prefs::kAllowedLanguages)->GetList();
+  for (const base::Value& value : allowed_languages) {
+    const std::string& locale = value.GetString();
+    if (IsAllowedUILanguage(locale, prefs))
+      return locale;
+  }
+
+  // default fallback
+  return kAllowedUILanguageFallback;
+}
+
+bool AddLocaleToPreferredLanguages(const std::string& locale,
+                                   PrefService* prefs) {
+  std::string preferred_languages_string =
+      prefs->GetString(language::prefs::kPreferredLanguages);
+  std::vector<std::string> preferred_languages =
+      base::SplitString(preferred_languages_string, ",", base::TRIM_WHITESPACE,
+                        base::SPLIT_WANT_NONEMPTY);
+  if (!base::Contains(preferred_languages, locale)) {
+    preferred_languages.push_back(locale);
+    prefs->SetString(language::prefs::kPreferredLanguages,
+                     base::JoinString(preferred_languages, ","));
+    return true;
+  }
+
+  return false;
 }
 
 }  // namespace locale_util

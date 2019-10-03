@@ -10,6 +10,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
+#include "base/timer/elapsed_timer.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 
@@ -18,7 +19,7 @@ namespace content {
 class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
  public:
   static BrowserAccessibilityAndroid* GetFromUniqueId(int32_t unique_id);
-  int32_t unique_id() const { return unique_id_; }
+  int32_t unique_id() const { return GetUniqueId().Get(); }
 
   // Overrides from BrowserAccessibility.
   void OnDataChanged() override;
@@ -26,7 +27,9 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   void OnLocationChanged() override;
   base::string16 GetValue() const override;
 
-  bool PlatformIsLeaf() const override;
+  bool PlatformIsLeafIncludingIgnored() const override;
+  // Android needs events even on objects that are trimmed away.
+  bool CanFireEvents() const override;
 
   bool IsCheckable() const;
   bool IsChecked() const;
@@ -73,11 +76,16 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   bool HasFocusableNonOptionChild() const;
   bool HasNonEmptyValue() const;
 
+  bool HasCharacterLocations() const;
+  bool HasImage() const;
+
   const char* GetClassName() const;
-  base::string16 GetText() const override;
+  base::string16 GetInnerText() const override;
   base::string16 GetHint() const;
 
   std::string GetRoleString() const;
+
+  base::string16 GetContentInvalidErrorMessage() const;
 
   base::string16 GetRoleDescription() const;
 
@@ -131,17 +139,22 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
                                 int offset);
 
   // Append line start and end indices for the text of this node
-  // (as returned by GetText()), adding |offset| to each one.
+  // (as returned by GetInnerText()), adding |offset| to each one.
   void GetLineBoundaries(std::vector<int32_t>* line_starts,
                          std::vector<int32_t>* line_ends,
                          int offset);
 
   // Append word start and end indices for the text of this node
-  // (as returned by GetText()) to |word_starts| and |word_ends|,
+  // (as returned by GetInnerText()) to |word_starts| and |word_ends|,
   // adding |offset| to each one.
   void GetWordBoundaries(std::vector<int32_t>* word_starts,
                          std::vector<int32_t>* word_ends,
                          int offset);
+
+  // Used to keep track of when to stop reporting content_invalid.
+  // Timer only applies if node has focus.
+  void ResetContentInvalidTimer();
+  base::ElapsedTimer content_invalid_timer_ = base::ElapsedTimer();
 
  private:
   // This gives BrowserAccessibility::Create access to the class constructor.
@@ -155,7 +168,7 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   bool IsIframe() const;
   bool ShouldExposeValueAsName() const;
 
-  int CountChildrenWithRole(ui::AXRole role) const;
+  int CountChildrenWithRole(ax::mojom::Role role) const;
 
   static size_t CommonPrefixLength(const base::string16 a,
                                    const base::string16 b);

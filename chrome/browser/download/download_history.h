@@ -15,8 +15,8 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "components/download/content/public/all_download_item_notifier.h"
+#include "components/download/public/common/download_item.h"
 #include "components/history/core/browser/history_service.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 
 namespace history {
@@ -36,11 +36,11 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
     virtual ~HistoryAdapter();
 
     virtual void QueryDownloads(
-        const history::HistoryService::DownloadQueryCallback& callback);
+        history::HistoryService::DownloadQueryCallback callback);
 
     virtual void CreateDownload(
         const history::DownloadRow& info,
-        const history::HistoryService::DownloadCreateCallback& callback);
+        history::HistoryService::DownloadCreateCallback callback);
 
     virtual void UpdateDownload(const history::DownloadRow& data,
                                 bool should_commit_immediately);
@@ -59,7 +59,7 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
 
     // Fires when a download is added to or updated in the database, just after
     // the task is posted to the history thread.
-    virtual void OnDownloadStored(content::DownloadItem* item,
+    virtual void OnDownloadStored(download::DownloadItem* item,
                                   const history::DownloadRow& info) {}
 
     // Fires when RemoveDownloads messages are sent to the DB thread.
@@ -80,7 +80,7 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
   // within a DownloadManager::Observer::OnDownloadCreated handler since the
   // persisted state may not yet have been updated for a download that was
   // restored from history.
-  static bool IsPersisted(const content::DownloadItem* item);
+  static bool IsPersisted(const download::DownloadItem* item);
 
   // Neither |manager| nor |history| may be NULL.
   // DownloadService creates DownloadHistory some time after DownloadManager is
@@ -93,37 +93,30 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  // Returns true if the download was restored from history. Safe to call from
-  // within a DownloadManager::Observer::OnDownloadCreated handler and can be
-  // used to distinguish between downloads that were created due to new requests
-  // vs. downloads that were created due to being restored from history. Note
-  // that the return value is only reliable for downloads that were restored by
-  // this specific DownloadHistory instance.
-  bool WasRestoredFromHistory(const content::DownloadItem* item) const;
-
  private:
-  typedef std::set<content::DownloadItem*> ItemSet;
-
   // Callback from |history_| containing all entries in the downloads database
   // table.
-  void QueryCallback(std::unique_ptr<std::vector<history::DownloadRow>> infos);
+  void QueryCallback(std::vector<history::DownloadRow> rows);
+
+  // Called to create all history downloads.
+  void LoadHistoryDownloads(std::vector<history::DownloadRow> rows);
 
   // May add |item| to |history_|.
-  void MaybeAddToHistory(content::DownloadItem* item);
+  void MaybeAddToHistory(download::DownloadItem* item);
 
   // Callback from |history_| when an item was successfully inserted into the
   // database.
-  void ItemAdded(uint32_t id, bool success);
+  void ItemAdded(uint32_t id, const history::DownloadRow& info, bool success);
 
   // AllDownloadItemNotifier::Observer
   void OnDownloadCreated(content::DownloadManager* manager,
-                         content::DownloadItem* item) override;
+                         download::DownloadItem* item) override;
   void OnDownloadUpdated(content::DownloadManager* manager,
-                         content::DownloadItem* item) override;
+                         download::DownloadItem* item) override;
   void OnDownloadOpened(content::DownloadManager* manager,
-                        content::DownloadItem* item) override;
+                        download::DownloadItem* item) override;
   void OnDownloadRemoved(content::DownloadManager* manager,
-                         content::DownloadItem* item) override;
+                         download::DownloadItem* item) override;
 
   // Schedule a record to be removed from |history_| the next time
   // RemoveDownloadsBatch() runs. Schedule RemoveDownloadsBatch() to be run soon
@@ -132,6 +125,12 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
 
   // Removes all |removing_ids_| from |history_|.
   void RemoveDownloadsBatch();
+
+  // Called when a download was restored from history.
+  void OnDownloadRestoredFromHistory(download::DownloadItem* item);
+
+  // Check whether an download item needs be updated or added to history DB.
+  bool NeedToUpdateDownloadHistory(download::DownloadItem* item);
 
   download::AllDownloadItemNotifier notifier_;
 
@@ -157,9 +156,9 @@ class DownloadHistory : public download::AllDownloadItemNotifier::Observer {
 
   bool initial_history_query_complete_;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
-  base::WeakPtrFactory<DownloadHistory> weak_ptr_factory_;
+  base::WeakPtrFactory<DownloadHistory> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadHistory);
 };

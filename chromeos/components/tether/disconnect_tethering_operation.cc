@@ -4,11 +4,14 @@
 
 #include "chromeos/components/tether/disconnect_tethering_operation.h"
 
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/message_wrapper.h"
 #include "chromeos/components/tether/proto/tether.pb.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -21,13 +24,14 @@ DisconnectTetheringOperation::Factory*
 // static
 std::unique_ptr<DisconnectTetheringOperation>
 DisconnectTetheringOperation::Factory::NewInstance(
-    const cryptauth::RemoteDevice& device_to_connect,
-    BleConnectionManager* connection_manager) {
+    multidevice::RemoteDeviceRef device_to_connect,
+    device_sync::DeviceSyncClient* device_sync_client,
+    secure_channel::SecureChannelClient* secure_channel_client) {
   if (!factory_instance_) {
     factory_instance_ = new Factory();
   }
-  return factory_instance_->BuildInstance(device_to_connect,
-                                          connection_manager);
+  return factory_instance_->BuildInstance(device_to_connect, device_sync_client,
+                                          secure_channel_client);
 }
 
 // static
@@ -38,21 +42,25 @@ void DisconnectTetheringOperation::Factory::SetInstanceForTesting(
 
 std::unique_ptr<DisconnectTetheringOperation>
 DisconnectTetheringOperation::Factory::BuildInstance(
-    const cryptauth::RemoteDevice& device_to_connect,
-    BleConnectionManager* connection_manager) {
-  return base::MakeUnique<DisconnectTetheringOperation>(device_to_connect,
-                                                        connection_manager);
+    multidevice::RemoteDeviceRef device_to_connect,
+    device_sync::DeviceSyncClient* device_sync_client,
+    secure_channel::SecureChannelClient* secure_channel_client) {
+  return base::WrapUnique(new DisconnectTetheringOperation(
+      device_to_connect, device_sync_client, secure_channel_client));
 }
 
 DisconnectTetheringOperation::DisconnectTetheringOperation(
-    const cryptauth::RemoteDevice& device_to_connect,
-    BleConnectionManager* connection_manager)
+    multidevice::RemoteDeviceRef device_to_connect,
+    device_sync::DeviceSyncClient* device_sync_client,
+    secure_channel::SecureChannelClient* secure_channel_client)
     : MessageTransferOperation(
-          std::vector<cryptauth::RemoteDevice>{device_to_connect},
-          connection_manager),
+          multidevice::RemoteDeviceRefList{device_to_connect},
+          secure_channel::ConnectionPriority::kHigh,
+          device_sync_client,
+          secure_channel_client),
       remote_device_(device_to_connect),
       has_sent_message_(false),
-      clock_(base::MakeUnique<base::DefaultClock>()) {}
+      clock_(base::DefaultClock::GetInstance()) {}
 
 DisconnectTetheringOperation::~DisconnectTetheringOperation() = default;
 
@@ -72,12 +80,12 @@ void DisconnectTetheringOperation::NotifyObserversOperationFinished(
 }
 
 void DisconnectTetheringOperation::OnDeviceAuthenticated(
-    const cryptauth::RemoteDevice& remote_device) {
+    multidevice::RemoteDeviceRef remote_device) {
   DCHECK(remote_devices().size() == 1u && remote_devices()[0] == remote_device);
 
   disconnect_message_sequence_number_ = SendMessageToDevice(
       remote_device,
-      base::MakeUnique<MessageWrapper>(DisconnectTetheringRequest()));
+      std::make_unique<MessageWrapper>(DisconnectTetheringRequest()));
   disconnect_start_time_ = clock_->Now();
 }
 
@@ -105,8 +113,8 @@ void DisconnectTetheringOperation::OnMessageSent(int sequence_number) {
 }
 
 void DisconnectTetheringOperation::SetClockForTest(
-    std::unique_ptr<base::Clock> clock_for_test) {
-  clock_ = std::move(clock_for_test);
+    base::Clock* clock_for_test) {
+  clock_ = clock_for_test;
 }
 
 }  // namespace tether

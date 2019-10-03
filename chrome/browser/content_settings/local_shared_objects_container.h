@@ -13,7 +13,6 @@
 #include "base/memory/ref_counted.h"
 
 class CannedBrowsingDataAppCacheHelper;
-class CannedBrowsingDataChannelIDHelper;
 class CannedBrowsingDataCookieHelper;
 class CannedBrowsingDataDatabaseHelper;
 class CannedBrowsingDataFileSystemHelper;
@@ -37,6 +36,9 @@ class LocalSharedObjectsContainer {
   // Returns the number of objects for the given |origin|.
   size_t GetObjectCountForDomain(const GURL& origin) const;
 
+  // Get number of unique registrable domains in the container.
+  size_t GetDomainCount() const;
+
   // Empties the container.
   void Reset();
 
@@ -46,9 +48,6 @@ class LocalSharedObjectsContainer {
 
   CannedBrowsingDataAppCacheHelper* appcaches() const {
     return appcaches_.get();
-  }
-  CannedBrowsingDataChannelIDHelper* channel_ids() const {
-    return channel_ids_.get();
   }
   CannedBrowsingDataCookieHelper* cookies() const { return cookies_.get(); }
   CannedBrowsingDataDatabaseHelper* databases() const {
@@ -78,7 +77,6 @@ class LocalSharedObjectsContainer {
 
  private:
   scoped_refptr<CannedBrowsingDataAppCacheHelper> appcaches_;
-  scoped_refptr<CannedBrowsingDataChannelIDHelper> channel_ids_;
   scoped_refptr<CannedBrowsingDataCookieHelper> cookies_;
   scoped_refptr<CannedBrowsingDataDatabaseHelper> databases_;
   scoped_refptr<CannedBrowsingDataFileSystemHelper> file_systems_;

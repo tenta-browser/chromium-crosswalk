@@ -4,6 +4,8 @@
 
 #include "chrome/browser/media/router/discovery/mdns/dns_sd_device_lister.h"
 
+#include "chrome/browser/media/router/discovery/mdns/dns_sd_delegate.h"
+
 using local_discovery::ServiceDescription;
 
 namespace media_router {
@@ -30,25 +32,38 @@ DnsSdDeviceLister::DnsSdDeviceLister(
     local_discovery::ServiceDiscoveryClient* service_discovery_client,
     DnsSdDelegate* delegate,
     const std::string& service_type)
-    : delegate_(delegate),
-      device_lister_(this, service_discovery_client, service_type),
-      started_(false) {}
+    : delegate_(delegate)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
+      ,
+      service_discovery_client_(service_discovery_client),
+      service_type_(service_type)
+#endif
+{
+}
 
 DnsSdDeviceLister::~DnsSdDeviceLister() {}
 
 void DnsSdDeviceLister::Discover() {
-  if (!started_) {
-    device_lister_.Start();
-    started_ = true;
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
+  if (!device_lister_) {
+    device_lister_ = local_discovery::ServiceDiscoveryDeviceLister::Create(
+        this, service_discovery_client_, service_type_);
+    device_lister_->Start();
     VLOG(1) << "Started device lister for service type "
-            << device_lister_.service_type();
+            << device_lister_->service_type();
   }
-  device_lister_.DiscoverNewDevices();
+  device_lister_->DiscoverNewDevices();
   VLOG(1) << "Discovery new devices for service type "
-          << device_lister_.service_type();
+          << device_lister_->service_type();
+#endif
+}
+
+void DnsSdDeviceLister::Reset() {
+  device_lister_.reset();
 }
 
 void DnsSdDeviceLister::OnDeviceChanged(
+    const std::string& service_type,
     bool added,
     const ServiceDescription& service_description) {
   DnsSdService service;
@@ -56,22 +71,23 @@ void DnsSdDeviceLister::OnDeviceChanged(
   VLOG(1) << "OnDeviceChanged: "
           << "service_name: " << service.service_name << ", "
           << "added: " << added << ", "
-          << "service_type: " << device_lister_.service_type();
-  delegate_->ServiceChanged(device_lister_.service_type(), added, service);
+          << "service_type: " << device_lister_->service_type();
+  delegate_->ServiceChanged(device_lister_->service_type(), added, service);
 }
 
-void DnsSdDeviceLister::OnDeviceRemoved(const std::string& service_name) {
+void DnsSdDeviceLister::OnDeviceRemoved(const std::string& service_type,
+                                        const std::string& service_name) {
   VLOG(1) << "OnDeviceRemoved: "
           << "service_name: " << service_name << ", "
-          << "service_type: " << device_lister_.service_type();
-  delegate_->ServiceRemoved(device_lister_.service_type(), service_name);
+          << "service_type: " << service_type;
+  delegate_->ServiceRemoved(service_type, service_name);
 }
 
-void DnsSdDeviceLister::OnDeviceCacheFlushed() {
+void DnsSdDeviceLister::OnDeviceCacheFlushed(const std::string& service_type) {
   VLOG(1) << "OnDeviceCacheFlushed: "
-          << "service_type: " << device_lister_.service_type();
-  delegate_->ServicesFlushed(device_lister_.service_type());
-  device_lister_.DiscoverNewDevices();
+          << "service_type: " << device_lister_->service_type();
+  delegate_->ServicesFlushed(device_lister_->service_type());
+  device_lister_->DiscoverNewDevices();
 }
 
 }  // namespace media_router

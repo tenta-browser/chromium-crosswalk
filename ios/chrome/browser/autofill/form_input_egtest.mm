@@ -4,19 +4,22 @@
 
 #import <EarlGrey/EarlGrey.h>
 
+#include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "ios/chrome/browser/autofill/form_input_accessory_view_tab_helper.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#import "components/autofill/ios/browser/js_suggestion_manager.h"
+#import "ios/chrome/browser/autofill/form_input_accessory_view_handler.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 #import "ios/web/public/test/earl_grey/web_view_actions.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
+#include "ios/web/public/test/element_selector.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 
@@ -50,7 +53,8 @@ void AssertElementIsFocused(const std::string& element_id) {
   ConditionBlock condition = ^{
     return base::SysNSStringToUTF8(GetFocusedElementId()) == element_id;
   };
-  GREYAssert(testing::WaitUntilConditionOrTimeout(10, condition), description);
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(10, condition),
+             description);
 }
 
 }  // namespace
@@ -78,7 +82,7 @@ void AssertElementIsFocused(const std::string& element_id) {
   // the previous and next buttons are not shown in our keyboard input
   // accessory. Instead, they appear in the native keyboard's shortcut bar (to
   // the left and right of the QuickType suggestions).
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no hidden toolbar in tablet)");
   }
 
@@ -87,7 +91,7 @@ void AssertElementIsFocused(const std::string& element_id) {
       "http://ios/testing/data/http_server_files/multi_field_form.html");
   [ChromeEarlGrey loadURL:URL];
 
-  [ChromeEarlGrey waitForWebViewContainingText:"hello!"];
+  [ChromeEarlGrey waitForWebStateContainingText:"hello!"];
 
   // Opening the keyboard from a webview blocks EarlGrey's synchronization.
   [[GREYConfiguration sharedInstance]
@@ -100,7 +104,8 @@ void AssertElementIsFocused(const std::string& element_id) {
                                    chrome_test_util::GetCurrentWebState())]
       performAction:web::WebViewTapElement(
                         chrome_test_util::GetCurrentWebState(),
-                        kFormElementId1)];
+                        [ElementSelector
+                            selectorWithElementID:kFormElementId1])];
 
   id<GREYMatcher> nextButtonMatcher =
       chrome_test_util::ButtonWithAccessibilityLabelId(
@@ -121,8 +126,8 @@ void AssertElementIsFocused(const std::string& element_id) {
                     error:&error];
     return (error == nil);
   };
-  GREYAssert(testing::WaitUntilConditionOrTimeout(
-                 testing::kWaitForUIElementTimeout, condition),
+  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
+                 base::test::ios::kWaitForUIElementTimeout, condition),
              description);
   base::test::ios::SpinRunLoopWithMinDelay(base::TimeDelta::FromSeconds(1));
 
@@ -151,12 +156,17 @@ void AssertElementIsFocused(const std::string& element_id) {
 // Tests that trying to programmatically dismiss the keyboard when it isn't
 // visible doesn't crash the browser.
 - (void)testCloseKeyboardWhenNotVisible {
-  FormInputAccessoryViewTabHelper* tabHelper =
-      FormInputAccessoryViewTabHelper::FromWebState(
-          chrome_test_util::GetCurrentWebState());
-  GREYAssertNotNil(tabHelper,
-                   @"The tab's input accessory view should not be non nil.");
-  tabHelper->CloseKeyboard();
+  FormInputAccessoryViewHandler* accessoryViewDelegate =
+      [[FormInputAccessoryViewHandler alloc] init];
+  GREYAssertNotNil(accessoryViewDelegate,
+                   @"The Accessory View Delegate should not be non nil.");
+  [accessoryViewDelegate closeKeyboardWithoutButtonPress];
+  CRWJSInjectionReceiver* injectionReceiver =
+      chrome_test_util::GetCurrentWebState()->GetJSInjectionReceiver();
+  accessoryViewDelegate.JSSuggestionManager =
+      base::mac::ObjCCastStrict<JsSuggestionManager>(
+          [injectionReceiver instanceOfClass:[JsSuggestionManager class]]);
+  [accessoryViewDelegate closeKeyboardWithoutButtonPress];
 }
 
 @end

@@ -10,9 +10,9 @@ mojom("interfaces") {
   ]
 
   public_deps = [
-    "//components/autofill/content/common:mojo_types",
-    "//mojo/common:common_custom_types",
-    "//url/mojo:url_mojom_gurl",
+    "//components/autofill/core/common/mojom:mojo_types",
+    "//mojo/public/mojom/base",
+    "//url/mojom:url_mojom_gurl",
   ]
 }
 

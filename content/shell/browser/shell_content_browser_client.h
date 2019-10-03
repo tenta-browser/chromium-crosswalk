@@ -8,72 +8,87 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
 #include "content/shell/browser/shell_speech_recognition_manager_delegate.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 
 namespace content {
 
+class ResourceDispatcherHostDelegate;
 class ShellBrowserContext;
 class ShellBrowserMainParts;
+
+std::string GetShellUserAgent();
+blink::UserAgentMetadata GetShellUserAgentMetadata();
 
 class ShellContentBrowserClient : public ContentBrowserClient {
  public:
   // Gets the current instance.
   static ShellContentBrowserClient* Get();
 
-  static void SetSwapProcessesForRedirect(bool swap);
-
   ShellContentBrowserClient();
   ~ShellContentBrowserClient() override;
 
   // ContentBrowserClient overrides.
-  BrowserMainParts* CreateBrowserMainParts(
+  std::unique_ptr<BrowserMainParts> CreateBrowserMainParts(
       const MainFunctionParams& parameters) override;
-  bool DoesSiteRequireDedicatedProcess(BrowserContext* browser_context,
-                                       const GURL& effective_site_url) override;
   bool IsHandledURL(const GURL& url) override;
   void BindInterfaceRequestFromFrame(
       content::RenderFrameHost* render_frame_host,
       const std::string& interface_name,
       mojo::ScopedMessagePipeHandle interface_pipe) override;
-  void RegisterInProcessServices(StaticServiceMap* services) override;
-  void RegisterOutOfProcessServices(OutOfProcessServiceMap* services) override;
+  void RunServiceInstance(
+      const service_manager::Identity& identity,
+      mojo::PendingReceiver<service_manager::mojom::Service>* receiver)
+      override;
   bool ShouldTerminateOnServiceQuit(
       const service_manager::Identity& id) override;
-  std::unique_ptr<base::Value> GetServiceManifestOverlay(
+  base::Optional<service_manager::Manifest> GetServiceManifestOverlay(
       base::StringPiece name) override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
+  std::string GetAcceptLangs(BrowserContext* context) override;
   void ResourceDispatcherHostCreated() override;
   std::string GetDefaultDownloadName() override;
   WebContentsViewDelegate* GetWebContentsViewDelegate(
       WebContents* web_contents) override;
-  QuotaPermissionContext* CreateQuotaPermissionContext() override;
+  scoped_refptr<content::QuotaPermissionContext> CreateQuotaPermissionContext()
+      override;
   void GetQuotaSettings(
       content::BrowserContext* context,
       content::StoragePartition* partition,
       storage::OptionalQuotaSettingsCallback callback) override;
-  void SelectClientCertificate(
+  GeneratedCodeCacheSettings GetGeneratedCodeCacheSettings(
+      content::BrowserContext* context) override;
+  base::OnceClosure SelectClientCertificate(
       WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
       std::unique_ptr<ClientCertificateDelegate> delegate) override;
   SpeechRecognitionManagerDelegate* CreateSpeechRecognitionManagerDelegate()
       override;
-  net::NetLog* GetNetLog() override;
-  bool ShouldSwapProcessesForRedirect(BrowserContext* browser_context,
-                                      const GURL& current_url,
-                                      const GURL& new_url) override;
+  void OverrideWebkitPrefs(RenderViewHost* render_view_host,
+                           WebPreferences* prefs) override;
   DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
-
-  void OpenURL(BrowserContext* browser_context,
+  void OpenURL(SiteInstance* site_instance,
                const OpenURLParams& params,
-               const base::Callback<void(WebContents*)>& callback) override;
+               base::OnceCallback<void(WebContents*)> callback) override;
+  std::unique_ptr<LoginDelegate> CreateLoginDelegate(
+      const net::AuthChallengeInfo& auth_info,
+      content::WebContents* web_contents,
+      const content::GlobalRequestID& request_id,
+      bool is_main_frame,
+      const GURL& url,
+      scoped_refptr<net::HttpResponseHeaders> response_headers,
+      bool first_auth_attempt,
+      LoginAuthRequiredCallback auth_required_callback) override;
+
+  std::string GetUserAgent() override;
+  blink::UserAgentMetadata GetUserAgentMetadata() override;
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
   void GetAdditionalMappedFilesForChildProcess(
@@ -86,9 +101,14 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   bool PreSpawnRenderer(sandbox::TargetPolicy* policy) override;
 #endif
 
+  network::mojom::NetworkContextPtr CreateNetworkContext(
+      BrowserContext* context,
+      bool in_memory,
+      const base::FilePath& relative_partition_path) override;
+
   ShellBrowserContext* browser_context();
   ShellBrowserContext* off_the_record_browser_context();
-  ShellResourceDispatcherHostDelegate* resource_dispatcher_host_delegate() {
+  ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate() {
     return resource_dispatcher_host_delegate_.get();
   }
   ShellBrowserMainParts* shell_browser_main_parts() {
@@ -97,12 +117,17 @@ class ShellContentBrowserClient : public ContentBrowserClient {
 
   // Used for content_browsertests.
   void set_select_client_certificate_callback(
-      base::Closure select_client_certificate_callback) {
-    select_client_certificate_callback_ = select_client_certificate_callback;
+      base::OnceClosure select_client_certificate_callback) {
+    select_client_certificate_callback_ =
+        std::move(select_client_certificate_callback);
   }
   void set_should_terminate_on_service_quit_callback(
-      base::Callback<bool(const service_manager::Identity&)> callback) {
-    should_terminate_on_service_quit_callback_ = callback;
+      base::OnceCallback<bool(const service_manager::Identity&)> callback) {
+    should_terminate_on_service_quit_callback_ = std::move(callback);
+  }
+  void set_login_request_callback(
+      base::OnceCallback<void(bool is_main_frame)> login_request_callback) {
+    login_request_callback_ = std::move(login_request_callback);
   }
 
  protected:
@@ -110,29 +135,30 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
           registry);
 
-  void set_resource_dispatcher_host_delegate(
-      std::unique_ptr<ShellResourceDispatcherHostDelegate> delegate) {
-    resource_dispatcher_host_delegate_ = std::move(delegate);
-  }
-
   void set_browser_main_parts(ShellBrowserMainParts* parts) {
     shell_browser_main_parts_ = parts;
   }
 
  private:
-  std::unique_ptr<ShellResourceDispatcherHostDelegate>
+  std::unique_ptr<ResourceDispatcherHostDelegate>
       resource_dispatcher_host_delegate_;
 
-  base::Closure select_client_certificate_callback_;
-  base::Callback<bool(const service_manager::Identity&)>
+  base::OnceClosure select_client_certificate_callback_;
+  base::OnceCallback<bool(const service_manager::Identity&)>
       should_terminate_on_service_quit_callback_;
+  base::OnceCallback<void(bool is_main_frame)> login_request_callback_;
 
   std::unique_ptr<
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>>
       frame_interfaces_;
 
+  // Owned by content::BrowserMainLoop.
   ShellBrowserMainParts* shell_browser_main_parts_;
 };
+
+// The delay for sending reports when running with --run-web-tests
+constexpr base::TimeDelta kReportingDeliveryIntervalTimeForWebTests =
+    base::TimeDelta::FromMilliseconds(100);
 
 }  // namespace content
 

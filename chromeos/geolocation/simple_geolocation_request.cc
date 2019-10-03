@@ -11,10 +11,11 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
@@ -25,8 +26,9 @@
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 // Location resolve timeout is usually 1 minute, so 2 minutes with 50 buckets
 // should be enough.
@@ -121,7 +123,7 @@ void RecordUmaEvent(SimpleGeolocationRequestEvent event) {
 }
 
 void RecordUmaResponseCode(int code) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("SimpleGeolocation.Request.ResponseCode", code);
+  base::UmaHistogramSparse("SimpleGeolocation.Request.ResponseCode", code);
 }
 
 // Slow geolocation resolve leads to bad user experience.
@@ -139,8 +141,8 @@ void RecordUmaResult(SimpleGeolocationRequestResult result, size_t retries) {
   UMA_HISTOGRAM_ENUMERATION("SimpleGeolocation.Request.Result",
                             result,
                             SIMPLE_GEOLOCATION_REQUEST_RESULT_COUNT);
-  UMA_HISTOGRAM_SPARSE_SLOWLY("SimpleGeolocation.Request.Retries",
-                              std::min(retries, kMaxRetriesValueInHistograms));
+  base::UmaHistogramSparse("SimpleGeolocation.Request.Retries",
+                           std::min(retries, kMaxRetriesValueInHistograms));
 }
 
 // Creates the request url to send to the server.
@@ -193,8 +195,8 @@ bool ParseServerResponse(const GURL& server_url,
   // Parse the response, ignoring comments.
   std::string error_msg;
   std::unique_ptr<base::Value> response_value =
-      base::JSONReader::ReadAndReturnError(response_body, base::JSON_PARSE_RFC,
-                                           NULL, &error_msg);
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          response_body, base::JSON_PARSE_RFC, NULL, &error_msg);
   if (response_value == NULL) {
     PrintGeolocationError(
         server_url, "JSONReader failed: " + error_msg, position);
@@ -287,7 +289,7 @@ bool GetGeolocationFromResponse(bool http_success,
   }
   if (status_code != net::HTTP_OK) {
     std::string message = "Returned error code ";
-    message += base::IntToString(status_code);
+    message += base::NumberToString(status_code);
     PrintGeolocationError(server_url, message, position);
     RecordUmaEvent(SIMPLE_GEOLOCATION_REQUEST_EVENT_RESPONSE_NOT_OK);
     return false;
@@ -315,7 +317,7 @@ std::unique_ptr<base::DictionaryValue> CreateAccessPointDictionary(
   if (!access_point.timestamp.is_null()) {
     access_point_dictionary->SetKey(
         kAge,
-        base::Value(base::Int64ToString(
+        base::Value(base::NumberToString(
             (base::Time::Now() - access_point.timestamp).InMilliseconds())));
   }
 
@@ -339,7 +341,7 @@ std::unique_ptr<base::DictionaryValue> CreateCellTowerDictionary(
   if (!cell_tower.timestamp.is_null()) {
     cell_tower_dictionary->SetKey(
         kAge,
-        base::Value(base::Int64ToString(
+        base::Value(base::NumberToString(
             (base::Time::Now() - cell_tower.timestamp).InMilliseconds())));
   }
   return cell_tower_dictionary;
@@ -348,12 +350,12 @@ std::unique_ptr<base::DictionaryValue> CreateCellTowerDictionary(
 }  // namespace
 
 SimpleGeolocationRequest::SimpleGeolocationRequest(
-    net::URLRequestContextGetter* url_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> factory,
     const GURL& service_url,
     base::TimeDelta timeout,
     std::unique_ptr<WifiAccessPointVector> wifi_data,
     std::unique_ptr<CellTowerVector> cell_tower_data)
-    : url_context_getter_(url_context_getter),
+    : shared_url_loader_factory_(std::move(factory)),
       service_url_(service_url),
       retry_sleep_on_server_error_(base::TimeDelta::FromSeconds(
           kResolveGeolocationRetrySleepOnServerErrorSeconds)),
@@ -436,21 +438,24 @@ void SimpleGeolocationRequest::StartRequest() {
   VLOG(1) << "SimpleGeolocationRequest::StartRequest(): request body:\n"
           << request_body;
 
-  url_fetcher_ =
-      net::URLFetcher::Create(request_url_, net::URLFetcher::POST, this);
-  url_fetcher_->SetRequestContext(url_context_getter_.get());
-  url_fetcher_->SetUploadData("application/json", request_body);
-  url_fetcher_->SetLoadFlags(net::LOAD_BYPASS_CACHE |
-                             net::LOAD_DISABLE_CACHE |
-                             net::LOAD_DO_NOT_SAVE_COOKIES |
-                             net::LOAD_DO_NOT_SEND_COOKIES |
-                             net::LOAD_DO_NOT_SEND_AUTH_DATA);
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = request_url_;
+  request->method = "POST";
+  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
+  request->allow_credentials = false;
+
+  simple_url_loader_ = network::SimpleURLLoader::Create(
+      std::move(request), NO_TRAFFIC_ANNOTATION_YET);
+  simple_url_loader_->AttachStringForUpload(request_body, "application/json");
 
   // Call test hook before asynchronous request actually starts.
   if (g_test_request_hook)
     g_test_request_hook->OnStart(this);
 
-  url_fetcher_->Start();
+  simple_url_loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      shared_url_loader_factory_.get(),
+      base::BindOnce(&SimpleGeolocationRequest::OnSimpleURLLoaderComplete,
+                     base::Unretained(this)));
 }
 
 void SimpleGeolocationRequest::MakeRequest(const ResponseCallback& callback) {
@@ -479,25 +484,31 @@ void SimpleGeolocationRequest::Retry(bool server_error) {
       FROM_HERE, delay, this, &SimpleGeolocationRequest::StartRequest);
 }
 
-void SimpleGeolocationRequest::OnURLFetchComplete(
-    const net::URLFetcher* source) {
-  DCHECK_EQ(url_fetcher_.get(), source);
-
-  net::URLRequestStatus status = source->GetStatus();
-  int response_code = source->GetResponseCode();
+void SimpleGeolocationRequest::OnSimpleURLLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
+  bool is_success = !!response_body;
+  int response_code = -1;
+  if (simple_url_loader_->ResponseInfo() &&
+      simple_url_loader_->ResponseInfo()->headers) {
+    response_code =
+        simple_url_loader_->ResponseInfo()->headers->response_code();
+  }
   RecordUmaResponseCode(response_code);
 
-  std::string data;
-  source->GetResponseAsString(&data);
   const bool parse_success = GetGeolocationFromResponse(
-      status.is_success(), response_code, data, source->GetURL(), &position_);
+      is_success, response_code, response_body ? *response_body : std::string(),
+      simple_url_loader_->GetFinalURL(), &position_);
+  // Note that SimpleURLLoader doesn't return a body for non-2xx
+  // responses by default.
   const bool server_error =
-      !status.is_success() || (response_code >= 500 && response_code < 600);
+      (!is_success && (response_code == -1 || response_code / 100 == 2)) ||
+      (response_code >= 500 && response_code < 600);
   const bool success = parse_success && position_.Valid();
-  url_fetcher_.reset();
+  simple_url_loader_.reset();
 
-  DVLOG(1) << "SimpleGeolocationRequest::OnURLFetchComplete(): position={"
-           << position_.ToString() << "}";
+  DVLOG(1)
+      << "SimpleGeolocationRequest::OnSimpleURLLoaderComplete(): position={"
+      << position_.ToString() << "}";
 
   if (!success) {
     Retry(server_error);
@@ -515,7 +526,7 @@ void SimpleGeolocationRequest::OnURLFetchComplete(
 void SimpleGeolocationRequest::ReplyAndDestroySelf(
     const base::TimeDelta elapsed,
     bool server_error) {
-  url_fetcher_.reset();
+  simple_url_loader_.reset();
   timeout_timer_.Stop();
   request_scheduled_.Stop();
 

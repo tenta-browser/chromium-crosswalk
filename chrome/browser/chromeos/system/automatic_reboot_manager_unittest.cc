@@ -14,7 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
@@ -23,15 +23,19 @@
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/system/automatic_reboot_manager_observer.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chromeos/chromeos_paths.h"
+#include "chromeos/constants/chromeos_paths.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/fake_update_engine_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
+#include "components/account_id/account_id.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/session_manager/core/session_manager.h"
+#include "components/session_manager/session_manager_types.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
@@ -39,7 +43,6 @@
 #include "content/public/browser/notification_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/message_center/message_center.h"
 
 using ::testing::_;
 using ::testing::Invoke;
@@ -163,6 +166,8 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
   // Sets the status of |update_engine_client_| to NEED_REBOOT for tests.
   void SetUpdateStatusNeedReboot();
 
+  void LogIn();
+
   MockUptimeProvider* uptime_provider() const {
     return task_runner_->uptime_provider();
   }
@@ -170,6 +175,11 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
   bool is_kiosk_session() const {
     return is_logged_in_as_kiosk_app_ || is_logged_in_as_arc_kiosk_app_;
   }
+
+  void VerifyTimerIsStopped(const base::OneShotTimer* timer) const;
+  void VerifyTimerIsRunning(const base::OneShotTimer* timer,
+                            const base::TimeDelta& delay) const;
+  void VerifyLoginScreenIdleTimerIsRunning() const;
 
   bool is_user_logged_in_ = false;
   bool is_logged_in_as_kiosk_app_ = false;
@@ -189,12 +199,6 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
   MockAutomaticRebootManagerObserver automatic_reboot_manager_observer_;
   std::unique_ptr<AutomaticRebootManager> automatic_reboot_manager_;
 
- private:
-  void VerifyTimerIsStopped(const base::OneShotTimer* timer) const;
-  void VerifyTimerIsRunning(const base::OneShotTimer* timer,
-                            const base::TimeDelta& delay) const;
-  void VerifyLoginScreenIdleTimerIsRunning() const;
-
   base::ScopedTempDir temp_dir_;
   base::FilePath update_reboot_needed_uptime_file_;
 
@@ -206,9 +210,12 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
   TestingPrefServiceSimple local_state_;
   MockUserManager* mock_user_manager_;  // Not owned.
   user_manager::ScopedUserManager user_manager_enabler_;
+  session_manager::SessionManager session_manager_;
 
-  FakePowerManagerClient* power_manager_client_ = nullptr;  // Not owned.
   FakeUpdateEngineClient* update_engine_client_ = nullptr;  // Not owned.
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(AutomaticRebootManagerBasicTest);
 };
 
 enum AutomaticRebootManagerTestScenario {
@@ -264,7 +271,7 @@ TestAutomaticRebootManagerTaskRunner::~TestAutomaticRebootManagerTaskRunner() {
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnBeforeSelectingTask() {
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnAfterTimePassed() {
@@ -272,7 +279,7 @@ void TestAutomaticRebootManagerTaskRunner::OnAfterTimePassed() {
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnAfterTaskRun() {
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
 }
 
 MockAutomaticRebootManagerObserver::MockAutomaticRebootManagerObserver()
@@ -320,21 +327,17 @@ void AutomaticRebootManagerBasicTest::SetUp() {
   update_reboot_needed_uptime_file_ =
       temp_dir.Append("update_reboot_needed_uptime");
   ASSERT_EQ(0, base::WriteFile(update_reboot_needed_uptime_file_, NULL, 0));
-  ASSERT_TRUE(PathService::Override(chromeos::FILE_UPTIME, uptime_file));
-  ASSERT_TRUE(PathService::Override(chromeos::FILE_UPDATE_REBOOT_NEEDED_UPTIME,
-                                    update_reboot_needed_uptime_file_));
+  ASSERT_TRUE(base::PathService::Override(FILE_UPTIME, uptime_file));
+  ASSERT_TRUE(base::PathService::Override(FILE_UPDATE_REBOOT_NEEDED_UPTIME,
+                                          update_reboot_needed_uptime_file_));
 
   TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
   AutomaticRebootManager::RegisterPrefs(local_state_.registry());
 
-  std::unique_ptr<DBusThreadManagerSetter> dbus_setter =
-      chromeos::DBusThreadManager::GetSetterForTesting();
-  power_manager_client_ = new FakePowerManagerClient;
-  dbus_setter->SetPowerManagerClient(
-      std::unique_ptr<PowerManagerClient>(power_manager_client_));
   update_engine_client_ = new FakeUpdateEngineClient;
-  dbus_setter->SetUpdateEngineClient(
+  DBusThreadManager::GetSetterForTesting()->SetUpdateEngineClient(
       std::unique_ptr<UpdateEngineClient>(update_engine_client_));
+  PowerManagerClient::InitializeFake();
 
   EXPECT_CALL(*mock_user_manager_, IsUserLoggedIn())
      .WillRepeatedly(ReturnPointee(&is_user_logged_in_));
@@ -357,6 +360,7 @@ void AutomaticRebootManagerBasicTest::TearDown() {
     task_runner_->RunUntilIdle();
   }
 
+  PowerManagerClient::Shutdown();
   DBusThreadManager::Shutdown();
   TestingBrowserProcess::GetGlobal()->SetLocalState(NULL);
 }
@@ -373,10 +377,10 @@ void AutomaticRebootManagerBasicTest::SetRebootAfterUpdate(
   reboot_after_update_ = reboot_after_update;
   local_state_.SetManagedPref(
       prefs::kRebootAfterUpdate,
-      base::MakeUnique<base::Value>(reboot_after_update));
+      std::make_unique<base::Value>(reboot_after_update));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::SetUptimeLimit(
@@ -388,11 +392,11 @@ void AutomaticRebootManagerBasicTest::SetUptimeLimit(
   } else {
     local_state_.SetManagedPref(
         prefs::kUptimeLimit,
-        base::MakeUnique<base::Value>(static_cast<int>(limit.InSeconds())));
+        std::make_unique<base::Value>(static_cast<int>(limit.InSeconds())));
   }
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyUpdateRebootNeeded() {
@@ -400,14 +404,14 @@ void AutomaticRebootManagerBasicTest::NotifyUpdateRebootNeeded() {
   automatic_reboot_manager_->UpdateStatusChanged(
       update_engine_client_->GetLastStatus());
   task_runner_->RunUntilIdle();
-  EXPECT_EQ(0, power_manager_client_->num_request_restart_calls());
+  EXPECT_EQ(0, FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyResumed(bool expect_reboot) {
   automatic_reboot_manager_->SuspendDone(base::TimeDelta::FromHours(1));
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::NotifyTerminating(bool expect_reboot) {
@@ -417,7 +421,7 @@ void AutomaticRebootManagerBasicTest::NotifyTerminating(bool expect_reboot) {
       content::NotificationService::NoDetails());
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::FastForwardBy(
@@ -425,14 +429,14 @@ void AutomaticRebootManagerBasicTest::FastForwardBy(
     bool expect_reboot) {
   task_runner_->FastForwardBy(delta);
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::FastForwardUntilNoTasksRemain(
     bool expect_reboot) {
   task_runner_->FastForwardUntilNoTasksRemain();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 }
 
 void AutomaticRebootManagerBasicTest::ExpectRebootRequest(
@@ -456,15 +460,16 @@ void AutomaticRebootManagerBasicTest::ExpectNoRebootRequest() {
 
 void AutomaticRebootManagerBasicTest::CreateAutomaticRebootManager(
     bool expect_reboot) {
-  automatic_reboot_manager_.reset(new AutomaticRebootManager(
-      std::unique_ptr<base::TickClock>(task_runner_->GetMockTickClock())));
+  automatic_reboot_manager_ = std::make_unique<AutomaticRebootManager>(
+      task_runner_->GetMockTickClock());
   automatic_reboot_manager_observer_.Init(automatic_reboot_manager_.get());
   task_runner_->RunUntilIdle();
   EXPECT_EQ(expect_reboot ? 1 : 0,
-            power_manager_client_->num_request_restart_calls());
+            FakePowerManagerClient::Get()->num_request_restart_calls());
 
   uptime_processing_delay_ =
-      base::TimeTicks() - automatic_reboot_manager_->boot_time_ -
+      base::TimeTicks() -
+      automatic_reboot_manager_->boot_time_.value_or(base::TimeTicks()) -
       uptime_provider()->uptime();
   EXPECT_GE(uptime_processing_delay_, base::TimeDelta());
   EXPECT_LE(uptime_processing_delay_, base::TimeDelta::FromSeconds(1));
@@ -537,6 +542,18 @@ void AutomaticRebootManagerBasicTest::SetUpdateStatusNeedReboot() {
   update_engine_client_->set_default_status(client_status);
 }
 
+void AutomaticRebootManagerBasicTest::LogIn() {
+  is_user_logged_in_ = true;
+
+  const AccountId account_id =
+      AccountId::FromUserEmailGaiaId("email", "123456");
+  session_manager_.CreateSession(
+      account_id,
+      chromeos::ProfileHelper::GetUserIdHashByUserIdForTesting("email"), true);
+  session_manager_.SessionStarted();
+  session_manager_.SetSessionState(session_manager::SessionState::ACTIVE);
+}
+
 void AutomaticRebootManagerBasicTest::VerifyTimerIsStopped(
     const base::OneShotTimer* timer) const {
   if (timer)
@@ -565,21 +582,23 @@ AutomaticRebootManagerTest::AutomaticRebootManagerTest() {
       is_user_logged_in_ = false;
       is_logged_in_as_kiosk_app_ = false;
       is_logged_in_as_arc_kiosk_app_ = false;
+      session_manager_.SetSessionState(
+          session_manager::SessionState::LOGIN_PRIMARY);
       break;
     case AUTOMATIC_REBOOT_MANAGER_TEST_SCENARIO_KIOSK_APP_SESSION:
-      is_user_logged_in_ = true;
       is_logged_in_as_kiosk_app_ = true;
       is_logged_in_as_arc_kiosk_app_ = false;
+      LogIn();
       break;
     case AUTOMATIC_REBOOT_MANAGER_TEST_SCENARIO_ARC_KIOSK_APP_SESSION:
-      is_user_logged_in_ = true;
       is_logged_in_as_kiosk_app_ = false;
       is_logged_in_as_arc_kiosk_app_ = true;
+      LogIn();
       break;
     case AUTOMATIC_REBOOT_MANAGER_TEST_SCENARIO_NON_KIOSK_APP_SESSION:
-      is_user_logged_in_ = true;
       is_logged_in_as_kiosk_app_ = false;
       is_logged_in_as_arc_kiosk_app_ = false;
+      LogIn();
       break;
   }
 }
@@ -600,12 +619,8 @@ TEST_F(AutomaticRebootManagerBasicTest, LoginStopsIdleTimer) {
   VerifyNoRebootRequested();
 
   // Notify that a kiosk app session has been started.
-  is_user_logged_in_ = true;
   is_logged_in_as_kiosk_app_ = true;
-  automatic_reboot_manager_->Observe(
-      chrome::NOTIFICATION_LOGIN_USER_CHANGED,
-      content::Source<AutomaticRebootManagerBasicTest>(this),
-      content::NotificationService::NoDetails());
+  LogIn();
 
   // Verify that the login screen idle timer is stopped.
   VerifyLoginScreenIdleTimerIsStopped();
@@ -627,11 +642,7 @@ TEST_F(AutomaticRebootManagerBasicTest, NonKioskLoginStopsIdleTimer) {
   VerifyNoRebootRequested();
 
   // Notify that a non-kiosk-app session has been started.
-  is_user_logged_in_ = true;
-  automatic_reboot_manager_->Observe(
-      chrome::NOTIFICATION_LOGIN_USER_CHANGED,
-      content::Source<AutomaticRebootManagerBasicTest>(this),
-      content::NotificationService::NoDetails());
+  LogIn();
 
   // Verify that the login screen idle timer is stopped.
   VerifyLoginScreenIdleTimerIsStopped();
@@ -681,8 +692,8 @@ TEST_F(AutomaticRebootManagerBasicTest, UserActivityResetsIdleTimer) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, ResumeNoPolicy) {
-  is_user_logged_in_ = true;
   is_logged_in_as_kiosk_app_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromDays(10));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -706,7 +717,7 @@ TEST_F(AutomaticRebootManagerBasicTest, ResumeNoPolicy) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeAppNoPolicy) {
-  is_user_logged_in_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromDays(10));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -731,8 +742,8 @@ TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeAppNoPolicy) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, ResumeBeforeGracePeriod) {
-  is_user_logged_in_ = true;
   is_logged_in_as_kiosk_app_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(12));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -762,7 +773,7 @@ TEST_F(AutomaticRebootManagerBasicTest, ResumeBeforeGracePeriod) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeBeforeGracePeriod) {
-  is_user_logged_in_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(12));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -792,8 +803,8 @@ TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeBeforeGracePeriod) {
 // Verifies that when the device is suspended and then resumes, it immediately
 // reboots.
 TEST_F(AutomaticRebootManagerBasicTest, ResumeInGracePeriod) {
-  is_user_logged_in_ = true;
   is_logged_in_as_kiosk_app_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(12));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -820,7 +831,7 @@ TEST_F(AutomaticRebootManagerBasicTest, ResumeInGracePeriod) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeInGracePeriod) {
-  is_user_logged_in_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(12));
 
   // Verify that no reboot is requested and the device does not reboot
@@ -850,8 +861,8 @@ TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeInGracePeriod) {
 // Verifies that when the device is suspended and then resumes, it immediately
 // reboots.
 TEST_F(AutomaticRebootManagerBasicTest, ResumeAfterGracePeriod) {
-  is_user_logged_in_ = true;
   is_logged_in_as_kiosk_app_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(29) +
                           base::TimeDelta::FromMinutes(30));
 
@@ -879,7 +890,7 @@ TEST_F(AutomaticRebootManagerBasicTest, ResumeAfterGracePeriod) {
 // Verifies that when the device is suspended and then resumes, it does not
 // immediately reboot.
 TEST_F(AutomaticRebootManagerBasicTest, NonKioskResumeAfterGracePeriod) {
-  is_user_logged_in_ = true;
+  LogIn();
   uptime_provider()->SetUptime(base::TimeDelta::FromHours(29) +
                           base::TimeDelta::FromMinutes(30));
 
@@ -2253,7 +2264,7 @@ TEST_P(AutomaticRebootManagerTest, StartNoUptime) {
   FastForwardUntilNoTasksRemain(false);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutomaticRebootManagerTestInstance,
     AutomaticRebootManagerTest,
     ::testing::Values(

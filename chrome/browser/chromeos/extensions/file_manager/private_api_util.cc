@@ -5,13 +5,15 @@
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_util.h"
 
 #include <stddef.h>
+#include <memory>
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
@@ -21,11 +23,14 @@
 #include "chrome/browser/chromeos/file_manager/path_util.h"
 #include "chrome/browser/chromeos/file_manager/snapshot_manager.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
+#include "chrome/browser/chromeos/fileapi/external_file_url_util.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/file_manager_private.h"
+#include "chromeos/components/drivefs/drivefs_util.h"
 #include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/drive.pb.h"
+#include "components/drive/drive_api_util.h"
 #include "components/drive/file_errors.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "storage/browser/fileapi/file_system_context.h"
@@ -48,60 +53,62 @@ struct GetSelectedFileInfoParams {
 
 // The callback type for GetFileNativeLocalPathFor{Opening,Saving}. It receives
 // the resolved local path when successful, and receives empty path for failure.
-typedef base::Callback<void(const base::FilePath&)> LocalPathCallback;
+typedef base::OnceCallback<void(const base::FilePath&)> LocalPathCallback;
 
 // Converts a callback from Drive file system to LocalPathCallback.
 void OnDriveGetFile(const base::FilePath& path,
-                    const LocalPathCallback& callback,
+                    LocalPathCallback callback,
                     drive::FileError error,
                     const base::FilePath& local_file_path,
                     std::unique_ptr<drive::ResourceEntry> entry) {
   if (error != drive::FILE_ERROR_OK)
     DLOG(ERROR) << "Failed to get " << path.value() << " with: " << error;
-  callback.Run(local_file_path);
+  std::move(callback).Run(local_file_path);
 }
 
 // Gets a resolved local file path of a non native |path| for file opening.
 void GetFileNativeLocalPathForOpening(Profile* profile,
                                       const base::FilePath& path,
-                                      const LocalPathCallback& callback) {
+                                      LocalPathCallback callback) {
   if (drive::util::IsUnderDriveMountPoint(path)) {
     drive::FileSystemInterface* file_system =
         drive::util::GetFileSystemByProfile(profile);
     if (!file_system) {
       DLOG(ERROR) << "Drive file selected while disabled: " << path.value();
-      callback.Run(base::FilePath());
+      std::move(callback).Run(base::FilePath());
       return;
     }
-    file_system->GetFile(drive::util::ExtractDrivePath(path),
-                         base::Bind(&OnDriveGetFile, path, callback));
+    file_system->GetFile(
+        drive::util::ExtractDrivePath(path),
+        base::BindOnce(&OnDriveGetFile, path, std::move(callback)));
     return;
   }
 
   VolumeManager::Get(profile)->snapshot_manager()->CreateManagedSnapshot(
-      path, callback);
+      path, std::move(callback));
 }
 
 // Gets a resolved local file path of a non native |path| for file saving.
 void GetFileNativeLocalPathForSaving(Profile* profile,
                                      const base::FilePath& path,
-                                     const LocalPathCallback& callback) {
+                                     LocalPathCallback callback) {
   if (drive::util::IsUnderDriveMountPoint(path)) {
     drive::FileSystemInterface* file_system =
         drive::util::GetFileSystemByProfile(profile);
     if (!file_system) {
       DLOG(ERROR) << "Drive file selected while disabled: " << path.value();
-      callback.Run(base::FilePath());
+      std::move(callback).Run(base::FilePath());
       return;
     }
-    file_system->GetFileForSaving(drive::util::ExtractDrivePath(path),
-                                  base::Bind(&OnDriveGetFile, path, callback));
+    file_system->GetFileForSaving(
+        drive::util::ExtractDrivePath(path),
+        base::BindOnce(&OnDriveGetFile, path, std::move(callback)));
     return;
   }
 
   // TODO(kinaba): For now, the only writable non-local volume is Drive.
   NOTREACHED();
-  callback.Run(base::FilePath());
+  std::move(callback).Run(base::FilePath());
 }
 
 // Forward declarations of helper functions for GetSelectedFileInfo().
@@ -109,6 +116,12 @@ void ContinueGetSelectedFileInfo(
     Profile* profile,
     std::unique_ptr<GetSelectedFileInfoParams> params,
     const base::FilePath& local_file_path);
+
+void ContinueGetSelectedFileInfoWithDriveFsMetadata(
+    Profile* profile,
+    std::unique_ptr<GetSelectedFileInfoParams> params,
+    drive::FileError error,
+    drivefs::mojom::FileMetadataPtr metadata);
 
 // Part of GetSelectedFileInfo().
 void GetSelectedFileInfoInternal(
@@ -125,34 +138,55 @@ void GetSelectedFileInfoInternal(
       // the selected path does not point to a native local path (e.g., Drive,
       // MTP, or provided file system), we should resolve the path.
       switch (params->local_path_option) {
-        case NO_LOCAL_PATH_RESOLUTION:
+        case NO_LOCAL_PATH_RESOLUTION: {
           // Pass empty local path.
-          params->selected_files.push_back(
-              ui::SelectedFileInfo(file_path, base::FilePath()));
+          params->selected_files.emplace_back(file_path, base::FilePath());
+
+          GURL external_file_url =
+              chromeos::CreateExternalFileURLFromPath(profile, file_path);
+          if (!external_file_url.is_empty()) {
+            params->selected_files.back().url.emplace(
+                std::move(external_file_url));
+          }
           break;
-        case NEED_LOCAL_PATH_FOR_OPENING:
+        }
+        case NEED_LOCAL_PATH_FOR_OPENING: {
           GetFileNativeLocalPathForOpening(
-              profile,
-              file_path,
-              base::Bind(&ContinueGetSelectedFileInfo,
-                         profile,
-                         base::Passed(&params)));
+              profile, file_path,
+              base::BindOnce(&ContinueGetSelectedFileInfo, profile,
+                             std::move(params)));
           return;  // Remaining work is done in ContinueGetSelectedFileInfo.
-        case NEED_LOCAL_PATH_FOR_SAVING:
+        }
+        case NEED_LOCAL_PATH_FOR_SAVING: {
           GetFileNativeLocalPathForSaving(
-              profile,
-              file_path,
-              base::Bind(&ContinueGetSelectedFileInfo,
-                         profile,
-                         base::Passed(&params)));
+              profile, file_path,
+              base::BindOnce(&ContinueGetSelectedFileInfo, profile,
+                             std::move(params)));
           return;  // Remaining work is done in ContinueGetSelectedFileInfo.
+        }
       }
     } else {
-      params->selected_files.push_back(
-          ui::SelectedFileInfo(file_path, file_path));
+      // Hosted docs can only accessed by navigating to their URLs. Get the
+      // metadata for the file from DriveFS and populate the |url| field in the
+      // SelectedFileInfo.
+      if (drive::util::HasHostedDocumentExtension(file_path)) {
+        auto* integration_service =
+            drive::util::GetIntegrationServiceByProfile(profile);
+        base::FilePath drive_mount_relative_path;
+        if (integration_service && integration_service->GetDriveFsInterface() &&
+            integration_service->GetRelativeDrivePath(
+                file_path, &drive_mount_relative_path)) {
+          integration_service->GetDriveFsInterface()->GetMetadata(
+              drive_mount_relative_path,
+              base::BindOnce(&ContinueGetSelectedFileInfoWithDriveFsMetadata,
+                             profile, std::move(params)));
+          return;
+        }
+      }
+      params->selected_files.emplace_back(file_path, file_path);
     }
   }
-  params->callback.Run(params->selected_files);
+  std::move(params->callback).Run(params->selected_files);
 }
 
 // Part of GetSelectedFileInfo().
@@ -161,16 +195,47 @@ void ContinueGetSelectedFileInfo(
     std::unique_ptr<GetSelectedFileInfoParams> params,
     const base::FilePath& local_path) {
   if (local_path.empty()) {
-    params->callback.Run(std::vector<ui::SelectedFileInfo>());
+    std::move(params->callback).Run(std::vector<ui::SelectedFileInfo>());
     return;
   }
   const int index = params->selected_files.size();
   const base::FilePath& file_path = params->file_paths[index];
-  params->selected_files.push_back(ui::SelectedFileInfo(file_path, local_path));
+  params->selected_files.emplace_back(file_path, local_path);
+  GetSelectedFileInfoInternal(profile, std::move(params));
+}
+
+// Part of GetSelectedFileInfo().
+void ContinueGetSelectedFileInfoWithDriveFsMetadata(
+    Profile* profile,
+    std::unique_ptr<GetSelectedFileInfoParams> params,
+    drive::FileError error,
+    drivefs::mojom::FileMetadataPtr metadata) {
+  const int index = params->selected_files.size();
+  const auto& path = params->file_paths[index];
+  params->selected_files.emplace_back(path, path);
+  if (metadata && drivefs::IsHosted(metadata->type) &&
+      !metadata->alternate_url.empty()) {
+    params->selected_files.back().url.emplace(
+        std::move(metadata->alternate_url));
+  }
   GetSelectedFileInfoInternal(profile, std::move(params));
 }
 
 }  // namespace
+
+void FillIconSet(file_manager_private::IconSet* output,
+                 const chromeos::file_system_provider::IconSet& input) {
+  DCHECK(output);
+  using chromeos::file_system_provider::IconSet;
+  if (input.HasIcon(IconSet::IconSize::SIZE_16x16)) {
+    output->icon16x16_url = std::make_unique<std::string>(
+        input.GetIcon(IconSet::IconSize::SIZE_16x16).spec());
+  }
+  if (input.HasIcon(IconSet::IconSize::SIZE_32x32)) {
+    output->icon32x32_url = std::make_unique<std::string>(
+        input.GetIcon(IconSet::IconSize::SIZE_32x32).spec());
+  }
+}
 
 void VolumeToVolumeMetadata(
     Profile* profile,
@@ -186,8 +251,8 @@ void VolumeToVolumeMetadata(
   volume_metadata->profile.is_current_profile = true;
 
   if (!volume.source_path().empty()) {
-    volume_metadata->source_path.reset(
-        new std::string(volume.source_path().AsUTF8Unsafe()));
+    volume_metadata->source_path =
+        std::make_unique<std::string>(volume.source_path().AsUTF8Unsafe());
   }
 
   switch (volume.source()) {
@@ -212,17 +277,21 @@ void VolumeToVolumeMetadata(
   volume_metadata->configurable = volume.configurable();
   volume_metadata->watchable = volume.watchable();
 
-  // TODO(baileyberro): Refactor extension_id into provider_id here.
   if (volume.type() == VOLUME_TYPE_PROVIDED) {
-    volume_metadata->extension_id.reset(
-        new std::string(volume.provider_id().GetIdUnsafe()));
-    volume_metadata->file_system_id.reset(
-        new std::string(volume.file_system_id()));
+    volume_metadata->provider_id =
+        std::make_unique<std::string>(volume.provider_id().ToString());
+    volume_metadata->file_system_id =
+        std::make_unique<std::string>(volume.file_system_id());
   }
 
-  volume_metadata->volume_label.reset(new std::string(volume.volume_label()));
-  volume_metadata->disk_file_system_type.reset(
-      new std::string(volume.file_system_type()));
+  FillIconSet(&volume_metadata->icon_set, volume.icon_set());
+
+  volume_metadata->volume_label =
+      std::make_unique<std::string>(volume.volume_label());
+  volume_metadata->disk_file_system_type =
+      std::make_unique<std::string>(volume.file_system_type());
+  volume_metadata->drive_label =
+      std::make_unique<std::string>(volume.drive_label());
 
   switch (volume.type()) {
     case VOLUME_TYPE_GOOGLE_DRIVE:
@@ -249,6 +318,17 @@ void VolumeToVolumeMetadata(
     case VOLUME_TYPE_MEDIA_VIEW:
       volume_metadata->volume_type =
           file_manager_private::VOLUME_TYPE_MEDIA_VIEW;
+      break;
+    case VOLUME_TYPE_CROSTINI:
+      volume_metadata->volume_type = file_manager_private::VOLUME_TYPE_CROSTINI;
+      break;
+    case VOLUME_TYPE_ANDROID_FILES:
+      volume_metadata->volume_type =
+          file_manager_private::VOLUME_TYPE_ANDROID_FILES;
+      break;
+    case VOLUME_TYPE_DOCUMENTS_PROVIDER:
+      volume_metadata->volume_type =
+          file_manager_private::VOLUME_TYPE_DOCUMENTS_PROVIDER;
       break;
     case VOLUME_TYPE_TESTING:
       volume_metadata->volume_type =
@@ -281,9 +361,10 @@ void VolumeToVolumeMetadata(
         volume_metadata->device_type = file_manager_private::DEVICE_TYPE_MOBILE;
         break;
     }
-    volume_metadata->device_path.reset(
-        new std::string(volume.system_path_prefix().AsUTF8Unsafe()));
-    volume_metadata->is_parent_device.reset(new bool(volume.is_parent()));
+    volume_metadata->device_path = std::make_unique<std::string>(
+        volume.storage_device_path().AsUTF8Unsafe());
+    volume_metadata->is_parent_device =
+        std::make_unique<bool>(volume.is_parent());
   } else {
     volume_metadata->device_type =
         file_manager_private::DEVICE_TYPE_NONE;
@@ -348,7 +429,7 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
   std::unique_ptr<GetSelectedFileInfoParams> params(
       new GetSelectedFileInfoParams);
   params->local_path_option = local_path_option;
-  params->callback = callback;
+  params->callback = std::move(callback);
 
   for (size_t i = 0; i < file_urls.size(); ++i) {
     const GURL& file_url = file_urls[i];
@@ -361,8 +442,8 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&GetSelectedFileInfoInternal, profile,
-                                base::Passed(&params)));
+      FROM_HERE,
+      base::BindOnce(&GetSelectedFileInfoInternal, profile, std::move(params)));
 }
 
 void SetupProfileFileAccessPermissions(int render_view_process_id,
@@ -371,7 +452,7 @@ void SetupProfileFileAccessPermissions(int render_view_process_id,
     drive::util::GetDriveMountPointPath(profile),
     util::GetDownloadsFolderForProfile(profile),
   };
-  for (size_t i = 0; i < arraysize(paths); ++i) {
+  for (size_t i = 0; i < base::size(paths); ++i) {
     content::ChildProcessSecurityPolicy::GetInstance(
         )->GrantCreateReadWriteFile(render_view_process_id, paths[i]);
   }
@@ -380,7 +461,7 @@ void SetupProfileFileAccessPermissions(int render_view_process_id,
 drive::EventLogger* GetLogger(Profile* profile) {
   drive::DriveIntegrationService* service =
       drive::DriveIntegrationServiceFactory::FindForProfile(profile);
-  return service ? service->event_logger() : NULL;
+  return service ? service->event_logger() : nullptr;
 }
 
 }  // namespace util

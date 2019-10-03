@@ -34,17 +34,6 @@ class InstantController::TabObserver : public content::WebContentsObserver {
     }
   }
 
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    // TODO(treib): Verify if this is necessary - NavigationEntryCommitted
-    // should already cover all cases.
-    if (navigation_handle->HasCommitted() &&
-        navigation_handle->IsInMainFrame() &&
-        search::IsInstantNTP(web_contents())) {
-      callback_.Run();
-    }
-  }
-
   base::Closure callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TabObserver);
@@ -58,27 +47,18 @@ InstantController::InstantController(Profile* profile,
 
 InstantController::~InstantController() = default;
 
-void InstantController::TabDetachedAt(content::WebContents* contents,
-                                      int index) {
-  StopWatchingTab(contents);
-}
+void InstantController::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (tab_strip_model->empty() || !selection.active_tab_changed())
+    return;
 
-void InstantController::TabDeactivated(content::WebContents* contents) {
-  StopWatchingTab(contents);
-}
+  if (selection.old_contents)
+    StopWatchingTab(selection.old_contents);
 
-void InstantController::ActiveTabChanged(content::WebContents* old_contents,
-                                         content::WebContents* new_contents,
-                                         int index,
-                                         int reason) {
-  StartWatchingTab(new_contents);
-}
-
-void InstantController::TabReplacedAt(TabStripModel* tab_strip_model,
-                                      content::WebContents* old_contents,
-                                      content::WebContents* new_contents,
-                                      int index) {
-  StopWatchingTab(old_contents);
+  if (selection.new_contents)
+    StartWatchingTab(selection.new_contents);
 }
 
 void InstantController::StartWatchingTab(content::WebContents* web_contents) {
@@ -104,6 +84,6 @@ void InstantController::UpdateInfoForInstantTab() {
       InstantServiceFactory::GetForProfile(profile_);
   if (instant_service) {
     instant_service->UpdateThemeInfo();
-    instant_service->UpdateMostVisitedItemsInfo();
+    instant_service->UpdateMostVisitedInfo();
   }
 }

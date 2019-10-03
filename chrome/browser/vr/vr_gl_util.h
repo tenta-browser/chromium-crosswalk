@@ -8,9 +8,9 @@
 #include <array>
 #include <string>
 
+#include "chrome/browser/vr/gl_bindings.h"
+#include "chrome/browser/vr/vr_base_export.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/gfx/geometry/rect.h"
-#include "ui/gl/gl_bindings.h"
 
 #define SHADER(Src) "#version 100\n" #Src
 #define OEIE_SHADER(Src) \
@@ -18,40 +18,33 @@
 #define VOID_OFFSET(x) reinterpret_cast<void*>(x)
 
 namespace gfx {
-class RectF;
-class Size;
-class SizeF;
 class Transform;
 }  // namespace gfx
 
 namespace vr {
 
-std::array<float, 16> MatrixToGLArray(const gfx::Transform& matrix);
-
-gfx::Rect CalculatePixelSpaceRect(const gfx::Size& texture_size,
-                                  const gfx::RectF& texture_rect);
+VR_BASE_EXPORT std::array<float, 16> MatrixToGLArray(
+    const gfx::Transform& matrix);
 
 // Compile a shader.
-GLuint CompileShader(GLenum shader_type,
-                     const GLchar* shader_source,
-                     std::string& error);
+VR_BASE_EXPORT GLuint CompileShader(GLenum shader_type,
+                                    const GLchar* shader_source,
+                                    std::string& error);
 
 // Compile and link a program.
-GLuint CreateAndLinkProgram(GLuint vertex_shader_handle,
-                            GLuint fragment_shader_handle,
-                            std::string& error);
-
-// Returns the normalized size of the element projected into screen space.
-// If (1, 1) the element fills the entire buffer.
-gfx::SizeF CalculateScreenSize(const gfx::Transform& proj_matrix,
-                               const gfx::Transform& model_matrix,
-                               const gfx::SizeF& size);
+VR_BASE_EXPORT GLuint CreateAndLinkProgram(GLuint vertex_shader_handle,
+                                           GLuint fragment_shader_handle,
+                                           std::string& error);
 
 // Sets default texture parameters given a texture type.
-void SetTexParameters(GLenum texture_type);
+VR_BASE_EXPORT void SetTexParameters(GLenum texture_type);
 
 // Sets color uniforms given an SkColor.
-void SetColorUniform(GLuint handle, SkColor c);
+VR_BASE_EXPORT void SetColorUniform(GLuint handle, SkColor c);
+
+// Sets color uniforms (but not alpha) given an SkColor. The alpha is assumed to
+// be 1.0 in this case.
+VR_BASE_EXPORT void SetOpaqueColorUniform(GLuint handle, SkColor c);
 
 }  // namespace vr
 

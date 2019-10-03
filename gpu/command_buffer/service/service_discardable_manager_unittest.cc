@@ -12,6 +12,7 @@
 #include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/mocks.h"
+#include "gpu/command_buffer/service/shared_image_manager.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,10 +33,12 @@ namespace {
 void CreateLockedHandlesForTesting(
     std::unique_ptr<ServiceDiscardableHandle>* service_handle,
     std::unique_ptr<ClientDiscardableHandle>* client_handle) {
-  std::unique_ptr<base::SharedMemory> shared_mem(new base::SharedMemory);
-  shared_mem->CreateAndMapAnonymous(sizeof(uint32_t));
-  scoped_refptr<gpu::Buffer> buffer =
-      MakeBufferFromSharedMemory(std::move(shared_mem), sizeof(uint32_t));
+  const size_t kShmemSize = sizeof(uint32_t);
+  base::UnsafeSharedMemoryRegion shared_mem =
+      base::UnsafeSharedMemoryRegion::Create(kShmemSize);
+  base::WritableSharedMemoryMapping shared_mem_mapping = shared_mem.Map();
+  scoped_refptr<gpu::Buffer> buffer = MakeBufferFromSharedMemory(
+      std::move(shared_mem), std::move(shared_mem_mapping));
 
   client_handle->reset(new ClientDiscardableHandle(buffer, 0, 0));
   service_handle->reset(new ServiceDiscardableHandle(buffer, 0, 0));
@@ -62,18 +65,20 @@ static const size_t kSmallTextureSize = 4 * kSmallTextureDim * kSmallTextureDim;
 
 class ServiceDiscardableManagerTest : public GpuServiceTest {
  public:
-  ServiceDiscardableManagerTest() {}
-  ~ServiceDiscardableManagerTest() override {}
+  ServiceDiscardableManagerTest() = default;
+  ~ServiceDiscardableManagerTest() override = default;
 
  protected:
   void SetUp() override {
     GpuServiceTest::SetUp();
-    decoder_.reset(new MockGLES2Decoder(&command_buffer_service_, &outputter_));
+    decoder_.reset(
+        new MockGLES2Decoder(&client_, &command_buffer_service_, &outputter_));
     feature_info_ = new FeatureInfo();
     context_group_ = scoped_refptr<ContextGroup>(new ContextGroup(
         gpu_preferences_, false, &mailbox_manager_, nullptr, nullptr, nullptr,
         feature_info_, false, &image_manager_, nullptr, nullptr,
-        GpuFeatureInfo(), &discardable_manager_));
+        GpuFeatureInfo(), &discardable_manager_, nullptr,
+        &shared_image_manager_));
     TestHelper::SetupContextGroupInitExpectations(
         gl_.get(), DisallowedFeatures(), "", "", CONTEXT_TYPE_OPENGLES2, false);
     context_group_->Initialize(decoder_.get(), CONTEXT_TYPE_OPENGLES2,
@@ -118,11 +123,13 @@ class ServiceDiscardableManagerTest : public GpuServiceTest {
   TraceOutputter outputter_;
   ImageManager image_manager_;
   ServiceDiscardableManager discardable_manager_;
+  SharedImageManager shared_image_manager_;
   GpuPreferences gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
   MockDestructionObserver destruction_observer_;
   TextureManager* texture_manager_;
   FakeCommandBufferServiceBase command_buffer_service_;
+  FakeDecoderClient client_;
   std::unique_ptr<MockGLES2Decoder> decoder_;
   scoped_refptr<gles2::ContextGroup> context_group_;
 };

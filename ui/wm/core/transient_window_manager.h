@@ -80,8 +80,7 @@ class WM_CORE_EXPORT TransientWindowManager : public aura::WindowObserver {
   void UpdateTransientChildVisibility(bool visible);
 
   // WindowObserver:
-  void OnWindowParentChanged(aura::Window* window,
-                             aura::Window* parent) override;
+  void OnWindowHierarchyChanged(const HierarchyChangeParams& params) override;
   void OnWindowVisibilityChanged(aura::Window* window, bool visible) override;
   void OnWindowStackingChanged(aura::Window* window) override;
   void OnWindowDestroying(aura::Window* window) override;
@@ -98,7 +97,14 @@ class WM_CORE_EXPORT TransientWindowManager : public aura::WindowObserver {
   bool show_on_parent_visible_;
   bool ignore_visibility_changed_event_;
 
-  base::ObserverList<TransientWindowObserver> observers_;
+  // Set to true to pause updating the stacking order of transient descandant
+  // windows while we reparent those transient children which used to be on the
+  // the same old parent as that of |window| to its new parent.
+  // This avoid recursively restacking multiple times when we have to reparent
+  // multiple transient children.
+  bool pause_transient_descendants_restacking_ = false;
+
+  base::ObserverList<TransientWindowObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(TransientWindowManager);
 };

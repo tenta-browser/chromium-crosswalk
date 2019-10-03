@@ -5,38 +5,47 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/ios/ios_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/test/scoped_command_line.h"
 #include "components/reading_list/core/reading_list_model.h"
+#include "components/search_engines/template_url.h"
+#include "components/search_engines/template_url_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_switches.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/notification_promo.h"
 #include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory.h"
 #include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory_util.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
+#include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_whats_new_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
+#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_provider_test_singleton.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_test_utils.h"
-#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_coordinator.h"
+#import "ios/chrome/browser/ui/settings/settings_table_view_controller.h"
+#import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#import "ios/chrome/test/app/history_test_util.h"
-#import "ios/chrome/test/app/tab_test_util.h"
-#include "ios/chrome/test/earl_grey/accessibility_util.h"
+#include "ios/chrome/test/base/scoped_block_swizzler.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -58,7 +67,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     return nullptr;
   }
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response =
-      base::MakeUnique<net::test_server::BasicHttpResponse>();
+      std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(net::HTTP_OK);
   http_response->set_content("<html><head><title>" + std::string(kPageTitle) +
                              "</title></head><body>" +
@@ -76,7 +85,9 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 // Mock provider from the singleton.
 @property(nonatomic, assign, readonly) MockContentSuggestionsProvider* provider;
 // Article category, used by the singleton.
-@property(nonatomic, assign, readonly) Category category;
+@property(nonatomic, assign, readonly) ntp_snippets::Category category;
+
+@property(nonatomic, assign) base::string16 defaultSearchEngine;
 
 @end
 
@@ -84,18 +95,6 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
 + (void)setUp {
   [super setUp];
-
-  // TODO(crbug.com/753599): When old bookmark is removed, NTP panel will always
-  // be shown modally.  Clean up the non-modal code below.
-  if (!PresentNTPPanelModally()) {
-    // Make sure we are on the Home panel on iPad when NTP is shown modally.
-    chrome_test_util::OpenNewTab();
-
-    NewTabPageController* ntp_controller =
-        chrome_test_util::GetCurrentNewTabPageController();
-    [ntp_controller selectPanel:ntp_home::HOME_PANEL];
-    [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  }
 
   // Clear the pasteboard in case there is a URL copied, triggering an omnibox
   // suggestion.
@@ -110,12 +109,12 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   // service with no provider registered, allowing to register fake providers
   // which do not require internet connection. The previous service is deleted.
   IOSChromeContentSuggestionsServiceFactory::GetInstance()->SetTestingFactory(
-      browserState, CreateChromeContentSuggestionsService);
+      browserState,
+      base::BindRepeating(&CreateChromeContentSuggestionsService));
 
   ContentSuggestionsService* service =
       IOSChromeContentSuggestionsServiceFactory::GetForBrowserState(
           browserState);
-  RegisterReadingListProvider(service, browserState);
   [[ContentSuggestionsTestSingleton sharedInstance]
       registerArticleProvider:service];
 }
@@ -126,10 +125,11 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       chrome_test_util::GetOriginalBrowserState();
   ReadingListModelFactory::GetForBrowserState(browserState)->DeleteAllEntries();
 
-  // Resets the Service associated with this browserState to a service with
-  // default providers. The previous service is deleted.
+  // Resets the Service associated with this browserState to a new service with
+  // no providers. The previous service is deleted.
   IOSChromeContentSuggestionsServiceFactory::GetInstance()->SetTestingFactory(
-      browserState, CreateChromeContentSuggestionsServiceWithProviders);
+      browserState,
+      base::BindRepeating(&CreateChromeContentSuggestionsService));
   [super tearDown];
 }
 
@@ -141,6 +141,13 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       ReadingListModelFactory::GetForBrowserState(self.browserState);
   readingListModel->DeleteAllEntries();
   [super setUp];
+
+  // Get the default Search Engine.
+  ios::ChromeBrowserState* browser_state =
+      chrome_test_util::GetOriginalBrowserState();
+  TemplateURLService* service =
+      ios::TemplateURLServiceFactory::GetForBrowserState(browser_state);
+  self.defaultSearchEngine = service->GetDefaultSearchProvider()->short_name();
 }
 
 - (void)tearDown {
@@ -148,6 +155,21 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       self.category, CategoryStatus::ALL_SUGGESTIONS_EXPLICITLY_DISABLED);
   [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationPortrait
                            errorOrNil:nil];
+
+  // Set the search engine back to the default in case the test fails before
+  // cleaning it up.
+  ios::ChromeBrowserState* browser_state =
+      chrome_test_util::GetOriginalBrowserState();
+  TemplateURLService* service =
+      ios::TemplateURLServiceFactory::GetForBrowserState(browser_state);
+  std::vector<TemplateURL*> urls = service->GetTemplateURLs();
+
+  for (auto iter = urls.begin(); iter != urls.end(); ++iter) {
+    if (self.defaultSearchEngine == (*iter)->short_name()) {
+      service->SetUserSelectedDefaultSearchProvider(*iter);
+    }
+  }
+
   [super tearDown];
 }
 
@@ -161,48 +183,101 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   return [[ContentSuggestionsTestSingleton sharedInstance] provider];
 }
 
-- (Category)category {
-  return Category::FromKnownCategory(KnownCategories::ARTICLES);
+- (ntp_snippets::Category)category {
+  return ntp_snippets::Category::FromKnownCategory(KnownCategories::ARTICLES);
 }
 
 #pragma mark - Tests
 
 // Tests that all items are accessible on the home page.
 - (void)testAccessibility {
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
+}
+
+// Tests that the collections shortcut are displayed and working.
+- (void)testCollectionShortcuts {
+  // Check the Bookmarks.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_BOOKMARKS)]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::HeaderWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_BOOKMARKS)]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
+      performAction:grey_tap()];
+
+  // Check the ReadingList.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_READING_LIST)]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::HeaderWithAccessibilityLabelId(
+                                   IDS_IOS_TOOLS_MENU_READING_LIST)]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
+      performAction:grey_tap()];
+
+  // Check the RecentTabs.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_RECENT_TABS)]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::HeaderWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_RECENT_TABS)]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
+      performAction:grey_tap()];
+
+  // Check the History.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
+                                   IDS_IOS_CONTENT_SUGGESTIONS_HISTORY)]
+      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::HeaderWithAccessibilityLabelId(
+                                   IDS_HISTORY_TITLE)]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
+      performAction:grey_tap()];
 }
 
 // Tests that the fake omnibox width is correctly updated after a rotation.
 - (void)testOmniboxWidthRotation {
   // TODO(crbug.com/652465): Enable the test for iPad when rotation bug is
   // fixed.
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to device rotation bug.");
   }
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  UIEdgeInsets safeArea = SafeAreaInsetsForView(CollectionView());
+  UIEdgeInsets safeArea = CollectionView().safeAreaInsets;
   CGFloat collectionWidth =
       CGRectGetWidth(UIEdgeInsetsInsetRect(CollectionView().bounds, safeArea));
   GREYAssertTrue(collectionWidth > 0, @"The collection width is nil.");
   CGFloat fakeOmniboxWidth = searchFieldWidth(collectionWidth);
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:OmniboxWidth(fakeOmniboxWidth)];
 
   [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationLandscapeLeft
                            errorOrNil:nil];
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
-  safeArea = SafeAreaInsetsForView(CollectionView());
+  safeArea = CollectionView().safeAreaInsets;
   CGFloat collectionWidthAfterRotation =
       CGRectGetWidth(UIEdgeInsetsInsetRect(CollectionView().bounds, safeArea));
   GREYAssertNotEqual(collectionWidth, collectionWidthAfterRotation,
                      @"The collection width has not changed.");
   fakeOmniboxWidth = searchFieldWidth(collectionWidthAfterRotation);
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:OmniboxWidth(fakeOmniboxWidth)];
 }
 
@@ -211,18 +286,17 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 - (void)testOmniboxWidthRotationBehindSettings {
   // TODO(crbug.com/652465): Enable the test for iPad when rotation bug is
   // fixed.
-  if (IsIPadIdiom()) {
+  if (IsRegularXRegularSizeClass()) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to device rotation bug.");
   }
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  UIEdgeInsets safeArea = SafeAreaInsetsForView(CollectionView());
+  UIEdgeInsets safeArea = CollectionView().safeAreaInsets;
   CGFloat collectionWidth =
       CGRectGetWidth(UIEdgeInsetsInsetRect(CollectionView().bounds, safeArea));
   GREYAssertTrue(collectionWidth > 0, @"The collection width is nil.");
   CGFloat fakeOmniboxWidth = searchFieldWidth(collectionWidth);
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:OmniboxWidth(fakeOmniboxWidth)];
 
   [ChromeEarlGreyUI openSettingsMenu];
@@ -231,20 +305,17 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                            errorOrNil:nil];
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_NAVIGATION_BAR_DONE_BUTTON)]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
       performAction:grey_tap()];
 
-  safeArea = SafeAreaInsetsForView(CollectionView());
+  safeArea = CollectionView().safeAreaInsets;
   CGFloat collectionWidthAfterRotation =
       CGRectGetWidth(UIEdgeInsetsInsetRect(CollectionView().bounds, safeArea));
   GREYAssertNotEqual(collectionWidth, collectionWidthAfterRotation,
                      @"The collection width has not changed.");
   fakeOmniboxWidth = searchFieldWidth(collectionWidthAfterRotation);
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:OmniboxWidth(fakeOmniboxWidth)];
 }
 
@@ -253,7 +324,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 - (void)testOmniboxPinnedWidthRotation {
   // TODO(crbug.com/652465): Enable the test for iPad when rotation bug is
   // fixed.
-  if (IsIPadIdiom()) {
+  if (IsRegularXRegularSizeClass()) {
     EARL_GREY_TEST_DISABLED(@"Disabled for iPad due to device rotation bug.");
   }
 
@@ -267,9 +338,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
   // The fake omnibox might be slightly bigger than the screen in order to cover
   // it for all screen scale.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
-      assertWithMatcher:OmniboxWidthBetween(collectionWidth + 1, 1)];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
+      assertWithMatcher:OmniboxWidthBetween(collectionWidth + 1, 2)];
 
   [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationLandscapeLeft
                            errorOrNil:nil];
@@ -279,17 +349,33 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   GREYAssertNotEqual(collectionWidth, collectionWidthAfterRotation,
                      @"The collection width has not changed.");
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
-      assertWithMatcher:OmniboxWidthBetween(collectionWidthAfterRotation + 1,
-                                            1)];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
+      assertWithMatcher:grey_not(grey_sufficientlyVisible())];
+}
+
+// Tests that the app doesn't crash when opening multiple tabs.
+- (void)testOpenMultipleTabs {
+  NSInteger numberOfTabs = 10;
+  for (NSInteger i = 0; i < numberOfTabs; i++) {
+    [ChromeEarlGreyUI openNewTab];
+  }
+  id<GREYMatcher> matcher;
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    matcher = grey_accessibilityID(@"Enter Tab Switcher");
+  } else {
+    matcher = grey_allOf(grey_accessibilityID(kToolbarStackButtonIdentifier),
+                         grey_sufficientlyVisible(), nil);
+  }
+  [[EarlGrey selectElementWithMatcher:matcher]
+      assertWithMatcher:grey_accessibilityValue([NSString
+                            stringWithFormat:@"%@", @(numberOfTabs + 1)])];
 }
 
 // Tests that the promo is correctly displayed and removed once tapped.
 - (void)testPromoTap {
   // Setup the promo.
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  [defaults setInteger:experimental_flags::WHATS_NEW_APP_RATING
+  [defaults setInteger:experimental_flags::WHATS_NEW_MOVE_TO_DOCK_TIP
                 forKey:@"WhatsNewPromoStatus"];
   PrefService* local_state = GetApplicationContext()->GetLocalState();
   ios::NotificationPromo::MigrateUserPrefs(local_state);
@@ -340,7 +426,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                  chrome_test_util::StaticTextWithAccessibilityLabel(
                      base::SysUTF8ToNSString(kPageTitle))]
       performAction:grey_tap()];
-  [ChromeEarlGrey waitForWebViewContainingText:kPageLoadedString];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
   [ChromeEarlGrey goBack];
 
   // Check that the new position is the same.
@@ -371,16 +457,14 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   CGPoint previousPosition = omnibox.bounds.origin;
 
   // Tap the omnibox to focus it.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
-      performAction:grey_tap()];
+  [self focusFakebox];
 
   // Navigate and come back.
   [[EarlGrey selectElementWithMatcher:
                  chrome_test_util::StaticTextWithAccessibilityLabel(
                      base::SysUTF8ToNSString(kPageTitle))]
       performAction:grey_tap()];
-  [ChromeEarlGrey waitForWebViewContainingText:kPageLoadedString];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
   [ChromeEarlGrey goBack];
 
   // Check that the new position is the same.
@@ -391,10 +475,10 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
 
 // Tests that tapping the fake omnibox focuses the real omnibox.
 - (void)testTapFakeOmnibox {
-  // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
-  // grey_typeText works on iOS 11.
-  if (IsIPadIdiom() && base::ios::IsRunningOnIOS11OrLater()) {
-    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  // TODO(crbug.com/753098): Re-enable this test on iPad once grey_typeText
+  // works.
+  if (IsRegularXRegularSizeClass()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iPad.");
   }
   // Setup the server.
   self.testServer->RegisterRequestHandler(base::Bind(&StandardResponse));
@@ -402,13 +486,42 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   const GURL pageURL = self.testServer->GetURL(kPageURL);
 
   NSString* URL = base::SysUTF8ToNSString(pageURL.spec());
-  // Type the URL in the fake omnibox and navigate to the page.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  // Tap the fake omnibox, type the URL in the real omnibox and navigate to the
+  // page.
+  [self focusFakebox];
+
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
       performAction:grey_typeText([URL stringByAppendingString:@"\n"])];
 
   // Check that the page is loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageLoadedString];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
+}
+
+// Tests that tapping the omnibox search button logs correctly.
+// It is important for ranking algorithm of omnibox that requests from the
+// search button and real omnibox are marked appropriately.
+- (void)testTapOmniboxSearchButtonLogsCorrectly {
+  if (IsRegularXRegularSizeClass()) {
+    // This logging only happens on iPhone, since on iPad there's no secondary
+    // toolbar.
+    return;
+  }
+
+  // Swizzle the method that needs to be called for correct logging.
+  __block BOOL tapped = NO;
+  ScopedBlockSwizzler swizzler([LocationBarCoordinator class],
+                               @selector(focusOmniboxFromSearchButton), ^{
+                                 tapped = YES;
+                               });
+
+  // Tap the search button.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kToolbarSearchButtonIdentifier)]
+      performAction:grey_tap()];
+
+  // Check that the page is loaded.
+  GREYAssertTrue(tapped,
+                 @"The tap on the search button was not correctly logged.");
 }
 
 // Tests that tapping the fake omnibox moves the collection.
@@ -434,18 +547,17 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   CGPoint origin = collectionView.contentOffset;
 
   // Tap the omnibox to focus it.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
-      performAction:grey_tap()];
+  [self focusFakebox];
 
   // Offset after the fake omnibox has been tapped.
   CGPoint offsetAfterTap = collectionView.contentOffset;
 
   // Make sure the fake omnibox has been hidden and the collection has moved.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:grey_not(grey_sufficientlyVisible())];
-  GREYAssertTrue(offsetAfterTap.y >= origin.y + headerHeight - 60,
+
+  CGFloat top = ntp_home::CollectionView().safeAreaInsets.top;
+  GREYAssertTrue(offsetAfterTap.y >= origin.y + headerHeight - (60 + top),
                  @"The collection has not moved.");
 
   // Unfocus the omnibox.
@@ -454,8 +566,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tapAtPoint(CGPointMake(0, offsetAfterTap.y + 100))];
 
   // Check the fake omnibox is displayed again at the same position.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   GREYAssertEqual(
@@ -481,9 +592,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   CGPoint origin = collectionView.contentOffset;
 
   // Tap the omnibox to focus it.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
-      performAction:grey_tap()];
+  [self focusFakebox];
 
   // Unfocus the omnibox.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::
@@ -492,8 +601,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                         CGPointMake(0, collectionView.contentOffset.y + 100))];
 
   // Check the fake omnibox is displayed again at the same position.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          FakeOmniboxAccessibilityID())]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // The collection might be slightly moved on iPhone.
@@ -501,6 +609,101 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       collectionView.contentOffset.y >= origin.y &&
           collectionView.contentOffset.y <= origin.y + 6,
       @"The collection is not scrolled back to its previous position");
+}
+
+// Tests tapping the search button when the fake omnibox is scrolled.
+- (void)testTapSearchButtonFakeOmniboxScrolled {
+  if (IsRegularXRegularSizeClass()) {
+    // This only happens on iPhone, since on iPad there's no secondary toolbar.
+    return;
+  }
+
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          ContentSuggestionCollectionView()]
+      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
+  // Tap the search button.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kToolbarSearchButtonIdentifier)]
+      performAction:grey_tap()];
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
+}
+
+- (void)testOpeningNewTab {
+  [ChromeEarlGreyUI openNewTab];
+
+  // Check that the fake omnibox is here.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  id<GREYMatcher> tabGridMatcher = nil;
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    tabGridMatcher = grey_accessibilityID(@"Enter Tab Switcher");
+  } else {
+    tabGridMatcher =
+        grey_allOf(grey_accessibilityID(kToolbarStackButtonIdentifier),
+                   grey_sufficientlyVisible(), nil);
+  }
+  [[EarlGrey selectElementWithMatcher:tabGridMatcher]
+      assertWithMatcher:grey_accessibilityValue(
+                            [NSString stringWithFormat:@"%i", 2])];
+
+  // Test the same thing after opening a tab from the tab grid.
+  // TODO(crbug.com/933953) For an unknown reason synchronization doesn't work
+  // well with tapping on the tabgrid button, and instead triggers the long
+  // press gesture recognizer.  Disable this here so the test can be re-enabled.
+  {
+    ScopedSynchronizationDisabler disabler;
+    [[EarlGrey selectElementWithMatcher:tabGridMatcher]
+        performAction:[GREYActions actionForLongPressWithDuration:0.05]];
+  }
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridNewTabButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+  [[EarlGrey selectElementWithMatcher:tabGridMatcher]
+      assertWithMatcher:grey_accessibilityValue(
+                            [NSString stringWithFormat:@"%i", 3])];
+}
+
+- (void)testFavicons {
+  for (NSInteger index = 0; index < 8; index++) {
+    [[EarlGrey
+        selectElementWithMatcher:
+            grey_accessibilityID([NSString
+                stringWithFormat:
+                    @"%@%li",
+                    kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix,
+                    index])] assertWithMatcher:grey_sufficientlyVisible()];
+  }
+
+  // Change the Search Engine to Yahoo!.
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:grey_accessibilityID(kSettingsSearchEngineCellId)];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(@"Yahoo!")]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
+      performAction:grey_tap()];
+
+  // Check again the favicons.
+  for (NSInteger index = 0; index < 8; index++) {
+    [[EarlGrey
+        selectElementWithMatcher:
+            grey_accessibilityID([NSString
+                stringWithFormat:
+                    @"%@%li",
+                    kContentSuggestionsMostVisitedAccessibilityIdentifierPrefix,
+                    index])] assertWithMatcher:grey_sufficientlyVisible()];
+  }
+
+  // Change the Search Engine to Google.
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:grey_accessibilityID(kSettingsSearchEngineCellId)];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(@"Google")]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
+      performAction:grey_tap()];
 }
 
 #pragma mark - Helpers
@@ -511,16 +714,23 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   const GURL pageURL = self.testServer->GetURL(kPageURL);
 
   // Clear history to ensure the tile will be shown.
-  chrome_test_util::ClearBrowsingHistory();
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+  [ChromeEarlGrey clearBrowsingHistory];
   [ChromeEarlGrey loadURL:pageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:kPageLoadedString];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageLoadedString];
 
   // After loading URL, need to do another action before opening a new tab
   // with the icon present.
   [ChromeEarlGrey goBack];
   [[self class] closeAllTabs];
-  chrome_test_util::OpenNewTab();
+  [ChromeEarlGrey openNewTab];
+}
+
+// Taps the fake omnibox and waits for the real omnibox to be visible.
+- (void)focusFakebox {
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::FakeOmnibox()]
+      performAction:grey_tap()];
+  [ChromeEarlGrey
+      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
 }
 
 @end

@@ -9,13 +9,11 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/memory_coordinator_client_registry.h"
 #include "base/memory/memory_pressure_monitor.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
@@ -115,7 +113,6 @@ void ResourceReporter::StartMonitoring(
   is_monitoring_ = true;
   memory_pressure_listener_.reset(new base::MemoryPressureListener(
       base::Bind(&ResourceReporter::OnMemoryPressure, base::Unretained(this))));
-  base::MemoryCoordinatorClientRegistry::GetInstance()->Register(this);
 }
 
 void ResourceReporter::StopMonitoring() {
@@ -132,8 +129,6 @@ void ResourceReporter::StopMonitoring() {
 
   is_monitoring_ = false;
   memory_pressure_listener_.reset();
-
-  base::MemoryCoordinatorClientRegistry::GetInstance()->Unregister(this);
 }
 
 void ResourceReporter::OnTasksRefreshedWithBackgroundCalculations(
@@ -148,7 +143,7 @@ void ResourceReporter::OnTasksRefreshedWithBackgroundCalculations(
         (observed_task_manager()->GetPlatformIndependentCPUUsage(id) /
          base::SysInfo::NumberOfProcessors());
     const int64_t memory_usage =
-        observed_task_manager()->GetPhysicalMemoryUsage(id);
+        observed_task_manager()->GetMemoryFootprintUsage(id);
 
     // Browser and GPU processes are reported later using UMA histograms as they
     // don't have any privacy issues.
@@ -197,13 +192,13 @@ void ResourceReporter::OnTasksRefreshedWithBackgroundCalculations(
   // Schedule reporting the samples.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&ResourceReporter::ReportSamples, base::Unretained(this)));
+      base::BindOnce(&ResourceReporter::ReportSamples, base::Unretained(this)));
 }
 
 ResourceReporter::ResourceReporter()
     : TaskManagerObserver(base::TimeDelta::FromSeconds(kRefreshIntervalSeconds),
                           task_manager::REFRESH_TYPE_CPU |
-                              task_manager::REFRESH_TYPE_MEMORY |
+                              task_manager::REFRESH_TYPE_MEMORY_FOOTPRINT |
                               task_manager::REFRESH_TYPE_PRIORITY),
       task_manager_to_observe_(nullptr),
       system_cpu_cores_range_(GetCurrentSystemCpuCoresRange()),
@@ -433,22 +428,6 @@ void ResourceReporter::StopRecordingCurrentState() {
   // memory pressure level, we need to stop listening to it.
   if (observed_task_manager())
     observed_task_manager()->RemoveObserver(this);
-}
-
-void ResourceReporter::OnMemoryStateChange(base::MemoryState state) {
-  switch (state) {
-    case base::MemoryState::NORMAL:
-      StopRecordingCurrentState();
-      break;
-    case base::MemoryState::THROTTLED:
-      StartRecordingCurrentState();
-      break;
-    case base::MemoryState::SUSPENDED:
-    // Note: Not supported at present. Fall through.
-    case base::MemoryState::UNKNOWN:
-      NOTREACHED();
-      break;
-  }
 }
 
 }  // namespace chromeos

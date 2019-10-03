@@ -9,7 +9,6 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature.h"
@@ -31,7 +30,7 @@ TEST(FeatureProviderTest, ManifestFeatureTypes) {
   ASSERT_TRUE(feature);
   const std::vector<Manifest::Type>& extension_types =
       feature->extension_types();
-  EXPECT_EQ(6u, extension_types.size());
+  EXPECT_EQ(7u, extension_types.size());
   EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_EXTENSION));
   EXPECT_EQ(
       1, base::STLCount(extension_types, Manifest::TYPE_LEGACY_PACKAGED_APP));
@@ -39,6 +38,8 @@ TEST(FeatureProviderTest, ManifestFeatureTypes) {
   EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_HOSTED_APP));
   EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_THEME));
   EXPECT_EQ(1, base::STLCount(extension_types, Manifest::TYPE_SHARED_MODULE));
+  EXPECT_EQ(1, base::STLCount(extension_types,
+                              Manifest::TYPE_LOGIN_SCREEN_EXTENSION));
 }
 
 // Tests that real manifest features have the correct availability for an

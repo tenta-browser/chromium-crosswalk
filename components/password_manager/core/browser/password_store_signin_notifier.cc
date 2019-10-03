@@ -13,18 +13,18 @@ PasswordStoreSigninNotifier::PasswordStoreSigninNotifier() {}
 
 PasswordStoreSigninNotifier::~PasswordStoreSigninNotifier() {}
 
-void PasswordStoreSigninNotifier::NotifySignin(const std::string& password) {
-  metrics_util::LogSyncPasswordHashChange(
-      metrics_util::SyncPasswordHashChange::SAVED_ON_CHROME_SIGNIN);
-  if (store_)
-    store_->SaveSyncPasswordHash(base::UTF8ToUTF16(password));
-}
+void PasswordStoreSigninNotifier::NotifySignedOut(const std::string& username,
+                                                  bool primary_account) {
+  if (!store_)
+    return;
 
-void PasswordStoreSigninNotifier::NotifySignedOut() {
-  metrics_util::LogSyncPasswordHashChange(
-      metrics_util::SyncPasswordHashChange::CLEARED_ON_CHROME_SIGNOUT);
-  if (store_)
-    store_->ClearSyncPasswordHash();
+  if (primary_account) {
+    metrics_util::LogSyncPasswordHashChange(
+        metrics_util::SyncPasswordHashChange::CLEARED_ON_CHROME_SIGNOUT);
+    store_->ClearAllGaiaPasswordHash();
+  } else {
+    store_->ClearGaiaPasswordHash(username);
+  }
 }
 
 }  // namespace password_manager

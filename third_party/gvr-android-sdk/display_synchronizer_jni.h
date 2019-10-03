@@ -21,9 +21,10 @@
 // Native JNI methods
 // ----------------------------------------------------------------------------
 #include <jni.h>
+#include <atomic>
+#include <type_traits>
 
 #include "base/android/jni_generator/jni_generator_helper.h"
-
 #include "base/android/jni_int_wrapper.h"
 
 // Step 1: forward declarations.
@@ -32,8 +33,8 @@ namespace {
 const char kDisplaySynchronizerClassPath[] =
     "com/google/vr/cardboard/DisplaySynchronizer";
 // Leaking this jclass as we cannot use LazyInstance from some threads.
-base::subtle::AtomicWord g_DisplaySynchronizer_clazz __attribute__((unused)) =
-    0;
+std::atomic<jclass> g_DisplaySynchronizer_clazz __attribute__((unused))
+    (nullptr);
 #define DisplaySynchronizer_clazz(env)                            \
   base::android::LazyGetClass(env, kDisplaySynchronizerClassPath, \
                               &g_DisplaySynchronizer_clazz)
@@ -72,6 +73,12 @@ Java_com_google_vr_cardboard_DisplaySynchronizer_nativeUpdate(
     jlong syncTime,
     jint currentRotation);
 
+extern "C" __attribute__((visibility("default"))) void
+Java_com_google_vr_cardboard_DisplaySynchronizer_nativeOnMetricsChanged(
+    JNIEnv* env,
+    jobject obj,
+    jlong native_object);
+
 // Step 3: RegisterNatives.
 
 static const JNINativeMethod kMethodsDisplaySynchronizer[] = {
@@ -108,6 +115,13 @@ static const JNINativeMethod kMethodsDisplaySynchronizer[] = {
      "V",
      reinterpret_cast<void*>(
          Java_com_google_vr_cardboard_DisplaySynchronizer_nativeUpdate)},
+    {"nativeOnMetricsChanged",
+     "("
+     "J"
+     ")"
+     "V",
+     reinterpret_cast<void*>(
+         Java_com_google_vr_cardboard_DisplaySynchronizer_nativeOnMetricsChanged)},
 };
 
 static bool RegisterNativesImpl(JNIEnv* env) {
@@ -115,7 +129,7 @@ static bool RegisterNativesImpl(JNIEnv* env) {
     return true;
 
   const int kMethodsDisplaySynchronizerSize =
-      arraysize(kMethodsDisplaySynchronizer);
+      std::extent<decltype(kMethodsDisplaySynchronizer)>();
 
   if (env->RegisterNatives(DisplaySynchronizer_clazz(env),
                            kMethodsDisplaySynchronizer,

@@ -11,7 +11,6 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/user_metrics.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -34,15 +33,14 @@
 #include "components/feature_engagement/internal/system_time_provider.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/feature_list.h"
-#include "components/leveldb_proto/proto_database_impl.h"
+#include "components/leveldb_proto/public/proto_database_provider.h"
 
 namespace feature_engagement {
 
 namespace {
-const base::FilePath::CharType kEventDBStorageDir[] =
-    FILE_PATH_LITERAL("EventDB");
-const base::FilePath::CharType kAvailabilityDBStorageDir[] =
-    FILE_PATH_LITERAL("AvailabilityDB");
+
+const char kEventDBName[] = "EventDB";
+const char kAvailabilityDBName[] = "AvailabilityDB";
 
 // Creates a TrackerImpl that is usable for a demo mode.
 std::unique_ptr<Tracker> CreateDemoModeTracker() {
@@ -54,7 +52,7 @@ std::unique_ptr<Tracker> CreateDemoModeTracker() {
   DVLOG(2) << "Enabling demo mode. Chosen feature: " << chosen_feature_name;
 
   std::unique_ptr<EditableConfiguration> configuration =
-      base::MakeUnique<EditableConfiguration>();
+      std::make_unique<EditableConfiguration>();
 
   // Create valid configurations for all features to ensure that the
   // OnceConditionValidator acknowledges that thet meet conditions once.
@@ -72,16 +70,16 @@ std::unique_ptr<Tracker> CreateDemoModeTracker() {
     configuration->SetConfiguration(feature, feature_config);
   }
 
-  auto raw_event_model = base::MakeUnique<EventModelImpl>(
-      base::MakeUnique<InMemoryEventStore>(),
-      base::MakeUnique<NeverEventStorageValidator>());
+  auto raw_event_model = std::make_unique<EventModelImpl>(
+      std::make_unique<InMemoryEventStore>(),
+      std::make_unique<NeverEventStorageValidator>());
 
-  return base::MakeUnique<TrackerImpl>(
-      base::MakeUnique<InitAwareEventModel>(std::move(raw_event_model)),
-      base::MakeUnique<NeverAvailabilityModel>(), std::move(configuration),
+  return std::make_unique<TrackerImpl>(
+      std::make_unique<InitAwareEventModel>(std::move(raw_event_model)),
+      std::make_unique<NeverAvailabilityModel>(), std::move(configuration),
       std::make_unique<NoopDisplayLockController>(),
-      base::MakeUnique<OnceConditionValidator>(),
-      base::MakeUnique<SystemTimeProvider>());
+      std::make_unique<OnceConditionValidator>(),
+      std::make_unique<SystemTimeProvider>());
 }
 
 }  // namespace
@@ -92,45 +90,47 @@ std::unique_ptr<Tracker> CreateDemoModeTracker() {
 // static
 Tracker* Tracker::Create(
     const base::FilePath& storage_dir,
-    const scoped_refptr<base::SequencedTaskRunner>& background_task_runner) {
+    const scoped_refptr<base::SequencedTaskRunner>& background_task_runner,
+    leveldb_proto::ProtoDatabaseProvider* db_provider) {
   DVLOG(2) << "Creating Tracker";
   if (base::FeatureList::IsEnabled(kIPHDemoMode))
     return CreateDemoModeTracker().release();
 
-  std::unique_ptr<leveldb_proto::ProtoDatabase<Event>> event_db =
-      base::MakeUnique<leveldb_proto::ProtoDatabaseImpl<Event>>(
-          background_task_runner);
+  base::FilePath event_storage_dir =
+      storage_dir.AppendASCII(std::string(kEventDBName));
+  auto event_db = db_provider->GetDB<Event>(
+      leveldb_proto::ProtoDbType::FEATURE_ENGAGEMENT_EVENT, event_storage_dir,
+      background_task_runner);
 
-  base::FilePath event_storage_dir = storage_dir.Append(kEventDBStorageDir);
-  auto event_store = base::MakeUnique<PersistentEventStore>(
-      event_storage_dir, std::move(event_db));
+  auto event_store =
+      std::make_unique<PersistentEventStore>(std::move(event_db));
 
-  auto configuration = base::MakeUnique<ChromeVariationsConfiguration>();
+  auto configuration = std::make_unique<ChromeVariationsConfiguration>();
   configuration->ParseFeatureConfigs(GetAllFeatures());
 
   auto event_storage_validator =
-      base::MakeUnique<FeatureConfigEventStorageValidator>();
+      std::make_unique<FeatureConfigEventStorageValidator>();
   event_storage_validator->InitializeFeatures(GetAllFeatures(), *configuration);
 
-  auto raw_event_model = base::MakeUnique<EventModelImpl>(
+  auto raw_event_model = std::make_unique<EventModelImpl>(
       std::move(event_store), std::move(event_storage_validator));
 
   auto event_model =
-      base::MakeUnique<InitAwareEventModel>(std::move(raw_event_model));
+      std::make_unique<InitAwareEventModel>(std::move(raw_event_model));
   auto condition_validator =
-      base::MakeUnique<FeatureConfigConditionValidator>();
-  auto time_provider = base::MakeUnique<SystemTimeProvider>();
+      std::make_unique<FeatureConfigConditionValidator>();
+  auto time_provider = std::make_unique<SystemTimeProvider>();
 
   base::FilePath availability_storage_dir =
-      storage_dir.Append(kAvailabilityDBStorageDir);
-  auto availability_db =
-      base::MakeUnique<leveldb_proto::ProtoDatabaseImpl<Availability>>(
-          background_task_runner);
+      storage_dir.AppendASCII(std::string(kAvailabilityDBName));
+  auto availability_db = db_provider->GetDB<Availability>(
+      leveldb_proto::ProtoDbType::FEATURE_ENGAGEMENT_AVAILABILITY,
+      availability_storage_dir, background_task_runner);
   auto availability_store_loader = base::BindOnce(
       &PersistentAvailabilityStore::LoadAndUpdateStore,
       availability_storage_dir, std::move(availability_db), GetAllFeatures());
 
-  auto availability_model = base::MakeUnique<AvailabilityModelImpl>(
+  auto availability_model = std::make_unique<AvailabilityModelImpl>(
       std::move(availability_store_loader));
 
   return new TrackerImpl(
@@ -153,16 +153,15 @@ TrackerImpl::TrackerImpl(
       condition_validator_(std::move(condition_validator)),
       time_provider_(std::move(time_provider)),
       event_model_initialization_finished_(false),
-      availability_model_initialization_finished_(false),
-      weak_ptr_factory_(this) {
+      availability_model_initialization_finished_(false) {
   event_model_->Initialize(
       base::Bind(&TrackerImpl::OnEventModelInitializationFinished,
                  weak_ptr_factory_.GetWeakPtr()),
       time_provider_->GetCurrentDay());
 
   availability_model_->Initialize(
-      base::Bind(&TrackerImpl::OnAvailabilityModelInitializationFinished,
-                 weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&TrackerImpl::OnAvailabilityModelInitializationFinished,
+                     weak_ptr_factory_.GetWeakPtr()),
       time_provider_->GetCurrentDay());
 }
 
@@ -249,11 +248,11 @@ bool TrackerImpl::IsInitialized() const {
 void TrackerImpl::AddOnInitializedCallback(OnInitializedCallback callback) {
   if (IsInitializationFinished()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, IsInitialized()));
+        FROM_HERE, base::BindOnce(std::move(callback), IsInitialized()));
     return;
   }
 
-  on_initialized_callbacks_.push_back(callback);
+  on_initialized_callbacks_.push_back(std::move(callback));
 }
 
 void TrackerImpl::OnEventModelInitializationFinished(bool success) {
@@ -287,7 +286,7 @@ void TrackerImpl::MaybePostInitializedCallbacks() {
 
   for (auto& callback : on_initialized_callbacks_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, IsInitialized()));
+        FROM_HERE, base::BindOnce(std::move(callback), IsInitialized()));
   }
 
   on_initialized_callbacks_.clear();

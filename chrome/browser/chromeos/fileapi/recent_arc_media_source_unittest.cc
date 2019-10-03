@@ -4,9 +4,9 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_util.h"
@@ -16,9 +16,10 @@
 #include "chrome/browser/chromeos/fileapi/recent_file.h"
 #include "chrome/browser/chromeos/fileapi/recent_source.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/common/file_system.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_file_system_instance.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -60,13 +61,15 @@ class RecentArcMediaSourceTest : public testing::Test {
   RecentArcMediaSourceTest() = default;
 
   void SetUp() override {
-    arc_service_manager_ = base::MakeUnique<arc::ArcServiceManager>();
-    profile_ = base::MakeUnique<TestingProfile>();
+    arc_service_manager_ = std::make_unique<arc::ArcServiceManager>();
+    profile_ = std::make_unique<TestingProfile>();
     arc_service_manager_->set_browser_context(profile_.get());
     runner_ = static_cast<arc::ArcFileSystemOperationRunner*>(
         arc::ArcFileSystemOperationRunner::GetFactory()
             ->SetTestingFactoryAndUse(
-                profile_.get(), &CreateFileSystemOperationRunnerForTesting));
+                profile_.get(),
+                base::BindRepeating(
+                    &CreateFileSystemOperationRunnerForTesting)));
 
     // Mount ARC file systems.
     arc::ArcFileSystemMounter::GetForBrowserContext(profile_.get());
@@ -75,7 +78,12 @@ class RecentArcMediaSourceTest : public testing::Test {
     // until EnableFakeFileSystemInstance() is called.
     AddDocumentsToFakeFileSystemInstance();
 
-    source_ = base::MakeUnique<RecentArcMediaSource>(profile_.get());
+    source_ = std::make_unique<RecentArcMediaSource>(profile_.get());
+  }
+
+  void TearDown() override {
+    arc_service_manager_->arc_bridge_service()->file_system()->CloseInstance(
+        &fake_file_system_);
   }
 
  protected:
@@ -104,6 +112,8 @@ class RecentArcMediaSourceTest : public testing::Test {
   void EnableFakeFileSystemInstance() {
     arc_service_manager_->arc_bridge_service()->file_system()->SetInstance(
         &fake_file_system_);
+    arc::WaitForInstanceReady(
+        arc_service_manager_->arc_bridge_service()->file_system());
   }
 
   std::vector<RecentFile> GetRecentFiles() {

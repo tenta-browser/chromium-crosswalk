@@ -4,6 +4,12 @@
 
 #include "ui/gl/gl_surface_stub.h"
 
+#include <utility>
+
+#include "base/bind.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
+
 namespace gl {
 
 void GLSurfaceStub::Destroy() {
@@ -20,8 +26,11 @@ bool GLSurfaceStub::IsOffscreen() {
   return false;
 }
 
-gfx::SwapResult GLSurfaceStub::SwapBuffers(
-    const PresentationCallback& callback) {
+gfx::SwapResult GLSurfaceStub::SwapBuffers(PresentationCallback callback) {
+  gfx::PresentationFeedback feedback(base::TimeTicks::Now(), base::TimeDelta(),
+                                     0 /* flags */);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), std::move(feedback)));
   return gfx::SwapResult::SWAP_ACK;
 }
 

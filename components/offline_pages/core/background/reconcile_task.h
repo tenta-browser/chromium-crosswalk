@@ -11,7 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "components/offline_pages/core/background/request_queue_store.h"
 #include "components/offline_pages/core/background/save_page_request.h"
-#include "components/offline_pages/core/task.h"
+#include "components/offline_pages/task/task.h"
 
 namespace offline_pages {
 
@@ -21,7 +21,7 @@ namespace offline_pages {
 class ReconcileTask : public Task {
  public:
   ReconcileTask(RequestQueueStore* store,
-                const RequestQueueStore::UpdateCallback& callback);
+                RequestQueueStore::UpdateCallback callback);
   ~ReconcileTask() override;
 
   // TaskQueue::Task implementation:
@@ -37,14 +37,14 @@ class ReconcileTask : public Task {
                  std::vector<std::unique_ptr<SavePageRequest>> requests);
 
   // Step 3. Processes update result.
-  void UpdateCompleted(std::unique_ptr<UpdateRequestsResult> update_result);
+  void UpdateCompleted(UpdateRequestsResult update_result);
 
   // Member variables, all pointers are not owned here.
   RequestQueueStore* store_;
   // Callback to complete the task.
   RequestQueueStore::UpdateCallback callback_;
   // Allows us to pass a weak pointer to callbacks.
-  base::WeakPtrFactory<ReconcileTask> weak_ptr_factory_;
+  base::WeakPtrFactory<ReconcileTask> weak_ptr_factory_{this};
 };
 
 }  // namespace offline_pages

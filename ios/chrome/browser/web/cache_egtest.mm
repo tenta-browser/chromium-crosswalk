@@ -4,21 +4,17 @@
 
 #import <EarlGrey/EarlGrey.h>
 
+#include <memory>
+
 #include "base/ios/ios_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
-#include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/content_settings/core/common/content_settings.h"
-#include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "ios/chrome/browser/ui/ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
-#include "ios/chrome/test/app/history_test_util.h"
-#include "ios/chrome/test/app/navigation_test_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/testing/wait_util.h"
+#include "ios/chrome/test/earl_grey/scoped_block_popups_pref.h"
 #include "ios/web/public/test/http_server/html_response_provider.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
@@ -28,6 +24,7 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::GetOriginalBrowserState;
 using web::test::HttpServer;
 
 namespace {
@@ -109,44 +106,6 @@ class CacheTestResponseProvider : public web::DataResponseProvider {
   GURL third_page_url_;
 };
 
-// ScopedBlockPopupsPref modifies the block popups preference and resets the
-// preference to its original value when this object goes out of scope.
-// TODO(crbug.com/638674): Evaluate if this can move to shared code.
-class ScopedBlockPopupsPref {
- public:
-  explicit ScopedBlockPopupsPref(ContentSetting setting) {
-    original_setting_ = GetPrefValue();
-    SetPrefValue(setting);
-  }
-  ~ScopedBlockPopupsPref() { SetPrefValue(original_setting_); }
-
- private:
-  // Gets the current value of the preference.
-  ContentSetting GetPrefValue() {
-    ContentSetting popupSetting =
-        ios::HostContentSettingsMapFactory::GetForBrowserState(
-            chrome_test_util::GetOriginalBrowserState())
-            ->GetDefaultContentSetting(CONTENT_SETTINGS_TYPE_POPUPS, NULL);
-    return popupSetting;
-  }
-
-  // Sets the preference to the given value.
-  void SetPrefValue(ContentSetting setting) {
-    DCHECK(setting == CONTENT_SETTING_BLOCK ||
-           setting == CONTENT_SETTING_ALLOW);
-    ios::ChromeBrowserState* state =
-        chrome_test_util::GetOriginalBrowserState();
-    ios::HostContentSettingsMapFactory::GetForBrowserState(state)
-        ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_POPUPS, setting);
-  }
-
-  // Saves the original pref setting so that it can be restored when the scoper
-  // is destroyed.
-  ContentSetting original_setting_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedBlockPopupsPref);
-};
-
 }  // namespace
 
 // Tests the browser cache behavior when navigating to cached pages.
@@ -165,37 +124,39 @@ class ScopedBlockPopupsPref {
     EARL_GREY_TEST_DISABLED(@"Disabled on iOS 10.3.1 and afterwards.");
   }
 
-  web::test::SetUpHttpServer(base::MakeUnique<CacheTestResponseProvider>());
+  web::test::SetUpHttpServer(std::make_unique<CacheTestResponseProvider>());
 
   const GURL cacheTestFirstPageURL =
       HttpServer::MakeUrl(kCacheTestFirstPageURL);
 
   // 1st hit to server. Verify that the server has the correct hit count.
   [ChromeEarlGrey loadURL:cacheTestFirstPageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 1"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 1"];
 
   // Navigate to another page. 2nd hit to server.
-  chrome_test_util::TapWebViewElementWithId(kCacheTestLinkID);
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 2"];
+  [ChromeEarlGrey
+      tapWebStateElementWithID:[NSString
+                                   stringWithUTF8String:kCacheTestLinkID]];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 2"];
 
   // Navigate back. This should not hit the server. Verify the page has been
   // loaded from cache. The serverHitCounter will remain the same.
   [ChromeEarlGrey goBack];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 1"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 1"];
 
   // Reload page. 3rd hit to server. Verify that page reload causes the
   // hitCounter to show updated value.
   [ChromeEarlGrey reload];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 3"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 3"];
 
   // Verify that page reload causes Cache-Control value to be sent with request.
-  [ChromeEarlGrey waitForWebViewContainingText:"cacheControl: max-age=0"];
+  [ChromeEarlGrey waitForWebStateContainingText:"cacheControl: max-age=0"];
 }
 
 // Tests caching behavior when opening new tab. New tab should not use the
 // cached page.
 - (void)testCachingBehaviorOnOpenNewTab {
-  web::test::SetUpHttpServer(base::MakeUnique<CacheTestResponseProvider>());
+  web::test::SetUpHttpServer(std::make_unique<CacheTestResponseProvider>());
 
   const GURL cacheTestFirstPageURL =
       HttpServer::MakeUrl(kCacheTestFirstPageURL);
@@ -204,55 +165,56 @@ class ScopedBlockPopupsPref {
 
   // 1st hit to server. Verify title and hitCount.
   [ChromeEarlGrey loadURL:cacheTestFirstPageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"First Page"];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 1"];
+  [ChromeEarlGrey waitForWebStateContainingText:"First Page"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 1"];
 
   // 2nd hit to server. Verify hitCount.
   [ChromeEarlGrey loadURL:cacheTestThirdPageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 2"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 2"];
 
   // Open the first page in a new tab. Verify that cache was not used. Must
   // first allow popups.
   ScopedBlockPopupsPref prefSetter(CONTENT_SETTING_ALLOW);
-  chrome_test_util::TapWebViewElementWithId(kCacheTestLinkID);
+  [ChromeEarlGrey
+      tapWebStateElementWithID:[NSString
+                                   stringWithUTF8String:kCacheTestLinkID]];
   [ChromeEarlGrey waitForMainTabCount:2];
   [ChromeEarlGrey waitForPageToFinishLoading];
-  [ChromeEarlGrey waitForWebViewContainingText:"First Page"];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 3"];
+  [ChromeEarlGrey waitForWebStateContainingText:"First Page"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 3"];
 }
 
 // Tests that cache is not used when selecting omnibox suggested website, even
 // though cache for that website exists.
 - (void)testCachingBehaviorOnSelectOmniboxSuggestion {
-  // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
-  // grey_typeText works on iOS 11.
-  if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
-    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  // TODO(crbug.com/753098): Re-enable this test on iPad once grey_typeText
+  // works.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iPad.");
   }
 
-  web::test::SetUpHttpServer(base::MakeUnique<CacheTestResponseProvider>());
+  web::test::SetUpHttpServer(std::make_unique<CacheTestResponseProvider>());
 
   // Clear the history to ensure expected omnibox autocomplete results.
-  chrome_test_util::ClearBrowsingHistory();
+  [ChromeEarlGrey clearBrowsingHistory];
 
   const GURL cacheTestFirstPageURL =
       HttpServer::MakeUrl(kCacheTestFirstPageURL);
 
   // 1st hit to server. Verify title and hitCount.
   [ChromeEarlGrey loadURL:cacheTestFirstPageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"First Page"];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 1"];
+  [ChromeEarlGrey waitForWebStateContainingText:"First Page"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 1"];
 
   // Type a search into omnnibox and select the first suggestion (second row)
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-      performAction:grey_typeText(@"cachetestfirstpage")];
+  [ChromeEarlGreyUI focusOmniboxAndType:@"cachetestfirstpage"];
   [[EarlGrey
       selectElementWithMatcher:grey_accessibilityID(@"omnibox suggestion 1")]
       performAction:grey_tap()];
 
   // Verify title and hitCount. Cache should not be used.
-  [ChromeEarlGrey waitForWebViewContainingText:"First Page"];
-  [ChromeEarlGrey waitForWebViewContainingText:"serverHitCounter: 2"];
+  [ChromeEarlGrey waitForWebStateContainingText:"First Page"];
+  [ChromeEarlGrey waitForWebStateContainingText:"serverHitCounter: 2"];
 }
 
 @end

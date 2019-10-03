@@ -51,7 +51,7 @@ base::string16 FakePluginService::GetPluginDisplayNameByPath(
 
 void FakePluginService::GetPlugins(GetPluginsCallback callback) {}
 
-PepperPluginInfo* FakePluginService::GetRegisteredPpapiPluginInfo(
+const PepperPluginInfo* FakePluginService::GetRegisteredPpapiPluginInfo(
     const base::FilePath& plugin_path) {
   return nullptr;
 }
@@ -86,6 +86,12 @@ bool FakePluginService::PpapiDevChannelSupported(
     BrowserContext* browser_context,
     const GURL& document_url) {
   return false;
+}
+
+int FakePluginService::CountPpapiPluginProcessesForProfile(
+    const base::FilePath& plugin_path,
+    const base::FilePath& profile_data_directory) {
+  return 0;
 }
 
 }  // namespace content

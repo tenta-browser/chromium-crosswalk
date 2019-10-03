@@ -10,7 +10,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/values.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/value_store/leveldb_value_store.h"
@@ -28,10 +27,9 @@ ValueStore* Param(const base::FilePath& file_path) {
 
 }  // namespace
 
-INSTANTIATE_TEST_CASE_P(
-    LeveldbValueStore,
-    ValueStoreTest,
-    testing::Values(&Param));
+INSTANTIATE_TEST_SUITE_P(LeveldbValueStore,
+                         ValueStoreTest,
+                         testing::Values(&Param));
 
 class LeveldbValueStoreUnitTest : public testing::Test {
  public:

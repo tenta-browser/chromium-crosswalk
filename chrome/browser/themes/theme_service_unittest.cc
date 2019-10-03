@@ -4,12 +4,10 @@
 
 #include "chrome/browser/themes/theme_service.h"
 
-#include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/strings/stringprintf.h"
 #include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -19,8 +17,8 @@
 #include "chrome/browser/themes/custom_theme_supplier.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service_factory.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -33,7 +31,6 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/ui_base_switches.h"
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_service.h"
@@ -46,15 +43,13 @@ namespace theme_service_internal {
 
 class ThemeServiceTest : public extensions::ExtensionServiceTestBase {
  public:
-  ThemeServiceTest() : is_supervised_(false),
-                       registry_(NULL) {}
+  ThemeServiceTest() : registry_(NULL) {}
   ~ThemeServiceTest() override {}
 
   void SetUp() override {
     extensions::ExtensionServiceTestBase::SetUp();
     extensions::ExtensionServiceTestBase::ExtensionServiceInitParams params =
         CreateDefaultInitParams();
-    params.profile_is_supervised = is_supervised_;
     InitializeExtensionService(params);
     service_->Init();
     registry_ = ExtensionRegistry::Get(profile_.get());
@@ -63,12 +58,18 @@ class ThemeServiceTest : public extensions::ExtensionServiceTestBase {
 
   // Moves a minimal theme to |temp_dir_path| and unpacks it from that
   // directory.
-  std::string LoadUnpackedThemeAt(const base::FilePath& temp_dir) {
+  std::string LoadUnpackedMinimalThemeAt(const base::FilePath& temp_dir) {
+    return LoadUnpackedTheme(temp_dir,
+                             "extensions/theme_minimal/manifest.json");
+  }
+
+  std::string LoadUnpackedTheme(const base::FilePath& temp_dir,
+                                const std::string source_file_path) {
     base::FilePath dst_manifest_path = temp_dir.AppendASCII("manifest.json");
     base::FilePath test_data_dir;
-    EXPECT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
+    EXPECT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir));
     base::FilePath src_manifest_path =
-        test_data_dir.AppendASCII("extensions/theme_minimal/manifest.json");
+        test_data_dir.AppendASCII(source_file_path);
     EXPECT_TRUE(base::CopyFile(src_manifest_path, dst_manifest_path));
 
     scoped_refptr<extensions::UnpackedInstaller> installer(
@@ -119,25 +120,15 @@ class ThemeServiceTest : public extensions::ExtensionServiceTestBase {
     theme_change_observer.Wait();
   }
 
-  // Alpha blends a non-opaque foreground color against an opaque background.
-  // This is not the same as color_utils::AlphaBlend() since it gets the opacity
-  // from the foreground color and then does not blend the two colors' alpha
-  // values together.
-  static SkColor AlphaBlend(SkColor foreground, SkColor background) {
-    return color_utils::AlphaBlend(SkColorSetA(foreground, SK_AlphaOPAQUE),
-                                   background, SkColorGetA(foreground));
-  }
-
   // Returns the separator color as the opaque result of blending it atop the
   // frame color (which is the color we use when calculating the contrast of the
   // separator with the tab and frame colors).
   static SkColor GetSeparatorColor(SkColor tab_color, SkColor frame_color) {
-    return AlphaBlend(ThemeService::GetSeparatorColor(tab_color, frame_color),
-                      frame_color);
+    return color_utils::GetResultingPaintColor(
+        ThemeService::GetSeparatorColor(tab_color, frame_color), frame_color);
   }
 
  protected:
-  bool is_supervised_;
   ExtensionRegistry* registry_;
 };
 
@@ -152,8 +143,10 @@ TEST_F(ThemeServiceTest, ThemeInstallUninstall) {
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  const std::string& extension_id = LoadUnpackedThemeAt(temp_dir.GetPath());
+  const std::string& extension_id =
+      LoadUnpackedMinimalThemeAt(temp_dir.GetPath());
   EXPECT_FALSE(theme_service->UsingDefaultTheme());
+  EXPECT_TRUE(theme_service->UsingExtensionTheme());
   EXPECT_EQ(extension_id, theme_service->GetThemeID());
 
   // Now uninstall the extension, should revert to the default theme.
@@ -161,6 +154,7 @@ TEST_F(ThemeServiceTest, ThemeInstallUninstall) {
                                extensions::UNINSTALL_REASON_FOR_TESTING,
                                NULL);
   EXPECT_TRUE(theme_service->UsingDefaultTheme());
+  EXPECT_FALSE(theme_service->UsingExtensionTheme());
 }
 
 // Test that a theme extension is disabled when not in use. A theme may be
@@ -177,7 +171,8 @@ TEST_F(ThemeServiceTest, DisableUnusedTheme) {
   ASSERT_TRUE(temp_dir2.CreateUniqueTempDir());
 
   // 1) Installing a theme should disable the previously active theme.
-  const std::string& extension1_id = LoadUnpackedThemeAt(temp_dir1.GetPath());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
   EXPECT_FALSE(theme_service->UsingDefaultTheme());
   EXPECT_EQ(extension1_id, theme_service->GetThemeID());
   EXPECT_TRUE(service_->IsExtensionEnabled(extension1_id));
@@ -185,7 +180,8 @@ TEST_F(ThemeServiceTest, DisableUnusedTheme) {
   // Show an infobar to prevent the current theme from being uninstalled.
   theme_service->OnInfobarDisplayed();
 
-  const std::string& extension2_id = LoadUnpackedThemeAt(temp_dir2.GetPath());
+  const std::string& extension2_id =
+      LoadUnpackedMinimalThemeAt(temp_dir2.GetPath());
   EXPECT_EQ(extension2_id, theme_service->GetThemeID());
   EXPECT_TRUE(service_->IsExtensionEnabled(extension2_id));
   EXPECT_TRUE(registry_->GetExtensionById(extension1_id,
@@ -199,12 +195,10 @@ TEST_F(ThemeServiceTest, DisableUnusedTheme) {
   EXPECT_TRUE(registry_->GetExtensionById(extension2_id,
                                           ExtensionRegistry::DISABLED));
 
-  // 3) Using RevertToTheme() with a disabled theme should enable and set the
-  // theme. This is the case when the user reverts to the previous theme
+  // 3) Using RevertToExtensionTheme() with a disabled theme should enable and
+  // set the theme. This is the case when the user reverts to the previous theme
   // via an infobar.
-  const extensions::Extension* extension2 =
-      service_->GetInstalledExtension(extension2_id);
-  theme_service->RevertToTheme(extension2);
+  theme_service->RevertToExtensionTheme(extension2_id);
   WaitForThemeInstall();
   EXPECT_EQ(extension2_id, theme_service->GetThemeID());
   EXPECT_TRUE(service_->IsExtensionEnabled(extension2_id));
@@ -212,15 +206,14 @@ TEST_F(ThemeServiceTest, DisableUnusedTheme) {
                                           ExtensionRegistry::DISABLED));
 
   // 4) Disabling the current theme extension should revert to the default theme
-  // and uninstall any installed theme extensions.
-  theme_service->OnInfobarDestroyed();
+  // and disable any installed theme extensions.
   EXPECT_FALSE(theme_service->UsingDefaultTheme());
   service_->DisableExtension(extension2_id,
                              extensions::disable_reason::DISABLE_USER_ACTION);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(theme_service->UsingDefaultTheme());
-  EXPECT_FALSE(service_->GetInstalledExtension(extension1_id));
-  EXPECT_FALSE(service_->GetInstalledExtension(extension2_id));
+  EXPECT_FALSE(service_->IsExtensionEnabled(extension1_id));
+  EXPECT_FALSE(service_->IsExtensionEnabled(extension2_id));
 }
 
 // Test the ThemeService's behavior when a theme is upgraded.
@@ -239,8 +232,10 @@ TEST_F(ThemeServiceTest, ThemeUpgrade) {
   base::ScopedTempDir temp_dir2;
   ASSERT_TRUE(temp_dir2.CreateUniqueTempDir());
 
-  const std::string& extension1_id = LoadUnpackedThemeAt(temp_dir1.GetPath());
-  const std::string& extension2_id = LoadUnpackedThemeAt(temp_dir2.GetPath());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
+  const std::string& extension2_id =
+      LoadUnpackedMinimalThemeAt(temp_dir2.GetPath());
 
   // Test the initial state.
   EXPECT_TRUE(registry_->GetExtensionById(extension1_id,
@@ -294,6 +289,124 @@ TEST_F(ThemeServiceTest, IncognitoTest) {
 #endif
 }
 
+TEST_F(ThemeServiceTest, GetDefaultThemeProviderForProfile) {
+  ThemeService* theme_service =
+      ThemeServiceFactory::GetForProfile(profile_.get());
+  theme_service->UseDefaultTheme();
+  // Let the ThemeService uninstall unused themes.
+  base::RunLoop().RunUntilIdle();
+
+  SkColor default_toolbar_color =
+      ThemeService::GetThemeProviderForProfile(profile_.get())
+          .GetColor(ThemeProperties::COLOR_TOOLBAR);
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  LoadUnpackedMinimalThemeAt(temp_dir.GetPath());
+
+  // Should get a new color after installing a theme.
+  EXPECT_NE(ThemeService::GetThemeProviderForProfile(profile_.get())
+                .GetColor(ThemeProperties::COLOR_TOOLBAR),
+            default_toolbar_color);
+
+  // Should get the same color when requesting a default color.
+  EXPECT_EQ(ThemeService::GetDefaultThemeProviderForProfile(profile_.get())
+                .GetColor(ThemeProperties::COLOR_TOOLBAR),
+            default_toolbar_color);
+}
+
+TEST_F(ThemeServiceTest, GetColorForToolbarButton) {
+  ThemeService* theme_service =
+      ThemeServiceFactory::GetForProfile(profile_.get());
+  theme_service->UseDefaultTheme();
+  // Let the ThemeService uninstall unused themes.
+  base::RunLoop().RunUntilIdle();
+
+  const ui::ThemeProvider& theme_provider =
+      ThemeService::GetThemeProviderForProfile(profile_.get());
+  SkColor default_toolbar_button_color =
+      theme_provider.GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+  EXPECT_FALSE(theme_provider.HasCustomColor(
+      ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON));
+
+  base::ScopedTempDir temp_dir1;
+  ASSERT_TRUE(temp_dir1.CreateUniqueTempDir());
+  LoadUnpackedTheme(temp_dir1.GetPath(),
+                    "extensions/theme_test_toolbar_button_color/manifest.json");
+
+  // Should get a new color after installing a theme.
+  SkColor toolbar_button_explicit_color =
+      theme_provider.GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+  EXPECT_NE(toolbar_button_explicit_color, default_toolbar_button_color);
+  EXPECT_TRUE(theme_provider.HasCustomColor(
+      ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON));
+
+  base::ScopedTempDir temp_dir2;
+  ASSERT_TRUE(temp_dir2.CreateUniqueTempDir());
+  LoadUnpackedTheme(temp_dir2.GetPath(),
+                    "extensions/theme_test_toolbar_button_tint/manifest.json");
+
+  // Should get the color based on a tint.
+  SkColor toolbar_button_tinted_color =
+      theme_provider.GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+  EXPECT_NE(toolbar_button_tinted_color, default_toolbar_button_color);
+  EXPECT_NE(toolbar_button_tinted_color, toolbar_button_explicit_color);
+  EXPECT_TRUE(theme_provider.HasCustomColor(
+      ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON));
+}
+
+TEST_F(ThemeServiceTest, NTPLogoAlternate) {
+  ThemeService* theme_service =
+      ThemeServiceFactory::GetForProfile(profile_.get());
+  theme_service->UseDefaultTheme();
+  // Let the ThemeService uninstall unused themes.
+  base::RunLoop().RunUntilIdle();
+
+  const ui::ThemeProvider& theme_provider =
+      ThemeService::GetThemeProviderForProfile(profile_.get());
+  {
+    base::ScopedTempDir temp_dir;
+    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+    LoadUnpackedTheme(temp_dir.GetPath(),
+                      "extensions/theme_grey_ntp/manifest.json");
+    // When logo alternate is not specified and ntp is grey, logo should be
+    // colorful.
+    EXPECT_EQ(0, theme_provider.GetDisplayProperty(
+                     ThemeProperties::NTP_LOGO_ALTERNATE));
+  }
+
+  {
+    base::ScopedTempDir temp_dir;
+    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+    LoadUnpackedTheme(temp_dir.GetPath(),
+                      "extensions/theme_grey_ntp_white_logo/manifest.json");
+    // Logo alternate should match what is specified in the manifest.
+    EXPECT_EQ(1, theme_provider.GetDisplayProperty(
+                     ThemeProperties::NTP_LOGO_ALTERNATE));
+  }
+
+  {
+    base::ScopedTempDir temp_dir;
+    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+    LoadUnpackedTheme(temp_dir.GetPath(),
+                      "extensions/theme_color_ntp_white_logo/manifest.json");
+    // When logo alternate is not specified and ntp is colorful, logo should be
+    // white.
+    EXPECT_EQ(1, theme_provider.GetDisplayProperty(
+                     ThemeProperties::NTP_LOGO_ALTERNATE));
+  }
+
+  {
+    base::ScopedTempDir temp_dir;
+    ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+    LoadUnpackedTheme(temp_dir.GetPath(),
+                      "extensions/theme_color_ntp_colorful_logo/manifest.json");
+    // Logo alternate should match what is specified in the manifest.
+    EXPECT_EQ(0, theme_provider.GetDisplayProperty(
+                     ThemeProperties::NTP_LOGO_ALTERNATE));
+  }
+}
+
 namespace {
 
 // NotificationObserver which emulates an infobar getting destroyed when the
@@ -339,7 +452,8 @@ TEST_F(ThemeServiceTest, UninstallThemeOnThemeChangeNotification) {
   base::ScopedTempDir temp_dir2;
   ASSERT_TRUE(temp_dir2.CreateUniqueTempDir());
 
-  const std::string& extension1_id = LoadUnpackedThemeAt(temp_dir1.GetPath());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
   ASSERT_EQ(extension1_id, theme_service->GetThemeID());
 
   // Show an infobar.
@@ -350,165 +464,78 @@ TEST_F(ThemeServiceTest, UninstallThemeOnThemeChangeNotification) {
   // itself as a result of the NOTIFICATION_BROWSER_THEME_CHANGED notification.
   {
     InfobarDestroyerOnThemeChange destroyer(profile_.get());
-    const std::string& extension2_id = LoadUnpackedThemeAt(temp_dir2.GetPath());
+    const std::string& extension2_id =
+        LoadUnpackedMinimalThemeAt(temp_dir2.GetPath());
     EXPECT_EQ(extension2_id, theme_service->GetThemeID());
   }
 
-  auto* extension1 = service_->GetInstalledExtension(extension1_id);
-  ASSERT_TRUE(extension1);
-
   // Check that it is possible to reinstall extension1.
-  ThemeServiceFactory::GetForProfile(profile_.get())->RevertToTheme(extension1);
+  ThemeServiceFactory::GetForProfile(profile_.get())
+      ->RevertToExtensionTheme(extension1_id);
   WaitForThemeInstall();
   EXPECT_EQ(extension1_id, theme_service->GetThemeID());
 }
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
-class ThemeServiceSupervisedUserTest : public ThemeServiceTest {
- public:
-  ThemeServiceSupervisedUserTest() {}
-  ~ThemeServiceSupervisedUserTest() override {}
-
-  void SetUp() override {
-    is_supervised_ = true;
-    ThemeServiceTest::SetUp();
-  }
-};
-
-// Checks that supervised users have their own default theme.
-TEST_F(ThemeServiceSupervisedUserTest,
-       SupervisedUserThemeReplacesDefaultTheme) {
+TEST_F(ThemeServiceTest, BuildFromColorTest) {
+  // Set theme from color.
   ThemeService* theme_service =
       ThemeServiceFactory::GetForProfile(profile_.get());
   theme_service->UseDefaultTheme();
   EXPECT_TRUE(theme_service->UsingDefaultTheme());
-  EXPECT_TRUE(get_theme_supplier(theme_service));
-  EXPECT_EQ(get_theme_supplier(theme_service)->get_theme_type(),
-            CustomThemeSupplier::SUPERVISED_USER_THEME);
+  EXPECT_FALSE(theme_service->UsingAutogenerated());
+  theme_service->BuildFromColor(SkColorSetRGB(100, 100, 100));
+  EXPECT_FALSE(theme_service->UsingDefaultTheme());
+  EXPECT_TRUE(theme_service->UsingAutogenerated());
+
+  // Set theme from data pack and then override it with theme from color.
+  base::ScopedTempDir temp_dir1;
+  ASSERT_TRUE(temp_dir1.CreateUniqueTempDir());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
+  EXPECT_EQ(extension1_id, theme_service->GetThemeID());
+  EXPECT_FALSE(theme_service->UsingDefaultTheme());
+  EXPECT_FALSE(theme_service->UsingAutogenerated());
+  base::FilePath path =
+      profile_->GetPrefs()->GetFilePath(prefs::kCurrentThemePackFilename);
+  EXPECT_FALSE(path.empty());
+
+  theme_service->BuildFromColor(SkColorSetRGB(100, 100, 100));
+  EXPECT_FALSE(theme_service->UsingDefaultTheme());
+  EXPECT_TRUE(theme_service->UsingAutogenerated());
+  EXPECT_EQ(ThemeService::kAutogeneratedThemeID, theme_service->GetThemeID());
+  path = profile_->GetPrefs()->GetFilePath(prefs::kCurrentThemePackFilename);
+  EXPECT_TRUE(path.empty());
 }
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-// Checks that supervised users don't use the system theme even if it is the
-// default. The system theme is only available on Linux.
-TEST_F(ThemeServiceSupervisedUserTest, SupervisedUserThemeReplacesNativeTheme) {
-  profile_->GetPrefs()->SetBoolean(prefs::kUsesSystemTheme, true);
+TEST_F(ThemeServiceTest, BuildFromColor_DisableExtensionTest) {
   ThemeService* theme_service =
       ThemeServiceFactory::GetForProfile(profile_.get());
+  base::ScopedTempDir temp_dir1;
+  ASSERT_TRUE(temp_dir1.CreateUniqueTempDir());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
+  EXPECT_EQ(extension1_id, theme_service->GetThemeID());
+  EXPECT_TRUE(service_->IsExtensionEnabled(extension1_id));
+
+  // Setting autogenerated theme should disable previous theme.
+  theme_service->BuildFromColor(SkColorSetRGB(100, 100, 100));
+  EXPECT_TRUE(theme_service->UsingAutogenerated());
+  EXPECT_FALSE(service_->IsExtensionEnabled(extension1_id));
+}
+
+TEST_F(ThemeServiceTest, UseDefaultTheme_DisableExtensionTest) {
+  ThemeService* theme_service =
+      ThemeServiceFactory::GetForProfile(profile_.get());
+  base::ScopedTempDir temp_dir1;
+  ASSERT_TRUE(temp_dir1.CreateUniqueTempDir());
+  const std::string& extension1_id =
+      LoadUnpackedMinimalThemeAt(temp_dir1.GetPath());
+  EXPECT_EQ(extension1_id, theme_service->GetThemeID());
+  EXPECT_TRUE(service_->IsExtensionEnabled(extension1_id));
+
+  // Resetting to default theme should disable previous theme.
   theme_service->UseDefaultTheme();
-  EXPECT_TRUE(theme_service->UsingDefaultTheme());
-  EXPECT_TRUE(get_theme_supplier(theme_service));
-  EXPECT_EQ(get_theme_supplier(theme_service)->get_theme_type(),
-            CustomThemeSupplier::SUPERVISED_USER_THEME);
+  EXPECT_FALSE(service_->IsExtensionEnabled(extension1_id));
 }
-#endif // defined(OS_LINUX) && !defined(OS_CHROMEOS)
-#endif // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 
-#if !defined(OS_MACOSX)  // Mac uses different colors than other platforms.
-// Check that the function which computes the separator color behaves as
-// expected for a variety of inputs.
-TEST_F(ThemeServiceTest, SeparatorColor) {
-  // Ensure Windows 10 machines use the built-in default colors rather than the
-  // current system native colors.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kDisableDwmComposition);
-
-  {
-    const ui::ThemeProvider& theme_provider =
-        ThemeService::GetThemeProviderForProfile(profile_.get());
-    const SkColor frame_color =
-        theme_provider.GetColor(ThemeProperties::COLOR_FRAME);
-    const SkColor tab_color =
-        theme_provider.GetColor(ThemeProperties::COLOR_TOOLBAR);
-    SCOPED_TRACE(base::StringPrintf("Tab color: 0x%08X, frame color: 0x%08X",
-                                    tab_color, frame_color));
-
-    // Check that the TOOLBAR_TOP_SEPARATOR color is the same whether we ask the
-    // theme provider or compute it manually.
-    const SkColor theme_color = AlphaBlend(
-        theme_provider.GetColor(ThemeProperties::COLOR_TOOLBAR_TOP_SEPARATOR),
-        frame_color);
-    SkColor separator_color = GetSeparatorColor(tab_color, frame_color);
-    EXPECT_EQ(theme_color, separator_color);
-
-    // For the default theme, the separator should darken the frame.
-    double frame_luminance = color_utils::GetRelativeLuminance(frame_color);
-    EXPECT_LT(color_utils::GetRelativeLuminance(separator_color),
-              frame_luminance);
-
-    // If we reverse the colors, the separator should darken the "frame" (which
-    // in this case is actually the tab color), since otherwise the contrast
-    // with the "frame" would be too minimal.  It should also be darker than the
-    // "tab" (frame color) since otherwise the contrast the contrast with the
-    // "tab color" would be too minimal.
-    separator_color = GetSeparatorColor(frame_color, tab_color);
-    double tab_luminance = color_utils::GetRelativeLuminance(tab_color);
-    double separator_luminance =
-        color_utils::GetRelativeLuminance(separator_color);
-    EXPECT_LT(separator_luminance, tab_luminance);
-    EXPECT_LT(separator_luminance, frame_luminance);
-
-    // When the frame color is black, the separator should lighten the frame,
-    // but it should still be darker than the tab color.
-    separator_color = GetSeparatorColor(tab_color, SK_ColorBLACK);
-    separator_luminance = color_utils::GetRelativeLuminance(separator_color);
-    EXPECT_GT(separator_luminance, 0);
-    EXPECT_LT(separator_luminance, tab_luminance);
-
-    // When the frame color is white, the separator should darken the frame; it
-    // should also be lighter than the tab color since otherwise the contrast
-    // with the tab would be too minimal.
-    separator_color = GetSeparatorColor(tab_color, SK_ColorWHITE);
-    separator_luminance = color_utils::GetRelativeLuminance(separator_color);
-    EXPECT_LT(separator_luminance, 1);
-    EXPECT_LT(separator_luminance, tab_luminance);
-  }
-
-  // Now make similar checks as above but for the incognito theme.
-  {
-    const ui::ThemeProvider& otr_provider =
-        ThemeService::GetThemeProviderForProfile(
-            profile_->GetOffTheRecordProfile());
-    const SkColor frame_color =
-        otr_provider.GetColor(ThemeProperties::COLOR_FRAME);
-    const SkColor tab_color =
-        otr_provider.GetColor(ThemeProperties::COLOR_TOOLBAR);
-    SCOPED_TRACE(base::StringPrintf("Tab color: 0x%08X, frame color: 0x%08X",
-                                    tab_color, frame_color));
-
-    const SkColor theme_color = AlphaBlend(
-        otr_provider.GetColor(ThemeProperties::COLOR_TOOLBAR_TOP_SEPARATOR),
-        frame_color);
-    SkColor separator_color = GetSeparatorColor(tab_color, frame_color);
-    EXPECT_EQ(theme_color, separator_color);
-
-    // For the default incognito theme, the separator should darken the frame.
-    EXPECT_LT(color_utils::GetRelativeLuminance(separator_color),
-              color_utils::GetRelativeLuminance(frame_color));
-
-    // And if we reverse the colors, the separator should lighten the "frame"
-    // (tab color).
-    separator_color = GetSeparatorColor(frame_color, tab_color);
-    double tab_luminance = color_utils::GetRelativeLuminance(tab_color);
-    EXPECT_GT(color_utils::GetRelativeLuminance(separator_color),
-              tab_luminance);
-
-    // When the frame color is black, the separator should lighten the frame; it
-    // should also be lighter than the tab color since otherwise the contrast
-    // with the tab would be too minimal.
-    separator_color = GetSeparatorColor(tab_color, SK_ColorBLACK);
-    double separator_luminance =
-        color_utils::GetRelativeLuminance(separator_color);
-    EXPECT_GT(separator_luminance, 0);
-    EXPECT_GT(separator_luminance, tab_luminance);
-
-    // When the frame color is white, the separator should darken the frame, but
-    // it should still be lighter than the tab color.
-    separator_color = GetSeparatorColor(tab_color, SK_ColorWHITE);
-    separator_luminance = color_utils::GetRelativeLuminance(separator_color);
-    EXPECT_LT(separator_luminance, 1);
-    EXPECT_GT(separator_luminance, tab_luminance);
-  }
-}
-#endif  // !defined(OS_MACOSX)
-
-}; // namespace theme_service_internal
+}  // namespace theme_service_internal

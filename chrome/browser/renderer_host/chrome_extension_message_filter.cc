@@ -10,10 +10,10 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/activity_log/activity_action_constants.h"
@@ -37,7 +37,7 @@ using content::BrowserThread;
 
 namespace {
 
-const uint32_t kFilteredMessageClasses[] = {
+const uint32_t kExtensionFilteredMessageClasses[] = {
     ChromeExtensionMsgStart, ExtensionMsgStart,
 };
 
@@ -59,8 +59,8 @@ void AddActionToExtensionActivityLog(Profile* profile,
 ChromeExtensionMessageFilter::ChromeExtensionMessageFilter(
     int render_process_id,
     Profile* profile)
-    : BrowserMessageFilter(kFilteredMessageClasses,
-                           arraysize(kFilteredMessageClasses)),
+    : BrowserMessageFilter(kExtensionFilteredMessageClasses,
+                           base::size(kExtensionFilteredMessageClasses)),
       render_process_id_(render_process_id),
       profile_(profile),
       activity_log_(extensions::ActivityLog::GetInstance(profile)),
@@ -163,8 +163,9 @@ void ChromeExtensionMessageFilter::OnGetExtMessageBundle(
   // This blocks tab loading. Priority is inherited from the calling context.
   base::PostTaskWithTraits(
       FROM_HERE, {base::MayBlock()},
-      base::Bind(&ChromeExtensionMessageFilter::OnGetExtMessageBundleAsync,
-                 this, paths_to_load, extension_id, default_locale, reply_msg));
+      base::BindOnce(&ChromeExtensionMessageFilter::OnGetExtMessageBundleAsync,
+                     this, paths_to_load, extension_id, default_locale,
+                     reply_msg));
 }
 
 void ChromeExtensionMessageFilter::OnGetExtMessageBundleAsync(

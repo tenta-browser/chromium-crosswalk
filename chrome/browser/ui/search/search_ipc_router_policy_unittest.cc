@@ -4,14 +4,12 @@
 
 #include "chrome/browser/ui/search/search_ipc_router.h"
 
-#include "build/build_config.h"
-#include "base/command_line.h"
 #include "chrome/browser/ui/search/search_ipc_router_policy_impl.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
+#include "content/public/browser/page_navigator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -30,7 +28,7 @@ class SearchIPCRouterPolicyTest : public BrowserWithTestWindowTest {
   SearchIPCRouter::Policy* GetSearchIPCRouterPolicy() {
     SearchTabHelper* search_tab_helper =
         SearchTabHelper::FromWebContents(web_contents());
-    EXPECT_NE(static_cast<SearchTabHelper*>(NULL), search_tab_helper);
+    EXPECT_NE(nullptr, search_tab_helper);
     return search_tab_helper->ipc_router_for_testing().policy_for_testing();
   }
 
@@ -43,6 +41,28 @@ class SearchIPCRouterPolicyTest : public BrowserWithTestWindowTest {
 
 TEST_F(SearchIPCRouterPolicyTest, ProcessFocusOmnibox) {
   NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
+  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldProcessFocusOmnibox(true));
+}
+
+// Regression test for crbug.com/592273.
+TEST_F(SearchIPCRouterPolicyTest, ProcessFocusOmniboxAfterDownload) {
+  // Open an NTP.
+  NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
+  ASSERT_TRUE(GetSearchIPCRouterPolicy()->ShouldProcessFocusOmnibox(true));
+
+  // Simulate a download by opening a URL without committing it.
+  browser()->OpenURL(content::OpenURLParams(
+      GURL("http://foo/download.zip"), content::Referrer(),
+      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false));
+
+  // Now the visible URL corresponds to the download, but the last committed URL
+  // is still the NTP.
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_EQ(GURL("http://foo/download.zip"), tab->GetVisibleURL());
+  ASSERT_EQ(GURL(chrome::kChromeSearchLocalNtpUrl), tab->GetLastCommittedURL());
+
+  // In this state, we should still accept IPC messages.
   EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldProcessFocusOmnibox(true));
 }
 
@@ -78,28 +98,6 @@ TEST_F(SearchIPCRouterPolicyTest, DoNotProcessLogEvent) {
   // Process message only if the underlying page is an InstantNTP.
   NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
   EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldProcessLogEvent());
-}
-
-TEST_F(SearchIPCRouterPolicyTest, ProcessChromeIdentityCheck) {
-  NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
-  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldProcessChromeIdentityCheck());
-}
-
-TEST_F(SearchIPCRouterPolicyTest, DoNotProcessChromeIdentityCheck) {
-  // Process message only if the underlying page is an InstantNTP.
-  NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldProcessChromeIdentityCheck());
-}
-
-TEST_F(SearchIPCRouterPolicyTest, ProcessHistorySyncCheck) {
-  NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
-  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldProcessHistorySyncCheck());
-}
-
-TEST_F(SearchIPCRouterPolicyTest, DoNotProcessHistorySyncCheck) {
-  // Process message only if the underlying page is an InstantNTP.
-  NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldProcessHistorySyncCheck());
 }
 
 TEST_F(SearchIPCRouterPolicyTest, ProcessPasteIntoOmniboxMsg) {
@@ -143,20 +141,20 @@ TEST_F(SearchIPCRouterPolicyTest,
 
   SearchIPCRouter::Policy* router_policy = GetSearchIPCRouterPolicy();
   EXPECT_FALSE(router_policy->ShouldSendThemeBackgroundInfo());
-  EXPECT_FALSE(router_policy->ShouldSendMostVisitedItems());
+  EXPECT_FALSE(router_policy->ShouldSendMostVisitedInfo());
   EXPECT_FALSE(router_policy->ShouldSendSetInputInProgress(true));
   EXPECT_FALSE(router_policy->ShouldSendOmniboxFocusChanged());
 }
 
-TEST_F(SearchIPCRouterPolicyTest, SendMostVisitedItems) {
+TEST_F(SearchIPCRouterPolicyTest, SendMostVisitedInfo) {
   NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
-  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldSendMostVisitedItems());
+  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldSendMostVisitedInfo());
 }
 
-TEST_F(SearchIPCRouterPolicyTest, DoNotSendMostVisitedItems) {
+TEST_F(SearchIPCRouterPolicyTest, DoNotSendMostVisitedInfo) {
   // Send most visited items only if the current tab is an Instant NTP.
   NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldSendMostVisitedItems());
+  EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldSendMostVisitedInfo());
 }
 
 TEST_F(SearchIPCRouterPolicyTest, SendThemeBackgroundInfo) {

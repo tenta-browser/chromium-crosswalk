@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "base/files/file_path.h"
+
 namespace policy {
 
 // A container keeping all parameters relevant to whether and how enterprise
@@ -42,6 +44,28 @@ struct EnrollmentConfig {
     // Server-backed-state-triggered attestation-based enrollment, user can't
     // skip.
     MODE_ATTESTATION_SERVER_FORCED,
+    // Forced enrollment triggered as a fallback to attestation re-enrollment,
+    // user can't skip.
+    MODE_ATTESTATION_MANUAL_FALLBACK,
+    // Enrollment for offline demo mode with locally stored policy data.
+    MODE_OFFLINE_DEMO,
+    // Flow that happens when already enrolled device undergoes version
+    // rollback. Enrollment information is preserved during rollback, but
+    // some steps have to be repeated as stateful partition was wiped.
+    MODE_ENROLLED_ROLLBACK,
+    // Server-backed-state-triggered forced initial enrollment, user can't
+    // skip.
+    MODE_INITIAL_SERVER_FORCED,
+    // Server-backed-state-triggered attestation-based initial enrollment,
+    // user can't skip.
+    MODE_ATTESTATION_INITIAL_SERVER_FORCED,
+    // Forced enrollment triggered as a fallback to attestation initial
+    // enrollment, user can't skip.
+    MODE_ATTESTATION_INITIAL_MANUAL_FALLBACK,
+
+    // Attestation-based enrollment with enrollment token, used in configuration
+    // based OOBE.
+    MODE_ATTESTATION_ENROLLMENT_TOKEN,
   };
 
   // An enumeration of authentication mechanisms that can be used for
@@ -56,6 +80,10 @@ struct EnrollmentConfig {
     AUTH_MECHANISM_BEST_AVAILABLE,
   };
 
+  EnrollmentConfig();
+  EnrollmentConfig(const EnrollmentConfig& config);
+  ~EnrollmentConfig();
+
   // Whether enrollment should be triggered.
   bool should_enroll() const {
     return should_enroll_with_attestation() || should_enroll_interactively();
@@ -69,11 +97,18 @@ struct EnrollmentConfig {
   // Whether interactive enrollment should be triggered.
   bool should_enroll_interactively() const { return mode != MODE_NONE; }
 
+  // Whether we fell back into manual enrollment.
+  bool is_manual_fallback() const {
+    return mode == MODE_ATTESTATION_MANUAL_FALLBACK ||
+           mode == MODE_ATTESTATION_INITIAL_MANUAL_FALLBACK;
+  }
+
   // Whether enrollment is forced. The user can't skip the enrollment step
   // during OOBE if this returns true.
   bool is_forced() const {
     return mode == MODE_LOCAL_FORCED || mode == MODE_SERVER_FORCED ||
-           mode == MODE_RECOVERY || is_attestation_forced();
+           mode == MODE_INITIAL_SERVER_FORCED || mode == MODE_RECOVERY ||
+           is_attestation_forced() || is_manual_fallback();
   }
 
   // Whether attestation-based enrollment is forced. The user can't skip
@@ -82,16 +117,29 @@ struct EnrollmentConfig {
     return auth_mechanism == AUTH_MECHANISM_ATTESTATION;
   }
 
+  // Whether this configuration is in attestation mode per server request.
+  bool is_mode_attestation_server() const {
+    return mode == MODE_ATTESTATION_SERVER_FORCED ||
+           mode == MODE_ATTESTATION_INITIAL_SERVER_FORCED;
+  }
+
   // Whether this configuration is in attestation mode.
   bool is_mode_attestation() const {
     return mode == MODE_ATTESTATION || mode == MODE_ATTESTATION_LOCAL_FORCED ||
-           mode == MODE_ATTESTATION_SERVER_FORCED;
+           mode == MODE_ATTESTATION_ENROLLMENT_TOKEN ||
+           is_mode_attestation_server();
   }
 
   // Whether this configuration is in OAuth mode.
   bool is_mode_oauth() const {
     return mode != MODE_NONE && !is_mode_attestation();
   }
+
+  // Whether state keys request should be skipped.
+  // Skipping the request is allowed only for offline demo mode. Offline demo
+  // mode setup ensures that online validation of state keys is not required in
+  // that case.
+  bool skip_state_keys_request() const { return mode == MODE_OFFLINE_DEMO; }
 
   // Indicates the enrollment flow variant to trigger during OOBE.
   Mode mode = MODE_NONE;
@@ -108,9 +156,16 @@ struct EnrollmentConfig {
   // The realm the device is joined to (if managed by AD).
   std::string management_realm;
 
+  // Enrollment token to use for authentication (for USB-enrollment).
+  std::string enrollment_token;
+
   // The authentication mechanism to use.
   // TODO(drcrash): Change to best available once ZTE is everywhere.
   AuthMechanism auth_mechanism = AUTH_MECHANISM_INTERACTIVE;
+
+  // The path for the device policy blob data for the offline demo mode. This
+  // should be empty and never used for other modes.
+  base::FilePath offline_policy_path;
 };
 
 }  // namespace policy

@@ -21,8 +21,9 @@ class TestLayerThreadedAnimationDelegate
   ~TestLayerThreadedAnimationDelegate() override;
 
   // Implementation of LayerThreadedAnimationDelegate
-  void AddThreadedAnimation(std::unique_ptr<cc::Animation> animation) override;
-  void RemoveThreadedAnimation(int animation_id) override;
+  void AddThreadedAnimation(
+      std::unique_ptr<cc::KeyframeModel> keyframe_model) override;
+  void RemoveThreadedAnimation(int keyframe_model_id) override;
 };
 
 class TestLayerAnimationDelegate : public LayerAnimationDelegate {
@@ -39,6 +40,11 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
   // PropertyChangeReason.
   void ExpectLastPropertyChangeReason(PropertyChangeReason reason);
 
+  // Sets the current frame number to be returned by GetFrameNumber. This can be
+  // used to simulate receiving acks of frame submission, in order to test
+  // advancing of animations.
+  void SetFrameNumber(int frame_number);
+
   // Implementation of LayerAnimationDelegate
   void SetBoundsFromAnimation(const gfx::Rect& bounds,
                               PropertyChangeReason reason) override;
@@ -54,8 +60,11 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
                                  PropertyChangeReason reason) override;
   void SetColorFromAnimation(SkColor color,
                              PropertyChangeReason reason) override;
-  void SetTemperatureFromAnimation(float temperature,
-                                   PropertyChangeReason reason) override;
+  void SetClipRectFromAnimation(const gfx::Rect& clip_rect,
+                                PropertyChangeReason reason) override;
+  void SetRoundedCornersFromAnimation(
+      const gfx::RoundedCornersF& rounded_corners,
+      PropertyChangeReason reason) override;
   void ScheduleDrawForAnimation() override;
   const gfx::Rect& GetBoundsForAnimation() const override;
   gfx::Transform GetTransformForAnimation() const override;
@@ -64,7 +73,8 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
   float GetBrightnessForAnimation() const override;
   float GetGrayscaleForAnimation() const override;
   SkColor GetColorForAnimation() const override;
-  float GetTemperatureFromAnimation() const override;
+  gfx::Rect GetClipRectForAnimation() const override;
+  gfx::RoundedCornersF GetRoundedCornersForAnimation() const override;
   float GetDeviceScaleFactor() const override;
   LayerAnimatorCollection* GetLayerAnimatorCollection() override;
   ui::Layer* GetLayer() override;
@@ -89,8 +99,10 @@ class TestLayerAnimationDelegate : public LayerAnimationDelegate {
   float brightness_;
   float grayscale_;
   SkColor color_;
-  float temperature_;
+  gfx::Rect clip_rect_;
+  gfx::RoundedCornersF rounded_corners_;
   scoped_refptr<cc::Layer> cc_layer_;
+  int frame_number_ = 0;
 
   // Allow copy and assign.
 };

@@ -10,11 +10,11 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/values.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_connection_observer.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
@@ -37,7 +37,9 @@ namespace chromeos {
 // available State information, and NetworkConfigurationHandler for any
 // configuration calls.
 
-class CHROMEOS_EXPORT NetworkConnectionHandler {
+enum class ConnectCallbackMode { ON_STARTED, ON_COMPLETED };
+
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnectionHandler {
  public:
   // Constants for |error_name| from |error_callback| for Connect.
 
@@ -86,8 +88,11 @@ class CHROMEOS_EXPORT NetworkConnectionHandler {
   // Certificate load timed out.
   static const char kErrorCertLoadTimeout[];
 
-  // Trying to configure an unmanged network but policy prohibits that
-  static const char kErrorUnmanagedNetwork[];
+  // Trying to configure a network that is blocked by policy.
+  static const char kErrorBlockedByPolicy[];
+
+  // The HexSSID is missing.
+  static const char kErrorHexSsidRequired[];
 
   // Network activation failed.
   static const char kErrorActivateFailed[];
@@ -99,7 +104,7 @@ class CHROMEOS_EXPORT NetworkConnectionHandler {
   // delegate present.
   static const char kErrorTetherAttemptWithNoDelegate[];
 
-  class CHROMEOS_EXPORT TetherDelegate {
+  class COMPONENT_EXPORT(CHROMEOS_NETWORK) TetherDelegate {
    public:
     // Connects to the Tether network with GUID |tether_network_guid|. On
     // success, invokes |success_callback|, and on failure, invokes
@@ -131,18 +136,25 @@ class CHROMEOS_EXPORT NetworkConnectionHandler {
   void SetTetherDelegate(TetherDelegate* tether_delegate);
 
   // ConnectToNetwork() will start an asynchronous connection attempt.
-  // On success, |success_callback| will be called.
-  // On failure, |error_callback| will be called with |error_name| one of the
-  //   constants defined above.
+  // |success_callback| will be called if the connection request succeeds
+  //   or if a request is sent if |mode| is ON_STARTED (see below).
+  // |error_callback| will be called with |error_name| set to one of the
+  //   constants defined above if the connection request fails.
   // |error_message| will contain an additional error string for debugging.
   // If |check_error_state| is true, the current state of the network is
-  //  checked for errors, otherwise current state is ignored (e.g. for recently
-  //  configured networks or repeat attempts).
+  //   checked for errors, otherwise current state is ignored (e.g. for recently
+  //   configured networks or repeat attempts).
+  // If |mode| is ON_STARTED, |success_callback| will be invoked when the
+  //   connect request is successfully made and not when the connection
+  //   completes. Note: This also prevents |error_callback| from being called
+  //   if the connection request is successfully sent but the network does not
+  //   connect.
   virtual void ConnectToNetwork(
       const std::string& service_path,
       const base::Closure& success_callback,
       const network_handler::ErrorCallback& error_callback,
-      bool check_error_state) = 0;
+      bool check_error_state,
+      ConnectCallbackMode mode) = 0;
 
   // DisconnectNetwork() will send a Disconnect request to Shill.
   // On success, |success_callback| will be called.
@@ -155,13 +167,6 @@ class CHROMEOS_EXPORT NetworkConnectionHandler {
       const std::string& service_path,
       const base::Closure& success_callback,
       const network_handler::ErrorCallback& error_callback) = 0;
-
-  // Returns true if ConnectToNetwork has been called with |service_path| and
-  // has not completed (i.e. success or error callback has been called).
-  virtual bool HasConnectingNetwork(const std::string& service_path) = 0;
-
-  // Returns true if there are any pending connect requests.
-  virtual bool HasPendingConnectRequest() = 0;
 
   virtual void Init(NetworkStateHandler* network_state_handler,
                     NetworkConfigurationHandler* network_configuration_handler,
@@ -194,7 +199,7 @@ class CHROMEOS_EXPORT NetworkConnectionHandler {
       const base::Closure& success_callback,
       const network_handler::ErrorCallback& error_callback);
 
-  base::ObserverList<NetworkConnectionObserver, true> observers_;
+  base::ObserverList<NetworkConnectionObserver, true>::Unchecked observers_;
 
   // Delegate used to start a connection to a tether network.
   TetherDelegate* tether_delegate_;

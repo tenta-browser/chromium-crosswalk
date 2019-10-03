@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -41,11 +42,10 @@ class FakePersistentHostScanCache : public FakeHostScanCache,
 };
 
 // MockTimer which invokes a callback in its destructor.
-class ExtendedMockTimer : public base::MockTimer {
+class ExtendedMockTimer : public base::MockOneShotTimer {
  public:
   explicit ExtendedMockTimer(const base::Closure& destructor_callback)
-      : base::MockTimer(true /* retain_user_task */, false /* is_repeating */),
-        destructor_callback_(destructor_callback) {}
+      : destructor_callback_(destructor_callback) {}
 
   ~ExtendedMockTimer() override { destructor_callback_.Run(); }
 
@@ -70,7 +70,7 @@ class TestTimerFactory : public TimerFactory {
   }
 
   // TimerFactory:
-  std::unique_ptr<base::Timer> CreateOneShotTimer() override {
+  std::unique_ptr<base::OneShotTimer> CreateOneShotTimer() override {
     EXPECT_TRUE(!tether_network_guids_for_upcoming_timers_.empty());
 
     // Pop the first GUID off the list of upcoming GUIDs.
@@ -112,12 +112,12 @@ class MasterHostScanCacheTest : public testing::Test {
 
   void SetUp() override {
     test_timer_factory_ = new TestTimerFactory();
-    fake_active_host_ = base::MakeUnique<FakeActiveHost>();
-    fake_network_host_scan_cache_ = base::MakeUnique<FakeHostScanCache>();
+    fake_active_host_ = std::make_unique<FakeActiveHost>();
+    fake_network_host_scan_cache_ = std::make_unique<FakeHostScanCache>();
     fake_persistent_host_scan_cache_ =
         base::WrapUnique(new FakePersistentHostScanCache());
 
-    host_scan_cache_ = base::MakeUnique<MasterHostScanCache>(
+    host_scan_cache_ = std::make_unique<MasterHostScanCache>(
         base::WrapUnique(test_timer_factory_), fake_active_host_.get(),
         fake_network_host_scan_cache_.get(),
         fake_persistent_host_scan_cache_.get());
@@ -126,10 +126,10 @@ class MasterHostScanCacheTest : public testing::Test {
     // FakeHostScanCache in memory and update it alongside |host_scan_cache_|.
     // Use a std::vector to track which device IDs correspond to devices whose
     // Tether networks' HasConnectedToHost fields are expected to be set.
-    expected_cache_ = base::MakeUnique<FakeHostScanCache>();
+    expected_cache_ = std::make_unique<FakeHostScanCache>();
 
     device_id_tether_network_guid_map_ =
-        base::MakeUnique<DeviceIdTetherNetworkGuidMap>();
+        std::make_unique<DeviceIdTetherNetworkGuidMap>();
   }
 
   void FireTimer(const std::string& tether_network_guid) {
@@ -336,7 +336,7 @@ TEST_F(MasterHostScanCacheTest, TestRecoversFromCrashAndCleansUpWhenDeleted) {
 
   // Create the master cache. It should have automatically picked up the
   // persisted scan results, even though they were not explicitly added.
-  host_scan_cache_ = base::MakeUnique<MasterHostScanCache>(
+  host_scan_cache_ = std::make_unique<MasterHostScanCache>(
       base::WrapUnique(test_timer_factory_), fake_active_host_.get(),
       fake_network_host_scan_cache_.get(),
       fake_persistent_host_scan_cache_.get());

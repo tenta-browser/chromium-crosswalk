@@ -4,56 +4,29 @@
 
 package org.chromium.chrome.browser.compositor.layouts.components;
 
-import static org.chromium.chrome.browser.compositor.layouts.ChromeAnimation.AnimatableAnimation.createAnimation;
-
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.RectF;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.compositor.layouts.ChromeAnimation;
+import org.chromium.chrome.browser.compositor.animation.FloatProperty;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ToolbarPhone;
-import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.browser.util.MathUtils;
-import org.chromium.ui.interpolators.BakedBezierInterpolator;
 
 /**
  * {@link LayoutTab} is used to keep track of a thumbnail's bitmap and position and to
  * draw itself onto the GL canvas at the desired Y Offset.
  */
-public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property> {
-    /**
-     * Properties that can be animated by using a
-     * {@link org.chromium.chrome.browser.compositor.layouts.ChromeAnimation.Animatable}.
-     */
-    public enum Property {
-        BORDER_ALPHA,
-        BORDER_SCALE,
-        ALPHA,
-        SATURATION,
-        STATIC_TO_VIEW_BLEND,
-        SCALE,
-        TILTX,
-        TILTY,
-        X,
-        Y,
-        MAX_CONTENT_WIDTH,
-        MAX_CONTENT_HEIGHT,
-        TOOLBAR_ALPHA,
-        DECORATION_ALPHA,
-        TOOLBAR_Y_OFFSET,
-        SIDE_BORDER_SCALE,
-        TOOLBAR_COLOR,
-    }
-
+public class LayoutTab {
     public static final float ALPHA_THRESHOLD = 1.0f / 255.0f;
 
     private static final float SNAP_SPEED = 1.0f; // dp per second
 
     // Public Layout constants.
     public static final float CLOSE_BUTTON_WIDTH_DP = 36.f;
+    public static final float SHADOW_ALPHA_ON_LIGHT_BG = 0.8f;
+    public static final float SHADOW_ALPHA_ON_DARK_BG = 1.0f;
 
     // TODO(dtrainor): Investigate removing this.
     private static final float BORDER_THICKNESS_DP = 4.f;
@@ -101,7 +74,7 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     private boolean mInsetBorderVertical;
     private float mToolbarYOffset;
     private float mSideBorderScale;
-    private boolean mForceDefaultThemeColor;
+    private boolean mCloseButtonIsOnRight;
 
     private final RectF mBounds = new RectF(); // Pre-allocated to avoid in-frame allocations.
     private final RectF mClosePlacement = new RectF();
@@ -119,11 +92,6 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
      * Whether initFromHost() has been called since the last call to init().
      */
     private boolean mInitFromHostCalled;
-
-    /** The animation set specific to this LayoutTab. */
-    private ChromeAnimation<ChromeAnimation.Animatable<?>> mCurrentAnimations;
-    private int mInitialThemeColor;
-    private int mFinalThemeColor;
 
     // All the members bellow are initialized from the delayed initialization.
     //
@@ -226,30 +194,7 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
 
         boolean needsUpdate = false;
 
-        // If the toolbar color changed, animate between the old and new colors.
-        if (mToolbarBackgroundColor != toolbarBackgroundColor && isVisible()
-                && mInitFromHostCalled) {
-            ChromeAnimation.Animation<ChromeAnimation.Animatable<?>>  themeColorAnimation =
-                    createAnimation(this, Property.TOOLBAR_COLOR, 0.0f, 1.0f,
-                    ToolbarPhone.THEME_COLOR_TRANSITION_DURATION, 0, false,
-                    BakedBezierInterpolator.TRANSFORM_CURVE);
-
-            mInitialThemeColor = mToolbarBackgroundColor;
-            mFinalThemeColor = toolbarBackgroundColor;
-
-            if (mCurrentAnimations != null) {
-                mCurrentAnimations.updateAndFinish();
-            }
-
-            mCurrentAnimations = new ChromeAnimation<ChromeAnimation.Animatable<?>>();
-            mCurrentAnimations.add(themeColorAnimation);
-            mCurrentAnimations.start();
-            needsUpdate = true;
-        } else {
-            // If the layout tab isn't visible, just set the toolbar color without animating.
-            mToolbarBackgroundColor = toolbarBackgroundColor;
-        }
-
+        mToolbarBackgroundColor = toolbarBackgroundColor;
         mTextBoxBackgroundColor = textBoxBackgroundColor;
         mTextBoxAlpha = textBoxAlpha;
         mShouldStall = shouldStall;
@@ -260,34 +205,10 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     }
 
     /**
-     * Update any animation controlled by this object.
-     * @param time The current app time in ms.
-     * @return Whether the animations controlled by this LayoutTab are finished.
-     */
-    public boolean onUpdateAnimation(long time) {
-        return mCurrentAnimations == null ? true : mCurrentAnimations.update(time);
-    }
-
-    /**
      * @return Whether {@link #initFromHost} needs to be called on this {@link LayoutTab}.
      */
     public boolean isInitFromHostNeeded() {
         return !mInitFromHostCalled;
-    }
-
-    /**
-     * @return Whether or not the object rendering this LayoutTab should force default theme colors.
-     */
-    public boolean getForceDefaultThemeColor() {
-        return mForceDefaultThemeColor;
-    }
-
-    /**
-     * @param force Whether or not the object rendering this LayoutTab should force default theme
-     *              colors.
-     */
-    public void setForceDefaultThemeColor(boolean force) {
-        mForceDefaultThemeColor = force;
     }
 
     /**
@@ -743,28 +664,27 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     /**
      * Tests if a point is inside the closing button of the tab.
      *
-     * @param x     The horizontal coordinate of the hit testing point.
-     * @param y     The vertical coordinate of the hit testing point.
-     * @param isRTL Whether or not this is an RTL layout.
-     * @return      Whether the hit testing point is inside the tab.
+     * @param x The horizontal coordinate of the hit testing point.
+     * @param y The vertical coordinate of the hit testing point.
+     * @return  Whether the hit testing point is inside the tab.
      */
-    public boolean checkCloseHitTest(float x, float y, boolean isRTL) {
-        RectF closeRectangle = getCloseBounds(isRTL);
+    public boolean checkCloseHitTest(float x, float y) {
+        RectF closeRectangle = getCloseBounds();
         return closeRectangle != null ? closeRectangle.contains(x, y) : false;
     }
 
     /**
-     * @param isRTL Whether or not this is an RTL layout.
-     * @return      The bounds of the active area of the close button. {@code null} if the close
-     *              button is not clickable.
+     * @return The bounds of the active area of the close button. {@code null} if the close button
+     *         is not clickable.
      */
-    public RectF getCloseBounds(boolean isRTL) {
+    public RectF getCloseBounds() {
         if (!mIsTitleNeeded || !mVisible || mBorderCloseButtonAlpha < 0.5f || mBorderAlpha < 0.5f
                 || mBorderScale != 1.0f || Math.abs(mTiltX) > 1.0f || Math.abs(mTiltY) > 1.0f) {
             return null;
         }
         mClosePlacement.set(0, 0, CLOSE_BUTTON_WIDTH_DP, CLOSE_BUTTON_WIDTH_DP);
-        if (!isRTL) mClosePlacement.offset(getFinalContentWidth() - mClosePlacement.width(), 0.f);
+        if (mCloseButtonIsOnRight)
+            mClosePlacement.offset(getFinalContentWidth() - mClosePlacement.width(), 0.f);
 
         if (mClosePlacement.bottom > getFinalContentHeight()
                 || mClosePlacement.right > getFinalContentWidth()) {
@@ -830,7 +750,6 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
      * @param visible True if the {@link LayoutTab} is visible and need to be drawn.
      */
     public void setVisible(boolean visible) {
-        if (!visible && mCurrentAnimations != null) mCurrentAnimations.updateAndFinish();
         mVisible = visible;
     }
 
@@ -922,6 +841,14 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
         return mInsetBorderVertical;
     }
 
+    public void setCloseButtonIsOnRight(boolean closeButtonIsOnRight) {
+        mCloseButtonIsOnRight = closeButtonIsOnRight;
+    }
+
+    public boolean isCloseButtonOnRight() {
+        return mCloseButtonIsOnRight;
+    }
+
     /**
      * @return The theoretical number of visible pixels. 0 if invisible.
      */
@@ -958,79 +885,192 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
         return mTextBoxAlpha;
     }
 
-    /**
-     * Callback for
-     * {@link org.chromium.chrome.browser.compositor.layouts.ChromeAnimation.Animatable}
-     *
-     * @param prop The property to set
-     * @param val The value to set it to
-     */
-    @Override
-    public void setProperty(Property prop, float val) {
-        switch (prop) {
-            case BORDER_ALPHA:
-                setBorderAlpha(val);
-                break;
-            case BORDER_SCALE:
-                setBorderScale(val);
-                break;
-            case ALPHA:
-                setAlpha(val);
-                break;
-            case SATURATION:
-                setSaturation(val);
-                break;
-            case STATIC_TO_VIEW_BLEND:
-                setStaticToViewBlend(val);
-                break;
-            case SCALE:
-                setScale(val);
-                break;
-            case TILTX:
-                setTiltX(val, mTiltXPivotOffset);
-                break;
-            case TILTY:
-                setTiltY(val, mTiltYPivotOffset);
-                break;
-            case X:
-                setX(val);
-                break;
-            case Y:
-                setY(val);
-                break;
-            case MAX_CONTENT_WIDTH:
-                setMaxContentWidth(val);
-                break;
-            case MAX_CONTENT_HEIGHT:
-                setMaxContentHeight(val);
-                break;
-            case TOOLBAR_ALPHA:
-                setToolbarAlpha(val);
-                break;
-            case DECORATION_ALPHA:
-                setDecorationAlpha(val);
-                break;
-            case TOOLBAR_Y_OFFSET:
-                setToolbarYOffset(val);
-                break;
-            case SIDE_BORDER_SCALE:
-                setSideBorderScale(val);
-                break;
-            case TOOLBAR_COLOR:
-                if (!isVisible()) {
-                    mCurrentAnimations.updateAndFinish();
-                } else {
-                    mToolbarBackgroundColor = ColorUtils.getColorWithOverlay(mInitialThemeColor,
-                            mFinalThemeColor, val);
-                }
-                break;
+    public static final FloatProperty<LayoutTab> ALPHA = new FloatProperty<LayoutTab>("ALPHA") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setAlpha(v);
         }
-    }
 
-    @Override
-    public void onPropertyAnimationFinished(Property prop) {
-        if (mCurrentAnimations != null && mCurrentAnimations.finished()) {
-            mCurrentAnimations = null;
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getAlpha();
         }
-    }
+    };
+
+    public static final FloatProperty<LayoutTab> BORDER_ALPHA =
+            new FloatProperty<LayoutTab>("BORDER_ALPHA") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setBorderAlpha(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getBorderAlpha();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> DECORATION_ALPHA =
+            new FloatProperty<LayoutTab>("DECORATION_ALPHA") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setDecorationAlpha(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getDecorationAlpha();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> BORDER_SCALE =
+            new FloatProperty<LayoutTab>("BORDER_SCALE") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setBorderScale(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getBorderScale();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> TOOLBAR_ALPHA =
+            new FloatProperty<LayoutTab>("TOOLBAR_ALPHA") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setToolbarAlpha(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getToolbarAlpha();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> TOOLBAR_Y_OFFSET =
+            new FloatProperty<LayoutTab>("TOOLBAR_Y_OFFSET") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setToolbarYOffset(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getToolbarYOffset();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> MAX_CONTENT_HEIGHT =
+            new FloatProperty<LayoutTab>("MAX_CONTENT_HEIGHT") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setMaxContentHeight(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getMaxContentHeight();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> SATURATION =
+            new FloatProperty<LayoutTab>("SATURATION") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setSaturation(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getSaturation();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> SCALE = new FloatProperty<LayoutTab>("SCALE") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setScale(v);
+        }
+
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getScale();
+        }
+    };
+
+    public static final FloatProperty<LayoutTab> SIDE_BORDER_SCALE =
+            new FloatProperty<LayoutTab>("SIDE_BORDER_SCALE") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setSideBorderScale(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getSideBorderScale();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> STATIC_TO_VIEW_BLEND =
+            new FloatProperty<LayoutTab>("STATIC_TO_VIEW_BLEND") {
+                @Override
+                public void setValue(LayoutTab layoutTab, float v) {
+                    layoutTab.setStaticToViewBlend(v);
+                }
+
+                @Override
+                public Float get(LayoutTab layoutTab) {
+                    return layoutTab.getStaticToViewBlend();
+                }
+            };
+
+    public static final FloatProperty<LayoutTab> TILTX = new FloatProperty<LayoutTab>("TILTX") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setTiltX(v, layoutTab.mTiltXPivotOffset);
+        }
+
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getTiltX();
+        }
+    };
+
+    public static final FloatProperty<LayoutTab> TILTY = new FloatProperty<LayoutTab>("TILTY") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setTiltY(v, layoutTab.mTiltYPivotOffset);
+        }
+
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getTiltY();
+        }
+    };
+
+    public static final FloatProperty<LayoutTab> X = new FloatProperty<LayoutTab>("X") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setX(v);
+        }
+
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getX();
+        }
+    };
+
+    public static final FloatProperty<LayoutTab> Y = new FloatProperty<LayoutTab>("Y") {
+        @Override
+        public void setValue(LayoutTab layoutTab, float v) {
+            layoutTab.setY(v);
+        }
+
+        @Override
+        public Float get(LayoutTab layoutTab) {
+            return layoutTab.getY();
+        }
+    };
 }

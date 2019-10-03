@@ -30,6 +30,16 @@ class TranslateBubbleModel {
     // The view state when the detailed settings is shown. This view appears
     // when the user click a link 'Advanced' on other views.
     VIEW_STATE_ADVANCED,
+    // The view state for TAB ui when the source language combobox is shown.
+    // This view appears when the user selects "Page is not in {source
+    // language}"
+    // under option menu.
+    VIEW_STATE_SOURCE_LANGUAGE,
+
+    // The view state for TAB ui when the source language combobox is shown.
+    // This view appears when the user selects "More options..." under option
+    // menu.
+    VIEW_STATE_TARGET_LANGUAGE
   };
 
   virtual ~TranslateBubbleModel() {}
@@ -84,6 +94,11 @@ class TranslateBubbleModel {
 
   // Returns true if the Always Translate checkbox should be checked by default.
   virtual bool ShouldAlwaysTranslateBeCheckedByDefault() const = 0;
+
+  // Returns true if the Always Translate checkbox should be shown on the
+  // initial translation prompt, when we think the user wants that
+  // functionality.
+  virtual bool ShouldShowAlwaysTranslateShortcut() const = 0;
 
   // Sets the value if the webpage in the current original language should be
   // translated into the current target language automatically.

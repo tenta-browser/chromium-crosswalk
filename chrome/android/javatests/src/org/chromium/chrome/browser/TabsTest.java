@@ -4,9 +4,12 @@
 
 package org.chromium.chrome.browser;
 
+import static android.support.test.espresso.Espresso.onView;
+import static android.support.test.espresso.action.ViewActions.click;
+import static android.support.test.espresso.matcher.ViewMatchers.withId;
+
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
 
-import android.content.DialogInterface;
 import android.content.pm.ActivityInfo;
 import android.graphics.Point;
 import android.os.Debug;
@@ -27,6 +30,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
@@ -36,11 +40,11 @@ import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerChrome;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerChromePhone;
+import org.chromium.chrome.browser.compositor.layouts.SceneChangeObserver;
 import org.chromium.chrome.browser.compositor.layouts.StaticLayout;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeHandler;
@@ -48,20 +52,21 @@ import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirectio
 import org.chromium.chrome.browser.compositor.layouts.phone.StackLayout;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.Stack;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackTab;
+import org.chromium.chrome.browser.jsdialog.JavascriptTabModalDialog;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
+import org.chromium.chrome.browser.tab.TabState;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
-import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorImpl;
+import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabbedModeTabPersistencePolicy;
-import org.chromium.chrome.browser.toolbar.ToolbarPhone;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.toolbar.top.ToggleTabStackButton;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
@@ -69,17 +74,21 @@ import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.MenuUtils;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.OverviewModeBehaviorWatcher;
-import org.chromium.content.browser.ContentViewCore;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
-import org.chromium.content.browser.test.util.UiUtils;
-import org.chromium.content.common.ContentSwitches;
+import org.chromium.content_public.browser.SelectionPopupController;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.content_public.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.test.util.UiUtils;
+import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.net.test.EmbeddedTestServer;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.UiRestriction;
 
 import java.io.File;
@@ -93,10 +102,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * General Tab tests.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TabsTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -159,7 +165,9 @@ public class TabsTest {
                 || mActivityTestRule.getName().equals("testIncognitoTabsNotRestoredAfterSwipe")) {
             return;
         }
-        mActivityTestRule.startMainActivityFromLauncher();
+        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.getActivity().getLayoutManager().getAnimationHandler().setTestingMode(
+                true);
     }
 
 
@@ -188,11 +196,11 @@ public class TabsTest {
 
         mActivityTestRule.newIncognitoTabFromMenu();
 
-        ThreadUtils.runOnUiThreadBlocking(() -> tab.getWebContents().evaluateJavaScriptForTests(
-                "(function() {"
-                        + "  window.open('www.google.com');"
-                        + "})()",
-                null));
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> tab.getWebContents().evaluateJavaScriptForTests("(function() {"
+                                        + "  window.open('www.google.com');"
+                                        + "})()",
+                                null));
 
         CriteriaHelper.pollUiThread(Criteria.equals(2,
                 () -> mActivityTestRule.getActivity()
@@ -209,33 +217,31 @@ public class TabsTest {
         mActivityTestRule.newIncognitoTabFromMenu();
         mActivityTestRule.loadUrl(mTestServer.getURL(TEST_FILE_PATH));
         final Tab tab = mActivityTestRule.getActivity().getActivityTab();
-        ThreadUtils.runOnUiThreadBlocking(() -> tab.getWebContents().evaluateJavaScriptForTests(
-                "(function() {"
-                        + "  alert('hi');"
-                        + "})()",
-                null));
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> tab.getWebContents().evaluateJavaScriptForTests("(function() {"
+                                        + "  alert('hi');"
+                                        + "})()",
+                                null));
 
-        final AtomicReference<JavascriptAppModalDialog> dialog =
-                new AtomicReference<>();
+        final AtomicReference<JavascriptTabModalDialog> dialog = new AtomicReference<>();
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                dialog.set(JavascriptAppModalDialog.getCurrentDialogForTest());
+                dialog.set(getCurrentAlertDialog());
 
                 return dialog.get() != null;
             }
         });
 
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> dialog.get().onClick(null, DialogInterface.BUTTON_POSITIVE));
+        onView(withId(R.id.positive_button)).perform(click());
 
         dialog.set(null);
 
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return JavascriptAppModalDialog.getCurrentDialogForTest() == null;
+                return getCurrentAlertDialog() == null;
             }
         });
 
@@ -304,7 +310,7 @@ public class TabsTest {
             public boolean isSatisfied() {
                 updateFailureReason("expected keyboard show: " + show);
                 return show
-                        == org.chromium.ui.UiUtils.isKeyboardShowing(
+                        == mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                                    mActivityTestRule.getActivity(),
                                    mActivityTestRule.getActivity().getTabsView());
             }
@@ -327,9 +333,7 @@ public class TabsTest {
         ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
                 mActivityTestRule.getActivity(), mTestServer.getURL(TEST_FILE_PATH), false);
         Assert.assertEquals("Failed to click node.", true,
-                DOMUtils.clickNode(
-                        mActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                        "input_text"));
+                DOMUtils.clickNode(mActivityTestRule.getWebContents(), "input_text"));
         assertWaitForKeyboardStatus(true);
 
         // Open a new tab(the 2nd tab).
@@ -338,8 +342,7 @@ public class TabsTest {
         assertWaitForKeyboardStatus(false);
 
         // Click node in the 2nd tab.
-        DOMUtils.clickNode(mActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                "input_text");
+        DOMUtils.clickNode(mActivityTestRule.getWebContents(), "input_text");
         assertWaitForKeyboardStatus(true);
 
         // Switch to the 1st tab.
@@ -347,8 +350,7 @@ public class TabsTest {
         assertWaitForKeyboardStatus(false);
 
         // Click node in the 1st tab.
-        DOMUtils.clickNode(mActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                "input_text");
+        DOMUtils.clickNode(mActivityTestRule.getWebContents(), "input_text");
         assertWaitForKeyboardStatus(true);
 
         // Close current tab(the 1st tab).
@@ -371,16 +373,12 @@ public class TabsTest {
         ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
                 mActivityTestRule.getActivity(), mTestServer.getURL(TEST_FILE_PATH), false);
         Assert.assertEquals("Failed to click textarea.", true,
-                DOMUtils.clickNode(
-                        mActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                        "textarea"));
+                DOMUtils.clickNode(mActivityTestRule.getWebContents(), "textarea"));
         assertWaitForKeyboardStatus(true);
 
         // Click the button to open a new window.
         Assert.assertEquals("Failed to click button.", true,
-                DOMUtils.clickNode(
-                        mActivityTestRule.getActivity().getActivityTab().getContentViewCore(),
-                        "button"));
+                DOMUtils.clickNode(mActivityTestRule.getWebContents(), "button"));
         assertWaitForKeyboardStatus(false);
     }
 
@@ -388,10 +386,10 @@ public class TabsTest {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                final String actualText = mActivityTestRule.getActivity()
-                                                  .getActivityTab()
-                                                  .getContentViewCore()
-                                                  .getSelectedText();
+                WebContents webContents = mActivityTestRule.getWebContents();
+                SelectionPopupController controller =
+                        SelectionPopupController.fromWebContents(webContents);
+                final String actualText = controller.getSelectedText();
                 updateFailureReason(
                         "expected selected text: [" + text + "], but got: [" + actualText + "]");
                 return text.equals(actualText);
@@ -430,12 +428,12 @@ public class TabsTest {
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
     @Feature({"Android-TabSwitcher"})
     @RetryOnFailure
+    @DisabledTest(message = "crbug.com/799728")
     public void testTabSwitcherCollapseSelection() throws Exception {
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
         ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
                 mActivityTestRule.getActivity(), mTestServer.getURL(TEST_FILE_PATH), false);
-        DOMUtils.longPressNode(
-                mActivityTestRule.getActivity().getActivityTab().getContentViewCore(), "textarea");
+        DOMUtils.longPressNode(mActivityTestRule.getWebContents(), "textarea");
         assertWaitForSelectedText("helloworld");
 
         // Switch to tab-switcher mode, switch back, and scroll page.
@@ -534,14 +532,11 @@ public class TabsTest {
         mActivityTestRule.getActivity();
 
         int initialTabCount = mActivityTestRule.getActivity().getCurrentTabModel().getCount();
-        ChromeTabUtils.newTabFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        View button = mActivityTestRule.getActivity().findViewById(R.id.tab_switcher_button);
-        OverviewModeBehaviorWatcher overviewModeWatcher = new OverviewModeBehaviorWatcher(
-                mActivityTestRule.getActivity().getLayoutManager(), true, false);
-        TouchCommon.singleClickView(button);
-        overviewModeWatcher.waitForBehavior();
+        ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
+                mActivityTestRule.getActivity(), UrlConstants.CHROME_BLANK_URL, false);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { mActivityTestRule.getActivity().getLayoutManager().showOverview(false); });
+
         Assert.assertTrue("Expected: " + (initialTabCount + 1) + " tab Got: "
                         + mActivityTestRule.getActivity().getCurrentTabModel().getCount(),
                 (initialTabCount + 1)
@@ -653,7 +648,7 @@ public class TabsTest {
      */
     @Test
     @FlakyTest
-    public void testOpenManyTabsInBursts() throws InterruptedException {
+    public void testOpenManyTabsInBursts() throws InterruptedException, TimeoutException {
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
         final int burstSize = 5;
         final String url = mTestServer.getURL(TEST_PAGE_FILE_PATH);
@@ -675,7 +670,7 @@ public class TabsTest {
      */
     @Test
     @FlakyTest(message = "crbug.com/223110")
-    public void testOpenManyTabsAtOnce10() throws InterruptedException {
+    public void testOpenManyTabsAtOnce10() throws InterruptedException, TimeoutException {
         openAndVerifyManyTestTabs(10);
     }
 
@@ -683,7 +678,8 @@ public class TabsTest {
      * Verify that we can open a large number of tabs all at once and that each
      * tab loads when selected.
      */
-    private void openAndVerifyManyTestTabs(final int num) throws InterruptedException {
+    private void openAndVerifyManyTestTabs(final int num)
+            throws InterruptedException, TimeoutException {
         mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
         final String url = mTestServer.getURL(TEST_PAGE_FILE_PATH);
         int startCount = mActivityTestRule.getActivity().getCurrentTabModel().getCount();
@@ -697,13 +693,10 @@ public class TabsTest {
         public void run() {
             // This is equivalent to clickById(R.id.tab_switcher_button) but does not rely on the
             // event pipeline.
-            View button = mActivityTestRule.getActivity().findViewById(R.id.tab_switcher_button);
+            ToggleTabStackButton button =
+                    mActivityTestRule.getActivity().findViewById(R.id.tab_switcher_button);
             Assert.assertNotNull("Could not find view R.id.tab_switcher_button", button);
-            View toolbar = mActivityTestRule.getActivity().findViewById(R.id.toolbar);
-            Assert.assertNotNull("Could not find view R.id.toolbar", toolbar);
-            Assert.assertTrue(
-                    "R.id.toolbar is not a ToolbarPhone", toolbar instanceof ToolbarPhone);
-            ((ToolbarPhone) toolbar).onClick(button);
+            button.onClick(button);
         }
     }
 
@@ -999,13 +992,14 @@ public class TabsTest {
                 "getStack must be executed on the ui thread", ThreadUtils.runningOnUiThread());
         LayoutManagerChromePhone layoutManagerPhone = (LayoutManagerChromePhone) layoutManager;
         StackLayout layout = (StackLayout) layoutManagerPhone.getOverviewLayout();
-        return (layout).getTabStack(isIncognito);
+        return (layout).getTabStackAtIndex(
+                isIncognito ? StackLayout.INCOGNITO_STACK_INDEX : StackLayout.NORMAL_STACK_INDEX);
     }
 
     private int getLayoutTabInStackCount(final boolean isIncognito) {
         final LayoutManagerChrome layoutManager = updateTabsViewSize();
         final int[] count = new int[1];
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Stack stack = getStack(layoutManager, isIncognito);
             count[0] = stack.getTabs().length;
         });
@@ -1015,7 +1009,7 @@ public class TabsTest {
     private boolean stackTabIsVisible(final boolean isIncognito, final int index) {
         final LayoutManagerChrome layoutManager = updateTabsViewSize();
         final boolean[] isVisible = new boolean[1];
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Stack stack = getStack(layoutManager, isIncognito);
             isVisible[0] = (stack.getTabs())[index].getLayoutTab().isVisible();
         });
@@ -1025,7 +1019,7 @@ public class TabsTest {
     private float[] getLayoutTabInStackXY(final boolean isIncognito, final int index) {
         final LayoutManagerChrome layoutManager = updateTabsViewSize();
         final float[] xy = new float[2];
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Stack stack = getStack(layoutManager, isIncognito);
             xy[0] = (stack.getTabs())[index].getLayoutTab().getX();
             xy[1] = (stack.getTabs())[index].getLayoutTab().getY();
@@ -1037,7 +1031,7 @@ public class TabsTest {
             final boolean isLandscape) {
         final LayoutManagerChrome layoutManager = updateTabsViewSize();
         final float[] target = new float[2];
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Stack stack = getStack(layoutManager, isIncognito);
             StackTab[] tabs = stack.getTabs();
             // The position of the click is expressed from the top left corner of the content.
@@ -1382,9 +1376,9 @@ public class TabsTest {
         mActivityTestRule.loadUrlInNewTab(
                 mTestServer.getURL("/chrome/test/data/android/tabstest/text_page.html"));
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            ContentViewCore view =
-                    mActivityTestRule.getActivity().getActivityTab().getContentViewCore();
-            view.flingViewport(SystemClock.uptimeMillis(), 0, -2000, false);
+            WebContents webContents = mActivityTestRule.getWebContents();
+            webContents.getEventForwarder().startFling(
+                    SystemClock.uptimeMillis(), 0, -2000, false, true);
         });
         ChromeTabUtils.closeCurrentTab(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
@@ -1448,27 +1442,15 @@ public class TabsTest {
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
     @RetryOnFailure
     public void testNewTabButton() throws InterruptedException {
-        MenuUtils.invokeCustomMenuActionSync(InstrumentationRegistry.getInstrumentation(),
-                mActivityTestRule.getActivity(), R.id.close_all_tabs_menu_id);
-        UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
-
-        CriteriaHelper.pollInstrumentationThread(new Criteria("Should be in overview mode") {
-            @Override
-            public boolean isSatisfied() {
-                return mActivityTestRule.getActivity().isInOverviewMode();
-            }
-        });
-
         int initialTabCount = mActivityTestRule.getActivity().getCurrentTabModel().getCount();
-        Assert.assertEquals(
-                "Tab count is expected to be 0 after closing all the tabs", 0, initialTabCount);
+        showOverviewAndWaitForAnimation();
 
         ChromeTabUtils.clickNewTabButton(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
 
         int newTabCount = mActivityTestRule.getActivity().getCurrentTabModel().getCount();
-        Assert.assertEquals(
-                "Tab count is expected to be 1 after clicking Newtab button", 1, newTabCount);
+        Assert.assertEquals("Tab count is expected to increment by 1 after clicking new tab button",
+                initialTabCount + 1, newTabCount);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
         CriteriaHelper.pollInstrumentationThread(new Criteria("Should not be in overview mode") {
             @Override
@@ -1483,7 +1465,8 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipeOnlyTab() throws InterruptedException {
+    @DisabledTest(message = "https://crbug.com/947694")
+    public void testToolbarSwipeOnlyTab() throws InterruptedException, TimeoutException {
         final TabModel tabModel =
                 mActivityTestRule.getActivity().getTabModelSelector().getModel(false);
 
@@ -1497,7 +1480,8 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipePrevTab() throws InterruptedException {
+    @DisabledTest(message = "crbug.com/863676")
+    public void testToolbarSwipePrevTab() throws InterruptedException, TimeoutException {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -1514,7 +1498,8 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipeNextTab() throws InterruptedException {
+    @DisabledTest(message = "crbug.com/802183")
+    public void testToolbarSwipeNextTab() throws InterruptedException, TimeoutException {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         ChromeTabUtils.switchTabInCurrentTabModel(mActivityTestRule.getActivity(), 0);
@@ -1532,7 +1517,7 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipePrevTabNone() throws InterruptedException {
+    public void testToolbarSwipePrevTabNone() throws InterruptedException, TimeoutException {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         ChromeTabUtils.switchTabInCurrentTabModel(mActivityTestRule.getActivity(), 0);
@@ -1550,7 +1535,8 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipeNextTabNone() throws InterruptedException {
+    @DisabledTest(message = "https://crbug.com/947694")
+    public void testToolbarSwipeNextTabNone() throws InterruptedException, TimeoutException {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -1567,9 +1553,10 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipeNextThenPrevTab() throws InterruptedException {
-        ChromeTabUtils.newTabFromMenu(
-                InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
+    @DisabledTest(message = "crbug.com/882003")
+    public void testToolbarSwipeNextThenPrevTab() throws InterruptedException, TimeoutException {
+        ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
+                mActivityTestRule.getActivity(), UrlConstants.CHROME_BLANK_URL, false);
         ChromeTabUtils.switchTabInCurrentTabModel(mActivityTestRule.getActivity(), 0);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
 
@@ -1588,9 +1575,14 @@ public class TabsTest {
     @Feature({"Android-TabSwitcher"})
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE)
     @RetryOnFailure
-    public void testToolbarSwipeNextThenPrevTabIncognito() throws InterruptedException {
-        mActivityTestRule.newIncognitoTabFromMenu();
-        mActivityTestRule.newIncognitoTabFromMenu();
+    @DisabledTest(message = "crbug.com/882003")
+    public void testToolbarSwipeNextThenPrevTabIncognito()
+            throws InterruptedException, TimeoutException {
+        ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
+                mActivityTestRule.getActivity(), UrlConstants.CHROME_BLANK_URL, true);
+        ChromeTabUtils.fullyLoadUrlInNewTab(InstrumentationRegistry.getInstrumentation(),
+                mActivityTestRule.getActivity(), UrlConstants.CHROME_BLANK_URL, true);
+        mActivityTestRule.getActivity().getTabModelSelector().selectModel(true);
         ChromeTabUtils.switchTabInCurrentTabModel(mActivityTestRule.getActivity(), 0);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
 
@@ -1604,49 +1596,49 @@ public class TabsTest {
         runToolbarSideSwipeTestOnCurrentModel(ScrollDirection.RIGHT, 0, true);
     }
 
-    private void runToolbarSideSwipeTestOnCurrentModel(ScrollDirection direction, int finalIndex,
-            boolean expectsSelection) throws InterruptedException {
+    private void runToolbarSideSwipeTestOnCurrentModel(
+            @ScrollDirection int direction, int finalIndex, boolean expectsSelection)
+            throws InterruptedException, TimeoutException {
         final CallbackHelper selectCallback = new CallbackHelper();
-        final int id =
-                mActivityTestRule.getActivity().getCurrentTabModel().getTabAt(finalIndex).getId();
-        final TabModelObserver observer = new EmptyTabModelObserver() {
-            @Override
-            public void didSelectTab(Tab tab, TabSelectionType type, int lastId) {
-                if (tab.getId() == id) selectCallback.notifyCalled();
-            }
-        };
+        final ChromeTabbedActivity activity = mActivityTestRule.getActivity();
+        final int id = activity.getCurrentTabModel().getTabAt(finalIndex).getId();
+        final TabModelSelectorTabModelObserver observer =
+                new TabModelSelectorTabModelObserver(activity.getTabModelSelector()) {
+                    @Override
+                    public void didSelectTab(Tab tab, @TabSelectionType int type, int lastId) {
+                        if (tab.getId() == id) selectCallback.notifyCalled();
+                    }
+                };
 
-        if (expectsSelection) {
-            ThreadUtils.runOnUiThreadBlocking(() -> {
-                TabModelSelector selector = mActivityTestRule.getActivity().getTabModelSelector();
-                for (TabModel tabModel : selector.getModels()) {
-                    tabModel.addObserver(observer);
-                }
-            });
-        }
+        int tabSelectedCallCount = selectCallback.getCallCount();
 
+        // Listen for changes in the layout to indicate the swipe has completed.
+        final CallbackHelper staticLayoutCallbackHelper = new CallbackHelper();
+        activity.getCompositorViewHolder().getLayoutManager().addSceneChangeObserver(
+                new SceneChangeObserver() {
+                    @Override
+                    public void onTabSelectionHinted(int tabId) {}
+
+                    @Override
+                    public void onSceneChange(Layout layout) {
+                        if (layout instanceof StaticLayout) {
+                            staticLayoutCallbackHelper.notifyCalled();
+                        }
+                    }
+                });
+
+        int callLayouChangeCount = staticLayoutCallbackHelper.getCallCount();
         performToolbarSideSwipe(direction);
-        waitForStaticLayout();
-        Assert.assertEquals("Index after toolbar side swipe is incorrect", finalIndex,
-                mActivityTestRule.getActivity().getCurrentTabModel().index());
+        staticLayoutCallbackHelper.waitForCallback(callLayouChangeCount, 1);
 
-        if (expectsSelection) {
-            try {
-                selectCallback.waitForCallback(0);
-            } catch (TimeoutException e) {
-                Assert.fail("Tab selected event was never received");
-            }
-            ThreadUtils.runOnUiThreadBlocking(() -> {
-                TabModelSelector selector = mActivityTestRule.getActivity().getTabModelSelector();
-                for (TabModel tabModel : selector.getModels()) {
-                    tabModel.removeObserver(observer);
-                }
-            });
-        }
+        if (expectsSelection) selectCallback.waitForCallback(tabSelectedCallCount, 1);
+        TestThreadUtils.runOnUiThreadBlocking(() -> observer.destroy());
+
+        Assert.assertEquals("Index after toolbar side swipe is incorrect", finalIndex,
+                activity.getCurrentTabModel().index());
     }
 
-
-    private void performToolbarSideSwipe(ScrollDirection direction) {
+    private void performToolbarSideSwipe(@ScrollDirection int direction) {
         Assert.assertTrue("Unexpected direction for side swipe " + direction,
                 direction == ScrollDirection.LEFT || direction == ScrollDirection.RIGHT);
         final View toolbar = mActivityTestRule.getActivity().findViewById(R.id.toolbar);
@@ -1666,21 +1658,6 @@ public class TabsTest {
         TouchCommon.dragEnd(mActivityTestRule.getActivity(), toX, y, downTime);
     }
 
-    private void waitForStaticLayout() throws InterruptedException {
-        CriteriaHelper.pollUiThread(
-                new Criteria("Static Layout never selected after side swipe") {
-                    @Override
-                    public boolean isSatisfied() {
-                        CompositorViewHolder compositorViewHolder =
-                                (CompositorViewHolder) mActivityTestRule.getActivity().findViewById(
-                                        R.id.compositor_view_holder);
-                        LayoutManager layoutManager = compositorViewHolder.getLayoutManager();
-
-                        return layoutManager.getActiveLayout() instanceof StaticLayout;
-                    }
-                });
-    }
-
     /**
      * Test that swipes and tab transitions are not causing URL bar to be focused.
      */
@@ -1692,7 +1669,7 @@ public class TabsTest {
     public void testOSKIsNotShownDuringSwipe() throws InterruptedException {
         final View urlBar = mActivityTestRule.getActivity().findViewById(R.id.url_bar);
         final LayoutManagerChrome layoutManager = updateTabsViewSize();
-        final EdgeSwipeHandler edgeSwipeHandler = layoutManager.getTopSwipeHandler();
+        final EdgeSwipeHandler edgeSwipeHandler = layoutManager.getToolbarSwipeHandler();
 
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> urlBar.requestFocus());
@@ -1705,9 +1682,10 @@ public class TabsTest {
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
 
         Assert.assertFalse("Keyboard somehow got shown",
-                org.chromium.ui.UiUtils.isKeyboardShowing(mActivityTestRule.getActivity(), urlBar));
+                mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
+                        mActivityTestRule.getActivity(), urlBar));
 
-        ThreadUtils.runOnUiThread(() -> {
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
             edgeSwipeHandler.swipeStarted(ScrollDirection.RIGHT, 0, 0);
             float swipeXChange = mTabsViewWidthDp / 2.f;
             edgeSwipeHandler.swipeUpdated(
@@ -1723,9 +1701,9 @@ public class TabsTest {
                     }
                 });
 
-        ThreadUtils.runOnUiThread(() -> {
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
             Assert.assertFalse("Keyboard should be hidden while swiping",
-                    org.chromium.ui.UiUtils.isKeyboardShowing(
+                    mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                             mActivityTestRule.getActivity(), urlBar));
             edgeSwipeHandler.swipeFinished();
         });
@@ -1740,7 +1718,8 @@ public class TabsTest {
                 });
 
         Assert.assertFalse("Keyboard should not be shown",
-                org.chromium.ui.UiUtils.isKeyboardShowing(mActivityTestRule.getActivity(), urlBar));
+                mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
+                        mActivityTestRule.getActivity(), urlBar));
     }
 
     /**
@@ -1758,11 +1737,10 @@ public class TabsTest {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         mActivityTestRule.loadUrl(RESIZE_TEST_URL);
-        final WebContents webContents =
-                mActivityTestRule.getActivity().getActivityTab().getWebContents();
+        final WebContents webContents = mActivityTestRule.getWebContents();
 
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
-                                                          "resizeHappened = false;");
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(
+                mActivityTestRule.getWebContents(), "resizeHappened = false;");
         mActivityTestRule.getActivity().setRequestedOrientation(
                 ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -1785,12 +1763,10 @@ public class TabsTest {
         ChromeTabUtils.newTabFromMenu(
                 InstrumentationRegistry.getInstrumentation(), mActivityTestRule.getActivity());
         mActivityTestRule.loadUrl(RESIZE_TEST_URL);
-        final WebContents webContents =
-                mActivityTestRule.getActivity().getActivityTab().getWebContents();
 
         showOverviewAndWaitForAnimation();
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
-                                                          "resizeHappened = false;");
+        final WebContents webContents = mActivityTestRule.getWebContents();
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents, "resizeHappened = false;");
         mActivityTestRule.getActivity().setRequestedOrientation(
                 ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -1800,8 +1776,7 @@ public class TabsTest {
                 JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents, "resizeHappened",
                         WAIT_RESIZE_TIMEOUT_MS, TimeUnit.MILLISECONDS));
 
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
-                                                          "resizeHappened = false;");
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents, "resizeHappened = false;");
         mActivityTestRule.getActivity().setRequestedOrientation(
                 ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         UiUtils.settleDownUI(InstrumentationRegistry.getInstrumentation());
@@ -1822,9 +1797,10 @@ public class TabsTest {
 
         Assert.assertEquals("Too many tabs at startup", 1, model.getCount());
 
-        ThreadUtils.runOnUiThreadBlocking((Runnable) () -> model.closeTab(tab, false, false, true));
+        TestThreadUtils.runOnUiThreadBlocking(
+                (Runnable) () -> model.closeTab(tab, false, false, true));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Assert.assertTrue("Tab close is not undoable", model.isClosurePending(tab.getId()));
             Assert.assertTrue("Tab was not hidden", tab.isHidden());
         });
@@ -1850,12 +1826,15 @@ public class TabsTest {
 
         Assert.assertEquals("Too many tabs at startup", 1, model.getCount());
 
-        ThreadUtils.runOnUiThreadBlocking((Runnable) () -> model.closeTab(tab, false, false, true));
+        TestThreadUtils.runOnUiThreadBlocking(
+                (Runnable) () -> model.closeTab(tab, false, false, true));
 
         Assert.assertTrue("notifyChanged() was not called", mNotifyChangedCalled);
     }
 
+    // Flaky: http://crbug.com/901986
     @Test
+    @DisabledTest
     @MediumTest
     @Feature({"Android-TabSwitcher"})
     @RetryOnFailure
@@ -1867,7 +1846,7 @@ public class TabsTest {
 
         final AtomicBoolean webContentsDestroyCalled = new AtomicBoolean();
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+        TestThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
                 @SuppressWarnings("unused") // Avoid GC of observer
@@ -1946,7 +1925,7 @@ public class TabsTest {
      * @param numTabs The number of tabs to open.
      */
     private void loadUrlInManyNewTabs(final String url, final int numTabs)
-            throws InterruptedException {
+            throws InterruptedException, TimeoutException {
         final CallbackHelper[] pageLoadedCallbacks = new CallbackHelper[numTabs];
         final int[] tabIds = new int[numTabs];
         for (int i = 0; i < numTabs; ++i) {
@@ -1961,7 +1940,7 @@ public class TabsTest {
                     pageLoadedCallbacks[index] = pageLoadCallback;
                     currentTab.addObserver(new EmptyTabObserver() {
                         @Override
-                        public void onPageLoadFinished(Tab tab) {
+                        public void onPageLoadFinished(Tab tab, String url) {
                             pageLoadCallback.notifyCalled();
                             tab.removeObserver(this);
                         }
@@ -1981,11 +1960,16 @@ public class TabsTest {
                     TabModelUtils.setIndex(tabModel, tabModel.indexOf(tab));
                 }
             });
-            try {
-                pageLoadedCallbacks[i].waitForCallback(0);
-            } catch (TimeoutException e) {
-                Assert.fail("PAGE_LOAD_FINISHED was not received for tabId=" + tabIds[i]);
-            }
+            pageLoadedCallbacks[i].waitForCallback(0);
         }
+    }
+
+    private JavascriptTabModalDialog getCurrentAlertDialog() {
+        return (JavascriptTabModalDialog) TestThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            PropertyModel dialogModel = mActivityTestRule.getActivity()
+                                                .getModalDialogManager()
+                                                .getCurrentDialogForTest();
+            return dialogModel != null ? dialogModel.get(ModalDialogProperties.CONTROLLER) : null;
+        });
     }
 }

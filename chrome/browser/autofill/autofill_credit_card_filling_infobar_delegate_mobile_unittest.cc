@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/autofill/core/browser/autofill_credit_card_filling_infobar_delegate_mobile.h"
+#include "components/autofill/core/browser/payments/autofill_credit_card_filling_infobar_delegate_mobile.h"
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -41,9 +42,9 @@ AutofillCreditCardFillingInfoBarDelegateMobileTest::CreateDelegate() {
   std::unique_ptr<AutofillCreditCardFillingInfoBarDelegateMobile> delegate(
       new AutofillCreditCardFillingInfoBarDelegateMobile(
           credit_card,
-          base::Bind(&AutofillCreditCardFillingInfoBarDelegateMobileTest::
-                         AcceptInfoBarCallback,
-                     base::Unretained(this))));
+          base::BindOnce(&AutofillCreditCardFillingInfoBarDelegateMobileTest::
+                             AcceptInfoBarCallback,
+                         base::Unretained(this))));
   delegate->set_was_shown();
   return delegate;
 }

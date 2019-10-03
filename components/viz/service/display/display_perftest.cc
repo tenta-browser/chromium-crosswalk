@@ -7,20 +7,19 @@
 #include "base/bind.h"
 #include "base/test/null_task_runner.h"
 #include "base/time/time.h"
-#include "cc/base/lap_timer.h"
-#include "cc/test/fake_output_surface.h"
-#include "cc/test/test_context_provider.h"
+#include "base/timer/lap_timer.h"
 #include "components/viz/common/display/renderer_settings.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/render_pass.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
-#include "components/viz/common/resources/shared_bitmap_manager.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/service/display/display.h"
 #include "components/viz/service/display/display_scheduler.h"
 #include "components/viz/service/display/output_surface.h"
+#include "components/viz/service/display/shared_bitmap_manager.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
+#include "components/viz/test/fake_output_surface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
 
@@ -47,16 +46,12 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
     auto scheduler = std::make_unique<DisplayScheduler>(&begin_frame_source_,
                                                         task_runner_.get(), 1);
 
-    std::unique_ptr<cc::FakeOutputSurface> output_surface;
-
-    auto provider = cc::TestContextProvider::Create();
-    provider->BindToCurrentThread();
-    output_surface = cc::FakeOutputSurface::Create3d(std::move(provider));
+    std::unique_ptr<FakeOutputSurface> output_surface =
+        FakeOutputSurface::Create3d();
 
     auto display = std::make_unique<Display>(
-        &bitmap_manager_, nullptr /* gpu_memory_buffer_manager */,
-        RendererSettings(), frame_sink_id, std::move(output_surface),
-        std::move(scheduler), task_runner_.get());
+        &bitmap_manager_, RendererSettings(), frame_sink_id,
+        std::move(output_surface), std::move(scheduler), task_runner_.get());
     return display;
   }
 
@@ -71,7 +66,8 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
     SkBlendMode blend_mode = SkBlendMode::kSrcOver;
 
     SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
-    state->SetAll(quad_transform, rect, rect, rect, is_clipped,
+    state->SetAll(quad_transform, rect, rect,
+                  /*rounded_corner_bounds=*/gfx::RRectF(), rect, is_clipped,
                   are_contents_opaque, opacity, blend_mode, sorting_context_id);
     return state;
   }
@@ -104,7 +100,8 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
         quad->SetNew(shared_quad_state, rect, rect, needs_blending, resource_id,
                      premultiplied_alpha, uv_top_left, uv_bottom_right,
                      background_color, vertex_opacity, y_flipped,
-                     nearest_neighbor, false);
+                     nearest_neighbor, /*secure_output_only=*/false,
+                     gfx::ProtectedVideoType::kClear);
         j += quad_height;
       }
       j = y_top;
@@ -294,7 +291,7 @@ class RemoveOverdrawQuadPerfTest : public testing::Test {
 
  private:
   CompositorFrame frame_;
-  cc::LapTimer timer_;
+  base::LapTimer timer_;
   StubBeginFrameSource begin_frame_source_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   ServerSharedBitmapManager bitmap_manager_;

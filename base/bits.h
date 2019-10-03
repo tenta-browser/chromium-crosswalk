@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <type_traits>
+
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "build/build_config.h"
@@ -21,38 +23,29 @@
 namespace base {
 namespace bits {
 
-// Returns the integer i such as 2^i <= n < 2^(i+1)
-inline int Log2Floor(uint32_t n) {
-  if (n == 0)
-    return -1;
-  int log = 0;
-  uint32_t value = n;
-  for (int i = 4; i >= 0; --i) {
-    int shift = (1 << i);
-    uint32_t x = value >> shift;
-    if (x != 0) {
-      value = x;
-      log += shift;
-    }
-  }
-  DCHECK_EQ(value, 1u);
-  return log;
-}
-
-// Returns the integer i such as 2^(i-1) < n <= 2^i
-inline int Log2Ceiling(uint32_t n) {
-  if (n == 0) {
-    return -1;
-  } else {
-    // Log2Floor returns -1 for 0, so the following works correctly for n=1.
-    return 1 + Log2Floor(n - 1);
-  }
+// Returns true iff |value| is a power of 2.
+template <typename T,
+          typename = typename std::enable_if<std::is_integral<T>::value>>
+constexpr inline bool IsPowerOfTwo(T value) {
+  // From "Hacker's Delight": Section 2.1 Manipulating Rightmost Bits.
+  //
+  // Only positive integers with a single bit set are powers of two. If only one
+  // bit is set in x (e.g. 0b00000100000000) then |x-1| will have that bit set
+  // to zero and all bits to its right set to 1 (e.g. 0b00000011111111). Hence
+  // |x & (x-1)| is 0 iff x is a power of two.
+  return value > 0 && (value & (value - 1)) == 0;
 }
 
 // Round up |size| to a multiple of alignment, which must be a power of two.
 inline size_t Align(size_t size, size_t alignment) {
-  DCHECK_EQ(alignment & (alignment - 1), 0u);
+  DCHECK(IsPowerOfTwo(alignment));
   return (size + alignment - 1) & ~(alignment - 1);
+}
+
+// Round down |size| to a multiple of alignment, which must be a power of two.
+inline size_t AlignDown(size_t size, size_t alignment) {
+  DCHECK(IsPowerOfTwo(alignment));
+  return size & ~(alignment - 1);
 }
 
 // CountLeadingZeroBits(value) returns the number of zero bits following the
@@ -88,9 +81,22 @@ ALWAYS_INLINE
     CountLeadingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
   unsigned long index;
+// MSVC only supplies _BitScanReverse64 when building for a 64-bit target.
+#if defined(ARCH_CPU_64_BITS)
   return LIKELY(_BitScanReverse64(&index, static_cast<uint64_t>(x)))
              ? (63 - index)
              : 64;
+#else
+  uint32_t left = static_cast<uint32_t>(x >> 32);
+  if (LIKELY(_BitScanReverse(&index, left)))
+    return 31 - index;
+
+  uint32_t right = static_cast<uint32_t>(x);
+  if (LIKELY(_BitScanReverse(&index, right)))
+    return 63 - index;
+
+  return 64;
+#endif
 }
 
 template <typename T, unsigned bits = sizeof(T) * 8>
@@ -111,22 +117,30 @@ ALWAYS_INLINE
     CountTrailingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
   unsigned long index;
+// MSVC only supplies _BitScanForward64 when building for a 64-bit target.
+#if defined(ARCH_CPU_64_BITS)
   return LIKELY(_BitScanForward64(&index, static_cast<uint64_t>(x))) ? index
                                                                      : 64;
+#else
+  uint32_t right = static_cast<uint32_t>(x);
+  if (LIKELY(_BitScanForward(&index, right)))
+    return index;
+
+  uint32_t left = static_cast<uint32_t>(x >> 32);
+  if (LIKELY(_BitScanForward(&index, left)))
+    return 32 + index;
+
+  return 64;
+#endif
 }
 
 ALWAYS_INLINE uint32_t CountLeadingZeroBits32(uint32_t x) {
   return CountLeadingZeroBits(x);
 }
 
-#if defined(ARCH_CPU_64_BITS)
-
-// MSVC only supplies _BitScanForward64 when building for a 64-bit target.
 ALWAYS_INLINE uint64_t CountLeadingZeroBits64(uint64_t x) {
   return CountLeadingZeroBits(x);
 }
-
-#endif
 
 #elif defined(COMPILER_GCC)
 
@@ -162,13 +176,9 @@ ALWAYS_INLINE uint32_t CountLeadingZeroBits32(uint32_t x) {
   return CountLeadingZeroBits(x);
 }
 
-#if defined(ARCH_CPU_64_BITS)
-
 ALWAYS_INLINE uint64_t CountLeadingZeroBits64(uint64_t x) {
   return CountLeadingZeroBits(x);
 }
-
-#endif
 
 #endif
 
@@ -178,6 +188,19 @@ ALWAYS_INLINE size_t CountLeadingZeroBitsSizeT(size_t x) {
 
 ALWAYS_INLINE size_t CountTrailingZeroBitsSizeT(size_t x) {
   return CountTrailingZeroBits(x);
+}
+
+// Returns the integer i such as 2^i <= n < 2^(i+1)
+inline int Log2Floor(uint32_t n) {
+  return 31 - CountLeadingZeroBits(n);
+}
+
+// Returns the integer i such as 2^(i-1) < n <= 2^i
+inline int Log2Ceiling(uint32_t n) {
+  // When n == 0, we want the function to return -1.
+  // When n == 0, (n - 1) will underflow to 0xFFFFFFFF, which is
+  // why the statement below starts with (n ? 32 : -1).
+  return (n ? 32 : -1) - CountLeadingZeroBits(n - 1);
 }
 
 }  // namespace bits

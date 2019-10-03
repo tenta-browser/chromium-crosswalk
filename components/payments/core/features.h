@@ -11,10 +11,14 @@
 namespace payments {
 namespace features {
 
-#if defined(OS_IOS)
-// Used to control the state of the Payment Request API feature.
-extern const base::Feature kWebPayments;
+// Master toggle for all experimental features that will ship in the next
+// release.
+extern const base::Feature kWebPaymentsExperimentalFeatures;
 
+// Used to control whether Google Pay cards are returned for basic-card.
+extern const base::Feature kReturnGooglePayInBasicCard;
+
+#if defined(OS_IOS)
 // Used to control the support for iOS third party apps as payment methods.
 extern const base::Feature kWebPaymentsNativeApps;
 #endif
@@ -26,6 +30,24 @@ extern const base::Feature kWebPaymentsMethodSectionOrderV2;
 
 // Used to control the support for Payment Details modifiers.
 extern const base::Feature kWebPaymentsModifiers;
+
+// Used to control whether the Payment Sheet can be skipped for Payment Requests
+// with a single URL based payment app and no other info requested.
+extern const base::Feature kWebPaymentsSingleAppUiSkip;
+
+// Used to control whether allow crawling just-in-time installable payment app.
+extern const base::Feature kWebPaymentsJustInTimePaymentApp;
+
+// Used to enable crawling just-in-time installable payment apps even if
+// basic-card is also requested.
+extern const base::Feature kAlwaysAllowJustInTimePaymentApp;
+
+// Used to control whether canMakePayment() quota is per-method.
+extern const base::Feature kWebPaymentsPerMethodCanMakePaymentQuota;
+
+// Used to control whether the shipping address returned for the
+// ShippingAddressChangeEvent is redacted of fine-grained details.
+extern const base::Feature kWebPaymentsRedactShippingAddress;
 
 }  // namespace features
 }  // namespace payments

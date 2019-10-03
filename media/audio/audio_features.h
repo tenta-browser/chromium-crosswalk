@@ -11,10 +11,22 @@
 
 namespace features {
 
-#if defined(OS_CHROMEOS)
-MEDIA_EXPORT extern const base::Feature kEnumerateAudioDevices;
-#endif  // defined(OS_CHROMEOS)
+MEDIA_EXPORT extern const base::Feature kAudioServiceOutOfProcessKillAtHang;
+MEDIA_EXPORT extern const base::Feature kDumpOnAudioServiceHang;
 
-}  // features
+#if defined(OS_CHROMEOS)
+MEDIA_EXPORT extern const base::Feature kCrOSSystemAEC;
+MEDIA_EXPORT extern const base::Feature kCrOSSystemAECDeactivatedGroups;
+#endif
+
+#if defined(OS_MACOSX) || defined(OS_CHROMEOS)
+MEDIA_EXPORT extern const base::Feature kForceEnableSystemAec;
+#endif
+
+#if defined(OS_WIN)
+MEDIA_EXPORT extern const base::Feature kAllowIAudioClient3;
+#endif
+
+}  // namespace features
 
 #endif  // MEDIA_AUDIO_AUDIO_FEATURES_H_

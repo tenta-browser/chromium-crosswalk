@@ -10,10 +10,16 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/threading/thread_checker.h"
-#include "chrome/common/media/webrtc_logging_message_data.h"
-#include "chrome/common/partial_circular_buffer.h"
+#include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
+#include "components/webrtc_logging/common/partial_circular_buffer.h"
 #include "net/base/network_interfaces.h"
+
+namespace chrome {
+namespace mojom {
+class WebRtcLoggingMessage;
+}  // namespace mojom
+}  // namespace chrome
 
 #if defined(OS_ANDROID)
 const size_t kWebRtcLogSize = 1 * 1024 * 1024;  // 1 MB
@@ -36,7 +42,7 @@ class WebRtcLogBuffer {
   // Must only be called after the log has been marked as complete
   // (see SetComplete) and the caller must ensure that the WebRtcLogBuffer
   // instance remains in scope for the lifetime of the returned circular buffer.
-  PartialCircularBuffer Read();
+  webrtc_logging::PartialCircularBuffer Read();
 
   // Switches the buffer to read-only mode, where access to the internal
   // buffer is allowed from different threads than were used to contribute
@@ -46,45 +52,48 @@ class WebRtcLogBuffer {
   void SetComplete();
 
  private:
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
   uint8_t buffer_[kWebRtcLogSize];
-  PartialCircularBuffer circular_;
+  webrtc_logging::PartialCircularBuffer circular_;
   bool read_only_;
 };
 
-class WebRtcTextLogHandler
-    : public base::RefCountedThreadSafe<WebRtcTextLogHandler> {
+class WebRtcTextLogHandler {
  public:
   // States used for protecting from function calls made at non-allowed points
   // in time. For example, StartLogging() is only allowed in CLOSED state.
-  // Transitions: SetMetaData():    CLOSED -> CLOSED.
+  // See also comment on |channel_is_closing_| below.
+  // Transitions: SetMetaData():    CLOSED -> CLOSED, or
+  //                                STARTED -> STARTED
   //              StartLogging():   CLOSED -> STARTING.
   //              StartDone():      STARTING -> STARTED.
   //              StopLogging():    STARTED -> STOPPING.
   //              StopDone():       STOPPING -> STOPPED.
-  //              DiscardLog():     STOPPED -> CLOSED or
-  //                                CHANNEL_CLOSING -> CHANNEL_CLOSING.
-  //              ReleaseLog():     STOPPED -> CLOSED. or
-  //                                CHANNEL_CLOSING -> CHANNEL_CLOSING.
-  //              ChannelClosing(): ANY -> CHANNEL_CLOSING.
+  //              DiscardLog():     STOPPED -> CLOSED.
+  //              ReleaseLog():     STOPPED -> CLOSED.
   enum LoggingState {
     CLOSED,           // Logging not started, no log in memory.
     STARTING,         // Start logging is in progress.
     STARTED,          // Logging started.
     STOPPING,         // Stop logging is in progress.
     STOPPED,          // Logging has been stopped, log still open in memory.
-    CHANNEL_CLOSING,  // Renderer is closing. The log (if there is one) can
-                      // still be uploaded, but no new logs can be created and
-                      // and no state transitions can be made.
   };
 
   typedef base::Callback<void(bool, const std::string&)> GenericDoneCallback;
 
   explicit WebRtcTextLogHandler(int render_process_id);
+  ~WebRtcTextLogHandler();
 
   // Returns the current state of the log. Must be called on the IO thread.
-  LoggingState GetState() const { return logging_state_; }
+  LoggingState GetState() const;
 
+  // Returns true if channel is closing. Must be called on the IO thread.
+  bool GetChannelIsClosing() const;
+
+  // Sets meta data for log uploading. Merged with any already set meta data.
+  // Values for existing keys are overwritten. The meta data already set at log
+  // start is written to the beginning of the log. Meta data set after log start
+  // is written to the log at that time.
   void SetMetaData(std::unique_ptr<MetaDataMap> meta_data,
                    const GenericDoneCallback& callback);
 
@@ -120,7 +129,8 @@ class WebRtcTextLogHandler
   void LogMessage(const std::string& message);
 
   // Adds a message to the log. Must be called on the IO thread.
-  void LogWebRtcLoggingMessageData(const WebRtcLoggingMessageData& message);
+  void LogWebRtcLoggingMessage(
+      const chrome::mojom::WebRtcLoggingMessage* message);
 
   // Returns true if the logging state is CLOSED and fires an the callback
   // with an error message otherwise. Must be called on the IO thread.
@@ -130,16 +140,19 @@ class WebRtcTextLogHandler
                                bool success,
                                const std::string& error_message);
 
- private:
-  friend class base::RefCountedThreadSafe<WebRtcTextLogHandler>;
-  ~WebRtcTextLogHandler();
+  // Must be called on the IO thread.
+  void SetWebAppId(int web_app_id);
 
+ private:
   void StartDone(const GenericDoneCallback& callback);
 
   void LogToCircularBuffer(const std::string& message);
 
-  void LogInitialInfoOnIOThread(const GenericDoneCallback& callback,
-                                const net::NetworkInterfaceList& network_list);
+  void OnGetNetworkInterfaceList(
+      const GenericDoneCallback& callback,
+      const base::Optional<net::NetworkInterfaceList>& networks);
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   // The render process ID this object belongs to.
   const int render_process_id_;
@@ -153,15 +166,28 @@ class WebRtcTextLogHandler
   // Should be created by StartLogging().
   std::unique_ptr<MetaDataMap> meta_data_;
 
-  // These are only accessed on the IO thread.
+  // Only accessed on the IO thread.
   GenericDoneCallback stop_callback_;
 
   // Only accessed on the IO thread.
   LoggingState logging_state_;
 
+  // True if renderer is closing. The log (if there is one) can still be
+  // released or discarded (i.e. closed). No new logs can be created. The only
+  // state change possible when channel is closing is from any state to CLOSED.
+  // Can only accessed on the IO thread.
+  bool channel_is_closing_ = false;
+
   // The system time in ms when logging is started. Reset when logging_state_
   // changes to STOPPED.
   base::Time logging_started_time_;
+
+  // Web app id used for statistics. See
+  // |WebRtcLoggingHandlerHost::web_app_id_|. Must only be accessed on the IO
+  // thread.
+  int web_app_id_ = 0;
+
+  base::WeakPtrFactory<WebRtcTextLogHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebRtcTextLogHandler);
 };

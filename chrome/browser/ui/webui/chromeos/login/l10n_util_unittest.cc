@@ -10,14 +10,13 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/customization/customization_document.h"
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util_test_util.h"
-#include "chromeos/system/statistics_provider.h"
+#include "chromeos/system/fake_statistics_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
 
@@ -60,18 +59,18 @@ class L10nUtilTest : public testing::Test {
 
  private:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
-
+  system::ScopedFakeStatisticsProvider scoped_fake_statistics_provider_;
   MockInputMethodManagerWithInputMethods* input_manager_;
+
+  DISALLOW_COPY_AND_ASSIGN(L10nUtilTest);
 };
 
 L10nUtilTest::L10nUtilTest()
     : input_manager_(new MockInputMethodManagerWithInputMethods) {
   chromeos::input_method::InitializeForTesting(input_manager_);
   input_manager_->SetComponentExtensionIMEManager(
-      base::MakeUnique<ComponentExtensionIMEManager>());
+      std::make_unique<ComponentExtensionIMEManager>());
 
-  chromeos::system::StatisticsProvider::GetInstance()
-      ->StartLoadingMachineStatistics(false);
   base::RunLoop().RunUntilIdle();
 }
 

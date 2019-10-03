@@ -15,8 +15,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "chrome/installer/test/alternate_version_generator.h"
 
 namespace {
@@ -52,7 +52,7 @@ const wchar_t* const Messages[] = {
 
 const wchar_t* GetErrorMessage(ErrorCode error_code) {
   DCHECK_LE(0, error_code);
-  DCHECK_GT(arraysize(Messages), static_cast<size_t>(error_code));
+  DCHECK_GT(base::size(Messages), static_cast<size_t>(error_code));
   return Messages[error_code];
 }
 
@@ -99,7 +99,7 @@ bool GetMiniInstallerPath(const base::CommandLine& cmd_line,
                           base::FilePath* mini_installer) {
   DCHECK(mini_installer);
   base::FilePath result = cmd_line.GetSwitchValuePath(switches::kMiniInstaller);
-  if (result.empty() && PathService::Get(base::DIR_EXE, &result))
+  if (result.empty() && base::PathService::Get(base::DIR_EXE, &result))
     result = result.Append(kDefaultMiniInstallerFile);
   if (result.empty())
     return false;

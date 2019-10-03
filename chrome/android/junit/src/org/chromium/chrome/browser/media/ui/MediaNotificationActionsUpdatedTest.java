@@ -16,11 +16,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.BaseChromiumApplication;
-import org.chromium.blink.mojom.MediaSessionAction;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.media.ui.MediaNotificationManager.ListenerService;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.media_session.mojom.MediaSessionAction;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -29,13 +28,12 @@ import java.util.Set;
  * Test of media notifications to see whether the control buttons update when MediaSessionActions
  * change or the tab navigates.
  */
-@RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, application = BaseChromiumApplication.class,
+@RunWith(BaseRobolectricTestRunner.class)
+@Config(manifest = Config.NONE,
         // Remove this after updating to a version of Robolectric that supports
         // notification channel creation. crbug.com/774315
         sdk = Build.VERSION_CODES.N_MR1,
-        shadows = {MediaNotificationTestShadowResources.class,
-                MediaNotificationTestShadowNotificationManager.class})
+        shadows = {MediaNotificationTestShadowResources.class})
 public class MediaNotificationActionsUpdatedTest extends MediaNotificationManagerTestBase {
     private static final int TAB_ID_1 = 1;
     private static final int TAB_ID_2 = 2;
@@ -50,7 +48,9 @@ public class MediaNotificationActionsUpdatedTest extends MediaNotificationManage
 
         getManager().mThrottler.mManager = getManager();
         doCallRealMethod().when(getManager()).onServiceStarted(any(ListenerService.class));
-        doCallRealMethod().when(mMockAppHooks).startForegroundService(any(Intent.class));
+        doCallRealMethod()
+                .when(mMockForegroundServiceUtils)
+                .startForegroundService(any(Intent.class));
         mTabHolder = new MediaNotificationTestTabHolder(TAB_ID_1, "about:blank", "title1");
     }
 

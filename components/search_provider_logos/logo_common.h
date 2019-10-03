@@ -33,7 +33,10 @@ enum class LogoType {
 // serialize and deserialize that field.
 struct LogoMetadata {
   LogoMetadata();
-  LogoMetadata(const LogoMetadata& other);
+  LogoMetadata(const LogoMetadata&);
+  LogoMetadata(LogoMetadata&&) noexcept;
+  LogoMetadata& operator=(const LogoMetadata&);
+  LogoMetadata& operator=(LogoMetadata&&) noexcept;
   ~LogoMetadata();
 
   // For use by the client ----------------------------------------------------
@@ -59,11 +62,34 @@ struct LogoMetadata {
   // ANIMATED: The mime type of the CTA image.
   std::string mime_type;
 
+  // SIMPLE: The mime type of the dark logo image. May be empty.
+  // ANIMATED: The mime type of the dark CTA image. May be empty.
+  std::string dark_mime_type;
+
+  // SIMPLE, ANIMATED: The background color to use in dark mode.
+  // INTERACTIVE: not used.
+  std::string dark_background_color;
+
   // ANIMATED: The URL for an animated image to display when the call to action
   // logo is clicked. If |animated_url| is not empty, |encoded_image| refers to
   // a call to action image.
   // SIMPLE, INTERACTIVE: not used.
   GURL animated_url;
+  GURL dark_animated_url;
+
+  // The URL to ping when the CTA image is clicked. May be empty.
+  GURL cta_log_url;
+  // The URL to ping when the main image is clicked (i.e. the animated image if
+  // there is one, or the only image otherwise). May be empty.
+  GURL log_url;
+
+  // The URL used for sharing doodles.
+  GURL short_link;
+
+  // SIMPLE, ANIMATED: ignored
+  // INTERACTIVE: appropriate dimensions for the iframe.
+  int iframe_width_px = 0;
+  int iframe_height_px = 0;
 
   // For use by LogoService ---------------------------------------------------
 
@@ -78,6 +104,28 @@ struct LogoMetadata {
   // When the logo expires. After this time, the logo will not be used and will
   // be deleted.
   base::Time expiration_time;
+
+  // Used by the Optional Doodle Share Button ---------------------------------
+
+  // Share button x position
+  int share_button_x = -1;
+  int dark_share_button_x = -1;
+
+  // Share button y position
+  int share_button_y = -1;
+  int dark_share_button_y = -1;
+
+  // Share button opacity
+  double share_button_opacity = 0;
+  double dark_share_button_opacity = 0;
+
+  // Share button icon image, uses Data URI format.
+  std::string share_button_icon;
+  std::string dark_share_button_icon;
+
+  // Share button background color, uses hex format.
+  std::string share_button_bg;
+  std::string dark_share_button_bg;
 };
 
 enum class LogoCallbackReason {
@@ -106,11 +154,16 @@ enum class LogoCallbackReason {
 
 struct EncodedLogo {
   EncodedLogo();
-  EncodedLogo(const EncodedLogo& other);
+  EncodedLogo(const EncodedLogo&);
+  EncodedLogo(EncodedLogo&&) noexcept;
+  EncodedLogo& operator=(const EncodedLogo& other);
+  EncodedLogo& operator=(EncodedLogo&& other) noexcept;
   ~EncodedLogo();
 
   // The jpeg- or png-encoded image.
   scoped_refptr<base::RefCountedString> encoded_image;
+  // The jpeg- or png-encoded dark image. May be null.
+  scoped_refptr<base::RefCountedString> dark_encoded_image;
   // Metadata about the logo.
   LogoMetadata metadata;
 };
@@ -122,8 +175,10 @@ struct Logo {
   Logo();
   ~Logo();
 
-  // The logo image.
+  // The light mode logo image.
   SkBitmap image;
+  // The dark mode logo image.
+  SkBitmap dark_image;
   // Metadata about the logo.
   LogoMetadata metadata;
 };
@@ -137,7 +192,8 @@ struct LogoCallbacks {
   LogoCallback on_fresh_decoded_logo_available;
 
   LogoCallbacks();
-  LogoCallbacks(LogoCallbacks&&);
+  LogoCallbacks(LogoCallbacks&&) noexcept;
+  LogoCallbacks& operator=(LogoCallbacks&&) noexcept;
   ~LogoCallbacks();
 };
 

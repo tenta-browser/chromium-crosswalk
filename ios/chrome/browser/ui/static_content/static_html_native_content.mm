@@ -7,8 +7,7 @@
 #include "base/logging.h"
 #import "ios/chrome/browser/ui/overscroll_actions/overscroll_actions_controller.h"
 #include "ios/chrome/browser/ui/static_content/static_html_view_controller.h"
-#import "ios/chrome/browser/ui/url_loader.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -16,9 +15,9 @@
 
 @interface StaticHtmlNativeContent ()
 // Designated initializer.
-- (instancetype)initWithLoader:(id<UrlLoader>)loader
-      staticHTMLViewController:(StaticHtmlViewController*)HTMLViewController
-                           URL:(const GURL&)URL;
+- (instancetype)initWithStaticHTMLViewController:
+                    (StaticHtmlViewController*)HTMLViewController
+                                             URL:(const GURL&)URL;
 @end
 
 @implementation StaticHtmlNativeContent {
@@ -29,8 +28,6 @@
   // The static HTML view controller that is used to display the content in
   // a web view.
   StaticHtmlViewController* _staticHTMLViewController;
-  // Responsible for loading a particular URL.
-  __weak id<UrlLoader> _loader;  // weak
   // The controller handling the overscroll actions.
   OverscrollActionsController* _overscrollActionsController;
 }
@@ -38,50 +35,33 @@
 #pragma mark -
 #pragma mark Public
 
-- (instancetype)initWithLoader:(id<UrlLoader>)loader
-      staticHTMLViewController:(StaticHtmlViewController*)HTMLViewController
-                           URL:(const GURL&)URL {
-  DCHECK(loader);
+- (instancetype)initWithStaticHTMLViewController:
+                    (StaticHtmlViewController*)HTMLViewController
+                                             URL:(const GURL&)URL {
   DCHECK(HTMLViewController);
   // No DCHECK for URL (invalid URL is a valid input).
   if (self = [super init]) {
     web::Referrer referrer(URL, web::ReferrerPolicyDefault);
-    [HTMLViewController setLoader:loader referrer:referrer];
     _URL = URL;
-    _loader = loader;
     _staticHTMLViewController = HTMLViewController;
   }
   return self;
 }
 
 - (instancetype)initWithResourcePathResource:(NSString*)resourcePath
-                                      loader:(id<UrlLoader>)loader
                                 browserState:(web::BrowserState*)browserState
                                          url:(const GURL&)URL {
-  DCHECK(loader);
   DCHECK(browserState);
   DCHECK(URL.is_valid());
   DCHECK(resourcePath);
   StaticHtmlViewController* HTMLViewController =
       [[StaticHtmlViewController alloc] initWithResource:resourcePath
                                             browserState:browserState];
-  return [self initWithLoader:loader
-      staticHTMLViewController:HTMLViewController
-                           URL:URL];
+  return [self initWithStaticHTMLViewController:HTMLViewController URL:URL];
 }
 
 - (void)dealloc {
   [[self scrollView] setDelegate:nil];
-}
-
-- (void)loadURL:(const GURL&)URL
-             referrer:(const web::Referrer&)referrer
-           transition:(ui::PageTransition)transition
-    rendererInitiated:(BOOL)rendererInitiated {
-  [_loader loadURL:URL
-               referrer:referrer
-             transition:transition
-      rendererInitiated:rendererInitiated];
 }
 
 - (OverscrollActionsController*)overscrollActionsController {
@@ -115,6 +95,16 @@
 }
 
 - (UIView*)view {
+  // During app teardown and when an offline reading list page is open,
+  // CRWWebController attempts to remove StaticHtmlNativeContent's web view from
+  // superview. While the app is clearing browsing data, though, web usage is
+  // not enabled. While returning nil whenever |_staticHTMLViewController| is
+  // nil is not ideal solution, this file will get removed soon in a refactor
+  // (crbug.com/725239), so it will serve to just prevent crashing.
+  if (!_staticHTMLViewController) {
+    return nil;
+  }
+
   CHECK(_webUsageEnabled) << "Tried to create a web view when web usage was"
                           << " disabled!";
   return [_staticHTMLViewController webView];
@@ -137,7 +127,7 @@
 }
 
 - (void)executeJavaScript:(NSString*)script
-        completionHandler:(web::JavaScriptResultBlock)handler {
+        completionHandler:(void (^)(id, NSError*))handler {
   [_staticHTMLViewController executeJavaScript:script
                              completionHandler:handler];
 }

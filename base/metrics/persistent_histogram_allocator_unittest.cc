@@ -34,7 +34,6 @@ class PersistentHistogramAllocatorTest : public testing::Test {
 
     GlobalHistogramAllocator::ReleaseForTesting();
     memset(allocator_memory_.get(), 0, kAllocatorMemorySize);
-    GlobalHistogramAllocator::GetCreateHistogramResultHistogram();
     GlobalHistogramAllocator::CreateWithPersistentMemory(
         allocator_memory_.get(), kAllocatorMemorySize, 0, 0,
         "PersistentHistogramAllocatorTest");
@@ -275,7 +274,7 @@ TEST_F(PersistentHistogramAllocatorTest, StatisticsRecorderMerge) {
     HistogramBase* found =
         StatisticsRecorder::FindHistogram(recovered->histogram_name());
     EXPECT_NE(recovered.get(), found);
-  };
+  }
   EXPECT_EQ(starting_sr_count + 2, StatisticsRecorder::GetHistogramCount());
 
   // Check the merged histograms for accuracy.
@@ -314,7 +313,7 @@ TEST_F(PersistentHistogramAllocatorTest, StatisticsRecorderMerge) {
     if (!recovered)
       break;
     recovery2.MergeHistogramDeltaToStatisticsRecorder(recovered.get());
-  };
+  }
   EXPECT_EQ(starting_sr_count + 2, StatisticsRecorder::GetHistogramCount());
 
   // And verify.

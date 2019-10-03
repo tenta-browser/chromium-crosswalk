@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "components/sync/base/data_type_histogram.h"
 #include "components/sync/engine_impl/conflict_resolver.h"
 #include "components/sync/engine_impl/cycle/data_type_debug_info_emitter.h"
@@ -75,7 +76,7 @@ SyncerError DirectoryUpdateHandler::ProcessGetUpdatesResponse(
       // set. Fail this get updates cycle, to force a retry.
       DVLOG(1) << "GU Context conflict detected, forcing GU retry.";
       debug_info_emitter_->EmitUpdateCountersUpdate();
-      return DATATYPE_TRIGGERED_RETRY;
+      return SyncerError(SyncerError::DATATYPE_TRIGGERED_RETRY);
     }
   }
 
@@ -87,7 +88,10 @@ SyncerError DirectoryUpdateHandler::ProcessGetUpdatesResponse(
     CreateTypeRoot(&trans);
   }
 
-  UpdateSyncEntities(&trans, applicable_updates, status);
+  UpdateSyncEntities(
+      &trans, applicable_updates,
+      /*is_initial_sync=*/!dir_->InitialSyncEndedForType(&trans, type_),
+      status);
 
   if (IsValidProgressMarker(progress_marker)) {
     ExpireEntriesIfNeeded(&trans, progress_marker);
@@ -95,7 +99,7 @@ SyncerError DirectoryUpdateHandler::ProcessGetUpdatesResponse(
   }
 
   debug_info_emitter_->EmitUpdateCountersUpdate();
-  return SYNCER_OK;
+  return SyncerError(SyncerError::SYNCER_OK);
 }
 
 void DirectoryUpdateHandler::CreateTypeRoot(
@@ -119,11 +123,11 @@ void DirectoryUpdateHandler::ApplyUpdates(StatusController* status) {
   if (IsApplyUpdatesRequired()) {
     // This will invoke handlers that belong to the model and its thread, so we
     // switch to the appropriate thread before we start this work.
-    WorkCallback c =
-        base::Bind(&DirectoryUpdateHandler::ApplyUpdatesImpl,
-                   // We wait until the callback is executed.  We can safely use
-                   // Unretained.
-                   base::Unretained(this), base::Unretained(status));
+    WorkCallback c = base::BindOnce(
+        &DirectoryUpdateHandler::ApplyUpdatesImpl,
+        // We wait until the callback is executed.  We can safely use
+        // Unretained.
+        base::Unretained(this), base::Unretained(status));
     worker_->DoWorkAndWaitUntilDone(std::move(c));
 
     debug_info_emitter_->EmitUpdateCountersUpdate();
@@ -214,7 +218,7 @@ SyncerError DirectoryUpdateHandler::ApplyUpdatesImpl(StatusController* status) {
     DCHECK(conflict_applicator.simple_conflict_ids().empty());
   }
 
-  return SYNCER_OK;
+  return SyncerError(SyncerError::SYNCER_OK);
 }
 
 void DirectoryUpdateHandler::PostApplyUpdates() {
@@ -242,11 +246,16 @@ bool DirectoryUpdateHandler::IsApplyUpdatesRequired() {
 void DirectoryUpdateHandler::UpdateSyncEntities(
     syncable::ModelNeutralWriteTransaction* trans,
     const SyncEntityList& applicable_updates,
+    bool is_initial_sync,
     StatusController* status) {
   UpdateCounters* counters = debug_info_emitter_->GetMutableUpdateCounters();
-  counters->num_updates_received += applicable_updates.size();
-  ProcessDownloadedUpdates(dir_, trans, type_, applicable_updates, status,
-                           counters);
+  if (is_initial_sync) {
+    counters->num_initial_updates_received += applicable_updates.size();
+  } else {
+    counters->num_non_initial_updates_received += applicable_updates.size();
+  }
+  ProcessDownloadedUpdates(dir_, trans, type_, applicable_updates,
+                           is_initial_sync, status, counters);
 }
 
 bool DirectoryUpdateHandler::IsValidProgressMarker(
@@ -299,12 +308,6 @@ void DirectoryUpdateHandler::ExpireEntriesIfNeeded(
                          new_gc_directive.age_watermark_in_days());
       cached_gc_directive_aged_out_day_ = to_be_expired;
     }
-  }
-
-  if (new_gc_directive.has_max_number_of_items()) {
-    DCHECK(new_gc_directive.max_number_of_items());
-    ExpireEntriesByItemLimit(dir_, trans, type_,
-                             new_gc_directive.max_number_of_items());
   }
 }
 

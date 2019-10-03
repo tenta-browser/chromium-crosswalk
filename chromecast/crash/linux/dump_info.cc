@@ -8,7 +8,6 @@
 #include <stdlib.h>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 
@@ -19,7 +18,7 @@ namespace {
 // "%Y-%m-%d %H:%M:%S";
 const char kDumpTimeFormat[] = "%04d-%02d-%02d %02d:%02d:%02d";
 
-const int kNumRequiredParams = 5;
+const int kNumRequiredParams = 4;
 
 const char kNameKey[] = "name";
 const char kDumpTimeKey[] = "dump_time";
@@ -54,10 +53,9 @@ DumpInfo::~DumpInfo() {
 
 std::unique_ptr<base::Value> DumpInfo::GetAsValue() const {
   std::unique_ptr<base::Value> result =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   base::DictionaryValue* entry;
   result->GetAsDictionary(&entry);
-  entry->SetString(kNameKey, params_.process_name);
 
   base::Time::Exploded ex;
   dump_time_.LocalExplode(&ex);
@@ -92,9 +90,6 @@ bool DumpInfo::ParseEntry(const base::Value* entry) {
     return false;
 
   // Extract required fields.
-  if (!dict->GetString(kNameKey, &params_.process_name))
-    return false;
-
   std::string dump_time;
   if (!dict->GetString(kDumpTimeKey, &dump_time))
     return false;
@@ -117,6 +112,9 @@ bool DumpInfo::ParseEntry(const base::Value* entry) {
   size_t num_params = kNumRequiredParams;
 
   // Extract all other optional fields.
+  std::string unused_process_name;
+  if (dict->GetString(kNameKey, &unused_process_name))
+    ++num_params;
   if (dict->GetString(kSuffixKey, &params_.suffix))
     ++num_params;
   if (dict->GetString(kPrevAppNameKey, &params_.previous_app_name))

@@ -18,7 +18,11 @@ class SessionSpecifics;
 
 namespace sync_sessions {
 class OpenTabsUIDelegate;
-class SessionsSyncManager;
+}
+
+namespace syncer {
+class ModelTypeProcessor;
+struct UpdateResponseData;
 }
 
 // Utility class to help add recent tabs for testing.
@@ -29,12 +33,12 @@ class RecentTabsBuilderTestHelper {
 
   void AddSession();
   int GetSessionCount();
-  SessionID::id_type GetSessionID(int session_index);
+  SessionID GetSessionID(int session_index);
   base::Time GetSessionTimestamp(int session_index);
 
   void AddWindow(int session_index);
   int GetWindowCount(int session_index);
-  SessionID::id_type GetWindowID(int session_index, int window_index);
+  SessionID GetWindowID(int session_index, int window_index);
 
   void AddTab(int session_index, int window_index);
   void AddTabWithInfo(int session_index,
@@ -42,9 +46,7 @@ class RecentTabsBuilderTestHelper {
                       base::Time timestamp,
                       const base::string16& title);
   int GetTabCount(int session_index, int window_index);
-  SessionID::id_type GetTabID(int session_index,
-                              int window_index,
-                              int tab_index);
+  SessionID GetTabID(int session_index, int window_index, int tab_index);
   base::Time GetTabTimestamp(int session_index,
                              int window_index,
                              int tab_index);
@@ -52,21 +54,22 @@ class RecentTabsBuilderTestHelper {
                        int window_index,
                        int tab_index);
 
-  void ExportToSessionsSyncManager(sync_sessions::SessionsSyncManager* manager);
+  void ExportToSessionSync(syncer::ModelTypeProcessor* processor);
+  void VerifyExport(sync_sessions::OpenTabsUIDelegate* delegate);
 
   std::vector<base::string16> GetTabTitlesSortedByRecency();
 
  private:
-  void BuildSessionSpecifics(int session_index,
-                             sync_pb::SessionSpecifics* meta);
-  void BuildWindowSpecifics(int session_index,
-                            int window_index,
-                            sync_pb::SessionSpecifics* meta);
-  void BuildTabSpecifics(int session_index,
-                         int window_index,
-                         int tab_index,
-                         sync_pb::SessionSpecifics* tab_base);
-  void VerifyExport(sync_sessions::OpenTabsUIDelegate* delegate);
+  sync_pb::SessionSpecifics BuildHeaderSpecifics(int session_index);
+  void AddWindowToHeaderSpecifics(int session_index,
+                                  int window_index,
+                                  sync_pb::SessionSpecifics* specifics);
+  sync_pb::SessionSpecifics BuildTabSpecifics(int session_index,
+                                              int window_index,
+                                              int tab_index);
+  std::unique_ptr<syncer::UpdateResponseData> BuildUpdateResponseData(
+      const sync_pb::SessionSpecifics& specifics,
+      base::Time timestamp);
 
   struct TabInfo;
   struct WindowInfo;
@@ -75,7 +78,8 @@ class RecentTabsBuilderTestHelper {
   std::vector<SessionInfo> sessions_;
   base::Time start_time_;
 
-  int max_tab_node_id_;
+  int max_tab_node_id_ = 0;
+  int next_response_version_ = 1;
 
   DISALLOW_COPY_AND_ASSIGN(RecentTabsBuilderTestHelper);
 };

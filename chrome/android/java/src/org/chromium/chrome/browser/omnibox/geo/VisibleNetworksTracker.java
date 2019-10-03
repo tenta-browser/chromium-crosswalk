@@ -5,14 +5,12 @@
 package org.chromium.chrome.browser.omnibox.geo;
 
 import android.content.Context;
-import android.os.AsyncTask;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-
-import javax.annotation.Nullable;
 
 /**
  * VisibleNetworksTracker keeps track of the visible networks.
@@ -27,8 +25,7 @@ class VisibleNetworksTracker {
     private static VisibleNetworks sVisibleNetworks;
     private static long sVisibleNetworksTime = Long.MAX_VALUE;
 
-    @Nullable
-    private static AsyncTask<Void, Void, VisibleNetworks> sOngoingRefresh;
+    private static boolean sOngoingRefresh;
 
     private static VisibleNetworks sVisibleNetworksForTesting;
     private static boolean sUseVisibleNetworksForTesting;
@@ -48,8 +45,7 @@ class VisibleNetworksTracker {
         try {
             // Include only the connected cell/wifi to minimize latency and compute the simplest
             // visible networks possible.
-            visibleNetworks = PlatformNetworksManager.computeVisibleNetworks(
-                    context, false /* includeAllVisibleNotConnectedNetworks */);
+            visibleNetworks = PlatformNetworksManager.computeConnectedNetworks(context);
         } catch (Exception e) {
             Log.e(TAG, "Failed to get the visible networks. Error: ", e.toString());
         }
@@ -65,30 +61,13 @@ class VisibleNetworksTracker {
      */
     static void refreshVisibleNetworks(final Context context) {
         ThreadUtils.assertOnUiThread();
-        if (isValidCachedVisibleNetworks() || sOngoingRefresh != null) {
+        if (isValidCachedVisibleNetworks() || sOngoingRefresh) {
             return;
         }
-        sOngoingRefresh = new AsyncTask<Void, Void, VisibleNetworks>() {
-            @Override
-            protected VisibleNetworks doInBackground(Void... params) {
-                VisibleNetworks visibleNetworks = null;
-                try {
-                    // Include all visible wifis and cells.
-                    visibleNetworks = PlatformNetworksManager.computeVisibleNetworks(
-                            context, true /* includeAllVisibleNotConnectedNetworks */);
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to get the visible networks. Error: ", e.toString());
-                }
-                return visibleNetworks;
-            }
 
-            @Override
-            protected void onPostExecute(VisibleNetworks visibleNetworks) {
-                sOngoingRefresh = null;
-                setCachedVisibleNetworks(visibleNetworks);
-            }
-        };
-        sOngoingRefresh.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+        sOngoingRefresh = true;
+        PlatformNetworksManager.computeVisibleNetworks(
+                context, VisibleNetworksTracker::setCachedVisibleNetworks);
     }
 
     @Nullable
@@ -116,6 +95,7 @@ class VisibleNetworksTracker {
 
     private static void setCachedVisibleNetworks(VisibleNetworks visibleNetworks) {
         ThreadUtils.assertOnUiThread();
+        sOngoingRefresh = false;
         sVisibleNetworks = visibleNetworks;
         sVisibleNetworksTime = SystemClock.elapsedRealtime();
     }

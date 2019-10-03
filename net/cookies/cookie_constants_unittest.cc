@@ -33,8 +33,31 @@ TEST(CookieConstantsTest, TestCookiePriority) {
   // Unrecognized tokens are interpreted as COOKIE_PRIORITY_DEFAULT.
   const char* const bad_tokens[] = {
     "", "lo", "lowerest", "high ", " high", "0"};
-  for (size_t i = 0; i < arraysize(bad_tokens); ++i) {
-    EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, StringToCookiePriority(bad_tokens[i]));
+  for (const auto* bad_token : bad_tokens) {
+    EXPECT_EQ(COOKIE_PRIORITY_DEFAULT, StringToCookiePriority(bad_token));
+  }
+}
+
+TEST(CookieConstantsTest, TestCookieSameSite) {
+  // Test case insensitivity
+  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, StringToCookieSameSite("None"));
+  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, StringToCookieSameSite("none"));
+  EXPECT_EQ(CookieSameSite::NO_RESTRICTION, StringToCookieSameSite("NONE"));
+  EXPECT_EQ(CookieSameSite::LAX_MODE, StringToCookieSameSite("Lax"));
+  EXPECT_EQ(CookieSameSite::LAX_MODE, StringToCookieSameSite("LAX"));
+  EXPECT_EQ(CookieSameSite::LAX_MODE, StringToCookieSameSite("lAx"));
+  EXPECT_EQ(CookieSameSite::STRICT_MODE, StringToCookieSameSite("Strict"));
+  EXPECT_EQ(CookieSameSite::STRICT_MODE, StringToCookieSameSite("STRICT"));
+  EXPECT_EQ(CookieSameSite::STRICT_MODE, StringToCookieSameSite("sTrIcT"));
+  EXPECT_EQ(CookieSameSite::EXTENDED_MODE, StringToCookieSameSite("extended"));
+  EXPECT_EQ(CookieSameSite::EXTENDED_MODE, StringToCookieSameSite("EXTENDED"));
+  EXPECT_EQ(CookieSameSite::EXTENDED_MODE, StringToCookieSameSite("ExtenDED"));
+
+  // Unrecognized tokens are interpreted as UNSPECIFIED.
+  const char* const bad_tokens[] = {"",          "foo",   "none ",
+                                    "strictest", " none", "0"};
+  for (const auto* bad_token : bad_tokens) {
+    EXPECT_EQ(CookieSameSite::UNSPECIFIED, StringToCookieSameSite(bad_token));
   }
 }
 

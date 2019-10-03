@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +5,8 @@
 '''Collections of messages and their translations, called cliques.  Also
 collections of cliques (uber-cliques).
 '''
+
+from __future__ import print_function
 
 import re
 import types
@@ -207,10 +208,12 @@ class UberClique(object):
     '''
     def Callback(id, structure):
       if id not in self.cliques_:
-        if debug: print "Ignoring translation #%s" % id
+        if debug:
+          print("Ignoring translation #%s" % id)
         return
 
-      if debug: print "Adding translation #%s" % id
+      if debug:
+        print("Adding translation #%s" % id)
 
       # We fetch placeholder information from the original message (the XTB file
       # only contains placeholder names).
@@ -469,8 +472,8 @@ class MessageClique(object):
 
     original = self.MessageForLanguage(self.source_language, False)
     if len(original.GetPlaceholders()) != len(translation.GetPlaceholders()):
-      print ("ERROR: '%s' translation of message id %s does not match" %
-             (language, translation.GetId()))
+      print("ERROR: '%s' translation of message id %s does not match" %
+            (language, translation.GetId()))
       assert False
 
     transl_msg = tclib.Translation(id=self.GetId(),
@@ -479,8 +482,7 @@ class MessageClique(object):
 
     if (self.custom_type and
         not self.custom_type.ValidateAndModify(language, transl_msg)):
-      print "WARNING: %s translation failed validation: %s" % (
-        language, transl_msg.GetId())
+      print("WARNING: %s translation failed validation: %s" %
+            (language, transl_msg.GetId()))
 
     self.clique[language] = transl_msg
-

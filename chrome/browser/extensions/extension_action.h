@@ -53,7 +53,6 @@ class ExtensionAction {
   static const int kDefaultTabId;
 
   ExtensionAction(const extensions::Extension& extension,
-                  extensions::ActionInfo::Type action_type,
                   const extensions::ActionInfo& manifest_data);
   ~ExtensionAction();
 
@@ -65,9 +64,9 @@ class ExtensionAction {
     return action_type_;
   }
 
-  // action id -- only used with legacy page actions API
-  std::string id() const { return id_; }
-  void set_id(const std::string& id) { id_ = id; }
+  extensions::ActionInfo::DefaultState default_state() const {
+    return default_state_;
+  }
 
   // Set the url which the popup will load when the user clicks this action's
   // icon.  Setting an empty URL will disable the popup for a given tab.
@@ -165,7 +164,7 @@ class ExtensionAction {
     if (const bool* tab_is_visible = FindOrNull(&is_visible_, tab_id))
       return *tab_is_visible;
 
-    if (base::ContainsKey(declarative_show_count_, tab_id))
+    if (base::Contains(declarative_show_count_, tab_id))
       return true;
 
     if (const bool* default_is_visible =
@@ -184,6 +183,9 @@ class ExtensionAction {
   // Returns the image to use as the default icon for the action. Can only be
   // called after SetDefaultIconImage().
   gfx::Image GetDefaultIconImage() const;
+
+  // Returns the placeholder image for the extension.
+  gfx::Image GetPlaceholderIconImage() const;
 
   // Determine whether or not the ExtensionAction has a value set for the given
   // |tab_id| for each property.
@@ -253,6 +255,8 @@ class ExtensionAction {
   const std::string extension_name_;
 
   const extensions::ActionInfo::Type action_type_;
+  // The default state of the action.
+  const extensions::ActionInfo::DefaultState default_state_;
 
   // Each of these data items can have both a global state (stored with the key
   // kDefaultTabId), or tab-specific state (stored with the tab_id as the key).
@@ -272,7 +276,7 @@ class ExtensionAction {
   // those up to be called in the right order.
 
   // Maps tab_id to the number of active (applied-but-not-reverted)
-  // declarativeContent.ShowPageAction actions.
+  // declarativeContent.ShowAction actions.
   std::map<int, int> declarative_show_count_;
 
   // declarative_icon_[tab_id][declarative_rule_priority] is a vector of icon

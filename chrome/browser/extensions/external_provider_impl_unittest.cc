@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -131,7 +132,7 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
     }
     if (url.path() == kAppPath) {
       base::FilePath test_data_dir;
-      PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
+      base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
       std::string contents;
       base::ReadFileToString(
           test_data_dir.AppendASCII("extensions/dummyiap.crx"),

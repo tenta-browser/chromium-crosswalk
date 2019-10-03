@@ -20,7 +20,7 @@ FakePowerInstance::SuspendCallback FakePowerInstance::GetSuspendCallback() {
 }
 
 void FakePowerInstance::InitDeprecated(mojom::PowerHostPtr host_ptr) {
-  Init(std::move(host_ptr), base::BindOnce(&base::DoNothing));
+  Init(std::move(host_ptr), base::DoNothing());
 }
 
 void FakePowerInstance::Init(mojom::PowerHostPtr host_ptr,
@@ -44,6 +44,10 @@ void FakePowerInstance::Resume() {
 
 void FakePowerInstance::UpdateScreenBrightnessSettings(double percent) {
   screen_brightness_ = percent;
+}
+
+void FakePowerInstance::PowerSupplyInfoChanged() {
+  num_power_supply_info_++;
 }
 
 }  // namespace arc

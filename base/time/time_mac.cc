@@ -19,8 +19,9 @@
 #include "base/mac/mach_logging.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_mach_port.h"
-#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
+#include "base/time/time_override.h"
 #include "build/build_config.h"
 
 #if defined(OS_IOS)
@@ -78,11 +79,12 @@ int64_t ComputeCurrentTicks() {
   struct timeval boottime;
   int mib[2] = {CTL_KERN, KERN_BOOTTIME};
   size_t size = sizeof(boottime);
-  int kr = sysctl(mib, arraysize(mib), &boottime, &size, nullptr, 0);
+  int kr = sysctl(mib, base::size(mib), &boottime, &size, nullptr, 0);
   DCHECK_EQ(KERN_SUCCESS, kr);
   base::TimeDelta time_difference =
-      base::Time::Now() - (base::Time::FromTimeT(boottime.tv_sec) +
-                           base::TimeDelta::FromMicroseconds(boottime.tv_usec));
+      base::subtle::TimeNowIgnoringOverride() -
+      (base::Time::FromTimeT(boottime.tv_sec) +
+       base::TimeDelta::FromMicroseconds(boottime.tv_usec));
   return time_difference.InMicroseconds();
 #else
   // mach_absolute_time is it when it comes to ticks on the Mac.  Other calls
@@ -97,17 +99,19 @@ int64_t ComputeThreadTicks() {
   NOTREACHED();
   return 0;
 #else
-  base::mac::ScopedMachSendRight thread(mach_thread_self());
-  mach_msg_type_number_t thread_info_count = THREAD_BASIC_INFO_COUNT;
-  thread_basic_info_data_t thread_info_data;
-
-  if (thread.get() == MACH_PORT_NULL) {
-    DLOG(ERROR) << "Failed to get mach_thread_self()";
+  // The pthreads library keeps a cached reference to the thread port, which
+  // does not have to be released like mach_thread_self() does.
+  mach_port_t thread_port = pthread_mach_thread_np(pthread_self());
+  if (thread_port == MACH_PORT_NULL) {
+    DLOG(ERROR) << "Failed to get pthread_mach_thread_np()";
     return 0;
   }
 
+  mach_msg_type_number_t thread_info_count = THREAD_BASIC_INFO_COUNT;
+  thread_basic_info_data_t thread_info_data;
+
   kern_return_t kr = thread_info(
-      thread.get(),
+      thread_port,
       THREAD_BASIC_INFO,
       reinterpret_cast<thread_info_t>(&thread_info_data),
       &thread_info_count);
@@ -135,10 +139,16 @@ namespace base {
 
 // Time -----------------------------------------------------------------------
 
-// static
-Time Time::Now() {
-  return FromCFAbsoluteTime(CFAbsoluteTimeGetCurrent());
+namespace subtle {
+Time TimeNowIgnoringOverride() {
+  return Time::FromCFAbsoluteTime(CFAbsoluteTimeGetCurrent());
 }
+
+Time TimeNowFromSystemTimeIgnoringOverride() {
+  // Just use TimeNowIgnoringOverride() because it returns the system time.
+  return TimeNowIgnoringOverride();
+}
+}  // namespace subtle
 
 // static
 Time Time::FromCFAbsoluteTime(CFAbsoluteTime t) {
@@ -163,12 +173,6 @@ CFAbsoluteTime Time::ToCFAbsoluteTime() const {
   return (static_cast<CFAbsoluteTime>(us_ - kTimeTToMicrosecondsOffset) /
           kMicrosecondsPerSecond) -
          kCFAbsoluteTimeIntervalSince1970;
-}
-
-// static
-Time Time::NowFromSystemTime() {
-  // Just use Now() because Now() returns the system time.
-  return Now();
 }
 
 // Note: These implementations of Time::FromExploded() and Time::Explode() are
@@ -269,10 +273,11 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
 
 // TimeTicks ------------------------------------------------------------------
 
-// static
-TimeTicks TimeTicks::Now() {
-  return TimeTicks(ComputeCurrentTicks());
+namespace subtle {
+TimeTicks TimeTicksNowIgnoringOverride() {
+  return TimeTicks() + TimeDelta::FromMicroseconds(ComputeCurrentTicks());
 }
+}  // namespace subtle
 
 // static
 bool TimeTicks::IsHighResolution() {
@@ -300,9 +305,12 @@ TimeTicks::Clock TimeTicks::GetClock() {
 #endif  // defined(OS_IOS)
 }
 
-// static
-ThreadTicks ThreadTicks::Now() {
-  return ThreadTicks(ComputeThreadTicks());
+// ThreadTicks ----------------------------------------------------------------
+
+namespace subtle {
+ThreadTicks ThreadTicksNowIgnoringOverride() {
+  return ThreadTicks() + TimeDelta::FromMicroseconds(ComputeThreadTicks());
 }
+}  // namespace subtle
 
 }  // namespace base

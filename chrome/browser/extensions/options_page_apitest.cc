@@ -4,8 +4,8 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/extensions/test_extension_dir.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
@@ -16,6 +16,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/value_builder.h"
 #include "extensions/test/extension_test_message_listener.h"
+#include "extensions/test/test_extension_dir.h"
 
 namespace extensions {
 
@@ -42,19 +43,18 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, DISABLED_OptionsPage) {
   // Go to the Extension Settings page and click the Options button.
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIExtensionsURL));
   TabStripModel* tab_strip = browser()->tab_strip_model();
-  ui_test_utils::WindowedTabAddedNotificationObserver observer(
-      content::NotificationService::AllSources());
+  ui_test_utils::TabAddedWaiter tab_add(browser());
   // NOTE: Currently the above script needs to execute in an iframe. The
   // selector for that iframe may break if the layout of the extensions
   // page changes.
   content::RenderFrameHost* frame = content::FrameMatchingPredicate(
       tab_strip->GetActiveWebContents(),
       base::Bind(&content::FrameHasSourceUrl,
-                 GURL(chrome::kChromeUIExtensionsFrameURL)));
+                 GURL(chrome::kChromeUIExtensionsURL)));
   EXPECT_TRUE(content::ExecuteScript(
       frame,
       kScriptClickOptionButton));
-  observer.Wait();
+  tab_add.Wait();
   EXPECT_EQ(2, tab_strip->count());
 
   EXPECT_EQ(extension->GetResourceURL("options.html"),

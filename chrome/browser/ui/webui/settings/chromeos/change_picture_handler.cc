@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/settings/chromeos/change_picture_handler.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/base64.h"
@@ -11,7 +12,9 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -38,8 +41,8 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/url_constants.h"
-#include "media/audio/sounds/sounds_manager.h"
 #include "net/base/data_url.h"
+#include "services/audio/public/cpp/sounds/sounds_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -85,7 +88,7 @@ ChangePictureHandler::ChangePictureHandler()
       user_manager_observer_(this),
       camera_observer_(this) {
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-  media::SoundsManager* manager = media::SoundsManager::Get();
+  audio::SoundsManager* manager = audio::SoundsManager::Get();
   manager->Initialize(SOUND_OBJECT_DELETE,
                       bundle.GetRawDataResource(IDR_SOUND_OBJECT_DELETE_WAV));
   manager->Initialize(SOUND_CAMERA_SNAP,
@@ -99,25 +102,27 @@ ChangePictureHandler::~ChangePictureHandler() {
 
 void ChangePictureHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "chooseFile", base::Bind(&ChangePictureHandler::HandleChooseFile,
-                               base::Unretained(this)));
+      "chooseFile", base::BindRepeating(&ChangePictureHandler::HandleChooseFile,
+                                        base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "photoTaken", base::Bind(&ChangePictureHandler::HandlePhotoTaken,
-                               base::Unretained(this)));
+      "photoTaken", base::BindRepeating(&ChangePictureHandler::HandlePhotoTaken,
+                                        base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "discardPhoto", base::Bind(&ChangePictureHandler::HandleDiscardPhoto,
-                                 base::Unretained(this)));
+      "discardPhoto",
+      base::BindRepeating(&ChangePictureHandler::HandleDiscardPhoto,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "onChangePicturePageInitialized",
-      base::Bind(&ChangePictureHandler::HandlePageInitialized,
-                 base::Unretained(this)));
+      base::BindRepeating(&ChangePictureHandler::HandlePageInitialized,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "selectImage", base::Bind(&ChangePictureHandler::HandleSelectImage,
-                                base::Unretained(this)));
+      "selectImage",
+      base::BindRepeating(&ChangePictureHandler::HandleSelectImage,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestSelectedImage",
-      base::Bind(&ChangePictureHandler::HandleRequestSelectedImage,
-                 base::Unretained(this)));
+      base::BindRepeating(&ChangePictureHandler::HandleRequestSelectedImage,
+                          base::Unretained(this)));
 }
 
 void ChangePictureHandler::OnJavascriptAllowed() {
@@ -146,31 +151,31 @@ void ChangePictureHandler::HandleChooseFile(const base::ListValue* args) {
       std::make_unique<ChromeSelectFilePolicy>(web_ui()->GetWebContents()));
 
   base::FilePath downloads_path;
-  if (!PathService::Get(chrome::DIR_DEFAULT_DOWNLOADS, &downloads_path)) {
+  if (!base::PathService::Get(chrome::DIR_DEFAULT_DOWNLOADS, &downloads_path)) {
     NOTREACHED();
     return;
   }
 
   // Static so we initialize it only once.
-  CR_DEFINE_STATIC_LOCAL(ui::SelectFileDialog::FileTypeInfo, file_type_info,
-                         (GetUserImageFileTypeInfo()));
+  static base::NoDestructor<ui::SelectFileDialog::FileTypeInfo> file_type_info(
+      GetUserImageFileTypeInfo());
 
   select_file_dialog_->SelectFile(
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       l10n_util::GetStringUTF16(IDS_DOWNLOAD_TITLE), downloads_path,
-      &file_type_info, 0, FILE_PATH_LITERAL(""), GetBrowserWindow(), NULL);
+      file_type_info.get(), 0, FILE_PATH_LITERAL(""), GetBrowserWindow(), NULL);
 }
 
 void ChangePictureHandler::HandleDiscardPhoto(const base::ListValue* args) {
   DCHECK(args->empty());
   AccessibilityManager::Get()->PlayEarcon(
-      SOUND_OBJECT_DELETE, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
+      SOUND_OBJECT_DELETE, PlaySoundOption::ONLY_IF_SPOKEN_FEEDBACK_ENABLED);
 }
 
 void ChangePictureHandler::HandlePhotoTaken(const base::ListValue* args) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   AccessibilityManager::Get()->PlayEarcon(
-      SOUND_CAMERA_SNAP, PlaySoundOption::SPOKEN_FEEDBACK_ENABLED);
+      SOUND_CAMERA_SNAP, PlaySoundOption::ONLY_IF_SPOKEN_FEEDBACK_ENABLED);
 
   std::string image_url;
   if (!args || args->GetSize() != 1 || !args->GetString(0, &image_url))
@@ -180,7 +185,7 @@ void ChangePictureHandler::HandlePhotoTaken(const base::ListValue* args) {
   std::string raw_data;
   base::StringPiece url(image_url);
   const char kDataUrlPrefix[] = "data:image/png;base64,";
-  const size_t kDataUrlPrefixLength = arraysize(kDataUrlPrefix) - 1;
+  const size_t kDataUrlPrefixLength = base::size(kDataUrlPrefix) - 1;
   if (!url.starts_with(kDataUrlPrefix) ||
       !base::Base64Decode(url.substr(kDataUrlPrefixLength), &raw_data)) {
     LOG(WARNING) << "Invalid image URL";
@@ -298,10 +303,16 @@ void ChangePictureHandler::HandleSelectImage(const base::ListValue* args) {
   if (image_type == "old") {
     // Previous image (from camera or manually uploaded) re-selected.
     DCHECK(!previous_image_.isNull());
-    std::unique_ptr<user_manager::UserImage> user_image =
-        base::MakeUnique<user_manager::UserImage>(
-            previous_image_, previous_image_bytes_, previous_image_format_);
-    user_image->MarkAsSafe();
+    std::unique_ptr<user_manager::UserImage> user_image;
+    if (previous_image_format_ == user_manager::UserImage::FORMAT_PNG &&
+        previous_image_bytes_) {
+      user_image = std::make_unique<user_manager::UserImage>(
+          previous_image_, previous_image_bytes_, previous_image_format_);
+      user_image->MarkAsSafe();
+    } else {
+      user_image = user_manager::UserImage::CreateAndEncode(
+          previous_image_, user_manager::UserImage::FORMAT_JPEG);
+    }
     user_image_manager->SaveUserImage(std::move(user_image));
 
     UMA_HISTOGRAM_EXACT_LINEAR("UserImage.ChangeChoice",
@@ -375,7 +386,7 @@ void ChangePictureHandler::SetImageFromCamera(
     const gfx::ImageSkia& photo,
     base::RefCountedBytes* photo_bytes) {
   std::unique_ptr<user_manager::UserImage> user_image =
-      base::MakeUnique<user_manager::UserImage>(
+      std::make_unique<user_manager::UserImage>(
           photo, photo_bytes, user_manager::UserImage::FORMAT_PNG);
   user_image->MarkAsSafe();
   ChromeUserManager::Get()

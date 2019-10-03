@@ -9,9 +9,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process_handle.h"
 #include "base/timer/timer.h"
-#include "services/resource_coordinator/public/interfaces/memory_instrumentation/memory_instrumentation.mojom.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/global_memory_dump.h"
 
-namespace profiling {
+namespace heap_profiling {
 
 class ProfilingProcessHost;
 
@@ -31,6 +31,12 @@ class BackgroundProfilingTriggers {
   // Register a periodic timer calling |PerformMemoryUsageChecks|.
   void StartTimer();
 
+ protected:
+  // High water mark for private footprint of each profiled pid at time of
+  // upload. Results are stored in |kb|.
+  // Exposed to subclasses for testing.
+  std::map<base::ProcessId, uint32_t> pmf_at_last_upload_;
+
  private:
   friend class FakeBackgroundProfilingTriggers;
   FRIEND_TEST_ALL_PREFIXES(BackgroundProfilingTriggersTest,
@@ -40,6 +46,11 @@ class BackgroundProfilingTriggers {
 
   // Returns true if trace uploads are allowed.
   bool IsAllowedToUpload() const;
+
+  // Returns true if a control report should be sent for the given
+  // |content_process_type|.
+  // Virtual for testing.
+  virtual bool ShouldTriggerControlReport(int content_process_type) const;
 
   // Returns true if |private_footprint_kb| is large enough to trigger
   // a report for the given |content_process_type|.
@@ -53,22 +64,23 @@ class BackgroundProfilingTriggers {
   // checks on memory usage and trigger a memory report with
   // |TriggerMemoryReportForProcess| if needed.
   void OnReceivedMemoryDump(
+      std::vector<base::ProcessId> profiled_pids,
       bool success,
-      memory_instrumentation::mojom::GlobalMemoryDumpPtr ptr);
+      std::unique_ptr<memory_instrumentation::GlobalMemoryDump> dump);
 
   // Virtual for testing. Called when a memory report needs to be send.
-  virtual void TriggerMemoryReport();
+  virtual void TriggerMemoryReport(std::string trigger_name);
 
   ProfilingProcessHost* host_;
 
   // Timer to periodically check memory consumption and upload a slow-report.
   base::RepeatingTimer timer_;
 
-  base::WeakPtrFactory<BackgroundProfilingTriggers> weak_ptr_factory_;
+  base::WeakPtrFactory<BackgroundProfilingTriggers> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundProfilingTriggers);
 };
 
-}  // namespace profiling
+}  // namespace heap_profiling
 
 #endif  // CHROME_BROWSER_PROFILING_HOST_BACKGROUND_PROFILING_TRIGGERS_H_

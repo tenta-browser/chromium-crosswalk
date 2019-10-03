@@ -6,14 +6,16 @@
 #define MEDIA_MOJO_INTERFACES_VIDEO_FRAME_STRUCT_TRAITS_H_
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
+#include "base/values.h"
 #include "gpu/ipc/common/mailbox_holder_struct_traits.h"
+#include "gpu/ipc/common/vulkan_ycbcr_info_mojom_traits.h"
 #include "media/base/ipc/media_param_traits_macros.h"
 #include "media/base/video_frame.h"
 #include "media/mojo/interfaces/media_types.mojom.h"
-#include "mojo/common/common_custom_types_struct_traits.h"
-#include "mojo/common/values_struct_traits.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
+#include "ui/gfx/ipc/color/gfx_param_traits.h"
 
 namespace mojo {
 
@@ -53,12 +55,24 @@ struct StructTraits<media::mojom::VideoFrameDataView,
     return input->timestamp();
   }
 
+  // TODO(hubbe): Return const ref when VideoFrame::ColorSpace()
+  // returns const ref.
+  static gfx::ColorSpace color_space(
+      const scoped_refptr<media::VideoFrame>& input) {
+    return input->ColorSpace();
+  }
+
+  static const base::Optional<gpu::VulkanYCbCrInfo>& ycbcr_info(
+      const scoped_refptr<media::VideoFrame>& input) {
+    return input->ycbcr_info();
+  }
+
   static media::mojom::VideoFrameDataPtr data(
       const scoped_refptr<media::VideoFrame>& input);
 
-  static std::unique_ptr<base::DictionaryValue> metadata(
+  static const base::Value& metadata(
       const scoped_refptr<media::VideoFrame>& input) {
-    return input->metadata()->CopyInternalValues();
+    return input->metadata()->GetInternalValues();
   }
 
   static bool Read(media::mojom::VideoFrameDataView input,

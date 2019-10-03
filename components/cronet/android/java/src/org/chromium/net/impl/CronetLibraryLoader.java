@@ -9,10 +9,12 @@ import android.os.ConditionVariable;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.Process;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.net.NetworkChangeNotifier;
 
@@ -31,9 +33,9 @@ public class CronetLibraryLoader {
     // the global singleton NetworkChangeNotifier live on it and are never killed.
     private static final HandlerThread sInitThread = new HandlerThread("CronetInit");
     // Has library loading commenced?  Setting guarded by sLoadLock.
-    private static volatile boolean sLibraryLoaded = false;
+    private static volatile boolean sLibraryLoaded = IntegratedModeState.INTEGRATED_MODE_ENABLED;
     // Has ensureInitThreadInitialized() completed?
-    private static volatile boolean sInitThreadInitDone = false;
+    private static volatile boolean sInitThreadInitDone;
     // Block calling native methods until this ConditionVariable opens to indicate loadLibrary()
     // is completed and native methods have been registered.
     private static final ConditionVariable sWaitForLibLoad = new ConditionVariable();
@@ -46,7 +48,10 @@ public class CronetLibraryLoader {
             Context applicationContext, final CronetEngineBuilderImpl builder) {
         synchronized (sLoadLock) {
             if (!sInitThreadInitDone) {
-                ContextUtils.initApplicationContext(applicationContext);
+                if (!IntegratedModeState.INTEGRATED_MODE_ENABLED) {
+                    // In integrated mode, application context should be initialized by the host.
+                    ContextUtils.initApplicationContext(applicationContext);
+                }
                 if (!sInitThread.isAlive()) {
                     sInitThread.start();
                 }
@@ -94,15 +99,19 @@ public class CronetLibraryLoader {
         if (sInitThreadInitDone) {
             return;
         }
-        NetworkChangeNotifier.init();
-        // Registers to always receive network notifications. Note
-        // that this call is fine for Cronet because Cronet
-        // embedders do not have API access to create network change
-        // observers. Existing observers in the net stack do not
-        // perform expensive work.
-        NetworkChangeNotifier.registerToReceiveNotificationsAlways();
-        // Wait for loadLibrary() to complete so JNI is registered.
-        sWaitForLibLoad.block();
+        if (IntegratedModeState.INTEGRATED_MODE_ENABLED) {
+            assert NetworkChangeNotifier.isInitialized();
+        } else {
+            NetworkChangeNotifier.init();
+            // Registers to always receive network notifications. Note
+            // that this call is fine for Cronet because Cronet
+            // embedders do not have API access to create network change
+            // observers. Existing observers in the net stack do not
+            // perform expensive work.
+            NetworkChangeNotifier.registerToReceiveNotificationsAlways();
+            // Wait for loadLibrary() to complete so JNI is registered.
+            sWaitForLibLoad.block();
+        }
         assert sLibraryLoaded;
         // registerToReceiveNotificationsAlways() is called before the native
         // NetworkChangeNotifierAndroid is created, so as to avoid receiving
@@ -121,6 +130,54 @@ public class CronetLibraryLoader {
         } else {
             new Handler(sInitThread.getLooper()).post(r);
         }
+    }
+
+    /**
+     * Called from native library to get default user agent constructed
+     * using application context. May be called on any thread.
+     *
+     * Expects that ContextUtils.initApplicationContext() was called already
+     * either by some testing framework or an embedder constructing a Java
+     * CronetEngine via CronetEngine.Builder.build().
+     */
+    @CalledByNative
+    private static String getDefaultUserAgent() {
+        return UserAgent.from(ContextUtils.getApplicationContext());
+    }
+
+    /**
+     * Called from native library to ensure that library is initialized.
+     * May be called on any thread, but initialization is performed on
+     * this.sInitThread.
+     *
+     * Expects that ContextUtils.initApplicationContext() was called already
+     * either by some testing framework or an embedder constructing a Java
+     * CronetEngine via CronetEngine.Builder.build().
+     *
+     * TODO(mef): In the long term this should be changed to some API with
+     * lower overhead like CronetEngine.Builder.loadNativeCronet().
+     */
+    @CalledByNative
+    private static void ensureInitializedFromNative() {
+        // Called by native, so native library is already loaded.
+        // It is possible that loaded native library is not regular
+        // "libcronet.xyz.so" but test library that statically links
+        // native code like "libcronet_unittests.so".
+        synchronized (sLoadLock) {
+            sLibraryLoaded = true;
+            sWaitForLibLoad.open();
+        }
+
+        // The application context must already be initialized
+        // using ContextUtils.initApplicationContext().
+        Context applicationContext = ContextUtils.getApplicationContext();
+        assert applicationContext != null;
+        ensureInitialized(applicationContext, null);
+    }
+
+    @CalledByNative
+    private static void setNetworkThreadPriorityOnNetworkThread(int priority) {
+        Process.setThreadPriority(priority);
     }
 
     // Native methods are implemented in cronet_library_loader.cc.

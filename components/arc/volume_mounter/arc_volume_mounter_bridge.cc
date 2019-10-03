@@ -5,12 +5,23 @@
 #include "components/arc/volume_mounter/arc_volume_mounter_bridge.h"
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/disks/disk.h"
 #include "chromeos/disks/disk_mount_manager.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/arc_features.h"
+#include "components/arc/arc_prefs.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "components/prefs/pref_service.h"
+#include "components/user_prefs/user_prefs.h"
+#include "content/public/browser/browser_context.h"
+#include "third_party/re2/src/re2/re2.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 using chromeos::disks::DiskMountManager;
 
@@ -18,14 +29,12 @@ namespace arc {
 
 namespace {
 
-// Sends MountEvents of all existing MountPoints in cros-disks.
-void SendAllMountEvents(ArcVolumeMounterBridge* bridge) {
-  for (const auto& keyValue : DiskMountManager::GetInstance()->mount_points()) {
-    bridge->OnMountEvent(DiskMountManager::MountEvent::MOUNTING,
-                         chromeos::MountError::MOUNT_ERROR_NONE,
-                         keyValue.second);
-  }
-}
+// TODO(crbug.com/929031): Move MyFiles constants to a common place.
+constexpr char kMyFilesPath[] = "/home/chronos/user/MyFiles";
+// Dummy UUID for MyFiles volume.
+constexpr char kMyFilesUuid[] = "0000000000000000000000000000CAFEF00D2019";
+// Dummy UUID for testing.
+constexpr char kDummyUuid[] = "00000000000000000000000000000000DEADBEEF";
 
 // Singleton factory for ArcVolumeMounterBridge.
 class ArcVolumeMounterBridgeFactory
@@ -54,63 +63,128 @@ ArcVolumeMounterBridge* ArcVolumeMounterBridge::GetForBrowserContext(
   return ArcVolumeMounterBridgeFactory::GetForBrowserContext(context);
 }
 
+// static
+ArcVolumeMounterBridge* ArcVolumeMounterBridge::GetForBrowserContextForTesting(
+    content::BrowserContext* context) {
+  return ArcVolumeMounterBridgeFactory::GetForBrowserContextForTesting(context);
+}
+
 ArcVolumeMounterBridge::ArcVolumeMounterBridge(content::BrowserContext* context,
                                                ArcBridgeService* bridge_service)
-    : arc_bridge_service_(bridge_service) {
+    : arc_bridge_service_(bridge_service),
+      pref_service_(user_prefs::UserPrefs::Get(context)),
+      weak_ptr_factory_(this) {
+  DCHECK(pref_service_);
   arc_bridge_service_->volume_mounter()->AddObserver(this);
+  arc_bridge_service_->volume_mounter()->SetHost(this);
   DCHECK(DiskMountManager::GetInstance());
   DiskMountManager::GetInstance()->AddObserver(this);
+
+  change_registerar_.Init(pref_service_);
+  // Start monitoring |kArcHasAccessToRemovableMedia| changes. Note that the
+  // registerar automatically stops monitoring the pref in its dtor.
+  change_registerar_.Add(
+      prefs::kArcHasAccessToRemovableMedia,
+      base::BindRepeating(&ArcVolumeMounterBridge::OnPrefChanged,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 ArcVolumeMounterBridge::~ArcVolumeMounterBridge() {
   DiskMountManager::GetInstance()->RemoveObserver(this);
+  arc_bridge_service_->volume_mounter()->SetHost(nullptr);
   arc_bridge_service_->volume_mounter()->RemoveObserver(this);
 }
 
+// Sends MountEvents of all existing MountPoints in cros-disks.
+void ArcVolumeMounterBridge::SendAllMountEvents() {
+  if (base::FeatureList::IsEnabled(chromeos::features::kMyFilesVolume))
+    SendMountEventForMyFiles();
+
+  for (const auto& keyValue : DiskMountManager::GetInstance()->mount_points()) {
+    OnMountEvent(DiskMountManager::MountEvent::MOUNTING,
+                 chromeos::MountError::MOUNT_ERROR_NONE, keyValue.second);
+  }
+}
+
+// Notifies ARC of MyFiles volume by sending a mount event.
+void ArcVolumeMounterBridge::SendMountEventForMyFiles() {
+  mojom::VolumeMounterInstance* volume_mounter_instance =
+      ARC_GET_INSTANCE_FOR_METHOD(arc_bridge_service_->volume_mounter(),
+                                  OnMountEvent);
+
+  if (!volume_mounter_instance)
+    return;
+
+  std::string device_label =
+      l10n_util::GetStringUTF8(IDS_FILE_BROWSER_MY_FILES_ROOT_LABEL);
+
+  // TODO(niwa): Add a new DeviceType enum value for MyFiles.
+  chromeos::DeviceType device_type = chromeos::DeviceType::DEVICE_TYPE_SD;
+
+  volume_mounter_instance->OnMountEvent(mojom::MountPointInfo::New(
+      DiskMountManager::MOUNTING, kMyFilesPath, kMyFilesPath, kMyFilesUuid,
+      device_label, device_type));
+}
+
+bool ArcVolumeMounterBridge::HasAccessToRemovableMedia() const {
+  DCHECK(pref_service_);
+  // If the UI is not enabled, allow the access.
+  if (!base::FeatureList::IsEnabled(arc::kUsbStorageUIFeature))
+    return true;
+  return pref_service_->GetBoolean(prefs::kArcHasAccessToRemovableMedia);
+}
+
+void ArcVolumeMounterBridge::OnPrefChanged() {
+  if (HasAccessToRemovableMedia()) {
+    // Mount everything again. Mounting the same disk (e.g. MyFiles) again is
+    // allowed and is no-op.
+    SendAllMountEvents();
+    return;
+  }
+  // Unmount everything except for MyFiles.
+  for (const auto& keyValue : DiskMountManager::GetInstance()->mount_points()) {
+    OnMountEvent(DiskMountManager::MountEvent::UNMOUNTING,
+                 chromeos::MountError::MOUNT_ERROR_NONE, keyValue.second);
+  }
+}
+
 void ArcVolumeMounterBridge::OnConnectionReady() {
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::TaskPriority::USER_BLOCKING,
-                            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-                           base::BindOnce(&SendAllMountEvents, this));
-}
-
-void ArcVolumeMounterBridge::OnDiskEvent(
-    chromeos::disks::DiskMountManager::DiskEvent event,
-    const chromeos::disks::DiskMountManager::Disk* disk) {
-  // Ignored. DiskEvents will be maintained in Vold during MountEvents.
-}
-
-void ArcVolumeMounterBridge::OnDeviceEvent(
-    chromeos::disks::DiskMountManager::DeviceEvent event,
-    const std::string& device_path) {
-  // Ignored. ARC doesn't care about events other than Disk and Mount events.
-}
-
-void ArcVolumeMounterBridge::OnFormatEvent(
-    chromeos::disks::DiskMountManager::FormatEvent event,
-    chromeos::FormatError error_code,
-    const std::string& device_path) {
-  // Ignored. ARC doesn't care about events other than Disk and Mount events.
-}
-
-void ArcVolumeMounterBridge::OnRenameEvent(
-    chromeos::disks::DiskMountManager::RenameEvent event,
-    chromeos::RenameError error_code,
-    const std::string& device_path) {
-  // Ignored. ARC doesn't care about events other than Disk and Mount events.
+  // Deferring the SendAllMountEvents as a task to current thread to not
+  // block the mojo request since SendAllMountEvents might take non trivial
+  // amount of time.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ArcVolumeMounterBridge::SendAllMountEvents,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ArcVolumeMounterBridge::OnMountEvent(
     DiskMountManager::MountEvent event,
     chromeos::MountError error_code,
-    const chromeos::disks::DiskMountManager::MountPointInfo& mount_info) {
+    const DiskMountManager::MountPointInfo& mount_info) {
+  // ArcVolumeMounter is limited for local storage, as Android's StorageManager
+  // volume concept relies on assumption that it is local filesystem. Hence,
+  // special volumes like DriveFS should not come through this path.
+  if (RE2::FullMatch(mount_info.source_path, "[a-z]+://.*")) {
+    DVLOG(1) << "Ignoring mount event for source_path: "
+             << mount_info.source_path;
+    return;
+  }
   if (error_code != chromeos::MountError::MOUNT_ERROR_NONE) {
     DVLOG(1) << "Error " << error_code << "occurs during MountEvent " << event;
     return;
   }
 
+  // Do not propagate MOUNTING event to ARC when the media sharing setting is
+  // turned off. The other event (i.e. UNMOUNTING) should still go through.
+  if (event == DiskMountManager::MountEvent::MOUNTING &&
+      !HasAccessToRemovableMedia()) {
+    VLOG(2) << "Disk at " << mount_info.source_path
+            << " is not allowed to be shared with ARC";
+    return;
+  }
+
   // Get disks informations that are needed by Android MountService.
-  const chromeos::disks::DiskMountManager::Disk* disk =
+  const chromeos::disks::Disk* disk =
       DiskMountManager::GetInstance()->FindDiskBySourcePath(
           mount_info.source_path);
   std::string fs_uuid, device_label;
@@ -124,6 +198,10 @@ void ArcVolumeMounterBridge::OnMountEvent(
     device_label = disk->device_label();
     device_type = disk->device_type();
   } else {
+    // This is needed by ChromeOS autotest (cheets_RemovableMedia) because it
+    // creates a diskless volume (hence, no uuid) and Android expects the volume
+    // to have a uuid.
+    fs_uuid = kDummyUuid;
     DVLOG(1) << "Disk at " << mount_info.source_path
              << " is null during MountEvent " << event;
   }
@@ -138,6 +216,15 @@ void ArcVolumeMounterBridge::OnMountEvent(
   volume_mounter_instance->OnMountEvent(mojom::MountPointInfo::New(
       event, mount_info.source_path, mount_info.mount_path, fs_uuid,
       device_label, device_type));
+}
+
+void ArcVolumeMounterBridge::RequestAllMountPoints() {
+  // Deferring the SendAllMountEvents as a task to current thread to not
+  // block the mojo request since SendAllMountEvents might take non trivial
+  // amount of time.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ArcVolumeMounterBridge::SendAllMountEvents,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 }  // namespace arc

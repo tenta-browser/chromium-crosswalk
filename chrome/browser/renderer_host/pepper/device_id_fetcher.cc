@@ -4,10 +4,11 @@
 
 #include "chrome/browser/renderer_host/pepper/device_id_fetcher.h"
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
@@ -15,13 +16,14 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_ppapi_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "crypto/encryptor.h"
 #include "crypto/random.h"
 #include "crypto/sha2.h"
 #include "ppapi/c/pp_errors.h"
-#include "rlz/features/features.h"
+#include "rlz/buildflags/buildflags.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/cryptohome/system_salt_getter.h"
@@ -74,10 +76,9 @@ bool DeviceIDFetcher::Start(const IDCallback& callback) {
   in_progress_ = true;
   callback_ = callback;
 
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&DeviceIDFetcher::CheckPrefsOnUIThread, this));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&DeviceIDFetcher::CheckPrefsOnUIThread, this));
   return true;
 }
 
@@ -115,9 +116,9 @@ void DeviceIDFetcher::CheckPrefsOnUIThread() {
   std::string salt = profile->GetPrefs()->GetString(prefs::kDRMSalt);
   if (salt.empty()) {
     uint8_t salt_bytes[kSaltLength];
-    crypto::RandBytes(salt_bytes, arraysize(salt_bytes));
+    crypto::RandBytes(salt_bytes, base::size(salt_bytes));
     // Since it will be stored in a string pref, convert it to hex.
-    salt = base::HexEncode(salt_bytes, arraysize(salt_bytes));
+    salt = base::HexEncode(salt_bytes, base::size(salt_bytes));
     profile->GetPrefs()->SetString(prefs::kDRMSalt, salt);
   }
 
@@ -125,9 +126,9 @@ void DeviceIDFetcher::CheckPrefsOnUIThread() {
   // Try the legacy path first for ChromeOS. We pass the new salt in as well
   // in case the legacy id doesn't exist.
   base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
-                           base::Bind(&DeviceIDFetcher::LegacyComputeAsync,
-                                      this, profile->GetPath(), salt));
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+                           base::BindOnce(&DeviceIDFetcher::LegacyComputeAsync,
+                                          this, profile->GetPath(), salt));
 #else
   // Get the machine ID and call ComputeOnUIThread with salt + machine_id.
   GetMachineIDAsync(
@@ -190,20 +191,20 @@ void DeviceIDFetcher::LegacyComputeAsync(const base::FilePath& profile_path,
   }
   // If we didn't find an ID, get the machine ID and call the new code path to
   // generate an ID.
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&GetMachineIDAsync,
-                 base::Bind(&DeviceIDFetcher::ComputeOnUIThread, this, salt)));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(
+          &GetMachineIDAsync,
+          base::Bind(&DeviceIDFetcher::ComputeOnUIThread, this, salt)));
 }
 
 void DeviceIDFetcher::RunCallbackOnIOThread(const std::string& id,
                                             int32_t result) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    BrowserThread::PostTask(
-        BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(&DeviceIDFetcher::RunCallbackOnIOThread, this, id, result));
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
+        base::BindOnce(&DeviceIDFetcher::RunCallbackOnIOThread, this, id,
+                       result));
     return;
   }
   in_progress_ = false;

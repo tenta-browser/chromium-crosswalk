@@ -2,7 +2,7 @@
 
 Summary: Library providing XML and HTML support
 Name: libxml2
-Version: 2.9.7
+Version: 2.9.9
 Release: 1%{?dist}%{?extra_release}
 License: MIT
 Group: Development/Libraries
@@ -203,6 +203,6 @@ rm -fr %{buildroot}
 %endif # with_python3
 
 %changelog
-* Wed Nov  8 2017 Daniel Veillard <veillard@redhat.com>
-- upstream release 2.9.7 see http://xmlsoft.org/news.html
+* Tue Feb 19 2019 Daniel Veillard <veillard@redhat.com>
+- upstream release 2.9.9 see http://xmlsoft.org/news.html
 

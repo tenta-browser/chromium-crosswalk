@@ -28,17 +28,13 @@ void IntSetToWorkarounds(const std::vector<int32_t>& enabled_workarounds,
   if (workarounds->max_texture_size_limit_4096)
     workarounds->max_texture_size = 4096;
 
-  if (workarounds->max_fragment_uniform_vectors_32)
-    workarounds->max_fragment_uniform_vectors = 32;
-  if (workarounds->max_varying_vectors_16)
-    workarounds->max_varying_vectors = 16;
-  if (workarounds->max_vertex_uniform_vectors_256)
-    workarounds->max_vertex_uniform_vectors = 256;
-
   if (workarounds->max_copy_texture_chromium_size_1048576)
     workarounds->max_copy_texture_chromium_size = 1048576;
   if (workarounds->max_copy_texture_chromium_size_262144)
     workarounds->max_copy_texture_chromium_size = 262144;
+
+  if (workarounds->max_3d_array_texture_size_1024)
+    workarounds->max_3d_array_texture_size = 1024;
 }
 
 GLint LowerMax(GLint max0, GLint max1) {
@@ -53,7 +49,7 @@ GLint LowerMax(GLint max0, GLint max1) {
 
 namespace gpu {
 
-GpuDriverBugWorkarounds::GpuDriverBugWorkarounds() {}
+GpuDriverBugWorkarounds::GpuDriverBugWorkarounds() = default;
 
 GpuDriverBugWorkarounds::GpuDriverBugWorkarounds(
     const std::vector<int>& enabled_driver_bug_workarounds) {
@@ -63,7 +59,17 @@ GpuDriverBugWorkarounds::GpuDriverBugWorkarounds(
 GpuDriverBugWorkarounds::GpuDriverBugWorkarounds(
     const GpuDriverBugWorkarounds& other) = default;
 
-GpuDriverBugWorkarounds::~GpuDriverBugWorkarounds() {}
+GpuDriverBugWorkarounds::~GpuDriverBugWorkarounds() = default;
+
+std::vector<int32_t> GpuDriverBugWorkarounds::ToIntSet() const {
+  std::vector<int32_t> result;
+#define GPU_OP(type, name) \
+  if (name)                \
+    result.push_back(type);
+  GPU_DRIVER_BUG_WORKAROUNDS(GPU_OP)
+#undef GPU_OP
+  return result;
+}
 
 void GpuDriverBugWorkarounds::Append(const GpuDriverBugWorkarounds& extra) {
 #define GPU_OP(type, name) name |= extra.name;
@@ -71,14 +77,10 @@ void GpuDriverBugWorkarounds::Append(const GpuDriverBugWorkarounds& extra) {
 #undef GPU_OP
 
   max_texture_size = LowerMax(max_texture_size, extra.max_texture_size);
-  max_fragment_uniform_vectors = LowerMax(max_fragment_uniform_vectors,
-                                          extra.max_fragment_uniform_vectors);
-  max_varying_vectors =
-      LowerMax(max_varying_vectors, extra.max_varying_vectors);
-  max_vertex_uniform_vectors =
-      LowerMax(max_vertex_uniform_vectors, extra.max_vertex_uniform_vectors);
   max_copy_texture_chromium_size = LowerMax(
       max_copy_texture_chromium_size, extra.max_copy_texture_chromium_size);
+  max_3d_array_texture_size =
+      LowerMax(max_3d_array_texture_size, extra.max_3d_array_texture_size);
 }
 
 }  // namespace gpu

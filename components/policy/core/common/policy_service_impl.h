@@ -31,12 +31,9 @@ class POLICY_EXPORT PolicyServiceImpl
  public:
   using Providers = std::vector<ConfigurationPolicyProvider*>;
 
-  // The PolicyServiceImpl will merge policies from |providers|. |providers|
-  // must be sorted in decreasing order of priority; the first provider will
-  // have the highest priority. The PolicyServiceImpl does not take ownership of
-  // the providers, and they must outlive the PolicyServiceImpl.
-  explicit PolicyServiceImpl(const Providers& providers);
-
+  // Creates a new PolicyServiceImpl with the list of
+  // ConfigurationPolicyProviders, in order of decreasing priority.
+  explicit PolicyServiceImpl(Providers providers);
   ~PolicyServiceImpl() override;
 
   // PolicyService overrides:
@@ -49,7 +46,8 @@ class POLICY_EXPORT PolicyServiceImpl
   void RefreshPolicies(const base::Closure& callback) override;
 
  private:
-  using Observers = base::ObserverList<PolicyService::Observer, true>;
+  using Observers =
+      base::ObserverList<PolicyService::Observer, true>::Unchecked;
 
   // ConfigurationPolicyProvider::Observer overrides:
   void OnUpdatePolicy(ConfigurationPolicyProvider* provider) override;
@@ -71,7 +69,7 @@ class POLICY_EXPORT PolicyServiceImpl
   // Invokes all the refresh callbacks if there are no more refreshes pending.
   void CheckRefreshComplete();
 
-  // The providers passed in the constructor, in order of decreasing priority.
+  // The providers, in order of decreasing priority.
   Providers providers_;
 
   // Maps each policy namespace to its current policies.
@@ -96,7 +94,7 @@ class POLICY_EXPORT PolicyServiceImpl
 
   // Used to create tasks to delay new policy updates while we may be already
   // processing previous policy updates.
-  base::WeakPtrFactory<PolicyServiceImpl> update_task_ptr_factory_;
+  base::WeakPtrFactory<PolicyServiceImpl> update_task_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PolicyServiceImpl);
 };

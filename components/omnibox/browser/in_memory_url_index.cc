@@ -4,12 +4,18 @@
 
 #include "components/omnibox/browser/in_memory_url_index.h"
 
+#include <cinttypes>
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/memory_dump_manager.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
@@ -89,7 +95,7 @@ InMemoryURLIndex::InMemoryURLIndex(bookmarks::BookmarkModel* bookmark_model,
       restore_cache_observer_(nullptr),
       save_cache_observer_(nullptr),
       task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND})),
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
       shutdown_(false),
       restored_(false),
       needs_to_be_cached_(false),
@@ -98,9 +104,15 @@ InMemoryURLIndex::InMemoryURLIndex(bookmarks::BookmarkModel* bookmark_model,
   // TODO(mrossetti): Register for language change notifications.
   if (history_service_)
     history_service_->AddObserver(this);
+
+  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
+      this, "InMemoryURLIndex", base::ThreadTaskRunnerHandle::Get());
 }
 
 InMemoryURLIndex::~InMemoryURLIndex() {
+  base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
+      this);
+
   // If there was a history directory (which there won't be for some unit tests)
   // then insure that the cache has already been saved.
   DCHECK(history_dir_.empty() || !needs_to_be_cached_);
@@ -163,16 +175,14 @@ void InMemoryURLIndex::OnURLsModified(history::HistoryService* history_service,
   }
 }
 
-void InMemoryURLIndex::OnURLsDeleted(history::HistoryService* history_service,
-                                     bool all_history,
-                                     bool expired,
-                                     const history::URLRows& deleted_rows,
-                                     const std::set<GURL>& favicon_urls) {
-  if (all_history) {
+void InMemoryURLIndex::OnURLsDeleted(
+    history::HistoryService* history_service,
+    const history::DeletionInfo& deletion_info) {
+  if (deletion_info.IsAllHistory()) {
     ClearPrivateData();
     needs_to_be_cached_ = true;
   } else {
-    for (const auto& row : deleted_rows)
+    for (const auto& row : deletion_info.deleted_rows())
       needs_to_be_cached_ |= private_data_->DeleteURL(row.url());
   }
   // If we made changes, destroy the previous cache.  Otherwise, if we go
@@ -193,7 +203,7 @@ void InMemoryURLIndex::OnURLsDeleted(history::HistoryService* history_service,
   if (needs_to_be_cached_ && GetCacheFilePath(&path))
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(base::IgnoreResult(base::DeleteFile), path, false));
+        base::BindOnce(base::IgnoreResult(base::DeleteFile), path, false));
 }
 
 void InMemoryURLIndex::OnHistoryServiceLoaded(
@@ -201,6 +211,26 @@ void InMemoryURLIndex::OnHistoryServiceLoaded(
   if (listen_to_history_service_loaded_)
     ScheduleRebuildFromHistory();
   listen_to_history_service_loaded_ = false;
+}
+
+bool InMemoryURLIndex::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* process_memory_dump) {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(scheme_whitelist_);
+
+  // TODO(dyaroshev): Add support for scoped_refptr in
+  //                  base::trace_event::EstimateMemoryUsage.
+  res += sizeof(URLIndexPrivateData) + private_data_->EstimateMemoryUsage();
+
+  const std::string dump_name =
+      base::StringPrintf("omnibox/in_memory_url_index/0x%" PRIXPTR,
+                         reinterpret_cast<uintptr_t>(this));
+  auto* dump = process_memory_dump->CreateAllocatorDump(dump_name);
+  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes, res);
+  return true;
 }
 
 // Restoring from Cache --------------------------------------------------------
@@ -218,10 +248,9 @@ void InMemoryURLIndex::PostRestoreFromCacheFileTask() {
   }
 
   base::PostTaskAndReplyWithResult(
-      task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&URLIndexPrivateData::RestoreFromFile, path),
-      base::Bind(&InMemoryURLIndex::OnCacheLoadDone, AsWeakPtr()));
+      task_runner_.get(), FROM_HERE,
+      base::BindOnce(&URLIndexPrivateData::RestoreFromFile, path),
+      base::BindOnce(&InMemoryURLIndex::OnCacheLoadDone, AsWeakPtr()));
 }
 
 void InMemoryURLIndex::OnCacheLoadDone(
@@ -241,7 +270,7 @@ void InMemoryURLIndex::OnCacheLoadDone(
       return;
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(base::IgnoreResult(base::DeleteFile), path, false));
+        base::BindOnce(base::IgnoreResult(base::DeleteFile), path, false));
     if (history_service_->backend_loaded()) {
       ScheduleRebuildFromHistory();
     } else {
@@ -265,10 +294,9 @@ void InMemoryURLIndex::Shutdown() {
   private_data_tracker_.TryCancelAll();
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(
-          base::IgnoreResult(
-              &URLIndexPrivateData::WritePrivateDataToCacheFileTask),
-          private_data_, path));
+      base::BindOnce(base::IgnoreResult(
+                         &URLIndexPrivateData::WritePrivateDataToCacheFileTask),
+                     private_data_, path));
   needs_to_be_cached_ = false;
 }
 
@@ -277,6 +305,7 @@ void InMemoryURLIndex::Shutdown() {
 void InMemoryURLIndex::ScheduleRebuildFromHistory() {
   DCHECK(history_service_);
   history_service_->ScheduleDBTask(
+      FROM_HERE,
       std::unique_ptr<history::HistoryDBTask>(
           new InMemoryURLIndex::RebuildPrivateDataFromHistoryDBTask(
               this, scheme_whitelist_)),
@@ -322,16 +351,15 @@ void InMemoryURLIndex::PostSaveToCacheFileTask() {
     scoped_refptr<URLIndexPrivateData> private_data_copy =
         private_data_->Duplicate();
     base::PostTaskAndReplyWithResult(
-        task_runner_.get(),
-        FROM_HERE,
-        base::Bind(&URLIndexPrivateData::WritePrivateDataToCacheFileTask,
-                   private_data_copy, path),
-        base::Bind(&InMemoryURLIndex::OnCacheSaveDone, AsWeakPtr()));
+        task_runner_.get(), FROM_HERE,
+        base::BindOnce(&URLIndexPrivateData::WritePrivateDataToCacheFileTask,
+                       private_data_copy, path),
+        base::BindOnce(&InMemoryURLIndex::OnCacheSaveDone, AsWeakPtr()));
   } else {
     // If there is no data in our index then delete any existing cache file.
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(base::IgnoreResult(base::DeleteFile), path, false));
+        base::BindOnce(base::IgnoreResult(base::DeleteFile), path, false));
   }
 }
 

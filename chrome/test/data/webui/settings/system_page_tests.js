@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /** @const {boolean} */
-var HARDWARE_ACCELERATION_AT_STARTUP = true;
+const HARDWARE_ACCELERATION_AT_STARTUP = true;
 
 /** @implements {settings.SystemPageBrowserProxy} */
 class TestSystemPageBrowserProxy extends TestBrowserProxy {
@@ -24,13 +24,13 @@ class TestSystemPageBrowserProxy extends TestBrowserProxy {
 
 suite('settings system page', function() {
   /** @type {TestSystemPageBrowserProxy} */
-  var systemBrowserProxy;
+  let systemBrowserProxy;
 
   /** @type {settings.TestLifetimeBrowserProxy} */
-  var lifetimeBrowserProxy;
+  let lifetimeBrowserProxy;
 
   /** @type {SettingsSystemPageElement} */
-  var systemPage;
+  let systemPage;
 
   setup(function() {
     PolymerTest.clearBody();
@@ -69,11 +69,11 @@ suite('settings system page', function() {
   });
 
   test('restart button', function() {
-    var control = systemPage.$.hardwareAcceleration;
+    const control = systemPage.$.hardwareAcceleration;
     expectEquals(HARDWARE_ACCELERATION_AT_STARTUP, control.checked);
 
     // Restart button should be hidden by default.
-    expectFalse(!!control.querySelector('paper-button'));
+    expectFalse(!!control.querySelector('cr-button'));
 
     systemPage.set(
         'prefs.hardware_acceleration_mode.enabled.value',
@@ -81,21 +81,21 @@ suite('settings system page', function() {
     Polymer.dom.flush();
     expectNotEquals(HARDWARE_ACCELERATION_AT_STARTUP, control.checked);
 
-    var restart = control.querySelector('paper-button');
+    const restart = control.querySelector('cr-button');
     expectTrue(!!restart);  // The "RESTART" button should be showing now.
 
-    MockInteractions.tap(restart);
+    restart.click();
     return lifetimeBrowserProxy.whenCalled('restart');
   });
 
   test('proxy row', function() {
-    MockInteractions.tap(systemPage.$.proxy);
+    systemPage.$.proxy.click();
     return systemBrowserProxy.whenCalled('showProxySettings');
   });
 
   test('proxy row enforcement', function() {
-    var control = systemPage.$.proxy;
-    var showProxyButton = control.querySelector('button');
+    const control = systemPage.$.proxy;
+    const showProxyButton = control.querySelector('cr-icon-button');
     assertTrue(control.hasAttribute('actionable'));
     assertEquals(null, control.querySelector('cr-policy-pref-indicator'));
     assertFalse(showProxyButton.hidden);
@@ -110,9 +110,9 @@ suite('settings system page', function() {
     });
     Polymer.dom.flush();
 
-    // The ability to show proxy settings should still be allowed when
-    // extensions are installed.
-    expectTrue(control.hasAttribute('actionable'));
+    // When managed by extensions, we disable the ability to show proxy
+    // settings.
+    expectFalse(control.hasAttribute('actionable'));
     expectEquals(null, control.querySelector('cr-policy-pref-indicator'));
     expectFalse(showProxyButton.hidden);
 

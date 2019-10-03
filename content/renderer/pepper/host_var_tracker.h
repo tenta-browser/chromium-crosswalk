@@ -10,7 +10,6 @@
 #include <map>
 
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
@@ -52,12 +51,12 @@ class HostVarTracker : public ppapi::VarTracker {
   ppapi::ResourceVar* MakeResourceVar(PP_Resource pp_resource) override;
   void DidDeleteInstance(PP_Instance pp_instance) override;
 
-  int TrackSharedMemoryHandle(PP_Instance instance,
-                              base::SharedMemoryHandle file,
+  int TrackSharedMemoryRegion(PP_Instance instance,
+                              base::UnsafeSharedMemoryRegion region,
                               uint32_t size_in_bytes) override;
-  bool StopTrackingSharedMemoryHandle(int id,
+  bool StopTrackingSharedMemoryRegion(int id,
                                       PP_Instance instance,
-                                      base::SharedMemoryHandle* handle,
+                                      base::UnsafeSharedMemoryRegion* region,
                                       uint32_t* size_in_bytes) override;
 
  private:
@@ -65,7 +64,7 @@ class HostVarTracker : public ppapi::VarTracker {
   ppapi::ArrayBufferVar* CreateArrayBuffer(uint32_t size_in_bytes) override;
   ppapi::ArrayBufferVar* CreateShmArrayBuffer(
       uint32_t size_in_bytes,
-      base::SharedMemoryHandle handle) override;
+      base::UnsafeSharedMemoryRegion region) override;
 
   // Clear the reference count of the given object and remove it from
   // live_vars_.
@@ -97,7 +96,7 @@ class HostVarTracker : public ppapi::VarTracker {
   // Tracks all shared memory handles used for transmitting array buffers.
   struct SharedMemoryMapEntry {
     PP_Instance instance;
-    base::SharedMemoryHandle handle;
+    base::UnsafeSharedMemoryRegion region;
     uint32_t size_in_bytes;
   };
   typedef std::map<int, SharedMemoryMapEntry> SharedMemoryMap;

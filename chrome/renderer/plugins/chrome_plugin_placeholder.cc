@@ -13,8 +13,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/features.h"
 #include "chrome/common/prerender_messages.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/grit/generated_resources.h"
@@ -31,16 +31,16 @@
 #include "content/public/renderer/render_thread.h"
 #include "gin/object_template_builder.h"
 #include "ipc/ipc_sync_channel.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/platform/WebMouseEvent.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
@@ -94,6 +94,7 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateLoadableMissingPlugin(
           IDR_BLOCKED_PLUGIN_HTML));
 
   base::DictionaryValue values;
+  values.SetString("name", "");
   values.SetString("message",
                    l10n_util::GetStringUTF8(IDS_PLUGIN_NOT_SUPPORTED));
 
@@ -136,8 +137,14 @@ ChromePluginPlaceholder* ChromePluginPlaceholder::CreateBlockedPlugin(
           roundf(power_saver_info.custom_poster_size.width() / zoom_factor);
       int height =
           roundf(power_saver_info.custom_poster_size.height() / zoom_factor);
-      values.SetString("visibleWidth", base::IntToString(width) + "px");
-      values.SetString("visibleHeight", base::IntToString(height) + "px");
+      values.SetString("visibleWidth", base::NumberToString(width) + "px");
+      values.SetString("visibleHeight", base::NumberToString(height) + "px");
+    } else {
+      // Need to populate these to please $i18n{...} replacement mechanism.
+      // 'undefined' is used on purpose as an invalid value for width and
+      // height, which is ignored by CSS.
+      values.SetString("visibleWidth", "undefined");
+      values.SetString("visibleHeight", "undefined");
     }
   }
 
@@ -203,7 +210,8 @@ void ChromePluginPlaceholder::UpdateFailure() {
 }
 
 void ChromePluginPlaceholder::OnSetPrerenderMode(
-    prerender::PrerenderMode mode) {
+    prerender::PrerenderMode mode,
+    const std::string& histogram_prefix) {
   OnSetIsPrerendering(mode != prerender::NO_PRERENDER);
 }
 
@@ -361,7 +369,7 @@ void ChromePluginPlaceholder::OnBlockedContent(
                        "visible size larger than 400 x 300 pixels, or it will "
                        "be blocked. Invisible content is always blocked.",
       GetPluginParams().url.GetString().Utf8().c_str());
-  render_frame()->AddMessageToConsole(content::CONSOLE_MESSAGE_LEVEL_INFO,
+  render_frame()->AddMessageToConsole(blink::mojom::ConsoleMessageLevel::kInfo,
                                       message);
 }
 
@@ -382,8 +390,8 @@ gin::ObjectTemplateBuilder ChromePluginPlaceholder::GetObjectTemplateBuilder(
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnablePluginPlaceholderTesting)) {
     builder.SetMethod<void (ChromePluginPlaceholder::*)()>(
-        "didFinishIconRepositionForTesting",
-        &ChromePluginPlaceholder::DidFinishIconRepositionForTestingCallback);
+        "notifyPlaceholderReadyForTesting",
+        &ChromePluginPlaceholder::NotifyPlaceholderReadyForTestingCallback);
   }
 
   return builder;

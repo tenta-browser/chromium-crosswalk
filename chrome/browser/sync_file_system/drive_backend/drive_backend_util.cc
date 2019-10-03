@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/leveldb_wrapper.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
@@ -21,7 +21,7 @@ namespace drive_backend {
 
 void PutVersionToDB(int64_t version, LevelDBWrapper* db) {
   DCHECK(db);
-  db->Put(kDatabaseVersionKey, base::Int64ToString(version));
+  db->Put(kDatabaseVersionKey, base::NumberToString(version));
 }
 
 void PutServiceMetadataToDB(const ServiceMetadata& service_metadata,
@@ -49,7 +49,7 @@ void PutFileTrackerToDB(const FileTracker& tracker, LevelDBWrapper* db) {
   std::string value;
   bool success = tracker.SerializeToString(&value);
   DCHECK(success);
-  db->Put(kFileTrackerKeyPrefix + base::Int64ToString(tracker.tracker_id()),
+  db->Put(kFileTrackerKeyPrefix + base::NumberToString(tracker.tracker_id()),
           value);
 }
 
@@ -61,7 +61,7 @@ void PutFileMetadataDeletionToDB(const std::string& file_id,
 
 void PutFileTrackerDeletionToDB(int64_t tracker_id, LevelDBWrapper* db) {
   DCHECK(db);
-  db->Delete(kFileTrackerKeyPrefix + base::Int64ToString(tracker_id));
+  db->Delete(kFileTrackerKeyPrefix + base::NumberToString(tracker_id));
 }
 
 bool HasFileAsParent(const FileDetails& details, const std::string& file_id) {
@@ -155,7 +155,8 @@ bool RemovePrefix(const std::string& str, const std::string& prefix,
 }
 
 std::unique_ptr<ServiceMetadata> InitializeServiceMetadata(LevelDBWrapper* db) {
-  base::AssertBlockingAllowed();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(db);
 
   std::unique_ptr<ServiceMetadata> service_metadata;

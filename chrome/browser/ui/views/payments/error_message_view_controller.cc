@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/views/payments/payment_request_views_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -32,7 +31,7 @@ ErrorMessageViewController::CreatePrimaryButton() {
       views::MdTextButton::CreateSecondaryUiBlueButton(
           this, l10n_util::GetStringUTF16(IDS_CLOSE)));
   button->set_tag(static_cast<int>(PaymentRequestCommonTags::CLOSE_BUTTON_TAG));
-  button->set_id(static_cast<int>(DialogViewID::CANCEL_BUTTON));
+  button->SetID(static_cast<int>(DialogViewID::CANCEL_BUTTON));
   return button;
 }
 
@@ -49,15 +48,15 @@ base::string16 ErrorMessageViewController::GetSheetTitle() {
 }
 
 void ErrorMessageViewController::FillContentView(views::View* content_view) {
-  views::BoxLayout* layout = new views::BoxLayout(
-      views::BoxLayout::kVertical,
+  auto layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical,
       gfx::Insets(0, kPaymentRequestRowHorizontalInsets), 0);
-  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
+  layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kStart);
   layout->set_cross_axis_alignment(
-      views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
-  content_view->SetLayoutManager(layout);
+      views::BoxLayout::CrossAxisAlignment::kStart);
+  content_view->SetLayoutManager(std::move(layout));
 
-  std::unique_ptr<views::Label> label = base::MakeUnique<views::Label>(
+  std::unique_ptr<views::Label> label = std::make_unique<views::Label>(
       l10n_util::GetStringUTF16(IDS_PAYMENTS_ERROR_MESSAGE));
   label->SetEnabledColor(label->GetNativeTheme()->GetSystemColor(
       ui::NativeTheme::kColorId_AlertSeverityHigh));

@@ -12,7 +12,7 @@
 
 namespace chrome {
 
-std::string GetChannelString() {
+std::string GetChannelName() {
 #if defined(GOOGLE_CHROME_BUILD)
   // Use the main Chrome application bundle and not the framework bundle.
   // Keystone keys don't live in the framework.
@@ -41,21 +41,22 @@ std::string GetChannelString() {
 #endif
 }
 
-version_info::Channel GetChannel() {
+version_info::Channel GetChannelByName(const std::string& channel) {
 #if defined(GOOGLE_CHROME_BUILD)
-  std::string channel = GetChannelString();
-  if (channel.empty()) {
+  if (channel.empty())
     return version_info::Channel::STABLE;
-  } else if (channel == "beta") {
+  if (channel == "beta")
     return version_info::Channel::BETA;
-  } else if (channel == "dev") {
+  if (channel == "dev")
     return version_info::Channel::DEV;
-  } else if (channel == "canary") {
+  if (channel == "canary")
     return version_info::Channel::CANARY;
-  }
 #endif
-
   return version_info::Channel::UNKNOWN;
+}
+
+version_info::Channel GetChannel() {
+  return GetChannelByName(GetChannelName());
 }
 
 }  // namespace chrome

@@ -44,7 +44,7 @@ class SSLHostStateDelegate {
   // a specified |error| type.
   virtual void AllowCert(const std::string&,
                          const net::X509Certificate& cert,
-                         net::CertStatus error) = 0;
+                         int error) = 0;
 
   // Clear allow preferences matched by |host_filter|. If the filter is null,
   // clear all preferences.
@@ -56,7 +56,7 @@ class SSLHostStateDelegate {
   // prior to this query, otherwise false.
   virtual CertJudgment QueryPolicy(const std::string& host,
                                    const net::X509Certificate& cert,
-                                   net::CertStatus error,
+                                   int error,
                                    bool* expired_previous_decision) = 0;
 
   // Records that a host has run insecure content of the given |content_type|.
@@ -66,10 +66,9 @@ class SSLHostStateDelegate {
 
   // Returns whether the specified host ran insecure content of the given
   // |content_type|.
-  virtual bool DidHostRunInsecureContent(
-      const std::string& host,
-      int child_id,
-      InsecureContentType content_type) const = 0;
+  virtual bool DidHostRunInsecureContent(const std::string& host,
+                                         int child_id,
+                                         InsecureContentType content_type) = 0;
 
   // Revokes all SSL certificate error allow exceptions made by the user for
   // |host|.
@@ -79,7 +78,7 @@ class SSLHostStateDelegate {
   // |host|. This does not mean that *all* certificate errors are allowed, just
   // that there exists an exception. To see if a particular certificate and
   // error combination exception is allowed, use QueryPolicy().
-  virtual bool HasAllowException(const std::string& host) const = 0;
+  virtual bool HasAllowException(const std::string& host) = 0;
 
  protected:
   virtual ~SSLHostStateDelegate() {}

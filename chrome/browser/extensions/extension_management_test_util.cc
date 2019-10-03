@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "components/crx_file/id_util.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
@@ -36,6 +36,9 @@ ExtensionManagementPrefUpdaterBase::ExtensionManagementPrefUpdaterBase() {
 }
 
 ExtensionManagementPrefUpdaterBase::~ExtensionManagementPrefUpdaterBase() {
+  // Make asynchronous calls finished to deliver all preference changes to the
+  // NetworkService and extension processes.
+  base::RunLoop().RunUntilIdle();
 }
 
 // Helper functions for per extension settings ---------------------------------
@@ -49,7 +52,7 @@ void ExtensionManagementPrefUpdaterBase::UnsetPerExtensionSettings(
 void ExtensionManagementPrefUpdaterBase::ClearPerExtensionSettings(
     const ExtensionId& id) {
   DCHECK(crx_file::id_util::IdIsValid(id));
-  pref_->SetWithoutPathExpansion(id, base::MakeUnique<base::DictionaryValue>());
+  pref_->SetWithoutPathExpansion(id, std::make_unique<base::DictionaryValue>());
 }
 
 // Helper functions for 'installation_mode' manipulation -----------------------
@@ -173,30 +176,58 @@ void ExtensionManagementPrefUpdaterBase::SetBlockedInstallMessage(
 
 // Helper functions for 'runtime_blocked_hosts' manipulation ------------------
 
-void ExtensionManagementPrefUpdaterBase::UnsetRuntimeBlockedHosts(
+void ExtensionManagementPrefUpdaterBase::UnsetPolicyBlockedHosts(
     const std::string& prefix) {
   DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
-  pref_->Remove(make_path(prefix, schema::kRuntimeBlockedHosts), nullptr);
+  pref_->Remove(make_path(prefix, schema::kPolicyBlockedHosts), nullptr);
 }
 
-void ExtensionManagementPrefUpdaterBase::ClearRuntimeBlockedHosts(
+void ExtensionManagementPrefUpdaterBase::ClearPolicyBlockedHosts(
     const std::string& prefix) {
   DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
-  ClearList(make_path(prefix, schema::kRuntimeBlockedHosts));
+  ClearList(make_path(prefix, schema::kPolicyBlockedHosts));
 }
 
-void ExtensionManagementPrefUpdaterBase::AddRuntimeBlockedHost(
+void ExtensionManagementPrefUpdaterBase::AddPolicyBlockedHost(
     const std::string& prefix,
     const std::string& host) {
   DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
-  AddStringToList(make_path(prefix, schema::kRuntimeBlockedHosts), host);
+  AddStringToList(make_path(prefix, schema::kPolicyBlockedHosts), host);
 }
 
-void ExtensionManagementPrefUpdaterBase::RemoveRuntimeBlockedHost(
+void ExtensionManagementPrefUpdaterBase::RemovePolicyBlockedHost(
     const std::string& prefix,
     const std::string& host) {
   DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
-  RemoveStringFromList(make_path(prefix, schema::kRuntimeBlockedHosts), host);
+  RemoveStringFromList(make_path(prefix, schema::kPolicyBlockedHosts), host);
+}
+
+// Helper functions for 'runtime_allowed_hosts' manipulation ------------------
+
+void ExtensionManagementPrefUpdaterBase::UnsetPolicyAllowedHosts(
+    const std::string& prefix) {
+  DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
+  pref_->Remove(make_path(prefix, schema::kPolicyAllowedHosts), nullptr);
+}
+
+void ExtensionManagementPrefUpdaterBase::ClearPolicyAllowedHosts(
+    const std::string& prefix) {
+  DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
+  ClearList(make_path(prefix, schema::kPolicyAllowedHosts));
+}
+
+void ExtensionManagementPrefUpdaterBase::AddPolicyAllowedHost(
+    const std::string& prefix,
+    const std::string& host) {
+  DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
+  AddStringToList(make_path(prefix, schema::kPolicyAllowedHosts), host);
+}
+
+void ExtensionManagementPrefUpdaterBase::RemovePolicyAllowedHost(
+    const std::string& prefix,
+    const std::string& host) {
+  DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
+  RemoveStringFromList(make_path(prefix, schema::kPolicyAllowedHosts), host);
 }
 
 // Helper functions for 'allowed_permissions' manipulation ---------------------
@@ -260,7 +291,7 @@ ExtensionManagementPrefUpdaterBase::TakePref() {
 }
 
 void ExtensionManagementPrefUpdaterBase::ClearList(const std::string& path) {
-  pref_->Set(path, base::MakeUnique<base::ListValue>());
+  pref_->Set(path, std::make_unique<base::ListValue>());
 }
 
 void ExtensionManagementPrefUpdaterBase::AddStringToList(
@@ -268,12 +299,12 @@ void ExtensionManagementPrefUpdaterBase::AddStringToList(
     const std::string& str) {
   base::ListValue* list_value_weak = nullptr;
   if (!pref_->GetList(path, &list_value_weak)) {
-    auto list_value = base::MakeUnique<base::ListValue>();
+    auto list_value = std::make_unique<base::ListValue>();
     list_value_weak = list_value.get();
     pref_->Set(path, std::move(list_value));
   }
   CHECK(
-      list_value_weak->AppendIfNotPresent(base::MakeUnique<base::Value>(str)));
+      list_value_weak->AppendIfNotPresent(std::make_unique<base::Value>(str)));
 }
 
 void ExtensionManagementPrefUpdaterBase::RemoveStringFromList(

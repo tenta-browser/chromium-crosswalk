@@ -14,30 +14,16 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "chromecast/app/android/cast_crash_reporter_client_android.h"
+#include "chromecast/base/chromecast_config_android.h"
 #include "chromecast/base/version.h"
-#include "components/crash/content/app/breakpad_linux.h"
+#include "chromecast/browser/jni_headers/CastCrashHandler_jni.h"
 #include "components/crash/content/app/crash_reporter_client.h"
+#include "components/crash/content/app/crashpad.h"
 #include "content/public/common/content_switches.h"
-#include "jni/CastCrashHandler_jni.h"
-#include "third_party/breakpad/breakpad/src/client/linux/handler/exception_handler.h"
-#include "third_party/breakpad/breakpad/src/client/linux/handler/minidump_descriptor.h"
 
 namespace {
 
 chromecast::CrashHandler* g_crash_handler = NULL;
-
-// Debug builds: always to crash-staging
-// Release builds: only to crash-staging for local/invalid build numbers
-bool UploadCrashToStaging() {
-#if CAST_IS_DEBUG_BUILD()
-  return true;
-#else
-  int build_number;
-  if (base::StringToInt(CAST_BUILD_INCREMENTAL, &build_number))
-    return build_number == 0;
-  return true;
-#endif
-}
 
 }  // namespace
 
@@ -58,6 +44,13 @@ bool CrashHandler::GetCrashDumpLocation(base::FilePath* crash_dir) {
       crash_dir);
 }
 
+// static
+bool CrashHandler::GetCrashReportsLocation(base::FilePath* reports_dir) {
+  DCHECK(g_crash_handler);
+  return g_crash_handler->crash_reporter_client_->GetCrashReportsLocation(
+      g_crash_handler->process_type_, reports_dir);
+}
+
 CrashHandler::CrashHandler(const std::string& process_type,
                            const base::FilePath& log_file_path)
     : log_file_path_(log_file_path),
@@ -75,36 +68,39 @@ CrashHandler::~CrashHandler() {
 }
 
 void CrashHandler::Initialize() {
-  if (process_type_.empty()) {
-    InitializeUploader();
-    breakpad::InitCrashReporter(process_type_);
-    return;
-  }
-
-  if (process_type_ != switches::kZygoteProcess) {
-    breakpad::InitNonBrowserCrashReporterForAndroid(process_type_);
-  }
-}
-
-void CrashHandler::InitializeUploader() {
-  CrashHandler::UploadDumps(crash_dump_path_, "", "", true);
+  crash_reporter::InitializeCrashpad(process_type_.empty(), process_type_);
 }
 
 // static
 void CrashHandler::UploadDumps(const base::FilePath& crash_dump_path,
+                               const base::FilePath& reports_path,
                                const std::string& uuid,
-                               const std::string& application_feedback,
-                               bool periodic_upload) {
+                               const std::string& application_feedback) {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jstring> crash_dump_path_java =
       base::android::ConvertUTF8ToJavaString(env, crash_dump_path.value());
+  base::android::ScopedJavaLocalRef<jstring> reports_path_java =
+      base::android::ConvertUTF8ToJavaString(env, reports_path.value());
   base::android::ScopedJavaLocalRef<jstring> uuid_java =
       base::android::ConvertUTF8ToJavaString(env, uuid);
   base::android::ScopedJavaLocalRef<jstring> application_feedback_java =
       base::android::ConvertUTF8ToJavaString(env, application_feedback);
-  Java_CastCrashHandler_initializeUploader(
-      env, crash_dump_path_java, uuid_java, application_feedback_java,
-      UploadCrashToStaging(), periodic_upload);
+  // TODO(servolk): Remove the UploadToStaging param and clean up Java code, if
+  // dev crash uploading to prod server works fine (b/113130776)
+  bool can_send_usage_stats =
+      android::ChromecastConfigAndroid::GetInstance()->CanSendUsageStats();
+
+  if (can_send_usage_stats) {
+    Java_CastCrashHandler_uploadOnce(env, crash_dump_path_java,
+                                     reports_path_java, uuid_java,
+                                     application_feedback_java,
+                                     /* UploadToStaging = */ false);
+  } else {
+    Java_CastCrashHandler_removeCrashDumps(env, crash_dump_path_java,
+                                           reports_path_java, uuid_java,
+                                           application_feedback_java,
+                                           /* UploadToStaging = */ false);
+  }
 }
 
 }  // namespace chromecast

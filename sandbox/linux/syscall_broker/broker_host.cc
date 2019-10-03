@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stddef.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -15,21 +16,16 @@
 
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket.h"
-#include "base/third_party/dynamic_annotations/dynamic_annotations.h"
-#include "base/third_party/valgrind/valgrind.h"
-#include "sandbox/linux/syscall_broker/broker_common.h"
-#include "sandbox/linux/syscall_broker/broker_policy.h"
+#include "sandbox/linux/syscall_broker/broker_command.h"
+#include "sandbox/linux/syscall_broker/broker_permission_list.h"
+#include "sandbox/linux/syscall_broker/broker_simple_message.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 
 namespace sandbox {
-
 namespace syscall_broker {
 
 namespace {
@@ -40,170 +36,305 @@ namespace {
 int sys_open(const char* pathname, int flags) {
   // Hardcode mode to rw------- when creating files.
   int mode = (flags & O_CREAT) ? 0600 : 0;
-  if (RunningOnValgrind()) {
-    // Valgrind does not support AT_FDCWD, just use libc's open() in this case.
-    return open(pathname, flags, mode);
-  }
   return syscall(__NR_openat, AT_FDCWD, pathname, flags, mode);
 }
 
-// Open |requested_filename| with |flags| if allowed by our policy.
-// Write the syscall return value (-errno) to |write_pickle| and append
-// a file descriptor to |opened_files| if relevant.
-void OpenFileForIPC(const BrokerPolicy& policy,
-                    const std::string& requested_filename,
-                    int flags,
-                    base::Pickle* write_pickle,
-                    std::vector<int>* opened_files) {
-  DCHECK(write_pickle);
-  DCHECK(opened_files);
-  const char* file_to_open = NULL;
-  bool unlink_after_open = false;
-  const bool safe_to_open_file = policy.GetFileNameIfAllowedToOpen(
-      requested_filename.c_str(), flags, &file_to_open, &unlink_after_open);
-
-  if (safe_to_open_file) {
-    CHECK(file_to_open);
-    int opened_fd = sys_open(file_to_open, flags);
-    if (opened_fd < 0) {
-      write_pickle->WriteInt(-errno);
-    } else {
-      // Success.
-      if (unlink_after_open) {
-        unlink(file_to_open);
-      }
-      opened_files->push_back(opened_fd);
-      write_pickle->WriteInt(0);
-    }
-  } else {
-    write_pickle->WriteInt(-policy.denied_errno());
-  }
+bool GetPathAndFlags(BrokerSimpleMessage* message,
+                     const char** pathname,
+                     int* flags) {
+  return message->ReadString(pathname) && message->ReadInt(flags);
 }
 
 // Perform access(2) on |requested_filename| with mode |mode| if allowed by our
-// policy. Write the syscall return value (-errno) to |write_pickle|.
-void AccessFileForIPC(const BrokerPolicy& policy,
+// permission_list. Write the syscall return value (-errno) to |reply|.
+void AccessFileForIPC(const BrokerCommandSet& allowed_command_set,
+                      const BrokerPermissionList& permission_list,
                       const std::string& requested_filename,
                       int mode,
-                      base::Pickle* write_pickle) {
-  DCHECK(write_pickle);
+                      BrokerSimpleMessage* reply) {
   const char* file_to_access = NULL;
-  const bool safe_to_access_file = policy.GetFileNameIfAllowedToAccess(
-      requested_filename.c_str(), mode, &file_to_access);
-
-  if (safe_to_access_file) {
-    CHECK(file_to_access);
-    int access_ret = access(file_to_access, mode);
-    int access_errno = errno;
-    if (!access_ret)
-      write_pickle->WriteInt(0);
-    else
-      write_pickle->WriteInt(-access_errno);
-  } else {
-    write_pickle->WriteInt(-policy.denied_errno());
+  if (!CommandAccessIsSafe(allowed_command_set, permission_list,
+                           requested_filename.c_str(), mode, &file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
   }
+
+  RAW_CHECK(file_to_access);
+  if (access(file_to_access, mode) < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+
+  RAW_CHECK(reply->AddIntToMessage(0));
 }
 
-// Perform stat(2) on |requested_filename| and marshal the result to
-// |write_pickle|.
-void StatFileForIPC(const BrokerPolicy& policy,
-                    IPCCommand command_type,
-                    const std::string& requested_filename,
-                    base::Pickle* write_pickle) {
-  DCHECK(write_pickle);
-  DCHECK(command_type == COMMAND_STAT || command_type == COMMAND_STAT64);
+// Performs mkdir(2) on |filename| with mode |mode| if allowed by our
+// permission_list. Write the syscall return value (-errno) to |reply|.
+void MkdirFileForIPC(const BrokerCommandSet& allowed_command_set,
+                     const BrokerPermissionList& permission_list,
+                     const std::string& filename,
+                     int mode,
+                     BrokerSimpleMessage* reply) {
   const char* file_to_access = nullptr;
-  if (!policy.GetFileNameIfAllowedToAccess(requested_filename.c_str(), F_OK,
-                                           &file_to_access)) {
-    write_pickle->WriteInt(-policy.denied_errno());
+  if (!CommandMkdirIsSafe(allowed_command_set, permission_list,
+                          filename.c_str(), &file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
+  }
+  if (mkdir(file_to_access, mode) < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+  RAW_CHECK(reply->AddIntToMessage(0));
+}
+
+// Open |requested_filename| with |flags| if allowed by our permission list.
+// Write the syscall return value (-errno) to |reply| and return the
+// file descriptor in the |opened_file| if relevant.
+void OpenFileForIPC(const BrokerCommandSet& allowed_command_set,
+                    const BrokerPermissionList& permission_list,
+                    const std::string& requested_filename,
+                    int flags,
+                    BrokerSimpleMessage* reply,
+                    int* opened_file) {
+  const char* file_to_open = NULL;
+  bool unlink_after_open = false;
+  if (!CommandOpenIsSafe(allowed_command_set, permission_list,
+                         requested_filename.c_str(), flags, &file_to_open,
+                         &unlink_after_open)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
+  }
+
+  CHECK(file_to_open);
+  int opened_fd = sys_open(file_to_open, flags);
+  if (opened_fd < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+
+  if (unlink_after_open)
+    unlink(file_to_open);
+
+  *opened_file = opened_fd;
+  RAW_CHECK(reply->AddIntToMessage(0));
+}
+
+// Perform rename(2) on |old_filename| to |new_filename| and write the
+// result to |return_val|.
+void RenameFileForIPC(const BrokerCommandSet& allowed_command_set,
+                      const BrokerPermissionList& permission_list,
+                      const std::string& old_filename,
+                      const std::string& new_filename,
+                      BrokerSimpleMessage* reply) {
+  const char* old_file_to_access = nullptr;
+  const char* new_file_to_access = nullptr;
+  if (!CommandRenameIsSafe(allowed_command_set, permission_list,
+                           old_filename.c_str(), new_filename.c_str(),
+                           &old_file_to_access, &new_file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
+  }
+  if (rename(old_file_to_access, new_file_to_access) < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+  RAW_CHECK(reply->AddIntToMessage(0));
+}
+
+// Perform readlink(2) on |filename| using a buffer of MAX_PATH bytes.
+void ReadlinkFileForIPC(const BrokerCommandSet& allowed_command_set,
+                        const BrokerPermissionList& permission_list,
+                        const std::string& filename,
+                        BrokerSimpleMessage* reply) {
+  const char* file_to_access = nullptr;
+  if (!CommandReadlinkIsSafe(allowed_command_set, permission_list,
+                             filename.c_str(), &file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
+  }
+  char buf[PATH_MAX];
+  ssize_t result = readlink(file_to_access, buf, sizeof(buf));
+  if (result < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+  RAW_CHECK(reply->AddIntToMessage(result));
+  RAW_CHECK(reply->AddDataToMessage(buf, result));
+}
+
+void RmdirFileForIPC(const BrokerCommandSet& allowed_command_set,
+                     const BrokerPermissionList& permission_list,
+                     const std::string& requested_filename,
+                     BrokerSimpleMessage* reply) {
+  const char* file_to_access = nullptr;
+  if (!CommandRmdirIsSafe(allowed_command_set, permission_list,
+                          requested_filename.c_str(), &file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
+    return;
+  }
+  if (rmdir(file_to_access) < 0) {
+    RAW_CHECK(reply->AddIntToMessage(-errno));
+    return;
+  }
+  RAW_CHECK(reply->AddIntToMessage(0));
+}
+
+// Perform stat(2) on |requested_filename| and write the result to
+// |return_val|.
+void StatFileForIPC(const BrokerCommandSet& allowed_command_set,
+                    const BrokerPermissionList& permission_list,
+                    BrokerCommand command_type,
+                    const std::string& requested_filename,
+                    bool follow_links,
+                    BrokerSimpleMessage* reply) {
+  const char* file_to_access = nullptr;
+  if (!CommandStatIsSafe(allowed_command_set, permission_list,
+                         requested_filename.c_str(), &file_to_access)) {
+    RAW_CHECK(reply->AddIntToMessage(-permission_list.denied_errno()));
     return;
   }
   if (command_type == COMMAND_STAT) {
     struct stat sb;
-    if (stat(file_to_access, &sb) < 0) {
-      write_pickle->WriteInt(-errno);
+    int sts =
+        follow_links ? stat(file_to_access, &sb) : lstat(file_to_access, &sb);
+    if (sts < 0) {
+      RAW_CHECK(reply->AddIntToMessage(-errno));
       return;
     }
-    write_pickle->WriteInt(0);
-    write_pickle->WriteData(reinterpret_cast<char*>(&sb), sizeof(sb));
+    RAW_CHECK(reply->AddIntToMessage(0));
+    RAW_CHECK(
+        reply->AddDataToMessage(reinterpret_cast<char*>(&sb), sizeof(sb)));
   } else {
+    DCHECK(command_type == COMMAND_STAT64);
+#if defined(__ANDROID_API__) && __ANDROID_API__ < 21
+    // stat64 is not defined for older Android API versions in newer NDK
+    // versions.
+    RAW_CHECK(reply->AddIntToMessage(-ENOSYS));
+    return;
+#else
     struct stat64 sb;
-    if (stat64(file_to_access, &sb) < 0) {
-      write_pickle->WriteInt(-errno);
+    int sts = follow_links ? stat64(file_to_access, &sb)
+                           : lstat64(file_to_access, &sb);
+    if (sts < 0) {
+      RAW_CHECK(reply->AddIntToMessage(-errno));
       return;
     }
-    write_pickle->WriteInt(0);
-    write_pickle->WriteData(reinterpret_cast<char*>(&sb), sizeof(sb));
+    RAW_CHECK(reply->AddIntToMessage(0));
+    RAW_CHECK(
+        reply->AddDataToMessage(reinterpret_cast<char*>(&sb), sizeof(sb)));
+#endif  // defined(__ANDROID_API__) && __ANDROID_API__ < 21
   }
 }
 
-// Perform rename(2) on |old_filename| to |new_filename| and marshal the
-// result to |write_pickle|.
-void RenameFileForIPC(const BrokerPolicy& policy,
-                      const std::string& old_filename,
-                      const std::string& new_filename,
-                      base::Pickle* write_pickle) {
-  DCHECK(write_pickle);
-  bool ignore;
-  const char* old_file_to_access = nullptr;
-  const char* new_file_to_access = nullptr;
-  if (!policy.GetFileNameIfAllowedToOpen(old_filename.c_str(), O_RDWR,
-                                         &old_file_to_access, &ignore) ||
-      !policy.GetFileNameIfAllowedToOpen(new_filename.c_str(), O_RDWR,
-                                         &new_file_to_access, &ignore)) {
-    write_pickle->WriteInt(-policy.denied_errno());
+void UnlinkFileForIPC(const BrokerCommandSet& allowed_command_set,
+                      const BrokerPermissionList& permission_list,
+                      const std::string& requested_filename,
+                      BrokerSimpleMessage* message) {
+  const char* file_to_access = nullptr;
+  if (!CommandUnlinkIsSafe(allowed_command_set, permission_list,
+                           requested_filename.c_str(), &file_to_access)) {
+    RAW_CHECK(message->AddIntToMessage(-permission_list.denied_errno()));
     return;
   }
-  if (rename(old_file_to_access, new_file_to_access) < 0) {
-    write_pickle->WriteInt(-errno);
+  if (unlink(file_to_access) < 0) {
+    RAW_CHECK(message->AddIntToMessage(-errno));
     return;
   }
-  write_pickle->WriteInt(0);
+  RAW_CHECK(message->AddIntToMessage(0));
 }
 
 // Handle a |command_type| request contained in |iter| and write the reply
-// to |write_pickle|, adding any files opened to |opened_files|.
-bool HandleRemoteCommand(const BrokerPolicy& policy,
-                         base::PickleIterator iter,
-                         base::Pickle* write_pickle,
-                         std::vector<int>* opened_files) {
+// to |reply|.
+bool HandleRemoteCommand(const BrokerCommandSet& allowed_command_set,
+                         const BrokerPermissionList& permission_list,
+                         BrokerSimpleMessage* message,
+                         BrokerSimpleMessage* reply,
+                         int* opened_file) {
+  // Message structure:
+  //   int:    command type
+  //   char[]: pathname
+  //   int:    flags
   int command_type;
-  if (!iter.ReadInt(&command_type))
+  if (!message->ReadInt(&command_type))
     return false;
 
   switch (command_type) {
     case COMMAND_ACCESS: {
-      std::string requested_filename;
+      const char* requested_filename;
       int flags = 0;
-      if (!iter.ReadString(&requested_filename) || !iter.ReadInt(&flags))
+      if (!GetPathAndFlags(message, &requested_filename, &flags))
         return false;
-      AccessFileForIPC(policy, requested_filename, flags, write_pickle);
+      AccessFileForIPC(allowed_command_set, permission_list, requested_filename,
+                       flags, reply);
+      break;
+    }
+    case COMMAND_MKDIR: {
+      const char* requested_filename;
+      int mode = 0;
+      if (!GetPathAndFlags(message, &requested_filename, &mode))
+        return false;
+      MkdirFileForIPC(allowed_command_set, permission_list, requested_filename,
+                      mode, reply);
       break;
     }
     case COMMAND_OPEN: {
-      std::string requested_filename;
+      const char* requested_filename;
       int flags = 0;
-      if (!iter.ReadString(&requested_filename) || !iter.ReadInt(&flags))
+      if (!GetPathAndFlags(message, &requested_filename, &flags))
         return false;
-      OpenFileForIPC(policy, requested_filename, flags, write_pickle,
-                     opened_files);
+      OpenFileForIPC(allowed_command_set, permission_list, requested_filename,
+                     flags, reply, opened_file);
+      break;
+    }
+    case COMMAND_READLINK: {
+      const char* filename;
+      if (!message->ReadString(&filename))
+        return false;
+
+      ReadlinkFileForIPC(allowed_command_set, permission_list, filename, reply);
+      break;
+    }
+    case COMMAND_RENAME: {
+      const char* old_filename;
+      if (!message->ReadString(&old_filename))
+        return false;
+
+      const char* new_filename;
+      if (!message->ReadString(&new_filename))
+        return false;
+
+      RenameFileForIPC(allowed_command_set, permission_list, old_filename,
+                       new_filename, reply);
+      break;
+    }
+    case COMMAND_RMDIR: {
+      const char* requested_filename;
+      if (!message->ReadString(&requested_filename))
+        return false;
+      RmdirFileForIPC(allowed_command_set, permission_list, requested_filename,
+                      reply);
       break;
     }
     case COMMAND_STAT:
     case COMMAND_STAT64: {
-      std::string requested_filename;
-      if (!iter.ReadString(&requested_filename))
+      const char* requested_filename;
+      if (!message->ReadString(&requested_filename))
         return false;
-      StatFileForIPC(policy, static_cast<IPCCommand>(command_type),
-                     requested_filename, write_pickle);
+      int follow_links;
+      if (!message->ReadInt(&follow_links))
+        return false;
+      StatFileForIPC(allowed_command_set, permission_list,
+                     static_cast<BrokerCommand>(command_type),
+                     requested_filename, !!follow_links, reply);
       break;
     }
-    case COMMAND_RENAME: {
-      std::string old_filename;
-      std::string new_filename;
-      if (!iter.ReadString(&old_filename) || !iter.ReadString(&new_filename))
+    case COMMAND_UNLINK: {
+      const char* requested_filename;
+      if (!message->ReadString(&requested_filename))
         return false;
-      RenameFileForIPC(policy, old_filename, new_filename, write_pickle);
+      UnlinkFileForIPC(allowed_command_set, permission_list, requested_filename,
+                       reply);
       break;
     }
     default:
@@ -215,59 +346,50 @@ bool HandleRemoteCommand(const BrokerPolicy& policy,
 
 }  // namespace
 
-BrokerHost::BrokerHost(const BrokerPolicy& broker_policy,
+BrokerHost::BrokerHost(const BrokerPermissionList& broker_permission_list,
+                       const BrokerCommandSet& allowed_command_set,
                        BrokerChannel::EndPoint ipc_channel)
-    : broker_policy_(broker_policy), ipc_channel_(std::move(ipc_channel)) {}
+    : broker_permission_list_(broker_permission_list),
+      allowed_command_set_(allowed_command_set),
+      ipc_channel_(std::move(ipc_channel)) {}
 
-BrokerHost::~BrokerHost() {
-}
+BrokerHost::~BrokerHost() {}
 
 // Handle a request on the IPC channel ipc_channel_.
 // A request should have a file descriptor attached on which we will reply and
 // that we will then close.
 // A request should start with an int that will be used as the command type.
 BrokerHost::RequestStatus BrokerHost::HandleRequest() const {
-  std::vector<base::ScopedFD> fds;
-  char buf[kMaxMessageLength];
+  BrokerSimpleMessage message;
   errno = 0;
-  const ssize_t msg_len = base::UnixDomainSocket::RecvMsg(
-      ipc_channel_.get(), buf, sizeof(buf), &fds);
+  base::ScopedFD temporary_ipc;
+  const ssize_t msg_len =
+      message.RecvMsgWithFlags(ipc_channel_.get(), 0, &temporary_ipc);
 
   if (msg_len == 0 || (msg_len == -1 && errno == ECONNRESET)) {
     // EOF from the client, or the client died, we should die.
     return RequestStatus::LOST_CLIENT;
   }
 
-  // The client should send exactly one file descriptor, on which we
+  // The client sends exactly one file descriptor, on which we
   // will write the reply.
-  if (msg_len < 0 || fds.size() != 1 || fds[0].get() < 0) {
+  if (msg_len < 0) {
     PLOG(ERROR) << "Error reading message from the client";
     return RequestStatus::FAILURE;
   }
 
-  base::ScopedFD temporary_ipc(std::move(fds[0]));
-
-  base::Pickle pickle(buf, msg_len);
-  base::PickleIterator iter(pickle);
-  base::Pickle write_pickle;
-  std::vector<int> opened_files;
+  BrokerSimpleMessage reply;
+  int opened_file = -1;
   bool result =
-      HandleRemoteCommand(broker_policy_, iter, &write_pickle, &opened_files);
+      HandleRemoteCommand(allowed_command_set_, broker_permission_list_,
+                          &message, &reply, &opened_file);
 
-  if (result) {
-    CHECK_LE(write_pickle.size(), kMaxMessageLength);
-    ssize_t sent = base::UnixDomainSocket::SendMsg(
-        temporary_ipc.get(), write_pickle.data(), write_pickle.size(),
-        opened_files);
-    if (sent <= 0) {
-      LOG(ERROR) << "Could not send IPC reply";
-      result = false;
-    }
-  }
+  ssize_t sent = reply.SendMsg(temporary_ipc.get(), opened_file);
+  if (sent < 0)
+    LOG(ERROR) << "sent failed";
 
-  // Close anything we have opened in this process.
-  for (int fd : opened_files) {
-    int ret = IGNORE_EINTR(close(fd));
+  if (opened_file >= 0) {
+    int ret = IGNORE_EINTR(close(opened_file));
     DCHECK(!ret) << "Could not close file descriptor";
   }
 

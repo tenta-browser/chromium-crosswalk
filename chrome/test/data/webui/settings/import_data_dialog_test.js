@@ -39,13 +39,13 @@ class TestImportDataBrowserProxy extends TestBrowserProxy {
 
 suite('ImportDataDialog', function() {
   /** @type {!Array<!settings.BrowserProfile} */
-  var browserProfiles = [
+  const browserProfiles = [
     {
       autofillFormData: true,
       favorites: true,
       history: true,
       index: 0,
-      name: "Mozilla Firefox",
+      name: 'Mozilla Firefox',
       passwords: true,
       search: true
     },
@@ -54,7 +54,7 @@ suite('ImportDataDialog', function() {
       favorites: true,
       history: false,
       index: 1,
-      name: "Bookmarks HTML File",
+      name: 'Bookmarks HTML File',
       passwords: false,
       search: false
     },
@@ -68,7 +68,7 @@ suite('ImportDataDialog', function() {
     };
   }
 
-  var prefs = {};
+  const prefs = {};
   ['import_dialog_history', 'import_dialog_bookmarks',
    'import_dialog_saved_passwords', 'import_dialog_search_engine',
    'import_dialog_autofill_form_data',
@@ -76,7 +76,7 @@ suite('ImportDataDialog', function() {
     prefs[name] = createBooleanPref(name);
   });
 
-  var dialog = null;
+  let dialog = null;
 
   setup(function() {
     browserProxy = new TestImportDataBrowserProxy();
@@ -133,16 +133,16 @@ suite('ImportDataDialog', function() {
     assertFalse(dialog.$.cancel.hidden);
     assertTrue(dialog.$.cancel.disabled);
     assertTrue(dialog.$.done.hidden);
-    assertTrue(dialog.$$('paper-spinner').active);
-    assertFalse(dialog.$$('paper-spinner').hidden);
+    assertTrue(dialog.$$('paper-spinner-lite').active);
+    assertFalse(dialog.$$('paper-spinner-lite').hidden);
   }
 
   function assertSucceededButtons() {
     assertTrue(dialog.$.import.hidden);
     assertTrue(dialog.$.cancel.hidden);
     assertFalse(dialog.$.done.hidden);
-    assertFalse(dialog.$$('paper-spinner').active);
-    assertTrue(dialog.$$('paper-spinner').hidden);
+    assertFalse(dialog.$$('paper-spinner-lite').active);
+    assertTrue(dialog.$$('paper-spinner-lite').hidden);
   }
 
   /** @param {!settings.ImportDataStatus} status */
@@ -152,7 +152,7 @@ suite('ImportDataDialog', function() {
 
   test('ImportFromBookmarksFile', function() {
     simulateBrowserProfileChange(1);
-    MockInteractions.tap(dialog.$.import);
+    dialog.$.import.click();
     return browserProxy.whenCalled('importFromBookmarksFile').then(function() {
       simulateImportStatusChange(settings.ImportDataStatus.IN_PROGRESS);
       assertInProgressButtons();
@@ -168,9 +168,9 @@ suite('ImportDataDialog', function() {
   test('ImportFromBrowserProfile', function() {
     dialog.set('prefs.import_dialog_bookmarks.value', false);
 
-    var expectedIndex = 0;
+    const expectedIndex = 0;
     simulateBrowserProfileChange(expectedIndex);
-    MockInteractions.tap(dialog.$.import);
+    dialog.$.import.click();
     return browserProxy.whenCalled('importData').then(function(actualIndex) {
       assertEquals(expectedIndex, actualIndex);
 

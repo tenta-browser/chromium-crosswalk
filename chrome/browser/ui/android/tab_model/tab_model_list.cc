@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 
+#include "base/no_destructor.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
@@ -14,16 +15,15 @@
 namespace {
 
 // Maintains and gives access to a static list of TabModel instances.
-static TabModelList::TabModelVector& tab_models() {
-  CR_DEFINE_STATIC_LOCAL(TabModelList::TabModelVector,
-                         tab_model_vector, ());
-  return tab_model_vector;
+TabModelList::TabModelVector& tab_models() {
+  static base::NoDestructor<TabModelList::TabModelVector> tab_model_vector;
+  return *tab_model_vector;
 }
 
 }  // namespace
 
 // static
-base::LazyInstance<base::ObserverList<TabModelListObserver>>::Leaky
+base::LazyInstance<base::ObserverList<TabModelListObserver>::Unchecked>::Leaky
     TabModelList::observers_ = LAZY_INSTANCE_INITIALIZER;
 
 void TabModelList::AddTabModel(TabModel* tab_model) {
@@ -54,12 +54,14 @@ void TabModelList::RemoveObserver(TabModelListObserver* observer) {
   observers_.Get().RemoveObserver(observer);
 }
 
-void TabModelList::HandlePopupNavigation(chrome::NavigateParams* params) {
+void TabModelList::HandlePopupNavigation(NavigateParams* params) {
   TabAndroid* tab = TabAndroid::FromWebContents(params->source_contents);
 
   // NOTE: If this fails contact dtrainor@.
   DCHECK(tab);
-  tab->HandlePopupNavigation(params);
+  TabModel* model = FindTabModelWithId(tab->window_id());
+  if (model)
+    model->HandlePopupNavigation(tab, params);
 }
 
 TabModel* TabModelList::GetTabModelForWebContents(
@@ -79,8 +81,7 @@ TabModel* TabModelList::GetTabModelForWebContents(
   return NULL;
 }
 
-TabModel* TabModelList::FindTabModelWithId(
-    SessionID::id_type desired_id) {
+TabModel* TabModelList::FindTabModelWithId(SessionID desired_id) {
   for (TabModelList::const_iterator i = TabModelList::begin();
       i != TabModelList::end(); i++) {
     if ((*i)->GetSessionId() == desired_id)

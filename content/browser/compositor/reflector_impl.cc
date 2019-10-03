@@ -4,9 +4,7 @@
 
 #include "content/browser/compositor/reflector_impl.h"
 
-#include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "components/viz/common/resources/transferable_resource.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
 #include "content/browser/compositor/owned_mailbox.h"
@@ -31,8 +29,7 @@ ReflectorImpl::ReflectorImpl(ui::Compositor* mirrored_compositor,
     AddMirroringLayer(mirroring_layer);
 }
 
-ReflectorImpl::~ReflectorImpl() {
-}
+ReflectorImpl::~ReflectorImpl() = default;
 
 void ReflectorImpl::Shutdown() {
   if (output_surface_)
@@ -44,8 +41,8 @@ void ReflectorImpl::Shutdown() {
 void ReflectorImpl::DetachFromOutputSurface() {
   DCHECK(output_surface_);
   output_surface_->SetReflector(nullptr);
-  DCHECK(mailbox_.get());
-  mailbox_ = nullptr;
+  DCHECK(mailbox_);
+  mailbox_.reset();
   output_surface_ = nullptr;
   for (const auto& layer_data : mirroring_layers_)
     layer_data->layer->SetShowSolidColorContent();
@@ -141,12 +138,6 @@ void ReflectorImpl::OnSourcePostSubBuffer(const gfx::Rect& swap_rect,
     UpdateTexture(layer_data.get(), surface_size, mirroring_rect);
 }
 
-static void ReleaseMailbox(scoped_refptr<OwnedMailbox> mailbox,
-                           const gpu::SyncToken& sync_token,
-                           bool is_lost) {
-  mailbox->UpdateSyncToken(sync_token);
-}
-
 std::vector<std::unique_ptr<ReflectorImpl::LayerData>>::iterator
 ReflectorImpl::FindLayerData(ui::Layer* layer) {
   return std::find_if(mirroring_layers_.begin(), mirroring_layers_.end(),
@@ -160,12 +151,11 @@ void ReflectorImpl::UpdateTexture(ReflectorImpl::LayerData* layer_data,
                                   const gfx::Rect& redraw_rect) {
   if (layer_data->needs_set_mailbox) {
     layer_data->layer->SetTransferableResource(
-        viz::TransferableResource::MakeGL(mailbox_->holder().mailbox, GL_LINEAR,
-                                          mailbox_->holder().texture_target,
-                                          mailbox_->holder().sync_token),
-        viz::SingleReleaseCallback::Create(
-            base::Bind(ReleaseMailbox, mailbox_)),
-        source_size);
+        viz::TransferableResource::MakeGL(
+            mailbox_->holder().mailbox, GL_LINEAR,
+            mailbox_->holder().texture_target, mailbox_->holder().sync_token,
+            source_size, false /* is_overlay_candidate */),
+        mailbox_->GetSingleReleaseCallback(), source_size);
     layer_data->needs_set_mailbox = false;
   } else {
     layer_data->layer->SetTextureSize(source_size);

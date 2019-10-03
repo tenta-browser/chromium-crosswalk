@@ -10,8 +10,14 @@
 #include "ash/highlighter/highlighter_gesture_util.h"
 #include "ash/highlighter/highlighter_result_view.h"
 #include "ash/highlighter/highlighter_view.h"
-#include "ash/public/cpp/scale_utility.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shell.h"
+#include "ash/shell_state.h"
+#include "ash/system/palette/palette_utils.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/timer/timer.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/base_event_utils.h"
@@ -36,31 +42,46 @@ gfx::RectF AdjustHorizontalStroke(const gfx::RectF& box,
                     box.width() + pen_tip_size.width(), pen_tip_size.height());
 }
 
-// This method computes the scale required to convert window-relative DIP
-// coordinates to the coordinate space of the screenshot taken from that window.
-// The transform returned by WindowTreeHost::GetRootTransform translates points
-// from DIP to physical screen pixels (by taking into account not only the
-// scale but also the rotation and the offset).
-// However, the screenshot bitmap is always oriented the same way as the window
-// from which it was taken, and has zero offset.
-// The code below deduces the scale from the transform by applying it to a pair
-// of points separated by the distance of 1, and measuring the distance between
-// the transformed points.
-float GetScreenshotScale(aura::Window* window) {
-  return GetScaleFactorForTransform(window->GetHost()->GetRootTransform());
-}
-
 }  // namespace
 
-HighlighterController::HighlighterController()
-    : binding_(this), weak_factory_(this) {}
+HighlighterController::HighlighterController() : weak_factory_(this) {
+  Shell::Get()->AddPreTargetHandler(this);
+}
 
-HighlighterController::~HighlighterController() = default;
+HighlighterController::~HighlighterController() {
+  Shell::Get()->RemovePreTargetHandler(this);
+}
+
+void HighlighterController::AddObserver(Observer* observer) {
+  DCHECK(observer);
+  observers_.AddObserver(observer);
+}
+
+void HighlighterController::RemoveObserver(Observer* observer) {
+  DCHECK(observer);
+  observers_.RemoveObserver(observer);
+}
 
 void HighlighterController::SetExitCallback(base::OnceClosure exit_callback,
                                             bool require_success) {
   exit_callback_ = std::move(exit_callback);
   require_success_ = require_success;
+}
+
+void HighlighterController::UpdateEnabledState(
+    HighlighterEnabledState enabled_state) {
+  if (enabled_state_ == enabled_state)
+    return;
+  enabled_state_ = enabled_state;
+
+  SetEnabled(enabled_state == HighlighterEnabledState::kEnabled);
+  for (auto& observer : observers_)
+    observer.OnHighlighterEnabledChanged(enabled_state);
+}
+
+void HighlighterController::AbortSession() {
+  if (enabled_state_ == HighlighterEnabledState::kEnabled)
+    UpdateEnabledState(HighlighterEnabledState::kDisabledBySessionAbort);
 }
 
 void HighlighterController::SetEnabled(bool enabled) {
@@ -82,25 +103,6 @@ void HighlighterController::SetEnabled(bool enabled) {
     if (highlighter_view_ && !highlighter_view_->animating())
       DestroyPointerView();
   }
-  if (client_)
-    client_->HandleEnabledStateChange(enabled);
-}
-
-void HighlighterController::BindRequest(
-    mojom::HighlighterControllerRequest request) {
-  binding_.Bind(std::move(request));
-}
-
-void HighlighterController::SetClient(
-    mojom::HighlighterControllerClientPtr client) {
-  client_ = std::move(client);
-  client_.set_connection_error_handler(
-      base::Bind(&HighlighterController::OnClientConnectionLost,
-                 weak_factory_.GetWeakPtr()));
-}
-
-void HighlighterController::ExitHighlighterMode() {
-  CallExitCallback();
 }
 
 views::View* HighlighterController::GetPointerView() const {
@@ -110,8 +112,9 @@ views::View* HighlighterController::GetPointerView() const {
 void HighlighterController::CreatePointerView(
     base::TimeDelta presentation_delay,
     aura::Window* root_window) {
-  highlighter_view_ =
-      std::make_unique<HighlighterView>(presentation_delay, root_window);
+  highlighter_view_ = std::make_unique<HighlighterView>(
+      presentation_delay,
+      Shell::GetContainer(root_window, kShellWindowId_OverlayContainer));
   result_view_.reset();
 }
 
@@ -156,7 +159,7 @@ void HighlighterController::RecognizeGesture() {
       highlighter_view_->GetWidget()->GetNativeWindow()->GetRootWindow();
   const gfx::Rect bounds = current_window->bounds();
 
-  const FastInkPoints& points = highlighter_view_->points();
+  const fast_ink::FastInkPoints& points = highlighter_view_->points();
   gfx::RectF box = points.GetBoundingBoxF();
 
   const HighlighterGestureType gesture_type =
@@ -187,10 +190,13 @@ void HighlighterController::RecognizeGesture() {
 
   if (!box.IsEmpty() &&
       gesture_type != HighlighterGestureType::kNotRecognized) {
-    if (client_) {
-      client_->HandleSelection(gfx::ToEnclosingRect(
-          gfx::ScaleRect(box, GetScreenshotScale(current_window))));
-    }
+    // The window for selection should be the root window to show assistant.
+    Shell::Get()->shell_state()->SetRootWindowForNewWindows(
+        current_window->GetRootWindow());
+
+    const gfx::Rect selection_rect = gfx::ToEnclosingRect(box);
+    for (auto& observer : observers_)
+      observer.OnHighlighterSelectionRecognized(selection_rect);
 
     result_view_ = std::make_unique<HighlighterResultView>(current_window);
     result_view_->Animate(box, gesture_type,
@@ -229,6 +235,9 @@ void HighlighterController::DestroyPointerView() {
 }
 
 bool HighlighterController::CanStartNewGesture(ui::TouchEvent* event) {
+  // Ignore events over the palette.
+  if (ash::palette_utils::PaletteContainsPointInScreen(event->root_location()))
+    return false;
   return !interrupted_stroke_timer_ &&
          FastInkPointerController::CanStartNewGesture(event);
 }
@@ -244,21 +253,9 @@ void HighlighterController::DestroyResultView() {
   result_view_.reset();
 }
 
-void HighlighterController::OnClientConnectionLost() {
-  client_.reset();
-  binding_.Close();
-  // The client has detached, force-exit the highlighter mode.
-  CallExitCallback();
-}
-
 void HighlighterController::CallExitCallback() {
   if (!exit_callback_.is_null())
     std::move(exit_callback_).Run();
-}
-
-void HighlighterController::FlushMojoForTesting() {
-  if (client_)
-    client_.FlushForTesting();
 }
 
 }  // namespace ash

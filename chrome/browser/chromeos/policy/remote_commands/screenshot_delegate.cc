@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/syslog_logging.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -53,17 +54,35 @@ std::unique_ptr<UploadJob> ScreenshotDelegate::CreateUploadJob(
   chromeos::DeviceOAuth2TokenService* device_oauth2_token_service =
       chromeos::DeviceOAuth2TokenServiceFactory::Get();
 
-  scoped_refptr<net::URLRequestContextGetter> system_request_context =
-      g_browser_process->system_request_context();
   std::string robot_account_id =
       device_oauth2_token_service->GetRobotAccountId();
 
   SYSLOG(INFO) << "Creating upload job for screenshot";
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("remote_command_screenshot", R"(
+        semantics {
+          sender: "Chrome OS Remote Commands"
+          description: "Admins of kiosks are able to request screenshots "
+              "of the current screen shown on the kiosk, which is uploaded to "
+              "the device management server."
+          trigger: "Admin requests remote screenshot on the Admin Console."
+          data: "Screenshot of the current screen shown on the kiosk."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled in settings, however this "
+              "request will only happen on explicit admin request and when no "
+              "user interaction or media capture happened since last reboot."
+          policy_exception_justification: "Requires explicit admin action."
+        }
+      )");
   return std::unique_ptr<UploadJob>(new UploadJobImpl(
-      upload_url, robot_account_id, device_oauth2_token_service,
-      system_request_context, delegate,
+      upload_url, robot_account_id,
+      device_oauth2_token_service->GetAccessTokenManager(),
+      g_browser_process->shared_url_loader_factory(), delegate,
       base::WrapUnique(new UploadJobImpl::RandomMimeBoundaryGenerator),
-      base::ThreadTaskRunnerHandle::Get()));
+      traffic_annotation, base::ThreadTaskRunnerHandle::Get()));
 }
 
 void ScreenshotDelegate::StoreScreenshot(

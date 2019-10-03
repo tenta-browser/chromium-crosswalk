@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
 #include "chrome/test/base/test_switches.h"
-#include "ppapi/features/features.h"
+#include "build/build_config.h"
+#include "ppapi/buildflags/buildflags.h"
 
 namespace switches {
 
 // Also emit full event trace logs for successful tests.
 const char kAlsoEmitSuccessLogs[] = "also-emit-success-logs";
+
+// Show the mean value of histograms that native performance tests
+// are monitoring. Note that this is only applicable for PerformanceTest
+// subclasses.
+const char kPerfTestPrintUmaMeans[] = "perf-test-print-uma-means";
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 // Makes browser pixel tests overwrite the reference if it does not match.

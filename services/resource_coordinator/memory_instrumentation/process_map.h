@@ -6,13 +6,15 @@
 #define SERVICES_RESOURCE_COORDINATOR_MEMORY_INSTRUMENTATION_PROCESS_MAP_H_
 
 #include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/process/process_handle.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/identity.h"
-#include "services/service_manager/public/interfaces/service_manager.mojom.h"
+#include "services/service_manager/public/mojom/service_manager.mojom.h"
 
 namespace service_manager {
 class Connector;
@@ -32,6 +34,12 @@ class ProcessMap : public service_manager::mojom::ServiceManagerListener {
 
   // Returns the pid for a client given its identity.
   base::ProcessId GetProcessId(const service_manager::Identity&) const;
+
+  // Computes a map of all service names each known PID is associated with. Note
+  // that this walks over all of |instances_|, so it should not be needlessly
+  // called repeatedly.
+  std::map<base::ProcessId, std::vector<std::string>>
+  ComputePidToServiceNamesMap() const;
 
  protected:
  private:

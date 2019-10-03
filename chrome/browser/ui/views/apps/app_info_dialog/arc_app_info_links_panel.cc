@@ -8,7 +8,7 @@
 
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/arc/common/app.mojom.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
@@ -26,15 +26,15 @@ ArcAppInfoLinksPanel::ArcAppInfoLinksPanel(Profile* profile,
     : AppInfoPanel(profile, app),
       app_list_observer_(this),
       manage_link_(nullptr) {
-  SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical, gfx::Insets(),
-                           ChromeLayoutProvider::Get()->GetDistanceMetric(
-                               views::DISTANCE_RELATED_CONTROL_VERTICAL)));
-  manage_link_ = new views::Link(
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(),
+      ChromeLayoutProvider::Get()->GetDistanceMetric(
+          views::DISTANCE_RELATED_CONTROL_VERTICAL)));
+  auto manage_link = std::make_unique<views::Link>(
       l10n_util::GetStringUTF16(IDS_ARC_APPLICATION_INFO_MANAGE_LINK));
-  manage_link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  manage_link_->set_listener(this);
-  AddChildView(manage_link_);
+  manage_link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  manage_link->set_listener(this);
+  manage_link_ = AddChildView(std::move(manage_link));
 
   ArcAppListPrefs* const arc_prefs = ArcAppListPrefs::Get(profile_);
   DCHECK(arc_prefs);
@@ -61,22 +61,23 @@ void ArcAppInfoLinksPanel::LinkClicked(views::Link* source, int event_flags) {
   }
 }
 
-void ArcAppInfoLinksPanel::OnAppReadyChanged(const std::string& app_id,
-                                             bool ready) {
-  if (app_id == arc::kSettingsAppId)
-    UpdateLink(ready);
-}
-
-void ArcAppInfoLinksPanel::OnAppRemoved(const std::string& app_id) {
-  if (app_id == arc::kSettingsAppId)
-    UpdateLink(false);
-}
-
 void ArcAppInfoLinksPanel::OnAppRegistered(
     const std::string& app_id,
     const ArcAppListPrefs::AppInfo& app_info) {
   if (app_id == arc::kSettingsAppId)
     UpdateLink(app_info.ready);
+}
+
+void ArcAppInfoLinksPanel::OnAppStatesChanged(
+    const std::string& app_id,
+    const ArcAppListPrefs::AppInfo& app_info) {
+  if (app_id == arc::kSettingsAppId)
+    UpdateLink(app_info.ready);
+}
+
+void ArcAppInfoLinksPanel::OnAppRemoved(const std::string& app_id) {
+  if (app_id == arc::kSettingsAppId)
+    UpdateLink(false);
 }
 
 void ArcAppInfoLinksPanel::UpdateLink(bool enabled) {

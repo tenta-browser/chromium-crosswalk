@@ -18,9 +18,9 @@ import org.junit.runner.RunWith;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserverTestRule.TabModelSelectorTestTabModel;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.List;
 import java.util.concurrent.TimeoutException;
@@ -45,17 +45,17 @@ public class TabModelSelectorTabModelObserverTest {
     }
 
     @Test
-    @UiThreadTest
     @SmallTest
     public void testAlreadyInitializedSelector() throws InterruptedException, TimeoutException {
         final CallbackHelper registrationCompleteCallback = new CallbackHelper();
         TabModelSelectorTabModelObserver observer =
-                new TabModelSelectorTabModelObserver(mSelector) {
-                    @Override
-                    protected void onRegistrationComplete() {
-                        registrationCompleteCallback.notifyCalled();
-                    }
-                };
+                TestThreadUtils.runOnUiThreadBlockingNoException(
+                        () -> new TabModelSelectorTabModelObserver(mSelector) {
+                            @Override
+                            protected void onRegistrationComplete() {
+                                registrationCompleteCallback.notifyCalled();
+                            }
+                        });
         registrationCompleteCallback.waitForCallback(0);
         assertAllModelsHaveObserver(mSelector, observer);
     }
@@ -66,7 +66,7 @@ public class TabModelSelectorTabModelObserverTest {
     public void testUninitializedSelector() throws InterruptedException, TimeoutException {
         mSelector = new TabModelSelectorBase() {
             @Override
-            public Tab openNewTab(LoadUrlParams loadUrlParams, TabLaunchType type, Tab parent,
+            public Tab openNewTab(LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent,
                     boolean incognito) {
                 return null;
             }

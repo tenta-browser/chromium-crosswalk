@@ -12,6 +12,7 @@
 
 namespace views {
 
+class MenuItemView;
 class SubmenuView;
 
 // MenuScrollViewContainer contains the SubmenuView (through a MenuScrollView)
@@ -19,30 +20,34 @@ class SubmenuView;
 // the preferred height of the SubmenuView is bigger than our bounds.
 class MenuScrollViewContainer : public View {
  public:
+  METADATA_HEADER(MenuScrollViewContainer);
+
   explicit MenuScrollViewContainer(SubmenuView* content_view);
 
   // Returns the buttons for scrolling up/down.
   View* scroll_down_button() const { return scroll_down_button_; }
   View* scroll_up_button() const { return scroll_up_button_; }
 
-  // External function to check if the bubble border is usd.
-  bool HasBubbleBorder();
+  // External function to check if the bubble border is used.
+  bool HasBubbleBorder() const;
 
-  // Offsets the Arrow from the default location.
-  void SetBubbleArrowOffset(int offset);
+  void SetFootnoteView(View* view);
 
   // View overrides.
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   void OnPaintBackground(gfx::Canvas* canvas) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
  protected:
   // View override.
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
 
  private:
+  // Create a default border or bubble border, as appropriate.
+  void CreateBorder();
+
   // Create the default border.
   void CreateDefaultBorder();
 
@@ -50,6 +55,9 @@ class MenuScrollViewContainer : public View {
   void CreateBubbleBorder();
 
   BubbleBorder::Arrow BubbleBorderTypeFromAnchor(MenuAnchorPosition anchor);
+
+  // Returns the last item in the menu if it is of type HIGHLIGHTED.
+  MenuItemView* GetFootnote() const;
 
   class MenuScrollView;
 
@@ -64,10 +72,13 @@ class MenuScrollViewContainer : public View {
   SubmenuView* content_view_;
 
   // If set the currently set border is a bubble border.
-  BubbleBorder::Arrow arrow_;
+  BubbleBorder::Arrow arrow_ = BubbleBorder::NONE;
 
   // Weak reference to the currently set border.
-  BubbleBorder* bubble_border_;
+  BubbleBorder* bubble_border_ = nullptr;
+
+  // Corner radius of the background.
+  int corner_radius_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(MenuScrollViewContainer);
 };

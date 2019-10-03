@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/values.h"
-#include "third_party/WebKit/public/platform/WebCrypto.h"
+#include "third_party/blink/public/platform/web_crypto.h"
 
 namespace webcrypto {
 
@@ -69,7 +69,7 @@ class JwkReader {
   //
   // NOTE: |*result| is owned by the JwkReader.
   Status GetOptionalList(const std::string& member_name,
-                         base::ListValue** result,
+                         const base::ListValue** result,
                          bool* member_exists) const;
 
   // Extracts the required string member |member_name| and saves the
@@ -99,7 +99,7 @@ class JwkReader {
   Status VerifyAlg(const std::string& expected_alg) const;
 
  private:
-  std::unique_ptr<base::DictionaryValue> dict_;
+  base::DictionaryValue dict_;
 };
 
 // Helper class for building the JSON for a JWK.

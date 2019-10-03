@@ -10,21 +10,18 @@
 #include <memory>
 #include <string>
 
-#include "ash/public/interfaces/locale.mojom.h"
+#include "ash/public/cpp/locale_update_controller.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/lazy_instance.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_types.h"
 
 class Profile;
-
-namespace base {
-class ListValue;
-}
 
 namespace chromeos {
 
@@ -32,6 +29,7 @@ namespace chromeos {
 // (based on synchronized user preference).  If so: shows notification that
 // allows user to revert change.
 class LocaleChangeGuard : public content::NotificationObserver,
+                          public DeviceSettingsService::Observer,
                           public base::SupportsWeakPtr<LocaleChangeGuard> {
  public:
   explicit LocaleChangeGuard(Profile* profile);
@@ -50,19 +48,19 @@ class LocaleChangeGuard : public content::NotificationObserver,
   FRIEND_TEST_ALL_PREFIXES(LocaleChangeGuardTest,
                            ShowNotificationLocaleChangedList);
 
-  void ConnectToLocaleNotificationController();
-
-  void RevertLocaleChangeCallback(const base::ListValue* list);
   void Check();
 
-  void OnResult(ash::mojom::LocaleNotificationResult result);
+  void OnResult(ash::LocaleNotificationResult result);
   void AcceptLocaleChange();
   void RevertLocaleChange();
 
-  // content::NotificationObserver implementation.
+  // content::NotificationObserver
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
+
+  // DeviceSettingsService::Observer
+  void OwnershipStatusChanged() override;
 
   // Returns true if we should notify user about automatic locale change.
   static bool ShouldShowLocaleChangeNotification(const std::string& from_locale,
@@ -70,9 +68,6 @@ class LocaleChangeGuard : public content::NotificationObserver,
 
   static const char* const* GetSkipShowNotificationLanguagesForTesting();
   static size_t GetSkipShowNotificationLanguagesSizeForTesting();
-
-  // Ash's mojom::LocaleNotificationController used to display notifications.
-  ash::mojom::LocaleNotificationControllerPtr notification_controller_;
 
   std::string from_locale_;
   std::string to_locale_;

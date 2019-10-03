@@ -11,10 +11,15 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
+#include "crypto/signature_verifier.h"
+#include "net/base/hash_value.h"
 #include "net/base/net_export.h"
+#include "third_party/boringssl/src/include/openssl/base.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 
 namespace crypto {
@@ -29,9 +34,7 @@ class X509Certificate;
 namespace x509_util {
 
 // Supported digest algorithms for signing certificates.
-enum DigestAlgorithm {
-  DIGEST_SHA256
-};
+enum DigestAlgorithm { DIGEST_SHA256 };
 
 // Generate a 'tls-server-end-point' channel binding based on the specified
 // certificate. Channel bindings are based on RFC 5929.
@@ -64,26 +67,29 @@ NET_EXPORT bool CreateKeyAndSelfSignedCert(
     std::unique_ptr<crypto::RSAPrivateKey>* key,
     std::string* der_cert);
 
+struct NET_EXPORT Extension {
+  Extension(base::span<const uint8_t> oid,
+            bool critical,
+            base::span<const uint8_t> contents);
+  ~Extension();
+  Extension(const Extension&);
+
+  base::span<const uint8_t> oid;
+  bool critical;
+  base::span<const uint8_t> contents;
+};
+
 // Creates a self-signed certificate from a provided key, using the specified
 // hash algorithm.
-NET_EXPORT bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
-                                     DigestAlgorithm alg,
-                                     const std::string& subject,
-                                     uint32_t serial_number,
-                                     base::Time not_valid_before,
-                                     base::Time not_valid_after,
-                                     std::string* der_cert);
-
-// Provides a method to parse a DER-encoded X509 certificate without calling any
-// OS primitives. This is useful in sandboxed processes.
-NET_EXPORT bool ParseCertificateSandboxed(
-    const base::StringPiece& certificate,
-    std::string* subject,
-    std::string* issuer,
-    base::Time* not_before,
-    base::Time* not_after,
-    std::vector<std::string>* dns_names,
-    std::vector<std::string>* ip_addresses);
+NET_EXPORT bool CreateSelfSignedCert(
+    EVP_PKEY* key,
+    DigestAlgorithm alg,
+    const std::string& subject,
+    uint32_t serial_number,
+    base::Time not_valid_before,
+    base::Time not_valid_after,
+    const std::vector<Extension>& extension_specs,
+    std::string* der_cert);
 
 // Returns a CRYPTO_BUFFER_POOL for deduplicating certificates.
 NET_EXPORT CRYPTO_BUFFER_POOL* GetBufferPool();
@@ -102,20 +108,39 @@ NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
     const char* invalid_data);
 
+// Compares two CRYPTO_BUFFERs and returns true if they have the same contents.
+NET_EXPORT bool CryptoBufferEqual(const CRYPTO_BUFFER* a,
+                                  const CRYPTO_BUFFER* b);
+
 // Returns a StringPiece pointing to the data in |buffer|.
 NET_EXPORT base::StringPiece CryptoBufferAsStringPiece(
     const CRYPTO_BUFFER* buffer);
 
 // Creates a new X509Certificate from the chain in |buffers|, which must have at
 // least one element.
-scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
-    STACK_OF(CRYPTO_BUFFER) * buffers);
+NET_EXPORT scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
+    const STACK_OF(CRYPTO_BUFFER) * buffers);
 
 // Returns the default ParseCertificateOptions for the net stack.
-ParseCertificateOptions DefaultParseCertificateOptions();
+NET_EXPORT ParseCertificateOptions DefaultParseCertificateOptions();
 
-} // namespace x509_util
+// On success, returns true and updates |hash| to be the SHA-256 hash of the
+// subjectPublicKeyInfo of the certificate in |buffer|. If |buffer| is not a
+// valid certificate, returns false and |hash| is in an undefined state.
+NET_EXPORT bool CalculateSha256SpkiHash(const CRYPTO_BUFFER* buffer,
+                                        HashValue* hash) WARN_UNUSED_RESULT;
 
-} // namespace net
+// Calls |verifier->VerifyInit|, using the public key from |certificate|,
+// checking if the digitalSignature key usage bit is present, and returns true
+// on success or false on error.
+NET_EXPORT bool SignatureVerifierInitWithCertificate(
+    crypto::SignatureVerifier* verifier,
+    crypto::SignatureVerifier::SignatureAlgorithm signature_algorithm,
+    base::span<const uint8_t> signature,
+    const CRYPTO_BUFFER* certificate);
+
+}  // namespace x509_util
+
+}  // namespace net
 
 #endif  // NET_CERT_X509_UTIL_H_

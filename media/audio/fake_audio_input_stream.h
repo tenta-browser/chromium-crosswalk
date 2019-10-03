@@ -41,6 +41,7 @@ class MEDIA_EXPORT FakeAudioInputStream
   bool IsMuted() override;
   bool SetAutomaticGainControl(bool enabled) override;
   bool GetAutomaticGainControl() override;
+  void SetOutputDeviceForAec(const std::string& output_device_id) override;
 
   // Generate one beep sound. This method is called by FakeVideoCaptureDevice to
   // test audio/video synchronization. This is a static method because
@@ -64,7 +65,7 @@ class MEDIA_EXPORT FakeAudioInputStream
   ~FakeAudioInputStream() override;
 
   std::unique_ptr<AudioOutputStream::AudioSourceCallback> ChooseSource();
-  void ReadAudioFromSource();
+  void ReadAudioFromSource(base::TimeTicks ideal_time, base::TimeTicks now);
 
   AudioManagerBase* audio_manager_;
   AudioInputCallback* callback_;

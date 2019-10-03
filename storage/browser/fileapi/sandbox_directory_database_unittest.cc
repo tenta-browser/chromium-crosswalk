@@ -35,8 +35,8 @@ const base::FilePath::CharType kDirectoryDatabaseName[] = FPL("Paths");
 
 class SandboxDirectoryDatabaseTest : public testing::Test {
  public:
-  typedef SandboxDirectoryDatabase::FileId FileId;
-  typedef SandboxDirectoryDatabase::FileInfo FileInfo;
+  using FileId = SandboxDirectoryDatabase::FileId;
+  using FileInfo = SandboxDirectoryDatabase::FileInfo;
 
   SandboxDirectoryDatabaseTest() {
     EXPECT_TRUE(base_.CreateUniqueTempDir());
@@ -51,7 +51,7 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
     // Call CloseDatabase() to avoid having multiple database instances for
     // single directory at once.
     CloseDatabase();
-    db_.reset(new SandboxDirectoryDatabase(path(), NULL));
+    db_.reset(new SandboxDirectoryDatabase(path(), nullptr));
   }
 
   void CloseDatabase() {
@@ -105,7 +105,7 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
     db_.reset();
     ASSERT_TRUE(base::DeleteFile(path(), true /* recursive */));
     ASSERT_TRUE(base::CreateDirectory(path()));
-    db_.reset(new SandboxDirectoryDatabase(path(), NULL));
+    db_.reset(new SandboxDirectoryDatabase(path(), nullptr));
   }
 
   bool RepairDatabase() {
@@ -119,21 +119,24 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
   void MakeHierarchyLink(FileId parent_id,
                          FileId child_id,
                          const base::FilePath::StringType& name) {
-    ASSERT_TRUE(db()->db_->Put(
-        leveldb::WriteOptions(),
-        "CHILD_OF:" + base::Int64ToString(parent_id) + ":" +
-        FilePathToString(base::FilePath(name)),
-        base::Int64ToString(child_id)).ok());
+    ASSERT_TRUE(db()->db_
+                    ->Put(leveldb::WriteOptions(),
+                          "CHILD_OF:" + base::NumberToString(parent_id) + ":" +
+                              FilePathToString(base::FilePath(name)),
+                          base::NumberToString(child_id))
+                    .ok());
   }
 
   // Deletes link from parent of |file_id| to |file_id|.
   void DeleteHierarchyLink(FileId file_id) {
     FileInfo file_info;
     ASSERT_TRUE(db()->GetFileInfo(file_id, &file_info));
-    ASSERT_TRUE(db()->db_->Delete(
-        leveldb::WriteOptions(),
-        "CHILD_OF:" + base::Int64ToString(file_info.parent_id) + ":" +
-        FilePathToString(base::FilePath(file_info.name))).ok());
+    ASSERT_TRUE(
+        db()->db_
+            ->Delete(leveldb::WriteOptions(),
+                     "CHILD_OF:" + base::NumberToString(file_info.parent_id) +
+                         ":" + FilePathToString(base::FilePath(file_info.name)))
+            .ok());
   }
 
  protected:
@@ -524,10 +527,10 @@ TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_Empty) {
 
 TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_Consistent) {
   FileId dir_id;
-  CreateFile(0, FPL("foo"), FPL("hoge"), NULL);
+  CreateFile(0, FPL("foo"), FPL("hoge"), nullptr);
   CreateDirectory(0, FPL("bar"), &dir_id);
-  CreateFile(dir_id, FPL("baz"), FPL("fuga"), NULL);
-  CreateFile(dir_id, FPL("fizz"), FPL("buzz"), NULL);
+  CreateFile(dir_id, FPL("baz"), FPL("fuga"), nullptr);
+  CreateFile(dir_id, FPL("fizz"), FPL("buzz"), nullptr);
 
   EXPECT_TRUE(db()->IsFileSystemConsistent());
 }
@@ -535,17 +538,17 @@ TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_Consistent) {
 TEST_F(SandboxDirectoryDatabaseTest,
        TestConsistencyCheck_BackingMultiEntry) {
   const base::FilePath::CharType kBackingFileName[] = FPL("the celeb");
-  CreateFile(0, FPL("foo"), kBackingFileName, NULL);
+  CreateFile(0, FPL("foo"), kBackingFileName, nullptr);
 
   EXPECT_TRUE(db()->IsFileSystemConsistent());
   ASSERT_TRUE(base::DeleteFile(path().Append(kBackingFileName), false));
-  CreateFile(0, FPL("bar"), kBackingFileName, NULL);
+  CreateFile(0, FPL("bar"), kBackingFileName, nullptr);
   EXPECT_FALSE(db()->IsFileSystemConsistent());
 }
 
 TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_FileLost) {
   const base::FilePath::CharType kBackingFileName[] = FPL("hoge");
-  CreateFile(0, FPL("foo"), kBackingFileName, NULL);
+  CreateFile(0, FPL("foo"), kBackingFileName, nullptr);
 
   EXPECT_TRUE(db()->IsFileSystemConsistent());
   ASSERT_TRUE(base::DeleteFile(path().Append(kBackingFileName), false));
@@ -553,7 +556,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_FileLost) {
 }
 
 TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_OrphanFile) {
-  CreateFile(0, FPL("foo"), FPL("hoge"), NULL);
+  CreateFile(0, FPL("foo"), FPL("hoge"), nullptr);
 
   EXPECT_TRUE(db()->IsFileSystemConsistent());
 
@@ -601,7 +604,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_WreckedEntries) {
   FileId dir2_id;
   CreateDirectory(0, FPL("foo"), &dir1_id);
   CreateDirectory(dir1_id, FPL("bar"), &dir2_id);
-  CreateFile(dir2_id, FPL("baz"), FPL("fizz/buzz"), NULL);
+  CreateFile(dir2_id, FPL("baz"), FPL("fizz/buzz"), nullptr);
 
   EXPECT_TRUE(db()->IsFileSystemConsistent());
   DeleteHierarchyLink(dir2_id);  // Delete link from |dir1_id| to |dir2_id|.
@@ -612,7 +615,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestRepairDatabase_Success) {
   base::FilePath::StringType kFileName = FPL("bar");
 
   FileId file_id_prev;
-  CreateFile(0, FPL("foo"), FPL("hoge"), NULL);
+  CreateFile(0, FPL("foo"), FPL("hoge"), nullptr);
   CreateFile(0, kFileName, FPL("fuga"), &file_id_prev);
 
   const base::FilePath kDatabaseDirectory =
@@ -633,8 +636,8 @@ TEST_F(SandboxDirectoryDatabaseTest, TestRepairDatabase_Success) {
 TEST_F(SandboxDirectoryDatabaseTest, TestRepairDatabase_Failure) {
   base::FilePath::StringType kFileName = FPL("bar");
 
-  CreateFile(0, FPL("foo"), FPL("hoge"), NULL);
-  CreateFile(0, kFileName, FPL("fuga"), NULL);
+  CreateFile(0, FPL("foo"), FPL("hoge"), nullptr);
+  CreateFile(0, kFileName, FPL("fuga"), nullptr);
 
   const base::FilePath kDatabaseDirectory =
       path().Append(kDirectoryDatabaseName);
@@ -655,7 +658,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestRepairDatabase_MissingManifest) {
   base::FilePath::StringType kFileName = FPL("bar");
 
   FileId file_id_prev;
-  CreateFile(0, FPL("foo"), FPL("hoge"), NULL);
+  CreateFile(0, FPL("foo"), FPL("hoge"), nullptr);
   CreateFile(0, kFileName, FPL("fuga"), &file_id_prev);
 
   const base::FilePath kDatabaseDirectory =

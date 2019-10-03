@@ -5,14 +5,16 @@
 #ifndef EXTENSIONS_BROWSER_GUEST_VIEW_APP_VIEW_APP_VIEW_GUEST_H_
 #define EXTENSIONS_BROWSER_GUEST_VIEW_APP_VIEW_APP_VIEW_GUEST_H_
 
+#include <memory>
+
 #include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "components/guest_view/browser/guest_view.h"
 #include "extensions/browser/guest_view/app_view/app_view_guest_delegate.h"
+#include "extensions/browser/lazy_context_task_queue.h"
 
 namespace extensions {
 class Extension;
-class ExtensionHost;
 
 // An AppViewGuest provides the browser-side implementation of <appview> API.
 // AppViewGuest is created on attachment. That is, when a guest WebContents is
@@ -52,28 +54,30 @@ class AppViewGuest : public guest_view::GuestView<AppViewGuest> {
 
   // GuestViewBase implementation.
   void CreateWebContents(const base::DictionaryValue& create_params,
-                         const WebContentsCreatedCallback& callback) final;
+                         WebContentsCreatedCallback callback) final;
   void DidInitialize(const base::DictionaryValue& create_params) final;
   const char* GetAPINamespace() const final;
   int GetTaskPrefix() const final;
 
   // content::WebContentsDelegate implementation.
-  bool HandleContextMenu(const content::ContextMenuParams& params) final;
+  bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                         const content::ContextMenuParams& params) final;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) final;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
+      content::MediaResponseCallback callback) final;
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type) final;
+                                  blink::mojom::MediaStreamType type) final;
 
   void CompleteCreateWebContents(const GURL& url,
                                  const Extension* guest_extension,
-                                 const WebContentsCreatedCallback& callback);
+                                 WebContentsCreatedCallback callback);
 
-  void LaunchAppAndFireEvent(std::unique_ptr<base::DictionaryValue> data,
-                             const WebContentsCreatedCallback& callback,
-                             ExtensionHost* extension_host);
+  void LaunchAppAndFireEvent(
+      std::unique_ptr<base::DictionaryValue> data,
+      WebContentsCreatedCallback callback,
+      std::unique_ptr<LazyContextTaskQueue::ContextInfo> context_info);
 
   GURL url_;
   std::string guest_extension_id_;
@@ -82,7 +86,7 @@ class AppViewGuest : public guest_view::GuestView<AppViewGuest> {
 
   // This is used to ensure pending tasks will not fire after this object is
   // destroyed.
-  base::WeakPtrFactory<AppViewGuest> weak_ptr_factory_;
+  base::WeakPtrFactory<AppViewGuest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppViewGuest);
 };

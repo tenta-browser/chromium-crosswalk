@@ -10,15 +10,15 @@
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/win/object_watcher.h"
 #include "components/device_event_log/device_event_log.h"
 
 #define INITGUID
 
-#include <windows.h>
 #include <hidclass.h>
+#include <windows.h>
 
 extern "C" {
 #include <hidsdi.h>
@@ -33,7 +33,8 @@ class PendingHidTransfer : public base::win::ObjectWatcher::Delegate {
  public:
   typedef base::OnceCallback<void(PendingHidTransfer*, bool)> Callback;
 
-  PendingHidTransfer(scoped_refptr<net::IOBuffer> buffer, Callback callback);
+  PendingHidTransfer(scoped_refptr<base::RefCountedBytes> buffer,
+                     Callback callback);
   ~PendingHidTransfer() override;
 
   void TakeResultFromWindowsAPI(BOOL result);
@@ -46,7 +47,7 @@ class PendingHidTransfer : public base::win::ObjectWatcher::Delegate {
  private:
   // The buffer isn't used by this object but it's important that a reference
   // to it is held until the transfer completes.
-  scoped_refptr<net::IOBuffer> buffer_;
+  scoped_refptr<base::RefCountedBytes> buffer_;
   Callback callback_;
   OVERLAPPED overlapped_;
   base::win::ScopedHandle event_;
@@ -55,8 +56,9 @@ class PendingHidTransfer : public base::win::ObjectWatcher::Delegate {
   DISALLOW_COPY_AND_ASSIGN(PendingHidTransfer);
 };
 
-PendingHidTransfer::PendingHidTransfer(scoped_refptr<net::IOBuffer> buffer,
-                                       PendingHidTransfer::Callback callback)
+PendingHidTransfer::PendingHidTransfer(
+    scoped_refptr<base::RefCountedBytes> buffer,
+    PendingHidTransfer::Callback callback)
     : buffer_(buffer),
       callback_(std::move(callback)),
       event_(CreateEvent(NULL, FALSE, FALSE, NULL)) {
@@ -84,6 +86,16 @@ void PendingHidTransfer::OnObjectSignaled(HANDLE event_handle) {
   std::move(callback_).Run(this, true);
 }
 
+// static
+scoped_refptr<HidConnection> HidConnectionWin::Create(
+    scoped_refptr<HidDeviceInfo> device_info,
+    base::win::ScopedHandle file) {
+  scoped_refptr<HidConnectionWin> connection(
+      new HidConnectionWin(std::move(device_info), std::move(file)));
+  connection->ReadNextInputReport();
+  return std::move(connection);
+}
+
 HidConnectionWin::HidConnectionWin(scoped_refptr<HidDeviceInfo> device_info,
                                    base::win::ScopedHandle file)
     : HidConnection(std::move(device_info)), file_(std::move(file)) {}
@@ -99,48 +111,29 @@ void HidConnectionWin::PlatformClose() {
   transfers_.clear();
 }
 
-void HidConnectionWin::PlatformRead(HidConnection::ReadCallback callback) {
-  // Windows will always include the report ID (including zero if report IDs
-  // are not in use) in the buffer.
-  scoped_refptr<net::IOBufferWithSize> buffer = new net::IOBufferWithSize(
-      base::checked_cast<int>(device_info()->max_input_report_size() + 1));
-  transfers_.push_back(std::make_unique<PendingHidTransfer>(
-      buffer, base::BindOnce(&HidConnectionWin::OnReadComplete, this, buffer,
-                             std::move(callback))));
-  transfers_.back()->TakeResultFromWindowsAPI(
-      ReadFile(file_.Get(), buffer->data(), static_cast<DWORD>(buffer->size()),
-               NULL, transfers_.back()->GetOverlapped()));
-}
-
-void HidConnectionWin::PlatformWrite(scoped_refptr<net::IOBuffer> buffer,
-                                     size_t size,
-                                     WriteCallback callback) {
-  size_t expected_size = device_info()->max_output_report_size() + 1;
-  DCHECK(size <= expected_size);
+void HidConnectionWin::PlatformWrite(
+    scoped_refptr<base::RefCountedBytes> buffer,
+    WriteCallback callback) {
   // The Windows API always wants either a report ID (if supported) or zero at
   // the front of every output report and requires that the buffer size be equal
   // to the maximum output report size supported by this collection.
-  if (size < expected_size) {
-    scoped_refptr<net::IOBuffer> tmp_buffer =
-        new net::IOBuffer(base::checked_cast<int>(expected_size));
-    memcpy(tmp_buffer->data(), buffer->data(), size);
-    memset(tmp_buffer->data() + size, 0, expected_size - size);
-    buffer = tmp_buffer;
-    size = expected_size;
-  }
+  size_t expected_size = device_info()->max_output_report_size() + 1;
+  DCHECK(buffer->size() <= expected_size);
+  buffer->data().resize(expected_size);
+
   transfers_.push_back(std::make_unique<PendingHidTransfer>(
       buffer, base::BindOnce(&HidConnectionWin::OnWriteComplete, this,
                              std::move(callback))));
-  transfers_.back()->TakeResultFromWindowsAPI(
-      WriteFile(file_.Get(), buffer->data(), static_cast<DWORD>(size), NULL,
-                transfers_.back()->GetOverlapped()));
+  transfers_.back()->TakeResultFromWindowsAPI(WriteFile(
+      file_.Get(), buffer->front(), static_cast<DWORD>(buffer->size()), NULL,
+      transfers_.back()->GetOverlapped()));
 }
 
 void HidConnectionWin::PlatformGetFeatureReport(uint8_t report_id,
                                                 ReadCallback callback) {
   // The first byte of the destination buffer is the report ID being requested.
-  scoped_refptr<net::IOBufferWithSize> buffer = new net::IOBufferWithSize(
-      base::checked_cast<int>(device_info()->max_feature_report_size() + 1));
+  auto buffer = base::MakeRefCounted<base::RefCountedBytes>(
+      device_info()->max_feature_report_size() + 1);
   buffer->data()[0] = report_id;
 
   transfers_.push_back(std::make_unique<PendingHidTransfer>(
@@ -148,13 +141,12 @@ void HidConnectionWin::PlatformGetFeatureReport(uint8_t report_id,
                              buffer, std::move(callback))));
   transfers_.back()->TakeResultFromWindowsAPI(
       DeviceIoControl(file_.Get(), IOCTL_HID_GET_FEATURE, NULL, 0,
-                      buffer->data(), static_cast<DWORD>(buffer->size()), NULL,
+                      buffer->front(), static_cast<DWORD>(buffer->size()), NULL,
                       transfers_.back()->GetOverlapped()));
 }
 
 void HidConnectionWin::PlatformSendFeatureReport(
-    scoped_refptr<net::IOBuffer> buffer,
-    size_t size,
+    scoped_refptr<base::RefCountedBytes> buffer,
     WriteCallback callback) {
   // The Windows API always wants either a report ID (if supported) or
   // zero at the front of every output report.
@@ -162,46 +154,61 @@ void HidConnectionWin::PlatformSendFeatureReport(
       buffer, base::BindOnce(&HidConnectionWin::OnWriteComplete, this,
                              std::move(callback))));
   transfers_.back()->TakeResultFromWindowsAPI(
-      DeviceIoControl(file_.Get(), IOCTL_HID_SET_FEATURE, buffer->data(),
-                      static_cast<DWORD>(size), NULL, 0, NULL,
+      DeviceIoControl(file_.Get(), IOCTL_HID_SET_FEATURE, buffer->front(),
+                      static_cast<DWORD>(buffer->size()), NULL, 0, NULL,
                       transfers_.back()->GetOverlapped()));
 }
 
-void HidConnectionWin::OnReadComplete(scoped_refptr<net::IOBuffer> buffer,
-                                      ReadCallback callback,
-                                      PendingHidTransfer* transfer_raw,
-                                      bool signaled) {
-  if (!file_.IsValid()) {
-    std::move(callback).Run(false, nullptr, 0);
+void HidConnectionWin::ReadNextInputReport() {
+  // Windows will always include the report ID (including zero if report IDs
+  // are not in use) in the buffer.
+  auto buffer = base::MakeRefCounted<base::RefCountedBytes>(
+      device_info()->max_input_report_size() + 1);
+
+  transfers_.push_back(std::make_unique<PendingHidTransfer>(
+      buffer,
+      base::BindOnce(&HidConnectionWin::OnReadInputReport, this, buffer)));
+  transfers_.back()->TakeResultFromWindowsAPI(
+      ReadFile(file_.Get(), buffer->front(), static_cast<DWORD>(buffer->size()),
+               NULL, transfers_.back()->GetOverlapped()));
+}
+
+void HidConnectionWin::OnReadInputReport(
+    scoped_refptr<base::RefCountedBytes> buffer,
+    PendingHidTransfer* transfer_raw,
+    bool signaled) {
+  if (!file_.IsValid())
     return;
-  }
 
   std::unique_ptr<PendingHidTransfer> transfer = UnlinkTransfer(transfer_raw);
   DWORD bytes_transferred;
   if (!signaled || !GetOverlappedResult(file_.Get(), transfer->GetOverlapped(),
                                         &bytes_transferred, FALSE)) {
     HID_PLOG(EVENT) << "HID read failed";
-    std::move(callback).Run(false, nullptr, 0);
     return;
   }
 
   if (bytes_transferred < 1) {
     HID_LOG(EVENT) << "HID read too short.";
-    std::move(callback).Run(false, nullptr, 0);
     return;
   }
 
   uint8_t report_id = buffer->data()[0];
   if (IsReportIdProtected(report_id)) {
-    PlatformRead(std::move(callback));
+    ReadNextInputReport();
     return;
   }
 
-  std::move(callback).Run(true, buffer, bytes_transferred);
+  // Hold a reference to |this| to prevent a callback executed by
+  // ProcessInputReport from freeing this object.
+  scoped_refptr<HidConnection> self(this);
+  ProcessInputReport(buffer, bytes_transferred);
+
+  ReadNextInputReport();
 }
 
 void HidConnectionWin::OnReadFeatureComplete(
-    scoped_refptr<net::IOBuffer> buffer,
+    scoped_refptr<base::RefCountedBytes> buffer,
     ReadCallback callback,
     PendingHidTransfer* transfer_raw,
     bool signaled) {
@@ -214,6 +221,7 @@ void HidConnectionWin::OnReadFeatureComplete(
   DWORD bytes_transferred;
   if (signaled && GetOverlappedResult(file_.Get(), transfer->GetOverlapped(),
                                       &bytes_transferred, FALSE)) {
+    DCHECK_LE(bytes_transferred, buffer->size());
     std::move(callback).Run(true, buffer, bytes_transferred);
   } else {
     HID_PLOG(EVENT) << "HID read failed";

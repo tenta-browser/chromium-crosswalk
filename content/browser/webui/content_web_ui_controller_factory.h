@@ -15,16 +15,18 @@ namespace content {
 class CONTENT_EXPORT ContentWebUIControllerFactory
     : public WebUIControllerFactory {
  public:
-  WebUI::TypeID GetWebUIType(BrowserContext* browser_context,
-                             const GURL& url) const override;
-  bool UseWebUIForURL(BrowserContext* browser_context,
-                      const GURL& url) const override;
-  bool UseWebUIBindingsForURL(BrowserContext* browser_context,
-                              const GURL& url) const override;
-  WebUIController* CreateWebUIControllerForURL(WebUI* web_ui,
-                                               const GURL& url) const override;
-
   static ContentWebUIControllerFactory* GetInstance();
+
+  // WebUIControllerFactory:
+  WebUI::TypeID GetWebUIType(BrowserContext* browser_context,
+                             const GURL& url) override;
+  bool UseWebUIForURL(BrowserContext* browser_context,
+                      const GURL& url) override;
+  bool UseWebUIBindingsForURL(BrowserContext* browser_context,
+                              const GURL& url) override;
+  std::unique_ptr<WebUIController> CreateWebUIControllerForURL(
+      WebUI* web_ui,
+      const GURL& url) override;
 
  protected:
   ContentWebUIControllerFactory();

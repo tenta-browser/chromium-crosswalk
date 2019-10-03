@@ -9,7 +9,6 @@
 
 #include "chrome/common/media_router/media_status.h"
 #include "chrome/common/media_router/mojo/media_status.mojom.h"
-#include "mojo/common/common_custom_types_struct_traits.h"
 
 namespace mojo {
 
@@ -58,11 +57,6 @@ struct StructTraits<media_router::mojom::MediaStatusDataView,
     return status.title;
   }
 
-  static const std::string& description(
-      const media_router::MediaStatus& status) {
-    return status.description;
-  }
-
   static bool can_play_pause(const media_router::MediaStatus& status) {
     return status.can_play_pause;
   }
@@ -98,24 +92,6 @@ struct StructTraits<media_router::mojom::MediaStatusDataView,
 
   static base::TimeDelta current_time(const media_router::MediaStatus& status) {
     return status.current_time;
-  }
-
-  static const base::Optional<media_router::HangoutsMediaStatusExtraData>&
-  hangouts_extra_data(const media_router::MediaStatus& status) {
-    return status.hangouts_extra_data;
-  }
-};
-
-template <>
-struct StructTraits<media_router::mojom::HangoutsMediaStatusExtraDataDataView,
-                    media_router::HangoutsMediaStatusExtraData> {
-  static bool Read(
-      media_router::mojom::HangoutsMediaStatusExtraDataDataView data,
-      media_router::HangoutsMediaStatusExtraData* out);
-
-  static bool local_present(
-      const media_router::HangoutsMediaStatusExtraData& data) {
-    return data.local_present;
   }
 };
 

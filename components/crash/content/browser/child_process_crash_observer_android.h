@@ -5,35 +5,32 @@
 #ifndef COMPONENTS_CRASH_CONTENT_BROWSER_CHILD_PROCESS_CRASH_OBSERVER_ANDROID_H_
 #define COMPONENTS_CRASH_CONTENT_BROWSER_CHILD_PROCESS_CRASH_OBSERVER_ANDROID_H_
 
-#include "base/files/file_path.h"
-#include "components/crash/content/browser/crash_dump_observer_android.h"
+#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/sequenced_task_runner.h"
+#include "components/crash/content/browser/child_exit_observer_android.h"
 
-namespace breakpad {
+namespace crash_reporter {
 
-class ChildProcessCrashObserver : public breakpad::CrashDumpObserver::Client {
+// Records metrics and initiates minidump upload in response to child process
+// crashes.
+class ChildProcessCrashObserver
+    : public crash_reporter::ChildExitObserver::Client {
  public:
-  ChildProcessCrashObserver(const base::FilePath crash_dump_dir,
-                            int descriptor_id);
+  ChildProcessCrashObserver();
   ~ChildProcessCrashObserver() override;
 
-  // breakpad::CrashDumpObserver::Client implementation:
-  void OnChildStart(int process_host_id,
-                    content::PosixFileDescriptorInfo* mappings) override;
-  void OnChildExit(int process_host_id,
-                   base::ProcessHandle pid,
-                   content::ProcessType process_type,
-                   base::TerminationStatus termination_status,
-                   base::android::ApplicationState app_state) override;
+  // crash_reporter::ChildExitObserver::Client implementation:
+  void OnChildExit(const ChildExitObserver::TerminationInfo& info) override;
 
  private:
-  base::FilePath crash_dump_dir_;
-  // The id used to identify the file descriptor in the set of file
-  // descriptor mappings passed to the child process.
-  int descriptor_id_;
+  void OnChildExitImpl(const ChildExitObserver::TerminationInfo& info);
+
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ChildProcessCrashObserver);
 };
 
-}  // namespace breakpad
+}  // namespace crash_reporter
 
 #endif  // COMPONENTS_CRASH_CONTENT_BROWSER_CHILD_PROCESS_CRASH_OBSERVER_ANDROID_H_

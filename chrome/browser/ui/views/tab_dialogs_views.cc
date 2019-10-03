@@ -4,11 +4,14 @@
 
 #include "chrome/browser/ui/views/tab_dialogs_views.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+#include <utility>
+
+#include "build/build_config.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
 #include "chrome/browser/ui/views/collected_cookies_views.h"
 #include "chrome/browser/ui/views/hung_renderer_view.h"
-#include "chrome/browser/ui/views/passwords/manage_passwords_bubble_view.h"
+#include "chrome/browser/ui/views/passwords/password_bubble_view_base.h"
 #include "content/public/browser/web_contents.h"
 
 #if !defined(OS_CHROMEOS)
@@ -20,7 +23,7 @@ void TabDialogs::CreateForWebContents(content::WebContents* contents) {
   DCHECK(contents);
   if (!FromWebContents(contents)) {
     contents->SetUserData(UserDataKey(),
-                          base::MakeUnique<TabDialogsViews>(contents));
+                          std::make_unique<TabDialogsViews>(contents));
   }
 }
 
@@ -37,17 +40,19 @@ gfx::NativeView TabDialogsViews::GetDialogParentView() const {
 }
 
 void TabDialogsViews::ShowCollectedCookies() {
-  // Deletes itself on close.
-  new CollectedCookiesViews(web_contents_);
+  CollectedCookiesViews::CreateAndShowForWebContents(web_contents_);
 }
 
 void TabDialogsViews::ShowHungRendererDialog(
-    const content::WebContentsUnresponsiveState& unresponsive_state) {
-  HungRendererDialogView::Show(web_contents_, unresponsive_state);
+    content::RenderWidgetHost* render_widget_host,
+    base::RepeatingClosure hang_monitor_restarter) {
+  HungRendererDialogView::Show(web_contents_, render_widget_host,
+                               std::move(hang_monitor_restarter));
 }
 
-void TabDialogsViews::HideHungRendererDialog() {
-  HungRendererDialogView::Hide(web_contents_);
+void TabDialogsViews::HideHungRendererDialog(
+    content::RenderWidgetHost* render_widget_host) {
+  HungRendererDialogView::Hide(web_contents_, render_widget_host);
 }
 
 bool TabDialogsViews::IsShowingHungRendererDialog() {
@@ -68,21 +73,21 @@ void TabDialogsViews::ShowProfileSigninConfirmation(
 }
 
 void TabDialogsViews::ShowManagePasswordsBubble(bool user_action) {
-  if (ManagePasswordsBubbleView::manage_password_bubble()) {
+  if (PasswordBubbleViewBase::manage_password_bubble()) {
     // The bubble is currently shown for some other tab. We should close it now
     // and open for |web_contents_|.
-    ManagePasswordsBubbleView::CloseCurrentBubble();
+    PasswordBubbleViewBase::CloseCurrentBubble();
   }
-  ManagePasswordsBubbleView::ShowBubble(
-      web_contents_, user_action ? ManagePasswordsBubbleView::USER_GESTURE
-                                 : ManagePasswordsBubbleView::AUTOMATIC);
+  PasswordBubbleViewBase::ShowBubble(
+      web_contents_, user_action ? LocationBarBubbleDelegateView::USER_GESTURE
+                                 : LocationBarBubbleDelegateView::AUTOMATIC);
 }
 
 void TabDialogsViews::HideManagePasswordsBubble() {
-  if (!ManagePasswordsBubbleView::manage_password_bubble())
+  PasswordBubbleViewBase* bubble =
+      PasswordBubbleViewBase::manage_password_bubble();
+  if (!bubble)
     return;
-  content::WebContents* bubble_web_contents =
-      ManagePasswordsBubbleView::manage_password_bubble()->web_contents();
-  if (web_contents_ == bubble_web_contents)
-    ManagePasswordsBubbleView::CloseCurrentBubble();
+  if (bubble->GetWebContents() == web_contents_)
+    PasswordBubbleViewBase::CloseCurrentBubble();
 }

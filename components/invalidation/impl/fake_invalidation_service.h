@@ -10,11 +10,9 @@
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "components/invalidation/impl/invalidator_registrar.h"
+#include "components/invalidation/impl/deprecated_invalidator_registrar.h"
 #include "components/invalidation/impl/mock_ack_handler.h"
 #include "components/invalidation/public/invalidation_service.h"
-#include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
-#include "google_apis/gaia/fake_identity_provider.h"
 
 namespace syncer {
 class Invalidation;
@@ -43,11 +41,10 @@ class FakeInvalidationService : public InvalidationService {
   InvalidationLogger* GetInvalidationLogger() override;
   void RequestDetailedStatus(
       base::Callback<void(const base::DictionaryValue&)> caller) const override;
-  IdentityProvider* GetIdentityProvider() override;
 
   void SetInvalidatorState(syncer::InvalidatorState state);
 
-  const syncer::InvalidatorRegistrar& invalidator_registrar() const {
+  const syncer::DeprecatedInvalidatorRegistrar& invalidator_registrar() const {
     return invalidator_registrar_;
   }
 
@@ -59,10 +56,8 @@ class FakeInvalidationService : public InvalidationService {
 
  private:
   std::string client_id_;
-  syncer::InvalidatorRegistrar invalidator_registrar_;
+  syncer::DeprecatedInvalidatorRegistrar invalidator_registrar_;
   syncer::MockAckHandler mock_ack_handler_;
-  FakeProfileOAuth2TokenService token_service_;
-  FakeIdentityProvider identity_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeInvalidationService);
 };

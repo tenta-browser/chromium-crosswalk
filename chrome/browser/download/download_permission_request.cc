@@ -5,22 +5,20 @@
 #include "chrome/browser/download/download_permission_request.h"
 
 #include "chrome/grit/generated_resources.h"
-#include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/android_theme_resources.h"
+#include "components/url_formatter/elide_url.h"
+#include "url/origin.h"
 #else
 #include "chrome/app/vector_icons/vector_icons.h"
 #endif
 
 DownloadPermissionRequest::DownloadPermissionRequest(
-    base::WeakPtr<DownloadRequestLimiter::TabDownloadState> host)
-    : host_(host) {
-  const content::WebContents* web_contents = host_->web_contents();
-  DCHECK(web_contents);
-  request_origin_ = web_contents->GetURL().GetOrigin();
-}
+    base::WeakPtr<DownloadRequestLimiter::TabDownloadState> host,
+    const GURL& request_origin)
+    : host_(host), request_origin_(request_origin) {}
 
 DownloadPermissionRequest::~DownloadPermissionRequest() {}
 
@@ -33,8 +31,17 @@ PermissionRequest::IconId DownloadPermissionRequest::GetIconId() const {
 }
 
 #if defined(OS_ANDROID)
+base::string16 DownloadPermissionRequest::GetTitleText() const {
+  return l10n_util::GetStringUTF16(IDS_MULTI_DOWNLOAD_WARNING_TITLE);
+}
+
 base::string16 DownloadPermissionRequest::GetMessageText() const {
-  return l10n_util::GetStringUTF16(IDS_MULTI_DOWNLOAD_WARNING);
+  return l10n_util::GetStringFUTF16(
+      IDS_MULTI_DOWNLOAD_WARNING,
+      url_formatter::FormatOriginForSecurityDisplay(
+          url::Origin::Create(request_origin_),
+          /*scheme_display = */ url_formatter::
+              SchemeDisplay::OMIT_CRYPTOGRAPHIC));
 }
 #endif
 
@@ -49,21 +56,21 @@ GURL DownloadPermissionRequest::GetOrigin() const {
 void DownloadPermissionRequest::PermissionGranted() {
   if (host_) {
     // This may invalidate |host_|.
-    host_->Accept();
+    host_->Accept(request_origin_);
   }
 }
 
 void DownloadPermissionRequest::PermissionDenied() {
   if (host_) {
     // This may invalidate |host_|.
-    host_->Cancel();
+    host_->Cancel(request_origin_);
   }
 }
 
 void DownloadPermissionRequest::Cancelled() {
   if (host_) {
     // This may invalidate |host_|.
-    host_->CancelOnce();
+    host_->CancelOnce(request_origin_);
   }
 }
 

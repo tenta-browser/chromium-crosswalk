@@ -19,10 +19,6 @@ namespace policy {
 
 namespace {
 
-// Determines the time, measured from the time of issue, after which the command
-// queue will consider this command expired if the command has not been started.
-const int kCommandExpirationTimeInMinutes = 10;
-
 const char kVolumeFieldName[] = "volume";
 
 }  // namespace
@@ -36,14 +32,10 @@ enterprise_management::RemoteCommand_Type DeviceCommandSetVolumeJob::GetType()
   return enterprise_management::RemoteCommand_Type_DEVICE_SET_VOLUME;
 }
 
-base::TimeDelta DeviceCommandSetVolumeJob::GetCommmandTimeout() const {
-  return base::TimeDelta::FromMinutes(kCommandExpirationTimeInMinutes);
-}
-
 bool DeviceCommandSetVolumeJob::ParseCommandPayload(
     const std::string& command_payload) {
   std::unique_ptr<base::Value> root(
-      base::JSONReader().ReadToValue(command_payload));
+      base::JSONReader().ReadToValueDeprecated(command_payload));
   if (!root.get())
     return false;
   base::DictionaryValue* payload = nullptr;
@@ -56,14 +48,8 @@ bool DeviceCommandSetVolumeJob::ParseCommandPayload(
   return true;
 }
 
-bool DeviceCommandSetVolumeJob::IsExpired(base::TimeTicks now) {
-  return now > issued_time() + base::TimeDelta::FromMinutes(
-                                   kCommandExpirationTimeInMinutes);
-}
-
-void DeviceCommandSetVolumeJob::RunImpl(
-    const CallbackWithResult& succeeded_callback,
-    const CallbackWithResult& failed_callback) {
+void DeviceCommandSetVolumeJob::RunImpl(CallbackWithResult succeeded_callback,
+                                        CallbackWithResult failed_callback) {
   SYSLOG(INFO) << "Running set volume command, volume = " << volume_;
   auto* audio_handler = chromeos::CrasAudioHandler::Get();
   audio_handler->SetOutputVolumePercent(volume_);
@@ -71,7 +57,7 @@ void DeviceCommandSetVolumeJob::RunImpl(
   audio_handler->SetOutputMute(mute);
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(succeeded_callback, nullptr));
+      FROM_HERE, base::BindOnce(std::move(succeeded_callback), nullptr));
 }
 
 }  // namespace policy

@@ -46,12 +46,19 @@ class ChromeManagementAPIDelegate : public extensions::ManagementAPIDelegate {
       content::BrowserContext* context,
       const std::string& title,
       const GURL& launch_url) const override;
-  bool CanHostedAppsOpenInWindows() const override;
-  bool IsNewBookmarkAppsEnabled() const override;
+  bool IsWebAppInstalled(content::BrowserContext* context,
+                         const GURL& web_app_url) const override;
+  bool CanContextInstallWebApps(
+      content::BrowserContext* context) const override;
+  void InstallReplacementWebApp(
+      content::BrowserContext* context,
+      const GURL& web_app_url,
+      ManagementAPIDelegate::InstallWebAppCallback callback) const override;
   void EnableExtension(content::BrowserContext* context,
                        const std::string& extension_id) const override;
   void DisableExtension(
       content::BrowserContext* context,
+      const extensions::Extension* source_extension,
       const std::string& extension_id,
       extensions::disable_reason::DisableReason disable_reason) const override;
   bool UninstallExtension(content::BrowserContext* context,

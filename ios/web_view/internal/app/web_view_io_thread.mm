@@ -4,7 +4,6 @@
 
 #include "ios/web_view/internal/app/web_view_io_thread.h"
 
-#include "base/memory/ptr_util.h"
 #include "ios/web_view/internal/web_view_network_delegate.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -13,15 +12,14 @@
 
 namespace ios_web_view {
 
-WebViewIOThread::WebViewIOThread(PrefService* local_state,
-                                 net_log::ChromeNetLog* net_log)
+WebViewIOThread::WebViewIOThread(PrefService* local_state, net::NetLog* net_log)
     : IOSIOThread(local_state, net_log) {}
 
 WebViewIOThread::~WebViewIOThread() = default;
 
 std::unique_ptr<net::NetworkDelegate>
 WebViewIOThread::CreateSystemNetworkDelegate() {
-  return base::MakeUnique<ios_web_view::WebViewNetworkDelegate>();
+  return std::make_unique<ios_web_view::WebViewNetworkDelegate>();
 }
 
 std::string WebViewIOThread::GetChannelString() const {

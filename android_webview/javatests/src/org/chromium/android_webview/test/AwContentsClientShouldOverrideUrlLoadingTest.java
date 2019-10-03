@@ -26,14 +26,14 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer
-        .OnEvaluateJavaScriptResultHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnPageStartedHelper;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnReceivedErrorHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.NavigationHistory;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnPageStartedHelper;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnReceivedErrorHelper;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.util.TestWebServer;
 
@@ -92,7 +92,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
     }
 
     private void clickOnLinkUsingJs() throws Throwable {
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
         JSUtils.clickOnLinkUsingJs(InstrumentationRegistry.getInstrumentation(), mAwContents,
                 mContentsClient.getOnEvaluateJavaScriptResultHelper(), "link");
     }
@@ -302,8 +302,11 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
                 CommonResources.makeHtmlPageWithSimpleLinkTo(anchorLinkUrl + "#anchor"));
 
         if (useLoadData) {
+            final String html =
+                    CommonResources.makeHtmlPageWithSimpleLinkTo("#anchor").replace("#", "%23");
+            // Loading the html via a data URI requires us to encode '#' symbols as '%23'.
             mActivityTestRule.loadDataSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
-                    CommonResources.makeHtmlPageWithSimpleLinkTo("#anchor"), "text/html", false);
+                    html, "text/html", false);
         } else {
             mActivityTestRule.loadUrlSync(
                     mAwContents, mContentsClient.getOnPageFinishedHelper(), anchorLinkUrl);
@@ -404,7 +407,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
     @Feature({"AndroidWebView", "Navigation"})
     public void testCalledWhenNavigatingFromJavaScriptUsingAssign() throws Throwable {
         standardSetup();
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String redirectTargetUrl = createRedirectTargetPage();
         mActivityTestRule.loadDataSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
@@ -420,7 +423,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
     @Feature({"AndroidWebView", "Navigation"})
     public void testCalledWhenNavigatingFromJavaScriptUsingReplace() throws Throwable {
         standardSetup();
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String redirectTargetUrl = createRedirectTargetPage();
         mActivityTestRule.loadDataSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
@@ -644,7 +647,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
         final String pageWithLinkToRedirectUrl = addPageToTestServer(
                 "/page_with_link_to_redirect.html", CommonResources.makeHtmlPageWithSimpleLinkTo(
                         "<title>" + pageTitle + "</title>", redirectUrl));
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         // There is a slight difference between navigations caused by calling load and navigations
         // caused by clicking on a link:
@@ -698,7 +701,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
         Assert.assertEquals(indirectLoadCallCount, mShouldOverrideUrlLoadingHelper.getCallCount());
 
         // Simulate touch, hasUserGesture must be true only on the first call.
-        DOMUtils.clickNode(mAwContents.getContentViewCore(), "link");
+        DOMUtils.clickNode(mAwContents.getWebContents(), "link");
 
         mShouldOverrideUrlLoadingHelper.waitForCallback(indirectLoadCallCount, 1);
         Assert.assertEquals(
@@ -830,6 +833,51 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
 
     @Test
     @SmallTest
+    @Feature({"AndroidWebView", "Navigation"})
+    public void testReloadingUrlDoesNotBreakBackForwardList() throws Throwable {
+        class ReloadInCallbackClient extends TestAwContentsClient {
+            @Override
+            public boolean shouldOverrideUrlLoading(AwContentsClient.AwWebResourceRequest request) {
+                mAwContents.loadUrl(request.url);
+                return true;
+            }
+        }
+
+        setupWithProvidedContentsClient(new ReloadInCallbackClient());
+        mShouldOverrideUrlLoadingHelper = mContentsClient.getShouldOverrideUrlLoadingHelper();
+
+        final String linkUrl =
+                addPageToTestServer("/foo.html", "<html><body>hello world</body></html>");
+        final String html = CommonResources.makeHtmlPageWithSimpleLinkTo(linkUrl);
+        final String firstUrl = addPageToTestServer("/first.html", html);
+        CallbackHelper onPageFinishedHelper = mContentsClient.getOnPageFinishedHelper();
+        mActivityTestRule.loadUrlSync(mAwContents, onPageFinishedHelper, firstUrl);
+
+        int pageFinishedCount = onPageFinishedHelper.getCallCount();
+        clickOnLinkUsingJs();
+        onPageFinishedHelper.waitForCallback(pageFinishedCount);
+
+        Assert.assertEquals(linkUrl, mAwContents.getUrl());
+        Assert.assertTrue("Should have a navigation history", mAwContents.canGoBack());
+        NavigationHistory navHistory = mAwContents.getNavigationHistory();
+        Assert.assertEquals(2, navHistory.getEntryCount());
+        Assert.assertEquals(1, navHistory.getCurrentEntryIndex());
+        Assert.assertEquals(linkUrl, navHistory.getEntryAtIndex(1).getUrl());
+
+        pageFinishedCount = onPageFinishedHelper.getCallCount();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> mAwContents.goBack());
+        onPageFinishedHelper.waitForCallback(pageFinishedCount);
+
+        Assert.assertFalse("Should not be able to navigate backward", mAwContents.canGoBack());
+        Assert.assertEquals(firstUrl, mAwContents.getUrl());
+        navHistory = mAwContents.getNavigationHistory();
+        Assert.assertEquals(2, navHistory.getEntryCount());
+        Assert.assertEquals(0, navHistory.getCurrentEntryIndex());
+        Assert.assertEquals(firstUrl, navHistory.getEntryAtIndex(0).getUrl());
+    }
+
+    @Test
+    @SmallTest
     @Feature({"AndroidWebView"})
     public void testCallStopAndLoadJsInCallback() throws Throwable {
         final String globalJsVar = "window.testCallStopAndLoadJsInCallback";
@@ -937,7 +985,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
             // handler selection window and the test can't dismiss that.
             mActivityTestRule.getActivity().setIgnoreStartActivity(true);
             setupWithProvidedContentsClient(new TestDefaultContentsClient());
-            mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+            AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
             final String pageTitle = "Click Title";
             final String htmlWithLink = "<html><title>" + pageTitle + "</title>"
                     + "<body><a id='link' href='" + ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL
@@ -950,7 +998,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
 
             // Clicking on an about:blank link should always navigate to the page directly
             int currentCallCount = mContentsClient.getOnPageFinishedHelper().getCallCount();
-            DOMUtils.clickNode(mAwContents.getContentViewCore(), "link");
+            DOMUtils.clickNode(mAwContents.getWebContents(), "link");
             mContentsClient.getOnPageFinishedHelper().waitForCallback(
                     currentCallCount, 1, WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
@@ -972,7 +1020,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
             final String testUrl = mWebServer.setResponse("/" + CommonResources.ABOUT_FILENAME,
                     CommonResources.ABOUT_HTML, CommonResources.getTextHtmlHeaders(true));
             setupWithProvidedContentsClient(new TestDefaultContentsClient());
-            mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+            AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
             final String pageTitle = "Click Title";
             final String htmlWithLink = "<html><title>" + pageTitle + "</title>"
                     + "<body><a id='link' href='" + testUrl + "'>Click this!</a></body></html>";
@@ -990,7 +1038,7 @@ public class AwContentsClientShouldOverrideUrlLoadingTest {
             Assert.assertNull(mActivityTestRule.getActivity().getLastSentIntent());
 
             // Clicking on a link should create an intent.
-            DOMUtils.clickNode(mAwContents.getContentViewCore(), "link");
+            DOMUtils.clickNode(mAwContents.getWebContents(), "link");
             mActivityTestRule.pollUiThread(
                     () -> mActivityTestRule.getActivity().getLastSentIntent() != null);
             Assert.assertEquals(testUrl,

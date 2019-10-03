@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/common/extensions/manifest_handlers/automation.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/version_info/version_info.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/automation.h"
 #include "extensions/common/permissions/permission_message_test_util.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -79,10 +79,9 @@ TEST_F(AutomationManifestTest, Matches) {
   scoped_refptr<Extension> extension = LoadAndExpectWarning(
       "automation_matches.json",
       ErrorUtils::FormatErrorMessage(
-          automation_errors::kErrorInvalidMatch,
-          "www.badpattern.com",
+          automation_errors::kErrorInvalidMatch, "www.badpattern.com",
           URLPattern::GetParseResultString(
-              URLPattern::PARSE_ERROR_MISSING_SCHEME_SEPARATOR)));
+              URLPattern::ParseResult::kMissingSchemeSeparator)));
   ASSERT_TRUE(extension.get());
 
   EXPECT_TRUE(VerifyOnePermissionMessage(
@@ -150,10 +149,9 @@ TEST_F(AutomationManifestTest, NoValidMatches) {
   EXPECT_EQ("", error);
   EXPECT_EQ(2u, extension->install_warnings().size());
   EXPECT_EQ(ErrorUtils::FormatErrorMessage(
-                automation_errors::kErrorInvalidMatch,
-                "www.badpattern.com",
+                automation_errors::kErrorInvalidMatch, "www.badpattern.com",
                 URLPattern::GetParseResultString(
-                    URLPattern::PARSE_ERROR_MISSING_SCHEME_SEPARATOR)),
+                    URLPattern::ParseResult::kMissingSchemeSeparator)),
             extension->install_warnings()[0].message);
   EXPECT_EQ(automation_errors::kErrorNoMatchesProvided,
             extension->install_warnings()[1].message);

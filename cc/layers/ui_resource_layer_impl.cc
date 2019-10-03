@@ -25,7 +25,7 @@ UIResourceLayerImpl::UIResourceLayerImpl(LayerTreeImpl* tree_impl, int id)
   vertex_opacity_[3] = 1.0f;
 }
 
-UIResourceLayerImpl::~UIResourceLayerImpl() {}
+UIResourceLayerImpl::~UIResourceLayerImpl() = default;
 
 std::unique_ptr<LayerImpl> UIResourceLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
@@ -86,7 +86,7 @@ void UIResourceLayerImpl::SetVertexOpacity(const float vertex_opacity[4]) {
 
 bool UIResourceLayerImpl::WillDraw(
     DrawMode draw_mode,
-    LayerTreeResourceProvider* resource_provider) {
+    viz::ClientResourceProvider* resource_provider) {
   if (!ui_resource_id_ || draw_mode == DRAW_MODE_RESOURCELESS_SOFTWARE)
     return false;
   return LayerImpl::WillDraw(draw_mode, resource_provider);
@@ -130,7 +130,7 @@ void UIResourceLayerImpl::AppendQuads(viz::RenderPass* render_pass,
   quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect, needs_blending,
                resource, premultiplied_alpha, uv_top_left_, uv_bottom_right_,
                SK_ColorTRANSPARENT, vertex_opacity_, flipped, nearest_neighbor,
-               false);
+               /*secure_output_only=*/false, gfx::ProtectedVideoType::kClear);
   ValidateQuadResources(quad);
 }
 
@@ -138,7 +138,8 @@ const char* UIResourceLayerImpl::LayerTypeAsString() const {
   return "cc::UIResourceLayerImpl";
 }
 
-std::unique_ptr<base::DictionaryValue> UIResourceLayerImpl::LayerAsJson() {
+std::unique_ptr<base::DictionaryValue> UIResourceLayerImpl::LayerAsJson()
+    const {
   std::unique_ptr<base::DictionaryValue> result = LayerImpl::LayerAsJson();
 
   result->Set("ImageBounds", MathUtil::AsValue(image_bounds_));

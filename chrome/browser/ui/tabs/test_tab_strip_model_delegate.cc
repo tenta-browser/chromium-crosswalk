@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
 
+#include <vector>
+
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 
@@ -14,12 +16,12 @@ TestTabStripModelDelegate::~TestTabStripModelDelegate() {
 }
 
 void TestTabStripModelDelegate::AddTabAt(const GURL& url,
-                                            int index,
-                                            bool foreground) {
-}
+                                         int index,
+                                         bool foreground,
+                                         base::Optional<TabGroupId> group) {}
 
 Browser* TestTabStripModelDelegate::CreateNewStripWithContents(
-    const std::vector<NewStripContents>& contentses,
+    std::vector<NewStripContents> contentses,
     const gfx::Rect& window_bounds,
     bool maximize) {
   return NULL;
@@ -55,7 +57,7 @@ bool TestTabStripModelDelegate::ShouldRunUnloadListenerBeforeClosing(
 
 bool TestTabStripModelDelegate::RunUnloadListenerBeforeClosing(
     content::WebContents* contents) {
-  return true;
+  return false;
 }
 
 TabStripModelDelegate::RestoreTabType

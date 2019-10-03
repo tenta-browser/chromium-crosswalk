@@ -12,11 +12,11 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/events/platform/platform_event_observer.h"
@@ -185,8 +185,8 @@ TEST_F(PlatformEventTest, DispatcherOrder) {
   }
   std::unique_ptr<PlatformEvent> event = CreatePlatformEvent();
   source()->Dispatch(*event);
-  ASSERT_EQ(arraysize(sequence), list_dispatcher.size());
-  EXPECT_EQ(std::vector<int>(sequence, sequence + arraysize(sequence)),
+  ASSERT_EQ(base::size(sequence), list_dispatcher.size());
+  EXPECT_EQ(std::vector<int>(sequence, sequence + base::size(sequence)),
             list_dispatcher);
 }
 
@@ -243,8 +243,8 @@ TEST_F(PlatformEventTest, ObserverOrder) {
   }
   std::unique_ptr<PlatformEvent> event = CreatePlatformEvent();
   source()->Dispatch(*event);
-  ASSERT_EQ(arraysize(sequence), list_observer.size());
-  EXPECT_EQ(std::vector<int>(sequence, sequence + arraysize(sequence)),
+  ASSERT_EQ(base::size(sequence), list_observer.size());
+  EXPECT_EQ(std::vector<int>(sequence, sequence + base::size(sequence)),
             list_observer);
 }
 
@@ -258,7 +258,7 @@ TEST_F(PlatformEventTest, DispatcherAndObserverOrder) {
   std::unique_ptr<PlatformEvent> event = CreatePlatformEvent();
   source()->Dispatch(*event);
   const int expected[] = {10, 20, 12, 23};
-  EXPECT_EQ(std::vector<int>(expected, expected + arraysize(expected)), list);
+  EXPECT_EQ(std::vector<int>(expected, expected + base::size(expected)), list);
 }
 
 // Tests that an overridden dispatcher receives events before the default
@@ -498,9 +498,10 @@ class PlatformEventTestWithMessageLoop : public PlatformEventTest {
   ~PlatformEventTestWithMessageLoop() override {}
 
   void Run() {
-    message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&PlatformEventTestWithMessageLoop::RunTestImpl,
-                              base::Unretained(this)));
+    scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&PlatformEventTestWithMessageLoop::RunTestImpl,
+                       base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -508,7 +509,8 @@ class PlatformEventTestWithMessageLoop : public PlatformEventTest {
   virtual void RunTestImpl() = 0;
 
  private:
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::UI};
 
   DISALLOW_COPY_AND_ASSIGN(PlatformEventTestWithMessageLoop);
 };
@@ -646,11 +648,9 @@ class DestroyedNestedOverriddenDispatcherQuitsNestedLoopIteration
     list.clear();
 
     overriding.SetScopedHandle(std::move(override_handle));
-    base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-    base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
-    loop->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &DestroyedNestedOverriddenDispatcherQuitsNestedLoopIteration::
                 NestedTask,
             base::Unretained(this), base::Unretained(&list),
@@ -665,7 +665,7 @@ class DestroyedNestedOverriddenDispatcherQuitsNestedLoopIteration
   }
 
  private:
-  base::RunLoop run_loop_;
+  base::RunLoop run_loop_{base::RunLoop::Type::kNestableTasksAllowed};
 };
 
 RUN_TEST_IN_MESSAGE_LOOP(
@@ -709,14 +709,12 @@ class ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration
 
     second_overriding.SetScopedHandle(std::move(second_override_handle));
     second_overriding.set_post_dispatch_action(POST_DISPATCH_NONE);
-    base::RunLoop run_loop;
+    base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
     second_overriding.set_callback(run_loop.QuitClosure());
-    base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-    base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
-    loop->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(base::IgnoreResult(&TestPlatformEventSource::Dispatch),
-                   base::Unretained(source()), *event));
+        base::BindOnce(base::IgnoreResult(&TestPlatformEventSource::Dispatch),
+                       base::Unretained(source()), *event));
     run_loop.Run();
     ASSERT_EQ(2u, list->size());
     EXPECT_EQ(15, (*list)[0]);
@@ -748,14 +746,12 @@ class ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration
     // Start a nested message-loop, and destroy |override_handle| in the nested
     // loop. That should terminate the nested loop, restore the previous
     // dispatchers, and return control to this function.
-    base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
-    base::MessageLoopForUI::ScopedNestableTaskAllower allow_nested(loop);
-    loop->task_runner()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration::
                 NestedTask,
-            base::Unretained(this), base::Passed(&override_handle),
+            base::Unretained(this), std::move(override_handle),
             base::Unretained(&list)));
     run_loop_.Run();
 
@@ -767,7 +763,7 @@ class ConsecutiveOverriddenDispatcherInTheSameMessageLoopIteration
   }
 
  private:
-  base::RunLoop run_loop_;
+  base::RunLoop run_loop_{base::RunLoop::Type::kNestableTasksAllowed};
 };
 
 RUN_TEST_IN_MESSAGE_LOOP(

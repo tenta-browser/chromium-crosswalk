@@ -9,12 +9,18 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/observer_list_types.h"
 
-namespace buzz {
+namespace jingle_xmpp {
 class XmlElement;
-}  // namespace buzz
+}  // namespace jingle_xmpp
 
 namespace remoting {
+
+namespace ftl {
+class ChromotingMessage;
+class Id;
+}  // namespace ftl
 
 class SignalingAddress;
 
@@ -42,9 +48,9 @@ class SignalStrategy {
   // Callback interface for signaling event. Event handlers are not
   // allowed to destroy SignalStrategy, but may add or remove other
   // listeners.
-  class Listener {
+  class Listener : public base::CheckedObserver {
    public:
-    virtual ~Listener() {}
+    ~Listener() override {}
 
     // Called after state of the connection has changed. If the state
     // is DISCONNECTED, then GetError() can be used to get the reason
@@ -55,7 +61,22 @@ class SignalStrategy {
     // otherwise. The signal strategy must not be deleted from a
     // handler of this message.
     virtual bool OnSignalStrategyIncomingStanza(
-        const buzz::XmlElement* stanza) = 0;
+        const jingle_xmpp::XmlElement* stanza) = 0;
+
+    // This method is similar to OnSignalStrategyIncomingStanza(). It will be
+    // called by signal strategy that supports ChromotingMessage (i.e.
+    // FtlSignalStrategy) before OnSignalStrategyIncomingStanza() is called.
+    //
+    // Must return true if the message was handled, false
+    // otherwise. The signal strategy must not be deleted from a
+    // handler of this message.
+    //
+    // TODO(yuweih): Remove OnSignalStrategyIncomingStanza() and make this
+    // method pure virtual.
+    virtual bool OnSignalStrategyIncomingMessage(
+        const ftl::Id& sender_id,
+        const std::string& sender_registration_id,
+        const ftl::ChromotingMessage& message);
   };
 
   SignalStrategy() {}
@@ -89,11 +110,16 @@ class SignalStrategy {
   virtual void RemoveListener(Listener* listener) = 0;
 
   // Sends a raw XMPP stanza. Returns false if the stanza couldn't be send.
-  virtual bool SendStanza(std::unique_ptr<buzz::XmlElement> stanza) = 0;
+  virtual bool SendStanza(std::unique_ptr<jingle_xmpp::XmlElement> stanza) = 0;
 
   // Returns new ID that should be used for the next outgoing IQ
   // request.
   virtual std::string GetNextId() = 0;
+
+  // Returns true if the signal strategy gets into an error state when it tries
+  // to sign in. You can get back the actual error by calling GetError().
+  // The default implementation always returns false.
+  virtual bool IsSignInError() const;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SignalStrategy);

@@ -17,11 +17,11 @@
 
 namespace {
 
-const char kHistogramNetworkBytes[] =
+const char kHistogramTabRestoreNetworkBytes[] =
     "PageLoad.Clients.TabRestore.Experimental.Bytes.Network";
-const char kHistogramCacheBytes[] =
+const char kHistogramTabRestoreCacheBytes[] =
     "PageLoad.Clients.TabRestore.Experimental.Bytes.Cache";
-const char kHistogramTotalBytes[] =
+const char kHistogramTabRestoreTotalBytes[] =
     "PageLoad.Clients.TabRestore.Experimental.Bytes.Total";
 
 }  // namespace
@@ -39,13 +39,18 @@ TabRestorePageLoadMetricsObserver::OnStart(
   return IsTabRestore(navigation_handle) ? CONTINUE_OBSERVING : STOP_OBSERVING;
 }
 
-void TabRestorePageLoadMetricsObserver::OnLoadedResource(
-    const page_load_metrics::ExtraRequestCompleteInfo&
-        extra_request_complete_info) {
-  if (extra_request_complete_info.was_cached) {
-    cache_bytes_ += extra_request_complete_info.raw_body_bytes;
-  } else {
-    network_bytes_ += extra_request_complete_info.raw_body_bytes;
+void TabRestorePageLoadMetricsObserver::OnResourceDataUseObserved(
+    content::RenderFrameHost* rfh,
+    const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+        resources) {
+  for (auto const& resource : resources) {
+    if (resource->is_complete) {
+      if (resource->cache_type ==
+          page_load_metrics::mojom::CacheType::kNotCached)
+        network_bytes_ += resource->encoded_body_length;
+      else
+        cache_bytes_ += resource->encoded_body_length;
+    }
   }
 }
 
@@ -70,9 +75,10 @@ void TabRestorePageLoadMetricsObserver::OnComplete(
 }
 
 void TabRestorePageLoadMetricsObserver::RecordByteHistograms() {
-  PAGE_BYTES_HISTOGRAM(kHistogramNetworkBytes, network_bytes_);
-  PAGE_BYTES_HISTOGRAM(kHistogramCacheBytes, cache_bytes_);
-  PAGE_BYTES_HISTOGRAM(kHistogramTotalBytes, network_bytes_ + cache_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramTabRestoreNetworkBytes, network_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramTabRestoreCacheBytes, cache_bytes_);
+  PAGE_BYTES_HISTOGRAM(kHistogramTabRestoreTotalBytes,
+                       network_bytes_ + cache_bytes_);
 }
 
 bool TabRestorePageLoadMetricsObserver::IsTabRestore(

@@ -4,14 +4,17 @@
 
 /**
  * Javascript for device_broker, served from chrome://bluetooth-internals/.
- * Provides a single source to access DevicePtrs. DevicePtrs are cached for
+ * Provides a single source to access DeviceProxys. DeviceProxys are cached for
  * for repeated use. Multiple connection requests will result in the same
- * DevicePtr being shared among all requesters.
+ * DeviceProxy being shared among all requesters.
  */
 
 // Expose for testing.
-/** @type {!Map<string, !bluetooth.mojom.DevicePtr|!Promise} */
-var connectedDevices = null;
+/**
+ * @type {?Map<string,
+ *     !bluetooth.mojom.DeviceProxy|!Promise<!bluetooth.mojom.DeviceProxy>>}
+ */
+let connectedDevices = null;
 
 cr.define('device_broker', function() {
   connectedDevices = new Map();
@@ -19,33 +22,34 @@ cr.define('device_broker', function() {
   /**
    * Creates a GATT connection to the device with |address|. If a connection to
    * the device already exists, the promise is resolved with the existing
-   * DevicePtr. If a connection is in progress, the promise resolves when
+   * DeviceProxy. If a connection is in progress, the promise resolves when
    * the existing connection request promise is fulfilled.
    * @param {string} address
-   * @return {!Promise<!bluetooth.mojom.DevicePtr>}
+   * @return {!Promise<!bluetooth.mojom.DeviceProxy>}
    */
   function connectToDevice(address) {
-    var deviceOrPromise = connectedDevices.get(address) || null;
-    if (deviceOrPromise !== null)
+    const deviceOrPromise = connectedDevices.get(address) || null;
+    if (deviceOrPromise !== null) {
       return Promise.resolve(deviceOrPromise);
+    }
 
-    var promise = adapter_broker.getAdapterBroker()
-                      .then(function(adapterBroker) {
-                        return adapterBroker.connectToDevice(address);
-                      })
-                      .then(function(device) {
-                        connectedDevices.set(address, device);
+    const promise = /** @type {!Promise<!bluetooth.mojom.DeviceProxy>} */ (
+        adapter_broker.getAdapterBroker()
+            .then(function(adapterBroker) {
+              return adapterBroker.connectToDevice(address);
+            })
+            .then(function(device) {
+              connectedDevices.set(address, device);
 
-                        device.ptr.setConnectionErrorHandler(function() {
-                          connectedDevices.delete(address);
-                        });
+              device.onConnectionError.addListener(
+                  () => connectedDevices.delete(address));
 
-                        return device;
-                      })
-                      .catch(function(error) {
-                        connectedDevices.delete(address);
-                        throw error;
-                      });
+              return device;
+            })
+            .catch(function(error) {
+              connectedDevices.delete(address);
+              throw error;
+            }));
 
     connectedDevices.set(address, promise);
     return promise;

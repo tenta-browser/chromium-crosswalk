@@ -26,10 +26,10 @@ namespace content {
 class BrowserContext;
 }
 
+namespace extensions {
 FORWARD_DECLARE_TEST(ExtensionServiceTest,
                      UpdatePendingExtensionAlreadyInstalled);
 
-namespace extensions {
 class PendingExtensionManager;
 
 class ExtensionUpdaterTest;
@@ -68,6 +68,10 @@ class PendingExtensionManager {
 
   // Whether there is pending extension install from sync.
   bool HasPendingExtensionFromSync() const;
+
+  // Whether there is a high-priority pending extension (one from either policy
+  // or an external component extension).
+  bool HasHighPriorityPendingExtension() const;
 
   // Notifies the manager that we are reinstalling the policy force-installed
   // extension with |id| because we detected corruption in the current copy.
@@ -156,7 +160,7 @@ class PendingExtensionManager {
   // due to corruption, mapped to the time we detected the corruption.
   std::map<ExtensionId, base::TimeTicks> expected_policy_reinstalls_;
 
-  FRIEND_TEST_ALL_PREFIXES(::ExtensionServiceTest,
+  FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest,
                            UpdatePendingExtensionAlreadyInstalled);
   friend class ExtensionUpdaterTest;
   friend void SetupPendingExtensionManagerForTest(

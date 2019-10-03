@@ -8,21 +8,26 @@
 // The functions defined are shared among some of the classes that implement
 // the internal sync API.  They are not to be used by clients of the API.
 
+#include <memory>
 #include <string>
 
 namespace sync_pb {
-class AttachmentMetadata;
 class EntitySpecifics;
 class PasswordSpecificsData;
+class WifiConfigurationSpecificsData;
 }
 
 namespace syncer {
 
 class Cryptographer;
 
-sync_pb::PasswordSpecificsData* DecryptPasswordSpecifics(
+std::unique_ptr<sync_pb::PasswordSpecificsData> DecryptPasswordSpecifics(
     const sync_pb::EntitySpecifics& specifics,
     Cryptographer* crypto);
+
+std::unique_ptr<sync_pb::WifiConfigurationSpecificsData>
+DecryptWifiConfigurationSpecifics(const sync_pb::EntitySpecifics& specifics,
+                                  Cryptographer* crypto);
 
 void SyncAPINameToServerName(const std::string& syncer_name, std::string* out);
 void ServerNameToSyncAPIName(const std::string& server_name, std::string* out);
@@ -32,10 +37,6 @@ bool IsNameServerIllegalAfterTrimming(const std::string& name);
 bool AreSpecificsEqual(const Cryptographer* cryptographer,
                        const sync_pb::EntitySpecifics& left,
                        const sync_pb::EntitySpecifics& right);
-
-// Return true iff |left| and |right| are equal.
-bool AreAttachmentMetadataEqual(const sync_pb::AttachmentMetadata& left,
-                                const sync_pb::AttachmentMetadata& right);
 
 }  // namespace syncer
 

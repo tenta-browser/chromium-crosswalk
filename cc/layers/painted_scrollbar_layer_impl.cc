@@ -46,9 +46,11 @@ PaintedScrollbarLayerImpl::PaintedScrollbarLayerImpl(
       thumb_thickness_(0),
       thumb_length_(0),
       track_start_(0),
-      track_length_(0) {}
+      track_length_(0),
+      back_button_rect_(gfx::Rect(0, 0)),
+      forward_button_rect_(gfx::Rect(0, 0)) {}
 
-PaintedScrollbarLayerImpl::~PaintedScrollbarLayerImpl() {}
+PaintedScrollbarLayerImpl::~PaintedScrollbarLayerImpl() = default;
 
 std::unique_ptr<LayerImpl> PaintedScrollbarLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
@@ -70,6 +72,8 @@ void PaintedScrollbarLayerImpl::PushPropertiesTo(LayerImpl* layer) {
   scrollbar_layer->SetThumbLength(thumb_length_);
   scrollbar_layer->SetTrackStart(track_start_);
   scrollbar_layer->SetTrackLength(track_length_);
+  scrollbar_layer->SetBackButtonRect(back_button_rect_);
+  scrollbar_layer->SetForwardButtonRect(forward_button_rect_);
 
   scrollbar_layer->set_track_ui_resource_id(track_ui_resource_id_);
   scrollbar_layer->set_thumb_ui_resource_id(thumb_ui_resource_id_);
@@ -79,7 +83,7 @@ void PaintedScrollbarLayerImpl::PushPropertiesTo(LayerImpl* layer) {
 
 bool PaintedScrollbarLayerImpl::WillDraw(
     DrawMode draw_mode,
-    LayerTreeResourceProvider* resource_provider) {
+    viz::ClientResourceProvider* resource_provider) {
   DCHECK(draw_mode != DRAW_MODE_RESOURCELESS_SOFTWARE);
   return LayerImpl::WillDraw(draw_mode, resource_provider);
 }
@@ -96,7 +100,7 @@ void PaintedScrollbarLayerImpl::AppendQuads(
   viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
   PopulateScaledSharedQuadState(shared_quad_state, internal_contents_scale_,
-                                internal_contents_scale_, contents_opaque());
+                                contents_opaque());
 
   AppendDebugBorderQuad(render_pass, gfx::Rect(internal_content_bounds_),
                         shared_quad_state, append_quads_data);
@@ -124,7 +128,8 @@ void PaintedScrollbarLayerImpl::AppendQuads(
                  scaled_visible_thumb_quad_rect, needs_blending,
                  thumb_resource_id, premultipled_alpha, uv_top_left,
                  uv_bottom_right, SK_ColorTRANSPARENT, opacity, flipped,
-                 nearest_neighbor, false);
+                 nearest_neighbor, /*secure_output_only=*/false,
+                 gfx::ProtectedVideoType::kClear);
     ValidateQuadResources(quad);
   }
 
@@ -143,7 +148,8 @@ void PaintedScrollbarLayerImpl::AppendQuads(
                  scaled_visible_track_quad_rect, needs_blending,
                  track_resource_id, premultipled_alpha, uv_top_left,
                  uv_bottom_right, SK_ColorTRANSPARENT, opacity, flipped,
-                 nearest_neighbor, false);
+                 nearest_neighbor, /*secure_output_only=*/false,
+                 gfx::ProtectedVideoType::kClear);
     ValidateQuadResources(quad);
   }
 }
@@ -186,6 +192,59 @@ void PaintedScrollbarLayerImpl::SetTrackStart(int track_start) {
 
 int PaintedScrollbarLayerImpl::TrackStart() const {
   return track_start_;
+}
+
+void PaintedScrollbarLayerImpl::SetBackButtonRect(gfx::Rect back_button_rect) {
+  if (back_button_rect_ == back_button_rect)
+    return;
+  back_button_rect_ = back_button_rect;
+  NoteLayerPropertyChanged();
+}
+
+gfx::Rect PaintedScrollbarLayerImpl::BackButtonRect() const {
+  return back_button_rect_;
+}
+
+void PaintedScrollbarLayerImpl::SetForwardButtonRect(
+    gfx::Rect forward_button_rect) {
+  if (forward_button_rect_ == forward_button_rect)
+    return;
+  forward_button_rect_ = forward_button_rect;
+  NoteLayerPropertyChanged();
+}
+
+gfx::Rect PaintedScrollbarLayerImpl::ForwardButtonRect() const {
+  return forward_button_rect_;
+}
+
+gfx::Rect PaintedScrollbarLayerImpl::BackTrackRect() const {
+  gfx::Rect thumb_rect = ComputeThumbQuadRect();
+  if (orientation() == HORIZONTAL) {
+    int rect_x = back_button_rect_.x() + back_button_rect_.width();
+    int rect_y = back_button_rect_.y();
+    return gfx::Rect(rect_x, rect_y, thumb_rect.x() - rect_x,
+                     back_button_rect_.height());
+  } else {
+    int rect_x = back_button_rect_.x();
+    int rect_y = back_button_rect_.y() + back_button_rect_.height();
+    return gfx::Rect(rect_x, rect_y, back_button_rect_.width(),
+                     thumb_rect.y() - rect_y);
+  }
+}
+
+gfx::Rect PaintedScrollbarLayerImpl::ForwardTrackRect() const {
+  gfx::Rect thumb_rect = ComputeThumbQuadRect();
+  if (orientation() == HORIZONTAL) {
+    int rect_x = thumb_rect.x() + thumb_rect.width();
+    int rect_y = thumb_rect.y();
+    return gfx::Rect(rect_x, rect_y, forward_button_rect_.x() - rect_x,
+                     forward_button_rect_.height());
+  } else {
+    int rect_x = thumb_rect.x();
+    int rect_y = thumb_rect.y() + thumb_rect.height();
+    return gfx::Rect(rect_x, rect_y, forward_button_rect_.width(),
+                     forward_button_rect_.y() - rect_y);
+  }
 }
 
 void PaintedScrollbarLayerImpl::SetTrackLength(int track_length) {

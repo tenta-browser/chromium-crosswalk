@@ -5,9 +5,10 @@
 #include "media/audio/cras/cras_input.h"
 
 #include <math.h>
+#include <algorithm>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "media/audio/audio_device_description.h"
@@ -27,12 +28,11 @@ CrasInputStream::CrasInputStream(const AudioParameters& params,
       stream_id_(0),
       stream_direction_(CRAS_STREAM_INPUT),
       pin_device_(NO_DEVICE),
-      is_loopback_(
-          device_id == AudioDeviceDescription::kLoopbackInputDeviceId ||
-          device_id == AudioDeviceDescription::kLoopbackWithMuteDeviceId),
+      is_loopback_(AudioDeviceDescription::IsLoopbackDevice(device_id)),
       mute_system_audio_(device_id ==
                          AudioDeviceDescription::kLoopbackWithMuteDeviceId),
-      mute_done_(false) {
+      mute_done_(false),
+      input_volume_(1.0f) {
   DCHECK(audio_manager_);
   audio_bus_ = AudioBus::Create(params_);
   if (!audio_manager_->IsDefault(device_id, true)) {
@@ -61,13 +61,6 @@ bool CrasInputStream::Open() {
   if (AudioParameters::AUDIO_PCM_LINEAR != params_.format() &&
       AudioParameters::AUDIO_PCM_LOW_LATENCY != params_.format()) {
     DLOG(WARNING) << "Unsupported audio format.";
-    return false;
-  }
-
-  snd_pcm_format_t pcm_format =
-      AudioManagerCras::BitsToFormat(params_.bits_per_sample());
-  if (pcm_format == SND_PCM_FORMAT_UNKNOWN) {
-    DLOG(WARNING) << "Unsupported bits/sample: " << params_.bits_per_sample();
     return false;
   }
 
@@ -130,6 +123,10 @@ void CrasInputStream::Close() {
   audio_manager_->ReleaseInputStream(this);
 }
 
+inline bool CrasInputStream::UseCrasAec() const {
+  return params_.effects() & AudioParameters::ECHO_CANCELLER;
+}
+
 void CrasInputStream::Start(AudioInputCallback* callback) {
   DCHECK(client_);
   DCHECK(callback);
@@ -149,7 +146,7 @@ void CrasInputStream::Start(AudioInputCallback* callback) {
     CRAS_CH_SL,
     CRAS_CH_SR
   };
-  static_assert(arraysize(kChannelMap) == CHANNELS_MAX + 1,
+  static_assert(base::size(kChannelMap) == CHANNELS_MAX + 1,
                 "kChannelMap array size should match");
 
   // If already playing, stop before re-starting.
@@ -163,9 +160,7 @@ void CrasInputStream::Start(AudioInputCallback* callback) {
   // Prepare |audio_format| and |stream_params| for the stream we
   // will create.
   cras_audio_format* audio_format = cras_audio_format_create(
-      AudioManagerCras::BitsToFormat(params_.bits_per_sample()),
-      params_.sample_rate(),
-      params_.channels());
+      SND_PCM_FORMAT_S16, params_.sample_rate(), params_.channels());
   if (!audio_format) {
     DLOG(WARNING) << "Error setting up audio parameters.";
     callback_->OnError();
@@ -176,12 +171,12 @@ void CrasInputStream::Start(AudioInputCallback* callback) {
   // Initialize channel layout to all -1 to indicate that none of
   // the channels is set in the layout.
   int8_t layout[CRAS_CH_MAX];
-  for (size_t i = 0; i < arraysize(layout); ++i)
+  for (size_t i = 0; i < base::size(layout); ++i)
     layout[i] = -1;
 
   // Converts to CRAS defined channels. ChannelOrder will return -1
   // for channels that are not present in params_.channel_layout().
-  for (size_t i = 0; i < arraysize(kChannelMap); ++i) {
+  for (size_t i = 0; i < base::size(kChannelMap); ++i) {
     layout[kChannelMap[i]] = ChannelOrder(params_.channel_layout(),
                                           static_cast<Channels>(i));
   }
@@ -214,6 +209,9 @@ void CrasInputStream::Start(AudioInputCallback* callback) {
     cras_audio_format_destroy(audio_format);
     return;
   }
+
+  if (UseCrasAec())
+    cras_client_stream_params_enable_aec(stream_params);
 
   // Before starting the stream, save the number of bytes in a frame for use in
   // the callback.
@@ -294,16 +292,22 @@ void CrasInputStream::ReadAudio(size_t frames,
   double normalized_volume = 0.0;
   GetAgcVolume(&normalized_volume);
 
-  // Warning: It is generally unsafe to manufacture TimeTicks values; but
-  // here it is required for interfacing with cras. Assumption: cras
-  // is providing the timestamp from the CLOCK_MONOTONIC POSIX clock.
-  const base::TimeTicks capture_time =
-      base::TimeTicks() + base::TimeDelta::FromTimeSpec(*sample_ts);
-  DCHECK_EQ(base::TimeTicks::GetClock(),
-            base::TimeTicks::Clock::LINUX_CLOCK_MONOTONIC);
+  // Don't just assume sample_ts is from the same clock as base::TimeTicks (it
+  // is not). Instead, convert it to a latency with a cras utility function
+  // (guaranteed to use the same clock) and apply that latency to
+  // TimeTicks::Now().
+  timespec latency_ts = {0, 0};
+  cras_client_calc_capture_latency(sample_ts, &latency_ts);
 
-  audio_bus_->FromInterleaved(buffer, audio_bus_->frames(),
-                              params_.bits_per_sample() / 8);
+  const base::TimeDelta delay =
+      std::max(base::TimeDelta::FromTimeSpec(latency_ts), base::TimeDelta());
+
+  // The delay says how long ago the capture was, so we subtract the delay from
+  // Now() to find the capture time.
+  const base::TimeTicks capture_time = base::TimeTicks::Now() - delay;
+
+  audio_bus_->FromInterleaved<SignedInt16SampleTypeTraits>(
+      reinterpret_cast<int16_t*>(buffer), audio_bus_->frames());
   callback_->OnData(audio_bus_.get(), capture_time, normalized_volume);
 }
 
@@ -313,20 +317,15 @@ void CrasInputStream::NotifyStreamError(int err) {
 }
 
 double CrasInputStream::GetMaxVolume() {
-  DCHECK(client_);
-
-  // Capture gain is returned as dB * 100 (150 => 1.5dBFS).  Convert the dB
-  // value to a ratio before returning.
-  double dB = cras_client_get_system_max_capture_gain(client_) / 100.0;
-  return GetVolumeRatioFromDecibels(dB);
+  return 1.0f;
 }
 
 void CrasInputStream::SetVolume(double volume) {
   DCHECK(client_);
 
-  // Convert from the passed volume ratio, to dB * 100.
-  double dB = GetDecibelsFromVolumeRatio(volume);
-  cras_client_set_system_capture_gain(client_, static_cast<long>(dB * 100.0));
+  // Set the volume ratio to CRAS's softare and stream specific gain.
+  input_volume_ = volume;
+  cras_client_set_stream_volume(client_, stream_id_, input_volume_);
 
   // Update the AGC volume level based on the last setting above. Note that,
   // the volume-level resolution is not infinite and it is therefore not
@@ -340,20 +339,16 @@ double CrasInputStream::GetVolume() {
   if (!client_)
     return 0.0;
 
-  long dB = cras_client_get_system_capture_gain(client_) / 100.0;
-  return GetVolumeRatioFromDecibels(dB);
+  return input_volume_;
 }
 
 bool CrasInputStream::IsMuted() {
   return false;
 }
 
-double CrasInputStream::GetVolumeRatioFromDecibels(double dB) const {
-  return pow(10, dB / 20.0);
-}
-
-double CrasInputStream::GetDecibelsFromVolumeRatio(double volume_ratio) const {
-  return 20 * log10(volume_ratio);
+void CrasInputStream::SetOutputDeviceForAec(
+    const std::string& output_device_id) {
+  // Not supported. Do nothing.
 }
 
 }  // namespace media

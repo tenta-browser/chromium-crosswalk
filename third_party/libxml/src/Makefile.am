@@ -8,7 +8,7 @@ DIST_SUBDIRS = include . doc example python xstc
 
 AM_CPPFLAGS = -I$(top_builddir)/include -I$(srcdir)/include
 
-AM_CFLAGS = $(THREAD_CFLAGS) $(Z_CFLAGS) $(LZMA_CFLAGS)
+AM_CFLAGS = $(EXTRA_CFLAGS) $(THREAD_CFLAGS) $(Z_CFLAGS) $(LZMA_CFLAGS)
 
 check_PROGRAMS=testSchemas testRelax testSAX testHTML testXPath testURI \
                testThreads testC14N testAutomata testRegexp \
@@ -126,11 +126,7 @@ testC14N_LDFLAGS =
 testC14N_DEPENDENCIES = $(DEPS)
 testC14N_LDADD= $(LDADDS)
 
-if THREADS_W32
-testThreads_SOURCES = testThreadsWin32.c
-else
 testThreads_SOURCES = testThreads.c
-endif
 testThreads_LDFLAGS = 
 testThreads_DEPENDENCIES = $(DEPS)
 testThreads_LDADD= $(BASE_THREAD_LIBS) $(LDADDS)
@@ -191,7 +187,6 @@ testapi_SOURCES=testapi.c
 testapi_LDFLAGS = 
 testapi_DEPENDENCIES = $(DEPS)
 testapi_LDADD= $(LDADDS)
-testapi_CFLAGS = -Wno-unused-function
 
 runxmlconf_SOURCES=runxmlconf.c
 runxmlconf_LDFLAGS = 
@@ -1254,7 +1249,7 @@ EXTRA_DIST = xml2-config.in xml2Conf.sh.in libxml.spec.in libxml2.spec \
 	     libxml2-config.cmake.in autogen.sh \
 	     trionan.c trionan.h triostr.c triostr.h trio.c trio.h \
 	     triop.h triodef.h libxml.h elfgcchack.h xzlib.h buf.h \
-	     enc.h save.h testThreadsWin32.c genUnicode.py TODO_SCHEMAS \
+	     enc.h save.h genUnicode.py TODO_SCHEMAS \
 	     dbgen.pl dbgenattr.pl regressions.py regressions.xml \
 	     README.tests Makefile.tests libxml2.syms timsort.h \
 	     README.zOS \

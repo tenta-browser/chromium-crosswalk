@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_ANDROID_SHORTCUT_HELPER_H_
 #define CHROME_BROWSER_ANDROID_SHORTCUT_HELPER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,14 +27,20 @@ class WebContents;
 // ShortcutHelper in Java.
 class ShortcutHelper {
  public:
-  using WebApkInfoCallback =
-      base::Callback<void(const std::vector<WebApkInfo>&)>;
+  // Creates a ShortcutInfo struct suitable for adding a shortcut to the home
+  // screen.
+  static std::unique_ptr<ShortcutInfo> CreateShortcutInfo(
+      const GURL& manifest_url,
+      const blink::Manifest& manifest,
+      const GURL& primary_icon_url,
+      const GURL& badge_icon_url);
 
   // Adds a shortcut to the launcher using a SkBitmap. The type of shortcut
   // added depends on the properties in |info|.
   static void AddToLauncherWithSkBitmap(content::WebContents* web_contents,
                                         const ShortcutInfo& info,
-                                        const SkBitmap& icon_bitmap);
+                                        const SkBitmap& icon_bitmap,
+                                        bool is_icon_maskable);
 
   // Shows toast notifying user that a WebAPK install is already in progress
   // when user tries to queue a new install for the same WebAPK.
@@ -76,12 +83,13 @@ class ShortcutHelper {
   // |is_generated| will be set to |true|.
   // Must be called on a background worker thread.
   static SkBitmap FinalizeLauncherIconInBackground(const SkBitmap& icon,
+                                                   bool is_icon_maskable,
                                                    const GURL& url,
                                                    bool* is_generated);
 
-  // Returns the package name of the WebAPK if WebAPKs are enabled and there is
-  // an installed WebAPK which can handle |url|. Returns empty string otherwise.
-  static std::string QueryWebApkPackage(const GURL& url);
+  // Returns the package name of one of the WebAPKs which can handle |url|.
+  // Returns an empty string if there are no matches.
+  static std::string QueryFirstWebApkPackage(const GURL& url);
 
   // Returns true if WebAPKs are enabled and there is an installed WebAPK which
   // can handle |start_url|, or there is one is being installed.
@@ -89,13 +97,9 @@ class ShortcutHelper {
                                 const GURL& start_url,
                                 const GURL& manifest_url);
 
-  // Generates a scope URL based on the passed in |url|. It should be used
-  // when the Web Manifest does not specify a scope URL.
-  static GURL GetScopeFromURL(const GURL& url);
-
-  // Fetches information on all the WebAPKs installed on the device and returns
-  // the info to the |callback|.
-  static void RetrieveWebApks(const WebApkInfoCallback& callback);
+  // Sets a flag to force an update for the WebAPK corresponding to |id| on next
+  // launch.
+  static void SetForceWebApkUpdate(const std::string& id);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ShortcutHelper);

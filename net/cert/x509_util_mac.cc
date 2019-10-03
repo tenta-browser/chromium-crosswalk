@@ -80,9 +80,8 @@ base::ScopedCFTypeRef<SecCertificateRef> CreateSecCertificateFromBytes(
 
 base::ScopedCFTypeRef<SecCertificateRef>
 CreateSecCertificateFromX509Certificate(const X509Certificate* cert) {
-  return CreateSecCertificateFromBytes(
-      CRYPTO_BUFFER_data(cert->os_cert_handle()),
-      CRYPTO_BUFFER_len(cert->os_cert_handle()));
+  return CreateSecCertificateFromBytes(CRYPTO_BUFFER_data(cert->cert_buffer()),
+                                       CRYPTO_BUFFER_len(cert->cert_buffer()));
 }
 
 scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
@@ -99,65 +98,27 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
   if (!sec_cert || SecCertificateGetData(sec_cert, &der_data) != noErr)
     return nullptr;
   bssl::UniquePtr<CRYPTO_BUFFER> cert_handle(
-      X509Certificate::CreateOSCertHandleFromBytes(
+      X509Certificate::CreateCertBufferFromBytes(
           reinterpret_cast<const char*>(der_data.Data), der_data.Length));
   if (!cert_handle)
     return nullptr;
   std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
-  X509Certificate::OSCertHandles intermediates_raw;
   for (const SecCertificateRef& sec_intermediate : sec_chain) {
     if (!sec_intermediate ||
         SecCertificateGetData(sec_intermediate, &der_data) != noErr) {
       return nullptr;
     }
     bssl::UniquePtr<CRYPTO_BUFFER> intermediate_cert_handle(
-        X509Certificate::CreateOSCertHandleFromBytes(
+        X509Certificate::CreateCertBufferFromBytes(
             reinterpret_cast<const char*>(der_data.Data), der_data.Length));
     if (!intermediate_cert_handle)
       return nullptr;
-    intermediates_raw.push_back(intermediate_cert_handle.get());
     intermediates.push_back(std::move(intermediate_cert_handle));
   }
   scoped_refptr<X509Certificate> result(
-      X509Certificate::CreateFromHandleUnsafeOptions(
-          cert_handle.get(), intermediates_raw, options));
+      X509Certificate::CreateFromBufferUnsafeOptions(
+          std::move(cert_handle), std::move(intermediates), options));
   return result;
-}
-
-bool IsSelfSigned(SecCertificateRef cert_handle) {
-  CSSMCachedCertificate cached_cert;
-  OSStatus status = cached_cert.Init(cert_handle);
-  if (status != noErr)
-    return false;
-
-  CSSMFieldValue subject;
-  status = cached_cert.GetField(&CSSMOID_X509V1SubjectNameStd, &subject);
-  if (status != CSSM_OK || !subject.field())
-    return false;
-
-  CSSMFieldValue issuer;
-  status = cached_cert.GetField(&CSSMOID_X509V1IssuerNameStd, &issuer);
-  if (status != CSSM_OK || !issuer.field())
-    return false;
-
-  if (subject.field()->Length != issuer.field()->Length ||
-      memcmp(subject.field()->Data, issuer.field()->Data,
-             issuer.field()->Length) != 0) {
-    return false;
-  }
-
-  CSSM_CL_HANDLE cl_handle = CSSM_INVALID_HANDLE;
-  status = SecCertificateGetCLHandle(cert_handle, &cl_handle);
-  if (status)
-    return false;
-  CSSM_DATA cert_data;
-  status = SecCertificateGetData(cert_handle, &cert_data);
-  if (status)
-    return false;
-
-  if (CSSM_CL_CertVerify(cl_handle, 0, &cert_data, &cert_data, NULL, 0))
-    return false;
-  return true;
 }
 
 SHA256HashValue CalculateFingerprint256(SecCertificateRef cert) {

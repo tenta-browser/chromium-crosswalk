@@ -10,7 +10,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/chromeos/platform_keys/platform_keys_service.h"
@@ -21,6 +21,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util.h"
 
 namespace extensions {
 
@@ -67,7 +68,7 @@ void BuildWebCryptoRSAAlgorithmDictionary(const PublicKeyInfo& key_info,
       "publicExponent",
       base::Value::CreateWithCopiedBuffer(
           reinterpret_cast<const char*>(defaultPublicExponent),
-          arraysize(defaultPublicExponent)));
+          base::size(defaultPublicExponent)));
 }
 
 const struct NameValuePair {
@@ -128,7 +129,7 @@ PlatformKeysInternalGetPublicKeyFunction::Run() {
       api_pki::GetPublicKey::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  const std::vector<char>& cert_der = params->certificate;
+  const std::vector<uint8_t>& cert_der = params->certificate;
   if (cert_der.empty())
     return RespondNow(Error(platform_keys::kErrorInvalidX509Cert));
   // Allow UTF-8 inside PrintableStrings in client certificates. See
@@ -137,7 +138,8 @@ PlatformKeysInternalGetPublicKeyFunction::Run() {
   options.printable_string_is_utf8 = true;
   scoped_refptr<net::X509Certificate> cert_x509 =
       net::X509Certificate::CreateFromBytesUnsafeOptions(
-          cert_der.data(), cert_der.size(), options);
+          reinterpret_cast<const char*>(cert_der.data()), cert_der.size(),
+          options);
   if (!cert_x509)
     return RespondNow(Error(platform_keys::kErrorInvalidX509Cert));
 
@@ -162,8 +164,8 @@ PlatformKeysInternalGetPublicKeyFunction::Run() {
                                        &algorithm.additional_properties);
 
   return RespondNow(ArgumentList(api_pki::GetPublicKey::Results::Create(
-      std::vector<char>(key_info.public_key_spki_der.begin(),
-                        key_info.public_key_spki_der.end()),
+      std::vector<uint8_t>(key_info.public_key_spki_der.begin(),
+                           key_info.public_key_spki_der.end()),
       algorithm)));
 }
 
@@ -183,7 +185,7 @@ PlatformKeysInternalSelectClientCertificatesFunction::Run() {
   DCHECK(service);
 
   chromeos::platform_keys::ClientCertificateRequest request;
-  for (const std::vector<char>& cert_authority :
+  for (const std::vector<uint8_t>& cert_authority :
        params->details.request.certificate_authorities) {
     request.certificate_authorities.push_back(
         std::string(cert_authority.begin(), cert_authority.end()));
@@ -207,7 +209,7 @@ PlatformKeysInternalSelectClientCertificatesFunction::Run() {
   std::unique_ptr<net::CertificateList> client_certs;
   if (params->details.client_certs) {
     client_certs.reset(new net::CertificateList);
-    for (const std::vector<char>& client_cert_der :
+    for (const std::vector<uint8_t>& client_cert_der :
          *params->details.client_certs) {
       if (client_cert_der.empty())
         return RespondNow(Error(platform_keys::kErrorInvalidX509Cert));
@@ -217,7 +219,8 @@ PlatformKeysInternalSelectClientCertificatesFunction::Run() {
       options.printable_string_is_utf8 = true;
       scoped_refptr<net::X509Certificate> client_cert_x509 =
           net::X509Certificate::CreateFromBytesUnsafeOptions(
-              client_cert_der.data(), client_cert_der.size(), options);
+              reinterpret_cast<const char*>(client_cert_der.data()),
+              client_cert_der.size(), options);
       if (!client_cert_x509)
         return RespondNow(Error(platform_keys::kErrorInvalidX509Cert));
       client_certs->push_back(client_cert_x509);
@@ -273,9 +276,8 @@ void PlatformKeysInternalSelectClientCertificatesFunction::
     }
 
     api_pk::Match result_match;
-    std::string der_encoded_cert;
-    net::X509Certificate::GetDEREncoded(match->os_cert_handle(),
-                                        &der_encoded_cert);
+    base::StringPiece der_encoded_cert =
+        net::x509_util::CryptoBufferAsStringPiece(match->cert_buffer());
     result_match.certificate.assign(der_encoded_cert.begin(),
                                     der_encoded_cert.end());
 
@@ -344,7 +346,7 @@ void PlatformKeysInternalSignFunction::OnSigned(
 
   if (error_message.empty())
     Respond(ArgumentList(api_pki::Sign::Results::Create(
-        std::vector<char>(signature.begin(), signature.end()))));
+        std::vector<uint8_t>(signature.begin(), signature.end()))));
   else
     Respond(Error(error_message));
 }
@@ -387,7 +389,7 @@ void PlatformKeysVerifyTLSServerCertificateFunction::FinishedVerification(
   if (net::IsCertificateError(verify_result)) {
     // Only report errors, not internal informational statuses.
     const int masked_cert_status = cert_status & net::CERT_STATUS_ALL_ERRORS;
-    for (size_t i = 0; i < arraysize(kCertStatusErrors); ++i) {
+    for (size_t i = 0; i < base::size(kCertStatusErrors); ++i) {
       if ((masked_cert_status & kCertStatusErrors[i].value) ==
           kCertStatusErrors[i].value) {
         result.debug_errors.push_back(kCertStatusErrors[i].name);

@@ -10,19 +10,16 @@
 #include <string>
 
 #include "base/callback_forward.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "google_apis/drive/drive_api_error_codes.h"
-#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace base {
 class SequencedTaskRunner;
-}
-
-namespace net {
-class URLRequestContextGetter;
 }
 
 namespace google_apis {
@@ -34,11 +31,10 @@ class AuthServiceInterface;
 // AuthenticatedRequestInterface and handles retries and authentication.
 class RequestSender {
  public:
-  // |auth_service| is used for fetching OAuth tokens. It'll be owned by
-  // this RequestSender.
+  // |auth_service| is used for fetching OAuth tokens.
   //
-  // |url_request_context_getter| is the context used to perform network
-  // requests from this RequestSender.
+  // |url_loader_factory| is the factory used to load resources requested by
+  // this RequestSender.
   //
   // |blocking_task_runner| is used for running blocking operation, e.g.,
   // parsing JSON response from the server.
@@ -46,8 +42,8 @@ class RequestSender {
   // |custom_user_agent| will be used for the User-Agent header in HTTP
   // requests issued through the request sender if the value is not empty.
   RequestSender(
-      AuthServiceInterface* auth_service,
-      net::URLRequestContextGetter* url_request_context_getter,
+      std::unique_ptr<AuthServiceInterface> auth_service,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
       const std::string& custom_user_agent,
       const net::NetworkTrafficAnnotationTag& traffic_annotation);
@@ -55,8 +51,8 @@ class RequestSender {
 
   AuthServiceInterface* auth_service() { return auth_service_.get(); }
 
-  net::URLRequestContextGetter* url_request_context_getter() const {
-    return url_request_context_getter_.get();
+  network::SharedURLLoaderFactory* url_loader_factory() const {
+    return url_loader_factory_.get();
   }
 
   base::SequencedTaskRunner* blocking_task_runner() const {
@@ -101,10 +97,12 @@ class RequestSender {
       const base::WeakPtr<AuthenticatedRequestInterface>& request);
 
   std::unique_ptr<AuthServiceInterface> auth_service_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
 
-  std::set<std::unique_ptr<AuthenticatedRequestInterface>> in_flight_requests_;
+  std::set<std::unique_ptr<AuthenticatedRequestInterface>,
+           base::UniquePtrComparator>
+      in_flight_requests_;
   const std::string custom_user_agent_;
 
   base::ThreadChecker thread_checker_;

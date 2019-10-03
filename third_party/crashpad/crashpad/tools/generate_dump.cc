@@ -26,12 +26,17 @@
 #include "minidump/minidump_file_writer.h"
 #include "tools/tool_support.h"
 #include "util/file/file_writer.h"
-#include "util/posix/drop_privileges.h"
+#include "util/process/process_id.h"
 #include "util/stdlib/string_number_conversion.h"
+
+#if defined(OS_POSIX)
+#include <unistd.h>
+
+#include "util/posix/drop_privileges.h"
+#endif
 
 #if defined(OS_MACOSX)
 #include <mach/mach.h>
-#include <unistd.h>
 
 #include "base/mac/scoped_mach_port.h"
 #include "snapshot/mac/process_snapshot_mac.h"
@@ -42,6 +47,14 @@
 #include "snapshot/win/process_snapshot_win.h"
 #include "util/win/scoped_process_suspend.h"
 #include "util/win/xp_compat.h"
+#elif defined(OS_FUCHSIA)
+#include <lib/zx/process.h>
+
+#include "snapshot/fuchsia/process_snapshot_fuchsia.h"
+#include "util/fuchsia/koid_utilities.h"
+#include "util/fuchsia/scoped_task_suspend.h"
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
+#include "snapshot/linux/process_snapshot_linux.h"
 #endif  // OS_MACOSX
 
 namespace crashpad {
@@ -80,7 +93,7 @@ int GenerateDumpMain(int argc, char* argv[]) {
 
   struct {
     std::string dump_path;
-    pid_t pid;
+    ProcessID pid;
     bool suspend;
   } options = {};
   options.suspend = true;
@@ -154,10 +167,17 @@ int GenerateDumpMain(int argc, char* argv[]) {
     PLOG(ERROR) << "could not open process " << options.pid;
     return EXIT_FAILURE;
   }
+#elif defined(OS_FUCHSIA)
+  zx::process process = GetProcessFromKoid(options.pid);
+  if (!process.is_valid()) {
+    LOG(ERROR) << "could not open process " << options.pid;
+    return EXIT_FAILURE;
+  }
 #endif  // OS_MACOSX
 
   if (options.dump_path.empty()) {
-    options.dump_path = base::StringPrintf("minidump.%d", options.pid);
+    options.dump_path = base::StringPrintf("minidump.%" PRI_PROCESS_ID,
+                                           options.pid);
   }
 
   {
@@ -170,6 +190,11 @@ int GenerateDumpMain(int argc, char* argv[]) {
     std::unique_ptr<ScopedProcessSuspend> suspend;
     if (options.suspend) {
       suspend.reset(new ScopedProcessSuspend(process.get()));
+    }
+#elif defined(OS_FUCHSIA)
+    std::unique_ptr<ScopedTaskSuspend> suspend;
+    if (options.suspend) {
+      suspend.reset(new ScopedTaskSuspend(process));
     }
 #endif  // OS_MACOSX
 
@@ -186,6 +211,17 @@ int GenerateDumpMain(int argc, char* argv[]) {
                                          : ProcessSuspensionState::kRunning,
                                      0,
                                      0)) {
+      return EXIT_FAILURE;
+    }
+#elif defined(OS_FUCHSIA)
+    ProcessSnapshotFuchsia process_snapshot;
+    if (!process_snapshot.Initialize(process)) {
+      return EXIT_FAILURE;
+    }
+#elif defined(OS_LINUX) || defined(OS_ANDROID)
+    // TODO(jperaza): https://crashpad.chromium.org/bug/30.
+    ProcessSnapshotLinux process_snapshot;
+    if (!process_snapshot.Initialize(nullptr)) {
       return EXIT_FAILURE;
     }
 #endif  // OS_MACOSX

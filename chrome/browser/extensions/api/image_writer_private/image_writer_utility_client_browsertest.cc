@@ -12,12 +12,15 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/task/post_task.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
-#include "chrome/common/extensions/removable_storage_writer.mojom.h"
+#include "chrome/services/removable_storage_writer/public/mojom/removable_storage_writer.mojom.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/system_connector.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 namespace image_writer {
@@ -31,7 +34,7 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
   ImageWriterUtilityClientTest() {
     base::ScopedAllowBlockingForTesting allow_blocking;
     test_device_ = base::FilePath().AppendASCII(
-        extensions::mojom::RemovableStorageWriter::kTestDevice);
+        chrome::mojom::RemovableStorageWriter::kTestDevice);
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
 
@@ -42,7 +45,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
     base::PostTaskWithTraitsAndReply(
         FROM_HERE, {base::MayBlock()},
-        base::Bind(&ImageWriterUtilityClientTest::FillFile, image_, pattern),
+        base::BindOnce(&ImageWriterUtilityClientTest::FillFile, image_,
+                       pattern),
         run_loop.QuitClosure());
 
     run_loop.Run();
@@ -54,7 +58,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
     base::PostTaskWithTraitsAndReply(
         FROM_HERE, {base::MayBlock()},
-        base::Bind(&ImageWriterUtilityClientTest::FillFile, device_, pattern),
+        base::BindOnce(&ImageWriterUtilityClientTest::FillFile, device_,
+                       pattern),
         run_loop.QuitClosure());
 
     run_loop.Run();
@@ -70,8 +75,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     cancel_ = (option == CANCEL);
 
     CreateTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&ImageWriterUtilityClientTest::StartWriteTest,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&ImageWriterUtilityClientTest::StartWriteTest,
+                                  base::Unretained(this)));
     run_loop.Run();
 
     EXPECT_TRUE(quit_called_);
@@ -97,11 +102,16 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
   const std::string& error() const { return error_; }
 
  private:
+  void SetUpOnMainThread() override {
+    connector_ = content::GetSystemConnector()->Clone();
+  }
+
   void StartWriteTest() {
     DCHECK(IsRunningInCorrectSequence());
 
     if (!image_writer_utility_client_)
-      image_writer_utility_client_ = new ImageWriterUtilityClient();
+      image_writer_utility_client_ =
+          new ImageWriterUtilityClient(GetTaskRunner(), std::move(connector_));
     success_ = false;
     progress_ = 0;
 
@@ -139,15 +149,16 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     }
 
     GetTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&ImageWriterUtilityClientTest::Shutdown,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&ImageWriterUtilityClientTest::Shutdown,
+                                  base::Unretained(this)));
   }
 
   void StartVerifyTest() {
     DCHECK(IsRunningInCorrectSequence());
 
     if (!image_writer_utility_client_)
-      image_writer_utility_client_ = new ImageWriterUtilityClient();
+      image_writer_utility_client_ =
+          new ImageWriterUtilityClient(GetTaskRunner(), std::move(connector_));
     success_ = false;
     progress_ = 0;
 
@@ -169,8 +180,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     error_ = error;
 
     GetTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&ImageWriterUtilityClientTest::Shutdown,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&ImageWriterUtilityClientTest::Shutdown,
+                                  base::Unretained(this)));
   }
 
   void Verified() {
@@ -181,8 +192,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     success_ = !cancel_;
 
     GetTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&ImageWriterUtilityClientTest::Shutdown,
-                              base::Unretained(this)));
+        FROM_HERE, base::BindOnce(&ImageWriterUtilityClientTest::Shutdown,
+                                  base::Unretained(this)));
   }
 
   void Cancelled() {
@@ -192,8 +203,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     success_ = cancel_;
 
     quit_called_ = true;
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     quit_closure_);
+    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                             quit_closure_);
   }
 
   void Shutdown() {
@@ -202,8 +213,8 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
     image_writer_utility_client_->Shutdown();
 
     quit_called_ = true;
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                     quit_closure_);
+    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                             quit_closure_);
   }
 
   static void FillFile(const base::FilePath& path, char pattern) {
@@ -225,7 +236,6 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
   }
 
   bool IsRunningInCorrectSequence() const {
-    base::AssertBlockingAllowed();
     return task_runner_->RunsTasksInCurrentSequence();
   }
 
@@ -245,6 +255,7 @@ class ImageWriterUtilityClientTest : public InProcessBrowserTest {
   bool cancel_ = false;
   std::string error_;
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  std::unique_ptr<service_manager::Connector> connector_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageWriterUtilityClientTest);
 };
@@ -265,7 +276,13 @@ IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, WriteNoDevice) {
   EXPECT_FALSE(error().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, Write) {
+// Flaky on Win. http://crbug.com/927218
+#if defined(OS_WIN)
+#define MAYBE_Write DISABLED_Write
+#else
+#define MAYBE_Write Write
+#endif
+IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, MAYBE_Write) {
   FillImageFileWithPattern('i');
   FillDeviceFileWithPattern(0);
 
@@ -275,7 +292,13 @@ IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, Write) {
   EXPECT_TRUE(error().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, WriteVerify) {
+// Flaky on Win. http://crbug.com/927218
+#if defined(OS_WIN)
+#define MAYBE_WriteVerify DISABLED_WriteVerify
+#else
+#define MAYBE_WriteVerify WriteVerify
+#endif
+IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, MAYBE_WriteVerify) {
   FillImageFileWithPattern('m');
   FillDeviceFileWithPattern(0);
 
@@ -285,7 +308,13 @@ IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, WriteVerify) {
   EXPECT_TRUE(error().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, WriteCancel) {
+// Flaky on Win. http://crbug.com/927218
+#if defined(OS_WIN)
+#define MAYBE_WriteCancel DISABLED_WriteCancel
+#else
+#define MAYBE_WriteCancel WriteCancel
+#endif
+IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, MAYBE_WriteCancel) {
   FillImageFileWithPattern('a');
   FillDeviceFileWithPattern(0);
 
@@ -321,7 +350,13 @@ IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, VerifyFailure) {
   EXPECT_FALSE(error().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, Verify) {
+// Flaky on Win. http://crbug.com/927218
+#if defined(OS_WIN)
+#define MAYBE_Verify DISABLED_Verify
+#else
+#define MAYBE_Verify Verify
+#endif
+IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, MAYBE_Verify) {
   FillImageFileWithPattern('e');
   FillDeviceFileWithPattern('e');
 
@@ -331,7 +366,13 @@ IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, Verify) {
   EXPECT_TRUE(error().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, VerifyCancel) {
+// Flaky on Win. http://crbug.com/927218
+#if defined(OS_WIN)
+#define MAYBE_VerifyCancel DISABLED_VerifyCancel
+#else
+#define MAYBE_VerifyCancel VerifyCancel
+#endif
+IN_PROC_BROWSER_TEST_F(ImageWriterUtilityClientTest, MAYBE_VerifyCancel) {
   FillImageFileWithPattern('s');
   FillDeviceFileWithPattern('s');
 

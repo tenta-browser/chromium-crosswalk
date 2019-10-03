@@ -4,22 +4,16 @@
 
 #include "chrome/browser/ssl/ssl_client_auth_observer.h"
 
-#include <tuple>
-
-#include "base/bind.h"
 #include "base/logging.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "base/no_destructor.h"
+#include "chrome/browser/ssl/ssl_client_auth_metrics.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
-#include "content/public/browser/notification_service.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_private_key.h"
 
 using content::BrowserThread;
-
-using CertDetails = std::
-    tuple<net::SSLCertRequestInfo*, net::X509Certificate*, net::SSLPrivateKey*>;
 
 SSLClientAuthObserver::SSLClientAuthObserver(
     const content::BrowserContext* browser_context,
@@ -38,16 +32,25 @@ void SSLClientAuthObserver::CertificateSelected(
   if (!delegate_)
     return;
 
+  // CertificateSelected is called with a valid delegate any time that the
+  // selector is explicitly closed by the user. If the user closes the entire
+  // tab, CancelCertificateSelection() is called first, removing the delegate.
+  if (certificate)
+    LogClientAuthResult(ClientCertSelectionResult::kUserSelect);
+  else
+    LogClientAuthResult(ClientCertSelectionResult::kUserCancel);
+
   // Stop listening now that the delegate has been resolved. This is also to
   // avoid getting a self-notification.
   StopObserving();
 
-  CertDetails details(cert_request_info_.get(), certificate, private_key);
-  content::NotificationService* service =
-      content::NotificationService::current();
-  service->Notify(chrome::NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED,
-                  content::Source<content::BrowserContext>(browser_context_),
-                  content::Details<CertDetails>(&details));
+  // Iterate a copy of the observer list as other observers may remove
+  // themselves from it in their callbacks.
+  std::set<SSLClientAuthObserver*> observers_copy = GetActiveObservers();
+  for (SSLClientAuthObserver* other_observer : observers_copy) {
+    other_observer->CertificateSelectedWithOtherObserver(
+        browser_context_, cert_request_info_.get(), certificate, private_key);
+  }
 
   delegate_->ContinueWithCertificate(certificate, private_key);
   delegate_.reset();
@@ -57,41 +60,51 @@ void SSLClientAuthObserver::CancelCertificateSelection() {
   if (!delegate_)
     return;
 
+  // This code is only reached when the selector's tab is closed-- cancelling
+  // the selection box calls CertificateSelected(nullptr, nullptr) first.
+  LogClientAuthResult(ClientCertSelectionResult::kUserCloseTab);
+
   // Stop observing now that the delegate has been resolved.
   StopObserving();
   delegate_.reset();
 }
 
-void SSLClientAuthObserver::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
+void SSLClientAuthObserver::CertificateSelectedWithOtherObserver(
+    const content::BrowserContext* browser_context,
+    net::SSLCertRequestInfo* cert_request_info,
+    net::X509Certificate* certificate,
+    net::SSLPrivateKey* private_key) {
   DVLOG(1) << "SSLClientAuthObserver::Observe " << this;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(chrome::NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED, type);
 
-  CertDetails* cert_details = content::Details<CertDetails>(details).ptr();
-  if (!std::get<0>(*cert_details)
-           ->host_and_port.Equals(cert_request_info_->host_and_port))
+  if (browser_context != browser_context_)
     return;
 
+  if (!cert_request_info->host_and_port.Equals(
+          cert_request_info_->host_and_port)) {
+    return;
+  }
+
   DVLOG(1) << this << " got matching notification and selecting cert "
-           << std::get<1>(*cert_details);
+           << certificate;
   StopObserving();
-  delegate_->ContinueWithCertificate(std::get<1>(*cert_details),
-                                     std::get<2>(*cert_details));
+  delegate_->ContinueWithCertificate(certificate, private_key);
   delegate_.reset();
   OnCertSelectedByNotification();
 }
 
 void SSLClientAuthObserver::StartObserving() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  notification_registrar_.Add(
-      this, chrome::NOTIFICATION_SSL_CLIENT_AUTH_CERT_SELECTED,
-      content::Source<content::BrowserContext>(browser_context_));
+  GetActiveObservers().insert(this);
 }
 
 void SSLClientAuthObserver::StopObserving() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  notification_registrar_.RemoveAll();
+  GetActiveObservers().erase(this);
+}
+
+// static
+std::set<SSLClientAuthObserver*>& SSLClientAuthObserver::GetActiveObservers() {
+  static base::NoDestructor<std::set<SSLClientAuthObserver*>> observers;
+  return *observers;
 }

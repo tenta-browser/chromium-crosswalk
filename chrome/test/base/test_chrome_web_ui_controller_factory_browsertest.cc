@@ -21,7 +21,7 @@ namespace {
 
 // Returns a new WebUI object for the WebContents from |arg0|.
 ACTION(ReturnNewWebUI) {
-  return new WebUIController(arg0);
+  return std::make_unique<WebUIController>(arg0);
 }
 
 // Mock the TestChromeWebUIControllerFactory::WebUIProvider to prove that we are
@@ -29,13 +29,14 @@ ACTION(ReturnNewWebUI) {
 class MockWebUIProvider
     : public TestChromeWebUIControllerFactory::WebUIProvider {
  public:
-  MOCK_METHOD2(NewWebUI, WebUIController*(content::WebUI* web_ui,
-                                          const GURL& url));
+  MOCK_METHOD2(NewWebUI,
+               std::unique_ptr<WebUIController>(content::WebUI* web_ui,
+                                                const GURL& url));
 };
 
 // Dummy URL location for us to override.
-const char kChromeTestChromeWebUIControllerFactory[] =
-    "chrome://ChromeTestChromeWebUIControllerFactory/";
+const std::string kChromeTestChromeWebUIControllerFactory =
+    content::GetWebUIURLString("ChromeTestChromeWebUIControllerFactory/");
 
 // Sets up and tears down the factory override for our url's host. It is
 // necessary to do this here, rather than in the test declaration, which is too
@@ -46,7 +47,7 @@ class TestChromeWebUIControllerFactoryTest : public InProcessBrowserTest {
   void SetUpOnMainThread() override {
     content::WebUIControllerFactory::UnregisterFactoryForTesting(
         ChromeWebUIControllerFactory::GetInstance());
-    test_factory_.reset(new TestChromeWebUIControllerFactory);
+    test_factory_ = std::make_unique<TestChromeWebUIControllerFactory>();
     content::WebUIControllerFactory::RegisterFactory(test_factory_.get());
     test_factory_->AddFactoryOverride(
         GURL(kChromeTestChromeWebUIControllerFactory).host(), &mock_provider_);

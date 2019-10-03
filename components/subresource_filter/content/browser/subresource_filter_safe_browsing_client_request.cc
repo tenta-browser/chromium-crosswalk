@@ -10,10 +10,8 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client.h"
-#include "components/subresource_filter/core/common/time_measurements.h"
 #include "content/public/browser/browser_thread.h"
 #include "url/gurl.h"
 
@@ -25,11 +23,13 @@ constexpr base::TimeDelta
 SubresourceFilterSafeBrowsingClientRequest::
     SubresourceFilterSafeBrowsingClientRequest(
         size_t request_id,
+        base::TimeTicks start_time,
         scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager>
             database_manager,
         scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
         SubresourceFilterSafeBrowsingClient* client)
     : request_id_(request_id),
+      start_time_(start_time),
       database_manager_(std::move(database_manager)),
       client_(client) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -46,11 +46,10 @@ SubresourceFilterSafeBrowsingClientRequest::
 
 void SubresourceFilterSafeBrowsingClientRequest::Start(const GURL& url) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  start_time_ = base::TimeTicks::Now();
+  // Just return SAFE if the database is not supported.
   bool synchronous_finish =
+      !database_manager_->IsSupported() ||
       database_manager_->CheckUrlForSubresourceFilter(url, this);
-  UMA_HISTOGRAM_MICRO_TIMES("SubresourceFilter.SafeBrowsing.CheckDispatchTime",
-                            (base::TimeTicks::Now() - start_time_));
   if (synchronous_finish) {
     request_completed_ = true;
     SendCheckResultToClient(false /* served_from_network */,
@@ -60,8 +59,9 @@ void SubresourceFilterSafeBrowsingClientRequest::Start(const GURL& url) {
   }
   timer_.Start(
       FROM_HERE, kCheckURLTimeout,
-      base::Bind(&SubresourceFilterSafeBrowsingClientRequest::OnCheckUrlTimeout,
-                 base::Unretained(this)));
+      base::BindOnce(
+          &SubresourceFilterSafeBrowsingClientRequest::OnCheckUrlTimeout,
+          base::Unretained(this)));
 }
 
 void SubresourceFilterSafeBrowsingClientRequest::OnCheckBrowseUrlResult(
@@ -89,15 +89,13 @@ void SubresourceFilterSafeBrowsingClientRequest::SendCheckResultToClient(
   result.request_id = request_id_;
   result.threat_type = threat_type;
   result.threat_metadata = metadata;
-  result.check_time = base::TimeTicks::Now() - start_time_;
+  result.start_time = start_time_;
 
   // This memeber is separate from |request_completed_|, in that it just
   // indicates that this request is done processing (due to completion or
   // timeout).
   result.finished = true;
 
-  UMA_HISTOGRAM_TIMES("SubresourceFilter.SafeBrowsing.CheckTime",
-                      result.check_time);
   // Will delete |this|.
   client_->OnCheckBrowseUrlResult(this, result);
 }

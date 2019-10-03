@@ -34,7 +34,7 @@ namespace {
 //    displays.
 //  * A user-set value for the specified display.
 //  * A user-set value in |local_path| or |path|, if no per-display settings are
-//    ever specified (see http://crbug.com/173719 for why). |local_path| is
+//    ever specified (see http://crbug.com/173719 for why), |local_path| is
 //    preferred. See comment in |kShelfAlignment| as to why we consider two
 //    prefs and why |local_path| is preferred.
 //  * A value recommended by policy. This is a single value that applies to all
@@ -50,7 +50,7 @@ std::string GetPerDisplayPref(PrefService* prefs,
   if (local_pref->IsManaged())
     return value;
 
-  std::string pref_key = base::Int64ToString(display_id);
+  std::string pref_key = base::NumberToString(display_id);
   bool has_per_display_prefs = false;
   if (!pref_key.empty()) {
     const base::DictionaryValue* shelf_prefs =
@@ -88,14 +88,14 @@ void SetPerDisplayPref(PrefService* prefs,
                        int64_t display_id,
                        const char* pref_key,
                        const std::string& value) {
-  if (display_id < 0)
+  if (display_id == display::kInvalidDisplayId)
     return;
 
   // Avoid DictionaryPrefUpdate's notifications for read but unmodified prefs.
   const base::DictionaryValue* current_shelf_prefs =
       prefs->GetDictionary(prefs::kShelfPreferences);
   DCHECK(current_shelf_prefs);
-  std::string display_key = base::Int64ToString(display_id);
+  std::string display_key = base::NumberToString(display_id);
   const base::DictionaryValue* current_display_prefs = nullptr;
   std::string current_value;
   if (current_shelf_prefs->GetDictionary(display_key, &current_display_prefs) &&
@@ -194,14 +194,6 @@ void SetShelfAutoHideBehaviorPref(PrefService* prefs,
     prefs->SetString(prefs::kShelfAutoHideBehaviorLocal, value);
     prefs->SetString(prefs::kShelfAutoHideBehavior, value);
   }
-}
-
-bool AreShelfPrefsAvailable(PrefService* prefs) {
-  return prefs->FindPreference(prefs::kShelfAlignmentLocal) &&
-         prefs->FindPreference(prefs::kShelfAlignment) &&
-         prefs->FindPreference(prefs::kShelfAutoHideBehaviorLocal) &&
-         prefs->FindPreference(prefs::kShelfAutoHideBehavior) &&
-         prefs->FindPreference(prefs::kShelfPreferences);
 }
 
 ShelfAlignment GetShelfAlignmentPref(PrefService* prefs, int64_t display_id) {

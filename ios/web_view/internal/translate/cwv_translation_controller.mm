@@ -6,13 +6,12 @@
 
 #include <string>
 
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/translate/core/browser/translate_download_manager.h"
-#include "components/translate/core/browser/translate_manager.h"
 #import "ios/web_view/internal/cwv_web_view_configuration_internal.h"
-#import "ios/web_view/internal/language/web_view_url_language_histogram_factory.h"
 #import "ios/web_view/internal/translate/cwv_translation_language_internal.h"
 #import "ios/web_view/internal/translate/web_view_translate_client.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
@@ -27,26 +26,39 @@
 NSErrorDomain const CWVTranslationErrorDomain =
     @"org.chromium.chromewebview.TranslationErrorDomain";
 
-const NSInteger CWVTranslationErrorNetwork =
-    translate::TranslateErrors::NETWORK;
-const NSInteger CWVTranslationErrorInitializationError =
-    translate::TranslateErrors::INITIALIZATION_ERROR;
-const NSInteger CWVTranslationErrorUnknownLanguage =
-    translate::TranslateErrors::UNKNOWN_LANGUAGE;
-const NSInteger CWVTranslationErrorUnsupportedLanguage =
-    translate::TranslateErrors::UNSUPPORTED_LANGUAGE;
-const NSInteger CWVTranslationErrorIdenticalLanguages =
-    translate::TranslateErrors::IDENTICAL_LANGUAGES;
-const NSInteger CWVTranslationErrorTranslationError =
-    translate::TranslateErrors::TRANSLATION_ERROR;
-const NSInteger CWVTranslationErrorTranslationTimeout =
-    translate::TranslateErrors::TRANSLATION_TIMEOUT;
-const NSInteger CWVTranslationErrorUnexpectedScriptError =
-    translate::TranslateErrors::UNEXPECTED_SCRIPT_ERROR;
-const NSInteger CWVTranslationErrorBadOrigin =
-    translate::TranslateErrors::BAD_ORIGIN;
-const NSInteger CWVTranslationErrorScriptLoadError =
-    translate::TranslateErrors::SCRIPT_LOAD_ERROR;
+namespace {
+// Converts a |translate::TranslateErrors::Type| to a |CWVTranslationError|.
+CWVTranslationError CWVConvertTranslateError(
+    translate::TranslateErrors::Type type) {
+  switch (type) {
+    case translate::TranslateErrors::NONE:
+      return CWVTranslationErrorNone;
+    case translate::TranslateErrors::NETWORK:
+      return CWVTranslationErrorNetwork;
+    case translate::TranslateErrors::INITIALIZATION_ERROR:
+      return CWVTranslationErrorInitializationError;
+    case translate::TranslateErrors::UNKNOWN_LANGUAGE:
+      return CWVTranslationErrorUnknownLanguage;
+    case translate::TranslateErrors::UNSUPPORTED_LANGUAGE:
+      return CWVTranslationErrorUnsupportedLanguage;
+    case translate::TranslateErrors::IDENTICAL_LANGUAGES:
+      return CWVTranslationErrorIdenticalLanguages;
+    case translate::TranslateErrors::TRANSLATION_ERROR:
+      return CWVTranslationErrorTranslationError;
+    case translate::TranslateErrors::TRANSLATION_TIMEOUT:
+      return CWVTranslationErrorTranslationTimeout;
+    case translate::TranslateErrors::UNEXPECTED_SCRIPT_ERROR:
+      return CWVTranslationErrorUnexpectedScriptError;
+    case translate::TranslateErrors::BAD_ORIGIN:
+      return CWVTranslationErrorBadOrigin;
+    case translate::TranslateErrors::SCRIPT_LOAD_ERROR:
+      return CWVTranslationErrorScriptLoadError;
+    case translate::TranslateErrors::TRANSLATE_ERROR_MAX:
+      NOTREACHED();
+      return CWVTranslationErrorNone;
+  }
+}
+}  // namespace
 
 @interface CWVTranslationController ()
 
@@ -66,29 +78,19 @@ const NSInteger CWVTranslationErrorScriptLoadError =
 
 @synthesize delegate = _delegate;
 @synthesize supportedLanguagesByCode = _supportedLanguagesByCode;
-@synthesize webState = _webState;
 
 #pragma mark - Internal Methods
 
-- (void)setWebState:(web::WebState*)webState {
-  _webState = webState;
+- (instancetype)initWithTranslateClient:
+    (ios_web_view::WebViewTranslateClient*)translateClient {
+  self = [super init];
+  if (self) {
+    _translateClient = translateClient;
+    _translateClient->set_translation_controller(self);
 
-  ios_web_view::WebViewTranslateClient::CreateForWebState(_webState);
-  language::IOSLanguageDetectionTabHelper::CreateForWebState(
-      _webState,
-      ios_web_view::WebViewTranslateClient::FromWebState(_webState)
-          ->GetTranslateDriver()
-          ->CreateLanguageDetectionCallback(),
-      ios_web_view::WebViewUrlLanguageHistogramFactory::GetForBrowserState(
-          ios_web_view::WebViewBrowserState::FromBrowserState(
-              _webState->GetBrowserState())));
-
-  _translateClient =
-      ios_web_view::WebViewTranslateClient::FromWebState(_webState);
-  _translateClient->set_translation_controller(self);
-  _translatePrefs = _translateClient->translate_manager()
-                        ->translate_client()
-                        ->GetTranslatePrefs();
+    _translatePrefs = _translateClient->GetTranslatePrefs();
+  }
+  return self;
 }
 
 - (void)updateTranslateStep:(translate::TranslateStep)step
@@ -102,7 +104,7 @@ const NSInteger CWVTranslationErrorScriptLoadError =
   NSError* error;
   if (errorType != translate::TranslateErrors::NONE) {
     error = [NSError errorWithDomain:CWVTranslationErrorDomain
-                                code:errorType
+                                code:CWVConvertTranslateError(errorType)
                             userInfo:nil];
   }
 
@@ -157,12 +159,12 @@ const NSInteger CWVTranslationErrorScriptLoadError =
       base::SysNSStringToUTF8(sourceLanguage.languageCode);
   std::string targetLanguageCode =
       base::SysNSStringToUTF8(targetLanguage.languageCode);
-  _translateClient->translate_manager()->TranslatePage(
-      sourceLanguageCode, targetLanguageCode, userInitiated);
+  _translateClient->TranslatePage(sourceLanguageCode, targetLanguageCode,
+                                  userInitiated);
 }
 
 - (void)revertTranslation {
-  _translateClient->translate_manager()->RevertTranslation();
+  _translateClient->RevertTranslation();
 }
 
 - (void)setTranslationPolicy:(CWVTranslationPolicy*)policy

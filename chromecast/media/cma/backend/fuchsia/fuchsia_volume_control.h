@@ -24,6 +24,8 @@ class FuchsiaVolumeControl : public SystemVolumeControl {
   void SetVolume(float level) override;
   bool IsMuted() override;
   void SetMuted(bool muted) override;
+  void SetPowerSave(bool power_save_on) override;
+  void SetLimit(float limit) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FuchsiaVolumeControl);

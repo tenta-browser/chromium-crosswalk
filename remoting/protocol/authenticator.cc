@@ -4,7 +4,6 @@
 
 #include "remoting/protocol/authenticator.h"
 
-#include "base/memory/ptr_util.h"
 #include "remoting/base/constants.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 
@@ -12,24 +11,24 @@ namespace remoting {
 namespace protocol {
 
 namespace {
-const buzz::StaticQName kAuthenticationQName = { kChromotingXmlNamespace,
+const jingle_xmpp::StaticQName kAuthenticationQName = { kChromotingXmlNamespace,
                                                  "authentication" };
 }  // namespace
 
 // static
-bool Authenticator::IsAuthenticatorMessage(const buzz::XmlElement* message) {
+bool Authenticator::IsAuthenticatorMessage(const jingle_xmpp::XmlElement* message) {
   return message->Name() == kAuthenticationQName;
 }
 
 // static
-std::unique_ptr<buzz::XmlElement>
+std::unique_ptr<jingle_xmpp::XmlElement>
 Authenticator::CreateEmptyAuthenticatorMessage() {
-  return base::MakeUnique<buzz::XmlElement>(kAuthenticationQName);
+  return std::make_unique<jingle_xmpp::XmlElement>(kAuthenticationQName);
 }
 
 // static
-const buzz::XmlElement* Authenticator::FindAuthenticatorMessage(
-    const buzz::XmlElement* message) {
+const jingle_xmpp::XmlElement* Authenticator::FindAuthenticatorMessage(
+    const jingle_xmpp::XmlElement* message) {
   return message->FirstNamed(kAuthenticationQName);
 }
 

@@ -6,10 +6,8 @@
 
 #include <utility>
 
-#include "ash/public/interfaces/shelf_test_api.mojom.h"
-#include "ash/public/interfaces/system_tray_test_api.mojom.h"
-#include "ash/shelf/shelf_test_api.h"
-#include "ash/system/tray/system_tray_test_api.h"
+#include "ash/public/interfaces/status_area_widget_test_api.test-mojom.h"
+#include "ash/system/status_area_widget_test_api.h"
 #include "base/bind.h"
 #include "base/single_thread_task_runner.h"
 
@@ -19,13 +17,10 @@ namespace {
 
 // These functions aren't strictly necessary, but exist to make threading and
 // arguments clearer.
-void BindShelfTestApiOnMainThread(mojom::ShelfTestApiRequest request) {
-  ShelfTestApi::BindRequest(std::move(request));
-}
 
-void BindSystemTrayTestApiOnMainThread(
-    mojom::SystemTrayTestApiRequest request) {
-  SystemTrayTestApi::BindRequest(std::move(request));
+void BindStatusAreaWidgetTestApiOnMainThread(
+    mojom::StatusAreaWidgetTestApiRequest request) {
+  StatusAreaWidgetTestApi::BindRequest(std::move(request));
 }
 
 }  // namespace
@@ -33,9 +28,7 @@ void BindSystemTrayTestApiOnMainThread(
 void RegisterInterfaces(
     service_manager::BinderRegistry* registry,
     scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner) {
-  registry->AddInterface(base::Bind(&BindShelfTestApiOnMainThread),
-                         main_thread_task_runner);
-  registry->AddInterface(base::Bind(&BindSystemTrayTestApiOnMainThread),
+  registry->AddInterface(base::Bind(&BindStatusAreaWidgetTestApiOnMainThread),
                          main_thread_task_runner);
 }
 

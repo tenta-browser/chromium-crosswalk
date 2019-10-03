@@ -1,3 +1,4 @@
+
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -15,9 +16,9 @@ class ChromeBrowserState;
 
 @protocol ApplicationCommands;
 @class DeviceSharingManager;
-@class GenericChromeCommand;
 @class MainController;
 @class NewTabPageController;
+@class UIViewController;
 
 namespace chrome_test_util {
 
@@ -26,13 +27,6 @@ MainController* GetMainController();
 
 // Returns the DeviceSharingManager object.
 DeviceSharingManager* GetDeviceSharingManager();
-
-// Returns the |NewTabPageController| of the current tab if the current tab is
-// a new tab and nil otherwise.
-NewTabPageController* GetCurrentNewTabPageController();
-
-// Returns the current WebState.
-web::WebState* GetCurrentWebState();
 
 // Returns the current, non-incognito ChromeBrowserState.
 ios::ChromeBrowserState* GetOriginalBrowserState();
@@ -44,11 +38,19 @@ ios::ChromeBrowserState* GetCurrentIncognitoBrowserState();
 NSUInteger GetRegisteredKeyCommandsCount();
 
 // Returns the dispatcher for the main BVC.
-// TODO(crbug.com/738881): Use DispatcherForActiveViewController() instead.
+// TODO(crbug.com/738881): Use DispatcherForActiveBrowserViewController()
+// instead.
 id<BrowserCommands> BrowserCommandDispatcherForMainBVC();
 
-// Returns the dispatcher for the active view controller.
-id<ApplicationCommands, BrowserCommands> DispatcherForActiveViewController();
+// Returns the active view controller.
+// NOTE: It is preferred to not directly access the active view controller if
+// possible.
+UIViewController* GetActiveViewController();
+
+// Returns the dispatcher for the active BrowserViewController. If the
+// BrowserViewController isn't presented, returns nil.
+id<ApplicationCommands, BrowserCommands>
+DispatcherForActiveBrowserViewController();
 
 // Removes all presented infobars.
 void RemoveAllInfoBars();
@@ -91,6 +93,12 @@ void WaitForBreakpadQueue();
 
 // Simulates launching Chrome from another application.
 void OpenChromeFromExternalApp(const GURL& url);
+
+// Purges cached web view page, so the next time back navigation will not use
+// cached page. Browsers don't have to use fresh version for back forward
+// navigation for HTTP pages and may serve version from the cache even if
+// Cache-Control response header says otherwise.
+bool PurgeCachedWebViewPages() WARN_UNUSED_RESULT;
 
 }  // namespace chrome_test_util
 

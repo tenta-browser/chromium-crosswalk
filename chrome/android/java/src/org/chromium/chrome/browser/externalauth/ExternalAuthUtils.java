@@ -9,26 +9,22 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
-import android.os.AsyncTask;
 import android.os.Binder;
-import android.os.StrictMode;
-import android.os.SystemClock;
 import android.support.annotation.WorkerThread;
 import android.text.TextUtils;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 
-import org.chromium.base.Callback;
+import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.metrics.CachedMetrics.SparseHistogramSample;
-import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.AppHooks;
-
-import java.util.concurrent.TimeUnit;
+import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * Utility class for external authentication tools.
@@ -41,11 +37,6 @@ public class ExternalAuthUtils {
     private static final String TAG = "ExternalAuthUtils";
 
     private static final ExternalAuthUtils sInstance = AppHooks.get().createExternalAuthUtils();
-
-    private final SparseHistogramSample mConnectionResultHistogramSample =
-            new SparseHistogramSample("GooglePlayServices.ConnectionResult");
-    private final TimesHistogramSample mRegistrationTimeHistogramSample = new TimesHistogramSample(
-            "Android.StrictMode.CheckGooglePlayServicesTime", TimeUnit.MILLISECONDS);
 
     /**
      * Returns the singleton instance of ExternalAuthUtils, creating it if needed.
@@ -167,11 +158,8 @@ public class ExternalAuthUtils {
      */
     public boolean isGooglePlayServicesMissing(final Context context) {
         final int resultCode = checkGooglePlayServicesAvailable(context);
-        if (resultCode == ConnectionResult.SERVICE_MISSING
-                || resultCode == ConnectionResult.SERVICE_INVALID) {
-            return true;
-        }
-        return false;
+        return (resultCode == ConnectionResult.SERVICE_MISSING
+                || resultCode == ConnectionResult.SERVICE_INVALID);
     }
 
     /**
@@ -186,12 +174,14 @@ public class ExternalAuthUtils {
      * @return true if and only if Google Play Services can be used
      */
     public boolean canUseGooglePlayServices(final UserRecoverableErrorHandler errorHandler) {
+        if (CommandLine.getInstance().hasSwitch(
+                    ChromeSwitches.DISABLE_GOOGLE_PLAY_SERVICES_FOR_TESTING)) {
+            return false;
+        }
+
         Context context = ContextUtils.getApplicationContext();
         final int resultCode = checkGooglePlayServicesAvailable(context);
-        recordConnectionResult(resultCode);
-        if (resultCode == ConnectionResult.SUCCESS) {
-            return true;
-        }
+        if (resultCode == ConnectionResult.SUCCESS) return true;
         // resultCode is some kind of error.
         Log.v(TAG, "Unable to use Google Play Services: %s", describeError(resultCode));
         if (isUserRecoverableError(resultCode)) {
@@ -201,7 +191,7 @@ public class ExternalAuthUtils {
                     errorHandler.handleError(context, resultCode);
                 }
             };
-            ThreadUtils.runOnUiThread(errorHandlerTask);
+            PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, errorHandlerTask);
         }
         return false;
     }
@@ -234,6 +224,10 @@ public class ExternalAuthUtils {
     @WorkerThread
     public boolean canUseFirstPartyGooglePlayServices(
             UserRecoverableErrorHandler userRecoverableErrorHandler) {
+        if (CommandLine.getInstance().hasSwitch(
+                    ChromeSwitches.DISABLE_FIRST_PARTY_GOOGLE_PLAY_SERVICES_FOR_TESTING)) {
+            return false;
+        }
         return canUseGooglePlayServices(userRecoverableErrorHandler) && isChromeGoogleSigned();
     }
 
@@ -248,40 +242,6 @@ public class ExternalAuthUtils {
     }
 
     /**
-     * Same as {@link #canUseFirstPartyGooglePlayServices(UserRecoverableErrorHandler)},
-     * but completes the task in the background to avoid any potentially slow calls blocking the
-     * UI thread.
-     * @param userRecoverableErrorHandler How to handle user-recoverable errors from Google
-     * Play Services; must be non-null.
-     * @param callback Callback to receive whether or not first party Play Services are available.
-     */
-    public void canUseFirstPartyGooglePlayServices(
-            UserRecoverableErrorHandler userRecoverableErrorHandler, Callback<Boolean> callback) {
-        new AsyncTask<Void, Void, Boolean>() {
-            @Override
-            protected Boolean doInBackground(Void... voids) {
-                return canUseGooglePlayServices(userRecoverableErrorHandler)
-                        && isChromeGoogleSigned();
-            }
-
-            @Override
-            protected void onPostExecute(Boolean canUseFirstPartyGooglePlayServices) {
-                callback.onResult(canUseFirstPartyGooglePlayServices);
-            }
-        }
-                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-    }
-
-    /**
-     * Record the result of a connection attempt. The default implementation records via a UMA
-     * histogram.
-     * @param resultCode the result from {@link #checkGooglePlayServicesAvailable(Context)}
-     */
-    protected void recordConnectionResult(final int resultCode) {
-        mConnectionResultHistogramSample.record(resultCode);
-    }
-
-    /**
      * Invokes whatever external code is necessary to check if Google Play Services is available
      * and returns the code produced by the attempt. Subclasses can override to force the behavior
      * one way or another, or to change the way that the check is performed.
@@ -289,16 +249,9 @@ public class ExternalAuthUtils {
      * @return The code produced by calling the external code
      */
     protected int checkGooglePlayServicesAvailable(final Context context) {
-        // Temporarily allowing disk access. TODO: Fix. See http://crbug.com/577190
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
-        try {
-            long time = SystemClock.elapsedRealtime();
-            int isAvailable =
-                    GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context);
-            mRegistrationTimeHistogramSample.record(SystemClock.elapsedRealtime() - time);
-            return isAvailable;
-        } finally {
-            StrictMode.setThreadPolicy(oldPolicy);
+        // TODO(crbug.com/577190): Temporarily allowing disk access until more permanent fix is in.
+        try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
+            return GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context);
         }
     }
 

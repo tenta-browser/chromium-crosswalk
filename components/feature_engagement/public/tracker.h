@@ -22,6 +22,10 @@
 #include "base/android/jni_android.h"
 #endif  // defined(OS_ANDROID)
 
+namespace leveldb_proto {
+class ProtoDatabaseProvider;
+}
+
 namespace feature_engagement {
 
 // A handle for the display lock. While this is unreleased, no in-product help
@@ -65,13 +69,14 @@ class Tracker : public KeyedService {
   // Invoked when the tracker has been initialized. The |success| parameter
   // indicates that the initialization was a success and the tracker is ready to
   // receive calls.
-  using OnInitializedCallback = base::Callback<void(bool success)>;
+  using OnInitializedCallback = base::OnceCallback<void(bool success)>;
 
   // The |storage_dir| is the path to where all local storage will be.
   // The |bakground_task_runner| will be used for all disk reads and writes.
   static Tracker* Create(
       const base::FilePath& storage_dir,
-      const scoped_refptr<base::SequencedTaskRunner>& background_task_runner);
+      const scoped_refptr<base::SequencedTaskRunner>& background_task_runner,
+      leveldb_proto::ProtoDatabaseProvider* db_provider);
 
   // Must be called whenever an event happens.
   virtual void NotifyEvent(const std::string& event) = 0;

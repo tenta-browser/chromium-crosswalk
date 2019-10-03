@@ -15,19 +15,26 @@ public interface ContextualSearchInternalStateHandler {
      * Hides the Contextual Search user interface.
      * @see ContextualSearchInternalStateController.InternalState#IDLE
      */
-    void hideContextualSearchUi(StateChangeReason reason);
+    void hideContextualSearchUi(@StateChangeReason int reason);
 
     /**
-     * Shows the Contextual Search user interface for a Tap.
-     * @see ContextualSearchInternalStateController.InternalState#SHOW_FULL_TAP_UI
+     * Shows the Contextual Search user interface for a resolving search.
+     * @see ContextualSearchInternalStateController.InternalState#SHOW_RESOLVING_UI
      */
-    void showContextualSearchTapUi();
+    void showContextualSearchResolvingUi();
 
     /**
      * Shows the Contextual Search user interface for a Long-press.
      * @see ContextualSearchInternalStateController.InternalState#SHOWING_LONGPRESS_SEARCH
      */
     void showContextualSearchLongpressUi();
+
+    /**
+     * The first state in the Tap-gesture processing pipeline where we know we're processing
+     * a Tap-gesture that won't be converted into something else.  Starts the processing pipeline.
+     * @see ContextualSearchInternalStateController.InternalState#TAP_GESTURE_COMMIT
+     */
+    void tapGestureCommit();
 
     /**
      * Gathers text surrounding the current selection, which may have been created by either a Tap

@@ -23,7 +23,13 @@ enum ContentSettingsType {
   CONTENT_SETTINGS_TYPE_IMAGES,
   CONTENT_SETTINGS_TYPE_JAVASCRIPT,
   CONTENT_SETTINGS_TYPE_PLUGINS,
+
+  // This setting governs both popups and unwanted redirects like tab-unders and
+  // framebusting.
+  // TODO(csharrison): Consider renaming it to POPUPS_AND_REDIRECTS, but it
+  // might not be worth the trouble.
   CONTENT_SETTINGS_TYPE_POPUPS,
+
   CONTENT_SETTINGS_TYPE_GEOLOCATION,
   CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
   CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE,
@@ -43,8 +49,6 @@ enum ContentSettingsType {
   CONTENT_SETTINGS_TYPE_BLUETOOTH_GUARD,
   CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC,
   CONTENT_SETTINGS_TYPE_AUTOPLAY,
-  // TODO(raymes): Deprecated. See crbug.com/681709. Remove after M60.
-  CONTENT_SETTINGS_TYPE_PROMPT_NO_DECISION_COUNT,
   CONTENT_SETTINGS_TYPE_IMPORTANT_SITE_INFO,
   CONTENT_SETTINGS_TYPE_PERMISSION_AUTOBLOCKER_DATA,
   CONTENT_SETTINGS_TYPE_ADS,
@@ -101,6 +105,67 @@ enum ContentSettingsType {
   // This is special-cased in the permissions layer to always allow, and as
   // such doesn't have associated prefs data.
   CONTENT_SETTINGS_TYPE_CLIPBOARD_WRITE,
+
+  // Used to store whether the user has ever changed the Flash permission for
+  // a site.
+  CONTENT_SETTINGS_TYPE_PLUGINS_DATA,
+
+  // Used to store whether to allow a website to install a payment handler.
+  CONTENT_SETTINGS_TYPE_PAYMENT_HANDLER,
+
+  // Content setting which stores whether to allow sites to ask for permission
+  // to access USB devices. If this is allowed specific device permissions are
+  // stored under CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA.
+  CONTENT_SETTINGS_TYPE_USB_GUARD,
+
+  // Nothing is stored in this setting at present. Please refer to
+  // BackgroundFetchPermissionContext for details on how this permission
+  // is ascertained.
+  CONTENT_SETTINGS_TYPE_BACKGROUND_FETCH,
+
+  // Website setting which stores the amount of times the user has dismissed
+  // intent picker UI without explicitly choosing an option.
+  CONTENT_SETTINGS_TYPE_INTENT_PICKER_DISPLAY,
+
+  // Used to store whether to allow a website to detect user active/idle state.
+  CONTENT_SETTINGS_TYPE_IDLE_DETECTION,
+
+  // Content settings for access to serial ports. The "guard" content setting
+  // stores whether to allow sites to ask for permission to access a port. The
+  // permissions granted to access particular ports are stored in the "chooser
+  // data" website setting.
+  CONTENT_SETTINGS_TYPE_SERIAL_GUARD,
+  CONTENT_SETTINGS_TYPE_SERIAL_CHOOSER_DATA,
+
+  // Nothing is stored in this setting at present. Please refer to
+  // PeriodicBackgroundSyncPermissionContext for details on how this permission
+  // is ascertained.
+  CONTENT_SETTINGS_TYPE_PERIODIC_BACKGROUND_SYNC,
+
+  // Content setting which stores whether to allow sites to ask for permission
+  // to do Bluetooth scanning.
+  CONTENT_SETTINGS_TYPE_BLUETOOTH_SCANNING,
+
+  // Content settings for access to HID devices. The "guard" content setting
+  // stores whether to allow sites to ask for permission to access a device. The
+  // permissions granted to access particular devices are stored in the "chooser
+  // data" website setting.
+  CONTENT_SETTINGS_TYPE_HID_GUARD,
+  CONTENT_SETTINGS_TYPE_HID_CHOOSER_DATA,
+
+  // Wake Lock API, which has two lock types: screen and system locks.
+  // Currently, screen locks do not need any additional permission, and system
+  // locks are always denied while the right UI is worked out.
+  CONTENT_SETTINGS_TYPE_WAKE_LOCK_SCREEN,
+  CONTENT_SETTINGS_TYPE_WAKE_LOCK_SYSTEM,
+
+  // Legacy SameSite cookie behavior. This disables SameSiteByDefaultCookies
+  // and CookiesWithoutSameSiteMustBeSecure, and forces the legacy behavior
+  // where cookies that don't specify SameSite are treated as SameSite=None and
+  // SameSite=None cookies are not required to be Secure.
+  // This will also be used to revert to legacy behavior when future changes
+  // in cookie handling are introduced.
+  CONTENT_SETTINGS_TYPE_LEGACY_COOKIE_ACCESS,
 
   CONTENT_SETTINGS_NUM_TYPES,
 };

@@ -4,13 +4,13 @@
 
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service_factory.h"
 
-#include "base/memory/ptr_util.h"
-#include "chrome/browser/browser_process.h"
+#include <memory>
+
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service.h"
-#include "chrome/browser/chromeos/settings/device_oauth2_token_service_delegate.h"
 #include "chrome/browser/chromeos/settings/token_encryptor.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 
@@ -27,13 +27,13 @@ DeviceOAuth2TokenService* DeviceOAuth2TokenServiceFactory::Get() {
 }
 
 // static
-void DeviceOAuth2TokenServiceFactory::Initialize() {
+void DeviceOAuth2TokenServiceFactory::Initialize(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+    PrefService* local_state) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!g_device_oauth2_token_service_);
-  g_device_oauth2_token_service_ = new DeviceOAuth2TokenService(
-      base::MakeUnique<DeviceOAuth2TokenServiceDelegate>(
-          g_browser_process->system_request_context(),
-          g_browser_process->local_state()));
+  g_device_oauth2_token_service_ =
+      new DeviceOAuth2TokenService(url_loader_factory, local_state);
 }
 
 // static

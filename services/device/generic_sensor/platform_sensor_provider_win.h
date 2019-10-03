@@ -10,14 +10,9 @@
 
 #include "services/device/generic_sensor/platform_sensor_provider.h"
 
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
-
 namespace device {
 
-class PlatformSensorReaderWin;
+class PlatformSensorReaderWinBase;
 
 // Implementation of PlatformSensorProvider for Windows platform.
 // PlatformSensorProviderWin is responsible for following tasks:
@@ -26,7 +21,8 @@ class PlatformSensorReaderWin;
 // - Constructs PlatformSensorWin on IPC thread and returns it to requester.
 class PlatformSensorProviderWin final : public PlatformSensorProvider {
  public:
-  static PlatformSensorProviderWin* GetInstance();
+  PlatformSensorProviderWin();
+  ~PlatformSensorProviderWin() override;
 
   // Overrides ISensorManager COM interface provided by the system, used
   // only for testing purposes.
@@ -34,33 +30,26 @@ class PlatformSensorProviderWin final : public PlatformSensorProvider {
       Microsoft::WRL::ComPtr<ISensorManager> sensor_manager);
 
  protected:
-  ~PlatformSensorProviderWin() override;
-
   // PlatformSensorProvider interface implementation.
-  void FreeResources() override;
   void CreateSensorInternal(mojom::SensorType type,
-                            mojo::ScopedSharedBufferMapping mapping,
+                            SensorReadingSharedBuffer* reading_buffer,
                             const CreateSensorCallback& callback) override;
 
  private:
-  PlatformSensorProviderWin();
-
-  void CreateSensorThread();
-  bool StartSensorThread();
-  void StopSensorThread();
-  std::unique_ptr<PlatformSensorReaderWin> CreateSensorReader(
+  void InitSensorManager();
+  void OnInitSensorManager(mojom::SensorType type,
+                           SensorReadingSharedBuffer* reading_buffer,
+                           const CreateSensorCallback& callback);
+  std::unique_ptr<PlatformSensorReaderWinBase> CreateSensorReader(
       mojom::SensorType type);
   void SensorReaderCreated(
       mojom::SensorType type,
-      mojo::ScopedSharedBufferMapping mapping,
+      SensorReadingSharedBuffer* reading_buffer,
       const CreateSensorCallback& callback,
-      std::unique_ptr<PlatformSensorReaderWin> sensor_reader);
+      std::unique_ptr<PlatformSensorReaderWinBase> sensor_reader);
 
- private:
-  friend struct base::DefaultSingletonTraits<PlatformSensorProviderWin>;
-
-  class SensorThread;
-  std::unique_ptr<SensorThread> sensor_thread_;
+  scoped_refptr<base::SingleThreadTaskRunner> com_sta_task_runner_;
+  Microsoft::WRL::ComPtr<ISensorManager> sensor_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformSensorProviderWin);
 };

@@ -8,37 +8,10 @@
 #include <sstream>
 #include <string>
 
+#include "third_party/webrtc/api/scoped_refptr.h"
 #include "third_party/webrtc/rtc_base/checks.h"
-#include "third_party/webrtc/rtc_base/scoped_ref_ptr.h"
 
 namespace rtc {
-
-///////////////////////////////////////////////////////////////////////////////
-// ConstantLabel can be used to easily generate string names from constant
-// values.  This can be useful for logging descriptive names of error messages.
-// Usage:
-//   const ConstantLabel LIBRARY_ERRORS[] = {
-//     KLABEL(SOME_ERROR),
-//     KLABEL(SOME_OTHER_ERROR),
-//     ...
-//     LASTLABEL
-//   }
-//
-//   int err = LibraryFunc();
-//   LOG(LS_ERROR) << "LibraryFunc returned: "
-//                 << ErrorName(err, LIBRARY_ERRORS);
-
-struct ConstantLabel {
-  int value;
-  const char* label;
-};
-#define KLABEL(x) \
-  { x, #x }
-#define LASTLABEL \
-  { 0, 0 }
-
-const char* FindLabel(int value, const ConstantLabel entries[]);
-std::string ErrorName(int err, const ConstantLabel* err_table);
 
 //////////////////////////////////////////////////////////////////////
 // Note that the non-standard LoggingSeverity aliases exist because they are
@@ -51,6 +24,7 @@ std::string ErrorName(int err, const ConstantLabel* err_table);
 //   in debug builds.
 //  LS_WARNING: Something that may warrant investigation.
 //  LS_ERROR: Something that should not have occurred.
+//  LS_NONE: Set this as minimum severity to disable logging.
 // Note that LoggingSeverity is mapped over to chromiums verbosity levels where
 // anything lower than or equal to the current verbosity level is written to
 // file which is the opposite of logging severity in libjingle where higher
@@ -60,6 +34,7 @@ std::string ErrorName(int err, const ConstantLabel* err_table);
 // TODO(tommi): To keep things simple, we should just use the same values for
 // these constants as Chrome does.
 enum LoggingSeverity {
+  LS_NONE = 0,
   LS_ERROR = 1,
   LS_WARNING = 2,
   LS_INFO = 3,
@@ -131,26 +106,10 @@ class LogMessageVoidify {
 // Logging Helpers
 //////////////////////////////////////////////////////////////////////
 
-class LogMultilineState {
- public:
-  size_t unprintable_count_[2];
-  LogMultilineState() { unprintable_count_[0] = unprintable_count_[1] = 0; }
-};
-
 class LogMessage {
  public:
   static void LogToDebug(int min_sev);
 };
-
-// When possible, pass optional state variable to track various data across
-// multiple calls to LogMultiline.  Otherwise, pass NULL.
-void LogMultiline(LoggingSeverity level,
-                  const char* label,
-                  bool input,
-                  const void* data,
-                  size_t len,
-                  bool hex_mode,
-                  LogMultilineState* state);
 
 // TODO(grunell): Change name to InitDiagnosticLoggingDelegate or
 // InitDiagnosticLogging. Change also in init_webrtc.h/cc.

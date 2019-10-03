@@ -5,7 +5,10 @@
 #include "chrome/renderer/extensions/extension_hooks_delegate.h"
 
 #include "base/strings/stringprintf.h"
+#include "content/public/common/child_process_host.h"
+#include "extensions/common/api/messaging/messaging_endpoint.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_messages.h"
 #include "extensions/common/value_builder.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
 #include "extensions/renderer/message_target.h"
@@ -15,6 +18,7 @@
 #include "extensions/renderer/native_renderer_messaging_service.h"
 #include "extensions/renderer/runtime_hooks_delegate.h"
 #include "extensions/renderer/script_context.h"
+#include "extensions/renderer/script_context_set.h"
 #include "extensions/renderer/send_message_tester.h"
 
 namespace extensions {
@@ -39,7 +43,7 @@ class ExtensionHooksDelegateTest
     bindings_system()->api_system()->GetHooksForAPI("runtime")->SetDelegate(
         std::make_unique<RuntimeHooksDelegate>(messaging_service_.get()));
 
-    scoped_refptr<Extension> mutable_extension = BuildExtension();
+    scoped_refptr<const Extension> mutable_extension = BuildExtension();
     RegisterExtension(mutable_extension);
     extension_ = mutable_extension;
 
@@ -59,7 +63,7 @@ class ExtensionHooksDelegateTest
   }
   bool UseStrictIPCMessageSender() override { return true; }
 
-  virtual scoped_refptr<Extension> BuildExtension() {
+  virtual scoped_refptr<const Extension> BuildExtension() {
     return ExtensionBuilder("foo").Build();
   }
 
@@ -111,16 +115,9 @@ TEST_F(ExtensionHooksDelegateTest, MessagingSanityChecks) {
 TEST_F(ExtensionHooksDelegateTest, SendRequestDisabled) {
   // Construct an extension for which sendRequest is disabled (unpacked
   // extension with an event page).
-  // TODO(devlin): Add a SetBackgroundPage() to ExtensionBuilder?
-  scoped_refptr<Extension> extension =
+  scoped_refptr<const Extension> extension =
       ExtensionBuilder("foo")
-          .MergeManifest(
-              DictionaryBuilder()
-                  .Set("background", DictionaryBuilder()
-                                         .SetBoolean("persistent", false)
-                                         .Set("page", "page.html")
-                                         .Build())
-                  .Build())
+          .SetBackgroundPage(ExtensionBuilder::BackgroundPage::EVENT)
           .SetLocation(Manifest::UNPACKED)
           .Build();
   RegisterExtension(extension);
@@ -159,6 +156,111 @@ TEST_F(ExtensionHooksDelegateTest, SendRequestDisabled) {
   check_access("chrome.extension.sendMessage", DOESNT_THROW);
   check_access("chrome.extension.onMessage", DOESNT_THROW);
   check_access("chrome.extension.onMessageExternal", DOESNT_THROW);
+}
+
+// Ensure that the extension.sendRequest() method doesn't close the channel if
+// the listener does not reply and also does not return `true` (unlike the
+// runtime.sendMessage() method, which will).
+TEST_F(ExtensionHooksDelegateTest, SendRequestChannelLeftOpenToReplyAsync) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  constexpr char kRegisterListener[] =
+      "(function() {\n"
+      "  chrome.extension.onRequest.addListener(\n"
+      "      function(message, sender, reply) {});\n"
+      "})";
+  v8::Local<v8::Function> add_listener =
+      FunctionFromString(context, kRegisterListener);
+  RunFunctionOnGlobal(add_listener, context, 0, nullptr);
+
+  const std::string kChannel = "chrome.extension.sendRequest";
+  base::UnguessableToken other_context_id = base::UnguessableToken::Create();
+  const PortId port_id(other_context_id, 0, false);
+
+  ExtensionMsg_TabConnectionInfo tab_connection_info;
+  tab_connection_info.frame_id = 0;
+  const int tab_id = 10;
+  GURL source_url("http://example.com");
+  tab_connection_info.tab.Swap(
+      DictionaryBuilder().Set("tabId", tab_id).Build().get());
+  ExtensionMsg_ExternalConnectionInfo external_connection_info;
+  external_connection_info.target_id = extension()->id();
+  external_connection_info.source_endpoint =
+      MessagingEndpoint::ForExtension(extension()->id());
+  external_connection_info.source_url = source_url;
+  external_connection_info.guest_process_id =
+      content::ChildProcessHost::kInvalidUniqueID;
+  external_connection_info.guest_render_frame_routing_id = 0;
+
+  // Open a receiver for the message.
+  EXPECT_CALL(*ipc_message_sender(),
+              SendOpenMessagePort(MSG_ROUTING_NONE, port_id));
+  messaging_service()->DispatchOnConnect(script_context_set(), port_id,
+                                         kChannel, tab_connection_info,
+                                         external_connection_info, nullptr);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
+  EXPECT_TRUE(
+      messaging_service()->HasPortForTesting(script_context(), port_id));
+
+  // Post the message to the receiver. Since the receiver doesn't respond, the
+  // channel should remain open.
+  messaging_service()->DeliverMessage(script_context_set(), port_id,
+                                      Message("\"message\"", false), nullptr);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
+  EXPECT_TRUE(
+      messaging_service()->HasPortForTesting(script_context(), port_id));
+}
+
+// Tests that overriding the runtime equivalents of chrome.extension methods
+// with accessors that throw does not cause a crash on access. Regression test
+// for https://crbug.com/949170.
+TEST_F(ExtensionHooksDelegateTest, RuntimeAliasesCorrupted) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  // Set a trap on chrome.runtime.sendMessage.
+  constexpr char kMutateChromeRuntime[] =
+      R"((function() {
+           Object.defineProperty(
+               chrome.runtime, 'sendMessage',
+               { get() { throw new Error('haha'); } });
+         }))";
+  RunFunctionOnGlobal(FunctionFromString(context, kMutateChromeRuntime),
+                      context, 0, nullptr);
+
+  // Touch chrome.extension.sendMessage, which is aliased to the runtime
+  // version. Though an error is thrown, we shouldn't crash.
+  constexpr char kTouchExtensionSendMessage[] =
+      "(function() { chrome.extension.sendMessage; })";
+  RunFunctionOnGlobal(FunctionFromString(context, kTouchExtensionSendMessage),
+                      context, 0, nullptr);
+}
+
+// Ensure that HandleGetURL allows extension URLs and doesn't allow arbitrary
+// non-extension URLs. Very similar to RuntimeHooksDeligateTest that tests a
+// similar function.
+TEST_F(ExtensionHooksDelegateTest, GetURL) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  auto get_url = [this, context](const char* args, const GURL& expected_url) {
+    SCOPED_TRACE(base::StringPrintf("Args: `%s`", args));
+    constexpr char kGetUrlTemplate[] =
+        "(function() { return chrome.extension.getURL(%s); })";
+    v8::Local<v8::Function> get_url =
+        FunctionFromString(context, base::StringPrintf(kGetUrlTemplate, args));
+    v8::Local<v8::Value> url = RunFunction(get_url, context, 0, nullptr);
+    ASSERT_FALSE(url.IsEmpty());
+    ASSERT_TRUE(url->IsString());
+    EXPECT_EQ(expected_url.spec(), gin::V8ToString(isolate(), url));
+  };
+
+  get_url("''", extension()->url());
+  get_url("'foo'", extension()->GetResourceURL("foo"));
+  get_url("'/foo'", extension()->GetResourceURL("foo"));
+  get_url("'https://www.google.com'",
+          GURL(extension()->url().spec() + "https://www.google.com"));
 }
 
 }  // namespace extensions

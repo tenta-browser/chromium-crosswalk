@@ -13,8 +13,7 @@
 
 namespace history {
 
-InMemoryDatabase::InMemoryDatabase() : URLDatabase() {
-}
+InMemoryDatabase::InMemoryDatabase() {}
 
 InMemoryDatabase::~InMemoryDatabase() {
 }
@@ -30,9 +29,6 @@ bool InMemoryDatabase::InitDB() {
 
   // No reason to leave data behind in memory when rows are removed.
   ignore_result(db_.Execute("PRAGMA auto_vacuum=1"));
-
-  // Ensure this is really an in-memory-only cache.
-  ignore_result(db_.Execute("PRAGMA temp_store=MEMORY"));
 
   // Create the URL table, but leave it empty for now.
   if (!CreateURLTable(false)) {
@@ -69,7 +65,7 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   // Attach to the history database on disk.  (We can't ATTACH in the middle of
   // a transaction.)
   sql::Statement attach(GetDB().GetUniqueStatement("ATTACH ? AS history"));
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) || defined(OS_FUCHSIA)
   attach.BindString(0, history_name.value());
 #else
   attach.BindString(0, base::WideToUTF8(history_name.value()));
@@ -102,7 +98,8 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   base::TimeTicks end_load = base::TimeTicks::Now();
   UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBPopulate",
                              end_load - begin_load);
-  UMA_HISTOGRAM_COUNTS("History.InMemoryDBItemCount", db_.GetLastChangeCount());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBItemCount",
+                          db_.GetLastChangeCount());
 
   {
     // This calculation should be fast (since it's on an in-memory DB with
@@ -110,8 +107,8 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
     sql::Statement visit_count(db_.GetUniqueStatement(
         "SELECT sum(visit_count) FROM urls"));
     if (visit_count.Step()) {
-      UMA_HISTOGRAM_COUNTS("History.InMemoryTypedUrlVisitCount",
-                           visit_count.ColumnInt(0));
+      UMA_HISTOGRAM_COUNTS_1M("History.InMemoryTypedUrlVisitCount",
+                              visit_count.ColumnInt(0));
     }
   }
 
@@ -127,8 +124,8 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   end_load = base::TimeTicks::Now();
   UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBKeywordURLPopulate",
                              end_load - begin_load);
-  UMA_HISTOGRAM_COUNTS("History.InMemoryDBKeywordURLItemCount",
-                       db_.GetLastChangeCount());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBKeywordURLItemCount",
+                          db_.GetLastChangeCount());
 
   // Copy search terms to memory.
   begin_load = base::TimeTicks::Now();
@@ -141,8 +138,8 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   end_load = base::TimeTicks::Now();
   UMA_HISTOGRAM_MEDIUM_TIMES("History.InMemoryDBKeywordTermsPopulate",
                              end_load - begin_load);
-  UMA_HISTOGRAM_COUNTS("History.InMemoryDBKeywordTermsCount",
-                       db_.GetLastChangeCount());
+  UMA_HISTOGRAM_COUNTS_1M("History.InMemoryDBKeywordTermsCount",
+                          db_.GetLastChangeCount());
 
   // Detach from the history database on disk.
   if (!db_.Execute("DETACH history")) {
@@ -158,7 +155,7 @@ bool InMemoryDatabase::InitFromDisk(const base::FilePath& history_name) {
   return true;
 }
 
-sql::Connection& InMemoryDatabase::GetDB() {
+sql::Database& InMemoryDatabase::GetDB() {
   return db_;
 }
 

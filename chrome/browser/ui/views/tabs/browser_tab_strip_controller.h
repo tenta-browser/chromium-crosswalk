@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_TABS_BROWSER_TAB_STRIP_CONTROLLER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -17,8 +18,8 @@
 #include "components/prefs/pref_change_registrar.h"
 
 class Browser;
+class BrowserNonClientFrameView;
 class Tab;
-class TabStripImpl;
 struct TabRendererData;
 
 namespace content {
@@ -37,7 +38,7 @@ class BrowserTabStripController : public TabStripController,
   BrowserTabStripController(TabStripModel* model, BrowserView* browser_view);
   ~BrowserTabStripController() override;
 
-  void InitFromModel(TabStripImpl* tabstrip);
+  void InitFromModel(TabStrip* tabstrip);
 
   TabStripModel* model() const { return model_; }
 
@@ -55,52 +56,47 @@ class BrowserTabStripController : public TabStripController,
   int GetActiveIndex() const override;
   bool IsTabSelected(int model_index) const override;
   bool IsTabPinned(int model_index) const override;
-  void SelectTab(int model_index) override;
+  void SelectTab(int model_index, const ui::Event& event) override;
   void ExtendSelectionTo(int model_index) override;
   void ToggleSelected(int model_index) override;
   void AddSelectionFromAnchorTo(int model_index) override;
+  bool BeforeCloseTab(int model_index, CloseTabSource source) override;
   void CloseTab(int model_index, CloseTabSource source) override;
-  void ToggleTabAudioMute(int model_index) override;
   void ShowContextMenuForTab(Tab* tab,
                              const gfx::Point& p,
                              ui::MenuSourceType source_type) override;
   int HasAvailableDragActions() const override;
   void OnDropIndexUpdate(int index, bool drop_before) override;
-  void PerformDrop(bool drop_before, int index, const GURL& url) override;
-  bool IsCompatibleWith(TabStripImpl* other) const override;
   void CreateNewTab() override;
   void CreateNewTabWithLocation(const base::string16& loc) override;
-  bool IsIncognito() override;
   void StackedLayoutMaybeChanged() override;
   void OnStartedDraggingTabs() override;
   void OnStoppedDraggingTabs() override;
-  void CheckFileSupported(const GURL& url) override;
+  const TabGroupData* GetDataForGroup(TabGroupId group_id) const override;
+  std::vector<int> ListTabsInGroup(TabGroupId group_id) const override;
+  bool IsFrameCondensed() const override;
+  bool HasVisibleBackgroundTabShapes() const override;
+  bool EverHasVisibleBackgroundTabShapes() const override;
+  bool ShouldPaintAsActiveFrame() const override;
+  bool CanDrawStrokes() const override;
+  SkColor GetFrameColor(
+      BrowserNonClientFrameView::ActiveState active_state =
+          BrowserNonClientFrameView::kUseCurrent) const override;
   SkColor GetToolbarTopSeparatorColor() const override;
+  int GetTabBackgroundResourceId(
+      BrowserNonClientFrameView::ActiveState active_state,
+      bool* has_custom_image) const override;
   base::string16 GetAccessibleTabName(const Tab* tab) const override;
   Profile* GetProfile() const override;
 
   // TabStripModelObserver implementation:
-  void TabInsertedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* contents,
-                     int model_index,
-                     bool is_active) override;
-  void TabDetachedAt(content::WebContents* contents, int model_index) override;
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override;
-  void TabSelectionChanged(TabStripModel* tab_strip_model,
-                           const ui::ListSelectionModel& old_model) override;
-  void TabMoved(content::WebContents* contents,
-                int from_model_index,
-                int to_model_index) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
   void TabChangedAt(content::WebContents* contents,
                     int model_index,
                     TabChangeType change_type) override;
-  void TabReplacedAt(TabStripModel* tab_strip_model,
-                     content::WebContents* old_contents,
-                     content::WebContents* new_contents,
-                     int model_index) override;
   void TabPinnedStateChanged(TabStripModel* tab_strip_model,
                              content::WebContents* contents,
                              int model_index) override;
@@ -119,6 +115,9 @@ class BrowserTabStripController : public TabStripController,
     EXISTING_TAB
   };
 
+  BrowserNonClientFrameView* GetFrameView();
+  const BrowserNonClientFrameView* GetFrameView() const;
+
   // Returns the TabRendererData for the specified tab.
   TabRendererData TabRendererDataFromModel(content::WebContents* contents,
                                            int model_index,
@@ -127,27 +126,15 @@ class BrowserTabStripController : public TabStripController,
   // Invokes tabstrip_->SetTabData.
   void SetTabDataAt(content::WebContents* web_contents, int model_index);
 
-  void StartHighlightTabsForCommand(
-      TabStripModel::ContextMenuCommand command_id,
-      Tab* tab);
-  void StopHighlightTabsForCommand(
-      TabStripModel::ContextMenuCommand command_id,
-      Tab* tab);
-
   // Adds a tab.
   void AddTab(content::WebContents* contents, int index, bool is_active);
 
   // Resets the tabstrips stacked layout (true or false) from prefs.
   void UpdateStackedLayout();
 
-  // Notifies the tabstrip whether |url| is supported once a MIME type request
-  // has completed.
-  void OnFindURLMimeTypeCompleted(const GURL& url,
-                                  const std::string& mime_type);
-
   TabStripModel* model_;
 
-  TabStripImpl* tabstrip_;
+  TabStrip* tabstrip_;
 
   BrowserView* browser_view_;
 
@@ -163,8 +150,6 @@ class BrowserTabStripController : public TabStripController,
   std::unique_ptr<ImmersiveRevealedLock> immersive_reveal_lock_;
 
   PrefChangeRegistrar local_pref_registrar_;
-
-  base::WeakPtrFactory<BrowserTabStripController> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserTabStripController);
 };

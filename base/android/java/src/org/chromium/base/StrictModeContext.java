@@ -11,9 +11,11 @@ import java.io.Closeable;
 /**
  * Enables try-with-resources compatible StrictMode violation whitelisting.
  *
+ * Prefer "ignored" as the variable name to appease Android Studio's "Unused symbol" inspection.
+ *
  * Example:
  * <pre>
- *     try (StrictModeContext unused = StrictModeContext.allowDiskWrites()) {
+ *     try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
  *         return Example.doThingThatRequiresDiskWrites();
  *     }
  * </pre>
@@ -60,6 +62,16 @@ public final class StrictModeContext implements Closeable {
      */
     public static StrictModeContext allowDiskReads() {
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+        return new StrictModeContext(oldPolicy);
+    }
+
+    /**
+     * Convenience method for disabling StrictMode for slow calls with try-with-resources.
+     */
+    public static StrictModeContext allowSlowCalls() {
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.getThreadPolicy();
+        StrictMode.setThreadPolicy(
+                new StrictMode.ThreadPolicy.Builder(oldPolicy).permitCustomSlowCalls().build());
         return new StrictModeContext(oldPolicy);
     }
 

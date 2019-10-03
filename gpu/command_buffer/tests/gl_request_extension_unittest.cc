@@ -17,7 +17,7 @@
 namespace gpu {
 
 class RequestExtensionCHROMIUMTest
-    : public testing::TestWithParam<gles2::ContextType> {
+    : public testing::TestWithParam<ContextType> {
  protected:
   void SetUp() override {
     GLManager::Options options;
@@ -67,8 +67,8 @@ TEST_P(RequestExtensionCHROMIUMTest, Basic) {
     std::set<std::string> extensions_from_string(extensions.begin(),
                                                  extensions.end());
 
-    if (GetParam() == gles2::CONTEXT_TYPE_WEBGL2 ||
-        GetParam() == gles2::CONTEXT_TYPE_OPENGLES3) {
+    if (GetParam() == CONTEXT_TYPE_WEBGL2 ||
+        GetParam() == CONTEXT_TYPE_OPENGLES3) {
       // Test that GetString(GL_EXTENSIONS) is consistent with
       // GetStringi(GL_EXTENSIONS, index)
       GLint num_extensions = 0;
@@ -92,10 +92,10 @@ TEST_P(RequestExtensionCHROMIUMTest, Basic) {
     EXPECT_GE(extensions.size(), extensions_size_before_request);
   }
 }
-INSTANTIATE_TEST_CASE_P(WithContextTypes,
-                        RequestExtensionCHROMIUMTest,
-                        ::testing::Values(gles2::CONTEXT_TYPE_WEBGL1,
-                                          gles2::CONTEXT_TYPE_WEBGL2,
-                                          gles2::CONTEXT_TYPE_OPENGLES2,
-                                          gles2::CONTEXT_TYPE_OPENGLES3));
+INSTANTIATE_TEST_SUITE_P(WithContextTypes,
+                         RequestExtensionCHROMIUMTest,
+                         ::testing::Values(CONTEXT_TYPE_WEBGL1,
+                                           CONTEXT_TYPE_WEBGL2,
+                                           CONTEXT_TYPE_OPENGLES2,
+                                           CONTEXT_TYPE_OPENGLES3));
 }

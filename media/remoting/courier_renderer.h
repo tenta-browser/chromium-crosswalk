@@ -14,7 +14,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/timer/timer.h"
@@ -121,7 +120,6 @@ class CourierRenderer : public Renderer {
   void OnVideoNaturalSizeChange(std::unique_ptr<pb::RpcMessage> message);
   void OnVideoOpacityChange(std::unique_ptr<pb::RpcMessage> message);
   void OnStatisticsUpdate(std::unique_ptr<pb::RpcMessage> message);
-  void OnDurationChange(std::unique_ptr<pb::RpcMessage> message);
 
   // Called when |current_media_time_| is updated.
   void OnMediaTimeUpdated();
@@ -211,7 +209,7 @@ class CourierRenderer : public Renderer {
   // Records events and measurements of interest.
   RendererMetricsRecorder metrics_recorder_;
 
-  std::unique_ptr<base::TickClock> clock_;
+  const base::TickClock* clock_;
 
   // A timer that polls the DemuxerStreamAdapters periodically to measure
   // the data flow rates for metrics.
@@ -221,7 +219,7 @@ class CourierRenderer : public Renderer {
   // reported buffer underflow.
   bool receiver_is_blocked_on_local_demuxers_ = true;
 
-  base::WeakPtrFactory<CourierRenderer> weak_factory_;
+  base::WeakPtrFactory<CourierRenderer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CourierRenderer);
 };

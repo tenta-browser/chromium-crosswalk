@@ -7,7 +7,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
-#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/common/url_constants.h"
 
 OneClickSigninLinksDelegateImpl::OneClickSigninLinksDelegateImpl(
@@ -17,13 +16,9 @@ OneClickSigninLinksDelegateImpl::OneClickSigninLinksDelegateImpl(
 OneClickSigninLinksDelegateImpl::~OneClickSigninLinksDelegateImpl() {}
 
 void OneClickSigninLinksDelegateImpl::OnLearnMoreLinkClicked(bool is_dialog) {
-  chrome::NavigateParams params(browser_, GURL(chrome::kChromeSyncLearnMoreURL),
-                                ui::PAGE_TRANSITION_LINK);
+  NavigateParams params(browser_, GURL(chrome::kChromeSyncLearnMoreURL),
+                        ui::PAGE_TRANSITION_LINK);
   params.disposition = is_dialog ? WindowOpenDisposition::NEW_WINDOW
                                  : WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
-}
-
-void OneClickSigninLinksDelegateImpl::OnAdvancedLinkClicked() {
-  chrome::ShowSettingsSubPage(browser_, chrome::kSyncSetupSubPage);
+  Navigate(&params);
 }

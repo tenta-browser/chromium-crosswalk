@@ -12,6 +12,7 @@ import android.view.inputmethod.EditorInfo;
 
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.content_public.browser.InputMethodManagerWrapper;
 
 /**
  * A factory class for {@link ThreadedInputConnection}. The class also includes triggering
@@ -37,6 +38,7 @@ public class ThreadedInputConnectionFactory implements ChromiumBaseInputConnecti
     private ThreadedInputConnection mThreadedInputConnection;
     private CheckInvalidator mCheckInvalidator;
     private boolean mReentrantTriggering;
+    private boolean mTriggerDelayedOnCreateInputConnection;
 
     // Initialization-on-demand holder for Handler.
     private static class LazyHandlerHolder {
@@ -69,6 +71,7 @@ public class ThreadedInputConnectionFactory implements ChromiumBaseInputConnecti
     ThreadedInputConnectionFactory(InputMethodManagerWrapper inputMethodManagerWrapper) {
         mInputMethodManagerWrapper = inputMethodManagerWrapper;
         mInputMethodUma = createInputMethodUma();
+        mTriggerDelayedOnCreateInputConnection = true;
     }
 
     @Override
@@ -80,7 +83,7 @@ public class ThreadedInputConnectionFactory implements ChromiumBaseInputConnecti
     protected ThreadedInputConnectionProxyView createProxyView(
             Handler handler, View containerView) {
         return new ThreadedInputConnectionProxyView(
-                containerView.getContext(), handler, containerView);
+                containerView.getContext(), handler, containerView, this);
     }
 
     @VisibleForTesting
@@ -88,51 +91,50 @@ public class ThreadedInputConnectionFactory implements ChromiumBaseInputConnecti
         return new InputMethodUma();
     }
 
+    @VisibleForTesting
+    @Override
+    public void setTriggerDelayedOnCreateInputConnection(boolean trigger) {
+        mTriggerDelayedOnCreateInputConnection = trigger;
+    }
+
+    // Note that ThreadedInputConnectionProxyView intentionally calls
+    // View#onCreateInputConnection() and not a separate method in this class.
+    // There are third party apps that override WebView#onCreateInputConnection(),
+    // and we still want to call them for consistency.
+    // We let ThreadedInputConnectionProxyView and TestInputMethodManagerWrapper call
+    // setTriggerDelayedOnCreateInputConnection(false) explicitly to avoid delayed triggering.
     private boolean shouldTriggerDelayedOnCreateInputConnection() {
-        // Note that ThreadedInputConnectionProxyView intentionally calls
-        // View#onCreateInputConnection() and not a separate method in this class.
-        // There are third party apps that override WebView#onCreateInputConnection(),
-        // and we still want to call them for consistency. The setback here is that the only
-        // way to distinguish calls from InputMethodManager and from ProxyView is by looking at
-        // the call stack.
-        // TODO - avoid using reflection here. See crbug.com/636474
-        for (StackTraceElement ste : Thread.currentThread().getStackTrace()) {
-            String className = ste.getClassName();
-            if (className != null
-                    && (className.contains(ThreadedInputConnectionProxyView.class.getName())
-                    || className.contains("TestInputMethodManagerWrapper"))) {
-                return false;
-            }
-        }
-        return true;
+        return mTriggerDelayedOnCreateInputConnection;
     }
 
     @Override
-    public ThreadedInputConnection initializeAndGet(View view, ImeAdapter imeAdapter, int inputType,
-            int inputFlags, int inputMode, int selectionStart, int selectionEnd,
-            EditorInfo outAttrs) {
+    public ThreadedInputConnection initializeAndGet(View view, ImeAdapterImpl imeAdapter,
+            int inputType, int inputFlags, int inputMode, int inputAction, int selectionStart,
+            int selectionEnd, EditorInfo outAttrs) {
         ImeUtils.checkOnUiThread();
 
         // Compute outAttrs early in case we early out to prevent reentrancy. (crbug.com/636197)
         // TODO(changwan): move this up to ImeAdapter once ReplicaInputConnection is deprecated.
-        ImeUtils.computeEditorInfo(
-                inputType, inputFlags, inputMode, selectionStart, selectionEnd, outAttrs);
+        ImeUtils.computeEditorInfo(inputType, inputFlags, inputMode, inputAction, selectionStart,
+                selectionEnd, outAttrs);
         if (DEBUG_LOGS) {
             Log.i(TAG, "initializeAndGet. outAttr: " + ImeUtils.getEditorInfoDebugString(outAttrs));
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+        // https://crbug.com/820756
+        final String htcMailPackageId = "com.htc.android.mail";
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N
+                || htcMailPackageId.equals(view.getContext().getPackageName())) {
             // IMM can internally ignore subsequent activation requests, e.g., by checking
             // mServedConnecting.
-            if (mCheckInvalidator != null)
-                mCheckInvalidator.invalidate();
+            if (mCheckInvalidator != null) mCheckInvalidator.invalidate();
 
             if (shouldTriggerDelayedOnCreateInputConnection()) {
                 triggerDelayedOnCreateInputConnection(view);
                 return null;
             }
+            if (DEBUG_LOGS) Log.i(TAG, "initializeAndGet: called from proxy view");
         }
-//        if (DEBUG_LOGS) Log.i(TAG, "initializeAndGet: called from proxy view");
 
         if (mThreadedInputConnection == null) {
             if (DEBUG_LOGS) Log.i(TAG, "Creating ThreadedInputConnection...");

@@ -14,18 +14,18 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/address_normalizer.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_data_model.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/country_names.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_data_model.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/phone_number.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/phone_number.h"
-#include "components/autofill/core/browser/state_names.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/geo/country_names.h"
+#include "components/autofill/core/browser/geo/state_names.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_l10n_util.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/strings/grit/components_strings.h"
@@ -340,12 +340,12 @@ bool FillExpirationMonthSelectControl(const base::string16& value,
   }
 
   // Attempt to match with each of the options' content.
-  for (const base::string16& option_contents : field->option_contents) {
+  for (size_t i = 0; i < field->option_contents.size(); ++i) {
     int converted_contents = 0;
-    if (CreditCard::ConvertMonth(option_contents, app_locale,
+    if (CreditCard::ConvertMonth(field->option_contents[i], app_locale,
                                  &converted_contents) &&
         month == converted_contents) {
-      field->value = option_contents;
+      field->value = field->option_values[i];
       return true;
     }
   }
@@ -624,13 +624,17 @@ bool FieldFiller::FillFormField(const AutofillField& field,
                                 FormFieldData* field_data,
                                 const base::string16& cvc) {
   const AutofillType type = field.Type();
+
   // Don't fill if autocomplete=off is set on |field| on desktop for non credit
   // card related fields.
-  if (!base::FeatureList::IsEnabled(kAutofillAlwaysFillAddresses) &&
+  if (!base::FeatureList::IsEnabled(features::kAutofillAlwaysFillAddresses) &&
       !field.should_autocomplete && IsDesktopPlatform() &&
       (type.group() != CREDIT_CARD)) {
     return false;
   }
+
+  if (data_model.ShouldSkipFillingOrSuggesting(type.GetStorableType()))
+    return false;
 
   base::string16 value = data_model.GetInfo(type, app_locale_);
   if (type.GetStorableType() == CREDIT_CARD_VERIFICATION_CODE)

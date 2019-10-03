@@ -11,7 +11,6 @@
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "ios/chrome/browser/net/net_types.h"
 #include "ios/web/public/browser_state.h"
@@ -26,10 +25,6 @@ class TestChromeBrowserStateManager;
 namespace base {
 class SequencedTaskRunner;
 class Time;
-}
-
-namespace net {
-class SSLConfigService;
 }
 
 namespace sync_preferences {
@@ -114,9 +109,6 @@ class ChromeBrowserState : public web::BrowserState {
   // access to the the proxy configuration possibly defined by preferences.
   virtual PrefProxyConfigTracker* GetProxyConfigTracker() = 0;
 
-  // Returns the SSLConfigService for this browser state.
-  virtual net::SSLConfigService* GetSSLConfigService() = 0;
-
   // Creates the main net::URLRequestContextGetter that will be returned by
   // GetRequestContext(). Should only be called once.
   virtual net::URLRequestContextGetter* CreateRequestContext(
@@ -129,6 +121,8 @@ class ChromeBrowserState : public web::BrowserState {
 
   // web::BrowserState
   net::URLRequestContextGetter* GetRequestContext() override;
+  void UpdateCorsExemptHeader(
+      network::mojom::NetworkContextParams* params) override;
 
  protected:
   explicit ChromeBrowserState(

@@ -10,30 +10,35 @@ import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
 import org.chromium.base.Log;
 import org.chromium.base.SysUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.blink.mojom.MediaSessionAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.metrics.MediaNotificationUma;
 import org.chromium.chrome.browser.metrics.MediaSessionUMA;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
+import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.MediaSession;
 import org.chromium.content_public.browser.MediaSessionObserver;
+import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.common.MediaMetadata;
+import org.chromium.media_session.mojom.MediaSessionAction;
+import org.chromium.services.media_session.MediaImage;
+import org.chromium.services.media_session.MediaMetadata;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.List;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * A tab helper responsible for enabling/disabling media controls and passing
@@ -47,9 +52,13 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     static final int HIDE_NOTIFICATION_DELAY_MILLIS = 1000;
 
     private Tab mTab;
+    @VisibleForTesting
+    LargeIconBridge mLargeIconBridge;
     private Bitmap mPageMediaImage;
     @VisibleForTesting
     Bitmap mFavicon;
+    // Set to true if favicon update callback was called at least once for the current tab.
+    private boolean mMaybeHasFavicon;
     private Bitmap mCurrentMediaImage;
     private String mOrigin;
     @VisibleForTesting
@@ -89,15 +98,9 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             MediaSessionUMA.recordPlay(
                     MediaSessionTabHelper.convertMediaActionSourceToUMA(actionSource));
 
-            if (mMediaSessionObserver.getMediaSession() != null) {
-                if (mMediaSessionActions != null
-                        && mMediaSessionActions.contains(MediaSessionAction.PLAY)) {
-                    mMediaSessionObserver.getMediaSession()
-                            .didReceiveAction(MediaSessionAction.PLAY);
-                } else {
-                    mMediaSessionObserver.getMediaSession().resume();
-                }
-            }
+            if (mMediaSessionObserver.getMediaSession() == null) return;
+
+            mMediaSessionObserver.getMediaSession().resume();
         }
 
         @Override
@@ -107,15 +110,9 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             MediaSessionUMA.recordPause(
                     MediaSessionTabHelper.convertMediaActionSourceToUMA(actionSource));
 
-            if (mMediaSessionObserver.getMediaSession() != null) {
-                if (mMediaSessionActions != null
-                        && mMediaSessionActions.contains(MediaSessionAction.PAUSE)) {
-                    mMediaSessionObserver.getMediaSession()
-                            .didReceiveAction(MediaSessionAction.PAUSE);
-                } else {
-                    mMediaSessionObserver.getMediaSession().suspend();
-                }
-            }
+            if (mMediaSessionObserver.getMediaSession() == null) return;
+
+            mMediaSessionObserver.getMediaSession().suspend();
         }
 
         @Override
@@ -153,6 +150,7 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         mHandler.postDelayed(mHideNotificationDelayedTask, HIDE_NOTIFICATION_DELAY_MILLIS);
 
         mNotificationInfoBuilder = null;
+        mFavicon = null;
     }
 
     private void hideNotificationImmediately() {
@@ -202,15 +200,16 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                     return;
                 }
 
-                Intent contentIntent = Tab.createBringTabToFrontIntent(mTab.getId());
+                Intent contentIntent = IntentUtils.createBringTabToFrontIntent(mTab.getId());
                 if (contentIntent != null) {
                     contentIntent.putExtra(MediaNotificationUma.INTENT_EXTRA_NAME,
-                            MediaNotificationUma.SOURCE_MEDIA);
+                            MediaNotificationUma.Source.MEDIA);
                 }
 
                 if (mFallbackTitle == null) mFallbackTitle = sanitizeMediaTitle(mTab.getTitle());
+
                 mCurrentMetadata = getMetadata();
-                mCurrentMediaImage = getNotificationImage();
+                mCurrentMediaImage = getCachedNotificationImage();
                 mNotificationInfoBuilder =
                         new MediaNotificationInfo.Builder()
                                 .setMetadata(mCurrentMetadata)
@@ -220,7 +219,6 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                                 .setPrivate(mTab.isIncognito())
                                 .setNotificationSmallIcon(R.drawable.audio_playing)
                                 .setNotificationLargeIcon(mCurrentMediaImage)
-                                .setDefaultNotificationLargeIcon(R.drawable.audio_playing_square)
                                 .setMediaSessionImage(mPageMediaImage)
                                 .setActions(MediaNotificationInfo.ACTION_PLAY_PAUSE
                                         | MediaNotificationInfo.ACTION_SWIPEAWAY)
@@ -229,6 +227,15 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                                 .setListener(mControlsListener)
                                 .setMediaSessionActions(mMediaSessionActions);
 
+                // Do not show notification icon till we get the favicon from the LargeIconBridge
+                // since we do not need to show default icon then change it to favicon. It is ok to
+                // wait here since the favicon is loaded from local cache in favicon service sql
+                // database.
+                // Incognito Tabs need the default icon as they don't show the media icon.
+                if (mTab.isIncognito() || (mCurrentMediaImage == null && !fetchFaviconImage())) {
+                    mNotificationInfoBuilder.setDefaultNotificationLargeIcon(
+                            R.drawable.audio_playing_square);
+                }
                 showNotification();
                 Activity activity = getActivityFromTab(mTab);
                 if (activity != null) {
@@ -239,9 +246,6 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             @Override
             public void mediaSessionMetadataChanged(MediaMetadata metadata) {
                 mPageMetadata = metadata;
-                mMediaImageManager.downloadImage(
-                        (mPageMetadata != null) ? mPageMetadata.getArtwork() : null,
-                        MediaSessionTabHelper.this);
                 updateNotificationMetadata();
             }
 
@@ -249,6 +253,12 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             public void mediaSessionActionsChanged(Set<Integer> actions) {
                 mMediaSessionActions = actions;
                 updateNotificationActions();
+            }
+
+            @Override
+            public void mediaSessionArtworkChanged(List<MediaImage> images) {
+                mMediaImageManager.downloadImage(images, MediaSessionTabHelper.this);
+                updateNotificationMetadata();
             }
         };
     }
@@ -285,24 +295,21 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         @Override
         public void onFaviconUpdated(Tab tab, Bitmap icon) {
             assert tab == mTab;
-
-            if (!updateFavicon(icon)) return;
-
-            updateNotificationImage();
+            updateFavicon(icon);
         }
 
         @Override
-        public void onDidFinishNavigation(Tab tab, String url, boolean isInMainFrame,
-                boolean isErrorPage, boolean hasCommitted, boolean isSameDocument,
-                boolean isFragmentNavigation, Integer pageTransition, int errorCode,
-                int httpStatusCode) {
+        public void onDidFinishNavigation(Tab tab, NavigationHandle navigation) {
             assert tab == mTab;
 
-            if (!hasCommitted || !isInMainFrame || isSameDocument) return;
+            if (!navigation.hasCommitted() || !navigation.isInMainFrame()
+                    || navigation.isSameDocument())
+                return;
 
             String origin = mTab.getUrl();
             try {
-                origin = UrlFormatter.formatUrlForSecurityDisplay(new URI(origin), true);
+                URI uri = new URI(origin);
+                origin = UrlFormatter.formatUrlForSecurityDisplay(origin);
             } catch (URISyntaxException | UnsatisfiedLinkError e) {
                 // UnstatisfiedLinkError can only happen in tests as the natives are not initialized
                 // yet.
@@ -343,7 +350,7 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         }
 
         @Override
-        public void onShown(Tab tab) {
+        public void onShown(Tab tab, @TabSelectionType int type) {
             assert tab == mTab;
             MediaNotificationManager.activateAndroidMediaSession(
                     tab.getId(), R.id.media_playback_notification);
@@ -358,6 +365,10 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             hideNotificationImmediately();
             mTab.removeObserver(this);
             mTab = null;
+            if (mLargeIconBridge != null) {
+                mLargeIconBridge.destroy();
+                mLargeIconBridge = null;
+            }
         }
     };
 
@@ -404,17 +415,18 @@ public class MediaSessionTabHelper implements MediaImageCallback {
      *               {@link MediaNotificationListener} interface.
      * @return the corresponding histogram value.
      */
-    public static int convertMediaActionSourceToUMA(int source) {
+    public static @MediaSessionUMA.MediaSessionActionSource int convertMediaActionSourceToUMA(
+            int source) {
         if (source == MediaNotificationListener.ACTION_SOURCE_MEDIA_NOTIFICATION) {
-            return MediaSessionUMA.MEDIA_SESSION_ACTION_SOURCE_MEDIA_NOTIFICATION;
+            return MediaSessionUMA.MediaSessionActionSource.MEDIA_NOTIFICATION;
         } else if (source == MediaNotificationListener.ACTION_SOURCE_MEDIA_SESSION) {
-            return MediaSessionUMA.MEDIA_SESSION_ACTION_SOURCE_MEDIA_SESSION;
+            return MediaSessionUMA.MediaSessionActionSource.MEDIA_SESSION;
         } else if (source == MediaNotificationListener.ACTION_SOURCE_HEADSET_UNPLUG) {
-            return MediaSessionUMA.MEDIA_SESSION_ACTION_SOURCE_HEADSET_UNPLUG;
+            return MediaSessionUMA.MediaSessionActionSource.HEADSET_UNPLUG;
         }
 
         assert false;
-        return MediaSessionUMA.MEDIA_SESSION_ACTION_SOURCE_MAX;
+        return MediaSessionUMA.MediaSessionActionSource.NUM_ENTRIES;
     }
 
     private Activity getActivityFromTab(Tab tab) {
@@ -425,24 +437,29 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     }
 
     /**
-     * Updates the best favicon if the given icon is better.
-     * @return whether the best favicon is updated.
+     * Updates the best favicon if the given icon is better and the favicon is shown in
+     * notification.
      */
-    private boolean updateFavicon(Bitmap icon) {
-        if (icon == null) return false;
+    private void updateFavicon(Bitmap icon) {
+        if (icon == null) return;
+
+        mMaybeHasFavicon = true;
+
+        // Store the favicon only if notification is being shown. Otherwise the favicon is
+        // obtained from large icon bridge when needed.
+        if (isNotificationHiddingOrHidden() || mPageMediaImage != null) return;
 
         // Disable favicons in notifications for low memory devices on O
         // where the notification icon is optional.
-        if (SysUtils.isLowEndDevice() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && SysUtils.isLowEndDevice()) return;
 
-        if (!MediaNotificationManager.isBitmapSuitableAsMediaImage(icon)) return false;
+        if (!MediaNotificationManager.isBitmapSuitableAsMediaImage(icon)) return;
         if (mFavicon != null && (icon.getWidth() < mFavicon.getWidth()
                                         || icon.getHeight() < mFavicon.getHeight())) {
-            return false;
+            return;
         }
         mFavicon = MediaNotificationManager.downscaleIconToIdealSize(icon);
-        return true;
+        updateNotificationImage(mFavicon);
     }
 
     /**
@@ -495,11 +512,11 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     @Override
     public void onImageDownloaded(Bitmap image) {
         mPageMediaImage = MediaNotificationManager.downscaleIconToIdealSize(image);
-        updateNotificationImage();
+        mFavicon = null;
+        updateNotificationImage(mPageMediaImage);
     }
 
-    private void updateNotificationImage() {
-        Bitmap newMediaImage = getNotificationImage();
+    private void updateNotificationImage(Bitmap newMediaImage) {
         if (mCurrentMediaImage == newMediaImage) return;
 
         mCurrentMediaImage = newMediaImage;
@@ -510,8 +527,47 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         showNotification();
     }
 
-    private Bitmap getNotificationImage() {
-        return (mPageMediaImage != null) ? mPageMediaImage : mFavicon;
+    private Bitmap getCachedNotificationImage() {
+        if (mPageMediaImage != null) return mPageMediaImage;
+        if (mFavicon != null) return mFavicon;
+        return null;
+    }
+
+    /**
+     * Fetch favicon image and update the notification when available.
+     * @return if the favicon will be updated.
+     */
+    private boolean fetchFaviconImage() {
+        // The page does not have a favicon yet to fetch since onFaviconUpdated was never called.
+        // Don't waste time trying to find it.
+        if (!mMaybeHasFavicon) return false;
+
+        if (mTab == null) return false;
+        WebContents webContents = mTab.getWebContents();
+        if (webContents == null) return false;
+        String pageUrl = webContents.getLastCommittedUrl();
+        int size = MediaNotificationManager.MINIMAL_MEDIA_IMAGE_SIZE_PX;
+        if (mLargeIconBridge == null) {
+            mLargeIconBridge = new LargeIconBridge(mTab.getProfile());
+        }
+        LargeIconBridge.LargeIconCallback callback = new LargeIconBridge.LargeIconCallback() {
+            @Override
+            public void onLargeIconAvailable(
+                    Bitmap icon, int fallbackColor, boolean isFallbackColorDefault, int iconType) {
+                if (isNotificationHiddingOrHidden()) return;
+                if (icon == null) {
+                    // If we do not have any favicon then make sure we show default sound icon. This
+                    // icon is used by notification manager only if we do not show any icon.
+                    mNotificationInfoBuilder.setDefaultNotificationLargeIcon(
+                            R.drawable.audio_playing_square);
+                    showNotification();
+                } else {
+                    updateFavicon(icon);
+                }
+            }
+        };
+
+        return mLargeIconBridge.getLargeIconForUrl(pageUrl, size, callback);
     }
 
     private boolean isNotificationHiddingOrHidden() {

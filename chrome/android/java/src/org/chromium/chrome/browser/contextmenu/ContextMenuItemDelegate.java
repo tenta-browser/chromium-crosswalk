@@ -4,18 +4,26 @@
 
 package org.chromium.chrome.browser.contextmenu;
 
+import android.support.annotation.IntDef;
+
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content_public.common.Referrer;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * A delegate responsible for taking actions based on context menu selections.
  */
 public interface ContextMenuItemDelegate {
     // The type of the data to save to the clipboard.
-    public static final int CLIPBOARD_TYPE_LINK_URL = 0;
-    public static final int CLIPBOARD_TYPE_LINK_TEXT = 1;
-    public static final int CLIPBOARD_TYPE_IMAGE_URL = 2;
+    @IntDef({ClipboardType.LINK_URL, ClipboardType.LINK_TEXT, ClipboardType.IMAGE_URL})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface ClipboardType {
+        int LINK_URL = 0;
+        int LINK_TEXT = 1;
+        int IMAGE_URL = 2;
+    }
 
     /**
      * Called when this ContextMenuItemDelegate is about to be destroyed.
@@ -23,8 +31,7 @@ public interface ContextMenuItemDelegate {
     void onDestroy();
 
     /**
-     * @return Whether or not this context menu is being shown for an incognito
-     *     {@link ContentViewCore}.
+     * @return Whether or not this context menu is being shown for an incognito content.
      */
     boolean isIncognito();
 
@@ -101,7 +108,7 @@ public interface ContextMenuItemDelegate {
      * @param text The text to save to the clipboard.
      * @param clipboardType The type of data in {@code text}.
      */
-    void onSaveToClipboard(String text, int clipboardType);
+    void onSaveToClipboard(String text, @ClipboardType int clipboardType);
 
     /**
      * @return whether an activity is available to handle an intent to call a phone number.
@@ -162,7 +169,7 @@ public interface ContextMenuItemDelegate {
 
     /**
      * Called when the {@code url} should be opened in a new Chrome tab from CCT.
-     * @param url The URL to open.
+     * @param linkUrl The URL to open.
      * @param isIncognito true if the {@code url} should be opened in a new incognito tab.
      */
     void onOpenInNewChromeTabFromCCT(String linkUrl, boolean isIncognito);
@@ -177,4 +184,11 @@ public interface ContextMenuItemDelegate {
      * @param url The URL to open.
      */
     void onOpenInDefaultBrowser(String url);
+
+    /**
+     * Called when the {@code url} should be opened in an ephemeral tab.
+     * @param url The URL to open.
+     * @param title The title text to show on top control.
+     */
+    void onOpenInEphemeralTab(String url, String title);
 }

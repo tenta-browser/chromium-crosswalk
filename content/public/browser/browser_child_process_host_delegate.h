@@ -15,12 +15,6 @@ class CONTENT_EXPORT BrowserChildProcessHostDelegate : public IPC::Listener {
  public:
   ~BrowserChildProcessHostDelegate() override {}
 
-  // Delegates return true if it's ok to shut down the child process (which is
-  // the default return value). The exception is if the host is in the middle of
-  // sending a request to the process, in which case the other side might think
-  // it's ok to shutdown, when really it's not.
-  virtual bool CanShutdown();
-
   // Called when the process has been started.
   virtual void OnProcessLaunched() {}
 
@@ -34,6 +28,6 @@ class CONTENT_EXPORT BrowserChildProcessHostDelegate : public IPC::Listener {
   virtual void OnProcessCrashed(int exit_code) {}
 };
 
-};  // namespace content
+}  // namespace content
 
 #endif  // CONTENT_PUBLIC_BROWSER_BROWSER_CHILD_PROCESS_HOST_DELEGATE_H_

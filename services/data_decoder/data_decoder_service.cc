@@ -4,60 +4,60 @@
 
 #include "services/data_decoder/data_decoder_service.h"
 
+#include <memory>
+
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/data_decoder/bundled_exchanges_parser_factory.h"
 #include "services/data_decoder/image_decoder_impl.h"
 #include "services/data_decoder/json_parser_impl.h"
-#include "services/data_decoder/public/interfaces/image_decoder.mojom.h"
+#include "services/data_decoder/public/mojom/image_decoder.mojom.h"
 #include "services/data_decoder/xml_parser.h"
-#include "services/service_manager/public/cpp/service_context.h"
+
+#ifdef OS_CHROMEOS
+#include "services/data_decoder/ble_scan_parser_impl.h"
+#endif  // OS_CHROMEOS
 
 namespace data_decoder {
 
 namespace {
 
-void OnImageDecoderRequest(
-    service_manager::ServiceContextRefFactory* ref_factory,
-    mojom::ImageDecoderRequest request) {
-  mojo::MakeStrongBinding(
-      std::make_unique<ImageDecoderImpl>(ref_factory->CreateRef()),
-      std::move(request));
-}
-
-void OnJsonParserRequest(service_manager::ServiceContextRefFactory* ref_factory,
-                         mojom::JsonParserRequest request) {
-  mojo::MakeStrongBinding(
-      std::make_unique<JsonParserImpl>(ref_factory->CreateRef()),
-      std::move(request));
-}
-
-void OnXmlParserRequest(service_manager::ServiceContextRefFactory* ref_factory,
-                        mojom::XmlParserRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<XmlParser>(ref_factory->CreateRef()),
-                          std::move(request));
-}
+constexpr auto kMaxServiceIdleTime = base::TimeDelta::FromSeconds(5);
 
 }  // namespace
 
-DataDecoderService::DataDecoderService() : weak_factory_(this) {}
+DataDecoderService::DataDecoderService()
+    : keepalive_(&binding_, kMaxServiceIdleTime) {
+  registry_.AddInterface(base::BindRepeating(
+      &DataDecoderService::BindImageDecoder, base::Unretained(this)));
+  registry_.AddInterface(base::BindRepeating(
+      &DataDecoderService::BindJsonParser, base::Unretained(this)));
+  registry_.AddInterface(base::BindRepeating(&DataDecoderService::BindXmlParser,
+                                             base::Unretained(this)));
+  registry_.AddInterface(base::BindRepeating(
+      &DataDecoderService::BindBundledExchangesParserFactory,
+      base::Unretained(this)));
+
+#ifdef OS_CHROMEOS
+  registry_.AddInterface(base::BindRepeating(
+      &DataDecoderService::BindBleScanParser, base::Unretained(this)));
+#endif  // OS_CHROMEOS
+}
+
+DataDecoderService::DataDecoderService(
+    service_manager::mojom::ServiceRequest request)
+    : DataDecoderService() {
+  BindRequest(std::move(request));
+}
 
 DataDecoderService::~DataDecoderService() = default;
 
-// static
-std::unique_ptr<service_manager::Service> DataDecoderService::Create() {
-  return std::make_unique<DataDecoderService>();
-}
-
-void DataDecoderService::OnStart() {
-  ref_factory_.reset(new service_manager::ServiceContextRefFactory(base::Bind(
-      &DataDecoderService::MaybeRequestQuitDelayed, base::Unretained(this))));
-  registry_.AddInterface(
-      base::Bind(&OnImageDecoderRequest, ref_factory_.get()));
-  registry_.AddInterface(base::Bind(&OnJsonParserRequest, ref_factory_.get()));
-  registry_.AddInterface(base::Bind(&OnXmlParserRequest, ref_factory_.get()));
+void DataDecoderService::BindRequest(
+    service_manager::mojom::ServiceRequest request) {
+  binding_.Bind(std::move(request));
 }
 
 void DataDecoderService::OnBindInterface(
@@ -67,18 +67,37 @@ void DataDecoderService::OnBindInterface(
   registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
-void DataDecoderService::MaybeRequestQuitDelayed() {
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&DataDecoderService::MaybeRequestQuit,
-                 weak_factory_.GetWeakPtr()),
-      base::TimeDelta::FromSeconds(5));
+#ifdef OS_CHROMEOS
+void DataDecoderService::BindBleScanParser(
+    mojom::BleScanParserRequest request) {
+  mojo::MakeStrongBinding(
+      std::make_unique<BleScanParserImpl>(keepalive_.CreateRef()),
+      std::move(request));
+}
+#endif  // OS_CHROMEOS
+
+void DataDecoderService::BindImageDecoder(mojom::ImageDecoderRequest request) {
+  mojo::MakeStrongBinding(
+      std::make_unique<ImageDecoderImpl>(keepalive_.CreateRef()),
+      std::move(request));
 }
 
-void DataDecoderService::MaybeRequestQuit() {
-  DCHECK(ref_factory_);
-  if (ref_factory_->HasNoRefs())
-    context()->RequestQuit();
+void DataDecoderService::BindJsonParser(mojom::JsonParserRequest request) {
+  mojo::MakeStrongBinding(
+      std::make_unique<JsonParserImpl>(keepalive_.CreateRef()),
+      std::move(request));
+}
+
+void DataDecoderService::BindXmlParser(mojom::XmlParserRequest request) {
+  mojo::MakeStrongBinding(std::make_unique<XmlParser>(keepalive_.CreateRef()),
+                          std::move(request));
+}
+
+void DataDecoderService::BindBundledExchangesParserFactory(
+    mojom::BundledExchangesParserFactoryRequest request) {
+  mojo::MakeStrongBinding(
+      std::make_unique<BundledExchangesParserFactory>(keepalive_.CreateRef()),
+      std::move(request));
 }
 
 }  // namespace data_decoder

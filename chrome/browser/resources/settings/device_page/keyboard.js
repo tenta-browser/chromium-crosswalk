@@ -21,6 +21,7 @@ settings.ModifierKey = {
   CAPS_LOCK_KEY: 4,
   ESCAPE_KEY: 5,
   BACKSPACE_KEY: 6,
+  ASSISTANT_KEY: 7,
 };
 
 Polymer({
@@ -36,8 +37,26 @@ Polymer({
     /** @private Whether to show Caps Lock options. */
     showCapsLock_: Boolean,
 
-    /** @private Whether to show diamond key options. */
-    showDiamondKey_: Boolean,
+    /** @private Whether this device has an internal keyboard. */
+    hasInternalKeyboard_: Boolean,
+
+    /** @private Whether this device has an Assistant key on keyboard. */
+    hasAssistantKey_: Boolean,
+
+    /**
+     * Whether to show a remapping option for external keyboard's Meta key
+     * (Search/Windows keys). This is true only when there's an external
+     * keyboard connected that is a non-Apple keyboard.
+     * @private
+     */
+    showExternalMetaKey_: Boolean,
+
+    /**
+     * Whether to show a remapping option for the Command key. This is true when
+     * one of the connected keyboards is an Apple keyboard.
+     * @private
+     */
+    showAppleCommandKey_: Boolean,
 
     /** @private {!DropdownMenuOptionList} Menu items for key mapping. */
     keyMapTargets_: Object,
@@ -106,6 +125,10 @@ Polymer({
         name: loadTimeData.getString('keyboardKeyBackspace')
       },
       {
+        value: settings.ModifierKey.ASSISTANT_KEY,
+        name: loadTimeData.getString('keyboardKeyAssistant')
+      },
+      {
         value: settings.ModifierKey.VOID_KEY,
         name: loadTimeData.getString('keyboardKeyDisabled')
       }
@@ -114,21 +137,36 @@ Polymer({
 
   /**
    * Handler for updating which keys to show.
-   * @param {boolean} showCapsLock
-   * @param {boolean} showDiamondKey
+   * @param {Object} keyboardParams
    * @private
    */
-  onShowKeysChange_: function(showCapsLock, showDiamondKey) {
-    this.showCapsLock_ = showCapsLock;
-    this.showDiamondKey_ = showDiamondKey;
+  onShowKeysChange_: function(keyboardParams) {
+    this.hasInternalKeyboard_ = keyboardParams['hasInternalKeyboard'];
+    this.hasAssistantKey_ = keyboardParams['hasAssistantKey'];
+    this.showCapsLock_ = keyboardParams['showCapsLock'];
+    this.showExternalMetaKey_ = keyboardParams['showExternalMetaKey'];
+    this.showAppleCommandKey_ = keyboardParams['showAppleCommandKey'];
   },
 
-  onShowKeyboardShortcutsOverlayTap_: function() {
+  onShowKeyboardShortcutViewerTap_: function() {
     settings.DevicePageBrowserProxyImpl.getInstance()
-        .showKeyboardShortcutsOverlay();
+        .showKeyboardShortcutViewer();
   },
 
   onShowLanguageInputTap_: function() {
-    settings.navigateTo(settings.routes.LANGUAGES);
+    settings.navigateTo(
+        settings.routes.LANGUAGES,
+        /* dynamicParams */ null, /* removeSearch */ true);
+  },
+
+  getExternalMetaKeyLabel_: function(hasInternalKeyboard) {
+    return loadTimeData.getString(
+        hasInternalKeyboard ? 'keyboardKeyExternalMeta' : 'keyboardKeyMeta');
+  },
+
+  getExternalCommandKeyLabel_: function(hasInternalKeyboard) {
+    return loadTimeData.getString(
+        hasInternalKeyboard ? 'keyboardKeyExternalCommand' :
+                              'keyboardKeyCommand');
   },
 });

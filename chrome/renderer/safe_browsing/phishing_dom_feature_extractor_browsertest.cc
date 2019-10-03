@@ -9,9 +9,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/renderer/safe_browsing/features.h"
@@ -24,12 +22,12 @@
 #include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebScriptSource.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
 #include "ui/native_theme/native_theme_features.h"
 
 using ::testing::DoAll;
@@ -132,18 +130,15 @@ class TestChromeContentRendererClient : public ChromeContentRendererClient {
   ~TestChromeContentRendererClient() override {}
   // Since visited_link_slave_ in ChromeContentRenderClient never get initiated,
   // overrides VisitedLinkedHash() function to prevent crashing.
-  unsigned long long VisitedLinkHash(const char* canonical_url,
-                                     size_t length) override {
-    return 0LL;
+  uint64_t VisitedLinkHash(const char* canonical_url, size_t length) override {
+    return 0;
   }
 };
 
 class PhishingDOMFeatureExtractorTest : public ChromeRenderViewTest {
  public:
   PhishingDOMFeatureExtractorTest()
-      : success_(false),
-        message_loop_(new content::MessageLoopRunner),
-        weak_factory_(this) {}
+      : success_(false), message_loop_(new content::MessageLoopRunner) {}
 
   bool GetSuccess() { return success_; }
   void ResetTest() {
@@ -162,8 +157,8 @@ class PhishingDOMFeatureExtractorTest : public ChromeRenderViewTest {
 
     extractor_->ExtractFeatures(
         GetMainFrame()->GetDocument(), features,
-        base::Bind(&PhishingDOMFeatureExtractorTest::AnotherExtractionDone,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&PhishingDOMFeatureExtractorTest::AnotherExtractionDone,
+                       weak_factory_.GetWeakPtr()));
     message_loop_->Run();
   }
 
@@ -175,18 +170,20 @@ class PhishingDOMFeatureExtractorTest : public ChromeRenderViewTest {
 
     extractor_->ExtractFeatures(
         GetMainFrame()->GetDocument(), features,
-        base::Bind(&PhishingDOMFeatureExtractorTest::AnotherExtractionDone,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&PhishingDOMFeatureExtractorTest::AnotherExtractionDone,
+                       weak_factory_.GetWeakPtr()));
     message_loop_->Run();
   }
 
   // Helper for the SubframeRemoval test that posts a message to remove
   // the iframe "frame1" from the document.
   void ScheduleRemoveIframe() {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&PhishingDOMFeatureExtractorTest::RemoveIframe,
-                       weak_factory_.GetWeakPtr()));
+    GetMainFrame()
+        ->GetTaskRunner(blink::TaskType::kInternalTest)
+        ->PostTask(
+            FROM_HERE,
+            base::BindOnce(&PhishingDOMFeatureExtractorTest::RemoveIframe,
+                           weak_factory_.GetWeakPtr()));
   }
 
  protected:
@@ -225,7 +222,7 @@ class PhishingDOMFeatureExtractorTest : public ChromeRenderViewTest {
   bool success_;
   std::unique_ptr<TestPhishingDOMFeatureExtractor> extractor_;
   scoped_refptr<content::MessageLoopRunner> message_loop_;
-  base::WeakPtrFactory<PhishingDOMFeatureExtractorTest> weak_factory_;
+  base::WeakPtrFactory<PhishingDOMFeatureExtractorTest> weak_factory_{this};
 };
 
 TEST_F(PhishingDOMFeatureExtractorTest, FormFeatures) {

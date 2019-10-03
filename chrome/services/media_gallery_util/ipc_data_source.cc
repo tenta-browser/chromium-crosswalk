@@ -4,10 +4,9 @@
 
 #include "chrome/services/media_gallery_util/ipc_data_source.h"
 
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/utility/utility_thread.h"
-
-namespace chrome {
 
 IPCDataSource::IPCDataSource(
     chrome::mojom::MediaDataSourcePtr media_data_source,
@@ -38,7 +37,7 @@ void IPCDataSource::Read(int64_t position,
 
   utility_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(&IPCDataSource::ReadBlob, base::Unretained(this),
+      base::BindOnce(&IPCDataSource::ReadMediaData, base::Unretained(this),
                      destination, callback, position, size));
 }
 
@@ -57,10 +56,10 @@ void IPCDataSource::SetBitrate(int bitrate) {
   DCHECK_CALLED_ON_VALID_THREAD(data_source_thread_checker_);
 }
 
-void IPCDataSource::ReadBlob(uint8_t* destination,
-                             const DataSource::ReadCB& callback,
-                             int64_t position,
-                             int size) {
+void IPCDataSource::ReadMediaData(uint8_t* destination,
+                                  const DataSource::ReadCB& callback,
+                                  int64_t position,
+                                  int size) {
   DCHECK_CALLED_ON_VALID_THREAD(utility_thread_checker_);
   CHECK_GE(total_size_, 0);
   CHECK_GE(position, 0);
@@ -71,7 +70,7 @@ void IPCDataSource::ReadBlob(uint8_t* destination,
   int64_t clamped_size =
       std::min(static_cast<int64_t>(size), total_size_ - position);
 
-  media_data_source_->ReadBlob(
+  media_data_source_->Read(
       position, clamped_size,
       base::BindOnce(&IPCDataSource::ReadDone, base::Unretained(this),
                      destination, callback));
@@ -85,5 +84,3 @@ void IPCDataSource::ReadDone(uint8_t* destination,
   std::copy(data.begin(), data.end(), destination);
   callback.Run(data.size());
 }
-
-}  // namespace chrome

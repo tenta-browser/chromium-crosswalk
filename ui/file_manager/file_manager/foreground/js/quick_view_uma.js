@@ -5,15 +5,14 @@
 /**
  * UMA exporter for Quick View.
  *
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @param {!DialogType} dialogType
  *
  * @constructor
  */
 function QuickViewUma(volumeManager, dialogType) {
-
   /**
-   * @type {!VolumeManagerWrapper}
+   * @type {!VolumeManager}
    * @private
    */
   this.volumeManager_ = volumeManager;
@@ -62,6 +61,9 @@ QuickViewUma.VolumeType = [
   VolumeManagerCommon.VolumeType.PROVIDED,
   VolumeManagerCommon.VolumeType.MTP,
   VolumeManagerCommon.VolumeType.MEDIA_VIEW,
+  VolumeManagerCommon.VolumeType.CROSTINI,
+  VolumeManagerCommon.VolumeType.ANDROID_FILES,
+  VolumeManagerCommon.VolumeType.DOCUMENTS_PROVIDER,
 ];
 
 /**
@@ -72,10 +74,14 @@ QuickViewUma.VolumeType = [
  *
  * @private
  */
-QuickViewUma.prototype.exportFileType_ = function(entry, name) {
-  var extension = FileType.getExtension(entry).toLowerCase();
-  if (FileTasks.UMA_INDEX_KNOWN_EXTENSIONS.indexOf(extension) < 0) {
-    extension = 'other';
+QuickViewUma.prototype.exportFileType_ = (entry, name) => {
+  let extension = FileType.getExtension(entry).toLowerCase();
+  if (entry.isDirectory) {
+    extension = 'directory';
+  } else if (extension === '') {
+    extension = 'no extension';
+  } else if (FileTasks.UMA_INDEX_KNOWN_EXTENSIONS.indexOf(extension) < 0) {
+    extension = 'unknown extension';
   }
   metrics.recordEnum(name, extension, FileTasks.UMA_INDEX_KNOWN_EXTENSIONS);
 };
@@ -100,7 +106,7 @@ QuickViewUma.prototype.onOpened = function(entry, wayToOpen) {
   metrics.recordEnum(
       'QuickView.WayToOpen', wayToOpen, QuickViewUma.WayToOpenValues_);
 
-  var volumeType = this.volumeManager_.getVolumeInfo(entry).volumeType;
+  const volumeType = this.volumeManager_.getVolumeInfo(entry).volumeType;
   if (QuickViewUma.VolumeType.includes(volumeType)) {
     metrics.recordEnum(
         'QuickView.VolumeType', volumeType, QuickViewUma.VolumeType);
@@ -109,11 +115,12 @@ QuickViewUma.prototype.onOpened = function(entry, wayToOpen) {
   }
   // Record stats of dialog types. It must be in sync with
   // FileDialogType enum in tools/metrics/histograms/histogram.xml.
-  metrics.recordEnum('QuickView.DialogType', this.dialogType_,
-      [DialogType.SELECT_FOLDER,
-       DialogType.SELECT_UPLOAD_FOLDER,
-       DialogType.SELECT_SAVEAS_FILE,
-       DialogType.SELECT_OPEN_FILE,
-       DialogType.SELECT_OPEN_MULTI_FILE,
-       DialogType.FULL_PAGE]);
+  metrics.recordEnum('QuickView.DialogType', this.dialogType_, [
+    DialogType.SELECT_FOLDER,
+    DialogType.SELECT_UPLOAD_FOLDER,
+    DialogType.SELECT_SAVEAS_FILE,
+    DialogType.SELECT_OPEN_FILE,
+    DialogType.SELECT_OPEN_MULTI_FILE,
+    DialogType.FULL_PAGE,
+  ]);
 };

@@ -18,8 +18,8 @@
 #include "base/threading/thread_checker.h"
 #include "media/base/content_decryption_module.h"
 #include "media/blink/new_session_cdm_result_promise.h"
-#include "third_party/WebKit/public/platform/WebContentDecryptionModuleSession.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_content_decryption_module_session.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 namespace media {
 
@@ -37,7 +37,7 @@ class WebContentDecryptionModuleSessionImpl
   blink::WebString SessionId() const override;
 
   void InitializeNewSession(
-      blink::WebEncryptedMediaInitDataType init_data_type,
+      EmeInitDataType init_data_type,
       const unsigned char* initData,
       size_t initDataLength,
       blink::WebEncryptedMediaSessionType session_type,
@@ -91,7 +91,8 @@ class WebContentDecryptionModuleSessionImpl
   // Since promises will live until they are fired, use a weak reference when
   // creating a promise in case this class disappears before the promise
   // actually fires.
-  base::WeakPtrFactory<WebContentDecryptionModuleSessionImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<WebContentDecryptionModuleSessionImpl> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(WebContentDecryptionModuleSessionImpl);
 };

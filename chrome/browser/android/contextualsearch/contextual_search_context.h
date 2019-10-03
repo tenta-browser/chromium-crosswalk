@@ -44,13 +44,21 @@ struct ContextualSearchContext {
       JNIEnv* env,
       jobject obj,
       const base::android::JavaParamRef<jstring>& j_home_country,
-      jboolean j_may_send_base_page_url);
+      jboolean j_may_send_base_page_url,
+      jlong j_previous_event_id,
+      jint j_previous_event_results);
 
   // Adjust the current selection offsets by the given signed amounts.
   void AdjustSelection(JNIEnv* env,
                        jobject obj,
                        jint j_start_adjust,
                        jint j_end_adjust);
+
+  void SetContent(JNIEnv* env,
+                  jobject obj,
+                  const base::android::JavaParamRef<jstring>& j_content,
+                  jint j_selection_start,
+                  jint j_selection_end);
 
   // Gets the URL of the base page.
   const GURL GetBasePageUrl() const;
@@ -81,6 +89,19 @@ struct ContextualSearchContext {
   // characters).
   int GetEndOffset() const;
 
+  int64_t GetPreviousEventId() const;
+  int GetPreviousEventResults() const;
+
+  // Causes the next resolve request to be for an exact match instead of an
+  // expandable term.
+  void RestrictResolve(JNIEnv* env,
+                       const base::android::JavaParamRef<jobject>& obj);
+
+  // Detects the language of the context using CLD from the translate utility.
+  base::android::ScopedJavaLocalRef<jstring> DetectLanguage(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
   // Gets a WeakPtr to this instance.
   base::WeakPtr<ContextualSearchContext> GetWeakPtr();
 
@@ -94,6 +115,8 @@ struct ContextualSearchContext {
   base::string16 surrounding_text;
   int start_offset;
   int end_offset;
+  int64_t previous_event_id;
+  int previous_event_results;
 
   // The linked Java object.
   base::android::ScopedJavaGlobalRef<jobject> java_object_;

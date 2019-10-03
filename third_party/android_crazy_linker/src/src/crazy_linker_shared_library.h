@@ -7,10 +7,14 @@
 
 #include <link.h>
 
+#include <utility>
+
 #include "crazy_linker_elf_relro.h"
 #include "crazy_linker_elf_symbols.h"
 #include "crazy_linker_elf_view.h"
 #include "crazy_linker_error.h"
+#include "crazy_linker_load_params.h"
+#include "crazy_linker_memory_mapping.h"
 #include "crazy_linker_rdebug.h"
 #include "crazy_linker_util.h"
 #include "elf_traits.h"
@@ -40,27 +44,27 @@ class SharedLibrary {
   size_t phdr_count() const { return view_.phdr_count(); }
   const char* base_name() const { return base_name_; }
 
+  // Return name of the library as found in DT_SONAME entry, or same
+  // as base_name() if not available.
+  const char* soname() const { return soname_; }
+
   // Load a library (without its dependents) from an ELF file.
   // Note: This does not apply relocations, nor runs constructors.
   // |full_path| if the file full path.
-  // |load_address| is the page-aligned load address in memory, or 0.
-  // |file_offset| is the page-aligned file offset.
+  // |params| are the load parameters for this operation.
   // On failure, return false and set |error| message.
   //
   // After this, the caller should load all library dependencies,
   // Then call Relocate() and CallConstructors() to complete the
   // operation.
-  bool Load(const char* full_path,
-            size_t load_address,
-            size_t file_offset,
-            Error* error);
+  bool Load(const LoadParams& params, Error* error);
 
   // Relocate this library, assuming all its dependencies are already
   // loaded in |lib_list|. On failure, return false and set |error|
   // message.
   bool Relocate(LibraryList* lib_list,
-                Vector<LibraryView*>* preloads,
-                Vector<LibraryView*>* dependencies,
+                const Vector<LibraryView*>* preloads,
+                const Vector<LibraryView*>* dependencies,
                 Error* error);
 
   void GetInfo(size_t* load_address,
@@ -88,7 +92,7 @@ class SharedLibrary {
 
   // Return the ELF symbol entry for a given symbol, if defined by
   // this library, or NULL otherwise.
-  const ELF::Sym* LookupSymbolEntry(const char* symbol_name);
+  const ELF::Sym* LookupSymbolEntry(const char* symbol_name) const;
 
   // Find the nearest symbol near a given |address|. On success, return
   // true and set |*sym_name| to the symbol name, |*sym_addr| to its address
@@ -96,14 +100,14 @@ class SharedLibrary {
   bool FindNearestSymbolForAddress(void* address,
                                    const char** sym_name,
                                    void** sym_addr,
-                                   size_t* sym_size) {
+                                   size_t* sym_size) const {
     return symbols_.LookupNearestByAddress(
         address, load_bias(), sym_name, sym_addr, sym_size);
   }
 
   // Return the address of a given |symbol_name| if it is exported
   // by the library, NULL otherwise.
-  void* FindAddressForSymbol(const char* symbol_name);
+  void* FindAddressForSymbol(const char* symbol_name) const;
 
   // Create a new Ashmem region holding a copy of the library's RELRO section,
   // potentially relocated for a new |load_address|. On success, return true
@@ -130,12 +134,16 @@ class SharedLibrary {
   // function result is less than |minimum_jni_version|, fail with
   // a message in |error|. On success, return true, and record
   // |java_vm| to call 'JNI_OnUnload' at unload time, if present.
-  bool SetJavaVM(void* java_vm, int minimum_jni_version, Error* error);
+  bool CallJniOnLoad(void* java_vm, int minimum_jni_version, Error* error);
 
   // Call 'JNI_OnUnload()' is necessary, i.e. if there was a succesful call
-  // to SetJavaVM() before. This will pass the same |java_vm| value to the
-  // callback, if it is present in the library.
+  // to CallJniOnLoad() before, or nothing otherwise.
   void CallJniOnUnload();
+
+  // Release reserved memory mapping. Caller takes ownership. Used to delay
+  // the unmapping of the library segments in the case of delayed RDebug
+  // operations.
+  MemoryMapping ReleaseMapping() { return std::move(reserved_map_); }
 
   // Helper class to iterate over dependencies in a given SharedLibrary.
   // Usage:
@@ -146,7 +154,7 @@ class SharedLibrary {
   //    }
   class DependencyIterator {
    public:
-    explicit DependencyIterator(SharedLibrary* lib)
+    explicit DependencyIterator(const SharedLibrary* lib)
         : iter_(&lib->view_), symbols_(&lib->symbols_), dep_name_(NULL) {}
 
     bool GetNext();
@@ -154,9 +162,9 @@ class SharedLibrary {
     const char* GetName() const { return dep_name_; }
 
    private:
-    DependencyIterator();
-    DependencyIterator(const DependencyIterator&);
-    DependencyIterator& operator=(const DependencyIterator&);
+    DependencyIterator() = delete;
+    DependencyIterator(const DependencyIterator&) = delete;
+    DependencyIterator& operator=(const DependencyIterator&) = delete;
 
     ElfView::DynamicIterator iter_;
     const ElfSymbols* symbols_;
@@ -170,37 +178,38 @@ class SharedLibrary {
 
   ElfView view_;
   ElfSymbols symbols_;
+  MemoryMapping reserved_map_;
 
-  ELF::Addr relro_start_;
-  ELF::Addr relro_size_;
-  bool relro_used_;
+  ELF::Addr relro_start_ = 0;
+  ELF::Addr relro_size_ = 0;
+  bool relro_used_ = false;
 
-  SharedLibrary* list_next_;
-  SharedLibrary* list_prev_;
-  unsigned flags_;
+  SharedLibrary* list_next_ = nullptr;
+  SharedLibrary* list_prev_ = nullptr;
+  unsigned flags_ = 0;
 
-  linker_function_t* preinit_array_;
-  size_t preinit_array_count_;
-  linker_function_t* init_array_;
-  size_t init_array_count_;
-  linker_function_t* fini_array_;
-  size_t fini_array_count_;
-  linker_function_t init_func_;
-  linker_function_t fini_func_;
-
+  linker_function_t* preinit_array_ = nullptr;
+  size_t preinit_array_count_ = 0;
+  linker_function_t* init_array_ = nullptr;
+  size_t init_array_count_ = 0;
+  linker_function_t* fini_array_ = nullptr;
+  size_t fini_array_count_ = 0;
+  linker_function_t init_func_ = nullptr;
+  linker_function_t fini_func_ = nullptr;
 #ifdef __arm__
   // ARM EABI section used for stack unwinding.
-  unsigned* arm_exidx_;
-  size_t arm_exidx_count_;
+  unsigned* arm_exidx_ = nullptr;
+  size_t arm_exidx_count_ = 0;
 #endif
 
-  link_map_t link_map_;
+  link_map_t link_map_ = {};
 
-  bool has_DT_SYMBOLIC_;
+  bool has_DT_SYMBOLIC_ = false;
 
-  void* java_vm_;
+  void* java_vm_ = nullptr;
 
-  const char* base_name_;
+  const char* soname_ = nullptr;
+  const char* base_name_ = nullptr;
   char full_path_[512];
 };
 

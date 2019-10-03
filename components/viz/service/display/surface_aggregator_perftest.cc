@@ -2,21 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ptr_util.h"
-#include "cc/base/lap_timer.h"
-#include "cc/resources/display_resource_provider.h"
+#include "base/timer/lap_timer.h"
 #include "cc/test/fake_output_surface_client.h"
-#include "cc/test/fake_resource_provider.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_shared_bitmap_manager.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
+#include "components/viz/service/display/display_resource_provider.h"
 #include "components/viz/service/display/surface_aggregator.h"
+#include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "components/viz/test/compositor_frame_helpers.h"
+#include "components/viz/test/test_context_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
 
@@ -27,18 +26,15 @@ constexpr bool kIsRoot = true;
 constexpr bool kIsChildRoot = false;
 constexpr bool kNeedsSyncPoints = true;
 
-const base::UnguessableToken kArbitraryToken = base::UnguessableToken::Create();
-
 class SurfaceAggregatorPerfTest : public testing::Test {
  public:
-  SurfaceAggregatorPerfTest() {
-    context_provider_ = cc::TestContextProvider::Create();
+  SurfaceAggregatorPerfTest() : manager_(&shared_bitmap_manager_) {
+    context_provider_ = TestContextProvider::Create();
     context_provider_->BindToCurrentThread();
-    shared_bitmap_manager_ = base::MakeUnique<cc::TestSharedBitmapManager>();
 
-    resource_provider_ =
-        cc::FakeResourceProvider::CreateDisplayResourceProvider(
-            context_provider_.get(), shared_bitmap_manager_.get());
+    resource_provider_ = std::make_unique<DisplayResourceProvider>(
+        DisplayResourceProvider::kGpu, context_provider_.get(),
+        &shared_bitmap_manager_);
   }
 
   void RunTest(int num_surfaces,
@@ -49,27 +45,30 @@ class SurfaceAggregatorPerfTest : public testing::Test {
                const std::string& name) {
     std::vector<std::unique_ptr<CompositorFrameSinkSupport>> child_supports(
         num_surfaces);
+    std::vector<base::UnguessableToken> child_tokens(num_surfaces);
     for (int i = 0; i < num_surfaces; i++) {
-      child_supports[i] = CompositorFrameSinkSupport::Create(
+      child_supports[i] = std::make_unique<CompositorFrameSinkSupport>(
           nullptr, &manager_, FrameSinkId(1, i + 1), kIsChildRoot,
           kNeedsSyncPoints);
+      child_tokens[i] = base::UnguessableToken::Create();
     }
-    aggregator_ = base::MakeUnique<SurfaceAggregator>(
-        manager_.surface_manager(), resource_provider_.get(), optimize_damage);
+    aggregator_ = std::make_unique<SurfaceAggregator>(
+        manager_.surface_manager(), resource_provider_.get(), optimize_damage,
+        true);
     for (int i = 0; i < num_surfaces; i++) {
-      LocalSurfaceId local_surface_id(i + 1, kArbitraryToken);
+      LocalSurfaceId local_surface_id(i + 1, child_tokens[i]);
 
       auto pass = RenderPass::Create();
       pass->output_rect = gfx::Rect(0, 0, 1, 2);
 
-      CompositorFrame frame = test::MakeEmptyCompositorFrame();
+      CompositorFrameBuilder frame_builder;
 
       auto* sqs = pass->CreateAndAppendSharedQuadState();
       for (int j = 0; j < num_textures; j++) {
         TransferableResource resource;
         resource.id = j;
         resource.is_software = true;
-        frame.resource_list.push_back(resource);
+        frame_builder.AddTransferableResource(resource);
 
         auto* quad = pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
         const gfx::Rect rect(0, 0, 1, 2);
@@ -87,7 +86,8 @@ class SurfaceAggregatorPerfTest : public testing::Test {
         quad->SetAll(sqs, rect, visible_rect, needs_blending, j, gfx::Size(),
                      premultiplied_alpha, uv_top_left, uv_bottom_right,
                      background_color, vertex_opacity, flipped,
-                     nearest_neighbor, false);
+                     nearest_neighbor, /*secure_output_only=*/false,
+                     gfx::ProtectedVideoType::kClear);
       }
       sqs = pass->CreateAndAppendSharedQuadState();
       sqs->opacity = opacity;
@@ -95,30 +95,41 @@ class SurfaceAggregatorPerfTest : public testing::Test {
         auto* surface_quad = pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
         surface_quad->SetNew(
             sqs, gfx::Rect(0, 0, 1, 1), gfx::Rect(0, 0, 1, 1),
-            SurfaceId(FrameSinkId(1, i), LocalSurfaceId(i, kArbitraryToken)),
-            base::nullopt, SK_ColorWHITE, false);
+            // Surface at index i embeds surface at index i - 1.
+            SurfaceRange(base::nullopt,
+                         SurfaceId(FrameSinkId(1, i),
+                                   LocalSurfaceId(i, child_tokens[i - 1]))),
+            SK_ColorWHITE, /*stretch_content_to_fill_bounds=*/false,
+            /*ignores_input_event=*/false);
       }
 
-      frame.render_pass_list.push_back(std::move(pass));
+      frame_builder.AddRenderPass(std::move(pass));
       child_supports[i]->SubmitCompositorFrame(local_surface_id,
-                                               std::move(frame));
+                                               frame_builder.Build());
     }
 
-    auto root_support = CompositorFrameSinkSupport::Create(
+    auto root_support = std::make_unique<CompositorFrameSinkSupport>(
         nullptr, &manager_, FrameSinkId(1, num_surfaces + 1), kIsRoot,
         kNeedsSyncPoints);
+    auto root_token = base::UnguessableToken::Create();
+    base::TimeTicks next_fake_display_time =
+        base::TimeTicks() + base::TimeDelta::FromSeconds(1);
     timer_.Reset();
     do {
       auto pass = RenderPass::Create();
-      CompositorFrame frame = test::MakeEmptyCompositorFrame();
 
       auto* sqs = pass->CreateAndAppendSharedQuadState();
       auto* surface_quad = pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
       surface_quad->SetNew(
           sqs, gfx::Rect(0, 0, 100, 100), gfx::Rect(0, 0, 100, 100),
-          SurfaceId(FrameSinkId(1, num_surfaces),
-                    LocalSurfaceId(num_surfaces, kArbitraryToken)),
-          base::nullopt, SK_ColorWHITE, false);
+          SurfaceRange(
+              base::nullopt,
+              // Root surface embeds surface at index num_surfaces - 1.
+              SurfaceId(FrameSinkId(1, num_surfaces),
+                        LocalSurfaceId(num_surfaces,
+                                       child_tokens[num_surfaces - 1]))),
+          SK_ColorWHITE, /*stretch_content_to_fill_bounds=*/false,
+          /*ignores_input_event=*/false);
 
       pass->output_rect = gfx::Rect(0, 0, 100, 100);
 
@@ -127,35 +138,51 @@ class SurfaceAggregatorPerfTest : public testing::Test {
       else
         pass->damage_rect = gfx::Rect(0, 0, 1, 1);
 
-      frame.render_pass_list.push_back(std::move(pass));
+      CompositorFrame frame =
+          CompositorFrameBuilder().AddRenderPass(std::move(pass)).Build();
 
       root_support->SubmitCompositorFrame(
-          LocalSurfaceId(num_surfaces + 1, kArbitraryToken), std::move(frame));
+          LocalSurfaceId(num_surfaces + 1, root_token), std::move(frame));
 
       CompositorFrame aggregated = aggregator_->Aggregate(
           SurfaceId(FrameSinkId(1, num_surfaces + 1),
-                    LocalSurfaceId(num_surfaces + 1, kArbitraryToken)));
+                    LocalSurfaceId(num_surfaces + 1, root_token)),
+          next_fake_display_time, gfx::OVERLAY_TRANSFORM_NONE);
+      next_fake_display_time += BeginFrameArgs::DefaultInterval();
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
     perf_test::PrintResult("aggregator_speed", "", name, timer_.LapsPerSecond(),
                            "runs/s", true);
-    for (int i = 0; i < num_surfaces; i++)
-      child_supports[i]->EvictCurrentSurface();
-    root_support->EvictCurrentSurface();
   }
 
  protected:
+  ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;
-  scoped_refptr<cc::TestContextProvider> context_provider_;
-  std::unique_ptr<SharedBitmapManager> shared_bitmap_manager_;
-  std::unique_ptr<cc::DisplayResourceProvider> resource_provider_;
+  scoped_refptr<TestContextProvider> context_provider_;
+  std::unique_ptr<DisplayResourceProvider> resource_provider_;
   std::unique_ptr<SurfaceAggregator> aggregator_;
-  cc::LapTimer timer_;
+  base::LapTimer timer_;
 };
 
 TEST_F(SurfaceAggregatorPerfTest, ManySurfacesOpaque) {
   RunTest(20, 100, 1.f, false, true, "many_surfaces_opaque");
+}
+
+TEST_F(SurfaceAggregatorPerfTest, ManySurfacesOpaque_100) {
+  RunTest(100, 1, 1.f, true, false, "(100 Surfaces, 1 quad each)");
+}
+
+TEST_F(SurfaceAggregatorPerfTest, ManySurfacesOpaque_300) {
+  RunTest(300, 1, 1.f, true, false, "(300 Surfaces, 1 quad each)");
+}
+
+TEST_F(SurfaceAggregatorPerfTest, ManySurfacesManyQuadsOpaque_100) {
+  RunTest(100, 100, 1.f, true, false, "(100 Surfaces, 100 quads each)");
+}
+
+TEST_F(SurfaceAggregatorPerfTest, ManySurfacesManyQuadsOpaque_300) {
+  RunTest(300, 100, 1.f, true, false, "(300 Surfaces, 100 quads each)");
 }
 
 TEST_F(SurfaceAggregatorPerfTest, ManySurfacesTransparent) {

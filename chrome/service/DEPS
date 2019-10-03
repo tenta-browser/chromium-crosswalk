@@ -1,11 +1,13 @@
 include_rules = [
   "+chrome/grit",
-  "+components/data_use_measurement/core",
+  "+chrome/services/printing/public",
+  "+components/language/core/browser",
+  "+components/language/core/common",
   "+components/network_session_configurator/common",
   "+components/prefs",
   "+components/version_info",
-  "+mojo/edk/embedder",
+  "+content/public/app",
+  "+mojo/core/embedder",
+  "+services/network/public/cpp",
   "+sandbox/win/src",
-  "+services/service_manager/public",
-  "+services/service_manager/sandbox",
 ]

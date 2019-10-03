@@ -17,14 +17,11 @@
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "base/supports_user_data.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/wifi/wifi_service.h"
-#include "content/public/browser/utility_process_host.h"
-#include "content/public/browser/utility_process_host_client.h"
 #include "extensions/browser/api/networking_private/networking_private_delegate.h"
-#include "net/base/network_change_notifier.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 
 namespace base {
 class SequencedTaskRunner;
@@ -38,7 +35,7 @@ namespace extensions {
 // WiFiService on the worker thread. Created and called from the UI thread.
 class NetworkingPrivateServiceClient
     : public NetworkingPrivateDelegate,
-      net::NetworkChangeNotifier::NetworkChangeObserver {
+      network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
   // Takes ownership of |wifi_service| which is accessed and deleted on the
   // worker thread. The deletion task is posted from the destructor.
@@ -120,9 +117,8 @@ class NetworkingPrivateServiceClient
   void AddObserver(NetworkingPrivateDelegateObserver* observer) override;
   void RemoveObserver(NetworkingPrivateDelegateObserver* observer) override;
 
-  // NetworkChangeNotifier::NetworkChangeObserver implementation.
-  void OnNetworkChanged(
-      net::NetworkChangeNotifier::ConnectionType type) override;
+  // NetworkConnectionTracker::NetworkConnectionObserver implementation.
+  void OnConnectionChanged(network::mojom::ConnectionType type) override;
 
  private:
   // Callbacks to extension api function objects. Keep reference to API object
@@ -177,7 +173,7 @@ class NetworkingPrivateServiceClient
   // Callbacks to run when callback is called from WiFiService.
   ServiceCallbacksMap callbacks_map_;
   // Observers to Network Events.
-  base::ObserverList<NetworkingPrivateDelegateObserver>
+  base::ObserverList<NetworkingPrivateDelegateObserver>::Unchecked
       network_events_observers_;
   // Interface to WiFiService. Used and deleted on the worker thread.
   std::unique_ptr<wifi::WiFiService> wifi_service_;

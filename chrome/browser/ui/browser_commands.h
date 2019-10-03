@@ -8,18 +8,15 @@
 #include <string>
 #include <vector>
 
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "content/public/common/page_zoom.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "ui/base/window_open_disposition.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/arc/intent_helper/arc_navigation_throttle.h"
-#include "chrome/browser/ui/browser_dialogs.h"
-#endif
 
 class Browser;
 class CommandObserver;
@@ -36,7 +33,9 @@ namespace chrome {
 
 bool IsCommandEnabled(Browser* browser, int command);
 bool SupportsCommand(Browser* browser, int command);
-bool ExecuteCommand(Browser* browser, int command);
+bool ExecuteCommand(Browser* browser,
+                    int command,
+                    base::TimeTicks time_stamp = base::TimeTicks::Now());
 bool ExecuteCommandWithDisposition(Browser* browser,
                                    int command,
                                    WindowOpenDisposition disposition);
@@ -65,7 +64,7 @@ bool CanGoBack(const Browser* browser);
 void GoBack(Browser* browser, WindowOpenDisposition disposition);
 bool CanGoForward(const Browser* browser);
 void GoForward(Browser* browser, WindowOpenDisposition disposition);
-bool NavigateToIndexWithDisposition(Browser* browser,
+void NavigateToIndexWithDisposition(Browser* browser,
                                     int index,
                                     WindowOpenDisposition disposition);
 void Reload(Browser* browser, WindowOpenDisposition disposition);
@@ -75,7 +74,7 @@ void Home(Browser* browser, WindowOpenDisposition disposition);
 void OpenCurrentURL(Browser* browser);
 void Stop(Browser* browser);
 void NewWindow(Browser* browser);
-void NewIncognitoWindow(Browser* browser);
+void NewIncognitoWindow(Profile* profile);
 void CloseWindow(Browser* browser);
 void NewTab(Browser* browser);
 void CloseTab(Browser* browser);
@@ -83,14 +82,26 @@ bool CanZoomIn(content::WebContents* contents);
 bool CanZoomOut(content::WebContents* contents);
 bool CanResetZoom(content::WebContents* contents);
 void RestoreTab(Browser* browser);
-TabStripModelDelegate::RestoreTabType GetRestoreTabType(
-    const Browser* browser);
-void SelectNextTab(Browser* browser);
-void SelectPreviousTab(Browser* browser);
+TabStripModelDelegate::RestoreTabType GetRestoreTabType(const Browser* browser);
+void SelectNextTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
+void SelectPreviousTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
 void MoveTabNext(Browser* browser);
 void MoveTabPrevious(Browser* browser);
-void SelectNumberedTab(Browser* browser, int index);
-void SelectLastTab(Browser* browser);
+void SelectNumberedTab(
+    Browser* browser,
+    int index,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
+void SelectLastTab(
+    Browser* browser,
+    TabStripModel::UserGestureDetails gesture_detail =
+        TabStripModel::UserGestureDetails(TabStripModel::GestureType::kOther));
 void DuplicateTab(Browser* browser);
 bool CanDuplicateTab(const Browser* browser);
 content::WebContents* DuplicateTabAt(Browser* browser, int index);
@@ -105,17 +116,19 @@ bool CanBookmarkCurrentPage(const Browser* browser);
 void BookmarkAllTabs(Browser* browser);
 bool CanBookmarkAllTabs(const Browser* browser);
 void SaveCreditCard(Browser* browser);
+void MigrateLocalCards(Browser* browser);
 void Translate(Browser* browser);
 void ManagePasswordsForPage(Browser* browser);
+void SendTabToSelfFromPageAction(Browser* browser);
 void SavePage(Browser* browser);
 bool CanSavePage(const Browser* browser);
 void ShowFindBar(Browser* browser);
 void Print(Browser* browser);
 bool CanPrint(Browser* browser);
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
 void BasicPrint(Browser* browser);
 bool CanBasicPrint(Browser* browser);
-#endif  // ENABLE_BASIC_PRINTING
+#endif  // ENABLE_PRINTING
 bool CanRouteMedia(Browser* browser);
 void RouteMedia(Browser* browser);
 void EmailPageLocation(Browser* browser);
@@ -125,13 +138,15 @@ void Find(Browser* browser);
 void FindNext(Browser* browser);
 void FindPrevious(Browser* browser);
 void FindInPage(Browser* browser, bool find_next, bool forward_direction);
+bool CanCloseFind(Browser* browser);
+void CloseFind(Browser* browser);
 void Zoom(Browser* browser, content::PageZoom zoom);
 void FocusToolbar(Browser* browser);
 void FocusLocationBar(Browser* browser);
 void FocusSearch(Browser* browser);
 void FocusAppMenu(Browser* browser);
 void FocusBookmarksToolbar(Browser* browser);
-void FocusInfobars(Browser* browser);
+void FocusInactivePopupForAccessibility(Browser* browser);
 void FocusNextPane(Browser* browser);
 void FocusPreviousPane(Browser* browser);
 void ToggleDevToolsWindow(Browser* browser, DevToolsToggleAction action);
@@ -142,26 +157,29 @@ void ToggleBookmarkBar(Browser* browser);
 void ShowAppMenu(Browser* browser);
 void ShowAvatarMenu(Browser* browser);
 void OpenUpdateChromeDialog(Browser* browser);
-void DistillCurrentPage(Browser* browser);
+void ToggleDistilledView(Browser* browser);
 bool CanRequestTabletSite(content::WebContents* current_tab);
 bool IsRequestingTabletSite(Browser* browser);
 void ToggleRequestTabletSite(Browser* browser);
+// Overwrite the user agent's OS with Android OS so that the web content is
+// using its mobile version layout. Note it won't take effect until the web
+// contents is reloaded.
+void SetAndroidOsForTabletSite(content::WebContents* current_tab);
 void ToggleFullscreenMode(Browser* browser);
 void ClearCache(Browser* browser);
 bool IsDebuggerAttachedToCurrentTab(Browser* browser);
 void CopyURL(Browser* browser);
-void OpenInChrome(Browser* browser);
-#if defined(OS_CHROMEOS)
-void QueryAndDisplayArcApps(
-    const Browser* browser,
-    const std::vector<arc::ArcNavigationThrottle::AppInfo>& app_info,
-    IntentPickerResponse callback);
-void SetIntentPickerViewVisibility(Browser* browser, bool visible);
-#endif  // defined(OS_CHROMEOS)
-
+// Moves the WebContents of a hosted app Browser to a tabbed Browser. Returns
+// the tabbed Browser.
+Browser* OpenInChrome(Browser* hosted_app_browser);
 bool CanViewSource(const Browser* browser);
 
-void CreateBookmarkAppFromCurrentWebContents(Browser* browser);
+// Initiates user flow for creating a bookmark app for the current page.
+// Will install a PWA hosted app if the site meets installability requirements
+// (see |AppBannerManager::PerformInstallableCheck|) unless |force_shortcut_app|
+// is true.
+void CreateBookmarkAppFromCurrentWebContents(Browser* browser,
+                                             bool force_shortcut_app);
 bool CanCreateBookmarkApp(const Browser* browser);
 
 }  // namespace chrome

@@ -6,10 +6,10 @@
 
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "content/browser/accessibility/accessibility_flags.h"
+#include "content/browser/accessibility/accessibility_buildflags.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 
 namespace content {
 
@@ -22,7 +22,7 @@ BrowserAccessibilityPosition::Clone() const {
   return AXPositionInstance(new BrowserAccessibilityPosition(*this));
 }
 
-base::string16 BrowserAccessibilityPosition::GetInnerText() const {
+base::string16 BrowserAccessibilityPosition::GetText() const {
   if (IsNullPosition())
     return base::string16();
   DCHECK(GetAnchor());
@@ -36,7 +36,7 @@ void BrowserAccessibilityPosition::AnchorChild(int child_index,
   DCHECK(child_id);
 
   if (!GetAnchor() || child_index < 0 || child_index >= AnchorChildCount()) {
-    *tree_id = INVALID_TREE_ID;
+    *tree_id = ui::AXTreeIDUnknown();
     *child_id = INVALID_ANCHOR_ID;
     return;
   }
@@ -64,8 +64,19 @@ int BrowserAccessibilityPosition::AnchorChildCount() const {
 }
 
 int BrowserAccessibilityPosition::AnchorIndexInParent() const {
-  return GetAnchor() ? static_cast<int>(GetAnchor()->GetIndexInParent())
+  return GetAnchor() ? GetAnchor()->GetIndexInParent()
                      : AXPosition::INVALID_INDEX;
+}
+
+base::stack<BrowserAccessibility*>
+BrowserAccessibilityPosition::GetAncestorAnchors() const {
+  base::stack<BrowserAccessibility*> anchors;
+  BrowserAccessibility* current_anchor = GetAnchor();
+  while (current_anchor) {
+    anchors.push(current_anchor);
+    current_anchor = current_anchor->PlatformGetParent();
+  }
+  return anchors;
 }
 
 void BrowserAccessibilityPosition::AnchorParent(AXTreeID* tree_id,
@@ -74,7 +85,7 @@ void BrowserAccessibilityPosition::AnchorParent(AXTreeID* tree_id,
   DCHECK(parent_id);
 
   if (!GetAnchor() || !GetAnchor()->PlatformGetParent()) {
-    *tree_id = AXPosition::INVALID_TREE_ID;
+    *tree_id = ui::AXTreeIDUnknown();
     *parent_id = AXPosition::INVALID_ANCHOR_ID;
     return;
   }
@@ -87,7 +98,7 @@ void BrowserAccessibilityPosition::AnchorParent(AXTreeID* tree_id,
 BrowserAccessibility* BrowserAccessibilityPosition::GetNodeInTree(
     AXTreeID tree_id,
     int32_t node_id) const {
-  if (tree_id == AXPosition::INVALID_TREE_ID ||
+  if (tree_id == ui::AXTreeIDUnknown() ||
       node_id == AXPosition::INVALID_ANCHOR_ID) {
     return nullptr;
   }
@@ -96,12 +107,6 @@ BrowserAccessibility* BrowserAccessibilityPosition::GetNodeInTree(
   if (!manager)
     return nullptr;
   return manager->GetFromID(node_id);
-}
-
-int BrowserAccessibilityPosition::MaxTextOffset() const {
-  if (IsNullPosition())
-    return INVALID_OFFSET;
-  return static_cast<int>(GetInnerText().length());
 }
 
 // On some platforms, most objects are represented in the text of their parents
@@ -123,27 +128,70 @@ int BrowserAccessibilityPosition::MaxTextOffsetInParent() const {
 #endif
 }
 
+bool BrowserAccessibilityPosition::IsInLineBreak() const {
+  if (IsNullPosition())
+    return false;
+  DCHECK(GetAnchor());
+  return GetAnchor()->IsLineBreakObject();
+}
+
+bool BrowserAccessibilityPosition::IsInTextObject() const {
+  if (IsNullPosition())
+    return false;
+  DCHECK(GetAnchor());
+  return GetAnchor()->IsTextOnlyObject();
+}
+
 bool BrowserAccessibilityPosition::IsInWhiteSpace() const {
   if (IsNullPosition())
     return false;
-
   DCHECK(GetAnchor());
   return GetAnchor()->IsLineBreakObject() ||
-         base::ContainsOnlyChars(GetInnerText(), base::kWhitespaceUTF16);
+         base::ContainsOnlyChars(GetText(), base::kWhitespaceUTF16);
+}
+
+bool BrowserAccessibilityPosition::IsInLineBreakingObject() const {
+  if (IsNullPosition())
+    return false;
+  DCHECK(GetAnchor());
+  return GetAnchor()->GetBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject);
+}
+
+ax::mojom::Role BrowserAccessibilityPosition::GetRole() const {
+  if (IsNullPosition())
+    return ax::mojom::Role::kNone;
+  DCHECK(GetAnchor());
+  return GetAnchor()->GetRole();
+}
+
+ui::AXNodeTextStyles BrowserAccessibilityPosition::GetTextStyles() const {
+  // Check either the current anchor or its parent for text styles.
+  ui::AXNodeTextStyles current_anchor_text_styles =
+      !IsNullPosition() ? GetAnchor()->GetData().GetTextStyles()
+                        : ui::AXNodeTextStyles();
+  if (current_anchor_text_styles.IsUnset()) {
+    AXPositionInstance parent = CreateParentPosition();
+    if (!parent->IsNullPosition())
+      return parent->GetAnchor()->GetData().GetTextStyles();
+  }
+  return current_anchor_text_styles;
 }
 
 std::vector<int32_t> BrowserAccessibilityPosition::GetWordStartOffsets() const {
   if (IsNullPosition())
     return std::vector<int32_t>();
   DCHECK(GetAnchor());
-  return GetAnchor()->GetIntListAttribute(ui::AX_ATTR_WORD_STARTS);
+  return GetAnchor()->GetIntListAttribute(
+      ax::mojom::IntListAttribute::kWordStarts);
 }
 
 std::vector<int32_t> BrowserAccessibilityPosition::GetWordEndOffsets() const {
   if (IsNullPosition())
     return std::vector<int32_t>();
   DCHECK(GetAnchor());
-  return GetAnchor()->GetIntListAttribute(ui::AX_ATTR_WORD_ENDS);
+  return GetAnchor()->GetIntListAttribute(
+      ax::mojom::IntListAttribute::kWordEnds);
 }
 
 int32_t BrowserAccessibilityPosition::GetNextOnLineID(int32_t node_id) const {
@@ -151,8 +199,8 @@ int32_t BrowserAccessibilityPosition::GetNextOnLineID(int32_t node_id) const {
     return INVALID_ANCHOR_ID;
   BrowserAccessibility* node = GetNodeInTree(tree_id(), node_id);
   int next_on_line_id;
-  if (!node ||
-      !node->GetIntAttribute(ui::AX_ATTR_NEXT_ON_LINE_ID, &next_on_line_id)) {
+  if (!node || !node->GetIntAttribute(ax::mojom::IntAttribute::kNextOnLineId,
+                                      &next_on_line_id)) {
     return INVALID_ANCHOR_ID;
   }
   return static_cast<int32_t>(next_on_line_id);
@@ -164,8 +212,9 @@ int32_t BrowserAccessibilityPosition::GetPreviousOnLineID(
     return INVALID_ANCHOR_ID;
   BrowserAccessibility* node = GetNodeInTree(tree_id(), node_id);
   int previous_on_line_id;
-  if (!node || !node->GetIntAttribute(ui::AX_ATTR_PREVIOUS_ON_LINE_ID,
-                                      &previous_on_line_id)) {
+  if (!node ||
+      !node->GetIntAttribute(ax::mojom::IntAttribute::kPreviousOnLineId,
+                             &previous_on_line_id)) {
     return INVALID_ANCHOR_ID;
   }
   return static_cast<int32_t>(previous_on_line_id);

@@ -1,10 +1,11 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
 '''The <structure> element.
 '''
+
+from __future__ import print_function
 
 import os
 import platform
@@ -18,15 +19,12 @@ from grit.node import variant
 import grit.gather.admin_template
 import grit.gather.chrome_html
 import grit.gather.chrome_scaled_image
-import grit.gather.igoogle_strings
-import grit.gather.muppet_strings
 import grit.gather.policy_json
 import grit.gather.rc
 import grit.gather.tr_html
 import grit.gather.txt
 
 import grit.format.rc
-import grit.format.rc_header
 
 # Type of the gatherer to use for each type attribute
 _GATHERERS = {
@@ -35,9 +33,7 @@ _GATHERERS = {
   'chrome_html'         : grit.gather.chrome_html.ChromeHtml,
   'chrome_scaled_image' : grit.gather.chrome_scaled_image.ChromeScaledImage,
   'dialog'              : grit.gather.rc.Dialog,
-  'igoogle'             : grit.gather.igoogle_strings.IgoogleStrings,
   'menu'                : grit.gather.rc.Menu,
-  'muppet'              : grit.gather.muppet_strings.MuppetStrings,
   'rcdata'              : grit.gather.rc.RCData,
   'tr_html'             : grit.gather.tr_html.TrHtml,
   'txt'                 : grit.gather.txt.TxtFile,
@@ -151,6 +147,7 @@ class StructureNode(base.Node):
              'sconsdep' : 'false',
              'variables': '',
              'compress': 'false',
+             'use_base_dir': 'true',
              }
 
   def IsExcludedFromRc(self):
@@ -191,32 +188,44 @@ class StructureNode(base.Node):
       return '\r'
     else:
       raise exception.UnexpectedAttribute(
-        "Attribute 'line_end' must be one of 'unix' (default), 'windows' or 'mac'")
+        "Attribute 'line_end' must be one of 'unix' (default), 'windows' or "
+        "'mac'")
 
   def GetCliques(self):
     return self.gatherer.GetCliques()
 
-  def GetDataPackPair(self, lang, encoding):
-    """Returns a (id, string|None) pair that represents the resource id and raw
-    bytes of the data (or None if no resource is generated).  This is used to
-    generate the data pack data file.
-    """
-    from grit.format import rc_header
-    id_map = rc_header.GetIds(self.GetRoot())
-    id = id_map[self.GetTextualIds()[0]]
+  def GetDataPackValue(self, lang, encoding):
+    """Returns a str represenation for a data_pack entry."""
     if self.ExpandVariables():
       text = self.gatherer.GetText()
       data = util.Encode(self._Substitute(text), encoding)
     else:
       data = self.gatherer.GetData(lang, encoding)
-    return id, self.CompressDataIfNeeded(data)
+    return self.CompressDataIfNeeded(data)
 
   def GetHtmlResourceFilenames(self):
     """Returns a set of all filenames inlined by this node."""
     return self.gatherer.GetHtmlResourceFilenames()
 
   def GetInputPath(self):
-    return self.gatherer.GetInputPath()
+    path = self.gatherer.GetInputPath()
+    if path is None:
+      return path
+
+    # Do not mess with absolute paths, that would make them invalid.
+    if os.path.isabs(os.path.expandvars(path)):
+      return path
+
+    # We have no control over code that calls ToRealPath later, so convert
+    # the path to be relative against our basedir.
+    if self.attrs.get('use_base_dir', 'true') != 'true':
+      # Normalize the directory path to use the appropriate OS separator.
+      # GetBaseDir() may return paths\like\this or paths/like/this, since it is
+      # read from the base_dir attribute in the grd file.
+      norm_base_dir = util.normpath(self.GetRoot().GetBaseDir())
+      return os.path.relpath(path, norm_base_dir)
+
+    return path
 
   def GetTextualIds(self):
     if not hasattr(self, 'gatherer'):
@@ -228,8 +237,8 @@ class StructureNode(base.Node):
 
   def RunPreSubstitutionGatherer(self, debug=False):
     if debug:
-      print 'Running gatherer %s for file %s' % (
-          str(type(self.gatherer)), self.GetInputPath())
+      print('Running gatherer %s for file %s' %
+            (type(self.gatherer), self.GetInputPath()))
 
     # Note: Parse() is idempotent, therefore this method is also.
     self.gatherer.Parse()
@@ -248,7 +257,7 @@ class StructureNode(base.Node):
 
   def HasFileForLanguage(self):
     return self.attrs['type'] in ['tr_html', 'admin_template', 'txt',
-                                  'muppet', 'igoogle', 'chrome_scaled_image',
+                                  'chrome_scaled_image',
                                   'chrome_html']
 
   def ExpandVariables(self):
@@ -344,12 +353,6 @@ class StructureNode(base.Node):
   def IsResourceMapSource(self):
     return True
 
-  def GeneratesResourceMapEntry(self, output_all_resource_defines,
-                                is_active_descendant):
-    if output_all_resource_defines:
-      return True
-    return is_active_descendant
-
   @staticmethod
   def Construct(parent, name, type, file, encoding='cp1252'):
     '''Creates a new node which is a child of 'parent', with attributes set
@@ -373,4 +376,3 @@ class StructureNode(base.Node):
     assert hasattr(self, 'gatherer')
     if self.ExpandVariables():
       self.gatherer.SubstituteMessages(substituter)
-

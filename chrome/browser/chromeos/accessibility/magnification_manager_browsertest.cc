@@ -7,6 +7,7 @@
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/shell.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "chrome/browser/browser_process.h"
@@ -20,7 +21,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_prefs/user_prefs.h"
@@ -318,49 +319,6 @@ IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, LoginFullToUnset) {
   EXPECT_FALSE(GetScreenMagnifierEnabledFromPref());
 }
 
-IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, LoginAsNewUserOff) {
-  // Confirms that magnifier is disabled on the login screen.
-  EXPECT_FALSE(IsMagnifierEnabled());
-
-  // Disables magnifier on login screen explicitly.
-  SetMagnifierEnabled(false);
-
-  // Logs in (but the session is not started yet).
-  session_manager::SessionManager::Get()->CreateSession(test_account_id_,
-                                                        kTestUserName, false);
-
-  // Confirms that magnifier is keeping disabled.
-  EXPECT_FALSE(IsMagnifierEnabled());
-
-  StartUserSession(test_account_id_);
-
-  // Confirms that magnifier is keeping disabled.
-  EXPECT_FALSE(IsMagnifierEnabled());
-  EXPECT_FALSE(GetScreenMagnifierEnabledFromPref());
-}
-
-IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, LoginAsNewUserFull) {
-  // Enables magnifier on login screen.
-  SetMagnifierEnabled(true);
-  SetFullScreenMagnifierScale(2.5);
-  EXPECT_TRUE(IsMagnifierEnabled());
-  EXPECT_EQ(2.5, GetFullScreenMagnifierScale());
-
-  // Logs in (but the session is not started yet).
-  session_manager::SessionManager::Get()->CreateSession(test_account_id_,
-                                                        kTestUserName, false);
-
-  // Confirms that magnifier is keeping enabled.
-  EXPECT_TRUE(IsMagnifierEnabled());
-
-  StartUserSession(test_account_id_);
-
-  // Confirms that magnifier keeps enabled.
-  EXPECT_TRUE(IsMagnifierEnabled());
-  EXPECT_EQ(2.5, GetFullScreenMagnifierScale());
-  EXPECT_TRUE(GetScreenMagnifierEnabledFromPref());
-}
-
 IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, LoginAsNewUserUnset) {
   // Confirms that magnifier is disabled on the login screen.
   EXPECT_FALSE(IsMagnifierEnabled());
@@ -440,7 +398,7 @@ IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, InvalidScalePref) {
   EXPECT_TRUE(IsMagnifierEnabled());
 
   // Confirms that the actual scale is set to the maximum scale.
-  EXPECT_EQ(4.0, GetFullScreenMagnifierScale());
+  EXPECT_EQ(20.0, GetFullScreenMagnifierScale());
 }
 
 IN_PROC_BROWSER_TEST_F(MagnificationManagerTest, MagnificationObserver) {

@@ -6,17 +6,19 @@
 
 #include <memory>
 
-#include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shelf_model.h"
-#include "ash/shelf/app_list_button.h"
+#include "ash/shelf/home_button.h"
 #include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_bubble.h"
 #include "ash/shelf/shelf_view.h"
 #include "ash/shelf/shelf_view_test_api.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/collision_detection/collision_detection_utils.h"
+#include "base/run_loop.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
@@ -29,21 +31,19 @@ class ShelfTooltipManagerTest : public AshTestBase {
   void SetUp() override {
     AshTestBase::SetUp();
     shelf_view_ = GetPrimaryShelf()->GetShelfViewForTesting();
-    tooltip_manager_ = ShelfViewTestAPI(shelf_view_).tooltip_manager();
+    ShelfViewTestAPI test_api(shelf_view_);
+    test_api.AddItem(TYPE_PINNED_APP);
+    tooltip_manager_ = test_api.tooltip_manager();
     tooltip_manager_->set_timer_delay_for_test(0);
   }
 
   bool IsTimerRunning() { return tooltip_manager_->timer_.IsRunning(); }
   views::Widget* GetTooltip() { return tooltip_manager_->bubble_->GetWidget(); }
 
-  std::unique_ptr<views::Widget> CreateTestWidget() {
-    std::unique_ptr<views::Widget> widget = std::make_unique<views::Widget>();
-    views::Widget::InitParams params;
-    params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-    params.context = CurrentContext();
-    widget->Init(params);
-    widget->Show();
-    return widget;
+  void ShowTooltipForFirstAppIcon() {
+    EXPECT_GE(shelf_view_->number_of_visible_apps(), 1);
+    tooltip_manager_->ShowTooltip(
+        shelf_view_->first_visible_button_for_testing());
   }
 
  protected:
@@ -55,14 +55,15 @@ class ShelfTooltipManagerTest : public AshTestBase {
 };
 
 TEST_F(ShelfTooltipManagerTest, ShowTooltip) {
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   EXPECT_TRUE(tooltip_manager_->IsVisible());
   EXPECT_FALSE(IsTimerRunning());
 }
 
 TEST_F(ShelfTooltipManagerTest, ShowTooltipWithDelay) {
   // ShowTooltipWithDelay should start the timer instead of showing immediately.
-  tooltip_manager_->ShowTooltipWithDelay(shelf_view_->GetAppListButton());
+  tooltip_manager_->ShowTooltipWithDelay(
+      shelf_view_->first_visible_button_for_testing());
   EXPECT_FALSE(tooltip_manager_->IsVisible());
   EXPECT_TRUE(IsTimerRunning());
   // TODO: Test that the delayed tooltip is shown, without flaky failures.
@@ -89,20 +90,19 @@ TEST_F(ShelfTooltipManagerTest, DoNotShowForInvalidView) {
   item.type = TYPE_PINNED_APP;
   const int index = model->Add(item);
   // Note: There's no easy way to correlate shelf a model index/id to its view.
-  tooltip_manager_->ShowTooltipWithDelay(
-      shelf_view_->child_at(shelf_view_->child_count() - 1));
+  tooltip_manager_->ShowTooltipWithDelay(shelf_view_->children().back());
   EXPECT_TRUE(IsTimerRunning());
 
   // Removing the view won't stop the timer, but the tooltip shouldn't be shown.
   model->RemoveItemAt(index);
   EXPECT_TRUE(IsTimerRunning());
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsTimerRunning());
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 }
 
 TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsHidden) {
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
 
   // Create a full-screen window to hide the shelf.
@@ -114,18 +114,19 @@ TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsHidden) {
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // Do not show the view if the shelf is hidden.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // ShowTooltipWithDelay doesn't even start the timer for the hidden shelf.
-  tooltip_manager_->ShowTooltipWithDelay(shelf_view_->GetAppListButton());
+  tooltip_manager_->ShowTooltipWithDelay(
+      shelf_view_->first_visible_button_for_testing());
   EXPECT_FALSE(IsTimerRunning());
 }
 
 TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsAutoHideHidden) {
   // Create a visible window so auto-hide behavior can actually hide the shelf.
   std::unique_ptr<views::Widget> widget = CreateTestWidget();
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
 
   GetPrimaryShelf()->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
@@ -133,18 +134,15 @@ TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsAutoHideHidden) {
   ASSERT_EQ(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS,
             GetPrimaryShelf()->auto_hide_behavior());
   ASSERT_EQ(SHELF_AUTO_HIDE_HIDDEN, GetPrimaryShelf()->GetAutoHideState());
-
-  // Tooltip visibility change for auto hide may take time.
-  EXPECT_TRUE(tooltip_manager_->IsVisible());
-  RunAllPendingInMessageLoop();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // Do not show the view if the shelf is hidden.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // ShowTooltipWithDelay doesn't even run the timer for the hidden shelf.
-  tooltip_manager_->ShowTooltipWithDelay(shelf_view_->GetAppListButton());
+  tooltip_manager_->ShowTooltipWithDelay(
+      shelf_view_->first_visible_button_for_testing());
   EXPECT_FALSE(IsTimerRunning());
 
   // Close the window to show the auto-hide shelf; tooltips should now show.
@@ -155,89 +153,96 @@ TEST_F(ShelfTooltipManagerTest, HideWhenShelfIsAutoHideHidden) {
   ASSERT_EQ(SHELF_AUTO_HIDE_SHOWN, GetPrimaryShelf()->GetAutoHideState());
 
   // The tooltip should show for an auto-hide-shown shelf.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   EXPECT_TRUE(tooltip_manager_->IsVisible());
 
   // ShowTooltipWithDelay should run the timer for an auto-hide-shown shelf.
-  tooltip_manager_->ShowTooltipWithDelay(shelf_view_->GetAppListButton());
+  tooltip_manager_->ShowTooltipWithDelay(
+      shelf_view_->first_visible_button_for_testing());
   EXPECT_TRUE(IsTimerRunning());
 }
 
 TEST_F(ShelfTooltipManagerTest, HideForEvents) {
-  // TODO: investigate failure in mash. http://crbug.com/695563.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   gfx::Rect shelf_bounds = shelf_view_->GetBoundsInScreen();
 
   // Should hide if the mouse exits the shelf area.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.MoveMouseTo(shelf_bounds.CenterPoint());
-  generator.SendMouseExit();
+  generator->MoveMouseTo(shelf_bounds.CenterPoint());
+  generator->SendMouseExit();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // Should hide if the mouse is pressed in the shelf area.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.MoveMouseTo(shelf_bounds.CenterPoint());
-  generator.PressLeftButton();
+  generator->MoveMouseTo(shelf_bounds.CenterPoint());
+  generator->PressLeftButton();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // Should hide for touch events in the shelf.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.set_current_location(shelf_bounds.CenterPoint());
-  generator.PressTouch();
+  generator->set_current_screen_location(shelf_bounds.CenterPoint());
+  generator->PressTouch();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 
   // Should hide for gesture events in the shelf.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.GestureTapDownAndUp(shelf_bounds.CenterPoint());
+  generator->GestureTapDownAndUp(shelf_bounds.CenterPoint());
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 }
 
 TEST_F(ShelfTooltipManagerTest, HideForExternalEvents) {
-  // TODO: investigate failure in mash. http://crbug.com/695563.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
 
   // Should hide for touches outside the shelf.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.set_current_location(gfx::Point());
-  generator.PressTouch();
+  generator->set_current_screen_location(gfx::Point());
+  generator->PressTouch();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
-  generator.ReleaseTouch();
+  generator->ReleaseTouch();
 
   // Should hide for touch events on the tooltip.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.set_current_location(
+  generator->set_current_screen_location(
       GetTooltip()->GetWindowBoundsInScreen().CenterPoint());
-  generator.PressTouch();
+  generator->PressTouch();
   EXPECT_FALSE(tooltip_manager_->IsVisible());
-  generator.ReleaseTouch();
+  generator->ReleaseTouch();
 
   // Should hide for gestures outside the shelf.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.GestureTapDownAndUp(gfx::Point());
+  generator->GestureTapDownAndUp(gfx::Point());
   EXPECT_FALSE(tooltip_manager_->IsVisible());
 }
 
-TEST_F(ShelfTooltipManagerTest, DoNotHideForKeyEvents) {
-  ui::test::EventGenerator& generator = GetEventGenerator();
+TEST_F(ShelfTooltipManagerTest, KeyEvents) {
+  ui::test::EventGenerator* generator = GetEventGenerator();
 
-  // Should not hide for key events.
-  tooltip_manager_->ShowTooltip(shelf_view_->GetAppListButton());
+  // Should hide when 'Esc' is pressed.
+  ShowTooltipForFirstAppIcon();
   ASSERT_TRUE(tooltip_manager_->IsVisible());
-  generator.PressKey(ui::VKEY_A, ui::EF_NONE);
+  generator->PressKey(ui::VKEY_ESCAPE, ui::EF_NONE);
+  EXPECT_FALSE(tooltip_manager_->IsVisible());
+}
+
+TEST_F(ShelfTooltipManagerTest, ShelfTooltipDoesNotAffectPipWindow) {
+  ShowTooltipForFirstAppIcon();
   EXPECT_TRUE(tooltip_manager_->IsVisible());
+
+  auto display = display::Screen::GetScreen()->GetPrimaryDisplay();
+  auto tooltip_bounds = GetTooltip()->GetWindowBoundsInScreen();
+  tooltip_bounds.Intersect(CollisionDetectionUtils::GetMovementArea(display));
+  EXPECT_FALSE(tooltip_bounds.IsEmpty());
+  EXPECT_EQ(tooltip_bounds,
+            CollisionDetectionUtils::GetRestingPosition(
+                display, tooltip_bounds,
+                CollisionDetectionUtils::RelativePriority::kPictureInPicture));
 }
 
 }  // namespace ash

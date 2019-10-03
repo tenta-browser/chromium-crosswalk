@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media/router/media_router_dialog_controller.h"
+
 #include <memory>
 #include <vector>
 
-#include "chrome/browser/media/router/media_router_dialog_controller.h"
+#include "base/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/media_router/media_route.h"
-#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/media_source.h"
 #include "chrome/common/media_router/route_request_result.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/render_process_host.h"
@@ -46,9 +48,12 @@ class MockWebContentsDelegate : public content::WebContentsDelegate {
 
 class MediaRouterDialogControllerTest : public ChromeRenderViewHostTestHarness {
  public:
-  MOCK_METHOD2(RequestSuccess,
-               void(const content::PresentationInfo&, const MediaRoute&));
-  MOCK_METHOD1(RequestError, void(const content::PresentationError& error));
+  MOCK_METHOD3(RequestSuccess,
+               void(const blink::mojom::PresentationInfo&,
+                    mojom::RoutePresentationConnectionPtr,
+                    const MediaRoute&));
+  MOCK_METHOD1(RequestError,
+               void(const blink::mojom::PresentationError& error));
 
  protected:
   MediaRouterDialogControllerTest() {}
@@ -71,13 +76,15 @@ class MediaRouterDialogControllerTest : public ChromeRenderViewHostTestHarness {
 
   bool ShowMediaRouterDialogForPresentation() {
     return dialog_controller_->ShowMediaRouterDialogForPresentation(
-        content::PresentationRequest(
-            {1, 2}, {GURL("http://example.com"), GURL("http://example2.com")},
-            url::Origin::Create(GURL("http://google.com"))),
-        base::BindOnce(&MediaRouterDialogControllerTest::RequestSuccess,
-                       base::Unretained(this)),
-        base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
-                       base::Unretained(this)));
+        std::make_unique<StartPresentationContext>(
+            content::PresentationRequest(
+                {1, 2},
+                {GURL("http://example.com"), GURL("http://example2.com")},
+                url::Origin::Create(GURL("http://google.com"))),
+            base::BindOnce(&MediaRouterDialogControllerTest::RequestSuccess,
+                           base::Unretained(this)),
+            base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
+                           base::Unretained(this))));
   }
 
   std::unique_ptr<TestMediaRouterDialogController> dialog_controller_;
@@ -127,7 +134,7 @@ TEST_F(MediaRouterDialogControllerTest, ShowDialogForPresentation) {
 }
 
 TEST_F(MediaRouterDialogControllerTest, StartPresentationContext) {
-  auto context = base::MakeUnique<StartPresentationContext>(
+  auto context = std::make_unique<StartPresentationContext>(
       content::PresentationRequest(
           {1, 2}, {GURL("http://example.com"), GURL("http://example2.com")},
           url::Origin::Create(GURL("http://google.com"))),
@@ -136,13 +143,13 @@ TEST_F(MediaRouterDialogControllerTest, StartPresentationContext) {
       base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
                      base::Unretained(this)));
 
-  MediaRoute route("routeId", MediaSourceForTab(1), "sinkId", "Description",
-                   false, "", false);
+  MediaRoute route("routeId", MediaSource::ForTab(1), "sinkId", "Description",
+                   false, false);
   auto result = RouteRequestResult::FromSuccess(route, "presentationId");
 
-  EXPECT_CALL(*this, RequestSuccess(_, _)).Times(1);
+  EXPECT_CALL(*this, RequestSuccess(_, _, _)).Times(1);
   EXPECT_CALL(*this, RequestError(_)).Times(0);
-  StartPresentationContext::HandleRouteResponse(std::move(context), *result);
+  context->HandleRouteResponse(nullptr, *result);
 }
 
 }  // namespace media_router

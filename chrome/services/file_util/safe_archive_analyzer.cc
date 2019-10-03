@@ -7,14 +7,13 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
+#include "chrome/common/safe_browsing/rar_analyzer.h"
 #include "chrome/common/safe_browsing/zip_analyzer.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 
 #if defined(OS_MACOSX)
 #include "chrome/utility/safe_browsing/mac/dmg_analyzer.h"
 #endif
-
-namespace chrome {
 
 SafeArchiveAnalyzer::SafeArchiveAnalyzer(
     std::unique_ptr<service_manager::ServiceContextRef> service_ref)
@@ -46,4 +45,13 @@ void SafeArchiveAnalyzer::AnalyzeDmgFile(base::File dmg_file,
 #endif
 }
 
-}  // namespace chrome
+void SafeArchiveAnalyzer::AnalyzeRarFile(base::File rar_file,
+                                         base::File temporary_file,
+                                         AnalyzeRarFileCallback callback) {
+  DCHECK(rar_file.IsValid());
+
+  safe_browsing::ArchiveAnalyzerResults results;
+  safe_browsing::rar_analyzer::AnalyzeRarFile(
+      std::move(rar_file), std::move(temporary_file), &results);
+  std::move(callback).Run(results);
+}

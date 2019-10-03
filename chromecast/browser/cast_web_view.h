@@ -5,122 +5,128 @@
 #ifndef CHROMECAST_BROWSER_CAST_WEB_VIEW_H_
 #define CHROMECAST_BROWSER_CAST_WEB_VIEW_H_
 
-#include <memory>
+#include <cstdint>
 #include <string>
 
-#include "base/memory/weak_ptr.h"
+#include "base/macros.h"
+#include "base/observer_list.h"
+#include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "chromecast/browser/cast_content_window.h"
+#include "chromecast/browser/cast_web_contents.h"
+#include "chromecast/graphics/cast_window_manager.h"
+#include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_delegate.h"
-#include "content/public/browser/web_contents_observer.h"
-
-namespace content {
-class BrowserContext;
-class RenderViewHost;
-class SiteInstance;
-}
+#include "url/gurl.h"
 
 namespace chromecast {
 
-class CastWebContentsManager;
 class CastWindowManager;
 
-// A simplified interface for loading and displaying WebContents in cast_shell.
-class CastWebView : content::WebContentsObserver, content::WebContentsDelegate {
- public:
-  class Delegate : public shell::CastContentWindow::Delegate {
-   public:
-    // Called when the page has stopped. ie: A 404 occured when loading the page
-    // or if the render process crashes. |error_code| will return a net::Error
-    // describing the failure, or net::OK if the page closed naturally.
-    virtual void OnPageStopped(int error_code) = 0;
+using shell::VisibilityPriority;
 
-    // Called during WebContentsDelegate::LoadingStateChanged.
-    // |loading| indicates if web_contents_ IsLoading or not.
-    virtual void OnLoadingStateChanged(bool loading) = 0;
+// A simplified interface for loading and displaying WebContents in cast_shell.
+class CastWebView {
+ public:
+  class Delegate : public CastWebContents::Delegate,
+                   public shell::CastContentWindow::Delegate {
+   public:
+    // Invoked by CastWebView when WebContentsDelegate::RunBluetoothChooser is
+    // called. Returns a BluetoothChooser, a class used to solicit bluetooth
+    // device selection from the user for WebBluetooth applications. If a
+    // delegate does not provide an implementation, WebBluetooth will not be
+    // supported for that CastWebView.
+    virtual std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
+        content::RenderFrameHost* frame,
+        const content::BluetoothChooser::EventHandler& event_handler);
   };
 
-  // |delegate| and |browser_context| should outlive the lifetime of this
-  // object.
-  CastWebView(Delegate* delegate,
-              CastWebContentsManager* web_contents_manager,
-              content::BrowserContext* browser_context,
-              scoped_refptr<content::SiteInstance> site_instance,
-              bool transparent,
-              bool allow_media_access,
-              bool is_headless);
-  ~CastWebView() override;
+  // Observer interface for tracking CastWebView lifetime.
+  class Observer {
+   public:
+    // Notifies that |web_view| is being destroyed. |web_view| should be assumed
+    // invalid after this method returns.
+    virtual void OnPageDestroyed(CastWebView* web_view) {}
 
-  shell::CastContentWindow* window() const { return window_.get(); }
+   protected:
+    virtual ~Observer() {}
+  };
 
-  content::WebContents* web_contents() const { return web_contents_.get(); }
+  // The parameters used to create a CastWebView instance. Passed to
+  // CastWebContentsManager::CreateWebView().
+  struct CreateParams {
+    // The delegate for the CastWebView. Must be non-null.
+    Delegate* delegate = nullptr;
+
+    // Parameters for initializing CastWebContents. These will be passed as-is
+    // to a CastWebContents instance, which should be used by all CastWebView
+    // implementations.
+    CastWebContents::InitParams web_contents_params;
+
+    // Parameters for creating the content window for this CastWebView.
+    shell::CastContentWindow::CreateParams window_params;
+
+    // Identifies the activity that is hosted by this CastWebView.
+    std::string activity_id = "";
+
+    // Whether this CastWebView is granted media access.
+    bool allow_media_access = false;
+
+    // Enable/Force 720p resolution for this CastWebView instance.
+    bool force_720p_resolution = false;
+
+    // Whether this CastWebView should be managed by web ui window manager.
+    bool managed = true;
+
+    // Prefix for JS console logs. This can be used to help identify the source
+    // of console log messages.
+    std::string log_prefix = "";
+
+    CreateParams();
+    CreateParams(const CreateParams& other);
+  };
+
+  CastWebView();
+  virtual ~CastWebView();
+
+  virtual shell::CastContentWindow* window() const = 0;
+
+  virtual content::WebContents* web_contents() const = 0;
+
+  virtual CastWebContents* cast_web_contents() = 0;
 
   // Navigates to |url|. The loaded page will be preloaded if MakeVisible has
   // not been called on the object.
-  void LoadUrl(GURL url);
+  virtual void LoadUrl(GURL url) = 0;
 
   // Begins the close process for this page (ie. triggering document.onunload).
   // A consumer of the class can be notified when the process has been finished
   // via Delegate::OnPageStopped(). The page will be torn down after
   // |shutdown_delay| has elapsed, or sooner if required.
-  void ClosePage(const base::TimeDelta& shutdown_delay);
+  virtual void ClosePage(const base::TimeDelta& shutdown_delay) = 0;
 
-  // Makes the page visible to the user.
-  void Show(CastWindowManager* window_manager);
+  // Adds the page to the window manager and makes it visible to the user if
+  // |is_visible| is true. |z_order| determines how this window is layered in
+  // relationt other windows (higher value == more foreground).
+  virtual void InitializeWindow(CastWindowManager* window_manager,
+                                CastWindowManager::WindowId z_order,
+                                VisibilityPriority initial_priority) = 0;
+
+  // Allows the page to be shown on the screen. The page cannot be shown on the
+  // screen until this is called.
+  virtual void GrantScreenAccess() = 0;
+
+  // Prevents the page from being shown on the screen until GrantScreenAccess()
+  // is called.
+  virtual void RevokeScreenAccess() = 0;
+
+  // Observer interface:
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
  private:
-  // WebContentsObserver implementation:
-  void RenderProcessGone(base::TerminationStatus status) override;
-  void RenderViewCreated(content::RenderViewHost* render_view_host) override;
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override;
-  void DidFailLoad(content::RenderFrameHost* render_frame_host,
-                   const GURL& validated_url,
-                   int error_code,
-                   const base::string16& error_description) override;
-  void DidFirstVisuallyNonEmptyPaint() override;
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override;
-  void MediaStartedPlaying(const MediaPlayerInfo& media_info,
-                           const MediaPlayerId& id) override;
-  void MediaStoppedPlaying(
-      const MediaPlayerInfo& media_info,
-      const MediaPlayerId& id,
-      WebContentsObserver::MediaStoppedReason reason) override;
-
-  // WebContentsDelegate implementation:
-  content::WebContents* OpenURLFromTab(
-      content::WebContents* source,
-      const content::OpenURLParams& params) override;
-  void CloseContents(content::WebContents* source) override;
-  void LoadingStateChanged(content::WebContents* source,
-                           bool to_different_document) override;
-  void ActivateContents(content::WebContents* contents) override;
-  bool CheckMediaAccessPermission(content::WebContents* web_contents,
-                                  const GURL& security_origin,
-                                  content::MediaStreamType type) override;
-  void RequestMediaAccessPermission(
-      content::WebContents* web_contents,
-      const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback) override;
-#if defined(OS_ANDROID)
-  base::android::ScopedJavaLocalRef<jobject> GetContentVideoViewEmbedder()
-      override;
-#endif  // defined(OS_ANDROID)
-
-  Delegate* const delegate_;
-  CastWebContentsManager* const web_contents_manager_;
-  content::BrowserContext* const browser_context_;
-  const scoped_refptr<content::SiteInstance> site_instance_;
-  const bool transparent_;
-  std::unique_ptr<content::WebContents> web_contents_;
-  std::unique_ptr<shell::CastContentWindow> window_;
-  bool did_start_navigation_;
-  base::TimeDelta shutdown_delay_;
-  bool allow_media_access_;
-
-  base::WeakPtrFactory<CastWebView> weak_factory_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(CastWebView);
 };

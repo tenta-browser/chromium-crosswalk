@@ -3,15 +3,35 @@
 // found in the LICENSE file.
 
 cr.define('settings_people_page', function() {
+  /** @implements {settings.PeopleBrowserProxy} */
+  class TestPeopleBrowserProxy extends TestBrowserProxy {
+    constructor() {
+      super([
+        'openURL',
+      ]);
+    }
+
+    /** @override */
+    openURL(url) {
+      this.methodCalled('openURL', url);
+    }
+  }
+
   suite('ProfileInfoTests', function() {
-    var peoplePage = null;
-    var browserProxy = null;
-    var syncBrowserProxy = null;
+    /** @type {SettingsPeoplePageElement} */
+    let peoplePage = null;
+    /** @type {settings.ProfileInfoBrowserProxy} */
+    let browserProxy = null;
+    /** @type {settings.SyncBrowserProxy} */
+    let syncBrowserProxy = null;
 
     suiteSetup(function() {
-      // Force easy unlock off. Those have their own ChromeOS-only tests.
       loadTimeData.overrideValues({
-        easyUnlockAllowed: false,
+        // Force Dice off. Dice is tested in the DiceUITest suite.
+        diceEnabled: false,
+        // Force Unified Consent off. Unified Consent is tested in the
+        // UnifiedConsentUITest suite.
+        unifiedConsentEnabled: false,
       });
     });
 
@@ -24,63 +44,62 @@ cr.define('settings_people_page', function() {
 
       PolymerTest.clearBody();
       peoplePage = document.createElement('settings-people-page');
+      peoplePage.pageVisibility = settings.pageVisibility;
       document.body.appendChild(peoplePage);
+
+      return Promise
+          .all([
+            browserProxy.whenCalled('getProfileInfo'),
+            syncBrowserProxy.whenCalled('getSyncStatus')
+          ])
+          .then(function() {
+            Polymer.dom.flush();
+          });
     });
 
-    teardown(function() { peoplePage.remove(); });
+    teardown(function() {
+      peoplePage.remove();
+    });
 
     test('GetProfileInfo', function() {
-      return Promise.all([browserProxy.whenCalled('getProfileInfo'),
-                          syncBrowserProxy.whenCalled('getSyncStatus')])
-          .then(function() {
-        Polymer.dom.flush();
-        assertEquals(browserProxy.fakeProfileInfo.name,
-                     peoplePage.$$('#profile-name').textContent.trim());
-        var bg = peoplePage.$$('#profile-icon').style.backgroundImage;
-        assertTrue(bg.includes(browserProxy.fakeProfileInfo.iconUrl));
+      assertEquals(
+          browserProxy.fakeProfileInfo.name,
+          peoplePage.$$('#profile-name').textContent.trim());
+      const bg = peoplePage.$$('#profile-icon').style.backgroundImage;
+      assertTrue(bg.includes(browserProxy.fakeProfileInfo.iconUrl));
 
-        var iconDataUrl = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEA' +
-            'LAAAAAABAAEAAAICTAEAOw==';
-        cr.webUIListenerCallback(
-          'profile-info-changed',
-          {name: 'pushedName', iconUrl: iconDataUrl});
+      const iconDataUrl = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEA' +
+          'LAAAAAABAAEAAAICTAEAOw==';
+      cr.webUIListenerCallback(
+          'profile-info-changed', {name: 'pushedName', iconUrl: iconDataUrl});
 
-        Polymer.dom.flush();
-        assertEquals('pushedName',
-                     peoplePage.$$('#profile-name').textContent.trim());
-        var newBg = peoplePage.$$('#profile-icon').style.backgroundImage;
-        assertTrue(newBg.includes(iconDataUrl));
-      });
+      Polymer.dom.flush();
+      assertEquals(
+          'pushedName', peoplePage.$$('#profile-name').textContent.trim());
+      const newBg = peoplePage.$$('#profile-icon').style.backgroundImage;
+      assertTrue(newBg.includes(iconDataUrl));
     });
 
-    test('GetProfileManagesSupervisedUsers', function() {
-      return browserProxy.whenCalled('getProfileManagesSupervisedUsers').then(
-          function() {
-            Polymer.dom.flush();
-            assertFalse(!!peoplePage.$$('#manageSupervisedUsersContainer'));
-
-            cr.webUIListenerCallback(
-              'profile-manages-supervised-users-changed',
-              true);
-
-            Polymer.dom.flush();
-            assertTrue(!!peoplePage.$$('#manageSupervisedUsersContainer'));
-          });
+    // This test ensures when unifiedConsentEnabled and diceEnabled is false,
+    // the #sync-status row is shown instead of the #sync-setup row.
+    test('ShowCorrectSyncRow', function() {
+      sync_test_util.simulateSyncStatus({
+        signedIn: true,
+        syncSystemEnabled: true,
+      });
+      assertFalse(!!peoplePage.$$('#sync-setup'));
+      assertTrue(!!peoplePage.$$('#sync-status'));
     });
   });
 
   if (!cr.isChromeOS) {
     suite('SyncStatusTests', function() {
-      var peoplePage = null;
-      var browserProxy = null;
-      var profileInfoBrowserProxy = null;
-
-      suiteSetup(function() {
-        // Force easy unlock off. Those have their own ChromeOS-only tests.
-        loadTimeData.overrideValues({
-          easyUnlockAllowed: false,
-        });
-      });
+      /** @type {SettingsPeoplePageElement} */
+      let peoplePage = null;
+      /** @type {settings.SyncBrowserProxy} */
+      let browserProxy = null;
+      /** @type {settings.ProfileInfoBrowserProxy} */
+      let profileInfoBrowserProxy = null;
 
       setup(function() {
         browserProxy = new TestSyncBrowserProxy();
@@ -92,122 +111,154 @@ cr.define('settings_people_page', function() {
 
         PolymerTest.clearBody();
         peoplePage = document.createElement('settings-people-page');
+        peoplePage.pageVisibility = settings.pageVisibility;
         document.body.appendChild(peoplePage);
       });
 
-      teardown(function() { peoplePage.remove(); });
+      teardown(function() {
+        peoplePage.remove();
+      });
+
+      test('Toast', function() {
+        assertFalse(peoplePage.$.toast.open);
+        cr.webUIListenerCallback('sync-settings-saved');
+        assertTrue(peoplePage.$.toast.open);
+      });
+
+      // This makes sure UI meant for DICE-enabled profiles are not leaked to
+      // non-dice profiles.
+      // TODO(tangltom): This should be removed once all profiles are fully
+      // migrated.
+      test('NoManageProfileRow', function() {
+        assertFalse(!!peoplePage.$$('#edit-profile'));
+      });
 
       test('GetProfileInfo', function() {
-        var disconnectButton = null;
-        return browserProxy.whenCalled('getSyncStatus').then(function() {
-          Polymer.dom.flush();
-          disconnectButton = peoplePage.$$('#disconnectButton');
-          assertTrue(!!disconnectButton);
-          assertFalse(!!peoplePage.$$('#disconnectDialog'));
+        let disconnectButton = null;
+        return browserProxy.whenCalled('getSyncStatus')
+            .then(function() {
+              Polymer.dom.flush();
+              disconnectButton = peoplePage.$$('#disconnectButton');
+              assertTrue(!!disconnectButton);
+              assertFalse(!!peoplePage.$$('settings-signout-dialog'));
 
-          MockInteractions.tap(disconnectButton);
-          Polymer.dom.flush();
-        }).then(function() {
-          assertTrue(peoplePage.$$('#disconnectDialog').open);
-          assertFalse(peoplePage.$$('#deleteProfile').hidden);
+              disconnectButton.click();
+              Polymer.dom.flush();
+            })
+            .then(function() {
+              const signoutDialog = peoplePage.$$('settings-signout-dialog');
+              assertTrue(signoutDialog.$$('#dialog').open);
+              assertFalse(signoutDialog.$$('#deleteProfile').hidden);
 
-          var deleteProfileCheckbox = peoplePage.$$('#deleteProfile');
-          assertTrue(!!deleteProfileCheckbox);
-          assertLT(0, deleteProfileCheckbox.clientHeight);
+              const deleteProfileCheckbox = signoutDialog.$$('#deleteProfile');
+              assertTrue(!!deleteProfileCheckbox);
+              assertLT(0, deleteProfileCheckbox.clientHeight);
 
-          var disconnectConfirm = peoplePage.$$('#disconnectConfirm');
-          assertTrue(!!disconnectConfirm);
-          assertFalse(disconnectConfirm.hidden);
+              const disconnectConfirm = signoutDialog.$$('#disconnectConfirm');
+              assertTrue(!!disconnectConfirm);
+              assertFalse(disconnectConfirm.hidden);
 
-          var popstatePromise = new Promise(function(resolve) {
-            listenOnce(window, 'popstate', resolve);
-          });
+              const popstatePromise = new Promise(function(resolve) {
+                listenOnce(window, 'popstate', resolve);
+              });
 
-          MockInteractions.tap(disconnectConfirm);
+              disconnectConfirm.click();
 
-          return popstatePromise;
-        }).then(function() {
-          return browserProxy.whenCalled('signOut');
-        }).then(function(deleteProfile) {
-          assertFalse(deleteProfile);
+              return popstatePromise;
+            })
+            .then(function() {
+              return browserProxy.whenCalled('signOut');
+            })
+            .then(function(deleteProfile) {
+              assertFalse(deleteProfile);
 
-          cr.webUIListenerCallback('sync-status-changed', {
-            signedIn: true,
-            domain: 'example.com',
-          });
-          Polymer.dom.flush();
+              sync_test_util.simulateSyncStatus({
+                signedIn: true,
+                domain: 'example.com',
+              });
 
-          assertFalse(!!peoplePage.$$('#disconnectDialog'));
-          MockInteractions.tap(disconnectButton);
-          Polymer.dom.flush();
+              assertFalse(!!peoplePage.$$('#dialog'));
+              disconnectButton.click();
+              Polymer.dom.flush();
 
-          return new Promise(function(resolve) { peoplePage.async(resolve); });
-        }).then(function() {
-          assertTrue(peoplePage.$$('#disconnectDialog').open);
-          assertFalse(!!peoplePage.$$('#deleteProfile'));
+              return new Promise(function(resolve) {
+                peoplePage.async(resolve);
+              });
+            })
+            .then(function() {
+              const signoutDialog = peoplePage.$$('settings-signout-dialog');
+              assertTrue(signoutDialog.$$('#dialog').open);
+              assertFalse(!!signoutDialog.$$('#deleteProfile'));
 
-          var disconnectManagedProfileConfirm =
-              peoplePage.$$('#disconnectManagedProfileConfirm');
-          assertTrue(!!disconnectManagedProfileConfirm);
-          assertFalse(disconnectManagedProfileConfirm.hidden);
+              const disconnectManagedProfileConfirm =
+                  signoutDialog.$$('#disconnectManagedProfileConfirm');
+              assertTrue(!!disconnectManagedProfileConfirm);
+              assertFalse(disconnectManagedProfileConfirm.hidden);
 
-          browserProxy.resetResolver('signOut');
+              browserProxy.resetResolver('signOut');
 
-          var popstatePromise = new Promise(function(resolve) {
-            listenOnce(window, 'popstate', resolve);
-          });
+              const popstatePromise = new Promise(function(resolve) {
+                listenOnce(window, 'popstate', resolve);
+              });
 
-          MockInteractions.tap(disconnectManagedProfileConfirm);
+              disconnectManagedProfileConfirm.click();
 
-          return popstatePromise;
-        }).then(function() {
-          return browserProxy.whenCalled('signOut');
-        }).then(function(deleteProfile) {
-          assertTrue(deleteProfile);
-        });
+              return popstatePromise;
+            })
+            .then(function() {
+              return browserProxy.whenCalled('signOut');
+            })
+            .then(function(deleteProfile) {
+              assertTrue(deleteProfile);
+            });
       });
 
       test('getProfileStatsCount', function() {
-        return browserProxy.whenCalled('getSyncStatus').then(function() {
-          Polymer.dom.flush();
+        return browserProxy.whenCalled('getSyncStatus')
+            .then(function() {
+              Polymer.dom.flush();
 
-          // Open the disconnect dialog.
-          disconnectButton = peoplePage.$$('#disconnectButton');
-          assertTrue(!!disconnectButton);
-          MockInteractions.tap(disconnectButton);
+              // Open the disconnect dialog.
+              disconnectButton = peoplePage.$$('#disconnectButton');
+              assertTrue(!!disconnectButton);
+              disconnectButton.click();
 
-          return profileInfoBrowserProxy.whenCalled('getProfileStatsCount');
-        }).then(function() {
-          Polymer.dom.flush();
-          assertTrue(peoplePage.$$('#disconnectDialog').open);
+              return profileInfoBrowserProxy.whenCalled('getProfileStatsCount');
+            })
+            .then(function() {
+              Polymer.dom.flush();
+              const signoutDialog = peoplePage.$$('settings-signout-dialog');
+              assertTrue(signoutDialog.$$('#dialog').open);
 
-          // Assert the warning message is as expected.
-          var warningMessage = peoplePage.$$('.delete-profile-warning');
+              // Assert the warning message is as expected.
+              const warningMessage =
+                  signoutDialog.$$('.delete-profile-warning');
 
-          cr.webUIListenerCallback('profile-stats-count-ready', 0);
-          assertEquals(
-              loadTimeData.getStringF('deleteProfileWarningWithoutCounts',
-                                      'fakeUsername'),
-              warningMessage.textContent.trim());
+              cr.webUIListenerCallback('profile-stats-count-ready', 0);
+              assertEquals(
+                  loadTimeData.getStringF(
+                      'deleteProfileWarningWithoutCounts', 'fakeUsername'),
+                  warningMessage.textContent.trim());
 
-          cr.webUIListenerCallback('profile-stats-count-ready', 1);
-          assertEquals(
-              loadTimeData.getStringF('deleteProfileWarningWithCountsSingular',
-                                      'fakeUsername'),
-              warningMessage.textContent.trim());
+              cr.webUIListenerCallback('profile-stats-count-ready', 1);
+              assertEquals(
+                  loadTimeData.getStringF(
+                      'deleteProfileWarningWithCountsSingular', 'fakeUsername'),
+                  warningMessage.textContent.trim());
 
-          cr.webUIListenerCallback('profile-stats-count-ready', 2);
-          assertEquals(
-              loadTimeData.getStringF('deleteProfileWarningWithCountsPlural', 2,
-                                      'fakeUsername'),
-              warningMessage.textContent.trim());
+              cr.webUIListenerCallback('profile-stats-count-ready', 2);
+              assertEquals(
+                  loadTimeData.getStringF(
+                      'deleteProfileWarningWithCountsPlural', 2,
+                      'fakeUsername'),
+                  warningMessage.textContent.trim());
 
-          // Close the disconnect dialog.
-          MockInteractions.tap(peoplePage.$$('#disconnectConfirm'));
-          return new Promise(function(resolve) {
-            listenOnce(window, 'popstate', resolve);
-          });
-        });
+              // Close the disconnect dialog.
+              signoutDialog.$$('#disconnectConfirm').click();
+              return new Promise(function(resolve) {
+                listenOnce(window, 'popstate', resolve);
+              });
+            });
       });
 
       test('NavigateDirectlyToSignOutURL', function() {
@@ -218,7 +269,8 @@ cr.define('settings_people_page', function() {
                  peoplePage.async(resolve);
                })
             .then(function() {
-              assertTrue(peoplePage.$$('#disconnectDialog').open);
+              assertTrue(
+                  peoplePage.$$('settings-signout-dialog').$$('#dialog').open);
               return profileInfoBrowserProxy.whenCalled('getProfileStatsCount');
             })
             .then(function() {
@@ -228,7 +280,9 @@ cr.define('settings_people_page', function() {
               new settings.ProfileInfoBrowserProxyImpl().getProfileStatsCount();
 
               // Close the disconnect dialog.
-              MockInteractions.tap(peoplePage.$$('#disconnectConfirm'));
+              peoplePage.$$('settings-signout-dialog')
+                  .$$('#disconnectConfirm')
+                  .click();
             })
             .then(function() {
               return new Promise(function(resolve) {
@@ -246,20 +300,21 @@ cr.define('settings_people_page', function() {
               });
             })
             .then(function() {
-              assertTrue(peoplePage.$$('#disconnectDialog').open);
+              assertTrue(
+                  peoplePage.$$('settings-signout-dialog').$$('#dialog').open);
 
-              var popstatePromise = new Promise(function(resolve) {
+              const popstatePromise = new Promise(function(resolve) {
                 listenOnce(window, 'popstate', resolve);
               });
 
-              cr.webUIListenerCallback('sync-status-changed', {
+              sync_test_util.simulateSyncStatus({
                 signedIn: false,
               });
 
               return popstatePromise;
             })
             .then(function() {
-              var popstatePromise = new Promise(function(resolve) {
+              const popstatePromise = new Promise(function(resolve) {
                 listenOnce(window, 'popstate', resolve);
               });
 
@@ -273,24 +328,24 @@ cr.define('settings_people_page', function() {
         assertFalse(!!peoplePage.$$('#sync-status'));
 
         return browserProxy.whenCalled('getSyncStatus').then(function() {
-          cr.webUIListenerCallback('sync-status-changed', {
+          sync_test_util.simulateSyncStatus({
             signedIn: true,
             syncSystemEnabled: true,
           });
           Polymer.dom.flush();
 
-          var syncStatusContainer = peoplePage.$$('#sync-status');
+          let syncStatusContainer = peoplePage.$$('#sync-status');
           assertTrue(!!syncStatusContainer);
           assertTrue(syncStatusContainer.hasAttribute('actionable'));
 
-          cr.webUIListenerCallback('sync-status-changed', {
+          sync_test_util.simulateSyncStatus({
             managed: true,
             signedIn: true,
             syncSystemEnabled: true,
           });
           Polymer.dom.flush();
 
-          var syncStatusContainer = peoplePage.$$('#sync-status');
+          syncStatusContainer = peoplePage.$$('#sync-status');
           assertTrue(!!syncStatusContainer);
           assertFalse(syncStatusContainer.hasAttribute('actionable'));
         });
@@ -300,7 +355,7 @@ cr.define('settings_people_page', function() {
         assertFalse(!!peoplePage.$$('#sync-status'));
 
         return browserProxy.whenCalled('getSyncStatus').then(function() {
-          cr.webUIListenerCallback('sync-status-changed', {
+          sync_test_util.simulateSyncStatus({
             hasError: true,
             statusAction: settings.StatusAction.NO_ACTION,
             signedIn: true,
@@ -308,11 +363,11 @@ cr.define('settings_people_page', function() {
           });
           Polymer.dom.flush();
 
-          var syncStatusContainer = peoplePage.$$('#sync-status');
+          let syncStatusContainer = peoplePage.$$('#sync-status');
           assertTrue(!!syncStatusContainer);
           assertFalse(syncStatusContainer.hasAttribute('actionable'));
 
-          cr.webUIListenerCallback('sync-status-changed', {
+          sync_test_util.simulateSyncStatus({
             hasError: true,
             statusAction: settings.StatusAction.UPGRADE_CLIENT,
             signedIn: true,
@@ -320,11 +375,214 @@ cr.define('settings_people_page', function() {
           });
           Polymer.dom.flush();
 
-          var syncStatusContainer = peoplePage.$$('#sync-status');
+          syncStatusContainer = peoplePage.$$('#sync-status');
           assertTrue(!!syncStatusContainer);
           assertTrue(syncStatusContainer.hasAttribute('actionable'));
         });
       });
     });
+
+    suite('DiceUITest', function() {
+      /** @type {SettingsPeoplePageElement} */
+      let peoplePage = null;
+      /** @type {settings.SyncBrowserProxy} */
+      let browserProxy = null;
+      /** @type {settings.ProfileInfoBrowserProxy} */
+      let profileInfoBrowserProxy = null;
+
+      suiteSetup(function() {
+        // Force UIs to think DICE is enabled for this profile.
+        loadTimeData.overrideValues({
+          diceEnabled: true,
+        });
+      });
+
+      setup(function() {
+        browserProxy = new TestSyncBrowserProxy();
+        settings.SyncBrowserProxyImpl.instance_ = browserProxy;
+
+        profileInfoBrowserProxy = new TestProfileInfoBrowserProxy();
+        settings.ProfileInfoBrowserProxyImpl.instance_ =
+            profileInfoBrowserProxy;
+
+        PolymerTest.clearBody();
+        peoplePage = document.createElement('settings-people-page');
+        peoplePage.pageVisibility = settings.pageVisibility;
+        document.body.appendChild(peoplePage);
+
+        Polymer.dom.flush();
+      });
+
+      teardown(function() {
+        peoplePage.remove();
+      });
+
+      test('ShowCorrectRows', function() {
+        return browserProxy.whenCalled('getSyncStatus').then(function() {
+          // The correct /manageProfile link row is shown.
+          assertTrue(!!peoplePage.$$('#edit-profile'));
+          assertFalse(!!peoplePage.$$('#picture-subpage-trigger'));
+
+          // Sync-overview row should not exist when diceEnabled is true, even
+          // if syncStatus values would've warranted the row otherwise.
+          sync_test_util.simulateSyncStatus({
+            signedIn: false,
+            signinAllowed: true,
+            syncSystemEnabled: true,
+          });
+          assertFalse(!!peoplePage.$$('#sync-overview'));
+
+          // The control element should exist when policy allows.
+          const accountControl = peoplePage.$$('settings-sync-account-control');
+          assertTrue(
+              window.getComputedStyle(accountControl)['display'] != 'none');
+
+          // Control element doesn't exist when policy forbids sync or sign-in.
+          sync_test_util.simulateSyncStatus({
+            signinAllowed: false,
+            syncSystemEnabled: true,
+          });
+          assertEquals(
+              'none', window.getComputedStyle(accountControl)['display']);
+
+          sync_test_util.simulateSyncStatus({
+            signinAllowed: true,
+            syncSystemEnabled: false,
+          });
+          assertEquals(
+              'none', window.getComputedStyle(accountControl)['display']);
+
+          const manageGoogleAccount = peoplePage.$$('#manage-google-account');
+
+          // Do not show Google Account when stored accounts or sync status
+          // could not be retrieved.
+          sync_test_util.simulateStoredAccounts(undefined);
+          sync_test_util.simulateSyncStatus(undefined);
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+
+          sync_test_util.simulateStoredAccounts([]);
+          sync_test_util.simulateSyncStatus(undefined);
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+
+          sync_test_util.simulateStoredAccounts(undefined);
+          sync_test_util.simulateSyncStatus({});
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+
+          sync_test_util.simulateStoredAccounts([]);
+          sync_test_util.simulateSyncStatus({});
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+
+          // A stored account with sync off but no error should result in the
+          // Google Account being shown.
+          sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+          sync_test_util.simulateSyncStatus({
+            signedIn: false,
+            hasError: false,
+          });
+          assertTrue(
+              window.getComputedStyle(manageGoogleAccount)['display'] !=
+              'none');
+
+          // A stored account with sync off and error should not result in the
+          // Google Account being shown.
+          sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+          sync_test_util.simulateSyncStatus({
+            signedIn: false,
+            hasError: true,
+          });
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+
+          // A stored account with sync on but no error should result in the
+          // Google Account being shown.
+          sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+          sync_test_util.simulateSyncStatus({
+            signedIn: true,
+            hasError: false,
+          });
+          assertTrue(
+              window.getComputedStyle(manageGoogleAccount)['display'] !=
+              'none');
+
+          // A stored account with sync on but with error should not result in
+          // the Google Account being shown.
+          sync_test_util.simulateStoredAccounts([{email: 'foo@foo.com'}]);
+          sync_test_util.simulateSyncStatus({
+            signedIn: true,
+            hasError: true,
+          });
+          assertEquals(
+              'none', window.getComputedStyle(manageGoogleAccount)['display']);
+        });
+      });
+
+      // This test ensures when diceEnabled is true, but unifiedConsentEnabled
+      // is false, the #sync-status row is shown instead of the #sync-setup row.
+      test('ShowCorrectSyncRowWithDice', function() {
+        sync_test_util.simulateSyncStatus({
+          signedIn: true,
+          syncSystemEnabled: true,
+        });
+        assertFalse(!!peoplePage.$$('#sync-setup'));
+        assertTrue(!!peoplePage.$$('#sync-status'));
+      });
+    });
   }
+
+  suite('UnifiedConsentUITest', function() {
+    /** @type {SettingsPeoplePageElement} */
+    let peoplePage = null;
+    /** @type {settings.SyncBrowserProxy} */
+    let browserProxy = null;
+    /** @type {settings.ProfileInfoBrowserProxy} */
+    let profileInfoBrowserProxy = null;
+
+    suiteSetup(function() {
+      // Force UIs to think DICE is enabled for this profile.
+      loadTimeData.overrideValues({
+        diceEnabled: true,
+        unifiedConsentEnabled: true,
+      });
+    });
+
+    setup(function() {
+      browserProxy = new TestSyncBrowserProxy();
+      settings.SyncBrowserProxyImpl.instance_ = browserProxy;
+
+      profileInfoBrowserProxy = new TestProfileInfoBrowserProxy();
+      settings.ProfileInfoBrowserProxyImpl.instance_ = profileInfoBrowserProxy;
+
+      PolymerTest.clearBody();
+      peoplePage = document.createElement('settings-people-page');
+      peoplePage.pageVisibility = settings.pageVisibility;
+      document.body.appendChild(peoplePage);
+
+      Polymer.dom.flush();
+      return browserProxy.whenCalled('getSyncStatus');
+    });
+
+    teardown(function() {
+      peoplePage.remove();
+    });
+
+    test('ShowCorrectSyncRowWithUnifiedConsent', function() {
+      assertTrue(!!peoplePage.$$('#sync-setup'));
+      assertFalse(!!peoplePage.$$('#sync-status'));
+
+      // Make sures the subpage opens even when logged out or has errors.
+      sync_test_util.simulateSyncStatus({
+        signedIn: false,
+        statusAction: settings.StatusAction.REAUTHENTICATE,
+      });
+
+      peoplePage.$$('#sync-setup').click();
+      Polymer.dom.flush();
+
+      assertEquals(settings.getCurrentRoute(), settings.routes.SYNC);
+    });
+  });
 });

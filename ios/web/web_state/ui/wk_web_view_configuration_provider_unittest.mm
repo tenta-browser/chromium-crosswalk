@@ -7,11 +7,12 @@
 #import <WebKit/WebKit.h>
 
 #include "base/memory/ptr_util.h"
+#import "ios/web/js_messaging/crw_wk_script_message_router.h"
+#import "ios/web/js_messaging/page_script_util.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
 #include "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/web_client.h"
-#import "ios/web/web_state/js/page_script_util.h"
-#import "ios/web/web_state/ui/crw_wk_script_message_router.h"
+#import "ios/web/test/fakes/fake_wk_configuration_provider_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -136,15 +137,49 @@ TEST_F(WKWebViewConfigurationProviderTest, Purge) {
 }
 
 // Tests that configuration's userContentController has only one script with the
-// same content as web::GetEarlyPageScript() returns.
+// same content as web::GetDocumentStartScriptForMainFrame() returns.
 TEST_F(WKWebViewConfigurationProviderTest, UserScript) {
   WKWebViewConfiguration* config = GetProvider().GetWebViewConfiguration();
   NSArray* scripts = config.userContentController.userScripts;
-  EXPECT_EQ(1U, scripts.count);
-  NSString* early_script = GetEarlyPageScript(&browser_state_);
-  // |earlyScript| is a substring of |userScripts|. The latter wraps the
-  // former with "if (!injected)" check to avoid double injections.
-  EXPECT_LT(0U, [[scripts[0] source] rangeOfString:early_script].length);
+  ASSERT_EQ(4U, scripts.count);
+  EXPECT_FALSE(((WKUserScript*)[scripts objectAtIndex:0]).isForMainFrameOnly);
+  EXPECT_TRUE(((WKUserScript*)[scripts objectAtIndex:1]).isForMainFrameOnly);
+  EXPECT_FALSE(((WKUserScript*)[scripts objectAtIndex:2]).isForMainFrameOnly);
+  EXPECT_TRUE(((WKUserScript*)[scripts objectAtIndex:3]).isForMainFrameOnly);
+  NSString* early_all_frames_script =
+      GetDocumentStartScriptForAllFrames(&browser_state_);
+  NSString* main_frame_script =
+      GetDocumentStartScriptForMainFrame(&browser_state_);
+  NSString* late_all_frames_script =
+      GetDocumentEndScriptForAllFrames(&browser_state_);
+  NSString* late_main_frame_script =
+      GetDocumentEndScriptForMainFrame(&browser_state_);
+  // The scripts in |userScrips| are wrapped with a "if (!injected)" check to
+  // avoid double injections, so a substring check is necessary.
+  EXPECT_LT(0U,
+            [[scripts[0] source] rangeOfString:early_all_frames_script].length);
+  EXPECT_LT(0U, [[scripts[1] source] rangeOfString:main_frame_script].length);
+  EXPECT_LT(0U,
+            [[scripts[2] source] rangeOfString:late_all_frames_script].length);
+  EXPECT_LT(0U,
+            [[scripts[3] source] rangeOfString:late_main_frame_script].length);
+}
+
+// Tests that observers methods are correctly triggered when observing the
+// WKWebViewConfigurationProvider
+TEST_F(WKWebViewConfigurationProviderTest, Observers) {
+  std::unique_ptr<TestBrowserState> browser_state =
+      std::make_unique<TestBrowserState>();
+  WKWebViewConfigurationProvider* provider = &GetProvider(browser_state.get());
+
+  FakeWKConfigurationProviderObserver observer(provider);
+  EXPECT_FALSE(observer.GetLastCreatedWKConfiguration());
+  WKWebViewConfiguration* config = provider->GetWebViewConfiguration();
+  EXPECT_NSEQ(config.preferences,
+              observer.GetLastCreatedWKConfiguration().preferences);
+  observer.ResetLastCreatedWKConfig();
+  config = provider->GetWebViewConfiguration();
+  EXPECT_FALSE(observer.GetLastCreatedWKConfiguration());
 }
 
 }  // namespace

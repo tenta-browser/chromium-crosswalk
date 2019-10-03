@@ -14,6 +14,7 @@
 #include "content/browser/frame_host/navigator.h"
 #include "content/common/content_export.h"
 #include "content/common/navigation_params.h"
+#include "content/common/navigation_params.mojom.h"
 #include "content/public/common/previews_state.h"
 #include "url/gurl.h"
 
@@ -23,7 +24,6 @@ namespace content {
 
 class NavigationControllerImpl;
 class NavigatorDelegate;
-class ResourceRequestBody;
 struct LoadCommittedDetails;
 
 // This class is an implementation of Navigator, responsible for managing
@@ -40,57 +40,68 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
   // Navigator implementation.
   NavigatorDelegate* GetDelegate() override;
   NavigationController* GetController() override;
-  void DidStartProvisionalLoad(
-      RenderFrameHostImpl* render_frame_host,
-      const GURL& url,
-      const std::vector<GURL>& redirect_chain,
-      const base::TimeTicks& navigation_start) override;
   void DidFailProvisionalLoadWithError(
       RenderFrameHostImpl* render_frame_host,
-      const FrameHostMsg_DidFailProvisionalLoadWithError_Params& params)
-      override;
+      const GURL& url,
+      int error_code,
+      const base::string16& error_description,
+      bool showing_repost_interstitial) override;
   void DidFailLoadWithError(RenderFrameHostImpl* render_frame_host,
                             const GURL& url,
                             int error_code,
                             const base::string16& error_description) override;
-  void DidNavigate(
+  void DidNavigate(RenderFrameHostImpl* render_frame_host,
+                   const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+                   std::unique_ptr<NavigationRequest> navigation_request,
+                   bool was_within_same_document) override;
+  bool StartHistoryNavigationInNewSubframe(
       RenderFrameHostImpl* render_frame_host,
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-      std::unique_ptr<NavigationHandleImpl> navigation_handle) override;
-  bool NavigateToPendingEntry(FrameTreeNode* frame_tree_node,
-                              const FrameNavigationEntry& frame_entry,
-                              ReloadType reload_type,
-                              bool is_same_document_history_load) override;
-  bool NavigateNewChildFrame(RenderFrameHostImpl* render_frame_host,
-                             const GURL& default_url) override;
-  void RequestOpenURL(
+      mojom::NavigationClientAssociatedPtrInfo* navigation_client) override;
+  void Navigate(std::unique_ptr<NavigationRequest> request,
+                ReloadType reload_type,
+                RestoreType restore_type) override;
+  void RequestOpenURL(RenderFrameHostImpl* render_frame_host,
+                      const GURL& url,
+                      const base::Optional<url::Origin>& initiator_origin,
+                      bool uses_post,
+                      const scoped_refptr<network::ResourceRequestBody>& body,
+                      const std::string& extra_headers,
+                      const Referrer& referrer,
+                      WindowOpenDisposition disposition,
+                      bool should_replace_current_entry,
+                      bool user_gesture,
+                      blink::WebTriggeringEventInfo triggering_event_info,
+                      const std::string& href_translate,
+                      scoped_refptr<network::SharedURLLoaderFactory>
+                          blob_url_loader_factory) override;
+  void NavigateFromFrameProxy(
       RenderFrameHostImpl* render_frame_host,
       const GURL& url,
-      bool uses_post,
-      const scoped_refptr<ResourceRequestBody>& body,
-      const std::string& extra_headers,
+      const url::Origin& initiator_origin,
+      SiteInstance* source_site_instance,
       const Referrer& referrer,
-      WindowOpenDisposition disposition,
+      ui::PageTransition page_transition,
       bool should_replace_current_entry,
-      bool user_gesture,
-      blink::WebTriggeringEventInfo triggering_event_info) override;
-  void RequestTransferURL(RenderFrameHostImpl* render_frame_host,
-                          const GURL& url,
-                          SiteInstance* source_site_instance,
-                          const std::vector<GURL>& redirect_chain,
-                          const Referrer& referrer,
-                          ui::PageTransition page_transition,
-                          const GlobalRequestID& transferred_global_request_id,
-                          bool should_replace_current_entry,
-                          const std::string& method,
-                          scoped_refptr<ResourceRequestBody> post_body,
-                          const std::string& extra_headers) override;
+      NavigationDownloadPolicy download_policy,
+      const std::string& method,
+      scoped_refptr<network::ResourceRequestBody> post_body,
+      const std::string& extra_headers,
+      scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
+      bool has_user_gesture) override;
   void OnBeforeUnloadACK(FrameTreeNode* frame_tree_node,
                          bool proceed,
                          const base::TimeTicks& proceed_time) override;
-  void OnBeginNavigation(FrameTreeNode* frame_tree_node,
-                         const CommonNavigationParams& common_params,
-                         const BeginNavigationParams& begin_params) override;
+  void OnBeginNavigation(
+      FrameTreeNode* frame_tree_node,
+      const CommonNavigationParams& common_params,
+      mojom::BeginNavigationParamsPtr begin_params,
+      scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
+      mojom::NavigationClientAssociatedPtrInfo navigation_client,
+      blink::mojom::NavigationInitiatorPtr navigation_initiator,
+      scoped_refptr<PrefetchedSignedExchangeCache>
+          prefetched_signed_exchange_cache) override;
+  void RestartNavigationAsCrossDocument(
+      std::unique_ptr<NavigationRequest> navigation_request) override;
   void OnAbortNavigation(FrameTreeNode* frame_tree_node) override;
   void LogResourceRequestTime(base::TimeTicks timestamp,
                               const GURL& url) override;
@@ -108,33 +119,6 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
   friend class NavigatorTestWithBrowserSideNavigation;
   ~NavigatorImpl() override;
 
-  // Navigates to the given entry, which might be the pending entry (if
-  // |is_pending_entry| is true).  Private because all callers should use either
-  // NavigateToPendingEntry or NavigateToNewChildFrame.
-  bool NavigateToEntry(FrameTreeNode* frame_tree_node,
-                       const FrameNavigationEntry& frame_entry,
-                       const NavigationEntryImpl& entry,
-                       ReloadType reload_type,
-                       bool is_same_document_history_load,
-                       bool is_history_navigation_in_new_child,
-                       bool is_pending_entry,
-                       const scoped_refptr<ResourceRequestBody>& post_body);
-
-  // PlzNavigate: if needed, sends a BeforeUnload IPC to the renderer to ask it
-  // to execute the beforeUnload event. Otherwise, the navigation request will
-  // be started.
-  void RequestNavigation(FrameTreeNode* frame_tree_node,
-                         const GURL& dest_url,
-                         const Referrer& dest_referrer,
-                         const FrameNavigationEntry& frame_entry,
-                         const NavigationEntryImpl& entry,
-                         ReloadType reload_type,
-                         PreviewsState previews_state,
-                         bool is_same_document_history_load,
-                         bool is_history_navigation_in_new_child,
-                         const scoped_refptr<ResourceRequestBody>& post_body,
-                         base::TimeTicks navigation_start);
-
   void RecordNavigationMetrics(
       const LoadCommittedDetails& details,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
@@ -143,7 +127,7 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
   // Called when a navigation has started in a main frame, to update the pending
   // NavigationEntry if the controller does not currently have a
   // browser-initiated one.
-  void DidStartMainFrameNavigation(const GURL& url,
+  void DidStartMainFrameNavigation(const CommonNavigationParams& common_params,
                                    SiteInstanceImpl* site_instance,
                                    NavigationHandleImpl* navigation_handle);
 

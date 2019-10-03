@@ -4,26 +4,28 @@
 
 #include "ui/gfx/skia_paint_util.h"
 
-#include "base/memory/ptr_util.h"
 #include "cc/paint/paint_image_builder.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
-#include "third_party/skia/include/effects/SkBlurMaskFilter.h"
+#include "third_party/skia/include/core/SkMaskFilter.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "third_party/skia/include/effects/SkLayerDrawLooper.h"
 #include "ui/gfx/image/image_skia_rep.h"
+#include "ui/gfx/switches.h"
 
 namespace gfx {
 
 sk_sp<cc::PaintShader> CreateImageRepShader(const gfx::ImageSkiaRep& image_rep,
-                                            SkShader::TileMode tile_mode,
+                                            SkTileMode tile_mode_x,
+                                            SkTileMode tile_mode_y,
                                             const SkMatrix& local_matrix) {
-  return CreateImageRepShaderForScale(image_rep, tile_mode, local_matrix,
-                                      image_rep.scale());
+  return CreateImageRepShaderForScale(image_rep, tile_mode_x, tile_mode_y,
+                                      local_matrix, image_rep.scale());
 }
 
 sk_sp<cc::PaintShader> CreateImageRepShaderForScale(
     const gfx::ImageSkiaRep& image_rep,
-    SkShader::TileMode tile_mode,
+    SkTileMode tile_mode_x,
+    SkTileMode tile_mode_y,
     const SkMatrix& local_matrix,
     SkScalar scale) {
   // Unscale matrix by |scale| such that the bitmap is drawn at the
@@ -38,12 +40,20 @@ sk_sp<cc::PaintShader> CreateImageRepShaderForScale(
   shader_scale.setScaleX(local_matrix.getScaleX() / scale);
   shader_scale.setScaleY(local_matrix.getScaleY() / scale);
 
-  return cc::PaintShader::MakeImage(
-      cc::PaintImageBuilder::WithDefault()
-          .set_id(cc::PaintImage::kNonLazyStableId)
-          .set_image(SkImage::MakeFromBitmap(image_rep.sk_bitmap()))
-          .TakePaintImage(),
-      tile_mode, tile_mode, &shader_scale);
+  // TODO(malaykeshav): The check for has_paint_image was only added here to
+  // prevent generating a paint record in tests. Tests need an instance of
+  // base::DiscardableMemoryAllocator to generate the PaintRecord. However most
+  // test suites don't have this set.
+  // https://crbug.com/891469
+  if (!image_rep.has_paint_image()) {
+    return cc::PaintShader::MakePaintRecord(
+        image_rep.GetPaintRecord(),
+        SkRect::MakeIWH(image_rep.pixel_width(), image_rep.pixel_height()),
+        tile_mode_x, tile_mode_y, &shader_scale);
+  } else {
+    return cc::PaintShader::MakeImage(image_rep.paint_image(), tile_mode_x,
+                                      tile_mode_y, &shader_scale);
+  }
 }
 
 sk_sp<cc::PaintShader> CreateGradientShader(int start_point,
@@ -56,7 +66,7 @@ sk_sp<cc::PaintShader> CreateGradientShader(int start_point,
   grad_points[1].iset(0, end_point);
 
   return cc::PaintShader::MakeLinearGradient(grad_points, grad_colors, nullptr,
-                                             2, SkShader::kClamp_TileMode);
+                                             2, SkTileMode::kClamp);
 }
 
 // This is copied from
@@ -86,13 +96,12 @@ sk_sp<SkDrawLooper> CreateShadowDrawLooper(
                            SkIntToScalar(shadow.y()));
 
     SkPaint* paint = looper_builder.addLayer(layer_info);
-    // SkBlurMaskFilter's blur radius defines the range to extend the blur from
+    // Skia's blur radius defines the range to extend the blur from
     // original mask, which is half of blur amount as defined in ShadowValue.
-    paint->setMaskFilter(SkBlurMaskFilter::Make(
-        kNormal_SkBlurStyle, RadiusToSigma(shadow.blur() / 2),
-        SkBlurMaskFilter::kHighQuality_BlurFlag));
+    paint->setMaskFilter(SkMaskFilter::MakeBlur(
+        kNormal_SkBlurStyle, RadiusToSigma(shadow.blur() / 2)));
     paint->setColorFilter(
-        SkColorFilter::MakeModeFilter(shadow.color(), SkBlendMode::kSrcIn));
+        SkColorFilters::Blend(shadow.color(), SkBlendMode::kSrcIn));
   }
 
   return looper_builder.detach();

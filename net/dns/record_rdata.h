@@ -18,7 +18,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_export.h"
-#include "net/dns/dns_protocol.h"
+#include "net/dns/public/dns_protocol.h"
 
 namespace net {
 
@@ -26,17 +26,16 @@ class DnsRecordParser;
 
 // Parsed represenation of the extra data in a record. Does not include standard
 // DNS record data such as TTL, Name, Type and Class.
-class NET_EXPORT_PRIVATE RecordRdata {
+class NET_EXPORT RecordRdata {
  public:
   virtual ~RecordRdata() {}
 
+  // Return true if |data| represents RDATA in the wire format with a valid size
+  // for the give |type|.
+  static bool HasValidSize(const base::StringPiece& data, uint16_t type);
+
   virtual bool IsEqual(const RecordRdata* other) const = 0;
   virtual uint16_t Type() const = 0;
-
- protected:
-  RecordRdata();
-
-  DISALLOW_COPY_AND_ASSIGN(RecordRdata);
 };
 
 // SRV record format (http://www.ietf.org/rfc/rfc2782.txt):
@@ -75,7 +74,7 @@ class NET_EXPORT_PRIVATE SrvRecordRdata : public RecordRdata {
 
 // A Record format (http://www.ietf.org/rfc/rfc1035.txt):
 // 4 bytes for IP address.
-class NET_EXPORT_PRIVATE ARecordRdata : public RecordRdata {
+class NET_EXPORT ARecordRdata : public RecordRdata {
  public:
   static const uint16_t kType = dns_protocol::kTypeA;
 
@@ -97,7 +96,7 @@ class NET_EXPORT_PRIVATE ARecordRdata : public RecordRdata {
 
 // AAAA Record format (http://www.ietf.org/rfc/rfc1035.txt):
 // 16 bytes for IP address.
-class NET_EXPORT_PRIVATE AAAARecordRdata : public RecordRdata {
+class NET_EXPORT AAAARecordRdata : public RecordRdata {
  public:
   static const uint16_t kType = dns_protocol::kTypeAAAA;
 
@@ -224,7 +223,7 @@ class NET_EXPORT_PRIVATE OptRecordRdata : public RecordRdata {
  public:
   class NET_EXPORT_PRIVATE Opt {
    public:
-    static const size_t kHeaderSize = 4;  // sizeof(code) + sizeof(size)
+    static constexpr size_t kHeaderSize = 4;  // sizeof(code) + sizeof(size)
 
     Opt(uint16_t code, base::StringPiece data);
 
@@ -241,7 +240,11 @@ class NET_EXPORT_PRIVATE OptRecordRdata : public RecordRdata {
   static const uint16_t kType = dns_protocol::kTypeOPT;
 
   OptRecordRdata();
+  OptRecordRdata(OptRecordRdata&& other);
   ~OptRecordRdata() override;
+
+  OptRecordRdata& operator=(OptRecordRdata&& other);
+
   static std::unique_ptr<OptRecordRdata> Create(const base::StringPiece& data,
                                                 const DnsRecordParser& parser);
   bool IsEqual(const RecordRdata* other) const override;
@@ -251,6 +254,11 @@ class NET_EXPORT_PRIVATE OptRecordRdata : public RecordRdata {
 
   const std::vector<Opt>& opts() const { return opts_; }
   void AddOpt(const Opt& opt);
+
+  // Add all Opts from |other| to |this|.
+  void AddOpts(const OptRecordRdata& other);
+
+  bool ContainsOptCode(uint16_t opt_code) const;
 
  private:
   std::vector<Opt> opts_;

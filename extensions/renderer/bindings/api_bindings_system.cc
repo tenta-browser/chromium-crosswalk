@@ -5,31 +5,44 @@
 #include "extensions/renderer/bindings/api_bindings_system.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "extensions/renderer/bindings/api_binding_hooks.h"
 #include "extensions/renderer/bindings/api_binding_util.h"
+#include "extensions/renderer/bindings/api_response_validator.h"
+#include "extensions/renderer/bindings/interaction_provider.h"
 
 namespace extensions {
 
 APIBindingsSystem::APIBindingsSystem(
-    const GetAPISchemaMethod& get_api_schema,
-    const BindingAccessChecker::AvailabilityCallback& is_available,
-    const APIRequestHandler::SendRequestMethod& send_request,
-    const APIEventHandler::EventListenersChangedMethod& event_listeners_changed,
-    const APIBinding::OnSilentRequest& on_silent_request,
-    const binding::AddConsoleError& add_console_error,
+    GetAPISchemaMethod get_api_schema,
+    BindingAccessChecker::AvailabilityCallback is_available,
+    APIRequestHandler::SendRequestMethod send_request,
+    std::unique_ptr<InteractionProvider> interaction_provider,
+    APIEventListeners::ListenersUpdated event_listeners_changed,
+    APIEventHandler::ContextOwnerIdGetter context_owner_getter,
+    APIBinding::OnSilentRequest on_silent_request,
+    binding::AddConsoleError add_console_error,
     APILastError last_error)
-    : type_reference_map_(base::Bind(&APIBindingsSystem::InitializeType,
-                                     base::Unretained(this))),
-      exception_handler_(add_console_error),
-      request_handler_(send_request,
+    : type_reference_map_(
+          base::BindRepeating(&APIBindingsSystem::InitializeType,
+                              base::Unretained(this))),
+      exception_handler_(std::move(add_console_error)),
+      interaction_provider_(std::move(interaction_provider)),
+      request_handler_(std::move(send_request),
                        std::move(last_error),
-                       &exception_handler_),
-      event_handler_(event_listeners_changed, &exception_handler_),
-      access_checker_(is_available),
-      get_api_schema_(get_api_schema),
-      on_silent_request_(on_silent_request) {}
+                       &exception_handler_,
+                       interaction_provider_.get()),
+      event_handler_(std::move(event_listeners_changed),
+                     std::move(context_owner_getter),
+                     &exception_handler_),
+      access_checker_(std::move(is_available)),
+      get_api_schema_(std::move(get_api_schema)),
+      on_silent_request_(std::move(on_silent_request)) {
+  if (binding::IsResponseValidationEnabled()) {
+    request_handler_.SetResponseValidator(
+        std::make_unique<APIResponseValidator>(&type_reference_map_));
+  }
+}
 
 APIBindingsSystem::~APIBindingsSystem() {}
 
@@ -74,7 +87,8 @@ std::unique_ptr<APIBinding> APIBindingsSystem::CreateNewAPIBinding(
   return std::make_unique<APIBinding>(
       api_name, function_definitions, type_definitions, event_definitions,
       property_definitions,
-      base::Bind(&APIBindingsSystem::CreateCustomType, base::Unretained(this)),
+      base::BindRepeating(&APIBindingsSystem::CreateCustomType,
+                          base::Unretained(this)),
       on_silent_request_, std::move(hooks), &type_reference_map_,
       &request_handler_, &event_handler_, &access_checker_);
 }
@@ -122,10 +136,10 @@ APIBindingHooks* APIBindingsSystem::GetHooksForAPI(
 }
 
 void APIBindingsSystem::RegisterCustomType(const std::string& type_name,
-                                           const CustomTypeHandler& function) {
+                                           CustomTypeHandler function) {
   DCHECK(custom_types_.find(type_name) == custom_types_.end())
       << "Custom type already registered: " << type_name;
-  custom_types_[type_name] = function;
+  custom_types_[type_name] = std::move(function);
 }
 
 void APIBindingsSystem::WillReleaseContext(v8::Local<v8::Context> context) {

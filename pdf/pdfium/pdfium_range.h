@@ -14,6 +14,14 @@
 
 namespace chrome_pdf {
 
+constexpr base::char16 kZeroWidthSpace = 0x200B;
+constexpr base::char16 kPDFSoftHyphenMarker = 0xFFFE;
+
+// Helper for identifying characters that PDFium outputs, via FPDFText_GetText,
+// that have special meaning, but should not be included in things like copied
+// text or when running find.
+bool IsIgnorableCharacter(base::char16 c);
+
 // Describes location of a string of characters.
 class PDFiumRange {
  public:
@@ -32,7 +40,7 @@ class PDFiumRange {
   // Gets bounding rectangles of range in screen coordinates.
   const std::vector<pp::Rect>& GetScreenRects(const pp::Point& offset,
                                               double zoom,
-                                              int rotation);
+                                              int rotation) const;
 
   // Gets the string of characters in this range.
   base::string16 GetText() const;
@@ -45,9 +53,9 @@ class PDFiumRange {
   int char_count_;
 
   // Cache of ScreenRect, and the associated variables used when caching it.
-  std::vector<pp::Rect> cached_screen_rects_;
-  pp::Point cached_screen_rects_offset_;
-  double cached_screen_rects_zoom_;
+  mutable std::vector<pp::Rect> cached_screen_rects_;
+  mutable pp::Point cached_screen_rects_offset_;
+  mutable double cached_screen_rects_zoom_ = 0;
 };
 
 }  // namespace chrome_pdf

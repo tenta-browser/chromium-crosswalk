@@ -38,7 +38,7 @@ class POLICY_EXPORT RemoteCommandJob {
     TERMINATED,           // The job was terminated before finishing by itself.
   };
 
-  using FinishedCallback = base::Closure;
+  using FinishedCallback = base::OnceClosure;
 
   virtual ~RemoteCommandJob();
 
@@ -60,7 +60,7 @@ class POLICY_EXPORT RemoteCommandJob {
   // Returns true if the task is posted and the command marked as running.
   // Returns false otherwise, for example if the command is invalid or expired.
   // Subclasses should implement RunImpl() for actual work.
-  bool Run(base::TimeTicks now, const FinishedCallback& finished_callback);
+  bool Run(base::TimeTicks now, FinishedCallback finished_callback);
 
   // Attempts to terminate the running tasks associated with this command. Does
   // nothing if the task is already terminated or finished. It's guaranteed that
@@ -76,7 +76,7 @@ class POLICY_EXPORT RemoteCommandJob {
 
   // Returns the remote command timeout. If the command takes longer than the
   // returned time interval to execute, the command queue will kill it.
-  virtual base::TimeDelta GetCommmandTimeout() const;
+  virtual base::TimeDelta GetCommandTimeout() const;
 
   // Helpful accessors.
   UniqueIDType unique_id() const { return unique_id_; }
@@ -102,7 +102,7 @@ class POLICY_EXPORT RemoteCommandJob {
   };
 
   using CallbackWithResult =
-      base::Callback<void(std::unique_ptr<ResultPayload>)>;
+      base::OnceCallback<void(std::unique_ptr<ResultPayload>)>;
 
   RemoteCommandJob();
 
@@ -119,7 +119,6 @@ class POLICY_EXPORT RemoteCommandJob {
   // checking. |now| is the current time obtained from a clock. Implementations
   // are usually expected to compare |now| to the issued_time(), which is the
   // timestamp when the command was issued on the server.
-  // The default implementation always returns false.
   virtual bool IsExpired(base::TimeTicks now);
 
   // Subclasses should implement this method for actual command execution logic.
@@ -128,8 +127,8 @@ class POLICY_EXPORT RemoteCommandJob {
   // |succeeded_callback| or |failed_callback| on the thread that this method
   // was called.
   // Also see comments regarding Run().
-  virtual void RunImpl(const CallbackWithResult& succeed_callback,
-                       const CallbackWithResult& failed_callback) = 0;
+  virtual void RunImpl(CallbackWithResult succeed_callback,
+                       CallbackWithResult failed_callback) = 0;
 
   // Subclasses should implement this method for actual command execution
   // termination. Be cautious that tasks might be running on another thread or
@@ -158,7 +157,7 @@ class POLICY_EXPORT RemoteCommandJob {
 
   base::ThreadChecker thread_checker_;
 
-  base::WeakPtrFactory<RemoteCommandJob> weak_factory_;
+  base::WeakPtrFactory<RemoteCommandJob> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RemoteCommandJob);
 };

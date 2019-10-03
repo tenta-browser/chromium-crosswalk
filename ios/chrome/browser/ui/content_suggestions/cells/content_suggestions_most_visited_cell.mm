@@ -4,71 +4,64 @@
 
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_most_visited_cell.h"
 
-#import "ios/chrome/browser/ui/favicon/favicon_view.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
-#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
+#import "ios/chrome/browser/ui/ntp_tile_views/ntp_most_visited_tile_view.h"
+
+#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_most_visited_constants.h"
+#import "ios/chrome/browser/ui/ntp_tile_views/ntp_tile_layout_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/common/favicon/favicon_view.h"
+#import "ios/chrome/common/material_timing.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
-namespace {
-const CGFloat kLabelTextColor = 0.314;
-const NSInteger kLabelNumLines = 2;
-const CGFloat kFaviconSize = 48;
-const CGFloat kSpaceFaviconTitle = 10;
+@interface ContentSuggestionsMostVisitedCell ()
 
-// Size of a Most Visited cell.
-const CGSize kCellSize = {73, 100};
-}
+@property(nonatomic, strong) NTPMostVisitedTileView* mostVisitedTile;
+
+@end
 
 @implementation ContentSuggestionsMostVisitedCell : MDCCollectionViewCell
-
-@synthesize faviconView = _faviconView;
-@synthesize titleLabel = _titleLabel;
 
 #pragma mark - Public
 
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    _titleLabel = [[UILabel alloc] init];
-    _titleLabel.textColor = [UIColor colorWithWhite:kLabelTextColor alpha:1.0];
-    _titleLabel.font = [MDCTypography captionFont];
-    _titleLabel.textAlignment = NSTextAlignmentCenter;
-    _titleLabel.preferredMaxLayoutWidth = [[self class] defaultSize].width;
-    _titleLabel.numberOfLines = kLabelNumLines;
-
-    _faviconView = [[FaviconViewNew alloc] init];
-    _faviconView.font = [MDCTypography headlineFont];
-
-    _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _faviconView.translatesAutoresizingMaskIntoConstraints = NO;
-
-    [self.contentView addSubview:_titleLabel];
-    [self.contentView addSubview:_faviconView];
-
-    [NSLayoutConstraint activateConstraints:@[
-      [_faviconView.widthAnchor constraintEqualToConstant:kFaviconSize],
-      [_faviconView.heightAnchor
-          constraintEqualToAnchor:_faviconView.widthAnchor],
-      [_faviconView.centerXAnchor
-          constraintEqualToAnchor:_titleLabel.centerXAnchor],
-    ]];
-
-    ApplyVisualConstraintsWithMetrics(
-        @[ @"V:|[favicon]-(space)-[title]", @"H:|[title]|" ],
-        @{ @"favicon" : _faviconView,
-           @"title" : _titleLabel },
-        @{ @"space" : @(kSpaceFaviconTitle) });
-
+    _mostVisitedTile = [[NTPMostVisitedTileView alloc] initWithFrame:frame];
+    [self.contentView addSubview:_mostVisitedTile];
+    _mostVisitedTile.translatesAutoresizingMaskIntoConstraints = NO;
+    AddSameConstraints(self.contentView, _mostVisitedTile);
     self.isAccessibilityElement = YES;
   }
   return self;
 }
 
+- (FaviconView*)faviconView {
+  return self.mostVisitedTile.faviconView;
+}
+
+- (UILabel*)titleLabel {
+  return self.mostVisitedTile.titleLabel;
+}
+
+- (void)setHighlighted:(BOOL)highlighted {
+  [super setHighlighted:highlighted];
+
+  [UIView transitionWithView:self
+                    duration:ios::material::kDuration8
+                     options:UIViewAnimationOptionCurveEaseInOut
+                  animations:^{
+                    self.alpha = highlighted ? 0.5 : 1.0;
+                  }
+                  completion:nil];
+}
+
 + (CGSize)defaultSize {
-  return kCellSize;
+  return MostVisitedCellSize(
+      UIApplication.sharedApplication.preferredContentSizeCategory);
 }
 
 - (CGSize)intrinsicContentSize {

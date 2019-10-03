@@ -23,15 +23,19 @@ class WebTextCheckClient;
 class WebView;
 }
 
+namespace content {
+class RenderView;
+}
+
 namespace test_runner {
 
 class WebTestRunner {
  public:
-  // Returns a mock WebContentSettings that is used for layout tests. An
+  // Returns a mock WebContentSettings that is used for web tests. An
   // embedder should use this for all WebViews it creates.
   virtual blink::WebContentSettingsClient* GetWebContentSettings() const = 0;
 
-  // Returns a mock WebTextCheckClient that is used for layout tests. An
+  // Returns a mock WebTextCheckClient that is used for web tests. An
   // embedder should use this for all WebLocalFrames it creates.
   virtual blink::WebTextCheckClient* GetWebTextCheckClient() const = 0;
 
@@ -52,17 +56,25 @@ class WebTestRunner {
   // (i.e. text mode if testRunner.dumpAsText() was called from javascript).
   virtual std::string DumpLayout(blink::WebLocalFrame* frame) = 0;
 
-  // Snapshots image of |web_view| using the mode requested by the current test
-  // and calls |callback| with the result.  Caller needs to ensure that
-  // |web_view| stays alive until |callback| is called.
+  // Returns true if the selection window should be painted onto captured
+  // pixels.
+  virtual bool ShouldDumpSelectionRect() const = 0;
+
+  // Returns false if the browser should capture the pixel output, true if it
+  // can be done locally in the renderer via DumpPixelsAsync().
+  virtual bool CanDumpPixelsFromRenderer() const = 0;
+
+  // Snapshots the content of |render_view| using the mode requested by the
+  // current test and calls |callback| with the result.  Caller needs to ensure
+  // that |render_view| stays alive until |callback| is called.
   virtual void DumpPixelsAsync(
-      blink::WebLocalFrame* frame,
+      content::RenderView* render_view,
       base::OnceCallback<void(const SkBitmap&)> callback) = 0;
 
-  // Replicates changes to layout test runtime flags
+  // Replicates changes to web test runtime flags
   // (i.e. changes that happened in another renderer).
-  // See also WebTestDelegate::OnLayoutTestRuntimeFlagsChanged.
-  virtual void ReplicateLayoutTestRuntimeFlagsChanges(
+  // See also WebTestDelegate::OnWebTestRuntimeFlagsChanged.
+  virtual void ReplicateWebTestRuntimeFlagsChanges(
       const base::DictionaryValue& changed_values) = 0;
 
   // If custom text dump is present (i.e. if testRunner.setCustomTextOutput has
@@ -77,13 +89,6 @@ class WebTestRunner {
   // Returns true if WebViewTestProxy::capturePixels should be invoked after
   // capturing text results.
   virtual bool ShouldGeneratePixelResults() = 0;
-
-  // Sets various interfaces consumed by WebView to implementations providing
-  // test behavior.  This method covers interfaces that are not exposed via
-  // WebViewClient (and are covered by WebViewTestClient) - for example this
-  // method covers blink::WebCredentialManagerClient and
-  // blink::WebSpellCheckClient.
-  virtual void InitializeWebViewWithMocks(blink::WebView* web_view) = 0;
 
   // Sets focus on the given view.  Internally tracks currently focused view,
   // to aid in defocusing previously focused views at the right time.

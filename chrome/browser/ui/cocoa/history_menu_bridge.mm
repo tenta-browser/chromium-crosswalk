@@ -23,18 +23,14 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/text_elider.h"
 #include "ui/resources/grit/ui_resources.h"
 
 namespace {
 
-// Maximum number of pixels to use for a menu item title.
-const float kTitlePixelWidth = 400;
-
 // Number of days to consider when getting the number of visited items.
 const int kVisitedScope = 90;
 
-// The number of visisted results to get.
+// The number of visited results to get.
 const int kVisitedCount = 15;
 
 // The number of recently closed items to get.
@@ -46,7 +42,7 @@ HistoryMenuBridge::HistoryItem::HistoryItem()
     : icon_requested(false),
       icon_task_id(base::CancelableTaskTracker::kBadTaskId),
       menu_item(nil),
-      session_id(0) {}
+      session_id(SessionID::InvalidValue()) {}
 
 HistoryMenuBridge::HistoryItem::HistoryItem(const HistoryItem& copy)
     : title(copy.title),
@@ -98,7 +94,7 @@ HistoryMenuBridge::HistoryMenuBridge(Profile* profile)
 
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   default_favicon_.reset(
-      rb.GetNativeImageNamed(IDR_DEFAULT_FAVICON).CopyNSImage());
+      [rb.GetNativeImageNamed(IDR_DEFAULT_FAVICON).ToNSImage() retain]);
 
   // Set the static icons in the menu.
   NSMenuItem* item = [HistoryMenu() itemWithTag:IDC_SHOW_HISTORY];
@@ -244,7 +240,7 @@ void HistoryMenuBridge::SetIsMenuOpen(bool flag) {
   if (!is_menu_open_ && need_recreate_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&HistoryMenuBridge::CreateMenu, base::Unretained(this)));
+        base::BindOnce(&HistoryMenuBridge::CreateMenu, base::Unretained(this)));
   }
 }
 
@@ -293,13 +289,10 @@ NSMenuItem* HistoryMenuBridge::AddItemToMenu(HistoryItem* item,
                                              NSInteger tag,
                                              NSInteger index) {
   // Elide the title of the history item, or use the URL if there is none.
-  std::string url = item->url.possibly_invalid_spec();
-  base::string16 full_title = item->title;
-  base::string16 title =
-      gfx::ElideText(full_title.empty() ? base::UTF8ToUTF16(url) : full_title,
-                     gfx::FontList(gfx::Font([NSFont menuFontOfSize:0])),
-                     kTitlePixelWidth,
-                     gfx::ELIDE_MIDDLE);
+  const std::string& url = item->url.possibly_invalid_spec();
+  const base::string16& full_title = item->title;
+  const base::string16& title =
+      full_title.empty() ? base::UTF8ToUTF16(url) : full_title;
 
   item->menu_item.reset(
       [[NSMenuItem alloc] initWithTitle:base::SysUTF16ToNSString(title)
@@ -345,10 +338,9 @@ void HistoryMenuBridge::CreateMenu() {
   options.SetRecentDayRange(kVisitedScope);
 
   history_service_->QueryHistory(
-      base::string16(),
-      options,
-      base::Bind(&HistoryMenuBridge::OnVisitedHistoryResults,
-                 base::Unretained(this)),
+      base::string16(), options,
+      base::BindOnce(&HistoryMenuBridge::OnVisitedHistoryResults,
+                     base::Unretained(this)),
       &cancelable_task_tracker_);
 }
 
@@ -358,15 +350,14 @@ void HistoryMenuBridge::OnHistoryChanged() {
   CreateMenu();
 }
 
-void HistoryMenuBridge::OnVisitedHistoryResults(
-    history::QueryResults* results) {
+void HistoryMenuBridge::OnVisitedHistoryResults(history::QueryResults results) {
   NSMenu* menu = HistoryMenu();
   ClearMenuSection(menu, kVisited);
   NSInteger top_item = [menu indexOfItemWithTag:kVisitedTitle] + 1;
 
-  size_t count = results->size();
+  size_t count = results.size();
   for (size_t i = 0; i < count; ++i) {
-    const history::URLResult& result = (*results)[i];
+    const history::URLResult& result = results[i];
 
     HistoryItem* item = new HistoryItem;
     item->title = result.title();
@@ -455,11 +446,9 @@ void HistoryMenuBridge::OnURLsModified(history::HistoryService* history_service,
   OnHistoryChanged();
 }
 
-void HistoryMenuBridge::OnURLsDeleted(history::HistoryService* history_service,
-                                      bool all_history,
-                                      bool expired,
-                                      const history::URLRows& deleted_rows,
-                                      const std::set<GURL>& favicon_urls) {
+void HistoryMenuBridge::OnURLsDeleted(
+    history::HistoryService* history_service,
+    const history::DeletionInfo& deletion_info) {
   OnHistoryChanged();
 }
 

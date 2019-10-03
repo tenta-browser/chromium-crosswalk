@@ -46,21 +46,22 @@ ExtensionMediaAccessHandler::~ExtensionMediaAccessHandler() {
 
 bool ExtensionMediaAccessHandler::SupportsStreamType(
     content::WebContents* web_contents,
-    const content::MediaStreamType type,
+    const blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
-  return extension && (extension->is_platform_app() ||
-                       IsMediaRequestWhitelistedForExtension(extension)) &&
-         (type == content::MEDIA_DEVICE_AUDIO_CAPTURE ||
-          type == content::MEDIA_DEVICE_VIDEO_CAPTURE);
+  return extension &&
+         (extension->is_platform_app() ||
+          IsMediaRequestWhitelistedForExtension(extension)) &&
+         (type == blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE ||
+          type == blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE);
 }
 
 bool ExtensionMediaAccessHandler::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    content::MediaStreamType type,
+    blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
   return extension->permissions_data()->HasAPIPermission(
-      type == content::MEDIA_DEVICE_AUDIO_CAPTURE
+      type == blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE
           ? extensions::APIPermission::kAudioCapture
           : extensions::APIPermission::kVideoCapture);
 }
@@ -68,23 +69,25 @@ bool ExtensionMediaAccessHandler::CheckMediaAccessPermission(
 void ExtensionMediaAccessHandler::HandleRequest(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
-    const content::MediaResponseCallback& callback,
+    content::MediaResponseCallback callback,
     const extensions::Extension* extension) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   bool audio_allowed =
-      request.audio_type == content::MEDIA_DEVICE_AUDIO_CAPTURE &&
+      request.audio_type ==
+          blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE &&
       extension->permissions_data()->HasAPIPermission(
           extensions::APIPermission::kAudioCapture) &&
       GetDevicePolicy(profile, extension->url(), prefs::kAudioCaptureAllowed,
                       prefs::kAudioCaptureAllowedUrls) != ALWAYS_DENY;
   bool video_allowed =
-      request.video_type == content::MEDIA_DEVICE_VIDEO_CAPTURE &&
+      request.video_type ==
+          blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE &&
       extension->permissions_data()->HasAPIPermission(
           extensions::APIPermission::kVideoCapture) &&
       GetDevicePolicy(profile, extension->url(), prefs::kVideoCaptureAllowed,
                       prefs::kVideoCaptureAllowedUrls) != ALWAYS_DENY;
 
-  CheckDevicesAndRunCallback(web_contents, request, callback, audio_allowed,
-                             video_allowed);
+  CheckDevicesAndRunCallback(web_contents, request, std::move(callback),
+                             audio_allowed, video_allowed);
 }

@@ -16,29 +16,30 @@
 #include "base/i18n/message_formatter.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/obsolete_system/obsolete_system.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/upgrade_detector.h"
+#include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/channel_info.h"
-#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/policy_constants.h"
 #include "components/strings/grit/components_chromium_strings.h"
@@ -48,14 +49,12 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "content/public/common/user_agent.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "v8/include/v8-version-string.h"
 
 #if defined(OS_CHROMEOS)
-#include "base/files/file_util_proxy.h"
 #include "base/i18n/time_formatting.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
@@ -63,11 +62,14 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/tpm_firmware_update.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/chromeos/image_source.h"
 #include "chrome/browser/ui/webui/help/help_utils_chromeos.h"
 #include "chrome/browser/ui/webui/help/version_updater_chromeos.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/dbus/power/power_manager_client.h"
+#include "chromeos/dbus/util/version_loader.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/system/statistics_provider.h"
@@ -82,7 +84,8 @@ namespace {
 
 #if defined(OS_CHROMEOS)
 
-// Directory containing the regulatory labels for supported regions.
+// The directory containing the regulatory labels for supported
+// models/regions, relative to chromeos-assets directory
 const char kRegulatoryLabelsDirectory[] = "regulatory_labels";
 
 // File names of the image file and the file containing alt text for the label.
@@ -96,6 +99,21 @@ struct RegulatoryLabel {
   const std::string label_text;
   const std::string image_url;
 };
+
+// Returns the link to the safety info for the device (if it exists).
+std::string GetSafetyInfoLink() {
+  const std::vector<std::string> board =
+      base::SplitString(base::SysInfo::GetLsbReleaseBoard(), "-",
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  if (board[0] == "nocturne") {
+    return chrome::kChromeUISafetyPixelSlateURL;
+  }
+  if (board[0] == "eve" || board[0] == "atlas") {
+    return chrome::kChromeUISafetyPixelbookURL;
+  }
+
+  return std::string();
+}
 
 // Returns message that informs user that for update it's better to
 // connect to a network of one of the allowed types.
@@ -128,28 +146,20 @@ bool IsEnterpriseManaged() {
 
 // Returns true if current user can change channel, false otherwise.
 bool CanChangeChannel(Profile* profile) {
-  // On a managed machine we delegate this setting to the users of the same
-  // domain only if the policy value is "domain".
   if (IsEnterpriseManaged()) {
     bool value = false;
+    // On a managed machine we delegate this setting to the affiliated users
+    // only if the policy value is true.
     chromeos::CrosSettings::Get()->GetBoolean(
         chromeos::kReleaseChannelDelegated, &value);
     if (!value)
       return false;
 
-    // Get the currently logged-in user and strip the domain part only.
-    std::string domain = "";
+    // Get the currently logged-in user and check if it is affiliated.
     const user_manager::User* user =
         profile ? chromeos::ProfileHelper::Get()->GetUserByProfile(profile)
                 : nullptr;
-    std::string email =
-        user ? user->GetAccountId().GetUserEmail() : std::string();
-    size_t at_pos = email.find('@');
-    if (at_pos != std::string::npos && at_pos + 1 < email.length())
-      domain = email.substr(email.find('@') + 1);
-    policy::BrowserPolicyConnectorChromeOS* connector =
-        g_browser_process->platform_part()->browser_policy_connector_chromeos();
-    return domain == connector->GetEnterpriseEnrollmentDomain();
+    return user && user->IsAffiliated();
   }
 
   // On non-managed machines, only the local owner can change the channel.
@@ -159,27 +169,31 @@ bool CanChangeChannel(Profile* profile) {
   return service && service->IsOwner();
 }
 
-// Returns the path of the regulatory labels directory for a given region, if
-// found. Must be called from the blocking pool.
+// Returns the relative path under the chromeos-assets dir
+// to the directory of regulatory labels for a given region, if found
+// (e.g. "regulatory_labels/us"). Must be called from the blocking pool.
 base::FilePath GetRegulatoryLabelDirForRegion(const std::string& region) {
-  // Generate the path under the asset dir or URL host to the regulatory files
-  // for the region, e.g., "regulatory_labels/us/".
-  const base::FilePath region_path =
-      base::FilePath(kRegulatoryLabelsDirectory).AppendASCII(region);
-
-  // Check for file existence starting in /usr/share/chromeos-assets/, e.g.,
-  // "/usr/share/chromeos-assets/regulatory_labels/us/label.png".
-  const base::FilePath asset_dir(chrome::kChromeOSAssetPath);
-  if (base::PathExists(asset_dir.Append(region_path)
-                           .AppendASCII(kRegulatoryLabelImageFilename))) {
-    return region_path;
+  base::FilePath region_path(kRegulatoryLabelsDirectory);
+  const std::string model_subdir =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          chromeos::switches::kRegulatoryLabelDir);
+  if (!model_subdir.empty()) {
+    region_path = region_path.AppendASCII(model_subdir);
   }
+  region_path = region_path.AppendASCII(region);
 
-  return base::FilePath();
+  // Check if the label image file exists in the full path, e.g.,
+  // "/usr/share/chromeos-assets/regulatory_labels/us/label.png".
+  const base::FilePath image_path =
+      base::FilePath(chrome::kChromeOSAssetPath)
+          .Append(region_path)
+          .AppendASCII(kRegulatoryLabelImageFilename);
+  return base::PathExists(image_path) ? region_path : base::FilePath();
 }
 
-// Finds the directory for the regulatory label, using the VPD region code.
-// Also tries "us" as a fallback region. Must be called from the blocking pool.
+// Finds the relative path under the chromeos-assets dir to the region
+// subdirectory of regulatory labels, using the VPD region code. Also
+// tries "us" as a fallback region. Must be called from the blocking pool.
 base::FilePath FindRegulatoryLabelDir() {
   std::string region;
   base::FilePath region_path;
@@ -197,12 +211,14 @@ base::FilePath FindRegulatoryLabelDir() {
   return region_path;
 }
 
-// Reads the file containing the regulatory label text, if found, relative to
-// the asset directory. Must be called from the blocking pool.
+// Reads the file containing the regulatory label text, if found
+// in the given relative path under the chromeos-assets dir.
+// Must be called from the blocking pool.
 std::string ReadRegulatoryLabelText(const base::FilePath& label_dir_path) {
-  base::FilePath text_path(chrome::kChromeOSAssetPath);
-  text_path = text_path.Append(label_dir_path);
-  text_path = text_path.AppendASCII(kRegulatoryLabelTextFilename);
+  const base::FilePath text_path =
+      base::FilePath(chrome::kChromeOSAssetPath)
+          .Append(label_dir_path)
+          .AppendASCII(kRegulatoryLabelTextFilename);
 
   std::string contents;
   if (base::ReadFileToString(text_path, &contents))
@@ -265,8 +281,7 @@ std::string UpdateStatusToString(VersionUpdater::Status status) {
 
 namespace settings {
 
-AboutHandler::AboutHandler()
-    : apply_changes_from_upgrade_observer_(false), weak_factory_(this) {
+AboutHandler::AboutHandler() : apply_changes_from_upgrade_observer_(false) {
   UpgradeDetector::GetInstance()->AddObserver(this);
 }
 
@@ -284,12 +299,10 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
           l10n_util::GetStringUTF16(version_info::IsOfficialBuild()
                                         ? IDS_VERSION_UI_OFFICIAL
                                         : IDS_VERSION_UI_UNOFFICIAL),
-          base::UTF8ToUTF16(chrome::GetChannelString()),
-#if defined(ARCH_CPU_64_BITS)
-          l10n_util::GetStringUTF16(IDS_VERSION_UI_64BIT)));
-#else
-          l10n_util::GetStringUTF16(IDS_VERSION_UI_32BIT)));
-#endif
+          base::UTF8ToUTF16(chrome::GetChannelName()),
+          l10n_util::GetStringUTF16(sizeof(void*) == 8
+                                        ? IDS_VERSION_UI_64BIT
+                                        : IDS_VERSION_UI_32BIT)));
 
   html_source->AddString(
       "aboutProductCopyright",
@@ -319,10 +332,26 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
 #endif
 
 #if defined(OS_CHROMEOS)
+  std::string safetyInfoLink = GetSafetyInfoLink();
+  html_source->AddBoolean("shouldShowSafetyInfo", !safetyInfoLink.empty());
+#if defined(GOOGLE_CHROME_BUILD)
+  html_source->AddString(
+      "aboutProductSafety",
+      l10n_util::GetStringUTF16(IDS_ABOUT_SAFETY_INFORMATION));
+  html_source->AddString("aboutProductSafetyURL",
+                         base::UTF8ToUTF16(safetyInfoLink));
+#endif
+
   base::string16 os_license = l10n_util::GetStringFUTF16(
       IDS_ABOUT_CROS_VERSION_LICENSE,
       base::ASCIIToUTF16(chrome::kChromeUIOSCreditsURL));
   html_source->AddString("aboutProductOsLicense", os_license);
+  base::string16 os_with_linux_license = l10n_util::GetStringFUTF16(
+      IDS_ABOUT_CROS_WITH_LINUX_VERSION_LICENSE,
+      base::ASCIIToUTF16(chrome::kChromeUIOSCreditsURL),
+      base::ASCIIToUTF16(chrome::kChromeUILinuxCreditsURL));
+  html_source->AddString("aboutProductOsWithLinuxLicense",
+                         os_with_linux_license);
   html_source->AddBoolean("aboutEnterpriseManaged", IsEnterpriseManaged());
 
   base::Time build_time = base::SysInfo::GetLsbReleaseTime();
@@ -335,7 +364,11 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
 
   html_source->AddString("aboutUserAgent", GetUserAgent());
   html_source->AddString("aboutJsEngineVersion", V8_VERSION_STRING);
-  html_source->AddString("aboutBlinkVersion", content::GetWebKitVersion());
+  html_source->AddString("endOfLifeMessage", l10n_util::GetStringFUTF16(
+                                                 IDS_EOL_NOTIFICATION_EOL,
+                                                 ui::GetChromeOSDeviceName()));
+  html_source->AddString("endOfLifeLearnMoreURL",
+                         base::ASCIIToUTF16(chrome::kEolNotificationURL));
 #endif
 
   return new AboutHandler();
@@ -343,53 +376,74 @@ AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
 
 void AboutHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "aboutPageReady",
-      base::Bind(&AboutHandler::HandlePageReady, base::Unretained(this)));
+      "aboutPageReady", base::BindRepeating(&AboutHandler::HandlePageReady,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "refreshUpdateStatus",
-      base::Bind(&AboutHandler::HandleRefreshUpdateStatus,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRefreshUpdateStatus,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "openFeedbackDialog", base::Bind(&AboutHandler::HandleOpenFeedbackDialog,
-                                       base::Unretained(this)));
+      "openFeedbackDialog",
+      base::BindRepeating(&AboutHandler::HandleOpenFeedbackDialog,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "openHelpPage",
-      base::Bind(&AboutHandler::HandleOpenHelpPage, base::Unretained(this)));
+      "openHelpPage", base::BindRepeating(&AboutHandler::HandleOpenHelpPage,
+                                          base::Unretained(this)));
 #if defined(OS_CHROMEOS)
   web_ui()->RegisterMessageCallback(
-      "setChannel",
-      base::Bind(&AboutHandler::HandleSetChannel, base::Unretained(this)));
+      "openOsHelpPage", base::BindRepeating(&AboutHandler::HandleOpenOsHelpPage,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "requestUpdate",
-      base::Bind(&AboutHandler::HandleRequestUpdate, base::Unretained(this)));
+      "setChannel", base::BindRepeating(&AboutHandler::HandleSetChannel,
+                                        base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "requestUpdate", base::BindRepeating(&AboutHandler::HandleRequestUpdate,
+                                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestUpdateOverCellular",
-      base::Bind(&AboutHandler::HandleRequestUpdateOverCellular,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRequestUpdateOverCellular,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getVersionInfo",
-      base::Bind(&AboutHandler::HandleGetVersionInfo, base::Unretained(this)));
+      "getVersionInfo", base::BindRepeating(&AboutHandler::HandleGetVersionInfo,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getRegulatoryInfo", base::Bind(&AboutHandler::HandleGetRegulatoryInfo,
-                                      base::Unretained(this)));
+      "getRegulatoryInfo",
+      base::BindRepeating(&AboutHandler::HandleGetRegulatoryInfo,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getChannelInfo", base::Bind(&AboutHandler::HandleGetChannelInfo,
-                                   base::Unretained(this)));
+      "getChannelInfo", base::BindRepeating(&AboutHandler::HandleGetChannelInfo,
+                                            base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "refreshTPMFirmwareUpdateStatus",
-      base::Bind(&AboutHandler::HandleRefreshTPMFirmwareUpdateStatus,
-                 base::Unretained(this)));
+      base::BindRepeating(&AboutHandler::HandleRefreshTPMFirmwareUpdateStatus,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getHasEndOfLife",
+      base::BindRepeating(&AboutHandler::HandleGetHasEndOfLife,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getEnabledReleaseNotes",
+      base::BindRepeating(&AboutHandler::HandleGetEnabledReleaseNotes,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "launchReleaseNotes",
+      base::BindRepeating(&AboutHandler::HandleLaunchReleaseNotes,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "checkInternetConnection",
+      base::BindRepeating(&AboutHandler::HandleCheckInternetConnection,
+                          base::Unretained(this)));
 #endif
 #if defined(OS_MACOSX)
   web_ui()->RegisterMessageCallback(
-      "promoteUpdater",
-      base::Bind(&AboutHandler::PromoteUpdater, base::Unretained(this)));
+      "promoteUpdater", base::BindRepeating(&AboutHandler::PromoteUpdater,
+                                            base::Unretained(this)));
 #endif
 
 #if defined(OS_CHROMEOS)
   // Handler for the product label image, which will be shown if available.
   content::URLDataSource::Add(Profile::FromWebUI(web_ui()),
-                              new chromeos::ImageSource());
+                              std::make_unique<chromeos::ImageSource>());
 #endif
 }
 
@@ -477,6 +531,47 @@ void AboutHandler::HandleOpenHelpPage(const base::ListValue* args) {
 }
 
 #if defined(OS_CHROMEOS)
+void AboutHandler::HandleGetEnabledReleaseNotes(const base::ListValue* args) {
+  CHECK_EQ(1U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+  ResolveJavascriptCallback(base::Value(callback_id),
+                            base::Value(base::FeatureList::IsEnabled(
+                                chromeos::features::kReleaseNotes)));
+}
+
+void AboutHandler::HandleCheckInternetConnection(const base::ListValue* args) {
+  CHECK_EQ(1U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+
+  chromeos::NetworkStateHandler* network_state_handler =
+      chromeos::NetworkHandler::Get()->network_state_handler();
+  const chromeos::NetworkState* network =
+      network_state_handler->DefaultNetwork();
+  ResolveJavascriptCallback(base::Value(callback_id),
+                            base::Value(network && network->IsOnline()));
+}
+
+void AboutHandler::HandleLaunchReleaseNotes(const base::ListValue* args) {
+  DCHECK(args->empty());
+  chromeos::NetworkStateHandler* network_state_handler =
+      chromeos::NetworkHandler::Get()->network_state_handler();
+  const chromeos::NetworkState* network =
+      network_state_handler->DefaultNetwork();
+  if (network && network->IsOnline()) {
+    base::RecordAction(
+        base::UserMetricsAction("ReleaseNotes.LaunchedAboutPage"));
+    chrome::LaunchReleaseNotes(Profile::FromWebUI(web_ui()));
+  }
+}
+
+void AboutHandler::HandleOpenOsHelpPage(const base::ListValue* args) {
+  DCHECK(args->empty());
+  Browser* browser =
+      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
+  chrome::ShowHelp(browser, chrome::HELP_SOURCE_WEBUI_CHROME_OS);
+}
 
 void AboutHandler::HandleSetChannel(const base::ListValue* args) {
   DCHECK(args->GetSize() == 2);
@@ -593,16 +688,37 @@ void AboutHandler::RequestUpdateOverCellular(const std::string& update_version,
 
 void AboutHandler::HandleRefreshTPMFirmwareUpdateStatus(
     const base::ListValue* args) {
-  chromeos::tpm_firmware_update::ShouldOfferUpdateViaPowerwash(
+  chromeos::tpm_firmware_update::GetAvailableUpdateModes(
       base::Bind(&AboutHandler::RefreshTPMFirmwareUpdateStatus,
-                 weak_factory_.GetWeakPtr()));
+                 weak_factory_.GetWeakPtr()),
+      base::TimeDelta());
 }
 
-void AboutHandler::RefreshTPMFirmwareUpdateStatus(bool update_available) {
+void AboutHandler::RefreshTPMFirmwareUpdateStatus(
+    const std::set<chromeos::tpm_firmware_update::Mode>& modes) {
   std::unique_ptr<base::DictionaryValue> event(new base::DictionaryValue);
-  event->SetBoolean("updateAvailable", update_available);
+  event->SetBoolean("updateAvailable", !modes.empty());
   FireWebUIListener("tpm-firmware-update-status-changed", *event);
 }
+
+void AboutHandler::HandleGetHasEndOfLife(const base::ListValue* args) {
+  CHECK_EQ(1U, args->GetSize());
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+  version_updater_->GetEolStatus(
+      base::BindOnce(&AboutHandler::OnGetEndOfLifeStatus,
+                     weak_factory_.GetWeakPtr(), callback_id));
+}
+
+void AboutHandler::OnGetEndOfLifeStatus(std::string callback_id,
+                                        update_engine::EndOfLifeStatus status) {
+  // Check for EndOfLifeStatus::kEol only because
+  // EndOfLifeStatus::kSecurityOnly state is no longer supported.
+  ResolveJavascriptCallback(
+      base::Value(callback_id),
+      base::Value(status == update_engine::EndOfLifeStatus::kEol));
+}
+
 #endif  // defined(OS_CHROMEOS)
 
 void AboutHandler::RequestUpdate() {
@@ -617,6 +733,7 @@ void AboutHandler::RequestUpdate() {
 
 void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
                                    int progress,
+                                   bool rollback,
                                    const std::string& version,
                                    int64_t size,
                                    const base::string16& message) {
@@ -627,9 +744,10 @@ void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
   event->SetString("status", UpdateStatusToString(status));
   event->SetString("message", message);
   event->SetInteger("progress", progress);
+  event->SetBoolean("rollback", rollback);
   event->SetString("version", version);
   // DictionaryValue does not support int64_t, so convert to string.
-  event->SetString("size", base::Int64ToString(size));
+  event->SetString("size", base::NumberToString(size));
 #if defined(OS_CHROMEOS)
   if (status == VersionUpdater::FAILED_OFFLINE ||
       status == VersionUpdater::FAILED_CONNECTION_TYPE_DISALLOWED) {
@@ -637,9 +755,9 @@ void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
     if (!types_msg.empty())
       event->SetString("connectionTypes", types_msg);
     else
-      event->Set("connectionTypes", base::MakeUnique<base::Value>());
+      event->Set("connectionTypes", std::make_unique<base::Value>());
   } else {
-    event->Set("connectionTypes", base::MakeUnique<base::Value>());
+    event->Set("connectionTypes", std::make_unique<base::Value>());
   }
 #endif  // defined(OS_CHROMEOS)
 

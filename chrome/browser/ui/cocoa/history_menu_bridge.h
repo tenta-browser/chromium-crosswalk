@@ -38,7 +38,7 @@ struct FaviconImageResult;
 // HistoryService and the TabRestoreService, and then updates the NSMenu when
 // there is new data.
 //
-// The history menu is broken up into sections: most visisted and recently
+// The history menu is broken up into sections: recently visited and recently
 // closed. The overall menu has a tag of IDC_HISTORY_MENU, with the user content
 // items having the local tags defined in the enum below. Items within a section
 // all share the same tag. The structure of the menu is laid out in MainMenu.xib
@@ -92,10 +92,10 @@ class HistoryMenuBridge : public sessions::TabRestoreServiceObserver,
 
     // This ID is unique for a browser session and can be passed to the
     // TabRestoreService to re-open the closed window or tab that this
-    // references. A non-0 session ID indicates that this is an entry can be
+    // references. A valid session ID indicates that this is an entry can be
     // restored that way. Otherwise, the URL will be used to open the item and
-    // this ID will be 0.
-    SessionID::id_type session_id;
+    // this ID will be SessionID::InvalidValue().
+    SessionID session_id;
 
     // If the HistoryItem is a window, this will be the vector of tabs. Note
     // that this is a list of weak references. The |menu_item_map_| is the owner
@@ -180,7 +180,7 @@ class HistoryMenuBridge : public sessions::TabRestoreServiceObserver,
 
   // Callback method for when HistoryService query results are ready with the
   // most recently-visited sites.
-  void OnVisitedHistoryResults(history::QueryResults* results);
+  void OnVisitedHistoryResults(history::QueryResults results);
 
   // Creates a HistoryItem* for the given tab entry. Caller takes ownership of
   // the result and must delete it when finished.
@@ -214,10 +214,7 @@ class HistoryMenuBridge : public sessions::TabRestoreServiceObserver,
   void OnURLsModified(history::HistoryService* history_service,
                       const history::URLRows& changed_urls) override;
   void OnURLsDeleted(history::HistoryService* history_service,
-                     bool all_history,
-                     bool expired,
-                     const history::URLRows& deleted_rows,
-                     const std::set<GURL>& favicon_urls) override;
+                     const history::DeletionInfo& deletion_info) override;
   void OnHistoryServiceLoaded(history::HistoryService* service) override;
 
   base::scoped_nsobject<HistoryMenuCocoaController> controller_;  // strong

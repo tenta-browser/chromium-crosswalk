@@ -192,6 +192,67 @@ class InputMethodPrivateOpenOptionsPageFunction
   DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateOpenOptionsPageFunction);
 };
 
+class InputMethodPrivateGetSurroundingTextFunction
+    : public UIThreadExtensionFunction {
+ public:
+  InputMethodPrivateGetSurroundingTextFunction() {}
+
+ protected:
+  ~InputMethodPrivateGetSurroundingTextFunction() override {}
+
+  ResponseAction Run() override;
+
+ private:
+  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.getSurroundingText",
+                             INPUTMETHODPRIVATE_GETSURROUNDINGTEXT)
+  DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateGetSurroundingTextFunction);
+};
+
+class InputMethodPrivateGetSettingFunction : public UIThreadExtensionFunction {
+ public:
+  InputMethodPrivateGetSettingFunction() = default;
+
+ protected:
+  ~InputMethodPrivateGetSettingFunction() override = default;
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
+
+ private:
+  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.getSetting",
+                             INPUTMETHODPRIVATE_GETSETTING)
+  DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateGetSettingFunction);
+};
+
+class InputMethodPrivateSetSettingFunction : public UIThreadExtensionFunction {
+ public:
+  InputMethodPrivateSetSettingFunction() = default;
+
+ protected:
+  ~InputMethodPrivateSetSettingFunction() override = default;
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
+
+ private:
+  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.setSetting",
+                             INPUTMETHODPRIVATE_SETSETTING)
+  DISALLOW_COPY_AND_ASSIGN(InputMethodPrivateSetSettingFunction);
+};
+
+class InputMethodPrivateSetCompositionRangeFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("inputMethodPrivate.setCompositionRange",
+                             INPUTMETHODPRIVATE_SETCOMPOSITIONRANGE)
+
+ protected:
+  ~InputMethodPrivateSetCompositionRangeFunction() override {}
+
+  // UIThreadExtensionFunction:
+  ResponseAction Run() override;
+};
+
 class InputMethodAPI : public BrowserContextKeyedAPI,
                        public extensions::EventRouter::Observer {
  public:

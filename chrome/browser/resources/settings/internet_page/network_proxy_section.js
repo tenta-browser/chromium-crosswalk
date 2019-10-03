@@ -38,13 +38,14 @@ Polymer({
 
   /** @protected settings.RouteObserverBehavior */
   currentRouteChanged: function(newRoute) {
-    if (newRoute == settings.routes.NETWORK_DETAIL)
+    if (newRoute == settings.routes.NETWORK_DETAIL) {
       /** @type {NetworkProxyElement} */ (this.$$('network-proxy')).reset();
+    }
   },
 
   /** @private */
   useSharedProxiesChanged_: function() {
-    var pref = this.getPref('settings.use_shared_proxies');
+    const pref = this.getPref('settings.use_shared_proxies');
     this.useSharedProxies_ = !!pref && !!pref.value;
   },
 
@@ -82,7 +83,7 @@ Polymer({
    * @private
    */
   shouldShowNetworkPolicyIndicator_: function() {
-    var property = this.getProxySettingsTypeProperty_();
+    const property = this.getProxySettingsTypeProperty_();
     return !!property && !this.isExtensionControlled(property) &&
         this.isNetworkPolicyEnforced(property);
   },
@@ -92,7 +93,7 @@ Polymer({
    * @private
    */
   shouldShowExtensionIndicator_: function() {
-    var property = this.getProxySettingsTypeProperty_();
+    const property = this.getProxySettingsTypeProperty_();
     return !!property && this.isExtensionControlled(property);
   },
 
@@ -102,8 +103,13 @@ Polymer({
    * @private
    */
   shouldShowAllowShared_: function(property) {
-    return this.isShared_() && !this.isNetworkPolicyEnforced(property) &&
-        !this.isExtensionControlled(property);
+    if (!this.isShared_()) {
+      return false;
+    }
+    // We currently do not accurately determine the source if the policy
+    // controlling the proxy setting, so always show the 'allow shared'
+    // toggle for shared networks. http://crbug.com/662529.
+    return true;
   },
 
   /**
@@ -139,6 +145,6 @@ Polymer({
 
   /** @private */
   onAllowSharedDialogClose_: function() {
-    cr.ui.focusWithoutInk(assert(this.$$('#allowShared')));
+    this.$.allowShared.focus();
   },
 });

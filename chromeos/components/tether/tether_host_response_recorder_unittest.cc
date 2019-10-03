@@ -4,7 +4,10 @@
 
 #include "chromeos/components/tether/tether_host_response_recorder.h"
 
-#include "components/cryptauth/remote_device_test_util.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
+#include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -34,21 +37,21 @@ class TestObserver final : public TetherHostResponseRecorder::Observer {
 class TetherHostResponseRecorderTest : public testing::Test {
  protected:
   TetherHostResponseRecorderTest()
-      : test_devices_(cryptauth::GenerateTestRemoteDevices(10)) {}
+      : test_devices_(multidevice::CreateRemoteDeviceRefListForTest(10)) {}
 
   void SetUp() override {
     pref_service_ =
-        base::MakeUnique<sync_preferences::TestingPrefServiceSyncable>();
+        std::make_unique<sync_preferences::TestingPrefServiceSyncable>();
     TetherHostResponseRecorder::RegisterPrefs(pref_service_->registry());
 
     recorder_ =
-        base::MakeUnique<TetherHostResponseRecorder>(pref_service_.get());
+        std::make_unique<TetherHostResponseRecorder>(pref_service_.get());
 
     test_observer_ = base::WrapUnique(new TestObserver());
     recorder_->AddObserver(test_observer_.get());
   }
 
-  const std::vector<cryptauth::RemoteDevice> test_devices_;
+  const multidevice::RemoteDeviceRefList test_devices_;
 
   std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> pref_service_;
   std::unique_ptr<TestObserver> test_observer_;

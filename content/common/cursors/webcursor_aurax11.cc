@@ -6,7 +6,7 @@
 
 
 #include "base/logging.h"
-#include "third_party/WebKit/public/platform/WebCursorInfo.h"
+#include "third_party/blink/public/platform/web_cursor_info.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/cursor_loader_x11.h"
 #include "ui/base/x/x11_util.h"
@@ -14,22 +14,16 @@
 
 namespace content {
 
-ui::PlatformCursor WebCursor::GetPlatformCursor() {
+ui::PlatformCursor WebCursor::GetPlatformCursor(const ui::Cursor& cursor) {
   if (platform_cursor_)
     return platform_cursor_;
 
-  SkBitmap bitmap;
-  gfx::Point hotspot;
-  CreateScaledBitmapAndHotspotFromCustomData(&bitmap, &hotspot);
+  SkBitmap bitmap = cursor.GetBitmap();
 
-  XcursorImage* image = ui::SkBitmapToXcursorImage(&bitmap, hotspot);
+  XcursorImage* image =
+      ui::SkBitmapToXcursorImage(&bitmap, cursor.GetHotspot());
   platform_cursor_ = ui::CreateReffedCustomXCursor(image);
   return platform_cursor_;
-}
-
-void WebCursor::InitPlatformData() {
-  platform_cursor_ = 0;
-  device_scale_factor_ = 1.f;
 }
 
 bool WebCursor::IsPlatformDataEqual(const WebCursor& other) const {

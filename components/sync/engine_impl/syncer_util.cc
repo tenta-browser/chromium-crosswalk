@@ -11,14 +11,13 @@
 #include "base/metrics/histogram.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "components/sync/base/attachment_id_proto.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/base/hash_util.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/time.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/engine_impl/conflict_resolver.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
+#include "components/sync/nigori/cryptographer.h"
 #include "components/sync/protocol/bookmark_specifics.pb.h"
 #include "components/sync/protocol/password_specifics.pb.h"
 #include "components/sync/protocol/sync.pb.h"
@@ -305,26 +304,6 @@ UniquePosition GetUpdatePosition(const sync_pb::SyncEntity& update,
 
 namespace {
 
-// Helper to synthesize a new-style sync_pb::EntitySpecifics for use locally,
-// when the server speaks only the old sync_pb::SyncEntity_BookmarkData-based
-// protocol.
-void UpdateBookmarkSpecifics(const std::string& singleton_tag,
-                             const std::string& url,
-                             const std::string& favicon_bytes,
-                             syncable::ModelNeutralMutableEntry* local_entry) {
-  // In the new-style protocol, the server no longer sends bookmark info for
-  // the "google_chrome" folder.  Mimic that here.
-  if (singleton_tag == "google_chrome")
-    return;
-  sync_pb::EntitySpecifics pb;
-  sync_pb::BookmarkSpecifics* bookmark = pb.mutable_bookmark();
-  if (!url.empty())
-    bookmark->set_url(url);
-  if (!favicon_bytes.empty())
-    bookmark->set_favicon(favicon_bytes);
-  local_entry->PutServerSpecifics(pb);
-}
-
 void UpdateBookmarkPositioning(
     const sync_pb::SyncEntity& update,
     syncable::ModelNeutralMutableEntry* local_entry) {
@@ -403,15 +382,7 @@ void UpdateServerFieldsFromUpdate(syncable::ModelNeutralMutableEntry* target,
     DCHECK_NE(GetModelType(update), UNSPECIFIED)
         << "Storing unrecognized datatype in sync database.";
     target->PutServerSpecifics(update.specifics());
-  } else if (update.has_bookmarkdata()) {
-    // Legacy protocol response for bookmark data.
-    const sync_pb::SyncEntity::BookmarkData& bookmark = update.bookmarkdata();
-    UpdateBookmarkSpecifics(update.server_defined_unique_tag(),
-                            bookmark.bookmark_url(),
-                            bookmark.bookmark_favicon(), target);
   }
-  target->PutServerAttachmentMetadata(
-      CreateAttachmentMetadata(update.attachment_id()));
   if (SyncerProtoUtil::ShouldMaintainPosition(update)) {
     UpdateBookmarkPositioning(update, target);
   }
@@ -466,7 +437,6 @@ void UpdateLocalDataFromServerData(syncable::WriteTransaction* trans,
   entry->PutBaseVersion(entry->GetServerVersion());
   entry->PutIsDel(entry->GetServerIsDel());
   entry->PutIsUnappliedUpdate(false);
-  entry->PutAttachmentMetadata(entry->GetServerAttachmentMetadata());
 }
 
 void MarkDeletedChildrenSynced(syncable::Directory* dir,

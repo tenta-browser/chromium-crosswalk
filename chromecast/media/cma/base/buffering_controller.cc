@@ -6,14 +6,21 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "chromecast/base/metrics/cast_metrics_helper.h"
 #include "chromecast/media/cma/base/buffering_state.h"
-#include "chromecast/media/cma/base/cma_logging.h"
 #include "media/base/timestamp_constants.h"
 
 namespace chromecast {
 namespace media {
+
+namespace {
+
+// Maximum time for buffering before we error out the stream.
+constexpr base::TimeDelta kBufferingTimeout = base::TimeDelta::FromMinutes(1);
+
+}  // namespace
 
 BufferingController::BufferingController(
     const scoped_refptr<BufferingConfig>& config,
@@ -24,14 +31,14 @@ BufferingController::BufferingController(
       begin_buffering_time_(base::Time()),
       last_buffer_end_time_(base::Time()),
       initial_buffering_(true),
+      buffering_timeout_exceeded_(false),
       weak_factory_(this) {
   weak_this_ = weak_factory_.GetWeakPtr();
   thread_checker_.DetachFromThread();
-  CMALOG(kLogControl) << __FUNCTION__
-                      << " High threshold: "
-                      << config_->high_level().InMilliseconds()
-                      << "ms Low threshold: "
-                      << config_->low_level().InMilliseconds() << "ms";
+  LOG(INFO) << __FUNCTION__
+            << " High threshold: " << config_->high_level().InMilliseconds()
+            << "ms Low threshold: " << config_->low_level().InMilliseconds()
+            << "ms";
 }
 
 BufferingController::~BufferingController() {
@@ -44,8 +51,8 @@ void BufferingController::UpdateHighLevelThreshold(
   // Can only decrease the high level threshold.
   if (high_level_threshold > config_->high_level())
     return;
-  CMALOG(kLogControl) << "High buffer threshold: "
-                      << high_level_threshold.InMilliseconds() << "ms";
+  LOG(INFO) << "High buffer threshold: "
+            << high_level_threshold.InMilliseconds() << "ms";
   config_->set_high_level(high_level_threshold);
 
   // Make sure the low level threshold is somewhat consistent.
@@ -53,8 +60,8 @@ void BufferingController::UpdateHighLevelThreshold(
   // this value could be adjusted in the future.
   base::TimeDelta low_level_threshold = high_level_threshold / 3;
   if (low_level_threshold <= config_->low_level()) {
-    CMALOG(kLogControl) << "Low buffer threshold: "
-                        << low_level_threshold.InMilliseconds() << "ms";
+    LOG(INFO) << "Low buffer threshold: "
+              << low_level_threshold.InMilliseconds() << "ms";
     config_->set_low_level(low_level_threshold);
   }
 
@@ -117,6 +124,8 @@ void BufferingController::Reset() {
 
   is_buffering_ = false;
   initial_buffering_ = true;
+  buffering_timeout_exceeded_ = false;
+  buffering_timer_.Stop();
   stream_list_.clear();
 }
 
@@ -148,6 +157,8 @@ void BufferingController::OnBufferingStateChanged(
   // Start buffering.
   if (is_buffering_ && !is_buffering_prv) {
     begin_buffering_time_ = base::Time::Now();
+    buffering_timer_.Start(FROM_HERE, kBufferingTimeout, this,
+                           &BufferingController::BufferingTimeoutExceeded);
   }
 
   // End buffering.
@@ -156,9 +167,8 @@ void BufferingController::OnBufferingStateChanged(
     base::TimeDelta buffering_user_time = current_time - begin_buffering_time_;
     chromecast::metrics::CastMetricsHelper* metrics_helper =
         chromecast::metrics::CastMetricsHelper::GetInstance();
-    CMALOG(kLogControl)
-        << "Buffering took: "
-        << buffering_user_time.InMilliseconds() << "ms";
+    LOG(INFO) << "Buffering took: " << buffering_user_time.InMilliseconds()
+              << "ms";
     chromecast::metrics::CastMetricsHelper::BufferingType buffering_type =
         initial_buffering_ ?
             chromecast::metrics::CastMetricsHelper::kInitialBuffering :
@@ -168,9 +178,8 @@ void BufferingController::OnBufferingStateChanged(
     if (!initial_buffering_) {
       base::TimeDelta time_between_buffering =
           begin_buffering_time_ - last_buffer_end_time_;
-      CMALOG(kLogControl)
-          << "Time since last buffering event: "
-          << time_between_buffering.InMilliseconds() << "ms";
+      LOG(INFO) << "Time since last buffering event: "
+                << time_between_buffering.InMilliseconds() << "ms";
       metrics_helper->RecordApplicationEventWithValue(
           "Cast.Platform.PlayTimeBeforeAutoPause",
           time_between_buffering.InMilliseconds());
@@ -180,10 +189,21 @@ void BufferingController::OnBufferingStateChanged(
     // Only the first buffering report is considered "initial buffering".
     last_buffer_end_time_ = current_time;
     initial_buffering_ = false;
+    buffering_timer_.Stop();
   }
 
-  if (is_buffering_prv != is_buffering_ || force_notification)
+  // Don't notify any buffering change if the timeout was exceeded, to avoid
+  // user surprise if playback resumes after extremely long buffering.
+  if (!buffering_timeout_exceeded_ &&
+      (is_buffering_prv != is_buffering_ || force_notification))
     buffering_notification_cb_.Run(is_buffering_);
+}
+
+void BufferingController::BufferingTimeoutExceeded() {
+  LOG(INFO) << __FUNCTION__;
+  metrics::CastMetricsHelper::GetInstance()->RecordApplicationEvent(
+      "Cast.Platform.BufferingTimeoutExceeded");
+  buffering_timeout_exceeded_ = true;
 }
 
 bool BufferingController::IsHighBufferLevel() {
@@ -218,7 +238,7 @@ bool BufferingController::IsLowBufferLevel() {
 void BufferingController::DumpState() const {
   for (StreamList::const_iterator it = stream_list_.begin();
        it != stream_list_.end(); ++it) {
-    CMALOG(kLogControl) << (*it)->ToString();
+    LOG(INFO) << (*it)->ToString();
   }
 }
 

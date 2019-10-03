@@ -29,7 +29,7 @@ public class BackgroundSyncLauncherTest {
     private Boolean mShouldLaunchResult;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() throws ExecutionException, InterruptedException {
         BackgroundSyncLauncher.setGCMEnabled(false);
         RecordHistogram.setDisabledForTests(true);
         mLauncher = BackgroundSyncLauncher.create();
@@ -47,36 +47,25 @@ public class BackgroundSyncLauncherTest {
         mLauncher = null;
     }
 
-    private Boolean shouldLaunchBrowserIfStoppedSync() {
+    private Boolean shouldLaunchBrowserIfStoppedSync() throws InterruptedException {
         mShouldLaunchResult = false;
 
         // Use a semaphore to wait for the callback to be called.
         final Semaphore semaphore = new Semaphore(0);
 
-        BackgroundSyncLauncher.ShouldLaunchCallback callback =
-                shouldLaunch -> {
-                    mShouldLaunchResult = shouldLaunch;
-                    semaphore.release();
-                };
+        BackgroundSyncLauncher.ShouldLaunchCallback callback = shouldLaunch -> {
+            mShouldLaunchResult = shouldLaunch;
+            semaphore.release();
+        };
 
         BackgroundSyncLauncher.shouldLaunchBrowserIfStopped(callback);
-        try {
-            // Wait on the callback to be called.
-            semaphore.acquire();
-        } catch (InterruptedException e) {
-            Assert.fail("Failed to acquire semaphore");
-        }
+        // Wait on the callback to be called.
+        semaphore.acquire();
         return mShouldLaunchResult;
     }
 
-    private void waitForLaunchBrowserTask() {
-        try {
-            mLauncher.mLaunchBrowserIfStoppedTask.get();
-        } catch (InterruptedException e) {
-            Assert.fail("Launch task was interrupted");
-        } catch (ExecutionException e) {
-            Assert.fail("Launch task had execution exception");
-        }
+    private void waitForLaunchBrowserTask() throws ExecutionException, InterruptedException {
+        mLauncher.mLaunchBrowserIfStoppedTask.get();
     }
 
     @Test
@@ -92,7 +81,7 @@ public class BackgroundSyncLauncherTest {
     @Test
     @SmallTest
     @Feature({"BackgroundSync"})
-    public void testDefaultNoLaunch() {
+    public void testDefaultNoLaunch() throws InterruptedException {
         Assert.assertFalse(shouldLaunchBrowserIfStoppedSync());
     }
 
@@ -100,7 +89,7 @@ public class BackgroundSyncLauncherTest {
     @SmallTest
     @Feature({"BackgroundSync"})
     @RetryOnFailure
-    public void testSetLaunchWhenNextOnline() {
+    public void testSetLaunchWhenNextOnline() throws ExecutionException, InterruptedException {
         Assert.assertFalse(shouldLaunchBrowserIfStoppedSync());
         mLauncher.launchBrowserIfStopped(true, 0);
         waitForLaunchBrowserTask();
@@ -114,7 +103,8 @@ public class BackgroundSyncLauncherTest {
     @SmallTest
     @Feature({"BackgroundSync"})
     @RetryOnFailure
-    public void testNewLauncherDisablesNextOnline() {
+    public void testNewLauncherDisablesNextOnline()
+            throws ExecutionException, InterruptedException {
         mLauncher.launchBrowserIfStopped(true, 0);
         waitForLaunchBrowserTask();
         Assert.assertTrue(shouldLaunchBrowserIfStoppedSync());

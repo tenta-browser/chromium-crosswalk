@@ -10,13 +10,11 @@ import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
 import org.chromium.base.CommandLine;
-import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.util.HashSet;
@@ -61,12 +59,7 @@ public class TabModelSelectorObserverTestRule extends ChromeBrowserTestRule {
     }
 
     private void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                initialize();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { initialize(); });
     }
 
     private void initialize() {
@@ -76,13 +69,13 @@ public class TabModelSelectorObserverTestRule extends ChromeBrowserTestRule {
 
         mSelector = new TabModelSelectorBase() {
             @Override
-            public Tab openNewTab(LoadUrlParams loadUrlParams, TabLaunchType type, Tab parent,
+            public Tab openNewTab(LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent,
                     boolean incognito) {
                 return null;
             }
         };
 
-        TabModelOrderController orderController = new TabModelOrderController(mSelector);
+        TabModelOrderController orderController = new TabModelOrderControllerImpl(mSelector);
         TabContentManager tabContentManager =
                 new TabContentManager(InstrumentationRegistry.getTargetContext(), null, false);
         TabPersistencePolicy persistencePolicy = new TabbedModeTabPersistencePolicy(0, false);
@@ -96,10 +89,15 @@ public class TabModelSelectorObserverTestRule extends ChromeBrowserTestRule {
             }
 
             @Override
-            public void requestToShowTab(Tab tab, TabSelectionType type) {}
+            public void requestToShowTab(Tab tab, @TabSelectionType int type) {}
 
             @Override
             public boolean isSessionRestoreInProgress() {
+                return false;
+            }
+
+            @Override
+            public boolean isCurrentModel(TabModel model) {
                 return false;
             }
 

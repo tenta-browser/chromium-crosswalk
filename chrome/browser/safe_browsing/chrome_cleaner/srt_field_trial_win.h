@@ -52,25 +52,26 @@ enum PromptTypeHistogramValue {
   PROMPT_TYPE_MAX,
 };
 
-// When enabled, shows a prompt dialog if a cleanup requires a reboot and the
-// Settings page is not the current active tab.
-extern const base::Feature kRebootPromptDialogFeature;
+// Feature to control whether users should be prompted for a cleanup if the
+// software reporter finds bad software on their machine.
+extern const base::Feature kChromeCleanupInBrowserPromptFeature;
 
-// When enabled, users can initiate cleanups from the Settings page.
-extern const base::Feature kUserInitiatedChromeCleanupsFeature;
+// Feature, parameters of which control which software reporter and cleanup tool
+// versions will be downloaded. When not enabled, default versions will be used.
+extern const base::Feature kChromeCleanupDistributionFeature;
 
-extern const char kSRTPromptTrial[];
+// Extensions cleanup feature. When enabled, Chrome Cleaner will prompt users
+// for, and cleanup, bad extensions.
+extern const base::Feature kChromeCleanupExtensionsFeature;
+
+// Protobuf IPC feature. When enabled, Chrome Cleaner will communicate by
+// serializing protobufs over a custom IPC pipe that isn't tied to the Mojo
+// version.
+extern const base::Feature kChromeCleanupProtobufIPCFeature;
 
 // Returns true if this Chrome is in a field trial group which shows the SRT
 // prompt.
-bool IsInSRTPromptFieldTrialGroups();
-
-// Returns true if this Chrome is in a field trial group which doesn't need an
-// elevation icon, i.e., the SRT won't ask for elevation on startup.
-bool SRTPromptNeedsElevationIcon();
-
-// Returns true if feature kUserInitiatedChromeCleanupsFeature is enabled.
-bool UserInitiatedCleanupsEnabled();
+bool IsSRTPromptFeatureEnabled();
 
 // Returns the correct SRT download URL for the current field trial.
 GURL GetSRTDownloadURL();
@@ -78,12 +79,9 @@ GURL GetSRTDownloadURL();
 // Returns the value of the incoming SRT seed.
 std::string GetIncomingSRTSeed();
 
-// Returns the group name in the SRTPrompt field trial.
-std::string GetSRTFieldTrialGroupName();
-
-// Returns true if the kRebootPromptDialogFeature is enabled and the prompt
-// dialog is modal.
-bool IsRebootPromptModal();
+// Returns the value of the "Group" parameter associed with the SRTPrompt
+// feature.
+std::string GetSRTPromptGroupName();
 
 // Records a value for the SRT Prompt Histogram.
 void RecordSRTPromptHistogram(SRTPromptHistogramValue value);

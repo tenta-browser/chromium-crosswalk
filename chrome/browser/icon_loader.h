@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/task_traits.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/gfx/image/image.h"
@@ -41,10 +41,10 @@ class IconLoader {
   };
 
   // The callback invoked when an icon has been read. The parameters are:
-  // - The icon that was loaded, or null if there was a failure to load it.
+  // - The icon that was loaded (IsEmpty() will be true on failure to load).
   // - The determined group from the original requested path.
   using IconLoadedCallback =
-      base::Callback<void(std::unique_ptr<gfx::Image>, const IconGroup&)>;
+      base::OnceCallback<void(gfx::Image, const IconGroup&)>;
 
   // Creates an IconLoader, which owns itself. If the IconLoader might outlive
   // the caller, be sure to use a weak pointer in the |callback|.

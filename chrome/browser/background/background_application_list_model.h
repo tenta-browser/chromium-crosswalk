@@ -8,12 +8,15 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/scoped_observer.h"
+#include "chrome/browser/background/background_contents_service.h"
+#include "chrome/browser/background/background_contents_service_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/extension_registry_observer.h"
@@ -34,7 +37,8 @@ class ExtensionRegistry;
 // BackgroundContents).
 class BackgroundApplicationListModel
     : public content::NotificationObserver,
-      public extensions::ExtensionRegistryObserver {
+      public extensions::ExtensionRegistryObserver,
+      public BackgroundContentsServiceObserver {
  public:
   // Observer is informed of changes to the model.  Users of the
   // BackgroundApplicationListModel should anticipate that associated data,
@@ -43,15 +47,13 @@ class BackgroundApplicationListModel
   // Observers of the model.
   class Observer {
    public:
-    // Invoked when data that the model associates with the extension, such as
+    // Invoked when data that the model associates with an extension, such as
     // the Icon, has changed.
-    virtual void OnApplicationDataChanged(
-        const extensions::Extension* extension,
-        Profile* profile);
+    virtual void OnApplicationDataChanged();
 
     // Invoked when the model detects a previously unknown extension and/or when
     // it no longer detects a previously known extension.
-    virtual void OnApplicationListChanged(Profile* profile);
+    virtual void OnApplicationListChanged(const Profile* profile);
 
    protected:
     virtual ~Observer();
@@ -65,15 +67,13 @@ class BackgroundApplicationListModel
   // Associate observer with this model.
   void AddObserver(Observer* observer);
 
-  // Return the icon associated with |extension| or NULL.  NULL indicates either
-  // that there is no icon associated with the extension, or that a pending
-  // task to retrieve the icon has not completed.  See the Observer class above.
+  // Return the icon associated with |extension|.  If the result isNull(),
+  // there is no icon associated with the extension, or a pending task to
+  // retrieve the icon has not completed.  See the Observer class above.
   //
-  // NOTE: The model manages the ImageSkia result, that is it "owns" the memory,
-  //       releasing it if the associated background application is unloaded.
   // NOTE: All icons are currently sized as
   //       ExtensionIconSet::EXTENSION_ICON_BITTY.
-  const gfx::ImageSkia* GetIcon(const extensions::Extension* extension);
+  gfx::ImageSkia GetIcon(const extensions::Extension* extension);
 
   // Return the position of |extension| within this list model.
   int GetPosition(const extensions::Extension* extension) const;
@@ -123,12 +123,12 @@ class BackgroundApplicationListModel
   // Returns the Application associated with |extension| or NULL.
   Application* FindApplication(const extensions::Extension* extension);
 
-  // content::NotificationObserver implementation.
+  // content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // extensions::ExtensionRegistryObserver implementation.
+  // extensions::ExtensionRegistryObserver:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
@@ -136,13 +136,16 @@ class BackgroundApplicationListModel
                            extensions::UnloadedExtensionReason reason) override;
   void OnShutdown(extensions::ExtensionRegistry* registry) override;
 
+  // BackgroundContentsServiceObserver:
+  void OnBackgroundContentsServiceChanged() override;
+  void OnBackgroundContentsServiceDestroying() override;
+
   // Intended to be called when extension system is ready.
   void OnExtensionSystemReady();
 
   // Notifies observers that some of the data associated with this background
-  // application, e. g. the Icon, has changed.
-  void SendApplicationDataChangedNotifications(
-      const extensions::Extension* extension);
+  // application, e.g. the Icon, has changed.
+  void SendApplicationDataChangedNotifications();
 
   // Notifies observers that at least one background application has been added
   // or removed.
@@ -161,17 +164,20 @@ class BackgroundApplicationListModel
   std::map<std::string, std::unique_ptr<Application>> applications_;
 
   extensions::ExtensionList extensions_;
-  base::ObserverList<Observer, true> observers_;
-  Profile* profile_;
+  base::ObserverList<Observer, true>::Unchecked observers_;
+  Profile* const profile_;
   content::NotificationRegistrar registrar_;
-  bool ready_;
+  bool ready_{false};
 
   // Listens to extension load, unload notifications.
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
-  base::WeakPtrFactory<BackgroundApplicationListModel> weak_ptr_factory_;
+  ScopedObserver<BackgroundContentsService, BackgroundContentsServiceObserver>
+      background_contents_service_observer_{this};
+
+  base::WeakPtrFactory<BackgroundApplicationListModel> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundApplicationListModel);
 };

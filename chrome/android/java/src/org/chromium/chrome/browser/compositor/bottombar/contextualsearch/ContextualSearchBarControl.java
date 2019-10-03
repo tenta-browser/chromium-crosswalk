@@ -12,9 +12,8 @@ import android.view.ViewGroup;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
-import org.chromium.chrome.browser.compositor.animation.CompositorAnimator.AnimatorUpdateListener;
-import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelAnimation;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -23,10 +22,19 @@ import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
  * Controls the Search Bar in the Contextual Search Panel.
  */
 public class ContextualSearchBarControl {
+    /** Full opacity -- fully visible. */
+    private static final float FULL_OPACITY = 1.0f;
+
+    /** Transparent opacity -- completely transparent (not visible). */
+    private static final float TRANSPARENT_OPACITY = 0.0f;
+
+    /** The opacity of the divider line when using the generic UX. */
+    private static final float DIVIDER_LINE_OPACITY_GENERIC = FULL_OPACITY;
+
     /**
      * The panel used to get information about the panel layout.
      */
-    protected OverlayPanel mOverlayPanel;
+    protected ContextualSearchPanel mContextualSearchPanel;
 
     /**
      * The {@link ContextualSearchContextControl} used to control the Search Context View.
@@ -47,6 +55,12 @@ public class ContextualSearchBarControl {
      * The {@link ContextualSearchQuickActionControl} used to control quick action behavior.
      */
     private final ContextualSearchQuickActionControl mQuickActionControl;
+
+    /**
+     * The {@link ContextualSearchCardIconControl} used to control icons for non-action Cards
+     * returned by the server.
+     */
+    private final ContextualSearchCardIconControl mCardIconControl;
 
     /**
      * The {@link ContextualSearchImageControl} for the panel.
@@ -129,14 +143,15 @@ public class ContextualSearchBarControl {
                                       Context context,
                                       ViewGroup container,
                                       DynamicResourceLoader loader) {
-        mOverlayPanel = panel;
+        mContextualSearchPanel = panel;
         mCanPromoteToNewTab = panel.canPromoteToNewTab();
         mImageControl = new ContextualSearchImageControl(panel);
         mContextControl = new ContextualSearchContextControl(panel, context, container, loader);
         mSearchTermControl = new ContextualSearchTermControl(panel, context, container, loader);
-        mCaptionControl = new ContextualSearchCaptionControl(panel, context, container, loader,
-                mCanPromoteToNewTab);
+        mCaptionControl = new ContextualSearchCaptionControl(
+                panel, context, container, loader, mCanPromoteToNewTab);
         mQuickActionControl = new ContextualSearchQuickActionControl(context, loader);
+        mCardIconControl = new ContextualSearchCardIconControl(context, loader);
 
         mTextLayerMinHeight = context.getResources().getDimension(
                 R.dimen.contextual_search_text_layer_min_height);
@@ -148,10 +163,13 @@ public class ContextualSearchBarControl {
                 R.dimen.contextual_search_divider_line_width);
         mDividerLineHeight = context.getResources().getDimension(
                 R.dimen.contextual_search_divider_line_height);
-        mDividerLineColor = ApiCompatibilityUtils.getColor(context.getResources(),
-                R.color.light_grey);
-        mEndButtonWidth = context.getResources().getDimension(
-                R.dimen.contextual_search_end_button_width);
+        mDividerLineColor = ApiCompatibilityUtils.getColor(
+                context.getResources(), R.color.contextual_search_divider_line_color);
+        int endButtonsWidthDimension =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.OVERLAY_NEW_LAYOUT)
+                ? R.dimen.contextual_search_end_buttons_width
+                : R.dimen.contextual_search_end_button_width;
+        mEndButtonWidth = context.getResources().getDimension(endButtonsWidthDimension);
         mDpToPx = context.getResources().getDisplayMetrics().density;
     }
 
@@ -185,6 +203,7 @@ public class ContextualSearchBarControl {
         mSearchTermControl.destroy();
         mCaptionControl.destroy();
         mQuickActionControl.destroy();
+        mCardIconControl.destroy();
     }
 
     /**
@@ -194,10 +213,10 @@ public class ContextualSearchBarControl {
     public void onUpdateFromCloseToPeek(float percentage) {
         // #onUpdateFromPeekToExpanded() never reaches the 0.f value because this method is called
         // instead. If the panel is fully peeked, call #onUpdateFromPeekToExpanded().
-        if (percentage == 1.f) onUpdateFromPeekToExpand(0.f);
+        if (percentage == FULL_OPACITY) onUpdateFromPeekToExpand(TRANSPARENT_OPACITY);
 
         // When the panel is completely closed the caption and custom image should be hidden.
-        if (percentage == 0.f) {
+        if (percentage == TRANSPARENT_OPACITY) {
             mQuickActionControl.reset();
             mCaptionControl.hide();
             getImageControl().hideCustomImage(false);
@@ -235,6 +254,19 @@ public class ContextualSearchBarControl {
     }
 
     /**
+     * Updates the Bar to display a dictionary definition card.
+     * @param searchTerm The string that represents the search term to display.
+     */
+    public void updateForDictionaryDefinition(String searchTerm) {
+        if (!mCardIconControl.didUpdateControlsForDefinition(
+                    mContextControl, mImageControl, searchTerm)) {
+            // Can't style, just update with the text to display.
+            setSearchTerm(searchTerm);
+            animateSearchTermResolution();
+        }
+    }
+
+    /**
      * Sets the search term to display in the control.
      * @param searchTerm The string that represents the search term.
      */
@@ -247,7 +279,7 @@ public class ContextualSearchBarControl {
 
         // If the panel is expanded, the divider line should not be hidden. This may happen if the
         // panel is opened before the search term is resolved.
-        if (mExpandedPercent == 0.f) animateDividerLine(false);
+        if (mExpandedPercent == TRANSPARENT_OPACITY) animateDividerLine(false);
     }
 
     /**
@@ -333,7 +365,7 @@ public class ContextualSearchBarControl {
             // TODO(twellington): should the quick action caption be stored separately from the
             // regular caption?
             mCaptionControl.setCaption(mQuickActionControl.getCaption());
-            mImageControl.setQuickActionIconResourceId(mQuickActionControl.getIconResId());
+            mImageControl.setCardIconResourceId(mQuickActionControl.getIconResId());
             animateDividerLine(true);
         }
     }
@@ -350,8 +382,8 @@ public class ContextualSearchBarControl {
      * context is made visible and the search term invisible.
      */
     private void resetSearchBarContextOpacity() {
-        mSearchBarContextOpacity = 1.f;
-        mSearchBarTermOpacity = 0.f;
+        mSearchBarContextOpacity = FULL_OPACITY;
+        mSearchBarTermOpacity = TRANSPARENT_OPACITY;
     }
 
     /**
@@ -359,8 +391,8 @@ public class ContextualSearchBarControl {
      * term is made visible and the search context invisible.
      */
     private void resetSearchBarTermOpacity() {
-        mSearchBarContextOpacity = 0.f;
-        mSearchBarTermOpacity = 1.f;
+        mSearchBarContextOpacity = TRANSPARENT_OPACITY;
+        mSearchBarTermOpacity = FULL_OPACITY;
     }
 
     /**
@@ -408,7 +440,8 @@ public class ContextualSearchBarControl {
         if (LocalizationUtils.isLayoutRtl()) {
             return mEndButtonWidth;
         } else {
-            return mOverlayPanel.getContentViewWidthPx() - mEndButtonWidth - getDividerLineWidth();
+            return mContextualSearchPanel.getContentViewWidthPx() - mEndButtonWidth
+                    - getDividerLineWidth();
         }
     }
 
@@ -417,18 +450,14 @@ public class ContextualSearchBarControl {
      * @param visible Whether the divider line should be made visible.
      */
     private void animateDividerLine(boolean visible) {
-        float endValue = visible ? 1.f : 0.f;
+        float endValue = visible ? FULL_OPACITY : TRANSPARENT_OPACITY;
         if (mDividerLineVisibilityPercentage == endValue) return;
         if (mDividerLineVisibilityAnimation != null) mDividerLineVisibilityAnimation.cancel();
-        AnimatorUpdateListener listener = new AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(CompositorAnimator animator) {
-                mDividerLineVisibilityPercentage = animator.getAnimatedValue();
-            }
-        };
         mDividerLineVisibilityAnimation = CompositorAnimator.ofFloat(
-                mOverlayPanel.getAnimationHandler(), mDividerLineVisibilityPercentage, endValue,
-                OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, listener);
+                mContextualSearchPanel.getAnimationHandler(), mDividerLineVisibilityPercentage,
+                endValue, OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
+        mDividerLineVisibilityAnimation.addUpdateListener(
+                animator -> mDividerLineVisibilityPercentage = animator.getAnimatedValue());
         mDividerLineVisibilityAnimation.start();
     }
 
@@ -485,12 +514,13 @@ public class ContextualSearchBarControl {
 
             // The touch was not on the end button so the touch highlight should cover everything
             // except the end button.
-            return mOverlayPanel.getContentViewWidthPx() - mEndButtonWidth - getDividerLineWidth();
+            return mContextualSearchPanel.getContentViewWidthPx() - mEndButtonWidth
+                    - getDividerLineWidth();
         }
 
         // If the divider line wasn't visible when the Bar was touched, the touch highlight covers
         // the entire Bar.
-        return mOverlayPanel.getContentViewWidthPx();
+        return mContextualSearchPanel.getContentViewWidthPx();
     }
 
     /**
@@ -522,16 +552,18 @@ public class ContextualSearchBarControl {
         // If the panel is expanded or maximized and the panel content cannot be promoted to a new
         // tab, then tapping anywhere besides the end button does nothing. In this case, the touch
         // highlight should not be shown.
-        if (!mWasTouchOnEndButton && !mOverlayPanel.isPeeking() && !mCanPromoteToNewTab) return;
+        if (!mWasTouchOnEndButton && !mContextualSearchPanel.isPeeking() && !mCanPromoteToNewTab)
+            return;
 
-        mWasDividerVisibleOnTouch = getDividerLineVisibilityPercentage() > 0.f;
+        mWasDividerVisibleOnTouch = getDividerLineVisibilityPercentage() > TRANSPARENT_OPACITY;
         mTouchHighlightVisible = true;
 
         // The touch highlight animation is used to ensure the touch highlight is visible for at
         // least OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS.
         // TODO(twellington): Add a material ripple to this animation.
         if (mTouchHighlightAnimation == null) {
-            mTouchHighlightAnimation = new CompositorAnimator(mOverlayPanel.getAnimationHandler());
+            mTouchHighlightAnimation =
+                    new CompositorAnimator(mContextualSearchPanel.getAnimationHandler());
             mTouchHighlightAnimation.setDuration(OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS);
             mTouchHighlightAnimation.addListener(new AnimatorListenerAdapter() {
                 @Override
@@ -549,7 +581,7 @@ public class ContextualSearchBarControl {
      * @return Whether the touch occurred on the search Bar's end button.
      */
     private boolean isTouchOnEndButton(float x) {
-        if (getDividerLineVisibilityPercentage() == 0.f) return false;
+        if (getDividerLineVisibilityPercentage() == TRANSPARENT_OPACITY) return false;
 
         float xPx = x * mDpToPx;
         if (LocalizationUtils.isLayoutRtl()) return xPx <= getDividerLineXOffset();
@@ -565,14 +597,11 @@ public class ContextualSearchBarControl {
      */
     public void animateSearchTermResolution() {
         if (mTextOpacityAnimation == null) {
-            mTextOpacityAnimation = CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(),
-                    0.f, 1.f, OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
-            mTextOpacityAnimation.addUpdateListener(new AnimatorUpdateListener() {
-                @Override
-                public void onAnimationUpdate(CompositorAnimator animator) {
-                    updateSearchBarTextOpacity(animator.getAnimatedValue());
-                }
-            });
+            mTextOpacityAnimation = CompositorAnimator.ofFloat(
+                    mContextualSearchPanel.getAnimationHandler(), TRANSPARENT_OPACITY, FULL_OPACITY,
+                    OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
+            mTextOpacityAnimation.addUpdateListener(
+                    animator -> updateSearchBarTextOpacity(animator.getAnimatedValue()));
         }
         mTextOpacityAnimation.cancel();
         mTextOpacityAnimation.start();
@@ -595,9 +624,11 @@ public class ContextualSearchBarControl {
         // The search context will start fading out before the search term starts fading in.
         // They will both be partially visible for overlapPercentage of the animation duration.
         float overlapPercentage = .75f;
-        float fadingOutPercentage = Math.max(1 - (percentage / overlapPercentage), 0.f);
+        float fadingOutPercentage =
+                Math.max(1 - (percentage / overlapPercentage), TRANSPARENT_OPACITY);
         float fadingInPercentage =
-                Math.max(percentage - (1 - overlapPercentage), 0.f) / overlapPercentage;
+                Math.max(percentage - (1 - overlapPercentage), TRANSPARENT_OPACITY)
+                / overlapPercentage;
 
         mSearchBarContextOpacity = fadingOutPercentage;
         mSearchBarTermOpacity = fadingInPercentage;

@@ -5,7 +5,6 @@
 #include "chrome/test/chromedriver/devtools_events_logger.h"
 
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
 #include "chrome/test/chromedriver/chrome/devtools_client_impl.h"
@@ -18,9 +17,7 @@ DevToolsEventsLogger::DevToolsEventsLogger(Log* log,
 inline DevToolsEventsLogger::~DevToolsEventsLogger() {}
 
 Status DevToolsEventsLogger::OnConnected(DevToolsClient* client) {
-  for (base::ListValue::const_iterator it = prefs_->begin();
-       it != prefs_->end();
-       ++it) {
+  for (auto it = prefs_->begin(); it != prefs_->end(); ++it) {
     std::string event;
     it->GetAsString(&event);
     events_.insert(event);
@@ -31,7 +28,7 @@ Status DevToolsEventsLogger::OnConnected(DevToolsClient* client) {
 Status DevToolsEventsLogger::OnEvent(DevToolsClient* client,
                                      const std::string& method,
                                      const base::DictionaryValue& params) {
-  std::unordered_set<std::string>::iterator it = events_.find(method);
+  auto it = events_.find(method);
   if (it != events_.end()) {
     base::DictionaryValue log_message_dict;
     log_message_dict.SetString("method", method);

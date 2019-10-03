@@ -16,7 +16,7 @@
         android:layout_marginTop="6dp"
         android:layout_marginStart="@dimen/list_item_default_margin"
         android:layout_marginEnd="@dimen/list_item_default_margin"
-        android:textAppearance="@style/BlackBody"
+        android:textAppearance="@style/TextAppearance.BlackBody"
         android:lineSpacingExtra="6sp"/>
 
     <LinearLayout
@@ -29,7 +29,7 @@
             android:layout_width="match_parent"
             android:layout_height="8dp" />
 
-        <View style="@style/Divider" />
+        <View style="@style/HorizontalDivider" />
 
     </LinearLayout>
 </LinearLayout>

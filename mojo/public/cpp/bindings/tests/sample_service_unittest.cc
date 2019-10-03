@@ -9,6 +9,10 @@
 #include <string>
 #include <utility>
 
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/tests/bindings_test_base.h"
 #include "mojo/public/interfaces/bindings/tests/sample_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -57,7 +61,7 @@ FooPtr MakeFoo() {
   for (size_t i = 0; i < input_streams.size(); ++i) {
     MojoCreateDataPipeOptions options;
     options.struct_size = sizeof(MojoCreateDataPipeOptions);
-    options.flags = MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE;
+    options.flags = MOJO_CREATE_DATA_PIPE_FLAG_NONE;
     options.element_num_bytes = 1;
     options.capacity_num_bytes = 1024;
     mojo::ScopedDataPipeProducerHandle producer;
@@ -247,8 +251,8 @@ class ServiceImpl : public Service {
  public:
   void Frobinate(FooPtr foo,
                  BazOptions baz,
-                 PortPtr port,
-                 const Service::FrobinateCallback& callback) override {
+                 mojo::PendingRemote<Port> pending_port,
+                 Service::FrobinateCallback callback) override {
     // Users code goes here to handle the incoming Frobinate message.
 
     // We mainly check that we're given the expected arguments.
@@ -257,6 +261,7 @@ class ServiceImpl : public Service {
       CheckFoo(*foo);
     EXPECT_EQ(BazOptions::EXTRA, baz);
 
+    mojo::Remote<Port> port(std::move(pending_port));
     if (g_dump_message_as_text) {
       // Also dump the Foo structure and all of its members.
       std::cout << "Frobinate:" << std::endl;
@@ -265,10 +270,10 @@ class ServiceImpl : public Service {
       Print(depth, "baz", static_cast<int32_t>(baz));
       Print(depth, "port", port.get());
     }
-    callback.Run(5);
+    std::move(callback).Run(5);
   }
 
-  void GetPort(mojo::InterfaceRequest<Port> port_request) override {}
+  void GetPort(mojo::PendingReceiver<Port> receiver) override {}
 };
 
 class ServiceProxyImpl : public ServiceProxy {
@@ -322,9 +327,8 @@ TEST_P(BindingsSampleTest, Basic) {
   FooPtr foo = MakeFoo();
   CheckFoo(*foo);
 
-  PortPtr port;
   service->Frobinate(std::move(foo), Service::BazOptions::EXTRA,
-                     std::move(port), Service::FrobinateCallback());
+                     mojo::NullRemote(), Service::FrobinateCallback());
 
   delete service;
 }
@@ -361,7 +365,7 @@ TEST_P(BindingsSampleTest, DefaultValues) {
   EXPECT_EQ(-0x123456789, defaults->a25);
 }
 
-INSTANTIATE_MOJO_BINDINGS_TEST_CASE_P(BindingsSampleTest);
+INSTANTIATE_MOJO_BINDINGS_TEST_SUITE_P(BindingsSampleTest);
 
 }  // namespace
 }  // namespace sample

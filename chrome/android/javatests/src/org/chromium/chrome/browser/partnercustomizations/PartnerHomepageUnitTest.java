@@ -11,24 +11,38 @@ import static org.chromium.chrome.browser.partnercustomizations.BasePartnerBrows
 
 import android.support.test.filters.SmallTest;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
+import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.partnercustomizations.TestPartnerBrowserCustomizationsDelayedProvider;
 import org.chromium.chrome.test.partnercustomizations.TestPartnerBrowserCustomizationsProvider;
+import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Unit test suite for partner homepage.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
+@DisableFeatures(ChromeFeatureList.HOME_PAGE_BUTTON_FORCE_ENABLED)
 public class PartnerHomepageUnitTest {
+    @Rule
+    public TestRule mFeaturesProcesser = new Features.JUnitProcessor();
+
     @Rule
     public BasePartnerBrowserCustomizationUnitTestRule mTestRule =
             new BasePartnerBrowserCustomizationUnitTestRule();
@@ -42,20 +56,59 @@ public class PartnerHomepageUnitTest {
     @Before
     public void setUp() throws Exception {
         mHomepageManager = HomepageManager.getInstance();
+        RecordHistogram.setDisabledForTests(true);
         Assert.assertNotNull(mHomepageManager);
 
         Assert.assertNotSame(
                 TestPartnerBrowserCustomizationsProvider.HOMEPAGE_URI, TEST_CUSTOM_HOMEPAGE_URI);
-
         PartnerBrowserCustomizations.ignoreBrowserProviderSystemPackageCheckForTests(true);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        RecordHistogram.setDisabledForTests(false);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Homepage"})
+    @DisabledTest(message = "crbug.com/901769")
+    public void testHomepageFeatureFlag() throws InterruptedException {
+        // Checks that #isHomepageProviderAvailableAndEnabled returned false
+        Assert.assertNull(PartnerBrowserCustomizations.getHomePageUrl());
+
+        FeatureUtilities.resetHomePageButtonForceEnabledForTests();
+        ChromePreferenceManager.getInstance().writeBoolean(
+                ChromePreferenceManager.HOME_PAGE_BUTTON_FORCE_ENABLED_KEY, true);
+        Assert.assertTrue(HomepageManager.isHomepageEnabled());
+        Assert.assertEquals(UrlConstants.NTP_NON_NATIVE_URL, HomepageManager.getHomepageUri());
+
+        mHomepageManager.setPrefHomepageEnabled(false);
+        Assert.assertFalse(HomepageManager.isHomepageEnabled());
+        FeatureUtilities.resetHomePageButtonForceEnabledForTests();
+
+        ChromePreferenceManager.getInstance().writeBoolean(
+                ChromePreferenceManager.HOME_PAGE_BUTTON_FORCE_ENABLED_KEY, false);
+        mHomepageManager.setPrefHomepageEnabled(true);
+        Assert.assertFalse(HomepageManager.isHomepageEnabled());
+
+        // Test that a cached value (homepage enabled = false) is being read.
+        ChromePreferenceManager.getInstance().writeBoolean(
+                ChromePreferenceManager.HOME_PAGE_BUTTON_FORCE_ENABLED_KEY, true);
+        mHomepageManager.setPrefHomepageEnabled(true);
+        Assert.assertFalse(HomepageManager.isHomepageEnabled());
+
+        FeatureUtilities.resetHomePageButtonForceEnabledForTests();
     }
 
     /**
      * Everything is enabled for using partner homepage, except that there is no flag file.
+     * Flaky: crbug.com/836700
      */
     @Test
     @SmallTest
     @Feature({"Homepage"})
+    @DisabledTest(message = "crbug.com/836700")
     public void testProviderNotFromSystemPackage() throws InterruptedException {
         mHomepageManager.setPrefHomepageEnabled(true);
         mHomepageManager.setPrefHomepageUseDefaultUri(true);
@@ -66,12 +119,9 @@ public class PartnerHomepageUnitTest {
         PartnerBrowserCustomizations.ignoreBrowserProviderSystemPackageCheckForTests(false);
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(
-                        mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(
+                    mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(
                 mTestRule.getCallback(), DEFAULT_TIMEOUT_MS);
@@ -88,10 +138,12 @@ public class PartnerHomepageUnitTest {
 
     /**
      * Everything is enabled for using partner homepage, except that there is no actual provider.
+     * Flaky : http://crbug.com/836110
      */
     @Test
     @SmallTest
     @Feature({"Homepage"})
+    @DisabledTest(message = "crbug.com/836110")
     public void testNoProvider() throws InterruptedException {
         mHomepageManager.setPrefHomepageEnabled(true);
         mHomepageManager.setPrefHomepageUseDefaultUri(true);
@@ -99,12 +151,9 @@ public class PartnerHomepageUnitTest {
 
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_NO_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(
-                        mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(
+                    mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(
                 mTestRule.getCallback(), DEFAULT_TIMEOUT_MS);
@@ -133,12 +182,9 @@ public class PartnerHomepageUnitTest {
 
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(
-                        mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(
+                    mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(
                 mTestRule.getCallback(), DEFAULT_TIMEOUT_MS);
@@ -169,12 +215,9 @@ public class PartnerHomepageUnitTest {
 
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(
-                        mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(
+                    mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(
                 mTestRule.getCallback(), DEFAULT_TIMEOUT_MS);
@@ -196,6 +239,7 @@ public class PartnerHomepageUnitTest {
      */
     @Test
     @SmallTest
+    @DisabledTest(message = "crbug.com/837311")
     @Feature({"Homepage"})
     public void testHomepageProviderTimeout() throws InterruptedException {
         mHomepageManager.setPrefHomepageEnabled(true);
@@ -204,11 +248,8 @@ public class PartnerHomepageUnitTest {
 
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_DELAYED_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(mTestRule.getContextWrapper(), 500);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(mTestRule.getContextWrapper(), 500);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(mTestRule.getCallback(), 300);
 
@@ -242,6 +283,7 @@ public class PartnerHomepageUnitTest {
     @Test
     @SmallTest
     @Feature({"Homepage"})
+    @DisabledTest(message = "crbug.com/837130")
     public void testHomepageProviderDelayed() throws InterruptedException {
         mHomepageManager.setPrefHomepageEnabled(true);
         mHomepageManager.setPrefHomepageUseDefaultUri(true);
@@ -251,11 +293,8 @@ public class PartnerHomepageUnitTest {
                 PARTNER_BROWSER_CUSTOMIZATIONS_DELAYED_PROVIDER);
         mTestRule.setDelayProviderUriPathForDelay(
                 PartnerBrowserCustomizations.PARTNER_HOMEPAGE_PATH);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(mTestRule.getContextWrapper(), 2000);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(mTestRule.getContextWrapper(), 2000);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(mTestRule.getCallback(), 300);
 
@@ -297,12 +336,9 @@ public class PartnerHomepageUnitTest {
 
         PartnerBrowserCustomizations.setProviderAuthorityForTests(
                 PARTNER_BROWSER_CUSTOMIZATIONS_PROVIDER);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                PartnerBrowserCustomizations.initializeAsync(
-                        mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            PartnerBrowserCustomizations.initializeAsync(
+                    mTestRule.getContextWrapper(), DEFAULT_TIMEOUT_MS);
         });
         PartnerBrowserCustomizations.setOnInitializeAsyncFinished(
                 mTestRule.getCallback(), DEFAULT_TIMEOUT_MS);

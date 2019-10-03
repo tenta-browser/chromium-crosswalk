@@ -5,20 +5,22 @@
 package org.chromium.chrome.browser.webapps;
 
 import android.content.Intent;
-import android.text.TextUtils;
+import android.os.Build;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.SingleTabActivity;
 import org.chromium.chrome.browser.contextmenu.ChromeContextMenuPopulator;
 import org.chromium.chrome.browser.contextmenu.ContextMenuPopulator;
 import org.chromium.chrome.browser.fullscreen.ComposedBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
-import org.chromium.chrome.browser.tab.InterceptNavigationDelegateImpl;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabContextMenuItemDelegate;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
+import org.chromium.chrome.browser.tab_activity_glue.ActivityTabWebContentsDelegateAndroid;
+import org.chromium.chrome.browser.tab_activity_glue.TabDelegateFactoryImpl;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.webapk.lib.client.WebApkNavigationClient;
 
@@ -26,13 +28,28 @@ import org.chromium.webapk.lib.client.WebApkNavigationClient;
  * A {@link TabDelegateFactory} class to be used in all {@link Tab} instances owned by a
  * {@link SingleTabActivity}.
  */
-public class WebappDelegateFactory extends TabDelegateFactory {
-    private static class WebappWebContentsDelegateAndroid extends TabWebContentsDelegateAndroid {
+public class WebappDelegateFactory extends TabDelegateFactoryImpl {
+    private static class WebappWebContentsDelegateAndroid
+            extends ActivityTabWebContentsDelegateAndroid {
         private final WebappActivity mActivity;
 
+        /** Action for do-nothing activity for activating WebAPK. */
+        private static final String ACTION_ACTIVATE_WEBAPK =
+                "org.chromium.chrome.browser.webapps.ActivateWebApkActivity.ACTIVATE";
+
         public WebappWebContentsDelegateAndroid(WebappActivity activity, Tab tab) {
-            super(tab);
+            super(tab, activity);
             mActivity = activity;
+        }
+
+        @Override
+        protected @WebDisplayMode int getDisplayMode() {
+            return mActivity.getWebappInfo().displayMode();
+        }
+
+        @Override
+        protected String getManifestScope() {
+            return mActivity.getWebappInfo().scopeUri().toString();
         }
 
         @Override
@@ -43,11 +60,22 @@ public class WebappDelegateFactory extends TabDelegateFactory {
             // compatibility we relaunch it the hard way.
             String startUrl = mActivity.getWebappInfo().uri().toString();
 
-            String webApkPackageName = mActivity.getWebappInfo().apkPackageName();
-            if (!TextUtils.isEmpty(webApkPackageName)) {
-                Intent intent = WebApkNavigationClient.createLaunchWebApkIntent(
-                        webApkPackageName, startUrl, false /* forceNavigation */);
-                IntentUtils.safeStartActivity(ContextUtils.getApplicationContext(), intent);
+            WebappInfo webappInfo = mActivity.getWebappInfo();
+            if (webappInfo.isForWebApk()) {
+                Intent activateIntent = null;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    activateIntent = new Intent(ACTION_ACTIVATE_WEBAPK);
+                    activateIntent.setPackage(
+                            ContextUtils.getApplicationContext().getPackageName());
+                } else {
+                    // For WebAPKs with new-style splash screen we cannot activate the WebAPK by
+                    // sending an intent because that would relaunch the WebAPK.
+                    assert !webappInfo.isSplashProvidedByWebApk();
+
+                    activateIntent = WebApkNavigationClient.createLaunchWebApkIntent(
+                            webappInfo.webApkPackageName(), startUrl, false /* forceNavigation */);
+                }
+                IntentUtils.safeStartActivity(mActivity, activateIntent);
                 return;
             }
 
@@ -56,8 +84,7 @@ public class WebappDelegateFactory extends TabDelegateFactory {
             intent.setPackage(mActivity.getPackageName());
             mActivity.getWebappInfo().setWebappIntentExtras(intent);
 
-            intent.putExtra(
-                    ShortcutHelper.EXTRA_MAC, ShortcutHelper.getEncodedMac(mActivity, startUrl));
+            intent.putExtra(ShortcutHelper.EXTRA_MAC, ShortcutHelper.getEncodedMac(startUrl));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             IntentUtils.safeStartActivity(ContextUtils.getApplicationContext(), intent);
         }
@@ -66,13 +93,14 @@ public class WebappDelegateFactory extends TabDelegateFactory {
     private final WebappActivity mActivity;
 
     public WebappDelegateFactory(WebappActivity activity) {
+        super(activity);
         mActivity = activity;
     }
 
     @Override
     public ContextMenuPopulator createContextMenuPopulator(Tab tab) {
-        return new ChromeContextMenuPopulator(
-                new TabContextMenuItemDelegate(tab), ChromeContextMenuPopulator.WEB_APP_MODE);
+        return new ChromeContextMenuPopulator(new TabContextMenuItemDelegate(tab),
+                ChromeContextMenuPopulator.ContextMenuMode.WEB_APP);
     }
 
     @Override
@@ -89,12 +117,7 @@ public class WebappDelegateFactory extends TabDelegateFactory {
     }
 
     @Override
-    public InterceptNavigationDelegateImpl createInterceptNavigationDelegate(Tab tab) {
-        return new WebappInterceptNavigationDelegate(mActivity, tab);
-    }
-
-    @Override
-    public boolean canShowAppBanners(Tab tab) {
+    public boolean canShowAppBanners() {
         // Do not show banners when we are in a standalone activity.
         return false;
     }

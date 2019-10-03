@@ -3,80 +3,125 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-__doc__ = """generate_resource_whitelist.py [-h] [--input INPUT]
-[--output OUTPUT]
+__doc__ = """generate_resource_whitelist.py [-o OUTPUT] INPUTS...
 
-INPUT specifies a file containing existing resource IDs that should be
-whitelisted, where each line of INPUT contains a single resource ID.
+INPUTS are paths to unstripped binaries or PDBs containing references to
+resources in their debug info.
 
-Creates a resource whitelist by collecting existing resource IDs that are part
-of unknown pragma warnings and adds additional arch specfic resource IDs.
-
-This script is used to find the resources that are actually compiled in Chrome
-in order to only include the needed strings/images in Chrome PAK files.
-These resource IDs show up in the build output after building Chrome with
-gn variable enable_resource_whitelist_generation set to true.
-This causes the compiler to print out an UnknownPragma message every time a
-resource ID is used.
-
-E.g. foo.cc:22:0: warning: ignoring #pragma whitelisted_resource_12345
-[-Wunknown-pragmas]
-
-On Windows, the message is simply a message via __pragma(message(...)).
+This script generates a resource whitelist by reading debug info from
+INPUTS and writes it to OUTPUT.
 """
+
+# Whitelisted resources are identified by searching the input file for
+# instantiations of the special function ui::WhitelistedResource (see
+# ui/base/resource/whitelist.h).
 
 import argparse
 import os
-import re
+import subprocess
 import sys
 
-
-COMPONENTS_STRINGS_HEADER = 'gen/components/strings/grit/components_strings.h'
-
-# We don't want the resources are different between 32-bit and 64-bit build,
-# added arch related resources even they are not used.
-ARCH_SPECIFIC_RESOURCES = [
-  'IDS_VERSION_UI_64BIT',
-  'IDS_VERSION_UI_32BIT',
-]
+llvm_bindir = os.path.join(
+    os.path.dirname(sys.argv[0]), '..', '..', 'third_party', 'llvm-build',
+    'Release+Asserts', 'bin')
 
 
-def _FindResourceIds(header, resource_names):
-  """Returns the numerical resource IDs that correspond to the given resource
-     names, as #defined in the given header file."
-  """
-  pattern = re.compile(
-      r'^#define (%s) _Pragma\S+ (\d+)$' % '|'.join(resource_names))
-  with open(header, 'r') as f:
-    res_ids = [ int(pattern.match(line).group(2))
-                 for line in f if pattern.match(line) ]
-  if len(res_ids) != len(resource_names):
-    raise Exception('Find resource id failed: the result is ' +
-                    ', '.join(str(i) for i in res_ids))
-  return set(res_ids)
+def GetResourceWhitelistELF(path):
+  # Produce a resource whitelist by searching for debug info referring to
+  # WhitelistedResource. It's sufficient to look for strings in .debug_str
+  # rather than trying to parse all of the debug info.
+  readelf = subprocess.Popen(['readelf', '-p', '.debug_str', path],
+                             stdout=subprocess.PIPE)
+  resource_ids = set()
+  for line in readelf.stdout:
+    # Read a line of the form "  [   123]  WhitelistedResource<456>". We're
+    # only interested in the string, not the offset. We're also not interested
+    # in header lines.
+    split = line.split(']', 1)
+    if len(split) < 2:
+      continue
+    s = split[1][2:]
+    if s.startswith('WhitelistedResource<'):
+      try:
+        resource_ids.add(int(s[len('WhitelistedResource<'):-len('>')-1]))
+      except ValueError:
+        continue
+  exit_code = readelf.wait()
+  if exit_code != 0:
+    raise Exception('readelf exited with exit code %d' % exit_code)
+  return resource_ids
+
+
+def GetResourceWhitelistPDB(path):
+  # Produce a resource whitelist by using llvm-pdbutil to read a PDB file's
+  # publics stream, which is essentially a symbol table, and searching for
+  # instantiations of WhitelistedResource. Any such instantiations are demangled
+  # to extract the resource identifier.
+  pdbutil = subprocess.Popen(
+      [os.path.join(llvm_bindir, 'llvm-pdbutil'), 'dump', '-publics', path],
+      stdout=subprocess.PIPE)
+  names = ''
+  for line in pdbutil.stdout:
+    # Read a line of the form
+    # "733352 | S_PUB32 [size = 56] `??$WhitelistedResource@$0BFGM@@ui@@YAXXZ`".
+    if '`' not in line:
+      continue
+    sym_name = line[line.find('`') + 1:line.rfind('`')]
+    if 'WhitelistedResource' in sym_name:
+      names += sym_name + '\n'
+  exit_code = pdbutil.wait()
+  if exit_code != 0:
+    raise Exception('llvm-pdbutil exited with exit code %d' % exit_code)
+
+  undname = subprocess.Popen([os.path.join(llvm_bindir, 'llvm-undname')],
+                             stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE)
+  stdout, _ = undname.communicate(names)
+  resource_ids = set()
+  for line in stdout.split('\n'):
+    # Read a line of the form
+    # "void __cdecl ui::WhitelistedResource<5484>(void)".
+    prefix = ' ui::WhitelistedResource<'
+    pos = line.find(prefix)
+    if pos == -1:
+      continue
+    try:
+      resource_ids.add(int(line[pos + len(prefix):line.rfind('>')]))
+    except ValueError:
+      continue
+  exit_code = undname.wait()
+  if exit_code != 0:
+    raise Exception('llvm-undname exited with exit code %d' % exit_code)
+  return resource_ids
+
+
+def WriteResourceWhitelist(args):
+  resource_ids = set()
+  for input in args.inputs:
+    with open(input, 'r') as f:
+      magic = f.read(4)
+    if magic == '\x7fELF':
+      resource_ids = resource_ids.union(GetResourceWhitelistELF(input))
+    elif magic == 'Micr':
+      resource_ids = resource_ids.union(GetResourceWhitelistPDB(input))
+    else:
+      raise Exception('unknown file format')
+  if len(resource_ids) == 0:
+    raise Exception('No debug info was dumped. Ensure GN arg "symbol_level" '
+                    '!= 0 and that the file is not stripped.')
+  for id in sorted(resource_ids):
+    args.output.write(str(id) + '\n')
 
 
 def main():
   parser = argparse.ArgumentParser(usage=__doc__)
+  parser.add_argument('inputs', nargs='+', help='An unstripped binary or PDB.')
   parser.add_argument(
-      '--input', type=argparse.FileType('r'), default=sys.stdin,
-      help='A resource whitelist where each line contains one resource ID')
-  parser.add_argument(
-      '--output', type=argparse.FileType('w'), default=sys.stdout,
+      '-o', dest='output', type=argparse.FileType('w'), default=sys.stdout,
       help='The resource list path to write (default stdout)')
-  parser.add_argument(
-      '--output-directory', required=True,
-      help='The output target directory, for example out/Release')
 
   args = parser.parse_args()
-
-  used_resources = set(int(resource_id) for resource_id in args.input)
-  used_resources |= _FindResourceIds(
-      os.path.join(args.output_directory, COMPONENTS_STRINGS_HEADER),
-      ARCH_SPECIFIC_RESOURCES)
-
-  for resource_id in sorted(used_resources):
-    args.output.write('%d\n' % resource_id)
+  WriteResourceWhitelist(args)
 
 if __name__ == '__main__':
   main()

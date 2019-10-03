@@ -15,10 +15,14 @@ DevToolsAutoOpener::DevToolsAutoOpener()
 DevToolsAutoOpener::~DevToolsAutoOpener() {
 }
 
-void DevToolsAutoOpener::TabInsertedAt(TabStripModel* tab_strip_model,
-                                       content::WebContents* contents,
-                                       int index,
-                                       bool foreground) {
-  if (!DevToolsWindow::IsDevToolsWindow(contents))
-    DevToolsWindow::OpenDevToolsWindow(contents);
+void DevToolsAutoOpener::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (change.type() != TabStripModelChange::kInserted)
+    return;
+
+  for (const auto& contents : change.GetInsert()->contents)
+    if (!DevToolsWindow::IsDevToolsWindow(contents.contents))
+      DevToolsWindow::OpenDevToolsWindow(contents.contents);
 }

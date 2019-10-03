@@ -27,12 +27,12 @@ namespace {
 
 // Maximum size on the display edge that initiate snapping phantom window,
 // from the corner of the display.
-const int kMaximumSnapHeight = 16;
+constexpr int kMaximumSnapHeight = 32;
 
 // Minimum height of an indicator on the display edge that allows
 // dragging a window.  If two displays shares the edge smaller than
 // this, entire edge will be used as a draggable space.
-const int kMinimumIndicatorHeight = 200;
+constexpr int kMinimumIndicatorHeight = 200;
 
 // Helper method that maps an aura::Window to display id;
 int64_t GetDisplayIdFromWindow(aura::Window* window) {
@@ -89,8 +89,17 @@ ExtendedMouseWarpController::WarpRegion::GetIndicatorBoundsForTest(
     int64_t id) const {
   if (a_display_id_ == id)
     return a_indicator_bounds_;
-  CHECK_EQ(b_display_id_, id);
+  DCHECK_EQ(b_display_id_, id);
   return b_indicator_bounds_;
+}
+
+const gfx::Rect&
+ExtendedMouseWarpController::WarpRegion::GetIndicatorNativeBoundsForTest(
+    int64_t id) const {
+  if (a_display_id_ == id)
+    return a_edge_bounds_in_native_;
+  DCHECK_EQ(b_display_id_, id);
+  return b_edge_bounds_in_native_;
 }
 
 ExtendedMouseWarpController::ExtendedMouseWarpController(

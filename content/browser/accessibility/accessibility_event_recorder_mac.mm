@@ -4,10 +4,11 @@
 
 #include "content/browser/accessibility/accessibility_event_recorder.h"
 
-#include <string>
-
 #import <Cocoa/Cocoa.h>
 
+#include <string>
+
+#include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/strings/stringprintf.h"
@@ -20,8 +21,8 @@ namespace content {
 // watch for NSAccessibility events.
 class AccessibilityEventRecorderMac : public AccessibilityEventRecorder {
  public:
-  explicit AccessibilityEventRecorderMac(BrowserAccessibilityManager* manager,
-                                         base::ProcessId pid);
+  AccessibilityEventRecorderMac(BrowserAccessibilityManager* manager,
+                                base::ProcessId pid);
   ~AccessibilityEventRecorderMac() override;
 
   // Callback executed every time we receive an event notification.
@@ -34,8 +35,8 @@ class AccessibilityEventRecorderMac : public AccessibilityEventRecorder {
 
   // Convenience function to get the value of an AX attribute from
   // an AXUIElementRef as a string.
-  std::string GetAXAttributeValue(
-      AXUIElementRef element, NSString* attribute_name);
+  std::string GetAXAttributeValue(AXUIElementRef element,
+                                  NSString* attribute_name);
 
   // The AXUIElement for the Chrome application.
   base::ScopedCFTypeRef<AXUIElementRef> application_;
@@ -43,31 +44,47 @@ class AccessibilityEventRecorderMac : public AccessibilityEventRecorder {
   // The AXObserver we use to monitor AX notifications.
   base::ScopedCFTypeRef<AXObserverRef> observer_ref_;
   CFRunLoopSourceRef observer_run_loop_source_;
+
+  DISALLOW_COPY_AND_ASSIGN(AccessibilityEventRecorderMac);
 };
 
 // Callback function registered using AXObserverCreate.
-static void EventReceivedThunk(
-    AXObserverRef observer_ref,
-    AXUIElementRef element,
-    CFStringRef notification,
-    void *refcon) {
+static void EventReceivedThunk(AXObserverRef observer_ref,
+                               AXUIElementRef element,
+                               CFStringRef notification,
+                               void* refcon) {
   AccessibilityEventRecorderMac* this_ptr =
       static_cast<AccessibilityEventRecorderMac*>(refcon);
   this_ptr->EventReceived(element, notification);
 }
 
 // static
-AccessibilityEventRecorder* AccessibilityEventRecorder::Create(
+std::unique_ptr<AccessibilityEventRecorder> AccessibilityEventRecorder::Create(
     BrowserAccessibilityManager* manager,
-    base::ProcessId pid) {
-  return new AccessibilityEventRecorderMac(manager, pid);
+    base::ProcessId pid,
+    const base::StringPiece& application_name_match_pattern) {
+  if (!application_name_match_pattern.empty()) {
+    LOG(ERROR) << "Recording accessibility events from an application name "
+                  "match pattern not supported on this platform yet.";
+    NOTREACHED();
+  }
+
+  return std::make_unique<AccessibilityEventRecorderMac>(manager, pid);
+}
+
+std::vector<AccessibilityEventRecorder::TestPass>
+AccessibilityEventRecorder::GetTestPasses() {
+  // Both the Blink pass and native pass use the same recorder
+  return {
+      {"blink", &AccessibilityEventRecorder::Create},
+      {"mac", &AccessibilityEventRecorder::Create},
+  };
 }
 
 AccessibilityEventRecorderMac::AccessibilityEventRecorderMac(
     BrowserAccessibilityManager* manager,
     base::ProcessId pid)
-    : AccessibilityEventRecorder(manager, pid),
-      observer_run_loop_source_(NULL) {
+    : AccessibilityEventRecorder(manager), observer_run_loop_source_(NULL) {
   if (kAXErrorSuccess != AXObserverCreate(pid, EventReceivedThunk,
                                           observer_ref_.InitializeInto())) {
     LOG(FATAL) << "Failed to create AXObserverRef";
@@ -126,7 +143,7 @@ std::string AccessibilityEventRecorderMac::GetAXAttributeValue(
     return base::SysCFStringRefToUTF8(value_string);
 
   // TODO(dmazzoni): And if it's not a string, can we return something better?
-  return std::string();
+  return {};
 }
 
 void AccessibilityEventRecorderMac::EventReceived(AXUIElementRef element,

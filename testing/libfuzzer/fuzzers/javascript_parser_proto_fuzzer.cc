@@ -27,12 +27,20 @@ std::string protobuf_to_string(
   return source;
 }
 
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
+// Explicitly specify some attributes to avoid issues with the linker dead-
+// stripping the following function on macOS, as it is not called directly
+// by fuzz target. LibFuzzer runtime uses dlsym() to resolve that function.
+#if V8_OS_MACOSX
+__attribute__((used)) __attribute__((visibility("default")))
+#endif  // V8_OS_MACOSX
+extern "C" int
+LLVMFuzzerInitialize(int* argc, char*** argv) {
   v8::V8::InitializeICUDefaultLocation((*argv)[0]);
   v8::V8::InitializeExternalStartupData((*argv)[0]);
   v8::V8::SetFlagsFromCommandLine(argc, *argv, true);
 
-  v8::Platform* platform = v8::platform::CreateDefaultPlatform();
+  // Intentionally leaked during fuzzing.
+  v8::Platform* platform = v8::platform::NewDefaultPlatform().release();
   v8::V8::InitializePlatform(platform);
   v8::V8::Initialize();
 

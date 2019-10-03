@@ -14,19 +14,19 @@ import android.os.Build;
 public class StandardNotificationBuilder extends NotificationBuilderBase {
     private final Context mContext;
 
-    public StandardNotificationBuilder(Context context, String channelId) {
-        super(context.getResources(), channelId);
+    public StandardNotificationBuilder(Context context) {
+        super(context.getResources());
         mContext = context;
     }
 
     @Override
-    public Notification build() {
+    public ChromeNotification build(NotificationMetadata metadata) {
         // Note: this is not a NotificationCompat builder so be mindful of the
         // API level of methods you call on the builder.
         // TODO(crbug.com/697104) We should probably use a Compat builder.
         ChromeNotificationBuilder builder =
-                NotificationBuilderFactory.createChromeNotificationBuilder(
-                        false /* preferCompat */, mChannelId);
+                NotificationBuilderFactory.createChromeNotificationBuilder(false /* preferCompat */,
+                        mChannelId, mRemotePackageForBuilderContext, metadata);
 
         builder.setContentTitle(mTitle);
         builder.setContentText(mBody);
@@ -46,7 +46,7 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
             builder.setStyle(new Notification.BigTextStyle().bigText(mBody));
         }
         builder.setLargeIcon(getNormalizedLargeIcon());
-        setSmallIconOnBuilder(builder, mSmallIconId, mSmallIconBitmap);
+        setStatusBarIcon(builder, mSmallIconId, mSmallIconBitmapForStatusBar);
         builder.setContentIntent(mContentIntent);
         builder.setDeleteIntent(mDeleteIntent);
         for (Action action : mActions) {
@@ -55,7 +55,7 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
         if (mSettingsAction != null) {
             addActionToBuilder(builder, mSettingsAction);
         }
-        builder.setPriority(mPriority);
+        builder.setPriorityBeforeO(mPriority);
         builder.setDefaults(mDefaults);
         if (mVibratePattern != null) builder.setVibrate(mVibratePattern);
         builder.setWhen(mTimestamp);
@@ -66,6 +66,6 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
             // Public versions only supported since L, and createPublicNotification requires L+.
             builder.setPublicVersion(createPublicNotification(mContext));
         }
-        return builder.build();
+        return builder.buildChromeNotification();
     }
 }

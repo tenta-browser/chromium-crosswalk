@@ -8,12 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 namespace ios {
 class ChromeBrowserState;
@@ -27,12 +23,12 @@ class UserEventService;
 class IOSUserEventServiceFactory : public BrowserStateKeyedServiceFactory {
  public:
   static syncer::UserEventService* GetForBrowserState(
-      ios::ChromeBrowserState* browser_state);
+      ios::ChromeBrowserState* context);
 
   static IOSUserEventServiceFactory* GetInstance();
 
  private:
-  friend struct base::DefaultSingletonTraits<IOSUserEventServiceFactory>;
+  friend class base::NoDestructor<IOSUserEventServiceFactory>;
 
   IOSUserEventServiceFactory();
   ~IOSUserEventServiceFactory() override;

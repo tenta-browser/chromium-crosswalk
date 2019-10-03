@@ -10,16 +10,15 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import org.chromium.chrome.browser.DisableHistogramsRule;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.test.support.DisableHistogramsRule;
 
 /**
  * Unit tests for {@link PartnerBookmarksFaviconThrottle}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class PartnerBookmarksFaviconThrottleTest {
     private static final String TEST_PREFERENCES_NAME = "partner_bookmarks_favicon_throttle_test";
@@ -31,8 +30,7 @@ public class PartnerBookmarksFaviconThrottleTest {
 
     @Before
     public void setUp() throws Exception {
-        mFaviconThrottle = new PartnerBookmarksFaviconThrottle(
-                RuntimeEnvironment.application, TEST_PREFERENCES_NAME);
+        mFaviconThrottle = new PartnerBookmarksFaviconThrottle(TEST_PREFERENCES_NAME);
     }
 
     @After

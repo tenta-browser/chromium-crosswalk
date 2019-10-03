@@ -4,12 +4,15 @@
 
 #import "ios/chrome/browser/ui/history/history_entry_inserter.h"
 
+#include "base/i18n/time_formatting.h"
 #import "base/mac/foundation_util.h"
+#include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/history/core/browser/browsing_history_service.h"
-#import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/history/history_entry_item.h"
+#include "ios/chrome/browser/ui/history/history_util.h"
+#import "ios/chrome/browser/ui/list_model/list_model.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -28,17 +31,24 @@ HistoryEntryItem* TestHistoryEntryItem(base::Time timestamp,
       BrowsingHistoryService::HistoryEntry::LOCAL_ENTRY,
       GURL(("http://" + name).c_str()), base::UTF8ToUTF16(name.c_str()),
       timestamp, std::string(), false, base::string16(), false);
-  return [[HistoryEntryItem alloc] initWithType:kItemTypeEnumZero
-                                   historyEntry:entry
-                                   browserState:nil
-                                       delegate:nil];
+  HistoryEntryItem* item =
+      [[HistoryEntryItem alloc] initWithType:kItemTypeEnumZero
+                       accessibilityDelegate:nil];
+  item.text = [history::FormattedTitle(entry.title, entry.url) copy];
+  item.detailText =
+      [base::SysUTF8ToNSString(entry.url.GetOrigin().spec()) copy];
+  item.timeText =
+      [base::SysUTF16ToNSString(base::TimeFormatTimeOfDay(entry.time)) copy];
+  item.URL = entry.url;
+  item.timestamp = entry.time;
+  return item;
 }
 
 // Test fixture for HistoryEntryInserter.
 class HistoryEntryInserterTest : public PlatformTest {
  public:
   HistoryEntryInserterTest() {
-    model_ = [[CollectionViewModel alloc] init];
+    model_ = [[ListModel alloc] init];
     [model_ addSectionWithIdentifier:kSectionIdentifierEnumZero];
     inserter_ = [[HistoryEntryInserter alloc] initWithModel:model_];
     mock_delegate_ =
@@ -47,12 +57,12 @@ class HistoryEntryInserterTest : public PlatformTest {
   }
 
  protected:
-  __strong CollectionViewModel* model_;
+  __strong ListModel* model_;
   __strong HistoryEntryInserter* inserter_;
   __strong id<HistoryEntryInserterDelegate> mock_delegate_;
 };
 
-// Tests that history entry items added to CollectionViewModel are sorted by
+// Tests that history entry items added to ListModel are sorted by
 // timestamp.
 TEST_F(HistoryEntryInserterTest, AddItems) {
   base::Time today =
@@ -74,7 +84,7 @@ TEST_F(HistoryEntryInserterTest, AddItems) {
 
   [[mock_delegate expect]
           historyEntryInserter:inserter_
-      didInsertItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:1]];
+      didInsertItemAtIndexPath:[NSIndexPath indexPathForItem:1 inSection:1]];
   [inserter_ insertHistoryEntryItem:entry1];
   EXPECT_OCMOCK_VERIFY(mock_delegate);
 
@@ -175,7 +185,7 @@ TEST_F(HistoryEntryInserterTest, AddSections) {
 
   [[mock_delegate expect]
           historyEntryInserter:inserter_
-      didInsertItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:2]];
+      didInsertItemAtIndexPath:[NSIndexPath indexPathForItem:1 inSection:2]];
   [inserter_ insertHistoryEntryItem:day2_entry1];
   EXPECT_EQ(4, [model_ numberOfSections]);
   EXPECT_EQ(0, [model_ numberOfItemsInSection:0]);

@@ -4,7 +4,7 @@
 
 #include "content/browser/cache_storage/cache_storage_operation.h"
 
-#include "content/browser/cache_storage/cache_storage_histogram_macros.h"
+#include "content/browser/cache_storage/cache_storage_histogram_utils.h"
 
 namespace content {
 
@@ -14,21 +14,27 @@ const int kNumSecondsForSlowOperation = 10;
 
 CacheStorageOperation::CacheStorageOperation(
     base::OnceClosure closure,
+    CacheStorageSchedulerId id,
     CacheStorageSchedulerClient client_type,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    CacheStorageSchedulerMode mode,
+    CacheStorageSchedulerOp op_type,
+    scoped_refptr<base::SequencedTaskRunner> task_runner)
     : closure_(std::move(closure)),
       creation_ticks_(base::TimeTicks::Now()),
+      id_(id),
       client_type_(client_type),
-      task_runner_(std::move(task_runner)),
-      weak_ptr_factory_(this) {}
+      mode_(mode),
+      op_type_(op_type),
+      task_runner_(std::move(task_runner)) {}
 
 CacheStorageOperation::~CacheStorageOperation() {
-  CACHE_STORAGE_SCHEDULER_UMA(TIMES, "OperationDuration", client_type_,
-                              base::TimeTicks::Now() - start_ticks_);
+  RecordCacheStorageSchedulerUMA(CacheStorageSchedulerUMA::kOperationDuration,
+                                 client_type_, op_type_,
+                                 base::TimeTicks::Now() - start_ticks_);
 
   if (!was_slow_)
-    CACHE_STORAGE_SCHEDULER_UMA(BOOLEAN, "IsOperationSlow", client_type_,
-                                false);
+    RecordCacheStorageSchedulerUMA(CacheStorageSchedulerUMA::kIsOperationSlow,
+                                   client_type_, op_type_, was_slow_);
 }
 
 void CacheStorageOperation::Run() {
@@ -44,7 +50,8 @@ void CacheStorageOperation::Run() {
 
 void CacheStorageOperation::NotifyOperationSlow() {
   was_slow_ = true;
-  CACHE_STORAGE_SCHEDULER_UMA(BOOLEAN, "IsOperationSlow", client_type_, true);
+  RecordCacheStorageSchedulerUMA(CacheStorageSchedulerUMA::kIsOperationSlow,
+                                 client_type_, op_type_, was_slow_);
 }
 
 }  // namespace content

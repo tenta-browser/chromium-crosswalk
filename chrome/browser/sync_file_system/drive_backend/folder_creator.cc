@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_util.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "components/drive/drive_api_util.h"
@@ -28,9 +29,7 @@ FolderCreator::FolderCreator(drive::DriveServiceInterface* drive_service,
     : drive_service_(drive_service),
       metadata_database_(metadata_database),
       parent_folder_id_(parent_folder_id),
-      title_(title),
-      weak_ptr_factory_(this) {
-}
+      title_(title) {}
 
 FolderCreator::~FolderCreator() {
 }

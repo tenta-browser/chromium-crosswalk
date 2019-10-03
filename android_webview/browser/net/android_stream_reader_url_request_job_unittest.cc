@@ -11,8 +11,6 @@
 #include "android_webview/browser/net/aw_url_request_job_factory.h"
 #include "android_webview/browser/net/input_stream_reader.h"
 #include "base/format_macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_task_environment.h"
@@ -80,7 +78,7 @@ class StreamReaderDelegate :
 
   std::unique_ptr<InputStream> OpenInputStream(JNIEnv* env,
                                                const GURL& url) override {
-    return base::MakeUnique<NotImplInputStream>();
+    return std::make_unique<NotImplInputStream>();
   }
 
   void OnInputStreamOpenFailed(net::URLRequest* request,
@@ -205,7 +203,7 @@ class AndroidStreamReaderURLRequestJobTest : public Test {
 
   void SetUpTestJob(std::unique_ptr<InputStreamReader> stream_reader) {
     SetUpTestJob(std::move(stream_reader),
-                 base::MakeUnique<StreamReaderDelegate>());
+                 std::make_unique<StreamReaderDelegate>());
   }
 
   void SetUpTestJob(std::unique_ptr<InputStreamReader> stream_reader,
@@ -258,7 +256,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadEmptyStream) {
 }
 
 TEST_F(AndroidStreamReaderURLRequestJobTest, ReadWithNullStream) {
-  SetUpTestJob(nullptr, base::MakeUnique<NullStreamReaderDelegate>());
+  SetUpTestJob(nullptr, std::make_unique<NullStreamReaderDelegate>());
   req_->Start();
 
   // The TestDelegate will quit the message loop on request completion.
@@ -274,7 +272,7 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, ReadWithNullStream) {
 }
 
 TEST_F(AndroidStreamReaderURLRequestJobTest, ModifyHeadersAndStatus) {
-  SetUpTestJob(nullptr, base::MakeUnique<HeaderAlteringStreamReaderDelegate>());
+  SetUpTestJob(nullptr, std::make_unique<HeaderAlteringStreamReaderDelegate>());
   req_->Start();
 
   // The TestDelegate will quit the message loop on request completion.
@@ -392,7 +390,6 @@ TEST_F(AndroidStreamReaderURLRequestJobTest, DeleteJobMidWayRead) {
   base::RunLoop loop;
   std::unique_ptr<StrictMock<MockInputStreamReader>> stream_reader(
       new StrictMock<MockInputStreamReader>());
-  net::CompletionCallback read_completion_callback;
   EXPECT_CALL(*stream_reader, Seek(_))
       .WillOnce(Return(bytes_available));
   EXPECT_CALL(*stream_reader, ReadRawData(_, _))

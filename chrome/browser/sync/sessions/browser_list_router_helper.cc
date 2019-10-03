@@ -48,13 +48,26 @@ void BrowserListRouterHelper::OnBrowserRemoved(Browser* browser) {
   }
 }
 
-void BrowserListRouterHelper::TabInsertedAt(TabStripModel* model,
-                                            content::WebContents* web_contents,
-                                            int index,
-                                            bool foreground) {
-  if (web_contents && Profile::FromBrowserContext(
-                          web_contents->GetBrowserContext()) == profile_)
-    router_->NotifyTabModified(web_contents, false);
+void BrowserListRouterHelper::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  std::vector<content::WebContents*> web_contents;
+  if (change.type() == TabStripModelChange::kInserted) {
+    for (const auto& contents : change.GetInsert()->contents)
+      web_contents.push_back(contents.contents);
+  } else if (change.type() == TabStripModelChange::kReplaced) {
+    web_contents.push_back(change.GetReplace()->new_contents);
+  } else {
+    return;
+  }
+
+  for (auto* contents : web_contents) {
+    if (Profile::FromBrowserContext(contents->GetBrowserContext()) ==
+        profile_) {
+      router_->NotifyTabModified(contents, false);
+    }
+  }
 }
 
 }  // namespace sync_sessions

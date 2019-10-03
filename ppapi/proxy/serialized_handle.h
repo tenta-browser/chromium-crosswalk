@@ -12,8 +12,11 @@
 
 #include "base/atomicops.h"
 #include "base/logging.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "build/build_config.h"
 #include "ipc/ipc_platform_file.h"
 #include "ppapi/c/pp_resource.h"
@@ -32,7 +35,9 @@ namespace proxy {
 // NaClIPCAdapter for use in NaCl.
 class PPAPI_PROXY_EXPORT SerializedHandle {
  public:
-  enum Type { INVALID, SHARED_MEMORY, SOCKET, FILE };
+  // TODO(https://crbug.com/845985): Remove SHARED_MEMORY type after all clients
+  // will be converted to the SHARED_MEMORY_REGION.
+  enum Type { INVALID, SHARED_MEMORY, SHARED_MEMORY_REGION, SOCKET, FILE };
   // Header contains the fields that we send in IPC messages, apart from the
   // actual handle. See comments on the SerializedHandle fields below.
   struct Header {
@@ -53,11 +58,19 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
   };
 
   SerializedHandle();
+  // Move operations are allowed.
+  SerializedHandle(SerializedHandle&&);
+  SerializedHandle& operator=(SerializedHandle&&);
   // Create an invalid handle of the given type.
   explicit SerializedHandle(Type type);
 
   // Create a shared memory handle.
   SerializedHandle(const base::SharedMemoryHandle& handle, uint32_t size);
+
+  // Create a shared memory region handle.
+  explicit SerializedHandle(base::ReadOnlySharedMemoryRegion region);
+  explicit SerializedHandle(base::UnsafeSharedMemoryRegion region);
+  explicit SerializedHandle(base::subtle::PlatformSharedMemoryRegion region);
 
   // Create a socket or file handle.
   SerializedHandle(const Type type,
@@ -65,6 +78,7 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
 
   Type type() const { return type_; }
   bool is_shmem() const { return type_ == SHARED_MEMORY; }
+  bool is_shmem_region() const { return type_ == SHARED_MEMORY_REGION; }
   bool is_socket() const { return type_ == SOCKET; }
   bool is_file() const { return type_ == FILE; }
   const base::SharedMemoryHandle& shmem() const {
@@ -74,6 +88,14 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
   uint32_t size() const {
     DCHECK(is_shmem());
     return size_;
+  }
+  const base::subtle::PlatformSharedMemoryRegion& shmem_region() const {
+    DCHECK(is_shmem_region());
+    return shm_region_;
+  }
+  base::subtle::PlatformSharedMemoryRegion TakeSharedMemoryRegion() {
+    DCHECK(is_shmem_region());
+    return std::move(shm_region_);
   }
   const IPC::PlatformFileForTransit& descriptor() const {
     DCHECK(is_socket() || is_file());
@@ -89,11 +111,24 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
     size_ = size;
 
     descriptor_ = IPC::InvalidPlatformFileForTransit();
+    shm_region_ = base::subtle::PlatformSharedMemoryRegion();
+  }
+  void set_shmem_region(base::subtle::PlatformSharedMemoryRegion region) {
+    type_ = SHARED_MEMORY_REGION;
+    shm_region_ = std::move(region);
+    // Writable regions are not supported.
+    DCHECK_NE(shm_region_.GetMode(),
+              base::subtle::PlatformSharedMemoryRegion::Mode::kWritable);
+
+    descriptor_ = IPC::InvalidPlatformFileForTransit();
+    shm_handle_ = base::SharedMemoryHandle();
+    size_ = 0;
   }
   void set_socket(const IPC::PlatformFileForTransit& socket) {
     type_ = SOCKET;
     descriptor_ = socket;
 
+    shm_region_ = base::subtle::PlatformSharedMemoryRegion();
     shm_handle_ = base::SharedMemoryHandle();
     size_ = 0;
   }
@@ -103,12 +138,24 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
     type_ = FILE;
 
     descriptor_ = descriptor;
+    shm_region_ = base::subtle::PlatformSharedMemoryRegion();
     shm_handle_ = base::SharedMemoryHandle();
     size_ = 0;
     open_flags_ = open_flags;
     file_io_ = file_io;
   }
+  void set_null() {
+    type_ = INVALID;
+
+    shm_handle_ = base::SharedMemoryHandle();
+    shm_region_ = base::subtle::PlatformSharedMemoryRegion();
+    size_ = 0;
+    descriptor_ = IPC::InvalidPlatformFileForTransit();
+  }
   void set_null_shmem() { set_shmem(base::SharedMemoryHandle(), 0); }
+  void set_null_shmem_region() {
+    set_shmem_region(base::subtle::PlatformSharedMemoryRegion());
+  }
   void set_null_socket() {
     set_socket(IPC::InvalidPlatformFileForTransit());
   }
@@ -142,6 +189,9 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
   base::SharedMemoryHandle shm_handle_;
   uint32_t size_;
 
+  // This is valid if type == SHARED_MEMORY_REGION.
+  base::subtle::PlatformSharedMemoryRegion shm_region_;
+
   // This is valid if type == SOCKET || type == FILE.
   IPC::PlatformFileForTransit descriptor_;
 
@@ -149,6 +199,8 @@ class PPAPI_PROXY_EXPORT SerializedHandle {
   int32_t open_flags_;
   // This is non-zero if file writes require quota checking.
   PP_Resource file_io_;
+
+  DISALLOW_COPY_AND_ASSIGN(SerializedHandle);
 };
 
 }  // namespace proxy

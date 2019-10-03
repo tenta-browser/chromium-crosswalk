@@ -7,7 +7,7 @@ include_rules = [
   "+libGLESv2",
   "+services/service_manager",
   "+services/shape_detection",
-  "+services/ui/common",
+  "+services/tracing/public/cpp",
   "+services/viz/privileged/interfaces",
   "+services/viz/service",
   "+sandbox",

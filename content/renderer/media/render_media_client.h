@@ -6,6 +6,7 @@
 #define CONTENT_RENDERER_MEDIA_RENDER_MEDIA_CLIENT_H_
 
 #include "content/common/content_export.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/media_client.h"
 
 namespace content {
@@ -23,9 +24,12 @@ class CONTENT_EXPORT RenderMediaClient : public media::MediaClient {
       std::vector<std::unique_ptr<media::KeySystemProperties>>* key_systems)
       final;
   bool IsKeySystemsUpdateNeeded() final;
-  bool IsSupportedAudioConfig(const media::AudioConfig& config) final;
-  bool IsSupportedVideoConfig(const media::VideoConfig& config) final;
+  bool IsSupportedAudioType(const media::AudioType& type) final;
+  bool IsSupportedVideoType(const media::VideoType& type) final;
   bool IsSupportedBitstreamAudioCodec(media::AudioCodec codec) final;
+  base::Optional<::media::AudioRendererAlgorithmParameters>
+  GetAudioRendererAlgorithmParameters(
+      media::AudioParameters audio_parameters) final;
 
  private:
   RenderMediaClient();

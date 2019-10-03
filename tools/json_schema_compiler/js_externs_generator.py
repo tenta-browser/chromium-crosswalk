@@ -83,11 +83,11 @@ class _Generator(object):
   def _AppendEnumJsDoc(self, c, js_type):
     """ Given an Enum Type object, generates the Code for the enum's definition.
     """
-    (c.Sblock(line='/**', line_prefix=' * ')
-      .Append('@enum {string}')
-      .Append(self._js_util.GetSeeLink(self._namespace.name, 'type',
-                                       js_type.simple_name))
-      .Eblock(' */'))
+    c.Sblock(line='/**', line_prefix=' * ')
+    c.Append('@enum {string}')
+    self._js_util.AppendSeeLink(c, self._namespace.name, 'type',
+                                js_type.simple_name)
+    c.Eblock(' */')
     c.Append('%s.%s = {' % (self._GetNamespace(), js_type.name))
 
     def get_property_name(e):
@@ -133,11 +133,11 @@ class _Generator(object):
     elif is_constructor:
       c.Comment('@constructor', comment_prefix = '', wrap_indent=4)
       c.Comment('@private', comment_prefix = '', wrap_indent=4)
-    else:
+    elif js_type.jsexterns is None:
       self._AppendTypedef(c, js_type.properties)
 
-    c.Append(self._js_util.GetSeeLink(self._namespace.name, 'type',
-                                      js_type.simple_name))
+    self._js_util.AppendSeeLink(c, self._namespace.name, 'type',
+                                js_type.simple_name)
     c.Eblock(' */')
 
     var = '%s.%s' % (self._GetNamespace(), js_type.simple_name)
@@ -159,11 +159,13 @@ class _Generator(object):
   def _AppendTypedef(self, c, properties):
     """Given an OrderedDict of properties, Appends code containing a @typedef.
     """
-    if not properties: return
 
     c.Append('@typedef {')
-    self._js_util.AppendObjectDefinition(c, self._namespace.name, properties,
-                                         new_line=False)
+    if properties:
+        self._js_util.AppendObjectDefinition(
+                c, self._namespace.name, properties, new_line=False)
+    else:
+        c.Append('Object', new_line=False)
     c.Append('}', new_line=False)
 
   def _AppendFunction(self, c, function):
@@ -192,8 +194,7 @@ class _Generator(object):
     if (event.description):
       c.Comment(event.description, comment_prefix='')
     c.Append('@type {!ChromeEvent}')
-    c.Append(self._js_util.GetSeeLink(self._namespace.name, 'event',
-                                      event.name))
+    self._js_util.AppendSeeLink(c, self._namespace.name, 'event', event.name)
     c.Eblock(' */')
     c.Append('%s.%s;' % (self._GetNamespace(), event.name))
     c.Append()

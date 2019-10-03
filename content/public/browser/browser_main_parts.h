@@ -5,11 +5,10 @@
 #ifndef CONTENT_PUBLIC_BROWSER_BROWSER_MAIN_PARTS_H_
 #define CONTENT_PUBLIC_BROWSER_BROWSER_MAIN_PARTS_H_
 
+#include "base/callback.h"
 #include "content/common/content_export.h"
 
 namespace content {
-
-class ServiceManagerConnection;
 
 // This class contains different "stages" to be executed by |BrowserMain()|,
 // Each stage is represented by a single BrowserMainParts method, called from
@@ -30,7 +29,7 @@ class ServiceManagerConnection;
 //    things which should be done immediately before the start of the main
 //    message loop should go in |PreMainMessageLoopStart()|.
 //  - RunMainMessageLoopParts:  things to be done before and after invoking the
-//    main message loop run method (e.g. MessageLoopForUI::current()->Run()).
+//    main message loop run method (e.g. MessageLoopCurrentForUI::Get()->Run()).
 //
 // How to add stuff (to existing parts):
 //  - Figure out when your new code should be executed. What must happen
@@ -53,7 +52,9 @@ class CONTENT_EXPORT BrowserMainParts {
   BrowserMainParts() {}
   virtual ~BrowserMainParts() {}
 
-  virtual void PreEarlyInitialization() {}
+  // A return value other than RESULT_CODE_NORMAL_EXIT indicates error and is
+  // used as the exit status.
+  virtual int PreEarlyInitialization();
 
   virtual void PostEarlyInitialization() {}
 
@@ -72,8 +73,9 @@ class CONTENT_EXPORT BrowserMainParts {
   // (or 0 if no error).
   virtual int PreCreateThreads();
 
-  virtual void ServiceManagerConnectionStarted(
-      ServiceManagerConnection* connection) {}
+  // This is called right after all child threads owned by the content framework
+  // are created.
+  virtual void PostCreateThreads() {}
 
   // This is called just before the main message loop is run.  The
   // various browser threads have all been created at this point
@@ -84,12 +86,13 @@ class CONTENT_EXPORT BrowserMainParts {
   // May set |result_code|, which will be returned by |BrowserMain()|.
   virtual bool MainMessageLoopRun(int* result_code);
 
+  // Provides an embedder with a Closure which will quit the default main
+  // message loop. This is call only if MainMessageLoopRun returns false.
+  virtual void PreDefaultMainMessageLoopRun(base::OnceClosure quit_closure) {}
+
   // This happens after the main message loop has stopped, but before
   // threads are stopped.
   virtual void PostMainMessageLoopRun() {}
-
-  // Called when shutdown is about to begin.
-  virtual void PreShutdown() {}
 
   // Called as the very last part of shutdown, after threads have been
   // stopped and destroyed.

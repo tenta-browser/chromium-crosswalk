@@ -7,9 +7,9 @@
 #include <sstream>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -49,15 +49,17 @@ class PasswordStoreConsumerHelper
   void OnGetPasswordStoreResults(
       std::vector<std::unique_ptr<PasswordForm>> results) override {
     result_.swap(results);
-    // Quit the message loop to wake up passwords_helper::GetLogins.
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    run_loop_.Quit();
   }
 
-  std::vector<std::unique_ptr<PasswordForm>> result() {
+  std::vector<std::unique_ptr<PasswordForm>> WaitForResult() {
+    DCHECK(!run_loop_.running());
+    content::RunThisRunLoop(&run_loop_);
     return std::move(result_);
   }
 
  private:
+  base::RunLoop run_loop_;
   std::vector<std::unique_ptr<PasswordForm>> result_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordStoreConsumerHelper);
@@ -81,7 +83,7 @@ void AddLogin(PasswordStore* store, const PasswordForm& form) {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   store->AddLogin(form);
-  store->ScheduleTask(base::Bind(&PasswordStoreCallback, &wait_event));
+  store->ScheduleTask(base::BindOnce(&PasswordStoreCallback, &wait_event));
   wait_event.Wait();
 }
 
@@ -91,18 +93,17 @@ void UpdateLogin(PasswordStore* store, const PasswordForm& form) {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   store->UpdateLogin(form);
-  store->ScheduleTask(base::Bind(&PasswordStoreCallback, &wait_event));
+  store->ScheduleTask(base::BindOnce(&PasswordStoreCallback, &wait_event));
   wait_event.Wait();
 }
 
 std::vector<std::unique_ptr<PasswordForm>> GetLogins(PasswordStore* store) {
   EXPECT_TRUE(store);
   password_manager::PasswordStore::FormDigest matcher_form = {
-      PasswordForm::SCHEME_HTML, kFakeSignonRealm, GURL()};
+      PasswordForm::Scheme::kHtml, kFakeSignonRealm, GURL()};
   PasswordStoreConsumerHelper consumer;
   store->GetLogins(matcher_form, &consumer);
-  content::RunMessageLoop();
-  return consumer.result();
+  return consumer.WaitForResult();
 }
 
 void RemoveLogin(PasswordStore* store, const PasswordForm& form) {
@@ -111,7 +112,7 @@ void RemoveLogin(PasswordStore* store, const PasswordForm& form) {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   store->RemoveLogin(form);
-  store->ScheduleTask(base::Bind(&PasswordStoreCallback, &wait_event));
+  store->ScheduleTask(base::BindOnce(&PasswordStoreCallback, &wait_event));
   wait_event.Wait();
 }
 

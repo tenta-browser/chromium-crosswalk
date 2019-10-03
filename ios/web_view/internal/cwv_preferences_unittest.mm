@@ -8,12 +8,14 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/autofill/core/common/autofill_prefs.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/in_memory_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
 #include "components/translate/core/browser/translate_pref_names.h"
+#import "ios/web_view/public/cwv_preferences_autofill.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -29,7 +31,12 @@ class CWVPreferencesTest : public PlatformTest {
   CWVPreferencesTest() {
     scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry =
         new user_prefs::PrefRegistrySyncable;
-    pref_registry->RegisterBooleanPref(autofill::prefs::kAutofillEnabled, true);
+    pref_registry->RegisterBooleanPref(
+        autofill::prefs::kAutofillCreditCardEnabled, true);
+    pref_registry->RegisterBooleanPref(autofill::prefs::kAutofillProfileEnabled,
+                                       true);
+    pref_registry->RegisterBooleanPref(
+        password_manager::prefs::kCredentialsEnableService, true);
     pref_registry->RegisterBooleanPref(prefs::kOfferTranslateEnabled, true);
 
     scoped_refptr<PersistentPrefStore> pref_store = new InMemoryPrefStore();
@@ -45,11 +52,18 @@ class CWVPreferencesTest : public PlatformTest {
   CWVPreferences* preferences_;
 };
 
-// Tests CWVPreferences |autofillEnabled|.
-TEST_F(CWVPreferencesTest, AutofillEnabled) {
-  EXPECT_TRUE(preferences_.autofillEnabled);
-  preferences_.autofillEnabled = NO;
-  EXPECT_FALSE(preferences_.autofillEnabled);
+// Tests CWVPreferences |profileAutofillEnabled|.
+TEST_F(CWVPreferencesTest, ProfileAutofillEnabled) {
+  EXPECT_TRUE(preferences_.profileAutofillEnabled);
+  preferences_.profileAutofillEnabled = NO;
+  EXPECT_FALSE(preferences_.profileAutofillEnabled);
+}
+
+// Tests CWVPreferences |creditCardAutofillEnabled|.
+TEST_F(CWVPreferencesTest, CreditCardAutofillEnabled) {
+  EXPECT_TRUE(preferences_.creditCardAutofillEnabled);
+  preferences_.creditCardAutofillEnabled = NO;
+  EXPECT_FALSE(preferences_.creditCardAutofillEnabled);
 }
 
 // Tests CWVPreferences |translationEnabled|.

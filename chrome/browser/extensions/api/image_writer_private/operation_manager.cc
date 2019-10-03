@@ -20,10 +20,12 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/file_manager/path_util.h"
@@ -37,9 +39,7 @@ namespace image_writer {
 using content::BrowserThread;
 
 OperationManager::OperationManager(content::BrowserContext* context)
-    : browser_context_(context),
-      extension_registry_observer_(this),
-      weak_factory_(this) {
+    : browser_context_(context), extension_registry_observer_(this) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context_));
   Profile* profile = Profile::FromBrowserContext(browser_context_);
   registrar_.Add(this,
@@ -57,9 +57,7 @@ OperationManager::~OperationManager() {
 }
 
 void OperationManager::Shutdown() {
-  for (OperationMap::iterator iter = operations_.begin();
-       iter != operations_.end();
-       iter++) {
+  for (auto iter = operations_.begin(); iter != operations_.end(); iter++) {
     scoped_refptr<Operation> operation = iter->second;
     operation->PostTask(base::BindOnce(&Operation::Abort, operation));
   }
@@ -75,7 +73,7 @@ void OperationManager::StartWriteFromUrl(
   // Chrome OS can only support a single operation at a time.
   if (operations_.size() > 0) {
 #else
-  OperationMap::iterator existing_operation = operations_.find(extension_id);
+  auto existing_operation = operations_.find(extension_id);
 
   if (existing_operation != operations_.end()) {
 #endif
@@ -84,14 +82,14 @@ void OperationManager::StartWriteFromUrl(
     return;
   }
 
+  network::mojom::URLLoaderFactoryPtrInfo url_loader_factory_info;
+  content::BrowserContext::GetDefaultStoragePartition(browser_context_)
+      ->GetURLLoaderFactoryForBrowserProcess()
+      ->Clone(mojo::MakeRequest(&url_loader_factory_info));
+
   scoped_refptr<Operation> operation(new WriteFromUrlOperation(
-      weak_factory_.GetWeakPtr(),
-      extension_id,
-      content::BrowserContext::GetDefaultStoragePartition(browser_context_)->
-          GetURLRequestContext(),
-      url,
-      hash,
-      device_path,
+      weak_factory_.GetWeakPtr(), CreateConnector(), extension_id,
+      std::move(url_loader_factory_info), url, hash, device_path,
       GetAssociatedDownloadFolder()));
   operations_[extension_id] = operation;
   operation->PostTask(base::BindOnce(&Operation::Start, operation));
@@ -108,7 +106,7 @@ void OperationManager::StartWriteFromFile(
   // Chrome OS can only support a single operation at a time.
   if (operations_.size() > 0) {
 #else
-  OperationMap::iterator existing_operation = operations_.find(extension_id);
+  auto existing_operation = operations_.find(extension_id);
 
   if (existing_operation != operations_.end()) {
 #endif
@@ -117,8 +115,8 @@ void OperationManager::StartWriteFromFile(
   }
 
   scoped_refptr<Operation> operation(new WriteFromFileOperation(
-      weak_factory_.GetWeakPtr(), extension_id, path, device_path,
-      GetAssociatedDownloadFolder()));
+      weak_factory_.GetWeakPtr(), CreateConnector(), extension_id, path,
+      device_path, GetAssociatedDownloadFolder()));
   operations_[extension_id] = operation;
   operation->PostTask(base::BindOnce(&Operation::Start, operation));
   std::move(callback).Run(true, "");
@@ -142,7 +140,7 @@ void OperationManager::DestroyPartitions(
     const ExtensionId& extension_id,
     const std::string& device_path,
     Operation::StartWriteCallback callback) {
-  OperationMap::iterator existing_operation = operations_.find(extension_id);
+  auto existing_operation = operations_.find(extension_id);
 
   if (existing_operation != operations_.end()) {
     std::move(callback).Run(false, error::kOperationAlreadyInProgress);
@@ -150,7 +148,7 @@ void OperationManager::DestroyPartitions(
   }
 
   scoped_refptr<Operation> operation(new DestroyPartitionsOperation(
-      weak_factory_.GetWeakPtr(), extension_id, device_path,
+      weak_factory_.GetWeakPtr(), CreateConnector(), extension_id, device_path,
       GetAssociatedDownloadFolder()));
   operations_[extension_id] = operation;
   operation->PostTask(base::BindOnce(&Operation::Start, operation));
@@ -224,7 +222,7 @@ base::FilePath OperationManager::GetAssociatedDownloadFolder() {
 }
 
 Operation* OperationManager::GetOperation(const ExtensionId& extension_id) {
-  OperationMap::iterator existing_operation = operations_.find(extension_id);
+  auto existing_operation = operations_.find(extension_id);
 
   if (existing_operation == operations_.end())
     return NULL;
@@ -232,7 +230,7 @@ Operation* OperationManager::GetOperation(const ExtensionId& extension_id) {
 }
 
 void OperationManager::DeleteOperation(const ExtensionId& extension_id) {
-  OperationMap::iterator existing_operation = operations_.find(extension_id);
+  auto existing_operation = operations_.find(extension_id);
   if (existing_operation != operations_.end()) {
     operations_.erase(existing_operation);
   }
@@ -243,6 +241,11 @@ void OperationManager::OnExtensionUnloaded(
     const Extension* extension,
     UnloadedExtensionReason reason) {
   DeleteOperation(extension->id());
+}
+
+std::unique_ptr<service_manager::Connector>
+OperationManager::CreateConnector() {
+  return content::GetSystemConnector()->Clone();
 }
 
 void OperationManager::Observe(int type,

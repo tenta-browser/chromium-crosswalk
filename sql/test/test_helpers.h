@@ -20,7 +20,7 @@ class FilePath;
 }
 
 namespace sql {
-class Connection;
+class Database;
 }
 
 namespace sql {
@@ -72,19 +72,19 @@ bool CorruptTableOrIndex(const base::FilePath& db_path,
                          const char* update_sql) WARN_UNUSED_RESULT;
 
 // Return the number of tables in sqlite_master.
-size_t CountSQLTables(sql::Connection* db) WARN_UNUSED_RESULT;
+size_t CountSQLTables(sql::Database* db) WARN_UNUSED_RESULT;
 
 // Return the number of indices in sqlite_master.
-size_t CountSQLIndices(sql::Connection* db) WARN_UNUSED_RESULT;
+size_t CountSQLIndices(sql::Database* db) WARN_UNUSED_RESULT;
 
 // Returns the number of columns in the named table.  0 indicates an
 // error (probably no such table).
-size_t CountTableColumns(sql::Connection* db, const char* table)
-    WARN_UNUSED_RESULT;
+size_t CountTableColumns(sql::Database* db,
+                         const char* table) WARN_UNUSED_RESULT;
 
 // Sets |*count| to the number of rows in |table|.  Returns false in
 // case of error, such as the table not existing.
-bool CountTableRows(sql::Connection* db, const char* table, size_t* count);
+bool CountTableRows(sql::Database* db, const char* table, size_t* count);
 
 // Creates a SQLite database at |db_path| from the sqlite .dump output
 // at |sql_path|.  Returns false if |db_path| already exists, or if
@@ -94,9 +94,9 @@ bool CreateDatabaseFromSQL(const base::FilePath& db_path,
                            const base::FilePath& sql_path) WARN_UNUSED_RESULT;
 
 // Return the results of running "PRAGMA integrity_check" on |db|.
-// TODO(shess): sql::Connection::IntegrityCheck() is basically the
+// TODO(shess): sql::Database::IntegrityCheck() is basically the
 // same, but not as convenient for testing.  Maybe combine.
-std::string IntegrityCheck(sql::Connection* db) WARN_UNUSED_RESULT;
+std::string IntegrityCheck(sql::Database* db) WARN_UNUSED_RESULT;
 
 // ExecuteWithResult() executes |sql| and returns the first column of the first
 // row as a string.  The empty string is returned for no rows.  This makes it
@@ -113,11 +113,44 @@ std::string IntegrityCheck(sql::Connection* db) WARN_UNUSED_RESULT;
 //   EXPECT_EQ("<NULL>", ExecuteWithResult(
 //       db, "SELECT c || '<NULL>' FROM t WHERE id = 1"));
 // To test blobs use the HEX() function.
-std::string ExecuteWithResult(sql::Connection* db, const char* sql);
-std::string ExecuteWithResults(sql::Connection* db,
+std::string ExecuteWithResult(sql::Database* db, const char* sql);
+std::string ExecuteWithResults(sql::Database* db,
                                const char* sql,
                                const char* column_sep,
                                const char* row_sep);
+
+// Returns the database size, in pages. Crashes on SQLite errors.
+int GetPageCount(sql::Database* db);
+
+// Column information returned by GetColumnInfo.
+//
+// C++ wrapper around the out-params of sqlite3_table_column_metadata().
+struct ColumnInfo {
+  // Retrieves schema information for a column in a table.
+  //
+  // Crashes on SQLite errors.
+  //
+  // |db_name| should be "main" for the connection's main (opened) database, and
+  // "temp" for the connection's temporary (in-memory) database.
+  //
+  // This is a static method rather than a function so it can be listed in the
+  // InternalApiToken access control list.
+  static ColumnInfo Create(sql::Database* db,
+                           const std::string& db_name,
+                           const std::string& table_name,
+                           const std::string& column_name) WARN_UNUSED_RESULT;
+
+  // The native data type. Example: "INTEGER".
+  std::string data_type;
+  // Default collation sequence for sorting. Example: "BINARY".
+  std::string collation_sequence;
+  // True if the column has a "NOT NULL" constraint.
+  bool has_non_null_constraint;
+  // True if the column is included in the table's PRIMARY KEY.
+  bool is_in_primary_key;
+  // True if the column is AUTOINCREMENT.
+  bool is_auto_incremented;
+};
 
 }  // namespace test
 }  // namespace sql

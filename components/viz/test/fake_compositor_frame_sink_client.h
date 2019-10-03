@@ -7,7 +7,9 @@
 
 #include <vector>
 
+#include "components/viz/common/frame_timing_details_map.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 
 namespace viz {
@@ -17,15 +19,13 @@ class FakeCompositorFrameSinkClient : public mojom::CompositorFrameSinkClient {
   FakeCompositorFrameSinkClient();
   ~FakeCompositorFrameSinkClient() override;
 
+  mojom::CompositorFrameSinkClientPtr BindInterfacePtr();
+
   // mojom::CompositorFrameSinkClient implementation.
   void DidReceiveCompositorFrameAck(
       const std::vector<ReturnedResource>& resources) override;
-  void DidPresentCompositorFrame(uint32_t presentation_token,
-                                 base::TimeTicks time,
-                                 base::TimeDelta refresh,
-                                 uint32_t flags) override;
-  void DidDiscardCompositorFrame(uint32_t presentation_token) override;
-  void OnBeginFrame(const BeginFrameArgs& args) override;
+  void OnBeginFrame(const BeginFrameArgs& args,
+                    const FrameTimingDetailsMap& timing_details) override;
   void ReclaimResources(
       const std::vector<ReturnedResource>& resources) override;
   void OnBeginFramePausedChanged(bool paused) override;
@@ -39,6 +39,8 @@ class FakeCompositorFrameSinkClient : public mojom::CompositorFrameSinkClient {
   void InsertResources(const std::vector<ReturnedResource>& resources);
 
   std::vector<ReturnedResource> returned_resources_;
+
+  mojo::Binding<mojom::CompositorFrameSinkClient> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeCompositorFrameSinkClient);
 };

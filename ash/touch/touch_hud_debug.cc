@@ -22,6 +22,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -48,7 +49,7 @@ const SkColor kColors[] = {
     SkColorSetRGB(0xFF, 0xDE, 0xAD),
 };
 const int kAlpha = 0x60;
-const int kMaxPaths = arraysize(kColors);
+const int kMaxPaths = base::size(kColors);
 const int kReducedScale = 10;
 
 const char* GetTouchEventLabel(ui::EventType type) {
@@ -300,31 +301,33 @@ class TouchHudCanvas : public views::View {
 };
 
 TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
-    : TouchObserverHUD(initial_root, "TouchHudDebug"),
+    : TouchObserverHud(initial_root, "TouchHudDebug"),
       mode_(FULLSCREEN),
       touch_log_(new TouchLog()),
-      canvas_(NULL),
-      label_container_(NULL) {
+      canvas_(new TouchHudCanvas(*touch_log_)),
+      label_container_(new views::View()) {
   const display::Display& display =
       Shell::Get()->display_manager()->GetDisplayForId(display_id());
 
   views::View* content = widget()->GetContentsView();
 
-  canvas_ = new TouchHudCanvas(*touch_log_);
   content->AddChildView(canvas_);
 
   const gfx::Size& display_size = display.size();
   canvas_->SetSize(display_size);
 
-  label_container_ = new views::View;
-  label_container_->SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical));
+  label_container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
 
+  constexpr SkColor kShadowColor = SK_ColorWHITE;
+  const SkColor label_color =
+      color_utils::GetColorWithMaxContrast(kShadowColor);
   for (int i = 0; i < kMaxTouchPoints; ++i) {
     touch_labels_[i] = new views::Label;
-    touch_labels_[i]->SetBackgroundColor(SkColorSetARGB(0, 255, 255, 255));
+    touch_labels_[i]->SetEnabledColor(label_color);
+    touch_labels_[i]->SetBackgroundColor(SK_ColorTRANSPARENT);
     touch_labels_[i]->SetShadows(gfx::ShadowValues(
-        1, gfx::ShadowValue(gfx::Vector2d(1, 1), 0, SK_ColorWHITE)));
+        1, gfx::ShadowValue(gfx::Vector2d(1, 1), 0, kShadowColor)));
     label_container_->AddChildView(touch_labels_[i]);
   }
   label_container_->SetX(0);
@@ -345,7 +348,7 @@ std::unique_ptr<base::DictionaryValue> TouchHudDebug::GetAllAsDictionary() {
     if (hud) {
       std::unique_ptr<base::ListValue> list = hud->GetLogAsList();
       if (!list->empty())
-        value->Set(base::Int64ToString(hud->display_id()), std::move(list));
+        value->Set(base::NumberToString(hud->display_id()), std::move(list));
     }
   }
   return value;
@@ -432,7 +435,7 @@ void TouchHudDebug::OnTouchEvent(ui::TouchEvent* event) {
 
 void TouchHudDebug::OnDisplayMetricsChanged(const display::Display& display,
                                             uint32_t metrics) {
-  TouchObserverHUD::OnDisplayMetricsChanged(display, metrics);
+  TouchObserverHud::OnDisplayMetricsChanged(display, metrics);
 
   if (display.id() != display_id() || !(metrics & DISPLAY_METRIC_BOUNDS))
     return;

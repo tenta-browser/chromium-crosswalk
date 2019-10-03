@@ -11,11 +11,12 @@ import android.os.Build;
 import android.view.View;
 import android.view.WindowManager;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
 import java.util.concurrent.Callable;
 
@@ -48,10 +49,11 @@ public class FullscreenTestUtils {
      */
     public static void togglePersistentFullscreen(final TabWebContentsDelegateAndroid delegate,
             final boolean state) {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                delegate.toggleFullscreenModeForTab(state);
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+            if (state) {
+                delegate.enterFullscreenModeForTab(false);
+            } else {
+                delegate.exitFullscreenModeForTab();
             }
         });
     }
@@ -96,7 +98,7 @@ public class FullscreenTestUtils {
     private static boolean isFullscreenFlagSet(final Tab tab, final boolean state,
             Activity activity) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            View view = tab.getContentViewCore().getContainerView();
+            View view = tab.getContentView();
             int visibility = view.getSystemUiVisibility();
             // SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN should only be used during the transition between
             // fullscreen states, so it should always be cleared when fullscreen transitions are

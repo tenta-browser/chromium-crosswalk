@@ -11,23 +11,36 @@ namespace media_router {
 
 MediaSink::MediaSink(const MediaSink::Id& sink_id,
                      const std::string& name,
-                     SinkIconType icon_type)
-    : sink_id_(sink_id), name_(name), icon_type_(icon_type) {}
+                     SinkIconType icon_type,
+                     MediaRouteProviderId provider_id)
+    : sink_id_(sink_id),
+      name_(name),
+      icon_type_(icon_type),
+      provider_id_(provider_id) {}
 
 MediaSink::MediaSink(const MediaSink& other) = default;
+MediaSink::MediaSink(MediaSink&& other) noexcept = default;
+MediaSink::MediaSink() = default;
+MediaSink::~MediaSink() = default;
 
-MediaSink::MediaSink() {}
+MediaSink& MediaSink::operator=(const MediaSink& other) = default;
+MediaSink& MediaSink::operator=(MediaSink&& other) noexcept = default;
 
-MediaSink::~MediaSink() {}
-
-bool MediaSink::Equals(const MediaSink& other) const {
-  return sink_id_ == other.sink_id_;
+bool MediaSink::IsMaybeCloudSink() const {
+  switch (icon_type_) {
+    case SinkIconType::MEETING:
+    case SinkIconType::HANGOUT:
+    case SinkIconType::EDUCATION:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool MediaSink::operator==(const MediaSink& other) const {
   return sink_id_ == other.sink_id_ && name_ == other.name_ &&
          description_ == other.description_ && domain_ == other.domain_ &&
-         icon_type_ == other.icon_type_;
+         icon_type_ == other.icon_type_ && provider_id_ == other.provider_id_;
 }
 
 bool MediaSink::operator!=(const MediaSink& other) const {

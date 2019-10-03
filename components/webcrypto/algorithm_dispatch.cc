@@ -12,7 +12,7 @@
 #include "components/webcrypto/generate_key_result.h"
 #include "components/webcrypto/status.h"
 #include "crypto/openssl_util.h"
-#include "third_party/WebKit/public/platform/WebCryptoKeyAlgorithm.h"
+#include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
 
 namespace webcrypto {
 
@@ -315,12 +315,6 @@ Status DeriveKey(const blink::WebCryptoAlgorithm& algorithm,
   // Create the key using the derived bytes.
   return ImportKey(blink::kWebCryptoKeyFormatRaw, CryptoData(derived_bytes),
                    import_algorithm, extractable, usages, derived_key);
-}
-
-std::unique_ptr<blink::WebCryptoDigestor> CreateDigestor(
-    blink::WebCryptoAlgorithmId algorithm) {
-  crypto::EnsureOpenSSLInit();
-  return CreateDigestorImplementation(algorithm);
 }
 
 bool SerializeKeyForClone(const blink::WebCryptoKey& key,

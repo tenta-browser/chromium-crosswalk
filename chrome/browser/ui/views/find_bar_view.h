@@ -25,7 +25,6 @@ class Range;
 
 namespace views {
 class ImageButton;
-class Label;
 class Painter;
 class Separator;
 class Textfield;
@@ -71,10 +70,10 @@ class FindBarView : public views::View,
   const char* GetClassName() const override;
   void Layout() override;
   gfx::Size CalculatePreferredSize() const override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
   // DropdownBarHostDelegate:
-  void SetFocusAndSelection(bool select_all) override;
+  void FocusAndSelectAll() override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -88,7 +87,13 @@ class FindBarView : public views::View,
   // views::ViewTargeterDelegate:
   views::View* TargetForRect(View* root, const gfx::Rect& rect) override;
 
+ protected:
+  // views::View overrides:
+  void AddedToWidget() override;
+
  private:
+  class MatchCountLabel;
+
   // Starts finding |search_text|.  If the text is empty, stops finding.
   void Find(const base::string16& search_text);
 
@@ -109,7 +114,7 @@ class FindBarView : public views::View,
   // The controls in the window.
   views::Textfield* find_text_;
   std::unique_ptr<views::Painter> find_text_border_;
-  views::Label* match_count_text_;
+  MatchCountLabel* match_count_text_;
   views::View* focus_forwarder_view_;
   views::Separator* separator_;
   views::ImageButton* find_previous_button_;

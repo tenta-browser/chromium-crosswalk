@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "chrome/browser/chromeos/arc/optin/arc_terms_of_service_negotiator.h"
-#include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen_view_observer.h"
+#include "chrome/browser/ui/webui/chromeos/login/arc_terms_of_service_screen_handler.h"
 
 namespace chromeos {
 class ArcTermsOfServiceScreenView;
@@ -38,7 +38,7 @@ class ArcTermsOfServiceOobeNegotiator
 
   // chromeos::ArcTermsOfServiceScreenViewObserver:
   void OnSkip() override;
-  void OnAccept() override;
+  void OnAccept(bool review_arc_settings) override;
   void OnViewDestroyed(chromeos::ArcTermsOfServiceScreenView* view) override;
 
   // ArcTermsOfServiceNegotiator:

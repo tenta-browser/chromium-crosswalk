@@ -9,11 +9,10 @@
 
 #include "base/macros.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
-#include "net/nqe/network_quality_estimator.h"
 
-namespace content {
-class WebContents;
-}  // namespace content
+namespace network {
+class NetworkQualityTracker;
+}
 
 class GURL;
 
@@ -21,13 +20,16 @@ class GURL;
 class AndroidPageLoadMetricsObserver
     : public page_load_metrics::PageLoadMetricsObserver {
  public:
-  explicit AndroidPageLoadMetricsObserver(content::WebContents* web_contents);
+  AndroidPageLoadMetricsObserver();
 
   // page_load_metrics::PageLoadMetricsObserver:
   ObservePolicy OnStart(content::NavigationHandle* navigation_handle,
                         const GURL& currently_committed_url,
                         bool started_in_foreground) override;
   void OnFirstContentfulPaintInPage(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnFirstMeaningfulPaintInMainFrameDocument(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnLoadEventStart(
@@ -38,11 +40,10 @@ class AndroidPageLoadMetricsObserver
 
  protected:
   AndroidPageLoadMetricsObserver(
-      content::WebContents* web_contents,
-      net::NetworkQualityEstimator::NetworkQualityProvider*
-          network_quality_provider)
-      : web_contents_(web_contents),
-        network_quality_provider_(network_quality_provider) {}
+      network::NetworkQualityTracker* network_quality_tracker)
+      : network_quality_tracker_(network_quality_tracker) {}
+
+  virtual void ReportNewNavigation();
 
   virtual void ReportNetworkQualityEstimate(
       net::EffectiveConnectionType connection_type,
@@ -51,6 +52,9 @@ class AndroidPageLoadMetricsObserver
 
   virtual void ReportFirstContentfulPaint(int64_t navigation_start_tick,
                                           int64_t first_contentful_paint_ms);
+
+  virtual void ReportFirstMeaningfulPaint(int64_t navigation_start_tick,
+                                          int64_t first_meaningful_paint_ms);
 
   virtual void ReportLoadEventStart(int64_t navigation_start_tick,
                                     int64_t load_event_start_ms);
@@ -64,12 +68,10 @@ class AndroidPageLoadMetricsObserver
                                         int64_t send_end_ms);
 
  private:
-  content::WebContents* web_contents_;
-
   bool did_dispatch_on_main_resource_ = false;
+  int64_t navigation_id_ = -1;
 
-  net::NetworkQualityEstimator::NetworkQualityProvider*
-      network_quality_provider_ = nullptr;
+  network::NetworkQualityTracker* network_quality_tracker_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(AndroidPageLoadMetricsObserver);
 };

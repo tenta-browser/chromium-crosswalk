@@ -44,6 +44,7 @@ extern const char
 extern const char
     kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown[];
 extern const char kDataReductionProxy[];
+extern const char kDataSaverEnabled[];
 extern const char kDataReductionProxyConfig[];
 extern const char kDataUsageReportingEnabled[];
 extern const char kDataReductionProxyWasEnabledBefore[];
@@ -52,6 +53,15 @@ extern const char kDataReductionProxySavingsClearedNegativeSystemClock[];
 extern const char kHttpOriginalContentLength[];
 extern const char kHttpReceivedContentLength[];
 extern const char kDataReductionProxyLastConfigRetrievalTime[];
+extern const char kNetworkProperties[];
+
+extern const char kThisWeekNumber[];
+extern const char kThisWeekServicesDownstreamBackgroundKB[];
+extern const char kThisWeekServicesDownstreamForegroundKB[];
+extern const char kLastWeekServicesDownstreamBackgroundKB[];
+extern const char kLastWeekServicesDownstreamForegroundKB[];
+extern const char kThisWeekUserTrafficContentTypeDownstreamKB[];
+extern const char kLastWeekUserTrafficContentTypeDownstreamKB[];
 
 }  // namespace prefs
 }  // namespace data_reduction_proxy

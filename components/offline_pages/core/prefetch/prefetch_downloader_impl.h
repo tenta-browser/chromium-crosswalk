@@ -13,11 +13,12 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/time/clock.h"
-#include "components/download/public/download_params.h"
+#include "components/download/public/background_service/download_params.h"
 #include "components/offline_pages/core/prefetch/prefetch_downloader.h"
 #include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "components/version_info/channel.h"
+
+class PrefService;
 
 namespace download {
 class DownloadService;
@@ -26,13 +27,13 @@ class DownloadService;
 namespace offline_pages {
 
 class PrefetchService;
-class PrefetchServiceTestTaco;
 
 // Asynchronously downloads the archive.
 class PrefetchDownloaderImpl : public PrefetchDownloader {
  public:
   PrefetchDownloaderImpl(download::DownloadService* download_service,
-                         version_info::Channel channel);
+                         version_info::Channel channel,
+                         PrefService* prefs);
   ~PrefetchDownloaderImpl() override;
 
   // PrefetchDownloader implementation:
@@ -40,7 +41,8 @@ class PrefetchDownloaderImpl : public PrefetchDownloader {
   bool IsDownloadServiceUnavailable() const override;
   void CleanupDownloadsWhenReady() override;
   void StartDownload(const std::string& download_id,
-                     const std::string& download_location) override;
+                     const std::string& download_location,
+                     const std::string& operation_name) override;
   void OnDownloadServiceReady(
       const std::set<std::string>& outstanding_download_ids,
       const std::map<std::string, std::pair<base::FilePath, int64_t>>&
@@ -50,12 +52,9 @@ class PrefetchDownloaderImpl : public PrefetchDownloader {
                            const base::FilePath& file_path,
                            int64_t file_size) override;
   void OnDownloadFailed(const std::string& download_id) override;
-
-  void SetClockForTesting(std::unique_ptr<base::Clock> clock);
+  int GetMaxConcurrentDownloads() override;
 
  private:
-  friend class PrefetchServiceTestTaco;
-
   enum class DownloadServiceStatus {
     // The download service is booting up.
     INITIALIZING,
@@ -66,9 +65,6 @@ class PrefetchDownloaderImpl : public PrefetchDownloader {
     UNAVAILABLE,
   };
 
-  // For test only.
-  explicit PrefetchDownloaderImpl(version_info::Channel channel);
-
   // Callback for StartDownload.
   void OnStartDownload(const std::string& download_id,
                        download::DownloadParams::StartResult result);
@@ -77,8 +73,6 @@ class PrefetchDownloaderImpl : public PrefetchDownloader {
       const std::set<std::string>& outstanding_download_ids,
       const std::map<std::string, std::pair<base::FilePath, int64_t>>&
           success_downloads);
-
-  std::unique_ptr<base::Clock> clock_;
 
   // Unowned. It is valid until |this| instance is disposed.
   download::DownloadService* download_service_;
@@ -99,7 +93,9 @@ class PrefetchDownloaderImpl : public PrefetchDownloader {
   std::set<std::string> outstanding_download_ids_;
   std::map<std::string, std::pair<base::FilePath, int64_t>> success_downloads_;
 
-  base::WeakPtrFactory<PrefetchDownloaderImpl> weak_ptr_factory_;
+  PrefService* prefs_;
+
+  base::WeakPtrFactory<PrefetchDownloaderImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrefetchDownloaderImpl);
 };

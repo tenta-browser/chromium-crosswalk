@@ -4,15 +4,13 @@
 
 #import "ios/chrome/browser/ui/toolbar/keyboard_assist/toolbar_keyboard_accessory_view.h"
 
-#import <NotificationCenter/NotificationCenter.h>
-
 #include "base/mac/foundation_util.h"
-#include "ios/chrome/browser/experimental_flags.h"
-#include "ios/chrome/browser/ui/rtl_geometry.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/toolbar/keyboard_assist/toolbar_assistive_keyboard_views.h"
 #import "ios/chrome/browser/ui/toolbar/keyboard_assist/toolbar_assistive_keyboard_views_utils.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#include "ios/chrome/browser/ui/util/rtl_geometry.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/common/ui_util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -88,7 +86,7 @@
   [self addSubview:searchStackView];
 
   // Position the stack views.
-  UILayoutGuide* layoutGuide = SafeAreaLayoutGuideForView(self);
+  id<LayoutGuideProvider> layoutGuide = self.safeAreaLayoutGuide;
   [NSLayoutConstraint activateConstraints:@[
     [searchStackView.leadingAnchor
         constraintEqualToAnchor:layoutGuide.leadingAnchor

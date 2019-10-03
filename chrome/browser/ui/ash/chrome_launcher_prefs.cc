@@ -7,49 +7,62 @@
 #include <stddef.h>
 
 #include <memory>
-#include <set>
 #include <utility>
 
+#include "ash/public/cpp/app_list/internal_app_id_constants.h"
 #include "ash/public/cpp/ash_pref_names.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
-#include "chrome/browser/app_mode/app_mode_utils.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
+#include "chrome/browser/web_applications/components/app_registrar.h"
+#include "chrome/browser/web_applications/components/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
+#include "components/crx_file/id_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "components/sync/model/string_ordinal.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+#include "extensions/common/constants.h"
 
 namespace {
 
-std::unique_ptr<base::DictionaryValue> CreateAppDict(
-    const std::string& app_id) {
-  auto app_value = base::MakeUnique<base::DictionaryValue>();
-  app_value->SetString(kPinnedAppsPrefAppIDPath, app_id);
-  return app_value;
-}
-
-// App ID of default pinned apps.
+// Chrome is pinned explicitly.
 const char* kDefaultPinnedApps[] = {
     extension_misc::kGmailAppId, extension_misc::kGoogleDocAppId,
     extension_misc::kYoutubeAppId, arc::kPlayStoreAppId};
 
-std::unique_ptr<base::ListValue> CreateDefaultPinnedAppsList() {
-  std::unique_ptr<base::ListValue> apps(new base::ListValue);
-  for (size_t i = 0; i < arraysize(kDefaultPinnedApps); ++i)
-    apps->Append(CreateAppDict(kDefaultPinnedApps[i]));
+const char* kDefaultPinnedApps7Apps[] = {
+    extension_misc::kGmailAppId,        extension_misc::kGoogleDocAppId,
+    extension_misc::kGooglePhotosAppId, extension_misc::kFilesManagerAppId,
+    extension_misc::kYoutubeAppId,      arc::kPlayStoreAppId};
 
-  return apps;
-}
+const char* kDefaultPinnedApps10Apps[] = {extension_misc::kGmailAppId,
+                                          extension_misc::kCalendarAppId,
+                                          extension_misc::kGoogleDocAppId,
+                                          extension_misc::kGoogleSheetsAppId,
+                                          extension_misc::kGoogleSlidesAppId,
+                                          extension_misc::kFilesManagerAppId,
+                                          app_list::kInternalAppIdCamera,
+                                          extension_misc::kGooglePhotosAppId,
+                                          arc::kPlayStoreAppId};
+
+const char kDefaultPinnedAppsKey[] = "default";
+const char kDefaultPinnedApps7AppsKey[] = "7apps";
+const char kDefaultPinnedApps10AppsKey[] = "10apps";
 
 bool IsAppIdArcPackage(const std::string& app_id) {
   return app_id.find('.') != app_id.npos;
@@ -92,76 +105,109 @@ struct ComparePinInfo {
   }
 };
 
-// Helper class to keep apps in order of appearance and to provide fast way
-// to check if app exists in the list.
-class AppTracker {
- public:
-  bool HasApp(const std::string& app_id) const {
-    return app_set_.find(app_id) != app_set_.end();
+// Returns true in case default pin layout |default_pin_layout| was already
+// rolled.
+bool IsDefaultPinLayoutRolled(Profile* profile,
+                              const std::string& default_pin_layout) {
+  const auto* layouts_rolled =
+      profile->GetPrefs()->GetList(prefs::kShelfDefaultPinLayoutRolls);
+  if (!layouts_rolled)
+    return false;
+
+  for (const auto& layout_rolled : layouts_rolled->GetList()) {
+    if (layout_rolled.GetString() == default_pin_layout)
+      return true;
   }
 
-  void AddApp(const std::string& app_id) {
-    if (HasApp(app_id))
-      return;
-    app_list_.push_back(app_id);
-    app_set_.insert(app_id);
+  return false;
+}
+
+// Marks that default pin layout |default_pin_layout| is rolled.
+void MarkDefaultPinLayoutRolled(Profile* profile,
+                                const std::string& default_pin_layout) {
+  DCHECK(!IsDefaultPinLayoutRolled(profile, default_pin_layout));
+
+  ListPrefUpdate update(profile->GetPrefs(),
+                        prefs::kShelfDefaultPinLayoutRolls);
+  update->AppendString(default_pin_layout);
+}
+
+// Returns true in case default pin layout configuration could be applied
+// safely. That means all required components are synced or worked in local
+// mode.
+bool IsSafeToApplyDefaultPinLayout(Profile* profile) {
+  const syncer::SyncService* sync_service =
+      ProfileSyncServiceFactory::GetForProfile(profile);
+  // No |sync_service| in incognito mode.
+  if (!sync_service)
+    return true;
+
+  const syncer::UserSelectableTypeSet selected_sync =
+      sync_service->GetUserSettings()->GetSelectedTypes();
+
+  // If App sync is not yet started, don't apply default pin apps once synced
+  // apps is likely override it. There is a case when App sync is disabled and
+  // in last case local cache is available immediately.
+  if (selected_sync.Has(syncer::UserSelectableType::kApps) &&
+      !app_list::AppListSyncableServiceFactory::GetForProfile(profile)
+           ->IsSyncing()) {
+    return false;
   }
 
-  void MaybeAddApp(const std::string& app_id,
-                   const LauncherControllerHelper* helper,
-                   bool check_for_valid_app) {
-    DCHECK_NE(kPinnedAppsPlaceholder, app_id);
-    if (check_for_valid_app && !helper->IsValidIDForCurrentUser(app_id)) {
-      return;
-    }
-    AddApp(app_id);
+  // If shelf pin layout rolls preference is not started yet then we cannot say
+  // if we rolled layout or not.
+  if (selected_sync.Has(syncer::UserSelectableType::kPreferences) &&
+      !PrefServiceSyncableFromProfile(profile)->IsSyncing()) {
+    return false;
   }
 
-  void MaybeAddAppFromPref(const base::DictionaryValue* app_pref,
-                           const LauncherControllerHelper* helper,
-                           bool check_for_valid_app) {
-    std::string app_id;
-    if (!app_pref->GetString(kPinnedAppsPrefAppIDPath, &app_id)) {
-      LOG(ERROR) << "Cannot get app id from app pref entry.";
-      return;
-    }
+  return true;
+}
 
-    if (app_id == kPinnedAppsPlaceholder)
-      return;
+// Returns true in case |pins_from_sync_raw| is empty or represents default app
+// set |kDefaultPinnedApps| plus Chrome app.
+bool IsCurrentDefaultOrEmpty(const std::set<std::string>& pins_from_sync_raw) {
+  if (pins_from_sync_raw.empty())
+    return true;
 
-    bool pinned_by_policy = false;
-    if (app_pref->GetBoolean(kPinnedAppsPrefPinnedByPolicy,
-                             &pinned_by_policy) &&
-        pinned_by_policy) {
-      return;
-    }
+  // Chrome is explicitly pinned regardless of configuration.
+  if (pins_from_sync_raw.size() != base::size(kDefaultPinnedApps) + 1)
+    return false;
 
-    MaybeAddApp(app_id, helper, check_for_valid_app);
+  if (!pins_from_sync_raw.count(extension_misc::kChromeAppId))
+    return false;
+
+  for (const char* default_app_id : kDefaultPinnedApps) {
+    if (!pins_from_sync_raw.count(default_app_id))
+      return false;
   }
 
-  const std::vector<std::string>& app_list() const { return app_list_; }
-
- private:
-  std::vector<std::string> app_list_;
-  std::set<std::string> app_set_;
-};
+  return true;
+}
 
 }  // namespace
 
-const char kPinnedAppsPrefAppIDPath[] = "id";
-const char kPinnedAppsPrefPinnedByPolicy[] = "pinned_by_policy";
-const char kPinnedAppsPlaceholder[] = "AppShelfIDPlaceholder--------";
+const char kPinnedAppsPrefAppIDKey[] = "id";
 
-void RegisterChromeLauncherUserPrefs(PrefRegistrySimple* registry) {
-  // TODO: If we want to support multiple profiles this will likely need to be
-  // pushed to local state and we'll need to track profile per item.
-  registry->RegisterIntegerPref(
-      prefs::kShelfChromeIconIndex, 0,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterListPref(prefs::kPinnedLauncherApps,
-                             CreateDefaultPinnedAppsList(),
-                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+const base::Feature kEnableExtendedShelfLayout{
+    "EnableExtendedShelfLayout", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Parameter for the finch experiment with number of default apps on the shelf.
+// Possible values:
+// 7 - activates |kDefaultPinnedApps7Apps|, see cc file.
+// 10 - activates |kDefaultPinnedApps10Apps|, see cc file.
+// 0 - by default.
+constexpr base::FeatureParam<int> kEnableExtendedShelfLayoutParam(
+    &kEnableExtendedShelfLayout,
+    "app_count",
+    0);
+
+void RegisterChromeLauncherUserPrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(prefs::kPolicyPinnedLauncherApps);
+  registry->RegisterListPref(
+      prefs::kShelfDefaultPinLayoutRolls,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
 }
 
 void InitLocalPref(PrefService* prefs, const char* local, const char* synced) {
@@ -174,16 +220,14 @@ void InitLocalPref(PrefService* prefs, const char* local, const char* synced) {
 }
 
 // Helper that extracts app list from policy preferences.
-void GetAppsPinnedByPolicy(const PrefService* prefs,
-                           const LauncherControllerHelper* helper,
-                           bool check_for_valid_app,
-                           AppTracker* apps) {
-  DCHECK(apps);
-  DCHECK(apps->app_list().empty());
-
-  const auto* policy_apps = prefs->GetList(prefs::kPolicyPinnedLauncherApps);
+std::vector<std::string> GetAppsPinnedByPolicy(
+    LauncherControllerHelper* helper) {
+  const PrefService* prefs = helper->profile()->GetPrefs();
+  std::vector<std::string> result;
+  const base::Value* policy_apps =
+      prefs->GetList(prefs::kPolicyPinnedLauncherApps);
   if (!policy_apps)
-    return;
+    return result;
 
   // Obtain here all ids of ARC apps because it takes linear time, and getting
   // them in the loop bellow would lead to quadratic complexity.
@@ -192,101 +236,98 @@ void GetAppsPinnedByPolicy(const PrefService* prefs,
       arc_app_list_pref ? arc_app_list_pref->GetAppIds()
                         : std::vector<std::string>());
 
-  std::string app_id;
-  for (size_t i = 0; i < policy_apps->GetSize(); ++i) {
-    const base::DictionaryValue* dictionary = nullptr;
-    if (!policy_apps->GetDictionary(i, &dictionary) ||
-        !dictionary->GetString(kPinnedAppsPrefAppIDPath, &app_id)) {
+  for (const auto& policy_dict_entry : policy_apps->GetList()) {
+    const std::string* policy_entry =
+        policy_dict_entry.is_dict()
+            ? policy_dict_entry.FindStringKey(kPinnedAppsPrefAppIDKey)
+            : nullptr;
+
+    if (!policy_entry) {
       LOG(ERROR) << "Cannot extract policy app info from prefs.";
       continue;
     }
-    if (IsAppIdArcPackage(app_id)) {
+
+    if (chromeos::DemoSession::Get() &&
+        chromeos::DemoSession::Get()->ShouldIgnorePinPolicy(*policy_entry)) {
+      continue;
+    }
+
+    // Handle Chrome App ids
+    if (crx_file::id_util::IdIsValid(*policy_entry)) {
+      result.emplace_back(*policy_entry);
+      continue;
+    }
+
+    // Handle Web App ids
+    const GURL web_app_url(*policy_entry);
+    if (web_app_url.is_valid()) {
+      base::Optional<web_app::AppId> web_app_id =
+          web_app::WebAppProvider::Get(helper->profile())
+              ->registrar()
+              .LookupExternalAppId(web_app_url);
+      if (web_app_id.has_value())
+        result.emplace_back(web_app_id.value());
+      continue;
+    }
+
+    // Handle Arc++ App ids
+    if (IsAppIdArcPackage(*policy_entry)) {
       if (!arc_app_list_pref)
         continue;
 
       // We are dealing with package name, not with 32 characters ID.
-      const std::string& arc_package = app_id;
+      const std::string& arc_package = *policy_entry;
       const std::vector<std::string> activities = GetActivitiesForPackage(
           arc_package, all_arc_app_ids, *arc_app_list_pref);
       for (const auto& activity : activities) {
         const std::string arc_app_id =
             ArcAppListPrefs::GetAppId(arc_package, activity);
-        apps->MaybeAddApp(arc_app_id, helper, check_for_valid_app);
+        result.emplace_back(arc_app_id);
       }
-    } else {
-      apps->MaybeAddApp(app_id, helper, check_for_valid_app);
-    }
-  }
-}
 
-std::vector<std::string> GetPinnedAppsFromPrefsLegacy(
-    const PrefService* prefs,
-    const LauncherControllerHelper* helper,
-    bool check_for_valid_app) {
-  // Adding the app list item to the list of items requires that the ID is not
-  // a valid and known ID for the extension system. The ID was constructed that
-  // way - but just to make sure...
-  DCHECK(!helper->IsValidIDForCurrentUser(kPinnedAppsPlaceholder));
-
-  const auto* pinned_apps = prefs->GetList(prefs::kPinnedLauncherApps);
-
-  // Get the sanitized preference value for the index of the Chrome app icon.
-  const size_t chrome_icon_index = std::max<size_t>(
-      0, std::min<size_t>(pinned_apps->GetSize(),
-                          prefs->GetInteger(prefs::kShelfChromeIconIndex)));
-
-  // Check if Chrome is in either of the the preferences lists.
-  std::unique_ptr<base::Value> chrome_app(
-      CreateAppDict(extension_misc::kChromeAppId));
-
-  AppTracker apps;
-  GetAppsPinnedByPolicy(prefs, helper, check_for_valid_app, &apps);
-
-  std::string app_id;
-  for (size_t i = 0; i < pinned_apps->GetSize(); ++i) {
-    // We need to position the chrome icon relative to its place in the pinned
-    // preference list - even if an item of that list isn't shown yet.
-    if (i == chrome_icon_index)
-      apps.AddApp(extension_misc::kChromeAppId);
-    const base::DictionaryValue* app_pref = nullptr;
-    if (!pinned_apps->GetDictionary(i, &app_pref)) {
-      LOG(ERROR) << "There is no dictionary for app entry.";
       continue;
     }
-    apps.MaybeAddAppFromPref(app_pref, helper, check_for_valid_app);
   }
-
-  // If not added yet, the chrome item will be the last item in the list.
-  apps.AddApp(extension_misc::kChromeAppId);
-  return apps.app_list();
+  return result;
 }
 
-// Helper to create pin position that stays before any synced app, even if
-// app is not currently visible on a device.
-syncer::StringOrdinal GetFirstPinPosition(Profile* profile) {
+// Returns pinned app position even if app is not currently visible on device
+// that is leftmost item on the shelf. If |exclude_chrome| is true then Chrome
+// app is not processed. if nothing pinned found, returns an invalid ordinal.
+syncer::StringOrdinal GetFirstPinnedAppPosition(Profile* profile,
+                                                bool exclude_chrome) {
   syncer::StringOrdinal position;
-  app_list::AppListSyncableService* app_service =
+  app_list::AppListSyncableService* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile);
-  for (const auto& sync_peer : app_service->sync_items()) {
+  for (const auto& sync_peer : syncable_service->sync_items()) {
     if (!sync_peer.second->item_pin_ordinal.IsValid())
+      continue;
+    if (exclude_chrome && sync_peer.first == extension_misc::kChromeAppId)
       continue;
     if (!position.IsValid() ||
         sync_peer.second->item_pin_ordinal.LessThan(position)) {
       position = sync_peer.second->item_pin_ordinal;
     }
   }
+  return position;
+}
 
+// Helper to create pin position that stays before any synced app, even if
+// app is not currently visible on a device.
+syncer::StringOrdinal CreateFirstPinPosition(Profile* profile) {
+  const syncer::StringOrdinal position =
+      GetFirstPinnedAppPosition(profile, false /* exclude_chrome */);
   return position.IsValid() ? position.CreateBefore()
                             : syncer::StringOrdinal::CreateInitialOrdinal();
 }
 
 // Helper to creates pin position that stays before any synced app, even if
 // app is not currently visible on a device.
-syncer::StringOrdinal GetLastPinPosition(Profile* profile) {
+syncer::StringOrdinal CreateLastPinPosition(Profile* profile) {
   syncer::StringOrdinal position;
-  app_list::AppListSyncableService* app_service =
+  app_list::AppListSyncableService* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile);
-  for (const auto& sync_peer : app_service->sync_items()) {
+  for (const auto& sync_peer : syncable_service->sync_items()) {
     if (!sync_peer.second->item_pin_ordinal.IsValid())
       continue;
     if (!position.IsValid() ||
@@ -299,128 +340,182 @@ syncer::StringOrdinal GetLastPinPosition(Profile* profile) {
                             : syncer::StringOrdinal::CreateInitialOrdinal();
 }
 
-std::vector<std::string> ImportLegacyPinnedApps(
-    const PrefService* prefs,
-    LauncherControllerHelper* helper) {
-  const std::vector<std::string> legacy_pins_all =
-      GetPinnedAppsFromPrefsLegacy(prefs, helper, false);
-  DCHECK(!legacy_pins_all.empty());
+// Helper to create and insert pins on the shelf for the set of apps defined in
+// |app_ids| after Chrome in the first position and before any other pinned app.
+// If Chrome is not the first pinned app then apps are pinned before any other
+// app.
+void InsertPinsAfterChromeAndBeforeFirstPinnedApp(
+    LauncherControllerHelper* helper,
+    app_list::AppListSyncableService* syncable_service,
+    const std::vector<std::string>& app_ids,
+    std::vector<PinInfo>* pin_infos) {
+  if (app_ids.empty())
+    return;
 
-  app_list::AppListSyncableService* app_service =
-      app_list::AppListSyncableServiceFactory::GetForProfile(helper->profile());
+  // Chrome must be pinned at this point.
+  const syncer::StringOrdinal chrome_position =
+      syncable_service->GetPinPosition(extension_misc::kChromeAppId);
+  DCHECK(chrome_position.IsValid());
 
-  std::vector<std::string> legacy_pins_valid;
-  syncer::StringOrdinal last_position =
-      syncer::StringOrdinal::CreateInitialOrdinal();
-  // Convert to sync item record.
-  for (const auto& app_id : legacy_pins_all) {
-    DCHECK_NE(kPinnedAppsPlaceholder, app_id);
-    app_service->SetPinPosition(app_id, last_position);
-    last_position = last_position.CreateAfter();
-    if (helper->IsValidIDForCurrentUser(app_id))
-      legacy_pins_valid.push_back(app_id);
+  // New pins are inserted after this position.
+  syncer::StringOrdinal after;
+  // New pins are inserted before this position.
+  syncer::StringOrdinal before =
+      GetFirstPinnedAppPosition(helper->profile(), true /* exclude_chrome */);
+
+  if (before.IsValid() && before.GreaterThan(chrome_position)) {
+    // Perfect case, Chrome is the first pinned app and we have next pinned app.
+    after = chrome_position;
+  } else {
+    if (before.IsValid()) {
+      // Chrome is not first. Generate after as position before |before|.
+      after = before.CreateBefore();
+    } else {
+      // Chrome is first and no more other pinned apps or apps are
+      // conflicting with Chrome pin position.
+      after = chrome_position;
+      before = chrome_position.CreateAfter();
+    }
   }
 
-  // Now process default apps.
-  for (size_t i = 0; i < arraysize(kDefaultPinnedApps); ++i) {
-    const std::string& app_id = kDefaultPinnedApps[i];
-    // Check if it is already imported.
-    if (app_service->GetPinPosition(app_id).IsValid())
+  for (const auto& app_id : app_ids) {
+    // Check if we already processed the current app.
+    if (syncable_service->GetPinPosition(app_id).IsValid())
       continue;
-    // Check if it is present but not in legacy pin.
-    if (helper->IsValidIDForCurrentUser(app_id))
-      continue;
-    app_service->SetPinPosition(app_id, last_position);
-    last_position = last_position.CreateAfter();
-  }
 
-  return legacy_pins_valid;
+    const syncer::StringOrdinal position = after.CreateBetween(before);
+    syncable_service->SetPinPosition(app_id, position);
+
+    // Even if app is not currently visible, its pin is pre-created.
+    if (helper->IsValidIDForCurrentUser(app_id))
+      pin_infos->emplace_back(PinInfo(app_id, position));
+
+    // Shift after position, next policy pin position will be created after
+    // current item.
+    after = position;
+  }
 }
 
-std::vector<ash::ShelfID> GetPinnedAppsFromPrefs(
-    const PrefService* prefs,
+std::vector<ash::ShelfID> GetPinnedAppsFromSync(
     LauncherControllerHelper* helper) {
-  app_list::AppListSyncableService* app_service =
+  const PrefService* prefs = helper->profile()->GetPrefs();
+  app_list::AppListSyncableService* const syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(helper->profile());
   // Some unit tests may not have it or service may not be initialized.
-  if (!app_service || !app_service->IsInitialized())
+  if (!syncable_service || !syncable_service->IsInitialized())
     return std::vector<ash::ShelfID>();
 
   std::vector<PinInfo> pin_infos;
 
   // Empty pins indicates that sync based pin model is used for the first
-  // time. In normal workflow we have at least Chrome browser pin info.
-  bool first_run = true;
+  // time. In the normal workflow we have at least Chrome browser pin info.
 
-  for (const auto& sync_peer : app_service->sync_items()) {
+  // Contains pins from sync regardless either real app available on device or
+  // not.
+  std::set<std::string> pins_from_sync_raw;
+  for (const auto& sync_peer : syncable_service->sync_items()) {
     if (!sync_peer.second->item_pin_ordinal.IsValid())
       continue;
 
-    first_run = false;
+    pins_from_sync_raw.insert(sync_peer.first);
+
     // Don't include apps that currently do not exist on device.
     if (sync_peer.first != extension_misc::kChromeAppId &&
         !helper->IsValidIDForCurrentUser(sync_peer.first)) {
       continue;
     }
 
-    pin_infos.push_back(
+    // Prevent old app camera pinning.
+    if (IsCameraApp(sync_peer.first))
+      continue;
+
+    pin_infos.emplace_back(
         PinInfo(sync_peer.first, sync_peer.second->item_pin_ordinal));
   }
 
-  if (first_run) {
-    // Return default apps in case profile is not synced yet.
-    sync_preferences::PrefServiceSyncable* const pref_service_syncable =
-        PrefServiceSyncableFromProfile(helper->profile());
-    if (!pref_service_syncable->IsSyncing()) {
-      return AppIdsToShelfIDs(
-          GetPinnedAppsFromPrefsLegacy(prefs, helper, true));
-    }
-
-    // We need to import legacy pins model and convert it to sync based
-    // model.
-    return AppIdsToShelfIDs(ImportLegacyPinnedApps(prefs, helper));
+  // Make sure Chrome is always pinned.
+  syncer::StringOrdinal chrome_position =
+      syncable_service->GetPinPosition(extension_misc::kChromeAppId);
+  if (!chrome_position.IsValid()) {
+    chrome_position = CreateFirstPinPosition(helper->profile());
+    syncable_service->SetPinPosition(extension_misc::kChromeAppId,
+                                     chrome_position);
+    pin_infos.emplace_back(
+        PinInfo(extension_misc::kChromeAppId, chrome_position));
   }
+
+  // Apply default apps in case profile syncing is done. Otherwise there is a
+  // risk that applied default apps would be overwritten by sync once it is
+  // completed. prefs::kPolicyPinnedLauncherApps overrides any default layout.
+  // This also limits applying experimental configuration only for users who
+  // have the default pin layout specified by |kDefaultPinnedApps| or for
+  // fresh users who have no pin information at all.
+  std::string shelf_layout = kDefaultPinnedAppsKey;
+  // Set to true in case default configuration has to be reset in order to let
+  // new layout takes effect.
+  bool reset_default_configuration = false;
+  if (base::FeatureList::IsEnabled(kEnableExtendedShelfLayout) &&
+      IsCurrentDefaultOrEmpty(pins_from_sync_raw)) {
+    const int forced_shelf_layout_app_count =
+        kEnableExtendedShelfLayoutParam.Get();
+    switch (forced_shelf_layout_app_count) {
+      case 0:
+        shelf_layout = kDefaultPinnedAppsKey;
+        break;
+      case 7:
+        reset_default_configuration = true;
+        shelf_layout = kDefaultPinnedApps7AppsKey;
+        break;
+      case 10:
+        reset_default_configuration = true;
+        shelf_layout = kDefaultPinnedApps10AppsKey;
+        break;
+      default:
+        LOG(ERROR) << "Wrong default shelf pin layout "
+                   << forced_shelf_layout_app_count;
+    }
+  }
+
+  if (!prefs->HasPrefPath(prefs::kPolicyPinnedLauncherApps) &&
+      IsSafeToApplyDefaultPinLayout(helper->profile()) &&
+      !IsDefaultPinLayoutRolled(helper->profile(), shelf_layout)) {
+    VLOG(1) << "Roll default shelf pin layout " << shelf_layout;
+    if (reset_default_configuration) {
+      VLOG(1) << "Reset previous default configuration";
+      pin_infos.clear();
+      pin_infos.emplace_back(
+          PinInfo(extension_misc::kChromeAppId, chrome_position));
+      for (const char* default_app_id : kDefaultPinnedApps) {
+        syncable_service->SetPinPosition(default_app_id,
+                                         syncer::StringOrdinal());
+      }
+    }
+    std::vector<std::string> default_app_ids;
+    if (shelf_layout == kDefaultPinnedApps7AppsKey) {
+      for (const char* default_app_id : kDefaultPinnedApps7Apps)
+        default_app_ids.push_back(default_app_id);
+    } else if (shelf_layout == kDefaultPinnedApps10AppsKey) {
+      for (const char* default_app_id : kDefaultPinnedApps10Apps)
+        default_app_ids.push_back(default_app_id);
+    } else {
+      for (const char* default_app_id : kDefaultPinnedApps)
+        default_app_ids.push_back(default_app_id);
+    }
+    InsertPinsAfterChromeAndBeforeFirstPinnedApp(helper, syncable_service,
+                                                 default_app_ids, &pin_infos);
+    MarkDefaultPinLayoutRolled(helper->profile(), shelf_layout);
+  }
+
+  // Handle pins, forced by policy. In case Chrome is first app they are added
+  // after Chrome, otherwise they are added to the front. Note, we handle apps
+  // that may not be currently on device. At this case pin position would be
+  // preallocated and apps will appear on shelf in deterministic order, even if
+  // their install order differ.
+  InsertPinsAfterChromeAndBeforeFirstPinnedApp(
+      helper, syncable_service, GetAppsPinnedByPolicy(helper), &pin_infos);
 
   // Sort pins according their ordinals.
   std::sort(pin_infos.begin(), pin_infos.end(), ComparePinInfo());
-
-  AppTracker policy_apps;
-  GetAppsPinnedByPolicy(prefs, helper, true, &policy_apps);
-
-  // Pinned by policy apps appear first, if they were not shown before.
-  syncer::StringOrdinal front_position = GetFirstPinPosition(helper->profile());
-  std::vector<std::string>::const_reverse_iterator it;
-  for (it = policy_apps.app_list().rbegin();
-       it != policy_apps.app_list().rend(); ++it) {
-    const std::string& app_id = *it;
-    if (app_id == kPinnedAppsPlaceholder)
-      continue;
-
-    // Check if we already processed current app.
-    if (app_service->GetPinPosition(app_id).IsValid())
-      continue;
-
-    // Now move it to the front.
-    pin_infos.insert(pin_infos.begin(), PinInfo(*it, front_position));
-    app_service->SetPinPosition(app_id, front_position);
-    front_position = front_position.CreateBefore();
-  }
-
-  // Now insert Chrome browser app if needed.
-  if (!app_service->GetPinPosition(extension_misc::kChromeAppId).IsValid()) {
-    pin_infos.insert(pin_infos.begin(),
-                     PinInfo(extension_misc::kChromeAppId, front_position));
-    app_service->SetPinPosition(extension_misc::kChromeAppId, front_position);
-  }
-
-  if (helper->IsValidIDForCurrentUser(arc::kPlayStoreAppId) &&
-      !app_service->GetSyncItem(arc::kPlayStoreAppId)) {
-    const syncer::StringOrdinal arc_host_position =
-        GetLastPinPosition(helper->profile());
-    pin_infos.insert(pin_infos.begin(),
-                     PinInfo(arc::kPlayStoreAppId, arc_host_position));
-    app_service->SetPinPosition(arc::kPlayStoreAppId, arc_host_position);
-  }
 
   // Convert to ShelfID array.
   std::vector<std::string> pins(pin_infos.size());
@@ -442,9 +537,9 @@ void RemovePinPosition(Profile* profile, const ash::ShelfID& shelf_id) {
   }
   DCHECK(!app_id.empty());
 
-  app_list::AppListSyncableService* app_service =
+  app_list::AppListSyncableService* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile);
-  app_service->SetPinPosition(app_id, syncer::StringOrdinal());
+  syncable_service->SetPinPosition(app_id, syncer::StringOrdinal());
 }
 
 void SetPinPosition(Profile* profile,
@@ -452,6 +547,8 @@ void SetPinPosition(Profile* profile,
                     const ash::ShelfID& shelf_id_before,
                     const std::vector<ash::ShelfID>& shelf_ids_after) {
   DCHECK(profile);
+  // Camera apps are mapped to the internal app.
+  DCHECK(!IsCameraApp(shelf_id.app_id));
 
   const std::string& app_id = shelf_id.app_id;
   if (!shelf_id.launch_id.empty()) {
@@ -466,21 +563,22 @@ void SetPinPosition(Profile* profile,
   DCHECK(!app_id.empty());
   DCHECK_NE(app_id, app_id_before);
 
-  app_list::AppListSyncableService* app_service =
+  app_list::AppListSyncableService* syncable_service =
       app_list::AppListSyncableServiceFactory::GetForProfile(profile);
   // Some unit tests may not have this service.
-  if (!app_service)
+  if (!syncable_service)
     return;
 
   syncer::StringOrdinal position_before =
       app_id_before.empty() ? syncer::StringOrdinal()
-                            : app_service->GetPinPosition(app_id_before);
+                            : syncable_service->GetPinPosition(app_id_before);
   syncer::StringOrdinal position_after;
   for (const auto& shelf_id_after : shelf_ids_after) {
     const std::string& app_id_after = shelf_id_after.app_id;
     DCHECK_NE(app_id_after, app_id);
     DCHECK_NE(app_id_after, app_id_before);
-    syncer::StringOrdinal position = app_service->GetPinPosition(app_id_after);
+    syncer::StringOrdinal position =
+        syncable_service->GetPinPosition(app_id_after);
     DCHECK(position.IsValid());
     if (!position.IsValid()) {
       LOG(ERROR) << "Sync pin position was not found for " << app_id_after;
@@ -501,5 +599,5 @@ void SetPinPosition(Profile* profile,
     pin_position = position_after.CreateBefore();
   else
     pin_position = syncer::StringOrdinal::CreateInitialOrdinal();
-  app_service->SetPinPosition(app_id, pin_position);
+  syncable_service->SetPinPosition(app_id, pin_position);
 }

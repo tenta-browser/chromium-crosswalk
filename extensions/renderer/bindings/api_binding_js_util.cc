@@ -6,10 +6,12 @@
 
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/renderer/bindings/api_event_handler.h"
 #include "extensions/renderer/bindings/api_request_handler.h"
 #include "extensions/renderer/bindings/api_signature.h"
 #include "extensions/renderer/bindings/api_type_reference_map.h"
+#include "extensions/renderer/bindings/argument_spec.h"
 #include "extensions/renderer/bindings/declarative_event.h"
 #include "extensions/renderer/bindings/exception_handler.h"
 #include "extensions/renderer/bindings/js_runner.h"
@@ -49,14 +51,17 @@ gin::ObjectTemplateBuilder APIBindingJSUtil::GetObjectTemplateBuilder(
       .SetMethod("runCallbackWithLastError",
                  &APIBindingJSUtil::RunCallbackWithLastError)
       .SetMethod("handleException", &APIBindingJSUtil::HandleException)
-      .SetMethod("setExceptionHandler", &APIBindingJSUtil::SetExceptionHandler);
+      .SetMethod("setExceptionHandler", &APIBindingJSUtil::SetExceptionHandler)
+      .SetMethod("validateType", &APIBindingJSUtil::ValidateType)
+      .SetMethod("validateCustomSignature",
+                 &APIBindingJSUtil::ValidateCustomSignature)
+      .SetMethod("addCustomSignature", &APIBindingJSUtil::AddCustomSignature);
 }
 
 void APIBindingJSUtil::SendRequest(
     gin::Arguments* arguments,
     const std::string& name,
     const std::vector<v8::Local<v8::Value>>& request_args,
-    v8::Local<v8::Value> schemas_unused,
     v8::Local<v8::Value> options) {
   v8::Isolate* isolate = arguments->isolate();
   v8::HandleScope handle_scope(isolate);
@@ -95,11 +100,13 @@ void APIBindingJSUtil::SendRequest(
   // TODO(devlin): We should ideally always be able to validate these, meaning
   // that we either need to make the APIs give us the expected signature, or
   // need to have a way of indicating an internal signature.
-  CHECK(signature->ConvertArgumentsIgnoringSchema(
-      context, request_args, &converted_arguments, &callback));
+  APISignature::JSONParseResult parse_result =
+      signature->ConvertArgumentsIgnoringSchema(context, request_args);
+  CHECK(parse_result.succeeded());
 
-  request_handler_->StartRequest(context, name, std::move(converted_arguments),
-                                 callback, custom_callback, thread);
+  request_handler_->StartRequest(
+      context, name, std::move(parse_result.arguments), parse_result.callback,
+      custom_callback, thread);
 }
 
 void APIBindingJSUtil::RegisterEventArgumentMassager(
@@ -115,7 +122,6 @@ void APIBindingJSUtil::RegisterEventArgumentMassager(
 
 void APIBindingJSUtil::CreateCustomEvent(gin::Arguments* arguments,
                                          v8::Local<v8::Value> v8_event_name,
-                                         v8::Local<v8::Value> unused_schema,
                                          bool supports_filters,
                                          bool supports_lazy_listeners) {
   v8::Isolate* isolate = arguments->isolate();
@@ -128,7 +134,7 @@ void APIBindingJSUtil::CreateCustomEvent(gin::Arguments* arguments,
       NOTREACHED();
       return;
     }
-    event_name = gin::V8ToString(v8_event_name);
+    event_name = gin::V8ToString(isolate, v8_event_name);
   }
 
   DCHECK(!supports_filters || !event_name.empty())
@@ -227,7 +233,7 @@ void APIBindingJSUtil::HandleException(gin::Arguments* arguments,
     std::string exception_string;
     v8::Local<v8::String> v8_exception_string;
     if (exception->ToString(context).ToLocal(&v8_exception_string))
-      exception_string = gin::V8ToString(v8_exception_string);
+      exception_string = gin::V8ToString(isolate, v8_exception_string);
     else
       exception_string = "(failed to get error message)";
     full_message =
@@ -243,6 +249,85 @@ void APIBindingJSUtil::SetExceptionHandler(gin::Arguments* arguments,
                                            v8::Local<v8::Function> handler) {
   exception_handler_->SetHandlerForContext(
       arguments->GetHolderCreationContext(), handler);
+}
+
+void APIBindingJSUtil::ValidateType(gin::Arguments* arguments,
+                                    const std::string& type_name,
+                                    v8::Local<v8::Value> value) {
+  v8::Isolate* isolate = arguments->isolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = arguments->GetHolderCreationContext();
+
+  const ArgumentSpec* spec = type_refs_->GetSpec(type_name);
+  if (!spec) {
+    // We shouldn't be asked to validate unknown specs, but since this comes
+    // from JS, assume nothing.
+    NOTREACHED();
+    return;
+  }
+
+  std::string error;
+  if (!spec->ParseArgument(context, value, *type_refs_, nullptr, nullptr,
+                           &error)) {
+    arguments->ThrowTypeError(error);
+  }
+}
+
+void APIBindingJSUtil::AddCustomSignature(
+    gin::Arguments* arguments,
+    const std::string& custom_signature_name,
+    v8::Local<v8::Value> signature) {
+  v8::Local<v8::Context> context = arguments->GetHolderCreationContext();
+
+  // JS bindings run per-context, so it's expected that they will call this
+  // multiple times in the lifetime of the renderer process. Only handle the
+  // first call.
+  if (type_refs_->GetCustomSignature(custom_signature_name))
+    return;
+
+  if (!signature->IsArray()) {
+    NOTREACHED();
+    return;
+  }
+
+  std::unique_ptr<base::Value> base_signature =
+      content::V8ValueConverter::Create()->FromV8Value(signature, context);
+  if (!base_signature->is_list()) {
+    NOTREACHED();
+    return;
+  }
+
+  type_refs_->AddCustomSignature(
+      custom_signature_name,
+      std::make_unique<APISignature>(
+          *base::ListValue::From(std::move(base_signature))));
+}
+
+void APIBindingJSUtil::ValidateCustomSignature(
+    gin::Arguments* arguments,
+    const std::string& custom_signature_name,
+    v8::Local<v8::Value> arguments_to_validate) {
+  v8::Isolate* isolate = arguments->isolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = arguments->GetHolderCreationContext();
+
+  const APISignature* signature =
+      type_refs_->GetCustomSignature(custom_signature_name);
+  if (!signature) {
+    NOTREACHED();
+  }
+
+  std::vector<v8::Local<v8::Value>> vector_arguments;
+  if (!gin::ConvertFromV8(isolate, arguments_to_validate, &vector_arguments)) {
+    NOTREACHED();
+    return;
+  }
+
+  APISignature::V8ParseResult parse_result =
+      signature->ParseArgumentsToV8(context, vector_arguments, *type_refs_);
+  if (!parse_result.succeeded()) {
+    arguments->ThrowTypeError(std::move(*parse_result.error));
+  }
 }
 
 }  // namespace extensions

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/deferred_sequenced_task_runner.h"
+#include "base/test/bind_test_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_common.h"
@@ -12,12 +14,25 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/system_connector.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/feature_h264_with_openh264_ffmpeg.h"
-#include "content/public/common/features.h"
+#include "content/public/common/network_service_util.h"
+#include "content/public/common/service_names.mojom.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/media_switches.h"
+#include "net/nqe/network_quality_estimator.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/network/network_service.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/mojom/network_service_test.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
+
+#if defined(OS_MACOSX)
+#include "base/mac/mac_util.h"
+#endif
 
 static const char kMainWebrtcTestHtmlPage[] =
     "/webrtc/webrtc_jsep01_test.html";
@@ -94,6 +109,38 @@ class WebRtcBrowserTest : public WebRtcTestBase {
     DetectVideoAndHangUp();
   }
 
+  uint32_t GetPeerToPeerConnectionsCountChangeFromNetworkService() {
+    uint32_t connection_count = 0u;
+    if (content::IsInProcessNetworkService()) {
+      base::RunLoop run_loop;
+      content::GetNetworkTaskRunner()->PostTask(
+          FROM_HERE, base::BindLambdaForTesting([&connection_count, &run_loop] {
+            connection_count =
+                network::NetworkService::GetNetworkServiceForTesting()
+                    ->network_quality_estimator()
+                    ->GetPeerToPeerConnectionsCountChange();
+            run_loop.Quit();
+          }));
+      run_loop.Run();
+      return connection_count;
+    }
+
+    network::mojom::NetworkServiceTestPtr network_service_test;
+    content::GetSystemConnector()->BindInterface(
+        content::mojom::kNetworkServiceName, &network_service_test);
+    // TODO(crbug.com/901026): Make sure the network process is started to avoid
+    // a deadlock on Android.
+    network_service_test.FlushForTesting();
+
+    mojo::ScopedAllowSyncCallForTesting allow_sync_call;
+
+    bool available = network_service_test->GetPeerToPeerConnectionsCountChange(
+        &connection_count);
+    EXPECT_TRUE(available);
+
+    return connection_count;
+  }
+
  protected:
   void StartServerAndOpenTabs() {
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -117,12 +164,20 @@ class WebRtcBrowserTest : public WebRtcTestBase {
   content::WebContents* right_tab_;
 };
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+// TODO(898546): many of these tests are failing on ASan builds.
+#if defined(ADDRESS_SANITIZER)
+#define MAYBE_WebRtcBrowserTest DISABLED_WebRtcBrowserTest
+class DISABLED_WebRtcBrowserTest : public WebRtcBrowserTest {};
+#else
+#define MAYBE_WebRtcBrowserTest WebRtcBrowserTest
+#endif
+
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsVP8) {
   RunsAudioVideoWebRTCCallInTwoTabs("VP8");
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsVP9) {
   RunsAudioVideoWebRTCCallInTwoTabs("VP9");
 }
@@ -138,6 +193,13 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
         "(test \"OK\")";
     return;
   }
+
+#if defined(OS_MACOSX)
+  // TODO(jam): this test only on 10.12.
+  if (base::mac::IsOS10_12())
+    return;
+#endif
+
   RunsAudioVideoWebRTCCallInTwoTabs("H264", true /* prefer_hw_video_codec */);
 }
 
@@ -158,14 +220,14 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest, TestWebAudioMediaStream) {
   ASSERT_FALSE(tab->IsCrashed());
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsOfferRsaAnswerRsa) {
   RunsAudioVideoWebRTCCallInTwoTabs(WebRtcTestBase::kUseDefaultVideoCodec,
                                     false /* prefer_hw_video_codec */,
                                     kKeygenAlgorithmRsa, kKeygenAlgorithmRsa);
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsOfferEcdsaAnswerEcdsa) {
   RunsAudioVideoWebRTCCallInTwoTabs(
       WebRtcTestBase::kUseDefaultVideoCodec, false /* prefer_hw_video_codec */,
@@ -173,32 +235,32 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(
-    WebRtcBrowserTest,
+    MAYBE_WebRtcBrowserTest,
     RunsAudioVideoWebRTCCallInTwoTabsWithClonedCertificateRsa) {
   RunsAudioVideoWebRTCCallInTwoTabsWithClonedCertificate(kKeygenAlgorithmRsa);
 }
 
 IN_PROC_BROWSER_TEST_F(
-    WebRtcBrowserTest,
+    MAYBE_WebRtcBrowserTest,
     RunsAudioVideoWebRTCCallInTwoTabsWithClonedCertificateEcdsa) {
   RunsAudioVideoWebRTCCallInTwoTabsWithClonedCertificate(kKeygenAlgorithmEcdsa);
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsOfferRsaAnswerEcdsa) {
   RunsAudioVideoWebRTCCallInTwoTabs(WebRtcTestBase::kUseDefaultVideoCodec,
                                     false /* prefer_hw_video_codec */,
                                     kKeygenAlgorithmRsa, kKeygenAlgorithmEcdsa);
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsOfferEcdsaAnswerRsa) {
   RunsAudioVideoWebRTCCallInTwoTabs(WebRtcTestBase::kUseDefaultVideoCodec,
                                     false /* prefer_hw_video_codec */,
                                     kKeygenAlgorithmEcdsa, kKeygenAlgorithmRsa);
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsGetStatsCallback) {
   StartServerAndOpenTabs();
   SetupPeerconnectionWithLocalStream(left_tab_);
@@ -210,7 +272,24 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
   DetectVideoAndHangUp();
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
+                       GetPeerToPeerConnectionsCountChangeFromNetworkService) {
+  EXPECT_EQ(0u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
+
+  StartServerAndOpenTabs();
+  SetupPeerconnectionWithLocalStream(left_tab_);
+
+  SetupPeerconnectionWithLocalStream(right_tab_);
+  NegotiateCall(left_tab_, right_tab_);
+
+  VerifyStatsGeneratedCallback(left_tab_);
+  EXPECT_EQ(2u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
+
+  DetectVideoAndHangUp();
+  EXPECT_EQ(0u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
+}
+
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        RunsAudioVideoWebRTCCallInTwoTabsGetStatsPromise) {
   StartServerAndOpenTabs();
   SetupPeerconnectionWithLocalStream(left_tab_);
@@ -220,7 +299,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
   NegotiateCall(left_tab_, right_tab_);
 
   std::set<std::string> missing_expected_stats;
-  for (const std::string& type : GetWhitelistedStatsTypes(left_tab_)) {
+  for (const std::string& type : GetMandatoryStatsTypes(left_tab_)) {
     missing_expected_stats.insert(type);
   }
   for (const std::string& type : VerifyStatsGeneratedPromise(left_tab_)) {
@@ -234,7 +313,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(
-    WebRtcBrowserTest,
+    MAYBE_WebRtcBrowserTest,
     RunsAudioVideoWebRTCCallInTwoTabsEmitsGatheringStateChange) {
   StartServerAndOpenTabs();
   SetupPeerconnectionWithLocalStream(left_tab_);
@@ -246,4 +325,22 @@ IN_PROC_BROWSER_TEST_F(
 
   EXPECT_EQ("complete", ice_gatheringstate);
   DetectVideoAndHangUp();
+}
+
+IN_PROC_BROWSER_TEST_F(
+    MAYBE_WebRtcBrowserTest,
+    RunsAudioVideoWebRTCCallInTwoTabsEmitsGatheringStateChange_ConnectionCount) {
+  EXPECT_EQ(0u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
+  StartServerAndOpenTabs();
+  SetupPeerconnectionWithLocalStream(left_tab_);
+  SetupPeerconnectionWithLocalStream(right_tab_);
+  NegotiateCall(left_tab_, right_tab_);
+  EXPECT_EQ(2u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
+
+  std::string ice_gatheringstate =
+      ExecuteJavascript("getLastGatheringState()", left_tab_);
+
+  EXPECT_EQ("complete", ice_gatheringstate);
+  DetectVideoAndHangUp();
+  EXPECT_EQ(0u, GetPeerToPeerConnectionsCountChangeFromNetworkService());
 }

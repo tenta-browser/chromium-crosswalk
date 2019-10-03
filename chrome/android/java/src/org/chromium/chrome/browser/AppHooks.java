@@ -4,22 +4,36 @@
 
 package org.chromium.chrome.browser;
 
+import android.app.Activity;
 import android.app.Notification;
+import android.app.Service;
 import android.content.Intent;
-import android.os.Build;
-import android.os.Handler;
-import android.os.Looper;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
 import android.support.annotation.Nullable;
+import android.view.View;
+import android.view.inputmethod.InputConnection;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.banners.AppDetailsDelegate;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
-import org.chromium.chrome.browser.datausage.ExternalDataUseObserver;
+import org.chromium.chrome.browser.directactions.DirectActionCoordinator;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
+import org.chromium.chrome.browser.feedback.AsyncFeedbackSource;
+import org.chromium.chrome.browser.feedback.FeedbackCollector;
 import org.chromium.chrome.browser.feedback.FeedbackReporter;
+import org.chromium.chrome.browser.feedback.FeedbackSource;
+import org.chromium.chrome.browser.feedback.FeedbackSourceProvider;
+import org.chromium.chrome.browser.firstrun.FreIntentCreator;
 import org.chromium.chrome.browser.gsa.GSAHelper;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.historyreport.AppIndexingReporter;
@@ -28,27 +42,37 @@ import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.metrics.VariationsSession;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
-import org.chromium.chrome.browser.net.qualityprovider.ExternalEstimateProviderAndroid;
 import org.chromium.chrome.browser.offlinepages.CCTRequestStatus;
 import org.chromium.chrome.browser.omaha.RequestGenerator;
 import org.chromium.chrome.browser.partnerbookmarks.PartnerBookmark;
 import org.chromium.chrome.browser.partnerbookmarks.PartnerBookmarksProviderIterator;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
-import org.chromium.chrome.browser.physicalweb.PhysicalWebBleClient;
+import org.chromium.chrome.browser.password_manager.GooglePasswordManagerUIProvider;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.preferences.LocationSettings;
 import org.chromium.chrome.browser.rlz.RevenueStats;
 import org.chromium.chrome.browser.services.AndroidEduOwnerCheckCallback;
 import org.chromium.chrome.browser.signin.GoogleActivityController;
 import org.chromium.chrome.browser.survey.SurveyController;
-import org.chromium.chrome.browser.sync.GmsCoreSyncListener;
 import org.chromium.chrome.browser.tab.AuthenticatorNavigationInterceptor;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.touchless.TouchlessDelegate;
+import org.chromium.chrome.browser.touchless.TouchlessModelCoordinator;
+import org.chromium.chrome.browser.touchless.TouchlessUiCoordinator;
+import org.chromium.chrome.browser.ui.ImmersiveModeManager;
+import org.chromium.chrome.browser.usage_stats.DigitalWellbeingClient;
 import org.chromium.chrome.browser.webapps.GooglePlayWebApkInstallDelegate;
+import org.chromium.chrome.browser.webauth.Fido2ApiHandler;
+import org.chromium.chrome.browser.widget.FeatureHighlightProvider;
+import org.chromium.components.download.DownloadCollectionBridge;
 import org.chromium.components.signin.AccountManagerDelegate;
 import org.chromium.components.signin.SystemAccountManagerDelegate;
+import org.chromium.content_public.browser.RenderFrameHost;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.policy.AppRestrictionsProvider;
 import org.chromium.policy.CombinedPolicyProvider;
+import org.chromium.services.service_manager.InterfaceRegistry;
 
 import java.util.Collections;
 import java.util.List;
@@ -71,9 +95,7 @@ public abstract class AppHooks {
 
     @CalledByNative
     public static AppHooks get() {
-        if (sInstance == null) {
-            sInstance = new AppHooksImpl();
-        }
+        if (sInstance == null) sInstance = new AppHooksImpl();
         return sInstance;
     }
 
@@ -82,8 +104,21 @@ public abstract class AppHooks {
      * @param callback Callback that should receive the results of the AndroidEdu device check.
      */
     public void checkIsAndroidEduDevice(final AndroidEduOwnerCheckCallback callback) {
-        new Handler(Looper.getMainLooper()).post(() -> callback.onSchoolCheckDone(false));
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> callback.onSchoolCheckDone(false));
     }
+
+    /**
+     * Perform platform-specific command line initialization.
+     * @param instance CommandLine instance to be updated.
+     */
+    public void initCommandLine(CommandLine instance) {}
+
+    /**
+     * Inform platform of current display mode.
+     * @param displayMode the new display mode (see WebDisplayMode)
+     * @param activity the affected activity.
+     */
+    public void setDisplayModeForActivity(int displayMode, Activity activity) {}
 
     /**
      * Creates a new {@link AccountManagerDelegate}.
@@ -126,6 +161,14 @@ public abstract class AppHooks {
     }
 
     /**
+     * Returns a new {@link DirectActionCoordinator} instance, if available.
+     */
+    @Nullable
+    public DirectActionCoordinator createDirectActionCoordinator() {
+        return null;
+    }
+
+    /**
      * Creates a new {@link SurveyController}.
      * @return The created {@link SurveyController}.
      */
@@ -141,34 +184,10 @@ public abstract class AppHooks {
     }
 
     /**
-     * @return An external observer of data use.
-     * @param nativePtr Pointer to the native ExternalDataUseObserver object.
-     */
-    public ExternalDataUseObserver createExternalDataUseObserver(long nativePtr) {
-        return new ExternalDataUseObserver(nativePtr);
-    }
-
-    /**
-     * @return A provider of external estimates.
-     * @param nativePtr Pointer to the native ExternalEstimateProviderAndroid object.
-     */
-    public ExternalEstimateProviderAndroid createExternalEstimateProviderAndroid(long nativePtr) {
-        return new ExternalEstimateProviderAndroid(nativePtr) {};
-    }
-
-    /**
      * @return An instance of {@link FeedbackReporter} to report feedback.
      */
     public FeedbackReporter createFeedbackReporter() {
         return new FeedbackReporter() {};
-    }
-
-    /**
-     * @return An instance of GmsCoreSyncListener to notify GmsCore of sync encryption key changes.
-     *         Will be null if one is unavailable.
-     */
-    public GmsCoreSyncListener createGmsCoreSyncListener() {
-        return null;
     }
 
     /**
@@ -205,6 +224,14 @@ public abstract class AppHooks {
     }
 
     /**
+     * @return An instance of {@link GooglePasswordManagerUIProvider}. Will be null if one is not
+     *         available.
+     */
+    public GooglePasswordManagerUIProvider createGooglePasswordManagerUIProvider() {
+        return null;
+    }
+
+    /**
      * Returns an instance of LocationSettings to be installed as a singleton.
      */
     public LocationSettings createLocationSettings() {
@@ -227,13 +254,6 @@ public abstract class AppHooks {
      */
     public RequestGenerator createOmahaRequestGenerator() {
         return null;
-    }
-
-    /**
-     * @return A new {@link PhysicalWebBleClient} instance.
-     */
-    public PhysicalWebBleClient createPhysicalWebBleClient() {
-        return new PhysicalWebBleClient();
     }
 
     /**
@@ -277,25 +297,19 @@ public abstract class AppHooks {
     }
 
     /**
-     * Starts a service from {@code intent} with the expectation that it will make itself a
-     * foreground service with {@link android.app.Service#startForeground(int, Notification)}.
-     *
-     * @param intent The {@link Intent} to fire to start the service.
+     * Upgrades a service from background to foreground after calling
+     * {@link Service#startForegroundService(Intent)}.
+     * @param service The service to be foreground.
+     * @param id The notification id.
+     * @param notification The notification attached to the foreground service.
+     * @param foregroundServiceType The type of foreground service. Must be a subset of the
+     *                              foreground service types defined in AndroidManifest.xml.
+     *                              Use 0 if no foregroundServiceType attribute is defined.
      */
-    public void startForegroundService(Intent intent) {
-        // TODO(crbug.com/758280): Remove this whole method once the downstream override is gone and
-        // all overrides have been ported over.
-        ContextUtils.startForegroundService(ContextUtils.getApplicationContext(), intent);
-    }
-
-    /**
-     * @return Whether the renderer should detect whether video elements are in fullscreen. The
-     * detection results can be retrieved through
-     * {@link WebContents.hasActiveEffectivelyFullscreenVideo()}.
-     */
-    @CalledByNative
-    public boolean shouldDetectVideoFullscreen() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+    public void startForeground(
+            Service service, int id, Notification notification, int foregroundServiceType) {
+        // TODO(xingliu): Add appropriate foregroundServiceType to manifest when we have new sdk.
+        service.startForeground(id, notification);
     }
 
     /**
@@ -317,6 +331,14 @@ public abstract class AppHooks {
     }
 
     /**
+     * @return A list of whitelisted app package names whose completed notifications
+     * we should suppress.
+     */
+    public List<String> getOfflinePagesSuppressNotificationPackages() {
+        return Collections.emptyList();
+    }
+
+    /**
      * @return An iterator of partner bookmarks.
      */
     @Nullable
@@ -331,4 +353,147 @@ public abstract class AppHooks {
     public PartnerBrowserCustomizations.Provider getCustomizationProvider() {
         return new PartnerBrowserCustomizations.ProviderPackage();
     }
+
+    /**
+     * @return A {@link FeedbackSourceProvider} that can provide additional {@link FeedbackSource}s
+     * and {@link AsyncFeedbackSource}s to be used by a {@link FeedbackCollector}.
+     */
+    public FeedbackSourceProvider getAdditionalFeedbackSources() {
+        return new FeedbackSourceProvider() {};
+    }
+
+    /**
+     * @return a new {@link Fido2ApiHandler} instance.
+     */
+    public Fido2ApiHandler createFido2ApiHandler() {
+        return new Fido2ApiHandler();
+    }
+
+    /**
+     * @return A new {@link FeatureHighlightProvider}.
+     */
+    public FeatureHighlightProvider createFeatureHighlightProvider() {
+        return new FeatureHighlightProvider();
+    }
+
+    /**
+     * @return A new {@link DownloadCollectionBridge} instance.
+     */
+    public DownloadCollectionBridge getDownloadCollectionBridge() {
+        return DownloadCollectionBridge.getDownloadCollectionBridge();
+    }
+
+    /**
+     * @return A new {@link DigitalWellbeingClient} instance.
+     */
+    public DigitalWellbeingClient createDigitalWellbeingClient() {
+        return new DigitalWellbeingClient();
+    }
+
+    /**
+     * @param activity An activity for access to different features.
+     * @return A new {@link TouchlessModelCoordinator} instance.
+     */
+    public TouchlessModelCoordinator createTouchlessModelCoordinator(Activity activity) {
+        return null;
+    }
+
+    /**
+     * @param activity An activity for access to different features.
+     * @return A new {@link TouchlessUiCoordinator} instance.
+     */
+    public TouchlessUiCoordinator createTouchlessUiCoordinator(ChromeActivity activity) {
+        return TouchlessDelegate.getTouchlessUiCoordinator(activity);
+    }
+
+    /**
+     * Checks the Google Play services availability on the this device.
+     *
+     * This is a workaround for the
+     * versioned API of {@link GoogleApiAvailability#isGooglePlayServicesAvailable()}. The current
+     * Google Play services SDK version doesn't have this API yet.
+     *
+     * TODO(zqzhang): Remove this method after the SDK is updated.
+     *
+     * @return status code indicating whether there was an error. The possible return values are the
+     * same as {@link GoogleApiAvailability#isGooglePlayServicesAvailable()}.
+     */
+    public int isGoogleApiAvailableWithMinApkVersion(int minApkVersion) {
+        try {
+            PackageInfo gmsPackageInfo =
+                    ContextUtils.getApplicationContext().getPackageManager().getPackageInfo(
+                            GoogleApiAvailability.GOOGLE_PLAY_SERVICES_PACKAGE, /* flags= */ 0);
+            int apkVersion = gmsPackageInfo.versionCode;
+            if (apkVersion >= minApkVersion) return ConnectionResult.SUCCESS;
+        } catch (PackageManager.NameNotFoundException e) {
+            return ConnectionResult.SERVICE_MISSING;
+        }
+        return ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED;
+    }
+
+    /**
+     * Returns a new {@link FreIntentCreator} instance.
+     */
+    public FreIntentCreator createFreIntentCreator() {
+        return new FreIntentCreator();
+    }
+
+    /**
+     * @return true if the webAppIntent has been intercepted.
+     */
+    public boolean interceptWebAppIntent(Intent intent, ChromeActivity activity) {
+        return false;
+    }
+
+    /**
+     * @see InputConnection#performPrivateCommand(java.lang.String, android.os.Bundle)
+     * @param webcontents The WebContents receiving the private IME command.
+     */
+    public void performPrivateImeCommand(WebContents webContents, String action, Bundle data) {}
+
+    /**
+     * Called when the Search Context Menu Item is clicked.
+     */
+    public void onSearchContextMenuClick() {}
+
+    /**
+     * @param registry The Chrome interface registry for the RenderFrameHost.
+     * @param renderFrameHost The RenderFrameHost the Interface Registry is for.
+     */
+    public void registerChromeRenderFrameHostInterfaces(
+            InterfaceRegistry registry, RenderFrameHost renderFrameHost) {}
+
+    /**
+     * @param registry The Chrome interface registry for the WebContents.
+     * @param webContents The WebContents the Interface Registry is for.
+     */
+    public void registerChromeWebContentsInterfaces(
+            InterfaceRegistry registry, WebContents webContents) {}
+
+    /**
+     * @param contentView The root content view for the containing activity.
+     * @return A new {@link ImmersiveModeManager} or null if there isn't one.
+     */
+    public @Nullable ImmersiveModeManager createImmersiveModeManager(View contentView) {
+        return null;
+    }
+
+    /**
+     * @param view {@link View} to define the area on.
+     * @param left Left The left coordinate of the area.
+     * @param top The top coordinate of the area.
+     * @param right The right coordinate of the area.
+     * @param bottom The bottom coordinate of the area.
+     * @return A {@link Runnable} that sets the input space in which swipe triggers navigation.
+     */
+    public Runnable createNavigationInputAreaSetter(
+            View view, int left, int top, int right, int bottom) {
+        return () -> {};
+    }
+
+    /**
+     * Starts the observer for listening to system settings changes. Must be called on
+     * ChromeActivity initialization.
+     */
+    public void startSystemSettingsObserver() {}
 }

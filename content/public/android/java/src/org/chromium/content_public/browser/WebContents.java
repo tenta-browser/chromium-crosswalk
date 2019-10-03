@@ -7,16 +7,14 @@ package org.chromium.content_public.browser;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Parcelable;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.util.Pair;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.ui.OverscrollRefreshHandler;
 import org.chromium.ui.base.EventForwarder;
+import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
-
-import java.lang.annotation.Annotation;
-import java.util.Map;
 
 /**
  * The WebContents Java wrapper to allow communicating with the native WebContents object.
@@ -61,20 +59,57 @@ public interface WebContents extends Parcelable {
     }
 
     /**
-     * Sets holder of the objects used internally by WebContents for various features.
-     * This transfers the ownership of the objects to the caller since they will have the same
-     * lifecycle as that of the caller. The caller doesn't have to care about the objects inside
-     * the holder but should hold a reference to it and manage its lifetime.
-     *
-     * @param holder {@link #InternalsHolder} used to transfer the internal objects
-     *        from WebContents to the caller.
+     * @return a default implementation of {@link InternalsHolder} that holds a reference to
+     * {@link WebContentsInternals} object owned by {@link WebContents} instance.
      */
-    void setInternalsHolder(InternalsHolder holder);
+    public static InternalsHolder createDefaultInternalsHolder() {
+        return new InternalsHolder() {
+            private WebContentsInternals mInternals;
+
+            @Override
+            public void set(WebContentsInternals internals) {
+                mInternals = internals;
+            }
+
+            @Override
+            public WebContentsInternals get() {
+                return mInternals;
+            }
+        };
+    }
+
+    /**
+     * Initialize various content objects of {@link WebContents} lifetime.
+     * @param productVersion Product version for accessibility.
+     * @param viewDelegate Delegate to add/remove anchor views.
+     * @param accessDelegate Handles dispatching all hidden or super methods to the containerView.
+     * @param windowAndroid An instance of the WindowAndroid.
+     * @param internalsHolder A holder of objects used internally by WebContents.
+     */
+    void initialize(String productVersion, ViewAndroidDelegate viewDelegate,
+            ViewEventSink.InternalAccessDelegate accessDelegate, WindowAndroid windowAndroid,
+            @NonNull InternalsHolder internalsHolder);
 
     /**
      * @return The top level WindowAndroid associated with this WebContents.  This can be null.
      */
+    @Nullable
     WindowAndroid getTopLevelNativeWindow();
+
+    /*
+     * Updates the native {@link WebContents} with a new window. This moves the NativeView and
+     * attached it to the new NativeWindow linked with the given {@link WindowAndroid}.
+     * TODO(jinsukkim): This should happen through view android tree instead.
+     * @param windowAndroid The new {@link WindowAndroid} for this {@link WebContents}.
+     */
+    void setTopLevelNativeWindow(WindowAndroid windowAndroid);
+
+    /**
+     * @return The {@link ViewAndroidDelegate} from which to get the container view.
+     *         This can be null.
+     */
+    @Nullable
+    ViewAndroidDelegate getViewAndroidDelegate();
 
     /**
      * Deletes the Web Contents object.
@@ -87,14 +122,34 @@ public interface WebContents extends Parcelable {
     boolean isDestroyed();
 
     /**
+     * Removes the native WebContents' reference to this object. This is used when we want to
+     * destroy this object without destroying its native counterpart.
+     */
+    void clearNativeReference();
+
+    /**
      * @return The navigation controller associated with this WebContents.
      */
     NavigationController getNavigationController();
 
     /**
-     * @return  The main frame associated with this WebContents.
+     * @return The main frame associated with this WebContents.
      */
     RenderFrameHost getMainFrame();
+
+    /**
+     * @return The focused frame associated with this WebContents. Will be null if the WebContents
+     * does not have focus.
+     */
+    @Nullable
+    RenderFrameHost getFocusedFrame();
+
+    /**
+     * @return The root level view from the renderer, or {@code null} in some cases where there is
+     *         none.
+     */
+    @Nullable
+    RenderWidgetHostView getRenderWidgetHostView();
 
     /**
      * @return The title for the current visible page.
@@ -127,48 +182,6 @@ public interface WebContents extends Parcelable {
      */
     void stop();
 
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Cut the selected content.
-     */
-    void cut();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Copy the selected content.
-     */
-    void copy();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Paste content from the clipboard.
-     */
-    void paste();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Paste content from the clipboard without format.
-     */
-    void pasteAsPlainText();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Replace the selected text with the {@code word}.
-     */
-    void replace(String word);
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Select all content.
-     */
-    void selectAll();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Collapse the selection to the end of selection range.
-     */
-    void collapseSelection();
-
     /**
      * To be called when the ContentView is hidden.
      */
@@ -181,21 +194,10 @@ public interface WebContents extends Parcelable {
 
     /**
      * ChildProcessImportance on Android allows controls of the renderer process bindings
-     * independent of visibility.
+     * independent of visibility. Note this does not affect importance of subframe processes.
+     * @param mainFrameImportance importance of the main frame process.
      */
-    void setImportance(@ChildProcessImportance int importance);
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Removes handles used in text selection.
-     */
-    void dismissTextHandles();
-
-    // TODO (amaralp): Only used in content. Should be moved out of public interface.
-    /**
-     * Shows paste popup menu at the touch handle at specified location.
-     */
-    void showContextMenuAtTouchHandle(int x, int y);
+    void setImportance(@ChildProcessImportance int mainFrameImportance);
 
     /**
      * Suspends all media players for this WebContents.  Note: There may still
@@ -212,21 +214,6 @@ public interface WebContents extends Parcelable {
     void setAudioMuted(boolean mute);
 
     /**
-     * Get the Background color from underlying RenderWidgetHost for this WebContent.
-     */
-    int getBackgroundColor();
-
-    /**
-     * Shows an interstitial page driven by the passed in delegate.
-     *
-     * @param url The URL being blocked by the interstitial.
-     * @param interstitialPageDelegateAndroid The delegate handling the interstitial.
-     */
-    @VisibleForTesting
-    void showInterstitialPage(
-            String url, long interstitialPageDelegateAndroid);
-
-    /**
      * @return Whether the page is currently showing an interstitial, such as a bad HTTPS page.
      */
     boolean isShowingInterstitialPage();
@@ -236,27 +223,11 @@ public interface WebContents extends Parcelable {
      */
     boolean focusLocationBarByDefault();
 
-    /**
-     * If the view is ready to draw contents to the screen. In hardware mode,
-     * the initialization of the surface texture may not occur until after the
-     * view has been added to the layout. This method will return {@code true}
-     * once the texture is actually ready.
-     */
-    boolean isReady();
 
      /**
      * Inform WebKit that Fullscreen mode has been exited by the user.
      */
     void exitFullscreen();
-
-    /**
-     * Changes whether hiding the browser controls is enabled.
-     *
-     * @param enableHiding Whether hiding the browser controls should be enabled or not.
-     * @param enableShowing Whether showing the browser controls should be enabled or not.
-     * @param animate Whether the transition should be animated or not.
-     */
-    void updateBrowserControlsState(boolean enableHiding, boolean enableShowing, boolean animate);
 
     /**
      * Brings the Editable to the visible area while IME is up to make easier for inputing text.
@@ -313,7 +284,7 @@ public interface WebContents extends Parcelable {
      *                 will be made on the main thread.
      *                 If no result is required, pass null.
      */
-    void evaluateJavaScript(String script, JavaScriptCallback callback);
+    void evaluateJavaScript(String script, @Nullable JavaScriptCallback callback);
 
     /**
      * Injects the passed Javascript code in the current page and evaluates it.
@@ -326,7 +297,7 @@ public interface WebContents extends Parcelable {
      *                 If no result is required, pass null.
      */
     @VisibleForTesting
-    void evaluateJavaScriptForTests(String script, JavaScriptCallback callback);
+    void evaluateJavaScriptForTests(String script, @Nullable JavaScriptCallback callback);
 
     /**
      * Adds a log message to dev tools console. |level| must be a value of
@@ -335,23 +306,20 @@ public interface WebContents extends Parcelable {
     void addMessageToDevToolsConsole(int level, String message);
 
     /**
-     * Post a message to a frame.
+     * Post a message to main frame.
      *
-     * @param frameName The name of the frame. If the name is null the message is posted
-     *                  to the main frame.
      * @param message   The message
      * @param targetOrigin  The target origin. If the target origin is a "*" or a
      *                  empty string, it indicates a wildcard target origin.
-     * @param sentPorts The sent message ports, if any. Pass null if there is no
+     * @param ports The sent message ports, if any. Pass null if there is no
      *                  message ports to pass.
      */
-    void postMessageToFrame(String frameName, String message,
-            String sourceOrigin, String targetOrigin, MessagePort[] ports);
+    void postMessageToMainFrame(String message, String sourceOrigin, String targetOrigin,
+            @Nullable MessagePort[] ports);
 
     /**
      * Creates a message channel for sending postMessage requests and returns the ports for
      * each end of the channel.
-     * @param service The message port service to register the channel with.
      * @return The ports that forms the ends of the message channel created.
      */
     MessagePort[] createMessageChannel();
@@ -373,6 +341,11 @@ public interface WebContents extends Parcelable {
      * @return The theme color for the content as set by the theme-color meta tag.
      */
     int getThemeColor();
+
+    /**
+     * @return Current page load progress on a scale of 0 to 100.
+     */
+    int getLoadProgress();
 
     /**
      * Initiate extraction of text, HTML, and other information for clipping puposes (smart clip)
@@ -421,14 +394,10 @@ public interface WebContents extends Parcelable {
     void setOverscrollRefreshHandler(OverscrollRefreshHandler handler);
 
     /**
-     * Requests an image snapshot of the content.
-     *
-     * @param width The width of the resulting bitmap, or 0 for "auto."
-     * @param height The height of the resulting bitmap, or 0 for "auto."
-     * @param callback May be called synchronously, or at a later point, to deliver the bitmap
-     *                 result (or a failure code).
+     * Controls use of spatial-navigation mode.
+     * @param disable True if spatial navigation should never be used.
      */
-    void getContentBitmapAsync(int width, int height, ContentBitmapCallback callback);
+    void setSpatialNavigationDisabled(boolean disabled);
 
     /**
      * Reloads all the Lo-Fi images in this WebContents.
@@ -458,27 +427,23 @@ public interface WebContents extends Parcelable {
     /**
      * Whether the WebContents has an active fullscreen video with native or custom controls.
      * The WebContents must be fullscreen when this method is called. Fullscreen videos may take a
-     * moment to register. This should only be called if AppHooks.shouldDetectVideoFullscreen()
-     * returns true.
+     * moment to register.
      */
     boolean hasActiveEffectivelyFullscreenVideo();
 
     /**
+     * Whether the WebContents is allowed to enter Picture-in-Picture when it has an active
+     * fullscreen video with native or custom controls.
+     */
+    boolean isPictureInPictureAllowedForFullscreenVideo();
+
+    /**
      * Gets a Rect containing the size of the currently playing fullscreen video. The position of
      * the rectangle is meaningless. Will return null if there is no such video. Fullscreen videos
-     * may take a moment to register. This should only be called if
-     * AppHooks.shouldDetectVideoFullscreen() returns true.
+     * may take a moment to register.
      */
     @Nullable
     Rect getFullscreenVideoSize();
-
-    /**
-     * Issues a fake notification about the renderer being killed.
-     *
-     * @param wasOomProtected True if the renderer was protected from the OS out-of-memory killer
-     *                        (e.g. renderer for the currently selected tab)
-     */
-    void simulateRendererKilledForTesting(boolean wasOomProtected);
 
     /**
      * Notifies the WebContents about the new persistent video status. It should be called whenever
@@ -489,7 +454,7 @@ public interface WebContents extends Parcelable {
     void setHasPersistentVideo(boolean value);
 
     /**
-     * Set the view size of WebContents. The size is in physical pixel.
+     * Set the view size of the WebContents. The size is in physical pixels.
      *
      * @param width The width of the view.
      * @param height The height of the view.
@@ -497,73 +462,29 @@ public interface WebContents extends Parcelable {
     void setSize(int width, int height);
 
     /**
-     * Returns JavaScript interface objects previously injected via
-     * {@link #addJavascriptInterface(Object, String)}.
+     * Gets the view size width of the WebContents. The size is in physical pixels.
      *
-     * @return the mapping of names to interface objects and corresponding annotation classes
+     * @return The width of the view.
      */
-    Map<String, Pair<Object, Class>> getJavascriptInterfaces();
+    int getWidth();
 
     /**
-     * Enables or disables inspection of JavaScript objects added via
-     * {@link #addJavascriptInterface(Object, String)} by means of Object.keys() method and
-     * &quot;for .. in&quot; loop. Being able to inspect JavaScript objects is useful
-     * when debugging hybrid Android apps, but can't be enabled for legacy applications due
-     * to compatibility risks.
+     * Gets the view size width of the WebContents. The size is in physical pixels.
      *
-     * @param allow Whether to allow JavaScript objects inspection.
+     * @return The width of the view.
      */
-    void setAllowJavascriptInterfacesInspection(boolean allow);
+    int getHeight();
 
     /**
-     * This method injects the supplied Java object into the WebContents.
-     * The object is injected into the JavaScript context of the main frame,
-     * using the supplied name. This allows the Java object to be accessed from
-     * JavaScript. Note that that injected objects will not appear in
-     * JavaScript until the page is next (re)loaded. For example:
-     * <pre> view.addJavascriptInterface(new Object(), "injectedObject");
-     * view.loadData("<!DOCTYPE html><title></title>", "text/html", null);
-     * view.loadUrl("javascript:alert(injectedObject.toString())");</pre>
-     * <p><strong>IMPORTANT:</strong>
-     * <ul>
-     * <li> addJavascriptInterface() can be used to allow JavaScript to control
-     * the host application. This is a powerful feature, but also presents a
-     * security risk. Use of this method in a WebContents containing
-     * untrusted content could allow an attacker to manipulate the host
-     * application in unintended ways, executing Java code with the permissions
-     * of the host application. Use extreme care when using this method in a
-     * WebContents which could contain untrusted content. Particular care
-     * should be taken to avoid unintentional access to inherited methods, such
-     * as {@link Object#getClass()}. To prevent access to inherited methods,
-     * pass an annotation for {@code requiredAnnotation}.  This will ensure
-     * that only methods with {@code requiredAnnotation} are exposed to the
-     * Javascript layer.  {@code requiredAnnotation} will be passed to all
-     * subsequently injected Java objects if any methods return an object.  This
-     * means the same restrictions (or lack thereof) will apply.  Alternatively,
-     * {@link #addJavascriptInterface(Object, String)} can be called, which
-     * automatically uses the {@link JavascriptInterface} annotation.
-     * <li> JavaScript interacts with Java objects on a private, background
-     * thread of the WebContents. Care is therefore required to maintain
-     * thread safety.</li>
-     * </ul></p>
+     * Sets the Display Cutout safe area of the WebContents. These are insets from each edge
+     * in physical pixels
      *
-     * @param object             The Java object to inject into the
-     *                           WebContents's JavaScript context. Null
-     *                           values are ignored.
-     * @param name               The name used to expose the instance in
-     *                           JavaScript.
-     * @param requiredAnnotation Restrict exposed methods to ones with this
-     *                           annotation.  If {@code null} all methods are
-     *                           exposed.
-     *
+     * @param insets The insets stored in a Rect.
      */
-    void addPossiblyUnsafeJavascriptInterface(
-            Object object, String name, Class<? extends Annotation> requiredAnnotation);
+    void setDisplayCutoutSafeArea(Rect insets);
 
     /**
-     * Removes a previously added JavaScript interface with the given name.
-     *
-     * @param name The name of the interface to remove.
+     * Notify that web preferences needs update for various properties.
      */
-    void removeJavascriptInterface(String name);
+    void notifyRendererPreferenceUpdate();
 }

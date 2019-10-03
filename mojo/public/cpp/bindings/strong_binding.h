@@ -19,7 +19,7 @@
 #include "mojo/public/cpp/bindings/filter_chain.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/message_header_validator.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/system/core.h"
 
 namespace mojo {
@@ -49,9 +49,10 @@ class StrongBinding {
   // StrongBinding instance.
   static StrongBindingPtr<Interface> Create(
       std::unique_ptr<Interface> impl,
-      InterfaceRequest<Interface> request) {
-    StrongBinding* binding =
-        new StrongBinding(std::move(impl), std::move(request));
+      InterfaceRequest<Interface> request,
+      scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
+    StrongBinding* binding = new StrongBinding(
+        std::move(impl), std::move(request), std::move(task_runner));
     return binding->weak_factory_.GetWeakPtr();
   }
 
@@ -100,10 +101,10 @@ class StrongBinding {
 
  private:
   StrongBinding(std::unique_ptr<Interface> impl,
-                InterfaceRequest<Interface> request)
+                InterfaceRequest<Interface> request,
+                scoped_refptr<base::SequencedTaskRunner> task_runner)
       : impl_(std::move(impl)),
-        binding_(impl_.get(), std::move(request)),
-        weak_factory_(this) {
+        binding_(impl_.get(), std::move(request), std::move(task_runner)) {
     binding_.set_connection_error_with_reason_handler(
         base::Bind(&StrongBinding::OnConnectionError, base::Unretained(this)));
   }
@@ -125,7 +126,7 @@ class StrongBinding {
   base::OnceClosure connection_error_handler_;
   ConnectionErrorWithReasonCallback connection_error_with_reason_handler_;
   Binding<Interface> binding_;
-  base::WeakPtrFactory<StrongBinding> weak_factory_;
+  base::WeakPtrFactory<StrongBinding> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(StrongBinding);
 };
@@ -133,8 +134,10 @@ class StrongBinding {
 template <typename Interface, typename Impl>
 StrongBindingPtr<Interface> MakeStrongBinding(
     std::unique_ptr<Impl> impl,
-    InterfaceRequest<Interface> request) {
-  return StrongBinding<Interface>::Create(std::move(impl), std::move(request));
+    InterfaceRequest<Interface> request,
+    scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr) {
+  return StrongBinding<Interface>::Create(std::move(impl), std::move(request),
+                                          std::move(task_runner));
 }
 
 }  // namespace mojo

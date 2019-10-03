@@ -21,12 +21,15 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/gfx/image/image.h"
 
 namespace {
+
+constexpr int kMenuAvatarIconSize = 38;
 
 // Used in UMA histogram macros, shouldn't be reordered or renumbered
 enum ValidateMenuItemSelector {
@@ -38,6 +41,13 @@ enum ValidateMenuItemSelector {
   MAX_VALIDATE_MENU_SELECTOR,
 };
 
+// Check Add Person pref.
+bool IsAddPersonEnabled() {
+  PrefService* service = g_browser_process->local_state();
+  DCHECK(service);
+  return service->GetBoolean(prefs::kBrowserAddPersonEnabled);
+}
+
 }  // namespace
 
 @interface ProfileMenuController (Private)
@@ -46,8 +56,7 @@ enum ValidateMenuItemSelector {
 
 namespace ProfileMenuControllerInternal {
 
-class Observer : public chrome::BrowserListObserver,
-                 public AvatarMenuObserver {
+class Observer : public BrowserListObserver, public AvatarMenuObserver {
  public:
   Observer(ProfileMenuController* controller) : controller_(controller) {
     BrowserList::AddObserver(this);
@@ -55,7 +64,7 @@ class Observer : public chrome::BrowserListObserver,
 
   ~Observer() override { BrowserList::RemoveObserver(this); }
 
-  // chrome::BrowserListObserver:
+  // BrowserListObserver:
   void OnBrowserAdded(Browser* browser) override {}
   void OnBrowserRemoved(Browser* browser) override {
     [controller_ activeBrowserChangedTo:chrome::GetLastActiveBrowser()];
@@ -121,7 +130,7 @@ class Observer : public chrome::BrowserListObserver,
 - (BOOL)insertItemsIntoMenu:(NSMenu*)menu
                    atOffset:(NSInteger)offset
                    fromDock:(BOOL)dock {
-  if (!avatarMenu_ || !avatarMenu_->ShouldShowAvatarMenu())
+  if (!avatarMenu_)
     return NO;
 
   // Don't show the list of profiles in the dock if only one profile exists.
@@ -154,14 +163,14 @@ class Observer : public chrome::BrowserListObserver,
       // Always use the low-res, small default avatars in the menu.
       AvatarMenu::GetImageForMenuButton(itemData.profile_path, &itemIcon);
 
-      // The image might be too large and need to be resized (i.e. if this is
-      // a signed-in user using the GAIA profile photo).
-      if (itemIcon.Width() > profiles::kAvatarIconWidth ||
-          itemIcon.Height() > profiles::kAvatarIconHeight) {
-        itemIcon = profiles::GetAvatarIconForWebUI(itemIcon, true);
+      // The image might be too large and need to be resized, e.g. if this is
+      // a signed-in user using the GAIA profile photo.
+      if (itemIcon.Width() > kMenuAvatarIconSize ||
+          itemIcon.Height() > kMenuAvatarIconSize) {
+        itemIcon = profiles::GetSizedAvatarIcon(itemIcon, /*is_rectangle=*/true,
+                                                kMenuAvatarIconSize,
+                                                kMenuAvatarIconSize);
       }
-      DCHECK(itemIcon.Width() <= profiles::kAvatarIconWidth);
-      DCHECK(itemIcon.Height() <= profiles::kAvatarIconHeight);
       [item setImage:itemIcon.ToNSImage()];
       [item setState:itemData.active ? NSOnState : NSOffState];
     }
@@ -179,6 +188,9 @@ class Observer : public chrome::BrowserListObserver,
     return [menuItem action] != @selector(newProfile:) &&
            [menuItem action] != @selector(editProfile:);
   }
+
+  if (!IsAddPersonEnabled())
+    return [menuItem action] != @selector(newProfile:);
 
   size_t index = avatarMenu_->GetActiveProfileIndex();
   if (avatarMenu_->GetNumberOfItems() <= index) {
@@ -240,11 +252,14 @@ class Observer : public chrome::BrowserListObserver,
                                         action:@selector(editProfile:)];
   [[self menu] addItem:item];
 
-  [[self menu] addItem:[NSMenuItem separatorItem]];
-  item = [self createItemWithTitle:l10n_util::GetNSStringWithFixup(
-      IDS_PROFILES_CREATE_NEW_PROFILE_OPTION)
-                            action:@selector(newProfile:)];
-  [[self menu] addItem:item];
+  if (IsAddPersonEnabled()) {
+    [[self menu] addItem:[NSMenuItem separatorItem]];
+
+    item = [self createItemWithTitle:l10n_util::GetNSStringWithFixup(
+                                         IDS_PROFILES_CREATE_NEW_PROFILE_OPTION)
+                              action:@selector(newProfile:)];
+    [[self menu] addItem:item];
+  }
 
   [self rebuildMenu];
 }

@@ -7,17 +7,15 @@
 #include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_service_factory.h"
-#include "components/download/public/download_service.h"
-#include "content/public/browser/browser_context.h"
+#include "components/download/public/background_service/download_service.h"
 
-DownloadTaskSchedulerImpl::DownloadTaskSchedulerImpl(
-    content::BrowserContext* context)
-    : context_(context), weak_factory_(this) {}
+DownloadTaskSchedulerImpl::DownloadTaskSchedulerImpl(SimpleFactoryKey* key)
+    : key_(key) {}
 
 DownloadTaskSchedulerImpl::~DownloadTaskSchedulerImpl() = default;
 
@@ -26,8 +24,8 @@ void DownloadTaskSchedulerImpl::ScheduleTask(
     bool require_unmetered_network,
     bool require_charging,
     int optimal_battery_percentage,
-    long window_start_time_seconds,
-    long window_end_time_seconds) {
+    int64_t window_start_time_seconds,
+    int64_t window_end_time_seconds) {
   // We only rely on this for cleanup tasks. Since this doesn't restart Chrome,
   // for download tasks it doesn't do much and we handle them outside of task
   // scheduler.
@@ -49,11 +47,16 @@ void DownloadTaskSchedulerImpl::CancelTask(
 
 void DownloadTaskSchedulerImpl::RunScheduledTask(
     download::DownloadTaskType task_type) {
+  if (task_type == download::DownloadTaskType::DOWNLOAD_AUTO_RESUMPTION_TASK) {
+    NOTREACHED();
+    return;
+  }
+
   download::DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(context_);
+      DownloadServiceFactory::GetForKey(key_);
   download_service->OnStartScheduledTask(
-      task_type, base::Bind(&DownloadTaskSchedulerImpl::OnTaskFinished,
-                            weak_factory_.GetWeakPtr()));
+      task_type, base::BindOnce(&DownloadTaskSchedulerImpl::OnTaskFinished,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void DownloadTaskSchedulerImpl::OnTaskFinished(bool reschedule) {

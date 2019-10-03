@@ -8,67 +8,137 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "components/arc/arc_util.h"
+#include "components/arc/metrics/stability_metrics_manager.h"
 
 namespace arc {
 
 namespace {
 
-std::string GetHistogramName(const std::string& base_name, bool managed) {
-  return base_name + (managed ? "Managed" : "Unmanaged");
+// Adds a suffix to the name based on the account type.
+std::string GetHistogramName(const std::string& base_name,
+                             const Profile* profile) {
+  if (IsRobotOrOfflineDemoAccountMode()) {
+    chromeos::DemoSession* demo_session = chromeos::DemoSession::Get();
+    if (demo_session && demo_session->started()) {
+      return demo_session->offline_enrolled() ? base_name + "OfflineDemoMode"
+                                              : base_name + "DemoMode";
+    }
+    return base_name + "RobotAccount";
+  }
+  if (profile->IsChild())
+    return base_name + "Child";
+  if (IsActiveDirectoryUserForProfile(profile))
+    return base_name + "ActiveDirectory";
+  return base_name +
+         (policy_util::IsAccountManaged(profile) ? "Managed" : "Unmanaged");
+}
+
+ArcEnabledState ComputeEnabledState(bool enabled, const Profile* profile) {
+  if (!IsArcAllowedForProfile(profile)) {
+    return enabled ? ArcEnabledState::ENABLED_NOT_ALLOWED
+                   : ArcEnabledState::DISABLED_NOT_ALLOWED;
+  }
+
+  if (!IsArcPlayStoreEnabledPreferenceManagedForProfile(profile)) {
+    return enabled ? ArcEnabledState::ENABLED_NOT_MANAGED
+                   : ArcEnabledState::DISABLED_NOT_MANAGED;
+  }
+
+  if (IsArcPlayStoreEnabledForProfile(profile)) {
+    return enabled ? ArcEnabledState::ENABLED_MANAGED_ON
+                   : ArcEnabledState::DISABLED_MANAGED_ON;
+  }
+
+  DCHECK(!enabled);
+  return ArcEnabledState::DISABLED_MANAGED_OFF;
 }
 
 }  // namespace
 
+void UpdateEnabledStateByUserTypeUMA() {
+  const Profile* profile = ProfileManager::GetPrimaryUserProfile();
+
+  // Don't record UMA if current primary user profile should be ignored in the
+  // first place, or we're currently in guest session.
+  if (!IsRealUserProfile(profile) || profile->IsGuestSession())
+    return;
+
+  base::Optional<bool> enabled_state;
+  if (auto* stability_metrics_manager = StabilityMetricsManager::Get())
+    enabled_state = stability_metrics_manager->GetArcEnabledState();
+
+  base::UmaHistogramEnumeration(
+      GetHistogramName("Arc.StateByUserType.", profile),
+      ComputeEnabledState(enabled_state.value_or(false), profile));
+}
+
 void UpdateOptInActionUMA(OptInActionType type) {
-  UMA_HISTOGRAM_ENUMERATION("Arc.OptInAction", static_cast<int>(type),
-                            static_cast<int>(OptInActionType::SIZE));
+  UMA_HISTOGRAM_ENUMERATION("Arc.OptInAction", type);
 }
 
 void UpdateOptInCancelUMA(OptInCancelReason reason) {
-  UMA_HISTOGRAM_ENUMERATION("Arc.OptInCancel", static_cast<int>(reason),
-                            static_cast<int>(OptInCancelReason::SIZE));
-}
-
-void UpdateEnabledStateUMA(bool enabled) {
-  // Equivalent to UMA_HISTOGRAM_BOOLEAN with the stability flag set.
-  UMA_STABILITY_HISTOGRAM_ENUMERATION("Arc.State", enabled ? 1 : 0, 2);
+  UMA_HISTOGRAM_ENUMERATION("Arc.OptInCancel", reason);
 }
 
 void UpdateOptInFlowResultUMA(OptInFlowResult result) {
-  UMA_HISTOGRAM_ENUMERATION("Arc.OptInResult", static_cast<int>(result),
-                            static_cast<int>(OptInFlowResult::SIZE));
+  UMA_HISTOGRAM_ENUMERATION("Arc.OptInResult", result);
 }
 
-void UpdateProvisioningResultUMA(ProvisioningResult result, bool managed) {
+void UpdateProvisioningResultUMA(ProvisioningResult result,
+                                 const Profile* profile) {
   DCHECK_NE(result, ProvisioningResult::CHROME_SERVER_COMMUNICATION_ERROR);
   base::UmaHistogramEnumeration(
-      GetHistogramName("Arc.Provisioning.Result.", managed), result,
-      ProvisioningResult::SIZE);
+      GetHistogramName("Arc.Provisioning.Result.", profile), result);
+}
+
+void UpdateSecondarySigninResultUMA(ProvisioningResult result) {
+  UMA_HISTOGRAM_ENUMERATION("Arc.Secondary.Signin.Result", result);
 }
 
 void UpdateProvisioningTiming(const base::TimeDelta& elapsed_time,
                               bool success,
-                              bool managed) {
+                              const Profile* profile) {
   std::string histogram_name = "Arc.Provisioning.TimeDelta.";
   histogram_name += success ? "Success." : "Failure.";
   // The macro UMA_HISTOGRAM_CUSTOM_TIMES expects a constant string, but since
   // this measurement happens very infrequently, we do not need to use a macro
   // here.
-  base::UmaHistogramCustomTimes(GetHistogramName(histogram_name, managed),
+  base::UmaHistogramCustomTimes(GetHistogramName(histogram_name, profile),
                                 elapsed_time, base::TimeDelta::FromSeconds(1),
                                 base::TimeDelta::FromMinutes(6), 50);
 }
 
-void UpdateReauthorizationResultUMA(ProvisioningResult result, bool managed) {
+void UpdateReauthorizationResultUMA(ProvisioningResult result,
+                                    const Profile* profile) {
   base::UmaHistogramEnumeration(
-      GetHistogramName("Arc.Reauthorization.Result.", managed), result,
-      ProvisioningResult::SIZE);
+      GetHistogramName("Arc.Reauthorization.Result.", profile), result);
+}
+
+void UpdatePlayAutoInstallRequestState(mojom::PaiFlowState state,
+                                       const Profile* profile) {
+  base::UmaHistogramEnumeration(
+      GetHistogramName("Arc.PlayAutoInstallRequest.State.", profile), state);
+}
+
+void UpdatePlayAutoInstallRequestTime(const base::TimeDelta& elapsed_time,
+                                      const Profile* profile) {
+  base::UmaHistogramCustomTimes(
+      GetHistogramName("Arc.PlayAutoInstallRequest.TimeDelta.", profile),
+      elapsed_time, base::TimeDelta::FromSeconds(1),
+      base::TimeDelta::FromMinutes(10), 50);
 }
 
 void UpdatePlayStoreShowTime(const base::TimeDelta& elapsed_time,
-                             bool managed) {
+                             const Profile* profile) {
   base::UmaHistogramCustomTimes(
-      GetHistogramName("Arc.PlayStoreShown.TimeDelta.", managed), elapsed_time,
+      GetHistogramName("Arc.PlayStoreShown.TimeDelta.", profile), elapsed_time,
       base::TimeDelta::FromSeconds(1), base::TimeDelta::FromMinutes(10), 50);
 }
 
@@ -81,7 +151,7 @@ void UpdateAuthTiming(const char* histogram_name,
 }
 
 void UpdateAuthCheckinAttempts(int32_t num_attempts) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("ArcAuth.CheckinAttempts", num_attempts);
+  base::UmaHistogramSparse("ArcAuth.CheckinAttempts", num_attempts);
 }
 
 void UpdateAuthAccountCheckStatus(mojom::AccountCheckStatus status) {
@@ -92,13 +162,22 @@ void UpdateAuthAccountCheckStatus(mojom::AccountCheckStatus status) {
 }
 
 void UpdateSilentAuthCodeUMA(OptInSilentAuthCode state) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Arc.OptInSilentAuthCode",
-                              static_cast<int>(state));
+  base::UmaHistogramSparse("Arc.OptInSilentAuthCode", static_cast<int>(state));
+}
+
+void UpdateSupervisionTransitionResultUMA(
+    mojom::SupervisionChangeStatus result) {
+  UMA_HISTOGRAM_ENUMERATION("Arc.Supervision.Transition.Result", result);
 }
 
 void UpdateReauthorizationSilentAuthCodeUMA(OptInSilentAuthCode state) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Arc.OptInSilentAuthCode.Reauthorization",
-                              static_cast<int>(state));
+  base::UmaHistogramSparse("Arc.OptInSilentAuthCode.Reauthorization",
+                           static_cast<int>(state));
+}
+
+void UpdateSecondaryAccountSilentAuthCodeUMA(OptInSilentAuthCode state) {
+  base::UmaHistogramSparse("Arc.OptInSilentAuthCode.SecondaryAccount",
+                           static_cast<int>(state));
 }
 
 std::ostream& operator<<(std::ostream& os, const ProvisioningResult& result) {
@@ -129,7 +208,7 @@ std::ostream& operator<<(std::ostream& os, const ProvisioningResult& result) {
     MAP_PROVISIONING_RESULT(NO_NETWORK_CONNECTION);
     MAP_PROVISIONING_RESULT(ARC_DISABLED);
     MAP_PROVISIONING_RESULT(SUCCESS_ALREADY_PROVISIONED);
-    MAP_PROVISIONING_RESULT(SIZE);
+    MAP_PROVISIONING_RESULT(UNSUPPORTED_ACCOUNT_TYPE);
   }
 
 #undef MAP_PROVISIONING_RESULT

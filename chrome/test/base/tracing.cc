@@ -6,11 +6,11 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
@@ -18,7 +18,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/tracing_controller.h"
 #include "content/public/test/test_utils.h"
-#include "services/resource_coordinator/public/interfaces/tracing/tracing_constants.mojom.h"
+#include "services/tracing/public/mojom/constants.mojom.h"
 
 namespace {
 

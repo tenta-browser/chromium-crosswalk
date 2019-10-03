@@ -20,59 +20,57 @@ var CAST_MESSAGE_NAMESPACE = 'urn:x-cast:com.google.chromeos.videoplayer';
  * This class is the dummy class which has same interface as VideoElement. This
  * behaves like VideoElement, and is used for making Chromecast player
  * controlled instead of the true Video Element tag.
- *
- * @param {MediaManager} media Media manager with the media to play.
- * @param {chrome.cast.Session} session Session to play a video on.
- * @constructor
- * @struct
- * @extends {cr.EventTarget}
  */
-function CastVideoElement(media, session) {
-  this.mediaManager_ = media;
-  this.mediaInfo_ = null;
-
-  this.castMedia_ = null;
-  this.castSession_ = session;
-  this.currentTime_ = null;
-  this.src_ = '';
-  this.volume_ = 100;
-  this.loop_ = false;
-  this.currentMediaPlayerState_ = null;
-  this.currentMediaCurrentTime_ = null;
-  this.currentMediaDuration_ = null;
-  this.playInProgress_ = false;
-  this.pauseInProgress_ = false;
-  this.errorCode_ = 0;
-
+class CastVideoElement extends cr.EventTarget {
   /**
-   * @type {number}
-   * @private
+   * @param {MediaManager} media Media manager with the media to play.
+   * @param {chrome.cast.Session} session Session to play a video on.
    */
-  this.updateTimerId_ = 0;
+  constructor(media, session) {
+    super();
 
-  /**
-   * @type {?string}
-   * @private
-   */
-  this.token_ = null;
+    this.mediaManager_ = media;
+    this.mediaInfo_ = null;
 
-  this.onMessageBound_ = this.onMessage_.bind(this);
-  this.onCastMediaUpdatedBound_ = this.onCastMediaUpdated_.bind(this);
-  this.castSession_.addMessageListener(
-      CAST_MESSAGE_NAMESPACE, this.onMessageBound_);
-}
+    this.castMedia_ = null;
+    this.castSession_ = session;
+    this.currentTime_ = null;
+    this.src_ = '';
+    this.volume_ = 100;
+    this.loop_ = false;
+    this.currentMediaPlayerState_ = null;
+    this.currentMediaCurrentTime_ = null;
+    this.currentMediaDuration_ = null;
+    this.playInProgress_ = false;
+    this.pauseInProgress_ = false;
+    this.errorCode_ = 0;
 
-CastVideoElement.prototype = /** @struct */ {
-  __proto__: cr.EventTarget.prototype,
+    /**
+     * @type {number}
+     * @private
+     */
+    this.updateTimerId_ = 0;
+
+    /**
+     * @type {?string}
+     * @private
+     */
+    this.token_ = null;
+
+    this.onMessageBound_ = this.onMessage_.bind(this);
+    this.onCastMediaUpdatedBound_ = this.onCastMediaUpdated_.bind(this);
+    this.castSession_.addMessageListener(
+        CAST_MESSAGE_NAMESPACE, this.onMessageBound_);
+  }
 
   /**
    * Prepares for unloading this objects.
    */
-  dispose: function() {
+  dispose() {
     this.unloadMedia_();
     this.castSession_.removeMessageListener(
         CAST_MESSAGE_NAMESPACE, this.onMessageBound_);
-  },
+  }
 
   /**
    * Returns a parent node. This must always be null.
@@ -80,7 +78,7 @@ CastVideoElement.prototype = /** @struct */ {
    */
   get parentNode() {
     return null;
-  },
+  }
 
   /**
    * The total time of the video (in sec).
@@ -88,7 +86,7 @@ CastVideoElement.prototype = /** @struct */ {
    */
   get duration() {
     return this.currentMediaDuration_;
-  },
+  }
 
   /**
    * The current timestamp of the video (in sec).
@@ -96,46 +94,52 @@ CastVideoElement.prototype = /** @struct */ {
    */
   get currentTime() {
     if (this.castMedia_) {
-      if (this.castMedia_.idleReason === chrome.cast.media.IdleReason.FINISHED)
-        return this.currentMediaDuration_;  // Returns the duration.
-      else
+      if (this.castMedia_.idleReason ===
+          chrome.cast.media.IdleReason.FINISHED) {
+        // Returns the duration.
+        return this.currentMediaDuration_;
+      } else {
         return this.castMedia_.getEstimatedTime();
+      }
     } else {
       return null;
     }
-  },
+  }
+
   set currentTime(currentTime) {
     var seekRequest = new chrome.cast.media.SeekRequest();
     seekRequest.currentTime = currentTime;
     this.castMedia_.seek(seekRequest,
         function() {},
         this.onCastCommandError_.wrap(this));
-  },
+  }
 
   /**
    * If this video is pauses or not.
    * @type {boolean}
    */
   get paused() {
-    if (!this.castMedia_)
+    if (!this.castMedia_) {
       return false;
+    }
 
     return !this.playInProgress_ &&
         (this.pauseInProgress_ ||
          this.castMedia_.playerState === chrome.cast.media.PlayerState.PAUSED);
-  },
+  }
 
   /**
    * If this video is ended or not.
    * @type {boolean}
    */
   get ended() {
-    if (!this.castMedia_)
+    if (!this.castMedia_) {
       return true;
+    }
 
     return !this.playInProgress_ &&
            this.castMedia_.idleReason === chrome.cast.media.IdleReason.FINISHED;
-  },
+  }
 
   /**
    * TimeRange object that represents the seekable ranges of the media
@@ -145,10 +149,14 @@ CastVideoElement.prototype = /** @struct */ {
   get seekable() {
     return {
       length: 1,
-      start: function(index) { return 0; },
-      end: function(index) { return this.currentMediaDuration_; },
+      start: function(index) {
+        return 0;
+      },
+      end: function(index) {
+        return this.currentMediaDuration_;
+      },
     };
-  },
+  }
 
   /**
    * Value of the volume
@@ -158,14 +166,16 @@ CastVideoElement.prototype = /** @struct */ {
     return this.castSession_.receiver.volume.muted ?
                0 :
                this.castSession_.receiver.volume.level;
-  },
+  }
+
   set volume(volume) {
     var VOLUME_EPS = 0.01;  // Threshold for ignoring a small change.
 
 
     if (this.castSession_.receiver.volume.muted) {
-      if (volume < VOLUME_EPS)
+      if (volume < VOLUME_EPS) {
         return;
+      }
 
       // Unmute before setting volume.
       this.castSession_.setReceiverMuted(false,
@@ -178,8 +188,9 @@ CastVideoElement.prototype = /** @struct */ {
     } else {
       // Ignores < 1% change.
       var diff = this.castSession_.receiver.volume.level - volume;
-      if (Math.abs(diff) < VOLUME_EPS)
+      if (Math.abs(diff) < VOLUME_EPS) {
         return;
+      }
 
       if (volume < VOLUME_EPS) {
         this.castSession_.setReceiverMuted(true,
@@ -192,7 +203,7 @@ CastVideoElement.prototype = /** @struct */ {
           function() {},
           this.onCastCommandError_.wrap(this));
     }
-  },
+  }
 
   /**
    * Returns the source of the current video.
@@ -200,10 +211,11 @@ CastVideoElement.prototype = /** @struct */ {
    */
   get src() {
     return null;
-  },
+  }
+
   set src(value) {
     // Do nothing.
-  },
+  }
 
   /**
    * Returns the flag if the video loops at end or not.
@@ -211,29 +223,32 @@ CastVideoElement.prototype = /** @struct */ {
    */
   get loop() {
     return this.loop_;
-  },
+  }
+
   set loop(value) {
     this.loop_ = !!value;
-  },
+  }
 
   /**
    * Returns the error object if available.
    * @type {?Object}
    */
   get error() {
-    if (this.errorCode_ === 0)
+    if (this.errorCode_ === 0) {
       return null;
+    }
 
     return {code: this.errorCode_};
-  },
+  }
 
   /**
    * Plays the video.
    * @param {boolean=} opt_seeking True when seeking. False otherwise.
    */
-  play: function(opt_seeking) {
-    if (this.playInProgress_)
+  play(opt_seeking) {
+    if (this.playInProgress_) {
       return;
+    }
 
     var play = function() {
       // If the casted media is already playing and a pause request is not in
@@ -261,19 +276,21 @@ CastVideoElement.prototype = /** @struct */ {
 
     this.playInProgress_ = true;
 
-    if (!this.castMedia_)
+    if (!this.castMedia_) {
       this.load(play);
-    else
+    } else {
       play();
-  },
+    }
+  }
 
   /**
    * Pauses the video.
    * @param {boolean=} opt_seeking True when seeking. False otherwise.
    */
-  pause: function(opt_seeking) {
-    if (!this.castMedia_)
+  pause(opt_seeking) {
+    if (!this.castMedia_) {
       return;
+    }
 
     if (this.pauseInProgress_ ||
         this.castMedia_.playerState === chrome.cast.media.PlayerState.PAUSED) {
@@ -293,12 +310,12 @@ CastVideoElement.prototype = /** @struct */ {
           this.pauseInProgress_ = false;
           this.onCastCommandError_(error);
         }.wrap(this));
-  },
+  }
 
   /**
    * Loads the video.
    */
-  load: function(opt_callback) {
+  load(opt_callback) {
     var sendTokenPromise = this.mediaManager_.getToken(false).then(
         function(token) {
           this.token_ = token;
@@ -329,21 +346,22 @@ CastVideoElement.prototype = /** @struct */ {
               this.castSession_.loadMedia.bind(this.castSession_, request)).
               then(function(media) {
                 this.onMediaDiscovered_(media);
-                if (opt_callback)
+                if (opt_callback) {
                   opt_callback();
+                }
               }.bind(this));
         }.bind(this)).catch(function(error) {
           this.unloadMedia_();
           this.dispatchEvent(new Event('error'));
           console.error('Cast failed.', error.stack || error);
         }.bind(this));
-  },
+  }
 
   /**
    * Unloads the video.
    * @private
    */
-  unloadMedia_: function() {
+  unloadMedia_() {
     if (this.castMedia_) {
       this.castMedia_.stop(null,
           function() {},
@@ -360,7 +378,7 @@ CastVideoElement.prototype = /** @struct */ {
     }
 
     clearInterval(this.updateTimerId_);
-  },
+  }
 
   /**
    * Sends the message to cast.
@@ -368,10 +386,10 @@ CastVideoElement.prototype = /** @struct */ {
    *     object).
    * @private
    */
-  sendMessage_: function(message) {
+  sendMessage_(message) {
     this.castSession_.sendMessage(CAST_MESSAGE_NAMESPACE, message,
         function() {}, function(error) {});
-  },
+  }
 
   /**
    * Invoked when receiving a message from the cast.
@@ -379,9 +397,10 @@ CastVideoElement.prototype = /** @struct */ {
    * @param {string} messageAsJson Content of message as json format.
    * @private
    */
-  onMessage_: function(namespace, messageAsJson) {
-    if (namespace !== CAST_MESSAGE_NAMESPACE || !messageAsJson)
+  onMessage_(namespace, messageAsJson) {
+    if (namespace !== CAST_MESSAGE_NAMESPACE || !messageAsJson) {
       return;
+    }
 
     var message = JSON.parse(messageAsJson);
     if (message['message'] === 'request-token') {
@@ -401,30 +420,33 @@ CastVideoElement.prototype = /** @struct */ {
             'New token is requested, but the previous token mismatches.');
       }
     } else if (message['message'] === 'playback-error') {
-      if (message['detail'] === 'src-not-supported')
+      if (message['detail'] === 'src-not-supported') {
         this.errorCode_ = MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
+      }
     }
-  },
+  }
 
   /**
    * This method is called periodically to update media information while the
    * media is loaded.
    * @private
    */
-  onPeriodicalUpdateTimer_: function() {
-    if (!this.castMedia_)
+  onPeriodicalUpdateTimer_() {
+    if (!this.castMedia_) {
       return;
+    }
 
-    if (this.castMedia_.playerState === chrome.cast.media.PlayerState.PLAYING)
+    if (this.castMedia_.playerState === chrome.cast.media.PlayerState.PLAYING) {
       this.onCastMediaUpdated_(true);
-  },
+    }
+  }
 
   /**
    * This method should be called when a media file is loaded.
    * @param {chrome.cast.media.Media} media Media object which was discovered.
    * @private
    */
-  onMediaDiscovered_: function(media) {
+  onMediaDiscovered_(media) {
     if (this.castMedia_ !== null) {
       this.unloadMedia_();
       console.info('New media is found and the old media is overridden.');
@@ -438,18 +460,18 @@ CastVideoElement.prototype = /** @struct */ {
     media.addUpdateListener(this.onCastMediaUpdatedBound_);
     this.updateTimerId_ = setInterval(this.onPeriodicalUpdateTimer_.bind(this),
                                       MEDIA_UPDATE_INTERVAL);
-  },
+  }
 
   /**
    * This method should be called when a media command to cast is failed.
    * @param {Object} error Object representing the error.
    * @private
    */
-  onCastCommandError_: function(error) {
+  onCastCommandError_(error) {
     this.unloadMedia_();
     this.dispatchEvent(new Event('error'));
     console.error('Error on sending command to cast.', error.stack || error);
-  },
+  }
 
   /**
    * This is called when any media data is updated and by the periodical timer
@@ -458,9 +480,10 @@ CastVideoElement.prototype = /** @struct */ {
    * @param {boolean} alive Media availability. False if it's unavailable.
    * @private
    */
-  onCastMediaUpdated_: function(alive) {
-    if (!this.castMedia_)
+  onCastMediaUpdated_(alive) {
+    if (!this.castMedia_) {
       return;
+    }
 
     var media = this.castMedia_;
     if (this.loop_ &&
@@ -491,10 +514,12 @@ CastVideoElement.prototype = /** @struct */ {
           newState === chrome.cast.media.PlayerState.PLAYING) {
         newPlayState = true;
       }
-      if (!oldPlayState && newPlayState)
+      if (!oldPlayState && newPlayState) {
         this.dispatchEvent(new Event('play'));
-      if (oldPlayState && !newPlayState)
+      }
+      if (oldPlayState && !newPlayState) {
         this.dispatchEvent(new Event('pause'));
+      }
 
       this.currentMediaPlayerState_ = newState;
     }
@@ -507,8 +532,9 @@ CastVideoElement.prototype = /** @struct */ {
       // Since recordMediumCount which is called inside recordCastedVideoLangth
       // can take a value ranges from 1 to 10,000, we don't allow to pass 0
       // here. i.e. length 0 is not recorded.
-      if (this.currentMediaDuration_)
+      if (this.currentMediaDuration_) {
         metrics.recordCastedVideoLength(this.currentMediaDuration_);
+      }
 
       this.currentMediaDuration_ = media.media.duration;
       this.dispatchEvent(new Event('durationchange'));
@@ -519,5 +545,5 @@ CastVideoElement.prototype = /** @struct */ {
       this.unloadMedia_();
       return;
     }
-  },
-};
+  }
+}

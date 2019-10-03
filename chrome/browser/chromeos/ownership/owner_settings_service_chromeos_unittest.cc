@@ -7,9 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/containers/queue.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_path_override.h"
 #include "base/values.h"
@@ -29,8 +29,7 @@ namespace chromeos {
 
 namespace {
 
-void OnPrefChanged(const std::string& /* setting */) {
-}
+void OnPrefChanged(const std::string& /* setting */) {}
 
 class PrefsChecker : public ownership::OwnerSettingsService::Observer {
  public:
@@ -50,10 +49,10 @@ class PrefsChecker : public ownership::OwnerSettingsService::Observer {
       return;
 
     while (!set_requests_.empty()) {
-      SetRequest request = set_requests_.front();
+      SetRequest request = std::move(set_requests_.front());
       set_requests_.pop();
       const base::Value* value = provider_->Get(request.first);
-      ASSERT_TRUE(request.second->Equals(value));
+      ASSERT_EQ(request.second, *value);
     }
     loop_.Quit();
   }
@@ -61,8 +60,7 @@ class PrefsChecker : public ownership::OwnerSettingsService::Observer {
   bool Set(const std::string& setting, const base::Value& value) {
     if (!service_->Set(setting, value))
       return false;
-    set_requests_.push(
-        SetRequest(setting, linked_ptr<base::Value>(value.DeepCopy())));
+    set_requests_.push(SetRequest(setting, value.Clone()));
     return true;
   }
 
@@ -73,7 +71,7 @@ class PrefsChecker : public ownership::OwnerSettingsService::Observer {
   DeviceSettingsProvider* provider_;
   base::RunLoop loop_;
 
-  using SetRequest = std::pair<std::string, linked_ptr<base::Value>>;
+  using SetRequest = std::pair<std::string, base::Value>;
   base::queue<SetRequest> set_requests_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefsChecker);
@@ -98,11 +96,13 @@ class OwnerSettingsServiceChromeOSTest : public DeviceSettingsTestBase {
 
   void SetUp() override {
     DeviceSettingsTestBase::SetUp();
-    provider_.reset(new DeviceSettingsProvider(base::Bind(&OnPrefChanged),
-                                               &device_settings_service_));
-    owner_key_util_->SetPrivateKey(device_policy_.GetSigningKey());
-    InitOwner(AccountId::FromUserEmail(device_policy_.policy_data().username()),
-              true);
+    provider_.reset(new DeviceSettingsProvider(
+        base::Bind(&OnPrefChanged), device_settings_service_.get(),
+        TestingBrowserProcess::GetGlobal()->local_state()));
+    owner_key_util_->SetPrivateKey(device_policy_->GetSigningKey());
+    InitOwner(
+        AccountId::FromUserEmail(device_policy_->policy_data().username()),
+        true);
     FlushDeviceSettings();
 
     service_ = OwnerSettingsServiceChromeOSFactory::GetForBrowserContext(
@@ -110,14 +110,17 @@ class OwnerSettingsServiceChromeOSTest : public DeviceSettingsTestBase {
     ASSERT_TRUE(service_);
     ASSERT_TRUE(service_->IsOwner());
 
-    device_policy_.policy_data().set_management_mode(
+    device_policy_->policy_data().set_management_mode(
         em::PolicyData::LOCAL_OWNER);
-    device_policy_.Build();
-    session_manager_client_.set_device_policy(device_policy_.GetBlob());
+    device_policy_->Build();
+    session_manager_client_.set_device_policy(device_policy_->GetBlob());
     ReloadDeviceSettings();
   }
 
-  void TearDown() override { DeviceSettingsTestBase::TearDown(); }
+  void TearDown() override {
+    provider_.reset();
+    DeviceSettingsTestBase::TearDown();
+  }
 
   void TestSingleSet(OwnerSettingsServiceChromeOS* service,
                      const std::string& setting,
@@ -165,7 +168,7 @@ TEST_F(OwnerSettingsServiceChromeOSTest, MultipleSetTest) {
 }
 
 TEST_F(OwnerSettingsServiceChromeOSTest, FailedSetRequest) {
-  session_manager_client_.set_store_device_policy_success(false);
+  session_manager_client_.ForceStorePolicyFailure(true);
   std::string current_channel;
   ASSERT_TRUE(provider_->Get(kReleaseChannel)->GetAsString(&current_channel));
   ASSERT_NE(current_channel, "stable-channel");
@@ -177,17 +180,17 @@ TEST_F(OwnerSettingsServiceChromeOSTest, FailedSetRequest) {
   checker.Wait();
 
   // Check that DeviceSettingsService's policy isn't updated.
-  ASSERT_EQ(current_channel, device_settings_service_.device_settings()
+  ASSERT_EQ(current_channel, device_settings_service_->device_settings()
                                  ->release_channel()
                                  .release_channel());
 }
 
 TEST_F(OwnerSettingsServiceChromeOSTest, ForceWhitelist) {
-  EXPECT_FALSE(FindInListValue(device_policy_.policy_data().username(),
+  EXPECT_FALSE(FindInListValue(device_policy_->policy_data().username(),
                                provider_->Get(kAccountsPrefUsers)));
   // Force a settings write.
   TestSingleSet(service_, kReleaseChannel, base::Value("dev-channel"));
-  EXPECT_TRUE(FindInListValue(device_policy_.policy_data().username(),
+  EXPECT_TRUE(FindInListValue(device_policy_->policy_data().username(),
                               provider_->Get(kAccountsPrefUsers)));
 }
 
@@ -199,16 +202,15 @@ class OwnerSettingsServiceChromeOSNoOwnerTest
 
   void SetUp() override {
     DeviceSettingsTestBase::SetUp();
-    provider_.reset(new DeviceSettingsProvider(base::Bind(&OnPrefChanged),
-                                               &device_settings_service_));
+    provider_.reset(new DeviceSettingsProvider(
+        base::Bind(&OnPrefChanged), device_settings_service_.get(),
+        TestingBrowserProcess::GetGlobal()->local_state()));
     FlushDeviceSettings();
     service_ = OwnerSettingsServiceChromeOSFactory::GetForBrowserContext(
         profile_.get());
     ASSERT_TRUE(service_);
     ASSERT_FALSE(service_->IsOwner());
   }
-
-  void TearDown() override { DeviceSettingsTestBase::TearDown(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(OwnerSettingsServiceChromeOSNoOwnerTest);
@@ -219,15 +221,15 @@ TEST_F(OwnerSettingsServiceChromeOSNoOwnerTest, SingleSetTest) {
 }
 
 TEST_F(OwnerSettingsServiceChromeOSNoOwnerTest, TakeOwnershipForceWhitelist) {
-  EXPECT_FALSE(FindInListValue(device_policy_.policy_data().username(),
+  EXPECT_FALSE(FindInListValue(device_policy_->policy_data().username(),
                                provider_->Get(kAccountsPrefUsers)));
-  owner_key_util_->SetPrivateKey(device_policy_.GetSigningKey());
-  InitOwner(AccountId::FromUserEmail(device_policy_.policy_data().username()),
+  owner_key_util_->SetPrivateKey(device_policy_->GetSigningKey());
+  InitOwner(AccountId::FromUserEmail(device_policy_->policy_data().username()),
             true);
   ReloadDeviceSettings();
   ASSERT_TRUE(service_->IsOwner());
 
-  EXPECT_TRUE(FindInListValue(device_policy_.policy_data().username(),
+  EXPECT_TRUE(FindInListValue(device_policy_->policy_data().username(),
                               provider_->Get(kAccountsPrefUsers)));
 }
 

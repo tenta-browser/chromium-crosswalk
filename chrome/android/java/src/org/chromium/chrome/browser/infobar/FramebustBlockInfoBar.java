@@ -20,6 +20,7 @@ import org.chromium.components.url_formatter.UrlFormatter;
  * continue the redirection by tapping on a link.
  */
 public class FramebustBlockInfoBar extends InfoBar {
+
     private final String mBlockedUrl;
 
     /** Whether the infobar should be shown as a mini-infobar or a classic expanded one. */
@@ -27,7 +28,7 @@ public class FramebustBlockInfoBar extends InfoBar {
 
     @VisibleForTesting
     public FramebustBlockInfoBar(String blockedUrl) {
-        super(R.drawable.infobar_redirect_blocked, null, null);
+        super(R.drawable.infobar_chrome, R.color.infobar_icon_drawable_color, null, null);
         mBlockedUrl = blockedUrl;
     }
 
@@ -49,19 +50,34 @@ public class FramebustBlockInfoBar extends InfoBar {
         // Formatting the URL and requesting to omit the scheme might still include it for some of
         // them (e.g. file, filesystem). We split the output of the formatting to make sure we don't
         // end up duplicating it.
-        String formattedUrl = UrlFormatter.formatUrlForSecurityDisplay(mBlockedUrl, true);
-        String scheme = Uri.parse(mBlockedUrl).getScheme() + "://";
+        final String schemeSeparator = "://";
+        String scheme = Uri.parse(mBlockedUrl).getScheme();
+
+        // In case mBlockedUrl does not specify a scheme, formatUrlForSecurityDisplay returns an
+        // empty string. Temporarily adding scheme separator allows it to parse the URL correctly.
+        String urlWithScheme = mBlockedUrl;
+        if (scheme == null) {
+            scheme = "";
+            urlWithScheme = schemeSeparator + mBlockedUrl;
+        }
+
+        String textToEllipsize = UrlFormatter
+                    .formatUrlForSecurityDisplay(urlWithScheme)
+                    .substring(scheme.length() + schemeSeparator.length());
 
         TextView schemeView = ellipsizerView.findViewById(R.id.url_scheme);
         schemeView.setText(scheme);
 
         TextView urlView = ellipsizerView.findViewById(R.id.url_minus_scheme);
-        urlView.setText(formattedUrl.substring(scheme.length()));
+        // Handle adjusting the text to workaround Android crashes when ellipsizing on old versions.
+        // TODO(donnd): remove this class when older versions of Android are no longer supported.
+        ((TextViewEllipsizerSafe) urlView).setTextSafely(textToEllipsize);
 
         ellipsizerView.setOnClickListener(view -> onLinkClicked());
 
         control.addView(ellipsizerView);
-        layout.setButtons(getContext().getResources().getString(R.string.ok), null);
+        layout.setButtons(
+                getContext().getResources().getString(R.string.always_allow_redirects), null);
     }
 
     @Override
@@ -86,6 +102,11 @@ public class FramebustBlockInfoBar extends InfoBar {
         }
 
         super.onLinkClicked();
+    }
+
+    @VisibleForTesting
+    public String getBlockedUrl() {
+        return mBlockedUrl;
     }
 
     private String getString(@StringRes int stringResId) {

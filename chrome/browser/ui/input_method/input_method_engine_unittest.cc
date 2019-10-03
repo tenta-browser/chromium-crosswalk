@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/input_method/input_method_engine.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/input_method/input_method_engine_base.h"
@@ -83,7 +83,7 @@ class TestObserver : public InputMethodEngineBase::Observer {
   void OnKeyEvent(
       const std::string& engine_id,
       const InputMethodEngineBase::KeyboardEvent& event,
-      ui::IMEEngineHandlerInterface::KeyEventDoneCallback& key_data) override {
+      ui::IMEEngineHandlerInterface::KeyEventDoneCallback key_data) override {
     calls_bitmap_ |= ONKEYEVENT;
     engine_id_ = engine_id;
     key_event_ = event;
@@ -114,7 +114,6 @@ class TestObserver : public InputMethodEngineBase::Observer {
     surrounding_info_.anchor = anchor_pos;
     surrounding_info_.offset = offset;
   }
-  void OnRequestEngineSwitch() override {}
 
   // Returns and resets the bitmap |calls_bitmap_|.
   unsigned char GetCallsBitmapAndReset() {
@@ -173,7 +172,9 @@ class InputMethodEngineTest : public testing::Test {
 
   void FocusIn(ui::TextInputType input_type) {
     ui::IMEEngineHandlerInterface::InputContext input_context(
-        input_type, ui::TEXT_INPUT_MODE_DEFAULT, ui::TEXT_INPUT_FLAG_NONE);
+        input_type, ui::TEXT_INPUT_MODE_DEFAULT, ui::TEXT_INPUT_FLAG_NONE,
+        ui::TextInputClient::FOCUS_REASON_OTHER,
+        false /* should_do_learning */);
     engine_->FocusIn(input_context);
     ui::IMEBridge::Get()->SetCurrentInputContext(input_context);
   }
@@ -219,8 +220,8 @@ TEST_F(InputMethodEngineTest, TestKeyEvent) {
   ui::KeyEvent key_event(ui::ET_KEY_PRESSED, ui::VKEY_A, ui::EF_NONE);
   KeyEventDoneCallback callback(false);
   ui::IMEEngineHandlerInterface::KeyEventDoneCallback keyevent_callback =
-      base::Bind(&KeyEventDoneCallback::Run, base::Unretained(&callback));
-  engine_->ProcessKeyEvent(key_event, keyevent_callback);
+      base::BindOnce(&KeyEventDoneCallback::Run, base::Unretained(&callback));
+  engine_->ProcessKeyEvent(key_event, std::move(keyevent_callback));
   EXPECT_EQ(ONKEYEVENT, observer_->GetCallsBitmapAndReset());
   EXPECT_EQ(kTestImeComponentId, observer_->GetEngineIdAndReset());
   EXPECT_EQ("keydown", observer_->GetKeyEvent().type);
@@ -279,6 +280,22 @@ TEST_F(InputMethodEngineTest, TestSurroundingTextChanged) {
   EXPECT_EQ(0, observer_->GetSurroundingInfo().focus);
   EXPECT_EQ(1, observer_->GetSurroundingInfo().anchor);
   EXPECT_EQ(0, observer_->GetSurroundingInfo().offset);
+}
+
+TEST_F(InputMethodEngineTest, TestDisableAfterSetComposition) {
+  // Enables the extension with focus.
+  engine_->Enable(kTestImeComponentId);
+  FocusIn(ui::TEXT_INPUT_TYPE_TEXT);
+
+  ui::CompositionText composition_text;
+  composition_text.text = base::ASCIIToUTF16("hello");
+  engine_->UpdateComposition(composition_text, 0, /* is_visible */ true);
+
+  // Disable to commit
+  engine_->Disable();
+
+  EXPECT_EQ(1, mock_ime_input_context_handler_->commit_text_call_count());
+  EXPECT_EQ("hello", mock_ime_input_context_handler_->last_commit_text());
 }
 
 }  // namespace input_method

@@ -14,16 +14,17 @@
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_danger_prompt.h"
-#include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/downloads.h"
 #include "components/download/content/public/all_download_item_notifier.h"
+#include "components/download/public/common/download_path_reservation_tracker.h"
 #include "content/public/browser/download_manager.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/warning_set.h"
 
 class DownloadFileIconExtractor;
+class DownloadOpenPrompt;
 
 namespace extensions {
 class ExtensionRegistry;
@@ -69,9 +70,9 @@ namespace extensions {
 
 class DownloadedByExtension : public base::SupportsUserData::Data {
  public:
-  static DownloadedByExtension* Get(content::DownloadItem* item);
+  static DownloadedByExtension* Get(download::DownloadItem* item);
 
-  DownloadedByExtension(content::DownloadItem* item,
+  DownloadedByExtension(download::DownloadItem* item,
                         const std::string& id,
                         const std::string& name);
 
@@ -100,8 +101,8 @@ class DownloadsDownloadFunction : public ChromeAsyncExtensionFunction {
   void OnStarted(const base::FilePath& creator_suggested_filename,
                  extensions::api::downloads::FilenameConflictAction
                      creator_conflict_action,
-                 content::DownloadItem* item,
-                 content::DownloadInterruptReason interrupt_reason);
+                 download::DownloadItem* item,
+                 download::DownloadInterruptReason interrupt_reason);
 
   DISALLOW_COPY_AND_ASSIGN(DownloadsDownloadFunction);
 };
@@ -243,10 +244,20 @@ class DownloadsOpenFunction : public UIThreadExtensionFunction {
   DownloadsOpenFunction();
   ResponseAction Run() override;
 
+  typedef base::OnceCallback<void(DownloadOpenPrompt*)> OnPromptCreatedCallback;
+  static void set_on_prompt_created_cb_for_testing(
+      OnPromptCreatedCallback* on_prompt_created_cb) {
+    on_prompt_created_cb_ = on_prompt_created_cb;
+  }
+
  protected:
   ~DownloadsOpenFunction() override;
 
  private:
+  void OpenPromptDone(int download_id, bool accept);
+
+  static OnPromptCreatedCallback* on_prompt_created_cb_;
+
   DISALLOW_COPY_AND_ASSIGN(DownloadsOpenFunction);
 };
 
@@ -262,19 +273,6 @@ class DownloadsSetShelfEnabledFunction : public UIThreadExtensionFunction {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DownloadsSetShelfEnabledFunction);
-};
-
-class DownloadsDragFunction : public UIThreadExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("downloads.drag", DOWNLOADS_DRAG)
-  DownloadsDragFunction();
-  ResponseAction Run() override;
-
- protected:
-  ~DownloadsDragFunction() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DownloadsDragFunction);
 };
 
 class DownloadsGetFileIconFunction : public ChromeAsyncExtensionFunction {
@@ -303,8 +301,8 @@ class ExtensionDownloadsEventRouter
  public:
   typedef base::Callback<void(
       const base::FilePath& changed_filename,
-      DownloadPathReservationTracker::FilenameConflictAction)>
-    FilenameChangedCallback;
+      download::DownloadPathReservationTracker::FilenameConflictAction)>
+      FilenameChangedCallback;
 
   static void SetDetermineFilenameTimeoutSecondsForTesting(int s);
 
@@ -330,7 +328,7 @@ class ExtensionDownloadsEventRouter
   // existing files, then |overwrite| will be true. Returns true on success,
   // false otherwise.
   static bool DetermineFilename(
-      Profile* profile,
+      content::BrowserContext* browser_context,
       bool include_incognito,
       const std::string& ext_id,
       int download_id,
@@ -352,19 +350,18 @@ class ExtensionDownloadsEventRouter
   // an extension wants to change the target filename, then |change| will be
   // called with the new filename and a flag indicating whether the new file
   // should overwrite any old files of the same name.
-  void OnDeterminingFilename(
-      content::DownloadItem* item,
-      const base::FilePath& suggested_path,
-      const base::Closure& no_change,
-      const FilenameChangedCallback& change);
+  void OnDeterminingFilename(download::DownloadItem* item,
+                             const base::FilePath& suggested_path,
+                             const base::Closure& no_change,
+                             const FilenameChangedCallback& change);
 
   // AllDownloadItemNotifier::Observer.
   void OnDownloadCreated(content::DownloadManager* manager,
-                         content::DownloadItem* download_item) override;
+                         download::DownloadItem* download_item) override;
   void OnDownloadUpdated(content::DownloadManager* manager,
-                         content::DownloadItem* download_item) override;
+                         download::DownloadItem* download_item) override;
   void OnDownloadRemoved(content::DownloadManager* manager,
-                         content::DownloadItem* download_item) override;
+                         download::DownloadItem* download_item) override;
 
   // extensions::EventRouter::Observer.
   void OnListenerRemoved(const extensions::EventListenerInfo& details) override;
@@ -378,12 +375,11 @@ class ExtensionDownloadsEventRouter
   void CheckForHistoryFilesRemoval();
 
  private:
-  void DispatchEvent(
-      events::HistogramValue histogram_value,
-      const std::string& event_name,
-      bool include_incognito,
-      const extensions::Event::WillDispatchCallback& will_dispatch_callback,
-      std::unique_ptr<base::Value> json_arg);
+  void DispatchEvent(events::HistogramValue histogram_value,
+                     const std::string& event_name,
+                     bool include_incognito,
+                     Event::WillDispatchCallback will_dispatch_callback,
+                     std::unique_ptr<base::Value> json_arg);
 
   // extensions::ExtensionRegistryObserver.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,

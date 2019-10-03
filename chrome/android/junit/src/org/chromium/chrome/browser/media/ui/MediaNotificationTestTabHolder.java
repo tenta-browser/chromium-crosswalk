@@ -4,19 +4,21 @@
 
 package org.chromium.chrome.browser.media.ui;
 
-import android.graphics.Bitmap;
-
 import static org.mockito.Mockito.when;
+
+import android.graphics.Bitmap;
 
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
+import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.MediaSession;
+import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.common.MediaMetadata;
+import org.chromium.services.media_session.MediaMetadata;
 
 import java.util.Set;
 
@@ -35,6 +37,15 @@ public class MediaNotificationTestTabHolder {
     String mUrl;
 
     MediaSessionTabHelper mMediaSessionTabHelper;
+
+    // Mock LargeIconBridge that always returns false.
+    private class TestLargeIconBridge extends LargeIconBridge {
+        @Override
+        public boolean getLargeIconForUrl(
+                final String pageUrl, int desiredSizePx, final LargeIconCallback callback) {
+            return false;
+        }
+    }
 
     public MediaNotificationTestTabHolder(int tabId, String url, String title) {
         MockitoAnnotations.initMocks(this);
@@ -57,6 +68,7 @@ public class MediaNotificationTestTabHolder {
 
         MediaSessionTabHelper.sOverriddenMediaSession = mMediaSession;
         mMediaSessionTabHelper = new MediaSessionTabHelper(mTab);
+        mMediaSessionTabHelper.mLargeIconBridge = new TestLargeIconBridge();
 
         simulateNavigation(url, false);
         simulateTitleUpdated(title);
@@ -86,9 +98,15 @@ public class MediaNotificationTestTabHolder {
 
     public void simulateNavigation(String url, boolean isSameDocument) {
         mUrl = url;
-        mMediaSessionTabHelper.mTabObserver.onDidFinishNavigation(mTab, url,
-                true /* isInMainFrame */, false /* isErrorPage */, true /* hasCommitted */,
-                isSameDocument, false /* isFragmentNavigation */, 0 /* pageTransition */,
-                0 /* errorCode */, 200 /* httpStatusCode */);
+
+        NavigationHandle navigation = new NavigationHandle(0 /* navigationHandleProxy */, url,
+                true /* isInMainFrame */, isSameDocument, false /* isRendererInitiated */);
+        mMediaSessionTabHelper.mTabObserver.onDidStartNavigation(mTab, navigation);
+
+        navigation.didFinish(url, false /* isErrorPage */, true /* hasCommitted */,
+                false /* isFragmentNavigation */, false /* isDownload */,
+                false /* isValidSearchFormUrl */, 0 /* pageTransition */, 0 /* errorCode */,
+                200 /* httpStatusCode */);
+        mMediaSessionTabHelper.mTabObserver.onDidFinishNavigation(mTab, navigation);
     }
 }

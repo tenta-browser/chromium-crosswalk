@@ -41,10 +41,8 @@ class OrphanedTestServerFilter : public base::ProcessFilter {
       return false;
     bool found_path_string = false;
     bool found_port_string = false;
-    for (std::vector<std::string>::const_iterator it =
-         entry.cmd_line_args().begin();
-         it != entry.cmd_line_args().end();
-         ++it) {
+    for (auto it = entry.cmd_line_args().begin();
+         it != entry.cmd_line_args().end(); ++it) {
       if (it->find(path_string_) != std::string::npos)
         found_path_string = true;
       if (it->find(port_string_) != std::string::npos)
@@ -105,11 +103,9 @@ bool ReadData(int fd,
 
 namespace net {
 
-bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
-  // Log is useful in the event you want to run a nearby script (e.g. a test) in
-  // the same environment as the TestServer.
-  VLOG(1) << "LaunchPython called with PYTHONPATH = " << getenv(kPythonPathEnv);
-
+bool LocalTestServer::LaunchPython(
+    const base::FilePath& testserver_path,
+    const std::vector<base::FilePath>& python_path) {
   base::CommandLine python_command(base::CommandLine::NO_PROGRAM);
   if (!GetPythonCommand(&python_command))
     return false;
@@ -128,25 +124,33 @@ bool LocalTestServer::LaunchPython(const base::FilePath& testserver_path) {
   child_fd_.reset(pipefd[0]);
   base::ScopedFD write_closer(pipefd[1]);
 
-  python_command.AppendArg("--startup-pipe=" + base::IntToString(pipefd[1]));
+  python_command.AppendArg("--startup-pipe=" + base::NumberToString(pipefd[1]));
 
   // Try to kill any orphaned testserver processes that may be running.
   OrphanedTestServerFilter filter(testserver_path.value(),
-                                  base::UintToString(GetPort()));
+                                  base::NumberToString(GetPort()));
   if (!base::KillProcesses("python", -1, &filter)) {
     LOG(WARNING) << "Failed to clean up older orphaned testserver instances.";
   }
 
   // Launch a new testserver process.
   base::LaunchOptions options;
+  SetPythonPathInEnvironment(python_path, &options.environment);
+
+  // Log is useful in the event you want to run a nearby script (e.g. a test) in
+  // the same environment as the TestServer.
+  LOG(ERROR) << "LaunchPython called with PYTHONPATH = "
+             << options.environment["PYTHONPATH"];
 
   // Set CWD to source root.
-  if (!PathService::Get(base::DIR_SOURCE_ROOT, &options.current_directory)) {
+  if (!base::PathService::Get(base::DIR_SOURCE_ROOT,
+                              &options.current_directory)) {
     LOG(ERROR) << "Failed to get DIR_SOURCE_ROOT";
     return false;
   }
 
   options.fds_to_remap.push_back(std::make_pair(pipefd[1], pipefd[1]));
+  LOG(ERROR) << "Running: " << python_command.GetCommandLineString();
   process_ = base::LaunchProcess(python_command, options);
   if (!process_.IsValid()) {
     LOG(ERROR) << "Failed to launch " << python_command.GetCommandLineString();

@@ -9,7 +9,7 @@
 namespace chromeos {
 namespace input_method {
 
-MockInputMethodManager::State::State() {}
+MockInputMethodManager::State::State() = default;
 
 scoped_refptr<InputMethodManager::State> MockInputMethodManager::State::Clone()
     const {
@@ -27,6 +27,12 @@ void MockInputMethodManager::State::RemoveInputMethodExtension(
 void MockInputMethodManager::State::ChangeInputMethod(
     const std::string& input_method_id,
     bool show_message) {}
+
+void MockInputMethodManager::State::ChangeInputMethodToJpKeyboard() {}
+
+void MockInputMethodManager::State::ChangeInputMethodToJpIme() {}
+
+void MockInputMethodManager::State::ToggleInputMethodForJpIme() {}
 
 bool MockInputMethodManager::State::EnableInputMethod(
     const std::string& new_active_input_method_id) {
@@ -73,7 +79,7 @@ void MockInputMethodManager::State::SetInputMethodLoginDefaultFromVPD(
 
 void MockInputMethodManager::State::SwitchToNextInputMethod() {}
 
-void MockInputMethodManager::State::SwitchToPreviousInputMethod() {}
+void MockInputMethodManager::State::SwitchToLastUsedInputMethod() {}
 
 InputMethodDescriptor MockInputMethodManager::State::GetCurrentInputMethod()
     const {
@@ -87,7 +93,8 @@ bool MockInputMethodManager::State::ReplaceEnabledInputMethods(
 }
 
 bool MockInputMethodManager::State::SetAllowedInputMethods(
-    const std::vector<std::string>& new_allowed_input_method_ids) {
+    const std::vector<std::string>& new_allowed_input_method_ids,
+    bool enable_allowed_input_methods) {
   allowed_input_method_ids_ = new_allowed_input_method_ids;
   return true;
 }
@@ -97,12 +104,20 @@ MockInputMethodManager::State::GetAllowedInputMethods() {
   return allowed_input_method_ids_;
 }
 
-MockInputMethodManager::State::~State() {}
+void MockInputMethodManager::State::EnableInputView() {}
+
+void MockInputMethodManager::State::DisableInputView() {}
+
+const GURL& MockInputMethodManager::State::GetInputViewUrl() const {
+  return GURL::EmptyGURL();
+}
+
+MockInputMethodManager::State::~State() = default;
 
 MockInputMethodManager::MockInputMethodManager()
     : features_enabled_state_(InputMethodManager::FEATURE_ALL) {}
 
-MockInputMethodManager::~MockInputMethodManager() {}
+MockInputMethodManager::~MockInputMethodManager() = default;
 
 InputMethodManager::UISessionState MockInputMethodManager::GetUISessionState() {
   return InputMethodManager::STATE_BROWSER_SCREEN;
@@ -133,6 +148,9 @@ MockInputMethodManager::GetSupportedInputMethods() const {
 
 void MockInputMethodManager::ActivateInputMethodMenuItem(
     const std::string& key) {}
+
+void MockInputMethodManager::ConnectInputEngineManager(
+    mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager> receiver) {}
 
 bool MockInputMethodManager::IsISOLevel5ShiftUsedByCurrentInputMethod() const {
   return false;
@@ -184,8 +202,7 @@ void MockInputMethodManager::NotifyImeMenuItemsChanged(
 
 void MockInputMethodManager::MaybeNotifyImeMenuActivationChanged() {}
 
-void MockInputMethodManager::OverrideKeyboardUrlRef(const std::string& keyset) {
-}
+void MockInputMethodManager::OverrideKeyboardKeyset(mojom::ImeKeyset keyset) {}
 
 void MockInputMethodManager::SetImeMenuFeatureEnabled(ImeMenuFeature feature,
                                                       bool enabled) {
@@ -201,6 +218,33 @@ bool MockInputMethodManager::GetImeMenuFeatureEnabled(
 }
 
 void MockInputMethodManager::NotifyObserversImeExtraInputStateChange() {}
+
+ui::InputMethodKeyboardController*
+MockInputMethodManager::GetInputMethodKeyboardController() {
+  return this;
+}
+
+void MockInputMethodManager::NotifyInputMethodExtensionAdded(
+    const std::string& extension_id) {}
+
+void MockInputMethodManager::NotifyInputMethodExtensionRemoved(
+    const std::string& extension_id) {}
+
+bool MockInputMethodManager::DisplayVirtualKeyboard() {
+  return false;
+}
+
+void MockInputMethodManager::DismissVirtualKeyboard() {}
+
+void MockInputMethodManager::AddObserver(
+    ui::InputMethodKeyboardControllerObserver* observer) {}
+
+void MockInputMethodManager::RemoveObserver(
+    ui::InputMethodKeyboardControllerObserver* observer) {}
+
+bool MockInputMethodManager::IsKeyboardVisible() {
+  return false;
+}
 
 }  // namespace input_method
 }  // namespace chromeos

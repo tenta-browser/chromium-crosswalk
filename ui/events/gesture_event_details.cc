@@ -19,10 +19,11 @@ GestureEventDetails::GestureEventDetails(ui::EventType type)
   DCHECK_LE(type, ET_GESTURE_TYPE_END);
 }
 
-GestureEventDetails::GestureEventDetails(ui::EventType type,
-                                         float delta_x,
-                                         float delta_y,
-                                         ScrollUnits units)
+GestureEventDetails::GestureEventDetails(
+    ui::EventType type,
+    float delta_x,
+    float delta_y,
+    ui::input_types::ScrollGranularity units)
     : type_(type),
       device_type_(GestureDeviceType::DEVICE_UNKNOWN),
       touch_points_(1) {
@@ -79,6 +80,7 @@ GestureEventDetails::GestureEventDetails(ui::EventType type,
       // allowed as an exception.
       if (other.type() == ui::ET_GESTURE_PINCH_BEGIN)
         break;
+      FALLTHROUGH;
     case ui::ET_GESTURE_SCROLL_UPDATE:
     case ui::ET_SCROLL_FLING_START:
     case ui::ET_GESTURE_SWIPE:

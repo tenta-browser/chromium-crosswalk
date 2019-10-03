@@ -3,13 +3,21 @@
      found in the LICENSE file.
 -->
 
-# How to run benchmarks for media router
-1. Run the following command to find all the avaiable browsers:
+# How to run benchmarks for Media Router
+1. Run the following command to find all the available browsers:
+
+```shell
 ./chrome/test/media_router/telemetry/run_benchmark --browser list
+```
+
+Let `<browser>` be one of the results.
 
 2. Run the following command to get benchmarks for media router dialog latency:
-./chrome/test/media_router/telemetry/run_benchmark --browser=<one of the values returned in step 1> media_router.dialog.latency.tracing --reset-results
 
-./chrome/test/media_router/telemetry/run_benchmark --browser=<one of the values returned in step 1> media_router.dialog.latency.histogram
+```shell
+./chrome/test/media_router/telemetry/run_benchmark --browser=<browser> \
+    media_router.cpu_memory
+```
 
-The results will be in <chromium src folder>/chrome/test/media_router/telemetry/results.html
+The results will be in
+`<chromium src folder>/chrome/test/media_router/telemetry/results.html`

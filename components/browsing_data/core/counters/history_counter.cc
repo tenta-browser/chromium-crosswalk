@@ -6,8 +6,9 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/timer/timer.h"
 #include "components/browsing_data/core/pref_names.h"
 
@@ -26,8 +27,7 @@ HistoryCounter::HistoryCounter(
       sync_tracker_(this, sync_service),
       has_synced_visits_(false),
       local_counting_finished_(false),
-      web_counting_finished_(false),
-      weak_ptr_factory_(this) {
+      web_counting_finished_(false) {
   DCHECK(history_service_);
 }
 
@@ -66,9 +66,9 @@ void HistoryCounter::Count() {
   local_counting_finished_ = false;
 
   history_service_->GetHistoryCount(
-      GetPeriodStart(), base::Time::Max(),
-      base::Bind(&HistoryCounter::OnGetLocalHistoryCount,
-                 weak_ptr_factory_.GetWeakPtr()),
+      GetPeriodStart(), GetPeriodEnd(),
+      base::BindOnce(&HistoryCounter::OnGetLocalHistoryCount,
+                     weak_ptr_factory_.GetWeakPtr()),
       &cancelable_task_tracker_);
 
   // If the history sync is enabled, test if there is at least one synced item.
@@ -88,7 +88,7 @@ void HistoryCounter::Count() {
   history::QueryOptions options;
   options.max_count = 1;
   options.begin_time = GetPeriodStart();
-  options.end_time = base::Time::Max();
+  options.end_time = GetPeriodEnd();
   net::PartialNetworkTrafficAnnotationTag partial_traffic_annotation =
       net::DefinePartialNetworkTrafficAnnotation("web_history_counter",
                                                  "web_history_service",
@@ -176,7 +176,7 @@ void HistoryCounter::MergeResults() {
   if (!local_counting_finished_ || !web_counting_finished_)
     return;
 
-  ReportResult(base::MakeUnique<HistoryResult>(
+  ReportResult(std::make_unique<HistoryResult>(
       this, local_result_, sync_tracker_.IsSyncActive(), has_synced_visits_));
 }
 

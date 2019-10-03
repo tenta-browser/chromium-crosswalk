@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/ui/settings/cells/passphrase_error_item.h"
 
+#import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -14,10 +15,10 @@
 
 namespace {
 
-using PasswordDetailsItemTest = PlatformTest;
+using PassphraseErrorItemTest = PlatformTest;
 
 // Tests that the text label is set properly after a call to |configureCell:|.
-TEST_F(PasswordDetailsItemTest, ConfigureCell) {
+TEST_F(PassphraseErrorItemTest, ConfigureCell) {
   PassphraseErrorItem* item = [[PassphraseErrorItem alloc] initWithType:0];
   PassphraseErrorCell* cell = [[[item cellClass] alloc] init];
   EXPECT_TRUE([cell isMemberOfClass:[PassphraseErrorCell class]]);
@@ -25,7 +26,7 @@ TEST_F(PasswordDetailsItemTest, ConfigureCell) {
   NSString* text = @"This is an error";
 
   item.text = text;
-  [item configureCell:cell];
+  [item configureCell:cell withStyler:[[ChromeTableViewStyler alloc] init]];
   EXPECT_NSEQ(text, cell.textLabel.text);
 }
 

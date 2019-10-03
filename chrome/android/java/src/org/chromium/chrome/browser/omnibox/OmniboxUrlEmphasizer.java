@@ -12,8 +12,8 @@ import android.text.style.StrikethroughSpan;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 
 import java.util.Locale;
@@ -94,8 +94,7 @@ public class OmniboxUrlEmphasizer {
      * Denotes that a span is used for emphasizing the URL.
      */
     @VisibleForTesting
-    interface UrlEmphasisSpan {
-    }
+    public interface UrlEmphasisSpan {}
 
     /**
      * Used for emphasizing the URL text by changing the text color.
@@ -103,12 +102,25 @@ public class OmniboxUrlEmphasizer {
     @VisibleForTesting
     static class UrlEmphasisColorSpan extends ForegroundColorSpan
             implements UrlEmphasisSpan {
+        private int mEmphasisColor;
 
         /**
          * @param color The color to set the text.
          */
         public UrlEmphasisColorSpan(int color) {
             super(color);
+            mEmphasisColor = color;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof UrlEmphasisColorSpan)) return false;
+            return ((UrlEmphasisColorSpan) obj).mEmphasisColor == mEmphasisColor;
+        }
+
+        @Override
+        public String toString() {
+            return getClass().getName() + ", color: " + mEmphasisColor;
         }
     }
 
@@ -118,6 +130,10 @@ public class OmniboxUrlEmphasizer {
     @VisibleForTesting
     static class UrlEmphasisSecurityErrorSpan extends StrikethroughSpan
             implements UrlEmphasisSpan {
+        @Override
+        public boolean equals(Object obj) {
+            return obj instanceof UrlEmphasisSecurityErrorSpan;
+        }
     }
 
     /**
@@ -167,18 +183,22 @@ public class OmniboxUrlEmphasizer {
                         // Draw attention to the data: URI scheme for anti-spoofing reasons.
                         if (UrlConstants.DATA_SCHEME.equals(
                                     emphasizeResponse.extractScheme(urlString))) {
-                            colorId = useDarkColors ? R.color.url_emphasis_default_text
-                                                    : R.color.url_emphasis_light_default_text;
+                            colorId = useDarkColors ? R.color.default_text_color_dark
+                                                    : R.color.default_text_color_light;
                         }
                         break;
                     case ConnectionSecurityLevel.DANGEROUS:
-                        if (emphasizeScheme) colorId = R.color.google_red_700;
+                        if (emphasizeScheme)
+                            colorId = useDarkColors ? R.color.default_red_dark
+                                                    : R.color.default_red_light;
                         strikeThroughScheme = true;
                         break;
                     case ConnectionSecurityLevel.EV_SECURE:
                     // Intentional fall-through:
                     case ConnectionSecurityLevel.SECURE:
-                        if (emphasizeScheme) colorId = R.color.google_green_700;
+                        if (emphasizeScheme)
+                            colorId = useDarkColors ? R.color.default_green_dark
+                                                    : R.color.default_green_light;
                         break;
                     default:
                         assert false;

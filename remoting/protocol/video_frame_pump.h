@@ -86,6 +86,7 @@ class VideoFramePump : public VideoStream,
   void SetLosslessEncode(bool want_lossless) override;
   void SetLosslessColor(bool want_lossless) override;
   void SetObserver(Observer* observer) override;
+  void SelectSource(int id) override;
 
   protocol::VideoFeedbackStub* video_feedback_stub() {
     return &capture_scheduler_;
@@ -168,7 +169,7 @@ class VideoFramePump : public VideoStream,
 
   // Timer used to ensure that we send empty keep-alive frames to the client
   // even when the video stream is paused or encoder is busy.
-  base::Timer keep_alive_timer_;
+  base::RetainingOneShotTimer keep_alive_timer_;
 
   // CaptureScheduler calls CaptureNextFrame() whenever a new frame needs to be
   // captured.

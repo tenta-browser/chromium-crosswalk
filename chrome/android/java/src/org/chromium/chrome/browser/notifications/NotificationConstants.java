@@ -30,12 +30,12 @@ public class NotificationConstants {
      * it *must* also be set in {@link NotificationJobService#getJobExtrasFromIntent(Intent)}
      */
     public static final String EXTRA_NOTIFICATION_ID = "notification_id";
+    static final String EXTRA_NOTIFICATION_TYPE = "notification_type";
     static final String EXTRA_NOTIFICATION_INFO_ORIGIN = "notification_info_origin";
     static final String EXTRA_NOTIFICATION_INFO_SCOPE = "notification_info_scope";
     static final String EXTRA_NOTIFICATION_INFO_PROFILE_ID = "notification_info_profile_id";
     static final String EXTRA_NOTIFICATION_INFO_PROFILE_INCOGNITO =
             "notification_info_profile_incognito";
-    static final String EXTRA_NOTIFICATION_INFO_TAG = "notification_info_tag";
     static final String EXTRA_NOTIFICATION_INFO_ACTION_INDEX = "notification_info_action_index";
     static final String EXTRA_NOTIFICATION_INFO_WEBAPK_PACKAGE = "notification_info_webapk_package";
     static final String EXTRA_NOTIFICATION_REPLY = "notification_reply";
@@ -70,6 +70,19 @@ public class NotificationConstants {
     public static final int NOTIFICATION_ID_WEBAPP_ACTIONS = 5;
 
     /**
+     * Unique identifier for the persistent notification displayed while a Trusted Web Activity is
+     * in foreground. No longer used.
+     */
+    @SuppressWarnings("unused")
+    public static final int NOTIFICATION_ID_TWA_PERSISTENT = 6;
+
+    /**
+     * Unique identifier for notification shown in VR if Chrome's VR browser is still getting ready
+     * and cannot be accessed yet.
+     */
+    public static final int NOTIFICATION_ID_PREPARING_VR = 7;
+
+    /**
      * Unique identifier for the summary notification for downloads.  Using the ID this summary was
      * going to have before it was migrated here.
      * TODO(dtrainor): Clean up this ID and make sure it's in line with existing id counters without
@@ -78,10 +91,22 @@ public class NotificationConstants {
     public static final int NOTIFICATION_ID_DOWNLOAD_SUMMARY = 999999;
 
     /**
-     * Separator used to separate the notification origin from additional data such as the
-     * developer specified tag.
+     * Unique identifier for a single update notification.
      */
-    static final String NOTIFICATION_TAG_SEPARATOR = ";";
+    public static final int NOTIFICATION_ID_UPDATE = 8;
+
+    /**
+     * Unique identifier for ClickToCall notifications.
+     */
+    public static final int NOTIFICATION_ID_CLICK_TO_CALL = 9;
+
+    /**
+     * Separator used to separate the notification origin from additional data such as the
+     * developer specified tag. This and the prefix following it need to be the same as the one
+     * specified in notification_id_generator.cc.
+     */
+    static final String NOTIFICATION_TAG_SEPARATOR = "#";
+    static final String PERSISTENT_NOTIFICATION_TAG_PREFIX = "p";
 
     /**
      * Key for retrieving the results of user input from notification text action intents.
@@ -96,6 +121,8 @@ public class NotificationConstants {
     public static final String GROUP_MEDIA_REMOTE = "MediaRemote";
     public static final String GROUP_SYNC = "Sync";
     public static final String GROUP_WEBAPK = "WebApk";
+    public static final String GROUP_SEND_TAB_TO_SELF = "SendTabToSelf";
+    public static final String GROUP_CLICK_TO_CALL = "ClickToCall";
 
     // Web notification group names are set dynamically as this prefix + notification origin.
     // For example, 'Web:chromium.org' for a notification from chromium.org.

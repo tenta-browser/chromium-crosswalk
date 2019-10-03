@@ -21,7 +21,9 @@ namespace chromeos {
 // A class that handles WebUI hooks in Gaia screen.
 class UserBoardScreenHandler : public BaseScreenHandler, public UserBoardView {
  public:
-  UserBoardScreenHandler();
+  using TView = UserBoardView;
+
+  explicit UserBoardScreenHandler(JSCallsContainer* js_calls_container);
   ~UserBoardScreenHandler() override;
 
  private:
@@ -36,7 +38,6 @@ class UserBoardScreenHandler : public BaseScreenHandler, public UserBoardView {
   // Handlers
   void HandleHardlockPod(const AccountId& account_id);
   void HandleAttemptUnlock(const AccountId& account_id);
-  void HandleRecordClickOnLockIcon(const AccountId& account_id);
 
   // UserBoardView implementation:
   void SetPublicSessionDisplayName(const AccountId& account_id,
@@ -45,7 +46,10 @@ class UserBoardScreenHandler : public BaseScreenHandler, public UserBoardView {
                                std::unique_ptr<base::ListValue> locales,
                                const std::string& default_locale,
                                bool multiple_recommended_locales) override;
-  void ShowBannerMessage(const base::string16& message) override;
+  void SetPublicSessionShowFullManagementDisclosure(
+      bool show_full_management_disclosure) override;
+  void ShowBannerMessage(const base::string16& message,
+                         bool is_warning) override;
   void ShowUserPodCustomIcon(
       const AccountId& account_id,
       const proximity_auth::ScreenlockBridge::UserPodCustomIconOptions&

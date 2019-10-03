@@ -85,17 +85,17 @@ public class Client implements InputStub {
     }
 
     /** Attempts to form a connection to the user-selected host. */
-    public void connectToHost(String username, String authToken, String hostJid,
+    public void connectToHost(String username, String authToken, String hostJid, String hostFtlId,
             String hostId, String hostPubkey, SessionAuthenticator authenticator, String flags,
             String hostVersion, String hostOs, String hostOsVersion, ConnectionListener listener) {
         disconnectFromHost();
 
         mConnectionListener = listener;
         mAuthenticator = authenticator;
-        nativeConnect(mNativeJniClient, username, authToken, hostJid,
-                hostId, hostPubkey, mAuthenticator.getPairingId(hostId),
-                mAuthenticator.getPairingSecret(hostId), mCapabilityManager.getLocalCapabilities(),
-                flags, hostVersion, hostOs, hostOsVersion);
+        nativeConnect(mNativeJniClient, username, authToken, hostJid, hostFtlId, hostId, hostPubkey,
+                mAuthenticator.getPairingId(hostId), mAuthenticator.getPairingSecret(hostId),
+                mCapabilityManager.getLocalCapabilities(), flags, hostVersion, hostOs,
+                hostOsVersion);
         mConnected = true;
     }
 
@@ -125,9 +125,8 @@ public class Client implements InputStub {
 
     /** Called whenever the connection status changes. */
     @CalledByNative
-    void onConnectionState(int stateCode, int errorCode) {
-        ConnectionListener.State state = ConnectionListener.State.fromValue(stateCode);
-        ConnectionListener.Error error = ConnectionListener.Error.fromValue(errorCode);
+    void onConnectionState(
+            @ConnectionListener.State int state, @ConnectionListener.Error int error) {
         mConnectionListener.onConnectionState(state, error);
         if (state == ConnectionListener.State.FAILED || state == ConnectionListener.State.CLOSED) {
             // Disconnect from the host here, otherwise the next time connectToHost() is called,
@@ -216,12 +215,12 @@ public class Client implements InputStub {
 
     /** Sends an array of TouchEvents to the host. */
     @Override
-    public void sendTouchEvent(TouchEventData.EventType eventType, TouchEventData[] data) {
+    public void sendTouchEvent(@TouchEventData.EventType int eventType, TouchEventData[] data) {
         if (!mConnected) {
             return;
         }
 
-        nativeSendTouchEvent(mNativeJniClient, eventType.value(), data);
+        nativeSendTouchEvent(mNativeJniClient, eventType, data);
     }
 
     /**
@@ -292,15 +291,31 @@ public class Client implements InputStub {
         nativeSendExtensionMessage(mNativeJniClient, type, data);
     }
 
+    /**
+     * Sends client resolution to the host so that the host can resize itself to fit the client
+     * without showing letterboxes.
+     *
+     * @param dipsWidth The width of the screen in density independent pixels.
+     * @param dipsHeight The height of the screen in density independent pixels.
+     * @param density The pixel density of the screen.
+     */
+    public void sendClientResolution(int dipsWidth, int dipsHeight, float density) {
+        if (!mConnected) {
+            return;
+        }
+
+        nativeSendClientResolution(mNativeJniClient, dipsWidth, dipsHeight, density);
+    }
+
     private native long nativeInit();
 
     private native void nativeDestroy(long nativeJniClient);
 
     /** Performs the native portion of the connection. */
-    private native void nativeConnect(long nativeJniClient,
-            String username, String authToken, String hostJid, String hostId, String hostPubkey,
-            String pairId, String pairSecret, String capabilities, String flags,
-            String hostVersion, String hostOs, String hostOsVersion);
+    private native void nativeConnect(long nativeJniClient, String username, String authToken,
+            String hostJid, String hostFtlId, String hostId, String hostPubkey, String pairId,
+            String pairSecret, String capabilities, String flags, String hostVersion, String hostOs,
+            String hostOsVersion);
 
     /** Native implementation of Client.handleAuthenticationResponse(). */
     private native void nativeAuthenticationResponse(
@@ -336,4 +351,8 @@ public class Client implements InputStub {
 
     /** Passes extension message to the native code. */
     private native void nativeSendExtensionMessage(long nativeJniClient, String type, String data);
+
+    /** Sends client resolution to the host. */
+    private native void nativeSendClientResolution(
+            long nativeJniClient, int dipsWidth, int dipsHeight, float scale);
 }

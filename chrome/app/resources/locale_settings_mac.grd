@@ -132,6 +132,11 @@
         Times
       </message>
 
+      <!-- The default value for |WebPreference::ntp_font_family| -->
+      <message name="IDS_NTP_FONT_FAMILY" use_name_for_id="true">
+        Roboto
+      </message>
+
       <!-- The default value for |WebPreference::sans_serif_font_family| -->
       <message name="IDS_SANS_SERIF_FONT_FAMILY" use_name_for_id="true">
         Helvetica
@@ -240,16 +245,6 @@
            Traditional Chinese script.  -->
       <message name="IDS_CURSIVE_FONT_FAMILY_TRADITIONAL_HAN" use_name_for_id="true">
         Kaiti TC
-      </message>
-
-      <!-- The default value for |WebPreference::default_font_size| -->
-      <message name="IDS_DEFAULT_FONT_SIZE" use_name_for_id="true">
-        16
-      </message>
-
-      <!-- The default value for |WebPreference::default_fixed_font_size| -->
-      <message name="IDS_DEFAULT_FIXED_FONT_SIZE" use_name_for_id="true">
-        13
       </message>
 
       <!-- The default value for |WebPreference::minimum_font_size| -->

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright (c) 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,37 +7,113 @@
 
 namespace gpu {
 
-// Test that an empty GPUInfo has valid members
-TEST(GPUInfoBasicTest, EmptyGPUInfo) {
+namespace {
+// This overrides the base class to test behaviors of virtual functions.
+class TestGPUInfoEnumerator : public gpu::GPUInfo::Enumerator {
+ public:
+  TestGPUInfoEnumerator()
+      : gpu_device_active_(false),
+        video_decode_accelerator_profile_active_(false),
+        video_encode_accelerator_profile_active_(false),
+        image_decode_accelerator_profile_active_(false),
+        dx12_vulkan_version_info_active_(false),
+        aux_attributes_active_(false) {}
+
+  void AddInt64(const char* name, int64_t value) override {}
+
+  void AddInt(const char* name, int value) override {}
+
+  void AddString(const char* name, const std::string& value) override {}
+
+  void AddBool(const char* name, bool value) override {}
+
+  void AddTimeDeltaInSecondsF(const char* name,
+                              const base::TimeDelta& value) override {}
+
+  // Enumerator state mutator functions
+  void BeginGPUDevice() override { gpu_device_active_ = true; }
+
+  void EndGPUDevice() override { gpu_device_active_ = false; }
+
+  void BeginVideoDecodeAcceleratorSupportedProfile() override {
+    video_decode_accelerator_profile_active_ = true;
+  }
+
+  void EndVideoDecodeAcceleratorSupportedProfile() override {
+    video_decode_accelerator_profile_active_ = false;
+  }
+
+  void BeginVideoEncodeAcceleratorSupportedProfile() override {
+    video_encode_accelerator_profile_active_ = true;
+  }
+
+  void EndVideoEncodeAcceleratorSupportedProfile() override {
+    video_encode_accelerator_profile_active_ = false;
+  }
+
+  void BeginImageDecodeAcceleratorSupportedProfile() override {
+    image_decode_accelerator_profile_active_ = true;
+  }
+
+  void EndImageDecodeAcceleratorSupportedProfile() override {
+    image_decode_accelerator_profile_active_ = false;
+  }
+
+  void BeginDx12VulkanVersionInfo() override {
+    dx12_vulkan_version_info_active_ = true;
+  }
+
+  void EndDx12VulkanVersionInfo() override {
+    dx12_vulkan_version_info_active_ = false;
+  }
+
+  void BeginAuxAttributes() override { aux_attributes_active_ = true; }
+
+  void EndAuxAttributes() override { aux_attributes_active_ = false; }
+
+  // Accessor functions
+  bool gpu_device_active() const { return gpu_device_active_; }
+
+  bool video_decode_accelerator_profile_active() const {
+    return video_decode_accelerator_profile_active_;
+  }
+
+  bool video_encode_accelerator_profile_active() const {
+    return video_encode_accelerator_profile_active_;
+  }
+
+  bool image_decode_accelerator_profile_active() const {
+    return image_decode_accelerator_profile_active_;
+  }
+
+  bool dx12_vulkan_version_info_active() const {
+    return dx12_vulkan_version_info_active_;
+  }
+
+  bool aux_attributes_active() const { return aux_attributes_active_; }
+
+ private:
+  bool gpu_device_active_;
+  bool video_decode_accelerator_profile_active_;
+  bool video_encode_accelerator_profile_active_;
+  bool image_decode_accelerator_profile_active_;
+  bool dx12_vulkan_version_info_active_;
+  bool aux_attributes_active_;
+};
+}  // namespace
+
+// Makes sure that after EnumerateFields is called, the field edit states
+// are inactive
+TEST(GpuInfoTest, FieldEditStates) {
   GPUInfo gpu_info;
-  EXPECT_EQ(gpu_info.initialization_time.ToInternalValue(), 0);
-  EXPECT_EQ(gpu_info.gpu.vendor_id, 0u);
-  EXPECT_EQ(gpu_info.gpu.device_id, 0u);
-  EXPECT_EQ(gpu_info.secondary_gpus.size(), 0u);
-  EXPECT_EQ(gpu_info.driver_vendor, "");
-  EXPECT_EQ(gpu_info.driver_version, "");
-  EXPECT_EQ(gpu_info.driver_date, "");
-  EXPECT_EQ(gpu_info.pixel_shader_version, "");
-  EXPECT_EQ(gpu_info.vertex_shader_version, "");
-  EXPECT_EQ(gpu_info.max_msaa_samples, "");
-  EXPECT_EQ(gpu_info.gl_version, "");
-  EXPECT_EQ(gpu_info.gl_vendor, "");
-  EXPECT_EQ(gpu_info.gl_renderer, "");
-  EXPECT_EQ(gpu_info.gl_extensions, "");
-  EXPECT_EQ(gpu_info.gl_ws_vendor, "");
-  EXPECT_EQ(gpu_info.gl_ws_version, "");
-  EXPECT_EQ(gpu_info.gl_ws_extensions, "");
-  EXPECT_EQ(gpu_info.basic_info_state, kCollectInfoNone);
-  EXPECT_EQ(gpu_info.context_info_state, kCollectInfoNone);
-#if defined(OS_WIN)
-  EXPECT_EQ(gpu_info.dx_diagnostics_info_state, kCollectInfoNone);
-#endif
-  EXPECT_EQ(gpu_info.video_decode_accelerator_capabilities.flags, 0u);
-  EXPECT_EQ(
-      gpu_info.video_decode_accelerator_capabilities.supported_profiles.size(),
-      0u);
-  EXPECT_EQ(gpu_info.video_encode_accelerator_supported_profiles.size(), 0u);
+  TestGPUInfoEnumerator enumerator;
+  gpu_info.EnumerateFields(&enumerator);
+  EXPECT_FALSE(enumerator.gpu_device_active());
+  EXPECT_FALSE(enumerator.video_decode_accelerator_profile_active());
+  EXPECT_FALSE(enumerator.video_encode_accelerator_profile_active());
+  EXPECT_FALSE(enumerator.image_decode_accelerator_profile_active());
+  EXPECT_FALSE(enumerator.dx12_vulkan_version_info_active());
+  EXPECT_FALSE(enumerator.aux_attributes_active());
 }
 
 }  // namespace gpu
-

@@ -4,10 +4,10 @@
 
 #include "components/viz/test/viz_test_suite.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_id_name_manager.h"
 #include "components/viz/test/paths.h"
+#include "components/viz/test/test_gpu_service_holder.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 namespace viz {
@@ -20,12 +20,12 @@ VizTestSuite::~VizTestSuite() = default;
 void VizTestSuite::Initialize() {
   base::TestSuite::Initialize();
   gl::GLSurfaceTestSupport::InitializeOneOff();
+  TestGpuServiceHolder::DestroyInstanceAfterEachTest();
   Paths::RegisterPathProvider();
 
-  message_loop_ = base::MakeUnique<base::MessageLoop>();
+  message_loop_ = std::make_unique<base::MessageLoop>();
 
-  base::ThreadIdNameManager::GetInstance()->SetName(
-      base::PlatformThread::CurrentId(), "Main");
+  base::ThreadIdNameManager::GetInstance()->SetName("Main");
 
   base::DiscardableMemoryAllocator::SetInstance(&discardable_memory_allocator_);
 }

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/extensions/extension_dialog.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -11,9 +12,26 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "ui/base/test/ui_controls.h"
 
-using ExtensionDialogUiTest = ExtensionBrowserTest;
+namespace {
 
-IN_PROC_BROWSER_TEST_F(ExtensionDialogUiTest, TabFocusLoop) {
+class ExtensionDialogUiTest : public extensions::ExtensionBrowserTest {
+ public:
+  ExtensionDialogUiTest() = default;
+  ~ExtensionDialogUiTest() override = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ExtensionDialogUiTest);
+};
+
+}  // namespace
+
+#if defined(OS_MACOSX)
+// Focusing or input is not completely working on Mac: http://crbug.com/824418
+#define MAYBE_TabFocusLoop DISABLED_TabFocusLoop
+#else
+#define MAYBE_TabFocusLoop TabFocusLoop
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionDialogUiTest, MAYBE_TabFocusLoop) {
   ExtensionTestMessageListener init_listener("ready", false /* will_reply */);
   ExtensionTestMessageListener button1_focus_listener("button1-focused", false);
   ExtensionTestMessageListener button2_focus_listener("button2-focused", false);
@@ -28,15 +46,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionDialogUiTest, TabFocusLoop) {
   // The main.html contains three buttons.
   ExtensionDialog* dialog = ExtensionDialog::Show(
       extension->url().Resolve("main.html"),
-      browser()->window()->GetNativeWindow(), browser()->profile(),
-      NULL, 300, 300, 300, 300, base::string16(), NULL);
+      browser()->window()->GetNativeWindow(), browser()->profile(), nullptr,
+      true, 300, 300, 300, 300, base::string16(), nullptr);
   ASSERT_TRUE(dialog);
   ASSERT_TRUE(init_listener.WaitUntilSatisfied());
 
   // Focus the second button.
-  ASSERT_TRUE(content::ExecuteScript(
-                  dialog->host()->render_view_host(),
-                  "document.querySelector('#button2').focus()"));
+  ASSERT_TRUE(
+      content::ExecuteScript(dialog->host()->host_contents(),
+                             "document.querySelector('#button2').focus()"));
   ASSERT_TRUE(button2_focus_listener.WaitUntilSatisfied());
 
   // Pressing TAB should focus the third(last) button.
@@ -56,4 +74,4 @@ IN_PROC_BROWSER_TEST_F(ExtensionDialogUiTest, TabFocusLoop) {
                   browser()->window()->GetNativeWindow(),
                   ui::VKEY_TAB, false, true, false, false));
   ASSERT_TRUE(button3_focus_listener.WaitUntilSatisfied());
-};
+}

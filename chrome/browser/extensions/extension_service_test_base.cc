@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
@@ -15,9 +16,10 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/component_loader.h"
-#include "chrome/browser/extensions/extension_error_reporter.h"
+#include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
@@ -26,12 +28,16 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/crx_file/crx_verifier.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/storage_partition.h"
+#include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/pref_names.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/extensions/install_limiter.h"
@@ -40,9 +46,6 @@
 namespace extensions {
 
 namespace {
-
-// By default, we run on the IO loop.
-const int kThreadOptions = content::TestBrowserThreadBundle::IO_MAINLOOP;
 
 // Create a testing profile according to |params|.
 std::unique_ptr<TestingProfile> BuildTestingProfile(
@@ -80,12 +83,13 @@ ExtensionServiceTestBase::ExtensionServiceInitParams::
         default;
 
 ExtensionServiceTestBase::ExtensionServiceTestBase()
-    : thread_bundle_(kThreadOptions),
+    : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
       service_(nullptr),
       testing_local_state_(TestingBrowserProcess::GetGlobal()),
-      registry_(nullptr) {
+      registry_(nullptr),
+      verifier_format_override_(crx_file::VerifierFormat::CRX3) {
   base::FilePath test_data_dir;
-  if (!PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir)) {
+  if (!base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir)) {
     ADD_FAILURE();
     return;
   }
@@ -131,7 +135,8 @@ void ExtensionServiceTestBase::InitializeExtensionService(
 
   // Garbage collector is typically NULL during tests, so give it a build.
   ExtensionGarbageCollectorFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile_.get(), &ExtensionGarbageCollectorFactory::BuildInstanceFor);
+      profile_.get(),
+      base::BindRepeating(&ExtensionGarbageCollectorFactory::BuildInstanceFor));
 }
 
 void ExtensionServiceTestBase::InitializeEmptyExtensionService() {
@@ -190,7 +195,7 @@ void ExtensionServiceTestBase::
 
 size_t ExtensionServiceTestBase::GetPrefKeyCount() {
   const base::DictionaryValue* dict =
-      profile()->GetPrefs()->GetDictionary("extensions.settings");
+      profile()->GetPrefs()->GetDictionary(pref_names::kExtensions);
   if (!dict) {
     ADD_FAILURE();
     return 0;
@@ -212,7 +217,7 @@ testing::AssertionResult ExtensionServiceTestBase::ValidateBooleanPref(
 
   PrefService* prefs = profile()->GetPrefs();
   const base::DictionaryValue* dict =
-      prefs->GetDictionary("extensions.settings");
+      prefs->GetDictionary(pref_names::kExtensions);
   if (!dict) {
     return testing::AssertionFailure()
         << "extension.settings does not exist " << msg;
@@ -239,13 +244,13 @@ void ExtensionServiceTestBase::ValidateIntegerPref(
     const std::string& extension_id,
     const std::string& pref_path,
     int expected_val) {
-  std::string msg = base::StringPrintf("while checking: %s %s == %s",
-                                       extension_id.c_str(), pref_path.c_str(),
-                                       base::IntToString(expected_val).c_str());
+  std::string msg = base::StringPrintf(
+      "while checking: %s %s == %s", extension_id.c_str(), pref_path.c_str(),
+      base::NumberToString(expected_val).c_str());
 
   PrefService* prefs = profile()->GetPrefs();
   const base::DictionaryValue* dict =
-      prefs->GetDictionary("extensions.settings");
+      prefs->GetDictionary(pref_names::kExtensions);
   ASSERT_TRUE(dict != NULL) << msg;
   const base::DictionaryValue* pref = NULL;
   ASSERT_TRUE(dict->GetDictionary(extension_id, &pref)) << msg;
@@ -264,7 +269,7 @@ void ExtensionServiceTestBase::ValidateStringPref(
                                        expected_val.c_str());
 
   const base::DictionaryValue* dict =
-      profile()->GetPrefs()->GetDictionary("extensions.settings");
+      profile()->GetPrefs()->GetDictionary(pref_names::kExtensions);
   ASSERT_TRUE(dict != NULL) << msg;
   const base::DictionaryValue* pref = NULL;
   std::string manifest_path = extension_id + ".manifest";
@@ -276,12 +281,24 @@ void ExtensionServiceTestBase::ValidateStringPref(
 }
 
 void ExtensionServiceTestBase::SetUp() {
-  ExtensionErrorReporter::GetInstance()->ClearErrors();
+  LoadErrorReporter::GetInstance()->ClearErrors();
+
+  // Force TabManager/TabLifecycleUnitSource creation.
+  g_browser_process->resource_coordinator_parts();
+}
+
+void ExtensionServiceTestBase::TearDown() {
+  if (profile_) {
+    auto* partition =
+        content::BrowserContext::GetDefaultStoragePartition(profile_.get());
+    if (partition)
+      partition->WaitForDeletionTasksForTesting();
+  }
 }
 
 void ExtensionServiceTestBase::SetUpTestCase() {
   // Safe to call multiple times.
-  ExtensionErrorReporter::Init(false);  // no noisy errors.
+  LoadErrorReporter::Init(false);  // no noisy errors.
 }
 
 // These are declared in the .cc so that all inheritors don't need to know

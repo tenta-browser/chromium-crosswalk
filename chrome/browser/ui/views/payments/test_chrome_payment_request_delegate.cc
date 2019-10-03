@@ -11,29 +11,27 @@ namespace payments {
 TestChromePaymentRequestDelegate::TestChromePaymentRequestDelegate(
     content::WebContents* web_contents,
     PaymentRequestDialogView::ObserverForTest* observer,
+    PrefService* pref_service,
     bool is_incognito,
     bool is_valid_ssl,
-    bool is_browser_window_active)
+    bool is_browser_window_active,
+    bool skip_ui_for_basic_card)
     : ChromePaymentRequestDelegate(web_contents),
       region_data_loader_(nullptr),
       observer_(observer),
+      pref_service_(pref_service),
       is_incognito_(is_incognito),
       is_valid_ssl_(is_valid_ssl),
-      is_browser_window_active_(is_browser_window_active) {}
+      is_browser_window_active_(is_browser_window_active),
+      skip_ui_for_basic_card_(skip_ui_for_basic_card) {}
 
 void TestChromePaymentRequestDelegate::ShowDialog(PaymentRequest* request) {
-  PaymentRequestDialogView* dialog_view =
-      new PaymentRequestDialogView(request, observer_);
-  dialog_view->ShowDialog();
-  dialog_ = dialog_view;
+  shown_dialog_ = new PaymentRequestDialogView(request, observer_);
+  shown_dialog_->ShowDialog();
 }
 
 bool TestChromePaymentRequestDelegate::IsIncognito() const {
   return is_incognito_;
-}
-
-bool TestChromePaymentRequestDelegate::IsSslCertificateValid() {
-  return is_valid_ssl_;
 }
 
 autofill::RegionDataLoader*
@@ -43,8 +41,21 @@ TestChromePaymentRequestDelegate::GetRegionDataLoader() {
   return ChromePaymentRequestDelegate::GetRegionDataLoader();
 }
 
+PrefService* TestChromePaymentRequestDelegate::GetPrefService() {
+  return pref_service_;
+}
+
 bool TestChromePaymentRequestDelegate::IsBrowserWindowActive() const {
   return is_browser_window_active_;
+}
+
+std::string
+TestChromePaymentRequestDelegate::GetInvalidSslCertificateErrorMessage() {
+  return is_valid_ssl_ ? "" : "Invalid SSL certificate";
+}
+
+bool TestChromePaymentRequestDelegate::SkipUiForBasicCard() const {
+  return skip_ui_for_basic_card_;
 }
 
 }  // namespace payments

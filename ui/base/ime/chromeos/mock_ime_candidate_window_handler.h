@@ -7,13 +7,14 @@
 
 #include <stdint.h>
 
+#include "base/component_export.h"
 #include "ui/base/ime/candidate_window.h"
-#include "ui/base/ime/chromeos/ime_candidate_window_handler_interface.h"
-#include "ui/base/ime/ui_base_ime_export.h"
+#include "ui/base/ime/ime_candidate_window_handler_interface.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace chromeos {
 
-class UI_BASE_IME_EXPORT MockIMECandidateWindowHandler
+class COMPONENT_EXPORT(UI_BASE_IME_CHROMEOS) MockIMECandidateWindowHandler
     : public IMECandidateWindowHandlerInterface {
  public:
   struct UpdateLookupTableArg {
@@ -37,6 +38,7 @@ class UI_BASE_IME_EXPORT MockIMECandidateWindowHandler
                          bool visible) override;
   void SetCursorBounds(const gfx::Rect& cursor_bounds,
                        const gfx::Rect& composition_head) override;
+  gfx::Rect GetCursorBounds() const override;
 
   int set_cursor_bounds_call_count() const {
     return set_cursor_bounds_call_count_;

@@ -18,11 +18,11 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <random>
 #include <string>
 #include <vector>
 
 #include "base/numerics/safe_conversions.h"
-#include "base/rand_util.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "test/scoped_temp_dir.h"
@@ -36,20 +36,28 @@ class MockDatabase : public CrashReportDatabase {
  public:
   // CrashReportDatabase:
   MOCK_METHOD0(GetSettings, Settings*());
-  MOCK_METHOD1(PrepareNewCrashReport, OperationStatus(NewReport**));
-  MOCK_METHOD2(FinishedWritingCrashReport, OperationStatus(NewReport*, UUID*));
-  MOCK_METHOD1(ErrorWritingCrashReport, OperationStatus(NewReport*));
+  MOCK_METHOD1(PrepareNewCrashReport,
+               OperationStatus(std::unique_ptr<NewReport>*));
   MOCK_METHOD2(LookUpCrashReport, OperationStatus(const UUID&, Report*));
   MOCK_METHOD1(GetPendingReports, OperationStatus(std::vector<Report>*));
   MOCK_METHOD1(GetCompletedReports, OperationStatus(std::vector<Report>*));
-  MOCK_METHOD2(GetReportForUploading,
-               OperationStatus(const UUID&, const Report**));
+  MOCK_METHOD3(GetReportForUploading,
+               OperationStatus(const UUID&,
+                               std::unique_ptr<const UploadReport>*,
+                               bool report_metrics));
   MOCK_METHOD3(RecordUploadAttempt,
-               OperationStatus(const Report*, bool, const std::string&));
+               OperationStatus(UploadReport*, bool, const std::string&));
   MOCK_METHOD2(SkipReportUpload,
                OperationStatus(const UUID&, Metrics::CrashSkippedReason));
   MOCK_METHOD1(DeleteReport, OperationStatus(const UUID&));
   MOCK_METHOD1(RequestUpload, OperationStatus(const UUID&));
+
+  // gmock doesn't support mocking methods with non-copyable types such as
+  // unique_ptr.
+  OperationStatus FinishedWritingCrashReport(std::unique_ptr<NewReport> report,
+                                             UUID* uuid) override {
+    return kNoError;
+  }
 };
 
 time_t NDaysAgo(int num_days) {
@@ -73,56 +81,49 @@ TEST(PruneCrashReports, AgeCondition) {
 }
 
 TEST(PruneCrashReports, SizeCondition) {
-  ScopedTempDir temp_dir;
-
   CrashReportDatabase::Report report_1k;
-  report_1k.file_path = temp_dir.path().Append(FILE_PATH_LITERAL("file1024"));
+  report_1k.total_size = 1024u;
   CrashReportDatabase::Report report_3k;
-  report_3k.file_path = temp_dir.path().Append(FILE_PATH_LITERAL("file3072"));
+  report_3k.total_size = 1024u * 3u;
+  CrashReportDatabase::Report report_unset_size;
 
   {
-    ScopedFileHandle scoped_file_1k(
-        LoggingOpenFileForWrite(report_1k.file_path,
-                                FileWriteMode::kCreateOrFail,
-                                FilePermissions::kOwnerOnly));
-    ASSERT_TRUE(scoped_file_1k.is_valid());
-
-    std::string string;
-    for (int i = 0; i < 128; ++i)
-      string.push_back(static_cast<char>(i));
-
-    for (size_t i = 0; i < 1024; i += string.size()) {
-      ASSERT_TRUE(LoggingWriteFile(scoped_file_1k.get(),
-                                   string.c_str(), string.length()));
-    }
-
-    ScopedFileHandle scoped_file_3k(
-        LoggingOpenFileForWrite(report_3k.file_path,
-                                FileWriteMode::kCreateOrFail,
-                                FilePermissions::kOwnerOnly));
-    ASSERT_TRUE(scoped_file_3k.is_valid());
-
-    for (size_t i = 0; i < 3072; i += string.size()) {
-      ASSERT_TRUE(LoggingWriteFile(scoped_file_3k.get(),
-                                   string.c_str(), string.length()));
-    }
-  }
-
-  {
-    DatabaseSizePruneCondition condition(1);
+    DatabaseSizePruneCondition condition(/*max_size_in_kb=*/1);
+    // |report_1k| should not be pruned as the cumulated size is not past 1kB
+    // yet.
     EXPECT_FALSE(condition.ShouldPruneReport(report_1k));
-    EXPECT_TRUE(condition.ShouldPruneReport(report_1k));
-  }
-
-  {
-    DatabaseSizePruneCondition condition(1);
+    // |report_3k| should be pruned as the cumulated size is now past 1kB.
     EXPECT_TRUE(condition.ShouldPruneReport(report_3k));
   }
 
   {
-    DatabaseSizePruneCondition condition(6);
+    DatabaseSizePruneCondition condition(/*max_size_in_kb=*/1);
+    // |report_3k| should be pruned as the cumulated size is already past 1kB.
+    EXPECT_TRUE(condition.ShouldPruneReport(report_3k));
+  }
+
+  {
+    DatabaseSizePruneCondition condition(/*max_size_in_kb=*/6);
+    // |report_3k| should not be pruned as the cumulated size is not past 6kB
+    // yet.
     EXPECT_FALSE(condition.ShouldPruneReport(report_3k));
+    // |report_3k| should not be pruned as the cumulated size is not past 6kB
+    // yet.
     EXPECT_FALSE(condition.ShouldPruneReport(report_3k));
+    // |report_1k| should be pruned as the cumulated size is now past 6kB.
+    EXPECT_TRUE(condition.ShouldPruneReport(report_1k));
+  }
+
+  {
+    DatabaseSizePruneCondition condition(/*max_size_in_kb=*/0);
+    // |report_unset_size| should not be pruned as its size is 0, regardless of
+    // how many times we try to prune it.
+    EXPECT_FALSE(condition.ShouldPruneReport(report_unset_size));
+    EXPECT_FALSE(condition.ShouldPruneReport(report_unset_size));
+    EXPECT_FALSE(condition.ShouldPruneReport(report_unset_size));
+    EXPECT_FALSE(condition.ShouldPruneReport(report_unset_size));
+    EXPECT_FALSE(condition.ShouldPruneReport(report_unset_size));
+    // |report_1k| should be pruned as the cumulated size is now past 0kB.
     EXPECT_TRUE(condition.ShouldPruneReport(report_1k));
   }
 }
@@ -210,11 +211,8 @@ TEST(PruneCrashReports, PruneOrder) {
     temp.creation_time = NDaysAgo(i * 10);
     reports.push_back(temp);
   }
-  // The randomness from std::rand() is not, so use a better rand() instead.
-  const auto random_generator = [](ptrdiff_t rand_max) {
-    return base::RandInt(0, base::checked_cast<int>(rand_max) - 1);
-  };
-  std::random_shuffle(reports.begin(), reports.end(), random_generator);
+  std::mt19937 urng(std::random_device{}());
+  std::shuffle(reports.begin(), reports.end(), urng);
   std::vector<CrashReportDatabase::Report> pending_reports(
       reports.begin(), reports.begin() + 5);
   std::vector<CrashReportDatabase::Report> completed_reports(

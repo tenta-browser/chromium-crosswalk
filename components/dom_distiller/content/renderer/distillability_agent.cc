@@ -5,18 +5,19 @@
 #include "components/dom_distiller/content/renderer/distillability_agent.h"
 
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "components/dom_distiller/content/common/distillability_service.mojom.h"
+#include "components/dom_distiller/content/common/mojom/distillability_service.mojom.h"
 #include "components/dom_distiller/core/distillable_page_detector.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/dom_distiller/core/page_features.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "content/public/renderer/render_frame.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/platform/WebDistillability.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_distillability.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace dom_distiller {
 
@@ -66,7 +67,7 @@ bool IsLast(bool is_loaded) {
 }
 
 bool IsBlacklisted(const GURL& url) {
-  for (size_t i = 0; i < arraysize(kBlacklist); ++i) {
+  for (size_t i = 0; i < base::size(kBlacklist); ++i) {
     if (base::LowerCaseEqualsASCII(url.host(), kBlacklist[i])) {
       return true;
     }
@@ -78,12 +79,13 @@ bool IsDistillablePageAdaboost(WebDocument& doc,
                                const DistillablePageDetector* detector,
                                const DistillablePageDetector* long_page,
                                bool is_last,
-                               bool exclude_mobile) {
-  WebDistillabilityFeatures features = doc.DistillabilityFeatures();
+                               bool& is_mobile_friendly) {
   GURL parsed_url(doc.Url());
   if (!parsed_url.is_valid()) {
     return false;
   }
+  WebDistillabilityFeatures features = doc.DistillabilityFeatures();
+  is_mobile_friendly = features.is_mobile_friendly;
   std::vector<double> derived = CalculateDerivedFeatures(
       features.open_graph, parsed_url, features.element_count,
       features.anchor_count, features.form_count, features.moz_score,
@@ -98,10 +100,10 @@ bool IsDistillablePageAdaboost(WebDocument& doc,
     int score_int = std::round(score * 100);
     if (score > 0) {
       UMA_HISTOGRAM_COUNTS_1000("DomDistiller.DistillabilityScoreNMF.Positive",
-          score_int);
+                                score_int);
     } else {
       UMA_HISTOGRAM_COUNTS_1000("DomDistiller.DistillabilityScoreNMF.Negative",
-          -score_int);
+                                -score_int);
     }
     if (distillable) {
       // The long-article model is trained with pages that are
@@ -110,10 +112,10 @@ bool IsDistillablePageAdaboost(WebDocument& doc,
       int long_score_int = std::round(long_score * 100);
       if (long_score > 0) {
         UMA_HISTOGRAM_COUNTS_1000("DomDistiller.LongArticleScoreNMF.Positive",
-            long_score_int);
+                                  long_score_int);
       } else {
         UMA_HISTOGRAM_COUNTS_1000("DomDistiller.LongArticleScoreNMF.Negative",
-            -long_score_int);
+                                  -long_score_int);
       }
     }
   }
@@ -122,51 +124,48 @@ bool IsDistillablePageAdaboost(WebDocument& doc,
                (static_cast<unsigned>(distillable) << 1);
   if (is_last) {
     UMA_HISTOGRAM_ENUMERATION("DomDistiller.PageDistillableAfterLoading",
-        bucket, 4);
+                              bucket, 4);
   } else {
     UMA_HISTOGRAM_ENUMERATION("DomDistiller.PageDistillableAfterParsing",
-        bucket, 4);
+                              bucket, 4);
     if (!distillable) {
       UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
-          NOT_ARTICLE, REJECTION_BUCKET_BOUNDARY);
+                                NOT_ARTICLE, REJECTION_BUCKET_BOUNDARY);
     } else if (features.is_mobile_friendly) {
       UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
-          MOBILE_FRIENDLY, REJECTION_BUCKET_BOUNDARY);
+                                MOBILE_FRIENDLY, REJECTION_BUCKET_BOUNDARY);
     } else if (blacklisted) {
       UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
-          BLACKLISTED, REJECTION_BUCKET_BOUNDARY);
+                                BLACKLISTED, REJECTION_BUCKET_BOUNDARY);
     } else if (!long_article) {
       UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
-          TOO_SHORT, REJECTION_BUCKET_BOUNDARY);
+                                TOO_SHORT, REJECTION_BUCKET_BOUNDARY);
     } else {
       UMA_HISTOGRAM_ENUMERATION("DomDistiller.DistillabilityRejection",
-          NOT_REJECTED, REJECTION_BUCKET_BOUNDARY);
+                                NOT_REJECTED, REJECTION_BUCKET_BOUNDARY);
     }
   }
 
   if (blacklisted) {
     return false;
   }
-  if (exclude_mobile && features.is_mobile_friendly) {
-    return false;
-  }
   return distillable && long_article;
 }
 
-bool IsDistillablePage(WebDocument& doc, bool is_last) {
+bool IsDistillablePage(WebDocument& doc,
+                       bool is_last,
+                       bool& is_mobile_friendly) {
   switch (GetDistillerHeuristicsType()) {
     case DistillerHeuristicsType::ALWAYS_TRUE:
       return true;
     case DistillerHeuristicsType::OG_ARTICLE:
       return doc.DistillabilityFeatures().open_graph;
     case DistillerHeuristicsType::ADABOOST_MODEL:
-      return IsDistillablePageAdaboost(
-          doc, DistillablePageDetector::GetNewModel(),
-          DistillablePageDetector::GetLongPageModel(), is_last, true);
     case DistillerHeuristicsType::ALL_ARTICLES:
       return IsDistillablePageAdaboost(
           doc, DistillablePageDetector::GetNewModel(),
-          DistillablePageDetector::GetLongPageModel(), is_last, false);
+          DistillablePageDetector::GetLongPageModel(), is_last,
+          is_mobile_friendly);
     case DistillerHeuristicsType::NONE:
     default:
       return false;
@@ -175,20 +174,18 @@ bool IsDistillablePage(WebDocument& doc, bool is_last) {
 
 }  // namespace
 
-DistillabilityAgent::DistillabilityAgent(
-    content::RenderFrame* render_frame)
-    : RenderFrameObserver(render_frame) {
-}
+DistillabilityAgent::DistillabilityAgent(content::RenderFrame* render_frame)
+    : RenderFrameObserver(render_frame) {}
 
-void DistillabilityAgent::DidMeaningfulLayout(
-    WebMeaningfulLayout layout_type) {
+void DistillabilityAgent::DidMeaningfulLayout(WebMeaningfulLayout layout_type) {
   if (layout_type != WebMeaningfulLayout::kFinishedParsing &&
       layout_type != WebMeaningfulLayout::kFinishedLoading) {
     return;
   }
 
   DCHECK(render_frame());
-  if (!render_frame()->IsMainFrame()) return;
+  if (!render_frame()->IsMainFrame())
+    return;
   DCHECK(render_frame()->GetWebFrame());
   WebDocument doc = render_frame()->GetWebFrame()->GetDocument();
   if (doc.IsNull() || doc.Body().IsNull())
@@ -197,17 +194,20 @@ void DistillabilityAgent::DidMeaningfulLayout(
     return;
 
   bool is_loaded = layout_type == WebMeaningfulLayout::kFinishedLoading;
-  if (!NeedToUpdate(is_loaded)) return;
+  if (!NeedToUpdate(is_loaded))
+    return;
 
   bool is_last = IsLast(is_loaded);
   // Connect to Mojo service on browser to notify page distillability.
   mojom::DistillabilityServicePtr distillability_service;
-  render_frame()->GetRemoteInterfaces()->GetInterface(
-      &distillability_service);
+  render_frame()->GetRemoteInterfaces()->GetInterface(&distillability_service);
   DCHECK(distillability_service);
-  if (!distillability_service.is_bound()) return;
-  distillability_service->NotifyIsDistillable(
-      IsDistillablePage(doc, is_last), is_last);
+  if (!distillability_service.is_bound())
+    return;
+  bool is_mobile_friendly = false;
+  bool is_distillable = IsDistillablePage(doc, is_last, is_mobile_friendly);
+  distillability_service->NotifyIsDistillable(is_distillable, is_last,
+                                              is_mobile_friendly);
 }
 
 DistillabilityAgent::~DistillabilityAgent() {}

@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
@@ -21,7 +20,6 @@
 #include "components/metrics/metrics_service_client.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "components/ukm/persisted_logs_metrics_impl.h"
 #include "components/ukm/ukm_pref_names.h"
 #include "components/ukm/ukm_rotation_scheduler.h"
 #include "services/metrics/public/cpp/delegating_ukm_recorder.h"
@@ -31,32 +29,44 @@ namespace ukm {
 
 namespace {
 
-// The delay, in seconds, after starting recording before doing expensive
-// initialization work.
-constexpr int kInitializationDelaySeconds = 5;
-
 // Generates a new client id and stores it in prefs.
-uint64_t GenerateClientId(PrefService* pref_service) {
+uint64_t GenerateAndStoreClientId(PrefService* pref_service) {
   uint64_t client_id = 0;
   while (!client_id)
     client_id = base::RandUint64();
-  pref_service->SetInt64(prefs::kUkmClientId, client_id);
+  pref_service->SetUint64(prefs::kUkmClientId, client_id);
 
   // Also reset the session id counter.
   pref_service->SetInteger(prefs::kUkmSessionId, 0);
   return client_id;
 }
 
-uint64_t LoadOrGenerateClientId(PrefService* pref_service) {
-  uint64_t client_id = pref_service->GetInt64(prefs::kUkmClientId);
-  if (!client_id)
-    client_id = GenerateClientId(pref_service);
-  return client_id;
+uint64_t LoadOrGenerateAndStoreClientId(PrefService* pref_service) {
+  uint64_t client_id = pref_service->GetUint64(prefs::kUkmClientId);
+  // The pref is stored as a string and GetUint64() uses base::StringToUint64()
+  // to convert it. base::StringToUint64() will treat a negative value as
+  // underflow, which results in 0 (the minimum Uint64 value).
+  if (client_id) {
+    UMA_HISTOGRAM_BOOLEAN("UKM.MigratedClientIdInt64ToUInt64", false);
+    return client_id;
+  }
+
+  // Since client_id was 0, the pref value may have been negative. Attempt to
+  // get it as an Int64 to migrate it to Uint64.
+  client_id = pref_service->GetInt64(prefs::kUkmClientId);
+  if (client_id) {
+    pref_service->SetUint64(prefs::kUkmClientId, client_id);
+    UMA_HISTOGRAM_BOOLEAN("UKM.MigratedClientIdInt64ToUInt64", true);
+    return client_id;
+  }
+
+  // The client_id is still 0, so it wasn't set.
+  return GenerateAndStoreClientId(pref_service);
 }
 
-int32_t LoadSessionId(PrefService* pref_service) {
+int32_t LoadAndIncrementSessionId(PrefService* pref_service) {
   int32_t session_id = pref_service->GetInteger(prefs::kUkmSessionId);
-  ++session_id;  // increment session id, once per session
+  ++session_id;  // Increment session id, once per session.
   pref_service->SetInteger(prefs::kUkmSessionId, session_id);
   return session_id;
 }
@@ -64,16 +74,17 @@ int32_t LoadSessionId(PrefService* pref_service) {
 }  // namespace
 
 UkmService::UkmService(PrefService* pref_service,
-                       metrics::MetricsServiceClient* client)
+                       metrics::MetricsServiceClient* client,
+                       bool restrict_to_whitelist_entries)
     : pref_service_(pref_service),
+      restrict_to_whitelist_entries_(restrict_to_whitelist_entries),
       client_id_(0),
       session_id_(0),
       report_count_(0),
       client_(client),
       reporting_service_(client, pref_service),
       initialize_started_(false),
-      initialize_complete_(false),
-      self_ptr_factory_(this) {
+      initialize_complete_(false) {
   DCHECK(pref_service_);
   DCHECK(client_);
   DVLOG(1) << "UkmService::Constructor";
@@ -89,8 +100,6 @@ UkmService::UkmService(PrefService* pref_service,
                  base::Unretained(client_));
   scheduler_.reset(new ukm::UkmRotationScheduler(rotate_callback,
                                                  get_upload_interval_callback));
-
-  metrics_providers_.Init();
 
   StoreWhitelistedEntries();
 
@@ -108,10 +117,12 @@ void UkmService::Initialize() {
   DVLOG(1) << "UkmService::Initialize";
   initialize_started_ = true;
 
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&UkmService::StartInitTask, self_ptr_factory_.GetWeakPtr()),
-      base::TimeDelta::FromSeconds(kInitializationDelaySeconds));
+  DCHECK_EQ(0, report_count_);
+  client_id_ = LoadOrGenerateAndStoreClientId(pref_service_);
+  session_id_ = LoadAndIncrementSessionId(pref_service_);
+  metrics_providers_.Init();
+
+  StartInitTask();
 }
 
 void UkmService::EnableReporting() {
@@ -183,12 +194,14 @@ void UkmService::Purge() {
   UkmRecorderImpl::Purge();
 }
 
-// TODO(bmcquade): rename this to something more generic, like
-// ResetClientState. Consider resetting all prefs here.
-void UkmService::ResetClientId() {
+void UkmService::ResetClientState(ResetReason reason) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  client_id_ = GenerateClientId(pref_service_);
-  session_id_ = LoadSessionId(pref_service_);
+
+  UMA_HISTOGRAM_ENUMERATION("UKM.ResetReason", reason);
+
+  client_id_ = GenerateAndStoreClientId(pref_service_);
+  // Note: the session_id has already been cleared by GenerateAndStoreClientId.
+  session_id_ = LoadAndIncrementSessionId(pref_service_);
   report_count_ = 0;
 }
 
@@ -199,7 +212,7 @@ void UkmService::RegisterMetricsProvider(
 
 // static
 void UkmService::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterInt64Pref(prefs::kUkmClientId, 0);
+  registry->RegisterUint64Pref(prefs::kUkmClientId, 0);
   registry->RegisterIntegerPref(prefs::kUkmSessionId, 0);
   UkmReportingService::RegisterPrefs(registry);
 }
@@ -207,10 +220,6 @@ void UkmService::RegisterPrefs(PrefRegistrySimple* registry) {
 void UkmService::StartInitTask() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(1) << "UkmService::StartInitTask";
-  client_id_ = LoadOrGenerateClientId(pref_service_);
-  session_id_ = LoadSessionId(pref_service_);
-  report_count_ = 0;
-
   metrics_providers_.AsyncInit(base::Bind(&UkmService::FinishedInitTask,
                                           self_ptr_factory_.GetWeakPtr()));
 }
@@ -228,6 +237,7 @@ void UkmService::RotateLog() {
   if (!reporting_service_.ukm_log_store()->has_unsent_logs())
     BuildAndStoreLog();
   reporting_service_.Start();
+  scheduler_->RotationFinished();
 }
 
 void UkmService::BuildAndStoreLog() {
@@ -235,8 +245,9 @@ void UkmService::BuildAndStoreLog() {
   DVLOG(1) << "UkmService::BuildAndStoreLog";
 
   // Suppress generating a log if we have no new data to include.
-  // TODO(zhenw): add a histogram here to debug if this case is hitting a lot.
-  if (sources().empty() && entries().empty())
+  bool empty = sources().empty() && entries().empty();
+  UMA_HISTOGRAM_BOOLEAN("UKM.BuildAndStoreLogIsEmpty", empty);
+  if (empty)
     return;
 
   Report report;
@@ -255,6 +266,10 @@ void UkmService::BuildAndStoreLog() {
   std::string serialized_log;
   report.SerializeToString(&serialized_log);
   reporting_service_.ukm_log_store()->StoreLog(serialized_log);
+}
+
+bool UkmService::ShouldRestrictToWhitelistedEntries() const {
+  return restrict_to_whitelist_entries_;
 }
 
 }  // namespace ukm

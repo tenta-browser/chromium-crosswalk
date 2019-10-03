@@ -12,11 +12,11 @@
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/scoped_observer.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
 #include "ui/events/devices/input_device_event_observer.h"
 
 namespace ui {
-class InputDeviceManager;
+class DeviceDataManager;
 enum class StylusState;
 }  // namespace ui
 
@@ -90,13 +90,14 @@ class ASH_EXPORT TrayAction : public mojom::TrayAction,
   std::unique_ptr<LockScreenNoteDisplayStateHandler>
       lock_screen_note_display_state_handler_;
 
-  base::ObserverList<TrayActionObserver> observers_;
+  base::ObserverList<TrayActionObserver>::Unchecked observers_;
 
-  mojo::Binding<mojom::TrayAction> binding_;
+  // Bindings for users of the mojo interface.
+  mojo::BindingSet<mojom::TrayAction> bindings_;
 
   mojom::TrayActionClientPtr tray_action_client_;
 
-  ScopedObserver<ui::InputDeviceManager, ui::InputDeviceEventObserver>
+  ScopedObserver<ui::DeviceDataManager, ui::InputDeviceEventObserver>
       stylus_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TrayAction);

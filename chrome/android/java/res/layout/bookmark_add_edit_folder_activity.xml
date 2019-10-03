@@ -5,10 +5,11 @@
 
 <merge
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:chrome="http://schemas.android.com/apk/res-auto"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:minHeight="@dimen/bookmark_minimum_dialog_size_tablet" >
 
     <ScrollView
+        android:id="@+id/scroll_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:paddingTop="@dimen/toolbar_height_no_shadow"
@@ -20,7 +21,7 @@
             android:orientation="vertical"
             android:clipToPadding="false" >
 
-            <org.chromium.chrome.browser.widget.EmptyAlertEditText
+            <org.chromium.chrome.browser.bookmarks.BookmarkTextInputLayout
                 android:id="@+id/folder_title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -28,10 +29,15 @@
                 android:layout_marginStart="12dp"
                 android:layout_marginTop="24dp"
                 android:hint="@string/title"
-                android:imeOptions="flagNoExtractUi"
-                android:inputType="textCapSentences|textAutoCorrect"
-                android:textAppearance="@style/BlackHeadline1"
-                chrome:alertMessage="@string/bookmark_missing_title"  />
+                app:emptyErrorMessage="@string/bookmark_missing_title">
+
+                <android.support.design.widget.TextInputEditText
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/TextAppearance.BlackHeadline"
+                    android:imeOptions="flagNoExtractUi"
+                    android:inputType="textCapSentences|textAutoCorrect" />
+            </org.chromium.chrome.browser.bookmarks.BookmarkTextInputLayout>
 
             <TextView
                 android:layout_width="wrap_content"
@@ -41,9 +47,7 @@
                 android:layout_marginStart="16dp"
                 android:layout_marginTop="24dp"
                 android:text="@string/bookmark_parent_folder"
-                android:textColor="@color/bookmark_detail_section"
-                android:textSize="@dimen/text_size_medium"
-                android:textStyle="bold" />
+                android:textAppearance="@style/TextAppearance.BlackHint2" />
 
             <TextView
                 android:id="@+id/parent_folder"
@@ -52,8 +56,7 @@
                 android:layout_marginStart="16dp"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="32dp"
-                android:textColor="@color/dark_mode_tint"
-                android:textSize="@dimen/text_size_large" />
+                android:textAppearance="@style/TextAppearance.BlackTitle1" />
         </LinearLayout>
     </ScrollView>
 
@@ -61,13 +64,12 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="@dimen/toolbar_height_no_shadow"
-        style="@style/ModernToolbar"
-        android:background="@color/modern_toolbar_bg" />
+        style="@style/ModernToolbar" />
 
     <View
         android:id="@+id/shadow"
         android:layout_width="match_parent"
-        android:layout_height="4dp"
+        android:layout_height="@dimen/selectable_list_toolbar_shadow_height"
         android:layout_marginTop="@dimen/toolbar_height_no_shadow"
         android:background="@drawable/bookmark_title_bar_shadow"
         android:visibility="gone" />

@@ -31,12 +31,11 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif  // defined(OS_CHROMEOS)
 
 using content::WebContents;
+using content::WebContentsTester;
 
 namespace {
 
@@ -105,7 +104,7 @@ ACTION_P2(CheckListSize, list, expected_list_size) {
 
 ACTION(QuitMessageLoop) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
+      FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
 }
 
 class TabDesktopMediaListTest : public testing::Test {
@@ -121,7 +120,8 @@ class TabDesktopMediaListTest : public testing::Test {
             profile_, content::SiteInstance::Create(profile_)));
     ASSERT_TRUE(contents);
 
-    contents->SetLastActiveTime(base::TimeTicks::Now());
+    WebContentsTester::For(contents.get())
+        ->SetLastActiveTime(base::TimeTicks::Now());
 
     // Get or create the transient NavigationEntry and add a title and a
     // favicon to it.
@@ -130,8 +130,9 @@ class TabDesktopMediaListTest : public testing::Test {
     if (!entry) {
       std::unique_ptr<content::NavigationEntry> entry_new =
           content::NavigationController::CreateNavigationEntry(
-              GURL("chrome://blank"), content::Referrer(),
-              ui::PAGE_TRANSITION_LINK, false, std::string(), profile_);
+              GURL("chrome://blank"), content::Referrer(), base::nullopt,
+              ui::PAGE_TRANSITION_LINK, false, std::string(), profile_,
+              nullptr /* blob_url_loader_factory */);
 
       contents->GetController().SetTransientEntry(std::move(entry_new));
       entry = contents->GetController().GetTransientEntry();
@@ -144,11 +145,12 @@ class TabDesktopMediaListTest : public testing::Test {
         CreateGrayscaleImage(gfx::Size(10, 10), favicon_greyscale);
     entry->GetFavicon() = favicon_info;
 
-    contents_array_.push_back(std::move(contents));
-    tab_strip_model->AppendWebContents(contents_array_.back().get(), false);
+    manually_added_web_contents_.push_back(contents.get());
+    tab_strip_model->AppendWebContents(std::move(contents), true);
   }
 
   void SetUp() override {
+    manually_added_web_contents_.clear();
     rvh_test_enabler_.reset(new content::RenderViewHostTestEnabler());
     // Create a new temporary directory, and store the path.
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -158,7 +160,6 @@ class TabDesktopMediaListTest : public testing::Test {
 #if defined(OS_CHROMEOS)
     base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
     cl->AppendSwitch(switches::kTestType);
-    chromeos::WallpaperManager::Initialize();
 #endif
 
     // Create profile.
@@ -178,15 +179,19 @@ class TabDesktopMediaListTest : public testing::Test {
   }
 
   void TearDown() override {
-    for (auto& contents : contents_array_)
-      contents.reset();
+    // TODO(erikchen): Tearing down the TabStripModel should just delete all its
+    // owned WebContents. Then |manually_added_web_contents_| won't be
+    // necessary. https://crbug.com/832879.
+    TabStripModel* tab_strip_model = browser_->tab_strip_model();
+    for (WebContents* contents : manually_added_web_contents_) {
+      tab_strip_model->DetachWebContentsAt(
+          tab_strip_model->GetIndexOfWebContents(contents));
+    }
+    manually_added_web_contents_.clear();
+
     browser_.reset();
     TestingBrowserProcess::GetGlobal()->SetProfileManager(NULL);
     base::RunLoop().RunUntilIdle();
-
-#if defined(OS_CHROMEOS)
-    chromeos::WallpaperManager::Shutdown();
-#endif
     rvh_test_enabler_.reset();
   }
 
@@ -239,17 +244,16 @@ class TabDesktopMediaListTest : public testing::Test {
   std::unique_ptr<content::RenderViewHostTestEnabler> rvh_test_enabler_;
   Profile* profile_;
   std::unique_ptr<Browser> browser_;
-  std::vector<std::unique_ptr<WebContents>> contents_array_;
 
   // Must be listed before |list_|, so it's destroyed last.
   MockObserver observer_;
   std::unique_ptr<TabDesktopMediaList> list_;
+  std::vector<WebContents*> manually_added_web_contents_;
 
   content::TestBrowserThreadBundle thread_bundle_;
 
 #if defined(OS_CHROMEOS)
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
 
@@ -276,7 +280,15 @@ TEST_F(TabDesktopMediaListTest, RemoveTab) {
 
   TabStripModel* tab_strip_model = browser_->tab_strip_model();
   ASSERT_TRUE(tab_strip_model);
-  tab_strip_model->DetachWebContentsAt(kDefaultSourceCount - 1);
+  std::unique_ptr<WebContents> released_web_contents =
+      tab_strip_model->DetachWebContentsAt(kDefaultSourceCount - 1);
+  for (auto it = manually_added_web_contents_.begin();
+       it != manually_added_web_contents_.end(); ++it) {
+    if (*it == released_web_contents.get()) {
+      manually_added_web_contents_.erase(it);
+      break;
+    }
+  }
 
   EXPECT_CALL(observer_, OnSourceRemoved(list_.get(), 0))
       .WillOnce(
@@ -302,8 +314,8 @@ TEST_F(TabDesktopMediaListTest, MoveTab) {
   ASSERT_TRUE(contents1);
   base::TimeTicks t1 = contents1->GetLastActiveTime();
 
-  contents0->SetLastActiveTime(t1);
-  contents1->SetLastActiveTime(t0);
+  WebContentsTester::For(contents0)->SetLastActiveTime(t1);
+  WebContentsTester::For(contents1)->SetLastActiveTime(t0);
 
   EXPECT_CALL(observer_, OnSourceMoved(list_.get(), 1, 0))
       .WillOnce(testing::DoAll(CheckListSize(list_.get(), kDefaultSourceCount),
@@ -323,7 +335,7 @@ TEST_F(TabDesktopMediaListTest, UpdateTitle) {
   WebContents* contents =
       tab_strip_model->GetWebContentsAt(kDefaultSourceCount - 1);
   ASSERT_TRUE(contents);
-  const content::NavigationController& controller = contents->GetController();
+  content::NavigationController& controller = contents->GetController();
   contents->UpdateTitleForEntry(controller.GetTransientEntry(),
                                 base::ASCIIToUTF16("New test tab"));
 

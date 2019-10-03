@@ -24,7 +24,6 @@
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_registry.h"
 #include "components/policy/policy_constants.h"
-#include "remoting/host/dns_blackhole_checker.h"
 #include "remoting/host/third_party_auth_config.h"
 #include "remoting/protocol/port_range.h"
 
@@ -62,7 +61,7 @@ std::unique_ptr<base::DictionaryValue> CopyValuesAndAddDefaults(
       continue;
     }
 
-    CHECK(value->IsType(i.value().type()));
+    CHECK(value->type() == i.value().type());
     to->Set(i.key(), value->CreateDeepCopy());
   }
 
@@ -163,16 +162,17 @@ std::unique_ptr<base::DictionaryValue> PolicyWatcher::GetCurrentPolicies() {
 }
 
 std::unique_ptr<base::DictionaryValue> PolicyWatcher::GetDefaultPolicies() {
-  auto result = base::MakeUnique<base::DictionaryValue>();
+  auto result = std::make_unique<base::DictionaryValue>();
   result->SetBoolean(key::kRemoteAccessHostFirewallTraversal, true);
   result->SetBoolean(key::kRemoteAccessHostRequireCurtain, false);
   result->SetBoolean(key::kRemoteAccessHostMatchUsername, false);
   result->Set(key::kRemoteAccessHostClientDomainList,
-              base::MakeUnique<base::ListValue>());
+              std::make_unique<base::ListValue>());
   result->Set(key::kRemoteAccessHostDomainList,
-              base::MakeUnique<base::ListValue>());
-  result->SetString(key::kRemoteAccessHostTalkGadgetPrefix,
-                    kDefaultHostTalkGadgetPrefix);
+              std::make_unique<base::ListValue>());
+  // TODO(yuweih): kRemoteAccessHostTalkGadgetPrefix is not used any more. Clean
+  // this up.
+  result->SetString(key::kRemoteAccessHostTalkGadgetPrefix, std::string());
   result->SetString(key::kRemoteAccessHostTokenUrl, std::string());
   result->SetString(key::kRemoteAccessHostTokenValidationUrl, std::string());
   result->SetString(key::kRemoteAccessHostTokenValidationCertificateIssuer,
@@ -183,6 +183,9 @@ std::unique_ptr<base::DictionaryValue> PolicyWatcher::GetDefaultPolicies() {
   result->SetString(key::kRemoteAccessHostUdpPortRange, "");
   result->SetBoolean(key::kRemoteAccessHostAllowUiAccessForRemoteAssistance,
                      false);
+#if !defined(OS_CHROMEOS)
+  result->SetBoolean(key::kRemoteAccessHostAllowFileTransfer, true);
+#endif
   return result;
 }
 
@@ -255,7 +258,7 @@ void PolicyWatcher::HandleDeprecatedPolicies(base::DictionaryValue* dict) {
       std::string domain;
       dict->GetString(policy::key::kRemoteAccessHostDomain, &domain);
       if (!domain.empty()) {
-        auto list = base::MakeUnique<base::ListValue>();
+        auto list = std::make_unique<base::ListValue>();
         list->AppendString(domain);
         dict->Set(policy::key::kRemoteAccessHostDomainList, std::move(list));
       }
@@ -269,7 +272,7 @@ void PolicyWatcher::HandleDeprecatedPolicies(base::DictionaryValue* dict) {
       std::string domain;
       dict->GetString(policy::key::kRemoteAccessHostClientDomain, &domain);
       if (!domain.empty()) {
-        auto list = base::MakeUnique<base::ListValue>();
+        auto list = std::make_unique<base::ListValue>();
         list->AppendString(domain);
         dict->Set(policy::key::kRemoteAccessHostClientDomainList,
                   std::move(list));
@@ -375,8 +378,8 @@ std::unique_ptr<PolicyWatcher> PolicyWatcher::CreateFromPolicyLoader(
 
   policy::PolicyServiceImpl::Providers providers;
   providers.push_back(policy_provider.get());
-  std::unique_ptr<policy::PolicyService> policy_service(
-      new policy::PolicyServiceImpl(providers));
+  std::unique_ptr<policy::PolicyServiceImpl> policy_service =
+      std::make_unique<policy::PolicyServiceImpl>(std::move(providers));
 
   policy::PolicyService* borrowed_policy_service = policy_service.get();
   return base::WrapUnique(new PolicyWatcher(

@@ -6,9 +6,13 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/system_connector.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace chromeos {
 
@@ -27,10 +31,10 @@ KioskExternalUpdateValidator::~KioskExternalUpdateValidator() {
 }
 
 void KioskExternalUpdateValidator::Start() {
-  scoped_refptr<extensions::SandboxedUnpacker> unpacker(
-      new extensions::SandboxedUnpacker(
-          extensions::Manifest::EXTERNAL_PREF, extensions::Extension::NO_FLAGS,
-          crx_unpack_dir_, backend_task_runner_.get(), this));
+  auto unpacker = base::MakeRefCounted<extensions::SandboxedUnpacker>(
+      content::GetSystemConnector()->Clone(),
+      extensions::Manifest::EXTERNAL_PREF, extensions::Extension::NO_FLAGS,
+      crx_unpack_dir_, backend_task_runner_.get(), this);
   if (!backend_task_runner_->PostTask(
           FROM_HERE,
           base::BindOnce(&extensions::SandboxedUnpacker::StartWithCrx,
@@ -43,8 +47,8 @@ void KioskExternalUpdateValidator::OnUnpackFailure(
     const extensions::CrxInstallError& error) {
   LOG(ERROR) << "Failed to unpack external kiosk crx file: "
              << crx_file_.extension_id << " " << error.message();
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(
           &KioskExternalUpdateValidatorDelegate::OnExternalUpdateUnpackFailure,
           delegate_, crx_file_.extension_id));
@@ -68,8 +72,8 @@ void KioskExternalUpdateValidator::OnUnpackSuccess(
     minimum_browser_version.clear();
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(
           &KioskExternalUpdateValidatorDelegate::OnExternalUpdateUnpackSuccess,
           delegate_, crx_file_.extension_id, extension->VersionString(),

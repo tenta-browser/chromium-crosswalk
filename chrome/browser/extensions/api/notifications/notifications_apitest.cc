@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/containers/circular_deque.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/apps/app_browsertest_util.h"
+#include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper_factory.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_handler.h"
@@ -36,8 +37,8 @@
 #include "extensions/common/features/feature.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notifier_id.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
@@ -110,7 +111,7 @@ enum class WindowState {
   NORMAL
 };
 
-class NotificationsApiTest : public ExtensionApiTest {
+class NotificationsApiTest : public extensions::ExtensionApiTest {
  public:
   const Extension* LoadExtensionAndWait(
       const std::string& test_name) {
@@ -171,16 +172,16 @@ class NotificationsApiTest : public ExtensionApiTest {
 
  protected:
   void SetUpOnMainThread() override {
-    ExtensionApiTest::SetUpOnMainThread();
+    extensions::ExtensionApiTest::SetUpOnMainThread();
 
     DCHECK(profile());
     display_service_tester_ =
-        base::MakeUnique<NotificationDisplayServiceTester>(profile());
+        std::make_unique<NotificationDisplayServiceTester>(profile());
   }
 
   void TearDownOnMainThread() override {
     display_service_tester_.reset();
-    ExtensionApiTest::TearDownOnMainThread();
+    extensions::ExtensionApiTest::TearDownOnMainThread();
   }
 
   // Returns the notification that's being displayed for |extension|, or nullptr
@@ -204,9 +205,11 @@ class NotificationsApiTest : public ExtensionApiTest {
   }
 
   void LaunchPlatformApp(const Extension* extension) {
-    OpenApplication(AppLaunchParams(
-        browser()->profile(), extension, extensions::LAUNCH_CONTAINER_NONE,
-        WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_TEST));
+    OpenApplication(
+        AppLaunchParams(browser()->profile(), extension->id(),
+                        extensions::LaunchContainer::kLaunchContainerNone,
+                        WindowOpenDisposition::NEW_WINDOW,
+                        extensions::AppLaunchSource::kSourceTest));
   }
 
   std::unique_ptr<NotificationDisplayServiceTester> display_service_tester_;
@@ -291,12 +294,13 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestPartialUpdate) {
   EXPECT_EQ(base::ASCIIToUTF16(kNewTitle), notification->title());
   EXPECT_EQ(base::ASCIIToUTF16(kNewMessage), notification->message());
   EXPECT_EQ(kNewPriority, notification->priority());
+  EXPECT_TRUE(notification->silent());
   EXPECT_EQ(1u, notification->buttons().size());
   EXPECT_EQ(base::ASCIIToUTF16(kButtonTitle), notification->buttons()[0].title);
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
-  scoped_refptr<Extension> empty_extension(
+  scoped_refptr<const Extension> empty_extension(
       extensions::ExtensionBuilder("Test").Build());
 
   // Get permission level for the extension whose notifications are enabled.
@@ -309,7 +313,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     notification_function->set_has_callback(true);
 
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
-        notification_function.get(), "[]", browser(), utils::NONE));
+        notification_function.get(), "[]", browser(),
+        extensions::api_test_utils::NONE));
 
     EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
@@ -327,12 +332,12 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     notification_function->set_has_callback(true);
 
     message_center::NotifierId notifier_id(
-        message_center::NotifierId::APPLICATION,
-        empty_extension->id());
+        message_center::NotifierType::APPLICATION, empty_extension->id());
     GetNotifierStateTracker()->SetNotifierEnabled(notifier_id, false);
 
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
-        notification_function.get(), "[]", browser(), utils::NONE));
+        notification_function.get(), "[]", browser(),
+        extensions::api_test_utils::NONE));
 
     EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
@@ -351,8 +356,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestOnPermissionLevelChanged) {
     ResultCatcher catcher;
 
     message_center::NotifierId notifier_id(
-        message_center::NotifierId::APPLICATION,
-        extension->id());
+        message_center::NotifierType::APPLICATION, extension->id());
     GetNotifierStateTracker()->SetNotifierEnabled(notifier_id, false);
 
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
@@ -363,8 +367,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestOnPermissionLevelChanged) {
     ResultCatcher catcher;
 
     message_center::NotifierId notifier_id(
-        message_center::NotifierId::APPLICATION,
-        extension->id());
+        message_center::NotifierType::APPLICATION, extension->id());
     GetNotifierStateTracker()->SetNotifierEnabled(notifier_id, true);
 
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
@@ -384,11 +387,23 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
 
   {
     UserGestureCatcher catcher;
-    notification->ButtonClick(0);
+
+    // Action button event.
+    display_service_tester_->SimulateClick(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        0 /* action_index */, base::nullopt /* reply */);
     EXPECT_TRUE(catcher.GetNextResult());
-    notification->Click();
+
+    // Click event.
+    display_service_tester_->SimulateClick(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        base::nullopt /* action_index */, base::nullopt /* reply */);
     EXPECT_TRUE(catcher.GetNextResult());
-    notification->Close(true /* by_user */);
+
+    // Close event.
+    display_service_tester_->RemoveNotification(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        true /* by_user */, false /* silent */);
     EXPECT_TRUE(catcher.GetNextResult());
 
     // Note that |notification| no longer points to valid memory.

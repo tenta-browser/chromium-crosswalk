@@ -5,7 +5,6 @@
 #ifndef IOS_CHROME_BROWSER_UI_DIALOGS_JAVA_SCRIPT_DIALOG_PRESENTER_IMPL_H_
 #define IOS_CHROME_BROWSER_UI_DIALOGS_JAVA_SCRIPT_DIALOG_PRESENTER_IMPL_H_
 
-#import "base/mac/scoped_nsobject.h"
 #include "ios/web/public/java_script_dialog_presenter.h"
 
 @class AlertCoordinator;
@@ -18,14 +17,14 @@ class JavaScriptDialogPresenterImpl final
     : public web::JavaScriptDialogPresenter {
  public:
   explicit JavaScriptDialogPresenterImpl(DialogPresenter* dialogPresenter);
-  ~JavaScriptDialogPresenterImpl();
+  ~JavaScriptDialogPresenterImpl() override;
 
   void RunJavaScriptDialog(web::WebState* web_state,
                            const GURL& origin_url,
                            web::JavaScriptDialogType dialog_type,
                            NSString* message_text,
                            NSString* default_prompt_text,
-                           const web::DialogClosedCallback& callback) override;
+                           web::DialogClosedCallback callback) override;
 
   void CancelDialogs(web::WebState* web_state) override;
 
@@ -38,7 +37,7 @@ class JavaScriptDialogPresenterImpl final
 
  private:
   // The underlying DialogPresenter handling the dialog UI.
-  base::scoped_nsobject<DialogPresenter> dialog_presenter_;
+  DialogPresenter* dialog_presenter_;
 
   DISALLOW_COPY_AND_ASSIGN(JavaScriptDialogPresenterImpl);
 };

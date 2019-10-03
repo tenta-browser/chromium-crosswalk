@@ -11,11 +11,12 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/guest_view/common/guest_view_constants.h"
+#include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/media_stream_request.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_types.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 namespace extensions {
 
@@ -59,16 +60,15 @@ class WebViewPermissionHelper
       content::WebContents* web_contents);
   static WebViewPermissionHelper* FromFrameID(int render_process_id,
                                               int render_frame_id);
-  void RequestMediaAccessPermission(
-      content::WebContents* source,
-      const content::MediaStreamRequest& request,
-      const content::MediaResponseCallback& callback);
-  bool CheckMediaAccessPermission(content::WebContents* source,
+  void RequestMediaAccessPermission(content::WebContents* source,
+                                    const content::MediaStreamRequest& request,
+                                    content::MediaResponseCallback callback);
+  bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type);
+                                  blink::mojom::MediaStreamType type);
   void CanDownload(const GURL& url,
                    const std::string& request_method,
-                   const base::Callback<void(bool)>& callback);
+                   base::OnceCallback<void(bool)> callback);
   void RequestPointerLockPermission(bool user_gesture,
                                     bool last_unlocked_by_target,
                                     const base::Callback<void(bool)>& callback);
@@ -77,7 +77,7 @@ class WebViewPermissionHelper
   void RequestGeolocationPermission(int bridge_id,
                                     const GURL& requesting_frame,
                                     bool user_gesture,
-                                    const base::Callback<void(bool)>& callback);
+                                    base::OnceCallback<void(bool)> callback);
   void CancelGeolocationPermissionRequest(int bridge_id);
 
   void RequestFileSystemPermission(const GURL& url,
@@ -119,9 +119,13 @@ class WebViewPermissionHelper
 
   WebViewGuest* web_view_guest() { return web_view_guest_; }
 
+  void set_default_media_access_permission(bool allow_media_access) {
+    default_media_access_permission_ = allow_media_access;
+  }
+
  private:
   void OnMediaPermissionResponse(const content::MediaStreamRequest& request,
-                                 const content::MediaResponseCallback& callback,
+                                 content::MediaResponseCallback callback,
                                  bool allow,
                                  const std::string& user_input);
 
@@ -142,7 +146,9 @@ class WebViewPermissionHelper
 
   WebViewGuest* const web_view_guest_;
 
-  base::WeakPtrFactory<WebViewPermissionHelper> weak_factory_;
+  bool default_media_access_permission_;
+
+  base::WeakPtrFactory<WebViewPermissionHelper> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebViewPermissionHelper);
 };

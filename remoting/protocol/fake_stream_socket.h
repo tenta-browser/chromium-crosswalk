@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
-#include "net/base/completion_callback.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "remoting/protocol/p2p_stream_socket.h"
 #include "remoting/protocol/stream_channel_factory.h"
 
@@ -71,14 +71,19 @@ class FakeStreamSocket : public P2PStreamSocket {
   base::WeakPtr<FakeStreamSocket> GetWeakPtr();
 
   // P2PStreamSocket interface.
-  int Read(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-           const net::CompletionCallback& callback) override;
-  int Write(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-            const net::CompletionCallback& callback) override;
+  int Read(const scoped_refptr<net::IOBuffer>& buf,
+           int buf_len,
+           net::CompletionOnceCallback callback) override;
+  int Write(
+      const scoped_refptr<net::IOBuffer>& buf,
+      int buf_len,
+      net::CompletionOnceCallback callback,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) override;
 
  private:
-  void DoAsyncWrite(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-                    const net::CompletionCallback& callback);
+  void DoAsyncWrite(const scoped_refptr<net::IOBuffer>& buf,
+                    int buf_len,
+                    net::CompletionOnceCallback callback);
   void DoWrite(const scoped_refptr<net::IOBuffer>& buf, int buf_len);
 
   bool async_write_ = false;
@@ -89,7 +94,7 @@ class FakeStreamSocket : public P2PStreamSocket {
   base::Optional<int> next_read_error_;
   scoped_refptr<net::IOBuffer> read_buffer_;
   int read_buffer_size_ = 0;
-  net::CompletionCallback read_callback_;
+  net::CompletionOnceCallback read_callback_;
   base::WeakPtr<FakeStreamSocket> peer_socket_;
 
   std::string written_data_;

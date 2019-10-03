@@ -34,9 +34,10 @@ class ContentsWebView
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override;
   void OnVisibleBoundsChanged() override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   void OnThemeChanged() override;
   void RenderViewReady() override;
+  void OnLetterboxingChanged() override;
 
   // ui::View overrides:
   std::unique_ptr<ui::Layer> RecreateLayer() override;
@@ -46,6 +47,7 @@ class ContentsWebView
   void DestroyClonedLayer() override;
 
  private:
+  void UpdateBackgroundColor();
   StatusBubbleViews* status_bubble_;
 
   std::unique_ptr<ui::LayerTreeOwner> cloned_layer_tree_;

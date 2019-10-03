@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/task_manager/web_contents_tags.h"
@@ -16,8 +15,8 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/fast_unload_controller.h"
 #include "chrome/browser/ui/tab_helpers.h"
+#include "chrome/browser/ui/tabs/tab_group_id.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/unload_controller.h"
 #include "chrome/common/chrome_switches.h"
@@ -28,30 +27,30 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "ipc/ipc_message.h"
 
+class TabGroupData;
+
 namespace chrome {
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserTabStripModelDelegate, public:
 
 BrowserTabStripModelDelegate::BrowserTabStripModelDelegate(Browser* browser)
-    : browser_(browser),
-      weak_factory_(this) {
-}
+    : browser_(browser) {}
 
-BrowserTabStripModelDelegate::~BrowserTabStripModelDelegate() {
-}
+BrowserTabStripModelDelegate::~BrowserTabStripModelDelegate() {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserTabStripModelDelegate, TabStripModelDelegate implementation:
 
 void BrowserTabStripModelDelegate::AddTabAt(const GURL& url,
                                             int index,
-                                            bool foreground) {
-  chrome::AddTabAt(browser_, url, index, foreground);
+                                            bool foreground,
+                                            base::Optional<TabGroupId> group) {
+  chrome::AddTabAt(browser_, url, index, foreground, group);
 }
 
 Browser* BrowserTabStripModelDelegate::CreateNewStripWithContents(
-    const std::vector<NewStripContents>& contentses,
+    std::vector<NewStripContents> contentses,
     const gfx::Rect& window_bounds,
     bool maximize) {
   DCHECK(browser_->CanSupportWindowFeature(Browser::FEATURE_TABSTRIP));
@@ -65,20 +64,21 @@ Browser* BrowserTabStripModelDelegate::CreateNewStripWithContents(
   TabStripModel* new_model = browser->tab_strip_model();
 
   for (size_t i = 0; i < contentses.size(); ++i) {
-    NewStripContents item = contentses[i];
+    NewStripContents item = std::move(contentses[i]);
 
     // Enforce that there is an active tab in the strip at all times by forcing
     // the first web contents to be marked as active.
     if (i == 0)
       item.add_types |= TabStripModel::ADD_ACTIVE;
 
+    content::WebContents* raw_web_contents = item.web_contents.get();
     new_model->InsertWebContentsAt(
-        static_cast<int>(i), item.web_contents, item.add_types);
+        static_cast<int>(i), std::move(item.web_contents), item.add_types);
     // Make sure the loading state is updated correctly, otherwise the throbber
     // won't start if the page is loading.
     // TODO(beng): find a better way of doing this.
-    static_cast<content::WebContentsDelegate*>(browser)->
-        LoadingStateChanged(item.web_contents, true);
+    static_cast<content::WebContentsDelegate*>(browser)->LoadingStateChanged(
+        raw_web_contents, true);
   }
 
   return browser;
@@ -94,8 +94,9 @@ void BrowserTabStripModelDelegate::WillAddWebContents(
 
 int BrowserTabStripModelDelegate::GetDragActions() const {
   return TabStripModelDelegate::TAB_TEAROFF_ACTION |
-      (browser_->tab_strip_model()->count() > 1
-          ? TabStripModelDelegate::TAB_MOVE_ACTION : 0);
+         (browser_->tab_strip_model()->count() > 1
+              ? TabStripModelDelegate::TAB_MOVE_ACTION
+              : 0);
 }
 
 bool BrowserTabStripModelDelegate::CanDuplicateContentsAt(int index) {

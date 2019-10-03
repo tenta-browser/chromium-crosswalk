@@ -37,16 +37,15 @@ void ExpectEquality(const std::vector<T>& expected,
 }
 
 template <>
-void ExpectEquality(const ResourceRequestBody::Element& expected,
-                    const ResourceRequestBody::Element& actual) {
+void ExpectEquality(const network::DataElement& expected,
+                    const network::DataElement& actual) {
   EXPECT_EQ(expected.type(), actual.type());
-  if (expected.type() == ResourceRequestBody::Element::TYPE_BYTES &&
-      actual.type() == ResourceRequestBody::Element::TYPE_BYTES) {
+  if (expected.type() == network::mojom::DataElementType::kBytes &&
+      actual.type() == network::mojom::DataElementType::kBytes) {
     EXPECT_EQ(std::string(expected.bytes(), expected.length()),
               std::string(actual.bytes(), actual.length()));
   }
   EXPECT_EQ(expected.path(), actual.path());
-  EXPECT_EQ(expected.filesystem_url(), actual.filesystem_url());
   EXPECT_EQ(expected.offset(), actual.offset());
   EXPECT_EQ(expected.length(), actual.length());
   EXPECT_EQ(expected.expected_modification_time(),
@@ -108,7 +107,7 @@ class PageStateSerializationTest : public testing::Test {
     frame_state->url_string = base::UTF8ToUTF16("http://dev.chromium.org/");
     frame_state->referrer =
         base::UTF8ToUTF16("https://www.google.com/search?q=dev.chromium.org");
-    frame_state->referrer_policy = blink::kWebReferrerPolicyAlways;
+    frame_state->referrer_policy = network::mojom::ReferrerPolicy::kAlways;
     frame_state->target = base::UTF8ToUTF16("foo");
     frame_state->state_object = base::nullopt;
     frame_state->document_state.push_back(base::UTF8ToUTF16("1"));
@@ -131,7 +130,7 @@ class PageStateSerializationTest : public testing::Test {
   void PopulateHttpBody(
       ExplodedHttpBody* http_body,
       std::vector<base::Optional<base::string16>>* referenced_files) {
-    http_body->request_body = new ResourceRequestBody();
+    http_body->request_body = new network::ResourceRequestBody();
     http_body->request_body->set_identifier(12345);
     http_body->contains_passwords = false;
     http_body->http_content_type = base::UTF8ToUTF16("text/foo");
@@ -151,7 +150,7 @@ class PageStateSerializationTest : public testing::Test {
       bool is_child) {
     frame_state->url_string = base::UTF8ToUTF16("http://chromium.org/");
     frame_state->referrer = base::UTF8ToUTF16("http://google.com/");
-    frame_state->referrer_policy = blink::kWebReferrerPolicyDefault;
+    frame_state->referrer_policy = network::mojom::ReferrerPolicy::kDefault;
     if (!is_child)
       frame_state->target = base::UTF8ToUTF16("target");
     frame_state->scroll_restoration_type =
@@ -174,7 +173,7 @@ class PageStateSerializationTest : public testing::Test {
 
     if (!is_child) {
       frame_state->http_body.http_content_type = base::UTF8ToUTF16("foo/bar");
-      frame_state->http_body.request_body = new ResourceRequestBody();
+      frame_state->http_body.request_body = new network::ResourceRequestBody();
       frame_state->http_body.request_body->set_identifier(789);
 
       std::string test_body("first data block");
@@ -204,7 +203,7 @@ class PageStateSerializationTest : public testing::Test {
                                     int version,
                                     ExplodedPageState* page_state) {
     base::FilePath path;
-    PathService::Get(content::DIR_TEST_DATA, &path);
+    base::PathService::Get(content::DIR_TEST_DATA, &path);
     path = path.AppendASCII("page_state")
                .AppendASCII(
                    base::StringPrintf("serialized_%s.dat", suffix.c_str()));
@@ -397,7 +396,7 @@ TEST_F(PageStateSerializationTest, LegacyEncodePageStateFrozen) {
   LegacyEncodePageStateForTesting(actual_state, 25, &actual_encoded_state);
 
   base::FilePath path;
-  PathService::Get(content::DIR_TEST_DATA, &path);
+  base::PathService::Get(content::DIR_TEST_DATA, &path);
   path = path.AppendASCII("page_state").AppendASCII("serialized_v25.dat");
 
   std::string file_contents;
@@ -460,7 +459,7 @@ TEST_F(PageStateSerializationTest, DumpExpectedPageStateForBackwardsCompat) {
   base::Base64Encode(encoded, &base64);
 
   base::FilePath path;
-  PathService::Get(base::DIR_TEMP, &path);
+  base::PathService::Get(base::DIR_TEMP, &path);
   path = path.AppendASCII("expected.dat");
 
   FILE* fp = base::OpenFile(path, "wb");
@@ -637,7 +636,7 @@ TEST_F(PageStateSerializationTest, BackwardsCompat_ScrollOffset) {
 
 TEST_F(PageStateSerializationTest, BackwardsCompat_ReferrerPolicy) {
   ExplodedPageState state;
-  state.top.referrer_policy = blink::kWebReferrerPolicyAlways;
+  state.top.referrer_policy = network::mojom::ReferrerPolicy::kAlways;
 
   ExplodedPageState saved_state;
   ReadBackwardsCompatPageState("referrer_policy", 26, &saved_state);
@@ -648,7 +647,7 @@ TEST_F(PageStateSerializationTest, BackwardsCompat_HttpBody) {
   ExplodedPageState state;
   ExplodedHttpBody& http_body = state.top.http_body;
 
-  http_body.request_body = new ResourceRequestBody();
+  http_body.request_body = new network::ResourceRequestBody();
   http_body.request_body->set_identifier(12345);
   http_body.contains_passwords = false;
   http_body.http_content_type = base::UTF8ToUTF16("text/foo");
@@ -661,9 +660,6 @@ TEST_F(PageStateSerializationTest, BackwardsCompat_HttpBody) {
   base::FilePath path(FILE_PATH_LITERAL("file.txt"));
   http_body.request_body->AppendFileRange(base::FilePath(path), 100, 1024,
                                           base::Time::FromDoubleT(9999.0));
-
-  http_body.request_body->AppendFileSystemFileRange(
-      GURL("file://some_file.txt"), 100, 1024, base::Time::FromDoubleT(9999.0));
 
   ExplodedPageState saved_state;
   ReadBackwardsCompatPageState("http_body", 26, &saved_state);

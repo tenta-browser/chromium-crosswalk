@@ -11,16 +11,14 @@
 class MockEmbeddedSearchClient : public chrome::mojom::EmbeddedSearchClient {
  public:
   MockEmbeddedSearchClient();
-  ~MockEmbeddedSearchClient();
+  ~MockEmbeddedSearchClient() override;
 
   MOCK_METHOD1(SetPageSequenceNumber, void(int));
-  MOCK_METHOD2(ChromeIdentityCheckResult, void(const base::string16&, bool));
   MOCK_METHOD2(FocusChanged, void(OmniboxFocusState, OmniboxFocusChangeReason));
-  MOCK_METHOD1(HistorySyncCheckResult, void(bool));
-  MOCK_METHOD1(MostVisitedChanged,
-               void(const std::vector<InstantMostVisitedItem>&));
+  MOCK_METHOD1(MostVisitedInfoChanged, void(const InstantMostVisitedInfo&));
   MOCK_METHOD1(SetInputInProgress, void(bool));
   MOCK_METHOD1(ThemeChanged, void(const ThemeBackgroundInfo&));
+  MOCK_METHOD0(LocalBackgroundSelected, void());
 };
 
 #endif  // CHROME_COMMON_SEARCH_MOCK_EMBEDDED_SEARCH_CLIENT_H_

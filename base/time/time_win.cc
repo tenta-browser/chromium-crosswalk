@@ -31,6 +31,7 @@
 // will only increase the system-wide timer if we're not running on battery
 // power.
 
+#include "base/feature_list.h"
 #include "base/time/time.h"
 
 #include <windows.h>
@@ -43,11 +44,9 @@
 #include "base/logging.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
+#include "base/time/time_override.h"
 
-using base::ThreadTicks;
-using base::Time;
-using base::TimeDelta;
-using base::TimeTicks;
+namespace base {
 
 namespace {
 
@@ -82,16 +81,32 @@ int64_t g_initial_time = 0;
 TimeTicks g_initial_ticks;
 
 void InitializeClock() {
-  g_initial_ticks = TimeTicks::Now();
+  g_initial_ticks = subtle::TimeTicksNowIgnoringOverride();
   g_initial_time = CurrentWallclockMicroseconds();
 }
+
+const base::Feature kSlowDCTimerInterruptsFeature{
+    "SlowDCTimerInterrups", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // The two values that ActivateHighResolutionTimer uses to set the systemwide
 // timer interrupt frequency on Windows. It controls how precise timers are
 // but also has a big impact on battery life.
-const int kMinTimerIntervalHighResMs = 1;
-const int kMinTimerIntervalLowResMs = 4;
-// Track if kMinTimerIntervalHighResMs or kMinTimerIntervalLowResMs is active.
+// Used when running on AC power - plugged in - when a fast timer is wanted.
+UINT MinTimerIntervalHighResMs() {
+  return 1;
+}
+
+UINT MinTimerIntervalLowResMs() {
+  // Traditionally Chrome has used an interval of 4 ms when raising the timer
+  // interrupt frequency on battery power. However even 4 ms is too short an
+  // interval on modern CPUs - it wastes non-trivial power - so this experiment
+  // tests an interval of 8 ms, recommended by Intel.
+  static const UINT s_interval =
+      base::FeatureList::IsEnabled(kSlowDCTimerInterruptsFeature) ? 8 : 4;
+  return s_interval;
+}
+
+// Track if MinTimerIntervalHighResMs() or MinTimerIntervalLowResMs() is active.
 bool g_high_res_timer_enabled = false;
 // How many times the high resolution timer has been called.
 uint32_t g_high_res_timer_count = 0;
@@ -105,8 +120,8 @@ TimeDelta g_high_res_timer_usage;
 // is used to calculate the cumulative usage.
 TimeTicks g_high_res_timer_last_activation;
 // The lock to control access to the above two variables.
-base::Lock* GetHighResLock() {
-  static auto* lock = new base::Lock();
+Lock* GetHighResLock() {
+  static auto* lock = new Lock();
   return lock;
 }
 
@@ -121,7 +136,7 @@ uint64_t QPCNowRaw() {
 }
 
 bool SafeConvertToWord(int in, WORD* out) {
-  base::CheckedNumeric<WORD> result = in;
+  CheckedNumeric<WORD> result = in;
   *out = result.ValueOrDefault(std::numeric_limits<WORD>::max());
   return result.IsValid();
 }
@@ -130,8 +145,8 @@ bool SafeConvertToWord(int in, WORD* out) {
 
 // Time -----------------------------------------------------------------------
 
-// static
-Time Time::Now() {
+namespace subtle {
+Time TimeNowIgnoringOverride() {
   if (g_initial_time == 0)
     InitializeClock();
 
@@ -146,7 +161,7 @@ Time Time::Now() {
   // To avoid any drift, we periodically resync the counters to the system
   // clock.
   while (true) {
-    TimeTicks ticks = TimeTicks::Now();
+    TimeTicks ticks = TimeTicksNowIgnoringOverride();
 
     // Calculate the time elapsed since we started our timer
     TimeDelta elapsed = ticks - g_initial_ticks;
@@ -157,16 +172,16 @@ Time Time::Now() {
       continue;
     }
 
-    return Time(elapsed + Time(g_initial_time));
+    return Time() + elapsed + TimeDelta::FromMicroseconds(g_initial_time);
   }
 }
 
-// static
-Time Time::NowFromSystemTime() {
+Time TimeNowFromSystemTimeIgnoringOverride() {
   // Force resync.
   InitializeClock();
-  return Time(g_initial_time);
+  return Time() + TimeDelta::FromMicroseconds(g_initial_time);
 }
+}  // namespace subtle
 
 // static
 Time Time::FromFileTime(FILETIME ft) {
@@ -194,7 +209,7 @@ FILETIME Time::ToFileTime() const {
 
 // static
 void Time::EnableHighResolutionTimer(bool enable) {
-  base::AutoLock lock(*GetHighResLock());
+  AutoLock lock(*GetHighResLock());
   if (g_high_res_timer_enabled == enable)
     return;
   g_high_res_timer_enabled = enable;
@@ -206,11 +221,11 @@ void Time::EnableHighResolutionTimer(bool enable) {
   // call timeEndPeriod with the same value used in timeBeginPeriod and
   // therefore undo the period effect.
   if (enable) {
-    timeEndPeriod(kMinTimerIntervalLowResMs);
-    timeBeginPeriod(kMinTimerIntervalHighResMs);
+    timeEndPeriod(MinTimerIntervalLowResMs());
+    timeBeginPeriod(MinTimerIntervalHighResMs());
   } else {
-    timeEndPeriod(kMinTimerIntervalHighResMs);
-    timeBeginPeriod(kMinTimerIntervalLowResMs);
+    timeEndPeriod(MinTimerIntervalHighResMs());
+    timeBeginPeriod(MinTimerIntervalLowResMs());
   }
 }
 
@@ -221,47 +236,47 @@ bool Time::ActivateHighResolutionTimer(bool activating) {
   // called.
   const uint32_t max = std::numeric_limits<uint32_t>::max();
 
-  base::AutoLock lock(*GetHighResLock());
-  UINT period = g_high_res_timer_enabled ? kMinTimerIntervalHighResMs
-                                         : kMinTimerIntervalLowResMs;
+  AutoLock lock(*GetHighResLock());
+  UINT period = g_high_res_timer_enabled ? MinTimerIntervalHighResMs()
+                                         : MinTimerIntervalLowResMs();
   if (activating) {
     DCHECK_NE(g_high_res_timer_count, max);
     ++g_high_res_timer_count;
     if (g_high_res_timer_count == 1) {
-      g_high_res_timer_last_activation = TimeTicks::Now();
+      g_high_res_timer_last_activation = subtle::TimeTicksNowIgnoringOverride();
       timeBeginPeriod(period);
     }
   } else {
     DCHECK_NE(g_high_res_timer_count, 0u);
     --g_high_res_timer_count;
     if (g_high_res_timer_count == 0) {
-      g_high_res_timer_usage +=
-          TimeTicks::Now() - g_high_res_timer_last_activation;
+      g_high_res_timer_usage += subtle::TimeTicksNowIgnoringOverride() -
+                                g_high_res_timer_last_activation;
       timeEndPeriod(period);
     }
   }
-  return (period == kMinTimerIntervalHighResMs);
+  return period == MinTimerIntervalHighResMs();
 }
 
 // static
 bool Time::IsHighResolutionTimerInUse() {
-  base::AutoLock lock(*GetHighResLock());
+  AutoLock lock(*GetHighResLock());
   return g_high_res_timer_enabled && g_high_res_timer_count > 0;
 }
 
 // static
 void Time::ResetHighResolutionTimerUsage() {
-  base::AutoLock lock(*GetHighResLock());
+  AutoLock lock(*GetHighResLock());
   g_high_res_timer_usage = TimeDelta();
-  g_high_res_timer_usage_start = TimeTicks::Now();
+  g_high_res_timer_usage_start = subtle::TimeTicksNowIgnoringOverride();
   if (g_high_res_timer_count > 0)
     g_high_res_timer_last_activation = g_high_res_timer_usage_start;
 }
 
 // static
 double Time::GetHighResolutionTimerUsage() {
-  base::AutoLock lock(*GetHighResLock());
-  TimeTicks now = TimeTicks::Now();
+  AutoLock lock(*GetHighResLock());
+  TimeTicks now = subtle::TimeTicksNowIgnoringOverride();
   TimeDelta elapsed_time = now - g_high_res_timer_usage_start;
   if (elapsed_time.is_zero()) {
     // This is unexpected but possible if TimeTicks resolution is low and
@@ -292,7 +307,7 @@ bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
       !SafeConvertToWord(exploded.minute, &st.wMinute) ||
       !SafeConvertToWord(exploded.second, &st.wSecond) ||
       !SafeConvertToWord(exploded.millisecond, &st.wMilliseconds)) {
-    *time = base::Time(0);
+    *time = Time(0);
     return false;
   }
 
@@ -360,6 +375,7 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
 }
 
 // TimeTicks ------------------------------------------------------------------
+
 namespace {
 
 // We define a wrapper to adapt between the __stdcall and __cdecl call of the
@@ -375,7 +391,7 @@ DWORD (*g_tick_function)(void) = &timeGetTimeWrapper;
 // "rollover" counter.
 union LastTimeAndRolloversState {
   // The state as a single 32-bit opaque value.
-  base::subtle::Atomic32 as_opaque_32;
+  subtle::Atomic32 as_opaque_32;
 
   // The state as usable values.
   struct {
@@ -391,7 +407,7 @@ union LastTimeAndRolloversState {
     uint16_t rollovers;
   } as_values;
 };
-base::subtle::Atomic32 g_last_time_and_rollovers = 0;
+subtle::Atomic32 g_last_time_and_rollovers = 0;
 static_assert(
     sizeof(LastTimeAndRolloversState) <= sizeof(g_last_time_and_rollovers),
     "LastTimeAndRolloversState does not fit in a single atomic word");
@@ -401,7 +417,7 @@ static_assert(
 // which will roll over the 32-bit value every ~49 days.  We try to track
 // rollover ourselves, which works if TimeTicks::Now() is called at least every
 // 48.8 days (not 49 days because only changes in the top 8 bits get noticed).
-TimeDelta RolloverProtectedNow() {
+TimeTicks RolloverProtectedNow() {
   LastTimeAndRolloversState state;
   DWORD now;  // DWORD is always unsigned 32 bits.
 
@@ -410,7 +426,7 @@ TimeDelta RolloverProtectedNow() {
     // incrementing the "rollovers" counter if the tick-value has wrapped back
     // around. Atomic operations ensure that both "last" and "rollovers" are
     // always updated together.
-    int32_t original = base::subtle::Acquire_Load(&g_last_time_and_rollovers);
+    int32_t original = subtle::Acquire_Load(&g_last_time_and_rollovers);
     state.as_opaque_32 = original;
     now = g_tick_function();
     uint8_t now_8 = static_cast<uint8_t>(now >> 24);
@@ -424,7 +440,7 @@ TimeDelta RolloverProtectedNow() {
 
     // Save the changed state. If the existing value is unchanged from the
     // original, exit the loop.
-    int32_t check = base::subtle::Release_CompareAndSwap(
+    int32_t check = subtle::Release_CompareAndSwap(
         &g_last_time_and_rollovers, original, state.as_opaque_32);
     if (check == original)
       break;
@@ -432,8 +448,9 @@ TimeDelta RolloverProtectedNow() {
     // Another thread has done something in between so retry from the top.
   }
 
-  return TimeDelta::FromMilliseconds(
-      now + (static_cast<uint64_t>(state.as_values.rollovers) << 32));
+  return TimeTicks() +
+         TimeDelta::FromMilliseconds(
+             now + (static_cast<uint64_t>(state.as_values.rollovers) << 32));
 }
 
 // Discussion of tick counter options on Windows:
@@ -471,13 +488,12 @@ TimeDelta RolloverProtectedNow() {
 // this timer; and also other Windows applications can alter it, affecting this
 // one.
 
-using NowFunction = TimeDelta (*)(void);
-
-TimeDelta InitialNowFunction();
+TimeTicks InitialNowFunction();
 
 // See "threading notes" in InitializeNowFunctionPointer() for details on how
 // concurrent reads/writes to these globals has been made safe.
-NowFunction g_now_function = &InitialNowFunction;
+TimeTicksNowFunction g_time_ticks_now_ignoring_override_function =
+    &InitialNowFunction;
 int64_t g_qpc_ticks_per_second = 0;
 
 // As of January 2015, use of <atomic> is forbidden in Chromium code. This is
@@ -508,13 +524,8 @@ TimeDelta QPCValueToTimeDelta(LONGLONG qpc_value) {
        g_qpc_ticks_per_second));
 }
 
-TimeDelta QPCNow() {
-  return QPCValueToTimeDelta(QPCNowRaw());
-}
-
-bool IsBuggyAthlon(const base::CPU& cpu) {
-  // On Athlon X2 CPUs (e.g. model 15) QueryPerformanceCounter is unreliable.
-  return cpu.vendor_name() == "AuthenticAMD" && cpu.family() == 15;
+TimeTicks QPCNow() {
+  return TimeTicks() + QPCValueToTimeDelta(QPCNowRaw());
 }
 
 void InitializeNowFunctionPointer() {
@@ -528,15 +539,13 @@ void InitializeNowFunctionPointer() {
   // If the QPC implementation is expensive and/or unreliable, TimeTicks::Now()
   // will still use the low-resolution clock. A CPU lacking a non-stop time
   // counter will cause Windows to provide an alternate QPC implementation that
-  // works, but is expensive to use. Certain Athlon CPUs are known to make the
-  // QPC implementation unreliable.
+  // works, but is expensive to use.
   //
   // Otherwise, Now uses the high-resolution QPC clock. As of 21 August 2015,
   // ~72% of users fall within this category.
-  NowFunction now_function;
-  base::CPU cpu;
-  if (ticks_per_sec.QuadPart <= 0 ||
-      !cpu.has_non_stop_time_stamp_counter() || IsBuggyAthlon(cpu)) {
+  TimeTicksNowFunction now_function;
+  CPU cpu;
+  if (ticks_per_sec.QuadPart <= 0 || !cpu.has_non_stop_time_stamp_counter()) {
     now_function = &RolloverProtectedNow;
   } else {
     now_function = &QPCNow;
@@ -553,12 +562,19 @@ void InitializeNowFunctionPointer() {
   // are changed.
   g_qpc_ticks_per_second = ticks_per_sec.QuadPart;
   ATOMIC_THREAD_FENCE(memory_order_release);
-  g_now_function = now_function;
+  // Also set g_time_ticks_now_function to avoid the additional indirection via
+  // TimeTicksNowIgnoringOverride() for future calls to TimeTicks::Now(). But
+  // g_time_ticks_now_function may have already be overridden.
+  if (internal::g_time_ticks_now_function ==
+      &subtle::TimeTicksNowIgnoringOverride) {
+    internal::g_time_ticks_now_function = now_function;
+  }
+  g_time_ticks_now_ignoring_override_function = now_function;
 }
 
-TimeDelta InitialNowFunction() {
+TimeTicks InitialNowFunction() {
   InitializeNowFunctionPointer();
-  return g_now_function();
+  return g_time_ticks_now_ignoring_override_function();
 }
 
 }  // namespace
@@ -568,20 +584,21 @@ TimeTicks::TickFunctionType TimeTicks::SetMockTickFunction(
     TickFunctionType ticker) {
   TickFunctionType old = g_tick_function;
   g_tick_function = ticker;
-  base::subtle::NoBarrier_Store(&g_last_time_and_rollovers, 0);
+  subtle::NoBarrier_Store(&g_last_time_and_rollovers, 0);
   return old;
 }
 
-// static
-TimeTicks TimeTicks::Now() {
-  return TimeTicks() + g_now_function();
+namespace subtle {
+TimeTicks TimeTicksNowIgnoringOverride() {
+  return g_time_ticks_now_ignoring_override_function();
 }
+}  // namespace subtle
 
 // static
 bool TimeTicks::IsHighResolution() {
-  if (g_now_function == &InitialNowFunction)
+  if (g_time_ticks_now_ignoring_override_function == &InitialNowFunction)
     InitializeNowFunctionPointer();
-  return g_now_function == &QPCNow;
+  return g_time_ticks_now_ignoring_override_function == &QPCNow;
 }
 
 // static
@@ -610,16 +627,33 @@ TimeTicks::Clock TimeTicks::GetClock() {
       Clock::WIN_QPC : Clock::WIN_ROLLOVER_PROTECTED_TIME_GET_TIME;
 }
 
-// static
-ThreadTicks ThreadTicks::Now() {
+// ThreadTicks ----------------------------------------------------------------
+
+namespace subtle {
+ThreadTicks ThreadTicksNowIgnoringOverride() {
   return ThreadTicks::GetForThread(PlatformThread::CurrentHandle());
 }
+}  // namespace subtle
 
 // static
 ThreadTicks ThreadTicks::GetForThread(
-    const base::PlatformThreadHandle& thread_handle) {
+    const PlatformThreadHandle& thread_handle) {
   DCHECK(IsSupported());
 
+#if defined(ARCH_CPU_ARM64)
+  // QueryThreadCycleTime versus TSCTicksPerSecond doesn't have much relation to
+  // actual elapsed time on Windows on Arm, because QueryThreadCycleTime is
+  // backed by the actual number of CPU cycles executed, rather than a
+  // constant-rate timer like Intel. To work around this, use GetThreadTimes
+  // (which isn't as accurate but is meaningful as a measure of elapsed
+  // per-thread time).
+  FILETIME creation_time, exit_time, kernel_time, user_time;
+  ::GetThreadTimes(thread_handle.platform_handle(), &creation_time, &exit_time,
+                   &kernel_time, &user_time);
+
+  int64_t us = FileTimeToMicroseconds(user_time);
+  return ThreadTicks(us);
+#else
   // Get the number of TSC ticks used by the current thread.
   ULONG64 thread_cycle_time = 0;
   ::QueryThreadCycleTime(thread_handle.platform_handle(), &thread_cycle_time);
@@ -633,28 +667,29 @@ ThreadTicks ThreadTicks::GetForThread(
   double thread_time_seconds = thread_cycle_time / tsc_ticks_per_second;
   return ThreadTicks(
       static_cast<int64_t>(thread_time_seconds * Time::kMicrosecondsPerSecond));
+#endif
 }
 
 // static
 bool ThreadTicks::IsSupportedWin() {
-  static bool is_supported = base::CPU().has_non_stop_time_stamp_counter() &&
-                             !IsBuggyAthlon(base::CPU());
+  static bool is_supported = CPU().has_non_stop_time_stamp_counter();
   return is_supported;
 }
 
 // static
 void ThreadTicks::WaitUntilInitializedWin() {
+#if !defined(ARCH_CPU_ARM64)
   while (TSCTicksPerSecond() == 0)
     ::Sleep(10);
+#endif
 }
 
+#if !defined(ARCH_CPU_ARM64)
 double ThreadTicks::TSCTicksPerSecond() {
   DCHECK(IsSupported());
-
   // The value returned by QueryPerformanceFrequency() cannot be used as the TSC
   // frequency, because there is no guarantee that the TSC frequency is equal to
   // the performance counter frequency.
-
   // The TSC frequency is cached in a static variable because it takes some time
   // to compute it.
   static double tsc_ticks_per_second = 0;
@@ -668,6 +703,7 @@ double ThreadTicks::TSCTicksPerSecond() {
 
   // The first time that this function is called, make an initial reading of the
   // TSC and the performance counter.
+
   static const uint64_t tsc_initial = __rdtsc();
   static const uint64_t perf_counter_initial = QPCNowRaw();
 
@@ -706,6 +742,7 @@ double ThreadTicks::TSCTicksPerSecond() {
 
   return tsc_ticks_per_second;
 }
+#endif  // defined(ARCH_CPU_ARM64)
 
 // static
 TimeTicks TimeTicks::FromQPCValue(LONGLONG qpc_value) {
@@ -718,3 +755,10 @@ TimeTicks TimeTicks::FromQPCValue(LONGLONG qpc_value) {
 TimeDelta TimeDelta::FromQPCValue(LONGLONG qpc_value) {
   return QPCValueToTimeDelta(qpc_value);
 }
+
+// static
+TimeDelta TimeDelta::FromFileTime(FILETIME ft) {
+  return TimeDelta::FromMicroseconds(FileTimeToMicroseconds(ft));
+}
+
+}  // namespace base

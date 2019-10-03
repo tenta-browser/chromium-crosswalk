@@ -10,13 +10,13 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/i18n/string_search.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/drive/chromeos/drive_test_util.h"
@@ -43,7 +43,7 @@ bool FindAndHighlightWrapper(
   std::vector<std::unique_ptr<
       base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>>
       queries;
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16(query_text)));
   return FindAndHighlight(text, queries, highlighted_text);
@@ -55,7 +55,7 @@ class SearchMetadataTest : public testing::Test {
  protected:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
+    fake_free_disk_space_getter_ = std::make_unique<FakeFreeDiskSpaceGetter>();
 
     metadata_storage_.reset(new ResourceMetadataStorage(
         temp_dir_.GetPath(), base::ThreadTaskRunnerHandle::Get().get()));
@@ -147,6 +147,26 @@ class SearchMetadataTest : public testing::Test {
     entry.mutable_file_specific_info()->set_content_mime_type(
         drive::util::kGoogleDocumentMimeType);
     EXPECT_EQ(FILE_ERROR_OK, resource_metadata_->AddEntry(entry, &local_id));
+
+    // drive/team_drives
+    EXPECT_EQ(FILE_ERROR_OK,
+              resource_metadata_->GetIdByPath(
+                  util::GetDriveTeamDrivesRootPath(), &local_id));
+    const std::string team_drive_root_local_id = local_id;
+
+    // drive/team_drives/TD-1
+    EXPECT_EQ(FILE_ERROR_OK, resource_metadata_->AddEntry(
+                                 GetDirectoryEntry("TD-1", "team_drive1", 1, 1,
+                                                   team_drive_root_local_id),
+                                 &local_id));
+    const std::string team_drive_dir1_local_id = local_id;
+
+    // drive/team_drives/TD-1/TD File 1.txt
+    EXPECT_EQ(FILE_ERROR_OK,
+              resource_metadata_->AddEntry(
+                  GetFileEntry("TD File 1.txt", "team_drive1_file1a", 2, 99,
+                               team_drive_dir1_local_id),
+                  &local_id));
   }
 
   ResourceEntry GetFileEntry(const std::string& name,
@@ -217,6 +237,23 @@ TEST_F(SearchMetadataTest, SearchMetadata_RegularFile) {
   ASSERT_TRUE(result);
   ASSERT_EQ(1U, result->size());
   EXPECT_EQ("drive/root/Directory-1/SubDirectory File 1.txt",
+            result->at(0).path.AsUTF8Unsafe());
+}
+
+TEST_F(SearchMetadataTest, SearchMetadata_TeamDrive_RegularFile) {
+  FileError error = FILE_ERROR_FAILED;
+  std::unique_ptr<MetadataSearchResultVector> result;
+
+  SearchMetadata(
+      base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
+      "TD File 1.txt", base::BindRepeating(&MatchesType, SEARCH_METADATA_ALL),
+      kDefaultAtMostNumMatches, MetadataSearchOrder::LAST_ACCESSED,
+      google_apis::test_util::CreateCopyResultCallback(&error, &result));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+  ASSERT_TRUE(result);
+  ASSERT_EQ(1U, result->size());
+  EXPECT_EQ("drive/team_drives/TD-1/TD File 1.txt",
             result->at(0).path.AsUTF8Unsafe());
 }
 
@@ -318,6 +355,22 @@ TEST_F(SearchMetadataTest, SearchMetadata_Directory) {
   EXPECT_EQ("drive/root/Directory-1", result->at(0).path.AsUTF8Unsafe());
 }
 
+TEST_F(SearchMetadataTest, SearchMetadata_TeamDrive_Directory) {
+  FileError error = FILE_ERROR_FAILED;
+  std::unique_ptr<MetadataSearchResultVector> result;
+
+  SearchMetadata(
+      base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(), "TD-1",
+      base::BindRepeating(&MatchesType, SEARCH_METADATA_ALL),
+      kDefaultAtMostNumMatches, MetadataSearchOrder::LAST_ACCESSED,
+      google_apis::test_util::CreateCopyResultCallback(&error, &result));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(FILE_ERROR_OK, error);
+  ASSERT_TRUE(result);
+  ASSERT_EQ(1U, result->size());
+  EXPECT_EQ("drive/team_drives/TD-1", result->at(0).path.AsUTF8Unsafe());
+}
+
 TEST_F(SearchMetadataTest, SearchMetadata_HostedDocument) {
   FileError error = FILE_ERROR_FAILED;
   std::unique_ptr<MetadataSearchResultVector> result;
@@ -412,7 +465,7 @@ TEST_F(SearchMetadataTest, SearchMetadata_ExcludeDirectory) {
 // "drive", "drive/root", "drive/other" should be excluded.
 TEST_F(SearchMetadataTest, SearchMetadata_ExcludeSpecialDirectories) {
   const char* const kQueries[] = { "drive", "root", "other" };
-  for (size_t i = 0; i < arraysize(kQueries); ++i) {
+  for (size_t i = 0; i < base::size(kQueries); ++i) {
     FileError error = FILE_ERROR_FAILED;
     std::unique_ptr<MetadataSearchResultVector> result;
 
@@ -481,10 +534,8 @@ TEST_F(SearchMetadataTest,
   // \xE3\x80\x80 is ideographic space.
   SearchMetadata(
       base::ThreadTaskRunnerHandle::Get(), resource_metadata_.get(),
-      "Directory\xE3\x80\x80"
-      "1",
-      base::Bind(&MatchesType, SEARCH_METADATA_ALL), kDefaultAtMostNumMatches,
-      MetadataSearchOrder::LAST_ACCESSED,
+      R"(Directory　1)", base::Bind(&MatchesType, SEARCH_METADATA_ALL),
+      kDefaultAtMostNumMatches, MetadataSearchOrder::LAST_ACCESSED,
       google_apis::test_util::CreateCopyResultCallback(&error, &result));
 
   base::RunLoop().RunUntilIdle();
@@ -583,7 +634,7 @@ TEST(SearchMetadataSimpleTest, MultiTextBySingleQuery) {
   std::vector<std::unique_ptr<
       base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>>
       queries;
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16("hello")));
 
@@ -619,10 +670,10 @@ TEST(SearchMetadataSimpleTest, FindAndHighlight_MultipleQueries) {
   std::vector<std::unique_ptr<
       base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>>
       queries;
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16("hello")));
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16("good")));
 
@@ -636,10 +687,10 @@ TEST(SearchMetadataSimpleTest, FindAndHighlight_OverlappingHighlights) {
   std::vector<std::unique_ptr<
       base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>>
       queries;
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16("morning")));
-  queries.push_back(base::MakeUnique<
+  queries.push_back(std::make_unique<
                     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents>(
       base::UTF8ToUTF16("ing,")));
 

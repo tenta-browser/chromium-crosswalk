@@ -8,30 +8,35 @@
 #include <utility>
 
 #include "ash/public/cpp/ash_switches.h"
-#include "ash/public/cpp/config.h"
-#include "ash/session/session_controller.h"
+#include "ash/public/cpp/shutdown_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
-#include "ash/shutdown_controller.h"
 #include "ash/shutdown_reason.h"
 #include "ash/system/power/power_button_controller.h"
+#include "ash/system/power/power_button_controller_test_api.h"
 #include "ash/system/power/power_button_test_base.h"
 #include "ash/touch/touch_devices_controller.h"
 #include "ash/wm/lock_state_controller_test_api.h"
 #include "ash/wm/session_state_animator.h"
 #include "ash/wm/test_session_state_animator.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
-#include "chromeos/dbus/fake_session_manager_client.h"
-#include "ui/display/manager/chromeos/display_configurator.h"
-#include "ui/display/manager/fake_display_snapshot.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
+#include "ui/display/fake/fake_display_snapshot.h"
+#include "ui/display/manager/display_configurator.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace ash {
 namespace {
 
+// Shorthand for some long constants.
+constexpr power_manager::BacklightBrightnessChange_Cause kUserCause =
+    power_manager::BacklightBrightnessChange_Cause_USER_REQUEST;
+constexpr power_manager::BacklightBrightnessChange_Cause kOtherCause =
+    power_manager::BacklightBrightnessChange_Cause_OTHER;
 bool cursor_visible() {
   return Shell::Get()->cursor_manager()->IsCursorVisible();
 }
@@ -51,6 +56,7 @@ class TestShutdownController : public ShutdownController {
 
  private:
   // ShutdownController:
+  void SetRebootOnShutdown(bool reboot_on_shutdown) override {}
   void ShutDownOrReboot(ShutdownReason reason) override {
     num_shutdown_requests_++;
   }
@@ -67,18 +73,30 @@ class LockStateControllerTest : public PowerButtonTestBase {
   LockStateControllerTest() = default;
   ~LockStateControllerTest() override = default;
 
+  // PowerButtonTestBase:
   void SetUp() override {
     PowerButtonTestBase::SetUp();
-    InitPowerButtonControllerMembers(false /* SendAccelerometerUpdate */);
+    InitPowerButtonControllerMembers(
+        chromeos::PowerManagerClient::TabletMode::UNSUPPORTED);
 
     test_animator_ = new TestSessionStateAnimator;
     lock_state_controller_->set_animator_for_test(test_animator_);
-    lock_state_test_api_->set_shutdown_controller(&test_shutdown_controller_);
+
+    shutdown_controller_resetter_ =
+        std::make_unique<ShutdownController::ScopedResetterForTest>();
+    test_shutdown_controller_ = std::make_unique<TestShutdownController>();
+    lock_state_test_api_->set_shutdown_controller(
+        test_shutdown_controller_.get());
+  }
+  void TearDown() override {
+    test_shutdown_controller_.reset();
+    shutdown_controller_resetter_.reset();
+    PowerButtonTestBase::TearDown();
   }
 
  protected:
   int NumShutdownRequests() {
-    return test_shutdown_controller_.num_shutdown_requests();
+    return test_shutdown_controller_->num_shutdown_requests();
   }
 
   void Advance(SessionStateAnimator::AnimationSpeed speed) {
@@ -88,6 +106,15 @@ class LockStateControllerTest : public PowerButtonTestBase {
   void AdvancePartially(SessionStateAnimator::AnimationSpeed speed,
                         float factor) {
     test_animator_->Advance(test_animator_->GetDuration(speed) * factor);
+  }
+
+  void SendBrightnessChange(
+      double percent,
+      power_manager::BacklightBrightnessChange_Cause cause) {
+    power_manager::BacklightBrightnessChange change;
+    change.set_percent(percent);
+    change.set_cause(cause);
+    power_manager_client()->SendScreenBrightnessChanged(change);
   }
 
   void ExpectPreLockAnimationStarted() {
@@ -264,18 +291,20 @@ class LockStateControllerTest : public PowerButtonTestBase {
     lock_state_controller_->OnLockScreenHide(closure);
   }
 
-  TestShutdownController test_shutdown_controller_;
-  TestSessionStateAnimator* test_animator_ = nullptr;  // not owned
+  std::unique_ptr<ShutdownController::ScopedResetterForTest>
+      shutdown_controller_resetter_;
+  std::unique_ptr<TestShutdownController> test_shutdown_controller_;
+  TestSessionStateAnimator* test_animator_ = nullptr;   // not owned
 
  private:
   DISALLOW_COPY_AND_ASSIGN(LockStateControllerTest);
 };
 
-// Test the lock-to-shutdown flow for non-Chrome-OS hardware that doesn't
-// correctly report power button releases.  We should lock immediately the first
+// Test the show menu and shutdown flow for non-Chrome-OS hardware that doesn't
+// correctly report power button releases.  We should show menu the first
 // time the button is pressed and shut down when it's pressed from the locked
 // state.
-TEST_F(LockStateControllerTest, LegacyLockAndShutDown) {
+TEST_F(LockStateControllerTest, LegacyShowMenuAndShutDown) {
   Initialize(ButtonType::LEGACY, LoginStatus::USER);
 
   ExpectUnlockedState();
@@ -284,23 +313,7 @@ TEST_F(LockStateControllerTest, LegacyLockAndShutDown) {
   // power button get pressed.
   PressPowerButton();
 
-  EXPECT_FALSE(lock_state_test_api_->is_lock_cancellable());
-
-  ExpectPreLockAnimationStarted();
-  test_animator_->CompleteAllAnimations(true);
-  ExpectPreLockAnimationFinished();
-
-  EXPECT_EQ(1, session_manager_client_->request_lock_screen_call_count());
-
-  // Notify that we locked successfully.
-  lock_state_controller_->OnStartingLock();
-  EXPECT_EQ(0u, test_animator_->GetAnimationCount());
-
-  LockScreen();
-
-  ExpectPostLockAnimationStarted();
-  test_animator_->CompleteAllAnimations(true);
-  ExpectPostLockAnimationFinished();
+  EXPECT_TRUE(power_button_test_api_->IsMenuOpened());
 
   // We shouldn't progress towards the shutdown state, however.
   EXPECT_FALSE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
@@ -316,277 +329,71 @@ TEST_F(LockStateControllerTest, LegacyLockAndShutDown) {
   EXPECT_EQ(0, NumShutdownRequests());
   // Make sure a mouse move event won't show the cursor.
   GenerateMouseMoveEvent();
-  // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
-    EXPECT_FALSE(cursor_visible());
+  EXPECT_FALSE(cursor_visible());
 
   EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
   lock_state_test_api_->trigger_real_shutdown_timeout();
   EXPECT_EQ(1, NumShutdownRequests());
 }
 
-// Test that we start shutting down immediately if the power button is pressed
-// while we're not logged in on an unofficial system.
-TEST_F(LockStateControllerTest, LegacyNotLoggedIn) {
-  Initialize(ButtonType::LEGACY, LoginStatus::NOT_LOGGED_IN);
+// Test that we ignore power button presses when the screen is turned off on an
+// unofficial system.
+TEST_F(LockStateControllerTest, LegacyIgnorePowerButtonIfScreenIsOff) {
+  Initialize(ButtonType::LEGACY, LoginStatus::USER);
 
+  // When the screen brightness is at 0%, we shouldn't do anything in response
+  // to power button presses.
+  SendBrightnessChange(0, kUserCause);
   PressPowerButton();
-  ExpectShutdownAnimationStarted();
-
-  EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
-}
-
-// Test that we start shutting down immediately if the power button is pressed
-// while we're logged in as a guest on an unofficial system.
-TEST_F(LockStateControllerTest, LegacyGuest) {
-  Initialize(ButtonType::LEGACY, LoginStatus::GUEST);
-
-  PressPowerButton();
-  ExpectShutdownAnimationStarted();
-
-  EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
-}
-
-// When we hold the power button while the user isn't logged in, we should shut
-// down the machine directly.
-TEST_F(LockStateControllerTest, ShutdownWhenNotLoggedIn) {
-  Initialize(ButtonType::NORMAL, LoginStatus::NOT_LOGGED_IN);
-
-  // Press the power button and check that we start the shutdown timer.
-  PressPowerButton();
-  EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
-  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
-  ExpectShutdownAnimationStarted();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN, 0.5f);
-
-  // Release the power button before the shutdown timer fires.
+  EXPECT_FALSE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
 
-  EXPECT_FALSE(lock_state_test_api_->shutdown_timer_is_running());
-  ExpectShutdownAnimationCancel();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_REVERT, 0.5f);
-
-  // Press the button again and make the shutdown timeout fire this time.
-  // Check that we start the timer for actually requesting the shutdown.
+  // After increasing the brightness to 10%, we should show the menu as usual.
+  SendBrightnessChange(10, kUserCause);
   PressPowerButton();
-
-  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
-  ExpectShutdownAnimationFinished();
-  lock_state_test_api_->trigger_shutdown_timeout();
-
-  EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
-  EXPECT_EQ(0, NumShutdownRequests());
-
-  // When the timout fires, we should request a shutdown.
-  lock_state_test_api_->trigger_real_shutdown_timeout();
-
-  EXPECT_EQ(1, NumShutdownRequests());
-}
-
-// Test that we lock the screen and deal with unlocking correctly.
-TEST_F(LockStateControllerTest, LockAndUnlock) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  ExpectUnlockedState();
-
-  // Press the power button and check that the lock timer is started and that we
-  // start lifting the non-screen-locker containers.
-  PressPowerButton();
-
-  ExpectPreLockAnimationStarted();
-  EXPECT_TRUE(lock_state_test_api_->is_lock_cancellable());
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
-
-  test_animator_->CompleteAllAnimations(true);
-  ExpectPreLockAnimationFinished();
-
-  EXPECT_EQ(1, session_manager_client_->request_lock_screen_call_count());
-
-  // Notify that we locked successfully.
-  lock_state_controller_->OnStartingLock();
-  // We had that animation already.
-  EXPECT_EQ(0u, test_animator_->GetAnimationCount());
-
-  LockScreen();
-
-  ExpectPostLockAnimationStarted();
-  test_animator_->CompleteAllAnimations(true);
-  ExpectPostLockAnimationFinished();
-
-  // When we release the power button, the lock-to-shutdown timer should be
-  // stopped.
-  ExpectLockedState();
-  EXPECT_TRUE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
+  EXPECT_TRUE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
-  ExpectLockedState();
-  EXPECT_FALSE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
-
-  // The backlights shouldn't be forced off when clamshell power button behavior
-  // isn't explicitly requested.
-  EXPECT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-
-  // Notify that the screen has been unlocked.  We should show the
-  // non-screen-locker windows.
-  bool called = false;
-  SuccessfulAuthentication(&called);
-
-  ExpectUnlockBeforeUIDestroyedAnimationStarted();
-  EXPECT_FALSE(called);
-  test_animator_->CompleteAllAnimations(true);
-  ExpectUnlockBeforeUIDestroyedAnimationFinished();
-
-  EXPECT_TRUE(called);
-
-  UnlockScreen();
-
-  ExpectUnlockAfterUIDestroyedAnimationStarted();
-  test_animator_->CompleteAllAnimations(true);
-  ExpectUnlockAfterUIDestroyedAnimationFinished();
-
-  ExpectUnlockedState();
 }
 
-// Test that we deal with cancelling lock correctly.
-TEST_F(LockStateControllerTest, LockAndCancel) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
+TEST_F(LockStateControllerTest, LegacyHonorPowerButtonInDockedMode) {
+  Initialize(ButtonType::LEGACY, LoginStatus::USER);
+  // Create two outputs, the first internal and the second external.
+  display::DisplayConfigurator::DisplayStateList outputs;
 
-  ExpectUnlockedState();
+  std::unique_ptr<display::DisplaySnapshot> internal_display =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(123)
+          .SetNativeMode(gfx::Size(1, 1))
+          .SetType(display::DISPLAY_CONNECTION_TYPE_INTERNAL)
+          .Build();
+  outputs.push_back(internal_display.get());
 
-  // Press the power button and check that the lock timer is started and that we
-  // start lifting the non-screen-locker containers.
+  std::unique_ptr<display::DisplaySnapshot> external_display =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(456)
+          .SetNativeMode(gfx::Size(1, 1))
+          .SetType(display::DISPLAY_CONNECTION_TYPE_HDMI)
+          .Build();
+  outputs.push_back(external_display.get());
+
+  // When all of the displays are turned off (e.g. due to user inactivity), the
+  // power button should be ignored.
+  SendBrightnessChange(0, kUserCause);
+  internal_display->set_current_mode(nullptr);
+  external_display->set_current_mode(nullptr);
+  power_button_controller_->OnDisplayModeChanged(outputs);
   PressPowerButton();
-
-  ExpectPreLockAnimationStarted();
-  EXPECT_TRUE(lock_state_test_api_->is_lock_cancellable());
-
-  // forward only half way through
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.5f);
-
-  // Release the button before the lock timer fires.
+  EXPECT_FALSE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
 
-  ExpectPreLockAnimationCancel();
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
-  ExpectUnlockedState();
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
-}
-
-// Test that we deal with cancelling lock correctly.
-TEST_F(LockStateControllerTest, LockAndCancelAndLockAgain) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  ExpectUnlockedState();
-
-  // Press the power button and check that the lock timer is started and that we
-  // start lifting the non-screen-locker containers.
+  // When the screen brightness is 0% but the external display is still turned
+  // on (indicating either docked mode or the user having manually decreased the
+  // brightness to 0%), the power button should still be handled.
+  external_display->set_current_mode(external_display->modes().back().get());
+  power_button_controller_->OnDisplayModeChanged(outputs);
   PressPowerButton();
-
-  ExpectPreLockAnimationStarted();
-  EXPECT_TRUE(lock_state_test_api_->is_lock_cancellable());
-
-  // forward only half way through
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.5f);
-
-  // Release the button before the lock timer fires.
+  EXPECT_TRUE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
-  ExpectPreLockAnimationCancel();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDO_MOVE_WINDOWS,
-                   0.5f);
-
-  PressPowerButton();
-  ExpectPreLockAnimationStarted();
-  EXPECT_TRUE(lock_state_test_api_->is_lock_cancellable());
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.6f);
-
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.6f);
-  ExpectPreLockAnimationFinished();
-  EXPECT_EQ(1, session_manager_client_->request_lock_screen_call_count());
-}
-
-// Hold the power button down from the unlocked state to eventual shutdown.
-TEST_F(LockStateControllerTest, LockToShutdown) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // Hold the power button and lock the screen.
-  PressPowerButton();
-  EXPECT_TRUE(lock_state_test_api_->is_animating_lock());
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  LockScreen();
-  Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
-
-  // When the lock-to-shutdown timeout fires, we should start the shutdown
-  // timer.
-  EXPECT_TRUE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
-
-  lock_state_test_api_->trigger_lock_to_shutdown_timeout();
-
-  ExpectShutdownAnimationStarted();
-  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
-
-  // Fire the shutdown timeout and check that we request shutdown.
-  Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
-  ExpectShutdownAnimationFinished();
-  lock_state_test_api_->trigger_shutdown_timeout();
-
-  EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
-  EXPECT_EQ(0, NumShutdownRequests());
-  lock_state_test_api_->trigger_real_shutdown_timeout();
-  EXPECT_EQ(1, NumShutdownRequests());
-}
-
-// Hold the power button down from the unlocked state to eventual shutdown,
-// then release the button while system does locking.
-TEST_F(LockStateControllerTest, CancelLockToShutdown) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  PressPowerButton();
-
-  // Hold the power button and lock the screen.
-  EXPECT_TRUE(lock_state_test_api_->is_animating_lock());
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  LockScreen();
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS, 0.5f);
-
-  // Power button is released while system attempts to lock.
-  ReleasePowerButton();
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
-
-  EXPECT_FALSE(lock_state_controller_->ShutdownRequested());
-  EXPECT_FALSE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
-  EXPECT_FALSE(lock_state_test_api_->shutdown_timer_is_running());
-}
-
-// Test that we handle the case where lock requests are ignored.
-TEST_F(LockStateControllerTest, Lock) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // Hold the power button and lock the screen.
-  PressPowerButton();
-  ExpectPreLockAnimationStarted();
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-
-  EXPECT_EQ(1, session_manager_client_->request_lock_screen_call_count());
-  EXPECT_TRUE(lock_state_test_api_->lock_fail_timer_is_running());
-  // We shouldn't start the lock-to-shutdown timer until the screen has actually
-  // been locked and this was animated.
-  EXPECT_FALSE(lock_state_test_api_->lock_to_shutdown_timer_is_running());
-
-  // Act as if the request timed out.
-  EXPECT_DEATH(lock_state_test_api_->trigger_lock_fail_timeout(), "");
 }
 
 // Test the basic operation of the lock button (not logged in).
@@ -597,7 +404,7 @@ TEST_F(LockStateControllerTest, LockButtonBasicNotLoggedIn) {
   PressLockButton();
   EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
   ReleaseLockButton();
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
+  EXPECT_FALSE(Shell::Get()->session_controller()->IsScreenLocked());
 }
 
 // Test the basic operation of the lock button (guest).
@@ -608,7 +415,7 @@ TEST_F(LockStateControllerTest, LockButtonBasicGuest) {
   PressLockButton();
   EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
   ReleaseLockButton();
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
+  EXPECT_FALSE(Shell::Get()->session_controller()->IsScreenLocked());
 }
 
 // Test the basic operation of the lock button.
@@ -620,6 +427,7 @@ TEST_F(LockStateControllerTest, LockButtonBasic) {
   PressLockButton();
   ExpectPreLockAnimationStarted();
   AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.5f);
+  ExpectPreLockAnimationRunning();
 
   // If the button is released immediately, we shouldn't lock the screen.
   ReleaseLockButton();
@@ -627,14 +435,16 @@ TEST_F(LockStateControllerTest, LockButtonBasic) {
   Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
 
   ExpectUnlockedState();
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
+  EXPECT_FALSE(Shell::Get()->session_controller()->IsScreenLocked());
 
   // Press the button again and let the lock timeout fire.  We should request
   // that the screen be locked.
   PressLockButton();
   ExpectPreLockAnimationStarted();
   Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  EXPECT_EQ(1, session_manager_client_->request_lock_screen_call_count());
+
+  GetSessionControllerClient()->FlushForTest();
+  EXPECT_TRUE(Shell::Get()->session_controller()->IsScreenLocked());
 
   // Pressing the lock button while we have a pending lock request shouldn't do
   // anything.
@@ -644,7 +454,6 @@ TEST_F(LockStateControllerTest, LockButtonBasic) {
   ReleaseLockButton();
 
   // Pressing the button also shouldn't do anything after the screen is locked.
-  LockScreen();
   ExpectPostLockAnimationStarted();
 
   PressLockButton();
@@ -657,54 +466,6 @@ TEST_F(LockStateControllerTest, LockButtonBasic) {
   PressLockButton();
   ReleaseLockButton();
   ExpectPostLockAnimationFinished();
-}
-
-// Test that the power button takes priority over the lock button.
-TEST_F(LockStateControllerTest, PowerButtonPreemptsLockButton) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // While the lock button is down, hold the power button.
-  PressLockButton();
-  ExpectPreLockAnimationStarted();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.1f);
-  ExpectPreLockAnimationRunning();
-
-  PressPowerButton();
-  ExpectPreLockAnimationRunning();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.1f);
-  ExpectPreLockAnimationRunning();
-
-  // The lock timer shouldn't be stopped when the lock button is released.
-  ReleaseLockButton();
-  ExpectPreLockAnimationRunning();
-
-  ReleasePowerButton();
-  ExpectPreLockAnimationCancel();
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
-  ExpectUnlockedState();
-
-  // Now press the power button first and then the lock button.
-  PressPowerButton();
-  ExpectPreLockAnimationStarted();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.1f);
-
-  PressLockButton();
-  ExpectPreLockAnimationRunning();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.1f);
-
-  // Releasing the power button should stop the lock timer.
-  ReleasePowerButton();
-  ExpectPreLockAnimationCancel();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.1f);
-
-  ReleaseLockButton();
-  ExpectPreLockAnimationCancel();
 }
 
 // When the screen is locked without going through the usual power-button
@@ -719,7 +480,7 @@ TEST_F(LockStateControllerTest, LockWithoutButton) {
   EXPECT_LT(0u, test_animator_->GetAnimationCount());
 
   test_animator_->CompleteAllAnimations(true);
-  EXPECT_EQ(0, session_manager_client_->request_lock_screen_call_count());
+  EXPECT_FALSE(Shell::Get()->session_controller()->IsScreenLocked());
 }
 
 // When we hear that the process is exiting but we haven't had a chance to
@@ -732,9 +493,7 @@ TEST_F(LockStateControllerTest, ShutdownWithoutButton) {
       SessionStateAnimator::kAllNonRootContainersMask,
       SessionStateAnimator::ANIMATION_HIDE_IMMEDIATELY));
   GenerateMouseMoveEvent();
-  // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
-    EXPECT_FALSE(cursor_visible());
+  EXPECT_FALSE(cursor_visible());
 }
 
 // Test that we display the fast-close animation and shut down when we get an
@@ -749,9 +508,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLoginScreen) {
   Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
 
   GenerateMouseMoveEvent();
-  // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
-    EXPECT_FALSE(cursor_visible());
+  EXPECT_FALSE(cursor_visible());
 
   EXPECT_EQ(0, NumShutdownRequests());
   EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
@@ -774,9 +531,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLockScreen) {
   Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
 
   GenerateMouseMoveEvent();
-  // TODO: CursorManager not created in mash. http://crbug.com/631103.
-  if (Shell::GetAshConfig() != Config::MASH)
-    EXPECT_FALSE(cursor_visible());
+  EXPECT_FALSE(cursor_visible());
 
   EXPECT_EQ(0, NumShutdownRequests());
   EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
@@ -784,99 +539,13 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLockScreen) {
   EXPECT_EQ(1, NumShutdownRequests());
 }
 
-TEST_F(LockStateControllerTest, RequestAndCancelShutdownFromLockScreen) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  LockScreen();
-  Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
-  ExpectLockedState();
-
-  // Press the power button and check that we start the shutdown timer.
-  PressPowerButton();
-  EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
-  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
-
-  ExpectShutdownAnimationStarted();
-
-  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN, 0.5f);
-
-  // Release the power button before the shutdown timer fires.
-  ReleasePowerButton();
-
-  EXPECT_FALSE(lock_state_test_api_->shutdown_timer_is_running());
-
-  ExpectShutdownAnimationCancel();
-
-  Advance(SessionStateAnimator::ANIMATION_SPEED_REVERT_SHUTDOWN);
-  ExpectLockedState();
-}
-
-// Test that we ignore power button presses when the screen is turned off.
-TEST_F(LockStateControllerTest, IgnorePowerButtonIfScreenIsOff) {
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // When the screen brightness is at 0%, we shouldn't do anything in response
-  // to power button presses.
-  power_manager_client_->SendBrightnessChanged(0, true);
-  PressPowerButton();
-  EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
-  ReleasePowerButton();
-
-  // After increasing the brightness to 10%, we should start the timer like
-  // usual.
-  power_manager_client_->SendBrightnessChanged(10, true);
-  PressPowerButton();
-  EXPECT_TRUE(lock_state_test_api_->is_animating_lock());
-  ReleasePowerButton();
-}
-
-TEST_F(LockStateControllerTest, HonorPowerButtonInDockedMode) {
-  // Create two outputs, the first internal and the second external.
-  display::DisplayConfigurator::DisplayStateList outputs;
-
-  std::unique_ptr<display::DisplaySnapshot> internal_display =
-      display::FakeDisplaySnapshot::Builder()
-          .SetId(123)
-          .SetNativeMode(gfx::Size(1, 1))
-          .SetType(display::DISPLAY_CONNECTION_TYPE_INTERNAL)
-          .Build();
-  outputs.push_back(internal_display.get());
-
-  std::unique_ptr<display::DisplaySnapshot> external_display =
-      display::FakeDisplaySnapshot::Builder()
-          .SetId(456)
-          .SetNativeMode(gfx::Size(1, 1))
-          .SetType(display::DISPLAY_CONNECTION_TYPE_HDMI)
-          .Build();
-  outputs.push_back(external_display.get());
-
-  // When all of the displays are turned off (e.g. due to user inactivity), the
-  // power button should be ignored.
-  power_manager_client_->SendBrightnessChanged(0, true);
-  internal_display->set_current_mode(nullptr);
-  external_display->set_current_mode(nullptr);
-  power_button_controller_->OnDisplayModeChanged(outputs);
-  PressPowerButton();
-  EXPECT_FALSE(lock_state_test_api_->is_animating_lock());
-  ReleasePowerButton();
-
-  // When the screen brightness is 0% but the external display is still turned
-  // on (indicating either docked mode or the user having manually decreased the
-  // brightness to 0%), the power button should still be handled.
-  external_display->set_current_mode(external_display->modes().back().get());
-  power_button_controller_->OnDisplayModeChanged(outputs);
-  PressPowerButton();
-  EXPECT_TRUE(lock_state_test_api_->is_animating_lock());
-  ReleasePowerButton();
-}
-
-// Test that hidden wallpaper appears and revers correctly on lock/cancel.
+// Test that hidden wallpaper appears and reverts correctly on lock/cancel.
 TEST_F(LockStateControllerTest, TestHiddenWallpaperLockCancel) {
   Initialize(ButtonType::NORMAL, LoginStatus::USER);
   HideWallpaper();
 
   ExpectUnlockedState();
-  PressPowerButton();
+  PressLockButton();
 
   ExpectPreLockAnimationStarted();
   ExpectWallpaperIsShowing();
@@ -885,7 +554,7 @@ TEST_F(LockStateControllerTest, TestHiddenWallpaperLockCancel) {
   AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE, 0.5f);
 
   // Release the button before the lock timer fires.
-  ReleasePowerButton();
+  ReleaseLockButton();
   ExpectPreLockAnimationCancel();
   ExpectWallpaperIsHiding();
 
@@ -907,9 +576,9 @@ TEST_F(LockStateControllerTest, TestHiddenWallpaperLockUnlock) {
 
   ExpectUnlockedState();
 
-  // Press the power button and check that the lock timer is started and that we
+  // Press the lock button and check that the lock timer is started and that we
   // start lifting the non-screen-locker containers.
-  PressPowerButton();
+  PressLockButton();
 
   ExpectPreLockAnimationStarted();
   ExpectWallpaperIsShowing();
@@ -920,7 +589,7 @@ TEST_F(LockStateControllerTest, TestHiddenWallpaperLockUnlock) {
 
   LockScreen();
 
-  ReleasePowerButton();
+  ReleaseLockButton();
 
   ExpectPostLockAnimationStarted();
   Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
@@ -928,7 +597,7 @@ TEST_F(LockStateControllerTest, TestHiddenWallpaperLockUnlock) {
 
   ExpectLockedState();
 
-  SuccessfulAuthentication(NULL);
+  SuccessfulAuthentication(nullptr);
 
   ExpectUnlockBeforeUIDestroyedAnimationStarted();
   Advance(SessionStateAnimator::ANIMATION_SPEED_MOVE_WINDOWS);
@@ -952,75 +621,6 @@ TEST_F(LockStateControllerTest, TestHiddenWallpaperLockUnlock) {
   ExpectUnlockedState();
 }
 
-// Test that backlights are forced off shortly after the screen is locked when
-// clamshell-style power button behavior is forced.
-TEST_F(LockStateControllerTest, ClamshellDisplayOffAfterLock) {
-  ForceClamshellPowerButton();
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // If the power button isn't held long enough for the screen to be locked, the
-  // backlights shouldn't be forced off.
-  PressPowerButton();
-  ReleasePowerButton();
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  EXPECT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-
-  // Now hold the power button long enough to lock the screen.
-  PressPowerButton();
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  LockScreen();
-  EXPECT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-
-  // After releasing the power button, the display should still be on, but it
-  // should be forced off after the display-off timer fires.
-  ReleasePowerButton();
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  EXPECT_TRUE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
-
-  // Pressing the power button should turn the display back on.
-  PressPowerButton();
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  ReleasePowerButton();
-
-  // Now that the screen is already locked, the timer shouldn't be started if
-  // the power button is pressed and released again.
-  PressPowerButton();
-  ReleasePowerButton();
-  ASSERT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  ASSERT_FALSE(power_manager_client_->backlights_forced_off());
-}
-
-// Test that user activity prevents backlights from being forced off after the
-// screen is locked.
-TEST_F(LockStateControllerTest, CancelClamshellDisplayOffAfterLock) {
-  ForceClamshellPowerButton();
-  Initialize(ButtonType::NORMAL, LoginStatus::USER);
-
-  // If a key is pressed shortly after locking, the display-off timer should be
-  // stopped.
-  PressPowerButton();
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  LockScreen();
-  ReleasePowerButton();
-  PressKey(ui::VKEY_A);
-  ReleaseKey(ui::VKEY_A);
-  EXPECT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  UnlockScreen();
-
-  // Mouse events should also stop the timer.
-  PressPowerButton();
-  Advance(SessionStateAnimator::ANIMATION_SPEED_UNDOABLE);
-  LockScreen();
-  ReleasePowerButton();
-  GenerateMouseMoveEvent();
-  EXPECT_FALSE(power_button_controller_->TriggerDisplayOffTimerForTesting());
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  UnlockScreen();
-}
-
 // Tests the default behavior of disabling the touchscreen when the screen is
 // turned off due to user inactivity.
 TEST_F(LockStateControllerTest, DisableTouchscreenForScreenOff) {
@@ -1030,15 +630,15 @@ TEST_F(LockStateControllerTest, DisableTouchscreenForScreenOff) {
   base::RunLoop().RunUntilIdle();
 
   // Manually turn the screen off and check that the touchscreen is enabled.
-  power_manager_client_->SendBrightnessChanged(0, true /* user_initiated */);
+  SendBrightnessChange(0, kUserCause);
   EXPECT_TRUE(Shell::Get()->touch_devices_controller()->GetTouchscreenEnabled(
-      TouchscreenEnabledSource::GLOBAL));
+      TouchDeviceEnabledSource::GLOBAL));
 
   // It should be disabled if the screen is turned off due to user inactivity.
-  power_manager_client_->SendBrightnessChanged(100, true /* user_initiated */);
-  power_manager_client_->SendBrightnessChanged(0, false /* user_initiated */);
+  SendBrightnessChange(100, kUserCause);
+  SendBrightnessChange(0, kOtherCause);
   EXPECT_FALSE(Shell::Get()->touch_devices_controller()->GetTouchscreenEnabled(
-      TouchscreenEnabledSource::GLOBAL));
+      TouchDeviceEnabledSource::GLOBAL));
 }
 
 // Tests that the kTouchscreenUsableWhileScreenOff switch keeps the touchscreen
@@ -1053,9 +653,46 @@ TEST_F(LockStateControllerTest, TouchscreenUnableWhileScreenOff) {
   base::RunLoop().RunUntilIdle();
 
   // The touchscreen should remain enabled.
-  power_manager_client_->SendBrightnessChanged(0, false /* user_initiated */);
+  SendBrightnessChange(0, kOtherCause);
   EXPECT_TRUE(Shell::Get()->touch_devices_controller()->GetTouchscreenEnabled(
-      TouchscreenEnabledSource::GLOBAL));
+      TouchDeviceEnabledSource::GLOBAL));
+}
+
+// Tests that continue pressing the power button for a while after power menu is
+// shown should trigger the cancellable pre-shutdown animation.
+TEST_F(LockStateControllerTest, ShutDownAfterShowPowerMenu) {
+  Initialize(ButtonType::NORMAL, LoginStatus::USER);
+  PressPowerButton();
+  EXPECT_TRUE(power_button_test_api_->IsMenuOpened());
+  ASSERT_TRUE(power_button_test_api_->TriggerPreShutdownTimeout());
+  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
+
+  ExpectShutdownAnimationStarted();
+  AdvancePartially(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN, 0.5f);
+  // Release the power button before the shutdown timer fires.
+  ReleasePowerButton();
+  EXPECT_FALSE(lock_state_test_api_->shutdown_timer_is_running());
+  ExpectShutdownAnimationCancel();
+
+  power_button_controller_->DismissMenu();
+  EXPECT_FALSE(power_button_test_api_->IsMenuOpened());
+
+  // Press the button again and make the shutdown timeout fire this time.
+  // Check that we start the timer for actually requesting the shutdown.
+  PressPowerButton();
+  ASSERT_TRUE(power_button_test_api_->TriggerPreShutdownTimeout());
+  EXPECT_TRUE(lock_state_test_api_->shutdown_timer_is_running());
+
+  Advance(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
+  ExpectShutdownAnimationFinished();
+  lock_state_test_api_->trigger_shutdown_timeout();
+
+  EXPECT_TRUE(lock_state_test_api_->real_shutdown_timer_is_running());
+  EXPECT_EQ(0, NumShutdownRequests());
+
+  // When the timeout fires, we should request a shutdown.
+  lock_state_test_api_->trigger_real_shutdown_timeout();
+  EXPECT_EQ(1, NumShutdownRequests());
 }
 
 }  // namespace ash

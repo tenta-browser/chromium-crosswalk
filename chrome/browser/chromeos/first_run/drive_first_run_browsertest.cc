@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/first_run/drive_first_run_controller.h"
@@ -88,7 +87,7 @@ DriveFirstRunTest::DriveFirstRunTest() :
     success_(false) {}
 
 void DriveFirstRunTest::SetUpOnMainThread() {
-  PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir_);
+  base::PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir_);
   test_data_dir_ = test_data_dir_.AppendASCII(kTestDirectory);
 
   host_resolver()->AddRule("example.com", "127.0.0.1");
@@ -112,7 +111,7 @@ void DriveFirstRunTest::InitTestServer(const std::string& directory) {
   // Configure the endpoint to use the test server's port.
   const GURL url(kTestEndpointUrl);
   GURL::Replacements replacements;
-  std::string port(base::IntToString(embedded_test_server()->port()));
+  std::string port(base::NumberToString(embedded_test_server()->port()));
   replacements.SetPortStr(port);
   endpoint_url_ = url.ReplaceComponents(replacements).spec();
   controller_->SetAppInfoForTest(kTestAppId, endpoint_url_);

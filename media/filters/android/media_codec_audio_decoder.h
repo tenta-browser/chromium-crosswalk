@@ -15,7 +15,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "media/base/android/media_codec_loop.h"
-#include "media/base/android/media_drm_bridge_cdm_context.h"
+#include "media/base/android/media_crypto_context.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/audio_decoder_config.h"
@@ -86,19 +86,21 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   std::string GetDisplayName() const override;
   void Initialize(const AudioDecoderConfig& config,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
-                  const OutputCB& output_cb) override;
-  void Decode(const scoped_refptr<DecoderBuffer>& buffer,
+                  InitCB init_cb,
+                  const OutputCB& output_cb,
+                  const WaitingCB& waiting_cb) override;
+  void Decode(scoped_refptr<DecoderBuffer> buffer,
               const DecodeCB& decode_cb) override;
-  void Reset(const base::Closure& closure) override;
+  void Reset(base::OnceClosure closure) override;
   bool NeedsBitstreamConversion() const override;
 
   // MediaCodecLoop::Client implementation
   bool IsAnyInputPending() const override;
   MediaCodecLoop::InputData ProvideInputData() override;
   void OnInputDataQueued(bool) override;
-  void OnDecodedEos(const MediaCodecLoop::OutputBuffer& out) override;
+  bool OnDecodedEos(const MediaCodecLoop::OutputBuffer& out) override;
   bool OnDecodedFrame(const MediaCodecLoop::OutputBuffer& out) override;
+  void OnWaiting(WaitingReason reason) override;
   bool OnOutputFormatChanged() override;
   void OnCodecLoopError() override;
 
@@ -124,10 +126,10 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
 
   // A helper method to start CDM initialization.  This must be called if and
   // only if we were constructed with |is_encrypted| set to true.
-  void SetCdm(CdmContext* cdm_context, const InitCB& init_cb);
+  void SetCdm(InitCB init_cb);
 
   // This callback is called after CDM obtained a MediaCrypto object.
-  void OnMediaCryptoReady(const InitCB& init_cb,
+  void OnMediaCryptoReady(InitCB init_cb,
                           JavaObjectPtr media_crypto,
                           bool requires_secure_video_codec);
 
@@ -144,6 +146,8 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   // Helper method to set sample rate, channel count  and |timestamp_helper_|
   // from |config_|.
   void SetInitialConfiguration();
+
+  void PumpMediaCodecLoop();
 
   // TODO(timav): refactor the common part out and use it here and in AVDA
   // (http://crbug.com/583082).
@@ -184,15 +188,16 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   // Callback that delivers output frames.
   OutputCB output_cb_;
 
+  WaitingCB waiting_cb_;
+
   std::unique_ptr<MediaCodecLoop> codec_loop_;
 
   std::unique_ptr<AudioTimestampHelper> timestamp_helper_;
 
   // CDM related stuff.
 
-  // CDM context that knowns about MediaCrypto. Owned by CDM which is external
-  // to this decoder.
-  MediaDrmBridgeCdmContext* media_drm_bridge_cdm_context_;
+  // Owned by CDM which is external to this decoder.
+  MediaCryptoContext* media_crypto_context_;
 
   // MediaDrmBridge requires registration/unregistration of the player, this
   // registration id is used for this.

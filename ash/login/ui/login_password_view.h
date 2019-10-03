@@ -6,9 +6,9 @@
 #define ASH_LOGIN_UI_LOGIN_PASSWORD_VIEW_H_
 
 #include "ash/ash_export.h"
+#include "ash/ime/ime_controller.h"
 #include "ash/login/ui/animated_rounded_image_view.h"
-#include "ash/public/interfaces/login_user_info.mojom.h"
-#include "ash/public/interfaces/user_info.mojom.h"
+#include "ash/public/cpp/session/user_info.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
@@ -26,6 +26,8 @@ class Textfield;
 
 namespace ash {
 class LoginButton;
+enum class EasyUnlockIconId;
+struct LoginUserInfo;
 
 // Contains a textfield instance with a submit button. The user can type a
 // password into the textfield and hit enter to submit.
@@ -36,17 +38,18 @@ class LoginButton;
 //
 //   * * * * * *   =>
 //  ------------------
-class ASH_EXPORT LoginPasswordView
-    : public views::View,
-      public views::ButtonListener,
-      public views::TextfieldController,
-      public chromeos::input_method::ImeKeyboard::Observer {
+class ASH_EXPORT LoginPasswordView : public views::View,
+                                     public views::ButtonListener,
+                                     public views::TextfieldController,
+                                     public ImeController::Observer {
  public:
   // TestApi is used for tests to get internal implementation details.
   class ASH_EXPORT TestApi {
    public:
     explicit TestApi(LoginPasswordView* view);
     ~TestApi();
+
+    void SubmitPassword(const std::string& password);
 
     views::Textfield* textfield() const;
     views::View* submit_button() const;
@@ -75,12 +78,15 @@ class ASH_EXPORT LoginPasswordView
             const OnEasyUnlockIconHovered& on_easy_unlock_icon_hovered,
             const OnEasyUnlockIconTapped& on_easy_unlock_icon_tapped);
 
+  // Is the password field enabled when there is no text?
+  void SetEnabledOnEmptyPassword(bool enabled);
+
   // Change the active icon for easy unlock.
-  void SetEasyUnlockIcon(mojom::EasyUnlockIconId id,
+  void SetEasyUnlockIcon(EasyUnlockIconId id,
                          const base::string16& accessibility_label);
 
   // Updates accessibility information for |user|.
-  void UpdateForUser(const mojom::LoginUserInfoPtr& user);
+  void UpdateForUser(const LoginUserInfo& user);
 
   // Enable or disable focus on the child elements (ie, password field and
   // submit button).
@@ -89,8 +95,9 @@ class ASH_EXPORT LoginPasswordView
   // Clear all currently entered text.
   void Clear();
 
-  // Add the given numeric value to the textfield.
-  void AppendNumber(int value);
+  // Inserts the given numeric value to the textfield at the current cursor
+  // position (most likely the end).
+  void InsertNumber(int value);
 
   // Erase the last entered value.
   void Backspace();
@@ -114,10 +121,12 @@ class ASH_EXPORT LoginPasswordView
   // views::TextfieldController:
   void ContentsChanged(views::Textfield* sender,
                        const base::string16& new_contents) override;
+  bool HandleKeyEvent(views::Textfield* sender,
+                      const ui::KeyEvent& key_event) override;
 
-  // chromeos::input_method::ImeKeyboard::Observer:
+  // ImeController::Observer:
   void OnCapsLockChanged(bool enabled) override;
-  void OnLayoutChanging(const std::string& layout_name) override {}
+  void OnKeyboardLayoutNameChanged(const std::string&) override {}
 
  private:
   class EasyUnlockIcon;
@@ -134,6 +143,9 @@ class ASH_EXPORT LoginPasswordView
   OnPasswordSubmit on_submit_;
   OnPasswordTextChanged on_password_text_changed_;
 
+  // Is the password field enabled when there is no text?
+  bool enabled_on_empty_password_ = false;
+
   views::View* password_row_ = nullptr;
 
   views::Textfield* textfield_ = nullptr;
@@ -142,10 +154,6 @@ class ASH_EXPORT LoginPasswordView
   views::Separator* separator_ = nullptr;
   EasyUnlockIcon* easy_unlock_icon_ = nullptr;
   views::View* easy_unlock_right_margin_ = nullptr;
-
-  ScopedObserver<chromeos::input_method::ImeKeyboard,
-                 chromeos::input_method::ImeKeyboard::Observer>
-      ime_keyboard_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(LoginPasswordView);
 };

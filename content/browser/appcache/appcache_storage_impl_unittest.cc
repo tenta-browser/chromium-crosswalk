@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -16,16 +17,17 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/post_task.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "content/browser/appcache/appcache.h"
-#include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_database.h"
 #include "content/browser/appcache/appcache_entry.h"
 #include "content/browser/appcache/appcache_group.h"
@@ -33,6 +35,16 @@
 #include "content/browser/appcache/appcache_interceptor.h"
 #include "content/browser/appcache/appcache_request_handler.h"
 #include "content/browser/appcache/appcache_service_impl.h"
+#include "content/browser/appcache/appcache_url_loader_request.h"
+#include "content/browser/child_process_security_policy_impl.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "content/public/common/content_features.h"
+#include "content/public/test/test_browser_context.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
@@ -41,155 +53,37 @@
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/test/test_url_loader_factory.h"
+#include "services/network/test/test_utils.h"
 #include "sql/test/test_helpers.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
+using blink::mojom::StorageType;
+
 namespace {
 
-const base::Time kZeroTime;
-const GURL kManifestUrl("http://blah/manifest");
-const GURL kManifestUrl2("http://blah/manifest2");
-const GURL kManifestUrl3("http://blah/manifest3");
-const GURL kEntryUrl("http://blah/entry");
-const GURL kEntryUrl2("http://blah/entry2");
-const GURL kFallbackNamespace("http://blah/fallback_namespace/");
-const GURL kFallbackNamespace2("http://blah/fallback_namespace/longer");
-const GURL kFallbackTestUrl("http://blah/fallback_namespace/longer/test");
-const GURL kOnlineNamespace("http://blah/online_namespace");
-const GURL kOnlineNamespaceWithinFallback(
-    "http://blah/fallback_namespace/online/");
-const GURL kInterceptNamespace("http://blah/intercept_namespace/");
-const GURL kInterceptNamespace2("http://blah/intercept_namespace/longer/");
-const GURL kInterceptTestUrl("http://blah/intercept_namespace/longer/test");
-const GURL kInterceptPatternNamespace("http://blah/intercept_pattern/*/bar");
-const GURL kInterceptPatternTestPositiveUrl(
-    "http://blah/intercept_pattern/foo/bar");
-const GURL kInterceptPatternTestNegativeUrl(
-    "http://blah/intercept_pattern/foo/not_bar");
-const GURL kFallbackPatternNamespace("http://blah/fallback_pattern/*/bar");
-const GURL kFallbackPatternTestPositiveUrl(
-    "http://blah/fallback_pattern/foo/bar");
-const GURL kFallbackPatternTestNegativeUrl(
-    "http://blah/fallback_pattern/foo/not_bar");
-const GURL kOrigin(kManifestUrl.GetOrigin());
-
-const int kManifestEntryIdOffset = 100;
-const int kFallbackEntryIdOffset = 1000;
-
-const GURL kDefaultEntryUrl("http://blah/makecacheandgroup_default_entry");
-const int kDefaultEntrySize = 10;
-const int kDefaultEntryIdOffset = 12345;
-
-const int kMockQuota = 5000;
+constexpr int kMockProcessId = 1;
+constexpr int kMockQuota = 5000;
 
 // The Reinitialize test needs some http accessible resources to run,
 // we mock stuff inprocess for that.
-class MockHttpServer {
- public:
-  static GURL GetMockUrl(const std::string& path) {
-    return GURL("http://mockhost/" + path);
-  }
+static GURL GetMockUrl(const std::string& path) {
+  return GURL("http://mockhost/" + path);
+}
 
-  static net::URLRequestJob* CreateJob(
-      net::URLRequest* request, net::NetworkDelegate* network_delegate) {
-    if (request->url().host() != "mockhost")
-      return new net::URLRequestErrorJob(request, network_delegate, -100);
-
-    std::string headers, body;
-    GetMockResponse(request->url().path(), &headers, &body);
-    return new net::URLRequestTestJob(
-        request, network_delegate, headers, body, true);
-  }
-
- private:
-  static void GetMockResponse(const std::string& path,
-                              std::string* headers,
-                              std::string* body) {
-    const char manifest_headers[] =
-        "HTTP/1.1 200 OK\n"
-        "Content-type: text/cache-manifest\n"
-        "\n";
-    const char page_headers[] =
-        "HTTP/1.1 200 OK\n"
-        "Content-type: text/html\n"
-        "\n";
-    const char not_found_headers[] =
-        "HTTP/1.1 404 NOT FOUND\n"
-        "\n";
-
-    if (path == "/manifest") {
-      (*headers) = std::string(manifest_headers, arraysize(manifest_headers));
-      (*body) = "CACHE MANIFEST\n";
-    } else if (path == "/empty.html") {
-      (*headers) = std::string(page_headers, arraysize(page_headers));
-      (*body) = "";
-    } else {
-      (*headers) = std::string(not_found_headers,
-                               arraysize(not_found_headers));
-      (*body) = "";
-    }
-  }
-};
-
-class MockHttpServerJobFactory
-    : public net::URLRequestJobFactory::ProtocolHandler {
- public:
-  MockHttpServerJobFactory(
-      std::unique_ptr<net::URLRequestInterceptor> appcache_start_interceptor)
-      : appcache_start_interceptor_(std::move(appcache_start_interceptor)) {}
-
-  net::URLRequestJob* MaybeCreateJob(
-      net::URLRequest* request,
-      net::NetworkDelegate* network_delegate) const override {
-    net::URLRequestJob* appcache_job =
-        appcache_start_interceptor_->MaybeInterceptRequest(
-            request, network_delegate);
-    if (appcache_job)
-      return appcache_job;
-    return MockHttpServer::CreateJob(request, network_delegate);
-  }
- private:
-  std::unique_ptr<net::URLRequestInterceptor> appcache_start_interceptor_;
-};
-
-class IOThread : public base::Thread {
- public:
-  explicit IOThread(const char* name)
-      : base::Thread(name) {
-  }
-
-  ~IOThread() override { Stop(); }
-
-  net::URLRequestContext* request_context() {
-    return request_context_.get();
-  }
-
-  void Init() override {
-    std::unique_ptr<net::URLRequestJobFactoryImpl> factory(
-        new net::URLRequestJobFactoryImpl());
-    factory->SetProtocolHandler("http",
-                                std::make_unique<MockHttpServerJobFactory>(
-                                    std::make_unique<AppCacheInterceptor>()));
-    job_factory_ = std::move(factory);
-    request_context_.reset(new net::TestURLRequestContext());
-    request_context_->set_job_factory(job_factory_.get());
-  }
-
-  void CleanUp() override {
-    request_context_.reset();
-    job_factory_.reset();
-  }
-
- private:
-  std::unique_ptr<net::URLRequestJobFactory> job_factory_;
-  std::unique_ptr<net::URLRequestContext> request_context_;
-};
-
+std::unique_ptr<TestBrowserContext> browser_context;
+const int kProcessId = 1;
 std::unique_ptr<base::test::ScopedTaskEnvironment> scoped_task_environment;
-std::unique_ptr<IOThread> io_thread;
+scoped_refptr<base::SingleThreadTaskRunner> io_runner;
 std::unique_ptr<base::Thread> background_thread;
 
 }  // namespace
@@ -199,10 +93,12 @@ class AppCacheStorageImplTest : public testing::Test {
   class MockStorageDelegate : public AppCacheStorage::Delegate {
    public:
     explicit MockStorageDelegate(AppCacheStorageImplTest* test)
-        : loaded_cache_id_(0), stored_group_success_(false),
-          would_exceed_quota_(false), obsoleted_success_(false),
-          found_cache_id_(kAppCacheNoCacheId), test_(test) {
-    }
+        : loaded_cache_id_(0),
+          stored_group_success_(false),
+          would_exceed_quota_(false),
+          obsoleted_success_(false),
+          found_cache_id_(blink::mojom::kAppCacheNoCacheId),
+          test_(test) {}
 
     void OnCacheLoaded(AppCache* cache, int64_t cache_id) override {
       loaded_cache_ = cache;
@@ -274,65 +170,25 @@ class AppCacheStorageImplTest : public testing::Test {
     AppCacheStorageImplTest* test_;
   };
 
-  class MockQuotaManager : public storage::QuotaManager {
-   public:
-    MockQuotaManager()
-        : QuotaManager(true /* is_incognito */,
-                       base::FilePath(),
-                       io_thread->task_runner().get(),
-                       nullptr,
-                       storage::GetQuotaSettingsFunc()),
-          async_(false) {}
-
-    void GetUsageAndQuota(const GURL& origin,
-                          storage::StorageType type,
-                          const UsageAndQuotaCallback& callback) override {
-      EXPECT_EQ(storage::kStorageTypeTemporary, type);
-      if (async_) {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
-            FROM_HERE, base::BindOnce(&MockQuotaManager::CallCallback,
-                                      base::Unretained(this), callback));
-        return;
-      }
-      CallCallback(callback);
-    }
-
-    void CallCallback(const UsageAndQuotaCallback& callback) {
-      callback.Run(storage::kQuotaStatusOk, 0, kMockQuota);
-    }
-
-    bool async_;
-
-   protected:
-    ~MockQuotaManager() override {}
-  };
-
   class MockQuotaManagerProxy : public storage::QuotaManagerProxy {
    public:
-    MockQuotaManagerProxy()
-        : QuotaManagerProxy(nullptr, nullptr),
-          notify_storage_accessed_count_(0),
-          notify_storage_modified_count_(0),
-          last_delta_(0),
-          mock_manager_(new MockQuotaManager) {
-      manager_ = mock_manager_.get();
-    }
+    MockQuotaManagerProxy() : QuotaManagerProxy(nullptr, nullptr) {}
 
     void NotifyStorageAccessed(storage::QuotaClient::ID client_id,
-                               const GURL& origin,
-                               storage::StorageType type) override {
+                               const url::Origin& origin,
+                               StorageType type) override {
       EXPECT_EQ(storage::QuotaClient::kAppcache, client_id);
-      EXPECT_EQ(storage::kStorageTypeTemporary, type);
+      EXPECT_EQ(StorageType::kTemporary, type);
       ++notify_storage_accessed_count_;
       last_origin_ = origin;
     }
 
     void NotifyStorageModified(storage::QuotaClient::ID client_id,
-                               const GURL& origin,
-                               storage::StorageType type,
+                               const url::Origin& origin,
+                               StorageType type,
                                int64_t delta) override {
       EXPECT_EQ(storage::QuotaClient::kAppcache, client_id);
-      EXPECT_EQ(storage::kStorageTypeTemporary, type);
+      EXPECT_EQ(StorageType::kTemporary, type);
       ++notify_storage_modified_count_;
       last_origin_ = origin;
       last_delta_ = delta;
@@ -340,22 +196,33 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Not needed for our tests.
     void RegisterClient(storage::QuotaClient* client) override {}
-    void NotifyOriginInUse(const GURL& origin) override {}
-    void NotifyOriginNoLongerInUse(const GURL& origin) override {}
+    void NotifyOriginInUse(const url::Origin& origin) override {}
+    void NotifyOriginNoLongerInUse(const url::Origin& origin) override {}
     void SetUsageCacheEnabled(storage::QuotaClient::ID client_id,
-                              const GURL& origin,
-                              storage::StorageType type,
+                              const url::Origin& origin,
+                              StorageType type,
                               bool enabled) override {}
     void GetUsageAndQuota(base::SequencedTaskRunner* original_task_runner,
-                          const GURL& origin,
-                          storage::StorageType type,
-                          const UsageAndQuotaCallback& callback) override {}
+                          const url::Origin& origin,
+                          StorageType type,
+                          UsageAndQuotaCallback callback) override {
+      EXPECT_EQ(StorageType::kTemporary, type);
+      if (async_) {
+        original_task_runner->PostTask(
+            FROM_HERE,
+            base::BindOnce(std::move(callback),
+                           blink::mojom::QuotaStatusCode::kOk, 0, kMockQuota));
+        return;
+      }
+      std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk, 0,
+                              kMockQuota);
+    }
 
-    int notify_storage_accessed_count_;
-    int notify_storage_modified_count_;
-    GURL last_origin_;
-    int last_delta_;
-    scoped_refptr<MockQuotaManager> mock_manager_;
+    int notify_storage_accessed_count_ = 0;
+    int notify_storage_modified_count_ = 0;
+    url::Origin last_origin_;
+    int last_delta_ = 0;
+    bool async_ = false;
 
    protected:
     ~MockQuotaManagerProxy() override {}
@@ -384,50 +251,73 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   static void SetUpTestCase() {
-    scoped_task_environment.reset(new base::test::ScopedTaskEnvironment());
+    scoped_task_environment = std::make_unique<TestBrowserThreadBundle>(
+        TestBrowserThreadBundle::REAL_IO_THREAD);
 
-    // We start both threads as TYPE_IO because we also use the db_thead
-    // for the disk_cache which needs to be of TYPE_IO.
+    browser_context = std::make_unique<TestBrowserContext>();
+    ChildProcessSecurityPolicyImpl::GetInstance()->Add(kProcessId,
+                                                       browser_context.get());
+
+    io_runner =
+        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO});
+
+    // We start the background thread as TYPE_IO because we also use the
+    // db_thread for the disk_cache which needs to be of TYPE_IO.
     base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
-    io_thread.reset(new IOThread("AppCacheTest.IOThread"));
-    ASSERT_TRUE(io_thread->StartWithOptions(options));
-    background_thread.reset(new base::Thread("AppCacheTest::BackgroundThread"));
+    background_thread =
+        std::make_unique<base::Thread>("AppCacheTest::BackgroundThread");
     ASSERT_TRUE(background_thread->StartWithOptions(options));
   }
 
   static void TearDownTestCase() {
-    io_thread.reset();
+    io_runner.reset();
     background_thread.reset();
+    ChildProcessSecurityPolicyImpl::GetInstance()->Remove(kProcessId);
+    browser_context.reset();
     scoped_task_environment.reset();
   }
 
   // Test harness --------------------------------------------------
 
-  AppCacheStorageImplTest() { request_delegate_.set_quit_on_complete(false); }
+  AppCacheStorageImplTest() {
+    auto head = network::CreateResourceResponseHead(net::HTTP_OK);
+    network::URLLoaderCompletionStatus status;
+
+    head.mime_type = "text/cache-manifest";
+    mock_url_loader_factory_.AddResponse(GetMockUrl("manifest"), head,
+                                         "CACHE MANIFEST\n", status);
+
+    head.mime_type = "text/html";
+    mock_url_loader_factory_.AddResponse(GetMockUrl("empty.html"), head, "",
+                                         status);
+    // TODO(http://crbug.com/824840): Enable NavigationLoaderOnUI for these
+    // tests.
+    feature_list_.InitWithFeatures({network::features::kNetworkService},
+                                   {features::kNavigationLoaderOnUI});
+  }
 
   template <class Method>
   void RunTestOnIOThread(Method method) {
-    test_finished_event_.reset(new base::WaitableEvent(
-        base::WaitableEvent::ResetPolicy::AUTOMATIC,
-        base::WaitableEvent::InitialState::NOT_SIGNALED));
-    io_thread->task_runner()->PostTask(
+    base::RunLoop run_loop;
+    test_finished_cb_ = run_loop.QuitClosure();
+    io_runner->PostTask(
         FROM_HERE,
         base::BindOnce(&AppCacheStorageImplTest::MethodWrapper<Method>,
                        base::Unretained(this), method));
-    test_finished_event_->Wait();
+    run_loop.Run();
   }
 
   void SetUpTest() {
-    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
-    service_.reset(new AppCacheServiceImpl(nullptr));
+    DCHECK(io_runner->BelongsToCurrentThread());
+    service_ = std::make_unique<AppCacheServiceImpl>(nullptr, nullptr);
     service_->Initialize(base::FilePath());
-    mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
+    mock_quota_manager_proxy_ = base::MakeRefCounted<MockQuotaManagerProxy>();
     service_->quota_manager_proxy_ = mock_quota_manager_proxy_;
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
   }
 
   void TearDownTest() {
-    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
+    DCHECK(io_runner->BelongsToCurrentThread());
     scoped_refptr<base::SequencedTaskRunner> db_runner =
         storage()->db_task_runner_;
     storage()->CancelDelegateCallbacks(delegate());
@@ -437,6 +327,7 @@ class AppCacheStorageImplTest : public testing::Test {
     mock_quota_manager_proxy_ = nullptr;
     delegate_.reset();
     service_.reset();
+    host_remote_.reset();
     FlushTasks(db_runner.get());
     FlushTasks(background_thread->task_runner().get());
     FlushTasks(db_runner.get());
@@ -445,7 +336,7 @@ class AppCacheStorageImplTest : public testing::Test {
   void TestFinished() {
     // We unwind the stack prior to finishing up to let stack
     // based objects get deleted.
-    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
+    DCHECK(io_runner->BelongsToCurrentThread());
     base::SequencedTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::BindOnce(&AppCacheStorageImplTest::TestFinishedUnwound,
                                   base::Unretained(this)));
@@ -453,7 +344,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void TestFinishedUnwound() {
     TearDownTest();
-    test_finished_event_->Signal();
+    std::move(test_finished_cb_).Run();
   }
 
   void PushNextTask(base::OnceClosure task) {
@@ -461,7 +352,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void ScheduleNextTask() {
-    DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
+    DCHECK(io_runner->BelongsToCurrentThread());
     if (task_stack_.empty()) {
       return;
     }
@@ -470,9 +361,7 @@ class AppCacheStorageImplTest : public testing::Test {
     task_stack_.pop();
   }
 
-  static void SignalEvent(base::WaitableEvent* event) {
-    event->Signal();
-  }
+  static void SignalEvent(base::WaitableEvent* event) { event->Signal(); }
 
   void FlushAllTasks() {
     FlushTasks(storage()->db_task_runner_.get());
@@ -521,7 +410,7 @@ class AppCacheStorageImplTest : public testing::Test {
     // Setup some preconditions. Make an 'unstored' cache for
     // us to load. The ctor should put it in the working set.
     int64_t cache_id = storage()->NewCacheId();
-    scoped_refptr<AppCache> cache(new AppCache(storage(), cache_id));
+    auto cache = base::MakeRefCounted<AppCache>(storage(), cache_id);
 
     // Conduct the test.
     storage()->LoadCache(cache_id, delegate());
@@ -566,8 +455,8 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Should not have been stored in the database.
     AppCacheDatabase::GroupRecord record;
-    EXPECT_FALSE(database()->FindGroup(
-        delegate()->loaded_group_->group_id(), &record));
+    EXPECT_FALSE(
+        database()->FindGroup(delegate()->loaded_group_->group_id(), &record));
 
     EXPECT_EQ(0, mock_quota_manager_proxy_->notify_storage_accessed_count_);
     EXPECT_EQ(0, mock_quota_manager_proxy_->notify_storage_modified_count_);
@@ -640,20 +529,20 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Setup some preconditions. Create a group and newest cache that
     // appear to be "unstored".
-    group_ = new AppCacheGroup(
-        storage(), kManifestUrl, storage()->NewGroupId());
-    cache_ = new AppCache(storage(), storage()->NewCacheId());
-    cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::EXPLICIT, 1,
-                                              kDefaultEntrySize));
+    group_ = base::MakeRefCounted<AppCacheGroup>(storage(), kManifestUrl,
+                                                 storage()->NewGroupId());
+    cache_ = base::MakeRefCounted<AppCache>(storage(), storage()->NewCacheId());
+    cache_->AddEntry(kEntryUrl,
+                     AppCacheEntry(AppCacheEntry::MASTER, 1, kDefaultEntrySize,
+                                   /*padding_size=*/0));
     // Hold a ref to the cache simulate the UpdateJob holding that ref,
     // and hold a ref to the group to simulate the CacheHost holding that ref.
 
-    // Have the quota manager retrun asynchronously for this test.
-    mock_quota_manager_proxy_->mock_manager_->async_ = true;
+    // Have the quota manager return asynchronously for this test.
+    mock_quota_manager_proxy_->async_ = true;
 
     // Conduct the store test.
     storage()->StoreGroupAndNewestCache(group_.get(), cache_.get(), delegate());
-    EXPECT_FALSE(delegate()->stored_group_success_);
   }
 
   void Verify_StoreNewGroup() {
@@ -688,16 +577,18 @@ class AppCacheStorageImplTest : public testing::Test {
     // Setup some preconditions. Create a group and old complete cache
     // that appear to be "stored"
     MakeCacheAndGroup(kManifestUrl, 1, 1, true);
-    EXPECT_EQ(kDefaultEntrySize, storage()->usage_map_[kOrigin]);
+    EXPECT_EQ(kDefaultEntrySize + kDefaultEntryPadding,
+              storage()->usage_map_[kOrigin]);
 
     // And a newest unstored complete cache.
-    cache2_ = new AppCache(storage(), 2);
-    cache2_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::MASTER, 1,
-                                               kDefaultEntrySize + 100));
+    cache2_ = base::MakeRefCounted<AppCache>(storage(), 2);
+    cache2_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::EXPLICIT, 1,
+                                               kDefaultEntrySize + 100,
+                                               kDefaultEntryPadding + 1000));
 
     // Conduct the test.
-    storage()->StoreGroupAndNewestCache(
-        group_.get(), cache2_.get(), delegate());
+    storage()->StoreGroupAndNewestCache(group_.get(), cache2_.get(),
+                                        delegate());
     EXPECT_FALSE(delegate()->stored_group_success_);
   }
 
@@ -717,10 +608,11 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(database()->FindCache(1, &cache_record));
 
     // Verify quota bookkeeping
-    EXPECT_EQ(kDefaultEntrySize + 100, storage()->usage_map_[kOrigin]);
+    EXPECT_EQ(kDefaultEntrySize + 100 + kDefaultEntryPadding + 1000,
+              storage()->usage_map_[kOrigin]);
     EXPECT_EQ(1, mock_quota_manager_proxy_->notify_storage_modified_count_);
     EXPECT_EQ(kOrigin, mock_quota_manager_proxy_->last_origin_);
-    EXPECT_EQ(100, mock_quota_manager_proxy_->last_delta_);
+    EXPECT_EQ(100 + 1000, mock_quota_manager_proxy_->last_delta_);
 
     TestFinished();
   }
@@ -735,11 +627,15 @@ class AppCacheStorageImplTest : public testing::Test {
     // Setup some preconditions. Create a group and old complete cache
     // that appear to be "stored"
     MakeCacheAndGroup(kManifestUrl, 1, 1, true);
-    EXPECT_EQ(kDefaultEntrySize, storage()->usage_map_[kOrigin]);
+    EXPECT_EQ(kDefaultEntrySize + kDefaultEntryPadding,
+              storage()->usage_map_[kOrigin]);
 
     // Change the cache.
     base::Time now = base::Time::Now();
-    cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::MASTER, 1, 100));
+    cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::EXPLICIT,
+                                              /*response_id=*/1,
+                                              /*response_size=*/100,
+                                              /*padding_size=*/10));
     cache_->set_update_time(now);
 
     PushNextTask(base::BindOnce(
@@ -752,8 +648,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(delegate()->stored_group_success_);
   }
 
-  void Verify_StoreExistingGroupExistingCache(
-      base::Time expected_update_time) {
+  void Verify_StoreExistingGroupExistingCache(base::Time expected_update_time) {
     EXPECT_TRUE(delegate()->stored_group_success_);
     EXPECT_EQ(cache_.get(), group_->newest_complete_cache());
 
@@ -764,43 +659,71 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(cache_record.online_wildcard);
     EXPECT_TRUE(expected_update_time == cache_record.update_time);
     EXPECT_EQ(100 + kDefaultEntrySize, cache_record.cache_size);
+    EXPECT_EQ(10 + kDefaultEntryPadding, cache_record.padding_size);
 
     std::vector<AppCacheDatabase::EntryRecord> entry_records;
     EXPECT_TRUE(database()->FindEntriesForCache(1, &entry_records));
     EXPECT_EQ(2U, entry_records.size());
     if (entry_records[0].url == kDefaultEntryUrl)
       entry_records.erase(entry_records.begin());
-    EXPECT_EQ(1 , entry_records[0].cache_id);
+    EXPECT_EQ(1, entry_records[0].cache_id);
     EXPECT_EQ(kEntryUrl, entry_records[0].url);
-    EXPECT_EQ(AppCacheEntry::MASTER, entry_records[0].flags);
+    EXPECT_EQ(AppCacheEntry::EXPLICIT, entry_records[0].flags);
     EXPECT_EQ(1, entry_records[0].response_id);
     EXPECT_EQ(100, entry_records[0].response_size);
+    EXPECT_EQ(10, entry_records[0].padding_size);
 
     // Verify quota bookkeeping
-    EXPECT_EQ(100 + kDefaultEntrySize, storage()->usage_map_[kOrigin]);
+    EXPECT_EQ(100 + 10 + kDefaultEntrySize + kDefaultEntryPadding,
+              storage()->usage_map_[kOrigin]);
     EXPECT_EQ(1, mock_quota_manager_proxy_->notify_storage_modified_count_);
     EXPECT_EQ(kOrigin, mock_quota_manager_proxy_->last_origin_);
-    EXPECT_EQ(100, mock_quota_manager_proxy_->last_delta_);
+    EXPECT_EQ(100 + 10, mock_quota_manager_proxy_->last_delta_);
 
     TestFinished();
   }
 
-  // FailStoreGroup  --------------------------------------
+  // FailStoreGroup_SizeTooBig / FailStoreGroup_PaddingTooBig   ----------------
 
-  void FailStoreGroup() {
+  void FailStoreGroup_SizeTooBig() {
     // Store a group and its newest cache. Should complete asynchronously.
     PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_FailStoreGroup,
                                 base::Unretained(this)));
 
-    // Setup some preconditions. Create a group and newest cache that
+    // Set up some preconditions. Create a group and newest cache that
     // appear to be "unstored" and big enough to exceed the 5M limit.
     const int64_t kTooBig = 10 * 1024 * 1024;  // 10M
-    group_ = new AppCacheGroup(
-        storage(), kManifestUrl, storage()->NewGroupId());
-    cache_ = new AppCache(storage(), storage()->NewCacheId());
-    cache_->AddEntry(kManifestUrl,
-                     AppCacheEntry(AppCacheEntry::MANIFEST, 1, kTooBig));
-    // Hold a ref to the cache simulate the UpdateJob holding that ref,
+    group_ = base::MakeRefCounted<AppCacheGroup>(storage(), kManifestUrl,
+                                                 storage()->NewGroupId());
+    cache_ = base::MakeRefCounted<AppCache>(storage(), storage()->NewCacheId());
+    cache_->AddEntry(kManifestUrl, AppCacheEntry(AppCacheEntry::MANIFEST,
+                                                 /*response_id=*/1,
+                                                 /*response_size=*/kTooBig,
+                                                 /*padding_size=*/0));
+    // Hold a ref to the cache to simulate the UpdateJob holding that ref,
+    // and hold a ref to the group to simulate the CacheHost holding that ref.
+
+    // Conduct the store test.
+    storage()->StoreGroupAndNewestCache(group_.get(), cache_.get(), delegate());
+    EXPECT_FALSE(delegate()->stored_group_success_);  // Expected to be async.
+  }
+
+  void FailStoreGroup_PaddingTooBig() {
+    // Store a group and its newest cache. Should complete asynchronously.
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_FailStoreGroup,
+                                base::Unretained(this)));
+
+    // Set up some preconditions. Create a group and newest cache that
+    // appear to be "unstored" and big enough to exceed the 5M limit.
+    const int64_t kTooBig = 10 * 1024 * 1024;  // 10M
+    group_ = base::MakeRefCounted<AppCacheGroup>(storage(), kManifestUrl,
+                                                 storage()->NewGroupId());
+    cache_ = base::MakeRefCounted<AppCache>(storage(), storage()->NewCacheId());
+    cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::EXPLICIT,
+                                              /*response_id=*/1,
+                                              /*response_size=*/1,
+                                              /*padding_size=*/kTooBig));
+    // Hold a ref to the cache to simulate the UpdateJob holding that ref,
     // and hold a ref to the group to simulate the CacheHost holding that ref.
 
     // Conduct the store test.
@@ -835,7 +758,8 @@ class AppCacheStorageImplTest : public testing::Test {
     // Setup some preconditions. Create a group and newest cache that
     // appears to be "stored" and "currently in use".
     MakeCacheAndGroup(kManifestUrl, 1, 1, true);
-    EXPECT_EQ(kDefaultEntrySize, storage()->usage_map_[kOrigin]);
+    EXPECT_EQ(kDefaultEntrySize + kDefaultEntryPadding,
+              storage()->usage_map_[kOrigin]);
 
     // Also insert some related records.
     AppCacheDatabase::EntryRecord entry_record;
@@ -849,7 +773,7 @@ class AppCacheStorageImplTest : public testing::Test {
     fallback_namespace_record.cache_id = 1;
     fallback_namespace_record.namespace_.target_url = kEntryUrl;
     fallback_namespace_record.namespace_.namespace_url = kFallbackNamespace;
-    fallback_namespace_record.origin = kManifestUrl.GetOrigin();
+    fallback_namespace_record.origin = url::Origin::Create(kManifestUrl);
     EXPECT_TRUE(database()->InsertNamespace(&fallback_namespace_record));
 
     AppCacheDatabase::OnlineWhiteListRecord online_whitelist_record;
@@ -880,8 +804,8 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(entry_records.empty());
     std::vector<AppCacheDatabase::NamespaceRecord> intercept_records;
     std::vector<AppCacheDatabase::NamespaceRecord> fallback_records;
-    database()->FindNamespacesForCache(
-        1, &intercept_records, &fallback_records);
+    database()->FindNamespacesForCache(1, &intercept_records,
+                                       &fallback_records);
     EXPECT_TRUE(fallback_records.empty());
     std::vector<AppCacheDatabase::OnlineWhiteListRecord> whitelist_records;
     database()->FindOnlineWhiteListForCache(1, &whitelist_records);
@@ -891,7 +815,8 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(storage()->usage_map_.empty());
     EXPECT_EQ(1, mock_quota_manager_proxy_->notify_storage_modified_count_);
     EXPECT_EQ(kOrigin, mock_quota_manager_proxy_->last_origin_);
-    EXPECT_EQ(-kDefaultEntrySize, mock_quota_manager_proxy_->last_delta_);
+    EXPECT_EQ(-(kDefaultEntrySize + kDefaultEntryPadding),
+              mock_quota_manager_proxy_->last_delta_);
 
     TestFinished();
   }
@@ -988,10 +913,11 @@ class AppCacheStorageImplTest : public testing::Test {
   void Verify_FindNoMainResponse() {
     EXPECT_EQ(kEntryUrl, delegate()->found_url_);
     EXPECT_TRUE(delegate()->found_manifest_url_.is_empty());
-    EXPECT_EQ(kAppCacheNoCacheId, delegate()->found_cache_id_);
-    EXPECT_EQ(kAppCacheNoResponseId, delegate()->found_entry_.response_id());
-    EXPECT_EQ(kAppCacheNoResponseId,
-        delegate()->found_fallback_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoCacheId, delegate()->found_cache_id_);
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_fallback_entry_.response_id());
     EXPECT_TRUE(delegate()->found_namespace_entry_url_.is_empty());
     EXPECT_EQ(0, delegate()->found_entry_.types());
     EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
@@ -1000,13 +926,9 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // BasicFindMainResponse  -------------------------------
 
-  void BasicFindMainResponseInDatabase() {
-    BasicFindMainResponse(true);
-  }
+  void BasicFindMainResponseInDatabase() { BasicFindMainResponse(true); }
 
-  void BasicFindMainResponseInWorkingSet() {
-    BasicFindMainResponse(false);
-  }
+  void BasicFindMainResponseInWorkingSet() { BasicFindMainResponse(false); }
 
   void BasicFindMainResponse(bool drop_from_working_set) {
     PushNextTask(
@@ -1034,7 +956,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct the test.
     storage()->FindResponseForMainRequest(kEntryUrl, GURL(), delegate());
-    EXPECT_NE(kEntryUrl,  delegate()->found_url_);
+    EXPECT_NE(kEntryUrl, delegate()->found_url_);
   }
 
   void Verify_BasicFindMainResponse() {
@@ -1068,35 +990,22 @@ class AppCacheStorageImplTest : public testing::Test {
     MakeCacheAndGroup(kManifestUrl, 2, 1, true);
     cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::FALLBACK, 1));
     cache_->AddEntry(kEntryUrl2, AppCacheEntry(AppCacheEntry::FALLBACK, 2));
-    cache_->fallback_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_FALLBACK_NAMESPACE,
-                  kFallbackNamespace2,
-                  kEntryUrl2,
-                  false));
-    cache_->fallback_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_FALLBACK_NAMESPACE,
-                  kFallbackNamespace,
-                  kEntryUrl,
-                  false));
+    cache_->fallback_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_FALLBACK_NAMESPACE, kFallbackNamespace2, kEntryUrl2, false));
+    cache_->fallback_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_FALLBACK_NAMESPACE, kFallbackNamespace, kEntryUrl, false));
     AppCacheDatabase::CacheRecord cache_record;
     std::vector<AppCacheDatabase::EntryRecord> entries;
     std::vector<AppCacheDatabase::NamespaceRecord> intercepts;
     std::vector<AppCacheDatabase::NamespaceRecord> fallbacks;
     std::vector<AppCacheDatabase::OnlineWhiteListRecord> whitelists;
-    cache_->ToDatabaseRecords(group_.get(),
-                              &cache_record,
-                              &entries,
-                              &intercepts,
-                              &fallbacks,
-                              &whitelists);
+    cache_->ToDatabaseRecords(group_.get(), &cache_record, &entries,
+                              &intercepts, &fallbacks, &whitelists);
 
-    std::vector<AppCacheDatabase::EntryRecord>::const_iterator iter =
-        entries.begin();
-    while (iter != entries.end()) {
+    for (const auto& entry : entries) {
       // MakeCacheAndGroup has inserted the default entry record already.
-      if (iter->url != kDefaultEntryUrl)
-        EXPECT_TRUE(database()->InsertEntry(&(*iter)));
-      ++iter;
+      if (entry.url != kDefaultEntryUrl)
+        EXPECT_TRUE(database()->InsertEntry(&entry));
     }
 
     EXPECT_TRUE(database()->InsertNamespaceRecords(fallbacks));
@@ -1146,31 +1055,22 @@ class AppCacheStorageImplTest : public testing::Test {
     MakeCacheAndGroup(kManifestUrl, 2, 1, true);
     cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::INTERCEPT, 1));
     cache_->AddEntry(kEntryUrl2, AppCacheEntry(AppCacheEntry::INTERCEPT, 2));
-    cache_->intercept_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_INTERCEPT_NAMESPACE, kInterceptNamespace2,
-                  kEntryUrl2, false));
-    cache_->intercept_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_INTERCEPT_NAMESPACE, kInterceptNamespace,
-                  kEntryUrl, false));
+    cache_->intercept_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_INTERCEPT_NAMESPACE, kInterceptNamespace2, kEntryUrl2, false));
+    cache_->intercept_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_INTERCEPT_NAMESPACE, kInterceptNamespace, kEntryUrl, false));
     AppCacheDatabase::CacheRecord cache_record;
     std::vector<AppCacheDatabase::EntryRecord> entries;
     std::vector<AppCacheDatabase::NamespaceRecord> intercepts;
     std::vector<AppCacheDatabase::NamespaceRecord> fallbacks;
     std::vector<AppCacheDatabase::OnlineWhiteListRecord> whitelists;
-    cache_->ToDatabaseRecords(group_.get(),
-                              &cache_record,
-                              &entries,
-                              &intercepts,
-                              &fallbacks,
-                              &whitelists);
+    cache_->ToDatabaseRecords(group_.get(), &cache_record, &entries,
+                              &intercepts, &fallbacks, &whitelists);
 
-    std::vector<AppCacheDatabase::EntryRecord>::const_iterator iter =
-        entries.begin();
-    while (iter != entries.end()) {
+    for (const auto& entry : entries) {
       // MakeCacheAndGroup has inserted  the default entry record already
-      if (iter->url != kDefaultEntryUrl)
-        EXPECT_TRUE(database()->InsertEntry(&(*iter)));
-      ++iter;
+      if (entry.url != kDefaultEntryUrl)
+        EXPECT_TRUE(database()->InsertEntry(&entry));
     }
 
     EXPECT_TRUE(database()->InsertNamespaceRecords(intercepts));
@@ -1184,8 +1084,8 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct the test. The test url is in both intercept namespaces,
     // but should match the longer of the two.
-    storage()->FindResponseForMainRequest(
-        kInterceptTestUrl, GURL(), delegate());
+    storage()->FindResponseForMainRequest(kInterceptTestUrl, GURL(),
+                                          delegate());
     EXPECT_NE(kInterceptTestUrl, delegate()->found_url_);
   }
 
@@ -1218,26 +1118,19 @@ class AppCacheStorageImplTest : public testing::Test {
     cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::INTERCEPT, 1));
     cache_->intercept_namespaces_.push_back(
         AppCacheNamespace(APPCACHE_INTERCEPT_NAMESPACE,
-            kInterceptPatternNamespace, kEntryUrl, true));
+                          kInterceptPatternNamespace, kEntryUrl, true));
     AppCacheDatabase::CacheRecord cache_record;
     std::vector<AppCacheDatabase::EntryRecord> entries;
     std::vector<AppCacheDatabase::NamespaceRecord> intercepts;
     std::vector<AppCacheDatabase::NamespaceRecord> fallbacks;
     std::vector<AppCacheDatabase::OnlineWhiteListRecord> whitelists;
-    cache_->ToDatabaseRecords(group_.get(),
-                              &cache_record,
-                              &entries,
-                              &intercepts,
-                              &fallbacks,
-                              &whitelists);
+    cache_->ToDatabaseRecords(group_.get(), &cache_record, &entries,
+                              &intercepts, &fallbacks, &whitelists);
 
-    std::vector<AppCacheDatabase::EntryRecord>::const_iterator iter =
-        entries.begin();
-    while (iter != entries.end()) {
+    for (const auto& entry : entries) {
       // MakeCacheAndGroup has inserted  the default entry record already
-      if (iter->url != kDefaultEntryUrl)
-        EXPECT_TRUE(database()->InsertEntry(&(*iter)));
-      ++iter;
+      if (entry.url != kDefaultEntryUrl)
+        EXPECT_TRUE(database()->InsertEntry(&entry));
     }
 
     EXPECT_TRUE(database()->InsertNamespaceRecords(intercepts));
@@ -1252,18 +1145,19 @@ class AppCacheStorageImplTest : public testing::Test {
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindInterceptPatternMatchNegative,
         base::Unretained(this)));
-    storage()->FindResponseForMainRequest(
-        kInterceptPatternTestNegativeUrl, GURL(), delegate());
+    storage()->FindResponseForMainRequest(kInterceptPatternTestNegativeUrl,
+                                          GURL(), delegate());
     EXPECT_EQ(GURL(), delegate()->found_url_);  // Is always async.
   }
 
   void Verify_FindInterceptPatternMatchNegative() {
     EXPECT_EQ(kInterceptPatternTestNegativeUrl, delegate()->found_url_);
     EXPECT_TRUE(delegate()->found_manifest_url_.is_empty());
-    EXPECT_EQ(kAppCacheNoCacheId, delegate()->found_cache_id_);
-    EXPECT_EQ(kAppCacheNoResponseId, delegate()->found_entry_.response_id());
-    EXPECT_EQ(kAppCacheNoResponseId,
-        delegate()->found_fallback_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoCacheId, delegate()->found_cache_id_);
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_fallback_entry_.response_id());
     EXPECT_TRUE(delegate()->found_namespace_entry_url_.is_empty());
     EXPECT_EQ(0, delegate()->found_entry_.types());
     EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
@@ -1272,8 +1166,8 @@ class AppCacheStorageImplTest : public testing::Test {
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindInterceptPatternMatchPositive,
         base::Unretained(this)));
-    storage()->FindResponseForMainRequest(
-        kInterceptPatternTestPositiveUrl, GURL(), delegate());
+    storage()->FindResponseForMainRequest(kInterceptPatternTestPositiveUrl,
+                                          GURL(), delegate());
   }
 
   void Verify_FindInterceptPatternMatchPositive() {
@@ -1290,9 +1184,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
   // FindFallbackPatternMatch  -------------------------------
 
-  void FindFallbackPatternMatchInDatabase() {
-    FindFallbackPatternMatch(true);
-  }
+  void FindFallbackPatternMatchInDatabase() { FindFallbackPatternMatch(true); }
 
   void FindFallbackPatternMatchInWorkingSet() {
     FindFallbackPatternMatch(false);
@@ -1305,26 +1197,19 @@ class AppCacheStorageImplTest : public testing::Test {
     cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::FALLBACK, 1));
     cache_->fallback_namespaces_.push_back(
         AppCacheNamespace(APPCACHE_FALLBACK_NAMESPACE,
-            kFallbackPatternNamespace, kEntryUrl, true));
+                          kFallbackPatternNamespace, kEntryUrl, true));
     AppCacheDatabase::CacheRecord cache_record;
     std::vector<AppCacheDatabase::EntryRecord> entries;
     std::vector<AppCacheDatabase::NamespaceRecord> intercepts;
     std::vector<AppCacheDatabase::NamespaceRecord> fallbacks;
     std::vector<AppCacheDatabase::OnlineWhiteListRecord> whitelists;
-    cache_->ToDatabaseRecords(group_.get(),
-                              &cache_record,
-                              &entries,
-                              &intercepts,
-                              &fallbacks,
-                              &whitelists);
+    cache_->ToDatabaseRecords(group_.get(), &cache_record, &entries,
+                              &intercepts, &fallbacks, &whitelists);
 
-    std::vector<AppCacheDatabase::EntryRecord>::const_iterator iter =
-        entries.begin();
-    while (iter != entries.end()) {
+    for (const auto& entry : entries) {
       // MakeCacheAndGroup has inserted the default entry record already.
-      if (iter->url != kDefaultEntryUrl)
-        EXPECT_TRUE(database()->InsertEntry(&(*iter)));
-      ++iter;
+      if (entry.url != kDefaultEntryUrl)
+        EXPECT_TRUE(database()->InsertEntry(&entry));
     }
 
     EXPECT_TRUE(database()->InsertNamespaceRecords(fallbacks));
@@ -1339,28 +1224,29 @@ class AppCacheStorageImplTest : public testing::Test {
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindFallbackPatternMatchNegative,
         base::Unretained(this)));
-    storage()->FindResponseForMainRequest(
-        kFallbackPatternTestNegativeUrl, GURL(), delegate());
+    storage()->FindResponseForMainRequest(kFallbackPatternTestNegativeUrl,
+                                          GURL(), delegate());
     EXPECT_EQ(GURL(), delegate()->found_url_);  // Is always async.
   }
 
   void Verify_FindFallbackPatternMatchNegative() {
     EXPECT_EQ(kFallbackPatternTestNegativeUrl, delegate()->found_url_);
-      EXPECT_TRUE(delegate()->found_manifest_url_.is_empty());
-      EXPECT_EQ(kAppCacheNoCacheId, delegate()->found_cache_id_);
-      EXPECT_EQ(kAppCacheNoResponseId, delegate()->found_entry_.response_id());
-      EXPECT_EQ(kAppCacheNoResponseId,
-          delegate()->found_fallback_entry_.response_id());
-      EXPECT_TRUE(delegate()->found_namespace_entry_url_.is_empty());
-      EXPECT_EQ(0, delegate()->found_entry_.types());
-      EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
+    EXPECT_TRUE(delegate()->found_manifest_url_.is_empty());
+    EXPECT_EQ(blink::mojom::kAppCacheNoCacheId, delegate()->found_cache_id_);
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_fallback_entry_.response_id());
+    EXPECT_TRUE(delegate()->found_namespace_entry_url_.is_empty());
+    EXPECT_EQ(0, delegate()->found_entry_.types());
+    EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
 
-      // Then test something that matches.
-      PushNextTask(base::BindOnce(
-          &AppCacheStorageImplTest::Verify_FindFallbackPatternMatchPositive,
-          base::Unretained(this)));
-      storage()->FindResponseForMainRequest(
-          kFallbackPatternTestPositiveUrl, GURL(), delegate());
+    // Then test something that matches.
+    PushNextTask(base::BindOnce(
+        &AppCacheStorageImplTest::Verify_FindFallbackPatternMatchPositive,
+        base::Unretained(this)));
+    storage()->FindResponseForMainRequest(kFallbackPatternTestPositiveUrl,
+                                          GURL(), delegate());
   }
 
   void Verify_FindFallbackPatternMatchPositive() {
@@ -1405,9 +1291,8 @@ class AppCacheStorageImplTest : public testing::Test {
     entry_record.flags = AppCacheEntry::EXPLICIT;
     entry_record.response_id = id;
     EXPECT_TRUE(database()->InsertEntry(&entry_record));
-    cache_->AddEntry(
-        entry_record.url,
-        AppCacheEntry(entry_record.flags, entry_record.response_id));
+    cache_->AddEntry(entry_record.url, AppCacheEntry(entry_record.flags,
+                                                     entry_record.response_id));
 
     // Add an entry for the manifestUrl
     entry_record.cache_id = id;
@@ -1415,9 +1300,8 @@ class AppCacheStorageImplTest : public testing::Test {
     entry_record.flags = AppCacheEntry::MANIFEST;
     entry_record.response_id = id + kManifestEntryIdOffset;
     EXPECT_TRUE(database()->InsertEntry(&entry_record));
-    cache_->AddEntry(
-        entry_record.url,
-        AppCacheEntry(entry_record.flags, entry_record.response_id));
+    cache_->AddEntry(entry_record.url, AppCacheEntry(entry_record.flags,
+                                                     entry_record.response_id));
 
     // Add a fallback entry and namespace
     entry_record.cache_id = id;
@@ -1425,20 +1309,16 @@ class AppCacheStorageImplTest : public testing::Test {
     entry_record.flags = AppCacheEntry::FALLBACK;
     entry_record.response_id = id + kFallbackEntryIdOffset;
     EXPECT_TRUE(database()->InsertEntry(&entry_record));
-    cache_->AddEntry(
-        entry_record.url,
-        AppCacheEntry(entry_record.flags, entry_record.response_id));
+    cache_->AddEntry(entry_record.url, AppCacheEntry(entry_record.flags,
+                                                     entry_record.response_id));
     AppCacheDatabase::NamespaceRecord fallback_namespace_record;
     fallback_namespace_record.cache_id = id;
     fallback_namespace_record.namespace_.target_url = entry_record.url;
     fallback_namespace_record.namespace_.namespace_url = kFallbackNamespace;
-    fallback_namespace_record.origin = manifest_url.GetOrigin();
+    fallback_namespace_record.origin = url::Origin::Create(manifest_url);
     EXPECT_TRUE(database()->InsertNamespace(&fallback_namespace_record));
-    cache_->fallback_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_FALLBACK_NAMESPACE,
-                  kFallbackNamespace,
-                  kEntryUrl2,
-                  false));
+    cache_->fallback_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_FALLBACK_NAMESPACE, kFallbackNamespace, kEntryUrl2, false));
   }
 
   void Verify_FindMainResponseWithMultipleHits() {
@@ -1451,7 +1331,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(delegate()->found_fallback_entry_.has_response_id());
 
     // Conduct another test preferring kManifestUrl
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits2,
         base::Unretained(this)));
@@ -1469,7 +1349,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(delegate()->found_fallback_entry_.has_response_id());
 
     // Conduct the another test preferring kManifestUrl2
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits3,
         base::Unretained(this)));
@@ -1487,12 +1367,11 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_FALSE(delegate()->found_fallback_entry_.has_response_id());
 
     // Conduct another test with no preferred manifest that hits the fallback.
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits4,
         base::Unretained(this)));
-    storage()->FindResponseForMainRequest(
-        kFallbackTestUrl, GURL(), delegate());
+    storage()->FindResponseForMainRequest(kFallbackTestUrl, GURL(), delegate());
     EXPECT_NE(kFallbackTestUrl, delegate()->found_url_);
   }
 
@@ -1508,12 +1387,12 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_EQ(kEntryUrl2, delegate()->found_namespace_entry_url_);
 
     // Conduct another test preferring kManifestUrl2 that hits the fallback.
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
     PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits5,
         base::Unretained(this)));
-    storage()->FindResponseForMainRequest(
-        kFallbackTestUrl, kManifestUrl2, delegate());
+    storage()->FindResponseForMainRequest(kFallbackTestUrl, kManifestUrl2,
+                                          delegate());
     EXPECT_NE(kFallbackTestUrl, delegate()->found_url_);
   }
 
@@ -1546,20 +1425,17 @@ class AppCacheStorageImplTest : public testing::Test {
     // foreign entry, an online namespace, and a second online
     // namespace nested within a fallback namespace.
     MakeCacheAndGroup(kManifestUrl, 1, 1, true);
-    cache_->AddEntry(kEntryUrl,
+    cache_->AddEntry(
+        kEntryUrl,
         AppCacheEntry(AppCacheEntry::EXPLICIT | AppCacheEntry::FOREIGN, 1));
     cache_->AddEntry(kEntryUrl2, AppCacheEntry(AppCacheEntry::FALLBACK, 2));
-    cache_->fallback_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_FALLBACK_NAMESPACE,
-                  kFallbackNamespace,
-                  kEntryUrl2,
-                  false));
-    cache_->online_whitelist_namespaces_.push_back(
-        AppCacheNamespace(APPCACHE_NETWORK_NAMESPACE, kOnlineNamespace,
-                  GURL(), false));
+    cache_->fallback_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_FALLBACK_NAMESPACE, kFallbackNamespace, kEntryUrl2, false));
+    cache_->online_whitelist_namespaces_.push_back(AppCacheNamespace(
+        APPCACHE_NETWORK_NAMESPACE, kOnlineNamespace, GURL(), false));
     cache_->online_whitelist_namespaces_.push_back(
         AppCacheNamespace(APPCACHE_NETWORK_NAMESPACE,
-            kOnlineNamespaceWithinFallback, GURL(), false));
+                          kOnlineNamespaceWithinFallback, GURL(), false));
 
     AppCacheDatabase::EntryRecord entry_record;
     entry_record.cache_id = 1;
@@ -1575,7 +1451,7 @@ class AppCacheStorageImplTest : public testing::Test {
     fallback_namespace_record.cache_id = 1;
     fallback_namespace_record.namespace_.target_url = kEntryUrl2;
     fallback_namespace_record.namespace_.namespace_url = kFallbackNamespace;
-    fallback_namespace_record.origin = kManifestUrl.GetOrigin();
+    fallback_namespace_record.origin = url::Origin::Create(kManifestUrl);
     EXPECT_TRUE(database()->InsertNamespace(&fallback_namespace_record));
     whitelist_record.cache_id = 1;
     whitelist_record.namespace_url = kOnlineNamespaceWithinFallback;
@@ -1595,11 +1471,12 @@ class AppCacheStorageImplTest : public testing::Test {
   void Verify_ExclusionNotFound(GURL expected_url, int phase) {
     EXPECT_EQ(expected_url, delegate()->found_url_);
     EXPECT_TRUE(delegate()->found_manifest_url_.is_empty());
-    EXPECT_EQ(kAppCacheNoCacheId, delegate()->found_cache_id_);
+    EXPECT_EQ(blink::mojom::kAppCacheNoCacheId, delegate()->found_cache_id_);
     EXPECT_EQ(0, delegate()->found_group_id_);
-    EXPECT_EQ(kAppCacheNoResponseId, delegate()->found_entry_.response_id());
-    EXPECT_EQ(kAppCacheNoResponseId,
-        delegate()->found_fallback_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_entry_.response_id());
+    EXPECT_EQ(blink::mojom::kAppCacheNoResponseId,
+              delegate()->found_fallback_entry_.response_id());
     EXPECT_TRUE(delegate()->found_namespace_entry_url_.is_empty());
     EXPECT_EQ(0, delegate()->found_entry_.types());
     EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
@@ -1607,10 +1484,10 @@ class AppCacheStorageImplTest : public testing::Test {
     if (phase == 1) {
       // We should not find anything for the online namespace.
       PushNextTask(
-          base::Bind(&AppCacheStorageImplTest::Verify_ExclusionNotFound,
-                     base::Unretained(this), kOnlineNamespace, 2));
-      storage()->FindResponseForMainRequest(
-          kOnlineNamespace, GURL(), delegate());
+          base::BindOnce(&AppCacheStorageImplTest::Verify_ExclusionNotFound,
+                         base::Unretained(this), kOnlineNamespace, 2));
+      storage()->FindResponseForMainRequest(kOnlineNamespace, GURL(),
+                                            delegate());
       return;
     }
     if (phase == 2) {
@@ -1619,8 +1496,8 @@ class AppCacheStorageImplTest : public testing::Test {
       PushNextTask(base::BindOnce(
           &AppCacheStorageImplTest::Verify_ExclusionNotFound,
           base::Unretained(this), kOnlineNamespaceWithinFallback, 3));
-      storage()->FindResponseForMainRequest(
-          kOnlineNamespaceWithinFallback, GURL(), delegate());
+      storage()->FindResponseForMainRequest(kOnlineNamespaceWithinFallback,
+                                            GURL(), delegate());
       return;
     }
 
@@ -1635,8 +1512,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
   class MockServiceObserver : public AppCacheServiceImpl::Observer {
    public:
-    explicit MockServiceObserver(AppCacheStorageImplTest* test)
-        : test_(test) {}
+    explicit MockServiceObserver(AppCacheStorageImplTest* test) : test_(test) {}
 
     void OnServiceReinitialized(
         AppCacheStorageReference* old_storage_ref) override {
@@ -1648,38 +1524,31 @@ class AppCacheStorageImplTest : public testing::Test {
     AppCacheStorageImplTest* test_;
   };
 
-  class MockAppCacheFrontend : public AppCacheFrontend {
+  class MockAppCacheFrontend : public blink::mojom::AppCacheFrontend {
    public:
     MockAppCacheFrontend() : error_event_was_raised_(false) {}
 
-    void OnCacheSelected(int host_id, const AppCacheInfo& info) override {}
-    void OnStatusChanged(const std::vector<int>& host_ids,
-                         AppCacheStatus status) override {}
-    void OnEventRaised(const std::vector<int>& host_ids,
-                       AppCacheEventID event_id) override {}
-    void OnProgressEventRaised(const std::vector<int>& host_ids,
-                               const GURL& url,
-                               int num_total,
-                               int num_complete) override {}
-    void OnErrorEventRaised(const std::vector<int>& host_ids,
-                            const AppCacheErrorDetails& details) override {
+    void CacheSelected(blink::mojom::AppCacheInfoPtr info) override {}
+    void EventRaised(blink::mojom::AppCacheEventID event_id) override {}
+    void ProgressEventRaised(const GURL& url,
+                             int32_t num_total,
+                             int32_t num_complete) override {}
+    void ErrorEventRaised(
+        blink::mojom::AppCacheErrorDetailsPtr details) override {
       error_event_was_raised_ = true;
     }
-    void OnLogMessage(int host_id,
-                      AppCacheLogLevel log_level,
-                      const std::string& message) override {}
-    void OnContentBlocked(int host_id, const GURL& manifest_url) override {}
-    void OnSetSubresourceFactory(
-        int host_id,
-        mojo::MessagePipeHandle loader_factory_pipe_handle) override {}
+    void LogMessage(blink::mojom::ConsoleMessageLevel log_level,
+                    const std::string& message) override {}
+    void SetSubresourceFactory(
+        network::mojom::URLLoaderFactoryPtr url_loader_factory) override {}
 
     bool error_event_was_raised_;
   };
 
   enum ReinitTestCase {
-     CORRUPT_CACHE_ON_INSTALL,
-     CORRUPT_CACHE_ON_LOAD_EXISTING,
-     CORRUPT_SQL_ON_INSTALL
+    CORRUPT_CACHE_ON_INSTALL,
+    CORRUPT_CACHE_ON_LOAD_EXISTING,
+    CORRUPT_SQL_ON_INSTALL
   };
 
   void Reinitialize1() {
@@ -1716,20 +1585,28 @@ class AppCacheStorageImplTest : public testing::Test {
       ASSERT_TRUE(base::CreateDirectory(disk_cache_directory));
       base::FilePath index_file = disk_cache_directory.AppendASCII("index");
       EXPECT_EQ(static_cast<int>(kCorruptData.length()),
-                base::WriteFile(
-                    index_file, kCorruptData.data(), kCorruptData.length()));
+                base::WriteFile(index_file, kCorruptData.data(),
+                                kCorruptData.length()));
+
+      // Also add a corrupt entry file so that simple disk_cache does not try
+      // to automatically recover from the corrupted index.
+      base::FilePath entry_file =
+          disk_cache_directory.AppendASCII("01234567_0");
+      EXPECT_EQ(static_cast<int>(kCorruptData.length()),
+                base::WriteFile(entry_file, kCorruptData.data(),
+                                kCorruptData.length()));
     }
 
     // Create records for a degenerate cached manifest that only contains
     // one entry for the manifest file resource.
     if (test_case == CORRUPT_CACHE_ON_LOAD_EXISTING) {
       AppCacheDatabase db(temp_directory_.GetPath().AppendASCII("Index"));
-      GURL manifest_url = MockHttpServer::GetMockUrl("manifest");
+      GURL manifest_url = GetMockUrl("manifest");
 
       AppCacheDatabase::GroupRecord group_record;
       group_record.group_id = 1;
       group_record.manifest_url = manifest_url;
-      group_record.origin = manifest_url.GetOrigin();
+      group_record.origin = url::Origin::Create(manifest_url);
       EXPECT_TRUE(db.InsertGroup(&group_record));
       AppCacheDatabase::CacheRecord cache_record;
       cache_record.cache_id = 1;
@@ -1737,6 +1614,7 @@ class AppCacheStorageImplTest : public testing::Test {
       cache_record.online_wildcard = false;
       cache_record.update_time = kZeroTime;
       cache_record.cache_size = kDefaultEntrySize;
+      cache_record.padding_size = 0;
       EXPECT_TRUE(db.InsertCache(&cache_record));
       AppCacheDatabase::EntryRecord entry_record;
       entry_record.cache_id = 1;
@@ -1744,19 +1622,24 @@ class AppCacheStorageImplTest : public testing::Test {
       entry_record.flags = AppCacheEntry::MANIFEST;
       entry_record.response_id = 1;
       entry_record.response_size = kDefaultEntrySize;
+      entry_record.padding_size = 0;
       EXPECT_TRUE(db.InsertEntry(&entry_record));
     }
 
     // Recreate the service to point at the db and corruption on disk.
-    service_.reset(new AppCacheServiceImpl(nullptr));
-    service_->set_request_context(io_thread->request_context());
+    service_ = std::make_unique<AppCacheServiceImpl>(nullptr, nullptr);
+    auto loader_factory_getter = base::MakeRefCounted<URLLoaderFactoryGetter>();
+    loader_factory_getter->SetNetworkFactoryForTesting(
+        &mock_url_loader_factory_, /* is_corb_enabled = */ true);
+    service_->set_url_loader_factory_getter(loader_factory_getter.get());
+
     service_->Initialize(temp_directory_.GetPath());
-    mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
+    mock_quota_manager_proxy_ = base::MakeRefCounted<MockQuotaManagerProxy>();
     service_->quota_manager_proxy_ = mock_quota_manager_proxy_;
-    delegate_.reset(new MockStorageDelegate(this));
+    delegate_ = std::make_unique<MockStorageDelegate>(this);
 
     // Additional setup to observe reinitailize happens.
-    observer_.reset(new MockServiceObserver(this));
+    observer_ = std::make_unique<MockServiceObserver>(this);
     service_->AddObserver(observer_.get());
 
     // We continue after the init task is complete including the callback
@@ -1769,10 +1652,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void Continue_Reinitialize(ReinitTestCase test_case) {
-    const int kMockProcessId = 1;
-    backend_.reset(new AppCacheBackendImpl);
-    backend_->Initialize(service_.get(), &frontend_, kMockProcessId);
-
+    const int kMockRenderFrameId = MSG_ROUTING_NONE;
     if (test_case == CORRUPT_SQL_ON_INSTALL) {
       // Break the db file
       EXPECT_FALSE(database()->was_corruption_detected());
@@ -1780,32 +1660,36 @@ class AppCacheStorageImplTest : public testing::Test {
           temp_directory_.GetPath().AppendASCII("Index")));
     }
 
-    if (test_case == CORRUPT_CACHE_ON_INSTALL  ||
+    if (test_case == CORRUPT_CACHE_ON_INSTALL ||
         test_case == CORRUPT_SQL_ON_INSTALL) {
       // Try to create a new appcache, the resulting update job will
       // eventually fail when it gets to disk cache initialization.
-      backend_->RegisterHost(1);
-      AppCacheHost* host1 = backend_->GetHost(1);
-      const GURL kEmptyPageUrl(MockHttpServer::GetMockUrl("empty.html"));
-      host1->first_party_url_ = kEmptyPageUrl;
-      host1->SelectCache(kEmptyPageUrl,
-                         kAppCacheNoCacheId,
-                         MockHttpServer::GetMockUrl("manifest"));
+      host1_id_ = base::UnguessableToken::Create();
+      service_->RegisterHostForFrame(
+          host_remote_.BindNewPipeAndPassReceiver(), BindFrontend(), host1_id_,
+          kMockRenderFrameId, kMockProcessId, GetBadMessageCallback());
+      AppCacheHost* host1 = service_->GetHost(host1_id_);
+      const GURL kEmptyPageUrl(GetMockUrl("empty.html"));
+      host1->SetFirstPartyUrlForTesting(kEmptyPageUrl);
+      host1->SelectCache(kEmptyPageUrl, blink::mojom::kAppCacheNoCacheId,
+                         GetMockUrl("manifest"));
     } else {
       ASSERT_EQ(CORRUPT_CACHE_ON_LOAD_EXISTING, test_case);
       // Try to access the existing cache manifest.
       // The URLRequestJob  will eventually fail when it gets to disk
       // cache initialization.
-      backend_->RegisterHost(2);
-      AppCacheHost* host2 = backend_->GetHost(2);
-      GURL manifest_url = MockHttpServer::GetMockUrl("manifest");
-      request_ = service()->request_context()->CreateRequest(
-          manifest_url, net::DEFAULT_PRIORITY, &request_delegate_,
-          TRAFFIC_ANNOTATION_FOR_TESTS);
-      AppCacheInterceptor::SetExtraRequestInfo(
-          request_.get(), service_.get(), backend_->process_id(),
-          host2->host_id(), RESOURCE_TYPE_MAIN_FRAME, false);
-      request_->Start();
+      host2_id_ = base::UnguessableToken::Create();
+      service_->RegisterHostForFrame(
+          host_remote_.BindNewPipeAndPassReceiver(), BindFrontend(), host2_id_,
+          kMockRenderFrameId, kMockProcessId, GetBadMessageCallback());
+      AppCacheHost* host2 = service_->GetHost(host2_id_);
+      network::ResourceRequest request;
+      request.url = GetMockUrl("manifest");
+      handler_ = host2->CreateRequestHandler(
+          std::make_unique<AppCacheURLLoaderRequest>(request),
+          ResourceType::kMainFrame, false);
+      handler_->MaybeCreateLoader(request, nullptr, nullptr, base::DoNothing(),
+                                  base::DoNothing());
     }
 
     PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_Reinitialized,
@@ -1831,59 +1715,70 @@ class AppCacheStorageImplTest : public testing::Test {
     if (test_case == CORRUPT_CACHE_ON_INSTALL ||
         test_case == CORRUPT_SQL_ON_INSTALL) {
       EXPECT_TRUE(frontend_.error_event_was_raised_);
-      AppCacheHost* host1 = backend_->GetHost(1);
+      AppCacheHost* host1 = service_->GetHost(host1_id_);
       EXPECT_FALSE(host1->associated_cache());
       EXPECT_FALSE(host1->group_being_updated_.get());
       EXPECT_TRUE(host1->disabled_storage_reference_.get());
     } else {
       ASSERT_EQ(CORRUPT_CACHE_ON_LOAD_EXISTING, test_case);
-      AppCacheHost* host2 = backend_->GetHost(2);
+      AppCacheHost* host2 = service_->GetHost(host2_id_);
       EXPECT_TRUE(host2->disabled_storage_reference_.get());
     }
 
     // Cleanup and claim victory.
+    service_->EraseHost(host1_id_);
+    service_->EraseHost(host2_id_);
     service_->RemoveObserver(observer_.get());
-    request_.reset();
-    backend_.reset();
+    handler_.reset();
     observer_.reset();
     TestFinished();
   }
 
   // Test case helpers --------------------------------------------------
 
-  AppCacheServiceImpl* service() {
-    return service_.get();
-  }
+  AppCacheServiceImpl* service() { return service_.get(); }
 
   AppCacheStorageImpl* storage() {
     return static_cast<AppCacheStorageImpl*>(service()->storage());
   }
 
-  AppCacheDatabase* database() {
-    return storage()->database_;
+  AppCacheDatabase* database() { return storage()->database_.get(); }
+
+  MockStorageDelegate* delegate() { return delegate_.get(); }
+
+  mojo::PendingRemote<blink::mojom::AppCacheFrontend> BindFrontend() {
+    mojo::PendingRemote<blink::mojom::AppCacheFrontend> result;
+    frontend_receivers_.Add(&frontend_,
+                            result.InitWithNewPipeAndPassReceiver());
+    return result;
   }
 
-  MockStorageDelegate* delegate() {
-    return delegate_.get();
+  mojo::ReportBadMessageCallback GetBadMessageCallback() {
+    return base::BindOnce(&AppCacheStorageImplTest::OnBadMessage,
+                          base::Unretained(this));
   }
+
+  void OnBadMessage(const std::string& reason) { NOTREACHED(); }
 
   void MakeCacheAndGroup(const GURL& manifest_url,
                          int64_t group_id,
                          int64_t cache_id,
                          bool add_to_database) {
-    AppCacheEntry default_entry(
-        AppCacheEntry::EXPLICIT, cache_id + kDefaultEntryIdOffset,
-        kDefaultEntrySize);
-    group_ = new AppCacheGroup(storage(), manifest_url, group_id);
-    cache_ = new AppCache(storage(), cache_id);
+    AppCacheEntry default_entry(AppCacheEntry::EXPLICIT,
+                                cache_id + kDefaultEntryIdOffset,
+                                kDefaultEntrySize, kDefaultEntryPadding);
+    group_ =
+        base::MakeRefCounted<AppCacheGroup>(storage(), manifest_url, group_id);
+    cache_ = base::MakeRefCounted<AppCache>(storage(), cache_id);
     cache_->AddEntry(kDefaultEntryUrl, default_entry);
     cache_->set_complete(true);
     group_->AddCache(cache_.get());
+    url::Origin manifest_origin(url::Origin::Create(manifest_url));
     if (add_to_database) {
       AppCacheDatabase::GroupRecord group_record;
       group_record.group_id = group_id;
       group_record.manifest_url = manifest_url;
-      group_record.origin = manifest_url.GetOrigin();
+      group_record.origin = manifest_origin;
       EXPECT_TRUE(database()->InsertGroup(&group_record));
       AppCacheDatabase::CacheRecord cache_record;
       cache_record.cache_id = cache_id;
@@ -1891,6 +1786,7 @@ class AppCacheStorageImplTest : public testing::Test {
       cache_record.online_wildcard = false;
       cache_record.update_time = kZeroTime;
       cache_record.cache_size = kDefaultEntrySize;
+      cache_record.padding_size = kDefaultEntryPadding;
       EXPECT_TRUE(database()->InsertCache(&cache_record));
       AppCacheDatabase::EntryRecord entry_record;
       entry_record.cache_id = cache_id;
@@ -1898,16 +1794,17 @@ class AppCacheStorageImplTest : public testing::Test {
       entry_record.flags = default_entry.types();
       entry_record.response_id = default_entry.response_id();
       entry_record.response_size = default_entry.response_size();
+      entry_record.padding_size = default_entry.padding_size();
       EXPECT_TRUE(database()->InsertEntry(&entry_record));
 
-      storage()->usage_map_[manifest_url.GetOrigin()] =
-          default_entry.response_size();
+      storage()->usage_map_[manifest_origin] =
+          default_entry.response_size() + default_entry.padding_size();
     }
   }
 
   // Data members --------------------------------------------------
 
-  std::unique_ptr<base::WaitableEvent> test_finished_event_;
+  base::OnceClosure test_finished_cb_;
   base::stack<base::OnceClosure> task_stack_;
   std::unique_ptr<AppCacheServiceImpl> service_;
   std::unique_ptr<MockStorageDelegate> delegate_;
@@ -1916,15 +1813,62 @@ class AppCacheStorageImplTest : public testing::Test {
   scoped_refptr<AppCache> cache_;
   scoped_refptr<AppCache> cache2_;
 
+  base::UnguessableToken host1_id_;
+  base::UnguessableToken host2_id_;
+  mojo::Remote<blink::mojom::AppCacheHost> host_remote_;
+
   // Specifically for the Reinitalize test.
+  base::test::ScopedFeatureList feature_list_;
   base::ScopedTempDir temp_directory_;
   std::unique_ptr<MockServiceObserver> observer_;
   MockAppCacheFrontend frontend_;
-  std::unique_ptr<AppCacheBackendImpl> backend_;
-  net::TestDelegate request_delegate_;
-  std::unique_ptr<net::URLRequest> request_;
-};
+  mojo::ReceiverSet<blink::mojom::AppCacheFrontend> frontend_receivers_;
+  std::unique_ptr<AppCacheRequestHandler> handler_;
+  network::TestURLLoaderFactory mock_url_loader_factory_;
 
+  // Test data
+  const base::Time kZeroTime;
+  const GURL kManifestUrl = GURL("http://blah/manifest");
+  const GURL kManifestUrl2 = GURL("http://blah/manifest2");
+  const GURL kManifestUrl3 = GURL("http://blah/manifest3");
+  const GURL kEntryUrl = GURL("http://blah/entry");
+  const GURL kEntryUrl2 = GURL("http://blah/entry2");
+  const GURL kFallbackNamespace = GURL("http://blah/fallback_namespace/");
+  const GURL kFallbackNamespace2 =
+      GURL("http://blah/fallback_namespace/longer");
+  const GURL kFallbackTestUrl =
+      GURL("http://blah/fallback_namespace/longer/test");
+  const GURL kOnlineNamespace = GURL("http://blah/online_namespace");
+  const GURL kOnlineNamespaceWithinFallback =
+      GURL("http://blah/fallback_namespace/online/");
+  const GURL kInterceptNamespace = GURL("http://blah/intercept_namespace/");
+  const GURL kInterceptNamespace2 =
+      GURL("http://blah/intercept_namespace/longer/");
+  const GURL kInterceptTestUrl =
+      GURL("http://blah/intercept_namespace/longer/test");
+  const GURL kInterceptPatternNamespace =
+      GURL("http://blah/intercept_pattern/*/bar");
+  const GURL kInterceptPatternTestPositiveUrl =
+      GURL("http://blah/intercept_pattern/foo/bar");
+  const GURL kInterceptPatternTestNegativeUrl =
+      GURL("http://blah/intercept_pattern/foo/not_bar");
+  const GURL kFallbackPatternNamespace =
+      GURL("http://blah/fallback_pattern/*/bar");
+  const GURL kFallbackPatternTestPositiveUrl =
+      GURL("http://blah/fallback_pattern/foo/bar");
+  const GURL kFallbackPatternTestNegativeUrl =
+      GURL("http://blah/fallback_pattern/foo/not_bar");
+  const url::Origin kOrigin = url::Origin::Create(kManifestUrl.GetOrigin());
+
+  const int kManifestEntryIdOffset = 100;
+  const int kFallbackEntryIdOffset = 1000;
+
+  const GURL kDefaultEntryUrl =
+      GURL("http://blah/makecacheandgroup_default_entry");
+  const int kDefaultEntrySize = 10;
+  const int kDefaultEntryPadding = 10000;
+  const int kDefaultEntryIdOffset = 12345;
+};
 
 TEST_F(AppCacheStorageImplTest, LoadCache_Miss) {
   RunTestOnIOThread(&AppCacheStorageImplTest::LoadCache_Miss);
@@ -1958,8 +1902,12 @@ TEST_F(AppCacheStorageImplTest, StoreExistingGroupExistingCache) {
   RunTestOnIOThread(&AppCacheStorageImplTest::StoreExistingGroupExistingCache);
 }
 
-TEST_F(AppCacheStorageImplTest, FailStoreGroup) {
-  RunTestOnIOThread(&AppCacheStorageImplTest::FailStoreGroup);
+TEST_F(AppCacheStorageImplTest, FailStoreGroup_SizeTooBig) {
+  RunTestOnIOThread(&AppCacheStorageImplTest::FailStoreGroup_SizeTooBig);
+}
+
+TEST_F(AppCacheStorageImplTest, FailStoreGroup_PaddingTooBig) {
+  RunTestOnIOThread(&AppCacheStorageImplTest::FailStoreGroup_PaddingTooBig);
 }
 
 TEST_F(AppCacheStorageImplTest, MakeGroupObsolete) {
@@ -1980,8 +1928,7 @@ TEST_F(AppCacheStorageImplTest, FindNoMainResponse) {
 }
 
 TEST_F(AppCacheStorageImplTest, BasicFindMainResponseInDatabase) {
-  RunTestOnIOThread(
-      &AppCacheStorageImplTest::BasicFindMainResponseInDatabase);
+  RunTestOnIOThread(&AppCacheStorageImplTest::BasicFindMainResponseInDatabase);
 }
 
 TEST_F(AppCacheStorageImplTest, BasicFindMainResponseInWorkingSet) {
@@ -2010,8 +1957,7 @@ TEST_F(AppCacheStorageImplTest, BasicFindMainInterceptResponseInWorkingSet) {
 }
 
 TEST_F(AppCacheStorageImplTest, FindMainResponseWithMultipleHits) {
-  RunTestOnIOThread(
-      &AppCacheStorageImplTest::FindMainResponseWithMultipleHits);
+  RunTestOnIOThread(&AppCacheStorageImplTest::FindMainResponseWithMultipleHits);
 }
 
 TEST_F(AppCacheStorageImplTest, FindMainResponseExclusionsInDatabase) {

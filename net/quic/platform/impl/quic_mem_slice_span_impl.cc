@@ -4,16 +4,16 @@
 
 #include "net/quic/platform/impl/quic_mem_slice_span_impl.h"
 
-#include "net/quic/core/quic_stream_send_buffer.h"
-#include "net/quic/platform/api/quic_bug_tracker.h"
-
-namespace net {
+namespace quic {
 
 QuicMemSliceSpanImpl::QuicMemSliceSpanImpl(
-    const scoped_refptr<IOBuffer>* buffers,
-    const int* lengths,
+    const scoped_refptr<net::IOBuffer>* buffers,
+    const size_t* lengths,
     size_t num_buffers)
     : buffers_(buffers), lengths_(lengths), num_buffers_(num_buffers) {}
+
+QuicMemSliceSpanImpl::QuicMemSliceSpanImpl(QuicMemSliceImpl* slice)
+    : QuicMemSliceSpanImpl(slice->impl(), slice->impl_length(), 1) {}
 
 QuicMemSliceSpanImpl::QuicMemSliceSpanImpl(const QuicMemSliceSpanImpl& other) =
     default;
@@ -26,19 +26,12 @@ QuicMemSliceSpanImpl& QuicMemSliceSpanImpl::operator=(
 
 QuicMemSliceSpanImpl::~QuicMemSliceSpanImpl() = default;
 
-QuicByteCount QuicMemSliceSpanImpl::SaveMemSlicesInSendBuffer(
-    QuicStreamSendBuffer* send_buffer) {
-  size_t saved_length = 0;
+QuicByteCount QuicMemSliceSpanImpl::total_length() {
+  QuicByteCount length = 0;
   for (size_t i = 0; i < num_buffers_; ++i) {
-    if (lengths_[i] == 0) {
-      // Skip empty buffer.
-      continue;
-    }
-    saved_length += lengths_[i];
-    send_buffer->SaveMemSlice(
-        QuicMemSlice(QuicMemSliceImpl(buffers_[i], lengths_[i])));
+    length += lengths_[i];
   }
-  return saved_length;
+  return length;
 }
 
-}  // namespace net
+}  // namespace quic

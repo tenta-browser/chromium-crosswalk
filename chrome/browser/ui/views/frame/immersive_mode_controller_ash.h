@@ -10,9 +10,10 @@
 #include "ash/public/cpp/immersive/immersive_fullscreen_controller.h"
 #include "ash/public/cpp/immersive/immersive_fullscreen_controller_delegate.h"
 #include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_observer.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "ui/aura/window_observer.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -20,18 +21,16 @@ namespace aura {
 class Window;
 }
 
-// See ash/mus/frame/README.md for description of how immersive mode works in
-// mash. This code works with both classic ash, and mash.
 class ImmersiveModeControllerAsh
     : public ImmersiveModeController,
       public ash::ImmersiveFullscreenControllerDelegate,
-      public content::NotificationObserver,
+      public FullscreenObserver,
       public aura::WindowObserver {
  public:
   ImmersiveModeControllerAsh();
   ~ImmersiveModeControllerAsh() override;
 
-  ash::ImmersiveFullscreenController* controller() { return controller_.get(); }
+  ash::ImmersiveFullscreenController* controller() { return &controller_; }
 
   // ImmersiveModeController overrides:
   void Init(BrowserView* browser_view) override;
@@ -46,49 +45,32 @@ class ImmersiveModeControllerAsh
   void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds_in_screen) override;
   bool ShouldStayImmersiveAfterExitingFullscreen() override;
-  views::Widget* GetRevealWidget() override;
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
 
  private:
-  // Enables or disables observers for window restore and entering / exiting
-  // tab fullscreen.
-  void EnableWindowObservers(bool enable);
-
   // Updates the browser root view's layout including window caption controls.
   void LayoutBrowserRootView();
-
-  // Used when running in mash to create |mash_reveal_widget_|. Does nothing
-  // if already null.
-  void CreateMashRevealWidget();
-
-  // Destroys |mash_reveal_widget_| if valid, does nothing otherwise.
-  void DestroyMashRevealWidget();
 
   // ImmersiveFullscreenController::Delegate overrides:
   void OnImmersiveRevealStarted() override;
   void OnImmersiveRevealEnded() override;
+  void OnImmersiveFullscreenEntered() override;
   void OnImmersiveFullscreenExited() override;
   void SetVisibleFraction(double visible_fraction) override;
   std::vector<gfx::Rect> GetVisibleBoundsInScreen() const override;
 
-  // content::NotificationObserver override:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // FullscreenObserver:
+  void OnFullscreenStateChanged() override;
 
-  // aura::WindowObserver override:
+  // aura::WindowObserver:
   void OnWindowPropertyChanged(aura::Window* window,
                                const void* key,
                                intptr_t old) override;
   void OnWindowDestroying(aura::Window* window) override;
 
-  std::unique_ptr<ash::ImmersiveFullscreenController> controller_;
+  ash::ImmersiveFullscreenController controller_;
 
   BrowserView* browser_view_ = nullptr;
-
-  // True if the observers for window restore and entering / exiting tab
-  // fullscreen are enabled.
-  bool observers_enabled_ = false;
 
   // The current visible bounds of the find bar, in screen coordinates. This is
   // an empty rect if the find bar is not visible.
@@ -98,11 +80,10 @@ class ImmersiveModeControllerAsh
   // the top-of-window views are not revealed.
   double visible_fraction_ = 1.0;
 
-  // When running in mash a widget is created to draw the top container. This
-  // widget does not actually contain the top container, it just renders it.
-  std::unique_ptr<views::Widget> mash_reveal_widget_;
+  ScopedObserver<FullscreenController, FullscreenObserver> fullscreen_observer_{
+      this};
 
-  content::NotificationRegistrar registrar_;
+  ScopedObserver<aura::Window, aura::WindowObserver> observed_windows_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImmersiveModeControllerAsh);
 };

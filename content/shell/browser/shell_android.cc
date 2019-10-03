@@ -13,8 +13,8 @@
 #include "base/strings/string_piece.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/shell/android/content_shell_jni_headers/Shell_jni.h"
 #include "content/shell/android/shell_manager.h"
-#include "jni/Shell_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
@@ -27,6 +27,7 @@ void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
 }
 
 void Shell::PlatformExit() {
+  DestroyShellManager();
 }
 
 void Shell::PlatformCleanUp() {
@@ -68,6 +69,12 @@ void Shell::PlatformResizeSubViews() {
   // Not needed; subviews are bound.
 }
 
+void Shell::SizeTo(const gfx::Size& content_size) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_Shell_sizeTo(env, java_object_, content_size.width(),
+                    content_size.height());
+}
+
 void Shell::PlatformSetTitle(const base::string16& title) {
   NOTIMPLEMENTED() << ": " << title;
 }
@@ -75,11 +82,6 @@ void Shell::PlatformSetTitle(const base::string16& title) {
 void Shell::LoadProgressChanged(WebContents* source, double progress) {
   JNIEnv* env = AttachCurrentThread();
   Java_Shell_onLoadProgressChanged(env, java_object_, progress);
-}
-
-ScopedJavaLocalRef<jobject> Shell::GetContentVideoViewEmbedder() {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  return Java_Shell_getContentVideoViewEmbedder(env, java_object_);
 }
 
 void Shell::SetOverlayMode(bool use_overlay_mode) {
@@ -106,7 +108,6 @@ void Shell::Close() {
 
 // static
 void JNI_Shell_CloseShell(JNIEnv* env,
-                          const JavaParamRef<jclass>& clazz,
                           jlong shellPtr) {
   Shell* shell = reinterpret_cast<Shell*>(shellPtr);
   shell->Close();

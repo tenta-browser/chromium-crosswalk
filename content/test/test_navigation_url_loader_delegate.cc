@@ -5,11 +5,10 @@
 #include "content/test/test_navigation_url_loader_delegate.h"
 
 #include "base/run_loop.h"
-#include "content/common/navigation_subresource_loader_params.h"
+#include "content/browser/navigation_subresource_loader_params.h"
+#include "content/common/navigation_params.h"
 #include "content/public/browser/global_request_id.h"
-#include "content/public/browser/navigation_data.h"
-#include "content/public/browser/stream_handle.h"
-#include "content/public/common/resource_response.h"
+#include "services/network/public/cpp/resource_response.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -43,48 +42,43 @@ void TestNavigationURLLoaderDelegate::WaitForRequestStarted() {
   request_started_.reset();
 }
 
-void TestNavigationURLLoaderDelegate::ReleaseBody() {
-  body_.reset();
-  handle_.reset();
+void TestNavigationURLLoaderDelegate::ReleaseURLLoaderClientEndpoints() {
+  url_loader_client_endpoints_ = nullptr;
+  response_body_.reset();
 }
 
 void TestNavigationURLLoaderDelegate::OnRequestRedirected(
     const net::RedirectInfo& redirect_info,
-    const scoped_refptr<ResourceResponse>& response) {
+    const scoped_refptr<network::ResourceResponse>& response_head) {
   redirect_info_ = redirect_info;
-  redirect_response_ = response;
+  redirect_response_ = response_head;
   ASSERT_TRUE(request_redirected_);
   request_redirected_->Quit();
 }
 
 void TestNavigationURLLoaderDelegate::OnResponseStarted(
-    const scoped_refptr<ResourceResponse>& response,
-    std::unique_ptr<StreamHandle> body,
-    mojo::ScopedDataPipeConsumerHandle consumer_handle,
-    const net::SSLInfo& ssl_info,
-    std::unique_ptr<NavigationData> navigation_data,
+    network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+    const scoped_refptr<network::ResourceResponse>& response_head,
+    mojo::ScopedDataPipeConsumerHandle response_body,
     const GlobalRequestID& request_id,
     bool is_download,
-    bool is_stream,
+    NavigationDownloadPolicy download_policy,
     base::Optional<SubresourceLoaderParams> subresource_loader_params) {
-  response_ = response;
-  body_ = std::move(body);
-  handle_ = std::move(consumer_handle);
-  ssl_info_ = ssl_info;
-  is_download_ = is_download;
+  response_head_ = response_head;
+  response_body_ = std::move(response_body);
+  url_loader_client_endpoints_ = std::move(url_loader_client_endpoints);
+  if (response_head->head.ssl_info.has_value())
+    ssl_info_ = *response_head->head.ssl_info;
+  is_download_ = is_download && download_policy.IsDownloadAllowed();
   if (response_started_)
     response_started_->Quit();
 }
 
 void TestNavigationURLLoaderDelegate::OnRequestFailed(
-    bool in_cache,
-    int net_error,
-    const base::Optional<net::SSLInfo>& ssl_info,
-    bool should_ssl_errors_be_fatal) {
-  net_error_ = net_error;
-  if (ssl_info.has_value())
-    ssl_info_ = ssl_info.value();
-  should_ssl_errors_be_fatal_ = should_ssl_errors_be_fatal;
+    const network::URLLoaderCompletionStatus& status) {
+  net_error_ = status.error_code;
+  if (status.ssl_info.has_value())
+    ssl_info_ = status.ssl_info.value();
   if (request_failed_)
     request_failed_->Quit();
 }

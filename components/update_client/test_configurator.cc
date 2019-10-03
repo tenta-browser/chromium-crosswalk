@@ -8,12 +8,17 @@
 
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
-#include "components/patch_service/file_patcher_impl.h"
-#include "components/patch_service/patch_service.h"
-#include "components/patch_service/public/interfaces/file_patcher.mojom.h"
 #include "components/prefs/pref_service.h"
+#include "components/services/patch/public/mojom/constants.mojom.h"
+#include "components/services/unzip/public/mojom/constants.mojom.h"
 #include "components/update_client/activity_data_service.h"
-#include "net/url_request/url_request_test_util.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
+#include "components/update_client/patcher.h"
+#include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "url/gurl.h"
 
@@ -36,10 +41,22 @@ TestConfigurator::TestConfigurator()
       ondemand_time_(0),
       enabled_cup_signing_(false),
       enabled_component_updates_(true),
-      connector_factory_(std::make_unique<patch::PatchService>()),
-      connector_(connector_factory_.CreateConnector()),
-      context_(base::MakeRefCounted<net::TestURLRequestContextGetter>(
-          base::ThreadTaskRunnerHandle::Get())) {}
+      unzip_factory_(base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+          connector_factory_.CreateConnector())),
+      patch_factory_(base::MakeRefCounted<update_client::PatchChromiumFactory>(
+          connector_factory_.CreateConnector())),
+      unzip_service_(
+          connector_factory_.RegisterInstance(unzip::mojom::kServiceName)),
+      patch_service_(
+          connector_factory_.RegisterInstance(patch::mojom::kServiceName)),
+      test_shared_loader_factory_(
+          base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+              &test_url_loader_factory_)),
+      network_fetcher_factory_(
+          base::MakeRefCounted<NetworkFetcherChromiumFactory>(
+              test_shared_loader_factory_)) {
+  connector_factory_.set_ignore_quit_requests(true);
+}
 
 TestConfigurator::~TestConfigurator() {
 }
@@ -99,21 +116,26 @@ std::string TestConfigurator::GetOSLongName() const {
   return "Fake Operating System";
 }
 
-std::string TestConfigurator::ExtraRequestParams() const {
-  return "extra=\"foo\"";
+base::flat_map<std::string, std::string> TestConfigurator::ExtraRequestParams()
+    const {
+  return {{"extra", "foo"}};
 }
 
 std::string TestConfigurator::GetDownloadPreference() const {
   return download_preference_;
 }
 
-net::URLRequestContextGetter* TestConfigurator::RequestContext() const {
-  return context_.get();
+scoped_refptr<NetworkFetcherFactory>
+TestConfigurator::GetNetworkFetcherFactory() {
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-TestConfigurator::CreateServiceManagerConnector() const {
-  return connector_->Clone();
+scoped_refptr<UnzipperFactory> TestConfigurator::GetUnzipperFactory() {
+  return unzip_factory_;
+}
+
+scoped_refptr<PatcherFactory> TestConfigurator::GetPatcherFactory() {
+  return patch_factory_;
 }
 
 bool TestConfigurator::EnabledDeltas() const {
@@ -166,6 +188,10 @@ void TestConfigurator::SetPingUrl(const GURL& url) {
   ping_url_ = url;
 }
 
+void TestConfigurator::SetAppGuid(const std::string& app_guid) {
+  app_guid_ = app_guid;
+}
+
 PrefService* TestConfigurator::GetPrefService() const {
   return nullptr;
 }
@@ -180,6 +206,19 @@ bool TestConfigurator::IsPerUserInstall() const {
 
 std::vector<uint8_t> TestConfigurator::GetRunActionKeyHash() const {
   return std::vector<uint8_t>(std::begin(gjpm_hash), std::end(gjpm_hash));
+}
+
+std::string TestConfigurator::GetAppGuid() const {
+  return app_guid_;
+}
+
+std::unique_ptr<ProtocolHandlerFactory>
+TestConfigurator::GetProtocolHandlerFactory() const {
+  return std::make_unique<ProtocolHandlerFactoryJSON>();
+}
+
+RecoveryCRXElevator TestConfigurator::GetRecoveryCRXElevator() const {
+  return {};
 }
 
 }  // namespace update_client

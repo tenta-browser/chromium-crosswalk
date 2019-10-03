@@ -14,15 +14,19 @@ class BookmarkBarViewTestHelper {
   explicit BookmarkBarViewTestHelper(BookmarkBarView* bbv) : bbv_(bbv) {}
   ~BookmarkBarViewTestHelper() {}
 
-  int GetBookmarkButtonCount() { return bbv_->GetBookmarkButtonCount(); }
+  size_t GetBookmarkButtonCount() { return bbv_->bookmark_buttons_.size(); }
 
-  views::LabelButton* GetBookmarkButton(int index) {
-    return bbv_->GetBookmarkButton(index);
+  views::LabelButton* GetBookmarkButton(size_t index) {
+    return bbv_->bookmark_buttons_[index];
   }
 
   views::LabelButton* apps_page_shortcut() { return bbv_->apps_page_shortcut_; }
 
   views::MenuButton* overflow_button() { return bbv_->overflow_button_; }
+
+  views::MenuButton* managed_bookmarks_button() {
+    return bbv_->managed_bookmarks_button_;
+  }
 
  private:
   BookmarkBarView* bbv_;

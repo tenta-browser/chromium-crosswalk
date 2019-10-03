@@ -6,7 +6,7 @@
 #define COMPONENTS_OFFLINE_PAGES_CORE_PREFETCH_TEST_DOWNLOAD_CLIENT_H_
 
 #include "base/macros.h"
-#include "components/download/public/test/empty_client.h"
+#include "components/download/public/background_service/test/empty_client.h"
 
 namespace offline_pages {
 
@@ -18,6 +18,7 @@ class TestDownloadClient : public download::test::EmptyClient {
   ~TestDownloadClient() override = default;
 
   void OnDownloadFailed(const std::string& guid,
+                        const download::CompletionInfo& completion_info,
                         download::Client::FailureReason reason) override;
   void OnDownloadSucceeded(
       const std::string& guid,

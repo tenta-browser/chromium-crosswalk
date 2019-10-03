@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -20,6 +20,7 @@
 #include "chrome/test/base/search_test_utils.h"
 #include "components/google/core/browser/google_pref_names.h"
 #include "components/google/core/browser/google_url_tracker.h"
+#include "components/image_fetcher/core/mock_image_fetcher.h"
 #include "components/search/search.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
@@ -27,7 +28,7 @@
 
 InstantUnitTestBase::InstantUnitTestBase() {
   field_trial_list_.reset(new base::FieldTrialList(
-      base::MakeUnique<metrics::SHA1EntropyProvider>("42")));
+      std::make_unique<variations::SHA1EntropyProvider>("42")));
 }
 
 InstantUnitTestBase::~InstantUnitTestBase() {
@@ -36,16 +37,25 @@ InstantUnitTestBase::~InstantUnitTestBase() {
 void InstantUnitTestBase::SetUp() {
   BrowserWithTestWindowTest::SetUp();
 
+  clock_ = new base::SimpleTestClock();
+
   template_url_service_ = TemplateURLServiceFactory::GetForProfile(profile());
   search_test_utils::WaitForTemplateURLServiceToLoad(template_url_service_);
 
   UIThreadSearchTermsData::SetGoogleBaseURL("https://www.google.com/");
   SetUserSelectedDefaultSearchProvider("{google:baseURL}");
   instant_service_ = InstantServiceFactory::GetForProfile(profile());
+
+  instant_service_->SetImageFetcherForTesting(
+      new testing::NiceMock<image_fetcher::MockImageFetcher>());
 }
 
 void InstantUnitTestBase::TearDown() {
   UIThreadSearchTermsData::SetGoogleBaseURL("");
+
+  delete clock_;
+  clock_ = nullptr;
+
   BrowserWithTestWindowTest::TearDown();
 }
 
@@ -59,7 +69,7 @@ void InstantUnitTestBase::SetUserSelectedDefaultSearchProvider(
   data.alternate_urls.push_back(base_url + "alt#quux={searchTerms}");
 
   TemplateURL* template_url =
-      template_url_service_->Add(base::MakeUnique<TemplateURL>(data));
+      template_url_service_->Add(std::make_unique<TemplateURL>(data));
   template_url_service_->SetUserSelectedDefaultSearchProvider(template_url);
 }
 
@@ -77,6 +87,7 @@ void InstantUnitTestBase::NotifyGoogleBaseURLUpdate(
 TestingProfile* InstantUnitTestBase::CreateProfile() {
   TestingProfile* profile = BrowserWithTestWindowTest::CreateProfile();
   TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-      profile, &TemplateURLServiceFactory::BuildInstanceFor);
+      profile,
+      base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
   return profile;
 }

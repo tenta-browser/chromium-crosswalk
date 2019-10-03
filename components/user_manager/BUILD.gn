@@ -14,12 +14,14 @@ component("user_manager") {
     "user_type.h",
   ]
 
-  deps = [
+  public_deps = [
     "//base",
-    "//components/signin/core/account_id",
-    "//google_apis",
-    "//skia",
+    "//components/account_id",
     "//ui/gfx",
+  ]
+
+  deps = [
+    "//google_apis",
   ]
 
   defines = [ "USER_MANAGER_IMPLEMENTATION" ]
@@ -40,8 +42,10 @@ component("user_manager") {
       "user_manager_base.cc",
       "user_manager_base.h",
     ]
+
     deps += [
       "//components/prefs",
+      "//skia",
       "//url",
     ]
   }
@@ -54,13 +58,15 @@ if (is_chromeos) {
       "fake_user_manager.cc",
       "fake_user_manager.h",
     ]
-    deps = [
+
+    public_deps = [
       ":user_manager",
       "//base",
-      "//chromeos:chromeos",
-      "//components/signin/core/account_id",
-      "//skia",
-      "//ui/base",
+      "//components/account_id",
+    ]
+
+    deps = [
+      "//chromeos/constants",
     ]
   }
 
@@ -71,10 +77,8 @@ if (is_chromeos) {
     ]
     deps = [
       ":user_manager",
-      "//components/signin/core/account_id",
-      "//skia",
+      "//components/account_id",
       "//testing/gtest",
-      "//ui/gfx",
     ]
   }
 }

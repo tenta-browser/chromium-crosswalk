@@ -10,10 +10,9 @@
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "chrome/installer/util/advanced_firewall_manager_win.h"
-#include "chrome/installer/util/browser_distribution.h"
+#include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/installer_util_strings.h"
 #include "chrome/installer/util/l10n_string_util.h"
 
@@ -35,7 +34,7 @@ class FirewallManagerAdvancedImpl : public FirewallManager {
   // FirewallManager methods.
   bool CanUseLocalPorts() override {
     return !manager_.IsFirewallEnabled() || manager_.HasAnyRule();
-  };
+  }
 
   bool AddFirewallRules() override {
     return manager_.AddUDPRule(GetMdnsRuleName(), GetMdnsRuleDescription(),
@@ -66,11 +65,10 @@ FirewallManager::~FirewallManager() {}
 
 // static
 std::unique_ptr<FirewallManager> FirewallManager::Create(
-    BrowserDistribution* dist,
     const base::FilePath& chrome_path) {
   // Try to connect to "Windows Firewall with Advanced Security" (Vista+).
-  auto manager = base::MakeUnique<FirewallManagerAdvancedImpl>();
-  if (manager->Init(dist->GetDisplayName(), chrome_path))
+  auto manager = std::make_unique<FirewallManagerAdvancedImpl>();
+  if (manager->Init(InstallUtil::GetDisplayName(), chrome_path))
     return std::move(manager);
 
   return nullptr;

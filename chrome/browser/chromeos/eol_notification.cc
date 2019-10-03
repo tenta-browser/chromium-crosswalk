@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/eol_notification.h"
 
+#include "ash/public/cpp/notification_utils.h"
+#include "base/bind.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
@@ -14,27 +16,22 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "components/prefs/pref_service.h"
-#include "components/vector_icons/vector_icons.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/chromeos/devicetype_utils.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
 
-using message_center::MessageCenter;
 using l10n_util::GetStringUTF16;
 
 namespace chromeos {
 namespace {
 
 const char kEolNotificationId[] = "chrome://product_eol";
-const SkColor kButtonIconColor = SkColorSetRGB(150, 150, 152);
-const SkColor kNotificationIconColor = SkColorSetRGB(219, 68, 55);
 
 // Buttons that appear in notifications.
 enum ButtonIndex {
@@ -51,16 +48,19 @@ class EolNotificationDelegate : public message_center::NotificationDelegate {
   ~EolNotificationDelegate() override = default;
 
   // NotificationDelegate overrides:
-  void ButtonClick(int button_index) override {
-    switch (button_index) {
+  void Click(const base::Optional<int>& button_index,
+             const base::Optional<base::string16>& reply) override {
+    if (!button_index)
+      return;
+
+    switch (*button_index) {
       case BUTTON_MORE_INFO: {
         // show eol link
-        chrome::NavigateParams params(profile_,
-                                      GURL(chrome::kEolNotificationURL),
-                                      ui::PAGE_TRANSITION_LINK);
+        NavigateParams params(profile_, GURL(chrome::kEolNotificationURL),
+                              ui::PAGE_TRANSITION_LINK);
         params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-        params.window_action = chrome::NavigateParams::SHOW_WINDOW;
-        chrome::Navigate(&params);
+        params.window_action = NavigateParams::SHOW_WINDOW;
+        Navigate(&params);
         break;
       }
       case BUTTON_DISMISS:
@@ -82,11 +82,6 @@ class EolNotificationDelegate : public message_center::NotificationDelegate {
 
 // static
 bool EolNotification::ShouldShowEolNotification() {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kDisableEolNotification)) {
-    return false;
-  }
-
   // Do not show end of life notification if this device is managed by
   // enterprise user.
   if (g_browser_process->platform_part()
@@ -110,8 +105,8 @@ void EolNotification::CheckEolStatus() {
       DBusThreadManager::Get()->GetUpdateEngineClient();
 
   // Request the Eol Status.
-  update_engine_client->GetEolStatus(
-      base::Bind(&EolNotification::OnEolStatus, weak_factory_.GetWeakPtr()));
+  update_engine_client->GetEolStatus(base::BindOnce(
+      &EolNotification::OnEolStatus, weak_factory_.GetWeakPtr()));
 }
 
 void EolNotification::OnEolStatus(update_engine::EndOfLifeStatus status) {
@@ -145,39 +140,28 @@ void EolNotification::Update() {
   message_center::RichNotificationData data;
 
   DCHECK_EQ(BUTTON_MORE_INFO, data.buttons.size());
-  data.buttons.emplace_back(GetStringUTF16(IDS_EOL_MORE_INFO_BUTTON));
-  data.buttons.back().icon = gfx::Image(
-      CreateVectorIcon(vector_icons::kInfoOutlineIcon, kButtonIconColor));
+  data.buttons.emplace_back(GetStringUTF16(IDS_LEARN_MORE));
 
   DCHECK_EQ(BUTTON_DISMISS, data.buttons.size());
   data.buttons.emplace_back(GetStringUTF16(IDS_EOL_DISMISS_BUTTON));
-  data.buttons.back().icon = gfx::Image(
-      CreateVectorIcon(vector_icons::kNotificationsOffIcon, kButtonIconColor));
 
-  message_center::Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, kEolNotificationId,
-      GetStringUTF16(IDS_EOL_NOTIFICATION_TITLE),
-      GetStringUTF16(IDS_EOL_NOTIFICATION_EOL),
-      message_center::IsNewStyleNotificationEnabled()
-          ? gfx::Image()
-          : gfx::Image(CreateVectorIcon(kEolIcon, kNotificationIconColor)),
-      GetStringUTF16(IDS_EOL_NOTIFICATION_DISPLAY_SOURCE),
-      GURL(kEolNotificationId),
-      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
-                                 kEolNotificationId),
-      data, new EolNotificationDelegate(profile_));
-
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification.set_accent_color(
-        message_center::kSystemNotificationColorCriticalWarning);
-    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
-        kNotificationEndOfSupportIcon,
-        message_center::kSystemNotificationColorCriticalWarning)));
-    notification.set_vector_small_image(kNotificationEndOfSupportIcon);
-  }
+  std::unique_ptr<message_center::Notification> notification =
+      ash::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, kEolNotificationId,
+          GetStringUTF16(IDS_EOL_NOTIFICATION_TITLE),
+          l10n_util::GetStringFUTF16(IDS_EOL_NOTIFICATION_EOL,
+                                     ui::GetChromeOSDeviceName()),
+          base::string16() /* display_source */, GURL(kEolNotificationId),
+          message_center::NotifierId(
+              message_center::NotifierType::SYSTEM_COMPONENT,
+              kEolNotificationId),
+          data, new EolNotificationDelegate(profile_),
+          kNotificationEndOfSupportIcon,
+          message_center::SystemNotificationWarningLevel::NORMAL);
 
   NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
-      NotificationHandler::Type::TRANSIENT, notification);
+      NotificationHandler::Type::TRANSIENT, *notification,
+      /*metadata=*/nullptr);
 }
 
 }  // namespace chromeos

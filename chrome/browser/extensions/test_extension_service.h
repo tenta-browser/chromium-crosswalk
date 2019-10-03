@@ -18,7 +18,7 @@ class Extension;
 // Implemention of ExtensionServiceInterface with default
 // implementations for methods that add failures.  You should subclass
 // this and override the methods you care about.
-class TestExtensionService : public ExtensionServiceInterface {
+class TestExtensionService : public extensions::ExtensionServiceInterface {
  public:
   ~TestExtensionService() override;
 
@@ -35,7 +35,8 @@ class TestExtensionService : public ExtensionServiceInterface {
       const std::string& id) const override;
   const extensions::Extension* GetPendingExtensionUpdate(
       const std::string& extension_id) const override;
-  void FinishDelayedInstallation(const std::string& extension_id) override;
+  bool FinishDelayedInstallationIfReady(const std::string& extension_id,
+                                        bool install_immediately) override;
   bool IsExtensionEnabled(const std::string& extension_id) const override;
 
   void CheckManagementPolicy() override;

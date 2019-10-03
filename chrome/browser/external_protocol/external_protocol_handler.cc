@@ -8,9 +8,10 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_contents/tab_util.h"
@@ -23,6 +24,13 @@
 #include "net/base/escape.h"
 #include "url/gurl.h"
 
+#if !defined(OS_ANDROID)
+#include "chrome/browser/sharing/click_to_call/click_to_call_sharing_dialog_controller.h"
+#include "chrome/browser/sharing/click_to_call/click_to_call_utils.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#endif
+
 namespace {
 
 // Whether we accept requests for launching external protocols. This is set to
@@ -30,17 +38,32 @@ namespace {
 // each user gesture. This variable should only be accessed from the UI thread.
 bool g_accept_requests = true;
 
+ExternalProtocolHandler::Delegate* g_external_protocol_handler_delegate =
+    nullptr;
+
 constexpr const char* kDeniedSchemes[] = {
-    "afp", "data", "disk", "disks",
+    "afp",
+    "data",
+    "disk",
+    "disks",
     // ShellExecuting file:///C:/WINDOWS/system32/notepad.exe will simply
     // execute the file specified!  Hopefully we won't see any "file" schemes
     // because we think of file:// URLs as handled URLs, but better to be safe
     // than to let an attacker format the user's hard drive.
-    "file", "hcp", "javascript", "ms-help", "nntp", "shell", "vbscript",
+    "file",
+    "hcp",
+    "ie.http",
+    "javascript",
+    "ms-help",
+    "nntp",
+    "res",
+    "shell",
+    "vbscript",
     // view-source is a special case in chrome. When it comes through an
     // iframe or a redirect, it looks like an external protocol, but we don't
     // want to shellexecute it.
-    "view-source", "vnd.ms.radio",
+    "view-source",
+    "vnd.ms.radio",
 };
 
 constexpr const char* kAllowedSchemes[] = {
@@ -70,33 +93,50 @@ ExternalProtocolHandler::BlockState GetBlockStateWithDelegate(
 
 void RunExternalProtocolDialogWithDelegate(
     const GURL& url,
-    int render_process_host_id,
-    int routing_id,
+    content::WebContents* web_contents,
     ui::PageTransition page_transition,
     bool has_user_gesture,
     ExternalProtocolHandler::Delegate* delegate) {
+  DCHECK(web_contents);
   if (delegate) {
-    delegate->RunExternalProtocolDialog(url, render_process_host_id, routing_id,
-                                        page_transition, has_user_gesture);
+    delegate->RunExternalProtocolDialog(url, web_contents, page_transition,
+                                        has_user_gesture);
     return;
   }
   ExternalProtocolHandler::RunExternalProtocolDialog(
-      url, render_process_host_id, routing_id, page_transition,
-      has_user_gesture);
+      url, web_contents, page_transition, has_user_gesture);
 }
 
 void LaunchUrlWithoutSecurityCheckWithDelegate(
     const GURL& url,
-    int render_process_host_id,
-    int render_view_routing_id,
+    content::WebContents* web_contents,
     ExternalProtocolHandler::Delegate* delegate) {
-  content::WebContents* web_contents = tab_util::GetWebContentsByID(
-      render_process_host_id, render_view_routing_id);
   if (delegate) {
     delegate->LaunchUrlWithoutSecurityCheck(url, web_contents);
     return;
   }
-  ExternalProtocolHandler::LaunchUrlWithoutSecurityCheck(url, web_contents);
+
+  // |web_contents| is only passed in to find browser context. Do not assume
+  // that the external protocol request came from the main frame.
+  if (!web_contents)
+    return;
+
+  platform_util::OpenExternal(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()), url);
+
+#if !defined(OS_ANDROID)
+  // If the protocol navigation occurs in a new tab, close it.
+  // Avoid calling CloseContents if the tab is not in this browser's tab strip
+  // model; this can happen if the protocol was initiated by something
+  // internal to Chrome.
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
+  if (browser && web_contents->GetController().IsInitialNavigation() &&
+      browser->tab_strip_model()->count() > 1 &&
+      browser->tab_strip_model()->GetIndexOfWebContents(web_contents) !=
+          TabStripModel::kNoTab) {
+    web_contents->Close();
+  }
+#endif
 }
 
 // When we are about to launch a URL with the default OS level application, we
@@ -116,7 +156,26 @@ void OnDefaultProtocolClientWorkerFinished(
   if (delegate)
     delegate->FinishedProcessingCheck();
 
-  if (state == shell_integration::IS_DEFAULT) {
+  content::WebContents* web_contents = tab_util::GetWebContentsByID(
+      render_process_host_id, render_view_routing_id);
+
+  // The default handler is hidden if it is Chrome itself, as nothing will
+  // happen if it is selected (since this is invoked by the external protocol
+  // handling flow).
+  bool chrome_is_default_handler = state == shell_integration::IS_DEFAULT;
+
+#if !defined(OS_ANDROID)
+  if (web_contents &&
+      ShouldOfferClickToCall(web_contents->GetBrowserContext(), escaped_url)) {
+    // Handle tel links by opening the Click to Call dialog. This will call back
+    // into LaunchUrlWithoutSecurityCheck if the user selects a system handler.
+    ClickToCallSharingDialogController::ShowDialog(web_contents, escaped_url,
+                                                   chrome_is_default_handler);
+    return;
+  }
+#endif
+
+  if (chrome_is_default_handler) {
     if (delegate)
       delegate->BlockRequest();
     return;
@@ -125,17 +184,20 @@ void OnDefaultProtocolClientWorkerFinished(
   // If we get here, either we are not the default or we cannot work out
   // what the default is, so we proceed.
   if (prompt_user) {
+    // Never prompt the user without a web_contents.
+    if (!web_contents)
+      return;
+
     // Ask the user if they want to allow the protocol. This will call
     // LaunchUrlWithoutSecurityCheck if the user decides to accept the
     // protocol.
     RunExternalProtocolDialogWithDelegate(
-        escaped_url, render_process_host_id, render_view_routing_id,
-        page_transition, has_user_gesture, delegate);
+        escaped_url, web_contents, page_transition, has_user_gesture, delegate);
     return;
   }
 
-  LaunchUrlWithoutSecurityCheckWithDelegate(escaped_url, render_process_host_id,
-                                            render_view_routing_id, delegate);
+  LaunchUrlWithoutSecurityCheckWithDelegate(escaped_url, web_contents,
+                                            delegate);
 }
 
 }  // namespace
@@ -144,12 +206,17 @@ const char ExternalProtocolHandler::kHandleStateMetric[] =
     "BrowserDialogs.ExternalProtocol.HandleState";
 
 // static
+void ExternalProtocolHandler::SetDelegateForTesting(Delegate* delegate) {
+  g_external_protocol_handler_delegate = delegate;
+}
+
+// static
 ExternalProtocolHandler::BlockState ExternalProtocolHandler::GetBlockState(
     const std::string& scheme,
     Profile* profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  // If we are being carpet bombed, block the request.
+  // If we are being flooded with requests, block the request.
   if (!g_accept_requests)
     return BLOCK;
 
@@ -161,21 +228,21 @@ ExternalProtocolHandler::BlockState ExternalProtocolHandler::GetBlockState(
   }
 
   // Always block the hard-coded denied schemes.
-  for (size_t i = 0; i < arraysize(kDeniedSchemes); ++i) {
+  for (size_t i = 0; i < base::size(kDeniedSchemes); ++i) {
     if (kDeniedSchemes[i] == scheme)
       return BLOCK;
   }
 
   // Always allow the hard-coded allowed schemes.
-  for (size_t i = 0; i < arraysize(kAllowedSchemes); ++i) {
+  for (size_t i = 0; i < base::size(kAllowedSchemes); ++i) {
     if (kAllowedSchemes[i] == scheme)
       return DONT_BLOCK;
   }
 
   PrefService* profile_prefs = profile->GetPrefs();
   if (profile_prefs) {  // May be NULL during testing.
-    DictionaryPrefUpdate update_excluded_schemas_profile(
-        profile_prefs, prefs::kExcludedSchemes);
+    const base::DictionaryValue* update_excluded_schemas_profile =
+        profile_prefs->GetDictionary(prefs::kExcludedSchemes);
     bool should_block;
     // Ignore stored block decisions. These are now not possible through the UI,
     // and previous block decisions should be ignored to allow users to recover
@@ -209,13 +276,11 @@ void ExternalProtocolHandler::SetBlockState(const std::string& scheme,
 }
 
 // static
-void ExternalProtocolHandler::LaunchUrlWithDelegate(
-    const GURL& url,
-    int render_process_host_id,
-    int render_view_routing_id,
-    ui::PageTransition page_transition,
-    bool has_user_gesture,
-    Delegate* delegate) {
+void ExternalProtocolHandler::LaunchUrl(const GURL& url,
+                                        int render_process_host_id,
+                                        int render_view_routing_id,
+                                        ui::PageTransition page_transition,
+                                        bool has_user_gesture) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Escape the input scheme to be sure that the command does not
@@ -232,11 +297,11 @@ void ExternalProtocolHandler::LaunchUrlWithDelegate(
   Profile* profile = nullptr;
   if (web_contents)  // Maybe NULL during testing.
     profile = Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  BlockState block_state =
-      GetBlockStateWithDelegate(escaped_url.scheme(), delegate, profile);
+  BlockState block_state = GetBlockStateWithDelegate(
+      escaped_url.scheme(), g_external_protocol_handler_delegate, profile);
   if (block_state == BLOCK) {
-    if (delegate)
-      delegate->BlockRequest();
+    if (g_external_protocol_handler_delegate)
+      g_external_protocol_handler_delegate->BlockRequest();
     return;
   }
 
@@ -247,12 +312,13 @@ void ExternalProtocolHandler::LaunchUrlWithDelegate(
   shell_integration::DefaultWebClientWorkerCallback callback = base::Bind(
       &OnDefaultProtocolClientWorkerFinished, escaped_url,
       render_process_host_id, render_view_routing_id, block_state == UNKNOWN,
-      page_transition, has_user_gesture, delegate);
+      page_transition, has_user_gesture, g_external_protocol_handler_delegate);
 
   // Start the check process running. This will send tasks to a worker task
   // runner and when the answer is known will send the result back to
   // OnDefaultProtocolClientWorkerFinished().
-  CreateShellWorker(callback, escaped_url.scheme(), delegate)
+  CreateShellWorker(callback, escaped_url.scheme(),
+                    g_external_protocol_handler_delegate)
       ->StartCheckIsDefault();
 }
 
@@ -260,13 +326,8 @@ void ExternalProtocolHandler::LaunchUrlWithDelegate(
 void ExternalProtocolHandler::LaunchUrlWithoutSecurityCheck(
     const GURL& url,
     content::WebContents* web_contents) {
-  // |web_contents| is only passed in to find browser context. Do not assume
-  // that the external protocol request came from the main frame.
-  if (!web_contents)
-    return;
-
-  platform_util::OpenExternal(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()), url);
+  LaunchUrlWithoutSecurityCheckWithDelegate(
+      url, web_contents, g_external_protocol_handler_delegate);
 }
 
 // static

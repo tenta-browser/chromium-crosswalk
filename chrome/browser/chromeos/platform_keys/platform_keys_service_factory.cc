@@ -10,14 +10,12 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/platform_keys/platform_keys_service.h"
 #include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/platform_keys_certificate_selector_chromeos.h"
@@ -89,7 +87,6 @@ PlatformKeysServiceFactory::PlatformKeysServiceFactory()
           "PlatformKeysService",
           BrowserContextDependencyManager::GetInstance()) {
   DependsOn(extensions::ExtensionSystemFactory::GetInstance());
-  DependsOn(policy::ProfilePolicyConnectorFactory::GetInstance());
 }
 
 PlatformKeysServiceFactory::~PlatformKeysServiceFactory() {
@@ -106,7 +103,7 @@ KeyedService* PlatformKeysServiceFactory::BuildServiceInstanceFor(
       extensions::ExtensionSystem::Get(context)->state_store();
 
   policy::ProfilePolicyConnector* const policy_connector =
-      policy::ProfilePolicyConnectorFactory::GetForBrowserContext(context);
+      Profile::FromBrowserContext(context)->GetProfilePolicyConnector();
 
   Profile* const profile = Profile::FromBrowserContext(context);
 
@@ -114,7 +111,7 @@ KeyedService* PlatformKeysServiceFactory::BuildServiceInstanceFor(
       policy_connector->IsManaged(), profile->GetPrefs(),
       policy_connector->policy_service(), context, store);
 
-  service->SetSelectDelegate(base::MakeUnique<DefaultSelectDelegate>());
+  service->SetSelectDelegate(std::make_unique<DefaultSelectDelegate>());
   return service;
 }
 

@@ -4,9 +4,9 @@
 
 #include "ash/metrics/pointer_metrics_recorder.h"
 
+#include "ash/display/screen_orientation_controller.h"
 #include "ash/public/cpp/app_types.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/metrics/histogram_macros.h"
 #include "ui/aura/client/aura_constants.h"
@@ -18,24 +18,6 @@ namespace ash {
 
 namespace {
 
-// Form factor of the down event. This enum is used to back an UMA histogram
-// and new values should be inserted immediately above FORM_FACTOR_COUNT.
-enum class DownEventFormFactor {
-  CLAMSHELL = 0,
-  TABLET_MODE,
-  FORM_FACTOR_COUNT,
-};
-
-// Input type of the down event. This enum is used to back an UMA
-// histogram and new values should be inserted immediately above SOURCE_COUNT.
-enum class DownEventSource {
-  UNKNOWN = 0,
-  MOUSE,
-  STYLUS,
-  TOUCH,
-  SOURCE_COUNT,
-};
-
 int GetDestination(views::Widget* target) {
   if (!target)
     return static_cast<int>(AppType::OTHERS);
@@ -45,65 +27,78 @@ int GetDestination(views::Widget* target) {
   return window->GetProperty(aura::client::kAppType);
 }
 
-void RecordUMA(ui::EventPointerType type, views::Widget* target) {
-  DownEventFormFactor form_factor = DownEventFormFactor::CLAMSHELL;
-  if (Shell::Get()
-          ->tablet_mode_controller()
-          ->IsTabletModeWindowManagerEnabled()) {
-    form_factor = DownEventFormFactor::TABLET_MODE;
-  }
-  UMA_HISTOGRAM_ENUMERATION(
-      "Event.DownEventCount.PerFormFactor",
-      static_cast<base::HistogramBase::Sample>(form_factor),
-      static_cast<base::HistogramBase::Sample>(
-          DownEventFormFactor::FORM_FACTOR_COUNT));
+DownEventMetric2 FindCombination(int destination,
+                                 DownEventSource input_type,
+                                 DownEventFormFactor form_factor) {
+  constexpr int kNumCombinationPerDestination =
+      static_cast<int>(DownEventSource::kSourceCount) *
+      static_cast<int>(DownEventFormFactor::kFormFactorCount);
+  int result = destination * kNumCombinationPerDestination +
+               static_cast<int>(DownEventFormFactor::kFormFactorCount) *
+                   static_cast<int>(input_type) +
+               static_cast<int>(form_factor);
+  DCHECK(result >= 0 &&
+         result <= static_cast<int>(DownEventMetric2::kMaxValue));
+  return static_cast<DownEventMetric2>(result);
+}
 
-  DownEventSource input_type = DownEventSource::UNKNOWN;
+void RecordUMA(ui::EventPointerType type, ui::EventTarget* event_target) {
+  DCHECK_NE(type, ui::EventPointerType::POINTER_TYPE_UNKNOWN);
+  views::Widget* target = views::Widget::GetTopLevelWidgetForNativeView(
+      static_cast<aura::Window*>(event_target));
+  DownEventFormFactor form_factor = DownEventFormFactor::kClamshell;
+  if (Shell::Get()->tablet_mode_controller()->InTabletMode()) {
+    OrientationLockType screen_orientation =
+        Shell::Get()->screen_orientation_controller()->GetCurrentOrientation();
+    if (screen_orientation == OrientationLockType::kLandscapePrimary ||
+        screen_orientation == OrientationLockType::kLandscapeSecondary) {
+      form_factor = DownEventFormFactor::kTabletModeLandscape;
+    } else {
+      form_factor = DownEventFormFactor::kTabletModePortrait;
+    }
+  }
+
+  DownEventSource input_type = DownEventSource::kUnknown;
   switch (type) {
     case ui::EventPointerType::POINTER_TYPE_UNKNOWN:
-      input_type = DownEventSource::UNKNOWN;
-      break;
+      return;
     case ui::EventPointerType::POINTER_TYPE_MOUSE:
-      input_type = DownEventSource::MOUSE;
+      input_type = DownEventSource::kMouse;
       break;
     case ui::EventPointerType::POINTER_TYPE_PEN:
-      input_type = DownEventSource::STYLUS;
+      input_type = DownEventSource::kStylus;
       break;
     case ui::EventPointerType::POINTER_TYPE_TOUCH:
-      input_type = DownEventSource::TOUCH;
+      input_type = DownEventSource::kTouch;
       break;
     case ui::EventPointerType::POINTER_TYPE_ERASER:
-      input_type = DownEventSource::STYLUS;
+      input_type = DownEventSource::kStylus;
       break;
   }
 
   UMA_HISTOGRAM_ENUMERATION(
-      "Event.DownEventCount.PerInput",
-      static_cast<base::HistogramBase::Sample>(input_type),
-      static_cast<base::HistogramBase::Sample>(DownEventSource::SOURCE_COUNT));
-
-  UMA_HISTOGRAM_ENUMERATION("Event.DownEventCount.PerDestination",
-                            GetDestination(target), kAppCount);
+      "Event.DownEventCount.PerInputFormFactorDestinationCombination2",
+      FindCombination(GetDestination(target), input_type, form_factor));
 }
 
 }  // namespace
 
 PointerMetricsRecorder::PointerMetricsRecorder() {
-  ShellPort::Get()->AddPointerWatcher(this,
-                                      views::PointerWatcherEventTypes::BASIC);
+  Shell::Get()->AddPreTargetHandler(this);
 }
 
 PointerMetricsRecorder::~PointerMetricsRecorder() {
-  ShellPort::Get()->RemovePointerWatcher(this);
+  Shell::Get()->RemovePreTargetHandler(this);
 }
 
-void PointerMetricsRecorder::OnPointerEventObserved(
-    const ui::PointerEvent& event,
-    const gfx::Point& location_in_screen,
-    gfx::NativeView target) {
-  if (event.type() == ui::ET_POINTER_DOWN)
-    RecordUMA(event.pointer_details().pointer_type,
-              views::Widget::GetTopLevelWidgetForNativeView(target));
+void PointerMetricsRecorder::OnMouseEvent(ui::MouseEvent* event) {
+  if (event->type() == ui::ET_MOUSE_PRESSED)
+    RecordUMA(event->pointer_details().pointer_type, event->target());
+}
+
+void PointerMetricsRecorder::OnTouchEvent(ui::TouchEvent* event) {
+  if (event->type() == ui::ET_TOUCH_PRESSED)
+    RecordUMA(event->pointer_details().pointer_type, event->target());
 }
 
 }  // namespace ash

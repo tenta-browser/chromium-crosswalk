@@ -13,7 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "components/prefs/pref_member.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/content_browser_client.h"
+#include "net/proxy_resolution/proxy_config_service_android.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_job_factory.h"
 
@@ -21,11 +21,11 @@ class PrefService;
 
 namespace net {
 class FileNetLogObserver;
-class HostResolver;
 class HttpAuthHandlerFactory;
 class HttpAuthPreferences;
 class HttpUserAgentSettings;
 class NetLog;
+class ProxyConfigServiceAndroid;
 class ProxyConfigService;
 class URLRequestContext;
 class URLRequestJobFactory;
@@ -37,22 +37,28 @@ class AwURLRequestContextGetter : public net::URLRequestContextGetter {
  public:
   AwURLRequestContextGetter(
       const base::FilePath& cache_path,
-      std::unique_ptr<net::ProxyConfigService> config_service,
-      PrefService* pref_service);
+      std::unique_ptr<net::ProxyConfigServiceAndroid> config_service,
+      PrefService* pref_service,
+      net::NetLog* net_log);
+
+  static void set_check_cleartext_permitted(bool permitted);
 
   // net::URLRequestContextGetter implementation.
   net::URLRequestContext* GetURLRequestContext() override;
   scoped_refptr<base::SingleThreadTaskRunner> GetNetworkTaskRunner()
       const override;
 
-  // NetLog is thread-safe, so clients can call this method from arbitrary
-  // threads (UI and IO).
-  net::NetLog* GetNetLog();
-
-  static void set_check_cleartext_permitted(bool permitted);
+  // Methods to set and clear proxy override
+  std::string SetProxyOverride(
+      const std::vector<net::ProxyConfigServiceAndroid::ProxyOverrideRule>&
+          proxy_rules,
+      const std::vector<std::string>& bypass_rules,
+      base::OnceClosure callback);
+  void ClearProxyOverride(base::OnceClosure callback);
 
  private:
   friend class AwBrowserContext;
+  friend class AwURLRequestContextGetterTest;
   ~AwURLRequestContextGetter() override;
 
   // Prior to GetURLRequestContext() being called, this is called to hand over
@@ -69,8 +75,7 @@ class AwURLRequestContextGetter : public net::URLRequestContextGetter {
 
   // This is called to create a HttpAuthHandlerFactory that will handle
   // auth challenges for the new URLRequestContext
-  std::unique_ptr<net::HttpAuthHandlerFactory> CreateAuthHandlerFactory(
-      net::HostResolver* resolver);
+  std::unique_ptr<net::HttpAuthHandlerFactory> CreateAuthHandlerFactory();
 
   // Update methods for the auth related preferences
   void UpdateServerWhitelist();
@@ -78,8 +83,9 @@ class AwURLRequestContextGetter : public net::URLRequestContextGetter {
 
   const base::FilePath cache_path_;
 
-  std::unique_ptr<net::NetLog> net_log_;
-  std::unique_ptr<net::ProxyConfigService> proxy_config_service_;
+  net::NetLog* net_log_;
+  std::unique_ptr<net::ProxyConfigServiceAndroid> proxy_config_service_;
+  net::ProxyConfigServiceAndroid* proxy_config_service_android_;
   std::unique_ptr<net::URLRequestJobFactory> job_factory_;
   std::unique_ptr<net::HttpUserAgentSettings> http_user_agent_settings_;
   std::unique_ptr<net::FileNetLogObserver> file_net_log_observer_;

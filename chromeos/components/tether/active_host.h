@@ -11,13 +11,11 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
+#include "chromeos/components/multidevice/remote_device_ref.h"
 
 class PrefRegistrySimple;
 class PrefService;
-
-namespace cryptauth {
-struct RemoteDevice;
-}  // namespace cryptauth
 
 namespace chromeos {
 
@@ -36,13 +34,14 @@ class ActiveHost {
     CONNECTING = 1,
     CONNECTED = 2
   };
+  static std::string StatusToString(const ActiveHostStatus& status);
 
   struct ActiveHostChangeInfo {
     ActiveHostChangeInfo();
     ActiveHostChangeInfo(
         ActiveHostStatus new_status,
         ActiveHostStatus old_status,
-        std::shared_ptr<cryptauth::RemoteDevice> new_active_host,
+        base::Optional<multidevice::RemoteDeviceRef> new_active_host,
         std::string old_active_host_id,
         std::string new_tether_network_guid,
         std::string old_tether_network_guid,
@@ -58,8 +57,8 @@ class ActiveHost {
     ActiveHostStatus new_status;
     ActiveHostStatus old_status;
 
-    // |new_active_host| will be null if |new_status| is DISCONNECTED.
-    std::shared_ptr<cryptauth::RemoteDevice> new_active_host;
+    // |new_active_host| will be empty if |new_status| is DISCONNECTED.
+    base::Optional<multidevice::RemoteDeviceRef> new_active_host;
     // |old_active_host_id| will be "" if |old_status| is DISCONNECTED.
     std::string old_active_host_id;
 
@@ -112,11 +111,11 @@ class ActiveHost {
   //                   parameters will be "".
   //     CONNECTING: The callback's |wifi_network_guid| parameter will be "".
   //     CONNECTED: All four parameters  will be present.
-  using ActiveHostCallback =
-      base::Callback<void(ActiveHostStatus active_host_status,
-                          std::shared_ptr<cryptauth::RemoteDevice> active_host,
-                          const std::string& tether_network_guid,
-                          const std::string& wifi_network_guid)>;
+  using ActiveHostCallback = base::Callback<void(
+      ActiveHostStatus active_host_status,
+      base::Optional<multidevice::RemoteDeviceRef> active_host,
+      const std::string& tether_network_guid,
+      const std::string& wifi_network_guid)>;
   virtual void GetActiveHost(const ActiveHostCallback& active_host_callback);
 
   // Synchronous getter methods which do not return a full RemoteDevice object.
@@ -135,7 +134,7 @@ class ActiveHost {
       const std::string& old_tether_network_guid,
       const std::string& old_wifi_network_guid,
       ActiveHostStatus new_status,
-      std::shared_ptr<cryptauth::RemoteDevice> new_active_host,
+      base::Optional<multidevice::RemoteDeviceRef> new_active_host,
       const std::string& new_tether_network_guid,
       const std::string& new_wifi_network_guid);
 
@@ -149,12 +148,12 @@ class ActiveHost {
 
   void OnTetherHostFetched(
       const ActiveHostCallback& active_host_callback,
-      std::unique_ptr<cryptauth::RemoteDevice> active_host);
+      base::Optional<multidevice::RemoteDeviceRef> active_host);
 
   TetherHostFetcher* tether_host_fetcher_;
   PrefService* pref_service_;
 
-  base::ObserverList<Observer> observer_list_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
 
   base::WeakPtrFactory<ActiveHost> weak_ptr_factory_;
 

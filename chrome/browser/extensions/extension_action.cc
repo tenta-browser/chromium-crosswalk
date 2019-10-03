@@ -48,7 +48,7 @@ class GetAttentionImageSource : public gfx::ImageSkiaSource {
     gfx::ImageSkiaRep icon_rep = icon_.GetRepresentation(scale);
     color_utils::HSL shift = {-1, 0, 0.5};
     return gfx::ImageSkiaRep(
-        SkBitmapOperations::CreateHSLShiftedBitmap(icon_rep.sk_bitmap(), shift),
+        SkBitmapOperations::CreateHSLShiftedBitmap(icon_rep.GetBitmap(), shift),
         icon_rep.scale());
   }
 
@@ -85,15 +85,13 @@ gfx::Image ExtensionAction::FallbackIcon() {
 const int ExtensionAction::kDefaultTabId = -1;
 
 ExtensionAction::ExtensionAction(const extensions::Extension& extension,
-                                 extensions::ActionInfo::Type action_type,
                                  const extensions::ActionInfo& manifest_data)
     : extension_id_(extension.id()),
       extension_name_(extension.name()),
-      action_type_(action_type) {
-  // Page/script actions are hidden/disabled by default, and browser actions are
-  // visible/enabled by default.
+      action_type_(manifest_data.type),
+      default_state_(manifest_data.default_state) {
   SetIsVisible(kDefaultTabId,
-               action_type == extensions::ActionInfo::TYPE_BROWSER);
+               default_state_ == extensions::ActionInfo::STATE_ENABLED);
   Populate(extension, manifest_data);
 }
 
@@ -129,8 +127,9 @@ bool ExtensionAction::ParseIconFromCanvasDictionary(
     std::string binary_string64;
     IPC::Message pickle;
     if (iter.value().is_blob()) {
-      pickle = IPC::Message(iter.value().GetBlob().data(),
-                            iter.value().GetBlob().size());
+      pickle = IPC::Message(
+          reinterpret_cast<const char*>(iter.value().GetBlob().data()),
+          iter.value().GetBlob().size());
     } else if (iter.value().GetAsString(&binary_string64)) {
       std::string binary_string;
       if (!base::Base64Decode(binary_string64, &binary_string))
@@ -194,8 +193,7 @@ void ExtensionAction::UndoDeclarativeSetIcon(int tab_id,
                                              int priority,
                                              const gfx::Image& icon) {
   std::vector<gfx::Image>& icons = declarative_icon_[tab_id][priority];
-  for (std::vector<gfx::Image>::iterator it = icons.begin(); it != icons.end();
-       ++it) {
+  for (auto it = icons.begin(); it != icons.end(); ++it) {
     if (it->AsImageSkia().BackedBySameObjectAs(icon.AsImageSkia())) {
       icons.erase(it);
       return;
@@ -236,6 +234,10 @@ gfx::Image ExtensionAction::GetDefaultIconImage() const {
   if (default_icon_image_)
     return default_icon_image_->image();
 
+  return GetPlaceholderIconImage();
+}
+
+gfx::Image ExtensionAction::GetPlaceholderIconImage() const {
   if (placeholder_icon_image_.IsEmpty()) {
     // For extension actions, we use a special placeholder icon (with the first
     // letter of the extension name) rather than the default (puzzle piece).
@@ -290,7 +292,6 @@ void ExtensionAction::Populate(const extensions::Extension& extension,
       extension.name();
   SetTitle(kDefaultTabId, title);
   SetPopupUrl(kDefaultTabId, manifest_data.default_popup_url);
-  set_id(manifest_data.id);
 
   // Initialize the specified icon set.
   if (!manifest_data.default_icon.empty()) {

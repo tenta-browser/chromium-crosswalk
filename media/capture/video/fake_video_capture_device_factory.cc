@@ -5,7 +5,6 @@
 #include "media/capture/video/fake_video_capture_device_factory.h"
 
 #include <array>
-#include <vector>
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -16,8 +15,6 @@
 #include "media/base/media_switches.h"
 
 namespace {
-
-static const size_t kDepthDeviceIndex = 1;
 
 // Cap the frame rate command line input to reasonable values.
 static const float kFakeCaptureMinFrameRate = 5.0f;
@@ -37,6 +34,8 @@ static constexpr std::array<gfx::Size, 5> kDefaultResolutions{
 static constexpr std::array<float, 1> kDefaultFrameRates{{20.0f}};
 
 static const double kInitialZoom = 100.0;
+static const double kInitialExposureTime = 50.0;
+static const double kInitialFocusDistance = 50.0;
 
 static const media::VideoPixelFormat kSupportedPixelFormats[] = {
     media::PIXEL_FORMAT_I420, media::PIXEL_FORMAT_Y16,
@@ -73,7 +72,9 @@ class ErrorFakeDevice : public media::VideoCaptureDevice {
   // VideoCaptureDevice implementation.
   void AllocateAndStart(const media::VideoCaptureParams& params,
                         std::unique_ptr<Client> client) override {
-    client->OnError(FROM_HERE, "Device has no supported formats.");
+    client->OnError(media::VideoCaptureError::
+                        kErrorFakeDeviceIntentionallyEmittingErrorEvent,
+                    FROM_HERE, "Device has no supported formats.");
   }
 
   void StopAndDeAllocate() override {}
@@ -131,18 +132,19 @@ FakeVideoCaptureDeviceFactory::CreateDeviceWithSettings(
   }
 
   const VideoCaptureFormat& initial_format = settings.supported_formats.front();
-  auto device_state = base::MakeUnique<FakeDeviceState>(
-      kInitialZoom, initial_format.frame_rate, initial_format.pixel_format);
+  auto device_state = std::make_unique<FakeDeviceState>(
+      kInitialZoom, kInitialExposureTime, kInitialFocusDistance,
+      initial_format.frame_rate, initial_format.pixel_format);
 
-  auto photo_frame_painter = base::MakeUnique<PacmanFramePainter>(
+  auto photo_frame_painter = std::make_unique<PacmanFramePainter>(
       PacmanFramePainter::Format::SK_N32, device_state.get());
-  auto photo_device = base::MakeUnique<FakePhotoDevice>(
+  auto photo_device = std::make_unique<FakePhotoDevice>(
       std::move(photo_frame_painter), device_state.get(),
       settings.photo_device_config);
 
-  return base::MakeUnique<FakeVideoCaptureDevice>(
+  return std::make_unique<FakeVideoCaptureDevice>(
       settings.supported_formats,
-      base::MakeUnique<FrameDelivererFactory>(settings.delivery_mode,
+      std::make_unique<FrameDelivererFactory>(settings.delivery_mode,
                                               device_state.get()),
       std::move(photo_device), std::move(device_state));
 }
@@ -164,7 +166,7 @@ FakeVideoCaptureDeviceFactory::CreateDeviceWithDefaultResolutions(
 // static
 std::unique_ptr<VideoCaptureDevice>
 FakeVideoCaptureDeviceFactory::CreateErrorDevice() {
-  return base::MakeUnique<ErrorFakeDevice>();
+  return std::make_unique<ErrorFakeDevice>();
 }
 
 void FakeVideoCaptureDeviceFactory::SetToDefaultDevicesConfig(
@@ -214,18 +216,6 @@ void FakeVideoCaptureDeviceFactory::GetDeviceDescriptors(
         );
     entry_index++;
   }
-
-  // Video device on index |kDepthDeviceIndex| is depth video capture device.
-  // Fill the camera calibration information only for it.
-  if (device_descriptors->size() <= kDepthDeviceIndex)
-    return;
-  VideoCaptureDeviceDescriptor& depth_device(
-      (*device_descriptors)[kDepthDeviceIndex]);
-  depth_device.camera_calibration.emplace();
-  depth_device.camera_calibration->focal_length_x = 135.0;
-  depth_device.camera_calibration->focal_length_y = 135.6;
-  depth_device.camera_calibration->depth_near = 0.0;
-  depth_device.camera_calibration->depth_far = 65.535;
 }
 
 void FakeVideoCaptureDeviceFactory::GetSupportedFormats(
@@ -242,6 +232,12 @@ void FakeVideoCaptureDeviceFactory::GetSupportedFormats(
   }
 }
 
+void FakeVideoCaptureDeviceFactory::GetCameraLocationsAsync(
+    std::unique_ptr<VideoCaptureDeviceDescriptors> device_descriptors,
+    DeviceDescriptorsCallback result_callback) {
+  std::move(result_callback).Run(std::move(device_descriptors));
+}
+
 // static
 void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
     const std::string options_string,
@@ -253,6 +249,8 @@ void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
   std::vector<gfx::Size> resolutions = ArrayToVector(kDefaultResolutions);
   std::vector<float> frame_rates = ArrayToVector(kDefaultFrameRates);
   int device_count = kDefaultDeviceCount;
+  FakeVideoCaptureDevice::DisplayMediaType display_media_type =
+      FakeVideoCaptureDevice::DisplayMediaType::ANY;
 
   while (option_tokenizer.GetNext()) {
     std::vector<std::string> param =
@@ -316,6 +314,17 @@ void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
       }
       LOG(WARNING) << "Unknown config " << param.back();
       return;
+    } else if (base::EqualsCaseInsensitiveASCII(param.front(),
+                                                "display-media-type")) {
+      if (base::EqualsCaseInsensitiveASCII(param.back(), "any")) {
+        display_media_type = FakeVideoCaptureDevice::DisplayMediaType::ANY;
+      } else if (base::EqualsCaseInsensitiveASCII(param.back(), "monitor")) {
+        display_media_type = FakeVideoCaptureDevice::DisplayMediaType::MONITOR;
+      } else if (base::EqualsCaseInsensitiveASCII(param.back(), "window")) {
+        display_media_type = FakeVideoCaptureDevice::DisplayMediaType::WINDOW;
+      } else if (base::EqualsCaseInsensitiveASCII(param.back(), "browser")) {
+        display_media_type = FakeVideoCaptureDevice::DisplayMediaType::BROWSER;
+      }
     }
   }
 
@@ -327,6 +336,7 @@ void FakeVideoCaptureDeviceFactory::ParseFakeDevicesConfigFromOptionsString(
     settings.device_id = base::StringPrintf(kDefaultDeviceIdMask, device_index);
     AppendAllCombinationsToFormatsContainer(
         pixel_formats, resolutions, frame_rates, &settings.supported_formats);
+    settings.display_media_type = display_media_type;
     config->push_back(settings);
   }
 }

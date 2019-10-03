@@ -7,12 +7,13 @@
 #include <algorithm>
 #include <memory>
 
-#include "ash/app_list/test_app_list_presenter_impl.h"
+#include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/focus_cycler.h"
+#include "ash/public/cpp/ash_features.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/scoped_root_window_for_new_windows.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_view_test_api.h"
@@ -20,10 +21,14 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test_shell_delegate.h"
+#include "ash/wm/desks/desk.h"
+#include "ash/wm/desks/desks_controller.h"
+#include "ash/wm/desks/desks_test_util.h"
 #include "ash/wm/window_cycle_list.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
+#include "base/test/scoped_feature_list.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
@@ -71,7 +76,7 @@ class EventCounter : public ui::EventHandler {
 };
 
 bool IsWindowMinimized(aura::Window* window) {
-  return wm::GetWindowState(window)->IsMinimized();
+  return WindowState::Get(window)->IsMinimized();
 }
 
 }  // namespace
@@ -93,14 +98,6 @@ class WindowCycleControllerTest : public AshTestBase {
     shelf_view_test_.reset(
         new ShelfViewTestAPI(GetPrimaryShelf()->GetShelfViewForTesting()));
     shelf_view_test_->SetAnimationDuration(1);
-  }
-
-  aura::Window* CreatePanelWindow() {
-    gfx::Rect rect(100, 100);
-    aura::Window* window = CreateTestWindowInShellWithDelegateAndType(
-        NULL, aura::client::WINDOW_TYPE_PANEL, 0, rect);
-    shelf_view_test_->RunMessageLoopUntilAnimationsDone();
-    return window;
   }
 
   const aura::Window::Windows GetWindows(WindowCycleController* controller) {
@@ -223,7 +220,7 @@ TEST_F(WindowCycleControllerTest, HandleCycleWindow) {
   wm::ActivateWindow(window0.get());
 
   // When the screen is locked, cycling window does not take effect.
-  Shell::Get()->session_controller()->LockScreenAndFlushForTest();
+  GetSessionControllerClient()->LockScreen();
   EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
   controller->HandleCycleWindow(WindowCycleController::FORWARD);
   EXPECT_FALSE(controller->IsCycling());
@@ -260,7 +257,7 @@ TEST_F(WindowCycleControllerTest, HandleCycleWindow) {
   modal_window.reset();
   std::unique_ptr<Window> skip_overview_window(
       CreateTestWindowInShellWithId(-3));
-  skip_overview_window->SetProperty(kShowInOverviewKey, false);
+  skip_overview_window->SetProperty(kHideInOverviewKey, true);
   wm::ActivateWindow(window0.get());
   wm::ActivateWindow(skip_overview_window.get());
   wm::ActivateWindow(window1.get());
@@ -277,7 +274,7 @@ TEST_F(WindowCycleControllerTest, MaximizedWindow) {
   // Create a couple of test windows.
   std::unique_ptr<Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<Window> window1(CreateTestWindowInShellWithId(1));
-  wm::WindowState* window1_state = wm::GetWindowState(window1.get());
+  WindowState* window1_state = WindowState::Get(window1.get());
   window1_state->Maximize();
   window1_state->Activate();
   EXPECT_TRUE(window1_state->IsActive());
@@ -286,7 +283,7 @@ TEST_F(WindowCycleControllerTest, MaximizedWindow) {
   WindowCycleController* controller = Shell::Get()->window_cycle_controller();
   controller->HandleCycleWindow(WindowCycleController::FORWARD);
   controller->CompleteCycling();
-  EXPECT_TRUE(wm::GetWindowState(window0.get())->IsActive());
+  EXPECT_TRUE(WindowState::Get(window0.get())->IsActive());
   EXPECT_FALSE(window1_state->IsActive());
 
   // One more time.
@@ -300,8 +297,8 @@ TEST_F(WindowCycleControllerTest, Minimized) {
   // Create a couple of test windows.
   std::unique_ptr<Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<Window> window1(CreateTestWindowInShellWithId(1));
-  wm::WindowState* window0_state = wm::GetWindowState(window0.get());
-  wm::WindowState* window1_state = wm::GetWindowState(window1.get());
+  WindowState* window0_state = WindowState::Get(window0.get());
+  WindowState* window1_state = WindowState::Get(window1.get());
 
   window1_state->Minimize();
   window0_state->Activate();
@@ -327,8 +324,8 @@ TEST_F(WindowCycleControllerTest, AllAreMinimized) {
   // Create a couple of test windows.
   std::unique_ptr<Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<Window> window1(CreateTestWindowInShellWithId(1));
-  wm::WindowState* window0_state = wm::GetWindowState(window0.get());
-  wm::WindowState* window1_state = wm::GetWindowState(window1.get());
+  WindowState* window0_state = WindowState::Get(window0.get());
+  WindowState* window1_state = WindowState::Get(window1.get());
 
   window0_state->Minimize();
   window1_state->Minimize();
@@ -490,17 +487,15 @@ TEST_F(WindowCycleControllerTest, MostRecentlyUsed) {
 
 // Tests that beginning window selection hides the app list.
 TEST_F(WindowCycleControllerTest, SelectingHidesAppList) {
-  // The tested behavior relies on the app list presenter implementation.
-  TestAppListPresenterImpl app_list_presenter_impl;
-
   WindowCycleController* controller = Shell::Get()->window_cycle_controller();
 
   std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<aura::Window> window1(CreateTestWindowInShellWithId(1));
-  app_list_presenter_impl.ShowAndRunLoop(GetPrimaryDisplay().id());
-  EXPECT_TRUE(app_list_presenter_impl.IsVisible());
+  GetAppListTestHelper()->ShowAndRunLoop(GetPrimaryDisplay().id());
+  GetAppListTestHelper()->CheckVisibility(true);
   controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  EXPECT_FALSE(app_list_presenter_impl.IsVisible());
+  GetAppListTestHelper()->WaitUntilIdle();
+  GetAppListTestHelper()->CheckVisibility(false);
 
   // Make sure that dismissing the app list this way doesn't pass activation
   // to a different window.
@@ -517,7 +512,7 @@ TEST_F(WindowCycleControllerTest, CyclePreservesMinimization) {
   std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<aura::Window> window1(CreateTestWindowInShellWithId(1));
   wm::ActivateWindow(window1.get());
-  wm::GetWindowState(window1.get())->Minimize();
+  WindowState::Get(window1.get())->Minimize();
   wm::ActivateWindow(window0.get());
   EXPECT_TRUE(IsWindowMinimized(window1.get()));
 
@@ -534,87 +529,6 @@ TEST_F(WindowCycleControllerTest, CyclePreservesMinimization) {
   EXPECT_TRUE(IsWindowMinimized(window1.get()));
 }
 
-// Tests cycles between panel and normal windows.
-TEST_F(WindowCycleControllerTest, CyclePanels) {
-  WindowCycleController* controller = Shell::Get()->window_cycle_controller();
-
-  std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> panel0(CreatePanelWindow());
-  std::unique_ptr<aura::Window> panel1(CreatePanelWindow());
-  wm::ActivateWindow(window0.get());
-  wm::ActivateWindow(panel1.get());
-  wm::ActivateWindow(panel0.get());
-  EXPECT_TRUE(wm::IsActiveWindow(panel0.get()));
-
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->CompleteCycling();
-  EXPECT_TRUE(wm::IsActiveWindow(panel1.get()));
-
-  // Cycling again should select the most recently used panel.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->CompleteCycling();
-  EXPECT_TRUE(wm::IsActiveWindow(panel0.get()));
-
-  // Cycling twice again should select the first window.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->CompleteCycling();
-  EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
-}
-
-// Tests cycles between panel and normal windows.
-TEST_F(WindowCycleControllerTest, CyclePanelsDestroyed) {
-  WindowCycleController* controller = Shell::Get()->window_cycle_controller();
-
-  std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> window1(CreateTestWindowInShellWithId(1));
-  std::unique_ptr<aura::Window> window2(CreateTestWindowInShellWithId(2));
-  std::unique_ptr<aura::Window> panel0(CreatePanelWindow());
-  std::unique_ptr<aura::Window> panel1(CreatePanelWindow());
-  wm::ActivateWindow(window2.get());
-  wm::ActivateWindow(panel1.get());
-  wm::ActivateWindow(panel0.get());
-  wm::ActivateWindow(window1.get());
-  wm::ActivateWindow(window0.get());
-  EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
-
-  // Cycling once highlights window2.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  // All panels are destroyed.
-  panel0.reset();
-  panel1.reset();
-  // Cycling again should now select window2.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->CompleteCycling();
-  EXPECT_TRUE(wm::IsActiveWindow(window2.get()));
-}
-
-// Tests cycles between panel and normal windows.
-TEST_F(WindowCycleControllerTest, CycleMruPanelDestroyed) {
-  WindowCycleController* controller = Shell::Get()->window_cycle_controller();
-
-  std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> window1(CreateTestWindowInShellWithId(1));
-  std::unique_ptr<aura::Window> panel0(CreatePanelWindow());
-  std::unique_ptr<aura::Window> panel1(CreatePanelWindow());
-  wm::ActivateWindow(panel1.get());
-  wm::ActivateWindow(panel0.get());
-  wm::ActivateWindow(window1.get());
-  wm::ActivateWindow(window0.get());
-  EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
-
-  // Cycling once highlights window2.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-
-  // Panel 1 is the next item as the MRU panel, removing it should make panel 2
-  // the next window to be selected.
-  panel0.reset();
-  // Cycling again should now select panel1.
-  controller->HandleCycleWindow(WindowCycleController::FORWARD);
-  controller->CompleteCycling();
-  EXPECT_TRUE(wm::IsActiveWindow(panel1.get()));
-}
-
 // Tests that the tab key events are not sent to the window.
 TEST_F(WindowCycleControllerTest, TabKeyNotLeaked) {
   std::unique_ptr<Window> w0(CreateTestWindowInShellWithId(0));
@@ -622,16 +536,16 @@ TEST_F(WindowCycleControllerTest, TabKeyNotLeaked) {
   EventCounter event_count;
   w0->AddPreTargetHandler(&event_count);
   w1->AddPreTargetHandler(&event_count);
-  ui::test::EventGenerator& generator = GetEventGenerator();
-  wm::GetWindowState(w0.get())->Activate();
-  generator.PressKey(ui::VKEY_MENU, ui::EF_NONE);
+  ui::test::EventGenerator* generator = GetEventGenerator();
+  WindowState::Get(w0.get())->Activate();
+  generator->PressKey(ui::VKEY_MENU, ui::EF_NONE);
   EXPECT_EQ(1, event_count.GetKeyEventCountAndReset());
-  generator.PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
+  generator->PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
   EXPECT_EQ(0, event_count.GetKeyEventCountAndReset());
-  generator.ReleaseKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
+  generator->ReleaseKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
   EXPECT_EQ(0, event_count.GetKeyEventCountAndReset());
-  generator.ReleaseKey(ui::VKEY_MENU, ui::EF_NONE);
-  EXPECT_TRUE(wm::GetWindowState(w1.get())->IsActive());
+  generator->ReleaseKey(ui::VKEY_MENU, ui::EF_NONE);
+  EXPECT_TRUE(WindowState::Get(w1.get())->IsActive());
   EXPECT_EQ(0, event_count.GetKeyEventCountAndReset());
 }
 
@@ -645,12 +559,12 @@ TEST_F(WindowCycleControllerTest, MouseEventsCaptured) {
   EventCounter event_count;
   w0->AddPreTargetHandler(&event_count);
   w1->SetTargetHandler(&event_count);
-  ui::test::EventGenerator& generator = GetEventGenerator();
+  ui::test::EventGenerator* generator = GetEventGenerator();
   wm::ActivateWindow(w0.get());
 
   // Events get through.
-  generator.MoveMouseToCenterOf(w0.get());
-  generator.ClickLeftButton();
+  generator->MoveMouseToCenterOf(w0.get());
+  generator->ClickLeftButton();
   EXPECT_LT(0, event_count.GetMouseEventCountAndReset());
 
   // Start cycling.
@@ -658,16 +572,16 @@ TEST_F(WindowCycleControllerTest, MouseEventsCaptured) {
   controller->HandleCycleWindow(WindowCycleController::FORWARD);
 
   // Most mouse events don't get through.
-  generator.PressLeftButton();
+  generator->PressLeftButton();
   EXPECT_EQ(0, event_count.GetMouseEventCountAndReset());
 
   // Although releases do.
-  generator.ReleaseLeftButton();
+  generator->ReleaseLeftButton();
   EXPECT_LT(0, event_count.GetMouseEventCountAndReset());
 
   // Stop cycling: once again, events get through.
   controller->CompleteCycling();
-  generator.ClickLeftButton();
+  generator->ClickLeftButton();
   EXPECT_LT(0, event_count.GetMouseEventCountAndReset());
 }
 
@@ -678,23 +592,23 @@ TEST_F(WindowCycleControllerTest, MouseEventsCaptured) {
 TEST_F(WindowCycleControllerTest, TabPastFullscreenWindow) {
   std::unique_ptr<Window> w0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<Window> w1(CreateTestWindowInShellWithId(1));
-  wm::WMEvent maximize_event(wm::WM_EVENT_FULLSCREEN);
+  WMEvent maximize_event(WM_EVENT_FULLSCREEN);
 
   // To make this test work with or without the new alt+tab selector we make
   // both the initial window and the second window fullscreen.
-  wm::GetWindowState(w0.get())->OnWMEvent(&maximize_event);
-  wm::GetWindowState(w1.get())->Activate();
-  wm::GetWindowState(w1.get())->OnWMEvent(&maximize_event);
-  EXPECT_TRUE(wm::GetWindowState(w0.get())->IsFullscreen());
-  EXPECT_TRUE(wm::GetWindowState(w1.get())->IsFullscreen());
-  wm::GetWindowState(w0.get())->Activate();
-  EXPECT_TRUE(wm::GetWindowState(w0.get())->IsActive());
+  WindowState::Get(w0.get())->OnWMEvent(&maximize_event);
+  WindowState::Get(w1.get())->Activate();
+  WindowState::Get(w1.get())->OnWMEvent(&maximize_event);
+  EXPECT_TRUE(WindowState::Get(w0.get())->IsFullscreen());
+  EXPECT_TRUE(WindowState::Get(w1.get())->IsFullscreen());
+  WindowState::Get(w0.get())->Activate();
+  EXPECT_TRUE(WindowState::Get(w0.get())->IsActive());
 
-  ui::test::EventGenerator& generator = GetEventGenerator();
-  generator.PressKey(ui::VKEY_MENU, ui::EF_NONE);
+  ui::test::EventGenerator* generator = GetEventGenerator();
+  generator->PressKey(ui::VKEY_MENU, ui::EF_NONE);
 
-  generator.PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
-  generator.ReleaseKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
+  generator->PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
+  generator->ReleaseKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
 
   // Because w0 and w1 are full-screen, the event should be passed to the
   // browser window to handle it (which if the browser doesn't handle it will
@@ -704,7 +618,7 @@ TEST_F(WindowCycleControllerTest, TabPastFullscreenWindow) {
   EventCounter event_count;
   w0->AddPreTargetHandler(&event_count);
   w1->AddPreTargetHandler(&event_count);
-  generator.PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
+  generator->PressKey(ui::VKEY_TAB, ui::EF_ALT_DOWN);
   EXPECT_EQ(1, event_count.GetKeyEventCountAndReset());
 }
 
@@ -759,6 +673,59 @@ TEST_F(WindowCycleControllerTest, MultiDisplayPositioning) {
       EXPECT_EQ(expected_bounds, display_relative_bounds);
     controller->CompleteCycling();
   }
+}
+
+class DesksWindowCyclingTest : public WindowCycleControllerTest {
+ public:
+  DesksWindowCyclingTest() = default;
+  ~DesksWindowCyclingTest() override = default;
+
+  // WindowCycleControllerTest:
+  void SetUp() override {
+    scoped_feature_list_.InitAndEnableFeature(features::kVirtualDesks);
+    WindowCycleControllerTest::SetUp();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(DesksWindowCyclingTest);
+};
+
+TEST_F(DesksWindowCyclingTest, CycleShowsAllDesksWindows) {
+  // Create two desks with two windows in each.
+  auto win0 = CreateTestWindow(gfx::Rect(0, 0, 250, 100));
+  auto win1 = CreateTestWindow(gfx::Rect(50, 50, 200, 200));
+  auto* desks_controller = DesksController::Get();
+  desks_controller->NewDesk(DesksCreationRemovalSource::kButton);
+  ASSERT_EQ(2u, desks_controller->desks().size());
+  const Desk* desk_2 = desks_controller->desks()[1].get();
+  ActivateDesk(desk_2);
+  EXPECT_EQ(desk_2, desks_controller->active_desk());
+  auto win2 = CreateTestWindow(gfx::Rect(0, 0, 300, 200));
+  auto win3 = CreateTestWindow(gfx::Rect(10, 30, 400, 200));
+
+  WindowCycleController* cycle_controller =
+      Shell::Get()->window_cycle_controller();
+  cycle_controller->HandleCycleWindow(WindowCycleController::FORWARD);
+  // All desks' windows are included in the cycle list.
+  auto cycle_windows = GetWindows(cycle_controller);
+  EXPECT_EQ(4u, cycle_windows.size());
+  EXPECT_TRUE(base::Contains(cycle_windows, win0.get()));
+  EXPECT_TRUE(base::Contains(cycle_windows, win1.get()));
+  EXPECT_TRUE(base::Contains(cycle_windows, win2.get()));
+  EXPECT_TRUE(base::Contains(cycle_windows, win3.get()));
+
+  // The MRU order is {win3, win2, win1, win0}. We're now at win2. Cycling one
+  // more time and completing the cycle, will activate win1 which exists on a
+  // desk_1. This should activate desk_1.
+  DeskSwitchAnimationWaiter waiter;
+  cycle_controller->HandleCycleWindow(WindowCycleController::FORWARD);
+  cycle_controller->CompleteCycling();
+  waiter.Wait();
+  Desk* desk_1 = desks_controller->desks()[0].get();
+  EXPECT_EQ(desk_1, desks_controller->active_desk());
+  EXPECT_EQ(win1.get(), window_util::GetActiveWindow());
 }
 
 }  // namespace ash

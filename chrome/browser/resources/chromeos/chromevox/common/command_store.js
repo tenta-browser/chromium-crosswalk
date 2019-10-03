@@ -135,14 +135,6 @@ cvox.CommandStore.CMD_WHITELIST = {
   'toggleStickyMode': {
     announce: false,
     msgId: 'toggle_sticky_mode',
-    'disallowOOBE': true,
-    category: 'modifier_keys'
-  },
-  'toggleKeyPrefix': {
-    announce: false,
-    skipInput: true,
-    msgId: 'prefix_key',
-    'disallowOOBE': true,
     category: 'modifier_keys'
   },
   'passThroughMode': {
@@ -161,15 +153,9 @@ cvox.CommandStore.CMD_WHITELIST = {
   'toggleChromeVox': {
     announce: false,
     platformFilter: cvox.PlatformFilter.WML,
-    msgId: 'toggle_chromevox_active',
-    category: 'modifier_keys'
+    msgId: 'toggle_chromevox_active'
   },
   'toggleChromeVoxVersion': {announce: false},
-  'showNextUpdatePage': {
-    msgId: 'show_next_update_description',
-    announce: false,
-    'category': 'help_commands'
-  },
   'openChromeVoxMenus': {announce: false, msgId: 'menus_title'},
   'decreaseTtsRate': {
     announce: false,
@@ -247,6 +233,13 @@ cvox.CommandStore.CMD_WHITELIST = {
       {announce: true, msgId: 'previous_granularity', category: 'navigation'},
   'nextGranularity':
       {announce: true, msgId: 'next_granularity', category: 'navigation'},
+  'previousAtGranularity': {
+    announce: true,
+    msgId: 'previous_at_granularity',
+    category: 'navigation'
+  },
+  'nextAtGranularity':
+      {announce: true, msgId: 'next_at_granularity', category: 'navigation'},
 
   'previousCharacter': {
     backward: true,
@@ -347,6 +340,9 @@ cvox.CommandStore.CMD_WHITELIST = {
   'moveToStartOfLine': {forward: true, announce: true},
   'moveToEndOfLine': {backward: true, announce: true},
 
+  'jumpToDetails':
+      {announce: false, msgId: 'jump_to_details', category: 'navigation'},
+
   'readFromHere': {
     forward: true,
     announce: false,
@@ -354,19 +350,12 @@ cvox.CommandStore.CMD_WHITELIST = {
     category: 'navigation'
   },
 
-  'performDefaultAction': {
-    disallowContinuation: true,
-    msgId: 'perform_default_action',
-    doDefault: true,
-    skipInput: true,
-    category: 'navigation'
-  },
   'forceClickOnCurrentItem': {
     announce: true,
     disallowContinuation: true,
     allowEvents: true,
     msgId: 'force_click_on_current_item',
-    category: 'navigation'
+    category: 'actions'
   },
   'forceDoubleClickOnCurrentItem':
       {announce: true, allowEvents: true, disallowContinuation: true},
@@ -383,7 +372,7 @@ cvox.CommandStore.CMD_WHITELIST = {
   'speakTimeAndDate':
       {announce: false, msgId: 'speak_time_and_date', category: 'information'},
   'toggleSelection':
-      {announce: true, msgId: 'toggle_selection', category: 'information'},
+      {announce: true, msgId: 'toggle_selection', category: 'actions'},
 
   'toggleSearchWidget': {
     announce: false,
@@ -402,13 +391,14 @@ cvox.CommandStore.CMD_WHITELIST = {
   'toggleKeyboardHelp': {
     announce: false,
     disallowContinuation: true,
-    msgId: 'show_power_key',
+    msgId: 'show_panel_menu',
     category: 'help_commands'
   },
+  'showPanelMenuMostRecent':
+      {announce: false, msgId: 'show_panel_menu', category: 'help_commands'},
   'help': {
     announce: false,
     msgId: 'help',
-    'disallowOOBE': true,
     disallowContinuation: true,
     category: 'help_commands'
   },
@@ -426,6 +416,13 @@ cvox.CommandStore.CMD_WHITELIST = {
     'disallowOOBE': true,
     category: 'help_commands'
   },
+  'showLogPage': {
+    announce: false,
+    disallowContinuation: true,
+    msgId: 'show_log_page',
+    'disallowOOBE': true,
+    category: 'help_commands'
+  },
   'showKbExplorerPage': {
     announce: false,
     disallowContinuation: true,
@@ -433,10 +430,17 @@ cvox.CommandStore.CMD_WHITELIST = {
     'disallowOOBE': true,
     category: 'help_commands'
   },
+  'showTtsSettings': {
+    announce: false,
+    msgId: 'show_tts_settings',
+    category: 'help_commands',
+    disallowOOBE: true
+  },
   'toggleBrailleCaptions':
       {announce: false, msgId: 'braille_captions', category: 'help_commands'},
   'reportIssue': {
     announce: false,
+    disallowOOBE: true,
     msgId: 'panel_menu_item_report_issue',
     category: 'help_commands'
   },
@@ -773,12 +777,34 @@ cvox.CommandStore.CMD_WHITELIST = {
       {announce: true, msgId: 'skip_to_col_beginning', category: 'tables'},
   'goToColLastCell':
       {announce: true, msgId: 'skip_to_col_end', category: 'tables'},
-  // These commands are left out of the options page because they involve
-  // multiple, non-user configurable modifiers.
-  'previousRow': {backward: true, announce: true, skipInput: true},
-  'previousCol': {backward: true, announce: true, skipInput: true},
-  'nextRow': {forward: true, announce: true, skipInput: true},
-  'nextCol': {forward: true, announce: true, skipInput: true},
+  'previousRow': {
+    backward: true,
+    announce: true,
+    skipInput: true,
+    msgId: 'skip_to_prev_row',
+    category: 'tables'
+  },
+  'previousCol': {
+    backward: true,
+    announce: true,
+    skipInput: true,
+    msgId: 'skip_to_prev_col',
+    category: 'tables'
+  },
+  'nextRow': {
+    forward: true,
+    announce: true,
+    skipInput: true,
+    msgId: 'skip_to_next_row',
+    category: 'tables'
+  },
+  'nextCol': {
+    forward: true,
+    announce: true,
+    skipInput: true,
+    msgId: 'skip_to_next_col',
+    category: 'tables'
+  },
 
   // Generic Actions.
   'enterShifter':
@@ -792,6 +818,10 @@ cvox.CommandStore.CMD_WHITELIST = {
 
   'pauseAllMedia':
       {announce: false, msgId: 'pause_all_media', category: 'information'},
+
+  // Scrolling actions.
+  'scrollBackward': {msgId: 'action_scroll_backward_description'},
+  'scrollForward': {msgId: 'action_scroll_forward_description'},
 
   // Math specific commands.
   'toggleSemantics':
@@ -860,6 +890,7 @@ cvox.CommandStore.CMD_WHITELIST = {
 /**
  * List of find next commands and their associated data.
  * @type {Object<{predicate: string,
+ *                typeMsg: string,
  *                forwardError: string,
  *                backwardError: string}>}
  *  predicate: The name of the predicate. This must be defined in DomPredicates.

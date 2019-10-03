@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.photo_picker;
 
 import android.app.Activity;
 import android.content.Context;
+import android.net.Uri;
 import android.support.v7.app.AlertDialog;
 
 import org.chromium.base.ActivityState;
@@ -55,13 +56,14 @@ public class PhotoPickerDialog extends AlertDialog {
 
         // PhotoPickerListener:
         @Override
-        public void onPickerUserAction(Action action, String[] photos) {
+        public void onPhotoPickerUserAction(@PhotoPickerAction int action, Uri[] photos) {
             mExternalIntentSelected = false;
-            if (action == Action.LAUNCH_GALLERY || action == Action.LAUNCH_CAMERA) {
+            if (action == PhotoPickerAction.LAUNCH_GALLERY
+                    || action == PhotoPickerAction.LAUNCH_CAMERA) {
                 mExternalIntentSelected = true;
             }
 
-            mListener.onPickerUserAction(action, photos);
+            mListener.onPhotoPickerUserAction(action, photos);
         }
 
         /**
@@ -82,13 +84,13 @@ public class PhotoPickerDialog extends AlertDialog {
      */
     public PhotoPickerDialog(Context context, PhotoPickerListener listener,
             boolean multiSelectionAllowed, List<String> mimeTypes) {
-        super(context, R.style.FullscreenWhite);
+        super(context, R.style.Theme_Chromium_Fullscreen);
         mContext = context;
         mListenerWrapper = new PhotoPickerListenerWrapper(listener);
 
         // Initialize the main content view.
-        mCategoryView = new PickerCategoryView(context);
-        mCategoryView.initialize(this, mListenerWrapper, multiSelectionAllowed, mimeTypes);
+        mCategoryView = new PickerCategoryView(context, multiSelectionAllowed);
+        mCategoryView.initialize(this, mListenerWrapper, mimeTypes);
         setView(mCategoryView);
     }
 

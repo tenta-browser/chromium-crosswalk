@@ -2,44 +2,36 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H
+#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H_
+#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H_
 
 #include <stdint.h>
 
 #include <cstddef>
 
+#include "base/allocator/partition_allocator/page_allocator_constants.h"
 #include "base/base_export.h"
 #include "base/compiler_specific.h"
 #include "build/build_config.h"
 
 namespace base {
 
-#if defined(OS_WIN)
-static const size_t kPageAllocationGranularityShift = 16;  // 64KB
-#else
-static const size_t kPageAllocationGranularityShift = 12;  // 4KB
-#endif
-static const size_t kPageAllocationGranularity =
-    1 << kPageAllocationGranularityShift;
-static const size_t kPageAllocationGranularityOffsetMask =
-    kPageAllocationGranularity - 1;
-static const size_t kPageAllocationGranularityBaseMask =
-    ~kPageAllocationGranularityOffsetMask;
-
-// All Blink-supported systems have 4096 sized system pages and can handle
-// permissions and commit / decommit at this granularity.
-static const size_t kSystemPageSize = 4096;
-static const size_t kSystemPageOffsetMask = kSystemPageSize - 1;
-static_assert((kSystemPageSize & (kSystemPageSize - 1)) == 0,
-              "kSystemPageSize must be power of 2");
-static const size_t kSystemPageBaseMask = ~kSystemPageOffsetMask;
-
 enum PageAccessibilityConfiguration {
   PageInaccessible,
+  PageRead,
   PageReadWrite,
   PageReadExecute,
+  // This flag is deprecated and will go away soon.
+  // TODO(bbudge) Remove this as soon as V8 doesn't need RWX pages.
   PageReadWriteExecute,
+};
+
+// Mac OSX supports tagged memory regions, to help in debugging.
+enum class PageTag {
+  kFirst = 240,     // Minimum tag value.
+  kChromium = 254,  // Chromium page, including off-heap V8 ArrayBuffers.
+  kV8 = 255,        // V8 heap pages.
+  kLast = kV8       // Maximum tag value.
 };
 
 // Allocate one or more pages.
@@ -60,6 +52,7 @@ BASE_EXPORT void* AllocPages(void* address,
                              size_t length,
                              size_t align,
                              PageAccessibilityConfiguration page_accessibility,
+                             PageTag tag = PageTag::kChromium,
                              bool commit = true);
 
 // Free one or more pages starting at |address| and continuing for |length|
@@ -75,7 +68,16 @@ BASE_EXPORT void FreePages(void* address, size_t length);
 //
 // Returns true if the permission change succeeded. In most cases you must
 // |CHECK| the result.
-BASE_EXPORT WARN_UNUSED_RESULT bool SetSystemPagesAccess(
+BASE_EXPORT WARN_UNUSED_RESULT bool TrySetSystemPagesAccess(
+    void* address,
+    size_t length,
+    PageAccessibilityConfiguration page_accessibility);
+
+// Mark one or more system pages, starting at |address| with the given
+// |page_accessibility|. |length| must be a multiple of |kSystemPageSize| bytes.
+//
+// Performs a CHECK that the operation succeeds.
+BASE_EXPORT void SetSystemPagesAccess(
     void* address,
     size_t length,
     PageAccessibilityConfiguration page_accessibility);
@@ -140,12 +142,31 @@ BASE_EXPORT WARN_UNUSED_RESULT bool RecommitSystemPages(
 // based on the original page content, or a page of zeroes.
 BASE_EXPORT void DiscardSystemPages(void* address, size_t length);
 
-ALWAYS_INLINE uintptr_t RoundUpToSystemPage(uintptr_t address) {
+// Rounds up |address| to the next multiple of |kSystemPageSize|. Returns
+// 0 for an |address| of 0.
+constexpr ALWAYS_INLINE uintptr_t RoundUpToSystemPage(uintptr_t address) {
   return (address + kSystemPageOffsetMask) & kSystemPageBaseMask;
 }
 
-ALWAYS_INLINE uintptr_t RoundDownToSystemPage(uintptr_t address) {
+// Rounds down |address| to the previous multiple of |kSystemPageSize|. Returns
+// 0 for an |address| of 0.
+constexpr ALWAYS_INLINE uintptr_t RoundDownToSystemPage(uintptr_t address) {
   return address & kSystemPageBaseMask;
+}
+
+// Rounds up |address| to the next multiple of |kPageAllocationGranularity|.
+// Returns 0 for an |address| of 0.
+constexpr ALWAYS_INLINE uintptr_t
+RoundUpToPageAllocationGranularity(uintptr_t address) {
+  return (address + kPageAllocationGranularityOffsetMask) &
+         kPageAllocationGranularityBaseMask;
+}
+
+// Rounds down |address| to the previous multiple of
+// |kPageAllocationGranularity|. Returns 0 for an |address| of 0.
+constexpr ALWAYS_INLINE uintptr_t
+RoundDownToPageAllocationGranularity(uintptr_t address) {
+  return address & kPageAllocationGranularityBaseMask;
 }
 
 // Reserves (at least) |size| bytes of address space, aligned to
@@ -164,4 +185,4 @@ BASE_EXPORT uint32_t GetAllocPageErrorCode();
 
 }  // namespace base
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H
+#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PAGE_ALLOCATOR_H_

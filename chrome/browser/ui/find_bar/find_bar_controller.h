@@ -8,7 +8,11 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/strings/string16.h"
+#include "chrome/browser/ui/find_bar/find_bar_platform_helper.h"
+#include "chrome/browser/ui/find_bar/find_result_observer.h"
+#include "chrome/browser/ui/find_bar/find_tab_helper.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -23,26 +27,13 @@ namespace gfx {
 class Rect;
 }
 
-class FindBarController : public content::NotificationObserver {
+enum class FindOnPageSelectionAction;
+enum class FindBoxResultAction;
+
+class FindBarController : public content::NotificationObserver,
+                          public FindResultObserver {
  public:
-  // An enum listing the possible actions to take on a find-in-page selection
-  // in the page when ending the find session.
-  enum SelectionAction {
-    kKeepSelectionOnPage,     // Translate the find selection into a normal
-                              // selection.
-    kClearSelectionOnPage,    // Clear the find selection.
-    kActivateSelectionOnPage  // Focus and click the selected node (for links).
-  };
-
-  // An enum listing the possible actions to take on a find-in-page results in
-  // the Find box when ending the find session.
-  enum ResultAction {
-    kClearResultsInFindBox,  // Clear search string, ordinal and match count.
-    kKeepResultsInFindBox,   // Leave the results untouched.
-  };
-
-  // FindBar takes ownership of |find_bar_view|.
-  FindBarController(FindBar* find_bar, Browser* browser);
+  FindBarController(std::unique_ptr<FindBar> find_bar, Browser* browser);
 
   ~FindBarController() override;
 
@@ -50,10 +41,10 @@ class FindBarController : public content::NotificationObserver {
   void Show();
 
   // Ends the current session. |selection_action| specifies what to do with the
-  // selection on the page created by the find operation. |results_action|
+  // selection on the page created by the find operation. |result_action|
   // specifies what to do with the contents of the Find box (after ending).
-  void EndFindSession(SelectionAction selection_action,
-                      ResultAction results_action);
+  void EndFindSession(FindOnPageSelectionAction selection_action,
+                      FindBoxResultAction result_action);
 
   // The visibility of the find bar view changed.
   void FindBarVisibilityChanged();
@@ -71,6 +62,15 @@ class FindBarController : public content::NotificationObserver {
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
+  // FindResultObserver:
+  void OnFindResultAvailable(content::WebContents* web_contents) override;
+
+  void SetText(base::string16 text);
+
+  // Called when the find text is updated in response to a user action.
+  void OnUserChangedFindText(base::string16 text);
+
+  Browser* browser() const { return browser_; }
   FindBar* find_bar() const { return find_bar_.get(); }
 
   // Reposition |view_location| such that it avoids |avoid_overlapping_rect|,
@@ -81,8 +81,8 @@ class FindBarController : public content::NotificationObserver {
       const gfx::Rect& avoid_overlapping_rect);
 
  private:
-  // Sents an update to the find bar with the tab contents' current result. The
-  // web_contents_ must be non-NULL before this call. Theis handles
+  // Sends an update to the find bar with the tab contents' current result. The
+  // web_contents_ must be non-NULL before this call. This handles
   // de-flickering in addition to just calling the update function.
   void UpdateFindBarForCurrentResult();
 
@@ -103,15 +103,14 @@ class FindBarController : public content::NotificationObserver {
   // The Browser creating this controller.
   Browser* const browser_;
 
-  // The last match count we reported to the user. This is used by
-  // UpdateFindBarForCurrentResult to avoid flickering.
-  int last_reported_matchcount_ = 0;
+  std::unique_ptr<FindBarPlatformHelper> find_bar_platform_helper_;
 
-  // Used to keep track of whether the user has been notified that the find came
-  // up empty. A single find session can result in multiple final updates, if
-  // the document contents change dynamically. It's a nuisance to notify the
-  // user more than once that a search came up empty, however.
-  base::string16 alerted_search_;
+  // The last match count and ordinal we reported to the user. This is used
+  // by UpdateFindBarForCurrentResult to avoid flickering.
+  int last_reported_matchcount_ = 0;
+  int last_reported_ordinal_ = 0;
+
+  ScopedObserver<FindTabHelper, FindResultObserver> find_tab_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FindBarController);
 };

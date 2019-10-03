@@ -8,6 +8,7 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 
@@ -21,6 +22,8 @@ std::string MediaLog::MediaLogLevelToString(MediaLogLevel level) {
   switch (level) {
     case MEDIALOG_ERROR:
       return "error";
+    case MEDIALOG_WARNING:
+      return "warning";
     case MEDIALOG_INFO:
       return "info";
     case MEDIALOG_DEBUG:
@@ -34,6 +37,8 @@ MediaLogEvent::Type MediaLog::MediaLogLevelToEventType(MediaLogLevel level) {
   switch (level) {
     case MEDIALOG_ERROR:
       return MediaLogEvent::MEDIA_ERROR_LOG_ENTRY;
+    case MEDIALOG_WARNING:
+      return MediaLogEvent::MEDIA_WARNING_LOG_ENTRY;
     case MEDIALOG_INFO:
       return MediaLogEvent::MEDIA_INFO_LOG_ENTRY;
     case MEDIALOG_DEBUG:
@@ -71,12 +76,16 @@ std::string MediaLog::EventTypeToString(MediaLogEvent::Type type) {
       return "TEXT_ENDED";
     case MediaLogEvent::MEDIA_ERROR_LOG_ENTRY:
       return "MEDIA_ERROR_LOG_ENTRY";
+    case MediaLogEvent::MEDIA_WARNING_LOG_ENTRY:
+      return "MEDIA_WARNING_LOG_ENTRY";
     case MediaLogEvent::MEDIA_INFO_LOG_ENTRY:
       return "MEDIA_INFO_LOG_ENTRY";
     case MediaLogEvent::MEDIA_DEBUG_LOG_ENTRY:
       return "MEDIA_DEBUG_LOG_ENTRY";
     case MediaLogEvent::PROPERTY_CHANGE:
       return "PROPERTY_CHANGE";
+    case MediaLogEvent::SUSPENDED:
+      return "SUSPENDED";
   }
   NOTREACHED();
   return NULL;
@@ -151,28 +160,81 @@ std::string MediaLog::MediaEventToMessageString(const MediaLogEvent& event) {
   }
 }
 
-std::string MediaLog::BufferingStateToString(BufferingState state) {
-  switch (state) {
-    case BUFFERING_HAVE_NOTHING:
-      return "BUFFERING_HAVE_NOTHING";
-    case BUFFERING_HAVE_ENOUGH:
-      return "BUFFERING_HAVE_ENOUGH";
-  }
-  NOTREACHED();
+std::string MediaLog::BufferingStateToString(
+    BufferingState state,
+    BufferingStateChangeReason reason) {
+  DCHECK(state == BUFFERING_HAVE_NOTHING || state == BUFFERING_HAVE_ENOUGH);
+  DCHECK(reason == BUFFERING_CHANGE_REASON_UNKNOWN ||
+         reason == DEMUXER_UNDERFLOW || reason == DECODER_UNDERFLOW ||
+         reason == REMOTING_NETWORK_CONGESTION);
+
+  std::string state_string = state == BUFFERING_HAVE_NOTHING
+                                 ? "BUFFERING_HAVE_NOTHING"
+                                 : "BUFFERING_HAVE_ENOUGH";
+
+  std::vector<std::string> flag_strings;
+  if (reason == DEMUXER_UNDERFLOW)
+    state_string += " (DEMUXER_UNDERFLOW)";
+  else if (reason == DECODER_UNDERFLOW)
+    state_string += " (DECODER_UNDERFLOW)";
+  else if (reason == REMOTING_NETWORK_CONGESTION)
+    state_string += " (REMOTING_NETWORK_CONGESTION)";
+
+  return state_string;
+}
+
+MediaLog::MediaLog() : MediaLog(new ParentLogRecord(this)) {}
+
+MediaLog::MediaLog(scoped_refptr<ParentLogRecord> parent_log_record)
+    : parent_log_record_(std::move(parent_log_record)),
+      id_(g_media_log_count.GetNext()) {}
+
+MediaLog::~MediaLog() {
+  // If we are the underlying log, then somebody should have called
+  // InvalidateLog before now.  Otherwise, there could be concurrent calls into
+  // this after we're destroyed.  Note that calling it here isn't really much
+  // better, since there could be concurrent calls into the now destroyed
+  // derived class.
+  //
+  // However, we can't DCHECK on it, since lots of folks create a base Medialog
+  // implementation temporarily.  So, the best we can do is invalidate the log.
+  // We could get around this if we introduce a new NullMediaLog that handles
+  // log invalidation, so we could dcheck here.  However, that seems like a lot
+  // of boilerplate.
+  if (parent_log_record_->media_log == this)
+    InvalidateLog();
+}
+
+void MediaLog::AddEvent(std::unique_ptr<MediaLogEvent> event) {
+  base::AutoLock auto_lock(parent_log_record_->lock);
+  // Forward to the parent log's implementation.
+  if (parent_log_record_->media_log)
+    parent_log_record_->media_log->AddEventLocked(std::move(event));
+}
+
+void MediaLog::AddEventLocked(std::unique_ptr<MediaLogEvent> event) {}
+
+std::string MediaLog::GetErrorMessage() {
+  base::AutoLock auto_lock(parent_log_record_->lock);
+  // Forward to the parent log's implementation.
+  if (parent_log_record_->media_log)
+    return parent_log_record_->media_log->GetErrorMessageLocked();
+
   return "";
 }
 
-MediaLog::MediaLog() : id_(g_media_log_count.GetNext()) {}
-
-MediaLog::~MediaLog() = default;
-
-void MediaLog::AddEvent(std::unique_ptr<MediaLogEvent> event) {}
-
-std::string MediaLog::GetErrorMessage() {
+std::string MediaLog::GetErrorMessageLocked() {
   return "";
 }
 
 void MediaLog::RecordRapporWithSecurityOrigin(const std::string& metric) {
+  base::AutoLock auto_lock(parent_log_record_->lock);
+  // Forward to the parent log's implementation.
+  if (parent_log_record_->media_log)
+    parent_log_record_->media_log->RecordRapporWithSecurityOriginLocked(metric);
+}
+
+void MediaLog::RecordRapporWithSecurityOriginLocked(const std::string& metric) {
   DVLOG(1) << "Default MediaLog doesn't support rappor reporting.";
 }
 
@@ -180,7 +242,7 @@ std::unique_ptr<MediaLogEvent> MediaLog::CreateCreatedEvent(
     const std::string& origin_url) {
   std::unique_ptr<MediaLogEvent> event(
       CreateEvent(MediaLogEvent::WEBMEDIAPLAYER_CREATED));
-  event->params.SetString("origin_url", origin_url);
+  event->params.SetString("origin_url", TruncateUrlString(origin_url));
   return event;
 }
 
@@ -214,24 +276,25 @@ std::unique_ptr<MediaLogEvent> MediaLog::CreateTimeEvent(
     MediaLogEvent::Type type,
     const std::string& property,
     base::TimeDelta value) {
+  return CreateTimeEvent(type, property, value.InSecondsF());
+}
+
+std::unique_ptr<MediaLogEvent> MediaLog::CreateTimeEvent(
+    MediaLogEvent::Type type,
+    const std::string& property,
+    double value) {
   std::unique_ptr<MediaLogEvent> event(CreateEvent(type));
-  if (value.is_max())
-    event->params.SetString(property, "unknown");
+  if (std::isfinite(value))
+    event->params.SetDouble(property, value);
   else
-    event->params.SetDouble(property, value.InSecondsF());
+    event->params.SetString(property, "unknown");
   return event;
 }
 
 std::unique_ptr<MediaLogEvent> MediaLog::CreateLoadEvent(
     const std::string& url) {
   std::unique_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::LOAD));
-  event->params.SetString("url", url);
-  return event;
-}
-
-std::unique_ptr<MediaLogEvent> MediaLog::CreateSeekEvent(double seconds) {
-  std::unique_ptr<MediaLogEvent> event(CreateEvent(MediaLogEvent::SEEK));
-  event->params.SetDouble("seek_target", seconds);
+  event->params.SetString("url", TruncateUrlString(url));
   return event;
 }
 
@@ -264,9 +327,10 @@ std::unique_ptr<MediaLogEvent> MediaLog::CreateVideoSizeSetEvent(
 
 std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferingStateChangedEvent(
     const std::string& property,
-    BufferingState state) {
+    BufferingState state,
+    BufferingStateChangeReason reason) {
   return CreateStringEvent(MediaLogEvent::PROPERTY_CHANGE, property,
-                           BufferingStateToString(state));
+                           BufferingStateToString(state, reason));
 }
 
 void MediaLog::AddLogEvent(MediaLogLevel level, const std::string& message) {
@@ -300,10 +364,45 @@ void MediaLog::SetBooleanProperty(
   AddEvent(std::move(event));
 }
 
+std::unique_ptr<MediaLog> MediaLog::Clone() {
+  // Protected ctor, so we can't use std::make_unique.
+  return base::WrapUnique(new MediaLog(parent_log_record_));
+}
+
+// static
+std::string MediaLog::TruncateUrlString(std::string log_string) {
+  if (log_string.length() > kMaxUrlLength) {
+    log_string.resize(kMaxUrlLength);
+
+    // Room for the ellipsis.
+    DCHECK_GE(kMaxUrlLength, std::size_t{3});
+    log_string.replace(log_string.end() - 3, log_string.end(), "...");
+  }
+
+  return log_string;
+}
+
+MediaLog::ParentLogRecord::ParentLogRecord(MediaLog* log) : media_log(log) {}
+MediaLog::ParentLogRecord::~ParentLogRecord() = default;
+
+void MediaLog::InvalidateLog() {
+  base::AutoLock auto_lock(parent_log_record_->lock);
+  // It's almost certainly unintentional to invalidate a parent log.
+  DCHECK(parent_log_record_->media_log == nullptr ||
+         parent_log_record_->media_log == this);
+
+  parent_log_record_->media_log = nullptr;
+  // Keep |parent_log_record_| around, since the lock must keep working.
+}
+
 LogHelper::LogHelper(MediaLog::MediaLogLevel level, MediaLog* media_log)
     : level_(level), media_log_(media_log) {
   DCHECK(media_log_);
 }
+
+LogHelper::LogHelper(MediaLog::MediaLogLevel level,
+                     const std::unique_ptr<MediaLog>& media_log)
+    : LogHelper(level, media_log.get()) {}
 
 LogHelper::~LogHelper() {
   media_log_->AddLogEvent(level_, stream_.str());

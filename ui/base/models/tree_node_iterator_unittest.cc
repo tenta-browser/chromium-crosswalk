@@ -5,7 +5,6 @@
 #include "ui/base/models/tree_node_iterator.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/models/tree_node_model.h"
 
@@ -33,19 +32,19 @@ TEST(TreeNodeIteratorTest, Basic) {
 
   TreeNodeIterator<TestNode> iterator(&root);
   ASSERT_TRUE(iterator.has_next());
-  ASSERT_EQ(root.GetChild(0), iterator.Next());
+  ASSERT_EQ(root.children()[0].get(), iterator.Next());
 
   ASSERT_TRUE(iterator.has_next());
-  ASSERT_EQ(root.GetChild(1), iterator.Next());
+  ASSERT_EQ(root.children()[1].get(), iterator.Next());
 
   ASSERT_TRUE(iterator.has_next());
-  ASSERT_EQ(root.GetChild(2), iterator.Next());
+  ASSERT_EQ(root.children()[2].get(), iterator.Next());
 
   ASSERT_TRUE(iterator.has_next());
   ASSERT_EQ(f4, iterator.Next());
 
   ASSERT_TRUE(iterator.has_next());
-  ASSERT_EQ(f4->GetChild(0), iterator.Next());
+  ASSERT_EQ(f4->children()[0].get(), iterator.Next());
 
   ASSERT_FALSE(iterator.has_next());
 }

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef PPAPI_PROXY_PPAPI_PROXY_TEST_H_
+#define PPAPI_PROXY_PPAPI_PROXY_TEST_H_
+
 #include <stdint.h>
 
 #include <map>
@@ -11,9 +14,9 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread.h"
 #include "ppapi/c/pp_instance.h"
@@ -147,6 +150,12 @@ class PluginProxyTestHarness : public ProxyTestHarnessBase {
     base::SharedMemoryHandle ShareSharedMemoryHandleWithRemote(
         const base::SharedMemoryHandle& handle,
         base::ProcessId remote_pid) override;
+    base::UnsafeSharedMemoryRegion ShareUnsafeSharedMemoryRegionWithRemote(
+        const base::UnsafeSharedMemoryRegion& region,
+        base::ProcessId remote_pid) override;
+    base::ReadOnlySharedMemoryRegion ShareReadOnlySharedMemoryRegionWithRemote(
+        const base::ReadOnlySharedMemoryRegion& region,
+        base::ProcessId remote_pid) override;
 
     // PluginDispatcher::PluginDelegate implementation.
     std::set<PP_Instance>* GetGloballySeenInstanceIDSet() override;
@@ -193,7 +202,7 @@ class PluginProxyTest : public PluginProxyTestHarness, public testing::Test {
   virtual void SetUp();
   virtual void TearDown();
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 // This class provides support for multi-thread testing. A secondary thread is
@@ -290,6 +299,12 @@ class HostProxyTestHarness : public ProxyTestHarnessBase {
     base::SharedMemoryHandle ShareSharedMemoryHandleWithRemote(
         const base::SharedMemoryHandle& handle,
         base::ProcessId remote_pid) override;
+    base::UnsafeSharedMemoryRegion ShareUnsafeSharedMemoryRegionWithRemote(
+        const base::UnsafeSharedMemoryRegion& region,
+        base::ProcessId remote_pid) override;
+    base::ReadOnlySharedMemoryRegion ShareReadOnlySharedMemoryRegionWithRemote(
+        const base::ReadOnlySharedMemoryRegion& region,
+        base::ProcessId remote_pid) override;
 
    private:
     base::SingleThreadTaskRunner* ipc_task_runner_;  // Weak
@@ -319,7 +334,7 @@ class HostProxyTest : public HostProxyTestHarness, public testing::Test {
   virtual void SetUp();
   virtual void TearDown();
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 // Use this base class to test both sides of a proxy.
@@ -357,7 +372,7 @@ class TwoWayTest : public testing::Test {
   // The plugin side of the proxy runs on its own thread.
   base::Thread plugin_thread_;
   // The message loop for the main (host) thread.
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   // Aliases for the host and plugin harnesses; if we're testing a PPP
   // interface, remote_harness will point to plugin_, and local_harness
@@ -383,3 +398,5 @@ class TwoWayTest : public testing::Test {
 
 }  // namespace proxy
 }  // namespace ppapi
+
+#endif  // PPAPI_PROXY_PPAPI_PROXY_TEST_H_

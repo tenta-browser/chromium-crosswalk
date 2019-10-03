@@ -15,10 +15,11 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/policy/cached_policy_key_loader_chromeos.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/cryptohome/rpc.pb.h"
+#include "chromeos/dbus/session_manager/session_manager_client.h"
+#include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_validator.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "third_party/cros_system_api/dbus/cryptohome/dbus-constants.h"
 
 namespace base {
@@ -89,9 +90,7 @@ class PreSigninPolicyFetcher : public CloudPolicyClient::Observer {
   using RetrievePolicyResponseType =
       chromeos::SessionManagerClient::RetrievePolicyResponseType;
 
-  void OnMountTemporaryUserHome(bool success,
-                                cryptohome::MountError return_code,
-                                const std::string& mount_hash);
+  void OnMountTemporaryUserHome(base::Optional<cryptohome::BaseReply> reply);
 
   void OnCachedPolicyRetrieved(
       RetrievePolicyResponseType retrieve_policy_response,
@@ -103,7 +102,7 @@ class PreSigninPolicyFetcher : public CloudPolicyClient::Observer {
   void OnUnmountTemporaryUserHome(
       RetrievePolicyResponseType retrieve_policy_response,
       const std::string& policy_blob,
-      base::Optional<bool> unmount_success);
+      base::Optional<cryptohome::BaseReply> reply);
 
   void OnCachedPolicyValidated(UserCloudPolicyValidator* validator);
 
@@ -150,7 +149,7 @@ class PreSigninPolicyFetcher : public CloudPolicyClient::Observer {
 
   // A timer that puts a hard limit on the maximum time to wait for the fresh
   // policy fetch.
-  base::Timer policy_fetch_timeout_{false, false};
+  base::OneShotTimer policy_fetch_timeout_;
 
   // Used to load the policy key provided by session manager as a file.
   std::unique_ptr<CachedPolicyKeyLoaderChromeOS> cached_policy_key_loader_;

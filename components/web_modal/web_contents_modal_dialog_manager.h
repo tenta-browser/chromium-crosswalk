@@ -30,14 +30,6 @@ class WebContentsModalDialogManager
   WebContentsModalDialogManagerDelegate* delegate() const { return delegate_; }
   void SetDelegate(WebContentsModalDialogManagerDelegate* d);
 
-#if defined(OS_MACOSX)
-  // Note: This method is not defined inside components/web_modal/ as its
-  // definition (needed for Cocoa builds) depends on chrome/browser/ui/cocoa/.
-  static SingleWebContentsDialogManager* CreateNativeWebModalManager(
-      gfx::NativeWindow dialog,
-      SingleWebContentsDialogManagerDelegate* native_delegate);
-#endif
-
   // Allow clients to supply their own native dialog manager. Suitable for
   // bubble clients.
   void ShowDialogWithManager(
@@ -63,14 +55,18 @@ class WebContentsModalDialogManager
 
     void CloseAllDialogs() { manager_->CloseAllDialogs(); }
     void DidAttachInterstitialPage() { manager_->DidAttachInterstitialPage(); }
-    void WebContentsWasShown() { manager_->WasShown(); }
-    void WebContentsWasHidden() { manager_->WasHidden(); }
+    void WebContentsVisibilityChanged(content::Visibility visibility) {
+      manager_->OnVisibilityChanged(visibility);
+    }
 
    private:
     WebContentsModalDialogManager* manager_;
 
     DISALLOW_COPY_AND_ASSIGN(TestApi);
   };
+
+  // Closes all WebContentsModalDialogs.
+  void CloseAllDialogs();
 
  private:
   explicit WebContentsModalDialogManager(content::WebContents* web_contents);
@@ -86,22 +82,16 @@ class WebContentsModalDialogManager
     std::unique_ptr<SingleWebContentsDialogManager> manager;
   };
 
-  using WebContentsModalDialogList = base::circular_deque<DialogState>;
-
   // Blocks/unblocks interaction with renderer process.
   void BlockWebContentsInteraction(bool blocked);
 
   bool IsWebContentsVisible() const;
 
-  // Closes all WebContentsModalDialogs.
-  void CloseAllDialogs();
-
   // Overridden from content::WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   void DidGetIgnoredUIEvent() override;
-  void WasShown() override;
-  void WasHidden() override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
   void WebContentsDestroyed() override;
   void DidAttachInterstitialPage() override;
 
@@ -109,10 +99,15 @@ class WebContentsModalDialogManager
   WebContentsModalDialogManagerDelegate* delegate_;
 
   // All active dialogs.
-  WebContentsModalDialogList child_dialogs_;
+  base::circular_deque<DialogState> child_dialogs_;
+
+  // Whether the WebContents' visibility is content::Visibility::HIDDEN.
+  bool web_contents_is_hidden_;
 
   // True while closing the dialogs on WebContents close.
   bool closing_all_dialogs_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsModalDialogManager);
 };

@@ -1,13 +1,15 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
-<link rel="import" href="chrome://resources/html/md_select_css.html">
+
+<link rel="import" href="chrome://resources/cr_elements/cr_button/cr_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_checkbox/cr_checkbox.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_icon_button/cr_icon_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_input/cr_input.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_radio_button/cr_radio_button.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_radio_group/cr_radio_group.html">
+<link rel="import" href="chrome://resources/cr_elements/shared_vars_css.html">
+<link rel="import" href="chrome://resources/cr_elements/md_select_css.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-collapse/iron-collapse.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-flex-layout/iron-flex-layout-classes.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/neon-animation/neon-animatable-behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-checkbox/paper-checkbox.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-input/paper-input.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-radio-button/paper-radio-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-radio-group/paper-radio-group.html">
 <link rel="import" href="icons.html">
 <link rel="import" href="shared_styles.html">
 
@@ -17,34 +19,36 @@
          See https://github.com/Polymer/polymer/pull/3668. -->
     <style include="device-emulator-shared-styles iron-flex iron-flex-alignment
         iron-positioning md-select">
+      cr-input {
+        --cr-input-error-display: none;
+        margin-bottom: var(--cr-form-field-bottom-spacing);
+      }
     </style>
     <div class="layout vertical">
       <div class="element-label">
-        <paper-icon-button icon="device-emulator:battery-charging-full">
-        </paper-icon-button>
+        <cr-icon-button iron-icon="device-emulator:battery-charging-full">
+        </cr-icon-button>
         Power
       </div>
       <label>
         <span class="form-label">Battery state</span>
-        <paper-radio-group selected="{{batteryState}}">
+        <cr-radio-group selected="{{batteryState}}">
           <template is="dom-repeat" items="[[batteryStateOptions]]">
-            <paper-radio-button name="[[item]]">[[item]]</paper-radio-button>
+            <cr-radio-button name="[[item]]">[[item]]</cr-radio-button>
           </template>
-        </paper-radio-group>
+        </cr-radio-group>
       </label>
       <iron-collapse opened="[[isBatteryPresent(batteryState)]]">
         <div class="layout vertical">
-          <paper-input label="Battery percentage" value="[[batteryPercent]]"
+          <cr-input label="Battery percentage" value="[[batteryPercent]]"
               on-change="onBatteryPercentChange" type="number">
-          </paper-input>
-
-          <paper-input label="Seconds until empty" value="[[timeUntilEmpty]]"
+          </cr-input>
+          <cr-input label="Seconds until empty" value="[[timeUntilEmpty]]"
               on-change="onTimeUntilEmptyChange" type="number">
-          </paper-input>
-
-          <paper-input label="Seconds until full" value="[[timeUntilFull]]"
+          </cr-input>
+          <cr-input label="Seconds until full" value="[[timeUntilFull]]"
               on-change="onTimeUntilFullChange" type="number">
-          </paper-input>
+          </cr-input>
         </div>
       </iron-collapse>
 
@@ -56,31 +60,29 @@
             <td class="centered-cell-label">Role</td>
             <td class="centered-cell-label">Amps</td>
           </tr>
-          <template is="dom-repeat" items="[[powerSourceOptions]]">
+          <template is="dom-repeat" items="{{powerSourceOptions}}">
             <tr>
               <td class="alias-cell">[[item.name]]</td>
               <td class="control-cell">
-                <paper-checkbox checked="{{item.connected}}"></paper-checkbox>
+                <cr-checkbox checked="{{item.connected}}"></cr-checkbox>
               </td>
               <td class="control-cell">
-                <paper-button on-tap="onSetAsSourceTap"
+                <cr-button on-click="onSetAsSourceClick"
+                    class$="[[cssClassForSetAsSource_(item,
+                        selectedPowerSourceId)]]"
                     hidden$="[[!isDualRole(item)]]"
-                    raised="[[!isSelectedSource(item, selectedPowerSourceId)]]"
                     disabled="[[!canBecomeSource(
                         item, selectedPowerSourceId, powerSourceOptions.*)]]">
                   Set as source
-                </paper-button>
+                </cr-button>
                 <div hidden$="[[isDualRole(item)]]">Source</div>
               </td>
               <td class="control-cell">
-                <div class="md-select-wrapper">
-                  <select class="md-select" disabled$="[[!item.variablePower]]"
-                      on-change="onPowerChanged" value="[[item.power]]">
-                    <option value="high">High</option>
-                    <option value="low">Low</option>
-                  </select>
-                  <span class="md-select-underline"></span>
-                </div>
+                <select class="md-select" disabled$="[[!item.variablePower]]"
+                    on-change="onPowerChanged" value="[[item.power]]">
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                </select>
               </td>
           </template>
         </tbody>

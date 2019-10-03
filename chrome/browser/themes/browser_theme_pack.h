@@ -58,7 +58,7 @@ class BrowserThemePack : public CustomThemeSupplier {
   // separate thread as it takes so long. This can fail in the case where the
   // theme has invalid data, in which case |pack->is_valid()| will be false.
   static void BuildFromExtension(const extensions::Extension* extension,
-                                 scoped_refptr<BrowserThemePack> pack);
+                                 BrowserThemePack* pack);
 
   // Builds the theme pack from a previously performed WriteToDisk(). This
   // operation should be relatively fast, as it should be an mmap() and some
@@ -70,8 +70,11 @@ class BrowserThemePack : public CustomThemeSupplier {
   // in the data pack.
   static bool IsPersistentImageID(int id);
 
+  // Builds the theme from given |color| into |pack|.
+  static void BuildFromColor(SkColor color, BrowserThemePack* pack);
+
   // Default. Everything is empty.
-  BrowserThemePack();
+  explicit BrowserThemePack(ThemeType theme_type);
 
   bool is_valid() const { return is_valid_; }
 
@@ -111,25 +114,65 @@ class BrowserThemePack : public CustomThemeSupplier {
 
   ~BrowserThemePack() override;
 
-  // Builds a header ready to write to disk.
-  void BuildHeader(const extensions::Extension* extension);
+  // Modifies |colors_| to set the entry with identifier |id| to |color|.  Only
+  // valid to call after InitColors(), which creates |colors_|.
+  void SetColor(int id, SkColor color);
+
+  // If |colors_| does not already contain an entry with identifier |id|,
+  // modifies |colors_| to set the entry with identifier |id| to |color|.  If an
+  // entry for |id| already exists, does nothing.
+  // Only valid to call after BuildColorsFromJSON(), which creates |colors_|.
+  void SetColorIfUnspecified(int id, SkColor color);
+
+  // Sets the value for |id| in |tints_|. Only valid to call after InitTints(),
+  // which creates |tints_|.
+  void SetTint(int id, color_utils::HSL tint);
+
+  // Sets the value for |id| in |display_properties_|. Only valid to call after
+  // InitDisplayProperties(), which creates |display_properties_|.
+  void SetDisplayProperty(int id, int value);
+
+  // Calculates the dominant color of the top |height| rows of |image|.
+  SkColor ComputeImageColor(const gfx::Image& image, int height);
+
+  // Adjusts/sets theme properties.
+  void AdjustThemePack();
+
+  // Initializes necessary fields.
+  void InitEmptyPack();
+
+  // Initializes the |header_| with default values.
+  void InitHeader();
+
+  // Initializes the |tints_| with default values.
+  void InitTints();
+
+  // Initializes the |colors_| with default values.
+  void InitColors();
+
+  // Initializes the |display_properties_| with default values.
+  void InitDisplayProperties();
+
+  // Initializes the |source_images_| with default values.
+  void InitSourceImages();
+
+  // Sets the ID from |extension|.
+  void SetHeaderId(const extensions::Extension* extension);
 
   // Transforms the JSON tint values into their final versions in the |tints_|
   // array.
-  void BuildTintsFromJSON(const base::DictionaryValue* tints_value);
+  void SetTintsFromJSON(const base::DictionaryValue* tints_value);
 
   // Transforms the JSON color values into their final versions in the
   // |colors_| array and also fills in unspecified colors based on tint values.
-  void BuildColorsFromJSON(const base::DictionaryValue* color_value);
+  void SetColorsFromJSON(const base::DictionaryValue* color_value);
 
   // Implementation details of BuildColorsFromJSON().
   void ReadColorsFromJSON(const base::DictionaryValue* colors_value,
                           std::map<int, SkColor>* temp_colors);
-  void GenerateMissingColors(std::map<int, SkColor>* temp_colors);
 
   // Transforms the JSON display properties into |display_properties_|.
-  void BuildDisplayPropertiesFromJSON(
-      const base::DictionaryValue* display_value);
+  void SetDisplayPropertiesFromJSON(const base::DictionaryValue* display_value);
 
   // Parses the image names out of an extension.
   void ParseImageNamesFromJSON(const base::DictionaryValue* images_value,
@@ -150,23 +193,51 @@ class BrowserThemePack : public CustomThemeSupplier {
   bool LoadRawBitmapsTo(const FilePathMap& file_paths,
                         ImageCache* image_cache);
 
-  // Populate |images| cache with empty gfx::Images. Image reps are lazily
-  // generated when an image rep is requested via ImageSkia::GetRepresentation.
-  // Source and destination is |images|.
-  void CreateImages(ImageCache* images) const;
-
   // Crops images down to a size such that most of the cropped image will be
   // displayed in the UI. Cropping is useful because images from custom themes
   // can be of any size. Source and destination is |images|.
   void CropImages(ImageCache* images) const;
 
+  // Set toolbar related elements' colors (e.g. status bubble, info bar,
+  // download shelf, detached bookmark bar) to toolbar color.
+  void SetToolbarRelatedColors();
+
+  // Creates a composited toolbar image. Source and destination is |images|.
+  // Also sets toolbar color corresponding to this image.
+  void CreateToolbarImageAndColors(ImageCache* images);
+
   // Creates tinted and composited frame images. Source and destination is
-  // |images|.
-  void CreateFrameImages(ImageCache* images) const;
+  // |images|.  Also sets frame colors corresponding to these images if no
+  // explicit color has been specified for these colors.
+  void CreateFrameImagesAndColors(ImageCache* images);
+
+  // Generates any frame colors which have not already been set from tints.
+  void GenerateFrameColorsFromTints();
+
+  // Generates background color information for the background of window control
+  // buttons.  This can be used when drawing the window control/caption buttons
+  // to determine what color to draw the symbol, ensuring that it contrasts
+  // sufficiently with the background of the button.
+  void GenerateWindowControlButtonColor(ImageCache* images);
 
   // Creates the semi-transparent tab background images, putting the results
-  // in |images|. Must be called after GenerateFrameImages().
-  void CreateTabBackgroundImages(ImageCache* images) const;
+  // in |images|.  Also sets colors corresponding to these images if no explicit
+  // color has been specified.  Must be called after GenerateFrameImages().
+  void CreateTabBackgroundImagesAndColors(ImageCache* images);
+
+  // Generates any text colors which have not already been set.
+  void GenerateMissingTextColors();
+
+  // Generates text color for the specified id |text_color_id|, based on the
+  // background color of the tab |tab_color_id|, and using the color already
+  // defined for |source_color_id| as a starting point (if it exists).
+  void GenerateMissingTextColorForID(int text_color_id,
+                                     int tab_color_id,
+                                     int frame_color_id,
+                                     int source_color_id);
+
+  // Generates missing NTP related colors.
+  void GenerateMissingNtpColors();
 
   // Takes all the SkBitmaps in |images|, encodes them as PNGs and places
   // them in |reencoded_images|.

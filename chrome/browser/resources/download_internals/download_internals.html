@@ -11,16 +11,20 @@
     <link rel="import" href="chrome://resources/html/cr.html">
     <link rel="import" href="chrome://resources/html/cr/ui/list_item.html">
     <link rel="import" href="chrome://resources/html/cr/ui/list.html">
-    <link rel="import" href="chrome://resources/html/load_time_data.html">
     <link rel="import" href="chrome://resources/html/util.html">
 
-    <script src="strings.js"></script>
     <script src="download_internals_browser_proxy.js"></script>
     <script src="download_internals.js"></script>
     <script src="download_internals_visuals.js"></script>
   </head>
   <body>
     <h1>Download Internals</h1>
+    <h4>Start Download</h4>
+    <div id="download-service-request-info">
+      <input id="download-url" type="url"
+          placeholder="http://www.example.com">
+      <button id="start-download">Download</button>
+    </div>
     <h4>Service State</h4>
     <div>
       State: <span id="service-state" class="status"></span>
@@ -108,7 +112,6 @@
         </tbody>
       </table>
     </div>
-    <script src="chrome://resources/js/i18n_template.js"></script>
     <script src="chrome://resources/js/jstemplate_compiled.js"></script>
   </body>
 </html>

@@ -15,15 +15,15 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "components/ntp_tiles/popular_sites.h"
-#include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
 namespace base {
 class Value;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SimpleURLLoader;
+class SharedURLLoaderFactory;
 }
 
 namespace user_prefs {
@@ -39,21 +39,21 @@ class TemplateURLService;
 
 namespace ntp_tiles {
 
-using ParseJSONCallback = base::Callback<void(
+using ParseJSONCallback = base::RepeatingCallback<void(
     const std::string& unsafe_json,
-    const base::Callback<void(std::unique_ptr<base::Value>)>& success_callback,
-    const base::Callback<void(const std::string&)>& error_callback)>;
+    base::OnceCallback<void(base::Value)> success_callback,
+    base::OnceCallback<void(const std::string&)> error_callback)>;
 
 // Actual (non-test) implementation of the PopularSites interface. Caches the
 // downloaded file on disk to avoid re-downloading on every startup.
-class PopularSitesImpl : public PopularSites, public net::URLFetcherDelegate {
+class PopularSitesImpl : public PopularSites {
  public:
   PopularSitesImpl(
       PrefService* prefs,
       const TemplateURLService* template_url_service,
       variations::VariationsService* variations_service,
-      net::URLRequestContextGetter* download_context,
-      ParseJSONCallback parse_json);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      const ParseJSONCallback& parse_json);
 
   ~PopularSitesImpl() override;
 
@@ -77,10 +77,10 @@ class PopularSitesImpl : public PopularSites, public net::URLFetcherDelegate {
   // that already exists.
   void FetchPopularSites();
 
-  // net::URLFetcherDelegate implementation.
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  // Called once SimpleURLLoader completes the network request.
+  void OnSimpleLoaderComplete(std::unique_ptr<std::string> response_body);
 
-  void OnJsonParsed(std::unique_ptr<base::Value> json);
+  void OnJsonParsed(base::Value json);
   void OnJsonParseFailed(const std::string& error_message);
   void OnDownloadFailed();
 
@@ -88,19 +88,19 @@ class PopularSitesImpl : public PopularSites, public net::URLFetcherDelegate {
   PrefService* const prefs_;
   const TemplateURLService* const template_url_service_;
   variations::VariationsService* const variations_;
-  net::URLRequestContextGetter* const download_context_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   ParseJSONCallback parse_json_;
 
   // Set by MaybeStartFetch() and called after fetch completes.
   FinishedCallback callback_;
 
-  std::unique_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<network::SimpleURLLoader> simple_url_loader_;
   bool is_fallback_;
   std::map<SectionType, SitesVector> sections_;
   GURL pending_url_;
   int version_in_pending_url_;
 
-  base::WeakPtrFactory<PopularSitesImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<PopularSitesImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PopularSitesImpl);
 };

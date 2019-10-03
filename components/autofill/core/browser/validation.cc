@@ -13,14 +13,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/credit_card.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/state_names.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
+#include "components/autofill/core/browser/geo/state_names.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_regex_constants.h"
 #include "components/autofill/core/common/autofill_regexes.h"
 #include "components/strings/grit/components_strings.h"
-#include "third_party/libphonenumber/phonenumber_api.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace autofill {
@@ -43,8 +42,15 @@ bool IsValidCreditCardExpirationDate(int year,
   return true;
 }
 
+bool IsValidCreditCardExpirationYear(int year, const base::Time& now) {
+  base::Time::Exploded now_exploded;
+  now.LocalExplode(&now_exploded);
+
+  return year >= now_exploded.year;
+}
+
 bool IsValidCreditCardNumber(const base::string16& text) {
-  base::string16 number = CreditCard::StripSeparators(text);
+  const base::string16 number = CreditCard::StripSeparators(text);
 
   if (!HasCorrectLength(number))
     return false;
@@ -85,14 +91,14 @@ bool HasCorrectLength(const base::string16& number) {
   return true;
 }
 
-bool PassesLuhnCheck(base::string16& number) {
+// TODO (crbug.com/927767): Add unit tests for this function.
+bool PassesLuhnCheck(const base::string16& number) {
   // Use the Luhn formula [3] to validate the number.
   // [3] http://en.wikipedia.org/wiki/Luhn_algorithm
   int sum = 0;
   bool odd = false;
-  for (base::string16::reverse_iterator iter = number.rbegin();
-       iter != number.rend();
-       ++iter) {
+  for (base::string16::const_reverse_iterator iter = number.rbegin();
+       iter != number.rend(); ++iter) {
     if (!base::IsAsciiDigit(*iter))
       return false;
 
@@ -140,70 +146,6 @@ bool IsValidCreditCardNumberForBasicCardNetworks(
   return false;
 }
 
-CreditCardCompletionStatus GetCompletionStatusForCard(
-    const CreditCard& card,
-    const std::string& app_locale,
-    const std::vector<AutofillProfile*> billing_addresses) {
-  CreditCardCompletionStatus status = CREDIT_CARD_COMPLETE;
-  if (card.IsExpired(autofill::AutofillClock::Now()))
-    status |= CREDIT_CARD_EXPIRED;
-
-  if (card.number().empty())
-    status |= CREDIT_CARD_NO_NUMBER;
-
-  if (card.GetInfo(autofill::AutofillType(autofill::CREDIT_CARD_NAME_FULL),
-                   app_locale)
-          .empty()) {
-    status |= CREDIT_CARD_NO_CARDHOLDER;
-  }
-
-  if (card.billing_address_id().empty() ||
-      !autofill::PersonalDataManager::GetProfileFromProfilesByGUID(
-          card.billing_address_id(), billing_addresses)) {
-    status |= CREDIT_CARD_NO_BILLING_ADDRESS;
-  }
-
-  return status;
-}
-
-base::string16 GetCompletionMessageForCard(CreditCardCompletionStatus status) {
-  switch (status) {
-    // No message is shown for complete or expired card (which will be fixable)
-    // in the CVC screen.
-    case CREDIT_CARD_COMPLETE:
-    case CREDIT_CARD_EXPIRED:
-      return base::string16();
-    case CREDIT_CARD_NO_CARDHOLDER:
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_NAME_ON_CARD_REQUIRED);
-    case CREDIT_CARD_NO_NUMBER:
-      return l10n_util::GetStringUTF16(
-          IDS_PAYMENTS_CARD_NUMBER_INVALID_VALIDATION_MESSAGE);
-    case CREDIT_CARD_NO_BILLING_ADDRESS:
-      return l10n_util::GetStringUTF16(
-          IDS_PAYMENTS_CARD_BILLING_ADDRESS_REQUIRED);
-    default:
-      // Multiple things are missing
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_MORE_INFORMATION_REQUIRED);
-  }
-}
-
-base::string16 GetEditDialogTitleForCard(CreditCardCompletionStatus status) {
-  switch (status) {
-    case CREDIT_CARD_COMPLETE:
-    case CREDIT_CARD_EXPIRED:
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_EDIT_CARD);
-    case CREDIT_CARD_NO_CARDHOLDER:
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_NAME_ON_CARD);
-    case CREDIT_CARD_NO_NUMBER:
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_VALID_CARD_NUMBER);
-    case CREDIT_CARD_NO_BILLING_ADDRESS:
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_BILLING_ADDRESS);
-    default:
-      // Multiple things are missing
-      return l10n_util::GetStringUTF16(IDS_PAYMENTS_ADD_MORE_INFORMATION);
-  }
-}
-
 bool IsValidEmailAddress(const base::string16& text) {
   // E-Mail pattern as defined by the WhatWG. (4.10.7.1.5 E-Mail state)
   const base::string16 kEmailPattern = base::ASCIIToUTF16(
@@ -217,18 +159,9 @@ bool IsValidState(const base::string16& text) {
          !state_names::GetNameForAbbreviation(text).empty();
 }
 
-bool IsValidPhoneNumber(const base::string16& text,
-                        const std::string& country_code) {
-  ::i18n::phonenumbers::PhoneNumber parsed_number;
-  ::i18n::phonenumbers::PhoneNumberUtil* phone_number_util =
-      ::i18n::phonenumbers::PhoneNumberUtil::GetInstance();
-  if (phone_number_util->Parse(base::UTF16ToUTF8(text), country_code,
-                               &parsed_number) !=
-      ::i18n::phonenumbers::PhoneNumberUtil::NO_PARSING_ERROR) {
-    return false;
-  }
-
-  return phone_number_util->IsValidNumber(parsed_number);
+bool IsPossiblePhoneNumber(const base::string16& text,
+                           const std::string& country_code) {
+  return i18n::IsPossiblePhoneNumber(base::UTF16ToUTF8(text), country_code);
 }
 
 bool IsValidZip(const base::string16& text) {
@@ -268,30 +201,28 @@ bool IsSSN(const base::string16& text) {
     return false;
 
   int area;
-  if (!base::StringToInt(base::StringPiece16(number_string.begin(),
-                                             number_string.begin() + 3),
-                         &area)) {
+  if (!base::StringToInt(
+          base::StringPiece16(number_string.begin(), number_string.begin() + 3),
+          &area)) {
     return false;
   }
-  if (area < 1 ||
-      area == 666 ||
-      area >= 900) {
+  if (area < 1 || area == 666 || area >= 900) {
     return false;
   }
 
   int group;
   if (!base::StringToInt(base::StringPiece16(number_string.begin() + 3,
                                              number_string.begin() + 5),
-                         &group)
-      || group == 0) {
+                         &group) ||
+      group == 0) {
     return false;
   }
 
   int serial;
   if (!base::StringToInt(base::StringPiece16(number_string.begin() + 5,
                                              number_string.begin() + 9),
-                         &serial)
-      || serial == 0) {
+                         &serial) ||
+      serial == 0) {
     return false;
   }
 
@@ -411,6 +342,13 @@ size_t GetCvcLengthForCardType(const base::StringPiece card_type) {
 
 bool IsUPIVirtualPaymentAddress(const base::string16& value) {
   return MatchesPattern(value, base::ASCIIToUTF16(kUPIVirtualPaymentAddressRe));
+}
+
+bool IsInternationalBankAccountNumber(const base::string16& value) {
+  base::string16 no_spaces;
+  base::RemoveChars(value, base::ASCIIToUTF16(" "), &no_spaces);
+  return MatchesPattern(no_spaces,
+                        base::ASCIIToUTF16(kInternationalBankAccountNumberRe));
 }
 
 }  // namespace autofill

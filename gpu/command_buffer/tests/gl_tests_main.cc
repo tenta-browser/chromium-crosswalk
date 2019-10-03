@@ -6,37 +6,31 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/test/launcher/unit_test_launcher.h"
+#include "base/test/test_suite.h"
+#include "build/build_config.h"
+#include "gpu/command_buffer/client/gles2_lib.h"
+#include "gpu/command_buffer/tests/gl_test_utils.h"
+#include "mojo/core/embedder/embedder.h"
+#include "testing/gmock/include/gmock/gmock.h"
+
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
-#include "base/test/launcher/unit_test_launcher.h"
-#include "base/test/test_suite.h"
-#include "gpu/command_buffer/client/gles2_lib.h"
-#include "gpu/command_buffer/tests/gl_manager.h"
-#include "gpu/config/gpu_driver_bug_workarounds.h"
-#include "gpu/config/gpu_info_collector.h"
-#include "gpu/config/gpu_util.h"
-#include "testing/gmock/include/gmock/gmock.h"
-#include "ui/gl/init/gl_factory.h"
 
 namespace {
 
 int RunHelper(base::TestSuite* testSuite) {
-#if defined(USE_OZONE)
-  base::MessageLoopForUI main_loop;
-#else
-  base::MessageLoopForIO message_loop;
-#endif
   base::FeatureList::InitializeInstance(std::string(), std::string());
-  gpu::GPUInfo gpu_info;
-  gpu::CollectBasicGraphicsInfo(&gpu_info);
-  gpu::GLManager::g_gpu_feature_info = gpu::ComputeGpuFeatureInfo(
-      gpu_info, base::CommandLine::ForCurrentProcess());
-  gl::init::InitializeGLNoExtensionsOneOff();
-  gl::init::SetDisabledExtensionsPlatform(
-      gpu::GLManager::g_gpu_feature_info.disabled_extensions);
-  gl::init::InitializeExtensionSettingsOneOffPlatform();
+#if defined(USE_OZONE)
+  base::SingleThreadTaskExecutor executor(base::MessagePump::Type::UI);
+#else
+  base::SingleThreadTaskExecutor executor(base::MessagePump::Type::IO);
+#endif
+  gpu::GLTestHelper::InitializeGLDefault();
+
   ::gles2::Initialize();
   return testSuite->Run();
 }
@@ -46,12 +40,13 @@ int RunHelper(base::TestSuite* testSuite) {
 int main(int argc, char** argv) {
   base::TestSuite test_suite(argc, argv);
   base::CommandLine::Init(argc, argv);
+
+  mojo::core::Init();
+
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool pool;
 #endif
   testing::InitGoogleMock(&argc, argv);
   return base::LaunchUnitTestsSerially(
-      argc,
-      argv,
-      base::Bind(&RunHelper, base::Unretained(&test_suite)));
+      argc, argv, base::BindOnce(&RunHelper, base::Unretained(&test_suite)));
 }

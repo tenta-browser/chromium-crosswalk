@@ -15,12 +15,16 @@ namespace device {
 class FakePlatformSensor : public PlatformSensor {
  public:
   FakePlatformSensor(mojom::SensorType type,
-                     mojo::ScopedSharedBufferMapping mapping,
+                     SensorReadingSharedBuffer* reading_buffer,
                      PlatformSensorProvider* provider);
 
   // PlatformSensor:
   MOCK_METHOD1(StartSensor,
                bool(const PlatformSensorConfiguration& configuration));
+
+  void set_maximum_supported_frequency(double maximum_supported_frequency) {
+    maximum_supported_frequency_ = maximum_supported_frequency;
+  }
 
  protected:
   void StopSensor() override {}
@@ -34,6 +38,8 @@ class FakePlatformSensor : public PlatformSensor {
 
   double GetMaximumSupportedFrequency() override;
   double GetMinimumSupportedFrequency() override;
+
+  double maximum_supported_frequency_ = 50.0;
 
   ~FakePlatformSensor() override;
 
@@ -51,11 +57,11 @@ class FakePlatformSensorProvider : public PlatformSensorProvider {
                     scoped_refptr<PlatformSensor>,
                     const CreateSensorCallback&));
 
-  mojo::ScopedSharedBufferMapping GetMapping(mojom::SensorType type);
+  SensorReadingSharedBuffer* GetSensorReadingBuffer(mojom::SensorType type);
 
  private:
   void CreateSensorInternal(mojom::SensorType type,
-                            mojo::ScopedSharedBufferMapping mapping,
+                            SensorReadingSharedBuffer* reading_buffer,
                             const CreateSensorCallback& callback) override;
 
   DISALLOW_COPY_AND_ASSIGN(FakePlatformSensorProvider);

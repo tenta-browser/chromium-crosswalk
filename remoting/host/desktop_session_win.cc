@@ -16,10 +16,9 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/guid.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_checker.h"
@@ -307,7 +306,7 @@ bool RdpSession::Initialize(const ScreenResolution& resolution) {
   Microsoft::WRL::ComPtr<IRdpDesktopSessionEventHandler> event_handler(
       new EventHandler(weak_factory_.GetWeakPtr()));
   terminal_id_ = base::GenerateGUID();
-  base::win::ScopedBstr terminal_id(base::UTF8ToUTF16(terminal_id_).c_str());
+  base::win::ScopedBstr terminal_id(base::UTF8ToUTF16(terminal_id_));
   result = rdp_desktop_session_->Connect(host_size.width(), host_size.height(),
                                          kDefaultRdpDpi, kDefaultRdpDpi,
                                          terminal_id, server_port,
@@ -482,7 +481,7 @@ std::unique_ptr<DesktopSession> DesktopSessionWin::CreateForConsole(
     DaemonProcess* daemon_process,
     int id,
     const ScreenResolution& resolution) {
-  return base::MakeUnique<ConsoleSession>(caller_task_runner, io_task_runner,
+  return std::make_unique<ConsoleSession>(caller_task_runner, io_task_runner,
                                           daemon_process, id,
                                           HostService::GetInstance());
 }
@@ -615,7 +614,7 @@ void DesktopSessionWin::OnSessionAttached(uint32_t session_id) {
   ReportElapsedTime("attached");
 
   // Launch elevated on Win8+ to enable injection of Alt+Tab and Ctrl+Alt+Del.
-  bool launch_elevated = base::win::GetVersion() >= base::win::VERSION_WIN8;
+  bool launch_elevated = base::win::GetVersion() >= base::win::Version::WIN8;
 
   // Get the name of the executable to run. |kDesktopBinaryName| specifies
   // uiAccess="true" in its manifest.
@@ -639,7 +638,7 @@ void DesktopSessionWin::OnSessionAttached(uint32_t session_id) {
   target->AppendSwitchASCII(kProcessTypeSwitchName, kProcessTypeDesktop);
   // Copy the command line switches enabling verbose logging.
   target->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                           kCopiedSwitchNames, arraysize(kCopiedSwitchNames));
+                           kCopiedSwitchNames, base::size(kCopiedSwitchNames));
 
   // Create a delegate capable of launching a process in a different session.
   std::unique_ptr<WtsSessionProcessDelegate> delegate(

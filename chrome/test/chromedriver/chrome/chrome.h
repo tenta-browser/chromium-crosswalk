@@ -7,6 +7,7 @@
 
 #include <list>
 #include <string>
+#include "base/values.h"
 
 struct BrowserInfo;
 class ChromeDesktopImpl;
@@ -15,6 +16,11 @@ class WebView;
 
 class Chrome {
  public:
+  enum class WindowType {
+    kWindow,
+    kTab,
+  };
+
   virtual ~Chrome() {}
 
   virtual Status GetAsDesktop(ChromeDesktopImpl** desktop) = 0;
@@ -36,11 +42,52 @@ class Chrome {
   // Return the WebView for the given id.
   virtual Status GetWebViewById(const std::string& id, WebView** web_view) = 0;
 
+  // Makes new window or tab.
+  virtual Status NewWindow(const std::string& target_id,
+                           WindowType type,
+                           std::string* window_handle) = 0;
+
+  // Gets the size of the specified WebView.
+  virtual Status GetWindowSize(const std::string& id,
+                               int* width,
+                               int* height) = 0;
+
+  // Sets the rect of the specified WebView
+  virtual Status SetWindowRect(const std::string& target_id,
+                               const base::DictionaryValue& params) = 0;
+
+  // Sets the size of the specified WebView.
+  virtual Status SetWindowSize(const std::string& target_id,
+                               int width,
+                               int height) = 0;
+
+  // Gets the on-screen position of the specified WebView.
+  virtual Status GetWindowPosition(const std::string& target_id,
+                                   int* x,
+                                   int* y) = 0;
+
+  // Sets the on-screen position of the specified WebView.
+  virtual Status SetWindowPosition(const std::string& target_id,
+                                   int x,
+                                   int y) = 0;
+
+  // Maximizes specified WebView.
+  virtual Status MaximizeWindow(const std::string& target_id) = 0;
+
+  // Minimizes specified WebView.
+  virtual Status MinimizeWindow(const std::string& target_id) = 0;
+
+  // Opens specified WebView in full screen mode.
+  virtual Status FullScreenWindow(const std::string& target_id) = 0;
+
   // Closes the specified WebView.
   virtual Status CloseWebView(const std::string& id) = 0;
 
   // Activates the specified WebView.
   virtual Status ActivateWebView(const std::string& id) = 0;
+
+  // Enables acceptInsecureCerts mode for the browser.
+  virtual Status SetAcceptInsecureCerts() = 0;
 
   // Get the operation system where Chrome is running.
   virtual std::string GetOperatingSystemName() = 0;

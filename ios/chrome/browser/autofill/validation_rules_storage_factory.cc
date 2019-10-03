@@ -16,15 +16,14 @@ using ::i18n::addressinput::Storage;
 
 // static
 std::unique_ptr<Storage> ValidationRulesStorageFactory::CreateStorage() {
-  static base::LazyInstance<ValidationRulesStorageFactory>::DestructorAtExit
-      instance = LAZY_INSTANCE_INITIALIZER;
+  static base::NoDestructor<ValidationRulesStorageFactory> instance;
   return std::unique_ptr<Storage>(
-      new ChromeStorageImpl(instance.Get().json_pref_store_.get()));
+      new ChromeStorageImpl(instance->json_pref_store_.get()));
 }
 
 ValidationRulesStorageFactory::ValidationRulesStorageFactory() {
   base::FilePath user_data_dir;
-  bool success = PathService::Get(ios::DIR_USER_DATA, &user_data_dir);
+  bool success = base::PathService::Get(ios::DIR_USER_DATA, &user_data_dir);
   DCHECK(success);
 
   json_pref_store_ = new JsonPrefStore(

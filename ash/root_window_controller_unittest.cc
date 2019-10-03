@@ -6,17 +6,25 @@
 
 #include <memory>
 
-#include "ash/public/cpp/config.h"
+#include "ash/keyboard/ui/keyboard_ui.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
+#include "ash/keyboard/ui/test/keyboard_test_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/session/test_session_controller_client.h"
+#include "ash/shelf/shelf_constants.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/window_factory.h"
 #include "ash/wm/system_modal_container_layout_manager.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
+#include "base/run_loop.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/window_parenting_client.h"
@@ -29,15 +37,11 @@
 #include "ui/base/ime/dummy_text_input_client.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/test_event_handler.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_switches.h"
-#include "ui/keyboard/keyboard_test_util.h"
-#include "ui/keyboard/keyboard_ui.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -103,6 +107,11 @@ class RootWindowControllerTest : public AshTestBase {
   views::Widget* CreateTestWidget(const gfx::Rect& bounds) {
     views::Widget* widget = views::Widget::CreateWindowWithContextAndBounds(
         NULL, CurrentContext(), bounds);
+    // The initial bounds will be constrained to the screen work area or the
+    // parent. See Widget::InitialBounds() & Widget::SetBoundsConstrained().
+    // Explicitly setting the bounds here will allow the view to be positioned
+    // such that it can extend outside the screen work area.
+    widget->SetBounds(bounds);
     widget->Show();
     return widget;
   }
@@ -110,6 +119,8 @@ class RootWindowControllerTest : public AshTestBase {
   views::Widget* CreateModalWidget(const gfx::Rect& bounds) {
     views::Widget* widget = views::Widget::CreateWindowWithContextAndBounds(
         new TestDelegate(true), CurrentContext(), bounds);
+    // See the above comment.
+    widget->SetBounds(bounds);
     widget->Show();
     return widget;
   }
@@ -118,6 +129,8 @@ class RootWindowControllerTest : public AshTestBase {
                                              aura::Window* parent) {
     views::Widget* widget = views::Widget::CreateWindowWithParentAndBounds(
         new TestDelegate(true), parent, bounds);
+    // See the above comment.
+    widget->SetBounds(bounds);
     widget->Show();
     return widget;
   }
@@ -133,6 +146,7 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   UpdateDisplay("600x600,300x300");
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
+  int bottom_inset = 300 - ShelfConstants::shelf_size();
   views::Widget* normal = CreateTestWidget(gfx::Rect(650, 10, 100, 100));
   EXPECT_EQ(root_windows[1], normal->GetNativeView()->GetRootWindow());
   EXPECT_EQ("650,10 100x100", normal->GetWindowBoundsInScreen().ToString());
@@ -142,9 +156,9 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   views::Widget* maximized = CreateTestWidget(gfx::Rect(700, 10, 100, 100));
   maximized->Maximize();
   EXPECT_EQ(root_windows[1], maximized->GetNativeView()->GetRootWindow());
-  EXPECT_EQ(gfx::Rect(600, 0, 300, 252).ToString(),
+  EXPECT_EQ(gfx::Rect(600, 0, 300, bottom_inset).ToString(),
             maximized->GetWindowBoundsInScreen().ToString());
-  EXPECT_EQ(gfx::Rect(0, 0, 300, 252).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 300, bottom_inset).ToString(),
             maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
 
   views::Widget* minimized = CreateTestWidget(gfx::Rect(550, 10, 200, 200));
@@ -168,18 +182,13 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   views::Widget* unparented_control = new Widget;
   Widget::InitParams params;
   params.bounds = gfx::Rect(650, 10, 100, 100);
-  params.context = CurrentContext();
   params.type = Widget::InitParams::TYPE_CONTROL;
+  params.context = CurrentContext();
   unparented_control->Init(params);
   EXPECT_EQ(root_windows[1],
             unparented_control->GetNativeView()->GetRootWindow());
   EXPECT_EQ(kShellWindowId_UnparentedControlContainer,
             unparented_control->GetNativeView()->parent()->id());
-
-  aura::Window* panel = CreateTestWindowInShellWithDelegateAndType(
-      NULL, aura::client::WINDOW_TYPE_PANEL, 0, gfx::Rect(700, 100, 100, 100));
-  EXPECT_EQ(root_windows[1], panel->GetRootWindow());
-  EXPECT_EQ(kShellWindowId_PanelContainer, panel->parent()->id());
 
   // Make sure a window that will delete itself when losing focus
   // will not crash.
@@ -201,25 +210,24 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   EXPECT_EQ("100,20 100x100",
             normal->GetNativeView()->GetBoundsInRootWindow().ToString());
 
-  // Maximized area on primary display has 48px for inset at the bottom
-  // (kShelfSize).
+  bottom_inset = 600 - ShelfConstants::shelf_size();
 
   // First clear fullscreen status, since both fullscreen and maximized windows
   // share the same desktop workspace, which cancels the shelf status.
   fullscreen->SetFullscreen(false);
   EXPECT_EQ(root_windows[0], maximized->GetNativeView()->GetRootWindow());
-  EXPECT_EQ(gfx::Rect(0, 0, 600, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 600, bottom_inset).ToString(),
             maximized->GetWindowBoundsInScreen().ToString());
-  EXPECT_EQ(gfx::Rect(0, 0, 600, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 600, bottom_inset).ToString(),
             maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
 
   // Set fullscreen to true, but maximized window's size won't change because
   // it's not visible. see crbug.com/504299.
   fullscreen->SetFullscreen(true);
   EXPECT_EQ(root_windows[0], maximized->GetNativeView()->GetRootWindow());
-  EXPECT_EQ(gfx::Rect(0, 0, 600, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 600, bottom_inset).ToString(),
             maximized->GetWindowBoundsInScreen().ToString());
-  EXPECT_EQ(gfx::Rect(0, 0, 600, 552).ToString(),
+  EXPECT_EQ(gfx::Rect(0, 0, 600, bottom_inset).ToString(),
             maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
 
   EXPECT_EQ(root_windows[0], minimized->GetNativeView()->GetRootWindow());
@@ -232,7 +240,7 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
             fullscreen->GetNativeView()->GetBoundsInRootWindow().ToString());
 
   // Test if the restore bounds are correctly updated.
-  wm::GetWindowState(maximized->GetNativeView())->Restore();
+  WindowState::Get(maximized->GetNativeView())->Restore();
   EXPECT_EQ("200,20 100x100", maximized->GetWindowBoundsInScreen().ToString());
   EXPECT_EQ("200,20 100x100",
             maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
@@ -247,10 +255,6 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
             unparented_control->GetNativeView()->GetRootWindow());
   EXPECT_EQ(kShellWindowId_UnparentedControlContainer,
             unparented_control->GetNativeView()->parent()->id());
-
-  // Test if the panel has moved.
-  EXPECT_EQ(root_windows[0], panel->GetRootWindow());
-  EXPECT_EQ(kShellWindowId_PanelContainer, panel->parent()->id());
 }
 
 TEST_F(RootWindowControllerTest, MoveWindows_Modal) {
@@ -314,7 +318,7 @@ TEST_F(RootWindowControllerTest, MoveWindows_LockWindowsInUnified) {
   EXPECT_EQ("0,0 500x500", lock_screen->GetNativeWindow()->bounds().ToString());
 
   // Switch to mirror.
-  display_manager()->SetMirrorMode(true);
+  display_manager()->SetMirrorMode(display::MirrorMode::kNormal, base::nullopt);
   EXPECT_TRUE(display_manager()->IsInMirrorMode());
 
   controller = Shell::GetPrimaryRootWindowController();
@@ -323,7 +327,7 @@ TEST_F(RootWindowControllerTest, MoveWindows_LockWindowsInUnified) {
   EXPECT_EQ("0,0 500x500", lock_screen->GetNativeWindow()->bounds().ToString());
 
   // Switch to unified.
-  display_manager()->SetMirrorMode(false);
+  display_manager()->SetMirrorMode(display::MirrorMode::kOff, base::nullopt);
   EXPECT_TRUE(display_manager()->IsInUnifiedMode());
 
   controller = Shell::GetPrimaryRootWindowController();
@@ -344,6 +348,50 @@ TEST_F(RootWindowControllerTest, MoveWindows_LockWindowsInUnified) {
   EXPECT_EQ("0,0 600x500", lock_screen->GetNativeWindow()->bounds().ToString());
 }
 
+// Tests that the moved windows (except the active one) are put under existing
+// ones.
+TEST_F(RootWindowControllerTest, MoveWindows_UnderExisting) {
+  UpdateDisplay("600x600,300x300");
+
+  display::Screen* screen = display::Screen::GetScreen();
+  const display::Display primary_display = screen->GetPrimaryDisplay();
+  const display::Display secondary_display = GetSecondaryDisplay();
+
+  views::Widget* existing = CreateTestWidget(gfx::Rect(0, 10, 100, 100));
+  ASSERT_EQ(primary_display.id(),
+            screen->GetDisplayNearestWindow(existing->GetNativeWindow()).id());
+
+  views::Widget* moved = CreateTestWidget(gfx::Rect(650, 10, 100, 100));
+  ASSERT_EQ(secondary_display.id(),
+            screen->GetDisplayNearestWindow(moved->GetNativeWindow()).id());
+
+  views::Widget* active = CreateTestWidget(gfx::Rect(650, 10, 100, 100));
+  ASSERT_TRUE(active->IsActive());
+  ASSERT_EQ(secondary_display.id(),
+            screen->GetDisplayNearestWindow(active->GetNativeWindow()).id());
+
+  // Switch to single display.
+  UpdateDisplay("600x500");
+
+  // |active| is still active.
+  ASSERT_TRUE(active->IsActive());
+
+  // |moved| should be put under |existing|.
+  ASSERT_EQ(moved->GetNativeWindow()->parent(),
+            existing->GetNativeWindow()->parent());
+  bool found_existing = false;
+  bool found_moved = false;
+  for (auto* child : moved->GetNativeWindow()->parent()->children()) {
+    if (child == existing->GetNativeWindow())
+      found_existing = true;
+    if (child == moved->GetNativeWindow()) {
+      found_moved = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found_moved && !found_existing);
+}
+
 TEST_F(RootWindowControllerTest, ModalContainer) {
   UpdateDisplay("600x600");
   RootWindowController* controller = Shell::GetPrimaryRootWindowController();
@@ -357,7 +405,7 @@ TEST_F(RootWindowControllerTest, ModalContainer) {
             controller->GetSystemModalLayoutManager(
                 session_modal_widget->GetNativeWindow()));
 
-  Shell::Get()->session_controller()->LockScreenAndFlushForTest();
+  GetSessionControllerClient()->LockScreen();
   EXPECT_TRUE(Shell::Get()->session_controller()->IsScreenLocked());
   EXPECT_EQ(
       GetLayoutManager(controller, kShellWindowId_LockSystemModalContainer),
@@ -382,7 +430,8 @@ TEST_F(RootWindowControllerTest, ModalContainerNotLoggedInLoggedIn) {
   UpdateDisplay("600x600");
 
   // Configure login screen environment.
-  SessionController* session_controller = Shell::Get()->session_controller();
+  SessionControllerImpl* session_controller =
+      Shell::Get()->session_controller();
   ClearLogin();
   EXPECT_EQ(0, session_controller->NumberOfLoggedInUsers());
   EXPECT_FALSE(session_controller->IsActiveUserSessionStarted());
@@ -614,28 +663,53 @@ class DestroyedWindowObserver : public aura::WindowObserver {
 TEST_F(RootWindowControllerTest, DontDeleteWindowsNotOwnedByParent) {
   DestroyedWindowObserver observer1;
   aura::test::TestWindowDelegate delegate1;
-  aura::Window* window1 = new aura::Window(&delegate1);
-  window1->SetType(aura::client::WINDOW_TYPE_CONTROL);
+  std::unique_ptr<aura::Window> window1 =
+      window_factory::NewWindow(&delegate1, aura::client::WINDOW_TYPE_CONTROL);
   window1->set_owned_by_parent(false);
-  observer1.SetWindow(window1);
+  observer1.SetWindow(window1.get());
   window1->Init(ui::LAYER_NOT_DRAWN);
-  aura::client::ParentWindowWithContext(window1, Shell::GetPrimaryRootWindow(),
-                                        gfx::Rect());
+  aura::client::ParentWindowWithContext(
+      window1.get(), Shell::GetPrimaryRootWindow(), gfx::Rect());
 
   DestroyedWindowObserver observer2;
-  aura::Window* window2 = new aura::Window(NULL);
+  std::unique_ptr<aura::Window> window2 = window_factory::NewWindow();
   window2->set_owned_by_parent(false);
-  observer2.SetWindow(window2);
+  observer2.SetWindow(window2.get());
   window2->Init(ui::LAYER_NOT_DRAWN);
-  Shell::GetPrimaryRootWindow()->AddChild(window2);
+  Shell::GetPrimaryRootWindow()->AddChild(window2.get());
 
   Shell::GetPrimaryRootWindowController()->CloseChildWindows();
 
   ASSERT_FALSE(observer1.destroyed());
-  delete window1;
+  window1.reset();
 
   ASSERT_FALSE(observer2.destroyed());
-  delete window2;
+  window2.reset();
+}
+
+// Verify that the context menu gets hidden when entering or exiting tablet
+// mode.
+TEST_F(RootWindowControllerTest, ContextMenuDisappearsInTabletMode) {
+  RootWindowController* controller = Shell::GetPrimaryRootWindowController();
+
+  // Open context menu.
+  ui::test::EventGenerator generator(controller->GetRootWindow());
+  generator.PressRightButton();
+  generator.ReleaseRightButton();
+  EXPECT_TRUE(controller->root_window_menu_model_adapter_);
+
+  // Verify menu closes on entering tablet mode.
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
+  EXPECT_FALSE(controller->root_window_menu_model_adapter_);
+
+  // Open context menu.
+  generator.PressRightButton();
+  generator.ReleaseRightButton();
+  EXPECT_TRUE(controller->root_window_menu_model_adapter_);
+
+  // Verify menu closes on exiting tablet mode.
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(false);
+  EXPECT_FALSE(controller->root_window_menu_model_adapter_);
 }
 
 class VirtualKeyboardRootWindowControllerTest
@@ -648,13 +722,17 @@ class VirtualKeyboardRootWindowControllerTest
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         keyboard::switches::kEnableVirtualKeyboard);
     AshTestBase::SetUp();
-    keyboard::SetTouchKeyboardEnabled(true);
-    Shell::Get()->CreateKeyboard();
+    SetTouchKeyboardEnabled(true);
   }
 
   void TearDown() override {
-    keyboard::SetTouchKeyboardEnabled(false);
+    SetTouchKeyboardEnabled(false);
     AshTestBase::TearDown();
+  }
+
+  void EnsureCaretInWorkArea(const gfx::Rect& occluded_bounds) {
+    keyboard::KeyboardUIController::Get()->EnsureCaretInWorkAreaForTest(
+        occluded_bounds);
   }
 
  private:
@@ -692,178 +770,6 @@ class TargetHitTestEventHandler : public ui::test::TestEventHandler {
   DISALLOW_COPY_AND_ASSIGN(TargetHitTestEventHandler);
 };
 
-// Test for http://crbug.com/297858. Virtual keyboard container should only show
-// on primary root window if no window has touch capability.
-TEST_F(VirtualKeyboardRootWindowControllerTest,
-       VirtualKeyboardOnPrimaryRootWindowDefault) {
-  UpdateDisplay("500x500,500x500");
-
-  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  aura::Window* primary_root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* secondary_root_window = root_windows[0] == primary_root_window
-                                            ? root_windows[1]
-                                            : root_windows[0];
-
-  ASSERT_TRUE(Shell::GetContainer(primary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-  ASSERT_FALSE(Shell::GetContainer(secondary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-}
-
-// Test for http://crbug.com/303429. Virtual keyboard container should show on
-// a display which has touch capability.
-TEST_F(VirtualKeyboardRootWindowControllerTest,
-       VirtualKeyboardOnTouchableDisplayOnly) {
-  // TODO: investigate failure in mash. http://crbug.com/695640.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  UpdateDisplay("500x500,500x500");
-  display::Display secondary_display =
-      Shell::Get()->display_manager()->GetSecondaryDisplay();
-  display::test::DisplayManagerTestApi(Shell::Get()->display_manager())
-      .SetTouchSupport(secondary_display.id(),
-                       display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE);
-
-  // The primary display doesn't have touch capability and the secondary display
-  // does.
-  ASSERT_NE(display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE,
-            display::Screen::GetScreen()->GetPrimaryDisplay().touch_support());
-  ASSERT_EQ(
-      display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE,
-      Shell::Get()->display_manager()->GetSecondaryDisplay().touch_support());
-
-  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  aura::Window* primary_root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* secondary_root_window = root_windows[0] == primary_root_window
-                                            ? root_windows[1]
-                                            : root_windows[0];
-
-  keyboard::KeyboardController::GetInstance()->ShowKeyboard(false);
-  ASSERT_FALSE(Shell::GetContainer(primary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-  ASSERT_TRUE(Shell::GetContainer(secondary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-
-  // Move the focus to the primary display.
-  aura::Window* focusable_window_in_primary_display =
-      CreateTestWindowInShellWithBounds(
-          primary_root_window->GetBoundsInScreen());
-  ASSERT_EQ(primary_root_window,
-            focusable_window_in_primary_display->GetRootWindow());
-  focusable_window_in_primary_display->Focus();
-  ASSERT_TRUE(focusable_window_in_primary_display->HasFocus());
-
-  // Virtual keyboard shows up on the secondary display even if a window in the
-  // primary screen has the focus.
-  keyboard::KeyboardController::GetInstance()->ShowKeyboard(false);
-  EXPECT_FALSE(Shell::GetContainer(primary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-  EXPECT_TRUE(Shell::GetContainer(secondary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-}
-
-// Test for http://crbug.com/303429. If both of displays have touch capability,
-// virtual keyboard follows the input focus.
-TEST_F(VirtualKeyboardRootWindowControllerTest, FollowInputFocus) {
-  // TODO: investigate failure in mash. http://crbug.com/695640.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  UpdateDisplay("500x500,500x500");
-  const int64_t primary_display_id =
-      display::Screen::GetScreen()->GetPrimaryDisplay().id();
-  display::test::DisplayManagerTestApi(Shell::Get()->display_manager())
-      .SetTouchSupport(primary_display_id,
-                       display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE);
-  const int64_t secondary_display_id =
-      Shell::Get()->display_manager()->GetSecondaryDisplay().id();
-  display::test::DisplayManagerTestApi(Shell::Get()->display_manager())
-      .SetTouchSupport(secondary_display_id,
-                       display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE);
-
-  // Both of displays have touch capability.
-  ASSERT_EQ(display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE,
-            display::Screen::GetScreen()->GetPrimaryDisplay().touch_support());
-  ASSERT_EQ(
-      display::Display::TouchSupport::TOUCH_SUPPORT_AVAILABLE,
-      Shell::Get()->display_manager()->GetSecondaryDisplay().touch_support());
-
-  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  aura::Window* primary_root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* secondary_root_window = root_windows[0] == primary_root_window
-                                            ? root_windows[1]
-                                            : root_windows[0];
-  aura::Window* focusable_window_in_primary_display =
-      CreateTestWindowInShellWithBounds(
-          primary_root_window->GetBoundsInScreen());
-  ASSERT_EQ(primary_root_window,
-            focusable_window_in_primary_display->GetRootWindow());
-  aura::Window* focusable_window_in_secondary_display =
-      CreateTestWindowInShellWithBounds(
-          secondary_root_window->GetBoundsInScreen());
-  ASSERT_EQ(secondary_root_window,
-            focusable_window_in_secondary_display->GetRootWindow());
-
-  keyboard::KeyboardController::GetInstance()->ShowKeyboard(false);
-  EXPECT_TRUE(Shell::GetContainer(primary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-  EXPECT_FALSE(Shell::GetContainer(secondary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-
-  // Move the focus to the secondary display.
-  focusable_window_in_secondary_display->Focus();
-  ASSERT_TRUE(focusable_window_in_secondary_display->HasFocus());
-
-  keyboard::KeyboardController::GetInstance()->ShowKeyboard(false);
-  ASSERT_FALSE(Shell::GetContainer(primary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-  ASSERT_TRUE(Shell::GetContainer(secondary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-
-  // Move back focus to the primary display.
-  focusable_window_in_primary_display->Focus();
-  ASSERT_TRUE(focusable_window_in_primary_display->HasFocus());
-
-  keyboard::KeyboardController::GetInstance()->ShowKeyboard(false);
-  EXPECT_TRUE(Shell::GetContainer(primary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-  EXPECT_FALSE(Shell::GetContainer(secondary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-}
-
-// Test for http://crbug.com/303429. Even if both of display don't have touch
-// capability, the virtual keyboard shows up on the specified display.
-TEST_F(VirtualKeyboardRootWindowControllerTest,
-       VirtualKeyboardShowOnSpecifiedDisplay) {
-  // TODO: fails in mash. http://crbug.com/695640.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  UpdateDisplay("500x500,500x500");
-  display::Display secondary_display = GetSecondaryDisplay();
-
-  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
-  aura::Window* primary_root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* secondary_root_window = root_windows[0] == primary_root_window
-                                            ? root_windows[1]
-                                            : root_windows[0];
-
-  ASSERT_TRUE(Shell::GetContainer(primary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-  ASSERT_FALSE(Shell::GetContainer(secondary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-
-  const int64_t secondary_display_id = secondary_display.id();
-  keyboard::KeyboardController::GetInstance()->ShowKeyboardInDisplay(
-      secondary_display_id);
-
-  EXPECT_FALSE(Shell::GetContainer(primary_root_window,
-                                   kShellWindowId_VirtualKeyboardContainer));
-  EXPECT_TRUE(Shell::GetContainer(secondary_root_window,
-                                  kShellWindowId_VirtualKeyboardContainer));
-}
-
 // Test for http://crbug.com/263599. Virtual keyboard should be able to receive
 // events at blocked user session.
 TEST_F(VirtualKeyboardRootWindowControllerTest,
@@ -875,48 +781,35 @@ TEST_F(VirtualKeyboardRootWindowControllerTest,
   keyboard_container->Show();
 
   aura::Window* contents_window =
-      keyboard::KeyboardController::GetInstance()->ui()->GetContentsWindow();
-  contents_window->SetBounds(gfx::Rect());
+      keyboard::KeyboardUIController::Get()->GetKeyboardWindow();
   contents_window->Show();
+  keyboard::KeyboardUIController::Get()->ShowKeyboard(false);
 
   // Make sure no pending mouse events in the queue.
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
+  // TODO(oshima|yhanada): This simply make sure that targeting logic works, but
+  // doesn't mean it'll deliver the event to the target. Fix this to make this
+  // more reliable.
   ui::test::TestEventHandler handler;
   root_window->AddPreTargetHandler(&handler);
 
   ui::test::EventGenerator event_generator(root_window, contents_window);
   event_generator.ClickLeftButton();
-  int expected_mouse_presses = 1;
-  EXPECT_EQ(expected_mouse_presses, handler.num_mouse_events() / 2);
+  EXPECT_EQ(2, handler.num_mouse_events());
 
   for (int block_reason = FIRST_BLOCK_REASON;
        block_reason < NUMBER_OF_BLOCK_REASONS; ++block_reason) {
+    SCOPED_TRACE(base::StringPrintf("Reason: %d", block_reason));
     BlockUserSession(static_cast<UserSessionBlockReason>(block_reason));
+    handler.Reset();
     event_generator.ClickLeftButton();
-    expected_mouse_presses++;
-    EXPECT_EQ(expected_mouse_presses, handler.num_mouse_events() / 2);
+    // Click may generate CAPTURE_CHANGED event so make sure it's more than
+    // 2 (press,release);
+    EXPECT_LE(2, handler.num_mouse_events());
     UnblockUserSession();
   }
   root_window->RemovePreTargetHandler(&handler);
-}
-
-// Test for http://crbug.com/299787. RootWindowController should delete
-// the old container since the keyboard controller creates a new window in
-// GetWindowContainer().
-TEST_F(VirtualKeyboardRootWindowControllerTest,
-       DeleteOldContainerOnVirtualKeyboardInit) {
-  aura::Window* root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* keyboard_container =
-      Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  // Track the keyboard container window.
-  aura::WindowTracker tracker;
-  tracker.Add(keyboard_container);
-  // Reinitialize the keyboard.
-  Shell::Get()->CreateKeyboard();
-  // keyboard_container should no longer be present.
-  EXPECT_FALSE(tracker.Contains(keyboard_container));
 }
 
 // Test for crbug.com/342524. After user login, the work space should restore to
@@ -926,9 +819,8 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, RestoreWorkspaceAfterLogin) {
   aura::Window* keyboard_container =
       Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
   keyboard_container->Show();
-  keyboard::KeyboardController* controller =
-      keyboard::KeyboardController::GetInstance();
-  aura::Window* contents_window = controller->ui()->GetContentsWindow();
+  auto* controller = keyboard::KeyboardUIController::Get();
+  aura::Window* contents_window = controller->GetKeyboardWindow();
   contents_window->SetBounds(
       keyboard::KeyboardBoundsFromRootBounds(root_window->bounds(), 100));
   contents_window->Show();
@@ -936,19 +828,16 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, RestoreWorkspaceAfterLogin) {
   gfx::Rect before =
       display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
 
-  // Notify keyboard bounds changing.
-  controller->NotifyContentsBoundsChanging(keyboard_container->bounds());
-
-  if (!keyboard::IsKeyboardOverscrollEnabled()) {
+  if (!controller->IsKeyboardOverscrollEnabled()) {
     gfx::Rect after =
         display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
     EXPECT_LT(after, before);
   }
 
   // Mock a login user profile change to reinitialize the keyboard.
-  mojom::SessionInfoPtr info = mojom::SessionInfo::New();
-  info->state = session_manager::SessionState::ACTIVE;
-  Shell::Get()->session_controller()->SetSessionInfo(std::move(info));
+  SessionInfo info;
+  info.state = session_manager::SessionState::ACTIVE;
+  Shell::Get()->session_controller()->SetSessionInfo(info);
   EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().work_area(),
             before);
 }
@@ -956,22 +845,18 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, RestoreWorkspaceAfterLogin) {
 // Ensure that system modal dialogs do not block events targeted at the virtual
 // keyboard.
 TEST_F(VirtualKeyboardRootWindowControllerTest, ClickWithActiveModalDialog) {
+  auto* controller = keyboard::KeyboardUIController::Get();
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* keyboard_container =
-      Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  keyboard_container->Show();
+  ASSERT_EQ(root_window, controller->GetRootWindow());
 
-  aura::Window* contents_window =
-      keyboard::KeyboardController::GetInstance()->ui()->GetContentsWindow();
-  contents_window->SetBounds(
-      keyboard::KeyboardBoundsFromRootBounds(root_window->bounds(), 100));
+  controller->ShowKeyboard(false /* locked */);
+  ASSERT_TRUE(keyboard::WaitUntilShown());
 
   ui::test::TestEventHandler handler;
   root_window->AddPreTargetHandler(&handler);
   ui::test::EventGenerator root_window_event_generator(root_window);
-  ui::test::EventGenerator keyboard_event_generator(root_window,
-                                                    contents_window);
+  ui::test::EventGenerator keyboard_event_generator(
+      root_window, controller->GetKeyboardWindow());
 
   views::Widget* modal_widget = CreateModalWidget(gfx::Rect(300, 10, 100, 100));
 
@@ -995,28 +880,22 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, ClickWithActiveModalDialog) {
 // Ensure that the visible area for scrolling the text caret excludes the
 // region occluded by the on-screen keyboard.
 TEST_F(VirtualKeyboardRootWindowControllerTest, EnsureCaretInWorkArea) {
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  keyboard::KeyboardUI* ui = keyboard_controller->ui();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
 
   MockTextInputClient text_input_client;
-  ui::InputMethod* input_method = ui->GetInputMethod();
+  ui::InputMethod* input_method = keyboard_controller->GetInputMethodForTest();
   ASSERT_TRUE(input_method);
   input_method->SetFocusedTextInputClient(&text_input_client);
 
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* keyboard_container =
-      Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  keyboard_container->Show();
 
   const int keyboard_height = 100;
-  aura::Window* contents_window = ui->GetContentsWindow();
+  aura::Window* contents_window = keyboard_controller->GetKeyboardWindow();
   contents_window->SetBounds(keyboard::KeyboardBoundsFromRootBounds(
       root_window->bounds(), keyboard_height));
   contents_window->Show();
 
-  ui->EnsureCaretInWorkArea();
+  EnsureCaretInWorkArea(contents_window->GetBoundsInScreen());
   ASSERT_EQ(root_window->bounds().width(),
             text_input_client.caret_exclude_rect().width());
   ASSERT_EQ(keyboard_height, text_input_client.caret_exclude_rect().height());
@@ -1026,10 +905,6 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, EnsureCaretInWorkArea) {
 
 TEST_F(VirtualKeyboardRootWindowControllerTest,
        EnsureCaretInWorkAreaWithMultipleDisplays) {
-  // TODO: fails in mash. http://crbug.com/695640.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   UpdateDisplay("500x500,600x600");
   const int64_t primary_display_id =
       display::Screen::GetScreen()->GetPrimaryDisplay().id();
@@ -1041,28 +916,22 @@ TEST_F(VirtualKeyboardRootWindowControllerTest,
   aura::Window* primary_root_window = root_windows[0];
   aura::Window* secondary_root_window = root_windows[1];
 
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  keyboard::KeyboardUI* ui = keyboard_controller->ui();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
 
   MockTextInputClient text_input_client;
-  ui::InputMethod* input_method = ui->GetInputMethod();
+  ui::InputMethod* input_method = keyboard_controller->GetInputMethodForTest();
   ASSERT_TRUE(input_method);
   input_method->SetFocusedTextInputClient(&text_input_client);
 
   const int keyboard_height = 100;
   // Check that the keyboard on the primary screen doesn't cover the window on
   // the secondary screen.
-  aura::Window* keyboard_container = Shell::GetContainer(
-      primary_root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  keyboard_container->Show();
-  aura::Window* contents_window = ui->GetContentsWindow();
+  aura::Window* contents_window = keyboard_controller->GetKeyboardWindow();
   contents_window->SetBounds(keyboard::KeyboardBoundsFromRootBounds(
       primary_root_window->bounds(), keyboard_height));
   contents_window->Show();
 
-  ui->EnsureCaretInWorkArea();
+  EnsureCaretInWorkArea(contents_window->GetBoundsInScreen());
   EXPECT_TRUE(primary_root_window->GetBoundsInScreen().Contains(
       text_input_client.caret_exclude_rect()));
   EXPECT_EQ(primary_root_window->GetBoundsInScreen().width(),
@@ -1072,11 +941,11 @@ TEST_F(VirtualKeyboardRootWindowControllerTest,
 
   // Move the keyboard into the secondary display and check that the keyboard
   // doesn't cover the window on the primary screen.
-  keyboard_controller->ShowKeyboardInDisplay(secondary_display_id);
+  keyboard_controller->ShowKeyboardInDisplay(GetSecondaryDisplay());
   contents_window->SetBounds(keyboard::KeyboardBoundsFromRootBounds(
       secondary_root_window->bounds(), keyboard_height));
 
-  ui->EnsureCaretInWorkArea();
+  EnsureCaretInWorkArea(contents_window->GetBoundsInScreen());
   EXPECT_FALSE(primary_root_window->GetBoundsInScreen().Contains(
       text_input_client.caret_exclude_rect()));
   EXPECT_TRUE(secondary_root_window->GetBoundsInScreen().Contains(
@@ -1092,18 +961,12 @@ TEST_F(VirtualKeyboardRootWindowControllerTest,
 // crbug/377180.
 TEST_F(VirtualKeyboardRootWindowControllerTest, ZOrderTest) {
   UpdateDisplay("800x600");
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
-  keyboard::KeyboardUI* ui = keyboard_controller->ui();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
 
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* keyboard_container =
-      Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  keyboard_container->Show();
 
   const int keyboard_height = 200;
-  aura::Window* contents_window = ui->GetContentsWindow();
+  aura::Window* contents_window = keyboard_controller->GetKeyboardWindow();
   gfx::Rect keyboard_bounds = keyboard::KeyboardBoundsFromRootBounds(
       root_window->bounds(), keyboard_height);
   contents_window->SetBounds(keyboard_bounds);
@@ -1173,19 +1036,79 @@ TEST_F(VirtualKeyboardRootWindowControllerTest, ZOrderTest) {
 // orientation. See crbug/417612.
 TEST_F(VirtualKeyboardRootWindowControllerTest, DisplayRotation) {
   UpdateDisplay("800x600");
-  aura::Window* root_window = Shell::GetPrimaryRootWindow();
-  aura::Window* keyboard_container =
-      Shell::GetContainer(root_window, kShellWindowId_VirtualKeyboardContainer);
-  ASSERT_TRUE(keyboard_container);
-  keyboard::KeyboardController* keyboard_controller =
-      keyboard::KeyboardController::GetInstance();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
   keyboard_controller->ShowKeyboard(false);
-  keyboard_controller->ui()->GetContentsWindow()->SetBounds(
-      gfx::Rect(0, 400, 800, 200));
-  EXPECT_EQ("0,400 800x200", keyboard_container->bounds().ToString());
+
+  aura::Window* keyboard_window = keyboard_controller->GetKeyboardWindow();
+
+  keyboard_window->SetBounds(gfx::Rect(0, 400, 800, 200));
+  EXPECT_EQ("0,400 800x200", keyboard_window->bounds().ToString());
 
   UpdateDisplay("600x800");
-  EXPECT_EQ("0,600 600x200", keyboard_container->bounds().ToString());
+  EXPECT_EQ("0,600 600x200", keyboard_window->bounds().ToString());
+}
+
+// Keeps a count of all the events a window receives.
+class EventObserver : public ui::EventHandler {
+ public:
+  EventObserver() = default;
+  ~EventObserver() override = default;
+
+  int GetEventCount(ui::EventType type) { return event_counts_[type]; }
+  void ResetAllEventCounts() { event_counts_.clear(); }
+
+ private:
+  // Overridden from ui::EventHandler:
+  void OnEvent(ui::Event* event) override {
+    ui::EventHandler::OnEvent(event);
+    event_counts_[event->type()]++;
+  }
+
+  std::map<ui::EventType, int> event_counts_;
+
+  DISALLOW_COPY_AND_ASSIGN(EventObserver);
+};
+
+// Tests that tapping/clicking inside the keyboard does not give it focus.
+TEST_F(VirtualKeyboardRootWindowControllerTest, ClickDoesNotFocusKeyboard) {
+  aura::Window* root_window = Shell::GetPrimaryRootWindow();
+
+  // Create a test window in the background with the same size as the screen.
+  aura::test::EventCountDelegate delegate;
+  std::unique_ptr<aura::Window> background_window(
+      CreateTestWindowInShellWithDelegate(&delegate, 0, root_window->bounds()));
+  background_window->Focus();
+  EXPECT_TRUE(background_window->IsVisible());
+  EXPECT_TRUE(background_window->HasFocus());
+
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
+  keyboard_controller->ShowKeyboard(false);
+  ASSERT_TRUE(keyboard::WaitUntilShown());
+  aura::Window* keyboard_window = keyboard_controller->GetKeyboardWindow();
+  EXPECT_FALSE(keyboard_window->HasFocus());
+
+  // Click on the keyboard. Make sure the keyboard receives the event, but does
+  // not get focus.
+  EventObserver observer;
+  keyboard_window->AddPreTargetHandler(&observer);
+
+  ui::test::EventGenerator generator(root_window);
+  generator.MoveMouseTo(keyboard_window->bounds().CenterPoint());
+  generator.ClickLeftButton();
+  EXPECT_TRUE(background_window->HasFocus());
+  EXPECT_FALSE(keyboard_window->HasFocus());
+  EXPECT_EQ("0 0", delegate.GetMouseButtonCountsAndReset());
+  EXPECT_EQ(1, observer.GetEventCount(ui::ET_MOUSE_PRESSED));
+  EXPECT_EQ(1, observer.GetEventCount(ui::ET_MOUSE_RELEASED));
+
+  // Click outside of the keyboard. It should reach the window behind.
+  observer.ResetAllEventCounts();
+  generator.MoveMouseTo(gfx::Point());
+  generator.ClickLeftButton();
+  EXPECT_EQ("1 1", delegate.GetMouseButtonCountsAndReset());
+  EXPECT_EQ(0, observer.GetEventCount(ui::ET_MOUSE_PRESSED));
+  EXPECT_EQ(0, observer.GetEventCount(ui::ET_MOUSE_RELEASED));
+  keyboard_window->RemovePreTargetHandler(&observer);
 }
 
 }  // namespace ash

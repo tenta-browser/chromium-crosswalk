@@ -18,17 +18,15 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
-#include "base/time/time.h"
-#include "base/timer/timer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/updater/extension_downloader.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
+#include "extensions/browser/updater/update_service.h"
 #include "url/gurl.h"
 
-class ExtensionServiceInterface;
 class PrefService;
 class Profile;
 
@@ -36,29 +34,38 @@ namespace extensions {
 
 class ExtensionCache;
 class ExtensionPrefs;
+class ExtensionServiceInterface;
 class ExtensionSet;
+struct ExtensionUpdateCheckParams;
 class ExtensionUpdaterTest;
 
 // A class for doing auto-updates of installed Extensions. Used like this:
 //
-// ExtensionUpdater* updater = new ExtensionUpdater(my_extensions_service,
-//                                                  extension_prefs,
-//                                                  pref_service,
-//                                                  profile,
-//                                                  update_frequency_secs,
-//                                                  downloader_factory);
+// std::unique_ptr<ExtensionUpdater> updater =
+//    std::make_unique<ExtensionUpdater>(my_extensions_service,
+//                                       extension_prefs,
+//                                       pref_service,
+//                                       profile,
+//                                       update_frequency_secs,
+//                                       downloader_factory);
 // updater->Start();
 // ....
 // updater->Stop();
 class ExtensionUpdater : public ExtensionDownloaderDelegate,
                          public content::NotificationObserver {
  public:
-  typedef base::Closure FinishedCallback;
+  typedef base::OnceClosure FinishedCallback;
 
   struct CheckParams {
     // Creates a default CheckParams instance that checks for all extensions.
     CheckParams();
     ~CheckParams();
+
+    CheckParams(const CheckParams& other) = delete;
+    CheckParams& operator=(const CheckParams& other) = delete;
+
+    CheckParams(CheckParams&& other);
+    CheckParams& operator=(CheckParams&& other);
 
     // The set of extensions that should be checked for updates. If empty
     // all extensions will be included in the update check.
@@ -69,14 +76,26 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
     // right away.
     bool install_immediately;
 
-    // An extension update check can be originated by a user or by a timer.
-    // When the value of |fetch_priority| is FOREGROUND, the update request was
-    // initiated by a user.
+    // An extension update check can be originated by a user or by a scheduled
+    // task. When the value of |fetch_priority| is FOREGROUND, the update
+    // request was initiated by a user.
     ManifestFetchData::FetchPriority fetch_priority;
 
     // Callback to call when the update check is complete. Can be null, if
     // you're not interested in when this happens.
     FinishedCallback callback;
+  };
+
+  // A class for use in tests to skip scheduled update checks for extensions
+  // during the lifetime of an instance of it. Only one instance should be alive
+  // at any given time.
+  class ScopedSkipScheduledCheckForTest {
+   public:
+    ScopedSkipScheduledCheckForTest();
+    ~ScopedSkipScheduledCheckForTest();
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(ScopedSkipScheduledCheckForTest);
   };
 
   // Holds a pointer to the passed |service|, using it for querying installed
@@ -105,11 +124,11 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
 
   // Starts an update check for the specified extension soon.
   void CheckExtensionSoon(const std::string& extension_id,
-                          const FinishedCallback& callback);
+                          FinishedCallback callback);
 
   // Starts an update check right now, instead of waiting for the next
   // regularly scheduled check or a pending check from CheckSoon().
-  void CheckNow(const CheckParams& params);
+  void CheckNow(CheckParams params);
 
   // Returns true iff CheckSoon() has been called but the update check
   // hasn't been performed yet.  This is used mostly by tests; calling
@@ -119,8 +138,9 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // Overrides the extension cache with |extension_cache| for testing.
   void SetExtensionCacheForTesting(ExtensionCache* extension_cache);
 
-  // Stop the timer to prevent scheduled updates for testing.
-  void StopTimerForTesting();
+  // Overrides the extension downloader with |downloader| for testing.
+  void SetExtensionDownloaderForTesting(
+      std::unique_ptr<ExtensionDownloader> downloader);
 
  private:
   friend class ExtensionUpdaterTest;
@@ -146,42 +166,42 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
 
   struct InProgressCheck {
     InProgressCheck();
-    InProgressCheck(const InProgressCheck& other);
     ~InProgressCheck();
 
     bool install_immediately;
+    bool awaiting_update_service;
     FinishedCallback callback;
     // The ids of extensions that have in-progress update checks.
-    std::list<std::string> in_progress_ids_;
+    std::set<std::string> in_progress_ids_;
+
+    DISALLOW_COPY_AND_ASSIGN(InProgressCheck);
   };
 
   // Ensure that we have a valid ExtensionDownloader instance referenced by
   // |downloader|.
   void EnsureDownloaderCreated();
 
-  // Computes when to schedule the first update check.
-  base::TimeDelta DetermineFirstCheckDelay();
-
-  // Sets the timer to call TimerFired after roughly |target_delay| from now.
-  // To help spread load evenly on servers, this method adds some random
-  // jitter. It also saves the scheduled time so it can be reloaded on
-  // browser restart.
-  void ScheduleNextCheck(const base::TimeDelta& target_delay);
+  // Schedules a task to call NextCheck after |frequency_| delay, plus
+  // or minus 0 to 20% (to help spread load evenly on servers).
+  void ScheduleNextCheck();
 
   // Add fetch records for extensions that are installed to the downloader,
   // ignoring |pending_ids| so the extension isn't fetched again.
   void AddToDownloader(const ExtensionSet* extensions,
                        const std::list<std::string>& pending_ids,
                        int request_id,
-                       ManifestFetchData::FetchPriority fetch_priority);
+                       ManifestFetchData::FetchPriority fetch_priority,
+                       ExtensionUpdateCheckParams* update_check_params);
 
-  // BaseTimer::ReceiverMethod callback.
-  void TimerFired();
+  // Conduct a check as scheduled by ScheduleNextCheck.
+  void NextCheck();
 
   // Posted by CheckSoon().
   void DoCheckSoon();
 
   // Implementation of ExtensionDownloaderDelegate.
+  void OnExtensionDownloadStageChanged(const std::string& id,
+                                       Stage stage) override;
   void OnExtensionDownloadFailed(const std::string& id,
                                  Error error,
                                  const PingResult& ping,
@@ -216,8 +236,11 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // Send a notification if we're finished updating.
   void NotifyIfFinished(int request_id);
 
+  // |udpate_service_| will execute this function on finish.
+  void OnUpdateServiceFinished(int request_id);
+
   void ExtensionCheckFinished(const std::string& extension_id,
-                              const FinishedCallback& callback);
+                              FinishedCallback callback);
 
   // Whether Start() has been called but not Stop().
   bool alive_;
@@ -232,8 +255,15 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // Fetches the crx files for the extensions that have an available update.
   std::unique_ptr<ExtensionDownloader> downloader_;
 
-  base::OneShotTimer timer_;
-  int frequency_seconds_;
+  // Update service is responsible for updating Webstore extensions.
+  // Note that |UpdateService| is a KeyedService class, which can only be
+  // created through a |KeyedServiceFactory| singleton, thus |update_service_|
+  // will be freed by the same factory singleton before the browser is
+  // shutdown.
+  UpdateService* update_service_;
+
+  bool do_scheduled_checks_;
+  base::TimeDelta frequency_;
   bool will_check_soon_;
 
   ExtensionPrefs* extension_prefs_;
@@ -256,7 +286,7 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
 
   ExtensionCache* extension_cache_;
 
-  base::WeakPtrFactory<ExtensionUpdater> weak_ptr_factory_;
+  base::WeakPtrFactory<ExtensionUpdater> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionUpdater);
 };

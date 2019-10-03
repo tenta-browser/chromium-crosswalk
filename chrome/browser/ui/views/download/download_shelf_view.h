@@ -12,9 +12,9 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/download/download_shelf.h"
-#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/accessible_pane_view.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/mouse_watcher.h"
@@ -24,7 +24,6 @@ class BrowserView;
 class DownloadItemView;
 
 namespace content {
-class DownloadItem;
 class PageNavigator;
 }
 
@@ -39,7 +38,7 @@ class MdTextButton;
 // DownloadShelfView does not hold an infinite number of download views, rather
 // it'll automatically remove views once a certain point is reached.
 class DownloadShelfView : public views::AccessiblePaneView,
-                          public gfx::AnimationDelegate,
+                          public views::AnimationDelegateViews,
                           public DownloadShelf,
                           public views::ButtonListener,
                           public views::LinkListener,
@@ -47,7 +46,6 @@ class DownloadShelfView : public views::AccessiblePaneView,
  public:
   DownloadShelfView(Browser* browser, BrowserView* parent);
   ~DownloadShelfView() override;
-
   // Sent from the DownloadItemView when the user opens an item.
   void OpenedDownload();
 
@@ -61,10 +59,8 @@ class DownloadShelfView : public views::AccessiblePaneView,
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
 
-  // gfx::AnimationDelegate.
+  // views::AnimationDelegateViews.
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
 
@@ -93,8 +89,12 @@ class DownloadShelfView : public views::AccessiblePaneView,
   void ConfigureButtonForTheme(views::MdTextButton* button);
 
  protected:
+  // views::View:
+  void AddedToWidget() override;
+  void OnThemeChanged() override;
+
   // DownloadShelf:
-  void DoAddDownload(content::DownloadItem* download) override;
+  void DoAddDownload(DownloadUIModel::DownloadUIModelPtr download) override;
   void DoOpen() override;
   void DoClose(CloseReason reason) override;
   void DoHide() override;
@@ -104,6 +104,32 @@ class DownloadShelfView : public views::AccessiblePaneView,
   views::View* GetDefaultFocusableChild() override;
 
  private:
+  // Max number of download views we'll contain. Any time a view is added and
+  // we already have this many download views, one is removed.
+  static constexpr size_t kMaxDownloadViews = 15;
+
+  // Padding from left edge and first download view.
+  static constexpr int kStartPadding = 4;
+
+  // Padding from right edge and close button/show downloads link.
+  static constexpr int kEndPadding = 6;
+
+  // Padding between the show all link and close button.
+  static constexpr int kCloseAndLinkPadding = 6;
+
+  // New download item animation speed in milliseconds.
+  static constexpr int kNewItemAnimationDurationMs = 800;
+
+  // Shelf show/hide speed.
+  static constexpr int kShelfAnimationDurationMs = 120;
+
+  // Amount of time to delay if the mouse leaves the shelf by way of entering
+  // another window. This is much larger than the normal delay as opening a
+  // download is most likely going to trigger a new window to appear over the
+  // button. Delay the time so that the user has a chance to quickly close the
+  // other app and return to chrome with the download shelf still open.
+  static constexpr int kNotifyOnExitTimeMS = 5000;
+
   // Adds a View representing a download to this DownloadShelfView.
   // DownloadShelfView takes ownership of the View, and will delete it as
   // necessary.
@@ -117,9 +143,6 @@ class DownloadShelfView : public views::AccessiblePaneView,
 
   // Called on theme change.
   void UpdateColorsFromTheme();
-
-  // views::View:
-  void OnThemeChanged() override;
 
   // Called when the "close shelf" animation ended.
   void Closed();
@@ -145,11 +168,15 @@ class DownloadShelfView : public views::AccessiblePaneView,
   std::vector<DownloadItemView*> download_views_;
 
   // Button for showing all downloads (chrome://downloads).
-  views::MdTextButton* show_all_view_;
+  views::MdTextButton* show_all_view_ = nullptr;
 
   // Button for closing the downloads. This is contained as a child, and
   // deleted by View.
   views::ImageButton* close_button_;
+
+  // Hidden view that will contain status text for immediate output by
+  // screen readers.
+  views::View* accessible_alert_;
 
   // The window this shelf belongs to.
   BrowserView* parent_;

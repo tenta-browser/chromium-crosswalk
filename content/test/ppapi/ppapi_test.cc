@@ -16,11 +16,13 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/test/ppapi_test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "media/base/media_switches.h"
 #include "net/base/filename_util.h"
 #include "ppapi/shared_impl/ppapi_switches.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/audio/cras_audio_handler.h"
+#include "chromeos/dbus/audio/cras_audio_client.h"
 #endif
 
 namespace content {
@@ -57,14 +59,18 @@ void PPAPITestBase::SetUpCommandLine(base::CommandLine* command_line) {
   command_line->AppendSwitchASCII(switches::kJavaScriptFlags, "--expose_gc");
 
   command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+
+  command_line->AppendSwitchASCII(
+      switches::kAutoplayPolicy,
+      switches::autoplay::kNoUserGestureRequiredPolicy);
 }
 
 GURL PPAPITestBase::GetTestFileUrl(const std::string& test_case) {
   base::FilePath test_path;
   {
-    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_setup;
+    base::ScopedAllowBlockingForTesting allow_blocking;
 
-    EXPECT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_path));
+    EXPECT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_path));
     test_path = test_path.Append(FILE_PATH_LITERAL("ppapi"));
     test_path = test_path.Append(FILE_PATH_LITERAL("tests"));
     test_path = test_path.Append(FILE_PATH_LITERAL("test_case.html"));
@@ -129,7 +135,8 @@ OutOfProcessPPAPITest::OutOfProcessPPAPITest() {
 
 void OutOfProcessPPAPITest::SetUp() {
 #if defined(OS_CHROMEOS)
-    chromeos::CrasAudioHandler::InitializeForTesting();
+  chromeos::CrasAudioClient::InitializeFake();
+  chromeos::CrasAudioHandler::InitializeForTesting();
 #endif
   ContentBrowserTest::SetUp();
 }
@@ -137,7 +144,8 @@ void OutOfProcessPPAPITest::SetUp() {
 void OutOfProcessPPAPITest::TearDown() {
   ContentBrowserTest::TearDown();
 #if defined(OS_CHROMEOS)
-    chromeos::CrasAudioHandler::Shutdown();
+  chromeos::CrasAudioHandler::Shutdown();
+  chromeos::CrasAudioClient::Shutdown();
 #endif
 }
 

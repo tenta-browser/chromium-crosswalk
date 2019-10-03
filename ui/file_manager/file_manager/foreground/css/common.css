@@ -82,6 +82,7 @@ html[dir='rtl'] cr-menu.chrome-menu > .menuitem-button.right {
 
 cr-menu.chrome-menu > cr-menu-item[disabled] {
   color: rgba(51, 51, 51, 0.20);
+  pointer-events: none;
 }
 
 cr-menu.chrome-menu > cr-menu-item:not([disabled])[selected],
@@ -126,7 +127,7 @@ cr-menu.chrome-menu > [checked]::before {
   min-width: 5.14em;
   outline: none;
   overflow: hidden;
-  padding: 0.7em 0.57em;
+  padding: 0.6em 0.57em;
   position: relative;
   text-align: center;
   text-transform: uppercase;
@@ -143,13 +144,16 @@ cr-menu.chrome-menu > [checked]::before {
   padding: auto;
 }
 
-.cr-dialog-buttons > button.cr-dialog-ok {
+.cr-dialog-buttons > button.cr-dialog-ok,
+.cr-dialog-buttons > button.cr-dialog-ok:hover {
   background-color: rgb(51, 103, 214);
   color: white;
+  order: 1;
 }
 
 .cr-dialog-buttons > button.cr-dialog-cancel {
   color: rgb(100, 100, 100);
+  order: 0;
 }
 
 .cr-dialog-buttons > button.cr-dialog-cancel:hover {
@@ -193,14 +197,15 @@ html[dir='rtl'] .entry-name {
 }
 
 /* Pop-up dialogs. */
+.cr-dialog-container.shown {
+  background-color: rgba(0, 0, 0, 0.6);
+}
 
 .cr-dialog-container {
-  align-items: center;
   display: flex;
   height: 100%;
-  justify-content: center;
   left: 0;
-  overflow: hidden;
+  overflow: auto;
   position: absolute;
   top: 0;
   transition: opacity 250ms linear;
@@ -218,6 +223,7 @@ html[dir='rtl'] .entry-name {
   cursor: default;
   display: flex;
   flex-direction: column;
+  margin: auto;
   padding: 12px;
   position: relative;
   width: 386px;
@@ -242,7 +248,7 @@ html[dir='rtl'] .entry-name {
  }
 }
 
-.cr-dialog-frame.pulse {
+.cr-dialog-container.pulse {
   animation-duration: 180ms;
   animation-iteration-count: 1;
   animation-name: pulse;

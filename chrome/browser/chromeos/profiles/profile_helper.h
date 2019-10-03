@@ -18,35 +18,12 @@
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browsing_data_remover.h"
 
-class ArcAppTest;
-class SessionControllerClientTest;
+class IndependentOTRProfileManagerTest;
 class Profile;
 
 namespace base {
 class FilePath;
 }
-
-namespace extensions {
-class ExtensionGarbageCollectorChromeOSUnitTest;
-}
-
-namespace arc {
-class ArcAuthServiceTest;
-class ArcCertStoreBridgeTest;
-class ArcSessionManagerTest;
-}
-
-namespace ash {
-class MultiUserWindowManagerChromeOSTest;
-}  // namespace ash
-
-namespace policy {
-class DeviceStatusCollectorTest;
-}  // namespace policy
-
-namespace test {
-class BrowserFinderChromeOSTest;
-}  // namespace test
 
 namespace chromeos {
 
@@ -106,6 +83,14 @@ class ProfileHelper
   // signin Profile.
   static bool IsSigninProfile(const Profile* profile);
 
+  // Returns true if the signin profile has been initialized.
+  static bool IsSigninProfileInitialized();
+
+  // Returns true if the signin profile has force-installed extensions set by
+  // policy. This DCHECKs that the profile is created, its PrefService is
+  // initialized and the associated pref exists.
+  static bool SigninProfileHasLoginScreenExtensions();
+
   // Returns the path used for the lock screen apps profile - profile used
   // for launching platform apps that can display windows on top of the lock
   // screen.
@@ -131,7 +116,7 @@ class ProfileHelper
 
   // Initialize a bunch of services that are tied to a browser profile.
   // TODO(dzhioev): Investigate whether or not this method is needed.
-  void ProfileStartup(Profile* profile, bool process_startup);
+  void ProfileStartup(Profile* profile);
 
   // Returns active user profile dir in a format [u-$hash].
   base::FilePath GetActiveUserProfileDir();
@@ -139,13 +124,13 @@ class ProfileHelper
   // Should called once after UserManager instance has been created.
   void Initialize();
 
-  // Returns hash for active user ID which is used to identify that user profile
-  // on Chrome OS.
-  std::string active_user_id_hash() { return active_user_id_hash_; }
-
   // Clears site data (cookies, history, etc) for signin profile.
   // Callback can be empty. Not thread-safe.
   void ClearSigninProfile(const base::Closure& on_clear_callback);
+
+  // Returns profile of the user associated with |account_id| if it is created
+  // and fully initialized. Otherwise, returns NULL.
+  Profile* GetProfileByAccountId(const AccountId& account_id);
 
   // Returns profile of the |user| if it is created and fully initialized.
   // Otherwise, returns NULL.
@@ -173,28 +158,28 @@ class ProfileHelper
   // Flushes all files of |profile|.
   void FlushProfile(Profile* profile);
 
+  // Associates |user| with profile with the same user_id,
+  // for GetUserByProfile() testing.
+  void SetProfileToUserMappingForTesting(user_manager::User* user);
+
+  // Enables/disables testing GetUserByProfile() by always returning
+  // primary user.
+  static void SetAlwaysReturnPrimaryUserForTesting(bool value);
+
+  // Associates |profile| with |user|, for GetProfileByUser() testing.
+  void SetUserToProfileMappingForTesting(const user_manager::User* user,
+                                         Profile* profile);
+
+  // Removes |account_id| user from |user_to_profile_for_testing_| for testing.
+  void RemoveUserFromListForTesting(const AccountId& account_id);
+
  private:
   // TODO(nkostylev): Create a test API class that will be the only one allowed
   // to access private test methods.
-  friend class CryptohomeAuthenticatorTest;
-  friend class DeviceSettingsTestBase;
-  friend class policy::DeviceStatusCollectorTest;
-  friend class ExistingUserControllerTest;
-  friend class extensions::ExtensionGarbageCollectorChromeOSUnitTest;
   friend class FakeChromeUserManager;
-  friend class KioskTest;
   friend class MockUserManager;
-  friend class MultiProfileUserControllerTest;
-  friend class PrinterDetectorAppSearchEnabledTest;
   friend class ProfileHelperTest;
-  friend class ProfileListChromeOSTest;
-  friend class ash::MultiUserWindowManagerChromeOSTest;
-  friend class arc::ArcSessionManagerTest;
-  friend class arc::ArcAuthServiceTest;
-  friend class arc::ArcCertStoreBridgeTest;
-  friend class ::ArcAppTest;
-  friend class ::SessionControllerClientTest;
-  friend class ::test::BrowserFinderChromeOSTest;
+  friend class ::IndependentOTRProfileManagerTest;
 
   // Called when signin profile is cleared.
   void OnSigninProfileCleared();
@@ -210,25 +195,10 @@ class ProfileHelper
   // user_manager::UserManager::UserSessionStateObserver implementation:
   void ActiveUserHashChanged(const std::string& hash) override;
 
-  // Associates |user| with profile with the same user_id,
-  // for GetUserByProfile() testing.
-  void SetProfileToUserMappingForTesting(user_manager::User* user);
-
   // Enables/disables testing code path in GetUserByProfile() like
   // always return primary user (when always_return_primary_user_for_testing is
   // set).
   static void SetProfileToUserForTestingEnabled(bool enabled);
-
-  // Enables/disables testing GetUserByProfile() by always returning
-  // primary user.
-  static void SetAlwaysReturnPrimaryUserForTesting(bool value);
-
-  // Associates |profile| with |user|, for GetProfileByUser() testing.
-  void SetUserToProfileMappingForTesting(const user_manager::User* user,
-                                         Profile* profile);
-
-  // Removes |account_id| user from |user_to_profile_for_testing_| for testing.
-  void RemoveUserFromListForTesting(const AccountId& account_id);
 
   // Identifies path to active user profile on Chrome OS.
   std::string active_user_id_hash_;

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/profiles/user_manager_view.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
@@ -15,6 +16,7 @@
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/signin_promo.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -45,13 +47,17 @@
 #include "ui/views/win/hwnd_util.h"
 #endif
 
+#if defined(OS_MACOSX)
+#include "chrome/browser/app_controller_mac.h"
+#endif
+
 namespace {
 
 // An open User Manager window. There can only be one open at a time. This
-// is reset to NULL when the window is closed.
-UserManagerView* instance_ = nullptr;
-base::Closure* user_manager_shown_callback_for_testing_ = nullptr;
-bool instance_under_construction_ = false;
+// is reset to nullptr when the window is closed.
+UserManagerView* g_user_manager_view = nullptr;
+base::Closure* g_user_manager_shown_callback_for_testing = nullptr;
+bool g_is_user_manager_view_under_construction = false;
 }  // namespace
 
 // Delegate---------------------------------------------------------------
@@ -63,7 +69,7 @@ UserManagerProfileDialogDelegate::UserManagerProfileDialogDelegate(
     const GURL& url)
     : parent_(parent), web_view_(web_view), email_address_(email_address) {
   AddChildView(web_view_);
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   web_view_->GetWebContents()->SetDelegate(this);
   web_view_->LoadInitialURL(url);
@@ -139,16 +145,20 @@ void UserManager::Show(
   DCHECK(profile_path_to_focus != ProfileManager::GetGuestProfilePath());
 
   ProfileMetrics::LogProfileOpenMethod(ProfileMetrics::OPEN_USER_MANAGER);
-  if (instance_) {
+  if (g_user_manager_view) {
     // If we are showing the User Manager after locking a profile, change the
     // active profile to Guest.
     profiles::SetActiveProfileToGuestIfLocked();
 
+#if defined(OS_MACOSX)
+    app_controller_mac::CreateGuestProfileIfNeeded();
+#endif
+
     // Note the time we started opening the User Manager.
-    instance_->set_user_manager_started_showing(base::Time::Now());
+    g_user_manager_view->set_user_manager_started_showing(base::Time::Now());
 
     // If there's a user manager window open already, just activate it.
-    instance_->GetWidget()->Activate();
+    g_user_manager_view->GetWidget()->Activate();
     return;
   }
 
@@ -156,7 +166,7 @@ void UserManager::Show(
   // Because creating the System profile is asynchronous, it's possible for
   // there to then be multiple pending operations and eventually multiple
   // User Managers.
-  if (instance_under_construction_)
+  if (g_is_user_manager_view_under_construction)
     return;
 
   // Create the system profile, if necessary, and open the user manager
@@ -168,30 +178,40 @@ void UserManager::Show(
       base::Bind(&UserManagerView::OnSystemProfileCreated,
                  base::Passed(base::WrapUnique(user_manager)),
                  base::Owned(new base::AutoReset<bool>(
-                     &instance_under_construction_, true))));
+                     &g_is_user_manager_view_under_construction, true))));
 }
 
 // static
 void UserManager::Hide() {
-  if (instance_)
-    instance_->GetWidget()->Close();
+  if (g_user_manager_view)
+    g_user_manager_view->GetWidget()->Close();
 }
 
 // static
 bool UserManager::IsShowing() {
-  return instance_ ? instance_->GetWidget()->IsActive() : false;
+#if defined(OS_MACOSX)
+  // Widget activation works differently on Mac: the UserManager is a child
+  // widget, so it is not active in the IsActive() sense even when showing
+  // and interactable. Test for IsVisible instead - this is what the Cocoa
+  // UserManager::IsShowing() does as well.
+  return g_user_manager_view ? g_user_manager_view->GetWidget()->IsVisible()
+                             : false;
+#else
+  return g_user_manager_view ? g_user_manager_view->GetWidget()->IsActive()
+                             : false;
+#endif
 }
 
 // static
 void UserManager::OnUserManagerShown() {
-  if (instance_) {
-    instance_->LogTimeToOpen();
-    if (user_manager_shown_callback_for_testing_) {
-      if (!user_manager_shown_callback_for_testing_->is_null())
-        user_manager_shown_callback_for_testing_->Run();
+  if (g_user_manager_view) {
+    g_user_manager_view->LogTimeToOpen();
+    if (g_user_manager_shown_callback_for_testing) {
+      if (!g_user_manager_shown_callback_for_testing->is_null())
+        g_user_manager_shown_callback_for_testing->Run();
 
-      delete user_manager_shown_callback_for_testing_;
-      user_manager_shown_callback_for_testing_ = nullptr;
+      delete g_user_manager_shown_callback_for_testing;
+      g_user_manager_shown_callback_for_testing = nullptr;
     }
   }
 }
@@ -199,69 +219,79 @@ void UserManager::OnUserManagerShown() {
 // static
 void UserManager::AddOnUserManagerShownCallbackForTesting(
     const base::Closure& callback) {
-  DCHECK(!user_manager_shown_callback_for_testing_);
-  user_manager_shown_callback_for_testing_ = new base::Closure(callback);
+  DCHECK(!g_user_manager_shown_callback_for_testing);
+  g_user_manager_shown_callback_for_testing = new base::Closure(callback);
 }
 
 // static
 base::FilePath UserManager::GetSigninProfilePath() {
-  return instance_->GetSigninProfilePath();
+  return g_user_manager_view->GetSigninProfilePath();
 }
 
 // UserManagerProfileDialog
 // -------------------------------------------------------------
 
 // static
-void UserManagerProfileDialog::ShowReauthDialog(
+void UserManagerProfileDialog::ShowUnlockDialog(
+    content::BrowserContext* browser_context,
+    const std::string& email) {
+  ShowUnlockDialogWithProfilePath(browser_context, email, base::FilePath());
+}
+
+// static
+void UserManagerProfileDialog::ShowUnlockDialogWithProfilePath(
     content::BrowserContext* browser_context,
     const std::string& email,
-    signin_metrics::Reason reason) {
+    const base::FilePath& profile_path) {
   // This method should only be called if the user manager is already showing.
   if (!UserManager::IsShowing())
     return;
   // Load the re-auth URL, prepopulated with the user's email address.
   // Add the index of the profile to the URL so that the inline login page
   // knows which profile to load and update the credentials.
-  GURL url = signin::GetReauthURLWithEmailForDialog(
-      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason, email);
-  instance_->ShowDialog(browser_context, email, url);
+  GURL url = signin::GetEmbeddedReauthURLWithEmail(
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER,
+      signin_metrics::Reason::REASON_UNLOCK, email);
+  g_user_manager_view->SetSigninProfilePath(profile_path);
+  g_user_manager_view->ShowDialog(browser_context, email, url);
 }
 
 // static
-void UserManagerProfileDialog::ShowSigninDialog(
+void UserManagerProfileDialog::ShowForceSigninDialog(
     content::BrowserContext* browser_context,
-    const base::FilePath& profile_path,
-    signin_metrics::Reason reason) {
+    const base::FilePath& profile_path) {
   if (!UserManager::IsShowing())
     return;
-  DCHECK(reason ==
-             signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT ||
-         reason == signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT);
-  instance_->SetSigninProfilePath(profile_path);
-  GURL url = signin::GetPromoURLForDialog(
-      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason, true);
-  instance_->ShowDialog(browser_context, std::string(), url);
+  g_user_manager_view->SetSigninProfilePath(profile_path);
+  GURL url = signin::GetEmbeddedPromoURL(
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER,
+      signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT, true);
+  g_user_manager_view->ShowDialog(browser_context, std::string(), url);
 }
 
 void UserManagerProfileDialog::ShowDialogAndDisplayErrorMessage(
     content::BrowserContext* browser_context) {
   if (!UserManager::IsShowing())
     return;
-  instance_->ShowDialog(browser_context, std::string(),
-                        GURL(chrome::kChromeUISigninErrorURL));
+  // The error occurred before sign in happened, reset |signin_profile_path_|
+  // so that the error page will show the error message that is assoicated with
+  // the system profile.
+  g_user_manager_view->SetSigninProfilePath(base::FilePath());
+  g_user_manager_view->ShowDialog(browser_context, std::string(),
+                                  GURL(chrome::kChromeUISigninErrorURL));
 }
 
 // static
 void UserManagerProfileDialog::DisplayErrorMessage() {
   // This method should only be called if the user manager is already showing.
-  DCHECK(instance_);
-  instance_->DisplayErrorMessage();
+  DCHECK(g_user_manager_view);
+  g_user_manager_view->DisplayErrorMessage();
 }
 
 // static
 void UserManagerProfileDialog::HideDialog() {
-  if (instance_ && instance_->GetWidget()->IsVisible())
-    instance_->HideDialog();
+  if (g_user_manager_view && g_user_manager_view->GetWidget()->IsVisible())
+    g_user_manager_view->HideDialog();
 }
 
 // UserManagerView -------------------------------------------------------------
@@ -289,9 +319,14 @@ void UserManagerView::OnSystemProfileCreated(
   // active profile to Guest.
   profiles::SetActiveProfileToGuestIfLocked();
 
-  DCHECK(!instance_);
-  instance_ = instance.release();  // |instance_| takes over ownership.
-  instance_->Init(system_profile, GURL(url));
+#if defined(OS_MACOSX)
+  app_controller_mac::CreateGuestProfileIfNeeded();
+#endif
+
+  DCHECK(!g_user_manager_view);
+  g_user_manager_view =
+      instance.release();  // |g_user_manager_view| takes over ownership.
+  g_user_manager_view->Init(system_profile, GURL(url));
 }
 
 void UserManagerView::ShowDialog(content::BrowserContext* browser_context,
@@ -302,7 +337,7 @@ void UserManagerView::ShowDialog(content::BrowserContext* browser_context,
   // WebView's lifetime is managed by the delegate.
   delegate_ = new UserManagerProfileDialogDelegate(
       this, new views::WebView(browser_context), email, url);
-  gfx::NativeView parent = instance_->GetWidget()->GetNativeView();
+  gfx::NativeView parent = g_user_manager_view->GetWidget()->GetNativeView();
   views::DialogDelegate::CreateDialogWidget(delegate_, nullptr, parent);
   delegate_->GetWidget()->Show();
 }
@@ -322,7 +357,7 @@ void UserManagerView::Init(Profile* system_profile, const GURL& url) {
   web_view_ = new views::WebView(system_profile);
   web_view_->set_allow_accelerators(true);
   AddChildView(web_view_);
-  SetLayoutManager(new views::FillLayout);
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   AddAccelerator(ui::Accelerator(ui::VKEY_W, ui::EF_CONTROL_DOWN));
   AddAccelerator(ui::Accelerator(ui::VKEY_F4, ui::EF_ALT_DOWN));
 
@@ -371,7 +406,7 @@ void UserManagerView::Init(Profile* system_profile, const GURL& url) {
       ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
 
 #if defined(OS_WIN)
-  // Set the app id for the task manager to the app id of its parent
+  // Set the app id for the user manager to the app id of its parent.
   ui::win::SetAppIdForWindow(
       shell_integration::win::GetChromiumModelIdForProfile(
           system_profile->GetPath()),
@@ -434,8 +469,8 @@ void UserManagerView::WindowClosing() {
   // Now that the window is closed, we can allow a new one to be opened.
   // (WindowClosing comes in asynchronously from the call to Close() and we
   // may have already opened a new instance).
-  if (instance_ == this)
-    instance_ = NULL;
+  if (g_user_manager_view == this)
+    g_user_manager_view = nullptr;
 }
 
 bool UserManagerView::ShouldUseCustomFrame() const {

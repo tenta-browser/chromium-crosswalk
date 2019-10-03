@@ -8,11 +8,11 @@
 #include <memory>
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/values.h"
 #include "chromeos/audio/audio_devices_pref_handler.h"
-#include "chromeos/chromeos_export.h"
 #include "components/prefs/pref_change_registrar.h"
 
 class PrefRegistrySimple;
@@ -22,7 +22,7 @@ namespace chromeos {
 
 // Class which implements AudioDevicesPrefHandler interface and register audio
 // preferences as well.
-class CHROMEOS_EXPORT AudioDevicesPrefHandlerImpl
+class COMPONENT_EXPORT(CHROMEOS_AUDIO) AudioDevicesPrefHandlerImpl
     : public AudioDevicesPrefHandler {
  public:
   // |local_state| is the device-wide preference service.
@@ -107,7 +107,7 @@ class CHROMEOS_EXPORT AudioDevicesPrefHandlerImpl
   PrefService* local_state_;  // not owned
 
   PrefChangeRegistrar pref_change_registrar_;
-  base::ObserverList<AudioPrefObserver> observers_;
+  base::ObserverList<AudioPrefObserver>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioDevicesPrefHandlerImpl);
 };

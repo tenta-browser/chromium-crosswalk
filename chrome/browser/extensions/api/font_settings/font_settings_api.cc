@@ -15,8 +15,6 @@
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -38,6 +36,10 @@
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/error_utils.h"
+
+#if defined(OS_WIN)
+#include "ui/gfx/win/direct_write.h"
+#endif  // defined(OS_WIN)
 
 namespace extensions {
 
@@ -79,12 +81,25 @@ std::string GetFontNamePrefPath(fonts::GenericFamily generic_family_enum,
   return result;
 }
 
+void MaybeUnlocalizeFontName(std::string* font_name) {
+#if defined(OS_WIN)
+  // Try to get the 'us-en' font name. If it is failing, use the first name
+  // available.
+  base::Optional<std::string> localized_font_name =
+      gfx::win::RetrieveLocalizedFontName(*font_name, "us-en");
+  if (!localized_font_name)
+    localized_font_name = gfx::win::RetrieveLocalizedFontName(*font_name, "");
+
+  if (localized_font_name)
+    *font_name = std::move(localized_font_name.value());
+#endif  // defined(OS_WIN)
+}
+
 }  // namespace
 
 FontSettingsEventRouter::FontSettingsEventRouter(Profile* profile)
     : profile_(profile) {
   TRACE_EVENT0("browser,startup", "FontSettingsEventRouter::ctor")
-  SCOPED_UMA_HISTOGRAM_TIMER("Extensions.FontSettingsEventRouterCtorTime");
 
   registrar_.Init(profile_->GetPrefs());
 
@@ -145,7 +160,6 @@ void FontSettingsEventRouter::OnFontNamePrefChanged(
     NOTREACHED();
     return;
   }
-  font_name = settings_utils::MaybeGetLocalizedFontName(font_name);
 
   base::ListValue args;
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
@@ -231,7 +245,11 @@ ExtensionFunction::ResponseAction FontSettingsGetFontFunction::Run() {
   std::string font_name;
   EXTENSION_FUNCTION_VALIDATE(
       pref && pref->GetValue()->GetAsString(&font_name));
-  font_name = settings_utils::MaybeGetLocalizedFontName(font_name);
+
+  // Legacy code was using the localized font name for fontId. These values may
+  // have been stored in prefs. For backward compatibility, we are converting
+  // the font name to the unlocalized name.
+  MaybeUnlocalizeFontName(&font_name);
 
   // We don't support incognito-specific font prefs, so don't consider them when
   // getting level of control.
@@ -263,7 +281,7 @@ ExtensionFunction::ResponseAction FontSettingsSetFontFunction::Run() {
 
   PreferenceAPI::Get(profile)->SetExtensionControlledPref(
       extension_id(), pref_path, kExtensionPrefsScopeRegular,
-      new base::Value(params->details.font_id));
+      base::Value(params->details.font_id));
   return RespondNow(NoArguments());
 }
 
@@ -282,8 +300,7 @@ void FontSettingsGetFontListFunction::FontListHasLoaded(
 bool FontSettingsGetFontListFunction::CopyFontsToResult(
     base::ListValue* fonts) {
   std::unique_ptr<base::ListValue> result(new base::ListValue());
-  for (base::ListValue::iterator it = fonts->begin();
-       it != fonts->end(); ++it) {
+  for (auto it = fonts->begin(); it != fonts->end(); ++it) {
     base::ListValue* font_list_value;
     if (!it->GetAsList(&font_list_value)) {
       NOTREACHED();
@@ -304,9 +321,9 @@ bool FontSettingsGetFontListFunction::CopyFontsToResult(
 
     std::unique_ptr<base::DictionaryValue> font_name(
         new base::DictionaryValue());
-    font_name->Set(kFontIdKey, base::MakeUnique<base::Value>(name));
+    font_name->Set(kFontIdKey, std::make_unique<base::Value>(name));
     font_name->Set(kDisplayNameKey,
-                   base::MakeUnique<base::Value>(localized_name));
+                   std::make_unique<base::Value>(localized_name));
     result->Append(std::move(font_name));
   }
 
@@ -357,7 +374,7 @@ ExtensionFunction::ResponseAction SetFontPrefExtensionFunction::Run() {
 
   PreferenceAPI::Get(profile)->SetExtensionControlledPref(
       extension_id(), GetPrefName(), kExtensionPrefsScopeRegular,
-      value->DeepCopy());
+      value->Clone());
   return RespondNow(NoArguments());
 }
 

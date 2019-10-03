@@ -10,20 +10,23 @@
 
 namespace web {
 
-class NavigationItem;
+class NavigationContextImpl;
+class NavigationItemImpl;
 class NavigationManager;
+class NavigationManagerImpl;
 
-// Returns transient, committed or pending navigation item with given
-// |unique_id| or null if item is not found. Item's unique id is retrieved via
-// GetUniqueID method.
-NavigationItem* GetItemWithUniqueID(NavigationManager* navigation_manager,
-                                    int unique_id);
+// Returns transient, committed or pending navigation item for the given
+// navigation context or null if item is not found. Item's unique id is
+// retrieved via GetUniqueID method if |context| is null.
+NavigationItemImpl* GetItemWithUniqueID(
+    NavigationManagerImpl* navigation_manager,
+    NavigationContextImpl* context);
 
 // Returns committed navigation item with given |unique_id| or null if item
 // is not found or it is pending or transient. Item's unique id is retrieved
 // via GetUniqueID method.
-NavigationItem* GetCommittedItemWithUniqueID(
-    NavigationManager* navigation_manager,
+NavigationItemImpl* GetCommittedItemWithUniqueID(
+    NavigationManagerImpl* navigation_manager,
     int unique_id);
 
 // Returns committed navigation item index with given |unique_id| or -1 if item

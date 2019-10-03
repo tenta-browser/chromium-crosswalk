@@ -14,13 +14,13 @@
 #include "base/strings/string16.h"
 #include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
+#include "testing/gmock/include/gmock/gmock.h"
 
 namespace autofill {
 class AutofillEntry;
 class AutofillKey;
 class AutofillProfile;
 class AutofillType;
-class AutofillWebDataService;
 class CreditCard;
 class PersonalDataManager;
 }  // namespace autofill
@@ -33,10 +33,6 @@ enum ProfileType {
   PROFILE_FRASIER,
   PROFILE_NULL
 };
-
-// Used to access the web data service within a particular sync profile.
-scoped_refptr<autofill::AutofillWebDataService> GetWebDataService(
-    int index) WARN_UNUSED_RESULT;
 
 // Used to access the personal data manager within a particular sync profile.
 autofill::PersonalDataManager* GetPersonalDataManager(
@@ -91,10 +87,10 @@ std::vector<autofill::AutofillProfile*> GetAllAutoFillProfiles(int profile)
 
 // Returns the number of autofill profiles contained by sync profile
 // |profile|.
-int GetProfileCount(int profile);
+size_t GetProfileCount(int profile);
 
 // Returns the number of autofill keys contained by sync profile |profile|.
-int GetKeyCount(int profile);
+size_t GetKeyCount(int profile);
 
 // Compares the Autofill profiles in the PersonalDataManagers of sync profiles
 // |profile_a| and |profile_b|. Returns true if they match.
@@ -140,6 +136,16 @@ class AutofillProfileChecker : public StatusChangeChecker,
  private:
   const int profile_a_;
   const int profile_b_;
+};
+
+class PersonalDataLoadedObserverMock
+    : public autofill::PersonalDataManagerObserver {
+ public:
+  PersonalDataLoadedObserverMock();
+  ~PersonalDataLoadedObserverMock() override;
+
+  MOCK_METHOD0(OnPersonalDataChanged, void());
+  MOCK_METHOD0(OnPersonalDataFinishedProfileTasks, void());
 };
 
 #endif  // CHROME_BROWSER_SYNC_TEST_INTEGRATION_AUTOFILL_HELPER_H_

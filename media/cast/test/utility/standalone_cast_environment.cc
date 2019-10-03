@@ -13,11 +13,7 @@ namespace media {
 namespace cast {
 
 StandaloneCastEnvironment::StandaloneCastEnvironment()
-    : CastEnvironment(
-          base::WrapUnique<base::TickClock>(new base::DefaultTickClock()),
-          NULL,
-          NULL,
-          NULL),
+    : CastEnvironment(base::DefaultTickClock::GetInstance(), NULL, NULL, NULL),
       main_thread_("StandaloneCastEnvironment Main"),
       audio_thread_("StandaloneCastEnvironment Audio"),
       video_thread_("StandaloneCastEnvironment Video") {
@@ -42,8 +38,7 @@ StandaloneCastEnvironment::~StandaloneCastEnvironment() {
 void StandaloneCastEnvironment::Shutdown() {
   CHECK(CalledOnValidThread());
 
-  base::ThreadRestrictions::ScopedAllowIO
-      because_i_brought_you_into_this_world_and_i_am_gonna_take_you_out;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   main_thread_.Stop();
   audio_thread_.Stop();
   video_thread_.Stop();

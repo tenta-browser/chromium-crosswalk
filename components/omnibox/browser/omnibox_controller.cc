@@ -4,10 +4,12 @@
 
 #include "components/omnibox/browser/omnibox_controller.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
+#include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "components/omnibox/browser/omnibox_edit_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
@@ -22,8 +24,7 @@ OmniboxController::OmniboxController(OmniboxEditModel* omnibox_edit_model,
       autocomplete_controller_(new AutocompleteController(
           client_->CreateAutocompleteProviderClient(),
           this,
-          AutocompleteClassifier::DefaultOmniboxProviders())),
-      weak_ptr_factory_(this) {}
+          AutocompleteClassifier::DefaultOmniboxProviders())) {}
 
 OmniboxController::~OmniboxController() {
 }
@@ -32,12 +33,21 @@ void OmniboxController::StartAutocomplete(
     const AutocompleteInput& input) const {
   ClearPopupKeywordMode();
 
+  if (client_->GetOmniboxControllerEmitter()) {
+    client_->GetOmniboxControllerEmitter()->NotifyOmniboxQuery(
+        autocomplete_controller_.get(), input.text());
+  }
+
   // We don't explicitly clear OmniboxPopupModel::manually_selected_match, as
   // Start ends up invoking OmniboxPopupModel::OnResultChanged which clears it.
   autocomplete_controller_->Start(input);
 }
 
 void OmniboxController::OnResultChanged(bool default_match_changed) {
+  if (client_->GetOmniboxControllerEmitter())
+    client_->GetOmniboxControllerEmitter()->NotifyOmniboxResultChanged(
+        default_match_changed, autocomplete_controller_.get());
+
   const bool was_open = popup_ && popup_->IsOpen();
   if (default_match_changed) {
     // The default match has changed, we need to let the OmniboxEditModel know
@@ -65,9 +75,10 @@ void OmniboxController::OnResultChanged(bool default_match_changed) {
 
   // Note: The client outlives |this|, so bind a weak pointer to the callback
   // passed in to eliminate the potential for crashes on shutdown.
-  client_->OnResultChanged(result(), default_match_changed,
-                           base::Bind(&OmniboxController::SetAnswerBitmap,
-                                      weak_ptr_factory_.GetWeakPtr()));
+  client_->OnResultChanged(
+      result(), default_match_changed,
+      base::BindRepeating(&OmniboxController::SetRichSuggestionBitmap,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
 void OmniboxController::InvalidateCurrentMatch() {
@@ -75,11 +86,14 @@ void OmniboxController::InvalidateCurrentMatch() {
 }
 
 void OmniboxController::ClearPopupKeywordMode() const {
-  if (popup_->IsOpen() &&
-      popup_->selected_line_state() == OmniboxPopupModel::KEYWORD)
+  // |popup_| can be nullptr in tests.
+  if (popup_ && popup_->IsOpen() &&
+      popup_->selected_line_state() == OmniboxPopupModel::KEYWORD) {
     popup_->SetSelectedLineState(OmniboxPopupModel::NORMAL);
+  }
 }
 
-void OmniboxController::SetAnswerBitmap(const SkBitmap& bitmap) {
-  popup_->SetAnswerBitmap(bitmap);
+void OmniboxController::SetRichSuggestionBitmap(int result_index,
+                                                const SkBitmap& bitmap) {
+  popup_->SetRichSuggestionBitmap(result_index, bitmap);
 }

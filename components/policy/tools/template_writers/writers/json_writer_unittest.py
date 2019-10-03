@@ -2,9 +2,7 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
 '''Unit tests for writers.json_writer'''
-
 
 import os
 import sys
@@ -15,8 +13,7 @@ import unittest
 
 from writers import writer_unittest_common
 
-
-TEMPLATE_HEADER="""\
+TEMPLATE_HEADER = """\
 // Policy template for Linux.
 // Uncomment the policies you wish to activate and change their values to
 // something useful for your case. The provided values are for reference only
@@ -24,7 +21,7 @@ TEMPLATE_HEADER="""\
 {
 """
 
-TEMPLATE_HEADER_WITH_VERSION="""\
+TEMPLATE_HEADER_WITH_VERSION = """\
 // chromium version: 39.0.0.0
 // Policy template for Linux.
 // Uncomment the policies you wish to activate and change their values to
@@ -33,10 +30,16 @@ TEMPLATE_HEADER_WITH_VERSION="""\
 {
 """
 
-
-HEADER_DELIMETER="""\
+HEADER_DELIMETER = """\
   //-------------------------------------------------------------------------
 """
+
+MESSAGES = '''
+  {
+    'doc_schema_description_link': {
+      'text': 'See $6'
+    },
+  }'''
 
 
 class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
@@ -52,15 +55,14 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     Raises:
       AssertionError: if the two strings are not equivalent.
     '''
-    self.assertEquals(
-        output.strip(),
-        expected_output.strip())
+    self.assertEquals(output.strip(), expected_output.strip())
 
   def testEmpty(self):
     # Test the handling of an empty policy list.
     policy_json = '''
         {
           "policy_definitions": [],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
@@ -73,11 +75,14 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     policy_json = '''
         {
           "policy_definitions": [],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(
-        policy_json, {'_chromium': '1', 'version':'39.0.0.0'}, 'json')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'version': '39.0.0.0'
+    }, 'json')
     expected_output = TEMPLATE_HEADER_WITH_VERSION + '}'
     self.CompareOutputs(output, expected_output)
 
@@ -95,14 +100,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": True
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_google_chrome' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_google_chrome': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example Main Policy\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example Main Policy\n' + HEADER_DELIMETER +
         '  // Example Main Policy\n\n'
         '  //"MainPolicy": true\n\n'
         '}')
@@ -126,17 +130,17 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": True
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_google_chrome' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_google_chrome': '1'}, 'json')
     expected_output = (
         TEMPLATE_HEADER +
         '  // Note: this policy is supported only in recommended mode.\n' +
         '  // The JSON file should be placed in' +
         ' /etc/opt/chrome/policies/recommended.\n' +
-        '  // Example Main Policy\n' +
-        HEADER_DELIMETER +
+        '  // Example Main Policy\n' + HEADER_DELIMETER +
         '  // Example Main Policy\n\n'
         '  //"MainPolicy": true\n\n'
         '}')
@@ -156,14 +160,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": "hello, world!"
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example String Policy\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example String Policy\n' + HEADER_DELIMETER +
         '  // Example String Policy\n\n'
         '  //"StringPolicy": "hello, world!"\n\n'
         '}')
@@ -183,14 +186,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": 15
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example Int Policy\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example Int Policy\n' + HEADER_DELIMETER +
         '  // Example Int Policy\n\n'
         '  //"IntPolicy": 15\n\n'
         '}')
@@ -214,14 +216,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": 1
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
     output = self.GetOutput(policy_json, {'_google_chrome': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example Int Enum\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example Int Enum\n' + HEADER_DELIMETER +
         '  // Example Int Enum\n\n'
         '  //"EnumPolicy": 1\n\n'
         '}')
@@ -247,14 +248,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": "one"
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
     output = self.GetOutput(policy_json, {'_google_chrome': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example String Enum\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example String Enum\n' + HEADER_DELIMETER +
         '  // Example String Enum\n\n'
         '  //"EnumPolicy": "one"\n\n'
         '}')
@@ -274,14 +274,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": ["foo", "bar"]
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example List\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example List\n' + HEADER_DELIMETER +
         '  // Example List\n\n'
         '  //"ListPolicy": ["foo", "bar"]\n\n'
         '}')
@@ -307,14 +306,13 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": ["one", "two"]
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example List\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Example List\n' + HEADER_DELIMETER +
         '  // Example List\n\n'
         '  //"ListPolicy": ["one", "two"]\n\n'
         '}')
@@ -323,14 +321,14 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
   def testDictionaryPolicy(self):
     # Tests a policy group with a single policy of type 'dict'.
     example = {
-      'bool': True,
-      'dict': {
-        'a': 1,
-        'b': 2,
-      },
-      'int': 10,
-      'list': [1, 2, 3],
-      'string': 'abc',
+        'bool': True,
+        'dict': {
+            'a': 1,
+            'b': 2,
+        },
+        'int': 10,
+        'list': [1, 2, 3],
+        'string': 'abc',
     }
     policy_json = '''
         {
@@ -344,15 +342,16 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": ''' + str(example) + '''
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
-          "messages": {},
-        }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+          "messages": %s,
+        }''' % MESSAGES
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example Dictionary Policy\n' +
-        HEADER_DELIMETER +
-        '  // Example Dictionary Policy\n\n'
+        TEMPLATE_HEADER + '  // Example Dictionary Policy\n' + HEADER_DELIMETER
+        + '  // Example Dictionary Policy See '
+        'https://www.chromium.org/administrators\n'
+        '  // /policy-list-3#DictionaryPolicy\n\n'
         '  //"DictionaryPolicy": {"bool": true, "dict": {"a": 1, '
         '"b": 2}, "int": 10, "list": [1, 2, 3], "string": "abc"}\n\n'
         '}')
@@ -361,8 +360,8 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
   def testExternalPolicy(self):
     # Tests a policy group with a single policy of type 'external'.
     example = {
-      "url": "https://example.com/avatar.jpg",
-      "hash": "deadbeef",
+        "url": "https://example.com/avatar.jpg",
+        "hash": "deadbeef",
     }
     policy_json = '''
         {
@@ -376,15 +375,16 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": %s
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
-          "messages": {},
-        }''' % str(example)
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+          "messages": %s,
+        }''' % (str(example), MESSAGES)
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Example External Policy\n' +
-        HEADER_DELIMETER +
-        '  // Example External Policy\n\n'
+        TEMPLATE_HEADER + '  // Example External Policy\n' + HEADER_DELIMETER +
+        '  // Example External Policy See '
+        'https://www.chromium.org/administrators/policy-\n'
+        '  // list-3#ExternalPolicy\n\n'
         '  //"ExternalPolicy": {"hash": "deadbeef", "url": "https://example.com/avatar.jpg"}\n\n'
         '}')
     self.CompareOutputs(output, expected_output)
@@ -404,10 +404,11 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": ["a"]
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = TEMPLATE_HEADER + '}'
     self.CompareOutputs(output, expected_output)
 
@@ -440,19 +441,16 @@ class JsonWriterUnittest(writer_unittest_common.WriterUnittestCommon):
               "example_value": "c"
             },
           ],
+          "policy_atomic_group_definitions": [],
           "placeholders": [],
           "messages": {},
         }'''
-    output = self.GetOutput(policy_json, {'_chromium' : '1'}, 'json')
+    output = self.GetOutput(policy_json, {'_chromium': '1'}, 'json')
     expected_output = (
-        TEMPLATE_HEADER +
-        '  // Policy One\n' +
-        HEADER_DELIMETER +
+        TEMPLATE_HEADER + '  // Policy One\n' + HEADER_DELIMETER +
         '  // Policy One\n\n'
         '  //"Policy1": ["a", "b"],\n\n'
-        '  // Policy Two\n' +
-        HEADER_DELIMETER +
-        '  // Policy Two\n\n'
+        '  // Policy Two\n' + HEADER_DELIMETER + '  // Policy Two\n\n'
         '  //"Policy2": "c"\n\n'
         '}')
     self.CompareOutputs(output, expected_output)

@@ -14,27 +14,38 @@
 #include "chrome/test/base/chrome_render_view_test.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_test_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebFrameContentDumper.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/web/web_frame_content_dumper.h"
+#include "third_party/blink/public/web/web_view.h"
 
 using testing::_;
 using testing::DeleteArg;
 
 namespace {
 
-constexpr char kScriptHtml[] =
-    "<html>"
-    "<head>"
-    "<script src='data:foo'></script>"
-    "</head>"
-    "<body>"
-    "</body>"
-    "</html>";
+constexpr char kScriptHtml[] = R"HTML(
+  <html>
+  <head>
+    <script src='data:foo'></script>
+  </head>
+  <body></body>
+  </html>;
+)HTML";
+
+constexpr char kScriptWithSrcHtml[] = R"HTML(
+  <html>
+  <head>
+    <script src="http://www.example.com/script.js"></script>
+  </head>
+  <body></body>
+  </html>
+)HTML";
 
 class MockContentSettingsObserver : public ContentSettingsObserver {
  public:
@@ -63,7 +74,7 @@ class MockContentSettingsObserver : public ContentSettingsObserver {
 MockContentSettingsObserver::MockContentSettingsObserver(
     content::RenderFrame* render_frame,
     service_manager::BinderRegistry* registry)
-    : ContentSettingsObserver(render_frame, NULL, false, registry),
+    : ContentSettingsObserver(render_frame, false, registry),
       image_url_("http://www.foo.com/image.jpg"),
       image_origin_("http://www.foo.com") {}
 
@@ -96,8 +107,8 @@ class CommitTimeConditionChecker : public content::RenderFrameObserver {
  protected:
   // RenderFrameObserver:
   void OnDestruct() override {}
-  void DidCommitProvisionalLoad(bool is_new_navigation,
-                                bool is_same_document_navigation) override {
+  void DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                ui::PageTransition transition) override {
     EXPECT_EQ(expectation_, predicate_.Run());
   }
 
@@ -110,7 +121,21 @@ class CommitTimeConditionChecker : public content::RenderFrameObserver {
 
 }  // namespace
 
-using ContentSettingsObserverBrowserTest = ChromeRenderViewTest;
+class ContentSettingsObserverBrowserTest : public ChromeRenderViewTest {
+  void SetUp() override {
+    ChromeRenderViewTest::SetUp();
+
+    // Set up a fake url loader factory to ensure that script loader can create
+    // a WebURLLoader.
+    CreateFakeWebURLLoaderFactory();
+
+    // Unbind the ContentSettingsRenderer interface that would be registered by
+    // the ContentSettingsObserver created when the render frame is created.
+    view_->GetMainRenderFrame()
+        ->GetAssociatedInterfaceRegistry()
+        ->RemoveInterface(chrome::mojom::ContentSettingsRenderer::Name_);
+  }
+};
 
 TEST_F(ContentSettingsObserverBrowserTest, DidBlockContentType) {
   MockContentSettingsObserver observer(view_->GetMainRenderFrame(),
@@ -125,10 +150,9 @@ TEST_F(ContentSettingsObserverBrowserTest, DidBlockContentType) {
 }
 
 // Tests that multiple invokations of AllowDOMStorage result in a single IPC.
-// Fails due to http://crbug.com/104300
-TEST_F(ContentSettingsObserverBrowserTest, DISABLED_AllowDOMStorage) {
+TEST_F(ContentSettingsObserverBrowserTest, AllowDOMStorage) {
   // Load some HTML, so we have a valid security origin.
-  LoadHTML("<html></html>");
+  LoadHTMLWithUrlOverride("<html></html>", "https://example.com/");
   MockContentSettingsObserver observer(view_->GetMainRenderFrame(),
                                        registry_.get());
   ON_CALL(observer,
@@ -163,7 +187,8 @@ TEST_F(ContentSettingsObserverBrowserTest, JSBlockSentAfterPageLoad) {
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
   ContentSettingsObserver* observer = ContentSettingsObserver::Get(
       view_->GetMainRenderFrame());
@@ -213,7 +238,7 @@ TEST_F(ContentSettingsObserverBrowserTest, PluginsTemporarilyAllowed) {
   EXPECT_FALSE(observer->IsPluginTemporarilyAllowed(bar_plugin));
 
   // Simulate same document navigation.
-  OnSameDocumentNavigation(GetMainFrame(), true, true);
+  OnSameDocumentNavigation(GetMainFrame(), true);
   EXPECT_TRUE(observer->IsPluginTemporarilyAllowed(foo_plugin));
   EXPECT_FALSE(observer->IsPluginTemporarilyAllowed(bar_plugin));
 
@@ -241,7 +266,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ImagesBlockedByDefault) {
       content_setting_rules.image_rules;
   image_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
 
   ContentSettingsObserver* observer = ContentSettingsObserver::Get(
@@ -258,7 +284,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ImagesBlockedByDefault) {
       ContentSettingPatternSource(
           ContentSettingsPattern::Wildcard(),
           ContentSettingsPattern::FromString(mock_observer.image_origin()),
-          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
+          base::Value::FromUniquePtrValue(
+              content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
           std::string(), false));
 
   EXPECT_CALL(mock_observer, OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES,
@@ -280,7 +307,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ImagesAllowedByDefault) {
       content_setting_rules.image_rules;
   image_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -297,7 +325,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ImagesAllowedByDefault) {
       ContentSettingPatternSource(
           ContentSettingsPattern::Wildcard(),
           ContentSettingsPattern::FromString(mock_observer.image_origin()),
-          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+          base::Value::FromUniquePtrValue(
+              content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
           std::string(), false));
   EXPECT_CALL(mock_observer,
               OnContentBlocked(CONTENT_SETTINGS_TYPE_IMAGES, base::string16()));
@@ -312,7 +341,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsBlockScripts) {
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -334,7 +364,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsAllowScripts) {
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -343,6 +374,29 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsAllowScripts) {
 
   // Load a page which contains a script.
   LoadHTML(kScriptHtml);
+
+  // Verify that the script was not blocked.
+  EXPECT_FALSE(render_thread_->sink().GetFirstMessageMatching(
+      ChromeViewHostMsg_ContentBlocked::ID));
+}
+
+TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsAllowScriptsWithSrc) {
+  // Set the content settings for scripts.
+  RendererContentSettingRules content_setting_rules;
+  ContentSettingsForOneType& script_setting_rules =
+      content_setting_rules.script_rules;
+  script_setting_rules.push_back(ContentSettingPatternSource(
+      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
+      std::string(), false));
+
+  ContentSettingsObserver* observer =
+      ContentSettingsObserver::Get(view_->GetMainRenderFrame());
+  observer->SetContentSettingRules(&content_setting_rules);
+
+  // Load a page which contains a script.
+  LoadHTML(kScriptWithSrcHtml);
 
   // Verify that the script was not blocked.
   EXPECT_FALSE(render_thread_->sink().GetFirstMessageMatching(
@@ -359,7 +413,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsNoscriptTag) {
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -391,7 +446,8 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsNoscriptTag) {
   script_setting_rules.clear();
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
       std::string(), false));
   observer->SetContentSettingRules(&content_setting_rules);
 
@@ -433,7 +489,8 @@ TEST_F(ContentSettingsObserverBrowserTest,
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -442,7 +499,7 @@ TEST_F(ContentSettingsObserverBrowserTest,
 
   // The page shouldn't see the change to script blocking setting after a
   // same document navigation.
-  OnSameDocumentNavigation(GetMainFrame(), true, true);
+  OnSameDocumentNavigation(GetMainFrame(), true);
   EXPECT_TRUE(observer->AllowScript(true));
 }
 
@@ -455,20 +512,22 @@ TEST_F(ContentSettingsObserverBrowserTest, ContentSettingsInterstitialPages) {
       content_setting_rules.script_rules;
   script_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
   // Block images.
   ContentSettingsForOneType& image_setting_rules =
       content_setting_rules.image_rules;
   image_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
       ContentSettingsObserver::Get(view_->GetMainRenderFrame());
   observer->SetContentSettingRules(&content_setting_rules);
-  observer->OnSetAsInterstitial();
+  observer->SetAsInterstitial();
 
   // Load a page which contains a script.
   LoadHTML(kScriptHtml);
@@ -497,7 +556,8 @@ TEST_F(ContentSettingsObserverBrowserTest, AutoplayContentSettings) {
       content_setting_rules.autoplay_rules;
   autoplay_setting_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
+      base::Value::FromUniquePtrValue(
+          content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW)),
       std::string(), false));
 
   ContentSettingsObserver* observer =
@@ -513,7 +573,8 @@ TEST_F(ContentSettingsObserverBrowserTest, AutoplayContentSettings) {
       ContentSettingPatternSource(
           ContentSettingsPattern::Wildcard(),
           ContentSettingsPattern::Wildcard(),
-          content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+          base::Value::FromUniquePtrValue(
+              content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK)),
           std::string(), false));
 
   EXPECT_FALSE(observer->AllowAutoplay(true));

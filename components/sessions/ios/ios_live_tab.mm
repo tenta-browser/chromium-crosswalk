@@ -4,15 +4,13 @@
 
 #include "components/sessions/ios/ios_live_tab.h"
 #include "base/memory/ptr_util.h"
-#include "ios/web/public/navigation_manager.h"
+#include "ios/web/public/navigation/navigation_manager.h"
 
 namespace {
 const char kIOSLiveTabWebStateUserDataKey[] = "ios_live_tab";
 }
 
 namespace sessions {
-
-std::string IOSLiveTab::user_agent_override_;
 
 // static
 IOSLiveTab* IOSLiveTab::GetForWebState(web::WebState* web_state) {
@@ -55,7 +53,7 @@ int IOSLiveTab::GetEntryCount() {
   return navigation_manager()->GetItemCount();
 }
 
-const std::string& IOSLiveTab::GetUserAgentOverride() const {
+const std::string& IOSLiveTab::GetUserAgentOverride() {
   // Dynamic user agent overrides are not supported on iOS.
   return user_agent_override_;
 }

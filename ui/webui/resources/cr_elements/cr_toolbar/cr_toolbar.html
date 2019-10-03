@@ -1,53 +1,72 @@
-<link rel="import" href="chrome://resources/html/polymer.html">
+<link rel="import" href="../../html/polymer.html">
 
-<link rel="import" href="chrome://resources/cr_elements/cr_icons_css.html">
-<link rel="import" href="chrome://resources/cr_elements/cr_toolbar/cr_toolbar_search_field.html">
-<link rel="import" href="chrome://resources/cr_elements/hidden_style_css.html">
+<link rel="import" href="../cr_icon_button/cr_icon_button.html">
+<link rel="import" href="../cr_icons_css.html">
+<link rel="import" href="../cr_toolbar/cr_toolbar_search_field.html">
+<link rel="import" href="../hidden_style_css.html">
+<link rel="import" href="../icons.html">
+<link rel="import" href="../shared_vars_css.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-media-query/iron-media-query.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 
 <dom-module id="cr-toolbar">
   <template>
     <style include="cr-icons cr-hidden-style">
       :host {
-        --cr-toolbar-field-width: 680px;
-        --cr-toolbar-height: 56px;
-        --paper-icon-button-ink-color: white;
         align-items: center;
+        background-color: var(--google-blue-700);
         color: #fff;
         display: flex;
         height: var(--cr-toolbar-height);
       }
 
+      @media (prefers-color-scheme: dark) {
+        :host {
+          background-color: rgba(255, 255, 255, .04);
+          border-bottom: var(--cr-separator-line);
+          box-sizing: border-box;
+          color: var(--cr-secondary-text-color);
+        }
+      }
+
       h1 {
-        -webkit-margin-start: 6px;
-        -webkit-padding-end: 12px;
         flex: 1;
         font-size: 123%;
         font-weight: 400;
+        letter-spacing: .25px;
         line-height: normal;
+        margin-inline-start: 6px;
+        padding-inline-end: 12px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        h1 {
+          color: var(--cr-primary-text-color);
+        }
       }
 
       #leftContent {
-        /* margin-start here must match margin-end on #rightContent. */
-        -webkit-margin-start: 12px;
         position: relative;
         transition: opacity 100ms;
       }
 
       #leftSpacer {
-        -webkit-margin-start: 6px;
         align-items: center;
+        box-sizing: border-box;
         display: flex;
+        /* 12px to match #rightSpacer + 6px to align with icons in menus. */
+        padding-inline-start: calc(12px + 6px);
+        width: var(--cr-toolbar-left-spacer-width, auto);
       }
 
-      #menuButton {
-        height: 32px;
-        margin-bottom: 6px;
-        margin-top: 6px;
+      cr-icon-button {
+        --cr-icon-button-size: 32px;
         min-width: 32px;
-        padding: 6px;
-        width: 32px;
+      }
+
+      @media (prefers-color-scheme: light) {
+        cr-icon-button {
+          --cr-icon-button-color: currentColor;
+        }
       }
 
       #centeredContent {
@@ -56,12 +75,17 @@
         justify-content: center;
       }
 
-      #rightContent {
-        -webkit-margin-end: 12px;
+      #rightSpacer {
+        padding-inline-end: 12px;
       }
 
       :host([narrow]) #centeredContent {
         justify-content: flex-end;
+      }
+
+      :host([has-overlay]) {
+        transition: visibility var(--cr-toolbar-overlay-animation-duration);
+        visibility: hidden;
       }
 
       :host([narrow][showing-search_]) #leftContent {
@@ -73,14 +97,16 @@
         flex: 1 1 var(--cr-toolbar-field-margin, 0);
       }
 
+      :host(:not([narrow])) #centeredContent {
+        flex-basis: var(--cr-toolbar-center-basis, 0);
+      }
+
       :host(:not([narrow])) #rightContent {
         flex: 1 1 0;
         text-align: end;
       }
 
       #menuPromo {
-        -webkit-padding-end: 12px;
-        -webkit-padding-start: 8px;
         align-items: center;
         background: #616161;
         border-radius: 2px;
@@ -90,6 +116,8 @@
         font-weight: 500;
         opacity: 0;
         padding-bottom: 6px;
+        padding-inline-end: 12px;
+        padding-inline-start: 8px;
         padding-top: 6px;
         position: absolute;
         top: var(--cr-toolbar-height);
@@ -117,12 +145,12 @@
 
       #closePromo {
         -webkit-appearance: none;
-        -webkit-margin-start: 12px;
         background: none;
         border: none;
         color: inherit;
         font-size: 20px;  /* Shouldn't change if default font-size changes. */
         line-height: 20px;
+        margin-inline-start: 12px;
         padding: 0;
         width: 20px;
       }
@@ -131,12 +159,11 @@
       <div id="leftSpacer">
         <!-- Note: showing #menuPromo relies on this dom-if being [restamp]. -->
         <template is="dom-if" if="[[showMenu]]" restamp>
-          <button id="menuButton" is="paper-icon-button-light"
-              class="icon-menu-white no-overlap"
-              on-tap="onMenuTap_"
-              title="[[titleIfNotShowMenuPromo_(menuLabel, showMenuPromo)]]"
-              aria-label$="[[menuLabel]]">
-          </button>
+          <cr-icon-button id="menuButton" class="no-overlap"
+              iron-icon="cr20:menu" on-click="onMenuTap_"
+              aria-label$="[[menuLabel]]"
+              title="[[titleIfNotShowMenuPromo_(menuLabel, showMenuPromo)]]">
+          </cr-icon-button>
           <template is="dom-if" if="[[showMenuPromo]]">
             <div id="menuPromo" role="tooltip">
               [[menuPromo]]
@@ -161,7 +188,9 @@
     </div>
 
     <div id="rightContent">
-      <content select=".more-actions"></content>
+      <div id="rightSpacer">
+        <slot></slot>
+      </div>
     </div>
   </template>
   <script src="cr_toolbar.js"></script>

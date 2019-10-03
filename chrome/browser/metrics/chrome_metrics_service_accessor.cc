@@ -6,7 +6,7 @@
 
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,24 +32,30 @@ void ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(
 
 // static
 bool ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled() {
+  return IsMetricsAndCrashReportingEnabled(g_browser_process->local_state());
+}
+
+// static
+bool ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled(
+    PrefService* local_state) {
   if (g_metrics_consent_for_testing)
     return *g_metrics_consent_for_testing;
 
   // TODO(blundell): Fix the unittests that don't set up the UI thread and
   // change this to just be DCHECK_CURRENTLY_ON().
-  DCHECK(
-      !content::BrowserThread::IsMessageLoopValid(content::BrowserThread::UI) ||
-      content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  DCHECK(!content::BrowserThread::IsThreadInitialized(
+             content::BrowserThread::UI) ||
+         content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // This is only possible during unit tests. If the unit test didn't set the
   // local_state then it doesn't care about pref value and therefore we return
   // false.
-  if (!g_browser_process->local_state()) {
+  if (!local_state) {
     DLOG(WARNING) << "Local state has not been set and pref cannot be read";
     return false;
   }
 
-  return IsMetricsReportingEnabled(g_browser_process->local_state());
+  return IsMetricsReportingEnabled(local_state);
 }
 
 // static
@@ -75,4 +81,11 @@ bool ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrialWithNameHash(
   return metrics::MetricsServiceAccessor::
       RegisterSyntheticFieldTrialWithNameHash(
           g_browser_process->metrics_service(), trial_name_hash, group_name);
+}
+
+// static
+void ChromeMetricsServiceAccessor::SetForceIsMetricsReportingEnabledPrefLookup(
+    bool value) {
+  metrics::MetricsServiceAccessor::SetForceIsMetricsReportingEnabledPrefLookup(
+      value);
 }

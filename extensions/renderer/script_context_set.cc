@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/script_context_set.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -13,8 +14,9 @@
 #include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_injection.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 #include "v8/include/v8.h"
 
 namespace extensions {
@@ -91,10 +93,17 @@ ScriptContext* ScriptContextSet::GetContextByV8Context(
   return g_context_set ? g_context_set->GetByV8Context(v8_context) : nullptr;
 }
 
+ScriptContext* ScriptContextSet::GetMainWorldContextForFrame(
+    content::RenderFrame* render_frame) {
+  v8::HandleScope handle_scope(blink::MainThreadIsolate());
+  return GetContextByV8Context(
+      render_frame->GetWebFrame()->MainWorldScriptContext());
+}
+
 void ScriptContextSet::ForEach(
     const std::string& extension_id,
     content::RenderFrame* render_frame,
-    const base::Callback<void(ScriptContext*)>& callback) const {
+    const base::RepeatingCallback<void(ScriptContext*)>& callback) {
   // We copy the context list, because calling into javascript may modify it
   // out from under us.
   std::set<ScriptContext*> contexts_copy = contexts_;
@@ -119,8 +128,9 @@ void ScriptContextSet::ForEach(
 }
 
 void ScriptContextSet::OnExtensionUnloaded(const std::string& extension_id) {
-  ForEach(extension_id,
-          base::Bind(&ScriptContextSet::Remove, base::Unretained(this)));
+  ScriptContextSetIterable::ForEach(
+      extension_id,
+      base::BindRepeating(&ScriptContextSet::Remove, base::Unretained(this)));
 }
 
 void ScriptContextSet::AddForTesting(std::unique_ptr<ScriptContext> context) {

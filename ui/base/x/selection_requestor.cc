@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/run_loop.h"
+#include "ui/base/x/selection_owner.h"
 #include "ui/base/x/selection_utils.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
@@ -20,16 +21,15 @@ namespace ui {
 namespace {
 
 const char kChromeSelection[] = "CHROME_SELECTION";
-const char kIncr[] = "INCR";
 
 // The period of |abort_timer_|. Arbitrary but must be <= than
 // kRequestTimeoutMs.
-const int kTimerPeriodMs = 100;
+const int KSelectionRequestorTimerPeriodMs = 100;
 
 // The amount of time to wait for a request to complete before aborting it.
 const int kRequestTimeoutMs = 10000;
 
-static_assert(kTimerPeriodMs <= kRequestTimeoutMs,
+static_assert(KSelectionRequestorTimerPeriodMs <= kRequestTimeoutMs,
               "timer period must be <= request timeout");
 
 // Combines |data| into a single RefCountedMemory object.
@@ -38,16 +38,15 @@ scoped_refptr<base::RefCountedMemory> CombineRefCountedMemory(
   if (data.size() == 1u)
     return data[0];
 
-  size_t length = 0;
-  for (size_t i = 0; i < data.size(); ++i)
-    length += data[i]->size();
+  size_t combined_length = 0;
+  for (const auto& datum : data)
+    combined_length += datum->size();
   std::vector<unsigned char> combined_data;
-  combined_data.reserve(length);
+  combined_data.reserve(combined_length);
 
-  for (size_t i = 0; i < data.size(); ++i) {
-    combined_data.insert(combined_data.end(),
-                         data[i]->front(),
-                         data[i]->front() + data[i]->size());
+  for (const auto& datum : data) {
+    combined_data.insert(combined_data.end(), datum->front(),
+                         datum->front() + datum->size());
   }
   return base::RefCountedBytes::TakeVector(&combined_data);
 }
@@ -82,8 +81,7 @@ bool SelectionRequestor::PerformBlockingConvertSelection(
     ConvertSelectionForCurrentRequest();
   BlockTillSelectionNotifyForRequest(&request);
 
-  std::vector<Request*>::iterator request_it = std::find(
-      requests_.begin(), requests_.end(), &request);
+  auto request_it = std::find(requests_.begin(), requests_.end(), &request);
   CHECK(request_it != requests_.end());
   if (static_cast<int>(current_request_index_) >
       request_it - requests_.begin()) {
@@ -110,22 +108,17 @@ void SelectionRequestor::PerformBlockingConvertSelectionWithParameter(
     XAtom target,
     const std::vector<XAtom>& parameter) {
   SetAtomArrayProperty(x_window_, kChromeSelection, "ATOM", parameter);
-  PerformBlockingConvertSelection(selection, target, NULL, NULL, NULL);
+  PerformBlockingConvertSelection(selection, target, nullptr, nullptr, nullptr);
 }
 
 SelectionData SelectionRequestor::RequestAndWaitForTypes(
     XAtom selection,
     const std::vector<XAtom>& types) {
-  for (std::vector<XAtom>::const_iterator it = types.begin();
-       it != types.end(); ++it) {
+  for (const XAtom& item : types) {
     scoped_refptr<base::RefCountedMemory> data;
     XAtom type = x11::None;
-    if (PerformBlockingConvertSelection(selection,
-                                        *it,
-                                        &data,
-                                        NULL,
-                                        &type) &&
-        type == *it) {
+    if (PerformBlockingConvertSelection(selection, item, &data, nullptr,
+                                        &type) && type == item) {
       return SelectionData(type, data);
     }
   }
@@ -256,10 +249,10 @@ void SelectionRequestor::ConvertSelectionForCurrentRequest() {
 void SelectionRequestor::BlockTillSelectionNotifyForRequest(Request* request) {
   if (PlatformEventSource::GetInstance()) {
     if (!abort_timer_.IsRunning()) {
-      abort_timer_.Start(FROM_HERE,
-                         base::TimeDelta::FromMilliseconds(kTimerPeriodMs),
-                         this,
-                         &SelectionRequestor::AbortStaleRequests);
+      abort_timer_.Start(
+          FROM_HERE,
+          base::TimeDelta::FromMilliseconds(KSelectionRequestorTimerPeriodMs),
+          this, &SelectionRequestor::AbortStaleRequests);
     }
 
     base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
@@ -285,8 +278,9 @@ void SelectionRequestor::BlockTillSelectionNotifyForRequest(Request* request) {
 }
 
 SelectionRequestor::Request* SelectionRequestor::GetCurrentRequest() {
-  return current_request_index_ == requests_.size() ?
-      NULL : requests_[current_request_index_];
+  return current_request_index_ == requests_.size()
+             ? nullptr
+             : requests_[current_request_index_];
 }
 
 SelectionRequestor::Request::Request(XAtom selection,

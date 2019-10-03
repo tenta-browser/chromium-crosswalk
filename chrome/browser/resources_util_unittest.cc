@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "components/grit/components_scaled_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,7 +24,7 @@ TEST(ResourcesUtil, SpotCheckIds) {
     // IDRs from chrome/app/theme/theme_resources.grd should be valid.
     {"IDR_ERROR_NETWORK_GENERIC", IDR_ERROR_NETWORK_GENERIC},
     // IDRs from ui/resources/ui_resources.grd should be valid.
-    {"IDR_FOLDER_CLOSED", IDR_FOLDER_CLOSED},
+    {"IDR_DEFAULT_FAVICON", IDR_DEFAULT_FAVICON},
 #if defined(OS_CHROMEOS)
     // Check IDRs from ui/chromeos/resources/ui_chromeos_resources.grd.
     {"IDR_LOGIN_DEFAULT_USER", IDR_LOGIN_DEFAULT_USER},
@@ -34,6 +34,6 @@ TEST(ResourcesUtil, SpotCheckIds) {
     {"backstar", -1},
   };
 
-  for (size_t i = 0; i < arraysize(kCases); ++i)
+  for (size_t i = 0; i < base::size(kCases); ++i)
     EXPECT_EQ(kCases[i].id, ResourcesUtil::GetThemeResourceId(kCases[i].name));
 }

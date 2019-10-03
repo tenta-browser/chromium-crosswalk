@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/containers/flat_set.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -44,59 +44,62 @@ class FaviconServiceImpl : public FaviconService {
   // FaviconService implementation.
   base::CancelableTaskTracker::TaskId GetFaviconImage(
       const GURL& icon_url,
-      const favicon_base::FaviconImageCallback& callback,
+      favicon_base::FaviconImageCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetRawFavicon(
       const GURL& icon_url,
       favicon_base::IconType icon_type,
       int desired_size_in_pixel,
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetFavicon(
       const GURL& icon_url,
       favicon_base::IconType icon_type,
       int desired_size_in_dip,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetFaviconImageForPageURL(
       const GURL& page_url,
-      const favicon_base::FaviconImageCallback& callback,
+      favicon_base::FaviconImageCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetRawFaviconForPageURL(
       const GURL& page_url,
       const favicon_base::IconTypeSet& icon_types,
       int desired_size_in_pixel,
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      bool fallback_to_host,
+      favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetLargestRawFaviconForPageURL(
       const GURL& page_url,
       const std::vector<favicon_base::IconTypeSet>& icon_types,
       int minimum_size_in_pixels,
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId GetFaviconForPageURL(
       const GURL& page_url,
       const favicon_base::IconTypeSet& icon_types,
       int desired_size_in_dip,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId UpdateFaviconMappingsAndFetch(
       const base::flat_set<GURL>& page_urls,
       const GURL& icon_url,
       favicon_base::IconType icon_type,
       int desired_size_in_dip,
-      const favicon_base::FaviconResultsCallback& callback,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker) override;
   void DeleteFaviconMappings(const base::flat_set<GURL>& page_urls,
                              favicon_base::IconType icon_type) override;
   base::CancelableTaskTracker::TaskId GetLargestRawFaviconForID(
       favicon_base::FaviconID favicon_id,
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      favicon_base::FaviconRawBitmapCallback callback,
       base::CancelableTaskTracker* tracker) override;
   void SetFaviconOutOfDateForPage(const GURL& page_url) override;
   void TouchOnDemandFavicon(const GURL& icon_url) override;
   void SetImportedFavicons(
       const favicon_base::FaviconUsageDataList& favicon_usage) override;
+  void AddPageNoVisitForBookmark(const GURL& url,
+                                 const base::string16& title) override;
   void MergeFavicon(const GURL& page_url,
                     const GURL& icon_url,
                     favicon_base::IconType icon_type,
@@ -110,11 +113,15 @@ class FaviconServiceImpl : public FaviconService {
       const GURL& page_url_to_read,
       const favicon_base::IconTypeSet& icon_types,
       const base::flat_set<GURL>& page_urls_to_write) override;
+  void CanSetOnDemandFavicons(
+      const GURL& page_url,
+      favicon_base::IconType icon_type,
+      base::OnceCallback<void(bool)> callback) const override;
   void SetOnDemandFavicons(const GURL& page_url,
                            const GURL& icon_url,
                            favicon_base::IconType icon_type,
                            const gfx::Image& image,
-                           base::Callback<void(bool)> callback) override;
+                           base::OnceCallback<void(bool)> callback) override;
   void UnableToDownloadFavicon(const GURL& icon_url) override;
   bool WasUnableToDownloadFavicon(const GURL& icon_url) const override;
   void ClearUnableToDownloadFavicons() override;
@@ -128,7 +135,8 @@ class FaviconServiceImpl : public FaviconService {
       const GURL& page_url,
       const favicon_base::IconTypeSet& icon_types,
       const std::vector<int>& desired_sizes_in_pixel,
-      const favicon_base::FaviconResultsCallback& callback,
+      bool fallback_to_host,
+      favicon_base::FaviconResultsCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Intermediate callback for GetFaviconImage() and GetFaviconImageForPageURL()
@@ -136,7 +144,7 @@ class FaviconServiceImpl : public FaviconService {
   // Builds favicon_base::FaviconImageResult from |favicon_bitmap_results| and
   // runs |callback|.
   void RunFaviconImageCallbackWithBitmapResults(
-      const favicon_base::FaviconImageCallback& callback,
+      favicon_base::FaviconImageCallback callback,
       int desired_size_in_dip,
       const std::vector<favicon_base::FaviconRawBitmapResult>&
           favicon_bitmap_results);
@@ -146,12 +154,12 @@ class FaviconServiceImpl : public FaviconService {
   // Resizes favicon_base::FaviconRawBitmapResult if necessary and runs
   // |callback|.
   void RunFaviconRawBitmapCallbackWithBitmapResults(
-      const favicon_base::FaviconRawBitmapCallback& callback,
+      favicon_base::FaviconRawBitmapCallback callback,
       int desired_size_in_pixel,
       const std::vector<favicon_base::FaviconRawBitmapResult>&
           favicon_bitmap_results);
 
-  base::hash_set<MissingFaviconURLHash> missing_favicon_urls_;
+  std::unordered_set<MissingFaviconURLHash> missing_favicon_urls_;
   std::unique_ptr<FaviconClient> favicon_client_;
   history::HistoryService* history_service_;
 

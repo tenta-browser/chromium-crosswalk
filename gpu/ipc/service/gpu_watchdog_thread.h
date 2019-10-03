@@ -9,14 +9,15 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "gpu/command_buffer/service/progress_reporter.h"
-#include "gpu/gpu_export.h"
+#include "gpu/ipc/service/gpu_ipc_service_export.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gl/progress_reporter.h"
 
 #if defined(USE_X11)
 #include <sys/poll.h>
@@ -26,23 +27,68 @@
 
 namespace gpu {
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class GpuWatchdogThreadEvent {
+  kGpuWatchdogStart,
+  kGpuWatchdogKill,
+  kGpuWatchdogEnd,
+  kMaxValue = kGpuWatchdogEnd,
+};
+
 // A thread that intermitently sends tasks to a group of watched message loops
 // and deliberately crashes if one of them does not respond after a timeout.
-class GPU_EXPORT GpuWatchdogThread : public base::Thread,
-                                     public base::PowerObserver,
-                                     public gles2::ProgressReporter {
+class GPU_IPC_SERVICE_EXPORT GpuWatchdogThread : public base::Thread,
+                                                 public base::PowerObserver,
+                                                 public gl::ProgressReporter {
  public:
   ~GpuWatchdogThread() override;
 
-  static std::unique_ptr<GpuWatchdogThread> Create();
-
-  void CheckArmed();
-
   // Must be called after a PowerMonitor has been created. Can be called from
   // any thread.
-  void AddPowerObserver();
+  virtual void AddPowerObserver() = 0;
 
-  // gles2::ProgressReporter implementation:
+  // Notifies the watchdog when Chrome is backgrounded / foregrounded. Should
+  // only be used if Chrome is completely backgrounded and not expected to
+  // render (all windows backgrounded and not producing frames).
+  virtual void OnBackgrounded() = 0;
+  virtual void OnForegrounded() = 0;
+
+  // The watchdog starts armed to catch startup hangs, and needs to be disarmed
+  // once init is complete, before executing tasks.
+  virtual void OnInitComplete() = 0;
+
+  virtual void GpuWatchdogHistogram(GpuWatchdogThreadEvent thread_event) = 0;
+
+  // For gpu testing only. Return status for the watchdog tests
+  virtual bool IsGpuHangDetectedForTesting() = 0;
+
+  virtual void WaitForPowerObserverAddedForTesting() {}
+
+ protected:
+  GpuWatchdogThread();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(GpuWatchdogThread);
+};
+
+class GPU_IPC_SERVICE_EXPORT GpuWatchdogThreadImplV1
+    : public GpuWatchdogThread {
+ public:
+  ~GpuWatchdogThreadImplV1() override;
+
+  static std::unique_ptr<GpuWatchdogThreadImplV1> Create(
+      bool start_backgrounded);
+
+  // Implements GpuWatchdogThread.
+  void AddPowerObserver() override;
+  void OnBackgrounded() override;
+  void OnForegrounded() override;
+  void OnInitComplete() override {}
+  void GpuWatchdogHistogram(GpuWatchdogThreadEvent thread_event) override;
+  bool IsGpuHangDetectedForTesting() override;
+
+  // gl::ProgressReporter implementation:
   void ReportProgress() override;
 
  protected:
@@ -52,24 +98,61 @@ class GPU_EXPORT GpuWatchdogThread : public base::Thread,
  private:
   // An object of this type intercepts the reception and completion of all tasks
   // on the watched thread and checks whether the watchdog is armed.
-  class GpuWatchdogTaskObserver : public base::MessageLoop::TaskObserver {
+  class GpuWatchdogTaskObserver
+      : public base::MessageLoopCurrent::TaskObserver {
    public:
-    explicit GpuWatchdogTaskObserver(GpuWatchdogThread* watchdog);
+    explicit GpuWatchdogTaskObserver(GpuWatchdogThreadImplV1* watchdog);
     ~GpuWatchdogTaskObserver() override;
 
-    // Implements MessageLoop::TaskObserver.
+    // Implements MessageLoopCurrent::TaskObserver.
     void WillProcessTask(const base::PendingTask& pending_task) override;
     void DidProcessTask(const base::PendingTask& pending_task) override;
 
    private:
-    GpuWatchdogThread* watchdog_;
+    GpuWatchdogThreadImplV1* watchdog_;
   };
 
-  GpuWatchdogThread();
+  // A helper class which allows multiple clients to suspend/resume the
+  // watchdog thread. As we need to suspend resume on both background /
+  // foreground events as well as power events, this class manages a ref-count
+  // of suspend requests.
+  class SuspensionCounter {
+   public:
+    SuspensionCounter(GpuWatchdogThreadImplV1* watchdog_thread);
+
+    class SuspensionCounterRef {
+     public:
+      explicit SuspensionCounterRef(SuspensionCounter* counter);
+      ~SuspensionCounterRef();
+
+     private:
+      SuspensionCounter* counter_;
+    };
+
+    // This class must outlive SuspensionCounterRefs.
+    std::unique_ptr<SuspensionCounterRef> Take();
+
+    // Used to update the |watchdog_thread_sequence_checker_|.
+    void OnWatchdogThreadStopped();
+
+    bool HasRefs() const;
+
+   private:
+    void OnAddRef();
+    void OnReleaseRef();
+    GpuWatchdogThreadImplV1* watchdog_thread_;
+    uint32_t suspend_count_ = 0;
+
+    SEQUENCE_CHECKER(watchdog_thread_sequence_checker_);
+  };
+  GpuWatchdogThreadImplV1();
+
+  void CheckArmed();
 
   void OnAcknowledge();
   void OnCheck(bool after_suspend);
   void OnCheckTimeout();
+  // Do not change the function name. It is used for [GPU HANG] carsh reports.
   void DeliberatelyTerminateToRecoverFromHang();
 #if defined(USE_X11)
   void SetupXServer();
@@ -83,6 +166,12 @@ class GPU_EXPORT GpuWatchdogThread : public base::Thread,
   void OnSuspend() override;
   void OnResume() override;
 
+  // Handle background/foreground.
+  void OnBackgroundedOnWatchdogThread();
+  void OnForegroundedOnWatchdogThread();
+
+  void SuspendStateChanged();
+
 #if defined(OS_WIN)
   base::ThreadTicks GetWatchedThreadTime();
 #endif
@@ -91,7 +180,7 @@ class GPU_EXPORT GpuWatchdogThread : public base::Thread,
   int GetActiveTTY() const;
 #endif
 
-  base::MessageLoop* watched_message_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> watched_task_runner_;
   base::TimeDelta timeout_;
   bool armed_;
   GpuWatchdogTaskObserver task_observer_;
@@ -122,7 +211,10 @@ class GPU_EXPORT GpuWatchdogThread : public base::Thread,
   // the task was posted.
   base::Time suspension_timeout_;
 
-  bool suspended_;
+  SuspensionCounter suspension_counter_;
+  std::unique_ptr<SuspensionCounter::SuspensionCounterRef> power_suspend_ref_;
+  std::unique_ptr<SuspensionCounter::SuspensionCounterRef>
+      background_suspend_ref_;
 
   // The time the last OnSuspend and OnResume was called.
   base::Time suspend_time_;
@@ -140,9 +232,9 @@ class GPU_EXPORT GpuWatchdogThread : public base::Thread,
   int host_tty_;
 #endif
 
-  base::WeakPtrFactory<GpuWatchdogThread> weak_factory_;
+  base::WeakPtrFactory<GpuWatchdogThreadImplV1> weak_factory_{this};
 
-  DISALLOW_COPY_AND_ASSIGN(GpuWatchdogThread);
+  DISALLOW_COPY_AND_ASSIGN(GpuWatchdogThreadImplV1);
 };
 
 }  // namespace gpu

@@ -3,7 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/locales.gni")
-import("//ppapi/features/features.gni")
+import("//ppapi/buildflags/buildflags.gni")
+import("//printing/buildflags/buildflags.gni")
 import("//tools/grit/grit_rule.gni")
 
 if (is_android) {
@@ -12,17 +13,20 @@ if (is_android) {
     "java/res/values-am/components_strings.xml",
     "java/res/values-ar/components_strings.xml",
     "java/res/values-bg/components_strings.xml",
+    "java/res/values-bn/components_strings.xml",
     "java/res/values-ca/components_strings.xml",
     "java/res/values-cs/components_strings.xml",
     "java/res/values-da/components_strings.xml",
     "java/res/values-de/components_strings.xml",
     "java/res/values-el/components_strings.xml",
     "java/res/values-en-rGB/components_strings.xml",
-    "java/res/values-es-rUS/components_strings.xml",
     "java/res/values-es/components_strings.xml",
+    "java/res/values-es-rUS/components_strings.xml",
+    "java/res/values-et/components_strings.xml",
     "java/res/values-fa/components_strings.xml",
     "java/res/values-fi/components_strings.xml",
     "java/res/values-fr/components_strings.xml",
+    "java/res/values-gu/components_strings.xml",
     "java/res/values-hi/components_strings.xml",
     "java/res/values-hr/components_strings.xml",
     "java/res/values-hu/components_strings.xml",
@@ -30,9 +34,13 @@ if (is_android) {
     "java/res/values-it/components_strings.xml",
     "java/res/values-iw/components_strings.xml",
     "java/res/values-ja/components_strings.xml",
+    "java/res/values-kn/components_strings.xml",
     "java/res/values-ko/components_strings.xml",
     "java/res/values-lt/components_strings.xml",
     "java/res/values-lv/components_strings.xml",
+    "java/res/values-ml/components_strings.xml",
+    "java/res/values-mr/components_strings.xml",
+    "java/res/values-ms/components_strings.xml",
     "java/res/values-nb/components_strings.xml",
     "java/res/values-nl/components_strings.xml",
     "java/res/values-pl/components_strings.xml",
@@ -45,6 +53,8 @@ if (is_android) {
     "java/res/values-sr/components_strings.xml",
     "java/res/values-sv/components_strings.xml",
     "java/res/values-sw/components_strings.xml",
+    "java/res/values-ta/components_strings.xml",
+    "java/res/values-te/components_strings.xml",
     "java/res/values-th/components_strings.xml",
     "java/res/values-tl/components_strings.xml",
     "java/res/values-tr/components_strings.xml",
@@ -67,7 +77,10 @@ group("strings") {
 
 grit("components_strings") {
   source = "../components_strings.grd"
-  defines = [ "enable_plugins=$enable_plugins" ]
+  defines = [
+    "enable_plugins=$enable_plugins",
+    "enable_print_preview=$enable_print_preview",
+  ]
 
   outputs = [
     "grit/components_strings.h",
@@ -117,17 +130,20 @@ if (is_android) {
     "java/res/values-am/components_locale_settings.xml",
     "java/res/values-ar/components_locale_settings.xml",
     "java/res/values-bg/components_locale_settings.xml",
+    "java/res/values-bn/components_locale_settings.xml",
     "java/res/values-ca/components_locale_settings.xml",
     "java/res/values-cs/components_locale_settings.xml",
     "java/res/values-da/components_locale_settings.xml",
     "java/res/values-de/components_locale_settings.xml",
     "java/res/values-el/components_locale_settings.xml",
     "java/res/values-en-rGB/components_locale_settings.xml",
-    "java/res/values-es-rUS/components_locale_settings.xml",
     "java/res/values-es/components_locale_settings.xml",
+    "java/res/values-es-rUS/components_locale_settings.xml",
+    "java/res/values-et/components_locale_settings.xml",
     "java/res/values-fa/components_locale_settings.xml",
     "java/res/values-fi/components_locale_settings.xml",
     "java/res/values-fr/components_locale_settings.xml",
+    "java/res/values-gu/components_locale_settings.xml",
     "java/res/values-hi/components_locale_settings.xml",
     "java/res/values-hr/components_locale_settings.xml",
     "java/res/values-hu/components_locale_settings.xml",
@@ -135,9 +151,13 @@ if (is_android) {
     "java/res/values-it/components_locale_settings.xml",
     "java/res/values-iw/components_locale_settings.xml",
     "java/res/values-ja/components_locale_settings.xml",
+    "java/res/values-kn/components_locale_settings.xml",
     "java/res/values-ko/components_locale_settings.xml",
     "java/res/values-lt/components_locale_settings.xml",
     "java/res/values-lv/components_locale_settings.xml",
+    "java/res/values-ml/components_locale_settings.xml",
+    "java/res/values-mr/components_locale_settings.xml",
+    "java/res/values-ms/components_locale_settings.xml",
     "java/res/values-nb/components_locale_settings.xml",
     "java/res/values-nl/components_locale_settings.xml",
     "java/res/values-pl/components_locale_settings.xml",
@@ -150,6 +170,8 @@ if (is_android) {
     "java/res/values-sr/components_locale_settings.xml",
     "java/res/values-sv/components_locale_settings.xml",
     "java/res/values-sw/components_locale_settings.xml",
+    "java/res/values-ta/components_locale_settings.xml",
+    "java/res/values-te/components_locale_settings.xml",
     "java/res/values-th/components_locale_settings.xml",
     "java/res/values-tl/components_locale_settings.xml",
     "java/res/values-tr/components_locale_settings.xml",

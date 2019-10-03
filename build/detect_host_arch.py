@@ -5,6 +5,8 @@
 
 """Outputs host CPU architecture in format recognized by gyp."""
 
+from __future__ import print_function
+
 import platform
 import re
 import sys
@@ -23,6 +25,8 @@ def HostArch():
     host_arch = 'arm'
   elif host_arch.startswith('aarch64'):
     host_arch = 'arm64'
+  elif host_arch.startswith('mips64'):
+    host_arch = 'mips64'
   elif host_arch.startswith('mips'):
     host_arch = 'mips'
   elif host_arch.startswith('ppc'):
@@ -48,4 +52,4 @@ def DoMain(_):
   return HostArch()
 
 if __name__ == '__main__':
-  print DoMain([])
+  print(DoMain([]))

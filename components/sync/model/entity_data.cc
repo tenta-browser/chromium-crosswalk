@@ -5,8 +5,10 @@
 #include "components/sync/model/entity_data.h"
 
 #include <algorithm>
+#include <ostream>
 #include <utility>
 
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -28,35 +30,38 @@ std::string UniquePositionToString(
 }  // namespace
 
 EntityData::EntityData() = default;
+
+EntityData::EntityData(EntityData&& other)
+    : id(std::move(other.id)),
+      client_tag_hash(std::move(other.client_tag_hash)),
+      originator_cache_guid(std::move(other.originator_cache_guid)),
+      originator_client_item_id(std::move(other.originator_client_item_id)),
+      server_defined_unique_tag(std::move(other.server_defined_unique_tag)),
+      name(std::move(other.name)),
+      creation_time(other.creation_time),
+      modification_time(other.modification_time),
+      parent_id(std::move(other.parent_id)),
+      is_folder(other.is_folder) {
+  specifics.Swap(&other.specifics);
+  unique_position.Swap(&other.unique_position);
+}
+
 EntityData::~EntityData() = default;
-EntityData::EntityData(const EntityData& src) = default;
 
-void EntityData::Swap(EntityData* other) {
-  id.swap(other->id);
-  client_tag_hash.swap(other->client_tag_hash);
-  non_unique_name.swap(other->non_unique_name);
-
-  specifics.Swap(&other->specifics);
-
-  std::swap(creation_time, other->creation_time);
-  std::swap(modification_time, other->modification_time);
-
-  parent_id.swap(other->parent_id);
-  unique_position.Swap(&other->unique_position);
-}
-
-EntityDataPtr EntityData::PassToPtr() {
-  EntityDataPtr target;
-  target.swap_value(this);
-  return target;
-}
-
-EntityDataPtr EntityData::UpdateId(const std::string& new_id) const {
-  EntityData entity_data(*this);
-  entity_data.id = new_id;
-  EntityDataPtr target;
-  target.swap_value(&entity_data);
-  return target;
+EntityData& EntityData::operator=(EntityData&& other) {
+  id = std::move(other.id);
+  client_tag_hash = std::move(other.client_tag_hash);
+  originator_cache_guid = std::move(other.originator_cache_guid);
+  originator_client_item_id = std::move(other.originator_client_item_id);
+  server_defined_unique_tag = std::move(other.server_defined_unique_tag);
+  name = std::move(other.name);
+  creation_time = other.creation_time;
+  modification_time = other.modification_time;
+  parent_id = other.parent_id;
+  is_folder = other.is_folder;
+  specifics.Swap(&other.specifics);
+  unique_position.Swap(&other.unique_position);
+  return *this;
 }
 
 #define ADD_TO_DICT(dict, value) \
@@ -66,16 +71,28 @@ EntityDataPtr EntityData::UpdateId(const std::string& new_id) const {
   dict->SetString(base::ToUpperASCII(#value), transform(value));
 
 std::unique_ptr<base::DictionaryValue> EntityData::ToDictionaryValue() {
+  // This is used when debugging at sync-internals page. The code in
+  // sync_node_browser.js is expecting certain fields names. e.g. CTIME, MTIME,
+  // and IS_DIR.
+  base::Time ctime = creation_time;
+  base::Time mtime = modification_time;
   std::unique_ptr<base::DictionaryValue> dict =
       std::make_unique<base::DictionaryValue>();
   dict->Set("SPECIFICS", EntitySpecificsToValue(specifics));
   ADD_TO_DICT(dict, id);
   ADD_TO_DICT(dict, client_tag_hash);
-  ADD_TO_DICT(dict, non_unique_name);
+  ADD_TO_DICT(dict, originator_cache_guid);
+  ADD_TO_DICT(dict, originator_client_item_id);
+  ADD_TO_DICT(dict, server_defined_unique_tag);
+  // The string "NON_UNIQUE_NAME" is used in sync-internals to identify the node
+  // title.
+  dict->SetString("NON_UNIQUE_NAME", name);
+  ADD_TO_DICT(dict, name);
   ADD_TO_DICT(dict, parent_id);
-  ADD_TO_DICT_WITH_TRANSFORM(dict, creation_time, GetTimeDebugString);
-  ADD_TO_DICT_WITH_TRANSFORM(dict, modification_time, GetTimeDebugString);
+  ADD_TO_DICT_WITH_TRANSFORM(dict, ctime, GetTimeDebugString);
+  ADD_TO_DICT_WITH_TRANSFORM(dict, mtime, GetTimeDebugString);
   ADD_TO_DICT_WITH_TRANSFORM(dict, unique_position, UniquePositionToString);
+  dict->SetBoolean("IS_DIR", is_folder);
   return dict;
 }
 
@@ -87,24 +104,28 @@ size_t EntityData::EstimateMemoryUsage() const {
   size_t memory_usage = 0;
   memory_usage += EstimateMemoryUsage(id);
   memory_usage += EstimateMemoryUsage(client_tag_hash);
-  memory_usage += EstimateMemoryUsage(non_unique_name);
+  memory_usage += EstimateMemoryUsage(originator_cache_guid);
+  memory_usage += EstimateMemoryUsage(originator_client_item_id);
+  memory_usage += EstimateMemoryUsage(server_defined_unique_tag);
+  memory_usage += EstimateMemoryUsage(name);
   memory_usage += EstimateMemoryUsage(specifics);
   memory_usage += EstimateMemoryUsage(parent_id);
   memory_usage += EstimateMemoryUsage(unique_position);
   return memory_usage;
 }
 
-void EntityDataTraits::SwapValue(EntityData* dest, EntityData* src) {
-  dest->Swap(src);
-}
-
-bool EntityDataTraits::HasValue(const EntityData& value) {
-  return !value.client_tag_hash.empty();
-}
-
-const EntityData& EntityDataTraits::DefaultValue() {
-  CR_DEFINE_STATIC_LOCAL(EntityData, default_instance, ());
-  return default_instance;
+void PrintTo(const EntityData& entity_data, std::ostream* os) {
+  std::string specifics;
+  base::JSONWriter::WriteWithOptions(
+      *syncer::EntitySpecificsToValue(entity_data.specifics),
+      base::JSONWriter::OPTIONS_PRETTY_PRINT, &specifics);
+  *os << "{ id: '" << entity_data.id << "', client_tag_hash: '"
+      << entity_data.client_tag_hash << "', originator_cache_guid: '"
+      << entity_data.originator_cache_guid << "', originator_client_item_id: '"
+      << entity_data.originator_client_item_id
+      << "', server_defined_unique_tag: '"
+      << entity_data.server_defined_unique_tag << "', specifics: " << specifics
+      << "}";
 }
 
 }  // namespace syncer

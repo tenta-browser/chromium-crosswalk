@@ -11,6 +11,7 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "chrome/browser/ui/views/payments/view_stack.h"
+#include "components/payments/content/initialization_task.h"
 #include "components/payments/content/payment_request_dialog.h"
 #include "components/payments/content/payment_request_spec.h"
 #include "components/payments/content/payment_request_state.h"
@@ -46,7 +47,7 @@ enum class BackNavigationType {
 class PaymentRequestDialogView : public views::DialogDelegateView,
                                  public PaymentRequestDialog,
                                  public PaymentRequestSpec::Observer,
-                                 public PaymentRequestState::Observer {
+                                 public InitializationTask::Observer {
  public:
   class ObserverForTest {
    public:
@@ -79,6 +80,10 @@ class PaymentRequestDialogView : public views::DialogDelegateView,
     virtual void OnSpecDoneUpdating() = 0;
 
     virtual void OnCvcPromptShown() = 0;
+
+    virtual void OnProcessingSpinnerShown() = 0;
+
+    virtual void OnProcessingSpinnerHidden() = 0;
   };
 
   // Build a Dialog around the PaymentRequest object. |observer| is used to
@@ -104,18 +109,23 @@ class PaymentRequestDialogView : public views::DialogDelegateView,
   void ShowDialog() override;
   void CloseDialog() override;
   void ShowErrorMessage() override;
+  void ShowProcessingSpinner() override;
+  bool IsInteractive() const override;
+  void ShowPaymentHandlerScreen(
+      const GURL& url,
+      PaymentHandlerOpenWindowCallback callback) override;
+  void RetryDialog() override;
 
   // PaymentRequestSpec::Observer:
   void OnStartUpdating(PaymentRequestSpec::UpdateReason reason) override;
   void OnSpecUpdated() override;
 
-  // PaymentRequestState::Observer:
-  void OnGetAllPaymentInstrumentsFinished() override;
-  void OnSelectedInformationChanged() override {}
+  // InitializationTask::Observer:
+  void OnInitialized(InitializationTask* initialization_task) override;
 
   void Pay();
   void GoBack();
-  void GoBackToPaymentSheet();
+  void GoBackToPaymentSheet(bool animate = true);
   void ShowContactProfileSheet();
   void ShowOrderSummary();
   void ShowShippingProfileSheet();
@@ -164,15 +174,13 @@ class PaymentRequestDialogView : public views::DialogDelegateView,
           result_delegate,
       content::WebContents* web_contents) override;
 
-  // Shows/Hides a full dialog spinner with the "processing" label that doesn't
-  // offer a way of closing the dialog.
-  void ShowProcessingSpinner();
+  // Hides the full dialog spinner with the "processing" label.
   void HideProcessingSpinner();
 
   Profile* GetProfile();
 
   ViewStack* view_stack_for_testing() { return view_stack_.get(); }
-  views::View* throbber_overlay_for_testing() { return &throbber_overlay_; }
+  views::View* throbber_overlay_for_testing() { return throbber_overlay_; }
 
  private:
   void ShowInitialPaymentSheet();
@@ -181,7 +189,7 @@ class PaymentRequestDialogView : public views::DialogDelegateView,
   // views::View
   gfx::Size CalculatePreferredSize() const override;
   void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
 
   // Non-owned reference to the PaymentRequest that initiated this dialog. Since
   // the PaymentRequest object always outlives this one, the pointer should
@@ -193,15 +201,18 @@ class PaymentRequestDialogView : public views::DialogDelegateView,
 
   // A full dialog overlay that shows a spinner and the "processing" label. It's
   // hidden until ShowProcessingSpinner is called.
-  views::View throbber_overlay_;
-  views::Throbber throbber_;
+  views::View* throbber_overlay_;
+  views::Throbber* throbber_;
 
   // May be null.
   ObserverForTest* observer_for_testing_;
 
   // Used when the dialog is being closed to avoid re-entrancy into the
   // controller_map_.
-  bool being_closed_;
+  bool being_closed_ = false;
+
+  // The number of initialization tasks that are not yet initialized.
+  size_t number_of_initialization_tasks_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestDialogView);
 };

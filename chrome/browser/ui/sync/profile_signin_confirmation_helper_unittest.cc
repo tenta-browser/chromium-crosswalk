@@ -11,10 +11,9 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,14 +32,13 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -107,6 +105,7 @@ static scoped_refptr<extensions::Extension> CreateExtension(
     extensions::Manifest::Location location) {
   base::DictionaryValue manifest;
   manifest.SetString(extensions::manifest_keys::kVersion, "1.0.0.0");
+  manifest.SetInteger(extensions::manifest_keys::kManifestVersion, 2);
   manifest.SetString(extensions::manifest_keys::kName, name);
   std::string error;
   scoped_refptr<extensions::Extension> extension =
@@ -174,8 +173,7 @@ class ProfileSigninConfirmationHelperTest : public testing::Test {
   BookmarkModel* model_;
 
 #if defined OS_CHROMEOS
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
+  chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
 };
@@ -183,6 +181,7 @@ class ProfileSigninConfirmationHelperTest : public testing::Test {
 // http://crbug.com/393149
 TEST_F(ProfileSigninConfirmationHelperTest, DISABLED_DoNotPromptForNewProfile) {
   // Profile is new and there's no profile data.
+  profile_->SetIsNewProfile(true);
   EXPECT_FALSE(
       GetCallbackResult(
           base::Bind(
@@ -194,6 +193,7 @@ TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Bookmarks) {
   ASSERT_TRUE(model_);
 
   // Profile is new but has bookmarks.
+  profile_->SetIsNewProfile(true);
   model_->AddURL(model_->bookmark_bar_node(), 0,
                  base::string16(base::ASCIIToUTF16("foo")),
                  GURL("http://foo.com"));
@@ -206,13 +206,12 @@ TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Bookmarks) {
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Extensions) {
-  ExtensionService* extensions =
+  extensions::ExtensionService* extensions =
       extensions::ExtensionSystem::Get(profile_.get())->extension_service();
   ASSERT_TRUE(extensions);
 
-  // Profile is new but has synced extensions.
-
-  // (The web store doesn't count.)
+  // Profile is new but has synced extensions (The web store doesn't count).
+  profile_->SetIsNewProfile(true);
   scoped_refptr<extensions::Extension> webstore =
       CreateExtension("web store",
                       extensions::kWebStoreAppId,
@@ -242,9 +241,10 @@ TEST_F(ProfileSigninConfirmationHelperTest,
 
   // Profile is new but has more than $(kHistoryEntriesBeforeNewProfilePrompt)
   // history items.
+  profile_->SetIsNewProfile(true);
   char buf[18];
   for (int i = 0; i < 10; i++) {
-    base::snprintf(buf, arraysize(buf), "http://foo.com/%d", i);
+    base::snprintf(buf, base::size(buf), "http://foo.com/%d", i);
     history->AddPage(
         GURL(std::string(buf)), base::Time::Now(), NULL, 1,
         GURL(), history::RedirectList(), ui::PAGE_TRANSITION_LINK,
@@ -265,6 +265,7 @@ TEST_F(ProfileSigninConfirmationHelperTest,
   ASSERT_TRUE(history);
 
   // Profile is new but has a typed URL.
+  profile_->SetIsNewProfile(true);
   history->AddPage(
       GURL("http://example.com"), base::Time::Now(), NULL, 1,
       GURL(), history::RedirectList(), ui::PAGE_TRANSITION_TYPED,
@@ -278,7 +279,7 @@ TEST_F(ProfileSigninConfirmationHelperTest,
 
 TEST_F(ProfileSigninConfirmationHelperTest, PromptForNewProfile_Restarted) {
   // Browser has been shut down since profile was created.
-  user_prefs_->set_read_error(PersistentPrefStore::PREF_READ_ERROR_NONE);
+  profile_->SetIsNewProfile(false);
   EXPECT_TRUE(
       GetCallbackResult(
           base::Bind(

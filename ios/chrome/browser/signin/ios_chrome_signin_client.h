@@ -5,45 +5,60 @@
 #ifndef IOS_CHROME_BROWSER_SIGNIN_IOS_CHROME_SIGNIN_CLIENT_H_
 #define IOS_CHROME_BROWSER_SIGNIN_IOS_CHROME_SIGNIN_CLIENT_H_
 
-#include "components/signin/ios/browser/ios_signin_client.h"
+#include <memory>
+
+#include "base/macros.h"
+#include "components/content_settings/core/browser/cookie_settings.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/signin/ios/browser/wait_for_network_callback_helper.h"
+#include "components/signin/public/base/signin_client.h"
+#include "net/cookies/cookie_change_dispatcher.h"
 
 namespace ios {
 class ChromeBrowserState;
 }
 
-// Concrete implementation of IOSSigninClient for //ios/chrome.
-class IOSChromeSigninClient : public IOSSigninClient {
+// Concrete implementation of SigninClient for //ios/chrome.
+class IOSChromeSigninClient : public SigninClient {
  public:
   IOSChromeSigninClient(
       ios::ChromeBrowserState* browser_state,
-      SigninErrorController* signin_error_controller,
       scoped_refptr<content_settings::CookieSettings> cookie_settings,
-      scoped_refptr<HostContentSettingsMap> host_content_settings_map,
-      scoped_refptr<TokenWebData> token_web_data);
-  ~IOSChromeSigninClient() override = default;
+      scoped_refptr<HostContentSettingsMap> host_content_settings_map);
+  ~IOSChromeSigninClient() override;
+
+  // KeyedService implementation.
+  void Shutdown() override;
 
   // SigninClient implementation.
-  base::Time GetInstallDate() override;
   std::string GetProductVersion() override;
-  void OnSignedIn(const std::string& account_id,
-                  const std::string& gaia_id,
-                  const std::string& username,
-                  const std::string& password) override;
   std::unique_ptr<GaiaAuthFetcher> CreateGaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
-      const std::string& source,
-      net::URLRequestContextGetter* getter) override;
+      gaia::GaiaSource source) override;
   void PreGaiaLogout(base::OnceClosure callback) override;
-
-  // SigninErrorController::Observer implementation.
-  void OnErrorChanged() override;
+  PrefService* GetPrefs() override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
+  network::mojom::CookieManager* GetCookieManager() override;
+  void DoFinalInit() override;
+  bool AreSigninCookiesAllowed() override;
+  bool AreSigninCookiesDeletedOnExit() override;
+  void AddContentSettingsObserver(
+      content_settings::Observer* observer) override;
+  void RemoveContentSettingsObserver(
+      content_settings::Observer* observer) override;
+  void DelayNetworkCall(base::OnceClosure callback) override;
 
  private:
-  // SigninClient private implementation.
-  void OnSignedOut() override;
 
+  // Helper to delay callbacks until connection becomes online again.
+  std::unique_ptr<WaitForNetworkCallbackHelper> network_callback_helper_;
+  // The browser state associated with this service.
   ios::ChromeBrowserState* browser_state_;
-  SigninErrorController* signin_error_controller_;
+  // Used to check if sign in cookies are allowed.
+  scoped_refptr<content_settings::CookieSettings> cookie_settings_;
+  // Used to add and remove content settings observers.
+  scoped_refptr<HostContentSettingsMap> host_content_settings_map_;
+
   DISALLOW_COPY_AND_ASSIGN(IOSChromeSigninClient);
 };
 

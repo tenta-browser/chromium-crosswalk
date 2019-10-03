@@ -7,13 +7,13 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/gcm.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
@@ -63,7 +63,6 @@ struct ExtensionEventObserver::KeepaliveSources {
 
 ExtensionEventObserver::ExtensionEventObserver()
     : should_delay_suspend_(true),
-      suspend_is_pending_(false),
       suspend_keepalive_count_(0),
       weak_factory_(this) {
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_ADDED,
@@ -71,7 +70,7 @@ ExtensionEventObserver::ExtensionEventObserver()
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
                  content::NotificationService::AllBrowserContextsAndSources());
 
-  DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
+  PowerManagerClient::Get()->AddObserver(this);
 }
 
 ExtensionEventObserver::~ExtensionEventObserver() {
@@ -84,7 +83,7 @@ ExtensionEventObserver::~ExtensionEventObserver() {
     host->RemoveObserver(this);
   }
 
-  DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
+  PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 std::unique_ptr<ExtensionEventObserver::TestApi>
@@ -95,12 +94,11 @@ ExtensionEventObserver::CreateTestApi() {
 
 void ExtensionEventObserver::SetShouldDelaySuspend(bool should_delay) {
   should_delay_suspend_ = should_delay;
-  if (!should_delay_suspend_ && suspend_is_pending_) {
+  if (!should_delay_suspend_ && block_suspend_token_) {
     // There is a suspend attempt pending but this class should no longer be
     // delaying it.  Immediately report readiness.
-    suspend_is_pending_ = false;
-    power_manager_callback_.Run();
-    power_manager_callback_.Reset();
+    PowerManagerClient::Get()->UnblockSuspend(block_suspend_token_);
+    block_suspend_token_ = {};
     suspend_readiness_callback_.Cancel();
   }
 }
@@ -133,7 +131,7 @@ void ExtensionEventObserver::OnBackgroundHostCreated(
     return;
 
   auto result = keepalive_sources_.insert(
-      std::make_pair(host, base::MakeUnique<KeepaliveSources>()));
+      std::make_pair(host, std::make_unique<KeepaliveSources>()));
 
   if (result.second)
     host->AddObserver(this);
@@ -217,8 +215,7 @@ void ExtensionEventObserver::DarkSuspendImminent() {
 }
 
 void ExtensionEventObserver::SuspendDone(const base::TimeDelta& duration) {
-  suspend_is_pending_ = false;
-  power_manager_callback_.Reset();
+  block_suspend_token_ = {};
   suspend_readiness_callback_.Cancel();
 }
 
@@ -237,15 +234,13 @@ void ExtensionEventObserver::OnProfileDestroyed(Profile* profile) {
 }
 
 void ExtensionEventObserver::OnSuspendImminent(bool dark_suspend) {
-  if (suspend_is_pending_) {
-    LOG(WARNING) << "OnSuspendImminent called while previous suspend attempt "
-                 << "is still pending.";
-  }
+  DCHECK(block_suspend_token_.is_empty())
+      << "OnSuspendImminent called while previous suspend attempt "
+      << "is still pending.";
 
-  suspend_is_pending_ = true;
-  power_manager_callback_ = DBusThreadManager::Get()
-                                ->GetPowerManagerClient()
-                                ->GetSuspendReadinessCallback();
+  block_suspend_token_ = base::UnguessableToken::Create();
+  PowerManagerClient::Get()->BlockSuspend(block_suspend_token_,
+                                          "ExtensionEventObserver");
 
   suspend_readiness_callback_.Reset(
       base::Bind(&ExtensionEventObserver::MaybeReportSuspendReadiness,
@@ -265,13 +260,11 @@ void ExtensionEventObserver::OnSuspendImminent(bool dark_suspend) {
 }
 
 void ExtensionEventObserver::MaybeReportSuspendReadiness() {
-  if (!suspend_is_pending_ || suspend_keepalive_count_ > 0 ||
-      power_manager_callback_.is_null())
+  if (suspend_keepalive_count_ > 0 || block_suspend_token_.is_empty())
     return;
 
-  suspend_is_pending_ = false;
-  power_manager_callback_.Run();
-  power_manager_callback_.Reset();
+  PowerManagerClient::Get()->UnblockSuspend(block_suspend_token_);
+  block_suspend_token_ = {};
 }
 
 }  // namespace chromeos

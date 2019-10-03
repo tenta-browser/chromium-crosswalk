@@ -10,8 +10,14 @@
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "crypto/rsa_private_key.h"
+#include "crypto/signature_verifier.h"
 #include "net/cert/x509_certificate.h"
+#include "net/test/cert_test_util.h"
+#include "net/test/key_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
+#include "third_party/boringssl/src/include/openssl/rsa.h"
 
 namespace net {
 
@@ -137,8 +143,8 @@ TEST(X509UtilTest, CreateSelfSigned) {
 
   std::string der_cert;
   ASSERT_TRUE(x509_util::CreateSelfSignedCert(
-      private_key.get(), x509_util::DIGEST_SHA256, "CN=subject", 1,
-      base::Time::Now(), base::Time::Now() + base::TimeDelta::FromDays(1),
+      private_key->key(), x509_util::DIGEST_SHA256, "CN=subject", 1,
+      base::Time::Now(), base::Time::Now() + base::TimeDelta::FromDays(1), {},
       &der_cert));
 
   scoped_refptr<X509Certificate> cert =
@@ -662,6 +668,134 @@ TEST(X509UtilTest, CreateChannelBindings_Unsupported_MD4) {
   ASSERT_FALSE(
       x509_util::GetTLSServerEndPointChannelBinding(*cert, &channel_bindings));
   EXPECT_TRUE(channel_bindings.empty());
+}
+
+namespace {
+
+bool DigestSign(EVP_PKEY* key,
+                const EVP_MD* md,
+                base::span<const uint8_t> data,
+                bool is_pss,
+                std::vector<uint8_t>* digest) {
+  bssl::ScopedEVP_MD_CTX ctx;
+  EVP_PKEY_CTX* pctx;
+  if (!EVP_DigestSignInit(ctx.get(), &pctx, md, nullptr, key)) {
+    return false;
+  }
+
+  if (is_pss) {
+    if (!EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) ||
+        !EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, -1 /* hash length */)) {
+      return false;
+    }
+  }
+
+  // Determine the maximum length of the signature.
+  size_t len = 0;
+  if (!EVP_DigestSign(ctx.get(), nullptr, &len, data.data(), data.size())) {
+    return false;
+  }
+  digest->resize(len);
+
+  // Sign it.
+  if (!EVP_DigestSign(ctx.get(), digest->data(), &len, data.data(),
+                      data.size())) {
+    return false;
+  }
+  digest->resize(len);
+  return true;
+}
+
+}  // namespace
+
+TEST(X509UtilTest, SignatureVerifierInitWithCertificate) {
+  static const uint8_t kMessage[] = {'h', 'e', 'l', 'l', 'o'};
+  static const uint8_t kWrongMessage[] = {'n', 'o', 'p', 'e'};
+
+  bssl::UniquePtr<EVP_PKEY> rsaKey =
+      net::key_util::LoadEVP_PKEYFromPEM(net::GetTestCertsDirectory().Append(
+          FILE_PATH_LITERAL("key_usage_rsa.key")));
+  ASSERT_NE(rsaKey, nullptr);
+  bssl::UniquePtr<EVP_PKEY> p256Key =
+      net::key_util::LoadEVP_PKEYFromPEM(net::GetTestCertsDirectory().Append(
+          FILE_PATH_LITERAL("key_usage_p256.key")));
+  ASSERT_NE(p256Key, nullptr);
+
+  std::vector<uint8_t> rsaSignaturePKCS1;
+  ASSERT_TRUE(DigestSign(rsaKey.get(), EVP_sha256(), kMessage, false,
+                         &rsaSignaturePKCS1));
+  std::vector<uint8_t> rsaSignaturePSS;
+  ASSERT_TRUE(
+      DigestSign(rsaKey.get(), EVP_sha256(), kMessage, true, &rsaSignaturePSS));
+  std::vector<uint8_t> p256Signature;
+  ASSERT_TRUE(
+      DigestSign(p256Key.get(), EVP_sha256(), kMessage, false, &p256Signature));
+
+  struct Test {
+    const char* cert;
+    crypto::SignatureVerifier::SignatureAlgorithm algorithm;
+    base::span<const uint8_t> signature;
+    bool ok;
+  } kTests[] = {
+      // The certificate must support the digitalSignature key usage.
+      {"key_usage_p256_digitalsignature.pem",
+       crypto::SignatureVerifier::ECDSA_SHA256, p256Signature, true},
+      {"key_usage_p256_both.pem", crypto::SignatureVerifier::ECDSA_SHA256,
+       p256Signature, true},
+      {"key_usage_rsa_digitalsignature.pem",
+       crypto::SignatureVerifier::RSA_PKCS1_SHA256, rsaSignaturePKCS1, true},
+      {"key_usage_rsa_digitalsignature.pem",
+       crypto::SignatureVerifier::RSA_PSS_SHA256, rsaSignaturePSS, true},
+      {"key_usage_rsa_both.pem", crypto::SignatureVerifier::RSA_PKCS1_SHA256,
+       rsaSignaturePKCS1, true},
+      {"key_usage_rsa_both.pem", crypto::SignatureVerifier::RSA_PSS_SHA256,
+       rsaSignaturePSS, true},
+
+      // Omitting the extension entirely is also accepted.
+      {"key_usage_p256_no_extension.pem",
+       crypto::SignatureVerifier::ECDSA_SHA256, p256Signature, true},
+      {"key_usage_rsa_no_extension.pem",
+       crypto::SignatureVerifier::RSA_PKCS1_SHA256, rsaSignaturePKCS1, true},
+      {"key_usage_rsa_no_extension.pem",
+       crypto::SignatureVerifier::RSA_PSS_SHA256, rsaSignaturePSS, true},
+
+      // If the extension is present but digitalSignature is missing, the
+      // signature is rejected.
+      {"key_usage_p256_keyagreement.pem",
+       crypto::SignatureVerifier::ECDSA_SHA256, p256Signature, false},
+      {"key_usage_rsa_keyencipherment.pem",
+       crypto::SignatureVerifier::RSA_PKCS1_SHA256, rsaSignaturePKCS1, false},
+      {"key_usage_rsa_keyencipherment.pem",
+       crypto::SignatureVerifier::RSA_PSS_SHA256, rsaSignaturePSS, false},
+
+      // The key and signature must match, rather than only extracting the hash
+      // function.
+      {"key_usage_p256_digitalsignature.pem",
+       crypto::SignatureVerifier::RSA_PKCS1_SHA256, p256Signature, false},
+      {"key_usage_rsa_digitalsignature.pem",
+       crypto::SignatureVerifier::ECDSA_SHA256, rsaSignaturePKCS1, false},
+  };
+
+  for (const auto& test : kTests) {
+    SCOPED_TRACE(test.cert);
+    scoped_refptr<X509Certificate> cert =
+        ImportCertFromFile(GetTestCertsDirectory(), test.cert);
+    ASSERT_TRUE(cert);
+
+    crypto::SignatureVerifier verifier;
+    bool ok = SignatureVerifierInitWithCertificate(
+        &verifier, test.algorithm, test.signature, cert->cert_buffer());
+    EXPECT_EQ(ok, test.ok);
+    if (ok) {
+      verifier.VerifyUpdate(kMessage);
+      EXPECT_TRUE(verifier.VerifyFinal());
+
+      ASSERT_TRUE(SignatureVerifierInitWithCertificate(
+          &verifier, test.algorithm, test.signature, cert->cert_buffer()));
+      verifier.VerifyUpdate(kWrongMessage);
+      EXPECT_FALSE(verifier.VerifyFinal());
+    }
+  }
 }
 
 }  // namespace x509_util

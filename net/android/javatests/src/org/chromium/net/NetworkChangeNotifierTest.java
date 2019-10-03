@@ -21,6 +21,9 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.StrictMode;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.annotation.UiThreadTest;
 import android.support.test.filters.MediumTest;
@@ -66,7 +69,7 @@ public class NetworkChangeNotifierTest {
      */
     private static class NetworkChangeNotifierTestObserver
             implements NetworkChangeNotifier.ConnectionTypeObserver {
-        private boolean mReceivedNotification = false;
+        private boolean mReceivedNotification;
 
         @Override
         public void onConnectionTypeChanged(int connectionType) {
@@ -99,7 +102,7 @@ public class NetworkChangeNotifierTest {
             mReceivedConnectionSubtypeNotification = false;
         }
 
-        private boolean mReceivedConnectionSubtypeNotification = false;
+        private boolean mReceivedConnectionSubtypeNotification;
     }
 
     private static class Helper {
@@ -186,14 +189,17 @@ public class NetworkChangeNotifierTest {
         private boolean mActiveNetworkExists;
         private int mNetworkType;
         private int mNetworkSubtype;
+        private boolean mIsPrivateDnsActive;
         private NetworkCallback mLastRegisteredNetworkCallback;
+        private NetworkCallback mLastRegisteredDefaultNetworkCallback;
 
         @Override
         public NetworkState getNetworkState(WifiManagerDelegate wifiManagerDelegate) {
             return new NetworkState(mActiveNetworkExists, mNetworkType, mNetworkSubtype,
                     mNetworkType == ConnectivityManager.TYPE_WIFI
                             ? wifiManagerDelegate.getWifiSsid()
-                            : null);
+                            : null,
+                    mIsPrivateDnsActive);
         }
 
         @Override
@@ -230,8 +236,8 @@ public class NetworkChangeNotifierTest {
         // Dummy implementations to avoid NullPointerExceptions in default implementations:
 
         @Override
-        public long getDefaultNetId() {
-            return NetId.INVALID;
+        public Network getDefaultNetwork() {
+            return null;
         }
 
         @Override
@@ -245,8 +251,15 @@ public class NetworkChangeNotifierTest {
         // Dummy implementation that also records the last registered callback.
         @Override
         public void registerNetworkCallback(
-                NetworkRequest networkRequest, NetworkCallback networkCallback) {
+                NetworkRequest networkRequest, NetworkCallback networkCallback, Handler handler) {
             mLastRegisteredNetworkCallback = networkCallback;
+        }
+
+        // Dummy implementation that also records the last registered callback.
+        @Override
+        public void registerDefaultNetworkCallback(
+                NetworkCallback networkCallback, Handler handler) {
+            mLastRegisteredDefaultNetworkCallback = networkCallback;
         }
 
         public void setActiveNetworkExists(boolean networkExists) {
@@ -261,8 +274,16 @@ public class NetworkChangeNotifierTest {
             mNetworkSubtype = networkSubtype;
         }
 
+        public void setIsPrivateDnsActive(boolean isPrivateDnsActive) {
+            mIsPrivateDnsActive = isPrivateDnsActive;
+        }
+
         public NetworkCallback getLastRegisteredNetworkCallback() {
             return mLastRegisteredNetworkCallback;
+        }
+
+        public NetworkCallback getDefaultNetworkCallback() {
+            return mLastRegisteredDefaultNetworkCallback;
         }
 
         /**
@@ -412,6 +433,8 @@ public class NetworkChangeNotifierTest {
             // Mock out to avoid unintended system interaction.
             @Override
             public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
+                // Should not be used starting with Pie.
+                Assert.assertFalse(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P);
                 return null;
             }
 
@@ -455,7 +478,7 @@ public class NetworkChangeNotifierTest {
 
     @Before
     public void setUp() throws Throwable {
-        LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
+        LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_BROWSER);
 
         mUiThreadRule.runOnUiThread(new Runnable() {
             @Override
@@ -581,6 +604,19 @@ public class NetworkChangeNotifierTest {
     }
 
     /**
+     * Indicate to NetworkChangeNotifierAutoDetect that a connectivity change has occurred.
+     * Uses same signals that system would use.
+     */
+    private void notifyConnectivityChange() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            mConnectivityDelegate.getDefaultNetworkCallback().onAvailable(null);
+        } else {
+            Intent connectivityIntent = new Intent(ConnectivityManager.CONNECTIVITY_ACTION);
+            mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        }
+    }
+
+    /**
      * Tests that when Chrome gets an intent indicating a change in network connectivity, it sends a
      * notification to Java observers.
      */
@@ -597,31 +633,51 @@ public class NetworkChangeNotifierTest {
         // We shouldn't be re-notified if the connection hasn't actually changed.
         NetworkChangeNotifierTestObserver observer = new NetworkChangeNotifierTestObserver();
         NetworkChangeNotifier.addConnectionTypeObserver(observer);
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        notifyConnectivityChange();
         Assert.assertFalse(observer.hasReceivedNotification());
 
         // We shouldn't be notified if we're connected to non-Wifi and the Wifi SSID changes.
         mWifiDelegate.setWifiSSID("bar");
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        notifyConnectivityChange();
         Assert.assertFalse(observer.hasReceivedNotification());
         // We should be notified when we change to Wifi.
         mConnectivityDelegate.setNetworkType(ConnectivityManager.TYPE_WIFI);
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        notifyConnectivityChange();
         Assert.assertTrue(observer.hasReceivedNotification());
         observer.resetHasReceivedNotification();
         // We should be notified when the Wifi SSID changes.
         mWifiDelegate.setWifiSSID("foo");
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        notifyConnectivityChange();
         Assert.assertTrue(observer.hasReceivedNotification());
         observer.resetHasReceivedNotification();
         // We shouldn't be re-notified if the Wifi SSID hasn't actually changed.
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        notifyConnectivityChange();
         Assert.assertFalse(observer.hasReceivedNotification());
+
+        // We should be notified if use of DNS-over-TLS changes.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Verify notification for enabling.
+            mConnectivityDelegate.setIsPrivateDnsActive(true);
+            mConnectivityDelegate.getDefaultNetworkCallback().onLinkPropertiesChanged(null, null);
+            Assert.assertTrue(observer.hasReceivedNotification());
+            observer.resetHasReceivedNotification();
+            // Verify no notification for no change.
+            mConnectivityDelegate.getDefaultNetworkCallback().onLinkPropertiesChanged(null, null);
+            Assert.assertFalse(observer.hasReceivedNotification());
+            // Verify notification for disbling.
+            mConnectivityDelegate.setIsPrivateDnsActive(false);
+            mConnectivityDelegate.getDefaultNetworkCallback().onLinkPropertiesChanged(null, null);
+            Assert.assertTrue(observer.hasReceivedNotification());
+            observer.resetHasReceivedNotification();
+        }
 
         // Mimic that connectivity has been lost and ensure that Chrome notifies our observer.
         mConnectivityDelegate.setActiveNetworkExists(false);
-        Intent noConnectivityIntent = new Intent(ConnectivityManager.CONNECTIVITY_ACTION);
-        mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), noConnectivityIntent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            mConnectivityDelegate.getDefaultNetworkCallback().onLost(null);
+        } else {
+            mReceiver.onReceive(InstrumentationRegistry.getTargetContext(), connectivityIntent);
+        }
         Assert.assertTrue(observer.hasReceivedNotification());
 
         observer.resetHasReceivedNotification();
@@ -709,8 +765,12 @@ public class NetworkChangeNotifierTest {
     public void testConnectivityManagerDelegateDoesNotCrash() {
         ConnectivityManagerDelegate delegate =
                 new ConnectivityManagerDelegate(InstrumentationRegistry.getTargetContext());
-        delegate.getNetworkState(
-                new WifiManagerDelegate(InstrumentationRegistry.getTargetContext()));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            delegate.getNetworkState(null);
+        } else {
+            delegate.getNetworkState(
+                    new WifiManagerDelegate(InstrumentationRegistry.getTargetContext()));
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             // getConnectionType(Network) doesn't crash upon invalid Network argument.
             Network invalidNetwork = Helper.netIdToNetwork(NetId.INVALID);
@@ -722,10 +782,11 @@ public class NetworkChangeNotifierTest {
             if (networks.length >= 1) {
                 delegate.getConnectionType(networks[0]);
             }
-            delegate.getDefaultNetId();
+            delegate.getDefaultNetwork();
             NetworkCallback networkCallback = new NetworkCallback();
             NetworkRequest networkRequest = new NetworkRequest.Builder().build();
-            delegate.registerNetworkCallback(networkRequest, networkCallback);
+            delegate.registerNetworkCallback(
+                    networkRequest, networkCallback, new Handler(Looper.myLooper()));
             delegate.unregisterNetworkCallback(networkCallback);
         }
     }
@@ -785,8 +846,8 @@ public class NetworkChangeNotifierTest {
             }
 
             @Override
-            long getDefaultNetId() {
-                return Integer.parseInt(mNetworks[1].toString());
+            Network getDefaultNetwork() {
+                return mNetworks[1];
             }
 
             @Override
@@ -802,7 +863,7 @@ public class NetworkChangeNotifierTest {
 
         // Verify that the mock delegate connectivity manager is being used
         // by the network change notifier auto-detector.
-        Assert.assertEquals(333, ncn.getDefaultNetId());
+        Assert.assertEquals(333, demungeNetId(ncn.getDefaultNetId()));
 
         // The api {@link NetworkChangeNotifierAutoDetect#getNetworksAndTypes()}
         // returns an array of a repeated sequence of: (NetID, ConnectionType).
@@ -972,5 +1033,69 @@ public class NetworkChangeNotifierTest {
         }
         ConnectivityManager.setProcessDefaultNetwork(null);
         Assert.assertFalse(NetworkChangeNotifier.isProcessBoundToNetwork());
+    }
+
+    /**
+     * Regression test for crbug.com/805424 where ConnectivityManagerDelegate.vpnAccessible() was
+     * found to leak.
+     */
+    @Test
+    @MediumTest
+    @MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP) // android.net.Network available in L+.
+    public void testVpnAccessibleDoesNotLeak() {
+        ConnectivityManagerDelegate connectivityManagerDelegate = new ConnectivityManagerDelegate(
+                InstrumentationRegistry.getInstrumentation().getTargetContext());
+        StrictMode.VmPolicy oldPolicy = StrictMode.getVmPolicy();
+        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                                       .detectLeakedClosableObjects()
+                                       .penaltyDeath()
+                                       .penaltyLog()
+                                       .build());
+        try {
+            // Test non-existent Network (NetIds only go to 65535).
+            connectivityManagerDelegate.vpnAccessible(Helper.netIdToNetwork(65537));
+            // Test existing Networks.
+            for (Network network : connectivityManagerDelegate.getAllNetworksUnfiltered()) {
+                connectivityManagerDelegate.vpnAccessible(network);
+            }
+
+            // Run GC and finalizers a few times to pick up leaked closeables
+            for (int i = 0; i < 10; i++) {
+                System.gc();
+                System.runFinalization();
+            }
+            System.gc();
+            System.runFinalization();
+        } finally {
+            StrictMode.setVmPolicy(oldPolicy);
+        }
+    }
+
+    /**
+     * Regression test for crbug.com/946531 where ConnectivityManagerDelegate.vpnAccessible()
+     * triggered StrictMode's untagged socket prohibition.
+     */
+    @Test
+    @MediumTest
+    @MinAndroidSdkLevel(Build.VERSION_CODES.O) // detectUntaggedSockets added in Oreo.
+    public void testVpnAccessibleDoesNotCreateUntaggedSockets() {
+        ConnectivityManagerDelegate connectivityManagerDelegate = new ConnectivityManagerDelegate(
+                InstrumentationRegistry.getInstrumentation().getTargetContext());
+        StrictMode.VmPolicy oldPolicy = StrictMode.getVmPolicy();
+        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                                       .detectUntaggedSockets()
+                                       .penaltyDeath()
+                                       .penaltyLog()
+                                       .build());
+        try {
+            // Test non-existent Network (NetIds only go to 65535).
+            connectivityManagerDelegate.vpnAccessible(Helper.netIdToNetwork(65537));
+            // Test existing Networks.
+            for (Network network : connectivityManagerDelegate.getAllNetworksUnfiltered()) {
+                connectivityManagerDelegate.vpnAccessible(network);
+            }
+        } finally {
+            StrictMode.setVmPolicy(oldPolicy);
+        }
     }
 }

@@ -43,7 +43,7 @@ class CONTENT_EXPORT InterceptingResourceHandler
 
   // ResourceHandler implementation:
   void OnResponseStarted(
-      ResourceResponse* response,
+      network::ResourceResponse* response,
       std::unique_ptr<ResourceController> controller) override;
   void OnWillRead(scoped_refptr<net::IOBuffer>* buf,
                   int* buf_size,
@@ -148,7 +148,7 @@ class CONTENT_EXPORT InterceptingResourceHandler
   // Result of the first read, that may have to be passed to an alternate
   // ResourceHandler instead of the original ResourceHandler.
   scoped_refptr<net::IOBuffer> first_read_buffer_;
-  // Instead of |first_read_buffer_|, this handler creates a new IOBuffer with
+  // Instead of |first_read_buffer_|, this handler creates an IOBuffer with
   // the same size and return it to the client.
   scoped_refptr<net::IOBuffer> first_read_buffer_double_;
   int first_read_buffer_size_ = 0;
@@ -167,7 +167,7 @@ class CONTENT_EXPORT InterceptingResourceHandler
   scoped_refptr<net::IOBuffer>* parent_read_buffer_ = nullptr;
   int* parent_read_buffer_size_ = nullptr;
 
-  scoped_refptr<ResourceResponse> response_;
+  scoped_refptr<network::ResourceResponse> response_;
 
   // Next two values are used to handle synchronous Resume calls without a
   // PostTask.
@@ -177,7 +177,7 @@ class CONTENT_EXPORT InterceptingResourceHandler
   // True if the request was resumed while |in_do_loop_| was true;
   bool advance_to_next_state_ = false;
 
-  base::WeakPtrFactory<InterceptingResourceHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<InterceptingResourceHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InterceptingResourceHandler);
 };

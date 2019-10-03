@@ -21,7 +21,7 @@ PermissionsUpdaterDelegateChromeOS::~PermissionsUpdaterDelegateChromeOS() {}
 void PermissionsUpdaterDelegateChromeOS::InitializePermissions(
     const Extension* extension,
     std::unique_ptr<const PermissionSet>* granted_permissions) {
-  if (!profiles::IsPublicSession() ||
+  if (!profiles::ArePublicSessionRestrictionsEnabled() ||
       chromeos::DeviceLocalAccountManagementPolicyProvider::IsWhitelisted(
           extension->id()) ||
       !(*granted_permissions)
@@ -36,7 +36,7 @@ void PermissionsUpdaterDelegateChromeOS::InitializePermissions(
   api_permission_set.insert(APIPermission::kClipboardRead);
   *granted_permissions = PermissionSet::CreateDifference(
       **granted_permissions,
-      PermissionSet(api_permission_set, ManifestPermissionSet(),
+      PermissionSet(std::move(api_permission_set), ManifestPermissionSet(),
                     URLPatternSet(), URLPatternSet()));
 }
 

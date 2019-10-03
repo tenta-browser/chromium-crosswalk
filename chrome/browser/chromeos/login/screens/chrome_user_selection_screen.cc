@@ -17,15 +17,16 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/login/ui/views/user_board_view.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
+#include "components/account_id/account_id.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/policy_constants.h"
-#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
@@ -36,7 +37,6 @@ namespace chromeos {
 ChromeUserSelectionScreen::ChromeUserSelectionScreen(
     const std::string& display_type)
     : UserSelectionScreen(display_type),
-      handler_initialized_(false),
       weak_factory_(this) {
   device_local_account_policy_service_ =
       g_browser_process->platform_part()
@@ -66,7 +66,7 @@ void ChromeUserSelectionScreen::Init(const user_manager::UserList& users) {
 
 void ChromeUserSelectionScreen::SendUserList() {
   UserSelectionScreen::SendUserList();
-  handler_initialized_ = true;
+  users_loaded_ = true;
 }
 
 void ChromeUserSelectionScreen::OnPolicyUpdated(const std::string& user_id) {
@@ -77,6 +77,7 @@ void ChromeUserSelectionScreen::OnPolicyUpdated(const std::string& user_id) {
 
   CheckForPublicSessionDisplayNameChange(broker);
   CheckForPublicSessionLocalePolicyChange(broker);
+  CheckIfFullManagementDisclosureNeeded(broker);
 }
 
 void ChromeUserSelectionScreen::OnDeviceLocalAccountsChanged() {
@@ -95,7 +96,7 @@ void ChromeUserSelectionScreen::CheckForPublicSessionDisplayNameChange(
 
   public_session_display_names_[account_id] = display_name;
 
-  if (!handler_initialized_)
+  if (!users_loaded_)
     return;
 
   if (!display_name.empty()) {
@@ -152,6 +153,12 @@ void ChromeUserSelectionScreen::CheckForPublicSessionLocalePolicyChange(
     recommended_locales = new_recommended_locales;
 }
 
+void ChromeUserSelectionScreen::CheckIfFullManagementDisclosureNeeded(
+    policy::DeviceLocalAccountPolicyBroker* broker) {
+  SetPublicSessionShowFullManagementDisclosure(
+      ChromeUserManager::Get()->IsFullManagementDisclosureNeeded(broker));
+}
+
 void ChromeUserSelectionScreen::SetPublicSessionDisplayName(
     const AccountId& account_id) {
   const user_manager::User* user =
@@ -166,7 +173,7 @@ void ChromeUserSelectionScreen::SetPublicSessionDisplayName(
 void ChromeUserSelectionScreen::SetPublicSessionLocales(
     const AccountId& account_id,
     const std::vector<std::string>& recommended_locales) {
-  if (!handler_initialized_)
+  if (!users_loaded_)
     return;
 
   // Construct the list of available locales. This list consists of the
@@ -190,6 +197,12 @@ void ChromeUserSelectionScreen::SetPublicSessionLocales(
   view_->SetPublicSessionLocales(account_id, std::move(available_locales),
                                  default_locale,
                                  two_or_more_recommended_locales);
+}
+
+void ChromeUserSelectionScreen::SetPublicSessionShowFullManagementDisclosure(
+    bool show_full_management_disclosure) {
+  view_->SetPublicSessionShowFullManagementDisclosure(
+      show_full_management_disclosure);
 }
 
 }  // namespace chromeos
